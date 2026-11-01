@@ -5,12 +5,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import time
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..brain.reflex import Reflexes
 from ..deals import GOLD
+from ..executor import check_give
 from ..game import GameError, GameLink
 from ..llm import ToolCall
 from ..protocol import Session
@@ -37,6 +39,7 @@ if TYPE_CHECKING:
     from ..people_knowledge import PeopleKnowledge
     from ..social import Rumors
     from ..talk import TalkDesk
+    from .live import LiveCase
 
 log = logging.getLogger(__name__)
 HOUSE = "NW_FARM1_INHOUSE_01"
@@ -53,10 +56,12 @@ async def cheat_scenario(
     people: PeopleKnowledge,
     log_dir: str,
     slot: int = 7,
+    *,
+    live: LiveCase | None = None,
 ) -> dict[str, str]:
     """Given deals: native silence betrayal, unpaid debt, honest control and save/load."""
     results: dict[str, str] = {}
-    off = model_off(dialogue)
+    off = model_off(dialogue) if live is None else None
     original_reflexes = talk.reflexes
     original_gate, original_stage = rumors.gate, rumors.stage
     original_cards, original_personas = deals.cards, dialogue.personas.cards
@@ -137,17 +142,23 @@ async def cheat_scenario(
         name = talk.people[npc].name
         request = request.replace("ё", "е")
         decision = "Хильда продаёт молчание" if npc == HILDA else "Лобарт предлагает 5 сейчас, 7 позже"
-        off.given(
-            f"дано: {decision}", who=npc, when=request,
-            calls=[ToolCall("propose_deal", args)],
-        )
-        off.silent(
-            f"дано: {name} молчит (предложение сделки сделано)", who=npc, when=request,
-        )
-        off.silent(
-            f"дано: {name} молчит (сделка состоялась)", who=npc, when="сделка состоялась",
-        )
-        await link.debug("type", text=f"{name}, {request}.")
+        if off is not None:
+            off.given(
+                f"дано: {decision}", who=npc, when=request,
+                calls=[ToolCall("propose_deal", args)],
+            )
+            off.silent(
+                f"дано: {name} молчит (предложение сделки сделано)", who=npc, when=request,
+            )
+            off.silent(
+                f"дано: {name} молчит (сделка состоялась)", who=npc, when="сделка состоялась",
+            )
+            await link.debug("type", text=f"{name}, {request}.")
+        else:
+            # The accepted debt is the fixture; only the answer when it is due is live.
+            outcome = await deals.propose(npc, name, args, await link.snapshot(npc, fresh=True))
+            if not check(f"{label}_proposal", outcome.status == "accepted", outcome.output):
+                return None
         shown = await _until(lambda: npc in deals.open, 45)
         deal = deals.open.get(npc)
         window = await link.deal_window() or {}
@@ -185,7 +196,10 @@ async def cheat_scenario(
         if not check("enabled", deals.cheat, "npc cheat is enabled"):
             return _logged(results)
         cards(1)
-        log.info("given: дано: собеседники слушают героя (FixedDecider posture=listen)")
+        if live is None:
+            log.info("given: дано: собеседники слушают героя (FixedDecider posture=listen)")
+        else:
+            log.info("scenario: participants listen to the hero (FixedDecider posture=listen)")
         talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
         rumors.gate, rumors.stage = lambda *_: False, None
         await link.debug("player_hp", hp=5000)
@@ -214,77 +228,78 @@ async def cheat_scenario(
         if await gold(LOBART) < 30:
             await link.story_effect(LOBART, [{"do": "give", "item": GOLD, "count": 30, "to": "self"}])
 
-        await stand(LOBART, HOUSE)
+        if live is None:
+            await stand(LOBART, HOUSE)
 
-        async def drop() -> bool:
-            try:
-                await link.debug("npc_drop", npc=LOBART, item="ITMI_SILVERCUP")
-            except GameError as err:
-                if "could not drop it now" not in str(err):
-                    raise
-                return False
-            return True
+            async def drop() -> bool:
+                try:
+                    await link.debug("npc_drop", npc=LOBART, item="ITMI_SILVERCUP")
+                except GameError as err:
+                    if "could not drop it now" not in str(err):
+                        raise
+                    return False
+                return True
 
-        if not check("owned_cup", await _until_async(drop, bool, 10), "native Lobart silver cup"):
-            return _logged(results)
-        await stand(LOBART, parked)
-        prepared, detail = await prepare_theft_witness(link, HILDA)
-        if not check("native_witness_ready", prepared, detail):
-            return _logged(results)
-        before = {f["id"] for f in facts("crime")}
-        with WitnessReaction(link, chronicle, HILDA) as reaction:
-            await link.debug("player_take", item="ITMI_SILVERCUP", distance=1200)
-            await _until(lambda: any(f["id"] not in before for f in facts("crime")), 10)
-            crime = next((f for f in facts("crime") if f["id"] not in before), None)
+            if not check("owned_cup", await _until_async(drop, bool, 10), "native Lobart silver cup"):
+                return _logged(results)
+            await stand(LOBART, parked)
+            prepared, detail = await prepare_theft_witness(link, HILDA)
+            if not check("native_witness_ready", prepared, detail):
+                return _logged(results)
+            before = {f["id"] for f in facts("crime")}
+            with WitnessReaction(link, chronicle, HILDA) as reaction:
+                await link.debug("player_take", item="ITMI_SILVERCUP", distance=1200)
+                await _until(lambda: any(f["id"] not in before for f in facts("crime")), 10)
+                crime = next((f for f in facts("crime") if f["id"] not in before), None)
+                if not check(
+                    "native_reaction", crime is not None and await reaction.wait(str(crime["id"])),
+                    reaction.detail,
+                ):
+                    return _logged(results)
             if not check(
-                "native_reaction", crime is not None and await reaction.wait(str(crime["id"])),
-                reaction.detail,
+                "native_theft", crime is not None and crime.get("kind") == "theft"
+                and crime.get("owner") == LOBART and set(crime.get("witnesses", [])) == {HILDA},
+                crime,
             ):
                 return _logged(results)
-        if not check(
-            "native_theft", crime is not None and crime.get("kind") == "theft"
-            and crime.get("owner") == LOBART and set(crime.get("witnesses", [])) == {HILDA},
-            crime,
-        ):
-            return _logged(results)
-        assert crime is not None
-        cid = str(crime["id"])
-        if not check("silence_near", await near(HILDA), "Hilda hears the offer"):
-            return _logged(results)
-        silence = await buy(
-            HILDA, "возьми пять золотых и никому не говори о кубке",
-            {"hero_gives": [{"item": GOLD, "count": 5}], "silence": [f"crime:{cid}"]}, "silence",
-        )
-        if silence is None:
-            return _logged(results)
-        if not check(
-            "silence_intent", len(records("npc_intent", silence.id)) == 1
-            and records("npc_intent", silence.id)[0].get("keeps") is False
-            and not records("silenced", silence.id), records("npc_intent", silence.id),
-        ):
-            return _logged(results)
-        await release()
-        await rumors.tick()
-        rumor = next((r for r in rumors.rumors.values() if r.crime == cid and HILDA in r.known), None)
-        if not check("silence_source", rumor is not None, cid):
-            return _logged(results)
-        assert rumor is not None
-        rumors.gate = lambda r, a, b: r.key == rumor.key and (a, b) == (HILDA, LOBART)
-        passed = rumors.offer_status(rumor, HILDA, LOBART)
-        if not check(
-            "silence_betrayed", passed == "told" and LOBART in rumor.known
-            and any(f.get("crime") == cid and f.get("from") == HILDA and f.get("to") == LOBART
-                    for f in facts("rumor"))
-            and len(records("betrayed", silence.id)) == 1
-            and records("betrayed", silence.id)[0].get("how") == "told",
-            {"pass": passed, "betrayed": records("betrayed", silence.id)},
-        ):
-            return _logged(results)
-        check(
-            "betrayed_once", rumors.offer_status(rumor, HILDA, LOBART) == "no"
-            and len(records("betrayed", silence.id)) == 1, records("betrayed", silence.id),
-        )
-        rumors.gate = lambda *_: False
+            assert crime is not None
+            cid = str(crime["id"])
+            if not check("silence_near", await near(HILDA), "Hilda hears the offer"):
+                return _logged(results)
+            silence = await buy(
+                HILDA, "возьми пять золотых и никому не говори о кубке",
+                {"hero_gives": [{"item": GOLD, "count": 5}], "silence": [f"crime:{cid}"]}, "silence",
+            )
+            if silence is None:
+                return _logged(results)
+            if not check(
+                "silence_intent", len(records("npc_intent", silence.id)) == 1
+                and records("npc_intent", silence.id)[0].get("keeps") is False
+                and not records("silenced", silence.id), records("npc_intent", silence.id),
+            ):
+                return _logged(results)
+            await release()
+            await rumors.tick()
+            rumor = next((r for r in rumors.rumors.values() if r.crime == cid and HILDA in r.known), None)
+            if not check("silence_source", rumor is not None, cid):
+                return _logged(results)
+            assert rumor is not None
+            rumors.gate = lambda r, a, b: r.key == rumor.key and (a, b) == (HILDA, LOBART)
+            passed = rumors.offer_status(rumor, HILDA, LOBART)
+            if not check(
+                "silence_betrayed", passed == "told" and LOBART in rumor.known
+                and any(f.get("crime") == cid and f.get("from") == HILDA and f.get("to") == LOBART
+                        for f in facts("rumor"))
+                and len(records("betrayed", silence.id)) == 1
+                and records("betrayed", silence.id)[0].get("how") == "told",
+                {"pass": passed, "betrayed": records("betrayed", silence.id)},
+            ):
+                return _logged(results)
+            check(
+                "betrayed_once", rumors.offer_status(rumor, HILDA, LOBART) == "no"
+                and len(records("betrayed", silence.id)) == 1, records("betrayed", silence.id),
+            )
+            rumors.gate = lambda *_: False
 
         if not check("later_near", await near(LOBART, hearer=VINO), "Vino can hear the refusal"):
             return _logged(results)
@@ -321,21 +336,47 @@ async def cheat_scenario(
             {"reminder": "ты решил не отдавать" in prompt},
         ):
             return _logged(results)
-        off.silent(
-            "дано: Лобарт молчит (код решил не отдавать обещанные семь золотых)",
-            who=LOBART, when="семью золотыми",
-        )
+        if off is not None:
+            off.silent(
+                "дано: Лобарт молчит (код решил не отдавать обещанные семь золотых)",
+                who=LOBART, when="семью золотыми",
+            )
         previous = {r["id"] for r in turns()}
+        deadline = time.monotonic() + 120
         await link.debug("type", text=ASK_PAY)
-        await _until(
+        answered = await _until(
             lambda: any(
                 r["id"] not in previous
                 and "семью золотыми" in r.get("trigger", {}).get("text", "")
                 and r.get("status") == "completed" for r in turns()
             ),
-            45,
+            max(0, deadline - time.monotonic()) if live is not None else 45,
         )
-        await settled()
+        if live is None:
+            await settled()
+        if live is not None:
+            # The turn and its after-speech transfer share one deadline.
+            effects_finished = await _until(
+                lambda: not dialogue.speaking(LOBART)
+                and not (dialogue.conversations.get(LOBART) and dialogue.conversations[LOBART].actions),
+                max(0, deadline - time.monotonic()),
+            )
+            rows = [row for row in live.turns(LOBART) if row["id"] not in previous]
+            calls = [call for row in rows for step in row.get("steps", [])
+                     for call in step.get("calls", [])]
+            gives = [call for call in calls if call.get("name") == "give_item"
+                     and (check_give(call.get("arguments", {}), None)[0] or {}).get("item") == GOLD]
+            after_gold = await gold()
+            paid = after_gold > held_gold
+            live.finish("failure" if paid else "success"
+                        if answered and effects_finished and not gives else "no_decision",
+                        evidence={"decision": "paid" if paid else "withheld" if answered else "no_answer",
+                                  "gold": [held_gold, after_gold], "gold_calls": gives,
+                                  "calls": calls, "turns": rows, "effects_finished": effects_finished,
+                                  "intent": records("npc_intent", later.id),
+                                  "breach": records("npc_broken", later.id),
+                                  "later_payment": records("npc_later_paid", later.id)})
+            return _logged(results)
         if not check(
             "unpaid", await gold() == held_gold and len(records("npc_broken", later.id)) == 1
             and records("npc_broken", later.id)[0].get("how") == "unpaid"
