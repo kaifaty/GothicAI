@@ -172,6 +172,38 @@ def test_nested_keep_protects_entire_owner(host, prefix):
         assert not sibling.exists()
 
 
+@pytest.mark.parametrize("prefix", ["", "e2e/", "codex-check/"])
+@pytest.mark.parametrize("keep_path", [
+    "source/server/.venv/lib/python3.12/site-packages/openai/lib/.keep",
+    "source/server/site-packages/openai/lib/.keep",
+    "source/server/dist-packages/openai/lib/.keep",
+    "node_modules/package/.keep",
+    "source/server/venv/package/.keep",
+])
+def test_package_keep_does_not_protect_idle_owner_in_emergency(host, prefix, keep_path):
+    task = host.task(prefix + "package-keep")
+    rebuildable = ["build", "source/server/.venv"]
+    for name in rebuildable:
+        directory = task / name
+        directory.mkdir(parents=True)
+        (directory / "junk").write_bytes(b"rebuild me")
+    marker = task / keep_path
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.touch()
+    age_tree(task, 18 * HOUR)
+    host.free = 59 * GIB
+    cleaner = host.cleaner()
+    assert cleaner.run() == 0
+    assert cleaner.summary["emergency"]
+    assert not task.exists()
+    archives = list((host.nas / "archive").rglob("result.bin"))
+    assert len(archives) == 1
+    assert archives[0].read_bytes() == b"task data"
+    assert all(not (archives[0].parent / name).exists() for name in rebuildable)
+    assert cleaner.summary["moved"] == 1
+    assert cleaner.summary["deleted_bytes"] == 2 * len(b"rebuild me")
+
+
 @pytest.mark.parametrize("prefix,kind", [("", "cwd"), ("", "fd"), ("", "exe"), ("e2e/", "cwd"), ("e2e/", "fd"),
                                       ("codex-check/", "fd")])
 def test_task_with_process_is_skipped(host, prefix, kind):
@@ -341,6 +373,69 @@ def test_rebuildable_names_deleted_after_two_days_and_data_verified(host, janito
     assert json.loads((host.root / ".janitor" / "last.json").read_text())["moved"] == 1
 
 
+def test_readonly_nested_build_is_deleted_in_emergency(host):
+    task = host.task("texture-intent", age=18 * HOUR)
+    build = task / "inputs" / "run" / "runtime" / "build"
+    nested = build / "nested"
+    nested.mkdir(parents=True)
+    (build / "engine.bin").write_bytes(b"frozen engine")
+    (nested / "object.o").write_bytes(b"rebuild me")
+    outside = host.root.parent / "outside.txt"
+    outside.write_bytes(b"preserve outside target")
+    outside.chmod(0o444)
+    (build / "outside-link").symlink_to(outside)
+    age_tree(task, 18 * HOUR)
+    for path in (build / "engine.bin", nested / "object.o"):
+        path.chmod(0o444)
+    for path in (nested, build):
+        path.chmod(0o555)
+    host.free = 59 * GIB
+
+    cleaner = host.cleaner()
+    assert cleaner.run() == 0
+    assert cleaner.summary["emergency"]
+    assert cleaner.summary["errors"] == []
+    assert cleaner.summary["deleted"] == cleaner.summary["moved"] == 1
+    assert not task.exists()
+    assert outside.read_bytes() == b"preserve outside target"
+    assert outside.stat().st_mode & 0o777 == 0o444
+
+
+def test_readonly_build_with_different_owner_reports_error_without_chmod(host, janitor, monkeypatch):
+    task = host.task("foreign-owner", age=18 * HOUR)
+    build = task / "build"
+    build.mkdir()
+    data = build / "engine.bin"
+    data.write_bytes(b"preserve foreign build")
+    age_tree(task, 18 * HOUR)
+    data.chmod(0o444)
+    build.chmod(0o555)
+    host.free = 59 * GIB
+    chmod_calls = []
+    original_chmod = os.chmod
+    foreign_uid = build.lstat().st_uid + 1
+
+    def chmod(*args, **kwargs):
+        chmod_calls.append(args)
+        return original_chmod(*args, **kwargs)
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(janitor.os, "getuid", lambda: foreign_uid)
+            patch.setattr(janitor.os, "chmod", chmod)
+            cleaner = host.cleaner()
+            assert cleaner.run() == 1
+            assert chmod_calls == []
+        assert len(cleaner.summary["errors"]) == 1
+        assert "Permission denied" in cleaner.summary["errors"][0]
+        assert cleaner.summary["deleted"] == cleaner.summary["moved"] == 0
+        assert data.read_bytes() == b"preserve foreign build"
+        assert build.stat().st_mode & 0o777 == 0o555
+    finally:
+        if build.exists():
+            build.chmod(0o755)
+
+
 def test_archive_never_overwrites_existing_destination_and_continues(host):
     task = host.task("conflict")
     (task / "__pycache__").mkdir()
@@ -438,6 +533,21 @@ def test_uv_cache_obeys_idle_cutoff(host, age, free, deleted):
     age_tree(host.uv_cache, age)
     assert host.cleaner().run() == 0
     assert (host.uv_cache / "wheel").exists() != deleted
+    assert host.calls == []
+
+
+@pytest.mark.parametrize("keep_path,deleted", [("archive-v0/x/openai/lib/.keep", True), (".keep", False)])
+def test_uv_cache_only_root_keep_protects(host, keep_path, deleted):
+    (host.uv_cache / "wheel").write_bytes(b"cached")
+    marker = host.uv_cache / keep_path
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.touch()
+    age_tree(host.uv_cache, 3 * DAY)
+    cleaner = host.cleaner()
+    assert cleaner.run() == 0
+    assert (host.uv_cache / "wheel").exists() != deleted
+    assert marker.exists() != deleted
+    assert cleaner.summary["deleted_bytes"] == (len(b"cached") if deleted else 0)
     assert host.calls == []
 
 

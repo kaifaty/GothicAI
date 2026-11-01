@@ -385,6 +385,11 @@ prints the error and a reminder to choose a frame in the YouTube app.
 
 ## Uploading to YouTube
 
+Before an upload, `uv run gothic-shorts check <video>` checks the file against YouTube's upload settings: H.264
+High, BT.709 in limited range, AAC 48 kHz stereo, −14 LUFS, at most 3 min for a Short
+([explainer README](explain/README.md#delivery-check); an explainer's folder also checks its drawing against
+the Shorts interface).
+
 ```bash
 uv run gothic-shorts youtube login                     # once: the browser opens Google's consent page
 uv run gothic-shorts upload .shorts/compare/bodies/short-ru.mp4 --meta .shorts/compare/bodies/youtube.json --privacy public
