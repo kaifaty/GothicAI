@@ -115,6 +115,7 @@ Gothic::Gothic() {
   defaults->set("GAME", "arrow_physics",       1);
   defaults->set("GAME", "arrow_sticking",      1);
   defaults->set("GAME", "spell_physics",       1);
+  defaults->set("GAME", "body_impact_damage",  1);
   defaults->set("GAME", "movable_vobs",        1);
   defaults->set("GAME", "item_hulls",          1);
   defaults->set("GAME", "item_deepest_contact",1);
@@ -924,7 +925,8 @@ void Gothic::refreshPhysicsFlags() {
     settingsGetI("GAME","melee_parry")!=0,
     settingsGetI("GAME","melee_parry_ai")!=0,
     settingsGetI("GAME","furniture_parts")!=0,
-    settingsGetI("GAME","placed_items")!=0
+    settingsGetI("GAME","placed_items")!=0,
+    settingsGetI("GAME","body_impact_damage")!=0
     };
   }
 
