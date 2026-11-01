@@ -246,7 +246,7 @@ def summarize(out: Path, suite: str, runs: int, codes: list[int], only: str | No
                 **asdict(spec),
                 "successes": counts["success"],
                 "attempts": played,
-                "success_rate": counts["success"] / played if played and observed != played else None,
+                "success_rate": counts["success"] / played if played and not observed else None,
                 "failures": counts["failure"],
                 "no_decision": counts["no_decision"],
                 "observed": observed,

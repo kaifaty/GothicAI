@@ -69,6 +69,13 @@ INNER
     assert "1/2" in markdown and "50.0%" in markdown and "6 / 3.00" in markdown
     assert str(tmp_path / "out/run-2/traces/turns.jsonl") in markdown
     assert "12.0" in done.stdout  # declared estimate, 6 per case × 2 runs
+    # A failed restart must never report stale outcomes from an earlier invocation.
+    repeated = subprocess.run(
+        ["bash", str(script)], env=env, capture_output=True, text=True, timeout=5
+    )
+    assert repeated.returncode == 2
+    assert "choose an empty directory" in repeated.stderr
+    assert json.loads((tmp_path / "out/report.json").read_text()) == report
     history = tmp_path / ".live/old"
     history.mkdir(parents=True)
     (history / "report.json").write_text(json.dumps(report))

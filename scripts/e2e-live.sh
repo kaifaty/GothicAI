@@ -17,6 +17,10 @@ if [[ ! "$RUNS" =~ ^[1-9][0-9]*$ ]]; then
   exit 2
 fi
 export OUT="${OUT:-$ROOT/.live/$SUITE-$(date +%Y%m%d-%H%M%S)}"
+if [[ -e "$OUT/run-1" || -e "$OUT/report.json" ]]; then
+  echo 'OUT already contains live results; choose an empty directory' >&2
+  exit 2
+fi
 export LIVE_HISTORY="$ROOT/.live"
 (cd "$ROOT/server" && uv run python -c 'from gothic_ai.scenarios.live import main; main()' estimate)
 mkdir -p "$OUT"

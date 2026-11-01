@@ -563,8 +563,10 @@ async def haggle(
                             deal = deals.open[npc]
                             terms[npc].append({
                                 "price": price,
-                                "hero_gives": [give.term() for give in deal.hero_gives],
-                                "npc_gives": [give.term() for give in deal.npc_gives],
+                                "hero_gives": [
+                                    give.term().model_dump(mode="json") for give in deal.hero_gives
+                                ],
+                                "npc_gives": [give.term().model_dump(mode="json") for give in deal.npc_gives],
                             })
                             return price
                     return None

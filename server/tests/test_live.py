@@ -46,3 +46,41 @@ def test_case_outcomes_requests_and_live_json(tmp_path, monkeypatch):
     assert report["cases"][3]["decisions"] == {"fight": {"count": 1, "share": 1.0}}
     assert report["cases"][4]["setup_errors"] == 1
     assert report["requests"] == 8
+
+
+async def test_haggle_persists_actual_deal_terms(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from gothic_ai.contracts import Give
+    from gothic_ai.scenarios import deals as scenario
+
+    monkeypatch.delenv("CASES", raising=False)
+    monkeypatch.setattr(scenario.asyncio, "sleep", AsyncMock())
+
+    async def until(check, timeout):
+        return bool(check())
+
+    monkeypatch.setattr(scenario, "_until", until)
+    link = SimpleNamespace(
+        session=object(), wait_world=AsyncMock(), attach=AsyncMock(), act=AsyncMock(),
+        detach=AsyncMock(), story_effect=AsyncMock(), debug=AsyncMock(), decline_deal=AsyncMock(),
+    )
+    dialogue = SimpleNamespace(trace=TraceWriter(tmp_path / "traces"), conversations={})
+    people = {npc: SimpleNamespace(distance=250, name=npc) for npc in (scenario.CANTHAR, scenario.LUTERO)}
+    talk = SimpleNamespace(people=people)
+    deals = SimpleNamespace(
+        open={
+            npc: SimpleNamespace(
+                version=1, hero_gives=(Give("ITMI_SILVERCUP", 1, "Silver cup"),),
+                npc_gives=(Give(scenario.GOLD, price, "Gold"),),
+            )
+            for npc, price in ((scenario.CANTHAR, 10), (scenario.LUTERO, 20))
+        },
+        chronicle=SimpleNamespace(facts=lambda kind: []),
+    )
+    assert await scenario.haggle(link, dialogue, talk, deals) == {"greedy_price": "done (success)"}
+    [case] = json.loads((tmp_path / "live.json").read_text())["cases"]
+    assert case["outcome"] == "success"
+    assert case["evidence"]["offers"] == {scenario.CANTHAR: [10], scenario.LUTERO: [20]}
+    assert case["evidence"]["terms"][scenario.CANTHAR][0]["hero_gives"][0]["count"] == 1
