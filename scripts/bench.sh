@@ -168,7 +168,7 @@ fi
 
 # These fixtures use a prepared world and clock; skip the new-game chapter video
 # before their first command on NEWWORLD.
-if [[ "$NAME" == placed-items* || "$NAME" == item-wake || "$NAME" == routine-return || "$NAME" == cloth* || "$NAME" == monster-character-virtual* || "$NAME" == own-mesh-* || "$NAME" == movable-census || "$NAME" == melee-physics || "$NAME" == melee-blade-shadow || "$NAME" == melee-stagger || "$NAME" == melee-beast-poise || "$NAME" == melee-posture-* || "$NAME" == streaming-flythrough || "$NAME" == streaming-shots || "$NAME" == furniture-parts || "$NAME" == loadprobe-idle || "$NAME" == loadprobe-chain ]]; then
+if [[ "$NAME" == placed-items* || "$NAME" == item-wake || "$NAME" == routine-return || "$NAME" == cloth* || "$NAME" == monster-character-virtual* || "$NAME" == own-mesh-* || "$NAME" == movable-census || "$NAME" == melee-physics || "$NAME" == melee-blade-shadow || "$NAME" == melee-stagger || "$NAME" == melee-beast-* || "$NAME" == melee-posture-* || "$NAME" == streaming-flythrough || "$NAME" == streaming-shots || "$NAME" == furniture-parts || "$NAME" == loadprobe-idle || "$NAME" == loadprobe-chain ]]; then
   START_ARGS+=(-nointro)
 fi
 

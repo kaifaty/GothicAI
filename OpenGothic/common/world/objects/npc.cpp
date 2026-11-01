@@ -7583,9 +7583,29 @@ void Npc::startMeleeStun(Npc& by, std::string_view reason) {
                         ",\"duration_ms\":"+std::to_string(MeleeImpact::stunDuration(reason)));
   }
 
+static float beastStumbleSpeed(const Animation::Sequence& seq, float targetMs) {
+  // A beast's own stumble (400–800 ms) stretched toward its beat of the stun, never below half speed.
+  return std::clamp(seq.totalTime()/targetMs,0.5f,1.f);
+  }
+
 void Npc::meleeStunLook(const Npc& by) {
-  if(!isHuman())
+  Vec3 away = position()-by.position();
+  away.y = 0;
+  away = away.length()>1e-3f ? Vec3::normalize(away) : Vec3(-std::cos(rotationRad()),0,-std::sin(rotationRad()));
+  if(!isHuman()) {
+    // A beast off balance: its own stagger back, stretched to about 700 ms, trunk and head giving
+    // way from the blow; the second beat (tickMeleeStunLook) lurches it forward to the end of the stun.
+    meleeStunBeat = false;
+    if(auto seq = setAnimAngGet(Anim::StumbleB))
+      visual.setLayerSpeed(seq,beastStumbleSpeed(*seq,700.f),owner.tickCount());
+    Flinch::Hit hit;
+    hit.dir      = away;
+    hit.height   = 0.6f;
+    hit.twist    = 0.2f;
+    hit.strength = 0.8f;
+    flinch(hit);
     return;
+    }
   // The blow was stopped and thrown back: the original stagger back, slowed to carry most of the
   // stun, the upper body giving way from the one who stopped it and the weapon arm thrown back
   // on the living rig, its motors bringing it into the stagger. T_STUMBLEB lasts 360 ms.
@@ -7596,9 +7616,6 @@ void Npc::meleeStunLook(const Npc& by) {
   meleeStunBeat = !posture;
   if(auto seq = setAnimAngGet(Anim::StumbleB))
     visual.setLayerSpeed(seq,staggerSpeed,owner.tickCount());
-  Vec3 away = position()-by.position();
-  away.y = 0;
-  away = away.length()>1e-3f ? Vec3::normalize(away) : Vec3(-std::cos(rotationRad()),0,-std::sin(rotationRad()));
   Flinch::Hit hit;
   hit.dir      = away;
   hit.height   = posture ? 0.55f : 0.85f;
@@ -7621,17 +7638,20 @@ void Npc::meleeStunLook(const Npc& by) {
 void Npc::tickMeleeStunLook() {
   // Balance lost, second beat: the stagger back runs out (730 ms) and the body lurches forward
   // to catch itself (the original stagger from behind, slowed), instead of standing frozen in
-  // the end of the first one for the rest of the stun.
+  // the end of the first one for the rest of the stun. A beast's own stumble fills what is left.
   if(meleeStunBeat || meleeStunReason!="posture")
     return;
   const auto now   = owner.tickCount();
   const auto start = meleeStunUntil-MeleeImpact::stunDuration("posture");
   if(now<start+700)
     return;
-  meleeStunBeat = true;
   constexpr float recoverSpeed = 0.6f;
-  if(auto seq = setAnimAngGet(Anim::StumbleA))
-    visual.setLayerSpeed(seq,recoverSpeed,now);
+  auto seq = setAnimAngGet(Anim::StumbleA);
+  if(seq==nullptr && !isHuman())
+    return; // a beast's stumble back cannot be cut: lurch forward the tick it runs out
+  meleeStunBeat = true;
+  if(seq)
+    visual.setLayerSpeed(seq,isHuman() ? recoverSpeed : beastStumbleSpeed(*seq,float(meleeStunUntil-now)),now);
   }
 
 void Npc::endMeleeStun(std::string_view reason) {
