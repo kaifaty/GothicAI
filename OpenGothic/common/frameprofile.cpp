@@ -21,7 +21,7 @@ const char* names[Zones]={"tick","finish_step","camera","observations","bench","
   "encode","submit","present","limiter","world_logic","prepare","physics","sync","world_misc",
   "parallel_animation","native_export","forced_sync_animation","actor_animation_elapsed_sum","pose_elapsed_sum","palette_elapsed_sum",
   "storage_join","storage_commit","storage_pack","storage_dispatch","storage_grow","storage_upload_execution_elapsed",
-  "bodynet","cloth","water","destruction","ai_bridge","sound",
+  "bodynet","cloth","water","destruction","ai_bridge","sound","vob_sound_load",
   "texture_update","texture_demand_elapsed_sum","bindless_rebuild","bindless_patch",
   "encode_shadows","encode_main","encode_water","encode_post","encode_ui"};
 const char* amountNames[Amounts]={"palette_calls","palette_bytes","identical_calls","identical_bytes",

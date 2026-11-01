@@ -21,7 +21,7 @@ enum class Zone : size_t {
   BodyNet, Cloth,
   // Main-thread buoyancy preparation/finish plus the synchronous Jolt step
   // listener (possibly a worker): elapsed sum, overlapping Physics wall time.
-  Water, Destruction, AiBridge, Sound,
+  Water, Destruction, AiBridge, Sound, VobSoundLoad,
   TextureUpdate,
   // Demand elapsed sums include animation workers and can overlap.
   TextureDemand,
