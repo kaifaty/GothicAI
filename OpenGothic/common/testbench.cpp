@@ -1,5 +1,6 @@
 #include "appcadence.h"
 #include "testbench.h"
+#include "ui/gamemenu.h"
 #include "navbench.h"
 #include "navdemos.h"
 #include "frameprofile.h"
@@ -13830,6 +13831,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       {"spell_physics",&Gothic::PhysicsFlags::spellPhysics},
       {"movable_vobs",&Gothic::PhysicsFlags::movableVobs},
       {"item_hulls",&Gothic::PhysicsFlags::itemHulls},
+      {"item_deepest_contact",&Gothic::PhysicsFlags::itemDeepestContact},
       {"furniture_parts",&Gothic::PhysicsFlags::furnitureParts},
       {"placed_items",&Gothic::PhysicsFlags::placedItems},
       {"cloth",&Gothic::PhysicsFlags::cloth}
@@ -15922,6 +15924,17 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       }
     else
       bench.overlay = (m!="off");
+    }
+  else if(c=="diary") {
+    // diary chronicle [feat] [open]: opens the diary on its «Летопись» tab, with that feat selected
+    // (counting the other fates' ones after this fate's), shown in full with `open`. The game pauses in
+    // the diary and the bench with it: shoot the window from outside (screencapture -l).
+    GameMenu::benchDiary.chronicle = a.size()>1 && a[1]=="chronicle";
+    GameMenu::benchDiary.feat      = int32_t(num(a,2,-1));
+    GameMenu::benchDiary.open      = a.size()>3 && a[3]=="open";
+    if(TestBench::openMenu)
+      TestBench::openMenu("MENU_LOG"); else
+      say("diary: no menu hook");
     }
   else if(c=="ui") {
     bench.ui = !(a.size()>1 && a[1]=="off");
@@ -19925,6 +19938,7 @@ void renderSound(uint64_t dt) {
 }
 
 std::function<bool()> TestBench::aiBusy;
+std::function<void(std::string_view)> TestBench::openMenu;
 std::function<bool(std::string_view,std::string_view)> TestBench::aiReached;
 std::function<bool(World&,std::string_view,float)> TestBench::stuckBegin;
 std::function<bool(World&)> TestBench::stuckEnd;

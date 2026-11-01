@@ -51,15 +51,18 @@ MtTexture::MtTexture(MtDevice& dev, const Pixmap& pm, uint32_t mipCnt, TextureFo
   const uint32_t         smip  = (isCompressedFormat(frm) ? mipCnt : 1);
   const MTL::StorageMode smode = hostVisibleStorageMode(*dev.impl);
 
-  NsPtr<MTL::Texture> stage = alloc(frm,pm.w(),pm.h(),0,smip,smode,MTL::TextureUsageShaderRead);
+  auto pool = NsPtr<NS::AutoreleasePool>::init();
+  // Acquire a command-buffer slot before locking staging; completion needs the lock.
+  auto cmd = (wait ? dev.queue : dev.uploadQueue)->commandBuffer();
+  std::unique_lock<std::mutex> uploadGuard;
+  NsPtr<MTL::Texture> stage = alloc(frm,pm.w(),pm.h(),0,smip,smode,MTL::TextureUsageShaderRead,
+                                   wait ? &uploadGuard : nullptr);
   impl = alloc(frm,pm.w(),pm.h(),0,mipCnt,MTL::StorageModePrivate,MTL::TextureUsageShaderRead);
 
   if(isCompressedFormat(frm))
     createCompressedTexture(*stage,pm,frm,mipCnt); else
     createRegularTexture(*stage,pm);
 
-  auto pool = NsPtr<NS::AutoreleasePool>::init();
-  auto cmd  = (wait ? dev.queue : dev.uploadQueue)->commandBuffer();
   auto enc  = cmd->blitCommandEncoder();
   if(isCompressedFormat(frm)) {
     enc->copyFromTexture(stage.get(),0,0, impl.get(),0,0, 1,mipCnt);
@@ -85,9 +88,16 @@ MtTexture::MtTexture(MtDevice& dev, const Pixmap& pm, uint32_t mipCnt, TextureFo
       });
     device->onSubmit();
     }
-  cmd->commit();
-  if(wait)
-    cmd->waitUntilCompleted();
+  if(wait) {
+    // Retained references keep staging and destination alive. Draws and readback
+    // commit later on the same queue; uploadReady needs no cross-queue fence.
+    dev.submitUpload(*cmd,stage->allocatedSize());
+    uploadGuard.unlock();
+    if(dev.syncTextureUploads)
+      cmd->waitUntilCompleted();
+    } else {
+    cmd->commit();
+    }
   }
 
 MtTexture::~MtTexture() {
@@ -126,7 +136,8 @@ void MtTexture::createRegularTexture(MTL::Texture& val, const Pixmap& p) {
 
 NsPtr<MTL::Texture> MtTexture::alloc(TextureFormat frm,
                                      const uint32_t w, const uint32_t h, const uint32_t d, const uint32_t mips,
-                                     MTL::StorageMode smode, MTL::TextureUsage umode) {
+                                     MTL::StorageMode smode, MTL::TextureUsage umode,
+                                     std::unique_lock<std::mutex>* uploadGuard) {
   auto desc = NsPtr<MTL::TextureDescriptor>::init();
   if(desc==nullptr)
     throw std::system_error(GraphicsErrc::OutOfHostMemory);
@@ -157,6 +168,9 @@ NsPtr<MTL::Texture> MtTexture::alloc(TextureFormat frm,
   sw.blue  = MTL::TextureSwizzleBlue;
   sw.alpha = MTL::TextureSwizzleAlpha;
   desc->setSwizzle(sw);
+
+  if(uploadGuard!=nullptr)
+    *uploadGuard = dev.lockUpload(dev.impl->heapTextureSizeAndAlign(desc.get()).size);
 
   NsPtr<MTL::Texture> ret;
   if(linear) {

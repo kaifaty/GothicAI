@@ -34,7 +34,6 @@ from .conversation import gossip_demo as gossip_demo
 from .conversation import gossip_scenario as gossip_scenario
 from .conversation import group_scenario as group_scenario
 from .conversation import interject_scenario as interject_scenario
-from .conversation import write_cards as write_cards
 from .cover import cover_scenario as cover_scenario
 from .cover import cover_subject_scenario as cover_subject_scenario
 from .crime_ally import crime_ally as crime_ally
@@ -86,6 +85,7 @@ from .perception import remembers_scenario as remembers_scenario
 from .perception import see_perception as see_perception
 from .perception import seen_memory as seen_memory
 from .perception import trace_memory as trace_memory
+from .quest_law import quest_law as quest_law
 from .road_bandits import road_bandits as road_bandits
 from .story import author_chain as author_chain
 from .story import authored_quest as authored_quest

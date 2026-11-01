@@ -10,12 +10,12 @@ from typing import TYPE_CHECKING, Any
 from ..bodies import Bodies
 from ..brain.reflex import Reflexes
 from ..deals import GOLD
-from ..game import GameError, GameLink
-from ..llm import Message, ToolCall
-from ..llm.fake import FakeStep
+from ..game import GameLink
+from ..llm import ToolCall
+from ..parley import HAIL_CUE
 from ..protocol import GameMessage, NpcActResult, NpcRoster, PerceptionHeld, RosterEntry
 from .bandit_hold import CAVALORN, GANG, PARK, PARTY_POINT, PRIMARY
-from .common import ClaimScript, FixedDecider, _logged, _m5b_player_weapon, _until, _until_async
+from .common import FixedDecider, _logged, _m5b_player_weapon, _until, _until_async, model_off
 
 if TYPE_CHECKING:
     from ..deals import Deals
@@ -23,26 +23,7 @@ if TYPE_CHECKING:
     from ..parley import Parley
     from ..talk import TalkDesk
 
-HAIL = "Чужак подходит"
 PAYMENT = "Дам сто золотых за мир со всей вашей шайкой."
-
-
-def _road_script() -> ClaimScript:
-    return ClaimScript(
-        said=[
-            (HAIL, FakeStep("Стой, чужак. Сто золотых за проход. Минута на ответ.", [ToolCall(
-                "ultimatum", {"demand": "Заплати сто золотых за проход", "seconds": 60},
-            )])),
-            (PAYMENT, FakeStep("Сотню сюда — и четыре часа наши тебя не тронут.", [ToolCall(
-                "propose_deal", {
-                    "npc_gives": [], "hero_gives": [{"item": GOLD, "count": 100}],
-                    "truce": {"hours": 4},
-                },
-            )])),
-        ],
-        told=[],
-        default="Жду твоего решения.",
-    )
 
 
 async def road_bandits(
@@ -52,21 +33,33 @@ async def road_bandits(
     deals: Deals,
     parley: Parley,
 ) -> dict[str, str]:
-    """New game, LLM=fake: the road gang hails the hero, sells peace, then reacts to a provocation.
+    """New game, GIVEN (LLM=off via auto): a road gang sells peace, then reacts to a provocation.
 
-    дано: ultimatum for 100 gold, 60 s on the hail; propose_deal for 100 gold
+    given: ultimatum for 100 gold, 60 s on the hail; propose_deal for 100 gold
     and a 4 h truce on the payment reply.
     """
-    if dialogue.llm.name != "fake":
-        raise GameError("scenario road_bandits requires LLM=fake and a new game without SAVE")
+    off = model_off(dialogue)
     await link.wait_world()
     results: dict[str, str] = {}
     roster: dict[str, RosterEntry] = {}
     native_attacks: list[tuple[float, str]] = []
     holds: list[PerceptionHeld] = []
     approaches: list[NpcActResult] = []
-    original_llm, original_reflexes = dialogue.llm, talk.reflexes
-    script = _road_script()
+    original_reflexes = talk.reflexes
+    leader = max(sorted(GANG), key=talk.lead)
+    hail_given = "дано: главарь дорожной шайки требует сто золотых за проход"
+    off.given(hail_given, who=leader, when=HAIL_CUE,
+              line="Стой, чужак. Сто золотых за проход. Минута на ответ.", calls=[ToolCall(
+                  "ultimatum", {"demand": "Заплати сто золотых за проход", "seconds": 60},
+              )])
+    off.given("дано: главарь предлагает перемирие за сто золотых", who=leader, when=PAYMENT,
+              line="Сотню сюда — и четыре часа наши тебя не тронут.", calls=[ToolCall(
+                  "propose_deal", {
+                      "npc_gives": [], "hero_gives": [{"item": GOLD, "count": 100}],
+                      "truce": {"hours": 4},
+                  },
+              )])
+    off.silent("дано: главарь молчит (сделка состоялась)", who=leader, when="сделка состоялась")
 
     def check(name: str, ok: bool, detail: object = "") -> bool:
         results[name] = f"{'done' if ok else 'failed'} ({detail})"
@@ -87,16 +80,14 @@ async def road_bandits(
             if message.action in {"turn_to", "go_to_npc"} and message.status == "queued":
                 approaches.append(message)
 
-    def hail_calls() -> list[tuple[Any, ...]]:
-        return [call for call in script.calls if call[1] and isinstance(call[1][-1], Message)
-                and HAIL in call[1][-1].content]
+    def hail_count() -> int:
+        return off.used.count(hail_given)
 
     async def gold(npc: str) -> int:
         return int(await link.evaluate([
             "call", "NPC_HASITEMS", ["inst", npc], ["sym", GOLD],
         ]) or 0)
 
-    dialogue.llm = script
     talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
     link.listeners.append(record)
     try:
@@ -130,7 +121,6 @@ async def road_bandits(
             primary.pos[0] + 1400 * dx / length, primary.pos[1], primary.pos[2] + 1400 * dz / length,
         ))
         ready = await _until(lambda: GANG <= roster.keys(), 10)
-        leader = max(sorted(GANG), key=talk.lead)
         snap = await link.snapshot(PRIMARY, fresh=True)
         cavalorn = await link.snapshot(CAVALORN, fresh=True)
         away = math.dist(snap.npc.pos, cavalorn.npc.pos)
@@ -141,24 +131,21 @@ async def road_bandits(
            f"Cavalorn={away:.0f} cm ({parked.status}), hour={snap.world.hour}"):
             return _logged(results)
 
-        hailed = await _until(lambda: bool(hail_calls() and parley.ultimatum(leader)), 30)
+        hailed = await _until(lambda: bool(hail_count() and parley.ultimatum(leader)), 30)
         leader_snap = await link.snapshot(leader, fresh=True)
         moved = math.dist(origins[leader].pos, leader_snap.npc.pos)
         turned = abs((leader_snap.npc.rot - origins[leader].rot + 180) % 360 - 180)
-        calls = hail_calls()
-        tools = {tool.name for tool in calls[0][2]} if calls else set()
         if not check("hail", bool(
-            hailed and len(calls) == 1 and any(row.npc == leader for row in approaches)
+            hailed and hail_count() == 1 and any(row.npc == leader for row in approaches)
             and talk.partner is not None and talk.partner.npc == leader
             and (moved > 50 or turned > 5)
-            and {"ultimatum", "propose_deal", "set_intent", "recall"} <= tools
             and any(hold.kind == "bandit_enemy" and hold.other == "PLAYER" for hold in holds)
             and not native_attacks
-        ), f"after_s={time.monotonic() - entered:.2f}, calls={len(calls)}, "
+        ), f"after_s={time.monotonic() - entered:.2f}, calls={hail_count()}, "
            f"leader={leader}, move_cm={moved:.0f}, turn_deg={turned:.1f}, "
            f"approaches={[(row.npc, row.action) for row in approaches]}, "
            f"partner={talk.partner.npc if talk.partner else None}, "
-           f"tools={sorted(tools)}, holds={len(holds)}, ZS_ATTACK={native_attacks}"):
+           f"holds={len(holds)}, ZS_ATTACK={native_attacks}"):
             return _logged(results)
 
         await _until(lambda: not dialogue.speaking(leader), 10)
@@ -166,7 +153,7 @@ async def road_bandits(
         talk.hear(PAYMENT, details={"via": "scenario"})
         offered = await _until(lambda: leader in deals.open, 20)
         if not offered:
-            check("paid", False, f"no offer; tool_outputs={script.outputs}")
+            check("paid", False, f"no offer; used_givens={off.used}")
             return _logged(results)
         await asyncio.sleep(1.2)
         pressed = await link.press_deal()
@@ -203,11 +190,11 @@ async def road_bandits(
         if not check("passes", bool(
             health and all(hp == hp_before == 1200 for hp in health) and not during
             and travelled > 100 and moving_samples >= 8 and max_step <= 150 and path_cm >= 5 * max_step
-            and len(hail_calls()) == 1 and all(parley.truce(npc) for npc in GANG)
+            and hail_count() == 1 and all(parley.truce(npc) for npc in GANG)
         ), f"seconds={time.monotonic() - peaceful_at:.2f}, samples={len(health)}, "
            f"HP={hp_before}->{health[-1]}, travelled_cm={travelled:.0f}, path_cm={path_cm:.0f}, "
            f"moving_samples={moving_samples}, max_step_cm={max_step:.0f}, "
-           f"hail_calls={len(hail_calls())}, ZS_ATTACK={during}"):
+           f"hail_calls={hail_count()}, ZS_ATTACK={during}"):
             return _logged(results)
 
         # A real weapon transition supplies the production perception and breaks the gang's truce.
@@ -236,6 +223,6 @@ async def road_bandits(
         ), f"after_draw_s={time.monotonic() - drawn:.2f}, attackers={first_attack}, "
            f"truce_broken={deals.chronicle.facts('truce_broken')}")
     finally:
-        dialogue.llm, talk.reflexes = original_llm, original_reflexes
+        talk.reflexes = original_reflexes
         link.listeners.remove(record)
     return _logged(results)

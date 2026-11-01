@@ -13,9 +13,8 @@ from ..bodypilot import BodyFight, BodyPilot, FightSummary, PolicyDecisionTrace
 from ..dialogue import DialogueManager
 from ..game import GameError, GameLink
 from ..llm import ToolCall
-from ..llm.fake import FakeBackend, FakeStep
-from ..protocol import GameMessage, LineStarted, NpcSpec, RoutineEntry
-from .common import _ByNpc, _clear_beasts, _m5b_player_weapon, _until, _until_async
+from ..protocol import NpcSpec, RoutineEntry
+from .common import _clear_beasts, _m5b_player_weapon, _until, _until_async, model_off
 from .neural_load import _policy_resets
 
 log = logging.getLogger("gothic_ai.scenarios")
@@ -179,25 +178,19 @@ async def neural_knockout_segment(
     *, stalls: list[HeroFightWait] | None = None,
 ) -> dict[str, str]:
     """A citizen's ordinary AR_NONE fight, real unconsciousness and native recovery."""
-    if dialogue.llm.name != "fake":
-        raise GameError("scenario neural-talk requires LLM=fake")
+    off = model_off(dialogue)
     await link.wait_world()
     npc = "DIR_NPC_NEURAL_TALK_CITIZEN"
     arena = "NW_XARDAS_TOWER_VALLEY_09"
     parked_at = "NW_FARM1_FIELD_06"
     hp_trigger = "DIR_NEURAL_TALK_KNOCKOUT_HP"
     results: dict[str, str] = {}
-    lines: list[LineStarted] = []
 
     def check(name: str, ok: bool, detail: str) -> bool:
         key = f"knockout_{name}"
         results[key] = f"{'done' if ok else 'failed'} ({detail})"
         log.info("%-28s %s", key, results[key])
         return ok
-
-    def heard(message: GameMessage) -> None:
-        if isinstance(message, LineStarted) and message.npc.upper() == npc:
-            lines.append(message)
 
     def summary_after(previous: set[int]) -> FightSummary | None:
         return next((summary for summary in pilot.summaries if (
@@ -231,13 +224,15 @@ async def neural_knockout_segment(
     if not await _until(lambda: npc in pilot.people and pilot.people[npc].distance <= 400, 10):
         raise GameError("neural-talk knockout preparation: citizen missing from roster")
 
-    original_llm = dialogue.llm
-    dialogue.llm = _ByNpc({"Мечник": FakeBackend(script=[FakeStep(
-        "Хочешь проверить мою шпагу? Ну что ж, защищайся!", [ToolCall("set_intent", {
+    off.given(
+        "дано: мечник решает драться", who=npc, when="проверим твою шпагу",
+        calls=[ToolCall("set_intent", {
             "goal": "fight", "target": "PLAYER", "attitude": "hostile", "agenda": None,
         })],
-    )], delay=0.15)}, FakeBackend("Хм.", delay=0))
-    link.listeners.append(heard)
+    )
+    off.silent(
+        "дано: мечник молчит (решение драться передано)", who=npc, when="проверим твою шпагу",
+    )
     last_row: dict[str, Any] = {}
 
     def observe(packet: dict[str, Any]) -> None:
@@ -277,10 +272,10 @@ async def neural_knockout_segment(
             lease = fight.lease if fight else None
             client = fight.client if fight else None
             if not check("talk_to_attack", bool(
-                ready and lines and lease and lease.npc == npc
+                ready and lease and lease.npc == npc
                 and lease.provider == "neural-body" and lease.mode == "realtime"
                 and (pilot.policy == "engine" or resets.get(client)) and fight._fallbacks == 0
-            ), f"lines={len(lines)}, symbol={symbol}, "
+            ), f"symbol={symbol}, "
                f"lease={lease.control_generation if lease else 0}, "
                f"decisions={fight._decisions if fight else 0}, "
                f"fallback={fight._fallbacks if fight else 0}, resets={len(resets.get(client, []))}"):
@@ -419,7 +414,5 @@ async def neural_knockout_segment(
                f"arena_distance_cm={arena_distance}, minimum_arena_cm=6000, "
                f"leases={int(link.body_leases.get(lease.entity_id) == lease)}")
     finally:
-        dialogue.llm = original_llm
-        link.listeners.remove(heard)
         link.raw_body_listeners.remove(observe)
     return results

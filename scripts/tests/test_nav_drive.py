@@ -320,7 +320,7 @@ def test_resume_does_not_reuse_greedy_recording_as_sample(tmp_path, existing):
         assert drive.indices(args, [pair]) == []
 
 
-def test_live_trace_fixture_renders_and_keeps_metrics_factual(tmp_path):
+def test_live_trace_fixture_renders_and_keeps_metrics_factual(tmp_path, monkeypatch):
     """Exercise the packed trace reader and both graphics on the same tiny run."""
     import shutil
     import subprocess
@@ -380,7 +380,13 @@ def test_live_trace_fixture_renders_and_keeps_metrics_factual(tmp_path):
     rotated = dict(decisions[0], yaw_deg=90)
     world = live._world_map(memory, maps["near"], rotated, [0, 0], 1, (100, 100))
     assert world.getpixel((50, 80))[:3] == tuple(live.CLASS_COLORS[2])
+    monkeypatch.setenv("OPENGOTHIC_BASE_FINGERPRINT", "b" * 64)
+    assert live.summarize(root, metadata, decisions)["base_fingerprint"] is None
+    episode = json.loads((root / "episode.json").read_text())
+    episode["base_fingerprint"] = "a" * 64
+    (root / "episode.json").write_text(json.dumps(episode))
     report = live.render_run(root)
+    assert report["base_fingerprint"] == "a" * 64
     assert report["decision_count"] == 12 and report["observation_frames"] == 3
     assert report["standing_seconds"] == pytest.approx(.2)
     assert report["circling_seconds"] == pytest.approx(.2)
@@ -412,6 +418,68 @@ def test_live_trace_fixture_renders_and_keeps_metrics_factual(tmp_path):
         stream.write(truncated)
     with pytest.raises(ValueError, match="Truncated"):
         list(live.observation_frames(root, metadata))
+
+
+@pytest.mark.parametrize("failure", [None, "checksum", "permission"])
+def test_live_binary_pin_copies_nas_bytes_and_probes_local_loader_before_game(tmp_path, monkeypatch, failure):
+    import hashlib
+    import subprocess
+    import sys
+
+    scripts = Path(__file__).resolve().parents[1]
+    launcher = (scripts / "nav-dagger4-remote.sh").read_text()
+    phase = launcher.split("<<'LIVE_R1_PHASE'\n", 1)[1].split("\nLIVE_R1_PHASE", 1)[0]
+    block = phase.split("<<'LIVE_R1_PIN'\n", 1)[1].split("\nLIVE_R1_PIN", 1)[0]
+    payload = b"fixture native binary"
+    expected = hashlib.sha256(payload).hexdigest()
+    archive, local = tmp_path / "archive", tmp_path / "local"
+    binary = archive / expected / "Gothic2Notr"
+    binary.parent.mkdir(parents=True)
+    binary.write_bytes(b"corrupt fixture" if failure == "checksum" else payload)
+    binary.chmod(0o644)
+    destination = local / expected / "Gothic2Notr"
+    calls = []
+    run_shell = subprocess.run
+
+    def probe(command, **kwargs):
+        calls.append(command)
+        assert command == [str(destination)]
+        assert kwargs["env"]["LD_TRACE_LOADED_OBJECTS"] == "1"
+        assert kwargs["capture_output"] and kwargs["text"] and kwargs["timeout"] == 15
+        assert destination.read_bytes() == payload
+        assert destination.stat().st_mode & 0o111
+        if failure == "permission":
+            raise PermissionError("fixture permission denied")
+        return subprocess.CompletedProcess(command, 0, stdout="fixture loader ready\n", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", probe)
+    monkeypatch.setattr(sys, "argv", ["LIVE_R1_PIN", str(archive), str(local), expected])
+    if failure is None:
+        exec(compile(block, "LIVE_R1_PIN", "exec"), {})
+    else:
+        exception = ValueError if failure == "checksum" else RuntimeError
+        message = "Archived live binary checksum differs" if failure == "checksum" else "Cannot execute local live binary"
+        with pytest.raises(exception, match=message):
+            exec(compile(block, "LIVE_R1_PIN", "exec"), {})
+    assert binary.stat().st_mode & 0o777 == 0o644
+    if failure == "checksum":
+        assert not local.exists() and calls == []
+        return
+    assert calls == [[str(destination)]]
+    assert hashlib.sha256(destination.read_bytes()).hexdigest() == expected
+    assert destination.stat().st_mode & 0o777 == 0o755
+    if failure is None:
+        # Execute only the worker's export and bench's host-label block.
+        export = next(line for line in phase.splitlines() if line == "export RYZEN_BENCH=1")
+        bench = (scripts / "bench.sh").read_text()
+        host = "HOST=mac\n" + bench.split("\nHOST=mac\n", 1)[1].split("\nREPORT_RC=0", 1)[0]
+        output = tmp_path / "host"
+        output.mkdir()
+        result = run_shell(["bash", "-c", 'set -euo pipefail\nOUT="$1"\nunset RYZEN_BENCH\n'
+                            + export + "\n" + host, "live-host-test", str(output)],
+                           capture_output=True, text=True, timeout=5)
+        assert result.returncode == 0, result.stderr
+        assert (output / "host.txt").read_text() == "ryzen\n"
 
 
 @pytest.mark.parametrize("failure,explicit", [("live_setup_no_safe_observer_position", True),

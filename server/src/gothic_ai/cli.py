@@ -61,7 +61,8 @@ from .dialogue import REACT_HINT, SVM_HINT, DialogueManager
 from .director import Director
 from .errands import Errands
 from .executor import Intent
-from .feat_art import Artist
+from .fates import Fates
+from .feat_art import DEFAULT_ROOT, Artist
 from .feats import Feats
 from .game import GameError, GameLink, GameServer
 from .gamedata import storygraph
@@ -131,6 +132,7 @@ from .scenarios.crime_law import crime_law as crime_law_scenario
 from .scenarios.crime_talk import crime_talk as crime_talk_scenario
 from .scenarios.crimes import crimes as crimes_scenario
 from .scenarios.feats import ScenarioArtist
+from .scenarios.groups import GIVEN, LIVE, OFF
 from .showrunner import Showrunner
 from .sightings import Sightings
 from .social import Rumors
@@ -189,6 +191,7 @@ HELP = """commands (npc defaults to the last attached one):
   lines             the director's plot lines, their state and remaining budget
   pitch             an occasion here and now, subject to the director's budget
   feats             the chronicler's feats on the current save branch
+  fates             this fate and the other fates, grouped by the save fork
   claims            quests of the scripts the hero said were done: believed, lies, found out
   know [npc] [query]  what the npc knows of the world now (M6), and what recall finds for the query
   see [npc]         what the npc perceives now: in Russian for its words, in English for its body
@@ -261,6 +264,7 @@ class ServerState:
         self.questlog: QuestLog | None = None
         self.showrunner: Showrunner | None = None
         self.feats: Feats | None = None
+        self.fates: Fates | None = None
         self.feat_challenges: Challenges | None = None
         self.vanilla: VanillaQuests | None = None
         self.gates: Gates | None = None
@@ -473,6 +477,20 @@ class Console:
                         if epilogue := epilogues.get(feat["id"]):
                             pending = " (не показан)" if feat["id"] not in shown else ""
                             print(f"  {epilogue['text']}{pending}")
+            case "fates":
+                data = self.state.fates.read() if self.state.fates is not None else None
+                print("Fate:")
+                if data is not None:
+                    for feat in data.fate:
+                        print(f"  {feat.id}: {feat.title}; {feat.text}")
+                        if feat.epilogue:
+                            print(f"    {feat.epilogue}")
+                    for fork in data.others:
+                        print(f"Other fate: chapter {fork.chapter}, day {fork.day}")
+                        for feat in fork.feats:
+                            print(f"  {feat.id}: {feat.title}; {feat.text}")
+                            if feat.epilogue:
+                                print(f"    {feat.epilogue}")
             case "graph" if self.state.story is not None:
                 await self.graph(rest)
             case "quest" if len(rest) >= 5 and self.state.quests is not None:
@@ -834,9 +852,6 @@ async def serve(args: argparse.Namespace) -> int:
         log.error("scenario %s requires --neural-body and, for service policy, GOTHIC_BODY_URL "
                   "(or --body-url)", args.scenario)
         return 2
-    if args.scenario == "neural-soak" and args.llm != "fake":
-        log.error("scenario %s requires --llm fake", args.scenario)
-        return 2
     if args.scenario == "feats" and args.llm not in {"fake", "chatgpt"}:
         log.error("scenario feats requires --llm fake or chatgpt")
         return 2
@@ -993,7 +1008,7 @@ async def serve(args: argparse.Namespace) -> int:
         feat_image_root = None
         if not args.no_feats and (
             args.scenario in {None, "feats"}
-            or (args.scenario == "lie" and args.llm == "fake")
+            or (args.scenario == "lie" and args.llm == "off")
             or (args.scenario == "vanilla_line_live" and os.environ.get("GOTHIC_FORCE_CHALLENGE") == "1")
         ):
             artist = None
@@ -1017,6 +1032,11 @@ async def serve(args: argparse.Namespace) -> int:
                 image_wait_s=30 if args.scenario == "feats" and args.llm == "fake" else 150,
             )
             state.talk.on_phrase.append(lambda to, text: state.feats.hero_talk(to.id) if to else None)
+        state.fates = Fates(
+            link, state.chronicle, enabled=not args.no_feats,
+            art_root=state.feats.artist.root if state.feats is not None
+            and state.feats.artist is not None else DEFAULT_ROOT,
+        )
         if not args.no_crimes:
             state.crimes = Crimes(
                 link,
@@ -1526,6 +1546,8 @@ async def serve(args: argparse.Namespace) -> int:
                 task.cancel()
             if state.feats is not None:
                 await state.feats.close()
+            if state.fates is not None:
+                await state.fates.close()
             if state.feat_challenges is not None:
                 state.feat_challenges.close()
             if feat_image_root is not None:
@@ -1566,7 +1588,7 @@ async def serve(args: argparse.Namespace) -> int:
                 where = Path(os.environ.get("LOG_DIR") or Path(args.trace_dir).parent)
                 assert state.bodies is not None
                 results = await scenarios.memprobe_scenario(
-                    link, bodies=state.bodies, log_dir=where, llm_name=state.dialogue.llm.name,
+                    link, bodies=state.bodies, log_dir=where,
                     body_enabled=bodypilot is not None or bool(args.body_url),
                 )
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
@@ -1683,7 +1705,7 @@ async def serve(args: argparse.Namespace) -> int:
             elif args.scenario in ("rescue", "rescue_self"):
                 killer = "hero" if args.scenario == "rescue" else "npc"
                 results = await scenarios.rescue(
-                    link, planner=state.brain, killer=killer, dialogue=state.dialogue if state.brain else None
+                    link, planner=state.brain, killer=killer, dialogue=state.dialogue
                 )
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info("scenario %s: %d checks, %d failed", args.scenario, len(results), len(bad))
@@ -1972,6 +1994,20 @@ async def serve(args: argparse.Namespace) -> int:
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info("scenario crime_law: %d checks, %d failed", len(results), len(bad))
                 exit_code = 1 if bad else 0
+            elif args.scenario == "quest_law":
+                assert state.crimes is not None and state.crime_law is not None and state.book is not None
+                assert state.dialogue is not None and state.rumors is not None
+                results = await scenarios.quest_law(
+                    link,
+                    state.crimes,
+                    state.crime_law,
+                    state.book,
+                    state.dialogue,
+                    state.rumors,
+                )
+                bad = {k: v for k, v in results.items() if not v.startswith("done")}
+                log.info("scenario quest_law: %d checks, %d failed", len(results), len(bad))
+                exit_code = 1 if bad else 0
             elif args.scenario == "ground":
                 assert state.dialogue is not None and state.talk is not None and state.perception is not None
                 results = await scenarios.ground_scenario(link, state.dialogue, state.talk, state.perception)
@@ -2149,12 +2185,10 @@ async def serve(args: argparse.Namespace) -> int:
             elif args.scenario == "wrath":
                 dialogue, talk, wrath = state.dialogue, state.talk, state.wrath
                 assert dialogue is not None and talk is not None and wrath is not None
-                live = dialogue.llm.name != "fake"
-                results = await scenarios.xardas_wrath(link, dialogue, talk, wrath, args.npc, live=live)
+                results = await scenarios.xardas_wrath(link, dialogue, talk, wrath, args.npc)
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info(
-                    "scenario wrath (%s): %d checks, %d failed",
-                    "live" if live else "fake",
+                    "scenario wrath: %d checks, %d failed",
                     len(results),
                     len(bad),
                 )
@@ -2218,7 +2252,7 @@ async def serve(args: argparse.Namespace) -> int:
                 exit_code = 1 if bad else 0
             elif args.scenario == "showrunner_live":
                 assert state.showrunner is not None
-                results = await scenario_showrunner.showrunner_live(link, state.showrunner)
+                results = await scenario_showrunner.showrunner_live(link, state.showrunner, trace)
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info("scenario showrunner_live: %d checks, %d failed", len(results), len(bad))
                 exit_code = 1 if bad else 0
@@ -2226,7 +2260,7 @@ async def serve(args: argparse.Namespace) -> int:
                 assert state.showrunner is not None and state.questlog is not None
                 if args.scenario == "vanilla_line_live":
                     results = await scenario_vanilla_line.vanilla_line_live(
-                        link, state.showrunner, state.questlog, journal
+                        link, state.showrunner, state.questlog, journal, trace
                     )
                 else:
                     results = await scenario_vanilla_line.vanilla_line(link, state.showrunner, state.questlog)
@@ -2351,14 +2385,6 @@ async def serve(args: argparse.Namespace) -> int:
                 results = await scenarios.contract(link, dialogue, talk, deals)
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info("scenario contract: %d checks, %d failed", len(results), len(bad))
-                exit_code = 1 if bad else 0
-            elif args.scenario == "cards":
-                if graph is None:
-                    raise SystemExit("cards need the story graph")
-                only = {n.strip().upper() for n in os.environ.get("GOTHIC_CARDS", "").split(",") if n.strip()}
-                results = await scenarios.write_cards(link, graph, llm, only or None)
-                bad = {k: v for k, v in results.items() if not v.startswith("done")}
-                log.info("scenario cards: %d checks, %d failed", len(results), len(bad))
                 exit_code = 1 if bad else 0
             elif args.scenario == "haggle":
                 dialogue, talk, deals = state.dialogue, state.talk, state.deals
@@ -2709,6 +2735,52 @@ async def lore_cmd(args: argparse.Namespace) -> int:
             for f in facts.get(n, []):
                 print(f"  {n} [{f['dialog']}] {f['place'] or '-'} {f['who']}: {f['ru']}")
     return 0
+
+
+async def cards_cmd(args: argparse.Namespace) -> int:
+    """Generate character cards from the connected world's people and their original script lines."""
+    graph = _story_graph(args, Path(args.game_dir) if args.game_dir else None)
+    if graph is None:
+        print("cards: needs the story graph", file=sys.stderr)
+        return 2
+    only = {npc.strip().upper() for npc in (args.only or "").split(",") if npc.strip()} or None
+    cards = characters.load()
+    llm = _backend(args)
+    server = GameServer(args.host, args.port)
+    try:
+        async with asyncio.TaskGroup() as tasks:
+            serving = tasks.create_task(server.serve_forever())
+            try:
+                link = await server.wait_link()
+                await link.wait_world()
+                people = await link.story_people(timeout=30)
+                subjects = [
+                    subject for subject in characters.subjects(graph, people, only)
+                    if only or subject.npc not in cards
+                ]
+                print(f"{len(subjects)} subjects, {len(cards)} existing cards", flush=True)
+                left = list(subjects)
+                for attempt in (1, 2):
+                    missed = []
+                    for i in range(0, len(left), characters.BATCH):
+                        batch = left[i : i + characters.BATCH]
+                        got, errors = await characters.write(llm, batch)
+                        cards.update(got)
+                        characters.save(cards)
+                        missed.extend(subject for subject in batch if subject.npc not in got)
+                        log.info(
+                            "cards: %d/%d written (attempt %d)%s", len(got), len(batch), attempt,
+                            f": {errors}" if errors else "",
+                        )
+                    left = missed
+                    if not left:
+                        break
+            finally:
+                serving.cancel()
+    finally:
+        await llm.aclose()
+    print(f"{len(subjects) - len(left)} of {len(subjects)} cards written -> {characters.CARDS_FILE}")
+    return 0 if not left and (subjects or only is None) else 1
 
 
 async def replay(args: argparse.Namespace) -> int:
@@ -3115,7 +3187,7 @@ def _add_voice_args(p: argparse.ArgumentParser) -> None:
 
 
 def _add_llm_args(p: argparse.ArgumentParser) -> None:
-    p.add_argument("--llm", choices=BACKENDS, default=os.environ.get("GOTHIC_AI_LLM", "chatgpt"))
+    p.add_argument("--llm", choices=(*BACKENDS, "auto"), default=os.environ.get("GOTHIC_AI_LLM", "chatgpt"))
     p.add_argument("--model", help="model id (default depends on the backend)")
     p.add_argument("--base-url", help="API base url (openai/local backends)")
     p.add_argument("--reasoning-effort", default="low", help="reasoning effort for Responses models")
@@ -3230,6 +3302,7 @@ def main() -> None:
             "cheat",
             "crime_director",
             "crime_law",
+            "quest_law",
             "showrunner",
             "showrunner_live",
             "vanilla_line",
@@ -3264,7 +3337,6 @@ def main() -> None:
             "day",
             "noise",
             "amends_deal",
-            "cards",
             "haggle",
             "rescue",
             "rescue_self",
@@ -3454,6 +3526,15 @@ def main() -> None:
     _add_voice_args(p)
     _add_llm_args(p)
 
+    p = sub.add_parser("cards", help="generate character cards; wait for the game to connect")
+    p.add_argument("--only", help="only these NPC symbols, comma separated; rewrite their existing cards")
+    p.add_argument("--host", default="127.0.0.1")
+    p.add_argument("--port", type=int, default=47817)
+    p.add_argument(
+        "--story-graph", help="storygraph JSON (default: built from the game's scripts and cached)"
+    )
+    _add_llm_args(p)
+
     p = sub.add_parser("llm-test", help="send one message to the LLM and measure latency")
     p.add_argument("text", nargs="?", default="")
     p.add_argument("--name", default="Ксардас", help="npc display name for the persona")
@@ -3554,6 +3635,17 @@ def main() -> None:
     p.add_argument("--game-dir", default=os.environ.get("GOTHIC_DIR", DEFAULT_GAME_DIR))
 
     args = parser.parse_args()
+    scenario = getattr(args, "scenario", None)
+    if getattr(args, "llm", None) == "auto":
+        if scenario is None:
+            parser.error("--llm auto requires --scenario")
+        args.llm = "off" if scenario in OFF | GIVEN else "fake"
+    if scenario in LIVE and args.llm in {"fake", "off"}:
+        parser.error(f"scenario {scenario} is live: set LLM=chatgpt|openai|local")
+    if args.command == "cards" and args.llm in {"fake", "off"}:
+        parser.error("cards requires --llm chatgpt|openai|local")
+    if scenario in OFF | GIVEN and args.llm != "off":
+        parser.error(f"scenario {scenario} requires --llm off")
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s %(levelname).1s %(name)s: %(message)s",
@@ -3578,6 +3670,8 @@ def main() -> None:
                 code = asyncio.run(places_cmd(args))
             case "lore":
                 code = asyncio.run(lore_cmd(args))
+            case "cards":
+                code = asyncio.run(cards_cmd(args))
             case "login":
                 code = asyncio.run(login_chatgpt())
             case "logout":

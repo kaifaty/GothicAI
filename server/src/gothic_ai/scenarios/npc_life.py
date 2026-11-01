@@ -4,15 +4,16 @@ import asyncio
 import json
 import logging
 import math
+import re
 import time
 from collections import Counter
-from collections.abc import AsyncIterator, Callable
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 from ..bodies import Bodies
-from ..brain import Decider, NpcPlanner, Outcome
+from ..brain import NpcPlanner, Outcome
 from ..budget import Budget
 from ..chests import BACK, CHEST, OWNED, ChestDesk
 from ..chronicle import Fact
@@ -23,11 +24,11 @@ from ..deals import GOLD, Deals
 from ..dialogue import DialogueManager
 from ..errands import Errands
 from ..game import GameError, GameLink
-from ..gossip import WORDS_CM, GossipDesk
+from ..gossip import CACHE_KEY as GOSSIP_KEY
+from ..gossip import WORDS_CM, GossipDesk, labels_of
 from ..guide import Guide
 from ..initiative import ARRIVE_CM, CHECKINFO, InitiativeDesk
-from ..llm import LLMEvent, Message, ToolCall
-from ..llm.fake import FakeBackend, FakeStep
+from ..llm import ToolCall
 from ..meetings import DAY as GAME_DAY
 from ..meetings import Meetings, clock
 from ..perception import PerceptionDesk
@@ -53,28 +54,26 @@ from ..social import DAY, Rumor, Rumors
 from ..storyguard import StoryGuard
 from ..talk import TalkDesk
 from ..trace import TraceWriter
+from ..trace import read as read_trace
 from .common import (
     ANDRE,
     HILDA,
     LOBART,
     RUEBEN,
     VINO,
-    ClaimScript,
     FixedDecider,
-    GossipScript,
-    _ByNpc,
     _caught_by,
     _logged,
-    _OnWords,
     _passes_text,
-    _Recorded,
     _save,
     _scene_lines,
     _until,
     _until_async,
     attach_when_free,
+    model_off,
     wait_message,
 )
+from .live import LiveSuite
 
 log = logging.getLogger("gothic_ai.scenarios")
 
@@ -90,37 +89,25 @@ async def lead_scenario(
 ) -> dict[str, str]:
     """The npc leads the hero (docs/npc-tools.md, wave 2 step 4: `lead`): «Малет, отведи меня к мельнице».
     Checks:
-    - offered: a deal with the way there in its window («Проводит: мельница фермы Лобарта»);
     - sets_off: the hero says yes (Y), Malet sets off for the mill;
     - waits: the hero is put back where Malet started: it stops and waits for him; he comes up, it goes on;
-    - there: the hero after it, it gets to the mill and says so; a fact `led` (arrived).
-    How fast it walks is logged (`pace`). The model is scripted with LLM=fake; LLM=chatgpt answers itself."""
+    - there: the hero follows it to the mill; a fact `led` (arrived).
+    How fast it walks is logged (`pace`). Given: Malet offers to lead the hero to the mill."""
     await link.wait_world()
     results: dict[str, str] = {}
 
     def check(name: str, ok: bool, detail: object = "") -> None:
         results[name] = f"{'done' if ok else 'failed'}{f' ({detail})' if detail != '' else ''}"
 
-    entries: list[dict[str, Any]] = []
-    sink = dialogue.journal.sink
-
-    def keep(entry: dict[str, Any]) -> None:
-        entries.append(entry)
-        if sink is not None:
-            sink(entry)
-
-    dialogue.journal.sink = keep
-    if dialogue.llm.name == "fake":
-        offer = {"npc_gives": [], "hero_gives": [], "lead": to}
-        dialogue.llm = _OnWords(
-            [
-                ("отведи меня", FakeStep("Пойдём, покажу.", [ToolCall("propose_deal", offer, "lead1")])),
-                ("ты ведёшь его", FakeStep("Иди за мной.")),
-                ("Герой отстал", FakeStep("Эй, не отставай!")),
-                ("Вы пришли", FakeStep("Вот и мельница.")),
-            ],
-            FakeStep("Да."),
-        )
+    off = model_off(dialogue)
+    off.given(
+        "дано: Малет предлагает проводить к мельнице", who=npc, when="отведи меня",
+        calls=[ToolCall("propose_deal", {"npc_gives": [], "hero_gives": [], "lead": to})],
+    )
+    off.silent("дано: Малет молчит (предложение проводить показано)", who=npc, when="отведи меня")
+    off.silent("дано: Малет молчит (старт провожатого)", who=npc, when="ты ведёшь его")
+    off.silent("дано: Малет молчит (герой отстал)", who=npc, when="Герой отстал", times=2)
+    off.silent("дано: Малет молчит (пришли к мельнице)", who=npc, when="Вы пришли")
     book = guide.book
     mill = book.get(to) if book is not None else None
     if mill is None or mill.center is None:
@@ -135,12 +122,10 @@ async def lead_scenario(
                         f"{him.player.pos if him.player else '?'}; around him {around})"})  # fmt: skip
 
     talk.hear("Малет, отведи меня к мельнице.", npc, {"via": "scenario"})
-    shown = await _until(lambda: npc in deals.open, 60)
+    await _until(lambda: npc in deals.open, 60)
     deal = deals.open.get(npc)
-    check("offered", shown and deal is not None and deal.lead is not None and deal.lead.place.id == to,
-          deal.terms() if deal is not None else "no deal")  # fmt: skip
     if deal is None:
-        return _logged(results)
+        return _logged({**results, "setup": "failed (no guide deal to accept)"})
     await asyncio.sleep(1.2)  # Y waits until the terms have stood a moment
     pressed = await link.press_deal()
     started = await _until(lambda: npc in guide.leads and guide.leads[npc].state == "going", 30)
@@ -179,10 +164,9 @@ async def lead_scenario(
     )
     await link.debug("player_goto", waypoint=start.npc.nearest_waypoint or start.npc.waypoint or "")
     waited = await _until(lambda: npc in guide.leads and guide.leads[npc].state == "waiting", 20)
-    called = any(e.get("kind") == "npc" and e.get("npc") == npc for e in entries[-20:])
     await link.debug("teleport", near=npc, distance=300)
     on = await _until(lambda: npc in guide.leads and guide.leads[npc].state == "going", 20)
-    check("waits", waited and on, f"waited {waited}, called {called}, went on {on}")
+    check("waits", waited and on, f"waited {waited}, went on {on}")
 
     # he goes after it: put behind it now and then, as a player who follows
     async def after() -> None:
@@ -203,14 +187,12 @@ async def lead_scenario(
     pace = sorted(speeds)[len(speeds) // 2] if speeds else 0.0
     results["pace"] = f"done ({pace:.1f} m/s on the move, the hero runs)"
     await asyncio.sleep(4)
-    said = [e.get("text", "") for e in entries if e.get("kind") == "npc" and e.get("npc") == npc]
     check(
         "there",
         bool(led) and led[-1].get("how") == "arrived" and math.dist(snap.npc.pos, mill.center) < 2000,
         f"{led[-1].get('how') if led else 'no fact'}, at {snap.npc.nearest_waypoint} "
         f"({there.id if there else '?'}), {math.dist(snap.npc.pos, mill.center) / 100:.0f} m from {to}",
     )
-    log.info("lead: %s said %s", npc, said)
     return _logged(results)
 
 
@@ -227,7 +209,6 @@ async def meet_scenario(
 ) -> dict[str, str]:
     """A meeting with the hero (docs/npc-tools.md, wave 2 step 4: `meet`): at 19:00 the hero agrees with
     Malet to meet at dawn by the field in front of the city gates. Checks:
-    - offered: a deal with the meeting in its window;
     - agreed: Y; the meeting is the desk's;
     - there: the clock leaps past when Malet sets off, as when the hero sleeps: the engine puts everyone at
       their routine's spot, and Malet is put at the meeting at once (`start_activity.place`);
@@ -235,27 +216,15 @@ async def meet_scenario(
     With `missed` (SCENARIO=meet_missed) the clock goes to a little before he sets off: he walks there himself
     and stands there by the hour. Then the hero does not come: the clock past its end, his word is broken
     (`broken`, promise meet), Malet goes back to his routine (`routine`), and when the hero comes up to him
-    the missed meeting is in front of him (`reproach`; live: in his words).
-    The model is scripted with LLM=fake; LLM=chatgpt answers itself."""
+    the missed meeting is in his situation (`reproach`), read without a model turn.
+    Given: Malet agrees to meet the hero at dawn."""
     await link.wait_world()
     results: dict[str, str] = {}
 
     def check(name: str, ok: bool, detail: object = "") -> None:
         results[name] = f"{'done' if ok else 'failed'}{f' ({detail})' if detail != '' else ''}"
 
-    entries: list[dict[str, Any]] = []
-    sink = dialogue.journal.sink
-
-    def keep(entry: dict[str, Any]) -> None:
-        entries.append(entry)
-        if sink is not None:
-            sink(entry)
-
-    def said(since: int) -> list[str]:
-        return [e.get("text", "") for e in entries[since:] if e.get("kind") == "npc" and e.get("npc") == npc]
-
-    dialogue.journal.sink = keep
-    live = dialogue.llm.name != "fake"
+    off = model_off(dialogue)
     await link.debug("time", hour=19, minute=0)
     await link.debug("skip_important", near=npc)  # Malet's own dialog would stop the hero at once
     await link.debug("teleport", near=npc, distance=300)
@@ -263,20 +232,15 @@ async def meet_scenario(
         return _logged({"roster": f"failed ({npc} is not around the hero)"})
     snap = await link.snapshot(npc, fresh=True)
     tomorrow = snap.world.day + 2  # as the npc sees days: from 1
-    if not live:
-        dawn = {"where": to, "day": tomorrow, "hour": 5, "minute": 0, "hours": 2}
-        offer = ToolCall("propose_deal", {"meet": dawn}, "meet1")
-        dialogue.llm = _OnWords(
-            [
-                ("встретимся", FakeStep("Ладно, на рассвете у поля перед воротами.", [offer])),
-                ("сделка состоялась", FakeStep("Договорились. Не опаздывай.")),
-                ("пришёл на встречу", FakeStep("Пришёл всё-таки. Хорошо.")),
-                ("привет", FakeStep("Ты где был на рассвете? Я тебя ждал.")),
-            ],
-            FakeStep("Да."),
-        )
-    model = _Recorded(dialogue.llm)
-    dialogue.llm = model
+    dawn = {"where": to, "day": tomorrow, "hour": 5, "minute": 0, "hours": 2}
+    off.given(
+        "дано: Малет соглашается встретиться на рассвете", who=npc, when="встретимся",
+        calls=[ToolCall("propose_deal", {"meet": dawn})],
+    )
+    off.silent("дано: Малет молчит (встреча предложена)", who=npc, when="встретимся")
+    off.silent("дано: Малет молчит (сделка о встрече состоялась)", who=npc, when="сделка состоялась")
+    if not missed:
+        off.silent("дано: Малет молчит (герой пришёл на встречу)", who=npc, when="пришёл на встречу")
 
     talk.hear(
         "Малет, давай встретимся завтра на рассвете у поля перед городскими воротами. Мне нужно с тобой "
@@ -285,21 +249,9 @@ async def meet_scenario(
         {"via": "scenario"},
     )
     shown = await _until(lambda: npc in deals.open and deals.open[npc].meet is not None, 60)
-    if not shown:  # a live Malet asks what it is about first
-        talk.hear(
-            "Про бандитов на дороге к городу: я знаю, где они прячутся. Здесь говорить не буду — на рассвете "
-            "у поля перед воротами.",
-            npc,
-            {"via": "scenario"},
-        )
-        shown = await _until(lambda: npc in deals.open and deals.open[npc].meet is not None, 90)
-    if not shown and live:  # it agrees in words and asks the hour first («В шесть часов подойдёт?»)
-        talk.hear("Да, в шесть подойдёт. Договорились.", npc, {"via": "scenario"})
-        shown = await _until(lambda: npc in deals.open and deals.open[npc].meet is not None, 90)
     deal = deals.open.get(npc)
-    check("offered", shown, deal.terms() if deal is not None else "no deal")
     if not shown or deal is None or deal.meet is None:
-        return _logged(results)
+        return _logged({**results, "setup": "failed (no meeting deal to accept)"})
     await asyncio.sleep(1.2)  # Y waits until the terms have stood a moment
     pressed = await link.press_deal()
 
@@ -332,7 +284,6 @@ async def meet_scenario(
         return _logged(results)
 
     if not missed:
-        t0 = len(entries)
         await link.debug("skip_important", near=npc)
         await link.debug("teleport", near=npc, distance=300)
         ready = await _until(
@@ -350,8 +301,13 @@ async def meet_scenario(
         kept = await _until(lambda: m.state == "kept", 30)
         facts = [f for f in meetings.chronicle.facts("meet_kept") if f.get("meet") == m.id]
         check("kept", kept and bool(facts), m.state)
-        spoke = await _until(lambda: bool(said(t0)), 60)
-        check("first", spoke and talk.partner is not None and talk.partner.npc == npc, said(t0) or "silent")
+        def greeting_sent() -> bool:
+            conv = dialogue.conversations.get(npc)
+            return conv is not None and any("Герой пришёл на встречу" in m.content for m in conv.history)
+
+        sent = await _until(greeting_sent, 60)
+        check("first", sent and talk.partner is not None and talk.partner.npc == npc,
+              f"meeting cue sent: {sent}, partner: {talk.partner.npc if talk.partner else 'none'}")
         return _logged(results)
 
     # he does not come: the clock past its end
@@ -368,23 +324,146 @@ async def meet_scenario(
     await link.debug("skip_important", near=npc)
     await link.debug("teleport", near=npc, distance=300)
     await _until(lambda: npc in talk.people and talk.people[npc].distance <= 600, 20)
-    t0, asked = len(entries), len(model.asked)
-    talk.hear("Малет, привет.", npc, {"via": "scenario"})
-    await _until(lambda: bool(said(t0)), 60)
-    words = " ".join(said(t0))
-    shown_to_it = any("не пришёл на встречу" in a for a in model.asked[asked:])
-    low = words.lower()
-    spoke_of = any(w in low for w in ("встреч", "ждал", "прожд", "рассвет", "договар", "не пришёл"))
-    check(
-        "reproach",
-        shown_to_it and (not live or spoke_of),
-        f"in its situation: {shown_to_it}; {words or 'silent'}",
-    )
+    situation = await dialogue.situation(npc, "Малет")
+    shown_to_it = "не пришёл на встречу" in situation
+    check("reproach", shown_to_it, f"missed meeting in situation: {shown_to_it}")
     return _logged(results)
 
 
 def _game_minute(snap: Snapshot) -> int:
     return snap.world.day * GAME_DAY + snap.world.hour * 60 + snap.world.minute
+
+
+async def _chests_lobart(
+    link: GameLink,
+    dialogue: DialogueManager,
+    talk: TalkDesk,
+    chests: ChestDesk | None,
+    npc: str,
+    item: str,
+    ask: str,
+) -> dict[str, str]:
+    """Observe a real chest retrieval and delivery, rather than the promise to fetch it."""
+    suite = LiveSuite("chests_lobart", dialogue.trace)
+    for case_name in suite.selected:
+        with suite.case(case_name) as case:
+            if chests is None:
+                raise GameError("chests_lobart requires the chest subsystem")
+            await link.wait_world()
+            await link.debug("skip_important", near=npc)
+            await link.debug("player_goto", to=npc, distance=300)
+            if not await _until(lambda: npc in talk.people and talk.people[npc].distance <= 800, 20):
+                raise GameError("Lobart is not near the hero")
+            chest = next(
+                (c for c in await link.npc_chests(npc) if any(i.item == item and i.count for i in c.items)),
+                None,
+            )
+            if chest is None:
+                raise GameError("Lobart's chest does not contain the requested clothes")
+
+            async def hero_has() -> int:
+                expr = ["call", "NPC_HASITEMS", ["inst", "HERO"], ["sym", item]]
+                return int(await link.evaluate(expr) or 0)
+
+            before = await hero_has()
+            # The hero can pay an ordinary clothing price when an actual offer is made.
+            await link.story_effect(npc, [{"do": "give", "item": GOLD, "count": 1000}])
+            start = await link.snapshot(npc, fresh=True)
+            positions = [start.npc.pos]
+            entries: list[dict[str, Any]] = []
+
+            def refusal_words(saved: list[dict[str, Any]] = entries) -> list[str]:
+                replies = [e["text"] for e in saved if e.get("kind") == "npc" and e.get("npc") == npc]
+                # Only an explicit refusal to sell is a failure; a promise without delivery is undecided.
+                refusals = (
+                    "не продам", "не продаю", "не продается", "не продаётся", "не продаются",
+                    "не буду продавать", "не собираюсь продавать", "не могу продать", "не для продажи",
+                )
+                answer = replies[-1].lower().strip(" —–-") if replies else ""
+                refused = re.match(r"нет\b(?!\s+проблем\b)", answer) or any(p in answer for p in refusals)
+                return replies[-1:] if refused else []
+
+            def position(msg: GameMessage, samples: list[tuple[float, float, float]] = positions) -> None:
+                if isinstance(msg, Snapshot) and msg.npc.id.upper() == npc:
+                    samples.append(msg.npc.pos)
+
+            link.listeners.append(position)
+            journals = [dialogue.journal]
+            if chests.journal is not dialogue.journal:
+                journals.append(chests.journal)
+            sinks = [journal.sink for journal in journals]
+            for journal, sink in zip(journals, sinks, strict=True):
+
+                def keep(
+                    entry: dict[str, Any], previous: Any = sink, saved: list[dict[str, Any]] = entries,
+                ) -> None:
+                    saved.append(entry)
+                    if previous is not None:
+                        previous(entry)
+
+                journal.sink = keep
+            try:
+                talk.hear(ask, npc, {"via": "scenario"})
+                deadline = time.monotonic() + 240
+                confirmed = False
+                after = before
+                accepted: list[str] = []
+                while time.monotonic() < deadline:
+                    after = await hero_has()
+                    fetched = any(
+                        e.get("kind") == "chest" and e.get("npc") == npc
+                        and e.get("chest") == chest.id and e.get("took", {}).get(item, 0) > 0
+                        for e in entries
+                    )
+                    if fetched and after > before:
+                        break
+                    window = await link.deal_window()
+                    if window is not None and window.get("npc") == npc:
+                        accepted.append(await link.press_deal())
+                    elif not dialogue.speaking(npc) and npc not in chests._going:
+                        replies = [e for e in entries if e.get("kind") == "npc" and e.get("npc") == npc]
+                        if refusal_words():
+                            break
+                        if replies and not confirmed:
+                            # A real model may name its price before it starts walking.
+                            talk.hear("Да, беру, по рукам.", npc, {"via": "scenario"})
+                            confirmed = True
+                    await asyncio.sleep(1)
+
+                await _until(lambda: not dialogue.speaking(npc), 30)
+                end = await link.snapshot(npc, fresh=True)
+                after = await hero_has()
+                positions.append(end.npc.pos)
+                moved_cm = max(math.dist(start.npc.pos, pos) for pos in positions)
+                chest_facts = [e for e in entries if e.get("kind") == "chest" and e.get("npc") == npc]
+                fetched = any(
+                    e.get("chest") == chest.id and e.get("took", {}).get(item, 0) > 0 for e in chest_facts
+                )
+                words = [e["text"] for e in entries if e.get("kind") == "npc" and e.get("npc") == npc]
+                calls = [
+                    call for row in case.records
+                    for step in row.get("steps", []) for call in step.get("calls", [])
+                ]
+                attempted = any(call.get("name") == CHEST for call in calls)
+                refusal = refusal_words()
+                outcome = "success" if moved_cm >= 100 and fetched and after > before else (
+                    "failure" if refusal else "no_decision"
+                )
+                decision = "delivered" if outcome == "success" else (
+                    "refused" if refusal else "incomplete" if words or attempted else "none"
+                )
+                case.finish(outcome, evidence={
+                    "decision": decision,
+                    "chest": chest.id, "chest_facts": chest_facts, "tool_outcomes": calls,
+                    "npc_words": words, "refusal_words": refusal, "moved_cm": round(moved_cm, 1),
+                    "hero_items_before": before, "hero_items_after": after,
+                    "deal_acceptance": accepted, "timeout_s": 240,
+                })
+            finally:
+                link.listeners.remove(position)
+                for journal, sink in zip(journals, sinks, strict=True):
+                    journal.sink = sink
+    return suite.results()
 
 
 async def chests_scenario(
@@ -399,16 +478,17 @@ async def chests_scenario(
 ) -> dict[str, str]:
     """Npc's chests (docs/npc-tools.md «Сундуки»; the user, 2026-10-14: Brago should remember what lies in his
     chest, and go to take it out). The hero goes up to Brago in the bandits' cave below Xardas's tower and,
-    unseen, takes the gold out of the chest there; then asks Brago for a bow. Brago's model is scripted
-    (LLM=fake); with a real one (`chests_lobart`: Lobart, his farmer's clothes in his chest) whether it goes
-    to the chest is the model's own call. Checks:
+    unseen, takes the gold out of the chest there; then asks Brago for a bow. Given: Brago takes the bow
+    from his chest. The separate live `chests_lobart` scenario keeps the model's own decision. Checks:
     - chest: the bridge counts the cave's chest as Brago's (nobody owns it, it stands by his routine), with
       a bow in it;
     - knows: Brago's situation tells what lies in it, as he knows: the bow and the gold too;
-    - fetched: told «продай лук», his model calls `chest`: he walks to the chest, opens it and takes the bow
+    - fetched: the given `chest` call makes him walk to the chest, open it and take the bow
       out; the bow is in his hands and no longer in the chest;
     - missing: having looked, he knows the gold is gone;
-    - back: back from the chest, he goes on talking to the hero."""
+    - back: back from the chest, he receives the cue to continue the conversation with the hero."""
+    if npc == LOBART:
+        return await _chests_lobart(link, dialogue, talk, chests, npc, item, ask)
     await link.wait_world()
     results: dict[str, str] = {}
     if chests is None:
@@ -418,33 +498,11 @@ async def chests_scenario(
         results[name] = f"{'done' if ok else 'failed'}{f' ({detail})' if detail != '' else ''}"
 
     bow, gold = item, "ITMI_GOLD"
-    asked: list[str] = []  # the situation of each of Brago's requests
-    cues: list[str] = []  # ...and what each was about
     fetch = ToolCall(CHEST, {"take": [{"item": bow, "count": 1}], "put": [], "chest": None})
-    # scripted (LLM=fake), or the real model (LLM=chatgpt): then what it does is its own call, to be read
-    inner: Any = dialogue.llm
-    if inner.name == "fake":
-        say = FakeStep("В сундуке лежит. Сейчас принесу.", [fetch])
-        inner = _ByNpc({name: _OnWords([("продай", say)], FakeStep("Ну."))}, FakeBackend("Хм.", delay=0))
-
-    class Recorded:
-        name = inner.name
-        model = getattr(inner, "model", None)
-
-        def __getattr__(self, attr: str) -> Any:
-            return getattr(inner, attr)
-
-        def stream(self, **kw: Any) -> AsyncIterator[LLMEvent]:
-            if f"Ты — {name}" in kw["instructions"]:
-                msgs = kw["messages"]
-                last = msgs[-1] if msgs else None
-                cues.append(last.content if isinstance(last, Message) else "")
-                asked.append(
-                    "\n".join(m.content for m in msgs if isinstance(m, Message) and m.role == "developer")
-                )
-            return cast(AsyncIterator[LLMEvent], inner.stream(**kw))
-
-    dialogue.llm = Recorded()  # type: ignore[assignment]
+    off = model_off(dialogue)
+    off.given("дано: Браго берёт лук из сундука", who=npc, when="продай", calls=[fetch])
+    off.silent("дано: Браго молчит (решение идти к сундуку принято)", who=npc, when="продай")
+    off.silent("дано: Браго молчит (вернулся от сундука)", who=npc, when=BACK)
 
     def dist() -> float:
         return talk.people[npc].distance / 100 if npc in talk.people else -1.0
@@ -471,12 +529,12 @@ async def chests_scenario(
     await link.debug("chest_take", chest=cave.id, item=gold, count=1000)
     log.info("chests: the hero took the gold out of %s unseen", cave.id)
 
-    talk.hear(ask, npc, {"via": "scenario"})
-    await _until(lambda: bool(asked), 30)
-    situation = asked[0] if asked else ""
+    situation = await dialogue.situation(npc, name)
     line = next((s for s in situation.split("\n") if s.startswith(tuple(OWNED.values()))), "")
     check("knows", bow in line and gold in line, line or situation[-300:])
 
+    talk.hear(ask, npc, {"via": "scenario"})
+    await _until(lambda: npc in dialogue.conversations, 30)
     conv = dialogue.conversations.get(npc)
 
     def note() -> str:
@@ -499,9 +557,6 @@ async def chests_scenario(
     # there and back: a chest across a house takes a minute and a half (Lobart's)
     await _until(lambda: bool(note()) or chests._going, 5)
     await _until(lambda: bool(note()) or chests._going or not dialogue.speaking(npc), 40)
-    if not note() and inner.name != "fake" and not chests._going:  # a real one names its price first
-        talk.hear("Да, беру, по рукам.", npc, {"via": "scenario"})
-        await _until(lambda: bool(chests._going), 30)
     await _until(lambda: bool(note()), 180)
     snap = await link.snapshot(npc, fresh=True)
     after = next((c for c in await link.npc_chests(npc) if c.id == cave.id), None)
@@ -513,10 +568,13 @@ async def chests_scenario(
         f"in hands {in_hands}, in the chest {still}: {note()}",
     )
     check("missing", "пропало" in note() and "Золото" in note(), note())
-    await _until(lambda: BACK in cues, 20)
+    def returned() -> bool:
+        return conv is not None and any(m.content == BACK for m in conv.history)
+
+    await _until(returned, 20)
     await _until(lambda: not dialogue.speaking(npc), 30)  # what it says back from the chest, for the log
     watch.cancel()
-    check("back", BACK in cues and 0 <= dist() <= 5, f"{dist():.1f} m from the hero; {cues}")
+    check("back", returned() and 0 <= dist() <= 5, f"{dist():.1f} m from the hero; return cue: {returned()}")
     return _logged(results)
 
 
@@ -543,9 +601,20 @@ async def initiative_scenario(
     the scripts. The hero owes Lobart 25 gold since yesterday (a debt written into the chronicle): a broken
     word, on Lobart's mind. The hero stands 12 m in front of him; Lobart comes up by himself, once, and speaks
     first about the debt, the hero's next words without a name go to him. The hero says he will pay: Lobart
-    offers a deal that settles the debt, the hero accepts it, and nothing is on Lobart's mind any more. With
-    the server's planner and its desk (DECIDER_URL) the behavioral model decides whether he comes up; without
-    it a fixed stand-in does, for Lobart only. The words are scripted unless LLM=chatgpt."""
+    offers a deal that settles the debt, the hero accepts it, and nothing is on Lobart's mind any more.
+    A fixed decision makes Lobart come up; his opening and the completed deal are silent givens."""
+
+    off = model_off(dialogue)
+    off.silent("дано: Лобарт молчит (подошёл потребовать долг)", who=lender, when="подошёл к герою")
+    off.given(
+        "дано: Лобарт предлагает погасить долг",
+        who=lender,
+        when="Отдам",
+        calls=[ToolCall("propose_deal", {"npc_gives": [], "hero_gives": [], "repay": [INITIATIVE_DEBT]})],
+    )
+    off.silent("дано: Лобарт молчит (предложил погасить долг)", who=lender, when="Отдам")
+    off.silent("дано: Лобарт молчит (сделка состоялась)", who=lender, when="сделка состоялась")
+    log.info("given: дано: Лобарт подходит к герою (react=approach_talk)")
     results: dict[str, str] = {}
 
     def check(name: str, ok: bool, detail: object = "") -> None:
@@ -570,7 +639,7 @@ async def initiative_scenario(
             log.info("Npc_CheckInfo of %s: %s", npc, err)
             return None
 
-    # without the server's planner: a fixed stand-in, Lobart comes up and the others keep to their routines
+    # Reuse the server's desk if present; both paths supply the same declared decision.
     own = desk is None
     runner: asyncio.Task[None] | None = None
     on_change: Callable[[str], None] | None = None
@@ -607,18 +676,14 @@ async def initiative_scenario(
         on_change = agenda
         concerns.on_change.append(on_change)
     planner = desk.planner
-    # Lobart's lines as the server sent them, with the trigger of the turn they came from
-    said: list[tuple[float, str, str]] = []
+    decider = planner.decider
+    planner.decider = FixedDecider({"react": "approach_talk"}, npcs={lender})
     walked: list[float] = []  # when Lobart was sent to the hero (by the desk: no one else sends go_to_npc)
     send = link.send
 
     async def sending(cmd: Any) -> Any:
         if isinstance(cmd, NpcActCmd) and cmd.npc.upper() == lender and cmd.action == "go_to_npc":
             walked.append(time.monotonic())
-        if isinstance(cmd, SayCmd) and cmd.npc.upper() == lender:
-            conv = dialogue.conversations.get(lender)
-            trigger = conv.trigger.content if conv is not None and conv.trigger is not None else ""
-            said.append((time.monotonic(), cmd.text, trigger))
         return await send(cmd)
 
     link.send = sending  # type: ignore[method-assign]
@@ -658,26 +723,6 @@ async def initiative_scenario(
         )
         deals.reload()
         await link.debug("time", hour=10, minute=0)
-        if isinstance(dialogue.llm, FakeBackend):
-            repay = {
-                "npc_gives": [],
-                "hero_gives": [],
-                "forgive": [],
-                "silence": [],
-                "hero_later": [],
-                "repay": [INITIATIVE_DEBT],
-            }
-            first = FakeStep("[angry] Эй, ты! Двадцать пять золотых за тобой, и срок вчера вышел.")
-            dialogue.llm = ClaimScript(
-                said=[
-                    ("подошёл к герою", first),
-                    ("Отдам", FakeStep("Давно бы так.", [ToolCall("propose_deal", repay, "repay")])),
-                ],
-                told=[],
-                default="Вот и ладно.",
-                only=name,
-            )
-
         # 1. Hilda has her greeting for the hero (DIA_Hilda_Hallo): the game's own check says so, and the
         # initiative leaves her to the scripts; once it counts as told, nothing waits
         before, waiting = await checkinfo(HILDA), await desk.important(HILDA)
@@ -717,7 +762,7 @@ async def initiative_scenario(
             lambda: (
                 len(walked) > walks and lender in talk.people and talk.people[lender].distance <= ARRIVE_CM
             ),
-            45 if own else 120,  # the live model decides when
+            45,
         )
         entry, rec = talk.people.get(lender), planner.npcs.get(lender)
         where = f"{entry.distance / 100:.1f} m" if entry else "not around"
@@ -732,22 +777,24 @@ async def initiative_scenario(
         if not came:
             return _logged(results)
 
-        # 4. he speaks first, about the debt; the hero has said nothing
-        def first_words() -> tuple[float, str, str] | None:
-            return next((w for w in said if w[2].startswith("[Ты сам подошёл к герою")), None)
+        # 4. the initiative cue is delivered before any hero input, with Lobart listening
+        def first_trigger() -> str:
+            conv = dialogue.conversations.get(lender)
+            if conv is None:
+                return ""
+            return next(
+                (e.content for e in conv.memory.entries if e.content.startswith("[Ты сам подошёл к герою")),
+                "",
+            )
 
-        await _until(lambda: first_words() is not None, 15)
-        words = first_words()
-        early = [t for t in typed if words is not None and t < words[0]]
-        # the hero said nothing yet: only the desk can have made Lobart his partner, listening
+        await _until(lambda: bool(first_trigger()), 15)
+        trigger = first_trigger()
         partner = talk.partner
         opened = partner is not None and partner.npc == lender and partner.posture == "listen"
         check(
             "spoke_first",
-            words is not None and "25" in words[2] and not early and opened,
-            f"«{words[1]}» on {words[2]!r}{f', the hero spoke {len(early)} time(s) before' if early else ''}"
-            if words
-            else f"silent; lines: {[w[1] for w in said][-3:]}",
+            "25" in trigger and not typed and opened,
+            f"cue {trigger!r}, hero inputs {len(typed)}, listening {opened}",
         )
 
         # 5. the fact: who came up, about what, who saw it
@@ -781,7 +828,7 @@ async def initiative_scenario(
             link.deal_window, lambda w: w is not None and owed in (w.get("hero_gives") or []), 10
         )
         window = await link.deal_window() or {}
-        check("offered_repay", ok and shown, window.get("hero_gives"))
+        check("debt_window", shown, window.get("hero_gives"))
         if not ok:
             return _logged(results)
 
@@ -809,6 +856,7 @@ async def initiative_scenario(
     finally:
         link.send = send  # type: ignore[method-assign]
         link.listeners.remove(heard)
+        planner.decider = decider
         if own:
             if runner is not None:
                 runner.cancel()
@@ -836,29 +884,16 @@ DEAD_OPTIONS = {"pick_up", "give_back", "rest", "socialize"}  # removed in wave 
 
 
 class DayRecorder:
-    """The behavioral model of the day e2e: every request's questions are kept; the pinned npc's pinned
-    questions get the pinned choice (if offered), every other question the stand-in's default (the first
-    option, level 0), so no other body acts: Lobart, with the lie on his mind, would come up to the hero and
-    hold Vino's scene. With the live model (DECIDER_URL) it is asked first and its own answers are kept."""
+    """Record the day menus and supply the declared choice, leaving other NPCs in their routines."""
 
-    def __init__(self, live: Decider | None, pin: dict[str, dict[str, str]]) -> None:
-        self.live = live
+    def __init__(self, pin: dict[str, dict[str, str]]) -> None:
         self.pin = {npc.upper(): questions for npc, questions in pin.items()}
-        self.requests: list[tuple[str, dict[str, dict]]] = []  # (npc, its questions), in order
-        self.own: list[tuple[str, dict[str, dict]]] = []  # (npc, the live model's own answers)
+        self.requests: list[tuple[str, dict[str, dict]]] = []
         self._rest = FixedDecider({}, npcs=())
-
-    @property
-    def model(self) -> str | None:
-        return getattr(self.live, "model", None)
 
     async def decide(self, rid, lane, priority, deadline_ms, state, questions) -> Outcome:  # noqa: ANN001
         npc = rid.split("#", 1)[0].upper()
         self.requests.append((npc, questions))
-        own = None
-        if self.live is not None:
-            own = await self.live.decide(rid, lane, priority, deadline_ms, state, questions)
-            self.own.append((npc, own.answers or {}))
         out = await self._rest.decide(rid, lane, priority, deadline_ms, state, questions)
         answers = dict(out.answers or {})
         for name, choice in self.pin.get(npc, {}).items():
@@ -869,13 +904,10 @@ class DayRecorder:
                     "probabilities": {choice: 0.9},
                     "confidence": 0.9,
                 }
-        if own is None:
-            return Outcome("answers", answers, out.queue_ms, out.infer_ms)
-        return Outcome("answers", answers, own.queue_ms, own.infer_ms)
+        return Outcome("answers", answers, out.queue_ms, out.infer_ms)
 
     async def cancel(self, rid: str) -> None:
-        if self.live is not None:
-            await self.live.cancel(rid)
+        pass
 
 
 class _TraceTap:
@@ -896,8 +928,7 @@ async def noise_scenario(
 ) -> dict[str, str]:
     """A native item impact behind Maleth: hear, decide, investigate, then resume his guard routine.
 
-    No event or action is injected. Without DECIDER_URL a fixed decider investigates only for Maleth;
-    with it the server's planner asks its live decider, records that answer and pins investigate.
+    No event or action is injected. A declared fixed decision makes Maleth investigate.
     """
     from ..brain import GameApplier
     from ..brain.day import current_entry
@@ -905,7 +936,7 @@ async def noise_scenario(
     npc = "BAU_954_MALETH"
     results = {
         k: "failed (0 observations)"
-        for k in ("heard", "decided", "sent", "went", "idle", "routine", "memory")
+        for k in ("heard", "sent", "went", "idle", "routine", "memory")
     }
 
     def check(name: str, ok: bool, detail: str) -> None:
@@ -917,12 +948,9 @@ async def noise_scenario(
         planner = NpcPlanner(FixedDecider({"react": "investigate"}, npcs={npc}), GameApplier(link))
         link.listeners.append(planner.on_message)
     brain = planner
-    decider, trace = brain.decider, brain.trace
-    recorder = DayRecorder(decider, {npc: {"react": "investigate"}}) if not own else None
-    if recorder is not None:
-        brain.decider = recorder
-    tap = _TraceTap(trace)
-    brain.trace = tap  # type: ignore[assignment]
+    decider = brain.decider
+    brain.decider = FixedDecider({"react": "investigate"}, npcs={npc})
+    log.info("given: дано: Малет идёт проверить шум (react=investigate)")
     runner = asyncio.create_task(brain.run()) if own else None
     events: list[NpcEvent] = []
     receipts: list[tuple[float, NpcActResult]] = []
@@ -1015,7 +1043,6 @@ async def noise_scenario(
         )
         if not ready:
             return _logged(results)
-        rows_start = len(tap.rows)
         started = time.monotonic()
         dropped = False
         attempts = 0
@@ -1053,49 +1080,6 @@ async def noise_scenario(
         if event is None or event.at is None:
             return _logged(results)
 
-        def decision() -> dict[str, Any] | None:
-            return next(
-                (
-                    r
-                    for r in tap.rows[rows_start:]
-                    if r.get("npc") == npc
-                    and r.get("question") == "react"
-                    and "noise" in r.get("stimuli", [])
-                    and r.get("choice") == "investigate"
-                    and r.get("applied")
-                ),
-                None,
-            )
-
-        await _until(lambda: decision() is not None, 15)
-        row = decision()
-        noise_rows = [
-            r for r in tap.rows[rows_start:] if r.get("npc") == npc and "noise" in r.get("stimuli", [])
-        ]
-        check(
-            "decided",
-            row is not None,
-            f"applied {int(row is not None)}, noise decisions {len(noise_rows)}, "
-            f"latency_ms {row.get('latency_ms', 0) if row else 0}",
-        )
-        if recorder is not None:
-            questions = [q for n, q in recorder.requests if n == npc]
-            answers = [a for n, a in recorder.own if n == npc]
-            answer = next(
-                (
-                    a.get("react", {})
-                    for q, a in zip(questions, answers, strict=False)
-                    if "investigate" in q.get("react", {}).get("criteria", {})
-                ),
-                {},
-            )
-            # A live model may choose any option (or return no answer); its choice is informational.
-            check(
-                "model_answer",
-                True,
-                f"answers {len(recorder.own)}, choice {answer.get('choice')}, "
-                f"P(investigate) {answer.get('probabilities', {}).get('investigate', 0):.3f}",
-            )
         await _until(lambda: any(c.action == "investigate" for _, c in sent), 5)
         when_sent, act = next(((t, c) for t, c in sent if c.action == "investigate"), (0.0, None))
         await _until(lambda: act is not None and any(m.id == act.id for _, m in receipts), 5)
@@ -1198,7 +1182,7 @@ async def noise_scenario(
             await asyncio.gather(sampling, return_exceptions=True)
         link.send = send  # type: ignore[method-assign]
         link.listeners.remove(heard)
-        brain.decider, brain.trace = decider, trace
+        brain.decider = decider
         if runner is not None:
             runner.cancel()
             await asyncio.gather(runner, return_exceptions=True)
@@ -1220,16 +1204,18 @@ async def day_scenario(
 ) -> dict[str, str]:
     """Everyday life from concerns (docs/npc-tools.md, wave 2 step 6), on the game. Lobart catches the hero
     lying; Vino, on his field, hears it from him far from the hero. With the hero near Malet, Vino's menu of
-    his next hour has a walk to Malet to tell the news (about an hour); it is chosen (pinned: the live model's
-    own answer is kept with DECIDER_URL) and Vino walks there: near the hero the two say it in a scene of
+    his next hour has a walk to Malet to tell the news (about an hour); a declared decision selects it
+    and Vino walks there: near the hero the two say it in a scene of
     step 2 (the fact how: talked) and the walk leaves a `day` fact the hero saw. From a save before the walk,
     with the hero by Vino's field, the same walk ends 72 m from the hero: Malet learns it as a fact (how:
     visited), without the model or words. Across the run: no sleep or dead option in any menu, and each
     routine asked a few times only. Without the server's planner (DECIDER_URL) the scenario runs its own.
-    The lines are scripted unless LLM=chatgpt; voices with a TTS service (scripts/e2e.sh starts one)."""
+    The scene's lines are given for the voice and queue checks; scripts/e2e.sh starts a TTS service."""
     from ..brain import GameApplier
     from ..brain.planner import PlannerConfig
 
+    off = model_off(dialogue)
+    log.info("given: дано: Вино выбирает пойти рассказать Малету (do=chat)")
     results: dict[str, str] = {}
 
     def check(name: str, ok: bool, detail: object = "") -> None:
@@ -1246,9 +1232,9 @@ async def day_scenario(
     asks: Counter[str] = Counter()  # the routines asked of the game, per npc
     idles: list[NpcIdle] = []
     loaded_with: list[int] = []  # how many routines the planner knew at each Loading
-    recorder = DayRecorder(None, pin={VINO: {"do": "chat"}})
+    recorder = DayRecorder(pin={VINO: {"do": "chat"}})
 
-    # the server's planner with DECIDER_URL, its day settings for the run; else one of the scenario's own
+    # Reuse the server's planner if present, with the declared choices and these day settings.
     own = planner is None
     if planner is None:
         planner = NpcPlanner(
@@ -1267,7 +1253,6 @@ async def day_scenario(
     brain = planner
     decider, cfg, trace = brain.decider, brain.cfg, brain.trace
     if not own:
-        recorder.live = decider
         brain.decider = recorder
         brain.cfg = replace(
             cfg, apply_day=True, plan_period_s=5.0, far_period_s=(5.0, 8.0), ask_attitude=False
@@ -1315,7 +1300,7 @@ async def day_scenario(
         rec = brain.npcs.get(VINO)
         if rec is not None:
             rec.next_check = brain.clock()  # looked at now, not at his next background turn
-        since, own_since, rows_since = len(recorder.requests), len(recorder.own), len(tap.rows)
+        since, rows_since = len(recorder.requests), len(tap.rows)
 
         def asked(chat: bool = True) -> dict[str, Any] | None:
             """His do question since then: the first with the walk, or (not `chat`) the latest."""
@@ -1344,13 +1329,6 @@ async def day_scenario(
             and got == args,
             f"{list(options)}; chat: {text!r}; {got or 'no option'}",
         )
-        if not own:  # what the live model itself chose, informational: the walk is pinned either way
-            mine = next((a["do"] for n, a in recorder.own[own_since:] if n == VINO and "do" in a), None) or {}
-            p = float((mine.get("probabilities") or {}).get("chat", 0.0))
-            check(
-                f"model_answer{tag}", True, f"{mine.get('choice')}, P(chat) {p:.2f}" if mine else "no answer"
-            )
-
         def chosen() -> dict[str, Any] | None:
             return next(
                 (
@@ -1364,15 +1342,8 @@ async def day_scenario(
                 None,
             )
 
-        ok = await _until(lambda: chosen() is not None, 30)
+        await _until(lambda: chosen() is not None, 30)
         chose_at = time.monotonic()
-        row = chosen()
-        theirs = [
-            (r.get("question"), r.get("choice"), r.get("why"))
-            for r in tap.rows[rows_since:]
-            if r.get("npc") == VINO
-        ]
-        check(f"chosen{tag}", ok, f"applied {row.get('applied')}" if row else f"his rows: {theirs[-3:]}")
         await _until(lambda: any(t >= chose_at - 1 and _is_walk(c) for t, c in sent), 10)
         act = next((c for t, c in sent if t >= chose_at - 1 and _is_walk(c)), None)
         return chose_at, act
@@ -1413,11 +1384,9 @@ async def day_scenario(
         check("routines", ok, f"Vino {doing(VINO)}, Malet {doing(MALETH)}")
 
         # 1. Lobart catches the hero lying; Vino, on his field 44 m off, does not hear it
-        live = None if isinstance(dialogue.llm, FakeBackend) else dialogue.llm
-        ok, claim = await _caught_by(link, dialogue, talk, LOBART, facts)
-        check("caught", ok, facts("caught")[-1:])
-        if not ok or claim is None:
-            return _logged(results)
+        ok, _ = await _caught_by(link, dialogue, talk, LOBART, facts)
+        if not ok:
+            return _logged({**results, "setup": "failed (turnip lie did not produce its consequences)"})
         around = [str(p.get("npc", "")).upper() for p in await link.story_nearby(LOBART, RUMOR_CM)]
         r = rumor()
         check(
@@ -1425,18 +1394,32 @@ async def day_scenario(
             VINO not in around and r is not None and VINO not in r.known,
             f"within {RUMOR_CM // 100} m of Lobart: {VINO in around}; knows: {sorted(r.known) if r else '-'}",
         )
-        # the scene's lines, else Lobart's script (it answers every call with LLM=fake)
-        script = GossipScript(
-            claim, claim, live, lines=DAY_LINES, quiet=False, reason="Вино пришёл с новостью"
+        scene_given = "дано: реплики сцены Вино рассказывает Малету"
+        labels = labels_of(social.names[VINO], social.names[MALETH])
+        off.given(
+            scene_given,
+            who=GOSSIP_KEY,
+            calls=[
+                ToolCall(
+                    "lines",
+                    {
+                        "lines": [
+                            {"speaker": labels[who], "text": text, "mood": mood}
+                            for who, text, mood in DAY_LINES
+                        ],
+                        "quiet": False,
+                        "reason": "Вино пришёл с новостью",
+                    },
+                )
+            ],
         )
-        dialogue.llm = script
 
         # 2. Vino hears it from Lobart far from the hero: only the fact
         talk.end()
         await link.debug("player_goto", to=VINO, distance=8000)
         far = await _until(lambda: VINO not in talk.people, 10)
         check("hero_far", far, f"Vino {metres(VINO):.0f} m")
-        lines_calls, scenes = script.lines_calls, gossip.scenes
+        lines_calls, scenes = off.used.count(scene_given), gossip.scenes
         passed = False
         for _ in range(3):
             # opened only within this synchronous call: no tick sees the pair open
@@ -1455,7 +1438,7 @@ async def day_scenario(
             and int(got[0].get("hops", 0)) == 1
             and got[0].get("how") == "met"
             and gossip.scenes == scenes
-            and script.lines_calls == lines_calls,
+            and off.used.count(scene_given) == lines_calls,
             _passes_text(got),
         )
         if not passed:
@@ -1497,7 +1480,6 @@ async def day_scenario(
         lines = _scene_lines(scene)
         said = sorted((x for x in lines if x.line in starts), key=lambda x: starts[x.line][0])
         speakers = [x.npc for x in said]
-        want = len(lines) if live is not None else len(DAY_LINES)
         says = [
             c for t, c in sent if t >= chose_at and isinstance(c, SayCmd) and c.npc.upper() in (VINO, MALETH)
         ]
@@ -1510,8 +1492,8 @@ async def day_scenario(
             done
             and scene is not None
             and scene.state == "done"
-            and len(said) == len(lines) == want
-            and 2 <= want <= 4
+            and bool(lines)
+            and len(said) == len(lines)
             and all(n == (VINO, MALETH)[i % 2] for i, n in enumerate(speakers))
             and to_other
             and len(voiced) == len(said),
@@ -1559,7 +1541,7 @@ async def day_scenario(
             bool(loaded_with) and not any(loaded_with) and again,
             f"routines known at the load: {loaded_with}; Vino's asked again: {again}",
         )
-        lines_calls, scenes = script.lines_calls, gossip.scenes
+        lines_calls, scenes = off.used.count(scene_given), gossip.scenes
         chose_at, act = await walk("_again")
         ok = act is not None and await _until(lambda: arrived(act) is not None, 150)
         idle = arrived(act)
@@ -1583,10 +1565,10 @@ async def day_scenario(
             and int(got[0].get("hops", 0)) == 2
             and got[0].get("how") == "visited"
             and gossip.scenes == scenes
-            and script.lines_calls == lines_calls
+            and off.used.count(scene_given) == lines_calls
             and not says,
             f"{_passes_text(got)}; {gossip.scenes - scenes} scene(s), "
-            f"{script.lines_calls - lines_calls} model call(s), lines {says}",
+            f"{off.used.count(scene_given) - lines_calls} model call(s), lines {says}",
         )
         mine = walked()
         fact = mine[-1] if mine else {}
@@ -1660,10 +1642,8 @@ async def errand_scenario(
     npc: str = LOBART,
     to: str = ANDRE,
 ) -> dict[str, str]:
-    """An errand (docs/npc-tools.md, wave 2 step 5: `plan`): Lobart catches the hero lying about the turnips,
-    and to «ты кому-нибудь расскажешь?» sets out to tell Andre tomorrow at 7:00 (model scripted with
-    LLM=fake; every pair's rumor held closed meanwhile, so that only the errand passes it). Checks:
-    - planned: the goal, a fact;
+    """Given Lobart exposes the turnip lie and decides to tell Andre tomorrow at 7:00.
+    Every pair's rumor stays closed meanwhile, so only the errand passes it. Checks:
     - near (SCENARIO=errand): the hero waits where Andre is by then; Lobart sets off at 7:00 from the farm,
       walks there for real (`there`), finds Andre and tells him in front of the hero: a rumor fact with
       `how: told` and `goal_done` (`told`), a scene of two voices (`scene`);
@@ -1671,8 +1651,9 @@ async def errand_scenario(
       there: he hears it instead (`goal_done.instead_of`);
     - far (SCENARIO=errand_far): the hero is at the tower; at 7:00 nothing walks, and when Lobart would be
       there the fact comes (`far`), his body still at his routine, no model called.
-    With LLM=chatgpt Lobart answers the question himself: whoever he sets out to tell and whenever, the rest
-    follows his goal."""
+    The near and fork scenes use given lines to exercise the scene queue and voices."""
+
+    off = model_off(dialogue)
     await link.wait_world()
     if link.session is None:
         await wait_message(link, Session, timeout=10)
@@ -1682,48 +1663,49 @@ async def errand_scenario(
         results[name] = f"{'done' if ok else 'failed'}{f' ({detail})' if detail != '' else ''}"
 
     facts = errands.chronicle.facts
-    live = None if isinstance(dialogue.llm, FakeBackend) else dialogue.llm
-    if live is not None and variant != "near":
-        return _logged({"live": f"failed (SCENARIO=errand_{variant} is scripted only)"})
     if not await _until(lambda: rumors.social is not None, 30):
         return _logged({"social": "failed (no people)"})
     rumors.gate = lambda r, a, b: False  # the schedule passes nothing meanwhile: only the errand does
+    starts: dict[str, tuple[float, bool]] = {}
+
+    def heard(message: GameMessage) -> None:
+        if isinstance(message, LineStarted):
+            starts[message.line] = (time.monotonic(), message.voiced)
+
+    link.listeners.append(heard)
     try:
         await link.debug("time", hour=9, minute=0)
-        ok, claim = await _caught_by(link, dialogue, talk, npc, facts)
-        check("caught", ok, facts("caught")[-1:])
-        if not ok or claim is None:
-            return _logged(results)
+        ok, _ = await _caught_by(link, dialogue, talk, npc, facts)
+        if not ok:
+            return _logged({"setup": "failed (turnip lie did not produce its consequences)"})
         snap = await link.snapshot(npc, fresh=True)
         tomorrow = snap.world.day + 2  # as the npc sees days: from 1
         plan = {"do": "tell", "who": "Андре", "item": "", "count": 0, "day": tomorrow, "hour": 7, "minute": 0}
-        claim.said.append(
-            ("расскажешь", FakeStep("Ещё как. Завтра с утра схожу к Андре, пусть ополчение знает.",
-                                    [ToolCall("plan", plan)]))
-        )  # fmt: skip
-        # live, Lobart's answer is his own model's
-        model = _Recorded(GossipScript(live or claim, claim, live, lines=ERRAND_LINES, quiet=False))
-        dialogue.llm = model
+        off.given(
+            "дано: Лобарт решил рассказать Андре завтра в 7:00",
+            who=npc, when="расскажешь", calls=[ToolCall("plan", plan)],
+        )
+        off.silent(
+            "дано: Лобарт молчит (поручение принято)", who=npc, when="расскажешь",
+        )
         name = talk.people[npc].name if npc in talk.people else "Лобарт"
         await link.debug("type", text=f"{name}, ты кому-нибудь расскажешь?")
 
         def goal() -> Any:
             return next((g for g in errands.goals.values() if g.npc == npc and g.do == "tell"), None)
 
-        planned = await _until(lambda: goal() is not None, 60)
+        await _until(lambda: goal() is not None, 60)
         g = goal()
-        meant = g is not None and (live is not None or g.to == to)
-        told = f"{g.when(errands.now)}: {g.what()}" if g is not None else "no goal"
-        check("planned", planned and meant, told)
         if g is None:
-            return _logged(results)
+            return _logged({"setup": "failed (no errand to follow)"})
+        await _until(lambda: not dialogue.speaking(npc), 10)
         to = g.to
         talk.end()
 
         # the night goes by (a leap, as a sleep: everyone at their routine's spots); the hero goes where
         # Andre will be, or far off
         before = g.start - 2
-        if errands.now is None or before > errands.now:  # live, it may set off at once
+        if errands.now is None or before > errands.now:
             await link.debug("time", hour=before % GAME_DAY // 60, minute=before % 60)
         await asyncio.sleep(2)
         here = await link.snapshot(npc, fresh=True)
@@ -1736,7 +1718,21 @@ async def errand_scenario(
         else:
             await link.debug("player_goto", waypoint=there.waypoint)
             await link.debug("skip_important", near=to)  # Andre's greeting would stop the hero
-        asked = len(model.asked)
+        asked = len(off.used)
+        if variant == "near":
+            labels = labels_of(name, rumors.social.names[to])
+            off.given(
+                "дано: реплики сцены рассказа Лобарта Андре",
+                who=GOSSIP_KEY,
+                calls=[ToolCall("lines", {
+                    "lines": [
+                        {"speaker": labels[who], "text": text, "mood": mood}
+                        for who, text, mood in ERRAND_LINES
+                    ],
+                    "quiet": False,
+                    "reason": "Лобарт передаёт новость по поручению",
+                })],
+            )
         scenes = gossip.scenes if gossip is not None else 0  # before it sets off: the scene may come fast
         set_off = await _until(lambda: g.state not in ("agreed", "leaving"), 60)
         if variant == "far":
@@ -1752,7 +1748,7 @@ async def errand_scenario(
             far = math.dist(snap.npc.pos, home.pos) / 100 if home is not None and home.pos else -1
             check("far", done and fact is not None and fact.get("how") == "told", f"{g.state}, {fact}")
             check("body", 0 <= far < 20, f"{far:.0f} m from its routine's spot")
-            check("no_model", len(model.asked) == asked, f"{len(model.asked) - asked} request(s)")
+            check("no_model", len(off.used) == asked, f"{len(off.used) - asked} request(s)")
             return _logged(results)
         check("set_off", set_off and g.state in ("going", "there"), f"{g.state}, to {there.waypoint}")
         if g.state not in ("going", "there"):
@@ -1770,6 +1766,19 @@ async def errand_scenario(
             if not others:
                 return _logged({**results, "fork": "failed (no other of the guild)"})
             stand_in = others[0]
+            labels = labels_of(name, social.names[stand_in])
+            off.given(
+                "дано: реплики сцены рассказа Лобарта другому ополченцу",
+                who=GOSSIP_KEY,
+                calls=[ToolCall("lines", {
+                    "lines": [
+                        {"speaker": labels[who], "text": text, "mood": mood}
+                        for who, text, mood in ERRAND_LINES
+                    ],
+                    "quiet": False,
+                    "reason": "Лобарт передаёт новость по поручению",
+                })],
+            )
             await link.debug("npc_goto", npc=to, waypoint=ERRAND_FAR_WP)
             await link.attach(to)
             await link.debug("npc_goto", npc=stand_in, waypoint=there.waypoint)
@@ -1786,12 +1795,29 @@ async def errand_scenario(
         else:
             ok = done and got is not None and hearer == to
         check("told", ok and fact is not None and fact.get("how") == "told", f"{g.state}, {got}, {fact}")
-        played = await _until(lambda: gossip is None or gossip.scenes > scenes, 60)
-        check("scene", played, f"{gossip.scenes if gossip else 0} scene(s)")
+        played = await _until(
+            lambda: gossip is not None and gossip.scenes > scenes
+            and gossip.scene is None and gossip.last is not None,
+            60,
+        )
+        scene = gossip.last if gossip is not None and gossip.scenes > scenes else None
+        lines = _scene_lines(scene)
+        said = sorted((line for line in lines if line.line in starts), key=lambda line: starts[line.line][0])
+        check(
+            "scene",
+            played and scene is not None and scene.state == "done" and not scene.why
+            and bool(lines) and len(said) == len(lines)
+            and all(starts[line.line][1] for line in said)
+            and all(line.npc == (npc, hearer)[i % 2] for i, line in enumerate(said))
+            and all(line.to == (hearer if line.npc == npc else npc) for line in said),
+            f"{scene.state + ' ' + scene.why if scene else 'no scene'}, "
+            f"{len(said)} of {len(lines)} lines started, voiced {sum(starts[line.line][1] for line in said)}",
+        )
         if variant == "fork":
             await link.detach(to)
         return _logged(results)
     finally:
+        link.listeners.remove(heard)
         rumors.gate = None
 
 
@@ -1801,7 +1827,12 @@ async def errand_give_scenario(
     """A thing taken to someone (docs/npc-tools.md, wave 2 step 5: `plan` with give): the hero asks Hilda to
     take Lobart 25 gold; she walks out to him and hands it over: her gold −25, his +25, a fact `gave`
     (`gave`). Then Canthar's letter (a mission item, v39): the errand is turned down with the reason
-    (`letter`). The model scripted with LLM=fake."""
+    (`letter`). Hilda's two plan calls are givens, handled by the real errand checks."""
+
+    off = model_off(dialogue)
+    if dialogue.trace is None:
+        raise GameError("scenario errand_give requires a trace directory")
+    trace = dialogue.trace
     await link.wait_world()
     results: dict[str, str] = {}
 
@@ -1827,28 +1858,26 @@ async def errand_give_scenario(
     check("marked", marked is True, f"mission: {marked}")
     name = talk.people[npc].name
     give = {"do": "give", "who": "Лобарт", "item": gold, "count": 25, "day": 0, "hour": 0, "minute": 0}
-    script = ClaimScript(
-        said=[
-            ("письмо", FakeStep("Письмо? Ладно, отнесу.", [ToolCall("plan", {**give, "item": letter,
-                                                                             "count": 1})])),
-            ("золот", FakeStep("Ладно, отнесу ему.", [ToolCall("plan", give)])),
-        ],
-        told=[],
-        default="Чего тебе?",
-        only=name,
-        others=None if isinstance(dialogue.llm, FakeBackend) else dialogue.llm,
-    )  # fmt: skip
-    dialogue.llm = script
+    off.given(
+        "дано: Хильда несёт Лобарту 25 золотых",
+        who=npc, when="золот", calls=[ToolCall("plan", give)],
+    )
+    off.silent("дано: Хильда молчит (поручение принято)", who=npc, when="золот")
+    off.given(
+        "дано: Хильда пробует отнести письмо Кантара",
+        who=npc, when="письмо", calls=[ToolCall("plan", {**give, "item": letter, "count": 1})],
+    )
+    off.silent("дано: Хильда молчит (письмо — вещь задания)", who=npc, when="письмо")
     await link.debug("type", text=f"{name}, отнеси Лобарту 25 золотых.")
 
     def goal() -> Any:
         return next((g for g in errands.goals.values() if g.npc == npc and g.item == gold), None)
 
-    planned = await _until(lambda: goal() is not None, 60)
+    await _until(lambda: goal() is not None, 60)
     g = goal()
-    check("planned", planned and g is not None, g.what() if g is not None else script.outputs[-1:])
     if g is None:
-        return _logged(results)
+        return _logged({**results, "setup": "failed (no delivery to follow)"})
+    await _until(lambda: not dialogue.speaking(npc), 10)
     talk.end()
     done = await _until(lambda: g.state in ("done", "failed"), 180)
     gave = next((f for f in errands.chronicle.facts("gave") if f.get("goal") == g.id), None)
@@ -1858,10 +1887,22 @@ async def errand_give_scenario(
     await asyncio.sleep(3)
     await link.debug("player_goto", to=npc, distance=250)
     await _until(lambda: npc in talk.people and talk.people[npc].distance <= 600, 20)
-    outputs = len(script.outputs)
-    await link.debug("type", text=f"{name}, а ещё отнеси Лобарту письмо.")
-    answered = await _until(lambda: len(script.outputs) > outputs, 60)
-    said = script.outputs[outputs:]
-    refused = any("вещь для задания" in o for o in said)
-    check("letter", answered and refused and not any(x.item == letter for x in errands.goals.values()), said)
+    text = f"{name}, а еще отнеси Лобарту письмо."
+    await link.debug("type", text=text)
+
+    def rejected() -> list[dict[str, Any]]:
+        if not trace.path().exists():
+            return []
+        return [
+            call
+            for row in read_trace(trace.path())
+            if row.get("type") == "turn" and row.get("npc") == npc
+            and row.get("trigger", {}).get("text") == text
+            for step in row.get("steps", []) for call in step.get("calls", [])
+            if call.get("name") == "plan" and call.get("outcome") == "rejected"
+            and "вещь для задания" in call.get("result", "")
+        ]
+
+    refused = await _until(lambda: bool(rejected()), 60)
+    check("letter", refused and not any(x.item == letter for x in errands.goals.values()), rejected())
     return _logged(results)

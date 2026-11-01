@@ -16,6 +16,7 @@
 #include "nsptr.h"
 
 #include <mutex>
+#include <deque>
 #include <vector>
 
 class MTLDevice;
@@ -287,6 +288,9 @@ class MtDevice : public AbstractGraphicsApi::Device {
     void     onSubmit();
     void     onFinish();
     void     waitIdle() override;
+    void     uploadBuffer(MTL::Buffer& target, const void* data, size_t off, size_t size, bool wait);
+    std::unique_lock<std::mutex> lockUpload(size_t bytes);
+    void     submitUpload(MTL::CommandBuffer& cmd, size_t bytes);
 
     std::shared_ptr<MtFence> findAvailableFence();
     void                     waitAny(std::unique_lock<std::mutex>& guard);
@@ -311,11 +315,23 @@ class MtDevice : public AbstractGraphicsApi::Device {
     Props                      prop;
     MtSamplerCache             samplers;
     bool                       validation = false;
+    bool                       syncBufferUploads = false;
+    bool                       syncTextureUploads = false;
 
     std::mutex                 scalerSync;
     std::vector<NsPtr<MTLFX::SpatialScaler>> scalers;
 
     static void deductProps(AbstractGraphicsApi::Props& prop, MTL::Device& dev);
+
+  private:
+    struct Upload {
+      NsPtr<MTL::CommandBuffer> command;
+      size_t                   bytes = 0;
+      };
+    std::mutex                 uploadSync;
+    std::condition_variable    uploadCv;
+    std::deque<Upload>         uploads;
+    size_t                     uploadBytes = 0;
   };
 
 inline void mtAssert(void* obj, NS::Error* err) {

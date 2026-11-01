@@ -283,6 +283,9 @@ GameMenu::GameMenu(MenuRoot &owner, KeyCodec& keyCodec, zenkit::DaedalusVm& vm, 
   back = Resources::loadTexture(menu->back_pic);
 
   initItems();
+  diary = menuSection=="MENU_LOG";
+  if(diary)
+    addChronicleItems();
   float infoX = 1000.0f/scriptDiv;
   float infoY = 7500.0f/scriptDiv;
 
@@ -298,6 +301,8 @@ GameMenu::GameMenu(MenuRoot &owner, KeyCodec& keyCodec, zenkit::DaedalusVm& vm, 
 
   setSelection(Gothic::inst().isInGameAndAlive() ? menu->default_ingame : menu->default_outgame);
   updateValues();
+  if(diary && benchDiary.chronicle)
+    applyBenchDiary();
   slider = Resources::loadTexture("MENU_SLIDER_POS.TGA");
 
   up     = Resources::loadTexture("O.TGA");
@@ -316,10 +321,14 @@ void GameMenu::resetVm(zenkit::DaedalusVm* inVm) {
   vm = inVm;
   for(int i=0; i<zenkit::IMenu::item_count; ++i){
     hItems[i].handle = nullptr;
+    if(isChronicleSlot(hItems[i]))
+      hItems[i] = Item();
     }
   if(vm==nullptr)
     return;
   initItems();
+  if(diary)
+    addChronicleItems();
   updateValues();
   }
 
@@ -387,6 +396,8 @@ void GameMenu::paintEvent(PaintEvent &e) {
                0,0,back->w(),back->h());
     }
 
+  if(diary)
+    drawChronicleFrame(p);
   for(auto& hItem:hItems)
     drawItem(p,hItem);
 
@@ -479,6 +490,11 @@ void GameMenu::drawItem(Painter& p, Item& hItem) {
 
   if(item->type==zenkit::MenuItemType::SLIDER && slider!=nullptr) {
     drawSlider(p,hItem,x,y,szX,szY);
+    }
+  else if(item->type==zenkit::MenuItemType::LISTBOX && isChronicle(hItem)) {
+    const int px = int(float(w()*item->frame_sizex)/scriptDiv);
+    const int py = int(float(h()*item->frame_sizey)/scriptDiv);
+    drawChronicle(p, hItem, x+px,y+py, szX-2*px,szY-2*py);
     }
   else if(item->type==zenkit::MenuItemType::LISTBOX) {
     if(auto ql = Gothic::inst().questLog()) {
@@ -942,7 +958,10 @@ void GameMenu::execCommands(std::string str, bool isClick, KeyCodec::Action hint
       auto& i = hItems[id];
       if(i.handle != nullptr && i.handle->type==zenkit::MenuItemType::LISTBOX) {
         i.visible = (i.name==arg0);
-        if(i.visible && isClick) {
+        if(i.visible && isClick && isChronicle(i)) {
+          execChronicle(i);
+          }
+        else if(i.visible && isClick) {
           const uint32_t prev = curItem;
           curItem = id;
           ListViewDialog dlg(*this,i);
