@@ -1830,6 +1830,21 @@ async def serve(args: argparse.Namespace) -> int:
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info("scenario live_director: %d checks, %d failed", len(results), len(bad))
                 exit_code = 1 if bad else 0
+            elif args.scenario == "live_deals":
+                assert state.dialogue is not None and state.talk is not None and state.deals is not None
+                assert state.parley is not None and state.bounty is not None and state.guide is not None
+                assert state.meetings is not None and state.crimes is not None
+                assert state.crime_react is not None and state.crime_meet is not None
+                assert state.amends is not None and state.rumors is not None
+                assert state.people_knowledge is not None and args.trace_dir is not None
+                results = await scenarios.live_deals(
+                    link, state.dialogue, state.talk, state.deals, state.parley, state.bounty,
+                    state.guide, state.meetings, state.crimes, state.crime_react, state.crime_meet,
+                    state.amends, state.rumors, state.people_knowledge, str(Path(args.trace_dir).parent),
+                )
+                bad = {key: value for key, value in results.items() if not value.startswith("done")}
+                log.info("scenario live_deals: %d checks, %d failed", len(results), len(bad))
+                exit_code = 1 if bad else 0
             elif args.scenario == "live_lies":
                 assert state.dialogue is not None and state.talk is not None
                 assert state.sightings is not None and state.witnesses is not None
@@ -3271,6 +3286,7 @@ def main() -> None:
             "live_lies",
             "live_npc",
             "live_director",
+            "live_deals",
             "orders",
             "fight_reactions_wolf",
             "fight_reactions_sight",

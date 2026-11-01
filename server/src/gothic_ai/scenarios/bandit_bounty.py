@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from ..guide import Guide
     from ..talk import TalkDesk
     from ..turn import ToolOutcome
+    from .live import LiveCase
 
 ASK = "Браго, кто платит за мою голову?"
 PAYMENT = "Браго, дам сто пятьдесят золотых за имя заказчика."
@@ -37,38 +38,44 @@ async def bandit_bounty(
     deals: Deals,
     bounty: Bounty,
     guide: Guide,
+    *, live: LiveCase | None = None,
 ) -> dict[str, str]:
     """Given Brago's offers, check leverage, payment, vanilla effects and his guide."""
-    off = model_off(dialogue)
-    off.given(
-        "дано: главарь окликает чужака у стоянки", who=BRAGO, when=HAIL_CUE,
-        line="Эй, чужак. Подойди.",
-    )
-    reveal = ToolCall("tell_secret", {"secret": "client_name"})
-    off.given("дано: Браго пытается назвать заказчика без рычага", who=BRAGO, when=ASK, calls=[reveal])
-    off.silent("дано: Браго молчит (раскрытие тайны без рычага отклонено)", who=BRAGO, when=ASK)
-    off.given(
-        "дано: Браго продаёт имя заказчика за сто пятьдесят золотых", who=BRAGO, when=PAYMENT,
-        calls=[ToolCall("propose_deal", {
-            "npc_gives": [], "hero_gives": [{"item": GOLD, "count": 150}], "secret": "client_name",
-        })],
-    )
-    off.silent("дано: Браго молчит (тайна предложена)", who=BRAGO, when=PAYMENT)
-    off.silent(
-        "дано: Браго молчит (сделка состоялась)", who=BRAGO, when="Герой согласился, сделка состоялась",
-    )
-    off.given("дано: Браго называет оплаченного заказчика", who=BRAGO, when=NAME, calls=[reveal])
-    off.silent("дано: Браго молчит (имя заказчика раскрыто)", who=BRAGO, when=NAME)
-    off.given(
-        "дано: Браго предлагает отвести героя к CASTLEMINE_HUT", who=BRAGO, when=LEAD,
-        calls=[ToolCall("propose_deal", {"npc_gives": [], "hero_gives": [], "lead": DESTINATION})],
-    )
-    off.silent("дано: Браго молчит (проводы предложены)", who=BRAGO, when=LEAD)
-    off.silent("дано: Браго молчит (начало проводов)", who=BRAGO, when="ты ведёшь его")
+    if live is None:
+        off = model_off(dialogue)
+        off.given(
+            "дано: главарь окликает чужака у стоянки", who=BRAGO, when=HAIL_CUE,
+            line="Эй, чужак. Подойди.",
+        )
+        reveal = ToolCall("tell_secret", {"secret": "client_name"})
+        off.given("дано: Браго пытается назвать заказчика без рычага", who=BRAGO, when=ASK, calls=[reveal])
+        off.silent("дано: Браго молчит (раскрытие тайны без рычага отклонено)", who=BRAGO, when=ASK)
+        off.given(
+            "дано: Браго продаёт имя заказчика за сто пятьдесят золотых", who=BRAGO, when=PAYMENT,
+            calls=[ToolCall("propose_deal", {
+                "npc_gives": [], "hero_gives": [{"item": GOLD, "count": 150}], "secret": "client_name",
+            })],
+        )
+        off.silent("дано: Браго молчит (тайна предложена)", who=BRAGO, when=PAYMENT)
+        off.silent(
+            "дано: Браго молчит (сделка состоялась)", who=BRAGO, when="Герой согласился, сделка состоялась",
+        )
+        off.given("дано: Браго называет оплаченного заказчика", who=BRAGO, when=NAME, calls=[reveal])
+        off.silent("дано: Браго молчит (имя заказчика раскрыто)", who=BRAGO, when=NAME)
+        off.given(
+            "дано: Браго предлагает отвести героя к CASTLEMINE_HUT", who=BRAGO, when=LEAD,
+            calls=[ToolCall("propose_deal", {"npc_gives": [], "hero_gives": [], "lead": DESTINATION})],
+        )
+        off.silent("дано: Браго молчит (проводы предложены)", who=BRAGO, when=LEAD)
+        off.silent("дано: Браго молчит (начало проводов)", who=BRAGO, when="ты ведёшь его")
     await link.wait_world()
     results: dict[str, str] = {}
     applied_effects: list[dict[str, Any]] = []
     original_reflexes = talk.reflexes
+    original_hail_talk = deals.parley.talk if deals.parley is not None else None
+    if live is not None and deals.parley is not None:
+        # The case starts with the hero's question, before a separate hail decision.
+        deals.parley.talk = None
     original_tool = dialogue._tool
     outputs: list[tuple[str, ToolOutcome]] = []
     original_effect = link.story_effect
@@ -98,7 +105,8 @@ async def bandit_bounty(
         return outcome
 
     dialogue._tool = record_tool
-    log.info("given: дано: решающая модель выбирает слушать героя")
+    if live is None:
+        log.info("given: дано: решающая модель выбирает слушать героя")
     talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
     link.story_effect = record_effect
     try:
@@ -133,9 +141,51 @@ async def bandit_bounty(
         ), f"near={ready}, Cavalorn={away:.0f} cm ({parked.status}), hero_gold={hero_gold}"):
             return _logged(results)
 
-        await _until(lambda: dialogue.has_spoken(BRAGO), 10)
-        await _until(lambda: not dialogue.speaking(BRAGO), 10)
+        if live is None:
+            await _until(lambda: dialogue.has_spoken(BRAGO), 10)
+            await _until(lambda: not dialogue.speaking(BRAGO), 10)
+        prior = {row["id"] for row in live.records} if live is not None else set()
         talk.hear(ASK, BRAGO, {"via": "scenario"})
+        if live is not None:
+            def rows() -> list[dict[str, Any]]:
+                return [row for row in live.turns(BRAGO, ASK) if row["id"] not in prior]
+
+            def calls() -> list[dict[str, Any]]:
+                return [call for row in rows() for step in row.get("steps", [])
+                        for call in step.get("calls", [])]
+
+            def offered() -> bool:
+                offer = deals.open.get(BRAGO)
+                return offer is not None and bool(offer.secret) and any(
+                    call.get("name") == "propose_deal" and call.get("outcome") == "accepted"
+                    for call in calls()
+                )
+
+            def settled() -> bool:
+                accepted_reveal = any(call.get("name") == "tell_secret"
+                                      and call.get("outcome") == "accepted" for call in calls())
+                accepted_offer = any(call.get("name") == "propose_deal"
+                                     and call.get("outcome") == "accepted" for call in calls())
+                return bool(rows()) and (not accepted_reveal or bool(revealed())) and (
+                    not accepted_offer or BRAGO in deals.open
+                )
+
+            effects_settled = await _until(settled, 60)
+            offer = deals.open.get(BRAGO)
+            success, failed = effects_settled and offered() and not revealed(), bool(revealed())
+            live.finish("failure" if failed else "success" if success else "no_decision", evidence={
+                "decision": "free_name" if failed else "secret_offer" if success else (
+                    "pending_effect" if rows() and not effects_settled else "no_sale" if rows()
+                    else "no_decision"
+                ),
+                "effects_settled": effects_settled, "turn_timeout_s": 60,
+                "calls": calls(), "revealed": revealed(),
+                "offer": offer.terms() if offer is not None else None,
+                "secret": offer.secret if offer is not None else None,
+                "price": sum(g.count for g in offer.hero_gives if g.item == GOLD) if offer else None,
+                "words": [step.get("text", "") for row in rows() for step in row.get("steps", [])],
+            })
+            return _logged(results)
         refused = await _until(lambda: any(
             npc == BRAGO and outcome.status == "rejected" and "нет рычага" in outcome.output
             for npc, outcome in outputs
@@ -198,6 +248,8 @@ async def bandit_bounty(
                     for fact in deals.chronicle.facts("deal"))
         ), f"Y={pressed}, started={started}, moved={moved}")
     finally:
+        if deals.parley is not None:
+            deals.parley.talk = original_hail_talk
         talk.reflexes = original_reflexes
         dialogue._tool = original_tool
         link.story_effect = original_effect

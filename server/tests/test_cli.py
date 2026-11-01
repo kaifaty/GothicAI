@@ -24,9 +24,10 @@ from gothic_ai.llm.off import ModelOff, OffBackend
     ("deal", "chatgpt", "scenario deal requires --llm off"),
     ("haggle", "off", "scenario haggle is live: set LLM=chatgpt|openai|local"),
     *[(scenario, llm, f"scenario {scenario} is live: set LLM=chatgpt|openai|local")
-      for scenario in ("live_lies", "live_npc", "live_director") for llm in ("auto", "off")],
+      for scenario in ("live_lies", "live_deals", "live_npc", "live_director")
+      for llm in ("auto", "off")],
     *[(scenario, "chatgpt", "chatgpt") for scenario in ("live_npc", "live_director")],
-    ("live_lies", "fake", "invalid choice: 'fake'"),
+    *[(suite, "fake", "invalid choice: 'fake'") for suite in ("live_lies", "live_deals")],
     (None, "auto", "--llm auto requires --scenario"),
     *[
         (scenario, llm, "off" if llm == "auto" else f"scenario {scenario} requires --llm off")

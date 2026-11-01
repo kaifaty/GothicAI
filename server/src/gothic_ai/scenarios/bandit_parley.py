@@ -12,7 +12,7 @@ from ..brain.reflex import Reflexes
 from ..deals import GOLD
 from ..game import GameLink
 from ..llm import ToolCall
-from ..parley import EXPIRY_CUE, HAIL_CUE
+from ..parley import EXPIRY_CUE, HAIL_CUE, NO_REASON
 from ..protocol import GameMessage, NpcRoster
 from .common import FixedDecider, _logged, _m5b_player_weapon, _until, log, model_off
 
@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from ..parley import Parley
     from ..talk import TalkDesk
     from ..turn import ToolOutcome
+    from .live import LiveCase
 
 BRAGO, MATE = "BDT_1014_BANDIT_L", "BDT_1015_BANDIT_L"
 CAVALORN, PARK = "BAU_4300_ADDON_CAVALORN", "NW_FARM1_FIELD_06"
@@ -37,50 +38,56 @@ async def bandit_parley(
     talk: TalkDesk,
     deals: Deals,
     parley: Parley,
+    *, live: LiveCase | None = None,
 ) -> dict[str, str]:
     """Given Brago's demands and attacks, check rejection, payment and the gang's truce."""
-    off = model_off(dialogue)
-    off.given(
-        "дано: главарь окликает чужака у стоянки", who=BRAGO, when=HAIL_CUE,
-        line="Стоять. Ты кто такой?",
-    )
     attack = ToolCall("set_intent", {
         "goal": "fight", "target": "PLAYER", "attitude": "hostile", "agenda": None,
     })
-    off.given("дано: Браго хочет напасть при встрече", who=BRAGO, when=GREETING, calls=[attack])
-    off.given(
-        "дано: Браго требует сто золотых за тридцать секунд после отказа нападать без повода",
-        who=BRAGO, when=GREETING,
-        calls=[ToolCall("ultimatum", {"demand": "Заплати сто золотых за проход", "seconds": 30})],
-    )
-    off.silent("дано: Браго молчит (ультиматум поставлен)", who=BRAGO, when=GREETING)
-    off.given(
-        "дано: Браго нападает по истечении неотвеченного ультиматума",
-        who=BRAGO, when=EXPIRY_CUE, calls=[attack],
-    )
-    off.silent("дано: Браго молчит (нападение после срока принято)", who=BRAGO, when=EXPIRY_CUE)
-    off.given(
-        "дано: Браго предлагает четыре часа перемирия за сто золотых", who=BRAGO, when=PAYMENT,
-        calls=[ToolCall("propose_deal", {
-            "npc_gives": [], "hero_gives": [{"item": GOLD, "count": 100}], "truce": {"hours": 4},
-        })],
-    )
-    off.silent("дано: Браго молчит (перемирие предложено)", who=BRAGO, when=PAYMENT)
-    off.silent(
-        "дано: Браго молчит (сделка состоялась)", who=BRAGO, when="Герой согласился, сделка состоялась",
-    )
-    off.given("дано: товарищ Браго хочет напасть во время перемирия",
-              who=MATE, when=MATE_CHALLENGE, calls=[attack])
-    off.silent("дано: товарищ Браго молчит (нападение отклонено из-за перемирия)",
-               who=MATE, when=MATE_CHALLENGE)
-    off.given("дано: Браго нападает при обнажённом оружии героя",
-              who=BRAGO, when=ARMED_CHALLENGE, calls=[attack])
-    off.silent("дано: Браго молчит (нападение принято)", who=BRAGO, when=ARMED_CHALLENGE)
+    if live is None:
+        off = model_off(dialogue)
+        off.given(
+            "дано: главарь окликает чужака у стоянки", who=BRAGO, when=HAIL_CUE,
+            line="Стоять. Ты кто такой?",
+        )
+        off.given("дано: Браго хочет напасть при встрече", who=BRAGO, when=GREETING, calls=[attack])
+        off.given(
+            "дано: Браго требует сто золотых за тридцать секунд после отказа нападать без повода",
+            who=BRAGO, when=GREETING,
+            calls=[ToolCall("ultimatum", {"demand": "Заплати сто золотых за проход", "seconds": 30})],
+        )
+        off.silent("дано: Браго молчит (ультиматум поставлен)", who=BRAGO, when=GREETING)
+        off.given(
+            "дано: Браго нападает по истечении неотвеченного ультиматума",
+            who=BRAGO, when=EXPIRY_CUE, calls=[attack],
+        )
+        off.silent("дано: Браго молчит (нападение после срока принято)", who=BRAGO, when=EXPIRY_CUE)
+        off.given(
+            "дано: Браго предлагает четыре часа перемирия за сто золотых", who=BRAGO, when=PAYMENT,
+            calls=[ToolCall("propose_deal", {
+                "npc_gives": [], "hero_gives": [{"item": GOLD, "count": 100}], "truce": {"hours": 4},
+            })],
+        )
+        off.silent("дано: Браго молчит (перемирие предложено)", who=BRAGO, when=PAYMENT)
+        off.silent(
+            "дано: Браго молчит (сделка состоялась)", who=BRAGO, when="Герой согласился, сделка состоялась",
+        )
+        off.given("дано: товарищ Браго хочет напасть во время перемирия",
+                  who=MATE, when=MATE_CHALLENGE, calls=[attack])
+        off.silent("дано: товарищ Браго молчит (нападение отклонено из-за перемирия)",
+                   who=MATE, when=MATE_CHALLENGE)
+        off.given("дано: Браго нападает при обнажённом оружии героя",
+                  who=BRAGO, when=ARMED_CHALLENGE, calls=[attack])
+        off.silent("дано: Браго молчит (нападение принято)", who=BRAGO, when=ARMED_CHALLENGE)
     await link.wait_world()
     results: dict[str, str] = {}
     entries: list[dict[str, Any]] = []
     native_attacks: list[tuple[int, str]] = []
     original_reflexes = talk.reflexes
+    original_hail_talk = parley.talk
+    if live is not None:
+        # Start at the rejected attack, before an autonomous hail can set an ultimatum.
+        parley.talk = None
     original_tool = dialogue._tool
     outputs: list[tuple[str, ToolOutcome]] = []
     original_sink = dialogue.journal.sink
@@ -116,7 +123,8 @@ async def bandit_parley(
         return outcome
 
     dialogue._tool = record_tool
-    log.info("given: дано: решающая модель выбирает слушать героя")
+    if live is None:
+        log.info("given: дано: решающая модель выбирает слушать героя")
     talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
     dialogue.journal.sink = keep
     link.listeners.append(record)
@@ -152,6 +160,54 @@ async def bandit_parley(
             ready and parked.status == "arrived" and away > 6000 and hero_gold == 200
             and brago.player and brago.player.distance <= 400
         ), f"near={ready}, Cavalorn={away:.0f} cm ({parked.status}), hero_gold={hero_gold}"):
+            return _logged(results)
+
+        if live is not None:
+            conv = dialogue.open(BRAGO, brago.npc.name, warm=False)
+            rejection = dialogue._set_intent(conv, attack, brago)
+            if not check("first_fight_rejected", rejection.status == "rejected"
+                         and rejection.output == f"Отклонено: {NO_REASON}"
+                         and not attacks() and not native_attacks, rejection.output):
+                return _logged(results)
+            if not check("partner", talk.begin(BRAGO, brago.npc.name)):
+                return _logged(results)
+            prior = {row["id"] for row in live.records}
+            dialogue.event_turn(
+                BRAGO, f"Герой подошёл и сказал: «{GREETING}» Ты попытался напасть. {rejection.output}",
+                tools={"ultimatum", "propose_deal", "set_intent", "recall"}, kind="parley_rejected",
+            )
+
+            def rows() -> list[dict[str, Any]]:
+                return [row for row in live.turns(BRAGO) if row["id"] not in prior]
+
+            def calls() -> list[dict[str, Any]]:
+                return [call for row in rows() for step in row.get("steps", [])
+                        for call in step.get("calls", [])]
+
+            def repeated_attack() -> bool:
+                return any(call.get("name") == "set_intent" and call.get("outcome") == "rejected"
+                           and call.get("result") == f"Отклонено: {NO_REASON}" for call in calls())
+
+            def terms() -> bool:
+                return any(call.get("outcome") == "accepted" and (
+                    call.get("name") == "ultimatum" and parley.ultimatum(BRAGO) is not None
+                    or call.get("name") == "propose_deal" and BRAGO in deals.open
+                ) for call in calls())
+
+            await _until(lambda: bool(rows()) and (repeated_attack() or terms()), 60)
+            success, failed = terms(), repeated_attack()
+            live.finish("failure" if failed else "success" if success else "no_decision", evidence={
+                "decision": "repeated_unprovoked_attack" if failed else "terms" if success else "no_decision",
+                "initial_rejection": {
+                    "name": attack.name, "arguments": attack.arguments,
+                    "outcome": rejection.status, "result": rejection.output,
+                },
+                "calls": calls(),
+                "ultimatum": parley.ultimatum(BRAGO),
+                "offer": deals.open[BRAGO].terms() if BRAGO in deals.open else None,
+                "attacks": attacks(), "native_attacks": native_attacks,
+                "words": [step.get("text", "") for row in rows() for step in row.get("steps", [])],
+            })
             return _logged(results)
 
         await _until(lambda: dialogue.has_spoken(BRAGO), 10)
@@ -249,6 +305,7 @@ async def bandit_parley(
         ), f"journal_attacks={attacks()[journal_mark:]}, "
            f"truce_broken={deals.chronicle.facts('truce_broken')}")
     finally:
+        parley.talk = original_hail_talk
         talk.reflexes = original_reflexes
         dialogue._tool = original_tool
         dialogue.journal.sink = original_sink

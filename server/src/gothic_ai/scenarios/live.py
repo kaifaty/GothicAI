@@ -47,6 +47,17 @@ CASE_SPECS = {
         CaseSpec("amends_storylet", "A lie rumor opens a storylet with a fine within the limits", 3),
         CaseSpec("feat_award", "The chronicler awards a feat using Brago's actual killing as proof", 2),
     ),
+    "live_deals": (
+        CaseSpec("money_unasked", "Xardas offers no gold during 20 seconds without a request", 1),
+        CaseSpec("money_asked", "Xardas proposes an accepted gold deal within his purse", 2),
+        CaseSpec("parley_terms", "After an unprovoked attack is rejected, Brago offers terms", 3),
+        CaseSpec("bounty_leverage", "Brago sells his secret instead of revealing it for free", 2),
+        CaseSpec("cheat_keeps", "Dishonest Lobart answers without paying the broken promise", 1),
+        CaseSpec("lead_offer", "Maleth proposes a deal to lead the hero to the mill", 1),
+        CaseSpec("meet_agree", "Observe a meeting offer, another time, or refusal", 1),
+        CaseSpec("amends_forgive", "Observe Andre's forgiveness offer and price, or refusal", 2),
+        CaseSpec("crime_demand", "The Amends model writes an accepted demand without fallback", 3),
+    ),
     "live_lies": (
         CaseSpec("seen_alibi", "Lobart catches the city alibi using his own farm sighting", 2),
         CaseSpec("trace_age", "Lobart catches the age lie using the fresh arrow trace", 2),

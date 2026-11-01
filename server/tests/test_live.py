@@ -8,21 +8,29 @@ from gothic_ai.scenarios.live import LiveSuite, estimate, selected_cases, summar
 from gothic_ai.trace import TraceWriter
 
 
-def test_live_lies_selection_and_recorded_cases(tmp_path, monkeypatch):
-    names = (
+@pytest.mark.parametrize(("suite_name", "names", "outcomes"), [
+    ("live_lies", (
         "seen_alibi", "trace_age", "trace_control", "witness_alibi", "vcheck_claim",
         "crime_testimony", "frame_belief", "cover_offer",
+    ), ("success", "failure", "success", "no_decision", "failure", "success", "observed", "observed")),
+    ("live_deals", (
+        "money_unasked", "money_asked", "parley_terms", "bounty_leverage", "cheat_keeps",
+        "lead_offer", "meet_agree", "amends_forgive", "crime_demand",
+    ), (
+        "success", "failure", "no_decision", "success", "success", "failure",
+        "observed", "observed", "success",
+    )),
+])
+def test_live_selection_and_recorded_cases(tmp_path, monkeypatch, suite_name, names, outcomes):
+    assert tuple(spec.name for spec in selected_cases(suite_name)) == names
+    assert tuple(spec.name for spec in selected_cases(suite_name, f"{names[-1]}, {names[0]}")) == (
+        names[0], names[-1],
     )
-    assert tuple(spec.name for spec in selected_cases("live_lies")) == names
-    assert tuple(spec.name for spec in selected_cases("live_lies", "cover_offer, seen_alibi")) == (
-        "seen_alibi", "cover_offer",
-    )
-    with pytest.raises(ValueError, match="unknown CASES for live_lies: broken"):
-        selected_cases("live_lies", "broken")
+    with pytest.raises(ValueError, match=f"unknown CASES for {suite_name}: broken"):
+        selected_cases(suite_name, "broken")
     monkeypatch.delenv("CASES", raising=False)
     trace = TraceWriter(tmp_path / "traces")
-    suite = LiveSuite("live_lies", trace)
-    outcomes = ("success", "failure", "success", "no_decision", "failure", "success", "observed", "observed")
+    suite = LiveSuite(suite_name, trace)
     for name, outcome in zip(names, outcomes, strict=True):
         with suite.case(name) as case:
             trace.write({"type": "turn", "id": name, "steps": [{}], "events": []})
@@ -229,6 +237,127 @@ async def test_live_cave_normalizes_the_call_and_waits_for_actual_arrival(
     assert suite.results() == {"cave_unnamed": f"done ({outcome})"}
     [case] = json.loads((tmp_path / "live.json").read_text())["cases"]
     assert case["evidence"]["inside"] is arrived
+
+
+@pytest.mark.parametrize(("name", "tool_outcome", "outcome"), [
+    ("money_unasked", "rejected", "failure"),
+    ("money_unasked", None, "success"),
+    ("money_asked", "accepted", "success"),
+    ("money_asked", "rejected", "failure"),
+])
+async def test_live_money_records_normalized_actions_without_givens(
+    tmp_path, monkeypatch, name, tool_outcome, outcome,
+):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, Mock
+
+    from gothic_ai.contracts import Give
+    from gothic_ai.scenarios import deals as scenario
+
+    monkeypatch.setenv("CASES", name)
+    monkeypatch.setattr(scenario, "model_off", Mock(side_effect=AssertionError("live uses no givens")))
+    trace = TraceWriter(tmp_path / "traces")
+    suite = LiveSuite("live_deals", trace)
+    npc, reflexes = "NONE_100_XARDAS", object()
+    deal = SimpleNamespace(
+        npc_gives=(Give(scenario.GOLD, 30, "Gold"),), npc_later=None, terms=lambda: "30 gold",
+    )
+    deals = SimpleNamespace(
+        purse=SimpleNamespace(rules={npc: {"gift": 50, "loan": 150}}), open={},
+    )
+
+    def reply(text=None):
+        calls = [{
+            "name": "propose_deal", "outcome": tool_outcome,
+            "arguments": {"npc_gives": [{"item": scenario.GOLD.lower(), "count": 30}]},
+        }] if tool_outcome else []
+        trace.write({
+            "type": "turn", "id": "money", "npc": npc, "status": "completed",
+            "trigger": {"text": text or ""},
+            "steps": [{"text": "Держи двести золотых.", "calls": calls}],
+        })
+        if tool_outcome == "accepted":
+            deals.open[npc] = deal
+
+    async def debug(command, **kwargs):
+        if command == "type":
+            reply(kwargs["text"])
+
+    async def sleep(seconds):
+        if seconds == 20:
+            reply()
+
+    async def until(check, timeout):
+        return bool(check())
+
+    monkeypatch.setattr(scenario.asyncio, "sleep", sleep)
+    monkeypatch.setattr(scenario, "_until", until)
+    link = SimpleNamespace(
+        session=object(), wait_world=AsyncMock(), evaluate=AsyncMock(return_value=200),
+        debug=AsyncMock(side_effect=debug),
+    )
+    talk = SimpleNamespace(people={npc: SimpleNamespace(name="Xardas", distance=250)}, reflexes=reflexes)
+    with suite.case(name) as case:
+        result = await scenario.xardas_money(
+            link, SimpleNamespace(conversations={}), talk, deals, live=case,
+        )
+    assert all(value.startswith("done") for value in result.values())
+    assert suite.results() == {name: f"done ({outcome})"}
+    [record] = json.loads((tmp_path / "live.json").read_text())["cases"]
+    assert record["outcome"] == outcome
+    assert record["requests"] == 1
+    assert record["evidence"]["words"] == ["Держи двести золотых."]
+    assert bool(record["evidence"]["money_calls"]) == (tool_outcome is not None)
+    if name == "money_unasked":
+        assert talk.reflexes is reflexes
+
+
+@pytest.mark.parametrize(("text", "speaker", "outcome"), [
+    ("", None, "no_decision"),
+    ("I will not pay.", None, "no_decision"),
+    ("", "BAU_952_VINO", "no_decision"),
+    ("I will not pay.", "BAU_950_LOBART", "success"),
+])
+async def test_live_cheat_requires_actual_speech(tmp_path, monkeypatch, text, speaker, outcome):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from gothic_ai.scenarios import cheat as scenario
+
+    monkeypatch.setenv("CASES", "cheat_keeps")
+    trace = TraceWriter(tmp_path / "traces")
+    suite = LiveSuite("live_deals", trace)
+    dialogue = SimpleNamespace(on_said=[], conversations={}, speaking=lambda _: False)
+
+    async def debug(command, **kwargs):
+        assert command == "type"
+        trace.write({
+            "type": "turn", "id": "reply", "npc": scenario.LOBART, "status": "completed",
+            "trigger": {"text": kwargs["text"].replace("ё", "е")},
+            "steps": [{"text": text, "calls": []}],
+        })
+        if speaker is not None:
+            for listener in dialogue.on_said:
+                listener(speaker, "Lobart" if speaker == scenario.LOBART else "Vino",
+                         "I will not pay.", "player", None)
+
+    async def until(check, timeout):
+        return bool(check())
+
+    monkeypatch.setattr(scenario, "_until", until)
+    link = SimpleNamespace(debug=AsyncMock(side_effect=debug), evaluate=AsyncMock(return_value=65))
+    chronicle = SimpleNamespace(facts=lambda _: [])
+    with suite.case("cheat_keeps") as case:
+        await scenario._record_live_cheat(link, dialogue, chronicle, case, "debt", 65)
+
+    assert suite.results() == {"cheat_keeps": f"done ({outcome})"}
+    [record] = json.loads((tmp_path / "live.json").read_text())["cases"]
+    assert record["evidence"]["turn_completed"]
+    assert record["evidence"]["effects_finished"]
+    assert record["evidence"]["gold"] == [65, 65]
+    assert bool(record["evidence"]["speech"]) == (speaker == scenario.LOBART)
+    assert record["evidence"]["decision"] == ("withheld" if outcome == "success" else "no_answer")
+    assert dialogue.on_said == []
 
 
 @pytest.mark.parametrize("suite_case", ["witness_alibi", "crime_testimony"])

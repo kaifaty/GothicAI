@@ -1301,12 +1301,13 @@ async def amends_storylet(
 
     if off is not None:
         amends.model.propose = given_amends  # type: ignore[method-assign]
-    amends.director.pacing.cooldown_s = 2.0
-    if live is None:
+        amends.director.pacing.cooldown_s = 2.0
         log.info("given: дано: решающая модель оставляет NPC слушать героя")
+    if live is None or deals is not None:
         talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
     await link.story_effect(giver, [{"do": "set", "var": RUEBEN, "value": 1}])
-    if live is not None:
+    if live is not None and deals is None:
+        amends.director.pacing.cooldown_s = 2.0
         from ..amends import MAX_GOLD
         from ..quests import Lie, caught
 
@@ -1334,6 +1335,63 @@ async def amends_storylet(
         )
         return _logged(results)
 
+    if live is not None:
+        if deals is None:
+            raise GameError("live amends_forgive requires Deals")
+        state = await link.story_state()
+        day = {key: state[key] for key in ("day", "hour", "minute") if key in state}
+        accusation = {
+            "fact": "caught", "npc": giver, "name": "Лобарт", "quest": RUEBEN,
+            "title": "Репа для Лобарта", "how": "видел сам: репа осталась на поле", **day,
+        }
+        rumor = {
+            "fact": "rumor", "kind": "caught", "quest": RUEBEN, "about": giver,
+            "about_name": "Лобарт", "from": giver, "from_name": "Лобарт", "to": ANDRE,
+            "title": accusation["title"], **day,
+        }
+        # The accusation and its delivery precede this conversation. Keep the fixture from
+        # starting an unrelated Amends writing turn; forgiveness is the model's own decision.
+        amends.chronicle.on_fact.remove(amends._on_fact)
+        try:
+            amends.chronicle.record(accusation)
+            amends.chronicle.record(rumor)
+        finally:
+            amends.chronicle.on_fact.append(amends._on_fact)
+        await link.debug("skip_important", near=ANDRE)
+        await link.debug("player_goto", to=ANDRE, distance=250)
+        if not await _until(lambda: ANDRE in talk.people and talk.people[ANDRE].distance <= 600, 20):
+            return _logged({"roster": f"failed ({ANDRE} is not near the hero)"})
+        request = f"{talk.people[ANDRE].name}, прости меня за вранье. Чем мне загладить вину?"
+        await link.debug("type", text=request)
+        effects_settled = await _until(
+            lambda: bool(live.turns(ANDRE, request)) and (
+                not any(call.get("name") == "propose_deal" and call.get("outcome") == "accepted"
+                        for call in live.calls(ANDRE)) or ANDRE in deals.open
+            ),
+            90,
+        )
+        rows = live.turns(ANDRE, request)
+        calls = [call for row in rows for step in row.get("steps", [])
+                 for call in step.get("calls", [])]
+        deal = deals.open.get(ANDRE)
+        key = f"caught:{giver}:{RUEBEN}"
+        offered = bool(
+            deal is not None and any(ref.key == key for ref in deal.forgive)
+            and any(call.get("name") == "propose_deal" and call.get("outcome") == "accepted"
+                    for call in calls)
+        )
+        live.finish("observed" if effects_settled else "failure" if rows else "no_decision", evidence={
+            "decision": "pending_effect" if rows and not effects_settled else (
+                "forgiveness_offered" if offered else "no_forgiveness_offer"
+            ),
+            "effects_settled": effects_settled,
+            "fixture": [accusation, rumor], "calls": calls,
+            "terms": deal.terms() if deal is not None else None,
+            "price": deal.gold() if offered else None,
+            "words": [step.get("text", "") for row in rows
+                      for step in row.get("steps", []) if step.get("text")],
+        })
+        return _logged(results)
     assert off is not None
     await link.debug("player_goto", to=giver, distance=250)
     if not await _until(lambda: giver in talk.people and talk.people[giver].distance <= 600, 20):
