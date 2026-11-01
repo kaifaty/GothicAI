@@ -1363,7 +1363,7 @@ async def m5e_talk(
     await _until(lambda: not dialogue.speaking(npc), 10)
     off.given(
         "дано: реплика Ксардаса для прерывания очереди", who=npc,
-        when="Расскажи всё о драконах", line=story,
+        when="Расскажи все о драконах", line=story,
     )
     t0 = time.monotonic()
     await link.debug("type", text="Расскажи всё о драконах")
