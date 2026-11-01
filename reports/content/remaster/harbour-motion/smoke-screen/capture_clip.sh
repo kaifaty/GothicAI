@@ -4,10 +4,12 @@
 #   on base 15cdc40c; frames and clips (MP4) to captures/<ROUND>/<SET>. Sets come from content-staging as they are:
 #   no OPENGOTHIC_TEXTURES, so the own smoke sprite must come from the set's content/materials (E4).
 #   ENGINE=gothic-ai/... — the game build (default: the shared remaster-engine).
+#   LAYERS=DIR — a set with DIR/<SET>/particles.d is BASE_SET (default harbour-motion-4, hard links on Ryzen) with
+#   those particle descriptions (gen_r7.py); other sets come from content-staging.
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/../../../../.." && pwd)"
 TASK=gothic-ai/remaster-harbour-motion; HOST=ryzen; STAGING=~/.local/share/gothic-ai/content-staging
-ENGINE="${ENGINE:-gothic-ai/remaster-engine}"
+ENGINE="${ENGINE:-gothic-ai/remaster-engine}"; LAYERS="${LAYERS:-}"; BASE_SET="${BASE_SET:-harbour-motion-4}"
 # the layer checks keep the shared build's content-convert: the game build may have only Gothic2Notr
 BUILD=gothic-ai/remaster-engine/build/opengothic; BENCH="$ROOT/scripts/content/harbour-motion-clip.bench"
 BASE_ENV="OPENGOTHIC_BASE_CACHE=\$HOME/$TASK/base-cache OPENGOTHIC_BASE_STORE=/mnt/shared/$TASK"
@@ -18,8 +20,14 @@ cmd="set -o pipefail; fp=\$(cat $TASK/base-fp.txt); export $BASE_ENV OPENGOTHIC_
 cmd+=" QUALITY_PILOT_TIMEOUT=600 QUALITY_PILOT_TASK=$TASK QUALITY_PILOT_BUILD_TASK=$ENGINE; rc=0; mkdir -p $TASK/out/$round"
 cmd+="; b=\$OPENGOTHIC_BASE_CACHE/\$fp"
 for v in "$@"; do
-  rsync -a --delete "$STAGING/$v/" "$HOST:$TASK/content/$v/" || exit 1
-  if [[ -d "$STAGING/$v/particles.d" ]]; then
+  if [[ -n "$LAYERS" && -d "$LAYERS/$v/particles.d" ]]; then
+    rsync -a --delete "$STAGING/$BASE_SET/" "$HOST:$TASK/content/$BASE_SET/" || exit 1
+    ssh -T $HOST "rm -rf ~/$TASK/content/$v && cp -al ~/$TASK/content/$BASE_SET ~/$TASK/content/$v" || exit 1
+    rsync -a "$LAYERS/$v/particles.d/" "$HOST:$TASK/content/$v/particles.d/" || exit 1
+  else
+    rsync -a --delete "$STAGING/$v/" "$HOST:$TASK/content/$v/" || exit 1
+  fi
+  if [[ -d "$STAGING/$v/particles.d" || -n "$LAYERS" && -d "$LAYERS/$v/particles.d" ]]; then
     cmd+="; $BUILD/content-convert check-particles \$b $TASK/content/$v || rc=1"
     cmd+="; $BUILD/content-convert check-vob-layer \$b/worlds/NEWWORLD $TASK/content/$v/worlds/NEWWORLD/vobs.d/harbour-motion.json $TASK/content/$v || rc=1"
   fi
