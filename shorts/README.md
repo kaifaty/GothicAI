@@ -20,7 +20,11 @@ and ending against that voice, masters it to −14 LUFS, and checks the decoded 
 included). All stems are averaged to dual mono before levelling and loudness measurements, keeping a
 stereo layout. Published AAC has two identical channels; the `dual_mono` gate requires max L−R ≤ −90 dBFS.
 AAC uses AudioToolbox where available; the FFmpeg fallback uses 256k with PNS and intensity stereo
-disabled and M/S forced to keep noisy audio in dual mono.
+disabled and M/S forced to keep noisy audio in dual mono. With forced M/S a silent channel loses its side
+and decodes as a copy of the other, 6 dB down, so on the fallback `dual_mono` checks the encoder only; the
+mix itself is dual mono by construction. Lossy AAC is not bit-exact across FFmpeg builds and CPUs: the
+same mix can peak 0.07 dB apart on Mac (FFmpeg 9, arm64) and Ryzen (FFmpeg 8, amd64), and the gates
+judge each decoded file as it is.
 It prints the levels table and writes `short-<lang>.levels.json`; a failed check leaves no
 published MP4. Old takes without NPC stems or verified `musicVolume=0` and `worldSounds=0` must be filmed again. `--lang en`
 changes the captions and keeps the same sound.
@@ -433,4 +437,11 @@ channel but the project's (GothicAI, `UCbeAoPh3V7yFVpiuWNI-wkw`; `--channel` or 
   channels and reject voiced publication when the decoded `dual_mono` gate exceeds −90 dBFS L−R.
 - 2026-10-22: disable PNS and intensity stereo and force M/S in the 256k AAC fallback; use the shared
   encoder for comparison parts and stings, and check unvoiced comparison AAC with `dual_mono`.
+- 2026-11-01: `test_levels.py` passes on Ryzen (Ubuntu 26.04, FFmpeg 8, amd64) as on the Mac. The gates were
+  right on Linux; two tests assumed one encoder's output. The rounded-summary peak test masters through
+  lossless ALAC (its 192k AAC peak was −0.99 dBTP on the Mac, −0.92 on Ryzen), and the channel test makes
+  the right channel weaker instead of silent and runs on the fallback too: forced M/S decoded a silent
+  channel as dual mono. The whole shorts suite passes there too (10 tests skip without macOS fonts).
+  FFmpeg 6.1 (Ubuntu 24.04) still differs: its encoder clicks, which the gate rejects, and its mixing
+  truncates WAV.
 

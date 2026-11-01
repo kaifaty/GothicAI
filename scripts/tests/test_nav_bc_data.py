@@ -18,6 +18,26 @@ SPEC.loader.exec_module(data)
 demos = data.nav_demos
 
 
+def test_circling_analysis_separates_labels_controllers_and_similar_inputs():
+    spec = importlib.util.spec_from_file_location("circling", MODULE_PATH.with_name("nav_dagger_circling.py"))
+    analysis = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(analysis)
+    keys = np.asarray([[0, 0, 1, 1, 0, 0], [0, 0, -1, 1, 0, 0],
+                       [1, 0, 1, 0, 0, 0], [0, 0, -1, 0, 0, 0]], float)
+    counts = analysis.action_counts(keys)
+    assert (counts["forward"], counts["turn_only"], counts["walk"], counts["flips"]) == (1, 3, 2, 3)
+    # Filtering a controller must not create an adjacent pair across the other controller.
+    assert analysis.action_counts(keys, np.asarray([True, False, True, False]))["adjacent"] == 0
+    direction = np.tile([0., 0., 1.], (4, 1))
+    distance = np.asarray([1000., 1020., 1100., 1000.])
+    maps = np.zeros((4, 112), np.float32)
+    maps[3] = .2
+    matched, pairs, examples = analysis.close_opposite_pairs(direction, distance, maps, keys[:, 2])
+    assert matched.tolist() == [True, True, False, False]
+    assert pairs == 1 and examples[0]["goal_distance_difference_cm"] == 20
+    assert analysis.path_distance(np.asarray([50., 30.]), [[0, 0], [100, 0]]) == 30
+
+
 def fixture_records(count=3):
     records = np.zeros(count, dtype=demos.RECORD_V2_DTYPE)
     layout = np.tile(np.array([0, 0, 1000], dtype=np.float32), (demos.RAY_COUNT, 1))
