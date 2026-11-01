@@ -1361,6 +1361,12 @@ NpcKeys::KeyState select(Episode& ep,NavPolicy::Result result) {
   keys.turn=float(int(ep.selectedIndices[2])-1);keys.walk=ep.selectedIndices[3]!=0;
   keys.jump=ep.policy->weightVersion()>=2?ep.selectedIndices[4]==1:ep.selectedIndices[4]!=0;
   keys.climb=ep.policy->weightVersion()>=2?ep.selectedIndices[4]==2:ep.selectedIndices[5]!=0;
+  if(const auto* pace=std::getenv("OPENGOTHIC_NAV_FORCE_PACE")) {
+    const std::string_view forcedPace=pace;
+    if(forcedPace=="walk")keys.walk=true;
+    else if(forcedPace=="run")keys.walk=false;
+    else if(!forcedPace.empty())throw std::runtime_error("navdemos: OPENGOTHIC_NAV_FORCE_PACE must be walk or run");
+  }
   return keys;
 }
 std::array<float,2> movementDirection(const NpcKeys::KeyState& keys) {
