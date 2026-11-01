@@ -1,6 +1,8 @@
 #include "worldsound.h"
+#include "loadprobe.h"
 
 #include <Tempest/SoundEffect>
+#include <cstdlib>
 
 #include "camera.h"
 #include "game/definitions/musicdefinitions.h"
@@ -18,6 +20,14 @@
 #include "frameprofile.h"
 
 namespace {
+bool lazyVobSounds() {
+  static const bool enabled = [] {
+    const char* value = std::getenv("OPENGOTHIC_LAZY_VOB_SOUNDS");
+    return value==nullptr || std::string_view(value)!="0";
+    }();
+  return enabled;
+  }
+
 bool usesSimulationAudioClock() {
   // isActive covers load-finalize animation updates, before body tracing starts. Normal play keeps
   // the existing OpenAL lifecycle; a benchmark must not change gameplay when rendering is slower.
@@ -30,8 +40,8 @@ const float WorldSound::talkRange = 2000;
 
 struct WorldSound::WSound final {
   Sound          current;
-  const SoundFx* eff0 = nullptr;
-  const SoundFx* eff1 = nullptr;
+  const SoundFx* eff[2] = {};
+  std::string    pending[2];
 
   std::string    vobName;
   Tempest::Vec3  pos;
@@ -103,6 +113,7 @@ WorldSound::~WorldSound() {
   }
 
 void WorldSound::setDefaultZone(const asset::VZoneMusic &vob) {
+  LoadProbe::Vobs::Scope probe("sound");
   def.reset(new Zone());
   def->bbox[0] = {vob.bbox.min.x, vob.bbox.min.y, vob.bbox.min.z};
   def->bbox[1] = {vob.bbox.max.x, vob.bbox.max.y, vob.bbox.max.z};
@@ -110,6 +121,7 @@ void WorldSound::setDefaultZone(const asset::VZoneMusic &vob) {
   }
 
 void WorldSound::addZone(const asset::VZoneMusic &vob) {
+  LoadProbe::Vobs::Scope probe("sound");
   Zone z;
   z.bbox[0] = {vob.bbox.min.x, vob.bbox.min.y, vob.bbox.min.z};
   z.bbox[1] = {vob.bbox.max.x, vob.bbox.max.y, vob.bbox.max.z};
@@ -119,13 +131,17 @@ void WorldSound::addZone(const asset::VZoneMusic &vob) {
   }
 
 void WorldSound::addSound(const asset::VSound &vob) {
+  LoadProbe::Vobs::Scope probe("sound");
   WSound s;
   s.vobName   = vob.vob_name;
   s.loop      = vob.mode==asset::SoundMode::LOOP;
   s.active    = vob.initially_playing;
   s.delay     = uint64_t(vob.random_delay * 1000);
   s.delayVar  = uint64_t(vob.random_delay_var * 1000);
-  s.eff0      = Gothic::inst().loadSoundFx(vob.sound_name);
+  if(lazyVobSounds())
+    s.pending[0] = vob.sound_name;
+  else
+    s.eff[0] = Gothic::inst().loadSoundFx(vob.sound_name);
 
   s.pos       = {vob.position.x,vob.position.y,vob.position.z};
   s.sndRadius = vob.radius;
@@ -137,7 +153,10 @@ void WorldSound::addSound(const asset::VSound &vob) {
 
     s.sndStart = gtime(int(b),int(b*60)%60);
     s.sndEnd   = gtime(int(e),int(e*60)%60);
-    s.eff1     = Gothic::inst().loadSoundFx(prDay.sound_name2);
+    if(lazyVobSounds())
+      s.pending[1] = prDay.sound_name2;
+    else
+      s.eff[1] = Gothic::inst().loadSoundFx(prDay.sound_name2);
     } else {
     s.sndStart = gtime(0,0);
     s.sndEnd   = gtime(24,0);
@@ -232,9 +251,24 @@ void WorldSound::tick(Npc& player) {
   game.updateListenerPos(cx);
 
   const bool worldSounds = Gothic::settingsGetI("SOUND","worldSounds")!=0;
+  unsigned loadsLeft = 2;
   for(auto& i:worldEff) {
     if(!worldSounds)
       break;
+
+    // Prefetch 20 m beyond the radius; playback still starts at radius + 8 m.
+    const float preloadDist = i.sndRadius + 2000.f;
+    if((i.pos-plPos).quadLength()<preloadDist*preloadDist) {
+      for(size_t s=0;s<2 && loadsLeft>0;++s) {
+        if(i.pending[s].empty())
+          continue;
+        FrameProfile::Scope loading(FrameProfile::Zone::VobSoundLoad);
+        i.eff[s] = Gothic::inst().loadSoundFx(i.pending[s]);
+        // An unsuccessful load is final, just as with eager loading.
+        i.pending[s].clear();
+        --loadsLeft;
+        }
+      }
     if(!i.active || !i.current.isFinished())
       continue;
     if(i.current.isFinished())
@@ -251,9 +285,9 @@ void WorldSound::tick(Npc& player) {
 
     const SoundFx* snd = nullptr;
     if(i.sndStart<= time && time<i.sndEnd) {
-      snd = i.eff0;
+      snd = i.eff[0];
       } else {
-      snd = i.eff1;
+      snd = i.eff[1];
       }
 
     if(snd==nullptr)

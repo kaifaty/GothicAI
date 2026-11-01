@@ -1,4 +1,4 @@
-import React from 'react';
+import React, {createContext, useContext} from 'react';
 import {
   AbsoluteFill,
   Audio,
@@ -23,11 +23,16 @@ import {CombatOverlay} from './parts/CombatOverlay';
 import {sourceFrame, zoomScale, type Viewport} from './parts/followMath';
 import {enterStyle, exitStyle, flashOpacity, type TransitionType} from './parts/motion';
 import {holdPush} from './parts/timing';
+import {Sfx} from './parts/Sfx';
 import {Sight} from './parts/Sight';
 import {Tags} from './parts/Tags';
 import {Hook, Texts} from './parts/Texts';
 import type {Beat, Plan} from './schema';
-import {COLOR, FONT, OUTLINE, SAFE, WIDE_SAFE} from './theme';
+import {CARD_LIFT, COLOR, FONT, OUTLINE, SAFE, WIDE_SAFE} from './theme';
+
+// the safe-zone check's render (plan.mask): only what we draw over the picture, on black. The footage, the stills,
+// a flash, the brand sting and the sound stay out; a card's dark ground and the shade bands stay under its threshold
+const Mask = createContext(false);
 
 // the voice speaks in these spans (seconds of the short): the game ducks under them
 type Spans = [number, number][];
@@ -56,6 +61,7 @@ const Picture: React.FC<{
 }> = ({src, from, beat, width, height, volume}) => {
   const {fps} = useVideoConfig();
   const t = useCurrentFrame() / fps;
+  const mask = useContext(Mask);
   const z = beat.zoom;
   const s = zoomScale(z, t);
   const style: React.CSSProperties = {
@@ -65,6 +71,9 @@ const Picture: React.FC<{
     transform: `scale(${s})`,
     transformOrigin: z ? `${z.x}px ${z.y}px` : 'center',
   };
+  if (mask) {
+    return null;
+  }
   if (src.endsWith('.png') || src.endsWith('.jpg')) {
     return <Img src={staticFile(src)} style={style} />;
   }
@@ -135,6 +144,8 @@ const BeatView: React.FC<{
     else if (card.type === 'ticks') body = <TicksView spec={card} />;
     else if (card.type === 'grid') body = <GridView spec={card} />;
     else if (card.type === 'flow') body = <FlowView spec={card} />;
+    // a tall card is lifted clear of the captions (its source line compensates: SOURCE_BOTTOM)
+    if (!wide) body = <AbsoluteFill style={{transform: `translateY(${-CARD_LIFT}px)`}}>{body}</AbsoluteFill>;
   } else if (beat.kind === 'split' && beat.src && beat.srcBottom) {
     const half = height / 2;
     body = wide ? (
@@ -163,7 +174,8 @@ const BeatView: React.FC<{
         {beat.labels && (
           <>
             <HalfLabel text={beat.labels[0]} top={170} color={beat.labelColors?.[0] ?? COLOR.before} />
-            <HalfLabel text={beat.labels[1]} top={half + 40} color={beat.labelColors?.[1] ?? COLOR.now} />
+            {/* the captions sit under the seam in a tall split: the bottom label goes to its panel's foot */}
+            <HalfLabel text={beat.labels[1]} top={height - SAFE.bottom - 70} color={beat.labelColors?.[1] ?? COLOR.now} />
           </>
         )}
       </>
@@ -172,7 +184,7 @@ const BeatView: React.FC<{
     body = <Picture src={beat.src} from={beat.from} beat={beat} width={width} height={height} volume={volume} />;
   }
   return (
-    <AbsoluteFill style={{background: '#000', overflow: 'hidden'}}>
+    <AbsoluteFill style={{background: beat.kind === 'card' ? COLOR.card : '#000', overflow: 'hidden'}}>
       {body}
       {beat.kind !== 'card' && (beat.follow || beat.hp) && (
         <CombatOverlay follow={beat.follow} hp={beat.hp} from={beat.from} beat={beat} viewport={viewport}
@@ -180,7 +192,7 @@ const BeatView: React.FC<{
       )}
       {split && (beat.followBottom || beat.hpBottom) && (
         <CombatOverlay follow={beat.followBottom} hp={beat.hpBottom} from={beat.fromBottom} beat={beat} viewport={bottomViewport}
-          insetTop={beat.labels ? (wide ? 122 : 106) : 32} />
+          insetTop={beat.labels && wide ? 122 : 32} />
       )}
       <Sight strokes={beat.strokes} fans={beat.fans} paths={beat.paths} scope={beat.id.replace(/[^\w-]/g, '_')} />
       <Tags tags={beat.tags} carried={next?.carry && !Array.isArray(next.carry.from)
@@ -195,6 +207,7 @@ const Moving: React.FC<{beat: Beat; next?: Beat; children: React.ReactNode}> = (
   const {fps, width, height} = useVideoConfig();
   const wide = width > height;
   const t = useCurrentFrame() / fps;
+  const mask = useContext(Mask);
   let style: React.CSSProperties = {};
   let flash = 0;
   if (beat.enter && t < beat.enter.dur) {
@@ -207,7 +220,7 @@ const Moving: React.FC<{beat: Beat; next?: Beat; children: React.ReactNode}> = (
   return (
     <AbsoluteFill style={style}>
       {children}
-      {flash > 0 && <AbsoluteFill style={{background: '#fff', opacity: flash}} />}
+      {flash > 0 && !mask && <AbsoluteFill style={{background: '#fff', opacity: flash}} />}
     </AbsoluteFill>
   );
 };
@@ -254,50 +267,60 @@ export const Explainer: React.FC<Plan> = (plan) => {
   const {fps} = useVideoConfig();
   const contentFrames = Math.round(plan.beats.reduce((s, b) => s + b.dur, 0) * fps);
   const spans: Spans = plan.lines.filter((l) => l.length > 0).map((l) => [l[0].start, l[l.length - 1].end]);
+  // the times of tall splits: there the captions sit just under the seam, off the bottom half's subject
+  const seams: [number, number][] = [];
+  const onFrame = (s: number) => Math.round(s * fps) / fps; // as the beats' Sequences start
+  plan.beats.reduce((at, b) => {
+    if (b.kind === 'split') seams.push([onFrame(at), onFrame(at + b.dur)]);
+    return at + b.dur;
+  }, 0);
   let t = 0;
   return (
-    <AbsoluteFill style={{background: '#000'}}>
-      <Sequence durationInFrames={contentFrames} layout="none" name="beats">
-        {plan.beats.map((beat, i) => {
-          const from = Math.round(t * fps);
-          const start = t;
-          t += beat.dur;
-          const next = plan.beats[i + 1];
-          return (
-            <Sequence key={beat.id} from={from} durationInFrames={Math.round((t + tail(next)) * fps) - from} name={beat.id}>
-              <Moving beat={beat} next={next}>
-                <Push beat={beat}>
-                  <BeatView beat={beat} next={next} start={start} spans={spans} duck={plan.duck} game={plan.gameVolume} stem={plan.stem} />
-                </Push>
-              </Moving>
-              {beat.carry && i > 0 && (
-                // over the beat's own entrance, so it does not move with the frame coming in; out with the beat
-                <Moving beat={{...beat, enter: undefined}} next={next}>
+    <Mask.Provider value={plan.mask ?? false}>
+      <AbsoluteFill style={{background: '#000'}}>
+        <Sequence durationInFrames={contentFrames} layout="none" name="beats">
+          {plan.beats.map((beat, i) => {
+            const from = Math.round(t * fps);
+            const start = t;
+            t += beat.dur;
+            const next = plan.beats[i + 1];
+            return (
+              <Sequence key={beat.id} from={from} durationInFrames={Math.round((t + tail(next)) * fps) - from} name={beat.id}>
+                <Moving beat={beat} next={next}>
                   <Push beat={beat}>
-                    <Carry beat={beat} prev={plan.beats[i - 1]} />
+                    <BeatView beat={beat} next={next} start={start} spans={spans} duck={plan.duck} game={plan.gameVolume} stem={plan.stem} />
                   </Push>
                 </Moving>
-              )}
-            </Sequence>
-          );
-        })}
-        {plan.music && (!plan.stem || plan.stem === 'music') && (
-          <Music music={plan.music} spans={spans} frames={contentFrames} stem={plan.stem === 'music'} />
-        )}
-        {(!plan.stem || plan.stem === 'voice') &&
-          plan.voice.map((v) => (
-            <Sequence key={v.file} from={Math.round(v.start * fps)} name={v.file}>
-              <Audio src={staticFile(v.file)} />
-            </Sequence>
-          ))}
-        <Captions lines={plan.lines} brand={plan.brand} />
-        <Hook text={plan.hook.text} until={plan.hook.until} />
-      </Sequence>
-      {plan.brand && (
-        <Sequence from={contentFrames} durationInFrames={STING_FRAMES} name="brand sting">
-          <BrandSting volume={plan.stem ? (plan.stem === 'game' ? 1 : 0) : plan.brandVolume} />
+                {beat.carry && i > 0 && (
+                  // over the beat's own entrance, so it does not move with the frame coming in; out with the beat
+                  <Moving beat={{...beat, enter: undefined}} next={next}>
+                    <Push beat={beat}>
+                      <Carry beat={beat} prev={plan.beats[i - 1]} />
+                    </Push>
+                  </Moving>
+                )}
+              </Sequence>
+            );
+          })}
+          {plan.music && !plan.mask && (!plan.stem || plan.stem === 'music') && (
+            <Music music={plan.music} spans={spans} frames={contentFrames} stem={plan.stem === 'music'} />
+          )}
+          {plan.sfx && !plan.mask && (!plan.stem || plan.stem === 'sfx') && <Sfx plan={plan} />}
+          {!plan.mask && (!plan.stem || plan.stem === 'voice') &&
+            plan.voice.map((v) => (
+              <Sequence key={v.file} from={Math.round(v.start * fps)} name={v.file}>
+                <Audio src={staticFile(v.file)} />
+              </Sequence>
+            ))}
+          <Captions lines={plan.lines} brand={plan.brand} seams={seams} />
+          <Hook text={plan.hook.text} until={plan.hook.until} />
         </Sequence>
-      )}
-    </AbsoluteFill>
+        {plan.brand && !plan.mask && (
+          <Sequence from={contentFrames} durationInFrames={STING_FRAMES} name="brand sting">
+            <BrandSting volume={plan.stem ? (plan.stem === 'game' ? 1 : 0) : plan.brandVolume} />
+          </Sequence>
+        )}
+      </AbsoluteFill>
+    </Mask.Provider>
   );
 };

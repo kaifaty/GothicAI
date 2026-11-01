@@ -6,8 +6,10 @@ import io
 import json
 import os
 import shutil
+import signal
 import subprocess
 import tempfile
+import time
 import tomllib
 import unittest
 from pathlib import Path
@@ -38,6 +40,40 @@ def prepared_game(home):
 
 def payload():
     return {"origin": "origin", "settings": {}, "game_helper": GAME_HELPER}
+
+
+def play_git(repo, *arguments):
+    return subprocess.check_output(["git", "-C", str(repo), *arguments], text=True,
+                                   stderr=subprocess.PIPE).strip()
+
+
+def auto_checkout(home):
+    upstream = home / "upstream"
+    (upstream / "scripts").mkdir(parents=True)
+    (upstream / "scripts/ryzen-play.sh").write_text("old installer\n")
+    play_git(upstream, "init", "--initial-branch=main")
+    play_git(upstream, "add", ".")
+    play_git(upstream, "-c", "user.name=Test", "-c", "user.email=test@example.com",
+             "commit", "-m", "Initial installation")
+    repo = home / "gothic-ai/play"
+    repo.parent.mkdir()
+    play_git(home, "clone", str(upstream), str(repo))
+    queue = home / "gothic-ai/bin/gq"
+    queue.parent.mkdir()
+    queue.write_text("#!/bin/sh\nprintf '%s\\n' '--interactive'\n")
+    queue.chmod(0o755)
+    uv = home / ".local/bin/uv"
+    uv.parent.mkdir(parents=True)
+    uv.touch()
+    return repo, upstream
+
+
+def advance_play(upstream, source):
+    (upstream / "scripts/ryzen-play.sh").write_text(source)
+    play_git(upstream, "add", ".")
+    play_git(upstream, "-c", "user.name=Test", "-c", "user.email=test@example.com",
+             "commit", "-m", "Update installation")
+    return play_git(upstream, "rev-parse", "HEAD")
 
 
 class RyzenPlayTests(unittest.TestCase):
@@ -98,7 +134,38 @@ class RyzenPlayTests(unittest.TestCase):
         options = command[:separator]
         self.assertEqual(options[options.index("--class") + 1], "quick")
         self.assertNotIn("--display-exclusive", options)
-        self.assertEqual(command[separator + 1:], [install.sys.executable, "-c", "prepare-source", "__prepare"])
+        self.assertEqual(command[separator + 1:], [
+            "bash", "-euc", 'source scripts/ryzen-build.sh; exec "$@"', "ryzen-play",
+            install.sys.executable, "-c", "prepare-source", "__prepare",
+        ])
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory) / "home"
+            task_repo = home / "gothic-ai/play"
+            (task_repo / "scripts").mkdir(parents=True)
+            helper = Path(__file__).resolve().parents[1] / "ryzen-build.sh"
+            shutil.copyfile(helper, task_repo / "scripts/ryzen-build.sh")
+            binaries = Path(directory) / "bin"
+            binaries.mkdir()
+            for tool in ("bash", "mkdir"):
+                (binaries / tool).symlink_to(shutil.which(tool))
+            ccache = binaries / "ccache"
+            ccache.write_text("#!/bin/sh\nexit 0\n")
+            ccache.chmod(0o755)
+            probe = ('import json, os; print(json.dumps({key: value '
+                     'for key, value in os.environ.items() if key.startswith("CCACHE_")}))')
+            queued = install.build_command(probe)
+            result = subprocess.run(
+                queued[queued.index("--") + 1:], cwd=task_repo,
+                env={"HOME": str(home), "PATH": str(binaries)},
+                capture_output=True, text=True, timeout=10,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads(result.stdout), {
+                "CCACHE_DIR": str(home / ".cache/gothic-ai/ccache"),
+                "CCACHE_MAXSIZE": "20G",
+                "CCACHE_BASEDIR": str(home / "gothic-ai"),
+                "CCACHE_NOHASHDIR": "true",
+            })
         with patch.dict(install.os.environ), \
                 patch.object(install.Path, "cwd", return_value=repo), \
                 patch.object(install.shutil, "which", return_value="/tool"), \
@@ -226,11 +293,22 @@ class RyzenPlayTests(unittest.TestCase):
             old.mkdir()
             (old / "interrupted-update").touch()
             rename = Path.rename
+            atomic_write = install.atomic_write
+            built_path = home / "gothic-ai/play.built"
+            failed_path = home / "gothic-ai/play.failed"
+
+            def write_under_lock(path, text):
+                if path in (built_path, failed_path):
+                    with (home / "gothic-ai/play.install.lock").open("a") as lock:
+                        with self.assertRaises(BlockingIOError):
+                            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return atomic_write(path, text)
 
             def rename_under_lock(path, target):
                 with (home / "gothic-ai/play.install.lock").open("a") as lock:
                     with self.assertRaises(BlockingIOError):
                         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                self.assertEqual(json.loads(built_path.read_text()), {"good": "current", "built": "current"})
                 return rename(path, target)
 
             for action, result in (("install", 0), ("update", 0), ("update", 3)):
@@ -238,19 +316,34 @@ class RyzenPlayTests(unittest.TestCase):
                 incoming.mkdir()
                 if result == 0:
                     (incoming / "enabled.json").write_text(action)
+                state_path = home / "gothic-ai/play-update.json"
+                state_path.write_text('{"result": "busy", "old_commit": "outdated"}\n')
+                report_before = (state_path.read_bytes(), state_path.stat().st_mtime_ns)
+                built_path.write_text('{"good": "previous", "built": "previous"}\n')
+                failed_path.write_text("failed\n")
+                metadata = ["main\n", "origin\n", "", "previous\n", "current\n"]
+
+                def build_with_pending_marker(command):
+                    self.assertEqual(json.loads(built_path.read_text()), {"good": "previous", "built": None})
+                    return result
+
                 with self.subTest(action=action, result=result), patch.dict(install.os.environ), \
                         patch.object(install.Path, "home", return_value=home), \
                         patch.object(install.Path, "rename", autospec=True, side_effect=rename_under_lock) as swap, \
+                        patch.object(install, "atomic_write", side_effect=write_under_lock), \
                         patch.object(install.os, "chdir"), \
                         patch.object(install, "run") as run, \
-                        patch.object(install.subprocess, "check_output", side_effect=["main\n", "origin\n", ""]), \
-                        patch.object(install, "owned_process", return_value=result) as build:
+                        patch.object(install.subprocess, "check_output", side_effect=metadata), \
+                        patch.object(install, "owned_process", side_effect=build_with_pending_marker) as build:
                     self.assertEqual(install.remote_install(action, payload(), "source"), result)
                     run.assert_called_once_with(["git", "-C", repo, "pull", "--ff-only"])
                     build.assert_called_once()
                     entry = (home / ".local/share/applications/gothic-ai.desktop").read_text()
                     self.assertEqual("Exec=ptyxis" in entry, result == 3)
                     self.assertEqual([call.args for call in swap.call_args_list], [(content, old), (incoming, content)])
+                    self.assertEqual((state_path.read_bytes(), state_path.stat().st_mtime_ns), report_before)
+                    self.assertEqual(json.loads(built_path.read_text()), {"good": "current", "built": "current"})
+                    self.assertFalse(failed_path.exists())
                 self.assertEqual(list(content.iterdir()), [content / "enabled.json"] if result == 0 else [])
                 if result == 0:
                     self.assertEqual((content / "enabled.json").read_text(), action)
@@ -310,6 +403,377 @@ class RyzenPlayTests(unittest.TestCase):
             self.assertEqual(list(content.iterdir()), [content / "old-file"])
             self.assertEqual((incoming / "new-file").read_text(), "waiting")
             self.assertFalse(content.with_name("play-content.old").exists())
+
+    def test_auto_update_skips_current_head_and_busy_installation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            repo, upstream = auto_checkout(home)
+            old = play_git(repo, "rev-parse", "HEAD")
+            state_path = home / "gothic-ai/play-update.json"
+            with patch.object(install.Path, "home", return_value=home), \
+                    patch.object(install.os, "chdir"), patch.dict(install.os.environ), \
+                    patch.object(install, "owned_process") as queued, \
+                    patch.object(install, "run", wraps=install.run) as run:
+                self.assertEqual(install.auto_update(str(upstream)), 0)
+                queued.assert_not_called()
+                state = json.loads(state_path.read_text())
+                self.assertEqual(state["result"], "up_to_date")
+                self.assertEqual((state["old_commit"], state["new_commit"]), (old, old))
+                self.assertTrue(state["time"])
+                target = advance_play(upstream, "new installer\n")
+
+                def admitted(command, *, keep_stdin=False):
+                    self.assertTrue(keep_stdin)
+                    self.assertEqual(play_git(repo, "rev-parse", "HEAD"), old)
+                    return install.main(command[-2:])
+
+                queued.side_effect = admitted
+                with (home / "gothic-ai/play.install.lock").open("a") as lock:
+                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    self.assertEqual(install.auto_update(str(upstream)), 0)
+                state = json.loads(state_path.read_text())
+                self.assertEqual(state["result"], "busy")
+                self.assertEqual((state["old_commit"], state["new_commit"]), (old, target))
+                self.assertFalse(any("pull" in call.args[0] for call in run.call_args_list))
+                queued.assert_called_once()
+            self.assertEqual(play_git(repo, "rev-parse", "HEAD"), old)
+        probe = "import select, sys; sys.exit(bool(select.select([sys.stdin], [], [], 0)[0]))"
+        self.assertEqual(install.owned_process([install.sys.executable, "-c", probe], keep_stdin=True), 0)
+
+    def test_auto_update_rolls_back_once_and_keeps_content_and_settings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            repo, upstream = auto_checkout(home)
+            old = play_git(repo, "rev-parse", "HEAD")
+            target = advance_play(upstream, "failed installer\n")
+            binary = repo / "launcher/app/src-tauri/target/release/gothic-launcher"
+            binary.parent.mkdir(parents=True)
+            binary.touch(mode=0o755)
+            (repo / ".git/info/exclude").write_text("/launcher/\n")
+            protected = [home / ".config/gothic-ai/settings.toml"]
+            for name in ("play-content", "play-content.incoming", "play-content.old"):
+                protected.append(home / ".local/share/gothic-ai" / name / "enabled.json")
+            for path in protected:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(f"personal data: {path.name}\n")
+            before = {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in protected}
+            state_path = home / "gothic-ai/play-update.json"
+            builds = []
+            in_job = False
+            lock_busy = False
+            real_run = subprocess.run
+            installer_run = install.run
+            atomic_write = install.atomic_write
+            built_path = home / "gothic-ai/play.built"
+            failed_path = home / "gothic-ai/play.failed"
+
+            def write_under_lock(path, text):
+                if path in (built_path, failed_path):
+                    with (home / "gothic-ai/play.install.lock").open("a") as lock:
+                        with self.assertRaises(BlockingIOError):
+                            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return atomic_write(path, text)
+
+            def admitted(command, *, keep_stdin=False):
+                nonlocal in_job
+                self.assertTrue(keep_stdin)
+                separator = command.index("--")
+                expected = install.build_command("")
+                self.assertEqual(command[:separator], expected[:expected.index("--")])
+                self.assertEqual(command[separator + 1:], [
+                    install.sys.executable, str(repo / "scripts/ryzen-play.sh"), "__auto_build", str(upstream),
+                ])
+                self.assertEqual(play_git(repo, "rev-parse", "HEAD"), old)
+                self.assertEqual((repo / "scripts/ryzen-play.sh").read_text(), "old installer\n")
+                with (home / "gothic-ai/play.install.lock").open("a") as lock:
+                    if lock_busy:
+                        with self.assertRaises(BlockingIOError):
+                            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    else:
+                        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                in_job = True
+                try:
+                    return install.main(command[-2:])
+                finally:
+                    in_job = False
+
+            def build(command, *args, **kwargs):
+                if command[0] != "bash" or command[-1] != "__prepare":
+                    return real_run(command, *args, **kwargs)
+                self.assertTrue(in_job)
+                with (home / "gothic-ai/play.install.lock").open("a") as lock:
+                    with self.assertRaises(BlockingIOError):
+                        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                builds.append((play_git(repo, "rev-parse", "HEAD"), command))
+                return subprocess.CompletedProcess(command, 1 if len(builds) == 1 else 3)
+
+            def run_inside_queue(command, **kwargs):
+                if command[0] == "git" and "reset" in command:
+                    self.assertTrue(in_job)
+                    self.assertIsNone(json.loads(built_path.read_text())["built"])
+                return installer_run(command, **kwargs)
+
+            with patch.object(install.Path, "home", return_value=home), \
+                    patch.object(install.os, "chdir"), patch.dict(install.os.environ), \
+                    patch.object(install, "owned_process", side_effect=admitted) as queued, \
+                    patch.object(install, "atomic_write", side_effect=write_under_lock), \
+                    patch.object(install.subprocess, "run", side_effect=build), \
+                    patch.object(install, "run", side_effect=run_inside_queue) as run, \
+                    patch.object(install.sys, "stdout", new_callable=io.StringIO) as journal:
+                self.assertNotEqual(install.auto_update(str(upstream)), 0)
+                queued.assert_called_once()
+                self.assertEqual([commit for commit, _ in builds], [target, old])
+                self.assertEqual([command[-2] for _, command in builds],
+                                 ["failed installer\n", "old installer\n"])
+                self.assertTrue(all(command[0] == "bash" and "gq" not in command for _, command in builds))
+                self.assertEqual(play_git(repo, "rev-parse", "HEAD"), old)
+                self.assertEqual(play_git(repo, "branch", "--show-current"), "main")
+                self.assertEqual(json.loads(built_path.read_text()), {"good": old, "built": old})
+                self.assertEqual(failed_path.read_text().strip(), target)
+                state = json.loads(state_path.read_text())
+                self.assertEqual(state["result"], "build_failed_rolled_back")
+                self.assertEqual((state["old_commit"], state["new_commit"], state["failed_commit"]),
+                                 (old, target, target))
+                self.assertIn('"result": "build_failed_rolled_back"', journal.getvalue())
+                desktop = home / ".local/share/applications/gothic-ai.desktop"
+                self.assertIn("Exec=ptyxis", desktop.read_text())
+                run.reset_mock()
+                self.assertEqual(install.auto_update(str(upstream)), 0)
+                with (home / "gothic-ai/play.install.lock").open("a") as lock:
+                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    self.assertEqual(install.auto_update(str(upstream)), 0)
+                self.assertEqual(json.loads(state_path.read_text())["result"], "up_to_date")
+                self.assertEqual(install.auto_update(str(upstream)), 0)
+                self.assertEqual(queued.call_count, 1)
+                self.assertFalse(any("pull" in call.args[0] for call in run.call_args_list))
+                self.assertEqual(json.loads(state_path.read_text())["failed_commit"], target)
+                latest = advance_play(upstream, "fixed installer\n")
+                lock_busy = True
+                with (home / "gothic-ai/play.install.lock").open("a") as lock:
+                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    self.assertEqual(install.auto_update(str(upstream)), 0)
+                self.assertEqual(json.loads(state_path.read_text())["result"], "busy")
+                self.assertEqual(json.loads(state_path.read_text())["failed_commit"], target)
+                self.assertEqual(queued.call_count, 2)
+                self.assertEqual(len(builds), 2)
+                lock_busy = False
+                self.assertEqual(install.auto_update(str(upstream)), 0)
+                self.assertEqual(queued.call_count, 3)
+                self.assertEqual(play_git(repo, "rev-parse", "HEAD"), latest)
+                self.assertEqual(json.loads(built_path.read_text()), {"good": latest, "built": latest})
+                self.assertFalse(failed_path.exists())
+                self.assertEqual(json.loads(state_path.read_text())["result"], "updated")
+                self.assertIn("Exec=ptyxis", desktop.read_text())
+            self.assertEqual({path: (path.read_bytes(), path.stat().st_mtime_ns) for path in protected}, before)
+            for path in protected:
+                self.assertEqual(list(path.parent.iterdir()), [path])
+
+    def test_auto_update_recovers_interrupted_build_and_failed_rollback(self):
+        for failure in ("terminated", "rollback_failed"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
+                home = Path(directory)
+                repo, upstream = auto_checkout(home)
+                old = play_git(repo, "rev-parse", "HEAD")
+                target = advance_play(upstream, "new installer\n")
+                state_path = home / "gothic-ai/play-update.json"
+                built_path = home / "gothic-ai/play.built"
+                failed_path = home / "gothic-ai/play.failed"
+                builds = []
+                real_run = subprocess.run
+                atomic_write = install.atomic_write
+
+                def write_under_lock(path, text):
+                    if path in (built_path, failed_path):
+                        with (home / "gothic-ai/play.install.lock").open("a") as lock:
+                            with self.assertRaises(BlockingIOError):
+                                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    return atomic_write(path, text)
+
+                def build(command, *args, **kwargs):
+                    if command[0] != "bash" or command[-1] != "__prepare":
+                        return real_run(command, *args, **kwargs)
+                    self.assertEqual(json.loads(built_path.read_text()), {"good": old, "built": None})
+                    builds.append((play_git(repo, "rev-parse", "HEAD"), command[-2]))
+                    code = 1 if failure == "rollback_failed" and len(builds) <= 2 else 3
+                    return subprocess.CompletedProcess(command, code)
+
+                def admitted(command, *, keep_stdin=False):
+                    self.assertTrue(keep_stdin)
+                    if queued.call_count > 1:
+                        state = json.loads(state_path.read_text())
+                        self.assertEqual(state["result"], "error")
+                        self.assertEqual(json.loads(built_path.read_text()), {"good": old, "built": None})
+                        self.assertTrue(state["error"])
+                    if failure != "terminated" or queued.call_count > 1:
+                        return install.main(command[-2:])
+                    ready = home / "prepare-ready"
+                    probe = (
+                        "import sys, time; from pathlib import Path; "
+                        "Path(sys.argv[1]).touch(); time.sleep(60)"
+                    )
+                    worker = """import sys
+from pathlib import Path
+from unittest.mock import patch
+namespace = {"__name__": "test_worker", "__file__": sys.argv[1]}
+exec(compile(Path(sys.argv[1]).read_text(), sys.argv[1], "exec"), namespace)
+namespace["prepare_command"] = lambda source: [sys.executable, "-c", sys.argv[4], sys.argv[5]]
+with patch.object(Path, "home", return_value=Path(sys.argv[2])):
+    sys.exit(namespace["auto_update"](sys.argv[3], admitted=True))
+"""
+                    child = subprocess.Popen(
+                        [install.sys.executable, "-c", worker, install.__file__, str(home), str(upstream),
+                         probe, str(ready)], start_new_session=True,
+                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                    )
+                    try:
+                        deadline = time.monotonic() + 10
+                        while not ready.exists() and child.poll() is None and time.monotonic() < deadline:
+                            time.sleep(0.01)
+                        self.assertTrue(ready.exists(), "Worker did not reach prepare")
+                        self.assertEqual(play_git(repo, "rev-parse", "HEAD"), target)
+                        self.assertEqual(json.loads(built_path.read_text()), {"good": old, "built": None})
+                        os.killpg(child.pid, signal.SIGTERM)
+                        child.communicate(timeout=5)
+                        self.assertEqual(child.returncode, -signal.SIGTERM)
+                        return 128 + signal.SIGTERM
+                    finally:
+                        try:
+                            os.killpg(child.pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                        child.wait(timeout=5)
+                        child.stdout.close()
+
+                with patch.object(install.Path, "home", return_value=home), \
+                        patch.object(install.os, "chdir"), patch.dict(install.os.environ), \
+                        patch.object(install, "owned_process", side_effect=admitted) as queued, \
+                        patch.object(install, "atomic_write", side_effect=write_under_lock), \
+                        patch.object(install.subprocess, "run", side_effect=build), \
+                        patch.object(install.sys, "stdout", new_callable=io.StringIO):
+                    self.assertNotEqual(install.auto_update(str(upstream)), 0)
+                    state = json.loads(state_path.read_text())
+                    self.assertEqual(state["result"], "error")
+                    self.assertEqual(json.loads(built_path.read_text()), {"good": old, "built": None})
+                    if failure == "rollback_failed":
+                        self.assertEqual(state["rollback_exit"], 1)
+                    self.assertEqual(install.auto_update(str(upstream)), 0)
+                    self.assertEqual(queued.call_count, 2)
+                    repaired = target if failure == "terminated" else old
+                    self.assertEqual(play_git(repo, "rev-parse", "HEAD"), repaired)
+                    self.assertEqual(json.loads(built_path.read_text()), {"good": repaired, "built": repaired})
+                    state = json.loads(state_path.read_text())
+                    self.assertEqual(state["result"], "updated")
+                    if failure == "rollback_failed":
+                        self.assertEqual(failed_path.read_text().strip(), target)
+                    else:
+                        self.assertFalse(failed_path.exists())
+                    self.assertNotIn("error", state)
+                    expected = [(target, "new installer\n"), (old, "old installer\n")] \
+                        if failure == "rollback_failed" else []
+                    repaired_source = "new installer\n" if failure == "terminated" else "old installer\n"
+                    self.assertEqual(builds, [*expected, (repaired, repaired_source)])
+                    self.assertEqual(install.auto_update(str(upstream)), 0)
+                    self.assertEqual(queued.call_count, 2)
+
+    def test_auto_update_ignores_stale_report_after_manual_update(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            repo, upstream = auto_checkout(home)
+            old = play_git(repo, "rev-parse", "HEAD")
+            target = advance_play(upstream, "manual installer\n")
+            prepared_game(home)
+            incoming = home / ".local/share/gothic-ai/play-content.incoming"
+            incoming.mkdir(parents=True)
+            state_path = home / "gothic-ai/play-update.json"
+            stale_report = json.dumps({"result": "busy", "old_commit": old, "new_commit": old})
+            state_path.write_text(stale_report)
+            built_path = home / "gothic-ai/play.built"
+            (home / "gothic-ai/play.failed").write_text(target)
+            atomic_write = install.atomic_write
+
+            def write_under_lock(path, text):
+                if path.name in ("play.built", "play.failed"):
+                    with (home / "gothic-ai/play.install.lock").open("a") as lock:
+                        with self.assertRaises(BlockingIOError):
+                            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return atomic_write(path, text)
+
+            def build(command):
+                self.assertEqual(json.loads(built_path.read_text()), {"good": old, "built": None})
+                return 3
+
+            with patch.object(install.Path, "home", return_value=home), \
+                    patch.object(install.os, "chdir"), patch.dict(install.os.environ), \
+                    patch.object(install, "atomic_write", side_effect=write_under_lock), \
+                    patch.object(install, "owned_process", side_effect=build) as queued, \
+                    patch.object(install, "run", wraps=install.run) as run:
+                settings = {**payload(), "origin": str(upstream)}
+                self.assertEqual(install.remote_install("update", settings, "source"), 3)
+                self.assertEqual(state_path.read_text(), stale_report)
+                self.assertEqual(json.loads(built_path.read_text()), {"good": target, "built": target})
+                self.assertFalse((home / "gothic-ai/play.failed").exists())
+                # A delayed busy report must not undo the successfully built checkout.
+                state_path.write_text(stale_report)
+                queued.reset_mock()
+                run.reset_mock()
+                self.assertEqual(install.auto_update(str(upstream)), 0)
+                queued.assert_not_called()
+                self.assertFalse(any("reset" in call.args[0] for call in run.call_args_list))
+                self.assertEqual(play_git(repo, "rev-parse", "HEAD"), target)
+
+    def test_autoupdate_units_use_installed_code_every_fifteen_minutes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            repo, upstream = auto_checkout(home)
+            with patch.object(install.Path, "home", return_value=home), \
+                    patch.object(install, "run") as systemctl:
+                with self.assertRaisesRegex(ValueError, "scripts/ryzen-play.sh update first"):
+                    install.manage_autoupdate("install", str(upstream))
+                systemctl.assert_not_called()
+                (repo / "scripts/ryzen-play.sh").write_text(Path(install.__file__).read_text())
+                install.manage_autoupdate("install", str(upstream))
+                units = home / ".config/systemd/user"
+                service = units / "gothic-play-update.service"
+                timer = units / "gothic-play-update.timer"
+                self.assertIn("ExecStart=/usr/bin/python3 %h/gothic-ai/play/scripts/ryzen-play.sh __auto",
+                              service.read_text())
+                self.assertIn(str(upstream), service.read_text())
+                self.assertIn("OnCalendar=*:0/15\n", timer.read_text())
+                self.assertIn("Persistent=true\n", timer.read_text())
+                self.assertEqual({path.name for path in units.iterdir()}, {service.name, timer.name})
+                self.assertIn(["systemctl", "--user", "enable", "--now", timer.name],
+                              [call.args[0] for call in systemctl.call_args_list])
+                install.manage_autoupdate("uninstall")
+                self.assertFalse(service.exists())
+                self.assertFalse(timer.exists())
+                self.assertIn(["systemctl", "--user", "disable", "--now", timer.name],
+                              [call.args[0] for call in systemctl.call_args_list])
+                head = play_git(repo, "rev-parse", "HEAD")
+                (home / "gothic-ai/play-update.json").write_text('{"result": "busy"}\n')
+                with patch.object(install.subprocess, "run") as timer_status, \
+                        patch.object(install.subprocess, "check_output", side_effect=[head, head]), \
+                        patch.object(install.sys, "stdout", new_callable=io.StringIO) as output:
+                    self.assertEqual(install.manage_autoupdate("status"), 0)
+                    timer_status.assert_called_once_with(
+                        ["systemctl", "--user", "status", timer.name, "--no-pager"], check=False)
+                    self.assertIn(f"HEAD: {head}", output.getvalue())
+                    self.assertIn(f"origin/main: {head}", output.getvalue())
+                    self.assertIn('"result": "busy"', output.getvalue())
+                self.assertIn(["systemctl", "--user", "list-timers", timer.name, "--all", "--no-pager"],
+                              [call.args[0] for call in systemctl.call_args_list])
+            with patch.object(install.Path, "home", return_value=home), \
+                    patch.object(install.subprocess, "check_output", return_value=str(upstream)), \
+                    patch.object(install, "sync_content") as sync, \
+                    patch.object(install, "owned_process", return_value=0) as remote:
+                for action in ("install", "uninstall", "status"):
+                    with self.subTest(action=action):
+                        self.assertEqual(install.main(["autoupdate", action]), 0)
+                        command, data = remote.call_args.args
+                        self.assertEqual(command[-2], "ryzen")
+                        self.assertEqual(install.shlex.split(command[-1])[-2:], ["__autoupdate", action])
+                        self.assertEqual(data, {"origin": str(upstream)} if action == "install" else {})
+                sync.assert_not_called()
+                self.assertFalse((home / ".config/gothic-ai/settings.toml").exists())
 
     def test_terminal_wrapper_delegates_to_the_same_linux_core_session(self):
         with patch.object(session.os, "execv") as execute:

@@ -4,6 +4,7 @@
 #include "ragdoll.h"
 #include "cloth.h"
 #include "frameprofile.h"
+#include "loadprobe.h"
 #include "gothic.h"
 #include "world/objects/item.h"
 #include "world/objects/npc.h"
@@ -410,6 +411,7 @@ struct CollisionWorld::Impl final : JPH::ContactListener, JPH::PhysicsStepListen
     auto settings = system.GetPhysicsSettings();
     settings.mTimeBeforeSleep = 2.f;
     settings.mPointVelocitySleepThreshold = 0.8f;
+    settings.mDeepestContactLayers = 1u<<DynamicWorld::C_Item;
     system.SetPhysicsSettings(settings);
     system.SetContactListener(this);
     }
@@ -1794,6 +1796,7 @@ void CollisionWorld::addBody(CollisionBody& body, const Tempest::Matrix4x4& matr
 std::unique_ptr<CollisionWorld::CollisionBody> CollisionWorld::addCollisionBody(JPH::ShapeRefC shape, const Tempest::Matrix4x4& matrix,
                                                                                float friction, int category, bool movable, bool sensor,
                                                                                const PhysicVbo* mesh) {
+  LoadProbe::Vobs::Scope probe("physics_body");
   auto result = std::unique_ptr<CollisionBody>(new CollisionBody(*this,std::move(shape),category));
   result->mesh = mesh;
   addBody(*result,matrix,friction,movable,sensor,0.f);
@@ -1802,6 +1805,7 @@ std::unique_ptr<CollisionWorld::CollisionBody> CollisionWorld::addCollisionBody(
 
 std::unique_ptr<CollisionWorld::DynamicBody> CollisionWorld::addDynamicBody(JPH::ShapeRefC shape, const Tempest::Matrix4x4& matrix,
                                                                            float friction, float mass, int category, bool startSleeping) {
+  LoadProbe::Vobs::Scope probe("physics_body");
   mass = std::isfinite(mass) && mass>0.f ? mass : 1.f;
   auto result = std::unique_ptr<DynamicBody>(new DynamicBody(*this,std::move(shape),mass,category));
   addBody(*result,matrix,friction,false,false,mass,startSleeping);
@@ -3580,6 +3584,12 @@ void CollisionWorld::setBuoyancyEnabled(bool enabled) {
 bool CollisionWorld::buoyancyEnabled() const { return buoyancy; }
 
 void CollisionWorld::setItemWakeEnabled(bool enabled) { itemWake=enabled; }
+
+void CollisionWorld::setItemDeepestContactEnabled(bool enabled) {
+  auto settings=impl->system.GetPhysicsSettings();
+  settings.mDeepestContactLayers=enabled ? 1u<<DynamicWorld::C_Item : 0;
+  impl->system.SetPhysicsSettings(settings);
+  }
 
 void CollisionWorld::setItemWakeCallback(std::function<size_t(const Tempest::Vec3&,const Tempest::Vec3&,size_t)> callback) {
   itemWakeCallback=std::move(callback);

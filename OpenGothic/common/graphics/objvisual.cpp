@@ -387,6 +387,13 @@ void ObjVisual::setupFracture(World& world, DynamicWorld::Item& body) {
     });
   }
 
+void ObjVisual::setTextureOwner(const Tempest::Vec3& position, bool spatial) {
+  if(type==M_Mesh)
+    mesh.view.setTextureOwner(position,spatial);
+  else if(type==M_Mdl)
+    mdl.view.setTextureOwner(position,spatial);
+  }
+
 bool ObjVisual::renderPosition(Tempest::Vec3& out) const {
   if(fracture && fracture->broken)
     return false;

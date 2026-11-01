@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 # story_program), v24: choices in the director's dialogs (steps choice, clear_choices; debug choices, talk,
 # menu, menu_pick), v25: story_program.own (the scripts' program under the director's), v26: the director's
 # lines in the npc's voice (line_voice).
-PROTOCOL_VERSION = 54
+PROTOCOL_VERSION = 55
 NOISE_PROTOCOL = 36  # npc_event noise and npc_act investigate
 TRACE_PROTOCOL = 37  # visible physical traces and game time on noise events
 PACE_PROTOCOL = 38  # go_to_waypoint.pace: a guide keeps the hero's pace; start_activity.place
@@ -134,6 +134,13 @@ class Saved(_GameMessage):
     type: Literal["saved"]
     branch: str
     seq: int
+
+
+class ChronicleGet(_GameMessage):
+    """Read the current fate and the other fates of this playthrough (v55)."""
+
+    type: Literal["chronicle_get"]
+    req: str
 
 
 class Attached(_GameMessage):
@@ -1230,6 +1237,7 @@ GameMessage = Annotated[
     | Loading
     | Session
     | Saved
+    | ChronicleGet
     | Attached
     | Detached
     | Result
@@ -1651,6 +1659,35 @@ class FeatToastCmd(_Command):
     title: str
     text: str
     icon: str = ""
+
+
+class ChronicleFeat(_Command):
+    """A recorded deed, with only the epilogue already revealed on its branch."""
+
+    id: str
+    title: str
+    text: str
+    category: str
+    chapter: int
+    day: int
+    engraving: str = ""
+    icon: str = ""
+    epilogue: str = ""
+
+
+class ChronicleFork(_Command):
+    chapter: int
+    day: int
+    feats: list[ChronicleFeat] = Field(default_factory=list)
+
+
+class ChronicleCmd(_Command):
+    """The journal's chronicle data, returned for every chronicle_get (v55)."""
+
+    type: Literal["chronicle"] = "chronicle"
+    req: str
+    fate: list[ChronicleFeat] = Field(default_factory=list)
+    others: list[ChronicleFork] = Field(default_factory=list)
 
 
 DebugCommand = Literal[

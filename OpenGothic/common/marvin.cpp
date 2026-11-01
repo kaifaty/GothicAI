@@ -186,6 +186,7 @@ Marvin::Marvin() {
     {"toggle spell_physics",      C_ToggleSpellPhysics},
     {"toggle movable_vobs",       C_ToggleMovableVobs},
     {"toggle item_hulls",         C_ToggleItemHulls},
+    {"toggle item_deepest_contact",C_ToggleItemDeepestContact},
     {"toggle furniture_parts",    C_ToggleFurnitureParts},
     {"toggle physics_noise",      C_TogglePhysicsNoise},
     {"toggle destruction",        C_ToggleDestruction},
@@ -610,6 +611,9 @@ bool Marvin::exec(std::string_view v) {
       return true;
     case C_ToggleItemHulls:
       Gothic::settingsSetI("GAME","item_hulls",Gothic::settingsGetI("GAME","item_hulls")==0 ? 1 : 0);
+      return true;
+    case C_ToggleItemDeepestContact:
+      Gothic::settingsSetI("GAME","item_deepest_contact",Gothic::settingsGetI("GAME","item_deepest_contact")==0 ? 1 : 0);
       return true;
     case C_ToggleFurnitureParts:
       Gothic::settingsSetI("GAME","furniture_parts",Gothic::settingsGetI("GAME","furniture_parts")==0 ? 1 : 0);

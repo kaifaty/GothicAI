@@ -793,6 +793,96 @@ def test_validation_commands_preserve_world_seed_and_force_sampled_zero_teacher(
         rl.action_seeds("7,7")
 
 
+def test_dagger_train_selection_rejects_held_out_splits_before_any_recording(monkeypatch):
+    value = dict(id="v5-water-a", family="water", goal_kind="point", split="train",
+                 region="harbour", start="A", goal="B", seed=19, recorded=False)
+    monkeypatch.setattr(rl, "rows", lambda _: iter([value]))
+    assert rl.dagger_scenarios(Path("/unused.jsonl")) == [value]
+    for change in (dict(split="validation"), dict(split="test"), dict(family="detour"), dict(final_test=True)):
+        monkeypatch.setattr(rl, "rows", lambda _, change=change: iter([dict(value, **change)]))
+        with pytest.raises(ValueError, match="requires train"):
+            rl.dagger_scenarios(Path("/unused.jsonl"))
+
+
+def test_dagger_commands_select_v3b_or_v2_without_changing_learner_sampling():
+    args = SimpleNamespace(npc="NPC", limit_ms=10000, weights=Path("/hd.navbc"), roads=Path("/roads"))
+    value = dict(id="v5-water-a", family="water", goal_kind="point", split="train",
+                 region="harbour", start="A", goal="B", seed=19, local=False)
+    ordinary = rl.policy_commands(args, value, 43, teacher_beta=.1, dagger=True)
+    assert "navdemos drive-teacher 3" in ordinary
+    assert "navdemos dagger on" in ordinary
+    assert "navdemos record on" in ordinary
+    assert "navdemos perception-monitor on" in ordinary
+    assert "roads stranger NPC" in ordinary
+    assert ordinary[-2] == "navdemos drive NPC A B 10000 /hd.navbc 0.1 43 sample"
+    jump = rl.policy_commands(args, dict(value, family="jump", transition_id=7), 43, teacher_beta=.1, dagger=True)
+    assert "navdemos drive-teacher 2" in jump
+    assert jump[-2].endswith("0.1 43 sample 7")
+    with pytest.raises(ValueError, match="cannot run another split"):
+        rl.validation_commands(args, value, 43)
+
+
+def test_dagger_control_metrics_preserve_student_and_masked_decisions(monkeypatch):
+    root = Path("/virtual")
+    episodes = {}
+    samples = {}
+    for family, controls in (("water", ["memory_danger", "memory_danger", "beta", ""]),
+                             ("point", ["heading", "stall", "", ""])):
+        directory = root / "dagger" / family / "scenario" / "seed-7"
+        samples[directory / "samples.jsonl"] = [dict(teacher_control=bool(reason), takeover=reason,
+            dart=index == 0, maneuver_mask=index == 1) for index, reason in enumerate(controls)]
+        episodes[directory / "episode.json"] = dict(family=family, decisions=4,
+            teacher_control_decisions=sum(bool(reason) for reason in controls), dagger_interventions=2,
+            dart_decisions=1, maneuver_masked_decisions=1)
+    monkeypatch.setattr(Path, "glob", lambda path, pattern: iter(episodes))
+    monkeypatch.setattr(rl, "read_json", episodes.__getitem__)
+    monkeypatch.setattr(rl, "rows", lambda path: iter(samples[path]))
+    metrics = rl.dagger_control_metrics(root)
+    assert metrics["all"]["decisions"] == 8
+    assert metrics["all"]["teacher_control_decisions"] == 5
+    assert metrics["all"]["teacher_control_fraction"] == 5 / 8
+    assert metrics["all"]["dagger_interventions"] == 4
+    assert metrics["all"]["dart_decisions"] == 2
+    assert metrics["all"]["maneuver_masked_decisions"] == 2
+    assert metrics["by_family"]["water"]["teacher_control_fraction"] == 3 / 4
+    assert metrics["by_family"]["point"]["teacher_control_fraction"] == 1 / 2
+    reason = metrics["by_family"]["water"]["by_reason"]["memory_danger"]
+    assert reason == dict(decisions=2, fraction_all_decisions=1 / 2, fraction_teacher_decisions=2 / 3)
+    episodes[next(iter(episodes))]["teacher_control_decisions"] = 4
+    with pytest.raises(ValueError, match="teacher_control_decisions count differs"):
+        rl.dagger_control_metrics(root)
+
+    # Offline estimates use recovered learner proposals on the recorded path.
+    def replay_steps(progress=False, danger=False):
+        for index in range(41):
+            x = index * (10 if progress else -10)
+            yield dict(time_ms=index * 100, position=(x, 0), movement=(0, -1),
+                       teacher_direction=(0, 1), teacher_path=[(x, 0), (x + 500, 0)],
+                       danger=danger and index == 0, was_teacher_controlled=index % 2 == 0)
+    replay = rl.dagger_threshold_replay(replay_steps())
+    assert replay["recovered_teacher_step_proposals"] == 21
+    assert replay["interventions_heading"] == 2
+    assert replay["steps_heading"] == 20
+    assert replay["steps_beta"] == pytest.approx(2.1)
+    assert rl.dagger_threshold_replay(replay_steps(progress=True))["interventions_heading"] == 0
+    danger_replay = rl.dagger_threshold_replay(replay_steps(progress=True, danger=True))
+    assert danger_replay["interventions_memory_danger"] == 1
+    assert danger_replay["steps_memory_danger"] == 10  # Exactly one second.
+
+    # Standing within the follow band is valid even when movement is commanded.
+    def stationary_steps(distance, kind="follow"):
+        for index in range(21):
+            yield dict(time_ms=index * 100, position=(0, 0), movement=(0, 1),
+                       teacher_direction=(0, 1), teacher_path=[(0, 0), (500, 0)],
+                       danger=False, was_teacher_controlled=False,
+                       goal_kind=kind, target_distance_cm=distance)
+    for distance in (200, 350, 500):
+        assert rl.dagger_threshold_replay(stationary_steps(distance))["interventions_stall"] == 0
+    for distance in (199, 501):
+        assert rl.dagger_threshold_replay(stationary_steps(distance))["interventions_stall"] == 1
+    assert rl.dagger_threshold_replay(stationary_steps(350, kind="approach"))["interventions_stall"] == 1
+
+
 def test_lean_validation_commands_disable_recording_for_every_family(tmp_path, monkeypatch):
     manifest, groups = validation_manifest(tmp_path)
     args = validation_drive_args(tmp_path, manifest, family=None)
@@ -1000,6 +1090,7 @@ def test_eval_screen_reader_rejects_test_or_changed_selection(tmp_path, corrupti
 
 def test_eval_screen_cli_drives_mixed_families_lean_without_selection_overrides(tmp_path, monkeypatch,
                                                                             validation_disk_space):
+    monkeypatch.setenv("OPENGOTHIC_BASE_FINGERPRINT", "a" * 64)
     _, groups = validation_manifest(tmp_path)
     _, detour = frozen_detour(tmp_path)
     safety = dict(id="water-case", family="safety", goal_kind="point", split="validation",
@@ -1008,7 +1099,8 @@ def test_eval_screen_cli_drives_mixed_families_lean_without_selection_overrides(
     path = tmp_path / "eval-screen.jsonl"
     rl.write_pairs(path, [dict(scenario=value, action_seeds=list(rl.ACTION_SEEDS)) for value in scenarios])
     arguments = ["nav_rl.py", "drive", "--output", str(tmp_path / "screen-run"),
-                 "--cache", str(tmp_path / "cache"), "--weights", "/hd.navbc", "--eval-screen", str(path)]
+                 "--cache", str(tmp_path / "cache"), "--weights", "/hd.navbc", "--eval-screen", str(path),
+                 "--parallel", "3"]
     captured = []
     monkeypatch.setattr(rl, "drive", lambda args: captured.append(args))
     monkeypatch.setattr(rl.sys, "argv", arguments)
@@ -1019,6 +1111,16 @@ def test_eval_screen_cli_drives_mixed_families_lean_without_selection_overrides(
     with pytest.raises(SystemExit):
         rl.main()
     stub_validation_runner(monkeypatch)
+    cache_writers = threading.Barrier(3)
+    caches = []
+    def new_runner(worker, name):
+        temporary = worker.cache / "fixture.navmesh.tmp"
+        temporary.write_text("fixture navmesh")
+        cache_writers.wait(timeout=5)
+        temporary.replace(worker.cache / "fixture.navmesh")
+        caches.append(worker.cache)
+        return SimpleNamespace(close=lambda: None)
+    monkeypatch.setattr(rl, "new_runner", new_runner)
     calls = []
     def scenario(worker, runner, name, commands, directory):
         family = directory.parent.parent.name
@@ -1036,8 +1138,11 @@ def test_eval_screen_cli_drives_mixed_families_lean_without_selection_overrides(
     monkeypatch.setattr(rl, "detour_episode_metrics", measured)
     monkeypatch.setattr(rl, "lean_validation_episode_metrics", measured)
     rl.drive_validation(args)
-    assert calls == [(value["family"], value["id"], seed) for value in scenarios for seed in rl.ACTION_SEEDS]
+    assert len(calls) == 9
+    assert set(calls) == {(value["family"], value["id"], seed) for value in scenarios for seed in rl.ACTION_SEEDS}
+    assert set(caches) == {args.cache / "ordinary" / str(index) for index in range(3)}
     assert len(list(args.output.rglob("drive-metrics.json"))) == 9
+    assert all(rl.read_json(path)["base_fingerprint"] == "a" * 64 for path in args.output.rglob("episode.json"))
 
 
 def test_detour_text_metrics_count_executed_rising_edges_without_teacher_labels(tmp_path):
@@ -1207,11 +1312,15 @@ def test_lean_metrics_match_recorded_physical_outcomes_without_navdemo(tmp_path,
 
 
 def test_lean_summary_pools_families_seeds_and_physical_evidence_without_samples(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENGOTHIC_BASE_FINGERPRINT", "b" * 64)
     episodes = []
     for seed in (7, 19, 43):
         for family in ("point", "object", "follow_below_gate", "jump", "safety"):
             directory = tmp_path / "validation" / family / f"seed-{seed}"
             lean_text_episode(directory, family, seed)
+            metadata = rl.read_json(directory / "episode.json")
+            metadata["base_fingerprint"] = "a" * 64
+            rl.write_json(directory / "episode.json", metadata)
             measured = rl.lean_validation_episode_metrics(directory)
             episodes.append(measured)
             rl.write_json(directory / "drive-metrics.json", measured)
@@ -1231,8 +1340,15 @@ def test_lean_summary_pools_families_seeds_and_physical_evidence_without_samples
     output = tmp_path / "summary"
     rl.summarize(SimpleNamespace(source=tmp_path / "validation", output=output))
     saved = rl.read_json(output / "metrics.json")
+    assert saved["base_fingerprint"] == "a" * 64
     assert saved["all"] == summary["all"]
     assert saved["object_failures_last_10s"] == []
+    unknown = sorted((tmp_path / "validation").rglob("drive-metrics.json"))[0]
+    metadata = rl.read_json(unknown)
+    del metadata["base_fingerprint"]
+    rl.write_json(unknown, metadata)
+    rl.summarize(SimpleNamespace(source=tmp_path / "validation", output=output))
+    assert rl.read_json(output / "metrics.json")["base_fingerprint"] is None
 
 
 @pytest.mark.parametrize("bad_moving_seed", [False, True])
@@ -1474,6 +1590,7 @@ def test_validation_summary_removes_shared_setup_refusals_from_both_policies(tmp
 
 
 def test_validation_resume_recovers_completed_episode_without_collector_metadata(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENGOTHIC_BASE_FINGERPRINT", "b" * 64)
     manifest, groups = validation_manifest(tmp_path)
     args = validation_drive_args(tmp_path, manifest, family="point", resume=True)
     args.action_seeds = "7"
@@ -1491,6 +1608,7 @@ def test_validation_resume_recovers_completed_episode_without_collector_metadata
         assert metadata["validation_scenario"] == value
         assert metadata["action_seed"] == 7
         assert metadata["weights"] == str(args.weights)
+        assert metadata.get("base_fingerprint") is None
         return dict(success=False)
 
     monkeypatch.setattr(rl, "validation_episode_metrics", metrics)
@@ -1633,6 +1751,101 @@ def test_eval_screen_agreement_uses_paired_routes_and_pooled_follow(monkeypatch)
     assert pair["significant"] and not pair["agrees"]
     noise = next(row for row in result if (row["metric"], row["left"], row["right"]) == ("point", "it35", "hd"))
     assert not noise["significant"] and noise["agrees"] is None  # Exactly two SE is not above two SE.
+
+
+def test_dagger_report_pairs_episode_keys_clusters_seeds_and_bootstraps_identical_medians(monkeypatch):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1]))
+    round_one, screen = rl.module("nav_dagger4_round"), rl.module("nav_eval_screen")
+    left = [dict(id=f"p{number}", family="point", action_seed=seed, success=win,
+                 elapsed_s=2 * number + 1, falls=win, safety=dict(unattributed_damage=10 * win))
+            for number, win in enumerate((1, 1, 0)) for seed in rl.ACTION_SEEDS]
+    right = [dict(ep, success=False, falls=0, safety=dict(unattributed_damage=0)) for ep in reversed(left)]
+    actual = round_one.paired_report_difference(left, right, "arrival")
+    expected = screen.paired_difference(left, right, "point")
+    for key in ("left", "right", "delta", "se", "routes"):
+        assert actual[key] == pytest.approx(expected[key])
+    assert actual["se"] == pytest.approx(1 / 3) and actual["episodes"] == 9
+    for metric, total, se in (("falls", 6, 3), ("unattributed_damage", 60, 30)):
+        result = round_one.paired_report_difference(left, right, metric)
+        assert result["left"] == total and result["right"] == 0
+        assert result["delta"] == total and result["se"] == pytest.approx(se)
+    following = [dict(id=f"f{number}", family="follow_below_gate", action_seed=seed,
+                     follow_in_band_ms=band, follow_observed_ms=observed)
+                 for number, (band, observed) in enumerate(((10, 10), (0, 90))) for seed in rl.ACTION_SEEDS]
+    other = [dict(ep, follow_in_band_ms=0) for ep in reversed(following)]
+    actual = round_one.paired_report_difference(following, other, "follow")
+    expected = screen.paired_difference(following, other, "follow_below_gate")
+    assert actual["left"] == .1 and actual["se"] == pytest.approx(.18)
+    for key in ("left", "right", "delta", "se", "routes"):
+        assert actual[key] == pytest.approx(expected[key])
+    identical = round_one.paired_report_difference(left, list(reversed(left)), "elapsed_s")
+    assert identical["left"] == identical["right"] == 3
+    assert identical["delta"] == identical["se"] == 0
+    with pytest.raises(ValueError, match="cohorts differ"):
+        round_one.paired_report_difference(left, right[:-1], "arrival")
+
+
+def test_dagger_round_compare_serializes_known_and_unknown_base_without_environment_fallback(tmp_path, monkeypatch):
+    round_one = rl.module("nav_dagger4_round")
+    monkeypatch.setattr(round_one, "ARCHIVE", tmp_path / "r1")
+    monkeypatch.setattr(round_one, "BASELINE", tmp_path / "baseline")
+    monkeypatch.setenv("OPENGOTHIC_BASE_FINGERPRINT", "b" * 64)
+    normal_episodes = [dict(family="point", id=f"p{index}", action_seed=7,
+        teacher_control_decisions=0, recording="text_only") for index in range(1491)]
+    detour_episodes = [dict(family="detour", id=f"d{index}", action_seed=7,
+        teacher_control_decisions=0, recording="text_only") for index in range(363)]
+    normal = dict(episodes=normal_episodes, setup_rejections=[{}, {}],
+        by_family=dict(point=dict(arrived=137), object=dict(arrived=498)))
+    detour = dict(episodes=detour_episodes, all=dict(arrived=293))
+    for model in ("bc3", "hd", "r1"):
+        normal_path = (round_one.ARCHIVE / "round1/validation/r1/metrics.json" if model == "r1" else
+                       round_one.BASELINE / f"hd-validation/{model}/metrics.json")
+        detour_path = (round_one.ARCHIVE / "round1/detour-validation/r1/metrics.json" if model == "r1" else
+                       round_one.BASELINE / ("hd-detour/metrics.json" if model == "hd" else "detour-baseline/bc3/metrics.json"))
+        fingerprint = dict(base_fingerprint="a" * 64) if model == "r1" else {}
+        rl.write_json(normal_path, dict(normal, **fingerprint))
+        rl.write_json(detour_path, dict(detour, **fingerprint))
+    monkeypatch.setattr(round_one, "check_episodes", lambda *args: None)
+    monkeypatch.setattr(round_one, "screen_comparison", lambda *args: dict(passed=True))
+    monkeypatch.setattr(round_one, "cleanup_runtime", lambda *args: None)
+    round_one.compare(tmp_path)
+    saved = rl.read_json(round_one.ARCHIVE / "round1/compare.json")
+    assert saved["event"] == "dagger4_round1_validation_complete"
+    assert saved["base_fingerprint"] == saved["models"]["r1"]["base_fingerprint"] == "a" * 64
+    assert saved["models"]["hd"]["base_fingerprint"] is None
+    assert saved["models"]["bc3"]["base_fingerprint"] is None
+    assert saved["decline_vs_hd"] == dict(point=0, detour=0)
+    assert saved["report_pending_live"] and saved["automatically_start_round2"] is False
+
+
+def test_dagger_round_base_pin_survives_changed_or_missing_global_settings(tmp_path, monkeypatch):
+    round_one = rl.module("nav_dagger4_round")
+    home, task = tmp_path / "home", tmp_path / "task"
+    settings = home / "gothic-ai/game-settings"
+    (settings / "system").mkdir(parents=True)
+    for name in ("Gothic.ini", "SystemPack.ini"):
+        (settings / "system" / name).write_text("fixture settings")
+    global_base = home / "gothic-ai/game-base.json"
+    rl.write_json(global_base, dict(base="changed-unavailable-base", videos="changed"))
+    stored_base = tmp_path / "base-store" / round_one.ROUND_BASE_FINGERPRINT
+    rl.write_json(stored_base / "base.json", dict(fingerprint=round_one.ROUND_BASE_FINGERPRINT))
+    pin = task / "input/base"
+    pin.parent.mkdir(parents=True)
+    pin.symlink_to(stored_base, target_is_directory=True)
+    monkeypatch.setattr(Path, "home", lambda: home)
+    monkeypatch.setenv("GOTHIC_DIR", "/changed/missing/settings")
+    monkeypatch.setenv("OPENGOTHIC_BASE", "/changed/missing/base")
+    monkeypatch.setenv("OPENGOTHIC_BASE_FINGERPRINT", "changed")
+    expected = dict(GOTHIC_DIR=str(settings), OPENGOTHIC_BASE=str(pin),
+        OPENGOTHIC_BASE_FINGERPRINT=round_one.ROUND_BASE_FINGERPRINT,
+        OPENGOTHIC_VIDEOS_FINGERPRINT=round_one.ROUND_VIDEOS_FINGERPRINT,
+        OPENGOTHIC_BASE_CACHE=str(task / "base-cache"), OPENGOTHIC_BASE_STORE=str(task / "base-store"))
+    assert round_one.round_environment(task) == expected
+    global_base.unlink()
+    assert rl.module("nav_dagger4_round").round_environment(task) == expected
+    rl.write_json(stored_base / "base.json", dict(fingerprint="wrong-base"))
+    with pytest.raises(ValueError, match="base pin"):
+        round_one.round_environment(task)
 
 
 def test_eval_screen_reuses_only_matching_finished_runner(tmp_path, monkeypatch):

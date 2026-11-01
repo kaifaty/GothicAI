@@ -780,6 +780,7 @@ bool Npc::setPosition(float ix, float iy, float iz) {
   x = ix;
   y = iy;
   z = iz;
+  visual.setTextureOwner(Vec3(x,y,z),!isPlayer());
   resetCharacterVisualHeight();
   if(!isPlayer() && (isHuman() || Gothic::physicsFlags().monsterCharacterVirtual))
     mvAlgo.resetCharacterVirtual();
@@ -813,6 +814,7 @@ void Npc::setViewPosition(const Tempest::Vec3& pos) {
   x = pos.x;
   y = pos.y;
   z = pos.z;
+  visual.setTextureOwner(pos,!isPlayer());
   durtyTranform |= TR_Pos;
   }
 
@@ -994,6 +996,7 @@ void Npc::setProcessPolicy(NpcProcessPolicy t) {
   if(aiPolicy==NpcProcessPolicy::Player)
     runAng = 0;
   aiPolicy=t;
+  visual.setTextureOwner(position(),!isPlayer());
   }
 
 void Npc::setWalkMode(WalkBit m) {
@@ -1277,6 +1280,7 @@ bool Npc::recoverRagdoll(bool force) {
   else if(fx*fx+fz*fz>1e-6f)
     angle = 90.f-std::atan2(fx,fz)*180.f/float(M_PI);
   x = at.x; y = at.y; z = at.z;
+  visual.setTextureOwner(at,!isPlayer());
   physic.setPosition(at);
   ragdollObjectMatrix.identity();
   ragdollObjectMatrix.translate(x,y,z);
@@ -1369,6 +1373,7 @@ bool Npc::recoverSpellThrow() {
   angle = ragdollQuestReturn.angle;
   const auto at = ragdollQuestReturn.anchor;
   x = at.x; y = at.y; z = at.z;
+  visual.setTextureOwner(at,!isPlayer());
   physic.setPosition(at);
   living.reset();
   arrowImpacts.clear();
@@ -1399,6 +1404,7 @@ void Npc::prepareRagdoll() {
       // NPC straight over the same edge again. 'armed' also survives a mid-rise save.
       const auto at = ragdollQuestReturn.anchor;
       x = at.x; y = at.y; z = at.z;
+      visual.setTextureOwner(at,!isPlayer());
       physic.setPosition(at);
       mvAlgo.clearSpeed();
       durtyTranform |= TR_Pos;
@@ -2724,6 +2730,7 @@ void Npc::syncRagdoll() {
   x = ragdollObjectMatrix.at(3,0);
   y = ragdollObjectMatrix.at(3,1);
   z = ragdollObjectMatrix.at(3,2);
+  visual.setTextureOwner(position(),!isPlayer());
   checkRagdollQuestHazard();
   physic.setPosition(position());
   visual.pose().setRagdollPose(visual.visualSkeleton(),ragdollPose,ragdoll->poseIndices());
@@ -3023,6 +3030,9 @@ void Npc::setVisual(const Skeleton* v) {
 
 void Npc::setVisualBody(int32_t headTexNr, int32_t teethTexNr, int32_t bodyTexNr, int32_t bodyTexColor,
                         std::string_view ibody, std::string_view ihead) {
+  const auto* residency=owner.chunkResidency();
+  Resources::TextureLoadScope textureLoadScope(!isPlayer() && residency &&
+      residency->textureDistance(ChunkId::fromPosition(x,z))>2);
   body    = ibody;
   head    = ihead;
   vHead   = headTexNr;
@@ -3039,6 +3049,9 @@ void Npc::setVisualBody(int32_t headTexNr, int32_t teethTexNr, int32_t bodyTexNr
   }
 
 void Npc::updateArmor() {
+  const auto* residency=owner.chunkResidency();
+  Resources::TextureLoadScope textureLoadScope(!isPlayer() && residency &&
+      residency->textureDistance(ChunkId::fromPosition(x,z))>2);
   living.reset();
   auto  ar = invent.currentArmor();
   auto& w  = owner;

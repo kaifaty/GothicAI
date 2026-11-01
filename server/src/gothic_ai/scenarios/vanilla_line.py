@@ -7,20 +7,23 @@ import copy
 import json
 import logging
 import os
-from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Sequence
+from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
 from .. import questbook
 from ..attitudes import non_hostile
+from ..chains import CACHE_KEY as CHAINS_KEY
 from ..challenges import KINDS
+from ..dialogue import DialogueManager
 from ..game import GameLink
 from ..journal import Journal
-from ..llm import Done, Item, LLMEvent, Message, Tool, ToolCall, ToolChoice
-from ..llm.fake import FakeBackend
+from ..llm import ToolCall
 from ..protocol import Session
+from ..showrunner import CACHE_KEY as SHOWRUNNER_KEY
 from ..showrunner import MIN_REAL_SECONDS, OUTCOMES, occasion_members
+from ..trace import TraceWriter
 from .common import (
     LOBART,
     RUEBEN,
@@ -28,10 +31,12 @@ from .common import (
     _save,
     _until,
     _until_async,
+    model_off,
     wait_message,
 )
+from .live import LiveSuite
 from .questlog import ACCEPT, TAKE, TITLE
-from .showrunner import ErrandScript
+from .showrunner import Errand, trace_live_builders
 from .story import play_book_chain
 
 if TYPE_CHECKING:
@@ -47,47 +52,6 @@ PREMISE = (
     "и просит осмотреть дорогу, где бросили грязные остатки припасов, и принести образец. "
     "Урожай уже принят Лобартом; это отдельная просьба."
 )
-
-
-class VanillaLineScript:
-    """The director's response is fixed; the watcher, canon and builders stay real."""
-
-    name = "vanilla-line-script"
-
-    def __init__(self, giver: str) -> None:
-        self.giver = giver
-        self.calls: list[str] = []
-
-    async def aclose(self) -> None:
-        pass
-
-    async def stream(
-        self,
-        *,
-        instructions: str,
-        messages: Sequence[Item],
-        tools: list[Tool] | None = None,
-        tool_choice: ToolChoice | None = None,
-        allowed: Collection[str] | None = None,
-        cache_key: str | None = None,
-    ) -> AsyncIterator[LLMEvent]:
-        self.calls.append("\n".join(m.content for m in messages if isinstance(m, Message)))
-        call = ToolCall(
-            "propose_line",
-            {
-                "kind": "quest",
-                "giver": self.giver,
-                "place": "",
-                "new_people": False,
-                "premise": PREMISE,
-                "reason": "сосед отвечает отдельной просьбой на работу героя у Лобарта",
-                "follows": RUEBEN,
-                "requires": REQUIRES,
-            },
-            f"vanilla_line{len(self.calls)}",
-        )
-        yield call
-        yield Done("", (call,))
 
 
 class Turnips:
@@ -206,16 +170,15 @@ async def _giver_ok(link: GameLink, director: Showrunner, line: dict[str, Any]) 
 
 
 async def vanilla_line(
-    link: GameLink, director: Showrunner, quests: QuestLog, slot: int = 7
+    link: GameLink, director: Showrunner, quests: QuestLog, dialogue: DialogueManager, slot: int = 7
 ) -> dict[str, str]:
-    """A scripted response to Lobart's success; the common player finishes it, then save/load keeps it."""
+    """A given neighbor's request after Lobart's success is played and retained across save/load."""
     results: dict[str, str] = {}
 
     def check(name: str, ok: bool, detail: object = "") -> None:
         results[name] = f"{'done' if ok else 'failed'}{f' ({detail})' if detail != '' else ''}"
 
-    if not isinstance(director.model.llm, FakeBackend):
-        return _logged({"scripted_model": "failed (vanilla_line requires LLM=fake)"})
+    off = model_off(dialogue)
     turnips = Turnips(link, director, quests)
     await turnips.prepare()
     check("prepared", True)
@@ -239,16 +202,26 @@ async def vanilla_line(
     check("neighbor", giver is not None and giver != LOBART, giver)
     if giver is None:
         return _logged(results)
-    script, builder = VanillaLineScript(giver), await ErrandScript.for_giver(director, giver)
+    builder = await Errand.for_giver(director, giver)
     if builder is None:
         return _logged({**results, "builder": "failed (no book quest brief)"})
-    director.model.llm, director.chains.model.llm = script, builder
+    off.given(
+        "дано: режиссёр предлагает отдельную просьбу соседа после принятой репы",
+        who=SHOWRUNNER_KEY, when=RUEBEN,
+        calls=[ToolCall("propose_line", {
+            "kind": "quest", "giver": giver, "place": "", "new_people": False,
+            "premise": PREMISE,
+            "reason": "сосед отвечает отдельной просьбой на работу героя у Лобарта",
+            "follows": RUEBEN, "requires": REQUIRES,
+        })],
+    )
+    off.given(
+        "дано: сборщик предлагает просьбу соседа осмотреть дорогу и принести образец",
+        who=CHAINS_KEY, when=f"Замысел режиссёра: {PREMISE}", calls=[builder.call()],
+    )
     line = await director.decide(occasion)
-    check("line", line is not None and line.get("fact") == "line", line)
     if line is None or line.get("fact") != "line":
-        return _logged(results)
-    check("follows_requires", line.get("follows") == RUEBEN and line.get("requires") == REQUIRES, line)
-    check("giver", line.get("giver") == giver and await _giver_ok(link, director, line), giver)
+        raise RuntimeError(f"the director did not build a playable neighbor errand: {line!r}")
     made = [director.book.all()[qid] for qid in line.get("quests", []) if qid in director.book.all()]
     check("book", bool(made) and len(made) == len(line.get("quests", [])), [q.id for q in made])
     if not made:
@@ -284,7 +257,8 @@ async def vanilla_line(
 
 
 async def vanilla_line_live(
-    link: GameLink, director: Showrunner, quests: QuestLog, journal: Journal
+    link: GameLink, director: Showrunner, quests: QuestLog, journal: Journal,
+    trace: TraceWriter | None = None,
 ) -> dict[str, str]:
     """The real consumer responds to taking and completing the scripts' quest, with live builders."""
     results: dict[str, str] = {}
@@ -302,8 +276,7 @@ async def vanilla_line_live(
         if service._raw_place is not None and not await _until(
             lambda: service.current is not None and service.current.id == service._raw_place, 25
         ):
-            check(f"{state}_setup", False, "the hero's place did not settle")
-            return None
+            raise RuntimeError("the hero's place did not settle")
         await service.poll()
         async with service._lock:
             service.pending.clear()
@@ -324,8 +297,7 @@ async def vanilla_line_live(
         try:
             await trigger()
             if not await _until(lambda: turnips.event(state, before), 45):
-                check(f"{state}_occasion", False, "the watcher did not record the vanilla occasion")
-                return None
+                raise RuntimeError("the watcher did not record the vanilla occasion")
             event = turnips.event(state, before)
             check(f"{state}_occasion", True, event)
             log.info("vanilla line live %s event: %s", state, json.dumps(event, ensure_ascii=False))
@@ -343,16 +315,10 @@ async def vanilla_line_live(
                 )
 
             if not await _until(outcome, 300):
-                check(f"{state}_outcome", False, "no outcome in the chronicle within 300 s")
                 return None
             fact = outcome()
             assert fact is not None
             log.info("vanilla line live %s response: %s", state, json.dumps(fact, ensure_ascii=False))
-            check(
-                f"{state}_outcome",
-                fact["fact"] == "line" or (fact["fact"] == "line_none" and bool(fact.get("reason"))),
-                fact,
-            )
             return fact
         finally:
             director.chronicle.on_fact.remove(stop_on_outcome)
@@ -372,7 +338,8 @@ async def vanilla_line_live(
         if sink is not None:
             sink(entry)
 
-    outcomes = lines = completed = 0
+    lines = 0
+    suite = LiveSuite("vanilla_line_live", trace) if trace is not None else None
     try:
         if force_challenge:
             director.model.instructions += (
@@ -382,150 +349,183 @@ async def vanilla_line_live(
             hint_chance.start()
             journal.sink = keep
         await turnips.prepare()
-        check("prepared", True)
+        if trace is None or suite is None:
+            raise RuntimeError("vanilla_line_live requires a trace directory")
         wall = [real_clock()]
         director.clock = lambda: wall[0]
-        for index, (state, trigger) in enumerate((("running", turnips.take), ("success", turnips.finish))):
-            if index:
-                before = await link.story_state()
-                hour, minute = int(before["hour"]), int(before["minute"])
-                await link.debug("time", hour=(hour + 12) % 24, minute=minute)
-                await link.debug("time", hour=hour, minute=minute)
-                after = await link.story_state()
-                elapsed = (
-                    (int(after["day"]) - int(before["day"])) * 1440
-                    + int(after["hour"]) * 60
-                    + int(after["minute"])
-                    - hour * 60
-                    - minute
-                )
-                check("success_day", elapsed >= 1440, elapsed)
-                wall[0] += MIN_REAL_SECONDS + 1
-                await turnips.harvest()
-            fact = await resolve(state, trigger)
-            if fact is None or fact["fact"] not in {"line", "line_none"}:
-                break
-            outcomes += 1
-            if fact["fact"] == "line_none":
-                continue
-            lines += 1
-            challenge = None
-            dropped = False
-            if force_challenge:
-                line_seq = next(seq for seq, entry in director.chronicle.entries("line") if entry == fact)
-                dropped = any(
-                    entry.get("line") == line_seq
-                    for entry in director.chronicle.facts("challenge_dropped")
-                )
-                if dropped:
-                    check(f"challenge_{lines}", True, "dropped: no_fight")
-                else:
-                    challenges = [
-                        (seq, entry) for seq, entry in director.chronicle.entries("challenge")
-                        if entry.get("line") == line_seq
-                    ]
-                    challenge = challenges[0] if len(challenges) == 1 else None
+        with trace_live_builders(director, trace):
+            for index, (state, trigger) in enumerate(
+                (("running", turnips.take), ("success", turnips.finish))
+            ):
+                if state not in suite.selected:
+                    continue
+                with suite.case(state) as case:
+                    results = {}
+                    if index:
+                        before = await link.story_state()
+                        hour, minute = int(before["hour"]), int(before["minute"])
+                        await link.debug("time", hour=(hour + 12) % 24, minute=minute)
+                        await link.debug("time", hour=hour, minute=minute)
+                        after = await link.story_state()
+                        elapsed = (
+                            (int(after["day"]) - int(before["day"])) * 1440
+                            + int(after["hour"]) * 60
+                            + int(after["minute"])
+                            - hour * 60
+                            - minute
+                        )
+                        if elapsed < 1440:
+                            raise RuntimeError(f"the next game day did not start: {elapsed} minutes")
+                        wall[0] += MIN_REAL_SECONDS + 1
+                        if quests.states.get(RUEBEN) != "running":
+                            await turnips.take()
+                        await turnips.harvest()
+                    fact = await resolve(state, trigger)
+                    evidence: dict[str, Any] = {"outcome": fact, "checks": results}
+                    if fact is None:
+                        case.finish("no_decision", evidence={**evidence, "reason": "no outcome within 300 s"})
+                        continue
+                    if fact["fact"] == "line_none":
+                        case.finish("no_decision", evidence=evidence)
+                        continue
+                    if fact["fact"] != "line":
+                        case.finish("failure", evidence=evidence)
+                        continue
+                    lines += 1
+                    challenge = None
+                    dropped = False
+                    if force_challenge:
+                        line_seq = next(
+                            seq for seq, entry in director.chronicle.entries("line") if entry == fact
+                        )
+                        dropped = any(
+                            entry.get("line") == line_seq
+                            for entry in director.chronicle.facts("challenge_dropped")
+                        )
+                        if dropped:
+                            check(f"challenge_{lines}", True, "dropped: no_fight")
+                        else:
+                            challenges = [
+                                (seq, entry) for seq, entry in director.chronicle.entries("challenge")
+                                if entry.get("line") == line_seq
+                            ]
+                            challenge = challenges[0] if len(challenges) == 1 else None
+                            check(
+                                f"challenge_{lines}",
+                                challenge is not None and challenge[1].get("kind") in KINDS,
+                                challenges,
+                            )
+
+                            def hint(
+                                seq: int | None = challenge[0] if challenge is not None else None,
+                            ) -> dict[str, Any] | None:
+                                return next((
+                                    entry for entry in director.chronicle.facts("challenge_hint")
+                                    if seq is not None and entry.get("challenge") == seq
+                                ), None)
+
+                            # A giver cannot be the source of a rumor about himself.
+                            sources = sorted(
+                                set(challenge[1].get("people", []) if challenge is not None else [])
+                                - {fact.get("giver"), "PLAYER"}
+                            )
+                            if challenge is not None and not sources:
+                                check(f"challenge_hint_{lines}", hint() is None, "no source: only the giver")
+                            else:
+                                if challenge is not None:
+                                    await _until(hint, 30)
+                                check(f"challenge_hint_{lines}", hint() is not None, hint())
+                    safe = await _giver_ok(link, director, fact)
                     check(
-                        f"challenge_{lines}",
-                        challenge is not None and challenge[1].get("kind") in KINDS,
-                        challenges,
+                        f"{state}_giver", safe, {"giver": fact.get("giver"), "follows": fact.get("follows")}
                     )
-
-                    def hint(
-                        seq: int | None = challenge[0] if challenge is not None else None,
-                    ) -> dict[str, Any] | None:
-                        return next((
-                            entry for entry in director.chronicle.facts("challenge_hint")
-                            if seq is not None and entry.get("challenge") == seq
-                        ), None)
-
-                    # the giver cannot be the source of a rumor about himself: no other person, no hint
-                    sources = sorted(
-                        set(challenge[1].get("people", []) if challenge is not None else [])
-                        - {fact.get("giver"), "PLAYER"}
+                    if not safe:
+                        case.finish("failure", evidence=evidence)
+                        continue
+                    made = [director.book.all()[qid] for qid in fact["quests"]]
+                    evidence["quests"] = [q.to_dict() for q in made]
+                    for q in made:
+                        log.info(
+                            "vanilla line live %s built: %s", state,
+                            json.dumps(q.to_dict(), ensure_ascii=False)
+                        )
+                    characters = [
+                        spec.model_dump()
+                        for spec in director.casting.cast.characters()
+                        if spec.npc in fact["characters"]
+                    ]
+                    evidence["characters"] = characters
+                    await link.debug("skip_important", near=fact["giver"])
+                    played = await play_book_chain(link, director.book, made)
+                    results.update({f"{state}_{key}": value for key, value in played.items()})
+                    await director.book.settle(fact["giver"])
+                    passed = (
+                        bool(made)
+                        and all(director.book.progress(q.id).state == "done" for q in made)
+                        and all(value.startswith("done") for value in played.values())
                     )
-                    if challenge is not None and not sources:
-                        check(f"challenge_hint_{lines}", hint() is None, "no source: only the giver")
-                    else:
+                    log.info(
+                        "vanilla line live %s passage: %s", state, json.dumps(played, ensure_ascii=False)
+                    )
+                    check(f"{state}_completed", passed)
+                    evidence["passage"] = played
+                    evidence["progress"] = {q.id: director.book.progress(q.id).state for q in made}
+                    if force_challenge and not dropped:
+                        def challenge_outcomes(
+                            challenge_seq: int | None = challenge[0] if challenge is not None else None,
+                        ) -> list[tuple[int, dict[str, Any]]]:
+                            return [
+                                (seq, entry) for seq, entry in director.chronicle.entries()
+                                if entry.get("fact") in {"challenge_met", "challenge_failed"}
+                                and challenge_seq is not None and entry.get("challenge") == challenge_seq
+                            ]
+
                         if challenge is not None:
-                            await _until(hint, 30)
-                        check(f"challenge_hint_{lines}", hint() is not None, hint())
-            safe = await _giver_ok(link, director, fact)
-            check(f"{state}_giver", safe, {"giver": fact.get("giver"), "follows": fact.get("follows")})
-            if not safe:
-                break
-            made = [director.book.all()[qid] for qid in fact["quests"]]
-            for q in made:
-                log.info("vanilla line live %s built: %s", state, json.dumps(q.to_dict(), ensure_ascii=False))
-            characters = [
-                spec.model_dump()
-                for spec in director.casting.cast.characters()
-                if spec.npc in fact["characters"]
-            ]
-            log.info("vanilla line live %s characters: %s", state, json.dumps(characters, ensure_ascii=False))
-            await link.debug("skip_important", near=fact["giver"])
-            played = await play_book_chain(link, director.book, made)
-            results.update({f"{state}_{key}": value for key, value in played.items()})
-            await director.book.settle(fact["giver"])
-            passed = (
-                bool(made)
-                and all(director.book.progress(q.id).state == "done" for q in made)
-                and all(value.startswith("done") for value in played.values())
-            )
-            log.info("vanilla line live %s passage: %s", state, json.dumps(played, ensure_ascii=False))
-            check(f"{state}_completed", passed)
-            if force_challenge and not dropped:
-                def challenge_outcomes(
-                    challenge_seq: int | None = challenge[0] if challenge is not None else None,
-                ) -> list[tuple[int, dict[str, Any]]]:
-                    return [
-                        (seq, entry) for seq, entry in director.chronicle.entries()
-                        if entry.get("fact") in {"challenge_met", "challenge_failed"}
-                        and challenge_seq is not None and entry.get("challenge") == challenge_seq
-                    ]
+                            await _until(challenge_outcomes, 30)
+                        resolved = challenge_outcomes()
+                        check(
+                            f"challenge_outcome_{lines}", len(resolved) == 1,
+                            [
+                                {
+                                    "kind": entry.get("kind"), "outcome": entry["fact"],
+                                    "why": entry.get("why", ""),
+                                }
+                                for _, entry in resolved
+                            ] or {
+                                "kind": challenge[1].get("kind") if challenge is not None else None,
+                                "outcome": "missing",
+                                "why": "no outcome within 30 s" if challenge is not None else "no challenge",
+                            },
+                        )
+                        if len(resolved) == 1 and resolved[0][1]["fact"] == "challenge_met":
+                            met_seq = resolved[0][0]
 
-                if challenge is not None:
-                    await _until(challenge_outcomes, 30)
-                resolved = challenge_outcomes()
-                check(
-                    f"challenge_outcome_{lines}", len(resolved) == 1,
-                    [
-                        {"kind": entry.get("kind"), "outcome": entry["fact"], "why": entry.get("why", "")}
-                        for _, entry in resolved
-                    ] or {
-                        "kind": challenge[1].get("kind") if challenge is not None else None,
-                        "outcome": "missing",
-                        "why": "no outcome within 30 s" if challenge is not None else "no challenge",
-                    },
-                )
-                if len(resolved) == 1 and resolved[0][1]["fact"] == "challenge_met":
-                    met_seq = resolved[0][0]
+                            def feat_decision(trigger: int = met_seq) -> dict[str, Any] | None:
+                                return next((
+                                    entry for entry in [*director.chronicle.facts("feat"), *declined]
+                                    if entry.get("trigger") == trigger
+                                ), None)
 
-                    def feat_decision(trigger: int = met_seq) -> dict[str, Any] | None:
-                        return next((
-                            entry for entry in [*director.chronicle.facts("feat"), *declined]
-                            if entry.get("trigger") == trigger
-                        ), None)
-
-                    await _until(feat_decision, 240)
-                    decision = feat_decision()
-                    check(
-                        f"challenge_feat_{lines}", decision is not None,
-                        decision.get("title", decision.get("reason", "")) if decision is not None
-                        else "no feat or refusal within 240 s",
-                    )
-            if not passed:
-                break
-            completed += 1
-        check("all_outcomes", outcomes == 2, f"{outcomes}/2")
-        check("at_least_one_line", lines >= 1, f"{lines}/2")
-        check("all_lines_completed", completed == lines, f"{completed}/{lines}")
-        if force_challenge and not lines:
-            check("challenge_lines", False, "no lines")
+                            await _until(feat_decision, 240)
+                            decision = feat_decision()
+                            check(
+                                f"challenge_feat_{lines}", decision is not None,
+                                decision.get("title", decision.get("reason", "")) if decision is not None
+                                else "no feat or refusal within 240 s",
+                            )
+                    passed = passed and all(value.startswith("done") for value in results.values())
+                    case.finish("success" if passed else "failure", evidence=evidence)
+    except Exception as error:
+        if suite is None:
+            raise
+        suite.setup_error(error)
     finally:
         director.clock = real_clock
         if force_challenge:
             director.model.instructions = instructions
             hint_chance.stop()
             journal.sink = sink
-    return _logged(results)
+        if suite is not None:
+            suite.results()
+    assert suite is not None
+    return _logged(suite.results())

@@ -1,5 +1,5 @@
 # Fixed performance viewpoints for Claude's comparison on Mac.
-# Run with OPENGOTHIC_STREAMING=0 and =1; capture only after full Far publication.
+# Run with OPENGOTHIC_TEXTURE_MIPS=0 and =1; wait for Far and texture publication.
 seed 73013
 cheat god
 world-check NEWWORLD.ZEN
@@ -33,4 +33,14 @@ wait 10000
 cam hold
 streaming wait
 shot perf-forest
+wait 34
+# Above the lighthouse, looking inland across the city towards the distant forest.
+# Horizontal eye position is approximately (-1500, 15800) cm; range is 300-800 m.
+goto pos 30000 4000 -12000
+cam look 120
+cam world 42000 6500 138.5
+wait 10000
+cam hold
+streaming wait
+shot perf-island
 wait 34

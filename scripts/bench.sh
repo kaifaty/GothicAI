@@ -21,6 +21,7 @@
 #                    goes into <segment>.wav instead of the speakers
 #      MOVABLE_VOBS  optional initial GAME movable_vobs setting (0 or 1), before world loading
 #      ITEM_HULLS    optional initial GAME item_hulls setting (0 or 1), for new item bodies
+#      ITEM_DEEPEST_CONTACT optional initial GAME item_deepest_contact setting (0 or 1)
 #      FURNITURE_PARTS optional initial GAME furniture_parts setting (0 or 1)
 #      ARROW_STICKING optional initial GAME arrow_sticking setting (0 or 1), before world loading
 #      PHYSICS_NOISE optional initial GAME physics_noise setting (0 or 1), before world loading
@@ -230,7 +231,7 @@ musicVolume=${MUSIC:-0}
 musicEnabled=$([[ "${MUSIC:-0}" == 0 || "${MUSIC:-0}" == 0.0 ]] && echo 0 || echo 1)
 worldSounds=${WORLD_SOUNDS:-1}
 EOF
-if [[ -n "${MOVABLE_VOBS:-}${ITEM_HULLS:-}${FURNITURE_PARTS:-}${ARROW_STICKING:-}${PHYSICS_NOISE:-}${DESTRUCTION:-}${BUOYANCY:-}${CLOTH:-}${ITEM_WAKE:-}${PLACED_ITEMS:-}${STATIC_COLLISION_SPLIT:-}${CHARACTER_VIRTUAL:-}${NPC_CHARACTER_VIRTUAL:-}${MONSTER_CHARACTER_VIRTUAL:-}${MELEE_BLADE_SHADOW:-}${MELEE_PHYSICS_HITS:-}${MELEE_POSTURE:-}${MELEE_REACTIONS:-}${MELEE_DOWN_TACTICS:-}${MELEE_HITSTOP:-}${MELEE_STAMINA:-}${MELEE_PARRY:-}${MELEE_PARRY_AI:-}${MELEE_STAGGER:-}" ]]; then
+if [[ -n "${MOVABLE_VOBS:-}${ITEM_HULLS:-}${ITEM_DEEPEST_CONTACT:-}${FURNITURE_PARTS:-}${ARROW_STICKING:-}${PHYSICS_NOISE:-}${DESTRUCTION:-}${BUOYANCY:-}${CLOTH:-}${ITEM_WAKE:-}${PLACED_ITEMS:-}${STATIC_COLLISION_SPLIT:-}${CHARACTER_VIRTUAL:-}${NPC_CHARACTER_VIRTUAL:-}${MONSTER_CHARACTER_VIRTUAL:-}${MELEE_BLADE_SHADOW:-}${MELEE_PHYSICS_HITS:-}${MELEE_POSTURE:-}${MELEE_REACTIONS:-}${MELEE_DOWN_TACTICS:-}${MELEE_HITSTOP:-}${MELEE_STAMINA:-}${MELEE_PARRY:-}${MELEE_PARRY_AI:-}${MELEE_STAGGER:-}" ]]; then
   printf '\n[GAME]\n' >>"$RUN/Gothic.ini"
   if [[ -n "${MOVABLE_VOBS:-}" ]]; then
     [[ "$MOVABLE_VOBS" == 0 || "$MOVABLE_VOBS" == 1 ]] || { echo "MOVABLE_VOBS must be 0 or 1" >&2; exit 2; }
@@ -239,6 +240,10 @@ if [[ -n "${MOVABLE_VOBS:-}${ITEM_HULLS:-}${FURNITURE_PARTS:-}${ARROW_STICKING:-
   if [[ -n "${ITEM_HULLS:-}" ]]; then
     [[ "$ITEM_HULLS" == 0 || "$ITEM_HULLS" == 1 ]] || { echo "ITEM_HULLS must be 0 or 1" >&2; exit 2; }
     printf 'item_hulls=%s\n' "$ITEM_HULLS" >>"$RUN/Gothic.ini"
+  fi
+  if [[ -n "${ITEM_DEEPEST_CONTACT:-}" ]]; then
+    [[ "$ITEM_DEEPEST_CONTACT" == 0 || "$ITEM_DEEPEST_CONTACT" == 1 ]] || { echo "ITEM_DEEPEST_CONTACT must be 0 or 1" >&2; exit 2; }
+    printf 'item_deepest_contact=%s\n' "$ITEM_DEEPEST_CONTACT" >>"$RUN/Gothic.ini"
   fi
   if [[ -n "${FURNITURE_PARTS:-}" ]]; then
     [[ "$FURNITURE_PARTS" == 0 || "$FURNITURE_PARTS" == 1 ]] || { echo "FURNITURE_PARTS must be 0 or 1" >&2; exit 2; }

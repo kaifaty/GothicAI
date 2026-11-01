@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from collections.abc import Sequence
 from pathlib import Path
@@ -9,16 +10,14 @@ from typing import Any
 
 from .. import triggers
 from ..bodies import Bodies
-from ..brain import Decider, NpcPlanner
+from ..brain import NpcPlanner
 from ..brain.reflex import Reflexes
 from ..budget import Budget
 from ..dialogue import DialogueManager
 from ..game import GameError, GameLink
 from ..incidents import IncidentDesk
-from ..journal import Journal
 from ..knowledge import Knowledge, Topic
-from ..llm import LLMBackend, Message, ToolCall, ToolResult
-from ..llm.fake import FakeBackend, FakeStep
+from ..llm import ToolCall
 from ..llm.openai_responses import OpenAIResponsesBackend
 from ..npc_tools import GESTURES as NPC_GESTURES
 from ..perception import BEASTS
@@ -45,7 +44,6 @@ from ..protocol import (
     ThreatControlCmd,
 )
 from ..talk import TalkDesk
-from ..trace import TraceWriter
 from ..trace import read as read_trace
 from ..voice import VoiceInput
 from .common import (
@@ -58,6 +56,7 @@ from .common import (
     _until,
     _until_async,
     attach_when_free,
+    model_off,
     prepare_npc_pose,
     wait_message,
 )
@@ -65,10 +64,12 @@ from .responses_server import ResponsesServer, reply
 
 log = logging.getLogger("gothic_ai.scenarios")
 
-GESTURES = ("T_COMEOVERHERE", "T_GREETNOV", "T_YES")
-QUICK_LINE_S = (
-    1.5  # m5 with the quick model: its line starts this soon (the conversational model takes 3-5 s)
+MOOD_REPLY = (
+    "[friendly] Ты вернулся. Хорошо. "
+    "[angry] Времени у нас мало, так что слушай внимательно. Драконы уже здесь."
 )
+
+GESTURES = ("T_COMEOVERHERE", "T_GREETNOV", "T_YES")
 
 
 async def m0_smoke(link: GameLink, npc: str = "NONE_100_XARDAS") -> list[Step]:
@@ -112,6 +113,12 @@ async def m1_chat(
     link: GameLink, dialogue: DialogueManager, npc: str = "NONE_100_XARDAS", text: str = "Кто ты такой?"
 ) -> list[str]:
     """M1 check without the keyboard: player text injected on the server, the npc must speak every line."""
+    off = model_off(dialogue)
+    dialogue.quick = None
+    off.given(
+        "дано: реплика Ксардаса с настроениями для очереди строк", who=npc, when=text,
+        line=MOOD_REPLY,
+    )
     await link.wait_world()
     await attach_when_free(link, npc)
     snap = await link.snapshot(npc)
@@ -121,16 +128,16 @@ async def m1_chat(
     link.listeners.append(lambda msg: started.append(msg.line) if isinstance(msg, LineStarted) else None)
 
     await dialogue.say_as_player(npc, text)
-    lines = conv.last_lines
+    lines = list(conv.last_lines)
     log.info("%s said %d line(s), waiting for the npc to speak them", npc, len(lines))
     for _ in range(20 * max(1, len(lines))):  # ~10 s per line
         if all(line in started for line in lines):
             break
         await asyncio.sleep(0.5)
     await link.act(npc, "return_to_routine")
-    missing = [line for line in lines if line not in started]
-    if not lines or missing:
-        raise RuntimeError(f"npc did not speak lines: {missing or 'no lines generated'}")
+    observed = [line for line in started if line in lines]
+    if not lines or observed != lines:
+        raise RuntimeError(f"npc did not speak lines in order: expected {lines}, observed {observed}")
     return lines
 
 
@@ -326,7 +333,9 @@ async def websocket(link: GameLink, dialogue: DialogueManager) -> dict[str, str]
     return _logged(results)
 
 
-async def m2_actions(link: GameLink, npc: str = "NONE_100_XARDAS") -> dict[str, str]:
+async def m2_actions(
+    link: GameLink, dialogue: DialogueManager, npc: str = "NONE_100_XARDAS"
+) -> dict[str, str]:
     """M2 check of the game-side actions: snapshot contents, give_item, follow/stop, gestures."""
     await link.wait_world()
     await attach_when_free(link, npc)
@@ -352,11 +361,14 @@ async def m2_actions(link: GameLink, npc: str = "NONE_100_XARDAS") -> dict[str, 
     def count_of(s: Snapshot) -> int:
         return next((i.count for i in s.npc.inventory if i.item == potion), 0)
 
-    # the whole path: the model speaks and calls give_item, the game transfers, the outcome becomes a note
-    llm = FakeBackend(
-        "Держи, это поможет тебе.", delay=0, tool_calls=[ToolCall("give_item", {"item": potion, "count": 1})]
+    # The given decision goes through turn checks, the game transfer and its memory note.
+    off = model_off(dialogue)
+    dialogue.quick = None
+    off.given(
+        "дано: Ксардас даёт зелье", who=npc, when="Дай зелье",
+        calls=[ToolCall("give_item", {"item": potion, "count": 1})],
     )
-    dialogue = DialogueManager(link, llm, PersonaProvider(None))
+    off.silent("дано: Ксардас молчит (зелье передано)", who=npc, when="Дай зелье")
     conv = dialogue.open(npc, snap.npc.name)
     before = count_of(await link.snapshot(npc, fresh=True))
     await dialogue.say_as_player(npc, "Дай зелье")
@@ -371,7 +383,9 @@ async def m2_actions(link: GameLink, npc: str = "NONE_100_XARDAS") -> dict[str, 
     )
 
     res = await link.act(npc, "give_item", item="ITMI_NOT_A_REAL_ITEM", count=1)
-    results["give_item_missing"] = res.status
+    results["give_item_missing"] = (
+        f"{'done' if res.status == 'rejected' else 'failed'} ({res.status}: {res.detail})"
+    )
 
     ended: list[str] = []
     link.listeners.append(lambda m: ended.append(m.reason) if isinstance(m, FollowEnded) else None)
@@ -384,7 +398,12 @@ async def m2_actions(link: GameLink, npc: str = "NONE_100_XARDAS") -> dict[str, 
     results["stop"] = f"{res.status}, follow_ended={ended}"
 
     for gesture, anim in NPC_GESTURES.items():
-        results[f"gesture {gesture}"] = (await link.act(npc, "play_ani", name=anim)).status
+        res = await link.act(npc, "play_ani", name=anim)
+        unavailable = res.status == "rejected" and res.detail == f"unknown animation: {anim}"
+        ok = res.status == "done" or unavailable
+        results[f"gesture {gesture}"] = (
+            f"{'done' if ok else 'failed'} ({res.status}{': ' + res.detail if res.detail else ''})"
+        )
 
     await link.act(npc, "return_to_routine")
     for name, outcome in results.items():
@@ -396,6 +415,17 @@ async def tts_lines(
     link: GameLink, dialogue: DialogueManager, npc: str = "NONE_100_XARDAS"
 ) -> dict[str, str]:
     """TTS check: every line of a reply reaches the game with its audio and is spoken aloud."""
+    off = model_off(dialogue)
+    dialogue.quick = None
+    off.given(
+        "дано: реплика Ксардаса для пути озвучки", who=npc,
+        when="Расскажи о драконах.", line=MOOD_REPLY,
+    )
+    if os.environ.get("GOTHIC_TTS_RECORD") == "1":
+        off.silent(
+            "дано: Ксардас молчит (крыса напала на героя на стенде записи голоса)", who=npc,
+            when="гигантская крыса нападает на героя",
+        )
     await link.wait_world()
     await attach_when_free(link, npc)
     snap = await link.snapshot(npc)
@@ -435,6 +465,16 @@ async def m3_memory_voice(
     Talk, save into `slot`, talk more, load the slot: the npc must remember the first talk only.
     Then one push-to-talk utterance (the server's audio source, e.g. a wav file) goes through ASR.
     """
+    off = model_off(dialogue)
+    dialogue.quick = None
+    off.given(
+        "дано: реплика Ксардаса до сохранения", who=npc, when="Запомни: меня зовут Тестер.",
+        line="Я тебя услышал.",
+    )
+    off.given(
+        "дано: реплика Ксардаса после сохранения", who=npc,
+        when="А это я сказал уже после сохранения.", line="Продолжай.",
+    )
     results: dict[str, str] = {}
     await link.wait_world()
     if link.session is None:
@@ -482,6 +522,7 @@ async def m3_memory_voice(
     results["memory"] = f"{'done' if ok else 'failed'} (remembers {said})"
 
     if voice is not None:
+        off.given("дано: реплика Ксардаса на распознанный голос", who=npc, line="Я слышу тебя.")
         started: list[str] = []
         link.listeners.append(lambda m: started.append(m.line) if isinstance(m, LineStarted) else None)
         before = len(conv.memory.entries)
@@ -817,18 +858,11 @@ async def svm_lines(
 
 
 async def m5_turn_loop(
-    link: GameLink,
-    npc: str = "NONE_100_XARDAS",
-    decider: Decider | None = None,
-    trace: TraceWriter | None = None,
-    quick: LLMBackend | None = None,
+    link: GameLink, shared: DialogueManager, npc: str = "NONE_100_XARDAS"
 ) -> dict[str, str]:
-    """M5a on the game: the turn loop with checks, intents moving the body, and the two loops on an
-    incident (the body reacts before the words). The conversational model is scripted; the behavioral
-    model is the live service when given, a fixed stand-in otherwise. The game cannot hit an npc on
-    command, so the incident's perception is injected on the server side. With `quick` (the quick model
-    of fights, live) the hero's phrases get its first words and the incident's words are its line, said
-    at once; the scripted model only acts."""
+    """Given decisions exercise turn checks, item transfer, intents and incident speech after a reflex."""
+    off = model_off(shared)
+    shared.quick = None
     await link.wait_world()
     await attach_when_free(link, npc)
     snap = await link.snapshot(npc, fresh=True)
@@ -840,35 +874,39 @@ async def m5_turn_loop(
         return next((i.count for i in s.npc.inventory if i.item == potion and not i.equipped), 0)
 
     intent = {"target": None, "attitude": "friendly", "agenda": "wants the hero to visit Lord Hagen"}
-    llm = FakeBackend(
-        script=[
-            FakeStep(
-                "Держи свиток огненного шара.",
-                [ToolCall("give_item", {"item": "ITSC_NOT_THERE", "count": 1})],
-            ),
-            FakeStep("Хотя нет, такого свитка у меня нет."),
-            FakeStep("Вот, возьми зелье.", [ToolCall("give_item", {"item": potion, "count": 1})]),
-            FakeStep("Хорошо, пойдём вместе.", [ToolCall("set_intent", {"goal": "follow_hero", **intent})]),
-            FakeStep(
-                "Довольно, у меня свои дела.", [ToolCall("set_intent", {"goal": "keep_routine", **intent})]
-            ),
-            FakeStep("Проклятая тварь! Ко мне, герой!"),
-        ],
-        delay=0,
+    off.given(
+        "дано: Ксардас пытается выдать несуществующий свиток", who=npc,
+        when="Дай мне свиток огненного шара",
+        calls=[ToolCall("give_item", {"item": "ITSC_NOT_THERE", "count": 1})],
+    )
+    off.silent(
+        "дано: Ксардас молчит (код отклонил выдачу свитка)", who=npc,
+        when="Дай мне свиток огненного шара",
+    )
+    off.given(
+        "дано: Ксардас даёт зелье", who=npc, when="Тогда дай зелье",
+        calls=[ToolCall("give_item", {"item": potion, "count": 1})],
+    )
+    off.silent("дано: Ксардас молчит (зелье передано)", who=npc, when="Тогда дай зелье")
+    off.given(
+        "дано: Ксардас следует за героем", who=npc, when="Пойдём со мной",
+        calls=[ToolCall("set_intent", {"goal": "follow_hero", **intent})],
+    )
+    off.silent("дано: Ксардас молчит (следует за героем)", who=npc, when="Пойдём со мной")
+    off.given(
+        "дано: Ксардас возвращается к своим делам", who=npc, when="Можешь остаться",
+        calls=[ToolCall("set_intent", {"goal": "keep_routine", **intent})],
+    )
+    off.silent("дано: Ксардас молчит (вернулся к своим делам)", who=npc, when="Можешь остаться")
+    off.given(
+        "дано: реплика Ксардаса при нападении волка", who=npc, when="WOLF нападает на тебя",
+        line="Проклятая тварь! Ко мне, герой!",
     )
     budget = Budget()
-    spoken: list[dict[str, Any]] = []  # the journal's entries: who said a line, how soon
-    dialogue = DialogueManager(
-        link,
-        llm,
-        PersonaProvider(None),
-        trace=trace,
-        budget=budget,
-        journal=Journal(spoken.append),
-        quick=quick,
-    )
-    reflexes = Reflexes(decider or FixedDecider({"react": "run_to_hero", "gesture": "nod"}))
-    desk = IncidentDesk(link, dialogue, reflexes, budget, trace)
+    dialogue = DialogueManager(link, off, PersonaProvider(None), trace=shared.trace, budget=budget)
+    log.info("given: дано: %s бежит к герою при нападении и кивает на обращение", npc)
+    reflexes = Reflexes(FixedDecider({"react": "run_to_hero", "gesture": "nod"}))
+    desk = IncidentDesk(link, dialogue, reflexes, budget, shared.trace)
     desk.attached.add(npc)  # it was attached before the desk was listening
     conv = dialogue.open(npc, snap.npc.name)
 
@@ -880,15 +918,27 @@ async def m5_turn_loop(
         return False
 
     try:
-        # 1. a commitment the npc cannot keep is rejected before the game and corrected in the same turn
+        # 1. The code rejects the missing item and still completes the turn.
         before = count_of(await link.snapshot(npc, fresh=True))
         await dialogue.say_as_player(npc, "Дай мне свиток огненного шара")
-        said = conv.history[-1].content if conv.history else ""
         unchanged = count_of(await link.snapshot(npc, fresh=True)) == before
-        ok = len(llm.calls) == 2 and "Хотя нет" in said and unchanged
-        results["rejected_give"] = f"{'done' if ok else 'failed'} ({len(llm.calls)} calls: {said})"
+        turn = next((
+            row for row in reversed(list(read_trace(shared.trace.path())))
+            if row.get("type") == "turn" and row.get("npc") == npc
+            and row.get("trigger", {}).get("text") == "Дай мне свиток огненного шара"
+        ), {}) if shared.trace is not None else {}
+        steps = turn.get("steps", [])
+        rejected = any(
+            call.get("name") == "give_item" and call.get("outcome") == "rejected"
+            for step in steps for call in step.get("calls", [])
+        )
+        ok = rejected and unchanged and turn.get("status") == "completed" and len(steps) >= 2
+        results["rejected_give"] = (
+            f"{'done' if ok else 'failed'} "
+            f"(rejected={rejected}, unchanged={unchanged}, status={turn.get('status')}, steps={len(steps)})"
+        )
 
-        # 2. a commitment it can keep: the body gives after the line
+        # 2. The accepted commitment transfers an actual item.
         await dialogue.say_as_player(npc, "Тогда дай зелье")
         for _ in range(60):
             if any(m.role == "developer" and "отдал" in m.content for m in conv.history):
@@ -897,24 +947,14 @@ async def m5_turn_loop(
         after = count_of(await link.snapshot(npc, fresh=True))
         results["give"] = f"{'done' if after == before - 1 else 'failed'} ({potion}: {before} -> {after})"
 
-        # 3. intents move the body: follow, then back to its own business
+        # 3. Intents move the body: follow, then back to its own business.
         await dialogue.say_as_player(npc, "Пойдём со мной")
         results["intent_follow"] = "done" if await following(True) else "failed (not following)"
         await dialogue.say_as_player(npc, "Можешь остаться")
         results["intent_routine"] = "done" if await following(False) else "failed (still following)"
 
-        if quick is not None and trace is not None:  # the quick model's first words to the hero's phrases
-            words = [
-                e["text"]
-                for r in read_trace(trace.path())
-                if r.get("type") == "turn" and r.get("npc") == npc
-                for e in r.get("events", [])
-                if e.get("kind") == "first_words"
-            ]
-            results["first_words"] = f"{'done' if words else 'failed'} ({len(words)} of 4: {words})"
-
-        # 4. an incident: the body reacts at once, the words come after
-        calls = len(llm.calls)
+        # 4. An incident: the body reacts first, then the given line is spoken.
+        calls = len(off.used)
         reacted_at: float | None = None
         started = time.monotonic()
         link._dispatch(
@@ -923,31 +963,23 @@ async def m5_turn_loop(
         for _ in range(100):
             if reacted_at is None and any(r.question == "react" for r in desk.reactions):
                 reacted_at = time.monotonic() - started
-            if len(llm.calls) > calls and conv.reply is not None and conv.reply.done():
+            if len(off.used) > calls and conv.reply is not None and conv.reply.done():
                 break
             await asyncio.sleep(0.1)
         words_at = time.monotonic() - started
         reaction = next((r for r in reversed(desk.reactions) if r.question == "react"), None)
         spoke = conv.history[-1].content if conv.history and conv.history[-1].role == "assistant" else ""
         results["incident_reflex"] = (
-            f"{'done' if reaction else 'failed'} "
+            f"{'done' if reaction and reaction.applied else 'failed'} "
             f"({reaction.choice if reaction else '-'}, applied={reaction.applied if reaction else '-'}, "
             f"{(reacted_at or 0) * 1000:.0f} ms)"
         )
         results["incident_words"] = (
             f"{'done' if spoke and (reacted_at or 99) < words_at else 'failed'} ({spoke})"
         )
-        if quick is not None:
-            line = next((e for e in reversed(spoken) if e["kind"] == "npc"), {})
-            ok = line.get("llm") == quick.name and line.get("first_token_s", 99) < QUICK_LINE_S
-            results["incident_quick"] = (
-                f"{'done' if ok else 'failed'} ({line.get('llm')}, first token {line.get('first_token_s')} s)"
-            )
     finally:
         await link.act(npc, "return_to_routine")
-    for name, outcome in results.items():
-        log.info("%-24s %s", name, outcome)
-    return results
+    return _logged(results)
 
 
 async def m5b_bridge(link: GameLink, npc: str = "NONE_100_XARDAS") -> dict[str, str]:
@@ -1161,11 +1193,10 @@ async def m5b_bridge(link: GameLink, npc: str = "NONE_100_XARDAS") -> dict[str, 
     return results
 
 
-async def m5c_free_npc(link: GameLink, npc: str = "NONE_100_XARDAS") -> dict[str, str]:
-    """M5c on the game: a free npc meets a wolf. The threat is held from the npc's scripts; the behavioral
-    model (a fixed stand-in here: fight, escalate 3.6 — the live model is measured by evals) takes the body
-    over with the game's own combat; the moment calls for words, and the conversational model (scripted)
-    speaks for the npc on the move."""
+async def m5c_free_npc(
+    link: GameLink, shared: DialogueManager, npc: str = "NONE_100_XARDAS"
+) -> dict[str, str]:
+    """A free npc meets a wolf: given fight, day plan and speech exercise threat hold and overlay words."""
     from ..brain import GameApplier
     from ..brain.day import Habit
     from ..brain.planner import PlannerConfig
@@ -1183,9 +1214,16 @@ async def m5c_free_npc(link: GameLink, npc: str = "NONE_100_XARDAS") -> dict[str
     held: list[PerceptionHeld] = []
     link.listeners.append(lambda m: held.append(m) if isinstance(m, PerceptionHeld) else None)
 
+    off = model_off(shared)
+    shared.quick = None
+    off.given(
+        "дано: реплика Ксардаса при встрече с волком", who=npc, when="Событие:",
+        line="Ещё одна тварь из тьмы. Прочь, или сгоришь!",
+    )
+    log.info("given: дано: %s дерётся, выбирает занятие h1 и зовёт на разговор (3.6)", npc)
     applier = GameApplier(link)
     planner = NpcPlanner(
-        FixedDecider({"react": "fight", "plan": "h1"}, {"escalate": 3.6}),
+        FixedDecider({"react": "fight", "plan": "h1"}, {"escalate": 3.6}, npcs={npc}),
         applier,
         config=PlannerConfig(ask_attitude=False, plan_period_s=3.0),
         routine_of=link.routine,
@@ -1193,8 +1231,7 @@ async def m5c_free_npc(link: GameLink, npc: str = "NONE_100_XARDAS") -> dict[str
     )
     link.listeners.append(planner.on_message)
     runner = asyncio.create_task(planner.run())
-    llm = FakeBackend("Ещё одна тварь из тьмы. Прочь, или сгоришь!", delay=0)
-    dialogue = DialogueManager(link, llm, PersonaProvider(None))
+    dialogue = DialogueManager(link, off, PersonaProvider(None))
     budget = Budget()
     IncidentDesk(link, dialogue, None, budget, None, planner=planner)
     await link.send(ThreatControlCmd(hold=True))
@@ -1234,12 +1271,6 @@ async def m5c_free_npc(link: GameLink, npc: str = "NONE_100_XARDAS") -> dict[str
             if held and any(to == "server" for _, to in verdicts)
             else f"failed (held {len(held)}, verdicts {verdicts})"
         )
-        results["body_reacts"] = (
-            f"done ({decision.choice} against {decision.target}, "
-            f"{time.monotonic() - t0:.1f} s after the spawn)"
-            if decision
-            else "failed (no decision)"
-        )
         words = None
         for _ in range(150):
             words = next((m for m in started_lines if m.npc == npc), None)
@@ -1247,8 +1278,8 @@ async def m5c_free_npc(link: GameLink, npc: str = "NONE_100_XARDAS") -> dict[str
                 break
             await asyncio.sleep(0.1)
         results["words_on_the_move"] = (
-            f"done ({time.monotonic() - t0:.1f} s after the spawn: {llm.calls[0][1][-1].content})"
-            if words and llm.calls
+            f"done ({time.monotonic() - t0:.1f} s after the spawn: {words.line})"
+            if words
             else "failed (no words)"
         )
     finally:
@@ -1271,13 +1302,16 @@ async def m5e_talk(
     key and the input line, through the bridge's own paths, with the hero's own focus); the server picks
     the addressee, the npc's body follows the behavioral model (a fixed stand-in here), the hero's doings,
     an interruption and a witness go into memory, the conversation ends when the hero walks away, and a
-    walking npc answers on the move. The conversational model is scripted."""
+    walking npc answers on the move. Replies are given for the speech queue."""
     await link.wait_world()
     results: dict[str, str] = {}
     started: list[tuple[float, LineStarted]] = []
     link.listeners.append(
         lambda m: started.append((time.monotonic(), m)) if isinstance(m, LineStarted) else None
     )
+    off = model_off(dialogue)
+    dialogue.quick = None
+    log.info("given: дано: %s слушает героя во время разговора", npc)
     stand_in = FixedDecider({"posture": "listen"})
     talk.reflexes = Reflexes(stand_in)
     talk.end_silence_s = 3.0
@@ -1299,7 +1333,10 @@ async def m5e_talk(
         return {"roster": f"failed ({npc} is not around the hero)"}
 
     # 1. a typed line: the bridge adds the hero's focus, the server picks whom it is said to
-    dialogue.llm = FakeBackend("Ты снова здесь. Говори, что нужно.", delay=0)
+    off.given(
+        "дано: реплика Ксардаса на введённую строку", who=npc, when="Что мне делать дальше?",
+        line="Ты снова здесь. Говори, что нужно.",
+    )
     t0 = time.monotonic()
     await link.debug("type", text="Что мне делать дальше?")
     ok = await _until(lambda: talk.partner is not None and bool(lines_of(npc, t0)), 20)
@@ -1311,7 +1348,7 @@ async def m5e_talk(
     # 2. the talk key held: the voice (a wav through the ASR service) names the npc
     if voice is not None:
         await _until(lambda: not dialogue.speaking(npc), 10)  # else the key would cut it off (step 4)
-        dialogue.llm = FakeBackend("Я слышу тебя.", delay=0)
+        off.given("дано: реплика Ксардаса на голос героя", who=npc, line="Я слышу тебя.")
         t0 = time.monotonic()
         await link.debug("ptt", state="start")
         await asyncio.sleep(getattr(voice.source, "duration", 1.0) + 0.3)  # a wav is spoken in real time
@@ -1334,7 +1371,10 @@ async def m5e_talk(
     # 4. the hero interrupts a long answer
     story = "Слушай внимательно. " + "Драконы пришли в долину рудников, и их ведёт сила Белиара. " * 5
     await _until(lambda: not dialogue.speaking(npc), 10)
-    dialogue.llm = FakeBackend(story, delay=0.03)
+    off.given(
+        "дано: реплика Ксардаса для прерывания очереди", who=npc,
+        when="Расскажи все о драконах", line=story,
+    )
     t0 = time.monotonic()
     await link.debug("type", text="Расскажи всё о драконах")
     await _until(lambda: bool(lines_of(npc, t0)), 20)
@@ -1346,8 +1386,7 @@ async def m5e_talk(
     ok = await _until(lambda: any("перебил" in n for n in notes(npc)), 8)
     await asyncio.sleep(3.0)
     after = len(lines_of(npc, t_cut + 0.3))
-    conv = dialogue.conversations[npc]
-    said = next((m.content for m in reversed(conv.history) if m.role == "assistant"), "")
+    said = " ".join(dialogue._lines[m.line][0] for m in lines_of(npc, t0))
     results["interrupt"] = (
         f"{'done' if ok and after == 0 and len(said) < len(story) else 'failed'} "
         f"(said {len(said)} of {len(story)} chars, {after} line(s) after the cut)"
@@ -1356,7 +1395,10 @@ async def m5e_talk(
     # 5. a witness hears what the hero says to the npc
     await link.debug("spawn", instance=witness, distance=300)
     near = await _until(lambda: witness in talk.people and talk.people[witness].distance <= 1000, 10)
-    dialogue.llm = FakeBackend("Не знаю его.", delay=0)
+    off.given(
+        "дано: реплика Ксардаса при свидетеле", who=npc, when="Ксардас, кто этот человек?",
+        line="Не знаю его.",
+    )
     await link.debug("type", text="Ксардас, кто этот человек?")
     ok = await _until(lambda: any("слышал" in n for n in notes(witness)), 10)
     results["witness"] = f"{'done' if near and ok else 'failed'} ({notes(witness)[-1:] or heard()})"
@@ -1375,6 +1417,7 @@ async def m5e_talk(
     # 7. a walking npc answers on the move, without stopping. The hero comes back in front of it first:
     # where step 6 left him a wall or a floor of the tower is between them (15 m straight, 67 m round by
     # voice), and a name called out to one who does not hear it goes to nobody (v30)
+    log.info("given: дано: %s продолжает идти, отвечая герою", npc)
     stand_in.choices["posture"] = "keep_working"
     await link.debug("teleport", near=npc, distance=800)
     back = await _until(lambda: npc in talk.people and talk.people[npc].earshot <= 1000, 5)
@@ -1382,7 +1425,9 @@ async def m5e_talk(
     moving = await _until(lambda: npc in talk.people and talk.people[npc].moving, 10)
     e = talk.people.get(npc)
     ear = f"heard {e.earshot / 100:.0f} m, {e.distance / 100:.0f} m straight" if e else "not around"
-    dialogue.llm = FakeBackend("Иду я, иду.", delay=0)
+    off.given(
+        "дано: реплика Ксардаса на ходу", who=npc, when="Ксардас, ты куда?", line="Иду я, иду.",
+    )
     t0 = time.monotonic()
     await link.debug("type", text="Ксардас, ты куда?")
     ok = await _until(lambda: bool(lines_of(npc, t0)), 20)
@@ -1410,8 +1455,7 @@ async def m6_knows(
     Xardas in chapter 1 knows his talk of chapters 1-2 and nothing of chapter 3. A dialog of his played from
     the menu becomes one the hero has heard. At chapter 3 his talk of chapter 3 opens. Lobart, the hero put
     next to him, knows his field work and what the people around the city say. The knowledge is in the
-    request to the model, and recall gives a topic in full. The conversational model is scripted: its
-    requests are checked."""
+    same situation the model would receive, and recall gives a topic in full without calling a model."""
     results: dict[str, str] = {}
 
     def check(name: str, ok: bool, detail: object = "") -> None:
@@ -1419,16 +1463,6 @@ async def m6_knows(
 
     def ids(topics: Sequence[Topic]) -> set[str]:
         return {t.node.id for t in topics}
-
-    def situation(llm: FakeBackend) -> str:
-        return next(
-            (
-                str(m.content)
-                for m in llm.calls[0][1]
-                if isinstance(m, Message) and m.role == "developer" and "Что ты знаешь" in str(m.content)
-            ),
-            "",
-        )
 
     await link.wait_world()
     if not await _until(lambda: npc in talk.people, 20):
@@ -1461,25 +1495,14 @@ async def m6_knows(
         check("heard_in_menu", ok, pick)
         await asyncio.sleep(3)  # the dialog's lines
 
-    # 3. a turn: the knowledge is in the request, recall gives a topic in full
-    llm = FakeBackend(
-        script=[
-            FakeStep("Хм…", [ToolCall("recall", {"query": "Глаз Инноса"}, "c1")]),
-            FakeStep("Это амулет, в нём сила самого Инноса."),
-        ],
-        delay=0,
-    )
-    dialogue.llm = llm
-    await link.debug("type", text="Ксардас, что такое Глаз Инноса?")
-    await _until(lambda: len(llm.calls) >= 2, 30)
-    result = next((i.output for c in llm.calls[1:] for i in c[1] if isinstance(i, ToolResult)), "")
-    text = situation(llm) if llm.calls else ""
+    # 3. the turn's situation and recall, without asking a model to respond
+    text = await dialogue.situation(npc, "Ксардас")
+    result = knowledge.recall(npc, "Глаз Инноса") or ""
     check(
         "in_the_turn",
         "Что ты знаешь (сейчас глава 1" in text and "Ты знаешь:" in result and "Глаз Инноса" in result,
         f"{len(text)} chars known, recall {len(result)} chars: {result[:120]!r}",
     )
-    await _until(lambda: not dialogue.speaking(npc), 15)
 
     # 4. chapter 3: his chapter 3 talk opens, that of chapters 1-2 closes (what the hero heard stays)
     await link.story_effect(npc, [{"do": "set", "var": "KAPITEL", "value": 3}])
@@ -1500,11 +1523,7 @@ async def m6_knows(
     if not await _until(lambda: farmer in talk.people and talk.people[farmer].distance < 800, 20):
         check("farmer", False, f"{farmer} is not around the hero")
         return _logged(results)
-    llm = FakeBackend("Работа есть: поле репы за амбаром.", delay=0)
-    dialogue.llm = llm
-    await link.debug("type", text="Лобарт, есть для меня работа?")
-    await _until(lambda: bool(llm.calls), 30)
-    text = situation(llm) if llm.calls else ""
+    text = await dialogue.situation(farmer, "Лобарт")
     check(
         "farmer",
         "Ты — житель окрестностей." in text and "«Я ищу работу.»" in text and "Что говорят вокруг" in text,

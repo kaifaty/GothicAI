@@ -1,4 +1,4 @@
-"""LLM adapter: one streaming interface, swappable backends (plan subscription, API key, local, fake)."""
+"""LLM adapter: one streaming interface, swappable backends (plan subscription, API key, local, off)."""
 
 from __future__ import annotations
 
@@ -29,9 +29,9 @@ from .openai_compat import OpenAICompatBackend
 from .openai_responses import OpenAIResponsesBackend
 from .siwc import ChatGPTAuth
 
-BACKENDS = ("chatgpt", "openai", "local", "fake", "off")
+BACKENDS = ("chatgpt", "openai", "local", "off")
 DEFAULT_MODELS = {
-    "chatgpt": "gpt-6.1-sol", "openai": "gpt-6.1-sol", "local": "qwen3:8b", "fake": "fake", "off": "off"
+    "chatgpt": "gpt-6.1-sol", "openai": "gpt-6.1-sol", "local": "qwen3:8b", "off": "off"
 }
 # the quick model of a fight (dialogue.py): Gemma 4 12B on llama.cpp, as server/deploy/gemma names it. A line
 # is a sentence or two; the cap keeps a small model from looping until its context is full
@@ -93,6 +93,8 @@ def make_backend(
     websocket: bool = True,
 ) -> LLMBackend:
     """`websocket`: an npc's requests go over a WebSocket of its own (openai_responses.py)."""
+    if kind not in BACKENDS:
+        raise LLMError(f"unknown LLM backend: {kind} (expected one of {', '.join(BACKENDS)})")
     model = model or DEFAULT_MODELS[kind]
     match kind:
         case "off":
@@ -118,16 +120,3 @@ def make_backend(
             )
         case "local":
             return OpenAICompatBackend(model, base_url or "http://127.0.0.1:11434/v1", name="local")
-        case "fake":
-            # a slow model (to see the npc's first sounds): GOTHIC_AI_FAKE_FIRST seconds before it writes,
-            # GOTHIC_AI_FAKE_DELAY seconds a chunk of the canned reply; GOTHIC_AI_FAKE_REPLIES: replies
-            # in turn instead, separated by " | " (a scripted scene: answers that fit its phrases)
-            replies = [
-                r.strip() for r in os.environ.get("GOTHIC_AI_FAKE_REPLIES", "").split(" | ") if r.strip()
-            ]
-            return FakeBackend(
-                delay=float(os.environ.get("GOTHIC_AI_FAKE_DELAY", "0.02")),
-                first=float(os.environ.get("GOTHIC_AI_FAKE_FIRST", "0")),
-                script=[FakeStep(r) for r in replies] or None,
-            )
-    raise LLMError(f"unknown LLM backend: {kind} (expected one of {', '.join(BACKENDS)})")
