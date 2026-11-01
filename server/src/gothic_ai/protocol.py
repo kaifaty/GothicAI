@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 # story_program), v24: choices in the director's dialogs (steps choice, clear_choices; debug choices, talk,
 # menu, menu_pick), v25: story_program.own (the scripts' program under the director's), v26: the director's
 # lines in the npc's voice (line_voice).
-PROTOCOL_VERSION = 55
+PROTOCOL_VERSION = 56
 NOISE_PROTOCOL = 36  # npc_event noise and npc_act investigate
 TRACE_PROTOCOL = 37  # visible physical traces and game time on noise events
 PACE_PROTOCOL = 38  # go_to_waypoint.pace: a guide keeps the hero's pace; start_activity.place
@@ -141,6 +141,16 @@ class ChronicleGet(_GameMessage):
 
     type: Literal["chronicle_get"]
     req: str
+
+
+class FateEnd(_GameMessage):
+    """The hero's current fate has ended (v56)."""
+
+    type: Literal["fate_end"]
+    req: str
+    kind: Literal["death", "wrath", "finale"]
+    killer: str = ""
+    name: str = ""
 
 
 class Attached(_GameMessage):
@@ -1238,6 +1248,7 @@ GameMessage = Annotated[
     | Session
     | Saved
     | ChronicleGet
+    | FateEnd
     | Attached
     | Detached
     | Result
@@ -1690,6 +1701,20 @@ class ChronicleCmd(_Command):
     others: list[ChronicleFork] = Field(default_factory=list)
 
 
+class FateCardCmd(_Command):
+    """The final fate card, returned for every fate_end (v56)."""
+
+    type: Literal["fate_card"] = "fate_card"
+    req: str
+    off: bool = False
+    title: str = ""
+    text: str = ""
+    feats: list[ChronicleFeat] = Field(default_factory=list, max_length=3)
+    chapter: int = 1
+    day: int = 0
+    count: int = 0
+
+
 DebugCommand = Literal[
     "save",
     "load",
@@ -1739,7 +1764,8 @@ class DebugCmd(_Command):
     player draw (`state: "melee"`) or put away (`"none"`) a weapon; move the player to a `waypoint` (or to
     the nearest one at least `distance` cm from `near`, or one `distance` cm off the npc `to`); put the
     player on the ground `distance` cm in front of an npc (`teleport`, `near`), facing it; `kill` an `npc`
-    (killed by no one), or the living creature of an `instance` closest to `near` (default the player) by
+    (killed by no one; PLAYER: the hero, by `by` if given), or the living creature of an `instance` closest
+    to `near` (default the player) by
     the hand of `by` (default the player, in melee: npc's around and the killer perceive it like a deadly
     hit); make an npc's important dialogs count as told (`skip_important`, `near`: it will not stop the
     player to talk); set the clock to `hour`:`minute` (`time`, the next day if that is earlier, like

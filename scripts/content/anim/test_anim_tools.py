@@ -76,7 +76,7 @@ def test_retarget_keeps_bone_directions(tmp_path):
     pos, rot = synthetic_soma(np.random.default_rng(7), 6)
     npz = tmp_path / "soma.npz"
     np.savez(npz, posed_joints=pos, global_rot_mats=rot)
-    anim = rs.retarget(npz, skel, "T_TEST", "", 30.0, 30.0, None, ref)
+    anim = rs.retarget(npz, skel, "T_TEST", "", 30.0, 30.0, None, ref, foot_ik=False)
     gskel = rs.with_offsets(skel, ref)
     child = {"BIP01 L UPPERARM": "BIP01 L FOREARM", "BIP01 R FOREARM": "BIP01 R HAND",
              "BIP01 L THIGH": "BIP01 L CALF", "BIP01 R CALF": "BIP01 R FOOT", "BIP01 SPINE1": "BIP01 SPINE2"}
@@ -91,7 +91,27 @@ def test_retarget_keeps_bone_directions(tmp_path):
 
 
 @pytest.mark.skipif(base_models() is None, reason="needs a converted base with the human model")
-def test_stance_survives_soma_and_back(tmp_path):
+def test_foot_ik_puts_ankles_on_soma_ankles(tmp_path):
+    """With foot IK each Gothic ankle sits on SOMA's ankle carried over by the root's scale."""
+    models = base_models()
+    skel = ga.read_skeleton(models / "HUMANS.MDH.json")
+    ref = ga.read_animation(models / "HUMANS_1HST1-S_1H.MAN.json")
+    pos, rot = synthetic_soma(np.random.default_rng(11), 6)
+    npz = tmp_path / "soma.npz"
+    np.savez(npz, posed_joints=pos, global_rot_mats=rot)
+    anim = rs.retarget(npz, skel, "T_TEST", "", 30.0, 30.0, 0.0, ref)
+    gskel = rs.with_offsets(skel, ref)
+    scale = rs.soma_rig(gskel, pos[0], rot[0], rs.SOMA30, ref)["scale"]
+    for f in range(anim.frame_count):
+        world = ga.world_pose(gskel, anim, f)
+        for g, s in (("BIP01 L FOOT", "LeftFoot"), ("BIP01 R FOOT", "RightFoot")):
+            target = rs.F @ pos[f, rs.SOMA30.index(s)] * scale
+            assert np.linalg.norm(world[gskel.index(g)][:3, 3] - target) < 0.5, (f, g)  # cm
+
+
+@pytest.mark.skipif(base_models() is None, reason="needs a converted base with the human model")
+@pytest.mark.parametrize("foot_ik", [False, True])
+def test_stance_survives_soma_and_back(tmp_path, foot_ik):
     """The 1H stance → SOMA keyframe → retarget lands within millimetres of the original."""
     models = base_models()
     skel0 = ga.read_skeleton(models / "HUMANS.MDH.json")
@@ -113,7 +133,9 @@ def test_stance_survives_soma_and_back(tmp_path):
     npz = tmp_path / "stance.npz"
     np.savez(npz, posed_joints=np.array([[p[n] for n in rs.SOMA30]] * 2),
              global_rot_mats=np.array([[g[n] for n in rs.SOMA30]] * 2))
-    back = rs.retarget(npz, skel0, "T", "", 30.0, 30.0, None, ref)
+    # SOMA's ankle stands at the measured 0.081 m only in Kimodo output; give the matching floor here.
+    lift = rig["bind_foot_y"] - rig["soma_foot_y"] * rig["scale"] if foot_ik else None
+    back = rs.retarget(npz, skel0, "T", "", 30.0, 30.0, lift, ref, foot_ik=foot_ik)
     w0, w1 = ga.world_pose(skel, ref, 0), ga.world_pose(skel, back, 0)
     for n in ("BIP01 R HAND", "BIP01 L HAND", "BIP01 R FOOT", "BIP01 L FOOT", "BIP01 HEAD"):
         i = skel.index(n)
@@ -165,22 +187,22 @@ def test_content_pack_writes_index_overlay_and_records(tmp_path):
     assert back.frame_count == 4 and np.allclose(back.positions, anim.positions, atol=1e-4)
 
 
-def test_match_stance_lands_ends_on_the_target_and_keeps_the_middle():
+def test_snap_ends_lands_both_ends_on_the_stance_and_keeps_the_middle_and_the_way():
     import finish
     rng = np.random.default_rng(9)
     frames, nodes = 20, 3
-    gen = ga.Animation("S_GEN", "", 1, 25.0, 1, [0, 1, 2], rng.normal(size=(1, nodes, 3)), random_quats(rng, (1, nodes)))
     target = ga.Animation("S_T", "", 1, 25.0, 1, [0, 1, 2], rng.normal(size=(1, nodes, 3)), random_quats(rng, (1, nodes)))
     rot = random_quats(rng, (frames, nodes))
     pos = rng.normal(size=(frames, nodes, 3))
-    rot[0], rot[-1] = gen.rotations[0], gen.rotations[0]  # the move starts and ends in the generated stance
-    pos[0], pos[-1] = gen.positions[0], gen.positions[0] + np.array([0, 0, -200.0])
+    way = np.array([0, 0, -200.0])
+    pos[-1, 0] = target.positions[0, 0] + way + np.array([0.5, 2.0, -0.4])  # the end misses the stance a little
     anim = ga.Animation("T", "", 1, 25.0, frames, [0, 1, 2], pos.copy(), rot.copy())
-    finish.match_stance(anim, gen, target, 0.12, 0.2)
+    finish.snap_ends(anim, target, 0.12, 0.2)
     same = lambda a, b: np.allclose(np.abs((a * b).sum(-1)), 1.0, atol=1e-6)  # noqa: E731
     assert same(anim.rotations[0], target.rotations[0]) and same(anim.rotations[-1], target.rotations[0])
     assert np.allclose(anim.positions[0], target.positions[0])
-    assert np.allclose(anim.positions[-1], target.positions[0] + np.array([0, 0, -200.0]))
+    assert np.allclose(anim.positions[-1, 1:], target.positions[0, 1:])
+    assert np.allclose(anim.positions[-1, 0], target.positions[0, 0] + way + np.array([0.5, 0, -0.4]))
     assert same(anim.rotations[8], rot[8]) and np.allclose(anim.positions[8], pos[8])
 
 

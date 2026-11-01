@@ -121,11 +121,11 @@ class Parley:
         disabled = set()
         if self.patches is not None:
             for op in [*self.patches.static, *self.patches.ops()]:
-                node = op.get("node", "").upper()
+                # an add_node's node is the whole dialog (amends, the director's quests): it frees nothing
                 if op.get("op") in {"disable", "remove_node"}:
-                    disabled.add(node)
+                    disabled.add(op["node"].upper())
                 elif op.get("op") == "enable":
-                    disabled.discard(node)
+                    disabled.discard(op["node"].upper())
         return not any(n.important and n.id not in disabled for n in self.graph.dialogs_of(npc))
 
     def _encounters(self) -> list[Fact]:

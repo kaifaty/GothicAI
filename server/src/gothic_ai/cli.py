@@ -61,6 +61,7 @@ from .dialogue import REACT_HINT, SVM_HINT, DialogueManager
 from .director import Director
 from .errands import Errands
 from .executor import Intent
+from .fatecard import FateCards
 from .fates import Fates
 from .feat_art import DEFAULT_ROOT, Artist
 from .feats import Feats
@@ -265,6 +266,7 @@ class ServerState:
         self.showrunner: Showrunner | None = None
         self.feats: Feats | None = None
         self.fates: Fates | None = None
+        self.fate_cards: FateCards | None = None
         self.feat_challenges: Challenges | None = None
         self.vanilla: VanillaQuests | None = None
         self.gates: Gates | None = None
@@ -1031,6 +1033,10 @@ async def serve(args: argparse.Namespace) -> int:
             art_root=state.feats.artist.root if state.feats is not None
             and state.feats.artist is not None else DEFAULT_ROOT,
         )
+        state.fate_cards = FateCards(
+            link, state.chronicle, llm, enabled=state.feats is not None and not args.no_fate_card,
+            art_root=state.fates.art_root,
+        )
         if not args.no_crimes:
             state.crimes = Crimes(
                 link,
@@ -1549,6 +1555,8 @@ async def serve(args: argparse.Namespace) -> int:
                 await state.feats.close()
             if state.fates is not None:
                 await state.fates.close()
+            if state.fate_cards is not None:
+                await state.fate_cards.close()
             if state.feat_challenges is not None:
                 state.feat_challenges.close()
             if feat_image_root is not None:
@@ -3482,6 +3490,9 @@ def main() -> None:
         "--no-feats",
         action="store_true",
         help="disable the chronicler's feats (enabled by default outside scenarios and in feats)",
+    )
+    p.add_argument(
+        "--no-fate-card", action="store_true", help="disable the final fate card",
     )
     p.add_argument(
         "--no-feat-challenges",

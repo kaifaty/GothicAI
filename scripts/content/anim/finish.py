@@ -3,8 +3,8 @@
     python3 scripts/content/anim/finish.py <in.MAN.json> <out.MAN.json> --ref <stance.MAN.json> \
         --name T_1HDASHB --warp 0:0,0.24:0.06,0.88:0.40,1.16:0.52 --sword-arm 0.5,0.8,1,1
 
---gen-stance with another --ref moves the ends onto that stance (one body motion for every talent
-overlay). --warp maps source seconds to target seconds at a few keys (monotone, smooth between them): the
+Both ends are eased onto the stance --ref exactly (--fade seconds at the start and the end). --warp maps
+source seconds to target seconds at a few keys (monotone, smooth between them): the
 start, the active phase and the recovery are squeezed by different amounts. The clip ends at the last
 key. --sword-arm blends the right clavicle, upper arm, forearm and hand towards the stance's local
 rotations (0 keeps Kimodo's, 1 is the stance's); the finger always comes from the stance, since it
@@ -74,26 +74,32 @@ def qmul(a: np.ndarray, b: np.ndarray) -> np.ndarray:
                      aw * by - ax * bz + ay * bw + az * bx, aw * bz + ax * by - ay * bx + az * bw], -1)
 
 
-def match_stance(anim: ga.Animation, gen: ga.Animation, target: ga.Animation, fade_in: float, fade_out: float) -> None:
-    """Move a clip made from the stance `gen` onto the stance `target` at its ends.
+def snap_ends(anim: ga.Animation, target: ga.Animation, fade_in: float, fade_out: float) -> None:
+    """Land both ends of the clip exactly on the stance `target` (frame 0 of its S_1HRUN).
 
-    Each node gets the local difference target · gen⁻¹ at frame 0, fading out over `fade_in` seconds,
-    and again fading in over the last `fade_out` seconds; the middle of the move stays as generated.
-    One body motion then serves every talent overlay, each with its own S_1HRUN at both ends."""
+    Each node gets the local difference between the stance and the clip's first frame, fading out over
+    `fade_in` seconds, and the difference to its last frame, fading in over the last `fade_out` seconds; the
+    middle of the move stays as generated. This takes away what foot IK and Kimodo's constraint tolerance
+    leave (2-5 cm), and the root keeps its way: its end is snapped in height only."""
     t = np.arange(anim.frame_count) / anim.fps
     end = (anim.frame_count - 1) / anim.fps
     s = lambda x: x * x * (3 - 2 * x)  # noqa: E731
-    w = np.maximum(s(np.clip(1 - t / fade_in, 0, 1)), s(np.clip(1 - (end - t) / fade_out, 0, 1)))
+    w_in = s(np.clip(1 - t / fade_in, 0, 1))
+    w_out = s(np.clip(1 - (end - t) / fade_out, 0, 1))
+    rot0, pos0 = anim.rotations.copy(), anim.positions.copy()
+    ident = np.broadcast_to(np.array([1.0, 0, 0, 0]), (anim.frame_count, 4))
+    conj = np.array([1.0, -1.0, -1.0, -1.0])
     for j, node in enumerate(anim.node_indices):
-        if node not in gen.node_indices or node not in target.node_indices:
+        if node not in target.node_indices:
             continue
-        g, k = gen.node_indices.index(node), target.node_indices.index(node)
-        conj = gen.rotations[0, g] * np.array([1.0, -1.0, -1.0, -1.0])
-        delta = qmul(target.rotations[0, k], conj)
-        ident = np.broadcast_to(np.array([1.0, 0, 0, 0]), (anim.frame_count, 4))
-        step = slerp(ident, np.broadcast_to(delta, (anim.frame_count, 4)), w)
-        anim.rotations[:, j] = qmul(step, anim.rotations[:, j])
-        anim.positions[:, j] += w[:, None] * (target.positions[0, k] - gen.positions[0, g])
+        k = target.node_indices.index(node)
+        for w, f in ((w_in, 0), (w_out, -1)):
+            delta = qmul(target.rotations[0, k], rot0[f, j] * conj)
+            anim.rotations[:, j] = qmul(slerp(ident, np.broadcast_to(delta, (anim.frame_count, 4)), w), anim.rotations[:, j])
+            dp = target.positions[0, k] - pos0[f, j]
+            if node == 0 and f == -1:
+                dp = dp * np.array([0.0, 1.0, 0.0])  # the root's way stays
+            anim.positions[:, j] += w[:, None] * dp
 
 
 def hold_arm(anim: ga.Animation, skel: ga.Skeleton, ref: ga.Animation, weights: list[float]) -> None:
@@ -140,8 +146,6 @@ def main():
     ap.add_argument("--next", default="")
     ap.add_argument("--warp", required=True, help="src:dst seconds, comma separated, from 0:0 to the end")
     ap.add_argument("--sword-arm", default="0.5,0.8,1,1", help="clavicle, upper arm, forearm, hand weights")
-    ap.add_argument("--gen-stance", type=Path, help="the stance the move was generated from, when --ref is another one "
-                    "(a talent overlay's S_1HRUN): the ends are moved onto --ref")
     ap.add_argument("--fill", type=Path, action="append", default=[],
                     help="the overlay's jump-back: its node set is written, and it poses the toes and weapon slots the stance lacks")
     ap.add_argument("--fade", default="0.12,0.2", help="seconds of stance matching at the start and at the end")
@@ -149,8 +153,7 @@ def main():
     skel = ga.read_skeleton(a.skeleton or a.ref.parent / "HUMANS.MDH.json")
     ref = ga.read_animation(a.ref)
     anim = retime(ga.read_animation(a.src), [tuple(map(float, k.split(":"))) for k in a.warp.split(",")])
-    if a.gen_stance:
-        match_stance(anim, ga.read_animation(a.gen_stance), ref, *map(float, a.fade.split(",")))
+    snap_ends(anim, ref, *map(float, a.fade.split(",")))
     hold_arm(anim, skel, ref, [float(w) for w in a.sword_arm.split(",")])
     fills = [ga.read_animation(f) for f in a.fill]
     body_nodes(anim, skel, [ref] + fills, fills[0] if fills else ref)

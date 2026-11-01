@@ -19,6 +19,8 @@ class AiBridge final {
 
     // Call on the game thread. The callback runs there, immediately when disconnected.
     static void requestChronicle(std::function<void(const ChronicleData&)> callback);
+    static void requestFateCard(std::string kind, std::string killer, std::string name,
+                                std::function<void(const FateCard&)> callback);
 
   private:
     struct Impl;
