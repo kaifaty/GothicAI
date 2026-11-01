@@ -49,6 +49,8 @@ const uint L_GDepth     = 13;
 const uint L_CmdOffsets = 14;
 const uint L_Normal     = 15;
 const uint L_Orm        = 16;
+const uint L_FogLut     = 17;
+const uint L_FogLutMs   = 18;
 const uint L_VsmPages   = L_Shadow0;
 const uint L_VsmLights  = L_Shadow1;
 
@@ -143,6 +145,12 @@ layout(binding = L_Morph,    std430) readonly buffer MSmp { vec4    samples[];  
 #if defined(GL_FRAGMENT_SHADER) && defined(FORWARD) && !defined(DEPTH_ONLY)
 layout(binding = L_Shadow0)          uniform sampler2D textureSm0;
 layout(binding = L_Shadow1)          uniform sampler2D textureSm1;
+#endif
+
+#if defined(GL_FRAGMENT_SHADER) && (defined(FORWARD) || (defined(EMISSIVE) && !defined(MULTIPLY)) || defined(GHOST)) && !defined(DEPTH_ONLY)
+#define MAT_FOG 1
+layout(binding = L_FogLut)           uniform sampler3D fogLut;
+layout(binding = L_FogLutMs)         uniform sampler3D fogLutMs;
 #endif
 
 #if defined(GL_FRAGMENT_SHADER) && (defined(WATER) || defined(GHOST))
