@@ -954,6 +954,17 @@ async def rescue(
         return outcome
 
     deciding.decide = recording  # type: ignore[method-assign]
+    on_escalate = planner.on_escalate
+    escalations: list[bool | None] = []
+
+    def recorded_escalation(who: str, level: float, reaction: Any, flight: Any) -> bool | None:
+        scheduled = on_escalate(who, level, reaction, flight) if on_escalate is not None else None
+        if who == npc:
+            escalations.append(scheduled)
+        return scheduled
+
+    if live is not None:
+        planner.on_escalate = recorded_escalation
 
     async def wait(check: Callable[[], Any], timeout: float) -> Any:
         for _ in range(int(timeout / 0.1)):
@@ -979,6 +990,7 @@ async def rescue(
         await asyncio.sleep(2.0)
 
         mark, first_speech, t0 = len(recent), len(speech), time.monotonic()
+        first_escalation = len(escalations)
         deadline = t0 + 90
         await link.debug("spawn", instance="WOLF", near=npc, distance=-500)
         request = await wait(
@@ -1000,12 +1012,17 @@ async def rescue(
                             for answer in answers),
                 max(0, deadline - time.monotonic()),
             )
-            await wait(
-                lambda: bool(speech[first_speech:])
-                and all(turn.done() for turn in speech[first_speech:])
-                and not dialogue.speaking(npc),
-                max(0, deadline - time.monotonic()),
-            )
+            scheduled = escalations[first_escalation] if len(escalations) > first_escalation else None
+            if scheduled is not False:
+                remaining = max(0, deadline - time.monotonic())
+                await wait(lambda: bool(speech[first_speech:]),
+                           min(3, remaining) if scheduled is None else remaining)
+            if speech[first_speech:]:
+                await wait(
+                    lambda: all(turn.done() for turn in speech[first_speech:])
+                    and not dialogue.speaking(npc),
+                    max(0, deadline - time.monotonic()),
+                )
             rec = planner.npcs.get(npc)
             live.finish("observed", evidence={
                 "decisions": [answer for answer in answers if answer["at"] >= t0],
@@ -1018,6 +1035,7 @@ async def rescue(
                 "activities": [{"after_s": at - t0, "activity": activity}
                                for at, activity in doing if at >= t0],
                 "stimuli": [stim.kind for stim in rec.stimuli] if rec else [],
+                "speech_started": bool(speech[first_speech:]),
                 "turns": live.turns(npc),
             })
             return _logged(results)
@@ -1072,9 +1090,14 @@ async def rescue(
     finally:
         deciding.decide = decide  # type: ignore[method-assign]
         planner.decider = original_decider
+        planner.on_escalate = on_escalate
         dialogue.event_turn = event_turn  # type: ignore[method-assign]
         link.listeners.remove(event)
         link.listeners.remove(track)
+        if live is not None:
+            # The final live case is over; do not reconsider its wolf during server shutdown.
+            link.listeners.remove(planner.on_message)
+            planner.reset()
         if runner is not None:
             await link.send(ThreatControlCmd(hold=False))
             runner.cancel()

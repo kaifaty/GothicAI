@@ -113,8 +113,15 @@ async def test_live_npc_skips_decider_cases_without_preparing_a_game(tmp_path, m
     assert "DECIDER_URL" in (tmp_path / "report.md").read_text()
 
 
-async def test_live_rescue_waits_for_delayed_escalation_and_completed_speech(tmp_path, monkeypatch):
+@pytest.mark.parametrize(("level", "escalate_delay", "speech_delay"), [
+    pytest.param(3.0, 0.8, 0.4, id="delayed-speech"),
+    pytest.param(0.0, 0.0, 0.0, id="silence"),
+])
+async def test_live_rescue_waits_for_delayed_escalation_and_completed_speech(
+    tmp_path, monkeypatch, level, escalate_delay, speech_delay,
+):
     import asyncio
+    import time
 
     from gothic_ai.brain import LogApplier, NpcPlanner, PlannerConfig
     from gothic_ai.budget import Budget
@@ -135,9 +142,12 @@ async def test_live_rescue_waits_for_delayed_escalation_and_completed_speech(tmp
 
     async def delayed_decide(rid, lane, priority, deadline_ms, state, questions):
         if "escalate" in questions:
-            await asyncio.sleep(0.8)
+            await asyncio.sleep(escalate_delay)
             escalate_finished.set()
-        return await decide(rid, lane, priority, deadline_ms, state, questions)
+        outcome = await decide(rid, lane, priority, deadline_ms, state, questions)
+        if "escalate" in questions:
+            outcome.answers["escalate"]["score"] = level
+        return outcome
 
     monkeypatch.setattr(decider, "decide", delayed_decide)
     handle = fake.handle
@@ -151,7 +161,7 @@ async def test_live_rescue_waits_for_delayed_escalation_and_completed_speech(tmp
     monkeypatch.setattr(fake, "handle", spawned_wolf)
     trace = TraceWriter(tmp_path / "traces")
     suite = LiveSuite("live_npc", trace)
-    llm = FakeBackend("Волк! На помощь!", first=0.4, delay=0)
+    llm = FakeBackend("Волк! На помощь!", first=speech_delay, delay=0)
     async with connected(fake) as link:
         dialogue = DialogueManager(link, llm, PersonaProvider(None), trace=trace)
         planner = NpcPlanner(decider, LogApplier(), config=PlannerConfig(ask_attitude=False))
@@ -163,14 +173,34 @@ async def test_live_rescue_waits_for_delayed_escalation_and_completed_speech(tmp
                                "distance": 600, "in_view": True})
             await _until(lambda: npc in planner.npcs)
             with suite.case("rescue_call") as case:
+                started = time.monotonic()
                 results = await rescue(link, planner=planner, dialogue=dialogue, live=case)
                 assert escalate_finished.is_set()
-                assert case.evidence["turns"]
+                assert bool(case.evidence["turns"]) == (level > 0)
                 assert all(turn["status"] == "completed" for turn in case.evidence["turns"])
-                assert " ".join(fake.said) == "Волк! На помощь!"
+                assert " ".join(fake.said) == ("Волк! На помощь!" if level > 0 else "")
                 assert not dialogue.speaking(npc)
+                if level == 0:
+                    assert time.monotonic() - started < 5
+                    assert not case.evidence["speech_started"]
+                    assert [answer["questions"] for answer in case.evidence["decisions"]] == [
+                        ["react"], ["escalate"],
+                    ]
+                    assert case.evidence["decisions"][1]["answers"]["escalate"]["score"] == 0
             assert all(value.startswith("done") for value in results.values())
             assert suite.results() == {"rescue_call": "done (observed)"}
+            assert [list(call["questions"]) for call in decider.calls] == [["react"], ["escalate"]]
+            await fake.roster({"id": npc, "name": "Малет", "guild": 8,
+                               "distance": 600, "in_view": True})
+            await fake.send(type="npc_event", npc=npc, kind="monster_near", other="WOLF",
+                            other_name="Волк", distance=400)
+            later = planner.clock() + 10
+            monkeypatch.setattr(planner, "clock", lambda: later)
+            planner.tick(later)
+            for _ in range(10):
+                await asyncio.sleep(0)
+            assert npc not in planner.npcs
+            assert len(decider.calls) == 2
         finally:
             tasks = [runner, *incidents._tasks,
                      *(task for conv in dialogue.conversations.values() for task in conv.tasks())]
