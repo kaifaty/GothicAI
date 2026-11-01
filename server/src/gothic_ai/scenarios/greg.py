@@ -10,6 +10,7 @@ from ..llm import ToolCall
 from ..protocol import Session
 from .common import (
     FixedDecider,
+    _clear_beasts,
     _logged,
     _save,
     _until,
@@ -69,7 +70,7 @@ async def greg(
         return [int(n or 0) for n in await link.story_eval(GREG, exprs)]
 
     async def say(text: str) -> bool:
-        await link.debug("player_goto", to=GREG, distance=250)
+        await link.debug("teleport", near=GREG, distance=250)
         if not await _until(lambda: GREG in talk.people and talk.people[GREG].distance < 600, 20):
             return False
         conv = dialogue.conversations.get(GREG)
@@ -78,12 +79,16 @@ async def greg(
 
         def answered() -> bool:
             conv = dialogue.conversations.get(GREG)
-            return bool(conv and conv.reply and conv.reply is not before and conv.reply.done())
+            return bool(
+                conv and conv.reply and conv.reply is not before and conv.reply.done() and not conv.actions
+            )
 
         return await _until(answered, 60)
 
     await link.debug("skip_important", near=GREG)
-    await link.debug("player_goto", to=GREG, distance=250)
+    # The nearest waypoint can be farther than talking distance from Greg.
+    await link.debug("teleport", near=GREG, distance=250)
+    await _clear_beasts(link, GREG)
     log.info("given: дано: решающая модель оставляет Грега слушать героя")
     talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
     if not check("near", await _until(lambda: GREG in talk.people, 20), GREG):
@@ -136,7 +141,7 @@ async def greg(
     situation = vanilla.situation(GREG) or ""
     check(
         "promised_on_turn_in",
-        "Награда, как обещано:" in situation
+        "Награда, как обещано" in situation
         and all(s in situation for s in ("50 золотых", "100", "опыт", "Карта земель Хориниса", "Ром ×2")),
         situation,
     )
