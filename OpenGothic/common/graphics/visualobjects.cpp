@@ -950,10 +950,13 @@ void VisualObjects::visibilityVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd)
   drawCmd.visibilityVsm(cmd);
   }
 
-void VisualObjects::drawTranslucent(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
-  // return;
+void VisualObjects::drawMultiply(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
   drawCmd.drawCommon(cmd, SceneGlobals::V_Main, Material::Multiply);
   drawCmd.drawCommon(cmd, SceneGlobals::V_Main, Material::Multiply2);
+  }
+
+void VisualObjects::drawTranslucent(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
+  // return;
   drawCmd.drawCommon(cmd, SceneGlobals::V_Main, Material::Ghost);
   drawCmd.drawCommon(cmd, SceneGlobals::V_Main, Material::AdditiveLight);
   drawCmd.drawCommon(cmd, SceneGlobals::V_Main, Material::Transparent);

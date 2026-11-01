@@ -61,12 +61,14 @@ class Material final {
     bool isSceneInfoRequired()   const { return isSceneInfoRequired(alpha);            }
     bool isShadowmapRequired()   const { return isShadowmapRequired(alpha);            }
     bool isTextureInShadowPass() const { return isTextureInShadowPass(alpha);          }
+    bool isFogRequired()         const { return isFogRequired(alpha);                  }
 
     static bool isTesselated(AlphaFunc alpha);
     static bool isForwardShading(AlphaFunc alpha);
     static bool isSceneInfoRequired(AlphaFunc alpha);
     static bool isShadowmapRequired(AlphaFunc alpha);
     static bool isTextureInShadowPass(AlphaFunc alpha);
+    static bool isFogRequired(AlphaFunc alpha);
 
   private:
     friend struct AssetDigest;

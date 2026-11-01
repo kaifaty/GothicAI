@@ -20,6 +20,10 @@ from .common import (
     wait_message,
 )
 
+SCENARIOS = {
+    "greg": ("GIVEN", {"save": False, "timeout": 240}),
+}
+
 if TYPE_CHECKING:
     from ..dialogue import DialogueManager
     from ..game import GameLink

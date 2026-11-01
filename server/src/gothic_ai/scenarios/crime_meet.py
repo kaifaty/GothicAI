@@ -6,11 +6,14 @@ import asyncio
 import logging
 import math
 import time
+from collections.abc import AsyncIterator
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from ..game import GameError, GameLink
+from ..llm import Done, LLMEvent, TextDelta, ToolCall
 from ..protocol import GameMessage, NpcActCmd, NpcActResult, NpcEvent, NpcIdle, NpcView, Session
+from ..trace import CallTrace, TurnTrace
 from .common import (
     HILDA,
     LOBART,
@@ -24,11 +27,16 @@ from .common import (
 )
 from .crimes import HOUSE
 
+SCENARIOS = {
+    "crime_meet": ("GIVEN", {"save": True, "timeout": 600}),
+}
+
 if TYPE_CHECKING:
-    from ..amends import Amends
+    from ..amends import Amends, Proposal, Storylet
     from ..crime_meet import CrimeMeet
     from ..crime_react import CrimeReact
     from ..crimes import Crimes
+    from .live import LiveCase
 
 log = logging.getLogger(__name__)
 CUP, GOLD = "ITMI_SILVERCUP", "ITMI_GOLD"
@@ -45,6 +53,8 @@ async def crime_meet(
     meets: CrimeMeet,
     amends: Amends,
     slot: int = 7,
+    *,
+    live: LiveCase | None = None,
 ) -> dict[str, str]:
     """Two branches of save 1 using native rules, including the required Amends demand.
 
@@ -57,6 +67,66 @@ async def crime_meet(
     facts = service.chronicle.facts
     original_cards, original_meet_cards = reactions.cards, meets.cards
     original_queue = amends._queue_crime
+    original_model_llm, original_try, original_fallback = amends.model.llm, amends._try, amends._fallback
+    model_traces: list[TurnTrace] = []
+    demand_source: list[dict[str, Any]] = []
+    fallback_used = False
+
+    def close_model_traces(outcome: str) -> None:
+        for trace in model_traces:
+            if trace.closed:
+                continue
+            for step in trace.steps:
+                for call in step.calls:
+                    call.outcome = outcome if call.name == "propose_amends" else "ignored"
+            trace.close("completed")
+
+    class DemandTrace:
+        # Amends has its own model loop. Record its actual requests in this live case as well.
+        def __getattr__(self, name: str) -> Any:
+            return getattr(original_model_llm, name)
+
+        async def stream(self, **kwargs: Any) -> AsyncIterator[LLMEvent]:
+            close_model_traces("rejected")
+            assert live is not None
+            trace = TurnTrace(
+                live.trace, npc=LOBART, branch=None, trigger={"kind": "amends", "text": "victim demand"},
+                instructions=kwargs.get("instructions", ""), tools=["propose_amends"], snapshot=None,
+                llm=original_model_llm.name, model=getattr(original_model_llm, "model", None),
+            )
+            model_traces.append(trace)
+            step = trace.step(kwargs.get("messages", []), kwargs.get("tool_choice"))
+            started = time.monotonic()
+            done = None
+            try:
+                async for event in original_model_llm.stream(**kwargs):
+                    if isinstance(event, ToolCall):
+                        step.calls.append(
+                            CallTrace(event.name, event.arguments, event.call_id, "", "pending")
+                        )
+                    elif isinstance(event, TextDelta):
+                        step.text += event.text
+                    elif isinstance(event, Done):
+                        done = event
+                    yield event
+            finally:
+                trace.finish_step(step, done, None, time.monotonic() - started)
+                if not step.calls:
+                    trace.close("completed")
+
+    async def tried(*args: Any, **kwargs: Any) -> tuple[Storylet | None, list[str]]:
+        made, errors = await original_try(*args, **kwargs)
+        if not fallback_used:
+            close_model_traces("accepted" if made is not None else "rejected")
+        if made is not None:
+            demand_source.append({"source": "fallback" if fallback_used else "model", "storylet": made.id})
+        return made, errors
+
+    def fallback(*args: Any, **kwargs: Any) -> Proposal:
+        nonlocal fallback_used
+        close_model_traces("rejected")
+        fallback_used = True
+        return original_fallback(*args, **kwargs)
     sent: list[Any] = []
     received: list[tuple[float, GameMessage]] = []
     hero_states: list[dict[str, Any]] = []
@@ -407,83 +477,84 @@ async def crime_meet(
         if not check("baseline", not facts("crime") and await _save(link, slot + 1) is not None):
             return _logged(results)
 
-        crime = await theft("home")
-        if crime is None:
-            return _logged(results)
-        cid = str(crime["id"])
-        if not check("home_owner_ready", await placed(LOBART, WITNESS_POINT, ready=True)):
-            return _logged(results)
-        await link.body_watch(["PLAYER"], rate_hz=20)
-        entered = time.monotonic()
-        before_home = len(sent)
-        prepared, preparation = await home_entry()
-        if not check("home_entry_ready", prepared, preparation):
-            return _logged(results)
-        await link.debug("player_hp", hp=10)
-        if not check("home_enter_room", await _until(lambda: bool(events("enter_room", entered)), 15)):
-            return _logged(results)
+        if live is None:
+            crime = await theft("home")
+            if crime is None:
+                return _logged(results)
+            cid = str(crime["id"])
+            if not check("home_owner_ready", await placed(LOBART, WITNESS_POINT, ready=True)):
+                return _logged(results)
+            await link.body_watch(["PLAYER"], rate_hz=20)
+            entered = time.monotonic()
+            before_home = len(sent)
+            prepared, preparation = await home_entry()
+            if not check("home_entry_ready", prepared, preparation):
+                return _logged(results)
+            await link.debug("player_hp", hp=10)
+            if not check("home_enter_room", await _until(lambda: bool(events("enter_room", entered)), 15)):
+                return _logged(results)
 
-        def home_actions(action: str) -> list[NpcActCmd]:
-            return [
-                c
-                for c in sent[before_home:]
-                if isinstance(c, NpcActCmd) and c.npc == LOBART and c.action == action
-            ]
+            def home_actions(action: str) -> list[NpcActCmd]:
+                return [
+                    c
+                    for c in sent[before_home:]
+                    if isinstance(c, NpcActCmd) and c.npc == LOBART and c.action == action
+                ]
 
-        def accepted(action: NpcActCmd) -> bool:
-            return any(
-                isinstance(m, NpcActResult) and m.id == action.id and m.status == "queued"
-                for _, m in received
-            )
-
-        def voiced() -> bool:
-            voices = [
-                c
-                for c in home_actions("say_svm")
-                if str(c.args.get("svm", "")).upper().lstrip("$") == "GETOUTOFHERE"
-            ]
-            return any(
-                accepted(c)
-                and any(
-                    isinstance(m, NpcIdle) and m.act == c.id and m.reason == "done" for _, m in received
+            def accepted(action: NpcActCmd) -> bool:
+                return any(
+                    isinstance(m, NpcActResult) and m.id == action.id and m.status == "queued"
+                    for _, m in received
                 )
-                for c in voices
-            )
 
-        if not check(
-            "home_warning",
-            await _until(voiced, 25),
-            [c.model_dump() for c in home_actions("say_svm")],
-        ):
-            return _logged(results)
-        if not check(
-            "home_meeting",
-            any(f.get("event") == "enter_room" and f.get("reaction") == "room" for f in meet_rows(cid)),
-            meet_rows(cid),
-        ):
-            return _logged(results)
-        reason = await link.evaluate(["var", "AR_CLEARROOM"])
-        if not check(
-            "home_clearroom_fight",
-            await _until(
-                lambda: any(
-                    accepted(c) and c.args.get("reason") in {"AR_CLEARROOM", reason}
-                    for c in home_actions("fight")
+            def voiced() -> bool:
+                voices = [
+                    c
+                    for c in home_actions("say_svm")
+                    if str(c.args.get("svm", "")).upper().lstrip("$") == "GETOUTOFHERE"
+                ]
+                return any(
+                    accepted(c)
+                    and any(
+                        isinstance(m, NpcIdle) and m.act == c.id and m.reason == "done" for _, m in received
+                    )
+                    for c in voices
+                )
+
+            if not check(
+                "home_warning",
+                await _until(voiced, 25),
+                [c.model_dump() for c in home_actions("say_svm")],
+            ):
+                return _logged(results)
+            if not check(
+                "home_meeting",
+                any(f.get("event") == "enter_room" and f.get("reaction") == "room" for f in meet_rows(cid)),
+                meet_rows(cid),
+            ):
+                return _logged(results)
+            reason = await link.evaluate(["var", "AR_CLEARROOM"])
+            if not check(
+                "home_clearroom_fight",
+                await _until(
+                    lambda: any(
+                        accepted(c) and c.args.get("reason") in {"AR_CLEARROOM", reason}
+                        for c in home_actions("fight")
+                    ),
+                    15,
                 ),
-                15,
-            ),
-            [c.model_dump() for c in home_actions("fight")],
-        ):
-            return _logged(results)
-        down = await _until(lambda: any(s["unconscious"] and not s["dead"] for s in hero_states), 60)
-        if not check(
-            "home_knocked_out",
-            down and not any(s["dead"] for s in hero_states),
-            {"samples": len(hero_states), "latest": hero_states[-1] if hero_states else None},
-        ):
-            return _logged(results)
-        if not await clean("victim"):
-            return _logged(results)
+                [c.model_dump() for c in home_actions("fight")],
+            ):
+                return _logged(results)
+            down = await _until(lambda: any(s["unconscious"] and not s["dead"] for s in hero_states), 60)
+            if not check(
+                "home_knocked_out",
+                down and not any(s["dead"] for s in hero_states),
+                {"samples": len(hero_states), "latest": hero_states[-1] if hero_states else None},
+            ):
+                return _logged(results)
+            if not await clean("victim"):
+                return _logged(results)
 
         crime = await theft("victim")
         if crime is None:
@@ -493,9 +564,16 @@ async def crime_meet(
             return _logged(results)
         meets.cards = {**original_meet_cards, LOBART: replace(original_cards[LOBART], courage=3)}
         reactions.cards = {**original_cards, LOBART: replace(original_cards[LOBART], courage=3)}
-        log.info("given: дано: Лобарт храбр при встрече (courage 3 после кражи)")
+        if live is None:
+            log.info("given: дано: Лобарт храбр при встрече (courage 3 после кражи)")
+        else:
+            log.info("scenario: victim meeting uses Lobart courage 3 after theft")
+            amends.model.llm = DemandTrace()
+            amends._try = tried  # type: ignore[method-assign]
+            amends._fallback = fallback  # type: ignore[method-assign]
         check("victim_card", True, "scenario only: courage 2 -> 3 after the theft")
         amends._queue_crime = original_queue  # type: ignore[method-assign]
+        deadline = time.monotonic() + 120
         if not check("victim_player_near", await next_meeting() is not None):
             return _logged(results)
         approached = await _until(
@@ -533,8 +611,31 @@ async def crime_meet(
             meet_rows(cid),
         )
         key = f"crime:{cid}"
-        await _until(lambda: any(s.npc == LOBART and s.lie == key for s in amends.storylets.values()), 120)
+        if live is not None:
+            # The decision and native installation share the demand's deadline.
+            await _until(
+                lambda: bool(demand_source)
+                and any(f.get("npc") == LOBART and f.get("lie") == key for f in facts("amends_open")),
+                max(0, deadline - time.monotonic()),
+            )
+        else:
+            await _until(
+                lambda: any(s.npc == LOBART and s.lie == key for s in amends.storylets.values()), 120
+            )
         storylet = next((s for s in amends.storylets.values() if s.npc == LOBART and s.lie == key), None)
+        if live is not None:
+            # An accepted model proposal is only counted after its real native storylet is installed.
+            opened = [f for f in facts("amends_open") if f.get("npc") == LOBART and f.get("lie") == key]
+            source = demand_source[-1]["source"] if demand_source else None
+            live.finish("failure" if fallback_used else "success" if source == "model" and opened
+                        else "no_decision", evidence={
+                            "decision": source or ("fallback" if fallback_used else "no_demand"),
+                            "crime": crime, "meeting": meet_rows(cid), "opened": opened,
+                            "fallback_used": fallback_used, "accepted": demand_source,
+                            "calls": live.calls(LOBART, "propose_amends"),
+                            "rejected": [f for f in facts("amends_rejected") if f.get("lie") == key],
+                        })
+            return _logged(results)
         price = (await link.story_eval(LOBART, [["field", ["inst", CUP], "VALUE"]]))[0]
         limit = min(100, price) if price > 0 else 50  # the meeting rule when no VM price is available
         if not check(
@@ -625,6 +726,11 @@ async def crime_meet(
         )
         return _logged(results)
     finally:
+        if live is not None:
+            close_model_traces("rejected")
+            amends.model.llm = original_model_llm
+            amends._try = original_try  # type: ignore[method-assign]
+            amends._fallback = original_fallback  # type: ignore[method-assign]
         reactions.cards, meets.cards = original_cards, original_meet_cards
         amends._queue_crime = original_queue  # type: ignore[method-assign]
         try:

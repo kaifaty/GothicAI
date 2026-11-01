@@ -26,6 +26,11 @@ from .common import _logged, _save_or_fail, _until, model_off, wait_message
 from .live import LiveSuite
 from .story import play_book_chain
 
+SCENARIOS = {
+    "showrunner": ("GIVEN", {"save": True, "timeout": 240}),
+    "showrunner_live": ("LIVE", None),
+}
+
 if TYPE_CHECKING:
     from ..showrunner import Showrunner
 

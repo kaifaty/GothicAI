@@ -59,6 +59,25 @@ from .common import (
     model_off,
     wait_message,
 )
+from .live import LiveCase
+
+SCENARIOS = {
+    "authored": ("GIVEN", {"save": True, "timeout": 240}),
+    "cast": ("OFF", {"save": True, "timeout": 240}),
+    "chain": ("GIVEN", {"save": True, "timeout": 240}),
+    "character": ("GIVEN", {"save": True, "timeout": 240}),
+    "death_load": ("OFF", {"save": False, "timeout": 240}),
+    "graph": ("OFF", {"save": False, "timeout": 240}),
+    "own": ("OFF", {"save": True, "timeout": 240}),
+    "own_amend": ("GIVEN", {"save": True, "timeout": 240}),
+    "own_repair": ("GIVEN", {"save": True, "timeout": 240}),
+    "person": ("OFF", {"save": True, "timeout": 240}),
+    "programs": ("OFF", {"save": False, "timeout": 240}),
+    "repair": ("GIVEN", {"save": False, "timeout": 240}),
+    "requires": ("OFF", {"save": True, "timeout": 240}),
+    "stages": ("OFF", {"save": True, "timeout": 240}),
+    "trigger": ("OFF", {"save": True, "timeout": 240}),
+}
 
 log = logging.getLogger("gothic_ai.scenarios")
 
@@ -541,7 +560,8 @@ async def death_load(link: GameLink, director: Director, slot: int = 8) -> dict[
 
 
 async def repair_after_death(
-    link: GameLink, director: Director, story: StoryPatches, giver: str = LOBART, successor: str = HILDA
+    link: GameLink, director: Director, story: StoryPatches, giver: str = LOBART, successor: str = HILDA,
+    *, live: LiveCase | None = None,
 ) -> dict[str, str]:
     """Stage 5 of the story graph on the game: a quest giver dies, the director repairs the quest, the hero
     finishes it.
@@ -561,7 +581,7 @@ async def repair_after_death(
         await wait_message(link, Session, timeout=10)
     await asyncio.sleep(1)
     assert director.dialogue is not None
-    off = model_off(director.dialogue)
+    off = model_off(director.dialogue) if live is None else None
     facts = director.chronicle.facts
     hero = ["inst", "HERO"]
 
@@ -588,27 +608,30 @@ async def repair_after_death(
 
     ending = director._ending(director.graph.nodes[before.endings(RUEBEN)[0]], RUEBEN, before, 1)
     assert ending is not None
-    off.given(
-        "дано: режиссёр сначала предлагает передать квест мёртвому Лобарту",
-        who=DIRECTOR_KEY, when=RUEBEN,
-        calls=[ToolCall(PROPOSE, _repair_proposal(ending, giver))],
-    )
-    off.given(
-        "дано: режиссёр предлагает передать квест Хильде после отказа",
-        who=DIRECTOR_KEY, when="Отклонено:",
-        calls=[ToolCall(PROPOSE, _repair_proposal(ending, successor))],
-    )
+    if off is not None:
+        off.given(
+            "дано: режиссёр сначала предлагает передать квест мёртвому Лобарту",
+            who=DIRECTOR_KEY, when=RUEBEN,
+            calls=[ToolCall(PROPOSE, _repair_proposal(ending, giver))],
+        )
+        off.given(
+            "дано: режиссёр предлагает передать квест Хильде после отказа",
+            who=DIRECTOR_KEY, when="Отклонено:",
+            calls=[ToolCall(PROPOSE, _repair_proposal(ending, successor))],
+        )
     # Lobart dies; the module's real loop rejects the first supplied repair and retries.
     await link.debug("kill", npc=giver)
     ok = await _until(lambda: any(f.get("npc") == giver for f in facts("died")), 10)
     check("died", ok)
     ok = await _until(
-        lambda: any(f.get("quest") == RUEBEN for f in facts("repair") + facts("unrepaired")), 60
+        lambda: any(f.get("quest") == RUEBEN for f in facts("repair") + facts("unrepaired")),
+        180 if live else 60,
     )
     dead_end = [f for f in facts("dead_end") if f.get("quest") == RUEBEN]
     check("dead_end", bool(dead_end), dead_end[-1:])
     rejected = [f for f in facts("repair_rejected") if f.get("quest") == RUEBEN]
-    check("rejected", any("мёртв" in why for f in rejected for why in f["why"]), rejected[-1:])
+    if live is None:
+        check("rejected", any("мёртв" in why for f in rejected for why in f["why"]), rejected[-1:])
     repair = next((f for f in facts("repair") if f.get("quest") == RUEBEN), None)
     check(
         "repaired",
@@ -616,8 +639,32 @@ async def repair_after_death(
         repair or facts("unrepaired"),
     )
     if repair is None or repair.get("kind") != "handover":
+        if live is not None:
+            live.finish("failure", evidence={"repair": repair, "rejected": rejected,
+                                             "unrepaired": facts("unrepaired")})
+            return _logged({"decision": "done (failure)"})
         return _logged(results)
     node, successor = repair["node"], repair["npc"]
+    if live is not None:
+        passage: dict[str, Any] = {}
+        complete = False
+        try:
+            await link.attach(successor)
+            await link.act(successor, "debug_add_item", item="ITPL_BEET", count=20)
+            await link.detach(successor)
+            await link.story_effect(successor, [{"do": "give", "item": "ITPL_BEET", "count": 20}])
+            await link.debug("player_goto", to=successor, distance=300)
+            await _until_async(lambda: link.story_state(), lambda state: not state.get("dialog"), 20)
+            passage["offered"] = await link.offered_dialogs(successor)
+            if node in passage["offered"]:
+                await link.choose_dialog(successor, node)
+                complete = await _until_async(lambda: var(RUEBEN), lambda value: value == 2, 15)
+        except (GameError, TimeoutError) as error:
+            passage["error"] = str(error)
+        live.finish("success" if complete else "failure", evidence={
+            "repair": repair, "rejected": rejected, "quest_state": await var(RUEBEN), "passage": passage,
+        })
+        return _logged({"decision": f"done ({live.outcome})"})
     # Read the built ending to check its actual payment and dialog consequences.
     made = next(op["node"] for op in story.ops() if op.get("op") == "add_node" and op["node"]["id"] == node)
     gives = [*made["effects"], *programs.effects(made.get("program"))]
@@ -838,7 +885,8 @@ def _chain_proposal(*, thief: str, camp_place: str, item: str, gold: int, xp: in
 
 
 async def director_casts(
-    link: GameLink, casting: Casting, author: Author, story: StoryPatches, places: PlaceBook
+    link: GameLink, casting: Casting, author: Author, story: StoryPatches, places: PlaceBook,
+    *, live: LiveCase | None = None,
 ) -> dict[str, str]:
     """Stage 2 of the director as author, layer 4 (docs/director.md): the director brings in a character of
     its own, and he gives the hero a quest of the author's. The casting and quest decisions are supplied;
@@ -849,7 +897,7 @@ async def director_casts(
         await wait_message(link, Session, timeout=10)
     await asyncio.sleep(1)
     assert author.dialogue is not None
-    off = model_off(author.dialogue)
+    off = model_off(author.dialogue) if live is None else None
     try:
         day = await link.routine(LOBART)
     except (GameError, TimeoutError) as err:
@@ -861,18 +909,26 @@ async def director_casts(
     brief = await casting.brief(place)
     if brief is None:
         return _logged({"prepared": "failed (no casting brief for Lobart's home)"})
-    off.given(
-        "дано: кастинг предлагает торговца Гарета", who=CASTING_KEY, when=place,
-        calls=[ToolCall(PROPOSE_CHARACTER, _character_proposal(brief))],
-    )
+    if off is not None:
+        off.given(
+            "дано: кастинг предлагает торговца Гарета", who=CASTING_KEY, when=place,
+            calls=[ToolCall(PROPOSE_CHARACTER, _character_proposal(brief))],
+        )
     spec = await casting.character(place)
+    if live is not None:
+        live.evidence["cast_rejected"] = casting.chronicle.facts("cast_rejected")
+        live.evidence["character"] = spec.model_dump() if spec is not None else None
+        if spec is None:
+            live.finish("failure")
+            return _logged({"decision": "done (failure)"})
     if spec is None:
         raise RuntimeError(f"supplied character was not built: {casting.chronicle.facts('cast_rejected')}")
-    return await authored_quest(link, author, story, giver=spec.npc)
+    return await authored_quest(link, author, story, giver=spec.npc, live=live)
 
 
 async def authored_quest(
-    link: GameLink, author: Author, story: StoryPatches, giver: str = HILDA, slot: int = 7
+    link: GameLink, author: Author, story: StoryPatches, giver: str = HILDA, slot: int = 7,
+    *, live: LiveCase | None = None,
 ) -> dict[str, str]:
     """Stage 1 of the director as author (docs/director.md) on the game: a quest of its own for Hilda.
 
@@ -894,15 +950,16 @@ async def authored_quest(
         await wait_message(link, Session, timeout=10)
     await asyncio.sleep(1)
     assert author.dialogue is not None
-    off = model_off(author.dialogue)
+    off = model_off(author.dialogue) if live is None else None
     brief = await author.brief(giver)
     if brief is None:
         return _logged({"prepared": "failed (no quest brief for the giver)"})
-    off.given(
-        "дано: автор предлагает квест из первой вещи и места справки",
-        who=AUTHOR_KEY, when=giver,
-        calls=[ToolCall(PROPOSE_QUEST, _authored_proposal(brief))],
-    )
+    if off is not None:
+        off.given(
+            "дано: автор предлагает квест из первой вещи и места справки",
+            who=AUTHOR_KEY, when=giver,
+            calls=[ToolCall(PROPOSE_QUEST, _authored_proposal(brief))],
+        )
     hero = ["inst", "HERO"]
 
     async def var(name: str) -> int | None:
@@ -919,6 +976,18 @@ async def authored_quest(
             await asyncio.sleep(0.5)
 
     q = await author.quest(giver)
+    if live is not None:
+        played = await play_book_chain(link, author.book, [q]) if q is not None else {}
+        if q is not None:
+            await author.book.settle(giver)
+        complete = (q is not None and bool(played)
+                    and all(value.startswith("done") for value in played.values())
+                    and author.book.progress(q.id).state == "done")
+        live.finish("success" if complete else "failure", evidence={
+            "quest": q.id if q else None, "rejected": author.chronicle.facts("authored_rejected"),
+            "passage": played,
+        })
+        return _logged({"decision": f"done ({live.outcome})"})
     if q is None:
         raise RuntimeError(f"supplied quest was not built: {author.chronicle.facts('authored_rejected')}")
     book = author.book
@@ -1602,7 +1671,8 @@ async def book_requires(link: GameLink, book: questbook.QuestBook, slot: int = 7
 
 
 async def author_chain(
-    link: GameLink, chains: ChainAuthor, places: PlaceBook, slot: int = 7
+    link: GameLink, chains: ChainAuthor, places: PlaceBook, slot: int = 7,
+    *, live: LiveCase | None = None,
 ) -> dict[str, str]:
     """Stage 3, layer 4: Garet's chain, built by the author, then played from the book's descriptions.
 
@@ -1632,44 +1702,58 @@ async def author_chain(
         return _logged(results)
     giver = spec.npc
     assert chains.author.dialogue is not None
-    off = model_off(chains.author.dialogue)
+    off = model_off(chains.author.dialogue) if live is None else None
     brief = await chains.brief(giver)
     if brief is None:
         return _logged({**results, "prepared": "failed (no author's brief for Garet)"})
-    camps = [p for p in brief.places.values() if brief.bandit_ok(p.id) and len(p.points) >= 3]
-    if not camps:
-        return _logged({**results, "prepared": "failed (no unoccupied camp in the author's brief)"})
-    camp = camps[0]
-    thief = next((p for p in brief.places.values() if p.id != camp.id), camp)
-    item = next(iter(brief.base.items))
-    for candidate in brief.base.items:
-        if not await link.evaluate(["call", "NPC_HASITEMS", ["inst", "HERO"], ["sym", candidate]]):
-            item = candidate
-            break
-    proposal = _chain_proposal(
-        thief=thief.id, camp_place=camp.id, item=item, gold=brief.base.gold, xp=brief.base.xp,
-    )
-    invalid = _chain_proposal(
-        thief=thief.id, camp_place="FARM1_OUT", item=item, gold=brief.base.gold, xp=brief.base.xp,
-    )
-    off.given(
-        "дано: автор цепочки сначала предлагает лагерь бандитов во дворе фермы",
-        who=CHAIN_KEY, when=giver, calls=[ToolCall(PROPOSE_CHAIN, invalid)],
-    )
-    off.given(
-        "дано: автор цепочки предлагает вора и лагерь из трёх бандитов после отказа",
-        who=CHAIN_KEY, when="Отклонено:", calls=[ToolCall(PROPOSE_CHAIN, proposal)],
-    )
-    character = await chains.casting.brief(thief.id)
-    if character is None:
-        return _logged({**results, "prepared": "failed (no casting brief for the thief)"})
-    off.given(
-        "дано: кастинг предлагает вора Рудека", who=CASTING_KEY, when=thief.id,
-        calls=[ToolCall(PROPOSE_CHARACTER, _character_proposal(character, thief=True))],
-    )
+    if off is not None:
+        camps = [p for p in brief.places.values() if brief.bandit_ok(p.id) and len(p.points) >= 3]
+        if not camps:
+            return _logged({**results, "prepared": "failed (no unoccupied camp in the author's brief)"})
+        camp = camps[0]
+        thief = next((p for p in brief.places.values() if p.id != camp.id), camp)
+        item = next(iter(brief.base.items))
+        for candidate in brief.base.items:
+            if not await link.evaluate(["call", "NPC_HASITEMS", ["inst", "HERO"], ["sym", candidate]]):
+                item = candidate
+                break
+        proposal = _chain_proposal(
+            thief=thief.id, camp_place=camp.id, item=item, gold=brief.base.gold, xp=brief.base.xp,
+        )
+        invalid = _chain_proposal(
+            thief=thief.id, camp_place="FARM1_OUT", item=item, gold=brief.base.gold, xp=brief.base.xp,
+        )
+        off.given(
+            "дано: автор цепочки сначала предлагает лагерь бандитов во дворе фермы",
+            who=CHAIN_KEY, when=giver, calls=[ToolCall(PROPOSE_CHAIN, invalid)],
+        )
+        off.given(
+            "дано: автор цепочки предлагает вора и лагерь из трёх бандитов после отказа",
+            who=CHAIN_KEY, when="Отклонено:", calls=[ToolCall(PROPOSE_CHAIN, proposal)],
+        )
+        character = await chains.casting.brief(thief.id)
+        if character is None:
+            return _logged({**results, "prepared": "failed (no casting brief for the thief)"})
+        off.given(
+            "дано: кастинг предлагает вора Рудека", who=CASTING_KEY, when=thief.id,
+            calls=[ToolCall(PROPOSE_CHARACTER, _character_proposal(character, thief=True))],
+        )
 
     quests = await chains.chain(giver, new_people=True)  # a chain of the director's own people
     facts = chains.chronicle.facts
+    if live is not None:
+        played = await play_book_chain(link, chains.book, quests) if quests else {}
+        if quests:
+            await chains.book.settle(giver)
+        complete = (bool(quests) and bool(played)
+                    and all(value.startswith("done") for value in played.values())
+                    and all(chains.book.progress(q.id).state == "done" for q in quests))
+        live.finish("success" if complete else "failure", evidence={
+            "quests": [q.id for q in quests] if quests else [],
+            "chain": facts("chain"), "rejected": facts("chain_rejected"),
+            "cast_rejected": facts("cast_rejected"), "passage": played,
+        })
+        return _logged({"decision": f"done ({live.outcome})"})
     rejected = facts("chain_rejected")
     refusal = [str(why) for f in rejected for why in f.get("why", f.get("errors", []))]
     check(
@@ -1832,7 +1916,10 @@ async def play_book_chain(
                             await link.debug("teleport", near=goal.npc, distance=max(50, goal.radius // 2))
                             await asyncio.sleep(0.5)
                     elif goal.kind == questbook.HAVE:
-                        if goal.npc:
+                        if goal.npc in {"PLAYER", "PC_HERO", "HERO"}:
+                            if await has(goal.item) < goal.count:
+                                raise RuntimeError(f"the hero no longer holds {goal.item} ×{goal.count}")
+                        elif goal.npc:
                             await link.debug("kill", npc=goal.npc)
                             await link.debug("teleport", near=goal.npc, distance=100)
                             await asyncio.sleep(0.5)

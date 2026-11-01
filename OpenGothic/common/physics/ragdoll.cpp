@@ -1895,6 +1895,13 @@ float Ragdoll::speciesMass(std::string_view name) {
   for(char& c:normalized) c=char(std::toupper(static_cast<unsigned char>(c)));
   name=normalized;
   if(named(name,"TROLL")) return 600.f;
+  if(named(name,"GOLEM") || named(name,"STONEGUARDIAN")) return 500.f;
+  if(named(name,"SHADOW")) return 250.f;
+  if(named(name,"DRAGONSNAPPER")) return 120.f;
+  if(named(name,"DRAGON")) return 2000.f;
+  if(named(name,"DEMON")) return 200.f;
+  if(named(name,"DRACONIAN")) return 100.f;
+  if(named(name,"ORCBITER")) return 45.f;
   if(named(name,"ORC")) return 150.f;
   if(named(name,"WARG")) return 60.f;
   if(named(name,"WOLF")) return 40.f;
@@ -1904,6 +1911,23 @@ float Ragdoll::speciesMass(std::string_view name) {
   if(named(name,"SKELETON")) return 45.f;
   if(named(name,"SNAPPER")) return 90.f;
   if(named(name,"LURKER")) return 80.f;
-  if(named(name,"SHADOWBEAST")) return 250.f;
+  if(named(name,"RAZOR")) return 75.f;
+  if(named(name,"ALLIGATOR")) return 250.f;
+  if(named(name,"BLATTCRAWLER")) return 80.f;
+  if(named(name,"CRAWLER")) return 120.f;
+  if(named(name,"BLOODFLY")) return 5.f;
+  if(named(name,"GIANT_BUG")) return 5.f;
+  if(named(name,"GIANT_RAT")) return 10.f;
+  if(named(name,"HARPIE")) return 40.f;
+  if(named(name,"IRRLICHT") || named(name,"SWARM")) return 1.f;
+  if(named(name,"KEILER")) return 100.f;
+  if(named(name,"MEATBUG")) return .5f;
+  if(named(name,"SHEEP")) return 50.f;
+  if(named(name,"STONEPUMA")) return 80.f;
+  if(named(name,"SWAMPDRONE")) return 10.f;
+  if(named(name,"SWAMPRAT")) return 15.f;
+  if(named(name,"SWAMPSHARK")) return 300.f;
+  if(named(name,"WARAN")) return 80.f;
+  if(named(name,"ZOMBIE") || named(name,"ZOM")) return 75.f;
   return 75.f;
   }

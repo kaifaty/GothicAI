@@ -17,6 +17,10 @@ from ..protocol import GameMessage, NpcActResult, NpcRoster, PerceptionHeld, Ros
 from .bandit_hold import CAVALORN, GANG, PARK, PARTY_POINT, PRIMARY
 from .common import FixedDecider, _logged, _m5b_player_weapon, _until, _until_async, model_off
 
+SCENARIOS = {
+    "road_bandits": ("GIVEN", {"save": False, "timeout": 240}),
+}
+
 if TYPE_CHECKING:
     from ..deals import Deals
     from ..dialogue import DialogueManager

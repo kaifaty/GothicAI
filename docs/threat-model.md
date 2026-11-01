@@ -141,6 +141,10 @@ Gothic AI — одиночная игра. Движок OpenGothic с ИИ-мо�
   - запускается на `push` в `main`, на `pull_request` (не `pull_request_target`) и вручную;
   - права `contents: read`; запись в Pages только у деплоя и только из `main`;
   - секретов не использует.
+- **`tests.yml`:**
+  - запускается на `pull_request` (не `pull_request_target`) и вручную; права `contents: read`, секретов не использует, `checkout` с `persist-credentials: false`;
+  - Actions закреплены SHA, `uv` — точной версией;
+  - команды групп берутся из `scripts/check.py` ветки PR и идут через `env`, а не подстановкой в скрипт; тесты ставят зависимости по `uv.lock`, а группы без lock (`body-service`, тесты `scripts/`) — с PyPI и индекса PyTorch CPU по диапазонам версий.
 - **`windows-release.yml`:**
   - только ручной запуск; `contents: write` нужен только черновику выпуска на последнем шаге;
   - `checkout` с `persist-credentials: false`;

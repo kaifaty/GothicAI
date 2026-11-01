@@ -100,6 +100,7 @@ class VisualObjects final {
     void visibilityPass (Tempest::Encoder<Tempest::CommandBuffer>& cmd, int pass);
     void visibilityVsm  (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
 
+    void drawMultiply   (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawTranslucent(Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawWater      (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawGBuffer    (Tempest::Encoder<Tempest::CommandBuffer>& cmd);

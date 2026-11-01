@@ -18,6 +18,10 @@ from ..protocol import BodyControlEvents, CombatHit, GameMessage, Session
 from .bandit_parley import CAVALORN, PARK
 from .common import _logged, _m5b_player_weapon, _save_or_fail, _until, _until_async, wait_message
 
+SCENARIOS = {
+    "neural-still": ("OFF", {"save": False, "timeout": 1200}),
+}
+
 log = logging.getLogger("gothic_ai.scenarios")
 
 ACTIONS = ("continue", "approach", "turn_to_target", "strafe_left", "strafe_right", "jump_back",

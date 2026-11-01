@@ -381,3 +381,62 @@ def test_compare_repeat_noise_sorted_regressions_and_leaf_inputs(tmp_path):
     leaf = json.loads((right / "compare.json").read_text())
     assert leaf["places"]["market"]["zones"][0]["within_noise"] is None
     assert (right / "compare.md").exists()
+
+
+@pytest.mark.parametrize("spread,failed_pass", [(2.0, None), (.3, "run"), (.3, "fly")])
+def test_series_p99_medians_off_noise_and_exit_code(tmp_path, capsys, spread, failed_pass):
+    directories = {side: [tmp_path / f"{side}-{index}" for index in (1, 2)] for side in ("off", "on")}
+    for side, roots in directories.items():
+        for index, root in enumerate(roots):
+            rows = []
+            for name, offset, base in (("run", 0, 10), ("fly", 1000, 20)):
+                change = 1.4 if failed_pass is None or name == failed_pass else .5
+                step = base + ((index - .5) * spread if side == "off" else change)
+                rows.extend({"segment": f"streaming-flythrough/{name}", "begin_ns": round(value * 1e6)}
+                            for value in (offset, offset + step, offset + 2 * step + 1))
+            profile(root, rows)
+            (root / "events.jsonl").write_text("\n".join(json.dumps(
+                {"kind": "route_end", "speed_cm_s": speed, "pass": True}) for speed in (500, 2000)))
+    args = ["series", "--off", *map(str, directories["off"]), "--on", *map(str, directories["on"])]
+    output = directories["on"][-1]
+    if failed_pass is None:
+        output = tmp_path / "result"
+        args += ["--out", str(output)]
+    assert report.main(args) == (1 if failed_pass else 0)
+    data = json.loads((output / "series.json").read_text())
+    markdown = (output / "series.md").read_text()
+    assert capsys.readouterr().out.strip() == markdown.strip()
+    assert data["minimum_tolerance_ms"] == 1.0
+    for name, base in (("run", 10), ("fly", 20)):
+        stats = data["passes"][name]
+        for side, roots in directories.items():
+            assert [run["directory"] for run in stats[side]] == [str(root.resolve()) for root in roots]
+            expected = [report.build_report(root)["places"]["streaming-flythrough"]["views"][name]
+                        ["frame_ms"]["p99"] for root in roots]
+            assert [run["p99_ms"] for run in stats[side]] == pytest.approx(expected)
+            assert all(f"{value:.3f}" in markdown for value in expected)
+        change = 1.4 if failed_pass is None or name == failed_pass else .5
+        assert stats["off_median_p99_ms"] == pytest.approx(base + .99)
+        assert stats["on_median_p99_ms"] == pytest.approx(base + .99 + change)
+        assert stats["delta_ms"] == pytest.approx(change)
+        assert stats["off_spread_ms"] == pytest.approx(spread)
+        assert stats["tolerance_ms"] == pytest.approx(max(1.0, spread))
+        assert stats["verdict"] == ("fail" if name == failed_pass else "pass")
+        assert f"| {name} |" in markdown
+    if failed_pass == "run":
+        assert report.main([*args, "--tolerance-ms", "1.5"]) == 0
+        adjusted = json.loads((output / "series.json").read_text())
+        assert adjusted["passes"]["run"]["tolerance_ms"] == 1.5
+
+
+@pytest.mark.parametrize("short_side", ["off", "on"])
+def test_series_requires_at_least_two_runs_per_side(tmp_path, capsys, short_side):
+    args = ["series"]
+    for side in ("off", "on"):
+        args += [f"--{side}", str(tmp_path / f"{side}-1")]
+        if side != short_side:
+            args.append(str(tmp_path / f"{side}-2"))
+    with pytest.raises(SystemExit) as error:
+        report.main(args)
+    assert error.value.code == 2
+    assert "at least two" in capsys.readouterr().err

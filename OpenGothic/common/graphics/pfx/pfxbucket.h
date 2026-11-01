@@ -63,6 +63,7 @@ class PfxBucket {
     void                        preFrameUpdate(const SceneGlobals& scene, uint8_t fId);
     void                        drawGBuffer    (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals &scene, uint8_t fId);
     void                        drawShadow     (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals &scene, uint8_t fId, int layer);
+    void                        drawMultiply   (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals &scene, uint8_t fId);
     void                        drawTranslucent(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals &scene, uint8_t fId);
 
     size_t                      allocEmitter();
@@ -89,6 +90,8 @@ class PfxBucket {
       L_Morph    = 11,
       L_SceneClr = 12,
       L_GDepth   = 13,
+      L_FogLut   = 17,
+      L_FogLutMs = 18,
       };
 
     struct Block final {

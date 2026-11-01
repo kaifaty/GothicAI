@@ -60,6 +60,7 @@ class WorldView {
     void setHiZ(const Tempest::Texture2d& hiZ);
     void setSceneImages(const Tempest::Texture2d& clr, const Tempest::Texture2d& depthAux, const Tempest::ZBuffer& depthNative);
     void setWindEnabled(bool enabled, uint64_t period);
+    void setFog(const Tempest::StorageImage& lut, const Tempest::StorageImage& lutMs);
     void setClothWind(bool enabled, float scale);
     void setOriginalClothMesh(const PackedMesh& mesh);
     void setOriginalClothVisible(bool visible);
@@ -78,6 +79,7 @@ class WorldView {
     void drawVsm        (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawGBuffer    (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t frameId);
     void drawWater      (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
+    void drawMultiply   (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t frameId);
     void drawTranslucent(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t frameId);
 
     MeshObjects::Mesh   addView      (std::string_view visual, int32_t headTex, int32_t teethTex, int32_t bodyColor);

@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any
 
 from ..brain.reflex import Reflexes
-from ..deals import GOLD, Deals
+from ..deals import GOLD, Deals, _parse
 from ..dialogue import DialogueManager
 from ..game import GameError, GameLink
 from ..llm import ToolCall
@@ -14,7 +15,16 @@ from ..talk import TalkDesk
 from ..trace import read as read_trace
 from ..trust import Trust
 from .common import LOBART, FixedDecider, _logged, _until, model_off, wait_message
-from .live import LiveSuite
+from .live import LiveCase, LiveSuite
+
+SCENARIOS = {
+    "contract": ("GIVEN", {"save": False, "timeout": 240}),
+    "deal": ("GIVEN", {"save": True, "timeout": 240}),
+    "debt": ("GIVEN", {"save": True, "timeout": 240}),
+    "deal_demo": ("GIVEN", {"save": False, "timeout": 240}),
+    "haggle": ("LIVE", None),
+    "xardas_money": ("GIVEN", {"save": False, "timeout": 240}),
+}
 
 log = logging.getLogger("gothic_ai.scenarios")
 
@@ -399,9 +409,10 @@ async def xardas_money(
     talk: TalkDesk,
     deals: Deals,
     npc: str = "NONE_100_XARDAS",
+    *, live: LiveCase | None = None,
 ) -> dict[str, str]:
     """Given gifts and a loan exercise transfers, debt terms and Xardas's purse limit."""
-    off = model_off(dialogue)
+    off = model_off(dialogue) if live is None else None
     results: dict[str, str] = {}
 
     def check(name: str, ok: bool, detail: object = "") -> None:
@@ -418,12 +429,82 @@ async def xardas_money(
 
     await link.debug("skip_important", near=npc)
     await link.debug("player_goto", to=npc, distance=250)
-    log.info("given: дано: решающая модель оставляет NPC слушать героя")
-    talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
+    if live is None:
+        log.info("given: дано: решающая модель оставляет NPC слушать героя")
+    if live is None or live.spec.name != "money_unasked":
+        talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
     if not await _until(lambda: npc in talk.people and talk.people[npc].distance <= 600, 20):
         check("near", False, npc)
         return _logged(results)
     name = talk.people[npc].name
+    if live is not None:
+        purse = deals.purse.rules.get(npc, {})
+        before = await gold()
+        request = None
+        if live.spec.name == "money_unasked":
+            await asyncio.sleep(20)
+            cutoff = round(time.time(), 3)
+            conv = dialogue.conversations.get(npc)
+            reply = conv.reply if conv is not None else None
+            effects_settled = await _until(
+                lambda: (reply is None or reply.done()) and (conv is None or not conv.actions),
+                90,
+            )
+        else:
+            request = f"{name}, дай мне двести золотых."
+            await link.debug("type", text=request)
+            effects_settled = await _until(
+                lambda: bool(live.turns(npc, request)) and (
+                    not any(call.get("name") == "propose_deal" and call.get("outcome") == "accepted"
+                            for call in live.calls(npc)) or npc in deals.open
+                ),
+                90,
+            )
+        rows = live.turns(npc, request)
+        records = rows
+        if request is None:
+            # Turns begun in the observation window may close after it; later turns are unrelated.
+            records = [row for row in live.records if row.get("npc") == npc
+                       and row.get("t", cutoff) <= cutoff]
+            rows = [row for row in records if row.get("status") in {"completed", "step_cap"}]
+        calls = [call for row in records for step in row.get("steps", [])
+                 for call in step.get("calls", [])]
+        money_calls = []
+        for call in calls:
+            if call.get("name") != "propose_deal":
+                continue
+            args = call.get("arguments", {})
+            gives, _ = _parse(args.get("npc_gives"))
+            later = args.get("npc_later")
+            deferred, _ = _parse(later.get("items")) if isinstance(later, dict) else ({}, "")
+            if (gives or {}).get(GOLD, 0) or (deferred or {}).get(GOLD, 0):
+                money_calls.append(call)
+        deal = deals.open.get(npc)
+        offered = bool(
+            deal is not None
+            and any(g.item == GOLD and g.count > 0 for g in (
+                *deal.npc_gives, *(deal.npc_later.gives if deal.npc_later else ()),
+            ))
+            and any(call.get("outcome") == "accepted" for call in money_calls)
+        )
+        outcome = (
+            "failure" if money_calls else "success" if effects_settled else "no_decision"
+        ) if live.spec.name == "money_unasked" else (
+            "success" if offered else "failure" if rows else "no_decision"
+        )
+        live.finish(outcome, evidence={
+            "decision": "money_offered" if money_calls else "no_money_offer",
+            "observation_seconds": 20 if live.spec.name == "money_unasked" else 90,
+            "effects_settled": effects_settled,
+            "calls": calls, "money_calls": money_calls, "purse": purse,
+            "terms": deal.terms() if deal is not None else None,
+            "gold_before": before, "gold_after": await gold(),
+            "words": [step.get("text", "") for row in rows
+                      for step in row.get("steps", []) if step.get("text")],
+        })
+        return _logged(results)
+
+    assert off is not None
 
     def offer(amount: int, loan: int = 0) -> ToolCall:
         return ToolCall(

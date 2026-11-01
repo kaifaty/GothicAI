@@ -26,6 +26,10 @@ from .common import (
 )
 from .crimes import ANDRE, CITY_OWNER
 
+SCENARIOS = {
+    "crime_law": ("GIVEN", {"save": True, "timeout": 420}),
+}
+
 if TYPE_CHECKING:
     from ..crime_law_runtime import CrimeLawRuntime
     from ..crimes import Crimes
