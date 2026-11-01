@@ -1,7 +1,7 @@
 # NPC simulation tier parity (docs/world-streaming.md, step 1, item 6): one continuous game day from a
 # fresh NEWWORLD (day 0, 08:00), every NPC journalled every 5 game minutes (npc-day*.csv).
 # No `set time`: it teleports everyone to their routine point. Run it in two modes and compare:
-#   WORLD=NEWWORLD.ZEN OPENGOTHIC_NPC_SIM_TIER=full TIMEOUT=7200 RYZEN_MAX=110m BENCH_HOST=ryzen \
+#   WORLD=NEWWORLD.ZEN OPENGOTHIC_NPC_SIM_TIER=full TIMEOUT=7200 RYZEN_MAX=120m BENCH_HOST=ryzen \
 #     scripts/bench.sh npc-day-parity /absolute/out/full-1
 #   scripts/npc_day_parity.py /absolute/out/full-1 /absolute/out/simplified-1 \
 #     --tolerances scripts/bench/npc-day-parity.tolerances.json --out report.md

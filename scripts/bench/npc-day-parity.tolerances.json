@@ -1,0 +1,15 @@
+{
+  "comment": "Noise floor of npc-day-parity (docs/world-streaming.md, item 6a): on one build two full-mode days and a simplified-mode day with the same executor were byte-identical (2026-11-02, Ryzen). Any difference therefore comes from the change under test; a PR that changes the executor states its own allowance on top of this with command-line limits (for example --max-pos-p95).",
+  "tolerances": {
+    "min_same_zs": 1.0,
+    "min_same_ta": 1.0,
+    "min_same_hp": 1.0,
+    "min_same_inventory": 1.0,
+    "max_pos_p50": 0.0,
+    "max_pos_p95": 0.0,
+    "max_pos_max": 0.0,
+    "min_zs_matched": 1.0,
+    "max_zs_offset_p95": 0.0,
+    "max_alive_diff": 0
+  }
+}
