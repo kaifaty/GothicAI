@@ -56,6 +56,8 @@ async def live_director(
                 await loading
                 await link.wait_world()
                 models = [director.model, amends.model, chronicler.model]
+                if state.fate_cards is not None:
+                    models.append(state.fate_cards)  # the final card's chronicler, for the trace
                 original = [model.llm for model in models]
                 repair = None
                 try:
@@ -92,6 +94,9 @@ async def live_director(
                         elif name == "feat_award":
                             state.chronicle.on_entry.append(chronicler._on_entry)
                             results = await feats(link, chronicler, journal, dialogue, live=case)
+                        elif name == "fate_card":
+                            state.chronicle.on_entry.append(chronicler._on_entry)
+                            results = await feats(link, chronicler, journal, dialogue, live=case, card=True)
                         else:
                             raise ValueError(f"unknown live_director case {name!r}")
                     failed = {key: value for key, value in results.items() if not value.startswith("done")}

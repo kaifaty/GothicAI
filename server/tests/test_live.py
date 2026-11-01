@@ -52,10 +52,10 @@ def test_live_selection_and_recorded_cases(tmp_path, monkeypatch, suite_name, na
     )),
     ("live_director", (
         "repair_handover", "authored_quest", "character_cast", "chain_built", "crime_line",
-        "crime_return", "amends_storylet", "feat_award",
+        "crime_return", "amends_storylet", "feat_award", "fate_card",
     ), (
         "success", "failure", "success", "failure", "no_decision", "success",
-        "observed", "no_decision",
+        "observed", "no_decision", "success",
     )),
 ])
 def test_npc_and_director_selection_and_recorded_outcomes(
