@@ -29,6 +29,7 @@ from gothic_ai.llm.off import ModelOff, OffBackend
         (scenario, llm, "off" if llm == "auto" else f"scenario {scenario} requires --llm off")
         for scenario in (
             "witness", "wrath", "amends", "amends_deal", "trace", "broken", "gate", "gate_vouch", "greg",
+            "crime_ally", "crime_law", "crime_talk", "trace_crime", "cover", "cover_subject",
         )
         for llm in ("auto", "fake", "chatgpt")
     ],
@@ -309,7 +310,9 @@ def test_deed_control_is_independent_of_the_planner_and_threat_switch(crimes, pl
     assert ("deeds" in command) == crimes
 
 
-@pytest.mark.parametrize("flags", [[], ["--no-cover"], ["--no-crimes"], ["--scenario", "cover"]])
+@pytest.mark.parametrize("flags", [
+    [], ["--no-cover"], ["--no-crimes"], ["--scenario", "cover", "--llm", "off"],
+])
 def test_cover_flag_defaults_and_scenario_are_available(monkeypatch, flags):
     async def serve(args):
         assert args.no_cover == ("--no-cover" in flags)
