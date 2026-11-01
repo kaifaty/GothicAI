@@ -92,8 +92,15 @@ def validate(row):
     if {row.get('winner'), row.get('loser')} != set(sides) or len(sides) != 2:
         raise ValueError('invalid winner/loser')
     loser = sides[row['loser']]
+    if loser['hp_after'] <= 0:
+        return  # the native nonlethal fight still killed (body impact): keep it, report counts deaths
     if loser['hp_after'] != 1 or not loser['hp_one'] or not loser['unconscious']:
         raise ValueError('resolved duel did not end at 1 HP in ZS_UNCONSCIOUS')
+
+
+def _killed(row):
+    return bool(row.get('loser')) and next(
+        row[r] for r in ('attacker', 'defender') if row[r]['instance'] == row['loser'])['hp_after'] <= 0
 
 
 def summarize(rows, pairs):
@@ -122,6 +129,7 @@ def summarize(rows, pairs):
         results.append(dict(pair=pair_id, holdout=lookup[frozenset((a, b))]['holdout'], attacker=a, defender=b,
                             n=len(samples), win_rate=sum(r.get('winner') == a for r in samples)/len(samples),
                             timeouts=sum(r.get('timeout', False) for r in samples),
+                            deaths=sum(_killed(r) for r in samples),
                             median_winner_hp_loss=statistics.median(losses) if losses else None,
                             median_duration_ms=statistics.median(r['duration_ms'] for r in samples)))
     return dict(records=len(rows), pairs=results, hits_by_talent=[
@@ -132,12 +140,12 @@ def summarize(rows, pairs):
 def report(folders, out, pairs):
     result = summarize(read_records(folders), pairs)
     lines = [f'NPC duels: {result["records"]} records', '',
-             '| Pair | Holdout | Attacker → defender | n | Attacker wins / all | Timeouts | Winner HP loss, median | Duration, median s |',
-             '|---|---|---|---:|---:|---:|---:|---:|']
+             '| Pair | Holdout | Attacker → defender | n | Attacker wins / all | Timeouts | Deaths | Winner HP loss, median | Duration, median s |',
+             '|---|---|---|---:|---:|---:|---:|---:|---:|']
     for row in result['pairs']:
         loss = row['median_winner_hp_loss']
         lines.append(f'| {row["pair"]} | {row["holdout"]} | {row["attacker"]} → {row["defender"]} | '
-                     f'{row["n"]} | {row["win_rate"]:.3f} | {row["timeouts"]} | '
+                     f'{row["n"]} | {row["win_rate"]:.3f} | {row["timeouts"]} | {row["deaths"]} | '
                      f'{loss if loss is not None else "n/a"} | {row["median_duration_ms"]/1000:.3f} |')
     lines += ['', '| Weapon | Talent tier | n | HP-loss hits | Duel seconds | Hits/s |', '|---|---:|---:|---:|---:|---:|']
     for row in result['hits_by_talent']:

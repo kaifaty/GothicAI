@@ -361,10 +361,16 @@ def test_far_fight_report_eight_records_and_nonlethal_validation(tmp_path, capsy
     assert json.loads((tmp_path/'far-fight.json').read_text()) == result
     assert '8 records' in capsys.readouterr().out
     assert '| Talent tier |' in (tmp_path/'far-fight.md').read_text()
-    rows[0]['defender']['hp_after'] = 0
+    assert sum(r['deaths'] for r in result['pairs']) == 0 and '| Deaths |' in (tmp_path/'far-fight.md').read_text()
+    rows[0]['defender']['hp_after'] = 5
     with pytest.raises(ValueError, match='1 HP'):
         far.validate(rows[0])
-    rows[0]['defender']['hp_after'] = 1
+    # A native nonlethal fight that still kills is real near-fight behaviour: kept, counted as a death.
+    rows[0]['defender'].update(hp_after=0, hp_one=False, unconscious=False)
+    far.validate(rows[0])
+    (folder/'events.jsonl').write_text(''.join(json.dumps(row)+'\n' for row in rows))
+    assert sum(r['deaths'] for r in far.report([folder], tmp_path, pairs)['pairs']) == 1
+    rows[0]['defender'].update(hp_after=1, hp_one=True, unconscious=True)
     rows[0]['attacker'].pop('damage')
     with pytest.raises(ValueError, match='missing'):
         far.validate(rows[0])
