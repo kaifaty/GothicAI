@@ -28,6 +28,26 @@ std::vector<ChronicleFeat> feats(const rapidjson::Value& object, const char* key
     }
   return result;
   }
+
+std::vector<ChronicleEnd> ends(const rapidjson::Value& object) {
+  std::vector<ChronicleEnd> result;
+  const auto list = object.FindMember("ends");
+  if(list==object.MemberEnd() || !list->value.IsArray())
+    return result;
+  for(const auto& value:list->value.GetArray()) {
+    if(!value.IsObject())
+      continue;
+    ChronicleEnd end;
+    end.kind    = JsonRead::str(value,"kind");
+    end.title   = TextCodec::fromUtf8(JsonRead::str(value,"title"));
+    end.text    = TextCodec::fromUtf8(JsonRead::str(value,"text"));
+    end.name    = TextCodec::fromUtf8(JsonRead::str(value,"name"));
+    end.chapter = JsonRead::integer(value,"chapter",1);
+    end.day     = JsonRead::integer(value,"day",0);
+    result.push_back(std::move(end));
+    }
+  return result;
+  }
 }
 
 ChronicleData parseChronicle(std::string_view json) {
@@ -47,6 +67,7 @@ ChronicleData parseChronicle(std::string_view json) {
     fork.chapter = JsonRead::integer(value,"chapter",1);
     fork.day = JsonRead::integer(value,"day",0);
     fork.feats = feats(value,"feats");
+    fork.ends = ends(value);
     result.others.push_back(std::move(fork));
     }
   return result;

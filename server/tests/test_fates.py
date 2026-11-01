@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import sqlite3
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -43,6 +44,14 @@ def award(store, id, branch="A", **changes):
     })
 
 
+def end(store, branch="A", **changes):
+    return record(store, branch, **{
+        "fact": "fate_end", "kind": "death", "title": "Конец пути",
+        "text": "Здесь путь героя оборвался.", "name": "Волк", "chapter": 2, "day": 9,
+        **changes,
+    })
+
+
 def ids(feats):
     return [feat.id for feat in feats]
 
@@ -66,10 +75,15 @@ def test_early_load_uses_last_shared_day_and_chapter_then_late_load_restores_fat
     record(store, fact="chapter", value=3, day=7)
     saved = record(store, fact="visited", place="FARM", day=8)
     award(store, "lost", chapter=4, day=15)
+    end(store, chapter=4, day=16)
     store.ensure_branch("early", "A", saved)
     fate, [fork] = collect_fates(store, "early")
     assert ids(fate) == ["shared"]
     assert (fork.chapter, fork.day, ids(fork.feats)) == (3, 8, ["lost"])
+    assert [ending.model_dump() for ending in fork.ends] == [{
+        "kind": "death", "title": "Конец пути", "text": "Здесь путь героя оборвался.",
+        "name": "Волк", "chapter": 4, "day": 16,
+    }]
 
     store.ensure_branch("late", "A", store.head("A"))
     fate, others = collect_fates(store, "late")
@@ -132,9 +146,12 @@ def test_other_playthrough_empty_branches_and_branches_without_deeds_add_no_fork
     award(store, "ours")
     store.ensure_branch("other-game")
     award(store, "foreign", "other-game")
+    end(store, "other-game")
     store.ensure_branch("empty", "A", 0)
+    end(store, "empty")
     store.ensure_branch("no-deeds", "A", store.head("A"))
     record(store, "no-deeds", fact="visited", place="CITY", day=8)
+    end(store, "no-deeds")  # Its inherited deed is already in the current fate.
     fate, others = collect_fates(store, "A")
     assert ids(fate) == ["ours"]
     assert others == []
@@ -143,6 +160,63 @@ def test_other_playthrough_empty_branches_and_branches_without_deeds_add_no_fork
     assert (fork.chapter, fork.day, ids(fork.feats)) == (1, 0, ["ours"])
     store.ensure_branch("unknown-parent", "unknown", 10)
     assert collect_fates(store, "unknown-parent") == ([], [])
+
+
+def test_ends_deduplicate_copies_and_order_by_recording_time_with_inherited_deeds(store):
+    saved = record(store, fact="visited", place="FARM", day=4)
+    store.ensure_branch("B", "A", saved)
+    inherited = award(store, "other", "B")
+    store.ensure_branch("C", "B", inherited)
+    end(store, "C", kind="wrath", title="Вечная служба", name="Ксардас", day=8)
+    end(store, "B", kind="finale", title="Путь пройден", name="", day=3)
+    store.ensure_branch("copy", "C", store.head("C"))
+
+    fate, [fork] = collect_fates(store, "A")
+    assert fate == [] and ids(fork.feats) == ["other"]
+    assert (fork.chapter, fork.day) == (1, 4)
+    assert [(ending.kind, ending.name, ending.day) for ending in fork.ends] == [
+        ("wrath", "Ксардас", 8), ("finale", "", 3),
+    ]
+
+
+def test_current_end_and_its_inherited_copies_are_not_other_fate_ends(store):
+    award(store, "ours")
+    end(store)
+    store.ensure_branch("copy", "A", store.head("A"))
+    award(store, "other", "copy")
+
+    fate, [fork] = collect_fates(store, "A")
+    assert ids(fate) == ["ours"] and ids(fork.feats) == ["other"]
+    assert fork.ends == []
+
+
+def test_old_feat_index_is_replaced_on_open_and_reads_fate_end(tmp_path):
+    path = tmp_path / "memory.sqlite3"
+    memory = MemoryStore(path)
+    memory.ensure_branch("A")
+    award(memory, "ours")
+    ended = end(memory)
+    memory.close()
+    with sqlite3.connect(path) as db:
+        db.executescript("""
+            DROP INDEX events_by_feat;
+            CREATE INDEX events_by_feat ON events (branch, seq)
+            WHERE kind='fact'
+            AND json_extract(content, '$.fact') IN ('feat', 'feat_epilogue', 'feat_epilogue_shown');
+        """)
+    memory = MemoryStore(path)
+    try:
+        facts = memory.feat_facts("A")
+        assert [(seq, json.loads(raw)["fact"]) for seq, _, raw in facts] == [
+            (1, "feat"), (ended, "fate_end"),
+        ]
+        with sqlite3.connect(path) as db:
+            [definition] = db.execute(
+                "SELECT sql FROM sqlite_master WHERE name='events_by_feat'",
+            ).fetchone()
+        assert "'fate_end'" in definition
+    finally:
+        memory.close()
 
 
 def test_epilogue_is_exposed_only_after_reveal_in_that_branch(store):
@@ -202,6 +276,7 @@ async def test_chronicle_get_replies_with_fate_forks_and_same_req_through_fake_g
     saved = award(store, "shared")
     store.ensure_branch("other", "A", saved)
     award(store, "lost", "other", chapter=2, day=4)
+    end(store, "other")
     fake = FakeGame(branch="A")
     async with connected(fake) as link:
         chronicle = Chronicle(link, store)
@@ -215,6 +290,7 @@ async def test_chronicle_get_replies_with_fate_forks_and_same_req_through_fake_g
             assert [feat["id"] for feat in reply["others"][0]["feats"]] == ["lost"]
             assert reply["others"][0]["chapter"] == 1 and reply["others"][0]["day"] == 2
             assert reply["fate"][0]["title"] == "Чужой кошель"
+            assert reply["others"][0]["ends"][0]["name"] == "Волк"
         finally:
             await fates.close()
 

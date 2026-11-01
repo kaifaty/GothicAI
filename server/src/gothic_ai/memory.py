@@ -56,7 +56,7 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS events_by_npc ON events (branch, npc, seq);
 CREATE INDEX IF NOT EXISTS events_by_feat ON events (branch, seq)
 WHERE kind='fact'
-AND json_extract(content, '$.fact') IN ('feat', 'feat_epilogue', 'feat_epilogue_shown');
+AND json_extract(content, '$.fact') IN ('feat', 'feat_epilogue', 'feat_epilogue_shown', 'fate_end');
 """
 
 
@@ -103,6 +103,11 @@ class MemoryStore:
         self.path = path
         self._db = sqlite3.connect(str(path), isolation_level=None)  # autocommit; explicit transactions
         self._db.execute("PRAGMA journal_mode=WAL")
+        index = self._db.execute(
+            "SELECT sql FROM sqlite_master WHERE type='index' AND name='events_by_feat'",
+        ).fetchone()
+        if index and "'fate_end'" not in index[0]:
+            self._db.execute("DROP INDEX events_by_feat")
         self._db.executescript(_SCHEMA)
 
     def close(self) -> None:
@@ -238,10 +243,11 @@ class MemoryStore:
         return [(int(s), content) for s, content in rows]
 
     def feat_facts(self, branch: str) -> list[tuple[int, float, str]]:
-        """Achievement facts with their original recording time, including inherited copies."""
+        """Achievement and ending facts with original recording times, including inherited copies."""
         rows = self._db.execute(
             "SELECT seq, created, content FROM events WHERE branch=? AND kind='fact' "
-            "AND json_extract(content, '$.fact') IN ('feat', 'feat_epilogue', 'feat_epilogue_shown') "
+            "AND json_extract(content, '$.fact') "
+            "IN ('feat', 'feat_epilogue', 'feat_epilogue_shown', 'fate_end') "
             "ORDER BY seq",
             (branch,),
         ).fetchall()
