@@ -25,7 +25,7 @@ from .neural_soak_metrics import SoakMetrics, release_within_deadline
 
 SCENARIOS = {
     "neural-soak": ("OFF", {
-        "save": False, "timeout": 900,
+        "save": False, "timeout": 900, "exclusive": True,
         "env": {"GOTHIC_SOAK_SECONDS": "300", "BENCH_CLASS": "quiet"},
     }),
 }

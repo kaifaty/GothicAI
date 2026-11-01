@@ -65,7 +65,8 @@ def test_scenario_llm_groups(monkeypatch, capsys, scenario, llm, expected):
 def test_scenario_groups_match_main_census():
     from gothic_ai.scenarios.groups import GIVEN, LIVE, OFF, RUN
 
-    # Preserve groups and RUN settings from origin/main at 1591a1472ad5.
+    # Preserve groups and RUN settings from origin/main at 1591a1472ad5,
+    # including the intentional exclusive display settings for body scenarios.
     # Omit new scenarios to avoid shared edits when adding them.
     # Update existing entries only for intentional changes to their group or RUN settings.
     expected = {
@@ -89,7 +90,7 @@ def test_scenario_groups_match_main_census():
         "chests": ("GIVEN", {"save": False, "timeout": 240}),
         "chests_lobart": ("LIVE", None),
         "combat_barks": ("GIVEN", {"save": False, "timeout": 240}),
-        "companion": ("GIVEN", {"save": False, "timeout": 240}),
+        "companion": ("GIVEN", {"save": False, "timeout": 240, "exclusive": True}),
         "contract": ("GIVEN", {"save": False, "timeout": 240}),
         "cover": ("GIVEN", {"save": True, "timeout": 720}),
         "cover_subject": ("GIVEN", {"save": True, "timeout": 720}),
@@ -111,10 +112,10 @@ def test_scenario_groups_match_main_census():
         "errand_give": ("GIVEN", {"save": True, "timeout": 240}),
         "feat_fame": ("GIVEN", {"save": False, "timeout": 420}),
         "feats": ("GIVEN", {"save": False, "timeout": 240}),
-        "fight_reactions_bandits": ("GIVEN", {"save": False, "timeout": 300}),
-        "fight_reactions_flee": ("GIVEN", {"save": False, "timeout": 180}),
-        "fight_reactions_sight": ("OFF", {"save": False, "timeout": 180}),
-        "fight_reactions_wolf": ("GIVEN", {"save": False, "timeout": 180}),
+        "fight_reactions_bandits": ("GIVEN", {"save": False, "timeout": 300, "exclusive": True}),
+        "fight_reactions_flee": ("GIVEN", {"save": False, "timeout": 180, "exclusive": True}),
+        "fight_reactions_sight": ("OFF", {"save": False, "timeout": 180, "exclusive": True}),
+        "fight_reactions_wolf": ("GIVEN", {"save": False, "timeout": 180, "exclusive": True}),
         "follow_back": ("OFF", {"save": False, "timeout": 240}),
         "frame": ("GIVEN", {"save": True, "timeout": 900}),
         "gate": ("GIVEN", {"save": False, "timeout": 240}),
@@ -156,16 +157,16 @@ def test_scenario_groups_match_main_census():
             "env": {"MEMPROBE_CYCLES": "8", "MEMPROBE_PHASES": "wave,save,load,spawn,teleport"},
         }),
         "mercy": ("GIVEN", {"save": False, "timeout": 240}),
-        "neural": ("OFF", {"save": False, "timeout": 240}),
-        "neural-companion": ("OFF", {"save": False, "timeout": 240}),
-        "neural-group": ("OFF", {"save": False, "timeout": 240}),
-        "neural-load": ("OFF", {"save": False, "timeout": 240}),
+        "neural": ("OFF", {"save": False, "timeout": 240, "exclusive": True}),
+        "neural-companion": ("OFF", {"save": False, "timeout": 240, "exclusive": True}),
+        "neural-group": ("OFF", {"save": False, "timeout": 240, "exclusive": True}),
+        "neural-load": ("OFF", {"save": False, "timeout": 240, "exclusive": True}),
         "neural-soak": ("OFF", {
-            "save": False, "timeout": 900,
+            "save": False, "timeout": 900, "exclusive": True,
             "env": {"GOTHIC_SOAK_SECONDS": "300", "BENCH_CLASS": "quiet"},
         }),
-        "neural-still": ("OFF", {"save": False, "timeout": 1200}),
-        "neural-talk": ("GIVEN", {"save": False, "timeout": 240}),
+        "neural-still": ("OFF", {"save": False, "timeout": 1200, "exclusive": True}),
+        "neural-talk": ("GIVEN", {"save": False, "timeout": 240, "exclusive": True}),
         "noise": ("GIVEN", {"save": True, "timeout": 240}),
         "npc_deeds": ("OFF", {"save": True, "timeout": 720}),
         "npc_director": ("GIVEN", {"save": True, "timeout": 720}),
@@ -184,8 +185,8 @@ def test_scenario_groups_match_main_census():
         "remembers": ("GIVEN", {"save": False, "timeout": 240}),
         "repair": ("GIVEN", {"save": False, "timeout": 240}),
         "requires": ("OFF", {"save": True, "timeout": 240}),
-        "rescue": ("GIVEN", {"save": False, "timeout": 240}),
-        "rescue_self": ("GIVEN", {"save": False, "timeout": 240}),
+        "rescue": ("GIVEN", {"save": False, "timeout": 240, "exclusive": True}),
+        "rescue_self": ("GIVEN", {"save": False, "timeout": 240, "exclusive": True}),
         "road_bandits": ("GIVEN", {"save": False, "timeout": 240}),
         "rumor": ("GIVEN", {"save": True, "timeout": 240}),
         "see": ("OFF", {"save": False, "timeout": 240}),
@@ -371,6 +372,8 @@ def test_scenario_start_marker_waits_for_world_and_precedes_scenario(
     backend = cli._backend(captured[0])
     monkeypatch.setattr(cli, "_backend", lambda args: backend)
     monkeypatch.setattr(cli.places.PlaceBook, "load", Mock(return_value=None))
+    parley = Mock(wraps=cli.Parley)
+    monkeypatch.setattr(cli, "Parley", parley)
     caplog.set_level("INFO", logger="gothic_ai")
 
     def markers():
@@ -435,6 +438,7 @@ def test_scenario_start_marker_waits_for_world_and_precedes_scenario(
 
         monkeypatch.setattr(cli, "GameServer", FakeServer)
         assert await asyncio.wait_for(real_serve(captured[0]), timeout=5) == code
+        assert parley.call_args.kwargs["hail"] is (scenario is None)
         assert markers() == (["scenario m0: checks started"] if scenario is not None else [])
         assert run_scenario_mock.await_count == int(scenario is not None)
         records = [record.getMessage() for record in caplog.records]
