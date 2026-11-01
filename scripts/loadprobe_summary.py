@@ -20,6 +20,9 @@ TEXTURE_FIELDS.extend(f"tex_source_{source}_{metric}" for source in ("base", "hd
 TEXTURE_FIELDS.extend(f"tex_{category}_{metric}" for category in ("landscape", "static", "dynamic", "other")
                       for metric in ("bytes", "n"))
 HEADER.extend(f"{field}_{stage}" for stage in ("end", "warm", "warm_5s") for field in TEXTURE_FIELDS)
+VOB_STREAMING_FIELDS = ["vob_near", "vob_far", "vob_outside", "vob_created", "vob_released", "vob_draw_instances", "vob_pending",
+                        "vob_publication_ms", "vob_create_ms", "vob_near_missing", "vob_near_missing_seconds", "vob_ready_ms"]
+HEADER.extend(f"{field}_{stage}" for stage in ("end", "warm", "warm_5s") for field in VOB_STREAMING_FIELDS)
 VOBS_HEADER = "run,seg,world,kind,name,count,ms,inclusive_ms,stage_ms,share_pct,unique,hits,misses,cold_miss_pct,repeat_n".split(",")
 
 
@@ -137,6 +140,11 @@ def summary_rows(out):
                 mark = marks[-1] if marks else {}
                 values.extend((round(mark[key], 9) if key == "tex_near_tail_seconds" else int(mark[key]))
                               if key in mark else "" for key in TEXTURE_FIELDS)
+            for stage in (end["stage"], "stream_warm", "stream_warm_5s"):
+                marks = [row for row in segment if row["stage"] == stage]
+                mark = marks[-1] if marks else {}
+                values.extend((round(mark[key], 9) if key.endswith(("_ms", "_seconds")) else int(mark[key]))
+                              if key in mark else "" for key in VOB_STREAMING_FIELDS)
             yield values
 
 

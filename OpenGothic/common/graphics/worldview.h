@@ -21,6 +21,8 @@ class ParticleFx;
 class PackedMesh;
 class gtime;
 class ChunkResidency;
+class ObjVisual;
+struct ChunkId;
 namespace asset { struct WorldMesh; }
 
 class WorldView {
@@ -30,6 +32,7 @@ class WorldView {
     ~WorldView();
 
     void startLandscapeStreaming(asset::WorldMesh&& mesh, ChunkResidency& residency, double preloadMs);
+    void startVobStreaming(ChunkResidency& residency);
     void setTextureResidency(ChunkResidency* residency) { visuals.setTextureResidency(residency); }
     void prepareLandscapeWork();
     void finishLandscapeUpdate();
@@ -111,6 +114,12 @@ class WorldView {
     std::unique_ptr<Landscape> originalCloth;
     struct LandscapeStreaming;
     std::unique_ptr<LandscapeStreaming> streaming;
+    struct VobStreaming;
+    std::shared_ptr<VobStreaming> vobStreaming;
+    void addVob(ObjVisual& visual, ChunkId id);
+    void removeVob(ObjVisual& visual, bool release = true);
+    void moveVob(ObjVisual& visual, ChunkId id);
+    void replaceVob(ObjVisual& previous, ObjVisual& next);
 
     bool needToUpdateCmd(uint8_t frameId) const;
     void invalidateCmd();
@@ -118,4 +127,6 @@ class WorldView {
   friend class LightGroup::Light;
   friend class PfxEmitter;
   friend class TrlObjects;
+  friend class ObjVisual;
+  friend struct MeshGltfTest;
   };

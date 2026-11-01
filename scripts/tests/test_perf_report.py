@@ -183,7 +183,9 @@ def test_percentiles_dynamic_columns_segments_and_no_gpu(tmp_path):
                                          "tex_landscape_bytes", "tex_landscape_n", "tex_static_bytes", "tex_static_n",
                                          "tex_dynamic_bytes", "tex_dynamic_n", "tex_other_bytes", "tex_other_n",
                                          "tex_full_bytes", "tex_tail_bytes", "tex_promoted", "tex_demoted",
-                                         "tex_promotion_queue", "tex_near_tail_n", "tex_near_tail_seconds"])
+                                         "tex_promotion_queue", "tex_near_tail_n", "tex_near_tail_seconds",
+                                         "vob_near", "vob_far", "vob_outside", "vob_created", "vob_released", "vob_pending",
+                                         "vob_publication_ms", "vob_near_missing", "vob_near_missing_seconds"])
         writer.writeheader()
         writer.writerows({"segment": f"streaming-flythrough/{name}", "frame": frame,
                           "update_ms": .001 * (frame + 1), "work_ms": .0001,
@@ -203,7 +205,11 @@ def test_percentiles_dynamic_columns_segments_and_no_gpu(tmp_path):
                           "tex_full_bytes": 12*1048576, "tex_tail_bytes": (8-frame)*1048576,
                           "tex_promoted": 10+frame, "tex_demoted": 5+frame,
                           "tex_promotion_queue": 2-frame, "tex_near_tail_n": frame,
-                          "tex_near_tail_seconds": 40+frame*.125}
+                          "tex_near_tail_seconds": 40+frame*.125,
+                          "vob_near": 100+frame, "vob_far": 700-frame, "vob_outside": 200,
+                          "vob_created": frame, "vob_released": int(frame==2), "vob_pending": 2-frame,
+                          "vob_publication_ms": frame*.25, "vob_near_missing": frame,
+                          "vob_near_missing_seconds": frame*.125}
                          for name in ("run", "fly") for frame in range(3))
     (streaming / "events.jsonl").write_text("\n".join(
         json.dumps(event) for event in [
@@ -249,6 +255,11 @@ def test_percentiles_dynamic_columns_segments_and_no_gpu(tmp_path):
             textures["near_tail_peak"], textures["near_tail_seconds"]) == (3, 2, 2, 2, .25)
     combined = report.build_report(streaming)["places"]["streaming-flythrough"]["summary"]["streaming"]["textures"]
     assert (combined["promoted"], combined["demoted"], combined["near_tail_seconds"]) == (8, 6, 1)
+    vobs = data["run"]["streaming"]["vobs"]
+    assert (vobs["near_end"], vobs["far_end"], vobs["outside_end"], vobs["created"], vobs["released"],
+            vobs["pending_peak"], vobs["near_missing_peak"], vobs["near_missing_seconds"]) == (102, 698, 200, 3, 1, 2, 2, .25)
+    assert vobs["publication_ms"]["max"] == .5
+    assert report.build_report(streaming)["places"]["streaming-flythrough"]["summary"]["streaming"]["vobs"]["near_missing_seconds"] == .5
     warmup = data["run"]["streaming"]
     assert warmup["warmup_far_count"] == 2
     assert warmup["warmup_far_publication_ms"]["p99"] == pytest.approx(.597)
@@ -261,7 +272,7 @@ def test_percentiles_dynamic_columns_segments_and_no_gpu(tmp_path):
     assert "| 2 | 6.00 / 4.00 / 2.00 | 12.00 |" in (streaming / "report.md").read_text()
     assert "| run | 7 | 18.00 / 2.00 | 24.00 | 5 / 3 |" in (streaming / "report.md").read_text()
     with (streaming / "streaming.csv").open(newline="") as stream:
-        legacy_rows = [{key: value for key, value in row.items() if not key.startswith(("page_", "tex_"))}
+        legacy_rows = [{key: value for key, value in row.items() if not key.startswith(("page_", "tex_", "vob_"))}
                        for row in csv.DictReader(stream)]
     with (streaming / "streaming.csv").open("w", newline="") as stream:
         writer = csv.DictWriter(stream, legacy_rows[0])
@@ -270,6 +281,7 @@ def test_percentiles_dynamic_columns_segments_and_no_gpu(tmp_path):
     legacy = report.build_report(streaming)["places"]["streaming-flythrough"]["views"]["run"]["streaming"]
     assert legacy["page_used_end_bytes"] is None and legacy["page_capacity_peak_bytes"] is None
     assert legacy["textures"] is None
+    assert legacy["vobs"] is None
     assert report.main(["run", str(streaming)]) == 0
 
 

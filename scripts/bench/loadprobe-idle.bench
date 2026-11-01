@@ -1,4 +1,4 @@
-# Load probe: fresh world (WORLD=...), stand 5 s after all landscape chunks are published.
+# Load probe: fresh world (WORLD=...), stand 5 s after landscape and vob queues finish.
 seed 73028
 cheat god
 set time 12 0

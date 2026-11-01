@@ -305,7 +305,7 @@ inline void mark(std::string_view stage, double stageMs = -1, std::string_view e
   processMb(rss,fp);
   size_t stagingCount=0, stagingBytes=0;
   tempestProbeUploadBuffers(stagingCount,stagingBytes);
-  char buf[512];
+  char buf[1536];
   std::snprintf(buf,sizeof(buf),
                 "[loadprobe] stage=%.*s stage_ms=%.1f t_ms=%.1f rss_mb=%.1f footprint_mb=%.1f gpu_mb=%.1f "
                 "tex_n=%llu tex_mb=%.1f tex_ms=%.1f %.*s",

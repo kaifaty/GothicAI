@@ -9,6 +9,7 @@
 #include "graphics/mesh/skeleton.h"
 #include "graphics/mesh/submesh/packedmesh.h"
 #include "graphics/worldview.h"
+#include "graphics/objvisual.h"
 #include "world/chunkresidency.h"
 #include "loadprobe.h"
 #include "graphics/mesh/submesh/pfxemittermesh.h"
@@ -61,6 +62,22 @@
 #include <vector>
 #include <sys/wait.h>
 #include <unistd.h>
+
+struct MeshGltfTest {
+  static void attach(ObjVisual& visual, WorldView& view, const ProtoMesh* proto, const Tempest::Vec3& position) {
+    visual.setType(ObjVisual::M_Mesh);
+    visual.mesh.proto=proto;
+    visual.mesh.windMode=asset::AnimationType::WIND;
+    visual.mesh.windStrength=.5f;
+    auto matrix=Tempest::Matrix4x4::mkIdentity();
+    matrix.translate(position);
+    visual.setObjMatrix(matrix);
+    view.addVob(visual,ChunkId::fromPosition(position.x,position.z));
+    }
+
+  static bool drawable(const ObjVisual& visual) { return !visual.mesh.view.isEmpty(); }
+  static Tempest::Matrix4x4 matrix(const ObjVisual& visual) { return visual.mesh.view.node(0).position(); }
+  };
 
 namespace {
 size_t assertions = 0;
@@ -1533,6 +1550,84 @@ void landscapeLifetime(const Fixture& fixture, Tempest::Device& device) {
   std::cout << "landscape streaming lifetime: 2 Near/Outside cycles, live_buffers=" << baseline << '\n';
 }
 
+void staticVobLifetime(Tempest::Device& device) {
+  setenv("OPENGOTHIC_VOB_STREAMING","1",1);
+  setenv("OPENGOTHIC_TEXTURE_STREAMING","1",1);
+  setenv("OPENGOTHIC_TEXTURE_BUDGET_MB","0",1);
+  Resources::configureTextures("0","0");
+  Gothic gothic;
+  ChunkTable table;
+  table.entries.push_back({{0,0},"",{0,0,0},{6400,1000,6400},1});
+  ChunkResidency residency(table);
+  WorldView view(std::pair{Tempest::Vec3{0,0,0},Tempest::Vec3{6400,1000,6400}},"CONTRACT.ZEN");
+  view.setTextureResidency(&residency);
+  view.startVobStreaming(residency);
+  const auto* proto=Resources::loadMesh("OWN_OPAQUE.3DS");
+  asset::VisualDecal decal;
+  decal.name="OWN_TEST_BARREL_WOOD.TGA";
+  decal.dimension={50,50};
+  const auto* decalProto=Resources::decalMesh(decal);
+  require(proto!=nullptr && decalProto!=nullptr,"static vob lifetime requires mesh and decal prototypes");
+  const auto* texture=proto->attach[0].sub[0].material.tex;
+  require(texture!=nullptr && texture->w()==4,"static vob lifetime must use a resident fixture texture");
+  ObjVisual meshVisual,decalVisual;
+  MeshGltfTest::attach(meshVisual,view,proto,{100,100,100});
+  MeshGltfTest::attach(decalVisual,view,decalProto,{200,100,100});
+  require(!MeshGltfTest::drawable(meshVisual) && !MeshGltfTest::drawable(decalVisual),
+          "Outside registration must retain prototypes without creating draw instances");
+  const auto update=[&](const Tempest::Vec3& position) {
+    view.prepareLandscapeWork();
+    residency.update(position,position,1000);
+    view.finishLandscapeUpdate();
+    Resources::updateTextures(&residency);
+    };
+  const auto textureWidth=[&](const Tempest::Vec3& position, uint32_t width) {
+    const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(5);
+    while(texture->w()!=width && std::chrono::steady_clock::now()<deadline) {
+      update(position);
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      }
+    require(texture->w()==width,width==1 ? "Outside must release all mesh/decal texture demand" :
+                                         "Near must restore texture demand after republishing");
+    };
+  const Tempest::Vec3 near={100,100,100},outside={1000000,0,1000000};
+  size_t clusters=0;
+  for(size_t cycle=0;cycle<2;++cycle) {
+    update(near);
+    const auto& stats=residency.stats();
+    require(MeshGltfTest::drawable(meshVisual) && MeshGltfTest::drawable(decalVisual) &&
+            stats.vobNear==2 && stats.vobCreated==2*(cycle+1) && stats.vobNearMissing==0 &&
+            stats.vobNearMissingSeconds==0,
+            "Near must synchronously publish both static visuals without a missing interval");
+    textureWidth(near,4);
+    if(cycle==0)
+      clusters=view.clusters().size();
+    else
+      require(view.clusters().size()==clusters,"republishing static vobs must reuse their draw-instance slots");
+    update(outside);
+    require(!MeshGltfTest::drawable(meshVisual) && !MeshGltfTest::drawable(decalVisual) &&
+            stats.vobOutside==2 && stats.vobReleased==2*(cycle+1) && stats.vobPending==0 &&
+            meshVisual.protoMesh()==proto && decalVisual.protoMesh()==decalProto,
+            "Outside must release draw instances while retaining both prototypes");
+    textureWidth(outside,1);
+    auto changed=Tempest::Matrix4x4::mkIdentity();
+    changed.translate(300.f+float(cycle),200,100);
+    meshVisual.setObjMatrix(changed);
+    }
+  update(near);
+  textureWidth(near,4);
+  const auto matrix=MeshGltfTest::matrix(meshVisual);
+  require(close(matrix[3][0],301) && close(matrix[3][1],200) && close(matrix[3][2],100) &&
+          view.clusters().size()==clusters && residency.stats().vobNearMissing==0,
+          "returning Near must restore the latest deferred transform without accumulating instances");
+  device.waitIdle();
+  unsetenv("OPENGOTHIC_VOB_STREAMING");
+  unsetenv("OPENGOTHIC_TEXTURE_STREAMING");
+  unsetenv("OPENGOTHIC_TEXTURE_BUDGET_MB");
+  Resources::configureTextures();
+  std::cout << "static vob streaming lifetime: 2 Near/Outside/Near cycles, texture demand released\n";
+  }
+
 void maskBc1Policy(const Fixture& fixture) {
   std::filesystem::create_directories(fixture.root/"materials");
   alphaDdsFile(fixture.root/"materials/transparent-bc1.dds",true);
@@ -1688,6 +1783,7 @@ void maskBc1Policy(const Fixture& fixture) {
             "material equality fixture must have the same visible alpha classification");
     require(!(legacyPolicy==forcedPolicy),"material equality must distinguish native and forced MASK policies");
     landscapeLifetime(fixture,device);
+    staticVobLifetime(device);
     }
   multiModelGpuCases(fixture,device);
   device.waitIdle();

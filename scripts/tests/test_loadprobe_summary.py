@@ -29,6 +29,10 @@ def test_session_and_world_change_csv(tmp_path):
         ("change_end", 15000, -1, 225, 75, 15, 25, 1600, ""),
         ("world_begin", 16000, -1, 225, 75, 15, 25, 1600, "world=ADDONWORLD.ZEN"),
     ):
+        if stage in ("session_end", "stream_warm", "stream_warm_5s"):
+            extra += (" vob_near=120 vob_far=800 vob_outside=900 vob_created=950 vob_released=30 vob_draw_instances=1840 "
+                      "vob_pending=2 vob_publication_ms=0.125 vob_create_ms=12.5 vob_near_missing=0 vob_near_missing_seconds=0 "
+                      "vob_ready_ms=420.123456789")
         log += (f"[loadprobe] stage={stage} stage_ms={duration} t_ms={elapsed} rss_mb={footprint} "
                 f"footprint_mb={footprint} gpu_mb={gpu} tex_n={count} tex_mb={mb} tex_ms={texture_ms} {extra}\n")
         if stage in ("session_end", "stream_warm", "stream_warm_5s"):
@@ -47,7 +51,7 @@ def test_session_and_world_change_csv(tmp_path):
     output = subprocess.check_output([sys.executable, str(SCRIPT), str(tmp_path)], text=True)
     reader = csv.DictReader(io.StringIO(output))
     rows = list(reader)
-    assert len(reader.fieldnames) == 139
+    assert len(reader.fieldnames) == 175
     assert len(rows) == 2
     assert [(row["seg"], row["world"], row["total_s"]) for row in rows] == [
         ("0", "NEWWORLD", "5.0"), ("1", "OLDWORLD", "2.0")]
@@ -80,6 +84,11 @@ def test_session_and_world_change_csv(tmp_path):
         "32", "32000", "4", "3", "1", "10900", "1", "300", "1", "200", "1", "100", "1"]
     texture_fields = [key for key in reader.fieldnames if key.startswith("tex_") and key.endswith(("_end", "_warm", "_warm_5s"))]
     assert all(rows[1][key] == "" for key in texture_fields)
+    assert [rows[0][f"vob_{field}_warm"] for field in (
+        "near", "far", "outside", "created", "released", "draw_instances", "pending", "publication_ms", "create_ms",
+        "near_missing", "near_missing_seconds", "ready_ms")] == [
+        "120", "800", "900", "950", "30", "1840", "2", "0.125", "12.5", "0", "0.0", "420.123456789"]
+    assert all(rows[1][key] == "" for key in reader.fieldnames if key.startswith("vob_"))
 
     (run / "game.log").write_text(log.split("[loadprobe] stage=change_begin")[0])
     output = subprocess.check_output([sys.executable, str(SCRIPT), str(tmp_path)], text=True)

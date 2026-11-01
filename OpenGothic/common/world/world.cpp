@@ -209,8 +209,11 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
     auto probeT = LoadProbe::now();
     if(wviewFut.valid())
       wview = wviewFut.get();
-    if(wview)
+    if(wview) {
       wview->setTextureResidency(residency.get());
+      if(residency)
+        wview->startVobStreaming(*residency);
+      }
     if(LoadProbe::enabled() && !streamLandscape)
       LoadProbe::mark("landscape_view",probeViewMs,"wait_ms="+std::to_string(LoadProbe::msSince(probeT)));
     loadProgress(60);
@@ -310,12 +313,12 @@ void World::updateLandscape(const Camera& camera) {
   if(wview)
     wview->prepareLandscapeWork();
   residency->update(npcPlayer->position(),camera.originLwc(),camera.zFar());
+  if(wview)
+    wview->finishLandscapeUpdate();
   if(textureLoadingPending) {
     Resources::finishTextureLoading();
     textureLoadingPending=false;
     }
-  if(wview)
-    wview->finishLandscapeUpdate();
   Resources::updateTextures(residency.get());
   }
 
