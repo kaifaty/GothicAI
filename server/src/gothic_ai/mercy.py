@@ -377,6 +377,8 @@ class Mercy:
     def _hit(self, hit: CombatHit) -> None:
         npc, attacker = hit.npc.upper(), hit.by.upper()
         already_down = npc in self._dead
+        if hit.hp > 0 and not hit.down and not hit.dead:
+            self._dead.discard(npc)
         if attacker in {"PLAYER", "PC_HERO"}:
             for recipient, hold in list(self._hold_turns.items()):
                 if npc in hold.members:
@@ -496,6 +498,8 @@ class Mercy:
             self._ticks = msg.t
             if isinstance(msg, NpcRoster):
                 for person in msg.npcs:
+                    if person.activity in {"routine", "dialog", "fight"}:
+                        self._dead.discard(person.id.upper())
                     if person.state != "ZS_ATTACK" and not self.held(person.id):
                         self._fight_words.pop(person.id, None)
                     if person.id in self._hold_used and not self.held(person.id):

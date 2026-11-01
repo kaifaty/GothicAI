@@ -233,7 +233,8 @@ async def test_repeated_knockdowns_context_witnesses_expiry_and_save_fork(rig):
         assert "сбил" not in str(rig.dialogue.open(who, who, warm=False).history)
 
 
-async def test_companion_knockdown_counts_but_beasts_and_other_fights_do_not(rig):
+@pytest.mark.parametrize("recovery", ["roster", "hit"])
+async def test_companion_knockdown_counts_but_beasts_and_other_fights_do_not(rig, recovery):
     rig.dialogue.change_intent(FRIEND, "Диего", body=False, goal="follow_hero", target="PLAYER")
     hit(rig, by="STRANGER", down=True)
     rig.talk.people["BEAST"] = rig.talk.people[NPC].model_copy(update={"id": "BEAST", "guild": 16})
@@ -242,6 +243,18 @@ async def test_companion_knockdown_counts_but_beasts_and_other_fights_do_not(rig
     await finish(rig)
     [fact] = rig.chronicle.facts("defeated")
     assert fact["npc"] == NPC and fact["by"] == FRIEND and fact["count"] == 1
+    assert NPC in rig.mercy._dead
+    if recovery == "roster":
+        rig.link._dispatch(NpcRoster(type="npc_roster", t=2000, npcs=[dict(
+            id=NPC, name="Лобарт", guild=8, distance=2500, activity="fight", state="ZS_ATTACK",
+        )]))
+    else:
+        hit(rig, by=FRIEND, down=False, hp=80)
+    assert NPC not in rig.mercy._dead
+    hit(rig, by=FRIEND, down=True, hp=1)
+    await finish(rig)
+    [fact] = rig.chronicle.facts("defeated")
+    assert fact["count"] == 2
 
 
 @pytest.mark.parametrize("reason", ["low_hp", "balance", "balance_stale", "companion"])
