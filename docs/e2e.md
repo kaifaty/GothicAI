@@ -182,7 +182,7 @@
 | `crime_react` | `hero_knocked_out` | Ryzen | герой не сбит |
 | `frame` | `frame_native_fight`, `investigation_native_fight` | Mac | родной бой за кражу; поздние проверки на `off` проходят |
 | `crime_meet` | `home_knocked_out` | Mac | родной бой дома; ветка пострадавшего на `off` проходит |
-| `broken` | `control_broken` | Mac, Ryzen | стенд движка падает до модели: Metal SIGABRT в снимке (Mac), забор не разрушается (Ryzen) |
+| `broken` | `control_broken` | Mac | стенд движка падает до модели: Metal SIGABRT в снимке; на Ryzen проходит 17/17 с 2026-11-01 (клинок, остановленный забором, снова его ломает) |
 
 Четыре из них — родной бой со сбиванием с ног; похоже на общую регрессию боя.
 
