@@ -123,7 +123,9 @@
      `npc_crime_suspected` только после открытия сундука; подозрение не становится доказательством.
      `npc_far.py` исполняет те же мотивы вдали итогом: реальные позиции (fallback — текущий
      распорядок), `chest_take` v48, человеческие неспящие свидетели по `theft_range` без видимости,
-     детерминированный бой по уровню, силе и HP. `npc_crime_law.py` доносит дела NPC закону
+     бой «сколько ударов до падения» (`npc_far_fight.py`, урон G2, зерно от дела,
+     коэффициенты `gamedata/far_fight.json`) и мгновенный нокаут `knockout` v59.
+     `npc_crime_law.py` доносит дела NPC закону
      общины и завершает их при встрече стража; отдельные `npc_crime_known` / `npc_crime_settled`
      не попадают в закон героя. `storyguard` защищает сюжет.
      Факты `npc_crime` и `npc_crime_seen` не попадают в читатели дел героя.
@@ -160,10 +162,10 @@
 | Разговор | `mercy` (сдача NPC и героя, выкуп, пощада и память ветки; `--no-mercy`), `combat_barks` (крики по реальному урону), `dialogue`, `talk`, `turn`, `voice`, `tts`, `persona`, `memory` (SQLite, ветвится с сейвами), `budget`, `npc_tools`, `executor`, `parley` (дорожные шайки, оклик главаря, аренда тишины, повод для драки, ультиматум, перемирие с шайкой; `--no-parley`), `bounty` (ступени знания охоты, тайны за рычаг, ванильные последствия и слух; `--no-bounty`), `commands`, `orders`, `group` (общая беседа), `interject`, `llm/` (`chatgpt`, `openai`, `local`, `off`; `fake` — только юнит-тесты) |
 | Быстрый контур и тело | `brain/` (`decider`, `planner`, `reflex`, `day`, `apply`, `tiers`, `stimuli`, `incident`, `situation`), `incidents`, `daylife`, `initiative`, `bodies` (исход мягких действий), `bodypilot` (боевое тело P30), `beasts` (волки слышат тон), `wrath` (терпение к оскорблениям) |
 | Восприятие и знание | `perception`, `sightings`, `places`, `lore`, `whereabouts`, `knowledge`, `social`, `gossip`, `trust`, `people_knowledge`, `attitudes`, `concerns` |
-| Правда, дела, ложь | `chronicle`, `crimes`, `crime_sides`, `crime_react`, `crime_meet`, `crime_memory`, `crime_law`, `crime_law_graph`, `crime_law_runtime`, `npc_crimes`, `npc_will`, `npc_far`, `npc_crime_law`, `blame`, `witnesses`, `quests`, `vanilla`, `gates` (проход по родному основанию, вере, поручительству или взятке; ответственность поручителя, проверка лжи и отзыв прохода), `consequences`, `amends` |
+| Правда, дела, ложь | `chronicle`, `crimes`, `crime_sides`, `crime_react`, `crime_meet`, `crime_memory`, `crime_law`, `crime_law_graph`, `crime_law_runtime`, `npc_crimes`, `npc_will`, `npc_far`, `npc_far_fight`, `npc_crime_law`, `blame`, `witnesses`, `quests`, `vanilla`, `gates` (проход по родному основанию, вере, поручительству или взятке; ответственность поручителя, проверка лжи и отзыв прохода), `consequences`, `amends` |
 | Сделки и поручения | `deals` (окно сделки, долги, `npc_later`), `purse` (пределы подарков и долга, просьба о деньгах; данные в `stash.json`), `npc_cheat` (намерение нарушить отложенное слово), `promise_breach` (первое проявление нарушения), `fear` (общее знание о насилии героя), `contracts` (опыт, обучение, платные задания), `chests`, `errands` (`plan`), `meetings` (`meet`), `guide` (`lead`) |
 | Сюжет | `story`, `validator`, `storyguard`, `programs`, `director`, `questbook`, `questlog`, `triggers`, `occasions`, `showrunner`, `challenges`, `authoring`, `casting`, `cast`, `characters` (карточки характера), `chains` |
-| Данные | `gamedata/`: `characters.json`, `lore.json`, `places.json`, `stash.json`, `quest_rewards.json` (добавки к наградам ванильных квестов), `gates.json` (уважаемые поручители и их положение), `bandit_bounty.json` (истина охоты и ступени знания бандитов), `ou.py` (реплики OU.BIN), `storygraph.py` |
+| Данные | `gamedata/`: `far_fight.json` (коэффициенты дальнего боя, пока без калибровки), `characters.json`, `lore.json`, `places.json`, `stash.json`, `quest_rewards.json` (добавки к наградам ванильных квестов), `gates.json` (уважаемые поручители и их положение), `bandit_bounty.json` (истина охоты и ступени знания бандитов), `ou.py` (реплики OU.BIN), `storygraph.py` |
 | Сценарии e2e | `scenarios/`: группы моделей в `groups.py`, общее в `common.py`, поддельный Responses WS/HTTP-сервер — в `responses_server.py`; модуль каждой области — в списке «Сценарии по областям» ниже; точки входа — в `__init__.py` |
 
 ## Движок: наши подсистемы
