@@ -241,7 +241,10 @@ async def crime_talk(
         await link.debug("type", text=f"Лобарт, {DENIAL}.")
         if live is not None:
             def decision_turns() -> list[dict[str, Any]]:
-                return [row for row in live.turns(LOBART, DENIAL) if row["id"] not in prior]
+                return [row for row in live.turns(LOBART) if row["id"] not in prior and (
+                    DENIAL in row.get("trigger", {}).get("text", "")
+                    or "Ответ:" in row.get("trigger", {}).get("text", "")
+                )]
 
             def resolved() -> bool:
                 rows = decision_turns()

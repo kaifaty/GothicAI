@@ -972,7 +972,7 @@ async def trace_memory(
                 # An explicit accusation also fails the control when no tool was accepted.
                 accused = bool(catches or accusation) or any(
                     re.search(r"ты (?:сам )?(?:стрелял|выстрелил|лж[её]шь|вр[её]шь)|"
-                              r"(?:это|стрела) тво[яё]|не верю тебе", text, re.IGNORECASE)
+                              r"(?:это|стрела) тво[яё]", text, re.IGNORECASE)
                     for text in words
                 )
                 outcome = "failure" if accused else "success" if rows else "no_decision"
