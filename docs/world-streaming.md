@@ -1543,3 +1543,79 @@ Load average Mac перед/после каждого финального ст�
 Диагностические логи: [ветка](../.bench/item-streaming/round2/diag-branch/), [main](../.bench/item-streaming/round2/diag-main/), [цель подхода](../.bench/item-streaming/round2/diag-goto/). Свежая `origin/main` `268ed391e` влита merge-коммитом `f91396943` перед финальными проверками.
 
 Первый финальный `ground` на объединённой ветке: **exit 0 / 30 с / 6 из 6**, `pickup_time` **2,13 с**. Настоящий перенос в инвентарь, `model_off` и `givens_used` прошли. [Логи](../.bench/item-streaming/round2/final-ground/).
+
+Финальные проверки после исправления (та же объединённая ветка; временных логов нет):
+
+| Проверка | Результат |
+|---|---|
+| `gothic-worldbase-contract`, Ryzen | exit **0**, **11 с**, геометрия совпала |
+| `gothic-mesh-gltf-test`, Ryzen | exit **0**, **4 с**, **8753 assertions**, включая статичные меши/декали и циклы мирового предмета |
+| `check_walk`, Ryzen | exit **0**, **142 с**, **3/3**; туда 71,4 с, обратно 54,4 с / 297,062 см |
+| `scripts/check.py run` | exit **0**: server **271 passed / 40,40 с**; shorts **22 passed / 94,35 с**; scripts **21 passed + 53 subtests / 9,86 с** |
+| `ruff check src/gothic_ai/scenarios/perception.py` | exit **0**, замечаний **0** |
+| Mac `Gothic2Notr` + `content-convert` | exit **0**, `APP_CADENCE=ON`, `FRAME_PROFILE=ON`; SHA-256 `febd2cce784dbb4b331cd064863449465f4059cf93855a501f5dcc81f2e33763` закреплён для всей серии |
+
+Логи: [контракты](../.bench/item-streaming/round2/final-contracts/), [check_walk](../.bench/item-streaming/round2/final-check_walk/), [Python](../.bench/item-streaming/round2/check-run.log), [сборка Mac](../.bench/item-streaming/round2/mac-build.log).
+
+| Дополнительная финальная проверка | Результат |
+|---|---|
+| `load_rewind`, Ryzen | exit **0**, **54 с**, **4/4**; откат **30,109 с**, tick 30210 → 101; `npc_views` 0,306 с / `story_world` 0,617 с / `npc_died` 0,453 с |
+| `movable-vobs`, Ryzen | exit **0**, **53 с**, **472 события / 0 ошибок**; 19 тел, 60 игровых секунд без дрейфа, все спят; контакт при ходьбе 115,690 см, взрыв 529,951 см; сохранены **917 тел / 917 спящих** |
+| GitHub после пуша `e85ecdc49` | **6/6** зелёных проверок, включая `tests`, run `41318377857` |
+
+Логи: [load_rewind](../.bench/item-streaming/round2/final-load_rewind/), [movable-vobs](../.bench/item-streaming/round2/final-movable-vobs/).
+
+**Подготовка `placed-items`:** исходный стенд на ветке остановился за **23 с**, на чистой `main` `268ed391e` — за **22 с**, в одном месте: `placed Item owned table preparation requires admitted owned and excluded authored Items on one native table`. Это существующий сбой подготовки, не отказ проверенной механики; стенд в PR не менялся. До него на ветке прошли **3/3** утверждения: ходьба — сдвиг 89,472 см / 1167 мс, стрела — 21,968 см, стол — 14,180 см / 4 допущенных предмета сдвинуты / 0 исключённых сдвинуты. Сохранены **2331** связи placed items и **10 089 239 байт** сейва. Перепись — **2331 предмет / 227 допущенных**; загрузка 4778,193 мс, классификация 850,784 мс. Ошибка owned-table сохранена отдельно от результатов механики. [Ветка](../.bench/item-streaming/round2/final-placed-items/), [чистая main](../.bench/item-streaming/round2/main-placed-items/).
+
+**Mac: первая серия зонда, тот же бинарь `febd2cce…33763`, порядок 0,1,0,1,0,1.** Каждый прогон — `scripts/loadprobe.sh local work:NEWWORLD:par`; все **6/6 exit 0**, `Item` **2331** в каждом, near-missing **0**. Память — `stream_warm_5s`.
+
+| № / VOB | session_end, с | vobs, мс | Item, мс | Malloc in-use / allocated / GPU, МиБ | Load average до → после (1/5/15) |
+|---|---:|---:|---:|---|---|
+| 1 / 0 | 9.8585 | 1008.6 | 163.029 | 573.850 / 739.875 / 376.0 | 89.82 / 180.60 / 208.18 → 71.38 / 167.47 / 202.47 |
+| 2 / 1 | 14.0477 | 1791.2 | 250.719 | 563.311 / 728.250 / 376.4 | 73.76 / 145.55 / 191.10 → 74.87 / 137.93 / 186.49 |
+| 3 / 0 | 15.9192 | 2133.0 | 495.530 | 561.231 / 715.890 / 376.0 | 74.87 / 137.93 / 186.49 → 78.51 / 131.70 / 182.25 |
+| 4 / 1 | 17.0846 | 2721.5 | 355.788 | 560.369 / 707.047 / 375.7 | 78.51 / 131.70 / 182.25 → 73.14 / 123.64 / 176.98 |
+| 5 / 0 | 17.6720 | 1799.0 | 242.323 | 562.739 / 719.890 / 376.0 | 73.14 / 123.64 / 176.98 → 73.63 / 118.58 / 173.01 |
+| 6 / 1 | 7.5406 | 1101.8 | 195.263 | 561.660 / 708.250 / 376.4 | 73.63 / 118.58 / 173.01 → 61.42 / 111.16 / 168.42 |
+
+Медианы OFF→ON: `session_end` **15.9192→14.0477 с (-1.8715)**, `vobs` **1799.0→1791.2 мс**, Item **242.323→250.719 мс (+8.396)**, malloc **-1.079 МиБ**, GPU **+0.4 МиБ**. Порог времени Item в первой серии **не пройден**. Предусмотрен один повтор без изменений; исходные данные не исключаются. Ошибка только локального разбора имени типа `Item`/`item` исправлена без повторного игрового запуска первого OFF.
+
+[Все исходные данные и load average](../.bench/item-streaming/mac-round2/).
+
+Отдельный временный сценарий из существующих команд повторил подготовку таверны, толчок стола и переход к `pickup-ready`, пропустив только недоступный owned-table. Он также остановился **до механики подбора** за **22 с**: `pickup requires a moved owned authored floor or tabletop object`; предшествующие утверждения **3 passed / 0 false**. Новые API владения и изменения стенда не добавлялись. Проверка героя на таком исходном owned-предмете остаётся недоступной в данном стенде; NPC-подбор письма проверен финальным `ground` (**6/6**).
+
+**Кадры Mac OFF/ON:** оба `streaming-shots` — exit **0**, **5 пар PNG**, без оценки изображений агентом. Монитор процесса каждые 2 с не обнаружил чужих игр в этих запусках (27 / 18 отсчётов).
+
+| Кадр | OFF | ON | Near / missing (оба режима) |
+|---|---|---|---|
+| market | [PNG](../.bench/item-streaming/mac-round2/mac-shots-0/perf-market.png) | [PNG](../.bench/item-streaming/mac-round2/mac-shots-1/perf-market.png) | 5467 / 0 |
+| harbour | [PNG](../.bench/item-streaming/mac-round2/mac-shots-0/perf-harbour.png) | [PNG](../.bench/item-streaming/mac-round2/mac-shots-1/perf-harbour.png) | 5076 / 0 |
+| forest | [PNG](../.bench/item-streaming/mac-round2/mac-shots-0/perf-forest.png) | [PNG](../.bench/item-streaming/mac-round2/mac-shots-1/perf-forest.png) | 5142 / 0 |
+| island | [PNG](../.bench/item-streaming/mac-round2/mac-shots-0/perf-island.png) | [PNG](../.bench/item-streaming/mac-round2/mac-shots-1/perf-island.png) | 6900 / 0 |
+| market-teleport | [PNG](../.bench/item-streaming/mac-round2/mac-shots-0/perf-market-teleport.png) | [PNG](../.bench/item-streaming/mac-round2/mac-shots-1/perf-market-teleport.png) | 4582 / 0 |
+
+`market-teleport` — первый кадр после возвращения, **t=45566 мс**, без ожидания Far: **4582 Near / 0 missing**, Far pending **OFF 0 / ON 10265**. Load average (1 минута) до→после: OFF **247,68→182,55**, ON **182,55→113,41**; полные тройки — в `host-load.log`.
+
+Два прогона облёта исключены только как неверная подготовка из-за внешнего запуска игры после нашего старта: исходный третий OFF пересёкся с PID 81484 (чужой старт 18:09:09, наш интервал 18:07–18:10); исходный четвёртый ON прерван монитором через 10 с при появлении чужого PID 27866. Остановлены только свои процессы; исходные логи и `process-overlap.log`/`invalid-setup.json` сохранены. Валидная последовательность — OFF 1, ON 2, замещающий OFF 3, замещающий ON 4; все используют один SHA.
+
+**Mac: первая валидная серия облёта 0,1,0,1**, `APP_CADENCE+FRAME_PROFILE`, SHA тот же.
+
+| № / VOB | run p99, мс / кадров | fly p99, мс / кадров | Near missing peak / интеграл |
+|---|---|---|---|
+| 1 / 0 | 38.079091 / 5829 | 40.757712 / 1448 | 0 / 0 |
+| 2 / 1 | 37.543116 / 5583 | 41.468117 / 1439 | 0 / 0 |
+| 3 / 0 | 33.387898 / 6224 | 33.852390 / 1495 | 0 / 0 |
+| 4 / 1 | 49.284977 / 5457 | 33.872511 / 1410 | 0 / 0 |
+
+Медиана run: OFF **35.733495** → ON **43.414046 мс**, Δ **+7.680552 мс**; порог +1 мс не пройден.
+
+Медиана fly: OFF **37.305051** → ON **37.670314 мс**, Δ **+0.365263 мс**; порог +1 мс пройден.
+
+Во всех валидных маршрутах публикаций/освобождений view **0/0**, pending peak **0**, near-missing peak/интеграл **0/0**, Near/Far в конце **5076/9771** (включая предметы). Нагрузка Mac существенно менялась; valid-прогоны из-за нагрузки не исключались. После повторного зонда предусмотрен один повтор облёта без изменения бинаря, если зонд проходит.
+
+| Валидный облёт | Load average до → после (1/5/15) |
+|---|---|
+| 1 | 61.42 / 111.16 / 168.42 → 131.59 / 114.94 / 156.09 |
+| 2 | 132.96 / 116.06 / 155.77 → 69.68 / 105.92 / 143.64 |
+| 3 | 116.67 / 134.06 / 140.99 → 105.20 / 101.18 / 123.75 |
+| 4 | 254.65 / 193.55 / 159.32 → 267.03 / 262.19 / 199.71 |
