@@ -5,6 +5,8 @@
 
 #include "utility/compiller_hints.h"
 
+#include <unistd.h>
+
 #if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
 #include "gapi/metalapi.h"
 #endif
@@ -72,15 +74,9 @@ void MtBuffer::updateAsync(const void* data, size_t off, size_t size) {
 void MtDevice::uploadBuffer(MTL::Buffer& target, const void* data, size_t off, size_t size, bool wait) {
   auto pool = NsPtr<NS::AutoreleasePool>::init();
   // Metal can wait for a free command-buffer slot; completion handlers need
-  // bufferUploadSync to retire previous uploads while that wait is in progress.
+  // uploadSync to retire previous uploads while that wait is in progress.
   auto cmd = queue->commandBuffer();
-  constexpr size_t maxStagingBytes = 128u*1024u*1024u;
-  std::unique_lock<std::mutex> guard(bufferUploadSync);
-  // Retire the oldest copies before allocating more staging. A single buffer
-  // larger than the budget is allowed only when all previous copies finished.
-  bufferUploadCv.wait(guard,[&] {
-    return bufferUploads.empty() || size<=maxStagingBytes-std::min(bufferUploadBytes,maxStagingBytes);
-    });
+  auto guard = lockUpload(size);
   MTL::ResourceOptions opt   = MTL::ResourceStorageModeShared | MTL::ResourceCPUCacheModeWriteCombined;
   auto                 stage = NsPtr<MTL::Buffer>(impl->newBuffer(size,opt));
   if(stage==nullptr)
@@ -96,27 +92,46 @@ void MtDevice::uploadBuffer(MTL::Buffer& target, const void* data, size_t off, s
 #if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
   profileGpu(cmd);
 #endif
-  cmd->retain();
-  bufferUploads.push_back({NsPtr<MTL::CommandBuffer>(cmd),stage->allocatedSize()});
-  bufferUploadBytes += stage->allocatedSize();
-  onSubmit();
-  auto* device = this;
-  cmd->addCompletedHandler(^(MTL::CommandBuffer*) {
-    {
-    std::lock_guard<std::mutex> guard(device->bufferUploadSync);
-    while(!device->bufferUploads.empty() &&
-          device->bufferUploads.front().command->status()>=MTL::CommandBufferStatusCompleted) {
-      device->bufferUploadBytes -= device->bufferUploads.front().bytes;
-      device->bufferUploads.pop_front();
-      }
-    device->bufferUploadCv.notify_all();
-    }
-    device->onFinish();
-    });
-  cmd->commit();
+  submitUpload(*cmd,stage->allocatedSize());
   guard.unlock();
   if(wait)
     cmd->waitUntilCompleted();
+  }
+
+std::unique_lock<std::mutex> MtDevice::lockUpload(size_t size) {
+  constexpr size_t maxStagingBytes = 128u*1024u*1024u;
+  // Standalone Metal allocations can round the payload/heap size to a VM page.
+  const size_t pageSize = size_t(getpagesize());
+  size = ((size+pageSize-1)/pageSize)*pageSize;
+  std::unique_lock<std::mutex> guard(uploadSync);
+  // Retire the oldest copies before allocating more staging. A single resource
+  // larger than the budget is allowed only when all previous copies finished.
+  uploadCv.wait(guard,[&] {
+    return uploads.empty() || size<=maxStagingBytes-std::min(uploadBytes,maxStagingBytes);
+    });
+  return guard;
+  }
+
+void MtDevice::submitUpload(MTL::CommandBuffer& cmd, size_t bytes) {
+  // The caller holds uploadSync from staging allocation through commit.
+  cmd.retain();
+  uploads.push_back({NsPtr<MTL::CommandBuffer>(&cmd),bytes});
+  uploadBytes += bytes;
+  onSubmit();
+  auto* device = this;
+  cmd.addCompletedHandler(^(MTL::CommandBuffer*) {
+    {
+    std::lock_guard<std::mutex> guard(device->uploadSync);
+    while(!device->uploads.empty() &&
+          device->uploads.front().command->status()>=MTL::CommandBufferStatusCompleted) {
+      device->uploadBytes -= device->uploads.front().bytes;
+      device->uploads.pop_front();
+      }
+    device->uploadCv.notify_all();
+    }
+    device->onFinish();
+    });
+  cmd.commit();
   }
 
 void MtBuffer::read(void *data, size_t off, size_t size) {
