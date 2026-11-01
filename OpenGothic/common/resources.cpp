@@ -2738,8 +2738,9 @@ bool Resources::loadModelScriptData(std::string_view name, asset::ModelScript& o
   if(content!=inst->contentModels.end()) {
     try {
       auto overlay = ModelData::readScriptOverlay(content->second);
-      const auto merge = [](auto& base, auto& additions) {
+      const auto merge = [](auto& base, auto& other, auto& additions) {
         for(auto& entry:additions) {
+          std::erase_if(other,[&](const auto& old) { return old.name==entry.name; });
           const auto found = std::find_if(base.begin(),base.end(),[&](const auto& old) {
             return old.name==entry.name;
             });
@@ -2747,8 +2748,8 @@ bool Resources::loadModelScriptData(std::string_view name, asset::ModelScript& o
           else *found = std::move(entry);
           }
         };
-      merge(out.animations,overlay.animations);
-      merge(out.aliases,overlay.aliases);
+      merge(out.animations,out.aliases,overlay.animations);
+      merge(out.aliases,out.animations,overlay.aliases);
       if(inst->census) inst->census->replaced(name,content->second.generic_string());
       }
     catch(const std::exception& error) {

@@ -812,6 +812,40 @@ struct BaseContentContract {
       require(logged(badFile),"broken content record log must contain its full path");
       require(logged(missingScript),"unknown base model warning must contain overlay path");
 
+      writeAnimation("S_WALK",3,30.f);
+      auto crossIndex=json(indexFile);
+      crossIndex["files"].AddMember("HUMANS-S_WALK.MAN","HUMANS-S_WALK.MAN.json",crossIndex.GetAllocator());
+      writeJson(indexFile,crossIndex);
+      const auto originalAliases=overlay.aliases;
+      std::erase_if(overlay.aliases,[](const auto& entry) { return entry.name=="S_WALK" || entry.name=="S_RUN"; });
+      overlay.animations.push_back(definition("S_WALK",3));
+      alias.name="S_RUN"; alias.alias="T_JUMPB"; alias.next="";
+      overlay.aliases.push_back(alias);
+      writeOverlay(scriptFile);
+      {
+      Resources resources; Resources::loadBase(); Gothic gothic;
+      asset::ModelScript merged;
+      require(Resources::loadModelScriptData("HUMANS.MSB",merged),"cross-kind overlay must load");
+      for(const std::string_view name:{"S_WALK","S_RUN"}) {
+        const auto count=std::count_if(merged.animations.begin(),merged.animations.end(),[&](const auto& entry) { return entry.name==name; })+
+                         std::count_if(merged.aliases.begin(),merged.aliases.end(),[&](const auto& entry) { return entry.name==name; });
+        equal(count,1,"animation and alias must share one namespace for "+std::string(name));
+        }
+      const auto* animation=Resources::loadAnimation("HUMANS.MSB");
+      require(animation!=nullptr,"cross-kind human animation must load");
+      const auto* walk=animation->sequence("S_WALK");
+      require(walk!=nullptr,"content animation must replace the base S_WALK alias");
+      equal(walk->data->numFrames,3u,"animation replacing alias frames");
+      const auto* run=animation->sequence("S_RUN");
+      const auto* jump=animation->sequence("T_JUMPB");
+      require(run && jump && run->data==jump->data,"content S_RUN alias must replace the base animation");
+      equal(run->data->numFrames,20u,"alias replacing animation frames");
+      }
+      overlay.animations.pop_back();
+      overlay.aliases=originalAliases;
+      writeOverlay(scriptFile);
+      gothicglb::writeFile(indexFile,index.data(),index.size());
+
       auto badOverlay=json(scriptFile);
       auto& badEvent=badOverlay["data"]["animations"][0]["events"][0];
       badEvent["type"].SetInt(int(asset::MdsEventType::OPTIMAL_FRAME));
