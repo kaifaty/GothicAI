@@ -651,6 +651,8 @@ async def initiative_scenario(
     perception: PerceptionDesk,
     desk: InitiativeDesk | None = None,
     lender: str = LOBART,
+    *,
+    live: LiveCase | None = None,
 ) -> dict[str, str]:
     """An npc comes up to the hero and speaks first (docs/npc-tools.md, wave 2 step 1), on the game. Hilda has
     her greeting waiting for the hero: the game's own Npc_CheckInfo says so and the initiative leaves her to
@@ -660,17 +662,20 @@ async def initiative_scenario(
     offers a deal that settles the debt, the hero accepts it, and nothing is on Lobart's mind any more.
     A fixed decision makes Lobart come up; his opening and the completed deal are silent givens."""
 
-    off = model_off(dialogue)
-    off.silent("дано: Лобарт молчит (подошёл потребовать долг)", who=lender, when="подошёл к герою")
-    off.given(
-        "дано: Лобарт предлагает погасить долг",
-        who=lender,
-        when="Отдам",
-        calls=[ToolCall("propose_deal", {"npc_gives": [], "hero_gives": [], "repay": [INITIATIVE_DEBT]})],
-    )
-    off.silent("дано: Лобарт молчит (предложил погасить долг)", who=lender, when="Отдам")
-    off.silent("дано: Лобарт молчит (сделка состоялась)", who=lender, when="сделка состоялась")
-    log.info("given: дано: Лобарт подходит к герою (react=approach_talk)")
+    if live is None:
+        off = model_off(dialogue)
+        off.silent("дано: Лобарт молчит (подошёл потребовать долг)", who=lender, when="подошёл к герою")
+        off.given(
+            "дано: Лобарт предлагает погасить долг",
+            who=lender,
+            when="Отдам",
+            calls=[ToolCall("propose_deal", {"npc_gives": [], "hero_gives": [], "repay": [INITIATIVE_DEBT]})],
+        )
+        off.silent("дано: Лобарт молчит (предложил погасить долг)", who=lender, when="Отдам")
+        off.silent("дано: Лобарт молчит (сделка состоялась)", who=lender, when="сделка состоялась")
+        log.info("given: дано: Лобарт подходит к герою (react=approach_talk)")
+    elif desk is None:
+        raise GameError("live initiative requires the behavioral model's initiative desk")
     results: dict[str, str] = {}
 
     def check(name: str, ok: bool, detail: object = "") -> None:
@@ -733,7 +738,8 @@ async def initiative_scenario(
         concerns.on_change.append(on_change)
     planner = desk.planner
     decider = planner.decider
-    planner.decider = FixedDecider({"react": "approach_talk"}, npcs={lender})
+    if live is None:
+        planner.decider = FixedDecider({"react": "approach_talk"}, npcs={lender})
     walked: list[float] = []  # when Lobart was sent to the hero (by the desk: no one else sends go_to_npc)
     send = link.send
 
@@ -784,11 +790,13 @@ async def initiative_scenario(
         before, waiting = await checkinfo(HILDA), await desk.important(HILDA)
         await link.debug("skip_important", near=HILDA)
         after, left = await checkinfo(HILDA), await desk.important(HILDA)
-        check(
-            "important_guard",
-            before is not None and bool(before) and waiting and after is not None and not after and not left,
-            f"Npc_CheckInfo {before} -> {after}, the desk {waiting} -> {left}",
-        )
+        if live is None:
+            check(
+                "important_guard",
+                before is not None and bool(before) and waiting
+                and after is not None and not after and not left,
+                f"Npc_CheckInfo {before} -> {after}, the desk {waiting} -> {left}",
+            )
 
         # 2. the debt is past its day (the deals look every 10 s): a broken word, on Lobart's mind
         ok = await _until(
@@ -823,13 +831,22 @@ async def initiative_scenario(
         entry, rec = talk.people.get(lender), planner.npcs.get(lender)
         where = f"{entry.distance / 100:.1f} m" if entry else "not around"
         body = guard.body(lender, entry.state if entry else "") or "may walk"
-        check(
-            "walked_up",
-            came and len(walked) - walks == 1,
-            f"{where} after {time.monotonic() - t0:.0f} s, {len(walked) - walks} walk(s), "
-            f"vetoed {planner.stats.vetoed}, agenda {rec.agenda if rec else '-'!r}, body: {body}"
-            f"{f', others close: {crowd}' if crowd else ''}",
-        )
+        if live is not None:
+            live.evidence.update(
+                approached=came, walks=len(walked) - walks, distance=where,
+                elapsed_s=round(time.monotonic() - t0, 2), body=body, crowd=crowd,
+            )
+            if not came:
+                live.finish("failure")
+                return _logged(results)
+        else:
+            check(
+                "walked_up",
+                came and len(walked) - walks == 1,
+                f"{where} after {time.monotonic() - t0:.0f} s, {len(walked) - walks} walk(s), "
+                f"vetoed {planner.stats.vetoed}, agenda {rec.agenda if rec else '-'!r}, body: {body}"
+                f"{f', others close: {crowd}' if crowd else ''}",
+            )
         if not came:
             return _logged(results)
 
@@ -847,36 +864,65 @@ async def initiative_scenario(
         trigger = first_trigger()
         partner = talk.partner
         opened = partner is not None and partner.npc == lender and partner.posture == "listen"
-        check(
-            "spoke_first",
-            "25" in trigger and not typed and opened,
-            f"cue {trigger!r}, hero inputs {len(typed)}, listening {opened}",
-        )
+        if live is None:
+            check(
+                "spoke_first",
+                "25" in trigger and not typed and opened,
+                f"cue {trigger!r}, hero inputs {len(typed)}, listening {opened}",
+            )
 
         # 5. the fact: who came up, about what, who saw it
         fact = next((f for f in reversed(chronicle.facts("initiative")) if f.get("npc") == lender), None)
-        check(
-            "fact",
-            fact is not None and fact.get("occasion") == key and "PLAYER" in (fact.get("seen_by") or []),
-            fact or "none",
-        )
+        if live is None:
+            check(
+                "fact",
+                fact is not None and fact.get("occasion") == key and "PLAYER" in (fact.get("seen_by") or []),
+                fact or "none",
+            )
+        else:
+            live.evidence.update(initiative=fact, opening_cue=trigger, listening=opened)
 
         # 6. the hero answers him without a name: it goes to Lobart, his partner now
-        await _until(lambda: not dialogue.speaking(lender), 15)
+        await _until(lambda: not dialogue.speaking(lender), 90 if live is not None else 15)
         text = "Отдам, держи свои двадцать пять."
+        deadline = time.monotonic() + 90
         await link.debug("type", text=text)
         await _until(lambda: talk.last is not None and talk.last[1] == text, 10)
         to = talk.last[0] if talk.last is not None and talk.last[1] == text else None
-        check(
-            "reply_goes_to_him",
-            to is not None and to.id == lender,
-            f"to {to.id} by {to.why}" if to else "not heard or to nobody",
-        )
+        if live is None:
+            check(
+                "reply_goes_to_him",
+                to is not None and to.id == lender,
+                f"to {to.id} by {to.why}" if to else "not heard or to nobody",
+            )
 
         # 7. he offers a deal that settles the debt: the window shows it
         def offered() -> bool:
             deal = deals.open.get(lender)
             return deal is not None and [d.id for d in deal.repay] == [INITIATIVE_DEBT]
+
+        if live is not None:
+            answered = await live.wait_turn(
+                dialogue, lender, text, timeout=max(0, deadline - time.monotonic()),
+            )
+            calls = [
+                call for turn in live.turns(lender, text) for step in turn.get("steps", [])
+                for call in step.get("calls", []) if call.get("name") == "propose_deal"
+            ]
+            # Deals._repay strips ids; their spelling and case remain significant.
+            accepted = any(
+                call.get("outcome") == "accepted"
+                and INITIATIVE_DEBT in [str(value).strip() for value in
+                                       (call.get("arguments", {}).get("repay") or [])]
+                for call in calls
+            )
+            proposed = await _until(offered, max(0, deadline - time.monotonic())) if accepted else False
+            live.finish("success" if came and answered and accepted and proposed else "failure", evidence={
+                "answered": answered, "reply_to": to.id if to else None,
+                "propose_deal": calls, "repayment_proposed": proposed,
+                "window": await link.deal_window(),
+            })
+            return _logged(results)
 
         ok = await _until(offered, 30)
         owed = f"Долг: {gold_text(25)}"
@@ -1697,6 +1743,7 @@ async def errand_scenario(
     variant: Literal["near", "fork", "far"] = "near",
     npc: str = LOBART,
     to: str = ANDRE,
+    live: LiveCase | None = None,
 ) -> dict[str, str]:
     """Given Lobart exposes the turnip lie and decides to tell Andre tomorrow at 7:00.
     Every pair's rumor stays closed meanwhile, so only the errand passes it. Checks:
@@ -1709,7 +1756,7 @@ async def errand_scenario(
       there the fact comes (`far`), his body still at his routine, no model called.
     The near and fork scenes use given lines to exercise the scene queue and voices."""
 
-    off = model_off(dialogue)
+    off = model_off(dialogue) if live is None else None
     await link.wait_world()
     if link.session is None:
         await wait_message(link, Session, timeout=10)
@@ -1731,6 +1778,46 @@ async def errand_scenario(
     link.listeners.append(heard)
     try:
         await link.debug("time", hour=9, minute=0)
+        if live is not None:
+            # The discovery is the initial world state; only the subsequent decision is live.
+            await link.debug("skip_important", near=npc)
+            await link.story_effect(npc, [{"do": "set", "var": RUEBEN, "value": 1}])
+            await link.debug("player_goto", to=npc, distance=250)
+            if not await _until(
+                lambda: npc in talk.people and talk.people[npc].distance <= 600, 20,
+            ):
+                return _logged({"roster": f"failed ({npc} is not around the hero)"})
+            name = talk.people[npc].name
+            snap = await link.snapshot(npc, fresh=True)
+            caught: Fact = {
+                "fact": "caught", "npc": npc, "name": name, "quest": RUEBEN,
+                "title": "Сбор репы", "how": "Герой сказал, что репа в амбаре, но там её нет.",
+                "day": snap.world.day,
+            }
+            errands.chronicle.record(caught)
+            prior_goals = {f.get("id") for f in facts("goal")}
+            text = f"{name}, ты кому-нибудь расскажешь?"
+            deadline = time.monotonic() + 90
+            await link.debug("type", text=text)
+            answered = await live.wait_turn(
+                dialogue, npc, text, timeout=max(0, deadline - time.monotonic()),
+            )
+            calls = live.calls(npc, "plan")
+            accepted = any(call.get("outcome") == "accepted" for call in calls)
+
+            def planned() -> list[Fact]:
+                return [f for f in facts("goal") if f.get("npc") == npc
+                        and f.get("id") not in prior_goals]
+
+            # The handler persists normalized destination ids and the resolved game time.
+            if accepted:
+                await _until(lambda: bool(planned()), max(0, deadline - time.monotonic()))
+            live.finish("observed", evidence={
+                "caught": caught, "answered": answered, "plan": calls,
+                "goals": planned(),
+                "decision": "plan" if planned() else "no_plan",
+            })
+            return _logged(results)
         ok, _ = await _caught_by(link, dialogue, talk, npc, facts)
         if not ok:
             return _logged({"setup": "failed (turnip lie did not produce its consequences)"})

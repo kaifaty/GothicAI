@@ -23,8 +23,10 @@ from gothic_ai.llm.off import ModelOff, OffBackend
     ("m0", "chatgpt", "scenario m0 requires --llm off"),
     ("deal", "chatgpt", "scenario deal requires --llm off"),
     ("haggle", "off", "scenario haggle is live: set LLM=chatgpt|openai|local"),
-    *[(suite, llm, f"scenario {suite} is live: set LLM=chatgpt|openai|local")
-      for suite in ("live_lies", "live_deals") for llm in ("auto", "off")],
+    *[(scenario, llm, f"scenario {scenario} is live: set LLM=chatgpt|openai|local")
+      for scenario in ("live_lies", "live_deals", "live_npc", "live_director")
+      for llm in ("auto", "off")],
+    *[(scenario, "chatgpt", "chatgpt") for scenario in ("live_npc", "live_director")],
     *[(suite, "fake", "invalid choice: 'fake'") for suite in ("live_lies", "live_deals")],
     (None, "auto", "--llm auto requires --scenario"),
     *[
@@ -49,7 +51,7 @@ def test_scenario_llm_groups(monkeypatch, capsys, scenario, llm, expected):
     monkeypatch.setattr("sys.argv", ["gothic-ai", "serve", "--llm", llm, *flags])
     with pytest.raises(SystemExit) as exit:
         cli.main()
-    if expected == "off":
+    if expected in {"off", "chatgpt"}:
         assert exit.value.code == 0
         assert serve.await_args.args[0].llm == expected
     else:

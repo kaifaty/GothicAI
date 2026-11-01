@@ -28,6 +28,7 @@ from .common import (
     prepare_npc_pose,
     wait_message,
 )
+from .live import LiveCase
 
 
 class ScenarioArtist(feat_art.Artist):
@@ -38,9 +39,11 @@ class ScenarioArtist(feat_art.Artist):
 
 async def feat_fame(
     link: GameLink, dialogue: DialogueManager, talk: TalkDesk, rumors: Rumors,
+    *, live: LiveCase | None = None,
 ) -> dict[str, str]:
     """Read fame in a witness, a hearer and an uninformed control's situations."""
-    model_off(dialogue)
+    if live is None:
+        model_off(dialogue)
     results: dict[str, str] = {}
     chronicle = rumors.chronicle
     witness = "NONE_100_XARDAS"
@@ -64,7 +67,8 @@ async def feat_fame(
         await link.wait_world()
         if link.session is None:
             await wait_message(link, Session, timeout=10)
-        if not check("new_game", link.session is not None and link.session.parent is None
+        if not check("new_game", link.session is not None
+                     and (live is not None or link.session.parent is None)
                      and not chronicle.facts("feat"), "fresh branch without feats"):
             return _logged(results)
         await link.debug("player_goto", waypoint=arena)
@@ -81,7 +85,7 @@ async def feat_fame(
             "chapter": int(at.get("vars", {}).get("KAPITEL") or 1),
             **{key: at[key] for key in ("day", "hour", "minute")},
         }
-        log.info("given: дано: подвиг известен Ксардасу и Лобарту, Хильда о нём не знает")
+        log.info("fixture: Xardas and Lobart know the feat; Hilda does not")
         chronicle.record(feat)
         chronicle.record({
             "fact": "feat_fame", "feat": feat["id"], "title": feat["title"],
@@ -121,8 +125,19 @@ async def feat_fame(
             check(f"fame_prompt_{role}", shown == int(known)
                   and (not known or feat["title"] in situation and feat["text"] in situation),
                   f"npc={npc}, fame_blocks={shown}")
+            if live is not None:
+                text = f"{snap.npc.name}, ты слышал о моих подвигах?"
+                talk.hear(text, npc, {"via": "scenario"})
+                await live.wait_turn(dialogue, npc, text)
+                live.evidence.setdefault("roles", []).append({
+                    "role": role, "npc": npc, "knows": known, "calls": live.calls(npc),
+                })
+                talk.end("scenario")
+                await _until(lambda npc=npc: npc not in talk.attached, 30)
             if not await place(npc, park):
                 return _logged(results)
+        if live is not None:
+            live.finish("observed", evidence={"feat": feat})
         return _logged(results)
     except (GameError, TimeoutError, RuntimeError) as error:
         check("error", False, str(error) or type(error).__name__)
@@ -133,10 +148,11 @@ async def feat_fame(
 
 async def feats(
     link: GameLink, chronicler: Feats, journal: Journal, dialogue: DialogueManager, slot: int = 8,
+    *, live: LiveCase | None = None,
 ) -> dict[str, str]:
     """Check a native kill's toast, fame and rollback with a given chronicler verdict."""
-    off = model_off(dialogue)
-    if chronicler.model.llm is not off:
+    off = model_off(dialogue) if live is None else None
+    if off is not None and chronicler.model.llm is not off:
         raise RuntimeError("chronicler must use the shared scenario backend")
     results: dict[str, str] = {}
 
@@ -158,7 +174,8 @@ async def feats(
         "reason": "Герой впервые убил человека.",
     }
     reason = "дано: летописец признаёт подвиг «Первый приговор»"
-    off.given(reason, who=CACHE_KEY, calls=[ToolCall(WRITE, answer)])
+    if off is not None:
+        off.given(reason, who=CACHE_KEY, calls=[ToolCall(WRITE, answer)])
     original_sink, send = journal.sink, link.send
     toasts: list[FeatToastCmd] = []
     chronicle_asks: list[float] = []  # the diary's copy follows each toast (chronicle_get, v55)
@@ -214,6 +231,12 @@ async def feats(
 
         await link.debug("kill", instance=victim, by="PLAYER")
         if not check("hero_deed", await _until(lambda: trigger is not None, 10), f"npc={victim}"):
+            return _logged(results)
+        if live is not None:
+            settled = await _until(
+                lambda: chronicler._work is None or chronicler._work.done(), 120,
+            )
+            _record_live_feat(live, chronicle.entries(), chronicler.feats, victim, settled)
             return _logged(results)
         if not await _until(lambda: bool(chronicler.feats), 60):
             raise RuntimeError("given feat did not reach the chronicle within 60 s")
@@ -282,3 +305,21 @@ async def feats(
         link.send = send  # type: ignore[method-assign]
         link.listeners.remove(asked)
         chronicle.on_entry.remove(record)
+
+
+def _record_live_feat(
+    live: LiveCase, entries: list[tuple[int, Fact]], awards: list[Fact], victim: str, settled: bool,
+) -> None:
+    kills = {seq for seq, fact in entries if (
+        fact.get("fact") == "died" and fact.get("npc") == victim and fact.get("killer") == "PLAYER"
+    ) or (
+        fact.get("fact") == "crime" and fact.get("kind") == "murder" and fact.get("victim") == victim
+    )}
+    correct = bool(awards) and all(
+        bool(award.get("evidence")) and set(award["evidence"]) <= kills for award in awards
+    )
+    live.finish(
+        "success" if correct else "failure" if awards else "no_decision",
+        evidence={"victim": victim, "kill_sequences": sorted(kills), "awards": awards,
+                  "settled": settled},
+    )

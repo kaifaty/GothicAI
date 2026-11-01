@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import math
+import time
 from pathlib import Path
 from typing import Any
 
@@ -223,17 +224,19 @@ async def xardas_wrath(
     talk: TalkDesk,
     wrath: Wrath,
     npc: str = "NONE_100_XARDAS",
+    *, live: LiveCase | None = None,
 ) -> dict[str, str]:
     """Given three offenses, check the hostile response, death and raising in the game."""
-    off = model_off(dialogue)
+    off = model_off(dialogue) if live is None else None
     await link.wait_world()
     results: dict[str, str] = {}
 
     def check(name: str, ok: bool, detail: object = "") -> None:
         results[name] = f"{'done' if ok else 'failed'}{f' ({detail})' if detail != '' else ''}"
 
-    log.info("given: дано: решающая модель оставляет NPC слушать героя")
-    talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
+    if live is None:
+        log.info("given: дано: решающая модель оставляет NPC слушать героя")
+        talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
     if not await _until(lambda: npc in talk.people, 20):
         return _logged({"roster": f"failed ({npc} is not around the hero)"})
 
@@ -249,6 +252,39 @@ async def xardas_wrath(
                 if quiet >= 3:
                     return
             await asyncio.sleep(0.4)
+
+    if live is not None:
+        dead = ["call", "NPC_ISDEAD", ["inst", "HERO"]]
+        killed = asyncio.create_task(_until_async(lambda: link.evaluate(dead), bool, 270))
+        tip_line = None
+        heard = []
+        try:
+            for index, line in enumerate(WRATH_LINES, 1):
+                await no_dialog()
+                deadline = time.monotonic() + 90
+                await link.debug("type", text=line)
+                await live.wait_turn(dialogue, npc, line)
+                heard.append({"line": index, "text": line, "calls": live.calls(npc)})
+                if wrath.of(npc).tipped:
+                    tip_line = index
+                    break
+            unforgivable = any(
+                call.get("outcome") in {"accepted", "read"}
+                and bool(call.get("arguments", {}).get("unforgivable"))
+                for call in live.calls(npc, TAKE_OFFENSE)
+            )
+            died = bool(killed.done() and not killed.cancelled() and killed.result())
+            if tip_line is not None and not died:
+                died = await _until_async(
+                    lambda: link.evaluate(dead), bool, max(0, deadline - time.monotonic()),
+                )
+            live.finish("success" if unforgivable and tip_line is not None and died else "failure", evidence={
+                "tip_line": tip_line, "insults": heard, "unforgivable": unforgivable,
+                "killed": died, "took": wrath.of(npc).took,
+            })
+        finally:
+            killed.cancel()
+        return _logged(results)
 
     offenses = ("назвал стариком", "назвал недоделанным", "оскорбил мою мать")
     for severity, (line, what) in enumerate(zip(WRATH_LINES, offenses, strict=True), 1):
@@ -560,6 +596,7 @@ async def vanilla_spare(
     talk: TalkDesk,
     vanilla: VanillaQuests,
     npc: str = "BAU_4300_ADDON_CAVALORN",
+    *, live: LiveCase | None = None,
 ) -> dict[str, str]:
     """Broken trust: negotiate a bandit's life, then reload and turn in three witnessed deaths.
 
@@ -571,7 +608,7 @@ async def vanilla_spare(
         results[name] = f"{'done' if ok else 'failed'}{f' ({detail})' if detail != '' else ''}"
         return ok
 
-    off = model_off(dialogue)
+    off = model_off(dialogue) if live is None else None
     await link.wait_world()
     if link.session is None:
         await wait_message(link, Session, timeout=10)
@@ -645,6 +682,9 @@ async def vanilla_spare(
         conv = dialogue.conversations.get(npc)
         before = conv.reply if conv else None
         talk.hear(text, npc, {"via": "scenario"})
+        if live is not None:
+            ok = await live.wait_turn(dialogue, npc, text)
+            return ok, [row for row in branch_turns() if row["id"] not in before_ids]
 
         def answered() -> bool:
             conv = dialogue.conversations.get(npc)
@@ -711,28 +751,29 @@ async def vanilla_spare(
             f"pay={pay}; {detail}; alive={alive}",
         )
 
-    off.given(
-        "дано: Кавалорн даёт квест о бандитах", who=npc, when="помогу",
-        calls=[ToolCall("give_quest", {"quest": quest})],
-    )
-    off.silent("дано: Кавалорн молчит (поручение выдано)", who=npc, when="помогу")
-    off.given(
-        "дано: Кавалорн щадит бандита по просьбе героя", who=npc, when="отпусти его",
-        calls=[ToolCall("amend_quest", {"quest": quest, "drop": [spared], "why": why})],
-    )
-    off.silent("дано: Кавалорн молчит (условия изменены)", who=npc, when="отпусти его")
-    off.given(
-        "дано: Кавалорн засчитывает дело после пощады", who=npc, when="с ними покончено",
-        calls=[ToolCall("accept_quest", {"quest": quest})],
-    )
-    off.silent("дано: Кавалорн молчит (дело засчитано)", who=npc, when="с ними покончено")
-    off.given(
-        "дано: Кавалорн засчитывает дело после загрузки", who=npc, when="с ними покончено",
-        calls=[ToolCall("accept_quest", {"quest": quest})],
-    )
-    off.silent("дано: Кавалорн молчит (дело засчитано после загрузки)", who=npc, when="с ними покончено")
-    log.info("given: дано: собеседники слушают героя (FixedDecider posture=listen)")
-    talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
+    if off is not None:
+        off.given(
+            "дано: Кавалорн даёт квест о бандитах", who=npc, when="помогу",
+            calls=[ToolCall("give_quest", {"quest": quest})],
+        )
+        off.silent("дано: Кавалорн молчит (поручение выдано)", who=npc, when="помогу")
+        off.given(
+            "дано: Кавалорн щадит бандита по просьбе героя", who=npc, when="отпусти его",
+            calls=[ToolCall("amend_quest", {"quest": quest, "drop": [spared], "why": why})],
+        )
+        off.silent("дано: Кавалорн молчит (условия изменены)", who=npc, when="отпусти его")
+        off.given(
+            "дано: Кавалорн засчитывает дело после пощады", who=npc, when="с ними покончено",
+            calls=[ToolCall("accept_quest", {"quest": quest})],
+        )
+        off.silent("дано: Кавалорн молчит (дело засчитано)", who=npc, when="с ними покончено")
+        off.given(
+            "дано: Кавалорн засчитывает дело после загрузки", who=npc, when="с ними покончено",
+            calls=[ToolCall("accept_quest", {"quest": quest})],
+        )
+        off.silent("дано: Кавалорн молчит (дело засчитано после загрузки)", who=npc, when="с ними покончено")
+        log.info("given: дано: собеседники слушают героя (FixedDecider posture=listen)")
+        talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
     for who in (npc, *bandits):
         await link.debug("skip_important", near=who)
     for _ in range(2):
@@ -743,7 +784,15 @@ async def vanilla_spare(
     await link.debug("player_goto", to=npc, distance=300)
     if not check("roster", await _until(lambda: npc in talk.people, 20), npc):
         return _logged(results)
-    answered, _ = await say("Кавалорн, давай я помогу тебе с бандитами.")
+    if live is None:
+        answered, _ = await say("Кавалорн, давай я помогу тебе с бандитами.")
+    else:
+        await vanilla.prepare(npc)
+        start = vanilla.starts.get(npc, {}).get(quest)
+        if start is None:
+            return _logged({"quest_fixture": "failed (no Cavalorn bandit quest start)"})
+        conv = dialogue.open(npc, talk.people[npc].name, warm=False)
+        _, answered = await vanilla._give(start, conv)
     given = await _until(lambda: any(f.get("quest") == quest for f in facts("quest_given")), 15)
     if not check("given", answered and given and await var(quest) == 1, facts("quest_given")[-1:]):
         return _logged(results)
@@ -812,7 +861,26 @@ async def vanilla_spare(
     dialogue.heard(npc, name, speaker, plea, "тебе")
     await link.send(SayCmd(npc=spared, line="AIB_VSPARE_PLEA", text=plea, to=npc))
     before_reward = await rewards()
+    deadline = time.monotonic() + 90
     answered, spare_turns = await say("Кавалорн, отпусти его.")
+    if live is not None:
+        actions = calls(spare_turns)
+        amended = any(
+            call.get("name") == "amend_quest" and call.get("outcome") == "accepted"
+            and str(call.get("arguments", {}).get("quest", "")).upper() == quest
+            and spared in [str(who).upper() for who in call.get("arguments", {}).get("drop", [])]
+            for call in actions
+        )
+        if amended:
+            await _until(dropped, max(0, deadline - time.monotonic()))
+        alive = await bandit_state(spared)
+        live.finish("observed", evidence={
+            "decision": "spared" if amended and dropped() and alive.get("state") == "alive"
+            else "killed" if alive.get("state") == "dead" else "refused",
+            "answered": answered, "calls": actions, "terms": quest_facts("quest_terms"),
+            "bandit": alive, "trust": vanilla.trust.situation(npc),
+        })
+        return _logged(results)
     bodies = (await link.story_state(npcs=[killed, witnessed], near=npc)).get("npcs", {})
     distances = {target: bodies.get(target, {}).get("distance") for target in (killed, witnessed)}
     await vanilla.prepare(npc)
@@ -1235,8 +1303,38 @@ async def amends_storylet(
         amends.model.propose = given_amends  # type: ignore[method-assign]
         amends.director.pacing.cooldown_s = 2.0
         log.info("given: дано: решающая модель оставляет NPC слушать героя")
-    talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
+    if live is None or deals is not None:
+        talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
     await link.story_effect(giver, [{"do": "set", "var": RUEBEN, "value": 1}])
+    if live is not None and deals is None:
+        amends.director.pacing.cooldown_s = 2.0
+        from ..amends import MAX_GOLD
+        from ..quests import Lie, caught
+
+        # The live decision starts after the accusation and its rumor have reached Andre.
+        await caught(
+            link, dialogue, amends.chronicle, dialogue.journal,
+            Lie(RUEBEN, giver, "Лобарт", "Убрать поле репы", "золото"),
+            "The unharvested field disproves the hero's claim",
+        )
+        rumor = {
+            "fact": "rumor", "kind": "caught", "quest": RUEBEN,
+            "about": giver, "about_name": "Лобарт", "subject": "PLAYER",
+            "subject_name": "герой", "title": "Убрать поле репы",
+            "from": giver, "from_name": "Лобарт", "to": ANDRE, "hops": 1, "how": "told",
+        }
+        amends.chronicle.record(rumor)
+        key = f"caught:{giver}:{RUEBEN}"
+        storylet = await amends.consider(key, ANDRE, "Лобарт")
+        live.finish(
+            "success" if storylet is not None and storylet.stage == "open"
+            and 0 <= storylet.gold <= MAX_GOLD else "observed",
+            evidence={"rumor": rumor, "storylet": vars(storylet) if storylet else None,
+                      "gold_limit": MAX_GOLD, "rejected": facts("amends_rejected"),
+                      "declined": facts("amends_none")},
+        )
+        return _logged(results)
+
     if live is not None:
         if deals is None:
             raise GameError("live amends_forgive requires Deals")
