@@ -46,6 +46,7 @@ CASE_SPECS = {
         CaseSpec("crime_return", "A return line is built and played to completion", 3),
         CaseSpec("amends_storylet", "A lie rumor opens a storylet with a fine within the limits", 3),
         CaseSpec("feat_award", "The chronicler awards a feat using Brago's actual killing as proof", 2),
+        CaseSpec("fate_card", "The hero dies after killing Brago; the live final card comes in time", 3),
     ),
     "live_deals": (
         CaseSpec("money_unasked", "Xardas offers no gold during 20 seconds without a request", 1),

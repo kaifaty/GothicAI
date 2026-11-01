@@ -1565,6 +1565,81 @@ namespace {
       loaded.setMovableVobsEnabled(!movable);
       require(loadedFence.isBroken(),"toggling movable-vobs must not resurrect a broken static fence");
       }
+    for(const bool movable:{false,true}) {
+      // A blade stopped by an intact fence bites into it: the board takes that blow at
+      // the contact, once per swing, and breaks when its health runs out.
+      DynamicWorld world(nullptr,movableFloor());
+      world.setMovableVobsEnabled(movable);
+      auto fence=world.addMovableVob(proto,"NW_NATURE_FENCE_01.MRM",at(100,50,0),.04f,true,"fence",true,zenId);
+      const auto fenceId=world.movableVobSnapshot()[0].id;
+      int actorId=0;
+      auto* actor=reinterpret_cast<Npc*>(&actorId);
+      const auto blow=[&](uint64_t swing,float z) {
+        const uint64_t t=swing*1000;
+        world.updateShadowBlade(actor,swing,{{{-10,30,z},{-10,70,z},{0,0,1},2}},t,double(t),double(t+100));
+        world.flushShadowBlades();
+        world.updateShadowBlade(actor,swing,{{{200,30,z},{200,70,z},{0,0,1},2}},t+100,double(t),double(t+100));
+        world.flushShadowBlades();
+        const auto contacts=world.takeShadowBladeContacts(actor);
+        const auto stop=std::find_if(contacts.begin(),contacts.end(),[](const MeleeBladeContact& c) {
+          return c.world && c.stopsSwing;
+          });
+        require(stop!=contacts.end(),"an intact fence must stop the blow");
+        return *stop;
+        };
+      const auto health=[&]() { return world.movableVobSnapshot()[0].health; };
+      std::vector<uintptr_t> struck;
+      const auto first=blow(1,0);
+      require(first.movableVob==fenceId,"a blow stopped by a fence must carry the struck movable vob");
+      require(world.meleeStoppedMovableVob(first,40,100,FractureRule::Melee::OneHand,nullptr,struck) &&
+              struck.size()==1 && struck[0]==fenceId,
+              "a stopped blow must strike the destructible fence it stopped at");
+      requireNear(health(),30.f,.001f,"a stopped blow must use the hit-frame damage rule");
+      require(!world.meleeStoppedMovableVob(first,40,100,FractureRule::Melee::OneHand,nullptr,struck),
+              "one swing must strike a stopping fence only once");
+      require(world.meleeMovableVobs({0,50,0},{1,0,0},150,40,100,FractureRule::Melee::OneHand,nullptr,&struck)==0,
+              "the hit frame of a swing that already struck a fence must not strike it again");
+      requireNear(health(),30.f,.001f,"a repeated strike in one swing must leave health untouched");
+      MeleeBladeContact wall=first;
+      wall.movableVob=0;
+      std::vector<uintptr_t> none;
+      require(!world.meleeStoppedMovableVob(wall,40,100,FractureRule::Melee::OneHand,nullptr,none) && none.empty(),
+              "a blow stopped by a plain wall must deliver no strike");
+      std::vector<uintptr_t> next;
+      require(world.meleeStoppedMovableVob(blow(2,10),40,100,FractureRule::Melee::OneHand,nullptr,next),
+              "the next swing must strike the fence again");
+      world.tick(17);
+      require(fence.isBroken() && world.fragmentSnapshot().size()==8,
+              "two stopped one-handed blows must break the fence");
+      require(!world.meleeStoppedMovableVob(first,40,100,FractureRule::Melee::OneHand,nullptr,none),
+              "a broken fence must not take stopped blows");
+      // Disabling destruction restores the intact fence, which must still ignore stopped blows.
+      world.setDestructionEnabled(false);
+      require(!fence.isBroken() && !world.meleeStoppedMovableVob(blow(3,0),40,100,FractureRule::Melee::OneHand,nullptr,none) &&
+              none.empty() && world.movableVobSnapshot()[0].health>99.f,
+              "destruction=0 must ignore stopped blows");
+      if(movable) {
+        DynamicWorld plain(nullptr,movableFloor());
+        plain.setMovableVobsEnabled(true);
+        // No fracture table entry for this visual: a large crate that cannot break.
+        auto crate=plain.addMovableVob(proto,"CONTRACT_PLAIN_CRATE.MRM",at(100,50,0),.04f,true,"crate",true,zenId+1);
+        require(!crate.isEmpty() && !plain.movableVobSnapshot()[0].destructible,
+                "the plain crate fixture must be a non-destructible movable vob");
+        plain.updateShadowBlade(actor,1,{{{-10,30,0},{-10,70,0},{0,0,1},2}},0,0,100);
+        plain.flushShadowBlades();
+        plain.updateShadowBlade(actor,1,{{{200,30,0},{200,70,0},{0,0,1},2}},100,0,100);
+        plain.flushShadowBlades();
+        const auto contacts=plain.takeShadowBladeContacts(actor);
+        const auto stop=std::find_if(contacts.begin(),contacts.end(),[](const MeleeBladeContact& c) {
+          return c.world && c.stopsSwing;
+          });
+        require(stop!=contacts.end() && stop->movableVob!=0,"a large movable vob must still stop the blow");
+        std::vector<uintptr_t> plainStruck;
+        require(!plain.meleeStoppedMovableVob(*stop,40,100,FractureRule::Melee::OneHand,nullptr,plainStruck) &&
+                plainStruck.empty(),"a non-destructible movable vob must stop the blow without a strike");
+        }
+      std::printf("Stopped blow fence movable %d: health 100 -> 30 -> broken\n",int(movable));
+      }
     for(const bool fence:{false,true}) {
       const auto origin=at(100,50,0);
       const auto add=[&](DynamicWorld& world) {

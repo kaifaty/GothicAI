@@ -872,6 +872,12 @@ class Npc final {
     void      nextAiAction(AiQueue& queue, uint64_t dt);
     bool      startQueuedState(const AiQueue::AiAction& act);
     void      commitDamage();
+    // The blow a destructible movable vob takes from this NPC's current melee weapon.
+    struct MeleeDestructionBlow final {
+      FractureRule::Melee kind = FractureRule::Melee::Fist;
+      float rangeCm = 0, weaponDamage = 0, strength = 0;
+      };
+    bool      meleeDestructionBlow(MeleeDestructionBlow& blow) const;
     Npc*      updateNearestEnemy();
     Npc*      updateNearestBody();
     bool      checkHealth(bool onChange, bool forceKill);

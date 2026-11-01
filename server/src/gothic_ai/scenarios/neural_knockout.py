@@ -265,9 +265,41 @@ async def neural_knockout_segment(
                     and fight._decisions >= 5
                 )
 
-            log.info("neural-talk knockout before speech: beasts_cleared=%d", await _clear_beasts(link, npc))
-            await link.debug("type", text="Мечник, проверим твою шпагу.")
-            ready = await _until(fight_ready, 25)
+            # The valley's beasts keep coming: a citizen already fighting one when the words
+            # land keeps that target, and the server's AR_NONE attack on the hero is lost.
+            # Speak only into a calm arena: three empty sweeps and the citizen not attacking.
+            loop = asyncio.get_running_loop()
+            calm_until = loop.time() + 20
+            calm = cleared_before = 0
+            while calm < 3 and loop.time() < calm_until:
+                cleared = await _clear_beasts(link, npc)
+                cleared_before += cleared
+                entry = pilot.people.get(npc)
+                fighting = entry is None or entry.state.upper() == "ZS_ATTACK"
+                calm = calm + 1 if not cleared and not fighting else 0
+                await asyncio.sleep(0.5)
+            log.info("neural-talk knockout before speech: beasts_cleared=%d calm=%d", cleared_before, calm)
+
+            async def keep_clear() -> None:
+                # Bloodflies fly in from beyond the snapshot's 20 m after the cleanup: the
+                # citizen's native attack takes one as its target, and P30 leads no beast fight.
+                while True:
+                    await asyncio.sleep(0.5)
+                    try:
+                        cleared = await _clear_beasts(link, npc)
+                    except (GameError, TimeoutError) as error:
+                        log.info("neural-talk knockout until lease: cleanup skipped (%s)", error)
+                        continue
+                    if cleared:
+                        log.info("neural-talk knockout until lease: beasts_cleared=%d", cleared)
+
+            clearing = asyncio.create_task(keep_clear())
+            try:
+                await link.debug("type", text="Мечник, проверим твою шпагу.")
+                ready = await _until(fight_ready, 25)
+            finally:
+                clearing.cancel()
+                await asyncio.gather(clearing, return_exceptions=True)
             fight = pilot.fights.get(npc)
             lease = fight.lease if fight else None
             client = fight.client if fight else None

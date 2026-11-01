@@ -455,6 +455,54 @@ async def _m5b_player_weapon(link: GameLink, state: Literal["none", "melee"], *,
         await link.body_watch([], timeout=1)
 
 
+class SharedBodyWatch:
+    """A scenario's passive body watch that survives the P30 pilot's watch and unwatch.
+
+    Both share one native subscription and every `body_watch` replaces its list. While
+    installed, the pilot's calls keep the scenario's actors and `watch` keeps the pilot's.
+    """
+
+    def __init__(self, link: GameLink, owner: str) -> None:
+        self.link, self.owner = link, owner
+        self._native = link.body_watch
+        self._passive: list[str] = []
+        self._others: list[str] = []
+        self._rate = self._others_rate = 20
+        self._watched: tuple[tuple[str, ...], int] | None = None
+        self._stats: dict[str, Any] = {}
+        link.body_watch = self._shared  # type: ignore[method-assign]
+
+    async def watch(self, npcs: list[str], rate_hz: int = 20, timeout: float = 5.0) -> dict[str, Any]:
+        """Replace the scenario's own actors; [] stops them and leaves the pilot's."""
+        self._passive, self._rate = [npc.upper() for npc in npcs], rate_hz
+        return await self._send(timeout)
+
+    def close(self) -> None:
+        self.link.body_watch = self._native  # type: ignore[method-assign]
+
+    async def _shared(self, npcs: list[str], rate_hz: int = 20, timeout: float = 5.0) -> dict[str, Any]:
+        previous = self._others, self._others_rate
+        self._others, self._others_rate = [npc.upper() for npc in npcs], rate_hz
+        try:
+            return await self._send(timeout)
+        except GameError:
+            # As the pilot: a refusal keeps the old list, a timeout may have applied the new one.
+            self._others, self._others_rate = previous
+            raise
+
+    async def _send(self, timeout: float) -> dict[str, Any]:
+        actors = list(dict.fromkeys([*self._passive, *self._others]))
+        rate_hz = self._rate if self._passive else self._others_rate
+        if len(actors) > 4:
+            raise GameError(f"{self.owner}: shared body watch exceeds four actors {actors}")
+        signature = (tuple(actors), rate_hz)
+        # A load starts a new generation without a watch: send the same list again then.
+        if self._watched != signature or self._stats.get("generation") != self.link.body_generation:
+            self._stats = await self._native(actors, rate_hz=rate_hz, timeout=timeout)
+            self._watched = signature
+        return self._stats
+
+
 async def _clear_beasts(link: GameLink, npc: str) -> int:
     """Remove nearby beasts without crediting an NPC as their killer."""
     cleared = 0
