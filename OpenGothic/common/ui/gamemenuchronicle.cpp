@@ -33,18 +33,35 @@ constexpr const char* Chapter   = "\xc3\xeb\xe0\xe2\xe0 ";  // Глава
 constexpr const char* Day       = ", \xe4\xe5\xed\xfc ";  // , день
 constexpr const char* Empty     = "\xcb\xe5\xf2\xee\xef\xe8\xf1\xfc \xef\xee\xea\xe0 \xef\xf3\xf1\xf2\xe0.";  // Летопись пока пуста.
 constexpr const char* OtherFate = "\xc4\xf0\xf3\xe3\xe0\xff \xf1\xf3\xe4\xfc\xe1\xe0: \xe3\xeb\xe0\xe2\xe0 ";  // Другая судьба: глава
+constexpr const char* EndMark   = "\xc8\xf2\xee\xe3: ";  // Итог:
+constexpr const char* Killer    = ". \xd3\xe1\xe8\xe9\xf6\xe0: ";  // . Убийца:
 
 std::string when(const char* prefix, int64_t chapter, int64_t day) {
   return std::string(prefix) + std::to_string(chapter) + Day + std::to_string(day);
+  }
+
+// how another fate ended, as the line under its name
+std::string howEnded(const ChronicleEnd& e) {
+  if(e.kind=="wrath")
+    return "\xc3\xed\xe5\xe2 \xca\xf1\xe0\xf0\xe4\xe0\xf1\xe0";  // Гнев Ксардаса
+  if(e.kind=="finale")
+    return "\xd4\xe8\xed\xe0\xeb \xe8\xe3\xf0\xfb";  // Финал игры
+  std::string s = "\xd1\xec\xe5\xf0\xf2\xfc \xe3\xe5\xf0\xee\xff";  // Смерть героя
+  if(!e.name.empty())
+    s += Killer + e.name;
+  return s;
   }
 }
 
 GameMenu::BenchDiary GameMenu::benchDiary;
 
 struct GameMenu::ChronicleRow {
-  const ChronicleFeat* feat  = nullptr;  // a feat, or a header line when null
-  const ChronicleFork* fork  = nullptr;  // the fork of another fate's feat, or of its header
+  const ChronicleFeat* feat  = nullptr;  // a feat, or a header line when null and no end
+  const ChronicleFork* fork  = nullptr;  // the fork of another fate's feat, end or header
   std::string          title;
+  const ChronicleEnd*  end   = nullptr;  // how another fate ended, after its feats
+
+  bool selectable() const { return feat!=nullptr || end!=nullptr; }
   };
 
 struct GameMenu::ChronicleDialog : Dialog {
@@ -182,16 +199,15 @@ std::vector<GameMenu::ChronicleRow> GameMenu::chronicleRows() const {
     rows.push_back({nullptr,&fork,when(Chapter,fork.chapter,fork.day)});
     for(auto& f:fork.feats)
       rows.push_back({&f,&fork,f.title});
+    for(auto& e:fork.ends)
+      rows.push_back({nullptr,&fork,e.title,&e});
     }
   return rows;
   }
 
 int32_t GameMenu::chronicleFeatCount() const {
-  const auto& book = Gothic::inst().chronicle();
-  size_t num = book.fate.size();
-  for(auto& fork:book.others)
-    num += fork.feats.size();
-  return int32_t(num);
+  const auto rows = chronicleRows();
+  return int32_t(std::count_if(rows.begin(),rows.end(),[](const ChronicleRow& r){ return r.selectable(); }));
   }
 
 const Texture2d* GameMenu::chronicleImage(const std::string& path) {
@@ -225,19 +241,37 @@ void GameMenu::drawChronicle(Painter& p, Item& it, int x, int y, int w, int h) {
     return;
     }
 
-  // the selected feat: its row and the fork it belongs to
+  // the selected feat or end: its row and the fork it belongs to
   const ChronicleRow* selected = nullptr;
   int32_t selectedRow = 0;
   {
   int32_t id = -1;
   for(size_t i=0; i<rows.size(); ++i)
-    if(rows[i].feat!=nullptr && ++id==it.value) {
+    if(rows[i].selectable() && ++id==it.value) {
       selected    = &rows[i];
       selectedRow = int32_t(i);
       break;
       }
   }
   const bool active = selectedItem()==&it;
+
+  if(chronicleOpen && selected!=nullptr && selected->end!=nullptr) {
+    // another fate's end: its name, when and how it ended, the chronicler's line about it all. No picture:
+    // the fate's feats above it carry theirs
+    auto& e  = *selected->end;
+    const int tw = w;
+    int ty = y;
+    auto draw = [&](const GthFont& fnt, const std::string& s) {
+      const auto sh = fnt.textSize(tw,s).h;
+      fnt.drawText(p,x,ty+line,tw,sh,s,AlignLeft);
+      ty += sh+line;
+      };
+    draw(fntH,e.title);
+    draw(fntD,when(OtherFate,e.chapter,e.day));
+    draw(fntD,howEnded(e));
+    draw(fntN,e.text);
+    return;
+    }
 
   if(chronicleOpen && selected!=nullptr) {
     // one feat: the engraving, its title and line, the epilogue the hero has seen
@@ -276,25 +310,31 @@ void GameMenu::drawChronicle(Painter& p, Item& it, int x, int y, int w, int h) {
   if(selectedRow>=it.scroll+visible)
     it.scroll = selectedRow-visible+1;
   it.scroll = std::clamp(it.scroll,0,std::max(int32_t(rows.size())-visible,0));
-  if(selectedRow>0 && rows[size_t(selectedRow-1)].feat==nullptr && it.scroll==selectedRow)
+  if(selectedRow>0 && !rows[size_t(selectedRow-1)].selectable() && it.scroll==selectedRow)
     it.scroll = std::max(it.scroll-1,0);  // keep a feat's fork header in view with it
 
   int itY = y;
   for(size_t i=size_t(it.scroll); i<rows.size() && itY+rowH<=y+h; ++i) {
     auto& r = rows[i];
-    if(r.feat==nullptr) {
+    if(!r.selectable()) {
       auto& fnt = r.fork==nullptr ? fntN : fntD;
       fnt.drawText(p,x,itY+line+line/2,w,line,r.title,AlignLeft);
       itY += rowH;
       continue;
       }
     const int icon = rowH-line/4;
-    int tx = x;
-    if(auto* img = chronicleImage(r.feat->icon)) {
-      p.setBrush(*img);
-      p.drawRect(x,itY,icon,icon,0,0,img->w(),img->h());
+    int tx = x+icon+line/2;
+    if(r.feat!=nullptr) {
+      if(auto* img = chronicleImage(r.feat->icon)) {
+        p.setBrush(*img);
+        p.drawRect(x,itY,icon,icon,0,0,img->w(),img->h());
+        }
+      } else {
+      // an end has no icon: «Итог:» in the dim font stands in the title's place
+      const int mark = fntD.textSize(w,EndMark).w;
+      fntD.drawText(p,tx,itY+line+line/2,mark,line,EndMark,AlignLeft);
+      tx += mark;
       }
-    tx += icon+line/2;
     auto& fnt = (&r==selected && active) ? fntH : fntN;
     fnt.drawText(p,tx,itY+line+line/2,w-(tx-x),line,r.title,AlignLeft);
     itY += rowH;
