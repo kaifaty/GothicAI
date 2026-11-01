@@ -66,6 +66,7 @@ async def ground_scenario(
     - sees: it is in Cavalorn's view, with its id;
     - situation: its situation tells it, «На земле: …»;
     - take: given take_item on «бери», it walks up and picks it up;
+    - pickup_time: it reaches the nearby ground item within 10 seconds without circling it;
     - has: the letter is in its inventory and no longer on the ground;
     - follows: it goes with the hero again, and catches up when he is 11 m off."""
     from ..executor import Intent
@@ -131,7 +132,9 @@ async def ground_scenario(
         t0 = time.monotonic()
         talk.hear("Кавалорн, вот твоё письмо, бери.", None, {"via": "scenario"})
         took = await _until(lambda: since(t0, "take_item") or since(t0, "take_item", "failed"), 45)
+        pickup_seconds = time.monotonic() - t0
         check("take", since(t0, "take_item"), [a for t, a, s in calls if t >= t0] if took else "no pick-up")
+        check("pickup_time", since(t0, "take_item") and pickup_seconds <= 10, f"{pickup_seconds:.2f} s")
         snap = await link.snapshot(npc, fresh=True)
         has = any(i.item == item for i in snap.npc.inventory)
         await asyncio.sleep(1.5)  # a pushed view after it

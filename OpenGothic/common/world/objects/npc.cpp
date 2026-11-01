@@ -314,6 +314,11 @@ bool Npc::GoTo::isClose(const Npc& self, float dist) const {
     return MoveAlgo::isClose(self, *npc, dist);
   if(wp!=nullptr)
     return MoveAlgo::isClose(self, *wp, dist);
+  if(flag==GT_Item) {
+    // Ground and table items are approached horizontally; ItmGet handles height.
+    const auto delta=pos-self.position();
+    return Vec2(delta.x,delta.z).quadLength()<dist*dist;
+    }
   return MoveAlgo::isClose(self, pos, dist);
   }
 
