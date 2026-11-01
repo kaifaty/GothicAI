@@ -34,6 +34,168 @@ def test_live_lies_selection_and_recorded_cases(tmp_path, monkeypatch):
     assert all(case["requests"] == 1 for case in data["cases"])
 
 
+@pytest.mark.parametrize(("name", "names", "outcomes"), [
+    ("live_npc", (
+        "wrath_tip", "calm_bandit", "cave_unnamed", "errand_tell", "spare_bandit",
+        "initiative_debt", "knows_danger", "fame_recognized", "rescue_call",
+    ), (
+        "success", "observed", "failure", "observed", "observed", "failure",
+        "observed", "observed", "observed",
+    )),
+    ("live_director", (
+        "repair_handover", "authored_quest", "character_cast", "chain_built", "crime_line",
+        "crime_return", "amends_storylet", "feat_award",
+    ), (
+        "success", "failure", "success", "failure", "no_decision", "success",
+        "observed", "no_decision",
+    )),
+])
+def test_npc_and_director_selection_and_recorded_outcomes(
+    tmp_path, monkeypatch, name, names, outcomes,
+):
+    assert tuple(spec.name for spec in selected_cases(name)) == names
+    assert tuple(spec.name for spec in selected_cases(name, f"{names[-1]}, {names[0]}")) == (
+        names[0], names[-1],
+    )
+    with pytest.raises(ValueError, match=f"unknown CASES for {name}: broken"):
+        selected_cases(name, "broken")
+    monkeypatch.delenv("CASES", raising=False)
+    trace = TraceWriter(tmp_path / "traces")
+    suite = LiveSuite(name, trace)
+    for case_name, outcome in zip(names, outcomes, strict=True):
+        with suite.case(case_name) as case:
+            trace.write({"type": "turn", "id": case_name, "steps": [{}], "events": []})
+            case.finish(outcome, evidence={"decision": case_name})
+    assert suite.results() == {
+        case_name: f"done ({outcome})" for case_name, outcome in zip(names, outcomes, strict=True)
+    }
+    data = json.loads((tmp_path / "live.json").read_text())
+    assert [case["name"] for case in data["cases"]] == list(names)
+    assert [case["outcome"] for case in data["cases"]] == list(outcomes)
+    assert all(case["requests"] == 1 for case in data["cases"])
+
+
+async def test_live_npc_skips_decider_cases_without_preparing_a_game(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from gothic_ai.scenarios.live_npc import live_npc
+
+    selected = "initiative_debt,rescue_call"
+    monkeypatch.setenv("CASES", selected)
+    monkeypatch.delenv("DECIDER_URL", raising=False)
+    link = SimpleNamespace(wait_world=AsyncMock(side_effect=AssertionError("skip needs no game")))
+    state = SimpleNamespace(dialogue=SimpleNamespace(
+        llm=SimpleNamespace(name="chatgpt"), trace=TraceWriter(tmp_path / "traces"),
+    ))
+    assert await live_npc(link, state) == {
+        "initiative_debt": "done (skipped)", "rescue_call": "done (skipped)",
+    }
+    data = json.loads((tmp_path / "live.json").read_text())
+    assert all(case["outcome"] == "skipped" and not case["setup_error"] for case in data["cases"])
+    assert all("DECIDER_URL" in case["evidence"]["skip_reason"] for case in data["cases"])
+    assert all(case["requests"] == 0 for case in data["cases"])
+    run = tmp_path / "run-1"
+    run.mkdir()
+    (run / "live.json").write_text(json.dumps(data))
+    report = summarize(tmp_path, "live_npc", 1, [0], selected)
+    assert report["setup_errors"] == 0
+    assert all(case["attempts"] == 0 and case["skipped"] == 1 for case in report["cases"])
+    write_report(tmp_path, report)
+    assert "DECIDER_URL" in (tmp_path / "report.md").read_text()
+
+
+@pytest.mark.parametrize(("evidence", "outcome"), [
+    ([10, 11], "success"), ([12], "failure"), (None, "no_decision"),
+])
+def test_live_feat_award_requires_evidence_of_the_actual_kill(
+    tmp_path, monkeypatch, evidence, outcome,
+):
+    from gothic_ai.scenarios.feats import _record_live_feat
+
+    monkeypatch.setenv("CASES", "feat_award")
+    suite = LiveSuite("live_director", TraceWriter(tmp_path / "traces"))
+    victim = "BDT_1014_BANDIT_L"
+    entries = [
+        (10, {"fact": "crime", "kind": "murder", "victim": victim}),
+        (11, {"fact": "died", "npc": victim, "killer": "PLAYER"}),
+        (12, {"fact": "died", "npc": "OTHER", "killer": "PLAYER"}),
+    ]
+    awards = [{"id": "award", "evidence": evidence}] if evidence is not None else []
+    with suite.case("feat_award") as case:
+        _record_live_feat(case, entries, awards, victim, settled=True)
+    assert suite.results() == {"feat_award": f"done ({outcome})"}
+    [case] = json.loads((tmp_path / "live.json").read_text())["cases"]
+    assert case["evidence"]["kill_sequences"] == [10, 11]
+    assert case["evidence"]["awards"] == awards
+
+
+@pytest.mark.parametrize(("arrived", "outcome"), [(True, "success"), (False, "failure")])
+async def test_live_cave_normalizes_the_call_and_waits_for_actual_arrival(
+    tmp_path, monkeypatch, arrived, outcome,
+):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, Mock
+
+    from gothic_ai.scenarios import perception as scenario
+
+    monkeypatch.setenv("CASES", "cave_unnamed")
+    monkeypatch.setattr(scenario.asyncio, "sleep", AsyncMock())
+    monkeypatch.setattr(scenario, "model_off", Mock(side_effect=AssertionError("live uses no givens")))
+    trace = TraceWriter(tmp_path / "traces")
+    suite = LiveSuite("live_npc", trace)
+    npc = "BAU_4300_ADDON_CAVALORN"
+    sent, positions, checks = [], [], []
+
+    def hear(text, *_):
+        if "зайди в пещеру" in text:
+            sent.append(text)
+            trace.write({
+                "type": "turn", "id": "cave", "npc": npc, "status": "completed",
+                "trigger": {"text": text}, "steps": [{"calls": [{
+                    "name": "go_to", "outcome": "accepted",
+                    "arguments": {"place": " xardas_bandits "},
+                }]}],
+            })
+
+    async def snapshot(*_, **__):
+        if sent:
+            positions.append("CAVE" if arrived and positions else "STEPS")
+        return SimpleNamespace(npc=SimpleNamespace(
+            pos=(0, 0, 0), nearest_waypoint=positions[-1] if positions else "STEPS",
+        ))
+
+    async def until_async(poll, check, timeout):
+        for _ in range(2):
+            done = bool(check(await poll()))
+            if sent:
+                checks.append(done)
+            if done:
+                return True
+        return False
+
+    monkeypatch.setattr(scenario, "_until_async", until_async)
+    book = SimpleNamespace(
+        get=lambda _: SimpleNamespace(center=(0, 0, 0)),
+        of=lambda point: SimpleNamespace(id="XARDAS_BANDITS" if point == "CAVE" else "XARDAS_STAIRS"),
+    )
+    link = SimpleNamespace(wait_world=AsyncMock(), debug=AsyncMock(), snapshot=snapshot)
+    dialogue = SimpleNamespace(open=Mock(return_value=SimpleNamespace()), conversations={},
+                               speaking=lambda _: False)
+    talk = SimpleNamespace(people={npc: SimpleNamespace(distance=300)}, hear=hear, orders=SimpleNamespace(
+        companion=lambda _: True,
+        situation=lambda _: "Места рядом: пещера бандитов: пещера, перед героем, вход — на ступенях",
+    ))
+    whereabouts = SimpleNamespace(book=book, where=lambda *_: "XARDAS_BANDITS — вход — на ступенях. Рядом:")
+    with suite.case("cave_unnamed") as case:
+        results = await scenario.cave_scenario(link, dialogue, talk, whereabouts, live=case)
+    assert all(value.startswith("done") for value in results.values())
+    assert checks == ([False, True] if arrived else [False, False])
+    assert suite.results() == {"cave_unnamed": f"done ({outcome})"}
+    [case] = json.loads((tmp_path / "live.json").read_text())["cases"]
+    assert case["evidence"]["inside"] is arrived
+
+
 @pytest.mark.parametrize("suite_case", ["witness_alibi", "crime_testimony"])
 @pytest.mark.parametrize(("tool_outcome", "reply_status", "delivery", "outcome"), [
     ("accepted", "completed", "delayed", "success"),

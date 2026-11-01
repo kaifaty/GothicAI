@@ -60,7 +60,9 @@ from .lies import vanilla_lie as vanilla_lie
 from .lies import vanilla_spare as vanilla_spare
 from .lies import witness_check as witness_check
 from .lies import xardas_wrath as xardas_wrath
+from .live_director import live_director as live_director
 from .live_lies import live_lies as live_lies
+from .live_npc import live_npc as live_npc
 from .load import load_rewind as load_rewind
 from .memprobe import memprobe_scenario as memprobe_scenario
 from .neural_load import neural_load_scenario as neural_load_scenario

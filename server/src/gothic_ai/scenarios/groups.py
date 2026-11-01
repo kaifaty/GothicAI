@@ -131,6 +131,8 @@ GIVEN = {
 }
 
 LIVE = {
+    "live_npc",
+    "live_director",
     "live_lies",
     "haggle",
     "interject",

@@ -48,6 +48,7 @@ from .common import (
     model_off,
     wait_message,
 )
+from .live import LiveCase
 
 log = logging.getLogger("gothic_ai.scenarios")
 
@@ -859,6 +860,8 @@ async def rescue(
     planner: NpcPlanner | None = None,
     killer: str = "hero",
     dialogue: DialogueManager | None = None,
+    *,
+    live: LiveCase | None = None,
 ) -> dict[str, str]:
     """The shepherd's body and native scripts execute given reactions to a wolf and its death.
 
@@ -870,7 +873,9 @@ async def rescue(
 
     if dialogue is None:
         raise GameError("scenario rescue requires the shared dialogue backend")
-    off = model_off(dialogue)
+    off = model_off(dialogue) if live is None else None
+    if live is not None and planner is None:
+        raise GameError("live rescue requires the server behavioral planner")
     await link.wait_world()
     results: dict[str, str] = {}
     events: list[NpcEvent | PerceptionHeld] = []
@@ -882,9 +887,10 @@ async def rescue(
     link.listeners.append(event)
     fixed = FixedDecider(
         {"react": ("thank", "call_help", "comment")}, {"escalate": 3.6, "attitude": 4.0}, npcs=[npc],
-    )
+    ) if live is None else None
     runner = None
     if planner is None:
+        assert fixed is not None and off is not None
         planner = NpcPlanner(fixed, GameApplier(link))
         link.listeners.append(planner.on_message)
         runner = asyncio.create_task(planner.run())
@@ -892,12 +898,13 @@ async def rescue(
         IncidentDesk(link, dialogue, None, Budget(), None, planner=planner)
         await link.send(ThreatControlCmd(hold=True))
     original_decider = planner.decider
-    planner.decider = fixed
+    if fixed is not None:
+        planner.decider = fixed
     event_turn = dialogue.event_turn
 
     def silent_event(who: str, cue: str, *args: Any, **kwargs: Any) -> asyncio.Task[None] | None:
         turn = event_turn(who, cue, *args, **kwargs)
-        if turn is not None and who == npc:
+        if off is not None and turn is not None and who == npc:
             reason = next((text for text in (
                 "идёт на тебя", "напал на тебя", "враждебен и бежит на тебя",
                 "расправился с монстром", "герой подошёл к тебе",
@@ -906,7 +913,8 @@ async def rescue(
                 off.silent(f"дано: Малет молчит ({cue})", who=npc, when=reason)
         return turn
 
-    dialogue.event_turn = silent_event  # type: ignore[method-assign]
+    if live is None:
+        dialogue.event_turn = silent_event  # type: ignore[method-assign]
     recent = getattr(planner.applier, "recent", [])
     verdicts = getattr(planner.applier, "verdicts", [])
     doing: list[tuple[float, str]] = []
@@ -919,21 +927,31 @@ async def rescue(
 
     link.listeners.append(track)
     asked: list[tuple[float, tuple[str, ...], tuple[str, ...], str]] = []
-    decide = fixed.decide
+    deciding = planner.decider
+    decide = deciding.decide
+    answers: list[dict[str, Any]] = []
 
     async def recording(rid, lane, priority, deadline_ms, state, questions):  # noqa: ANN001, ANN202
+        started_at = time.monotonic()
+        stimuli: tuple[str, ...] = ()
         if rid.split("#", 1)[0].upper() == npc:
             rec = planner.npcs.get(npc)
             stimuli = tuple(stim.kind for stim in rec.stimuli) if rec else ()
-            asked.append((time.monotonic(), tuple(questions), stimuli, state))
+            asked.append((started_at, tuple(questions), stimuli, state))
         outcome = await decide(rid, lane, priority, deadline_ms, state, questions)
         if rid.split("#", 1)[0].upper() == npc:
             for question, answer in (outcome.answers or {}).items():
                 value = answer.get("choice", answer.get("score"))
-                log.info("given: дано: Малет отвечает %s=%s (FixedDecider)", question, value)
+                if live is None:
+                    log.info("given: дано: Малет отвечает %s=%s (FixedDecider)", question, value)
+            if live is not None:
+                answers.append({
+                    "at": started_at, "stimuli": list(stimuli), "questions": list(questions),
+                    "kind": outcome.kind, "answers": outcome.answers, "detail": outcome.detail,
+                })
         return outcome
 
-    fixed.decide = recording  # type: ignore[method-assign]
+    deciding.decide = recording  # type: ignore[method-assign]
 
     async def wait(check: Callable[[], Any], timeout: float) -> Any:
         for _ in range(int(timeout / 0.1)):
@@ -954,14 +972,44 @@ async def rescue(
             f"done ({rec.name} {rec.distance_cm / 100:.0f} m away, in view)"
             if rec else "failed (not in view)"
         )
+        if live is not None and not rec:
+            return _logged(results)
         await asyncio.sleep(2.0)
 
         mark, t0 = len(recent), time.monotonic()
+        deadline = t0 + 90
         await link.debug("spawn", instance="WOLF", near=npc, distance=-500)
-        request = await wait(lambda: requested(t0, "monster_near"), 15)
+        request = await wait(
+            lambda: requested(t0, "monster_near"),
+            max(0, deadline - time.monotonic()) if live is not None else 15,
+        )
         seen = ", ".join(dict.fromkeys(
             f"{entry.type}:{entry.kind}/{entry.other}" for entry in events
         )) or "none"
+        if live is not None:
+            await wait(
+                lambda: any(answer["at"] >= t0 and "react" in answer["questions"]
+                            and any(kind in {"monster_near", "monster_attack"}
+                                    for kind in answer["stimuli"]) for answer in answers),
+                max(0, deadline - time.monotonic()),
+            )
+            await asyncio.sleep(0.2)
+            await wait(lambda: not dialogue.speaking(npc), max(0, deadline - time.monotonic()))
+            rec = planner.npcs.get(npc)
+            live.finish("observed", evidence={
+                "decisions": [answer for answer in answers if answer["at"] >= t0],
+                "reactions": [
+                    {"choice": decision.choice, "target": decision.target,
+                     "stimuli": list(decision.stimuli), "latency_ms": decision.latency_ms}
+                    for decision in list(recent)[mark:] if decision.npc == npc
+                ],
+                "events": [entry.model_dump(mode="json") for entry in events],
+                "activities": [{"after_s": at - t0, "activity": activity}
+                               for at, activity in doing if at >= t0],
+                "stimuli": [stim.kind for stim in rec.stimuli] if rec else [],
+                "turns": live.turns(npc),
+            })
+            return _logged(results)
         results["threat_reaction"] = (
             f"done (react requested after {request[0] - t0:.3f} s; events: {seen})"
             if request else f"failed (no reaction request to the wolf; events: {seen}; "
@@ -1011,7 +1059,7 @@ async def rescue(
         )
         await asyncio.sleep(3.0)
     finally:
-        fixed.decide = decide  # type: ignore[method-assign]
+        deciding.decide = decide  # type: ignore[method-assign]
         planner.decider = original_decider
         dialogue.event_turn = event_turn  # type: ignore[method-assign]
         link.listeners.remove(event)
@@ -2183,6 +2231,8 @@ async def calm_scenario(
     parley: Parley,
     bandit: str = "BDT_1013_BANDIT_L",
     gang: tuple[str, ...] = ("BDT_1014_BANDIT_L", "BDT_1015_BANDIT_L"),
+    *,
+    live: LiveCase | None = None,
 ) -> dict[str, str]:
     """Talking an attacker down (the user, 2026-10-14: attacked by a bandit, he spoke to him and was told
     nobody heard; he wants to calm one with words). The bandit at the steps sets a 30-second ultimatum
@@ -2211,24 +2261,25 @@ async def calm_scenario(
     dialogue.journal.sink = keep
     fight = {"goal": "fight", "target": "PLAYER", "attitude": "hostile", "agenda": None}
     calm = {"goal": "none", "target": None, "attitude": "wary", "agenda": None}
-    off = model_off(dialogue)
-    off.given(
-        "дано: бандит ставит ультиматум о плате за проход", who=bandit, when="отойди с дороги",
-        calls=[ToolCall("ultimatum", {
-            "demand": "Заплати сто золотых за проход или уходи", "seconds": 30,
-        })],
-    )
-    off.given(
-        "дано: бандит нападает после отказа героя", who=bandit, when="Сам проваливай.",
-        calls=[ToolCall("set_intent", fight)],
-    )
-    off.silent("дано: бандит молчит (ультиматум передан)", who=bandit, when="отойди с дороги")
-    off.silent("дано: бандит молчит (решение напасть передано)", who=bandit, when="Сам проваливай.")
-    off.given(
-        "дано: бандит успокаивается на просьбу героя", who=bandit, when="Спокуха",
-        calls=[ToolCall("set_intent", calm)],
-    )
-    off.silent("дано: бандит молчит (решение успокоиться передано)", who=bandit, when="Спокуха")
+    if live is None:
+        off = model_off(dialogue)
+        off.given(
+            "дано: бандит ставит ультиматум о плате за проход", who=bandit, when="отойди с дороги",
+            calls=[ToolCall("ultimatum", {
+                "demand": "Заплати сто золотых за проход или уходи", "seconds": 30,
+            })],
+        )
+        off.given(
+            "дано: бандит нападает после отказа героя", who=bandit, when="Сам проваливай.",
+            calls=[ToolCall("set_intent", fight)],
+        )
+        off.silent("дано: бандит молчит (ультиматум передан)", who=bandit, when="отойди с дороги")
+        off.silent("дано: бандит молчит (решение напасть передано)", who=bandit, when="Сам проваливай.")
+        off.given(
+            "дано: бандит успокаивается на просьбу героя", who=bandit, when="Спокуха",
+            calls=[ToolCall("set_intent", calm)],
+        )
+        off.silent("дано: бандит молчит (решение успокоиться передано)", who=bandit, when="Спокуха")
 
     def state() -> str:
         e = talk.people.get(bandit)
@@ -2249,29 +2300,71 @@ async def calm_scenario(
             log.info("calm: kill %s: %s", other, err)
     await link.debug("teleport", near=bandit, distance=250)
     if not await _until(lambda: bandit in talk.people and talk.people[bandit].distance <= 500, 15):
+        if live is not None:
+            dialogue.journal.sink = sink
         return _logged({"near": f"failed ({bandit} is not near the hero)"})
 
-    talk.hear("Эй, ты! А ну отойди с дороги.", bandit, {"via": "scenario"})
-    required = await _until(lambda: bool(
-        (ultimatum := parley.ultimatum(bandit)) and ultimatum.get("status") == "active"
-    ), 20)
-    if not required:
-        check("attack", False, "no active ultimatum")
-        return _logged(results)
-    talk.hear("Сам проваливай.", bandit, {"via": "scenario"})
+    if live is not None:
+        dialogue.change_intent(
+            bandit, talk.people[bandit].name, body=False,
+            goal="fight", target="PLAYER", attitude="hostile",
+        )
+        await link.story_effect(bandit, [{"do": "attack", "reason": "AR_SUDDENENEMYINFERNO"}])
+    else:
+        talk.hear("Эй, ты! А ну отойди с дороги.", bandit, {"via": "scenario"})
+        required = await _until(lambda: bool(
+            (ultimatum := parley.ultimatum(bandit)) and ultimatum.get("status") == "active"
+        ), 20)
+        if not required:
+            check("attack", False, "no active ultimatum")
+            return _logged(results)
+        talk.hear("Сам проваливай.", bandit, {"via": "scenario"})
     attacked = await _until(
-        lambda: any(e["kind"] == "attack" for e in entries) and state() == "ZS_ATTACK", 20
+        lambda: (live is not None or any(e["kind"] == "attack" for e in entries))
+        and state() == "ZS_ATTACK", 20
     )
     check("attack", attacked, f"state {state()}")
 
+    if live is not None and not attacked:
+        dialogue.journal.sink = sink
+        return _logged(results)
     hp = await hero_hp()
-    talk.hear("Воу, воу, ты чего? Спокуха!", None, {"via": "scenario"})
+    line = "Воу, воу, ты чего? Спокуха!"
+    deadline = time.monotonic() + 90
+    talk.hear(line, None, {"via": "scenario"})
     to = talk.last[0] if talk.last else None
     check(
         "addressed",
         to is not None and to.id == bandit and to.why == "attacker",
         f"{to.why if to else 'nobody'}",
     )
+    if live is not None:
+        from ..executor import parse_intent
+
+        try:
+            answered = await live.wait_turn(dialogue, bandit, line)
+            calls = [call for turn in live.turns(bandit, line)
+                     for step in turn.get("steps", []) for call in step.get("calls", [])
+                     if call.get("name") == "set_intent"]
+            peaceful = [call for call in calls if call.get("outcome") == "accepted"
+                        and parse_intent(call.get("arguments", {})).goal != "fight"]
+            if peaceful:
+                await _until(
+                    lambda: any(e["kind"] == "calm" for e in entries),
+                    max(0, deadline - time.monotonic()),
+                )
+            snap = await link.snapshot(bandit, fresh=True)
+            live.finish("observed", evidence={
+                "answered": answered, "set_intent": calls,
+                "calmed": bool(peaceful and any(e["kind"] == "calm" for e in entries)
+                               and state() != "ZS_ATTACK"),
+                "npc_state": state(), "npc_action": snap.npc.action,
+                "hero_hp_before": hp, "hero_hp_after": await hero_hp(),
+                "events": entries, "turns": live.turns(bandit, line),
+            })
+            return _logged(results)
+        finally:
+            dialogue.journal.sink = sink
     await _until(lambda: any(e["kind"] == "calm" for e in entries), 20)
     stopped = await _until(lambda: state() != "ZS_ATTACK", 10)
     check("stopped", stopped, f"state {state()}")
