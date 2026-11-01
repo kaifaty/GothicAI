@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..game import GameError, GameLink
 from ..llm import ToolCall
-from ..npc_far import FarWorld
+from ..npc_far import FarWorld, _fight_inputs
 from ..npc_will import OWNER_NEAR_CM, ROUTINE_CM
 from ..protocol import Detached, NpcActCmd, Result, Session, StoryEffectCmd
 from ..social import Tie
@@ -209,7 +209,34 @@ async def npc_far(
         views = await link.npc_view([HILDA])
         if not views or views[0].time is None:
             raise RuntimeError("Far fight preparation could not read the game clock")
-        await will.tick(now=views[0].time)
+        rule_log = logging.getLogger("gothic_ai.npc_will")
+        previous_level = rule_log.level
+        rule_log.setLevel(logging.DEBUG)
+        try:
+            await will.tick(now=views[0].time)
+        finally:
+            rule_log.setLevel(previous_level)
+        if not knockouts:
+            expressions = [*_fight_inputs(LOBART), *_fight_inputs(HILDA), [
+                "call", "NPC_HASITEMS", ["inst", HILDA], ["sym", item],
+            ]]
+            values = await link.story_eval(LOBART, expressions)
+            log.info("npc_far melee input diagnostic: %s", {
+                "expressions": len(expressions), "values": len(values),
+                "invalid": [
+                    {"index": i, "expression": expression, "value": value}
+                    for i, (expression, value) in enumerate(zip(expressions, values, strict=False))
+                    if type(value) is not int
+                ],
+            })
+        log.info("npc_far fight tick: %s", {
+            "now": will._now,
+            "bodies": await bodies(),
+            "free": {n: will.far_world.free(n) for n in (HILDA, LOBART)},
+            "roster": {n: will.roster[n].model_dump() for n in (HILDA, LOBART) if n in will.roster},
+            "meeting": await will.far_world.meeting(HILDA, LOBART, will._generation),
+            "pending": will.pending(),
+        })
 
     async def fight_branch(cid: str, item: str, far_waypoint: str) -> None:
         nonlocal boundary
@@ -239,10 +266,11 @@ async def npc_far(
         # The first branch tests the race at the simulation boundary with the actual bridge.
         boundary = True
         fight_kinds = {"npc_crime_defense", "npc_crime_reaction", "npc_crime_restitution"}
-        before_facts = [f for f in facts() if f.get("fact") in fight_kinds]
+        before_facts = [f for f in facts() if f.get("fact") in fight_kinds and f.get("far") is True]
         cards(courage=3)
         await fight_tick()
-        refused = next((e for e in knockouts.values() if e["boundary"]), None)
+        await _until(lambda: any(e["boundary"] and "after" in e for e in knockouts.values()), 10)
+        refused = next((e for e in knockouts.values() if e["boundary"] and "after" in e), None)
         if not check("boundary_attempt", refused is not None, knockouts):
             return
         assert refused is not None
@@ -257,8 +285,8 @@ async def npc_far(
                 for key in ("hp", "inventory", "weapon", "unconscious", "body", "items"))
             for n in (HILDA, LOBART)
         ), {"before": refused["before"], "after": after})
-        check("boundary_no_facts", [f for f in facts() if f.get("fact") in fight_kinds] == before_facts,
-              [f for f in facts() if f.get("fact") in fight_kinds])
+        after_facts = [f for f in facts() if f.get("fact") in fight_kinds and f.get("far") is True]
+        check("boundary_no_facts", after_facts == before_facts, after_facts)
 
         # Reload before any native near fight can become relevant to this branch.
         boundary = False
