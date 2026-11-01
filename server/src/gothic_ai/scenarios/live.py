@@ -82,6 +82,7 @@ CASE_SPECS = {
         CaseSpec(
             "C_brago", "Brago accepts the humiliating surrender, humiliates the hero and stops fighting", 3
         ),
+        CaseSpec("C_band", "Brago accepts surrender addressed to his mate and both bandits stop fighting", 4),
     ),
     "showrunner_live": tuple(
         CaseSpec(name, "The occasion produces a canon-approved line built and played to completion", 8)
