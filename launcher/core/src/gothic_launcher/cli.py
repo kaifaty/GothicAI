@@ -228,6 +228,7 @@ REMOTE_PROFILE: dict[str, Any] = {
     "llm.backend": "chatgpt",
     "llm.quick": False,
     "llm.decider_url": None,
+    "llm.embed_url": None,
     "llm.quick_url": None,
     "llm.body_url": None,
     "voice.enabled": True,
@@ -508,7 +509,8 @@ def _smoke_settings(config: Config) -> None:
     """A single quota-free run; never write these overrides to settings.toml."""
     llm = config.settings.llm
     llm.backend, llm.model, llm.base_url = "fake", None, None
-    llm.decider_url, llm.quick_url, llm.body_url, llm.quick = None, None, None, False
+    llm.decider_url, llm.quick_url, llm.body_url, llm.embed_url = None, None, None, None
+    llm.quick = False
     llm.body_policy, llm.body_net = "service", None
     config.settings.voice.enabled = False
     config.settings.tts.enabled = False
