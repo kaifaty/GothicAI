@@ -68,7 +68,7 @@ class MdlVisual final {
     // the shot leaves from there)
     void                           dropAmmo();
     bool                           hasAmmoShown() const { return !ammunition.view.isEmpty(); }
-    void                           setSlotItem   (MeshObjects::Mesh&& itm,  std::string_view bone);
+    void                           setSlotItem   (MeshObjects::Mesh&& itm,  std::string_view bone, int32_t material = 0);
     void                           setStateItem  (MeshObjects::Mesh&& itm,  std::string_view bone);
     void                           clearSlotItem (std::string_view bone);
     bool                           setFightMode  (asset::MdsFightMode mode);
@@ -227,6 +227,7 @@ class MdlVisual final {
       };
     struct MeshAttach : Attach<MeshObjects::Mesh> {
       const ProtoMesh* deferredProto = nullptr;
+      int32_t deferredMaterial = 0;
       };
     using PfxAttach  = Attach<Effect>;
 

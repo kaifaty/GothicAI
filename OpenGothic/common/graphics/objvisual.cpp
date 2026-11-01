@@ -482,9 +482,9 @@ bool ObjVisual::renderPosition(Tempest::Vec3& out) const {
   return false;
   }
 
-void ObjVisual::setSlotItem(MeshObjects::Mesh&& itm, std::string_view slot) {
+void ObjVisual::setSlotItem(MeshObjects::Mesh&& itm, std::string_view slot, int32_t material) {
   if(type==M_Mdl)
-    mdl.view.setSlotItem(std::move(itm), slot);
+    mdl.view.setSlotItem(std::move(itm), slot, material);
   }
 
 void ObjVisual::setInteractive(Interactive* it) {

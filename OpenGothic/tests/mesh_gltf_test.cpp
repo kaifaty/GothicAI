@@ -97,6 +97,7 @@ struct MeshGltfTest {
   static Tempest::Matrix4x4 modelMatrix(const ObjVisual& visual) { return visual.mdl.view.view.node(0).position(); }
   static bool modelSlotDrawable(const ObjVisual& visual) { return !visual.mdl.view.item.at(0).view.isEmpty(); }
   static Tempest::Matrix4x4 modelSlotMatrix(const ObjVisual& visual) { return visual.mdl.view.item.at(0).view.node(0).position(); }
+  static const Tempest::Texture2d* modelSlotTexture(const ObjVisual& visual) { return visual.mdl.view.item.at(0).view.node(0).material().tex; }
   static const ProtoMesh* modelSlotProto(const ObjVisual& visual) { return visual.mdl.view.item.at(0).deferredProto; }
   static bool startModelAnimation(ObjVisual& visual, const Animation::Sequence& sequence) {
     return visual.mdl.view.pose().startAnim(visual.mdl.view.solver,&sequence,0,BS_NONE,Pose::Force,0);
@@ -1709,8 +1710,17 @@ void mobsiVobLifetime(Tempest::Device& device) {
   ObjVisual visual;
   const Tempest::Vec3 near={100,100,100},outside={1000000,0,1000000};
   MeshGltfTest::attachModel(visual,view,proto,near);
-  const auto* slotProto=Resources::loadMesh("OWN_OPAQUE.3DS");
-  visual.setSlotItem(view.addView(slotProto),"ZS_POS0");
+  const auto* slotProto=Resources::loadMesh("OWN_SLOT.3DS");
+  require(slotProto!=nullptr && slotProto->attach.size()==1 && slotProto->attach[0].sub.size()==1,
+          "mobsi slot fixture must have a textured mesh");
+  auto slotView=view.addView("OWN_SLOT.3DS",1,0,1);
+  require(!slotView.isEmpty(),"mobsi slot fixture must create the requested material variant");
+  const auto* slotTexture=slotView.node(0).material().tex;
+  require(slotTexture==Resources::loadMaterialAlbedo("SLOT_V1.TGA") &&
+          slotTexture!=slotProto->attach[0].sub[0].material.tex,
+          "mobsi slot fixture must select a texture distinct from its prototype's default material");
+  visual.setSlotItem(std::move(slotView),"ZS_POS0",1);
+  const std::array textures={texture,slotTexture};
   auto* pose=&MeshGltfTest::modelPose(visual);
   require(!MeshGltfTest::modelDrawable(visual) && !MeshGltfTest::modelSlotDrawable(visual) &&
           MeshGltfTest::modelSlotProto(visual)==slotProto && pose->boneCount()==skeleton->nodes.size() &&
@@ -1725,13 +1735,16 @@ void mobsiVobLifetime(Tempest::Device& device) {
     Resources::updateTextures(&residency);
     };
   const auto textureWidth=[&](const Tempest::Vec3& position, int width) {
+    const auto matches=[&] {
+      return std::all_of(textures.begin(),textures.end(),[&](auto* item) { return item->w()==width; });
+      };
     const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(5);
-    while(texture->w()!=width && std::chrono::steady_clock::now()<deadline) {
+    while(!matches() && std::chrono::steady_clock::now()<deadline) {
       update(position);
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
       }
-    require(texture->w()==width,width==1 ? "Outside mobsi must release body texture demand" :
-                                         "Near mobsi must restore body texture demand");
+    require(matches(),width==1 ? "Outside mobsi must release body and slot variant texture demand" :
+                                "Near mobsi must restore body and slot variant texture demand");
     };
   size_t clusters=0;
   for(size_t cycle=0;cycle<2;++cycle) {
@@ -1744,6 +1757,8 @@ void mobsiVobLifetime(Tempest::Device& device) {
                "a newly published mobsi body must use its current bone pose");
     sameMatrix(MeshGltfTest::modelSlotMatrix(visual),visual.bone(slot),
                "an item inserted outside residency must appear on its current posed attachment point");
+    require(MeshGltfTest::modelSlotTexture(visual)==slotTexture,
+            "republishing a mobsi slot item must preserve its selected material variant");
     textureWidth(near,4);
     if(cycle==0)
       clusters=view.clusters().size();
@@ -1770,7 +1785,8 @@ void mobsiVobLifetime(Tempest::Device& device) {
   sameMatrix(MeshGltfTest::modelSlotMatrix(visual),visual.bone(slot),
              "returning Near must restore the slot item at its current animated attachment point");
   require(view.clusters().size()==clusters && residency.stats().vobNearMissing==0 &&
-          &MeshGltfTest::modelPose(visual)==pose && visual.animNames()==animationState,
+          &MeshGltfTest::modelPose(visual)==pose && visual.animNames()==animationState &&
+          MeshGltfTest::modelSlotTexture(visual)==slotTexture,
           "recreating a mobsi body must neither accumulate instances nor reset its animation");
   update(outside);
   textureWidth(outside,1);
@@ -1790,6 +1806,8 @@ void maskBc1Policy(const Fixture& fixture) {
   textFile(fixture.root/"materials/materials.json",R"({
     "OWN_TEST_BARREL_WOOD.TGA":{"albedo":"transparent-bc1.dds"},
     "ORIGINAL.TGA":{"albedo":"transparent-bc1.dds"},
+    "SLOT_V0.TGA":{"albedo":"transparent-bc1.dds"},
+    "SLOT_V1.TGA":{"albedo":"opaque-bc3.dds"},
     "OPAQUE_BC1.TGA":{"albedo":"opaque-bc1.dds"},
     "OPAQUE_BC3.TGA":{"albedo":"opaque-bc3.dds"}
   })");
@@ -1812,6 +1830,9 @@ void maskBc1Policy(const Fixture& fixture) {
   glbFile(fixture.root/"meshes/test/own.glb",options);
   glbFile(fixture.root/"meshes/test/opaque.glb");
   options = {};
+  options.texture = "SLOT_V0.TGA";
+  glbFile(fixture.root/"meshes/test/slot.glb",options);
+  options = {};
   options.rotated = true;
   glbFile(fixture.root/"meshes/test/oblique.glb",options);
   const auto rotation = modelFiles(fixture);
@@ -1825,6 +1846,7 @@ void maskBc1Policy(const Fixture& fixture) {
   fixture.index(R"({
     "OWN_MESH":{"glb":"test/own.glb"},
     "OWN_OPAQUE":{"glb":"test/opaque.glb"},
+    "OWN_SLOT":{"glb":"test/slot.glb"},
     "OWN_MODEL_ROTATION":{"glb":"test/opaque.glb"},
     "OWN_MODEL_MASK":{"glb":"test/own.glb"},
     "OWN_MODEL_SCALED":{"glb":"test/oblique.glb"},

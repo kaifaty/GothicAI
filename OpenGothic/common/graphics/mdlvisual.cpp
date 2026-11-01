@@ -379,7 +379,7 @@ void MdlVisual::setVisualBody(WorldView& owner, MeshObjects::Mesh&& body) {
   view.setPose(pos,*skInst);
   for(auto& slot:item)
     if(slot.deferredProto!=nullptr) {
-      slot.view=owner.addView(slot.deferredProto);
+      slot.view=owner.addView(slot.deferredProto->fname,slot.deferredMaterial,0,slot.deferredMaterial);
       if(textureOwnerKnown)
         slot.view.setTextureOwner(textureOwnerPosition,textureOwnerSpatial);
       }
@@ -551,7 +551,7 @@ void MdlVisual::setMagicWeaponKey(World& owner, SpellFxKey key, int32_t keyLvl) 
   pfx.view.setKey(owner,key,keyLvl);
   }
 
-void MdlVisual::setSlotItem(MeshObjects::Mesh &&itm, std::string_view bone) {
+void MdlVisual::setSlotItem(MeshObjects::Mesh &&itm, std::string_view bone, int32_t material) {
   if(textureOwnerKnown)
     itm.setTextureOwner(textureOwnerPosition,textureOwnerSpatial);
   if(bone.empty() || skeleton==nullptr)
@@ -568,6 +568,7 @@ void MdlVisual::setSlotItem(MeshObjects::Mesh &&itm, std::string_view bone) {
   for(auto& i:item) {
     if(i.boneId==id) {
       i.deferredProto=itm.protoMesh();
+      i.deferredMaterial=material;
       if(bodyDetached)
         itm={};
       i.view=std::move(itm);
@@ -579,6 +580,7 @@ void MdlVisual::setSlotItem(MeshObjects::Mesh &&itm, std::string_view bone) {
   MeshAttach slt;
   slt.bone = skeleton->nodes[id].name;
   slt.deferredProto=itm.protoMesh();
+  slt.deferredMaterial=material;
   if(bodyDetached)
     itm={};
   bind(slt,std::move(itm),slt.bone);

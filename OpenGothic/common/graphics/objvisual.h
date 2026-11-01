@@ -29,7 +29,7 @@ class ObjVisual {
     void setupFracture(World& world, DynamicWorld::Item& body);
     bool renderPosition(Tempest::Vec3& out) const;
 
-    void setSlotItem(MeshObjects::Mesh&& itm, std::string_view slot);
+    void setSlotItem(MeshObjects::Mesh&& itm, std::string_view slot, int32_t material = 0);
 
     void setInteractive(Interactive* it);
 
