@@ -1764,7 +1764,8 @@ class DebugCmd(_Command):
     player draw (`state: "melee"`) or put away (`"none"`) a weapon; move the player to a `waypoint` (or to
     the nearest one at least `distance` cm from `near`, or one `distance` cm off the npc `to`); put the
     player on the ground `distance` cm in front of an npc (`teleport`, `near`), facing it; `kill` an `npc`
-    (killed by no one), or the living creature of an `instance` closest to `near` (default the player) by
+    (killed by no one; PLAYER: the hero, by `by` if given), or the living creature of an `instance` closest
+    to `near` (default the player) by
     the hand of `by` (default the player, in melee: npc's around and the killer perceive it like a deadly
     hit); make an npc's important dialogs count as told (`skip_important`, `near`: it will not stop the
     player to talk); set the clock to `hour`:`minute` (`time`, the next day if that is earlier, like

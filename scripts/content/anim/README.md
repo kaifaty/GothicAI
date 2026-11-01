@@ -7,7 +7,7 @@
 - `gothic_anim.py` — чтение и запись скелета (`*.MDH`), анимаций (`*.MAN`, `quantized16` и `float32`) и тела с весами (`*.MDM`) из базы. Чистый Python с numpy, работает и в Blender.
 - `retarget_soma.py` — перенос движения SOMA (выход Kimodo, 30 или 77 суставов) на скелет `BIP01`. Обратный перевод позы Готики в SOMA нужен для ограничений.
 - `kimodo_moves.py` + `moves-probe.json` — папки генерации Kimodo: запрос и ограничения. Каждый ход начинается в стойке Готики и, если не задан `end_free`, кончается в ней же со сдвигом `travel`.
-- `run_kimodo.sh` — прогон всех папок на `dev-ubuntu`.
+- `run_kimodo.sh` — прогон всех папок на `dev-ubuntu`; `kimodo_textencoder_local.py` — текстовый кодировщик Kimodo на локальных копиях моделей.
 - `blender/gothic_rig.py` — риг Готики в Blender: скелет, тело и анимации как действия. Рендерит кадры с боку, спереди, сзади и в три четверти. Камера идёт за корнем, на полу метровая сетка.
 - `test_anim_tools.py` — круг записи `MAN` и ретаргет. Ретаргет проверяется по направлениям костей и по кругу стойки через SOMA.
 
@@ -52,7 +52,7 @@ python3 scripts/content/anim/retarget_soma.py out_00.npz $B/HUMANS.MDH.json /abs
 `<soma.npz>` — любой выход Kimodo: из него берутся смещения покоя SOMA.
 
 Kimodo стоит на `dev-ubuntu` в `~/gothic-ai/kimodo/`: свой venv, без сервиса.
-- Его текстовому кодировщику нужна закрытая `meta-llama/Meta-Llama-3-8B-Instruct`. Доступ к ней даёт вход на Hugging Face на `dev-ubuntu`.
+- Его текстовый кодировщик — LLM2Vec на `Meta-Llama-3-8B-Instruct`. Meta закрывает модель формой, поэтому копии лежат в `~/gothic-ai/kimodo/models/`: открытая копия `NousResearch/Meta-Llama-3-8B-Instruct` (SHA-256 всех четырёх файлов весов совпадают с репозиторием Meta) и оба адаптера LLM2Vec. Лицензия Llama 3 на них действует. `kimodo_textencoder_local.py` запускает сервер Kimodo на этих копиях; его копия лежит рядом с `run_kimodo.sh`.
 - Кодировщик работает на CPU, около 16 ГБ памяти, с ограничением 22 ГБ. Генерация занимает меньше 3 ГБ видеопамяти.
 
 Файлы `.blend` и кадры с телом Готики — оригинальный контент: в git их нет.

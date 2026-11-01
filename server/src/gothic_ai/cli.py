@@ -1034,7 +1034,7 @@ async def serve(args: argparse.Namespace) -> int:
             and state.feats.artist is not None else DEFAULT_ROOT,
         )
         state.fate_cards = FateCards(
-            link, state.chronicle, llm, enabled=not args.no_feats and not args.no_fate_card,
+            link, state.chronicle, llm, enabled=state.feats is not None and not args.no_fate_card,
             art_root=state.fates.art_root,
         )
         if not args.no_crimes:
