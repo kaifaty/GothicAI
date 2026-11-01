@@ -137,7 +137,7 @@ def test_v51_combat_hit_reports_actual_health_loss(kind):
 
 
 def test_v50_svm_lines_keep_the_native_meaning_and_addressee():
-    assert PROTOCOL_VERSION == 57
+    assert PROTOCOL_VERSION == 58
     msg = parse_game_message(_json({
         "type": "svm_line", "id": "svm-1", "npc": "X", "svm": "$KILLENEMY",
         "text": "Ещё одним монстром меньше.", "target": "WOLF", "overlay": True,
@@ -796,7 +796,9 @@ def test_v37_physical_traces_and_noise_clock():
         "hero_cm",
         "from_hero",
         "age",
+        "npc",  # v58: only a body's, whose body it is; never who caused a trace
     }
+    assert trace.npc is None
     legacy = parse_game_message('{"type":"npc_views","t":1,"views":[{"npc":"X","name":"x"}]}')
     assert isinstance(legacy, NpcViews) and legacy.views[0].traces == []
     noise = parse_game_message('{"type":"npc_event","npc":"X","kind":"noise","time":725}')
@@ -842,5 +844,6 @@ def test_v40_broken_trace_has_age_and_no_culprit(age):
     assert (trace.kind, trace.name, trace.age) == ("broken", "сломанный забор", age)
     assert trace.waypoint == "NW_FARM1_OUT_02" and trace.distance == 210
     assert set(trace.model_dump()) == {
-        "id", "kind", "name", "waypoint", "distance", "hero_cm", "from_hero", "age",
+        "id", "kind", "name", "waypoint", "distance", "hero_cm", "from_hero", "age", "npc",
     }
+    assert trace.npc is None  # v58's field is a dead body's id, absent from debris

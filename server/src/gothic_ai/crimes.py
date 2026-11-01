@@ -545,6 +545,37 @@ class Crimes:
                 out.append(fact)
         return out
 
+    def suspect_body(self, npc: str, body: str, trace: str, *, died: int, place: str) -> list[Fact]:
+        """A body found plus the hero remembered at its place within half an hour of the death is
+        suspicion of murder, by the chest's rule; never proof, and never who really killed him."""
+        if self.sightings is None:
+            return []
+        npc, body = npc.upper(), body.upper()
+        out = []
+        for s in self.sightings.present(npc, place, died, SUSPECT_MIN, skip={body}):
+            if s.who not in HERO:
+                continue  # people and creatures are NpcCrimes.suspect_body's, in their own namespace
+            if any(
+                f.get("npc") == npc and f.get("crime") == "murder" and f.get("body") == body
+                and f.get("suspect") == s.who
+                for f in self.chronicle.facts("crime_suspected")
+            ):
+                continue
+            fact = {
+                "fact": "crime_suspected",
+                "npc": npc,
+                "crime": "murder",  # no deed id: the server does not know whose deed it was
+                "suspect": s.who,
+                "body": body,
+                "trace": trace,
+                "died": died,
+                "place": place,
+                "sighting": s.record(),
+            }
+            self.chronicle.record(fact)
+            out.append(fact)
+        return out
+
     def concerns(self, npc: str) -> list[Concern]:
         from .concerns import Concern
 

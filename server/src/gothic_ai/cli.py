@@ -65,6 +65,7 @@ from .fatecard import FateCards
 from .fates import Fates
 from .feat_art import DEFAULT_ROOT, Artist
 from .feats import Feats
+from .found_traces import FoundTraces
 from .game import GameError, GameLink, GameServer
 from .gamedata import storygraph
 from .gamedata.ou import load_npc_lines
@@ -295,6 +296,7 @@ class ServerState:
         self.day: DayDesk | None = None
         self.perception: PerceptionDesk | None = None
         self.sightings: Sightings | None = None
+        self.found_traces: FoundTraces | None = None
         self.whereabouts: Whereabouts | None = None
         self.lore: lore.Lore | None = None
         self.guide: Guide | None = None
@@ -1166,6 +1168,12 @@ async def serve(args: argparse.Namespace) -> int:
             enabled=not args.no_crimes and not args.no_npc_crimes,
         )
         link.npc_crime_check = state.npc_crimes.check_command
+        if not args.no_found_traces:
+            # a body first seen is a find: a stimulus, and suspicion by evidence (stage 8 step 4б)
+            assert state.sightings is not None
+            state.found_traces = FoundTraces(
+                state.sightings, crimes=state.crimes, npc_crimes=state.npc_crimes, journal=journal,
+            )
         if state.crimes is not None:
             state.blame = Blame(
                 link, state.chronicle, state.crimes, state.npc_crimes, state.dialogue, journal=journal,
@@ -1481,6 +1489,8 @@ async def serve(args: argparse.Namespace) -> int:
             )
             planner.crime_rooms = state.crimes is not None
             state.incidents.follow(planner)  # free npc's speak when the moment calls for it
+            if state.found_traces is not None:
+                state.found_traces.follow(planner)  # a free npc decides what to do about a body it found
             state.talk.planner = planner  # npc's in a conversation are left to it; others overhear
             link.listeners.append(planner.on_message)
             # what the npc wants from the hero, from the conversation, steers it afterwards
@@ -1934,6 +1944,13 @@ async def serve(args: argparse.Namespace) -> int:
                 )
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info("scenario npc_far: %d checks, %d failed", len(results), len(bad))
+                exit_code = 1 if bad else 0
+            elif args.scenario == "body_found":
+                assert state.sightings is not None and state.found_traces is not None
+                assert state.crimes is not None
+                results = await scenarios.body_found(link, state.sightings, state.found_traces, state.crimes)
+                bad = {k: v for k, v in results.items() if not v.startswith("done")}
+                log.info("scenario body_found: %d checks, %d failed", len(results), len(bad))
                 exit_code = 1 if bad else 0
             elif args.scenario == "frame":
                 assert state.npc_will is not None and state.chests is not None
@@ -3349,6 +3366,7 @@ def main() -> None:
             "npc_director",
             "npc_will",
             "npc_far",
+            "body_found",
             "frame",
             "crime_meet",
             "crime_ally",
@@ -3479,6 +3497,11 @@ def main() -> None:
     )
     p.add_argument(
         "--no-cover", action="store_true", help="disable witness cover deals and fear of testifying"
+    )
+    p.add_argument(
+        "--no-found-traces",
+        action="store_true",
+        help="a body first seen is only a trace: no trace_found stimulus and no suspicion of murder",
     )
     p.add_argument(
         "--no-occasions", action="store_true", help="do not watch for the director's story occasions"
