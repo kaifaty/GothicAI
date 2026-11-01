@@ -59,6 +59,7 @@ struct MeleeBladeContact final {
   bool world = false;
   bool stopsSwing = false;
   bool windup = false;     // a wall met by a blade going back or up (wind-up, follow-through): passed
+  uintptr_t movableVob = 0; // world contact with a movable vob body: its snapshot id, else zero
   uint64_t step = 0;
   };
 
@@ -475,9 +476,15 @@ class DynamicWorld final {
     std::shared_ptr<const MovableVobPose> movableVobPose(uint32_t zenId) const;
     std::shared_ptr<const MovableVobPose> rayMovableVob(const Tempest::Vec3& from, const Tempest::Vec3& to) const;
     // One animation's optimal hit frame: each first-contact body takes damage once.
+    // `struck`, when given, holds the snapshot ids this swing already struck: they are
+    // skipped, and every body struck here is appended.
     size_t         meleeMovableVobs(const Tempest::Vec3& origin, const Tempest::Vec3& forward,
                                     float rangeCm, float weaponDamage, float strength, FractureRule::Melee kind,
-                                    Npc* attacker = nullptr);
+                                    Npc* attacker = nullptr, std::vector<uintptr_t>* struck = nullptr);
+    // A blow stopped by an intact destructible movable vob: the board takes that strike at
+    // the contact point (same rule as the hit frame), once per swing per body.
+    bool           meleeStoppedMovableVob(const MeleeBladeContact& contact, float weaponDamage, float strength,
+                                          FractureRule::Melee kind, Npc* attacker, std::vector<uintptr_t>& struck);
     struct MovableVobSnapshot {
       uintptr_t          id = 0;
       uint32_t           zenId = uint32_t(-1);
@@ -693,6 +700,9 @@ class DynamicWorld final {
     bool           hasCollision(const NpcItem &it, CollisionTest& out);
     void           prepareMovableVobShape(BodyData& body);
     void           rebuildMovableVob(BodyData& body);
+    bool           meleeEligible(const BodyData& body) const;
+    bool           meleeStrike(BodyData& body, const Tempest::Vec3& direction, const Tempest::Vec3& point,
+                               float weaponDamage, float strength, FractureRule::Melee kind, Npc* attacker);
     void           validateMovableVobs();
     void           syncMovableVob(BodyData& body);
     void           damageMovableVob(BodyData& body, float impulse, const Tempest::Vec3& point, bool arrow = false,
