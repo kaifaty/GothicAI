@@ -9,6 +9,8 @@ start, the active phase and the recovery are squeezed by different amounts. The 
 key. --sword-arm blends the right clavicle, upper arm, forearm and hand towards the stance's local
 rotations (0 keeps Kimodo's, 1 is the stance's); the finger always comes from the stance, since it
 holds the hilt. Kimodo knows nothing of the sword, so its wrist swings the blade through the body.
+--clear-sword (rolls) then moves that held arm aside where it would put the hand or the blade into the floor or
+the body: the stance arm turns with the chest and in a tumble went up to 70 cm under the floor.
 """
 from __future__ import annotations
 
@@ -193,6 +195,200 @@ def hold_arm(anim: ga.Animation, skel: ga.Skeleton, ref: ga.Animation, weights: 
         anim.rotations[:, j] = slerp(anim.rotations[:, j], target, np.full(anim.frame_count, w))
 
 
+DETOUR = 4  # steps of 5° past a forearm's smallest clearing shoulder turn that the path may take
+STEP = 6.0  # a step of x° between two frames costs x²/STEP: 6° as much as 6° off the held arm, 60° ten times more
+BLADE_CM = 90.0  # a long 1H sword lies along ZS_RIGHTHAND's +X: the base's sword meshes run 1-89 cm along it
+# What the sword arm keeps out of: capsules (from node, to node, radius cm); the head's runs 14 cm past its node.
+# The last is the torso's shadow on the floor: a blade kept just off the floor slid under the rolling body.
+BODY = (("BIP01 PELVIS", "BIP01 NECK", 14.0), ("BIP01 NECK", "BIP01 HEAD", 11.0), ("BIP01 HEAD", None, 11.0),
+        ("BIP01 L THIGH", "BIP01 L CALF", 8.0), ("BIP01 L CALF", "BIP01 L FOOT", 6.0),
+        ("BIP01 R THIGH", "BIP01 R CALF", 8.0), ("BIP01 R CALF", "BIP01 R FOOT", 6.0), ("BIP01 PELVIS", "BIP01 NECK", 18.0))
+
+
+def fibonacci_sphere(n: int) -> np.ndarray:
+    i = np.arange(n) + 0.5
+    y = 1 - 2 * i / n
+    r, a = np.sqrt(1 - y * y), np.pi * (1 + 5 ** 0.5) * i
+    return np.stack([r * np.cos(a), y, r * np.sin(a)], axis=1)
+
+
+def rotvec_matrix(v: np.ndarray) -> np.ndarray:
+    """Rotation matrices from rotation vectors (axis times angle in radians), any leading shape."""
+    angle = np.linalg.norm(v, axis=-1)[..., None, None]
+    k = v / np.maximum(angle[..., 0], 1e-12)
+    kx = np.zeros(v.shape[:-1] + (3, 3))
+    kx[..., 0, 1], kx[..., 0, 2], kx[..., 1, 2] = -k[..., 2], k[..., 1], -k[..., 0]
+    kx = kx - np.swapaxes(kx, -1, -2)
+    return np.eye(3) + np.sin(angle) * kx + (1 - np.cos(angle)) * kx @ kx
+
+
+def axis_matrix(axis: np.ndarray, angle: float) -> np.ndarray:
+    return rotvec_matrix(axis / max(np.linalg.norm(axis), 1e-12) * angle)
+
+
+def clear_sword(anim: ga.Animation, skel: ga.Skeleton, floor: float, hand: float = 5.0, blade: float = 5.0,
+                spare: float = 4.0) -> dict:
+    """Keep the sword hand and the blade off the floor and out of the body: in a roll the held stance arm turns
+    with the chest and drove the hand 4-38 cm and the blade 35-52 cm under the floor.
+
+    A clear arm puts the elbow and the fist `hand` cm and every point of the blade `blade` cm over `floor`, the
+    blade clear of the torso, head and legs and of the floor under the torso, the fist clear of the torso and head. To get there the arm may
+    twist the forearm about its own axis (up to 90°, which turns the blade about the arm), bend the elbow more
+    (up to 50°, never past 150°) and turn as a whole at the shoulder; the wrist keeps its bend. Each frame offers
+    its smallest clear changes, and the path through the frames pays for every change (a degree at the shoulder
+    twice a degree of twist or bend) and for the square of every step between frames, so the arm moves aside
+    early and smoothly instead of flipping. A changed arm is asked `spare` cm more, which a light smoothing then
+    spends. The first and the last frame are the stance and stay. Returns the worst clearance (cm) before and
+    after, the stance's own (0 unless it already holds the blade within the margins) and the biggest changes."""
+    names = [nd.name for nd in skel.nodes]
+    need = ("BIP01 R UPPERARM", "BIP01 R FOREARM", "BIP01 R HAND", "ZS_RIGHTHAND", "BIP01 NECK")
+    if any(x not in names for x in need):
+        return {}
+    ua, fa, hd, slot, neck = (names.index(x) for x in need)
+    fist = [hd, slot] + ([names.index(FINGER)] if FINGER in names else [])
+    caps = [(names.index(a), names.index(b) if b else None, r)
+            for a, b, r in BODY if a in names and (b is None or b in names)]
+    n = anim.frame_count
+    worlds = [ga.world_pose(skel, anim, f) for f in range(n)]
+    twists = np.radians(np.arange(-90, 91, 15))
+    bends = np.radians([0.0, 25.0, 50.0])
+    axes = fibonacci_sphere(200)
+    angles = np.radians(np.arange(5, 181, 5))
+    turns = rotvec_matrix(axes[None] * angles[:, None, None])  # (angles, axes, 3, 3)
+
+    def gap(x, cap):  # distance of points x (..., 3) to a capsule's surface
+        a, b, r = cap
+        ab = b - a
+        t = np.clip(((x - a) @ ab) / max(ab @ ab, 1e-9), 0, 1)
+        return np.linalg.norm(x - (a + t[..., None] * ab), axis=-1) - r
+
+    def clearance(q, body, extra):
+        """Worst margin of arm points q (..., 14, 3): the elbow, 3 fist points, 10 blade points; >= 0 is clear."""
+        worst = np.minimum(q[..., :4, 1].min(-1) - floor - hand, q[..., 4:, 1].min(-1) - floor - blade) - extra
+        for k, cap in enumerate(body):
+            worst = np.minimum(worst, gap(q[..., 4:, :], cap).min(-1) - 1)
+            if k < 3:  # the fist may touch the chest and the head, not sink into them
+                worst = np.minimum(worst, gap(q[..., 1:4, :], cap).min(-1) + 3)
+        return worst - allow
+
+    frames = []  # per frame: the shoulder, the arm's points from it, the elbow's hinge, the forearm, its bend, the body
+    for w in worlds:
+        s, e, h = (w[i][:3, 3] for i in (ua, fa, hd))
+        tip = w[slot][:3, :3] @ np.array([BLADE_CM, 0, 0])
+        arm = np.vstack([[e], [w[i][:3, 3] for i in fist], w[slot][:3, 3] + np.linspace(0.1, 1, 10)[:, None] * tip]) - s
+        hinge = np.cross(e - s, h - e)
+        if np.linalg.norm(hinge) < 1e-3 * np.linalg.norm(e - s) * np.linalg.norm(h - e):
+            hinge = w[ua][:3, :3] @ np.array([0.0, 0.0, 1.0])  # a straight arm bends about the upper arm's Z
+        bend = np.arccos(np.clip(np.dot(e - s, h - e) / (np.linalg.norm(e - s) * np.linalg.norm(h - e)), -1, 1))
+        body = []
+        for a, b, r in caps:
+            pa = w[a][:3, 3]
+            up = pa - w[neck][:3, 3]
+            body.append((pa, w[b][:3, 3] if b is not None else pa + 14 * up / max(np.linalg.norm(up), 1e-6), r))
+        if len(body) == len(BODY):
+            a, b, r = body[-1]
+            body[-1] = (a * [1, 0, 1] + [0, floor, 0], b * [1, 0, 1] + [0, floor, 0], r)
+        frames.append((s, arm, hinge, h - e, bend, body))
+    # The ends are the stance and stay as they are; where the stance itself holds the blade nearer a thigh than
+    # the margins, no frame is asked for more than it gives
+    allow = 0.0  # clearance() reads it
+    allow = min(0.0, *(float(clearance(frames[f][1] + frames[f][0], frames[f][5], spare)) for f in (0, n - 1)))
+
+    def forearm(f, tw, bd):
+        _, _, hinge, along, _, _ = frames[f]
+        return axis_matrix(hinge, bd) @ axis_matrix(along, tw)
+
+    def posed(f, p):
+        """The arm's points after the forearm's twist and bend at the elbow and the shoulder's turn, in the world."""
+        s, arm = frames[f][:2]
+        q = np.vstack([arm[:1], (arm[1:] - arm[0]) @ forearm(f, p[3], p[4]).T + arm[0]])
+        return q @ rotvec_matrix(p[:3]).T + s
+
+    def size(p):  # degrees off the held arm: the shoulder counts twice the forearm
+        return np.degrees(np.linalg.norm(p[..., :3], axis=-1)) + 0.5 * np.degrees(np.abs(p[..., 3]) + np.abs(p[..., 4]))
+
+    def step(d):  # degrees of a step between frames, by how far it swings the blade: a twist almost as far as a turn
+        return np.degrees(np.linalg.norm(d[..., :3], axis=-1)) + 0.7 * np.degrees(np.abs(d[..., 3]) + np.abs(d[..., 4]))
+
+    def states(f):
+        """Clear arms of a frame: for each forearm twist and bend, the smallest shoulder turns that clear and those
+        up to DETOUR steps (of 5°) bigger, up to 8 axes a step, or no turn when none is needed; the clearest arm if
+        nothing clears. The detours let the path keep the forearm's twist instead of flipping it. An arm that
+        clears without the spare is one more state: asking the spare of it bent the arm right after the start, and
+        making it the only state snapped a twisted arm back in one frame."""
+        s, arm, _, _, bend, body = frames[f]
+        if f in (0, n - 1):
+            return np.zeros((1, 5))  # the ends are the stance
+        keys = [(tw, bd) for tw in twists for bd in bends if bend + bd <= np.radians(150)]
+        local = np.array([posed(f, np.r_[0, 0, 0, k]) - s for k in keys])  # (keys, 14, 3)
+        out, found, best = [np.zeros(5)] if clearance(arm + s, body, 0) >= 0 else [], {}, (-np.inf, np.zeros(5))
+        for i in range(len(angles) + 1):
+            rots, vecs = (np.eye(3)[None], np.zeros((1, 3))) if i == 0 else (turns[i - 1], axes * angles[i - 1])
+            c = clearance(np.einsum("aij,cpj->acpi", rots, local) + s, body, spare)  # (turns, keys)
+            if c.max() > best[0]:
+                ai, ci = np.unravel_index(np.argmax(c), c.shape)
+                best = (c.max(), np.r_[vecs[ai], keys[ci]])
+            for ci in range(len(keys)):
+                if found.get(ci, i) < i - DETOUR or (found.get(ci) == 0 and i > 0):
+                    continue  # this forearm already has its smallest turns and the detours past them
+                ok = np.flatnonzero(c[:, ci] >= 0)
+                if len(ok):
+                    out += [np.r_[vecs[ai], keys[ci]] for ai in ok[::max(1, len(ok) // 8)][:8]]
+                    found.setdefault(ci, i)
+            if len(found) == len(keys) and all(i - v >= DETOUR or v == 0 for v in found.values()):
+                break
+        return np.array(out) if out else best[1][None]
+
+    def worst(params):
+        return min(float(clearance(posed(f, params[f]), frames[f][5], 0)) for f in range(n))
+
+    before = worst(np.zeros((n, 5)))
+    # The cheapest path through every frame's clear arms. A step between frames costs its square: a greedy pick
+    # flipped the forearm's twist from +90° to -60° between two frames, and so did a path paying the step linearly,
+    # which costs a flip no more than the same turn spread over five frames; a twist priced at half a turn still
+    # snapped back 60° in one frame, a swing of 80 cm at the tip
+    cand = [states(f) for f in range(n)]
+    # A neighbour's arm that clears this frame too lets the path hold a pose: the smallest turns of a frame that
+    # clears with less left no state near the last frame's, and the arm sprang 15° and back right after the start
+    cand = [c if f in (0, n - 1) else np.vstack([c] + [p[None] for p in np.vstack([cand[f - 1], cand[f + 1]])
+                                                       if clearance(posed(f, p), frames[f][5], 0) >= 0])
+            for f, c in enumerate(cand)]
+    cost, back = size(cand[0]), []
+    for f in range(1, n):
+        d = cand[f - 1][:, None, :] - cand[f][None, :, :]
+        total = cost[:, None] + step(d) ** 2 / STEP
+        back.append(np.argmin(total, axis=0))
+        cost = total[back[-1], np.arange(len(cand[f]))] + size(cand[f])
+    pick = [int(np.argmin(cost))]
+    for f in range(n - 1, 0, -1):
+        pick.append(int(back[f - 1][pick[-1]]))
+    raw = np.array([cand[f][k] for f, k in enumerate(reversed(pick))])  # shoulder turn (rotation vector), twist, bend
+    kern = np.exp(-0.5 * (np.arange(-2, 3) / 0.8) ** 2)
+    pad = np.pad(raw, ((2, 2), (0, 0)), mode="edge")
+    params = np.array([(kern[:, None] * pad[f:f + 5]).sum(0) / kern.sum() for f in range(n)])
+    for f in range(n):  # where the smoothing spent more than the spare, the frame keeps its own clear arm
+        if clearance(posed(f, params[f]), frames[f][5], 0) < 0 <= clearance(posed(f, raw[f]), frames[f][5], 0):
+            params[f] = raw[f]
+    params[[0, n - 1]] = 0.0
+    sizes = size(params)
+    after = worst(params)
+    for f in range(n):
+        if size(params[f]) < 0.05:
+            continue
+        w = worlds[f]
+        turn = rotvec_matrix(params[f, :3])
+        for node, local in ((ua, w[skel.nodes[ua].parent][:3, :3].T @ turn @ w[ua][:3, :3]),
+                            (fa, w[ua][:3, :3].T @ forearm(f, params[f, 3], params[f, 4]) @ w[fa][:3, :3])):
+            j = anim.node_indices.index(node)
+            q = rs.mat_to_quat(local)
+            anim.rotations[f, j] = -q if np.dot(q, anim.rotations[f, j]) < 0 else q
+    return {"before_cm": round(before + allow, 1), "after_cm": round(after + allow, 1), "stance_cm": round(allow, 1),
+            "frames_changed": int((sizes > 0.5).sum()),
+            "max_shoulder_deg": round(float(np.degrees(np.linalg.norm(params[:, :3], axis=1)).max()), 1),
+            "max_twist_deg": round(float(np.degrees(np.abs(params[:, 3])).max()), 1),
+            "max_bend_deg": round(float(np.degrees(params[:, 4]).max()), 1)}
+
+
 def body_nodes(anim: ga.Animation, skel: ga.Skeleton, sources: list[ga.Animation], like: ga.Animation) -> None:
     """Write the nodes Gothic's own move writes (`like`: the overlay's jump-back, 27 nodes with the weapon slots
     ZS_RIGHTHAND and ZS_SWORD), the rest keep what was set before.
@@ -233,6 +429,8 @@ def main():
     ap.add_argument("--no-foot-lock", action="store_true", help="leave the feet as retargeted")
     ap.add_argument("--lock-ends", type=float, help="pin feet only this many seconds from the start and the end (rolls)")
     ap.add_argument("--fade", default="0.12,0.2", help="seconds of stance matching at the start and at the end")
+    ap.add_argument("--clear-sword", action="store_true",
+                    help="turn the sword arm at the shoulder so hand and blade stay off the floor and out of the body (rolls)")
     a = ap.parse_args()
     skel = ga.read_skeleton(a.skeleton or a.ref.parent / "HUMANS.MDH.json")
     ref = ga.read_animation(a.ref)
@@ -244,6 +442,11 @@ def main():
         lock_feet(anim, rs.with_offsets(skel, ref), ends=a.lock_ends)
     fills = [ga.read_animation(f) for f in a.fill]
     body_nodes(anim, skel, [ref] + fills, fills[0] if fills else ref)
+    if a.clear_sword:
+        w0 = ga.world_pose(skel, ref, 0)
+        # the toe nodes of the stance sit about 3 cm over the sole
+        floor = min(w0[skel.index(f"BIP01 {s} TOE0")][1, 3] for s in "LR") - 3
+        print("sword clearance", clear_sword(anim, skel, floor))
     anim.name, anim.next = a.name, a.next
     a.out.parent.mkdir(parents=True, exist_ok=True)
     ga.write_animation(a.out, anim, source=f"finish:{a.src.name} warp {a.warp} arm {a.sword_arm}")
