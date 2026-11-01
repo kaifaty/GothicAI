@@ -742,12 +742,13 @@ class DialogueManager:
         # a companion's fight (npc, target): carried out by orders.py, which brings it back to the hero
         # after; False if it is not the companions' business
         self.companion_fight: Callable[[str, str | None], bool] | None = None
+        self.companion_fight_reason: Callable[[str, str | None], str | None] | None = None
         # the npc is in such a fight: a goal of going with the hero waits for it to end
         self.fighting: Callable[[str], bool] = lambda npc: False
         # the npc's guild (the roster's, talk.py), None if not known: whom it attacks to kill (`KILLERS`)
         self.guild_of: Callable[[str], int | None] = lambda npc: None
-        # A bandit's reason to attack the hero (parley.py); None keeps the original rules.
-        self.fight_reason: Callable[[str, Snapshot | None], str | None] | None = None
+        # A bandit's reason to attack the hero's side (npc, snapshot, target; parley.py).
+        self.fight_reason: Callable[[str, Snapshot | None, str | None], str | None] | None = None
         # Parley's balance of forces, read synchronously from snapshots and perception in memory.
         self.balance: Callable[[str], str | None] | None = None
         self.on_player_said: list[Callable[[str], None]] = []
@@ -3029,10 +3030,18 @@ class DialogueManager:
         seen = sight.targets if sight is not None else None  # whom it perceives, not all within 15 m
         intent, reason = executor.check_intent(
             executor.parse_intent(call.arguments, conv.intent), snap, seen,
-            fight_reason=(lambda: self.fight_reason(conv.npc, snap)) if self.fight_reason else None,
+            fight_reason=(
+                (lambda target: self.fight_reason(conv.npc, snap, target)) if self.fight_reason else None
+            ),
         )
         if intent is None:
             return ToolOutcome(f"Отклонено: {reason}", "rejected")
+        if (
+            intent.goal == "fight" and self.companion_fight_reason is not None
+            and not (state is not None and conv.trigger is not None and conv.trigger.role == "user")
+        ):
+            if reason := self.companion_fight_reason(conv.npc, intent.target):
+                return ToolOutcome(f"Отклонено: {reason}", "rejected")
         if executor.same(conv.intent, intent):
             if (
                 intent.goal not in executor.COMPANION_GOALS
@@ -3167,7 +3176,7 @@ class DialogueManager:
         if self.hero_fight_held(conv.npc):
             return "Ты опустил оружие и слушаешь героя; решение о сдаче ещё не принято.", True
         if not resume and self.fight_reason is not None:
-            if why := self.fight_reason(conv.npc, self.link.snapshots.get(conv.npc)):
+            if why := self.fight_reason(conv.npc, self.link.snapshots.get(conv.npc), "PLAYER"):
                 self._change_intent(
                     conv, conv.calm or Intent(), self.link.snapshots.get(conv.npc), body=False
                 )

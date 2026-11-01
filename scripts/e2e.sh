@@ -17,10 +17,10 @@
 #   crime_ally: given: Brago attacks the following Cavalorn; Cavalorn stays silent after the murder.
 #       New game, no SAVE; LLM=off via auto. The hero knocks Brago down and finishes him;
 #       murder and crime_side remain in the chronicle.
-#   bandit_parley: given: Brago attacks without cause, demands 100 gold, grants four hours of peace,
-#       then attacks on drawn weapons; his mate tries attacking during the truce. New game, no SAVE;
-#       Y pays 100 gold for four hours of peace with the cave gang, including 1015; no attack for 20 s,
-#       then drawing a weapon breaks the truce and Brago attacks
+#   bandit_parley: given: the leader hails; Brago tries attacking without cause, demands 100 gold for 30 s,
+#       attacks after the unanswered ultimatum expires, then grants four hours of peace; his mate tries
+#       attacking during the truce. New game, no SAVE; LLM=off via auto. Y pays 100 gold to end the fight;
+#       no attack for 20 s, then drawing a weapon breaks the truce and Brago attacks.
 #   bandit_hold: new game, no SAVE, no model; ranger bandits and a scripted party member stay quiet
 #       on renewable 5 s parley leases for 30 s, then releasing to scripts starts a native attack
 #   combat_barks: given: Lobart cries out after a hit; new game, no SAVE, LLM=off via auto.
@@ -42,9 +42,13 @@
 #       text and voice delays, then Cavalorn kills a beast and speaks its native script SVM.
 #       An unavailable QUICK_URL falls back after three errors; TTS=fake|inworld.
 #       GOTHIC_NO_SVM_LINES=1 keeps native speech only
-#   bandit_bounty: given: Brago tries revealing without leverage, sells and reveals Dexter's name, then guides.
+#   bandit_bounty: given: the leader hails; Brago tries revealing without leverage, sells and reveals
+#       Dexter's name, then guides.
 #       New game, no SAVE; the code rejects disclosure without leverage, charges 150 gold through Y,
 #       updates the vanilla leaflet quest and starts leading to CASTLEMINE_HUT; LLM=off via auto.
+#   road_bandits: given: ultimatum for 100 gold, 60 s on the hail; propose_deal for 100 gold and a 4 h truce
+#       on the payment reply. New game, no SAVE; LLM=off via auto. The ranger gang keeps peace for 20 s,
+#       then at least two bandits attack within 5 s of a drawn weapon.
 #   m0: no model; takes Xardas over, walks him around and returns him to his routine
 #   m1: given: Xardas answers with mood-tagged lines; checks delivery line by line.
 #       New game, no SAVE, LLM=off via auto; also used by the mood-ai bench.
@@ -460,7 +464,7 @@ if [[ ( "$SCENARIO" == bandit_hold || "$SCENARIO" == death_load ) && -n "${SAVE:
   echo "scenario $SCENARIO requires a new game (unset SAVE)" >&2
   exit 2
 fi
-if [[ ( "$SCENARIO" == bandit_parley || "$SCENARIO" == bandit_bounty ) && -n "${SAVE:-}" ]]; then
+if [[ ( "$SCENARIO" == bandit_parley || "$SCENARIO" == bandit_bounty || "$SCENARIO" == road_bandits ) && -n "${SAVE:-}" ]]; then
   echo "scenario $SCENARIO requires a new game (unset SAVE)" >&2
   exit 2
 fi
@@ -570,6 +574,12 @@ if [ "$SCENARIO" = "m3" ] || [ "$SCENARIO" = "m5e" ]; then
   ASR_PID=$!
   VOICE_ARGS=(--asr-url "ws://127.0.0.1:$ASR_PORT" --voice-file "$VOICE_FILE")
 fi
+
+case "$SCENARIO" in
+  # These fixtures own hold verdicts or measure native reactions before contact.
+  # crime_ally supplies Brago's attack on Cavalorn without a parley cause to test crimes.
+  bandit_hold|fight_reactions_bandits|fight_reactions_flee|crime_ally) FEAT_ARGS+=(--no-parley) ;;
+esac
 
 (cd "$ROOT/server" && exec uv run gothic-ai serve --port "$PORT" --scenario "$SCENARIO" --llm "$LLM" --exit-after --no-console \
   --memory-db "$LOG_DIR/memory.sqlite3" --trace-dir "$LOG_DIR/traces" "${VOICE_ARGS[@]}" "${TTS_ARGS[@]}" "${BRAIN_ARGS[@]}" "${QUICK_ARGS[@]}" ${SVM_ARGS[@]+"${SVM_ARGS[@]}"} ${FEAT_ARGS[@]+"${FEAT_ARGS[@]}"} "${BODY_ARGS[@]}") >"$LOG_DIR/server.log" 2>&1 &
@@ -723,8 +733,8 @@ EOF
   GAME_ENV+=("OPENGOTHIC_BENCH=$LOG_DIR/humiliate-input.bench" "OPENGOTHIC_BENCH_OUT=$LOG_DIR"
     "OPENGOTHIC_BENCH_REALTIME=1" "OPENGOTHIC_BENCH_KEEP=1")
 fi
-if [[ "$SCENARIO" == neural-soak ]]; then
-  # Refuse a fixed-step recording: the soak must keep the ordinary game clock.
+if [[ "$SCENARIO" == neural-soak || "$SCENARIO" == road_bandits ]]; then
+  # These fixtures must keep the ordinary game clock.
   SOAK_BUILD="$(dirname "$GAME_BIN")"
   SOAK_NORMAL_CLOCK=0
   # ryzen.sh publishes cache entries only from cadence-enabled builds. A fresh
@@ -750,9 +760,12 @@ if [[ "$SCENARIO" == neural-soak ]]; then
     SOAK_BUILD="$(dirname "$SOAK_BUILD")"
   done
   if [[ "$SOAK_NORMAL_CLOCK" == 1 ]]; then
-    GAME_ENV+=("OPENGOTHIC_BENCH=$ROOT/scripts/bench/neural-soak-e2e.bench" "OPENGOTHIC_BENCH_OUT=$LOG_DIR"
+    GAME_ENV+=("OPENGOTHIC_BENCH=$ROOT/scripts/bench/${SCENARIO//_/-}-e2e.bench" "OPENGOTHIC_BENCH_OUT=$LOG_DIR"
       "OPENGOTHIC_BENCH_REALTIME=1" "OPENGOTHIC_BENCH_KEEP=1" "TEMPEST_BACKGROUND=1"
       "TEMPEST_WINDOW_SIZE=640x360" "OPENGOTHIC_BENCH_ENCODER=-c:v libx264 -preset ultrafast -crf 30")
+  elif [[ "$SCENARIO" == road_bandits ]]; then
+    echo 'road_bandits requires a normal-clock bench build' >&2
+    exit 2
   else
     echo 'neural-soak: video unavailable (normal-clock bench not compiled)'
   fi

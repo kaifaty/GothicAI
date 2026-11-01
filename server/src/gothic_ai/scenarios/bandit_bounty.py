@@ -11,6 +11,7 @@ from ..brain.reflex import Reflexes
 from ..deals import GOLD
 from ..game import GameLink
 from ..llm import ToolCall
+from ..parley import HAIL_CUE
 from .bandit_parley import BRAGO, CAVALORN, MATE, PARK
 from .common import FixedDecider, _logged, _m5b_player_weapon, _until, _until_async, log, model_off
 
@@ -39,6 +40,10 @@ async def bandit_bounty(
 ) -> dict[str, str]:
     """Given Brago's offers, check leverage, payment, vanilla effects and his guide."""
     off = model_off(dialogue)
+    off.given(
+        "дано: главарь окликает чужака у стоянки", who=BRAGO, when=HAIL_CUE,
+        line="Эй, чужак. Подойди.",
+    )
     reveal = ToolCall("tell_secret", {"secret": "client_name"})
     off.given("дано: Браго пытается назвать заказчика без рычага", who=BRAGO, when=ASK, calls=[reveal])
     off.silent("дано: Браго молчит (раскрытие тайны без рычага отклонено)", who=BRAGO, when=ASK)
@@ -128,6 +133,8 @@ async def bandit_bounty(
         ), f"near={ready}, Cavalorn={away:.0f} cm ({parked.status}), hero_gold={hero_gold}"):
             return _logged(results)
 
+        await _until(lambda: dialogue.has_spoken(BRAGO), 10)
+        await _until(lambda: not dialogue.speaking(BRAGO), 10)
         talk.hear(ASK, BRAGO, {"via": "scenario"})
         refused = await _until(lambda: any(
             npc == BRAGO and outcome.status == "rejected" and "нет рычага" in outcome.output

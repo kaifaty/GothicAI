@@ -1,28 +1,37 @@
 import asyncio
+import os
 from contextlib import asynccontextmanager
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from gothic_ai.chronicle import Chronicle
 from gothic_ai.dialogue import REACT_HINT, DialogueManager
 from gothic_ai.executor import Intent
+from gothic_ai.gamedata.storygraph import Node, StoryGraph, load
 from gothic_ai.llm import FakeBackend, FakeStep, Message, ToolCall, ToolResult
 from gothic_ai.memory import MemoryStore
-from gothic_ai.parley import AGREEMENT, EXPIRY_CUE, NO_REASON, Parley
+from gothic_ai.orders import Orders
+from gothic_ai.parley import AGREEMENT, EXPIRY_CUE, HAIL_CUE, LEASE_MS, NO_REASON, Parley
 from gothic_ai.perception import PerceptionDesk
 from gothic_ai.persona import PersonaProvider
 from gothic_ai.places import PlaceBook
 from gothic_ai.protocol import (
     HeroDeed,
+    HoldVerdictCmd,
     Loading,
     NpcEvent,
     NpcRoster,
     NpcView,
     NpcViews,
     Perception,
+    PerceptionHeld,
     Session,
     WorldLoaded,
 )
+from gothic_ai.story import StoryPatches, freed
+from gothic_ai.talk import TalkDesk
 from tests.fake_game import FakeGame, connected
 
 BRAGO, MATE, OTHER = "BDT_1014_BANDIT_L", "BDT_1015_BANDIT_L", "VLK_414_RUPERT"
@@ -664,6 +673,543 @@ async def test_balance_uses_visible_equipment_health_and_people_not_levels():
         )
         assert "он опасен" in parley.situation(BRAGO)
         assert "уров" not in parley.situation(BRAGO).lower()
+
+
+def held(*, npc=BRAGO, other="PLAYER", kind="bandit_enemy", key="bandit-hold"):
+    return PerceptionHeld(
+        type="perception_held", hold=key, npc=npc, other=other, kind=kind, distance=100,
+    )
+
+
+def verdicts(monkeypatch, link):
+    sent = []
+    original = link.send
+
+    async def send(command):
+        if isinstance(command, HoldVerdictCmd):
+            sent.append(command)
+        await original(command)
+
+    monkeypatch.setattr(link, "send", send)
+    return sent
+
+
+async def finish_hails(parley):
+    async with asyncio.timeout(2):
+        while parley._background:
+            await asyncio.gather(*parley._background)
+
+
+def hail_body(monkeypatch, dialogue, parley):
+    approaches, turns = [], []
+    parley.bodies = SimpleNamespace(busy=lambda npc: False)
+    begun = []
+    parley.talk = SimpleNamespace(
+        partner=None, begun=begun, begin=lambda npc, name: begun.append(npc) or True,
+        people={BRAGO: SimpleNamespace(activity="routine", state="ZS_STAND")},
+    )
+    monkeypatch.setattr(dialogue, "body_busy", lambda npc: False)
+
+    async def approach(link, bodies, talk, npc, *, valid):
+        assert valid()
+        approaches.append(npc)
+        return True
+
+    monkeypatch.setattr("gothic_ai.initiative.approach", approach)
+    monkeypatch.setattr(
+        dialogue, "event_turn", lambda npc, cue, **kw: turns.append((npc, cue, kw)) or True,
+    )
+    return approaches, turns
+
+
+@pytest.mark.parametrize("other", ["PLAYER", COMPANION])
+async def test_held_truce_silently_leases_sightings_of_hero_and_companion(monkeypatch, other):
+    async with world() as (_, link, dialogue, _, parley):
+        _, turns = hail_body(monkeypatch, dialogue, parley)
+        sent = verdicts(monkeypatch, link)
+        await parley.accept_deal(BRAGO, 4)
+        await parley._held(held(other=other), parley._generation)
+        await finish_hails(parley)
+        assert [(s.to, s.ms) for s in sent] == [("parley", LEASE_MS)]
+        assert not turns and not dialogue.llm.calls
+
+
+@pytest.mark.parametrize("npc", [BRAGO, "BDT_10300_RANGERBANDIT"])
+@pytest.mark.parametrize("other", ["PLAYER", COMPANION])
+async def test_cause_attacks_player_immediately_for_overridden_and_native_bandits(monkeypatch, npc, other):
+    async with world() as (fake, link, dialogue, chronicle, parley):
+        # Brago's native AIV_EnemyOverride suppresses B_AssessEnemy; road bandits use that path normally.
+        dialogue.guild_of = lambda who: 9
+        chronicle.record({"fact": "caught", "npc": npc, "quest": "lie"})
+        sent = verdicts(monkeypatch, link)
+        started = asyncio.get_running_loop().time()
+        await parley._held(held(npc=npc, other=other), parley._generation)
+        elapsed = asyncio.get_running_loop().time() - started
+        assert elapsed < 2
+        assert [(s.to, s.ms) for s in sent] == [("scripts", None)]
+        assert (dialogue.conversations[npc].intent.goal, dialogue.conversations[npc].intent.target) == (
+            "fight", "PLAYER",
+        )
+        assert any(
+            msg.get("npc") == npc
+            and msg.get("effects") == [{"do": "attack", "reason": "AR_SUDDENENEMYINFERNO"}]
+            for msg in fake.story
+        )
+        assert not dialogue.llm.calls
+
+
+@pytest.mark.parametrize(("membership", "cause"), [
+    ("orders", "weapon"), ("orders", "attack"), ("party", "weapon"),
+])
+async def test_bandit_needs_a_cause_to_fight_a_companion_and_keeps_the_chosen_target(
+    monkeypatch, membership, cause,
+):
+    async with world() as (fake, link, dialogue, _, parley):
+        fake.nearby.append({"id": COMPANION, "name": "Диего", "distance": 200, "guild": 3})
+        snap = await link.snapshot(BRAGO, fresh=True)
+        orders = Orders(link, TalkDesk(link, dialogue), dialogue)
+        companion = dialogue.open(COMPANION, "Диего", warm=False)
+        companion.intent = Intent("follow_hero", "PLAYER", "friendly")
+        parley.companion = orders.companion if membership == "orders" else lambda npc: False
+        if membership == "party":
+            link.party[COMPANION] = (1, 1)
+        conv = dialogue.conversations[BRAGO]
+        attack = ToolCall("set_intent", {"goal": "fight", "target": COMPANION.lower(), "attitude": "hostile"})
+        result = dialogue._set_intent(conv, attack, snap)
+        assert result.status == "rejected" and NO_REASON in result.output
+        assert conv.intent.goal != "fight"
+        citizen = dialogue.open(OTHER, "Горожанин", warm=False)
+        assert dialogue._set_intent(citizen, attack, snap).status == "accepted"
+
+        sent = verdicts(monkeypatch, link)
+        await parley._held(held(other=COMPANION), parley._generation)
+        await finish_hails(parley)
+        assert [(s.to, s.ms) for s in sent] == [("parley", LEASE_MS)]
+        if cause == "weapon":
+            armed(parley, "melee")
+        else:
+            parley._on_message(Perception(
+                type="perception", npc=BRAGO, perc="ASSESSDAMAGE", other=COMPANION, distance=100,
+            ))
+        assert dialogue._set_intent(conv, attack, snap).status == "accepted"
+        intent = conv.intent
+        await parley._held(held(other=COMPANION, key="chosen-target"), parley._generation)
+        assert sent[-1].to == "scripts" and sent[-1].ms is None
+        assert conv.intent is intent and intent.target == COMPANION
+        assert not any(op.get("do") == "attack" for msg in fake.story for op in msg.get("effects", []))
+
+
+async def test_no_cause_leases_before_a_slow_approach_and_hails_the_leader_once(monkeypatch):
+    async with world() as (_, link, dialogue, chronicle, parley):
+        approaches, turns = hail_body(monkeypatch, dialogue, parley)
+        sent = verdicts(monkeypatch, link)
+        arrived = asyncio.Event()
+        approaching = asyncio.Event()
+
+        async def approach(link, bodies, talk, npc, *, valid):
+            assert valid() and sent[0].to == "parley"
+            approaches.append(npc)
+            approaching.set()
+            await arrived.wait()
+            return True
+
+        monkeypatch.setattr("gothic_ai.initiative.approach", approach)
+        parley._on_message(held())
+        async with asyncio.timeout(1):
+            await approaching.wait()
+        assert sent[0].to == "parley" and not turns
+        await parley._held(held(key="again"), parley._generation)
+        arrived.set()
+        await finish_hails(parley)
+        await parley._held(held(npc=MATE, key="mate"), parley._generation)
+        await finish_hails(parley)
+        assert approaches == [BRAGO]
+        assert parley.talk.begun == [BRAGO]
+        assert len(turns) == 1 and turns[0][:2] == (BRAGO, HAIL_CUE)
+        assert turns[0][2]["tools"] == {"ultimatum", "propose_deal", "set_intent", "recall"}
+        assert turns[0][2]["relevant"]()
+        assert parley._encounters()[0]["hailed"]
+        assert parley._encounters()[0]["members"] == sorted([BRAGO, MATE])
+        assert len(chronicle.facts("parley_encounter")) == 3
+
+
+@pytest.mark.parametrize("arrived", [False, True])
+async def test_hail_renewals_do_not_repeat_an_attempt_or_snapshot(monkeypatch, arrived):
+    async with world() as (_, link, dialogue, chronicle, parley):
+        approaches, turns = hail_body(monkeypatch, dialogue, parley)
+        snapshots = []
+        original = link.snapshot
+
+        async def snapshot(npc, **kw):
+            snapshots.append(npc)
+            return await original(npc, **kw)
+
+        async def approach(link, bodies, talk, npc, *, valid):
+            assert valid()
+            approaches.append(npc)
+            return arrived
+
+        monkeypatch.setattr(link, "snapshot", snapshot)
+        monkeypatch.setattr("gothic_ai.initiative.approach", approach)
+        for i in range(5):
+            parley._ticks += LEASE_MS + 1
+            await parley._held(held(npc=MATE if i % 2 else BRAGO, key=str(i)), parley._generation)
+            await finish_hails(parley)
+        assert approaches == [BRAGO] and len(snapshots) == 1
+        assert len(turns) == int(arrived)
+        assert parley._encounters()[0]["hail_attempted"]
+        assert len(chronicle.facts("parley_encounter")) == 2 + int(arrived)
+
+
+@pytest.mark.parametrize("busy", ["dialog", "cutscene", "missing", "partner", "body"])
+async def test_native_busy_preflight_does_not_consume_the_hail_attempt(monkeypatch, busy):
+    async with world() as (fake, _, dialogue, _, parley):
+        approaches, turns = hail_body(monkeypatch, dialogue, parley)
+        if busy == "dialog":
+            fake.in_dialog = True
+        elif busy == "cutscene":
+            fake.in_cutscene = True
+        elif busy == "missing":
+            parley.talk.people.clear()
+        elif busy == "partner":
+            parley.talk.partner = SimpleNamespace(npc=OTHER)
+        else:
+            parley.bodies.busy = lambda npc: True
+        await parley._held(held(), parley._generation)
+        await finish_hails(parley)
+        assert not approaches and not turns
+        assert not parley._encounters()[0].get("hail_attempted")
+        fake.in_dialog, fake.in_cutscene = False, False
+        parley.talk.people[BRAGO] = SimpleNamespace(activity="routine", state="ZS_STAND")
+        parley.talk.partner = None
+        parley.bodies.busy = lambda npc: False
+        await parley._held(held(key="eligible"), parley._generation)
+        await finish_hails(parley)
+        assert approaches == [BRAGO] and len(turns) == 1
+        assert parley._encounters()[0]["hail_attempted"]
+
+
+async def test_hail_preserves_members_added_during_approach(monkeypatch):
+    async with world() as (_, link, dialogue, _, parley):
+        _, turns = hail_body(monkeypatch, dialogue, parley)
+        approaching, arrived = asyncio.Event(), asyncio.Event()
+
+        async def approach(link, bodies, talk, npc, *, valid):
+            approaching.set()
+            await arrived.wait()
+            return True
+
+        monkeypatch.setattr("gothic_ai.initiative.approach", approach)
+        await parley._held(held(), parley._generation)
+        async with asyncio.timeout(1):
+            await approaching.wait()
+        third = "BDT_1013_BANDIT"
+        dialogue.guild_of = lambda npc: 9
+        snap = link.snapshots[BRAGO]
+        snap.nearby_npcs.append(snap.nearby_npcs[0].model_copy(update={"id": third}))
+        widened = parley._encounter(BRAGO)
+        assert third in widened["members"]
+        arrived.set()
+        await finish_hails(parley)
+        assert parley._encounters()[0]["members"] == sorted([BRAGO, MATE, third])
+        await parley._held(held(npc=third, key="third"), parley._generation)
+        await finish_hails(parley)
+        assert len(turns) == 1
+
+
+@pytest.mark.parametrize("busy", ["sleep", "fight", "reply", "partner"])
+async def test_hail_waits_when_the_leader_is_busy_or_hero_talks_to_the_band(monkeypatch, busy):
+    async with world() as (_, link, dialogue, _, parley):
+        approaches, turns = hail_body(monkeypatch, dialogue, parley)
+        row = {
+            "id": BRAGO, "name": "Браго", "guild": 9, "distance": 100,
+            "state": "ZS_SLEEP" if busy == "sleep" else "ZS_STAND", "activity": "routine",
+        }
+        if busy == "fight":
+            row["activity"] = "fight"
+        elif busy == "reply":
+            dialogue.conversations[BRAGO].reply = asyncio.create_task(asyncio.Event().wait())
+        elif busy == "partner":
+            parley.talk.partner = SimpleNamespace(npc=MATE)
+        parley._on_message(NpcRoster(type="npc_roster", t=1000, npcs=[row]))
+        await parley._held(held(), parley._generation)
+        await finish_hails(parley)
+        assert not approaches and not turns
+        reply = dialogue.conversations[BRAGO].reply
+        if reply is not None:
+            reply.cancel()
+            await asyncio.gather(reply, return_exceptions=True)
+        parley.talk.partner = None
+        parley._on_message(NpcRoster(type="npc_roster", t=2000, npcs=[{
+            **row, "state": "ZS_STAND", "activity": "routine",
+        }]))
+        await parley._held(held(key="ready"), parley._generation)
+        await finish_hails(parley)
+        assert approaches == [BRAGO] and len(turns) == 1
+
+
+async def test_encounter_boundary_oscillation_does_not_grow_the_chronicle():
+    async with world() as (_, _, _, chronicle, parley):
+        original = parley._encounter(BRAGO)["id"]
+        for i in range(100):
+            parley._on_message(NpcRoster(type="npc_roster", t=1000 + i * 250, npcs=[
+                {"id": npc, "name": "Бандит", "guild": 9, "distance": 2990 if i % 2 else 3010}
+                for npc in (BRAGO, MATE)
+            ]))
+            parley.tick()
+        assert parley._encounters()[0]["id"] == original
+        assert len(chronicle.facts("parley_encounter")) == 1
+
+
+async def test_leaving_all_members_for_sixty_continuous_seconds_starts_a_new_encounter(monkeypatch):
+    async with world() as (_, link, dialogue, _, parley):
+        _, turns = hail_body(monkeypatch, dialogue, parley)
+        await parley._held(held(), parley._generation)
+        await finish_hails(parley)
+        original = parley._encounters()[0]["id"]
+
+        def roster(t, brago=3100, mate=3100):
+            parley._on_message(NpcRoster(type="npc_roster", t=t, npcs=[
+                {"id": npc, "name": "Бандит", "guild": 9, "distance": distance}
+                for npc, distance in ((BRAGO, brago), (MATE, mate))
+            ]))
+            parley.tick()
+
+        roster(2000)
+        roster(61000, mate=3000)  # one member is still within 30 m: restart the timer
+        roster(62000)
+        roster(121999)
+        assert parley._encounters()[0]["id"] == original
+        roster(122000)
+        assert not parley._encounters()
+        roster(123000, brago=100, mate=200)
+        await parley._held(held(key="new-meeting"), parley._generation)
+        await finish_hails(parley)
+        assert len(turns) == 2 and parley._encounters()[0]["id"] != original
+
+
+async def test_deal_keeps_the_encounter_band_after_its_leader_steps_away():
+    async with world() as (_, link, _, chronicle, parley):
+        encounter = parley._encounter(BRAGO)
+        assert encounter["members"] == sorted([BRAGO, MATE])
+        # The greeting moved Brago: the farthest member is now beyond his snapshot's 15 m radius.
+        link.snapshots[BRAGO].nearby_npcs.clear()
+        assert parley.members(BRAGO) == sorted([BRAGO, MATE])
+        assert parley.members(MATE) == sorted([BRAGO, MATE])
+        await parley.accept_deal(BRAGO, 4)
+        assert chronicle.facts("truce")[-1]["members"] == sorted([BRAGO, MATE])
+        assert parley.truce(MATE) is not None
+        parley.chronicle.record({**encounter, "status": "closed", "why": "left"})
+        assert parley.members(BRAGO) == [BRAGO]
+
+
+async def test_encounter_hail_rolls_back_with_the_save_branch_and_world_change_ends_it(monkeypatch):
+    async with world() as (_, link, dialogue, chronicle, parley):
+        _, turns = hail_body(monkeypatch, dialogue, parley)
+        before = chronicle.memory.head(chronicle.branch)
+        await parley._held(held(), parley._generation)
+        await finish_hails(parley)
+        parent, head = chronicle.branch, chronicle.memory.head(chronicle.branch)
+        parley._on_message(Loading(type="loading"))
+        link._dispatch(Session(type="session", branch="after-hail", parent=parent, parent_seq=head))
+        link._dispatch(WorldLoaded(type="world_loaded", world="NEWWORLD.ZEN"))
+        await parley._held(held(key="after-load"), parley._generation)
+        await finish_hails(parley)
+        assert len(turns) == 1 and parley._encounters()[0]["hailed"]
+        link._dispatch(Session(type="session", branch="before-hail", parent=parent, parent_seq=before))
+        assert not parley._encounters()
+        await parley._held(held(key="replayed"), parley._generation)
+        await finish_hails(parley)
+        assert len(turns) == 2
+        parley._on_message(Loading(type="loading"))
+        parley._on_message(WorldLoaded(type="world_loaded", world="ADDONWORLD.ZEN"))
+        assert not parley._encounters() and not turns[-1][2]["relevant"]()
+
+
+@pytest.mark.parametrize("number", [1040, 1049, 1060, 1068])
+async def test_dexter_camp_sightings_return_to_the_scripts(monkeypatch, number):
+    async with world() as (_, link, dialogue, _, parley):
+        npc = f"BDT_{number}_BANDIT"
+        dialogue.guild_of = lambda who: 9
+        sent = verdicts(monkeypatch, link)
+        await parley._held(held(npc=npc), parley._generation)
+        assert sent[0].to == "scripts" and parley.fight_reason(npc) is None
+        assert npc not in dialogue.conversations
+
+
+async def test_important_dialog_stays_native_until_story_patches_disable_it(monkeypatch):
+    async with world() as (_, link, dialogue, chronicle, parley):
+        node = Node("DIA_BANDIT_WARN", "dialog", BRAGO, "", [], set(), important=True)
+        parley.graph = StoryGraph({node.id: node}, {}, {}, {}, {})
+        parley.patches = StoryPatches(link, chronicle.memory)
+        sent = verdicts(monkeypatch, link)
+        await parley._held(held(), parley._generation)
+        assert sent[-1].to == "scripts" and parley.fight_reason(BRAGO) is None
+        await parley.patches.apply({"op": "disable", "node": node.id})
+        await parley._held(held(key="freed"), parley._generation)
+        await finish_hails(parley)
+        assert sent[-1].to == "parley" and parley.fight_reason(BRAGO) == NO_REASON
+        await parley.patches.apply({"op": "enable", "node": node.id})
+        await parley._held(held(key="native-again"), parley._generation)
+        assert sent[-1].to == "scripts"
+
+
+@pytest.fixture(scope="module")
+def real_graph():
+    data = Path(os.environ.get("GOTHIC_AI_DATA", Path.home() / ".local/share/gothic-ai"))
+    path = Path(os.environ.get("GOTHIC_STORY_GRAPH", data / "story.json"))
+    if not path.exists():
+        pytest.skip("needs actual storygraph export (GOTHIC_STORY_GRAPH)")
+    return load(path)
+
+
+@pytest.mark.parametrize("npc", ["SLD_840_ALVARES", "SLD_841_ENGARDO"])
+async def test_freed_akil_farm_bandits_become_negotiable(monkeypatch, real_graph, npc):
+    async with world() as (_, link, dialogue, chronicle, parley):
+        dialogue.guild_of = lambda who: 9
+        parley.graph = real_graph
+        assert any(n.important for n in parley.graph.dialogs_of(npc))
+        sent = verdicts(monkeypatch, link)
+        await parley._held(held(npc=npc), parley._generation)
+        assert sent[-1].to == "scripts" and not parley.negotiable(npc)
+        parley.patches = StoryPatches(
+            link, chronicle.memory, static=freed(parley.graph.nodes.__contains__),
+        )
+        await parley._held(held(npc=npc, key="freed"), parley._generation)
+        await finish_hails(parley)
+        assert sent[-1].to == "parley" and parley.negotiable(npc)
+
+
+async def test_party_enemy_leases_a_peaceful_gang_and_releases_a_provoked_gang(monkeypatch):
+    async with world() as (_, link, _, _, parley):
+        sent = verdicts(monkeypatch, link)
+        signal = held(npc=COMPANION, other=BRAGO, kind="party_enemy")
+        await parley._held(signal, parley._generation)
+        assert sent[-1].to == "parley"
+        await parley.accept_deal(BRAGO, 4)
+        await parley._held(signal, parley._generation)
+        assert sent[-1].to == "parley"
+        armed(parley, "melee")
+        await parley._held(signal, parley._generation)
+        assert sent[-1].to == "scripts"
+
+
+@pytest.mark.parametrize("pending", ["reply", "offer"])
+async def test_answered_ultimatum_does_not_interrupt_a_slow_reply_or_deal_window(monkeypatch, pending):
+    async with world() as (fake, link, dialogue, _, parley):
+        sent = verdicts(monkeypatch, link)
+        await demand(dialogue, parley)
+        parley.hero_said(BRAGO)
+        assert parley.fight_reason(BRAGO) is None
+        reply = asyncio.create_task(asyncio.Event().wait())
+        if pending == "reply":
+            dialogue.conversations[BRAGO].reply = reply
+        else:
+            parley.offer_pending = lambda npc: npc == BRAGO
+        await parley._held(held(), parley._generation)
+        assert sent[-1].to == "parley" and not fake.story
+        armed(parley, "melee")
+        await parley._held(held(key="weapon"), parley._generation)
+        assert sent[-1].to == "scripts"
+        assert any(op.get("do") == "attack" for msg in fake.story for op in msg.get("effects", []))
+        reply.cancel()
+        await asyncio.gather(reply, return_exceptions=True)
+
+
+@pytest.mark.parametrize("kind", ["bandit_enemy", "party_enemy"])
+async def test_answered_ultimatum_keeps_silence_without_a_talk_partner_until_expiry(monkeypatch, kind):
+    async with world() as (fake, link, dialogue, _, parley):
+        monkeypatch.setattr(dialogue, "event_turn", lambda *a, **kw: None)
+        sent = verdicts(monkeypatch, link)
+        await demand(dialogue, parley)
+        parley.hero_said(BRAGO)
+        assert parley.talk is None and parley.fight_reason(BRAGO) is None
+        signal = held() if kind == "bandit_enemy" else held(npc=COMPANION, other=BRAGO, kind=kind)
+        parley._ticks = parley.ultimatum(BRAGO)["deadline"] - 1
+        await parley._held(signal, parley._generation)
+        assert sent[-1].to == "parley" and not fake.story
+        parley._ticks += 1
+        await parley._held(signal, parley._generation)
+        assert parley.ultimatum(BRAGO)["status"] == "expired"
+        assert sent[-1].to == "scripts"
+        if kind == "bandit_enemy":
+            assert any(op.get("do") == "attack" for msg in fake.story for op in msg.get("effects", []))
+
+
+async def test_companion_model_waits_for_negotiations_but_a_hero_order_does_not(monkeypatch):
+    async with world() as (fake, link, dialogue, _, parley):
+        fake.nearby = [{"id": BRAGO, "name": "Браго", "distance": 100, "guild": 9}]
+        await link.attach(COMPANION)
+        snap = await link.snapshot(COMPANION, fresh=True)
+        talk = TalkDesk(link, dialogue)
+        orders = Orders(link, talk, dialogue)
+        orders.parley_quiet = parley.quiet
+        assert dialogue.fight_reason == parley.fight_reason
+        conv = dialogue.open(COMPANION, "Диего", warm=False)
+        conv.intent = Intent("follow_hero", "PLAYER", "friendly")
+        starts = []
+        monkeypatch.setattr(orders, "_start", lambda npc, target, standing: starts.append((npc, target)))
+        monkeypatch.setattr(dialogue, "event_turn", lambda *a, **kw: None)
+        attack = ToolCall("set_intent", {"goal": "fight", "target": BRAGO, "attitude": "friendly"})
+
+        await demand(dialogue, parley)
+        parley.hero_said(BRAGO)
+        assert parley.fight_reason(BRAGO) is None and parley.quiet(BRAGO)
+        result = dialogue._set_intent(conv, attack, snap)
+        assert result.status == "rejected" and "Нужен приказ героя" in result.output
+        assert conv.intent.goal == "follow_hero" and not starts
+        assert orders.fight_intent(COMPANION, BRAGO)
+        assert starts == [(COMPANION, BRAGO)]
+
+        # A new, unanswered demand expires: the model follows the usual fight rules again.
+        await demand(dialogue, parley)
+        parley._ticks = parley.ultimatum(BRAGO)["deadline"]
+        parley.tick()
+        assert not parley.ultimatum(BRAGO).get("answered") and not parley.quiet(BRAGO)
+        assert dialogue._set_intent(conv, attack, snap).status == "accepted"
+        assert starts == [(COMPANION, BRAGO), (COMPANION, BRAGO)]
+
+
+@pytest.mark.parametrize("trigger", ["player", "incident"])
+async def test_companion_fight_in_a_reply_to_the_hero_is_an_order_but_an_event_is_not(monkeypatch, trigger):
+    attack = ToolCall("set_intent", {"goal": "fight", "target": BRAGO, "attitude": "friendly"})
+    async with world([
+        FakeStep("Сейчас я им покажу!", [attack]), FakeStep("Тогда подожду."),
+    ]) as (fake, link, dialogue, _, parley):
+        fake.nearby = [{"id": BRAGO, "name": "Браго", "distance": 100, "guild": 9}]
+        await link.attach(COMPANION)
+        await link.snapshot(COMPANION, fresh=True)
+        orders = Orders(link, TalkDesk(link, dialogue), dialogue)
+        orders.parley_quiet = parley.quiet
+        parley.companion = orders.companion
+        conv = dialogue.open(COMPANION, "Диего", warm=False)
+        conv.intent = Intent("follow_hero", "PLAYER", "friendly")
+        starts = []
+        monkeypatch.setattr(orders, "_start", lambda npc, target, standing: starts.append((npc, target)))
+        assert parley.quiet(BRAGO)
+        if trigger == "player":
+            await dialogue.say_as_player(COMPANION, "Там в пещере бандиты, разберись с ними.")
+            assert conv.intent.goal == "fight" and starts == [(COMPANION, BRAGO)]
+        else:
+            await dialogue.event_turn(COMPANION, "[Рядом замечены бандиты]", tools=["set_intent"])
+            assert conv.intent.goal == "follow_hero" and not starts
+            rejected = next(i for i in dialogue.llm.calls[1][1] if isinstance(i, ToolResult))
+            assert "Нужен приказ героя" in rejected.output
+        assert orders.fight_intent(COMPANION, BRAGO)
+        assert starts[-1] == (COMPANION, BRAGO)
+
+
+async def test_expired_ultimatum_attacks_even_with_a_lingering_talk_partner(monkeypatch):
+    async with world() as (fake, link, dialogue, _, parley):
+        parley.talk = SimpleNamespace(partner=SimpleNamespace(npc=BRAGO))
+        monkeypatch.setattr(dialogue, "event_turn", lambda *a, **kw: None)
+        await demand(dialogue, parley)
+        parley._ticks = 11000
+        sent = verdicts(monkeypatch, link)
+        await parley._held(held(), parley._generation)
+        assert parley.ultimatum(BRAGO)["status"] == "expired"
+        assert sent[-1].to == "scripts"
+        assert any(op.get("do") == "attack" for msg in fake.story for op in msg.get("effects", []))
 
 
 async def test_quick_summaries_include_the_same_balance_without_waiting_for_extensions(monkeypatch):
