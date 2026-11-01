@@ -135,6 +135,7 @@ def test_drive_metrics_measure_applied_actions_and_teacher_action_changes(tmp_pa
     episode = tmp_path / "changing"
     write_analysis_episode(episode)
     result = drive.episode_metrics(episode, demos)
+    assert result["forced_pace"] is None
     assert result["travelled_xz_cm"] == 200
     assert result["observed_reason"] == "moving_at_timeout"
     assert result["action_counts"] == dict(forward=4, backward=0, strafe_left=0, strafe_right=0,
@@ -156,6 +157,7 @@ def test_drive_metrics_measure_applied_actions_and_teacher_action_changes(tmp_pa
     assert no_changes["action_change_steps"] == 0
     assert all(value is None for value in no_changes["action_change_accuracy"].values())
     group = drive.group_metrics([result, no_changes])
+    assert group["forced_pace"] is None
     assert group["decisions"] == 14
     assert group["action_change_steps"] == 6
     assert group["action_change_accuracy"] == result["action_change_accuracy"]
@@ -318,6 +320,9 @@ def test_resume_does_not_reuse_greedy_recording_as_sample(tmp_path, existing):
             drive.indices(args, [pair])
     else:
         assert drive.indices(args, [pair]) == []
+        args.force_pace = "walk"
+        with pytest.raises(ValueError, match='resume forced pace differs'):
+            drive.indices(args, [pair])
 
 
 def test_live_trace_fixture_renders_and_keeps_metrics_factual(tmp_path, monkeypatch):
