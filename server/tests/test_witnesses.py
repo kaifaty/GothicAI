@@ -25,7 +25,6 @@ from gothic_ai.perception import PerceptionDesk
 from gothic_ai.persona import PersonaProvider
 from gothic_ai.protocol import NpcView
 from gothic_ai.questbook import Goal, Progress, Quest, Stage, Talk
-from gothic_ai.scenarios.common import ClaimScript
 from gothic_ai.sightings import Sightings
 from gothic_ai.social import Tie
 from gothic_ai.storyguard import StoryGuard
@@ -33,7 +32,7 @@ from gothic_ai.talk import TalkDesk
 from gothic_ai.trust import Trust
 from gothic_ai.witnesses import ASK_TOOL, Candidate, Inquiry, Witnesses, _named
 from gothic_ai.witnesses import Testimony as WitnessTestimony
-from tests.fake_game import FakeGame, connected
+from tests.fake_game import ClaimScript, FakeGame, connected
 from tests.test_crimes import deed
 from tests.test_dialogue import _until
 from tests.test_perception import HILDA, LOBART, MALETH, look

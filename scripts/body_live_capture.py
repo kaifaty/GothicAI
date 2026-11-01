@@ -148,8 +148,10 @@ async def capture(args) -> int:
 
     if sys.platform != "darwin":
         raise RuntimeError("live capture with game audio requires macOS")
-    if any(os.environ.get(name, "fake") != "fake" for name in ("LLM", "ASR", "TTS")):
-        raise RuntimeError("LLM, ASR and TTS must be fake")
+    if os.environ.get("LLM", "off") != "off" or any(
+        os.environ.get(name, "fake") != "fake" for name in ("ASR", "TTS")
+    ):
+        raise RuntimeError("LLM must be off; ASR and TTS must be fake")
     body_url = tomllib.loads(args.settings.read_text()).get("llm", {}).get("body_url")
     if not body_url:
         raise RuntimeError("settings contain no body_url")
@@ -211,7 +213,7 @@ async def capture(args) -> int:
     game = None
     try:
         await server.started.wait()
-        env = {**os.environ, "LLM": "fake", "ASR": "fake", "TTS": "fake",
+        env = {**os.environ, "LLM": "off", "ASR": "fake", "TTS": "fake",
                "GOTHIC_AI_URL": f"ws://127.0.0.1:{server.port}", "GOTHIC_AI": "1",
                "TEMPEST_BACKGROUND": "1", "TEMPEST_WINDOW_SIZE": macos_window_size("1920x1080"),
                "TEMPEST_AUDIO_LOOPBACK": "48000", "OPENGOTHIC_BENCH_REALTIME": "1",

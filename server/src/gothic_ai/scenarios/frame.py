@@ -6,7 +6,6 @@ import asyncio
 import logging
 import math
 import re
-from collections.abc import AsyncIterator
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -14,8 +13,7 @@ from typing import TYPE_CHECKING, Any
 from .. import triggers
 from ..brain.reflex import Reflexes
 from ..game import GameLink
-from ..llm import LLMEvent, Message, ToolCall
-from ..llm.fake import FakeBackend, FakeStep
+from ..llm import ToolCall
 from ..protocol import GameMessage, NpcActCmd, NpcActResult, NpcIdle, Session
 from ..trace import read as read_trace
 from .common import (
@@ -27,6 +25,7 @@ from .common import (
     _save,
     _until,
     _until_async,
+    model_off,
     prepare_npc_pose,
     wait_message,
     wait_npc_visibility,
@@ -40,6 +39,7 @@ if TYPE_CHECKING:
     from ..talk import TalkDesk
     from ..trust import Trust
     from ..witnesses import Witnesses
+    from .live import LiveCase
 
 log = logging.getLogger("gothic_ai.scenarios")
 MALAK = "BAU_963_MALAK"
@@ -59,22 +59,22 @@ async def frame(
     trust: Trust,
     log_dir: str,
     slot: int = 7,
+    *,
+    live: LiveCase | None = None,
 ) -> dict[str, str]:
-    """Fake: chest theft, a false belief tested by combat, truthful testimony, restitution and load.
+    """Declared accusations, a false belief tested by combat, testimony, restitution and load.
 
-    Live stops after Lobart's one ordinary answer to «Это Малак взял». Either belief or refusal is
-    valid. The same courage card supplies the fixture; his conversational persona and prompt remain
-    the ordinary production ones. All fights come from the reclaim motive, never this scenario.
+    All fights come from the reclaim motive, never this scenario.
     """
     results: dict[str, str] = {}
+    off = model_off(dialogue) if live is None else None
     service, rumors, people = will.npc_crimes, will.rumors, will.people
     crimes, blame = service.crimes, will.blame
     facts = will.chronicle.facts
     original_cards, original_crime_cards = will.cards, service.cards
-    original_llm, original_reflexes, original_busy = dialogue.llm, talk.reflexes, will.busy
+    original_reflexes, original_busy = talk.reflexes, will.busy
     original_gate, original_stage = rumors.gate, rumors.stage
     send = link.send
-    fake = isinstance(original_llm, FakeBackend)
     directory = Path(log_dir)
     preparing = {LOBART}
     participants = {LOBART, HILDA, VINO, MALAK}
@@ -169,61 +169,15 @@ async def frame(
                 dialogue.return_body(conv, "scenario-frame-chest")
         return check(f"{label}_discovered", opened.status == "done" and "пропало" in note, note)
 
-    class Script:
-        name = "frame-script"
-
-        def __init__(self, cid: str, *, investigation: bool = False) -> None:
-            self.cid, self.investigation = cid, investigation
-            self.asked = self.accused = False
-            self.prompts: list[str] = []
-
-        async def stream(self, **kw: Any) -> AsyncIterator[LLMEvent]:
-            last = kw["messages"][-1]
-            text = last.content if isinstance(last, Message) else ""
-            prompt = "\n".join(
-                m.content for m in kw["messages"] if isinstance(m, Message) and m.role == "developer"
-            )
-            npc = kw.get("cache_key")
-            step = FakeStep("Я запомню.")
-            if npc == LOBART:
-                self.prompts.append(prompt)
-                if not self.investigation and FRAME_WORDS in text and not self.accused and self.cid in prompt:
-                    self.accused = True
-                    step = FakeStep("Значит, Малак взял. Верну своё.", [
-                        ToolCall("blame", {"who": "Малак", "crime": self.cid}),
-                    ])
-                elif self.investigation and INVESTIGATE_WORDS in text and not self.asked:
-                    self.asked = True
-                    step = FakeStep("Спрошу у Хильды, что она видела о Вино.", [ToolCall("ask_witness", {
-                        "who": "Хильда", "said": INVESTIGATE_WORDS, "about": "Вино",
-                    })])
-                elif self.investigation and not self.accused and any(
-                    re.match(r"- С\d+:", line) and all(word in line for word in ("Хильда", "Вино", self.cid))
-                    for line in prompt.splitlines()
-                ):
-                    self.accused = True
-                    step = FakeStep("Хильда видела Вино. Потребую своё обратно.", [
-                        ToolCall("blame", {"who": "Вино", "crime": self.cid}),
-                    ])
-            async for event in FakeBackend(script=[step], delay=0).stream(**kw):
-                yield event
-
-    async def speak(words: str) -> tuple[bool, str, list[dict[str, Any]]]:
+    async def speak(words: str) -> None:
         before = {row["id"] for row in turns()}
         await link.debug("type", text=f"Лобарт, {words}.")
-        finished = await _until(lambda: any(
+        await _until(lambda: any(
             row["id"] not in before and words in row.get("trigger", {}).get("text", "")
-            for row in turns()
-        ), 180 if not fake else 60)
-        await settled()
-        rows = [row for row in turns() if row["id"] not in before
-                and words in row.get("trigger", {}).get("text", "")]
-        quote = " ".join(
-            str(step["text"]).strip() for row in rows for step in row.get("steps", [])
-            if step.get("text") and not step.get("silent")
-        )
-        log.info("frame %s response: %s", "scripted" if fake else "live", quote)
-        return finished and any(row.get("status") == "completed" for row in rows), quote, rows
+            for row in (live.turns(LOBART) if live is not None else turns())
+        ), 60)
+        if live is None:
+            await settled()
 
     async def fight(label: str, crime: dict[str, Any], culprit: str) -> bool:
         cid = str(crime["id"])
@@ -309,13 +263,13 @@ async def frame(
             await wait_message(link, Session, timeout=10)
         if not check("enabled", will.enabled and blame is not None and crimes is not None, log_dir):
             return _logged(results)
+        log.info("Preparing listener with FixedDecider posture=listen")
         talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
         rumors.gate, rumors.stage = lambda *_: False, None
-        prepared = {npc: replace(card, honesty=5, greed=1) for npc, card in original_cards.items()}
-        prepared[LOBART] = replace(prepared[LOBART], courage=3)
-        will.cards = service.cards = prepared
-        if fake:
-            dialogue.llm = FakeBackend("Я слушаю.", delay=0)
+        if live is None:
+            prepared = {npc: replace(card, honesty=5, greed=1) for npc, card in original_cards.items()}
+            prepared[LOBART] = replace(prepared[LOBART], courage=3)
+            will.cards = service.cards = prepared
         await link.debug("player_hp", hp=5000)
         await link.debug("time", hour=8, minute=0)
         population = {str(p["npc"]) for p in await link.story_people()}
@@ -396,28 +350,44 @@ async def frame(
         # Malak is present in the normal situation, rather than an invented name in the fixture.
         if not await place(MALAK, ROAD, to=LOBART, distance=450, face=LOBART):
             return _logged(results)
-        if fake:
-            dialogue.llm = Script(cid)  # type: ignore[assignment]
+        if off is not None:
+            off.given(
+                "дано: Лобарт верит, что Малак взял вещь из сундука",
+                who=LOBART, when=FRAME_WORDS,
+                calls=[ToolCall("blame", {"who": "Малак", "crime": cid})],
+            )
+            off.silent(
+                "дано: Лобарт молчит (обвинение Малака записано)", who=LOBART, when=FRAME_WORDS,
+            )
         before_trust = trust.of(LOBART)
-        finished, quote, rows = await speak(FRAME_WORDS)
-        if not check("frame_answer", finished and bool(quote), quote):
+        prior = {row["id"] for row in live.records} if live is not None else set()
+        await speak(FRAME_WORDS)
+        belief = next((f for f in facts("blamed")
+                       if f.get("npc") == LOBART and f.get("crime") == cid), {})
+        if live is not None:
+            rows = [row for row in live.turns(LOBART, FRAME_WORDS) if row["id"] not in prior]
+            calls = [
+                call for row in rows for step in row.get("steps", []) for call in step.get("calls", [])
+            ]
+            accepted = {call["name"] for call in calls if call.get("outcome") == "accepted"}
+            decision = "blame" if "blame" in accepted and belief.get("culprit") == MALAK else (
+                "ask_witness" if "ask_witness" in accepted else "no_blame"
+            )
+            live.finish("observed" if rows else "no_decision", evidence={
+                "decision": decision if rows else "no_decision", "calls": calls, "belief": belief,
+                "words": [step.get("text", "") for row in rows for step in row.get("steps", [])],
+            })
             return _logged(results)
-        beliefs = [f for f in facts("blamed") if f.get("npc") == LOBART and f.get("crime") == cid]
-        if not fake:
-            calls = [c for row in rows for step in row.get("steps", []) for c in step.get("calls", [])
-                     if c.get("name") == "blame"]
-            check("live_decision", True, {"believed": bool(beliefs), "calls": calls, "quote": quote})
-            return _logged(results)
-        if not check("frame_believed", len(beliefs) == 1 and beliefs[0].get("culprit") == MALAK
-                     and beliefs[0].get("truth") is False and beliefs[0].get("because") == "hero_words"
-                     and FRAME_WORDS in beliefs[0].get("said", ""), beliefs):
+        assert off is not None
+        if not check("frame_believed", belief.get("truth") is False
+                     and belief.get("because") == "hero_words", belief):
             return _logged(results)
         if not await fight("frame", theft, MALAK):
             return _logged(results)
         await _until(lambda: any(f.get("crime") == cid for f in facts("blame_refuted")), 10)
-        await _until(lambda: any(f.get("blamed") == beliefs[0]["id"] for f in facts("caught")), 10)
+        await _until(lambda: any(f.get("blamed") == belief["id"] for f in facts("caught")), 10)
         refuted = [f for f in facts("blame_refuted") if f.get("crime") == cid]
-        caught = [f for f in facts("caught") if f.get("blamed") == beliefs[0]["id"]]
+        caught = [f for f in facts("caught") if f.get("blamed") == belief["id"]]
         if not check("frame_refuted", len(refuted) == 1 and refuted[0].get("culprit") == MALAK
                      and refuted[0].get("how") == "no_goods" and blame.active(LOBART, cid) is None
                      and not any(m.get("crime") == cid for m in will.pending()), refuted):
@@ -536,30 +506,51 @@ async def frame(
             return _logged(results)
         if not await place(VINO, ROAD, to=LOBART, distance=450, face=LOBART):
             return _logged(results)
-        script = Script(did, investigation=True)
-        dialogue.llm = script  # type: ignore[assignment]
-        finished, quote, _ = await speak(INVESTIGATE_WORDS)
-        believed = await _until(lambda: any(f.get("crime") == did for f in facts("blamed")), 90)
+        off.given(
+            "дано: Лобарт спрашивает Хильду о Вино",
+            who=LOBART, when=INVESTIGATE_WORDS,
+            calls=[ToolCall("ask_witness", {
+                "who": "Хильда", "said": INVESTIGATE_WORDS, "about": "Вино",
+            })],
+        )
+        off.silent(
+            "дано: Лобарт молчит (вопрос Хильде передан)", who=LOBART, when=INVESTIGATE_WORDS,
+        )
+        off.given(
+            "дано: реплика свидетеля Хильды о Вино",
+            who=HILDA, when="спрашивает тебя о человеке Вино",
+            line="Я сама видела, как Вино взял вещь из сундука Лобарта.",
+        )
+        off.given(
+            "дано: Лобарт обвиняет Вино по показанию Хильды",
+            who=LOBART, when="Ответ о человеке Вино",
+            calls=[ToolCall("blame", {"who": "Вино", "crime": did})],
+        )
+        off.silent(
+            "дано: Лобарт молчит (показание Хильды получено)",
+            who=LOBART, when="Ответ о человеке Вино",
+        )
+        await speak(INVESTIGATE_WORDS)
+        await _until(lambda: any(f.get("crime") == did for f in facts("blamed")), 90)
         await settled()
         testimony = [f for f in facts("testimony") if f.get("npc") == LOBART and f.get("witness") == HILDA
                      and f.get("about") == VINO and did in f.get("crime_told", [])]
-        if not check("about_testimony", finished and len(testimony) == 1, testimony):
+        if not check("about_testimony", len(testimony) == 1, testimony):
             return _logged(results)
-        lines = [
-            line for prompt in script.prompts for line in prompt.splitlines() if re.match(r"- С\d+:", line)
-        ]
+        prompt = await dialogue.situation(LOBART, "Лобарт")
+        lines = [line for line in prompt.splitlines() if re.match(r"- С\d+:", line)]
         if not check("about_situation", any(all(word in line for word in ("Хильда", "Вино", did))
                                            for line in lines), lines):
             return _logged(results)
-        correct = [f for f in facts("blamed") if f.get("npc") == LOBART and f.get("crime") == did]
-        if not check("investigation_believed", believed and len(correct) == 1
-                     and correct[0].get("culprit") == VINO and correct[0].get("truth") is True
-                     and correct[0].get("because") == f"testimony:{testimony[0]['id']}", correct):
+        correct = next((f for f in facts("blamed")
+                        if f.get("npc") == LOBART and f.get("crime") == did), {})
+        if not check("investigation_believed", correct.get("truth") is True
+                     and correct.get("because") == f"testimony:{testimony[0]['id']}", correct):
             return _logged(results)
         if not await fight("investigation", deed, VINO):
             return _logged(results)
         check("true_case_stands", not any(f.get("crime") == did for f in facts("blame_refuted"))
-              and not any(f.get("blamed") == correct[0]["id"] for f in facts("caught")), correct)
+              and not any(f.get("blamed") == correct["id"] for f in facts("caught")), correct)
 
         # Save branches retain the resolved false belief and the truthful case, without new reactions.
         kinds = {"crime", "crime_suspected", "npc_crime", "npc_crime_seen", "npc_crime_suspected",
@@ -591,7 +582,7 @@ async def frame(
         return _logged(results)
     finally:
         will.cards, service.cards = original_cards, original_crime_cards
-        dialogue.llm, talk.reflexes, will.busy = original_llm, original_reflexes, original_busy
+        talk.reflexes, will.busy = original_reflexes, original_busy
         rumors.gate, rumors.stage = original_gate, original_stage
         link.send = send  # type: ignore[method-assign]
         try:

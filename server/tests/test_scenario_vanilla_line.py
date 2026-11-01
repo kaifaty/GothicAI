@@ -1,31 +1,23 @@
+import asyncio
+import json
+from contextlib import nullcontext
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
 from gothic_ai import challenges, questbook
 from gothic_ai.journal import Journal
-from gothic_ai.llm import ToolCall
 from gothic_ai.scenarios import story as scenarios
+from gothic_ai.scenarios import vanilla_line as live_scenario
 from gothic_ai.scenarios.vanilla_line import (
-    REQUIRES,
     RUEBEN,
     Turnips,
-    VanillaLineScript,
     _giver_ok,
     vanilla_line_live,
 )
 from gothic_ai.showrunner import ShowrunnerModel
-
-
-async def test_script_proposes_vanilla_followup() -> None:
-    script = VanillaLineScript("BAU_952_VINO")
-    calls = [
-        event async for event in script.stream(instructions="", messages=[]) if isinstance(event, ToolCall)
-    ]
-    assert len(calls) == 1
-    assert calls[0].arguments["follows"] == RUEBEN
-    assert calls[0].arguments["requires"] == REQUIRES
-    assert calls[0].arguments["giver"] == "BAU_952_VINO"
+from gothic_ai.trace import TraceWriter
 
 
 def test_event_matches_quest_state_and_current_occasion_window() -> None:
@@ -143,3 +135,75 @@ async def test_live_challenge_instructions_are_scoped_and_restored(monkeypatch, 
     assert challenges._chance is chance
     assert director.clock is clock
     assert journal.sink is sink
+
+
+@pytest.mark.parametrize(("missing", "expected"), [
+    ("challenge", "failure"),
+    ("hint", "failure"),
+    ("outcome", "failure"),
+    ("feat", "failure"),
+    ("dropped", "success"),
+    ("normal", "success"),
+])
+async def test_live_line_grade_includes_forced_challenge_checks(monkeypatch, tmp_path, missing, expected):
+    monkeypatch.setenv("CASES", "running")
+    monkeypatch.setenv("GOTHIC_FORCE_CHALLENGE", "0" if missing == "normal" else "1")
+    occasion = {"fact": "occasion", "kind": "vanilla", "vanilla": {"quest": RUEBEN, "to": "running"}}
+    line = {
+        "fact": "line", "occasion": occasion, "giver": "HILDA", "quests": ["DIR_Q1"], "characters": [],
+    }
+    receipts = [(1, occasion), (2, line)]
+    if missing == "dropped":
+        receipts.append((3, {"fact": "challenge_dropped", "line": 2}))
+    elif missing not in {"challenge", "normal"}:
+        receipts.append((3, {"fact": "challenge", "line": 2, "kind": "mercy", "people": ["LOBART"]}))
+        if missing != "hint":
+            receipts.append((4, {"fact": "challenge_hint", "challenge": 3}))
+        if missing != "outcome":
+            receipts.append((5, {"fact": "challenge_met", "challenge": 3}))
+        if missing != "feat":
+            receipts.append((6, {"fact": "feat", "trigger": 5, "title": "Mercy"}))
+    recorded = []
+
+    async def take(self):
+        recorded.extend(receipts)
+
+    async def until(check, timeout):
+        return bool(check())
+
+    quest = SimpleNamespace(id="DIR_Q1", to_dict=lambda: {"id": "DIR_Q1"})
+    chronicle = SimpleNamespace(
+        on_fact=[],
+        facts=lambda kind=None: [entry for _, entry in recorded if kind is None or entry["fact"] == kind],
+        entries=lambda kind=None: [(seq, entry) for seq, entry in recorded
+                                   if kind is None or entry["fact"] == kind],
+    )
+    director = SimpleNamespace(
+        model=ShowrunnerModel(SimpleNamespace(name="chatgpt")), clock=lambda: 10.0,
+        chronicle=chronicle, run=AsyncMock(), _work=None,
+        occasions=SimpleNamespace(
+            poll=AsyncMock(), _raw_place=None, pending=[], _events=[], _lock=asyncio.Lock(),
+        ),
+        book=SimpleNamespace(
+            all=lambda: {quest.id: quest}, progress=lambda qid: SimpleNamespace(state="done"),
+            settle=AsyncMock(),
+        ),
+        casting=SimpleNamespace(cast=SimpleNamespace(characters=lambda: [])),
+    )
+    passage = AsyncMock(return_value={"quest_1": "done"})
+    monkeypatch.setattr(Turnips, "prepare", AsyncMock())
+    monkeypatch.setattr(Turnips, "take", take)
+    monkeypatch.setattr(live_scenario, "_until", until)
+    monkeypatch.setattr(live_scenario, "_giver_ok", AsyncMock(return_value=True))
+    monkeypatch.setattr(live_scenario, "play_book_chain", passage)
+    monkeypatch.setattr(live_scenario, "trace_live_builders", lambda *args: nullcontext())
+
+    results = await vanilla_line_live(
+        SimpleNamespace(debug=AsyncMock()), director, None, Journal(), TraceWriter(tmp_path / "traces"),
+    )
+
+    passage.assert_awaited_once()
+    [case] = json.loads((tmp_path / "live.json").read_text())["cases"]
+    assert case["evidence"]["passage"] == {"quest_1": "done"}
+    assert case["outcome"] == expected
+    assert results == {"running": f"done ({expected})"}

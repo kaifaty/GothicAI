@@ -38,6 +38,13 @@ constexpr float Pi=3.14159265358979323846f;
 constexpr uint64_t PolicyWarmupDecisions=30;
 struct RecordedKeys { uint64_t time=0; NpcKeys::KeyState keys; };
 struct MotionSample { uint64_t time=0; Vec3 position; bool commanded=false; };
+struct DaggerMotionSample : MotionSample { std::vector<Vec3> teacherPath; };
+struct DaggerEvidence {
+  const char* trigger="";
+  bool stalled=false,memoryDanger=false,followBand=false;
+  float headingCosine=1,pathProgressCm=0,targetDistanceCm=0;
+  uint64_t headingMs=0,progressWindowMs=0;
+};
 struct CriticState {
   double pathCm=0;
   std::array<float,3> firstDirection={};
@@ -111,7 +118,13 @@ struct Episode {
   uint32_t teacherVersion=1;
   double teacherBeta=0;
   uint64_t mixingSeed=7,teacherControlDecisions=0;
-  std::mt19937_64 mixingRng,actionRng;
+  bool dagger=false,teacherControlled=false,maneuverMasked=false,learnerCommanded=false;
+  bool dartEpisode=false,dartStarted=false,headingDisagrees=false;
+  uint64_t teacherUntil=0,headingDisagreedAt=0,daggerInterventions=0,dartDecisions=0,maneuverMaskedDecisions=0;
+  unsigned dartRemaining=0;
+  std::string takeoverReason;
+  std::deque<DaggerMotionSample> daggerMotion;
+  std::mt19937_64 mixingRng,actionRng,dartRng;
   KnownRoads::Guidance guidance;
   uint64_t began=0,limit=240000,next=0,decisions=0,frames=0,cvFrames=0;
   uint64_t progressAt=0;
@@ -183,6 +196,8 @@ struct Settings {
   bool cv=false,heroNear=true,killArmed=false,killFired=false;
   bool oracle=false,recordDemos=true;
   bool perceptionMonitor=false;
+  bool dagger=false;
+  uint32_t driveTeacher=0;
   bool live=false,liveTargetPlayer=false,liveGuidePlayer=false,liveTargetWalkOnly=false;
   NavigationEye::FloorSampling floorSampling=NavigationEye::FloorSampling::WalkingGazeDown;
   size_t killSlot=0;
@@ -428,7 +443,7 @@ void finish(Episode& ep,World& world) {
      <<",\"demonstration_recorded\":"<<bool(ep.writer)<<",\"demo_recorded\":"<<bool(ep.writer)
      <<",\"solver\":"<<std::quoted(ep.teacherVersion==3?"memory_teacher_v3":ep.teacherVersion==2?"teacher_v2":"teacher_v1")
      <<",\"observation_source\":"
-     <<std::quoted(ep.oracle?"detour_raster":ep.teacherVersion==3?"learner_memory":ep.teacherVersion==2?"detour_teacher_v2":"detour_teacher_v1")
+     <<std::quoted(ep.oracle?"detour_raster":ep.teacherVersion==3 || ep.dagger?"learner_memory":ep.teacherVersion==2?"detour_teacher_v2":"detour_teacher_v1")
      <<",\"oracle_unsupported_decisions\":"<<ep.oracleUnsupportedDecisions
      <<",\"oracle_snapped_support_decisions\":"<<ep.oracleSnappedSupportDecisions
      <<",\"oracle_support_snap_max_cm\":"<<ep.oracleSupportSnapMaxCm
@@ -465,8 +480,12 @@ void finish(Episode& ep,World& world) {
        <<",\"target_final_down\":"<<ep.target->isDown()
        <<",\"target_final_dead\":"<<ep.target->isDead();
   out<<",\"next_corner\":";vector(out,ep.path.corners.empty()?ep.goal:cm(ep.path.corners.back()));
+  if(ep.dagger)out<<",\"dagger_control_version\":3";
   if(ep.drive) {
     out<<",\"teacher_beta\":"<<ep.teacherBeta<<",\"mixing_seed\":"<<ep.mixingSeed
+       <<",\"dagger\":"<<ep.dagger<<",\"dagger_interventions\":"<<ep.daggerInterventions
+       <<",\"dart_episode\":"<<ep.dartEpisode<<",\"dart_decisions\":"<<ep.dartDecisions
+       <<",\"maneuver_masked_decisions\":"<<ep.maneuverMaskedDecisions
        <<",\"action_mode\":"<<std::quoted(ep.sampled?"sample":"argmax")
        <<",\"teacher_control_decisions\":"<<ep.teacherControlDecisions
        <<",\"policy_population\":"<<ep.policyStates.size()
@@ -497,6 +516,7 @@ void finish(Episode& ep,World& world) {
          <<",\"familiar_input_nonzero_decisions\":"<<ep.familiarInputNonzeroDecisions
          <<",\"familiar_near_input_nonzero_decisions\":"<<ep.familiarNearInputNonzeroDecisions
          <<",\"familiar_far_input_nonzero_decisions\":"<<ep.familiarFarInputNonzeroDecisions;
+    if(ep.dagger)out<<",\"training_valid\":"<<(ep.trainingValid && !ep.nonfinite);
   }
   out<<",\"eye_layout\":[";
   for(size_t i=0;i<ep.eye.samples().size();++i) {
@@ -1343,6 +1363,162 @@ NpcKeys::KeyState select(Episode& ep,NavPolicy::Result result) {
   keys.climb=ep.policy->weightVersion()>=2?ep.selectedIndices[4]==2:ep.selectedIndices[5]!=0;
   return keys;
 }
+std::array<float,2> movementDirection(const NpcKeys::KeyState& keys) {
+  // NpcKeys gives strafing priority over forward/backward motion.
+  if(keys.strafe!=0)return {keys.strafe>0?1.f:-1.f,0};
+  return {0,keys.forward>0?1.f:keys.forward<0?-1.f:0.f};
+}
+bool memoryDangerAhead(const NavDemoWriter::Snapshot& sample,const std::array<float,2>& movement) {
+  if(movement[0]==0 && movement[1]==0)return false;
+  const auto& near=sample.memory->near;
+  for(size_t row=0;row<near.size;++row)for(size_t column=0;column<near.size;++column) {
+    const auto& cell=near.cells[row*near.size+column];
+    // Match channels quantized into NAVDEMO and the learner's observation.
+    if(std::lround(cell.water*255.f)<128 && std::lround(cell.drop*255.f)<128)continue;
+    const float right=(float(column)+.5f-float(near.size)*.5f)*near.cellCm;
+    const float forward=(float(row)+.5f-float(near.size)*.5f)*near.cellCm;
+    const float along=right*movement[0]+forward*movement[1];
+    const float across=std::abs(right*movement[1]-forward*movement[0]);
+    // A 15-cm body margin plus half a cell diagonal covers the commanded lane.
+    const float approach=sample.body.velocityCmS[0]*right+sample.body.velocityCmS[2]*forward;
+    if(along>0 && along<=100.f && across<=15.f+near.cellCm*.707107f && approach>0)return true;
+  }
+  return false;
+}
+std::vector<Vec3> daggerTeacherPath(const Episode& ep,const NavDemoWriter::Snapshot& sample) {
+  const Vec3 position(sample.position[0],sample.position[1],sample.position[2]);
+  std::vector<Vec3> path={position};
+  if(ep.teacherVersion==3) {
+    const float yaw=sample.bodyYawDeg*Pi/180.f,c=std::cos(yaw),s=std::sin(yaw);
+    for(const auto& point:ep.memoryTeacher.plan())
+      path.push_back(position+Vec3(point.forwardCm*c-point.rightCm*s,0,
+                                   point.forwardCm*s+point.rightCm*c));
+  }
+  else {
+    const Vec3 corner(sample.teacherCorner[0],sample.teacherCorner[1],sample.teacherCorner[2]);
+    path.push_back(corner);
+    // The hint can refer to a direct segment outside the retained corridor.
+    // Only continue through that corridor when its corner matches the hint.
+    for(size_t i=0;i<ep.path.corners.size();++i)if((cm(ep.path.corners[i])-corner).length()<1.f) {
+      for(size_t j=i+1;j<ep.path.corners.size();++j)path.push_back(cm(ep.path.corners[j]));
+      break;
+    }
+  }
+  return path;
+}
+float daggerPathArc(const std::vector<Vec3>& path,const Vec3& position) {
+  float closest=std::numeric_limits<float>::max(),arc=0,offset=0;
+  for(size_t i=1;i<path.size();++i) {
+    const auto delta=path[i]-path[i-1],relative=position-path[i-1];
+    const float square=delta.x*delta.x+delta.z*delta.z;
+    if(square==0)continue;
+    const float fraction=std::clamp((relative.x*delta.x+relative.z*delta.z)/square,0.f,1.f);
+    const auto error=relative-delta*fraction;
+    const float distance=error.x*error.x+error.z*error.z,length=std::sqrt(square);
+    if(distance<closest) {closest=distance;arc=offset+fraction*length;}
+    offset+=length;
+  }
+  return arc;
+}
+DaggerEvidence daggerTrigger(Episode& ep,const NavDemoWriter::Snapshot& sample,const NpcKeys::KeyState& learner) {
+  DaggerEvidence evidence;
+  const auto movement=movementDirection(learner);
+  const bool moving=movement[0]!=0 || movement[1]!=0;
+  const auto now=sample.gameMs;
+  ep.daggerMotion.push_back({{now,Vec3(sample.position[0],sample.position[1],sample.position[2]),
+                             ep.learnerCommanded},daggerTeacherPath(ep,sample)});
+  ep.learnerCommanded=moving;
+  const auto cutoff=now>=2000?now-2000:0;
+  while(ep.daggerMotion.size()>1 && ep.daggerMotion[1].time<=cutoff)ep.daggerMotion.pop_front();
+  uint64_t commanded=0;
+  for(size_t i=1;i<ep.daggerMotion.size();++i)
+    if(ep.daggerMotion[i].commanded)commanded+=ep.daggerMotion[i].time-ep.daggerMotion[i-1].time;
+  const auto displacement=ep.daggerMotion.back().position-ep.daggerMotion.front().position;
+  evidence.progressWindowMs=now-ep.daggerMotion.front().time;
+  evidence.targetDistanceCm=(ep.daggerMotion.back().position-ep.goal).length();
+  evidence.followBand=ep.goalKind=="follow" && evidence.targetDistanceCm>=200.f && evidence.targetDistanceCm<=500.f;
+  evidence.stalled=!evidence.followBand && moving && evidence.progressWindowMs>=2000 && commanded>=2000 &&
+                   std::hypot(displacement.x,displacement.z)<30.f;
+  // Freeze the earlier teacher polyline: replanning can change its length even
+  // without movement. Progress is forward arc distance on that same route.
+  if(evidence.progressWindowMs>=2000) {
+    const auto& previous=ep.daggerMotion.front();
+    evidence.pathProgressCm=daggerPathArc(previous.teacherPath,ep.daggerMotion.back().position)-
+                            daggerPathArc(previous.teacherPath,previous.position);
+  }
+  auto teacher=movementDirection(sample.keys);
+  if(ep.teacherVersion==3) {
+    // The endpoint can lie behind an obstacle while the next route segment
+    // correctly leads away from it. Preserve backward/sideways recovery keys.
+    if(sample.keys.forward>=0 && sample.keys.strafe==0)
+      for(const auto& point:ep.memoryTeacher.plan())
+        if(std::hypot(point.rightCm,point.forwardCm)>1.f) {
+          teacher={point.rightCm,point.forwardCm};break;
+        }
+  }
+  else {
+    const Vec3 delta(sample.teacherCorner[0]-sample.position[0],0,sample.teacherCorner[2]-sample.position[2]);
+    const auto relative=local(delta,sample.bodyYawDeg*Pi/180.f);
+    if(std::hypot(relative[0],relative[2])>=1.f)teacher={relative[0],relative[2]};
+  }
+  const float teacherLength=std::hypot(teacher[0],teacher[1]);
+  if(teacherLength>0)evidence.headingCosine=(movement[0]*teacher[0]+movement[1]*teacher[1])/teacherLength;
+  const bool disagree=moving && evidence.headingCosine<-.5f;
+  if(disagree && !ep.headingDisagrees)ep.headingDisagreedAt=now;
+  ep.headingDisagrees=disagree;
+  evidence.headingMs=disagree?now-ep.headingDisagreedAt:0;
+  evidence.memoryDanger=memoryDangerAhead(sample,movement);
+  if(evidence.stalled)evidence.trigger="stall";
+  else if(evidence.memoryDanger)evidence.trigger="memory_danger";
+  else if(disagree && evidence.headingMs>2000 && evidence.pathProgressCm<=0)evidence.trigger="heading";
+  return evidence;
+}
+NpcKeys::KeyState mixTeacher(Episode& ep,const NavDemoWriter::Snapshot& sample,NpcKeys::KeyState learner) {
+  const auto now=sample.gameMs;
+  const auto learnerKeys=learner;
+  const auto evidence=ep.dagger?daggerTrigger(ep,sample,learner):DaggerEvidence{};
+  const auto* trigger=evidence.trigger;
+  if(ep.dagger && now>=ep.teacherUntil && trigger[0]!='\0') {
+    ep.teacherUntil=now+1000;
+    ep.takeoverReason=trigger;++ep.daggerInterventions;
+  }
+  const bool held=ep.dagger && now<ep.teacherUntil;
+  ep.teacherControlled=held || std::bernoulli_distribution(ep.teacherBeta)(ep.mixingRng);
+  if(!held)ep.takeoverReason=ep.teacherControlled?"beta":"";
+  bool dart=false;
+  if(ep.teacherControlled) {
+    learner=sample.keys;++ep.teacherControlDecisions;
+    if(ep.dagger && ep.dartEpisode && !ep.dartStarted) {
+      ep.dartStarted=true;ep.dartRemaining=std::uniform_int_distribution<unsigned>(3,10)(ep.dartRng);
+      ep.teacherUntil=std::max(ep.teacherUntil,now+uint64_t(ep.dartRemaining)*100);
+    }
+    if(ep.dartRemaining>0) {
+      // Perturb only locomotion on teacher steps; the unperturbed corrective
+      // label remains in NAVDEMO, including its maneuver head.
+      learner.forward=float(std::uniform_int_distribution<int>(-1,1)(ep.dartRng));
+      learner.strafe=float(std::uniform_int_distribution<int>(-1,1)(ep.dartRng));
+      learner.turn=float(std::uniform_int_distribution<int>(-1,1)(ep.dartRng));
+      learner.walk=std::bernoulli_distribution(.5)(ep.dartRng);
+      --ep.dartRemaining;++ep.dartDecisions;dart=true;
+    }
+  }
+  if(ep.dagger && ep.samples.is_open()) {
+    ep.samples<<"{\"time_ms\":"<<now<<",\"elapsed_ms\":"<<now-ep.began
+              <<",\"teacher_control\":"<<ep.teacherControlled<<",\"maneuver_mask\":"<<ep.maneuverMasked
+              <<",\"dart\":"<<dart<<",\"takeover\":"<<std::quoted(ep.takeoverReason)
+              <<",\"learner_keys\":["<<learnerKeys.forward<<','<<learnerKeys.strafe<<','<<learnerKeys.turn
+              <<','<<int(learnerKeys.walk)<<','<<int(learnerKeys.jump)<<','<<int(learnerKeys.climb)<<']'
+              <<",\"trigger\":"<<std::quoted(trigger)<<",\"stall\":"<<evidence.stalled
+              <<",\"follow_band\":"<<evidence.followBand<<",\"target_distance_cm\":"<<evidence.targetDistanceCm
+              <<",\"memory_danger\":"<<evidence.memoryDanger<<",\"heading_cosine\":"<<evidence.headingCosine
+              <<",\"heading_disagreement_ms\":"<<evidence.headingMs
+              <<",\"teacher_path_progress_cm\":"<<evidence.pathProgressCm
+              <<",\"progress_window_ms\":"<<evidence.progressWindowMs<<"}\n";
+    if(!ep.samples)throw std::runtime_error("navdemos DAgger sample write failed");
+  }
+  ep.maneuverMaskedDecisions+=ep.maneuverMasked;
+  return learner;
+}
 NpcKeys::KeyState executePolicy(Episode& ep,const NavDemoWriter::Snapshot& sample) {
   if(!ep.drive)return sample.keys;
   auto executed=sample.keys;
@@ -1398,9 +1574,7 @@ NpcKeys::KeyState executePolicy(Episode& ep,const NavDemoWriter::Snapshot& sampl
   for(size_t i=0;i<disagree.size();++i)ep.disagreements[i]+=disagree[i];
   // The recurrent student observes every visited state. The same state's
   // teacher label is always recorded, regardless of who presses the keys.
-  if(std::bernoulli_distribution(ep.teacherBeta)(ep.mixingRng)) {
-    executed=sample.keys;++ep.teacherControlDecisions;
-  }
+  executed=mixTeacher(ep,sample,executed);
   if(ep.live)ep.live->observation(sample,&features,sample.gameMs-ep.began,ep.decisions);
   return executed;
 }
@@ -1467,6 +1641,16 @@ void decideMemory(Episode& ep,World& w,uint64_t elapsed) {
     oracleMemory(input,raster);
   }
   sample.keys=ep.memoryTeacher.decide(input);++ep.replans;
+  ep.maneuverMasked=false;
+  if(ep.dagger) {
+    sample.keys.jump=false;sample.keys.climb=false;
+    for(const auto& link:NavBench::navigationMesh(w).params().links) {
+      if((position-cm(link.start)).length()<=300.f ||
+         (link.bidirectional && (position-cm(link.end)).length()<=300.f)) {
+        ep.maneuverMasked=true;break;
+      }
+    }
+  }
   ep.startNotFoundDecisions+=!ep.memoryTeacher.lastPlanStatus().startFound;
   const auto& points=ep.memoryTeacher.plan();
   auto& out=ep.teacherPaths;
@@ -1484,11 +1668,11 @@ void decideMemory(Episode& ep,World& w,uint64_t elapsed) {
                                            p.forwardCm*std::sin(yaw)+p.rightCm*std::cos(yaw)));
   }
   sample.teacherPathCm=ep.memoryTeacher.planLengthCm();
+  const auto executed=executePolicy(ep,sample);
+  liveDecision(ep,w,sample,executed);
   if(ep.writer) {
     const double cost=ep.writer->append(sample);ep.writeUs+=cost;ep.maxWriteUs=std::max(ep.maxWriteUs,cost);
   }
-  const auto executed=executePolicy(ep,sample);
-  liveDecision(ep,w,sample,executed);
   ep.backwardDecisions+=executed.forward<0;ep.strafeDecisions+=executed.strafe!=0;
   action(ep,elapsed,executed);NpcKeys::set(*ep.npc,executed,1000);ep.previous=executed;++ep.decisions;
   ep.failure=ep.blocked?"body_blocked":"";
@@ -2197,6 +2381,14 @@ void NavDemos::command(const std::vector<std::string>& args,World& w,Npc& player
     }
     return;
   }
+  if(a.size()>=2 && (a[1]=="drive-teacher" || a[1]=="dagger")) {
+    if(running())throw std::runtime_error("navdemos cannot change drive settings during an episode");
+    if(a[1]=="drive-teacher" && a.size()==3 && (a[2]=="auto" || a[2]=="2" || a[2]=="3"))
+      settings.driveTeacher=a[2]=="auto"?0u:uint32_t(std::stoul(a[2]));
+    else if(a[1]=="dagger" && a.size()==3 && (a[2]=="on" || a[2]=="off"))settings.dagger=a[2]=="on";
+    else throw std::runtime_error("navdemos drive-teacher auto|2|3 | dagger on|off");
+    return;
+  }
   if(a.size()>=2 && (a[1]=="physics" || a[1]=="hero" || a[1]=="kill-slot")) {
     if(running())throw std::runtime_error("navdemos cannot change settings during an episode");
     if(a[1]=="physics" && a.size()==3 && (a[2]=="cv" || a[2]=="native"))settings.cv=a[2]=="cv";
@@ -2301,7 +2493,7 @@ void NavDemos::command(const std::vector<std::string>& args,World& w,Npc& player
     const auto population=speed?std::stoul(a[7]):1;
     if(population==0 || population>1000)throw std::runtime_error("navdemos invalid policy population");
     ep.policy=std::make_unique<NavPolicy>(a[current?5:6]);
-    ep.teacherVersion=ep.policy->navDemoVersion()>=2?3:1;
+    ep.teacherVersion=settings.driveTeacher?settings.driveTeacher:(ep.policy->navDemoVersion()>=2?3:1);
     ep.policy->configureMemory(ep.memory,std::getenv("OPENGOTHIC_NAV_JOURNEY_MEMORY"));
     if(ep.memory.journeyMemoryEnabled() && ep.policy->navDemoVersion()>=2)
       KnownRoadsBench::attachFamiliar(w,*npc,ep.memory);
@@ -2309,6 +2501,12 @@ void NavDemos::command(const std::vector<std::string>& args,World& w,Npc& player
     if(!speed && a.size()>betaIndex)ep.teacherBeta=std::stod(a[betaIndex]);
     if(!std::isfinite(ep.teacherBeta) || ep.teacherBeta<0 || ep.teacherBeta>1)
       throw std::runtime_error("navdemos teacher beta must be in [0,1]");
+    ep.dagger=settings.dagger;
+    if(ep.dagger) {
+      if(speed || ep.policy->navDemoVersion()<2 || !ep.memory.journeyMemoryEnabled())
+        throw std::runtime_error("navdemos DAgger requires a single v2+ learner with journey memory 4");
+      ep.teacherBeta=std::max(.1,ep.teacherBeta);
+    }
     if(!speed && a.size()>betaIndex+1)ep.mixingSeed=std::stoull(a[betaIndex+1]);
     if(!speed && a.size()>betaIndex+2) {
       if(a[betaIndex+2]!="sample" && a[betaIndex+2]!="argmax")
@@ -2316,6 +2514,8 @@ void NavDemos::command(const std::vector<std::string>& args,World& w,Npc& player
       ep.sampled=a[betaIndex+2]=="sample";
     }
     ep.mixingRng.seed(ep.mixingSeed);ep.actionRng.seed(ep.mixingSeed);
+    ep.dartRng.seed(ep.mixingSeed^0x44415254u);
+    if(ep.dagger)ep.dartEpisode=std::bernoulli_distribution(.1)(ep.dartRng);
     ep.policyStates.resize(population);
     ep.policyUs.reserve(size_t((ep.limit+99)/100)*population);
     ep.encodeUs.reserve(size_t((ep.limit+99)/100));
@@ -2454,10 +2654,11 @@ void NavDemos::command(const std::vector<std::string>& args,World& w,Npc& player
     ep.actions=file(ep,"actions.txt");
     if(settings.recordDemos && !ep.oracle) {
       ep.writer=std::make_unique<NavDemoWriter>((std::filesystem::path(output)/"samples.bin.gz").string(),demoVersion(ep));
+      if(ep.dagger)ep.samples=file(ep,"samples.jsonl");
     }
     if(ep.teacherVersion>=2) {
       ep.knownPaths=file(ep,"known-paths.jsonl");
-      if(!ep.drive || ep.teacherVersion==3) {
+      if(!ep.drive || ep.teacherVersion==3 || ep.dagger || ep.hasObservedTransition) {
         ep.teacherPaths=file(ep,"teacher-paths.jsonl");
         ep.transitionFrames=file(ep,"transition-frames.jsonl");
       }

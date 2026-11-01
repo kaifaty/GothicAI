@@ -12,7 +12,6 @@ from ..attitudes import non_hostile
 from ..crime_law import REPORT_DELAYS, game_minutes
 from ..crime_law_graph import law_var
 from ..game import GameError, GameLink
-from ..llm.fake import FakeBackend
 from ..protocol import DialogChosen, Session
 from ..validator import LOG_RUNNING, LOG_SUCCESS
 from .common import (
@@ -51,7 +50,7 @@ async def quest_law(
     rumors: Rumors,
     slot: int = 7,
 ) -> dict[str, str]:
-    """Save 1, fake model: have -> bring, native theft, reload, fine, turn-in, fine payment.
+    """Save 1, no model: have -> bring, native theft, reload, fine, turn-in, fine payment.
 
     Only the scene is staged, as in crime_law: other people wait away from Matteo's street and his
     rule-based reaction finishes before he is moved. Ownership, guilds and native perceptions stay intact.
@@ -162,9 +161,6 @@ async def quest_law(
     def talk_line(said: str, answer: str, remember: str = "") -> questbook.Talk:
         return questbook.Talk(said, [{"speaker": "self", "text": answer}], remember)
 
-    if not isinstance(dialogue.llm, FakeBackend):
-        check(current, False, "quest_law requires LLM=fake")
-        return _logged(results)
     await link.wait_world()
     if link.session is None:
         await wait_message(link, Session, timeout=10)

@@ -1,0 +1,8 @@
+# Fresh WORLD=OLDWORLD.ZEN, PLACED_ITEMS=1.
+# 300 native fixed steps; numeric diagnosis, no captures.
+seed 73013
+cheat god
+set time 12 0
+overlay off
+placed-items diagnose 1644 control
+physics stats

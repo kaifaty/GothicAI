@@ -114,7 +114,7 @@ while True:
             ['bash', '-c', harness], capture_output=True, text=True, timeout=20,
             env=dict(os.environ, HOME=str(root / 'home'), TEST_ROOT=str(root),
                      TEST_MODE=mode, SCENARIO='stages', GQ_PROFILE='ryzen',
-                     LLM='fake', SAVE='', GAME_EXTRA_ENV='', GOTHIC_TTS_RECORD='0', GOTHIC_SOAK_CONTROL='0',
+                     LLM='off', SAVE='', GAME_EXTRA_ENV='', GOTHIC_TTS_RECORD='0', GOTHIC_SOAK_CONTROL='0',
                      PATH=str(binaries) + os.pathsep + os.environ['PATH']),
         )
         return result, root / 'state/runs/run', int((root / 'starts').read_text())
