@@ -91,6 +91,7 @@ GIVEN = {
     "deal_demo",
     "bandit_parley",
     "bandit_bounty",
+    "road_bandits",
     "calm",
     "companion",
     "neural-talk",

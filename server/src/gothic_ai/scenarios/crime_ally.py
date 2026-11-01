@@ -151,7 +151,12 @@ async def crime_ally(
         ):
             return _logged(results)
         if perception is not None:
-            await perception.fresh(BRAGO)
+            # Distance alone permits Cavalorn to remain behind the cave's corner.
+            if not await _until_async(
+                lambda: perception.fresh(BRAGO),
+                lambda _: bool((sight := perception.sight(BRAGO)) and CAVALORN in sight.targets), 20,
+            ):
+                raise GameError("Cavalorn must be visible to Brago before the given attack")
         await link.snapshot(BRAGO, fresh=True)
         talk.hear("Эй, Браго! Не трогай Кавалорна.", BRAGO, {"via": "scenario"})
 
