@@ -4765,6 +4765,21 @@ namespace {
     require(!Npc::canAccumulateMeleePosture(true,false,true,false),"a knockdown must not accumulate another knockdown");
     require(!Npc::canAccumulateMeleePosture(true,false,false,true),"death or unconsciousness must retain the old path");
 
+    require(MeleeImpact::beastSize(54.9f)==MeleeImpact::BeastSize::Small,
+            "beasts below 55 kg must be small");
+    require(MeleeImpact::beastSize(55.f)==MeleeImpact::BeastSize::Medium &&
+            MeleeImpact::beastSize(299.9f)==MeleeImpact::BeastSize::Medium,
+            "beasts from 55 kg to below 300 kg must be medium");
+    require(MeleeImpact::beastSize(300.f)==MeleeImpact::BeastSize::Huge,
+            "beasts from 300 kg must be huge");
+    require(MeleeImpact::beastCanAccumulatePosture(54.9f) && MeleeImpact::beastCanAccumulatePosture(299.9f) &&
+            !MeleeImpact::beastCanAccumulatePosture(300.f) && !MeleeImpact::beastCanAccumulatePosture(600.f),
+            "small and medium beasts must accumulate posture while huge beasts never do");
+    requireNear(Ragdoll::speciesMass("Shadow"),250.f,.0001f,"the Shadow model must weigh 250 kg");
+    requireNear(Ragdoll::speciesMass("sHaDoW"),250.f,.0001f,"Shadow mass must be case insensitive");
+    requireNear(Ragdoll::speciesMass("Golem"),500.f,.0001f,"the Golem model must weigh 500 kg");
+    requireNear(Ragdoll::speciesMass("gOlEm"),500.f,.0001f,"Golem mass must be case insensitive");
+
     require(MeleeImpact::heavyHit(MeleeImpact::Weapon::TwoHand,{0,0,0},0)==MeleeImpact::HeavyHit::TwoHanded,
             "a two-handed weapon must qualify as a heavy hit");
     require(MeleeImpact::heavyHit(MeleeImpact::Weapon::OneHand,{80,-60,0},0)==MeleeImpact::HeavyHit::Downward,

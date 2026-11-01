@@ -30,6 +30,14 @@ uint64_t MeleeImpact::stunDuration(std::string_view reason) {
   return reason=="posture" ? 1500 : 1000;
   }
 
+MeleeImpact::BeastSize MeleeImpact::beastSize(float bodyMassKg) {
+  return bodyMassKg<55.f ? BeastSize::Small : bodyMassKg<300.f ? BeastSize::Medium : BeastSize::Huge;
+  }
+
+bool MeleeImpact::beastCanAccumulatePosture(float bodyMassKg) {
+  return beastSize(bodyMassKg)!=BeastSize::Huge;
+  }
+
 Tempest::Vec3 MeleeImpact::impulse(Weapon weapon, const Tempest::Vec3& velocityCmS, float surfaceAngleDeg) {
   const float mass = weapon==Weapon::Fist ? 1.5f : weapon==Weapon::OneHand ? 2.5f : 4.f;
   const float edge = .5f+.5f*std::sin(std::clamp(surfaceAngleDeg,0.f,90.f)*float(M_PI)/180.f);

@@ -8,10 +8,13 @@ namespace MeleeImpact {
   enum class Weapon : uint8_t { Fist, OneHand, TwoHand };
   enum class HeavyHit : uint8_t { None, TwoHanded, Downward, Posture };
   enum class ArmorClass : uint8_t { Light, Medium, Heavy };
+  enum class BeastSize : uint8_t { Small, Medium, Huge };
 
   HeavyHit heavyHit(Weapon weapon, const Tempest::Vec3& velocityCmS, float postureIncrease);
   ArmorClass armorClass(int32_t edgeProtection);
   float armorThresholdScale(ArmorClass armor);
+  BeastSize beastSize(float bodyMassKg);
+  bool beastCanAccumulatePosture(float bodyMassKg);
   uint64_t stunDuration(std::string_view reason);
 
   // World contact velocity is in cm/s; the returned impulse is in N s.
