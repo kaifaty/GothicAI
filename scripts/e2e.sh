@@ -305,14 +305,9 @@
 #   wrath: given: Xardas takes offense at severity 1, 2 and 3, unforgivable on the third insult.
 #       He kills the hero with a spell and raises him as a skeleton (docs/xardas-wrath.md).
 #       Group 2, LLM=off via auto; new game, no SAVE.
-#   initiative: an npc comes up to the hero and speaks first (docs/npc-tools.md, wave 2 step 1). Hilda's
-#       greeting waits for the hero (the game's Npc_CheckInfo), so she is left to the scripts. The hero owes
-#       Lobart 25 gold since yesterday (a debt seeded into the chronicle): a broken word, on Lobart's mind. The
-#       hero stands 12 m in front of him; Lobart walks up once by himself and speaks first about the debt (the
-#       fact `initiative`), the hero's next words without a name go to him, Lobart offers a deal that settles
-#       the debt, the hero accepts it and nothing is on Lobart's mind any more. Without DECIDER_URL a fixed
-#       stand-in decides for Lobart only; with it the behavioral model decides (give a longer TIMEOUT).
-#       Words scripted with LLM=fake. Run on a save: SAVE=save_slot_1.sav
+#   initiative: given: Lobart approaches about the overdue 25 gold and offers repayment. Checks the
+#       approach, listening partner, debt window and settlement. Group 2, LLM=off via auto;
+#       SAVE=save_slot_1.sav
 #   gossip: two people near the hero talk about his lie, in their own voices (docs/npc-tools.md, wave 2
 #       step 2). Lobart catches the hero lying, Hilda in the house does not hear it; an hour later she is put
 #       5 m from Lobart, the hero 13 m off, and the pair is opened: the rumor passes as one fact (how: talked),
@@ -321,20 +316,12 @@
 #       asks Hilda and she has it in mind; far from the hero a pass is only the fact. Starts the TTS service
 #       (TTS=fake). Words scripted with LLM=fake. Without DECIDER_URL (with it Lobart may first come up about
 #       the lie himself); TIMEOUT=420
-#   day: everyday life from concerns (docs/npc-tools.md, wave 2 step 6). Lobart catches the hero lying; Vino,
-#       on his field, hears it from him far from the hero. With the hero by Malet, Vino's menu of his next hour
-#       has a walk to Malet to tell the news (about an hour); it is chosen and Vino walks there: near the hero
-#       the two say it in a scene of step 2 (how: talked) and the walk leaves a `day` fact the hero saw; from a
-#       save, with the hero by Vino's field, the same walk ends far from him and Malet learns it as a fact
-#       (how: visited), no model, no words. No sleep or dead option in any menu, few routine asks. Without
-#       DECIDER_URL the scenario's own planner (a fixed stand-in); with it the server's planner, the choice
-#       pinned and the live model's own answer logged. Starts the TTS service (TTS=fake). Words scripted with LLM=fake;
-#       TIMEOUT=480
-#   noise: a real physical impact near a free human at Lobart's farm: noise event, planner decision,
-#       investigate receipt, walk within 2 m, idle within 45 s, return within 1.5 m of the routine post,
-#       and heard-noise memory
-#       with place and game time. Without DECIDER_URL a fixed stand-in chooses investigate for this NPC;
-#       with it the server's planner logs the live choice and pins investigate. SAVE=save_slot_1.sav
+#   day: given: Lobart exposes the turnip lie; Vino chooses to tell Malet; the scene's lines are given.
+#       Checks daily menus, walks, alternating voices and recipients, near/far facts and save/load.
+#       Group 2, LLM=off via auto; TTS=fake; SAVE=save_slot_1.sav; TIMEOUT=480
+#   noise: given: Malet investigates a physical impact. Checks the noise event, investigate receipt,
+#       walk within 2 m, idle within 45 s, routine return and heard-noise memory.
+#       Group 2, LLM=off via auto; SAVE=save_slot_1.sav
 #   cards: the model writes character cards (docs/npc-tools.md, wave 1 step 3) for every npc of the world with
 #       lines of its own (GOTHIC_CARDS=SYM,...: those only) into server/src/gothic_ai/gamedata/characters.json;
 #       those with a card are skipped; needs LLM=chatgpt and a long TIMEOUT for all of them
@@ -377,27 +364,26 @@
 #   knows: what an npc knows of where people are (docs/npc-tools.md, step M4): Cavalorn by his fire knows the
 #       bandits who robbed him sit in the cave below the steps, though the hero told him nothing: the fact is in
 #       his turn's situation and in `where{пещера}`; no model
-#   lead: the npc leads the hero (docs/npc-tools.md, wave 2 step 4): «Малет, отведи меня к мельнице» — a deal
-#       with the way in its window, Y, Malet sets off; the hero put back where it started: it waits and goes on
-#       once he comes up; at the mill it says so, a fact `led` (model scripted with LLM=fake); TIMEOUT=540
-#   meet: a meeting (docs/npc-tools.md, wave 2 step 4): at 19:00 the hero and Malet agree to meet at dawn by
-#       the field in front of the city gates (a deal, Y); the clock leaps past when Malet sets off, as a sleep:
-#       he is there at once and waits; the hero comes, `meet_kept`, Malet speaks first (model scripted with
-#       LLM=fake); TIMEOUT=600
-#   meet_missed: the clock to a little before he sets off, Malet walks there himself and waits; the hero does
-#       not come: the clock past the end, his word broken (`broken`, promise meet), Malet back to his routine,
-#       and when the hero comes up the missed meeting is before him; TIMEOUT=700
-#   errand: an errand (docs/npc-tools.md, wave 2 step 5, `plan`): Lobart catches the hero lying and, asked
-#       «ты кому-нибудь расскажешь?», sets out to tell Andre tomorrow at 7:00; the night goes by (a leap), the
-#       hero waits where Andre will be; Lobart walks there from the farm, finds Andre and tells him in front of
-#       the hero: a rumor with `how: told`, `goal_done`, a scene of two voices. Starts the TTS service
-#       (TTS=fake); model scripted with LLM=fake (LLM=chatgpt: Lobart decides himself whom he tells and
-#       when, or not to); TIMEOUT=1500 (the walk is ~8 min of real time)
-#   errand_fork: the same, but Andre is taken away before Lobart comes: another of the militia there hears it
-#   errand_far: the same, the hero at the tower: nothing walks, the rumor comes as a fact when Lobart would be
-#       there, his body stays at his routine, no model call
-#   errand_give: Hilda takes Lobart 25 gold the hero asks her to (`npc_act give`): her −25, his +25, a fact
-#       `gave`; Canthar's letter (a mission item, v39) is turned down with the reason
+#   chests: given: Brago takes a bow from his chest on the hero's request to buy it. Checks chest
+#       contents in the situation, fetching, missing gold and return. Group 2, LLM=off via auto; new game.
+#   lead: given: Malet offers to guide the hero to FARM1_MILL. Checks departure, waiting for the hero
+#       and arrival with a led fact. Group 2, LLM=off via auto; SAVE=save_slot_1.sav; TIMEOUT=540
+#   meet: given: Malet agrees to meet at dawn by FARM1_WOLF. Checks the deal, sleep-like clock jump,
+#       arrival, meet_kept, greeting cue and conversation partner. Group 2, LLM=off via auto;
+#       SAVE=save_slot_1.sav; TIMEOUT=600
+#   meet_missed: given: the same meeting. Checks Malet's walk, wait, broken promise, routine return
+#       and the missed meeting in his situation. Group 2, LLM=off via auto;
+#       SAVE=save_slot_1.sav; TIMEOUT=700
+#   errand: given: Lobart exposes the turnip lie and decides to tell Andre tomorrow at 7:00;
+#       the scene's lines are given. Checks the walk, rumor how=told, goal_done and two voices.
+#       Group 2, LLM=off via auto; TTS=fake; SAVE=save_slot_1.sav; TIMEOUT=1500
+#   errand_fork: given: the same errand; Andre is moved away before arrival, another militiaman hears it.
+#       Group 2, LLM=off via auto; TTS=fake; SAVE=save_slot_1.sav; TIMEOUT=1500
+#   errand_far: given: the same errand; the hero stays at the tower. Checks the distant rumor, routine
+#       body and absence of a scene request. Group 2, LLM=off via auto; SAVE=save_slot_1.sav; TIMEOUT=1500
+#   errand_give: given: Hilda takes Lobart 25 gold; she also attempts to give Canthar's mission letter.
+#       Checks balances, gave, goal completion and rejection of the mission item.
+#       Group 2, LLM=off via auto; SAVE=save_slot_1.sav
 #   programs: the director's programs (docs/story-graph.md, «Исполнение без VM»): a dialog's program read
 #       and given back, the director's in place of an information (a line of its own, gold, experience) and of
 #       a condition, the scripts' one back, a bad one rejected, a dialog of the director with a program, its

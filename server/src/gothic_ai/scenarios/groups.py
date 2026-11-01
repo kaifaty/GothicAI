@@ -45,6 +45,17 @@ OFF = {
 }
 
 GIVEN = {
+    "chests",
+    "lead",
+    "meet",
+    "meet_missed",
+    "errand",
+    "errand_fork",
+    "errand_far",
+    "errand_give",
+    "initiative",
+    "day",
+    "noise",
     "witness",
     "wrath",
     "amends",

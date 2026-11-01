@@ -24,6 +24,8 @@ from gothic_ai.llm.off import ModelOff, OffBackend
         (scenario, llm, "off" if llm == "auto" else f"scenario {scenario} requires --llm off")
         for scenario in (
             "witness", "wrath", "amends", "amends_deal", "trace", "broken", "gate", "gate_vouch", "greg",
+            "chests", "lead", "meet", "meet_missed", "errand", "errand_fork", "errand_far",
+            "errand_give", "initiative", "day", "noise",
         )
         for llm in ("auto", "fake", "chatgpt")
     ],
