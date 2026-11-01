@@ -23,6 +23,15 @@ OFF = {
 }
 
 GIVEN = {
+    "witness",
+    "wrath",
+    "amends",
+    "amends_deal",
+    "trace",
+    "broken",
+    "gate",
+    "gate_vouch",
+    "greg",
     "lie",
     "vgive",
     "vlie",

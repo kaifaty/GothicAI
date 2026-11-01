@@ -2139,12 +2139,10 @@ async def serve(args: argparse.Namespace) -> int:
             elif args.scenario == "wrath":
                 dialogue, talk, wrath = state.dialogue, state.talk, state.wrath
                 assert dialogue is not None and talk is not None and wrath is not None
-                live = dialogue.llm.name != "fake"
-                results = await scenarios.xardas_wrath(link, dialogue, talk, wrath, args.npc, live=live)
+                results = await scenarios.xardas_wrath(link, dialogue, talk, wrath, args.npc)
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info(
-                    "scenario wrath (%s): %d checks, %d failed",
-                    "live" if live else "fake",
+                    "scenario wrath: %d checks, %d failed",
                     len(results),
                     len(bad),
                 )

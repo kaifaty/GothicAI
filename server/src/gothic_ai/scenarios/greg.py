@@ -1,4 +1,4 @@
-"""Greg's clothing errand: the model promises its reward, pays it, and records missing clothes."""
+"""Consequences of Greg's given clothing errand and reward decisions."""
 
 from __future__ import annotations
 
@@ -7,16 +7,15 @@ from typing import TYPE_CHECKING
 
 from ..brain.reflex import Reflexes
 from ..llm import ToolCall
-from ..llm.fake import FakeBackend, FakeStep
 from ..protocol import Session
 from .common import (
     FixedDecider,
-    _ByNpc,
     _logged,
-    _OnWords,
     _save,
     _until,
     _until_async,
+    log,
+    model_off,
     wait_message,
 )
 
@@ -37,16 +36,15 @@ GOLD = "ITMI_GOLD"
 async def greg(
     link: GameLink, dialogue: DialogueManager, talk: TalkDesk, vanilla: VanillaQuests, slot: int = 7
 ) -> dict[str, str]:
-    """On a new game, give and accept Greg's native quest through his model. Reload the branch saved
-    before the clothes were supplied: accepting the same claim without them must record the truth."""
+    """Give and accept Greg's native quest as declared givens. Reload the branch saved before the
+    clothes were supplied: accepting the same claim without them must record the truth."""
     results: dict[str, str] = {}
 
     def check(name: str, ok: bool, detail: object = "") -> bool:
         results[name] = f"{'done' if ok else 'failed'}{f' ({detail})' if detail != '' else ''}"
         return ok
 
-    if not isinstance(dialogue.llm, FakeBackend):
-        return _logged({"scripted_model": "failed (greg requires LLM=fake)"})
+    off = model_off(dialogue)
     await link.wait_world()
     if link.session is None:
         await wait_message(link, Session, timeout=10)
@@ -86,6 +84,7 @@ async def greg(
 
     await link.debug("skip_important", near=GREG)
     await link.debug("player_goto", to=GREG, distance=250)
+    log.info("given: дано: решающая модель оставляет Грега слушать героя")
     talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
     if not check("near", await _until(lambda: GREG in talk.people, 20), GREG):
         return _logged(results)
@@ -93,20 +92,21 @@ async def greg(
     if not check("new_game", await state() == 0 and before[3] == before[5] == 0, before):
         return _logged(results)
     name = talk.people[GREG].name
-    give = ToolCall("give_quest", {"quest": QUEST}, "greg_give")
-    accept = ToolCall("accept_quest", {"quest": QUEST}, "greg_accept")
-    dialogue.llm = _ByNpc(
-        {
-            name: _OnWords(
-                [
-                    ("помогу", FakeStep("Добудь мне одежду крестьянина. За мной награда.", [give])),
-                    ("одежду", FakeStep("Верю тебе, приятель. Держи награду.", [accept])),
-                ],
-                FakeStep("Хм."),
-            )
-        },
-        FakeBackend("Хм.", delay=0),
+    off.given(
+        "дано: Грег даёт поручение добыть одежду крестьянина", who=GREG, when="помогу",
+        calls=[ToolCall("give_quest", {"quest": QUEST}, "greg_give")],
     )
+    off.silent("дано: Грег молчит (поручение выдано)", who=GREG, when="помогу")
+    off.given(
+        "дано: Грег засчитывает принесённую одежду", who=GREG, when="принёс одежду",
+        calls=[ToolCall("accept_quest", {"quest": QUEST}, "greg_accept")],
+    )
+    off.silent("дано: Грег молчит (поручение засчитано)", who=GREG, when="принёс одежду")
+    off.given(
+        "дано: Грег верит заявлению об одежде за углом и засчитывает поручение", who=GREG, when="за углом",
+        calls=[ToolCall("accept_quest", {"quest": QUEST}, "greg_accept_missing")],
+    )
+    off.silent("дано: Грег молчит (заявление об одежде принято)", who=GREG, when="за углом")
 
     await vanilla.prepare(GREG)
     situation = vanilla.situation(GREG) or ""
