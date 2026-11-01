@@ -20,6 +20,13 @@ from gothic_ai.llm.off import ModelOff, OffBackend
     ("haggle", "off", "scenario haggle is live: set LLM=chatgpt|openai|local"),
     ("haggle", "fake", "scenario haggle is live: set LLM=chatgpt|openai|local"),
     (None, "auto", "--llm auto requires --scenario"),
+    *[
+        (scenario, llm, "off" if llm == "auto" else f"scenario {scenario} requires --llm off")
+        for scenario in (
+            "witness", "wrath", "amends", "amends_deal", "trace", "broken", "gate", "gate_vouch", "greg",
+        )
+        for llm in ("auto", "fake", "chatgpt")
+    ],
 ])
 def test_scenario_llm_groups(monkeypatch, capsys, scenario, llm, expected):
     serve = AsyncMock(return_value=0)
