@@ -1,0 +1,26 @@
+{
+  "note": "Kimodo probe of step 6 (reports/Свои анимации для боя.md): 1H stance at both ends, travel in metres in the character's frame (x = its left, z = forward), Kimodo runs at 30 fps.",
+  "stance": "HUMANS_1HST1-S_1H.MAN",
+  "samples": 8,
+  "seed": 6001,
+  "moves": [
+    {"id": "dash_back", "duration": 1.2, "travel": [0.0, -2.0],
+     "text": "A person in a sword fighting stance quickly dashes backward to dodge an attack, then settles back into the fighting stance."},
+    {"id": "dash_left", "duration": 1.2, "travel": [2.0, 0.0],
+     "text": "A person in a sword fighting stance quickly dashes sideways to their left to dodge an attack, then settles back into the fighting stance."},
+    {"id": "roll_back", "duration": 1.7, "travel": [0.0, -3.0],
+     "text": "A person in a fighting stance quickly rolls backward over their shoulder on the ground to dodge, then springs back up into the fighting stance."},
+    {"id": "roll_left", "duration": 1.7, "travel": [3.0, 0.0],
+     "text": "A person in a fighting stance dives and rolls on the ground to their left side to dodge, then quickly gets back up into the fighting stance."},
+    {"id": "heavy_roll_back", "duration": 2.3, "travel": [0.0, -2.2],
+     "text": "A person wearing heavy armor slowly and clumsily rolls backward on the ground, then struggles back up into a fighting stance."},
+    {"id": "barge", "duration": 1.5, "travel": [0.0, 1.8],
+     "text": "A person in a fighting stance rushes forward and rams their shoulder hard into an opponent in front of them, then steps back into the fighting stance."},
+    {"id": "charge", "duration": 2.6, "travel": [0.0, 0.4],
+     "text": "A person raises a sword high above their head with their right hand, holds it there gathering strength, then swings it down hard in front of them and returns to the fighting stance."},
+    {"id": "riposte", "duration": 2.2, "travel": [0.0, 0.5],
+     "text": "A person thrusts a sword forward with their right hand deep into the stomach of an enemy standing in front of them, holds it, then pulls the sword back out and returns to the fighting stance."},
+    {"id": "riposte_victim", "duration": 2.5, "travel": [0.0, -0.8], "end_free": true,
+     "text": "A dazed person is stabbed in the stomach, doubles over in pain, staggers backward and collapses to the ground."}
+  ]
+}
