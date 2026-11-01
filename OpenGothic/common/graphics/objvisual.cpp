@@ -383,6 +383,8 @@ void ObjVisual::setObjMatrix(const Tempest::Matrix4x4& obj) {
     case M_None:
       break;
     case M_Mdl:
+      if(streamView)
+        mdl.view.setTextureOwner({obj[3][0],obj[3][1],obj[3][2]},true);
       mdl.view.setObjMatrix(obj,true);
       mdl.physic.setObjMatrix(obj);
       break;
