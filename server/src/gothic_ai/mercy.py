@@ -891,7 +891,7 @@ class Mercy:
             await self.dialogue._say(conv, words.strip(), None, overlay=True)
         scene = await self._humiliate(conv) if humiliate else None
         return ToolOutcome(f"Принято: бой прекращён; герой передал тебе: {taken}."
-                           + (" золота у героя нет." if no_gold else "")
+                           + (" Золота у героя нет." if no_gold else "")
                            + (" Долг перед законом погашен." if community else "")
                            + (" Унижение завершено." if scene else
                               " Сцена унижения отменена; сдача остаётся в силе." if humiliate else ""),

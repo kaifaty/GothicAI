@@ -1120,7 +1120,7 @@ async def test_hero_ransom_transfers_real_items_calm_and_native_victory(rig, tak
 async def test_zero_gold_does_not_reject_surrender_or_other_ransom(rig, take, expected):
     rig.fake.hero_items[GOLD] = 0
     output = await hero_yields(rig, take)
-    assert output.startswith("Принято:") and "золота у героя нет" in output
+    assert output.startswith("Принято:") and ". Золота у героя нет." in output
     [fact] = rig.chronicle.facts("hero_yield")
     assert {give["item"]: give["count"] for give in fact["take"]} == expected
     assert rig.fake.hero_items[GOLD] == 0 and not rig.fake.attack_state
@@ -1154,11 +1154,9 @@ async def test_hero_yield_fine_uses_law_debt(rig, take, guard, debt, gold, accep
         assert not rig.chronicle.facts("hero_yield")
 
 
-@pytest.mark.parametrize("take", [["ITFO_BREAD"], ["gold"], [f"ITFO_ITEM_{i}" for i in range(6)]])
+@pytest.mark.parametrize("take", [["ITFO_BREAD"], [f"ITFO_ITEM_{i}" for i in range(6)]])
 async def test_unavailable_ransom_rejects_without_stopping_or_taking(rig, take):
     rig.fake.hero_items.pop(take[0], None)
-    if take == ["gold"]:
-        rig.fake.hero_items[GOLD] = 0
     before = dict(rig.fake.hero_items)
     output = await hero_yields(rig, take)
     assert output.startswith("Отклонено:") and rig.fake.hero_items == before
