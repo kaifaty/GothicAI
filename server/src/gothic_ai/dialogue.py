@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from . import commands, executor, npc_tools
 from .budget import Budget
+from .embeddings import EmbedError
 from .executor import Intent
 from .game import GameError, GameLink
 from .journal import Journal
@@ -1542,6 +1543,7 @@ class DialogueManager:
             if conv.memory.intent:
                 conv.intent = Intent.from_json(conv.memory.intent)
             self.conversations[npc] = conv
+            self.memory.queue_embeddings(branch, npc)
             if conv.memory.entries or conv.memory.summary:
                 log.info(
                     "%s remembers %d message(s)%s",
@@ -2924,7 +2926,7 @@ class DialogueManager:
                 if state.recalled:
                     return ToolOutcome("Больше ничего не вспоминается.", "ignored")
                 state.recalled = True
-                return ToolOutcome(self._recall(conv, str(call.arguments.get("query", ""))), "read")
+                return ToolOutcome(await self._recall(conv, str(call.arguments.get("query", ""))), "read")
             case npc_tools.GIVE_ITEM:
                 args, reason = executor.check_give(call.arguments, snap)
                 if args is None:
@@ -2990,11 +2992,21 @@ class DialogueManager:
             unique.setdefault(tool.name, tool)
         return list(unique.values())
 
-    def _recall(self, conv: Conversation, query: str) -> str:
+    async def _recall(self, conv: Conversation, query: str) -> str:
         """Older messages than the npc has in mind (folded into the summary, or beyond what was loaded), and
         what extensions that answer recall know of it (knowledge.py: the npc's dialogs in full)."""
         first = conv.memory.entries[0].seq if conv.memory.entries else conv.memory.summary_seq + 1
-        found = self.memory.search(conv.branch, conv.npc, query, min(conv.memory.summary_seq, first - 1))
+        before = min(conv.memory.summary_seq, first - 1)
+        path, reason = "lexical", "embeddings disabled or unconfigured"
+        if self.memory.embeddings is not None:
+            try:
+                found = await self.memory.semantic_search(conv.branch, conv.npc, query, before)
+                path, reason = "semantic", "none"
+            except EmbedError as exc:
+                reason = str(exc).replace("\n", " ")
+                found = self.memory.search(conv.branch, conv.npc, query, before)
+        else:
+            found = self.memory.search(conv.branch, conv.npc, query, before)
         parts = []
         if found:
             speaker = {"user": "Герой", "assistant": "Ты", "developer": ""}
@@ -3007,7 +3019,10 @@ class DialogueManager:
             recall = getattr(ext, "recall", None)
             if recall is not None and (known := recall(conv.npc, query)):
                 parts.append(known)
-        log.info("%s recalls %r: %d message(s), %d more part(s)", conv.npc, query, len(found), len(parts))
+        log.info(
+            "%s recalls %r: path=%s reason=%s, %d message(s), %d part(s)",
+            conv.npc, query, path, reason, len(found), len(parts),
+        )
         return "\n\n".join(parts) or "Ничего такого не вспоминается."
 
     async def _give(self, conv: Conversation, call: ToolCall, snap: Snapshot | None) -> tuple[str, bool]:

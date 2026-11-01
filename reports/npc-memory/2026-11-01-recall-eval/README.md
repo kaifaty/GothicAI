@@ -129,3 +129,5 @@ cd server && uv run --with snowballstemmer python ../scripts/recall_eval.py \
 Векторы считались на `dev-ubuntu` во временном окружении `~/gothic-ai/recall-eval/` (sentence-transformers 6.2, torch 2.15). Окружение, копия реплик и скачанные модели после замера удалены.
 
 Источники рейтингов: [ruMTEB, NAACL 2025](https://aclanthology.org/2025.naacl-long.12/), [таблица MTEB-rus в карточке USER2-base](https://huggingface.co/deepvk/USER2-base), [карточка FRIDA](https://huggingface.co/ai-forever/FRIDA).
+
+**Проверка настоящего пути, 2026-11-01.** `recall_eval.py --embed-url` через `MemoryStore.semantic_search` и живой `gothic-embed`: пересказ own 47/50, mixed 45/50, same 25/25, form 8/8 — приёмка пройдена. MRR этого пути с таблицей выше не сравнивается: сервер отдаёт найденные реплики в порядке `seq`, а не по близости.
