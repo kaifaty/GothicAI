@@ -181,7 +181,9 @@ def test_percentiles_dynamic_columns_segments_and_no_gpu(tmp_path):
                                          "page_used_bytes", "page_free_bytes", "page_retired_bytes", "page_count",
                                          "tex_live_bytes", "tex_retired_bytes", "tex_peak_bytes", "tex_live_n", "tex_evicted", "tex_reloaded",
                                          "tex_landscape_bytes", "tex_landscape_n", "tex_static_bytes", "tex_static_n",
-                                         "tex_dynamic_bytes", "tex_dynamic_n", "tex_other_bytes", "tex_other_n"])
+                                         "tex_dynamic_bytes", "tex_dynamic_n", "tex_other_bytes", "tex_other_n",
+                                         "tex_full_bytes", "tex_tail_bytes", "tex_promoted", "tex_demoted",
+                                         "tex_promotion_queue", "tex_near_tail_n", "tex_near_tail_seconds"])
         writer.writeheader()
         writer.writerows({"segment": f"streaming-flythrough/{name}", "frame": frame,
                           "update_ms": .001 * (frame + 1), "work_ms": .0001,
@@ -197,7 +199,11 @@ def test_percentiles_dynamic_columns_segments_and_no_gpu(tmp_path):
                           "tex_landscape_bytes": (10-frame)*1048576, "tex_landscape_n": 3-frame,
                           "tex_static_bytes": 5*1048576, "tex_static_n": 2,
                           "tex_dynamic_bytes": 3*1048576, "tex_dynamic_n": 2,
-                          "tex_other_bytes": 2*1048576, "tex_other_n": 2}
+                          "tex_other_bytes": 2*1048576, "tex_other_n": 2,
+                          "tex_full_bytes": 12*1048576, "tex_tail_bytes": (8-frame)*1048576,
+                          "tex_promoted": 10+frame, "tex_demoted": 5+frame,
+                          "tex_promotion_queue": 2-frame, "tex_near_tail_n": frame,
+                          "tex_near_tail_seconds": 40+frame*.125}
                          for name in ("run", "fly") for frame in range(3))
     (streaming / "events.jsonl").write_text("\n".join(
         json.dumps(event) for event in [
@@ -205,11 +211,13 @@ def test_percentiles_dynamic_columns_segments_and_no_gpu(tmp_path):
             {"kind": "streaming_ready", "far_publication_ms": [.3, .6], "far_max_per_frame": 1, "queue_max_ms": .8},
             {"kind": "perf_segment", "segment": "streaming-flythrough/run", "residency_manager": True},
             {"kind": "route_end", "speed_cm_s": 500, "pass": True},
-            {"kind": "streaming_end", "segment": "streaming-flythrough/run", "gpu_mb": 320.5},
+            {"kind": "streaming_end", "segment": "streaming-flythrough/run", "gpu_mb": 320.5,
+             "tex_promoted": 3, "tex_demoted": 2, "tex_near_tail_seconds": .25},
             {"kind": "streaming_ready", "far_publication_ms": [], "far_max_per_frame": 0, "queue_max_ms": .001},
             {"kind": "perf_segment", "segment": "streaming-flythrough/fly", "residency_manager": True},
             {"kind": "route_end", "speed_cm_s": 2000, "pass": True},
-            {"kind": "streaming_end", "segment": "streaming-flythrough/fly", "gpu_mb": 330.5}]))
+            {"kind": "streaming_end", "segment": "streaming-flythrough/fly", "gpu_mb": 330.5,
+             "tex_promoted": 5, "tex_demoted": 4, "tex_near_tail_seconds": .75}]))
     data = report.build_report(streaming)["places"]["streaming-flythrough"]["views"]
     assert data["run"]["frame_ms"]["p50"] == 10
     assert data["fly"]["frame_ms"]["p99"] == data["fly"]["frame_ms"]["max"] == 20
@@ -235,6 +243,12 @@ def test_percentiles_dynamic_columns_segments_and_no_gpu(tmp_path):
             textures["evicted"], textures["reloaded"]) == (18*1048576, 2*1048576, 24*1048576, 7, 5, 3)
     assert textures["categories"]["landscape"] == {"bytes": 8*1048576, "count": 1}
     assert sum(category["bytes"] for category in textures["categories"].values()) == textures["live_end_bytes"]
+    assert textures["full_end_bytes"] == 12*1048576
+    assert textures["tail_end_bytes"] == 6*1048576
+    assert (textures["promoted"], textures["demoted"], textures["promotion_queue_peak"],
+            textures["near_tail_peak"], textures["near_tail_seconds"]) == (3, 2, 2, 2, .25)
+    combined = report.build_report(streaming)["places"]["streaming-flythrough"]["summary"]["streaming"]["textures"]
+    assert (combined["promoted"], combined["demoted"], combined["near_tail_seconds"]) == (8, 6, 1)
     warmup = data["run"]["streaming"]
     assert warmup["warmup_far_count"] == 2
     assert warmup["warmup_far_publication_ms"]["p99"] == pytest.approx(.597)
@@ -274,6 +288,45 @@ def test_fence_attempts_cost_time_but_do_not_inflate_rendered_fps(tmp_path):
     assert stats["cpu_ms"]["mean"] == 3
     assert stats["zones"][0]["mean_ms"] == 1
     assert stats["amounts"]["palette_bytes"]["per_frame"] == 1536
+    assert "texture_activity" not in stats
+
+    directory = profile(tmp_path / "texture", [
+        {"begin_ns": 0},
+        {"begin_ns": 10_000_000, "outcome": 2},
+        {"begin_ns": 30_000_000},
+        {"begin_ns": 50_000_000},
+        {"begin_ns": 90_000_000},
+        {"begin_ns": 100_000_000},
+    ])
+    with (directory / "frameprofile.csv.texture.csv").open("w", newline="") as stream:
+        writer = csv.DictWriter(stream, ["event", "kind", "begin_ns", "end_ns", "complete", "overflow"])
+        writer.writeheader()
+        for index, (kind, begin, end) in enumerate((
+            ("read", 12, 15), ("upload", 15, 65), ("complete", 65, 65),
+            ("ready", 90, 90), ("publish", 30, 30), ("publish", 100, 100),
+        )):
+            writer.writerow({"event": index, "kind": kind, "begin_ns": begin*1_000_000,
+                             "end_ns": end*1_000_000, "complete": 1, "overflow": 0})
+    # Both sidecars are separate from the exact frameprofile.csv input glob.
+    (directory / "frameprofile.csv.gpu.csv").write_text("not a frame profile\n")
+    frames = report.samples_from_profile(directory / "frameprofile.csv")[0][("market", "view-1")]
+    assert frames[0]["attempts"] == 2
+    assert [row["texture_activity"] for row in frames] == [
+        dict(worker_active=True, read=True, upload=True, complete=False, ready=False, publish=False),
+        dict(worker_active=True, read=False, upload=True, complete=False, ready=False, publish=True),
+        dict(worker_active=True, read=False, upload=True, complete=True, ready=False, publish=False),
+        dict(worker_active=False, read=False, upload=False, complete=False, ready=True, publish=False),
+    ]
+    result = report.build_report(directory)
+    activity = result["places"]["market"]["summary"]["texture_activity"]
+    assert activity["worker_active"]["with"] == {"frames": 3, "p99_ms": pytest.approx(39.8)}
+    assert activity["worker_active"]["without"] == {"frames": 1, "p99_ms": 10}
+    assert activity["read"]["with"] == {"frames": 1, "p99_ms": 30}
+    assert activity["upload"] == activity["worker_active"]
+    assert activity["complete"]["with"] == {"frames": 1, "p99_ms": 40}
+    assert activity["ready"]["with"] == {"frames": 1, "p99_ms": 10}
+    assert activity["publish"]["with"] == {"frames": 1, "p99_ms": 20}
+    assert "| worker_active | 3 | 39.800 | 1 | 10.000 |" in report.report_markdown(result)
 
 
 def test_gpu_completion_and_matching_cpu_duration(tmp_path):
@@ -287,6 +340,7 @@ def test_gpu_completion_and_matching_cpu_duration(tmp_path):
     assert gpu["completed_frames"] == 2
     assert gpu["completion_fraction"] == pytest.approx(2 / 3)
     assert gpu["mean_ms"] == 2.5
+    assert gpu["p50_ms"] == 2.5
     assert gpu["p95_ms"] == pytest.approx(3.85)
     assert gpu["longer_than_cpu_fraction"] == .5
     assert gpu["buffers_per_completed_frame"] == 1.5
@@ -315,3 +369,62 @@ def test_compare_repeat_noise_sorted_regressions_and_leaf_inputs(tmp_path):
     leaf = json.loads((right / "compare.json").read_text())
     assert leaf["places"]["market"]["zones"][0]["within_noise"] is None
     assert (right / "compare.md").exists()
+
+
+@pytest.mark.parametrize("spread,failed_pass", [(2.0, None), (.3, "run"), (.3, "fly")])
+def test_series_p99_medians_off_noise_and_exit_code(tmp_path, capsys, spread, failed_pass):
+    directories = {side: [tmp_path / f"{side}-{index}" for index in (1, 2)] for side in ("off", "on")}
+    for side, roots in directories.items():
+        for index, root in enumerate(roots):
+            rows = []
+            for name, offset, base in (("run", 0, 10), ("fly", 1000, 20)):
+                change = 1.4 if failed_pass is None or name == failed_pass else .5
+                step = base + ((index - .5) * spread if side == "off" else change)
+                rows.extend({"segment": f"streaming-flythrough/{name}", "begin_ns": round(value * 1e6)}
+                            for value in (offset, offset + step, offset + 2 * step + 1))
+            profile(root, rows)
+            (root / "events.jsonl").write_text("\n".join(json.dumps(
+                {"kind": "route_end", "speed_cm_s": speed, "pass": True}) for speed in (500, 2000)))
+    args = ["series", "--off", *map(str, directories["off"]), "--on", *map(str, directories["on"])]
+    output = directories["on"][-1]
+    if failed_pass is None:
+        output = tmp_path / "result"
+        args += ["--out", str(output)]
+    assert report.main(args) == (1 if failed_pass else 0)
+    data = json.loads((output / "series.json").read_text())
+    markdown = (output / "series.md").read_text()
+    assert capsys.readouterr().out.strip() == markdown.strip()
+    assert data["minimum_tolerance_ms"] == 1.0
+    for name, base in (("run", 10), ("fly", 20)):
+        stats = data["passes"][name]
+        for side, roots in directories.items():
+            assert [run["directory"] for run in stats[side]] == [str(root.resolve()) for root in roots]
+            expected = [report.build_report(root)["places"]["streaming-flythrough"]["views"][name]
+                        ["frame_ms"]["p99"] for root in roots]
+            assert [run["p99_ms"] for run in stats[side]] == pytest.approx(expected)
+            assert all(f"{value:.3f}" in markdown for value in expected)
+        change = 1.4 if failed_pass is None or name == failed_pass else .5
+        assert stats["off_median_p99_ms"] == pytest.approx(base + .99)
+        assert stats["on_median_p99_ms"] == pytest.approx(base + .99 + change)
+        assert stats["delta_ms"] == pytest.approx(change)
+        assert stats["off_spread_ms"] == pytest.approx(spread)
+        assert stats["tolerance_ms"] == pytest.approx(max(1.0, spread))
+        assert stats["verdict"] == ("fail" if name == failed_pass else "pass")
+        assert f"| {name} |" in markdown
+    if failed_pass == "run":
+        assert report.main([*args, "--tolerance-ms", "1.5"]) == 0
+        adjusted = json.loads((output / "series.json").read_text())
+        assert adjusted["passes"]["run"]["tolerance_ms"] == 1.5
+
+
+@pytest.mark.parametrize("short_side", ["off", "on"])
+def test_series_requires_at_least_two_runs_per_side(tmp_path, capsys, short_side):
+    args = ["series"]
+    for side in ("off", "on"):
+        args += [f"--{side}", str(tmp_path / f"{side}-1")]
+        if side != short_side:
+            args.append(str(tmp_path / f"{side}-2"))
+    with pytest.raises(SystemExit) as error:
+        report.main(args)
+    assert error.value.code == 2
+    assert "at least two" in capsys.readouterr().err

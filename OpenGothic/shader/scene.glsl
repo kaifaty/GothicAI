@@ -38,6 +38,7 @@ struct SceneDesc {
   ivec2 screenRes;
   vec4  cloudsDir;
   float probeGridBias;
+  uint  fogQuality; // 0 - none, 1 - fog LUT, 2 - separate single and multi-scattering LUTs
   };
 
 struct LightSource {

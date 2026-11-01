@@ -37,6 +37,10 @@ from typing import Any
 from .game import GameLink
 from .llm import LLMBackend, Message, TextDelta
 
+SCENARIOS = {
+    "places": ("OFF", {"save": False, "timeout": 240}),
+}
+
 log = logging.getLogger(__name__)
 
 VERSION = 2

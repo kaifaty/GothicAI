@@ -1,14 +1,329 @@
 """CLI defaults start the director only for ordinary play."""
 
 import asyncio
+import importlib.util
 import json
-from types import SimpleNamespace
+import pkgutil
+from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 
 from gothic_ai import cli
 from gothic_ai.llm.off import ModelOff, OffBackend
+
+
+@pytest.mark.parametrize(("scenario", "llm", "expected"), [
+    ("m0", "auto", "off"),
+    *[(scenario, "auto", "off") for scenario in (
+        "deal", "contract", "debt", "xardas_money", "deal_demo",
+        "bandit_parley", "bandit_bounty", "road_bandits", "calm", "companion", "neural-talk",
+        "rescue", "rescue_self",
+    )],
+    ("haggle", "auto", "scenario haggle is live: set LLM=chatgpt|openai|local"),
+    ("m0", "fake", "invalid choice: 'fake'"),
+    ("m0", "chatgpt", "scenario m0 requires --llm off"),
+    ("deal", "chatgpt", "scenario deal requires --llm off"),
+    ("haggle", "off", "scenario haggle is live: set LLM=chatgpt|openai|local"),
+    *[(scenario, llm, f"scenario {scenario} is live: set LLM=chatgpt|openai|local")
+      for scenario in ("live_lies", "live_deals", "live_npc", "live_director")
+      for llm in ("auto", "off")],
+    *[(scenario, "chatgpt", "chatgpt") for scenario in ("live_npc", "live_director")],
+    *[(suite, "fake", "invalid choice: 'fake'") for suite in ("live_lies", "live_deals")],
+    (None, "auto", "--llm auto requires --scenario"),
+    *[
+        (scenario, llm, "off" if llm == "auto" else f"scenario {scenario} requires --llm off")
+        for scenario in (
+            "witness", "wrath", "amends", "amends_deal", "trace", "broken", "gate", "gate_vouch", "greg",
+            "crime_ally", "crime_law", "crime_talk", "trace_crime", "cover", "cover_subject",
+            "cheat", "frame", "crime_meet", "crime_director", "npc_director",
+            "ground", "remembers", "cave", "seen", "group", "gossip", "gossip_demo",
+            "repair", "authored", "character", "chain", "own_amend", "own_repair",
+            "showrunner", "vanilla_line", "feats", "feat_fame",
+            "m1", "m2", "m3", "m5", "m5c", "m5e", "tts",
+            "combat_barks", "mercy", "hero_yield", "humiliate",
+        )
+        for llm in ("auto", "chatgpt")
+    ],
+])
+def test_scenario_llm_groups(monkeypatch, capsys, scenario, llm, expected):
+    serve = AsyncMock(return_value=0)
+    monkeypatch.setattr(cli, "serve", serve)
+    flags = ["--scenario", scenario] if scenario else []
+    monkeypatch.setattr("sys.argv", ["gothic-ai", "serve", "--llm", llm, *flags])
+    with pytest.raises(SystemExit) as exit:
+        cli.main()
+    if expected in {"off", "chatgpt"}:
+        assert exit.value.code == 0
+        assert serve.await_args.args[0].llm == expected
+    else:
+        assert exit.value.code == 2
+        assert expected in capsys.readouterr().err
+        serve.assert_not_awaited()
+
+
+def test_scenario_groups_match_main_census():
+    from gothic_ai.scenarios.groups import GIVEN, LIVE, OFF, RUN
+
+    # Preserve groups and RUN settings from origin/main at 1591a1472ad5.
+    # Omit new scenarios to avoid shared edits when adding them.
+    # Update existing entries only for intentional changes to their group or RUN settings.
+    expected = {
+        "amends": ("GIVEN", {"save": True, "timeout": 240}),
+        "amends_deal": ("GIVEN", {"save": True, "timeout": 240}),
+        "authored": ("GIVEN", {"save": True, "timeout": 240}),
+        "bandit_bounty": ("GIVEN", {"save": False, "timeout": 240}),
+        "bandit_hold": ("OFF", {"save": False, "timeout": 240}),
+        "bandit_parley": ("GIVEN", {"save": False, "timeout": 240}),
+        "broken": ("GIVEN", {
+            "save": True, "timeout": 240,
+            "env": {"OPENGOTHIC_FRACTURE": "~/.local/share/gothic-ai/fracture"},
+        }),
+        "calm": ("GIVEN", {"save": False, "timeout": 240}),
+        "cast": ("OFF", {"save": True, "timeout": 240}),
+        "cave": ("GIVEN", {"save": False, "timeout": 240}),
+        "chain": ("GIVEN", {"save": True, "timeout": 240}),
+        "character": ("GIVEN", {"save": True, "timeout": 240}),
+        "cheat": ("GIVEN", {"save": True, "timeout": 720}),
+        "check_walk": ("OFF", {"save": False, "timeout": 240}),
+        "chests": ("GIVEN", {"save": False, "timeout": 240}),
+        "chests_lobart": ("LIVE", None),
+        "combat_barks": ("GIVEN", {"save": False, "timeout": 240}),
+        "companion": ("GIVEN", {"save": False, "timeout": 240}),
+        "contract": ("GIVEN", {"save": False, "timeout": 240}),
+        "cover": ("GIVEN", {"save": True, "timeout": 720}),
+        "cover_subject": ("GIVEN", {"save": True, "timeout": 720}),
+        "crime_ally": ("GIVEN", {"save": False, "timeout": 240}),
+        "crime_director": ("GIVEN", {"save": True, "timeout": 900}),
+        "crime_law": ("GIVEN", {"save": True, "timeout": 420}),
+        "crime_meet": ("GIVEN", {"save": True, "timeout": 600}),
+        "crime_react": ("OFF", {"save": True, "timeout": 420}),
+        "crime_talk": ("GIVEN", {"save": True, "timeout": 600}),
+        "crimes": ("OFF", {"save": True, "timeout": 420}),
+        "day": ("GIVEN", {"save": True, "timeout": 480}),
+        "deal": ("GIVEN", {"save": True, "timeout": 240}),
+        "deal_demo": ("GIVEN", {"save": False, "timeout": 240}),
+        "death_load": ("OFF", {"save": False, "timeout": 240}),
+        "debt": ("GIVEN", {"save": True, "timeout": 240}),
+        "errand": ("GIVEN", {"save": True, "timeout": 1500}),
+        "errand_far": ("GIVEN", {"save": True, "timeout": 1500}),
+        "errand_fork": ("GIVEN", {"save": True, "timeout": 1500}),
+        "errand_give": ("GIVEN", {"save": True, "timeout": 240}),
+        "feat_fame": ("GIVEN", {"save": False, "timeout": 420}),
+        "feats": ("GIVEN", {"save": False, "timeout": 240}),
+        "fight_reactions_bandits": ("GIVEN", {"save": False, "timeout": 300}),
+        "fight_reactions_flee": ("GIVEN", {"save": False, "timeout": 180}),
+        "fight_reactions_sight": ("OFF", {"save": False, "timeout": 180}),
+        "fight_reactions_wolf": ("GIVEN", {"save": False, "timeout": 180}),
+        "follow_back": ("OFF", {"save": False, "timeout": 240}),
+        "frame": ("GIVEN", {"save": True, "timeout": 900}),
+        "gate": ("GIVEN", {"save": False, "timeout": 240}),
+        "gate_vouch": ("GIVEN", {"save": False, "timeout": 240}),
+        "gossip": ("GIVEN", {"save": True, "timeout": 420, "env": {"DECIDER_URL": ""}}),
+        "gossip_demo": ("GIVEN", {"save": True, "timeout": 240}),
+        "graph": ("OFF", {"save": False, "timeout": 240}),
+        "greg": ("GIVEN", {"save": False, "timeout": 240}),
+        "ground": ("GIVEN", {"save": False, "timeout": 240}),
+        "group": ("GIVEN", {"save": False, "timeout": 240}),
+        "haggle": ("LIVE", None),
+        "hearing": ("OFF", {"save": False, "timeout": 240}),
+        "hero_yield": ("GIVEN", {"save": False, "timeout": 240}),
+        "humiliate": ("GIVEN", {"save": False, "timeout": 240}),
+        "initiative": ("GIVEN", {"save": True, "timeout": 240}),
+        "interject": ("LIVE", None),
+        "knows": ("OFF", {"save": False, "timeout": 240}),
+        "lead": ("GIVEN", {"save": True, "timeout": 540}),
+        "lie": ("GIVEN", {"save": True, "timeout": 240}),
+        "live_deals": ("LIVE", None),
+        "live_director": ("LIVE", None),
+        "live_lies": ("LIVE", None),
+        "live_npc": ("LIVE", None),
+        "load_rewind": ("OFF", {"save": False, "timeout": 240}),
+        "m0": ("OFF", {"save": False, "timeout": 240}),
+        "m1": ("GIVEN", {"save": False, "timeout": 240}),
+        "m2": ("GIVEN", {"save": False, "timeout": 240}),
+        "m3": ("GIVEN", {"save": False, "timeout": 240}),
+        "m4": ("OFF", {"save": False, "timeout": 240}),
+        "m5": ("GIVEN", {"save": False, "timeout": 240}),
+        "m5b": ("OFF", {"save": False, "timeout": 240}),
+        "m5c": ("GIVEN", {"save": False, "timeout": 240}),
+        "m5e": ("GIVEN", {"save": False, "timeout": 240}),
+        "m6": ("OFF", {"save": False, "timeout": 240}),
+        "meet": ("GIVEN", {"save": True, "timeout": 600}),
+        "meet_missed": ("GIVEN", {"save": True, "timeout": 700}),
+        "memprobe": ("OFF", {
+            "save": False, "timeout": 1200,
+            "env": {"MEMPROBE_CYCLES": "8", "MEMPROBE_PHASES": "wave,save,load,spawn,teleport"},
+        }),
+        "mercy": ("GIVEN", {"save": False, "timeout": 240}),
+        "neural": ("OFF", {"save": False, "timeout": 240}),
+        "neural-companion": ("OFF", {"save": False, "timeout": 240}),
+        "neural-group": ("OFF", {"save": False, "timeout": 240}),
+        "neural-load": ("OFF", {"save": False, "timeout": 240}),
+        "neural-soak": ("OFF", {
+            "save": False, "timeout": 900,
+            "env": {"GOTHIC_SOAK_SECONDS": "300", "BENCH_CLASS": "quiet"},
+        }),
+        "neural-still": ("OFF", {"save": False, "timeout": 1200}),
+        "neural-talk": ("GIVEN", {"save": False, "timeout": 240}),
+        "noise": ("GIVEN", {"save": True, "timeout": 240}),
+        "npc_deeds": ("OFF", {"save": True, "timeout": 720}),
+        "npc_director": ("GIVEN", {"save": True, "timeout": 720}),
+        "npc_far": ("OFF", {"save": True, "timeout": 720}),
+        "npc_will": ("OFF", {"save": True, "timeout": 240}),
+        "occasions": ("OFF", {"save": True, "timeout": 240}),
+        "orders": ("GIVEN", {"save": False, "timeout": 360}),
+        "own": ("OFF", {"save": True, "timeout": 240}),
+        "own_amend": ("GIVEN", {"save": True, "timeout": 240}),
+        "own_repair": ("GIVEN", {"save": True, "timeout": 240}),
+        "person": ("OFF", {"save": True, "timeout": 240}),
+        "places": ("OFF", {"save": False, "timeout": 240}),
+        "programs": ("OFF", {"save": False, "timeout": 240}),
+        "quest_law": ("OFF", {"save": True, "timeout": 600}),
+        "questlog": ("OFF", {"save": True, "timeout": 300}),
+        "remembers": ("GIVEN", {"save": False, "timeout": 240}),
+        "repair": ("GIVEN", {"save": False, "timeout": 240}),
+        "requires": ("OFF", {"save": True, "timeout": 240}),
+        "rescue": ("GIVEN", {"save": False, "timeout": 240}),
+        "rescue_self": ("GIVEN", {"save": False, "timeout": 240}),
+        "road_bandits": ("GIVEN", {"save": False, "timeout": 240}),
+        "rumor": ("GIVEN", {"save": True, "timeout": 240}),
+        "see": ("OFF", {"save": False, "timeout": 240}),
+        "seen": ("GIVEN", {"save": True, "timeout": 240}),
+        "showrunner": ("GIVEN", {"save": True, "timeout": 240}),
+        "showrunner_live": ("LIVE", None),
+        "stages": ("OFF", {"save": True, "timeout": 240}),
+        "surrender_live": ("LIVE", None),
+        "svm_lines": ("OFF", {"save": False, "timeout": 240}),
+        "trace": ("GIVEN", {"save": True, "timeout": 240}),
+        "trace_crime": ("GIVEN", {
+            "save": True, "timeout": 240,
+            "env": {"OPENGOTHIC_FRACTURE": "~/.local/share/gothic-ai/fracture"},
+        }),
+        "trigger": ("OFF", {"save": True, "timeout": 240}),
+        "tts": ("GIVEN", {"save": False, "timeout": 240}),
+        "vanilla_line": ("GIVEN", {"save": True, "timeout": 420}),
+        "vanilla_line_live": ("LIVE", None),
+        "vcheck": ("GIVEN", {"save": True, "timeout": 240}),
+        "vgive": ("GIVEN", {"save": False, "timeout": 240}),
+        "vlie": ("GIVEN", {"save": True, "timeout": 240}),
+        "vspare": ("GIVEN", {"save": False, "timeout": 900}),
+        "websocket": ("OFF", {"save": True, "timeout": 240}),
+        "witness": ("GIVEN", {"save": True, "timeout": 240}),
+        "wolf": ("OFF", {"save": False, "timeout": 240}),
+        "wolf_load": ("OFF", {"save": False, "timeout": 240}),
+        "wrath": ("GIVEN", {"save": False, "timeout": 240}),
+        "xardas_money": ("GIVEN", {"save": False, "timeout": 240}),
+    }
+    for group, actual in (("OFF", OFF), ("GIVEN", GIVEN), ("LIVE", LIVE)):
+        assert actual & expected.keys() == {
+            name for name, (declared, _) in expected.items() if declared == group
+        }
+    assert {name: run for name, run in RUN.items() if name in expected} == {
+        name: run for name, (_, run) in expected.items() if run is not None
+    }
+
+
+def test_scenario_groups_reject_duplicate_names(monkeypatch):
+    from gothic_ai.scenarios import groups
+
+    first = ModuleType("gothic_ai.scenarios.first")
+    second = ModuleType("gothic_ai.scenarios.second")
+    first.SCENARIOS = {"duplicate": ("OFF", {"save": False, "timeout": 240})}
+    second.SCENARIOS = first.SCENARIOS
+    modules = {module.__name__: module for module in (first, second)}
+    monkeypatch.setattr(pkgutil, "iter_modules", Mock(return_value=[
+        SimpleNamespace(name=name) for name in modules
+    ]))
+    monkeypatch.setattr(importlib, "import_module", modules.__getitem__)
+    spec = importlib.util.spec_from_file_location(groups.__name__, groups.__file__)
+    fresh = importlib.util.module_from_spec(spec)
+    with pytest.raises(ValueError, match=(
+        "scenario duplicate declared in both gothic_ai.scenarios.first and gothic_ai.scenarios.second"
+    )):
+        spec.loader.exec_module(fresh)
+
+
+def test_every_cli_scenario_has_exactly_one_model_group(monkeypatch, capsys):
+    groups = (cli.OFF, cli.GIVEN, cli.LIVE)
+    parse_args = cli.argparse.ArgumentParser.parse_args
+    choices = []
+
+    def capture(parser, *args, **kwargs):
+        if parser.prog == "gothic-ai":
+            sub = next(action for action in parser._actions if action.dest == "command")
+            serve = sub.choices["serve"]
+            choices.extend(next(action.choices for action in serve._actions if action.dest == "scenario"))
+        return parse_args(parser, *args, **kwargs)
+
+    monkeypatch.setattr(cli.argparse.ArgumentParser, "parse_args", capture)
+    monkeypatch.setattr("sys.argv", ["gothic-ai", "--help"])
+    with pytest.raises(SystemExit) as exit:
+        cli.main()
+    assert exit.value.code == 0
+    assert choices
+    for scenario in choices:
+        assert sum(scenario in group for group in groups) == 1, (
+            f"scenario {scenario} must declare exactly one model group in its module"
+        )
+    assert set(choices) == set().union(*groups)
+
+    monkeypatch.setattr(cli, "OFF", cli.OFF - {"m0"})
+    monkeypatch.setattr("sys.argv", ["gothic-ai", "serve", "--scenario", "m0", "--llm", "auto"])
+    with pytest.raises(SystemExit) as exit:
+        cli.main()
+    assert exit.value.code == 2
+    assert "scenario m0 has no model group (docs/e2e.md)" in capsys.readouterr().err
+
+
+def test_cards_command_generates_from_the_connected_world(monkeypatch, capsys):
+    graph = object()
+    people = [{"npc": "BAU_950_LOBART", "name": "Lobart", "guild": 8, "routine": []}]
+    link = SimpleNamespace(wait_world=AsyncMock(), story_people=AsyncMock(return_value=people))
+    backend = SimpleNamespace(aclose=AsyncMock())
+    subject = SimpleNamespace(npc="BAU_950_LOBART")
+    card = object()
+
+    class Server:
+        def __init__(self, host, port):
+            assert (host, port) == ("127.0.0.1", 47817)
+
+        async def serve_forever(self):
+            await asyncio.Future()
+
+        async def wait_link(self):
+            return link
+
+    monkeypatch.setattr(cli, "GameServer", Server)
+    monkeypatch.setattr(cli, "_story_graph", Mock(return_value=graph))
+    monkeypatch.setattr(cli, "_backend", Mock(return_value=backend))
+    monkeypatch.setattr(cli.characters, "load", Mock(return_value={subject.npc: object()}))
+    subjects = Mock(return_value=[subject])
+    monkeypatch.setattr(cli.characters, "subjects", subjects)
+    write = AsyncMock(return_value=({subject.npc: card}, []))
+    monkeypatch.setattr(cli.characters, "write", write)
+    save = Mock()
+    monkeypatch.setattr(cli.characters, "save", save)
+    monkeypatch.setattr("sys.argv", ["gothic-ai", "cards", "--only", " bau_950_lobart, "])
+    with pytest.raises(SystemExit) as exit:
+        cli.main()
+    assert exit.value.code == 0
+    subjects.assert_called_once_with(graph, people, {subject.npc})
+    write.assert_awaited_once_with(backend, [subject])
+    save.assert_called_once_with({subject.npc: card})
+    backend.aclose.assert_awaited_once()
+    assert "1 of 1 cards written" in capsys.readouterr().out
+
+    monkeypatch.setattr("sys.argv", ["gothic-ai", "serve", "--scenario", "cards"])
+    with pytest.raises(SystemExit) as exit:
+        cli.main()
+    assert exit.value.code == 2
+    assert "invalid choice: 'cards'" in capsys.readouterr().err
+    monkeypatch.setattr("sys.argv", ["gothic-ai", "cards", "--llm", "off"])
+    with pytest.raises(SystemExit) as exit:
+        cli.main()
+    assert exit.value.code == 2
+    assert "cards requires --llm chatgpt|openai|local" in capsys.readouterr().err
 
 
 def test_story_graph_is_optional_before_the_game_publishes_its_base(tmp_path, monkeypatch, caplog):
@@ -22,8 +337,7 @@ def test_story_graph_is_optional_before_the_game_publishes_its_base(tmp_path, mo
 
 
 @pytest.mark.parametrize(("scenario", "backend_kind", "outcome", "code"), [
-    (None, "fake", "clean", 0),
-    ("m0", "fake", "clean", 0),
+    (None, "off", "clean", 0),
     ("m0", "off", "clean", 0),
     ("m0", "off", "caught", 1),
     ("m0", "off", "uncaught", 1),
@@ -126,7 +440,7 @@ def test_scenario_start_marker_waits_for_world_and_precedes_scenario(
         records = [record.getMessage() for record in caplog.records]
         checks = {key: next((line for line in records if f": {key}: " in line), "")
                   for key in ("model_off", "givens_used")}
-        if backend_kind == "off":
+        if backend_kind == "off" and scenario is not None:
             assert ("failed" in checks["model_off"]) == (outcome in {"caught", "uncaught"})
             assert ("failed" in checks["givens_used"]) == (outcome == "unused")
             assert all(checks.values())
@@ -162,8 +476,8 @@ def test_serve_arguments_select_responses_transport(monkeypatch, flags, websocke
     [
         ([], True),
         (["--no-showrunner"], False),
-        (["--scenario", "m0"], False),
-        (["--scenario", "showrunner"], False),
+        (["--scenario", "m0", "--llm", "off"], False),
+        (["--scenario", "showrunner", "--llm", "off"], False),
         (["--scenario", "showrunner_live"], False),
     ],
 )
@@ -207,7 +521,7 @@ def test_feat_challenge_flags(monkeypatch, flags):
     assert exit.value.code == 0
 
 
-@pytest.mark.parametrize("flags", [[], ["--scenario", "questlog"], ["--no-questlog"]])
+@pytest.mark.parametrize("flags", [[], ["--scenario", "questlog", "--llm", "auto"], ["--no-questlog"]])
 def test_questlog_is_enabled_by_default_including_scenarios(monkeypatch, flags):
     async def serve(args):
         assert args.no_questlog == ("--no-questlog" in flags)
@@ -247,7 +561,10 @@ def test_svm_lines_are_enabled_by_default(monkeypatch, flags):
 
 
 @pytest.mark.parametrize(
-    "flags", [[], ["--scenario", "crimes"], ["--scenario", "crime_meet"], ["--no-crimes"]]
+    "flags", [
+        [], ["--scenario", "crimes", "--llm", "auto"],
+        ["--scenario", "crime_meet", "--llm", "auto"], ["--no-crimes"],
+    ]
 )
 def test_crimes_is_enabled_by_default_including_scenarios(monkeypatch, flags):
     async def serve(args):
@@ -264,15 +581,19 @@ def test_crimes_is_enabled_by_default_including_scenarios(monkeypatch, flags):
 @pytest.mark.parametrize("crimes", [False, True])
 @pytest.mark.parametrize("planner", [False, True])
 @pytest.mark.parametrize("hold_threats", [False, True])
-def test_deed_control_is_independent_of_the_planner_and_threat_switch(crimes, planner, hold_threats):
-    args = SimpleNamespace(no_crimes=not crimes, no_hold_threats=not hold_threats)
+@pytest.mark.parametrize("parley", [False, True])
+def test_deed_control_is_independent_of_the_planner_and_threat_switch(crimes, planner, hold_threats, parley):
+    args = SimpleNamespace(no_crimes=not crimes, no_hold_threats=not hold_threats, no_parley=not parley)
     command = json.loads(cli._perception_control(args, planner=planner).to_json())
     assert command["hold"] == (planner and hold_threats)
     assert command.get("deeds", False) == crimes
     assert ("deeds" in command) == crimes
+    assert command["bandits"] == parley
 
 
-@pytest.mark.parametrize("flags", [[], ["--no-cover"], ["--no-crimes"], ["--scenario", "cover"]])
+@pytest.mark.parametrize("flags", [
+    [], ["--no-cover"], ["--no-crimes"], ["--scenario", "cover", "--llm", "off"],
+])
 def test_cover_flag_defaults_and_scenario_are_available(monkeypatch, flags):
     async def serve(args):
         assert args.no_cover == ("--no-cover" in flags)
@@ -286,7 +607,9 @@ def test_cover_flag_defaults_and_scenario_are_available(monkeypatch, flags):
     assert exit.value.code == 0
 
 
-@pytest.mark.parametrize("flags", [[], ["--no-npc-cheat"], ["--no-crimes"], ["--scenario", "cheat"]])
+@pytest.mark.parametrize("flags", [
+    [], ["--no-npc-cheat"], ["--no-crimes"], ["--scenario", "cheat", "--llm", "auto"],
+])
 def test_npc_cheat_flag_and_scenario_are_available(monkeypatch, flags):
     async def serve(args):
         assert args.no_npc_cheat == ("--no-npc-cheat" in flags)
@@ -311,7 +634,9 @@ async def test_no_crimes_starts_no_encounter_worker_or_approach(monkeypatch):
     approach.assert_not_called()
 
 
-@pytest.mark.parametrize("flags", [[], ["--no-npc-crimes"], ["--no-crimes"], ["--scenario", "npc_deeds"]])
+@pytest.mark.parametrize("flags", [
+    [], ["--no-npc-crimes"], ["--no-crimes"], ["--scenario", "npc_deeds", "--llm", "auto"],
+])
 def test_npc_crimes_switch_and_scenario(monkeypatch, flags):
     async def serve(args):
         assert args.no_npc_crimes == ("--no-npc-crimes" in flags)
@@ -347,22 +672,19 @@ async def test_encounter_worker_starts_without_a_behavioral_planner(monkeypatch)
 @pytest.mark.parametrize(
     ("scenario", "control", "enabled", "url", "llm", "valid", "policy"),
     [
-        ("neural-soak", "1", False, None, "fake", True, "service"),
-        ("neural-soak", "1", False, "tcp://policy:47835", "fake", True, "service"),
-        ("neural-soak", "1", True, "tcp://policy:47835", "fake", False, "service"),
-        ("neural-soak", "0", False, None, "fake", False, "service"),
-        ("neural-soak", "0", True, None, "fake", True, "engine"),
-        ("neural-soak", "0", True, None, "fake", False, "service"),
-        ("neural-soak", "0", True, "tcp://policy:47835", "fake", True, "service"),
-        ("neural-soak", "0", True, "tcp://policy:47835", "fake", True, "engine"),
-        ("neural-soak", "1", False, None, "chatgpt", False, "service"),
-        ("neural-load", "1", False, None, "fake", False, "service"),
-        (None, "1", False, None, "fake", False, "service"),
-        ("neural", "0", True, None, "fake", True, "engine"),
-        ("neural", "0", True, None, "fake", False, "service"),
-        ("feats", "0", True, None, "fake", True, "engine"),
-        ("feats", "0", True, None, "chatgpt", True, "engine"),
-        ("feats", "0", True, None, "local", False, "engine"),
+        ("neural-soak", "1", False, None, "off", True, "service"),
+        ("neural-soak", "1", False, "tcp://policy:47835", "off", True, "service"),
+        ("neural-soak", "1", True, "tcp://policy:47835", "off", False, "service"),
+        ("neural-soak", "0", False, None, "off", False, "service"),
+        ("neural-soak", "0", True, None, "off", True, "engine"),
+        ("neural-soak", "0", True, None, "off", False, "service"),
+        ("neural-soak", "0", True, "tcp://policy:47835", "off", True, "service"),
+        ("neural-soak", "0", True, "tcp://policy:47835", "off", True, "engine"),
+        ("neural-load", "1", False, None, "off", False, "service"),
+        (None, "1", False, None, "off", False, "service"),
+        ("neural", "0", True, None, "off", True, "engine"),
+        ("neural", "0", True, None, "off", False, "service"),
+        ("feats", "0", True, None, "off", True, "engine"),
     ],
 )
 async def test_serve_validates_scenario_backend_and_soak_control(

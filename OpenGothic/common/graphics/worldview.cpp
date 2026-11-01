@@ -239,7 +239,10 @@ struct WorldView::LandscapeStreaming {
 
   void publish(size_t i, const PackedMesh& packed) {
     const auto t=ChunkResidency::Clock::now();
-    chunks[i].gpu=std::make_unique<Landscape>(view.visuals,packed,pages);
+    const auto id=residency.table().entries[i].id;
+    const Vec3 texturePosition((float(id.x)+0.5f)*ChunkId::Size,0,(float(id.z)+0.5f)*ChunkId::Size);
+    Resources::TextureLoadScope textureLoadScope(true);
+    chunks[i].gpu=std::make_unique<Landscape>(view.visuals,packed,pages,texturePosition);
     const auto ms=std::chrono::duration<double,std::milli>(ChunkResidency::Clock::now()-t).count();
     residency.recordPublication(ms,residency.desired(i)==ChunkResidency::State::Far);
     if(firstUpdate)
@@ -437,6 +440,10 @@ void WorldView::setSceneImages(const Tempest::Texture2d& clr, const Tempest::Tex
   sGlobal.zbuffer    = &textureCast<const Texture2d&>(depthNative);
   }
 
+void WorldView::setFog(const Tempest::StorageImage& lut, const Tempest::StorageImage& lutMs) {
+  sGlobal.setFog(&lut, &lutMs);
+  }
+
 void WorldView::setWindEnabled(bool enabled, uint64_t period) {
   sGlobal.zWindEnabled = enabled && period>0;
   sGlobal.windPeriod   = period;
@@ -494,6 +501,11 @@ void WorldView::drawGBuffer(Tempest::Encoder<CommandBuffer>& cmd, uint8_t fId) {
 
 void WorldView::drawWater(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
   visuals.drawWater(cmd);
+  }
+
+void WorldView::drawMultiply(Tempest::Encoder<CommandBuffer>& cmd, uint8_t fId) {
+  visuals.drawMultiply(cmd);
+  pfxGroup.drawMultiply(cmd, fId);
   }
 
 void WorldView::drawTranslucent(Tempest::Encoder<CommandBuffer>& cmd, uint8_t fId) {

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import re
 import time
 from collections.abc import AsyncIterator, Callable, Collection, Sequence
@@ -16,11 +17,19 @@ from ..chronicle import Chronicle, Fact
 from ..dialogue import DialogueManager, SceneLine
 from ..game import GameError, GameLink
 from ..gossip import Scene
-from ..llm import Item, LLMBackend, LLMEvent, Message, Tool, ToolCall, ToolChoice, ToolResult
-from ..llm.fake import FakeBackend, FakeStep
+from ..llm import Item, LLMEvent, Message, ToolCall
 from ..llm.off import OffBackend
 from ..perception import BEASTS, trace_name
-from ..protocol import ActionResult, GameMessage, NpcActResult, NpcIdle, PerceptionHeld, Saved
+from ..protocol import (
+    ActionResult,
+    GameMessage,
+    NpcActResult,
+    NpcIdle,
+    NpcRoster,
+    PerceptionHeld,
+    RosterEntry,
+    Saved,
+)
 from ..sightings import Sighting
 from ..talk import TalkDesk
 
@@ -279,6 +288,82 @@ async def wait_npc_visibility(
     return await _until_async(ready, bool, timeout), detail
 
 
+async def prepare_npc_parking(
+    link: GameLink, npc: str, waypoint: str, position: tuple[float, float, float],
+) -> tuple[bool, dict[str, Any]]:
+    """Keep a distant extra outside the scene, without requiring an initialized still pose."""
+    receipts: dict[str, NpcActResult] = {}
+
+    def record(message: GameMessage) -> None:
+        if isinstance(message, NpcActResult) and message.npc == npc:
+            receipts[message.id] = message
+
+    link.listeners.append(record)
+    try:
+        # Crowded parking points can keep distant extras stepping around one another.
+        await link.debug("skip_important", near=npc)
+        await link.debug("npc_goto", npc=npc, waypoint=waypoint)
+        action = await link.npc_act(
+            npc, "start_activity", state="ZS_STAND_WP", waypoint=waypoint, minutes=120, place=False,
+        )
+        await _until(lambda: action in receipts, 5)
+        receipt = receipts.get(action)
+        snapshot = await link.snapshot(npc, fresh=True)
+        horizontal = math.hypot(snapshot.npc.pos[0] - position[0], snapshot.npc.pos[2] - position[2])
+        distance = snapshot.player.distance if snapshot.player is not None else 0
+        ready = receipt is not None and receipt.status == "queued" and horizontal <= 600 and distance >= 8000
+        return ready, {
+            "npc": npc, "point": waypoint, "receipt": receipt.model_dump() if receipt else None,
+            "pos": snapshot.npc.pos, "horizontal": horizontal, "hero_distance": distance,
+        }
+    finally:
+        link.listeners.remove(record)
+
+
+async def prepare_street_theft_witness(
+    link: GameLink, npc: str, waypoint: str, item: str,
+) -> tuple[bool, dict[str, Any]]:
+    """Prove the initialized street witness sees both the hero and the native dropped item."""
+    roster_serial = 0
+    people: dict[str, RosterEntry] = {}
+
+    def record(message: GameMessage) -> None:
+        nonlocal roster_serial, people
+        if isinstance(message, NpcRoster):
+            roster_serial += 1
+            entries = {entry.id.upper(): entry for entry in message.npcs}
+            people = entries if message.full else {**people, **entries}
+
+    link.listeners.append(record)
+    try:
+        await link.debug("teleport", near=npc, distance=450)
+        # Keep the initialized activity while the native drop animation finishes.
+        await link.debug("npc_goto", npc=npc, waypoint=waypoint, face="PC_HERO")
+        after = roster_serial
+        visible, detail = await wait_npc_visibility(link, npc, "HERO", timeout=5)
+        free = await _until(
+            lambda: roster_serial > after
+            and npc in people and people[npc].activity == "routine"
+            and people[npc].state == "ZS_STAND_WP"
+            and not link.body_owned(npc),
+            5,
+        )
+        entry = people.get(npc)
+        cup = next((
+            ground for ground in detail.get("view", {}).get("items", []) if ground.get("item") == item
+        ), None)
+        detail.update(
+            fresh_roster=free, roster=entry.model_dump() if entry is not None else None, cup=cup,
+        )
+        return (
+            visible and free and 250 <= detail.get("distance", 0) <= 700
+            and cup is not None and cup.get("hero_cm") is not None and cup["hero_cm"] <= 800,
+            detail,
+        )
+    finally:
+        link.listeners.remove(record)
+
+
 async def wait_message[M: GameMessage](
     link: GameLink, kind: type[M], match: Callable[[M], bool] = lambda _: True, timeout: float = 120
 ) -> M:
@@ -395,41 +480,6 @@ async def _until(check: Callable[[], object], timeout: float) -> bool:
     return bool(check())
 
 
-class _OnWords:
-    """A scripted model that answers by what it is asked: the step of the first words found in the last
-    message (the hero's phrase or an event's cue), `default` else."""
-
-    name = "fake"
-
-    def __init__(self, replies: list[tuple[str, FakeStep]], default: FakeStep) -> None:
-        self.replies, self.default = replies, default
-
-    async def aclose(self) -> None:
-        pass
-
-    def stream(
-        self,
-        *,
-        instructions: str,
-        messages: Sequence[Item],
-        tools: list[Tool] | None = None,
-        tool_choice: ToolChoice | None = None,
-        allowed: Collection[str] | None = None,
-        cache_key: str | None = None,
-    ) -> AsyncIterator[LLMEvent]:
-        last = messages[-1] if messages else None
-        text = last.content if isinstance(last, Message) else ""
-        step = next((s for words, s in self.replies if words.lower() in text.lower()), self.default)
-        return FakeBackend(script=[step], delay=0).stream(
-            instructions=instructions,
-            messages=messages,
-            tools=tools,
-            tool_choice=tool_choice,
-            allowed=allowed,
-            cache_key=cache_key,
-        )
-
-
 class _Recorded:
     """A model as it is, and what it was given: each request's messages, for a scenario to read."""
 
@@ -449,133 +499,34 @@ class _Recorded:
         return getattr(self.llm, name)
 
 
-class _ByNpc:
-    """A scripted model selected by its npc cache key, then its persona prefix; `default` else."""
-
-    name = "fake"
-
-    def __init__(self, by: dict[str, Any], default: Any) -> None:
-        self.by, self.default = by, default
-
-    async def aclose(self) -> None:
-        pass
-
-    def stream(
-        self,
-        *,
-        instructions: str,
-        messages: Sequence[Item],
-        tools: list[Tool] | None = None,
-        tool_choice: ToolChoice | None = None,
-        allowed: Collection[str] | None = None,
-        cache_key: str | None = None,
-    ) -> AsyncIterator[LLMEvent]:
-        llm = self.by.get(cache_key) if cache_key is not None else None
-        if llm is None:
-            llm = next((b for name, b in self.by.items() if f"Ты — {name}" in instructions), self.default)
-        return llm.stream(
-            instructions=instructions,
-            messages=messages,
-            tools=tools,
-            tool_choice=tool_choice,
-            allowed=allowed,
-            cache_key=cache_key,
-        )
-
-
 LOBART, HILDA = "BAU_950_LOBART", "BAU_951_HILDA"
 RUEBEN, RUEBEN_TO_HILDA = "MIS_LOBART_RUEBEN", "MIS_LOBART_RUEBENTOHILDA"
-
-
-class ClaimScript:
-    """A giver's conversational model, scripted by what it hears: the step for a phrase in the hero's words
-    or the cue (`said`), or in the outcome of its last tool call (`told`); else a plain reply."""
-
-    name = "claim-script"
-
-    def __init__(
-        self,
-        said: list[tuple[str, FakeStep]],
-        told: list[tuple[str, FakeStep]],
-        default: str = "Ну?",
-        only: str | None = None,
-        others: LLMBackend | None = None,
-    ) -> None:
-        """`only`: the scripted npc's name; the other npc's turns go to `others` (the live model)."""
-        self.said, self.told, self.default = said, told, default
-        self.only, self.others = only, others
-        self.calls: list[tuple[str, list[Item], list[Tool]]] = []
-        self.outputs: list[str] = []  # what came of its tool calls
-
-    async def aclose(self) -> None:
-        pass
-
-    async def stream(
-        self,
-        *,
-        instructions: str,
-        messages: Sequence[Item],
-        tools: list[Tool] | None = None,
-        tool_choice: ToolChoice | None = None,
-        allowed: Collection[str] | None = None,
-        cache_key: str | None = None,
-    ) -> AsyncIterator[LLMEvent]:
-        if self.others is not None and self.only is not None and f"по имени {self.only}" not in instructions:
-            async for event in self.others.stream(
-                instructions=instructions,
-                messages=messages,
-                tools=tools,
-                tool_choice=tool_choice,
-                allowed=allowed,
-                cache_key=cache_key,
-            ):
-                yield event
-            return
-        self.calls.append(
-            (instructions, list(messages), [t for t in tools or [] if allowed is None or t.name in allowed])
-        )
-        last = messages[-1] if messages else None
-        if isinstance(last, ToolResult):
-            self.outputs.append(last.output)
-            rules, text = self.told, last.output
-        else:
-            rules, text = self.said, last.content if isinstance(last, Message) else ""
-        step = next((s for k, s in rules if k in text), FakeStep(self.default))
-        fake = FakeBackend(script=[step], delay=0)
-        async for event in fake.stream(
-            instructions=instructions,
-            messages=messages,
-            tools=tools,
-            tool_choice=tool_choice,
-            allowed=allowed,
-            cache_key=cache_key,
-        ):
-            yield event
-
 
 ANDRE = "MIL_311_ANDRE"
 
 
 async def _caught_by(
     link: GameLink, dialogue: DialogueManager, talk: TalkDesk, giver: str, facts: Callable[..., list[Fact]]
-) -> tuple[bool, ClaimScript | None]:
-    """The hero tells `giver` the turnips are in the barn and is caught (the giver scripted; with LLM=chatgpt
-    the others are the live model)."""
+) -> tuple[bool, None]:
+    """Seed a caught turnip lie with an explicitly supplied decision."""
+    off = model_off(dialogue)
     await link.story_effect(giver, [{"do": "set", "var": RUEBEN, "value": 1}])
     await link.debug("player_goto", to=giver, distance=250)
     talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
-    # by the roster after the move: one from before it may still have him farther than a name is heard
+    log.info("given: дано: Лобарт слушает героя (posture=listen)")
+    # Wait for the roster after the move to put the giver within earshot.
     if not await _until(lambda: giver in talk.people and talk.people[giver].distance <= 600, 20):
         return False, None
     name = talk.people[giver].name
-    live = None if isinstance(dialogue.llm, FakeBackend) else dialogue.llm
-    expose = FakeStep("Врёшь! Нет у тебя никакой репы.", [ToolCall("expose_lie", {"quest": RUEBEN})])
-    script = ClaimScript(
-        said=[("репа", expose)], told=[], default="Ну, здравствуй. Чего тебе?", only=name, others=live
+    off.given(
+        "дано: Лобарт уличил героя во лжи",
+        who=giver,
+        when="репа",
+        calls=[ToolCall("expose_lie", {"quest": RUEBEN})],
     )
-    dialogue.llm = script
+    off.silent("дано: Лобарт молчит (ложь раскрыта)", who=giver, when="репа")
     await link.debug("type", text=f"{name}, репа уже в амбаре, все двадцать штук. Давай плату.")
-    return await _until(lambda: any(f.get("quest") == RUEBEN for f in facts("caught")), 60), script
+    return await _until(lambda: any(f.get("quest") == RUEBEN for f in facts("caught")), 60), None
 
 
 def _trace_evidence_line(prompt: str, observation: Sighting) -> tuple[str, str]:
@@ -596,91 +547,12 @@ def _trace_evidence_line(prompt: str, observation: Sighting) -> tuple[str, str]:
 
 
 VINO = "BAU_952_VINO"
-# the scene as the scripted model writes it: (0 the teller, 1 the listener), text, mood
+# The supplied gossip scene: (0 the teller, 1 the listener), text, mood
 GOSSIP_LINES = (
     (0, "Слыхала? Этот бродяга мне про репу наврал, глазом не моргнул.", "angry"),
     (1, "Да ну? А с виду смирный.", "neutral"),
     (0, "Смирный… Глаз с него не спускай.", "neutral"),
 )
-
-
-class GossipScript:
-    """The conversational model of the gossip e2e (and the day e2e's), routed by what is asked: a scene (the
-    tool `lines`) gets `lines` (GOSSIP_LINES) with the two names the tool allows, Hilda's answer to the hero
-    is hers, anything else goes to Lobart's script (which sends the others to the live model itself). With
-    `live` (LLM=chatgpt) the scene and Hilda are the live model."""
-
-    name = "gossip-script"
-
-    def __init__(
-        self,
-        claim: LLMBackend,
-        hilda: LLMBackend,
-        live: LLMBackend | None = None,
-        *,
-        lines: Sequence[tuple[int, str, str]] = GOSSIP_LINES,
-        quiet: bool = True,
-        reason: str = "сплетничают о герое, пока он рядом",
-    ) -> None:
-        self.claim, self.hilda, self.live = claim, hilda, live
-        self.lines = lines
-        self.quiet, self.reason = quiet, reason
-        self.lines_calls = 0  # how often a scene was written
-
-    async def aclose(self) -> None:
-        pass
-
-    async def stream(
-        self,
-        *,
-        instructions: str,
-        messages: Sequence[Item],
-        tools: list[Tool] | None = None,
-        tool_choice: ToolChoice | None = None,
-        allowed: Collection[str] | None = None,
-        cache_key: str | None = None,
-    ) -> AsyncIterator[LLMEvent]:
-        lines = next((t for t in tools or [] if t.name == "lines"), None)
-        backend: LLMBackend
-        if lines is not None:
-            self.lines_calls += 1
-            call = ToolCall("lines", _gossip_lines(lines, self.lines, self.quiet, self.reason), "gossip")
-            backend = self.live or FakeBackend(script=[FakeStep("", [call])], delay=0)
-        elif "по имени Хильда" in instructions:
-            backend = self.live or self.hilda
-        else:
-            backend = self.claim
-        async for event in backend.stream(
-            instructions=instructions,
-            messages=messages,
-            tools=tools,
-            tool_choice=tool_choice,
-            allowed=allowed,
-            cache_key=cache_key,
-        ):
-            yield event
-
-
-def _gossip_lines(
-    tool: Tool,
-    lines: Sequence[tuple[int, str, str]] = GOSSIP_LINES,
-    quiet: bool = True,
-    reason: str = "сплетничают о герое, пока он рядом",
-) -> dict[str, Any]:
-    """The scripted lines (0 the teller, 1 the listener) as the tool `lines` takes them: its schema lists the
-    teller's name first."""
-    try:
-        names = tool.parameters["properties"]["lines"]["items"]["properties"]["speaker"]["enum"]
-        teller, listener = str(names[0]), str(names[1])
-    except (KeyError, IndexError, TypeError):
-        teller, listener = "Лобарт", "Хильда"
-    return {
-        "lines": [
-            {"speaker": (teller, listener)[who], "text": text, "mood": mood} for who, text, mood in lines
-        ],
-        "quiet": quiet,
-        "reason": reason,
-    }
 
 
 async def _save(link: GameLink, slot: int, attempts: int = 15) -> Saved | None:

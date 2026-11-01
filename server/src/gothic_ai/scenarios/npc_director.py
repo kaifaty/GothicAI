@@ -3,24 +3,19 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import math
-import os
-import re
-from collections.abc import AsyncIterator
-from dataclasses import replace
+from dataclasses import asdict, replace
 from typing import TYPE_CHECKING, Any
-
-from pydantic import ValidationError
 
 from .. import questbook
 from ..brain.reflex import Reflexes
+from ..chains import CACHE_KEY as CHAINS_KEY
 from ..game import GameLink
-from ..llm import LLMEvent, Message, ToolCall
-from ..llm.fake import FakeBackend, FakeStep
+from ..llm import ToolCall
 from ..protocol import GameMessage, NpcActResult, NpcIdle, Session
-from ..showrunner import Proposal, occasion_members
+from ..showrunner import CACHE_KEY as SHOWRUNNER_KEY
+from ..showrunner import occasion_members
 from .common import (
     HILDA,
     LOBART,
@@ -30,11 +25,16 @@ from .common import (
     _save,
     _until,
     _until_async,
+    model_off,
     prepare_npc_pose,
     wait_message,
     wait_npc_visibility,
 )
 from .npc_deeds import CHEST, HOUSE, ROAD
+
+SCENARIOS = {
+    "npc_director": ("GIVEN", {"save": True, "timeout": 720}),
+}
 
 if TYPE_CHECKING:
     from ..chests import ChestDesk
@@ -43,13 +43,14 @@ if TYPE_CHECKING:
     from ..showrunner import Showrunner
     from ..talk import TalkDesk
     from ..witnesses import Witnesses
+    from .live import LiveCase
 
 log = logging.getLogger("gothic_ai.scenarios")
 WORDS = "Помоги найти вора. Спроси Хильду о Вино"
 PREMISE = "У Лобарта пропала вещь из сундука. Он просит героя убедить его, кто вор."
 
 
-def _builder(cid: str) -> FakeBackend:
+def _chain(cid: str) -> ToolCall:
     def talk(description: str, answer: str) -> dict[str, Any]:
         return {
             "description": description,
@@ -57,7 +58,7 @@ def _builder(cid: str) -> FakeBackend:
             "remember": answer,
         }
 
-    return FakeBackend("", tool_calls=[ToolCall("propose_chain", {
+    return ToolCall("propose_chain", {
         "cast": [],
         "quests": [{
             "title": "Кто обокрал Лобарта",
@@ -75,42 +76,7 @@ def _builder(cid: str) -> FakeBackend:
             "gold": 1, "xp": 0,
         }],
         "reason": "Заказчик должен сам назвать вора; герой может убедить его и ложью.",
-    })], delay=0)
-
-
-class InvestigationScript:
-    name = "npc-director-script"
-
-    def __init__(self, cid: str) -> None:
-        self.cid = cid
-        self.asked = self.accused = False
-        self.prompts: list[str] = []
-
-    async def stream(self, **kw: Any) -> AsyncIterator[LLMEvent]:
-        last = kw["messages"][-1]
-        text = last.content if isinstance(last, Message) else ""
-        prompt = "\n".join(
-            m.content for m in kw["messages"] if isinstance(m, Message) and m.role == "developer"
-        )
-        step = FakeStep("Я слушаю.")
-        if kw.get("cache_key") == LOBART:
-            self.prompts.append(prompt)
-            if WORDS in text and not self.asked:
-                self.asked = True
-                step = FakeStep("Спрошу Хильду, что она видела о Вино.", [ToolCall("ask_witness", {
-                    "who": "Хильда", "said": WORDS, "about": "Вино",
-                })])
-            elif not self.accused and any(
-                re.match(r"- С\d+:", line)
-                and all(word in line for word in ("Хильда", "Вино", self.cid))
-                for line in prompt.splitlines()
-            ):
-                self.accused = True
-                step = FakeStep("Хильда видела Вино. Значит, он взял мою вещь.", [
-                    ToolCall("blame", {"who": "Вино", "crime": self.cid}),
-                ])
-        async for event in FakeBackend(script=[step], delay=0).stream(**kw):
-            yield event
+    })
 
 
 async def npc_director(
@@ -123,18 +89,15 @@ async def npc_director(
     witnesses: Witnesses,
     log_dir: str,
     slot: int = 7,
+    *,
+    live: LiveCase | None = None,
 ) -> dict[str, str]:
-    """Fake plays one theft line; live asks only the ordinary showrunner model once, without building.
-
-    The live preparation does not consume important vanilla dialogs or change character cards. Its
-    decision uses the production brief, instructions and canon, without a retry or a suggested plot.
-    """
+    """Apply declared theft-line decisions and check testimony, reward and save persistence."""
     results: dict[str, str] = {}
     service, rumors = will.npc_crimes, will.rumors
     facts = will.chronicle.facts
-    live = director.model.llm.name != "fake"
-    original_llm, original_reflexes, original_busy = dialogue.llm, talk.reflexes, will.busy
-    original_model, original_builder = director.model.llm, director.chains.model.llm
+    off = model_off(dialogue) if live is None else None
+    original_reflexes, original_busy = talk.reflexes, will.busy
     original_cards, original_crime_cards = will.cards, service.cards
     original_gate, original_stage = rumors.gate, rumors.stage
     participants = {LOBART, HILDA, VINO}
@@ -154,30 +117,9 @@ async def npc_director(
         return int(await link.evaluate(["call", "NPC_HASITEMS", ["inst", npc], ["sym", item]]) or 0)
 
     async def place(npc: str, point: str, **kw: Any) -> bool:
-        if not live:
-            kw.setdefault("require_perception_ready", point != parked)
-            ok, detail = await prepare_npc_pose(link, npc, point, **kw)
-            return ok or check("pose", False, detail)
-        # Unlike the generic scenario helper, this path leaves important vanilla dialogs alone.
-        await link.debug("npc_goto", npc=npc, waypoint=point)
-        await link.npc_act(
-            npc, "start_activity", state="ZS_STAND_WP", waypoint=point, minutes=120, place=False,
-        )
-
-        async def ready() -> bool:
-            views = await link.npc_view([npc])
-            return bool(views and views[0].state == "ZS_STAND_WP" and views[0].body == "stand"
-                        and (point == parked or views[0].theft_ready is True))
-
-        if not await _until_async(ready, bool, 15):
-            return check("pose", False, {"npc": npc, "waypoint": point})
-        placement: dict[str, Any] = {"npc": npc}
-        placement.update({"to": kw["to"], "distance": kw.get("distance", 300)}
-                         if "to" in kw else {"waypoint": point})
-        if "face" in kw:
-            placement["face"] = kw["face"]
-        await link.debug("npc_goto", **placement)
-        return True
+        kw.setdefault("require_perception_ready", point != parked)
+        ok, detail = await prepare_npc_pose(link, npc, point, **kw)
+        return ok or check("pose", False, detail)
 
     async def settled() -> bool:
         return await _until(lambda: not witnesses._asking.intersection(participants) and all(
@@ -196,7 +138,7 @@ async def npc_director(
 
     link.listeners.append(record)
     will.busy = lambda npc: npc in preparing or original_busy(npc)
-    dialogue.llm = FakeBackend("Я слушаю.", delay=0)
+    log.info("given: дано: решающая модель оставляет NPC слушать героя")
     talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
     rumors.gate, rumors.stage = lambda *_: False, None
     try:
@@ -205,8 +147,7 @@ async def npc_director(
             await wait_message(link, Session, timeout=10)
         if not check("enabled", will.enabled and service.enabled and will.blame is not None, log_dir):
             return _logged(results)
-        if not live:
-            will.cards = service.cards = {n: replace(c, honesty=5, greed=1) for n, c in will.cards.items()}
+        will.cards = service.cards = {n: replace(c, honesty=5, greed=1) for n, c in will.cards.items()}
         await link.debug("player_hp", hp=5000)
         await link.debug("time", hour=8, minute=0)
         humans = {str(p["npc"]) for p in await link.story_people()}
@@ -224,8 +165,7 @@ async def npc_director(
             p["npc"] for p in await link.story_nearby(LOBART, 7000) if p["npc"] in humans
         ]]))
         preparing.update(farm)
-        if not live:
-            await link.story_effect(LOBART, [{"do": "end"}])
+        await link.story_effect(LOBART, [{"do": "end"}])
         await link.debug("player_goto", waypoint=HOUSE)
         for npc in farm:
             if not await place(npc, parked):
@@ -291,19 +231,18 @@ async def npc_director(
         if not check("loss_discovered", opened.status == "done" and "пропало" in note, note):
             return _logged(results)
 
-        if not live:
-            await link.debug("player_goto", waypoint=ROAD)
-            if not await place(LOBART, ROAD) or not await place(
-                HILDA, ROAD, to=LOBART, distance=350, face=LOBART,
-            ):
-                return _logged(results)
-            if not await place(VINO, ROAD, to=LOBART, distance=450, face=LOBART):
-                return _logged(results)
-            await link.debug("teleport", near=LOBART, distance=250)
-            ready = await _until(lambda: all(n in talk.people and talk.people[n].distance <= 700
-                                            and talk.people[n].earshot <= 700 for n in (LOBART, HILDA)), 20)
-            if not check("talk_near", ready):
-                return _logged(results)
+        await link.debug("player_goto", waypoint=ROAD)
+        if not await place(LOBART, ROAD) or not await place(
+            HILDA, ROAD, to=LOBART, distance=350, face=LOBART,
+        ):
+            return _logged(results)
+        if not await place(VINO, ROAD, to=LOBART, distance=450, face=LOBART):
+            return _logged(results)
+        await link.debug("teleport", near=LOBART, distance=250)
+        ready = await _until(lambda: all(n in talk.people and talk.people[n].distance <= 700
+                                        and talk.people[n].earshot <= 700 for n in (LOBART, HILDA)), 20)
+        if not check("talk_near", ready):
+            return _logged(results)
         if not await _until(lambda: any(f.get("crime") == cid for f in facts("occasion")), 20):
             check("deed", False, cid)
             return _logged(results)
@@ -311,67 +250,74 @@ async def npc_director(
         if not check("deed", any(f.get("crime") == cid for f in occasion_members(occasion)), occasion):
             return _logged(results)
 
-        if live:
-            # GOTHIC_DIRECTOR_ASKS=N asks the same brief N times to see how often a hidden challenge is laid
-            asks = max(1, int(os.environ.get("GOTHIC_DIRECTOR_ASKS", "1")))
-            brief = await director.brief(occasion)
-            challenges: list[str] = []
-            for ask in range(asks):
-                suffix = f"_{ask + 1}" if asks > 1 else ""
-                raw = await director.model.propose(brief)
-                try:
-                    proposal = Proposal.of(raw or {})
-                    errors = director.canon(proposal, brief)
-                    if not errors:
-                        errors = await director._requirements(proposal)
-                except ValidationError as error:
-                    return _logged({**results, f"live_decision{suffix}": f"failed ({error})"})
-                outcome = {"fact": "line_none" if proposal.kind == "none" else "line",
-                           "proposal": raw, "canon": errors}
-                log.info("npc_director live outcome: %s", json.dumps(outcome, ensure_ascii=False))
-                check(f"live_decision{suffix}", bool(proposal.reason.strip()) if proposal.kind == "none"
-                      else bool(proposal.premise.strip()), outcome)
-                check(f"live_canon{suffix}", not errors, errors)
-                if proposal.kind != "none":
-                    challenges.append((proposal.challenge or {}).get("kind", "") or "none")
-            check("live_challenges", True, ", ".join(challenges) or "no lines")
+        if live is not None:
+            outcome = await director.decide(occasion)
+            quests = [director.book.all()[qid] for qid in (outcome or {}).get("quests", [])
+                      if qid in director.book.all()]
+            blame = [goal for q in quests for stage in q.stages for goal in stage.goals
+                     if goal.kind == "blame" and goal.crime == cid]
+            live.finish(
+                "no_decision" if (outcome or {}).get("fact") == "line_none" else
+                "success" if (outcome or {}).get("fact") == "line" and blame else "failure",
+                evidence={"crime": crime, "decision": outcome, "quests": [q.id for q in quests],
+                          "blame_goals": [asdict(g) for g in blame],
+                          "rejected": facts("line_rejected") + facts("chain_rejected")},
+            )
             return _logged(results)
 
-        director.model.llm = FakeBackend("", tool_calls=[ToolCall("propose_line", {
-            "kind": "quest", "giver": LOBART, "place": "", "new_people": False,
-            "premise": PREMISE, "reason": "Лобарт обнаружил пропажу и хочет найти вора.",
-            "follows": "", "crime": cid, "requires": [],
-        })], delay=0)
-        director.chains.model.llm = _builder(cid)
+        assert off is not None
+        off.given(
+            "дано: шоураннер предлагает Лобарту линию поиска вора",
+            who=SHOWRUNNER_KEY, when=cid,
+            calls=[ToolCall("propose_line", {
+                "kind": "quest", "giver": LOBART, "place": "", "new_people": False,
+                "premise": PREMISE, "reason": "Лобарт обнаружил пропажу и хочет найти вора.",
+                "follows": "", "crime": cid, "requires": [],
+            })],
+        )
+        off.given(
+            "дано: автор цепочек строит цель обвинения вора",
+            who=CHAINS_KEY, when=cid, calls=[_chain(cid)],
+        )
         outcome = await director.decide(occasion)
-        if not check("line", outcome is not None and outcome.get("fact") == "line"
-                     and outcome.get("giver") == LOBART and outcome.get("crime") == cid, outcome):
-            return _logged(results)
         assert outcome is not None
-        made = [director.book.all()[qid] for qid in outcome.get("quests", []) if qid in director.book.all()]
-        if not check("blame_goal", len(made) == 1 and made[0].stages[0].goals[0].kind == "blame"
-                     and made[0].stages[0].goals[0].crime == cid, outcome.get("quests")):
-            return _logged(results)
-        q = made[0]
+        q, = [director.book.all()[qid] for qid in outcome.get("quests", [])]
         await link.choose_dialog(LOBART, questbook.give_node(q))
         if not check("quest_given", await _until(
             lambda: director.book.progress(q.id).state == "given", 20,
         ), q.id):
             return _logged(results)
-        script = InvestigationScript(cid)
-        dialogue.llm = script  # type: ignore[assignment]
+        off.given(
+            "дано: Лобарт спрашивает Хильду о Вино",
+            who=LOBART, when=WORDS,
+            calls=[ToolCall("ask_witness", {"who": "Хильда", "said": WORDS, "about": "Вино"})],
+        )
+        off.silent("дано: Лобарт молчит (вопрос Хильде передан)", who=LOBART, when=WORDS)
+        off.given(
+            "дано: реплика свидетеля Хильды о краже Вино",
+            who=HILDA, when="спрашивает тебя о человеке Вино",
+            line="Я видела, как Вино взял вещь из сундука Лобарта.",
+        )
+        off.given(
+            "дано: Лобарт обвиняет Вино по показанию Хильды",
+            who=LOBART, when="Ответ о человеке Вино:",
+            calls=[ToolCall("blame", {"who": "Вино", "crime": cid})],
+        )
+        off.silent(
+            "дано: Лобарт молчит (обвинение по показанию записано)",
+            who=LOBART, when="Ответ о человеке Вино:",
+        )
         await link.debug("type", text=f"Лобарт, {WORDS}.")
-        believed = await _until(lambda: any(f.get("npc") == LOBART and f.get("crime") == cid
-                                           for f in facts("blamed")), 90)
+        await _until(lambda: any(f.get("npc") == LOBART and f.get("crime") == cid
+                                for f in facts("blamed")), 90)
         await settled()
         testimony = [f for f in facts("testimony") if f.get("npc") == LOBART and f.get("witness") == HILDA
                      and f.get("about") == VINO and cid in f.get("crime_told", [])]
-        if not check("about_testimony", len(testimony) == 1 and script.asked, testimony):
+        if not check("about_testimony", len(testimony) == 1, testimony):
             return _logged(results)
-        beliefs = [f for f in facts("blamed") if f.get("npc") == LOBART and f.get("crime") == cid]
-        if not check("giver_blamed", believed and len(beliefs) == 1 and beliefs[0].get("culprit") == VINO
-                     and beliefs[0].get("truth") is True
-                     and beliefs[0].get("because") == f"testimony:{testimony[0]['id']}", beliefs):
+        belief = next((f for f in facts("blamed") if f.get("npc") == LOBART and f.get("crime") == cid), {})
+        if not check("giver_blamed", belief.get("truth") is True
+                     and belief.get("because") == f"testimony:{testimony[0]['id']}", belief):
             return _logged(results)
         offered = await _until_async(lambda: link.offered_dialogs(LOBART),
                                     lambda rows: questbook.done_node(q) in rows, 30)
@@ -409,8 +355,7 @@ async def npc_director(
               and [f for f in facts() if f.get("fact") in kinds] == kept, len(kept))
         return _logged(results)
     finally:
-        dialogue.llm, talk.reflexes, will.busy = original_llm, original_reflexes, original_busy
-        director.model.llm, director.chains.model.llm = original_model, original_builder
+        talk.reflexes, will.busy = original_reflexes, original_busy
         will.cards, service.cards = original_cards, original_crime_cards
         rumors.gate, rumors.stage = original_gate, original_stage
         link.listeners.remove(record)

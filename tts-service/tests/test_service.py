@@ -1,14 +1,21 @@
 import asyncio
+import base64
+import hashlib
 import json
 import logging
+from contextlib import asynccontextmanager
+from types import SimpleNamespace
 
 import httpx
 import pytest
 from websockets.asyncio.client import connect
 from websockets.asyncio.server import serve
+from websockets.exceptions import InvalidStatus
 
+from gothic_tts import service as service_module
 from gothic_tts.providers import TtsError, Voice, make_provider, parse_spec
 from gothic_tts.providers.fake import FakeProvider
+from gothic_tts.providers.inworld import InworldTTS
 from gothic_tts.providers.voxcpm import VoxCPM
 from gothic_tts.service import TtsService, load_original_voices
 from gothic_tts.synthesizer import Synthesizer
@@ -101,6 +108,22 @@ async def service():
     await asyncio.gather(task, return_exceptions=True)
 
 
+@pytest.mark.parametrize("bridge", [True, False])
+async def test_local_origin_connects(service, bridge) -> None:
+    svc, _ = service
+    url = f"ws://127.0.0.1:{svc.port}"
+    async with connect(url, origin=url if bridge else None) as ws:
+        await ws.ping()
+
+
+async def test_browser_origin_is_forbidden(service) -> None:
+    svc, _ = service
+    with pytest.raises(InvalidStatus) as exc:
+        async with connect(f"ws://127.0.0.1:{svc.port}", origin="https://evil.example"):
+            pytest.fail("browser origin connected")
+    assert exc.value.response.status_code == 403
+
+
 async def test_websocket_speak(service) -> None:
     svc, fake = service
     async with connect(f"ws://127.0.0.1:{svc.port}") as ws:
@@ -179,7 +202,126 @@ def test_original_voices_missing_manifest_disables_once(tmp_path, caplog) -> Non
         assert len(caplog.records) == 1 and caplog.records[0].levelno == logging.INFO
 
 
-async def test_health_shows_providers_left_out() -> None:
+@pytest.mark.parametrize("source", ["workspace", "timeout"])
+async def test_originals_ready_before_listening_without_snapshots(tmp_path, monkeypatch, caplog, source):
+    monkeypatch.setenv("INWORLD_API_KEY", "test-key")
+    monkeypatch.setattr(service_module, "ORIGINAL_LOOKUP_TIMEOUT_S", 0.02)
+    cids = ("NONE_100_XARDAS", "VLK_439_VATRAS")
+    voices = [
+        {"voiceId": f"test-original-{i}", "displayName": f"gothic-ai {cid}@original",
+         "tags": ["gothic-ai", f"sample-{service_module.ORIGINAL_SAMPLES[cid]}"]}
+        for i, cid in enumerate(cids)
+    ]
+    requests = []
+
+    async def transport(request):
+        requests.append(request)
+        if request.url.path == "/voices/v1/voices":
+            if source == "timeout":
+                await asyncio.Event().wait()
+            return httpx.Response(200, json={"voices": voices})
+        assert request.url.path == "/tts/v1/voice:stream"
+        assert json.loads(request.content)["voiceId"] == "test-original-0"
+        return httpx.Response(200, json={"result": {"audioContent": base64.b64encode(b"\0\0").decode()}})
+
+    def prepare(game, directory, **kwargs):
+        assert game == tmp_path / "empty-game" and not (directory / "manifest.json").exists()
+        raise ValueError("no game data")
+
+    monkeypatch.setattr(service_module.originals, "prepare", prepare)
+    (tmp_path / "empty-game").mkdir()
+    provider = InworldTTS(
+        cache=tmp_path / "cache.json", transport=httpx.MockTransport(transport), keep_warm=0,
+    )
+    synth = Synthesizer(provider)
+    svc = TtsService(synth, port=0, original_voices_dir=tmp_path, game_dir=tmp_path / "empty-game")
+    stop = asyncio.Event()
+
+    @asynccontextmanager
+    async def serve(*args, **kwargs):
+        if source != "timeout":
+            assert svc.original_voices[cids[0].casefold()].preset == "test-original-0"
+            assert svc.original_voices["vlk_439_vatras_di"].preset == "test-original-1"
+        yield SimpleNamespace(sockets=[SimpleNamespace(getsockname=lambda: ("127.0.0.1", 12345))],
+                              serve_forever=stop.wait)
+
+    monkeypatch.setattr(service_module, "serve", serve)
+    started = asyncio.Event()
+    task = asyncio.create_task(svc.serve_forever(started))
+    messages = []
+
+    async def send(message):
+        messages.append(message)
+
+    try:
+        await asyncio.wait_for(started.wait(), 1)
+        if source == "timeout":
+            assert not svc.original_voices
+            assert "startup lookup unavailable: TimeoutError" in caplog.text
+        else:
+            await svc._speak(SimpleNamespace(send=send), {
+                "id": "1", "text": "Да.",
+                "voice": {"id": cids[0], "description": XARDAS.description},
+            })
+            assert json.loads(messages[-1])["type"] == "done"
+            assert provider.cached_clone(
+                Voice(f"{cids[0]}@original"), service_module.ORIGINAL_SAMPLES[cids[0]],
+            )
+        assert sum(req.url.path == "/voices/v1/voices" for req in requests) == 1
+    finally:
+        stop.set()
+        await task
+        await synth.aclose()
+
+
+@pytest.mark.parametrize("clone_fails", [False, True])
+async def test_actual_snapshot_hash_replaces_or_removes_early_original(
+    tmp_path, monkeypatch, caplog, clone_fails,
+):
+    monkeypatch.setenv("INWORLD_API_KEY", "test-key")
+    cid = "VLK_439_VATRAS"
+    alias = "vlk_439_vatras_di"
+    sample = tmp_path / f"{cid}.wav"
+    sample.write_bytes(b"RIFF changed snapshot")
+    digest = hashlib.sha1(sample.read_bytes()).hexdigest()[:16]
+    (tmp_path / "manifest.json").write_text(json.dumps([{"id": cid, "file": sample.name}]))
+    clones = []
+
+    def transport(request):
+        if request.url.path == "/voices/v1/voices":
+            return httpx.Response(200, json={"voices": [{
+                "voiceId": "test-expected-clone", "displayName": f"gothic-ai {cid}@original",
+                "tags": ["gothic-ai", f"sample-{service_module.ORIGINAL_SAMPLES[cid]}"],
+            }]})
+        assert request.url.path == "/voices/v1/voices:clone"
+        clones.append(json.loads(request.content))
+        if clone_fails:
+            return httpx.Response(503, text="unavailable")
+        return httpx.Response(200, json={"voice": {"voiceId": "test-actual-clone"}})
+
+    provider = InworldTTS(
+        cache=tmp_path / "cache.json", transport=httpx.MockTransport(transport), keep_warm=0,
+    )
+    synth = Synthesizer(provider)
+    svc = TtsService(synth, original_voices_dir=tmp_path)
+    try:
+        await svc._publish_originals()
+        assert svc.original_voices[alias].preset == "test-expected-clone"
+        await svc._prepare_originals()
+        assert len(clones) == 1 and f"sample-{digest}" in clones[0]["tags"]
+        assert f"{cid}: sample hash {digest} differs" in caplog.text
+        assert "update original_samples.json" in caplog.text
+        if clone_fails:
+            assert cid.casefold() not in svc.original_voices and alias not in svc.original_voices
+        else:
+            assert svc.original_voices[cid.casefold()].preset == "test-actual-clone"
+            assert svc.original_voices[alias].preset == "test-actual-clone"
+    finally:
+        await synth.aclose()
+
+
+@pytest.mark.parametrize("origin", [None, "https://evil.example"])
+async def test_health_shows_providers_left_out(origin) -> None:
     synth = Synthesizer(FakeProvider(fail=True), FakeProvider())
     await _collect(synth, "Привет")  # the primary fails and waits for its check in the background
     svc = TtsService(synth, port=0)
@@ -188,7 +330,10 @@ async def test_health_shows_providers_left_out() -> None:
     await started.wait()
     try:
         async with httpx.AsyncClient() as http:
-            r = await http.get(f"http://127.0.0.1:{svc.port}/health")
+            r = await http.get(
+                f"http://127.0.0.1:{svc.port}/health", headers={"Origin": origin} if origin else {}
+            )
+        assert r.status_code == 200
         assert r.json() == {
             "ok": True,
             "service": "gothic-tts",

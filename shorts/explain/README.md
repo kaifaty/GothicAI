@@ -16,13 +16,15 @@ follows the footage in either format; `parts/followMath.ts` shares the frame/zoo
 maps source pixels through cover, split and zoom. These overlays are opt-in through `follow` and `hp`.
 Their plan timings drive every reveal, turn, alignment and packet; the diagrams need no game or model process.
 Omit a diagram beat to leave it out; these five types are rejected in tall plans. Publication of either format
-uses the same `gothic_shorts.levels.publish` checks. Before them, the published footage sound fades in and out
+adds the [sound of the motion](#the-sound-of-the-motion) to the effects, and uses the same
+`gothic_shorts.levels.publish` checks and the [delivery check](#delivery-check): YouTube's
+file settings (BT.709, limited range) and nothing of ours under the Shorts interface. Before them, the published footage sound fades in and out
 over 30 ms at every beat's edges and at `freeze`, so a hard cut never clicks.
 
 ```bash
 cd shorts/explain
 npm ci
-npx remotion studio --props '{"brand":false}'                           # the demo plan: the dice chart, no assets
+npx remotion studio --props '{"brand":false,"sfx":false}'               # the demo plan: the dice chart, no assets
 npx remotion studio --props src/demo-wide.json                          # nineteen wide cards, no external assets
 npx remotion still Explainer --props src/demo-wide.json --frame 330 out/wide-formula.png
 npx remotion still Explainer --public-dir "$W" --props "$W/plan.json" --frame 120 "$W/render/f120.png"
@@ -54,13 +56,79 @@ The plan is relative to the workspace, as with `dub`; the workspace is a folder 
 `~/.local/share/gothic-ai/explain/`, as with `words` and `studio`. The default output is
 `<workspace>/render/short-<plan.lang>.mp4`.
 
-Remotion renders the muted picture at the plan's dimensions (H.264, CRF 18) and three WAV stems. The command joins the picture with
+Remotion renders the muted picture at the plan's dimensions (H.264, CRF 18, BT.709 in limited range:
+`remotion.config.ts` sets the colour space, Remotion 4 would write BT.601 in full range) and three WAV stems. The command joins the picture with
 the game/ending stem, takes each speech window from the first to the last word of a nonempty `lines` entry,
 and calls `gothic_shorts.levels.publish`. That shared function calibrates the voice, effects, music and ending,
 masters the mix, and checks the decoded AAC: voice −14 LUFS, true peak ≤ −1 dBTP, the balance between stems,
 and zero clicks. It prints the table and writes a sibling `.levels.json` report. A failed check returns a
 nonzero exit code and removes the output video. Temporary pictures and stems are removed on success or failure.
 Without `music` in the plan, music rows have no data, as in the shared publisher.
+
+### The sound of the motion
+
+The key movements sound, from the plan alone (`src/parts/sfxMap.ts`, played by `parts/Sfx.tsx`), in a
+"scriptorium" palette under the channel's wax-seal letter: paper, books, wood. Only the key moments (the user,
+2026-11-01): a card comes in with a page turned (on the cut, or across its transition); a frame sliding or
+wiping in and a carried label flying get cloth; a tag's counter ticks like a die on wood, faster first and
+slower to its stop, which knocks; a text, a verdict, a formula's main result, the last group of bars and a
+dice chart's marker land like a book set down; a formula's terms and the other results knock lightly; the dice
+chart's step down thuds; a punch-in zoom thumps; the dots tick as they fill. Captions, the hook, plain cuts and
+ordinary label openings stay silent. Sounds keep 0.25 s apart, the stronger staying (ticks only keep 0.08 s from
+the rest); about 23 a minute on the bow short besides the ticks. `"sfx": false` in a plan leaves them out.
+
+```bash
+python3 scripts/sfx_lib.py                       # once: ~/.local/share/gothic-ai/sfx/lib from the packs
+ln -s "$HOME/.local/share/gothic-ai/sfx/lib" "$W/sfx"   # for Studio and drafts; publication makes it itself
+node --no-warnings scripts/sfxmap.mjs "$W/plan.json"     # the sound map: time, kind, beat, what; what was left out
+```
+
+The sounds are CC0 (`sfx.json`: Kenney's RPG Audio and Impact Sounds, starninjas' page flips on OpenGameArt);
+the files stay outside the repository, `~/.local/share/gothic-ai/sfx/packs/` holding the unpacked downloads.
+`sfx_lib.py` makes each kind's variants equally loud (RMS −18 dBFS, peaks under −1), puts each variant's peak at
+its kind's `lead` (a page flip's rustle comes 0.25 s before the turn), low-passes paper and cloth at 9 kHz and
+the counter's knocks at 5 kHz, and lets a sound rise out of silence over 1 ms: a knock keeps its attack but has
+no corner for `gothic_shorts.clicks` to stop the mix on (a test builds the real library and checks it).
+Publication renders them as their own stem and sums it into the game stem after that stem's edge fades (a page
+may cross a cut), in 32-bit float; `levels` then holds the effects, these included, to its rules: S−8 LU in the
+voice's pauses, S−12 under it. Research and the decisions: `reports/Звуковые эффекты шортсов.md`.
+
+### Delivery check
+
+`gothic_shorts.delivery` checks what leaves for YouTube; `explain` runs it, and `gothic-shorts check` runs it alone:
+
+```bash
+uv run gothic-shorts check bow                          # the plan's drawing, then render/short-ru.mp4
+uv run gothic-shorts check .shorts/compare/water/short-ru.mp4   # any short: the file alone
+```
+
+- **The file**, against [YouTube's recommended upload settings](https://support.google.com/youtube/answer/1722171):
+  MP4, H.264 High, `yuv420p` in limited (`tv`) range, BT.709 matrix, primaries and transfer, progressive, 24-60
+  fps, 1080×1920 or 1920×1080, AAC-LC at 48 kHz in stereo, −14 ± 1 LUFS with a true peak under −1 dBTP, at most
+  180 s for a vertical Short. The coded luma of 12 frames is read as it is: more than 0.5 % outside 12..240 means
+  full-range values whatever the tags say. Notes only: the index after the data (no fast start), less than
+  8 Mbit/s, an average frame rate below the nominal one (gaps where pieces were joined).
+- **The safe zones**, for a tall explainer: the composition renders with `mask: true` at a quarter of its size —
+  no footage, stills, flash, sting or sound, only our drawing over black — in about 30 s for 80 s of short.
+  Anything brighter than luma 60 (text, bars, pins; a card's ground, its grid and the shade bands stay below) in
+  a band the interface covers (`SAFE`: top 150, bottom 380, right 150; its left 60 is our margin, nothing covers
+  it) for 0.25 s or more and 8 px or deeper is a failure with its time, beat, depth and box; a shorter stay is a
+  thing passing through in a transition and is only listed. A wide video plays between the interface, not under
+  it: no zones. A ray or fan of `Sight` counts too: where it lands is what it shows. The slow push of a held card (up to 5 %) carries its edges 22 px right and
+  35 px down: things there need that margin, and the check sees it.
+
+`explain` checks the zones before its long render and the file after `levels`; either failure leaves no MP4.
+The report is `short-<lang>.delivery.md` beside the video.
+
+Why these numbers (research 2026-11-01). YouTube publishes the file settings but no Shorts overlay; third-party
+templates disagree (top 100-200, bottom 180-420, right 80-150 px). Measured on our own Short in the mobile web
+player: the buttons column spans x 907-1045 of 1080 from y 1417 down, the channel row is at the bottom edge; the
+app overlays more of the bottom than the web player. `SAFE` stays at the conservative end. Colour, measured on a
+bow card: Remotion's `bt709` output codes white as Y 235 and the card ground `#14110D` as Y 31, U 126, V 129-130,
+the BT.709 limited values to within a code. The old default wrote `yuvj420p` tagged BT.601 in full range: decoded
+by its tags it looks the same (a frame of textures-3 differs by about 2 levels, the re-encode), but 5.5 % of a
+bow frame's luma lies outside 16..235, and a player that ignores the tags and assumes BT.709 limited (the usual
+guess for HD) clips it: crushed shadows, flat highlights. BT.709 limited is what YouTube asks for and nobody guesses.
 
 `stem` is optional: `voice` plays only the voice lines at 1; `game` plays the footage at each beat's `game`
 level, then the brand sting at 1; `music` plays the looped bed at 1 with its `fadeIn`/`fadeOut`. Stems have no
@@ -488,6 +556,17 @@ up to three people. The versions are pinned in `package.json`.
 
 ## План и журнал
 
+- 2026-11-01: the sound of the motion (`parts/sfxMap.ts`, `parts/Sfx.tsx`, `sfx.json`, `scripts/sfx_lib.py`,
+  `scripts/sfxmap.mjs`): CC0 paper, book and wood sounds on the key movements, computed from the plan, mixed into
+  the effects before `levels`. A counter that stopped before its tag opened makes no sound (its roll is not
+  drawn either).
+- 2026-11-01: delivery check (`gothic_shorts.delivery`, `gothic-shorts check`, run by `explain`): the file against
+  YouTube's upload settings and our drawing against the Shorts interface, from a `mask` render. The picture is
+  now BT.709 in limited range (`remotion.config.ts`; was `yuvj420p` BT.601) and the published MP4 has fast start.
+  On the bow plan the check found a card's source line 36 px into the bottom band and the exe chart's «45» 14 px
+  into the right one, both carried there by the slow push: the source line now ends 36 px above the band and the
+  last tick ends on the axis. The bow 7b pin (22 px into the right band) is in its plan, left as published.
+  Every finished short failed the colour check: the explainers in BT.601 full range, the comparisons untagged.
 - 2026-10-31: the cards from the motion reviews: the tall formula card with the example's numbers beside its
   terms and the results as tiles («400» at 96 px with a pop instead of a 46 px line); bar values 48/56 px in
   tall (were 36); the dots' counter after its grid; a text gives way to the next one at its place.

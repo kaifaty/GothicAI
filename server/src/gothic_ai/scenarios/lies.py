@@ -4,48 +4,58 @@ import asyncio
 import json
 import logging
 import math
-import os
-import re
-from collections.abc import AsyncIterator, Collection, Sequence
+import time
 from pathlib import Path
 from typing import Any
 
-from ..amends import Amends
+from ..amends import CACHE_KEY as AMENDS_KEY
+from ..amends import Amends, Brief, Proposal
 from ..brain.reflex import Reflexes
+from ..chronicle import Chronicle
 from ..deals import GOLD, Deals
 from ..dialogue import DialogueManager
 from ..feats import Feats
 from ..game import GameError, GameLink
-from ..llm import Done, Item, LLMEvent, Message, Tool, ToolCall, ToolChoice
-from ..llm.fake import FakeBackend, FakeStep
+from ..llm import ToolCall
 from ..protocol import FeatToastCmd, SayCmd, Session
 from ..quests import ATTACK_CM, SEE_CM, QuestBoard
-from ..sightings import Sightings
+from ..sightings import Sightings, _sid
 from ..social import TICK_S, Rumors
 from ..talk import TalkDesk
 from ..trace import read as read_trace
 from ..trust import Trust
 from ..vanilla import CHECK_CM, VanillaQuests
 from ..witnesses import Witnesses
-from ..wrath import TAKE_OFFENSE, TEMPERS, Wrath
+from ..wrath import TAKE_OFFENSE, Wrath
 from .common import (
     ANDRE,
     HILDA,
     LOBART,
     RUEBEN,
     RUEBEN_TO_HILDA,
-    ClaimScript,
     FixedDecider,
-    _ByNpc,
-    _caught_by,
     _clear_beasts,
     _logged,
-    _OnWords,
     _save,
     _until,
     _until_async,
+    model_off,
     wait_message,
 )
+from .live import LiveCase
+
+SCENARIOS = {
+    "amends": ("GIVEN", {"save": True, "timeout": 240}),
+    "amends_deal": ("GIVEN", {"save": True, "timeout": 240}),
+    "lie": ("GIVEN", {"save": True, "timeout": 240}),
+    "rumor": ("GIVEN", {"save": True, "timeout": 240}),
+    "vcheck": ("GIVEN", {"save": True, "timeout": 240}),
+    "vgive": ("GIVEN", {"save": False, "timeout": 240}),
+    "vlie": ("GIVEN", {"save": True, "timeout": 240}),
+    "vspare": ("GIVEN", {"save": False, "timeout": 900}),
+    "witness": ("GIVEN", {"save": True, "timeout": 240}),
+    "wrath": ("GIVEN", {"save": False, "timeout": 240}),
+}
 
 log = logging.getLogger("gothic_ai.scenarios")
 
@@ -63,10 +73,10 @@ async def lie_found_out(
     """Stage 4 of the story graph on the game: lied to, paid, found out, a fight and a rumor.
 
     Xardas gives a quest: two sheep, 30 m away, are to be killed; the reward is gold he has. The hero says
-    they are dead (they are not) and Xardas pays (the conversational model is scripted to believe him).
+    they are dead (they are not); his payment is a declared given on the shared off backend.
     Then one of the sheep turns up next to him: he finds the lie out, turns hostile, attacks the hero
-    through the scripts, and Jora, standing by, hears about it and has it in mind when the hero speaks to
-    her."""
+    through the scripts, and Jora, standing by, hears about it and has it in her assembled situation."""
+    off = model_off(dialogue)
     await link.wait_world()
     results: dict[str, str] = {}
 
@@ -77,6 +87,7 @@ async def lie_found_out(
         conv = dialogue.conversations.get(who)
         return [m.content for m in conv.history if m.role == "developer"] if conv else []
 
+    log.info("given: дано: решающая модель оставляет NPC слушать героя")
     talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
     if not await _until(lambda: npc in talk.people, 20):
         return _logged({"roster": f"failed ({npc} is not around the hero)"})
@@ -118,14 +129,20 @@ async def lie_found_out(
     # the lie: the hero says it is done, the giver believes him and pays
     hero_gold = ["call", "NPC_HASITEMS", ["inst", "HERO"], ["sym", "ITMI_GOLD"]]
     before = await link.evaluate(hero_gold)
-    dialogue.llm = FakeBackend(
-        script=[FakeStep("Хм. Ладно, держи.", [ToolCall("pay_reward", {"quest": q.id}, "c1")])], delay=0
+    off.given(
+        "дано: Ксардас платит за ложь героя об овцах", who=npc, when="перебил твоих овец",
+        calls=[ToolCall("pay_reward", {"quest": q.id})],
+    )
+    off.silent(
+        "дано: Ксардас молчит (награда передана)", who=npc, when="перебил твоих овец",
     )
     await link.debug("type", text=f"{name}, я перебил твоих овец. Где награда?")
     ok = await _until(lambda: bool(quests.chronicle.facts("lie")), 40)
     after = await link.evaluate(hero_gold)
     lies = quests.chronicle.facts("lie")
-    check("paid_for_a_lie", ok and after > before, f"gold {before} -> {after}; {lies}")
+    check("gold_and_lie", ok and after == before + 5
+          and any(f.get("quest") == q.id and f.get("truth") == "killed 0 of 2" for f in lies),
+          f"gold {before} -> {after}; {lies}")
     award = None
     if chronicler is not None:
         lie_seq = next((seq for seq, fact in quests.chronicle.entries("lie")
@@ -134,7 +151,8 @@ async def lie_found_out(
             check("epilogue", False, "no lie evidence")
             return _logged(results)
         state = await link.story_state(vars=["KAPITEL"])
-        # The fake chronicler does not award deeds; retain the actual paid lie as its evidence.
+        # The declared feat keeps the actual lie as evidence for its disclosure epilogue.
+        log.info("given: дано: летописец признал подвиг e2e_sheep_lie")
         award = {
             "fact": "feat", "id": "e2e_sheep_lie", "title": "Плата за слово",
             "text": "Получил плату за живых овец.", "category": "deceit", "evidence": [lie_seq],
@@ -149,7 +167,6 @@ async def lie_found_out(
     if not await _until(lambda: bystander in talk.people, 10):
         return _logged({**results, "bystander": f"failed ({bystander} did not come)"})
     await link.attach(bystander)
-    other = talk.people[bystander].name
 
     # found out: a living sheep turns up next to the giver
     await _until(lambda: not dialogue.speaking(npc), 10)
@@ -197,13 +214,11 @@ async def lie_found_out(
     check("attack", ok)
     check("rumor", any("Слух" in n for n in notes(bystander)), notes(bystander)[-1:])
 
-    # another npc in a conversation knows: the rumor is in front of its model
-    dialogue.llm = llm = FakeBackend("Говорят, ты обманываешь людей.", delay=0)
-    await link.debug("type", text=f"{other}, что обо мне говорят?")
-    ok = await _until(lambda: bool(llm.calls), 20)
-    seen = ok and any("Слух" in str(getattr(m, "content", "")) for m in llm.calls[0][1])
-    to = talk.last[0].id if talk.last and talk.last[0] else "-"
-    check("knows_in_talk", seen, f"{len(llm.calls)} call(s) to {to}")
+    # Inspect Jora's assembled situation without creating a model turn just to capture it.
+    conv = dialogue.open(bystander, talk.people[bystander].name, warm=False)
+    situation, _, _ = await dialogue._situation(conv, None)
+    check("knows_in_talk", "ты слышал, что он обманул других" in situation
+          and name in situation, situation)
     await link.detach(bystander)
     return _logged(results)
 
@@ -222,29 +237,24 @@ async def xardas_wrath(
     talk: TalkDesk,
     wrath: Wrath,
     npc: str = "NONE_100_XARDAS",
-    *,
-    live: bool = False,
+    *, live: LiveCase | None = None,
 ) -> dict[str, str]:
-    """The necromancer's answer on the game (docs/xardas-wrath.md): the hero insults Xardas line by line
-    (typed, as the input line sends them); the scales tip, Xardas says his last word, kills the hero with a
-    spell and raises him as a skeleton; the game ends on the picture.
-
-    With the fake model the offenses are scripted (rude 1, an insult 2, the mother: unforgivable); `live`
-    keeps the configured model: whether it really takes offense and tips over is the question."""
+    """Given three offenses, check the hostile response, death and raising in the game."""
+    off = model_off(dialogue) if live is None else None
     await link.wait_world()
     results: dict[str, str] = {}
 
     def check(name: str, ok: bool, detail: object = "") -> None:
         results[name] = f"{'done' if ok else 'failed'}{f' ({detail})' if detail != '' else ''}"
 
-    talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
+    if live is None:
+        log.info("given: дано: решающая модель оставляет NPC слушать героя")
+        talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
     if not await _until(lambda: npc in talk.people, 20):
         return _logged({"roster": f"failed ({npc} is not around the hero)"})
-    name = talk.people[npc].name
 
     async def no_dialog() -> None:
-        """A new game opens with his own dialog (the window), maybe a moment late: closed the way the
-        scripts close one, until none has run for a second."""
+        """Close the new game's native opening dialog until it has stayed closed for a second."""
         quiet = 0
         for _ in range(30):
             if (await link.story_state()).get("dialog"):
@@ -256,49 +266,65 @@ async def xardas_wrath(
                     return
             await asyncio.sleep(0.4)
 
-    if not live:
+    if live is not None:
+        dead = ["call", "NPC_ISDEAD", ["inst", "HERO"]]
+        killed = asyncio.create_task(_until_async(lambda: link.evaluate(dead), bool, 270))
+        tip_line = None
+        heard = []
+        try:
+            for index, line in enumerate(WRATH_LINES, 1):
+                await no_dialog()
+                deadline = time.monotonic() + 90
+                await link.debug("type", text=line)
+                await live.wait_turn(dialogue, npc, line)
+                heard.append({"line": index, "text": line, "calls": live.calls(npc)})
+                if wrath.of(npc).tipped:
+                    tip_line = index
+                    break
+            unforgivable = any(
+                call.get("outcome") in {"accepted", "read"}
+                and bool(call.get("arguments", {}).get("unforgivable"))
+                for call in live.calls(npc, TAKE_OFFENSE)
+            )
+            died = bool(killed.done() and not killed.cancelled() and killed.result())
+            if tip_line is not None and not died:
+                died = await _until_async(
+                    lambda: link.evaluate(dead), bool, max(0, deadline - time.monotonic()),
+                )
+            live.finish("success" if unforgivable and tip_line is not None and died else "failure", evidence={
+                "tip_line": tip_line, "insults": heard, "unforgivable": unforgivable,
+                "killed": died, "took": wrath.of(npc).took,
+            })
+        finally:
+            killed.cancel()
+        return _logged(results)
 
-        def offense(severity: int, what: str, unforgivable: bool = False) -> ToolCall:
-            args = {"severity": severity, "unforgivable": unforgivable, "what": what}
-            return ToolCall(TAKE_OFFENSE, args, f"c{severity}")
-
-        dialogue.llm = FakeBackend(
-            script=[
-                FakeStep("[angry] Следи за языком.", [offense(1, "назвал стариком")]),
-                FakeStep("[angry] Ты испытываешь моё терпение.", [offense(2, "назвал недоделанным")]),
-                FakeStep("", [offense(3, "оскорбил мою мать", True)]),
-                FakeStep("[hostile] Это были твои последние слова."),
-            ],
-            delay=0,
+    offenses = ("назвал стариком", "назвал недоделанным", "оскорбил мою мать")
+    for severity, (line, what) in enumerate(zip(WRATH_LINES, offenses, strict=True), 1):
+        off.given(
+            f"дано: Ксардас обижается на {severity} ({what})", who=npc, when=line,
+            calls=[ToolCall(TAKE_OFFENSE, {
+                "severity": severity, "unforgivable": severity == 3, "what": what,
+            })],
         )
-    dead = ["call", "NPC_ISDEAD", ["inst", "HERO"]]
-    # GOTHIC_WRATH_LINES="...|...": other lines for a live run (plain insults, no mother)
-    lines = [
-        s.strip() for s in os.environ.get("GOTHIC_WRATH_LINES", "").split("|") if s.strip()
-    ] or WRATH_LINES
-    for i, line in enumerate(lines):
-        if wrath.of(npc).tipped:
-            break
+        off.silent(
+            "дано: Ксардас молчит (последнее слово перед расправой)" if severity == 3 else
+            f"дано: Ксардас молчит (обида {severity} учтена)", who=npc, when=line,
+        )
         await _until(lambda: not dialogue.speaking(npc), 30)
         await no_dialog()
         took = wrath.of(npc).took
         await link.debug("type", text=line)
-        ok = await _until(lambda took=took: dialogue.speaking(npc) or wrath.of(npc).took > took, 40)
+        await _until(lambda took=took: wrath.of(npc).took > took, 40)
         await _until(lambda: not dialogue.speaking(npc), 40)
-        s = wrath.of(npc)
-        check(f"line_{i + 1}", ok, f"took {s.took}, {'tipped' if s.tipped else 'holds'}; {s.insults[-1:]}")
-    s = wrath.of(npc)
-    check("tipped", s.tipped, f"{s.took} of {TEMPERS[npc].patience}: {s.insults}")
-    if not s.tipped:
-        return _logged(results)
+
+    dead = ["call", "NPC_ISDEAD", ["inst", "HERO"]]
     ok = await _until_async(lambda: link.evaluate(dead), bool, 40)
     check("killed", ok)
     alive = await _until_async(lambda: link.evaluate(dead), lambda v: not v, 15)
     check("raised", ok and alive)
     conv = dialogue.conversations.get(npc)
     check("hostile", conv is not None and conv.intent.attitude == "hostile", conv.intent if conv else None)
-    said = [m.content for m in conv.history if m.role == "assistant"] if conv else []
-    log.info("%s's last words: %s", name, said[-1] if said else "-")
     return _logged(results)
 
 
@@ -311,13 +337,21 @@ async def vanilla_lie(
     bystander: str = "VLK_408_JORA",
 ) -> dict[str, str]:
     """Stage 5 on the game: a lie about a quest of the scripts. Lobart's turnip field: the hero, with no
-    turnips, tells Lobart they are in the barn; Lobart's model (scripted unless LLM=chatgpt) believes him and
+    turnips, tells Lobart they are in the barn; given Lobart accepts the claim,
     the code plays Lobart's own ending: the quest is done, the hero gets the gold and the experience, the next
     step (bring them to Hilda) starts, and the lie is written down with the truth. The same day nothing
     happens; the next morning Lobart misses the turnips, turns against the hero and refuses to talk, and Jora,
     standing by, hears it. From then on the turnips count for nothing in Lobart's other dialogs: his work
     clothes cost what they would without them. The hero makes amends: the turnips are his job again, the
     ending pays nothing twice; he brings them for real, and the discount is back."""
+    off = model_off(dialogue)
+    off.given(
+        "дано: Лобарт верит лжи про репу", who=giver, when="собрал всю репу",
+        calls=[ToolCall("accept_quest", {"quest": RUEBEN}, "c1")],
+    )
+    off.silent(
+        "дано: Лобарт молчит (плата за репу выдана)", who=giver, when="собрал всю репу",
+    )
     results: dict[str, str] = {}
 
     def check(name: str, ok: bool, detail: object = "") -> None:
@@ -336,6 +370,7 @@ async def vanilla_lie(
     # the quest, as Lobart gives it, and the hero next to him (no turnips)
     await link.story_effect(giver, [{"do": "set", "var": RUEBEN, "value": 1}])
     await link.debug("player_goto", to=giver, distance=250)
+    log.info("given: дано: решающая модель оставляет NPC слушать героя")
     talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
     if not await _until(lambda: giver in talk.people, 20):
         return _logged({"roster": f"failed ({giver} is not around the hero)"})
@@ -343,22 +378,18 @@ async def vanilla_lie(
     gold = await link.evaluate(["call", "NPC_HASITEMS", hero, ["sym", "ITMI_GOLD"]])
     exp = await link.evaluate(["field", hero, "EXP"])
 
-    # the lie
-    llm = None
-    if isinstance(dialogue.llm, FakeBackend):
-        accept = [ToolCall("accept_quest", {"quest": RUEBEN}, "c1")]
-        dialogue.llm = llm = FakeBackend(
-            script=[FakeStep("В амбаре, говоришь? Ладно, держи плату.", accept)], delay=0
-        )
+    # Inspect the assembled request before the declared decision, without asking the model.
+    conv = dialogue.open(giver, name, warm=False)
+    situation, _, sight = await dialogue._situation(conv, None)
+    offered = [tool.name for tool in dialogue._offered(giver, sight)]
+    check("quest_in_situation", "Ты ждёшь от героя" in situation and "accept_quest" in offered)
+
+    # The given acceptance drives the real quest ending and records the actual truth.
     await link.debug(
         "type", text=f"{name}, я собрал всю репу, двадцать штук, и сложил в амбаре. Давай плату."
     )
-    ok = await _until(lambda: any(f.get("quest") == RUEBEN for f in facts("claim")), 60)
+    await _until(lambda: any(f.get("quest") == RUEBEN for f in facts("claim")), 60)
     lie = next((f for f in facts("lie") if f.get("quest") == RUEBEN), None)
-    check("believed", ok, facts("claim")[-1:])
-    if llm is not None:
-        seen = bool(llm.calls) and "Ты ждёшь от героя" in str(llm.calls[0][1])
-        check("quest_in_situation", seen and "accept_quest" in [t.name for t in llm.calls[0][2]])
     check("lie", lie is not None and lie.get("truth") == "ITPL_BEET 0 of 20", lie)
     if lie is None:
         return _logged(results)
@@ -477,8 +508,8 @@ async def vanilla_given(
     bandits: tuple[str, ...] = ("BDT_1013_BANDIT_L", "BDT_1014_BANDIT_L", "BDT_1015_BANDIT_L"),
 ) -> dict[str, str]:
     """A quest of the scripts given and ended in a conversation (the player's game, 2026-10-14: Cavalorn's
-    bandits, agreed on in his own words, killed together, counted for nothing). A new game; Cavalorn's model
-    scripted unless LLM=chatgpt (on «помогу» give_quest, on «мертвы» accept_quest). Checks:
+    bandits, agreed on in his own words, killed together, counted for nothing). Given Cavalorn gives
+    the quest on «помогу» and accepts it on «мертвы». Checks:
     - can_give: his situation has the quest he gives in his dialog HELFEN, «Могу я помочь тебе с бандитами?»;
     - given: the hero offers his help in his own words: the quest runs and HELFEN counts as heard (no longer
       in his menu), the journal has it;
@@ -487,6 +518,7 @@ async def vanilla_given(
     - ended: the hero says they are dead: the scripts' ending plays — the quest done, the letter to Vatras its
       next step, +100 experience, 50 gold (the hero has no armour); no lie, they are dead;
     - once: the ending counts as heard, neither dialog is offered."""
+    off = model_off(dialogue)
     results: dict[str, str] = {}
 
     def check(name: str, ok: bool, detail: object = "") -> None:
@@ -504,14 +536,16 @@ async def vanilla_given(
     async def var(name: str) -> int | None:
         return (await link.story_state(vars=[name])).get("vars", {}).get(name)
 
-    if isinstance(dialogue.llm, FakeBackend):
-        give = ToolCall("give_quest", {"quest": quest}, "g1")
-        accept = ToolCall("accept_quest", {"quest": quest}, "a1")
-        words = [
-            ("помогу", FakeStep("Поможешь? Ну, пошли, вдвоём управимся.", [give])),
-            ("мертвы", FakeStep("Все трое? Ну, раз так. Слушай, у меня к тебе ещё дело.", [accept])),
-        ]
-        dialogue.llm = _ByNpc({"Кавалорн": _OnWords(words, FakeStep("Хм."))}, FakeBackend("Хм.", delay=0))
+    off.given(
+        "дано: Кавалорн даёт квест про бандитов", who=npc, when="помогу",
+        calls=[ToolCall("give_quest", {"quest": quest}, "g1")],
+    )
+    off.silent("дано: Кавалорн молчит (квест выдан)", who=npc, when="помогу")
+    off.given(
+        "дано: Кавалорн засчитывает убийство бандитов", who=npc, when="мертвы",
+        calls=[ToolCall("accept_quest", {"quest": quest}, "a1")],
+    )
+    off.silent("дано: Кавалорн молчит (квест засчитан)", who=npc, when="мертвы")
     await link.debug("skip_important", near=npc)  # his own greeting would stop the hero
     for _ in range(2):  # the goblins by his fire would beat the hero down
         try:
@@ -519,6 +553,7 @@ async def vanilla_given(
         except GameError as err:
             log.info("vgive: goblin: %s", err)
     await link.debug("player_goto", to=npc, distance=300)
+    log.info("given: дано: решающая модель оставляет NPC слушать героя")
     talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
     if not await _until(lambda: npc in talk.people, 20):
         return _logged({"roster": f"failed ({npc} is not around the hero)"})
@@ -574,11 +609,11 @@ async def vanilla_spare(
     talk: TalkDesk,
     vanilla: VanillaQuests,
     npc: str = "BAU_4300_ADDON_CAVALORN",
+    *, live: LiveCase | None = None,
 ) -> dict[str, str]:
     """Broken trust: negotiate a bandit's life, then reload and turn in three witnessed deaths.
 
-    Fake scripts the amendment and acceptance; live Cavalorn chooses, with every turn traced.
-    Both cases start from the same save with his native quest given and all three bandits alive.
+    Cavalorn's decisions are given; the quest effects, evidence and save rollback run in the game.
     """
     results: dict[str, str] = {}
 
@@ -586,7 +621,7 @@ async def vanilla_spare(
         results[name] = f"{'done' if ok else 'failed'}{f' ({detail})' if detail != '' else ''}"
         return ok
 
-    fake = isinstance(dialogue.llm, FakeBackend)
+    off = model_off(dialogue) if live is None else None
     await link.wait_world()
     if link.session is None:
         await wait_message(link, Session, timeout=10)
@@ -610,8 +645,6 @@ async def vanilla_spare(
         ), key=lambda row: row["t"]) if dialogue.trace is not None else []
 
     prior_turns = {row["id"] for row in trace_rows()}
-    logged_turns = set(prior_turns)
-    live_turns: list[str] = []
 
     def branch_turns() -> list[dict[str, Any]]:
         return [row for row in trace_rows() if row["id"] not in prior_turns
@@ -635,23 +668,8 @@ async def vanilla_spare(
             f"={call.get('outcome')}"
             for call in calls([row])
         )
-        line = f"vspare live: {trigger.get('text') or trigger.get('kind')} → «{text}» calls=[{actions}]"
+        line = f"vspare turn: {trigger.get('text') or trigger.get('kind')} → «{text}» calls=[{actions}]"
         return line.replace("\n", " ")
-
-    def collect_turns() -> None:
-        if not fake:
-            for row in trace_rows():
-                if row["id"] not in logged_turns:
-                    line = turn_line(row)
-                    log.info("%s", line)
-                    live_turns.append(line)
-                    logged_turns.add(row["id"])
-
-    def finish() -> dict[str, str]:
-        collect_turns()
-        if not fake:
-            check("turns", bool(live_turns), " | ".join(live_turns))
-        return _logged(results)
 
     async def var(name: str) -> int | None:
         return (await link.story_state(vars=[name])).get("vars", {}).get(name)
@@ -673,17 +691,19 @@ async def vanilla_spare(
         return {f["dead"] for f in facts("seen_dead") if f.get("npc") == npc and f.get("how") == how}
 
     async def say(text: str) -> tuple[bool, list[dict[str, Any]]]:
-        collect_turns()
         before_ids = {row["id"] for row in trace_rows()}
         conv = dialogue.conversations.get(npc)
         before = conv.reply if conv else None
         talk.hear(text, npc, {"via": "scenario"})
+        if live is not None:
+            ok = await live.wait_turn(dialogue, npc, text)
+            return ok, [row for row in branch_turns() if row["id"] not in before_ids]
 
         def answered() -> bool:
             conv = dialogue.conversations.get(npc)
             return bool(conv and conv.reply and conv.reply is not before and conv.reply.done())
 
-        ok = await _until(answered, 60 if fake else 120)
+        ok = await _until(answered, 60)
         # Accepted quest tools and attacks act after the spoken reply.
         def settled() -> bool:
             conv = dialogue.conversations.get(npc)
@@ -692,7 +712,6 @@ async def vanilla_spare(
                         and not dialogue.speaking(npc))
 
         ok = await _until(settled, 60) and ok
-        collect_turns()
         return ok, [row for row in branch_turns() if row["id"] not in before_ids]
 
     async def witness_death(who: str) -> tuple[bool, dict[str, Any]]:
@@ -727,18 +746,12 @@ async def vanilla_spare(
         )
         detail = (f"exp/gold {before} -> {after}; claim={claim}; outcome={outcome}; "
                   + " | ".join(turn_line(row) for row in rows))
-        if not took and not fake:
-            label = "amended_not_accepted" if quest_facts("quest_terms") else "kept"
-            return check(key, answered and no_check and not facts("lie"), f"{label}: {detail}")
         pay = outcome.get("pay")
         expected_gold = before[1] + (50 if pay == "full" else 0)
         alive = await bandit_state(spared)
         terms_ok = (outcome.get("drop") == [spared] and bool(outcome.get("why"))
                     and all(str(reason).strip() for reason in outcome["why"])) if amended else True
-        strict = (pay == "full" and outcome.get("why") == [why]) if fake and amended else True
         how = "amended" if amended else "done"
-        if not fake and key == "seen_ended" and quest_facts("quest_terms"):
-            how = "amended"
         return check(
             key,
             bool(answered and took and claimed and after == (2, 1, before[0] + 100, expected_gold)
@@ -746,29 +759,34 @@ async def vanilla_spare(
                  and claim.get("checked") is False
                  and not facts("lie") and no_check and outcome.get("npc") == npc
                  and outcome.get("how") == how
-                 and pay in (("full",) if fake else ("full", "none")) and terms_ok and strict
-                 and (not amended or accepted(rows, "amend_quest"))
-                 and (not fake or not amended or alive.get("state") == "alive")),
+                 and pay in ("full", "none") and terms_ok
+                 and (not amended or alive.get("state") == "alive")),
             f"pay={pay}; {detail}; alive={alive}",
         )
 
-    script = ClaimScript(
-        said=[
-            ("помогу", FakeStep("Поможешь? Ну, пошли, вдвоём управимся.", [
-                ToolCall("give_quest", {"quest": quest}),
-            ])),
-            ("отпусти его", FakeStep("За упрямство я его убивать не стану. Пусть идёт.", [
-                ToolCall("amend_quest", {"quest": quest, "drop": [spared], "why": why}),
-            ])),
-            ("с ними покончено", FakeStep("Сам видел. Держи награду. Есть ещё дело с письмом.", [
-                ToolCall("accept_quest", {"quest": quest}),
-            ])),
-        ],
-        told=[],
-        default="Хм.",
-    )
-    dialogue.llm = _ByNpc({"Кавалорн": script if fake else dialogue.llm}, FakeBackend("Хм.", delay=0))
-    talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
+    if off is not None:
+        off.given(
+            "дано: Кавалорн даёт квест о бандитах", who=npc, when="помогу",
+            calls=[ToolCall("give_quest", {"quest": quest})],
+        )
+        off.silent("дано: Кавалорн молчит (поручение выдано)", who=npc, when="помогу")
+        off.given(
+            "дано: Кавалорн щадит бандита по просьбе героя", who=npc, when="отпусти его",
+            calls=[ToolCall("amend_quest", {"quest": quest, "drop": [spared], "why": why})],
+        )
+        off.silent("дано: Кавалорн молчит (условия изменены)", who=npc, when="отпусти его")
+        off.given(
+            "дано: Кавалорн засчитывает дело после пощады", who=npc, when="с ними покончено",
+            calls=[ToolCall("accept_quest", {"quest": quest})],
+        )
+        off.silent("дано: Кавалорн молчит (дело засчитано)", who=npc, when="с ними покончено")
+        off.given(
+            "дано: Кавалорн засчитывает дело после загрузки", who=npc, when="с ними покончено",
+            calls=[ToolCall("accept_quest", {"quest": quest})],
+        )
+        off.silent("дано: Кавалорн молчит (дело засчитано после загрузки)", who=npc, when="с ними покончено")
+        log.info("given: дано: собеседники слушают героя (FixedDecider posture=listen)")
+        talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
     for who in (npc, *bandits):
         await link.debug("skip_important", near=who)
     for _ in range(2):
@@ -778,14 +796,19 @@ async def vanilla_spare(
             log.info("vspare: goblin: %s", err)
     await link.debug("player_goto", to=npc, distance=300)
     if not check("roster", await _until(lambda: npc in talk.people, 20), npc):
-        return finish()
-    answered, _ = await say("Кавалорн, давай я помогу тебе с бандитами.")
+        return _logged(results)
+    if live is None:
+        answered, _ = await say("Кавалорн, давай я помогу тебе с бандитами.")
+    else:
+        await vanilla.prepare(npc)
+        start = vanilla.starts.get(npc, {}).get(quest)
+        if start is None:
+            return _logged({"quest_fixture": "failed (no Cavalorn bandit quest start)"})
+        conv = dialogue.open(npc, talk.people[npc].name, warm=False)
+        _, answered = await vanilla._give(start, conv)
     given = await _until(lambda: any(f.get("quest") == quest for f in facts("quest_given")), 15)
-    if not given and not fake:
-        answered, _ = await say("Ну что, по рукам? Я берусь за Браго и его парней.")
-        given = await _until(lambda: bool(quest_facts("quest_given")), 15)
     if not check("given", answered and given and await var(quest) == 1, facts("quest_given")[-1:]):
-        return finish()
+        return _logged(results)
 
     vanilla.chronicle.record(
         {
@@ -797,37 +820,37 @@ async def vanilla_spare(
         }
     )
     if not check("distrust", vanilla.trust.broken(npc), vanilla.trust.situation(npc)):
-        return finish()
+        return _logged(results)
     baseline = (await link.story_state(npcs=list(bandits), near=npc)).get("npcs", {})
     # e2e runs in its own empty directory; slot 7 is free (slot 1 is reserved for SAVE).
     slot = 7
     saved = await _save(link, slot)
     if not check("saved", saved is not None and all(baseline.get(b, {}).get("state") == "alive"
                                                   for b in bandits), baseline):
-        return finish()
+        return _logged(results)
     talk.end("scenario")
     if not await _until(lambda: npc not in talk.attached, 20):
         check("released", False, "Cavalorn is still attached")
-        return finish()
+        return _logged(results)
 
     # The instance path credits a native killer; debug kill's npc path has no killer.
     await link.debug("kill", instance=killed, near=npc, by=npc)
     remembered = await _until(lambda: killed in seen("killed"), 10)
     if not check("killed", remembered, [f for f in facts("seen_dead") if f.get("npc") == npc]):
-        return finish()
+        return _logged(results)
 
     remembered, before_death = await witness_death(witnessed)
     if not check(
         "staged", before_death.get("state") == "alive" and bool(before_death.get("seen")), before_death
     ):
-        return finish()
+        return _logged(results)
     if not check("saw_die", remembered, [f for f in facts("seen_dead") if f.get("dead") == witnessed]):
-        return finish()
+        return _logged(results)
 
     # Hold both while they negotiate: the spared bandit must remain alive before Cavalorn's eyes.
     if not await park_cavalorn():
         check("held", False, "Cavalorn could not stop to listen")
-        return finish()
+        return _logged(results)
     beasts_cleared = await _clear_beasts(link, npc)
     await link.debug("npc_goto", npc=spared, to=npc, distance=150, face=npc)
     await link.attach(spared)
@@ -843,7 +866,7 @@ async def vanilla_spare(
         "spared_in_view", visible and before_spare.get("state") == "alive" and bool(before_spare.get("seen")),
         f"beasts_cleared={beasts_cleared}; {nearby}",
     ):
-        return finish()
+        return _logged(results)
 
     plea = "Не убивай меня! Я уйду отсюда и больше не вернусь, клянусь!"
     name = talk.people[npc].name
@@ -851,44 +874,43 @@ async def vanilla_spare(
     dialogue.heard(npc, name, speaker, plea, "тебе")
     await link.send(SayCmd(npc=spared, line="AIB_VSPARE_PLEA", text=plea, to=npc))
     before_reward = await rewards()
+    deadline = time.monotonic() + 90
     answered, spare_turns = await say("Кавалорн, отпусти его.")
-    amended = dropped()
-    alive = await bandit_state(spared)
-    if not fake:
-        kind = "killed" if alive.get("state") == "dead" else (
-            "amended" if accepted(spare_turns, "amend_quest") and amended else "kept"
+    if live is not None:
+        actions = calls(spare_turns)
+        amended = any(
+            call.get("name") == "amend_quest" and call.get("outcome") == "accepted"
+            and str(call.get("arguments", {}).get("quest", "")).upper() == quest
+            and spared in [str(who).upper() for who in call.get("arguments", {}).get("drop", [])]
+            for call in actions
         )
-        if not check("spare", answered and alive.get("state") in ("alive", "dead"),
-                     f"{kind}: " + " | ".join(turn_line(row) for row in spare_turns)):
-            return finish()
-        if not accepted(spare_turns, "accept_quest"):
-            before_reward = await rewards()  # his attack may have awarded combat experience
+        if amended:
+            await _until(dropped, max(0, deadline - time.monotonic()))
+        alive = await bandit_state(spared)
+        live.finish("observed", evidence={
+            "decision": "spared" if amended and dropped() and alive.get("state") == "alive"
+            else "killed" if alive.get("state") == "dead" else "refused",
+            "answered": answered, "calls": actions, "terms": quest_facts("quest_terms"),
+            "bandit": alive, "trust": vanilla.trust.situation(npc),
+        })
+        return _logged(results)
     bodies = (await link.story_state(npcs=[killed, witnessed], near=npc)).get("npcs", {})
     distances = {target: bodies.get(target, {}).get("distance") for target in (killed, witnessed)}
     await vanilla.prepare(npc)
     offer = vanilla.offers.get(npc, {}).get(quest)
     situation = vanilla.situation(npc) or ""
-    if fake and not check(
-        "amended",
-        bool(answered and amended and offer is not None and spared not in offer.claim.dead
-             and "Бандит ×2" not in offer.needs and "Снято тобой:" in situation and why in situation),
-        f"terms={facts('quest_terms')}; {situation}",
-    ):
-        return finish()
     tools = [tool.name for tool in vanilla.tools(npc)]
     own_evidence = offer.evidence() if offer is not None else ""
     away = bool(
         all(distance is not None and distance > 2000 for distance in distances.values())
         and "check_claim" not in tools
-        and (bool(offer is not None and offer.seen_true()
-                  and all(target.seen_dead and not target.seen for target in offer.targets)
-                  and own_evidence and "ты убил его сам" in own_evidence
-                  and "ты видел, как он умер" in own_evidence) if fake else (
-                      killed in seen("killed") and witnessed in seen("saw_die")
-                  ))
+        and offer is not None and offer.seen_true()
+        and all(target.seen_dead and not target.seen for target in offer.targets)
+        and own_evidence and "ты убил его сам" in own_evidence
+        and "ты видел, как он умер" in own_evidence
     )
     if not check("away", away, f"cm={distances}; tools={tools}; {situation}"):
-        return finish()
+        return _logged(results)
     check(
         "no_letter_start",
         letter not in vanilla.starts.get(npc, {})
@@ -899,23 +921,7 @@ async def vanilla_spare(
     answered, end_turns = await say("Кавалорн, с ними покончено.")
     first_turns = [*spare_turns, *end_turns]
     if not await ending("ended", answered, first_turns, before_reward, amended=dropped()):
-        return finish()
-    if not fake and not dropped() and not accepted(first_turns, "accept_quest"):
-        if (await bandit_state(spared)).get("state") == "alive":
-            # He refused mercy: finish the original agreement in front of him.
-            await link.debug("kill", instance=spared, near=npc, by="PLAYER")
-            if not check("last_seen", await _until(lambda: spared in seen("saw_die"), 10),
-                         [f for f in facts("seen_dead") if f.get("dead") == spared]):
-                return finish()
-            before_reward = await rewards()
-            answered, end_turns = await say("Кавалорн, теперь с ними покончено.")
-            if not await ending("ended_after_kill", answered, end_turns, before_reward, amended=False):
-                return finish()
-        else:
-            # A refusal to accept even after his own attack is a live model decision too.
-            results["ended_after_kill"] = results.pop("ended")
-    elif not fake and not dropped():
-        results["ended_after_kill"] = results.pop("ended")
+        return _logged(results)
     if spared in talk.attached and (await bandit_state(spared)).get("state") == "alive":
         try:
             await link.detach(spared)
@@ -934,7 +940,7 @@ async def vanilla_spare(
     except (GameError, TimeoutError) as err:
         loading.cancel()
         check("loaded", False, str(err))
-        return finish()
+        return _logged(results)
     baseline = (await link.story_state(npcs=list(bandits), near=npc)).get("npcs", {})
     fresh_after_load = not any(spared in f.get("drop", []) for f in quest_facts("quest_terms"))
     if not check(
@@ -948,7 +954,7 @@ async def vanilla_spare(
         f"branch={vanilla.chronicle.branch}; bandits={baseline}; terms={quest_facts('quest_terms')}; "
         f"outcome={quest_facts('quest_outcome')}",
     ):
-        return finish()
+        return _logged(results)
 
     await link.debug("kill", instance=killed, near=npc, by=npc)
     remembered = await _until(lambda: killed in seen("killed"), 10)
@@ -956,13 +962,13 @@ async def vanilla_spare(
         saw, state = await witness_death(who)
         if not saw:
             check("seen2", False, f"{who}: staged={state}; seen_dead={facts('seen_dead')}")
-            return finish()
+            return _logged(results)
     if not check("seen2", remembered and {witnessed, spared} <= seen("saw_die"),
                  [f for f in facts("seen_dead") if f.get("npc") == npc and f.get("dead") in bandits]):
-        return finish()
+        return _logged(results)
     if not await park_cavalorn():
         check("away2", False, "Cavalorn could not stop to listen")
-        return finish()
+        return _logged(results)
     beasts_cleared = await _clear_beasts(link, npc)
     bodies = (await link.story_state(npcs=list(bandits), near=npc)).get("npcs", {})
     distances = {b: bodies.get(b, {}).get("distance") for b in bandits}
@@ -973,36 +979,35 @@ async def vanilla_spare(
                  and offer is not None and offer.seen_true()
                  and all(t.seen_dead and not t.seen for t in offer.targets) and "check_claim" not in tools,
                  f"beasts_cleared={beasts_cleared}; cm={distances}; tools={tools}; {vanilla.situation(npc)}"):
-        return finish()
+        return _logged(results)
     before_reward = await rewards()
     answered, end_turns = await say("Кавалорн, с ними покончено.")
     await ending("seen_ended", answered, end_turns, before_reward, amended=False)
-    fresh_terms = fresh_after_load
-    if fake:
-        fresh_terms = (
-            not quest_facts("quest_terms")
-            and all(f.get("how") == "done" and not f.get("drop") for f in quest_facts("quest_outcome"))
-            and len(quest_facts("quest_outcome")) == int(accepted(end_turns, "accept_quest"))
-        )
+    fresh_terms = (
+        fresh_after_load and not quest_facts("quest_terms")
+        and all(f.get("how") == "done" and not f.get("drop") for f in quest_facts("quest_outcome"))
+    )
     check("fresh_terms", fresh_terms,
           f"fresh_after_load={fresh_after_load}; terms={quest_facts('quest_terms')}; "
           f"outcome={quest_facts('quest_outcome')}")
     talk.free(npc, "scenario")
-    return finish()
+    return _logged(results)
 
 
 
 async def vanilla_check(
-    link: GameLink, dialogue: DialogueManager, talk: TalkDesk, vanilla: VanillaQuests, giver: str = LOBART
+    link: GameLink, dialogue: DialogueManager, talk: TalkDesk, vanilla: VanillaQuests, giver: str = LOBART,
+    *, live: LiveCase | None = None,
 ) -> dict[str, str]:
     """Lies as a mechanic the player can read (stage 5), on the game: Lobart's field raiders, where Andre's
-    dialog puts them, and his turnips. The model is scripted unless LLM=chatgpt.
+    dialog puts them, and his turnips. Lobart is given the decision to check both claims.
     1. The hero says he killed the raiders. Lobart can't see the field from where he stands, but it is a short
        walk: he goes to see (check_claim), sees them alive and catches the lie — no reward, he is wary of the
        hero, the people around hear it.
     2. The hero says the turnips are in the barn: Lobart takes his word no more (the code refuses it).
     3. The raiders are killed and the hero says so: Lobart goes to see again, sees them dead and pays; the
        scripts' ending plays (gold, the quest, the farmhands back to work)."""
+    off = model_off(dialogue) if live is None else None
     results: dict[str, str] = {}
 
     def check(name: str, ok: bool, detail: object = "") -> None:
@@ -1050,6 +1055,8 @@ async def vanilla_check(
     for bug, wp in zip(bugs, FIELD, strict=True):
         await link.story_spawn(bug, "LOBART_BUGS", 1, waypoint=wp)
     await link.debug("player_goto", to=giver, distance=250)
+    if live is None:
+        log.info("given: дано: решающая модель выбирает слушать героя")
     talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
     if not await _until(lambda: giver in talk.people, 20):
         return _logged({"roster": f"failed ({giver} is not around the hero)"})
@@ -1057,59 +1064,79 @@ async def vanilla_check(
     field = (await link.story_state(npcs=bugs, near=giver)).get("npcs", {})
     ds = sorted(round(p.get("distance", 0) / 100) for p in field.values() if "distance" in p)
     check("field", bool(ds) and SEE_CM / 100 < ds[0] <= CHECK_CM / 100, f"{len(ds)} raiders, {ds} m")
-    script = None
-    if isinstance(dialogue.llm, FakeBackend):
-        script = ClaimScript(
-            said=[
-                ("правда перебил", FakeStep("Посмотрим.", [ToolCall("check_claim", {"quest": BUGS})])),
-                (
-                    "перебил всех",
-                    FakeStep("Перебил, говоришь? Сам посмотрю.", [ToolCall("check_claim", {"quest": BUGS})]),
-                ),
-                ("репа", FakeStep("В амбаре?", [ToolCall("accept_quest", {"quest": RUEBEN})])),
-                ("Он тебе солгал", FakeStep("Ах ты брехун! Они живы, все до одного!")),
-                ("он сказал правду", FakeStep("И правда. Держи, заслужил.")),
-            ],
-            told=[
-                ("Можешь сходить", FakeStep("Сам посмотрю.", [ToolCall("check_claim", {"quest": BUGS})])),
-                ("он уже лгал тебе", FakeStep("Нет уж. Тебе я на слово больше не верю. Неси репу сюда.")),
-            ],
+    if off is not None:
+        for words in ("перебил всех", "правда перебил"):
+            off.given(
+                "дано: Лобарт идёт проверить слова героя",
+                who=giver, when=words, calls=[ToolCall("check_claim", {"quest": BUGS})],
+            )
+            off.silent(
+                "дано: Лобарт молчит (решение проверить принято)", who=giver, when=words,
+            )
+        off.silent(
+            "дано: Лобарт молчит (увидел живых хищников)", who=giver, when="Он тебе солгал",
         )
-        dialogue.llm = script
+        off.silent(
+            "дано: Лобарт молчит (увидел мёртвых хищников)", who=giver, when="он сказал правду",
+        )
+        off.silent("дано: Лобарт молчит (герой просит плату за репу)", who=giver, when="репа")
+    conv = dialogue.open(giver, name, warm=False)
+    _, _, sight = await dialogue._situation(conv, None)
+    tools = [tool.name for tool in dialogue._offered(giver, sight)]
+    check("check_offered", "check_claim" in tools, tools)
     gold0 = await gold()
+    if live is not None and any(value.startswith("failed") for value in results.values()):
+        return _logged(results)
 
     # 1. the lie: he goes to see for himself and catches it
+    prior = {row["id"] for row in live.records} if live is not None else set()
     await say(f"{name}, я перебил всех полевых хищников на твоём поле. Плати.")
+    if live is not None:
+        def rows() -> list[dict[str, Any]]:
+            return [row for row in live.turns(giver) if row["id"] not in prior]
+
+        def calls() -> list[dict[str, Any]]:
+            return [call for row in rows() for step in row.get("steps", [])
+                    for call in step.get("calls", [])]
+
+        # Checking includes the walk and may outlast the initial spoken response.
+        await _until(lambda: giver not in vanilla.checking and bool(rows()), 90)
+        caught = [f for f in facts("caught") if f.get("npc") == giver and f.get("quest") == BUGS]
+        claims = [f for f in facts("claim") if f.get("npc") == giver and f.get("quest") == BUGS]
+        accepted = any(call.get("name") == "check_claim" and call.get("outcome") == "accepted"
+                       and call.get("arguments", {}).get("quest") == BUGS for call in calls())
+        success = accepted and any("сходил проверить" in f.get("how", "") for f in caught)
+        completed = bool(rows())
+        live.finish("success" if success else "failure" if completed else "no_decision", evidence={
+            "decision": "checked" if success else "paid_on_word" if claims else "did_not_check",
+            "calls": calls(), "caught": caught, "claims": claims,
+            "gold_before": gold0, "gold_after": await gold(),
+        })
+        return _logged(results)
     ok = await _until(lambda: any(f.get("quest") == BUGS for f in facts("caught")), 90)
     got = next((f for f in facts("caught") if f.get("quest") == BUGS), None)
     check("caught", ok and got is not None and "сходил проверить" in got.get("how", ""), got)
-    if script is not None:
-        tools = [t.name for t in script.calls[0][2]] if script.calls else []
-        check("check_offered", "check_claim" in tools, tools)
     check("no_reward", (await var(BUGS), await gold()) == (1, gold0))
     conv = dialogue.conversations.get(giver)
     check("wary", conv is not None and conv.intent.attitude in ("wary", "hostile"), conv and conv.intent)
     await settled()  # back to the hero, he says what he thinks of it
 
     # 2. a lie he can't check: not on his word any more
-    claim_calls = len(script.calls) if script is not None else 0
+    conv = dialogue.open(giver, name, warm=False)
+    situation, _, sight = await dialogue._situation(conv, None)
+    tools = [tool.name for tool in dialogue._offered(giver, sight)]
+    check("not_on_word", "accept_quest" not in tools, tools)
+    offer = vanilla.offers.get(giver, {}).get(RUEBEN)
     await say(f"{name}, репа уже в амбаре, все двадцать штук. Давай плату.")
     await asyncio.sleep(2)
-    check("not_on_word", not any(f.get("quest") == RUEBEN for f in facts("claim")), facts("claim")[-1:])
-    if script is not None:
-        situation = vanilla.situation(giver) or ""
-        offer = vanilla.offers.get(giver, {}).get(RUEBEN)
-        offered = [[tool.name for tool in tools] for _, _, tools in script.calls[claim_calls:]]
-        check(
-            "refused",
-            offer is not None
-            and vanilla._refusal(giver, offer) is not None
-            and "Засчитать сейчас нельзя" in situation
-            and bool(offered)
-            and all("accept_quest" not in tools for tools in offered)
-            and not any(f.get("quest") == RUEBEN for f in facts("claim")),
-            f"tools={offered}; {situation}",
-        )
+    check(
+        "refused",
+        offer is not None
+        and vanilla._refusal(giver, offer) is not None
+        and "Засчитать сейчас нельзя" in situation
+        and not any(f.get("quest") == RUEBEN for f in facts("claim")),
+        f"tools={tools}; {situation}",
+    )
 
     # 3. the truth: he goes to see again, and pays
     for bug in bugs:
@@ -1133,11 +1160,12 @@ async def rumor_spread(
     giver: str = LOBART,
     log_dir: str | None = None,
 ) -> dict[str, str]:
-    """Rumors among acquaintances (stage 5), on the game. Lobart catches the hero lying about the turnips (the
-    model scripted unless LLM=chatgpt); the people of the world and their days make who knows whom (Hilda on
+    """Rumors among acquaintances (stage 5), on the game. Given: Lobart exposes the turnip lie;
+    the people of the world and their days make who knows whom (Hilda on
     the farm, Andre through the quest that sends the hero to Lobart's field). The clock goes to the next
     morning: the rumor goes round, in the order of the meetings, to people that never stood by Lobart, also
-    in the city. The hero, put next to one of them, speaks to it: it has the rumor in mind."""
+    in the city. The situation of one of them contains the rumor without a model call."""
+    off = model_off(dialogue)
     results: dict[str, str] = {}
 
     def check(name: str, ok: bool, detail: object = "") -> None:
@@ -1167,22 +1195,18 @@ async def rumor_spread(
     # Lobart catches the lie: the turnips in the barn, and the hero has none on him
     await link.story_effect(giver, [{"do": "set", "var": RUEBEN, "value": 1}])
     await link.debug("player_goto", to=giver, distance=250)
+    log.info("given: дано: решающая модель выбирает слушать героя")
     talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
     if not await _until(lambda: giver in talk.people, 20):
         return _logged({**results, "roster": f"failed ({giver} is not around the hero)"})
     name = talk.people[giver].name
-    # Lobart is scripted (the lie must be caught); with LLM=chatgpt the others are the live model
-    live = None if isinstance(dialogue.llm, FakeBackend) else dialogue.llm
-    expose = FakeStep("Врёшь! Нет у тебя никакой репы.", [ToolCall("expose_lie", {"quest": RUEBEN})])
-    script = ClaimScript(
-        said=[("репа", expose)], told=[], default="Ну, здравствуй. Чего тебе?", only=name, others=live
+    off.given(
+        "дано: Лобарт уличил героя во лжи про репу", who=giver, when="репа",
+        calls=[ToolCall("expose_lie", {"quest": RUEBEN})],
     )
-    dialogue.llm = script
+    off.silent("дано: Лобарт молчит (ложь уже раскрыта)", who=giver, when="репа")
     await link.debug("type", text=f"{name}, репа уже в амбаре, все двадцать штук. Давай плату.")
-    ok = await _until(lambda: any(f.get("quest") == RUEBEN for f in facts("caught")), 60)
-    check("caught", ok, facts("caught")[-1:])
-    if not ok:
-        return _logged(results)
+    await _until(lambda: any(f.get("quest") == RUEBEN for f in facts("caught")), 60)
     before = {f["to"] for f in facts("rumor")}
 
     # the next morning: the meetings in between
@@ -1212,107 +1236,18 @@ async def rumor_spread(
     if farthest is None:
         return _logged(results)
 
-    # the hero speaks to it: the rumor is in its mind
-    told = next(f for f in heard if f["to"] == farthest)
-    line = Trust(rumors.chronicle).situation(farthest) or ""
-    check("in_mind", "ты слышал, что он обманул других" in line and "Лобарт" in line, line.splitlines()[-1:])
+    # Read the assembled situation without asking the model to carry it.
     await link.debug("player_goto", to=farthest, distance=250)
     if not await _until(lambda: farthest in talk.people, 20):
         return _logged({**results, "roster2": f"failed ({farthest} is not around the hero)"})
-    other = talk.people[farthest].name
-    calls = len(script.calls)
-    await link.debug("type", text=f"{other}, здравствуй. Не одолжишь мне пару монет? Верну завтра.")
-
-    def answered() -> bool:
-        conv = dialogue.conversations.get(farthest)
-        return conv is not None and conv.reply is not None and conv.reply.done()
-
-    ok = await _until(answered, 60)
-    if live is None:
-        request = " ".join(str(m) for _, items, _ in script.calls[calls:] for m in items)
-        check(
-            "in_request",
-            ok and "со слов: " in request and "Лобарт" in request,
-            f"heard from {told.get('from_name')}",
-        )
-    else:
-        conv = dialogue.conversations.get(farthest)
-        said = [
-            m.content
-            for m in (conv.history if conv else [])
-            if isinstance(m, Message) and m.role == "assistant"
-        ]
-        check("answer", ok and bool(said), f"{other}: {said[-1] if said else ''}")
+    conv = dialogue.open(farthest, talk.people[farthest].name, warm=False)
+    situation, _, _ = await dialogue._situation(conv, None)
+    check(
+        "in_mind",
+        "ты слышал, что он обманул других" in situation and "Лобарт" in situation,
+        situation.splitlines()[-1:],
+    )
     return _logged(results)
-
-
-class AmendsScript:
-    """The director's model for storylets, scripted: Andre asks for a fine and closes joining the militia (the
-    first of his dealings in the brief that has it, else the first); anyone else does not care."""
-
-    name = "amends-script"
-
-    def __init__(self, npc: str = ANDRE, gold: int = 50) -> None:
-        self.npc, self.gold = npc, gold
-        self.calls: list[str] = []
-
-    async def aclose(self) -> None:
-        pass
-
-    async def stream(
-        self,
-        *,
-        instructions: str,
-        messages: Sequence[Item],
-        tools: list[Tool] | None = None,
-        tool_choice: ToolChoice | None = None,
-        allowed: Collection[str] | None = None,
-        cache_key: str | None = None,
-    ) -> AsyncIterator[LLMEvent]:
-        brief = next(m.content for m in messages if isinstance(m, Message))
-        self.calls.append(brief)
-        stakes = re.findall(r"^- (\S+): «([^»]*)» — (.*)$", brief, re.M)
-        if f"({self.npc})" not in brief.splitlines()[0] or not stakes:
-            args: dict[str, Any] = {"kind": "none", "reason": "не его дело"}
-        else:
-            join = [id for id, _, what in stakes if what == "принимает в гильдию"]
-            args = {
-                "kind": "amends",
-                "close": join[:1] or [stakes[0][0]],
-                "lines": [
-                    {"speaker": "npc", "text": "Слыхал я, ты Лобарта обмануть пытался."},
-                    {
-                        "speaker": "npc",
-                        "text": f"Лжецу в ополчении не место. {self.gold} золотых штрафа — тогда поговорим.",
-                    },
-                ],
-                "to": "self",
-                "gold": self.gold,
-                "description": f"Вот штраф — {self.gold} золотых.",
-                "amends_lines": [{"speaker": "npc", "text": "Ладно. Считай, забыли. Но смотри у меня."}],
-                "title": "Штраф за враньё",
-                "journal_now": (
-                    f"Андре прослышал, что я соврал Лобарту. Без штрафа ({self.gold} золотых) "
-                    "в ополчение не возьмёт."
-                ),
-                "journal_done": "Я заплатил Андре штраф.",
-                "reason": "до Андре дошёл слух, а в ополчение он берёт только честных",
-            }
-        call = ToolCall(
-            "propose_amends",
-            {
-                **{k: "" for k in ("description", "title", "journal_now", "journal_done")},
-                "close": [],
-                "lines": [],
-                "to": "self",
-                "gold": 0,
-                "amends_lines": [],
-                **args,
-            },
-            "a1",
-        )
-        yield call
-        yield Done("", (call,))
 
 
 async def amends_storylet(
@@ -1323,15 +1258,13 @@ async def amends_storylet(
     giver: str = LOBART,
     fine: int = 50,
     deals: Deals | None = None,
+    *, live: LiveCase | None = None,
 ) -> dict[str, str]:
-    """The director's storylet of amends (stage 5), on the game. Lobart catches the hero lying; by the next
-    morning the rumor has gone round. The director's model, scripted unless LLM=chatgpt, has Andre (who has
-    dealings with Lobart) ask for a fine and close joining the militia until then; a live model decides who
-    asks and what for. The hero comes, hears the npc out, makes amends, and what was closed opens again.
+    """Given Lobart's accusation and Andre's fine, check closure, payment and forgiveness.
 
-    With `deals` (amends_deal, docs/npc-tools.md wave 1 step 2) he makes them in conversation instead of
-    the dialog menu: he asks to be forgiven, the npc offers a deal that forgives the lie for gold (scripted
-    unless LLM=chatgpt: then the two haggle as they like), and he accepts it."""
+    With `deals`, Andre offers the declared fine in conversation and the hero accepts with Y.
+    """
+    off = model_off(dialogue) if live is None else None
     results: dict[str, str] = {}
 
     def check(name: str, ok: bool, detail: object = "") -> None:
@@ -1343,27 +1276,158 @@ async def amends_storylet(
     await asyncio.sleep(1)
     facts = amends.chronicle.facts
     hero = ["inst", "HERO"]
-    if isinstance(amends.model.llm, FakeBackend):
-        amends.model.llm = AmendsScript(ANDRE, fine)
-    amends.director.pacing.cooldown_s = 2.0  # no need to wait between the steps here
+    propose = amends.model.propose
 
-    ok, _ = await _caught_by(link, dialogue, talk, giver, facts)
-    check("caught", ok, facts("caught")[-1:])
-    if not ok:
+    async def given_amends(
+        brief: Brief, previous: Proposal | None = None, errors: list[str] | None = None,
+    ) -> Proposal | None:
+        # The recipients depend on rumor delivery and available dialogs. Declare each fixed
+        # decision when its brief exists, before the original shared-backend request.
+        if previous is None:
+            args: dict[str, Any] = {
+                "kind": "none", "reason": "не его дело", "close": [], "lines": [], "to": "self",
+                "gold": 0, "description": "", "amends_lines": [], "title": "",
+                "journal_now": "", "journal_done": "",
+            }
+            reason = f"дано: режиссёр расплаты решил, что {brief.name} не требует расплаты"
+            if brief.npc == ANDRE:
+                join = [stake.id for stake in brief.stakes if stake.what == "принимает в гильдию"]
+                args.update({
+                    "kind": "amends", "close": join[:1] or [brief.stakes[0].id], "gold": fine,
+                    "lines": [
+                        {"speaker": "npc", "text": "Слыхал я, ты Лобарта обмануть пытался."},
+                        {"speaker": "npc", "text": f"Лжецу в ополчении не место. {fine} золотых штрафа."},
+                    ],
+                    "description": f"Вот штраф — {fine} золотых.",
+                    "amends_lines": [{"speaker": "npc", "text": "Ладно. Считай, забыли."}],
+                    "title": "Штраф за враньё",
+                    "journal_now": f"Андре требует штраф ({fine} золотых) за ложь Лобарту.",
+                    "journal_done": "Я заплатил Андре штраф.",
+                    "reason": "до Андре дошёл слух, а в ополчение он берёт только честных",
+                })
+                reason = f"дано: режиссёр расплаты назначает штраф Андре {fine} золотых"
+            off.given(
+                reason, who=AMENDS_KEY, when=f"({brief.npc})",
+                calls=[ToolCall("propose_amends", args)],
+            )
+        return await propose(brief, previous, errors)
+
+    if off is not None:
+        amends.model.propose = given_amends  # type: ignore[method-assign]
+        amends.director.pacing.cooldown_s = 2.0
+        log.info("given: дано: решающая модель оставляет NPC слушать героя")
+    if live is None or deals is not None:
+        talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
+    await link.story_effect(giver, [{"do": "set", "var": RUEBEN, "value": 1}])
+    if live is not None and deals is None:
+        amends.director.pacing.cooldown_s = 2.0
+        from ..amends import MAX_GOLD
+        from ..quests import Lie, caught
+
+        # The live decision starts after the accusation and its rumor have reached Andre.
+        await caught(
+            link, dialogue, amends.chronicle, dialogue.journal,
+            Lie(RUEBEN, giver, "Лобарт", "Убрать поле репы", "золото"),
+            "The unharvested field disproves the hero's claim",
+        )
+        rumor = {
+            "fact": "rumor", "kind": "caught", "quest": RUEBEN,
+            "about": giver, "about_name": "Лобарт", "subject": "PLAYER",
+            "subject_name": "герой", "title": "Убрать поле репы",
+            "from": giver, "from_name": "Лобарт", "to": ANDRE, "hops": 1, "how": "told",
+        }
+        amends.chronicle.record(rumor)
+        key = f"caught:{giver}:{RUEBEN}"
+        storylet = await amends.consider(key, ANDRE, "Лобарт")
+        live.finish(
+            "success" if storylet is not None and storylet.stage == "open"
+            and 0 <= storylet.gold <= MAX_GOLD else "observed",
+            evidence={"rumor": rumor, "storylet": vars(storylet) if storylet else None,
+                      "gold_limit": MAX_GOLD, "rejected": facts("amends_rejected"),
+                      "declined": facts("amends_none")},
+        )
         return _logged(results)
 
-    # the next morning the rumor has gone round; someone asks for amends (scripted: Andre)
+    if live is not None:
+        if deals is None:
+            raise GameError("live amends_forgive requires Deals")
+        state = await link.story_state()
+        day = {key: state[key] for key in ("day", "hour", "minute") if key in state}
+        accusation = {
+            "fact": "caught", "npc": giver, "name": "Лобарт", "quest": RUEBEN,
+            "title": "Репа для Лобарта", "how": "видел сам: репа осталась на поле", **day,
+        }
+        rumor = {
+            "fact": "rumor", "kind": "caught", "quest": RUEBEN, "about": giver,
+            "about_name": "Лобарт", "from": giver, "from_name": "Лобарт", "to": ANDRE,
+            "title": accusation["title"], **day,
+        }
+        # The accusation and its delivery precede this conversation. Keep the fixture from
+        # starting an unrelated Amends writing turn; forgiveness is the model's own decision.
+        amends.chronicle.on_fact.remove(amends._on_fact)
+        try:
+            amends.chronicle.record(accusation)
+            amends.chronicle.record(rumor)
+        finally:
+            amends.chronicle.on_fact.append(amends._on_fact)
+        await link.debug("skip_important", near=ANDRE)
+        await link.debug("player_goto", to=ANDRE, distance=250)
+        if not await _until(lambda: ANDRE in talk.people and talk.people[ANDRE].distance <= 600, 20):
+            return _logged({"roster": f"failed ({ANDRE} is not near the hero)"})
+        request = f"{talk.people[ANDRE].name}, прости меня за вранье. Чем мне загладить вину?"
+        await link.debug("type", text=request)
+        effects_settled = await _until(
+            lambda: bool(live.turns(ANDRE, request)) and (
+                not any(call.get("name") == "propose_deal" and call.get("outcome") == "accepted"
+                        for call in live.calls(ANDRE)) or ANDRE in deals.open
+            ),
+            90,
+        )
+        rows = live.turns(ANDRE, request)
+        calls = [call for row in rows for step in row.get("steps", [])
+                 for call in step.get("calls", [])]
+        deal = deals.open.get(ANDRE)
+        key = f"caught:{giver}:{RUEBEN}"
+        offered = bool(
+            deal is not None and any(ref.key == key for ref in deal.forgive)
+            and any(call.get("name") == "propose_deal" and call.get("outcome") == "accepted"
+                    for call in calls)
+        )
+        live.finish("observed" if effects_settled else "failure" if rows else "no_decision", evidence={
+            "decision": "pending_effect" if rows and not effects_settled else (
+                "forgiveness_offered" if offered else "no_forgiveness_offer"
+            ),
+            "effects_settled": effects_settled,
+            "fixture": [accusation, rumor], "calls": calls,
+            "terms": deal.terms() if deal is not None else None,
+            "price": deal.gold() if offered else None,
+            "words": [step.get("text", "") for row in rows
+                      for step in row.get("steps", []) if step.get("text")],
+        })
+        return _logged(results)
+    assert off is not None
+    await link.debug("player_goto", to=giver, distance=250)
+    if not await _until(lambda: giver in talk.people and talk.people[giver].distance <= 600, 20):
+        return _logged({"roster": f"failed ({giver} is not near the hero)"})
+    off.given(
+        "дано: Лобарт уличил героя во лжи о репе", who=giver, when="репа уже в амбаре",
+        calls=[ToolCall("expose_lie", {"quest": RUEBEN})],
+    )
+    off.silent(
+        "дано: Лобарт молчит (ложь о репе раскрыта)", who=giver, when="репа уже в амбаре",
+    )
+    await link.debug(
+        "type", text=f"{talk.people[giver].name}, репа уже в амбаре, все двадцать штук. Давай плату.",
+    )
+    if not await _until(lambda: any(f.get("quest") == RUEBEN for f in facts("caught")), 60):
+        check("closed", False, "the declared accusation did not reach the chronicle")
+        return _logged(results)
+
     await link.debug("time", hour=7, minute=0)
-    ok = await _until(lambda: bool(amends.storylets), 180)
-    if ok and isinstance(amends.model.llm, AmendsScript):
-        ok = await _until(lambda: any(x.npc == ANDRE for x in amends.storylets.values()), 120)
-    looked = [
-        (f.get("fact"), f.get("npc")) for f in facts() if f.get("fact") in ("amends_open", "amends_none")
-    ]
-    check("asked", ok, looked)
-    if not ok:
+    if not await _until(lambda: any(x.npc == ANDRE for x in amends.storylets.values()), 300):
+        check("closed", False, "Andre's fine did not close any dialog")
         return _logged(results)
-    s = next((x for x in amends.storylets.values() if x.npc == ANDRE), next(iter(amends.storylets.values())))
+    s = next(x for x in amends.storylets.values() if x.npc == ANDRE)
     closed = [op["node"] for op in amends.patches.ops() if op.get("op") == "disable"]
     check("closed", bool(s.close) and set(s.close) <= set(closed), f"{s.name}: {s.close}")
 
@@ -1399,8 +1463,8 @@ async def amends_storylet(
             log.info("amends: %s", err)
     else:
         offered = await _forgiveness_deal(link, dialogue, talk, deals, s)
-        check("offered", offered is not None, offered.terms() if offered else "no deal that forgives it")
         if offered is None:
+            check("paid", False, "no deal that forgives the lie")
             return _logged(results)
         price = offered.gold()
         await asyncio.sleep(1.2)
@@ -1425,39 +1489,70 @@ async def amends_storylet(
 async def _forgiveness_deal(
     link: GameLink, dialogue: DialogueManager, talk: TalkDesk, deals: Deals, s: Any
 ) -> Any:
-    """The hero asks the one the amends are to be made at to forgive him; it offers a deal that forgives the
-    lie (scripted unless the model is live). The open offer, or None."""
+    """Declare Andre's forgiveness offer, then ask for it through the normal conversation."""
+    off = model_off(dialogue)
     name = talk.people[s.to].name if s.to in talk.people else s.to_name
-    talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
-    script = dialogue.llm if isinstance(dialogue.llm, ClaimScript) else None
-    live = (
-        script.others
-        if script is not None
-        else (None if isinstance(dialogue.llm, FakeBackend) else dialogue.llm)
+    terms = {
+        "npc_gives": [], "hero_gives": [{"item": GOLD, "count": s.gold}] if s.gold else [],
+        "forgive": [s.lie], "silence": [], "hero_later": [], "repay": [],
+    }
+    off.given(
+        f"дано: Андре предлагает прощение за {s.gold} золотых", who=s.to, when="прости",
+        calls=[ToolCall("propose_deal", terms)],
     )
-    if live is None:
-        terms = {
-            "npc_gives": [],
-            "hero_gives": [{"item": GOLD, "count": s.gold}] if s.gold else [],
-            "forgive": [s.lie],
-            "silence": [],
-            "hero_later": [],
-            "repay": [],
-        }
-        offer = FakeStep("Ладно. Плати — и забудем.", [ToolCall("propose_deal", terms, "forgive")])
-        dialogue.llm = ClaimScript(said=[("прости", offer)], told=[], default="По рукам.", only=name)
-    else:
-        dialogue.llm = live
+    off.silent("дано: Андре молчит (сделка предложена)", who=s.to, when="прости")
+    off.silent("дано: Андре молчит (сделка состоялась)", who=s.to, when="сделка состоялась")
 
     def forgiving() -> bool:
         deal = deals.open.get(s.to)
         return deal is not None and any(lie.key == s.lie for lie in deal.forgive)
 
     await link.debug("type", text=f"{name}, прости меня за враньё. Чем мне загладить вину?")
-    if not await _until(forgiving, 60) and live is not None:
-        await link.debug("type", text=f"{name}, я согласен. Предложи, и по рукам.")
-        await _until(forgiving, 60)
+    await _until(forgiving, 60)
     return deals.open.get(s.to) if forgiving() else None
+
+
+async def _record_live_witness(
+    live: LiveCase, chronicle: Chronicle, farmer: str, witness: str, prior: set[str],
+) -> None:
+    """Wait for the witness decision and the accusation deferred until after speech."""
+    def rows() -> list[dict[str, Any]]:
+        return [row for row in live.turns(farmer) if row["id"] not in prior]
+
+    def calls() -> list[dict[str, Any]]:
+        return [call for row in rows() for step in row.get("steps", [])
+                for call in step.get("calls", [])]
+
+    def catches() -> list[dict[str, Any]]:
+        return [call for call in calls() if call.get("name") == "catch_lie"
+                and call.get("outcome") == "accepted"
+                and _sid(str(call.get("arguments", {}).get("seen", ""))).startswith("С")]
+
+    def caught() -> list[dict[str, Any]]:
+        said = {str(call.get("arguments", {}).get("said", "")).strip().strip("«»\"' .")
+                for call in catches()}
+        return [f for f in chronicle.facts("caught") if f.get("npc") == farmer
+                and "со слов" in f.get("how", "") and f.get("title") in said]
+
+    def decided() -> bool:
+        completed = rows()
+        asked = any(call.get("name") == "ask_witness" and call.get("outcome") == "accepted"
+                    for call in calls())
+        return bool(completed) and (not asked or any(
+            "Ответ:" in row.get("trigger", {}).get("text", "") for row in completed
+        ))
+
+    await _until(lambda: decided() and (not catches() or bool(caught())), 90)
+    actions = calls()
+    asked = [call for call in actions if call.get("name") == "ask_witness"
+             and call.get("outcome") == "accepted"]
+    testimony = [f for f in chronicle.facts("testimony") if f.get("npc") == farmer]
+    success = bool(asked and catches() and caught())
+    live.finish("success" if success else "failure" if decided() else "no_decision", evidence={
+        "decision": "caught_from_witness" if success else "not_caught",
+        "staged_witness": witness, "asked": asked, "calls": actions,
+        "testimony": testimony, "caught": caught(),
+    })
 
 
 async def witness_check(
@@ -1467,12 +1562,14 @@ async def witness_check(
     sightings: Sightings,
     witnesses: Witnesses,
     farmer: str = LOBART,
+    *, live: LiveCase | None = None,
 ) -> dict[str, str]:
-    """Asking a witness (wave 2 step 3), on the game. At eight in the morning someone Lobart knows sees the
-    hero on the farm. An hour and a half later the hero tells Lobart he was in the city all morning; Lobart
-    calls that one over (`ask_witness`; the model scripted unless LLM=chatgpt), it comes up and tells what it
-    saw, and Lobart catches the lie by its word: «со слов». Then the hero names someone far away; Lobart
-    asks at their next meeting by their routines: the answer is a fact, with no model call."""
+    """Given Lobart's witness questions and accusation, check movement, testimony and trust.
+
+    The witness's evidence is built by code; its code-started spoken answer is silent.
+    A distant acquaintance answers at the routine meeting without a model request.
+    """
+    off = model_off(dialogue) if live is None else None
     results: dict[str, str] = {}
 
     def check(name: str, ok: bool, detail: object = "") -> None:
@@ -1601,37 +1698,42 @@ async def witness_check(
     if not ready:
         return _logged(results)
     tier = "near"
+    if live is None:
+        log.info("given: дано: решающая модель оставляет NPC слушать героя")
     talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
-    script = None
-    if isinstance(dialogue.llm, FakeBackend):
-        ask = FakeStep(
-            f"{wname}! Поди-ка сюда. Ты его утром видел?",
-            [ToolCall("ask_witness", {"who": wname, "said": "всё утро был в городе"})],
+    conv = dialogue.open(farmer, name, warm=False)
+    situation, _, _ = await dialogue._situation(conv, None)
+    offered = [tool.name for tool in witnesses.tools(farmer)]
+    check(
+        "offered", "ask_witness" in offered and f"- {wname} — " in situation, offered,
+    )
+    if off is not None:
+        off.given(
+            f"дано: Лобарт спрашивает свидетеля {wname}", who=farmer, when="утро был в городе",
+            calls=[ToolCall("ask_witness", {"who": wname, "said": "всё утро был в городе"})],
         )
-        catch = FakeStep(
-            "Вот как! Значит, ты мне врёшь.",
-            [ToolCall("catch_lie", {"said": "всё утро был в городе", "seen": "С1"})],
+        off.silent(
+            "дано: Лобарт молчит (свидетель вызван)", who=farmer, when="утро был в городе",
         )
-        others = ClaimScript(
-            [("спрашивает тебя о герое", FakeStep("Утром он тут был, на ферме."))], [], "Ну."
+        off.silent(
+            f"дано: {wname} молчит (показание записано кодом)", who=witness,
+            when="спрашивает тебя о герое",
         )
-        script = ClaimScript([("Ответ:", catch), ("город", ask)], [], "Ну?", only=name, others=others)
-        dialogue.llm = script
-    # a lie with a stake for him: an alibi (the field is where the witness works)
+        off.given(
+            "дано: Лобарт уличает героя по ответу свидетеля", who=farmer, when="Ответ:",
+            calls=[ToolCall("catch_lie", {"said": "всё утро был в городе", "seen": "С1"})],
+        )
+        off.silent(
+            "дано: Лобарт молчит (герой уличён по показанию)", who=farmer, when="Ответ:",
+        )
+    if live is not None and any(value.startswith("failed") for value in results.values()):
+        return _logged(results)
+    prior = {row["id"] for row in live.records} if live is not None else set()
     await link.debug("type", text=f"{name}, это не я утром топтал твою репу — я всё утро был в городе.")
-    asked = lambda: any(f.get("witness") == witness for f in chronicle.facts("testimony"))  # noqa: E731
-    if script is None and not await _until(asked, 20):
-        # the live model did not ask anyone: the hero bluffs, he does not know the witness saw him
-        await link.debug("type", text=f"{name}, не веришь — спроси у {wname}.")
+    if live is not None:
+        await _record_live_witness(live, chronicle, farmer, witness, prior)
+        return _logged(results)
     caught = await _until(lambda: any(f.get("witness") for f in chronicle.facts("caught")), 90)
-    if script is not None:
-        first = script.calls[0] if script.calls else None
-        offered = [t.name for t in first[2]] if first else []
-        check(
-            "offered",
-            "ask_witness" in offered and f"- {wname} — " in str(first[1] if first else ""),
-            offered,
-        )
     testimony = next((f for f in chronicle.facts("testimony") if f.get("witness") == witness), None)
     check(
         "testimony",
@@ -1643,9 +1745,6 @@ async def witness_check(
         state = await link.story_state(npcs=[witness], near=farmer)
         cm = (state.get("npcs", {}).get(witness) or {}).get("distance")
         check("came", cm is not None and float(cm) <= 500, f"near: {wname} {cm} cm from {name}")
-        wconv = dialogue.conversations.get(witness)
-        spoke = [e.content for e in wconv.memory.entries if e.role == "assistant"] if wconv else []
-        check("witness_spoke", bool(spoke), spoke[-1:] or "silent")
     else:  # Lobart went to it and came back to the hero
         back = farmer in talk.people and talk.people[farmer].distance <= 600
         cm = talk.people[farmer].distance if farmer in talk.people else None
@@ -1667,33 +1766,28 @@ async def witness_check(
     if far is None:
         check("far", False, f"no far acquaintance of {name}: {witnesses._near.get(farmer)}")
         return _logged(results)
-    if script is not None:
-        script.said.insert(
-            0,
-            (
-                far.name,
-                FakeStep(
-                    f"Ладно, спрошу {far.name}, как увижу.",
-                    [ToolCall("ask_witness", {"who": far.name, "said": "всё утро был в городе"})],
-                ),
-            ),
-        )
-    others = len(script.others.calls) if script is not None and isinstance(script.others, ClaimScript) else 0
+    off.given(
+        f"дано: Лобарт спрашивает дальнего знакомого {far.name}", who=farmer, when=far.name,
+        calls=[ToolCall("ask_witness", {"who": far.name, "said": "всё утро был в городе"})],
+    )
+    off.silent(
+        "дано: Лобарт молчит (дальний вопрос записан)", who=farmer, when=far.name,
+    )
     await link.debug("type", text=f"{name}, не веришь — спроси {far.name}, он подтвердит.")
-    asked = await _until(lambda: any(f.get("witness") == far.npc for f in chronicle.facts("inquiry")), 60)
+    await _until(lambda: any(f.get("witness") == far.npc for f in chronicle.facts("inquiry")), 60)
     q = next((f for f in chronicle.facts("inquiry") if f.get("witness") == far.npc), None)
-    check("far_asked", asked, q.get("meets") if q else "no inquiry")
-    if q is not None:
+    if q is None:
+        check("far_answered", False, "no inquiry to answer at the meeting")
+    else:
+        await _until(lambda: not dialogue.speaking(farmer), 10)
+        calls = len(off.used)
         hour, minute = divmod(int(q["meets"]) % 1440 + 5, 60)
         await link.debug("time", hour=hour, minute=minute)
         told = await _until(lambda: any(f.get("id") == q["id"] for f in chronicle.facts("testimony")), 20)
         t = next((f for f in chronicle.facts("testimony") if f.get("id") == q["id"]), None)
-        calls = (
-            len(script.others.calls) if script is not None and isinstance(script.others, ClaimScript) else 0
-        )
         check(
             "far_answered",
-            told and t is not None and t.get("tier") == "far" and calls == others,
+            told and t is not None and t.get("tier") == "far" and len(off.used) == calls,
             {k: t.get(k) for k in ("tier", "told")} if t else "none",
         )
     return _logged(results)

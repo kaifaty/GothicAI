@@ -177,19 +177,45 @@ async def test_a_second_session_is_refused_while_one_runs(setup, monkeypatch):
     assert window.events("session")[-1]["state"] == "stopped"
 
 
-async def test_report_has_the_logs_without_keys(setup):
+async def test_report_has_the_logs_without_keys(setup, monkeypatch):
     c, window, tmp_path = setup
+    tokens = tmp_path / "chatgpt.json"
+    tokens.write_text(json.dumps({"access_token": "access-secret", "refresh_token": "refresh-secret"}))
+    monkeypatch.setattr(control_module.checks, "CHATGPT_TOKENS", tokens)
     await call(c, "settings.set", key="secrets.inworld_api_key", value="iw-secret")
     log_dir = tmp_path / "logs" / "2026-10-11_18-00-00"
     log_dir.mkdir(parents=True)
-    (log_dir / "tts.log").write_text("key iw-secret leaked\n")
+    (log_dir / "tts.log").write_text(
+        "key iw-secret leaked\nAuthorization: Bearer abc.DEF-123_x\n"
+        "authorization: bEaReR abc.DEF-123_x\naccess_token=access-secret\nrefresh_token=refresh-secret\n"
+    )
 
     path = Path((await call(c, "report.create"))["path"])
 
     with zipfile.ZipFile(path) as z:
         text = z.read("2026-10-11_18-00-00/tts.log").decode()
         settings = z.read("settings.toml").decode()
-    assert "iw-secret" not in text and "<hidden>" in text and "<set>" in settings
+        contents = "\n".join(z.read(name).decode() for name in z.namelist())
+    for secret in ("iw-secret", "abc.DEF-123_x", "access-secret", "refresh-secret"):
+        assert secret not in contents
+    assert text.count("<hidden>") == 5 and "Bearer <hidden>" in text and "<set>" in settings
+
+
+@pytest.mark.parametrize("tokens_json", [None, "{broken", "{}"])
+async def test_report_without_chatgpt_tokens(setup, monkeypatch, tokens_json):
+    c, window, tmp_path = setup
+    tokens = tmp_path / "chatgpt.json"
+    if tokens_json is not None:
+        tokens.write_text(tokens_json)
+    monkeypatch.setattr(control_module.checks, "CHATGPT_TOKENS", tokens)
+    log_dir = tmp_path / "logs" / "2026-10-11_18-00-00"
+    log_dir.mkdir(parents=True)
+    (log_dir / "server.log").write_text("Authorization: Bearer abc.DEF-123_x\n")
+
+    path = Path((await call(c, "report.create"))["path"])
+
+    with zipfile.ZipFile(path) as z:
+        assert z.read(f"{log_dir.name}/server.log").decode() == "Authorization: Bearer <hidden>\n"
 
 
 @pytest.fixture

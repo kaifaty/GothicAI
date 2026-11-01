@@ -1,4 +1,4 @@
-"""Greg's clothing errand: the model promises its reward, pays it, and records missing clothes."""
+"""Consequences of Greg's given clothing errand and reward decisions."""
 
 from __future__ import annotations
 
@@ -7,18 +7,22 @@ from typing import TYPE_CHECKING
 
 from ..brain.reflex import Reflexes
 from ..llm import ToolCall
-from ..llm.fake import FakeBackend, FakeStep
 from ..protocol import Session
 from .common import (
     FixedDecider,
-    _ByNpc,
+    _clear_beasts,
     _logged,
-    _OnWords,
     _save,
     _until,
     _until_async,
+    log,
+    model_off,
     wait_message,
 )
+
+SCENARIOS = {
+    "greg": ("GIVEN", {"save": False, "timeout": 240}),
+}
 
 if TYPE_CHECKING:
     from ..dialogue import DialogueManager
@@ -37,16 +41,15 @@ GOLD = "ITMI_GOLD"
 async def greg(
     link: GameLink, dialogue: DialogueManager, talk: TalkDesk, vanilla: VanillaQuests, slot: int = 7
 ) -> dict[str, str]:
-    """On a new game, give and accept Greg's native quest through his model. Reload the branch saved
-    before the clothes were supplied: accepting the same claim without them must record the truth."""
+    """Give and accept Greg's native quest as declared givens. Reload the branch saved before the
+    clothes were supplied: accepting the same claim without them must record the truth."""
     results: dict[str, str] = {}
 
     def check(name: str, ok: bool, detail: object = "") -> bool:
         results[name] = f"{'done' if ok else 'failed'}{f' ({detail})' if detail != '' else ''}"
         return ok
 
-    if not isinstance(dialogue.llm, FakeBackend):
-        return _logged({"scripted_model": "failed (greg requires LLM=fake)"})
+    off = model_off(dialogue)
     await link.wait_world()
     if link.session is None:
         await wait_message(link, Session, timeout=10)
@@ -71,7 +74,7 @@ async def greg(
         return [int(n or 0) for n in await link.story_eval(GREG, exprs)]
 
     async def say(text: str) -> bool:
-        await link.debug("player_goto", to=GREG, distance=250)
+        await link.debug("teleport", near=GREG, distance=250)
         if not await _until(lambda: GREG in talk.people and talk.people[GREG].distance < 600, 20):
             return False
         conv = dialogue.conversations.get(GREG)
@@ -80,12 +83,17 @@ async def greg(
 
         def answered() -> bool:
             conv = dialogue.conversations.get(GREG)
-            return bool(conv and conv.reply and conv.reply is not before and conv.reply.done())
+            return bool(
+                conv and conv.reply and conv.reply is not before and conv.reply.done() and not conv.actions
+            )
 
         return await _until(answered, 60)
 
     await link.debug("skip_important", near=GREG)
-    await link.debug("player_goto", to=GREG, distance=250)
+    # The nearest waypoint can be farther than talking distance from Greg.
+    await link.debug("teleport", near=GREG, distance=250)
+    await _clear_beasts(link, GREG)
+    log.info("given: дано: решающая модель оставляет Грега слушать героя")
     talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
     if not check("near", await _until(lambda: GREG in talk.people, 20), GREG):
         return _logged(results)
@@ -93,20 +101,21 @@ async def greg(
     if not check("new_game", await state() == 0 and before[3] == before[5] == 0, before):
         return _logged(results)
     name = talk.people[GREG].name
-    give = ToolCall("give_quest", {"quest": QUEST}, "greg_give")
-    accept = ToolCall("accept_quest", {"quest": QUEST}, "greg_accept")
-    dialogue.llm = _ByNpc(
-        {
-            name: _OnWords(
-                [
-                    ("помогу", FakeStep("Добудь мне одежду крестьянина. За мной награда.", [give])),
-                    ("одежду", FakeStep("Верю тебе, приятель. Держи награду.", [accept])),
-                ],
-                FakeStep("Хм."),
-            )
-        },
-        FakeBackend("Хм.", delay=0),
+    off.given(
+        "дано: Грег даёт поручение добыть одежду крестьянина", who=GREG, when="помогу",
+        calls=[ToolCall("give_quest", {"quest": QUEST}, "greg_give")],
     )
+    off.silent("дано: Грег молчит (поручение выдано)", who=GREG, when="помогу")
+    off.given(
+        "дано: Грег засчитывает принесённую одежду", who=GREG, when="принёс одежду",
+        calls=[ToolCall("accept_quest", {"quest": QUEST}, "greg_accept")],
+    )
+    off.silent("дано: Грег молчит (поручение засчитано)", who=GREG, when="принёс одежду")
+    off.given(
+        "дано: Грег верит заявлению об одежде за углом и засчитывает поручение", who=GREG, when="за углом",
+        calls=[ToolCall("accept_quest", {"quest": QUEST}, "greg_accept_missing")],
+    )
+    off.silent("дано: Грег молчит (заявление об одежде принято)", who=GREG, when="за углом")
 
     await vanilla.prepare(GREG)
     situation = vanilla.situation(GREG) or ""
@@ -136,7 +145,7 @@ async def greg(
     situation = vanilla.situation(GREG) or ""
     check(
         "promised_on_turn_in",
-        "Награда, как обещано:" in situation
+        "Награда, как обещано" in situation
         and all(s in situation for s in ("50 золотых", "100", "опыт", "Карта земель Хориниса", "Ром ×2")),
         situation,
     )

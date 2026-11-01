@@ -2,7 +2,7 @@ import React from 'react';
 import {AbsoluteFill, interpolate, useCurrentFrame, useVideoConfig} from 'remotion';
 import {chance, exeChance, MAX_DIST, MIN_DIST, type Curve} from '../dice';
 import type {DiceChart as Spec} from '../schema';
-import {CARD_LIFT, COLOR, FONT, OUTLINE, SOURCE_TOP} from '../theme';
+import {CARD_LIFT, COLOR, FONT, OUTLINE, SOURCE_BOTTOM} from '../theme';
 import {keyframes, shown} from './anim';
 
 const STYLE: Record<Curve, {color: string; width: number}> = {
@@ -125,7 +125,8 @@ export const DiceChart: React.FC<{spec: Spec}> = ({spec}) => {
             position: 'absolute',
             left: x(d),
             top: Y0 + 16,
-            transform: 'translateX(-50%)',
+            // the last one ends on the axis: centred, the slow push carried it under the Shorts buttons
+            transform: d === MAX_DIST ? 'translateX(-100%)' : 'translateX(-50%)',
             opacity: axes,
             ...label(36, d === MIN_DIST ? COLOR.text : COLOR.before),
           }}
@@ -210,7 +211,7 @@ export const DiceChart: React.FC<{spec: Spec}> = ({spec}) => {
         </div>
       ))}
 
-      <div style={{position: 'absolute', left: wide ? 96 : X0 - 20, top: wide ? 850 : SOURCE_TOP + CARD_LIFT, opacity: axes, ...label(28, COLOR.before), fontWeight: 600, ...(wide ? {width: 1728, whiteSpace: 'normal'} : {})}}>
+      <div style={{position: 'absolute', left: wide ? 96 : X0 - 20, ...(wide ? {top: 850} : {bottom: SOURCE_BOTTOM - CARD_LIFT}), opacity: axes, ...label(28, COLOR.before), fontWeight: 600, ...(wide ? {width: 1728, whiteSpace: 'normal'} : {})}}>
         {spec.source}
       </div>
     </AbsoluteFill>

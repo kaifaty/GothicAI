@@ -15,6 +15,7 @@
 #include "world/objects/npc.h"
 #include "gothic.h"
 
+#include <Tempest/Log>
 #include <Tempest/MemReader>
 #include <Tempest/MemWriter>
 
@@ -4155,6 +4156,139 @@ namespace {
       }
     }
 
+  void testItemDeepestContact() {
+    require(Gothic::PhysicsFlags{}.itemDeepestContact,"item deepest contact must default to ON");
+    // Inflated body-frame hull vertices (metres), poses and original volumes
+    // from Claude's thin-blade dumps. No game assets or hull inflation run here.
+    const JPH::Vec3 canePoints[] = {
+      {0.0000100f,-0.0394365f,-0.0001233f},{0.0953004f,-0.0176432f,-0.0763430f},{0.1580164f,-0.0275274f,0.0000100f},
+      {0.0000100f,0.0386679f,-0.0001233f},{0.1580164f,0.0275474f,0.0000100f},{0.0953004f,0.0172531f,-0.0763430f},
+      {-0.9935228f,0.0117074f,0.0000100f},{-1.0002762f,0.0067635f,-0.0067435f},{-1.0002762f,0.0067635f,0.0067635f},
+      {-1.0052202f,0.0000100f,0.0000100f},{-0.9935228f,0.0000100f,0.0117074f},{-1.0002762f,-0.0067435f,0.0067635f},
+      {-0.9935228f,-0.0116874f,0.0000100f},{-1.0002762f,-0.0067435f,-0.0067435f},{-0.9935228f,0.0000100f,-0.0116874f},
+      {0.1853235f,0.0067635f,-0.0067435f},{0.1902674f,0.0000100f,0.0000100f},{0.1853235f,-0.0067435f,-0.0067435f},
+      {0.1853235f,0.0067635f,0.0067635f},{0.1853235f,-0.0067435f,0.0067635f},{0.1647699f,0.0067635f,0.0326835f},
+      {0.1647699f,-0.0067435f,0.0326835f},{0.1580164f,0.0000100f,0.0376274f},{0.0000100f,-0.0314245f,0.0281609f},
+      {-0.0315445f,-0.0160990f,0.0629631f},{0.0000100f,0.0306559f,0.0281610f},{-0.0315445f,0.0161190f,0.0629631f},
+      {-0.0247910f,0.0111751f,0.0697166f},{0.1647698f,0.0226035f,0.0067635f},{-0.0247910f,-0.0111551f,0.0697166f},
+      {0.1647698f,-0.0225835f,0.0067635f},{0.1392130f,-0.0110891f,-0.0620342f},{0.1407028f,-0.0069485f,-0.0636713f},
+      {0.1020538f,-0.0126993f,-0.0830965f},{0.1647698f,0.0226035f,-0.0067435f},{0.1392130f,0.0106990f,-0.0620342f},
+      {0.1647698f,-0.0225835f,-0.0067435f},{0.0525214f,-0.0176432f,-0.0780567f},{0.0525214f,0.0172531f,-0.0780567f},
+      {0.1020538f,0.0123092f,-0.0830965f},{0.1407028f,0.0065584f,-0.0636713f},{0.1339493f,-0.0001950f,-0.0686152f},
+      {-0.9234520f,0.0000100f,0.0178850f},{-0.9302055f,0.0067635f,0.0129411f},{-0.9302055f,-0.0067435f,0.0129411f},
+      {0.1027695f,-0.0069485f,-0.0856545f},{0.0960160f,-0.0001950f,-0.0905984f},{0.1027695f,0.0065584f,-0.0856545f},
+      {-0.9234520f,0.0000100f,-0.0178650f},{0.0520127f,-0.0001950f,-0.0923611f},{0.0525214f,-0.0059458f,-0.0897541f},
+      {0.0525214f,0.0055557f,-0.0897541f},{0.1324595f,-0.0160330f,-0.0552807f},{0.1324595f,0.0156429f,-0.0552807f},
+      {-0.0315445f,0.0000100f,0.0778565f},{-0.0382980f,-0.0111551f,0.0697166f},{-0.0382980f,0.0111751f,0.0697166f},
+      {0.0953004f,-0.0059458f,-0.0880404f},{0.0953004f,0.0055557f,-0.0880404f},{-0.9234520f,0.0117074f,0.0061876f},
+      {-0.9234520f,-0.0116874f,0.0061876f},{-0.9302055f,0.0067635f,-0.0129211f},{0.0457679f,0.0123092f,-0.0848102f},
+      {-0.9302055f,-0.0067435f,-0.0129211f},{0.0457679f,-0.0126993f,-0.0848102f},{-0.0247910f,0.0067635f,0.0729126f},
+      {-0.0247910f,-0.0067435f,0.0729126f},{0.0000100f,-0.0314245f,-0.0284076f},{0.0592749f,-0.0126993f,-0.0848102f},
+      {0.0592749f,0.0123092f,-0.0848102f},{0.0000100f,0.0306559f,-0.0284076f},{-0.9234520f,0.0117074f,-0.0061676f},
+      {-0.9234520f,-0.0116874f,-0.0061676f},{-0.0382980f,-0.0067435f,0.0729126f},{-0.0382980f,0.0067635f,0.0729126f},
+      };
+    const JPH::Vec3 rapierPoints[] = {
+      {-0.6599900f,-0.0099900f,-0.0049900f},{-0.6249900f,-0.0147319f,0.0200100f},{-0.6749900f,-0.0099900f,0.0200100f},
+      {-0.0140601f,0.0000100f,-0.1101174f},{0.0773733f,0.0105005f,-0.0943249f},{0.0773733f,-0.0112228f,-0.0943249f},
+      {0.1165810f,-0.0148450f,-0.0775646f},{0.1165810f,0.0141227f,-0.0775646f},{0.1410690f,0.0102463f,-0.0521023f},
+      {0.1410690f,-0.0109685f,-0.0521023f},{-0.6749900f,0.0000100f,0.0300100f},{-0.6807635f,0.0057835f,0.0257835f},
+      {-0.6807635f,-0.0057635f,0.0257835f},{-0.6849900f,0.0000100f,0.0200100f},{-0.0144463f,-0.0178263f,0.0845428f},
+      {0.1193156f,-0.0414022f,-0.0320298f},{-0.0082866f,-0.0057635f,0.1059109f},{0.1425866f,-0.0257067f,-0.0216935f},
+      {0.1391145f,-0.0057635f,0.0068040f},{0.0807833f,0.0536168f,-0.0419428f},{-0.0144463f,0.0178463f,0.0845428f},
+      {0.1135421f,0.0449064f,-0.0378032f},{0.1368131f,0.0292109f,-0.0274670f},{0.1425866f,0.0249844f,-0.0332405f},
+      {0.1193156f,0.0406799f,-0.0435767f},{0.1572153f,0.0000100f,-0.0119868f},{0.1529888f,0.0057835f,-0.0062133f},
+      {0.1529888f,-0.0057635f,-0.0062133f},{0.1391145f,0.0057835f,0.0068040f},{-0.6807635f,0.0057835f,0.0142365f},
+      {-0.6749900f,0.0100100f,0.0200100f},{-0.6807635f,-0.0057635f,0.0142365f},{-0.6657635f,-0.0057635f,-0.0107635f},
+      {0.1425866f,0.0249844f,-0.0216935f},{-0.0082866f,0.0057835f,0.1059109f},{-0.6249900f,0.0000100f,-0.0299900f},
+      {-0.6307635f,0.0057835f,-0.0257635f},{-0.0198336f,0.0057835f,-0.1058909f},{-0.6307635f,-0.0057635f,-0.0257635f},
+      {-0.0198336f,-0.0057635f,-0.1058909f},{-0.6657635f,0.0057835f,-0.0107635f},{-0.6599900f,0.0100100f,-0.0049900f},
+      {-0.6249900f,0.0100100f,-0.0199900f},{-0.6249900f,0.0147519f,0.0200100f},{0.1135421f,-0.0456287f,-0.0378033f},
+      {0.0807833f,-0.0543391f,-0.0419428f},{0.0450249f,-0.0543391f,-0.0390658f},{0.0450249f,0.0536168f,-0.0390658f},
+      {0.0428319f,0.0400725f,-0.0663219f},{-0.6249900f,-0.0099900f,-0.0199900f},{0.0428319f,-0.0407948f,-0.0663219f},
+      {0.1175570f,0.0298183f,-0.0654344f},{0.1416106f,0.0189566f,-0.0453706f},{0.1193156f,-0.0414022f,-0.0435768f},
+      {0.1175570f,-0.0305405f,-0.0654344f},{0.1416106f,-0.0196789f,-0.0453706f},{0.1425866f,-0.0257067f,-0.0332405f},
+      {0.0831468f,0.0162740f,-0.0900984f},{0.0843638f,0.0358460f,-0.0749724f},{0.0843638f,-0.0365683f,-0.0749724f},
+      {0.0831468f,-0.0169963f,-0.0900984f},{0.1108075f,-0.0090715f,-0.0817911f},{-0.6599900f,0.0000100f,-0.0149900f},
+      {0.1108075f,0.0083492f,-0.0817911f},{0.1452955f,0.0044728f,-0.0463288f},{0.1452955f,-0.0051950f,-0.0463288f},
+      {-0.0140601f,0.0100100f,0.1001374f},{-0.0140601f,-0.0099900f,0.1001374f},{-0.0140601f,0.0000100f,0.1101374f},
+      {-0.0198336f,0.0057835f,0.1059109f},{-0.0198336f,-0.0057635f,0.1059109f},{0.0785903f,0.0400725f,-0.0691989f},
+      {0.0785903f,-0.0407948f,-0.0691989f},{0.1193156f,0.0406799f,-0.0320297f},{0.1468131f,-0.0199332f,-0.0274670f},
+      {0.1458371f,-0.0139054f,-0.0395971f},{0.1458371f,0.0131831f,-0.0395971f},{0.1468131f,0.0192109f,-0.0274670f},
+      {-0.0082866f,0.0057835f,-0.1058909f},{-0.0082866f,-0.0057635f,-0.1058909f},{0.0728168f,-0.0365683f,-0.0749724f},
+      {-0.6699900f,0.0000100f,-0.0049900f},{0.0728168f,0.0358460f,-0.0749724f},{0.0370584f,-0.0365683f,-0.0720954f},
+      {0.0865568f,-0.0501126f,-0.0477163f},{0.0865568f,0.0493903f,-0.0477163f},{0.0370584f,0.0358460f,-0.0720954f},
+      {-0.6307635f,-0.0105054f,0.0257835f},{-0.6307635f,0.0105254f,0.0257835f},{0.1333411f,0.0000100f,0.0110305f},
+      {-0.0159459f,0.0319281f,0.0337302f},{0.1368131f,-0.0299332f,-0.0274670f},
+      };
+
+    const auto check=[](const char* name, const auto& points, JPH::Vec3Arg position, JPH::QuatArg rotation,
+                       float volume, const JPH::VertexList& vertices, int supportLayer) {
+      JPH::ConvexHullShapeSettings hullSettings(points,int(std::size(points)),.00025f);
+      hullSettings.mHullTolerance=.0001f;
+      hullSettings.mMaxErrorConvexRadius=.0001f;
+      const auto hull=hullSettings.Create();
+      require(!hull.HasError(),"thin-blade dump must create its native convex hull");
+      const auto support=JPH::MeshShapeSettings(vertices,{{0,1,2}}).Create();
+      require(!support.HasError(),"thin-blade fixture must create one horizontal support triangle");
+      const auto transform=JPH::Mat44::sRotationTranslation(rotation,position);
+      auto matrix=Tempest::Matrix4x4::mkIdentity();
+      for(int c=0;c<4;++c)
+        for(int r=0;r<3;++r)
+          matrix.set(c,r,transform.GetColumn4(c)[r]*(c==3 ? 100.f : 1.f));
+      const float planeY=vertices[0].y*100.f;
+      for(const bool enabled:{false,true}) {
+        CollisionWorld world;
+        world.setItemDeepestContactEnabled(enabled);
+        // OFF must expose the native crossing before the safety net resets it.
+        // ON keeps the production recovery path and counts every reset.
+        world.setItemWakeEnabled(enabled);
+        auto floor=world.addCollisionBody(support.Get(),at(0,0,0),.5f,supportLayer);
+        auto item=world.addDynamicBody(hull.Get(),matrix,.5f,7800.f*volume,DynamicWorld::C_Item);
+        const auto start=item->position();
+        float maxShift=0,minComAbove=item->centerOfMass().y-planeY;
+        uint64_t crossed=0;
+        size_t recovered=0;
+        Tempest::Log::setOutputCallback([&](Tempest::Log::Mode,const char* line) {
+          if(std::string_view(line).find("item recovered:")!=std::string_view::npos)
+            ++recovered;
+          });
+        uint64_t sampled=0;
+        while(world.simulationStep()<(enabled ? 300u : 20u)) {
+          world.tick(16);
+          if(sampled==world.simulationStep())continue;
+          require(world.simulationStep()==sampled+1,"thin-blade fixture must sample every native 1/60 step");
+          sampled=world.simulationStep();
+          maxShift=std::max(maxShift,(item->position()-start).length());
+          const float above=item->centerOfMass().y-planeY;
+          minComAbove=std::min(minComAbove,above);
+          if(above<0 && crossed==0)crossed=sampled;
+          }
+        Tempest::Log::setOutputCallback({});
+        std::printf("Thin blade %s deepest %d: steps %llu, mass %.9g kg, max shift %.6f cm, "
+                    "min COM above %.6f cm, crossing step %llu, recovered %zu\n",
+                    name,int(enabled),static_cast<unsigned long long>(sampled),double(item->mass()),
+                    double(maxShift),double(minComAbove),static_cast<unsigned long long>(crossed),recovered);
+        if(enabled) {
+          require(maxShift<5.f,"deepest contact must hold each blade within five centimetres for 300 steps");
+          require(minComAbove>=0,"deepest contact must keep blade COM above the support on every step");
+          require(recovered==0,"deepest contact must hold each blade without recovery");
+          }
+        else
+          require(crossed>0 && crossed<=20,"upstream manifold must reproduce the blade crossing within twenty steps");
+        }
+      };
+    check("OLDWORLD 1644",canePoints,{-126.0437775f,29.5590572f,-336.4428711f},
+          {-.000000022f,.939692676f,-.000000008f,.342020154f},.00205267756f,
+          {{-126.625645f,29.5296582f,-336.858516f},
+           {-125.506016f,29.5296582f,-335.660703f},
+           {-125.335527f,29.5296582f,-335.977812f}},DynamicWorld::C_Object);
+    check("ADDONWORLD 6863",rapierPoints,{42.7198410f,-32.5431252f,258.7348328f},
+          {0,0,0,1},.00332153379f,
+          {{42.4582031f,-32.5876465f,257.429688f},
+           {40.8759204f,-32.5876465f,260.700645f},
+           {43.5833301f,-32.5876465f,259.642266f}},DynamicWorld::C_Landscape);
+    }
+
   void testItemWake() {
     for(const bool legacy:{false,true}) {
       CollisionWorld world;
@@ -4429,6 +4563,42 @@ namespace {
 
   void testContracts() {
     {
+      using MeleeImpact::BackstabKind;
+      requireNear(MeleeImpact::backstabAngle(0.f,119.9f),119.9f,.0001f,
+                  "backstab angles must retain the horizontal sector boundary");
+      requireNear(MeleeImpact::backstabAngle(350.f,110.f),120.f,.0001f,
+                  "backstab angles must wrap across zero degrees");
+      require(MeleeImpact::backstabKind(119.9f,1,false,false,false)==BackstabKind::None,
+              "an unaware target at 119.9 degrees must not receive a backstab");
+      require(MeleeImpact::backstabKind(120.f,1,false,false,false)==BackstabKind::Unaware,
+              "an unaware target at 120 degrees must receive a backstab");
+      require(MeleeImpact::backstabKind(180.f,0,false,false,false)==BackstabKind::None,
+              "an unaware backstab must require the sneak talent");
+      require(MeleeImpact::backstabKind(180.f,0,false,true,true)==BackstabKind::Stunned,
+              "a rear hit on a stunned target must qualify without sneak or surprise");
+      require(MeleeImpact::backstabKind(0.f,1,true,false,false)==BackstabKind::Sleeping,
+              "a sleeping target must allow a frontal backstab with the sneak talent");
+      require(MeleeImpact::backstabKind(0.f,0,true,false,false)==BackstabKind::None,
+              "a sleeping backstab must still require the sneak talent");
+      require(MeleeImpact::backstabKind(0.f,0,false,true,true)==BackstabKind::None,
+              "a frontal hit on a stunned target must not qualify as a backstab");
+      require(MeleeImpact::backstabKind(180.f,1,false,false,true)==BackstabKind::None,
+              "combat or a recent hit must prevent an unaware backstab");
+      require(MeleeImpact::backstabRecentHit(10900,1000),
+              "a hit 9.9 seconds ago must keep the target aware of its attacker");
+      require(!MeleeImpact::backstabRecentHit(11000,1000),
+              "a hit exactly 10 seconds ago must no longer keep the target aware");
+      requireNear(MeleeImpact::backstabMultiplier(BackstabKind::Unaware,false,1.f),3.f,.0001f,
+                  "an unaware backstab must triple final melee damage");
+      requireNear(MeleeImpact::backstabMultiplier(BackstabKind::Unaware,true,1.f),1.5f,.0001f,
+                  "a huge beast must receive only a 1.5 backstab multiplier");
+      requireNear(MeleeImpact::backstabMultiplier(BackstabKind::Stunned,false,1.5f),3.f,.0001f,
+                  "a stunned backstab must replace rather than multiply the stun bonus");
+      requireNear(MeleeImpact::backstabMultiplier(BackstabKind::None,false,1.5f),1.5f,.0001f,
+                  "an ordinary hit must retain the existing stun bonus");
+      }
+
+    {
       using MeleeImpact::Weapon;
       const auto fist=MeleeImpact::impulse(Weapon::Fist,{600,800,0},90);
       requireNear(fist.x,9.f,.0001f,"fist impulse must convert world cm/s into N s");
@@ -4630,6 +4800,68 @@ namespace {
     require(!Npc::canAccumulateMeleePosture(true,true,false,false),"a blocked hit must leave posture unchanged");
     require(!Npc::canAccumulateMeleePosture(true,false,true,false),"a knockdown must not accumulate another knockdown");
     require(!Npc::canAccumulateMeleePosture(true,false,false,true),"death or unconsciousness must retain the old path");
+
+    require(MeleeImpact::beastSize(54.9f)==MeleeImpact::BeastSize::Small,
+            "beasts below 55 kg must be small");
+    require(MeleeImpact::beastSize(55.f)==MeleeImpact::BeastSize::Medium &&
+            MeleeImpact::beastSize(299.9f)==MeleeImpact::BeastSize::Medium,
+            "beasts from 55 kg to below 300 kg must be medium");
+    require(MeleeImpact::beastSize(300.f)==MeleeImpact::BeastSize::Huge,
+            "beasts from 300 kg must be huge");
+    require(MeleeImpact::beastCanAccumulatePosture(54.9f) && MeleeImpact::beastCanAccumulatePosture(299.9f) &&
+            !MeleeImpact::beastCanAccumulatePosture(300.f) && !MeleeImpact::beastCanAccumulatePosture(600.f),
+            "small and medium beasts must accumulate posture while huge beasts never do");
+    requireNear(Ragdoll::speciesMass("Shadow"),250.f,.0001f,"the Shadow model must weigh 250 kg");
+    requireNear(Ragdoll::speciesMass("sHaDoW"),250.f,.0001f,"Shadow mass must be case insensitive");
+    requireNear(Ragdoll::speciesMass("Golem"),500.f,.0001f,"the Golem model must weigh 500 kg");
+    requireNear(Ragdoll::speciesMass("gOlEm"),500.f,.0001f,"Golem mass must be case insensitive");
+
+    requireNear(MeleeImpact::beastImpulse(40.f),20.f,.0001f,"a 40 kg beast must strike with 20 N s");
+    requireNear(MeleeImpact::beastImpulse(90.f),45.f,.0001f,"a 90 kg beast must strike with 45 N s");
+    requireNear(MeleeImpact::beastImpulse(250.f),60.f,.0001f,"a 250 kg beast impulse must cap at 60 N s");
+    requireNear(MeleeImpact::beastSkillThresholdScale(0),.96f,.0001f,
+                "beast attacks must use a neutral attacker scale against an unskilled defender");
+    requireNear(MeleeImpact::beastSkillThresholdScale(100),1.44f,.0001f,
+                "beast attacks must retain the skilled defender threshold multiplier");
+    {
+      const auto threshold = MeleeImpact::beastSkillThresholdScale(0);
+      const auto hugeHit = MeleeImpact::postureIncrease(60.f,75.f,threshold);
+      const auto mediumHit = MeleeImpact::postureIncrease(45.f,75.f,threshold);
+      require(hugeHit>=40.f && mediumHit<40.f,
+              "60 N s must cross the heavy posture threshold against 75 kg while 45 N s must not");
+      require(MeleeImpact::heavyHit(MeleeImpact::Weapon::Fist,{0,0,0},hugeHit)==MeleeImpact::HeavyHit::Posture &&
+              MeleeImpact::heavyHit(MeleeImpact::Weapon::Fist,{0,0,0},mediumHit)==MeleeImpact::HeavyHit::None,
+              "unarmed beast hits must qualify as heavy only through their posture increase");
+      }
+
+    require(MeleeImpact::heavyHit(MeleeImpact::Weapon::TwoHand,{0,0,0},0)==MeleeImpact::HeavyHit::TwoHanded,
+            "a two-handed weapon must qualify as a heavy hit");
+    require(MeleeImpact::heavyHit(MeleeImpact::Weapon::OneHand,{80,-60,0},0)==MeleeImpact::HeavyHit::Downward,
+            "a downward velocity fraction of 0.6 must qualify as a heavy hit");
+    require(MeleeImpact::heavyHit(MeleeImpact::Weapon::OneHand,{std::sqrt(10000.f-59.f*59.f),-59,0},0)==MeleeImpact::HeavyHit::None,
+            "a downward velocity fraction of 0.59 must not qualify as a heavy hit");
+    require(MeleeImpact::heavyHit(MeleeImpact::Weapon::OneHand,{0,0,0},40.f)==MeleeImpact::HeavyHit::Posture,
+            "a posture increase of 40 must qualify as a heavy hit");
+    require(MeleeImpact::heavyHit(MeleeImpact::Weapon::OneHand,{0,0,0},39.9f)==MeleeImpact::HeavyHit::None,
+            "a posture increase of 39.9 must not qualify as a heavy hit");
+    require(MeleeImpact::armorClass(39)==MeleeImpact::ArmorClass::Light,
+            "edge protection below 40 must be light armor");
+    require(MeleeImpact::armorClass(40)==MeleeImpact::ArmorClass::Medium &&
+            MeleeImpact::armorClass(79)==MeleeImpact::ArmorClass::Medium,
+            "edge protection from 40 through 79 must be medium armor");
+    require(MeleeImpact::armorClass(80)==MeleeImpact::ArmorClass::Heavy,
+            "edge protection from 80 must be heavy armor");
+    requireNear(MeleeImpact::armorThresholdScale(MeleeImpact::armorClass(0)),1.f,.0001f,
+                "no armor must retain the posture threshold");
+    requireNear(MeleeImpact::armorThresholdScale(MeleeImpact::ArmorClass::Light),1.f,.0001f,
+                "light armor must retain the posture threshold");
+    requireNear(MeleeImpact::armorThresholdScale(MeleeImpact::ArmorClass::Medium),1.15f,.0001f,
+                "medium armor must multiply the posture threshold by 1.15");
+    requireNear(MeleeImpact::armorThresholdScale(MeleeImpact::ArmorClass::Heavy),1.3f,.0001f,
+                "heavy armor must multiply the posture threshold by 1.3");
+    require(MeleeImpact::stunDuration("parried")==1000 && MeleeImpact::stunDuration("guard_break")==1000 &&
+            MeleeImpact::stunDuration("posture")==1500,
+            "parry and guard-break stuns must last 1000 ms and posture stuns 1500 ms");
 
     {
       // Tip heights of T_2HSFINISH and T_1HSFINISH at 30 fps, sampled in the game: the stroke down
@@ -5113,6 +5345,7 @@ int main() {
     testNpcSeparatedContactResponse();
     testFixedStepCarry();
     testFixedStepCadence();
+    testItemDeepestContact();
     testItemWake();
     testItemWeaponWake();
     testContracts();

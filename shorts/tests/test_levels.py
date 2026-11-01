@@ -1316,18 +1316,21 @@ def test_mastering_checks_all_decoded_stems_of_a_balanced_music_mix(tmp_path, co
     assert out.stat().st_size > 0
 
 
-@pytest.mark.parametrize("unsafe_limit", [True, False], ids=["earlier-limiter", "current-limiter"])
+@pytest.mark.parametrize("unsafe_limit", [True, False], ids=["hidden-overshoot", "current-limiter"])
 def test_mastering_rejects_a_true_peak_hidden_by_the_rounded_summary(
     tmp_path, comparison_cut, monkeypatch, unsafe_limit,
 ):
     if shutil.which("ffmpeg") is None:
         pytest.skip("ffmpeg is required for synthetic mastering")
-    # AAC at 192k reproduces the earlier limiter's overshoot on every platform.
+    # Lossy AAC is not bit-exact across FFmpeg builds: at 192k and the earlier 0.79 limit the
+    # candidate peaked at -0.99 dBTP with FFmpeg 9 on arm64, -0.92 with FFmpeg 8 on amd64. Lossless
+    # ALAC keeps the limiter's own intersample overshoot, about -0.98 dBTP at 0.792 on both, inside
+    # the (-1, -0.95) dBTP window that the rounded summary prints as -1.0.
     # The current limiter uses the production 256k fallback, which must also preserve dual mono.
-    encoder = ("-c:a", "aac", "-b:a", "192k") if unsafe_limit else levels.AAC_FALLBACK
+    encoder = ("-c:a", "alac", "-sample_fmt", "s32p") if unsafe_limit else levels.AAC_FALLBACK
     monkeypatch.setattr(levels, "aac_encoder", lambda: encoder)
     if unsafe_limit:
-        monkeypatch.setattr(levels, "PEAK_LIMIT", 0.79)
+        monkeypatch.setattr(levels, "PEAK_LIMIT", 0.792)
     else:
         assert levels.PEAK_LIMIT == 0.71
     voice, joined, out = (tmp_path / name for name in ("voice.wav", "joined.mkv", "short-ru.mp4"))
@@ -2051,13 +2054,21 @@ def test_publish_folds_panned_game_stereo_music_and_mono_voice(
             rows["music_speech"]["measured_lufs"])
 
 
-def test_publish_rejects_a_candidate_with_different_channels(tmp_path, publication_inputs, monkeypatch):
+@pytest.mark.parametrize("encoder", [None, levels.AAC_FALLBACK],
+                         ids=["platform-aac", "ffmpeg-aac-256k"])
+def test_publish_rejects_a_candidate_with_different_channels(
+    tmp_path, publication_inputs, monkeypatch, encoder,
+):
+    if encoder is not None:
+        monkeypatch.setattr(levels, "aac_encoder", lambda: encoder)
     original_graph = levels.AudioGraph.master_graph
 
+    # A silent right channel is no test for the fallback: forced M/S then codes no side and
+    # decodes both channels as the mid, 6 dB down. A weaker right channel survives every encoder.
     def panned_master(self, *args, **kwargs):
         return original_graph(self, *args, **kwargs).replace(
             "[master_mix]pan=stereo|c0=c0|c1=c0[a]",
-            "[master_mix]pan=stereo|c0=c0|c1=0*c0[a]",
+            "[master_mix]pan=stereo|c0=c0|c1=0.5*c0[a]",
         )
 
     monkeypatch.setattr(levels.AudioGraph, "master_graph", panned_master)

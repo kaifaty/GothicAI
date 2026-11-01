@@ -1,7 +1,8 @@
 """Push-to-talk: while the player holds the key (anywhere, protocol v7), the server records the Mac
 microphone and streams it to the ASR service (asr-service/) as it is spoken. Partial text goes to the
 game right away; on release only the recognizer's short tail is left, and the final text is the hero's
-phrase: talk.py decides whom it is said to (the hero's focus at the key is one of the hints).
+phrase: talk.py decides whom it is said to (the hero's focus at the key is one of the hints). Laughter
+alone («Ха-ха-ха») is said as `(смеётся)`: npc's hear that he laughs, not a word.
 
 The game only reports the key (`ptt_start` / `ptt_stop` / `ptt_cancel`); no audio passes through it.
 """
@@ -11,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 import wave
 from collections.abc import Callable, Coroutine
@@ -43,6 +45,20 @@ MIC_DENIED = (
     "микрофон молчит: разрешите доступ к микрофону приложению, в котором запущен сервер "
     "(Системные настройки → Конфиденциальность и безопасность → Микрофон)"
 )
+LAUGH = "(смеётся)"
+_LAUGH_WORD = re.compile(r"[ао]?(?:х[аеиоыэ])+х?|(?:гы)+")
+_VOWEL = re.compile(r"[аеиоыэ]")
+
+
+def laughter(text: str) -> bool:
+    """Only laughter, at least two syllables of it: «Ха-ха-ха», «Ахаха», «Хи-хи», «Гы-гы». ASR writes
+    laughter so; «Ах», «Ха» or laughter with words («Ха-ха, ну ты лошара») are the hero's words."""
+    words = re.findall(r"[^\W\d_]+", text.lower().replace("ё", "е"))
+    return (
+        bool(words)
+        and all(_LAUGH_WORD.fullmatch(word) for word in words)
+        and sum(len(_VOWEL.findall(word)) for word in words) >= 2
+    )
 
 
 class VoiceError(RuntimeError):
@@ -464,11 +480,13 @@ class VoiceInput:
         if not result.text:
             await self._status("notice", "Не расслышал. Удерживайте T, пока говорите")
             return
-        self.heard(
-            result.text,
-            utt.focus,
-            {"via": "voice", "asr": result.provider, "latency_s": round(result.latency_s, 2)},
-        )
+        details: dict[str, Any] = {
+            "via": "voice", "asr": result.provider, "latency_s": round(result.latency_s, 2)
+        }
+        text = result.text
+        if laughter(text):
+            text, details["heard"] = LAUGH, result.text
+        self.heard(text, utt.focus, details)
 
     async def _partial(self, utt: _Utterance, text: str) -> None:
         if not utt.finished:

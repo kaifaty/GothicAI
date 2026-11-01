@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
-import time
 from typing import TYPE_CHECKING, Any
 
 from .. import triggers
 from ..executor import Intent
 from ..game import GameError, GameLink
 from ..llm import ToolCall
-from ..llm.fake import FakeBackend, FakeStep
 from ..protocol import GameMessage, HeroDeed, Perception
-from .common import _ByNpc, _logged, _OnWords, _until, _until_async
+from .common import _logged, _until, _until_async, model_off
+
+SCENARIOS = {
+    "crime_ally": ("GIVEN", {"save": False, "timeout": 240}),
+}
 
 if TYPE_CHECKING:
     from ..crimes import Crimes
@@ -22,7 +24,6 @@ if TYPE_CHECKING:
 CAVALORN, BRAGO = "BAU_4300_ADDON_CAVALORN", "BDT_1014_BANDIT_L"
 OTHERS = ("BDT_1013_BANDIT_L", "BDT_1015_BANDIT_L")
 QUESTION = "Кавалорн, что скажешь о том, что случилось с Браго?"
-ANSWER = "Ты помог мне отбиться от Браго. Я с тобой."
 
 
 async def crime_ally(
@@ -32,24 +33,17 @@ async def crime_ally(
     service: Crimes,
     perception: PerceptionDesk | None = None,
 ) -> dict[str, str]:
-    """A following ally sees the murder of his enemy and still answers the hero."""
-    if dialogue.llm.name != "fake":
-        raise GameError("scenario crime_ally requires LLM=fake and a new game without SAVE")
+    """A following ally witnesses the hero finishing his enemy, given Brago attacks him."""
+    off = model_off(dialogue)
     await link.wait_world()
     results: dict[str, str] = {}
-    entries: list[dict[str, Any]] = []
     received: list[GameMessage] = []
     follows: list[str] = []
-    original_llm, original_sink, original_act = dialogue.llm, dialogue.journal.sink, link.act
+    original_act = link.act
 
     def check(name: str, ok: bool, detail: object = "") -> bool:
         results[name] = f"{'done' if ok else 'failed'}{f' ({detail})' if detail != '' else ''}"
         return ok
-
-    def keep(entry: dict[str, Any]) -> None:
-        entries.append(entry)
-        if original_sink is not None:
-            original_sink(entry)
 
     async def recorded(npc: str, action: Any, /, **kw: Any) -> Any:
         if npc.upper() == CAVALORN and action == "follow":
@@ -62,18 +56,18 @@ async def crime_ally(
     def record(message: GameMessage) -> None:
         received.append(message)
 
-    challenge = _OnWords(
-        [("не трогай", FakeStep("Сам напросился!", [ToolCall("set_intent", {
+    off.given(
+        "дано: Браго нападает на Кавалорна", who=BRAGO, when="Не трогай",
+        calls=[ToolCall("set_intent", {
             "goal": "fight", "target": CAVALORN, "attitude": "hostile", "agenda": None,
-        })]))],
-        FakeStep("Убирайся."),
+        })],
     )
-    dialogue.llm = _ByNpc({
-        "Кавалорн": _OnWords([(QUESTION, FakeStep(ANSWER))], FakeStep("Я рядом.")),
-        "Браго": challenge,
-        "Бандит": challenge,
-    }, FakeBackend("Хм.", delay=0))
-    dialogue.journal.sink = keep
+    off.silent("дано: Браго молчит (решение напасть принято)", who=BRAGO, when="Не трогай")
+    off.silent(
+        "дано: Кавалорн молчит (Браго нападает на него)",
+        who=CAVALORN, when="Браго нападает на тебя",
+    )
+    off.silent("дано: Кавалорн молчит (герой спрашивает об убийстве Браго)", who=CAVALORN, when=QUESTION)
     link.act = recorded  # type: ignore[method-assign]
     link.listeners.append(record)
 
@@ -161,22 +155,24 @@ async def crime_ally(
         ):
             return _logged(results)
         if perception is not None:
-            await perception.fresh(BRAGO)
+            # Distance alone permits Cavalorn to remain behind the cave's corner.
+            if not await _until_async(
+                lambda: perception.fresh(BRAGO),
+                lambda _: bool((sight := perception.sight(BRAGO)) and CAVALORN in sight.targets), 20,
+            ):
+                raise GameError("Cavalorn must be visible to Brago before the given attack")
         await link.snapshot(BRAGO, fresh=True)
         talk.hear("Эй, Браго! Не трогай Кавалорна.", BRAGO, {"via": "scenario"})
 
         def attacked() -> bool:
-            conv = dialogue.conversations.get(BRAGO)
-            return (
-                conv is not None
-                and (conv.intent.goal, conv.intent.target) == ("fight", CAVALORN)
-                and any(isinstance(message, Perception)
-                        and message.npc == CAVALORN and message.perc == "ASSESSDAMAGE"
-                        and message.other == BRAGO for message in received)
+            return any(
+                isinstance(message, Perception)
+                and message.npc == CAVALORN and message.perc == "ASSESSDAMAGE"
+                and message.other == BRAGO for message in received
             )
 
         if not check(
-            "brago_attacked", await _until(attacked, 30), f"set_intent fight -> {CAVALORN}; ASSESSDAMAGE",
+            "brago_attacked", await _until(attacked, 30), f"{CAVALORN}; ASSESSDAMAGE from Brago",
         ):
             return _logged(results)
 
@@ -266,20 +262,9 @@ async def crime_ally(
 
         await link.debug("teleport", near=CAVALORN, distance=250)
         await _until(lambda: 0 <= distance(CAVALORN) <= 500, 5)
-        mark, started = len(entries), time.monotonic()
         talk.hear(QUESTION, CAVALORN, {"via": "scenario"})
-        answers = await _until(lambda: any(
-            entry.get("kind") == "npc" and entry.get("npc") == CAVALORN and ANSWER in entry.get("text", "")
-            for entry in entries[mark:]
-        ), 15)
-        addressed = any(entry.get("kind") == "player" and entry.get("npc") == CAVALORN
-                        and entry.get("text") == QUESTION for entry in entries[mark:])
-        check(
-            "answers", addressed and answers,
-            f"focused hero question; reply in {time.monotonic() - started:.1f} s",
-        )
+        await _until(lambda: not off.unused() and not dialogue.speaking(CAVALORN), 15)
         return _logged(results)
     finally:
-        dialogue.llm, dialogue.journal.sink = original_llm, original_sink
         link.act = original_act  # type: ignore[method-assign]
         link.listeners.remove(record)

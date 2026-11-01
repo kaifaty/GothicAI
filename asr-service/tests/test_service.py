@@ -7,13 +7,15 @@ import httpx
 import numpy as np
 import pytest
 from websockets.asyncio.client import connect
+from websockets.exceptions import InvalidStatus
 
 from gothic_asr import cli
 from gothic_asr.audio import RATE, float_to_pcm16, resample
 from gothic_asr.providers import AsrError, make_provider, parse_spec
+from gothic_asr.providers.base import Transcript
 from gothic_asr.providers.fake import FakeProvider
 from gothic_asr.providers.remote import OpenAICompatible
-from gothic_asr.recognizer import Recognizer
+from gothic_asr.recognizer import Recognizer, _echoes
 from gothic_asr.service import AsrService
 
 
@@ -75,12 +77,32 @@ async def service():
     await asyncio.gather(task, return_exceptions=True)
 
 
-async def test_health(service) -> None:
+@pytest.mark.parametrize("origin", [None, "https://evil.example"])
+async def test_health(service, origin) -> None:
     svc, _ = service
     async with httpx.AsyncClient() as http:
-        r = await http.get(f"http://127.0.0.1:{svc.port}/health")
+        r = await http.get(
+            f"http://127.0.0.1:{svc.port}/health", headers={"Origin": origin} if origin else {}
+        )
+    assert r.status_code == 200
     assert r.headers["content-type"] == "application/json"
     assert r.json() == {"ok": True, "service": "gothic-asr", "providers": [{"name": "fake"}]}
+
+
+@pytest.mark.parametrize("bridge", [True, False])
+async def test_local_origin_connects(service, bridge) -> None:
+    svc, _ = service
+    url = f"ws://127.0.0.1:{svc.port}"
+    async with connect(url, origin=url if bridge else None) as ws:
+        assert json.loads(await ws.recv())["type"] == "hello"
+
+
+async def test_browser_origin_is_forbidden(service) -> None:
+    svc, _ = service
+    with pytest.raises(InvalidStatus) as exc:
+        async with connect(f"ws://127.0.0.1:{svc.port}", origin="https://evil.example"):
+            pytest.fail("browser origin connected")
+    assert exc.value.response.status_code == 403
 
 
 async def test_websocket_roundtrip(service) -> None:
@@ -246,6 +268,52 @@ async def test_broken_stream_falls_back_with_the_whole_recording(streaming_servi
     assert events[-1]["text"] == "запасной"
     assert fallback.calls == [(int(1.5 * RATE), "ru")]
     assert primary.streams[0].cancelled
+
+
+HINTS = ["Ксардас", "Ксардаса", "Ксардасу", "Иннос", "Инноса", "Аданос", "Белиар", "Хоринис", "Хориниса"]
+
+
+@pytest.mark.parametrize(
+    ("text", "echo"),
+    [
+        # read back from the 2026-11-01 session: laughter, then the hints in their order
+        ("Благо, Иннос, Инноса, Аданос, Белиар, Хорин", True),
+        ("Ксардас, Ксардаса, Ксардасу, Иннос", True),
+        ("ксардас, ксардаса", True),
+        ("Белиар, Хоринис, Хор", True),
+        ("Эээ, Ксардас, привет.", False),
+        ("Иннос, Белиар и Аданос — три бога.", False),
+        ("Ксардас, Иннос с тобой.", False),
+        ("Иннос, Инн тут ни при чём.", False),  # a cut-off hint counts only at the very end
+        ("Ксардас", False),
+        ("", False),
+    ],
+)
+def test_echoed_hints(text, echo) -> None:
+    assert _echoes(text, HINTS) is echo
+    assert not _echoes(text, None)
+
+
+async def _utterance(recognizer: Recognizer, audio: np.ndarray):
+    utt = recognizer.utterance("ru", hints=HINTS)
+    await utt.begin()
+    await utt.feed(audio)
+    return await utt.finish()
+
+
+async def test_hints_read_back_are_heard_again_without_them() -> None:
+    primary = FakeProvider(text="Благо, Иннос, Инноса, Аданос, Белиар, Хорин", stream=True)
+    primary.transcribe = AsyncMock(return_value=Transcript("Ха-ха-ха.", "fake"))
+    r = await _utterance(Recognizer(primary), tone(2))
+    assert (r.text, r.provider) == ("Ха-ха-ха.", "fake")
+    assert primary.transcribe.await_args.args[0].shape == (2 * RATE,)
+
+    primary.transcribe = AsyncMock(side_effect=AsrError("down"))
+    assert (await _utterance(Recognizer(primary), tone(2))).text == ""
+
+    plain = FakeProvider(text="Эээ, Ксардас, привет.", stream=True)
+    assert (await _utterance(Recognizer(plain), tone(1))).text == "Эээ, Ксардас, привет."
+    assert not plain.calls
 
 
 async def test_voxtral_speaks_audiocpp_live() -> None:

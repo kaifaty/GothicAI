@@ -1,13 +1,15 @@
 """Primary provider with an optional fallback, a silence gate and latency logging.
 
 An utterance streams into the primary provider while it is spoken (if the provider can stream) and
-is also kept whole: when the stream fails, the fallback gets the complete recording.
+is also kept whole: when the stream fails, the fallback gets the complete recording. When the stream
+reads its name hints back instead of the audio, the recording is heard again without them.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from dataclasses import dataclass
 from typing import cast
@@ -155,7 +157,15 @@ class Utterance:
                     latency,
                     result.text,
                 )
-                return Recognition(result.text, name, len(audio) / RATE, latency)
+                if not _echoes(result.text, self.hints):
+                    return Recognition(result.text, name, len(audio) / RATE, latency)
+                log.warning("%s read the hints back: hearing it again without them", name)
+                await self._drop_stream()
+                try:
+                    return await self.recognizer._batch(audio, self.lang, providers, started)
+                except AsrError as err:
+                    log.warning("no transcript without hints: %s", err)
+                    return Recognition("", name, len(audio) / RATE, time.monotonic() - started)
             except (AsrError, TimeoutError) as err:
                 log.warning("%s stream failed: %s", name, err or "timeout")
                 self._primary_failed = True
@@ -180,3 +190,31 @@ def _silence(audio: np.ndarray) -> Recognition | None:
         log.info("skipped %.2fs of audio at %.0f dBFS (silence)", audio_s, level)
         return Recognition("", "", audio_s, 0.0)
     return None
+
+
+_PIECE = re.compile(r"[,.;:!?…]+")
+
+
+def _fold(text: str) -> str:
+    return " ".join(text.lower().replace("ё", "е").split()).strip(" '()-")
+
+
+def _echoes(text: str, hints: list[str] | None) -> bool:
+    """The text is two hints in a row, in their order: the model read its prompt back instead of the
+    audio, as Inworld does on laughter and other sounds without words («Благо, Иннос, Инноса, Инносу,
+    …»). The last piece may be cut off. Real speech never names two case forms of one name in a row."""
+    if not hints:
+        return False
+    order = [_fold(hint) for hint in hints]
+    pieces = [_fold(piece) for piece in _PIECE.split(text)]
+    while pieces and not pieces[-1]:
+        pieces.pop()
+    for i, (a, b) in enumerate(zip(pieces, pieces[1:], strict=False)):
+        if not a or not b:
+            continue
+        last = i + 2 == len(pieces)
+        for j, hint in enumerate(order[:-1]):
+            after = order[j + 1]
+            if hint == a and (after == b or (last and len(b) >= 2 and after.startswith(b))):
+                return True
+    return False

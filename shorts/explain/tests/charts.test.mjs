@@ -704,3 +704,59 @@ test('texts: one without until gives way to the next at its place, not to one el
   assert.equal(textUntil(texts, 3), 6);
   assert.equal(textUntil(texts, 4), undefined);
 });
+
+// the sound of the motion (src/parts/sfxMap.ts)
+import {readFileSync} from 'node:fs';
+import {hits as sfxHits, KINDS, SPACING, sounds as sfxSounds, ticks as sfxTicks} from '../src/parts/sfxMap.ts';
+
+const sfxPlan = (beats) => Plan.parse({lang: 'ru', hook: {text: 'h', until: 1}, beats});
+const footage = (id, dur, extra = {}) => ({id, kind: 'footage', src: 'a.mp4', dur, ...extra});
+
+test('sfx kinds match the library manifest: lead and number of variants', () => {
+  const manifest = JSON.parse(readFileSync(new URL('../sfx.json', import.meta.url), 'utf8'));
+  assert.deepEqual(Object.keys(KINDS).sort(), Object.keys(manifest.kinds).sort());
+  for (const [kind, k] of Object.entries(KINDS)) {
+    assert.equal(k.lead, manifest.kinds[kind].lead, kind);
+    assert.equal(k.variants, manifest.kinds[kind].files.length, kind);
+  }
+});
+
+test('a counter ticks faster first, slower to its stop, then settles; its verdict yields to the stop', () => {
+  const t = sfxTicks(1, 1.8);
+  assert.ok(t.length >= 6 && t[0] === 1 && t.at(-1) < 1.8);
+  assert.ok(t[1] - t[0] < t.at(-1) - t.at(-2));
+  const plan = sfxPlan([footage('a', 4, {tags: [{x: 500, y: 900, at: 1, lines: [
+    {text: 'бросок {n}', at: 1, count: {to: 65, dur: 0.8}}, {text: 'мимо', at: 1.5}]}]})]);
+  const all = sfxHits(plan);
+  assert.ok(all.some((h) => h.kind === 'settle' && Math.abs(h.t - 1.8) < 1e-9));
+  assert.ok(all.some((h) => h.kind === 'place' && h.what.includes('verdict')));
+  const kept = sfxSounds(plan);
+  assert.equal(kept.filter((s) => s.kind === 'settle').length, 1);
+  assert.ok(!kept.some((s) => s.what.includes('verdict')), 'the verdict 0.06 s after the stop is the stop');
+  // a counter that stopped before its box opened (Tags.tsx shows only its number): no roll to hear
+  const late = sfxPlan([footage('a', 4, {tags: [{x: 500, y: 900, at: 2, lines: [{text: '{n}', count: {to: 5, dur: 0.8}}]}]})]);
+  assert.deepEqual(sfxHits(late), []);
+});
+
+test('a card coming in turns a page: on the cut, or across its transition; a plain footage cut is silent', () => {
+  const plan = sfxPlan([
+    footage('a', 2),
+    footage('b', 2),
+    {id: 'c', kind: 'card', dur: 3, enter: {type: 'fade'}, chart: {type: 'stats', rows: [{name: 'a', value: '1'}],
+      fadeAt: 2, question: {text: '?', at: 1}}},
+    {id: 'd', kind: 'card', dur: 3, chart: {type: 'stats', rows: [{name: 'a', value: '1'}], fadeAt: 2, question: {text: '?', at: 1}}},
+  ]);
+  const pages = sfxSounds(plan).filter((s) => s.kind === 'page');
+  assert.deepEqual(pages.map((s) => +s.t.toFixed(3)), [4.175, 7]);
+  assert.ok(!sfxSounds(plan).some((s) => s.beat === 'b'));
+  assert.ok(pages.every((s) => Math.abs(s.start - (s.t - KINDS.page.lead)) < 1e-9));
+});
+
+test('sounds keep their spacing, the stronger one stays; no kind repeats a variant twice running', () => {
+  const plan = sfxPlan([footage('a', 6, {zoom: {at: 1, dur: 0.01, scale: 1.5, x: 500, y: 900},
+    texts: [{text: 'x', at: 1}, {text: 'y', at: 3}, {text: 'z', at: 3.5}]})]);
+  const kept = sfxSounds(plan);
+  assert.deepEqual(kept.map((s) => s.kind), ['punch', 'place', 'place']);
+  for (let i = 1; i < kept.length; i++) assert.ok(kept[i].t - kept[i - 1].t >= SPACING);
+  assert.notEqual(kept[1].file, kept[2].file);
+});

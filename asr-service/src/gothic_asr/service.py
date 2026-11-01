@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from http import HTTPStatus
 
 from websockets.asyncio.server import ServerConnection, serve
@@ -34,6 +35,7 @@ from .recognizer import Recognizer, Utterance
 log = logging.getLogger(__name__)
 
 MAX_SECONDS = 60
+LOCAL_ORIGINS = [None, re.compile(r"ws://(?:127\.0\.0\.1|localhost|\[::1\])(?::[0-9]+)?")]
 
 
 class AsrService:
@@ -44,7 +46,8 @@ class AsrService:
 
     async def serve_forever(self, started=None) -> None:
         async with serve(
-            self._handler, self.host, self.port, max_size=2**22, process_request=self._health
+            self._handler, self.host, self.port, max_size=2**22, process_request=self._health,
+            origins=LOCAL_ORIGINS,
         ) as server:
             self.port = server.sockets[0].getsockname()[1]
             log.info("listening on ws://%s:%d", self.host, self.port)

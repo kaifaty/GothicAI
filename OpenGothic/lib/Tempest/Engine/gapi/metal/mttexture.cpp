@@ -46,20 +46,23 @@ MtTexture::MtTexture(MtDevice& d, const uint32_t w, const uint32_t h, const uint
   impl = alloc(frm,w,h,depth,mipCnt,MTL::StorageModePrivate,usage);
   }
 
-MtTexture::MtTexture(MtDevice& dev, const Pixmap& pm, uint32_t mipCnt, TextureFormat frm)
+MtTexture::MtTexture(MtDevice& dev, const Pixmap& pm, uint32_t mipCnt, TextureFormat frm, bool wait)
   :dev(dev), mipCnt(mipCnt) {
   const uint32_t         smip  = (isCompressedFormat(frm) ? mipCnt : 1);
   const MTL::StorageMode smode = hostVisibleStorageMode(*dev.impl);
 
-  NsPtr<MTL::Texture> stage = alloc(frm,pm.w(),pm.h(),0,smip,smode,MTL::TextureUsageShaderRead);
+  auto pool = NsPtr<NS::AutoreleasePool>::init();
+  // Acquire a command-buffer slot before locking staging; completion needs the lock.
+  auto cmd = (wait ? dev.queue : dev.uploadQueue)->commandBuffer();
+  std::unique_lock<std::mutex> uploadGuard;
+  NsPtr<MTL::Texture> stage = alloc(frm,pm.w(),pm.h(),0,smip,smode,MTL::TextureUsageShaderRead,
+                                   wait ? &uploadGuard : nullptr);
   impl = alloc(frm,pm.w(),pm.h(),0,mipCnt,MTL::StorageModePrivate,MTL::TextureUsageShaderRead);
 
   if(isCompressedFormat(frm))
     createCompressedTexture(*stage,pm,frm,mipCnt); else
     createRegularTexture(*stage,pm);
 
-  auto pool = NsPtr<NS::AutoreleasePool>::init();
-  auto cmd  = dev.queue->commandBuffer();
   auto enc  = cmd->blitCommandEncoder();
   if(isCompressedFormat(frm)) {
     enc->copyFromTexture(stage.get(),0,0, impl.get(),0,0, 1,mipCnt);
@@ -72,12 +75,41 @@ MtTexture::MtTexture(MtDevice& dev, const Pixmap& pm, uint32_t mipCnt, TextureFo
 #if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
   profileGpu(cmd);
 #endif
-  cmd->commit();
-  // TODO: implement proper upload engine
-  cmd->waitUntilCompleted();
+  if(!wait) {
+    const auto fence=dev.aquireFence();
+    if(fence==nullptr)
+      throw DeviceLostException();
+    uploadFence=fence;
+    auto* device=&dev;
+    cmd->addCompletedHandler(^(MTL::CommandBuffer* completed) {
+      const auto status=completed->status();
+      device->signalFence(*fence,status,MTL::CommandBufferError(completed->error()->code()),completed->error());
+      device->onFinish();
+      });
+    device->onSubmit();
+    }
+  if(wait) {
+    // Retained references keep staging and destination alive. Draws and readback
+    // commit later on the same queue; uploadReady needs no cross-queue fence.
+    dev.submitUpload(*cmd,stage->allocatedSize());
+    uploadGuard.unlock();
+    if(dev.syncTextureUploads)
+      cmd->waitUntilCompleted();
+    } else {
+    cmd->commit();
+    }
   }
 
 MtTexture::~MtTexture() {
+  }
+
+bool MtTexture::uploadReady() {
+  if(uploadFence==nullptr)
+    return true;
+  if(!uploadFence->wait(0))
+    return false;
+  uploadFence.reset();
+  return true;
   }
 
 void MtTexture::createCompressedTexture(MTL::Texture& val, const Pixmap& p, TextureFormat frm, uint32_t mipCnt) {
@@ -104,7 +136,8 @@ void MtTexture::createRegularTexture(MTL::Texture& val, const Pixmap& p) {
 
 NsPtr<MTL::Texture> MtTexture::alloc(TextureFormat frm,
                                      const uint32_t w, const uint32_t h, const uint32_t d, const uint32_t mips,
-                                     MTL::StorageMode smode, MTL::TextureUsage umode) {
+                                     MTL::StorageMode smode, MTL::TextureUsage umode,
+                                     std::unique_lock<std::mutex>* uploadGuard) {
   auto desc = NsPtr<MTL::TextureDescriptor>::init();
   if(desc==nullptr)
     throw std::system_error(GraphicsErrc::OutOfHostMemory);
@@ -135,6 +168,9 @@ NsPtr<MTL::Texture> MtTexture::alloc(TextureFormat frm,
   sw.blue  = MTL::TextureSwizzleBlue;
   sw.alpha = MTL::TextureSwizzleAlpha;
   desc->setSwizzle(sw);
+
+  if(uploadGuard!=nullptr)
+    *uploadGuard = dev.lockUpload(dev.impl->heapTextureSizeAndAlign(desc.get()).size);
 
   NsPtr<MTL::Texture> ret;
   if(linear) {

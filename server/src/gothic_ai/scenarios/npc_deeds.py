@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING, Any
 
 from .. import triggers
 from ..game import GameError, GameLink
-from ..llm.fake import FakeBackend
 from ..protocol import GameMessage, NpcActResult, NpcDeed, NpcIdle, Session
 from .common import (
     HILDA,
@@ -25,6 +24,10 @@ from .common import (
     wait_message,
     wait_npc_visibility,
 )
+
+SCENARIOS = {
+    "npc_deeds": ("OFF", {"save": True, "timeout": 720}),
+}
 
 if TYPE_CHECKING:
     from ..dialogue import DialogueManager
@@ -57,8 +60,27 @@ async def npc_deeds(
     """
     results: dict[str, str] = {}
     facts = service.chronicle.facts
-    original_cards, original_llm = service.cards, dialogue.llm
+    original_cards = service.cards
     original_gate, original_stage = rumors.gate, rumors.stage
+    body_watch = link.body_watch
+    passive_npcs: list[str] = []
+    watched: tuple[tuple[str, ...], int] | None = None
+    watch_stats: dict[str, Any] = {}
+
+    async def passive_body_watch(
+        npcs: list[str], rate_hz: int = 20, timeout: float = 5.0,
+    ) -> dict[str, Any]:
+        nonlocal watched, watch_stats
+        # The pilot shares this subscription; its release must not stop the passive trace.
+        actors = list(dict.fromkeys([*passive_npcs, *(npc.upper() for npc in npcs)]))
+        if len(actors) > 4:
+            raise GameError("npc_deeds setup: passive body watch exceeds four actors")
+        signature = (tuple(actors), rate_hz)
+        if watched != signature or watch_stats.get("generation") != link.body_generation:
+            watch_stats = await body_watch(actors, rate_hz=rate_hz, timeout=timeout)
+            watched = signature
+        return watch_stats
+
     received: list[NpcDeed | NpcActResult | NpcIdle] = []
     transfer_sight: dict[str, asyncio.Task[dict[str, Any]]] = {}
     body_states: dict[str, list[dict[str, Any]]] = {VINO: [], MALETH: [], LOBART: []}
@@ -317,16 +339,16 @@ async def npc_deeds(
 
     link.listeners.append(record)
     link.raw_body_listeners.append(observe)
+    link.body_watch = passive_body_watch  # type: ignore[method-assign]
     try:
         await link.wait_world()
         if link.session is None:
             await wait_message(link, Session, timeout=10)
         if not check(
-            "enabled", service.enabled and isinstance(original_llm, FakeBackend),
-            "npc crimes enabled, LLM=fake; logs: " + log_dir,
+            "enabled", service.enabled,
+            "npc crimes enabled; logs: " + log_dir,
         ):
             return _logged(results)
-        dialogue.llm = FakeBackend("Ну, как знаешь.", delay=0)
         rumors.gate, rumors.stage = lambda *_: False, None
         await link.debug("player_hp", hp=5000)
         await link.debug("time", hour=8, minute=0)
@@ -473,7 +495,8 @@ async def npc_deeds(
              "npcs": {npc: pose.pos for npc, pose in attack_poses.items()}},
         ):
             return _logged(results)
-        await link.body_watch([VINO, MALETH], rate_hz=20)
+        passive_npcs[:] = [VINO, MALETH]
+        await link.body_watch(passive_npcs, rate_hz=20)
         body_states[VINO].clear()
         body_states[MALETH].clear()
         prior = {str(f["id"]) for f in facts("npc_crime")}
@@ -580,6 +603,7 @@ async def npc_deeds(
              "summary": await attack_summary()},
         ):
             return _logged(results)
+        passive_npcs.clear()
         await link.body_watch([])
 
         # A second physical theft covers a world item's native owner. Lobart's courage alone is
@@ -591,6 +615,9 @@ async def npc_deeds(
         if not await place(LOBART, RETURN_ROAD, to=VINO, distance=300, face=VINO):
             return _logged(results)
         if not check("owned_cup", await _until_async(native_drop, bool, 10), "native Lobart drop"):
+            return _logged(results)
+        # Keep both the thief and the dropped cup ahead of the owner throughout the approach.
+        if not await place(LOBART, RETURN_ROAD, to=VINO, distance=-300, face=VINO):
             return _logged(results)
         # The passive hero must not share the thief's capsule or obstruct the item approach.
         # The adjacent road point keeps both active bodies near the hero without occupying their lane.
@@ -615,7 +642,8 @@ async def npc_deeds(
         prior = {str(f["id"]) for f in facts("npc_crime")}
         body_latest.pop(VINO, None)
         body_latest.pop(LOBART, None)
-        await link.body_watch([VINO, LOBART], rate_hz=20)
+        passive_npcs[:] = [VINO, LOBART]
+        await link.body_watch(passive_npcs, rate_hz=20)
         body_states[VINO].clear()
         body_states[LOBART].clear()
         await _until(lambda: {VINO, LOBART} <= body_latest.keys(), 5)
@@ -732,6 +760,7 @@ async def npc_deeds(
              "defense": facts("npc_crime_defense")},
         ):
             return _logged(results)
+        passive_npcs.clear()
         await link.body_watch([])
         check(
             "hero_unchanged", [f for f in facts() if f.get("fact") in {"crime", "crime_seen"}] == hero_facts,
@@ -764,6 +793,7 @@ async def npc_deeds(
         )
         return _logged(results)
     finally:
+        link.body_watch = body_watch  # type: ignore[method-assign]
         defense_stop.set()
         if defense_task is not None:
             await defense_task
@@ -774,7 +804,7 @@ async def npc_deeds(
                 pending.cancel()
         if transfer_sight:
             await asyncio.gather(*transfer_sight.values(), return_exceptions=True)
-        service.cards, dialogue.llm = original_cards, original_llm
+        service.cards = original_cards
         rumors.gate, rumors.stage = original_gate, original_stage
         try:
             if not link.closed.is_set():

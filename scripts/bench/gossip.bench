@@ -1,5 +1,5 @@
 # Two people talk about the hero and look at each other (docs/npc-tools.md, wave 2 step 2), with an AI server
-# (GOTHIC_AI_URL) whose scenario stages them (`serve --scenario gossip_demo --llm fake --no-tts`): Lobart has
+# (GOTHIC_AI_URL) whose scenario stages them (`serve --scenario gossip_demo --llm off --no-tts`): Lobart has
 # caught the hero lying, Hilda is put 5 m from him (NW_FARM1_PATH_01), the hero 7 m from them; Lobart turns
 # to her and they say three lines in turn, each to the other. During each line both should show `look=talk
 # at=<the other>` (`nearby`, `pair`), the watched Hilda's `gaze err` within 15 degrees, and the frames of the

@@ -1,4 +1,7 @@
 import json
+import shutil
+import subprocess
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -59,6 +62,25 @@ from gothic_ai.protocol import (
 from tests.fake_game import FakeGame
 
 
+def test_native_chronicle_parser_contract(tmp_path):
+    compiler = shutil.which("c++")
+    if compiler is None:
+        pytest.skip("needs a C++ compiler for the native chronicle parser")
+    engine = Path(__file__).resolve().parents[2] / "OpenGothic"
+    bridge = engine / "ai_bridge"
+    executable = tmp_path / "chronicle-contract"
+    subprocess.run(
+        [compiler, "-std=c++20", "-Wall", "-Wconversion", "-Werror",
+         "-I", str(bridge), "-I", str(engine / "common"),
+         "-isystem", str(engine / "lib" / "rapidjson" / "include"),
+         str(bridge / "tests" / "chronicle_contract.cpp"), str(bridge / "chronicledata.cpp"),
+         str(bridge / "textcodec.cpp"), "-o", str(executable)],
+        check=True, capture_output=True, text=True, timeout=60,
+    )
+    checked = subprocess.run([str(executable)], check=True, capture_output=True, text=True, timeout=10)
+    assert checked.stdout == "Chronicle contract: 15 checks passed\n"
+
+
 @pytest.mark.parametrize("counters", [{}, {
     "selected_actions": {"continue": 2, "wait_200": 3},
     "accepted_actions": {"wait_200": 3}, "hidden_reset": 1,
@@ -115,7 +137,7 @@ def test_v51_combat_hit_reports_actual_health_loss(kind):
 
 
 def test_v50_svm_lines_keep_the_native_meaning_and_addressee():
-    assert PROTOCOL_VERSION == 54
+    assert PROTOCOL_VERSION == 55
     msg = parse_game_message(_json({
         "type": "svm_line", "id": "svm-1", "npc": "X", "svm": "$KILLENEMY",
         "text": "Ещё одним монстром меньше.", "target": "WOLF", "overlay": True,

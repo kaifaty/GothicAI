@@ -17,12 +17,18 @@ from ..bodies import Bodies
 from ..bodypilot import ACQUIRE_WINDOW, WORLD_STOP_REASONS, BodyFight, BodyPilot, FightSummary
 from ..dialogue import DialogueManager
 from ..game import GameError, GameLink
-from ..llm.fake import FakeBackend
 from ..protocol import BodyLease, GameMessage, LineStarted, NpcSpec, RoutineEntry, Session
-from .common import _save_or_fail, _until, _until_async, wait_message
+from .common import _save_or_fail, _until, _until_async, model_off, wait_message
 from .neural_load import _policy_resets
 from .neural_soak_capture import CaptureTracker
 from .neural_soak_metrics import SoakMetrics, release_within_deadline
+
+SCENARIOS = {
+    "neural-soak": ("OFF", {
+        "save": False, "timeout": 900,
+        "env": {"GOTHIC_SOAK_SECONDS": "300", "BENCH_CLASS": "quiet"},
+    }),
+}
 
 log = logging.getLogger("gothic_ai.scenarios")
 BANDITS = tuple(f"DIR_NPC_SOAK_BANDIT_{i}" for i in range(1, 5))
@@ -205,8 +211,6 @@ async def neural_soak_scenario(
         raise GameError("neural-soak control requires --no-neural-body")
     if not control and (pilot is None or pilot.max_fights != 4):
         raise GameError("neural-soak requires an available body policy and --neural-body-max=4")
-    if dialogue.llm.name != "fake":
-        raise GameError("neural-soak requires LLM=fake")
     duration = float(os.environ.get("GOTHIC_SOAK_SECONDS", "1800"))
     if not 90 <= duration <= 2100:
         raise GameError("GOTHIC_SOAK_SECONDS must be between 90 and 2100")
@@ -572,6 +576,10 @@ async def neural_soak_scenario(
         await link.debug("npc_goto", npc=TALKER, to="PC_HERO", distance=150, face="PC_HERO")
         await link.attach(TALKER)
         mark = len(lines)
+        model_off(dialogue).given(
+            "Given: the traveler's line between waves", who=TALKER,
+            line="Пока спокойно. Держи меч наготове.",
+        )
         await link.debug("type", text="Путник, как дорога? Всё спокойно?")
         answered = await _until(lambda: len(lines) > mark, 15)
         conversations.append(answered)
@@ -609,8 +617,6 @@ async def neural_soak_scenario(
     await check_companion()
     await link.debug("player_equip", item="ITMW_1H_BAU_MACE")
     saved = await _save_or_fail(link, 7)
-    original_llm = dialogue.llm
-    dialogue.llm = FakeBackend("Пока спокойно. Держи меч наготове.", delay=.15)
     link.raw_body_listeners.append(observe)
     link.listeners.append(heard)
     try:
@@ -727,10 +733,10 @@ async def neural_soak_scenario(
                              for index, npc in enumerate(BANDITS[:count])])
                 loaded = False
                 combat_deadline = started + duration + (30 if probe_only else 0)
+                # A final load probe still gives every attacker time to acquire:
+                # the first fresh lease must not cut off the rest of the wave.
                 while time.monotonic() - wave_start < 75 and time.monotonic() < combat_deadline:
                     await poll(break_stalls=True)
-                    if probe_only and not pending_probe():
-                        break
                     if cause := death_cause():
                         await load_wave(saved, cause=cause)
                         loaded = True
@@ -870,6 +876,5 @@ async def neural_soak_scenario(
             sampler.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await sampler
-        dialogue.llm = original_llm
         link.raw_body_listeners.remove(observe)
         link.listeners.remove(heard)

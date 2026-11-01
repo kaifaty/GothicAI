@@ -5,45 +5,108 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
-from collections.abc import AsyncIterator
+import time
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..brain.reflex import Reflexes
 from ..deals import GOLD
+from ..executor import check_give
 from ..game import GameError, GameLink
-from ..llm import Done, LLMEvent, Message, ToolCall
-from ..llm.fake import FakeBackend, FakeStep
+from ..llm import ToolCall
 from ..protocol import Session
 from ..trace import read as read_trace
 from .common import (
     HILDA,
     LOBART,
     VINO,
-    ClaimScript,
     FixedDecider,
     WitnessReaction,
     _logged,
     _save,
     _until,
     _until_async,
+    model_off,
     prepare_theft_witness,
     wait_message,
 )
 
+SCENARIOS = {
+    "cheat": ("GIVEN", {"save": True, "timeout": 720}),
+}
+
 if TYPE_CHECKING:
+    from ..chronicle import Chronicle
     from ..crimes import Crimes
     from ..deals import Deal, Deals
     from ..dialogue import DialogueManager
-    from ..llm import LLMBackend
     from ..people_knowledge import PeopleKnowledge
     from ..social import Rumors
     from ..talk import TalkDesk
+    from .live import LiveCase
 
 log = logging.getLogger(__name__)
 HOUSE = "NW_FARM1_INHOUSE_01"
 ASK_PAY = "Лобарт, я пришёл за обещанными семью золотыми. Срок уже настал, отдавай."
+
+
+async def _record_live_cheat(
+    link: GameLink,
+    dialogue: DialogueManager,
+    chronicle: Chronicle,
+    live: LiveCase,
+    deal: str,
+    held_gold: int,
+) -> None:
+    previous = {row["id"] for row in live.turns(LOBART)}
+    speech: list[dict[str, Any]] = []
+
+    def said(npc: str, name: str, text: str, kind: str, to: str | None) -> None:
+        if npc == LOBART and text.strip() and to in {None, "PLAYER"}:
+            speech.append({
+                "source": "dialogue.on_said", "npc": npc, "name": name,
+                "text": text, "kind": kind, "to": to,
+            })
+
+    def rows() -> list[dict[str, Any]]:
+        return [row for row in live.turns(LOBART, "семью золотыми") if row["id"] not in previous]
+
+    dialogue.on_said.append(said)
+    deadline = time.monotonic() + 120
+    try:
+        await link.debug("type", text=ASK_PAY)
+        completed = await _until(
+            lambda: any(row.get("status") == "completed" for row in rows()),
+            max(0, deadline - time.monotonic()),
+        )
+        # The turn and its after-speech transfer share one deadline.
+        effects_finished = await _until(
+            lambda: not dialogue.speaking(LOBART)
+            and not (dialogue.conversations.get(LOBART) and dialogue.conversations[LOBART].actions),
+            max(0, deadline - time.monotonic()),
+        )
+        turns = rows()
+        calls = [call for row in turns for step in row.get("steps", [])
+                 for call in step.get("calls", [])]
+        gives = [call for call in calls if call.get("name") == "give_item"
+                 and (check_give(call.get("arguments", {}), None)[0] or {}).get("item") == GOLD]
+        after_gold = int(await link.evaluate([
+            "call", "NPC_HASITEMS", ["inst", "HERO"], ["sym", GOLD],
+        ]) or 0)
+        paid, answered = after_gold > held_gold, bool(speech)
+        live.finish("failure" if paid else "success"
+                    if completed and answered and effects_finished and not gives else "no_decision",
+                    evidence={"decision": "paid" if paid else "withheld" if answered else "no_answer",
+                              "gold": [held_gold, after_gold], "gold_calls": gives,
+                              "calls": calls, "turns": turns, "speech": speech,
+                              "turn_completed": completed, "effects_finished": effects_finished,
+                              "intent": [f for f in chronicle.facts("npc_intent") if f.get("deal") == deal],
+                              "breach": [f for f in chronicle.facts("npc_broken") if f.get("deal") == deal],
+                              "later_payment": [f for f in chronicle.facts("npc_later_paid")
+                                                if f.get("deal") == deal]})
+    finally:
+        dialogue.on_said.remove(said)
 
 
 async def cheat_scenario(
@@ -56,18 +119,15 @@ async def cheat_scenario(
     people: PeopleKnowledge,
     log_dir: str,
     slot: int = 7,
+    *,
+    live: LiveCase | None = None,
 ) -> dict[str, str]:
-    """Fake: native theft, paid silence betrayed by rumor, unpaid npc_later, honest control and load.
-
-    Live runs only the later-payment scene. Its proposal and acceptance are scripted, then exactly
-    one real model request receives the ordinary situation and the hero's demand. The response is
-    recorded verbatim. Character fixtures and the real model's prompt are never adjusted after it.
-    """
+    """Given deals: native silence betrayal, unpaid debt, honest control and save/load."""
     results: dict[str, str] = {}
-    original_llm, original_reflexes = dialogue.llm, talk.reflexes
+    off = model_off(dialogue) if live is None else None
+    original_reflexes = talk.reflexes
     original_gate, original_stage = rumors.gate, rumors.stage
     original_cards, original_personas = deals.cards, dialogue.personas.cards
-    fake = isinstance(original_llm, FakeBackend)
     chronicle, directory = service.chronicle, Path(log_dir)
     facts = chronicle.facts
     participants = {HILDA, LOBART, VINO}
@@ -143,15 +203,25 @@ async def cheat_scenario(
 
     async def buy(npc: str, request: str, args: dict[str, Any], label: str) -> Deal | None:
         name = talk.people[npc].name
-        dialogue.llm = ClaimScript(
-            [(request.replace("ё", "е"), FakeStep(
-                "Пять золотых сейчас — и договорились.", [ToolCall("propose_deal", args)]
-            ))],
-            [],
-            "Договорились.",
-            only=name,
-        )
-        await link.debug("type", text=f"{name}, {request}.")
+        request = request.replace("ё", "е")
+        decision = "Хильда продаёт молчание" if npc == HILDA else "Лобарт предлагает 5 сейчас, 7 позже"
+        if off is not None:
+            off.given(
+                f"дано: {decision}", who=npc, when=request,
+                calls=[ToolCall("propose_deal", args)],
+            )
+            off.silent(
+                f"дано: {name} молчит (предложение сделки сделано)", who=npc, when=request,
+            )
+            off.silent(
+                f"дано: {name} молчит (сделка состоялась)", who=npc, when="сделка состоялась",
+            )
+            await link.debug("type", text=f"{name}, {request}.")
+        else:
+            # The accepted debt is the fixture; only the answer when it is due is live.
+            outcome = await deals.propose(npc, name, args, await link.snapshot(npc, fresh=True))
+            if not check(f"{label}_proposal", outcome.status == "accepted", outcome.output):
+                return None
         shown = await _until(lambda: npc in deals.open, 45)
         deal = deals.open.get(npc)
         window = await link.deal_window() or {}
@@ -182,33 +252,6 @@ async def cheat_scenario(
             return None
         return deal
 
-    class Reply:
-        """Observe the ordinary refusal request; every other turn stays scripted, even live."""
-
-        name = "cheat-observed-reply"
-
-        def __init__(self, backend: LLMBackend) -> None:
-            self.backend = backend
-            self.prompts: list[str] = []
-            self.words: list[str] = []
-
-        async def stream(self, **kw: Any) -> AsyncIterator[LLMEvent]:
-            last = kw["messages"][-1]
-            observed = (
-                not self.prompts and kw.get("cache_key") == LOBART
-                and isinstance(last, Message)
-                and ASK_PAY.replace("ё", "е") in last.content.replace("ё", "е")
-            )
-            if observed:
-                self.prompts.append("\n".join(
-                    m.content for m in kw["messages"] if isinstance(m, Message) and m.role == "developer"
-                ))
-            backend = self.backend if observed else FakeBackend("Ну, как знаешь.", delay=0)
-            async for event in backend.stream(**kw):
-                if observed and isinstance(event, Done):
-                    self.words.append(event.text)
-                yield event
-
     try:
         await link.wait_world()
         if link.session is None:
@@ -216,7 +259,10 @@ async def cheat_scenario(
         if not check("enabled", deals.cheat, "npc cheat is enabled"):
             return _logged(results)
         cards(1)
-        dialogue.llm = FakeBackend("Договорились.", delay=0)
+        if live is None:
+            log.info("given: дано: собеседники слушают героя (FixedDecider posture=listen)")
+        else:
+            log.info("scenario: participants listen to the hero (FixedDecider posture=listen)")
         talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
         rumors.gate, rumors.stage = lambda *_: False, None
         await link.debug("player_hp", hp=5000)
@@ -245,7 +291,7 @@ async def cheat_scenario(
         if await gold(LOBART) < 30:
             await link.story_effect(LOBART, [{"do": "give", "item": GOLD, "count": 30, "to": "self"}])
 
-        if fake:
+        if live is None:
             await stand(LOBART, HOUSE)
 
             async def drop() -> bool:
@@ -347,29 +393,31 @@ async def cheat_scenario(
         await link.debug("time", hour=8, minute=0)
         if not check("due_near", await near(LOBART, hearer=VINO), "same NPC, next day, Vino hears"):
             return _logged(results)
-        refused = Reply(FakeBackend("Про какие семь золотых ты толкуешь? Ничего я тебе не должен.", delay=0)
-                        if fake else original_llm)
-        dialogue.llm = refused  # type: ignore[assignment]
-        previous = {r["id"] for r in turns()}
-        await link.debug("type", text=ASK_PAY)
-        answered = await _until(
-            lambda: bool(refused.words) and any(
-                r["id"] not in previous
-                and ASK_PAY.replace("ё", "е") in r.get("trigger", {}).get("text", "").replace("ё", "е")
-                and r.get("status") == "completed" for r in turns()
-            ),
-            180 if not fake else 45,
-        )
-        await settled()
-        quote = " ".join(refused.words)
-        log.info("cheat %s response: %s", "scripted" if fake else "live", quote)
-        prompt = "\n".join(refused.prompts)
+        prompt = await dialogue.situation(LOBART, "Лобарт")
         if not check(
-            "refusal_answer", answered and bool(quote) and len(refused.prompts) == 1
-            and "ты решил не отдавать" in prompt,
-            {"quote": quote, "requests": len(refused.prompts), "reminder": "ты решил не отдавать" in prompt},
+            "refusal_answer", "ты решил не отдавать" in prompt,
+            {"reminder": "ты решил не отдавать" in prompt},
         ):
             return _logged(results)
+        if off is not None:
+            off.silent(
+                "дано: Лобарт молчит (код решил не отдавать обещанные семь золотых)",
+                who=LOBART, when="семью золотыми",
+            )
+        if live is not None:
+            await _record_live_cheat(link, dialogue, chronicle, live, later.id, held_gold)
+            return _logged(results)
+        previous = {r["id"] for r in turns()}
+        await link.debug("type", text=ASK_PAY)
+        await _until(
+            lambda: any(
+                r["id"] not in previous
+                and "семью золотыми" in r.get("trigger", {}).get("text", "")
+                and r.get("status") == "completed" for r in turns()
+            ),
+            45,
+        )
+        await settled()
         if not check(
             "unpaid", await gold() == held_gold and len(records("npc_broken", later.id)) == 1
             and records("npc_broken", later.id)[0].get("how") == "unpaid"
@@ -390,9 +438,6 @@ async def cheat_scenario(
         await deals.prepare(LOBART)
         check("unpaid_once", len(records("npc_broken", later.id)) == 1 and await gold() == held_gold,
               records("npc_broken", later.id))
-        if not fake:
-            return _logged(results)
-
         await release()
         cards(4)
         if not check("honest_near", await near(LOBART, hearer=VINO), "same NPC, scenario honesty 4"):
@@ -411,7 +456,10 @@ async def cheat_scenario(
         await link.debug("time", hour=8, minute=0)
         if not check("honest_due_near", await near(LOBART, hearer=VINO), "control payment is due"):
             return _logged(results)
-        dialogue.llm = FakeBackend("Вот твои семь золотых, как и обещал.", delay=0)
+        off.silent(
+            "дано: Лобарт молчит (код выплачивает обещанные семь золотых)",
+            who=LOBART, when="пора отдать обещанные семь золотых",
+        )
         talk.hear("Лобарт, пора отдать обещанные семь золотых.", LOBART, {"via": "scenario"})
         paid = await _until(lambda: bool(records("npc_later_paid", honest.id)), 30)
         await settled()
@@ -459,5 +507,5 @@ async def cheat_scenario(
     finally:
         deals.cards, dialogue.personas.cards = original_cards, original_personas
         dialogue.personas._get.cache_clear()
-        dialogue.llm, talk.reflexes = original_llm, original_reflexes
+        talk.reflexes = original_reflexes
         rumors.gate, rumors.stage = original_gate, original_stage

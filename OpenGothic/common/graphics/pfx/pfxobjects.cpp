@@ -78,6 +78,11 @@ void PfxObjects::drawShadow(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8
     i.drawShadow(cmd, scene, fId, layer);
   }
 
+void PfxObjects::drawMultiply(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId) {
+  for(auto& i:bucket)
+    i.drawMultiply(cmd, scene, fId);
+  }
+
 void PfxObjects::drawTranslucent(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId) {
   for(auto& i:bucket)
     i.drawTranslucent(cmd, scene, fId);

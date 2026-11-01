@@ -47,6 +47,19 @@ The run fails if either route does not finish or either pass lacks metrics. Use 
 host, resolution and content overrides for later comparisons; `OPENGOTHIC_STREAMING=0`
 disables the manager and deliberately cannot produce this residency measurement.
 
+Run comparison series in alternating order (OFF, ON, OFF, ON), with at least two runs
+per side on the same host. Judge `run` and `fly` with `perf_report.py series`: it compares
+the median per-run p99 and accepts ON − OFF <= max(1 ms, OFF p99 max − min), so the
+measurement's own OFF spread sets the allowance when it exceeds the configured tolerance.
+It prints the per-run values and verdicts and writes `series.md` / `series.json` to `--out`
+(the last `--on` directory by default); exit code 0 means both passes pass, 1 means a failure,
+and 2 means invalid arguments.
+
+```bash
+python3 scripts/perf_report.py series --off /path/off-1 /path/off-2 \
+  --on /path/on-1 /path/on-2 --tolerance-ms 1.0 --out /path/series
+```
+
 `BENCH_HOST=local OPENGOTHIC_STREAMING=0 scripts/bench.sh streaming-shots` and the same
 command with `OPENGOTHIC_STREAMING=1` capture `perf-market.png`, `perf-harbour.png` and
 `perf-forest.png` from the first viewpoints of those performance scenarios. `streaming wait`
@@ -266,7 +279,7 @@ with the old talk loop), `lips-dialog` (the hero talks to Xardas through the dia
 the first choice: the lines of both are played the way the game plays them).
 Faces: `faces` (the face animations of a head one after another, then two of them while Xardas speaks),
 `face-fade` (faces fade in and out, one gives way to the next, three a moment apart, the lips over a
-fading face), `mood-ai` (lines of an AI server with moods: start `gothic-ai serve --scenario m1 --llm fake
+fading face), `mood-ai` (given lines of an AI server with moods: start `gothic-ai serve --scenario m1 --llm off
 --no-tts` on a port of your own and run the bench with `GOTHIC_AI_URL=ws://127.0.0.1:<port>`; with a TTS
 service instead of `--no-tts` the lines are voiced in their mood). Columns `face_neutral`, `face_friendly`,
 `face_angry`, `face_hostile`, `face_afraid`, `face_pain` of `metrics.csv`: how much of each face of the
@@ -295,10 +308,10 @@ line is being said), `ge_id` (the gesture playing, 1 is `T_DIALOGGESTURE_01`), `
 Listening: `listen` (Xardas' face close up: quiet, the hero speaks to him 6 s, he thinks 2.5 s, he answers;
 with `gestures off` on top of a copy he stands still, as before).
 Deals: `deal` (the deal window of an AI server, the interface in the frames: start `gothic-ai serve
---scenario deal_demo --llm fake --no-tts` on a port of your own and run the bench with `GOTHIC_AI_URL`;
+--scenario deal_demo --llm off --no-tts` on a port of your own and run the bench with `GOTHIC_AI_URL`;
 Xardas offers a thing he has for 50 gold the hero lacks, then for 30, and the hero accepts).
 Two people talking: `gossip` (Lobart and Hilda talk about the hero's lie at Lobart's farm, each line said to
-the other: start `gothic-ai serve --scenario gossip_demo --llm fake --no-tts` on a port of your own and run
+the other: start `gothic-ai serve --scenario gossip_demo --llm off --no-tts` on a port of your own and run
 the bench with `GOTHIC_AI_URL`; the server puts Hilda 5 m from Lobart and the hero 7 m from them; `nearby`,
 `pair` and `where` every second: during each line both look at each other, `look=talk at=<the other>`).
 
@@ -591,12 +604,12 @@ segment's sound goes into `<segment>.wav`).
 
 `scripts/body_live_capture.py` starts a local game with the production `GameServer` and
 `BodyPilot`, using `[llm].body_url` from the usual launcher settings. It uses the existing
-remote P30 service without starting or changing it. `LLM`, `ASR` and `TTS` must be `fake`;
+remote P30 service without starting or changing it. `LLM` must be `off`; `ASR` and `TTS` must be `fake`;
 no clients for these models are created. Build the engine first. Each capture checks
 `pgrep -fl Gothic2Notr` immediately before launch and refuses to share the Mac with another game.
 
 ```bash
-LLM=fake ASR=fake TTS=fake uv run --project server python scripts/body_live_capture.py \
+LLM=off ASR=fake TTS=fake uv run --project server python scripts/body_live_capture.py \
   live-takeover --output "$HOME/.local/share/gothic-ai/explain/combat-ai/footage/live-takeover"
 ```
 
@@ -890,7 +903,7 @@ the ZEN-ID whenever the recovered Item has an authored link.
 separately. They still count toward the 95% fraction, but are omitted from the
 maximum-travel and recovery gates. Raw maximum/recovery totals remain visible
 beside `gate_max_shift_cm` and `gate_recovered`. The agreed file contains exactly
-NEWWORLD 18261, OLDWORLD 1644 and ADDONWORLD 6863; every other excess still fails.
+NEWWORLD 18261 (the rolling flask); every other excess still fails.
 
 `placed-items diagnose <ZEN-ID> [control]` advances that Item's original 12 m
 section for 300 native steps and writes `placed-items-diagnose.jsonl`. Each step
@@ -901,6 +914,24 @@ movable furniture while retaining landscape and static objects. The command
 requires an authored Item and uses `tick(16)` to prevent batched native steps.
 For an excluded Item it records the verdict and verifies that neither wake nor
 activation can create a body, without attempting to simulate that Item.
+
+`placed-items-diagnose-1644` / `placed-items-diagnose-1644-control` use
+`WORLD=OLDWORLD.ZEN`; `placed-items-diagnose-6863` /
+`placed-items-diagnose-6863-control` use `WORLD=ADDONWORLD.ZEN`. Set
+`PLACED_ITEMS=1 ITEM_DEEPEST_CONTACT=1` for the fixed manifold or
+`ITEM_DEEPEST_CONTACT=0` for the upstream control, for example:
+
+```bash
+WORLD=OLDWORLD.ZEN PLACED_ITEMS=1 ITEM_DEEPEST_CONTACT=1 \
+  scripts/bench.sh placed-items-diagnose-1644 "$PWD/.bench/thin-blades/1644-on"
+```
+
+`[GAME] item_deepest_contact=1` retains the EPA pair in manifolds involving
+`C_Item` when it is more than 1 mm deeper than every clipped pair; coplanar
+face contacts keep their original support corners. Marvin
+`toggle item_deepest_contact` applies on the next
+native step. OFF uses Jolt's original clipping. See the
+[thin-blade results](../../reports/physics/2026-10-31-thin-blades/README.md).
 
 `PLACED_ITEMS=0` selects the existing body-creation paths. `[GAME] placed_items`
 defaults to 1; Marvin `toggle placed_items` changes it during play. The census is

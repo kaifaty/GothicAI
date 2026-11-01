@@ -706,7 +706,7 @@ def revelation(**changes):
 ])
 async def test_epilogue_matches_a_lie_in_evidence_and_stays_hidden_far_away(kind, evidence_kind, npc, name):
     history = [lie(fact=evidence_kind, npc=npc, name=name), feat(evidence=[1], category="deceit")]
-    async with world(history=history, hero_distance=lambda npc: ATTACK_CM + 1) as (
+    async with world(backend=OffBackend(), history=history, hero_distance=lambda npc: ATTACK_CM + 1) as (
         fake, chronicle, chronicler, llm, journal,
     ):
         trigger = chronicle.record(revelation(fact=kind, npc=npc, name=name))
@@ -716,7 +716,7 @@ async def test_epilogue_matches_a_lie_in_evidence_and_stays_hidden_far_away(kind
             "fact": "feat_epilogue", "feat": "old", "text": "Позже обман раскрылся.",
             "trigger": trigger, "npc": npc, "name": name, "quest": "WOLVES", "day": 10,
         }
-        assert chronicler.feats == [history[1]] and not llm.calls
+        assert chronicler.feats == [history[1]] and not llm.attempts
         chronicler.hero_talk("STRANGER")
         chronicle.link._dispatch(NpcRoster(type="npc_roster", t=1, npcs=[]))
         await asyncio.sleep(0)

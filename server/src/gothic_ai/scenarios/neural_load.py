@@ -22,6 +22,10 @@ from .common import (
     wait_message,
 )
 
+SCENARIOS = {
+    "neural-load": ("OFF", {"save": False, "timeout": 240}),
+}
+
 log = logging.getLogger("gothic_ai.scenarios")
 
 
