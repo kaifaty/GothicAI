@@ -1,12 +1,14 @@
 import base64
 import json
 import logging
+from types import SimpleNamespace
 
 import httpx
 import numpy as np
 import pytest
 
 from gothic_ai import dialogue as dialogue_mod
+from gothic_ai import embeddings
 from gothic_ai.dialogue import DialogueManager
 from gothic_ai.embeddings import EmbedClient
 from gothic_ai.llm import ToolCall, ToolResult
@@ -181,8 +183,12 @@ async def test_recall_tool_finds_paraphrase_and_embeds_missing_candidates(monkey
     ("query", "timeout"), ("query", "500"), ("query", "base64"), ("query", "dimension"),
 ])
 async def test_recall_falls_back_to_words_on_service_failure(monkeypatch, caplog, failure):
+    now = 100.0
+    monkeypatch.setattr(embeddings, "time", SimpleNamespace(monotonic=lambda: now))
+    failure = list(failure)
     client, calls = _recall_client(failure)
     store = _old_recall_memory(client)
+    queue_background = store.queue_embeddings
     monkeypatch.setattr(store, "queue_embeddings", lambda *args: None)
     caplog.set_level(logging.INFO, logger="gothic_ai.dialogue")
     try:
@@ -194,9 +200,21 @@ async def test_recall_falls_back_to_words_on_service_failure(monkeypatch, caplog
             assert result == "Ты вспоминаешь:\n" + "\n".join(
                 f"[?] {'Ты' if r.role == 'assistant' else 'Герой'}: {r.content}" for r in expected
             )
+            failed_calls = len(calls)
+            now = 159.0
+            assert await dialogue._recall(conv, "монеты") == result
+            queue_background(conv.branch, XARDAS)
+            await store._embedding_task
+            assert len(calls) == failed_calls
+            now = 160.0
+            failure.clear()  # the service recovered while callers were in backoff
+            assert await dialogue._recall(conv, "монеты") == result
+            assert len(calls) > failed_calls
         logs = [r.message for r in caplog.records if "recalls" in r.message]
-        assert len(logs) == 1 and "path=lexical reason=" in logs[0]
-        assert calls[-1][0] == failure[0]
+        assert len(logs) == 3 and "path=lexical reason=" in logs[0]
+        assert "path=lexical reason=embeddings backoff," in logs[1]
+        assert "path=semantic reason=none," in logs[2]
+        assert calls[-1][0] == "query"
     finally:
         store.close()
         await client.close()

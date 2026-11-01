@@ -1,11 +1,14 @@
 import asyncio
+import base64
 import hashlib
+import json
 import sqlite3
 
+import httpx
 import numpy as np
 import pytest
 
-from gothic_ai.embeddings import EmbedError
+from gothic_ai.embeddings import EmbedClient, EmbedError
 from gothic_ai.memory import SEARCH_NOTES, MemoryStore
 
 
@@ -95,10 +98,16 @@ class _Embeddings:
         self.calls = []
         self.failure = None
         self.gate = None
+        self.model = None
+        self.dim = None
+
+    def check_backoff(self):
+        pass
 
     async def health(self):
         if self.failure is not None:
             raise self.failure
+        self.model, self.dim = "test", 2
         return {"model": "test", "dim": 2}
 
     async def embed(self, texts, kind):
@@ -230,3 +239,47 @@ async def test_recall_waits_for_backfill_instead_of_dropping_uncached_candidates
     assert [len(texts) for texts in documents] == [256, 1]
     assert len(await store.semantic_search("A", "X", "башня", before_seq=257)) == 6
     store.close()
+
+
+async def test_long_messages_keep_full_hash_and_cached_recall_needs_one_request():
+    calls = []
+
+    def respond(request):
+        body = json.loads(request.content) if request.content else {}
+        calls.append((request.url.path, body))
+        if request.url.path == "/health":
+            return httpx.Response(200, json={
+                "model": "test", "dim": 2, "dtype": "bfloat16", "device": "cuda",
+            })
+        assert all(len(text) <= 4000 for text in body["texts"])
+        vectors = np.array([
+            [1, 0] if "башня" in text.lower() else [0, 1] for text in body["texts"]
+        ], dtype="<f4")
+        return httpx.Response(200, json={
+            "model": "test", "dim": 2, "vectors": base64.b64encode(vectors.tobytes()).decode(),
+        })
+
+    client = EmbedClient("http://embed", transport=httpx.MockTransport(respond))
+    store = MemoryStore(":memory:")
+    store.ensure_branch("A")
+    text = "Башня " + "а" * 4001
+    seq = store.append("A", "X", "assistant", text)
+    store.append("A", "X", "user", "Река.")
+    store.embeddings = client
+    try:
+        found = await store.semantic_search("A", "X", "Башня", before_seq=2, limit=1)
+        assert [(r.seq, r.content) for r in found] == [(seq, text)]
+        documents = next(body["texts"] for path, body in calls if body.get("kind") == "document")
+        assert documents == ["Река.", text[:4000]] and len(documents[1]) == 4000
+        hashes = {row[0] for row in store._db.execute("SELECT hash FROM vectors")}
+        assert hashlib.sha256(text.encode()).hexdigest() in hashes
+        assert hashlib.sha256(text[:4000].encode()).hexdigest() not in hashes
+        calls.clear()
+        assert (await store.semantic_search("A", "X", "Башня", before_seq=2, limit=1))[0].seq == seq
+        assert calls == [("/embed", {"texts": ["Башня"], "kind": "query"})]
+        calls.clear()
+        await store.backfill("A", "X")
+        assert not calls  # known metadata and cached documents need no health probe
+    finally:
+        store.close()
+        await client.close()

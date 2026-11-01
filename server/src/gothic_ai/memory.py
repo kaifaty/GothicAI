@@ -230,8 +230,10 @@ class MemoryStore:
         """Encode all uncached searchable lines of this npc, in service-sized batches."""
         if self.embeddings is None:
             raise EmbedError("embeddings disabled")
-        health = await self.embeddings.health()
-        model, dim = health["model"], health["dim"]
+        self.embeddings.check_backoff()
+        if self.embeddings.model is None or self.embeddings.dim is None:
+            await self.embeddings.health()
+        model, dim = self.embeddings.model, self.embeddings.dim
         rows = self._db.execute(
             "SELECT role, content FROM events WHERE branch=? AND npc=? AND kind='message' ORDER BY seq",
             (branch, npc),
@@ -279,11 +281,13 @@ class MemoryStore:
         """Rank the lexical search's candidate window by normalized embedding dot product."""
         if self.embeddings is None:
             raise EmbedError("embeddings disabled")
+        self.embeddings.check_backoff()
         rows = self._search_rows(branch, npc, before_seq)
         if not rows or limit <= 0:
             return []
-        health = await self.embeddings.health()
-        model, dim = health["model"], health["dim"]
+        if self.embeddings.model is None or self.embeddings.dim is None:
+            await self.embeddings.health()
+        model, dim = self.embeddings.model, self.embeddings.dim
         texts = list(dict.fromkeys(row[2] for row in rows))
         cached = self._cached_vectors(texts, model, dim)
         missing = [text for text in texts if _text_hash(text) not in cached]

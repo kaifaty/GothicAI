@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import time
 from typing import Literal
 
 import httpx
@@ -20,32 +21,48 @@ class EmbedClient:
         self._http = httpx.AsyncClient(base_url=url.rstrip("/") + "/", transport=transport)
         self.model: str | None = None
         self.dim: int | None = None
+        self._backoff_until = 0.0
 
     async def close(self) -> None:
         await self._http.aclose()
 
     async def health(self) -> dict:
-        data = await self._request("GET", "health", timeout=2.0)
-        model, dim = self._identity(data)
-        if not all(isinstance(data.get(key), str) and data[key] for key in ("dtype", "device")):
-            raise EmbedError("Invalid embedding health response")
+        self.check_backoff()
+        try:
+            data = await self._request("GET", "health", timeout=2.0)
+            model, dim = self._identity(data)
+            if not all(isinstance(data.get(key), str) and data[key] for key in ("dtype", "device")):
+                raise EmbedError("Invalid embedding health response")
+        except EmbedError:
+            self._service_failed()
+            raise
         self.model, self.dim = model, dim
         return data
 
     async def embed(self, texts: list[str], kind: Literal["query", "document"]) -> NDArray[np.float32]:
         if kind not in ("query", "document"):
             raise EmbedError("Invalid embedding kind")
-        if len(texts) > 256 or any(not isinstance(text, str) or len(text) > 4000 for text in texts):
+        if len(texts) > 256 or any(not isinstance(text, str) for text in texts):
             raise EmbedError("Invalid embedding texts")
+        self.check_backoff()
         expected = (self.model, self.dim)
-        data = await self._request(
-            "POST", "embed", timeout=2.0 if kind == "query" else 30.0,
-            json={"texts": texts, "kind": kind},
-        )
-        model, dim = self._identity(data)
-        if expected[0] is not None and (model, dim) != expected:
-            raise EmbedError("Embedding model or dimension changed during the request")
         try:
+            data = await self._request(
+                "POST", "embed", timeout=2.0 if kind == "query" else 30.0,
+                json={"texts": [text[:4000] for text in texts], "kind": kind},
+            )
+            try:
+                model, dim = self._identity(data)
+            except EmbedError:
+                self.model, self.dim = None, None
+                raise
+            identity = (model, dim)
+            current = (self.model, self.dim)
+            if (expected[0] is not None and identity != expected) or (
+                current != expected and current != identity
+            ):
+                self.model, self.dim = None, None
+                raise EmbedError("Embedding model or dimension changed during the request")
             encoded = data["vectors"]
             if not isinstance(encoded, str):
                 raise ValueError("vectors must be base64 text")
@@ -55,10 +72,23 @@ class EmbedClient:
             vectors = np.frombuffer(raw, dtype="<f4").reshape(len(texts), dim).astype(np.float32)
             if not np.isfinite(vectors).all():
                 raise ValueError("vectors contain non-finite values")
+        except EmbedError:
+            self._service_failed()
+            raise
         except (KeyError, TypeError, ValueError) as exc:
+            self._service_failed()
             raise EmbedError(f"Invalid embedding vectors: {exc}") from exc
         self.model, self.dim = model, dim
         return vectors
+
+    def check_backoff(self) -> None:
+        if time.monotonic() < self._backoff_until:
+            raise EmbedError("embeddings backoff")
+
+    def _service_failed(self) -> None:
+        now = time.monotonic()
+        if now >= self._backoff_until:
+            self._backoff_until = now + 60
 
     async def _request(self, method: str, path: str, *, timeout: float, **kwargs) -> dict:
         try:
