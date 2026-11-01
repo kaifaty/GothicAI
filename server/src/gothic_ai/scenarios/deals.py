@@ -209,7 +209,8 @@ async def contract(
     off.silent(
         "дано: Ксардас молчит (сделка состоялась)", who=npc, when="сделка состоялась", times=2,
     )
-    off.silent("дано: Ксардас молчит (герой принёс весть о волке)", who=npc, when="волк мёртв")
+    off.silent("дано: Ксардас молчит (герой убил волка)", who=npc, when="Событие: герой убил: Волк")
+    off.silent("дано: Ксардас молчит (герой принёс весть о волке)", who=npc, when="волк мертв")
 
     # 1. experience and a rune from the stash, now
     exp, lp, runes = await field("EXP"), await field("LP"), await has(rune)
