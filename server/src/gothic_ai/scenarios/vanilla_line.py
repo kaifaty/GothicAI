@@ -7,19 +7,21 @@ import copy
 import json
 import logging
 import os
-from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Sequence
+from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
 from .. import questbook
 from ..attitudes import non_hostile
+from ..chains import CACHE_KEY as CHAINS_KEY
 from ..challenges import KINDS
+from ..dialogue import DialogueManager
 from ..game import GameLink
 from ..journal import Journal
-from ..llm import Done, Item, LLMEvent, Message, Tool, ToolCall, ToolChoice
-from ..llm.fake import FakeBackend
+from ..llm import ToolCall
 from ..protocol import Session
+from ..showrunner import CACHE_KEY as SHOWRUNNER_KEY
 from ..showrunner import MIN_REAL_SECONDS, OUTCOMES, occasion_members
 from ..trace import TraceWriter
 from .common import (
@@ -29,11 +31,12 @@ from .common import (
     _save,
     _until,
     _until_async,
+    model_off,
     wait_message,
 )
 from .live import LiveSuite
 from .questlog import ACCEPT, TAKE, TITLE
-from .showrunner import ErrandScript, trace_live_builders
+from .showrunner import Errand, trace_live_builders
 from .story import play_book_chain
 
 if TYPE_CHECKING:
@@ -49,47 +52,6 @@ PREMISE = (
     "и просит осмотреть дорогу, где бросили грязные остатки припасов, и принести образец. "
     "Урожай уже принят Лобартом; это отдельная просьба."
 )
-
-
-class VanillaLineScript:
-    """The director's response is fixed; the watcher, canon and builders stay real."""
-
-    name = "vanilla-line-script"
-
-    def __init__(self, giver: str) -> None:
-        self.giver = giver
-        self.calls: list[str] = []
-
-    async def aclose(self) -> None:
-        pass
-
-    async def stream(
-        self,
-        *,
-        instructions: str,
-        messages: Sequence[Item],
-        tools: list[Tool] | None = None,
-        tool_choice: ToolChoice | None = None,
-        allowed: Collection[str] | None = None,
-        cache_key: str | None = None,
-    ) -> AsyncIterator[LLMEvent]:
-        self.calls.append("\n".join(m.content for m in messages if isinstance(m, Message)))
-        call = ToolCall(
-            "propose_line",
-            {
-                "kind": "quest",
-                "giver": self.giver,
-                "place": "",
-                "new_people": False,
-                "premise": PREMISE,
-                "reason": "сосед отвечает отдельной просьбой на работу героя у Лобарта",
-                "follows": RUEBEN,
-                "requires": REQUIRES,
-            },
-            f"vanilla_line{len(self.calls)}",
-        )
-        yield call
-        yield Done("", (call,))
 
 
 class Turnips:
@@ -208,16 +170,15 @@ async def _giver_ok(link: GameLink, director: Showrunner, line: dict[str, Any]) 
 
 
 async def vanilla_line(
-    link: GameLink, director: Showrunner, quests: QuestLog, slot: int = 7
+    link: GameLink, director: Showrunner, quests: QuestLog, dialogue: DialogueManager, slot: int = 7
 ) -> dict[str, str]:
-    """A scripted response to Lobart's success; the common player finishes it, then save/load keeps it."""
+    """A given neighbor's request after Lobart's success is played and retained across save/load."""
     results: dict[str, str] = {}
 
     def check(name: str, ok: bool, detail: object = "") -> None:
         results[name] = f"{'done' if ok else 'failed'}{f' ({detail})' if detail != '' else ''}"
 
-    if not isinstance(director.model.llm, FakeBackend):
-        return _logged({"scripted_model": "failed (vanilla_line requires LLM=fake)"})
+    off = model_off(dialogue)
     turnips = Turnips(link, director, quests)
     await turnips.prepare()
     check("prepared", True)
@@ -241,16 +202,26 @@ async def vanilla_line(
     check("neighbor", giver is not None and giver != LOBART, giver)
     if giver is None:
         return _logged(results)
-    script, builder = VanillaLineScript(giver), await ErrandScript.for_giver(director, giver)
+    builder = await Errand.for_giver(director, giver)
     if builder is None:
         return _logged({**results, "builder": "failed (no book quest brief)"})
-    director.model.llm, director.chains.model.llm = script, builder
+    off.given(
+        "дано: режиссёр предлагает отдельную просьбу соседа после принятой репы",
+        who=SHOWRUNNER_KEY, when=RUEBEN,
+        calls=[ToolCall("propose_line", {
+            "kind": "quest", "giver": giver, "place": "", "new_people": False,
+            "premise": PREMISE,
+            "reason": "сосед отвечает отдельной просьбой на работу героя у Лобарта",
+            "follows": RUEBEN, "requires": REQUIRES,
+        })],
+    )
+    off.given(
+        "дано: сборщик предлагает просьбу соседа осмотреть дорогу и принести образец",
+        who=CHAINS_KEY, when=f"Замысел режиссёра: {PREMISE}", calls=[builder.call()],
+    )
     line = await director.decide(occasion)
-    check("line", line is not None and line.get("fact") == "line", line)
     if line is None or line.get("fact") != "line":
-        return _logged(results)
-    check("follows_requires", line.get("follows") == RUEBEN and line.get("requires") == REQUIRES, line)
-    check("giver", line.get("giver") == giver and await _giver_ok(link, director, line), giver)
+        raise RuntimeError(f"the director did not build a playable neighbor errand: {line!r}")
     made = [director.book.all()[qid] for qid in line.get("quests", []) if qid in director.book.all()]
     check("book", bool(made) and len(made) == len(line.get("quests", [])), [q.id for q in made])
     if not made:

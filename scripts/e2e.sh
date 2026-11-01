@@ -23,13 +23,16 @@
 #       no attack for 20 s, then drawing a weapon breaks the truce and Brago attacks.
 #   bandit_hold: new game, no SAVE, no model; ranger bandits and a scripted party member stay quiet
 #       on renewable 5 s parley leases for 30 s, then releasing to scripts starts a native attack
-#   combat_barks: new game, LLM=fake; first hit warms the fighter, next checks combat_hit and overlay voice;
-#       QUICK_URL uses live Gemma and reports phrase/voice delays; TTS=fake|inworld
-#   mercy: new game, LLM=fake; a real low-health hit makes Lobart surrender, stops combat and sets AIV;
+#   combat_barks: given: Lobart cries out after a hit; new game, no SAVE, LLM=off via auto.
+#       First hit warms the fighter, next checks combat_hit and overlay voice; TTS=fake.
+#   mercy: given: Lobart surrenders at low health and stays silent after being spared.
+#       New game, no SAVE, LLM=off via auto; a real hit stops combat and sets AIV; TTS=fake;
 #       sheathing the hero's weapon records mercy and ordinary player_text opens conversation again
-#   hero_yield: new game, LLM=fake; the hero surrenders via player_text during a native fight;
+#   hero_yield: given: Lobart accepts the hero's surrender for all gold, without humiliation.
+#       New game, no SAVE, LLM=off via auto, TTS=fake; the hero surrenders via player_text;
 #       accept_surrender stops attacks within 3 s, transfers all real gold and sets victory AIV
-#   humiliate: hero_yield with humiliate:true; checks native S_PRAY/S_PEE, distance, said bark,
+#   humiliate: given: Lobart accepts surrender for gold with humiliation and a given cry.
+#       New game, no SAVE, LLM=off via auto, TTS=fake; checks native S_PRAY/S_PEE, distance, said bark,
 #       held kneeling and native exit after real Back input; records positions and game/wall times
 #   surrender_live: new game, LLM=chatgpt and live QUICK_URL (defaults to settings.toml);
 #       seven independent Lobart/bandit/guard/Brago scenes record real surrender decisions, tools, speech,
@@ -47,19 +50,24 @@
 #       on the payment reply. New game, no SAVE; LLM=off via auto. The ranger gang keeps peace for 20 s,
 #       then at least two bandits attack within 5 s of a drawn weapon.
 #   m0: no model; takes Xardas over, walks him around and returns him to his routine
-#   m1: Xardas answers a player question line by line (LLM backend: LLM=fake|chatgpt|local)
+#   m1: given: Xardas answers with mood-tagged lines; checks delivery line by line.
+#       New game, no SAVE, LLM=off via auto; also used by the mood-ai bench.
 #   websocket: Lobart and Hilda speak through Responses against an in-process fake server: per-npc
 #       WebSocket reuse, tool continuation, HTTP fallback and --no-websocket; SAVE=save_slot_1.sav; no model
-#   m2: npc actions (give_item, follow/stop, gestures)
-#   m3: memory survives save/load and follows the save; push-to-talk from a wav file (streamed at
+#   m2: given: Xardas gives one health potion; npc actions (give_item, follow/stop, gestures).
+#       New game, no SAVE, LLM=off via auto.
+#   m3: given: Xardas answers with a fixed line; memory survives save/load and follows the save.
+#       New game, no SAVE, LLM=off via auto; push-to-talk from a wav file (streamed at
 #       speaking pace) through the ASR service (ASR=fake|inworld|voxtral|chatgpt); ASR=inworld is paid,
 #       so it also needs PAID_ASR=1
 #   m4: no model; what the npc planner needs from the bridge: npc roster, soft actions (npc_act) and their end
 #       (npc_idle); with DECIDER_URL the planner runs against that decision service too
 #   m5b: no model; bridge threats, drawn weapon perception and body actions for free and attached npcs
-#   m5: the turn loop (a rejected commitment corrected in the same turn, a real give after the line),
-#       intents moving the body, and an incident: the body reacts before the words (behavioral model:
-#       DECIDER_URL, or a fixed stand-in); with QUICK_URL the words are the quick model's line, at once
+#   m5: given: Xardas tries an unavailable scroll, gives a potion, follows, then keeps his routine;
+#       fixed body decisions and an incident line. New game, no SAVE, LLM=off via auto;
+#       checks code rejection, continued turn, real transfer and intent/body consequences.
+#   m5c: given: the NPC fights, follows his day plan and speaks on the move.
+#       New game, no SAVE, LLM=off via auto; checks threat holding, activity and moving speech.
 #   neural: no model; a one-handed bandit fights the hero under the P30 body pilot through the full lease cycle;
 #       requires a new game, >=10 decisions, no fallback, engine step p99 <=2000 us
 #   neural-still: no model; BDT_1013 attacks the hero who stands still with a drawn sword (the surrender_live
@@ -105,7 +113,8 @@
 #   orders: immediate companion orders, then Cavalorn hears «Бей волка!» with no focus: he fights the
 #       visible wolf before it attacks the hero; the wolf never hears the phrase or asks its tone model.
 #       No model; combat-event speech is explicitly silent (GIVEN); TIMEOUT=360
-#   m5e: talking without a window: a typed line and the talk key (a wav through the ASR service) with the
+#   m5e: given: Xardas answers with fixed lines; body decisions are fixed.
+#       New game, no SAVE, LLM=off via auto, ASR=fake; talking without a window, typed line and talk key with the
 #       hero's own focus, the addressee, the npc's body, the hero's doings, an interruption, a witness, the end
 #       of a conversation when the hero walks away, a walking npc answering on the move
 #   m6: npc's know the world from the scripts' dialogs as far as the story has got: Xardas's talk of chapter 1
@@ -131,26 +140,23 @@
 #       The far answer is recorded at the routine meeting. Group 2, LLM=off via auto; SAVE=save_slot_1.sav.
 #   places: no model; not a check: dumps the world's waypoints and its people's routines into $LOG_DIR/world_points.json
 #       for the book of places (gothic-ai places <dump>, server/src/gothic_ai/places.py)
-#   tts: npc lines reach the game with audio from the TTS service (TTS=fake|voxcpm|inworld) and play aloud;
+#   tts: given: Xardas answers with fixed mood-tagged lines; audio reaches the game and plays aloud.
+#       New game, no SAVE, LLM=off via auto; TTS=fake|voxcpm|inworld;
 #       TTS=inworld is paid, so it also needs PAID_TTS=1
 #       GOTHIC_TTS_RECORD=1 also records the reply and its bench events for check-voice-stem.sh
 #   lie: given: Xardas pays for the hero's sheep lie; the chronicler recognizes e2e_sheep_lie.
 #       A living sheep reveals the lie, Xardas attacks, and Jora hears the rumor; her situation is read
 #       without a model turn. Group 2, LLM=off via auto; SAVE=save_slot_1.sav.
 #   death_load: human deaths before/after older-save load, player credit, and no repeated saved deaths; no model, no SAVE.
-#   feats: save before a hero kill, chronicler feat with evidence, picture, toast and journal;
-#       load rolls back feat/image facts while retaining picture files; no SAVE.
-#       LLM=fake uses a scripted chronicler and picture; LLM=chatgpt uses the real chronicler and Artist,
-#       requires authenticated codex on the host for image_gen; TIMEOUT defaults to 1020 in live mode.
-#   feat_fame: new game, no SAVE; a witness and a hearer receive fame in the real conversation prompt,
-#       an uninformed control does not; LLM=chatgpt checks wolf/pelt recognition, LLM=fake logs replies.
-#   repair: Lobart gives the hero the turnip quest and dies; the director finds the quest without an ending,
-#       its model proposes a repair (scripted with LLM=fake: first the dead Lobart, rejected by the validator,
-#       then Hilda), and the hero ends the quest with Hilda for Lobart's reward (story graph, stage 5)
-#   authored: the director makes Hilda a quest of its own (docs/director.md, stage 1; model scripted with
-#       LLM=fake): a thing she lost lies near the farm; the hero takes the quest, finds the thing, saves and
-#       loads, brings it and is paid; its variable DIR_Q1 lives in the save (protocol v29). On a save of
-#       Lobart's farm: SAVE=save_slot_1.sav
+#   feats: given: the chronicler recognizes First Judgment; ScenarioArtist supplies its picture.
+#       Save before a hero kill; check picture, toast, journal and rollback while retaining picture files.
+#       Group 2, LLM=off via auto; new game, no SAVE.
+#   feat_fame: given: fame facts are written directly. Read witness/hearer/control situations without
+#       a model turn; check fame propagation. Group 2, LLM=off via auto; new game, no SAVE; TIMEOUT=420.
+#   repair: given: the director proposes dead Lobart (validator rejects), then Hilda. Finish the turnip
+#       quest after Lobart dies; check repair and payment. Group 2, LLM=off via auto; new game, no SAVE.
+#   authored: given: the author proposes a quest using the first reference item and place.
+#       Accept, find, save/load, return and get paid. Group 2, LLM=off via auto; SAVE=save_slot_1.sav.
 #   own: script symbols of our own (docs/director.md, stage 2, layer 1): a story variable, an npc of the
 #       director's made like a nameless farmer, another variable; two saves and loads keep them all, the npc
 #       bound to its own symbol, the farmer and Hilda untouched (protocol v33: debug own_npc). On a save of
@@ -162,10 +168,8 @@
 #   person: the peddler of `cast` as a person (docs/director.md, stage 2, layer 3): his card, past, knowledge
 #       and acquaintances in the production prompt without a model call, a voice of his own; Hilda knows
 #       him by name; the same after a save and a load. On a save of Lobart's farm: SAVE=save_slot_1.sav
-#   character: the director brings in a character of its own (docs/director.md, stage 2, layer 4; models
-#       scripted with LLM=fake): its model makes him up for the place of Lobart's day, the code builds and checks
-#       him, and he gives the hero the quest of stage 1 (the checks of `authored`, him as the giver). On a
-#       save of Lobart's farm: SAVE=save_slot_1.sav
+#   character: given: casting proposes Garet, then the author proposes his quest. The code introduces
+#       him and the hero completes the quest with save/load. Group 2, LLM=off via auto; SAVE=save_slot_1.sav.
 #   trigger: the director's triggers in the bridge (docs/director.md, stage 3, layer 1): one for every event —
 #       a thing put near the hero at once, his having it, a place he comes into again and again, a dialog of
 #       the director's, the hour, the death of an npc of the director's he kills; a save and a load in the
@@ -175,10 +179,10 @@
 #       stages written in the scenario — come to a place, get a thing put at another, bring it to her; the book
 #       checks and builds it of vars, dialogs and triggers; a save and a load at stage 2 keep it. On a save:
 #       SAVE=save_slot_1.sav
-#   own_amend: Hilda's three-stage quest from `stages`; at the hero's "не нужно никуда идти", her scripted
-#       model calls amend_quest to waive stage 1's destination without a visit. Stage 2 starts, terms survive
+#   own_amend: given: Hilda calls amend_quest at "не нужно никуда идти" to waive stage 1's destination.
+#       Stage 2 starts without a visit, terms survive
 #       save/load, and the normal item pickup and turn-in finish with quest_outcome amended/full.
-#       LLM=fake; SAVE=save_slot_1.sav
+#       Group 2, LLM=off via auto; SAVE=save_slot_1.sav.
 #   crimes: hero deeds and engine witnesses (docs/crime.md, layer 1), no model on Lobart's farm:
 #       SAVE=save_slot_1.sav; TIMEOUT=420. Theft, chest, unowned item, attack, sheep, both pocket
 #       outcomes, then save/load and a clean branch. Native script reactions remain enabled.
@@ -248,18 +252,17 @@
 #       the book's second stage waits for "Сковорода для Хильды" to become running. A save and a load
 #       keep that stage and its unfired vanilla trigger; Hilda's native shopping dialog gives the pan
 #       quest, advancing the book to its final talk and reward. On a save: SAVE=save_slot_1.sav; no model
-#   own_repair: the director's own quest repaired (docs/director.md, stage 3, layer 3): Hilda gives the
-#       three-stage quest of `stages`; after the hero reaches the farmyard she dies, the director passes her
-#       turn-in to Lobart (scripted: first the dead Hilda is refused), keeping its id and required effects
-#       and reducing the reward; a save and a load keep it, the hero brings the broom to Lobart, who takes it
+#   own_repair: given: the director proposes dead Hilda (validator rejects), then Lobart with one gold.
+#       Hilda gives the three-stage quest of `stages`; after the hero reaches the farmyard she dies.
+#       The repair keeps its id and required effects and reduces the reward;
+#       a save and a load keep it, the hero brings the broom to Lobart, who takes it
 #       and pays; the book follows the quest to success and Lobart knows he paid. On a save:
-#       SAVE=save_slot_1.sav; LLM=fake
-#   chain: Garet's linked quests (docs/director.md, stage 3, layer 4): its model proposes the cast and two
-#       quests together (scripted: stolen merchandise held by a thief, then three bandits in a camp; the
-#       first proposal's farmyard camp is refused). The book introduces the chain atomically; a general
+#       Group 2, LLM=off via auto; SAVE=save_slot_1.sav.
+#   chain: given: a thief and a camp of three bandits; the first farmyard camp is rejected by the code.
+#       The book introduces the chain atomically; a general
 #       player follows its goals, checks the next quest stays locked until turn-in, saves and loads after
-#       the first bandit's death, finishes both quests, and checks Garet knows. LLM=chatgpt uses the same
-#       player for the model's own chain. On a save: SAVE=save_slot_1.sav
+#       the first bandit's death, finishes both quests, and checks Garet knows.
+#       Group 2, LLM=off via auto; SAVE=save_slot_1.sav.
 #   occasions: the director's occasions (docs/director.md, stage 4, layer 1), no model: the hero settles
 #       in a new inhabited place (one arrived), leaves and returns (none), saves and loads (the same
 #       visited places, empty queue, no repeat); KAPITEL rises (chapter), the hero kills a living human
@@ -270,11 +273,9 @@
 #       vanilla occasion); story_effect finishes it and the real 30 s poll records running -> success
 #       without a dialog node. A save and a load repeat no facts, including the next periodic sample.
 #       On a save: SAVE=save_slot_1.sav; no model; TIMEOUT=300
-#   showrunner: the director's decision (docs/director.md, stage 4, layer 2), LLM=fake only: a real
-#       arrived at a new inhabited place produces a quest from an eligible giver; a plot giver is refused
-#       first, the second proposal and the builder receive the premise. Another occasion that day is
-#       skipped before the model; after a game day and a simulated 15 min, none is recorded. Save/load
-#       keeps the lines and budget. On a save: SAVE=save_slot_1.sav; no ordinary background loop
+#   showrunner: given: a rejected plot giver, a trial line, none, a theft line and their quest builders.
+#       Check canon, pause, budget, trials, passage and save/load; no ordinary background loop.
+#       Group 2, LLM=off via auto; SAVE=save_slot_1.sav.
 #   showrunner_live: LLM=chatgpt only, stage 4 layer 3: one saved game, real arrived, human-kill deed and
 #       chapter occasions consumed by Showrunner.run; every line is finished by play_book_chain before
 #       the next occasion, with a game day and an injected 15 min between them. All three must have a
@@ -283,10 +284,9 @@
 #   greg: given: Greg gives his city errand and accepts the hero's clothing claim. New game, no SAVE;
 #       Group 2, LLM=off via auto. Farmer clothes earn 50 gold, a map
 #       and two rum; reload the branch without the clothes and his acceptance records a lie with its truth
-#   vanilla_line: LLM=fake only, stage 5 layer 3: take and finish Lobart's turnips through the scripts'
-#       own dialogs. The vanilla success occasion produces a neighbor's line with follows and a success
-#       requirement; its book offer is open, play_book_chain completes it, and save/load keeps the same
-#       line and quest fields. SAVE=save_slot_1.sav; TIMEOUT=420
+#   vanilla_line: given: the showrunner proposes a neighbor's line after Lobart's turnips.
+#       Finish the native turnip dialogs, play the follow-up and save/load its state.
+#       Group 2, LLM=off via auto; SAVE=save_slot_1.sav; TIMEOUT=420.
 #   vanilla_line_live: LLM=chatgpt only: Showrunner.run consumes two real vanilla occasions, taking and
 #       completing Lobart's turnips. Finish the first line, if any, before the second event, then advance
 #       a game day and the budget's wall clock by 15 min. live.json scores canonical completed lines;
@@ -410,7 +410,7 @@
 # slot 1). The game runs in LOG_DIR,
 # so its saves and settings stay there; memories go to LOG_DIR/memory.sqlite3.
 #
-#   SCENARIO=m3 LLM=fake ASR=voxtral GOTHIC_DIR=/path/to/Gothic\ II scripts/e2e.sh
+#   SCENARIO=m3 ASR=voxtral GOTHIC_DIR=/path/to/Gothic\ II scripts/e2e.sh
 # GAME_EXTRA_ENV adds game-only environment assignments, one NAME=value per line.
 # Example: GAME_EXTRA_ENV=$'LD_PRELOAD=/path/libjemalloc.so.2\nMALLOC_CONF=prof:true'
 set -euo pipefail
@@ -434,7 +434,6 @@ if [[ "$SCENARIO" == surrender_live || "$SCENARIO" == neural-still || "$SCENARIO
 if [[ "$SCENARIO" == haggle ]]; then E2E_DEFAULT_TIMEOUT=1200; fi
 if [[ "$SCENARIO" == interject ]]; then E2E_DEFAULT_TIMEOUT=600; fi
 if [[ "$SCENARIO" == chests_lobart ]]; then E2E_DEFAULT_TIMEOUT=420; fi
-if [[ "$SCENARIO" == feats && "$LLM" == chatgpt ]]; then E2E_DEFAULT_TIMEOUT=1020; fi
 if [[ "$SCENARIO" == feat_fame ]]; then E2E_DEFAULT_TIMEOUT=420; fi
 TIMEOUT="${TIMEOUT:-$E2E_DEFAULT_TIMEOUT}"
 if [[ "${GOTHIC_TTS_RECORD:-0}" == 1 && "$SCENARIO" != tts ]]; then
@@ -463,12 +462,8 @@ if [[ ( "$SCENARIO" == bandit_parley || "$SCENARIO" == bandit_bounty || "$SCENAR
   echo "scenario $SCENARIO requires a new game (unset SAVE)" >&2
   exit 2
 fi
-if [[ "$SCENARIO" == feats && ( ( "$LLM" != fake && "$LLM" != chatgpt && "$LLM" != auto ) || -n "${SAVE:-}" ) ]]; then
-  echo 'scenario feats requires LLM=fake or LLM=chatgpt and a new game (unset SAVE)' >&2
-  exit 2
-fi
-if [[ "$SCENARIO" == feat_fame && ( ( "$LLM" != fake && "$LLM" != chatgpt && "$LLM" != auto ) || -n "${SAVE:-}" ) ]]; then
-  echo 'scenario feat_fame requires LLM=fake or LLM=chatgpt and a new game (unset SAVE)' >&2
+if [[ ( "$SCENARIO" == feats || "$SCENARIO" == feat_fame ) && -n "${SAVE:-}" ]]; then
+  echo "scenario $SCENARIO requires a new game (unset SAVE)" >&2
   exit 2
 fi
 ASR="${ASR:-fake}"
@@ -507,7 +502,7 @@ BRAIN_ARGS=(--no-brain)
 if [ -n "${DECIDER_URL:-}" ]; then
   BRAIN_ARGS=(--decider-url "$DECIDER_URL")
 fi
-# lines in a fight come from the quick model only when given (QUICK_URL=http://<gpu-host>:47834/v1; m5)
+# QUICK_URL enables live quick speech only in scenarios that use it.
 QUICK_ARGS=(--no-quick)
 if [[ "$SCENARIO" == surrender_live && -z "${QUICK_URL:-}" ]]; then
   QUICK_URL="$(cd "$ROOT/server" && uv run python - <<'PY'
@@ -539,6 +534,12 @@ fi
 if [ -n "${QUICK_URL:-}" ]; then
   QUICK_ARGS=(--quick-url "$QUICK_URL")
 fi
+case "$SCENARIO" in
+  m1|m2|m3|m5|m5c|m5e|tts|combat_barks|mercy|hero_yield|humiliate)
+    BRAIN_ARGS=(--no-brain)
+    QUICK_ARGS=(--no-quick)
+    ;;
+esac
 SVM_ARGS=()
 if [[ "${GOTHIC_NO_SVM_LINES:-0}" == 1 ]]; then
   SVM_ARGS=(--no-svm-lines)
