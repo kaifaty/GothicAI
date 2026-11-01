@@ -184,6 +184,7 @@ Marvin::Marvin() {
     {"toggle arrow_physics",      C_ToggleArrowPhysics},
     {"toggle arrow_sticking",     C_ToggleArrowSticking},
     {"toggle spell_physics",      C_ToggleSpellPhysics},
+    {"toggle body_impact_damage", C_ToggleBodyImpactDamage},
     {"toggle movable_vobs",       C_ToggleMovableVobs},
     {"toggle item_hulls",         C_ToggleItemHulls},
     {"toggle item_deepest_contact",C_ToggleItemDeepestContact},
@@ -607,6 +608,9 @@ bool Marvin::exec(std::string_view v) {
       return true;
     case C_ToggleSpellPhysics:
       Gothic::settingsSetI("GAME","spell_physics",Gothic::settingsGetI("GAME","spell_physics")==0 ? 1 : 0);
+      return true;
+    case C_ToggleBodyImpactDamage:
+      Gothic::settingsSetI("GAME","body_impact_damage",Gothic::settingsGetI("GAME","body_impact_damage")==0 ? 1 : 0);
       return true;
     case C_ToggleMovableVobs:
       Gothic::settingsSetI("GAME","movable_vobs",Gothic::settingsGetI("GAME","movable_vobs")==0 ? 1 : 0);

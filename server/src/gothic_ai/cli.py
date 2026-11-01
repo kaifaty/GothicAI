@@ -493,6 +493,8 @@ class Console:
                             print(f"  {feat.id}: {feat.title}; {feat.text}")
                             if feat.epilogue:
                                 print(f"    {feat.epilogue}")
+                        for end in fork.ends:
+                            print(f"  {end.kind}: {end.title}; {end.text}")
             case "graph" if self.state.story is not None:
                 await self.graph(rest)
             case "quest" if len(rest) >= 5 and self.state.quests is not None:

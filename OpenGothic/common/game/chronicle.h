@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-// The hero's chronicle as the AI server sends it (protocol v55): this branch's fate and the
+// The hero's chronicle as the AI server sends it (protocol v57): this branch's fate and the
 // other fates of the playthrough by save fork. The bridge fills it, the diary reads it.
 struct ChronicleFeat final {
   std::string id;
@@ -18,10 +18,16 @@ struct ChronicleFeat final {
   std::string epilogue;
   };
 
+struct ChronicleEnd final {
+  std::string kind, title, text, name;
+  int64_t     chapter = 1, day = 0;
+  };
+
 struct ChronicleFork final {
   int64_t                    chapter = 1;
   int64_t                    day = 0;
   std::vector<ChronicleFeat> feats;
+  std::vector<ChronicleEnd>  ends;
   };
 
 struct ChronicleData final {
