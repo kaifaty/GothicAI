@@ -1462,11 +1462,11 @@ async def witness_check(
         "offered", "ask_witness" in offered and f"- {wname} — " in situation, offered,
     )
     off.given(
-        f"дано: Лобарт спрашивает свидетеля {wname}", who=farmer, when="всё утро был в городе",
+        f"дано: Лобарт спрашивает свидетеля {wname}", who=farmer, when="утро был в городе",
         calls=[ToolCall("ask_witness", {"who": wname, "said": "всё утро был в городе"})],
     )
     off.silent(
-        "дано: Лобарт молчит (свидетель вызван)", who=farmer, when="всё утро был в городе",
+        "дано: Лобарт молчит (свидетель вызван)", who=farmer, when="утро был в городе",
     )
     off.silent(
         f"дано: {wname} молчит (показание записано кодом)", who=witness,
