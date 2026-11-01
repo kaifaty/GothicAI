@@ -17324,7 +17324,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     say("immortal " + symName(w,n) + " " + (n->isImmortal() ? "on" : "off"));
     }
   else if(c=="stun") {
-    // stun <npc|nearest|player> [parried|guard_break]: the stun of melee_parry as after a parry, by the hero
+    // stun <npc|nearest|player> [parried|guard_break|posture]: melee stun, by the hero
     // (or, for the hero, by the nearest npc): the look without timing a real parade
     Npc* n = a.size()>1 && a[1]=="player" ? &pl : findNpc(w,pl,a.size()>1 ? a[1] : "nearest");
     Npc* by = n==&pl ? findNpc(w,pl,"nearest") : &pl;

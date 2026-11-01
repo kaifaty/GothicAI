@@ -4765,6 +4765,39 @@ namespace {
     require(!Npc::canAccumulateMeleePosture(true,false,true,false),"a knockdown must not accumulate another knockdown");
     require(!Npc::canAccumulateMeleePosture(true,false,false,true),"death or unconsciousness must retain the old path");
 
+    require(MeleeImpact::beastSize(54.9f)==MeleeImpact::BeastSize::Small,
+            "beasts below 55 kg must be small");
+    require(MeleeImpact::beastSize(55.f)==MeleeImpact::BeastSize::Medium &&
+            MeleeImpact::beastSize(299.9f)==MeleeImpact::BeastSize::Medium,
+            "beasts from 55 kg to below 300 kg must be medium");
+    require(MeleeImpact::beastSize(300.f)==MeleeImpact::BeastSize::Huge,
+            "beasts from 300 kg must be huge");
+    require(MeleeImpact::beastCanAccumulatePosture(54.9f) && MeleeImpact::beastCanAccumulatePosture(299.9f) &&
+            !MeleeImpact::beastCanAccumulatePosture(300.f) && !MeleeImpact::beastCanAccumulatePosture(600.f),
+            "small and medium beasts must accumulate posture while huge beasts never do");
+    requireNear(Ragdoll::speciesMass("Shadow"),250.f,.0001f,"the Shadow model must weigh 250 kg");
+    requireNear(Ragdoll::speciesMass("sHaDoW"),250.f,.0001f,"Shadow mass must be case insensitive");
+    requireNear(Ragdoll::speciesMass("Golem"),500.f,.0001f,"the Golem model must weigh 500 kg");
+    requireNear(Ragdoll::speciesMass("gOlEm"),500.f,.0001f,"Golem mass must be case insensitive");
+
+    requireNear(MeleeImpact::beastImpulse(40.f),20.f,.0001f,"a 40 kg beast must strike with 20 N s");
+    requireNear(MeleeImpact::beastImpulse(90.f),45.f,.0001f,"a 90 kg beast must strike with 45 N s");
+    requireNear(MeleeImpact::beastImpulse(250.f),60.f,.0001f,"a 250 kg beast impulse must cap at 60 N s");
+    requireNear(MeleeImpact::beastSkillThresholdScale(0),.96f,.0001f,
+                "beast attacks must use a neutral attacker scale against an unskilled defender");
+    requireNear(MeleeImpact::beastSkillThresholdScale(100),1.44f,.0001f,
+                "beast attacks must retain the skilled defender threshold multiplier");
+    {
+      const auto threshold = MeleeImpact::beastSkillThresholdScale(0);
+      const auto hugeHit = MeleeImpact::postureIncrease(60.f,75.f,threshold);
+      const auto mediumHit = MeleeImpact::postureIncrease(45.f,75.f,threshold);
+      require(hugeHit>=40.f && mediumHit<40.f,
+              "60 N s must cross the heavy posture threshold against 75 kg while 45 N s must not");
+      require(MeleeImpact::heavyHit(MeleeImpact::Weapon::Fist,{0,0,0},hugeHit)==MeleeImpact::HeavyHit::Posture &&
+              MeleeImpact::heavyHit(MeleeImpact::Weapon::Fist,{0,0,0},mediumHit)==MeleeImpact::HeavyHit::None,
+              "unarmed beast hits must qualify as heavy only through their posture increase");
+      }
+
     require(MeleeImpact::heavyHit(MeleeImpact::Weapon::TwoHand,{0,0,0},0)==MeleeImpact::HeavyHit::TwoHanded,
             "a two-handed weapon must qualify as a heavy hit");
     require(MeleeImpact::heavyHit(MeleeImpact::Weapon::OneHand,{80,-60,0},0)==MeleeImpact::HeavyHit::Downward,

@@ -30,6 +30,14 @@ uint64_t MeleeImpact::stunDuration(std::string_view reason) {
   return reason=="posture" ? 1500 : 1000;
   }
 
+MeleeImpact::BeastSize MeleeImpact::beastSize(float bodyMassKg) {
+  return bodyMassKg<55.f ? BeastSize::Small : bodyMassKg<300.f ? BeastSize::Medium : BeastSize::Huge;
+  }
+
+bool MeleeImpact::beastCanAccumulatePosture(float bodyMassKg) {
+  return beastSize(bodyMassKg)!=BeastSize::Huge;
+  }
+
 Tempest::Vec3 MeleeImpact::impulse(Weapon weapon, const Tempest::Vec3& velocityCmS, float surfaceAngleDeg) {
   const float mass = weapon==Weapon::Fist ? 1.5f : weapon==Weapon::OneHand ? 2.5f : 4.f;
   const float edge = .5f+.5f*std::sin(std::clamp(surfaceAngleDeg,0.f,90.f)*float(M_PI)/180.f);
@@ -40,10 +48,18 @@ Tempest::Vec3 MeleeImpact::impulse(Weapon weapon, const Tempest::Vec3& velocityC
   return result;
   }
 
+float MeleeImpact::beastImpulse(float bodyMassKg) {
+  return std::min(60.f,.1f*bodyMassKg*5.f);
+  }
+
 float MeleeImpact::skillThresholdScale(int32_t attackerHitChance, int32_t attackerStrength, int32_t defenderHitChance) {
   const float attack  = std::clamp(.7f+.005f*float(std::clamp(attackerHitChance,0,100))+.002f*float(attackerStrength-60),.5f,1.4f);
   const float defence = .8f+.004f*float(std::clamp(defenderHitChance,0,100));
   return 1.2f*defence/attack;
+  }
+
+float MeleeImpact::beastSkillThresholdScale(int32_t defenderHitChance) {
+  return 1.2f*(.8f+.004f*float(std::clamp(defenderHitChance,0,100)));
   }
 
 void MeleeImpact::Posture::tick(uint64_t nowMs, uint64_t dtMs) {
