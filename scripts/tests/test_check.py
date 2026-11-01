@@ -481,13 +481,15 @@ def test_real_game_change_selects_server_importers(filename):
     changed = "/".join(("server", "src", "gothic_ai", filename))
     matrix = check.select_groups(ROOT, [changed])
     files = selected_files(matrix)
-    assert {group["name"] for group in matrix} == {"server", "scripts-torch"}
+    # scripts/tests gains server importers over time (test_e2e_live.py): pin what must be there, not the whole set
+    assert {"server", "scripts-torch"} <= {group["name"] for group in matrix} <= {"server", "scripts", "scripts-torch"}
     assert "scripts/tests/test_body_live_capture.py" in files
     assert "server/tests/test_memprobe.py" in files
     assert "server/tests/test_neural_transitions.py" in files
     assert "server/tests/test_body_control.py" in files
     total = check.discover_tests(ROOT)["server"]
-    assert files == set(total) | {"scripts/tests/test_body_live_capture.py"}
+    assert set(total) | {"scripts/tests/test_body_live_capture.py"} <= files
+    assert all(path.startswith(("server/tests/", "scripts/tests/")) for path in files)
     direct = check.select_groups(ROOT, [changed], level="direct")
     direct_files = selected_files(direct)
     assert direct_files <= files
