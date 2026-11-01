@@ -441,17 +441,18 @@ async def test_greedy_npc_steals_one_item_by_the_native_checked_command(system):
 
 
 @pytest.mark.parametrize("honesty,days", [(1, 2), (2, 4)])
-@pytest.mark.parametrize("far", [False, True])
-async def test_greedy_npc_timeout_does_not_reset_its_character_cooldown(system, honesty, days, far):
+@pytest.mark.parametrize("far", [None, False, True])
+async def test_greed_cooldown_holds_without_and_after_a_defense_timeout(system, honesty, days, far):
     greed_scene(system, honesty=honesty)
     await system.will.tick(NOW)
     case = commit_theft(system)
     finish_action(system)
-    system.chronicle.record({
-        "fact": "npc_crime_defense", "crime": case["id"], "culprit": THIEF,
-        "fighter": LOBART, "outcome": "timeout", "reason": "deadline",
-        **({"far": True} if far else {}),
-    })
+    if far is not None:
+        system.chronicle.record({
+            "fact": "npc_crime_defense", "crime": case["id"], "culprit": THIEF,
+            "fighter": LOBART, "outcome": "timeout", "reason": "deadline",
+            **({"far": True} if far else {}),
+        })
     before = NOW + days * DAY - 60
     system.moments.now += 60
     refresh(system, before)
