@@ -182,3 +182,15 @@ def test_match_stance_lands_ends_on_the_target_and_keeps_the_middle():
     assert np.allclose(anim.positions[0], target.positions[0])
     assert np.allclose(anim.positions[-1], target.positions[0] + np.array([0, 0, -200.0]))
     assert same(anim.rotations[8], rot[8]) and np.allclose(anim.positions[8], pos[8])
+
+
+def test_body_nodes_drop_slots_and_fill_toes():
+    import finish
+    rng = np.random.default_rng(4)
+    names = ["BIP01", "BIP01 L TOE0", "BIP01 R TOE0", "ZS_RIGHTHAND"]
+    skel = ga.Skeleton([ga.Node(n, -1 if i == 0 else 0, np.eye(4)) for i, n in enumerate(names)], np.zeros(3))
+    anim = ga.Animation("T", "", 1, 25.0, 3, [0, 1, 2, 3], rng.normal(size=(3, 4, 3)), random_quats(rng, (3, 4)))
+    fill = ga.Animation("J", "", 1, 25.0, 1, [1, 2], rng.normal(size=(1, 2, 3)), random_quats(rng, (1, 2)))
+    finish.body_nodes(anim, skel, [fill])
+    assert anim.node_indices == [0, 1, 2]
+    assert np.allclose(anim.rotations[:, 1], fill.rotations[0, 0]) and np.allclose(anim.positions[:, 2], fill.positions[0, 1])
