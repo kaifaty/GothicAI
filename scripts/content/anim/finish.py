@@ -116,7 +116,8 @@ def frame_skeleton(skel: ga.Skeleton, anim: ga.Animation, t: int) -> ga.Skeleton
     return ga.Skeleton(nodes, skel.root_translation)
 
 
-def lock_feet(anim: ga.Animation, skel: ga.Skeleton, height: float = 4.0, speed: float = 8.0) -> None:
+def lock_feet(anim: ga.Animation, skel: ga.Skeleton, height: float = 4.0, speed: float = 8.0,
+              ends: float | None = None) -> None:
     """Pin each foot while it stands and bend the leg to it (two-bone IK on thigh and calf).
 
     A foot stands where its ankle is within `height` cm of its standing height (the stance at the clip's ends)
@@ -124,7 +125,8 @@ def lock_feet(anim: ga.Animation, skel: ga.Skeleton, height: float = 4.0, speed:
     stand at the end of the clip is pinned where the stance puts it, so the snapped end stays. The offset
     between one pin and the next is spread over the swing between them, where it shows as no slide; before the
     first stand and after the last it fades to nothing. Squeezing time doubles a slide per frame, and easing
-    the ends onto another stance moves the feet."""
+    the ends onto another stance moves the feet. `ends` (seconds) limits the stands to the start and the end of
+    the clip: in a roll the feet also lie low and still on the ground, and pinning them there would bend the legs."""
     n = anim.frame_count
     worlds = [ga.world_pose(skel, anim, f) for f in range(n)]
     names = [nd.name for nd in skel.nodes]
@@ -137,6 +139,9 @@ def lock_feet(anim: ga.Animation, skel: ga.Skeleton, height: float = 4.0, speed:
         p = np.array([w[chain[2]][:3, 3] for w in worlds])
         v = np.r_[0.0, np.linalg.norm(np.diff(p[:, [0, 2]], axis=0), axis=1)]
         planted = (p[:, 1] < min(p[0, 1], p[-1, 1]) + height) & (v < speed)
+        if ends is not None:
+            t = np.arange(n) / anim.fps
+            planted &= (t <= ends) | (t >= t[-1] - ends)
         spans, f = [], 0
         while f < n:
             if planted[f]:
@@ -226,6 +231,7 @@ def main():
     ap.add_argument("--fill", type=Path, action="append", default=[],
                     help="the overlay's jump-back: its node set is written, and it poses the toes and weapon slots the stance lacks")
     ap.add_argument("--no-foot-lock", action="store_true", help="leave the feet as retargeted")
+    ap.add_argument("--lock-ends", type=float, help="pin feet only this many seconds from the start and the end (rolls)")
     ap.add_argument("--fade", default="0.12,0.2", help="seconds of stance matching at the start and at the end")
     a = ap.parse_args()
     skel = ga.read_skeleton(a.skeleton or a.ref.parent / "HUMANS.MDH.json")
@@ -235,7 +241,7 @@ def main():
     hold_arm(anim, skel, ref, [float(w) for w in a.sword_arm.split(",")])
     hold_arm(anim, skel, ref, [float(w) for w in a.free_arm.split(",")], side="L")
     if not a.no_foot_lock:
-        lock_feet(anim, rs.with_offsets(skel, ref))
+        lock_feet(anim, rs.with_offsets(skel, ref), ends=a.lock_ends)
     fills = [ga.read_animation(f) for f in a.fill]
     body_nodes(anim, skel, [ref] + fills, fills[0] if fills else ref)
     anim.name, anim.next = a.name, a.next
