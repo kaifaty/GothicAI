@@ -63,7 +63,7 @@ pin off
 wait 2000
 stop
 
-# One strike before Snapper's hit frame 8 must preserve its current bite when ON.
+# Native monster combat chooses the bite; the short series catches its wind-up when ON.
 # High hero HP, without god mode, leaves actual bite damage measurable in body-events.
 watch player
 clear 3000
@@ -73,11 +73,25 @@ stats npc SNAPPER hp 100000 hpmax 100000
 watch SNAPPER
 wait 600
 rec snapper-attack novideo
+# Set the target, then discard the human state and its queued weapon removal.
 fight SNAPPER player
-wait 1000
-ani SNAPPER S_FISTATTACK
-wait 67
+wait 200
+freeze SNAPPER
+freeze SNAPPER
+state SNAPPER ZS_MM_ATTACK NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+freeze SNAPPER off
+wait 500
 mark snapper-hit-during-attack
+strike SNAPPER
+wait 67
+strike SNAPPER
+wait 67
+strike SNAPPER
+wait 67
+strike SNAPPER
+wait 67
+strike SNAPPER
+wait 67
 strike SNAPPER
 wait 1500
 mark snapper-native-resume
