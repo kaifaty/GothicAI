@@ -817,14 +817,18 @@ async def test_a_model_quiet_twice_gives_up():
     assert (llm.calls, fake.said) == (2, [])  # one retry a turn
 
 
-async def test_m1_scenario_with_fake_llm():
+async def test_m1_scenario_with_model_off():
+    from gothic_ai.llm.off import OffBackend
+
     fake = FakeGame()
+    llm = OffBackend()
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, FakeBackend(delay=0), PersonaProvider(None))
+        dialogue = DialogueManager(link, llm, PersonaProvider(None))
         lines = await asyncio.wait_for(scenarios.m1_chat(link, dialogue), 10)
 
     assert len(lines) >= 2
     assert fake.attached == set()  # returned to routine
+    assert not llm.attempts and not llm.unused()
 
 
 async def test_tool_call_runs_in_the_game_and_its_outcome_becomes_a_note():

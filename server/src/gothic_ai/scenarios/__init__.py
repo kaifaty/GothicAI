@@ -34,7 +34,6 @@ from .conversation import gossip_demo as gossip_demo
 from .conversation import gossip_scenario as gossip_scenario
 from .conversation import group_scenario as group_scenario
 from .conversation import interject_scenario as interject_scenario
-from .conversation import write_cards as write_cards
 from .cover import cover_scenario as cover_scenario
 from .cover import cover_subject_scenario as cover_subject_scenario
 from .crime_ally import crime_ally as crime_ally

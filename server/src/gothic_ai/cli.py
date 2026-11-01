@@ -851,9 +851,6 @@ async def serve(args: argparse.Namespace) -> int:
         log.error("scenario %s requires --neural-body and, for service policy, GOTHIC_BODY_URL "
                   "(or --body-url)", args.scenario)
         return 2
-    if args.scenario == "feats" and args.llm not in {"fake", "chatgpt"}:
-        log.error("scenario feats requires --llm fake or chatgpt")
-        return 2
     done = asyncio.Event()
     exit_code = 0
     state = ServerState()
@@ -1014,21 +1011,18 @@ async def serve(args: argparse.Namespace) -> int:
             if not args.no_feat_images and args.scenario in {None, "feats"}:
                 if args.scenario == "feats":
                     feat_image_root = TemporaryDirectory(prefix="feat-images-")
-                    artist = (
-                        ScenarioArtist(Path(feat_image_root.name), codex="scenario")
-                        if args.llm == "fake" else Artist(Path(feat_image_root.name))
-                    )
+                    artist = ScenarioArtist(Path(feat_image_root.name), codex="scenario")
                 else:
                     artist = Artist()
             state.feats = Feats(
                 link, state.chronicle, llm, journal=journal, places=place_book,
-                gather_s=1 if args.scenario == "feats" and args.llm == "fake" else 20,
+                gather_s=1 if args.scenario == "feats" else 20,
                 artist=artist,
                 fame=not args.no_feat_fame,
                 hero_distance=lambda npc: (
                     state.talk.people[npc].distance if npc in state.talk.people else None
                 ),
-                image_wait_s=30 if args.scenario == "feats" and args.llm == "fake" else 150,
+                image_wait_s=30 if args.scenario == "feats" else 150,
             )
             state.talk.on_phrase.append(lambda to, text: state.feats.hero_talk(to.id) if to else None)
         state.fates = Fates(
@@ -1652,17 +1646,14 @@ async def serve(args: argparse.Namespace) -> int:
                 log.info("scenario m0: %d steps, %d failed", len(steps), len(failed))
                 exit_code = 1 if failed else 0
             elif args.scenario == "m2":
-                results = await scenarios.m2_actions(link, args.npc)
-                bad = {
-                    k: v
-                    for k, v in results.items()
-                    if not k.startswith("gesture") and k != "give_item_missing" and not v.startswith("done")
-                }
+                assert state.dialogue is not None
+                results = await scenarios.m2_actions(link, state.dialogue, args.npc)
+                bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info("scenario m2: %d checks, %d failed", len(results), len(bad))
                 exit_code = 1 if bad else 0
             elif args.scenario == "m1":
                 lines = await scenarios.m1_chat(link, state.dialogue, args.npc)
-                log.info("scenario m1: npc spoke %d line(s)", len(lines))
+                log.info("scenario m1: line_delivery: done (%d lines)", len(lines))
             elif args.scenario == "websocket":
                 assert state.dialogue
                 results = await scenarios.websocket(link, state.dialogue)
@@ -1680,7 +1671,8 @@ async def serve(args: argparse.Namespace) -> int:
                 log.info("scenario m4: %d checks, %d failed", len(results), len(bad))
                 exit_code = 1 if bad else 0
             elif args.scenario == "m5":
-                results = await scenarios.m5_turn_loop(link, args.npc, decider, trace, quick)
+                assert state.dialogue is not None
+                results = await scenarios.m5_turn_loop(link, state.dialogue, args.npc)
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info("scenario m5: %d checks, %d failed", len(results), len(bad))
                 exit_code = 1 if bad else 0
@@ -1690,7 +1682,8 @@ async def serve(args: argparse.Namespace) -> int:
                 log.info("scenario m5b: %d checks, %d failed", len(results), len(bad))
                 exit_code = 1 if bad else 0
             elif args.scenario == "m5c":
-                results = await scenarios.m5c_free_npc(link, args.npc)
+                assert state.dialogue is not None
+                results = await scenarios.m5c_free_npc(link, state.dialogue, args.npc)
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info("scenario m5c: %d checks, %d failed", len(results), len(bad))
                 exit_code = 1 if bad else 0
@@ -2202,7 +2195,7 @@ async def serve(args: argparse.Namespace) -> int:
                 exit_code = 1 if bad else 0
             elif args.scenario == "feats":
                 assert state.feats is not None
-                results = await scenarios.feats(link, state.feats, journal)
+                results = await scenarios.feats(link, state.feats, journal, state.dialogue)
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info("scenario feats: %d checks, %d failed", len(results), len(bad))
                 exit_code = 1 if bad else 0
@@ -2238,13 +2231,13 @@ async def serve(args: argparse.Namespace) -> int:
                 exit_code = 1 if bad else 0
             elif args.scenario == "showrunner":
                 assert state.showrunner is not None
-                results = await scenario_showrunner.showrunner(link, state.showrunner)
+                results = await scenario_showrunner.showrunner(link, state.showrunner, state.dialogue)
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info("scenario showrunner: %d checks, %d failed", len(results), len(bad))
                 exit_code = 1 if bad else 0
             elif args.scenario == "showrunner_live":
                 assert state.showrunner is not None
-                results = await scenario_showrunner.showrunner_live(link, state.showrunner)
+                results = await scenario_showrunner.showrunner_live(link, state.showrunner, trace)
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info("scenario showrunner_live: %d checks, %d failed", len(results), len(bad))
                 exit_code = 1 if bad else 0
@@ -2252,10 +2245,12 @@ async def serve(args: argparse.Namespace) -> int:
                 assert state.showrunner is not None and state.questlog is not None
                 if args.scenario == "vanilla_line_live":
                     results = await scenario_vanilla_line.vanilla_line_live(
-                        link, state.showrunner, state.questlog, journal
+                        link, state.showrunner, state.questlog, journal, trace
                     )
                 else:
-                    results = await scenario_vanilla_line.vanilla_line(link, state.showrunner, state.questlog)
+                    results = await scenario_vanilla_line.vanilla_line(
+                        link, state.showrunner, state.questlog, state.dialogue
+                    )
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info("scenario %s: %d checks, %d failed", args.scenario, len(results), len(bad))
                 exit_code = 1 if bad else 0
@@ -2377,14 +2372,6 @@ async def serve(args: argparse.Namespace) -> int:
                 results = await scenarios.contract(link, dialogue, talk, deals)
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info("scenario contract: %d checks, %d failed", len(results), len(bad))
-                exit_code = 1 if bad else 0
-            elif args.scenario == "cards":
-                if graph is None:
-                    raise SystemExit("cards need the story graph")
-                only = {n.strip().upper() for n in os.environ.get("GOTHIC_CARDS", "").split(",") if n.strip()}
-                results = await scenarios.write_cards(link, graph, llm, only or None)
-                bad = {k: v for k, v in results.items() if not v.startswith("done")}
-                log.info("scenario cards: %d checks, %d failed", len(results), len(bad))
                 exit_code = 1 if bad else 0
             elif args.scenario == "haggle":
                 dialogue, talk, deals = state.dialogue, state.talk, state.deals
@@ -2735,6 +2722,52 @@ async def lore_cmd(args: argparse.Namespace) -> int:
             for f in facts.get(n, []):
                 print(f"  {n} [{f['dialog']}] {f['place'] or '-'} {f['who']}: {f['ru']}")
     return 0
+
+
+async def cards_cmd(args: argparse.Namespace) -> int:
+    """Generate character cards from the connected world's people and their original script lines."""
+    graph = _story_graph(args, Path(args.game_dir) if args.game_dir else None)
+    if graph is None:
+        print("cards: needs the story graph", file=sys.stderr)
+        return 2
+    only = {npc.strip().upper() for npc in (args.only or "").split(",") if npc.strip()} or None
+    cards = characters.load()
+    llm = _backend(args)
+    server = GameServer(args.host, args.port)
+    try:
+        async with asyncio.TaskGroup() as tasks:
+            serving = tasks.create_task(server.serve_forever())
+            try:
+                link = await server.wait_link()
+                await link.wait_world()
+                people = await link.story_people(timeout=30)
+                subjects = [
+                    subject for subject in characters.subjects(graph, people, only)
+                    if only or subject.npc not in cards
+                ]
+                print(f"{len(subjects)} subjects, {len(cards)} existing cards", flush=True)
+                left = list(subjects)
+                for attempt in (1, 2):
+                    missed = []
+                    for i in range(0, len(left), characters.BATCH):
+                        batch = left[i : i + characters.BATCH]
+                        got, errors = await characters.write(llm, batch)
+                        cards.update(got)
+                        characters.save(cards)
+                        missed.extend(subject for subject in batch if subject.npc not in got)
+                        log.info(
+                            "cards: %d/%d written (attempt %d)%s", len(got), len(batch), attempt,
+                            f": {errors}" if errors else "",
+                        )
+                    left = missed
+                    if not left:
+                        break
+            finally:
+                serving.cancel()
+    finally:
+        await llm.aclose()
+    print(f"{len(subjects) - len(left)} of {len(subjects)} cards written -> {characters.CARDS_FILE}")
+    return 0 if not left and (subjects or only is None) else 1
 
 
 async def replay(args: argparse.Namespace) -> int:
@@ -3290,7 +3323,6 @@ def main() -> None:
             "day",
             "noise",
             "amends_deal",
-            "cards",
             "haggle",
             "rescue",
             "rescue_self",
@@ -3480,6 +3512,15 @@ def main() -> None:
     _add_voice_args(p)
     _add_llm_args(p)
 
+    p = sub.add_parser("cards", help="generate character cards; wait for the game to connect")
+    p.add_argument("--only", help="only these NPC symbols, comma separated; rewrite their existing cards")
+    p.add_argument("--host", default="127.0.0.1")
+    p.add_argument("--port", type=int, default=47817)
+    p.add_argument(
+        "--story-graph", help="storygraph JSON (default: built from the game's scripts and cached)"
+    )
+    _add_llm_args(p)
+
     p = sub.add_parser("llm-test", help="send one message to the LLM and measure latency")
     p.add_argument("text", nargs="?", default="")
     p.add_argument("--name", default="Ксардас", help="npc display name for the persona")
@@ -3587,6 +3628,8 @@ def main() -> None:
         args.llm = "off" if scenario in OFF | GIVEN else "fake"
     if scenario in LIVE and args.llm in {"fake", "off"}:
         parser.error(f"scenario {scenario} is live: set LLM=chatgpt|openai|local")
+    if args.command == "cards" and args.llm in {"fake", "off"}:
+        parser.error("cards requires --llm chatgpt|openai|local")
     if scenario in OFF | GIVEN and args.llm != "off":
         parser.error(f"scenario {scenario} requires --llm off")
     logging.basicConfig(
@@ -3613,6 +3656,8 @@ def main() -> None:
                 code = asyncio.run(places_cmd(args))
             case "lore":
                 code = asyncio.run(lore_cmd(args))
+            case "cards":
+                code = asyncio.run(cards_cmd(args))
             case "login":
                 code = asyncio.run(login_chatgpt())
             case "logout":

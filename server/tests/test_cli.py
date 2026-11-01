@@ -17,7 +17,6 @@ from gothic_ai.llm.off import ModelOff, OffBackend
         "deal", "contract", "debt", "xardas_money", "deal_demo",
         "bandit_parley", "bandit_bounty", "calm", "companion", "neural-talk", "rescue", "rescue_self",
     )],
-    ("m1", "auto", "fake"),
     ("haggle", "auto", "scenario haggle is live: set LLM=chatgpt|openai|local"),
     ("m0", "fake", "scenario m0 requires --llm off"),
     ("m0", "chatgpt", "scenario m0 requires --llm off"),
@@ -31,6 +30,10 @@ from gothic_ai.llm.off import ModelOff, OffBackend
             "witness", "wrath", "amends", "amends_deal", "trace", "broken", "gate", "gate_vouch", "greg",
             "crime_ally", "crime_law", "crime_talk", "trace_crime", "cover", "cover_subject",
             "cheat", "frame", "crime_meet", "crime_director", "npc_director",
+            "repair", "authored", "character", "chain", "own_amend", "own_repair",
+            "showrunner", "vanilla_line", "feats", "feat_fame",
+            "m1", "m2", "m3", "m5", "m5c", "m5e", "tts",
+            "combat_barks", "mercy", "hero_yield", "humiliate",
         )
         for llm in ("auto", "fake", "chatgpt")
     ],
@@ -49,6 +52,57 @@ def test_scenario_llm_groups(monkeypatch, capsys, scenario, llm, expected):
         assert exit.value.code == 2
         assert expected in capsys.readouterr().err
         serve.assert_not_awaited()
+
+
+def test_cards_command_generates_from_the_connected_world(monkeypatch, capsys):
+    graph = object()
+    people = [{"npc": "BAU_950_LOBART", "name": "Lobart", "guild": 8, "routine": []}]
+    link = SimpleNamespace(wait_world=AsyncMock(), story_people=AsyncMock(return_value=people))
+    backend = SimpleNamespace(aclose=AsyncMock())
+    subject = SimpleNamespace(npc="BAU_950_LOBART")
+    card = object()
+
+    class Server:
+        def __init__(self, host, port):
+            assert (host, port) == ("127.0.0.1", 47817)
+
+        async def serve_forever(self):
+            await asyncio.Future()
+
+        async def wait_link(self):
+            return link
+
+    monkeypatch.setattr(cli, "GameServer", Server)
+    monkeypatch.setattr(cli, "_story_graph", Mock(return_value=graph))
+    monkeypatch.setattr(cli, "_backend", Mock(return_value=backend))
+    monkeypatch.setattr(cli.characters, "load", Mock(return_value={subject.npc: object()}))
+    subjects = Mock(return_value=[subject])
+    monkeypatch.setattr(cli.characters, "subjects", subjects)
+    write = AsyncMock(return_value=({subject.npc: card}, []))
+    monkeypatch.setattr(cli.characters, "write", write)
+    save = Mock()
+    monkeypatch.setattr(cli.characters, "save", save)
+    monkeypatch.setattr("sys.argv", ["gothic-ai", "cards", "--only", " bau_950_lobart, "])
+    with pytest.raises(SystemExit) as exit:
+        cli.main()
+    assert exit.value.code == 0
+    subjects.assert_called_once_with(graph, people, {subject.npc})
+    write.assert_awaited_once_with(backend, [subject])
+    save.assert_called_once_with({subject.npc: card})
+    backend.aclose.assert_awaited_once()
+    assert "1 of 1 cards written" in capsys.readouterr().out
+
+    monkeypatch.setattr("sys.argv", ["gothic-ai", "serve", "--scenario", "cards"])
+    with pytest.raises(SystemExit) as exit:
+        cli.main()
+    assert exit.value.code == 2
+    assert "invalid choice: 'cards'" in capsys.readouterr().err
+    for llm in ("off", "fake"):
+        monkeypatch.setattr("sys.argv", ["gothic-ai", "cards", "--llm", llm])
+        with pytest.raises(SystemExit) as exit:
+            cli.main()
+        assert exit.value.code == 2
+        assert "cards requires --llm chatgpt|openai|local" in capsys.readouterr().err
 
 
 def test_story_graph_is_optional_before_the_game_publishes_its_base(tmp_path, monkeypatch, caplog):
@@ -202,7 +256,7 @@ def test_serve_arguments_select_responses_transport(monkeypatch, flags, websocke
         ([], True),
         (["--no-showrunner"], False),
         (["--scenario", "m0", "--llm", "off"], False),
-        (["--scenario", "showrunner"], False),
+        (["--scenario", "showrunner", "--llm", "off"], False),
         (["--scenario", "showrunner_live"], False),
     ],
 )
@@ -407,9 +461,7 @@ async def test_encounter_worker_starts_without_a_behavioral_planner(monkeypatch)
         (None, "1", False, None, "fake", False, "service"),
         ("neural", "0", True, None, "off", True, "engine"),
         ("neural", "0", True, None, "off", False, "service"),
-        ("feats", "0", True, None, "fake", True, "engine"),
-        ("feats", "0", True, None, "chatgpt", True, "engine"),
-        ("feats", "0", True, None, "local", False, "engine"),
+        ("feats", "0", True, None, "off", True, "engine"),
     ],
 )
 async def test_serve_validates_scenario_backend_and_soak_control(
