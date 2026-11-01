@@ -1,0 +1,70 @@
+{
+ "huts r5-fog g75a52": {
+  "sky": -1.6,
+  "crown": 1.9,
+  "other": -0.6,
+  "motion": [
+   0.94,
+   0.25
+  ]
+ },
+ "huts r6 clip-1": {
+  "sky": -1.6,
+  "crown": 1.9,
+  "other": -0.6,
+  "motion": [
+   0.94,
+   0.25
+  ]
+ },
+ "huts-night r5-fog g75a52": {
+  "sky": 0.7,
+  "crown": 2.2,
+  "other": 1.7,
+  "motion": [
+   0.42,
+   0.0
+  ]
+ },
+ "huts-night r6 clip-1": {
+  "sky": 0.7,
+  "crown": 2.6,
+  "other": 1.6,
+  "motion": [
+   0.43,
+   0.01
+  ]
+ },
+ "huts-north r5-fog g75a52": {
+  "sky": -1.0,
+  "other": 0.0,
+  "motion": [
+   0.44,
+   0.07
+  ]
+ },
+ "huts-north r6 clip-1": {
+  "sky": -0.9,
+  "other": 0.0,
+  "motion": [
+   0.56,
+   0.05
+  ]
+ },
+ "huts-north-night r5-fog g75a52": {
+  "sky": 0.6,
+  "other": 0.0,
+  "motion": [
+   0.26,
+   0.02
+  ]
+ },
+ "huts-north-night r6 clip-1": {
+  "sky": 0.4,
+  "other": 0.0,
+  "motion": [
+   0.26,
+   0.03
+  ]
+ }
+}
