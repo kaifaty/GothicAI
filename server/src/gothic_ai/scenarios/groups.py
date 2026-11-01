@@ -191,7 +191,7 @@ RUN = {
     "frame": {"save": True, "timeout": 900},
     "gate": {"save": False, "timeout": 240},
     "gate_vouch": {"save": False, "timeout": 240},
-    "gossip": {"save": True, "timeout": 420},
+    "gossip": {"save": True, "timeout": 420, "env": {"DECIDER_URL": ""}},
     "gossip_demo": {"save": True, "timeout": 240},
     "graph": {"save": False, "timeout": 240},
     "greg": {"save": False, "timeout": 240},
