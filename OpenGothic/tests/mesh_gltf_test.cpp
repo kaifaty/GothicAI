@@ -1595,6 +1595,10 @@ void staticVobLifetime(Tempest::Device& device) {
                                 "Resident Near/Far visuals must restore mesh/decal texture demand");
     };
   const Tempest::Vec3 near={100,100,100},outside={1000000,0,1000000};
+  update({25600,100,100},100000);
+  require(residency.stats().vobFar==2 && residency.stats().vobPending==2 &&
+          residency.stats().vobNearMissing==0 && !view.landscapeReady(),
+          "Far readiness must account for unpublished mesh and decal instances");
   size_t clusters=0;
   for(size_t cycle=0;cycle<2;++cycle) {
     update(near);
