@@ -2150,12 +2150,13 @@ async def companion_scenario(
             focus == bandit and sight is not None and bandit in sight.targets,
             f"hero looks at {focus}",
         )
-    # «Погоди.» 20 m from the bandit, then the hero goes up to him alone
+    # A hail can move the bandit. Keep >=22 m before halting: a follower <=6 m away
+    # stays >=13.5 m off after the hero's final 2.5 m approach.
     hero = ["inst", "HERO"]
     party = await link.evaluate(["field", ["inst", npc], "AIVAR", 15])
     check("party", party == 1, f"AIV_PARTYMEMBER {party}")
-    await link.debug("player_goto", near=bandit, distance=2000)
-    await _until(lambda: 0 <= dist() <= 6 and dist(bandit) >= 15, 20)
+    await link.debug("player_goto", near=bandit, distance=2500)
+    await _until(lambda: 0 <= dist() <= 6 and dist(bandit) >= 22, 20)
     talk.hear("Кавалорн, погоди.", None, {"via": "scenario"})
     halted = await _until(
         lambda: talk.orders is not None and getattr(talk.orders.standing.get(npc), "kind", "") == "halt", 5

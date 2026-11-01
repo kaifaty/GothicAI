@@ -1170,6 +1170,35 @@ async def test_companion_model_waits_for_negotiations_but_a_hero_order_does_not(
         assert starts == [(COMPANION, BRAGO), (COMPANION, BRAGO)]
 
 
+@pytest.mark.parametrize("trigger", ["player", "incident"])
+async def test_companion_fight_in_a_reply_to_the_hero_is_an_order_but_an_event_is_not(monkeypatch, trigger):
+    attack = ToolCall("set_intent", {"goal": "fight", "target": BRAGO, "attitude": "friendly"})
+    async with world([
+        FakeStep("Сейчас я им покажу!", [attack]), FakeStep("Тогда подожду."),
+    ]) as (fake, link, dialogue, _, parley):
+        fake.nearby = [{"id": BRAGO, "name": "Браго", "distance": 100, "guild": 9}]
+        await link.attach(COMPANION)
+        await link.snapshot(COMPANION, fresh=True)
+        orders = Orders(link, TalkDesk(link, dialogue), dialogue)
+        orders.parley_quiet = parley.quiet
+        parley.companion = orders.companion
+        conv = dialogue.open(COMPANION, "Диего", warm=False)
+        conv.intent = Intent("follow_hero", "PLAYER", "friendly")
+        starts = []
+        monkeypatch.setattr(orders, "_start", lambda npc, target, standing: starts.append((npc, target)))
+        assert parley.quiet(BRAGO)
+        if trigger == "player":
+            await dialogue.say_as_player(COMPANION, "Там в пещере бандиты, разберись с ними.")
+            assert conv.intent.goal == "fight" and starts == [(COMPANION, BRAGO)]
+        else:
+            await dialogue.event_turn(COMPANION, "[Рядом замечены бандиты]", tools=["set_intent"])
+            assert conv.intent.goal == "follow_hero" and not starts
+            rejected = next(i for i in dialogue.llm.calls[1][1] if isinstance(i, ToolResult))
+            assert "Нужен приказ героя" in rejected.output
+        assert orders.fight_intent(COMPANION, BRAGO)
+        assert starts[-1] == (COMPANION, BRAGO)
+
+
 async def test_expired_ultimatum_attacks_even_with_a_lingering_talk_partner(monkeypatch):
     async with world() as (fake, link, dialogue, _, parley):
         parley.talk = SimpleNamespace(partner=SimpleNamespace(npc=BRAGO))

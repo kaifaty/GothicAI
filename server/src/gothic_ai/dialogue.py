@@ -3031,7 +3031,10 @@ class DialogueManager:
         )
         if intent is None:
             return ToolOutcome(f"Отклонено: {reason}", "rejected")
-        if intent.goal == "fight" and self.companion_fight_reason is not None:
+        if (
+            intent.goal == "fight" and self.companion_fight_reason is not None
+            and not (state is not None and conv.trigger is not None and conv.trigger.role == "user")
+        ):
             if reason := self.companion_fight_reason(conv.npc, intent.target):
                 return ToolOutcome(f"Отклонено: {reason}", "rejected")
         if executor.same(conv.intent, intent):
