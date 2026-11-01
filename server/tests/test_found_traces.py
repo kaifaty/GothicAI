@@ -453,3 +453,15 @@ async def test_a_find_saved_before_its_decision_is_decided_once_after_the_load(t
     assert len(again.chronicle.facts("trace_judged")) == 1
     await asyncio.gather(*again.seen._background, *again.chronicle._background)
     store.close()
+
+
+async def test_a_body_found_the_minute_he_died_is_no_sight_of_him_alive(store):
+    """The body's own sighting begins at the find: with age 0 it starts at the death, which is not being
+    there when he died (e2e body_found, first run: Lobart «был здесь» and suspected no one)."""
+    w = World(store)
+    w.saw(seen_view(AT_8))  # the hero and Maleth alive in the yard at 08:10
+    w.saw(found_view(AT_8 + 12, body(age=0)))  # killed at 08:22, unseen; found at once
+    assert [f["suspect"] for f in w.suspected()] == ["PLAYER"]
+    line = next(row for row in (w.seen.situation(LOBART) or "").splitlines() if "тело: Малет" in row)
+    assert "ты был здесь" not in line and "герой" in line
+    await asyncio.gather(*w.seen._background, *w.chronicle._background)

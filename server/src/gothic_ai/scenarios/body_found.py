@@ -99,8 +99,16 @@ async def body_found(
         view = await sightings.desk.fresh(LOBART)
         return view.time if view is not None else None
 
+    async def stand(npc: str, waypoint: str) -> None:
+        """The npc stands at the waypoint and stays there for two game hours."""
+        await link.debug("npc_goto", npc=npc, waypoint=waypoint)
+        await link.npc_act(
+            npc, "start_activity", state="ZS_STAND_WP", waypoint=waypoint, minutes=120, place=True
+        )
+
     async def skip(minutes: int) -> None:
-        """The clock `minutes` game minutes on (the dead stay where they lie with body_traces=1)."""
+        """The clock `minutes` game minutes on (the dead stay where they lie with body_traces=1; the living
+        go back to their routine points)."""
         now = await clock()
         at = (now if now is not None else 8 * 60) + minutes
         await link.debug("time", hour=at % DAY // 60, minute=at % 60)
@@ -154,10 +162,7 @@ async def body_found(
             return _logged(results)
 
         # (а) Lobart sees the hero by Maleth, then goes indoors; Maleth dies unseen
-        await link.debug("npc_goto", npc=MALETH, waypoint=spot_a["name"])
-        await link.npc_act(
-            MALETH, "start_activity", state="ZS_STAND_WP", waypoint=spot_a["name"], minutes=120, place=True
-        )
+        await stand(MALETH, spot_a["name"])
         await link.debug("teleport", near=MALETH, distance=250)
         await move(near="PC_HERO", distance=400)
         await link.act(LOBART, "turn_to", npc="PLAYER")
@@ -176,6 +181,10 @@ async def body_found(
         # Lobart last saw Maleth alive more than PRESENT_MIN before the death and more than GAP_MIN
         # (a sighting's break) before seeing his body: he was not there when he died
         await skip(12)
+        # the clock leap puts the living back at their routine points (WorldObjects::resetPositionToTA):
+        # Maleth to his spot by the hero's, Lobart to the house again
+        await stand(MALETH, spot_a["name"])
+        await move(waypoint=HOUSE, face=None)
         await link.debug("kill", npc=MALETH)
         killed = await clock()
         await move(near=MALETH, distance=250, face=MALETH)
@@ -189,6 +198,7 @@ async def body_found(
         assert trace is not None
         check("maleth_judged", await judged(trace.id), chronicle.facts("trace_judged"))
         first = mine(MALETH)
+        check("maleth_at_spot", bool(first) and first[0].place == place_a.id, first[0].place if first else "")
         # the time of death is the view's clock less the body's age: the kill, within a few game minutes
         died = (
             bool(first)
@@ -222,10 +232,8 @@ async def body_found(
         now = await clock()
         await move(waypoint=HOUSE, face=None)
         await link.debug("time", hour=((now or 8 * 60) % DAY // 60 + 2) % 24, minute=0)
-        await link.debug("npc_goto", npc=VINO, waypoint=spot_b["name"])
-        await link.npc_act(
-            VINO, "start_activity", state="ZS_STAND_WP", waypoint=spot_b["name"], minutes=120, place=True
-        )
+        await move(waypoint=HOUSE, face=None)  # after the leap: Lobart indoors again, Vino at his spot
+        await stand(VINO, spot_b["name"])
         await link.debug("teleport", near=VINO, distance=250)
         hidden = await sightings.desk.fresh(LOBART)
         check(

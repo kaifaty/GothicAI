@@ -223,10 +223,13 @@ class FoundTraces:
 
     def was_there(self, npc: str, body: str, died: int, place: str) -> bool:
         """It saw him alive at that place until PRESENT_MIN game minutes before he died, or later: it was
-        there when he died (and may have killed him). No conclusion about who did it."""
+        there when he died (and may have killed him). No conclusion about who did it.
+
+        Alive: the sighting began before the death. The sighting of the body itself begins at the find, so
+        a body found within its first game minute (age 0) is not a sight of him alive."""
         body = body.upper()
         return any(
-            s.who == body and place in s.place_ids and s.start <= died and s.end >= died - PRESENT_MIN
+            s.who == body and place in s.place_ids and s.start < died and s.end >= died - PRESENT_MIN
             for s in self.sightings.mind(npc).sightings
         )
 
