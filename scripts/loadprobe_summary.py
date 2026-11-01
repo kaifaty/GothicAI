@@ -23,6 +23,9 @@ HEADER.extend(f"{field}_{stage}" for stage in ("end", "warm", "warm_5s") for fie
 VOB_STREAMING_FIELDS = ["vob_near", "vob_far", "vob_outside", "vob_created", "vob_released", "vob_draw_instances", "vob_pending",
                         "vob_publication_ms", "vob_create_ms", "vob_near_missing", "vob_near_missing_seconds", "vob_ready_ms"]
 HEADER.extend(f"{field}_{stage}" for stage in ("end", "warm", "warm_5s") for field in VOB_STREAMING_FIELDS)
+NPC_TIER_FIELDS = ["npc_full", "npc_simplified", "npc_to_full", "npc_to_simplified", "npc_full_tick_ms",
+                   "npc_simplified_tick_ms", "npc_full_tick_ms_total", "npc_simplified_tick_ms_total", "npc_tier_ticks"]
+HEADER.extend(f"{field}_{stage}" for stage in ("end", "warm", "warm_5s") for field in NPC_TIER_FIELDS)
 VOBS_HEADER = "run,seg,world,kind,name,count,ms,inclusive_ms,stage_ms,share_pct,unique,hits,misses,cold_miss_pct,repeat_n".split(",")
 
 
@@ -46,7 +49,7 @@ def parse(path):
             if vobs:
                 pending_vobs.append(fields(vobs.group(1)))
                 continue
-            match = re.search(r"\[loadprobe(-(?:malloc|textures|vob-streaming))?\] stage=(\S+) (.*)", line)
+            match = re.search(r"\[loadprobe(-(?:malloc|textures|vob-streaming|npc-tier))?\] stage=(\S+) (.*)", line)
             if not match:
                 continue
             row = {"stage": match.group(2)}
@@ -145,6 +148,11 @@ def summary_rows(out):
                 mark = marks[-1] if marks else {}
                 values.extend((round(mark[key], 9) if key.endswith(("_ms", "_seconds")) else int(mark[key]))
                               if key in mark else "" for key in VOB_STREAMING_FIELDS)
+            for stage in (end["stage"], "stream_warm", "stream_warm_5s"):
+                marks = [row for row in segment if row["stage"] == stage]
+                mark = marks[-1] if marks else {}
+                values.extend((round(mark[key], 6) if "_ms" in key else int(mark[key]))
+                              if key in mark else "" for key in NPC_TIER_FIELDS)
             yield values
 
 

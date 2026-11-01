@@ -360,10 +360,21 @@ void MainWindow::drawChunks(Painter& p, const World& world, const Camera& camera
                   static_cast<unsigned long long>(textures.nearTailCount),textures.nearTailSeconds);
     fnt.drawText(p,x,top+5*line,text);
     };
+  auto drawNpcTiers = [&](int top) {
+    const auto& tiers = world.npcSimTierStats();
+    char text[192];
+    std::snprintf(text,sizeof(text),"NPC tier %s: Full %zu  Simplified %zu  to Full %llu  to Simplified %llu",
+                  NpcSimTiers::name(tiers.mode),tiers.full,tiers.simplified,
+                  static_cast<unsigned long long>(tiers.toFull),static_cast<unsigned long long>(tiers.toSimplified));
+    fnt.drawText(p,x,top,text);
+    std::snprintf(text,sizeof(text),"NPC tick: Full %.3f ms  Simplified %.3f ms",tiers.fullTickMs,tiers.simplifiedTickMs);
+    fnt.drawText(p,x,top+line,text);
+    };
   const auto chunks = world.chunkResidency();
   if(chunks==nullptr) {
     fnt.drawText(p,x,y,"Chunks: streaming manager disabled");
     drawTextures(y+line);
+    drawNpcTiers(y+7*line);
     return;
     }
   auto hero = world.player();
@@ -376,10 +387,10 @@ void MainWindow::drawChunks(Painter& p, const World& world, const Camera& camera
   const int64_t radius = std::max<int64_t>({8,std::abs(int64_t(cameraId.x)-center.x)+1,
                                             std::abs(int64_t(cameraId.z)-center.z)+1});
   const int mapSize = std::min(240,std::min(w(),h())/2);
-  const int mapY = y+13*line;
+  const int mapY = y+15*line;
   const float cell = float(mapSize)/float(radius*2+1);
   p.setBrush(Color(0.f,0.f,0.f,0.8f));
-  p.drawRect(x-5,y-5,std::max(660,mapSize+10),mapSize+15*line+10);
+  p.drawRect(x-5,y-5,std::max(660,mapSize+10),mapSize+17*line+10);
 
   const auto& stats = chunks->stats();
   char text[160];
@@ -405,6 +416,7 @@ void MainWindow::drawChunks(Painter& p, const World& world, const Camera& camera
   std::snprintf(text,sizeof(text),"Vobs Near missing: %zu  %.6f visual-seconds",stats.vobNearMissing,stats.vobNearMissingSeconds);
   fnt.drawText(p,x,y+6*line,text);
   drawTextures(y+7*line);
+  drawNpcTiers(y+13*line);
 
   const auto& entries = chunks->table().entries;
   for(size_t i=0;i<entries.size();++i) {
