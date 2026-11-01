@@ -418,6 +418,25 @@ struct CollisionWorld::Impl final : JPH::ContactListener, JPH::PhysicsStepListen
 
   void onContact(const JPH::Body& a, const JPH::Body& b, const JPH::ContactManifold& manifold,
                  const JPH::ContactSettings& settings, bool persisted) {
+    if(emitBodyImpacts && !a.IsSensor() && !b.IsSensor()) {
+      const auto accepts=[](const JPH::Body& body) {
+        const auto layer=body.GetObjectLayer();
+        return layer==DynamicWorld::C_Landscape || layer==DynamicWorld::C_Object || layer==DynamicWorld::C_MovableVob;
+        };
+      const bool first=a.GetObjectLayer()==DynamicWorld::C_Ragdoll && accepts(b);
+      const bool second=b.GetObjectLayer()==DynamicWorld::C_Ragdoll && accepts(a);
+      if(first || second) {
+        float speed=0;
+        for(uint i=0;i<manifold.mRelativeContactPointsOn1.size();++i) {
+          const auto point=manifold.GetWorldSpaceContactPointOn1(i);
+          speed=std::max(speed,(a.GetPointVelocity(point)-b.GetPointVelocity(point)).Dot(manifold.mWorldSpaceNormal));
+          }
+        if(speed>0.f) {
+          std::lock_guard<std::mutex> guard(impactMutex);
+          bodyImpacts.push_back({first ? a.GetID() : b.GetID(),speed*.1f});
+          }
+        }
+      }
     if(const auto* target=solverTraceTarget.load(std::memory_order_relaxed)) {
       const auto traced=[&](const JPH::Body& body) {
         if(body.GetObjectLayer()!=DynamicWorld::C_Item)return false;
@@ -590,6 +609,9 @@ struct CollisionWorld::Impl final : JPH::ContactListener, JPH::PhysicsStepListen
   std::mutex impactMutex;
   std::atomic<const Item*> solverTraceTarget {nullptr};
   std::vector<ItemSolverContact> solverContacts;
+  struct BodyImpact { JPH::BodyID body;float speed; };
+  std::vector<BodyImpact> bodyImpacts;
+  bool emitBodyImpacts=true;
   std::vector<Impact> impacts;
   std::vector<NoiseImpact> noises;
   uint64_t simulationStep = 0;
@@ -2243,7 +2265,7 @@ std::vector<CollisionWorld::RagdollContact> CollisionWorld::ragdollContacts(cons
   }
 
 bool CollisionWorld::hasCollision(const JPH::Shape* shape, const Tempest::Vec3& center,
-                                  Tempest::Vec3& normal, Interactive*& vob) const {
+                                  Tempest::Vec3& normal, Interactive*& vob, const CapsuleContact& contact) const {
   if(shape==nullptr)
     return false;
   JPH::CollideShapeSettings settings;
@@ -2308,6 +2330,11 @@ bool CollisionWorld::hasCollision(const JPH::Shape* shape, const Tempest::Vec3& 
           hasSourceWitnessNormal = true;
           }
         }
+      }
+    if(contact && native.GetObjectLayer()!=DynamicWorld::C_Ragdoll) {
+      const auto point=position+hit.mContactPointOn2;
+      contact(body,{contactNormal.GetX(),contactNormal.GetY(),contactNormal.GetZ()},toCentimeters(point),
+              toCentimeters(native.GetPointVelocity(point)));
       }
     sum += contactNormal;
     ++count;
@@ -3226,6 +3253,12 @@ void CollisionWorld::tick(uint64_t dt) {
     fillRagdoll(result,id);
     return result.ragdoll;
     };
+  for(const auto& impact:impl->bodyImpacts) {
+    auto* rig=rigFor(impact.body);
+    if(rig!=nullptr && rig->impactBone(rig->boneForBodyId(impact.body.GetIndexAndSequenceNumber())))
+      rig->recordImpactSpeed(impact.speed);
+    }
+  impl->bodyImpacts.clear();
   // Resolve identities only after all Jolt workers finish. The native sequence
   // number rejects a removed/reused body; NPC handles are weak and user_ptr is
   // cleared by NPC destruction even while the script retains the instance.
@@ -3584,6 +3617,14 @@ void CollisionWorld::setBuoyancyEnabled(bool enabled) {
 bool CollisionWorld::buoyancyEnabled() const { return buoyancy; }
 
 void CollisionWorld::setItemWakeEnabled(bool enabled) { itemWake=enabled; }
+
+void CollisionWorld::setBodyImpactEnabled(bool enabled) {
+  impl->emitBodyImpacts=enabled;
+  if(!enabled) {
+    impl->bodyImpacts.clear();
+    for(auto* rig:ragdolls) rig->takeImpactSpeed();
+    }
+  }
 
 void CollisionWorld::setItemDeepestContactEnabled(bool enabled) {
   auto settings=impl->system.GetPhysicsSettings();

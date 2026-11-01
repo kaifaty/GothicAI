@@ -670,6 +670,22 @@ Frame timing sums public physics work across worker threads, so it can exceed el
 For a hotspot diagnostic, `--method-breakdown` additionally writes per-method inclusive and outer
 work to `OPENGOTHIC_PHYSICS_TRACE_METHODS`. Keep this extra instrumentation out of formal timing runs.
 
+`body-impact.bench` checks body impact damage: knockdown falls from 2/5/10 m
+against animated falls of the same guild, knockdown-ragdoll wall impacts at
+6/10/14 m/s, a real hero WindFist into a wall through the animated capsule path,
+and unconscious, dead and immortal controls. Ragdolls count only pelvis, spine
+and head contacts with landscape, static objects or movable furniture. Spell
+capsule wall impacts and their existing landing damage share one 300 ms maximum
+speed window per NPC. Damage uses the unchanged guild fall formula; fatal
+impacts retain the attacker or caster, including the hero's kill attribution.
+
+Run `scripts/bench.sh body-impact <absolute-output-directory>` and repeat with
+`BODY_IMPACT_DAMAGE=0`; the disabled run retains the previous animated landing
+behavior and adds no body impact damage. `[GAME] body_impact_damage` defaults to
+1; Marvin `toggle body_impact_damage` changes it during play. The native contract
+is `gothic-physics-contract`. Acceptance numbers and the ON/OFF duel and Mac
+physics timing comparison belong in the [body impact report](../../reports/physics/2026-11-01-body-impact/README.md).
+
 For stage 2, `ragdoll.bench` exercises death, sleeping/wake, controlled unconscious recovery,
 slopes, stairs, a cliff and the human/Wolf/Scavenger/Molerat/Orc models. Run it with
 `OPENGOTHIC_RAGDOLL_TRACE=1` to append `ph_ms,ph_bodies,ph_rays,rd_mode,rd_weight,rd_sleep`

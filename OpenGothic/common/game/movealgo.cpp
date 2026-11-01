@@ -151,7 +151,14 @@ bool MoveAlgo::tryMove(float x,float y,float z, DynamicWorld::CollisionTest& out
   }
 
 bool MoveAlgo::tryMove(const Tempest::Vec3& dp, DynamicWorld::CollisionTest& out) {
+  out.trackBodyImpact=Gothic::physicsFlags().bodyImpactDamage && npc.hasBodyImpactSpellFlight() && (flags==InAir || flags==Falling);
+  if(out.trackBodyImpact) {
+    out.bodyImpactVelocity=fallSpeed;
+    out.bodyImpactSpeed=0;
+    }
   const bool accepted = npc.tryMove(dp,out);
+  if(out.trackBodyImpact && out.bodyImpactSpeed>0.f)
+    npc.recordBodyImpact(out.bodyImpactSpeed,npc.bodyImpactCulprit(),"spell_capsule");
   if(movementTrace!=nullptr)
     movementTrace->collision(dp,accepted,out);
   return accepted;

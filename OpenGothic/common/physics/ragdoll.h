@@ -75,6 +75,10 @@ class Ragdoll final {
                   float stiffness = 1.f);
     void setNpc(Npc* npc);
     void setNoiseCulprit(Npc* culprit);
+    Npc* impactCulprit() const;
+    bool impactBone(size_t bone) const;
+    // Largest incoming torso normal speed since the previous read, in cm/ms.
+    float takeImpactSpeed();
     float reactionWeight() const;
     const std::vector<size_t>& reactionBones() const;
     enum class BenchMode : uint8_t { Full, Chain };
@@ -148,6 +152,7 @@ class Ragdoll final {
     void finishKinematicStep();
     size_t boneForBodyId(uint32_t id) const;
     std::vector<uint32_t> diagnosticBodyIds() const;
+    void recordImpactSpeed(float speed);
     Npc* noiseNpc() const;
     Npc* noiseCulprit() const;
     bool acceptNoise(uint64_t step);
