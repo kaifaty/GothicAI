@@ -10,6 +10,7 @@ from typing import Any
 from ..amends import CACHE_KEY as AMENDS_KEY
 from ..amends import Amends, Brief, Proposal
 from ..brain.reflex import Reflexes
+from ..chronicle import Chronicle
 from ..deals import GOLD, Deals
 from ..dialogue import DialogueManager
 from ..feats import Feats
@@ -17,7 +18,7 @@ from ..game import GameError, GameLink
 from ..llm import ToolCall
 from ..protocol import FeatToastCmd, SayCmd, Session
 from ..quests import ATTACK_CM, SEE_CM, QuestBoard
-from ..sightings import Sightings
+from ..sightings import Sightings, _sid
 from ..social import TICK_S, Rumors
 from ..talk import TalkDesk
 from ..trace import read as read_trace
@@ -1340,6 +1341,49 @@ async def _forgiveness_deal(
     return deals.open.get(s.to) if forgiving() else None
 
 
+async def _record_live_witness(
+    live: LiveCase, chronicle: Chronicle, farmer: str, witness: str, prior: set[str],
+) -> None:
+    """Wait for the witness decision and the accusation deferred until after speech."""
+    def rows() -> list[dict[str, Any]]:
+        return [row for row in live.turns(farmer) if row["id"] not in prior]
+
+    def calls() -> list[dict[str, Any]]:
+        return [call for row in rows() for step in row.get("steps", [])
+                for call in step.get("calls", [])]
+
+    def catches() -> list[dict[str, Any]]:
+        return [call for call in calls() if call.get("name") == "catch_lie"
+                and call.get("outcome") == "accepted"
+                and _sid(str(call.get("arguments", {}).get("seen", ""))).startswith("С")]
+
+    def caught() -> list[dict[str, Any]]:
+        said = {str(call.get("arguments", {}).get("said", "")).strip().strip("«»\"' .")
+                for call in catches()}
+        return [f for f in chronicle.facts("caught") if f.get("npc") == farmer
+                and "со слов" in f.get("how", "") and f.get("title") in said]
+
+    def decided() -> bool:
+        completed = rows()
+        asked = any(call.get("name") == "ask_witness" and call.get("outcome") == "accepted"
+                    for call in calls())
+        return bool(completed) and (not asked or any(
+            "Ответ:" in row.get("trigger", {}).get("text", "") for row in completed
+        ))
+
+    await _until(lambda: decided() and (not catches() or bool(caught())), 90)
+    actions = calls()
+    asked = [call for call in actions if call.get("name") == "ask_witness"
+             and call.get("outcome") == "accepted"]
+    testimony = [f for f in chronicle.facts("testimony") if f.get("npc") == farmer]
+    success = bool(asked and catches() and caught())
+    live.finish("success" if success else "failure" if decided() else "no_decision", evidence={
+        "decision": "caught_from_witness" if success else "not_caught",
+        "staged_witness": witness, "asked": asked, "calls": actions,
+        "testimony": testimony, "caught": caught(),
+    })
+
+
 async def witness_check(
     link: GameLink,
     dialogue: DialogueManager,
@@ -1516,37 +1560,7 @@ async def witness_check(
     prior = {row["id"] for row in live.records} if live is not None else set()
     await link.debug("type", text=f"{name}, это не я утром топтал твою репу — я всё утро был в городе.")
     if live is not None:
-        def rows() -> list[dict[str, Any]]:
-            return [row for row in live.turns(farmer) if row["id"] not in prior]
-
-        def calls() -> list[dict[str, Any]]:
-            return [call for row in rows() for step in row.get("steps", [])
-                    for call in step.get("calls", [])]
-
-        def decision() -> bool:
-            completed = rows()
-            asked = any(call.get("name") == "ask_witness" and call.get("outcome") == "accepted"
-                        for call in calls())
-            return bool(completed) and (not asked or any(
-                "Ответ:" in row.get("trigger", {}).get("text", "") for row in completed
-            ))
-
-        decided = await _until(decision, 90)
-        testimony = [f for f in chronicle.facts("testimony") if f.get("npc") == farmer]
-        caught = [f for f in chronicle.facts("caught") if f.get("npc") == farmer
-                  and "со слов" in f.get("how", "")]
-        actions = calls()
-        asked = [call for call in actions if call.get("name") == "ask_witness"
-                 and call.get("outcome") == "accepted"]
-        catches = [call for call in actions if call.get("name") == "catch_lie"
-                   and call.get("outcome") == "accepted"
-                   and str(call.get("arguments", {}).get("seen", "")).startswith("С")]
-        success = bool(asked and catches and caught)
-        live.finish("success" if success else "failure" if decided else "no_decision", evidence={
-            "decision": "caught_from_witness" if success else "not_caught",
-            "staged_witness": witness, "asked": asked, "calls": actions,
-            "testimony": testimony, "caught": caught,
-        })
+        await _record_live_witness(live, chronicle, farmer, witness, prior)
         return _logged(results)
     caught = await _until(lambda: any(f.get("witness") for f in chronicle.facts("caught")), 90)
     testimony = next((f for f in chronicle.facts("testimony") if f.get("witness") == witness), None)

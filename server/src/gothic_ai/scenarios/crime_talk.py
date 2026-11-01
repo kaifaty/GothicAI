@@ -11,6 +11,7 @@ from ..brain.reflex import Reflexes
 from ..game import GameError, GameLink
 from ..llm import ToolCall
 from ..protocol import Session
+from ..sightings import _sid
 from .common import (
     HILDA,
     LOBART,
@@ -28,6 +29,7 @@ from .crimes import HOUSE
 
 if TYPE_CHECKING:
     from ..chests import ChestDesk
+    from ..chronicle import Chronicle
     from ..concerns import Concerns
     from ..crimes import Crimes
     from ..deals import Deals
@@ -40,6 +42,47 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 DENIAL = "я ничего не брал в твоем доме"  # the game's input normalizes ё to е
+
+
+async def _record_live_testimony(
+    live: LiveCase, chronicle: Chronicle, crime: str, prior: set[str],
+) -> None:
+    """Record the testimony decision after its deferred accusation has reached the game."""
+    def decision_turns() -> list[dict[str, Any]]:
+        return [row for row in live.turns(LOBART) if row["id"] not in prior and (
+            DENIAL in row.get("trigger", {}).get("text", "")
+            or "Ответ:" in row.get("trigger", {}).get("text", "")
+        )]
+
+    def calls() -> list[dict[str, Any]]:
+        return [call for row in decision_turns() for step in row.get("steps", [])
+                for call in step.get("calls", [])]
+
+    def accepted() -> list[dict[str, Any]]:
+        return [call for call in calls() if call.get("name") == "catch_lie"
+                and call.get("outcome") == "accepted"
+                and _sid(str(call.get("arguments", {}).get("seen", ""))).startswith("С")]
+
+    def caught() -> list[dict[str, Any]]:
+        said = {str(call.get("arguments", {}).get("said", "")).strip().strip("«»\"' .")
+                for call in accepted()}
+        return [f for f in chronicle.facts("caught") if f.get("npc") == LOBART
+                and f.get("crime") == crime and f.get("witness") == HILDA and f.get("title") in said]
+
+    def decided() -> bool:
+        rows = decision_turns()
+        asked = any(call.get("name") == "ask_witness" and call.get("outcome") == "accepted"
+                    for call in calls())
+        return bool(rows) and (not asked or any(
+            "Ответ:" in row.get("trigger", {}).get("text", "") for row in rows
+        ))
+
+    await _until(lambda: decided() and (not accepted() or bool(caught())), 90)
+    testimony = [f for f in chronicle.facts("testimony") if f.get("witness") == HILDA]
+    live.finish(
+        "success" if accepted() and caught() else "failure" if decided() else "no_decision",
+        evidence={"calls": calls(), "caught": caught(), "testimony": testimony},
+    )
 
 
 async def crime_talk(
@@ -240,38 +283,7 @@ async def crime_talk(
         prior = {row["id"] for row in live.records} if live is not None else set()
         await link.debug("type", text=f"Лобарт, {DENIAL}.")
         if live is not None:
-            def decision_turns() -> list[dict[str, Any]]:
-                return [row for row in live.turns(LOBART) if row["id"] not in prior and (
-                    DENIAL in row.get("trigger", {}).get("text", "")
-                    or "Ответ:" in row.get("trigger", {}).get("text", "")
-                )]
-
-            def resolved() -> bool:
-                rows = decision_turns()
-                asked = any(
-                    call.get("name") == "ask_witness" and call.get("outcome") == "accepted"
-                    for row in rows for step in row.get("steps", []) for call in step.get("calls", [])
-                )
-                return bool(rows) and (not asked or any(
-                    "Ответ:" in row.get("trigger", {}).get("text", "") for row in rows
-                ))
-
-            await _until(resolved, 90)
-            rows = decision_turns()
-            calls = [
-                call for row in rows for step in row.get("steps", []) for call in step.get("calls", [])
-            ]
-            caught = [f for f in facts("caught") if f.get("crime") == cid and f.get("witness") == HILDA]
-            testimony = [f for f in facts("testimony") if f.get("witness") == HILDA]
-            accepted = [
-                call for call in calls if call.get("name") == "catch_lie"
-                and call.get("outcome") == "accepted"
-                and str(call.get("arguments", {}).get("seen", "")).startswith("С")
-            ]
-            live.finish(
-                "success" if accepted and caught else "failure" if resolved() else "no_decision",
-                evidence={"calls": calls, "caught": caught, "testimony": testimony},
-            )
+            await _record_live_testimony(live, service.chronicle, cid, prior)
             return _logged(results)
         assert off is not None
         await _until(lambda: any(f.get("crime") == cid for f in facts("caught")), 90)

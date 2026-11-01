@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from ..brain.reflex import Reflexes
+from ..chronicle import Chronicle
 from ..dialogue import DialogueManager
 from ..game import GameError, GameLink
 from ..knowledge import Knowledge
@@ -17,7 +18,7 @@ from ..lore import Lore
 from ..perception import PerceptionDesk, Sight, trace_name
 from ..places import SIDES
 from ..protocol import DebugCmd, Saved, SayCmd, Session, Snapshot
-from ..sightings import Sighting, Sightings
+from ..sightings import Sighting, Sightings, _sid
 from ..social import Rumors
 from ..talk import TalkDesk, addressee
 from ..trace import read as read_trace
@@ -652,6 +653,46 @@ async def see_perception(
 TOWNSFOLK = ("MIL_319_PABLO", "VLK_417_CONSTANTINO", "VLK_424_ALWIN")  # in the street by Harad's smithy
 
 
+async def _record_live_sighting(
+    live: LiveCase, chronicle: Chronicle, farmer: str, sid: str, situation: str, denial: str,
+) -> None:
+    def accepted() -> list[dict[str, Any]]:
+        return [call for call in live.calls(farmer, "catch_lie")
+                if call.get("outcome") == "accepted"
+                and _sid(str(call.get("arguments", {}).get("seen", ""))) == _sid(sid)]
+
+    def caught() -> list[dict[str, Any]]:
+        said = {str(call.get("arguments", {}).get("said", "")).strip().strip("«»\"' .")
+                for call in accepted()}
+        return [fact for fact in chronicle.facts("caught") if fact.get("npc") == farmer
+                and fact.get("said") and fact.get("title") in said]
+
+    # catch_lie schedules its fact after speech; the same deadline covers both stages.
+    await _until(lambda: bool(live.turns(farmer, denial)) and (not accepted() or bool(caught())), 90)
+    rows = live.turns(farmer, denial)
+    success = bool(accepted() and caught())
+    live.finish("success" if success else "failure" if rows else "no_decision", evidence={
+        "row": sid, "situation": situation, "calls": live.calls(farmer, "catch_lie"),
+        "words": [step.get("text", "") for row in rows for step in row.get("steps", [])],
+        "caught": caught(),
+    })
+
+
+async def _record_live_trace_control(
+    live: LiveCase, chronicle: Chronicle, farmer: str, situation: str, denial: str,
+) -> None:
+    await _until(lambda: bool(live.turns(farmer, denial)), 90)
+    calls = live.calls(farmer)
+    rows = live.turns(farmer, denial)
+    caught, blamed = chronicle.facts("caught"), chronicle.facts("blamed")
+    accused = any(call.get("name") in {"catch_lie", "blame"} for call in calls) or caught or blamed
+    live.finish("failure" if accused else "success" if rows else "no_decision", evidence={
+        "row": "", "situation": situation, "calls": calls,
+        "words": [step.get("text", "") for row in rows for step in row.get("steps", [])],
+        "caught": caught, "blamed": blamed,
+    })
+
+
 async def seen_memory(
     link: GameLink,
     dialogue: DialogueManager,
@@ -792,16 +833,9 @@ async def seen_memory(
         return _logged(results)
     await link.debug("type", text=f"{name}, я всё утро был в городе, только что оттуда.")
     if live is not None:
-        await _until(lambda: bool(live.turns(farmer, "утро был в городе")), 90)
-        calls = live.calls(farmer, "catch_lie")
-        caught = any(
-            c.get("outcome") == "accepted" and c.get("arguments", {}).get("seen") == sid
-            for c in calls
+        await _record_live_sighting(
+            live, chronicle, farmer, sid, situation, "утро был в городе",
         )
-        live.finish("success" if caught else "failure" if live.turns(farmer, "утро был в городе")
-                    else "no_decision", evidence={
-            "row": sid, "situation": situation, "calls": calls, "caught": chronicle.facts("caught"),
-        })
         return _logged(results)
     await _until(lambda: any(f.get("said") for f in chronicle.facts("caught")), 60)
     await _until(lambda: not dialogue.speaking(farmer), 30)
@@ -961,29 +995,12 @@ async def trace_memory(
             return situation
         await link.debug("type", text=f"Лобарт, {denial}.")
         if live is not None:
-            await _until(lambda: bool(live.turns(farmer, denial)), 90)
-            calls = live.calls(farmer)
-            catches = [c for c in calls if c.get("name") == "catch_lie"]
-            accusation = [c for c in calls if c.get("name") == "blame"
-                          and c.get("outcome") == "accepted"]
-            rows = live.turns(farmer, denial)
-            words = [step.get("text", "") for row in rows for step in row.get("steps", [])]
             if observation is None:
-                # An explicit accusation also fails the control when no tool was accepted.
-                accused = bool(catches or accusation) or any(
-                    re.search(r"ты (?:сам )?(?:стрелял|выстрелил|лж[её]шь|вр[её]шь)|"
-                              r"(?:это|стрела) тво[яё]", text, re.IGNORECASE)
-                    for text in words
-                )
-                outcome = "failure" if accused else "success" if rows else "no_decision"
+                await _record_live_trace_control(live, chronicle, farmer, situation, denial)
             else:
-                caught = any(c.get("outcome") == "accepted"
-                             and c.get("arguments", {}).get("seen") == sid for c in catches)
-                outcome = "success" if caught else "failure" if rows else "no_decision"
-            live.finish(outcome, evidence={
-                "row": sid, "situation": situation, "calls": calls, "words": words,
-                "caught": chronicle.facts("caught"),
-            })
+                await _record_live_sighting(
+                    live, chronicle, farmer, sid, situation, denial,
+                )
             return situation
         await _until(
             lambda: any(
