@@ -3159,7 +3159,7 @@ const Animation::Sequence* Npc::playAnimByName(std::string_view name, BodyState 
   return visual.startAnimAndGet(*this,name,calcAniComb(),bs);
   }
 
-bool Npc::setPlayerPose(bool kneel) {
+bool Npc::setPlayerPose(bool kneel, std::string_view reason) {
   if(!isPlayer())
     return false;
   if(kneel) {
@@ -3175,6 +3175,7 @@ bool Npc::setPlayerPose(bool kneel) {
     playerPoseExiting = false;
     }
   else if(playerKneeling) {
+    Log::i("[ai] hero pose kneel ends: ",reason);
     playerKneeling = false;
     playerPoseExiting = true;
     clearAiQueue();
@@ -3185,6 +3186,8 @@ bool Npc::setPlayerPose(bool kneel) {
 
 bool Npc::tickPlayerPose() {
   if(isDown() || isDead()) {
+    if(playerKneeling)
+      Log::i("[ai] hero pose kneel ends: down");
     playerKneeling = playerPoseExiting = false;
     return false;
     }
@@ -8505,7 +8508,6 @@ void Npc::startDialog(Npc& pl) {
     }
   if(pl.isDown() || pl.isInAir() || isPlayer())
     return;
-  pl.setPlayerPose(false);
   stopPhysicsInvestigation(false);
   if(perceptionProcess(pl,nullptr,0,PERC_ASSESSTALK))
     setOther(&pl);

@@ -254,6 +254,9 @@ def read_streaming(directory):
             grouped.setdefault(parts[1], []).append(sample)
     if set(grouped) != {"run", "fly"} or any(len(rows) < 2 for rows in grouped.values()):
         raise ValueError(f"{path}: both run and fly require complete residency samples")
+    for samples in grouped.values():
+        if "vob_near_missing_seconds" in samples[-1]:
+            samples[-1]["vob_near_missing_seconds_route"] = samples[-1]["vob_near_missing_seconds"]
     warmup = None
     for event in events:
         if event.get("kind") == "streaming_ready":
@@ -290,6 +293,7 @@ def streaming_stats(rows):
     warmup = [value for row in rows for value in row.get("warmup_far_publication_ms", [])]
     pages = [row for row in rows if "page_used_bytes" in row]
     textures = [row for row in rows if "tex_live_bytes" in row]
+    vobs = [row for row in rows if "vob_near" in row]
     return {
         "updates": len(rows),
         "near_transitions": int(sum(row["near_transitions"] for row in rows)),
@@ -314,6 +318,18 @@ def streaming_stats(rows):
         "page_count_end": int(pages[-1]["page_count"]) if pages else None,
         "page_capacity_peak_bytes": int(max(row["page_used_bytes"]+row["page_free_bytes"]+row["page_retired_bytes"]
                                             for row in pages)) if pages else None,
+        "vobs": {
+            "near_end": int(vobs[-1]["vob_near"]),
+            "far_end": int(vobs[-1]["vob_far"]),
+            "outside_end": int(vobs[-1]["vob_outside"]),
+            "created": int(sum(row["vob_created"] for row in vobs)),
+            "released": int(sum(row["vob_released"] for row in vobs)),
+            "pending_peak": int(max(row["vob_pending"] for row in vobs)),
+            "publication_ms": describe([row["vob_publication_ms"] for row in vobs]),
+            "near_missing_peak": int(max(row["vob_near_missing"] for row in vobs)),
+            "near_missing_seconds": sum(row["vob_near_missing_seconds_route"] for row in vobs
+                                        if "vob_near_missing_seconds_route" in row),
+        } if vobs else None,
         "textures": {
             "live_end_bytes": int(textures[-1]["tex_live_bytes"]),
             "retired_end_bytes": int(textures[-1]["tex_retired_bytes"]),
@@ -437,6 +453,19 @@ def summary_table(report):
             lines.append(f"| {view} | {number(data['warmup_far_count'], 0)} | "
                          f"{number(publication['p99'], 6)} / {number(publication['max'], 6)} | "
                          f"{number(data['warmup_far_max_per_frame'], 0)} | {number(data['warmup_queue_max_ms'], 6)} |")
+        if any(stats["streaming"]["vobs"] is not None for stats in streaming["views"].values()):
+            lines.extend(["", "| Pass | Vobs Near / Far / Outside end | Created / released | Queue peak | Publish p99 / max ms per frame | Near missing peak | Near missing vob-seconds |",
+                          "|---|---:|---:|---:|---:|---:|---:|"])
+            for view, stats in streaming["views"].items():
+                vobs = stats["streaming"]["vobs"]
+                if vobs is None:
+                    lines.append(f"| {view} | n/a | n/a | n/a | n/a | n/a | n/a |")
+                    continue
+                publication = vobs["publication_ms"]
+                lines.append(f"| {view} | {vobs['near_end']} / {vobs['far_end']} / {vobs['outside_end']} | "
+                             f"{vobs['created']} / {vobs['released']} | {vobs['pending_peak']} | "
+                             f"{number(publication['p99'], 6)} / {number(publication['max'], 6)} | "
+                             f"{vobs['near_missing_peak']} | {number(vobs['near_missing_seconds'], 9)} |")
         lines.extend(["", "| Pass | Textures end | Texture live / retired end MiB | Texture session peak MiB | Session evicted / reloaded |",
                       "|---|---:|---:|---:|---:|"])
         for view, stats in streaming["views"].items():

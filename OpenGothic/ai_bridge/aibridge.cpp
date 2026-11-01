@@ -217,8 +217,12 @@ struct AiBridge::Impl final {
   void processInbound(World* world, Inbound& in);
   void onStartLoading();
   void onSessionUnload() {
-    if(auto world = Gothic::inst().world())
+    if(auto world = Gothic::inst().world()) {
+      if(!saving)
+        if(auto* pl = world->player())
+          pl->setPlayerPose(false,"world reset");
       observer.cancelDeeds(*world);
+      }
     observer.clear();
     voices.clear();
     resetBodyObservations();
@@ -606,7 +610,7 @@ void AiBridge::Impl::processInbound(World* world, Inbound& in) {
         // nobody drives the npc's anymore: hand them back to their routines, threats to their scripts
         if(world!=nullptr) {
           if(auto* pl = world->player())
-            pl->setPlayerPose(false);
+            pl->setPlayerPose(false,"disconnect");
           ctrl.detachAll(*world,"server_disconnected");
           observer.releaseAll(*world);
           beasts.releaseAll(*world);
@@ -917,7 +921,7 @@ void AiBridge::Impl::handle(World* world, const std::string& text) {
     auto* pl = world!=nullptr ? world->player() : nullptr;
     const auto pose = JsonRead::str(doc,"pose");
     const bool valid = pose=="kneel" || pose=="none";
-    const bool ok = pl!=nullptr && valid && pl->setPlayerPose(pose=="kneel");
+    const bool ok = pl!=nullptr && valid && pl->setPlayerPose(pose=="kneel","server none");
     sendResult(req,ok,"player_pose requires an available hero and pose kneel or none");
     return;
     }
@@ -2664,7 +2668,6 @@ void AiBridge::Impl::submitChat(const std::string& text) {
   World* world = Gothic::inst().world();
   if(world==nullptr || world->player()==nullptr || text.empty())
     return;
-  world->player()->setPlayerPose(false);
   // shown once the server has decided whom it is said to (transcript)
   JsonWriter j("player_text");
   j.str("text",TextCodec::toUtf8(text));
@@ -2744,8 +2747,6 @@ void AiBridge::Impl::sendPtt(std::string_view type, std::string_view audio) {
   if(world==nullptr)
     return;
   if(type=="ptt_start") {
-    if(auto* pl = world->player())
-      pl->setPlayerPose(false);
     pttHeld = true;
     Npc* npc = pickListener(*world);
     if(npc!=nullptr && npcSymbol(*world,*npc)!=listener) {

@@ -45,10 +45,10 @@ from .talk import TalkDesk
 from .triggers import STATE, removal, trigger
 
 SCENARIOS = {
-    "fight_reactions_wolf": ("GIVEN", {"save": False, "timeout": 180}),
-    "fight_reactions_sight": ("OFF", {"save": False, "timeout": 180}),
-    "fight_reactions_bandits": ("GIVEN", {"save": False, "timeout": 300}),
-    "fight_reactions_flee": ("GIVEN", {"save": False, "timeout": 180}),
+    "fight_reactions_wolf": ("GIVEN", {"save": False, "timeout": 180, "exclusive": True}),
+    "fight_reactions_sight": ("OFF", {"save": False, "timeout": 180, "exclusive": True}),
+    "fight_reactions_bandits": ("GIVEN", {"save": False, "timeout": 300, "exclusive": True}),
+    "fight_reactions_flee": ("GIVEN", {"save": False, "timeout": 180, "exclusive": True}),
 }
 
 log = logging.getLogger(__name__)

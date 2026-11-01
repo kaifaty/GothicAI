@@ -58,6 +58,7 @@ class CombatBarks:
         self.hits = hits
         self.companion: Callable[[str], bool] = lambda npc: False
         self.silenced: Callable[[str], bool] = lambda npc: False
+        self.defeat_context: Callable[[str], str | None] = lambda npc: None
         self.roster: dict[str, RosterEntry] = {}
         self.views: dict[str, NpcView] = {}
         self.fighters: dict[str, Fighter] = {}
@@ -258,6 +259,8 @@ class CombatBarks:
         text = ""
         scene = attempt["reason"] == "humiliate"
         hint = HUMILIATE_HINT.format(target=event) if scene else HINT.format(event=event)
+        if not scene and (defeat := self.defeat_context(conv.npc)):
+            hint = f"{defeat}\n{hint}"
         try:
             async with asyncio.timeout_at(received + REPLY_S):
                 async with aclosing(self.dialogue._quick_stream(

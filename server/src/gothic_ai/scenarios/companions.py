@@ -52,14 +52,14 @@ from .live import LiveCase
 
 SCENARIOS = {
     "calm": ("GIVEN", {"save": False, "timeout": 240}),
-    "companion": ("GIVEN", {"save": False, "timeout": 240}),
-    "neural": ("OFF", {"save": False, "timeout": 240}),
-    "neural-companion": ("OFF", {"save": False, "timeout": 240}),
-    "neural-group": ("OFF", {"save": False, "timeout": 240}),
-    "neural-talk": ("GIVEN", {"save": False, "timeout": 240}),
+    "companion": ("GIVEN", {"save": False, "timeout": 240, "exclusive": True}),
+    "neural": ("OFF", {"save": False, "timeout": 240, "exclusive": True}),
+    "neural-companion": ("OFF", {"save": False, "timeout": 240, "exclusive": True}),
+    "neural-group": ("OFF", {"save": False, "timeout": 240, "exclusive": True}),
+    "neural-talk": ("GIVEN", {"save": False, "timeout": 240, "exclusive": True}),
     "orders": ("GIVEN", {"save": False, "timeout": 360}),
-    "rescue": ("GIVEN", {"save": False, "timeout": 240}),
-    "rescue_self": ("GIVEN", {"save": False, "timeout": 240}),
+    "rescue": ("GIVEN", {"save": False, "timeout": 240, "exclusive": True}),
+    "rescue_self": ("GIVEN", {"save": False, "timeout": 240, "exclusive": True}),
     "wolf": ("OFF", {"save": False, "timeout": 240}),
     "wolf_load": ("OFF", {"save": False, "timeout": 240}),
 }

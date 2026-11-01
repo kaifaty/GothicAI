@@ -14,7 +14,16 @@ from gothic_ai.dialogue import DialogueManager
 from gothic_ai.game import GameError
 from gothic_ai.llm import FakeBackend, FakeStep, Message, ToolCall, ToolResult
 from gothic_ai.memory import MemoryStore
-from gothic_ai.mercy import ACCEPT_QUIET_S, PARDON, PEE_DISTANCE_CM, PEE_HOLD_MS, VICTOR, YIELDING, Mercy
+from gothic_ai.mercy import (
+    ACCEPT_QUIET_S,
+    PARDON,
+    PEE_DISTANCE_CM,
+    PEE_HOLD_MS,
+    VICTOR,
+    YIELDING,
+    Mercy,
+    defeat_times,
+)
 from gothic_ai.orders import Fight, Orders, Standing
 from gothic_ai.parley import Parley
 from gothic_ai.persona import PersonaProvider
@@ -153,6 +162,96 @@ async def finish(rig):
     if conv and conv.reply:
         await conv.reply
     await rig.link.story_eval(NPC, [["int", 1]])  # wait for preceding speech to reach the fake game
+
+
+@pytest.mark.parametrize(("count", "words"), [
+    (1, "один раз"), (2, "дважды"), (3, "три раза"), (4, "четыре раза"),
+    (5, "5 раз"),
+])
+def test_defeat_count_wording(count, words):
+    assert defeat_times(count) == words
+
+
+async def test_repeated_knockdowns_context_witnesses_expiry_and_save_fork(rig):
+    brago = "BDT_1014_BANDIT_L"
+    rig.talk.people[brago] = rig.talk.people[NPC].model_copy(update={"id": brago, "name": "Браго"})
+    for witness, guild, hp, distance in [
+        (FRIEND, 0, 100, 150), ("FAR", 0, 100, 201),
+        ("DEAD", 0, 0, 150), ("BEAST", 16, 100, 150),
+    ]:
+        rig.talk.people[witness] = rig.talk.people[FRIEND].model_copy(
+            update={"id": witness, "guild": guild},
+        )
+        rig.fake.views[witness] = dict(
+            npc=witness, name=witness, hp=hp, senses_range=200,
+            hero=dict(id="PLAYER", name="Герой", distance=distance),
+        )
+    parent = rig.chronicle.branch
+    before = rig.memory.head(parent)
+    first = 0
+    for count in range(1, 4):
+        hit(rig, npc=brago, down=True, hp=1)
+        await finish(rig)
+        [fact] = rig.chronicle.facts("defeated")
+        assert fact["count"] == count
+        if count == 1:
+            first = rig.memory.head(parent)
+    assert fact["npc"] == brago and fact["by"] == "PLAYER"
+    assert fact["time"] == 1920 and fact["until"] == 4320
+    assert fact["place"] == "NW_XARDAS_TOWER_IN1_31" and fact["witnesses"] == [FRIEND]
+    own_line = (
+        "Герой сегодня три раза сбил тебя с ног в драке. Ты знаешь, что он сильнее тебя: "
+        "держишься с ним осторожнее, насколько позволяет твой характер. Гордость можешь показать "
+        "бравадой, но угрожать ему всерьёз не станешь, пока не изменится расклад."
+    )
+    witness_line = "Ты видел, как герой сегодня сбил с ног Браго: он опасен в драке."
+    for who, expected in [(brago, own_line), (FRIEND, witness_line)]:
+        conv = rig.dialogue.open(who, who, warm=False)
+        situation, _, _ = await rig.dialogue._situation(conv, None)
+        assert expected in situation
+        assert "сбил" in str(conv.history)
+    rig.chronicle.record({"fact": "surrender", "npc": brago, "status": "spared", "until": 4320})
+    assert rig.mercy.situation(brago) == own_line + "\n" + YIELDING
+    rig.mercy._minute = 4319
+    assert own_line in rig.mercy.situation(brago) and rig.mercy.situation(FRIEND) == witness_line
+    rig.mercy._minute = 4320
+    assert rig.mercy.situation(brago) is None and rig.mercy.situation(FRIEND) is None
+    rig.link._dispatch(Session(type="session", branch="one_fall", reason="load",
+                               parent=parent, parent_seq=first))
+    rig.mercy._minute = 1920
+    [saved] = rig.chronicle.facts("defeated")
+    assert saved["count"] == 1 and "один раз" in rig.mercy.situation(brago)
+    rig.link._dispatch(Session(type="session", branch="before_fight", reason="load",
+                               parent=parent, parent_seq=before))
+    rig.mercy._minute = 1920
+    assert not rig.chronicle.facts("defeated")
+    for who in (brago, FRIEND):
+        assert rig.mercy.situation(who) is None
+        assert "сбил" not in str(rig.dialogue.open(who, who, warm=False).history)
+
+
+@pytest.mark.parametrize("recovery", ["roster", "hit"])
+async def test_companion_knockdown_counts_but_beasts_and_other_fights_do_not(rig, recovery):
+    rig.dialogue.change_intent(FRIEND, "Диего", body=False, goal="follow_hero", target="PLAYER")
+    hit(rig, by="STRANGER", down=True)
+    rig.talk.people["BEAST"] = rig.talk.people[NPC].model_copy(update={"id": "BEAST", "guild": 16})
+    hit(rig, npc="BEAST", down=True)
+    hit(rig, by=FRIEND, down=True)
+    await finish(rig)
+    [fact] = rig.chronicle.facts("defeated")
+    assert fact["npc"] == NPC and fact["by"] == FRIEND and fact["count"] == 1
+    assert NPC in rig.mercy._dead
+    if recovery == "roster":
+        rig.link._dispatch(NpcRoster(type="npc_roster", t=2000, npcs=[dict(
+            id=NPC, name="Лобарт", guild=8, distance=2500, activity="fight", state="ZS_ATTACK",
+        )]))
+    else:
+        hit(rig, by=FRIEND, down=False, hp=80)
+    assert NPC not in rig.mercy._dead
+    hit(rig, by=FRIEND, down=True, hp=1)
+    await finish(rig)
+    [fact] = rig.chronicle.facts("defeated")
+    assert fact["count"] == 2
 
 
 @pytest.mark.parametrize("reason", ["low_hp", "balance", "balance_stale", "companion"])
