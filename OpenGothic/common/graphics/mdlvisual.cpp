@@ -1659,9 +1659,9 @@ const Animation::Sequence* MdlVisual::startAnimAndGet(std::string_view name, uin
   return nullptr;
   }
 
-const Animation::Sequence* MdlVisual::startAnimAndGet(Npc &npc, std::string_view name, uint8_t comb, BodyState bs) {
+const Animation::Sequence* MdlVisual::startAnimAndGet(Npc &npc, std::string_view name, uint8_t comb, BodyState bs, bool force) {
   const Animation::Sequence* sq  = solver.solveFrm(name);
-  if(skInst->startAnim(solver,sq,comb,bs,Pose::NoHint,npc.world().tickCount()))
+  if(skInst->startAnim(solver,sq,comb,bs,force ? Pose::Force : Pose::NoHint,npc.world().tickCount()))
     return sq;
   return nullptr;
   }

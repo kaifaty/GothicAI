@@ -168,7 +168,8 @@ class MdlVisual final {
     bool                           hasAnim(std::string_view scheme) const;
 
     const Animation::Sequence*     startAnimAndGet(std::string_view name, uint64_t tickCount, bool forceAnim = false);
-    const Animation::Sequence*     startAnimAndGet(Npc& npc, std::string_view      name, uint8_t comb, BodyState bs);
+    // force: start it even over a layer that cannot be cut now (a melee dodge out of a parade)
+    const Animation::Sequence*     startAnimAndGet(Npc& npc, std::string_view      name, uint8_t comb, BodyState bs, bool force = false);
     const Animation::Sequence*     startAnimAndGet(Npc& npc, AnimationSolver::Anim    a, uint8_t comb, WeaponState st, WalkBit wlk);
 
     bool                           startAnim      (Npc& npc, WeaponState st);

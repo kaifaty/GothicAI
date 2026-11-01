@@ -1455,6 +1455,9 @@ void MoveAlgo::onMoveFailed(const Tempest::Vec3& dp, const DynamicWorld::Collisi
 
   if(dp==Tempest::Vec3())
     return;
+  // A melee dodge that runs into a wall or a body is neither cut nor turned: the dodger just stops there
+  if(npc.isMeleeDodging())
+    return;
 
   const auto  ortho   = Tempest::Vec3::crossProduct(Tempest::Vec3::normalize(dp),Tempest::Vec3(0,1,0));
   const float stp     = speed*float(dt)/1000.f;

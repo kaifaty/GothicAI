@@ -46,6 +46,7 @@
 #include <memory>
 #include <mutex>
 #include <sstream>
+#include <unordered_set>
 
 using namespace Tempest;
 
@@ -65,10 +66,21 @@ float meleeParryLeadMs() {
   }
 
 std::optional<Pose::CombatLayer> meleeParadeLayer(const Pose& pose, uint64_t now) {
+  // A dodge plays in BS_PARADE, as the jump back does, but it is no parade even with a defence window
   for(const auto& layer:pose.combatLayers(now))
-    if(layer.state==BS_PARADE && !layer.sequence->data->defWindow.empty())
+    if(layer.state==BS_PARADE && !layer.sequence->data->defWindow.empty() &&
+       !MeleeDodge::parseAnimation(layer.sequence->name))
       return layer;
   return std::nullopt;
+  }
+
+// One line in the log per missing dodge animation name, not one per press
+void reportMissingDodgeAnimation(const std::string& name) {
+  static std::mutex                      sync;
+  static std::unordered_set<std::string> reported;
+  std::lock_guard<std::mutex> guard(sync);
+  if(reported.insert(name).second)
+    Log::i("[melee] dodge animation ",name," is not there: its fallback plays");
   }
 
 std::string meleeStaminaIdentity(const Pose& pose, uint64_t now) {
@@ -1147,6 +1159,9 @@ bool Npc::addSpellImpulse(const Vec3& impulseNs, bool reaction, Npc* culprit) {
   if(!Gothic::physicsFlags().spellPhysics || spellFrozen() ||
      !std::isfinite(impulseNs.x) || !std::isfinite(impulseNs.y) || !std::isfinite(impulseNs.z) ||
      impulseNs.quadLength()<=0.f)
+    return false;
+  // A spell's blow inside a dodge's window does not throw the dodger (its damage is refused in takeDamage)
+  if(reaction && isMeleeDodgeInvulnerable())
     return false;
   if(ragdoll) {
     ragdoll->addImpulse(impulseNs,culprit);
@@ -2311,8 +2326,12 @@ void Npc::consumeMeleeContacts() {
       continue;
       }
     const auto& targetPose = target->visual.pose();
-    const bool dodge = !target->meleeKnockdown && !target->isMeleeStunned() && targetPose.isJumpBack(owner.tickCount()) && target->fghAlgo.isInJumpBackAngle(*target,*this);
-    const bool block = !target->meleeKnockdown && !target->isMeleeStunned() && target->fghAlgo.isInFocusAngle(*target,*this) && targetPose.isDefence(owner.tickCount());
+    // A melee dodge is neither the jump back nor a parade: inside its window the blade passes (takeDamage logs
+    // it), outside the window it hits
+    const bool dodging = target->isMeleeDodging();
+    const bool dodge = (dodging && target->isMeleeDodgeInvulnerable()) ||
+                       (!dodging && !target->meleeKnockdown && !target->isMeleeStunned() && targetPose.isJumpBack(owner.tickCount()) && target->fghAlgo.isInJumpBackAngle(*target,*this));
+    const bool block = !dodging && !target->meleeKnockdown && !target->isMeleeStunned() && target->fghAlgo.isInFocusAngle(*target,*this) && targetPose.isDefence(owner.tickCount());
     entry.result = block ? "blocked" : (dodge ? "evaded" : "hit");
     if(!block && !dodge) {
       const auto backstab = target->meleeBackstabKind(*this);
@@ -5139,13 +5158,18 @@ bool Npc::tickMeleePosture(uint64_t dt) {
 void Npc::takeDamage(Npc &other, const Bullet* b, bool ignoreDefence, float meleeScale, const MeleeBladeContact* contact) {
   if(isDown())
     return;
+  // Inside a dodge's window nothing passes: no damage, balance, reaction or perception
+  if(!ignoreDefence && meleeDodgeEvades(other,b==nullptr ? "melee" : "ranged"))
+    return;
 
   stopPhysicsInvestigation(false);
 
   assert(b==nullptr || !b->isSpell());
   const auto& pose    = visual.pose();
-  const bool  isJumpb = !meleeKnockdown && !isMeleeStunned() && !ignoreDefence && pose.isJumpBack(owner.tickCount()) && fghAlgo.isInJumpBackAngle(*this,other);
-  const bool  isBlock = !meleeKnockdown && !isMeleeStunned() && !ignoreDefence && (!other.isMonster() || other.inventory().activeWeapon()!=nullptr) &&
+  // Outside its window a dodge is open: it is no jump back and no parade
+  const bool  dodging = isMeleeDodging();
+  const bool  isJumpb = !dodging && !meleeKnockdown && !isMeleeStunned() && !ignoreDefence && pose.isJumpBack(owner.tickCount()) && fghAlgo.isInJumpBackAngle(*this,other);
+  const bool  isBlock = !dodging && !meleeKnockdown && !isMeleeStunned() && !ignoreDefence && (!other.isMonster() || other.inventory().activeWeapon()!=nullptr) &&
                          fghAlgo.isInFocusAngle(*this,other) &&
                          pose.isDefence(owner.tickCount());
   if((isBlock || isJumpb) && b==nullptr)
@@ -5182,6 +5206,8 @@ void Npc::takeDamage(Npc &other, const Bullet* b, bool ignoreDefence, float mele
 
 void Npc::takeDamage(Npc& other, const Bullet* b, const VisualFx* vfx, int32_t splId) {
   if(isDown())
+    return;
+  if(meleeDodgeEvades(other,"spell"))
     return;
 
   lastHitSpell = splId;
@@ -7864,6 +7890,186 @@ void Npc::waitForMeleeStamina(uint64_t dt) {
     }
   setAnim(Anim::Idle);
   implFaiWait(200);
+  }
+
+std::optional<Npc::MeleeDodgeLayer> Npc::meleeDodgeLayer() const {
+  const auto& pose = visual.pose();
+  if(!Gothic::physicsFlags().meleeDodge || !pose.hasState(BS_PARADE))
+    return std::nullopt;
+  for(const auto& layer:pose.combatLayers(owner.tickCount()))
+    if(layer.state==BS_PARADE)
+      if(auto move = MeleeDodge::parseAnimation(layer.sequence->name))
+        return MeleeDodgeLayer{*move,layer.origin};
+  return std::nullopt;
+  }
+
+bool Npc::isMeleeDodging() const {
+  return meleeDodgeLayer().has_value();
+  }
+
+bool Npc::isMeleeDodgeRoll() const {
+  const auto layer = meleeDodgeLayer();
+  return layer && layer->move.kind!=MeleeDodge::Kind::Dash;
+  }
+
+bool Npc::isMeleeDodgeInvulnerable() const {
+  const auto layer = meleeDodgeLayer();
+  const auto now   = owner.tickCount();
+  return layer && now>=layer->origin && MeleeDodge::invulnerable(layer->move.kind,now-layer->origin);
+  }
+
+std::optional<uint64_t> Npc::nextMeleeContactMs() const {
+  const auto now = owner.tickCount();
+  if(const auto contact = visual.pose().nextMeleeContact(now))
+    return contact->contact>now ? contact->contact-now : 0;
+  return std::nullopt;
+  }
+
+void Npc::meleeDodgeNote(const std::string& text, std::string_view phase, const std::string& fields) {
+  if(TestBench::isActive()) {
+    const auto self = TestBench::who(this);
+    TestBench::note(("melee dodge "+std::string(self)+": "+text).c_str());
+    }
+  if(TestBench::bodyTracing())
+    TestBench::bodyEvent(*this,currentTarget,phase,owner.tickCount(),fields,visual.pose().animNames());
+  }
+
+bool Npc::meleeDodgeEvades(Npc& other, std::string_view kind) {
+  const auto layer = meleeDodgeLayer();
+  if(!layer)
+    return false;
+  const auto now     = owner.tickCount();
+  const auto elapsed = now>=layer->origin ? now-layer->origin : 0;
+  if(!MeleeDodge::invulnerable(layer->move.kind,elapsed))
+    return false;
+  const auto window = MeleeDodge::invulnerability(layer->move.kind);
+  if(kind=="melee")
+    BodyObservations::noteEvent(*this,&other,"evaded",now);
+  const auto by = TestBench::who(&other);
+  meleeDodgeNote(std::string(kind)+" hit by "+std::string(by)+" at "+std::to_string(elapsed)+" ms of "+
+                 std::string(MeleeDodge::name(layer->move.kind))+" "+std::to_string(window.beginMs)+"-"+
+                 std::to_string(window.endMs)+" ms: did not pass (no damage, balance or reaction), hp "+
+                 std::to_string(attribute(ATR_HITPOINTS)),
+                 "dodge_invulnerable",
+                 "\"damage_kind\":"+TestBench::bodyJson(kind)+",\"by\":"+TestBench::bodyJson(by)+
+                 ",\"kind\":"+TestBench::bodyJson(MeleeDodge::name(layer->move.kind))+
+                 ",\"direction\":"+TestBench::bodyJson(MeleeDodge::name(layer->move.direction))+
+                 ",\"elapsed_ms\":"+std::to_string(elapsed)+
+                 ",\"window_ms\":["+std::to_string(window.beginMs)+","+std::to_string(window.endMs)+"]"+
+                 ",\"hp\":"+std::to_string(attribute(ATR_HITPOINTS)));
+  return true;
+  }
+
+bool Npc::meleeDodge(MeleeDodge::Direction direction) {
+  const auto ws    = weaponState();
+  const auto bs    = bodyStateMasked();
+  auto*      armor = invent.currentArmor();
+  const auto armorClass = armor!=nullptr ? std::optional<MeleeImpact::ArmorClass>(MeleeImpact::armorClass(armor->handle().protection[PROT_EDGE])) :
+                                           std::optional<MeleeImpact::ArmorClass>();
+  const auto wanted = MeleeDodge::kind(armorClass);
+  const std::string dir    = std::string(MeleeDodge::name(direction));
+  const std::string armour = std::string(MeleeDodge::name(armorClass));
+  const std::string head   = "\"direction\":"+TestBench::bodyJson(dir)+",\"armour\":"+TestBench::bodyJson(armour)+
+                             ",\"kind_wanted\":"+TestBench::bodyJson(MeleeDodge::name(wanted));
+
+  MeleeDodge::Situation s;
+  s.enabled     = Gothic::physicsFlags().meleeDodge;
+  // a human with a melee weapon or the fists drawn: a beast (the hero transformed too) keeps its own moves
+  s.meleeWeapon = isHuman() && (ws==WeaponState::Fist || ws==WeaponState::W1H || ws==WeaponState::W2H);
+  s.attacking   = isAttackAnim();
+  s.stunned     = isMeleeStunned();
+  s.knockedDown = meleeKnockdown || isDown();
+  s.inAir       = isInAir() || isFalling() || isSlide() || isJump() || isJumpUp();
+  s.inWater     = isInWater() || isSwim() || isDive();
+  s.dodging     = isMeleeDodging();
+  s.activity    = (bs==BS_STAND || bs==BS_NONE) ? MeleeDodge::Activity::Stand :
+                  bs==BS_WALK   ? MeleeDodge::Activity::Walk   :
+                  bs==BS_RUN    ? MeleeDodge::Activity::Run    :
+                  bs==BS_PARADE ? MeleeDodge::Activity::Parade : MeleeDodge::Activity::Other;
+  if(interactive()!=nullptr)
+    s.activity = MeleeDodge::Activity::Other;
+  const auto refusal = MeleeDodge::refusal(s);
+  if(refusal!=MeleeDodge::Refusal::None) {
+    if(refusal==MeleeDodge::Refusal::Stunned)
+      allowMeleeStunAction("dodge"); // the stun_refused event, as a parade's and a jump back's
+    meleeDodgeNote(dir+", armour "+armour+": refused, "+std::string(MeleeDodge::name(refusal)),"dodge_refused",
+                   head+",\"reason\":"+TestBench::bodyJson(MeleeDodge::name(refusal)));
+    return false;
+    }
+
+  const auto stance = ws==WeaponState::W2H ? MeleeDodge::Stance::TwoHand :
+                      ws==WeaponState::W1H ? MeleeDodge::Stance::OneHand : MeleeDodge::Stance::Fist;
+  const auto plan = MeleeDodge::plan(wanted,stance,direction);
+  const MeleeDodge::Candidate* chosen = nullptr;
+  std::string missing;
+  for(const auto& c:plan.candidates) {
+    if(visual.hasAnim(c.name)) {
+      chosen = &c;
+      break;
+      }
+    reportMissingDodgeAnimation(c.name);
+    missing += (missing.empty() ? "" : ", ")+c.name;
+    }
+
+  if(chosen==nullptr) {
+    if(!plan.jumpBack) {
+      meleeDodgeNote(dir+", armour "+armour+", "+std::string(MeleeDodge::name(wanted))+": no dodge this way (no "+missing+")",
+                     "dodge_none",head+",\"missing\":"+TestBench::bodyJson(missing));
+      return false;
+      }
+    // Backwards the original jump back stays: its own cost and its old evasion, no dodge window
+    tickMeleeStamina();
+    const float before = stamina();
+    const bool  ok     = setAnim(Anim::MoveBack);
+    const auto  cost   = before-stamina();
+    meleeDodgeNote(dir+", armour "+armour+", "+std::string(MeleeDodge::name(wanted))+": the original jump back "+
+                   visual.pose().animNames()+" (no "+missing+"), "+(ok ? "started" : "refused")+", cost "+
+                   std::to_string(int(std::lround(cost)))+", window none",
+                   "dodge_jumpback",head+",\"missing\":"+TestBench::bodyJson(missing)+",\"started\":"+(ok ? "true" : "false")+
+                   ",\"cost\":"+std::to_string(cost));
+    return ok;
+    }
+
+  const auto kind      = chosen->kind;
+  const bool fallback  = kind!=wanted;
+  const auto window    = MeleeDodge::invulnerability(kind);
+  const bool fullCost  = !isPlayer() && !BodyController::owns(*this);
+  const auto moveText  = std::string(MeleeDodge::name(wanted))+(fallback ? " -> "+std::string(MeleeDodge::name(kind)) : "")+" "+
+                         chosen->name+(fallback ? " (no "+missing+")" : "");
+  tickMeleeStamina();
+  if(!MeleeDodge::staminaAllows(meleeStamina,kind,fullCost,hasStamina())) {
+    if(TestBench::bodyTracing())
+      TestBench::bodyEvent(*this,currentTarget,"stamina_refused",owner.tickCount(),
+                          "\"action\":\"dodge\",\"after\":"+std::to_string(stamina()));
+    meleeDodgeNote(dir+", armour "+armour+", "+moveText+": refused, stamina "+std::to_string(int(std::lround(stamina())))+
+                   (isStaminaExhausted() ? " (spent)" : "")+" for "+std::to_string(int(MeleeDodge::cost(kind))),
+                   "dodge_refused",head+",\"reason\":\"stamina\",\"stamina\":"+std::to_string(stamina()));
+    return false;
+    }
+
+  const auto now     = owner.tickCount();
+  const auto before  = meleeStaminaIdentity(visual.pose(),now);
+  // Out of a parade (a BS_PARADE layer with a defence window, as the parry takes it) the dodge cuts it: a parade
+  // cannot be cut for its whole length otherwise. A blow's swing, a stumble or the jump back still hold.
+  const bool fromParade = meleeParadeLayer(visual.pose(),now).has_value();
+  const auto* sq     = visual.startAnimAndGet(*this,chosen->name,0,BS_PARADE,fromParade);
+  if(sq==nullptr || before==meleeStaminaIdentity(visual.pose(),now)) {
+    meleeDodgeNote(dir+", armour "+armour+", "+moveText+": not taken, playing "+visual.pose().animNames(),
+                   "dodge_refused",head+",\"reason\":\"pose\"");
+    return false;
+    }
+  const float staminaBefore = stamina();
+  const float cost          = MeleeDodge::charged(kind,hasStamina());
+  spendStamina("dodge",cost);
+  meleeDodgeNote(dir+", armour "+armour+", "+moveText+", cost "+std::to_string(int(cost))+
+                 (hasStamina() ? "" : " (melee_stamina off)")+", window "+std::to_string(window.beginMs)+"-"+
+                 std::to_string(window.endMs)+" ms",
+                 "dodge",head+",\"kind\":"+TestBench::bodyJson(MeleeDodge::name(kind))+
+                 ",\"animation_name\":"+TestBench::bodyJson(chosen->name)+",\"fallback\":"+(fallback ? "true" : "false")+
+                 ",\"missing\":"+TestBench::bodyJson(missing)+",\"cost\":"+std::to_string(cost)+
+                 ",\"stamina_before\":"+std::to_string(staminaBefore)+",\"stamina_after\":"+std::to_string(stamina())+
+                 ",\"window_ms\":["+std::to_string(window.beginMs)+","+std::to_string(window.endMs)+"]");
+  return true;
   }
 
 bool Npc::doAttack(Anim anim, BodyState bs) {
