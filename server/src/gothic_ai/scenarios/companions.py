@@ -2139,15 +2139,43 @@ async def companion_scenario(
     following = await _until(lambda: since(0, "follow") and 0 <= dist() <= 5, 20)
     check("follow", following, f"{dist():.1f} m")
 
-    # pace: the hero is suddenly 11+ m off; a run covers it in about 2 s, a walk in 5 or more
-    await link.debug("player_goto", near=npc, distance=1100)
-    t0 = time.monotonic()
-    await _until(lambda: dist() >= 9, 3)
-    d0 = dist()
-    caught_up = await _until(lambda: 0 <= dist() <= 5, 20)
-    took = time.monotonic() - t0
+    # pace: the hero is suddenly 11+ m off; a run covers it in about 2 s, a walk in 5 or more.
+    # Game time from body rows: frames held after the teleport (world chunks built at once)
+    # stop the run on the wall clock, and the roster distance lags behind the bodies.
+    pace_symbols = dict(zip(
+        await link.story_eval(npc, [["sym", npc], ["sym", "PC_HERO"]]), (npc, "PLAYER"), strict=True,
+    ))
+    hero_at: list[Any] = []
+    track: list[tuple[int, float, int]] = []  # game ms, distance m, companion body state
+
+    def pace_rows(packet: dict[str, Any]) -> None:
+        for row in packet["observations"]:
+            who = pace_symbols.get(row["script_symbol"])
+            if who == "PLAYER":
+                hero_at[:] = [row["self"]["position_world_cm"]]
+            elif who == npc and hero_at:
+                at = row["self"]["position_world_cm"]
+                track.append((row["t_game_ms"], math.dist(at[::2], hero_at[0][::2]) / 100,
+                              row["self"]["body_state_base"]))
+
+    link.raw_body_listeners.append(pace_rows)
+    try:
+        await link.body_watch([npc, "PLAYER"], rate_hz=10)
+        await link.debug("player_goto", near=npc, distance=1100)
+        t0 = time.monotonic()
+        far = await _until(lambda: any(d >= 9 for _, d, _ in track), 3)
+        caught_up = far and await _until(lambda: track[-1][1] <= 5, 20)
+    finally:
+        link.raw_body_listeners.remove(pace_rows)
+        await link.body_watch([])
+    wall = time.monotonic() - t0
+    start = next((i for i, (_, d, _) in enumerate(track) if d >= 9), None)
+    end = next((i for i in range(start, len(track)) if track[i][1] <= 5), None) if start is not None else None
+    d0 = track[start][1] if start is not None else 0.0
+    took = (track[end][0] - track[start][0]) / 1000 if start is not None and end is not None else 0.0
     speed = (d0 - 5) / took if took > 0 else 0.0
-    check("pace", caught_up and speed >= 2.5, f"{d0:.1f} m -> 5 m in {took:.1f} s, {speed:.1f} m/s")
+    check("pace", bool(caught_up) and end is not None and speed >= 2.5,
+          f"{d0:.1f} m -> 5 m in {took:.1f} s of game time ({wall:.1f} s wall), {speed:.1f} m/s")
 
     # freed: next to the bandit at the steps, nothing starts on its own
     await link.debug("player_goto", to=bandit, distance=300)
