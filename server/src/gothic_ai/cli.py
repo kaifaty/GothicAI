@@ -1646,17 +1646,14 @@ async def serve(args: argparse.Namespace) -> int:
                 log.info("scenario m0: %d steps, %d failed", len(steps), len(failed))
                 exit_code = 1 if failed else 0
             elif args.scenario == "m2":
-                results = await scenarios.m2_actions(link, args.npc)
-                bad = {
-                    k: v
-                    for k, v in results.items()
-                    if not k.startswith("gesture") and k != "give_item_missing" and not v.startswith("done")
-                }
+                assert state.dialogue is not None
+                results = await scenarios.m2_actions(link, state.dialogue, args.npc)
+                bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info("scenario m2: %d checks, %d failed", len(results), len(bad))
                 exit_code = 1 if bad else 0
             elif args.scenario == "m1":
                 lines = await scenarios.m1_chat(link, state.dialogue, args.npc)
-                log.info("scenario m1: npc spoke %d line(s)", len(lines))
+                log.info("scenario m1: line_delivery: done (%d lines)", len(lines))
             elif args.scenario == "websocket":
                 assert state.dialogue
                 results = await scenarios.websocket(link, state.dialogue)
@@ -1674,7 +1671,8 @@ async def serve(args: argparse.Namespace) -> int:
                 log.info("scenario m4: %d checks, %d failed", len(results), len(bad))
                 exit_code = 1 if bad else 0
             elif args.scenario == "m5":
-                results = await scenarios.m5_turn_loop(link, args.npc, decider, trace, quick)
+                assert state.dialogue is not None
+                results = await scenarios.m5_turn_loop(link, state.dialogue, args.npc)
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info("scenario m5: %d checks, %d failed", len(results), len(bad))
                 exit_code = 1 if bad else 0
@@ -1684,7 +1682,8 @@ async def serve(args: argparse.Namespace) -> int:
                 log.info("scenario m5b: %d checks, %d failed", len(results), len(bad))
                 exit_code = 1 if bad else 0
             elif args.scenario == "m5c":
-                results = await scenarios.m5c_free_npc(link, args.npc)
+                assert state.dialogue is not None
+                results = await scenarios.m5c_free_npc(link, state.dialogue, args.npc)
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info("scenario m5c: %d checks, %d failed", len(results), len(bad))
                 exit_code = 1 if bad else 0
