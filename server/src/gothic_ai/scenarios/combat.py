@@ -31,6 +31,14 @@ from .common import (
 )
 from .live import LiveSuite
 
+SCENARIOS = {
+    "combat_barks": ("GIVEN", {"save": False, "timeout": 240}),
+    "mercy": ("GIVEN", {"save": False, "timeout": 240}),
+    "hero_yield": ("GIVEN", {"save": False, "timeout": 240}),
+    "humiliate": ("GIVEN", {"save": False, "timeout": 240}),
+    "surrender_live": ("LIVE", None),
+}
+
 
 async def surrender_live(
     link: GameLink, dialogue: DialogueManager, talk: TalkDesk, mercy: Mercy,

@@ -38,6 +38,17 @@ from .common import (
 )
 from .live import LiveCase
 
+SCENARIOS = {
+    "cave": ("GIVEN", {"save": False, "timeout": 240}),
+    "ground": ("GIVEN", {"save": False, "timeout": 240}),
+    "hearing": ("OFF", {"save": False, "timeout": 240}),
+    "knows": ("OFF", {"save": False, "timeout": 240}),
+    "remembers": ("GIVEN", {"save": False, "timeout": 240}),
+    "see": ("OFF", {"save": False, "timeout": 240}),
+    "seen": ("GIVEN", {"save": True, "timeout": 240}),
+    "trace": ("GIVEN", {"save": True, "timeout": 240}),
+}
+
 log = logging.getLogger("gothic_ai.scenarios")
 
 

@@ -30,6 +30,11 @@ from .common import (
 )
 from .live import LiveCase
 
+SCENARIOS = {
+    "feats": ("GIVEN", {"save": False, "timeout": 240}),
+    "feat_fame": ("GIVEN", {"save": False, "timeout": 420}),
+}
+
 
 class ScenarioArtist(feat_art.Artist):
     async def _generate(self, tmp: Path, emblem: str) -> Path | None:

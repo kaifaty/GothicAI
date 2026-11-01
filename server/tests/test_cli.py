@@ -60,6 +60,162 @@ def test_scenario_llm_groups(monkeypatch, capsys, scenario, llm, expected):
         serve.assert_not_awaited()
 
 
+def test_scenario_groups_match_main_census():
+    from gothic_ai.scenarios.groups import GIVEN, LIVE, OFF, RUN
+
+    # Snapshot of origin/main at 1591a1472ad5; independent of the scenario declarations.
+    expected = {
+        "amends": ("GIVEN", {"save": True, "timeout": 240}),
+        "amends_deal": ("GIVEN", {"save": True, "timeout": 240}),
+        "authored": ("GIVEN", {"save": True, "timeout": 240}),
+        "bandit_bounty": ("GIVEN", {"save": False, "timeout": 240}),
+        "bandit_hold": ("OFF", {"save": False, "timeout": 240}),
+        "bandit_parley": ("GIVEN", {"save": False, "timeout": 240}),
+        "broken": ("GIVEN", {
+            "save": True, "timeout": 240,
+            "env": {"OPENGOTHIC_FRACTURE": "~/.local/share/gothic-ai/fracture"},
+        }),
+        "calm": ("GIVEN", {"save": False, "timeout": 240}),
+        "cast": ("OFF", {"save": True, "timeout": 240}),
+        "cave": ("GIVEN", {"save": False, "timeout": 240}),
+        "chain": ("GIVEN", {"save": True, "timeout": 240}),
+        "character": ("GIVEN", {"save": True, "timeout": 240}),
+        "cheat": ("GIVEN", {"save": True, "timeout": 720}),
+        "check_walk": ("OFF", {"save": False, "timeout": 240}),
+        "chests": ("GIVEN", {"save": False, "timeout": 240}),
+        "chests_lobart": ("LIVE", None),
+        "combat_barks": ("GIVEN", {"save": False, "timeout": 240}),
+        "companion": ("GIVEN", {"save": False, "timeout": 240}),
+        "contract": ("GIVEN", {"save": False, "timeout": 240}),
+        "cover": ("GIVEN", {"save": True, "timeout": 720}),
+        "cover_subject": ("GIVEN", {"save": True, "timeout": 720}),
+        "crime_ally": ("GIVEN", {"save": False, "timeout": 240}),
+        "crime_director": ("GIVEN", {"save": True, "timeout": 900}),
+        "crime_law": ("GIVEN", {"save": True, "timeout": 420}),
+        "crime_meet": ("GIVEN", {"save": True, "timeout": 600}),
+        "crime_react": ("OFF", {"save": True, "timeout": 420}),
+        "crime_talk": ("GIVEN", {"save": True, "timeout": 600}),
+        "crimes": ("OFF", {"save": True, "timeout": 420}),
+        "day": ("GIVEN", {"save": True, "timeout": 480}),
+        "deal": ("GIVEN", {"save": True, "timeout": 240}),
+        "deal_demo": ("GIVEN", {"save": False, "timeout": 240}),
+        "death_load": ("OFF", {"save": False, "timeout": 240}),
+        "debt": ("GIVEN", {"save": True, "timeout": 240}),
+        "errand": ("GIVEN", {"save": True, "timeout": 1500}),
+        "errand_far": ("GIVEN", {"save": True, "timeout": 1500}),
+        "errand_fork": ("GIVEN", {"save": True, "timeout": 1500}),
+        "errand_give": ("GIVEN", {"save": True, "timeout": 240}),
+        "feat_fame": ("GIVEN", {"save": False, "timeout": 420}),
+        "feats": ("GIVEN", {"save": False, "timeout": 240}),
+        "fight_reactions_bandits": ("GIVEN", {"save": False, "timeout": 300}),
+        "fight_reactions_flee": ("GIVEN", {"save": False, "timeout": 180}),
+        "fight_reactions_sight": ("OFF", {"save": False, "timeout": 180}),
+        "fight_reactions_wolf": ("GIVEN", {"save": False, "timeout": 180}),
+        "follow_back": ("OFF", {"save": False, "timeout": 240}),
+        "frame": ("GIVEN", {"save": True, "timeout": 900}),
+        "gate": ("GIVEN", {"save": False, "timeout": 240}),
+        "gate_vouch": ("GIVEN", {"save": False, "timeout": 240}),
+        "gossip": ("GIVEN", {"save": True, "timeout": 420, "env": {"DECIDER_URL": ""}}),
+        "gossip_demo": ("GIVEN", {"save": True, "timeout": 240}),
+        "graph": ("OFF", {"save": False, "timeout": 240}),
+        "greg": ("GIVEN", {"save": False, "timeout": 240}),
+        "ground": ("GIVEN", {"save": False, "timeout": 240}),
+        "group": ("GIVEN", {"save": False, "timeout": 240}),
+        "haggle": ("LIVE", None),
+        "hearing": ("OFF", {"save": False, "timeout": 240}),
+        "hero_yield": ("GIVEN", {"save": False, "timeout": 240}),
+        "humiliate": ("GIVEN", {"save": False, "timeout": 240}),
+        "initiative": ("GIVEN", {"save": True, "timeout": 240}),
+        "interject": ("LIVE", None),
+        "knows": ("OFF", {"save": False, "timeout": 240}),
+        "lead": ("GIVEN", {"save": True, "timeout": 540}),
+        "lie": ("GIVEN", {"save": True, "timeout": 240}),
+        "live_deals": ("LIVE", None),
+        "live_director": ("LIVE", None),
+        "live_lies": ("LIVE", None),
+        "live_npc": ("LIVE", None),
+        "load_rewind": ("OFF", {"save": False, "timeout": 240}),
+        "m0": ("OFF", {"save": False, "timeout": 240}),
+        "m1": ("GIVEN", {"save": False, "timeout": 240}),
+        "m2": ("GIVEN", {"save": False, "timeout": 240}),
+        "m3": ("GIVEN", {"save": False, "timeout": 240}),
+        "m4": ("OFF", {"save": False, "timeout": 240}),
+        "m5": ("GIVEN", {"save": False, "timeout": 240}),
+        "m5b": ("OFF", {"save": False, "timeout": 240}),
+        "m5c": ("GIVEN", {"save": False, "timeout": 240}),
+        "m5e": ("GIVEN", {"save": False, "timeout": 240}),
+        "m6": ("OFF", {"save": False, "timeout": 240}),
+        "meet": ("GIVEN", {"save": True, "timeout": 600}),
+        "meet_missed": ("GIVEN", {"save": True, "timeout": 700}),
+        "memprobe": ("OFF", {
+            "save": False, "timeout": 1200,
+            "env": {"MEMPROBE_CYCLES": "8", "MEMPROBE_PHASES": "wave,save,load,spawn,teleport"},
+        }),
+        "mercy": ("GIVEN", {"save": False, "timeout": 240}),
+        "neural": ("OFF", {"save": False, "timeout": 240}),
+        "neural-companion": ("OFF", {"save": False, "timeout": 240}),
+        "neural-group": ("OFF", {"save": False, "timeout": 240}),
+        "neural-load": ("OFF", {"save": False, "timeout": 240}),
+        "neural-soak": ("OFF", {
+            "save": False, "timeout": 900,
+            "env": {"GOTHIC_SOAK_SECONDS": "300", "BENCH_CLASS": "quiet"},
+        }),
+        "neural-still": ("OFF", {"save": False, "timeout": 1200}),
+        "neural-talk": ("GIVEN", {"save": False, "timeout": 240}),
+        "noise": ("GIVEN", {"save": True, "timeout": 240}),
+        "npc_deeds": ("OFF", {"save": True, "timeout": 720}),
+        "npc_director": ("GIVEN", {"save": True, "timeout": 720}),
+        "npc_far": ("OFF", {"save": True, "timeout": 720}),
+        "npc_will": ("OFF", {"save": True, "timeout": 240}),
+        "occasions": ("OFF", {"save": True, "timeout": 240}),
+        "orders": ("GIVEN", {"save": False, "timeout": 360}),
+        "own": ("OFF", {"save": True, "timeout": 240}),
+        "own_amend": ("GIVEN", {"save": True, "timeout": 240}),
+        "own_repair": ("GIVEN", {"save": True, "timeout": 240}),
+        "person": ("OFF", {"save": True, "timeout": 240}),
+        "places": ("OFF", {"save": False, "timeout": 240}),
+        "programs": ("OFF", {"save": False, "timeout": 240}),
+        "quest_law": ("OFF", {"save": True, "timeout": 600}),
+        "questlog": ("OFF", {"save": True, "timeout": 300}),
+        "remembers": ("GIVEN", {"save": False, "timeout": 240}),
+        "repair": ("GIVEN", {"save": False, "timeout": 240}),
+        "requires": ("OFF", {"save": True, "timeout": 240}),
+        "rescue": ("GIVEN", {"save": False, "timeout": 240}),
+        "rescue_self": ("GIVEN", {"save": False, "timeout": 240}),
+        "road_bandits": ("GIVEN", {"save": False, "timeout": 240}),
+        "rumor": ("GIVEN", {"save": True, "timeout": 240}),
+        "see": ("OFF", {"save": False, "timeout": 240}),
+        "seen": ("GIVEN", {"save": True, "timeout": 240}),
+        "showrunner": ("GIVEN", {"save": True, "timeout": 240}),
+        "showrunner_live": ("LIVE", None),
+        "stages": ("OFF", {"save": True, "timeout": 240}),
+        "surrender_live": ("LIVE", None),
+        "svm_lines": ("OFF", {"save": False, "timeout": 240}),
+        "trace": ("GIVEN", {"save": True, "timeout": 240}),
+        "trace_crime": ("GIVEN", {
+            "save": True, "timeout": 240,
+            "env": {"OPENGOTHIC_FRACTURE": "~/.local/share/gothic-ai/fracture"},
+        }),
+        "trigger": ("OFF", {"save": True, "timeout": 240}),
+        "tts": ("GIVEN", {"save": False, "timeout": 240}),
+        "vanilla_line": ("GIVEN", {"save": True, "timeout": 420}),
+        "vanilla_line_live": ("LIVE", None),
+        "vcheck": ("GIVEN", {"save": True, "timeout": 240}),
+        "vgive": ("GIVEN", {"save": False, "timeout": 240}),
+        "vlie": ("GIVEN", {"save": True, "timeout": 240}),
+        "vspare": ("GIVEN", {"save": False, "timeout": 900}),
+        "websocket": ("OFF", {"save": True, "timeout": 240}),
+        "witness": ("GIVEN", {"save": True, "timeout": 240}),
+        "wolf": ("OFF", {"save": False, "timeout": 240}),
+        "wolf_load": ("OFF", {"save": False, "timeout": 240}),
+        "wrath": ("GIVEN", {"save": False, "timeout": 240}),
+        "xardas_money": ("GIVEN", {"save": False, "timeout": 240}),
+    }
+    for group, actual in (("OFF", OFF), ("GIVEN", GIVEN), ("LIVE", LIVE)):
+        assert actual == {name for name, (declared, _) in expected.items() if declared == group}
+    assert RUN == {name: run for name, (_, run) in expected.items() if run is not None}
+
+
 def test_every_cli_scenario_has_exactly_one_model_group(monkeypatch, capsys):
     groups = (cli.OFF, cli.GIVEN, cli.LIVE)
     parse_args = cli.argparse.ArgumentParser.parse_args
@@ -77,8 +233,12 @@ def test_every_cli_scenario_has_exactly_one_model_group(monkeypatch, capsys):
     with pytest.raises(SystemExit) as exit:
         cli.main()
     assert exit.value.code == 0
-    assert choices and set(choices) == set().union(*groups)
-    assert all(sum(scenario in group for group in groups) == 1 for scenario in choices)
+    assert choices
+    for scenario in choices:
+        assert sum(scenario in group for group in groups) == 1, (
+            f"scenario {scenario} must declare exactly one model group in its module"
+        )
+    assert set(choices) == set().union(*groups)
 
     monkeypatch.setattr(cli, "OFF", cli.OFF - {"m0"})
     monkeypatch.setattr("sys.argv", ["gothic-ai", "serve", "--scenario", "m0", "--llm", "auto"])

@@ -61,6 +61,24 @@ from .common import (
 )
 from .live import LiveCase
 
+SCENARIOS = {
+    "authored": ("GIVEN", {"save": True, "timeout": 240}),
+    "cast": ("OFF", {"save": True, "timeout": 240}),
+    "chain": ("GIVEN", {"save": True, "timeout": 240}),
+    "character": ("GIVEN", {"save": True, "timeout": 240}),
+    "death_load": ("OFF", {"save": False, "timeout": 240}),
+    "graph": ("OFF", {"save": False, "timeout": 240}),
+    "own": ("OFF", {"save": True, "timeout": 240}),
+    "own_amend": ("GIVEN", {"save": True, "timeout": 240}),
+    "own_repair": ("GIVEN", {"save": True, "timeout": 240}),
+    "person": ("OFF", {"save": True, "timeout": 240}),
+    "programs": ("OFF", {"save": False, "timeout": 240}),
+    "repair": ("GIVEN", {"save": False, "timeout": 240}),
+    "requires": ("OFF", {"save": True, "timeout": 240}),
+    "stages": ("OFF", {"save": True, "timeout": 240}),
+    "trigger": ("OFF", {"save": True, "timeout": 240}),
+}
+
 log = logging.getLogger("gothic_ai.scenarios")
 
 

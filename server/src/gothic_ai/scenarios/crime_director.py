@@ -35,6 +35,10 @@ from .common import (
 )
 from .crimes import HOUSE
 
+SCENARIOS = {
+    "crime_director": ("GIVEN", {"save": True, "timeout": 900}),
+}
+
 if TYPE_CHECKING:
     from ..amends import Amends
     from ..bodies import Bodies

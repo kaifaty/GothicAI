@@ -16,6 +16,10 @@ from ..parley import EXPIRY_CUE, HAIL_CUE, NO_REASON
 from ..protocol import GameMessage, NpcRoster
 from .common import FixedDecider, _logged, _m5b_player_weapon, _until, log, model_off
 
+SCENARIOS = {
+    "bandit_parley": ("GIVEN", {"save": False, "timeout": 240}),
+}
+
 if TYPE_CHECKING:
     from ..deals import Deals
     from ..dialogue import Conversation, DialogueManager, TurnState

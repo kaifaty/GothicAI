@@ -15,6 +15,10 @@ from ..parley import HAIL_CUE
 from .bandit_parley import BRAGO, CAVALORN, MATE, PARK
 from .common import FixedDecider, _logged, _m5b_player_weapon, _until, _until_async, log, model_off
 
+SCENARIOS = {
+    "bandit_bounty": ("GIVEN", {"save": False, "timeout": 240}),
+}
+
 if TYPE_CHECKING:
     from ..bounty import Bounty
     from ..deals import Deals

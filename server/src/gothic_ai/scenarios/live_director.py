@@ -16,6 +16,10 @@ from .npc_director import npc_director
 from .showrunner import _LiveBuilderTrace, trace_live_builders
 from .story import author_chain, authored_quest, director_casts, repair_after_death
 
+SCENARIOS = {
+    "live_director": ("LIVE", None),
+}
+
 if TYPE_CHECKING:
     from ..cli import ServerState
     from ..journal import Journal

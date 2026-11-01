@@ -75,6 +75,21 @@ from .common import (
 )
 from .live import LiveCase, LiveSuite
 
+SCENARIOS = {
+    "chests": ("GIVEN", {"save": False, "timeout": 240}),
+    "chests_lobart": ("LIVE", None),
+    "day": ("GIVEN", {"save": True, "timeout": 480}),
+    "errand": ("GIVEN", {"save": True, "timeout": 1500}),
+    "errand_fork": ("GIVEN", {"save": True, "timeout": 1500}),
+    "errand_far": ("GIVEN", {"save": True, "timeout": 1500}),
+    "errand_give": ("GIVEN", {"save": True, "timeout": 240}),
+    "initiative": ("GIVEN", {"save": True, "timeout": 240}),
+    "lead": ("GIVEN", {"save": True, "timeout": 540}),
+    "meet": ("GIVEN", {"save": True, "timeout": 600}),
+    "meet_missed": ("GIVEN", {"save": True, "timeout": 700}),
+    "noise": ("GIVEN", {"save": True, "timeout": 240}),
+}
+
 log = logging.getLogger("gothic_ai.scenarios")
 
 
