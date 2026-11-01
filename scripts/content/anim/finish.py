@@ -3,7 +3,8 @@
     python3 scripts/content/anim/finish.py <in.MAN.json> <out.MAN.json> --ref <stance.MAN.json> \
         --name T_1HDASHB --warp 0:0,0.24:0.06,0.88:0.40,1.16:0.52 --sword-arm 0.5,0.8,1,1
 
---warp maps source seconds to target seconds at a few keys (monotone, smooth between them): the
+--gen-stance with another --ref moves the ends onto that stance (one body motion for every talent
+overlay). --warp maps source seconds to target seconds at a few keys (monotone, smooth between them): the
 start, the active phase and the recovery are squeezed by different amounts. The clip ends at the last
 key. --sword-arm blends the right clavicle, upper arm, forearm and hand towards the stance's local
 rotations (0 keeps Kimodo's, 1 is the stance's); the finger always comes from the stance, since it
@@ -65,6 +66,35 @@ def retime(anim: ga.Animation, keys: list[tuple[float, float]]) -> ga.Animation:
     return ga.Animation(anim.name, anim.next, anim.layer, anim.fps, frames, list(anim.node_indices), pos, rot)
 
 
+def qmul(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    aw, ax, ay, az = np.moveaxis(a, -1, 0)
+    bw, bx, by, bz = np.moveaxis(b, -1, 0)
+    return np.stack([aw * bw - ax * bx - ay * by - az * bz, aw * bx + ax * bw + ay * bz - az * by,
+                     aw * by - ax * bz + ay * bw + az * bx, aw * bz + ax * by - ay * bx + az * bw], -1)
+
+
+def match_stance(anim: ga.Animation, gen: ga.Animation, target: ga.Animation, fade_in: float, fade_out: float) -> None:
+    """Move a clip made from the stance `gen` onto the stance `target` at its ends.
+
+    Each node gets the local difference target · gen⁻¹ at frame 0, fading out over `fade_in` seconds,
+    and again fading in over the last `fade_out` seconds; the middle of the move stays as generated.
+    One body motion then serves every talent overlay, each with its own S_1HRUN at both ends."""
+    t = np.arange(anim.frame_count) / anim.fps
+    end = (anim.frame_count - 1) / anim.fps
+    s = lambda x: x * x * (3 - 2 * x)  # noqa: E731
+    w = np.maximum(s(np.clip(1 - t / fade_in, 0, 1)), s(np.clip(1 - (end - t) / fade_out, 0, 1)))
+    for j, node in enumerate(anim.node_indices):
+        if node not in gen.node_indices or node not in target.node_indices:
+            continue
+        g, k = gen.node_indices.index(node), target.node_indices.index(node)
+        conj = gen.rotations[0, g] * np.array([1.0, -1.0, -1.0, -1.0])
+        delta = qmul(target.rotations[0, k], conj)
+        ident = np.broadcast_to(np.array([1.0, 0, 0, 0]), (anim.frame_count, 4))
+        step = slerp(ident, np.broadcast_to(delta, (anim.frame_count, 4)), w)
+        anim.rotations[:, j] = qmul(step, anim.rotations[:, j])
+        anim.positions[:, j] += w[:, None] * (target.positions[0, k] - gen.positions[0, g])
+
+
 def hold_arm(anim: ga.Animation, skel: ga.Skeleton, ref: ga.Animation, weights: list[float]) -> None:
     for name, w in [*zip(ARM, weights), (FINGER, 1.0)]:
         node = skel.index(name)
@@ -85,10 +115,15 @@ def main():
     ap.add_argument("--next", default="")
     ap.add_argument("--warp", required=True, help="src:dst seconds, comma separated, from 0:0 to the end")
     ap.add_argument("--sword-arm", default="0.5,0.8,1,1", help="clavicle, upper arm, forearm, hand weights")
+    ap.add_argument("--gen-stance", type=Path, help="the stance the move was generated from, when --ref is another one "
+                    "(a talent overlay's S_1HRUN): the ends are moved onto --ref")
+    ap.add_argument("--fade", default="0.12,0.2", help="seconds of stance matching at the start and at the end")
     a = ap.parse_args()
     skel = ga.read_skeleton(a.skeleton or a.ref.parent / "HUMANS.MDH.json")
     ref = ga.read_animation(a.ref)
     anim = retime(ga.read_animation(a.src), [tuple(map(float, k.split(":"))) for k in a.warp.split(",")])
+    if a.gen_stance:
+        match_stance(anim, ga.read_animation(a.gen_stance), ref, *map(float, a.fade.split(",")))
     hold_arm(anim, skel, ref, [float(w) for w in a.sword_arm.split(",")])
     anim.name, anim.next = a.name, a.next
     a.out.parent.mkdir(parents=True, exist_ok=True)

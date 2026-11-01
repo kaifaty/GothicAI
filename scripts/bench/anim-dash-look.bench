@@ -1,53 +1,55 @@
-# Our own back dash (step 6 of the melee port, reports/Свои анимации для боя.md): the hero in the 1H stance plays
-# the finished dash variants from content, then the original T_1HPARADEJUMPB, side and front, at 1x and slowed 4x.
-# The dash comes from OPENGOTHIC_CONTENT made by scripts/content/anim/content_pack.py (names T_1HDASHB_A, _B).
-# The look is judged by Claude from the clips; anim_pop in metrics.csv at the switches.
+# Our own back dash (step 6 of the melee port, reports/Свои анимации для боя.md): the hero with a one-hander drawn
+# (talent 2, so the HUMANS_1HST2 overlay and its S_1HRUN stance) plays three finished dash candidates from content,
+# then the original T_1HPARADEJUMPB; side and front at 1x, side slowed 4x. On the flat floor of Xardas' tower.
+# The candidates come from OPENGOTHIC_CONTENT made by scripts/content/anim/content_pack.py (T_1HDASHB_1.._3 in
+# HUMANS_1HST2.MSB). The look is judged by Claude from the clips; anim_pop in metrics.csv at the switches.
 # WORLD=NEWWORLD.ZEN OPENGOTHIC_CONTENT=/abs/content
 seed 73013
 cheat god
 set time 12 0
+view clean
 release all
 overlay off
-goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
-wait 500
+goto NW_XARDAS_TOWER_IN1_26
+wait 800
 watch player
-clear 3000
-corner right go 0
-melee-shadow setup 1h
-wait 600
 melee-shadow weapon 1h
 wait 1500
-pin WOLF 5000 90 0
-wait 34
-pin off
-pin WOLF 5000 -90 0
-wait 34
-pin off
 anims
 
 cam follow 420 100 90
 wait 800
-rec dash-a-side
-ani player T_1HDASHB_A
-wait 1500
-ani player T_1HDASHB_B
-wait 1500
+rec dash-side
+ani player T_1HDASHB_1
+wait 1400
+ani player T_1HDASHB_2
+wait 1400
+ani player T_1HDASHB_3
+wait 1400
 ani player T_1HPARADEJUMPB
-wait 1500
+wait 1400
 stop
 
 cam follow 420 100 0
 wait 800
-rec dash-a-front
-ani player T_1HDASHB_A
-wait 1500
+rec dash-front
+ani player T_1HDASHB_1
+wait 1400
+ani player T_1HDASHB_2
+wait 1400
+ani player T_1HDASHB_3
+wait 1400
 stop
 
-cam follow 420 100 90
+cam follow 380 100 90
 slowmo 4
 wait 800
 rec dash-slow-side
-ani player T_1HDASHB_A
+ani player T_1HDASHB_1
+wait 1200
+ani player T_1HDASHB_2
+wait 1200
+ani player T_1HDASHB_3
 wait 1200
 ani player T_1HPARADEJUMPB
 wait 1200

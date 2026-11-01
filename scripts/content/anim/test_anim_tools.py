@@ -163,3 +163,22 @@ def test_content_pack_writes_index_overlay_and_records(tmp_path):
     assert (entry["name"], entry["first_frame"], entry["last_frame"], entry["blend_out"]) == ("T_TESTDASHB", 0, 3, 0.2)
     back = ga.read_animation(models / "HUMANS-T_TESTDASHB.MAN.json")
     assert back.frame_count == 4 and np.allclose(back.positions, anim.positions, atol=1e-4)
+
+
+def test_match_stance_lands_ends_on_the_target_and_keeps_the_middle():
+    import finish
+    rng = np.random.default_rng(9)
+    frames, nodes = 20, 3
+    gen = ga.Animation("S_GEN", "", 1, 25.0, 1, [0, 1, 2], rng.normal(size=(1, nodes, 3)), random_quats(rng, (1, nodes)))
+    target = ga.Animation("S_T", "", 1, 25.0, 1, [0, 1, 2], rng.normal(size=(1, nodes, 3)), random_quats(rng, (1, nodes)))
+    rot = random_quats(rng, (frames, nodes))
+    pos = rng.normal(size=(frames, nodes, 3))
+    rot[0], rot[-1] = gen.rotations[0], gen.rotations[0]  # the move starts and ends in the generated stance
+    pos[0], pos[-1] = gen.positions[0], gen.positions[0] + np.array([0, 0, -200.0])
+    anim = ga.Animation("T", "", 1, 25.0, frames, [0, 1, 2], pos.copy(), rot.copy())
+    finish.match_stance(anim, gen, target, 0.12, 0.2)
+    same = lambda a, b: np.allclose(np.abs((a * b).sum(-1)), 1.0, atol=1e-6)  # noqa: E731
+    assert same(anim.rotations[0], target.rotations[0]) and same(anim.rotations[-1], target.rotations[0])
+    assert np.allclose(anim.positions[0], target.positions[0])
+    assert np.allclose(anim.positions[-1], target.positions[0] + np.array([0, 0, -200.0]))
+    assert same(anim.rotations[8], rot[8]) and np.allclose(anim.positions[8], pos[8])
