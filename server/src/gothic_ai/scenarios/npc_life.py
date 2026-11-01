@@ -73,7 +73,7 @@ from .common import (
     model_off,
     wait_message,
 )
-from .live import LiveSuite
+from .live import LiveCase, LiveSuite
 
 log = logging.getLogger("gothic_ai.scenarios")
 
@@ -86,6 +86,7 @@ async def lead_scenario(
     guide: Guide,
     npc: str = "BAU_954_MALETH",
     to: str = "FARM1_MILL",
+    *, live: LiveCase | None = None,
 ) -> dict[str, str]:
     """The npc leads the hero (docs/npc-tools.md, wave 2 step 4: `lead`): «Малет, отведи меня к мельнице».
     Checks:
@@ -99,15 +100,16 @@ async def lead_scenario(
     def check(name: str, ok: bool, detail: object = "") -> None:
         results[name] = f"{'done' if ok else 'failed'}{f' ({detail})' if detail != '' else ''}"
 
-    off = model_off(dialogue)
-    off.given(
-        "дано: Малет предлагает проводить к мельнице", who=npc, when="отведи меня",
-        calls=[ToolCall("propose_deal", {"npc_gives": [], "hero_gives": [], "lead": to})],
-    )
-    off.silent("дано: Малет молчит (предложение проводить показано)", who=npc, when="отведи меня")
-    off.silent("дано: Малет молчит (старт провожатого)", who=npc, when="ты ведёшь его")
-    off.silent("дано: Малет молчит (герой отстал)", who=npc, when="Герой отстал", times=2)
-    off.silent("дано: Малет молчит (пришли к мельнице)", who=npc, when="Вы пришли")
+    if live is None:
+        off = model_off(dialogue)
+        off.given(
+            "дано: Малет предлагает проводить к мельнице", who=npc, when="отведи меня",
+            calls=[ToolCall("propose_deal", {"npc_gives": [], "hero_gives": [], "lead": to})],
+        )
+        off.silent("дано: Малет молчит (предложение проводить показано)", who=npc, when="отведи меня")
+        off.silent("дано: Малет молчит (старт провожатого)", who=npc, when="ты ведёшь его")
+        off.silent("дано: Малет молчит (герой отстал)", who=npc, when="Герой отстал", times=2)
+        off.silent("дано: Малет молчит (пришли к мельнице)", who=npc, when="Вы пришли")
     book = guide.book
     mill = book.get(to) if book is not None else None
     if mill is None or mill.center is None:
@@ -121,7 +123,32 @@ async def lead_scenario(
         return _logged({"roster": f"failed ({npc} at {him.npc.pos}, the hero at "
                         f"{him.player.pos if him.player else '?'}; around him {around})"})  # fmt: skip
 
-    talk.hear("Малет, отведи меня к мельнице.", npc, {"via": "scenario"})
+    request = "Малет, отведи меня к мельнице."
+    talk.hear(request, npc, {"via": "scenario"})
+    if live is not None:
+        await _until(
+            lambda: bool(live.turns(npc, request)) and (
+                not any(call.get("name") == "propose_deal" and call.get("outcome") == "accepted"
+                        for call in live.calls(npc)) or npc in deals.open
+            ),
+            90,
+        )
+        rows = live.turns(npc, request)
+        calls = [call for row in rows for step in row.get("steps", [])
+                 for call in step.get("calls", [])]
+        deal = deals.open.get(npc)
+        offered = bool(
+            deal is not None and deal.lead is not None
+            and any(call.get("name") == "propose_deal" and call.get("outcome") == "accepted"
+                    for call in calls)
+        )
+        live.finish("success" if offered else "failure" if rows else "no_decision", evidence={
+            "decision": "lead_offered" if offered else "no_lead_offer",
+            "calls": calls, "terms": deal.terms() if deal is not None else None,
+            "words": [step.get("text", "") for row in rows
+                      for step in row.get("steps", []) if step.get("text")],
+        })
+        return _logged(results)
     await _until(lambda: npc in deals.open, 60)
     deal = deals.open.get(npc)
     if deal is None:
@@ -206,6 +233,7 @@ async def meet_scenario(
     missed: bool = False,
     npc: str = "BAU_954_MALETH",
     to: str = "FARM1_WOLF",
+    live: LiveCase | None = None,
 ) -> dict[str, str]:
     """A meeting with the hero (docs/npc-tools.md, wave 2 step 4: `meet`): at 19:00 the hero agrees with
     Malet to meet at dawn by the field in front of the city gates. Checks:
@@ -224,7 +252,7 @@ async def meet_scenario(
     def check(name: str, ok: bool, detail: object = "") -> None:
         results[name] = f"{'done' if ok else 'failed'}{f' ({detail})' if detail != '' else ''}"
 
-    off = model_off(dialogue)
+    off = model_off(dialogue) if live is None else None
     await link.debug("time", hour=19, minute=0)
     await link.debug("skip_important", near=npc)  # Malet's own dialog would stop the hero at once
     await link.debug("teleport", near=npc, distance=300)
@@ -233,21 +261,49 @@ async def meet_scenario(
     snap = await link.snapshot(npc, fresh=True)
     tomorrow = snap.world.day + 2  # as the npc sees days: from 1
     dawn = {"where": to, "day": tomorrow, "hour": 5, "minute": 0, "hours": 2}
-    off.given(
-        "дано: Малет соглашается встретиться на рассвете", who=npc, when="встретимся",
-        calls=[ToolCall("propose_deal", {"meet": dawn})],
-    )
-    off.silent("дано: Малет молчит (встреча предложена)", who=npc, when="встретимся")
-    off.silent("дано: Малет молчит (сделка о встрече состоялась)", who=npc, when="сделка состоялась")
-    if not missed:
-        off.silent("дано: Малет молчит (герой пришёл на встречу)", who=npc, when="пришёл на встречу")
+    if off is not None:
+        off.given(
+            "дано: Малет соглашается встретиться на рассвете", who=npc, when="встретимся",
+            calls=[ToolCall("propose_deal", {"meet": dawn})],
+        )
+        off.silent("дано: Малет молчит (встреча предложена)", who=npc, when="встретимся")
+        off.silent("дано: Малет молчит (сделка о встрече состоялась)", who=npc, when="сделка состоялась")
+        if not missed:
+            off.silent("дано: Малет молчит (герой пришёл на встречу)", who=npc, when="пришёл на встречу")
 
-    talk.hear(
+    request = (
         "Малет, давай встретимся завтра на рассвете у поля перед городскими воротами. Мне нужно с тобой "
-        "поговорить без лишних ушей.",
-        npc,
-        {"via": "scenario"},
+        "поговорить без лишних ушей."
     )
+    talk.hear(request, npc, {"via": "scenario"})
+    if live is not None:
+        effects_settled = await _until(
+            lambda: bool(live.turns(npc, request)) and (
+                not any(call.get("name") == "propose_deal" and call.get("outcome") == "accepted"
+                        for call in live.calls(npc)) or npc in deals.open
+            ),
+            90,
+        )
+        rows = live.turns(npc, request)
+        calls = [call for row in rows for step in row.get("steps", [])
+                 for call in step.get("calls", [])]
+        deal = deals.open.get(npc)
+        term = deal.meet if deal is not None else None
+        offered = bool(term is not None and any(
+            call.get("name") == "propose_deal" and call.get("outcome") == "accepted" for call in calls
+        ))
+        requested = (tomorrow - 1) * GAME_DAY + 5 * 60
+        live.finish("observed" if effects_settled else "failure" if rows else "no_decision", evidence={
+            "decision": "pending_effect" if rows and not effects_settled else (
+                ("agreed" if term.start == requested else "own_time") if offered else "no_meeting_offer"
+            ),
+            "effects_settled": effects_settled,
+            "calls": calls, "terms": deal.terms() if deal is not None else None,
+            "requested": dawn, "meeting": term.text() if term is not None else None,
+            "words": [step.get("text", "") for row in rows
+                      for step in row.get("steps", []) if step.get("text")],
+        })
+        return _logged(results)
     shown = await _until(lambda: npc in deals.open and deals.open[npc].meet is not None, 60)
     deal = deals.open.get(npc)
     if not shown or deal is None or deal.meet is None:

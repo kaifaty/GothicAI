@@ -131,6 +131,7 @@ GIVEN = {
 }
 
 LIVE = {
+    "live_deals",
     "live_lies",
     "haggle",
     "interject",

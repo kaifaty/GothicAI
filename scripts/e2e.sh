@@ -136,6 +136,8 @@
 #       denied authorship are the control. Group 2, LLM=off via auto; SAVE=save_slot_1.sav.
 #   live_lies: live-only lie/evidence cases, reusing the Group 2 fixtures without given decisions.
 #       Run through scripts/e2e-live.sh; CASES selects cases; SAVE=save_slot_1.sav; TIMEOUT=2400.
+#   live_deals: live-only bargaining and promise cases using the Group 2 fixtures without givens.
+#       Run through scripts/e2e-live.sh; CASES selects cases; SAVE=save_slot_1.sav; TIMEOUT=2400.
 #   broken: given: Lobart catches a lie about fresh fence debris; another NPC's sword break is the control.
 #       Group 2, LLM=off via auto; SAVE=save_slot_1.sav.
 #   witness: given: Lobart asks a farm witness, catches the lie from its testimony, and asks a far acquaintance.
@@ -441,7 +443,7 @@ E2E_DEFAULT_TIMEOUT=240
 if [[ "$SCENARIO" == memprobe ]]; then E2E_DEFAULT_TIMEOUT=1200; fi
 if [[ "$SCENARIO" == surrender_live || "$SCENARIO" == neural-still || "$SCENARIO" == showrunner_live || "$SCENARIO" == vanilla_line_live ]]; then E2E_DEFAULT_TIMEOUT=1200; fi
 if [[ "$SCENARIO" == haggle ]]; then E2E_DEFAULT_TIMEOUT=1200; fi
-if [[ "$SCENARIO" == live_lies ]]; then E2E_DEFAULT_TIMEOUT=2400; fi
+if [[ "$SCENARIO" == live_lies || "$SCENARIO" == live_deals ]]; then E2E_DEFAULT_TIMEOUT=2400; fi
 if [[ "$SCENARIO" == interject ]]; then E2E_DEFAULT_TIMEOUT=600; fi
 if [[ "$SCENARIO" == chests_lobart ]]; then E2E_DEFAULT_TIMEOUT=420; fi
 if [[ "$SCENARIO" == feat_fame ]]; then E2E_DEFAULT_TIMEOUT=420; fi
@@ -464,8 +466,8 @@ if [[ "$SCENARIO" == surrender_live && -n "${SAVE:-}" ]]; then
   echo 'scenario surrender_live requires a new game (unset SAVE)' >&2
   exit 2
 fi
-if [[ "$SCENARIO" == live_lies && -z "${SAVE:-}" ]]; then
-  echo 'scenario live_lies requires SAVE with the Group 2 farm fixture' >&2
+if [[ ( "$SCENARIO" == live_lies || "$SCENARIO" == live_deals ) && -z "${SAVE:-}" ]]; then
+  echo "scenario $SCENARIO requires SAVE with the Group 2 farm fixture" >&2
   exit 2
 fi
 if [[ ( "$SCENARIO" == bandit_hold || "$SCENARIO" == death_load ) && -n "${SAVE:-}" ]]; then
