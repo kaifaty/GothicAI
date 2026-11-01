@@ -1,10 +1,11 @@
-# Our own back dash (step 6 of the melee port, reports/Свои анимации для боя.md): the hero with a one-hander drawn
-# in the HUMANS_1HST2 overlay plays three finished dash candidates from content, then the original
-# T_1HPARADEJUMPB; each from the same spot on an open field, side at 1x and slowed 4x, front at 1x.
-# The candidates come from OPENGOTHIC_CONTENT made by scripts/content/anim/content_pack.py (T_1HDASHB_1.._3 in
-# HUMANS_1HST2.MSB). The look is judged by Claude from the clips; anim_pop in metrics.csv at the switches.
-# After a goto the hero needs ~2 s on the ground before `ani` is accepted. After an `ani` the hero idles in S_1H
-# (sword down), so each take re-arms first: the move must start from the combat stance S_1HRUN.
+# Our own back dash T_1HDASHB (step 6 of the melee port, reports/Свои анимации для боя.md) at each 1H talent level,
+# next to Gothic's own jump-back T_1HPARADEJUMPB of the same level: no overlay (HUMANS), HUMANS_1HST1, HUMANS_1HST2.
+# Each take from the same spot on an open field, from the side at 1x and slowed 4x.
+# The dash comes from OPENGOTHIC_CONTENT made by scripts/content/anim/content_pack.py (T_1HDASHB in HUMANS.MSB and
+# both overlay scripts). The look is judged by Claude from the clips; anim_pop in metrics.csv at the switches.
+# The fixture's talent does not put a stance overlay on: the takes start without one, then bladepath puts
+# HUMANS_1HST1 on, then HUMANS_1HST2 over it (the last one wins). After an `ani` the hero idles in S_1H (sword
+# down), so each take re-arms first; after a goto the hero needs ~2 s on the ground before `ani` is accepted.
 # WORLD=NEWWORLD.ZEN OPENGOTHIC_CONTENT=/abs/content
 seed 73013
 cheat god
@@ -16,39 +17,55 @@ wait 500
 watch player
 clear 3000
 melee-shadow weapon 1h
-# the talent set by the fixture does not put its stance overlay on; bladepath puts it on (no names after it)
-bladepath HUMANS_1HST2.MDS
 wait 1500
-anims
-animinfo T_1HDASHB_1 T_1HDASHB_2 T_1HDASHB_3 T_1HPARADEJUMPB S_1HRUN
-
 cam follow 380 110 270
-wait 800
-rec dash1-side
-ani player T_1HDASHB_1
+animinfo T_1HDASHB T_1HPARADEJUMPB S_1HRUN
+
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+melee-shadow weapon 1h
+wait 2000
+rec t0-dash
+ani player T_1HDASHB
 wait 1300
 stop
 goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
 melee-shadow weapon 1h
-bladepath HUMANS_1HST2.MDS
 wait 2000
-rec dash2-side
-ani player T_1HDASHB_2
+rec t0-jumpb
+ani player T_1HPARADEJUMPB
+wait 1300
+stop
+
+bladepath HUMANS_1HST1.MDS
+animinfo T_1HDASHB S_1HRUN
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+melee-shadow weapon 1h
+wait 2000
+rec t1-dash
+ani player T_1HDASHB
 wait 1300
 stop
 goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
 melee-shadow weapon 1h
-bladepath HUMANS_1HST2.MDS
 wait 2000
-rec dash3-side
-ani player T_1HDASHB_3
+rec t1-jumpb
+ani player T_1HPARADEJUMPB
+wait 1300
+stop
+
+bladepath HUMANS_1HST2.MDS
+animinfo T_1HDASHB S_1HRUN
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+melee-shadow weapon 1h
+wait 2000
+rec t2-dash
+ani player T_1HDASHB
 wait 1300
 stop
 goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
 melee-shadow weapon 1h
-bladepath HUMANS_1HST2.MDS
 wait 2000
-rec jumpb-side
+rec t2-jumpb
 ani player T_1HPARADEJUMPB
 wait 1300
 stop
@@ -56,36 +73,16 @@ stop
 slowmo 4
 goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
 melee-shadow weapon 1h
-bladepath HUMANS_1HST2.MDS
 wait 2000
-rec dash1-slow
-ani player T_1HDASHB_1
+rec t2-dash-slow
+ani player T_1HDASHB
 wait 1000
 stop
 goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
 melee-shadow weapon 1h
-bladepath HUMANS_1HST2.MDS
 wait 2000
-rec dash3-slow
-ani player T_1HDASHB_3
-wait 1000
-stop
-goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
-melee-shadow weapon 1h
-bladepath HUMANS_1HST2.MDS
-wait 2000
-rec jumpb-slow
+rec t2-jumpb-slow
 ani player T_1HPARADEJUMPB
 wait 1000
 stop
 slowmo 1
-
-cam follow 420 120 0
-goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
-melee-shadow weapon 1h
-bladepath HUMANS_1HST2.MDS
-wait 2000
-rec dash1-front
-ani player T_1HDASHB_1
-wait 1300
-stop
