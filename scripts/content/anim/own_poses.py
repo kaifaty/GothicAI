@@ -14,8 +14,12 @@ Frame: Gothic world, cm, Y up, the floor at 0, the character faces +Z, its right
 Angles in degrees: yaw > 0 turns to the character's right, pitch > 0 leans forward (towards +Z,
 whatever the turn), roll > 0 bends to its left. Pelvis, chest and head angles are all in the world:
 the three spine links share the turn from the pelvis to the chest, the neck a part of the turn
-from the chest to the head; head yaw 0 looks at the target ahead. The sword blade lies along ZS_RIGHTHAND's X, its edges along the slot's ±Z (the
-weapon meshes of the base are 1.5 cm thick in Y and 6-10 cm wide in Z).
+from the chest to the head; head yaw 0 looks at the target ahead.
+
+The sword blade lies along ZS_RIGHTHAND's -X, as the engine binds the weapon mesh to the slot
+(MdlVisual::bladePath; the converted .glb meshes are mirrored in X and show it along +X): a test clip
+holding the slot's +X forward shows the blade backwards in the game. Its edges lie along the slot's ±Z
+(the weapon meshes are 1.5 cm thick in Y and 6-10 cm wide in Z).
 """
 from __future__ import annotations
 
@@ -201,7 +205,7 @@ class Builder:
         bh = B[gi[names[2]]]
         if "blade" in arm:
             slot = self.skel.nodes[gi["ZS_RIGHTHAND"]].rest[:3, :3]
-            blade_l, z_l = slot @ [1.0, 0, 0], slot @ [0, 0, 1.0]
+            blade_l, z_l = slot @ [-1.0, 0, 0], slot @ [0, 0, 1.0]
             # the true edge is the one in line with the knuckles, where the hand's X points
             edge_l = z_l if np.dot(z_l, [1.0, 0, 0]) > 0 else -z_l
             hand = triad(blade_l, edge_l, blade, edge)
@@ -243,7 +247,7 @@ class Builder:
             out[f"wrist {s}"] = round(float(np.degrees(np.arccos(np.clip(fx @ hx, -1, 1)))), 1)
         slot = world[gi["ZS_RIGHTHAND"]]
         base = p[gi["ZS_RIGHTHAND"]]
-        tip = base + slot @ np.array([BLADE_CM, 0, 0])
+        tip = base + slot @ np.array([-BLADE_CM, 0, 0])
         out["tip"] = tip.round(1).tolist()
         pel, neck, head = p[gi["BIP01 PELVIS"]], p[gi["BIP01 NECK"]], p[gi["BIP01 HEAD"]]
         blade = [base + (tip - base) * t for t in np.linspace(0.15, 1, 18)]
