@@ -53,6 +53,7 @@
 #include "jsonwriter.h"
 #include "world/waypoint.h"
 #include "linelibrary.h"
+#include "fateend.h"
 #include "necromancy.h"
 #include "npccontroller.h"
 #include "npcfind.h"
@@ -78,7 +79,7 @@ using namespace Tempest;
 
 namespace {
 
-constexpr int         ProtocolVersion = 55;
+constexpr int         ProtocolVersion = 56;
 AiBridge*             activeBridge = nullptr;
 constexpr const char* SaveEntry       = "ai_bridge/session";  // own entry in save games
 constexpr const char* DefaultUrl      = "ws://127.0.0.1:47817";
@@ -310,6 +311,8 @@ struct AiBridge::Impl final {
   bool                 connected = false;
   uint64_t             chronicleRequests = 0;
   std::unordered_map<std::string,std::function<void(const ChronicleData&)>> chronicleCallbacks;
+  uint64_t             fateCardRequests = 0;
+  std::unordered_map<std::string,std::function<void(const FateCard&)>> fateCardCallbacks;
   bool                 replaceSvm = false;
   uint64_t             svmLines = 0;
   uint64_t             bodyGeneration = 0;
@@ -345,6 +348,8 @@ struct AiBridge::Impl final {
   std::unordered_map<std::string,std::string> originalTo;     // ...-> the npc it is said to (v15), if not the hero
   std::unique_ptr<ChatOverlay> chat;
   Necromancy                   necro;
+  // v56: the final card at any end of the game (docs/achievements.md)
+  FateEnd                      fate;
   std::string                  listener;       // the npc listening to the hero's voice
   std::string                  lastAddressee;  // whom the server said the hero spoke to last
   std::string                  thinker;        // the npc thinking of an answer
@@ -432,9 +437,24 @@ AiBridge::Impl::Impl() {
   debugTimer.timeout.bind(this,&Impl::runDebug);
   bodyTimer.timeout.bind(this,&Impl::pumpBodyControl);
   bodyTimer.start(50);
+  fate.setAsk([](std::string kind, std::string killer, std::string name,
+                 std::function<void(const FateCard&)> answer) {
+    AiBridge::requestFateCard(std::move(kind),std::move(killer),std::move(name),std::move(answer));
+    });
+  necro.onEnd = [this]() {
+    if(auto w = Gothic::inst().world())
+      fate.finish(*w,"wrath",true);
+    };
+  Gothic::inst().takeGameEnd = [this](std::string_view kind) {
+    auto w = Gothic::inst().world();
+    if(w==nullptr)
+      return false;
+    fate.finish(*w,kind,false);
+    return true;
+    };
   if(TestBench::isActive())
     TestBench::aiReached = [this](std::string_view key, std::string_view stage) {
-      return key=="necro" && necro.reached(stage);
+      return (key=="necro" && necro.reached(stage)) || (key=="fate" && fate.reached(stage));
       };
   if(TestBench::isActive())
     TestBench::aiBusy = [this]() {
@@ -495,6 +515,7 @@ AiBridge::Impl::Impl() {
 AiBridge::Impl::~Impl() {
   bodyTimer.stop();
   auto& gothic = Gothic::inst();
+  gothic.takeGameEnd = nullptr;
   gothic.onTick              .ubind(this,&Impl::onTick);
   gothic.onStartLoading      .ubind(this,&Impl::onStartLoading);
   gothic.onSessionUnload     .ubind(this,&Impl::onSessionUnload);
@@ -569,6 +590,7 @@ void AiBridge::Impl::onTick(uint64_t /*dt*/) {
     tickDeal(*world);
     tickListener(*world);
     necro.tick(*world);
+    fate.tick(*world,necro.active());
     }
   ensureChat();
   chat->setHidden(necro.hidesChat());
@@ -627,6 +649,8 @@ void AiBridge::Impl::processInbound(World* world, Inbound& in) {
       connected = false;
       for(auto& [req,callback]:std::exchange(chronicleCallbacks,{}))
         callback({});
+      for(auto& [req,callback]:std::exchange(fateCardCallbacks,{}))
+        callback({});
       Gothic::inst().setChronicle({});
       if(in.kind==Inbound::Error)
         lastError = in.text;
@@ -675,6 +699,7 @@ void AiBridge::Impl::onStartLoading() {
   runtime.clear();
   story.clear();
   necro.clear();
+  fate.clear();
   if(auto world = Gothic::inst().world()) {
     ctrl.detachAll(*world,"loading");
     beasts.releaseAll(*world);
@@ -914,6 +939,15 @@ void AiBridge::Impl::handle(World* world, const std::string& text) {
       auto callback = std::move(found->second);
       chronicleCallbacks.erase(found);
       callback(parseChronicle(text));
+      }
+    return;
+    }
+  if(type=="fate_card") {
+    const auto found = fateCardCallbacks.find(std::string(req));
+    if(found!=fateCardCallbacks.end()) {
+      auto callback = std::move(found->second);
+      fateCardCallbacks.erase(found);
+      callback(parseFateCard(text));
       }
     return;
     }
@@ -1609,10 +1643,22 @@ void AiBridge::Impl::runWorldDebug(const rapidjson::Value& msg) {
     return;
     }
   if(cmd=="kill") {
-    // `npc`: that npc dies, killed by no one (a quest giver for the director's repairs).
+    // `npc`: that npc dies, killed by no one (a quest giver for the director's repairs); `npc` PLAYER: the hero
+    // dies, by the hand of `by` if given (the final card's death, docs/achievements.md).
     // `instance`: the living creature of that instance (WOLF) closest to an npc (`near`, default the player)
     // dies by the hand of `by` (default the player), the way a deadly hit ends it (Npc::takeDamage): in melee,
     // right in front of the killer; npc's around, the killer too, perceive it (ASSESSMURDER)
+    if(auto name = JsonRead::str(msg,"npc"); name=="PLAYER") {
+      if(pl==nullptr || pl->isDead()) {
+        sendResult(req,false,"no living hero");
+        return;
+        }
+      if(const auto byName = JsonRead::str(msg,"by"); !byName.empty())
+        pl->setLastHitBy(npcBySymbol(*world,byName));
+      pl->changeAttribute(ATR_HITPOINTS,-pl->attribute(ATR_HITPOINTSMAX)-1,false);
+      sendResult(req,pl->isDead(),"the hero did not die (immortal?)");
+      return;
+      }
     if(auto name = JsonRead::str(msg,"npc"); !name.empty()) {
       Npc* npc = npcBySymbol(*world,name);
       if(npc==nullptr || npc->isDead() || npc->isPlayer()) {
@@ -2136,6 +2182,7 @@ bool AiBridge::Impl::onConsoleCommand(std::string_view cmd, std::string& reply) 
     reply += "; " + graph.status();
     reply += "; " + triggers.status();
     reply += "; necro " + necro.status();
+    reply += "; fate " + fate.status();
     reply += "; " + beasts.status();
     return true;
     }
@@ -2174,6 +2221,12 @@ bool AiBridge::Impl::onConsoleCommand(std::string_view cmd, std::string& reply) 
     card.title = TextCodec::fromUtf8("Конец");
     const auto spell = args.size()>3 ? upperSymbol(args[3]) : std::string("SPL_SKULL");
     reply = necro.start(*world,*npc,std::move(card),spell,err) ? "necro " + spell : err;
+    return true;
+    }
+  if(sub=="fate" && args.size()>2) {
+    // ai fate death|wrath|finale: the final card as that ending asks for it (docs/achievements.md)
+    fate.finish(*world,lower(args[2]),false);
+    reply = "fate " + fate.status();
     return true;
     }
   if(sub=="beast" && args.size()>2) {
@@ -2266,6 +2319,19 @@ void AiBridge::requestChronicle(std::function<void(const ChronicleData&)> callba
   const auto req = "chronicle:"+std::to_string(++bridge.chronicleRequests);
   bridge.chronicleCallbacks.emplace(req,std::move(callback));
   bridge.send(JsonWriter("chronicle_get").str("req",req).finish());
+  }
+
+void AiBridge::requestFateCard(std::string kind, std::string killer, std::string name,
+                             std::function<void(const FateCard&)> callback) {
+  if(activeBridge==nullptr || activeBridge->impl==nullptr || !activeBridge->impl->connected) {
+    callback({});
+    return;
+    }
+  auto& bridge = *activeBridge->impl;
+  const auto req = "fate_card:"+std::to_string(++bridge.fateCardRequests);
+  bridge.fateCardCallbacks.emplace(req,std::move(callback));
+  bridge.send(JsonWriter("fate_end").str("req",req).str("kind",kind).str("killer",killer)
+                .str("name",TextCodec::toUtf8(name)).finish());
   }
 
 void AiBridge::Impl::askVoice(const std::string& line, const std::string& npc, const std::string& text) {

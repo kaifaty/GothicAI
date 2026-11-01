@@ -1068,6 +1068,17 @@ async def test_important_dialog_stays_native_until_story_patches_disable_it(monk
         assert sent[-1].to == "scripts"
 
 
+async def test_an_added_dialog_on_the_branch_keeps_the_bandit_negotiable():
+    # 2026-11-01 play: an amends dialog (add_node, its node a dict) broke every later turn of Brago's band
+    async with world() as (_, link, _, chronicle, parley):
+        node = Node("DIA_BANDIT_WARN", "dialog", BRAGO, "", [], set(), important=True)
+        parley.graph = StoryGraph({node.id: node}, {}, {}, {}, {})
+        parley.patches = StoryPatches(link, chronicle.memory)
+        await parley.patches.apply({"op": "disable", "node": node.id})
+        await parley.patches.apply({"op": "add_node", "node": {"id": "DIR_AMENDS_X_1", "npc": BRAGO}})
+        assert parley.negotiable(BRAGO) and parley.situation(BRAGO) is not None
+
+
 @pytest.fixture(scope="module")
 def real_graph():
     data = Path(os.environ.get("GOTHIC_AI_DATA", Path.home() / ".local/share/gothic-ai"))

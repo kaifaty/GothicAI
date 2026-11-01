@@ -56,5 +56,39 @@ int main() {
           "other fates receive converted epilogues");
   require(data.others[0].feats[0].engraving.empty() && data.others[0].feats[0].icon.empty(),
           "missing pictures remain empty");
+
+  const auto emptyCard = parseFateCard(R"({"type":"fate_card","req":"empty"})");
+  require(!emptyCard.off && emptyCard.title.empty() && emptyCard.text.empty() && emptyCard.feats.empty(),
+          "empty card fields and the protocol's off default are preserved");
+  require(emptyCard.chapter==1 && emptyCard.day==0 && emptyCard.count==0,
+          "empty card dates and count use defaults");
+  require(parseFateCard(R"({"type":"fate_card","off":true})").off,
+          "disabled card is parsed");
+
+  const auto card = parseFateCard(R"({
+    "type":"fate_card","req":"fate_card:1","title":"Твое слово","text":"Герой прошёл свой путь.",
+    "chapter":6,"day":42,"count":7,"feats":[
+      {"id":"first","title":"Твоё слово","text":"Герой сдержал обещание.","category":"word",
+       "chapter":2,"day":3,"engraving":"/tmp/летопись/engraving.jpg","icon":"/tmp/летопись/icon.png",
+       "epilogue":"Позже его узнали в городе."},
+      {"id":"second","title":"Второй шаг","text":"Он продолжил путь.","category":"survival",
+       "chapter":3,"day":15,"engraving":"","icon":"","epilogue":""},
+      {"id":"third","title":"Последний шаг","text":"Он покинул эти земли.","category":"oath",
+       "chapter":6,"day":42,"engraving":"","icon":"","epilogue":""}]})");
+  require(!card.off && card.title==std::string("\xD2\xE2\xEE\xE5 \xF1\xEB\xEE\xE2\xEE"),
+          "card title uses Windows-1251");
+  require(TextCodec::toUtf8(card.text)=="Герой прошел свой путь.","card text uses the game codepage");
+  require(card.chapter==6 && card.day==42 && card.count==7,"card dates and full feat count are parsed");
+  require(card.feats.size()==3,"three best feats are parsed");
+  require(card.feats[0].id=="first" && card.feats[1].id=="second" && card.feats[2].id=="third",
+          "best feats retain chronicle order");
+  require(card.feats[0].title==std::string("\xD2\xE2\xEE\xE5 \xF1\xEB\xEE\xE2\xEE") &&
+          TextCodec::toUtf8(card.feats[0].text)=="Герой сдержал обещание." &&
+          TextCodec::toUtf8(card.feats[0].epilogue)=="Позже его узнали в городе.",
+          "best feat display text uses the game codepage");
+  require(card.feats[0].engraving=="/tmp/летопись/engraving.jpg" &&
+          card.feats[0].icon=="/tmp/летопись/icon.png","best feat paths retain UTF-8");
+  require(card.feats[1].engraving.empty() && card.feats[1].icon.empty() && card.feats[1].epilogue.empty(),
+          "empty best feat fields remain empty");
   std::printf("Chronicle contract: %d checks passed\n",checks);
   }

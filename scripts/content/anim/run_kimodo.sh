@@ -4,10 +4,10 @@
 #   scripts/content/anim/run_kimodo.sh <dir on dev-ubuntu with move folders from kimodo_moves.py>
 #
 # Kimodo lives in ~/gothic-ai/kimodo (its own venv, no service). The text encoder (LLM2Vec on
-# Meta-Llama-3-8B-Instruct, gated: the Hugging Face login on dev-ubuntu must have access) runs once
-# on the CPU in bf16 (~16 GB RAM, memory capped so the user's containers are safe) and serves every
-# generation on the temporary-server port 47833, bound to localhost. Generation itself takes <3 GB
-# of video memory next to the running services.
+# Meta-Llama-3-8B-Instruct, local copies in ~/gothic-ai/kimodo/models: kimodo_textencoder_local.py)
+# runs once on the CPU in bf16 (~16 GB RAM, memory capped so the user's containers are safe) and
+# serves every generation on the temporary-server port 47833, bound to localhost. Generation itself
+# takes <3 GB of video memory next to the running services.
 set -euo pipefail
 dir="${1:?probe dir}"
 K="$HOME/gothic-ai/kimodo"
@@ -16,7 +16,7 @@ export TEXT_ENCODER_URL=http://127.0.0.1:47833/ TEXT_ENCODER_MODE=api
 free_mb=$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits | head -1)
 [ "$free_mb" -ge 4000 ] || { echo "only ${free_mb} MiB of video memory free" >&2; exit 75; }
 
-systemd-run --user --scope --quiet -p MemoryMax=22G "$K/.venv/bin/kimodo_textencoder" \
+systemd-run --user --scope --quiet -p MemoryMax=22G "$K/.venv/bin/python" "$K/kimodo_textencoder_local.py" \
   >"$dir/textencoder.log" 2>&1 &
 srv=$!
 trap 'kill "$srv" 2>/dev/null || true' EXIT

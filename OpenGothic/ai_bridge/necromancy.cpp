@@ -314,8 +314,12 @@ void Necromancy::tick(World& world) {
             auto* w = Gothic::inst().world();
             if(w==nullptr || w->tickCount()-since < FadeMs+PictureMs+KeyAfterMs)
               return;
-            Log::i("[necro] the end: back to the main menu");
             clear();
+            if(onEnd) {
+              onEnd();
+              return;
+              }
+            Log::i("[necro] the end: back to the main menu");
             if(auto s = Gothic::inst().gameSession())
               s->exitSession();
             };
