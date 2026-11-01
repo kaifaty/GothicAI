@@ -777,12 +777,12 @@ async def seen_memory(
     log.info("given: дано: решающая модель оставляет Лобарта слушать героя")
     talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
     off.given(
-        "дано: Лобарт уличает героя по увиденному", who=farmer, when="всё утро был в городе",
+        "дано: Лобарт уличает героя по увиденному", who=farmer, when="утро был в городе",
         calls=[ToolCall("catch_lie", {"said": "всё утро был в городе", "seen": sid})],
     )
     off.silent(
         "дано: Лобарт молчит (уличение по увиденному записано)",
-        who=farmer, when="всё утро был в городе",
+        who=farmer, when="утро был в городе",
     )
     await link.debug("type", text=f"{name}, я всё утро был в городе, только что оттуда.")
     await _until(lambda: any(f.get("said") for f in chronicle.facts("caught")), 60)
