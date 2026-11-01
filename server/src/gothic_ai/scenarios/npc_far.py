@@ -9,11 +9,11 @@ import time
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
-from ..game import GameLink
+from ..game import GameError, GameLink
 from ..llm import ToolCall
 from ..npc_far import FarWorld
 from ..npc_will import OWNER_NEAR_CM, ROUTINE_CM
-from ..protocol import NpcActCmd, Result, Session, StoryEffectCmd
+from ..protocol import Detached, NpcActCmd, Result, Session, StoryEffectCmd
 from ..social import Tie
 from .common import (
     HILDA,
@@ -488,17 +488,53 @@ async def npc_far(
             assert sightings is not None
 
             async def recalled() -> bool:
-                await sightings.desk.fresh(LOBART)
-                return any(s.who == HILDA and s.end >= will._at(theft) - 30
-                           and s.start <= will._at(theft) + 30 for s in sightings.mind(LOBART).sightings)
+                view = await sightings.desk.fresh(LOBART)
+                seen = sightings.mind(LOBART).sightings
+                remembered = any(s.who == HILDA and s.end >= will._at(theft) - 30
+                                 and s.start <= will._at(theft) + 30 for s in seen)
+                if not remembered:
+                    log.info("npc_far owner recall missing: %s", {
+                        "reason": "No Hilda sighting overlaps the theft window",
+                        "theft_at": will._at(theft), "positions_at": opportunity["now"],
+                        "theft_positions": {
+                            "lobart": opportunity["owner"]["pos"],
+                            "hilda": opportunity["thief"]["pos"],
+                        },
+                        "owner_state": view.state if view is not None else None,
+                        "owner_view": view.model_dump() if view is not None else None,
+                        "sightings": [s.record() for s in seen],
+                    })
+                return remembered
 
             remembered = await _until_async(recalled, bool, 5)
             if not remembered:
                 assert chest.waypoint is not None
-                posed, detail = await prepare_npc_pose(
-                    link, LOBART, chest.waypoint, to=HILDA, distance=350, face=HILDA,
+                releasing = asyncio.create_task(wait_message(
+                    link, Detached, lambda m: m.npc.upper() == LOBART, 10,
+                ))
+                await asyncio.sleep(0)
+                dialogue.return_body(conv, "scenario-npc-far-chest")
+                held = False
+                try:
+                    released = await releasing
+                except TimeoutError:
+                    check("owner_released", False, "No detached message for Lobart within 10 s")
+                    return _logged(results)
+                check("owner_released", True, released.model_dump())
+                try:
+                    posed, detail = await prepare_npc_pose(
+                        link, LOBART, chest.waypoint, to=HILDA, distance=350, face=HILDA,
+                    )
+                except (GameError, TimeoutError) as error:
+                    check("owner_memory_pose", False, {"reason": str(error) or type(error).__name__})
+                    return _logged(results)
+                if not check("owner_memory_pose", posed, detail):
+                    return _logged(results)
+                held = await _until_async(
+                    lambda: dialogue.borrow_body(conv, "scenario-npc-far-chest"), bool, 10,
                 )
-                log.info("npc_far owner memory preparation: %s", detail)
+                if not check("owner_memory_held", held):
+                    return _logged(results)
                 remembered = posed and await _until_async(recalled, bool, 5)
             if not check("owner_remembers", remembered, [
                 s.record() for s in sightings.mind(LOBART).sightings if s.who == HILDA
