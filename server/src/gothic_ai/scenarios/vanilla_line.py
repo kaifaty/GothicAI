@@ -39,6 +39,11 @@ from .questlog import ACCEPT, TAKE, TITLE
 from .showrunner import Errand, trace_live_builders
 from .story import play_book_chain
 
+SCENARIOS = {
+    "vanilla_line": ("GIVEN", {"save": True, "timeout": 420}),
+    "vanilla_line_live": ("LIVE", None),
+}
+
 if TYPE_CHECKING:
     from ..questlog import QuestLog
     from ..showrunner import Showrunner

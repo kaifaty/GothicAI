@@ -43,6 +43,7 @@ class SceneGlobals final {
     void setResolution(uint32_t w, uint32_t h);
     void setHiZ(const Tempest::Texture2d& hiZ);
     void setShadowMap(const Tempest::Texture2d* tex[]);
+    void setFog(const Tempest::StorageImage* lut, const Tempest::StorageImage* lutMs);
 
     void setVirtualShadowMap(bool enabled,
                              const Tempest::ZBuffer&       vsmPageData,
@@ -74,6 +75,9 @@ class SceneGlobals final {
     const Tempest::Texture2d*         gbufNormals  = &Resources::fallbackBlack();
 
     const Tempest::Texture2d*         hiZ          = &Resources::fallbackTexture();
+
+    const Tempest::StorageImage*      fogLut       = &Resources::fallbackImage3d();
+    const Tempest::StorageImage*      fogLutMs     = &Resources::fallbackImage3d();
 
     const Tempest::StorageBuffer*     lights        = nullptr;
 
@@ -120,6 +124,7 @@ class SceneGlobals final {
       Tempest::Vec2                   cloudsDir[2] = {};
 
       float                           probeGridBias = 3;
+      uint32_t                        fogQuality = 0;
       };
 
     Tempest::UniformBuffer<UboGlobal> uboGlobalPf[Resources::MaxFramesInFlight][V_Count];

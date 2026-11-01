@@ -594,6 +594,50 @@ def compare_markdown(report):
     return "\n".join(lines) + "\n"
 
 
+def build_series(off, on, tolerance_ms):
+    runs = {}
+    for side, directories in (("off", off), ("on", on)):
+        runs[side] = []
+        for directory in directories:
+            report = build_report(directory)
+            streaming = report["places"].get("streaming-flythrough")
+            if streaming is None:
+                raise ValueError(f"{directory}: no streaming-flythrough measurement segments")
+            runs[side].append((report["directory"], streaming["views"]))
+    passes = {}
+    for name in ("run", "fly"):
+        data = {side: [{"directory": directory, "p99_ms": views[name]["frame_ms"]["p99"]}
+                       for directory, views in reports] for side, reports in runs.items()}
+        off_p99 = [run["p99_ms"] for run in data["off"]]
+        on_p99 = [run["p99_ms"] for run in data["on"]]
+        off_median, on_median = statistics.median(off_p99), statistics.median(on_p99)
+        spread = max(off_p99) - min(off_p99)
+        tolerance = max(tolerance_ms, spread)
+        change = on_median - off_median
+        passes[name] = {**data, "off_median_p99_ms": off_median, "on_median_p99_ms": on_median,
+                        "delta_ms": change, "off_spread_ms": spread, "tolerance_ms": tolerance,
+                        "verdict": "pass" if change <= tolerance else "fail"}
+    return {"schema_version": 1, "minimum_tolerance_ms": tolerance_ms, "passes": passes}
+
+
+def series_markdown(report):
+    lines = ["# Streaming flythrough series", "",
+             "Delta = median ON p99 - median OFF p99. OFF spread = max OFF p99 - min OFF p99.",
+             f"Pass when delta <= max({number(report['minimum_tolerance_ms'])} ms, OFF spread).", "",
+             "| Pass | OFF median p99 ms | ON median p99 ms | Δ ms | OFF spread ms | Tolerance ms | Verdict |",
+             "|---|---:|---:|---:|---:|---:|---|"]
+    for name, data in report["passes"].items():
+        lines.append(f"| {name} | {number(data['off_median_p99_ms'])} | {number(data['on_median_p99_ms'])} | "
+                     f"{data['delta_ms']:+.3f} | {number(data['off_spread_ms'])} | "
+                     f"{number(data['tolerance_ms'])} | {data['verdict']} |")
+    lines.extend(["", "| Pass | Side | Run directory | p99 ms |", "|---|---|---|---:|"])
+    for name, data in report["passes"].items():
+        for side in ("off", "on"):
+            for run in data[side]:
+                lines.append(f"| {name} | {side.upper()} | `{run['directory']}` | {number(run['p99_ms'])} |")
+    return "\n".join(lines) + "\n"
+
+
 def write_outputs(directory, stem, report, markdown):
     (directory / (stem + ".json")).write_text(json.dumps(report, indent=2, ensure_ascii=False, allow_nan=False) + "\n")
     (directory / (stem + ".md")).write_text(markdown)
@@ -607,9 +651,27 @@ def main(argv=None):
     compare_parser = subcommands.add_parser("compare", help="write compare.md and compare.json in B")
     compare_parser.add_argument("a", type=Path)
     compare_parser.add_argument("b", type=Path)
+    series_parser = subcommands.add_parser("series", help="compare alternating streaming-flythrough OFF/ON runs")
+    series_parser.add_argument("--off", type=Path, nargs="+", required=True)
+    series_parser.add_argument("--on", type=Path, nargs="+", required=True)
+    series_parser.add_argument("--tolerance-ms", type=float, default=1.0)
+    series_parser.add_argument("--out", type=Path)
     args = parser.parse_args(argv)
+    if args.command == "series":
+        if len(args.off) < 2 or len(args.on) < 2:
+            series_parser.error("series requires at least two run directories for each of --off and --on")
+        if not math.isfinite(args.tolerance_ms) or args.tolerance_ms < 0:
+            series_parser.error("--tolerance-ms must be a finite nonnegative number")
     try:
-        if args.command == "run":
+        if args.command == "series":
+            report = build_series(args.off, args.on, args.tolerance_ms)
+            markdown = series_markdown(report)
+            output = args.out if args.out is not None else args.on[-1]
+            output.mkdir(parents=True, exist_ok=True)
+            write_outputs(output, "series", report, markdown)
+            print(markdown, end="")
+            return 0 if all(data["verdict"] == "pass" for data in report["passes"].values()) else 1
+        elif args.command == "run":
             report = build_report(args.directory)
             write_outputs(args.directory, "report", report, report_markdown(report))
             print(summary_table(report))

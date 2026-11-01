@@ -147,6 +147,12 @@ bool Material::isTextureInShadowPass(AlphaFunc alpha) {
   return (alpha==Material::AlphaTest);
   }
 
+bool Material::isFogRequired(AlphaFunc alpha) {
+  // drawn after the fog pass: they take the fog of their own depth.
+  // Multiply stays under the fog pass: blending can't add the haze in front of it.
+  return alpha==Material::Transparent || alpha==Material::AdditiveLight || alpha==Material::Ghost;
+  }
+
 bool Material::isTesselated(AlphaFunc alpha) {
   // if(alpha!=Material::Water)
   //   return false;

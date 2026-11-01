@@ -7,6 +7,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 SCRIPT = Path(__file__).resolve().parents[1] / "e2e-live.sh"
 
 
@@ -90,8 +92,10 @@ INNER
     assert "= 6.0" in done.stdout  # measured mean of 3 replaces the declared 6
 
 
-def test_non_live_llm_is_rejected_before_starting_a_run(tmp_path):
+@pytest.mark.parametrize("suite", ["haggle", "live_npc", "live_director"])
+def test_non_live_llm_is_rejected_before_starting_a_run(tmp_path, suite):
     script, _, env = runner(tmp_path)
+    env["SUITE"] = suite
     for llm in ("", "off", "fake"):
         done = subprocess.run(
             ["bash", str(script)], env={**env, "LLM": llm}, capture_output=True, text=True, timeout=5

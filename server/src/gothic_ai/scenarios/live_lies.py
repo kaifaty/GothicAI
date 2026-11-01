@@ -15,6 +15,10 @@ from .lies import vanilla_check, witness_check
 from .live import LiveSuite
 from .perception import seen_memory, trace_memory
 
+SCENARIOS = {
+    "live_lies": ("LIVE", None),
+}
+
 if TYPE_CHECKING:
     from ..chests import ChestDesk
     from ..concerns import Concerns

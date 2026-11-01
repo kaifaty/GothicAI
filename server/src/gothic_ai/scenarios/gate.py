@@ -22,6 +22,11 @@ from .common import (
     wait_message,
 )
 
+SCENARIOS = {
+    "gate": ("GIVEN", {"save": False, "timeout": 240}),
+    "gate_vouch": ("GIVEN", {"save": False, "timeout": 240}),
+}
+
 if TYPE_CHECKING:
     from ..deals import Deals
     from ..dialogue import DialogueManager

@@ -4563,6 +4563,42 @@ namespace {
 
   void testContracts() {
     {
+      using MeleeImpact::BackstabKind;
+      requireNear(MeleeImpact::backstabAngle(0.f,119.9f),119.9f,.0001f,
+                  "backstab angles must retain the horizontal sector boundary");
+      requireNear(MeleeImpact::backstabAngle(350.f,110.f),120.f,.0001f,
+                  "backstab angles must wrap across zero degrees");
+      require(MeleeImpact::backstabKind(119.9f,1,false,false,false)==BackstabKind::None,
+              "an unaware target at 119.9 degrees must not receive a backstab");
+      require(MeleeImpact::backstabKind(120.f,1,false,false,false)==BackstabKind::Unaware,
+              "an unaware target at 120 degrees must receive a backstab");
+      require(MeleeImpact::backstabKind(180.f,0,false,false,false)==BackstabKind::None,
+              "an unaware backstab must require the sneak talent");
+      require(MeleeImpact::backstabKind(180.f,0,false,true,true)==BackstabKind::Stunned,
+              "a rear hit on a stunned target must qualify without sneak or surprise");
+      require(MeleeImpact::backstabKind(0.f,1,true,false,false)==BackstabKind::Sleeping,
+              "a sleeping target must allow a frontal backstab with the sneak talent");
+      require(MeleeImpact::backstabKind(0.f,0,true,false,false)==BackstabKind::None,
+              "a sleeping backstab must still require the sneak talent");
+      require(MeleeImpact::backstabKind(0.f,0,false,true,true)==BackstabKind::None,
+              "a frontal hit on a stunned target must not qualify as a backstab");
+      require(MeleeImpact::backstabKind(180.f,1,false,false,true)==BackstabKind::None,
+              "combat or a recent hit must prevent an unaware backstab");
+      require(MeleeImpact::backstabRecentHit(10900,1000),
+              "a hit 9.9 seconds ago must keep the target aware of its attacker");
+      require(!MeleeImpact::backstabRecentHit(11000,1000),
+              "a hit exactly 10 seconds ago must no longer keep the target aware");
+      requireNear(MeleeImpact::backstabMultiplier(BackstabKind::Unaware,false,1.f),3.f,.0001f,
+                  "an unaware backstab must triple final melee damage");
+      requireNear(MeleeImpact::backstabMultiplier(BackstabKind::Unaware,true,1.f),1.5f,.0001f,
+                  "a huge beast must receive only a 1.5 backstab multiplier");
+      requireNear(MeleeImpact::backstabMultiplier(BackstabKind::Stunned,false,1.5f),3.f,.0001f,
+                  "a stunned backstab must replace rather than multiply the stun bonus");
+      requireNear(MeleeImpact::backstabMultiplier(BackstabKind::None,false,1.5f),1.5f,.0001f,
+                  "an ordinary hit must retain the existing stun bonus");
+      }
+
+    {
       using MeleeImpact::Weapon;
       const auto fist=MeleeImpact::impulse(Weapon::Fist,{600,800,0},90);
       requireNear(fist.x,9.f,.0001f,"fist impulse must convert world cm/s into N s");
@@ -4764,6 +4800,68 @@ namespace {
     require(!Npc::canAccumulateMeleePosture(true,true,false,false),"a blocked hit must leave posture unchanged");
     require(!Npc::canAccumulateMeleePosture(true,false,true,false),"a knockdown must not accumulate another knockdown");
     require(!Npc::canAccumulateMeleePosture(true,false,false,true),"death or unconsciousness must retain the old path");
+
+    require(MeleeImpact::beastSize(54.9f)==MeleeImpact::BeastSize::Small,
+            "beasts below 55 kg must be small");
+    require(MeleeImpact::beastSize(55.f)==MeleeImpact::BeastSize::Medium &&
+            MeleeImpact::beastSize(299.9f)==MeleeImpact::BeastSize::Medium,
+            "beasts from 55 kg to below 300 kg must be medium");
+    require(MeleeImpact::beastSize(300.f)==MeleeImpact::BeastSize::Huge,
+            "beasts from 300 kg must be huge");
+    require(MeleeImpact::beastCanAccumulatePosture(54.9f) && MeleeImpact::beastCanAccumulatePosture(299.9f) &&
+            !MeleeImpact::beastCanAccumulatePosture(300.f) && !MeleeImpact::beastCanAccumulatePosture(600.f),
+            "small and medium beasts must accumulate posture while huge beasts never do");
+    requireNear(Ragdoll::speciesMass("Shadow"),250.f,.0001f,"the Shadow model must weigh 250 kg");
+    requireNear(Ragdoll::speciesMass("sHaDoW"),250.f,.0001f,"Shadow mass must be case insensitive");
+    requireNear(Ragdoll::speciesMass("Golem"),500.f,.0001f,"the Golem model must weigh 500 kg");
+    requireNear(Ragdoll::speciesMass("gOlEm"),500.f,.0001f,"Golem mass must be case insensitive");
+
+    requireNear(MeleeImpact::beastImpulse(40.f),20.f,.0001f,"a 40 kg beast must strike with 20 N s");
+    requireNear(MeleeImpact::beastImpulse(90.f),45.f,.0001f,"a 90 kg beast must strike with 45 N s");
+    requireNear(MeleeImpact::beastImpulse(250.f),60.f,.0001f,"a 250 kg beast impulse must cap at 60 N s");
+    requireNear(MeleeImpact::beastSkillThresholdScale(0),.96f,.0001f,
+                "beast attacks must use a neutral attacker scale against an unskilled defender");
+    requireNear(MeleeImpact::beastSkillThresholdScale(100),1.44f,.0001f,
+                "beast attacks must retain the skilled defender threshold multiplier");
+    {
+      const auto threshold = MeleeImpact::beastSkillThresholdScale(0);
+      const auto hugeHit = MeleeImpact::postureIncrease(60.f,75.f,threshold);
+      const auto mediumHit = MeleeImpact::postureIncrease(45.f,75.f,threshold);
+      require(hugeHit>=40.f && mediumHit<40.f,
+              "60 N s must cross the heavy posture threshold against 75 kg while 45 N s must not");
+      require(MeleeImpact::heavyHit(MeleeImpact::Weapon::Fist,{0,0,0},hugeHit)==MeleeImpact::HeavyHit::Posture &&
+              MeleeImpact::heavyHit(MeleeImpact::Weapon::Fist,{0,0,0},mediumHit)==MeleeImpact::HeavyHit::None,
+              "unarmed beast hits must qualify as heavy only through their posture increase");
+      }
+
+    require(MeleeImpact::heavyHit(MeleeImpact::Weapon::TwoHand,{0,0,0},0)==MeleeImpact::HeavyHit::TwoHanded,
+            "a two-handed weapon must qualify as a heavy hit");
+    require(MeleeImpact::heavyHit(MeleeImpact::Weapon::OneHand,{80,-60,0},0)==MeleeImpact::HeavyHit::Downward,
+            "a downward velocity fraction of 0.6 must qualify as a heavy hit");
+    require(MeleeImpact::heavyHit(MeleeImpact::Weapon::OneHand,{std::sqrt(10000.f-59.f*59.f),-59,0},0)==MeleeImpact::HeavyHit::None,
+            "a downward velocity fraction of 0.59 must not qualify as a heavy hit");
+    require(MeleeImpact::heavyHit(MeleeImpact::Weapon::OneHand,{0,0,0},40.f)==MeleeImpact::HeavyHit::Posture,
+            "a posture increase of 40 must qualify as a heavy hit");
+    require(MeleeImpact::heavyHit(MeleeImpact::Weapon::OneHand,{0,0,0},39.9f)==MeleeImpact::HeavyHit::None,
+            "a posture increase of 39.9 must not qualify as a heavy hit");
+    require(MeleeImpact::armorClass(39)==MeleeImpact::ArmorClass::Light,
+            "edge protection below 40 must be light armor");
+    require(MeleeImpact::armorClass(40)==MeleeImpact::ArmorClass::Medium &&
+            MeleeImpact::armorClass(79)==MeleeImpact::ArmorClass::Medium,
+            "edge protection from 40 through 79 must be medium armor");
+    require(MeleeImpact::armorClass(80)==MeleeImpact::ArmorClass::Heavy,
+            "edge protection from 80 must be heavy armor");
+    requireNear(MeleeImpact::armorThresholdScale(MeleeImpact::armorClass(0)),1.f,.0001f,
+                "no armor must retain the posture threshold");
+    requireNear(MeleeImpact::armorThresholdScale(MeleeImpact::ArmorClass::Light),1.f,.0001f,
+                "light armor must retain the posture threshold");
+    requireNear(MeleeImpact::armorThresholdScale(MeleeImpact::ArmorClass::Medium),1.15f,.0001f,
+                "medium armor must multiply the posture threshold by 1.15");
+    requireNear(MeleeImpact::armorThresholdScale(MeleeImpact::ArmorClass::Heavy),1.3f,.0001f,
+                "heavy armor must multiply the posture threshold by 1.3");
+    require(MeleeImpact::stunDuration("parried")==1000 && MeleeImpact::stunDuration("guard_break")==1000 &&
+            MeleeImpact::stunDuration("posture")==1500,
+            "parry and guard-break stuns must last 1000 ms and posture stuns 1500 ms");
 
     {
       // Tip heights of T_2HSFINISH and T_1HSFINISH at 30 fps, sampled in the game: the stroke down

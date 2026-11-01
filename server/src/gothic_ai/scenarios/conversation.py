@@ -42,6 +42,13 @@ from .common import (
 )
 from .live import LiveSuite
 
+SCENARIOS = {
+    "gossip": ("GIVEN", {"save": True, "timeout": 420, "env": {"DECIDER_URL": ""}}),
+    "gossip_demo": ("GIVEN", {"save": True, "timeout": 240}),
+    "group": ("GIVEN", {"save": False, "timeout": 240}),
+    "interject": ("LIVE", None),
+}
+
 log = logging.getLogger("gothic_ai.scenarios")
 
 

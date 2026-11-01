@@ -201,6 +201,9 @@ Marvin::Marvin() {
     {"toggle melee_physics_hits", C_ToggleMeleePhysicsHits},
     {"toggle melee_reactions",    C_ToggleMeleeReactions},
     {"toggle melee_posture",      C_ToggleMeleePosture},
+    {"toggle melee_stagger",      C_ToggleMeleeStagger},
+    {"toggle melee_beast_poise",  C_ToggleMeleeBeastPoise},
+    {"toggle melee_backstab",     C_ToggleMeleeBackstab},
     {"toggle melee_down_tactics", C_ToggleMeleeDownTactics},
     {"toggle melee_hitstop",      C_ToggleMeleeHitStop},
     {"toggle melee_stamina",      C_ToggleMeleeStamina},
@@ -684,6 +687,24 @@ bool Marvin::exec(std::string_view v) {
       const bool enabled = !Gothic::physicsFlags().meleePosture;
       Gothic::settingsSetI("GAME","melee_posture",enabled ? 1 : 0);
       print(enabled ? "Melee posture: ON" : "Melee posture: OFF");
+      return true;
+      }
+    case C_ToggleMeleeStagger: {
+      const bool enabled = Gothic::settingsGetI("GAME","melee_stagger")==0;
+      Gothic::settingsSetI("GAME","melee_stagger",enabled ? 1 : 0);
+      print(enabled ? "Melee stagger: ON" : "Melee stagger: OFF");
+      return true;
+      }
+    case C_ToggleMeleeBeastPoise: {
+      const bool enabled = Gothic::settingsGetI("GAME","melee_beast_poise")==0;
+      Gothic::settingsSetI("GAME","melee_beast_poise",enabled ? 1 : 0);
+      print(enabled ? "Melee beast poise: ON" : "Melee beast poise: OFF");
+      return true;
+      }
+    case C_ToggleMeleeBackstab: {
+      const bool enabled = !Gothic::physicsFlags().meleeBackstab;
+      Gothic::settingsSetI("GAME","melee_backstab",enabled ? 1 : 0);
+      print(enabled ? "Melee backstab: ON" : "Melee backstab: OFF");
       return true;
       }
     case C_ToggleMeleeDownTactics: {

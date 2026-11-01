@@ -22,6 +22,10 @@ from ..protocol import (
 )
 from .common import _logged, _m5b_player_weapon, _until, _until_async, prepare_npc_pose
 
+SCENARIOS = {
+    "bandit_hold": ("OFF", {"save": False, "timeout": 240}),
+}
+
 if TYPE_CHECKING:
     from ..dialogue import DialogueManager
 

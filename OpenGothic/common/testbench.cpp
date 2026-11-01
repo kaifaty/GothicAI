@@ -16367,7 +16367,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     say(pl.bowDump());
     }
   else if(c=="stats") {
-    // stats [npc <npc>] [str <n>] [dex <n>] [bow <n>] [cbow <n>] [hp <n>] [hpmax <n>] [talent auto|0|1|2]:
+    // stats [npc <npc>] [str <n>] [dex <n>] [bow <n>] [cbow <n>] [sneak <n>] [hp <n>] [hpmax <n>] [talent auto|0|1|2]:
     // the hero's (an npc's) strength, dexterity, hit chances (the skill of the manual aim), hit points;
     // talent: the animations of the trained (G2 sets level 1 at 30%, 2 at 60%: _BOWT1, _BOWT2), auto as
     // the hit chances say
@@ -16405,6 +16405,8 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
         h.hitchance[TALENT_BOW] = v;
       else if(a[i]=="cbow")
         h.hitchance[TALENT_CROSSBOW] = v;
+      else if(a[i]=="sneak")
+        n.setTalentSkill(TALENT_SNEAK,v);
       else if(a[i]=="hp")
         h.attribute[ATR_HITPOINTS] = v;
       else if(a[i]=="hpmax")
@@ -17324,7 +17326,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     say("immortal " + symName(w,n) + " " + (n->isImmortal() ? "on" : "off"));
     }
   else if(c=="stun") {
-    // stun <npc|nearest|player> [parried|guard_break]: the stun of melee_parry as after a parry, by the hero
+    // stun <npc|nearest|player> [parried|guard_break|posture]: melee stun, by the hero
     // (or, for the hero, by the nearest npc): the look without timing a real parade
     Npc* n = a.size()>1 && a[1]=="player" ? &pl : findNpc(w,pl,a.size()>1 ? a[1] : "nearest");
     Npc* by = n==&pl ? findNpc(w,pl,"nearest") : &pl;

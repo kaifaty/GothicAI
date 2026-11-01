@@ -14,6 +14,11 @@ from ..llm import ToolCall
 from ..protocol import ActionResult, ActionType
 from .common import _logged, _until_async
 
+SCENARIOS = {
+    "check_walk": ("OFF", {"save": False, "timeout": 240}),
+    "follow_back": ("OFF", {"save": False, "timeout": 240}),
+}
+
 CAVALORN = "BAU_4300_ADDON_CAVALORN"
 BRAGO = "BDT_1014_BANDIT_L"
 BANDITS = (BRAGO, "BDT_1013_BANDIT_L", "BDT_1015_BANDIT_L")

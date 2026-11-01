@@ -456,6 +456,8 @@ def aac_encoder() -> tuple[str, ...]:
     ffmpeg's own encoder at 192k turned one voice transient of an AI take into a lone +0.15 dBFS
     sample, 3 dB over the limiter (-2.50 dBTP before it); at 256k, and with AudioToolbox, it stays
     near -2.6. Disable PNS and intensity stereo and force M/S to preserve identical channels on noise.
+    Forced M/S codes no side when one channel is silent: such a mix decodes as dual mono 6 dB down,
+    so dual_mono checks the encoder, not the mix (master_graph copies c0 into both channels).
     Popen keeps the probe out of tests that replace subprocess.run.
     """
     with subprocess.Popen(["ffmpeg", "-hide_banner", "-encoders"], stdout=subprocess.PIPE,

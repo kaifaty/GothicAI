@@ -47,6 +47,19 @@ The run fails if either route does not finish or either pass lacks metrics. Use 
 host, resolution and content overrides for later comparisons; `OPENGOTHIC_STREAMING=0`
 disables the manager and deliberately cannot produce this residency measurement.
 
+Run comparison series in alternating order (OFF, ON, OFF, ON), with at least two runs
+per side on the same host. Judge `run` and `fly` with `perf_report.py series`: it compares
+the median per-run p99 and accepts ON − OFF <= max(1 ms, OFF p99 max − min), so the
+measurement's own OFF spread sets the allowance when it exceeds the configured tolerance.
+It prints the per-run values and verdicts and writes `series.md` / `series.json` to `--out`
+(the last `--on` directory by default); exit code 0 means both passes pass, 1 means a failure,
+and 2 means invalid arguments.
+
+```bash
+python3 scripts/perf_report.py series --off /path/off-1 /path/off-2 \
+  --on /path/on-1 /path/on-2 --tolerance-ms 1.0 --out /path/series
+```
+
 `BENCH_HOST=local OPENGOTHIC_STREAMING=0 scripts/bench.sh streaming-shots` and the same
 command with `OPENGOTHIC_STREAMING=1` capture `perf-market.png`, `perf-harbour.png` and
 `perf-forest.png` from the first viewpoints of those performance scenarios. `streaming wait`
