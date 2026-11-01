@@ -1027,6 +1027,25 @@ namespace {
       require(BodyTraces::isStoryType(type,BodyTraces::StoryTypes),"NPCTYPE_MAIN, NPCTYPE_OCMAIN and NPCTYPE_BL_MAIN are story types");
     for(int32_t type:{0,2,3,5,6})
       require(!BodyTraces::isStoryType(type,BodyTraces::StoryTypes),"ambient and friend types are not story types");
+
+    // Story types from the scripts: the Gothic II fallback only when no symbol exists at all.
+    {
+    const auto none = BodyTraces::storyTypes({std::nullopt,std::nullopt,std::nullopt});
+    require(none==BodyTraces::StoryTypes,"no NPCTYPE symbol at all: the Gothic II values 1, 4, 7");
+    const auto g1 = BodyTraces::storyTypes({1,std::nullopt,std::nullopt});
+    require(g1==std::array<int32_t,3>{1,-1,-1},"a missing symbol beside a present one must match nothing (-1)");
+    require(BodyTraces::isStoryType(1,g1) && !BodyTraces::isStoryType(4,g1) && !BodyTraces::isStoryType(7,g1),
+            "with only NPCTYPE_MAIN defined, types 4 and 7 are not exceptions");
+    const auto all = BodyTraces::storyTypes({11,14,17});
+    require(all==std::array<int32_t,3>{11,14,17},"the scripts' own values win");
+    }
+
+    // One death stamps the record once: a BodyController defers ZS_Dead, later blows keep it.
+    require(BodyTraces::stampsDeath(true,false,0,false),"the first fatal blow stamps the body record");
+    require(!BodyTraces::stampsDeath(true,false,4,false),"a blow before the deferred ZS_Dead keeps the first record");
+    require(!BodyTraces::stampsDeath(true,true,4,true),"a blow on a corpse keeps its record");
+    require(!BodyTraces::stampsDeath(false,false,0,false),"unconsciousness stamps nothing");
+    require(BodyTraces::stampsDeath(true,false,4,true),"a body that rose again (it reached ZS_Dead) dies anew");
     }
 
   void testBodyImpactDamage() {

@@ -251,9 +251,10 @@ void writeItems(Writer& w, World& world, Npc& npc, float range) {
 
 void writeTraces(Writer& w, World& world, Npc& npc, float range) {
   struct SeenTrace { const World::PhysicsTrace* trace; float dist; };
-  const auto traces = world.physicsTraces();
-  std::vector<SeenTrace> seen;
   const auto maxRange = std::min(range,TraceRange);
+  const auto viewer   = npc.position();
+  const auto traces   = world.physicsTraces(&viewer,maxRange);
+  std::vector<SeenTrace> seen;
   for(const auto& trace:traces) {
     const auto dist = (trace.position-npc.position()).length();
     if(dist>maxRange)

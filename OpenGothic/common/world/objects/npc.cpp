@@ -1,4 +1,5 @@
 #include "npc.h"
+#include "world/bodytraces.h"
 #include "graphics/mesh/protomesh.h"
 
 #include <Tempest/Matrix4x4>
@@ -722,7 +723,8 @@ void Npc::load(Serialize &fin, size_t id, std::string_view directory) {
      fin.setEntry("worlds/",fin.worldName(),directory,id,"/stuck-arrows") &&
      !visual.loadStuckArrows(fin,owner))
     Log::e("arrows: invalid saved NPC attachments, keeping the body without arrows");
-  bodyTraceRecord = {};
+  bodyTraceRecord  = {};
+  bodyTraceEntered = false;
   if(isDead() && fin.setEntry("worlds/",fin.worldName(),directory,id,"/body-trace")) {
     try {
       uint32_t magic=0, traceId=0;
@@ -735,11 +737,12 @@ void Npc::load(Serialize &fin, size_t id, std::string_view directory) {
       trace.diedAt    = minute(died);
       trace.clockFrom = minute(clock);
       if(magic==BodyTraceMagic && schema==1 && traceId!=0 && traceId!=uint32_t(-1) && trace.culprit.size()<=512)
-        bodyTraceRecord = std::move(trace); else
+        setBodyTrace(std::move(trace)); else
         Log::e("body trace: invalid saved record, the body counts as one from an older save");
       }
     catch(const std::exception& e) {
-      bodyTraceRecord = {};
+      bodyTraceRecord  = {};
+      bodyTraceEntered = false;
       Log::e("body trace load: ",e.what());
       }
     }
@@ -1153,9 +1156,10 @@ void Npc::onNoHealth(bool death, HitSound sndMask) {
 
   size_t fdead=owner.script().findSymbolIndex(state);
   startState(fdead,"",gtime::endOfTime(),true);
-  if(death && !wasDead) {
+  if(BodyTraces::stampsDeath(death,wasDead,bodyTraceRecord.id,bodyTraceEntered)) {
     // Engine truth of the body trace: kept whatever [GAME] body_traces says, so the
-    // age and lifetime are right when the flag is turned on later.
+    // age and lifetime are right when the flag is turned on later. A deferred ZS_Dead
+    // (BodyController) keeps the first fatal blow's record: see BodyTraces::stampsDeath.
     BodyTrace trace;
     trace.id        = owner.allocBodyTraceId();
     trace.diedAt    = owner.gameMinute();
@@ -1166,7 +1170,8 @@ void Npc::onNoHealth(bool death, HitSound sndMask) {
       else if(auto* symbol = owner.script().findSymbol(lastHit->instanceSymbol()))
         trace.culprit = symbol->name();
       }
-    bodyTraceRecord = std::move(trace);
+    bodyTraceRecord  = std::move(trace);
+    bodyTraceEntered = isDead();
     }
   // Note: clear perceptions for William in Jarkentar
   for(size_t i=0;i<PERC_Count;++i)
@@ -6628,7 +6633,14 @@ bool Npc::startState(ScriptFn id, std::string_view wp, gtime endTime, bool noFin
   aiState.eTime        = endTime;
   aiState.loopNextTime = owner.tickCount();
   aiState.hint         = st.name();
+  if(bodyTraceRecord.id!=0 && !bodyTraceEntered && isDead())
+    bodyTraceEntered = true; // a deferred ZS_Dead has started: a later death is a new one
   return true;
+  }
+
+void Npc::setBodyTrace(BodyTrace trace) {
+  bodyTraceRecord  = std::move(trace);
+  bodyTraceEntered = bodyTraceRecord.id!=0 && isDead();
   }
 
 void Npc::clearState(bool noFinalize) {

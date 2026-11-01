@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdint>
+#include <optional>
 
 // Bodies as physical traces (physics stage 8, step 4b; [GAME] body_traces).
 // A dead person is evidence: World::physicsTraces() reports it as a `body` trace.
@@ -44,6 +45,26 @@ namespace BodyTraces {
   // Only a person's body is a trace; a monster's is not evidence.
   inline bool isTrace(bool enabled, bool dead, bool player, int32_t guild, int32_t separatorHum) {
     return enabled && dead && !player && guild<separatorHum;
+    }
+
+  // The three main types as the scripts define them (std::nullopt: no such symbol). No symbol at
+  // all: the Gothic II values; some present: a missing one matches nothing (-1), so a Gothic I
+  // script set never turns its own types 4 and 7 into exceptions.
+  inline std::array<int32_t,3> storyTypes(const std::array<std::optional<int32_t>,3>& symbols) {
+    if(!symbols[0] && !symbols[1] && !symbols[2])
+      return StoryTypes;
+    std::array<int32_t,3> types = {};
+    for(size_t i=0;i<types.size();++i)
+      types[i] = symbols[i].value_or(-1);
+    return types;
+    }
+
+  // One death stamps the body record once. `entered`: this record's death has reached ZS_Dead.
+  // While a BodyController owns the NPC, ZS_Dead is deferred and isDead() stays false, so later
+  // blows reach onNoHealth again: they keep the number, minute and culprit of the first fatal
+  // blow. Only a body that was dead and rose again (necromancy) dies anew.
+  inline bool stampsDeath(bool death, bool wasDead, uint32_t id, bool entered) {
+    return death && !wasDead && (id==0 || entered);
     }
 
   inline bool isStoryType(int32_t type, const std::array<int32_t,3>& story) {

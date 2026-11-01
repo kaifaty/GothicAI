@@ -640,12 +640,14 @@ std::string save(World& world, Npc& hero, const std::string& label, const std::s
 
 void BodyTracesBench::reset() {
   st = {};
+  TestBench::allowBodySweep(false);
   }
 
 std::string BodyTracesBench::command(const std::vector<std::string>& a, World& world, Npc& player,
                                      const std::string& out) {
   if(a.size()<2)
     fail("body_traces <command>");
+  TestBench::allowBodySweep(true); // this fixture is about the body lifetime
   if(st.world!=&world && a[1]!="setup") {
     // A fresh process after loading a save: find the fixture's bodies again.
     rebind(world,player);

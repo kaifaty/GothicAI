@@ -79,7 +79,9 @@ class World final {
       std::string culprit; // engine truth: never serialize this field to the AI bridge
       std::string npc;     // a body: the dead one's instance symbol, as npc_view's look names it
       };
-    std::vector<PhysicsTrace> physicsTraces() const;
+    // `viewer` (with `range`, cm): body rows farther from it are not built; the rows that are
+    // built do not change. Without it, every trace of the world.
+    std::vector<PhysicsTrace> physicsTraces(const Tempest::Vec3* viewer = nullptr, float range = 0) const;
 
     // Bodies (physics stage 8, step 4b; world/bodytraces.h holds the rules).
     int64_t              gameMinute() const;                  // minutes since the first day began

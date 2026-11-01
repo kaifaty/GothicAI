@@ -20398,6 +20398,18 @@ std::function<void(std::string_view)> TestBench::openMenu;
 std::function<bool(std::string_view,std::string_view)> TestBench::aiReached;
 std::function<bool(World&,std::string_view,float)> TestBench::stuckBegin;
 std::function<std::string(World&,std::string_view)> TestBench::npcView;
+
+namespace {
+bool benchBodySweep = false;
+}
+
+void TestBench::allowBodySweep(bool allow) {
+  benchBodySweep = allow;
+  }
+
+bool TestBench::bodySweepAllowed() {
+  return benchBodySweep;
+  }
 std::function<bool(World&)> TestBench::stuckEnd;
 
 bool TestBench::voiceStems() {

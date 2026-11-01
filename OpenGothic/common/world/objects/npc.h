@@ -742,7 +742,7 @@ class Npc final {
       std::string culprit;        // "PLAYER" or the killer's instance symbol
       };
     const BodyTrace& bodyTrace() const { return bodyTraceRecord; }
-    void      setBodyTrace(BodyTrace trace) { bodyTraceRecord = std::move(trace); }
+    void      setBodyTrace(BodyTrace trace);
 
     void      setOther(Npc* ot);
     void      setVictim(Npc* ot);
@@ -1118,6 +1118,7 @@ class Npc final {
     // last hit
     Npc*                           lastHit          = nullptr;
     BodyTrace                      bodyTraceRecord;
+    bool                           bodyTraceEntered = false; // the record's death reached ZS_Dead
     char                           lastHitType      = 'A';
     int32_t                        lastHitSpell     = 0;
 

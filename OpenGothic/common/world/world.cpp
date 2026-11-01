@@ -23,6 +23,8 @@
 #include "world/triggers/abstracttrigger.h"
 #include "world/triggers/cscamera.h"
 #include "game/bodyarena.h"
+#include "game/bodycontroller.h"
+#include "navdemos.h"
 #include "game/globaleffects.h"
 #include "game/serialize.h"
 #include "game/physicssave.h"
@@ -484,7 +486,7 @@ bool World::stuckArrowAttachment(size_t index, uint32_t& zenId, Tempest::Matrix4
   return true;
   }
 
-std::vector<World::PhysicsTrace> World::physicsTraces() const {
+std::vector<World::PhysicsTrace> World::physicsTraces(const Tempest::Vec3* viewer, float range) const {
   std::vector<PhysicsTrace> result;
   if(Gothic::physicsFlags().arrowSticking) {
     for(const auto& pin:stuckArrows) {
@@ -533,6 +535,10 @@ std::vector<World::PhysicsTrace> World::physicsTraces() const {
       const auto& npc   = wobj.npc(i);
       const auto& state = npc.bodyTrace();
       if(state.id==0 || !BodyTraces::isTrace(true,npc.isDead(),npc.isPlayer(),int32_t(npc.guild()),GIL_SEPERATOR_HUM))
+        continue;
+      // The viewer's own range test (npc_view: distance to the trace position) before the
+      // bones and strings: the same rows, built only for bodies the viewer can get.
+      if(viewer!=nullptr && (npc.position()-*viewer).length()>range)
         continue;
       PhysicsTrace trace;
       trace.id          = bodyTraceId(npc);
@@ -584,11 +590,13 @@ bool World::isStoryNpcType(int32_t type) const {
   if(!storyNpcTypesRead) {
     storyNpcTypesRead = true;
     const char* names[] = {"NPCTYPE_MAIN","NPCTYPE_OCMAIN","NPCTYPE_BL_MAIN"};
-    for(size_t i=0;i<storyNpcTypes.size();++i) {
+    std::array<std::optional<int32_t>,3> symbols;
+    for(size_t i=0;i<symbols.size();++i) {
       auto* symbol = script().getVm().find_symbol_by_name(names[i]);
       if(symbol!=nullptr && symbol->type()==zenkit::DaedalusDataType::INT)
-        storyNpcTypes[i] = symbol->get_int(0);
+        symbols[i] = symbol->get_int(0);
       }
+    storyNpcTypes = BodyTraces::storyTypes(symbols);
     }
   return BodyTraces::isStoryType(type,storyNpcTypes);
   }
@@ -610,19 +618,35 @@ BodyTraces::Body World::bodyRule(const Npc& body, const Npc* hero) const {
 
 void World::sweepBodies() {
   // Once per game minute; rays only for bodies past their lifetime and away from the hero.
-  if(!Gothic::physicsFlags().bodyTraces)
-    return;
   const auto now = gameMinute();
   if(now==bodySweepMinute)
     return;
   bodySweepMinute = now;
   const Npc* hero = player();
-  if(hero==nullptr)
+  // A body that reached ZS_Dead past Npc::onNoHealth (a script's AI_StartState(ZS_Dead)) gets
+  // its record here, as a body of an older save does at loading: whatever the flag says.
+  for(size_t i=0;i<wobj.npcCount();++i) {
+    auto& npc = wobj.npc(i);
+    if(&npc==hero || npc.bodyTrace().id!=0 || !npc.isDead())
+      continue;
+    Npc::BodyTrace trace;
+    trace.id        = allocBodyTraceId();
+    trace.clockFrom = now;
+    npc.setBodyTrace(std::move(trace));
+    }
+  if(!Gothic::physicsFlags().bodyTraces || hero==nullptr)
+    return;
+  // Stands and training hold their actors by pointer: an arena, navigation demos and any
+  // bench but the one that asks for the sweep (body_traces) keep every body.
+  if(BodyArena::enabled() || BodyArena::frozenWorld() || NavDemos::running() ||
+     (TestBench::isActive() && !TestBench::bodySweepAllowed()))
     return;
   std::vector<Npc*> gone;
   for(size_t i=0;i<wobj.npcCount();++i) {
     auto& npc = wobj.npc(i);
     if(&npc==hero || !npc.isDead())
+      continue;
+    if(BodyArena::isActor(npc) || NavDemos::fullSimulation(npc) || BodyController::owns(npc))
       continue;
     auto rule = bodyRule(npc,hero);
     if(!BodyTraces::removableUnseen(rule))
