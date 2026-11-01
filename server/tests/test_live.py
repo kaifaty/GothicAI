@@ -113,6 +113,72 @@ async def test_live_npc_skips_decider_cases_without_preparing_a_game(tmp_path, m
     assert "DECIDER_URL" in (tmp_path / "report.md").read_text()
 
 
+async def test_live_rescue_waits_for_delayed_escalation_and_completed_speech(tmp_path, monkeypatch):
+    import asyncio
+
+    from gothic_ai.brain import LogApplier, NpcPlanner, PlannerConfig
+    from gothic_ai.budget import Budget
+    from gothic_ai.dialogue import DialogueManager
+    from gothic_ai.incidents import IncidentDesk
+    from gothic_ai.llm import FakeBackend
+    from gothic_ai.persona import PersonaProvider
+    from gothic_ai.scenarios.companions import rescue
+    from tests.fake_game import FakeGame, connected
+    from tests.fakes import FakeDecider
+    from tests.test_dialogue import _until
+
+    monkeypatch.setenv("CASES", "rescue_call")
+    npc = "BAU_954_MALETH"
+    fake, decider = FakeGame(), FakeDecider("call_help")
+    escalate_finished = asyncio.Event()
+    decide = decider.decide
+
+    async def delayed_decide(rid, lane, priority, deadline_ms, state, questions):
+        if "escalate" in questions:
+            await asyncio.sleep(0.8)
+            escalate_finished.set()
+        return await decide(rid, lane, priority, deadline_ms, state, questions)
+
+    monkeypatch.setattr(decider, "decide", delayed_decide)
+    handle = fake.handle
+
+    async def spawned_wolf(message):
+        await handle(message)
+        if message["type"] == "debug" and message.get("cmd") == "spawn":
+            await fake.send(type="npc_event", npc=npc, kind="monster_near", other="WOLF",
+                            other_name="Волк", distance=400)
+
+    monkeypatch.setattr(fake, "handle", spawned_wolf)
+    trace = TraceWriter(tmp_path / "traces")
+    suite = LiveSuite("live_npc", trace)
+    llm = FakeBackend("Волк! На помощь!", first=0.4, delay=0)
+    async with connected(fake) as link:
+        dialogue = DialogueManager(link, llm, PersonaProvider(None), trace=trace)
+        planner = NpcPlanner(decider, LogApplier(), config=PlannerConfig(ask_attitude=False))
+        link.listeners.append(planner.on_message)
+        incidents = IncidentDesk(link, dialogue, None, Budget(), trace, planner=planner)
+        runner = asyncio.create_task(planner.run())
+        try:
+            await fake.roster({"id": npc, "name": "Малет", "guild": 8,
+                               "distance": 600, "in_view": True})
+            await _until(lambda: npc in planner.npcs)
+            with suite.case("rescue_call") as case:
+                results = await rescue(link, planner=planner, dialogue=dialogue, live=case)
+                assert escalate_finished.is_set()
+                assert case.evidence["turns"]
+                assert all(turn["status"] == "completed" for turn in case.evidence["turns"])
+                assert " ".join(fake.said) == "Волк! На помощь!"
+                assert not dialogue.speaking(npc)
+            assert all(value.startswith("done") for value in results.values())
+            assert suite.results() == {"rescue_call": "done (observed)"}
+        finally:
+            tasks = [runner, *incidents._tasks,
+                     *(task for conv in dialogue.conversations.values() for task in conv.tasks())]
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+
 @pytest.mark.parametrize(("evidence", "settled", "outcome"), [
     ([10, 11], True, "success"), ([12], True, "failure"),
     (None, True, "no_decision"), (None, False, "no_decision"),

@@ -901,9 +901,12 @@ async def rescue(
     if fixed is not None:
         planner.decider = fixed
     event_turn = dialogue.event_turn
+    speech: list[asyncio.Task[None]] = []
 
     def silent_event(who: str, cue: str, *args: Any, **kwargs: Any) -> asyncio.Task[None] | None:
         turn = event_turn(who, cue, *args, **kwargs)
+        if live is not None and who == npc and turn is not None:
+            speech.append(turn)
         if off is not None and turn is not None and who == npc:
             reason = next((text for text in (
                 "идёт на тебя", "напал на тебя", "враждебен и бежит на тебя",
@@ -913,8 +916,7 @@ async def rescue(
                 off.silent(f"дано: Малет молчит ({cue})", who=npc, when=reason)
         return turn
 
-    if live is None:
-        dialogue.event_turn = silent_event  # type: ignore[method-assign]
+    dialogue.event_turn = silent_event  # type: ignore[method-assign]
     recent = getattr(planner.applier, "recent", [])
     verdicts = getattr(planner.applier, "verdicts", [])
     doing: list[tuple[float, str]] = []
@@ -976,7 +978,7 @@ async def rescue(
             return _logged(results)
         await asyncio.sleep(2.0)
 
-        mark, t0 = len(recent), time.monotonic()
+        mark, first_speech, t0 = len(recent), len(speech), time.monotonic()
         deadline = t0 + 90
         await link.debug("spawn", instance="WOLF", near=npc, distance=-500)
         request = await wait(
@@ -993,8 +995,17 @@ async def rescue(
                                     for kind in answer["stimuli"]) for answer in answers),
                 max(0, deadline - time.monotonic()),
             )
-            await asyncio.sleep(0.2)
-            await wait(lambda: not dialogue.speaking(npc), max(0, deadline - time.monotonic()))
+            await wait(
+                lambda: any(answer["at"] >= t0 and "escalate" in answer["questions"]
+                            for answer in answers),
+                max(0, deadline - time.monotonic()),
+            )
+            await wait(
+                lambda: bool(speech[first_speech:])
+                and all(turn.done() for turn in speech[first_speech:])
+                and not dialogue.speaking(npc),
+                max(0, deadline - time.monotonic()),
+            )
             rec = planner.npcs.get(npc)
             live.finish("observed", evidence={
                 "decisions": [answer for answer in answers if answer["at"] >= t0],
