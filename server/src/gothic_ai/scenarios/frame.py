@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from ..talk import TalkDesk
     from ..trust import Trust
     from ..witnesses import Witnesses
+    from .live import LiveCase
 
 log = logging.getLogger("gothic_ai.scenarios")
 MALAK = "BAU_963_MALAK"
@@ -58,13 +59,15 @@ async def frame(
     trust: Trust,
     log_dir: str,
     slot: int = 7,
+    *,
+    live: LiveCase | None = None,
 ) -> dict[str, str]:
     """Declared accusations, a false belief tested by combat, testimony, restitution and load.
 
     All fights come from the reclaim motive, never this scenario.
     """
     results: dict[str, str] = {}
-    off = model_off(dialogue)
+    off = model_off(dialogue) if live is None else None
     service, rumors, people = will.npc_crimes, will.rumors, will.people
     crimes, blame = service.crimes, will.blame
     facts = will.chronicle.facts
@@ -171,9 +174,10 @@ async def frame(
         await link.debug("type", text=f"Лобарт, {words}.")
         await _until(lambda: any(
             row["id"] not in before and words in row.get("trigger", {}).get("text", "")
-            for row in turns()
+            for row in (live.turns(LOBART) if live is not None else turns())
         ), 60)
-        await settled()
+        if live is None:
+            await settled()
 
     async def fight(label: str, crime: dict[str, Any], culprit: str) -> bool:
         cid = str(crime["id"])
@@ -259,12 +263,13 @@ async def frame(
             await wait_message(link, Session, timeout=10)
         if not check("enabled", will.enabled and blame is not None and crimes is not None, log_dir):
             return _logged(results)
-        log.info("given: дано: решающая модель оставляет NPC слушать героя")
+        log.info("Preparing listener with FixedDecider posture=listen")
         talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
         rumors.gate, rumors.stage = lambda *_: False, None
-        prepared = {npc: replace(card, honesty=5, greed=1) for npc, card in original_cards.items()}
-        prepared[LOBART] = replace(prepared[LOBART], courage=3)
-        will.cards = service.cards = prepared
+        if live is None:
+            prepared = {npc: replace(card, honesty=5, greed=1) for npc, card in original_cards.items()}
+            prepared[LOBART] = replace(prepared[LOBART], courage=3)
+            will.cards = service.cards = prepared
         await link.debug("player_hp", hp=5000)
         await link.debug("time", hour=8, minute=0)
         population = {str(p["npc"]) for p in await link.story_people()}
@@ -345,18 +350,35 @@ async def frame(
         # Malak is present in the normal situation, rather than an invented name in the fixture.
         if not await place(MALAK, ROAD, to=LOBART, distance=450, face=LOBART):
             return _logged(results)
-        off.given(
-            "дано: Лобарт верит, что Малак взял вещь из сундука",
-            who=LOBART, when=FRAME_WORDS,
-            calls=[ToolCall("blame", {"who": "Малак", "crime": cid})],
-        )
-        off.silent(
-            "дано: Лобарт молчит (обвинение Малака записано)", who=LOBART, when=FRAME_WORDS,
-        )
+        if off is not None:
+            off.given(
+                "дано: Лобарт верит, что Малак взял вещь из сундука",
+                who=LOBART, when=FRAME_WORDS,
+                calls=[ToolCall("blame", {"who": "Малак", "crime": cid})],
+            )
+            off.silent(
+                "дано: Лобарт молчит (обвинение Малака записано)", who=LOBART, when=FRAME_WORDS,
+            )
         before_trust = trust.of(LOBART)
+        prior = {row["id"] for row in live.records} if live is not None else set()
         await speak(FRAME_WORDS)
         belief = next((f for f in facts("blamed")
                        if f.get("npc") == LOBART and f.get("crime") == cid), {})
+        if live is not None:
+            rows = [row for row in live.turns(LOBART, FRAME_WORDS) if row["id"] not in prior]
+            calls = [
+                call for row in rows for step in row.get("steps", []) for call in step.get("calls", [])
+            ]
+            accepted = {call["name"] for call in calls if call.get("outcome") == "accepted"}
+            decision = "blame" if "blame" in accepted and belief.get("culprit") == MALAK else (
+                "ask_witness" if "ask_witness" in accepted else "no_blame"
+            )
+            live.finish("observed" if rows else "no_decision", evidence={
+                "decision": decision if rows else "no_decision", "calls": calls, "belief": belief,
+                "words": [step.get("text", "") for row in rows for step in row.get("steps", [])],
+            })
+            return _logged(results)
+        assert off is not None
         if not check("frame_believed", belief.get("truth") is False
                      and belief.get("because") == "hero_words", belief):
             return _logged(results)

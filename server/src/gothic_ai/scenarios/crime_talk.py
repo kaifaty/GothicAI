@@ -36,6 +36,7 @@ if TYPE_CHECKING:
     from ..social import Rumors
     from ..talk import TalkDesk
     from ..witnesses import Witnesses
+    from .live import LiveCase
 
 log = logging.getLogger(__name__)
 DENIAL = "я ничего не брал в твоем доме"  # the game's input normalizes ё to е
@@ -53,6 +54,8 @@ async def crime_talk(
     chests: ChestDesk,
     concerns: Concerns,
     slot: int = 7,
+    *,
+    live: LiveCase | None = None,
 ) -> dict[str, str]:
     """Three independent scenes from save 1 with declared NPC decisions.
 
@@ -62,7 +65,7 @@ async def crime_talk(
     knowledge, hop, freshness or silence checks. Reloading resets the scripts between scenes.
     """
     results: dict[str, str] = {}
-    off = model_off(dialogue)
+    off = model_off(dialogue) if live is None else None
     original_gate, original_stage = rumors.gate, rumors.stage
     meeting = False
     facts = service.chronicle.facts
@@ -152,7 +155,7 @@ async def crime_talk(
     await link.wait_world()
     if link.session is None:
         await wait_message(link, Session, timeout=10)
-    log.info("given: дано: собеседники слушают героя (FixedDecider posture=listen)")
+    log.info("Preparing listeners with FixedDecider posture=listen")
     talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
     rumors.gate = lambda _r, a, b: meeting and a == HILDA and b == LOBART
     rumors.stage = None  # bare facts, no background gossip model calls
@@ -212,28 +215,62 @@ async def crime_talk(
             "со слов" in prompt and "Хильд" in prompt and service.describe(crime) in prompt,
             [line for line in prompt.splitlines() if service.describe(crime) in line],
         )
-        off.given(
-            "дано: Лобарт спрашивает Хильду о краже",
-            who=LOBART, when=DENIAL,
-            calls=[ToolCall("ask_witness", {"who": "Хильда", "said": DENIAL})],
-        )
-        off.silent(
-            "дано: Лобарт молчит (вопрос Хильде задан)", who=LOBART, when=DENIAL,
-        )
-        off.given(
-            "дано: реплика свидетеля Хильды о краже кубка",
-            who=HILDA, when="спрашивает тебя о герое",
-            line="Я сама видела, как он взял серебряный кубок в нашем доме.",
-        )
-        off.given(
-            "дано: Лобарт уличает героя по показанию Хильды",
-            who=LOBART, when="Ответ:",
-            calls=[ToolCall("catch_lie", {"said": DENIAL, "seen": "С1"})],
-        )
-        off.silent(
-            "дано: Лобарт молчит (уличение по показанию записано)", who=LOBART, when="Ответ:",
-        )
+        if off is not None:
+            off.given(
+                "дано: Лобарт спрашивает Хильду о краже",
+                who=LOBART, when=DENIAL,
+                calls=[ToolCall("ask_witness", {"who": "Хильда", "said": DENIAL})],
+            )
+            off.silent(
+                "дано: Лобарт молчит (вопрос Хильде задан)", who=LOBART, when=DENIAL,
+            )
+            off.given(
+                "дано: реплика свидетеля Хильды о краже кубка",
+                who=HILDA, when="спрашивает тебя о герое",
+                line="Я сама видела, как он взял серебряный кубок в нашем доме.",
+            )
+            off.given(
+                "дано: Лобарт уличает героя по показанию Хильды",
+                who=LOBART, when="Ответ:",
+                calls=[ToolCall("catch_lie", {"said": DENIAL, "seen": "С1"})],
+            )
+            off.silent(
+                "дано: Лобарт молчит (уличение по показанию записано)", who=LOBART, when="Ответ:",
+            )
+        prior = {row["id"] for row in live.records} if live is not None else set()
         await link.debug("type", text=f"Лобарт, {DENIAL}.")
+        if live is not None:
+            def decision_turns() -> list[dict[str, Any]]:
+                return [row for row in live.turns(LOBART, DENIAL) if row["id"] not in prior]
+
+            def resolved() -> bool:
+                rows = decision_turns()
+                asked = any(
+                    call.get("name") == "ask_witness" and call.get("outcome") == "accepted"
+                    for row in rows for step in row.get("steps", []) for call in step.get("calls", [])
+                )
+                return bool(rows) and (not asked or any(
+                    "Ответ:" in row.get("trigger", {}).get("text", "") for row in rows
+                ))
+
+            await _until(resolved, 90)
+            rows = decision_turns()
+            calls = [
+                call for row in rows for step in row.get("steps", []) for call in step.get("calls", [])
+            ]
+            caught = [f for f in facts("caught") if f.get("crime") == cid and f.get("witness") == HILDA]
+            testimony = [f for f in facts("testimony") if f.get("witness") == HILDA]
+            accepted = [
+                call for call in calls if call.get("name") == "catch_lie"
+                and call.get("outcome") == "accepted"
+                and str(call.get("arguments", {}).get("seen", "")).startswith("С")
+            ]
+            live.finish(
+                "success" if accepted and caught else "failure" if resolved() else "no_decision",
+                evidence={"calls": calls, "caught": caught, "testimony": testimony},
+            )
+            return _logged(results)
+        assert off is not None
         await _until(lambda: any(f.get("crime") == cid for f in facts("caught")), 90)
         await _until(
             lambda: (

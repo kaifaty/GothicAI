@@ -131,6 +131,7 @@ GIVEN = {
 }
 
 LIVE = {
+    "live_lies",
     "haggle",
     "interject",
     "showrunner_live",

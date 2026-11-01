@@ -4,8 +4,101 @@ import json
 
 import pytest
 
-from gothic_ai.scenarios.live import LiveSuite, estimate, summarize, write_report
+from gothic_ai.scenarios.live import LiveSuite, estimate, selected_cases, summarize, write_report
 from gothic_ai.trace import TraceWriter
+
+
+def test_live_lies_selection_and_recorded_cases(tmp_path, monkeypatch):
+    names = (
+        "seen_alibi", "trace_age", "trace_control", "witness_alibi", "vcheck_claim",
+        "crime_testimony", "frame_belief", "cover_offer",
+    )
+    assert tuple(spec.name for spec in selected_cases("live_lies")) == names
+    assert tuple(spec.name for spec in selected_cases("live_lies", "cover_offer, seen_alibi")) == (
+        "seen_alibi", "cover_offer",
+    )
+    with pytest.raises(ValueError, match="unknown CASES for live_lies: broken"):
+        selected_cases("live_lies", "broken")
+    monkeypatch.delenv("CASES", raising=False)
+    trace = TraceWriter(tmp_path / "traces")
+    suite = LiveSuite("live_lies", trace)
+    outcomes = ("success", "failure", "success", "no_decision", "failure", "success", "observed", "observed")
+    for name, outcome in zip(names, outcomes, strict=True):
+        with suite.case(name) as case:
+            trace.write({"type": "turn", "id": name, "steps": [{}], "events": []})
+            case.finish(outcome, evidence={"decision": name})
+    assert all(value.startswith("done") for value in suite.results().values())
+    data = json.loads((tmp_path / "live.json").read_text())
+    assert [case["name"] for case in data["cases"]] == list(names)
+    assert [case["outcome"] for case in data["cases"]] == list(outcomes)
+    assert all(case["requests"] == 1 for case in data["cases"])
+
+
+@pytest.mark.parametrize(("tool_outcome", "has_caught", "status", "outcome"), [
+    ("accepted", True, "completed", "success"),
+    ("accepted", False, "completed", "failure"),
+    ("rejected", True, "completed", "failure"),
+    ("accepted", False, "llm_error", "no_decision"),
+])
+async def test_live_vcheck_records_execution_instead_of_promised_check(
+    tmp_path, monkeypatch, tool_outcome, has_caught, status, outcome,
+):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, Mock
+
+    from gothic_ai.scenarios import lies as scenario
+
+    monkeypatch.setenv("CASES", "vcheck_claim")
+    monkeypatch.setattr(scenario.asyncio, "sleep", AsyncMock())
+    monkeypatch.setattr(scenario, "model_off", Mock(side_effect=AssertionError("live uses no givens")))
+
+    async def until(check, timeout):
+        return bool(check())
+
+    monkeypatch.setattr(scenario, "_until", until)
+    trace = TraceWriter(tmp_path / "traces")
+    suite = LiveSuite("live_lies", trace)
+    npc = scenario.LOBART
+    caught = {"npc": npc, "quest": scenario.BUGS, "how": "сходил проверить: хищники живы"}
+    facts = {}
+
+    async def debug(command, **kwargs):
+        if command == "type":
+            trace.write({
+                "type": "turn", "id": "claim", "npc": npc, "status": status,
+                "trigger": {"text": kwargs["text"]}, "events": [],
+                "steps": [{"text": "I will check.", "calls": [{
+                    "name": "check_claim", "arguments": {"quest": scenario.BUGS},
+                    "outcome": tool_outcome,
+                }]}],
+            })
+            if has_caught:
+                facts["caught"] = [caught]
+
+    link = SimpleNamespace(
+        session=object(), wait_world=AsyncMock(), debug=AsyncMock(side_effect=debug),
+        story_effect=AsyncMock(), story_spawn=AsyncMock(), evaluate=AsyncMock(return_value=100),
+        story_state=AsyncMock(return_value={"npcs": {"bug": {
+            "distance": (scenario.SEE_CM + scenario.CHECK_CM) / 2,
+        }}}),
+    )
+    dialogue = SimpleNamespace(
+        conversations={}, open=Mock(return_value=object()),
+        _situation=AsyncMock(return_value=("", None, None)),
+        _offered=Mock(return_value=[SimpleNamespace(name="check_claim")]),
+    )
+    talk = SimpleNamespace(people={npc: SimpleNamespace(name="Lobart", distance=250)})
+    vanilla = SimpleNamespace(
+        checking=set(), chronicle=SimpleNamespace(facts=lambda kind: facts.get(kind, [])),
+    )
+    with suite.case("vcheck_claim") as case:
+        result = await scenario.vanilla_check(link, dialogue, talk, vanilla, live=case)
+    assert all(value.startswith("done") for value in result.values())
+    assert suite.results() == {"vcheck_claim": f"done ({outcome})"}
+    [case] = json.loads((tmp_path / "live.json").read_text())["cases"]
+    assert case["outcome"] == outcome
+    assert case["evidence"]["caught"] == ([caught] if has_caught else [])
+    assert case["requests"] == 1
 
 
 def test_case_outcomes_requests_and_live_json(tmp_path, monkeypatch):

@@ -134,6 +134,8 @@
 #       Group 2, LLM=off via auto; SAVE=save_slot_1.sav.
 #   trace: given: Lobart catches a lie about an arrow's age by its fresh trace; a stranger's arrow and
 #       denied authorship are the control. Group 2, LLM=off via auto; SAVE=save_slot_1.sav.
+#   live_lies: live-only lie/evidence cases, reusing the Group 2 fixtures without given decisions.
+#       Run through scripts/e2e-live.sh; CASES selects cases; SAVE=save_slot_1.sav; TIMEOUT=2400.
 #   broken: given: Lobart catches a lie about fresh fence debris; another NPC's sword break is the control.
 #       Group 2, LLM=off via auto; SAVE=save_slot_1.sav.
 #   witness: given: Lobart asks a farm witness, catches the lie from its testimony, and asks a far acquaintance.
@@ -435,6 +437,7 @@ E2E_DEFAULT_TIMEOUT=240
 if [[ "$SCENARIO" == memprobe ]]; then E2E_DEFAULT_TIMEOUT=1200; fi
 if [[ "$SCENARIO" == surrender_live || "$SCENARIO" == neural-still || "$SCENARIO" == showrunner_live || "$SCENARIO" == vanilla_line_live ]]; then E2E_DEFAULT_TIMEOUT=1200; fi
 if [[ "$SCENARIO" == haggle ]]; then E2E_DEFAULT_TIMEOUT=1200; fi
+if [[ "$SCENARIO" == live_lies ]]; then E2E_DEFAULT_TIMEOUT=2400; fi
 if [[ "$SCENARIO" == interject ]]; then E2E_DEFAULT_TIMEOUT=600; fi
 if [[ "$SCENARIO" == chests_lobart ]]; then E2E_DEFAULT_TIMEOUT=420; fi
 if [[ "$SCENARIO" == feat_fame ]]; then E2E_DEFAULT_TIMEOUT=420; fi
@@ -455,6 +458,10 @@ if [[ "$SCENARIO" = neural || "$SCENARIO" = neural-companion || "$SCENARIO" = ne
 fi
 if [[ "$SCENARIO" == surrender_live && ( "$LLM" == fake || -n "${SAVE:-}" ) ]]; then
   echo 'scenario surrender_live requires a non-fake LLM and a new game (unset SAVE)' >&2
+  exit 2
+fi
+if [[ "$SCENARIO" == live_lies && -z "${SAVE:-}" ]]; then
+  echo 'scenario live_lies requires SAVE with the Group 2 farm fixture' >&2
   exit 2
 fi
 if [[ ( "$SCENARIO" == bandit_hold || "$SCENARIO" == death_load ) && -n "${SAVE:-}" ]]; then
@@ -780,6 +787,39 @@ fi
 if [ "$SCENARIO" = "trace" ] || [ "$SCENARIO" = "broken" ] || [ "$SCENARIO" = "trace_crime" ]; then
   GAME_ENV+=("OPENGOTHIC_BENCH=$ROOT/scripts/bench/$SCENARIO-e2e.bench" "OPENGOTHIC_BENCH_OUT=$LOG_DIR"
     "OPENGOTHIC_BENCH_REALTIME=1" "OPENGOTHIC_BENCH_KEEP=1" "TEMPEST_BACKGROUND=1")
+fi
+if [[ "$SCENARIO" == live_lies ]]; then
+  # Reuse the native arrow fixture once per selected trace case. A file barrier prevents
+  # unrelated conversation replies from releasing the arrow bench before its scenario starts.
+  (cd "$ROOT/server" && uv run python - "$ROOT" "$LOG_DIR" <<'PY'
+import os
+import sys
+from pathlib import Path
+
+from gothic_ai.scenarios.live import selected_cases
+
+root, directory = map(Path, sys.argv[1:])
+fixture = (root / "scripts/bench/trace-e2e.bench").read_text().splitlines()
+blocks = []
+for spec in selected_cases("live_lies", os.environ.get("CASES")):
+    if spec.name not in {"trace_age", "trace_control"}:
+        continue
+    gate = directory / f"live-trace-{spec.name}"
+    gate.unlink(missing_ok=True)
+    blocks.append(f"bodylive wait {gate} 2400000")
+    for line in fixture:
+        if line == "quit" or spec.name == "trace_control" and line == "mark positive_ready":
+            break
+        blocks.append(line)
+if blocks:
+    blocks.append("wait 2400000")
+    (directory / "live-lies.bench").write_text("\n".join(blocks) + "\n")
+PY
+  )
+  if [[ -f "$LOG_DIR/live-lies.bench" ]]; then
+    GAME_ENV+=("OPENGOTHIC_BENCH=$LOG_DIR/live-lies.bench" "OPENGOTHIC_BENCH_OUT=$LOG_DIR"
+      "OPENGOTHIC_BENCH_REALTIME=1" "OPENGOTHIC_BENCH_KEEP=1" "TEMPEST_BACKGROUND=1")
+  fi
 fi
 if { [ "$SCENARIO" = "broken" ] || [ "$SCENARIO" = "trace_crime" ]; } && [[ -z "${OPENGOTHIC_FRACTURE+set}" ]]; then
   GAME_ENV+=("OPENGOTHIC_FRACTURE=$HOME/.local/share/gothic-ai/fracture")

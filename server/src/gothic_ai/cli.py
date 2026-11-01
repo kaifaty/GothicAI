@@ -1813,6 +1813,21 @@ async def serve(args: argparse.Namespace) -> int:
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info("scenario crime_meet: %d checks, %d failed", len(results), len(bad))
                 exit_code = 1 if bad else 0
+            elif args.scenario == "live_lies":
+                assert state.dialogue is not None and state.talk is not None
+                assert state.sightings is not None and state.witnesses is not None
+                assert state.vanilla is not None and state.crimes is not None
+                assert state.deals is not None and state.rumors is not None
+                assert state.chests is not None and state.concerns is not None
+                assert state.npc_will is not None and state.trust is not None and args.trace_dir is not None
+                results = await scenarios.live_lies(
+                    link, state.dialogue, state.talk, state.sightings, state.witnesses,
+                    state.vanilla, state.crimes, state.deals, state.rumors, state.chests,
+                    state.concerns, state.npc_will, state.trust, str(Path(args.trace_dir).parent),
+                )
+                bad = {key: value for key, value in results.items() if not value.startswith("done")}
+                log.info("scenario live_lies: %d checks, %d failed", len(results), len(bad))
+                exit_code = 1 if bad else 0
             elif args.scenario == "crime_talk":
                 assert state.crimes is not None and state.dialogue is not None and state.talk is not None
                 assert (
@@ -3236,6 +3251,7 @@ def main() -> None:
             "hero_yield",
             "humiliate",
             "surrender_live",
+            "live_lies",
             "orders",
             "fight_reactions_wolf",
             "fight_reactions_sight",
