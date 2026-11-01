@@ -623,6 +623,16 @@ struct Bench {
   std::vector<Hold>             holds;
   std::vector<KeyCodec::Action> taps;
 
+  // `dodge ... before <attacker> <ms>`: the melee dodge waits for the attacker's next blow to come that near
+  struct DodgeArm {
+    Npc*                  npc      = nullptr;
+    Npc*                  attacker = nullptr;
+    MeleeDodge::Direction dir      = MeleeDodge::Direction::Back;
+    uint64_t              leadMs   = 0;
+    uint64_t              until    = 0;
+    };
+  std::optional<DodgeArm> dodgeArm;
+
   CamMode     cam       = C_Game;
   float       camDist   = 220;
   float       camHeight = 40;
@@ -1786,7 +1796,7 @@ bool keyAction(std::string_view k, KeyCodec::Action& a) {
     {"turnl",  KeyCodec::RotateL}, {"turnr",KeyCodec::RotateR},   {"jump",KeyCodec::Jump},  {"walk", KeyCodec::Walk},
     {"sneak",  KeyCodec::Sneak},   {"weapon",KeyCodec::Weapon},   {"action",KeyCodec::ActionGeneric},
     {"melee",  KeyCodec::WeaponMele},{"bow",KeyCodec::WeaponBow}, {"spell",KeyCodec::WeaponMage3},
-    {"parade", KeyCodec::Parade},  {"breath",KeyCodec::Walk},
+    {"parade", KeyCodec::Parade},  {"breath",KeyCodec::Walk},     {"dodge",KeyCodec::Dodge},
     };
   for(auto& i:keys)
     if(i.name==k) {
@@ -7454,6 +7464,40 @@ void placedItemsDiagnose(World& world,Npc& player,uint32_t zenId,bool control) {
     ",\"recovery_rays_tested\":"+std::to_string(tested)+",\"recovery_triggers\":"+std::to_string(triggers)+
     ",\"trace_complete\":"+(!samples.empty() && maximumGap<=1 && steps>=300?"true":"false"));
 }
+
+bool dodgeDirection(std::string_view name, MeleeDodge::Direction& dir) {
+  if(name=="back" || name=="none")
+    dir = MeleeDodge::Direction::Back;
+  else if(name=="left")
+    dir = MeleeDodge::Direction::Left;
+  else if(name=="right")
+    dir = MeleeDodge::Direction::Right;
+  else if(name=="forward")
+    dir = MeleeDodge::Direction::Forward;
+  else
+    return false;
+  return true;
+  }
+
+// `dodge ... before`: fires as the attacker's next blow comes within leadMs of its contact
+void meleeDodgeFields(World& world) {
+  if(!bench.dodgeArm)
+    return;
+  const auto arm = *bench.dodgeArm;
+  if(world.tickCount()>arm.until) {
+    say("dodge " + symName(world,arm.npc) + ": no blow of " + symName(world,arm.attacker) + " came in time");
+    bench.dodgeArm.reset();
+    return;
+    }
+  const auto contact = arm.attacker->nextMeleeContactMs();
+  if(!contact || *contact>arm.leadMs)
+    return;
+  bench.dodgeArm.reset();
+  const bool ok = arm.npc->meleeDodge(arm.dir);
+  say("dodge " + symName(world,arm.npc) + " " + std::string(MeleeDodge::name(arm.dir)) + " before the blow of " +
+      symName(world,arm.attacker) + ", its contact in " + std::to_string(*contact) + " ms: " +
+      (ok ? "started" : "not started"));
+  }
 
 void placedItemsFields(World& world,Npc& player,PlayerControl& ctrl) {
   auto& state=bench.placedItems;
@@ -17659,6 +17703,37 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     n->startMeleeStun(*by,a.size()>2 ? a[2] : "parried");
     say("stun " + symName(w,n) + (n->isMeleeStunned() ? " on" : " refused"));
     }
+  else if(c=="dodge") {
+    // dodge [<npc>] back|left|right|forward|none [before <attacker> <ms>]: the melee dodge (melee_dodge) that way
+    // relative to its facing, now, or as the attacker's next blow comes within <ms> of its contact (8 s at
+    // most). Its line in the log: the way, the armour, the move and animation or fallback, cost, window. The
+    // hero's own key is `tap dodge` (the way from the movement keys held then)
+    size_t i = 1;
+    Npc*   n = &pl;
+    MeleeDodge::Direction dir = MeleeDodge::Direction::Back;
+    if(a.size()>i && !dodgeDirection(a[i],dir)) {
+      n = findNpc(w,pl,a[i]);
+      ++i;
+      }
+    if(n==nullptr || a.size()<=i || !dodgeDirection(a[i],dir)) {
+      say("dodge: no npc or way " + line);
+      return;
+      }
+    ++i;
+    if(a.size()>i && a[i]=="before") {
+      Npc* by = a.size()>i+1 ? findNpc(w,pl,a[i+1]) : nullptr;
+      if(by==nullptr || by==n) {
+        say("dodge: no attacker " + line);
+        return;
+        }
+      bench.dodgeArm = Bench::DodgeArm{n,by,dir,uint64_t(std::max(0.f,num(a,i+2,120))),w.tickCount()+8000};
+      say("dodge " + symName(w,n) + " " + std::string(MeleeDodge::name(dir)) + " armed: " +
+          std::to_string(bench.dodgeArm->leadMs) + " ms before the blow of " + symName(w,by));
+      return;
+      }
+    const bool ok = n->meleeDodge(dir);
+    say("dodge " + symName(w,n) + " " + std::string(MeleeDodge::name(dir)) + (ok ? ": started" : ": not started"));
+    }
   else if(c=="clear") {
     // clear [radius]: the npcs around the hero leave the world (rats, wolves that would join in), not the
     // watched one
@@ -17686,6 +17761,8 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
         bench.pinned = nullptr;
       if(bench.downNpc==n)
         bench.downNpc = nullptr;
+      if(bench.dodgeArm && (bench.dodgeArm->npc==n || bench.dodgeArm->attacker==n))
+        bench.dodgeArm.reset();
       w.removeNpc(*n);
       }
     say(out);
@@ -20566,6 +20643,7 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
     if(!fixture.walker && !fixture.walkArrived)player->setDirection(fixture.walkDirection);
     }
 
+  meleeDodgeFields(*world);
   placedItemsFields(*world,*player,ctrl);
   movableFields(*world);
   ownMeshFields(*world,*player);

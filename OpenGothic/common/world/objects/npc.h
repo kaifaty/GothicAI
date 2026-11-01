@@ -13,6 +13,7 @@
 #include "game/archerai.h"
 #include "game/gamescript.h"
 #include "game/ragdollsave.h"
+#include "game/meleedodge.h"
 #include "game/meleeimpact.h"
 #include "game/meleestamina.h"
 #include "physics/dynamicworld.h"
@@ -327,6 +328,16 @@ class Npc final {
     bool      isStaminaExhausted() const;
     bool      isMeleeStunned() const;
     void      startMeleeStun(Npc& by, std::string_view reason);
+    // The melee dodge ([GAME] melee_dodge, game/meleedodge): that way relative to the facing, the move by the
+    // armour, its stamina, its window without incoming harm. Any npc may call it; the hero's input does
+    // (PlayerControl). false: refused, no animation, or the pose did not take it. The playing dodge is told by
+    // its animation (a BS_PARADE layer named T_<1H|2H|FIST><DASH|ROLL|ROLLHEAVY><B|L|R|F>); saves keep nothing.
+    bool      meleeDodge(MeleeDodge::Direction direction);
+    bool      isMeleeDodging() const;
+    bool      isMeleeDodgeRoll() const;    // a roll or a heavy roll plays: foot IK off, as in a jump
+    bool      isMeleeDodgeInvulnerable() const;
+    // ms until its own blow's next contact (the optimal frame, after its speed and hit stop); none: no blow
+    std::optional<uint64_t> nextMeleeContactMs() const;
     auto      beginCastSpell() -> BeginCastResult;
     void      endCastSpell(bool playerCtrl = false);
     void      setActiveSpellInfo(int32_t info);
@@ -1020,6 +1031,14 @@ class Npc final {
     float                         meleeStunBonus(const Npc& attacker) const;
     MeleeImpact::BackstabKind      meleeBackstabKind(const Npc& attacker) const;
     float                         meleeBackstabMultiplier(MeleeImpact::BackstabKind kind) const;
+    struct MeleeDodgeLayer final {
+      MeleeDodge::Move move;
+      uint64_t         origin = 0; // the layer's start as it began: a hit stop moves its start, not this
+      };
+    std::optional<MeleeDodgeLayer> meleeDodgeLayer() const;
+    // An incoming blow, arrow or spell inside the dodge's window: true, it does not pass (logged)
+    bool                          meleeDodgeEvades(Npc& other, std::string_view kind);
+    void                          meleeDodgeNote(const std::string& text, std::string_view phase, const std::string& fields);
     // Transient per-attacker awareness, sampled before damage perception changes combat state.
     std::vector<std::pair<const Npc*,uint64_t>> meleeRecentHits;
     std::string                   meleeStunReason;

@@ -300,6 +300,11 @@ FootIk::Input FootIk::mkInput(const Npc& npc, World& world, const Matrix4x4& obj
     in.hardOff = true;
     return in;
     }
+  // A melee roll goes over the ground on the body, off as in a jump; a dash fades out as the jump back does
+  if(bs==(BS_PARADE & BS_MAX) && npc.isMeleeDodgeRoll()) {
+    in.hardOff = true;
+    return in;
+    }
   // Two legs: standing, locomotion, aiming a bow (a shot is a frame of BS_HIT) and casting a spell, the
   // feet stand still there; other animations (attacks, items, ...) fade out.
   // Four legs keep it: a beast attacks standing on the ground, and is not tilted to it otherwise

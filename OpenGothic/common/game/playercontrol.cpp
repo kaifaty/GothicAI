@@ -34,6 +34,7 @@ const char* playerPoseEndReason(KeyCodec::Action a) {
     case KeyCodec::RotateL:       return "key RotateL";
     case KeyCodec::RotateR:       return "key RotateR";
     case KeyCodec::Jump:          return "key Jump";
+    case KeyCodec::Dodge:         return "key Dodge";
     case KeyCodec::ActionGeneric: return "key ActionGeneric";
     case KeyCodec::ActionLeft:    return "key ActionLeft";
     case KeyCodec::ActionRight:   return "key ActionRight";
@@ -153,6 +154,17 @@ void PlayerControl::onKeyPressed(KeyCodec::Action a, Tempest::KeyEvent::KeyType 
       return;
       }
     }
+
+  // The melee dodge: its own key, or the jump key (by default) with a melee weapon or the fists drawn. The way is
+  // read from the movement keys now, relative to the hero's facing: forward/back, else the strafe keys, else the
+  // keys that turn the hero (the arrows); none: back. Out of melee the jump key jumps.
+  if(pl!=nullptr && (a==Action::Dodge || (a==Action::Jump && KeyCodec::dodgeOnJump(mapping))) && dodgeKeyDodges(*pl)) {
+    dodgeRequest = MeleeDodge::direction(movement.forwardBackward.value(),movement.strafeRightLeft.value(),
+                                         movement.turnRightLeft.value());
+    return;
+    }
+  if(a==Action::Dodge)
+    return;
 
   if(pl!=nullptr) {
     if(a==Action::Weapon) {
@@ -572,7 +584,16 @@ bool PlayerControl::canInteract() const {
   return true;
   }
 
+bool PlayerControl::dodgeKeyDodges(const Npc& pl) const {
+  const auto ws = pl.weaponState();
+  const auto c  = Gothic::inst().camera();
+  return Gothic::physicsFlags().meleeDodge && pl.isHuman() &&
+         (ws==WeaponState::Fist || ws==WeaponState::W1H || ws==WeaponState::W2H) &&
+         pl.interactive()==nullptr && (c==nullptr || !c->isFree());
+  }
+
 void PlayerControl::clearInput() {
+  dodgeRequest.reset();
   movement.reset();
   std::memset(ctrl, 0,sizeof(ctrl));
   std::memset(actrl,0,sizeof(actrl));
@@ -713,6 +734,8 @@ bool PlayerControl::tickMove(uint64_t dt) {
     return true;
 
   if(pl->isMeleeStunned()) {
+    if(dodgeRequest)
+      pl->meleeDodge(*dodgeRequest); // refused: stunned
     if(actrl[ActForward] || actrl[ActMove] || actrl[ActKill] || actrl[ActLeft] || actrl[ActRight])
       pl->doAttack(Npc::Anim::Attack,BS_HIT);
     if(actrl[ActBack]) {
@@ -755,6 +778,7 @@ bool PlayerControl::tickMove(uint64_t dt) {
   else if(ctrl[Action::ActionGeneric] || ctrl[Action::Jump])
     pl->setPlayerPose(false,ctrl[Action::ActionGeneric] ? "key ActionGeneric" : "key Jump");
   if(pl->tickPlayerPose()) {
+    dodgeRequest.reset();
     pl->setDirection(pl->rotation()+rotMouse);
     rotMouse = rotMouseY = 0;
     runAngleDest = 0;
@@ -801,6 +825,9 @@ void PlayerControl::implMove(uint64_t dt) {
   bool  allowRot  = !ctrl[KeyCodec::ActionGeneric] && pl.isRotationAllowed();
 
   Npc::Anim ani = Npc::Anim::Idle;
+  // a press is taken this tick or not at all
+  const auto dodge = dodgeRequest;
+  dodgeRequest.reset();
 
   if(bs==BS_DEAD)
     return;
@@ -896,6 +923,12 @@ void PlayerControl::implMove(uint64_t dt) {
     }
 
   pl.setDirectionY(rotY);
+  if(dodge && pl.meleeDodge(*dodge)) {
+    pl.setAnimRotate(0);
+    pl.setDirection(rot);
+    runAngleDest = 0;
+    return;
+    }
   if(pl.isFalling() || pl.isSlide() || pl.isInAir() || pl.isJump() || pl.isJumpUp()){
     pl.setDirection(rot);
     runAngleDest = 0;
