@@ -1834,7 +1834,12 @@ async def wolf_load_scenario(link: GameLink, talk: TalkDesk, beasts: BeastDesk) 
     async def kill(wolf: str | None) -> None:
         if wolf in beasts.wolves:
             await link.debug("kill", instance=wolf.split("#", 1)[0], by="PLAYER")
-            await _until(lambda: wolf not in beasts.wolves, 5)
+            if not await _until(lambda: wolf not in beasts.wolves, 5):
+                raise GameError(f"wolf_load preparation: {wolf} remained after cleanup")
+            # BeastWatch's 1500 ms pack-hit window includes the dead wolf.
+            killed_t = await ticks()
+            if not await _until_async(ticks, lambda now: now - killed_t >= 1500, 10):
+                raise GameError("wolf_load preparation: game clock did not clear the pack-hit window")
 
     async def ticks() -> int:
         # A fresh snapshot carries world.tickCount() even when there are no wolves to report.

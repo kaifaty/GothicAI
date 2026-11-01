@@ -132,6 +132,7 @@ from .scenarios.crime_law import crime_law as crime_law_scenario
 from .scenarios.crime_talk import crime_talk as crime_talk_scenario
 from .scenarios.crimes import crimes as crimes_scenario
 from .scenarios.feats import ScenarioArtist
+from .scenarios.groups import GIVEN, LIVE, OFF
 from .showrunner import Showrunner
 from .sightings import Sightings
 from .social import Rumors
@@ -849,9 +850,6 @@ async def serve(args: argparse.Namespace) -> int:
     ):
         log.error("scenario %s requires --neural-body and, for service policy, GOTHIC_BODY_URL "
                   "(or --body-url)", args.scenario)
-        return 2
-    if args.scenario == "neural-soak" and args.llm != "fake":
-        log.error("scenario %s requires --llm fake", args.scenario)
         return 2
     if args.scenario == "feats" and args.llm not in {"fake", "chatgpt"}:
         log.error("scenario feats requires --llm fake or chatgpt")
@@ -1585,7 +1583,7 @@ async def serve(args: argparse.Namespace) -> int:
                 where = Path(os.environ.get("LOG_DIR") or Path(args.trace_dir).parent)
                 assert state.bodies is not None
                 results = await scenarios.memprobe_scenario(
-                    link, bodies=state.bodies, log_dir=where, llm_name=state.dialogue.llm.name,
+                    link, bodies=state.bodies, log_dir=where,
                     body_enabled=bodypilot is not None or bool(args.body_url),
                 )
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
@@ -3145,7 +3143,7 @@ def _add_voice_args(p: argparse.ArgumentParser) -> None:
 
 
 def _add_llm_args(p: argparse.ArgumentParser) -> None:
-    p.add_argument("--llm", choices=BACKENDS, default=os.environ.get("GOTHIC_AI_LLM", "chatgpt"))
+    p.add_argument("--llm", choices=(*BACKENDS, "auto"), default=os.environ.get("GOTHIC_AI_LLM", "chatgpt"))
     p.add_argument("--model", help="model id (default depends on the backend)")
     p.add_argument("--base-url", help="API base url (openai/local backends)")
     p.add_argument("--reasoning-effort", default="low", help="reasoning effort for Responses models")
@@ -3584,6 +3582,15 @@ def main() -> None:
     p.add_argument("--game-dir", default=os.environ.get("GOTHIC_DIR", DEFAULT_GAME_DIR))
 
     args = parser.parse_args()
+    scenario = getattr(args, "scenario", None)
+    if getattr(args, "llm", None) == "auto":
+        if scenario is None:
+            parser.error("--llm auto requires --scenario")
+        args.llm = "off" if scenario in OFF | GIVEN else "fake"
+    if scenario in LIVE and args.llm in {"fake", "off"}:
+        parser.error(f"scenario {scenario} is live: set LLM=chatgpt|openai|local")
+    if scenario in OFF | GIVEN and args.llm != "off":
+        parser.error(f"scenario {scenario} requires --llm off")
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s %(levelname).1s %(name)s: %(message)s",

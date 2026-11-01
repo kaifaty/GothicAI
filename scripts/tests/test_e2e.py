@@ -144,7 +144,7 @@ sleep() { printf 'sleep %s\n' "$1" >> "$CALLS"; }
 
 
 class SoakControlTests(unittest.TestCase):
-    def test_off_is_accepted_and_forwarded_to_server(self):
+    def test_off_and_default_auto_are_forwarded_to_server(self):
         source = SCRIPT.read_text()
         selection = source[source.index('SCENARIO="${SCENARIO:-m0}"'):source.index('ASR="${ASR:-fake}"')]
         launch = source[source.index('(cd "$ROOT/server" && exec uv run gothic-ai serve'):
@@ -168,27 +168,34 @@ class SoakControlTests(unittest.TestCase):
                 )
                 self.assertEqual(done.returncode, 0, done.stderr)
                 args = (root / "server.log").read_text().splitlines()
-                self.assertEqual(args[args.index("--llm") + 1], llm or "fake")
+                self.assertEqual(args[args.index("--llm") + 1], llm or "auto")
 
     def test_control_selects_native_body_without_relaxing_other_launch_requirements(self):
         source = SCRIPT.read_text()
         selection = source[source.index('SCENARIO="${SCENARIO:-m0}"'):source.index('ASR="${ASR:-fake}"')]
         cases = [
-            ("memprobe", "0", "", "", "fake", 0, "--no-neural-body", None),
-            ("neural-soak", "1", "", "", "fake", 0, "--no-neural-body", None),
-            ("neural-soak", "1", "tcp://policy:47835", "", "fake", 0, "--no-neural-body", None),
-            ("neural-soak", "0", "tcp://policy:47835", "", "fake", 0,
+            ("memprobe", "0", "", "", "off", 0, "--no-neural-body", None),
+            ("neural-soak", "1", "", "", "off", 0, "--no-neural-body", None),
+            ("neural-soak", "1", "tcp://policy:47835", "", "off", 0, "--no-neural-body", None),
+            ("neural-soak", "0", "tcp://policy:47835", "", "off", 0,
              "--neural-body--body-policyengine", None),
-            ("neural-soak", "0", "", "", "fake", 0, "--neural-body--body-policyengine", None),
-            ("neural-soak", "0", "", "", "fake", 2, None, "service"),
-            ("neural-soak", "1", "", "/tmp/save.sav", "fake", 2, None, None),
-            ("neural-soak", "1", "", "", "chatgpt", 2, None, None),
-            ("neural-load", "1", "tcp://policy:47835", "", "fake", 2, None, None),
+            ("neural-soak", "0", "", "", "off", 0, "--neural-body--body-policyengine", None),
+            ("neural-soak", "0", "", "", "off", 2, None, "service"),
+            ("neural-soak", "1", "", "/tmp/save.sav", "off", 2, None, None),
+            ("neural-load", "1", "tcp://policy:47835", "", "off", 2, None, None),
+            ("bandit_parley", "0", "", "", None, 0, "--neural-body--body-policyengine", None),
+            ("feats", "0", "", "", None, 0, "--neural-body--body-policyengine", None),
+            ("feat_fame", "0", "", "", None, 0, "--neural-body--body-policyengine", None),
+            ("bandit_parley", "0", "", "", "chatgpt", 2, None, None),
         ]
         for scenario, control, url, save, llm, status, body_flag, policy in cases:
             with self.subTest(scenario=scenario, control=control, url=url, save=save, llm=llm, policy=policy):
                 env = dict(os.environ, SCENARIO=scenario, GOTHIC_SOAK_CONTROL=control,
-                           GOTHIC_BODY_URL=url, SAVE=save, LLM=llm, GOTHIC_TTS_RECORD="0")
+                           GOTHIC_BODY_URL=url, SAVE=save, GOTHIC_TTS_RECORD="0")
+                if llm is None:
+                    env.pop("LLM", None)
+                else:
+                    env["LLM"] = llm
                 env.pop("GOTHIC_BODY_POLICY", None)
                 if policy is not None:
                     env["GOTHIC_BODY_POLICY"] = policy
