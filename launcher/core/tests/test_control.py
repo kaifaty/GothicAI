@@ -400,6 +400,10 @@ async def update_setup(setup, monkeypatch):
         "with (root / 'systemd.jsonl').open('a') as trace:\n"
         "    trace.write(json.dumps({'command': command, 'args': args}) + '\\n')\n"
         "if command == 'journalctl':\n"
+        "    if (root / 'journal-error').exists():\n"
+        "        (root / 'journal-failed').touch()\n"
+        "        print('journal unavailable', file=sys.stderr)\n"
+        "        sys.exit(1)\n"
         "    print('Building launcher')\n"
         "elif args[1] == 'start':\n"
         "    count = root / 'starts'\n"
@@ -407,8 +411,24 @@ async def update_setup(setup, monkeypatch):
         "elif args[1] == 'show':\n"
         "    count = root / 'starts'\n"
         "    if not count.exists():\n"
+        "        failures = root / 'prestart-show-errors'\n"
+        "        if failures.exists():\n"
+        "            polls = root / 'prestart-polls'\n"
+        "            number = int(polls.read_text()) + 1 if polls.exists() else 1\n"
+        "            polls.write_text(str(number))\n"
+        "            if number <= int(failures.read_text()):\n"
+        "                print('show unavailable before start', file=sys.stderr)\n"
+        "                sys.exit(1)\n"
         "        print('active' if (root / 'stale-busy').exists() else 'inactive')\n"
         "        sys.exit(0)\n"
+        "    failures = root / 'show-errors'\n"
+        "    if failures.exists():\n"
+        "        polls = root / 'show-polls'\n"
+        "        number = int(polls.read_text()) + 1 if polls.exists() else 1\n"
+        "        polls.write_text(str(number))\n"
+        "        if number <= int(failures.read_text()):\n"
+        "            print('show unavailable', file=sys.stderr)\n"
+        "            sys.exit(1)\n"
         "    starts = int(count.read_text())\n"
         "    busy = (root / 'stale-busy').exists() and starts == 1\n"
         "    if busy:\n"
@@ -506,7 +526,9 @@ async def test_update_releases_the_install_lock_and_streams_the_service_result(u
     with lock_path.open("ab") as other:
         with pytest.raises(BlockingIOError):
             fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        started = await call(c, "update.start")
+        response = await call(c, "update.start")
+        assert response == window.events("update")[-1] == (await call(c, "state"))["update"]
+        started = response["updating"]
         assert started["state"] == "running" and started["detail"] == "Запускаю обновление"
         assert isinstance(started["started"], float)
         assert started["result"] is None and started["error"] is None
@@ -553,9 +575,12 @@ async def test_update_releases_the_install_lock_and_streams_the_service_result(u
     ]
 
 
-async def test_update_retries_a_stale_busy_run_only_once(update_setup):
+@pytest.mark.parametrize("prestart_errors", [0, 2])
+async def test_update_retries_a_stale_busy_run_only_once(update_setup, prestart_errors):
     c, window, root = update_setup
     (root / "stale-busy").touch()
+    if prestart_errors:
+        (root / "prestart-show-errors").write_text(str(prestart_errors))
     report = root / "gothic-ai/play-update.json"
     busy = {"result": "busy", "time": "2000-01-01T00:00:00+00:00"}
     report.write_text(json.dumps(busy))
@@ -568,8 +593,81 @@ async def test_update_retries_a_stale_busy_run_only_once(update_setup):
     (root / "release").touch()
     await asyncio.wait_for(c.update_task, 5)
     assert (root / "starts").read_text() == "2"
+    if prestart_errors:
+        assert (root / "prestart-polls").read_text() == "3"
     assert c.update["updating"]["state"] == "finished"
     assert c.update["updating"]["result"] == "updated"
+
+
+async def test_update_keeps_polling_when_the_journal_is_unavailable(update_setup, caplog):
+    c, window, root = update_setup
+    (root / "journal-error").touch()
+    await call(c, "update.start")
+    async with asyncio.timeout(5):
+        while not (root / "journal-failed").exists():
+            await asyncio.sleep(0.01)
+    assert c.update["updating"]["state"] == "running"
+    assert c.update["updating"]["error"] is None
+    assert c.update["updating"]["detail"] == "Запускаю обновление"
+    (root / "release").touch()
+    await asyncio.wait_for(c.update_task, 5)
+    assert c.update["updating"]["state"] == "finished"
+    assert c.update["updating"]["result"] == "updated" and c.update["updating"]["error"] is None
+    assert "journal unavailable" in caplog.text
+
+
+@pytest.mark.parametrize("failures", [2, 5])
+async def test_update_retries_active_state_errors_before_giving_up(update_setup, failures):
+    c, window, root = update_setup
+    (root / "show-errors").write_text(str(failures))
+    (root / "release").touch()
+    await call(c, "update.start")
+    await asyncio.wait_for(c.update_task, 5)
+    assert c.update["updating"]["state"] == "finished"
+    if failures == 2:
+        assert c.update["updating"]["result"] == "updated" and c.update["updating"]["error"] is None
+        assert (root / "show-polls").read_text() == "3"
+    else:
+        assert c.update["updating"]["error"] and c.update["updating"]["result"] is None
+        assert (root / "show-polls").read_text() == "5"
+
+
+async def test_login_allows_other_helpers_but_blocks_the_installation_update(update_setup):
+    c, window, root = update_setup
+    uv = root / "bin/uv"
+    uv.write_text(
+        f"#!{sys.executable}\n"
+        "import pathlib, sys, time\n"
+        f"root = pathlib.Path({str(root)!r})\n"
+        "if 'login' in sys.argv:\n"
+        "    (root / 'login-running').touch()\n"
+        "    while not (root / 'login-release').exists(): time.sleep(0.01)\n"
+        "elif sys.argv[-1] == 'mics':\n"
+        "    print('[{\"id\": 0, \"name\": \"Test microphone\"}]')\n"
+        "else:\n"
+        "    sys.exit(2)\n"
+    )
+    uv.chmod(0o755)
+    await call(c, "settings.set", key="paths.uv", value=str(uv))
+    login = asyncio.create_task(c.login_chatgpt())
+    try:
+        async with asyncio.timeout(5):
+            while not (root / "login-running").exists():
+                await asyncio.sleep(0.01)
+        assert await asyncio.wait_for(call(c, "mics"), 1) == [{"id": 0, "name": "Test microphone"}]
+        assert not login.done() and not c._testing.locked() and c._helpers == 1
+        with pytest.raises(RuntimeError, match="Сначала завершите проверку"):
+            await call(c, "update.start")
+        assert not (root / "starts").exists()
+    finally:
+        (root / "login-release").touch()
+        result = await asyncio.wait_for(login, 5)
+    assert result["ok"] and c._helpers == 0
+    (root / "release").touch()
+    response = await call(c, "update.start")
+    assert response["updating"]["state"] == "running"
+    await asyncio.wait_for(c.update_task, 5)
+    assert c.update["updating"]["result"] == "updated" and c.update["updating"]["error"] is None
 
 
 async def test_update_refuses_games_checks_and_missing_auto_service(update_setup):

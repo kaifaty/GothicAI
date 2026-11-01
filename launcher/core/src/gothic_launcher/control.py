@@ -122,6 +122,7 @@ class Control:
         self.session: dict[str, Any] | None = None  # the running (or last) session, as the window sees it
         self.journal: deque[dict[str, Any]] = deque(maxlen=JOURNAL_KEEP)
         self._testing = asyncio.Lock()  # one microphone or voice test at a time
+        self._helpers = 0  # helper programs may run concurrently, but keep updates out
         # Tests can supply a play tree; production detection uses the core's own resolved location.
         play = install_dir or Path.home() / "gothic-ai/play"
         self.install_dir = (
@@ -259,8 +260,7 @@ class Control:
     async def mics(self) -> list[dict[str, Any]]:
         self._not_updating()
         out: list[str] = []
-        async with self._testing:
-            self._not_updating()
+        async with self._helper():
             await _run(
                 "mics", self._server_argv(self._tool_layout(self._config()), "mics"), stdout=out.append,
             )
@@ -333,7 +333,7 @@ class Control:
             raise RequestError("Сначала остановите игру: проверки запускают свои сервисы")
         if self._testing.locked():
             raise RequestError("Уже идёт другая проверка")
-        async with self._testing:
+        async with self._testing, self._helper():
             proc = next(
                 p for p in services(config, layout, ports, cwd=self.log_root / "checks") if p.name == name
             )
@@ -351,8 +351,7 @@ class Control:
         self._not_updating()
         repo, uv = tools(self._config())
         argv = [str(uv), "run", "--project", str(repo / "server"), "gothic-ai", "login", "chatgpt"]
-        async with self._testing:
-            self._not_updating()
+        async with self._helper():
             code = await _run("login", argv)
         return {"ok": code == 0, "signed_in": checks.CHATGPT_TOKENS.is_file()}
 
@@ -371,8 +370,7 @@ class Control:
             argv += ["--game-dir", str(config.settings.game.dir)]
         env = {"OPENAI_API_KEY": config.secrets.openai_api_key} if config.secrets.openai_api_key else {}
         out: list[str] = []
-        async with self._testing:
-            self._not_updating()
+        async with self._helper():
             await _run("llm-test", argv, env=env, stdout=out.append)
         try:
             result = json.loads(out[-1])
@@ -518,6 +516,15 @@ class Control:
         if self.updating is not None:
             raise RequestError("Идёт обновление установки")
 
+    @contextlib.asynccontextmanager
+    async def _helper(self):  # noqa: ANN202
+        self._not_updating()
+        self._helpers += 1
+        try:
+            yield
+        finally:
+            self._helpers -= 1
+
     def _auto_installed(self) -> bool:
         return self._update_service.is_file()
 
@@ -568,7 +575,7 @@ class Control:
             self._not_updating()
             if self.session is not None and self.session["state"] in ("waiting", "running"):
                 raise RequestError("Сначала остановите игру")
-            if self._testing.locked():
+            if self._testing.locked() or self._helpers:
                 raise RequestError("Сначала завершите проверку")
             if self.update is None:
                 raise RequestError("Не удалось проверить обновление установки")
@@ -582,7 +589,7 @@ class Control:
                 self.install_lock.close()
             released = time.time()
             self.update_task = asyncio.create_task(self._run_update(released))
-            return self.updating
+            return self.update
 
     def _update_report(self) -> tuple[dict[str, Any] | None, float]:
         assert self.install_dir is not None
@@ -599,33 +606,53 @@ class Control:
         assert self.updating is not None
         started = self.updating["started"]
         show = ("systemctl", "--user", "show", "-p", "ActiveState", "--value", UPDATE_UNIT)
+
+        async def active_state() -> str:
+            failures = 0
+            while True:
+                try:
+                    active = (await _output(*show)).strip()
+                    if not active:
+                        raise RuntimeError("systemctl returned no ActiveState")
+                    return active
+                except (OSError, TimeoutError, RuntimeError) as err:
+                    failures += 1
+                    log.warning("Cannot read update service state (%s/5): %s", failures, err)
+                    if failures == 5:
+                        raise RuntimeError(
+                            "Cannot read update service state after 5 consecutive polls: "
+                            f"{str(err) or type(err).__name__}"
+                        ) from err
+                await asyncio.sleep(UPDATE_POLL_S)
+
         try:
             for attempt in range(2):
-                report_after = started if attempt == 0 else time.time()
                 # A timer's busy run may finish between start --no-block and the first poll.
-                active = (await _output(*show)).strip()
-                seen_active = bool(active) and active not in ("inactive", "failed")
+                seen_active = await active_state() not in ("inactive", "failed")
+                report_after = started if attempt == 0 else time.time()
                 await _output("systemctl", "--user", "start", "--no-block", UPDATE_UNIT)
                 while True:
                     await asyncio.sleep(UPDATE_POLL_S)
-                    active = (await _output(*show)).strip()
-                    journal = await _output(
-                        "journalctl", "--user", "-u", UPDATE_UNIT, "--since", f"@{started}",
-                        "-n", "1", "-o", "cat", "--no-pager",
-                    )
-                    detail = next(
-                        (line.strip() for line in reversed(journal.splitlines()) if line.strip()), "",
-                    )
-                    if detail and detail != self.updating["detail"]:
-                        self._update_progress(detail=detail)
+                    active = await active_state()
+                    try:
+                        journal = await _output(
+                            "journalctl", "--user", "-u", UPDATE_UNIT, "--since", f"@{started}",
+                            "-n", "1", "-o", "cat", "--no-pager",
+                        )
+                    except (OSError, TimeoutError, RuntimeError) as err:
+                        log.warning("Cannot read update service journal: %s", err)
+                    else:
+                        detail = next(
+                            (line.strip() for line in reversed(journal.splitlines()) if line.strip()), "",
+                        )
+                        if detail and detail != self.updating["detail"]:
+                            self._update_progress(detail=detail)
                     report, modified = self._update_report()
                     if active in ("inactive", "failed"):
                         if seen_active or modified >= report_after:
                             break
-                    elif active:
-                        seen_active = True
                     else:
-                        raise RuntimeError("systemctl returned no ActiveState")
+                        seen_active = True
                 report_time = (report or {}).get("time", "")
                 if (
                     attempt == 0 and report is not None and report.get("result") == "busy"
