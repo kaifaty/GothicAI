@@ -66,9 +66,10 @@ def _combatant(npc: str, values: list[int]) -> Combatant:
 
 
 @dataclass
-class _Knockout:
+class _Fight:
     result: Result
     goods: int
+    expected_hp: tuple[int, int] | None
     applied: bool | None = None
 
 
@@ -95,8 +96,8 @@ class FarWorld:
         self._positions: dict[str, FarPosition | None] = {}
         self._hero: tuple[float, float, float] | None = None
         self._fight_lock = asyncio.Lock()
-        self._knockouts: dict[str, _Knockout] = {}
-        self._knockout_generation = will._generation
+        self._fights: dict[str, _Fight] = {}
+        self._fight_generation = will._generation
         self._fight_coefficients = Coefficients.from_mapping(json.loads(
             (Path(__file__).parent / "gamedata" / "far_fight.json").read_text(encoding="utf-8"),
         ))
@@ -313,11 +314,11 @@ class FarWorld:
                          if f.get("act") == action and f.get("crime") == cid), None)
         if previous is not None:
             return previous
-        if self._knockout_generation != generation:
-            self._knockouts.clear()
-            self._knockout_generation = generation
+        if self._fight_generation != generation:
+            self._fights.clear()
+            self._fight_generation = generation
         theft = crime["kind"] == "theft"
-        pending = self._knockouts.get(action)
+        pending = self._fights.get(action)
         if pending is None:
             if not self.free(fighter) or not self.free(culprit):
                 raise GameError("Distant combatants are busy or story-protected")
@@ -339,25 +340,29 @@ class FarWorld:
             result = resolve(action, _combatant(fighter, values[:len(first)]),
                              _combatant(culprit, values[len(first):len(first) + len(second)]),
                              self._fight_coefficients)
-            pending = _Knockout(result, values[-1] if theft else 0)
-            # Reserve before sending. A timeout never authorizes sending a second knockout,
+            expected_hp = ((max(1, values[1] - result.loss),
+                            max(1, values[len(first) + 1] - result.by_loss))
+                           if result.winner is None else None)
+            pending = _Fight(result, values[-1] if theft else 0, expected_hp)
+            # Reserve before sending. A lost response never authorizes a second effect,
             # even if readback is unavailable or has not observed the effect yet.
-            self._knockouts[action] = pending
-            loser = culprit if result.winner == fighter else fighter
+            self._fights[action] = pending
+            target = culprit if result.winner == fighter else fighter
+            effect = ({"do": "wound", "by": culprit, "loss": result.loss,
+                       "by_loss": result.by_loss} if result.winner is None else
+                      {"do": "knockout", "by": result.winner, "loss": result.loss})
             try:
-                await self.will.link.story_effect(loser, [{
-                    "do": "knockout", "by": result.winner, "loss": result.loss,
-                }], check=True)
+                await self.will.link.story_effect(target, [effect], check=True)
             except (TimeoutError, ConnectionError, GameDisconnected):
                 if not self._current(generation):
                     return None
-                pending.applied = await self._knockout_applied(loser, generation)
+                pending.applied = await self._fight_applied(pending, fighter, culprit, generation)
                 if not self._current(generation):
                     return None
                 if not pending.applied:
                     raise
             except GameError:
-                self._knockouts.pop(action, None)
+                self._fights.pop(action, None)
                 raise
             else:
                 pending.applied = True
@@ -365,17 +370,16 @@ class FarWorld:
                 return None
         result = pending.result
         if pending.applied is not True:
-            loser = culprit if result.winner == fighter else fighter
-            pending.applied = await self._knockout_applied(loser, generation)
+            pending.applied = await self._fight_applied(pending, fighter, culprit, generation)
             if not self._current(generation):
                 return None
         if not pending.applied:
-            raise GameError("Distant knockout is not confirmed; this act cannot be replayed")
+            raise GameError("Distant fight outcome is not confirmed; this act cannot be replayed")
         if self.will.npc_crimes.settled(cid):
             return None
         wins = result.winner == fighter
         returned = 0
-        outcome = "defeated" if wins else "defender_down"
+        outcome = "timeout" if result.winner is None else "defeated" if wins else "defender_down"
         already_returned = any(f.get("crime") == cid
                                for f in chronicle.facts("npc_crime_restitution"))
         deeds = self.will.npc_crimes
@@ -417,14 +421,32 @@ class FarWorld:
         })
         result = {
             "fact": "npc_crime_defense", "crime": cid, "culprit": culprit,
-            "fighter": fighter, "act": action, "outcome": outcome, "reason": "hits_to_down",
+            "fighter": fighter, "act": action, "outcome": outcome,
+            "reason": "deadline" if result.winner is None else "hits_to_down",
             "item": crime.get("item", ""), "count": crime.get("count", 0), "returned": returned,
             "far": True, "model": "hits_v1", "winner": result.winner, "loss": result.loss,
             "duration_s": result.duration_s, "hits": result.hits, "p_win": round(result.p_win, 3),
+            "p_timeout": round(result.p_timeout, 3),
+            **({"by_loss": result.by_loss} if result.winner is None else {}),
             **({"blamed": crime["blamed"]} if crime.get("blamed") else {}),
         }
         chronicle.record(result)
         return result
+
+    async def _fight_applied(
+        self, pending: _Fight, fighter: str, culprit: str, generation: int,
+    ) -> bool:
+        if pending.result.winner is not None:
+            loser = culprit if pending.result.winner == fighter else fighter
+            return await self._knockout_applied(loser, generation)
+        values = await self.will.link.story_eval(fighter, [
+            ["field", ["inst", npc], "ATTRIBUTE", 0] for npc in (fighter, culprit)
+        ])
+        if not self._current(generation):
+            return False
+        if len(values) != 2 or any(type(v) is not int for v in values):
+            raise GameError("Could not verify distant wound state")
+        return tuple(values) == pending.expected_hp
 
     async def _knockout_applied(self, loser: str, generation: int) -> bool:
         values = await self.will.link.story_eval(loser, [

@@ -261,18 +261,40 @@ bool StoryWorld::effects(World& world, const rapidjson::Value& msg, std::string&
     return state;
     };
   // Mandatory even without check:true, before any other effect or controller release.
-  auto loser = inspect(npc);
-  Npc* winner = nullptr;
-  Knockout::Result outcome;
-  for(const auto& e:list) {
-    if(e.kind!="knockout")
+  struct FightOutcome {
+    Npc* by = nullptr;
+    Knockout::Result knockout;
+    Knockout::WoundResult wound;
+    };
+  std::vector<FightOutcome> outcomes(list.size());
+  std::map<Npc*,Knockout::Actor> actors;
+  auto actor = [&](Npc* n) -> Knockout::Actor& { return actors.try_emplace(n,inspect(n)).first->second; };
+  for(size_t i=0;i<list.size();++i) {
+    const auto& e = list[i];
+    if(e.kind!="knockout" && e.kind!="wound")
       continue;
-    winner = bySymbol(world,e.by);
-    outcome = Knockout::check(loser,inspect(winner),npc==winner,e.loss);
-    error = outcome.error;
+    auto& outcome = outcomes[i];
+    outcome.by = bySymbol(world,e.by);
+    auto& self = actor(npc);
+    auto& by = actor(outcome.by);
+    if(e.kind=="knockout") {
+      outcome.knockout = Knockout::check(self,by,npc==outcome.by,e.loss);
+      error = outcome.knockout.error;
+      if(error.empty()) {
+        self.down = true; // a second knockout of this self rejects the entire batch
+        self.hp = 1;
+        by.hp = outcome.knockout.winnerHp;
+        }
+      } else {
+      outcome.wound = Knockout::wound(self,by,npc==outcome.by,e.loss,e.byLoss);
+      error = outcome.wound.error;
+      if(error.empty()) {
+        self.hp = outcome.wound.selfHp;
+        by.hp = outcome.wound.byHp;
+        }
+      }
     if(!error.empty())
       return false;
-    loser.down = true; // a second knockout of this self rejects the entire batch
     }
   if(JsonRead::boolean(msg,"check",false)) {
     // all or nothing (v10, a deal): each giver must have all it gives, or nothing happens; what the npc
@@ -309,7 +331,23 @@ bool StoryWorld::effects(World& world, const rapidjson::Value& msg, std::string&
       }
     }
   const auto who = symbolOf(world,*npc);
-  for(auto& e : list) {
+  for(size_t i=0;i<list.size();++i) {
+    auto& e = list[i];
+    auto* winner = outcomes[i].by;
+    auto& outcome = outcomes[i].knockout;
+    if(e.kind=="wound") {
+      const auto& wounded = outcomes[i].wound;
+      npc->handlePtr()->attribute[ATR_HITPOINTS] = wounded.selfHp;
+      winner->handlePtr()->attribute[ATR_HITPOINTS] = wounded.byHp;
+      rapidjson::StringBuffer buf;
+      rapidjson::Writer<rapidjson::StringBuffer> result(buf);
+      result.StartObject();
+      result.Key("self_hp"); result.Int(wounded.selfHp);
+      result.Key("by_hp"); result.Int(wounded.byHp);
+      result.EndObject();
+      value.assign(buf.GetString(),buf.GetSize());
+      continue;
+      }
     if(e.kind=="knockout") {
       winner->handlePtr()->attribute[ATR_HITPOINTS] = outcome.winnerHp;
       outcome.dropped.clear();

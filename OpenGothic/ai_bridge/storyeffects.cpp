@@ -93,14 +93,20 @@ std::string StoryEffect::read(const rapidjson::Value& x, zenkit::DaedalusVm* vm,
   e.toHero = JsonRead::str(x,"to")!="self" && !e.toNpc;
   auto* item = vm ? vm->find_symbol_by_name(e.item) : nullptr;
   auto* var  = vm ? vm->find_symbol_by_name(e.var) : nullptr;
-  if(e.kind=="knockout") {
+  if(e.kind=="knockout" || e.kind=="wound") {
     e.by = upper(JsonRead::str(x,"by"));
     if(e.by.empty())
-      return "knockout: needs by";
+      return e.kind+": needs by";
     const auto loss = x.FindMember("loss");
     if(loss==x.MemberEnd() || !loss->value.IsInt64() || loss->value.GetInt64()<0)
-      return "knockout: loss must be a nonnegative integer";
+      return e.kind+": loss must be a nonnegative integer";
     e.loss = loss->value.GetInt64();
+    if(e.kind=="wound") {
+      const auto byLoss = x.FindMember("by_loss");
+      if(byLoss==x.MemberEnd() || !byLoss->value.IsInt64() || byLoss->value.GetInt64()<0)
+        return "wound: by_loss must be a nonnegative integer";
+      e.byLoss = byLoss->value.GetInt64();
+      }
     return {};
     }
   if(e.kind=="give" || e.kind=="create" || e.kind=="chest_take") {

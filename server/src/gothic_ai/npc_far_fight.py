@@ -8,6 +8,9 @@ import random
 from dataclasses import dataclass
 from typing import Any
 
+# Match the scoped deed-fight StateMaxMs in OpenGothic/ai_bridge/npcobserver.cpp.
+TIME_LIMIT_S = 120
+
 
 @dataclass(frozen=True)
 class Coefficients:
@@ -45,11 +48,13 @@ class Combatant:
 
 @dataclass(frozen=True)
 class Result:
-    winner: str
+    winner: str | None
     loss: int
     duration_s: float
     hits: dict[str, int]
     p_win: float
+    by_loss: int = 0
+    p_timeout: float = 0
 
 
 def hit_damage(
@@ -67,7 +72,7 @@ def hit_damage(
 
 def _duel(
     fighter: Combatant, culprit: Combatant, coefficients: Coefficients, seed: bytes,
-) -> tuple[str, int, float, dict[str, int]]:
+) -> tuple[str | None, int, float, dict[str, int], int]:
     rng = random.Random(int.from_bytes(seed, "big"))
     actors = (fighter, culprit)
     hp = [fighter.hp, culprit.hp]
@@ -77,6 +82,10 @@ def _duel(
     clocks = [rng.expovariate(rate) for rate in rates]
     while True:
         attacker = 0 if clocks[0] < clocks[1] else 1
+        if clocks[attacker] > TIME_LIMIT_S:
+            return (None, fighter.hp - hp[0], TIME_LIMIT_S,
+                    {actor.name: count for actor, count in zip(actors, hits, strict=True)},
+                    culprit.hp - hp[1])
         defender = 1 - attacker
         critical = rng.randrange(100) < actors[attacker].hitchance
         hp[defender] = max(1, hp[defender] - hit_damage(
@@ -85,15 +94,16 @@ def _duel(
         hits[attacker] += 1
         if hp[defender] == 1:
             return (actors[attacker].name, actors[attacker].hp - hp[attacker], clocks[attacker],
-                    {actor.name: count for actor, count in zip(actors, hits, strict=True)})
+                    {actor.name: count for actor, count in zip(actors, hits, strict=True)}, 0)
         clocks[attacker] += rng.expovariate(rates[attacker])
 
 
 def resolve(act: str, fighter: Combatant, culprit: Combatant, coefficients: Coefficients) -> Result:
     """Draw one stable result for the act and estimate the fighter's chance on 400 derived seeds."""
     seed = hashlib.sha256(act.encode("utf-8")).digest()
-    winner, loss, duration_s, hits = _duel(fighter, culprit, coefficients, seed)
-    wins = sum(_duel(fighter, culprit, coefficients,
-                     hashlib.sha256(seed + trial.to_bytes(4, "big")).digest())[0] == fighter.name
-               for trial in range(400))
-    return Result(winner, loss, duration_s, hits, wins / 400)
+    winner, loss, duration_s, hits, by_loss = _duel(fighter, culprit, coefficients, seed)
+    outcomes = [_duel(fighter, culprit, coefficients,
+                      hashlib.sha256(seed + trial.to_bytes(4, "big")).digest())[0]
+                for trial in range(400)]
+    return Result(winner, loss, duration_s, hits, outcomes.count(fighter.name) / 400,
+                  by_loss, outcomes.count(None) / 400)

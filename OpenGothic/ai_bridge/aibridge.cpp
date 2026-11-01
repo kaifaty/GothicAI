@@ -1081,12 +1081,12 @@ void AiBridge::Impl::handle(World* world, const std::string& text) {
     sendResult(req,!value.empty(),err,value);
     }
   else if(type=="story_effect") {
-    bool knockout = false;
+    bool farFight = false;
     if(auto effects = doc.FindMember("effects"); effects!=doc.MemberEnd() && effects->value.IsArray())
       for(const auto& effect:effects->value.GetArray())
-        knockout = knockout || JsonRead::str(effect,"do")=="knockout";
+        farFight = farFight || JsonRead::str(effect,"do")=="knockout" || JsonRead::str(effect,"do")=="wound";
     if(auto npc = npcBySymbol(*world,JsonRead::str(doc,"npc"));
-       !knockout && npc!=nullptr && BodyController::owns(*npc)) {
+       !farFight && npc!=nullptr && BodyController::owns(*npc)) {
       BodyController::takeover(*npc,"story_takeover");
       if(BodyController::owns(*npc)) {
         sendResult(req,false,"body control is releasing at a safe boundary; retry story effect");

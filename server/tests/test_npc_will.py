@@ -230,6 +230,46 @@ async def test_owner_acts_once_per_known_theft_and_uses_native_body(system, cour
         assert system.memory.load("A", LOBART).entries
 
 
+@pytest.mark.parametrize("far", [False, True])
+async def test_timeout_consumes_owner_motive_without_repeating_the_fight(system, far):
+    case = theft(system, witnesses=[LOBART])
+    scene(system)
+    system.link.values = [0, 0, 0, 1, 1, 0, 0]
+    if far:
+        async def meeting(*args):
+            return True
+
+        async def fight(crime, fighter, generation):
+            system.chronicle.record({
+                "fact": "npc_crime_reaction", "crime": crime["id"], "npc": fighter,
+                "reaction": "fight", "role": "reclaim", "act": "far-fight", "far": True,
+            })
+            result = {
+                "fact": "npc_crime_defense", "crime": crime["id"], "culprit": THIEF,
+                "fighter": fighter, "act": "far-fight", "outcome": "timeout", "reason": "deadline",
+                "far": True,
+            }
+            system.chronicle.record(result)
+            return result
+
+        system.will.far_world.meeting = meeting
+        system.will.fight_far = fight
+    await system.will.tick(NOW)
+    if not far:
+        attempt = system.will.attempts()[0]
+        system.link.receive(NpcIdle(
+            type="npc_idle", npc=LOBART, act=attempt["action"], reason="timeout",
+        ))
+        await asyncio.gather(*tuple(system.deeds._tasks))
+    [attempt] = system.will.attempts()
+    assert (attempt["outcome"], attempt["reason"]) == ("aborted", "timeout")
+    assert system.will.pending() == [] and not system.deeds.settled(case["id"])
+    await system.will.tick(NOW + 60)
+    assert len(system.will.attempts()) == 1
+    assert len(system.chronicle.facts("npc_crime_reaction")) == 1
+    assert not system.chronicle.facts("npc_crime_restitution")
+
+
 async def test_unknown_truth_does_not_give_owner_a_reclaim_motive(system):
     theft(system)
     scene(system)
@@ -401,11 +441,17 @@ async def test_greedy_npc_steals_one_item_by_the_native_checked_command(system):
 
 
 @pytest.mark.parametrize("honesty,days", [(1, 2), (2, 4)])
-async def test_greed_cannot_repeat_before_its_character_cooldown(system, honesty, days):
+@pytest.mark.parametrize("far", [False, True])
+async def test_greedy_npc_timeout_does_not_reset_its_character_cooldown(system, honesty, days, far):
     greed_scene(system, honesty=honesty)
     await system.will.tick(NOW)
-    commit_theft(system)
+    case = commit_theft(system)
     finish_action(system)
+    system.chronicle.record({
+        "fact": "npc_crime_defense", "crime": case["id"], "culprit": THIEF,
+        "fighter": LOBART, "outcome": "timeout", "reason": "deadline",
+        **({"far": True} if far else {}),
+    })
     before = NOW + days * DAY - 60
     system.moments.now += 60
     refresh(system, before)
