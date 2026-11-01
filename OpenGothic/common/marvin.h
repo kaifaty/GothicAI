@@ -109,6 +109,7 @@ class Marvin {
       C_ToggleMeleePosture,
       C_ToggleMeleeStagger,
       C_ToggleMeleeBeastPoise,
+      C_ToggleMeleeBackstab,
       C_ToggleMeleeDownTactics,
       C_ToggleMeleeHitStop,
       C_ToggleMeleeStamina,
