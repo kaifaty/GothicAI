@@ -22,6 +22,7 @@ class ObjVisual {
     void load(Serialize& fin,  Interactive &mob);
 
     void setVisual(const zenkit::IItem& visual, World& world, bool staticDraw);
+    void setWorldItem(const zenkit::IItem& item, World& world, const Tempest::Matrix4x4& matrix);
     void setVisual(const asset::VirtualObject& visual, World& world, bool staticDraw, bool enablePhysics = true);
     void setObjMatrix(const Tempest::Matrix4x4& obj);
     void setTextureOwner(const Tempest::Vec3& position, bool spatial);
@@ -68,6 +69,8 @@ class ObjVisual {
       asset::AnimationType windMode = asset::AnimationType::NONE;
       float windStrength = 0;
       bool published = false;
+      bool worldItem = false;
+      int32_t material = 0;
       };
 
     union {
