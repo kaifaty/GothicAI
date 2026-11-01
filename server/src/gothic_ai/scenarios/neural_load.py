@@ -23,7 +23,7 @@ from .common import (
 )
 
 SCENARIOS = {
-    "neural-load": ("OFF", {"save": False, "timeout": 240}),
+    "neural-load": ("OFF", {"save": False, "timeout": 240, "exclusive": True}),
 }
 
 log = logging.getLogger("gothic_ai.scenarios")

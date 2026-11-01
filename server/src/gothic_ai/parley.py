@@ -82,10 +82,12 @@ class Parley:
         talk: TalkDesk | None = None,
         graph: StoryGraph | None = None,
         patches: StoryPatches | None = None,
+        hail: bool = True,
     ) -> None:
         self.link, self.dialogue, self.chronicle = link, dialogue, chronicle
         self.perception, self.companion, self.places, self.lead = perception, companion, places, lead
         self.bodies, self.talk, self.graph, self.patches = bodies, talk, graph, patches
+        self.hail = hail
         self.offer_pending: Callable[[str], bool] = lambda npc: False
         self._ticks = max((s.t for s in link.snapshots.values()), default=0)
         self._minute: int | None = None
@@ -227,7 +229,7 @@ class Parley:
             return
         # Renew before any body RPC or model call; a slow hail must never reopen vanilla aggression.
         await self.link.send(HoldVerdictCmd(hold=message.hold, to="parley", ms=LEASE_MS))
-        if not truce and generation == self._generation and npc not in self._pending_hails:
+        if self.hail and not truce and generation == self._generation and npc not in self._pending_hails:
             task = self._spawn(self._hail(npc, generation))
             self._pending_hails[npc] = task
 
