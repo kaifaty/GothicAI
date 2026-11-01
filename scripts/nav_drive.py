@@ -190,6 +190,13 @@ def collect(args):
     action_mode = getattr(args, "action_mode", "argmax")
     if action_mode not in ("argmax", "sample"):
         raise ValueError("--action-mode must be sample or argmax")
+    args.force_pace = getattr(args, "force_pace", None) or os.environ.get("OPENGOTHIC_NAV_FORCE_PACE") or None
+    if args.force_pace not in (None, "walk", "run"):
+        raise ValueError("OPENGOTHIC_NAV_FORCE_PACE must be walk or run")
+    if args.force_pace is not None:
+        if action_mode != "sample":
+            raise ValueError("Forced pace requires sampled evaluation drive")
+        os.environ["OPENGOTHIC_NAV_FORCE_PACE"] = args.force_pace
     pairs = load_pairs(args)
     selected = indices(args, pairs)
     if args.list_indices:

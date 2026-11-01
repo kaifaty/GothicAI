@@ -265,6 +265,7 @@ def test_policy_arguments_preserve_greedy_command_and_seed_sample_by_original_pa
 
 
 def test_sample_collection_passes_mode_to_drive_and_drive_current_and_checks_runner(tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENGOTHIC_NAV_FORCE_PACE", "walk")
     pool = [dict(index=0, split='validation', split_index=0, region='lobart', npc='NPC',
                  start='START', goal='GOAL', seed=7),
             dict(index=1, split='control', split_index=0, region='lobart', npc='NPC',
@@ -303,6 +304,7 @@ def test_sample_collection_passes_mode_to_drive_and_drive_current_and_checks_run
     for pair in pool:
         result = drive.read_json(drive.episode_dir(args, pair) / 'episode.json')
         assert result['action_mode'] == result['requested_action_mode'] == 'sample'
+        assert result['forced_pace'] == 'walk'
 
 
 @pytest.mark.parametrize("existing", ["argmax", "sample"])
