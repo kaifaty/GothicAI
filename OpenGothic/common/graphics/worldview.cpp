@@ -239,7 +239,10 @@ struct WorldView::LandscapeStreaming {
 
   void publish(size_t i, const PackedMesh& packed) {
     const auto t=ChunkResidency::Clock::now();
-    chunks[i].gpu=std::make_unique<Landscape>(view.visuals,packed,pages);
+    const auto id=residency.table().entries[i].id;
+    const Vec3 texturePosition((float(id.x)+0.5f)*ChunkId::Size,0,(float(id.z)+0.5f)*ChunkId::Size);
+    Resources::TextureLoadScope textureLoadScope(true);
+    chunks[i].gpu=std::make_unique<Landscape>(view.visuals,packed,pages,texturePosition);
     const auto ms=std::chrono::duration<double,std::milli>(ChunkResidency::Clock::now()-t).count();
     residency.recordPublication(ms,residency.desired(i)==ChunkResidency::State::Far);
     if(firstUpdate)

@@ -61,7 +61,8 @@ from .dialogue import REACT_HINT, SVM_HINT, DialogueManager
 from .director import Director
 from .errands import Errands
 from .executor import Intent
-from .feat_art import Artist
+from .fates import Fates
+from .feat_art import DEFAULT_ROOT, Artist
 from .feats import Feats
 from .game import GameError, GameLink, GameServer
 from .gamedata import storygraph
@@ -190,6 +191,7 @@ HELP = """commands (npc defaults to the last attached one):
   lines             the director's plot lines, their state and remaining budget
   pitch             an occasion here and now, subject to the director's budget
   feats             the chronicler's feats on the current save branch
+  fates             this fate and the other fates, grouped by the save fork
   claims            quests of the scripts the hero said were done: believed, lies, found out
   know [npc] [query]  what the npc knows of the world now (M6), and what recall finds for the query
   see [npc]         what the npc perceives now: in Russian for its words, in English for its body
@@ -262,6 +264,7 @@ class ServerState:
         self.questlog: QuestLog | None = None
         self.showrunner: Showrunner | None = None
         self.feats: Feats | None = None
+        self.fates: Fates | None = None
         self.feat_challenges: Challenges | None = None
         self.vanilla: VanillaQuests | None = None
         self.gates: Gates | None = None
@@ -474,6 +477,20 @@ class Console:
                         if epilogue := epilogues.get(feat["id"]):
                             pending = " (не показан)" if feat["id"] not in shown else ""
                             print(f"  {epilogue['text']}{pending}")
+            case "fates":
+                data = self.state.fates.read() if self.state.fates is not None else None
+                print("Fate:")
+                if data is not None:
+                    for feat in data.fate:
+                        print(f"  {feat.id}: {feat.title}; {feat.text}")
+                        if feat.epilogue:
+                            print(f"    {feat.epilogue}")
+                    for fork in data.others:
+                        print(f"Other fate: chapter {fork.chapter}, day {fork.day}")
+                        for feat in fork.feats:
+                            print(f"  {feat.id}: {feat.title}; {feat.text}")
+                            if feat.epilogue:
+                                print(f"    {feat.epilogue}")
             case "graph" if self.state.story is not None:
                 await self.graph(rest)
             case "quest" if len(rest) >= 5 and self.state.quests is not None:
@@ -1014,6 +1031,11 @@ async def serve(args: argparse.Namespace) -> int:
                 image_wait_s=30 if args.scenario == "feats" and args.llm == "fake" else 150,
             )
             state.talk.on_phrase.append(lambda to, text: state.feats.hero_talk(to.id) if to else None)
+        state.fates = Fates(
+            link, state.chronicle, enabled=not args.no_feats,
+            art_root=state.feats.artist.root if state.feats is not None
+            and state.feats.artist is not None else DEFAULT_ROOT,
+        )
         if not args.no_crimes:
             state.crimes = Crimes(
                 link,
@@ -1519,6 +1541,8 @@ async def serve(args: argparse.Namespace) -> int:
                 task.cancel()
             if state.feats is not None:
                 await state.feats.close()
+            if state.fates is not None:
+                await state.fates.close()
             if state.feat_challenges is not None:
                 state.feat_challenges.close()
             if feat_image_root is not None:
@@ -1961,6 +1985,20 @@ async def serve(args: argparse.Namespace) -> int:
                 )
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info("scenario crime_law: %d checks, %d failed", len(results), len(bad))
+                exit_code = 1 if bad else 0
+            elif args.scenario == "quest_law":
+                assert state.crimes is not None and state.crime_law is not None and state.book is not None
+                assert state.dialogue is not None and state.rumors is not None
+                results = await scenarios.quest_law(
+                    link,
+                    state.crimes,
+                    state.crime_law,
+                    state.book,
+                    state.dialogue,
+                    state.rumors,
+                )
+                bad = {k: v for k, v in results.items() if not v.startswith("done")}
+                log.info("scenario quest_law: %d checks, %d failed", len(results), len(bad))
                 exit_code = 1 if bad else 0
             elif args.scenario == "ground":
                 assert state.dialogue is not None and state.talk is not None and state.perception is not None
@@ -3219,6 +3257,7 @@ def main() -> None:
             "cheat",
             "crime_director",
             "crime_law",
+            "quest_law",
             "showrunner",
             "showrunner_live",
             "vanilla_line",
@@ -3557,7 +3596,7 @@ def main() -> None:
         format="%(asctime)s %(levelname).1s %(name)s: %(message)s",
         datefmt="%H:%M:%S",
     )
-    for noisy in ("httpx", "httpx2", "httpcore", "openai"):
+    for noisy in ("httpx", "httpx2", "httpcore", "openai", "websockets"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
     try:

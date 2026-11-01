@@ -459,6 +459,10 @@ bool Inventory::setSlot(Item *&slot, Item* next, Npc& owner, bool force) {
   }
 
 void Inventory::updateView(Npc& owner) {
+  const auto* residency=owner.world().chunkResidency();
+  const auto texturePosition=owner.position();
+  Resources::TextureLoadScope textureLoadScope(!owner.isPlayer() && residency &&
+      residency->textureDistance(ChunkId::fromPosition(texturePosition.x,texturePosition.z))>2);
   auto& world = owner.world();
 
   updateArmorView (owner);
@@ -492,6 +496,10 @@ void Inventory::updateArmorView(Npc& owner) {
   }
 
 void Inventory::updateSwordView(Npc &owner) {
+  const auto* residency=owner.world().chunkResidency();
+  const auto texturePosition=owner.position();
+  Resources::TextureLoadScope textureLoadScope(!owner.isPlayer() && residency &&
+      residency->textureDistance(ChunkId::fromPosition(texturePosition.x,texturePosition.z))>2);
   if(melee==nullptr) {
     owner.setSword(MeshObjects::Mesh());
     return;
@@ -502,6 +510,10 @@ void Inventory::updateSwordView(Npc &owner) {
   }
 
 void Inventory::updateBowView(Npc &owner) {
+  const auto* residency=owner.world().chunkResidency();
+  const auto texturePosition=owner.position();
+  Resources::TextureLoadScope textureLoadScope(!owner.isPlayer() && residency &&
+      residency->textureDistance(ChunkId::fromPosition(texturePosition.x,texturePosition.z))>2);
   if(range==nullptr) {
     owner.setRangedWeapon(MeshObjects::Mesh());
     return;
@@ -515,6 +527,10 @@ void Inventory::updateBowView(Npc &owner) {
   }
 
 void Inventory::updateShieldView(Npc& owner) {
+  const auto* residency=owner.world().chunkResidency();
+  const auto texturePosition=owner.position();
+  Resources::TextureLoadScope textureLoadScope(!owner.isPlayer() && residency &&
+      residency->textureDistance(ChunkId::fromPosition(texturePosition.x,texturePosition.z))>2);
   if(shield==nullptr) {
     owner.setShield(MeshObjects::Mesh());
     return;
@@ -691,6 +707,10 @@ void Inventory::putCurrentToSlot(Npc& owner, std::string_view slot) {
   }
 
 void Inventory::putToSlot(Npc& owner, size_t cls, std::string_view slot) {
+  const auto* residency=owner.world().chunkResidency();
+  const auto texturePosition=owner.position();
+  Resources::TextureLoadScope textureLoadScope(!owner.isPlayer() && residency &&
+      residency->textureDistance(ChunkId::fromPosition(texturePosition.x,texturePosition.z))>2);
   clearSlot(owner,slot,false);
 
   Item* it=findByClass(cls);
@@ -737,6 +757,10 @@ bool Inventory::clearSlot(Npc& owner, std::string_view slot, bool remove) {
   }
 
 void Inventory::putAmmunition(Npc& owner, size_t cls, std::string_view slot) {
+  const auto* residency=owner.world().chunkResidency();
+  const auto texturePosition=owner.position();
+  Resources::TextureLoadScope textureLoadScope(!owner.isPlayer() && residency &&
+      residency->textureDistance(ChunkId::fromPosition(texturePosition.x,texturePosition.z))>2);
   Item* it = (cls==0 ? nullptr : findByClass(cls));
   if(it==nullptr) {
     ammotSlot.slot.clear();
@@ -753,6 +777,10 @@ void Inventory::putAmmunition(Npc& owner, size_t cls, std::string_view slot) {
   }
 
 void Inventory::implPutState(Npc& owner, size_t cls, std::string_view slot) {
+  const auto* residency=owner.world().chunkResidency();
+  const auto texturePosition=owner.position();
+  Resources::TextureLoadScope textureLoadScope(!owner.isPlayer() && residency &&
+      residency->textureDistance(ChunkId::fromPosition(texturePosition.x,texturePosition.z))>2);
   Item* it = (cls==0 ? nullptr : findByClass(cls));
   if(it==nullptr) {
     stateSlot.slot.clear();

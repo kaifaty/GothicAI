@@ -1,6 +1,15 @@
 #!/usr/bin/env python3
-"""Install/update the personal Ryzen checkout from this Mac (stdlib only)."""
+"""Manage the personal Ryzen checkout from this Mac (stdlib only).
+
+install/update also transfer content and settings. After one manual update,
+autoupdate install enables a user systemd timer every 15 minutes;
+autoupdate uninstall disables it. The timer
+runs this installed script's __auto action: update/build while the game is closed,
+roll back failed builds, and leave content/settings alone. autoupdate status shows
+the timer, checkout commits and last result (~/gothic-ai/play-update.json).
+"""
 import argparse
+from datetime import datetime, timezone
 import fcntl
 import json
 import os
@@ -17,7 +26,11 @@ from pathlib import Path
 
 def arguments(argv):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("install", "update"))
+    actions = parser.add_subparsers(dest="action", required=True)
+    for action in ("install", "update"):
+        actions.add_parser(action)
+    automatic = actions.add_parser("autoupdate")
+    automatic.add_argument("command", choices=("install", "uninstall", "status"))
     return parser.parse_args(argv)
 
 
@@ -26,9 +39,9 @@ def run(command, **kwargs):
     subprocess.run(list(map(str, command)), check=True, **kwargs)
 
 
-def owned_process(command, payload=None):
+def owned_process(command, payload=None, *, keep_stdin=False):
     # Keep stdin open: gq run cancels its own job on EOF, including an SSH loss.
-    child = subprocess.Popen(command, stdin=subprocess.PIPE if payload is not None else None)
+    child = subprocess.Popen(command, stdin=subprocess.PIPE if payload is not None or keep_stdin else None)
     previous = {}
 
     def stop(signum, _frame):
@@ -93,7 +106,12 @@ def create_settings(path, source, repo, home):
 def build_command(source):
     return [str(Path.home() / "gothic-ai/bin/gq"), "run", "--class", "quick",
             "--threads", "12", "--mem", "12G", "--max", "30m",
-            "--name", "Gothic AI install/update", "--", sys.executable, "-c", source, "__prepare"]
+            "--name", "Gothic AI install/update", "--", *prepare_command(source)]
+
+
+def prepare_command(source):
+    return ["bash", "-euc", 'source scripts/ryzen-build.sh; exec "$@"', "ryzen-play",
+            sys.executable, "-c", source, "__prepare"]
 
 
 def sync_content():
@@ -158,6 +176,182 @@ def desktop_entry(repo, launcher_ready=True):
             "Terminal=false\nCategories=Game;RolePlaying;\nStartupNotify=true\n")
 
 
+def write_desktop_entry(repo, result):
+    applications = Path.home() / ".local/share/applications"
+    applications.mkdir(parents=True, exist_ok=True)
+    (applications / "gothic-ai.desktop").write_text(desktop_entry(repo, launcher_ready=result == 0))
+
+
+def check_tools(home):
+    queue = home / "gothic-ai/bin/gq"
+    if not os.access(queue, os.X_OK):
+        raise ValueError("gq is not installed: run scripts/gq install ryzen on the Mac")
+    queue_help = subprocess.run([str(queue), "run", "--help"], check=False, capture_output=True, text=True)
+    if queue_help.returncode or "--interactive" not in queue_help.stdout:
+        raise ValueError("Installed gq lacks --interactive: run scripts/gq install ryzen on the Mac")
+    if not (home / ".local/bin/uv").is_file():
+        raise ValueError("Missing ~/.local/bin/uv on Ryzen")
+
+
+def check_checkout(repo, expected_origin):
+    branch = subprocess.check_output(["git", "-C", repo, "branch", "--show-current"], text=True).strip()
+    origin = subprocess.check_output(["git", "-C", repo, "remote", "get-url", "origin"], text=True).strip()
+    if branch != "main" or origin != expected_origin:
+        raise ValueError("~/gothic-ai/play must be a main checkout of this origin")
+    if subprocess.check_output(["git", "-C", repo, "status", "--porcelain"], text=True).strip():
+        raise ValueError("~/gothic-ai/play has local changes; keep them before updating")
+
+
+def atomic_write(path, text):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, prefix=f".{path.name}.", delete=False) as stream:
+        temporary = Path(stream.name)
+        try:
+            stream.write(text)
+            stream.close()
+            temporary.chmod(0o644)
+            temporary.replace(path)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+
+def read_built(repo, head):
+    path = repo.parent / "play.built"
+    return json.loads(path.read_text()) if path.exists() else {"good": head, "built": head}
+
+
+def auto_update(expected_origin, *, admitted=False):
+    home = Path.home()
+    repo = home / "gothic-ai/play"
+    state_path = repo.parent / "play-update.json"
+    built_path = repo.parent / "play.built"
+    failed_path = repo.parent / "play.failed"
+    state = {"old_commit": "", "new_commit": "", "failed_commit": ""}
+
+    def finish(result, code=0, **details):
+        state.update(time=datetime.now(timezone.utc).isoformat(), result=result, **details)
+        text = json.dumps(state, sort_keys=True) + "\n"
+        print(text, end="", flush=True)
+        atomic_write(state_path, text)
+        return code
+
+    def commit(ref):
+        return subprocess.check_output(["git", "-C", repo, "rev-parse", ref], text=True).strip()
+
+    def snapshot():
+        head = commit("HEAD")
+        built = read_built(repo, head)
+        failed = failed_path.read_text().strip() if failed_path.exists() else ""
+        target = commit("origin/main")
+        if target == failed:
+            target = built["good"]
+        state.update(old_commit=head, new_commit=target, failed_commit=failed)
+        return head, target, built
+
+    try:
+        if not admitted:
+            run(["git", "-C", repo, "fetch", "origin"])
+        head, target, built = snapshot()
+        if not admitted:
+            if built["built"] == head == target:
+                return finish("up_to_date")
+            # Observe report completion only; reports never select a build target.
+            previous = state_path.stat().st_mtime_ns if state_path.exists() else None
+            os.chdir(repo)
+            os.environ["GQ_OWNER"] = "ryzen-play-autoupdate"
+            command = build_command("")
+            command = command[:command.index("--") + 1] + [
+                sys.executable, str(repo / "scripts/ryzen-play.sh"), "__auto_build", expected_origin]
+            # Wait without locking or changing the checkout. systemd serializes runs.
+            result = owned_process(command, keep_stdin=True)
+            current = state_path.stat().st_mtime_ns if state_path.exists() else None
+            if current == previous:
+                return finish("error", result or 2, error=f"gq exited {result} without an update result")
+            return result
+        with (repo.parent / "play.install.lock").open("a") as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return finish("busy")
+            check_tools(home)
+            check_checkout(repo, expected_origin)
+            # A manual update may have finished while this job was queued.
+            head, target, built = snapshot()
+            if built["built"] == head == target:
+                return finish("up_to_date")
+            good = built["good"]
+            os.chdir(repo)
+            script = repo / "scripts/ryzen-play.sh"
+
+            def build(revision):
+                atomic_write(built_path, json.dumps({"good": good, "built": None}) + "\n")
+                run(["git", "-C", repo, "reset", "--hard", revision])
+                result = subprocess.run(prepare_command(script.read_text()), check=False).returncode
+                if result in (0, 3):
+                    atomic_write(built_path, json.dumps({"good": revision, "built": revision}) + "\n")
+                return result
+
+            result = build(target)
+            if result in (0, 3):
+                if target != good:
+                    failed_path.unlink(missing_ok=True)
+                    state["failed_commit"] = ""
+                write_desktop_entry(repo, result)
+                return finish("updated")
+            state["build_exit"] = result
+            if target == good:
+                raise ValueError(f"Build of last successful commit {good} failed with exit {result}")
+            atomic_write(failed_path, target + "\n")
+            state["failed_commit"] = target
+            rollback = build(good)
+            state["rollback_exit"] = rollback
+            if rollback not in (0, 3):
+                raise ValueError(f"Rollback build failed with exit {rollback}")
+            write_desktop_entry(repo, rollback)
+            return finish("build_failed_rolled_back", result)
+    except (OSError, ValueError, subprocess.CalledProcessError) as error:
+        return finish("error", 2, error=str(error))
+
+
+def manage_autoupdate(action, origin=None):
+    home = Path.home()
+    units = home / ".config/systemd/user"
+    if action == "install":
+        script = home / "gothic-ai/play/scripts/ryzen-play.sh"
+        if not script.is_file() or '"__auto"' not in script.read_text():
+            raise ValueError("Installed ryzen-play.sh lacks autoupdate: run scripts/ryzen-play.sh update first")
+        # systemd uses double-quoted arguments and expands percent specifiers.
+        argument = json.dumps(origin.replace("%", "%%"))
+        atomic_write(units / "gothic-play-update.service", (
+            "[Unit]\nDescription=Update the personal Gothic AI installation\n\n"
+            "[Service]\nType=oneshot\nTimeoutStartSec=infinity\n"
+            "WorkingDirectory=%h/gothic-ai/play\n"
+            f"ExecStart=/usr/bin/python3 %h/gothic-ai/play/scripts/ryzen-play.sh __auto {argument}\n"
+            "Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin\n"))
+        atomic_write(units / "gothic-play-update.timer", (
+            "[Unit]\nDescription=Check for Gothic AI updates every 15 minutes\n\n"
+            "[Timer]\nOnCalendar=*:0/15\nPersistent=true\n\n"
+            "[Install]\nWantedBy=timers.target\n"))
+        run(["systemctl", "--user", "daemon-reload"])
+        run(["systemctl", "--user", "enable", "--now", "gothic-play-update.timer"])
+    elif action == "uninstall":
+        run(["systemctl", "--user", "disable", "--now", "gothic-play-update.timer"])
+        # Removing the files lets an active oneshot finish its build/rollback.
+        for name in ("gothic-play-update.service", "gothic-play-update.timer"):
+            (units / name).unlink(missing_ok=True)
+        run(["systemctl", "--user", "daemon-reload"])
+    else:
+        subprocess.run(["systemctl", "--user", "status", "gothic-play-update.timer", "--no-pager"], check=False)
+        run(["systemctl", "--user", "list-timers", "gothic-play-update.timer", "--all", "--no-pager"])
+        repo = home / "gothic-ai/play"
+        for ref in ("HEAD", "origin/main"):
+            value = subprocess.check_output(["git", "-C", repo, "rev-parse", ref], text=True).strip()
+            print(f"{ref}: {value}", flush=True)
+        state = home / "gothic-ai/play-update.json"
+        print(state.read_text() if state.exists() else "No automatic update result yet.", flush=True)
+    return 0
+
+
 def remote_install(action, payload, source):
     home = Path.home()
     helper = {"__name__": "ryzen_game"}
@@ -170,30 +364,25 @@ def remote_install(action, payload, source):
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise ValueError("Gothic AI is open, playing or updating; close it before install/update") from None
-        queue = home / "gothic-ai/bin/gq"
-        if not os.access(queue, os.X_OK):
-            raise ValueError("gq is not installed: run scripts/gq install ryzen on the Mac")
-        queue_help = subprocess.run([str(queue), "run", "--help"], check=False, capture_output=True, text=True)
-        if queue_help.returncode or "--interactive" not in queue_help.stdout:
-            raise ValueError("Installed gq lacks --interactive: run scripts/gq install ryzen on the Mac")
-        if not (home / ".local/bin/uv").is_file():
-            raise ValueError("Missing ~/.local/bin/uv on Ryzen")
+        check_tools(home)
         if not repo.exists():
             if action == "update":
                 raise ValueError("No ~/gothic-ai/play: run scripts/ryzen-play.sh install first")
             run(["git", "clone", "--branch", "main", payload["origin"], repo])
-        branch = subprocess.check_output(["git", "-C", repo, "branch", "--show-current"], text=True).strip()
-        origin = subprocess.check_output(["git", "-C", repo, "remote", "get-url", "origin"], text=True).strip()
-        if branch != "main" or origin != payload["origin"]:
-            raise ValueError("~/gothic-ai/play must be a main checkout of this origin")
-        if subprocess.check_output(["git", "-C", repo, "status", "--porcelain"], text=True).strip():
-            raise ValueError("~/gothic-ai/play has local changes; keep them before updating")
+        check_checkout(repo, payload["origin"])
+        head = subprocess.check_output(["git", "-C", repo, "rev-parse", "HEAD"], text=True).strip()
+        built = read_built(repo, head)
+        built_path = repo.parent / "play.built"
+        atomic_write(built_path, json.dumps({"good": built["good"], "built": None}) + "\n")
         run(["git", "-C", repo, "pull", "--ff-only"])
+        head = subprocess.check_output(["git", "-C", repo, "rev-parse", "HEAD"], text=True).strip()
         os.chdir(repo)
         os.environ["GQ_OWNER"] = "ryzen-play-install"
         result = owned_process(build_command(source))
         if result not in (0, 3):
             return result
+        atomic_write(built_path, json.dumps({"good": head, "built": head}) + "\n")
+        (repo.parent / "play.failed").unlink(missing_ok=True)
         content = home / ".local/share/gothic-ai/play-content"
         incoming = content.with_name("play-content.incoming")
         old = content.with_name("play-content.old")
@@ -205,9 +394,7 @@ def remote_install(action, payload, source):
         if old.exists():
             shutil.rmtree(old)
         create_settings(home / ".config/gothic-ai/settings.toml", payload["settings"], repo, home)
-        applications = home / ".local/share/applications"
-        applications.mkdir(parents=True, exist_ok=True)
-        (applications / "gothic-ai.desktop").write_text(desktop_entry(repo, launcher_ready=result == 0))
+        write_desktop_entry(repo, result)
         print("Ready: open Gothic AI in GNOME Applications. Login on Ryzen: "
               "~/.local/bin/uv run --project ~/gothic-ai/play/launcher/core gothic-launcher login", flush=True)
     return result
@@ -218,16 +405,31 @@ def main(argv=None):
     try:
         if argv == ["__prepare"]:
             return prepare()
+        if argv[:1] == ["__auto"]:
+            return auto_update(argv[1])
+        if argv[:1] == ["__auto_build"]:
+            return auto_update(argv[1], admitted=True)
+        if argv[:1] == ["__autoupdate"]:
+            payload = json.loads(sys.stdin.readline())
+            return manage_autoupdate(argv[1], payload.get("origin"))
         if argv[:1] == ["__remote"]:
             payload = json.loads(sys.stdin.readline())
             return remote_install(argv[1], payload, payload["installer"])
         args = arguments(argv)
         root = Path(__file__).resolve().parent.parent
+        source = Path(__file__).read_text()
+        if args.action == "autoupdate":
+            payload = {}
+            if args.command == "install":
+                payload["origin"] = subprocess.check_output(
+                    ["git", "-C", root, "remote", "get-url", "origin"], text=True).strip()
+            command = shlex.join(["python3", "-c", source, "__autoupdate", args.command])
+            return owned_process(["ssh", "-T", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
+                                  "ryzen", command], payload)
         origin = subprocess.check_output(["git", "-C", root, "remote", "get-url", "origin"], text=True).strip()
         with (Path.home() / ".config/gothic-ai/settings.toml").open("rb") as stream:
             settings = tomllib.load(stream)
         # Never read secrets.toml/chatgpt.json or put private settings in argv/logs.
-        source = Path(__file__).read_text()
         game_helper = Path(__file__).with_name("ryzen_game.py").read_text()
         payload = {"origin": origin, "settings": {key: settings.get(key, {}) for key in ("game", "llm", "voice", "tts")},
                    "installer": source, "game_helper": game_helper}

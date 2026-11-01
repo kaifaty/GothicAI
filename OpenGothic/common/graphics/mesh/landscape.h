@@ -12,7 +12,7 @@ class PackedMesh;
 class Landscape final {
   public:
     Landscape(VisualObjects& visual, const PackedMesh& wmesh);
-    Landscape(VisualObjects& visual, const PackedMesh& wmesh, LandscapePages& pages);
+    Landscape(VisualObjects& visual, const PackedMesh& wmesh, LandscapePages& pages, const Tempest::Vec3& texturePosition);
     ~Landscape();
 
     void setVisible(bool visible);
@@ -20,7 +20,7 @@ class Landscape final {
     const Tempest::StorageBuffer& bvh()   const { return bvhNodes; }
 
   private:
-    void init(const PackedMesh& packed, bool wholeWorld);
+    void init(const PackedMesh& packed, bool wholeWorld, const Tempest::Vec3* texturePosition = nullptr);
     using Item = VisualObjects::Item;
 
     struct Block {

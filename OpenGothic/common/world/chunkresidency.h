@@ -40,6 +40,7 @@ class ChunkResidency {
 
     using Clock = std::chrono::steady_clock;
     using Listener = std::function<void(ChunkId,State,State)>;
+    using FocusListener = std::function<void()>;
     // A job performs a cooperative slice before deadline and returns true
     // when complete. Consumers must yield by the deadline (no blocking I/O).
     using Work = std::function<bool(Clock::time_point deadline)>;
@@ -59,12 +60,14 @@ class ChunkResidency {
     State desired(ChunkId id) const;
     // Returns size_t(-1) for cells without a landscape entry.
     size_t indexOf(ChunkId id) const;
+    uint32_t textureDistance(ChunkId id) const;
     bool actualLoaded(size_t index) const { return index<chunks.entries.size(); }
     const ChunkTable& table() const { return chunks; }
     const Stats& stats() const { return counters; }
     bool idle() const { return work.empty(); }
 
     uint64_t subscribe(Listener listener);
+    uint64_t subscribeFocus(FocusListener listener);
     void unsubscribe(uint64_t subscription);
     void enqueue(Work work);
     void recordPublication(double ms, bool far);
@@ -84,6 +87,9 @@ class ChunkResidency {
     Stats counters;
     uint64_t nextSubscription = 0;
     std::map<uint64_t,std::shared_ptr<Listener>> listeners;
+    std::map<uint64_t,std::shared_ptr<FocusListener>> focusListeners;
+    ChunkId heroCell{}, cameraCell{};
+    bool focused = false;
     std::deque<Work> work;
     std::deque<std::pair<Clock::time_point,size_t>> recentTransitions;
   };
