@@ -365,6 +365,7 @@ async def chests_scenario(
         results[name] = f"{'done' if ok else 'failed'}{f' ({detail})' if detail != '' else ''}"
 
     bow, gold = item, "ITMI_GOLD"
+    asked: list[str] = []  # situations of the separate live chests_lobart scenario
     cues: list[str] = []  # requests of the separate live chests_lobart scenario
     fetch = ToolCall(CHEST, {"take": [{"item": bow, "count": 1}], "put": [], "chest": None})
     off = model_off(dialogue) if npc == "BDT_1014_BANDIT_L" else None
@@ -389,6 +390,9 @@ async def chests_scenario(
                 msgs = kw["messages"]
                 last = msgs[-1] if msgs else None
                 cues.append(last.content if isinstance(last, Message) else "")
+                asked.append(
+                    "\n".join(m.content for m in msgs if isinstance(m, Message) and m.role == "developer")
+                )
             return cast(AsyncIterator[LLMEvent], inner.stream(**kw))
 
     if off is None:
@@ -419,12 +423,18 @@ async def chests_scenario(
     await link.debug("chest_take", chest=cave.id, item=gold, count=1000)
     log.info("chests: the hero took the gold out of %s unseen", cave.id)
 
-    situation = await dialogue.situation(npc, name)
+    if off is None:
+        talk.hear(ask, npc, {"via": "scenario"})
+        await _until(lambda: bool(asked), 30)
+        situation = asked[0] if asked else ""
+    else:
+        situation = await dialogue.situation(npc, name)
     line = next((s for s in situation.split("\n") if s.startswith(tuple(OWNED.values()))), "")
     check("knows", bow in line and gold in line, line or situation[-300:])
 
-    talk.hear(ask, npc, {"via": "scenario"})
-    await _until(lambda: npc in dialogue.conversations, 30)
+    if off is not None:
+        talk.hear(ask, npc, {"via": "scenario"})
+        await _until(lambda: npc in dialogue.conversations, 30)
     conv = dialogue.conversations.get(npc)
 
     def note() -> str:
