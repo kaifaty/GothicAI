@@ -4,28 +4,30 @@
 
 ## Что сделано
 
-Слой предметов `worlds/NEWWORLD/vobs.d/harbour-motion.json`, 13 записей, и своё описание частиц `particles.d/harbour-smoke.json` (Д2б). Новых моделей и текстур нет, постройки и предметы оригинала не тронуты: в слое нет ни `remove`, ни `move`.
+Слой предметов `worlds/NEWWORLD/vobs.d/harbour-motion.json`, 10 записей, и свои описания частиц `particles.d/harbour-smoke.json` (Д2б). Новых моделей нет. Новая текстура одна — спрайт дыма `OWN_HUT_SMOKE`, его собирают из базы игрока (см. «r6»). Постройки и предметы оригинала не тронуты: в слое нет ни `remove`, ни `move`.
 
 | Место | Что | Из чего |
 |---|---|---|
-| хижина `HAFEN04` у площади | дым из провала кровли 146 × 40 см над большим очагом | три эмиттера своего PFX `OWN_HARBOUR_SMOKE` вдоль провала, наклон 25° по ветру |
-| хижина `HAFEN06` в бедном квартале | дым из провала кровли 73 × 54 см над очагом | два эмиттера `OWN_HARBOUR_SMOKE`, наклон 25° |
+| хижина `HAFEN04` у площади | дым из провала кровли 120 × 37 см над большим очагом | один эмиттер своего PFX `OWN_HUT_SMOKE_04` в устье провала, источник по размеру провала, снос по ветру |
+| хижина `HAFEN06` в бедном квартале | дым из провала кровли 41 × 23 см над очагом | один эмиттер `OWN_HUT_SMOKE_06`, тот же дым, темп в другой фазе |
 | дорога к кораблю под лагерем паладинов | две жаровни у подножия стены террасы, шагом ~25 м | столб `OC_LOB_LIGHTER_HUGE3`, огонь `FIRE_MEDIUM`, дым `FIRE_SMOKE`, свет `FIRE_SMALL_02` 500 см (194, 125, 56) — как у жаровен рыбаков и мола |
 
 Слой собирает [`harbour_motion.py`](../../../../scripts/content/harbour_motion.py) из [`harbour-motion-placements.json`](../../../../data/content/world/harbour-motion-placements.json); копия — [`data/content/world/NEWWORLD/vobs.d/harbour-motion.json`](../../../../data/content/world/NEWWORLD/vobs.d/harbour-motion.json). Жаровня ставится к ближайшей стене расстановкой М4 (`harbour_life.place`). Её огонь, дым и свет привязаны к столбу (`attach`, `offset` в осях столба) с теми же смещениями, что у жаровен оригинала: 3,24, 3,50 и 3,83 м.
 
 Наборы в `content-staging`:
-- `motion-3` — слой и `particles.d` (r4); `motion-2` — слой r3 с `LIGHTSMOKE`;
+- `motion-4` — слой, `particles.d` и спрайт дыма в `materials/` (r6, g75 a52); `motion-3` — r4; `motion-2` — слой r3 с `LIGHTSMOKE`;
 - сторона A — `harbour-life-8` (порт после М4);
-- сторона B — `harbour-motion-3`: `lightfix-2` + `rigging-26` + `life-8` + `motion-3` (r3 — `harbour-motion-2`).
+- сторона B — `harbour-motion-4`: `lightfix-2` + `rigging-26` + `life-8` + `motion-4` (r4 — `harbour-motion-3`, r3 — `harbour-motion-2`).
 
 Пересборка:
 
 ```
 uv run --no-project --with numpy python scripts/content/harbour_motion.py layer --set motion-N --ground-set harbour-life-8
+uv run --no-project --with numpy --with pillow python scripts/content/harbour_motion.py texture --base <база>/textures --set motion-N
 uv run --no-project --with numpy --with pillow --with scipy python scripts/content/building_set.py compose harbour-motion-N lightfix-2 rigging-26 life-8 motion-N
 uv run --no-project --with numpy python scripts/content/harbour_motion.py bench
 uv run --no-project --with numpy python scripts/content/harbour_motion.py bench --only huts,huts-north,overhead --name harbour-motion-smoke
+uv run --no-project --with numpy python scripts/content/harbour_motion.py bench --only huts,huts-north --name harbour-motion-clip --settle 13000 --clip 15000 --together
 ```
 
 `layer` пишет и `particles.d/harbour-smoke.json` в набор, с копией в [`data/content/particles.d/`](../../../../data/content/particles.d/harbour-smoke.json).
@@ -302,6 +304,35 @@ r4 приёмка отклонила: столб слишком плотный, 
 
 Решение за пользователем: пересмотреть цели карточки (например, принимать дым по кадрам и движению, а не по ΔY) или разрешить большую плотность.
 
+### r6: слой g75 a52, приёмка клипом
+
+Решение пользователя 1.11: перебор был в приёмке по числам. Цели карточки к небу недостижимы при её же альфах, а глазу дым r5 уже нравился. Поэтому дым принимает сам пользователь по клипу, глазом. Пакета рецензенту и новых кругов подбора нет. Числа остаются только ограничителями:
+- ночью дым не светлее неба больше чем на 4 уровня;
+- нет сплошного столба: покрытие горлышка не выше 0,35;
+- серый не светлее 128.
+
+Вариант — серый 75, альфа 52. Только у него знак верный в обоих ракурсах: днём к небу −1,6 и −1,0, к кроне +1,9. Данные r5 не менялись, они перенесены в слой:
+- **эмиттеры:** по одному на провал, `OWN_HUT_SMOKE_04` и `OWN_HUT_SMOKE_06` (второй наследует первый, меняются размер источника и фаза темпа);
+- **спрайт:** `OWN_HUT_SMOKE` лежит в `materials/` набора, его собирает `harbour_motion.py texture` из `FIRESMOKE` базы игрока. В git спрайта нет, это производная оригинала;
+- **движок:** частица берёт текстуру из `content/materials` — шаг Е4, [#695](https://github.com/kaifaty/GothicAI/pull/695). Без Е4 эмиттеры дыма не создаются;
+- **наборы:** `motion-4` и `harbour-motion-4` (`lightfix-2` + `rigging-26` + `life-8` + `motion-4`); `compose` теперь переносит записи материалов только с `albedo`.
+
+Клип снят одной заявкой `gq` на сборке `main` `243584ddf` с Е4, в паре со стороной A. Скрипт — [`capture_clip.sh`](smoke-screen/capture_clip.sh), сценарий — [`harbour-motion-clip.bench`](../../../../scripts/content/harbour-motion-clip.bench) (`harbour_motion.py bench --clip`). Камеры `huts` и `huts-north`: полдень, потом полночь; кадры через 13 с, затем 15 с видео (30 кадров/с). `OPENGOTHIC_TEXTURES` пуст.
+- **Е4 работает.** В переписи `OWN_HUT_SMOKE.TGA` — замена `materials/own-hut-smoke/albedo.dds`. Проверка съёмки: заменены все 54 записи набора.
+- **Тот же дым, что g75 a52 в r5.** ΔY к A в теле шлейфа отличается не больше чем на 0,4 уровня ([`tone_r6.py`](smoke-screen/tone_r6.py), [`r6-tone.json`](smoke-screen/r6-tone.json)). Ограничители проходят: ночью к небу +0,4…+0,7, покрытие днём 0,12–0,13.
+- **Движение.** В клипе нет скачков и мигания: средняя смена яркости шлейфа от кадра к кадру 0,03–0,12 уровня, максимум ~1, как шум кодека у A. Дыхание темпа медленное: средняя ΔY шлейфа ходит в пределах ±0,2 уровня за 15 с.
+
+Что видно глазом:
+- **`huts-north` днём.** Над фронтоном справа поднимается тонкая тёмная струйка на фоне неба. Её видно, если знать, куда смотреть.
+- **`huts` днём.** С 15 м дым почти не читается: лёгкая тёмная дымка правее башни.
+- **Ночью** дыма не видно ни в одном ракурсе. Свечения, как в r4, нет.
+
+Это и есть вуаль из карточки исследования: в жизни такой дым с 10–15 м тоже едва заметен. Если пользователь захочет, чтобы дым читался сильнее, нужна большая плотность, а это ход против правила остановки.
+
+![r6, кадры из клипа: слева без дыма, справа с дымом; huts и huts-north, полдень и полночь, настоящая яркость](smoke-screen/r6-clip-sheet.jpg)
+
+Клипы (вне git): `captures/clip-1/m5-smoke-r6.mp4` (как видит игрок, 60 с) и `captures/clip-1/m5-smoke-r6-zoom.mp4` (крупно, без дыма | с дымом). Сырые клипы и кадры — `captures/clip-1/{harbour-life-8,harbour-motion-4}/`.
+
 ## Свет
 
 Ночью оригинал светит так:
@@ -386,9 +417,10 @@ r4 приёмка отклонила: столб слишком плотный, 
 - Пакеты слепых пар — `~/.local/share/gothic-ai/remaster/harbour-motion/reviews/r3-{quay-west,quay-east,quay-north,tavern,fishers,huts,huts-north,overhead}{,-night}/order-{1,2}`, ключи `r3-*.key.json`. Кадры — `captures/final-2/{harbour-life-8,harbour-motion-2}/`.
 - Пакеты r4 (свой дым) — `reviews/r4-{huts,huts-north,overhead}{,-night}/order-{1,2}`, ключи `r4-*.key.json`. Кадры — `captures/final-3/{harbour-life-8,harbour-motion-3}/`, сценарии [`harbour-motion-smoke.bench`](../../../../scripts/content/harbour-motion-smoke.bench) и `-night`. Обе стороны — на сборке `remaster-engine` от main (после #548 и #628) с базой `15cdc40c…`.
 - Кадры r5 — `captures/r5/{harbour-life-8,r5-k29,r5-k52,r5-g{75,95,115}a{29,52}}/`, сценарий [`harbour-motion-r5.bench`](../../../../scripts/content/harbour-motion-r5.bench). Пакетов r5 нет: прогон остановлен по числам до рецензента.
+- Клипы r6 — `captures/clip-1/`, сценарий [`harbour-motion-clip.bench`](../../../../scripts/content/harbour-motion-clip.bench); пакетов нет, приёмка — глазом пользователя по клипу.
 - `content-convert check-particles`: `valid (1 particle effects)`; `check-vob-layer`: `valid (13 added, 0 removed, 0 moved)`, на базе `15cdc40c…` и наборе `harbour-motion-3`; в игре — `vob layer … harbour-motion.json: applied added=13`.
 - `pytest`: `test_harbour_motion.py`, `test_harbour_life.py`, `test_building_set.py`, `test_remaster.py`, `scripts/tests/test_perf_report.py`.
 
 ## Включение
 
-Не включено. Включить вместе с рабочим набором: `building_set.py compose working-<n> lightfix-2 rigging-26 life-8 motion-3` (как сторона B, `compose` переносит и `particles.d`), затем `enable` — по слову пользователя.
+Не включено. Включить вместе с рабочим набором: `building_set.py compose working-<n> lightfix-2 rigging-26 life-8 motion-4` (как сторона B, `compose` переносит и `particles.d`, и спрайт дыма), затем `enable` — по слову пользователя. Спрайт дыма грузится только движком с Е4 ([#695](https://github.com/kaifaty/GothicAI/pull/695)); на сборке без него эмиттеры дыма не создаются.
