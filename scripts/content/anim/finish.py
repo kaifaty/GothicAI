@@ -80,7 +80,9 @@ def snap_ends(anim: ga.Animation, target: ga.Animation, fade_in: float, fade_out
     Each node gets the local difference between the stance and the clip's first frame, fading out over
     `fade_in` seconds, and the difference to its last frame, fading in over the last `fade_out` seconds; the
     middle of the move stays as generated. This takes away what foot IK and Kimodo's constraint tolerance
-    leave (2-5 cm), and the root keeps its way: its end is snapped in height only."""
+    leave (2-5 cm). The root is snapped in height only: the engine moves the body by the root's way from the
+    clip's own first frame, and Gothic's stances carry an arbitrary horizontal offset (S_1HRUN: -6, -33 cm);
+    snapping it dragged the whole body and shortened the way."""
     t = np.arange(anim.frame_count) / anim.fps
     end = (anim.frame_count - 1) / anim.fps
     s = lambda x: x * x * (3 - 2 * x)  # noqa: E731
@@ -97,9 +99,79 @@ def snap_ends(anim: ga.Animation, target: ga.Animation, fade_in: float, fade_out
             delta = qmul(target.rotations[0, k], rot0[f, j] * conj)
             anim.rotations[:, j] = qmul(slerp(ident, np.broadcast_to(delta, (anim.frame_count, 4)), w), anim.rotations[:, j])
             dp = target.positions[0, k] - pos0[f, j]
-            if node == 0 and f == -1:
-                dp = dp * np.array([0.0, 1.0, 0.0])  # the root's way stays
+            if node == 0:
+                dp = dp * np.array([0.0, 1.0, 0.0])  # the engine takes the root's way from the clip's first frame
             anim.positions[:, j] += w[:, None] * dp
+
+
+LEGS = {"L": ("BIP01 L THIGH", "BIP01 L CALF", "BIP01 L FOOT"), "R": ("BIP01 R THIGH", "BIP01 R CALF", "BIP01 R FOOT")}
+
+
+def frame_skeleton(skel: ga.Skeleton, anim: ga.Animation, t: int) -> ga.Skeleton:
+    """The skeleton with the clip's own bone offsets at frame t: Gothic's clips carry their own (Biped) offsets,
+    and IK on another stance's lengths misses the target and drops the foot."""
+    nodes = [ga.Node(nd.name, nd.parent, nd.rest.copy()) for nd in skel.nodes]
+    for j, node in enumerate(anim.node_indices):
+        nodes[node].rest[:3, 3] = anim.positions[t, j]
+    return ga.Skeleton(nodes, skel.root_translation)
+
+
+def lock_feet(anim: ga.Animation, skel: ga.Skeleton, height: float = 4.0, speed: float = 8.0) -> None:
+    """Pin each foot while it stands and bend the leg to it (two-bone IK on thigh and calf).
+
+    A foot stands where its ankle is within `height` cm of its standing height (the stance at the clip's ends)
+    and moves less than `speed` cm a frame (a swinging foot moves 20+). It is pinned where it touched down; a
+    stand at the end of the clip is pinned where the stance puts it, so the snapped end stays. The offset
+    between one pin and the next is spread over the swing between them, where it shows as no slide; before the
+    first stand and after the last it fades to nothing. Squeezing time doubles a slide per frame, and easing
+    the ends onto another stance moves the feet."""
+    n = anim.frame_count
+    worlds = [ga.world_pose(skel, anim, f) for f in range(n)]
+    names = [nd.name for nd in skel.nodes]
+    for chain_names in LEGS.values():
+        if any(x not in names for x in chain_names):
+            continue
+        chain = tuple(names.index(x) for x in chain_names)
+        if any(c not in anim.node_indices for c in chain[:2]):
+            continue
+        p = np.array([w[chain[2]][:3, 3] for w in worlds])
+        v = np.r_[0.0, np.linalg.norm(np.diff(p[:, [0, 2]], axis=0), axis=1)]
+        planted = (p[:, 1] < min(p[0, 1], p[-1, 1]) + height) & (v < speed)
+        spans, f = [], 0
+        while f < n:
+            if planted[f]:
+                g = f
+                while g + 1 < n and planted[g + 1]:
+                    g += 1
+                spans.append((f, g))
+                f = g + 1
+            else:
+                f += 1
+        if not spans:
+            continue
+        corr = np.zeros((n, 3))
+        for f, g in spans:
+            pin = p[n - 1] if g == n - 1 and f > 0 else p[f]
+            corr[f:g + 1, [0, 2]] = pin[[0, 2]] - p[f:g + 1][:, [0, 2]]
+        for (_, g), (f, _) in zip(spans, spans[1:]):  # the swing between two stands carries the offset over
+            for t in range(g + 1, f):
+                u = (t - g) / (f - g)
+                corr[t] = (1 - u) * corr[g] + u * corr[f]
+        first, last = spans[0][0], spans[-1][1]
+        for t in range(0, first):
+            corr[t] = corr[first] * (t / first)
+        for t in range(last + 1, n):
+            corr[t] = corr[last] * ((n - 1 - t) / (n - 1 - last))
+        for t in range(n):
+            if np.linalg.norm(corr[t]) < 0.05:
+                continue
+            world_rot = np.array([m[:3, :3] for m in worlds[t]])
+            rs.two_bone_ik(world_rot, worlds[t][0][:3, 3], frame_skeleton(skel, anim, t), chain, p[t] + corr[t])
+            for node in chain[:2]:
+                local = world_rot[skel.nodes[node].parent].T @ world_rot[node]
+                j = anim.node_indices.index(node)
+                q = rs.mat_to_quat(local)
+                anim.rotations[t, j] = -q if np.dot(q, anim.rotations[t, j]) < 0 else q
 
 
 def hold_arm(anim: ga.Animation, skel: ga.Skeleton, ref: ga.Animation, weights: list[float]) -> None:
@@ -148,6 +220,7 @@ def main():
     ap.add_argument("--sword-arm", default="0.5,0.8,1,1", help="clavicle, upper arm, forearm, hand weights")
     ap.add_argument("--fill", type=Path, action="append", default=[],
                     help="the overlay's jump-back: its node set is written, and it poses the toes and weapon slots the stance lacks")
+    ap.add_argument("--no-foot-lock", action="store_true", help="leave the feet as retargeted")
     ap.add_argument("--fade", default="0.12,0.2", help="seconds of stance matching at the start and at the end")
     a = ap.parse_args()
     skel = ga.read_skeleton(a.skeleton or a.ref.parent / "HUMANS.MDH.json")
@@ -155,6 +228,8 @@ def main():
     anim = retime(ga.read_animation(a.src), [tuple(map(float, k.split(":"))) for k in a.warp.split(",")])
     snap_ends(anim, ref, *map(float, a.fade.split(",")))
     hold_arm(anim, skel, ref, [float(w) for w in a.sword_arm.split(",")])
+    if not a.no_foot_lock:
+        lock_feet(anim, rs.with_offsets(skel, ref))
     fills = [ga.read_animation(f) for f in a.fill]
     body_nodes(anim, skel, [ref] + fills, fills[0] if fills else ref)
     anim.name, anim.next = a.name, a.next

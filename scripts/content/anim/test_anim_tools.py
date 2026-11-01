@@ -200,9 +200,12 @@ def test_snap_ends_lands_both_ends_on_the_stance_and_keeps_the_middle_and_the_wa
     finish.snap_ends(anim, target, 0.12, 0.2)
     same = lambda a, b: np.allclose(np.abs((a * b).sum(-1)), 1.0, atol=1e-6)  # noqa: E731
     assert same(anim.rotations[0], target.rotations[0]) and same(anim.rotations[-1], target.rotations[0])
-    assert np.allclose(anim.positions[0], target.positions[0])
+    assert np.allclose(anim.positions[0, 1:], target.positions[0, 1:])
     assert np.allclose(anim.positions[-1, 1:], target.positions[0, 1:])
-    assert np.allclose(anim.positions[-1, 0], target.positions[0, 0] + way + np.array([0.5, 0, -0.4]))
+    # the root: its height lands on the stance at both ends, its way stays as generated
+    assert np.isclose(anim.positions[0, 0, 1], target.positions[0, 0, 1])
+    assert np.isclose(anim.positions[-1, 0, 1], target.positions[0, 0, 1])
+    assert np.allclose(anim.positions[:, 0, [0, 2]], pos[:, 0, [0, 2]])
     assert same(anim.rotations[8], rot[8]) and np.allclose(anim.positions[8], pos[8])
 
 
@@ -222,3 +225,28 @@ def test_body_nodes_take_the_moves_node_set_and_hold_undriven_nodes():
     assert np.allclose(anim.positions[:, 0], root)  # and the root's way: BIP01 is derived, not in the map
     assert np.allclose(anim.rotations[:, 2], jump.rotations[0, 2])  # the toe: only the jump-back has it
     assert np.allclose(anim.rotations[:, 3], stance.rotations[0, 2])  # the slot: the stance comes first
+
+
+def test_lock_feet_pins_a_standing_foot():
+    import finish
+    # pelvis → thigh → calf → foot, straight down, a leg 90 cm long under a root at 95 cm
+    names = ["BIP01", "BIP01 L THIGH", "BIP01 L CALF", "BIP01 L FOOT"]
+    rests = [np.eye(4) for _ in names]
+    for i, drop in ((1, 5.0), (2, 45.0), (3, 45.0)):
+        rests[i][:3, 3] = [0, -drop, 0]
+    skel = ga.Skeleton([ga.Node(n, i - 1, r) for i, (n, r) in enumerate(zip(names, rests))], np.zeros(3))
+    frames = 10
+    pos = np.array([[r[:3, 3] for r in rests]] * frames, dtype=float)
+    pos[:, 0] = [0, 95.0, 0]
+    pos[:, 0, 2] = -2.0 * np.arange(frames)  # the body drifts 2 cm a frame, the foot slides with it
+    bend = np.array([np.cos(0.15), np.sin(0.15), 0, 0])  # knees a little bent, so IK has room
+    rot = np.tile(np.array([1.0, 0, 0, 0]), (frames, 4, 1))
+    rot[:, 1], rot[:, 2] = bend, bend * np.array([1, -1, 1, 1])
+    anim = ga.Animation("T", "", 1, 25.0, frames, [0, 1, 2, 3], pos, rot)
+    j = skel.index("BIP01 L FOOT")
+    before = np.array([ga.world_pose(skel, anim, f)[j][:3, 3] for f in range(frames)])
+    finish.lock_feet(anim, skel)
+    after = np.array([ga.world_pose(skel, anim, f)[j][:3, 3] for f in range(frames)])
+    assert np.ptp(before[:, 2]) > 15
+    assert np.ptp(after[:, 2]) < 0.5 and np.ptp(after[:, 0]) < 0.5  # pinned where it touched down
+    assert np.allclose(after[:, 1], before[:, 1], atol=0.5)
