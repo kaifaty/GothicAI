@@ -59,6 +59,10 @@ async def crime_ally(
         })],
     )
     off.silent("дано: Браго молчит (решение напасть принято)", who=BRAGO, when="Не трогай")
+    off.silent(
+        "дано: Кавалорн молчит (Браго нападает на него)",
+        who=CAVALORN, when="Браго нападает на тебя",
+    )
     off.silent("дано: Кавалорн молчит (герой спрашивает об убийстве Браго)", who=CAVALORN, when=QUESTION)
     link.act = recorded  # type: ignore[method-assign]
     link.listeners.append(record)
