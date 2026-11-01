@@ -271,3 +271,11 @@ def test_own_poses_put_feet_blade_and_joints_where_asked(tmp_path):
         b.save(tmp_path / f"{name}.MAN.json", name, pose, "test")
         back = ga.world_pose(b.skel, ga.read_animation(tmp_path / f"{name}.MAN.json"), 0)
         assert np.allclose(np.array([m[:3, :3] for m in back]), world, atol=1e-3), name
+
+
+def test_eval_rejects_a_sword_climbing_back_after_the_follow_through():
+    import probe_eval as pe
+    m = {"slide_max": 0.5, "tip_below_floor": 0, "hand_drop_cm": 110, "hand_vmax": 9, "rearm_cm": 12.0}
+    assert pe.fails("charge_release", m) == ["rearm"]
+    m["rearm_cm"] = -10.0
+    assert pe.fails("charge_release", m) == []
