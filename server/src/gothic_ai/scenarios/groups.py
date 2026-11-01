@@ -45,6 +45,18 @@ OFF = {
 }
 
 GIVEN = {
+    "deal",
+    "contract",
+    "debt",
+    "xardas_money",
+    "deal_demo",
+    "bandit_parley",
+    "bandit_bounty",
+    "calm",
+    "companion",
+    "neural-talk",
+    "rescue",
+    "rescue_self",
     "witness",
     "wrath",
     "amends",
