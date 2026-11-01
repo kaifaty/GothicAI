@@ -46,6 +46,17 @@ OFF = {
 }
 
 GIVEN = {
+    "chests",
+    "lead",
+    "meet",
+    "meet_missed",
+    "errand",
+    "errand_fork",
+    "errand_far",
+    "errand_give",
+    "initiative",
+    "day",
+    "noise",
     "crime_ally",
     "crime_law",
     "crime_talk",
