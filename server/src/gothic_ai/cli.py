@@ -1007,7 +1007,7 @@ async def serve(args: argparse.Namespace) -> int:
         feat_image_root = None
         if not args.no_feats and (
             args.scenario in {None, "feats"}
-            or (args.scenario == "lie" and args.llm == "fake")
+            or (args.scenario == "lie" and args.llm == "off")
             or (args.scenario == "vanilla_line_live" and os.environ.get("GOTHIC_FORCE_CHALLENGE") == "1")
         ):
             artist = None

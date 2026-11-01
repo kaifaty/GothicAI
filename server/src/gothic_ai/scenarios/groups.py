@@ -45,6 +45,12 @@ OFF = {
 }
 
 GIVEN = {
+    "lie",
+    "vgive",
+    "vlie",
+    "vcheck",
+    "vspare",
+    "rumor",
     "orders",
     "fight_reactions_wolf",
     "fight_reactions_bandits",

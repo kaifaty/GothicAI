@@ -120,9 +120,9 @@
 #   tts: npc lines reach the game with audio from the TTS service (TTS=fake|voxcpm|inworld) and play aloud;
 #       TTS=inworld is paid, so it also needs PAID_TTS=1
 #       GOTHIC_TTS_RECORD=1 also records the reply and its bench events for check-voice-stem.sh
-#   lie: the hero lies to a quest giver (Xardas: two sheep to kill) and is paid; a sheep he did not kill
-#        turns up, Xardas finds out, attacks him through the scripts, and Jora, standing by, hears it as a
-#        rumor and has it in mind when the hero speaks to her (story graph, stage 4)
+#   lie: given: Xardas pays for the hero's sheep lie; the chronicler recognizes e2e_sheep_lie.
+#       A living sheep reveals the lie, Xardas attacks, and Jora hears the rumor; her situation is read
+#       without a model turn. Group 2, LLM=off via auto; SAVE=save_slot_1.sav.
 #   death_load: human deaths before/after older-save load, player credit, and no repeated saved deaths; no model, no SAVE.
 #   feats: save before a hero kill, chronicler feat with evidence, picture, toast and journal;
 #       load rolls back feat/image facts while retaining picture files; no SAVE.
@@ -278,21 +278,19 @@
 #       one line, all quests completed; givers must be peaceful and outside their follows quest's cast.
 #       Logs include each event, proposal outcome, built quests and passage. SAVE=save_slot_1.sav; TIMEOUT=1200
 #       GOTHIC_FORCE_CHALLENGE=1 requires one hidden challenge per line and checks its hint, outcome and feat.
-#   vgive: a quest of the scripts given and ended in a conversation (Cavalorn's bandits; model scripted with
-#       LLM=fake): he gives it as his dialog HELFEN does, the bandits die, the hero says so and the scripts'
-#       ending plays (the letter to Vatras, +100 exp); a new game (protocol v31: story_effect knows)
-#   vspare: with broken trust, Cavalorn considers sparing the last bandit through amend_quest; after
-#       loading, he credits all three witnessed deaths away from the bodies without check_claim.
-#       New game, LLM=fake; LLM=chatgpt makes only Cavalorn live and logs his choices; TIMEOUT=900
-#   vlie: a lie about a quest of the scripts: the hero tells Lobart the turnips are in the barn, Lobart's
-#       model (scripted with LLM=fake) believes him and his own ending plays; the next morning he misses the
-#       turnips, turns against the hero, and the people around hear it (story graph, stage 5)
-#   vcheck: lies as a mechanic: the hero tells Lobart he killed the raiders on his field; Lobart goes to see
-#       for himself, sees them alive and catches the lie; then he takes no lie on the hero's word; once the
-#       raiders are really dead he goes to see again and pays (model scripted with LLM=fake; stage 5)
-#   rumor: Lobart catches the hero lying; the clock goes to the next morning and the rumor goes round the
-#       people that know each other (routines, shared quests) as far as the city; one there has it in mind
-#       when the hero speaks to it (stage 5)
+#   vgive: given: Cavalorn gives and accepts his bandit quest. Native menus, the letter to Vatras,
+#       +100 exp, gold and single payment are checked. Group 2, LLM=off via auto; new game, no SAVE.
+#   vspare: given: Cavalorn gives his quest, spares the last bandit and accepts before and after load.
+#       With broken trust, remembered deaths count away from bodies without check_claim; loading
+#       restores the original terms. Group 2, LLM=off via auto; new game, no SAVE; TIMEOUT=900.
+#   vlie: given: Lobart accepts the turnip lie. His native ending, next-morning discovery, hostility,
+#       rumor, dialog consequences and restored discount are checked. Group 2, LLM=off via auto;
+#       SAVE=save_slot_1.sav.
+#   vcheck: given: Lobart checks the hero's bandit claim twice. He sees the living bandits, distrusts
+#       the hero, then checks the real deaths and pays; unavailable accept_quest is checked directly.
+#       Group 2, LLM=off via auto; SAVE=save_slot_1.sav.
+#   rumor: given: Lobart exposes the turnip lie. The rumor spreads through acquaintances as far as
+#       the city and enters a distant NPC's situation. Group 2, LLM=off via auto; SAVE=save_slot_1.sav.
 #   amends: the director's storylet: Lobart catches the hero lying, the rumor reaches Andre, who asks for a
 #       fine and closes joining the militia until then (model scripted with LLM=fake); the hero hears him
 #       out and pays, and the militia is open again (stage 5)
