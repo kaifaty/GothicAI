@@ -203,7 +203,8 @@ class Launcher {
   async update(): Promise<void> {
     try {
       const update = await call<State["update"]>("update.start");
-      if (this.state && update) this.state.update = update;
+      // progress events may already be ahead of this answer
+      if (this.state && update && !this.state.update?.updating) this.state.update = update;
       this.error = null;
     } catch (err) {
       this.error = String(err);
