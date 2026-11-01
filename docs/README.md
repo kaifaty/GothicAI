@@ -29,6 +29,7 @@
  ┌───────────────────────────┐               ┌──────────────────────────────┐
  │ Gothic2Notr               │               │ Strands Decider 2B — решения │
  │  OpenGothic + P30 + bridge│               │ Gemma 4 12B — быстрые реплики│
+ │                           │               │ FRIDA — память, :47837       │
  │        │ WebSocket JSON   │   HTTP / WS   │ P30 TCP — выключен, CPU 0–1  │
  │        ▼ :47817           │   TCP JSONL   │ (Voxtral, VoxCPM2 остановлены│
  │ ИИ-сервер gothic-ai serve ├──────────────►│  с 23 и 27 октября)          │
@@ -159,7 +160,7 @@
 | Группа | Модули |
 |---|---|
 | Вход и связь | `cli` (точка входа, `ServerState`), `game` (WebSocket), `protocol` (pydantic-схемы), `trace`, `replay`, `journal` (журнал для человека) |
-| Разговор | `mercy` (сдача NPC и героя, выкуп, пощада и память ветки; `--no-mercy`), `combat_barks` (крики по реальному урону), `dialogue`, `talk`, `turn`, `voice`, `tts`, `persona`, `memory` (SQLite, ветвится с сейвами), `budget`, `npc_tools`, `executor`, `parley` (дорожные шайки, оклик главаря, аренда тишины, повод для драки, ультиматум, перемирие с шайкой; `--no-parley`), `bounty` (ступени знания охоты, тайны за рычаг, ванильные последствия и слух; `--no-bounty`), `commands`, `orders`, `group` (общая беседа), `interject`, `llm/` (`chatgpt`, `openai`, `local`, `off`; `fake` — только юнит-тесты) |
+| Разговор | `mercy` (сдача NPC и героя, выкуп, пощада и память ветки; `--no-mercy`), `combat_barks` (крики по реальному урону), `dialogue`, `talk`, `turn`, `voice`, `tts`, `persona`, `memory` (SQLite, ветвится с сейвами; общая таблица векторов), `embeddings` (HTTP-клиент смыслового поиска памяти, `--no-embeddings`), `budget`, `npc_tools`, `executor`, `parley` (дорожные шайки, оклик главаря, аренда тишины, повод для драки, ультиматум, перемирие с шайкой; `--no-parley`), `bounty` (ступени знания охоты, тайны за рычаг, ванильные последствия и слух; `--no-bounty`), `commands`, `orders`, `group` (общая беседа), `interject`, `llm/` (`chatgpt`, `openai`, `local`, `off`; `fake` — только юнит-тесты) |
 | Быстрый контур и тело | `brain/` (`decider`, `planner`, `reflex`, `day`, `apply`, `tiers`, `stimuli`, `incident`, `situation`), `incidents`, `daylife`, `initiative`, `bodies` (исход мягких действий), `bodypilot` (боевое тело P30), `beasts` (волки слышат тон), `wrath` (терпение к оскорблениям) |
 | Восприятие и знание | `perception`, `sightings`, `places`, `lore`, `whereabouts`, `knowledge`, `social`, `gossip`, `trust`, `people_knowledge`, `attitudes`, `concerns` |
 | Правда, дела, ложь | `chronicle`, `crimes`, `crime_sides`, `crime_react`, `crime_meet`, `crime_memory`, `crime_law`, `crime_law_graph`, `crime_law_runtime`, `npc_crimes`, `npc_will`, `npc_far`, `npc_crime_law`, `blame`, `witnesses`, `quests`, `vanilla`, `gates` (проход по родному основанию, вере, поручительству или взятке; ответственность поручителя, проверка лжи и отзыв прохода), `consequences`, `amends` |
@@ -245,6 +246,7 @@
 | `asr-service/` | распознавание речи: Inworld STT, подсказки имён; запасной — подписка ChatGPT; Voxtral (audio.cpp) выбирается явно | клиент на Mac или Ryzen, Inworld API; Voxtral остаётся на dev-ubuntu | `--asr-url`, `GOTHIC_ASR_URL` |
 | `tts-service/` | голос NPC: Inworld TTS-2, оригинальные голоса сюжетных NPC только в игре; без запасного; VoxCPM2 (audio.cpp) выбирается явно | клиент на Mac или Ryzen; VoxCPM2 на dev-ubuntu остановлен | `--tts-url`, `GOTHIC_TTS_URL` |
 | `decider-service/` | быстрые решения NPC: Strands Decider 2B, полосы urgent и background | dev-ubuntu | `--decider-url`, `GOTHIC_DECIDER_URL` |
+| `embed-service/` | сервис `gothic-embed`: векторы FRIDA для смыслового поиска памяти NPC | dev-ubuntu, HTTP :47837; развёртывание проверяется отдельно | `--embed-url`, `GOTHIC_EMBED_URL`; без явного адреса — хост `--decider-url` и порт 47837 |
 | `server/deploy/gemma/` | Gemma 4 12B (llama.cpp): реплики в бою, первые слова | dev-ubuntu | `--quick-url`, `GOTHIC_QUICK_LLM_URL` |
 | `body-service/` | запасной TCP-сервис P30 (GRU), обучение BC и PPO | по умолчанию P30 в движке; сервис на dev-ubuntu остановлен и выключен 2026-10-28; ручные опыты на ядрах 0–1; обучение — Ryzen и dev-ubuntu | `--body-policy service --body-url URL`, `GOTHIC_BODY_POLICY`, `GOTHIC_BODY_URL` |
 | `launcher/` | `core/` проверяет готовую базу без `Data` (`check`), перед запуском готовит базу и ролики соседним `content-convert`, отдельно — `gothic-launcher prepare [DIR]`; поднимает сервисы и игру одной командой; `app/` — окно (Tauri, Svelte); на Ryzen — значок GNOME с Ptyxis; на Windows — `Setup/Start-GothicAI.cmd` и `scripts/windows/` | ядро — Mac, Linux и Windows (не проверено на игровом ПК), приложение — Mac | `up --continue`, временные `--no-voice` и `--smoke`, `setup`; [Ryzen](launcher.md#ryzen-linux), [Windows](launcher.md#windows) |

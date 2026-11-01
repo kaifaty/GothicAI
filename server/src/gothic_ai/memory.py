@@ -13,6 +13,8 @@ the branch as a whole: patches of the story graph (story.py), which follow the s
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import logging
 import os
 import re
@@ -21,6 +23,9 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import numpy as np
+
+from .embeddings import EmbedClient, EmbedError
 from .llm import Message, Role
 
 log = logging.getLogger(__name__)
@@ -31,6 +36,12 @@ DEFAULT_PATH = Path(os.environ.get("GOTHIC_AI_DATA", Path.home() / ".local" / "s
 LOAD_LIMIT = 100  # newest messages read back for one npc (older ones should be summarized already)
 PATCHES = "*"  # the "npc" of story graph patches and facts: they belong to the branch
 SEARCH_SCAN = 2000  # how far back a search looks
+SEARCH_NOTES = (
+    "[Новая встреча с героем",
+    "[Ты закончил разговор",
+    "[Герой ушёл",
+    "[Герой перебил тебя",
+)
 STEM = 4  # a crude stem for Russian: the first letters of longer words ("драконы" ~ "дракон")
 _WORDS = re.compile(r"\w+")
 
@@ -54,6 +65,12 @@ CREATE TABLE IF NOT EXISTS events (
     PRIMARY KEY (branch, seq)
 );
 CREATE INDEX IF NOT EXISTS events_by_npc ON events (branch, npc, seq);
+CREATE TABLE IF NOT EXISTS vectors (
+    hash  TEXT NOT NULL,
+    model TEXT NOT NULL,
+    vec   BLOB NOT NULL,
+    PRIMARY KEY (hash, model)
+);
 CREATE INDEX IF NOT EXISTS events_by_feat ON events (branch, seq)
 WHERE kind='fact'
 AND json_extract(content, '$.fact') IN ('feat', 'feat_epilogue', 'feat_epilogue_shown', 'fate_end');
@@ -97,10 +114,14 @@ class BranchInfo:
 
 
 class MemoryStore:
-    def __init__(self, path: str | Path = DEFAULT_PATH) -> None:
+    def __init__(self, path: str | Path = DEFAULT_PATH, *, embeddings: EmbedClient | None = None) -> None:
         if str(path) != ":memory:":
             Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.path = path
+        self.embeddings = embeddings
+        self._embedding_npcs: set[tuple[str, str]] = set()
+        self._embedding_task: asyncio.Task[None] | None = None
+        self._embedding_error_at = float("-inf")
         self._db = sqlite3.connect(str(path), isolation_level=None)  # autocommit; explicit transactions
         self._db.execute("PRAGMA journal_mode=WAL")
         index = self._db.execute(
@@ -111,6 +132,8 @@ class MemoryStore:
         self._db.executescript(_SCHEMA)
 
     def close(self) -> None:
+        if self._embedding_task is not None:
+            self._embedding_task.cancel()
         self._db.close()
 
     def ensure_branch(self, branch: str, parent: str | None = None, parent_seq: int = 0) -> int:
@@ -137,7 +160,10 @@ class MemoryStore:
         return int(row[0] or 0)
 
     def append(self, branch: str, npc: str, role: Role, content: str, game_time: str | None = None) -> int:
-        return self._insert(branch, npc, "message", role, content, None, game_time)
+        seq = self._insert(branch, npc, "message", role, content, None, game_time)
+        if not _search_note(role, content):
+            self.queue_embeddings(branch, npc)
+        return seq
 
     def add_summary(self, branch: str, npc: str, summary: str, covers: int) -> int:
         return self._insert(branch, npc, "summary", None, summary, covers, None)
@@ -171,13 +197,112 @@ class MemoryStore:
         ).fetchone()
         return row[0] if row else None
 
-    def search(
+    def queue_embeddings(self, branch: str, npc: str) -> None:
+        """Encode an npc's missing lines in the background, including inherited history."""
+        if self.embeddings is None:
+            return
+        self._embedding_npcs.add((branch, npc))
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return  # synchronous imports can backfill once they enter an event loop
+        if self._embedding_task is None:
+            self._embedding_task = loop.create_task(self._encode_queued())
+
+    async def _encode_queued(self) -> None:
+        try:
+            while self._embedding_npcs:
+                branch, npc = self._embedding_npcs.pop()
+                try:
+                    await self.backfill(branch, npc)
+                except EmbedError as exc:
+                    self._embedding_npcs.add((branch, npc))
+                    now = time.monotonic()
+                    if now - self._embedding_error_at >= 60:
+                        reason = str(exc).replace("\n", " ").replace("\r", " ")
+                        log.warning("memory background embeddings: %s", reason)
+                        self._embedding_error_at = now
+                    return
+        finally:
+            self._embedding_task = None
+
+    async def backfill(self, branch: str, npc: str) -> None:
+        """Encode all uncached searchable lines of this npc, in service-sized batches."""
+        if self.embeddings is None:
+            raise EmbedError("embeddings disabled")
+        health = await self.embeddings.health()
+        model, dim = health["model"], health["dim"]
+        rows = self._db.execute(
+            "SELECT role, content FROM events WHERE branch=? AND npc=? AND kind='message' ORDER BY seq",
+            (branch, npc),
+        ).fetchall()
+        texts = list(dict.fromkeys(content for role, content in rows if not _search_note(role, content)))
+        cached = self._cached_vectors(texts, model, dim)
+        missing = [text for text in texts if _text_hash(text) not in cached]
+        for offset in range(0, len(missing), 256):
+            await self._encode_documents(missing[offset:offset + 256], model, dim)
+
+    def _cached_vectors(self, texts: list[str], model: str, dim: int) -> dict[str, np.ndarray]:
+        hashes = list(dict.fromkeys(_text_hash(text) for text in texts))
+        cached = {}
+        for offset in range(0, len(hashes), 256):
+            batch = hashes[offset:offset + 256]
+            marks = ",".join("?" for _ in batch)
+            rows = self._db.execute(
+                f"SELECT hash, vec FROM vectors WHERE model=? AND hash IN ({marks})", (model, *batch)
+            ).fetchall()
+            for key, blob in rows:
+                if len(blob) != dim * 2:
+                    raise EmbedError("cached vector dimension does not match the service")
+                vec = np.frombuffer(blob, dtype="<f2").astype(np.float32)
+                if not np.isfinite(vec).all():
+                    raise EmbedError("cached vector contains non-finite values")
+                cached[key] = vec
+        return cached
+
+    async def _encode_documents(self, texts: list[str], model: str, dim: int) -> dict[str, np.ndarray]:
+        assert self.embeddings is not None
+        vectors = await self.embeddings.embed(texts, "document")
+        if vectors.shape != (len(texts), dim):
+            raise EmbedError("document vector dimension does not match the service")
+        cached = {_text_hash(text): vec for text, vec in zip(texts, vectors, strict=True)}
+        with self._tx():
+            self._db.executemany(
+                "INSERT OR REPLACE INTO vectors (hash, model, vec) VALUES (?,?,?)",
+                [(key, model, vec.astype("<f2").tobytes()) for key, vec in cached.items()],
+            )
+        return cached
+
+    async def semantic_search(
         self, branch: str, npc: str, query: str, before_seq: int, limit: int = 6
     ) -> list[Recollection]:
-        """Messages up to `before_seq` (older than what the npc has in mind): those sharing the most word
-        stems with `query`, topped up with the latest of them (a word search misses "как меня зовут" vs
-        "моё имя"; the model reads what comes back). Matching is done here, not in SQL: SQLite's LIKE
-        ignores case for ASCII only."""
+        """Rank the lexical search's candidate window by normalized embedding dot product."""
+        if self.embeddings is None:
+            raise EmbedError("embeddings disabled")
+        rows = self._search_rows(branch, npc, before_seq)
+        if not rows or limit <= 0:
+            return []
+        health = await self.embeddings.health()
+        model, dim = health["model"], health["dim"]
+        texts = list(dict.fromkeys(row[2] for row in rows))
+        cached = self._cached_vectors(texts, model, dim)
+        missing = [text for text in texts if _text_hash(text) not in cached]
+        if len(missing) > 256:
+            self.queue_embeddings(branch, npc)
+            raise EmbedError(f"backfill pending: {len(missing)} missing document vectors (limit 256)")
+        if missing:
+            cached.update(await self._encode_documents(missing, model, dim))
+        query_vectors = await self.embeddings.embed([query], "query")
+        if query_vectors.shape != (1, dim):
+            raise EmbedError("query vector dimension does not match the service")
+        scored = [
+            (float(cached[_text_hash(row[2])] @ query_vectors[0]), row[0], Recollection(*row))
+            for row in rows
+        ]
+        scored.sort(key=lambda item: (-item[0], -item[1]))
+        return sorted((row for _, _, row in scored[:limit]), key=lambda row: row.seq)
+
+    def _search_rows(self, branch: str, npc: str, before_seq: int) -> list[tuple]:
         if before_seq <= 0:
             return []
         rows = self._db.execute(
@@ -185,6 +310,16 @@ class MemoryStore:
             "WHERE branch=? AND npc=? AND kind='message' AND seq<=? ORDER BY seq DESC LIMIT ?",
             (branch, npc, before_seq, SEARCH_SCAN),
         ).fetchall()
+        return [row for row in rows if not _search_note(row[1], row[2])]
+
+    def search(
+        self, branch: str, npc: str, query: str, before_seq: int, limit: int = 6
+    ) -> list[Recollection]:
+        """Messages up to `before_seq` (older than what the npc has in mind): those sharing the most word
+        stems with `query`, topped up with the latest of them (a word search misses "как меня зовут" vs
+        "моё имя"; the model reads what comes back). Matching is done here, not in SQL: SQLite's LIKE
+        ignores case for ASCII only."""
+        rows = self._search_rows(branch, npc, before_seq)
         stems = _stems(query)
         scored = []
         for seq, role, content, game_time in rows:
@@ -331,3 +466,11 @@ class _Transaction:
 
 def _stems(text: str) -> set[str]:
     return {w[:STEM] for w in _WORDS.findall(text.lower()) if len(w) >= 3}
+
+
+def _search_note(role: str, content: str) -> bool:
+    return role == "developer" and content.startswith(SEARCH_NOTES)
+
+
+def _text_hash(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
