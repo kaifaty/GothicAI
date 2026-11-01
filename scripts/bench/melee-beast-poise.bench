@@ -149,3 +149,58 @@ stun TROLL posture
 wait 1800
 hp TROLL
 stop
+
+# Beast hits fill human posture by mass; the shadowbeast's capped 60 Ns is a heavy hit.
+# Start beyond the snapper stun and recovery cap. The stock hero has light armour and 10/10 melee hit chance.
+freeze TROLL
+watch player
+clear 3000
+wait 8000
+release all
+disarm
+stats hp 100000 hpmax 100000
+insert Wolf
+put WOLF 140 0
+stats npc WOLF hp 100000 hpmax 100000
+insert Shadowbeast
+put SHADOWBEAST 450 90
+stats npc SHADOWBEAST hp 100000 hpmax 100000
+watch player
+wait 600
+rec beast-hits-human novideo
+mark wolf-native-bite
+fight WOLF player
+wait 200
+freeze WOLF
+freeze WOLF
+state WOLF ZS_MM_ATTACK NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+freeze WOLF off
+wait 1700
+freeze WOLF
+freeze WOLF
+put WOLF 140 0
+mark wolf-fill-human
+strike player WOLF
+wait 34
+strike player WOLF
+wait 34
+strike player WOLF
+wait 34
+strike player WOLF
+wait 34
+strike player WOLF
+wait 34
+strike player WOLF
+wait 34
+strike player WOLF
+wait 34
+strike player WOLF
+wait 34
+strike player WOLF
+wait 34
+strike player WOLF
+mark shadow-heavy-on-staggered
+strike player SHADOWBEAST
+wait 8000
+stats
+stop

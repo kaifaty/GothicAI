@@ -48,10 +48,18 @@ Tempest::Vec3 MeleeImpact::impulse(Weapon weapon, const Tempest::Vec3& velocityC
   return result;
   }
 
+float MeleeImpact::beastImpulse(float bodyMassKg) {
+  return std::min(60.f,.1f*bodyMassKg*5.f);
+  }
+
 float MeleeImpact::skillThresholdScale(int32_t attackerHitChance, int32_t attackerStrength, int32_t defenderHitChance) {
   const float attack  = std::clamp(.7f+.005f*float(std::clamp(attackerHitChance,0,100))+.002f*float(attackerStrength-60),.5f,1.4f);
   const float defence = .8f+.004f*float(std::clamp(defenderHitChance,0,100));
   return 1.2f*defence/attack;
+  }
+
+float MeleeImpact::beastSkillThresholdScale(int32_t defenderHitChance) {
+  return 1.2f*(.8f+.004f*float(std::clamp(defenderHitChance,0,100)));
   }
 
 void MeleeImpact::Posture::tick(uint64_t nowMs, uint64_t dtMs) {
