@@ -57,8 +57,10 @@ Material::Material(const asset::Material& m, bool enableAlphaTest, bool requireA
 
   if(m.wave_mode!=asset::WaveMode::NONE)
     waveMaxAmplitude = m.wave_max_amplitude;
-  if(alpha==Water)
-    turbidity = maps.turbidity;
+  if(alpha==Water) {
+    turbidity      = maps.turbidity;
+    turbidityDepth = maps.turbidityDepth;
+    }
 
   if(m.environment_mapping!=0)
     ; // envMapping = m.environment_mapping_strength;
@@ -118,6 +120,7 @@ bool Material::operator ==(const Material& other) const {
          isGhost==other.isGhost &&
          waveMaxAmplitude==other.waveMaxAmplitude &&
          turbidity==other.turbidity &&
+         turbidityDepth==other.turbidityDepth &&
          envMapping==other.envMapping;
   }
 

@@ -21,14 +21,15 @@ from mathutils import Vector
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from parts import Parts, args, load_goal  # noqa: E402
-from hearth_parts import chain, octagon, stick, turned  # noqa: E402
+from hearth_parts import chain, floating_bits, octagon, stick, turned  # noqa: E402
 
 cfg, out = args()
 goal, lo, hi = load_goal(cfg)
 rng = np.random.default_rng(cfg.get("seed", 9))
 keys = [z["key"] for z in goal["zones"]]
-WOOD, IRON, RIVET, LIQUID, RUST, SCALE = (keys.index(k) for k in ("OWN_HEARTH_WOOD", "OWN_HEARTH_IRON", "OWN_HEARTH_RIVET",
-                                                                  "OWN_HEARTH_LIQUID", "OWN_HEARTH_RUST", "OWN_HEARTH_SCALE"))
+WOOD, IRON, RIVET, LIQUID, RUST, SCALE, BITS = (keys.index(k) for k in ("OWN_HEARTH_WOOD", "OWN_HEARTH_IRON", "OWN_HEARTH_RIVET",
+                                                                        "OWN_HEARTH_LIQUID", "OWN_HEARTH_RUST", "OWN_HEARTH_SCALE",
+                                                                        "OWN_HEARTH_BITS"))
 P = Parts(rng, 0.1)
 
 
@@ -81,6 +82,7 @@ verts = [P.vert(Vector((pc.x + r * math.cos(2 * math.pi * i / pot["sides"]), pc.
 centre = P.vert(Vector((pc.x, pc.y, pot["liquid"])), part)
 for i in range(len(verts)):
     P.poly([centre, verts[i], verts[(i + 1) % len(verts)]], LIQUID, [(0, 0), (0.1, 0), (0, 0.1)])
+floating_bits(P, rng, pc, min(lr) - 0.05, pot["liquid"], BITS, *cfg.get("bits", [4, 2]))  # the stew over the fire
 rim_y = profile[-1][0]
 rim_r = profile[-1][1]
 for deg in cfg["hooks"]:

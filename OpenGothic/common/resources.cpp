@@ -1233,6 +1233,14 @@ void Resources::indexMaterialMaps() {
       else
         maps.turbidity = float(turbidity->value.GetDouble());
       }
+    // A stew: the turbidity is reached over this many cm of liquid (Beer-Lambert), clearer where it is thin.
+    if(const auto depth = entry.value.FindMember("turbidity_depth"); depth!=entry.value.MemberEnd()) {
+      if(!depth->value.IsNumber() || !std::isfinite(depth->value.GetDouble()) ||
+         depth->value.GetDouble()<0 || depth->value.GetDouble()>1e6)
+        valid = false;
+      else
+        maps.turbidityDepth = float(depth->value.GetDouble());
+      }
     if(const auto scale = entry.value.FindMember("scale"); scale!=entry.value.MemberEnd()) {
       if(!scale->value.IsNumber()) {
         valid = false;
@@ -2537,6 +2545,7 @@ Resources::MaterialMaps Resources::loadMaterialMaps(std::string_view name) {
   ret.scale  = files.scale;
   ret.antitileCell = files.antitileCell;
   ret.turbidity = files.turbidity;
+  ret.turbidityDepth = files.turbidityDepth;
   ret.antitile = files.antitile;
   ret.present = true;
   ret.hasAlbedo = !files.albedo.empty();

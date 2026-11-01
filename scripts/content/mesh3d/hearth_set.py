@@ -141,10 +141,13 @@ def cmd_pack(args) -> int:
         atlas_cfg = json.loads((BLENDER_DIR / spec['atlas']).read_text())
         # pot water: how cloudy the engine's clear water is (materials.json "turbidity"), by the zone's material key
         turbidity = {atlas_cfg['slots'][zone][0]: value for zone, value in atlas_cfg.get('turbidity', {}).items()}
+        # ... and over how many cm of liquid it reaches that (a stew: a few cm; absent: at once, as water)
+        depth = {atlas_cfg['slots'][zone][0]: value for zone, value in atlas_cfg.get('turbidity_depth', {}).items()}
         for key in keys:
             if f'{key}.TGA' in materials:
                 raise SystemExit(f'{item}: material key {key} already used by another item')
-            materials[f'{key}.TGA'] = {**entry, **tail, **({'turbidity': turbidity[key]} if key in turbidity else {})}
+            materials[f'{key}.TGA'] = {**entry, **tail, **({'turbidity': turbidity[key]} if key in turbidity else {}),
+                                     **({'turbidity_depth': depth[key]} if key in depth else {})}
         used = rig.glb_edit(bake / 'model.glb', mesh_dir / 'model.glb', {}, set())
         missing = [m for m in used if f'{m}.TGA' not in materials]
         if missing:

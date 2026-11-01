@@ -10,7 +10,8 @@ Asset city-hearth (intent.md, wave 1; the user chose on 2026-10-31 to take the f
 mesh and the material from concept hearth-cauldron attempt 6). The pot is turned from the measured
 profile: a flat bottom, the belly widest at 0.4 of the height, the neck, and a collar flaring out almost
 to the belly. Its centre and floor are the original's (bbox of the target). Inside, the wall comes down
-to a floor; the water at "liquid" m is a flat disc in its own zone, drawn as clear engine water. Each band is a raised ring
+to a floor; the stew at "liquid" m is a flat disc in its own zone, drawn by the engine's water with a turbidity, and
+"bits" [leaves, rings] of cabbage and leek float on it. Each band is a raised ring
 "band_proud" proud of the wall with rivet heads every "rivet_step" m. The wall is hammered: small
 dents "dents" [depth, count around] and a slight oval, so the contour is round but not turned.
 """
@@ -23,13 +24,14 @@ from mathutils import Vector
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from parts import Parts, args, load_goal  # noqa: E402
+from hearth_parts import floating_bits  # noqa: E402
 
 cfg, out = args()
 goal, lo, hi = load_goal(cfg)
 rng = np.random.default_rng(cfg.get("seed", 3))
 keys = [z["key"] for z in goal["zones"]]
-IRON, RIVET, LIQUID, RUST, SCALE = (keys.index(k) for k in ("OWN_HEARTH_IRON", "OWN_HEARTH_RIVET", "OWN_HEARTH_LIQUID",
-                                                             "OWN_HEARTH_RUST", "OWN_HEARTH_SCALE"))
+IRON, RIVET, LIQUID, RUST, SCALE, BITS = (keys.index(k) for k in ("OWN_HEARTH_IRON", "OWN_HEARTH_RIVET", "OWN_HEARTH_LIQUID",
+                                                                   "OWN_HEARTH_RUST", "OWN_HEARTH_SCALE", "OWN_HEARTH_BITS"))
 P = Parts(rng, 0.1)
 sides = cfg["sides"]
 cx, cy, floor = (lo.x + hi.x) / 2, (lo.y + hi.y) / 2, lo.z
@@ -132,6 +134,8 @@ surface = P.new_part(wound=True)  # an open disc: wound up by hand, the recalcul
 lr = [radius(liquid, t) - wall - 0.001 for t in angles]
 liq = [P.vert(point(liquid, t, r), surface) for t, r in zip(angles, lr)]
 cap(liq, LIQUID, up=True)
+# the stew in it (user, 2026-11-01: stew in the pots on the fire): cabbage and leek floating
+floating_bits(P, rng, Vector((cx, cy, 0)), min(lr) - 0.07, floor + liquid, BITS, *cfg.get("bits", [7, 3]))
 
 # --- bands and rivets -------------------------------------------------------------------------------
 proud = cfg.get("band_proud", 0.005)

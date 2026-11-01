@@ -1,5 +1,5 @@
 {
- "base": "3f6bb9688f39f2c86ae7b798c126b83b4a0c4e246a0a130ea9ad264cc560c948",
+ "base": "6942191b46c1cd3afe58785465120d3b7a717ef81a4342e52e4bcc776d9ab7f5",
  "targets": [
   {
    "id": "hearth-cauldron",
@@ -19,7 +19,7 @@
     {
      "key": "OWN_HEARTH_LIQUID",
      "group": "WATER",
-     "role": "the water in a pot: clear engine water (glTF alphaMode BLEND), no collision"
+     "role": "the stew or water in a pot: engine water (glTF alphaMode BLEND) with its turbidity, no collision"
     },
     {
      "key": "OWN_HEARTH_RUST",
@@ -30,6 +30,11 @@
      "key": "OWN_HEARTH_SCALE",
      "group": "METAL",
      "role": "the pale ring of scale the water leaves at its level inside a pot"
+    },
+    {
+     "key": "OWN_HEARTH_BITS",
+     "group": "UNDEF",
+     "role": "cabbage and leek pieces floating in the stew"
     }
    ],
    "kind": "mob_model",
@@ -216,7 +221,7 @@
     {
      "key": "OWN_HEARTH_LIQUID",
      "group": "WATER",
-     "role": "the water in a pot: clear engine water (glTF alphaMode BLEND), no collision"
+     "role": "the stew or water in a pot: engine water (glTF alphaMode BLEND) with its turbidity, no collision"
     },
     {
      "key": "OWN_HEARTH_RUST",
@@ -227,6 +232,11 @@
      "key": "OWN_HEARTH_SCALE",
      "group": "METAL",
      "role": "the pale ring of scale the water leaves at its level inside a pot"
+    },
+    {
+     "key": "OWN_HEARTH_BITS",
+     "group": "UNDEF",
+     "role": "cabbage and leek pieces floating in the stew"
     }
    ],
    "kind": "static_mrm",

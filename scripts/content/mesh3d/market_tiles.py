@@ -14,8 +14,8 @@ A source tile is quilted seamless along its axes (seam_fix.seamless), resized to
 concept instead and keeps its aspect; such a panel has axes "".
 "equalize": n brings n equal columns (planks side by side) to one mean colour, so a light plank
 of the source does not land on every n-th board of a model. "copy" reuses an existing tile directory unchanged; "procedural": {"base": [r, g, b],
-"noise": 0.08, "seed": 1, "relief": 0.25} makes a smooth periodic surface (wax, glass, bone) with
-no image_gen; relief scales its normal, height and AO down from the filter's full strength. The atlas bake later scales
+"noise": 0.08, "seed": 1, "relief": 0.25} makes a smooth periodic surface (wax, glass, bone, a stew with
+"eyes" [count, min px, max px, lift] of fat) with no image_gen; relief scales its normal, height and AO down from the filter's full strength. The atlas bake later scales
 each zone to the original's measured mean colour, so a tile carries pattern and
 relief, not the final colour. --import-sources keeps each source PNG once in
 content-sources/mesh3d-market/ and appends one material recipe per tile.
@@ -86,7 +86,17 @@ def procedural_tile(spec: dict, out: Path) -> None:
         v = np.arange(1024, dtype=np.float32)[:, None] / 1024
         crest = (0.5 + 0.5 * np.sin(2 * np.pi * (v * spec["waves"] + 0.8 * field))) ** 3
         field = 2 * crest - 1 + 0.3 * field
-    shade = np.clip(1 + spec.get("noise", 0.08) * field, 0, None)[..., None]
+    shade = np.clip(1 + spec.get("noise", 0.08) * field, 0, None)
+    if spec.get("eyes"):  # [count, min px, max px, lift]: round fat drops on a stew, lighter, soft edged, wrapped
+        count, small, large, lift = spec["eyes"]
+        yy, xx = np.mgrid[0:1024, 0:1024].astype(np.float32)
+        eye = np.zeros((1024, 1024), dtype=np.float32)
+        for _ in range(int(count)):
+            cx, cy, r = rng.uniform(0, 1024), rng.uniform(0, 1024), rng.uniform(small, large)
+            d = np.hypot((xx - cx + 512) % 1024 - 512, (yy - cy + 512) % 1024 - 512) / r
+            eye = np.maximum(eye, np.sqrt(np.clip(1 - d, 0, 1)))
+        shade = shade * (1 + lift * eye)
+    shade = shade[..., None]
     rgb = np.clip(np.array(spec["base"], dtype=np.float32) * shade, 0, 1)
     image = Image.fromarray(np.rint(rgb * 255).astype("uint8"))
     maps = bakeoff.filtered_maps(image, {"parameters": {"tiling_axes": "uv", "roughness_base": spec["roughness"]}})

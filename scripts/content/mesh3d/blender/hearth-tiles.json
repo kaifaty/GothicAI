@@ -19,17 +19,21 @@
   "own_hearth_liquid": {
    "procedural": {
     "base": [
-     0.2,
-     0.24,
-     0.27
+     0.42,
+     0.38,
+     0.22
     ],
-    "noise": 0.45,
+    "noise": 0.35,
     "seed": 3,
-    "relief": 0.3,
-    "stretch": 3.0,
-    "waves": 9
+    "relief": 0.25,
+    "eyes": [
+     90,
+     5,
+     20,
+     0.45
+    ]
    },
-   "roughness": 0.1,
+   "roughness": 0.15,
    "metallic": 0.0
   },
   "own_hearth_stone": {
@@ -73,6 +77,20 @@
   },
   "own_hearth_scale": {
    "copy": "~/.local/share/gothic-ai/content-staging/city-hearth/tiles/own_hearth_iron"
+  },
+  "own_hearth_bits": {
+   "procedural": {
+    "base": [
+     0.6,
+     0.62,
+     0.4
+    ],
+    "noise": 0.25,
+    "seed": 5,
+    "relief": 0.3
+   },
+   "roughness": 0.45,
+   "metallic": 0.0
   }
  }
 }

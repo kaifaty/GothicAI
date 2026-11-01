@@ -239,3 +239,49 @@ def octagon(r, t, round_share=0.25):
     phase = (t + math.pi / 8) % (math.pi / 4) - math.pi / 8
     flat = r * math.cos(math.pi / 8) / math.cos(phase)
     return flat * (1 - round_share) + r * math.cos(math.pi / 16) * round_share
+
+
+def floating_bits(P, rng, c, reach, level, material, leaves=7, rings=3):
+    """Pieces floating in a stew at height level around c (Vector, z ignored), within reach m of the centre:
+    torn cabbage leaves (curled six-sided pieces 5-9 cm, the middle 3 mm proud) and leek rings (flat
+    annuli 2.5-3.5 cm). Seen only from above: one side, wound up by hand; planar UVs in metres."""
+    placed = []
+
+    def spot(size):
+        for _ in range(40):
+            r, t = reach * math.sqrt(rng.uniform(0.05, 1.0)), rng.uniform(0, 2 * math.pi)
+            p = (c.x + r * math.cos(t), c.y + r * math.sin(t))
+            if all(math.dist(p, q) > (size + s) * 0.8 for q, s in placed):
+                placed.append((p, size))
+                return p
+        return None
+
+    for _ in range(leaves):
+        size = rng.uniform(0.025, 0.045)
+        p = spot(size)
+        if p is None:
+            continue
+        part = P.new_part(wound=True)
+        turn = rng.uniform(0, 2 * math.pi)
+        centre = P.vert(Vector((p[0], p[1], level + 0.003)), part)
+        rim = [P.vert(Vector((p[0] + size * k * math.cos(turn + i * math.pi / 3),
+                              p[1] + size * k * math.sin(turn + i * math.pi / 3),
+                              level + rng.uniform(0.0005, 0.0015))), part)
+               for i, k in enumerate(rng.uniform(0.55, 1.0, 6))]
+        for i in range(6):
+            tri = [centre, rim[i], rim[(i + 1) % 6]]
+            P.poly(tri, material, [(v.co.x, v.co.y) for v in tri])
+    for _ in range(rings):
+        outer = rng.uniform(0.0125, 0.0175)
+        p = spot(outer)
+        if p is None:
+            continue
+        part = P.new_part(wound=True)
+        z = level + 0.0015
+        ring = [(P.vert(Vector((p[0] + outer * math.cos(i * math.pi / 3), p[1] + outer * math.sin(i * math.pi / 3), z)), part),
+                 P.vert(Vector((p[0] + 0.6 * outer * math.cos(i * math.pi / 3), p[1] + 0.6 * outer * math.sin(i * math.pi / 3), z)), part))
+                for i in range(6)]
+        for i in range(6):
+            (a, ai), (b, bi) = ring[i], ring[(i + 1) % 6]
+            for tri in ([ai, a, b], [ai, b, bi]):
+                P.poly(tri, material, [(v.co.x, v.co.y) for v in tri])

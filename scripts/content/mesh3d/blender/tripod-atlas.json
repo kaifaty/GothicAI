@@ -7,7 +7,8 @@
   "OWN_HEARTH_RIVET": 5.0,
   "OWN_HEARTH_LIQUID": 1.0,
   "OWN_HEARTH_RUST": 1.0,
-  "OWN_HEARTH_SCALE": 1.0
+  "OWN_HEARTH_SCALE": 1.0,
+  "OWN_HEARTH_BITS": 1.0
  },
  "targets": {
   "OWN_HEARTH_WOOD": [
@@ -26,9 +27,9 @@
    0.038
   ],
   "OWN_HEARTH_LIQUID": [
-   0.06,
-   0.055,
-   0.045
+   0.09,
+   0.08,
+   0.035
   ],
   "OWN_HEARTH_RUST": [
    0.055,
@@ -39,6 +40,11 @@
    0.13,
    0.115,
    0.09
+  ],
+  "OWN_HEARTH_BITS": [
+   0.18,
+   0.17,
+   0.07
   ]
  },
  "slots": {
@@ -65,6 +71,10 @@
   "OWN_HEARTH_SCALE": [
    "OWN_HEARTH_TRIPOD_KETTLE",
    "METAL"
+  ],
+  "OWN_HEARTH_BITS": [
+   "OWN_HEARTH_TRIPOD_KETTLE",
+   "METAL"
   ]
  },
  "metal": [
@@ -77,7 +87,8 @@
   "OWN_HEARTH_RIVET": 0.1,
   "OWN_HEARTH_LIQUID": 0.0,
   "OWN_HEARTH_RUST": 0.0,
-  "OWN_HEARTH_SCALE": 0.0
+  "OWN_HEARTH_SCALE": 0.0,
+  "OWN_HEARTH_BITS": 0.0
  },
  "size": 1024,
  "seed": 1,
@@ -116,9 +127,13 @@
  "contrast": {
   "OWN_HEARTH_IRON": 0.7,
   "OWN_HEARTH_RUST": 1.2,
-  "OWN_HEARTH_SCALE": 1.2
+  "OWN_HEARTH_SCALE": 1.2,
+  "OWN_HEARTH_BITS": 1.1
  },
  "turbidity": {
-  "OWN_HEARTH_LIQUID": 0.08
+  "OWN_HEARTH_LIQUID": 0.97
+ },
+ "turbidity_depth": {
+  "OWN_HEARTH_LIQUID": 4.0
  }
 }

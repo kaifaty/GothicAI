@@ -11,6 +11,7 @@
 #include "water/gerstner_wave.glsl"
 #include "lighting/shadow_sampling.glsl"
 #include "lighting/tonemapping.glsl"
+#include "lighting/material_brdf.glsl"
 
 #if defined(MAT_VARYINGS)
 layout(location = 0) in flat uint bucketId;
@@ -551,26 +552,41 @@ vec4 waterShading(vec4 t, const vec3 normal) {
 
 void mainWater(vec4 t) {
   const float waveMaxAmplitude = bucket[bucketId].waveMaxAmplitude;
+  const float turbidity        = bucket[bucketId].turbidity;
+  const float turbidityDepth   = bucket[bucketId].turbidityDepth;
+  // Water in a pot (it has a turbidity) ripples at the pot's scale: the sea's waves, 25 times smaller and slower.
+  const float rippleScale      = turbidity>0.0 ? 25.0 : 1.0;
 
   vec3 lx = dFdx(shInp.pos), ly = dFdy(shInp.pos);
   float minLength = max(length(lx),length(ly));
 
-  Wave wx = wave(shInp.pos, minLength, waveIterationsHigh, waveAmplitude(waveMaxAmplitude));
+  Wave wx = wave(shInp.pos*rippleScale, minLength*rippleScale, waveIterationsHigh, waveAmplitude(waveMaxAmplitude));
 
   if(gl_FrontFacing) {
     // BROKEN: water mesh is two sided
     wx.normal = -wx.normal;
     }
 
-  outColor       = waterShading(t,wx.normal);
-  const float turbidity = bucket[bucketId].turbidity;
+  outColor = waterShading(t,wx.normal);
+  const float shadow = scene.underWater==0 ? calcShadow(vec4(shInp.pos,1), 0, scene, textureSm0, textureSm1) : 0.0;
   if(turbidity>0.0) {
-    // Water in a pot clouded with ash and fat: the material's colour, lit like a surface, over the clear water.
-    const vec3  n      = normalize(shInp.normal);
-    const float shadow = calcShadow(vec4(shInp.pos,1), 0, scene, textureSm0, textureSm1);
-    const vec3  sun    = scene.sunColor * clamp(dot(scene.sunDir,n), 0.0, 1.0) * shadow;
-    const vec3  amb    = scene.ambient + (n.y*0.25+0.75) * NightAmbient * Fd_Lambert;
-    outColor.rgb = mix(outColor.rgb, textureAlbedo(t.rgb) * (sun + 2.0*amb) * scene.exposure, turbidity);
+    // Water in a pot clouded with ash and fat, or a stew: the material's colour, lit like a surface, over the clear water.
+    // With a depth (cm) the cloud thickens with the liquid it is seen through (Beer-Lambert): a stew is clearer at the wall.
+    float cloud = turbidity;
+    if(turbidityDepth>0.0)
+      cloud *= 1.0 - exp(-underWaterColorDepth(wx.normal).a/turbidityDepth);
+    const vec3  n   = normalize(shInp.normal);
+    const vec3  sun = scene.sunColor * clamp(dot(scene.sunDir,n), 0.0, 1.0) * shadow * Fd_Lambert; // as direct_light.frag
+    const vec3  amb = scene.ambient + (n.y*0.25+0.75) * NightAmbient * Fd_Lambert; // x2 below stands for the sky irradiance
+    outColor.rgb = mix(outColor.rgb, textureAlbedo(t.rgb) * (sun + 2.0*amb) * scene.exposure, cloud);
+    }
+  if(scene.underWater==0) {
+    // Sun glint: the sun reflected by the rippled surface, not in shadow (water_reflection.frag adds only the sky).
+    // A sharp GGX lobe over the sun's irradiance: in life it is the brightest thing on the water.
+    const vec3 view = normalize(scene.camPos - shInp.pos);
+    const vec3 n    = wx.normal.y<0.0 ? -wx.normal : wx.normal;
+    const vec3 spec = materialSpecular(n, view, scene.sunDir, vec3(WaterF0), turbidity>0.0 ? PotWaterRoughness : WaterRoughness);
+    outColor.rgb += spec * scene.sunColor * max(dot(n, scene.sunDir), 0.0) * shadow * scene.exposure;
     }
   outDiffuse.rgb = t.rgb;
   outDiffuse.a   = encodeHintBits();

@@ -11,9 +11,14 @@ const float RClouds  = RPlanet+3000; // Clouds height in meters
 const float RAtmos   = 6460e3;       // Radius of the atmosphere in meters
 
 const float Ffresnel = 0.02;
-const float IorWater = 1.0 / 1.52; // air / water
-const float IorAir   = 1.52;       // water /air
+const float IorWater = 1.0 / 1.333; // air / water (1.52 was glass)
+const float IorAir   = 1.333;      // water / air
 const vec3  WaterAlbedo = vec3(0.8,0.9,1.0);
+const float WaterF0        = 0.0204; // ((1.333-1)/(1.333+1))^2
+// Ripples finer than the wave normal, as a GGX roughness (alpha = r^2): the sea in a 5 m/s wind has a
+// mean square slope of about 0.029 (Cox and Munk), alpha ~0.24; still water in a pot about 0.06.
+const float WaterRoughness    = 0.45;
+const float PotWaterRoughness = 0.25;
 
 // in vanilla game night time attenuated as rgb{18 16 60}
 const float GMoonIntensity = 0.36;
