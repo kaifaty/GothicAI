@@ -23,13 +23,16 @@
 #       then drawing a weapon breaks the truce and Brago attacks
 #   bandit_hold: new game, no SAVE, no model; ranger bandits and a scripted party member stay quiet
 #       on renewable 5 s parley leases for 30 s, then releasing to scripts starts a native attack
-#   combat_barks: new game, LLM=fake; first hit warms the fighter, next checks combat_hit and overlay voice;
-#       QUICK_URL uses live Gemma and reports phrase/voice delays; TTS=fake|inworld
-#   mercy: new game, LLM=fake; a real low-health hit makes Lobart surrender, stops combat and sets AIV;
+#   combat_barks: given: Lobart cries out after a hit; new game, no SAVE, LLM=off via auto.
+#       First hit warms the fighter, next checks combat_hit and overlay voice; TTS=fake.
+#   mercy: given: Lobart surrenders at low health and stays silent after being spared.
+#       New game, no SAVE, LLM=off via auto; a real hit stops combat and sets AIV; TTS=fake;
 #       sheathing the hero's weapon records mercy and ordinary player_text opens conversation again
-#   hero_yield: new game, LLM=fake; the hero surrenders via player_text during a native fight;
+#   hero_yield: given: Lobart accepts the hero's surrender for all gold, without humiliation.
+#       New game, no SAVE, LLM=off via auto, TTS=fake; the hero surrenders via player_text;
 #       accept_surrender stops attacks within 3 s, transfers all real gold and sets victory AIV
-#   humiliate: hero_yield with humiliate:true; checks native S_PRAY/S_PEE, distance, said bark,
+#   humiliate: given: Lobart accepts surrender for gold with humiliation and a given cry.
+#       New game, no SAVE, LLM=off via auto, TTS=fake; checks native S_PRAY/S_PEE, distance, said bark,
 #       held kneeling and native exit after real Back input; records positions and game/wall times
 #   surrender_live: new game, LLM=chatgpt and live QUICK_URL (defaults to settings.toml);
 #       seven independent Lobart/bandit/guard/Brago scenes record real surrender decisions, tools, speech,
@@ -43,19 +46,24 @@
 #       New game, no SAVE; the code rejects disclosure without leverage, charges 150 gold through Y,
 #       updates the vanilla leaflet quest and starts leading to CASTLEMINE_HUT; LLM=off via auto.
 #   m0: no model; takes Xardas over, walks him around and returns him to his routine
-#   m1: Xardas answers a player question line by line (LLM backend: LLM=fake|chatgpt|local)
+#   m1: given: Xardas answers with mood-tagged lines; checks delivery line by line.
+#       New game, no SAVE, LLM=off via auto; also used by the mood-ai bench.
 #   websocket: Lobart and Hilda speak through Responses against an in-process fake server: per-npc
 #       WebSocket reuse, tool continuation, HTTP fallback and --no-websocket; SAVE=save_slot_1.sav; no model
-#   m2: npc actions (give_item, follow/stop, gestures)
-#   m3: memory survives save/load and follows the save; push-to-talk from a wav file (streamed at
+#   m2: given: Xardas gives one health potion; npc actions (give_item, follow/stop, gestures).
+#       New game, no SAVE, LLM=off via auto.
+#   m3: given: Xardas answers with a fixed line; memory survives save/load and follows the save.
+#       New game, no SAVE, LLM=off via auto; push-to-talk from a wav file (streamed at
 #       speaking pace) through the ASR service (ASR=fake|inworld|voxtral|chatgpt); ASR=inworld is paid,
 #       so it also needs PAID_ASR=1
 #   m4: no model; what the npc planner needs from the bridge: npc roster, soft actions (npc_act) and their end
 #       (npc_idle); with DECIDER_URL the planner runs against that decision service too
 #   m5b: no model; bridge threats, drawn weapon perception and body actions for free and attached npcs
-#   m5: the turn loop (a rejected commitment corrected in the same turn, a real give after the line),
-#       intents moving the body, and an incident: the body reacts before the words (behavioral model:
-#       DECIDER_URL, or a fixed stand-in); with QUICK_URL the words are the quick model's line, at once
+#   m5: given: Xardas tries an unavailable scroll, gives a potion, follows, then keeps his routine;
+#       fixed body decisions and an incident line. New game, no SAVE, LLM=off via auto;
+#       checks code rejection, continued turn, real transfer and intent/body consequences.
+#   m5c: given: the NPC fights, follows his day plan and speaks on the move.
+#       New game, no SAVE, LLM=off via auto; checks threat holding, activity and moving speech.
 #   neural: no model; a one-handed bandit fights the hero under the P30 body pilot through the full lease cycle;
 #       requires a new game, >=10 decisions, no fallback, engine step p99 <=2000 us
 #   neural-still: no model; BDT_1013 attacks the hero who stands still with a drawn sword (the surrender_live
@@ -101,7 +109,8 @@
 #   orders: immediate companion orders, then Cavalorn hears «Бей волка!» with no focus: he fights the
 #       visible wolf before it attacks the hero; the wolf never hears the phrase or asks its tone model.
 #       No model; combat-event speech is explicitly silent (GIVEN); TIMEOUT=360
-#   m5e: talking without a window: a typed line and the talk key (a wav through the ASR service) with the
+#   m5e: given: Xardas answers with fixed lines; body decisions are fixed.
+#       New game, no SAVE, LLM=off via auto, ASR=fake; talking without a window, typed line and talk key with the
 #       hero's own focus, the addressee, the npc's body, the hero's doings, an interruption, a witness, the end
 #       of a conversation when the hero walks away, a walking npc answering on the move
 #   m6: npc's know the world from the scripts' dialogs as far as the story has got: Xardas's talk of chapter 1
@@ -127,7 +136,8 @@
 #       The far answer is recorded at the routine meeting. Group 2, LLM=off via auto; SAVE=save_slot_1.sav.
 #   places: no model; not a check: dumps the world's waypoints and its people's routines into $LOG_DIR/world_points.json
 #       for the book of places (gothic-ai places <dump>, server/src/gothic_ai/places.py)
-#   tts: npc lines reach the game with audio from the TTS service (TTS=fake|voxcpm|inworld) and play aloud;
+#   tts: given: Xardas answers with fixed mood-tagged lines; audio reaches the game and plays aloud.
+#       New game, no SAVE, LLM=off via auto; TTS=fake|voxcpm|inworld;
 #       TTS=inworld is paid, so it also needs PAID_TTS=1
 #       GOTHIC_TTS_RECORD=1 also records the reply and its bench events for check-voice-stem.sh
 #   lie: given: Xardas pays for the hero's sheep lie; the chronicler recognizes e2e_sheep_lie.
@@ -418,7 +428,7 @@
 # slot 1). The game runs in LOG_DIR,
 # so its saves and settings stay there; memories go to LOG_DIR/memory.sqlite3.
 #
-#   SCENARIO=m3 LLM=fake ASR=voxtral GOTHIC_DIR=/path/to/Gothic\ II scripts/e2e.sh
+#   SCENARIO=m3 ASR=voxtral GOTHIC_DIR=/path/to/Gothic\ II scripts/e2e.sh
 # GAME_EXTRA_ENV adds game-only environment assignments, one NAME=value per line.
 # Example: GAME_EXTRA_ENV=$'LD_PRELOAD=/path/libjemalloc.so.2\nMALLOC_CONF=prof:true'
 set -euo pipefail
@@ -515,7 +525,7 @@ BRAIN_ARGS=(--no-brain)
 if [ -n "${DECIDER_URL:-}" ]; then
   BRAIN_ARGS=(--decider-url "$DECIDER_URL")
 fi
-# lines in a fight come from the quick model only when given (QUICK_URL=http://<gpu-host>:47834/v1; m5)
+# QUICK_URL enables live quick speech only in scenarios that use it.
 QUICK_ARGS=(--no-quick)
 if [[ "$SCENARIO" == surrender_live && -z "${QUICK_URL:-}" ]]; then
   QUICK_URL="$(cd "$ROOT/server" && uv run python - <<'PY'
@@ -547,6 +557,12 @@ fi
 if [ -n "${QUICK_URL:-}" ]; then
   QUICK_ARGS=(--quick-url "$QUICK_URL")
 fi
+case "$SCENARIO" in
+  m1|m2|m3|m5|m5c|m5e|tts|combat_barks|mercy|hero_yield|humiliate)
+    BRAIN_ARGS=(--no-brain)
+    QUICK_ARGS=(--no-quick)
+    ;;
+esac
 SVM_ARGS=()
 if [[ "${GOTHIC_NO_SVM_LINES:-0}" == 1 ]]; then
   SVM_ARGS=(--no-svm-lines)

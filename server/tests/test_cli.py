@@ -17,7 +17,6 @@ from gothic_ai.llm.off import ModelOff, OffBackend
         "deal", "contract", "debt", "xardas_money", "deal_demo",
         "bandit_parley", "bandit_bounty", "calm", "companion", "neural-talk", "rescue", "rescue_self",
     )],
-    ("m1", "auto", "fake"),
     ("haggle", "auto", "scenario haggle is live: set LLM=chatgpt|openai|local"),
     ("m0", "fake", "scenario m0 requires --llm off"),
     ("m0", "chatgpt", "scenario m0 requires --llm off"),
@@ -30,6 +29,8 @@ from gothic_ai.llm.off import ModelOff, OffBackend
         for scenario in (
             "witness", "wrath", "amends", "amends_deal", "trace", "broken", "gate", "gate_vouch", "greg",
             "crime_ally", "crime_law", "crime_talk", "trace_crime", "cover", "cover_subject",
+            "m1", "m2", "m3", "m5", "m5c", "m5e", "tts",
+            "combat_barks", "mercy", "hero_yield", "humiliate",
         )
         for llm in ("auto", "fake", "chatgpt")
     ],
