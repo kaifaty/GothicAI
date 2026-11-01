@@ -59,6 +59,31 @@ def test_a_smoke_scenario_waits_out_a_particle_life_and_turns_to_night():
     assert lines[lines.index('shot ship-night') - 1] == 'set time 0 0'
 
 
+def test_a_clip_follows_the_shots_of_each_camera():
+    lines = harbour_motion.together_lines(CAMERAS, CAMERAS[1:], settle=13000, clip=15000)
+    recs = [line[4:] for line in lines if line.startswith('rec ')]
+    assert recs == ['ship-clip', 'quay-clip', 'quay-night-clip']
+    i = lines.index('rec ship-clip')
+    assert lines[i - 1] == 'shot ship-b' and lines[i + 1:i + 3] == ['wait 15000', 'stop']
+    assert not any(line.startswith('rec ') for line in harbour_motion.bench_lines(CAMERAS, night=False))
+
+
+def test_the_smoke_sprite_is_soft_white_and_has_no_edge(tmp_path):
+    import numpy as np
+    alpha = np.full((16, 16), 0.8)
+    rgba = harbour_motion.smoke_sprite(alpha)
+    assert rgba.shape == (16, 16, 4) and (rgba[..., :3] == 1).all()
+    assert rgba[..., 3].max() == 0.8 and rgba[0, :, 3].max() == 0 and rgba[:, -1, 3].max() == 0
+    path = tmp_path / 'own-hut-smoke/albedo.dds'
+    harbour_motion.write_soft_dds(path, rgba)
+    data = path.read_bytes()
+    assert data[:4] == b'DDS ' and data[84:88] == b'DXT5'
+    assert len(data) == 128 + 16 * (16 + 4 + 1 + 1 + 1)  # 16x16, 8x8, 4x4, 2x2, 1x1 in 4x4 blocks
+    with Image.open(path) as image:
+        back = np.asarray(image.convert('RGBA'), float) / 255
+    assert np.abs(back[..., 3] - rgba[..., 3]).max() < 0.04  # a soft alpha, not hardened to a cutout
+
+
 def test_a_tilted_emitter_leans_with_the_wind():
     smoke, = harbour_motion.layer_entries([
         {'key': 'smoke', 'kind': 'emitter', 'pfx': 'OWN_SMOKE', 'position': [1, 2, 3], 'tilt': 40}])
