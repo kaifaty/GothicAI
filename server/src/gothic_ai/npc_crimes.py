@@ -121,6 +121,31 @@ class NpcCrimes:
                 out.append(fact)
         return out
 
+    def suspect_body(self, npc: str, body: str, trace: str, *, died: int, place: str) -> list[Fact]:
+        """People remembered at a found body's place within half an hour of the death: suspicion of
+        murder in the NPC namespace, by the chest's rule. The hero is Crimes.suspect_body's."""
+        crimes = self.crimes
+        if not self.enabled or crimes is None or crimes.sightings is None:
+            return []
+        npc, body = npc.upper(), body.upper()
+        out = []
+        for sight in crimes.sightings.present(npc, place, died, SUSPECT_MIN, skip={body}):
+            if sight.who in HERO or self._human(sight.who) is False:
+                continue  # a wolf by the body is no murderer; an unknown guild stays a person
+            if any(
+                f.get("npc") == npc and f.get("crime") == "murder" and f.get("body") == body
+                and f.get("suspect") == sight.who
+                for f in self.chronicle.facts("npc_crime_suspected")
+            ):
+                continue
+            fact = {
+                "fact": "npc_crime_suspected", "npc": npc, "crime": "murder", "suspect": sight.who,
+                "body": body, "trace": trace, "died": died, "place": place, "sighting": sight.record(),
+            }
+            self.chronicle.record(fact)
+            out.append(fact)
+        return out
+
     def _human(self, npc: str, guild: int | None = None) -> bool | None:
         if guild is None and self.crimes is not None:
             guild = self.crimes.people.get(npc.upper(), {}).get("guild")

@@ -33,6 +33,12 @@ POLICIES: dict[str, EventPolicy] = {
         15,
         salient=True,
     ),
+    # the first sight of a trace that matters by itself (found_traces.py): a body (v58), later blood
+    "trace_found": EventPolicy(
+        "You found the body of {other} {place}, {detail}. Someone was killed here.{context}",
+        120,
+        salient=True,
+    ),
     "player_sleeps": EventPolicy("The hero lay down to sleep nearby.", 60),
     "player_sits": EventPolicy("The hero sat down nearby.", 30),
     "weapon_drawn": EventPolicy("The hero drew a weapon near you.", 20, scripted=True),
