@@ -728,10 +728,10 @@ MeshObjects::Mesh WorldView::addView(std::string_view visual, int32_t headTex, i
   return MeshObjects::Mesh();
   }
 
-MeshObjects::Mesh WorldView::addView(const ProtoMesh* mesh) {
+MeshObjects::Mesh WorldView::addView(const ProtoMesh* mesh, int32_t material) {
   if(mesh!=nullptr) {
     bool staticDraw = false;
-    return MeshObjects::Mesh(objGroup,*mesh,0,0,0,staticDraw);
+    return MeshObjects::Mesh(objGroup,*mesh,material,0,material,staticDraw);
     }
   return MeshObjects::Mesh();
   }

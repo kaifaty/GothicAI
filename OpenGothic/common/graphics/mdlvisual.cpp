@@ -379,7 +379,7 @@ void MdlVisual::setVisualBody(WorldView& owner, MeshObjects::Mesh&& body) {
   view.setPose(pos,*skInst);
   for(auto& slot:item)
     if(slot.deferredProto!=nullptr) {
-      slot.view=owner.addView(slot.deferredProto->fname,slot.deferredMaterial,0,slot.deferredMaterial);
+      slot.view=owner.addView(slot.deferredProto,slot.deferredMaterial);
       if(textureOwnerKnown)
         slot.view.setTextureOwner(textureOwnerPosition,textureOwnerSpatial);
       }
