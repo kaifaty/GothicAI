@@ -9,6 +9,12 @@ namespace MeleeImpact {
   enum class HeavyHit : uint8_t { None, TwoHanded, Downward, Posture };
   enum class ArmorClass : uint8_t { Light, Medium, Heavy };
   enum class BeastSize : uint8_t { Small, Medium, Huge };
+  enum class BackstabKind : uint8_t { None, Unaware, Sleeping, Stunned };
+
+  float backstabAngle(float targetFacingDeg, float attackerBearingDeg);
+  bool backstabRecentHit(uint64_t nowMs, uint64_t lastHitMs);
+  BackstabKind backstabKind(float angleDeg, int32_t sneakTalent, bool sleeping, bool stunned, bool aware);
+  float backstabMultiplier(BackstabKind kind, bool hugeBeast, float stunBonus);
 
   HeavyHit heavyHit(Weapon weapon, const Tempest::Vec3& velocityCmS, float postureIncrease);
   ArmorClass armorClass(int32_t edgeProtection);

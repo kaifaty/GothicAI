@@ -440,6 +440,10 @@ void WorldView::setSceneImages(const Tempest::Texture2d& clr, const Tempest::Tex
   sGlobal.zbuffer    = &textureCast<const Texture2d&>(depthNative);
   }
 
+void WorldView::setFog(const Tempest::StorageImage& lut, const Tempest::StorageImage& lutMs) {
+  sGlobal.setFog(&lut, &lutMs);
+  }
+
 void WorldView::setWindEnabled(bool enabled, uint64_t period) {
   sGlobal.zWindEnabled = enabled && period>0;
   sGlobal.windPeriod   = period;
@@ -497,6 +501,11 @@ void WorldView::drawGBuffer(Tempest::Encoder<CommandBuffer>& cmd, uint8_t fId) {
 
 void WorldView::drawWater(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
   visuals.drawWater(cmd);
+  }
+
+void WorldView::drawMultiply(Tempest::Encoder<CommandBuffer>& cmd, uint8_t fId) {
+  visuals.drawMultiply(cmd);
+  pfxGroup.drawMultiply(cmd, fId);
   }
 
 void WorldView::drawTranslucent(Tempest::Encoder<CommandBuffer>& cmd, uint8_t fId) {

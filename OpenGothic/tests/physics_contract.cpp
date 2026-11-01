@@ -4563,6 +4563,42 @@ namespace {
 
   void testContracts() {
     {
+      using MeleeImpact::BackstabKind;
+      requireNear(MeleeImpact::backstabAngle(0.f,119.9f),119.9f,.0001f,
+                  "backstab angles must retain the horizontal sector boundary");
+      requireNear(MeleeImpact::backstabAngle(350.f,110.f),120.f,.0001f,
+                  "backstab angles must wrap across zero degrees");
+      require(MeleeImpact::backstabKind(119.9f,1,false,false,false)==BackstabKind::None,
+              "an unaware target at 119.9 degrees must not receive a backstab");
+      require(MeleeImpact::backstabKind(120.f,1,false,false,false)==BackstabKind::Unaware,
+              "an unaware target at 120 degrees must receive a backstab");
+      require(MeleeImpact::backstabKind(180.f,0,false,false,false)==BackstabKind::None,
+              "an unaware backstab must require the sneak talent");
+      require(MeleeImpact::backstabKind(180.f,0,false,true,true)==BackstabKind::Stunned,
+              "a rear hit on a stunned target must qualify without sneak or surprise");
+      require(MeleeImpact::backstabKind(0.f,1,true,false,false)==BackstabKind::Sleeping,
+              "a sleeping target must allow a frontal backstab with the sneak talent");
+      require(MeleeImpact::backstabKind(0.f,0,true,false,false)==BackstabKind::None,
+              "a sleeping backstab must still require the sneak talent");
+      require(MeleeImpact::backstabKind(0.f,0,false,true,true)==BackstabKind::None,
+              "a frontal hit on a stunned target must not qualify as a backstab");
+      require(MeleeImpact::backstabKind(180.f,1,false,false,true)==BackstabKind::None,
+              "combat or a recent hit must prevent an unaware backstab");
+      require(MeleeImpact::backstabRecentHit(10900,1000),
+              "a hit 9.9 seconds ago must keep the target aware of its attacker");
+      require(!MeleeImpact::backstabRecentHit(11000,1000),
+              "a hit exactly 10 seconds ago must no longer keep the target aware");
+      requireNear(MeleeImpact::backstabMultiplier(BackstabKind::Unaware,false,1.f),3.f,.0001f,
+                  "an unaware backstab must triple final melee damage");
+      requireNear(MeleeImpact::backstabMultiplier(BackstabKind::Unaware,true,1.f),1.5f,.0001f,
+                  "a huge beast must receive only a 1.5 backstab multiplier");
+      requireNear(MeleeImpact::backstabMultiplier(BackstabKind::Stunned,false,1.5f),3.f,.0001f,
+                  "a stunned backstab must replace rather than multiply the stun bonus");
+      requireNear(MeleeImpact::backstabMultiplier(BackstabKind::None,false,1.5f),1.5f,.0001f,
+                  "an ordinary hit must retain the existing stun bonus");
+      }
+
+    {
       using MeleeImpact::Weapon;
       const auto fist=MeleeImpact::impulse(Weapon::Fist,{600,800,0},90);
       requireNear(fist.x,9.f,.0001f,"fist impulse must convert world cm/s into N s");

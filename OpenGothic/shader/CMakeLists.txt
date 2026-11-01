@@ -90,6 +90,7 @@ endfunction(add_shader)
 #   ATEST      - use alpha test
 #   WATER      - water material
 #   GHOST      - ghost material
+#   EMISSIVE   - additive blend; with MULTIPLY - multiplicative, drawn before the fog pass
 
 function(add_geom_shader OUTPUT)
   list(SUBLIST ARGV 1 -1 VARS)
@@ -180,6 +181,7 @@ add_frag_shader(main_lnd_g_at  -DFLAT_NORMAL -DGBUFFER -DATEST)
 add_frag_shader(main_lnd_g_tx  -DFLAT_NORMAL -DGBUFFER)
 add_frag_shader(main_lnd_f     -DFLAT_NORMAL -DFORWARD)
 add_frag_shader(main_lnd_e     -DFLAT_NORMAL -DEMISSIVE)
+add_frag_shader(main_lnd_m     -DFLAT_NORMAL -DEMISSIVE -DMULTIPLY)
 add_frag_shader(main_lnd_x     -DFLAT_NORMAL -DGHOST)
 add_frag_shader(main_lnd_w     -DFLAT_NORMAL -DWATER)
 add_frag_shader(main_lnd_d     -DFLAT_NORMAL -DDEPTH_ONLY)
@@ -192,6 +194,7 @@ add_frag_shader(main_obj_g     -DGBUFFER)
 add_frag_shader(main_obj_g_at  -DGBUFFER -DATEST)
 add_frag_shader(main_obj_f     -DFORWARD)
 add_frag_shader(main_obj_e     -DEMISSIVE)
+add_frag_shader(main_obj_m     -DEMISSIVE -DMULTIPLY)
 add_frag_shader(main_obj_w     -DWATER)
 add_frag_shader(main_obj_x     -DGHOST)
 add_frag_shader(main_obj_d     -DDEPTH_ONLY)
@@ -221,6 +224,7 @@ add_shader(main_pfx_f.frag     materials/main.frag  "-DMESH_TYPE=4" -DFORWARD   
 add_shader(main_pfx_f_at.frag  materials/main.frag  "-DMESH_TYPE=4" -DFORWARD    -DVT_COLOR -DATEST)
 add_shader(main_pfx_e.frag     materials/main.frag  "-DMESH_TYPE=4" -DEMISSIVE   -DVT_COLOR)
 add_shader(main_pfx_e_at.frag  materials/main.frag  "-DMESH_TYPE=4" -DEMISSIVE   -DVT_COLOR -DATEST)
+add_shader(main_pfx_m.frag     materials/main.frag  "-DMESH_TYPE=4" -DEMISSIVE   -DVT_COLOR -DMULTIPLY)
 add_shader(main_pfx_x.frag     materials/main.frag  "-DMESH_TYPE=4" -DGHOST      -DVT_COLOR)
 add_shader(main_pfx_x_at.frag  materials/main.frag  "-DMESH_TYPE=4" -DGHOST      -DVT_COLOR -DATEST)
 add_shader(main_pfx_d.frag     materials/main.frag  "-DMESH_TYPE=4" -DDEPTH_ONLY -DVT_COLOR)

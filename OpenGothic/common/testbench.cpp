@@ -16367,7 +16367,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     say(pl.bowDump());
     }
   else if(c=="stats") {
-    // stats [npc <npc>] [str <n>] [dex <n>] [bow <n>] [cbow <n>] [hp <n>] [hpmax <n>] [talent auto|0|1|2]:
+    // stats [npc <npc>] [str <n>] [dex <n>] [bow <n>] [cbow <n>] [sneak <n>] [hp <n>] [hpmax <n>] [talent auto|0|1|2]:
     // the hero's (an npc's) strength, dexterity, hit chances (the skill of the manual aim), hit points;
     // talent: the animations of the trained (G2 sets level 1 at 30%, 2 at 60%: _BOWT1, _BOWT2), auto as
     // the hit chances say
@@ -16405,6 +16405,8 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
         h.hitchance[TALENT_BOW] = v;
       else if(a[i]=="cbow")
         h.hitchance[TALENT_CROSSBOW] = v;
+      else if(a[i]=="sneak")
+        n.setTalentSkill(TALENT_SNEAK,v);
       else if(a[i]=="hp")
         h.attribute[ATR_HITPOINTS] = v;
       else if(a[i]=="hpmax")
@@ -18188,9 +18190,33 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     say("ani " + symName(w,n) + " " + a[2]);
     }
   else if(c=="heropose") {
-    // heropose kneel|none: the hero kneels as after a surrender (player_pose), or gets up
+    // heropose kneel|none|check: set the surrender pose, or exercise its real input paths.
+    if(a.size()>1 && a[1]=="check") {
+      if(!pl.isPlayerKneeling())
+        throw std::runtime_error("heropose check requires a kneeling hero");
+      const float rotation = pl.rotation();
+      ctrl.onRotateMouse(15.f,5.f);
+      ctrl.tickMove(16);
+      if(!pl.isPlayerKneeling())
+        throw std::runtime_error("heropose: mouse rotation ended kneel");
+      if(std::abs(std::remainder(pl.rotation()-rotation-15.f,360.f))>0.01f)
+        throw std::runtime_error("heropose: mouse rotation did not turn the hero");
+      std::string reply;
+      if(!aiCommand("ai ptt start",reply))
+        throw std::runtime_error("heropose: no AI bridge for ptt_start");
+      const bool speakingKneeling = pl.isPlayerKneeling();
+      aiCommand("ai ptt cancel",reply);
+      if(!speakingKneeling)
+        throw std::runtime_error("heropose: ptt_start ended kneel");
+      press(ctrl,KeyCodec::Forward);
+      release(ctrl,KeyCodec::Forward);
+      if(pl.isPlayerKneeling())
+        throw std::runtime_error("heropose: Forward did not end kneel");
+      say("heropose check passed: mouse and ptt_start preserve kneel; Forward ends kneel");
+      return;
+      }
     const bool kneel = a.size()>1 && a[1]=="kneel";
-    say(std::string("heropose ") + (pl.setPlayerPose(kneel) ? (kneel ? "kneel" : "none") : "refused"));
+    say(std::string("heropose ") + (pl.setPlayerPose(kneel,"testbench none") ? (kneel ? "kneel" : "none") : "refused"));
     }
   else if(c=="place") {
     // place <dist> <angle>: the hero stands that far from the watched npc, at that angle from its facing

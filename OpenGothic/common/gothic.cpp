@@ -135,6 +135,7 @@ Gothic::Gothic() {
   defaults->set("GAME", "melee_posture",         1);
   defaults->set("GAME", "melee_stagger",         1);
   defaults->set("GAME", "melee_beast_poise",     1);
+  defaults->set("GAME", "melee_backstab",        1);
   defaults->set("GAME", "melee_down_tactics",    1);
   defaults->set("GAME", "melee_hitstop",         1);
   defaults->set("GAME", "melee_stamina",         1);
@@ -914,6 +915,7 @@ void Gothic::refreshPhysicsFlags() {
     settingsGetI("GAME","melee_posture")!=0,
     settingsGetI("GAME","melee_posture")!=0 && settingsGetI("GAME","melee_stagger")!=0,
     settingsGetI("GAME","melee_posture")!=0 && settingsGetI("GAME","melee_stagger")!=0 && settingsGetI("GAME","melee_beast_poise")!=0,
+    settingsGetI("GAME","melee_backstab")!=0,
     settingsGetI("GAME","melee_down_tactics")!=0,
     settingsGetI("GAME","item_hulls")!=0,
     settingsGetI("GAME","item_deepest_contact")!=0,

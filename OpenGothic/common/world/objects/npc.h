@@ -634,7 +634,7 @@ class Npc final {
     bool      whirlTo(float dx, float dz, float step, uint64_t dt);
     bool      isRotationAllowed() const;
     auto      playAnimByName(std::string_view name, BodyState bs) -> const Animation::Sequence*;
-    bool      setPlayerPose(bool kneel);
+    bool      setPlayerPose(bool kneel, std::string_view reason);
     void      tickPeeStream();
     bool      tickPlayerPose();
     bool      isPlayerKneeling() const { return playerKneeling; }
@@ -988,6 +988,10 @@ class Npc final {
     bool                          hasMeleeBeastPoise() const;
     bool                          hasMeleeSuperArmor() const;
     float                         meleeStunBonus(const Npc& attacker) const;
+    MeleeImpact::BackstabKind      meleeBackstabKind(const Npc& attacker) const;
+    float                         meleeBackstabMultiplier(MeleeImpact::BackstabKind kind) const;
+    // Transient per-attacker awareness, sampled before damage perception changes combat state.
+    std::vector<std::pair<const Npc*,uint64_t>> meleeRecentHits;
     std::string                   meleeStunReason;
     bool                          meleeStunBeat = true; // the second beat of a lost balance is played
     uint64_t                      meleeStunUntil = 0;
