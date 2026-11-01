@@ -98,6 +98,7 @@ struct Bucket {
   uint  flags;
   float uvScale;
   float antitileCell;
+  float turbidity;
   };
 
 #endif

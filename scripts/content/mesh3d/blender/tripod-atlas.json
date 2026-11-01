@@ -93,5 +93,8 @@
  },
  "contrast": {
   "OWN_HEARTH_IRON": 0.7
+ },
+ "turbidity": {
+  "OWN_HEARTH_LIQUID": 0.45
  }
 }

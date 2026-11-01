@@ -138,10 +138,13 @@ def cmd_pack(args) -> int:
         bake = BUILD / item / 'atlas'
         keys = json.loads((bake / 'metrics.json').read_text())['materials']
         entry = rig.write_maps(write_dds, output / 'materials', output / 'materials' / name / 'atlas', bake / 'maps' / keys[0].lower())
+        atlas_cfg = json.loads((BLENDER_DIR / spec['atlas']).read_text())
+        # pot water: how cloudy the engine's clear water is (materials.json "turbidity"), by the zone's material key
+        turbidity = {atlas_cfg['slots'][zone][0]: value for zone, value in atlas_cfg.get('turbidity', {}).items()}
         for key in keys:
             if f'{key}.TGA' in materials:
                 raise SystemExit(f'{item}: material key {key} already used by another item')
-            materials[f'{key}.TGA'] = {**entry, **tail}
+            materials[f'{key}.TGA'] = {**entry, **tail, **({'turbidity': turbidity[key]} if key in turbidity else {})}
         used = rig.glb_edit(bake / 'model.glb', mesh_dir / 'model.glb', {}, set())
         missing = [m for m in used if f'{m}.TGA' not in materials]
         if missing:

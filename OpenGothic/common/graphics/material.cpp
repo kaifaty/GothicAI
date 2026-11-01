@@ -17,7 +17,8 @@ Material::Material(const asset::Material& m, bool enableAlphaTest, bool requireA
   loadFrames(m);
 
   Resources::MaterialMaps maps;
-  if(m.group!=asset::MaterialGroup::WATER && !hasFrameAnimation() &&
+  // Water reads its maps too: our pot water has an albedo and a turbidity of its own.
+  if(!hasFrameAnimation() &&
      m.wave_mode==asset::WaveMode::NONE &&
      (m.texture_anim_map_mode==asset::AnimationMapping::NONE ||
       (m.texture_anim_map_dir.x==0.f && m.texture_anim_map_dir.y==0.f))) {
@@ -56,6 +57,8 @@ Material::Material(const asset::Material& m, bool enableAlphaTest, bool requireA
 
   if(m.wave_mode!=asset::WaveMode::NONE)
     waveMaxAmplitude = m.wave_max_amplitude;
+  if(alpha==Water)
+    turbidity = maps.turbidity;
 
   if(m.environment_mapping!=0)
     ; // envMapping = m.environment_mapping_strength;
@@ -114,6 +117,7 @@ bool Material::operator ==(const Material& other) const {
          texAniFPSInv==other.texAniFPSInv &&
          isGhost==other.isGhost &&
          waveMaxAmplitude==other.waveMaxAmplitude &&
+         turbidity==other.turbidity &&
          envMapping==other.envMapping;
   }
 
@@ -138,9 +142,9 @@ bool Material::isSceneInfoRequired(AlphaFunc alpha) {
   }
 
 bool Material::isShadowmapRequired(AlphaFunc alpha) {
+  // Water samples the sun's shadow for a turbid surface (pot water).
   return isForwardShading(alpha) &&
-         alpha!=Material::AdditiveLight && alpha!=Material::Multiply && alpha!=Material::Multiply2 &&
-         alpha!=Material::Water;
+         alpha!=Material::AdditiveLight && alpha!=Material::Multiply && alpha!=Material::Multiply2;
   }
 
 bool Material::isTextureInShadowPass(AlphaFunc alpha) {

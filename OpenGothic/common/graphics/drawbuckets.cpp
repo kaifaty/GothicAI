@@ -138,6 +138,7 @@ bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
     BucketGpu bx;
     bx.texAniMapDirPeriod = i.mat.texAniMapDirPeriod;
     bx.waveMaxAmplitude   = i.mat.waveMaxAmplitude;
+    bx.turbidity          = i.mat.turbidity;
     bx.alphaWeight        = i.mat.alphaWeight;
     bx.envMapping         = i.mat.envMapping;
     if(i.staticMesh!=nullptr) {

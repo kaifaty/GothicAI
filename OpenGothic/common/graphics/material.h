@@ -46,6 +46,7 @@ class Material final {
     uint64_t                  texAniFPSInv     = 1;
     bool                      isGhost          = false;
     float                     waveMaxAmplitude = 0;
+    float                     turbidity        = 0;
     float                     envMapping       = 0;
 
     bool operator == (const Material& other) const;

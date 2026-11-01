@@ -1170,6 +1170,14 @@ void Resources::indexMaterialMaps() {
           maps.antitileCell = float(value);
         }
       }
+    // Water in a pot clouded with ash and fat: how much of the material's own lit colour covers the clear water.
+    if(const auto turbidity = entry.value.FindMember("turbidity"); turbidity!=entry.value.MemberEnd()) {
+      if(!turbidity->value.IsNumber() || !std::isfinite(turbidity->value.GetDouble()) ||
+         turbidity->value.GetDouble()<0 || turbidity->value.GetDouble()>1)
+        valid = false;
+      else
+        maps.turbidity = float(turbidity->value.GetDouble());
+      }
     if(const auto scale = entry.value.FindMember("scale"); scale!=entry.value.MemberEnd()) {
       if(!scale->value.IsNumber()) {
         valid = false;
@@ -1945,6 +1953,7 @@ Resources::MaterialMaps Resources::loadMaterialMaps(std::string_view name) {
   ret.orm    = inst->implLoadMaterialTexture(files.orm,false);
   ret.scale  = files.scale;
   ret.antitileCell = files.antitileCell;
+  ret.turbidity = files.turbidity;
   ret.antitile = files.antitile;
   ret.present = true;
   ret.hasAlbedo = !files.albedo.empty();

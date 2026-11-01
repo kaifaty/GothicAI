@@ -99,5 +99,8 @@
    0.0045,
    0.004
   ]
+ },
+ "turbidity": {
+  "OWN_HEARTH_LIQUID": 0.45
  }
 }

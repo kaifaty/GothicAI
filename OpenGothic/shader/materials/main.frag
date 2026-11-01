@@ -560,6 +560,15 @@ void mainWater(vec4 t) {
     }
 
   outColor       = waterShading(t,wx.normal);
+  const float turbidity = bucket[bucketId].turbidity;
+  if(turbidity>0.0) {
+    // Water in a pot clouded with ash and fat: the material's colour, lit like a surface, over the clear water.
+    const vec3  n      = normalize(shInp.normal);
+    const float shadow = calcShadow(vec4(shInp.pos,1), 0, scene, textureSm0, textureSm1);
+    const vec3  sun    = scene.sunColor * clamp(dot(scene.sunDir,n), 0.0, 1.0) * shadow;
+    const vec3  amb    = scene.ambient + (n.y*0.25+0.75) * NightAmbient * Fd_Lambert;
+    outColor.rgb = mix(outColor.rgb, textureAlbedo(t.rgb) * (sun + 2.0*amb) * scene.exposure, turbidity);
+    }
   outDiffuse.rgb = t.rgb;
   outDiffuse.a   = encodeHintBits();
   outNormal      = encodeNormal(wx.normal);

@@ -140,7 +140,7 @@ layout(binding = L_MorphId,  std430) readonly buffer MId  { int     index[];    
 layout(binding = L_Morph,    std430) readonly buffer MSmp { vec4    samples[];     } morph[];
 #endif
 
-#if defined(GL_FRAGMENT_SHADER) && defined(FORWARD) && !defined(DEPTH_ONLY)
+#if defined(GL_FRAGMENT_SHADER) && (defined(FORWARD) || defined(WATER)) && !defined(DEPTH_ONLY)
 layout(binding = L_Shadow0)          uniform sampler2D textureSm0;
 layout(binding = L_Shadow1)          uniform sampler2D textureSm1;
 #endif

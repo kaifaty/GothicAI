@@ -132,6 +132,7 @@ class Resources final {
       const Tempest::Texture2d* orm    = nullptr;
       float                    scale  = 1.f;
       float                    antitileCell = 1.f;
+      float                    turbidity = 0.f;
       Material::Antitile       antitile = Material::Antitile::Off;
       bool                     present = false;
       bool                     hasAlbedo = false;
@@ -368,6 +369,7 @@ class Resources final {
       std::string albedoReplacement;
       float       scale = 1.f;
       float       antitileCell = 1.f;
+      float       turbidity = 0.f;
       Material::Antitile antitile = Material::Antitile::Off;
       };
     std::unordered_map<std::string,MaterialMapFiles>                  materialMaps;
