@@ -115,13 +115,14 @@
 #       the city (Harad sees him), an hour passes, he comes back and says he was in the city all morning:
 #       Lobart catches the lie by what he saw (model scripted with LLM=fake); the memory follows the save;
 #       story_state's `seen` (check_claim) is the engine's sight
-#   trace: Lobart catches a lie about an arrow's age by its fresh trace; a stranger's arrow and denied authorship are the control
-#   broken: Lobart returns to fresh fence debris and catches a lie about its age; another NPC's sword break is the control
-#   witness: asking a witness (wave 2 step 3): at 8:00 someone Lobart knows sees the hero in the open, Lobart
-#       does not; later the hero comes up to Lobart with an alibi («это не я топтал твою репу — я всё утро был
-#       в городе»), Lobart calls that one over, it comes and tells what it saw, Lobart catches the lie «со слов»
-#       (model scripted with LLM=fake; live, the hero bluffs «спроси у …» if nobody is asked); then someone far
-#       is asked at their next meeting: the answer is a fact, no model call
+#   trace: given: Lobart catches a lie about an arrow's age by its fresh trace; a stranger's arrow and
+#       denied authorship are the control. Group 2, LLM=off via auto; SAVE=save_slot_1.sav.
+#   broken: given: Lobart catches a lie about fresh fence debris; another NPC's sword break is the control.
+#       Group 2, LLM=off via auto; SAVE=save_slot_1.sav.
+#   witness: given: Lobart asks a farm witness, catches the lie from its testimony, and asks a far acquaintance.
+#       At 8:00 the witness sees the hero while Lobart does not. Later the hero claims he was in the city;
+#       the witness comes over, code records its testimony, and its code-started answer stays silent.
+#       The far answer is recorded at the routine meeting. Group 2, LLM=off via auto; SAVE=save_slot_1.sav.
 #   places: no model; not a check: dumps the world's waypoints and its people's routines into $LOG_DIR/world_points.json
 #       for the book of places (gothic-ai places <dump>, server/src/gothic_ai/places.py)
 #   tts: npc lines reach the game with audio from the TTS service (TTS=fake|voxcpm|inworld) and play aloud;
@@ -221,10 +222,12 @@
 #       Matteo witnesses a native theft; Andre stays locked until the next day, charges 50 through
 #       his native voiced dialog and accepts payment. Matteo still remembers. A second theft with
 #       an accepted silence deal never reaches Andre. Native theft perceptions stay enabled.
-#   gate: new game, LLM=fake: the city guard sells passage for 100 gold through Y; both gate guards
+#   gate: given: the guard offers passage for 100 gold and believes the hero's claim. New game, no SAVE;
+#       Group 2, LLM=off via auto. The hero accepts through Y; both gate guards
 #       get AIV_PASSGATE and the hero crosses without SECONDWARN/ATTACK. Loading the outside save,
 #       a believed let_pass claim grants passage and records its text, reference and game time.
-#   gate_vouch: new game, LLM=fake: nearby Lothar vouches and the guard admits the hero; a loaded
+#   gate_vouch: given: Lothar vouches and the guard admits the hero and believes a false Harad claim.
+#       New game, no SAVE; Group 2, LLM=off via auto. A loaded
 #       branch admits a real pass without a native menu or lines. Another loaded branch believes
 #       a false Harad claim; the next morning catches it and revokes both guards' passage.
 #   crime_react: rule reactions at the deed (docs/crime.md, layer 4a), no model; SAVE=save_slot_1.sav.
@@ -273,7 +276,8 @@
 #       the next occasion, with a game day and an injected 15 min between them. All three must have a
 #       line/none outcome, at least one completed line. SAVE=save_slot_1.sav; TIMEOUT=1200
 #       GOTHIC_NO_FEAT_CHALLENGES=1 runs the director without hidden challenges (--no-feat-challenges)
-#   greg: LLM=fake, new game: Greg gives his city errand, accepts farmer clothes and pays 50 gold, a map
+#   greg: given: Greg gives his city errand and accepts the hero's clothing claim. New game, no SAVE;
+#       Group 2, LLM=off via auto. Farmer clothes earn 50 gold, a map
 #       and two rum; reload the branch without the clothes and his acceptance records a lie with its truth
 #   vanilla_line: LLM=fake only, stage 5 layer 3: take and finish Lobart's turnips through the scripts'
 #       own dialogs. The vanilla success occasion produces a neighbor's line with follows and a success
@@ -298,18 +302,17 @@
 #       Group 2, LLM=off via auto; SAVE=save_slot_1.sav.
 #   rumor: given: Lobart exposes the turnip lie. The rumor spreads through acquaintances as far as
 #       the city and enters a distant NPC's situation. Group 2, LLM=off via auto; SAVE=save_slot_1.sav.
-#   amends: the director's storylet: Lobart catches the hero lying, the rumor reaches Andre, who asks for a
-#       fine and closes joining the militia until then (model scripted with LLM=fake); the hero hears him
-#       out and pays, and the militia is open again (stage 5)
-#   amends_deal: as amends, but the hero makes them in conversation: he asks to be forgiven, the npc offers a
-#       deal that forgives the lie for the fine, and he accepts it (docs/npc-tools.md, wave 1 step 2)
+#   amends: given: Lobart exposes the turnip lie; Amends assigns Andre a 50-gold fine, others none.
+#       The rumor reaches Andre, the militia closes, the hero hears him out and pays, and the menu reopens.
+#       Group 2, LLM=off via auto; SAVE=save_slot_1.sav.
+#   amends_deal: given: the same exposure and fine; Andre offers forgiveness for 50 gold through a deal.
+#       The hero accepts it in conversation. Group 2, LLM=off via auto; SAVE=save_slot_1.sav.
 #   debt: given: Lobart lends 20 gold for 25 back the next day and accepts a repayment deal.
 #       SAVE=save_slot_1.sav; two days on the debt is a
 #       broken word (trust) and goes round as a rumor; then the hero pays it back, late (wave 1 step 2)
-#   wrath: the necromancer's answer (docs/xardas-wrath.md): the hero insults Xardas line by line; the scales of
-#       his patience tip (model scripted with LLM=fake: rude, an insult, his mother), he kills the hero with a
-#       spell and raises him as a skeleton. LLM=chatgpt: whether the real model tips over (GOTHIC_WRATH_LINES:
-#       other lines, "|" between them)
+#   wrath: given: Xardas takes offense at severity 1, 2 and 3, unforgivable on the third insult.
+#       He kills the hero with a spell and raises him as a skeleton (docs/xardas-wrath.md).
+#       Group 2, LLM=off via auto; new game, no SAVE.
 #   initiative: an npc comes up to the hero and speaks first (docs/npc-tools.md, wave 2 step 1). Hilda's
 #       greeting waits for the hero (the game's Npc_CheckInfo), so she is left to the scripts. The hero owes
 #       Lobart 25 gold since yesterday (a debt seeded into the chronicle): a broken word, on Lobart's mind. The

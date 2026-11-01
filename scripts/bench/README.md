@@ -890,7 +890,7 @@ the ZEN-ID whenever the recovered Item has an authored link.
 separately. They still count toward the 95% fraction, but are omitted from the
 maximum-travel and recovery gates. Raw maximum/recovery totals remain visible
 beside `gate_max_shift_cm` and `gate_recovered`. The agreed file contains exactly
-NEWWORLD 18261, OLDWORLD 1644 and ADDONWORLD 6863; every other excess still fails.
+NEWWORLD 18261 (the rolling flask); every other excess still fails.
 
 `placed-items diagnose <ZEN-ID> [control]` advances that Item's original 12 m
 section for 300 native steps and writes `placed-items-diagnose.jsonl`. Each step
@@ -901,6 +901,24 @@ movable furniture while retaining landscape and static objects. The command
 requires an authored Item and uses `tick(16)` to prevent batched native steps.
 For an excluded Item it records the verdict and verifies that neither wake nor
 activation can create a body, without attempting to simulate that Item.
+
+`placed-items-diagnose-1644` / `placed-items-diagnose-1644-control` use
+`WORLD=OLDWORLD.ZEN`; `placed-items-diagnose-6863` /
+`placed-items-diagnose-6863-control` use `WORLD=ADDONWORLD.ZEN`. Set
+`PLACED_ITEMS=1 ITEM_DEEPEST_CONTACT=1` for the fixed manifold or
+`ITEM_DEEPEST_CONTACT=0` for the upstream control, for example:
+
+```bash
+WORLD=OLDWORLD.ZEN PLACED_ITEMS=1 ITEM_DEEPEST_CONTACT=1 \
+  scripts/bench.sh placed-items-diagnose-1644 "$PWD/.bench/thin-blades/1644-on"
+```
+
+`[GAME] item_deepest_contact=1` retains the EPA pair in manifolds involving
+`C_Item` when it is more than 1 mm deeper than every clipped pair; coplanar
+face contacts keep their original support corners. Marvin
+`toggle item_deepest_contact` applies on the next
+native step. OFF uses Jolt's original clipping. See the
+[thin-blade results](../../reports/physics/2026-10-31-thin-blades/README.md).
 
 `PLACED_ITEMS=0` selects the existing body-creation paths. `[GAME] placed_items`
 defaults to 1; Marvin `toggle placed_items` changes it during play. The census is

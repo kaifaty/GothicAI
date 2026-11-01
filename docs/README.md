@@ -14,6 +14,8 @@
 
 Карта описывает то, что есть сейчас. PR, который добавляет модуль, сервис, флаг, сценарий или документ, правит и эту страницу.
 
+Физика тонких клинков: `[GAME] item_deepest_contact=1` сохраняет глубину EPA только для `C_Item`; `placed-items-diagnose-{1644,6863}` и варианты `-control` проверяют 300 шагов ON/OFF, контракт — `gothic-physics-contract`. [Отчёт и офлайн-стенд](../reports/physics/2026-10-31-thin-blades/README.md), [текущее поведение](physics.md#как-работает-сейчас).
+
 ## Части и машины
 
 ```
@@ -218,6 +220,7 @@
 | Возврат человека к распорядку после рэгдолла с 10–20 м от путевых точек | `common/testbench.cpp`, [`routine-return.bench`](../scripts/bench/routine-return.bench), `scripts/bench.sh`; исправление индексов `NpcBodyList::frozen` в `physics/dynamicworld.cpp` | Замер обычного ИИ: лимит по длине маршрута, MOB-скачки отдельно, проверка физической капсулы, повторы FAIL; будущий экзамен обучаемой навигации | [Замер и история](../reports/physics/2026-10-30-routine-return/README.md) |
 | Кэш цельных форм коллизии Jolt | `common/physics/collisioncache.*`, `dynamicworld.*`, `common/world/world.cpp` | ландшафт и вода восстанавливаются по входам мира; `OPENGOTHIC_COLLISION_CACHE=0`; CPU-меш сохраняет материалы и сектора | [`world-streaming.md`](world-streaming.md) |
 | Начальная загрузка private VBO/IBO/SSBO Metal без ожидания CPU | `lib/Tempest/Engine/gapi/metal/mtbuffer.*`, `mtdevice.*` | основная очередь, удержание буферов до completion, staging 128 МиБ; `OPENGOTHIC_METAL_SYNC_UPLOAD=1` возвращает ожидание | [`world-streaming.md`](world-streaming.md) |
+| Ленивые звуки vob'ов (5в) | `common/world/worldsound.cpp`, `common/frameprofile.*` | предзагрузка `radius + 20 м`, до двух эффектов за кадр; `OPENGOTHIC_LAZY_VOB_SOUNDS=0`; зонд и `streaming-flythrough`, e2e `check_walk`/`load_rewind` | [`world-streaming.md`](world-streaming.md#как-работает-сейчас) |
 | Куски мира 64 м и стенд облёта рынок → гавань → лес | `common/world/chunkresidency.*`, `worldchunksruntime.*`; [`streaming-flythrough.bench`](../scripts/bench/streaming-flythrough.bench), DSL `route`, `scripts/perf_report.py` | ландшафт на GPU по кускам; `OPENGOTHIC_STREAMING=0` выключает менеджер, Marvin `toggle chunks`; `scripts/bench.sh streaming-flythrough` на Ryzen | [`world-streaming.md`](world-streaming.md) |
 | Резидентность текстур 7а | `common/resources.*`, `frameprofile.*`, `graphics/visualobjects.*`, `drawbuckets.*`, `rtscene.*`; зонд и `scripts/loadprobe_summary.py` / `perf_report.py` | стабильная identity, спрос владельцев/кусков, LRU без спроса и освобождение после fence; `OPENGOTHIC_TEXTURE_STREAMING=0`, бюджет `[GAME] texture_budget_mb` / `OPENGOTHIC_TEXTURE_BUDGET_MB` (256 МиБ); производительность и вид приняты Claude; run выше численного порога на шуме, fly проходит; на Хоринисе востребовано ~303 МиБ, экономия рабочего набора — в 7б-2 | [`world-streaming.md`](world-streaming.md) |
 | Повторяемый стенд производительности: рынок, гавань, лес, интерьер, бой; четыре ракурса, реальные часы, CPU/GPU, повторы и сравнение | `scripts/perf.sh`, `scripts/perf_report.py`, `scripts/bench/perf-*.bench`, команды `perf sample` / `perf stop` | явный запуск; отдельная `OpenGothic/build-perf` | [`performance.md`](performance.md) |
