@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 # story_program), v24: choices in the director's dialogs (steps choice, clear_choices; debug choices, talk,
 # menu, menu_pick), v25: story_program.own (the scripts' program under the director's), v26: the director's
 # lines in the npc's voice (line_voice).
-PROTOCOL_VERSION = 56
+PROTOCOL_VERSION = 57
 NOISE_PROTOCOL = 36  # npc_event noise and npc_act investigate
 TRACE_PROTOCOL = 37  # visible physical traces and game time on noise events
 PACE_PROTOCOL = 38  # go_to_waypoint.pace: a guide keeps the hero's pace; start_activity.place
@@ -1686,10 +1686,20 @@ class ChronicleFeat(_Command):
     epilogue: str = ""
 
 
+class ChronicleEnd(_Command):
+    kind: Literal["death", "wrath", "finale"]
+    title: str
+    text: str
+    name: str
+    chapter: int
+    day: int
+
+
 class ChronicleFork(_Command):
     chapter: int
     day: int
     feats: list[ChronicleFeat] = Field(default_factory=list)
+    ends: list[ChronicleEnd] = Field(default_factory=list)
 
 
 class ChronicleCmd(_Command):

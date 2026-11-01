@@ -78,7 +78,7 @@ def test_native_chronicle_parser_contract(tmp_path):
         check=True, capture_output=True, text=True, timeout=60,
     )
     checked = subprocess.run([str(executable)], check=True, capture_output=True, text=True, timeout=10)
-    assert checked.stdout == "Chronicle contract: 26 checks passed\n"
+    assert checked.stdout == "Chronicle contract: 29 checks passed\n"
 
 
 @pytest.mark.parametrize("counters", [{}, {
