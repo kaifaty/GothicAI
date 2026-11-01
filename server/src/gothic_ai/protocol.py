@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 # story_program), v24: choices in the director's dialogs (steps choice, clear_choices; debug choices, talk,
 # menu, menu_pick), v25: story_program.own (the scripts' program under the director's), v26: the director's
 # lines in the npc's voice (line_voice).
-PROTOCOL_VERSION = 57
+PROTOCOL_VERSION = 59
 NOISE_PROTOCOL = 36  # npc_event noise and npc_act investigate
 TRACE_PROTOCOL = 37  # visible physical traces and game time on noise events
 PACE_PROTOCOL = 38  # go_to_waypoint.pace: a guide keeps the hero's pace; start_activity.place
@@ -31,6 +31,7 @@ CRIME_REACT_PROTOCOL = 44  # independently held hero deeds, their ids, and vanil
 CRIME_MEET_PROTOCOL = 46  # deeds switch also holds room entry; rule verdicts need no body action
 NPC_CRIME_PROTOCOL = 47  # marked NPC theft/attack and separate npc_deed snapshots
 NPC_FAR_PROTOCOL = 48  # story_effect chest_take: a checked chest-to-self transfer without a body action
+NPC_FAR_FIGHT_PROTOCOL = 59  # story_effect knockout: native nonlethal outcome outside simulation
 
 # --- game -> server -----------------------------------------------------------
 
@@ -1932,6 +1933,25 @@ class StoryWatchCmd(_Command):
     owner: str = ""
 
 
+class StoryEffect(_Command):
+    """A world effect; existing effect-specific fields pass through unchanged."""
+
+    model_config = ConfigDict(extra="allow", frozen=True)
+
+    do: Literal[
+        "give", "xp", "set", "journal", "end", "attack", "refuse_talk", "routine", "create",
+        "teach", "calm", "party", "knows", "crime_memory", "chest_take", "knockout",
+    ]
+    by: Annotated[str, Field(strict=True, min_length=1)] | None = None
+    loss: Annotated[int, Field(strict=True, ge=0)] | None = None
+
+    @model_validator(mode="after")
+    def knockout_fields(self) -> StoryEffect:
+        if self.do == "knockout" and (self.by is None or self.loss is None):
+            raise ValueError("knockout needs by and loss")
+        return self
+
+
 class StoryEffectCmd(_Command):
     """Effects on an npc (v8), through the scripts' own functions, the npc as self and the hero as other:
     the same as in a dialog of the director (give, xp, set, journal, end) and `attack` (`reason`: an AR_*
@@ -1953,13 +1973,25 @@ class StoryEffectCmd(_Command):
     v48: `chest_take` with `chest`, `item`, `count`: the self npc takes the exact count into its own
     inventory, without walking, animation or script perceptions. Every source chest is checked before
     any effect runs, even without `check`; missing quantities and mission items reject the whole batch.
-    The server's StoryGuard protects plot items before sending this effect."""
+    The server's StoryGuard protects plot items before sending this effect.
+
+    v59: `knockout` with `by` (winner instance), `loss` (nonnegative integer): self loses a far fight
+    through the native unconscious state; the winner keeps at least 1 HP. Both participants are checked
+    before any effect runs; inside simulation or controlled bodies reject the batch without changes.
+    `result.value` reports `winner_hp` and `dropped` (item instance or null)."""
 
     type: Literal["story_effect"] = "story_effect"
     req: str
     npc: str
     effects: list[dict[str, Any]]
     check: bool | None = None
+
+    @model_validator(mode="after")
+    def validate_knockout(self) -> StoryEffectCmd:
+        for effect in self.effects:
+            if effect.get("do") == "knockout":
+                StoryEffect.model_validate(effect)
+        return self
 
 
 class EndCard(BaseModel):

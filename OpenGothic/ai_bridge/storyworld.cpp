@@ -11,6 +11,7 @@
 #include <zenkit/DaedalusVm.hh>
 #include <zenkit/addon/daedalus.hh>
 
+#include "game/bodycontroller.h"
 #include "game/inventory.h"
 #include "physics/dynamicworld.h"
 #include "world/objects/interactive.h"
@@ -22,6 +23,7 @@
 #include "chesttake.h"
 #include "jsonread.h"
 #include "jsonwriter.h"
+#include "knockout.h"
 #include "npcfind.h"
 #include "npcchests.h"
 #include "npcsteal.h"
@@ -197,7 +199,7 @@ void StoryWorld::watch(const rapidjson::Value& msg) {
   eachString(msg,"npcs",[&](const std::string& name) { list.push_back(name); });
   }
 
-bool StoryWorld::effects(World& world, const rapidjson::Value& msg, std::string& error) {
+bool StoryWorld::effects(World& world, const rapidjson::Value& msg, std::string& error, std::string& value) {
   Npc* npc = bySymbol(world,JsonRead::str(msg,"npc"));
   Npc* pl  = world.player();
   if(npc==nullptr || pl==nullptr) {
@@ -239,6 +241,39 @@ bool StoryWorld::effects(World& world, const rapidjson::Value& msg, std::string&
     });
   if(!error.empty())
     return false;
+  const auto inspect = [](Npc* actor) {
+    Knockout::Actor state;
+    if(actor==nullptr)
+      return state;
+    state.exists = true;
+    state.human = actor->guild()<GIL_SEPERATOR_HUM;
+    state.hero = actor->isPlayer();
+    state.dead = actor->isDead();
+    state.down = actor->isDown();
+    state.immortal = actor->isImmortal();
+    state.insideSimulation = actor->processPolicy()==NpcProcessPolicy::AiNormal;
+    state.bodyControlled = BodyController::owns(*actor);
+    state.externalControl = actor->isExternalControl();
+    state.hp = actor->attribute(ATR_HITPOINTS);
+    if(auto* weapon = actor->currentMeleeWeapon())
+      if(auto* symbol = actor->world().script().findSymbol(weapon->clsId()))
+        state.weapon = symbol->name();
+    return state;
+    };
+  // Mandatory even without check:true, before any other effect or controller release.
+  auto loser = inspect(npc);
+  Npc* winner = nullptr;
+  Knockout::Result outcome;
+  for(const auto& e:list) {
+    if(e.kind!="knockout")
+      continue;
+    winner = bySymbol(world,e.by);
+    outcome = Knockout::check(loser,inspect(winner),npc==winner,e.loss);
+    error = outcome.error;
+    if(!error.empty())
+      return false;
+    loser.down = true; // a second knockout of this self rejects the entire batch
+    }
   if(JsonRead::boolean(msg,"check",false)) {
     // all or nothing (v10, a deal): each giver must have all it gives, or nothing happens; what the npc
     // creates (v17, its stash) is its own to give, and the hero must have the learning points of all
@@ -275,6 +310,35 @@ bool StoryWorld::effects(World& world, const rapidjson::Value& msg, std::string&
     }
   const auto who = symbolOf(world,*npc);
   for(auto& e : list) {
+    if(e.kind=="knockout") {
+      winner->handlePtr()->attribute[ATR_HITPOINTS] = outcome.winnerHp;
+      outcome.dropped.clear();
+      if(auto* weapon = npc->currentMeleeWeapon()) {
+        const auto id = weapon->clsId();
+        if(auto* symbol = world.script().findSymbol(id))
+          outcome.dropped = symbol->name();
+        Matrix4x4 at;
+        at.identity();
+        at.translate(npc->position());
+        world.addItemDyn(id,at,npc->instanceSymbol())->setCount(1);
+        // Unequip even a stacked weapon so the native fall cannot drop another copy.
+        npc->unequipItem(id);
+        npc->delItem(id,1);
+        }
+      npc->setLastHitBy(winner);
+      npc->setRagdollDown(false); // onNoHealth(false, HS_NoSound), no combat perceptions
+      rapidjson::StringBuffer buf;
+      rapidjson::Writer<rapidjson::StringBuffer> result(buf);
+      result.StartObject();
+      result.Key("winner_hp"); result.Int(outcome.winnerHp);
+      result.Key("dropped");
+      if(outcome.dropped.empty())
+        result.Null(); else
+        result.String(outcome.dropped.data(),rapidjson::SizeType(outcome.dropped.size()));
+      result.EndObject();
+      value.assign(buf.GetString(),buf.GetSize());
+      continue;
+      }
     if(e.kind=="attack" || e.kind=="refuse_talk" || e.kind=="calm")
       release(world,*npc);  // the scripts carry these out: an npc the server holds is let go first
     e.run(vm,*npc,*pl,who);
