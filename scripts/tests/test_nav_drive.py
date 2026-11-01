@@ -420,6 +420,68 @@ def test_live_trace_fixture_renders_and_keeps_metrics_factual(tmp_path, monkeypa
         list(live.observation_frames(root, metadata))
 
 
+@pytest.mark.parametrize("failure", [None, "checksum", "permission"])
+def test_live_binary_pin_copies_nas_bytes_and_probes_local_loader_before_game(tmp_path, monkeypatch, failure):
+    import hashlib
+    import subprocess
+    import sys
+
+    scripts = Path(__file__).resolve().parents[1]
+    launcher = (scripts / "nav-dagger4-remote.sh").read_text()
+    phase = launcher.split("<<'LIVE_R1_PHASE'\n", 1)[1].split("\nLIVE_R1_PHASE", 1)[0]
+    block = phase.split("<<'LIVE_R1_PIN'\n", 1)[1].split("\nLIVE_R1_PIN", 1)[0]
+    payload = b"fixture native binary"
+    expected = hashlib.sha256(payload).hexdigest()
+    archive, local = tmp_path / "archive", tmp_path / "local"
+    binary = archive / expected / "Gothic2Notr"
+    binary.parent.mkdir(parents=True)
+    binary.write_bytes(b"corrupt fixture" if failure == "checksum" else payload)
+    binary.chmod(0o644)
+    destination = local / expected / "Gothic2Notr"
+    calls = []
+    run_shell = subprocess.run
+
+    def probe(command, **kwargs):
+        calls.append(command)
+        assert command == [str(destination)]
+        assert kwargs["env"]["LD_TRACE_LOADED_OBJECTS"] == "1"
+        assert kwargs["capture_output"] and kwargs["text"] and kwargs["timeout"] == 15
+        assert destination.read_bytes() == payload
+        assert destination.stat().st_mode & 0o111
+        if failure == "permission":
+            raise PermissionError("fixture permission denied")
+        return subprocess.CompletedProcess(command, 0, stdout="fixture loader ready\n", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", probe)
+    monkeypatch.setattr(sys, "argv", ["LIVE_R1_PIN", str(archive), str(local), expected])
+    if failure is None:
+        exec(compile(block, "LIVE_R1_PIN", "exec"), {})
+    else:
+        exception = ValueError if failure == "checksum" else RuntimeError
+        message = "Archived live binary checksum differs" if failure == "checksum" else "Cannot execute local live binary"
+        with pytest.raises(exception, match=message):
+            exec(compile(block, "LIVE_R1_PIN", "exec"), {})
+    assert binary.stat().st_mode & 0o777 == 0o644
+    if failure == "checksum":
+        assert not local.exists() and calls == []
+        return
+    assert calls == [[str(destination)]]
+    assert hashlib.sha256(destination.read_bytes()).hexdigest() == expected
+    assert destination.stat().st_mode & 0o777 == 0o755
+    if failure is None:
+        # Execute only the worker's export and bench's host-label block.
+        export = next(line for line in phase.splitlines() if line == "export RYZEN_BENCH=1")
+        bench = (scripts / "bench.sh").read_text()
+        host = "HOST=mac\n" + bench.split("\nHOST=mac\n", 1)[1].split("\nREPORT_RC=0", 1)[0]
+        output = tmp_path / "host"
+        output.mkdir()
+        result = run_shell(["bash", "-c", 'set -euo pipefail\nOUT="$1"\nunset RYZEN_BENCH\n'
+                            + export + "\n" + host, "live-host-test", str(output)],
+                           capture_output=True, text=True, timeout=5)
+        assert result.returncode == 0, result.stderr
+        assert (output / "host.txt").read_text() == "ryzen\n"
+
+
 @pytest.mark.parametrize("failure,explicit", [("live_setup_no_safe_observer_position", True),
                                              ("dagger_start_not_supported", False)])
 def test_live_setup_rejection_preserves_diagnostics_without_rendering(tmp_path, monkeypatch, failure, explicit):

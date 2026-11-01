@@ -38,7 +38,6 @@ source="$(cd "$(dirname "$0")" && pwd)"
 live="$(cd "$source/../.." && pwd)"
 task="$HOME/gothic-ai/nav-dagger4"
 archive=/mnt/shared/gothic-ai/nav-dagger4
-saved=/mnt/shared/gothic-ai/archive/nav-live-20261031
 output=/mnt/shared/gothic-ai/nav-live/dagger4-r1
 candidate="${1:?selected round-one policy}"
 test -f "$live/.dagger4-r1-owner"
@@ -78,43 +77,41 @@ eval "$round_exports"
 if [[ ! -x "$live/.venv/bin/python" ]]; then uv venv --python 3.12 "$live/.venv"; fi
 python="$live/.venv/bin/python"
 uv pip install --python "$python" numpy pillow pytest
-test "$(cc -dumpfullversion)" = 15.2.0
-test "$(c++ -dumpfullversion)" = 15.2.0
-for entry in \
-  e1ba7f77f4381d0b385b:37df2244849831b7ad03308a08a58f902bd3c2a00b645b831c7fc71c032e3f8a \
-  4f9926f1627c4e270d0b:a2964efaf4f4c2a3d2f072cebdba032022b826f05417dbc63c3666da8c89abd2; do
-  snapshot="${entry%%:*}"; expected="${entry#*:}"
-  mkdir -p "$live/source/$snapshot"
-  rsync -a --no-links "$saved/source/$snapshot/" "$live/source/$snapshot/"
-  rm -rf -- "$live/build"
-  "$python" -X faulthandler -B -I -c 'import shutil,sys; assert shutil.disk_usage(sys.argv[1]).free >= 26*1024**3, "Live build needs 26 GiB free including its reserve"' "$live"
-  cmake -S "$live/source/$snapshot/OpenGothic" -B "$live/build" -G Ninja \
-    -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
-    -DCMAKE_CXX_FLAGS_RELEASE='-O2 -g0 -DNDEBUG' -DCMAKE_C_FLAGS_RELEASE='-O2 -g0 -DNDEBUG' \
-    -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF -DINTERPROCEDURAL_OPTIMIZATION=OFF -DOPENGOTHIC_JOLT_X86=x86-64-v3 \
-    -DCMAKE_CXX_FLAGS="-I$VULKAN_SDK/include" -DCMAKE_EXE_LINKER_FLAGS="-L$VULKAN_SDK/lib"
-  cmake --build "$live/build" --target Gothic2Notr --parallel 8
-  "$python" -X faulthandler -B -I - "$live/build/opengothic/Gothic2Notr" "$archive/round1/live-binaries" "$expected" <<'LIVE_R1_PIN'
+export RYZEN_BENCH=1
+for expected in \
+  37df2244849831b7ad03308a08a58f902bd3c2a00b645b831c7fc71c032e3f8a \
+  a2964efaf4f4c2a3d2f072cebdba032022b826f05417dbc63c3666da8c89abd2; do
+  "$python" -X faulthandler -B -I - "$archive/round1/live-binaries" "$live/binaries" "$expected" <<'LIVE_R1_PIN'
 import hashlib
+import json
+import os
 from pathlib import Path
 import shutil
+import subprocess
 import sys
-binary, root = map(Path, sys.argv[1:3])
+archive, local = map(Path, sys.argv[1:3])
 expected = sys.argv[3]
-actual = hashlib.sha256(binary.read_bytes()).hexdigest()
-print(f'Rebuilt live binary: expected={expected} actual={actual}', flush=True)
-if actual != expected:
-    raise ValueError('Exact baseline binary reconstruction failed; no game may start')
-destination = root / expected / 'Gothic2Notr'
+binary = archive / expected / 'Gothic2Notr'
+if hashlib.sha256(binary.read_bytes()).hexdigest() != expected:
+    raise ValueError(f'Archived live binary checksum differs: {binary}')
+destination = local / expected / 'Gothic2Notr'
 destination.parent.mkdir(parents=True, exist_ok=True)
-if destination.exists():
-    if hashlib.sha256(destination.read_bytes()).hexdigest() != expected:
-        raise ValueError('Saved evaluation binary differs from its pinned checksum')
-else:
-    shutil.copy2(binary, destination)
-    destination.chmod(0o555)
+shutil.copyfile(binary, destination)
+destination.chmod(0o755)
 if hashlib.sha256(destination.read_bytes()).hexdigest() != expected:
-    raise ValueError('Archived evaluation binary checksum differs')
+    raise ValueError(f'Local live binary checksum differs: {destination}')
+# Direct exec checks permissions and the ELF loader without starting the game.
+try:
+    probe = subprocess.run([str(destination)],
+        env=dict(os.environ, LD_TRACE_LOADED_OBJECTS='1'), capture_output=True, text=True, timeout=15)
+except (OSError, subprocess.TimeoutExpired) as error:
+    raise RuntimeError(f'Cannot execute local live binary {destination}: {error}') from error
+print(probe.stdout, end='', flush=True)
+print(probe.stderr, end='', file=sys.stderr, flush=True)
+if probe.returncode != 0 or not probe.stdout.strip() or 'not found' in probe.stdout + probe.stderr:
+    raise RuntimeError(f'Local live binary loader check failed: {destination}; exit={probe.returncode}')
+print(json.dumps(dict(event='dagger4_live_binary_ready', path=str(destination),
+    sha256=expected, loader_exit=probe.returncode)), flush=True)
 LIVE_R1_PIN
 done
 export XDG_RUNTIME_DIR="/run/user/$(id -u)"
@@ -198,7 +195,7 @@ for source_weight, destination, expected in specifications:
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source_weight, destination)
 suite['bc4_weights'] = str(specifications[-1][1])
-pins = archive / 'round1/live-binaries'
+pins = runtime / 'binaries'
 def relocate(value):
     if isinstance(value, dict):
         for key, item in list(value.items()):
@@ -259,8 +256,8 @@ if (not complete['qualified_subset_complete'] or complete['completed'] != 90 or 
 final_report(task,live_output=output)
 if not live.cleanup(runtime,output):
     raise ValueError('Live R1 cleanup refused its completed identities')
-for name in ('.venv','tmp','hot-cache','validation-cache','base-cache','base-store','build'):
-    directory = task / name
+for directory in [runtime / 'tmp', runtime / 'base-store', *(task / name for name in
+        ('.venv','tmp','hot-cache','validation-cache','base-cache','base-store','build'))]:
     if directory.exists():
         shutil.rmtree(directory)
 print(json.dumps(dict(event='dagger4_live_complete',new_r1=27,reused=63,expected=90,output=str(output))),flush=True)
@@ -268,7 +265,7 @@ LIVE_R1_RUN
 LIVE_R1_PHASE
   "$ROOT/scripts/gq" submit --class batch --threads 16 --cpu-quota 1200% --mem 12G --max 2h \
     --display --display-shared --archive "$log_dir" --name 'nav dagger4 R1 frozen live continuation' -- \
-    python3 -X faulthandler -I "$source/scripts/nav_job.py" --max-seconds 7200 -- bash "$source/live-r1.sh" "$phase"
+    python3 -X faulthandler -I "$source/scripts/nav_job.py" --max-seconds 7140 -- bash "$source/live-r1.sh" "$phase"
   exit
 fi
 if [[ "$stage" == train-r1 ]]; then
