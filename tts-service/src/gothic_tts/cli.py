@@ -144,13 +144,26 @@ async def clone_originals(args: argparse.Namespace) -> int:
                 print(f"error: {cid}: {err}", file=sys.stderr)
                 failed = True
         try:
-            await provider.tag_cached_clones()
+            await provider.tag_cached_voices()
         except (TtsError, OSError) as err:
-            print(f"error: clone sample tags: {err}", file=sys.stderr)
+            print(f"error: voice tags: {err}", file=sys.stderr)
             failed = True
     finally:
         await provider.aclose()
     return int(failed)
+
+
+async def tag_voices() -> int:
+    provider = InworldTTS()
+    try:
+        tagged, already_tagged, missing = await provider.tag_cached_voices()
+        print(f"Voice tags: {tagged} tagged, {already_tagged} already tagged, {missing} not found")
+    except (TtsError, OSError) as err:
+        print(f"error: voice tags: {err}", file=sys.stderr)
+        return 1
+    finally:
+        await provider.aclose()
+    return 0
 
 
 def _write(path: str, data: bytes) -> None:
@@ -204,6 +217,8 @@ def main() -> None:
     p.add_argument("--game-dir", type=Path, help="Gothic II folder for original voice snapshots")
     p.add_argument("ids", metavar="ID", nargs="*")
 
+    sub.add_parser("tag-voices", help="tag cached Inworld clones and designed voices in the workspace")
+
     p = sub.add_parser("say", help="speak lines and measure latency")
     p.add_argument("text", nargs="+")
     p.add_argument("--voice-id", default="test")
@@ -232,6 +247,8 @@ def main() -> None:
                 code = asyncio.run(say(args))
             case "clone-originals":
                 code = asyncio.run(clone_originals(args))
+            case "tag-voices":
+                code = asyncio.run(tag_voices())
             case _:
                 code = 2
     except ValueError as err:
