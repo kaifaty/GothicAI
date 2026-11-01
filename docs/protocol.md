@@ -16,6 +16,7 @@
 Брони:
 
 - v57 — занято: claude/fate-ends
+- v58 — занято: claude/body-traces
 
 ### Что добавила каждая версия
 

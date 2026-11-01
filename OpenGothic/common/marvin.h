@@ -90,6 +90,7 @@ class Marvin {
       C_ToggleArrowPhysics,
       C_ToggleArrowSticking,
       C_ToggleSpellPhysics,
+      C_ToggleBodyImpactDamage,
       C_ToggleMovableVobs,
       C_ToggleItemHulls,
       C_ToggleItemDeepestContact,

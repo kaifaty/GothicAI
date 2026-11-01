@@ -423,6 +423,30 @@ class Npc final {
     bool      isUnconscious() const;
     bool      isDown() const;
     bool      isMeleeKnockedDown() const { return meleeKnockdown; }
+    struct BodyImpactWindow final {
+      uint64_t until = 0;
+      float speed = 0; // centimetres per millisecond, as damageFall expects
+      bool add(uint64_t now, float incoming) {
+        if(incoming<=0.f) return false;
+        if(speed==0.f) until=now+300;
+        if(incoming<=speed) return false;
+        speed=incoming;
+        return true;
+        }
+      float take(uint64_t now) {
+        if(speed==0.f || now<until) return 0.f;
+        const float result=speed;
+        clear();
+        return result;
+        }
+      void clear() { until=0;speed=0; }
+      };
+    static bool canTakeBodyImpact(bool enabled, bool unconscious, bool dead, bool immortal) {
+      return enabled && !unconscious && !dead && !immortal;
+      }
+    Npc* bodyImpactCulprit() const;
+    bool hasBodyImpactSpellFlight() const { return bodyImpactSpellFlight; }
+    void recordBodyImpact(float speedCmMs, Npc* culprit, const char* source);
     static bool canAccumulateMeleePosture(bool enabled, bool blocked, bool knockedDown, bool down) {
       return enabled && !blocked && !knockedDown && !down;
       }
@@ -968,6 +992,12 @@ class Npc final {
     std::vector<ArrowImpact>       arrowImpacts;
     Tempest::Vec3                  pendingSpellImpulse = {};
     std::weak_ptr<zenkit::INpc>     spellImpulseCulprit;
+    BodyImpactWindow              bodyImpactWindow;
+    std::weak_ptr<zenkit::INpc>     bodyImpactLaunchCulprit,bodyImpactPendingCulprit;
+    const char*                   bodyImpactSource = "ragdoll";
+    bool                          bodyImpactSpellFlight = false;
+    void                          applyBodyImpact();
+    void                          tickBodyImpact();
     std::vector<Tempest::Matrix4x4> arrowPhysicalPose;
     std::unique_ptr<Ragdoll>       ragdoll;
     std::optional<Ragdoll::State>  ragdollDormant;

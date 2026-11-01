@@ -127,6 +127,9 @@ class DynamicWorld final {
       Npc*          npc     = nullptr;
       float         npcCol  = 0;
       bool          landCol = false;
+      bool          trackBodyImpact = false;
+      Tempest::Vec3 bodyImpactVelocity = {}; // incoming cm/ms
+      float         bodyImpactSpeed = 0; // largest incoming relative normal speed, cm/ms
       };
 
     struct NpcItem {

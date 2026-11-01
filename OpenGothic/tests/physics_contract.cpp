@@ -987,6 +987,78 @@ namespace {
     require(!steps.empty(),"a fallen ragdoll must emit impact noise");
     }
 
+  void testBodyImpactDamage() {
+    require(Gothic::PhysicsFlags{}.bodyImpactDamage,"body impact damage must default to ON");
+    require(Npc::canTakeBodyImpact(true,false,false,false),"a living physical body must receive impact damage");
+    require(!Npc::canTakeBodyImpact(false,false,false,false),"body impact OFF must preserve the old damage path");
+    require(!Npc::canTakeBodyImpact(true,true,false,false),"an unconscious body must not receive impact damage");
+    require(!Npc::canTakeBodyImpact(true,false,true,false),"a dead body must not receive impact damage");
+    require(!Npc::canTakeBodyImpact(true,false,false,true),"an IMMORTAL body must not receive impact damage");
+
+    Npc::BodyImpactWindow window;
+    // Native torso contacts and spell capsule wall/landing contacts feed this
+    // same per-NPC window, so later sources must replace rather than add damage.
+    window.add(1000,.6f);
+    window.add(1100,1.f);
+    window.add(1299,.8f);
+    requireNear(window.take(1299),0.f,.000001f,"a body impact window must wait for all three hundred milliseconds");
+    requireNear(window.take(1300),1.f,.000001f,"one body impact window must emit only its maximum normal speed");
+    requireNear(window.take(1300),0.f,.000001f,"a consumed body impact window must not emit twice");
+    window.add(1300,.6f);
+    requireNear(window.take(1600),.6f,.000001f,"a later impact must open an independent body window");
+    window.add(1700,1.4f);
+    window.clear();
+    requireNear(window.take(2000),0.f,.000001f,"disabling body impact damage must discard pending contacts");
+
+    const auto impact=[&](bool limbs,int category,bool enabled=true) {
+      zenkit::ModelHierarchy hierarchy{};
+      const char* torsoNames[]={"BIP01","BIP01 PELVIS","BIP01 SPINE","BIP01 HEAD"};
+      const char* limbNames[]={"BIP01","BIP01 L UPPERARM","BIP01 L FOREARM","BIP01 L HAND"};
+      const float offsets[]={0,95,40,40};
+      for(int i=0;i<4;++i) {
+        zenkit::ModelHierarchyNode node;
+        node.name=limbs ? limbNames[i] : torsoNames[i];
+        node.parent_index=int16_t(i-1);
+        const auto matrix=at(0,offsets[i],0);
+        std::memcpy(&node.transform,&matrix,sizeof(matrix));
+        hierarchy.nodes.push_back(node);
+        }
+      Skeleton skeleton(asset::fromZenKit(hierarchy),nullptr,limbs ? "IMPACT_ARM.MDS" : "IMPACT_TORSO.MDS");
+      HitZones zones;
+      zones.setSkeleton(&skeleton);
+      require(zones.isValid(),"body impact fixture must contain native capsules");
+      CollisionWorld world;
+      world.setBodyImpactEnabled(enabled);
+      auto floor=world.addCollisionBody(new JPH::BoxShape(JPH::Vec3(20,.5f,20)),at(0,-50,0),.7f,category);
+      auto object=at(0,100,0);
+      object.rotateOZ(90.f);
+      std::vector<Tempest::Matrix4x4> pose;
+      for(const auto& bone:skeleton.tr) pose.push_back(object*bone);
+      auto body=world.createRagdoll(skeleton,zones,pose.data(),pose.size(),object,{0,-600,0});
+      require(body!=nullptr && body->partCount()>1,"body impact fixture must create multiple physical parts");
+      require(!body->impactBone(0),"an unphysical root must not count as a torso contact");
+      for(size_t bone=1;bone<4;++bone)
+        require(body->impactBone(bone)==!limbs,"only pelvis, spine and head may supply impact speed");
+      float maximum=0;
+      for(int frame=0;frame<90;++frame) {
+        world.tick(17);
+        maximum=std::max(maximum,body->takeImpactSpeed());
+        requireNear(body->takeImpactSpeed(),0.f,.000001f,"reading a native body's impact speed must consume the contact sample");
+        }
+      return maximum;
+      };
+    const float torso=impact(false,DynamicWorld::C_Landscape);
+    require(torso>.6f && torso<1.5f,"a native torso landing must report incoming normal speed in centimetres per millisecond");
+    requireNear(impact(true,DynamicWorld::C_Landscape),0.f,.000001f,"native arm contacts must never supply body impact damage");
+    require(impact(false,DynamicWorld::C_Object)>.6f,"a native torso must report impacts against static objects");
+    require(impact(false,DynamicWorld::C_MovableVob)>.6f,"a native torso must report impacts against furniture");
+    requireNear(impact(false,DynamicWorld::C_Item),0.f,.000001f,"item contacts must not supply body impact damage");
+    requireNear(impact(false,DynamicWorld::C_Landscape,false),0.f,.000001f,
+                "body impact OFF must suppress real native torso contact samples");
+    std::printf("Body impact damage: 300 ms maximum window; unconscious/dead/IMMORTAL/OFF exclusions; "
+                "native torso %.6f cm/ms, limbs ignored, landscape/object/furniture categories passed\n",double(torso));
+    }
+
   void testOffCenterImpulse() {
     CollisionWorld world;
     auto centered=world.addDynamicBody(new JPH::BoxShape(JPH::Vec3::sReplicate(.5f)),at(0,1000,0),.7f,2.f);
@@ -5369,6 +5441,7 @@ int main() {
     testRotatingFragments();
     testPhysicsNoise();
     testRagdollNoise();
+    testBodyImpactDamage();
     testOffCenterImpulse();
     std::puts("Physics contracts passed");
     return EXIT_SUCCESS;

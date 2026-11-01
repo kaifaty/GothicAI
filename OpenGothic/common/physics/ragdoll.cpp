@@ -957,7 +957,8 @@ struct Ragdoll::Impl final {
   std::vector<BuoyancyPart> waterParts;
   bool legacyAncestors=false;
   uint32_t group=0;
-  std::weak_ptr<zenkit::INpc> npc,culprit;
+  std::weak_ptr<zenkit::INpc> npc,culprit,impactCulprit;
+  float impactSpeed=0;
   uint64_t culpritUntilStep=0;
   uint64_t nextNoiseStep=0;
   bool kinematic=false;
@@ -1239,6 +1240,25 @@ void Ragdoll::updateBuoyancyFractions() {
   // bones still receive water drag and entry splashes, but settle on the bed.
   for(size_t i=0;i<impl->waterParts.size();++i)
     impl->waterParts[i].fraction=sinks ? 1.5f : partBuoyancyFraction(impl->rig->parts[i].name);
+  }
+
+Npc* Ragdoll::impactCulprit() const {
+  const auto culprit=impl->impactCulprit.lock();
+  return culprit!=nullptr ? static_cast<Npc*>(culprit->user_ptr) : nullptr;
+  }
+
+bool Ragdoll::impactBone(size_t bone) const {
+  for(const auto& part:impl->rig->parts)
+    if(part.bone==bone)
+      return named(part.name,"PELVIS") || named(part.name,"SPINE") || named(part.name,"HEAD");
+  return false;
+  }
+
+void Ragdoll::recordImpactSpeed(float speed) { impl->impactSpeed=std::max(impl->impactSpeed,speed); }
+float Ragdoll::takeImpactSpeed() {
+  const float result=impl->impactSpeed;
+  impl->impactSpeed=0;
+  return result;
   }
 
 void Ragdoll::setNoiseCulprit(Npc* culprit) {
@@ -1603,6 +1623,7 @@ void Ragdoll::setAllowSleeping(bool allow) {
 void Ragdoll::addImpulse(const Tempest::Vec3& impulse, Npc* culprit) {
   if(!valid() || impl->kinematic || !finite(impulse)) return;
   setNoiseCulprit(culprit);
+  impl->impactCulprit=culprit!=nullptr ? culprit->handlePtr() : std::weak_ptr<zenkit::INpc>();
   auto& interface=impl->world->physicsSystem().GetBodyInterface();
   for(size_t i=0;i<partCount();++i) {
     const auto* settings=impl->native->GetRagdollSettings();
@@ -1617,6 +1638,7 @@ void Ragdoll::knockOff(const Tempest::Vec3& direction, float impulseNs, Npc* cul
   if(d.length()<1e-3f) return;
   d=Tempest::Vec3::normalize(d);
   setNoiseCulprit(culprit);
+  impl->impactCulprit=culprit!=nullptr ? culprit->handlePtr() : std::weak_ptr<zenkit::INpc>();
   impl->knockedOff=true;
   // The blow alone moves 75 kg by under a metre a second; a man thrown down moves
   // his trunk at about two. The heavier the blow, the harder he goes down.

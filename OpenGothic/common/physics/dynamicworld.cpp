@@ -2818,6 +2818,7 @@ void DynamicWorld::moveBullet(BulletBody &b, const Tempest::Vec3& dir, uint64_t 
 
 void DynamicWorld::tick(uint64_t dt) {
   if(ownerWorld!=nullptr) {
+    world->setBodyImpactEnabled(Gothic::physicsFlags().bodyImpactDamage);
     const float cycle=Gothic::settingsGetF("ENGINE","zWindCycleTime")+
                       Gothic::settingsGetF("ENGINE","zWindCycleTimeVar");
     const uint64_t period=std::isfinite(cycle) && cycle>0.f ? uint64_t(cycle*1000.f) : 0;
@@ -3040,7 +3041,22 @@ bool DynamicWorld::hasCollision(const NpcItem& it, CollisionTest& out) {
   if(npcList->hasCollision(it,out.normal,out.npc,out.npcCol)){
     ret = true;
     }
-  if(it.obj->shape!=nullptr && world->hasCollision(it.obj->shape.GetPtr(),it.obj->centerPosition(),out.normal,out.vob)) {
+  CollisionWorld::CapsuleContact contact;
+  if(out.trackBodyImpact) {
+    contact=[&](CollisionWorld::CollisionBody* body,const Tempest::Vec3& normal,const Tempest::Vec3& point,
+                const Tempest::Vec3& nativeVelocity) {
+      auto velocity=nativeVelocity;
+      if(body!=nullptr && body->ptrType()==P_MovableVob && body->payload()!=nullptr) {
+        const auto* movable=static_cast<const BodyData*>(body->payload());
+        if(movable->body!=nullptr)
+          velocity=movable->body->velocity()+Tempest::Vec3::crossProduct(movable->body->angularVelocity(),
+                                                                       point-movable->body->centerOfMass());
+        }
+      out.bodyImpactSpeed=std::max(out.bodyImpactSpeed,
+          -Tempest::Vec3::dotProduct(out.bodyImpactVelocity-velocity*.001f,normal));
+      };
+    }
+  if(it.obj->shape!=nullptr && world->hasCollision(it.obj->shape.GetPtr(),it.obj->centerPosition(),out.normal,out.vob,contact)) {
     out.landCol = true;
     ret = true;
     }

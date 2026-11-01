@@ -326,6 +326,11 @@ bool Npc::GoTo::isClose(const Npc& self, float dist) const {
     return MoveAlgo::isClose(self, *npc, dist);
   if(wp!=nullptr)
     return MoveAlgo::isClose(self, *wp, dist);
+  if(flag==GT_Item) {
+    // Ground and table items are approached horizontally; ItmGet handles height.
+    const auto delta=pos-self.position();
+    return Vec2(delta.x,delta.z).quadLength()<dist*dist;
+    }
   return MoveAlgo::isClose(self, pos, dist);
   }
 
@@ -566,6 +571,10 @@ void Npc::save(Serialize &fout, size_t id, std::string_view directory) {
   }
 
 void Npc::load(Serialize &fin, size_t id, std::string_view directory) {
+  bodyImpactWindow.clear();
+  bodyImpactLaunchCulprit.reset();
+  bodyImpactPendingCulprit.reset();
+  bodyImpactSpellFlight=false;
   endMeleeStun("reset");
   meleeParadeOrigin.reset();
   meleeStamina = {};
@@ -990,6 +999,10 @@ void Npc::resetNavigationEpisode() {
   living.reset();
   livingRetryTick = 0;
   livingNeedsRebuild = livingWasFrozen = livingWasInteracting = false;
+  bodyImpactWindow.clear();
+  bodyImpactLaunchCulprit.reset();
+  bodyImpactPendingCulprit.reset();
+  bodyImpactSpellFlight=false;
   arrowImpacts.clear();
   pendingSpellImpulse = {};
   spellImpulseCulprit.reset();
@@ -1165,6 +1178,7 @@ bool Npc::addSpellImpulse(const Vec3& impulseNs, bool reaction, Npc* culprit) {
     return false;
   if(ragdoll) {
     ragdoll->addImpulse(impulseNs,culprit);
+    bodyImpactLaunchCulprit=culprit!=nullptr ? culprit->handlePtr() : std::weak_ptr<zenkit::INpc>();
     return true;
     }
   if(isDown()) {
@@ -1176,6 +1190,8 @@ bool Npc::addSpellImpulse(const Vec3& impulseNs, bool reaction, Npc* culprit) {
   if(!mvAlgo.addSpellImpulse(impulseNs,physicsMass(),reaction))
     return false;
   spellImpulseCulprit = culprit!=nullptr ? culprit->handlePtr() : std::weak_ptr<zenkit::INpc>();
+  bodyImpactLaunchCulprit=spellImpulseCulprit;
+  bodyImpactSpellFlight=true;
   if(living)
     living->setNoiseCulprit(culprit);
   if(!isPlayer() && isHuman() && ragdollQuestReturn.hasAnchor &&
@@ -5481,6 +5497,77 @@ bool Npc::queueMeleeReaction(const Npc& other, const Vec3& at, const MeleeBladeC
   return true;
   }
 
+Npc* Npc::bodyImpactCulprit() const {
+  const auto culprit=bodyImpactLaunchCulprit.lock();
+  return culprit!=nullptr ? static_cast<Npc*>(culprit->user_ptr) : nullptr;
+  }
+
+void Npc::recordBodyImpact(float speedCmMs, Npc* culprit, const char* source) {
+  if(!canTakeBodyImpact(Gothic::physicsFlags().bodyImpactDamage,isUnconscious(),isDead(),isImmortal()) ||
+     !std::isfinite(speedCmMs) || speedCmMs<=0.f)
+    return;
+  applyBodyImpact();
+  if(isDead()) return;
+  if(bodyImpactWindow.add(owner.tickCount(),speedCmMs)) {
+    bodyImpactPendingCulprit=culprit!=nullptr ? culprit->handlePtr() : std::weak_ptr<zenkit::INpc>();
+    bodyImpactSource=source;
+    }
+  }
+
+void Npc::applyBodyImpact() {
+  if(!canTakeBodyImpact(Gothic::physicsFlags().bodyImpactDamage,isUnconscious(),isDead(),isImmortal())) {
+    bodyImpactWindow.clear();
+    bodyImpactPendingCulprit.reset();
+    return;
+    }
+  const float speed=bodyImpactWindow.take(owner.tickCount());
+  if(speed<=0.f) return;
+  const auto culpritHandle=bodyImpactPendingCulprit.lock();
+  auto* culprit=culpritHandle!=nullptr ? static_cast<Npc*>(culpritHandle->user_ptr) : nullptr;
+  bodyImpactPendingCulprit.reset();
+  const auto damage=DamageCalculator::damageFall(*this,speed);
+  const int32_t before=attribute(ATR_HITPOINTS);
+  if(damage.hasHit) {
+    auto deed=culprit!=nullptr && damage.value>=before ? HeroDeed::capture(*culprit,"murder",this) : nullptr;
+    if(culprit!=nullptr && damage.value>=before) {
+      lastHit=culprit;
+      currentOther=culprit;
+      }
+    changeAttribute(ATR_HITPOINTS,-damage.value,false);
+    if(isDead() && culprit!=nullptr)
+      owner.sendPassivePerc(*this,*culprit,*this,PERC_ASSESSMURDER,std::move(deed));
+    }
+  if(TestBench::isActive()) {
+    const auto who=TestBench::who(this),by=TestBench::who(culprit);
+    char buf[384];
+    std::snprintf(buf,sizeof(buf),"body_impact %.*s: source %s speed_cm_s %.6f damage %d hp_before %d hp_after %d dead %d by %.*s",
+                  int(who.size()),who.data(),bodyImpactSource,double(speed*1000.f),before-attribute(ATR_HITPOINTS),
+                  before,attribute(ATR_HITPOINTS),int(isDead()),int(by.size()),by.data());
+    TestBench::note(buf);
+    }
+  if(TestBench::bodyTracing())
+    TestBench::bodyEvent(*this,culprit,"body_impact",owner.tickCount(),
+                        "\"source\":"+TestBench::bodyJson(bodyImpactSource)+
+                        ",\"speed_cm_s\":"+std::to_string(speed*1000.f)+
+                        ",\"damage\":"+std::to_string(before-attribute(ATR_HITPOINTS))+
+                        ",\"hp_before\":"+std::to_string(before)+
+                        ",\"hp_after\":"+std::to_string(attribute(ATR_HITPOINTS))+
+                        ",\"dead\":"+(isDead() ? "true" : "false"));
+  }
+
+void Npc::tickBodyImpact() {
+  if(ragdoll) {
+    const float speed=ragdoll->takeImpactSpeed();
+    if(speed>0.f) {
+      auto* culprit=ragdoll->impactCulprit();
+      bodyImpactLaunchCulprit=culprit!=nullptr ? culprit->handlePtr() : std::weak_ptr<zenkit::INpc>();
+      recordBodyImpact(speed,culprit,"ragdoll");
+      }
+    }
+  applyBodyImpact();
+  if(mvAlgo.state()!=MoveAlgo::InAir && mvAlgo.state()!=MoveAlgo::Falling && !ragdoll) bodyImpactSpellFlight=false;
+  }
+
 void Npc::takeFallDamage(const Vec3& fallSpeed) {
   if(bodyStateMasked()==BS_FALL) {
     if(!isFallingDeep()) {
@@ -5498,13 +5585,21 @@ void Npc::takeFallDamage(const Vec3& fallSpeed) {
       }
     }
   auto dmg = DamageCalculator::damageFall(*this,fallSpeed.length());
-  if(!dmg.hasHit)
-    return;
   int32_t hp = attribute(ATR_HITPOINTS);
-  if(hp>dmg.value) {
+  // Keep vanilla landing feedback immediate; only HP joins the impact window.
+  if(dmg.hasHit && hp>dmg.value) {
     emitSoundSVM("SVM_%d_AARGH");
     clearState(true);
     }
+  if(bodyImpactSpellFlight) {
+    bodyImpactSpellFlight=false;
+    if(Gothic::physicsFlags().bodyImpactDamage) {
+      recordBodyImpact(fallSpeed.length(),bodyImpactCulprit(),"spell_landing");
+      return;
+      }
+    }
+  if(!dmg.hasHit)
+    return;
   changeAttribute(ATR_HITPOINTS,-dmg.value,false);
   }
 
@@ -5703,6 +5798,7 @@ void Npc::tickAnimationTags() {
   }
 
 void Npc::tick(uint64_t dt) {
+  tickBodyImpact();
   tickMeleeParry();
   tickMeleeStamina();
   // Only NPCs inserted in the live world are ticked. A restored NPC starts
