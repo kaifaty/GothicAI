@@ -1,5 +1,6 @@
 """Queue admission and per-worktree uploads without a game or real SSH."""
 import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -704,12 +705,11 @@ remote_run pytest "$TEST_ROOT/worktree" run -rs tests/test_storygraph.py
         self.assertFalse((self.home / 'gothic-ai' / 'game').exists())
 
     def test_setup_removes_only_its_temporary_copy_on_failure_or_interrupt(self):
-        import hashlib
-
         game = self.root / 'installation'
         game.mkdir()
         part = self.root / 'mac-base'
         part.mkdir()
+        (part / 'base.json').write_text(json.dumps({'format_sha256': 'a' * 64}))
         pointers = self.home / '.cache/gothic-ai/base/current'
         pointers.mkdir(parents=True)
         pointer = pointers / (hashlib.sha256(str(game).encode()).hexdigest() + '.json')
@@ -724,6 +724,8 @@ remote_run pytest "$TEST_ROOT/worktree" run -rs tests/test_storygraph.py
         harness = r'''
 set -euo pipefail
 ACTION=setup RYZEN_HOST=test
+ROOT="$TEST_ROOT/source"
+cmake() { printf '%064d\n' 0 | tr 0 a; }
 toolchain() { :; }
 remote() { HOME="$TEST_ROOT/remote" "$@"; }
 verify_base_part() { [[ "$4" != full ]] || return 23; }
@@ -744,6 +746,141 @@ rsync() {
                 self.assertEqual(result.returncode, status, result.stdout + result.stderr)
                 self.assertEqual(list(remote_cache.glob('.setup-*')), [foreign])
                 self.assertTrue((foreign / 'keep').exists())
+
+    def setup_part(self, kind, fingerprint, format_digest, *, path=None, source='installation'):
+        cache = self.home / '.cache/gothic-ai/base'
+        part = path or cache / ('' if kind == 'base' else 'videos') / fingerprint
+        part.mkdir(parents=True)
+        identity = {'format_sha256': format_digest}
+        if kind == 'base':
+            identity.update(archives=[{'name': source}], loose_files=[{'path': source}])
+            metadata = dict(identity, fingerprint=fingerprint)
+        else:
+            identity['sources'] = [{'name': source}]
+            metadata = {'fingerprint': fingerprint, 'identity': json.dumps(identity)}
+        (part / ('base.json' if kind == 'base' else 'videos.json')).write_text(json.dumps(metadata))
+        return {'fingerprint': fingerprint, 'path': str(part)}
+
+    def run_setup(self, parts):
+        game = self.root / 'installation'
+        (game / 'system').mkdir(parents=True, exist_ok=True)
+        for name in ('Gothic.ini', 'SystemPack.ini'):
+            (game / 'system' / name).write_text(name)
+        pointers = self.home / '.cache/gothic-ai/base/current'
+        pointers.mkdir(parents=True, exist_ok=True)
+        pointer = pointers / (hashlib.sha256(str(game).encode()).hexdigest() + '.json')
+        contents = json.dumps(dict(version=1, gothic=str(game), **parts))
+        pointer.write_text(contents)
+        (self.root / 'remote').mkdir(exist_ok=True)
+        setup = SCRIPT.read_text().split('if [[ "$ACTION" == setup ]]; then\n', 1)[1]
+        setup = setup.split('\nfi\n\n# Codex worktrees', 1)[0]
+        harness = r'''
+set -euo pipefail
+ACTION=setup RYZEN_HOST=test
+ROOT="$TEST_ROOT/source"
+cmake() {
+  case "$1 $2 $3" in
+    "-DBASE_ROOT=$ROOT/OpenGothic -P $ROOT/OpenGothic/cmake/BaseFormat.cmake") printf '%064d\n' 0 | tr 0 a ;;
+    "-DVIDEO_ROOT=$ROOT/OpenGothic -P $ROOT/OpenGothic/cmake/VideoFormat.cmake") printf '%064d\n' 0 | tr 0 b ;;
+    *) return 99 ;;
+  esac
+}
+toolchain() { :; }
+remote() {
+  printf '%s\n' "$*" >>"$TEST_ROOT/remote-calls"
+  (cd "$TEST_ROOT/remote"; HOME="$PWD" "$@")
+}
+verify_base_part() { [[ -f "$2/base.json" || -f "$2/videos.json" ]]; }
+flock() { :; }
+export -f flock
+rsync() {
+  python3 - "$@" <<'PY'
+import json
+import os
+from pathlib import Path
+import shutil
+import sys
+args = sys.argv[1:]
+with (Path(os.environ['TEST_ROOT']) / 'copies.jsonl').open('a') as stream:
+    stream.write(json.dumps(args) + '\n')
+destination = Path(args[-1].removeprefix('test:'))
+if not destination.is_absolute():
+    destination = Path(os.environ['TEST_ROOT']) / 'remote' / destination
+for name in args[2:-1]:
+    source = Path(name)
+    if source.is_dir():
+        shutil.copytree(source, destination, dirs_exist_ok=True)
+    else:
+        shutil.copyfile(source, destination / source.name)
+PY
+}
+'''+setup
+        result = subprocess.run(['bash', '-c', harness], capture_output=True, text=True, timeout=5,
+                                env=dict(self.env, GOTHIC_DIR=str(game)))
+        self.assertEqual(pointer.read_text(), contents)
+        copies = self.root / 'copies.jsonl'
+        return result, [json.loads(line) for line in copies.read_text().splitlines()] if copies.exists() else []
+
+    def test_setup_keeps_pointer_parts_with_checkout_formats(self):
+        parts = {
+            kind: self.setup_part(kind, fingerprint * 64, digest * 64,
+                                  path=self.root / f'pointer-{kind}')
+            for kind, fingerprint, digest in (('base', 'c', 'a'), ('videos', 'd', 'b'))
+        }
+        result, copies = self.run_setup(parts)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual([copy[2] for copy in copies[:2]], [part['path'] + '/' for part in parts.values()])
+        self.assertEqual(json.loads((self.root / 'remote/gothic-ai/game-base.json').read_text()),
+                         {kind: part['fingerprint'] for kind, part in parts.items()})
+        self.assertNotIn('Mac pointer has importer format', result.stderr)
+
+    def test_setup_uses_checkout_cache_parts_from_the_same_installation(self):
+        parts = {
+            kind: self.setup_part(kind, fingerprint * 64, 'f' * 64)
+            for kind, fingerprint in (('base', 'c'), ('videos', 'd'))
+        }
+        expected = {}
+        for kind, digest, fingerprint in (('base', 'a', 'e'), ('videos', 'b', 'f')):
+            self.setup_part(kind, '0' * 64, digest * 64, source='another installation')
+            expected[kind] = self.setup_part(kind, fingerprint * 64, digest * 64)
+        result, copies = self.run_setup(parts)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual([copy[2] for copy in copies[:2]], [part['path'] + '/' for part in expected.values()])
+        self.assertEqual(json.loads((self.root / 'remote/gothic-ai/game-base.json').read_text()),
+                         {kind: part['fingerprint'] for kind, part in expected.items()})
+        for kind, digest in (('base', 'a'), ('videos', 'b')):
+            self.assertIn(f"Ryzen: Mac pointer has importer format {'f' * 64}, using Mac cache part "
+                          f"{expected[kind]['fingerprint']} of format {digest * 64}", result.stderr)
+
+    def test_setup_requires_decision_before_copying_when_checkout_format_is_missing(self):
+        for kind, digest in (('base', 'a'), ('videos', 'b')):
+            with self.subTest(kind=kind):
+                parts = {
+                    name: self.setup_part(name, fingerprint * 64,
+                                          ('f' if name == kind else format_digest) * 64,
+                                          path=self.root / f'{kind}-pointer-{name}')
+                    for name, fingerprint, format_digest in (('base', 'c', 'a'), ('videos', 'd', 'b'))
+                }
+                result, copies = self.run_setup(parts)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn(f"needs_decision: Mac {kind} part {parts[kind]['fingerprint']} has importer "
+                              f"format {'f' * 64}, this checkout builds {digest * 64};", result.stderr)
+                self.assertIn('~/.cache/gothic-ai/base', result.stderr)
+                self.assertEqual(copies, [])
+                self.assertFalse((self.root / 'remote-calls').exists())
+                self.assertFalse((self.root / 'remote/gothic-ai/game-base.json').exists())
+
+    @unittest.skipUnless(shutil.which('cmake'), 'cmake is not available')
+    def test_importer_format_scripts_print_one_sha256(self):
+        engine = SCRIPT.parents[1] / 'OpenGothic'
+        cmake = shutil.which('cmake')
+        for kind in ('Base', 'Video'):
+            with self.subTest(kind=kind):
+                result = subprocess.run([cmake, f'-D{kind.upper()}_ROOT={engine}',
+                                         '-P', str(engine / 'cmake' / f'{kind}Format.cmake')],
+                                        capture_output=True, text=True, timeout=30)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertRegex(result.stdout, r'\A[0-9a-f]{64}\n\Z')
 
     def test_e2e_ports_size_and_position_follow_the_assigned_slot(self):
         self.entry(self.engine_digest)
