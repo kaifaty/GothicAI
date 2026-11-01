@@ -1,60 +1,76 @@
 # Our own back dash (step 6 of the melee port, reports/Свои анимации для боя.md): the hero with a one-hander drawn
-# (talent 2, so the HUMANS_1HST2 overlay and its S_1HRUN stance) plays three finished dash candidates from content,
-# then the original T_1HPARADEJUMPB; side and front at 1x, side slowed 4x. On the flat floor of Xardas' tower.
+# in the HUMANS_1HST2 overlay plays three finished dash candidates from content, then the original
+# T_1HPARADEJUMPB; each from the same spot on an open field, side at 1x and slowed 4x, front at 1x.
 # The candidates come from OPENGOTHIC_CONTENT made by scripts/content/anim/content_pack.py (T_1HDASHB_1.._3 in
 # HUMANS_1HST2.MSB). The look is judged by Claude from the clips; anim_pop in metrics.csv at the switches.
+# After a goto the hero needs ~2 s on the ground before `ani` is accepted.
 # WORLD=NEWWORLD.ZEN OPENGOTHIC_CONTENT=/abs/content
 seed 73013
 cheat god
 set time 12 0
-view clean
 release all
 overlay off
-goto NW_XARDAS_TOWER_IN1_26
-wait 800
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+wait 500
 watch player
+clear 3000
 melee-shadow weapon 1h
 # the talent set by the fixture does not put its stance overlay on; bladepath puts it on (no names after it)
 bladepath HUMANS_1HST2.MDS
 wait 1500
 anims
-animinfo T_1HDASHB_1 T_1HDASHB_2 T_1HPARADEJUMPB S_1HRUN
+animinfo T_1HDASHB_1 T_1HDASHB_2 T_1HDASHB_3 T_1HPARADEJUMPB S_1HRUN
 
-cam follow 420 100 90
+cam follow 380 110 270
 wait 800
-rec dash-side
+rec dash1-side
 ani player T_1HDASHB_1
-wait 1400
+wait 1300
+stop
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+wait 2000
+rec dash2-side
 ani player T_1HDASHB_2
-wait 1400
+wait 1300
+stop
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+wait 2000
+rec dash3-side
 ani player T_1HDASHB_3
-wait 1400
+wait 1300
+stop
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+wait 2000
+rec jumpb-side
 ani player T_1HPARADEJUMPB
-wait 1400
+wait 1300
 stop
 
-cam follow 420 100 0
-wait 800
-rec dash-front
-ani player T_1HDASHB_1
-wait 1400
-ani player T_1HDASHB_2
-wait 1400
-ani player T_1HDASHB_3
-wait 1400
-stop
-
-cam follow 380 100 90
 slowmo 4
-wait 800
-rec dash-slow-side
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+wait 2000
+rec dash1-slow
 ani player T_1HDASHB_1
-wait 1200
-ani player T_1HDASHB_2
-wait 1200
+wait 1000
+stop
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+wait 2000
+rec dash3-slow
 ani player T_1HDASHB_3
-wait 1200
+wait 1000
+stop
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+wait 2000
+rec jumpb-slow
 ani player T_1HPARADEJUMPB
-wait 1200
+wait 1000
 stop
 slowmo 1
+
+cam follow 420 120 0
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+wait 2000
+rec dash1-front
+ani player T_1HDASHB_1
+wait 1300
+stop

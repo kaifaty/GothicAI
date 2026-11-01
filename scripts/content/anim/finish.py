@@ -20,6 +20,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import gothic_anim as ga  # noqa: E402
+import retarget_soma as rs  # noqa: E402
 
 ARM = ["BIP01 R CLAVICLE", "BIP01 R UPPERARM", "BIP01 R FOREARM", "BIP01 R HAND"]
 FINGER = "BIP01 R FINGER0"
@@ -105,23 +106,24 @@ def hold_arm(anim: ga.Animation, skel: ga.Skeleton, ref: ga.Animation, weights: 
         anim.rotations[:, j] = slerp(anim.rotations[:, j], target, np.full(anim.frame_count, w))
 
 
-TOES = ["BIP01 L TOE0", "BIP01 R TOE0"]
+def body_nodes(anim: ga.Animation, skel: ga.Skeleton, sources: list[ga.Animation], like: ga.Animation) -> None:
+    """Write the nodes Gothic's own move writes (`like`: the overlay's jump-back, 27 nodes with the weapon slots
+    ZS_RIGHTHAND and ZS_SWORD), the rest keep what was set before.
 
-
-def body_nodes(anim: ga.Animation, skel: ga.Skeleton, fills: list[ga.Animation]) -> None:
-    """Write the 27 body nodes, as Gothic's moves do, without the ZS_* slots (they keep what was set before).
-
-    Kimodo has no toes: the toes take their pose from the first of `fills` that animates them (the overlay's
-    own jump-back). Without it a toe kept the bind pose and jumped tens of centimetres at the switch."""
-    for name in TOES:
-        node = skel.index(name)
-        src = next((f for f in fills if node in f.node_indices), None)
-        if src is None or node not in anim.node_indices:
+    Nodes Kimodo does not drive (toes, the weapon slots) hold the pose of the first of `sources` that has them
+    (the stance, then the jump-back). A slot left to the bind pose points the sword at the ground; a toe left to
+    it jumped tens of centimetres at the switch."""
+    names = [n.name for n in skel.nodes]
+    driven = {names.index(n) for n in rs.MAP if n in names}
+    for j, node in enumerate(anim.node_indices):
+        if node in driven:
             continue
-        j, k = anim.node_indices.index(node), src.node_indices.index(node)
-        anim.rotations[:, j] = src.rotations[0, k]
-        anim.positions[:, j] = src.positions[0, k]
-    cols = [j for j, n in enumerate(anim.node_indices) if not skel.nodes[n].name.startswith("ZS_")]
+        src = next((f for f in sources if node in f.node_indices), None)
+        if src is not None:
+            k = src.node_indices.index(node)
+            anim.rotations[:, j] = src.rotations[0, k]
+            anim.positions[:, j] = src.positions[0, k]
+    cols = [anim.node_indices.index(n) for n in like.node_indices if n in anim.node_indices]
     anim.node_indices = [anim.node_indices[c] for c in cols]
     anim.positions = anim.positions[:, cols]
     anim.rotations = anim.rotations[:, cols]
@@ -140,7 +142,7 @@ def main():
     ap.add_argument("--gen-stance", type=Path, help="the stance the move was generated from, when --ref is another one "
                     "(a talent overlay's S_1HRUN): the ends are moved onto --ref")
     ap.add_argument("--fill", type=Path, action="append", default=[],
-                    help="clips that give the toes their pose when the stance has none (the overlay's jump-back)")
+                    help="the overlay's jump-back: its node set is written, and it poses the toes and weapon slots the stance lacks")
     ap.add_argument("--fade", default="0.12,0.2", help="seconds of stance matching at the start and at the end")
     a = ap.parse_args()
     skel = ga.read_skeleton(a.skeleton or a.ref.parent / "HUMANS.MDH.json")
@@ -149,7 +151,8 @@ def main():
     if a.gen_stance:
         match_stance(anim, ga.read_animation(a.gen_stance), ref, *map(float, a.fade.split(",")))
     hold_arm(anim, skel, ref, [float(w) for w in a.sword_arm.split(",")])
-    body_nodes(anim, skel, [ref] + [ga.read_animation(f) for f in a.fill])
+    fills = [ga.read_animation(f) for f in a.fill]
+    body_nodes(anim, skel, [ref] + fills, fills[0] if fills else ref)
     anim.name, anim.next = a.name, a.next
     a.out.parent.mkdir(parents=True, exist_ok=True)
     ga.write_animation(a.out, anim, source=f"finish:{a.src.name} warp {a.warp} arm {a.sword_arm}")
