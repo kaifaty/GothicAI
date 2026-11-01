@@ -4,6 +4,7 @@ import { providerTitle } from "./status";
 import {
   call,
   onCore,
+  restartApp,
   showWindow,
   toMenuBar,
   type CoreMessage,
@@ -198,6 +199,18 @@ class Launcher {
     await call("session.stop");
   }
 
+  /** Brings the personal Ryzen install up to main; the app restarts itself when the core is done. */
+  async update(): Promise<void> {
+    try {
+      const update = await call<State["update"]>("update.start");
+      // progress events may already be ahead of this answer
+      if (this.state && update && !this.state.update?.updating) this.state.update = update;
+      this.error = null;
+    } catch (err) {
+      this.error = String(err);
+    }
+  }
+
   private onMessage(m: CoreMessage): void {
     const s = this.state;
     switch (m.event) {
@@ -231,6 +244,13 @@ class Launcher {
       case "voice_test":
         if (m.data.level !== undefined) this.voiceTest.levels = [...this.voiceTest.levels, m.data.level].slice(-24);
         if (m.data.partial !== undefined) this.voiceTest.partial = m.data.partial;
+        break;
+      case "update":
+        if (s) s.update = m.data;
+        // the checkout under the old core changed: start the rebuilt app (the panel leaves it to the window)
+        if (this.role === "window" && m.data?.updating?.state === "finished") {
+          void restartApp().catch((err) => (this.error = `Не удалось перезапустить лаунчер: ${err}`));
+        }
         break;
       case "core_exit":
         this.coreDown = true;

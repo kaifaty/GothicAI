@@ -1,6 +1,6 @@
 // The four status rows (game, brain, voice, speech): before the game from the providers' checks,
 // during it from the services' own health answers.
-import type { Check, Part, Providers, Session } from "./core";
+import type { Check, Part, Providers, Session, Update } from "./core";
 
 export type Tone = "ok" | "warn" | "bad" | "idle";
 export type Row = {
@@ -90,4 +90,27 @@ export function duringGame(session: Session, p: Providers | null, voiceOff: bool
     service(session, "asr", "mic", "Голос игрока", voiceOff),
     service(session, "tts", "speaker", "Озвучка NPC", speechOff),
   ];
+}
+
+/** What the main screen says about the personal Ryzen install (null: nothing to say). */
+export type UpdateKind = "updating" | "restarting" | "behind" | "unbuilt" | "failed" | "updated";
+
+const UPDATED_SHOWN_S = 10 * 60;
+
+export function updateKind(u: Update | null | undefined, now = Date.now() / 1000): UpdateKind | null {
+  if (!u) return null;
+  if (u.updating) return u.updating.state === "running" ? "updating" : "restarting";
+  if (!u.current) return u.behind > 0 ? "behind" : "unbuilt";
+  if (u.latest_failed) return "failed";
+  const time = u.report ? Date.parse(u.report.time) / 1000 : NaN;
+  if (u.report?.result === "updated" && now - time < UPDATED_SHOWN_S) return "updated";
+  return null;
+}
+
+/** 1 изменение, 3 изменения, 12 изменений */
+export function plural(n: number, one: string, few: string, many: string): string {
+  const tens = n % 100;
+  if (tens >= 11 && tens <= 14) return many;
+  if (n % 10 === 1) return one;
+  return n % 10 >= 2 && n % 10 <= 4 ? few : many;
 }

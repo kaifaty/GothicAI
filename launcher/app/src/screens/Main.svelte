@@ -2,9 +2,10 @@
   import Header from "../components/Header.svelte";
   import Icon from "../components/Icon.svelte";
   import StatusRow from "../components/StatusRow.svelte";
+  import UpdateNotice from "../components/UpdateNotice.svelte";
   import { call, openFolder, reveal } from "../lib/core";
   import { launcher } from "../lib/launcher.svelte";
-  import { beforeGame } from "../lib/status";
+  import { beforeGame, updateKind } from "../lib/status";
 
   let { onSettings }: { onSettings: () => void } = $props();
 
@@ -12,6 +13,9 @@
   const rows = $derived(beforeGame(launcher.providers, launcher.checking, s.problems, s.settings.game.dir));
   const save = $derived(s.last_save);
   let starting = $state(false);
+  const update = $derived(updateKind(s.update));
+  // the checkout changes under the core: nothing starts until the app comes back on the new version
+  const busy = $derived(starting || update === "updating" || update === "restarting");
 
   function when(t: number): string {
     const d = new Date(t * 1000);
@@ -53,11 +57,15 @@
   <main>
     <section class="play">
       <h1 class="display">Ночь Ворона</h1>
-      <p class="muted">
-        NPC слышат вас и отвечают голосом. В игре посмотрите на NPC и удерживайте <kbd>T</kbd>, чтобы сказать реплику.
-      </p>
+      {#if update}
+        <UpdateNotice />
+      {:else}
+        <p class="muted">
+          NPC слышат вас и отвечают голосом. В игре посмотрите на NPC и удерживайте <kbd>T</kbd>, чтобы сказать реплику.
+        </p>
+      {/if}
       {#if save}
-        <button class="primary" disabled={starting} onclick={() => start("continue")}>
+        <button class="primary" disabled={busy} onclick={() => start("continue")}>
           <Icon name="play" size={26} />
           <span class="label">
             <span class="big">Продолжить</span>
@@ -65,14 +73,14 @@
           </span>
         </button>
       {:else}
-        <button class="primary" disabled={starting} onclick={() => start("menu")}>
+        <button class="primary" disabled={busy} onclick={() => start("menu")}>
           <Icon name="play" size={26} />
           <span class="label"><span class="big">Играть</span><span class="small">Откроется меню игры</span></span>
         </button>
       {/if}
       <div class="more">
-        {#if save}<button class="btn btn-ghost" disabled={starting} onclick={() => start("menu")}>Меню игры</button>{/if}
-        <button class="btn btn-ghost" disabled={starting} onclick={() => start("new")}>Новая игра</button>
+        {#if save}<button class="btn btn-ghost" disabled={busy} onclick={() => start("menu")}>Меню игры</button>{/if}
+        <button class="btn btn-ghost" disabled={busy} onclick={() => start("new")}>Новая игра</button>
       </div>
       {#if launcher.error}<p class="error selectable" role="alert">{launcher.error}</p>{/if}
     </section>
