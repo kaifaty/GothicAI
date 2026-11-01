@@ -16,6 +16,7 @@
 Брони:
 
 - v58 — занято: claude/body-traces
+- v59 — занято: claude/wonderful-golick-9705c1 (итог дальнего боя NPC)
 
 ### Что добавила каждая версия
 
