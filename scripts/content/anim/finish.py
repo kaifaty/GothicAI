@@ -114,7 +114,8 @@ def body_nodes(anim: ga.Animation, skel: ga.Skeleton, sources: list[ga.Animation
     (the stance, then the jump-back). A slot left to the bind pose points the sword at the ground; a toe left to
     it jumped tens of centimetres at the switch."""
     names = [n.name for n in skel.nodes]
-    driven = {names.index(n) for n in rs.MAP if n in names}
+    # BIP01 is not in the map: the retarget derives it from the pelvis, and it carries the root motion
+    driven = {names.index(n) for n in [*rs.MAP, "BIP01"] if n in names}
     for j, node in enumerate(anim.node_indices):
         if node in driven:
             continue

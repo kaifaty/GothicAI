@@ -191,10 +191,12 @@ def test_body_nodes_take_the_moves_node_set_and_hold_undriven_nodes():
     skel = ga.Skeleton([ga.Node(n, -1 if i == 0 else 0, np.eye(4)) for i, n in enumerate(names)], np.zeros(3))
     anim = ga.Animation("T", "", 1, 25.0, 3, [0, 1, 2, 3, 4], rng.normal(size=(3, 5, 3)), random_quats(rng, (3, 5)))
     driven = anim.rotations[:, 1].copy()
+    root = anim.positions[:, 0].copy()
     stance = ga.Animation("S", "", 1, 25.0, 1, [0, 1, 3], rng.normal(size=(1, 3, 3)), random_quats(rng, (1, 3)))
     jump = ga.Animation("J", "", 1, 25.0, 1, [0, 1, 2, 3], rng.normal(size=(1, 4, 3)), random_quats(rng, (1, 4)))
     finish.body_nodes(anim, skel, [stance, jump], jump)
     assert anim.node_indices == [0, 1, 2, 3]  # the jump-back's set: no ZS_HELMET
     assert np.allclose(anim.rotations[:, 1], driven)  # Kimodo's pelvis stays
+    assert np.allclose(anim.positions[:, 0], root)  # and the root's way: BIP01 is derived, not in the map
     assert np.allclose(anim.rotations[:, 2], jump.rotations[0, 2])  # the toe: only the jump-back has it
     assert np.allclose(anim.rotations[:, 3], stance.rotations[0, 2])  # the slot: the stance comes first
