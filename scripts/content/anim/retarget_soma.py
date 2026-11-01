@@ -186,7 +186,10 @@ def soma_rig(skel: ga.Skeleton, pos0: np.ndarray, rot0: np.ndarray, names: list[
     for i, n in enumerate(skel.nodes):
         r = bind[i][:3, :3]
         if n.name in rest_dir:
-            r = shortest_arc(r[:, 0], rest_dir[n.name]) @ r
+            # Along the bone to its BIP01 child, not along local X: the Biped foot's X axis is 61°
+            # off the direction to TOE0, and aligning X tilted every retargeted foot by that much.
+            child = next(j for j, c in enumerate(skel.nodes) if c.parent == i and c.name.startswith("BIP01"))
+            r = shortest_arc(r @ skel.nodes[child].rest[:3, 3], rest_dir[n.name]) @ r
         aligned[n.name] = r
     soma_pts = {n: pos0[i] for n, i in si.items()}  # lengths only, any frame will do
     gothic_bind = {n.name: bind[i][:3, 3] for i, n in enumerate(skel.nodes)}
@@ -195,7 +198,8 @@ def soma_rig(skel: ga.Skeleton, pos0: np.ndarray, rot0: np.ndarray, names: list[
     stand = ga.world_pose(skel, ground, 0) if ground is not None else bind
     foot_y = min(stand[skel.index("BIP01 L FOOT")][1, 3], stand[skel.index("BIP01 R FOOT")][1, 3])
     # SOMA ankle joint height over the floor at heel contact, measured in Kimodo outputs.
-    return {"si": si, "aligned": aligned, "scale": scale, "bind_foot_y": float(foot_y), "soma_foot_y": 0.081}
+    return {"si": si, "aligned": aligned, "scale": scale, "bind_foot_y": float(foot_y), "soma_foot_y": 0.081,
+            "legmid_off": 0.5 * (rest_off["LeftLeg"] + rest_off["RightLeg"])}
 
 
 def gothic_to_soma(skel: ga.Skeleton, anim: ga.Animation, frame: int, rig: dict, names: list[str],
@@ -213,9 +217,10 @@ def gothic_to_soma(skel: ga.Skeleton, anim: ga.Animation, frame: int, rig: dict,
             soma_global[n] = soma_global[parent]
         local = soma_global[n] if parent is None else soma_global[parent].T @ soma_global[n]
         out[j] = axis_angle(local)
-    hips = F @ world[gi["BIP01 PELVIS"]][:3, 3]
-    hips[1] -= rig["bind_foot_y"] - rig.get("soma_foot_y", 0.0) * rig["scale"]
-    hips = hips / rig["scale"]
+    # The hip joints coincide (see retarget): the SOMA hips sit off their midpoint by SOMA's offset.
+    legmid = F @ (0.5 * (world[gi["BIP01 L THIGH"]][:3, 3] + world[gi["BIP01 R THIGH"]][:3, 3]))
+    legmid[1] -= rig["bind_foot_y"] - rig.get("soma_foot_y", 0.0) * rig["scale"]
+    hips = legmid / rig["scale"] - soma_global["Hips"] @ rig["legmid_off"]
     if origin_xz is not None:
         hips[[0, 2]] -= origin_xz
     return out, hips
@@ -231,10 +236,61 @@ def axis_angle(m: np.ndarray) -> np.ndarray:
     return q[1:] / s * 2.0 * np.arctan2(s, q[0])
 
 
+def world_positions(skel: ga.Skeleton, world_rot: np.ndarray, root: np.ndarray) -> np.ndarray:
+    """Node positions from world rotations and the root position (FK on the rest offsets)."""
+    out = np.zeros((len(skel.nodes), 3))
+    for i, n in enumerate(skel.nodes):
+        out[i] = root if n.parent < 0 else out[n.parent] + world_rot[n.parent] @ n.rest[:3, 3]
+    return out
+
+
+def two_bone_ik(world_rot: np.ndarray, root_pos: np.ndarray, skel: ga.Skeleton,
+                chain: tuple[int, int, int], target: np.ndarray) -> None:
+    """Turn the upper and lower bones of `chain` (hip, knee, ankle nodes) so the ankle reaches
+    `target`, keeping the knee in the plane of the current pose. The ankle's own rotation stays."""
+    hip, knee, ankle = chain
+    world = world_positions(skel, world_rot, root_pos)
+    p_hip, p_knee, p_ankle = world[hip], world[knee], world[ankle]
+    a = float(np.linalg.norm(skel.nodes[knee].rest[:3, 3]))
+    b = float(np.linalg.norm(skel.nodes[ankle].rest[:3, 3]))
+    to_target = target - p_hip
+    d = float(np.clip(np.linalg.norm(to_target), abs(a - b) + 1e-3, a + b - 1e-3))
+    axis = to_target / max(np.linalg.norm(to_target), 1e-9)
+    pole = (p_knee - p_hip) - axis * np.dot(p_knee - p_hip, axis)
+    if np.linalg.norm(pole) < 1e-6:  # straight leg: bend the knee forward
+        pole = np.cross(axis, [1.0, 0.0, 0.0])
+    pole /= np.linalg.norm(pole)
+    along = (a * a - b * b + d * d) / (2 * d)
+    new_knee = p_hip + axis * along + pole * np.sqrt(max(a * a - along * along, 0.0))
+    new_ankle = p_hip + axis * d
+    turn_upper = shortest_arc(p_knee - p_hip, new_knee - p_hip)
+    world_rot[hip] = turn_upper @ world_rot[hip]
+    moved_ankle = new_knee + turn_upper @ (p_ankle - p_knee)
+    world_rot[knee] = shortest_arc(moved_ankle - new_knee, new_ankle - new_knee) @ turn_upper @ world_rot[knee]
+
+
+TOE_FADE = 4  # frames over which a toe lock hands back to the ankle path after lift-off
+
+
+def toe_contacts(contacts: np.ndarray | None, side: str, frames: int) -> tuple[np.ndarray, np.ndarray]:
+    """Kimodo's heel and toe contact flags of one foot; 6 channels for 77 joints
+    [L heel, L toe, L toe end, R heel, R toe, R toe end], 4 for 30 [L heel, L toe, R heel, R toe]."""
+    if contacts is None:
+        return np.ones(frames, bool), np.zeros(frames, bool)
+    c = np.asarray(contacts).astype(bool)
+    first = (0 if side == "L" else 3) if c.shape[1] == 6 else (0 if side == "L" else 2)
+    return c[:frames, first], c[:frames, first + 1]
+
+
 def retarget(npz: Path, skel: ga.Skeleton, name: str, next_ani: str, fps: float, src_fps: float,
-             root_offset_y: float | None = None, ref: ga.Animation | None = None) -> ga.Animation:
-    """`ref`: the stance clip the move starts from; gives bone offsets and the floor height."""
-    pos, rot, names, _ = load_soma(npz)
+             root_offset_y: float | None = None, ref: ga.Animation | None = None,
+             foot_ik: bool = True) -> ga.Animation:
+    """`ref`: the stance clip the move starts from; gives bone offsets and the floor height.
+
+    `foot_ik`: put each ankle where SOMA's ankle is, carried over by the root's scale. Copied
+    rotations alone let a planted foot slide, because the Gothic thigh and shin keep other
+    proportions than SOMA's (0.3 cm per frame median, peaks 1–4 cm, in the probe of 2026-11-01)."""
+    pos, rot, names, contacts = load_soma(npz)
     if ref is not None:
         skel = with_offsets(skel, ref)
     rig = soma_rig(skel, pos[0], rot[0], names, ref)
@@ -242,6 +298,7 @@ def retarget(npz: Path, skel: ga.Skeleton, name: str, next_ani: str, fps: float,
     gi = {n.name: i for i, n in enumerate(skel.nodes)}
 
     frames_src = pos.shape[0]
+    thigh_off = 0.5 * (skel.nodes[gi["BIP01 L THIGH"]].rest[:3, 3] + skel.nodes[gi["BIP01 R THIGH"]].rest[:3, 3])
     world_rot = np.zeros((frames_src, len(skel.nodes), 3, 3))
     root_pos = np.zeros((frames_src, 3))
     for t in range(frames_src):
@@ -256,15 +313,46 @@ def retarget(npz: Path, skel: ga.Skeleton, name: str, next_ani: str, fps: float,
                 parent = skel.nodes[i].parent
                 local = skel.nodes[i].rest[:3, :3]
                 world_rot[t, i] = (world_rot[t, parent] @ local) if parent >= 0 else aligned[g]
-        # SOMA hips sit at the Gothic pelvis; BIP01 is its parent by the bind offset.
-        root_pos[t] = F @ pos[t, si["Hips"]] * scale - world_rot[t, 0] @ skel.nodes[pelvis].rest[:3, 3]
+        # The hip joints coincide: the midpoint of the Gothic thighs sits on SOMA's LeftLeg/RightLeg
+        # midpoint. Placing the pelvis on SOMA's hips instead leaves the legs ~8 cm too short for the
+        # ankles (Gothic's pelvis sits lower over its hip joints than SOMA's).
+        legmid = 0.5 * (pos[t, si["LeftLeg"]] + pos[t, si["RightLeg"]])
+        root_pos[t] = F @ legmid * scale - world_rot[t, pelvis] @ thigh_off - world_rot[t, 0] @ skel.nodes[pelvis].rest[:3, 3]
 
+    ankles = {k: np.array([F @ p * scale for p in pos[:, si[f"{s}Foot"]]]) for k, s in (("L", "Left"), ("R", "Right"))}
     if root_offset_y is None:
         # Ground the clip: the lower foot's 10th percentile height equals the stance's ankle height.
-        feet = np.array([[world_feet(skel, world_rot[t], root_pos[t], k) for k in ("L", "R")]
-                         for t in range(frames_src)])
-        root_offset_y = rig["bind_foot_y"] - float(np.percentile(feet.min(axis=1), 10))
+        if foot_ik:
+            low = np.minimum(ankles["L"][:, 1], ankles["R"][:, 1])
+        else:
+            low = np.array([[world_feet(skel, world_rot[t], root_pos[t], k) for k in ("L", "R")]
+                            for t in range(frames_src)]).min(axis=1)
+        root_offset_y = rig["bind_foot_y"] - float(np.percentile(low, 10))
     root_pos[:, 1] += root_offset_y
+    if foot_ik:
+        lift = np.array([0.0, root_offset_y, 0.0])
+        for k in ("L", "R"):
+            chain = (gi[f"BIP01 {k} THIGH"], gi[f"BIP01 {k} CALF"], gi[f"BIP01 {k} FOOT"])
+            heel, toe = toe_contacts(contacts, k, frames_src)
+            toe_rest = skel.nodes[gi[f"BIP01 {k} TOE0"]].rest[:3, 3]
+            lock, offset, fade = None, np.zeros(3), 0
+            for t in range(frames_src):
+                target = ankles[k][t] + lift
+                toe_now = world_rot[t, chain[2]] @ toe_rest
+                if toe[t] and not heel[t]:
+                    # Heel up, rolling over the toes: the Gothic foot is longer than SOMA's (26 cm to
+                    # TOE0 against 14 cm to ToeBase), so its toe stays where it touched down and the
+                    # ankle rises around it.
+                    if lock is None:
+                        lock = target + toe_now
+                    offset, fade = lock - toe_now - target, TOE_FADE
+                    target = lock - toe_now
+                else:
+                    lock = None
+                    if fade:
+                        target = target + offset * fade / (TOE_FADE + 1)
+                        fade -= 1
+                two_bone_ik(world_rot[t], root_pos[t], skel, chain, target)
 
     # Local samples at the source rate.
     rest_t = [n.rest[:3, 3] for n in skel.nodes]
