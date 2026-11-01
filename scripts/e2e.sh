@@ -2,6 +2,7 @@
 # End-to-end check: starts the AI server with a scenario, then a new game in OpenGothic.
 # LLM defaults to the scenario group selected in server/src/gothic_ai/scenarios/groups.py.
 # LLM=off forbids model calls except explicit scenario givens (given/silent).
+# Manual live suites: SUITE=haggle RUNS=3 LLM=chatgpt scripts/e2e-live.sh; see docs/e2e.md.
 #   check_walk: new game, no SAVE, no model; Cavalorn walks from Xardas's stairs to Brago's
 #       unseen body in the bandit cave using the native waynet, sees it and returns to the hero
 #   follow_back: new game, no SAVE, no model; repeated set_intent follow_hero recalls Cavalorn
@@ -13,8 +14,9 @@
 #       MEMPROBE_PHASES=wave,save,load,spawn,teleport, MEMPROBE_CYCLES=8; no model, no body URL
 #   crime_meet: save 1, native home eviction and a brave victim's Amends approach/payment;
 #       LLM=chatgpt runs only the short compensation scene with the real model
-#   crime_ally: new game, no SAVE, LLM=fake; Brago attacks the following Cavalorn, the hero knocks him
-#       down and finishes him; murder and crime_side remain in the chronicle and Cavalorn answers
+#   crime_ally: given: Brago attacks the following Cavalorn; Cavalorn stays silent after the murder.
+#       New game, no SAVE; LLM=off via auto. The hero knocks Brago down and finishes him;
+#       murder and crime_side remain in the chronicle.
 #   bandit_parley: given: Brago attacks without cause, demands 100 gold, grants four hours of peace,
 #       then attacks on drawn weapons; his mate tries attacking during the truce. New game, no SAVE;
 #       Y pays 100 gold for four hours of peace with the cave gang, including 1015; no attack for 20 s,
@@ -31,8 +33,8 @@
 #       held kneeling and native exit after real Back input; records positions and game/wall times
 #   surrender_live: new game, LLM=chatgpt and live QUICK_URL (defaults to settings.toml);
 #       seven independent Lobart/bandit/guard/Brago scenes record real surrender decisions, tools, speech,
-#       transfers, humiliation and timings in surrender_live.json; any completed decision passes;
-#       SURRENDER_CASES=B_guard,C_brago runs only those scenes
+#       transfers, humiliation and timings in live.json; outcomes are scored from game facts;
+#       CASES=B_guard,C_brago runs only those scenes (see docs/e2e.md)
 #   svm_lines: new game, no SAVE, no model; QUICK_URL supplies ten live Gemma SVM lines, their native
 #       text and voice delays, then Cavalorn kills a beast and speaks its native script SVM.
 #       An unavailable QUICK_URL falls back after three errors; TTS=fake|inworld.
@@ -176,21 +178,18 @@
 #   crimes: hero deeds and engine witnesses (docs/crime.md, layer 1), no model on Lobart's farm:
 #       SAVE=save_slot_1.sav; TIMEOUT=420. Theft, chest, unowned item, attack, sheep, both pocket
 #       outcomes, then save/load and a clean branch. Native script reactions remain enabled.
-#   crime_talk: crime knowledge and speech (docs/crime.md, layer 2), on Lobart's farm/save_slot_1.sav.
-#       LLM=fake: Hilda's theft rumor, testimony/catch_lie, accepted silence, chest suspicion/concern.
-#       LLM=chatgpt: only the first scene; records Lobart's actual prompt, reply and catch_lie outcome.
-#       TIMEOUT=600. Native theft perceptions stay enabled; Hilda's fight is reset after her sighting.
-#   trace_crime: one reply catches lies by fresh fence debris and Hilda's theft testimony, then save/load.
-#       LLM=fake; SAVE=save_slot_1.sav. Native theft perceptions stay enabled; checks mixed evidence,
-#       both accepted catch_lie calls, crime knowledge and trust without treating debris as authorship proof.
-#   cover: Hilda sees a real theft, sells cover through the deal key, and lies to Lobart. Her С row cannot
-#       catch the hero; Vino's real sighting exposes her. Save/load keeps the cover and one exposed fact.
-#       LLM=fake; SAVE=save_slot_1.sav; TIMEOUT=720. LLM=chatgpt runs only the one cover request to Hilda,
-#       logs her exact reply and proposal/refusal, then exits. Fear is checked by the server unit tests.
-#   cover_subject: the same native cover/exposure, then Lobart's cover rumor reaches an acquaintance
-#       shared with Hilda (prefer Vatras). Its model reads the people block and both witness warnings;
-#       hero trust is unchanged by the rumor. Save/load restores knowledge and the rumor once.
-#       LLM=fake; SAVE=save_slot_1.sav; TIMEOUT=720.
+#   crime_talk: given: Lobart asks Hilda and catches the lie from her testimony; Hilda offers silence.
+#       Testimony is a given line. Checks crime knowledge, accepted silence and chest suspicion/concern.
+#       LLM=off via auto; SAVE=save_slot_1.sav; TIMEOUT=600. Native theft perceptions stay enabled.
+#   trace_crime: given: Lobart asks Hilda, then catches two lies in one turn from fresh fence debris
+#       and her given testimony. Checks accepted evidence, knowledge, trust and save/load.
+#       LLM=off via auto; SAVE=save_slot_1.sav; debris never proves theft authorship.
+#   cover: given: Hilda sells cover for 5 gold; Lobart asks Hilda and Vino, then catches the lie
+#       from the second source. Testimony lines are given; Hilda's covered row is rejected as proof.
+#       Checks payment, exposure and save/load; LLM=off via auto; SAVE=save_slot_1.sav; TIMEOUT=720.
+#   cover_subject: given: the cover decisions above; a third asker asks Hilda without a verdict.
+#       Checks the rumor about Hilda, unchanged hero trust and witness warnings by reading the situation
+#       without a model turn, then save/load; LLM=off via auto; SAVE=save_slot_1.sav; TIMEOUT=720.
 #   cheat: Hilda sells silence after a native theft but tells Lobart; dishonest Lobart keeps a later
 #       payment, Vino hears, then honesty 4 pays. Save/load preserves intentions and single outcomes.
 #       LLM=fake; SAVE=save_slot_1.sav; TIMEOUT=720. LLM=chatgpt scripts only the later-payment setup,
@@ -218,7 +217,8 @@
 #       LLM=fake: unseen chest theft and its return quest, Hilda's initiative and paid silence,
 #       Lobart's learned grievance and Amends payment. LLM=chatgpt: witnessed theft goes to the
 #       real showrunner; records its line premise or none reason. TIMEOUT=900.
-#   crime_law: community law (docs/crime.md, layer 3), LLM=fake; SAVE=save_slot_1.sav, TIMEOUT=420.
+#   crime_law: given: Matteo offers silence for the second theft; community law otherwise uses no model.
+#       LLM=off via auto; SAVE=save_slot_1.sav; TIMEOUT=420.
 #       Matteo witnesses a native theft; Andre stays locked until the next day, charges 50 through
 #       his native voiced dialog and accepts payment. Matteo still remembers. A second theft with
 #       an accepted silence deal never reaches Andre. Native theft perceptions stay enabled.
@@ -274,7 +274,7 @@
 #   showrunner_live: LLM=chatgpt only, stage 4 layer 3: one saved game, real arrived, human-kill deed and
 #       chapter occasions consumed by Showrunner.run; every line is finished by play_book_chain before
 #       the next occasion, with a game day and an injected 15 min between them. All three must have a
-#       line/none outcome, at least one completed line. SAVE=save_slot_1.sav; TIMEOUT=1200
+#       live.json case: completed canonical line, failed passage, or no_decision. SAVE=save_slot_1.sav
 #       GOTHIC_NO_FEAT_CHALLENGES=1 runs the director without hidden challenges (--no-feat-challenges)
 #   greg: given: Greg gives his city errand and accepts the hero's clothing claim. New game, no SAVE;
 #       Group 2, LLM=off via auto. Farmer clothes earn 50 gold, a map
@@ -285,8 +285,8 @@
 #       line and quest fields. SAVE=save_slot_1.sav; TIMEOUT=420
 #   vanilla_line_live: LLM=chatgpt only: Showrunner.run consumes two real vanilla occasions, taking and
 #       completing Lobart's turnips. Finish the first line, if any, before the second event, then advance
-#       a game day and the budget's wall clock by 15 min. Both events need a line/none outcome, at least
-#       one line, all quests completed; givers must be peaceful and outside their follows quest's cast.
+#       a game day and the budget's wall clock by 15 min. live.json scores canonical completed lines;
+#       no line is no_decision; failed construction or passage is failure.
 #       Logs include each event, proposal outcome, built quests and passage. SAVE=save_slot_1.sav; TIMEOUT=1200
 #       GOTHIC_FORCE_CHALLENGE=1 requires one hidden challenge per line and checks its hint, outcome and feat.
 #   vgive: given: Cavalorn gives and accepts his bandit quest. Native menus, the letter to Vatras,
@@ -330,9 +330,6 @@
 #   noise: given: Malet investigates a physical impact. Checks the noise event, investigate receipt,
 #       walk within 2 m, idle within 45 s, routine return and heard-noise memory.
 #       Group 2, LLM=off via auto; SAVE=save_slot_1.sav
-#   cards: the model writes character cards (docs/npc-tools.md, wave 1 step 3) for every npc of the world with
-#       lines of its own (GOTHIC_CARDS=SYM,...: those only) into server/src/gothic_ai/gamedata/characters.json;
-#       those with a card are skipped; needs LLM=chatgpt and a long TIMEOUT for all of them
 #   haggle: live only (LLM=chatgpt): the hero offers the same silver cup to Canthar (greedy by his card) and
 #       Lutero (fairer) and asks for more: the greedy one should offer less (wave 1 step 3)
 #   deal: given: Lobart offers goods for 50 gold, 40 after refusal and 30 after haggling.
@@ -429,7 +426,10 @@ if [[ "${GOTHIC_SOAK_CONTROL:-0}" == 1 && "$SCENARIO" != neural-soak ]]; then
 fi
 E2E_DEFAULT_TIMEOUT=240
 if [[ "$SCENARIO" == memprobe ]]; then E2E_DEFAULT_TIMEOUT=1200; fi
-if [[ "$SCENARIO" == surrender_live || "$SCENARIO" == neural-still ]]; then E2E_DEFAULT_TIMEOUT=1200; fi
+if [[ "$SCENARIO" == surrender_live || "$SCENARIO" == neural-still || "$SCENARIO" == showrunner_live || "$SCENARIO" == vanilla_line_live ]]; then E2E_DEFAULT_TIMEOUT=1200; fi
+if [[ "$SCENARIO" == haggle ]]; then E2E_DEFAULT_TIMEOUT=1200; fi
+if [[ "$SCENARIO" == interject ]]; then E2E_DEFAULT_TIMEOUT=600; fi
+if [[ "$SCENARIO" == chests_lobart ]]; then E2E_DEFAULT_TIMEOUT=420; fi
 if [[ "$SCENARIO" == feats && "$LLM" == chatgpt ]]; then E2E_DEFAULT_TIMEOUT=1020; fi
 if [[ "$SCENARIO" == feat_fame ]]; then E2E_DEFAULT_TIMEOUT=420; fi
 TIMEOUT="${TIMEOUT:-$E2E_DEFAULT_TIMEOUT}"

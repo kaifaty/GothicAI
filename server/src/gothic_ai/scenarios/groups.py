@@ -57,6 +57,12 @@ GIVEN = {
     "initiative",
     "day",
     "noise",
+    "crime_ally",
+    "crime_law",
+    "crime_talk",
+    "trace_crime",
+    "cover",
+    "cover_subject",
     "deal",
     "contract",
     "debt",
@@ -97,5 +103,4 @@ LIVE = {
     "vanilla_line_live",
     "surrender_live",
     "chests_lobart",
-    "cards",
 }

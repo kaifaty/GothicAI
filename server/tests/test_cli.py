@@ -29,6 +29,7 @@ from gothic_ai.llm.off import ModelOff, OffBackend
         (scenario, llm, "off" if llm == "auto" else f"scenario {scenario} requires --llm off")
         for scenario in (
             "witness", "wrath", "amends", "amends_deal", "trace", "broken", "gate", "gate_vouch", "greg",
+            "crime_ally", "crime_law", "crime_talk", "trace_crime", "cover", "cover_subject",
         )
         for llm in ("auto", "fake", "chatgpt")
     ],
@@ -47,6 +48,57 @@ def test_scenario_llm_groups(monkeypatch, capsys, scenario, llm, expected):
         assert exit.value.code == 2
         assert expected in capsys.readouterr().err
         serve.assert_not_awaited()
+
+
+def test_cards_command_generates_from_the_connected_world(monkeypatch, capsys):
+    graph = object()
+    people = [{"npc": "BAU_950_LOBART", "name": "Lobart", "guild": 8, "routine": []}]
+    link = SimpleNamespace(wait_world=AsyncMock(), story_people=AsyncMock(return_value=people))
+    backend = SimpleNamespace(aclose=AsyncMock())
+    subject = SimpleNamespace(npc="BAU_950_LOBART")
+    card = object()
+
+    class Server:
+        def __init__(self, host, port):
+            assert (host, port) == ("127.0.0.1", 47817)
+
+        async def serve_forever(self):
+            await asyncio.Future()
+
+        async def wait_link(self):
+            return link
+
+    monkeypatch.setattr(cli, "GameServer", Server)
+    monkeypatch.setattr(cli, "_story_graph", Mock(return_value=graph))
+    monkeypatch.setattr(cli, "_backend", Mock(return_value=backend))
+    monkeypatch.setattr(cli.characters, "load", Mock(return_value={subject.npc: object()}))
+    subjects = Mock(return_value=[subject])
+    monkeypatch.setattr(cli.characters, "subjects", subjects)
+    write = AsyncMock(return_value=({subject.npc: card}, []))
+    monkeypatch.setattr(cli.characters, "write", write)
+    save = Mock()
+    monkeypatch.setattr(cli.characters, "save", save)
+    monkeypatch.setattr("sys.argv", ["gothic-ai", "cards", "--only", " bau_950_lobart, "])
+    with pytest.raises(SystemExit) as exit:
+        cli.main()
+    assert exit.value.code == 0
+    subjects.assert_called_once_with(graph, people, {subject.npc})
+    write.assert_awaited_once_with(backend, [subject])
+    save.assert_called_once_with({subject.npc: card})
+    backend.aclose.assert_awaited_once()
+    assert "1 of 1 cards written" in capsys.readouterr().out
+
+    monkeypatch.setattr("sys.argv", ["gothic-ai", "serve", "--scenario", "cards"])
+    with pytest.raises(SystemExit) as exit:
+        cli.main()
+    assert exit.value.code == 2
+    assert "invalid choice: 'cards'" in capsys.readouterr().err
+    for llm in ("off", "fake"):
+        monkeypatch.setattr("sys.argv", ["gothic-ai", "cards", "--llm", llm])
+        with pytest.raises(SystemExit) as exit:
+            cli.main()
+        assert exit.value.code == 2
+        assert "cards requires --llm chatgpt|openai|local" in capsys.readouterr().err
 
 
 def test_story_graph_is_optional_before_the_game_publishes_its_base(tmp_path, monkeypatch, caplog):
@@ -309,7 +361,9 @@ def test_deed_control_is_independent_of_the_planner_and_threat_switch(crimes, pl
     assert ("deeds" in command) == crimes
 
 
-@pytest.mark.parametrize("flags", [[], ["--no-cover"], ["--no-crimes"], ["--scenario", "cover"]])
+@pytest.mark.parametrize("flags", [
+    [], ["--no-cover"], ["--no-crimes"], ["--scenario", "cover", "--llm", "off"],
+])
 def test_cover_flag_defaults_and_scenario_are_available(monkeypatch, flags):
     async def serve(args):
         assert args.no_cover == ("--no-cover" in flags)

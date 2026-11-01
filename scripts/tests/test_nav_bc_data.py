@@ -394,7 +394,7 @@ def test_compact_v5_manifest_uses_supplied_root_and_only_eligible_train(tmp_path
     metadata = {"id": "point-0", "goal_kind": "point", "split": "train", "training_eligible": True,
                 "decisions": 2, "navigation_memory_version": 4, "journey_memory": True,
                 "demo_version": 3, "perception_mode": "gaze", "physics_mode": "cv",
-                "start": "start", "goal": "goal", "region": "forest"}
+                "start": "start", "goal": "goal", "region": "forest", "teacher_version": 3}
     (directory / "episode.json").write_text(json.dumps(metadata))
     entry = {"id": "point-0", "family": "point", "split": "train", "training_eligible": True,
              "decisions": 2, "samples_sha256": "a" * 64, "episode": relative}
@@ -471,6 +471,54 @@ def test_compact_v5_manifest_uses_supplied_root_and_only_eligible_train(tmp_path
     expanded = data.unpack_cached(packed)
     for name in cached:
         assert cached[name].tobytes() == expanded[name].tobytes()
+    dagger = tmp_path / "dagger" / "point" / "learner"
+    dagger.mkdir(parents=True)
+    (dagger / "samples.bin.gz").write_bytes((directory / "samples.bin.gz").read_bytes())
+    (dagger / "episode.json").write_text(json.dumps({**metadata, "drive": True, "dagger": True,
+        "dagger_scenario": {"split": "train"}, "training_valid": True, "teacher_version": 3}))
+    (dagger / "samples.jsonl").write_text("\n".join(json.dumps({
+        "time_ms": int(stamp), "teacher_control": number == 0, "maneuver_mask": number == 1,
+    }) for number, stamp in enumerate(records["time_ms"])))
+    hd_output = tmp_path / "hd-cache"
+    links = tmp_path / "accepted-links.txt"
+    links.write_text("0 7 0 1 7 0 1 1\n")
+    with monkeypatch.context() as storage:
+        storage.setattr(data.shutil, "disk_usage", lambda path: SimpleNamespace(free=32 * 1024**3))
+        hd_index = data.prepare(source, hd_output, manifest=path, input_variant="hd", chunk_records=1,
+                                dagger_sources=[tmp_path / "dagger"], maneuver_links=links)
+    assert hd_index["cache_version"] == data.HD_CACHE_VERSION
+    assert hd_index["navigation_memory_version"] == 4
+    assert hd_index["preprocessing"] == {**data.HD_PREPROCESSING, "navigation_memory_version": 4}
+    assert [ep["source_kind"] for ep in hd_index["episodes"]] == ["teacher", "dagger"]
+    entry = hd_index["episodes"][1]
+    assert entry["effective_steps"] == 1.5 and entry["teacher_control_steps"] == 1
+    cached = data.load_cached(hd_output / entry["file"])
+    assert cached["near"].shape == (2, 10, 64, 64)
+    assert cached["far"].shape == (2, 10, 50, 100)
+    np.testing.assert_array_equal(cached["sample_weight"], [.5, 1])
+    np.testing.assert_array_equal(cached["maneuver_valid"], [1, 0])
+    assert not cached["labels"][:, 4].any()
+    teacher = data.load_cached(hd_output / hd_index["episodes"][0]["file"])
+    assert not teacher["maneuver_valid"].any()
+    chunk_output = tmp_path / "hd-chunk"
+    original_chunks = demos.iter_chunks
+    def selected_chunks(samples, chunk_records):
+        assert samples.parent == dagger
+        return original_chunks(samples, chunk_records)
+    with monkeypatch.context() as storage:
+        storage.setattr(data.shutil, "disk_usage", lambda path: SimpleNamespace(free=32 * 1024**3))
+        storage.setattr(demos, "iter_chunks", selected_chunks)
+        chunk = data.prepare_manifest(source, chunk_output, path, input_variant="hd", chunk_records=1,
+            dagger_sources=[tmp_path / "dagger"], maneuver_links=links, episode_range=(1, 2))
+        for invalid_range in ((2, 2), (0, 3)):
+            with pytest.raises(ValueError, match="episode range"):
+                data.prepare_manifest(source, tmp_path / "invalid-chunk", path, input_variant="hd",
+                    dagger_sources=[tmp_path / "dagger"], maneuver_links=links, episode_range=invalid_range)
+    assert chunk["preparation_range"] == {"start": 1, "stop": 2, "total": 2}
+    assert chunk["episodes"] == [hd_index["episodes"][1]]
+    assert chunk["splits"]["train"] == {"pairs": 1, "episodes": 1, "steps": 2}
+    assert list((chunk_output / "episodes").glob("*.npz")) == [chunk_output / entry["file"]]
+    assert not (tmp_path / "invalid-chunk").exists()
 
 
 @pytest.mark.parametrize("input_variant", ["compact", "hd", "hd-familiar"])
