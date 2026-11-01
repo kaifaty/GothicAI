@@ -29,6 +29,8 @@ from gothic_ai.llm.off import ModelOff, OffBackend
         for scenario in (
             "witness", "wrath", "amends", "amends_deal", "trace", "broken", "gate", "gate_vouch", "greg",
             "crime_ally", "crime_law", "crime_talk", "trace_crime", "cover", "cover_subject",
+            "repair", "authored", "character", "chain", "own_amend", "own_repair",
+            "showrunner", "vanilla_line", "feats", "feat_fame",
             "m1", "m2", "m3", "m5", "m5c", "m5e", "tts",
             "combat_barks", "mercy", "hero_yield", "humiliate",
         )
@@ -253,7 +255,7 @@ def test_serve_arguments_select_responses_transport(monkeypatch, flags, websocke
         ([], True),
         (["--no-showrunner"], False),
         (["--scenario", "m0", "--llm", "off"], False),
-        (["--scenario", "showrunner"], False),
+        (["--scenario", "showrunner", "--llm", "off"], False),
         (["--scenario", "showrunner_live"], False),
     ],
 )
@@ -453,9 +455,7 @@ async def test_encounter_worker_starts_without_a_behavioral_planner(monkeypatch)
         (None, "1", False, None, "fake", False, "service"),
         ("neural", "0", True, None, "off", True, "engine"),
         ("neural", "0", True, None, "off", False, "service"),
-        ("feats", "0", True, None, "fake", True, "engine"),
-        ("feats", "0", True, None, "chatgpt", True, "engine"),
-        ("feats", "0", True, None, "local", False, "engine"),
+        ("feats", "0", True, None, "off", True, "engine"),
     ],
 )
 async def test_serve_validates_scenario_backend_and_soak_control(
