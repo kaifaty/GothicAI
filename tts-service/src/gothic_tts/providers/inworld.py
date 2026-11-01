@@ -308,7 +308,7 @@ class InworldTTS:
         """Migrate local sample hashes into the shared registry without changing other tags."""
         voices = await self._workspace()
         if voices is None:
-            return
+            raise TtsError("inworld: cannot read workspace voices to tag cached clones")
         by_id = {entry["voiceId"]: entry for entry in voices}
         for key, cached in self._load().items():
             if not cached.get("sample") or not cached.get("voice_id"):
@@ -321,14 +321,11 @@ class InworldTTS:
             tags = voice.get("tags", [])
             if tag in tags:
                 continue
-            try:
-                await self._call(
-                    "PATCH", f"/voices/v1/voices/{cached['voice_id']}",
-                    params={"updateMask": "tags"}, json={"tags": [*tags, tag]},
-                )
-                voice["tags"] = [*tags, tag]
-            except (TtsError, ValueError) as err:
-                log.warning("inworld: cannot tag cached clone %s: %s", key, err)
+            await self._call(
+                "PATCH", f"/voices/v1/voices/{cached['voice_id']}",
+                params={"updateMask": "tags"}, json={"tags": [*tags, tag]},
+            )
+            voice["tags"] = [*tags, tag]
 
     async def _cloned(self, voice: Voice) -> str:
         return (await self.clone_with_source(voice))[0]

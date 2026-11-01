@@ -928,6 +928,39 @@ def test_clone_originals_command_reuses_sample_hash(api, tmp_path, monkeypatch, 
     assert capsys.readouterr().out == "XARDAS → ws__clone-voice-3 (cloned)\n"
 
 
+@pytest.mark.parametrize("failed_method", ["GET", "PATCH"])
+def test_clone_originals_fails_when_sample_tag_migration_fails(
+    api, tmp_path, monkeypatch, capsys, failed_method,
+):
+    sample = b"RIFF legacy"
+    (tmp_path / "LEGACY.wav").write_bytes(sample)
+    (tmp_path / "manifest.json").write_text(json.dumps([{"id": "LEGACY", "file": "LEGACY.wav"}]))
+    (tmp_path / "voices.json").write_text(json.dumps({
+        "LEGACY@original": {
+            "voice_id": "legacy-clone", "sample": hashlib.sha1(sample).hexdigest()[:16],
+        },
+    }))
+    api.library = [{"voiceId": "legacy-clone", "tags": ["gothic-ai"]}]
+    methods = []
+
+    def transport(request):
+        methods.append(request.method)
+        if request.method == failed_method:
+            return httpx.Response(503, text="migration unavailable")
+        return api(request)
+
+    monkeypatch.setattr(cli, "InworldTTS", lambda: _provider(transport, tmp_path, keep_warm=0))
+    monkeypatch.setattr(cli, "load_env_file", lambda: None)
+    monkeypatch.setattr(sys, "argv", ["gothic-tts", "clone-originals", "--dir", str(tmp_path)])
+    with pytest.raises(SystemExit) as failed:
+        cli.main()
+    assert failed.value.code == 1
+    assert "error: clone sample tags:" in capsys.readouterr().err
+    assert methods == (["GET"] if failed_method == "GET" else ["GET", "PATCH"])
+    assert api.library[0]["tags"] == ["gothic-ai"]
+    assert api.cloned == api.designed == 0
+
+
 @pytest.mark.parametrize("failure", ["network", "empty_voice"])
 def test_clone_originals_continues_after_failed_voice(api, tmp_path, monkeypatch, capsys, failure) -> None:
     for cid in ("FIRST", "BAD", "LAST"):
