@@ -91,14 +91,14 @@
 #       ice wolves and black wolves hear the hero and calm down; tone as in wolf, fixed scenario dice
 #   orders: immediate companion orders, then Cavalorn hears «Бей волка!» with no focus: he fights the
 #       visible wolf before it attacks the hero; the wolf never hears the phrase or asks its tone model.
-#       Scripted with LLM=fake; TIMEOUT=360
+#       No model; combat-event speech is explicitly silent (GIVEN); TIMEOUT=360
 #   m5e: talking without a window: a typed line and the talk key (a wav through the ASR service) with the
 #       hero's own focus, the addressee, the npc's body, the hero's doings, an interruption, a witness, the end
 #       of a conversation when the hero walks away, a walking npc answering on the move
 #   m6: npc's know the world from the scripts' dialogs as far as the story has got: Xardas's talk of chapter 1
 #       but not chapter 3, a dialog played from the menu becomes one the hero has heard, chapter 3 opens its
 #       talk; Lobart knows his field work and what farmers say; the knowledge is in the model's request and
-#       recall gives a topic in full (model scripted with LLM=fake)
+#       recall gives a topic in full (no model)
 #   see: what npc's perceive (npc_view, v11): Xardas sees the hero in front of him and not through the tower's
 #       walls; Lobart names whom he knows and tells the hero by his look, in militia armor a militiaman; the
 #       view is in the model's request, `look` answers, the views of the nearest npc's are pushed each second;
@@ -123,7 +123,7 @@
 #   lie: the hero lies to a quest giver (Xardas: two sheep to kill) and is paid; a sheep he did not kill
 #        turns up, Xardas finds out, attacks him through the scripts, and Jora, standing by, hears it as a
 #        rumor and has it in mind when the hero speaks to her (story graph, stage 4)
-#   death_load: human deaths before/after older-save load, player credit, and no repeated saved deaths; LLM=fake, no SAVE.
+#   death_load: human deaths before/after older-save load, player credit, and no repeated saved deaths; no model, no SAVE.
 #   feats: save before a hero kill, chronicler feat with evidence, picture, toast and journal;
 #       load rolls back feat/image facts while retaining picture files; no SAVE.
 #       LLM=fake uses a scripted chronicler and picture; LLM=chatgpt uses the real chronicler and Artist,
@@ -146,7 +146,7 @@
 #       person as template is refused; saved and loaded he is the same, a save from before he came has none
 #       (protocol v34: story_npc). On a save of Lobart's farm: SAVE=save_slot_1.sav
 #   person: the peddler of `cast` as a person (docs/director.md, stage 2, layer 3): his card, past, knowledge
-#       and acquaintances in front of his model when the hero speaks to him, a voice of his own; Hilda knows
+#       and acquaintances in the production prompt without a model call, a voice of his own; Hilda knows
 #       him by name; the same after a save and a load. On a save of Lobart's farm: SAVE=save_slot_1.sav
 #   character: the director brings in a character of its own (docs/director.md, stage 2, layer 4; models
 #       scripted with LLM=fake): its model makes him up for the place of Lobart's day, the code builds and checks
@@ -165,7 +165,7 @@
 #       model calls amend_quest to waive stage 1's destination without a visit. Stage 2 starts, terms survive
 #       save/load, and the normal item pickup and turn-in finish with quest_outcome amended/full.
 #       LLM=fake; SAVE=save_slot_1.sav
-#   crimes: hero deeds and engine witnesses (docs/crime.md, layer 1), LLM=fake on Lobart's farm:
+#   crimes: hero deeds and engine witnesses (docs/crime.md, layer 1), no model on Lobart's farm:
 #       SAVE=save_slot_1.sav; TIMEOUT=420. Theft, chest, unowned item, attack, sheep, both pocket
 #       outcomes, then save/load and a clean branch. Native script reactions remain enabled.
 #   crime_talk: crime knowledge and speech (docs/crime.md, layer 2), on Lobart's farm/save_slot_1.sav.
@@ -188,15 +188,15 @@
 #       LLM=fake; SAVE=save_slot_1.sav; TIMEOUT=720. LLM=chatgpt scripts only the later-payment setup,
 #       records one ordinary real-model refusal response verbatim, then exits.
 #   npc_will: character rules start theft, reclamation and accusations near the hero; save/load cooldown;
-#       LLM=fake, SAVE=save_slot_1.sav. The scene never commands harm.
+#       no model, SAVE=save_slot_1.sav. The scene never commands harm.
 #   npc_far: natural farm routines and greedy cards start a real off-screen chest transfer; the owner
 #       opens his chest and accuses off screen. Witness truth, save/load and cooldown are checked;
 #       Lobart's GIL_OUT farm has no community law, so guards are covered by module tests.
-#       LLM=fake; SAVE=save_slot_1.sav; TIMEOUT=720; the scene never commands harm.
+#       no model; SAVE=save_slot_1.sav; TIMEOUT=720; the scene never commands harm.
 #   npc_deeds: Vino steals from CHEST_LOBART in front of Hilda, assaults Maleth to a living knockout,
 #       then steals a world item before brave Lobart, who defeats him and reclaims it. NPC knowledge,
 #       its rumor and save/load are checked; guards are covered by module tests.
-#       LLM=fake; SAVE=save_slot_1.sav; TIMEOUT=720; no live model.
+#       no model; SAVE=save_slot_1.sav; TIMEOUT=720; no live model.
 #   npc_director: Vino steals Lobart's chest item before Hilda; the deed becomes Lobart's line to
 #       find the thief, his ask_witness/about and blame finish its goal, then reward and save/load.
 #       LLM=fake; SAVE=save_slot_1.sav; TIMEOUT=720. LLM=chatgpt asks only the ordinary showrunner
@@ -220,7 +220,7 @@
 #   gate_vouch: new game, LLM=fake: nearby Lothar vouches and the guard admits the hero; a loaded
 #       branch admits a real pass without a native menu or lines. Another loaded branch believes
 #       a false Harad claim; the next morning catches it and revokes both guards' passage.
-#   crime_react: rule reactions at the deed (docs/crime.md, layer 4a), LLM=fake; SAVE=save_slot_1.sav.
+#   crime_react: rule reactions at the deed (docs/crime.md, layer 4a), no model; SAVE=save_slot_1.sav.
 #       Hilda's retained theft witness and own SVM shout; Lobart courage 2 demands restitution, then
 #       a temporary scenario card with courage 3 fights through native AR_THEFT to a living knockout
 #       and the cup's return. Finally deeds:false leaves theft to vanilla without a held perception.
@@ -233,7 +233,7 @@
 #       offer stays absent while Lobart's turnip quest is open or running, opens after its success, and
 #       the book's second stage waits for "Сковорода для Хильды" to become running. A save and a load
 #       keep that stage and its unfired vanilla trigger; Hilda's native shopping dialog gives the pan
-#       quest, advancing the book to its final talk and reward. On a save: SAVE=save_slot_1.sav; LLM=fake
+#       quest, advancing the book to its final talk and reward. On a save: SAVE=save_slot_1.sav; no model
 #   own_repair: the director's own quest repaired (docs/director.md, stage 3, layer 3): Hilda gives the
 #       three-stage quest of `stages`; after the hero reaches the farmyard she dies, the director passes her
 #       turn-in to Lobart (scripted: first the dead Hilda is refused), keeping its id and required effects
@@ -250,12 +250,12 @@
 #       in a new inhabited place (one arrived), leaves and returns (none), saves and loads (the same
 #       visited places, empty queue, no repeat); KAPITEL rises (chapter), the hero kills a living human
 #       bandit (deed), and the clock passes a full game day (quiet). Uses the real 5 s sampling and 10 s
-#       settling, normal story_eval for the nearest waypoint. On a save: SAVE=save_slot_1.sav; LLM=fake
+#       settling, normal story_eval for the nearest waypoint. On a save: SAVE=save_slot_1.sav; no model
 #   questlog: vanilla quest progress (docs/director.md, stage 5, layer 1), no model: Lobart's actual
 #       work offer and native answer start "Убрать поле репы" (open -> running, dialog node and npc,
 #       vanilla occasion); story_effect finishes it and the real 30 s poll records running -> success
 #       without a dialog node. A save and a load repeat no facts, including the next periodic sample.
-#       On a save: SAVE=save_slot_1.sav; LLM=fake; TIMEOUT=300
+#       On a save: SAVE=save_slot_1.sav; no model; TIMEOUT=300
 #   showrunner: the director's decision (docs/director.md, stage 4, layer 2), LLM=fake only: a real
 #       arrived at a new inhabited place produces a quest from an eligible giver; a plot giver is refused
 #       first, the second proposal and the builder receive the premise. Another occasion that day is
@@ -366,7 +366,8 @@
 #   fight_reactions_wolf/sight/bandits/flee: Cavalorn intercepts a hunting wolf before its first bite;
 #       sees a bloodfly at 30 m; charges two bandits (one held listening), which shout and draw before
 #       contact and strike within 3 s; a coward flees Cavalorn while the hero stays passive. Actual
-#       strike/damage timestamps come from body_watch. Models scripted by default, DECIDER_URL optional;
+#       strike/damage timestamps come from body_watch. Fixed decisions and incidental combat silence
+#       are givens; sight uses only the native party flag and opens no conversation. DECIDER_URL optional;
 #       starts TTS (TTS=fake), TIMEOUT=300 for bandits, 180 for the other cases
 #   cave: the map of places (docs/npc-tools.md, step M3): Cavalorn goes with the hero to the steps below
 #       Xardas's tower; the bandits' cave is among the places around him, a cave entered from the steps, and
@@ -374,7 +375,7 @@
 #       scripted with LLM=fake; LLM=chatgpt: the model chooses the cave itself)
 #   knows: what an npc knows of where people are (docs/npc-tools.md, step M4): Cavalorn by his fire knows the
 #       bandits who robbed him sit in the cave below the steps, though the hero told him nothing: the fact is in
-#       his turn's situation and in `where{пещера}`; LLM=chatgpt: his own answer to «что тут поблизости опасного?»
+#       his turn's situation and in `where{пещера}`; no model
 #   lead: the npc leads the hero (docs/npc-tools.md, wave 2 step 4): «Малет, отведи меня к мельнице» — a deal
 #       with the way in its window, Y, Malet sets off; the hero put back where it started: it waits and goes on
 #       once he comes up; at the mill it says so, a fact `led` (model scripted with LLM=fake); TIMEOUT=540
@@ -450,11 +451,11 @@ if [[ "$SCENARIO" == surrender_live && ( "$LLM" == fake || -n "${SAVE:-}" ) ]]; 
   echo 'scenario surrender_live requires a non-fake LLM and a new game (unset SAVE)' >&2
   exit 2
 fi
-if [[ "$SCENARIO" == bandit_hold && -n "${SAVE:-}" ]]; then
-  echo 'scenario bandit_hold requires a new game (unset SAVE)' >&2
+if [[ ( "$SCENARIO" == bandit_hold || "$SCENARIO" == death_load ) && -n "${SAVE:-}" ]]; then
+  echo "scenario $SCENARIO requires a new game (unset SAVE)" >&2
   exit 2
 fi
-if [[ ( "$SCENARIO" == bandit_parley || "$SCENARIO" == bandit_bounty || "$SCENARIO" == death_load ) && ( ( "$LLM" != fake && "$LLM" != auto ) || -n "${SAVE:-}" ) ]]; then
+if [[ ( "$SCENARIO" == bandit_parley || "$SCENARIO" == bandit_bounty ) && ( ( "$LLM" != fake && "$LLM" != auto ) || -n "${SAVE:-}" ) ]]; then
   echo "scenario $SCENARIO requires LLM=fake and a new game (unset SAVE)" >&2
   exit 2
 fi

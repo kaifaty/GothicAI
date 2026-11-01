@@ -50,6 +50,7 @@ from .common import (
     _until,
     _until_async,
     attach_when_free,
+    model_off,
     wait_message,
 )
 
@@ -1089,8 +1090,6 @@ async def orders_scenario(
         return res
 
     link.act = recorded  # type: ignore[method-assign]
-    llm = FakeBackend("Это не приказ, а разговор.", delay=0)
-    dialogue.llm = llm
     if not await _until(lambda: npc in talk.people, 20):
         link.act = act  # type: ignore[method-assign]
         return {"roster": f"failed ({npc} is not around the hero)"}
@@ -1154,6 +1153,22 @@ async def orders_scenario(
     dialogue.open(npc, "Ксардас").intent = Intent("follow_hero", "PLAYER", "friendly")
 
     companion = "BAU_4300_ADDON_CAVALORN"
+    event_turn = dialogue.event_turn
+
+    def silent_combat(who: str, cue: str, *args: Any, **kwargs: Any) -> asyncio.Task[None] | None:
+        turn = event_turn(who, cue, *args, **kwargs)
+        if turn is not None and who in {npc, companion}:
+            reason = next((text for text in (
+                "нападает на тебя", "нападает на героя", "нападает на:", "убил:",
+                "колдует на тебя", "Ты перестал идти за героем",
+            ) if text in cue), None)
+            if reason is not None:
+                model_off(dialogue).silent(
+                    f"дано: {who} молчит ({cue})", who=who, when=reason,
+                )
+        return turn
+
+    dialogue.event_turn = silent_combat  # type: ignore[method-assign]
     watched = (npc, "PC_HERO", "WOLF", companion)
     symbols = await link.story_eval(npc, [["sym", who] for who in watched])
     names = dict(zip(symbols, (npc, "PLAYER", "WOLF", companion), strict=True))
@@ -1211,8 +1226,6 @@ async def orders_scenario(
     def dist() -> float:
         return talk.people[npc].distance / 100 if npc in talk.people else -1.0
 
-    given: set[str] = set()
-
     async def order(
         text: str, action: str, focus: str | None = None, timeout: float = 15
     ) -> tuple[bool, str]:
@@ -1223,7 +1236,6 @@ async def orders_scenario(
             if action == "fight" and talk.orders is not None and npc in talk.orders.fights:
                 raise GameError("orders attack preparation: automatic defence started before the order")
             t0 = time.monotonic()
-            given.add(text)
             if focus is None:
                 await link.debug("type", text=text)
             else:
@@ -1344,12 +1356,6 @@ async def orders_scenario(
         f"(in {took}; detached {free}, goal {goal})"
     )
 
-    # Combat incidents may speak on their own. Only the hero's orders must skip a dialogue turn.
-    order_calls = sum(1 for _, messages, _ in llm.calls if messages and messages[-1].content in given)
-    results["no_model"] = (
-        f"{'done' if not order_calls else 'failed'} "
-        f"({order_calls} order model call(s), {len(llm.calls) - order_calls} incident call(s))"
-    )
     link.act = act  # type: ignore[method-assign]
     if home is not None:
         await link.debug("npc_goto", npc=npc, waypoint=home)
@@ -1361,6 +1367,7 @@ async def orders_scenario(
         results.update(attack_words)
     for name, outcome in results.items():
         log.info("%-12s %s", name, outcome)
+    dialogue.event_turn = event_turn  # type: ignore[method-assign]
     return results
 
 
@@ -1528,9 +1535,7 @@ async def _companion_attack_words(
     killed: list[str] = []
     judged: list[str] = []
     heard: list[str] = []
-    act, judge, hears, quick = link.act, beasts.judge, beasts.hears, beasts.quick
-    tone_model = FakeBackend("hostile", delay=0)
-    beasts.quick = tone_model
+    act, judge, hears = link.act, beasts.judge, beasts.hears
 
     async def record_act(who: str, action: Any, /, **kw: Any) -> Any:
         mine = who.upper() == npc and action == "fight"
@@ -1594,15 +1599,14 @@ async def _companion_attack_words(
         )
         check(
             "wolf_unheard",
-            not heard and not judged and not tone_model.calls,
-            f"hears {len(heard)}, judge {len(judged)}, tone model {len(tone_model.calls)}",
+            not heard and not judged,
+            f"hears {len(heard)}, judge {len(judged)}",
         )
         await _until(lambda: bool(finished), 60)
     finally:
         link.act = act  # type: ignore[method-assign]
         beasts.judge = judge  # type: ignore[method-assign]
         beasts.hears = hears  # type: ignore[method-assign]
-        beasts.quick = quick
         link.listeners.remove(on_beasts)
     return results
 

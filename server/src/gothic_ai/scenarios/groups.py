@@ -1,6 +1,28 @@
 """Model groups from the [2026-10-31 census](e2e-llm-census.md)."""
 
 OFF = {
+    "cast",
+    "death_load",
+    "graph",
+    "occasions",
+    "own",
+    "programs",
+    "questlog",
+    "requires",
+    "stages",
+    "trigger",
+    "person",
+    "crimes",
+    "crime_react",
+    "npc_deeds",
+    "npc_far",
+    "npc_will",
+    "hearing",
+    "see",
+    "knows",
+    "m6",
+    "fight_reactions_sight",
+
     "memprobe",
     "load_rewind",
     "check_walk",
@@ -22,7 +44,12 @@ OFF = {
     "places",
 }
 
-GIVEN: set[str] = set()
+GIVEN = {
+    "orders",
+    "fight_reactions_wolf",
+    "fight_reactions_bandits",
+    "fight_reactions_flee",
+}
 
 LIVE = {
     "haggle",
