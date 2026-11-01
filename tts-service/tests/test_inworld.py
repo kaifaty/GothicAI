@@ -225,7 +225,7 @@ async def test_voice_cloned_from_a_recording_speaks_the_providers_language(api, 
     sample.write_bytes(b"RIFF me again")
     api.voices.discard("ws__clone-voice-2")
     await _speak(p, me)
-    assert api.cloned == 3 and api.streams()[-1]["voiceId"] == "ws__clone-voice-3"
+    assert api.cloned == 4 and api.streams()[-1]["voiceId"] == "ws__clone-voice-4"
     await p.aclose()
 
 
