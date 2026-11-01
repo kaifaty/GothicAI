@@ -428,6 +428,27 @@ class HiddenQuestTool:
         return []
 
 
+async def test_situation_prepares_current_context_without_starting_a_model_turn():
+    from gothic_ai.llm.off import OffBackend
+
+    llm = OffBackend()
+    fake = FakeGame()
+    extra = SimpleNamespace(
+        prepare=AsyncMock(), situation=lambda npc: "An available quest from the extension.",
+    )
+    async with connected(fake) as link:
+        dialogue = DialogueManager(link, llm, PersonaProvider(None))
+        dialogue.extensions.append(extra)
+        link.snapshots[XARDAS] = Snapshot.model_validate(fake.snapshot(XARDAS))
+        text = await dialogue.situation(XARDAS.lower(), "Ксардас")
+        conv = dialogue.conversations[XARDAS]
+
+        assert "Обстановка" in text and "An available quest from the extension." in text
+        extra.prepare.assert_awaited_once_with(XARDAS)
+        assert conv.reply is None and conv.talked_at == float("-inf")
+        assert llm.attempts == [] and fake.said == []
+
+
 async def test_extensions_share_tool_names_once_and_the_first_definition_wins():
     class QuestTools(HiddenQuestTool):
         def __init__(self, description):

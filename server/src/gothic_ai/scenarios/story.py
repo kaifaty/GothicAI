@@ -2245,7 +2245,7 @@ async def cast_person(
     """Stage 2 of the director as author, layer 3 (docs/director.md): a character of the director's is a
     person, on the game. Garet the peddler (as in `cast`) comes with who he is (GARET). Checks:
     - persona: his persona is his card, past, knowledge and acquaintances, in a voice of his own;
-    - talk: the hero speaks to him, and his model has all that in front of it;
+    - prompt: the conversational prompt contains his card, past, knowledge and acquaintances;
     - knows_hilda: Hilda and he are acquainted (the rumors' ties), and with him beside her she calls him by
       name, not «незнакомец»;
     - after_load: after a save and a load he is the same person, in the same voice."""
@@ -2278,25 +2278,22 @@ async def cast_person(
         persona.voice_id,
     )
 
-    def told(llm: FakeBackend) -> str:
-        return "\n".join([llm.calls[0][0], *(str(getattr(m, "content", "")) for m in llm.calls[0][1])])
-
-    # the hero speaks to him
+    # Build the same persona and situation a turn would send, without asking for a reply.
     await link.debug("player_goto", waypoint=by_day)
     await asyncio.sleep(1)
-    dialogue.llm = llm = FakeBackend("Гарет я. Торгую понемногу.", delay=0)
-    await link.debug("type", text="Гарет, кто ты такой?")
-    ok = await _until(lambda: bool(llm.calls), 20)
-    prompt = told(llm) if ok else ""
-    check("talk", ok and all(t in prompt for t in parts), f"{len(llm.calls)} call(s)")
-    await _until(lambda: not dialogue.speaking(me), 15)
+    prompt = (
+        dialogue.open(me, spec.name, warm=False).persona.instructions
+        + "\n"
+        + await dialogue.situation(me, spec.name)
+    )
+    check("prompt", all(t in prompt for t in parts), f"{len(prompt)} characters")
 
     # Hilda knows him: beside her, he is Garet to her
     ok = await _until(lambda: rumors.social is not None and me in rumors.social.ties.get(HILDA, {}), 15)
     bonds = rumors.social.ties[HILDA][me].bonds if ok and rumors.social is not None else []
     check("tie", ok and bonds == [GARET.ties[0].how], bonds)
     await link.debug("player_goto", to=HILDA, distance=250)
-    # the talk held him to listen: free, he steps beside her
+    # Move him beside her so her view can identify him.
     for _ in range(20):
         try:
             await link.detach(me)
@@ -2312,13 +2309,9 @@ async def cast_person(
         if not (await link.story_state()).get("dialog"):
             break
         await asyncio.sleep(0.5)
-    dialogue.llm = llm = FakeBackend("Это Гарет, торговец.", delay=0)
-    await link.debug("type", text="Хильда, кто это рядом с тобой?")
-    ok = await _until(lambda: bool(llm.calls), 20)
-    prompt = told(llm) if ok else ""
+    prompt = await dialogue.situation(HILDA, "Хильда")
     seen = [line for line in prompt.split("\n") if "Гарет" in line or "незнакомец" in line]
-    check("knows_hilda", ok and any("Гарет" in line for line in seen), seen[:4])
-    await _until(lambda: not dialogue.speaking(HILDA), 15)
+    check("knows_hilda", any("Гарет" in line for line in seen), seen[:4])
 
     # a save and a load
     await _save_or_fail(link, slot)

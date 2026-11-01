@@ -346,6 +346,7 @@ const Word = z.object({text: z.string(), start: z.number(), end: z.number()});
 export const Plan = z.object({
   format: z.enum(['tall', 'wide']).default('tall'),
   stem: z.enum(['voice', 'game', 'music']).optional(), // uncalibrated sources for publication through gothic_shorts.levels
+  mask: z.boolean().optional(), // the safe-zone check (gothic_shorts.delivery): our drawing alone, no footage
   brand: z.boolean().default(true),
   brandVolume: z.number().nonnegative().default(0.355), // draft mix only; levels sets the published sting level
   lang: z.enum(['ru', 'en']),

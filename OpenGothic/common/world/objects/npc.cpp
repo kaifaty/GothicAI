@@ -55,6 +55,15 @@ namespace {
 
 constexpr float meleeMagnetTorsoGapCm = 18.f;
 
+float meleeParryLeadMs() {
+  static const float lead = [] {
+    const char* text = std::getenv("OPENGOTHIC_MELEE_PARRY_LEAD_MS");
+    const float value = text==nullptr ? 0.f : std::strtof(text,nullptr);
+    return std::isfinite(value) ? value : 0.f;
+    }();
+  return lead;
+  }
+
 std::optional<Pose::CombatLayer> meleeParadeLayer(const Pose& pose, uint64_t now) {
   for(const auto& layer:pose.combatLayers(now))
     if(layer.state==BS_PARADE && !layer.sequence->data->defWindow.empty())
@@ -770,6 +779,7 @@ bool Npc::setPosition(float ix, float iy, float iz) {
   x = ix;
   y = iy;
   z = iz;
+  visual.setTextureOwner(Vec3(x,y,z),!isPlayer());
   resetCharacterVisualHeight();
   if(!isPlayer() && (isHuman() || Gothic::physicsFlags().monsterCharacterVirtual))
     mvAlgo.resetCharacterVirtual();
@@ -803,6 +813,7 @@ void Npc::setViewPosition(const Tempest::Vec3& pos) {
   x = pos.x;
   y = pos.y;
   z = pos.z;
+  visual.setTextureOwner(pos,!isPlayer());
   durtyTranform |= TR_Pos;
   }
 
@@ -984,6 +995,7 @@ void Npc::setProcessPolicy(NpcProcessPolicy t) {
   if(aiPolicy==NpcProcessPolicy::Player)
     runAng = 0;
   aiPolicy=t;
+  visual.setTextureOwner(position(),!isPlayer());
   }
 
 void Npc::setWalkMode(WalkBit m) {
@@ -1267,6 +1279,7 @@ bool Npc::recoverRagdoll(bool force) {
   else if(fx*fx+fz*fz>1e-6f)
     angle = 90.f-std::atan2(fx,fz)*180.f/float(M_PI);
   x = at.x; y = at.y; z = at.z;
+  visual.setTextureOwner(at,!isPlayer());
   physic.setPosition(at);
   ragdollObjectMatrix.identity();
   ragdollObjectMatrix.translate(x,y,z);
@@ -1359,6 +1372,7 @@ bool Npc::recoverSpellThrow() {
   angle = ragdollQuestReturn.angle;
   const auto at = ragdollQuestReturn.anchor;
   x = at.x; y = at.y; z = at.z;
+  visual.setTextureOwner(at,!isPlayer());
   physic.setPosition(at);
   living.reset();
   arrowImpacts.clear();
@@ -1389,6 +1403,7 @@ void Npc::prepareRagdoll() {
       // NPC straight over the same edge again. 'armed' also survives a mid-rise save.
       const auto at = ragdollQuestReturn.anchor;
       x = at.x; y = at.y; z = at.z;
+      visual.setTextureOwner(at,!isPlayer());
       physic.setPosition(at);
       mvAlgo.clearSpeed();
       durtyTranform |= TR_Pos;
@@ -2710,6 +2725,7 @@ void Npc::syncRagdoll() {
   x = ragdollObjectMatrix.at(3,0);
   y = ragdollObjectMatrix.at(3,1);
   z = ragdollObjectMatrix.at(3,2);
+  visual.setTextureOwner(position(),!isPlayer());
   checkRagdollQuestHazard();
   physic.setPosition(position());
   visual.pose().setRagdollPose(visual.visualSkeleton(),ragdollPose,ragdoll->poseIndices());
@@ -3009,6 +3025,9 @@ void Npc::setVisual(const Skeleton* v) {
 
 void Npc::setVisualBody(int32_t headTexNr, int32_t teethTexNr, int32_t bodyTexNr, int32_t bodyTexColor,
                         std::string_view ibody, std::string_view ihead) {
+  const auto* residency=owner.chunkResidency();
+  Resources::TextureLoadScope textureLoadScope(!isPlayer() && residency &&
+      residency->textureDistance(ChunkId::fromPosition(x,z))>2);
   body    = ibody;
   head    = ihead;
   vHead   = headTexNr;
@@ -3025,6 +3044,9 @@ void Npc::setVisualBody(int32_t headTexNr, int32_t teethTexNr, int32_t bodyTexNr
   }
 
 void Npc::updateArmor() {
+  const auto* residency=owner.chunkResidency();
+  Resources::TextureLoadScope textureLoadScope(!isPlayer() && residency &&
+      residency->textureDistance(ChunkId::fromPosition(x,z))>2);
   living.reset();
   auto  ar = invent.currentArmor();
   auto& w  = owner;
@@ -3803,8 +3825,10 @@ bool Npc::implGoTo(uint64_t dt, float destDist) {
   }
 
 bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyAction) {
-  if(currentTarget==nullptr || isPlayer() || isTalk())
+  if(currentTarget==nullptr || isPlayer() || isTalk()) {
+    meleeParadeTiming.reset();
     return false;
+    }
 
   if(currentTarget->isDown()){
     traceCombatGate("target_down");
@@ -3823,16 +3847,23 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
   const auto ws = weaponState();
   const auto bs = bodyStateMasked();
   const auto& flags = Gothic::physicsFlags();
+  const bool parryAi = !bodyOverride && flags.meleeParryAi && flags.meleeParry && isHuman() &&
+                       (ws==WeaponState::Fist || ws==WeaponState::W1H || ws==WeaponState::W2H);
+  if(!parryAi || (meleeParadeTiming && meleeParadeTiming->target!=currentTarget))
+    meleeParadeTiming.reset();
   const bool downTactics = !bodyOverride && flags.meleeDownTactics && flags.meleePosture && flags.meleePhysicsHits &&
                           (ws==WeaponState::W1H || ws==WeaponState::W2H);
   const bool targetKnockdown = downTactics && currentTarget->meleeKnockdown;
+  const bool targetStunned = parryAi && currentTarget->isMeleeStunned();
   // Discard the remaining native combo, but let the attack already in flight finish below.
-  if(targetKnockdown)
+  if(targetKnockdown || targetStunned) {
     fghAlgo.onTargetKnockdown();
+    meleeParadeTiming.reset();
+    }
   const bool magnetHeading = visual.pose().isAttackAnim() && meleeShadow && meleeShadow->window && meleeShadow->physicsHits &&
                              meleeShadow->magnet.eligible;
 
-  if((bs==BS_HIT || (targetKnockdown && visual.pose().isAttackAnim())) &&
+  if((bs==BS_HIT || ((targetKnockdown || targetStunned) && visual.pose().isAttackAnim())) &&
      (ws==WeaponState::Fist || ws==WeaponState::W1H || ws==WeaponState::W2H)) {
     traceCombatGate("melee_hit_lock");
     //NOTE: 'storm' attack has BS_RUN state and not meant to be auto-rotated
@@ -3842,7 +3873,8 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
     return true;
     }
 
-  if(!bodyOverride && !targetKnockdown && !fghAlgo.hasInstructions()) {
+  if(!bodyOverride && !targetKnockdown && !targetStunned && !fghAlgo.hasInstructions()) {
+    meleeParadeTiming.reset();
     traceCombatGate("no_instructions");
     return false;
     }
@@ -3867,14 +3899,25 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
     return true;
     }
 
-  if(targetKnockdown) {
+  if(targetKnockdown || targetStunned) {
     const bool rising = currentTarget->meleeRiseTick!=0;
     // Use the same root-transformed distance as isInFinishRange, bounded by its script limit.
     const float finishRange = std::min(fghAlgo.attackFinishDistance(owner.script()),ws==WeaponState::W1H ? 165.f : 170.f);
-    const bool inRange = rising ? fghAlgo.isInWRange(*this,*currentTarget,owner.script()) :
+    const bool inRange = targetStunned || rising ? fghAlgo.isInWRange(*this,*currentTarget,owner.script()) :
                                  fghAlgo.qDistTo(*this,*currentTarget)<=finishRange*finishRange;
-    const auto action = FightAlgo::resolveDownTactics(downTactics,currentTarget->meleeKnockdown,rising,inRange,
-                                                     fghAlgo.isInFocusAngle(*this,*currentTarget,5.f));
+    const bool focus = fghAlgo.isInFocusAngle(*this,*currentTarget,5.f);
+    auto action = FightAlgo::resolveDownTactics(downTactics,currentTarget->meleeKnockdown,rising,inRange,focus);
+    if(targetStunned) {
+      switch(MeleeParry::resolveStunnedTactics(parryAi,true,inRange,focus)) {
+        case MeleeParry::StunnedAction::Move:   action = FightAlgo::MV_MOVE; break;
+        case MeleeParry::StunnedAction::Turn:   action = FightAlgo::MV_TURN2HIT; break;
+        case MeleeParry::StunnedAction::Attack: action = FightAlgo::MV_ATTACK; break;
+        case MeleeParry::StunnedAction::None:   break;
+        }
+      if(TestBench::bodyTracing() && action!=FightAlgo::MV_ATTACK)
+        TestBench::bodyEvent(*this,currentTarget,"stunned_target",owner.tickCount(),
+                            "\"action\":"+TestBench::bodyJson(action==FightAlgo::MV_MOVE ? "move" : "turn"));
+      }
     if(action==FightAlgo::MV_MOVE) {
       implTurnToFai(*currentTarget,dt);
       setAnim(AnimationSolver::Move);
@@ -3895,8 +3938,11 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
           return true;
           }
         const auto hit = owner.physic()->ray(collosionCenter(),currentTarget->collosionCenter());
-        if(!hit.hasCol && doAttack(Anim::Attack,BS_HIT))
+        if(!hit.hasCol && doAttack(Anim::Attack,BS_HIT)) {
+          if(targetStunned && TestBench::bodyTracing())
+            TestBench::bodyEvent(*this,currentTarget,"stunned_target",owner.tickCount(),"\"action\":\"attack\"");
           implFaiWait(visual.pose().atkTotalTime()+1);
+          }
         }
       mvAlgo.tick(dt,MoveAlgo::FaiMove);
       }
@@ -3904,7 +3950,10 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
     }
 
   const auto act = bodyOverride ? bodyAction : fghAlgo.nextFromQueue(*this,*currentTarget,owner.script());
+  if(act!=FightAlgo::MV_BLOCK)
+    meleeParadeTiming.reset();
   const auto consume = [&] {
+    meleeParadeTiming.reset();
     if(bodyOverride) { BodyController::consumed(*this); return; }
     const auto before = fghAlgo.queuedAction();
     BodyTrajectory::nativeConsumed(*this);
@@ -3952,6 +4001,76 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
                                     fghAlgo.traceChoiceId(),fghAlgo.traceParentInstruction(),fghAlgo.traceEntrySerial());
 
   if(act==FightAlgo::MV_BLOCK) {
+    if(parryAi) {
+      const auto now = owner.tickCount();
+      const auto skip = [&](std::string_view reason) {
+        if(TestBench::bodyTracing())
+          TestBench::bodyEvent(*this,currentTarget,"parade_skipped",now,"\"reason\":"+TestBench::bodyJson(reason));
+        consume();
+        };
+      const auto hold = [&] {
+        visual.stopWalkAnim(*this);
+        if(!visual.pose().isStanding())
+          setAnim(Anim::Idle);
+        implTurnToFai(*currentTarget,dt);
+        mvAlgo.tick(dt,MoveAlgo::FaiMove);
+        };
+      if(!meleeParadeTiming)
+        meleeParadeTiming = MeleeParadeTiming{currentTarget,nullptr,0,now};
+      const auto held = now-meleeParadeTiming->began;
+      if(held>=1000) {
+        skip("timeout");
+        return true;
+        }
+      const auto swing = currentTarget->visual.pose().nextMeleeContact(now);
+      if(meleeParadeTiming->sequence==nullptr) {
+        switch(MeleeParry::awaitSwing(held,bool(swing))) {
+          case MeleeParry::SwingAction::Wait:
+            hold();
+            return true;
+          case MeleeParry::SwingAction::GiveUp:
+            skip("no_swing");
+            return true;
+          case MeleeParry::SwingAction::TimeParade:
+            break;
+          }
+        }
+      if(!swing) {
+        // A late timing error may put the start after the optimal frame. Keep that
+        // deadline while the same swing still exists; an interrupted swing is gone.
+        bool same = false;
+        for(const auto& layer:currentTarget->visual.pose().combatLayers(now))
+          same |= layer.sequence==meleeParadeTiming->sequence && layer.origin==meleeParadeTiming->origin;
+        if(!same) {
+          skip("swing_gone");
+          return true;
+          }
+        }
+      const int talent = std::clamp(hitChance(ws==WeaponState::W2H ? TALENT_2H : TALENT_1H),0,100);
+      if(swing && (meleeParadeTiming->sequence!=swing->sequence || meleeParadeTiming->origin!=swing->origin)) {
+        const auto began = meleeParadeTiming->began;
+        const double u = (double(owner.script().rand(1u<<24,this))+.5)/double(1u<<24);
+        const double v = (double(owner.script().rand(1u<<24,this))+.5)/double(1u<<24);
+        const float error = MeleeParry::timingSigmaMs(talent)*float(std::sqrt(-2.*std::log(u))*std::cos(2.*M_PI*v));
+        meleeParadeTiming = MeleeParadeTiming{currentTarget,swing->sequence,swing->origin,began,swing->contact,error};
+        if(TestBench::bodyTracing()) {
+          const auto start = MeleeParry::paradeStartMs(now,swing->contact,talent,error,meleeParryLeadMs());
+          TestBench::bodyEvent(*this,currentTarget,"parade_timed",now,
+                              "\"predicted_contact_ms\":"+std::to_string(swing->contact-now)+
+                              ",\"held_ms\":"+std::to_string(held)+
+                              ",\"wait_ms\":"+std::to_string(start-now)+",\"error_ms\":"+std::to_string(error)+
+                              ",\"aim_ms\":"+std::to_string(MeleeParry::windowMs(talent)*.5f+meleeParryLeadMs())+
+                              ",\"talent\":"+std::to_string(talent));
+          }
+        }
+      if(swing)
+        meleeParadeTiming->contact = swing->contact;
+      const auto start = MeleeParry::paradeStartMs(now,meleeParadeTiming->contact,talent,meleeParadeTiming->errorMs,meleeParryLeadMs());
+      if(now<start) {
+        hold();
+        return true;
+        }
+      }
     if(!fghAlgo.isInFocusAngle(*this, *currentTarget)) {
       consume();
       return true;
@@ -7378,6 +7497,9 @@ void Npc::endMeleeStun(std::string_view reason) {
 
 void Npc::tickMeleeParry() {
   const auto now = owner.tickCount();
+  if(!Gothic::physicsFlags().meleeParryAi || !Gothic::physicsFlags().meleeParry ||
+     currentTarget==nullptr || isDown() || meleeKnockdown || isMeleeStunned())
+    meleeParadeTiming.reset();
   if(!Gothic::physicsFlags().meleeParry) {
     endMeleeStun("reset");
     meleeParadeOrigin.reset();

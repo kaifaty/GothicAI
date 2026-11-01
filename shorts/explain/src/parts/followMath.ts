@@ -10,7 +10,8 @@ export type HpSample = readonly [frame: number, self: number, target: number];
 
 export const zoomScale = (zoom: Zoom | undefined, t: number): number => {
   if (!zoom) return 1;
-  const progress = zoom.dur <= 0 ? Number(t >= zoom.at) : Math.max(0, Math.min(1, (t - zoom.at) / zoom.dur));
+  // up to a frame (0.04 s) it is a punch-in, a cut: zoomed from `at` itself, so frame 0 is not left unzoomed
+  const progress = zoom.dur <= 0.04 ? Number(t >= zoom.at) : Math.max(0, Math.min(1, (t - zoom.at) / zoom.dur));
   return 1 + (zoom.scale - 1) * (zoom.ease === 'linear' ? progress : easeInOut(progress));
 };
 

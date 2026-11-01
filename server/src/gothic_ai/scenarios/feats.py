@@ -17,7 +17,7 @@ from ..game import GameError, GameLink
 from ..journal import Journal
 from ..llm import ToolCall
 from ..llm.fake import FakeBackend
-from ..protocol import FeatToastCmd, Session
+from ..protocol import ChronicleGet, FeatToastCmd, GameMessage, Session
 from ..social import Rumors
 from ..talk import TalkDesk
 from .common import (
@@ -194,6 +194,7 @@ async def feats(link: GameLink, chronicler: Feats, journal: Journal, slot: int =
     backend = FakeBackend("", tool_calls=[ToolCall(WRITE, answer)], delay=0)
     original_llm, original_sink, send = chronicler.model.llm, journal.sink, link.send
     toasts: list[FeatToastCmd] = []
+    chronicle_asks: list[float] = []  # the diary's copy follows each toast (chronicle_get, v55)
     recorded_at: dict[str, float] = {}
     toasted_at: dict[str, float] = {}
     entries: list[dict[str, Any]] = []
@@ -234,6 +235,11 @@ async def feats(link: GameLink, chronicler: Feats, journal: Journal, slot: int =
         if original_sink is not None:
             original_sink(entry)
 
+    def asked(msg: GameMessage) -> None:
+        if isinstance(msg, ChronicleGet):
+            chronicle_asks.append(time.monotonic())
+
+    link.listeners.append(asked)
     if not live:
         chronicler.model.llm = backend
     chronicle.on_entry.append(record)
@@ -325,6 +331,10 @@ async def feats(link: GameLink, chronicler: Feats, journal: Journal, slot: int =
                              for toast in toasts),
                 f"feat={award['id']}, icons={[t.icon for t in toasts if t.feat == award['id']]}{latency}",
             )
+            toasted = toasted_at.get(award["id"])
+            await _until(lambda: toasted is not None and any(t >= toasted for t in chronicle_asks), 10)
+            check("chronicle_requested", toasted is not None and any(t >= toasted for t in chronicle_asks),
+                  f"chronicle_get after the toast: {sum(t >= (toasted or 0) for t in chronicle_asks)}")
             check("image_file", icon.is_file(), str(icon))
             check(
                 "feat_image", any(fact.get("id") == award["id"] and fact.get("hash")
@@ -372,4 +382,5 @@ async def feats(link: GameLink, chronicler: Feats, journal: Journal, slot: int =
             await asyncio.gather(loading, return_exceptions=True)
         chronicler.model.llm, journal.sink = original_llm, original_sink
         link.send = send  # type: ignore[method-assign]
+        link.listeners.remove(asked)
         chronicle.on_entry.remove(record)

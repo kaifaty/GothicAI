@@ -183,11 +183,19 @@ class SoakControlTests(unittest.TestCase):
             ("neural-soak", "0", "", "", "off", 2, None, "service"),
             ("neural-soak", "1", "", "/tmp/save.sav", "off", 2, None, None),
             ("neural-load", "1", "tcp://policy:47835", "", "off", 2, None, None),
+            ("bandit_parley", "0", "", "", None, 0, "--neural-body--body-policyengine", None),
+            ("feats", "0", "", "", None, 0, "--neural-body--body-policyengine", None),
+            ("feat_fame", "0", "", "", None, 0, "--neural-body--body-policyengine", None),
+            ("bandit_parley", "0", "", "", "chatgpt", 2, None, None),
         ]
         for scenario, control, url, save, llm, status, body_flag, policy in cases:
             with self.subTest(scenario=scenario, control=control, url=url, save=save, llm=llm, policy=policy):
                 env = dict(os.environ, SCENARIO=scenario, GOTHIC_SOAK_CONTROL=control,
-                           GOTHIC_BODY_URL=url, SAVE=save, LLM=llm, GOTHIC_TTS_RECORD="0")
+                           GOTHIC_BODY_URL=url, SAVE=save, GOTHIC_TTS_RECORD="0")
+                if llm is None:
+                    env.pop("LLM", None)
+                else:
+                    env["LLM"] = llm
                 env.pop("GOTHIC_BODY_POLICY", None)
                 if policy is not None:
                     env["GOTHIC_BODY_POLICY"] = policy

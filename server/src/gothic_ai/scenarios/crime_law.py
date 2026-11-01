@@ -12,7 +12,7 @@ from ..crime_law_graph import law_var
 from ..game import GameError, GameLink
 from ..llm import ToolCall
 from ..llm.fake import FakeBackend, FakeStep
-from ..protocol import DialogChosen, NpcActResult, NpcRoster, Session
+from ..protocol import DialogChosen, Session
 from .common import (
     ClaimScript,
     FixedDecider,
@@ -20,9 +20,10 @@ from .common import (
     _save,
     _until,
     _until_async,
+    prepare_npc_parking,
     prepare_npc_pose,
+    prepare_street_theft_witness,
     wait_message,
-    wait_npc_visibility,
 )
 from .crimes import ANDRE, CITY_OWNER
 
@@ -61,8 +62,6 @@ async def crime_law(
     results: dict[str, str] = {}
     facts = service.chronicle.facts
     chosen: list[DialogChosen] = []
-    receipts: dict[str, NpcActResult] = {}
-    roster_serial = 0
     original_llm, original_reflexes = dialogue.llm, talk.reflexes
     original_gate, original_stage = rumors.gate, rumors.stage
 
@@ -72,13 +71,8 @@ async def crime_law(
         return ok
 
     def record(message: object) -> None:
-        nonlocal roster_serial
         if isinstance(message, DialogChosen):
             chosen.append(message)
-        elif isinstance(message, NpcRoster):
-            roster_serial += 1
-        elif isinstance(message, NpcActResult):
-            receipts[message.id] = message
 
     def news(cid: str) -> list[dict[str, Any]]:
         return [f for f in facts("crime_known") if f.get("community") == "city" and f.get("crime") == cid]
@@ -91,27 +85,12 @@ async def crime_law(
 
     async def stand(npc: str, point: str, *, face: str | None = None) -> bool:
         if point == parked:
-            # Distant extras may keep stepping around the crowded parking point. They need to
-            # stay out of the theft scene; only its actual witness needs an initialized still pose.
-            await link.debug("skip_important", near=npc)
-            await link.debug("npc_goto", npc=npc, waypoint=point)
-            action = await link.npc_act(
-                npc, "start_activity", state="ZS_STAND_WP", waypoint=point, minutes=120, place=False,
-            )
-            await _until(lambda: action in receipts, 5)
-            receipt = receipts.get(action)
-            snapshot = await link.snapshot(npc, fresh=True)
             expected = points[point]
-            horizontal = math.hypot(snapshot.npc.pos[0] - expected["x"], snapshot.npc.pos[2] - expected["z"])
-            distance = snapshot.player.distance if snapshot.player is not None else 0
-            ready = (
-                receipt is not None and receipt.status == "queued" and horizontal <= 600 and distance >= 8000
+            ready, detail = await prepare_npc_parking(
+                link, npc, point, (expected["x"], expected["y"], expected["z"]),
             )
             if not ready:
-                check("parking_pose", False, {
-                    "npc": npc, "point": point, "receipt": receipt.model_dump() if receipt else None,
-                    "pos": snapshot.npc.pos, "horizontal": horizontal, "hero_distance": distance,
-                })
+                check("parking_pose", False, detail)
             return ready
         if npc == CITY_OWNER:
             # Both actors use native public street waypoints. Keep the hero separated before
@@ -128,35 +107,11 @@ async def crime_law(
 
     async def theft_posture(label: str) -> bool:
         """Keep Matteo's initialized activity while proving actual sight and a fresh free roster."""
-        # Use the already proven public sight line for an exact short placement; the street
-        # waypoint pair itself can be farther apart than the place book's approximate centers.
-        await link.debug("teleport", near=CITY_OWNER, distance=450)
-        # Face the native street point, not an offset through the shop's bedroom wall.
-        # This changes no callback or soft action; the native drop animation may finish normally.
-        await link.debug("npc_goto", npc=CITY_OWNER, waypoint=THEFT_POINT, face="PC_HERO")
-        after = roster_serial
-        visible, detail = await wait_npc_visibility(link, CITY_OWNER, "HERO", timeout=5)
-        free = await _until(
-            lambda: roster_serial > after
-            and CITY_OWNER in talk.people and talk.people[CITY_OWNER].activity == "routine"
-            and talk.people[CITY_OWNER].state == "ZS_STAND_WP"
-            and not link.body_owned(CITY_OWNER),
-            5,
+        ready, detail = await prepare_street_theft_witness(
+            link, CITY_OWNER, THEFT_POINT, "ITMI_SILVERCUP",
         )
-        entry = talk.people.get(CITY_OWNER)
-        cup = next((
-            item for item in detail.get("view", {}).get("items", [])
-            if item.get("item") == "ITMI_SILVERCUP"
-        ), None)
-        detail.update(
-            npc_point=THEFT_POINT, hero_point=HERO_POINT, fresh_roster=free,
-            roster=entry.model_dump() if entry is not None else None, cup=cup,
-        )
-        return check(
-            f"{label}_witness_ready", visible and free and 250 <= detail.get("distance", 0) <= 700
-            and cup is not None and cup.get("hero_cm") is not None and cup["hero_cm"] <= 800,
-            detail,
-        )
+        detail.update(npc_point=THEFT_POINT, hero_point=HERO_POINT)
+        return check(f"{label}_witness_ready", ready, detail)
 
     async def drop() -> bool:
         try:

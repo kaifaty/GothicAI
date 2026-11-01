@@ -232,7 +232,7 @@ def test_feat_challenge_flags(monkeypatch, flags):
     assert exit.value.code == 0
 
 
-@pytest.mark.parametrize("flags", [[], ["--scenario", "questlog"], ["--no-questlog"]])
+@pytest.mark.parametrize("flags", [[], ["--scenario", "questlog", "--llm", "auto"], ["--no-questlog"]])
 def test_questlog_is_enabled_by_default_including_scenarios(monkeypatch, flags):
     async def serve(args):
         assert args.no_questlog == ("--no-questlog" in flags)
@@ -272,7 +272,7 @@ def test_svm_lines_are_enabled_by_default(monkeypatch, flags):
 
 
 @pytest.mark.parametrize(
-    "flags", [[], ["--scenario", "crimes"], ["--scenario", "crime_meet"], ["--no-crimes"]]
+    "flags", [[], ["--scenario", "crimes", "--llm", "auto"], ["--scenario", "crime_meet"], ["--no-crimes"]]
 )
 def test_crimes_is_enabled_by_default_including_scenarios(monkeypatch, flags):
     async def serve(args):
@@ -336,7 +336,9 @@ async def test_no_crimes_starts_no_encounter_worker_or_approach(monkeypatch):
     approach.assert_not_called()
 
 
-@pytest.mark.parametrize("flags", [[], ["--no-npc-crimes"], ["--no-crimes"], ["--scenario", "npc_deeds"]])
+@pytest.mark.parametrize("flags", [
+    [], ["--no-npc-crimes"], ["--no-crimes"], ["--scenario", "npc_deeds", "--llm", "auto"],
+])
 def test_npc_crimes_switch_and_scenario(monkeypatch, flags):
     async def serve(args):
         assert args.no_npc_crimes == ("--no-npc-crimes" in flags)

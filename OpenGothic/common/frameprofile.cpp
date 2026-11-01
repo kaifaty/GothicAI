@@ -15,20 +15,27 @@
 
 namespace {
 constexpr size_t Zones=size_t(FrameProfile::Zone::Count), Amounts=size_t(FrameProfile::Amount::Count), MaxAttempts=20000, MaxActors=20;
+constexpr size_t MaxTextureEvents=20000;
+const char* textureNames[]={"read","upload","complete","ready","publish"};
 const char* names[Zones]={"tick","finish_step","camera","observations","bench","fence_poll","recycle","ui",
   "encode","submit","present","limiter","world_logic","prepare","physics","sync","world_misc",
   "parallel_animation","native_export","forced_sync_animation","actor_animation_elapsed_sum","pose_elapsed_sum","palette_elapsed_sum",
   "storage_join","storage_commit","storage_pack","storage_dispatch","storage_grow","storage_upload_execution_elapsed",
   "bodynet","cloth","water","destruction","ai_bridge","sound",
-  "texture_update","texture_demand_elapsed_sum",
+  "texture_update","texture_demand_elapsed_sum","bindless_rebuild","bindless_patch",
   "encode_shadows","encode_main","encode_water","encode_post","encode_ui"};
 const char* amountNames[Amounts]={"palette_calls","palette_bytes","identical_calls","identical_bytes",
-  "patch_calls","patch_bytes","patch_blocks","grow_bytes","upload_execution_bytes","draw_calls","dispatch_calls"};
+  "patch_calls","patch_bytes","patch_blocks","grow_bytes","upload_execution_bytes","draw_calls","dispatch_calls",
+  "bindless_texture_slots","bindless_buffer_slots","bindless_patched_slots"};
 uint64_t ns() {
   return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
   }
 struct Counter {
   std::atomic<uint64_t> sum{0}, calls{0}, first{0}, last{0};
+  };
+struct TextureRecord {
+  std::atomic<uint64_t> begin{0}, end{0};
+  FrameProfile::TextureActivity activity=FrameProfile::TextureActivity::Read;
   };
 struct Record {
   uint64_t begin=0,end=0,observer=0,dt=0,frame=0;
@@ -48,6 +55,8 @@ struct Record {
 struct Recorder {
   std::string path;
   std::unique_ptr<Record[]> records;
+  std::unique_ptr<TextureRecord[]> textures;
+  std::atomic<size_t> textureCount{0}, textureOverflow{0};
   size_t count=0,overflow=0;
   std::atomic<bool> closed{false};
   std::atomic<Record*> current{nullptr};
@@ -56,10 +65,15 @@ struct Recorder {
   size_t actorCount=0;
   Recorder() {
     const auto* value=std::getenv("OPENGOTHIC_FRAME_PROFILE");
-    if(value!=nullptr && value[0]!=0) { path=value; records=std::make_unique<Record[]>(MaxAttempts); }
+    if(value!=nullptr && value[0]!=0) {
+      path=value;
+      records=std::make_unique<Record[]>(MaxAttempts);
+      textures=std::make_unique<TextureRecord[]>(MaxTextureEvents);
+      }
     }
   void flush() {
     if(path.empty() || closed.exchange(true)) return;
+    const auto closedAt=ns();
     current.store(nullptr); latest.store(nullptr);
     // Rendering has stopped; late GPU callbacks may still update their records.
     // This is the only output operation.
@@ -89,6 +103,21 @@ struct Recorder {
         }
       std::fclose(file);
       }
+    if(auto* file=std::fopen((path+".texture.csv").c_str(),"w")) {
+      std::fprintf(file,"event,kind,begin_ns,end_ns,complete,overflow\n");
+      const auto events=std::min(textureCount.load(),MaxTextureEvents);
+      for(size_t i=0;i<events;++i) {
+        const auto& event=textures[i];
+        const auto begin=event.begin.load(std::memory_order_acquire);
+        if(begin==0 || begin>closedAt)
+          continue;
+        const auto end=event.end.load(std::memory_order_acquire);
+        std::fprintf(file,"%zu,%s,%llu,%llu,%u,%zu\n",i,textureNames[size_t(event.activity)],
+                     (unsigned long long)begin,(unsigned long long)(end!=0 ? end : closedAt),
+                     unsigned(end!=0),textureOverflow.load());
+        }
+      std::fclose(file);
+      }
     // GPU callbacks append only in memory. Write the pass sidecar after rendering
     // has stopped, just like the main frame profile, without per-frame disk I/O.
     if(auto* file=std::fopen((path+".gpu.csv").c_str(),"w")) {
@@ -115,6 +144,20 @@ struct Recorder {
 // Process-lifetime storage protects a late async upload scope during shutdown.
 // The bounded diagnostic buffer is explicitly flushed after rendering stops.
 Recorder& recorder() { static Recorder* value=new Recorder; return *value; }
+TextureRecord* textureRecord(FrameProfile::TextureActivity activity) {
+  auto& recorder=::recorder();
+  if(recorder.textures==nullptr || recorder.closed.load())
+    return nullptr;
+  const auto index=recorder.textureCount.fetch_add(1,std::memory_order_relaxed);
+  if(index>=MaxTextureEvents) {
+    recorder.textureOverflow.fetch_add(1,std::memory_order_relaxed);
+    return nullptr;
+    }
+  auto* record=&recorder.textures[index];
+  record->activity=activity;
+  record->begin.store(ns(),std::memory_order_release);
+  return record;
+  }
 thread_local unsigned actorDepth=0;
 }
 
@@ -186,6 +229,22 @@ void FrameProfile::add(Amount amount,uint64_t value) {
   if(r!=nullptr) r->amounts[size_t(amount)].fetch_add(value,std::memory_order_relaxed);
   }
 void FrameProfile::flush() { recorder().flush(); }
+
+FrameProfile::TextureWork::TextureWork(TextureActivity activity):record(textureRecord(activity)) {
+  }
+FrameProfile::TextureWork::~TextureWork() {
+  finish();
+  }
+void FrameProfile::TextureWork::finish() {
+  if(record==nullptr)
+    return;
+  static_cast<TextureRecord*>(record)->end.store(ns(),std::memory_order_release);
+  record=nullptr;
+  }
+void FrameProfile::textureEvent(TextureActivity activity) {
+  if(auto* record=textureRecord(activity))
+    record->end.store(record->begin.load(std::memory_order_relaxed),std::memory_order_release);
+  }
 
 void* FrameProfile::gpuSubmitted() {
   auto& r=recorder();

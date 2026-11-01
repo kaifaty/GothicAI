@@ -988,6 +988,13 @@ class Npc final {
     std::optional<uint64_t>        meleeParadeOrigin;
     uint64_t                      meleeParadeEnd = 0;
     bool                          meleeParadeContact = false;
+    struct MeleeParadeTiming final {
+      const Npc*                 target = nullptr;
+      const Animation::Sequence* sequence = nullptr;
+      uint64_t                   origin = 0, began = 0, contact = 0;
+      float                      errorMs = 0;
+      };
+    std::optional<MeleeParadeTiming> meleeParadeTiming; // native AI only, transient
     bool                          meleeKnockdown = false;
     bool                          meleeDownStrike = false; // the chop from above at one lying is playing
     bool                          meleeGetupForced = false;

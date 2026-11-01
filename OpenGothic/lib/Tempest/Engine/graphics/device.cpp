@@ -222,7 +222,15 @@ ZBuffer Device::zbuffer(TextureFormat frm, const uint32_t w, const uint32_t h) {
   return ZBuffer(std::move(t),!devProps.hasSamplerFormat(frm));
   }
 
-Texture2d Device::texture(const Pixmap &pm, const bool mips) {
+Texture2d Device::texture(const Pixmap& pm, const bool mips) {
+  return implTexture(pm,mips,false);
+  }
+
+Texture2d Device::textureAsync(const Pixmap& pm, const bool mips) {
+  return implTexture(pm,mips,true);
+  }
+
+Texture2d Device::implTexture(const Pixmap& pm, bool mips, bool async) {
   TextureFormat format = pm.format();
   uint32_t      mipCnt = mips ? mipCount(pm.w(),pm.h()) : 1;
   const Pixmap* p=&pm;
@@ -262,7 +270,8 @@ Texture2d Device::texture(const Pixmap &pm, const bool mips) {
       }
     }
 
-  Texture2d t(*this,api.createTexture(dev,*p,format,mipCnt),p->w(),p->h(),1,format);
+  auto payload=async ? api.createTextureAsync(dev,*p,format,mipCnt) : api.createTexture(dev,*p,format,mipCnt);
+  Texture2d t(*this,std::move(payload),p->w(),p->h(),1,format);
   if(tempestLoadProbeEnabled()) {
     size_t bytes = 0;
     for(uint32_t mip=0; mip<t.mipCount(); ++mip) {

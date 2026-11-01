@@ -1,10 +1,12 @@
 #include "drawbuckets.h"
 
 #include <Tempest/Vec>
+#include <algorithm>
 
 #include "graphics/mesh/submesh/staticmesh.h"
 #include "graphics/mesh/submesh/animmesh.h"
 #include "graphics/shaders.h"
+#include "frameprofile.h"
 
 using namespace Tempest;
 
@@ -33,7 +35,7 @@ DrawBuckets::Id::~Id() {
   }
 
 
-DrawBuckets::DrawBuckets() {
+DrawBuckets::DrawBuckets():textureDesc(Resources::MaxFramesInFlight) {
   }
 
 DrawBuckets::Id DrawBuckets::alloc(const Material& mat, const StaticMesh& mesh) {
@@ -85,12 +87,58 @@ const std::vector<DrawBuckets::Bucket>& DrawBuckets::buckets() const {
   return bucketsCpu;
   }
 
-void DrawBuckets::updateBindlessArrays(bool updateBuffers) {
+void DrawBuckets::updateTextureArrays(uint8_t fId) {
+  auto& bank=textureDesc[fId];
+  for(size_t i=0;i<textureSlots.size();++i) {
+    Resources::recycle(std::move(bank.arrays[i]));
+    if(!textureSlots[i].empty())
+      bank.arrays[i]=Resources::device().descriptors(textureSlots[i]);
+    }
+  bank.pending.clear();
+  bank.rebuild=false;
+  }
+
+void DrawBuckets::updateBindlessArrays(bool updateBuffers, uint8_t fId) {
   if(!Shaders::options().doBindless)
     return;
+  if(!updateBuffers) {
+    FrameProfile::Scope timing(FrameProfile::Zone::BindlessPatch);
+    if(textureGeneration!=Resources::textureGeneration()) {
+      for(const auto* texture:Resources::textureChanges(textureGeneration)) {
+        const auto found=textureUsers.find(texture);
+        if(found==textureUsers.end())
+          continue;
+        for(auto& bank:textureDesc)
+          if(!bank.rebuild)
+            bank.pending.insert(bank.pending.end(),found->second.begin(),found->second.end());
+        }
+      }
+    auto& bank=textureDesc[fId];
+    if(bank.rebuild) {
+      timing.finish();
+      FrameProfile::Scope rebuildTiming(FrameProfile::Zone::BindlessRebuild);
+      updateTextureArrays(fId);
+      rebuildTiming.add(FrameProfile::Amount::BindlessTextureSlots,
+                        textureSlots[0].size()+textureSlots[1].size()+textureSlots[2].size());
+      return;
+      }
+    std::sort(bank.pending.begin(),bank.pending.end());
+    bank.pending.erase(std::unique(bank.pending.begin(),bank.pending.end()),bank.pending.end());
+    // commit runs after this frame slot's fence. Other banks retain their
+    // previous descriptors until their own fence completes and they are used.
+    for(const auto& [array,index]:bank.pending)
+      bank.arrays[array].set(index,textureSlots[array][index]);
+    timing.add(FrameProfile::Amount::BindlessPatchedSlots,bank.pending.size());
+    bank.pending.clear();
+    return;
+    }
+  FrameProfile::Scope timing(FrameProfile::Zone::BindlessRebuild);
 
-  std::vector<const Tempest::Texture2d*>     tex;
-  std::vector<const Tempest::Texture2d*>     normal, orm;
+  for(auto& slots:textureSlots)
+    slots.clear();
+  auto& tex=textureSlots[0];
+  auto& normal=textureSlots[1];
+  auto& orm=textureSlots[2];
   std::vector<const Tempest::StorageBuffer*> vbo, ibo;
   std::vector<const Tempest::StorageBuffer*> morphId, morph;
   for(auto& i:bucketsCpu) {
@@ -99,8 +147,6 @@ void DrawBuckets::updateBindlessArrays(bool updateBuffers) {
       normal.push_back(i.mat.normal!=nullptr ? i.mat.normal : &Resources::fallbackTexture());
       orm.push_back(i.mat.orm!=nullptr ? i.mat.orm : &Resources::fallbackTexture());
       }
-    if(!updateBuffers)
-      continue;
     if(i.staticMesh!=nullptr) {
       ibo    .push_back(&i.staticMesh->ibo8Buffer());
       vbo    .push_back(&i.staticMesh->vboBuffer());
@@ -131,38 +177,43 @@ void DrawBuckets::updateBindlessArrays(bool updateBuffers) {
   normal .resize(roundup(normal.size()));
   orm    .resize(roundup(orm.size()));
 
-  Resources::recycle(std::move(desc.tex));
+  textureUsers.clear();
+  for(uint8_t array=0;array<textureSlots.size();++array)
+    for(uint32_t i=0;i<textureSlots[array].size();++i)
+      if(const auto* texture=textureSlots[array][i])
+        textureUsers[texture].emplace_back(array,i);
+  for(auto& bank:textureDesc) {
+    bank.pending.clear();
+    bank.rebuild=true;
+    }
+  updateTextureArrays(fId);
 
   auto& device = Resources::device();
-  desc.tex     = device.descriptors(tex);
-  if(updateBuffers) {
-    vbo    .resize(roundup(vbo.size()));
-    ibo    .resize(roundup(ibo.size()));
-    morphId.resize(roundup(morphId.size()));
-    morph  .resize(roundup(morph.size()));
-    Resources::recycle(std::move(desc.vbo));
-    Resources::recycle(std::move(desc.ibo));
-    Resources::recycle(std::move(desc.morphId));
-    Resources::recycle(std::move(desc.morph));
-    desc.vbo     = device.descriptors(vbo);
-    desc.ibo     = device.descriptors(ibo);
-    desc.morphId = device.descriptors(morphId);
-    desc.morph   = device.descriptors(morph);
-    }
-  if(Shaders::options().doMaterialMaps) {
-    Resources::recycle(std::move(desc.normal));
-    Resources::recycle(std::move(desc.orm));
-    desc.normal = device.descriptors(normal);
-    desc.orm    = device.descriptors(orm);
-    }
+  vbo    .resize(roundup(vbo.size()));
+  ibo    .resize(roundup(ibo.size()));
+  morphId.resize(roundup(morphId.size()));
+  morph  .resize(roundup(morph.size()));
+  Resources::recycle(std::move(desc.vbo));
+  Resources::recycle(std::move(desc.ibo));
+  Resources::recycle(std::move(desc.morphId));
+  Resources::recycle(std::move(desc.morph));
+  desc.vbo     = device.descriptors(vbo);
+  desc.ibo     = device.descriptors(ibo);
+  desc.morphId = device.descriptors(morphId);
+  desc.morph   = device.descriptors(morph);
+  timing.add(FrameProfile::Amount::BindlessTextureSlots,tex.size()+normal.size()+orm.size());
+  timing.add(FrameProfile::Amount::BindlessBufferSlots,vbo.size()+ibo.size()+morphId.size()+morph.size());
   }
 
 bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
+  currentFrame=fId;
   const auto generation=Resources::textureGeneration();
   if(!bucketsDurtyBit) {
-    if(textureGeneration==generation)
+    const auto& bank=textureDesc[fId];
+    if(textureGeneration==generation &&
+       (!Shaders::options().doBindless || (!bank.rebuild && bank.pending.empty())))
       return false;
-    updateBindlessArrays(false);
+    updateBindlessArrays(false,fId);
     textureGeneration=generation;
     return true;
     }
@@ -225,6 +276,6 @@ bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
   bucketsGpu = device.ssbo(Uninitialized,bucket.size()*sizeof(bucket[0]));
   bucketsGpu.updateAsync(bucket.data(),0,bucket.size()*sizeof(bucket[0]));
 
-  updateBindlessArrays(true);
+  updateBindlessArrays(true,fId);
   return true;
   }

@@ -1,4 +1,5 @@
 #include "staticmesh.h"
+#include "loadprobe.h"
 
 #include <cassert>
 #include <algorithm>
@@ -136,6 +137,7 @@ std::shared_ptr<LandscapeRange> LandscapePages::allocate(const PackedMesh& mesh)
 StaticMesh::StaticMesh(const PackedMesh& mesh) {
   const Vertex* vert=mesh.vertices.data();
   if(Resources::hasGraphicsDevice()) {
+    LoadProbe::Vobs::Scope probe("mesh_gpu");
     vbo  = Resources::vbo<Vertex>  (vert,mesh.vertices.size());
     ibo  = Resources::ibo<uint32_t>(mesh.indices.data(),mesh.indices.size());
     ibo8 = Resources::ssbo(mesh.indices8.data(),mesh.indices8.size());
@@ -144,6 +146,7 @@ StaticMesh::StaticMesh(const PackedMesh& mesh) {
   initSubMeshes(mesh);
 
   if(Resources::hasGraphicsDevice() && Shaders::options().doRtScene) {
+    LoadProbe::Vobs::Scope probe("mesh_gpu");
     for(size_t i=0;i<mesh.subMeshes.size();++i) {
       sub[i].blas = Resources::blas(vbo, ibo, sub[i].iboOffset, sub[i].iboLength);
       }
@@ -238,10 +241,13 @@ StaticMesh::StaticMesh(const Material& mat, std::vector<Resources::Vertex> cvbo,
     ibo[at + 2] = uint8_t(prim);
     ibo[at + 3] = uint8_t(vert);
 
-    if(Resources::hasGraphicsDevice())
+    if(Resources::hasGraphicsDevice()) {
+      LoadProbe::Vobs::Scope probe("mesh_gpu");
       ibo8 = Resources::ssbo(ibo.data(),ibo.size());
+      }
     }
   if(Resources::hasGraphicsDevice()) {
+    LoadProbe::Vobs::Scope probe("mesh_gpu");
     vbo  = Resources::vbo<Vertex>(cvbo.data(),cvbo.size());
     ibo  = Resources::ibo(cibo.data(),cibo.size());
     }
@@ -252,8 +258,10 @@ StaticMesh::StaticMesh(const Material& mat, std::vector<Resources::Vertex> cvbo,
     sub[i].material  = mat;
     //sub[i].iboLength = Gothic::options().doMeshShading ? PackedMesh::MaxInd : ibo.size();
     sub[i].iboLength = PackedMesh::MaxInd;
-    if(Resources::hasGraphicsDevice() && Shaders::options().doRtScene)
+    if(Resources::hasGraphicsDevice() && Shaders::options().doRtScene) {
+      LoadProbe::Vobs::Scope probe("mesh_gpu");
       sub[i].blas = Resources::blas(vbo, ibo, 0, ibo.size());
+      }
     }
   bbox.assign(cvbo);
   }

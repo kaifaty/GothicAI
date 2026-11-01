@@ -16,7 +16,8 @@ follows the footage in either format; `parts/followMath.ts` shares the frame/zoo
 maps source pixels through cover, split and zoom. These overlays are opt-in through `follow` and `hp`.
 Their plan timings drive every reveal, turn, alignment and packet; the diagrams need no game or model process.
 Omit a diagram beat to leave it out; these five types are rejected in tall plans. Publication of either format
-uses the same `gothic_shorts.levels.publish` checks. Before them, the published footage sound fades in and out
+uses the same `gothic_shorts.levels.publish` checks and the [delivery check](#delivery-check): YouTube's
+file settings (BT.709, limited range) and nothing of ours under the Shorts interface. Before them, the published footage sound fades in and out
 over 30 ms at every beat's edges and at `freeze`, so a hard cut never clicks.
 
 ```bash
@@ -54,13 +55,51 @@ The plan is relative to the workspace, as with `dub`; the workspace is a folder 
 `~/.local/share/gothic-ai/explain/`, as with `words` and `studio`. The default output is
 `<workspace>/render/short-<plan.lang>.mp4`.
 
-Remotion renders the muted picture at the plan's dimensions (H.264, CRF 18) and three WAV stems. The command joins the picture with
+Remotion renders the muted picture at the plan's dimensions (H.264, CRF 18, BT.709 in limited range:
+`remotion.config.ts` sets the colour space, Remotion 4 would write BT.601 in full range) and three WAV stems. The command joins the picture with
 the game/ending stem, takes each speech window from the first to the last word of a nonempty `lines` entry,
 and calls `gothic_shorts.levels.publish`. That shared function calibrates the voice, effects, music and ending,
 masters the mix, and checks the decoded AAC: voice −14 LUFS, true peak ≤ −1 dBTP, the balance between stems,
 and zero clicks. It prints the table and writes a sibling `.levels.json` report. A failed check returns a
 nonzero exit code and removes the output video. Temporary pictures and stems are removed on success or failure.
 Without `music` in the plan, music rows have no data, as in the shared publisher.
+
+### Delivery check
+
+`gothic_shorts.delivery` checks what leaves for YouTube; `explain` runs it, and `gothic-shorts check` runs it alone:
+
+```bash
+uv run gothic-shorts check bow                          # the plan's drawing, then render/short-ru.mp4
+uv run gothic-shorts check .shorts/compare/water/short-ru.mp4   # any short: the file alone
+```
+
+- **The file**, against [YouTube's recommended upload settings](https://support.google.com/youtube/answer/1722171):
+  MP4, H.264 High, `yuv420p` in limited (`tv`) range, BT.709 matrix, primaries and transfer, progressive, 24-60
+  fps, 1080×1920 or 1920×1080, AAC-LC at 48 kHz in stereo, −14 ± 1 LUFS with a true peak under −1 dBTP, at most
+  180 s for a vertical Short. The coded luma of 12 frames is read as it is: more than 0.5 % outside 12..240 means
+  full-range values whatever the tags say. Notes only: the index after the data (no fast start), less than
+  8 Mbit/s, an average frame rate below the nominal one (gaps where pieces were joined).
+- **The safe zones**, for a tall explainer: the composition renders with `mask: true` at a quarter of its size —
+  no footage, stills, flash, sting or sound, only our drawing over black — in about 30 s for 80 s of short.
+  Anything brighter than luma 60 (text, bars, pins; a card's ground, its grid and the shade bands stay below) in
+  a band the interface covers (`SAFE`: top 150, bottom 380, right 150; its left 60 is our margin, nothing covers
+  it) for 0.25 s or more and 8 px or deeper is a failure with its time, beat, depth and box; a shorter stay is a
+  thing passing through in a transition and is only listed. A wide video plays between the interface, not under
+  it: no zones. A ray or fan of `Sight` counts too: where it lands is what it shows. The slow push of a held card (up to 5 %) carries its edges 22 px right and
+  35 px down: things there need that margin, and the check sees it.
+
+`explain` checks the zones before its long render and the file after `levels`; either failure leaves no MP4.
+The report is `short-<lang>.delivery.md` beside the video.
+
+Why these numbers (research 2026-11-01). YouTube publishes the file settings but no Shorts overlay; third-party
+templates disagree (top 100-200, bottom 180-420, right 80-150 px). Measured on our own Short in the mobile web
+player: the buttons column spans x 907-1045 of 1080 from y 1417 down, the channel row is at the bottom edge; the
+app overlays more of the bottom than the web player. `SAFE` stays at the conservative end. Colour, measured on a
+bow card: Remotion's `bt709` output codes white as Y 235 and the card ground `#14110D` as Y 31, U 126, V 129-130,
+the BT.709 limited values to within a code. The old default wrote `yuvj420p` tagged BT.601 in full range: decoded
+by its tags it looks the same (a frame of textures-3 differs by about 2 levels, the re-encode), but 5.5 % of a
+bow frame's luma lies outside 16..235, and a player that ignores the tags and assumes BT.709 limited (the usual
+guess for HD) clips it: crushed shadows, flat highlights. BT.709 limited is what YouTube asks for and nobody guesses.
 
 `stem` is optional: `voice` plays only the voice lines at 1; `game` plays the footage at each beat's `game`
 level, then the brand sting at 1; `music` plays the looped bed at 1 with its `fadeIn`/`fadeOut`. Stems have no
@@ -99,7 +138,8 @@ the original plan gains and ducking for Studio and drafts; they do not run the p
 - `beats`: in order, each `footage` (an mp4, `freeze` and `zoom` optional), `still` (a png), `split` (two takes,
   top/bottom in `tall`, left/right in `wide`, with labels) or `card` (a chart); `texts` on top of a beat, `tags` (a label pinned to a point
   of the picture, to its left or right with `side`, lines appearing one by one, a roll counter that stops on the
-  real number), `strokes` (a line drawing itself between two points of the picture; with `cut` it stops at a wall:
+  real number; a line under a counter waits for it to stop, so a verdict never shows during its roll, and a line
+  added to an open box grows its slot over 0.2 s instead of the box jumping a line taller), `strokes` (a line drawing itself between two points of the picture; with `cut` it stops at a wall:
   solid up to it, dashed past it, a cross on it) and `fans` (a sector opening from a point): lines of sight and the
   bow's focus from the bench's `sight` export; `paths` (a line drawing itself through several points, smoothed
   unless `curve: false`, `arrow` puts a head on its tip, `dash` makes it dashed): an arrow's flight, a route;
@@ -131,15 +171,25 @@ the original plan gains and ducking for Studio and drafts; they do not run the p
   until `until` or the beat's end. Take `to` from a still of the card; whatever the carried thing causes (a
   point, a marker, a counter) appears on its landing, at `at` plus its duration (the strips report gives it);
 - `split` keeps the same field names in either format: `src`/`from` are the first half, `srcBottom`/`fromBottom`
-  the second; `labels` and `labelColors` follow that order. In `wide`, labels sit at the top of each half and
+  the second; `labels` and `labelColors` follow that order. In `tall` the captions sit just under the seam
+  (from 990 px, on the top of the bottom half) instead of on the bottom half's subject; the first label stays at
+  the top of its half and the second goes to the foot of its half. The seam itself (y about 880) is the place for
+  a comparison text; keep `texts` out of 990-1250. In `wide`, labels sit at the top of each half and
   a thin vertical line divides the pictures. Footage and stills cover their frame or half-frame;
+- a text without `until` gives way to the next text of its beat at the same `y`: its fade out ends as the next
+  one starts, so two texts never lie on each other;
 - coordinates (`texts.y`, tag pins, strokes, fans and zoom origins) are pixels of the selected frame.
   Texts without `y` start at 260 in `tall`, 140 in `wide`; an explicit `y` is kept as supplied;
 - the cards (`chart.type`): `dice` (the chance by distance, curves drawn as they are named), `formula` (the
   terms a line each as they are said, then a worked example computed the way `damagecalculator.cpp` does it:
-  rounded at each step, protection not below 0, at least 5), `bars` (groups growing one by one), `dots` (marks
-  filling up to a count), `stats` (the character's numbers greying out under a question), and the wide-only
-  `line`, `big`, `table`, `cells`, `rays`, `cone`, `ticks`, `grid`, `flow` described below;
+  rounded at each step, protection not below 0, at least 5; in tall, with five terms, each term's number of the
+  example stands at the right of its row and the zones' results close the card as tiles, the first big and
+  struck), `bars` (groups growing one by one; in tall the values over the bars are 48 px, the biggest 56),
+  `dots` (marks filling up to a count; the counter comes in once the grid has swept in), `stats` (the character's numbers greying out under a question), and the wide-only
+  `line`, `big`, `table`, `cells`, `rays`, `cone`, `ticks`, `grid`, `flow` described below. A tall card is drawn
+  `CARD_LIFT` (80 px) above its own coordinates, so its lowest labels clear the captions by about 100 px; its
+  source line sits at 1470, clear of three lines of captions. Its title and frame (axes, panel, first row) are there from the cut, so frame 0 is
+  a finished picture; the rest enters on its words;
   each but `stats` names its `source`;
 - `lines`: the voice's words with their times, a sentence per line (`gothic-shorts words`); the captions are
   pages of 2-4 words of them, the word being said in gold. A page never ends on a preposition or a conjunction
@@ -477,6 +527,22 @@ up to three people. The versions are pinned in `package.json`.
 
 ## План и журнал
 
+- 2026-11-01: delivery check (`gothic_shorts.delivery`, `gothic-shorts check`, run by `explain`): the file against
+  YouTube's upload settings and our drawing against the Shorts interface, from a `mask` render. The picture is
+  now BT.709 in limited range (`remotion.config.ts`; was `yuvj420p` BT.601) and the published MP4 has fast start.
+  On the bow plan the check found a card's source line 36 px into the bottom band and the exe chart's «45» 14 px
+  into the right one, both carried there by the slow push: the source line now ends 36 px above the band and the
+  last tick ends on the axis. The bow 7b pin (22 px into the right band) is in its plan, left as published.
+  Every finished short failed the colour check: the explainers in BT.601 full range, the comparisons untagged.
+- 2026-10-31: the cards from the motion reviews: the tall formula card with the example's numbers beside its
+  terms and the results as tiles («400» at 96 px with a pop instead of a 46 px line); bar values 48/56 px in
+  tall (were 36); the dots' counter after its grid; a text gives way to the next one at its place.
+- 2026-10-31: fixes from the first motion review (the `motion-reviewer` agent of the explainer skill, on the bow
+  short): the hook and a card's frame on screen from frame 0; a zoom up to 0.04 s is a punch-in from its start
+  (frame 0 was left unzoomed); a tag line under a counter waits for it to stop; a line joining an open tag box
+  grows its slot; tall cards lifted 80 px clear of the captions; captions just under the seam of a tall split (on the seam first: the verification round found them over the comparison texts). `strips.py`
+  blanks the captions before looking for jumps (on the bow short 32 jumps were 27 caption pages) and notes a tag
+  line planned before its counter stops. `shown(…, fadeIn 0)` no longer throws (`carry.until` used it).
 - 2026-10-30: a held picture (a card, a still, a freeze) of 2 s or more pushes in by itself, 3-5 % across the
   hold (`holdPush`), the user's choice over the old rule that nothing drifts on its own; `push: 0` turns it off.
   The strips report marks which still holds it covers. On a 27 s card the title moves 1 px at a time (Chrome

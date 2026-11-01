@@ -37,6 +37,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import re
 import sys
 import time
 import zipfile
@@ -468,6 +469,13 @@ class Control:
             raise RequestError("Логов ещё нет: лаунчер ни разу не запускал игру")
         latest = sessions[-1]
         secrets = [v for v in config.secrets.model_dump().values() if v]
+        with contextlib.suppress(OSError, ValueError):
+            tokens = json.loads(checks.CHATGPT_TOKENS.read_text())
+            if isinstance(tokens, dict):
+                secrets.extend(
+                    value for key in ("access_token", "refresh_token")
+                    if isinstance(value := tokens.get(key), str) and value
+                )
         target = root / f"report-{latest.name}.zip"
 
         def build() -> None:
@@ -482,6 +490,7 @@ class Control:
 
 
 def _redact(text: str, secrets: list[str]) -> str:
+    text = re.sub(r"\bBearer[ \t]+[A-Za-z0-9._~+/=-]+", "Bearer <hidden>", text, flags=re.IGNORECASE)
     for s in secrets:
         text = text.replace(s, "<hidden>")
     return text
