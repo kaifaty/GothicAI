@@ -1,0 +1,153 @@
+{
+  "source": "GOTHIC.DAT from the game base; instance names, NPC_TYPE_AMBIENT and constructor equipment checked 2026-11-01. Save 1: NEWWORLD.",
+  "pairs": [
+    {
+      "id": "lobart-equals",
+      "npcs": [
+        "BAU_953_BAUER",
+        "BAU_955_BAUER"
+      ],
+      "coverage": [
+        "equal-peasants",
+        "lobart-farm"
+      ],
+      "holdout": false,
+      "smoke": true
+    },
+    {
+      "id": "militia-2h",
+      "npcs": [
+        "MIL_318_MILIZ",
+        "SLD_826_SOELDNER"
+      ],
+      "coverage": [
+        "militia-mercenary",
+        "1h-2h"
+      ],
+      "holdout": false,
+      "smoke": true
+    },
+    {
+      "id": "peasant-militia",
+      "npcs": [
+        "BAU_953_BAUER",
+        "MIL_318_MILIZ"
+      ],
+      "coverage": [
+        "peasant-militia"
+      ],
+      "holdout": false,
+      "smoke": false
+    },
+    {
+      "id": "unarmed-peasant",
+      "npcs": [
+        "VLK_474_BUERGER",
+        "BAU_955_BAUER"
+      ],
+      "coverage": [
+        "unarmed-armed"
+      ],
+      "holdout": false,
+      "smoke": false
+    },
+    {
+      "id": "level-gap",
+      "npcs": [
+        "BAU_955_BAUER",
+        "SLD_819_SOELDNER"
+      ],
+      "coverage": [
+        "large-level-gap",
+        "1h-2h"
+      ],
+      "holdout": false,
+      "smoke": false
+    },
+    {
+      "id": "militia-1h",
+      "npcs": [
+        "MIL_318_MILIZ",
+        "SLD_815_SOELDNER"
+      ],
+      "coverage": [
+        "militia-mercenary"
+      ],
+      "holdout": false,
+      "smoke": false
+    },
+    {
+      "id": "onar-1h-2h",
+      "npcs": [
+        "SLD_815_SOELDNER",
+        "SLD_826_SOELDNER"
+      ],
+      "coverage": [
+        "1h-2h",
+        "onar-farm"
+      ],
+      "holdout": false,
+      "smoke": false
+    },
+    {
+      "id": "militia-equals",
+      "npcs": [
+        "MIL_320_MILIZ",
+        "MIL_322_MILIZ"
+      ],
+      "coverage": [
+        "equal-militia"
+      ],
+      "holdout": false,
+      "smoke": false
+    },
+    {
+      "id": "farms",
+      "npcs": [
+        "BAU_937_BAUER",
+        "BAU_943_BAUER"
+      ],
+      "coverage": [
+        "peasant-mace-axe"
+      ],
+      "holdout": false,
+      "smoke": false
+    },
+    {
+      "id": "bengar-equals",
+      "npcs": [
+        "BAU_964_BAUER",
+        "BAU_965_BAUER"
+      ],
+      "coverage": [
+        "equal-peasants"
+      ],
+      "holdout": true,
+      "smoke": false
+    },
+    {
+      "id": "unarmed-militia",
+      "npcs": [
+        "VLK_474_BUERGER",
+        "MIL_320_MILIZ"
+      ],
+      "coverage": [
+        "unarmed-armed"
+      ],
+      "holdout": true,
+      "smoke": false
+    },
+    {
+      "id": "militia-sword",
+      "npcs": [
+        "MIL_322_MILIZ",
+        "SLD_824_SOELDNER"
+      ],
+      "coverage": [
+        "militia-mercenary"
+      ],
+      "holdout": true,
+      "smoke": false
+    }
+  ]
+}
