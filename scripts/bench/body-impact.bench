@@ -1,4 +1,6 @@
 # Numerical native body impacts. BODY_IMPACT_DAMAGE=0 keeps ordinary animated falls and spell damage.
+# Falls check torso contact speed against sqrt(2gh) within 10%; animated HP is a reference.
+# Ragdoll damping remains unchanged; damage is checked against damageFall at the measured speed.
 seed 73013
 cheat god
 set time 12 0

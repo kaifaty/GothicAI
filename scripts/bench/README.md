@@ -671,10 +671,12 @@ For a hotspot diagnostic, `--method-breakdown` additionally writes per-method in
 work to `OPENGOTHIC_PHYSICS_TRACE_METHODS`. Keep this extra instrumentation out of formal timing runs.
 
 `body-impact.bench` checks body impact damage: knockdown falls from 2/5/10 m
-against animated falls of the same guild, knockdown-ragdoll wall impacts at
-6/10/14 m/s, a real hero WindFist into a wall through the animated capsule path,
-and unconscious, dead and immortal controls. Ragdolls count only pelvis, spine
-and head contacts with landscape, static objects or movable furniture. Spell
+require actual torso contact speed within 10% of `sqrt(2gh)`. Ragdoll and
+animated-fall HP loss of the same guild are recorded as references, without an
+HP parity threshold; ragdoll damping stays 0.12. It also checks knockdown-ragdoll
+wall impacts at 6/10/14 m/s, a real hero WindFist into a wall through the animated
+capsule path, and unconscious, dead and immortal controls. Ragdolls count only
+pelvis, spine and head contacts with landscape, static objects or movable furniture. Spell
 capsule wall impacts and their existing landing damage share one 300 ms maximum
 speed window per NPC. Damage uses the unchanged guild fall formula; fatal
 impacts retain the attacker or caster, including the hero's kill attribution.

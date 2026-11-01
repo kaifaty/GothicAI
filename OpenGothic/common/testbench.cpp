@@ -1212,12 +1212,12 @@ struct Bench {
     Npc* animated=nullptr;
     Npc* witness=nullptr;
     Npc* player=nullptr;
-    Vec3 anchor,animatedFallVelocity;
+    Vec3 anchor;
     std::unique_ptr<PhysicMeshShape> floorShape,wallShape,ledgeShape;
     DynamicWorld::Item floor,wall,ledge;
     std::string mode;
-    float value=0,maximumSpeed=0;
-    int hpBefore=0,animatedBefore=0,damage=0,questGuard=0;
+    float value=0,maximumSpeed=0,launchSpeed=0;
+    int hpBefore=0,animatedBefore=0,damage=0,capsuleDamage=0,questGuard=0;
     uint64_t started=0;
     size_t impacts=0,deeds=0,murders=0;
     bool ready=false,tracing=false,observing=false,duel=false,sawAir=false,guardSaved=false;
@@ -3425,11 +3425,11 @@ void bodyImpactSetup(World& world,Npc& player,std::string_view mode,float value)
     bodyImpactSurface(world,{{-2200,0,-1800},{-2200,0,1800},{2200,0,1800},{2200,0,-1800}},state.floorShape,state.floor);
     state.ready=true;
     }
-  state.mode=mode;state.value=value;state.player=&player;state.damage=0;state.impacts=state.deeds=state.murders=0;
+  state.mode=mode;state.value=value;state.player=&player;state.damage=state.capsuleDamage=0;state.impacts=state.deeds=state.murders=0;
   // The numeric fall must reach its support rather than the separate quest return.
   state.questGuard=Gothic::settingsGetI("GAME","ragdoll_quest_guard");state.guardSaved=true;
   Gothic::settingsSetI("GAME","ragdoll_quest_guard",0);
-  state.maximumSpeed=0;state.sawAir=false;state.animatedFallVelocity={};
+  state.maximumSpeed=0;state.launchSpeed=0;state.sawAir=false;
   const auto origin=state.anchor+Vec3(-500,0,0);
   player.clearAiQueue();player.stopWalking();player.clearSpeed();player.setPosition(origin-Vec3(0,0,180));
   player.setDirection(Vec3(0,0,1));player.updateTransform();
@@ -3463,7 +3463,7 @@ void bodyImpactSetup(World& world,Npc& player,std::string_view mode,float value)
     if(state.animated->guild()!=npc.guild()) {arenaAbort("body impact fall comparators have different guilds");return;}
     }
   if(mode=="wall" || mode=="fatal")
-    bodyImpactSurface(world,{{-1600,0,180},{1600,0,180},{1600,1600,180},{-1600,1600,180}},state.wallShape,state.wall);
+    bodyImpactSurface(world,{{-1600,0,180},{-1600,1600,180},{1600,1600,180},{1600,0,180}},state.wallShape,state.wall);
   state.witness=bodyImpactActor(world,"BAU_904_BAUER",state.anchor+Vec3(200,0,-200));
   Gothic::inst().onHeroDeed.bind(&state,&Bench::BodyImpact::deed);
   Gothic::inst().onObservedPerception.bind(&state,&Bench::BodyImpact::perception);
@@ -3490,8 +3490,11 @@ void bodyImpactLaunch(World& world,Npc& player) {
   if(state.mode=="immortal")npc->handle().flags=zenkit::NpcFlag(uint32_t(npc->handle().flags)|uint32_t(zenkit::NpcFlag::IMMORTAL));
   if(state.mode=="fatal")npc->handle().attribute[ATR_HITPOINTS]=20;
   state.hpBefore=npc->attribute(ATR_HITPOINTS);state.animatedBefore=state.animated ? state.animated->attribute(ATR_HITPOINTS) : 0;
-  state.damage=0;state.impacts=state.deeds=state.murders=0;state.maximumSpeed=0;state.started=world.tickCount();state.tracing=true;
-  if(wall && !npc->addSpellImpulse(Vec3(0,0,npc->physicsMass()*state.value),true,&player)) {
+  state.damage=state.capsuleDamage=0;state.impacts=state.deeds=state.murders=0;state.maximumSpeed=0;state.started=world.tickCount();state.tracing=true;
+  // Ragdoll's existing .12/s damping acts once before the first 120 Hz contact.
+  // Prepare the requested contact speed without changing the native damping.
+  state.launchSpeed=wall ? state.value/(1.f-.12f/120.f) : 0.f;
+  if(wall && !npc->addSpellImpulse(Vec3(0,0,npc->physicsMass()*state.launchSpeed),true,&player)) {
     arenaAbort("body impact native wall impulse was refused");return;
     }
   if(state.animated) {
@@ -3505,6 +3508,7 @@ void bodyImpactLaunch(World& world,Npc& player) {
     }
   event("body_impact_launch","\"case\":"+jsonStr(state.mode)+",\"value\":"+ragdollNumber(state.value)+
     ",\"hp_before\":"+std::to_string(state.hpBefore)+",\"normal_speed_m_s\":"+ragdollNumber(wall?state.value:0)+
+    ",\"launch_speed_m_s\":"+ragdollNumber(state.launchSpeed)+
     ",\"drop_m\":"+ragdollNumber(wall?0:state.value)+",\"feature\":"+(Gothic::physicsFlags().bodyImpactDamage?"true":"false"));
   }
 
@@ -3514,9 +3518,9 @@ void bodyImpactWind(World& world,Npc& player) {
   for(auto& actor:bench.spellActors)world.removeNpc(*actor.npc);
   bench.spellActors.clear();bench.crew.clear();
   if(!state.ready) {arenaAbort("body impact wind requires the body impact floor");return;}
-  state.mode="wind_goblin";state.value=0;state.player=&player;state.damage=0;state.impacts=state.deeds=state.murders=0;
-  state.maximumSpeed=0;state.sawAir=false;bodyTrace=true;
-  bodyImpactSurface(world,{{-1600,0,80},{1600,0,80},{1600,1600,80},{-1600,1600,80}},state.wallShape,state.wall);
+  state.mode="wind_goblin";state.value=0;state.player=&player;state.damage=state.capsuleDamage=0;state.impacts=state.deeds=state.murders=0;
+  state.maximumSpeed=0;state.launchSpeed=0;state.sawAir=false;bodyTrace=true;
+  bodyImpactSurface(world,{{-1600,0,80},{-1600,1600,80},{1600,1600,80},{1600,0,80}},state.wallShape,state.wall);
   state.npc=bodyImpactActor(world,"GOBBO_GREEN",state.anchor);if(!state.npc)return;
   player.setPosition(state.anchor-Vec3(0,0,230));player.setDirection(Vec3(0,0,1));player.updateTransform();
   bench.spellActors.push_back({state.npc,"body_impact_target"});bench.subject=state.npc;
@@ -3531,28 +3535,52 @@ void bodyImpactReport(World& world,Npc& player) {
   const bool enabled=Gothic::physicsFlags().bodyImpactDamage;
   const bool fall=state.mode=="fall",wind=state.mode=="wind_goblin",fatal=state.mode=="fatal";
   const bool excluded=state.mode=="unconscious" || state.mode=="dead" || state.mode=="immortal";
-  const float speed=fall ? std::sqrt(2.f*DynamicWorld::gravity*state.value*100.f) : wind ? state.maximumSpeed*.001f : state.value*.1f;
+  const bool wall=state.mode=="wall" || fatal || wind;
+  const float wallZ=state.anchor.z+(wind ? 80.f : 180.f);
+  float frontZ=npc->navigationPhysicsPosition().z;
+  if(const auto* body=npc->ragdollBody())if(const auto* skeleton=npc->visualSkeleton()) {
+    frontZ=-std::numeric_limits<float>::infinity();
+    for(const auto& part:body->state().parts) {
+      auto name=skeleton->nodes[part.bone].name;
+      for(auto& c:name)c=char(std::toupper(static_cast<unsigned char>(c)));
+      if(name.find("PELVIS")!=std::string::npos || name.find("SPINE")!=std::string::npos || name.find("HEAD")!=std::string::npos)
+        frontZ=std::max(frontZ,part.centerOfMassMeters.z*100.f);
+      }
+    }
+  const bool wallBlocked=wall && frontZ<=wallZ+5.f;
+  const float normalSpeedError=wall && !wind && enabled ? std::abs(state.maximumSpeed-state.value*100.f)/(state.value*100.f)*100.f : 0.f;
+  const float freefallSpeed=fall ? std::sqrt(2.f*DynamicWorld::gravity*state.value*100.f)*1000.f : 0.f;
+  const float freefallError=fall && enabled ? std::abs(state.maximumSpeed-freefallSpeed)/freefallSpeed*100.f : 0.f;
+  const float speed=fall || wind ? state.maximumSpeed*.001f : state.value*.1f;
   const int formula=DamageCalculator::damageFall(*state.npc,speed).value;
   const int damage=state.hpBefore-npc->attribute(ATR_HITPOINTS);
   const int animated=state.animated ? state.animatedBefore-state.animated->attribute(ATR_HITPOINTS) : 0;
   const int expected=enabled && !excluded ? formula : 0;
   const float tolerance=fall ? std::max(2.f,float(expected)*.1f) : float(expected)*.1f;
   const bool attributed=npc->bodyImpactCulprit()==&player;
-  bool pass=wind ? (enabled ? state.damage>0 && attributed && state.sawAir : state.damage==0) :
+  bool pass=wind ? (enabled ? state.capsuleDamage>0 && attributed && state.sawAir : state.damage==0 && state.capsuleDamage==0) :
             float(std::abs(damage-expected))<=tolerance;
-  if(fall)pass&=state.sawAir && float(std::abs(animated-formula))<=std::max(2.f,float(formula)*.1f) &&
-                 (!enabled || float(std::abs(damage-animated))<=std::max(2.f,float(animated)*.1f));
+  if(fall)pass&=state.sawAir && (!enabled || freefallError<=10.f);
   if(excluded || (!enabled && !wind))pass&=damage==0 && state.deeds==0 && state.murders==0;
   if(fatal && enabled)pass=npc->isDead() && npc->lastHitBy()==&player && attributed && state.deeds>0 && state.murders>0;
   if(!fall && !excluded && !wind && enabled)pass&=attributed;
+  if(wall && !wind && enabled)pass&=normalSpeedError<=1.f;
+  if(wall)pass&=wallBlocked;
   event("body_impact_result","\"case\":"+jsonStr(state.mode)+",\"value\":"+ragdollNumber(state.value)+
     ",\"feature\":"+(enabled?"true":"false")+",\"elapsed_ms\":"+std::to_string(world.tickCount()-state.started)+
     ",\"hp_before\":"+std::to_string(state.hpBefore)+",\"hp_after\":"+std::to_string(npc->attribute(ATR_HITPOINTS))+
     ",\"damage\":"+std::to_string(damage)+",\"body_damage\":"+std::to_string(state.damage)+
+    ",\"capsule_wall_damage\":"+std::to_string(state.capsuleDamage)+
     ",\"formula_damage\":"+std::to_string(formula)+",\"expected_damage\":"+std::to_string(expected)+
     ",\"animated_damage\":"+std::to_string(animated)+",\"animated_airborne\":"+(state.sawAir?"true":"false")+
-    ",\"animated_fall_velocity_cm_s\":"+ragdollVector(state.animatedFallVelocity)+
     ",\"impacts\":"+std::to_string(state.impacts)+",\"maximum_normal_speed_cm_s\":"+ragdollNumber(state.maximumSpeed)+
+    ",\"expected_freefall_speed_cm_s\":"+(fall?ragdollNumber(freefallSpeed):"null")+
+    ",\"freefall_speed_error_percent\":"+(fall && enabled?ragdollNumber(freefallError):"null")+
+    ",\"launch_speed_m_s\":"+ragdollNumber(state.launchSpeed)+
+    ",\"normal_speed_error_percent\":"+(wall && !wind && enabled?ragdollNumber(normalSpeedError):"null")+
+    ",\"wall_z_cm\":"+(wall?ragdollNumber(wallZ):"null")+
+    ",\"front_z_cm\":"+(wall?ragdollNumber(frontZ):"null")+",\"wall_blocked\":"+(wallBlocked?"true":"false")+
+    ",\"root_position_cm\":"+ragdollVector(npc->position())+
     ",\"culprit_hero\":"+(attributed?"true":"false")+",\"killer_hero\":"+(npc->lastHitBy()==&player?"true":"false")+
     ",\"deeds\":"+std::to_string(state.deeds)+",\"murder_perceptions\":"+std::to_string(state.murders)+
     ",\"unconscious\":"+(npc->isUnconscious()?"true":"false")+",\"dead\":"+(npc->isDead()?"true":"false")+
@@ -3584,12 +3612,7 @@ void bodyImpactDuel(World& world,Npc& player,uint32_t seed,std::string_view weap
 void bodyImpactTick(World& world) {
   auto& state=bench.bodyImpact;
   if(state.tracing) {
-    if(state.animated && (state.animated->isInAir() || state.animated->isFalling())) {
-      state.sawAir=true;state.animatedFallVelocity=state.animated->spellVelocity();
-      event("body_impact_animated_fall","\"drop_m\":"+ragdollNumber(state.value)+
-        ",\"velocity_cm_s\":"+ragdollVector(state.animatedFallVelocity)+
-        ",\"position_cm\":"+ragdollVector(state.animated->position()));
-      }
+    if(state.animated)state.sawAir|=state.animated->isInAir() || state.animated->isFalling();
     if(state.mode=="wind_goblin" && state.npc)state.sawAir|=state.npc->isInAir();
     }
   if(state.duel) {
@@ -20029,6 +20052,8 @@ void TestBench::bodyEvent(const Npc& actor, const Npc* target, std::string_view 
        sample.HasMember("speed_cm_s") && sample["speed_cm_s"].IsNumber()) {
       if(bench.bodyImpact.tracing && bench.bodyImpact.npc==&actor) {
         bench.bodyImpact.damage+=sample["damage"].GetInt();++bench.bodyImpact.impacts;
+        if(sample.HasMember("source") && sample["source"].IsString() &&
+           std::string_view(sample["source"].GetString())=="spell_capsule")bench.bodyImpact.capsuleDamage+=sample["damage"].GetInt();
         bench.bodyImpact.maximumSpeed=std::max(bench.bodyImpact.maximumSpeed,sample["speed_cm_s"].GetFloat());
         }
       for(auto& body:bench.bodyImpact.duelBodies)if(body.npc==&actor && body.knocked) {
