@@ -11,8 +11,9 @@
 #   memprobe: engine RSS after each step (Linux /proc status, macOS RSS and phys_footprint), and after
 #       each cycle Linux smaps groups or macOS `footprint` categories;
 #       MEMPROBE_PHASES=wave,save,load,spawn,teleport, MEMPROBE_CYCLES=8; no model, no body URL
-#   crime_meet: save 1, native home eviction and a brave victim's Amends approach/payment;
-#       LLM=chatgpt runs only the short compensation scene with the real model
+#   crime_meet: given: Lobart is brave at the later meeting; the required Amends demand uses its rule.
+#       Native home eviction, victim approach and payment; LLM=off via auto;
+#       SAVE=save_slot_1.sav; TIMEOUT=600.
 #   crime_ally: given: Brago attacks the following Cavalorn; Cavalorn stays silent after the murder.
 #       New game, no SAVE; LLM=off via auto. The hero knocks Brago down and finishes him;
 #       murder and crime_side remain in the chronicle.
@@ -189,10 +190,9 @@
 #   cover_subject: given: the cover decisions above; a third asker asks Hilda without a verdict.
 #       Checks the rumor about Hilda, unchanged hero trust and witness warnings by reading the situation
 #       without a model turn, then save/load; LLM=off via auto; SAVE=save_slot_1.sav; TIMEOUT=720.
-#   cheat: Hilda sells silence after a native theft but tells Lobart; dishonest Lobart keeps a later
-#       payment, Vino hears, then honesty 4 pays. Save/load preserves intentions and single outcomes.
-#       LLM=fake; SAVE=save_slot_1.sav; TIMEOUT=720. LLM=chatgpt scripts only the later-payment setup,
-#       records one ordinary real-model refusal response verbatim, then exits.
+#   cheat: given: Hilda sells silence; Lobart twice offers 5 now and 7 later.
+#       Character rules break silence and the dishonest promise, then honesty 4 pays. Checks knowledge,
+#       money and save/load; LLM=off via auto; SAVE=save_slot_1.sav; TIMEOUT=720.
 #   npc_will: character rules start theft, reclamation and accusations near the hero; save/load cooldown;
 #       no model, SAVE=save_slot_1.sav. The scene never commands harm.
 #   npc_far: natural farm routines and greedy cards start a real off-screen chest transfer; the owner
@@ -203,19 +203,16 @@
 #       then steals a world item before brave Lobart, who defeats him and reclaims it. NPC knowledge,
 #       its rumor and save/load are checked; guards are covered by module tests.
 #       no model; SAVE=save_slot_1.sav; TIMEOUT=720; no live model.
-#   npc_director: Vino steals Lobart's chest item before Hilda; the deed becomes Lobart's line to
-#       find the thief, his ask_witness/about and blame finish its goal, then reward and save/load.
-#       LLM=fake; SAVE=save_slot_1.sav; TIMEOUT=720. LLM=chatgpt asks only the ordinary showrunner
-#       once on the same deed, records its line premise or none reason and canon, without building.
-#       GOTHIC_DIRECTOR_ASKS=N asks it N times and lists the hidden challenge kinds of its lines.
-#   frame: unseen hero chest theft, Lobart believes Malak guilty, native reclaim combat finds no goods
-#       and reveals the hero's lie; Hilda's honest testimony about Vino leads to true blame and return.
-#       Save/load restores both cases without duplicates. LLM=fake; SAVE=save_slot_1.sav; TIMEOUT=900.
-#       LLM=chatgpt stops after Lobart's one ordinary answer to «Это Малак взял», belief or refusal.
-#   crime_director: deeds and story responses (docs/crime.md, layer 5), SAVE=save_slot_1.sav.
-#       LLM=fake: unseen chest theft and its return quest, Hilda's initiative and paid silence,
-#       Lobart's learned grievance and Amends payment. LLM=chatgpt: witnessed theft goes to the
-#       real showrunner; records its line premise or none reason. TIMEOUT=900.
+#   npc_director: given: showrunner proposes finding the thief, chains builds a blame goal;
+#       Lobart asks Hilda about Vino and blames him; Hilda's testimony is a given line.
+#       Checks testimony, reward and save/load; LLM=off via auto; SAVE=save_slot_1.sav; TIMEOUT=720.
+#   frame: given: Lobart blames Malak, then asks Hilda about Vino and blames Vino;
+#       Hilda's testimony is a given line. Checks combat, refutation, goods returned and save/load.
+#       LLM=off via auto; SAVE=save_slot_1.sav; TIMEOUT=900.
+#   crime_director: given: showrunner proposes returning the stolen item, chains builds it;
+#       Hilda approaches and sells silence for 25 gold; Amends offers Lobart a fine of 1 gold.
+#       Checks return, silence, concern and payment; LLM=off via auto;
+#       SAVE=save_slot_1.sav; TIMEOUT=900.
 #   crime_law: given: Matteo offers silence for the second theft; community law otherwise uses no model.
 #       LLM=off via auto; SAVE=save_slot_1.sav; TIMEOUT=420.
 #       Matteo witnesses a native theft; Andre stays locked until the next day, charges 50 through

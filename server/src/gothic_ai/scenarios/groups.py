@@ -46,6 +46,11 @@ OFF = {
 }
 
 GIVEN = {
+    "cheat",
+    "frame",
+    "crime_meet",
+    "crime_director",
+    "npc_director",
     "crime_ally",
     "crime_law",
     "crime_talk",
