@@ -1,0 +1,98 @@
+{
+ "format": 1,
+ "add": [
+  {
+   "key": "edda-fire",
+   "kind": "emitter",
+   "position": [
+    2417.0,
+    -112.0,
+    -6257.0
+   ],
+   "yaw_deg": 0.0,
+   "pfx": "FIRE_HOT"
+  },
+  {
+   "key": "edda-coals",
+   "kind": "emitter",
+   "position": [
+    2417.0,
+    -114.0,
+    -6257.0
+   ],
+   "yaw_deg": 0.0,
+   "pfx": "COALGLOW"
+  },
+  {
+   "key": "edda-light",
+   "kind": "light",
+   "position": [
+    2417.0,
+    -105.0,
+    -6257.0
+   ],
+   "yaw_deg": 0.0,
+   "range": 400.0,
+   "color": [
+    194,
+    125,
+    56
+   ]
+  },
+  {
+   "key": "edda-steam",
+   "kind": "emitter",
+   "position": [
+    2421.0,
+    -44.0,
+    -6253.0
+   ],
+   "yaw_deg": 0.0,
+   "pfx": "OWN_POT_STEAM"
+  },
+  {
+   "key": "tripod-2664-steam",
+   "kind": "emitter",
+   "position": [
+    79842,
+    5605.2,
+    34107.8
+   ],
+   "yaw_deg": 0.0,
+   "pfx": "OWN_KETTLE_STEAM"
+  },
+  {
+   "key": "tripod-11721-steam",
+   "kind": "emitter",
+   "position": [
+    53306.3,
+    1774.2,
+    -10438.5
+   ],
+   "yaw_deg": 0.0,
+   "pfx": "OWN_KETTLE_STEAM"
+  },
+  {
+   "key": "tripod-17014-steam",
+   "kind": "emitter",
+   "position": [
+    3469.9,
+    222.7,
+    16239.1
+   ],
+   "yaw_deg": 0.0,
+   "pfx": "OWN_KETTLE_STEAM"
+  },
+  {
+   "key": "tripod-19865-steam",
+   "kind": "emitter",
+   "position": [
+    -1718.6,
+    696.0,
+    -8898.4
+   ],
+   "yaw_deg": 0.0,
+   "pfx": "OWN_KETTLE_STEAM"
+  }
+ ]
+}

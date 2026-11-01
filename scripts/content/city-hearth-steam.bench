@@ -1,0 +1,81 @@
+# city-hearth steam and Edda's fire: Edda's cauldron and the quay tripod, effects drawn (view full, the hero and NPCs hidden), noon and
+# 19:00; a shot, a second 0.7 s later and an 8 s clip each, for the motion of the steam. Cameras from
+# city-hearth-fire.bench (cauldron-poor, tripod-quay); world cm.
+cheat god
+clear 1000000
+overlay off
+view full
+view hide animated morph
+cam lift off
+
+# edda at 12:00
+set time 12 0
+cam look -620.000
+goto pos 2421.000 552.000 -6253.000
+cam world 300.188 -500.000 64.971576
+wait 34
+cam hold
+wait 8000
+set time 12 0
+wait 300
+shot edda-12
+wait 700
+shot edda-12-b
+rec edda-12-clip
+wait 8000
+stop
+wait 300
+
+# tripod at 12:00
+set time 12 0
+cam look -600.000
+goto pos -1688.000 1235.000 -8889.000
+cam world 449.642 -500.000 -170.139651
+wait 34
+cam hold
+wait 8000
+set time 12 0
+wait 300
+shot tripod-12
+wait 700
+shot tripod-12-b
+rec tripod-12-clip
+wait 8000
+stop
+wait 300
+
+# edda at 19:00
+set time 19 0
+cam look -620.000
+goto pos 2421.000 552.000 -6253.000
+cam world 300.188 -500.000 64.971576
+wait 34
+cam hold
+wait 8000
+set time 19 0
+wait 300
+shot edda-19
+wait 700
+shot edda-19-b
+rec edda-19-clip
+wait 8000
+stop
+wait 300
+
+# tripod at 19:00
+set time 19 0
+cam look -600.000
+goto pos -1688.000 1235.000 -8889.000
+cam world 449.642 -500.000 -170.139651
+wait 34
+cam hold
+wait 8000
+set time 19 0
+wait 300
+shot tripod-19
+wait 700
+shot tripod-19-b
+rec tripod-19-clip
+wait 8000
+stop
+wait 300

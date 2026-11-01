@@ -29,6 +29,8 @@ import rigging_set as rig  # noqa: E402
 ROOT = rig.ROOT
 BLENDER_DIR = rig.BLENDER_DIR
 STAGING = rig.STAGING
+LAYER = ROOT / 'data/content/world/NEWWORLD/vobs.d/city-hearth.json'
+PARTICLES = ROOT / 'data/content/particles.d/city-hearth-steam.json'
 BUILD = STAGING / 'city-hearth/build'
 TILES = STAGING / 'city-hearth/tiles'
 BLENDER = rig.BLENDER
@@ -157,6 +159,12 @@ def cmd_pack(args) -> int:
         print(f'{item}: {spec["visual"]} <- {name}, materials {used}')
     (output / 'materials' / 'materials.json').write_text(json.dumps(materials, indent=2) + '\n')
     (output / 'meshes' / 'meshes.json').write_text(json.dumps(meshes, indent=2) + '\n')
+    # fire under Edda's cauldron and steam over the pots on a fire (user, 2026-11-01): a vob layer and own PFX,
+    # kept in git and carried into the set the way building_set.py compose expects them
+    for source, target in ((LAYER, output / 'worlds' / 'NEWWORLD' / 'vobs.d' / LAYER.name),
+                           (PARTICLES, output / 'particles.d' / PARTICLES.name)):
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
     ids = {r['id'] for r in records}
     old = [json.loads(line) for line in REGISTRY.read_text().splitlines()] if REGISTRY.is_file() else []
     REGISTRY.write_text(''.join(json.dumps(r, ensure_ascii=False, sort_keys=True) + '\n'
