@@ -57,10 +57,10 @@ struct WorldView::VobStreaming : std::enable_shared_from_this<VobStreaming> {
   void publish(Chunk& chunk, ObjVisual& visual) {
     if(visual.mesh.published)
       return;
-    const bool wasMissing=!visual.mesh.proto->submeshId.empty() && visual.mesh.view.isEmpty();
+    const bool wasMissing=(!visual.mesh.proto->submeshId.empty() || visual.mesh.proto->skinedNodesCount()!=0) && visual.mesh.view.isEmpty();
     const auto before=ChunkResidency::Clock::now();
     visual.createView();
-    visual.mesh.published=!visual.mesh.view.isEmpty() || visual.mesh.proto->submeshId.empty();
+    visual.mesh.published=!visual.mesh.view.isEmpty() || (visual.mesh.proto->submeshId.empty() && visual.mesh.proto->skinedNodesCount()==0);
     chunk.unpublished-=visual.mesh.published;
     chunk.missing-=wasMissing && !visual.mesh.view.isEmpty();
     auto& stats=residency.vobStats();
@@ -74,7 +74,7 @@ struct WorldView::VobStreaming : std::enable_shared_from_this<VobStreaming> {
   void release(Chunk& chunk, ObjVisual& visual) {
     if(!visual.mesh.published)
       return;
-    chunk.missing+=!visual.mesh.proto->submeshId.empty() && !visual.mesh.view.isEmpty();
+    chunk.missing+=(!visual.mesh.proto->submeshId.empty() || visual.mesh.proto->skinedNodesCount()!=0) && !visual.mesh.view.isEmpty();
     visual.mesh.view={};
     visual.mesh.published=false;
     ++chunk.unpublished;
@@ -512,7 +512,7 @@ void WorldView::addVob(ObjVisual& visual, ChunkId id) {
   auto& chunk=streaming.chunks[{id.x,id.z}];
   chunk.visuals.push_back(&visual);
   chunk.unpublished+=!visual.mesh.published;
-  chunk.missing+=!visual.mesh.proto->submeshId.empty() && visual.mesh.view.isEmpty();
+  chunk.missing+=(!visual.mesh.proto->submeshId.empty() || visual.mesh.proto->skinedNodesCount()!=0) && visual.mesh.view.isEmpty();
   chunk.cursor=0;
   chunk.state=streaming.residency.desired(id,chunk.state);
   if(!streaming.enabled || chunk.state==ChunkResidency::State::Near)
@@ -527,7 +527,7 @@ void WorldView::removeVob(ObjVisual& visual, bool release) {
   if(release)
     streaming.release(chunk,visual);
   chunk.unpublished-=!visual.mesh.published;
-  chunk.missing-=!visual.mesh.proto->submeshId.empty() && visual.mesh.view.isEmpty();
+  chunk.missing-=(!visual.mesh.proto->submeshId.empty() || visual.mesh.proto->skinedNodesCount()!=0) && visual.mesh.view.isEmpty();
   const auto found=std::find(chunk.visuals.begin(),chunk.visuals.end(),&visual);
   *found=chunk.visuals.back();
   chunk.visuals.pop_back();
@@ -729,10 +729,10 @@ MeshObjects::Mesh WorldView::addView(std::string_view visual, int32_t headTex, i
   return MeshObjects::Mesh();
   }
 
-MeshObjects::Mesh WorldView::addView(const ProtoMesh* mesh) {
+MeshObjects::Mesh WorldView::addView(const ProtoMesh* mesh, int32_t material) {
   if(mesh!=nullptr) {
     bool staticDraw = false;
-    return MeshObjects::Mesh(objGroup,*mesh,0,0,0,staticDraw);
+    return MeshObjects::Mesh(objGroup,*mesh,material,0,material,staticDraw);
     }
   return MeshObjects::Mesh();
   }

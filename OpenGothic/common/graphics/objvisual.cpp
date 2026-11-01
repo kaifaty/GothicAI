@@ -242,6 +242,26 @@ void ObjVisual::setVisual(const zenkit::IItem& hitem, World& world, bool staticD
     }
   }
 
+void ObjVisual::setWorldItem(const zenkit::IItem& item, World& world, const Tempest::Matrix4x4& matrix) {
+  cleanup();
+  const auto* proto=Resources::loadMesh(item.visual);
+  if(proto==nullptr)
+    return;
+  setType(M_Mesh);
+  mesh.proto=proto;
+  mesh.worldItem=true;
+  mesh.material=item.material;
+  renderMatrix=matrix;
+  const Tempest::Vec3 position(matrix[3][0],matrix[3][1],matrix[3][2]);
+  if(world.view()!=nullptr && world.chunkResidency()!=nullptr)
+    world.view()->addVob(*this,ChunkId::fromPosition(position.x,position.z));
+  if(!streamView) {
+    mesh.view=world.addView(item);
+    mesh.view.setObjMatrix(matrix);
+    mesh.view.setTextureOwner(position,true);
+    }
+  }
+
 void ObjVisual::setVisual(const asset::VirtualObject& vob, World& world, bool staticDraw, bool enablePhysics) {
   cleanup();
 
@@ -397,10 +417,14 @@ void ObjVisual::setObjMatrix(const Tempest::Matrix4x4& obj) {
   }
 
 void ObjVisual::createView() {
-  mesh.view=streamView->addStaticView(mesh.proto,true);
+  mesh.view=mesh.worldItem ? streamView->addView(mesh.proto,mesh.material) : streamView->addStaticView(mesh.proto,true);
   mesh.view.setWind(mesh.windMode,mesh.windStrength);
   mesh.view.setObjMatrix(fracture && fracture->broken ? hiddenFractureMatrix() : renderMatrix);
-  mesh.view.setTexturePosition(Tempest::Vec3(renderMatrix[3][0],renderMatrix[3][1],renderMatrix[3][2]));
+  const Tempest::Vec3 position(renderMatrix[3][0],renderMatrix[3][1],renderMatrix[3][2]);
+  if(mesh.worldItem)
+    mesh.view.setTextureOwner(position,true);
+  else
+    mesh.view.setTexturePosition(position);
   }
 
 void ObjVisual::setupFracture(World& world, DynamicWorld::Item& body) {
