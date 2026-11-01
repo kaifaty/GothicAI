@@ -86,7 +86,8 @@ Material::Material(const asset::VisualDecal& decal)
   }
 
 Material::Material(const Def::ParticleEffect& src) {
-  tex = Resources::loadTexture(src.vis_name_s,false,false);
+  // content/materials first, as for a mesh: an own particle texture comes with the content
+  tex = Resources::loadMaterialAlbedo(src.vis_name_s);
   loadFrames(src.vis_name_s, src.vis_tex_ani_fps);
 
   //TODO: visTexAniIsLooping
