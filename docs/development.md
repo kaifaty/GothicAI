@@ -172,7 +172,7 @@ cd tts-service && uv run gothic-tts serve --provider openai --fallback none
 cd tts-service && uv run gothic-tts say "Драконы уже здесь." --voice-id xardas --voice "An old man with a deep calm voice" --out /tmp/x.wav
 ```
 
-ИИ-сервер. Ждёт игру на `ws://127.0.0.1:47817` и принимает команды из консоли: `attach`, `goto`, `come`, `ani`, `talk <текст>`, `memory`, `routine`, … Бэкенд LLM выбирается флагом `--llm chatgpt|openai|local|fake`, модель — `--model`. Память NPC хранится в `~/.local/share/gothic-ai/memory.sqlite3` по веткам сохранений; голос пишется с микрофона Mac (`--no-voice` выключает). NPC говорят вслух через TTS-сервис (`--no-tts` оставляет только субтитры).
+ИИ-сервер. Ждёт игру на `ws://127.0.0.1:47817` и принимает команды из консоли: `attach`, `goto`, `come`, `ani`, `talk <текст>`, `memory`, `routine`, … Бэкенд LLM выбирается флагом `--llm chatgpt|openai|local|off`, модель — `--model`. Память NPC хранится в `~/.local/share/gothic-ai/memory.sqlite3` по веткам сохранений; голос пишется с микрофона Mac (`--no-voice` выключает). NPC говорят вслух через TTS-сервис (`--no-tts` оставляет только субтитры).
 
 ```bash
 cd server && uv run gothic-ai serve
