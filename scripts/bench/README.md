@@ -700,7 +700,8 @@ no body rows. `advance <minutes>` moves the clock alone; `sleep <hours>` sleeps 
 a bed (`World::setDayTime`); `hero near|far-visible|far-hidden` places the hero
 within 30 m, beyond 30 m with an open ray from his eyes to a body sight point, or
 beyond 30 m with none; `check <label>` fails the run on the first unmet rule.
-`save created` writes `session-created.sav`.
+`save created` writes `session-created.sav`. A complete run ends with the
+`check sleep-far` sample: `scripts/bench.sh` does not fail a game killed by `TIMEOUT`.
 
 ```bash
 WORLD=NEWWORLD.ZEN scripts/bench.sh body-traces /abs/out/on
