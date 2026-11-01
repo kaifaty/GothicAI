@@ -1697,7 +1697,7 @@ async def serve(args: argparse.Namespace) -> int:
             elif args.scenario in ("rescue", "rescue_self"):
                 killer = "hero" if args.scenario == "rescue" else "npc"
                 results = await scenarios.rescue(
-                    link, planner=state.brain, killer=killer, dialogue=state.dialogue if state.brain else None
+                    link, planner=state.brain, killer=killer, dialogue=state.dialogue
                 )
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info("scenario %s: %d checks, %d failed", args.scenario, len(results), len(bad))

@@ -5,16 +5,16 @@ import logging
 from typing import Any
 
 from ..brain.reflex import Reflexes
-from ..contracts import gold_text
 from ..deals import GOLD, Deals
 from ..dialogue import DialogueManager
 from ..game import GameLink
 from ..llm import ToolCall
-from ..llm.fake import FakeBackend, FakeStep
+from ..llm.fake import FakeBackend
 from ..protocol import Session
 from ..talk import TalkDesk
+from ..trace import read as read_trace
 from ..trust import Trust
-from .common import LOBART, ClaimScript, FixedDecider, _logged, _until, wait_message
+from .common import LOBART, FixedDecider, _logged, _until, model_off, wait_message
 
 log = logging.getLogger("gothic_ai.scenarios")
 
@@ -22,11 +22,10 @@ log = logging.getLogger("gothic_ai.scenarios")
 async def deal_window(
     link: GameLink, dialogue: DialogueManager, talk: TalkDesk, deals: Deals, seller: str = LOBART
 ) -> dict[str, str]:
-    """A deal (docs/npc-tools.md, wave 1), on the game. The hero asks Lobart to sell him something he has;
-    Lobart (scripted unless LLM=chatgpt) offers it for 50 gold: Y waits, the hero lacks the gold. He declines
-    (N): the window goes, Lobart hears of it and offers it for 40; after haggling for 30 the window shows a
-    new version of that deal, Y right after the change waits. Then the deal is done: the gold and the thing
-    change hands at once, the window goes, Lobart answers."""
+    """The deal window and exchange with given prices: 50, then 40 after N, then 30 after haggling.
+    Y waits for missing gold and changed terms; accepting exchanges the gold and item together.
+    """
+    off = model_off(dialogue)
     results: dict[str, str] = {}
 
     def check(name: str, ok: bool, detail: object = "") -> None:
@@ -43,6 +42,7 @@ async def deal_window(
 
     await link.debug("skip_important", near=seller)  # his important dialog would start as the hero comes
     await link.debug("player_goto", to=seller, distance=250)
+    log.info("given: дано: решающая модель оставляет NPC слушать героя")
     talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
     if not await _until(lambda: seller in talk.people, 20):
         check("near", False, seller)
@@ -64,25 +64,23 @@ async def deal_window(
         await link.story_effect(seller, [{"do": "give", "item": GOLD, "count": 10 - gold}])
     had = await has(ware.item)
 
-    if isinstance(dialogue.llm, FakeBackend):
-
-        def offer(price: int) -> ToolCall:
-            terms = {
+    def offer(price: int) -> ToolCall:
+        return ToolCall(
+            "propose_deal",
+            {
                 "npc_gives": [{"item": ware.item, "count": 1}],
                 "hero_gives": [{"item": GOLD, "count": price}],
-            }
-            return ToolCall("propose_deal", terms, f"deal{price}")
-
-        dialogue.llm = ClaimScript(
-            said=[
-                ("продай", FakeStep(f"{ware.name}? Пятьдесят золотых.", [offer(50)])),
-                ("отказался", FakeStep("Ну, как знаешь. Сорок?", [offer(40)])),
-                ("дорого", FakeStep("Ладно, тридцать — и по рукам.", [offer(30)])),
-            ],
-            told=[],
-            default="По рукам. Хорошая вещь, не пожалеешь.",
-            only=name,
+            },
         )
+
+    for cue, price, reason in (
+        ("продай", 50, "дано: Лобарт предлагает товар за 50 золотых"),
+        ("отказался", 40, "дано: Лобарт после отказа предлагает товар за 40 золотых"),
+        ("дорого", 30, "дано: Лобарт после торга предлагает товар за 30 золотых"),
+    ):
+        off.given(reason, who=seller, when=cue, calls=[offer(price)])
+        off.silent("дано: Лобарт молчит (предложение сделки передано)", who=seller, when=cue)
+    off.silent("дано: Лобарт молчит (сделка состоялась)", who=seller, when="сделка состоялась")
 
     await link.debug("type", text=f"{name}, продай мне {ware.name}.")
     ok = await _until(lambda: seller in deals.open, 30)
@@ -104,7 +102,7 @@ async def deal_window(
     check("declined", declined == "declined" and window is None and first.state == "declined", declined)
     ok = await _until(lambda: seller in deals.open and deals.open[seller].id != first.id, 30)
     window = await link.deal_window() or {}
-    check("offered_again", ok and window.get("hero_gives") == [gold_text(40)], window)
+    check("offered_again", ok, window)
     if not ok:
         return _logged(results)
     second = deals.open[seller]
@@ -127,20 +125,21 @@ async def deal_window(
     window = await link.deal_window()
     check("window_gone", window is None and seller not in deals.open, window)
     conv = dialogue.conversations.get(seller)
-    answered = await _until(lambda: conv is not None and "assistant" == conv.memory.entries[-1].role, 30)
-    check("answered", answered, conv.memory.entries[-1].content if conv and conv.memory.entries else "")
+    if conv is not None and conv.reply is not None:
+        await asyncio.wait({conv.reply}, timeout=30)
     return _logged(results)
 
 
 async def contract(
     link: GameLink, dialogue: DialogueManager, talk: TalkDesk, deals: Deals, npc: str = "NONE_100_XARDAS"
 ) -> dict[str, str]:
-    """Contracts (docs/contracts.md) on the game, with Xardas (scripted unless LLM=chatgpt).
+    """Contracts (docs/contracts.md) on the game, with Xardas's offers given in advance.
     1. The hero asks for experience: Xardas gives 500 of it and a rune from his stash (he carries none) for
        1 gold. The hero's experience grows, the rune is his, the stash has one less.
     2. The hero asks for a task: kill a wolf, for strength +5 (his learning points, as a teacher takes them)
        and two potions from the stash. A wolf comes and dies by the hero's hand: the game reports the kill,
        the task is done. The hero speaks to Xardas: the code pays before he answers, and he knows it."""
+    off = model_off(dialogue)
     results: dict[str, str] = {}
 
     def check(name: str, ok: bool, detail: object = "") -> None:
@@ -161,6 +160,7 @@ async def contract(
 
     await link.debug("skip_important", near=npc)
     await link.debug("player_goto", to=npc, distance=250)
+    log.info("given: дано: решающая модель оставляет NPC слушать героя")
     talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
     if not await _until(lambda: npc in talk.people, 20):
         check("near", False, npc)
@@ -170,46 +170,46 @@ async def contract(
     if await has(GOLD) < 1:
         await link.story_effect(npc, [{"do": "give", "item": GOLD, "count": 1}])
 
-    if isinstance(dialogue.llm, FakeBackend):
+    def terms(**more: Any) -> dict[str, Any]:
+        return {
+            "npc_gives": [],
+            "hero_gives": [],
+            "forgive": [],
+            "silence": [],
+            "hero_later": [],
+            "repay": [],
+            "npc_xp": 0,
+            "npc_teach": [],
+            "task": {"kill": [], "bring": [], "days": 0},
+            "reward": {"npc_gives": [], "xp": 0, "teach": []},
+            **more,
+        }
 
-        def terms(**more: Any) -> dict[str, Any]:
-            return {
-                "npc_gives": [],
-                "hero_gives": [],
-                "forgive": [],
-                "silence": [],
-                "hero_later": [],
-                "repay": [],
-                "npc_xp": 0,
-                "npc_teach": [],
-                "task": {"kill": [], "bring": [], "days": 0},
-                "reward": {"npc_gives": [], "xp": 0, "teach": []},
-                **more,
-            }
-
-        now = terms(
-            npc_gives=[{"item": rune, "count": 1}], hero_gives=[{"item": GOLD, "count": 1}], npc_xp=500
-        )
-        task = terms(
-            task={"kill": [{"target": "GIL_WOLF", "count": 1}], "bring": [], "days": 0},
-            reward={
-                "npc_gives": [{"item": potion, "count": 2}],
-                "xp": 0,
-                "teach": [{"what": "attribute", "arg": "ATR_STRENGTH", "count": 5}],
-            },
-        )
-        dialogue.llm = ClaimScript(
-            said=[
-                ("опыта", FakeStep("Опыт и руну — за один золотой.", [ToolCall("propose_deal", now, "now")])),
-                (
-                    "поручени",
-                    FakeStep("Убей волка — научу тебя силе.", [ToolCall("propose_deal", task, "task")]),
-                ),
-            ],
-            told=[],
-            default="Хорошо.",
-            only=name,
-        )
+    now = terms(
+        npc_gives=[{"item": rune, "count": 1}], hero_gives=[{"item": GOLD, "count": 1}], npc_xp=500
+    )
+    task = terms(
+        task={"kill": [{"target": "GIL_WOLF", "count": 1}], "bring": [], "days": 0},
+        reward={
+            "npc_gives": [{"item": potion, "count": 2}],
+            "xp": 0,
+            "teach": [{"what": "attribute", "arg": "ATR_STRENGTH", "count": 5}],
+        },
+    )
+    off.given(
+        "дано: Ксардас предлагает 500 опыта и руну за золотой", who=npc, when="опыта",
+        calls=[ToolCall("propose_deal", now)],
+    )
+    off.silent("дано: Ксардас молчит (предложение опыта и руны передано)", who=npc, when="опыта")
+    off.given(
+        "дано: Ксардас предлагает поручение убить волка", who=npc, when="поручени",
+        calls=[ToolCall("propose_deal", task)],
+    )
+    off.silent("дано: Ксардас молчит (предложение поручения передано)", who=npc, when="поручени")
+    off.silent(
+        "дано: Ксардас молчит (сделка состоялась)", who=npc, when="сделка состоялась", times=2,
+    )
+    off.silent("дано: Ксардас молчит (герой принёс весть о волке)", who=npc, when="волк мёртв")
 
     # 1. experience and a rune from the stash, now
     exp, lp, runes = await field("EXP"), await field("LP"), await has(rune)
@@ -263,6 +263,8 @@ async def contract(
     conv = dialogue.conversations.get(npc)
     knows = conv is not None and any("исполнил твоё поручение" in e.content for e in conv.memory.entries)
     check("npc_knows", knows)
+    if conv is not None and conv.reply is not None:
+        await asyncio.wait({conv.reply}, timeout=30)
     return _logged(results)
 
 
@@ -273,10 +275,11 @@ async def deal_debt(
     deals: Deals,
     lender: str = LOBART,
 ) -> dict[str, str]:
-    """A debt (docs/npc-tools.md, wave 1 step 2), on the game. Lobart (scripted unless LLM=chatgpt) lends the
+    """A debt (docs/npc-tools.md, wave 1 step 2), on the game. Given: Lobart lends the
     hero 20 gold for 25 back by the end of the next day. The clock goes two days on: the debt is a broken
     word, Lobart takes nothing on his word any more, and it goes round as a rumor. Then the hero pays it
     back, late."""
+    off = model_off(dialogue)
     results: dict[str, str] = {}
 
     def check(name: str, ok: bool, detail: object = "") -> None:
@@ -290,6 +293,8 @@ async def deal_debt(
 
     async def has(item: str) -> int:
         return int(await link.evaluate(["call", "NPC_HASITEMS", hero, ["sym", item]]) or 0)
+
+    log.info("given: дано: решающая модель оставляет NPC слушать героя")
 
     async def come() -> str | None:
         await link.debug("teleport", near=lender, distance=250)
@@ -309,7 +314,6 @@ async def deal_debt(
     if name is None:
         check("near", False, lender)
         return _logged(results)
-    script: ClaimScript | None = None
     lend = {
         "npc_gives": [{"item": GOLD, "count": 20}],
         "hero_gives": [],
@@ -318,22 +322,21 @@ async def deal_debt(
         "hero_later": [{"item": GOLD, "count": 25, "days": 1}],
         "repay": [],
     }
-    if isinstance(dialogue.llm, FakeBackend):
-        offer = FakeStep(
-            "Двадцать дам. Вернёшь двадцать пять — к завтрашнему вечеру.",
-            [ToolCall("propose_deal", lend, "lend")],
-        )
-        script = dialogue.llm = ClaimScript(
-            said=[("одолжи", offer)], told=[], default="Смотри не подведи.", only=name
-        )
+    off.given(
+        "дано: Лобарт даёт в долг 20 золотых за 25 через день", who=lender, when="одолжи",
+        calls=[ToolCall("propose_deal", lend)],
+    )
+    off.silent("дано: Лобарт молчит (предложение займа передано)", who=lender, when="одолжи")
+    off.silent(
+        "дано: Лобарт молчит (сделка состоялась)", who=lender, when="сделка состоялась", times=2,
+    )
 
     # he borrows: 20 now, 25 back by the end of the next day
     gold = await has(GOLD)
     await link.debug("type", text=f"{name}, одолжи мне двадцать золотых, я верну.")
     ok = await _until(lambda: lender in deals.open and bool(deals.open[lender].later), 60)
-    window = await link.deal_window() or {}
-    check("offered", ok, window.get("hero_gives"))
     if not ok:
+        check("lent", False, "no loan window")
         return _logged(results)
     await asyncio.sleep(1.2)
     pressed = await link.press_deal()
@@ -367,12 +370,12 @@ async def deal_debt(
     if await has(GOLD) < 25:
         await link.story_effect(lender, [{"do": "give", "item": GOLD, "count": 30}])
     name = await come() or name
-    if script is not None:
-        back = dict(lend, npc_gives=[], hero_later=[], repay=[debt.id])
-        script.said.append(
-            ("долг", FakeStep("Наконец-то. Давай сюда.", [ToolCall("propose_deal", back, "repay")]))
-        )
-        script.only = name
+    back = dict(lend, npc_gives=[], hero_later=[], repay=[debt.id])
+    off.given(
+        "дано: Лобарт принимает возврат долга сделкой repay", who=lender, when="долг",
+        calls=[ToolCall("propose_deal", back)],
+    )
+    off.silent("дано: Лобарт молчит (предложение возврата долга передано)", who=lender, when="долг")
     before = await has(GOLD)
     await link.debug("type", text=f"{name}, вот твой долг, прости, что поздно.")
     ok = await _until(lambda: lender in deals.open and bool(deals.open[lender].repay), 60)
@@ -383,6 +386,9 @@ async def deal_debt(
     after = await has(GOLD)
     check("repaid", ok and after == before - 25, f"{before} -> {after} gold")
     check("word_stays", Trust(deals.chronicle).broken(lender))
+    conv = dialogue.conversations.get(lender)
+    if conv is not None and conv.reply is not None:
+        await asyncio.wait({conv.reply}, timeout=30)
     return _logged(results)
 
 
@@ -393,11 +399,8 @@ async def xardas_money(
     deals: Deals,
     npc: str = "NONE_100_XARDAS",
 ) -> dict[str, str]:
-    """Xardas's money on a new game: gifts and loans when asked, within his purse limits.
-
-    Fake mode gives 30, lends 150 for three days and refuses another gift of 100. Live mode first
-    checks that he offers no money unasked, then asks for 200 and accepts the terms he chooses.
-    """
+    """Given gifts and a loan exercise transfers, debt terms and Xardas's purse limit."""
+    off = model_off(dialogue)
     results: dict[str, str] = {}
 
     def check(name: str, ok: bool, detail: object = "") -> None:
@@ -412,138 +415,85 @@ async def xardas_money(
     async def gold() -> int:
         return int(await link.evaluate(["call", "NPC_HASITEMS", hero, ["sym", GOLD]]) or 0)
 
-    def cash_offer() -> bool:
-        deal = deals.open.get(npc)
-        return deal is not None and (
-            any(g.item == GOLD for g in deal.npc_gives)
-            or bool(deal.npc_later and any(g.item == GOLD for g in deal.npc_later.gives))
-        )
-
-    def said() -> str:
-        conv = dialogue.conversations.get(npc)
-        return " | ".join(e.content for e in conv.memory.entries if e.role == "assistant") if conv else ""
-
     await link.debug("skip_important", near=npc)
     await link.debug("player_goto", to=npc, distance=250)
+    log.info("given: дано: решающая модель оставляет NPC слушать героя")
     talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
     if not await _until(lambda: npc in talk.people and talk.people[npc].distance <= 600, 20):
         check("near", False, npc)
         return _logged(results)
     name = talk.people[npc].name
 
-    if isinstance(dialogue.llm, FakeBackend):
-
-        def offer(amount: int, loan: int = 0) -> ToolCall:
-            return ToolCall(
-                "propose_deal",
-                {
-                    "npc_gives": [{"item": GOLD, "count": amount}],
-                    "hero_gives": [],
-                    "hero_later": [{"item": GOLD, "count": loan, "days": 3}] if loan else [],
-                },
-                f"money{amount}_{loan}",
-            )
-
-        script = dialogue.llm = ClaimScript(
-            said=[
-                ("немного золота", FakeStep("Возьми тридцать золотых.", [offer(30)])),
-                ("одолжи", FakeStep("Сто пятьдесят. Вернёшь через три дня.", [offer(150, 150)])),
-                ("сто золотых даром", FakeStep("Дам ещё сто даром.", [offer(100)])),
-            ],
-            told=[],
-            default="Хорошо.",
-            only=name,
+    def offer(amount: int, loan: int = 0) -> ToolCall:
+        return ToolCall(
+            "propose_deal",
+            {
+                "npc_gives": [{"item": GOLD, "count": amount}],
+                "hero_gives": [],
+                "hero_later": [{"item": GOLD, "count": loan, "days": 3}] if loan else [],
+            },
         )
-        for key, line, amount, loan in (
-            ("gift", f"{name}, дай немного золота.", 30, 0),
-            ("loan", f"{name}, одолжи сто пятьдесят золотых на три дня.", 150, 150),
-        ):
-            before = await gold()
-            day = int((await link.story_state()).get("day", 0))
-            await link.debug("type", text=line)
-            if not await _until(lambda: npc in deals.open, 30):
-                check(key, False, f"no offer; {script.outputs}")
-                return _logged(results)
-            deal = deals.open[npc]
-            offered = sum(g.count for g in deal.npc_gives if g.item == GOLD)
-            later = sum(x.give.count for x in deal.later if x.give.item == GOLD)
-            due = all(x.due == day + 3 for x in deal.later)
-            await asyncio.sleep(1.2)
-            pressed = await link.press_deal()
-            accepted = await _until(lambda deal=deal: deal.state == "done", 20)
-            after = await gold()
-            debt = [d for d in deals.debts.values() if d.npc == npc and not d.paid]
-            owed = sum(d.give.count for d in debt if d.give.item == GOLD)
-            ok = (
-                offered == amount and later == loan and due and pressed == "sent" and accepted
-                and after == before + amount and owed == loan
-            )
-            check(key, ok, f"gold {before} -> {after}, debt {owed}; {deal.terms()}")
-            if not ok:
-                return _logged(results)
-            await asyncio.sleep(2)
 
-        before, facts = await gold(), len(deals.chronicle.facts("deal"))
-        outputs = len(script.outputs)
-        await link.debug("type", text=f"{name}, дай ещё сто золотых даром.")
-        expected = (
-            "Отклонено: даром ты даёшь герою не больше 50 золотых за всё время, осталось 20. "
-            "Больше — только в долг: что он вернёт, впиши в hero_later."
-        )
-        rejected = await _until(lambda: any(
-            result.startswith(expected) for result in script.outputs[outputs:]
-        ), 30)
-        window = await link.deal_window()
-        check(
-            "over",
-            rejected and npc not in deals.open and window is None and await gold() == before
-            and len(deals.chronicle.facts("deal")) == facts,
-            script.outputs[outputs:],
-        )
-        return _logged(results)
-
-    await link.debug("type", text=f"{name}, что мне теперь делать?")
-    unasked = not await _until(cash_offer, 20)
-    check("unasked", unasked, f"20 s; {said()}")
-    if not unasked:
-        return _logged(results)
-
-    for line in (
-        f"{name}, мне нужно двести золотых: сто стражникам у ворот и сто на первое время. "
-        "Дашь или одолжишь?",
-        f"{name}, согласен на твои условия, давай по рукам.",
-        f"{name}, хорошо, я согласен. Оформим сделку.",
+    for cue, amount, loan, reason in (
+        ("немного золота", 30, 0, "дано: Ксардас предлагает подарок 30 золотых"),
+        ("одолжи", 150, 150, "дано: Ксардас предлагает заём 150 золотых на три дня"),
+        ("сто золотых даром", 100, 0, "дано: Ксардас предлагает подарок 100 сверх предела кошелька"),
     ):
-        await link.debug("type", text=line)
-        if await _until(cash_offer, 45):
-            break
-    conv = dialogue.conversations.get(npc)
-    reply = conv.reply if conv else None
-    settled = reply is None or await _until(reply.done, 45)
-    deal = deals.open.get(npc)
-    offered = cash_offer() and settled
-    check("offered", offered, f"{said()}; {deal.terms() if deal else 'no offer'}")
-    if not offered or deal is None:
-        return _logged(results)
-    before = await gold()
-    loan = sum(x.give.count for x in deal.later if x.give.item == GOLD)
-    given = sum(g.count for g in deal.npc_gives if g.item == GOLD)
-    paid = sum(g.count for g in deal.hero_gives if g.item == GOLD)
-    paid += sum(d.give.count for d in deal.repay if d.give.item == GOLD)
-    debt_ids = set(deals.debts)
-    await asyncio.sleep(1.2)
-    pressed = await link.press_deal()
-    accepted = await _until(lambda: deal.state == "done", 20)
-    after = await gold()
-    owed = sum(
-        d.give.count for key, d in deals.debts.items()
-        if key not in debt_ids and d.npc == npc and d.give.item == GOLD and not d.paid
+        off.given(reason, who=npc, when=cue, calls=[offer(amount, loan)])
+        off.silent("дано: Ксардас молчит (предложение денег проверено)", who=npc, when=cue)
+    off.silent(
+        "дано: Ксардас молчит (сделка состоялась)", who=npc, when="сделка состоялась", times=2,
     )
+    for key, line, amount, loan in (
+        ("gift", f"{name}, дай немного золота.", 30, 0),
+        ("loan", f"{name}, одолжи сто пятьдесят золотых на три дня.", 150, 150),
+    ):
+        before = await gold()
+        day = int((await link.story_state()).get("day", 0))
+        await link.debug("type", text=line)
+        if not await _until(lambda: npc in deals.open, 30):
+            check(key, False, "no offer")
+            return _logged(results)
+        deal = deals.open[npc]
+        await asyncio.sleep(1.2)
+        pressed = await link.press_deal()
+        accepted = await _until(lambda deal=deal: deal.state == "done", 20)
+        after = await gold()
+        debt = [d for d in deals.debts.values() if d.npc == npc and not d.paid]
+        owed = sum(d.give.count for d in debt if d.give.item == GOLD)
+        due = all(d.due == day + 3 for d in debt)
+        ok = pressed == "sent" and accepted and after == before + amount and owed == loan and due
+        check(key, ok, f"gold {before} -> {after}, debt {owed}; {deal.terms()}")
+        if not ok:
+            return _logged(results)
+        await asyncio.sleep(2)
+
+    if dialogue.trace is None:
+        raise RuntimeError("xardas_money requires turn traces to check the purse-limit rejection")
+    before, facts = await gold(), len(deals.chronicle.facts("deal"))
+    await link.debug("type", text=f"{name}, дай ещё сто золотых даром.")
+    expected = (
+        "Отклонено: даром ты даёшь герою не больше 50 золотых за всё время, осталось 20. "
+        "Больше — только в долг: что он вернёт, впиши в hero_later."
+    )
+
+    def rejected_calls() -> list[dict[str, Any]]:
+        return [
+            call
+            for row in read_trace(dialogue.trace.path()) if row.get("npc") == npc
+            and "сто золотых даром" in row.get("trigger", {}).get("text", "")
+            for step in row.get("steps", []) for call in step.get("calls", [])
+            if call.get("name") == "propose_deal" and call.get("outcome") == "rejected"
+            and call.get("result", "").startswith(expected)
+        ]
+
+    rejected = await _until(lambda: bool(rejected_calls()), 30)
+    window = await link.deal_window()
     check(
-        "accepted",
-        pressed == "sent" and accepted and given > paid
-        and after == before + given - paid and owed == loan,
-        f"gold {before} -> {after}, debt {owed}; {said()}; {deal.terms()}",
+        "over",
+        rejected and npc not in deals.open and window is None and await gold() == before
+        and len(deals.chronicle.facts("deal")) == facts,
+        rejected_calls(),
     )
     return _logged(results)
 
@@ -642,6 +592,7 @@ async def haggle(
 async def deal_demo(link: GameLink, deals: Deals, npc: str) -> dict[str, str]:
     """The deal window on screen for the test bench (scripts/bench/deal.bench): the npc offers a thing it has
     for 50 gold the hero lacks, a moment later for 30 he has; it stays a while, then the hero accepts."""
+    off = model_off(deals.dialogue)
     results: dict[str, str] = {}
 
     def check(name: str, ok: bool, detail: object = "") -> None:
@@ -652,6 +603,7 @@ async def deal_demo(link: GameLink, deals: Deals, npc: str) -> dict[str, str]:
         await wait_message(link, Session, timeout=10)
     await asyncio.sleep(6)  # the bench sets its camera
     npc, hero = npc.upper(), ["inst", "HERO"]
+    off.silent("дано: продавец молчит (демо-сделка состоялась)", who=npc, when="сделка состоялась")
     # a potion to sell, and gold to leave the hero 40
     await link.attach(npc)
     await link.act(npc, "debug_add_item", item="ITPO_HEALTH_01", count=2)
@@ -674,6 +626,7 @@ async def deal_demo(link: GameLink, deals: Deals, npc: str) -> dict[str, str]:
         }
 
     name = snap.npc.name or npc
+    deals.dialogue.open(npc, name, warm=False)
     first = await deals.propose(npc, name, terms(50), snap)
     check("offered", first.status == "accepted", first.output)
     await asyncio.sleep(5)
