@@ -15,7 +15,8 @@
 #       LLM=chatgpt runs only the short compensation scene with the real model
 #   crime_ally: new game, no SAVE, LLM=fake; Brago attacks the following Cavalorn, the hero knocks him
 #       down and finishes him; murder and crime_side remain in the chronicle and Cavalorn answers
-#   bandit_parley: new game, LLM=fake; Brago's first fight is rejected, an ultimatum runs its course;
+#   bandit_parley: given: Brago attacks without cause, demands 100 gold, grants four hours of peace,
+#       then attacks on drawn weapons; his mate tries attacking during the truce. New game, no SAVE;
 #       Y pays 100 gold for four hours of peace with the cave gang, including 1015; no attack for 20 s,
 #       then drawing a weapon breaks the truce and Brago attacks
 #   bandit_hold: new game, no SAVE, no model; ranger bandits and a scripted party member stay quiet
@@ -36,8 +37,9 @@
 #       text and voice delays, then Cavalorn kills a beast and speaks its native script SVM.
 #       An unavailable QUICK_URL falls back after three errors; TTS=fake|inworld.
 #       GOTHIC_NO_SVM_LINES=1 keeps native speech only
-#   bandit_bounty: new game, LLM=fake; Brago refuses a secret without leverage, sells Dexter's name
-#       for 150 gold through Y, updates the vanilla leaflet quest and starts leading to CASTLEMINE_HUT
+#   bandit_bounty: given: Brago tries revealing without leverage, sells and reveals Dexter's name, then guides.
+#       New game, no SAVE; the code rejects disclosure without leverage, charges 150 gold through Y,
+#       updates the vanilla leaflet quest and starts leading to CASTLEMINE_HUT; LLM=off via auto.
 #   m0: no model; takes Xardas over, walks him around and returns him to his routine
 #   m1: Xardas answers a player question line by line (LLM backend: LLM=fake|chatgpt|local)
 #   websocket: Lobart and Hilda speak through Responses against an in-process fake server: per-npc
@@ -62,12 +64,13 @@
 #       a companion target in the fight summary, natural fight end and confirmed release
 #   neural-group: no model; three one-handed bandits fight the hero and his swordsman companion under P30 at once;
 #       each gets >=10 decisions, no fallback, release <=2 s, engine step p99 <=2000 us
-#   neural-talk: a non-bandit swordsman attacks after words (AR_NONE), knocks the hero out alive, releases
+#   neural-talk: given: a swordsman fights; a bandit gives ten seconds to leave and attacks on expiry.
+#       New game, no SAVE; the swordsman attacks (AR_NONE), knocks the hero out alive, releases
 #       P30 and returns to his routine; the hero gets up. Then a hostile bandit gives a ten-second
 #       ultimatum, attacks after its expiry, loses the
 #       fleeing hero, returns to his routine, reattacks or talks again and starts a fresh fight. After
 #       return_to_second_fight, >=20 decisions or 20 s trigger another hero flight; fight_end_clean checks
-#       target_lost/npc_unavailable, release <=2 s and no lease/body/watch after 2 s; LLM=fake
+#       target_lost/npc_unavailable, release <=2 s and no lease/body/watch after 2 s; LLM=off via auto
 #       one hero hit breaks 15 s without target damage; stall_broken reports count and seconds as P30
 #       diagnostics. Only the separate knockout requires hero_down within 30 s after that hit;
 #       wildlife is cleared and the swordsman parked away
@@ -79,10 +82,14 @@
 #       GOTHIC_BODY_POLICY=service with GOTHIC_BODY_URL uses service data and p95/p99 <=20 ms.
 #       GOTHIC_SOAK_CONTROL=1 uses native combat with --no-neural-body and needs no body URL.
 #       Samples in neural_soak.jsonl; records 25 s of the first wave when normal-clock bench is available
-#   rescue: the hero next to the shepherd Maleth, a wolf attacks him: the body reacts (a call for help
-#       runs from the wolf), words follow on the move; the hero kills the wolf (monster_killed): the shepherd
-#       reacts and speaks again (the live models with DECIDER_URL and LLM, or a fixed stand-in and scripted
-#       words). rescue_self: the shepherd kills the wolf himself and says a word about it
+#   rescue: given: Maleth calls for help and thanks the hero after a wolf attacks him; speech is silent.
+#       New game, no SAVE; body/script reactions, decision timing, kill and ended threat are checked.
+#   rescue_self: given: Maleth calls for help and comments after killing the wolf himself; speech is silent.
+#       New game, no SAVE; the same body/script and threat checks as rescue; LLM=off via auto.
+#   companion: given: Cavalorn goes to XARDAS_BANDITS; a bandit demands payment then attacks.
+#       New game, no SAVE; follow, arrival, party defence and experience are checked; LLM=off via auto.
+#   calm: given: a bandit demands payment, attacks, then calms on the hero's request.
+#       New game, no SAVE; routing and stopped native combat are checked; LLM=off via auto.
 #   wolf: no model; wolves hear the hero (docs/beasts.md) on the road below Xardas's tower: a wolf growls at him, waits
 #       for his words while he holds the talk key, is soothed, sits, lets him pass and be; hostility, «Стой!»,
 #       walking right up to a calm one, a threat, a failed roll, and one talked down mid-bite (the tone is the
@@ -229,7 +236,7 @@
 #       and the cup's return. Finally deeds:false leaves theft to vanilla without a held perception.
 #       Community guards are covered by unit tests. TIMEOUT=420; no behavioral model.
 #   quest_law: a book quest advances on Matteo's stolen item while city law keeps its own case;
-#       LLM=fake, SAVE=save_slot_1.sav, TIMEOUT=600. Save/load keeps the quest and law; the giver
+#       no model, SAVE=save_slot_1.sav, TIMEOUT=600. Save/load keeps the quest and law; the giver
 #       pays before Andre's fine, completing the quest never forgives the theft, and paying the fine
 #       never repeats the quest reward. Native theft perceptions stay enabled.
 #   requires: a book quest depending on vanilla (docs/director.md, stage 5, layer 2), no model: Hilda's
@@ -300,7 +307,8 @@
 #       Group 2, LLM=off via auto; SAVE=save_slot_1.sav.
 #   amends_deal: given: the same exposure and fine; Andre offers forgiveness for 50 gold through a deal.
 #       The hero accepts it in conversation. Group 2, LLM=off via auto; SAVE=save_slot_1.sav.
-#   debt: Lobart lends the hero 20 gold for 25 back by the end of the next day; two days on the debt is a
+#   debt: given: Lobart lends 20 gold for 25 back the next day and accepts a repayment deal.
+#       SAVE=save_slot_1.sav; two days on the debt is a
 #       broken word (trust) and goes round as a rumor; then the hero pays it back, late (wave 1 step 2)
 #   wrath: given: Xardas takes offense at severity 1, 2 and 3, unforgivable on the third insult.
 #       He kills the hero with a spell and raises him as a skeleton (docs/xardas-wrath.md).
@@ -327,13 +335,16 @@
 #       those with a card are skipped; needs LLM=chatgpt and a long TIMEOUT for all of them
 #   haggle: live only (LLM=chatgpt): the hero offers the same silver cup to Canthar (greedy by his card) and
 #       Lutero (fairer) and asks for more: the greedy one should offer less (wave 1 step 3)
-#   deal: the hero asks Lobart to sell him something; Lobart offers it for 50 gold (model scripted with
-#       LLM=fake): Y waits without the gold; the hero declines (N), Lobart offers it for 40, then 30 after
+#   deal: given: Lobart offers goods for 50 gold, 40 after refusal and 30 after haggling.
+#       SAVE=save_slot_1.sav; Y waits without the gold; the hero declines (N), then
 #       haggling: the deal window shows the new version, Y waits right after the change, then the deal is
-#       done and Lobart answers (docs/npc-tools.md, wave 1)
-#   xardas_money: new game, no SAVE; LLM=fake: Xardas gives 30 gold, lends 150 for three days, refuses
-#       another gift of 100; LLM=chatgpt: no gold offer for 20 s unasked, then the hero asks for 200 and
-#       accepts Xardas's chosen terms; the result includes his words and the deal's terms
+#       done (docs/npc-tools.md, wave 1); LLM=off via auto.
+#   contract: given: Xardas offers 500 experience and a rune for one gold, then a contract to kill a wolf.
+#       New game, no SAVE; deal validation and window are checked; LLM=off via auto.
+#   xardas_money: given: Xardas gives 30 gold, lends 150 for three days, then offers another gift of 100.
+#       New game, no SAVE; transfers, debt and wallet rejection are checked; LLM=off via auto.
+#   deal_demo: given: Xardas stays silent after the bench's direct Deals.propose offer is accepted.
+#       New game, no SAVE; deal-window demo for scripts/bench/deal.bench; LLM=off via auto.
 #   graph: the story graph decides which dialogs an npc offers (docs/story-graph.md, stage 3): switching a
 #       dialog off, adding a condition and a dialog of the director's own, keeping that across save/load;
 #       the game checks every script condition against its lifted form ("[story] check" in game.log)
@@ -444,8 +455,8 @@ if [[ ( "$SCENARIO" == bandit_hold || "$SCENARIO" == death_load ) && -n "${SAVE:
   echo "scenario $SCENARIO requires a new game (unset SAVE)" >&2
   exit 2
 fi
-if [[ ( "$SCENARIO" == bandit_parley || "$SCENARIO" == bandit_bounty ) && ( ( "$LLM" != fake && "$LLM" != auto ) || -n "${SAVE:-}" ) ]]; then
-  echo "scenario $SCENARIO requires LLM=fake and a new game (unset SAVE)" >&2
+if [[ ( "$SCENARIO" == bandit_parley || "$SCENARIO" == bandit_bounty ) && -n "${SAVE:-}" ]]; then
+  echo "scenario $SCENARIO requires a new game (unset SAVE)" >&2
   exit 2
 fi
 if [[ "$SCENARIO" == feats && ( ( "$LLM" != fake && "$LLM" != chatgpt && "$LLM" != auto ) || -n "${SAVE:-}" ) ]]; then

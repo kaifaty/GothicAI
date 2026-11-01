@@ -13,10 +13,15 @@ from gothic_ai.llm.off import ModelOff, OffBackend
 
 @pytest.mark.parametrize(("scenario", "llm", "expected"), [
     ("m0", "auto", "off"),
+    *[(scenario, "auto", "off") for scenario in (
+        "deal", "contract", "debt", "xardas_money", "deal_demo",
+        "bandit_parley", "bandit_bounty", "calm", "companion", "neural-talk", "rescue", "rescue_self",
+    )],
     ("m1", "auto", "fake"),
     ("haggle", "auto", "scenario haggle is live: set LLM=chatgpt|openai|local"),
     ("m0", "fake", "scenario m0 requires --llm off"),
     ("m0", "chatgpt", "scenario m0 requires --llm off"),
+    ("deal", "chatgpt", "scenario deal requires --llm off"),
     ("haggle", "off", "scenario haggle is live: set LLM=chatgpt|openai|local"),
     ("haggle", "fake", "scenario haggle is live: set LLM=chatgpt|openai|local"),
     (None, "auto", "--llm auto requires --scenario"),

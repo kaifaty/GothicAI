@@ -552,7 +552,9 @@ class Amends:
             )
             previous: Proposal | None = None
             errors: list[str] = []
-            for attempt in range(1, ATTEMPTS + 1):
+            # With no model (LLM=off) a required meeting demand is the rule's own, as the model's fallback.
+            attempts = 0 if required and self.model.llm.name == "off" else ATTEMPTS
+            for attempt in range(1, attempts + 1):
                 proposal = await self.model.propose(brief, previous, errors)
                 if not self._current(brief, world):
                     return None

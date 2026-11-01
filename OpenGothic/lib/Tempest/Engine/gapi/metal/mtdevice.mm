@@ -93,6 +93,8 @@ MtDevice::MtDevice(std::string_view name, bool validation)
   : impl(mkDevice(name)), samplers(*impl), validation(validation) {
   const auto* syncUploads = std::getenv("OPENGOTHIC_METAL_SYNC_UPLOAD");
   syncBufferUploads = syncUploads!=nullptr && std::strcmp(syncUploads,"1")==0;
+  const auto* syncTextures = std::getenv("OPENGOTHIC_METAL_SYNC_TEXTURE_UPLOAD");
+  syncTextureUploads = syncBufferUploads || (syncTextures!=nullptr && std::strcmp(syncTextures,"1")==0);
   if(impl.get()==nullptr)
     throw std::system_error(Tempest::GraphicsErrc::NoDevice);
 
