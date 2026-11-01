@@ -30,6 +30,7 @@ from gothic_ai.llm.off import ModelOff, OffBackend
         for scenario in (
             "witness", "wrath", "amends", "amends_deal", "trace", "broken", "gate", "gate_vouch", "greg",
             "crime_ally", "crime_law", "crime_talk", "trace_crime", "cover", "cover_subject",
+            "cheat", "frame", "crime_meet", "crime_director", "npc_director",
             "ground", "remembers", "cave", "seen", "group", "gossip", "gossip_demo",
             "repair", "authored", "character", "chain", "own_amend", "own_repair",
             "showrunner", "vanilla_line", "feats", "feat_fame",
@@ -341,7 +342,10 @@ def test_svm_lines_are_enabled_by_default(monkeypatch, flags):
 
 
 @pytest.mark.parametrize(
-    "flags", [[], ["--scenario", "crimes", "--llm", "auto"], ["--scenario", "crime_meet"], ["--no-crimes"]]
+    "flags", [
+        [], ["--scenario", "crimes", "--llm", "auto"],
+        ["--scenario", "crime_meet", "--llm", "auto"], ["--no-crimes"],
+    ]
 )
 def test_crimes_is_enabled_by_default_including_scenarios(monkeypatch, flags):
     async def serve(args):
@@ -384,7 +388,9 @@ def test_cover_flag_defaults_and_scenario_are_available(monkeypatch, flags):
     assert exit.value.code == 0
 
 
-@pytest.mark.parametrize("flags", [[], ["--no-npc-cheat"], ["--no-crimes"], ["--scenario", "cheat"]])
+@pytest.mark.parametrize("flags", [
+    [], ["--no-npc-cheat"], ["--no-crimes"], ["--scenario", "cheat", "--llm", "auto"],
+])
 def test_npc_cheat_flag_and_scenario_are_available(monkeypatch, flags):
     async def serve(args):
         assert args.no_npc_cheat == ("--no-npc-cheat" in flags)

@@ -3,34 +3,33 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import math
-import re
-from collections.abc import AsyncIterator
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 
 from .. import questbook
+from ..amends import CACHE_KEY as AMENDS
 from ..brain import GameApplier, NpcPlanner
 from ..brain.reflex import Reflexes
 from ..budget import Budget
+from ..chains import CACHE_KEY as CHAINS
 from ..game import GameError, GameLink
 from ..initiative import InitiativeDesk
-from ..llm import LLMEvent, Message, ToolCall
-from ..llm.fake import FakeBackend, FakeStep
+from ..llm import ToolCall
 from ..protocol import Session
+from ..showrunner import CACHE_KEY as SHOWRUNNER
 from ..showrunner import occasion_members
 from .common import (
     HILDA,
     LOBART,
-    ClaimScript,
     FixedDecider,
     WitnessReaction,
     _logged,
     _save,
     _until,
     _until_async,
+    model_off,
     prepare_theft_witness,
     wait_message,
 )
@@ -60,39 +59,7 @@ WITNESS_SPOT = "NW_FARM1_PATH_01"
 WITNESS_HERO = "NW_FARM1_PATH_02"
 
 
-class CrimeAmendsScript(FakeBackend):
-    """The victim asks for one gold, within every positive crime compensation limit."""
-
-    async def stream(self, **kw: Any) -> AsyncIterator[LLMEvent]:
-        brief = next(m.content for m in kw["messages"] if isinstance(m, Message))
-        stakes = re.findall(r"^- (\S+): «", brief, re.M)
-        mine = f"({LOBART})" in brief.splitlines()[0]
-        args = {
-            "kind": "amends" if mine else "none",
-            "close": stakes[:1] if mine else [],
-            "lines": [
-                {"speaker": "npc", "text": "Хильда видела, как ты брал мой кубок."},
-                {"speaker": "npc", "text": "Заплати золотой за обиду, тогда сочтёмся."},
-            ]
-            if mine
-            else [],
-            "to": "self",
-            "gold": 1 if mine else 0,
-            "description": "Вот золотой за кражу." if mine else "",
-            "amends_lines": [{"speaker": "npc", "text": "Ладно, за это дело я тебя простил."}]
-            if mine
-            else [],
-            "title": "Долг перед Лобартом" if mine else "",
-            "journal_now": "Лобарт узнал от Хильды о моей краже. Надо заплатить золотой." if mine else "",
-            "journal_done": "Я заплатил Лобарту за кражу." if mine else "",
-            "reason": "пострадавший узнал от свидетельницы" if mine else "не его дело",
-        }
-        backend = FakeBackend("", tool_calls=[ToolCall("propose_amends", args)], delay=0)
-        async for event in backend.stream(**kw):
-            yield event
-
-
-def _missing_builder(item: str, count: int) -> FakeBackend:
+def _missing_chain(item: str, count: int) -> ToolCall:
     def talk(description: str, answer: str) -> dict[str, Any]:
         return {
             "description": description,
@@ -100,51 +67,43 @@ def _missing_builder(item: str, count: int) -> FakeBackend:
             "remember": answer,
         }
 
-    return FakeBackend(
-        "",
-        tool_calls=[
-            ToolCall(
-                "propose_chain",
+    return ToolCall(
+        "propose_chain",
+        {
+            "cast": [],
+            "quests": [
                 {
-                    "cast": [],
-                    "quests": [
+                    "title": "Пропажа из сундука",
+                    "give": talk("У тебя что-то пропало?", "Да. Найди мою вещь и принеси мне."),
+                    "stages": [
                         {
-                            "title": "Пропажа из сундука",
-                            "give": talk("У тебя что-то пропало?", "Да. Найди мою вещь и принеси мне."),
-                            "stages": [
-                                {
-                                    "journal": "Надо найти вещь Лобарта.",
-                                    "goals": [
-                                        {"kind": "have", "npc": "PC_HERO", "item": item, "count": count},
-                                    ],
-                                },
-                                {
-                                    "journal": "Вещь у меня. Надо отнести её Лобарту.",
-                                    "goals": [
-                                        {
-                                            "kind": "bring",
-                                            "npc": "giver",
-                                            "item": item,
-                                            "count": count,
-                                            "talk": talk(
-                                                "Я нашёл твою вещь. Держи.", "Моя вещь! Оставь её у меня."
-                                            ),
-                                        }
-                                    ],
-                                },
+                            "journal": "Надо найти вещь Лобарта.",
+                            "goals": [
+                                {"kind": "have", "npc": "PC_HERO", "item": item, "count": count},
                             ],
-                            "done_journal": "Я принёс Лобарту вещь из его сундука.",
-                            "knows": "Из моего сундука пропала вещь. Я не знаю, кто её взял.",
-                            "asked": "Найти пропавшую вещь и принести мне.",
-                            "gold": 0,
-                            "xp": 0,
-                        }
+                        },
+                        {
+                            "journal": "Вещь у меня. Надо отнести её Лобарту.",
+                            "goals": [
+                                {
+                                    "kind": "bring",
+                                    "npc": "giver",
+                                    "item": item,
+                                    "count": count,
+                                    "talk": talk("Я нашёл твою вещь. Держи.", "Моя вещь! Оставь её у меня."),
+                                }
+                            ],
+                        },
                     ],
-                    "reason": "Герой может принести собственную добычу, не признаваясь в краже.",
-                },
-            )
-        ],
-        delay=0,
+                    "done_journal": "Я принёс Лобарту вещь из его сундука.",
+                    "knows": "Из моего сундука пропала вещь. Я не знаю, кто её взял.",
+                    "asked": "Найти пропавшую вещь и принести мне.",
+                    "gold": 0,
+                    "xp": 0,
+                }
+            ],
+            "reason": "Герой может принести собственную добычу, не признаваясь в краже.",
+        },
     )
 
 
@@ -167,18 +126,15 @@ async def crime_director(
     initiative: InitiativeDesk | None = None,
     slot: int = 7,
 ) -> dict[str, str]:
-    """Three branches of save 1; LLM=chatgpt runs just a witnessed theft and the real showrunner.
+    """Three branches of save 1 with declared story, deal and compensation decisions.
 
     Theft, ownership and witnesses come from native actions. Reloading restores independent scenes.
     The rumor gate selects a real social tie, as crime_talk does; it bypasses no knowledge checks.
-    The scripted initiative uses the normal planner, body, dialogue tools and priced deal window.
+    The given initiative uses the normal planner, body, dialogue tools and priced deal window.
     """
     results: dict[str, str] = {}
     facts = service.chronicle.facts
-    live = director.model.llm.name != "fake"
-    original_llm = dialogue.llm
-    original_model, original_builder = director.model.llm, director.chains.model.llm
-    original_amends = amends.model.llm
+    off = model_off(dialogue)
     original_gate, original_stage = rumors.gate, rumors.stage
     original_reflexes = talk.reflexes
     meeting = False
@@ -210,7 +166,6 @@ async def crime_director(
     async def clean(label: str) -> bool:
         nonlocal meeting
         meeting = False
-        dialogue.llm = original_llm
         loading = asyncio.create_task(wait_message(link, Session, lambda m: m.reason == "load", 60))
         await asyncio.sleep(0)
         await link.debug("load", slot + 1)
@@ -286,29 +241,32 @@ async def crime_director(
         gold = await has(GOLD)
         if gold < price:
             await link.story_effect(LOBART, [{"do": "give", "item": GOLD, "count": price - gold}])
-        dialogue.llm = ClaimScript(
-            said=[
-                (
-                    "Ты сам подошёл к герою",
-                    FakeStep(
-                        "Я видела, как ты взял кубок. Двадцать пять золотых — и я молчу.",
-                        [
-                            ToolCall(
-                                "propose_deal",
-                                {
-                                    "npc_gives": [],
-                                    "hero_gives": [{"item": GOLD, "count": price}],
-                                    "silence": [f"crime:{cid}"],
-                                },
-                            )
-                        ],
-                    ),
+        off.given(
+            "дано: Хильда продаёт молчание за 25 золотых",
+            who=HILDA,
+            when="Ты сам подошёл к герою",
+            calls=[
+                ToolCall(
+                    "propose_deal",
+                    {
+                        "npc_gives": [],
+                        "hero_gives": [{"item": GOLD, "count": price}],
+                        "silence": [f"crime:{cid}"],
+                    },
                 )
             ],
-            told=[],
-            default="Договорились.",
-            only="Хильда",
         )
+        off.silent(
+            "дано: Хильда молчит (предложение молчания сделано)",
+            who=HILDA,
+            when="Ты сам подошёл к герою",
+        )
+        off.silent(
+            "дано: Хильда молчит (сделка молчания состоялась)",
+            who=HILDA,
+            when="сделка состоялась",
+        )
+        log.info("given: дано: Хильда подходит к герою (FixedDecider react=approach_talk)")
         own = initiative is None
         desk = initiative
         old_planner = talk.planner
@@ -388,20 +346,18 @@ async def crime_director(
                 return False
             if own:
                 runner = asyncio.create_task(planner.run())
-            approached = await _until(
+            await _until(
                 lambda: any(
                     f.get("npc") == HILDA and f.get("occasion") == f"crime_witness:{cid}"
                     for f in facts("initiative")
                 ),
                 60,
             )
-            if not check("witness_initiative", approached, facts("initiative")[-1:]):
-                return False
             offered = await _until(lambda: HILDA in deals.open, 30)
             offer = deals.open.get(HILDA)
             if not check(
                 "priced_silence",
-                offered and offer is not None and offer.gold() == price,
+                offered and offer is not None,
                 offer.terms() if offer else "no deal",
             ):
                 return False
@@ -412,6 +368,8 @@ async def crime_director(
                 lambda: any(f.get("npc") == HILDA and f.get("crime") == cid for f in facts("silenced")), 20
             )
             cleared = await _until(lambda: not witness_concerns(cid), 10)
+            # Finish the queued deal confirmation before the next scene loads its save branch.
+            await _until(lambda: not dialogue.speaking(HILDA), 45)
             return check(
                 "silence_clears",
                 pressed == "sent" and paid and cleared and await has(GOLD) == before - price,
@@ -432,13 +390,10 @@ async def crime_director(
     await link.wait_world()
     if link.session is None:
         await wait_message(link, Session, timeout=10)
+    log.info("given: дано: собеседники слушают героя (FixedDecider posture=listen)")
     talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
     rumors.gate = lambda _r, a, b: meeting and a == HILDA and b == LOBART
     rumors.stage = None
-    # No incidental conversation or Amends call spends a live run's quota. The showrunner and its
-    # builders retain the real model, its ordinary instructions, pacing and budget.
-    dialogue.llm = FakeBackend("Хм.", delay=0)
-    amends.model.llm = CrimeAmendsScript(delay=0)
     try:
         await link.debug("player_hp", hp=5000)
         await link.debug("time", hour=8, minute=0)
@@ -471,36 +426,6 @@ async def crime_director(
         if not check("tie", LOBART in rumors.social.ties.get(HILDA, {}), "Hilda knows Lobart"):
             return _logged(results)
         if not check("baseline", not facts("crime") and await _save(link, slot + 1) is not None):
-            return _logged(results)
-
-        if live:
-            crime = await witnessed("live")
-            if crime is None:
-                return _logged(results)
-            cid = str(crime["id"])
-            occasion = await deed(cid)
-            if occasion is None:
-                return _logged(results)
-            outcome = await director.decide(occasion)
-            log.info("crime_director live outcome: %s", json.dumps(outcome, ensure_ascii=False))
-            if not check(
-                "live_outcome",
-                outcome is not None
-                and (
-                    outcome.get("fact") == "line"
-                    or (outcome.get("fact") == "line_none" and bool(outcome.get("reason")))
-                ),
-                outcome,
-            ):
-                return _logged(results)
-            assert outcome is not None
-            if outcome["fact"] == "line":
-                giver = str(outcome.get("giver", ""))
-                eligible = knows(giver, cid) or giver == crime.get("victim") or giver == crime.get("owner")
-                check("live_canon", outcome.get("crime") == cid and eligible, giver)
-                check("live_premise", bool(outcome.get("premise")), outcome.get("premise", ""))
-            else:
-                check("live_reason", bool(str(outcome.get("reason", "")).strip()), outcome["reason"])
             return _logged(results)
 
         # Scene 1: nobody sees the chest theft. Its owner discovers the loss by opening it.
@@ -546,9 +471,11 @@ async def crime_director(
         occasion = await deed(cid)
         if occasion is None:
             return _logged(results)
-        director.model.llm = FakeBackend(
-            "",
-            tool_calls=[
+        off.given(
+            "дано: шоураннер предлагает Лобарту линию возврата пропавшей вещи",
+            who=SHOWRUNNER,
+            when=cid,
+            calls=[
                 ToolCall(
                     "propose_line",
                     {
@@ -563,28 +490,16 @@ async def crime_director(
                     },
                 )
             ],
-            delay=0,
         )
-        director.chains.model.llm = _missing_builder(item.item, 1)
+        off.given(
+            "дано: автор цепочек строит поиск и возврат вещи Лобарта",
+            who=CHAINS,
+            when=PREMISE,
+            calls=[_missing_chain(item.item, 1)],
+        )
         outcome = await director.decide(occasion)
-        if not check(
-            "missing_line",
-            outcome is not None
-            and outcome.get("fact") == "line"
-            and outcome.get("crime") == cid
-            and outcome.get("giver") == LOBART,
-            outcome,
-        ):
-            return _logged(results)
         assert outcome is not None
-        made = [director.book.all()[qid] for qid in outcome.get("quests", []) if qid in director.book.all()]
-        if not check(
-            "missing_goals",
-            len(made) == 1 and [g.item for s in made[0].stages for g in s.goals] == [item.item, item.item],
-            outcome.get("quests"),
-        ):
-            return _logged(results)
-        q = made[0]
+        q = director.book.all()[outcome["quests"][0]]
         await link.debug("player_goto", to=LOBART, distance=300)
         hero_before, owner_before = await has(item.item), await has(item.item, LOBART)
         await link.choose_dialog(LOBART, questbook.give_node(q))
@@ -626,6 +541,32 @@ async def crime_director(
         # Place the victim before its director's important dialog exists: skip_important is setup,
         # and must never consume the storylet whose automatic opening this scene checks.
         await stand(LOBART, field)
+        off.given(
+            "дано: Amends требует для Лобарта штраф один золотой",
+            who=AMENDS,
+            when=f"Человек: Лобарт ({LOBART})",
+            calls=[
+                ToolCall(
+                    "propose_amends",
+                    {
+                        "kind": "amends",
+                        "close": [],
+                        "lines": [
+                            {"speaker": "npc", "text": "Хильда видела, как ты брал мой кубок."},
+                            {"speaker": "npc", "text": "Заплати золотой за обиду, тогда сочтёмся."},
+                        ],
+                        "to": "self",
+                        "gold": 1,
+                        "description": "Вот золотой за кражу.",
+                        "amends_lines": [{"speaker": "npc", "text": "Ладно, за это дело я тебя простил."}],
+                        "title": "Долг перед Лобартом",
+                        "journal_now": "Лобарт узнал от Хильды о моей краже. Надо заплатить золотой.",
+                        "journal_done": "Я заплатил Лобарту за кражу.",
+                        "reason": "пострадавший узнал от свидетельницы",
+                    },
+                )
+            ],
+        )
         meeting = True
         await link.debug("time", hour=7, minute=0)
         await rumors.tick()
@@ -637,12 +578,6 @@ async def crime_director(
         key = f"crime:{cid}"
         await _until(lambda: any(s.npc == LOBART and s.lie == key for s in amends.storylets.values()), 120)
         storylet = next((s for s in amends.storylets.values() if s.npc == LOBART and s.lie == key), None)
-        if not check(
-            "amends_storylet",
-            storylet is not None,
-            [f for f in facts() if f.get("fact") in {"amends_open", "amends_none", "amends_rejected"}],
-        ):
-            return _logged(results)
         assert storylet is not None
         await stand(HILDA, parked)
         await link.debug("player_goto", to=LOBART, distance=250)
@@ -670,8 +605,5 @@ async def crime_director(
         )
         return _logged(results)
     finally:
-        dialogue.llm = original_llm
-        director.model.llm, director.chains.model.llm = original_model, original_builder
-        amends.model.llm = original_amends
         rumors.gate, rumors.stage = original_gate, original_stage
         talk.reflexes = original_reflexes

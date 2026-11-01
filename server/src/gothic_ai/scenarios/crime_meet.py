@@ -5,15 +5,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
-import re
 import time
-from collections.abc import AsyncIterator
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from ..game import GameError, GameLink
-from ..llm import LLMEvent, Message, ToolCall
-from ..llm.fake import FakeBackend
 from ..protocol import GameMessage, NpcActCmd, NpcActResult, NpcEvent, NpcIdle, NpcView, Session
 from .common import (
     HILDA,
@@ -42,33 +38,6 @@ NEAR_REPEAT_S = 31.0  # bridge NearPeriodMs=30000; leaving alone does not reset 
 PUBLIC_PORTAL_GUILDS = {-1, 0, 15}  # unknown, GIL_NONE and the positive GIL_PUBLIC
 
 
-class MeetAmendsScript(FakeBackend):
-    """The victim demands a real payment through the existing Amends graph."""
-
-    async def stream(self, **kw: Any) -> AsyncIterator[LLMEvent]:
-        brief = next(m.content for m in kw["messages"] if isinstance(m, Message))
-        stakes = re.findall(r"^- (\S+): «", brief, re.M)
-        args = {
-            "kind": "amends",
-            "close": stakes[:1],
-            "lines": [
-                {"speaker": "npc", "text": "Я сам видел, как ты взял мой кубок."},
-                {"speaker": "npc", "text": "Верни вещь или заплати золотой за обиду."},
-            ],
-            "to": "self",
-            "gold": 1,
-            "description": "Вот золотой за кражу.",
-            "amends_lines": [{"speaker": "npc", "text": "Ладно, за эту кражу я тебя простил."}],
-            "title": "Расчёт с Лобартом",
-            "journal_now": "Лобарт видел мою кражу и требует возместить ущерб.",
-            "journal_done": "Я заплатил Лобарту за кражу.",
-            "reason": "пострадавший сам видел кражу",
-        }
-        backend = FakeBackend("", tool_calls=[ToolCall("propose_amends", args)], delay=0)
-        async for event in backend.stream(**kw):
-            yield event
-
-
 async def crime_meet(
     link: GameLink,
     service: Crimes,
@@ -77,7 +46,7 @@ async def crime_meet(
     amends: Amends,
     slot: int = 7,
 ) -> dict[str, str]:
-    """Two branches of save 1; a live backend runs only the victim's meeting and payment.
+    """Two branches of save 1 using native rules, including the required Amends demand.
 
     The native drop owns the cup, the native take supplies the witness, and common helpers prove
     sight and wait for the held rule's recorded SVM. No fixed pause stands in for scene readiness.
@@ -87,8 +56,7 @@ async def crime_meet(
     results: dict[str, str] = {}
     facts = service.chronicle.facts
     original_cards, original_meet_cards = reactions.cards, meets.cards
-    original_model, original_queue = amends.model.llm, amends._queue_crime
-    live = original_model.name != "fake"
+    original_queue = amends._queue_crime
     sent: list[Any] = []
     received: list[tuple[float, GameMessage]] = []
     hero_states: list[dict[str, Any]] = []
@@ -403,8 +371,6 @@ async def crime_meet(
     link.listeners.append(record)
     link.raw_body_listeners.append(observe)
     amends._queue_crime = deferred_crime  # type: ignore[method-assign]
-    if not live:
-        amends.model.llm = MeetAmendsScript(delay=0)
     try:
         await link.debug("time", hour=8, minute=0)
         humans = {p["npc"] for p in await link.story_people()}
@@ -441,84 +407,83 @@ async def crime_meet(
         if not check("baseline", not facts("crime") and await _save(link, slot + 1) is not None):
             return _logged(results)
 
-        if not live:
-            crime = await theft("home")
-            if crime is None:
-                return _logged(results)
-            cid = str(crime["id"])
-            if not check("home_owner_ready", await placed(LOBART, WITNESS_POINT, ready=True)):
-                return _logged(results)
-            await link.body_watch(["PLAYER"], rate_hz=20)
-            entered = time.monotonic()
-            before_home = len(sent)
-            prepared, preparation = await home_entry()
-            if not check("home_entry_ready", prepared, preparation):
-                return _logged(results)
-            await link.debug("player_hp", hp=10)
-            if not check("home_enter_room", await _until(lambda: bool(events("enter_room", entered)), 15)):
-                return _logged(results)
+        crime = await theft("home")
+        if crime is None:
+            return _logged(results)
+        cid = str(crime["id"])
+        if not check("home_owner_ready", await placed(LOBART, WITNESS_POINT, ready=True)):
+            return _logged(results)
+        await link.body_watch(["PLAYER"], rate_hz=20)
+        entered = time.monotonic()
+        before_home = len(sent)
+        prepared, preparation = await home_entry()
+        if not check("home_entry_ready", prepared, preparation):
+            return _logged(results)
+        await link.debug("player_hp", hp=10)
+        if not check("home_enter_room", await _until(lambda: bool(events("enter_room", entered)), 15)):
+            return _logged(results)
 
-            def home_actions(action: str) -> list[NpcActCmd]:
-                return [
-                    c
-                    for c in sent[before_home:]
-                    if isinstance(c, NpcActCmd) and c.npc == LOBART and c.action == action
-                ]
+        def home_actions(action: str) -> list[NpcActCmd]:
+            return [
+                c
+                for c in sent[before_home:]
+                if isinstance(c, NpcActCmd) and c.npc == LOBART and c.action == action
+            ]
 
-            def accepted(action: NpcActCmd) -> bool:
-                return any(
-                    isinstance(m, NpcActResult) and m.id == action.id and m.status == "queued"
-                    for _, m in received
+        def accepted(action: NpcActCmd) -> bool:
+            return any(
+                isinstance(m, NpcActResult) and m.id == action.id and m.status == "queued"
+                for _, m in received
+            )
+
+        def voiced() -> bool:
+            voices = [
+                c
+                for c in home_actions("say_svm")
+                if str(c.args.get("svm", "")).upper().lstrip("$") == "GETOUTOFHERE"
+            ]
+            return any(
+                accepted(c)
+                and any(
+                    isinstance(m, NpcIdle) and m.act == c.id and m.reason == "done" for _, m in received
                 )
+                for c in voices
+            )
 
-            def voiced() -> bool:
-                voices = [
-                    c
-                    for c in home_actions("say_svm")
-                    if str(c.args.get("svm", "")).upper().lstrip("$") == "GETOUTOFHERE"
-                ]
-                return any(
-                    accepted(c)
-                    and any(
-                        isinstance(m, NpcIdle) and m.act == c.id and m.reason == "done" for _, m in received
-                    )
-                    for c in voices
-                )
-
-            if not check(
-                "home_warning",
-                await _until(voiced, 25),
-                [c.model_dump() for c in home_actions("say_svm")],
-            ):
-                return _logged(results)
-            if not check(
-                "home_meeting",
-                any(f.get("event") == "enter_room" and f.get("reaction") == "room" for f in meet_rows(cid)),
-                meet_rows(cid),
-            ):
-                return _logged(results)
-            reason = await link.evaluate(["var", "AR_CLEARROOM"])
-            if not check(
-                "home_clearroom_fight",
-                await _until(
-                    lambda: any(
-                        accepted(c) and c.args.get("reason") in {"AR_CLEARROOM", reason}
-                        for c in home_actions("fight")
-                    ),
-                    15,
+        if not check(
+            "home_warning",
+            await _until(voiced, 25),
+            [c.model_dump() for c in home_actions("say_svm")],
+        ):
+            return _logged(results)
+        if not check(
+            "home_meeting",
+            any(f.get("event") == "enter_room" and f.get("reaction") == "room" for f in meet_rows(cid)),
+            meet_rows(cid),
+        ):
+            return _logged(results)
+        reason = await link.evaluate(["var", "AR_CLEARROOM"])
+        if not check(
+            "home_clearroom_fight",
+            await _until(
+                lambda: any(
+                    accepted(c) and c.args.get("reason") in {"AR_CLEARROOM", reason}
+                    for c in home_actions("fight")
                 ),
-                [c.model_dump() for c in home_actions("fight")],
-            ):
-                return _logged(results)
-            down = await _until(lambda: any(s["unconscious"] and not s["dead"] for s in hero_states), 60)
-            if not check(
-                "home_knocked_out",
-                down and not any(s["dead"] for s in hero_states),
-                {"samples": len(hero_states), "latest": hero_states[-1] if hero_states else None},
-            ):
-                return _logged(results)
-            if not await clean("victim"):
-                return _logged(results)
+                15,
+            ),
+            [c.model_dump() for c in home_actions("fight")],
+        ):
+            return _logged(results)
+        down = await _until(lambda: any(s["unconscious"] and not s["dead"] for s in hero_states), 60)
+        if not check(
+            "home_knocked_out",
+            down and not any(s["dead"] for s in hero_states),
+            {"samples": len(hero_states), "latest": hero_states[-1] if hero_states else None},
+        ):
+            return _logged(results)
+        if not await clean("victim"):
+            return _logged(results)
 
         crime = await theft("victim")
         if crime is None:
@@ -528,6 +493,7 @@ async def crime_meet(
             return _logged(results)
         meets.cards = {**original_meet_cards, LOBART: replace(original_cards[LOBART], courage=3)}
         reactions.cards = {**original_cards, LOBART: replace(original_cards[LOBART], courage=3)}
+        log.info("given: дано: Лобарт храбр при встрече (courage 3 после кражи)")
         check("victim_card", True, "scenario only: courage 2 -> 3 after the theft")
         amends._queue_crime = original_queue  # type: ignore[method-assign]
         if not check("victim_player_near", await next_meeting() is not None):
@@ -536,7 +502,7 @@ async def crime_meet(
             lambda: any(
                 f.get("npc") == LOBART and f.get("occasion") == f"crime:{cid}" for f in facts("initiative")
             ),
-            120 if live else 30,
+            30,
         )
         detail: object = facts("initiative")[-1:]
         if not approached:
@@ -569,18 +535,15 @@ async def crime_meet(
         key = f"crime:{cid}"
         await _until(lambda: any(s.npc == LOBART and s.lie == key for s in amends.storylets.values()), 120)
         storylet = next((s for s in amends.storylets.values() if s.npc == LOBART and s.lie == key), None)
-        if not check("victim_amends", storylet is not None):
+        price = (await link.story_eval(LOBART, [["field", ["inst", CUP], "VALUE"]]))[0]
+        limit = min(100, price) if price > 0 else 50  # the meeting rule when no VM price is available
+        if not check(
+            "victim_amends",
+            storylet is not None and storylet.stage != "done" and 0 < storylet.gold <= limit,
+            {"storylet": storylet, "item_price": price, "gold_limit": limit},
+        ):
             return _logged(results)
         assert storylet is not None
-        demands = [
-            line.get("text", "")
-            for op in amends.patches.ops()
-            if op.get("op") == "add_node" and op.get("node", {}).get("id") == storylet.talk
-            for line in op["node"].get("lines", [])
-            if line.get("speaker") == "self"
-        ]
-        check("victim_demand", bool(demands), " | ".join(demands))
-        log.info("crime_meet %s demand: %s", "live" if live else "scripted", " | ".join(demands))
         if not check(
             "victim_automatic_talk", await _until(lambda: storylet.stage != "open", 30), storylet.talk
         ):
@@ -663,7 +626,7 @@ async def crime_meet(
         return _logged(results)
     finally:
         reactions.cards, meets.cards = original_cards, original_meet_cards
-        amends.model.llm, amends._queue_crime = original_model, original_queue  # type: ignore[method-assign]
+        amends._queue_crime = original_queue  # type: ignore[method-assign]
         try:
             if not link.closed.is_set():
                 await link.body_watch([])
