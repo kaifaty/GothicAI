@@ -20,6 +20,7 @@
 #include "waymatrix.h"
 #include "portalrooms.h"
 #include "chunkresidency.h"
+#include "bodytraces.h"
 
 class GameSession;
 class Focus;
@@ -76,8 +77,20 @@ class World final {
       std::array<Tempest::Vec3,6> sightPoints;
       int64_t appearedAt = -1; // game minutes; -1 for traces from legacy saves
       std::string culprit; // engine truth: never serialize this field to the AI bridge
+      std::string npc;     // a body: the dead one's instance symbol, as npc_view's look names it
       };
-    std::vector<PhysicsTrace> physicsTraces() const;
+    // `viewer` (with `range`, cm): body rows farther from it are not built; the rows that are
+    // built do not change. Without it, every trace of the world.
+    std::vector<PhysicsTrace> physicsTraces(const Tempest::Vec3* viewer = nullptr, float range = 0) const;
+
+    // Bodies (physics stage 8, step 4b; world/bodytraces.h holds the rules).
+    int64_t              gameMinute() const;                  // minutes since the first day began
+    uint32_t             allocBodyTraceId() { return nextBodyTraceId++; }
+    std::string          bodyTraceId(const Npc& body) const;  // "<world>:body:<n>"
+    std::array<Tempest::Vec3,6> bodySightPoints(const Npc& body) const;
+    bool                 heroSeesBody(const Npc& hero, const Npc& body) const;
+    bool                 isStoryNpcType(int32_t type) const;
+    BodyTraces::Body     bodyRule(const Npc& body, const Npc* hero) const; // all but heroSees
 
     uint32_t             mobsiId(const Interactive* ptr) const;
     Interactive*         mobsiById(uint32_t id);
@@ -285,6 +298,13 @@ class World final {
       };
     std::vector<StuckArrow>               stuckArrows;
     uint64_t                             nextArrowTraceId = 1;
+    uint32_t                             nextBodyTraceId  = 1;
+    int64_t                              bodySweepMinute  = -1;
+    mutable std::array<int32_t,3>        storyNpcTypes    = BodyTraces::StoryTypes;
+    mutable bool                         storyNpcTypesRead = false;
+    void                                 sweepBodies();
+    void                                 saveBodyTraces(Serialize& fout) const;
+    void                                 loadBodyTraces(Serialize& fin);
     void                                 saveStuckArrows(Serialize& fout) const;
     void                                 loadStuckArrows(Serialize& fin);
     void                                 updateStuckArrows();

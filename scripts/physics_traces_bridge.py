@@ -198,7 +198,7 @@ def assert_private_trace_fields_absent(path: Path) -> int:
             for key, value in row.items():
                 if key == "traces" and isinstance(value, list):
                     for trace in value:
-                        assert set(trace) <= {"id", "kind", "name", "waypoint", "distance", "hero_cm", "from_hero", "age"}, trace
+                        assert set(trace) <= {"id", "kind", "name", "waypoint", "distance", "hero_cm", "from_hero", "age", "npc"}, trace
                         count += 1
                 inspect(value)
         elif isinstance(row, list):

@@ -1,0 +1,17 @@
+# Run with a build of main from before body traces: a dead person and a dead wolf in
+# session-legacy.sav, the input of body-traces-legacy. Only generic bench commands.
+seed 73013
+cheat god
+set time 12 0
+goto NW_XARDAS_TOWER_VALLEY_091
+clear 4000
+wait 500
+insert BDT_1000_BANDIT_L
+put BDT_1000_BANDIT_L 700 -10
+down BDT_1000_BANDIT_L dead
+insert WOLF
+put WOLF 700 10
+down WOLF dead
+wait 6000
+movable save legacy
+quit

@@ -70,6 +70,7 @@
 #include "game/navigationmemorybench.h"
 #include "game/knownroadsbench.h"
 #include "game/npckeysbench.h"
+#include "game/bodytracesbench.h"
 #include "game/serialize.h"
 #include "game/ragdollsave.h"
 #include "game/definitions/sounddefinitions.h"
@@ -13519,6 +13520,15 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     }
     return;
   }
+  if(c=="body_traces") {
+    try {
+      event("body_traces","\"sample\":"+BodyTracesBench::command(a,w,pl,outDir));
+    } catch(const std::exception& error) {
+      event("body_traces_error","\"reason\":"+jsonStr(error.what()));
+      arenaAbort(error.what());
+    }
+    return;
+  }
   if(c=="keys") {
     try {
       event("keys_command","\"sample\":"+NpcKeysBench::command(a,w,pl,ctrl,outDir));
@@ -14181,6 +14191,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       {"arrow_sticking",&Gothic::PhysicsFlags::arrowSticking},
       {"spell_physics",&Gothic::PhysicsFlags::spellPhysics},
       {"body_impact_damage",&Gothic::PhysicsFlags::bodyImpactDamage},
+      {"body_traces",&Gothic::PhysicsFlags::bodyTraces},
       {"movable_vobs",&Gothic::PhysicsFlags::movableVobs},
       {"item_hulls",&Gothic::PhysicsFlags::itemHulls},
       {"item_deepest_contact",&Gothic::PhysicsFlags::itemDeepestContact},
@@ -20024,6 +20035,7 @@ void TestBench::configure(std::string scenario, std::string output, int64_t seed
   NavigationMemoryBench::reset();
   NavigationEyeBench::reset();
   NpcKeysBench::reset();
+  BodyTracesBench::reset();
   NavBench::reset();
   NavDemos::reset();
   stopRecording();
@@ -20385,6 +20397,19 @@ std::function<bool()> TestBench::aiBusy;
 std::function<void(std::string_view)> TestBench::openMenu;
 std::function<bool(std::string_view,std::string_view)> TestBench::aiReached;
 std::function<bool(World&,std::string_view,float)> TestBench::stuckBegin;
+std::function<std::string(World&,std::string_view)> TestBench::npcView;
+
+namespace {
+bool benchBodySweep = false;
+}
+
+void TestBench::allowBodySweep(bool allow) {
+  benchBodySweep = allow;
+  }
+
+bool TestBench::bodySweepAllowed() {
+  return benchBodySweep;
+  }
 std::function<bool(World&)> TestBench::stuckEnd;
 
 bool TestBench::voiceStems() {
