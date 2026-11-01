@@ -110,7 +110,7 @@ systemd-run --user --wait --pipe --collect --unit="$unit" \
   --setenv=VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json \
   --setenv=LP_NUM_THREADS=4 --setenv=ALSOFT_DRIVERS=null --setenv=GOTHIC_AI=1 \
   --setenv=OPENGOTHIC_TEXTURES= --setenv=DECIDER_URL= \
-  --setenv=LLM=fake --setenv=ASR=fake --setenv=TTS=fake --setenv=UV_NO_DEV=1 --setenv=UV_FROZEN=1 \
+  --setenv=LLM=off --setenv=ASR=fake --setenv=TTS=fake --setenv=UV_NO_DEV=1 --setenv=UV_FROZEN=1 \
   --setenv="PHYSICS_E2E_BINARY=$binary" --setenv="GAME_BIN=$out/game-wrapper.sh" \
   --setenv="GOTHIC_DIR=$HOME/gothic-ai/body-baseline/assets" \
   --setenv="SAVE=$HOME/gothic-ai/body-baseline/reference/save_slot_1.sav" \

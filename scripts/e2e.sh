@@ -426,6 +426,10 @@ GAME_BIN="${GAME_BIN:-$ROOT/OpenGothic/build/opengothic/Gothic2Notr}"
 LOG_DIR="${LOG_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/gothic-e2e.XXXXXX")}"
 SCENARIO="${SCENARIO:-m0}"
 LLM="${LLM:-auto}"
+if [[ "$LLM" == fake ]]; then
+  echo 'LLM=fake is gone: scenarios pick their group (docs/e2e.md)' >&2
+  exit 2
+fi
 BODY_POLICY="${GOTHIC_BODY_POLICY:-engine}"
 BODY_ARGS=(--neural-body --body-policy "$BODY_POLICY")
 if [[ "$SCENARIO" == memprobe ]]; then BODY_ARGS=(--no-neural-body); fi
@@ -456,8 +460,8 @@ if [[ "$SCENARIO" = neural || "$SCENARIO" = neural-companion || "$SCENARIO" = ne
   fi
   [ -z "${SAVE:-}" ] || { echo "scenario $SCENARIO requires a new game (unset SAVE)" >&2; exit 2; }
 fi
-if [[ "$SCENARIO" == surrender_live && ( "$LLM" == fake || -n "${SAVE:-}" ) ]]; then
-  echo 'scenario surrender_live requires a non-fake LLM and a new game (unset SAVE)' >&2
+if [[ "$SCENARIO" == surrender_live && -n "${SAVE:-}" ]]; then
+  echo 'scenario surrender_live requires a new game (unset SAVE)' >&2
   exit 2
 fi
 if [[ "$SCENARIO" == live_lies && -z "${SAVE:-}" ]]; then

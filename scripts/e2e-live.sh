@@ -6,7 +6,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export SUITE="${SUITE:?Set SUITE to a live scenario (see docs/e2e.md)}"
 export RUNS="${RUNS:-3}"
 case "${LLM:-}" in
-  ''|off|fake) echo 'e2e-live requires a live LLM; set LLM=chatgpt (off/fake are not live)' >&2; exit 2 ;;
+  chatgpt|openai|local) ;;
+  *) echo 'e2e-live requires a live LLM; set LLM=chatgpt, openai or local' >&2; exit 2 ;;
 esac
 if [[ "$SUITE" == interject && -z "${DECIDER_URL:-}" ]]; then
   echo 'interject requires DECIDER_URL for the live behavioral model' >&2

@@ -19,13 +19,13 @@ from gothic_ai.llm.off import ModelOff, OffBackend
         "rescue", "rescue_self",
     )],
     ("haggle", "auto", "scenario haggle is live: set LLM=chatgpt|openai|local"),
-    ("m0", "fake", "scenario m0 requires --llm off"),
+    ("m0", "fake", "invalid choice: 'fake'"),
     ("m0", "chatgpt", "scenario m0 requires --llm off"),
     ("deal", "chatgpt", "scenario deal requires --llm off"),
     ("haggle", "off", "scenario haggle is live: set LLM=chatgpt|openai|local"),
-    ("haggle", "fake", "scenario haggle is live: set LLM=chatgpt|openai|local"),
     *[("live_lies", llm, "scenario live_lies is live: set LLM=chatgpt|openai|local")
-      for llm in ("auto", "off", "fake")],
+      for llm in ("auto", "off")],
+    ("live_lies", "fake", "invalid choice: 'fake'"),
     (None, "auto", "--llm auto requires --scenario"),
     *[
         (scenario, llm, "off" if llm == "auto" else f"scenario {scenario} requires --llm off")
@@ -39,7 +39,7 @@ from gothic_ai.llm.off import ModelOff, OffBackend
             "m1", "m2", "m3", "m5", "m5c", "m5e", "tts",
             "combat_barks", "mercy", "hero_yield", "humiliate",
         )
-        for llm in ("auto", "fake", "chatgpt")
+        for llm in ("auto", "chatgpt")
     ],
 ])
 def test_scenario_llm_groups(monkeypatch, capsys, scenario, llm, expected):
@@ -49,13 +49,41 @@ def test_scenario_llm_groups(monkeypatch, capsys, scenario, llm, expected):
     monkeypatch.setattr("sys.argv", ["gothic-ai", "serve", "--llm", llm, *flags])
     with pytest.raises(SystemExit) as exit:
         cli.main()
-    if expected in {"off", "fake"}:
+    if expected == "off":
         assert exit.value.code == 0
         assert serve.await_args.args[0].llm == expected
     else:
         assert exit.value.code == 2
         assert expected in capsys.readouterr().err
         serve.assert_not_awaited()
+
+
+def test_every_cli_scenario_has_exactly_one_model_group(monkeypatch, capsys):
+    groups = (cli.OFF, cli.GIVEN, cli.LIVE)
+    parse_args = cli.argparse.ArgumentParser.parse_args
+    choices = []
+
+    def capture(parser, *args, **kwargs):
+        if parser.prog == "gothic-ai":
+            sub = next(action for action in parser._actions if action.dest == "command")
+            serve = sub.choices["serve"]
+            choices.extend(next(action.choices for action in serve._actions if action.dest == "scenario"))
+        return parse_args(parser, *args, **kwargs)
+
+    monkeypatch.setattr(cli.argparse.ArgumentParser, "parse_args", capture)
+    monkeypatch.setattr("sys.argv", ["gothic-ai", "--help"])
+    with pytest.raises(SystemExit) as exit:
+        cli.main()
+    assert exit.value.code == 0
+    assert choices and set(choices) == set().union(*groups)
+    assert all(sum(scenario in group for group in groups) == 1 for scenario in choices)
+
+    monkeypatch.setattr(cli, "OFF", cli.OFF - {"m0"})
+    monkeypatch.setattr("sys.argv", ["gothic-ai", "serve", "--scenario", "m0", "--llm", "auto"])
+    with pytest.raises(SystemExit) as exit:
+        cli.main()
+    assert exit.value.code == 2
+    assert "scenario m0 has no model group (docs/e2e.md)" in capsys.readouterr().err
 
 
 def test_cards_command_generates_from_the_connected_world(monkeypatch, capsys):
@@ -101,12 +129,11 @@ def test_cards_command_generates_from_the_connected_world(monkeypatch, capsys):
         cli.main()
     assert exit.value.code == 2
     assert "invalid choice: 'cards'" in capsys.readouterr().err
-    for llm in ("off", "fake"):
-        monkeypatch.setattr("sys.argv", ["gothic-ai", "cards", "--llm", llm])
-        with pytest.raises(SystemExit) as exit:
-            cli.main()
-        assert exit.value.code == 2
-        assert "cards requires --llm chatgpt|openai|local" in capsys.readouterr().err
+    monkeypatch.setattr("sys.argv", ["gothic-ai", "cards", "--llm", "off"])
+    with pytest.raises(SystemExit) as exit:
+        cli.main()
+    assert exit.value.code == 2
+    assert "cards requires --llm chatgpt|openai|local" in capsys.readouterr().err
 
 
 def test_story_graph_is_optional_before_the_game_publishes_its_base(tmp_path, monkeypatch, caplog):
@@ -120,7 +147,7 @@ def test_story_graph_is_optional_before_the_game_publishes_its_base(tmp_path, mo
 
 
 @pytest.mark.parametrize(("scenario", "backend_kind", "outcome", "code"), [
-    (None, "fake", "clean", 0),
+    (None, "off", "clean", 0),
     ("m0", "off", "clean", 0),
     ("m0", "off", "caught", 1),
     ("m0", "off", "uncaught", 1),
@@ -223,7 +250,7 @@ def test_scenario_start_marker_waits_for_world_and_precedes_scenario(
         records = [record.getMessage() for record in caplog.records]
         checks = {key: next((line for line in records if f": {key}: " in line), "")
                   for key in ("model_off", "givens_used")}
-        if backend_kind == "off":
+        if backend_kind == "off" and scenario is not None:
             assert ("failed" in checks["model_off"]) == (outcome in {"caught", "uncaught"})
             assert ("failed" in checks["givens_used"]) == (outcome == "unused")
             assert all(checks.values())
@@ -464,7 +491,7 @@ async def test_encounter_worker_starts_without_a_behavioral_planner(monkeypatch)
         ("neural-soak", "0", True, "tcp://policy:47835", "off", True, "service"),
         ("neural-soak", "0", True, "tcp://policy:47835", "off", True, "engine"),
         ("neural-load", "1", False, None, "off", False, "service"),
-        (None, "1", False, None, "fake", False, "service"),
+        (None, "1", False, None, "off", False, "service"),
         ("neural", "0", True, None, "off", True, "engine"),
         ("neural", "0", True, None, "off", False, "service"),
         ("feats", "0", True, None, "off", True, "engine"),
