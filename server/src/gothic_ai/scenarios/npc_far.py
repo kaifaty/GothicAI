@@ -204,6 +204,13 @@ async def npc_far(
         await link.wait_world()
         return loaded
 
+    async def fight_tick() -> None:
+        # A far-away load can precede the first pushed view. Use the real clock without changing it.
+        views = await link.npc_view([HILDA])
+        if not views or views[0].time is None:
+            raise RuntimeError("Far fight preparation could not read the game clock")
+        await will.tick(now=views[0].time)
+
     async def fight_branch(cid: str, item: str, far_waypoint: str) -> None:
         nonlocal boundary
         off = model_off(dialogue)
@@ -234,7 +241,7 @@ async def npc_far(
         fight_kinds = {"npc_crime_defense", "npc_crime_reaction", "npc_crime_restitution"}
         before_facts = [f for f in facts() if f.get("fact") in fight_kinds]
         cards(courage=3)
-        await will.tick()
+        await fight_tick()
         refused = next((e for e in knockouts.values() if e["boundary"]), None)
         if not check("boundary_attempt", refused is not None, knockouts):
             return
@@ -261,7 +268,7 @@ async def npc_far(
             await meeting()
             cards(courage=3)
         sent_at = len(sent)
-        await will.tick()
+        await fight_tick()
         await _until(lambda: any(f.get("crime") == cid for f in facts("npc_crime_defense")), 15)
         defense = next((f for f in facts("npc_crime_defense") if f.get("crime") == cid), None)
         if not check("far_fight", defense is not None and defense.get("far") is True
@@ -346,7 +353,7 @@ async def npc_far(
         await link.debug("player_goto", waypoint=far_waypoint)
         await meeting()
         for _ in range(2):
-            await will.tick()
+            await fight_tick()
             await asyncio.sleep(1)
         check("fight_not_repeated", [f for f in facts() if f.get("fact") in kinds] == kept
               and not (await bodies())[loser]["unconscious"]
