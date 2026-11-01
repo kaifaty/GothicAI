@@ -1592,7 +1592,7 @@ void staticVobLifetime(Tempest::Device& device) {
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
       }
     require(matches(),width==1 ? "Outside must release all mesh/decal texture demand" :
-                                         "Near must restore texture demand after republishing");
+                                "Resident Near/Far visuals must restore mesh/decal texture demand");
     };
   const Tempest::Vec3 near={100,100,100},outside={1000000,0,1000000};
   size_t clusters=0;
@@ -1628,7 +1628,12 @@ void staticVobLifetime(Tempest::Device& device) {
   // must keep texture demand until the vob cell itself leaves Far.
   table.entries[0].triangleCount=0;
   const Tempest::Vec3 far={25600,100,100};
+  const auto createdBeforeFar=residency.stats().vobCreated;
+  const auto releasedBeforeFar=residency.stats().vobReleased;
   update(far,100000);
+  require(MeshGltfTest::drawable(meshVisual) && MeshGltfTest::drawable(decalVisual) &&
+          residency.stats().vobCreated==createdBeforeFar && residency.stats().vobReleased==releasedBeforeFar,
+          "Near to Far must retain vob-only cell views without releasing or recreating instances");
   textureWidth(far,4,100000);
   for(size_t frame=0;frame<32;++frame)
     update(far,100000);

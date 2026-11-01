@@ -39,10 +39,10 @@ struct WorldView::VobStreaming : std::enable_shared_from_this<VobStreaming> {
   explicit VobStreaming(ChunkResidency& residency):residency(residency) {
     const auto* flag=std::getenv("OPENGOTHIC_VOB_STREAMING");
     enabled=flag==nullptr || std::strcmp(flag,"0")!=0;
-    subscription=residency.subscribe([this](ChunkId id, ChunkResidency::State, ChunkResidency::State next) {
+    subscription=residency.subscribe([this](ChunkId id, ChunkResidency::State, ChunkResidency::State) {
       auto found=chunks.find({id.x,id.z});
       if(found!=chunks.end())
-        transition(found->first,found->second,next);
+        transition(found->first,found->second,this->residency.desired(id,found->second.state));
       });
     }
 
