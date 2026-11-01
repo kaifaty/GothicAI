@@ -331,6 +331,8 @@ async def cover_scenario(
         ) -> tuple[str, str, list[dict[str, Any]]]:
             prior = {r["id"] for r in turns(asker)}
             asker_name = talk.people[asker].name
+            # A load rebuilds acquaintances asynchronously; they supply witness candidates.
+            await _until(lambda: rumors.social is not None, 20)
             question = await dialogue.situation(asker, asker_name)
             off.given(
                 f"дано: {asker_name} спрашивает свидетеля {name}",
@@ -406,7 +408,12 @@ async def cover_scenario(
         ):
             return _logged(results)
         # Keep this testimony newer than Hilda's so its real evidence row is deterministically С1.
+        talk.end("gone")
+        await _until(lambda: not participants.intersection(talk.attached), 20)
         await link.debug("time", hour=9, minute=10)
+        ready, preparation = await stage_investigation(field)
+        if not check("second_ask_near", ready, preparation):
+            return _logged(results)
         _, _, calls = await investigate(VINO, "Вино")
         caught = [f for f in facts("caught") if f.get("npc") == LOBART and f.get("title") == DENIAL]
         if not check(
@@ -635,7 +642,12 @@ async def cover_scenario(
             ),
             reloaded,
         )
+        talk.end("gone")
+        await _until(lambda: not participants.intersection(talk.attached), 20)
         await link.debug("time", hour=12, minute=10)
+        ready, preparation = await stage_investigation(field)
+        if not check("repeated_ask_near", ready, preparation):
+            return _logged(results)
         _, _, repeated = await investigate(VINO, "Вино")
         check(
             "no_duplicate_exposed",
