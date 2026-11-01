@@ -34,6 +34,7 @@
 #include <limits>
 #include <stdexcept>
 #include <thread>
+#include <type_traits>
 #include <cstdio>
 
 #if defined(__GNUC__)
@@ -74,6 +75,8 @@
 
 using namespace Tempest;
 
+namespace ModelData { asset::ModelScript readScriptOverlay(const std::filesystem::path& file); }
+
 Resources* Resources::inst=nullptr;
 
 struct Resources::VideoBase {
@@ -87,6 +90,14 @@ struct Resources::VideoBase {
 namespace {
 thread_local bool preparingVideo = false;
 thread_local bool loadingTextureTail = false;
+
+std::string modelKey(std::string_view name) {
+  const auto separator = name.find_last_of("/\\");
+  std::string key(separator==std::string_view::npos ? name : name.substr(separator+1));
+  for(auto& c:key)
+    c = char(std::toupper(static_cast<unsigned char>(c)));
+  return key;
+  }
 
 std::string wayHeightFileStamp(const std::filesystem::path& file) {
   try {
@@ -850,6 +861,7 @@ void Resources::indexBaseContent() {
   baseMeshes.load(root,"meshes");
   baseZen.load(root,"zen");
   baseModels.load(root,"models");
+  indexContentModels();
   baseFonts.load(root,"fonts");
   basePrograms = ProgramData::readIndex(root/"programs");
   baseOutputUnits = OutputUnits::readIndex(root/"outputunits");
@@ -866,6 +878,57 @@ void Resources::indexBaseContent() {
     const std::filesystem::path file(entry["path"].GetString());
     if(file.parent_path().parent_path()=="worlds" && file.filename()=="world.json")
       baseWorlds.emplace(file.parent_path().filename().string());
+    }
+  }
+
+void Resources::indexContentModels() {
+  contentModels.clear();
+  const auto root = contentDir();
+  if(root.empty())
+    return;
+  const auto folder = root/"models";
+  const auto index = folder/"models.json";
+  std::ifstream file(index,std::ios::binary);
+  if(!file) {
+    std::error_code ec;
+    if(std::filesystem::exists(index,ec) || ec)
+      Log::e("content models: cannot read \"",index.string(),"\"");
+    return;
+    }
+  try {
+    const std::string text{std::istreambuf_iterator<char>(file),std::istreambuf_iterator<char>()};
+    rapidjson::Document table;
+    table.Parse<rapidjson::kParseValidateEncodingFlag>(text.data(),text.size());
+    if(table.HasParseError() || !table.IsObject() ||
+       !table.HasMember("format") || !table["format"].IsString() ||
+       std::string_view(table["format"].GetString(),table["format"].GetStringLength())!="gothic-models" ||
+       !table.HasMember("version") || !table["version"].IsUint() || table["version"].GetUint()!=1 ||
+       !table.HasMember("files") || !table["files"].IsObject())
+      throw std::runtime_error("expected gothic-models index version 1 with files object");
+    for(const auto& entry:table["files"].GetObject()) {
+      const std::string key(entry.name.GetString(),entry.name.GetStringLength());
+      if(key.empty() || key.find_first_of("/\\")!=std::string::npos || key.find('\0')!=std::string::npos ||
+         key!=modelKey(key) || !entry.value.IsString()) {
+        Log::e("content models: invalid entry \"",key,"\" in \"",index.string(),"\"");
+        continue;
+        }
+      const std::string path(entry.value.GetString(),entry.value.GetStringLength());
+      const std::filesystem::path relative(path);
+      if(path.empty() || path.find('\0')!=std::string::npos || path.find('\\')!=std::string::npos ||
+         relative.is_absolute() || relative.has_root_name() ||
+         std::any_of(relative.begin(),relative.end(),[](const auto& part) { return part==".."; })) {
+        Log::e("content models: invalid path for \"",key,"\" in \"",index.string(),"\"");
+        continue;
+        }
+      if((FileExt::hasExt(key,"MSB") || FileExt::hasExt(key,"MDS")) && baseModels.files.count(key)==0) {
+        Log::e("content models: warning: no base script for overlay \"",(folder/relative).string(),"\" (",key,")");
+        continue;
+        }
+      contentModels.emplace(key,folder/relative);
+      }
+    }
+  catch(const std::exception& error) {
+    Log::e("content models: \"",index.string(),"\": ",error.what());
     }
   }
 
@@ -2602,23 +2665,41 @@ const Animation* Resources::loadAnimation(std::string_view name) {
   }
 
 std::filesystem::path Resources::baseModelFile(std::string_view name) {
-  const auto separator = name.find_last_of("/\\");
-  std::string key(separator==std::string_view::npos ? name : name.substr(separator+1));
-  for(auto& c:key)
-    c = char(std::toupper(static_cast<unsigned char>(c)));
-  const auto found = inst->baseModels.files.find(key);
+  const auto found = inst->baseModels.files.find(modelKey(name));
   if(found==inst->baseModels.files.end())
     return {};
   return inst->baseModels.dir/found->second;
   }
 
-bool Resources::loadHierarchyData(std::string_view name, asset::ModelHierarchy& out) {
+template<class T>
+bool Resources::loadModelRecord(std::string_view name, T& out, T (*read)(const std::filesystem::path&)) {
   LoadProbe::Vobs::Scope probe("mesh_read");
+  const auto content = inst->contentModels.find(modelKey(name));
+  if(content!=inst->contentModels.end()) {
+    try {
+      auto record = read(content->second);
+      if constexpr(std::is_same_v<T,asset::ModelAnimation>) {
+        if(record.frame_count==0 || record.node_count==0 || record.fps<=0 ||
+           record.node_indices.size()!=record.node_count ||
+           uint64_t(record.frame_count)*record.node_count!=record.samples.size() ||
+           std::any_of(record.node_indices.begin(),record.node_indices.end(),[](uint32_t node) {
+             return node>=MAX_NUM_SKELETAL_NODES;
+             }))
+          throw std::runtime_error("invalid animation frames, nodes, samples or fps");
+        }
+      out = std::move(record);
+      if(inst->census) inst->census->replaced(name,content->second.generic_string());
+      return true;
+      }
+    catch(const std::exception& error) {
+      Log::e("content models: skipping \"",content->second.string(),"\": ",error.what());
+      }
+    }
   const auto file = baseModelFile(name);
   if(file.empty())
     return false;
   try {
-    out = ModelData::readHierarchy(file);
+    out = read(file);
     }
   catch(const std::exception& error) {
     if(inst->census) inst->census->missing(name,error.what());
@@ -2626,38 +2707,18 @@ bool Resources::loadHierarchyData(std::string_view name, asset::ModelHierarchy& 
     }
   if(inst->census) inst->census->replaced(name,"base/models/"+file.filename().string());
   return true;
+  }
+
+bool Resources::loadHierarchyData(std::string_view name, asset::ModelHierarchy& out) {
+  return loadModelRecord(name,out,ModelData::readHierarchy);
   }
 
 bool Resources::loadModelMeshData(std::string_view name, asset::ModelMesh& out) {
-  LoadProbe::Vobs::Scope probe("mesh_read");
-  const auto file = baseModelFile(name);
-  if(file.empty())
-    return false;
-  try {
-    out = ModelData::readMesh(file);
-    }
-  catch(const std::exception& error) {
-    if(inst->census) inst->census->missing(name,error.what());
-    throw;
-    }
-  if(inst->census) inst->census->replaced(name,"base/models/"+file.filename().string());
-  return true;
+  return loadModelRecord(name,out,ModelData::readMesh);
   }
 
 bool Resources::loadModelData(std::string_view name, asset::Model& out) {
-  LoadProbe::Vobs::Scope probe("mesh_read");
-  const auto file = baseModelFile(name);
-  if(file.empty())
-    return false;
-  try {
-    out = ModelData::readModel(file);
-    }
-  catch(const std::exception& error) {
-    if(inst->census) inst->census->missing(name,error.what());
-    throw;
-    }
-  if(inst->census) inst->census->replaced(name,"base/models/"+file.filename().string());
-  return true;
+  return loadModelRecord(name,out,ModelData::readModel);
   }
 
 bool Resources::loadModelScriptData(std::string_view name, asset::ModelScript& out) {
@@ -2673,41 +2734,40 @@ bool Resources::loadModelScriptData(std::string_view name, asset::ModelScript& o
     throw;
     }
   if(inst->census) inst->census->replaced(name,"base/models/"+file.filename().string());
+  const auto content = inst->contentModels.find(modelKey(name));
+  if(content!=inst->contentModels.end()) {
+    try {
+      auto overlay = ModelData::readScriptOverlay(content->second);
+      const auto merge = [](auto& base, auto& additions) {
+        for(auto& entry:additions) {
+          const auto found = std::find_if(base.begin(),base.end(),[&](const auto& old) {
+            return old.name==entry.name;
+            });
+          if(found==base.end()) base.push_back(std::move(entry));
+          else *found = std::move(entry);
+          }
+        };
+      merge(out.animations,overlay.animations);
+      merge(out.aliases,overlay.aliases);
+      if(inst->census) inst->census->replaced(name,content->second.generic_string());
+      }
+    catch(const std::exception& error) {
+      Log::e("content models: skipping \"",content->second.string(),"\": ",error.what());
+      }
+    }
   return true;
   }
 
 bool Resources::loadAnimationData(std::string_view name, asset::ModelAnimation& out) {
-  LoadProbe::Vobs::Scope probe("mesh_read");
-  const auto file = baseModelFile(name);
-  if(file.empty())
-    return false;
-  try {
-    out = ModelData::readAnimation(file);
-    }
-  catch(const std::exception& error) {
-    if(inst->census) inst->census->missing(name,error.what());
-    throw;
-    }
-  if(inst->census) inst->census->replaced(name,"base/models/"+file.filename().string());
-  return true;
+  return loadModelRecord(name,out,ModelData::readAnimation);
   }
 
 asset::MorphMesh Resources::loadMorphData(std::string_view name) {
-  LoadProbe::Vobs::Scope probe("mesh_read");
-  const auto file = baseModelFile(name);
-  if(file.empty()) {
+  asset::MorphMesh out;
+  if(!loadModelRecord(name,out,ModelData::readMorph)) {
     if(inst->census) inst->census->missing(name,"missing from base index");
     throw std::runtime_error("failed to open resource: " + std::string(name));
     }
-  asset::MorphMesh out;
-  try {
-    out = ModelData::readMorph(file);
-    }
-  catch(const std::exception& error) {
-    if(inst->census) inst->census->missing(name,error.what());
-    throw;
-    }
-  if(inst->census) inst->census->replaced(name,"base/models/"+file.filename().string());
   return out;
   }
 
