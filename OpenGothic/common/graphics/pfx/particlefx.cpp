@@ -209,7 +209,7 @@ uint64_t ParticleFx::calcPrefferedTimeSingle(const KeyList& k, float fps) {
   }
 
 const Tempest::Texture2d* ParticleFx::loadTexture(std::string_view src) {
-  auto view = Resources::loadTexture(src);
+  auto view = Resources::loadTexture(src,false,false);
   if(view==nullptr)
     view = &Resources::fallbackBlack();
   return view;

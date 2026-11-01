@@ -37,7 +37,7 @@ import asyncio
 import contextlib
 import json
 import logging
-import signal
+import re
 import sys
 import time
 import zipfile
@@ -64,10 +64,14 @@ from .commands import (
     services,
     tools,
 )
-from .linux_session import LinuxSession, installation_lock
 from .settings import CONFIG_DIR, Config, Secrets, Settings
 from .state import STATE_DIR, AlreadyRunning, SessionFile
 from .supervisor import Event, NotReady, Supervisor, temporary
+
+if sys.platform != "win32":
+    from .linux_session import LinuxSession, installation_lock
+else:  # the Ryzen desktop session needs fcntl; Windows runs the Supervisor directly
+    LinuxSession = installation_lock = None
 
 log = logging.getLogger(__name__)
 
@@ -465,6 +469,13 @@ class Control:
             raise RequestError("Логов ещё нет: лаунчер ни разу не запускал игру")
         latest = sessions[-1]
         secrets = [v for v in config.secrets.model_dump().values() if v]
+        with contextlib.suppress(OSError, ValueError):
+            tokens = json.loads(checks.CHATGPT_TOKENS.read_text())
+            if isinstance(tokens, dict):
+                secrets.extend(
+                    value for key in ("access_token", "refresh_token")
+                    if isinstance(value := tokens.get(key), str) and value
+                )
         target = root / f"report-{latest.name}.zip"
 
         def build() -> None:
@@ -479,6 +490,7 @@ class Control:
 
 
 def _redact(text: str, secrets: list[str]) -> str:
+    text = re.sub(r"\bBearer[ \t]+[A-Za-z0-9._~+/=-]+", "Bearer <hidden>", text, flags=re.IGNORECASE)
     for s in secrets:
         text = text.replace(s, "<hidden>")
     return text
@@ -518,10 +530,11 @@ async def serve() -> int:
         sys.stdout.write(json.dumps(msg, ensure_ascii=False) + "\n")
         sys.stdout.flush()
 
+    from .cli import on_stop_signals
+
     control = Control(write)
     closing = asyncio.Event()
-    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
-        loop.add_signal_handler(sig, closing.set)
+    on_stop_signals(loop, lambda _sig: closing.set())
     requests: set[asyncio.Task[None]] = set()
 
     async def read() -> None:

@@ -6,6 +6,8 @@
 #include <string>
 #include <vector>
 
+struct ChunkTable;
+
 // Authored cloth polygons are split before either landscape packing pass.
 // This keeps the original triangles available for the cloth=0 fallback without
 // retaining a second copy of the entire landscape or changing BSP sectors.
@@ -25,6 +27,6 @@ struct Extracted {
   std::vector<Surface> surfaces;
   };
 
-Extracted extract(asset::WorldMesh& landscape);
+Extracted extract(asset::WorldMesh& landscape, ChunkTable* chunks = nullptr);
 
 }

@@ -68,8 +68,10 @@ REUSE
 runner_reused=true
 if [[ ! -x "$output/gothic-body-runner" ]]; then
   runner_reused=false
+  source scripts/ryzen-build.sh
   cmake -S OpenGothic -B "$runtime/build" -G Ninja \
     -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+    "${RYZEN_CMAKE_FLAGS[@]}" \
     -DOPENGOTHIC_JOLT_X86=x86-64-v3 \
     -DCMAKE_CXX_FLAGS="-I$VULKAN_SDK/include" -DCMAKE_EXE_LINKER_FLAGS="-L$VULKAN_SDK/lib"
   cmake --build "$runtime/build" --target gothic-body-runner --parallel 3

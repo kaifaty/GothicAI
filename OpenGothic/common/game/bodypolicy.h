@@ -4,6 +4,7 @@
 
 #include <array>
 #include <cstdint>
+#include <filesystem>
 #include <map>
 #include <optional>
 #include <string>
@@ -21,7 +22,7 @@ class BodyNet final {
       std::vector<float> hidden;
       };
 
-    explicit BodyNet(const std::string& path);
+    explicit BodyNet(const std::filesystem::path& path);
     const std::string& checkpointSha256() const { return checkpoint; }
     static std::vector<std::string> featureNames();
     static Identity actorIdentity(const rapidjson::Value& row);

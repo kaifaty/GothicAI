@@ -119,7 +119,7 @@ def parse_intent(args: dict[str, Any], current: Intent | None = None) -> Intent:
 
 def check_intent(
     intent: Intent, snap: Snapshot | None, seen: dict[str, str] | None = None,
-    *, fight_reason: Callable[[], str | None] | None = None,
+    *, fight_reason: Callable[[str | None], str | None] | None = None,
 ) -> tuple[Intent | None, str | None]:
     """The intent as it will be carried out, or why not. `seen`: whom it may point to, as the npc perceives
     them (perception.py); else the snapshot's people and points around."""
@@ -138,8 +138,8 @@ def check_intent(
             listed = ", ".join(f"{k} ({v})" for k, v in allowed.items())
             return None, f"Цели {intent.target} рядом нет. Можно указать: {listed}."
         intent = replace(intent, target=match)
-    if intent.goal == "fight" and intent.target == "PLAYER" and fight_reason is not None:
-        if reason := fight_reason():
+    if intent.goal == "fight" and fight_reason is not None:
+        if reason := fight_reason(intent.target):
             return None, reason
     return intent, None
 

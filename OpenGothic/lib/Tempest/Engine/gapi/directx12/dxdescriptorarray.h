@@ -20,6 +20,7 @@ class DxDescriptorArray : public AbstractGraphicsApi::DescArray {
     ~DxDescriptorArray();
 
     size_t size() const;
+    void setTexture(size_t index, AbstractGraphicsApi::Texture* texture) override;
     auto   handleR()  const -> D3D12_GPU_DESCRIPTOR_HANDLE;
     auto   handleRW() const -> D3D12_GPU_DESCRIPTOR_HANDLE;
     auto   handleS()  const -> D3D12_GPU_DESCRIPTOR_HANDLE;
@@ -32,5 +33,6 @@ class DxDescriptorArray : public AbstractGraphicsApi::DescArray {
     uint32_t  dPtrRW = 0xFFFFFFFF;
     uint32_t  dPtrS  = 0xFFFFFFFF;
     size_t    cnt   = 0;
+    uint32_t  mipLevel = uint32_t(-1);
   };
 }}

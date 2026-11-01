@@ -1,0 +1,10 @@
+# Fresh NEWWORLD, PLACED_ITEMS=0/1, three processes per mode on Mac.
+# Includes entry frames and ten steady seconds after a two second warmup.
+seed 73013
+cheat god
+set time 12 0
+overlay off
+placed-items census
+placed-items performance
+wait 12000
+placed-items performance-report

@@ -19,7 +19,7 @@ from gothic_ai.crimes import Crimes
 from gothic_ai.deals import Deals
 from gothic_ai.dialogue import DialogueManager
 from gothic_ai.gamedata.storygraph import StoryGraph, load
-from gothic_ai.initiative import CHECKINFO, TOOLS, ImportantApproach, InitiativeDesk
+from gothic_ai.initiative import CHECKINFO, TOOLS, ImportantApproach, InitiativeDesk, approach
 from gothic_ai.journal import Journal
 from gothic_ai.llm.fake import FakeBackend, FakeStep
 from gothic_ai.memory import MemoryStore
@@ -208,6 +208,92 @@ async def _comes_up(s: Scene, *others: dict) -> None:
 def _skipped(s: Scene) -> list[str]:
     """Why the desk let walk-ups go (the journal)."""
     return [e["why"] for e in s.journal if e["kind"] == "initiative_skipped"]
+
+
+async def test_greeting_turns_when_the_hero_is_already_close(tmp_path):
+    async with _scene(tmp_path) as s:
+        await _around(s, person(LOBART, "Лобарт", 3))
+        task = asyncio.create_task(approach(
+            s.desk.link, s.desk.bodies, s.talk, LOBART, valid=lambda: True
+        ))
+        await _walks(s, 1)
+        assert s.fake.acts[-1]["action"] == "turn_to"
+        await _idle(s)
+        assert await task
+        assert not s.desk.bodies.busy(LOBART) and not s.llm.calls
+
+
+@pytest.mark.parametrize("moves", [False, True])
+async def test_greeting_walks_only_a_few_steps_and_requires_confirmed_movement(tmp_path, monkeypatch, moves):
+    monkeypatch.setattr("gothic_ai.initiative.APPROACH_S", 0.15)
+    monkeypatch.setattr("gothic_ai.initiative.WATCH_S", 0.01)
+    async with _scene(tmp_path) as s:
+        await _around(s, person(LOBART, "Лобарт", 15))
+        task = asyncio.create_task(approach(
+            s.desk.link, s.desk.bodies, s.talk, LOBART, valid=lambda: True
+        ))
+        await _walks(s, 1)
+        assert s.fake.acts[-1]["action"] == "go_to_npc"
+        if moves:
+            await _around(s, person(LOBART, "Лобарт", 13, moving=True))
+        assert await asyncio.wait_for(task, 1) is moves
+        assert any(m.get("exprs") == [["call", "NPC_CLEARAIQUEUE", ["inst", "SELF"]]]
+                   for m in s.fake.story)
+        assert not s.desk.bodies.busy(LOBART)
+
+
+async def test_greeting_clears_its_walk_when_the_encounter_ends(tmp_path):
+    async with _scene(tmp_path) as s:
+        await _around(s, person(LOBART, "Лобарт", 15))
+        valid = True
+        task = asyncio.create_task(approach(
+            s.desk.link, s.desk.bodies, s.talk, LOBART, valid=lambda: valid
+        ))
+        await _walks(s, 1)
+        valid = False
+        assert not await task
+        assert any(m.get("exprs") == [["call", "NPC_CLEARAIQUEUE", ["inst", "SELF"]]]
+                   for m in s.fake.story)
+
+
+@pytest.mark.parametrize("takeover", ["action", "fight", "dialog", "loading", "session"])
+async def test_greeting_never_clears_a_replacement_or_a_new_world(tmp_path, takeover):
+    async with _scene(tmp_path) as s:
+        await _around(s, person(LOBART, "Лобарт", 15))
+        task = asyncio.create_task(approach(
+            s.desk.link, s.desk.bodies, s.talk, LOBART, valid=lambda: True
+        ))
+        await _walks(s, 1)
+        if takeover == "action":
+            await s.fake.send(type="npc_act_result", id="replacement", npc=LOBART,
+                              action="flee", status="queued")
+        elif takeover in {"fight", "dialog"}:
+            await _around(s, person(LOBART, "Лобарт", 15, activity=takeover))
+        elif takeover == "loading":
+            await s.fake.send(type="loading")
+        else:
+            await s.fake.send(type="session", branch="B", parent="A", parent_seq=0, reason="load")
+        assert not await task
+        assert not any(m.get("exprs") == [["call", "NPC_CLEARAIQUEUE", ["inst", "SELF"]]]
+                       for m in s.fake.story)
+        assert not s.desk.bodies.busy(LOBART)
+
+
+@pytest.mark.parametrize("activity,state", [("routine", "ZS_GOTOBED"), ("fight", "ZS_ATTACK")])
+async def test_greeting_does_not_start_when_the_leader_is_busy_or_asleep(tmp_path, activity, state):
+    async with _scene(tmp_path) as s:
+        await _around(s, person(LOBART, "Лобарт", 15, activity=activity, state=state))
+        assert not await approach(s.desk.link, s.desk.bodies, s.talk, LOBART, valid=lambda: True)
+        assert not s.fake.acts
+
+
+async def test_rejected_greeting_does_not_clear_the_native_queue(tmp_path):
+    async with _scene(tmp_path) as s:
+        s.fake.busy_npcs.add(LOBART)
+        await _around(s, person(LOBART, "Лобарт", 15))
+        assert not await approach(s.desk.link, s.desk.bodies, s.talk, LOBART, valid=lambda: True)
+        assert not any(m.get("exprs") == [["call", "NPC_CLEARAIQUEUE", ["inst", "SELF"]]]
+                       for m in s.fake.story)
 
 
 async def test_rule_approach_leaves_existing_important_dialog_to_native_perception(tmp_path):

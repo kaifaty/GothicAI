@@ -19,6 +19,7 @@
 #include "utils/fileutil.h"
 #include "commandline.h"
 #include "gothic.h"
+#include "loadprobe.h"
 #include "navdemos.h"
 
 using namespace Tempest;
@@ -496,6 +497,7 @@ void GameScript::initializeInstanceNpc(const std::shared_ptr<zenkit::INpc>& npc,
   }
 
 void GameScript::initializeInstanceItem(const std::shared_ptr<zenkit::IItem>& item, size_t instance) {
+  LoadProbe::Vobs::Scope probe("script_item");
   auto sym = vm.find_symbol_by_index(uint32_t(instance));
 
   if(sym == nullptr) {

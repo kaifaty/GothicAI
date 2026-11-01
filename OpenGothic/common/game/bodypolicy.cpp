@@ -196,7 +196,7 @@ std::vector<std::string> BodyNet::featureNames() {
   return names;
   }
 
-BodyNet::BodyNet(const std::string& path) {
+BodyNet::BodyNet(const std::filesystem::path& path) {
   SmallNet::TensorFile file(path);
   const auto& h = file.header;
   require(text(get(h,"format"),"gothic-body-net") && get(h,"version").IsUint64() && get(h,"version").GetUint64()==1,

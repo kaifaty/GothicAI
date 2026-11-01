@@ -1,0 +1,18 @@
+{
+ "about": "M5 of docs/world-detail-plan.md: smoke out of the roof holes over two burning hearths, two braziers along the way to the ship. Layer: scripts/content/harbour_motion.py layer. Positions in Gothic cm; offsets of a brazier's fire, smoke and light in its own axes, as the original braziers (OC_LOB_LIGHTER_HUGE3 by the fishers and the mole).",
+ "items": [
+  {"key": "smoke-hut04-1", "kind": "emitter", "pfx": "LIGHTSMOKE", "position": [2836, 245, -2426], "zone": "hut HAFEN04, hole 146 x 40 cm 81 cm from the large hearth"},
+  {"key": "smoke-hut04-2", "kind": "emitter", "pfx": "LIGHTSMOKE", "position": [2871, 245, -2426]},
+  {"key": "smoke-hut04-3", "kind": "emitter", "pfx": "LIGHTSMOKE", "position": [2906, 245, -2426]},
+  {"key": "smoke-hut06-1", "kind": "emitter", "pfx": "LIGHTSMOKE", "position": [3998, 262, -4061], "zone": "hut HAFEN06, hole 73 x 54 cm 91 cm from the hearth"},
+  {"key": "smoke-hut06-2", "kind": "emitter", "pfx": "LIGHTSMOKE", "position": [4038, 262, -4061]},
+  {"key": "brazier-1", "kind": "mesh", "visual": "OC_LOB_LIGHTER_HUGE3", "x": -3300, "z": -4560, "wall": 45, "yaw": 0, "collision": "mesh", "zone": "way to the ship, foot of the paladin camp, 26 m from the lamp post at crane C"},
+  {"key": "brazier-1-fire", "kind": "emitter", "pfx": "FIRE_MEDIUM", "attach": "brazier-1", "offset": [-3, 324, 6]},
+  {"key": "brazier-1-smoke", "kind": "emitter", "pfx": "FIRE_SMOKE", "attach": "brazier-1", "offset": [-6, 350, 9]},
+  {"key": "brazier-1-light", "kind": "light", "attach": "brazier-1", "offset": [4, 383, 4], "range": 500, "color": [194, 125, 56]},
+  {"key": "brazier-2", "kind": "mesh", "visual": "OC_LOB_LIGHTER_HUGE3", "x": -5600, "z": -4900, "wall": 45, "yaw": 0, "collision": "mesh", "zone": "way to the ship, 23 m on, 25 m before the fishers' braziers"},
+  {"key": "brazier-2-fire", "kind": "emitter", "pfx": "FIRE_MEDIUM", "attach": "brazier-2", "offset": [-3, 324, 6]},
+  {"key": "brazier-2-smoke", "kind": "emitter", "pfx": "FIRE_SMOKE", "attach": "brazier-2", "offset": [-6, 350, 9]},
+  {"key": "brazier-2-light", "kind": "light", "attach": "brazier-2", "offset": [4, 383, 4], "range": 500, "color": [194, 125, 56]}
+ ]
+}

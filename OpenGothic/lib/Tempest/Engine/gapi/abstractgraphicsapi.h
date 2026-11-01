@@ -531,6 +531,7 @@ namespace Tempest {
         };
       struct Texture:Shared  {
         virtual uint32_t      mipCount() const = 0;
+        virtual bool          uploadReady() { return true; }
         virtual NonUniqResId  syncId() const = 0;
         };
       struct Pipeline:Shared {
@@ -546,6 +547,7 @@ namespace Tempest {
       struct Buffer:Shared   {
         virtual ~Buffer()=default;
         virtual void  update  (const void* data, size_t off, size_t size)=0;
+        virtual void  updateAsync(const void* data, size_t off, size_t size) { update(data,off,size); }
         virtual void  read    (      void* data, size_t off, size_t size)=0;
         };
 
@@ -561,7 +563,9 @@ namespace Tempest {
         };
       struct BlasBuildCtx {};
       struct AccelerationStructure:Shared {};
-      struct DescArray:NoCopy {};
+      struct DescArray:NoCopy {
+        virtual void setTexture(size_t index, Texture* texture);
+        };
       struct BarrierDesc {
         const Texture*   texture   = nullptr;
         const Swapchain* swapchain = nullptr;
@@ -653,6 +657,7 @@ namespace Tempest {
 
       virtual PBuffer    createBuffer (Device* d, const void* mem, size_t size, MemUsage usage, BufferHeap flg) = 0;
       virtual PTexture   createTexture(Device* d, const Pixmap& p, TextureFormat frm, uint32_t mips) = 0;
+      virtual PTexture   createTextureAsync(Device* d, const Pixmap& p, TextureFormat frm, uint32_t mips);
       virtual PTexture   createTexture(Device* d, const uint32_t w, const uint32_t h, uint32_t mips, TextureFormat frm) = 0;
       virtual PTexture   createStorage(Device* d, const uint32_t w, const uint32_t h, uint32_t mips, TextureFormat frm) = 0;
       virtual PTexture   createStorage(Device* d, const uint32_t w, const uint32_t h, const uint32_t depth, uint32_t mips, TextureFormat frm) = 0;

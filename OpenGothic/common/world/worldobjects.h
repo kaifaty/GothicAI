@@ -7,6 +7,7 @@
 
 #include "bullet.h"
 #include "spaceindex.h"
+#include "physics/dynamicworld.h"
 #include "game/gametime.h"
 #include "game/perceptionmsg.h"
 #include "game/constants.h"
@@ -56,6 +57,19 @@ class WorldObjects final {
     void           tick(uint64_t dt, uint64_t dtPlayer);
     void           prepareRagdolls();
     void           syncRagdolls();
+
+    struct PlacedItem {
+      uint32_t zenId = uint32_t(-1);
+      size_t instance = size_t(-1);
+      std::string visual;
+      Tempest::Matrix4x4 origin;
+      Item* item = nullptr;
+      DynamicWorld::PlacedItemCensusEntry validation;
+      };
+    void           finalizePlacedItems();
+    const std::vector<PlacedItem>& placedItemCensus() const { return placedItems; }
+    double         placedItemValidationMilliseconds() const { return placedValidationMs; }
+    size_t         placedItemsCreatedThisFrame() const { return placedCreatedThisFrame; }
 
     Npc*           addNpc(size_t itemInstance, std::string_view     at);
     Npc*           addNpc(size_t itemInstance, const Tempest::Vec3& at);
@@ -148,9 +162,14 @@ class WorldObjects final {
     void           resetPositionToTA();
 
   private:
+    friend class World;
     friend struct WorldDataContract;
     void           saveItemPhysics(Serialize& fout) const;
     void           loadItemPhysics(Serialize& fin);
+    void           savePlacedItems(Serialize& fout) const;
+    void           loadPlacedItems(Serialize& fin);
+    void           tickPlacedItems();
+    void           linkPlacedItem(PlacedItem& source, Item& item);
 
     struct MobRoutine {
       gtime   time;
@@ -181,6 +200,9 @@ class WorldObjects final {
 
     std::vector<StaticObj*>            objStatic;
     std::vector<std::unique_ptr<Item>> itemArr;
+    std::vector<PlacedItem>            placedItems;
+    double                            placedValidationMs = 0;
+    size_t                            placedCreatedThisFrame = 0;
     std::list<MobStates>               routines;
 
     std::list<Bullet>                  bullets;

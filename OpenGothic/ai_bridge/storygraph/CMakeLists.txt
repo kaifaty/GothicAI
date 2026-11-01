@@ -23,8 +23,17 @@ if(PROJECT_IS_TOP_LEVEL)
   set(DM_ENABLE_ASAN OFF CACHE INTERNAL "")
   add_subdirectory(../../lib/dmusic dmusic EXCLUDE_FROM_ALL)
   include(../../cmake/BaseImport.cmake)
+  if(MSVC)
+    # the base C sources read dmusic's _Atomic structs (see the game's CMakeLists.txt)
+    target_compile_options(gothic-base-runtime PRIVATE $<$<COMPILE_LANGUAGE:C>:/experimental:c11atomics>)
+    target_compile_options(gothic-base-import PRIVATE $<$<COMPILE_LANGUAGE:C>:/experimental:c11atomics>)
+  endif()
   # basestore.cpp, linked into the tool below, also resolves the video part
   include(../../cmake/VideoImport.cmake)
+  if(MSVC)
+    # M_PI in the Bink decoder; the game's root CMakeLists.txt defines this for every target
+    target_compile_definitions(gothic-video-import PRIVATE _USE_MATH_DEFINES)
+  endif()
 endif()
 
 set(STORYGRAPH_SOURCES

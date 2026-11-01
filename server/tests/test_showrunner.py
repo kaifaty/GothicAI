@@ -14,13 +14,14 @@ from gothic_ai.cast import Cast, Person
 from gothic_ai.characters import Card
 from gothic_ai.crime_law import CrimeLaw
 from gothic_ai.crimes import Crimes
+from gothic_ai.game import GameError
 from gothic_ai.llm import ToolCall
 from gothic_ai.llm.fake import FakeBackend, FakeStep
 from gothic_ai.memory import MemoryStore
 from gothic_ai.occasions import Occasions
 from gothic_ai.places import PlaceBook
 from gothic_ai.protocol import Loading, NpcSpec, RoutineEntry, Session
-from gothic_ai.questbook import Goal, Quest, Stage, Talk
+from gothic_ai.questbook import BLAME, KILL, Goal, Quest, Stage, Talk
 from gothic_ai.showrunner import (
     CACHE_KEY,
     MAX_LINES_PER_CHAPTER,
@@ -1255,6 +1256,7 @@ async def test_accepted_line_records_its_challenge_with_people_and_time(graph):
     async with world(graph, proposal(
         kind="stranger", giver="", place=HOME, challenge={"kind": "no_blood"},
     )) as w:
+        w.fake.attitudes[LOBART] = 0
         make_chain = w.chains.chain.side_effect
 
         async def chain(*args, **kwargs):
@@ -1276,6 +1278,95 @@ async def test_accepted_line_records_its_challenge_with_people_and_time(graph):
         instructions, _, [tool] = w.llm.calls[0]
         assert "challenge" in instructions
         assert "challenge" in tool.parameters["properties"]
+
+
+@pytest.mark.parametrize("kind", ["no_blood", "no_reward", "secret_kept", "mercy"])
+async def test_peaceful_line_drops_only_no_blood(graph, kind, caplog):
+    async with world(graph, proposal(challenge={"kind": kind})) as w:
+        make_chain = w.chains.chain.side_effect
+
+        async def chain(*args, **kwargs):
+            quests = await make_chain(*args, **kwargs)
+            w.chronicle.record({
+                "fact": "chain", "quests": [q.id for q in quests], "roles": {"witness": [LOBART]},
+            })
+            # Neither hostility from the giver nor from someone outside the line counts.
+            w.fake.attitudes.update({HILDA: 0, VINO: 0})
+            return quests
+
+        w.chains.chain.side_effect = chain
+        with caplog.at_level("INFO", logger="gothic_ai.showrunner"):
+            result = await w.showrunner.decide(occasion())
+        [(seq, recorded)] = w.chronicle.entries("line")
+        assert recorded == result and result["fact"] == "line"
+        people = sorted([HILDA, LOBART])
+        if kind == "no_blood":
+            assert w.chronicle.facts("challenge_dropped") == [{
+                "fact": "challenge_dropped", "kind": kind, "line": seq,
+                "why": "no_fight", "people": people,
+            }]
+            assert w.chronicle.facts("challenge") == []
+            assert "dropped no_blood" in caplog.text and "no_fight" in caplog.text
+        else:
+            assert w.chronicle.facts("challenge_dropped") == []
+            [challenge] = w.chronicle.facts("challenge")
+            assert challenge["kind"] == kind and challenge["people"] == people
+        reads = [r for r in w.fake.story if r.get("type") == "story_eval" and "NPC_GETATTITUDE" in str(r)]
+        assert len(reads) == (2 if kind == "no_blood" else 1)
+        if kind == "no_blood":
+            assert len(reads[-1]["exprs"]) == 1 and LOBART in str(reads[-1])
+
+
+async def test_crime_keeps_no_blood_in_a_peaceful_line(graph):
+    async with world(graph, proposal(giver=LOBART, crime="A/deed-1", challenge={"kind": "no_blood"})) as w:
+        enable_crime(w)
+        result = await w.showrunner.decide(occasion())
+        assert result["fact"] == "line"
+        [challenge] = w.chronicle.facts("challenge")
+        assert challenge["kind"] == "no_blood"
+        assert w.chronicle.facts("challenge_dropped") == []
+
+
+@pytest.mark.parametrize("goal", [Goal(KILL, npcs=[LOBART]), Goal(BLAME, npc=LOBART)])
+async def test_fight_goal_on_a_line_person_keeps_no_blood(graph, goal):
+    async with world(graph, proposal(challenge={"kind": "no_blood"})) as w:
+        async def chain(npc, **kwargs):
+            first = quest(giver=npc)
+            first.stages[0].goals.append(goal)
+            await w.keep(first)
+            return [first]
+
+        w.chains.chain.side_effect = chain
+        result = await w.showrunner.decide(occasion())
+        assert result["fact"] == "line"
+        [challenge] = w.chronicle.facts("challenge")
+        assert challenge["kind"] == "no_blood" and LOBART in challenge["people"]
+        assert w.chronicle.facts("challenge_dropped") == []
+
+
+@pytest.mark.parametrize("error", [GameError, TimeoutError])
+async def test_unreadable_attitude_keeps_no_blood_without_failing_the_line(graph, monkeypatch, caplog, error):
+    async with world(graph, proposal(challenge={"kind": "no_blood"})) as w:
+        make_chain = w.chains.chain.side_effect
+
+        async def chain(*args, **kwargs):
+            quests = await make_chain(*args, **kwargs)
+            w.chronicle.record({
+                "fact": "chain", "quests": [q.id for q in quests], "roles": {"witness": [LOBART]},
+            })
+            monkeypatch.setattr(
+                w.author.link, "story_eval", AsyncMock(side_effect=error("attitude unavailable")),
+            )
+            return quests
+
+        w.chains.chain.side_effect = chain
+        with caplog.at_level("INFO", logger="gothic_ai.showrunner"):
+            result = await w.showrunner.decide(occasion())
+        assert result["fact"] == "line" and w.chronicle.facts("line_failed") == []
+        [challenge] = w.chronicle.facts("challenge")
+        assert challenge["kind"] == "no_blood" and LOBART in challenge["people"]
+        assert w.chronicle.facts("challenge_dropped") == []
+        assert error.__name__ in caplog.text and "attitude unavailable" in caplog.text
 
 
 async def test_disabled_challenges_are_absent_from_the_model_request(graph):

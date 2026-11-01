@@ -21,6 +21,8 @@
 #include <map>
 #include <set>
 #include <thread>
+#include <array>
+#include <future>
 
 #include "graphics/material.h"
 #include "sound/soundfx.h"
@@ -34,6 +36,7 @@ class PfxEmitterMesh;
 class GthFont;
 class ContentCensus;
 struct ChunkTable;
+class ChunkResidency;
 
 namespace asset { struct WorldMesh; }
 
@@ -116,13 +119,13 @@ class Resources final {
     static const Tempest::Texture2d& fallbackBlack();
     static auto                      fallbackImage() -> const Tempest::StorageImage&;
     static Tempest::Texture2d        loadTextureUncached(std::string_view name, bool forceMips = false);
-    static const Tempest::Texture2d* loadTexture(std::string_view name, bool forceMips = false);
+    static const Tempest::Texture2d* loadTexture(std::string_view name, bool forceMips = false, bool pinned = true);
     static const Tempest::Texture2d* loadTexture(Tempest::Color color);
     static bool                      hasTextureVariant(std::string_view name);
     static std::string               textureVariantName(std::string_view name, int32_t v, int32_t c);
     static const Tempest::Texture2d* loadTexture(std::string_view name, int32_t v, int32_t c);
     static       Tempest::Texture2d  loadTexturePm(const Tempest::Pixmap& pm);
-    static auto                      loadTextureAnim(std::string_view name) -> std::vector<const Tempest::Texture2d*>;
+    static auto                      loadTextureAnim(std::string_view name, bool pinned = true) -> std::vector<const Tempest::Texture2d*>;
     static       Material            loadMaterial(const asset::Material& src, bool enableAlphaTest,
                                                    bool requireAlphaTest = false);
 
@@ -141,6 +144,38 @@ class Resources final {
     static const Tempest::Texture2d* loadMaterialAlbedo(std::string_view name);
     static void                      materialAlbedoReplaced(std::string_view name);
     static bool                      materialMapsEnabled();
+
+    enum class TextureCategory : uint8_t { Landscape, Static, Dynamic, Other };
+    enum class TextureSource : uint8_t { Base, Hd, Material, Other };
+    struct TextureStats {
+      uint64_t liveBytes = 0, retiredBytes = 0, peakBytes = 0;
+      uint64_t count = 0, evicted = 0, reloaded = 0;
+      uint64_t fullBytes = 0, tailBytes = 0, promoted = 0, demoted = 0;
+      uint64_t promotionQueue = 0, nearTailCount = 0;
+      double nearTailSeconds = 0;
+      uint64_t fullRing2Bytes = 0;
+      std::array<uint64_t,4> sourceBytes{}, sourceFullBytes{};
+      std::array<uint64_t,4> categoryBytes{}, categoryCount{};
+      };
+    static TextureStats              textureStats();
+    static uint64_t                  textureGeneration();
+    static std::vector<const Tempest::Texture2d*> textureChanges(uint64_t since);
+    static bool                      texturesReady();
+    static Tempest::TextureFormat    textureFormat(const Tempest::Texture2d* texture);
+    class TextureLoadScope {
+      public:
+        explicit TextureLoadScope(bool tail);
+        ~TextureLoadScope();
+        TextureLoadScope(const TextureLoadScope&) = delete;
+        TextureLoadScope& operator=(const TextureLoadScope&) = delete;
+      private:
+        bool previous;
+      };
+    static void                      finishTextureLoading();
+    static constexpr uint32_t TextureAlwaysFull = uint32_t(-1);
+    static void                      textureDemand(const Material& material, TextureCategory category, bool add, uint32_t distance = TextureAlwaysFull);
+    static void                      updateTextures(ChunkResidency* residency);
+    static void                      configureTextures(std::string_view budget = {}, std::string_view skipMips = {}, std::string_view target = {});
 
     static const AttachBinder*       bindMesh       (const ProtoMesh& anim, const Skeleton& s);
     static const ProtoMesh*          loadMesh       (std::string_view name);
@@ -196,6 +231,7 @@ class Resources final {
     static void recycle(Tempest::Attachment&& img);
     static void recycle(Tempest::ZBuffer&& img);
     static void recycle(Tempest::AccelerationStructure&& rtas);
+    static void recycle(std::shared_ptr<void>&& lifetime);
 
     static bool                      hasWorld(std::string_view name);
     static int                       baseLanguage();
@@ -210,6 +246,7 @@ class Resources final {
                                                         std::u16string_view hostPath = {});
 
     static std::filesystem::path      worldBaseDir(std::string_view world);
+    static std::filesystem::path      contentDir();
     static std::filesystem::path      worldOverrideDir(std::string_view world);
     struct WayHeightInputs {
       std::string baseFingerprint;
@@ -266,8 +303,10 @@ class Resources final {
     struct TextureData {
       Tempest::Pixmap pixmap;
       bool useMipmap = false;
+      std::filesystem::path source;
+      bool tail = false;
       };
-    static TextureData decodeBaseTexture(const std::filesystem::path& path, bool forceMips);
+    static TextureData decodeBaseTexture(const std::filesystem::path& path, bool forceMips, uint32_t skipMips = 0);
 
     struct DecalK {
       Material mat;
@@ -288,9 +327,20 @@ class Resources final {
     void                  indexHdTextures();
     void                  indexMaterialMaps();
     void                  indexMeshOverrides();
-    const Tempest::Texture2d* implLoadMaterialTexture(const std::string& path, bool normalMap);
-    Tempest::Texture2d*   implLoadTexture(std::string_view cname, bool forceMips);
+    enum class TextureKind : uint8_t { Color, Normal, Orm };
+    const Tempest::Texture2d* implLoadMaterialTexture(const std::string& path, TextureKind kind);
+    Tempest::Texture2d*   implLoadTexture(std::string_view cname, bool forceMips, bool pinned);
     Tempest::Texture2d    implLoadTextureUncached(std::string_view name, bool forceMips);
+    TextureData          implDecodeTexture(std::string_view name, bool forceMips, uint32_t skipMips = 0);
+    void                 trackTexture(Tempest::Texture2d* texture, const TextureData& data, TextureKind kind, bool pinned);
+    void                 retireTexture(Tempest::Texture2d&& texture);
+    void                 publishTexture();
+    struct TextureRecord;
+    void                 notifyTextureChanged(TextureRecord& record);
+    void                 queueTexture(TextureRecord& record);
+    void                 unqueueTexture(TextureRecord& record);
+    void                 updateNearTailTime();
+    bool                 wantsFull(const TextureRecord& record) const;
     bool                 hasTexture(std::string_view name) const;
     ProtoMesh*            implLoadMesh(std::string_view name);
     std::unique_ptr<ProtoMesh> implLoadMeshMain(std::string name);
@@ -356,9 +406,58 @@ class Resources final {
       std::vector<Tempest::ZBuffer>         zb;
       std::vector<Tempest::DescriptorArray> arr;
       std::vector<Tempest::AccelerationStructure> rtas;
+      std::vector<std::shared_ptr<void>> lifetime;
+      std::vector<Tempest::Texture2d> textures;
+      uint64_t textureBytes = 0;
       };
     DeleteQueue recycled[MaxFramesInFlight];
     uint8_t     recycledId = 0;
+
+    struct TextureRecord {
+      Tempest::Texture2d* texture = nullptr;
+      std::filesystem::path source;
+      Tempest::TextureFormat format = Tempest::TextureFormat::Undefined;
+      TextureKind kind = TextureKind::Color;
+      bool mipmaps = false, pinned = false, resident = true, failed = false;
+      bool tail = false, hasTail = false;
+      std::array<uint32_t,4> demand{};
+      std::map<uint32_t,uint32_t> distances;
+      std::chrono::steady_clock::time_point demoteAt{};
+      TextureCategory category = TextureCategory::Other;
+      TextureSource sourceKind = TextureSource::Other;
+      uint64_t lastDemand = 0, lastNeededFull = 0, bytes = 0, changedGeneration = 0;
+      bool wanted() const;
+      std::tuple<uint32_t,uint64_t,uintptr_t> demotionPriority() const;
+      };
+    struct TextureReload {
+      Tempest::Texture2d* identity = nullptr;
+      struct Payload {
+        Tempest::Texture2d texture;
+        bool tail = false;
+        };
+      std::future<Payload> pending;
+      Tempest::Texture2d ready;
+      bool tail = false;
+      std::weak_ptr<int> queued;
+      };
+    std::unordered_map<const Tempest::Texture2d*,TextureRecord> textureRecords;
+    std::map<std::pair<uint64_t,uintptr_t>,const Tempest::Texture2d*> changedTextures;
+    std::map<std::pair<uint64_t,uintptr_t>,TextureRecord*> textureIdle;
+    std::set<TextureRecord*> textureMissing;
+    std::set<TextureRecord*> texturePromotions;
+    std::map<std::pair<std::chrono::steady_clock::time_point,uintptr_t>,TextureRecord*> textureDemotions;
+    std::map<std::tuple<uint32_t,uint64_t,uintptr_t>,TextureRecord*> textureDemotionLru;
+    std::set<TextureRecord*> nearTailTextures;
+    std::chrono::steady_clock::time_point nearTailUpdated = std::chrono::steady_clock::now();
+    double nearTailSeconds = 0;
+    std::shared_ptr<TextureReload> textureReload;
+    Tempest::Texture2d texturePlaceholders[3];
+    uint64_t textureEpoch = 0, textureClock = 0;
+    uint64_t texturesEvicted = 0, texturesReloaded = 0, texturesPromoted = 0, texturesDemoted = 0;
+    uint32_t textureSkipMips = 2;
+    uint64_t textureBudget = 256*1048576;
+    uint64_t textureTarget = 192*1048576;
+    bool textureStreaming = true, textureOverBudget = false, texturePayloadChanged = false;
 
     TextureCache                                                      texCache;
     // OPENGOTHIC_TEXTURES: sharper textures of our own (scripts/hd-textures.sh) in place of the game's,

@@ -99,6 +99,25 @@ async def test_the_likeliest_to_speak_up_do_two_at_most():
     assert interject.spoke == {HILDA, MALETH}
 
 
+async def test_a_witness_being_asked_is_not_asked_to_speak_up():
+    # it speaks from its testimony only (witnesses.py): Lobart's question to her is no cue to chime in on
+    fake = FakeGame()
+    llm = FakeBackend("Ну?", delay=0)
+    decider = ByCharacter({"Хильда": (0.2, 0.7), "Малет": (0.7, 0.15), "Вино": (0.05, 0.05)})
+    cm, dialogue, talk, interject = await _desk(fake, llm, decider)
+    interject.group.witness = lambda npc: npc == HILDA
+    try:
+        await fake.roster(*NEAR)
+        await fake.send(type="player_text", text="Лобарт, привет")
+        await _until(lambda: len(llm.calls) == 2 and not dialogue.speaking(MALETH), 5)
+        await asyncio.sleep(0.3)
+    finally:
+        await cm.__aexit__(None, None, None)
+
+    assert sorted(decider.asked) == ["Вино", "Малет"] and cues(dialogue, HILDA) == []
+    assert cues(dialogue, MALETH) == [WORD_CUE]
+
+
 async def test_nobody_speaks_up_twice_in_a_row_and_the_quiet_keep_quiet():
     fake = FakeGame()
     llm = FakeBackend("Ну?", delay=0)

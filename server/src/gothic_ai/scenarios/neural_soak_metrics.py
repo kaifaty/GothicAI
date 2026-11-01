@@ -6,6 +6,7 @@ import json
 import math
 import os
 import re
+import sys
 import time
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterator
@@ -22,7 +23,7 @@ from ..bodypilot import (
     FightSummary,
     PolicyClient,
 )
-from ..game import GameLink
+from ..game import GameError, GameLink
 from ..protocol import (
     ActionResult,
     BodyLease,
@@ -33,6 +34,7 @@ from ..protocol import (
     RoutineInfo,
     Snapshot,
 )
+from .memprobe import _darwin_status
 
 WAIT_200 = 10
 # Native soak2 control, final 20 minutes; user decision 2026-10-19.
@@ -68,10 +70,12 @@ def percentile(values: list[float], fraction: float) -> float | None:
 
 
 def rss_bytes(pid: int) -> int | None:
-    """Resident pages in Linux procfs; do not start an extra monitoring process."""
+    """Resident memory from procfs or macOS native counters, without a monitoring process."""
     try:
+        if sys.platform == "darwin":
+            return _darwin_status(pid)["VmRSS"]
         return int(Path(f"/proc/{pid}/statm").read_text().split()[1]) * os.sysconf("SC_PAGE_SIZE")
-    except (OSError, ValueError, IndexError):
+    except (OSError, ValueError, IndexError, GameError):
         return None
 
 

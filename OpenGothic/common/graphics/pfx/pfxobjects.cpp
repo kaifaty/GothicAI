@@ -15,6 +15,8 @@ PfxObjects::PfxObjects(WorldView& world, const SceneGlobals& scene, VisualObject
   }
 
 PfxObjects::~PfxObjects() {
+  // Buckets release demand through their ParticleFx declarations.
+  bucket.clear();
   }
 
 void PfxObjects::setViewerPos(const Vec3& pos) {

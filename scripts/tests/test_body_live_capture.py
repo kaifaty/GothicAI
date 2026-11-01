@@ -129,8 +129,8 @@ def arguments(tmp_path):
 def test_capture_refuses_existing_take_before_launch(capture, tmp_path, monkeypatch, old_name):
     install_runtime_stubs(monkeypatch)
     monkeypatch.setattr(capture.sys, "platform", "darwin")
-    for name in ("LLM", "ASR", "TTS"):
-        monkeypatch.setenv(name, "fake")
+    for name, value in (("LLM", "off"), ("ASR", "fake"), ("TTS", "fake")):
+        monkeypatch.setenv(name, value)
     args = arguments(tmp_path)
     args.output.mkdir()
     (args.output / old_name).write_bytes(b"old take")
@@ -209,7 +209,8 @@ def test_runtime_uses_settings_policy_native_sound_and_prepared_scene(capture, t
         assert env["OPENGOTHIC_BENCH_REALTIME"] == "1" and env["OPENGOTHIC_PHYSICS_THREADS"] == "0"
         assert env["OPENGOTHIC_BENCH"] == str(args.output / "scene.bench")
         assert env["OPENGOTHIC_BENCH_OUT"] == str(args.output)
-        assert all(env[name] == "fake" for name in ("LLM", "ASR", "TTS"))
+        assert env["LLM"] == "off"
+        assert all(env[name] == "fake" for name in ("ASR", "TTS"))
         assert not any(name in env for name in ("ALSOFT_DRIVERS", "VK_DRIVER_FILES", "VK_ICD_FILENAMES"))
         config = configparser.ConfigParser()
         config.read(cwd / "Gothic.ini")
@@ -222,8 +223,8 @@ def test_runtime_uses_settings_policy_native_sound_and_prepared_scene(capture, t
 
     install_runtime_stubs(monkeypatch, BodyPilot=Pilot, GameServer=Server)
     monkeypatch.setattr(capture.sys, "platform", "darwin")
-    for name in ("LLM", "ASR", "TTS"):
-        monkeypatch.setenv(name, "fake")
+    for name, value in (("LLM", "off"), ("ASR", "fake"), ("TTS", "fake")):
+        monkeypatch.setenv(name, value)
     for name in ("ALSOFT_DRIVERS", "VK_DRIVER_FILES", "VK_ICD_FILENAMES"):
         monkeypatch.setenv(name, "inherited-linux-setting")
     monkeypatch.setattr(capture, "prepare", prepared)
@@ -334,8 +335,8 @@ def test_disconnect_requires_finalized_recording_and_cleans_up_pilot(
 
     install_runtime_stubs(monkeypatch, BodyPilot=Pilot, GameServer=server_class or Server)
     monkeypatch.setattr(capture.sys, "platform", "darwin")
-    for name in ("LLM", "ASR", "TTS"):
-        monkeypatch.setenv(name, "fake")
+    for name, value in (("LLM", "off"), ("ASR", "fake"), ("TTS", "fake")):
+        monkeypatch.setenv(name, value)
     monkeypatch.setattr(capture, "prepare", prepared)
     monkeypatch.setattr(capture, "game_guard", lambda: None)
     monkeypatch.setattr(capture.asyncio, "create_subprocess_exec", launch)

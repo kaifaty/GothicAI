@@ -38,7 +38,7 @@ def sha256(path):
 
 def phase_deadline():
     remaining = float(os.environ.get('NAVLIVE_DEADLINE', time.time() + 3300)) - time.time()
-    return time.monotonic() + min(3300, max(0, remaining))
+    return time.monotonic() + min(7140, max(0, remaining))
 
 
 def suite_cases(suite):
@@ -297,6 +297,9 @@ def run_episode(args, case, model, seed, directory, teacher=None, recorded=True)
         result.check_returncode()
         if not raw_complete(directory, recorded):
             raise ValueError(f'Incomplete game run: {directory}; see launcher.log and game.log')
+        episode = read_json(directory / 'episode.json')
+        episode['base_fingerprint'] = environment.get('OPENGOTHIC_BASE_FINGERPRINT') or None
+        write_json(directory / 'episode.json', episode)
         # The save is input, not a per-seed output. Keep only the small bench ini.
         saved = directory / 'run/save_slot_1.sav'
         saved.unlink(missing_ok=True)

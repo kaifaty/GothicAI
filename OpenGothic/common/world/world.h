@@ -47,8 +47,13 @@ class World final {
     void                 postInit();
     std::string_view     name() const { return wname; }
     double               loadMilliseconds() const { return worldLoadMs; }
+    const std::vector<WorldObjects::PlacedItem>& placedItemCensus() const { return wobj.placedItemCensus(); }
+    double               placedItemValidationMilliseconds() const { return wobj.placedItemValidationMilliseconds(); }
+    size_t               placedItemsCreatedThisFrame() const { return wobj.placedItemsCreatedThisFrame(); }
     const ChunkTable&    chunkTable() const { return chunks; }
     ChunkResidency*      chunkResidency() const { return residency.get(); }
+    void                 updateLandscape(const Camera& camera);
+    bool                 landscapeReady() const { return !wview || wview->landscapeReady(); }
 
     void                 load(Serialize& fin );
     void                 save(Serialize& fout);
@@ -237,6 +242,7 @@ class World final {
     friend struct WorldDataContract;
     friend struct WayHeightsContract;
     double               worldLoadMs = 0;
+    bool                 textureLoadingPending = true;
     const zenkit::IFocus& searchPolicy(const Npc& pl, TargetCollect& collAlgo, TargetType& collType, WorldObjects::SearchFlg& opt) const;
     std::string                           wname;
     GameSession&                          game;

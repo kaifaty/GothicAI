@@ -37,8 +37,8 @@ def reuse_runner(source, runs, output):
     """Copy a matching finished runner from this screen's own NAS results."""
     digest = hashlib.sha256()
     paths = sorted(path for path in (source / "OpenGothic").rglob("*") if path.is_file())
-    # Include the launcher so any compiler/configuration change invalidates reuse.
-    paths.append(source / "scripts/nav-eval-screen-remote.sh")
+    # Include the launcher and shared flags so any compiler/configuration change invalidates reuse.
+    paths += [source / "scripts/nav-eval-screen-remote.sh", source / "scripts/ryzen-build.sh"]
     for path in paths:
         digest.update(path.relative_to(source).as_posix().encode() + b"\0")
         digest.update(hashlib.sha256(path.read_bytes()).digest())

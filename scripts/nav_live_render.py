@@ -250,6 +250,7 @@ def summarize(directory: Path, metadata: dict, decisions: list[dict], teacher_di
     mean_distance, mean_source = follow_mean_distance(directory, episode, decisions) if following else (None, "null outside follow runs")
     summary = {
         "schema": 1, "success": bool(episode["success"]), "elapsed_seconds": elapsed_ms / 1000,
+        "base_fingerprint": episode.get("base_fingerprint"),
         "path_length_m": travelled / 100, "teacher_path_length_m": None if teacher_length is None else teacher_length / 100,
         "path_to_teacher_ratio": travelled / teacher_length if teacher_length else None,
         "standing_seconds": float(dt[standing].sum()), "circling_seconds": float(dt[circling].sum()),

@@ -3,6 +3,7 @@
 #include <zenkit/DaedalusVm.hh>
 #include <zenkit/addon/daedalus.hh>
 #include "game/definitions/definitiontypes.h"
+#include "particlecontent.h"
 
 #include <unordered_map>
 #include <memory>
@@ -42,6 +43,7 @@ class ParticlesDefinitions final {
   private:
     std::recursive_mutex                sync;
     std::unique_ptr<zenkit::DaedalusVm> vm;
+    ParticleContent::Result            content;
 
     std::unordered_map<std::string,          std::unique_ptr<ParticleFx>> pfx;
     std::unordered_map<const VisualFx::Key*, std::unique_ptr<ParticleFx>> pfxKey;

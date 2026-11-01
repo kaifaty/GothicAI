@@ -5,6 +5,7 @@
 #include "asset/material.h"
 
 #include <Tempest/Vec>
+#include <span>
 #include <utility>
 
 #include "resources.h"
@@ -83,7 +84,17 @@ class PackedMesh {
 
     PackedMesh(const asset::StaticMesh& mesh, PkgType type, bool explicitAlphaTest = false);
     PackedMesh(const asset::WorldMesh& mesh, PkgType type);
+    // Triangle IDs address the unchanged source polygon arrays. Materials and
+    // vertex/feature IDs remain global to mesh, including unused materials.
+    // Chunk landscapes never build the whole-world software ray tracing BVH.
+    // Compact chunk sources may supply local-to-source vertex/feature IDs to
+    // keep the heap's packing order identical to the unchanged source arrays.
+    PackedMesh(const asset::WorldMesh& mesh, std::span<const uint32_t> triangles,
+               std::span<const uint32_t> materialMap = {},
+               std::span<const uint32_t> vertexIds = {}, std::span<const uint32_t> featureIds = {});
     PackedMesh(const asset::SoftSkinMesh& mesh);
+
+    static std::vector<uint32_t> landscapeMaterialMap(const asset::WorldMesh& mesh);
 
     void debug(std::ostream &out) const;
 
@@ -206,11 +217,15 @@ class PackedMesh {
 
     //
     void   packMeshletsLnd(const asset::WorldMesh& mesh);
+    void   packMeshletsLnd(const asset::WorldMesh& mesh, std::span<const uint32_t> triangles,
+                          std::span<const uint32_t> materialMap,
+                          std::span<const uint32_t> vertexIds = {}, std::span<const uint32_t> featureIds = {});
     void   packMeshletsObj(const asset::StaticMesh& mesh, PkgType type,
                            const std::vector<SkeletalData>* skeletal);
 
     std::vector<Meshlet> buildMeshlets(const asset::WorldMesh* mesh, const asset::SubMesh* proto_mesh,
-                                       PrimitiveHeap& heap, std::vector<bool>& used);
+                                       PrimitiveHeap& heap, std::vector<bool>& used,
+                                       std::span<const uint32_t> vertexIds = {}, std::span<const uint32_t> featureIds = {});
 
     void   computeBbox();
 

@@ -3,6 +3,7 @@
 #include <rapidjson/document.h>
 
 #include <cstddef>
+#include <filesystem>
 #include <initializer_list>
 #include <map>
 #include <string>
@@ -18,7 +19,7 @@ struct Tensor final {
 // One bounded JSON header line followed by contiguous little-endian float32
 // tensors. Construction either validates the entire file or throws.
 struct TensorFile final {
-  explicit TensorFile(const std::string& path);
+  explicit TensorFile(const std::filesystem::path& path);
   const Tensor& tensor(const std::string& name, std::initializer_list<size_t> shape) const;
 
   rapidjson::Document header;

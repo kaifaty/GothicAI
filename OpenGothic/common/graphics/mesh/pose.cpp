@@ -306,6 +306,7 @@ void Pose::setSkeleton(const Skeleton* sk) {
   for(auto& i:hasSamples)
     i = S_None;
   blend.reset(numBones);
+  blend.setWeaponBody(skeleton!=nullptr && skeleton->findNode("ZS_RIGHTHAND")<skeleton->nodes.size());
   ik.setSkeleton(skeleton);
   gaze.setSkeleton(skeleton);
   lean.setSkeleton(skeleton);
@@ -1052,6 +1053,50 @@ auto Pose::combatLayers(uint64_t tickCount) const -> std::vector<CombatLayer> {
   return result;
   }
 
+auto Pose::nextMeleeContact(uint64_t tickCount) const -> std::optional<MeleeContact> {
+  std::optional<MeleeContact> result;
+  for(const auto& layer:lay) {
+    if(!layer.seq->isAttackAnim())
+      continue;
+    const auto& data = *layer.seq->data;
+    const auto played = layerTime(layer,tickCount)-layer.sAnim;
+    const uint64_t segmentStart = combo.len()>0 && combo.len()<=data.defHitEnd.size() ? data.defHitEnd[combo.len()-1] : 0;
+    const auto segmentEnd = uint64_t(layer.seq->atkTotalTime(combo.len()));
+    for(const auto& event:data.events) {
+      if(event.type!=asset::MdsEventType::OPTIMAL_FRAME)
+        continue;
+      for(const auto frame:event.frames) {
+        const auto at = uint64_t(float(data.optimalFrame(frame))*1000.f/data.fpsRate);
+        if(at<played || at<segmentStart || at>segmentEnd)
+          continue;
+        auto projected = layer;
+        uint64_t contact = projected.sAnim+uint64_t(std::ceil(double(at)/double(projected.speed)));
+        if(stopUntil!=0 && projected.stopFrom>0.f && projected.speed<projected.stopFrom && contact>stopUntil) {
+          // Project endHitStop on a copy: the hold is followed by the same bounded catch-up.
+          const auto resume = std::max(tickCount,stopUntil);
+          const float base = projected.stopFrom;
+          float speed = base;
+          if(projected.seq->animCls!=Animation::Loop) {
+            const double held = double(layerTime(projected,resume)-projected.sAnim);
+            const double due = double(resume>projected.dueStart ? resume-projected.dueStart : 0)*double(base);
+            const double end = double(projected.seq->atkTotalTime(combo.len()));
+            if(due>held && end>held) {
+              const double left = std::max((end-due)/double(base),(end-held)/(1.5*double(base)));
+              speed = float((end-held)/left);
+              }
+            }
+          rebaseLayer(projected,speed,resume);
+          contact = projected.sAnim+uint64_t(std::ceil(double(at)/double(projected.speed)));
+          }
+        contact = std::max(tickCount,contact);
+        if(!result || contact<result->contact)
+          result = MeleeContact{layer.seq,layer.sOrigin,contact};
+        }
+      }
+    }
+  return result;
+  }
+
 bool Pose::isJumpBack(uint64_t tickCount) const {
   for(auto& i:lay) {
     if(i.bs==BS_PARADE && i.seq->data->defWindow.empty())
@@ -1320,9 +1365,12 @@ void Pose::setAnimSpeed(std::string_view name, float k) {
 
 void Pose::setLayerSpeed(const Animation::Sequence* seq, float k, uint64_t now) {
   for(auto& l:lay)
-    if(l.seq==seq && now>l.sAnim && k>0.f) {
-      const double played = double(layerTime(l,now)-l.sAnim);
-      l.sAnim = now-uint64_t(played/double(k));
+    if(l.seq==seq && k>0.f) {
+      // a layer started this very tick takes the pace from its start
+      if(now>l.sAnim) {
+        const double played = double(layerTime(l,now)-l.sAnim);
+        l.sAnim = now-uint64_t(played/double(k));
+        }
       l.speed = k;
       l.catchFrom = 0; // a speed set on purpose; a hit stop under way still keeps it (endHitStop)
       }

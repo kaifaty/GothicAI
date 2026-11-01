@@ -1,0 +1,160 @@
+{
+ "format": 1,
+ "add": [
+  {
+   "key": "smoke-hut04-1",
+   "kind": "emitter",
+   "position": [
+    2836.0,
+    245.0,
+    -2426.0
+   ],
+   "yaw_deg": 0.0,
+   "pfx": "LIGHTSMOKE"
+  },
+  {
+   "key": "smoke-hut04-2",
+   "kind": "emitter",
+   "position": [
+    2871.0,
+    245.0,
+    -2426.0
+   ],
+   "yaw_deg": 0.0,
+   "pfx": "LIGHTSMOKE"
+  },
+  {
+   "key": "smoke-hut04-3",
+   "kind": "emitter",
+   "position": [
+    2906.0,
+    245.0,
+    -2426.0
+   ],
+   "yaw_deg": 0.0,
+   "pfx": "LIGHTSMOKE"
+  },
+  {
+   "key": "smoke-hut06-1",
+   "kind": "emitter",
+   "position": [
+    3998.0,
+    262.0,
+    -4061.0
+   ],
+   "yaw_deg": 0.0,
+   "pfx": "LIGHTSMOKE"
+  },
+  {
+   "key": "smoke-hut06-2",
+   "kind": "emitter",
+   "position": [
+    4038.0,
+    262.0,
+    -4061.0
+   ],
+   "yaw_deg": 0.0,
+   "pfx": "LIGHTSMOKE"
+  },
+  {
+   "key": "brazier-1",
+   "kind": "mesh",
+   "visual": "OC_LOB_LIGHTER_HUGE3",
+   "position": [
+    -3299.9,
+    -245.2,
+    -4598.3
+   ],
+   "yaw_deg": 179.9,
+   "collision": "mesh"
+  },
+  {
+   "key": "brazier-1-fire",
+   "kind": "emitter",
+   "position": [
+    -3296.9,
+    78.8,
+    -4604.3
+   ],
+   "yaw_deg": 0.0,
+   "pfx": "FIRE_MEDIUM"
+  },
+  {
+   "key": "brazier-1-smoke",
+   "kind": "emitter",
+   "position": [
+    -3293.9,
+    104.8,
+    -4607.3
+   ],
+   "yaw_deg": 0.0,
+   "pfx": "FIRE_SMOKE"
+  },
+  {
+   "key": "brazier-1-light",
+   "kind": "light",
+   "position": [
+    -3303.9,
+    137.8,
+    -4602.3
+   ],
+   "yaw_deg": 0.0,
+   "range": 500.0,
+   "color": [
+    194,
+    125,
+    56
+   ]
+  },
+  {
+   "key": "brazier-2",
+   "kind": "mesh",
+   "visual": "OC_LOB_LIGHTER_HUGE3",
+   "position": [
+    -5570.0,
+    -222.0,
+    -5013.6
+   ],
+   "yaw_deg": 165.2,
+   "collision": "mesh"
+  },
+  {
+   "key": "brazier-2-fire",
+   "kind": "emitter",
+   "position": [
+    -5565.6,
+    102.0,
+    -5018.6
+   ],
+   "yaw_deg": 0.0,
+   "pfx": "FIRE_MEDIUM"
+  },
+  {
+   "key": "brazier-2-smoke",
+   "kind": "emitter",
+   "position": [
+    -5561.9,
+    128.0,
+    -5020.8
+   ],
+   "yaw_deg": 0.0,
+   "pfx": "FIRE_SMOKE"
+  },
+  {
+   "key": "brazier-2-light",
+   "kind": "light",
+   "position": [
+    -5572.8,
+    161.0,
+    -5018.5
+   ],
+   "yaw_deg": 0.0,
+   "range": 500.0,
+   "color": [
+    194,
+    125,
+    56
+   ]
+  }
+ ]
+}

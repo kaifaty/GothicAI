@@ -2,6 +2,7 @@
 
 import copy
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -10,7 +11,7 @@ from array import array
 
 import pytest
 
-from gothic_shorts import cli, clicks, explain, levels, studio
+from gothic_shorts import cli, clicks, delivery, explain, levels, studio
 
 
 def _rows(report):
@@ -201,12 +202,21 @@ def test_render_passes_plan_dimensions_and_preserves_stems(tmp_path, monkeypatch
     monkeypatch.setattr(explain, "_run", lambda command, **kwargs: commands.append((command, kwargs)))
     faded = []
     monkeypatch.setattr(explain, "fade_edges", lambda path, spans: faded.append((path, spans)))
+    mixed = []
+    monkeypatch.setattr(explain, "add_sfx", lambda game, sfx: mixed.append((game, sfx)))
+    lib = tmp_path / "lib"
+    lib.mkdir()
+    (lib / "index.json").write_text("{}")
+    monkeypatch.setattr(explain, "SFX_LIB", lib)
 
     explain.render(tmp_path, plan, tmp_path)
 
     assert faded == [(tmp_path / "game.wav", [(0, 12)])]
-    assert len(commands) == 4
-    for (command, kwargs), stem in zip(commands, (None, "voice", "game", "music"), strict=True):
+    # the sound of the motion: its own stem, summed into the faded game stem; the workspace links the library
+    assert mixed == [(tmp_path / "game.wav", tmp_path / "sfx.wav")]
+    assert (tmp_path / "sfx").resolve() == lib.resolve()
+    assert len(commands) == 5
+    for (command, kwargs), stem in zip(commands, (None, "voice", "game", "music", "sfx"), strict=True):
         assert command[:4] == ["npx", "remotion", "render", "Explainer"]
         assert command[command.index("--width") + 1] == str(width)
         assert command[command.index("--height") + 1] == str(height)
@@ -402,3 +412,78 @@ def test_cli_rejects_loud_music_removes_stale_video_and_writes_failed_report(
     assert rows["music_pause"]["ok"] is False
     assert rows["music_speech"]["ok"] is False
     assert "error:" in capsys.readouterr().err
+
+
+def _workspace(tmp_path):
+    ws = tmp_path / "synthetic"
+    ws.mkdir()
+    (ws / "plan.json").write_text(json.dumps(_plan(lang="ru")))
+    return ws
+
+
+def test_publish_checks_zones_first_and_the_file_last(tmp_path, monkeypatch, synthetic_stems, delivery_passes):
+    ws = _workspace(tmp_path)
+    _prepared_render(monkeypatch, synthetic_stems)
+    out = explain.publish(ws)
+    assert delivery_passes == [("zones", "ru"), ("file", out.name)]
+    assert out.is_file() and out.with_suffix(".delivery.md").is_file()
+
+
+def test_publish_stops_before_rendering_on_drawing_under_the_interface(tmp_path, monkeypatch, synthetic_stems):
+    ws = _workspace(tmp_path)
+    calls = _prepared_render(monkeypatch, synthetic_stems)
+
+    def zones(ws, plan, report=None):
+        report = delivery.Report()
+        report.check(False, "under the Shorts interface: right")
+        return report
+
+    monkeypatch.setattr(delivery, "check_zones", zones)
+    with pytest.raises(explain.ExplainError, match="Shorts interface"):
+        explain.publish(ws)
+    assert calls == []
+
+
+def test_publish_leaves_no_video_that_youtube_would_not_take(tmp_path, monkeypatch, synthetic_stems):
+    ws = _workspace(tmp_path)
+    _prepared_render(monkeypatch, synthetic_stems)
+
+    def file(video, report=None):
+        report.check(False, "range pc (tv)")
+        return report
+
+    monkeypatch.setattr(delivery, "check_file", file)
+    with pytest.raises(explain.ExplainError, match="range pc"):
+        explain.publish(ws)
+    assert not (ws / "render/short-ru.mp4").exists()
+    assert "FAIL range pc" in (ws / "render/short-ru.delivery.md").read_text()
+
+
+def test_render_without_sfx_needs_no_library(tmp_path, monkeypatch):
+    plan = {**_plan(), "sfx": False}
+    commands = []
+    monkeypatch.setattr(explain, "_run", lambda command, **kwargs: commands.append(command))
+    monkeypatch.setattr(explain, "fade_edges", lambda path, spans: None)
+    monkeypatch.setattr(explain, "SFX_LIB", tmp_path / "nowhere")
+    explain.render(tmp_path, plan, tmp_path)
+    assert len(commands) == 4 and not (tmp_path / "sfx").exists()
+
+
+def test_render_names_the_missing_sound_library(tmp_path, monkeypatch):
+    monkeypatch.setattr(explain, "_run", lambda command, **kwargs: None)
+    monkeypatch.setattr(explain, "SFX_LIB", tmp_path / "nowhere")
+    with pytest.raises(explain.ExplainError, match="sfx_lib.py"):
+        explain.render(tmp_path, _plan(), tmp_path, stems=("game",))
+
+
+def test_add_sfx_sums_into_float_without_clipping(tmp_path):
+    for name, freq in (("game", 220), ("sfx", 330)):
+        subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", f"aevalsrc=0.9*sin({freq}*2*PI*t):s=48000:d=1",
+                        "-ac", "2", "-c:a", "pcm_s16le", str(tmp_path / f"{name}.wav")], check=True)
+    explain.add_sfx(tmp_path / "game.wav", tmp_path / "sfx.wav")
+    probe = json.loads(subprocess.run(["ffprobe", "-v", "error", "-show_streams", "-of", "json", str(tmp_path / "game.wav")],
+                                      check=True, capture_output=True, text=True).stdout)["streams"][0]
+    assert probe["codec_name"] == "pcm_f32le" and float(probe["duration"]) == pytest.approx(1, abs=0.01)
+    peak = subprocess.run(["ffmpeg", "-v", "info", "-i", str(tmp_path / "game.wav"), "-af", "astats=metadata=0", "-f", "null", "-"],
+                          capture_output=True, text=True).stderr
+    assert max(float(v) for v in re.findall(r"Peak level dB: ([-\d.]+)", peak)) > 0  # over full scale: kept, not clipped

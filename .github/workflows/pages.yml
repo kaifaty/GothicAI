@@ -18,6 +18,8 @@ concurrency:
 
 jobs:
   build:
+    # only the author's repository has the site: forks never build or deploy it
+    if: github.repository == 'kaifaty/GothicAI'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -31,7 +33,7 @@ jobs:
           path: site/_build
 
   deploy:
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    if: github.repository == 'kaifaty/GothicAI' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
     permissions:

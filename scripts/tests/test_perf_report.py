@@ -164,17 +164,60 @@ def test_percentiles_dynamic_columns_segments_and_no_gpu(tmp_path):
     streaming = profile(tmp_path / "streaming", [
         {"segment": f"streaming-flythrough/{name}", "begin_ns": (offset + frame * step) * 1_000_000}
         for name, offset, step in (("run", 0, 10), ("fly", 100, 20)) for frame in range(3)])
+    completed = [{"kind": "route_end", "speed_cm_s": speed, "pass": True} for speed in (500, 2000)]
+    (streaming / "events.jsonl").write_text("\n".join(json.dumps(event) for event in completed))
+    frames_only = report.build_report(streaming)["places"]["streaming-flythrough"]
+    assert frames_only["views"]["run"]["frame_ms"]["p50"] == 10
+    assert frames_only["views"]["fly"]["frame_ms"]["p99"] == 20
+    assert "streaming" not in frames_only["summary"]
+    assert report.main(["run", str(streaming)]) == 0
+    (streaming / "events.jsonl").write_text("\n".join(json.dumps(event) for event in [
+        {"kind": "perf_segment", "segment": "streaming-flythrough/run", "residency_manager": True}, *completed]))
+    with pytest.raises(ValueError, match="residency manager was enabled but samples are missing"):
+        report.build_report(streaming)
     with (streaming / "streaming.csv").open("w", newline="") as stream:
         writer = csv.DictWriter(stream, ["segment", "frame", "update_ms", "work_ms", "near", "far", "outside",
-                                         "near_transitions", "far_transitions"])
+                                         "near_transitions", "far_transitions", "publication_ms", "published", "released",
+                                         "page_used_bytes", "page_free_bytes", "page_retired_bytes", "page_count",
+                                         "tex_live_bytes", "tex_retired_bytes", "tex_peak_bytes", "tex_live_n", "tex_evicted", "tex_reloaded",
+                                         "tex_landscape_bytes", "tex_landscape_n", "tex_static_bytes", "tex_static_n",
+                                         "tex_dynamic_bytes", "tex_dynamic_n", "tex_other_bytes", "tex_other_n",
+                                         "tex_full_bytes", "tex_tail_bytes", "tex_promoted", "tex_demoted",
+                                         "tex_promotion_queue", "tex_near_tail_n", "tex_near_tail_seconds"])
         writer.writeheader()
         writer.writerows({"segment": f"streaming-flythrough/{name}", "frame": frame,
                           "update_ms": .001 * (frame + 1), "work_ms": .0001,
                           "near": 20 + frame, "far": 300, "outside": 3,
-                          "near_transitions": frame, "far_transitions": frame + 1}
+                          "near_transitions": frame, "far_transitions": frame + 1,
+                          "publication_ms": ("", ".25;.5", ".75")[frame] if name == "run" else "",
+                          "published": (0, 2, 1)[frame] if name == "run" else 0, "released": int(frame == 2),
+                          "page_used_bytes": (8-frame)*1048576, "page_free_bytes": (2+frame)*1048576,
+                          "page_retired_bytes": frame*1048576, "page_count": 2,
+                          "tex_live_bytes": (20-frame)*1048576, "tex_retired_bytes": frame*1048576,
+                          "tex_peak_bytes": 24*1048576, "tex_live_n": 9-frame,
+                          "tex_evicted": 3+frame, "tex_reloaded": 1+frame,
+                          "tex_landscape_bytes": (10-frame)*1048576, "tex_landscape_n": 3-frame,
+                          "tex_static_bytes": 5*1048576, "tex_static_n": 2,
+                          "tex_dynamic_bytes": 3*1048576, "tex_dynamic_n": 2,
+                          "tex_other_bytes": 2*1048576, "tex_other_n": 2,
+                          "tex_full_bytes": 12*1048576, "tex_tail_bytes": (8-frame)*1048576,
+                          "tex_promoted": 10+frame, "tex_demoted": 5+frame,
+                          "tex_promotion_queue": 2-frame, "tex_near_tail_n": frame,
+                          "tex_near_tail_seconds": 40+frame*.125}
                          for name in ("run", "fly") for frame in range(3))
     (streaming / "events.jsonl").write_text("\n".join(
-        json.dumps({"kind": "route_end", "speed_cm_s": speed, "pass": True}) for speed in (500, 2000)))
+        json.dumps(event) for event in [
+            {"kind": "streaming_ready", "far_publication_ms": [9], "far_max_per_frame": 1, "queue_max_ms": 10},
+            {"kind": "streaming_ready", "far_publication_ms": [.3, .6], "far_max_per_frame": 1, "queue_max_ms": .8},
+            {"kind": "perf_segment", "segment": "streaming-flythrough/run", "residency_manager": True},
+            {"kind": "route_end", "speed_cm_s": 500, "pass": True},
+            {"kind": "streaming_end", "segment": "streaming-flythrough/run", "gpu_mb": 320.5,
+             "tex_promoted": 3, "tex_demoted": 2, "tex_near_tail_seconds": .25},
+            {"kind": "streaming_ready", "far_publication_ms": [], "far_max_per_frame": 0, "queue_max_ms": .001},
+            {"kind": "perf_segment", "segment": "streaming-flythrough/fly", "residency_manager": True},
+            {"kind": "route_end", "speed_cm_s": 2000, "pass": True},
+            {"kind": "streaming_end", "segment": "streaming-flythrough/fly", "gpu_mb": 330.5,
+             "tex_promoted": 5, "tex_demoted": 4, "tex_near_tail_seconds": .75}]))
     data = report.build_report(streaming)["places"]["streaming-flythrough"]["views"]
     assert data["run"]["frame_ms"]["p50"] == 10
     assert data["fly"]["frame_ms"]["p99"] == data["fly"]["frame_ms"]["max"] == 20
@@ -183,6 +226,50 @@ def test_percentiles_dynamic_columns_segments_and_no_gpu(tmp_path):
     assert data["run"]["streaming"]["peak_near"] == 22
     assert data["run"]["streaming"]["update_ms"]["p99"] == pytest.approx(.00298)
     assert data["run"]["streaming"]["work_ms"]["max"] == .0001
+    assert data["run"]["streaming"]["publication_ms"]["p99"] == pytest.approx(.745)
+    assert data["run"]["streaming"]["publication_ms"]["max"] == .75
+    assert data["run"]["streaming"]["published"] == 3
+    assert data["run"]["streaming"]["released"] == 1
+    assert data["fly"]["streaming"]["gpu_end_mb"] == 330.5
+    assert data["fly"]["streaming"]["publication_ms"] is None
+    assert data["fly"]["streaming"]["published"] == 0
+    assert data["run"]["streaming"]["page_used_end_bytes"] == 6*1048576
+    assert data["run"]["streaming"]["page_free_end_bytes"] == 4*1048576
+    assert data["run"]["streaming"]["page_retired_end_bytes"] == 2*1048576
+    assert data["run"]["streaming"]["page_count_end"] == 2
+    assert data["run"]["streaming"]["page_capacity_peak_bytes"] == 12*1048576
+    textures = data["run"]["streaming"]["textures"]
+    assert (textures["live_end_bytes"], textures["retired_end_bytes"], textures["peak_bytes"], textures["count_end"],
+            textures["evicted"], textures["reloaded"]) == (18*1048576, 2*1048576, 24*1048576, 7, 5, 3)
+    assert textures["categories"]["landscape"] == {"bytes": 8*1048576, "count": 1}
+    assert sum(category["bytes"] for category in textures["categories"].values()) == textures["live_end_bytes"]
+    assert textures["full_end_bytes"] == 12*1048576
+    assert textures["tail_end_bytes"] == 6*1048576
+    assert (textures["promoted"], textures["demoted"], textures["promotion_queue_peak"],
+            textures["near_tail_peak"], textures["near_tail_seconds"]) == (3, 2, 2, 2, .25)
+    combined = report.build_report(streaming)["places"]["streaming-flythrough"]["summary"]["streaming"]["textures"]
+    assert (combined["promoted"], combined["demoted"], combined["near_tail_seconds"]) == (8, 6, 1)
+    warmup = data["run"]["streaming"]
+    assert warmup["warmup_far_count"] == 2
+    assert warmup["warmup_far_publication_ms"]["p99"] == pytest.approx(.597)
+    assert warmup["warmup_far_publication_ms"]["max"] == .6
+    assert warmup["warmup_far_max_per_frame"] == 1
+    assert warmup["warmup_queue_max_ms"] == .8
+    assert data["fly"]["streaming"]["warmup_far_count"] == 0
+    assert data["fly"]["streaming"]["warmup_far_publication_ms"] is None
+    assert report.main(["run", str(streaming)]) == 0
+    assert "| 2 | 6.00 / 4.00 / 2.00 | 12.00 |" in (streaming / "report.md").read_text()
+    assert "| run | 7 | 18.00 / 2.00 | 24.00 | 5 / 3 |" in (streaming / "report.md").read_text()
+    with (streaming / "streaming.csv").open(newline="") as stream:
+        legacy_rows = [{key: value for key, value in row.items() if not key.startswith(("page_", "tex_"))}
+                       for row in csv.DictReader(stream)]
+    with (streaming / "streaming.csv").open("w", newline="") as stream:
+        writer = csv.DictWriter(stream, legacy_rows[0])
+        writer.writeheader()
+        writer.writerows(legacy_rows)
+    legacy = report.build_report(streaming)["places"]["streaming-flythrough"]["views"]["run"]["streaming"]
+    assert legacy["page_used_end_bytes"] is None and legacy["page_capacity_peak_bytes"] is None
+    assert legacy["textures"] is None
     assert report.main(["run", str(streaming)]) == 0
 
 
@@ -201,6 +288,45 @@ def test_fence_attempts_cost_time_but_do_not_inflate_rendered_fps(tmp_path):
     assert stats["cpu_ms"]["mean"] == 3
     assert stats["zones"][0]["mean_ms"] == 1
     assert stats["amounts"]["palette_bytes"]["per_frame"] == 1536
+    assert "texture_activity" not in stats
+
+    directory = profile(tmp_path / "texture", [
+        {"begin_ns": 0},
+        {"begin_ns": 10_000_000, "outcome": 2},
+        {"begin_ns": 30_000_000},
+        {"begin_ns": 50_000_000},
+        {"begin_ns": 90_000_000},
+        {"begin_ns": 100_000_000},
+    ])
+    with (directory / "frameprofile.csv.texture.csv").open("w", newline="") as stream:
+        writer = csv.DictWriter(stream, ["event", "kind", "begin_ns", "end_ns", "complete", "overflow"])
+        writer.writeheader()
+        for index, (kind, begin, end) in enumerate((
+            ("read", 12, 15), ("upload", 15, 65), ("complete", 65, 65),
+            ("ready", 90, 90), ("publish", 30, 30), ("publish", 100, 100),
+        )):
+            writer.writerow({"event": index, "kind": kind, "begin_ns": begin*1_000_000,
+                             "end_ns": end*1_000_000, "complete": 1, "overflow": 0})
+    # Both sidecars are separate from the exact frameprofile.csv input glob.
+    (directory / "frameprofile.csv.gpu.csv").write_text("not a frame profile\n")
+    frames = report.samples_from_profile(directory / "frameprofile.csv")[0][("market", "view-1")]
+    assert frames[0]["attempts"] == 2
+    assert [row["texture_activity"] for row in frames] == [
+        dict(worker_active=True, read=True, upload=True, complete=False, ready=False, publish=False),
+        dict(worker_active=True, read=False, upload=True, complete=False, ready=False, publish=True),
+        dict(worker_active=True, read=False, upload=True, complete=True, ready=False, publish=False),
+        dict(worker_active=False, read=False, upload=False, complete=False, ready=True, publish=False),
+    ]
+    result = report.build_report(directory)
+    activity = result["places"]["market"]["summary"]["texture_activity"]
+    assert activity["worker_active"]["with"] == {"frames": 3, "p99_ms": pytest.approx(39.8)}
+    assert activity["worker_active"]["without"] == {"frames": 1, "p99_ms": 10}
+    assert activity["read"]["with"] == {"frames": 1, "p99_ms": 30}
+    assert activity["upload"] == activity["worker_active"]
+    assert activity["complete"]["with"] == {"frames": 1, "p99_ms": 40}
+    assert activity["ready"]["with"] == {"frames": 1, "p99_ms": 10}
+    assert activity["publish"]["with"] == {"frames": 1, "p99_ms": 20}
+    assert "| worker_active | 3 | 39.800 | 1 | 10.000 |" in report.report_markdown(result)
 
 
 def test_gpu_completion_and_matching_cpu_duration(tmp_path):
@@ -214,6 +340,7 @@ def test_gpu_completion_and_matching_cpu_duration(tmp_path):
     assert gpu["completed_frames"] == 2
     assert gpu["completion_fraction"] == pytest.approx(2 / 3)
     assert gpu["mean_ms"] == 2.5
+    assert gpu["p50_ms"] == 2.5
     assert gpu["p95_ms"] == pytest.approx(3.85)
     assert gpu["longer_than_cpu_fraction"] == .5
     assert gpu["buffers_per_completed_frame"] == 1.5

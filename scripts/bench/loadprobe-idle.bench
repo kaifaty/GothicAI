@@ -1,7 +1,10 @@
-# Load probe: fresh world (WORLD=...), stand 5 s after loading.
+# Load probe: fresh world (WORLD=...), stand 5 s after all landscape chunks are published.
 seed 73028
 cheat god
 set time 12 0
 rec idle novideo
-wait 5000
+streaming wait
+mark stream_warm
+wait real 5000
+mark stream_warm_5s
 stop

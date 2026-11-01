@@ -23,7 +23,7 @@ def test_branches_follow_saves() -> None:
     # a branch of a branch inherits through the copy
     assert db.ensure_branch("C", "B", 3) == 3
     assert [e.seq for e in db.load("C", "XARDAS").entries] == [1, 2, 3]
-    assert {b.id: b.head for b in db.branches()} == {"A": 4, "B": 3, "C": 3}
+    assert {b.id: (b.head, b.npcs) for b in db.branches()} == {"A": (4, 2), "B": (3, 1), "C": (3, 1)}
 
 
 def test_summary_folds_older_messages() -> None:

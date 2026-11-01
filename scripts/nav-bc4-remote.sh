@@ -97,7 +97,9 @@ if [[ "$stage" == smoke ]]; then
   "$python" -B -m pytest -q -p no:cacheprovider \
     scripts/tests/test_nav_bc_data.py scripts/tests/test_nav_bc_model.py \
     scripts/tests/test_nav_bc_train.py scripts/tests/test_nav_bc_contract.py scripts/tests/test_nav_rl.py
+  source "$task/source/scripts/ryzen-build.sh"
   cmake -S "$task/source/OpenGothic" -B "$task/build" -G Ninja \
+    "${RYZEN_CMAKE_FLAGS[@]}" \
     -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
     -DOPENGOTHIC_JOLT_X86=x86-64-v3 \
     -DCMAKE_CXX_FLAGS="-I$VULKAN_SDK/include" -DCMAKE_EXE_LINKER_FLAGS="-L$VULKAN_SDK/lib"
@@ -199,6 +201,12 @@ elif [[ "$stage" == train ]]; then
 elif [[ "$stage" == diagnose-quick ]]; then
   rm -f -- "$archive/diagnostics/smoke-passed"
   "$python" -B -m pytest -q -p no:cacheprovider scripts/tests/test_nav_rl.py
+  source "$task/source/scripts/ryzen-build.sh"
+  cmake -S "$task/source/OpenGothic" -B "$task/build" -G Ninja \
+    "${RYZEN_CMAKE_FLAGS[@]}" \
+    -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+    -DOPENGOTHIC_JOLT_X86=x86-64-v3 \
+    -DCMAKE_CXX_FLAGS="-I$VULKAN_SDK/include" -DCMAKE_EXE_LINKER_FLAGS="-L$VULKAN_SDK/lib"
   cmake --build "$task/build" --target gothic-body-runner --parallel 3
   "$python" -X faulthandler -B -I - "$task" "$archive" <<'DIAGNOSE'
 import json

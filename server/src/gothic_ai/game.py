@@ -6,6 +6,7 @@ import asyncio
 import itertools
 import json
 import logging
+import re
 import secrets
 from collections import deque
 from collections.abc import Awaitable, Callable, Iterable
@@ -91,6 +92,7 @@ from .protocol import (
 )
 
 log = logging.getLogger(__name__)
+LOCAL_ORIGINS = [None, re.compile(r"ws://(?:127\.0\.0\.1|localhost|\[::1\])(?::[0-9]+)?")]
 
 # the game's answer to a story effect on an npc whose body P30 owns (aibridge.cpp, story_effect): it lets go
 # at the next safe boundary, the effect is sent again
@@ -1196,7 +1198,9 @@ class GameServer:
         return resp
 
     async def serve_forever(self) -> None:
-        async with serve(self._handler, self.host, self.port, process_request=self._health) as server:
+        async with serve(
+            self._handler, self.host, self.port, process_request=self._health, origins=LOCAL_ORIGINS
+        ) as server:
             self.port = server.sockets[0].getsockname()[1]  # actual port when 0 was requested
             self.started.set()
             log.info("waiting for the game on ws://%s:%d", self.host, self.port)

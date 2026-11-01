@@ -200,7 +200,12 @@ static void printStats(const Model& m, size_t lineTexts) {
   }
 
 static int run(int argc, char** argv) {
+#ifdef _WIN32
+  // the Microsoft CRT has no line buffering: _IOLBF is full buffering and a zero size is an invalid parameter
+  std::setvbuf(stdout, nullptr, _IONBF, 0);  // what was printed survives a crash
+#else
   std::setvbuf(stdout, nullptr, _IOLBF, 0);  // what was printed survives a crash
+#endif
   const char* datPath = nullptr;
   const char* ouPath  = nullptr;
   const char* json    = nullptr;

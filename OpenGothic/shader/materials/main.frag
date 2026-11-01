@@ -288,6 +288,9 @@ vec4 diffuseTex() {
 
 #if defined(BINDLESS)
   nonuniformEXT uint tId = bucketId;
+  if(bucket[bucketId].frameCount!=0)
+    tId = bucket[bucketId].diffuseFrames +
+          (scene.tickCount32 / bucket[bucketId].frameDuration) % bucket[bucketId].frameCount;
 #else
   const         uint tId = 0;
 #endif

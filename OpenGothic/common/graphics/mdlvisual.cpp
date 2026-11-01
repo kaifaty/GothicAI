@@ -12,6 +12,7 @@
 #include "graphics/mesh/animmath.h"
 #include "graphics/mesh/ikmath.h"
 #include "frameprofile.h"
+#include "worldchunksruntime.h"
 
 #include <algorithm>
 #include <array>
@@ -262,6 +263,8 @@ bool MdlVisual::stickArrow(MeshObjects::Mesh&& arrow, size_t bone, const Matrix4
   if(!validRenderFrame(pin.local))
     return false;
   arrow.setObjMatrix(renderedBone(bone)*pin.local);
+  if(textureOwnerKnown)
+    arrow.setTextureOwner(textureOwnerPosition,textureOwnerSpatial);
   pin.view=std::move(arrow);
   if(stuckArrows.size()>=MaxStuckArrows)
     stuckArrows.erase(stuckArrows.begin());
@@ -285,6 +288,9 @@ void MdlVisual::saveStuckArrows(Serialize& fout) const {
   }
 
 bool MdlVisual::loadStuckArrows(Serialize& fin, World& world) {
+  const auto* residency=world.chunkResidency();
+  Resources::TextureLoadScope textureLoadScope(textureOwnerKnown && textureOwnerSpatial && residency &&
+      residency->textureDistance(ChunkId::fromPosition(textureOwnerPosition.x,textureOwnerPosition.z))>2);
   clearStuckArrows();
   if(!Gothic::physicsFlags().arrowSticking)
     return true;
@@ -317,6 +323,8 @@ bool MdlVisual::loadStuckArrows(Serialize& fin, World& world) {
           if(std::abs(pin.local.at(c,r))>100000000.f)
             return false;
       pin.view=world.addView(pin.visual);
+      if(textureOwnerKnown)
+        pin.view.setTextureOwner(textureOwnerPosition,textureOwnerSpatial);
       if(pin.view.isEmpty())
         return false;
       pin.view.setObjMatrix(renderedBone(pin.bone)*pin.local);
@@ -400,6 +408,8 @@ void MdlVisual::setArmor(Npc& npc, MeshObjects::Mesh&& armor) {
   }
 
 void MdlVisual::implSetBody(Npc* npc, World& world, MeshObjects::Mesh&& body, const int32_t version) {
+  if(npc)
+    setTextureOwner(npc->position(),!npc->isPlayer());
   clearPhysicalPose();
   attach.clear();
   if(auto p = body.protoMesh()) {
@@ -412,6 +422,8 @@ void MdlVisual::implSetBody(Npc* npc, World& world, MeshObjects::Mesh&& body, co
     syncAttaches();
     }
   view = std::move(body);
+  if(textureOwnerKnown)
+    view.setTextureOwner(textureOwnerPosition,textureOwnerSpatial);
   view.setAsGhost(hnpcFlagGhost);
   view.setFatness(npc==nullptr ? 0 : npc->fatness());
   view.setSkeleton(skeleton);
@@ -436,6 +448,8 @@ void MdlVisual::fitHitZones() {
   }
 
 void MdlVisual::setSlotAttachment(MeshObjects::Mesh&& itm, std::string_view bone) {
+  if(textureOwnerKnown)
+    itm.setTextureOwner(textureOwnerPosition,textureOwnerSpatial);
   if(bone.empty() || skeleton==nullptr)
     return;
 
@@ -495,6 +509,8 @@ void MdlVisual::setMagicWeaponKey(World& owner, SpellFxKey key, int32_t keyLvl) 
   }
 
 void MdlVisual::setSlotItem(MeshObjects::Mesh &&itm, std::string_view bone) {
+  if(textureOwnerKnown)
+    itm.setTextureOwner(textureOwnerPosition,textureOwnerSpatial);
   if(bone.empty() || skeleton==nullptr)
     return;
 
@@ -738,6 +754,27 @@ void MdlVisual::setObjMatrix(const Tempest::Matrix4x4 &m, bool syncAttach) {
     syncAttaches();
   }
 
+void MdlVisual::setTextureOwner(const Vec3& position, bool spatial) {
+  if(textureOwnerKnown && textureOwnerSpatial==spatial &&
+     (!spatial || ChunkId::fromPosition(textureOwnerPosition.x,textureOwnerPosition.z)==ChunkId::fromPosition(position.x,position.z)))
+    return;
+  textureOwnerKnown=true;
+  textureOwnerSpatial=spatial;
+  textureOwnerPosition=position;
+  view.setTextureOwner(position,spatial);
+  MeshAttach* slots[]={&head,&sword,&shield,&bow,&ammunition,&stateItm};
+  for(auto* slot:slots)
+    slot->view.setTextureOwner(position,spatial);
+  for(auto& slot:item)
+    slot.view.setTextureOwner(position,spatial);
+  for(auto& slot:attach)
+    slot.view.setTextureOwner(position,spatial);
+  for(auto& pin:stuckArrows)
+    pin.view.setTextureOwner(position,spatial);
+  if(torch.view)
+    torch.view->setTextureOwner(position,spatial);
+  }
+
 bool MdlVisual::minSkinnedVertex(float fatness,Vec3& point) const {
   const auto* mesh=view.protoMesh();
   if(mesh==nullptr)
@@ -790,8 +827,13 @@ void MdlVisual::setTorch(bool t, World& owner) {
 
   auto hitem = std::make_shared<zenkit::IItem>();
   owner.script().initializeInstanceItem(hitem, torchId);
+  const auto* residency=owner.chunkResidency();
+  Resources::TextureLoadScope textureLoadScope(textureOwnerKnown && textureOwnerSpatial && residency &&
+      residency->textureDistance(ChunkId::fromPosition(textureOwnerPosition.x,textureOwnerPosition.z))>2);
   torch.view.reset(new ObjVisual());
   torch.view->setVisual(*hitem,owner,false);
+  if(textureOwnerKnown)
+    torch.view->setTextureOwner(textureOwnerPosition,textureOwnerSpatial);
   torch.boneId = (skeleton==nullptr ? size_t(-1) : skeleton->findNode("ZS_LEFTHAND"));
 
   auto& pose = *skInst;
@@ -1279,6 +1321,32 @@ float MdlVisual::animTime(std::string_view name) const {
   return sq!=nullptr ? sq->totalTime() : 0.f;
   }
 
+// the bones of the model at a frame of the animation (f past its end: the bind pose), in the model's frame
+static void modelFrame(const Skeleton& skeleton, const Animation::AnimData& d, uint32_t f,
+                       std::vector<Tempest::Matrix4x4>& world) {
+  auto& nodes = skeleton.nodes;
+  std::vector<Tempest::Matrix4x4> local(nodes.size());
+  world.resize(nodes.size());
+  for(size_t i=0; i<nodes.size(); ++i)
+    local[i] = nodes[i].tr;
+  for(size_t i=0; i<d.nodeIndex.size() && f<d.numFrames; ++i)
+    if(d.nodeIndex[i]<nodes.size())
+      local[d.nodeIndex[i]] = mkMatrix(d.samples[size_t(f)*d.nodeIndex.size()+i]);
+  std::vector<bool> done(nodes.size(),false);
+  for(size_t i=0; i<nodes.size(); ++i) {
+    size_t chain[Resources::MAX_NUM_SKELETAL_NODES];
+    size_t n = 0;
+    for(size_t b=i; b<nodes.size() && !done[b] && n<nodes.size(); b=nodes[b].parent)
+      chain[n++] = b;
+    while(n>0) {
+      const size_t b = chain[--n];
+      const size_t p = nodes[b].parent;
+      world[b] = p<nodes.size() ? world[p]*local[b] : local[b];
+      done[b]  = true;
+      }
+    }
+  }
+
 std::string MdlVisual::animInfo(std::string_view name) const {
   const Animation::Sequence* sq = solver.solveFrm(name);
   if(sq==nullptr || sq->data==nullptr)
@@ -1314,33 +1382,13 @@ std::string MdlVisual::animInfo(std::string_view name) const {
   const size_t rt = skeleton->findNode("BIP01 R THIGH");
   if(lt>=nodes.size() || rt>=nodes.size())
     return out;
-  std::vector<Tempest::Matrix4x4> local(nodes.size()), world(nodes.size());
+  std::vector<Tempest::Matrix4x4> world;
   auto yaw = [&](const Tempest::Matrix4x4* m) {
     const float dx = m[lt].at(3,0)-m[rt].at(3,0);
     const float dz = m[lt].at(3,2)-m[rt].at(3,2);
     return std::atan2(dz,dx)*180.f/float(M_PI);
     };
-  // f: a frame, else the bind pose
-  auto pose = [&](uint32_t f) {
-    for(size_t i=0; i<nodes.size(); ++i)
-      local[i] = nodes[i].tr;
-    for(size_t i=0; i<d.nodeIndex.size() && f<d.numFrames; ++i)
-      if(d.nodeIndex[i]<nodes.size())
-        local[d.nodeIndex[i]] = mkMatrix(d.samples[size_t(f)*d.nodeIndex.size()+i]);
-    std::vector<bool> done(nodes.size(),false);
-    for(size_t i=0; i<nodes.size(); ++i) {
-      size_t chain[Resources::MAX_NUM_SKELETAL_NODES];
-      size_t n = 0;
-      for(size_t b=i; b<nodes.size() && !done[b] && n<nodes.size(); b=nodes[b].parent)
-        chain[n++] = b;
-      while(n>0) {
-        const size_t b = chain[--n];
-        const size_t p = nodes[b].parent;
-        world[b] = p<nodes.size() ? world[p]*local[b] : local[b];
-        done[b]  = true;
-        }
-      }
-    };
+  auto pose = [&](uint32_t f) { modelFrame(*skeleton,d,f,world); };
   pose(uint32_t(-1));
   std::snprintf(buf,sizeof(buf),"; hips bind %.0f, at frames",double(yaw(world.data())));
   out += buf;
@@ -1348,6 +1396,49 @@ std::string MdlVisual::animInfo(std::string_view name) const {
     const uint32_t f = std::min(d.numFrames-1,d.numFrames*q/4);
     pose(f);
     std::snprintf(buf,sizeof(buf)," %u:%.0f/%.0f",unsigned(f),double(yaw(world.data())),double(world[0].at(3,1)));
+    out += buf;
+    }
+  return out;
+  }
+
+std::string MdlVisual::bladePath(std::string_view name, float length) const {
+  // the blade's tip (-length along the hand's x, as the weapon meshes lie) at each frame, in the model's
+  // frame, and how fast it goes; the root bone, whose x and z the game keeps at the actor's position (the
+  // actor goes the root's way instead); the frames of the fight tags as the MDS gives them
+  const Animation::Sequence* sq = solver.solveFrm(name);
+  if(sq==nullptr || sq->data==nullptr || skeleton==nullptr)
+    return std::string(name) + ": none";
+  const auto& d = *sq->data;
+  const size_t hand = skeleton->findNode("ZS_RIGHTHAND");
+  const size_t root = skeleton->findRootNode();
+  if(hand>=skeleton->nodes.size() || root>=skeleton->nodes.size() || d.numFrames==0)
+    return std::string(name) + ": no hand";
+  char buf[256];
+  std::snprintf(buf,sizeof(buf),"%s: frames %u..%u (%u) fps %.1f reverse %d",sq->name.c_str(),unsigned(d.firstFrame),
+                unsigned(d.lastFrame),unsigned(d.numFrames),double(d.fpsRate),int(sq->reverse));
+  std::string out = buf;
+  for(const auto& e:d.events) {
+    const char* tag = e.type==asset::MdsEventType::OPTIMAL_FRAME ? "optimal" :
+                      e.type==asset::MdsEventType::HIT_END       ? "hit_end" :
+                      e.type==asset::MdsEventType::COMBO_WINDOW  ? "window"  : nullptr;
+    if(tag==nullptr)
+      continue;
+    out += std::string("; ") + tag;
+    for(auto f:e.frames)
+      out += " " + std::to_string(f);
+    }
+  std::vector<Tempest::Matrix4x4> world;
+  Tempest::Vec3 previous;
+  for(uint32_t f=0; f<d.numFrames; ++f) {
+    modelFrame(*skeleton,d,f,world);
+    Tempest::Vec3 tip(-length,0,0), grip;
+    world[hand].project(tip);
+    world[hand].project(grip);
+    const float speed = f>0 ? (tip-previous).length()*d.fpsRate : 0.f;
+    previous = tip;
+    std::snprintf(buf,sizeof(buf),"; %u: tip %.0f %.0f %.0f grip %.0f %.0f %.0f root %.0f %.0f %.0f %.0f cm/s",
+                  unsigned(f),double(tip.x),double(tip.y),double(tip.z),double(grip.x),double(grip.y),double(grip.z),
+                  double(world[root].at(3,0)),double(world[root].at(3,1)),double(world[root].at(3,2)),double(speed));
     out += buf;
     }
   return out;
@@ -1739,6 +1830,8 @@ Bounds MdlVisual::bounds() const {
 void MdlVisual::bind(MeshAttach& slot, MeshObjects::Mesh&& itm, std::string_view bone) {
   slot.boneId = skeleton==nullptr ? size_t(-1) : skeleton->findNode(bone);
   slot.view   = std::move(itm);
+  if(textureOwnerKnown)
+    slot.view.setTextureOwner(textureOwnerPosition,textureOwnerSpatial);
   slot.bone   = bone;
   // sync?
   }

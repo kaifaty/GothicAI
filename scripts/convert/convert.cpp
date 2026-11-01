@@ -7,6 +7,8 @@
 //       Compare existing chunks and world data with the source .ZEN.
 //   content-convert check-vob-layer <base world dir> <layer.json> [content dir]
 //       Validate the layer schema, base ids, world keys and visual resources without a game.
+//   content-convert check-particles <base root> <content dir>
+//       Validate all particles.d definitions using the game's particle loader.
 //   content-convert zen|verify-zen <gothic dir> <dir>
 //       Engine-consumed meshless .ZEN files, including loose _work files.
 //   content-convert textures <gothic dir> <out dir>
@@ -67,6 +69,7 @@
 #include "worldchunksruntime.h"
 #include "worlddata.h"
 #include "world/voblayer.h"
+#include "game/definitions/particlecontent.h"
 #include "gothicglb.h"
 
 #include <zenkit/Archive.hh>
@@ -806,6 +809,14 @@ int main(int argc, char** argv) {
     const std::vector<std::string> args(argv+1,argv+argc);
     if(args.size()==1 && args[0]=="--self-test")
       return selfTest();
+    if(args.size()==3 && args[0]=="check-particles") {
+      const auto result=ParticleContent::check(args[1],args[2]);
+      for(const auto& error:result.errors)
+        std::cerr << error << '\n';
+      if(!result.errors.empty()) return 1;
+      std::cout << args[2] << ": valid (" << result.effects.size() << " particle effects)\n";
+      return 0;
+      }
     if((args.size()==3 || args.size()==4) && args[0]=="check-vob-layer") {
       const auto result=VobLayer::check(args[1],args[2],args.size()==4 ? fs::path(args[3]) : fs::path());
       for(const auto& error:result.errors)
@@ -891,6 +902,7 @@ int main(int argc, char** argv) {
       }
     std::cerr << "usage: content-convert world|verify-world <gothic dir> <WORLD.ZEN> <dir> [override]\n"
                  "       content-convert check-vob-layer <base world dir> <layer.json> [content dir]\n"
+                 "       content-convert check-particles <base root> <content dir>\n"
                  "       content-convert textures|verify-textures|meshes|verify-meshes|zen|verify-zen <gothic dir> <dir>\n"
                  "       content-convert models|verify-models <gothic dir> <dir>\n"
                  "       content-convert fonts|verify-fonts <gothic dir> <dir>\n"

@@ -1,0 +1,16 @@
+world,zen_id,visual,origin_x_cm,origin_y_cm,origin_z_cm,max_shift_cm,final_shift_cm,support_category,support_label,support_slope_deg,static_depth_cm,furniture_depth_cm,item_depth_cm,reason
+NEWWORLD.ZEN,21021,Itmw_010_1h_vlk_hatchet_01.3DS,4574.65967,-60.9396057,768.346252,38.8012886,38.8012886,4,NW_CITY_TABLE_PEASANT_01.3DS,0,0,0,0,Admitted static support; exact motion mechanism not traced
+NEWWORLD.ZEN,25026,ItMi_Broom.3DS,10498.8428,1035.82874,824.729797,12.1429968,11.8524027,2,landscape,0,1.01705384,0,0,Admitted static support; exact motion mechanism not traced
+NEWWORLD.ZEN,18957,ItMw_020_2h_Pickaxe_01.3DS,18516.4277,1986.04138,-14509.5645,33.3403816,33.3403816,2,landscape,6.52242565,0,0,0,Admitted static support; exact motion mechanism not traced
+NEWWORLD.ZEN,18246,ItMi_Pocket.3ds,26959.2578,4423.59814,-3816.54639,21.514637,21.5145473,4,NW_HARBOUR_CRATEBROKEN_01.MRM,12.6338377,1.41597426,0,0,Admitted static support; exact motion mechanism not traced
+NEWWORLD.ZEN,18260,ItPo_Health_01.3ds,26898.6836,4389.47559,-3820.99243,11.4095964,11.3978271,2,landscape,12.5840883,1.03217924,0,0,Admitted static support; exact motion mechanism not traced
+NEWWORLD.ZEN,18261,ItPo_Health_02.3ds,26925.0293,4403.98486,-3834.28955,123.417038,123.417038,4,NW_HARBOUR_CRATEBROKEN_01.MRM,12.6338377,1.37390161,0,0,Admitted static support; exact motion mechanism not traced
+NEWWORLD.ZEN,14211,ItSc_FullHeal.3DS,57191.0703,1746.94885,-16444.7676,25.4577675,24.6686611,2,landscape,1.20495999,0.235186517,0,0,Admitted static support; exact motion mechanism not traced
+OLDWORLD.ZEN,8586,ItMi_Pocket.3ds,-26208.998,-1389.58179,-11239.1416,26.7840252,23.0267143,2,landscape,0,0,0,0,Admitted static support; exact motion mechanism not traced
+OLDWORLD.ZEN,8750,ItRw_Bolt.3ds,-21218.9922,-1060,18803.4219,10.5313349,10.1130972,2,landscape,5.11764574,0,0,0,Admitted static support; exact motion mechanism not traced
+OLDWORLD.ZEN,2427,ItLs_Torch_01.3ds,1248.40369,2798.66772,21971.5859,16.2586269,16.2586269,2,landscape,10.1560774,0,0,0,Admitted static support; exact motion mechanism not traced
+OLDWORLD.ZEN,8788,ItSc_TrfShadowbeast.3DS,15585.1484,1523.04346,-10921.542,34.8539619,34.8539619,4,ORC_BED_01.MRM,10.4956694,1.6337533,0,0,Admitted static support; exact motion mechanism not traced
+ADDONWORLD.ZEN,6894,ItPo_Health_01.3ds,-9087.81543,-3838.8645,26098.5723,20.8632317,20.5955963,2,landscape,13.5210238,0.903315067,0,0,Admitted static support; exact motion mechanism not traced
+ADDONWORLD.ZEN,6895,ItPo_Mana_01.3ds,-5051.79443,-2682.28271,25870.1816,74.7259445,74.7259445,2,landscape,14.8641005,1.13019049,0,0,Admitted static support; exact motion mechanism not traced
+ADDONWORLD.ZEN,7737,ItFo_Fish.3DS,32023.9805,-5337.21875,-4156.67529,50.6705589,50.3523483,2,landscape,4.47990847,0,0,0,Admitted static support; exact motion mechanism not traced
+ADDONWORLD.ZEN,7707,ItPo_Mana_01.3ds,31622.9199,-4452.71826,-6357.18555,11.0865479,11.0841064,2,landscape,11.3491983,1.10734558,0,0,Admitted static support; exact motion mechanism not traced

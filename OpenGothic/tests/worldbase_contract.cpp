@@ -25,6 +25,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <set>
 #include <stdexcept>
 #include <string>
 
@@ -294,6 +295,23 @@ asset::WorldMesh selectionMesh() {
   return mesh;
   }
 
+asset::WorldMesh expandChunkMesh(const WorldChunkMesh& compact, const asset::WorldMesh& source) {
+  require(compact.mesh.vertices.size()==compact.vertexIds.size() && compact.mesh.features.size()==compact.featureIds.size(),
+          "compact chunk values must have matching source IDs");
+  auto expanded=canonicalWorldMesh(source);
+  expanded.materials=compact.mesh.materials;
+  expanded.polygons=compact.mesh.polygons;
+  for(size_t i=0;i<compact.vertexIds.size();++i)
+    expanded.vertices.at(compact.vertexIds[i])=compact.mesh.vertices[i];
+  for(size_t i=0;i<compact.featureIds.size();++i)
+    expanded.features.at(compact.featureIds[i])=compact.mesh.features[i];
+  for(auto& vertex:expanded.polygons.vertex_indices)
+    vertex=compact.vertexIds.at(vertex);
+  for(auto& feature:expanded.polygons.feature_indices)
+    feature=compact.featureIds.at(feature);
+  return expanded;
+  }
+
 void worldDataContract(const zenkit::World& world, const WorldChunkSource& source, const fs::path& dir) {
   const auto original=WorldData::fromWorld(world,source);
   WorldData::write(original,dir);
@@ -351,7 +369,51 @@ void selectionContract(const fs::path& root) {
   require(chunks.entries.size()==1 && chunks.entries[0].id==ChunkId{0,0} &&
           chunks.entries[0].file==manifest.chunks.front() && chunks.entries[0].min.x>4.f*ChunkId::Size &&
           chunks.triangleChunks==std::vector<uint32_t>{0},"moved override must retain source chunk ownership and exact bounds");
+  require(chunks.source!=nullptr && chunks.triangleSources.size()==1,"edited chunks must retain a file-backed source");
+  const auto compact=chunks.source->read(0,chunks.triangleSources);
+  require(compareWorldMeshes(canonicalWorldMesh(movedMesh),expandChunkMesh(compact,movedMesh)).empty(),
+          "compact reads must use the selected override with the stitched vertex, feature and material IDs");
   std::puts("Selection: matching override chunk replaces base");
+  }
+
+using SourceTriangle = std::array<uint32_t,7>;
+
+std::multiset<SourceTriangle> unpackLandscape(const PackedMesh& packed, const asset::WorldMesh& source) {
+  std::multiset<SourceTriangle> result;
+  for(const auto& sub:packed.subMeshes) {
+    const auto material=std::find_if(source.materials.begin(),source.materials.end(),[&](const auto& candidate) {
+      return sameMaterial(sub.material,candidate);
+      });
+    require(material!=source.materials.end(),"packed landscape material must retain its whole-mesh representative");
+    for(size_t at=sub.iboOffset;at<sub.iboOffset+sub.iboLength;at+=3) {
+      if(packed.indices[at]==packed.indices[at+1] && packed.indices[at]==packed.indices[at+2])
+        continue;
+      SourceTriangle triangle {};
+      triangle[6]=uint32_t(material-source.materials.begin());
+      for(size_t corner=0;corner<3;++corner) {
+        const auto& vertex=packed.vertices[packed.indices[at+corner]];
+        bool found=false;
+        for(size_t id=0;id<source.vertices.size() && !found;++id) {
+          const auto& position=source.vertices[id];
+          if(position.x!=vertex.pos[0] || position.y!=vertex.pos[1] || position.z!=vertex.pos[2])
+            continue;
+          for(size_t feature=0;feature<source.features.size();++feature) {
+            const auto& value=source.features[feature];
+            if(value.texture.x!=vertex.uv[0] || value.texture.y!=vertex.uv[1] ||
+               value.normal.x!=vertex.norm[0] || value.normal.y!=vertex.norm[1] || value.normal.z!=vertex.norm[2])
+              continue;
+            triangle[corner*2]=uint32_t(id);
+            triangle[corner*2+1]=uint32_t(feature);
+            found=true;
+            break;
+            }
+          }
+        require(found,"packed landscape corner must retain the source vertex/feature pair");
+        }
+      result.insert(triangle);
+      }
+    }
+  return result;
   }
 
 void chunkContract(const fs::path& root) {
@@ -362,22 +424,38 @@ void chunkContract(const fs::path& root) {
     }
 
   auto mesh=selectionMesh();
+  mesh.materials.push_back(mesh.materials[0]);
+  mesh.materials[1].name="EQUIVALENT_ALIAS";
+  mesh.materials.push_back(mesh.materials[0]);
+  mesh.materials[2].name="DISTINCT_MATERIAL";
+  mesh.materials[2].group=asset::MaterialGroup::WOOD;
   mesh.vertices.insert(mesh.vertices.end(),{{-6401,0,-100},{-6401,100,-100},{-6398,0,200},
                                           {-100,10,100},{6500,20,100},{200,30,200},
                                           {6500,0,-100},{6500,100,-100},{6600,0,-200}});
   for(uint32_t triangle=1;triangle<4;++triangle) {
     mesh.polygons.vertex_indices.insert(mesh.polygons.vertex_indices.end(),{triangle*3,triangle*3+1,triangle*3+2});
     mesh.polygons.feature_indices.insert(mesh.polygons.feature_indices.end(),{0,1,2});
-    mesh.polygons.material_indices.push_back(0);
+    mesh.polygons.material_indices.push_back(triangle==2 ? 2u : 1u);
+    mesh.polygons.lightmap_indices.push_back(-1);
+    mesh.polygons.flags.emplace_back();
+    }
+  mesh.materials.push_back(mesh.materials[0]);
+  mesh.materials[3].name="NW_CITY_FLAG_01";
+  mesh.vertices.insert(mesh.vertices.end(),{{1200,600,100},{1400,600,100},{1400,300,100},{1200,300,100}});
+  for(const auto& triangle:std::array<std::array<uint32_t,3>,4>{{{12,13,14},{12,14,15},{12,14,13},{12,15,14}}}) {
+    mesh.polygons.vertex_indices.insert(mesh.polygons.vertex_indices.end(),triangle.begin(),triangle.end());
+    mesh.polygons.feature_indices.insert(mesh.polygons.feature_indices.end(),{0,1,2});
+    mesh.polygons.material_indices.push_back(3);
     mesh.polygons.lightmap_indices.push_back(-1);
     mesh.polygons.flags.emplace_back();
     }
   const auto directory=root/"chunks";
   const auto manifest=writeWorldChunks(mesh,{"CONTRACT.ZEN",0,0},directory);
   ChunkTable table;
-  const auto restored=readWorldChunks(directory,{},&table);
+  auto restored=readWorldChunks(directory,{},&table);
   require(compareWorldMeshes(canonicalWorldMesh(mesh),restored).empty(),"chunk metadata must not reorder the stitched mesh");
-  require(table.entries.size()==manifest.chunks.size() && table.triangleChunks.size()==4,"chunk table must cover the manifest and stitched triangles");
+  require(table.entries.size()==manifest.chunks.size() && table.triangleChunks.size()==8 && table.triangleSources.size()==8 &&
+          table.source!=nullptr,"chunk table must cover the manifest and stitched/file-backed triangles");
   for(size_t i=0;i<table.entries.size();++i) {
     const auto& chunk=table.entries[i];
     require(chunk.file==manifest.chunks[i],"chunk table file must match manifest order");
@@ -405,6 +483,64 @@ void chunkContract(const fs::path& root) {
     require(chunk.triangleCount==count && chunk.min==minimum && chunk.max==maximum,
             "chunk bounds and counts must use their actual triangles, including overhangs");
     }
+
+  const auto beforeCloth=table.triangleChunks;
+  const auto sourcesBeforeCloth=table.triangleSources;
+  const auto extracted=WorldCloth::extract(restored,&table);
+  require(extracted.surfaces.size()==1 && extracted.original.polygons.material_indices.size()==4 &&
+          restored.polygons.material_indices.size()==4,"small chunk fixture must extract the four cloth triangles");
+  require(table.triangleChunks==std::vector<uint32_t>(beforeCloth.begin(),beforeCloth.begin()+4),
+          "cloth extraction must filter ownership alongside the exact retained source triangles");
+  require(table.source!=nullptr && table.triangleSources==
+          std::vector<uint32_t>(sourcesBeforeCloth.begin(),sourcesBeforeCloth.begin()+4),
+          "cloth extraction must filter file-backed triangle IDs alongside ownership");
+  require(restored.vertices==mesh.vertices && restored.polygons.vertex_indices==
+          std::vector<uint32_t>(mesh.polygons.vertex_indices.begin(),mesh.polygons.vertex_indices.begin()+12) &&
+          restored.polygons.feature_indices==std::vector<uint32_t>(mesh.polygons.feature_indices.begin(),mesh.polygons.feature_indices.begin()+12),
+          "cloth extraction must preserve all source vertex and feature IDs");
+  const auto lists=chunkTriangleLists(restored,table);
+  const auto representatives=PackedMesh::landscapeMaterialMap(restored);
+  const PackedMesh whole(restored,PackedMesh::PK_VisualLnd);
+  std::multiset<SourceTriangle> expected,combined;
+  for(size_t triangle=0;triangle<restored.polygons.material_indices.size();++triangle) {
+    SourceTriangle value {};
+    for(size_t corner=0;corner<3;++corner) {
+      value[corner*2]=restored.polygons.vertex_indices[triangle*3+corner];
+      value[corner*2+1]=restored.polygons.feature_indices[triangle*3+corner];
+      }
+    value[6]=representatives[restored.polygons.material_indices[triangle]];
+    expected.insert(value);
+    }
+  for(size_t chunk=0;chunk<lists.size();++chunk) {
+    require(lists[chunk].size()==table.entries[chunk].triangleCount,"filtered per-chunk count must match its source triangle list");
+    const PackedMesh packed(restored,lists[chunk],representatives);
+    const auto triangles=unpackLandscape(packed,restored);
+    combined.insert(triangles.begin(),triangles.end());
+    std::vector<uint32_t> sources;
+    for(const auto triangle:lists[chunk])
+      sources.push_back(table.triangleSources[triangle]);
+    const auto compact=table.source->read(chunk,sources);
+    auto expectedChunk=restored;
+    retainWorldTriangles(expectedChunk,lists[chunk]);
+    require(compareWorldMeshes(expectedChunk,expandChunkMesh(compact,restored)).empty(),
+            "compact chunk reads must retain exact source values, polygon IDs and material records after cloth filtering");
+    std::vector<uint32_t> localTriangles(sources.size());
+    for(size_t i=0;i<localTriangles.size();++i)
+      localTriangles[i]=uint32_t(i);
+    const PackedMesh compactPacked(compact.mesh,localTriangles,representatives,compact.vertexIds,compact.featureIds);
+    require(unpackLandscape(compactPacked,restored)==triangles,
+            "file-backed chunk packing must match in-memory packing with global source IDs and whole-world material representatives");
+    }
+  require(unpackLandscape(whole,restored)==expected && combined==expected,
+          "whole and chunk landscapes must contain the same triangles, original vertex/feature IDs and representative materials");
+  auto sparse=restored;
+  auto sparseTable=table;
+  retainWorldTriangles(sparse,std::array<uint32_t,2>{1,3},&sparseTable);
+  require(sparseTable.triangleChunks==std::vector<uint32_t>{table.triangleChunks[1],table.triangleChunks[3]} &&
+          sparseTable.triangleSources==std::vector<uint32_t>{table.triangleSources[1],table.triangleSources[3]} &&
+          sparse.polygons.vertex_indices==std::vector<uint32_t>{3,4,5,9,10,11},
+          "the reusable filter must preserve source IDs and ownership for a noncontiguous subset");
+  std::printf("Chunk landscape contract: %zu chunks, %zu triangles, 4 cloth triangles; disk/in-memory source IDs/materials equal\n",lists.size(),expected.size());
 
   ChunkTable grid;
   for(int32_t x=-4;x<=14;++x) for(int32_t z=-4;z<=4;++z)

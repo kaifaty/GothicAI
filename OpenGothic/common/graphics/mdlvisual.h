@@ -36,6 +36,7 @@ class MdlVisual final {
     void                           setVisual(const Skeleton *visual);
 
     void                           setObjMatrix(const Tempest::Matrix4x4 &m, bool syncAttach = false);
+    void                           setTextureOwner(const Tempest::Vec3& position, bool spatial);
     bool                           minSkinnedVertex(float fatness, Tempest::Vec3& point) const;
 
     void                           setHeadRotation(float dx, float dz);
@@ -144,6 +145,8 @@ class MdlVisual final {
     // an animation of the model (the test bench): its frames, the nodes it moves, how far it goes, which
     // way the hips face (the thighs) at a few points of it
     std::string                    animInfo(std::string_view name) const;
+    // the blade's tip at each frame of the animation (the test bench)
+    std::string                    bladePath(std::string_view name, float length) const;
     // ms the animation of that name takes (the overlays chosen), 0: none
     float                          animTime(std::string_view name) const;
     // cm the bow's string goes from rest to drawn as held in the aim (its morph), 0: not known
@@ -259,6 +262,8 @@ class MdlVisual final {
     void setupGestures();
 
     Tempest::Matrix4x4             pos;
+    Tempest::Vec3                 textureOwnerPosition;
+    bool                          textureOwnerKnown = false, textureOwnerSpatial = false;
     MeshObjects::Mesh              view;
 
     MeshAttach                     head, sword, bow, shield;

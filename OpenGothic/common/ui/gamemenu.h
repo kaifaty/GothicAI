@@ -9,8 +9,11 @@
 #include <zenkit/addon/daedalus.hh>
 
 #include <memory>
+#include <unordered_map>
+#include <vector>
 
 #include "game/savegameheader.h"
+#include "game/chronicle.h"
 #include "game/questlog.h"
 #include "utils/keycodec.h"
 
@@ -33,6 +36,14 @@ class GameMenu : public Tempest::Widget {
 
     KeyCodec::Action keyClose() const { return kClose; }
 
+    // the bench's `diary` command: the next diary opens on «Летопись» as set here, then it is reset
+    struct BenchDiary {
+      bool    chronicle = false;
+      int32_t feat      = -1;
+      bool    open      = false;
+      };
+    static BenchDiary benchDiary;
+
   protected:
     void paintEvent (Tempest::PaintEvent& event) override;
     void resizeEvent(Tempest::SizeEvent&  event) override;
@@ -49,6 +60,8 @@ class GameMenu : public Tempest::Widget {
     struct ListViewDialog;
     struct KeyEditDialog;
     struct SavNameDialog;
+    struct ChronicleDialog;
+    struct ChronicleRow;
     struct Item {
       std::string                         name;
       std::shared_ptr<zenkit::IMenuItem>  handle={};
@@ -81,7 +94,22 @@ class GameMenu : public Tempest::Widget {
 
     KeyCodec::Action                      kClose = KeyCodec::Escape;
 
+    // the diary's «Летопись» tab (gamemenuchronicle.cpp)
+    bool                                  diary         = false;  // MENU_LOG: it has the tab
+    bool                                  chronicleOpen = false;  // one feat shown in full
+    std::unordered_map<std::string,std::unique_ptr<Tempest::Texture2d>> chronicleImages;
+
     void                                  drawItem(Tempest::Painter& p, Item& it);
+    void                                  addChronicleItems();
+    static bool                           isChronicle(const Item& it);
+    static bool                           isChronicleSlot(const Item& it);
+    std::vector<ChronicleRow>             chronicleRows() const;
+    int32_t                               chronicleFeatCount() const;
+    const Tempest::Texture2d*             chronicleImage(const std::string& path);
+    void                                  drawChronicle(Tempest::Painter& p, Item& it, int x, int y, int w, int h);
+    void                                  execChronicle(Item& list);
+    void                                  applyBenchDiary();
+    void                                  drawChronicleFrame(Tempest::Painter& p);
     void                                  drawSlider(Tempest::Painter& p, Item& it, int x, int y, int w, int h);
     void                                  drawQuestList(Tempest::Painter& p, Item& it, int x, int y, int w, int h,
                                                         const QuestLog& log, QuestStat st);

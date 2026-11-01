@@ -11,7 +11,7 @@ from pathlib import Path
 from gothic_launcher.commands import LaunchError, find_layout, load_config, tools
 from gothic_launcher.settings import Config, SettingsError
 
-from . import compare, cover, srt, youtube
+from . import compare, cover, delivery, srt, youtube
 from . import cut as cutting
 from .align import AlignError, align
 from .dub import DubError, dub_compare, dub_explainer, dub_take
@@ -206,6 +206,32 @@ def cmd_words(args: argparse.Namespace) -> int:
         print(f"{line['n']:2d} {w[0]['start']:6.2f}-{w[-1]['end']:6.2f}  " + " ".join(x["text"] for x in w))
     print(f"words.{done['lang']}.json: {len(done['lines'])} lines, {done['duration']:.1f} s")
     return 0
+
+
+def cmd_check(args: argparse.Namespace) -> int:
+    target = Path(args.target).expanduser()
+    if target.is_file():
+        report, out = delivery.check_file(target), None
+    else:
+        ws = workspace(args.target)
+        try:
+            plan = json.loads((ws / args.plan).read_text())
+        except (OSError, ValueError) as err:
+            raise delivery.DeliveryError(f"{ws / args.plan}: {err}") from err
+        video = Path(args.video).expanduser() if args.video else ws / f"render/short-{plan['lang']}.mp4"
+        report = delivery.check_zones(ws, plan)
+        if video.is_file():
+            delivery.check_file(video, report)
+            out = video.with_suffix(".delivery.md")
+        else:
+            report.lines.append(f"skip {video} is not rendered yet: only the safe zones")
+            out = ws / f"render/short-{plan['lang']}.delivery.md"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        delivery.write(report, out, f"Delivery: {ws.name}")
+    print("\n".join(report.lines))
+    if out:
+        print(out)
+    return 0 if report.ok else 1
 
 
 def cmd_explain(args: argparse.Namespace) -> int:
@@ -458,6 +484,13 @@ def main() -> None:
     s.add_argument("--out", help="the output file (default: <workspace>/render/short-<plan lang>.mp4)")
     s.set_defaults(fn=cmd_explain)
 
+    s = sub.add_parser("check", help="delivery check: the file against YouTube's specification (colour, codec, "
+                       "loudness) and, for an explainer, our drawing clear of the Shorts interface")
+    s.add_argument("target", help="a video file, or an explainer's folder or name in ~/.local/share/gothic-ai/explain")
+    s.add_argument("--plan", default="plan.json", help="the explainer's plan (default: plan.json)")
+    s.add_argument("--video", help="the explainer's file (default: <workspace>/render/short-<plan lang>.mp4)")
+    s.set_defaults(fn=cmd_check)
+
     s = sub.add_parser("youtube", help="YouTube: sign in (the browser opens), the channel, the token's life")
     s.add_argument("action", choices=["login"])
     s.set_defaults(fn=cmd_youtube_login)
@@ -508,6 +541,7 @@ def main() -> None:
     try:
         sys.exit(args.fn(args))
     except (ShotError, FilmError, VoiceError, cutting.CutError, LaunchError, SettingsError,
-            YouTubeError, AlignError, StudioError, DubError, GpuError, ExplainError, cover.CoverError) as err:
+            YouTubeError, AlignError, StudioError, DubError, GpuError, ExplainError, cover.CoverError,
+            delivery.DeliveryError) as err:
         print(f"error: {err}", file=sys.stderr)
         sys.exit(1)

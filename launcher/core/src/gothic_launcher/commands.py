@@ -35,7 +35,24 @@ def default_hd_textures() -> Path:
 def default_log_root() -> Path:
     if sys.platform == "linux":
         return Path.home() / ".local" / "state" / "gothic-ai" / "logs"
+    if sys.platform == "win32":
+        return local_app_data() / "GothicAI" / "Logs"
     return Path.home() / "Library" / "Logs" / "GothicAI"
+
+
+def local_app_data() -> Path:
+    """Windows' per-user, non-roaming folder (%LOCALAPPDATA%)."""
+    return Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
+
+
+def base_cache_env() -> dict[str, str]:
+    """Windows: the engine's own base cache, %LOCALAPPDATA%\\gothic-ai\\base (common/basestore.cpp), named
+    for this launcher and everything it starts; the Python base readers would look in ~/.cache. Resolved,
+    so the game, the converter and the services get the folder's physical path also in a shell whose
+    AppData a packaged app redirects. An explicit OPENGOTHIC_BASE_CACHE takes precedence."""
+    if sys.platform != "win32" or "OPENGOTHIC_BASE_CACHE" in os.environ:
+        return {}
+    return {"OPENGOTHIC_BASE_CACHE": str((local_app_data() / "gothic-ai" / "base").resolve())}
 
 
 # sharper textures of the characters, made from the game's own by scripts/hd-textures.sh (never in git)
@@ -46,6 +63,12 @@ PLAY_CONTENT = Path.home() / ".local" / "share" / "gothic-ai" / "play-content"
 LOG_ROOT = default_log_root()
 KEEP_LOGS = 20
 UV_CANDIDATES = ("~/.local/bin/uv", "/opt/homebrew/bin/uv", "/usr/local/bin/uv", "~/.cargo/bin/uv")
+# uv's standalone installer, its older default, and WinGet's links
+UV_CANDIDATES_WINDOWS = (
+    "~/.local/bin/uv.exe",
+    "~/.cargo/bin/uv.exe",
+    "%LOCALAPPDATA%/Microsoft/WinGet/Links/uv.exe",
+)
 MANAGED_ENV = ("OPENAI_API_KEY", "INWORLD_API_KEY", "OPENGOTHIC_BODY_NET")
 FOREIGN_ENV = ("VIRTUAL_ENV",)  # the launcher's own venv: `uv run` of a service would warn and ignore it
 SAVE_RE = re.compile(r"save_slot_(\d+)\.sav")
@@ -237,8 +260,9 @@ def uv_path(config: Config) -> Path | None:
         return config.settings.paths.uv
     if found := shutil.which("uv"):
         return Path(found)
-    for c in UV_CANDIDATES:
-        p = Path(c).expanduser()
+    windows = sys.platform == "win32"
+    for c in UV_CANDIDATES_WINDOWS if windows else UV_CANDIDATES:
+        p = Path(os.path.expandvars(c) if windows else c).expanduser()
         if os.access(p, os.X_OK):
             return p
     return None
@@ -246,10 +270,32 @@ def uv_path(config: Config) -> Path | None:
 
 def default_game_bin(repo: Path) -> Path:
     """The build's Gothic2Notr; from inside `OpenGothic Dev.app` (scripts/make-dev-app.sh) when that bundle
-    exists, so the game has its own name and icon in the Dock."""
+    exists, so the game has its own name and icon in the Dock. Windows: Gothic2Notr.exe, next to the
+    Tempest and shader compiler DLLs of the build (scripts/build-engine.ps1)."""
     build = repo / "OpenGothic" / "build" / "opengothic"
+    if sys.platform == "win32":
+        return build / "Gothic2Notr.exe"
     bundled = build / "OpenGothic Dev.app" / "Contents" / "MacOS" / "Gothic2Notr"
     return bundled if sys.platform == "darwin" and os.access(bundled, os.X_OK) else build / "Gothic2Notr"
+
+
+def content_converter(game_bin: Path) -> Path:
+    """The base and video converter (scripts/convert) the engine build puts beside the game."""
+    return game_bin.parent / ("content-convert.exe" if sys.platform == "win32" else "content-convert")
+
+
+def storygraph_tool(repo: Path) -> Path:
+    """The story graph converter of the repository's build (the services look there by themselves)."""
+    name = "storygraph.exe" if sys.platform == "win32" else "storygraph"
+    return repo / "OpenGothic" / "ai_bridge" / "storygraph" / "build" / name
+
+
+def storygraph_env(layout: Layout) -> dict[str, str]:
+    """Windows: the services' own default has no .exe, so they are told where it is. An explicit
+    STORYGRAPH_TOOL takes precedence (the services read it as it is)."""
+    if sys.platform != "win32" or "STORYGRAPH_TOOL" in os.environ:
+        return {}
+    return {"STORYGRAPH_TOOL": str(storygraph_tool(layout.repo))}
 
 
 def services(config: Config, layout: Layout, ports: Ports, cwd: Path) -> list[Proc]:
@@ -280,7 +326,7 @@ def services(config: Config, layout: Layout, ports: Ports, cwd: Path) -> list[Pr
         server_args.append("--no-voice")
 
     if s.tts.enabled:
-        env = dict(openai_key)
+        env = {**openai_key, **storygraph_env(layout)}  # the original voices read OU.BIN through it
         if s.tts.voxcpm_url:
             env["GOTHIC_VOXCPM_URL"] = s.tts.voxcpm_url
         if keys.inworld_api_key:
@@ -297,8 +343,9 @@ def services(config: Config, layout: Layout, ports: Ports, cwd: Path) -> list[Pr
     else:
         server_args.append("--no-tts")
 
+    server_env = {**openai_key, **storygraph_env(layout)}
     procs.append(
-        _service(layout, "server", "server", "gothic-ai", server_args, openai_key, ports.server, cwd)
+        _service(layout, "server", "server", "gothic-ai", server_args, server_env, ports.server, cwd)
     )
     return procs
 
@@ -340,11 +387,11 @@ def preparation(
     ryzen_settings = str(Path.home() / "gothic-ai/game-settings")
     if inherited.get("OPENGOTHIC_BASE_FINGERPRINT") and inherited.get("GOTHIC_DIR") != ryzen_settings:
         return None
-    converter = game_bin.parent / "content-convert"
+    converter = content_converter(game_bin)
     if not converter.is_file() or not os.access(converter, os.X_OK):
+        build = "scripts/build-engine.ps1" if sys.platform == "win32" else "scripts/build-engine.sh"
         raise LaunchError(
-            f"content-convert is missing or not executable: {converter}; "
-            "rebuild the engine with scripts/build-engine.sh"
+            f"content-convert is missing or not executable: {converter}; rebuild the engine with {build}"
         )
     return Proc("prepare", [str(converter), "resolve", str(game_dir)], cwd, env or {}, restart=False)
 
@@ -365,6 +412,9 @@ def child_env(extra: dict[str, str]) -> dict[str, str]:
         if not k.startswith("GOTHIC_") and k not in MANAGED_ENV and k not in FOREIGN_ENV
     }
     env["PYTHONUNBUFFERED"] = "1"  # service output reaches the log as it happens
+    if sys.platform == "win32":
+        # UTF-8 files and pipes instead of the ANSI code page: Russian lines and paths stay intact
+        env.setdefault("PYTHONUTF8", "1")
     env.update(extra)
     return env
 

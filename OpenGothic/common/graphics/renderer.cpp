@@ -2068,7 +2068,7 @@ void Renderer::prepareFog(Encoder<Tempest::CommandBuffer>& cmd, WorldView& wview
         cmd.setBinding(3, epipolar.epipoles);
         cmd.setBinding(4, zbuffer);
         cmd.setPipeline(shaders.fogEpipolarOcclusion);
-        cmd.dispatchThreads(zbuffer.size());
+        cmd.dispatchThreads(occlusionLut.size());
         } else {
         cmd.setFramebuffer({});
         cmd.setBinding(2, zbuffer, Sampler::nearest());

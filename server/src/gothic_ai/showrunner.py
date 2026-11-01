@@ -31,7 +31,7 @@ from .llm import LLMBackend, LLMError, Message, Tool, ToolCall, open_ahead
 from .occasions import DEEDS, NEAREST, OccasionFailed, Occasions, with_quest_outcomes
 from .people_knowledge import PeopleKnowledge, rumor_subject
 from .protocol import GameMessage, Loading, Session
-from .questbook import Ground, _vanilla
+from .questbook import BLAME, KILL, Ground, _vanilla
 
 log = logging.getLogger(__name__)
 
@@ -90,11 +90,13 @@ INSTRUCTIONS = """\
 Людей и места выбирай только из сводки. При нехватке бюджета на людей выбери quest или chain без новых
 людей или none. Отказ кода исправь, не повторяй его."""
 
-CHALLENGE_INSTRUCTIONS = """\
-Поле challenge — null или одно скрытое условие {kind}: no_blood — не убивать людей линии;
-no_reward — исполнить поручение без платы; secret_kept — соврать в линии и сохранить тайну;
-mercy — пощадить человека линии. Не больше одного условия, только если оно естественно для людей
-и сюжета линии; чаще оставляй null. Герою условие не сообщается."""
+CHALLENGE_INSTRUCTIONS = (
+    "Поле challenge — null или одно скрытое условие {kind}: no_blood — не убивать людей линии, "
+    "только если среди них есть враждебный герою, виновник преступления или тот, кого надо обвинить "
+    "или убить; no_reward — исполнить поручение без платы; secret_kept — соврать в линии и сохранить "
+    "тайну; mercy — пощадить человека линии. Не больше одного условия, только если оно естественно "
+    "для людей и сюжета линии; чаще оставляй null. Герою условие не сообщается."
+)
 
 
 class Proposal(BaseModel):
@@ -1118,12 +1120,39 @@ class Showrunner:
                 pass
             # Keep the builder's receipts, including all quests of a completed chain.
             quests = ([q.id for q in made] if isinstance(made, list) else [made.id]) if made else None
-            return self._finish_build(build, errors, quests=quests, at=at)
+            no_fight = False
+            if not errors and self.feat_challenges and p.challenge == {"kind": "no_blood"}:
+                assert quests is not None
+                no_fight = not await self._has_fight(build, quests)
+            return self._finish_build(build, errors, quests=quests, at=at, no_fight=no_fight)
         except Exception as error:
             self._finish_build(build, [self._unexpected(error)])
             raise  # run() logs the traceback and moves on to the next occasion
         finally:
             self._building = None
+
+    async def _has_fight(self, build: _Build, quests: list[str]) -> bool:
+        if build.proposal.crime:
+            return True
+        characters = {s.npc for s in self.casting.cast.characters()} - build.before_people
+        people = line_people(self.book, quests, build.giver, characters)
+        if any(
+            goal.kind in {KILL, BLAME} and set(people).intersection(
+                npc.upper() for npc in (goal.npc, *goal.npcs) if npc
+            )
+            for qid in quests for stage in self.book.all()[qid].stages for goal in stage.goals
+        ):
+            return True
+        others = [npc for npc in people if npc != build.giver.upper()]
+        try:
+            peaceful = await non_hostile(self.link, others, context=build.giver)
+        except (GameError, TimeoutError) as error:
+            log.info(
+                "showrunner keeping no_blood: attitude read failed (%s): %s",
+                type(error).__name__, error,
+            )
+            return True
+        return any(npc not in peaceful for npc in others)
 
     def _finish_build(
         self,
@@ -1132,6 +1161,7 @@ class Showrunner:
         *,
         quests: list[str] | None = None,
         at: Fact | None = None,
+        no_fight: bool = False,
     ) -> Fact:
         if build.outcome is not None:
             return build.outcome
@@ -1160,10 +1190,18 @@ class Showrunner:
         )
         seq = self.chronicle.record(build.outcome)
         if not errors and self.feat_challenges and p.challenge is not None and seq is not None:
-            self.chronicle.record({
-                "fact": "challenge", "kind": p.challenge["kind"], "line": seq,
-                "quests": quests, "people": line_people(self.book, quests, giver, characters),
-                "chapter": brief.chapter,
-                **{k: build.outcome[k] for k in ("day", "hour", "minute")},
-            })
+            people = line_people(self.book, quests, giver, characters)
+            if no_fight:
+                self.chronicle.record({
+                    "fact": "challenge_dropped", "kind": "no_blood", "line": seq,
+                    "why": "no_fight", "people": people,
+                })
+                log.info("showrunner dropped no_blood for line %s: no_fight (people=%s)", seq, people)
+            else:
+                self.chronicle.record({
+                    "fact": "challenge", "kind": p.challenge["kind"], "line": seq,
+                    "quests": quests, "people": people,
+                    "chapter": brief.chapter,
+                    **{k: build.outcome[k] for k in ("day", "hour", "minute")},
+                })
         return build.outcome

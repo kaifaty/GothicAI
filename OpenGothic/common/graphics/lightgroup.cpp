@@ -1,4 +1,5 @@
 #include "lightgroup.h"
+#include "loadprobe.h"
 
 #include <Tempest/Dir>
 #include <Tempest/Log>
@@ -128,6 +129,7 @@ LightGroup::LightGroup(const SceneGlobals& scene) {
   }
 
 LightGroup::Light LightGroup::add(const asset::LightPreset& vob) {
+  LoadProbe::Vobs::Scope probe("light");
   LightSource l;
   l.setPosition(Vec3(0, 0, 0));
   l.setDebugName(vob.preset);

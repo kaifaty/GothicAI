@@ -1,4 +1,5 @@
 #include "animmesh.h"
+#include "loadprobe.h"
 #include "packedmesh.h"
 
 #include <Tempest/Log>
@@ -19,6 +20,7 @@ static size_t countBones(const Resources::VertexA* v, size_t n) {
 AnimMesh::AnimMesh(const PackedMesh& mesh)
   : bonesCount(countBones(mesh.verticesA.data(),mesh.verticesA.size())) {
   if(Resources::hasGraphicsDevice()) {
+    LoadProbe::Vobs::Scope probe("mesh_gpu");
     vbo  = Resources::vbo (mesh.verticesA.data(),mesh.verticesA.size());
     ibo  = Resources::ibo (mesh.indices.data(),  mesh.indices.size());
     ibo8 = Resources::ssbo(mesh.indices8.data(), mesh.indices8.size());

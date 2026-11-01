@@ -3,6 +3,7 @@
 #include "physics/dynamicworld.h"
 #include "physics/physicvbo.h"
 #include "physics/ragdoll.h"
+#include "graphics/mesh/animblend.h"
 #include "graphics/mesh/protomesh.h"
 #include "graphics/mesh/skeleton.h"
 #include "graphics/mesh/hitzones.h"
@@ -14,6 +15,7 @@
 #include "world/objects/npc.h"
 #include "gothic.h"
 
+#include <Tempest/Log>
 #include <Tempest/MemReader>
 #include <Tempest/MemWriter>
 
@@ -4154,6 +4156,139 @@ namespace {
       }
     }
 
+  void testItemDeepestContact() {
+    require(Gothic::PhysicsFlags{}.itemDeepestContact,"item deepest contact must default to ON");
+    // Inflated body-frame hull vertices (metres), poses and original volumes
+    // from Claude's thin-blade dumps. No game assets or hull inflation run here.
+    const JPH::Vec3 canePoints[] = {
+      {0.0000100f,-0.0394365f,-0.0001233f},{0.0953004f,-0.0176432f,-0.0763430f},{0.1580164f,-0.0275274f,0.0000100f},
+      {0.0000100f,0.0386679f,-0.0001233f},{0.1580164f,0.0275474f,0.0000100f},{0.0953004f,0.0172531f,-0.0763430f},
+      {-0.9935228f,0.0117074f,0.0000100f},{-1.0002762f,0.0067635f,-0.0067435f},{-1.0002762f,0.0067635f,0.0067635f},
+      {-1.0052202f,0.0000100f,0.0000100f},{-0.9935228f,0.0000100f,0.0117074f},{-1.0002762f,-0.0067435f,0.0067635f},
+      {-0.9935228f,-0.0116874f,0.0000100f},{-1.0002762f,-0.0067435f,-0.0067435f},{-0.9935228f,0.0000100f,-0.0116874f},
+      {0.1853235f,0.0067635f,-0.0067435f},{0.1902674f,0.0000100f,0.0000100f},{0.1853235f,-0.0067435f,-0.0067435f},
+      {0.1853235f,0.0067635f,0.0067635f},{0.1853235f,-0.0067435f,0.0067635f},{0.1647699f,0.0067635f,0.0326835f},
+      {0.1647699f,-0.0067435f,0.0326835f},{0.1580164f,0.0000100f,0.0376274f},{0.0000100f,-0.0314245f,0.0281609f},
+      {-0.0315445f,-0.0160990f,0.0629631f},{0.0000100f,0.0306559f,0.0281610f},{-0.0315445f,0.0161190f,0.0629631f},
+      {-0.0247910f,0.0111751f,0.0697166f},{0.1647698f,0.0226035f,0.0067635f},{-0.0247910f,-0.0111551f,0.0697166f},
+      {0.1647698f,-0.0225835f,0.0067635f},{0.1392130f,-0.0110891f,-0.0620342f},{0.1407028f,-0.0069485f,-0.0636713f},
+      {0.1020538f,-0.0126993f,-0.0830965f},{0.1647698f,0.0226035f,-0.0067435f},{0.1392130f,0.0106990f,-0.0620342f},
+      {0.1647698f,-0.0225835f,-0.0067435f},{0.0525214f,-0.0176432f,-0.0780567f},{0.0525214f,0.0172531f,-0.0780567f},
+      {0.1020538f,0.0123092f,-0.0830965f},{0.1407028f,0.0065584f,-0.0636713f},{0.1339493f,-0.0001950f,-0.0686152f},
+      {-0.9234520f,0.0000100f,0.0178850f},{-0.9302055f,0.0067635f,0.0129411f},{-0.9302055f,-0.0067435f,0.0129411f},
+      {0.1027695f,-0.0069485f,-0.0856545f},{0.0960160f,-0.0001950f,-0.0905984f},{0.1027695f,0.0065584f,-0.0856545f},
+      {-0.9234520f,0.0000100f,-0.0178650f},{0.0520127f,-0.0001950f,-0.0923611f},{0.0525214f,-0.0059458f,-0.0897541f},
+      {0.0525214f,0.0055557f,-0.0897541f},{0.1324595f,-0.0160330f,-0.0552807f},{0.1324595f,0.0156429f,-0.0552807f},
+      {-0.0315445f,0.0000100f,0.0778565f},{-0.0382980f,-0.0111551f,0.0697166f},{-0.0382980f,0.0111751f,0.0697166f},
+      {0.0953004f,-0.0059458f,-0.0880404f},{0.0953004f,0.0055557f,-0.0880404f},{-0.9234520f,0.0117074f,0.0061876f},
+      {-0.9234520f,-0.0116874f,0.0061876f},{-0.9302055f,0.0067635f,-0.0129211f},{0.0457679f,0.0123092f,-0.0848102f},
+      {-0.9302055f,-0.0067435f,-0.0129211f},{0.0457679f,-0.0126993f,-0.0848102f},{-0.0247910f,0.0067635f,0.0729126f},
+      {-0.0247910f,-0.0067435f,0.0729126f},{0.0000100f,-0.0314245f,-0.0284076f},{0.0592749f,-0.0126993f,-0.0848102f},
+      {0.0592749f,0.0123092f,-0.0848102f},{0.0000100f,0.0306559f,-0.0284076f},{-0.9234520f,0.0117074f,-0.0061676f},
+      {-0.9234520f,-0.0116874f,-0.0061676f},{-0.0382980f,-0.0067435f,0.0729126f},{-0.0382980f,0.0067635f,0.0729126f},
+      };
+    const JPH::Vec3 rapierPoints[] = {
+      {-0.6599900f,-0.0099900f,-0.0049900f},{-0.6249900f,-0.0147319f,0.0200100f},{-0.6749900f,-0.0099900f,0.0200100f},
+      {-0.0140601f,0.0000100f,-0.1101174f},{0.0773733f,0.0105005f,-0.0943249f},{0.0773733f,-0.0112228f,-0.0943249f},
+      {0.1165810f,-0.0148450f,-0.0775646f},{0.1165810f,0.0141227f,-0.0775646f},{0.1410690f,0.0102463f,-0.0521023f},
+      {0.1410690f,-0.0109685f,-0.0521023f},{-0.6749900f,0.0000100f,0.0300100f},{-0.6807635f,0.0057835f,0.0257835f},
+      {-0.6807635f,-0.0057635f,0.0257835f},{-0.6849900f,0.0000100f,0.0200100f},{-0.0144463f,-0.0178263f,0.0845428f},
+      {0.1193156f,-0.0414022f,-0.0320298f},{-0.0082866f,-0.0057635f,0.1059109f},{0.1425866f,-0.0257067f,-0.0216935f},
+      {0.1391145f,-0.0057635f,0.0068040f},{0.0807833f,0.0536168f,-0.0419428f},{-0.0144463f,0.0178463f,0.0845428f},
+      {0.1135421f,0.0449064f,-0.0378032f},{0.1368131f,0.0292109f,-0.0274670f},{0.1425866f,0.0249844f,-0.0332405f},
+      {0.1193156f,0.0406799f,-0.0435767f},{0.1572153f,0.0000100f,-0.0119868f},{0.1529888f,0.0057835f,-0.0062133f},
+      {0.1529888f,-0.0057635f,-0.0062133f},{0.1391145f,0.0057835f,0.0068040f},{-0.6807635f,0.0057835f,0.0142365f},
+      {-0.6749900f,0.0100100f,0.0200100f},{-0.6807635f,-0.0057635f,0.0142365f},{-0.6657635f,-0.0057635f,-0.0107635f},
+      {0.1425866f,0.0249844f,-0.0216935f},{-0.0082866f,0.0057835f,0.1059109f},{-0.6249900f,0.0000100f,-0.0299900f},
+      {-0.6307635f,0.0057835f,-0.0257635f},{-0.0198336f,0.0057835f,-0.1058909f},{-0.6307635f,-0.0057635f,-0.0257635f},
+      {-0.0198336f,-0.0057635f,-0.1058909f},{-0.6657635f,0.0057835f,-0.0107635f},{-0.6599900f,0.0100100f,-0.0049900f},
+      {-0.6249900f,0.0100100f,-0.0199900f},{-0.6249900f,0.0147519f,0.0200100f},{0.1135421f,-0.0456287f,-0.0378033f},
+      {0.0807833f,-0.0543391f,-0.0419428f},{0.0450249f,-0.0543391f,-0.0390658f},{0.0450249f,0.0536168f,-0.0390658f},
+      {0.0428319f,0.0400725f,-0.0663219f},{-0.6249900f,-0.0099900f,-0.0199900f},{0.0428319f,-0.0407948f,-0.0663219f},
+      {0.1175570f,0.0298183f,-0.0654344f},{0.1416106f,0.0189566f,-0.0453706f},{0.1193156f,-0.0414022f,-0.0435768f},
+      {0.1175570f,-0.0305405f,-0.0654344f},{0.1416106f,-0.0196789f,-0.0453706f},{0.1425866f,-0.0257067f,-0.0332405f},
+      {0.0831468f,0.0162740f,-0.0900984f},{0.0843638f,0.0358460f,-0.0749724f},{0.0843638f,-0.0365683f,-0.0749724f},
+      {0.0831468f,-0.0169963f,-0.0900984f},{0.1108075f,-0.0090715f,-0.0817911f},{-0.6599900f,0.0000100f,-0.0149900f},
+      {0.1108075f,0.0083492f,-0.0817911f},{0.1452955f,0.0044728f,-0.0463288f},{0.1452955f,-0.0051950f,-0.0463288f},
+      {-0.0140601f,0.0100100f,0.1001374f},{-0.0140601f,-0.0099900f,0.1001374f},{-0.0140601f,0.0000100f,0.1101374f},
+      {-0.0198336f,0.0057835f,0.1059109f},{-0.0198336f,-0.0057635f,0.1059109f},{0.0785903f,0.0400725f,-0.0691989f},
+      {0.0785903f,-0.0407948f,-0.0691989f},{0.1193156f,0.0406799f,-0.0320297f},{0.1468131f,-0.0199332f,-0.0274670f},
+      {0.1458371f,-0.0139054f,-0.0395971f},{0.1458371f,0.0131831f,-0.0395971f},{0.1468131f,0.0192109f,-0.0274670f},
+      {-0.0082866f,0.0057835f,-0.1058909f},{-0.0082866f,-0.0057635f,-0.1058909f},{0.0728168f,-0.0365683f,-0.0749724f},
+      {-0.6699900f,0.0000100f,-0.0049900f},{0.0728168f,0.0358460f,-0.0749724f},{0.0370584f,-0.0365683f,-0.0720954f},
+      {0.0865568f,-0.0501126f,-0.0477163f},{0.0865568f,0.0493903f,-0.0477163f},{0.0370584f,0.0358460f,-0.0720954f},
+      {-0.6307635f,-0.0105054f,0.0257835f},{-0.6307635f,0.0105254f,0.0257835f},{0.1333411f,0.0000100f,0.0110305f},
+      {-0.0159459f,0.0319281f,0.0337302f},{0.1368131f,-0.0299332f,-0.0274670f},
+      };
+
+    const auto check=[](const char* name, const auto& points, JPH::Vec3Arg position, JPH::QuatArg rotation,
+                       float volume, const JPH::VertexList& vertices, int supportLayer) {
+      JPH::ConvexHullShapeSettings hullSettings(points,int(std::size(points)),.00025f);
+      hullSettings.mHullTolerance=.0001f;
+      hullSettings.mMaxErrorConvexRadius=.0001f;
+      const auto hull=hullSettings.Create();
+      require(!hull.HasError(),"thin-blade dump must create its native convex hull");
+      const auto support=JPH::MeshShapeSettings(vertices,{{0,1,2}}).Create();
+      require(!support.HasError(),"thin-blade fixture must create one horizontal support triangle");
+      const auto transform=JPH::Mat44::sRotationTranslation(rotation,position);
+      auto matrix=Tempest::Matrix4x4::mkIdentity();
+      for(int c=0;c<4;++c)
+        for(int r=0;r<3;++r)
+          matrix.set(c,r,transform.GetColumn4(c)[r]*(c==3 ? 100.f : 1.f));
+      const float planeY=vertices[0].y*100.f;
+      for(const bool enabled:{false,true}) {
+        CollisionWorld world;
+        world.setItemDeepestContactEnabled(enabled);
+        // OFF must expose the native crossing before the safety net resets it.
+        // ON keeps the production recovery path and counts every reset.
+        world.setItemWakeEnabled(enabled);
+        auto floor=world.addCollisionBody(support.Get(),at(0,0,0),.5f,supportLayer);
+        auto item=world.addDynamicBody(hull.Get(),matrix,.5f,7800.f*volume,DynamicWorld::C_Item);
+        const auto start=item->position();
+        float maxShift=0,minComAbove=item->centerOfMass().y-planeY;
+        uint64_t crossed=0;
+        size_t recovered=0;
+        Tempest::Log::setOutputCallback([&](Tempest::Log::Mode,const char* line) {
+          if(std::string_view(line).find("item recovered:")!=std::string_view::npos)
+            ++recovered;
+          });
+        uint64_t sampled=0;
+        while(world.simulationStep()<(enabled ? 300u : 20u)) {
+          world.tick(16);
+          if(sampled==world.simulationStep())continue;
+          require(world.simulationStep()==sampled+1,"thin-blade fixture must sample every native 1/60 step");
+          sampled=world.simulationStep();
+          maxShift=std::max(maxShift,(item->position()-start).length());
+          const float above=item->centerOfMass().y-planeY;
+          minComAbove=std::min(minComAbove,above);
+          if(above<0 && crossed==0)crossed=sampled;
+          }
+        Tempest::Log::setOutputCallback({});
+        std::printf("Thin blade %s deepest %d: steps %llu, mass %.9g kg, max shift %.6f cm, "
+                    "min COM above %.6f cm, crossing step %llu, recovered %zu\n",
+                    name,int(enabled),static_cast<unsigned long long>(sampled),double(item->mass()),
+                    double(maxShift),double(minComAbove),static_cast<unsigned long long>(crossed),recovered);
+        if(enabled) {
+          require(maxShift<5.f,"deepest contact must hold each blade within five centimetres for 300 steps");
+          require(minComAbove>=0,"deepest contact must keep blade COM above the support on every step");
+          require(recovered==0,"deepest contact must hold each blade without recovery");
+          }
+        else
+          require(crossed>0 && crossed<=20,"upstream manifold must reproduce the blade crossing within twenty steps");
+        }
+      };
+    check("OLDWORLD 1644",canePoints,{-126.0437775f,29.5590572f,-336.4428711f},
+          {-.000000022f,.939692676f,-.000000008f,.342020154f},.00205267756f,
+          {{-126.625645f,29.5296582f,-336.858516f},
+           {-125.506016f,29.5296582f,-335.660703f},
+           {-125.335527f,29.5296582f,-335.977812f}},DynamicWorld::C_Object);
+    check("ADDONWORLD 6863",rapierPoints,{42.7198410f,-32.5431252f,258.7348328f},
+          {0,0,0,1},.00332153379f,
+          {{42.4582031f,-32.5876465f,257.429688f},
+           {40.8759204f,-32.5876465f,260.700645f},
+           {43.5833301f,-32.5876465f,259.642266f}},DynamicWorld::C_Landscape);
+    }
+
   void testItemWake() {
     for(const bool legacy:{false,true}) {
       CollisionWorld world;
@@ -4644,6 +4779,49 @@ namespace {
       require(!Npc::meleeFinishStroke({50,50,50,50}),"a blade that never drops has no stroke");
       }
 
+    {
+      // t_1hAttackR of the master is frames 21..40 of the ASC whose 1..19 are t_1hAttackL, with L's tags:
+      // its DEF_OPT_FRAME counts from its own start (read as a frame of the file, it clamped to 0)
+      Animation::AnimData left,right;
+      left.firstFrame = 1;  left.lastFrame = 19;  left.numFrames = 19;
+      right.firstFrame = 21; right.lastFrame = 40; right.numFrames = 20;
+      require(left.optimalFrame(3)==2 && right.optimalFrame(3)==2,"a side swing's optimal frame must count from its own start");
+      require(right.optimalFrame(25)==4,"a frame of the file must stay that frame");
+      require(right.optimalFrame(60)==19,"a frame past the end must clamp to the last");
+      }
+
+    {
+      // A weapon body's switch into a blow settles within blowTime, however far the arm turns; the usual
+      // 0.3 s for so large a turn pulled t_1hAttackR's arc to the stance and it crossed short of the body
+      constexpr size_t count = 2;
+      asset::AnimationSample stance[count],blow[count],shown[count];
+      for(size_t i=0;i<count;++i) {
+        stance[i].rotation = {1,0,0,0};
+        stance[i].position = {0,float(i*20),0};
+        blow[i].rotation   = {std::cos(1.f),std::sin(1.f),0,0};
+        blow[i].position   = stance[i].position;
+        }
+      Animation::Sequence idle,attack;
+      attack.data = std::make_shared<Animation::AnimData>();
+      asset::MdsEventTag optimal{};
+      optimal.type   = asset::MdsEventType::OPTIMAL_FRAME;
+      optimal.frames = {3};
+      attack.data->events.push_back(optimal);
+      for(const bool weapon:{true,false}) {
+        AnimBlend blend;
+        blend.reset(count);
+        blend.setWeaponBody(weapon);
+        for(size_t i=0;i<count;++i) blend.drive(i,idle,1000,stance[i],stance[i],25);
+        blend.apply(stance,shown,count,1000);
+        blend.apply(stance,shown,count,1033);
+        for(size_t i=0;i<count;++i) blend.drive(i,attack,1033,blow[i],blow[i],25);
+        blend.apply(blow,shown,count,1033);
+        const bool blending = blend.apply(blow,shown,count,1033+uint64_t(AnimBlend::params().blowTime*1000.f)+17);
+        require(blending!=weapon,weapon ? "a weapon body's blow must settle within its blow time" :
+                                          "a body without a weapon must keep the usual blend into a blow");
+        }
+      }
+
     require(FightAlgo::resolveDownTactics(true,true,false,false,true)==FightAlgo::MV_MOVE,
             "a distant lying target must be approached");
     require(FightAlgo::resolveDownTactics(true,true,false,true,true)==FightAlgo::MV_ATTACK,
@@ -4903,8 +5081,156 @@ namespace {
     }
   }
 
+namespace {
+
+  void testCompoundChunkSeams() {
+    // The routes and acceptance limits are the #616 edge/corner matrix. Only
+    // ownership changes: four 64 m MeshShapes are children of one static body.
+    constexpr uint32_t cells=16, side=2*cells+1;
+    std::vector<JPH::Vec3> vertices;
+    for(int x=-int(cells);x<=int(cells);++x)
+      for(int z=-int(cells);z<=int(cells);++z)
+        vertices.emplace_back(float(x)*4.f,0,float(z)*4.f);
+    PhysicVbo mesh(&vertices);
+    std::array<std::vector<uint32_t>,4> indices;
+    const char* sectors[]={"south-west","north-west","south-east","north-east"};
+    for(uint32_t x=0;x<2;++x)
+      for(uint32_t z=0;z<2;++z) {
+        auto& part=indices[x*2+z];
+        for(uint32_t localX=0;localX<cells;++localX)
+          for(uint32_t localZ=0;localZ<cells;++localZ) {
+            const uint32_t a=(x*cells+localX)*side+z*cells+localZ,b=a+1,c=a+side+1,d=a+side;
+            part.insert(part.end(),{a,c,b,a,d,c});
+            }
+        const auto material=(x+z)%2==0 ? asset::MaterialGroup::STONE : asset::MaterialGroup::WOOD;
+        mesh.addIndex(part,0,part.size(),material,sectors[x*2+z]);
+        }
+    CollisionWorld whole,compoundWorld;
+    auto wholeBody=whole.addCollisionBody(mesh.shape(true),at(0,0,0),0,DynamicWorld::C_Landscape,false,false,&mesh);
+    JPH::StaticCompoundShapeSettings settings;
+    for(uint32_t x=0;x<2;++x)
+      for(uint32_t z=0;z<2;++z) {
+        const auto part=x*2+z;
+        const JPH::Vec3 origin(float(int(x)-1)*64.f,0,float(int(z)-1)*64.f);
+        JPH::VertexList childVertices;
+        JPH::IndexedTriangleList triangles;
+        const auto& source=indices[part];
+        for(uint32_t localX=0;localX<=cells;++localX)
+          for(uint32_t localZ=0;localZ<=cells;++localZ)
+            childVertices.emplace_back(float(localX)*4.f,0,float(localZ)*4.f);
+        const auto localIndex=[&](uint32_t index) {
+          return (index/side-x*cells)*(cells+1)+(index%side-z*cells);
+          };
+        // Match PhysicVbo::shape(true): split each 4 m square's long diagonal,
+        // keep its original triangle userdata, and translate to a local origin.
+        for(size_t i=0;i<source.size();i+=6) {
+          const auto midpoint=(vertices[source[i]]+vertices[source[i+1]])*.5f-origin;
+          const auto mid=uint32_t(childVertices.size());
+          childVertices.emplace_back(midpoint.GetX(),midpoint.GetY(),midpoint.GetZ());
+          const auto a=localIndex(source[i]),c=localIndex(source[i+1]),b=localIndex(source[i+2]),d=localIndex(source[i+4]);
+          const auto triangle=part*2*cells*cells+uint32_t(i/3);
+          triangles.emplace_back(c,mid,b,0,triangle);
+          triangles.emplace_back(mid,a,b,0,triangle);
+          triangles.emplace_back(a,mid,d,0,triangle+1);
+          triangles.emplace_back(mid,c,d,0,triangle+1);
+          }
+        JPH::MeshShapeSettings child(std::move(childVertices),std::move(triangles));
+        child.mPerTriangleUserData=true;
+        const auto shape=child.Create();
+        require(!shape.HasError(),"compound seam fixture must create each 64 m MeshShape");
+        settings.AddShape(origin,JPH::Quat::sIdentity(),shape.Get().GetPtr());
+        }
+    const auto shape=settings.Create();
+    require(!shape.HasError(),"compound seam fixture must create one static compound");
+    auto compoundBody=compoundWorld.addCollisionBody(shape.Get(),at(0,0,0),0,DynamicWorld::C_Landscape,false,false,&mesh);
+    require(compoundWorld.bodyCount()==1,"compound seam fixture must publish exactly one landscape body");
+    // Speeds are representative walking/running inputs, not animation metadata.
+    // Every route passes through its edge/corner; shallow approaches have enough
+    // travel to clear the capsule on both sides without reaching an outer edge.
+    constexpr uint64_t seamDt=17;
+    constexpr float seamSeconds=float(seamDt)*.001f, halfRoute=600.f;
+    size_t passedCount=0;
+    std::puts("Compound seam matrix: kind speed_cm_s angle_deg height_mm vertical_m_s airborne stairs_attempted stairs_succeeded speed_loss_pct box_bounce_mm cv_travel_cm box_travel_cm result");
+    for(const bool corner:{false,true})
+      for(const float speed:{180.f,400.f})
+        for(const float angle:{90.f,45.f,10.f}) {
+          const float radians=angle*.01745329252f;
+          const Tempest::Vec3 direction=angle==90.f ? Tempest::Vec3(1,0,0) :
+                                                   Tempest::Vec3(std::sin(radians),0,std::cos(radians));
+          const auto center=Tempest::Vec3(0,0,corner ? 0.f : -1600.f);
+          const auto initial=center-direction*halfRoute;
+          const auto displacement=direction*(speed*seamSeconds);
+          const int frames=int(std::ceil(2.f*halfRoute/(speed*seamSeconds)));
+          auto cv=compoundWorld.createVirtualCharacter(25,180,initial);
+          auto reference=whole.createVirtualCharacter(25,180,initial);
+          cv->setDiagnosticsEnabled(true);
+          CollisionWorld::CharacterMoveResult state,expected;
+          for(int frame=0;frame<30;++frame) {
+            state=cv->move({},seamDt,50,.785398163f,80,nullptr);
+            expected=reference->move({},seamDt,50,.785398163f,80,nullptr);
+            }
+          require(state.grounded && expected.grounded,"seam fixtures must settle on their flat support before measuring");
+          const auto settled=state.position;
+          float height=0,verticalSpeed=0,speedLoss=0;
+          size_t airborne=0,stairsAttempted=0,stairsSucceeded=0;
+          for(int frame=0;frame<frames;++frame) {
+            const auto previous=state.position,previousExpected=expected.position;
+            state=cv->move(displacement,seamDt,50,.785398163f,80,nullptr);
+            expected=reference->move(displacement,seamDt,50,.785398163f,80,nullptr);
+            CharacterVirtualDiagnostics diagnostic;
+            require(cv->diagnostics(diagnostic),"seam measurements must retain native ground and stair diagnostics");
+            height=std::max(height,std::abs(state.position.y-expected.position.y));
+            // Include penetration recovery/stair snaps as actual vertical motion,
+            // as well as the controller's solved velocity.
+            verticalSpeed=std::max({verticalSpeed,std::abs(state.position.y-previous.y)/seamSeconds,
+                                   std::abs(state.velocity.y)});
+            const auto actualDelta=state.position-previous,expectedDelta=expected.position-previousExpected;
+            const float actualAdvance=actualDelta.x*direction.x+actualDelta.z*direction.z;
+            const float expectedAdvance=expectedDelta.x*direction.x+expectedDelta.z*direction.z;
+            require(expected.grounded && expectedAdvance>0,"whole-body seam control must stay grounded and advance each frame");
+            speedLoss=std::max(speedLoss,std::max(0.f,1.f-actualAdvance/expectedAdvance));
+            airborne+=!state.grounded || diagnostic.afterStairs.groundState!=0 ? 1 : 0;
+            stairsAttempted+=diagnostic.stairAttempted ? 1 : 0;
+            stairsSucceeded+=diagnostic.stairSucceeded ? 1 : 0;
+            }
+          const auto cvDelta=state.position-settled;
+          const float cvTravel=cvDelta.x*direction.x+cvDelta.z*direction.z;
+          cv.reset();reference.reset();
+
+          auto box=compoundWorld.addDynamicBody(new JPH::BoxShape({.1f,.1f,.1f}),at(initial.x,10,initial.z),0,1);
+          auto control=whole.addDynamicBody(new JPH::BoxShape({.1f,.1f,.1f}),at(initial.x,10,initial.z),0,1);
+          for(int frame=0;frame<120;++frame) {
+            compoundWorld.tick(seamDt);whole.tick(seamDt);
+            }
+          const auto boxStart=box->position();
+          box->setVelocity(direction*speed,{});
+          control->setVelocity(direction*speed,{});
+          float boxBounce=0;
+          for(int frame=0;frame<frames;++frame) {
+            compoundWorld.tick(seamDt);whole.tick(seamDt);
+            boxBounce=std::max({boxBounce,box->position().y-boxStart.y,
+                               std::abs(box->position().y-control->position().y)});
+            }
+          const auto boxDelta=box->position()-boxStart;
+          const float boxTravel=boxDelta.x*direction.x+boxDelta.z*direction.z;
+          const bool passed=height<=.5f && verticalSpeed<=10.f && airborne==0 && stairsSucceeded==0 &&
+                            speedLoss<=.05f && cvTravel>halfRoute+25.f && boxBounce<=.5f && boxTravel>halfRoute+10.f;
+          passedCount+=passed ? 1 : 0;
+          std::printf("Compound seam %s %.0f %.0f %.6f %.6f %zu %zu %zu %.6f %.6f %.6f %.6f %s\n",
+                      corner ? "corner" : "edge",double(speed),double(angle),double(height*10.f),double(verticalSpeed*.01f),
+                      airborne,stairsAttempted,stairsSucceeded,double(speedLoss*100.f),double(boxBounce*10.f),
+                      double(cvTravel),double(boxTravel),passed ? "PASS" : "FAIL");
+          }
+
+    std::printf("Compound seam experiment: %zu/12 passed (measurement only; not a production collision mode)\n",passedCount);
+    }
+  }
+
 int main() {
   try {
+    testCompoundChunkSeams();
+    if(const auto* only=std::getenv("OPENGOTHIC_COMPOUND_SEAMS_ONLY"); only && std::string_view(only)=="1")
+      return EXIT_SUCCESS;
     testMovableVobImpulseInertia();
     testMovableTableImpulseCouple();
     testMeshRayEdges();
@@ -4921,6 +5247,7 @@ int main() {
     testNpcSeparatedContactResponse();
     testFixedStepCarry();
     testFixedStepCadence();
+    testItemDeepestContact();
     testItemWake();
     testItemWeaponWake();
     testContracts();

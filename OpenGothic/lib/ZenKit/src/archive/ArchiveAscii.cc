@@ -428,7 +428,11 @@ namespace zenkit {
 		std::time_t clk;
 		std::time(&clk);
 		auto* time = std::localtime(&clk);
+#ifdef _WIN32
+		strftime(date_buffer, 20, "%#d.%#m.%Y %H:%M:%S", time);
+#else
 		strftime(date_buffer, 20, "%-d.%-m.%Y %H:%M:%S", time);
+#endif
 
 		this->_m_write->write_line("ZenGin Archive");
 		this->_m_write->write_line("ver 1");

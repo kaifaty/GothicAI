@@ -1,4 +1,5 @@
 #include "physicmeshshape.h"
+#include "loadprobe.h"
 
 #include "graphics/mesh/submesh/packedmesh.h"
 #include "dynamicworld.h"
@@ -8,6 +9,7 @@ float PhysicMeshShape::friction() const {
   }
 
 PhysicMeshShape* PhysicMeshShape::load(PackedMesh&& packed) {
+  LoadProbe::Vobs::Scope probe("mesh_shape");
   uint32_t count = 0;
   for(auto& i : packed.subMeshes)
     if(!i.material.disable_collision && i.iboLength > 0) {

@@ -56,5 +56,6 @@ class PfxObjects final {
     uint64_t                      lastUpdate=0;
 
   friend class PfxEmitter;
+  friend class PfxBucket;
   friend class TrlObjects;
   };

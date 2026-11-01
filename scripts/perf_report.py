@@ -2,6 +2,7 @@
 """Summarize frame-profile CSVs and compare repeatable world performance runs."""
 
 import argparse
+from bisect import bisect_left
 import csv
 import json
 import math
@@ -15,6 +16,7 @@ METADATA_COLUMNS = {
     "end_ns", "outcome", "flags", "overflow", "gpu_ns", "gpu_done", "gpu_buffers",
     "drawable_width", "drawable_height", "width", "height",
 }
+TEXTURE_ACTIVITIES = ("read", "upload", "complete", "ready", "publish")
 TIMING = (
     "Frame intervals are differences between consecutive submitted attempt begin_ns "
     "timestamps in the same contiguous perf-PLACE/view-N or streaming-flythrough/PASS segment. Intervening "
@@ -87,8 +89,46 @@ def segment_parts(segment):
     return None
 
 
+def read_texture_activity(path):
+    path = Path(str(path) + ".texture.csv")
+    if not path.exists():
+        return None
+    events = {kind: [] for kind in TEXTURE_ACTIVITIES}
+    with path.open(newline="") as stream:
+        for row in csv.DictReader(stream):
+            kind = row["kind"]
+            begin, end = int(row["begin_ns"]), int(row["end_ns"])
+            if kind not in events or begin < 0 or end < begin:
+                raise ValueError(f"{path}: invalid texture activity")
+            if int(row["overflow"]):
+                raise ValueError(f"{path}: texture profiler overflow; recording is truncated")
+            if kind in ("read", "upload") and begin == end:
+                continue
+            events[kind].append((begin, end))
+    indexed = {}
+    for kind, rows in events.items():
+        rows.sort()
+        starts, ends = [], []
+        for begin, end in rows:
+            starts.append(begin)
+            ends.append(max(ends[-1] if ends else 0, end))
+        indexed[kind] = starts, ends
+    return indexed
+
+
+def texture_activity(events, left, right):
+    flags = {}
+    for kind, (starts, ends) in events.items():
+        before = bisect_left(starts, right)
+        flags[kind] = (before > 0 and ends[before - 1] > left) if kind in ("read", "upload") else (
+            before > bisect_left(starts, left))
+    flags["worker_active"] = flags["read"] or flags["upload"]
+    return flags
+
+
 def samples_from_profile(path):
     rows, zones, amounts, has_gpu = read_profile(path)
+    activity = read_texture_activity(path)
     samples = {}
     start = 0
     while start < len(rows):
@@ -122,6 +162,8 @@ def samples_from_profile(path):
                     "gpu_ms": submitted["gpu_ns"] / 1e6 if gpu_valid else None,
                     "gpu_buffers": submitted.get("gpu_buffers") if gpu_valid else None,
                 })
+                if activity is not None:
+                    target[-1]["texture_activity"] = texture_activity(activity, submitted["begin_ns"], rows[right]["begin_ns"])
         start = end
     warnings = []
     overflow = max((row.get("overflow", 0) for row in rows), default=0)
@@ -158,6 +200,15 @@ def summarize(samples):
         "gpu": None,
     }
     result["zones"].sort(key=lambda item: item["mean_ms"], reverse=True)
+    measured_activity = [row for row in samples if "texture_activity" in row]
+    if measured_activity:
+        result["texture_activity"] = {}
+        for kind in ("worker_active", *TEXTURE_ACTIVITIES):
+            groups = {}
+            for label, active in (("with", True), ("without", False)):
+                intervals = [row["frame_ms"] for row in measured_activity if row["texture_activity"][kind] == active]
+                groups[label] = {"frames": len(intervals), "p99_ms": percentile(intervals, .99)}
+            result["texture_activity"][kind] = groups
     if any(row["has_gpu"] for row in samples):
         completed = [row for row in samples if row["gpu_ms"] is not None]
         buffers = [row["gpu_buffers"] for row in completed if row["gpu_buffers"] is not None]
@@ -165,6 +216,7 @@ def summarize(samples):
             "completed_frames": len(completed),
             "completion_fraction": len(completed) / frames,
             "mean_ms": statistics.fmean(row["gpu_ms"] for row in completed) if completed else None,
+            "p50_ms": percentile([row["gpu_ms"] for row in completed], 0.5),
             "p95_ms": percentile([row["gpu_ms"] for row in completed], 0.95),
             "longer_than_cpu_fraction": (sum(row["gpu_ms"] > row["submitted_cpu_ms"] for row in completed)
                                          / len(completed)) if completed else None,
@@ -179,27 +231,65 @@ def read_metadata(directory):
 
 
 def read_streaming(directory):
+    events = [json.loads(line) for line in (directory / "events.jsonl").read_text().splitlines()]
+    completed = [event for event in events if event.get("kind") == "route_end" and event.get("pass")]
+    if sorted(event.get("speed_cm_s") for event in completed) != [500, 2000]:
+        raise ValueError(f"{directory}: both route passes must reach their endpoints")
     path = directory / "streaming.csv"
+    if not path.exists():
+        if any(event.get("kind") == "perf_segment" and event.get("residency_manager") is True for event in events):
+            raise ValueError(f"{path}: residency manager was enabled but samples are missing")
+        return None
     with path.open(newline="") as stream:
         rows = list(csv.DictReader(stream))
     grouped = {}
     for row in rows:
         parts = segment_parts(row["segment"])
         if parts and parts[0] == "streaming-flythrough":
-            sample = {key: float(value) for key, value in row.items() if key != "segment"}
-            if not all(math.isfinite(value) and value >= 0 for value in sample.values()):
+            sample = {key: float(value) for key, value in row.items() if key not in {"segment", "publication_ms"}}
+            publications = [float(value) for value in row.get("publication_ms", "").split(";") if value]
+            if not all(math.isfinite(value) and value >= 0 for value in [*sample.values(), *publications]):
                 raise ValueError(f"{path}: invalid residency metric")
+            sample["publication_ms"] = publications
             grouped.setdefault(parts[1], []).append(sample)
     if set(grouped) != {"run", "fly"} or any(len(rows) < 2 for rows in grouped.values()):
         raise ValueError(f"{path}: both run and fly require complete residency samples")
-    events = [json.loads(line) for line in (directory / "events.jsonl").read_text().splitlines()]
-    completed = [event for event in events if event.get("kind") == "route_end" and event.get("pass")]
-    if sorted(event.get("speed_cm_s") for event in completed) != [500, 2000]:
-        raise ValueError(f"{directory}: both route passes must reach their endpoints")
+    warmup = None
+    for event in events:
+        if event.get("kind") == "streaming_ready":
+            warmup = event
+            continue
+        parts = segment_parts(event.get("segment", ""))
+        if not parts or parts[0] != "streaming-flythrough":
+            continue
+        if event.get("kind") == "perf_segment" and warmup is not None and "far_publication_ms" in warmup:
+            publications = warmup.get("far_publication_ms", [])
+            maximum = warmup.get("far_max_per_frame", 0)
+            queue_ms = warmup.get("queue_max_ms", 0)
+            if not all(math.isfinite(value) and value >= 0 for value in [*publications, maximum, queue_ms]):
+                raise ValueError(f"{directory}: invalid warmup publication metric")
+            grouped[parts[1]][0].update(warmup_far_publication_ms=publications,
+                                      warmup_far_max_per_frame=maximum, warmup_queue_max_ms=queue_ms)
+            warmup = None
+        elif event.get("kind") == "streaming_end":
+            gpu_mb = event["gpu_mb"]
+            if not math.isfinite(gpu_mb) or gpu_mb < 0:
+                raise ValueError(f"{directory}: invalid GPU allocation metric")
+            grouped[parts[1]][-1]["gpu_mb"] = gpu_mb
+            for field in ("tex_promoted", "tex_demoted", "tex_near_tail_seconds"):
+                if field in event:
+                    value = event[field]
+                    if not math.isfinite(value) or value < 0:
+                        raise ValueError(f"{directory}: invalid route texture metric")
+                    grouped[parts[1]][-1][field + "_route"] = value
     return grouped
 
 
 def streaming_stats(rows):
+    publications = [value for row in rows for value in row["publication_ms"]]
+    warmup = [value for row in rows for value in row.get("warmup_far_publication_ms", [])]
+    pages = [row for row in rows if "page_used_bytes" in row]
+    textures = [row for row in rows if "tex_live_bytes" in row]
     return {
         "updates": len(rows),
         "near_transitions": int(sum(row["near_transitions"] for row in rows)),
@@ -207,6 +297,47 @@ def streaming_stats(rows):
         "peak_near": int(max(row["near"] for row in rows)),
         "update_ms": describe([row["update_ms"] for row in rows]),
         "work_ms": describe([row["work_ms"] for row in rows]),
+        # Each timing is one chunk, including synchronous Near publications.
+        "publication_ms": describe(publications) if publications else None,
+        "warmup_far_publication_ms": describe(warmup) if warmup else None,
+        "warmup_far_count": len(warmup) if any("warmup_far_publication_ms" in row for row in rows) else None,
+        "warmup_far_max_per_frame": max((row["warmup_far_max_per_frame"] for row in rows
+                                         if "warmup_far_max_per_frame" in row), default=None),
+        "warmup_queue_max_ms": max((row["warmup_queue_max_ms"] for row in rows
+                                    if "warmup_queue_max_ms" in row), default=None),
+        "published": int(sum(row.get("published", 0) for row in rows)),
+        "released": int(sum(row.get("released", 0) for row in rows)),
+        "gpu_end_mb": next((row["gpu_mb"] for row in reversed(rows) if "gpu_mb" in row), None),
+        "page_used_end_bytes": int(pages[-1]["page_used_bytes"]) if pages else None,
+        "page_free_end_bytes": int(pages[-1]["page_free_bytes"]) if pages else None,
+        "page_retired_end_bytes": int(pages[-1]["page_retired_bytes"]) if pages else None,
+        "page_count_end": int(pages[-1]["page_count"]) if pages else None,
+        "page_capacity_peak_bytes": int(max(row["page_used_bytes"]+row["page_free_bytes"]+row["page_retired_bytes"]
+                                            for row in pages)) if pages else None,
+        "textures": {
+            "live_end_bytes": int(textures[-1]["tex_live_bytes"]),
+            "retired_end_bytes": int(textures[-1]["tex_retired_bytes"]),
+            "peak_bytes": int(max(row["tex_peak_bytes"] for row in textures)),
+            "count_end": int(textures[-1]["tex_live_n"]),
+            "evicted": int(max(row["tex_evicted"] for row in textures)),
+            "reloaded": int(max(row["tex_reloaded"] for row in textures)),
+            "full_end_bytes": int(textures[-1]["tex_full_bytes"]) if "tex_full_bytes" in textures[-1] else None,
+            "tail_end_bytes": int(textures[-1]["tex_tail_bytes"]) if "tex_tail_bytes" in textures[-1] else None,
+            "promoted": int(sum(row["tex_promoted_route"] for row in textures
+                                if "tex_promoted_route" in row)) if any("tex_promoted_route" in row for row in textures) else None,
+            "demoted": int(sum(row["tex_demoted_route"] for row in textures
+                               if "tex_demoted_route" in row)) if any("tex_demoted_route" in row for row in textures) else None,
+            "promotion_queue_peak": int(max(row["tex_promotion_queue"] for row in textures
+                                            if "tex_promotion_queue" in row)) if any("tex_promotion_queue" in row for row in textures) else None,
+            "near_tail_peak": int(max(row["tex_near_tail_n"] for row in textures
+                                      if "tex_near_tail_n" in row)) if any("tex_near_tail_n" in row for row in textures) else None,
+            "near_tail_seconds": sum(row["tex_near_tail_seconds_route"] for row in textures
+                                     if "tex_near_tail_seconds_route" in row) if any("tex_near_tail_seconds_route" in row for row in textures) else None,
+            "categories": {category: {
+                "bytes": int(textures[-1][f"tex_{category}_bytes"]),
+                "count": int(textures[-1][f"tex_{category}_n"]),
+            } for category in ("landscape", "static", "dynamic", "other")},
+        } if textures else None,
     }
 
 
@@ -246,10 +377,11 @@ def build_report(directory):
             if place == "streaming-flythrough":
                 if set(views) != {"run", "fly"}:
                     raise ValueError(f"{directory}/{repeat}: both run and fly frame segments are required")
-                for view, stats in repeat_reports[-1]["views"].items():
-                    stats["streaming"] = streaming_stats(streaming[repeat][view])
-                repeat_reports[-1]["summary"]["streaming"] = streaming_stats(
-                    [row for rows in streaming[repeat].values() for row in rows])
+                if streaming[repeat] is not None:
+                    for view, stats in repeat_reports[-1]["views"].items():
+                        stats["streaming"] = streaming_stats(streaming[repeat][view])
+                    repeat_reports[-1]["summary"]["streaming"] = streaming_stats(
+                        [row for rows in streaming[repeat].values() for row in rows])
             for view, rows in views.items():
                 view_samples.setdefault(view, []).extend(rows)
         places[place] = {
@@ -257,12 +389,13 @@ def build_report(directory):
             "views": {view: summarize(rows) for view, rows in sorted(view_samples.items())},
             "repeats": repeat_reports,
         }
-        if place == "streaming-flythrough":
+        measured = [repeat for repeat in repeats if streaming.get(repeat) is not None]
+        if place == "streaming-flythrough" and measured:
             for view, stats in places[place]["views"].items():
                 stats["streaming"] = streaming_stats(
-                    [row for repeat in repeats for row in streaming[repeat][view]])
+                    [row for repeat in measured for row in streaming[repeat][view]])
             places[place]["summary"]["streaming"] = streaming_stats(
-                [row for repeat in repeats for rows in streaming[repeat].values() for row in rows])
+                [row for repeat in measured for rows in streaming[repeat].values() for row in rows])
     return {"schema_version": 1, "directory": str(directory), "metadata": read_metadata(directory),
             "timing": TIMING, "warnings": warnings, "sources": sources, "places": places}
 
@@ -281,13 +414,60 @@ def summary_table(report):
             lines.append(f"| {name} | {stats['frames']} | {stats['fps']:.2f} | "
                          + " | ".join(number(frame[key]) for key in ("mean", "p50", "p95", "p99", "max")) + " |")
     streaming = report["places"].get("streaming-flythrough")
-    if streaming:
-        lines.extend(["", "| Pass | Near transitions | Far transitions | Peak Near | Update p99 ms | Work p99 / max ms |",
-                      "|---|---:|---:|---:|---:|---:|"])
+    if streaming and "streaming" in streaming["summary"]:
+        lines.extend(["", "| Pass | Near transitions | Far transitions | Peak Near | Update p99 ms | Work p99 / max ms | Publish p99 / max ms | Published / released | GPU end MiB | Pages end | Page used / free / retired end MiB | Page capacity peak MiB |",
+                      "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"])
         for view, stats in streaming["views"].items():
             data = stats["streaming"]
+            publication = data["publication_ms"] or {"p99": None, "max": None}
+            page_end = " / ".join(number(None if data[key] is None else data[key]/1048576.0, 2)
+                                  for key in ("page_used_end_bytes", "page_free_end_bytes", "page_retired_end_bytes"))
+            capacity = data["page_capacity_peak_bytes"]
             lines.append(f"| {view} | {data['near_transitions']} | {data['far_transitions']} | {data['peak_near']} | "
-                         f"{data['update_ms']['p99']:.6f} | {data['work_ms']['p99']:.6f} / {data['work_ms']['max']:.6f} |")
+                         f"{data['update_ms']['p99']:.6f} | {data['work_ms']['p99']:.6f} / {data['work_ms']['max']:.6f} | "
+                         f"{number(publication['p99'], 6)} / {number(publication['max'], 6)} | "
+                         f"{data['published']} / {data['released']} | {number(data['gpu_end_mb'], 1)} | "
+                         f"{number(data['page_count_end'], 0)} | {page_end} | "
+                         f"{number(None if capacity is None else capacity/1048576.0, 2)} |")
+        lines.extend(["", "| Warmup before pass | Far published | Publish p99 / max ms | Max Far per frame | Queue max ms |",
+                      "|---|---:|---:|---:|---:|"])
+        for view, stats in streaming["views"].items():
+            data = stats["streaming"]
+            publication = data["warmup_far_publication_ms"] or {"p99": None, "max": None}
+            lines.append(f"| {view} | {number(data['warmup_far_count'], 0)} | "
+                         f"{number(publication['p99'], 6)} / {number(publication['max'], 6)} | "
+                         f"{number(data['warmup_far_max_per_frame'], 0)} | {number(data['warmup_queue_max_ms'], 6)} |")
+        lines.extend(["", "| Pass | Textures end | Texture live / retired end MiB | Texture session peak MiB | Session evicted / reloaded |",
+                      "|---|---:|---:|---:|---:|"])
+        for view, stats in streaming["views"].items():
+            textures = stats["streaming"]["textures"]
+            if textures is None:
+                lines.append(f"| {view} | n/a | n/a | n/a | n/a |")
+                continue
+            lines.append(f"| {view} | {textures['count_end']} | {textures['live_end_bytes']/1048576:.2f} / "
+                         f"{textures['retired_end_bytes']/1048576:.2f} | {textures['peak_bytes']/1048576:.2f} | "
+                         f"{textures['evicted']} / {textures['reloaded']} |")
+        lines.extend(["", "| Pass | Landscape MiB / count | Static MiB / count | NPC/items MiB / count | Other MiB / count |",
+                      "|---|---:|---:|---:|---:|"])
+        for view, stats in streaming["views"].items():
+            textures = stats["streaming"]["textures"]
+            categories = textures["categories"] if textures is not None else {}
+            cells = [f"{categories[category]['bytes']/1048576:.2f} / {categories[category]['count']}"
+                     if category in categories else "n/a" for category in ("landscape", "static", "dynamic", "other")]
+            lines.append(f"| {view} | " + " | ".join(cells) + " |")
+        lines.extend(["", "Spatial texture demand: Full within ring 2; demotion beyond ring 3; Near on Tail within ring 1.", "",
+                      "| Pass | Full / Tail end MiB | Promoted / demoted on route | Promotion queue peak | Near (ring 1) on Tail peak | Near (ring 1) on Tail texture-seconds |",
+                      "|---|---:|---:|---:|---:|---:|"])
+        for view, stats in streaming["views"].items():
+            textures = stats["streaming"]["textures"]
+            if textures is None:
+                lines.append(f"| {view} | n/a | n/a | n/a | n/a | n/a |")
+                continue
+            residency = " / ".join(number(None if textures[key] is None else textures[key]/1048576, 2)
+                                   for key in ("full_end_bytes", "tail_end_bytes"))
+            lines.append(f"| {view} | {residency} | {number(textures['promoted'], 0)} / {number(textures['demoted'], 0)} | "
+                         f"{number(textures['promotion_queue_peak'], 0)} | {number(textures['near_tail_peak'], 0)} | "
+                         f"{number(textures['near_tail_seconds'], 9)} |")
     return "\n".join(lines)
 
 
@@ -314,7 +494,7 @@ def report_markdown(report):
             if gpu is None:
                 lines.extend(["GPU timestamps unavailable.", ""])
             else:
-                lines.extend([f"GPU mean/p95 {number(gpu['mean_ms'])}/{number(gpu['p95_ms'])} ms; "
+                lines.extend([f"GPU mean/p50/p95 {number(gpu['mean_ms'])}/{number(gpu['p50_ms'])}/{number(gpu['p95_ms'])} ms; "
                               f"completed {gpu['completed_frames']}/{stats['frames']} frames "
                               f"({100 * gpu['completion_fraction']:.1f}%); GPU longer than CPU "
                               f"{number(None if gpu['longer_than_cpu_fraction'] is None else 100 * gpu['longer_than_cpu_fraction'], 1)}%; "
@@ -327,6 +507,18 @@ def report_markdown(report):
             lines.extend(f"| {amount} | {values['total']} | {values['per_frame']:.3f} |"
                          for amount, values in stats["amounts"].items())
             lines.append("")
+            if "texture_activity" in stats:
+                lines.extend(["Texture activity intersects submitted-frame intervals, including intervening FenceBusy time. "
+                              "Read/upload use interval overlap; complete/ready/publish use point timestamps in [begin, next begin). "
+                              "Complete marks CPU worker completion; ready marks the main thread observing GPU upload completion; "
+                              "publish marks the payload swap. Groups overlap and indicate correlation.", "",
+                              "| Texture activity | Frames with | Frame p99 with ms | Frames without | Frame p99 without ms |",
+                              "|---|---:|---:|---:|---:|"])
+                for kind, groups in stats["texture_activity"].items():
+                    yes, no = groups["with"], groups["without"]
+                    lines.append(f"| {kind} | {yes['frames']} | {number(yes['p99_ms'])} | "
+                                 f"{no['frames']} | {number(no['p99_ms'])} |")
+                lines.append("")
         lines.extend([f"### {place} repeats", "", "| Repeat | FPS | p95 ms |",
                       "|---|---:|---:|"])
         lines.extend(f"| {repeat['directory']} | {repeat['summary']['fps']:.2f} | {repeat['summary']['frame_ms']['p95']:.3f} |"

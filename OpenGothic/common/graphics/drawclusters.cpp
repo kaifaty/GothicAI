@@ -97,7 +97,7 @@ bool DrawClusters::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
 
   Resources::recycle(std::move(clustersGpu));
   clustersGpu  = device.ssbo(Tempest::Uninitialized, csize);
-  clustersGpu.update(clusters);
+  clustersGpu.updateAsync(clusters.data(),0,clusters.size()*sizeof(clusters[0]));
   std::fill(clustersDurty.begin(), clustersDurty.end(), 0x0);
   return true;
   }

@@ -50,6 +50,9 @@ class Item : public Vob {
     virtual void setPhysicsEnable(World& w);
     void    setPhysicsDisable();
     bool    wakePhysics();
+    bool    activatePhysics();
+    bool    isPlacedItem() const { return placedZenId!=uint32_t(-1); }
+    uint32_t placedItemZenId() const { return placedZenId; }
     bool    isDynamic() const override;
     float   physicsMass() const { return physic.mass(); }
     Tempest::Vec3 physicsVelocity() const { return physic.velocity(); } // cm/s
@@ -117,6 +120,8 @@ class Item : public Vob {
     uint32_t                       amount   = 0;
     uint8_t                        equipped = 0;
     uint8_t                        itSlot   = NSLOT;
+    uint32_t                       placedZenId = uint32_t(-1);
+    bool                           placedAllowed = true;
 
     MeshObjects::Mesh              visual;
     DynamicWorld::Item             physic;

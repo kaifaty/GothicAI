@@ -8,6 +8,7 @@
 #include "graphics/mesh/protomesh.h"
 
 #include "visualobjects.h"
+#include "worldchunksruntime.h"
 
 MeshObjects::MeshObjects(VisualObjects& parent)
   :parent(&parent) {
@@ -274,11 +275,37 @@ MeshObjects::Mesh &MeshObjects::Mesh::operator =(MeshObjects::Mesh &&other) {
   std::swap(binder,   other.binder);
   std::swap(cpuOnly,  other.cpuOnly);
   std::swap(cpuSub,   other.cpuSub);
+  std::swap(textureOwnerKnown, other.textureOwnerKnown);
+  std::swap(textureOwnerSpatial, other.textureOwnerSpatial);
+  std::swap(textureOwnerChunk, other.textureOwnerChunk);
   return *this;
   }
 
 void MeshObjects::Mesh::setObjMatrix(const Tempest::Matrix4x4 &mt) {
   implSetObjMatrix(mt,skeleton==nullptr ? nullptr : skeleton->tr.data());
+  }
+
+void MeshObjects::Mesh::setTextureCategory(Resources::TextureCategory category) {
+  textureOwnerKnown=false;
+  for(size_t i=0;i<subCount;++i)
+    sub[i].setTextureCategory(category);
+  }
+
+void MeshObjects::Mesh::setTextureOwner(const Tempest::Vec3& position, bool spatial) {
+  const auto chunk=ChunkId::fromPosition(position.x,position.z);
+  const std::pair key{chunk.x,chunk.z};
+  if(textureOwnerKnown && textureOwnerSpatial==spatial && (!spatial || textureOwnerChunk==key))
+    return;
+  textureOwnerKnown=true;
+  textureOwnerSpatial=spatial;
+  textureOwnerChunk=key;
+  for(size_t i=0;i<subCount;++i)
+    sub[i].setTextureOwner(position,spatial);
+  }
+
+void MeshObjects::Mesh::setTexturePosition(const Tempest::Vec3& position) {
+  for(size_t i=0;i<subCount;++i)
+    sub[i].setTexturePosition(position);
   }
 
 void MeshObjects::Mesh::implSetObjMatrix(const Tempest::Matrix4x4& mt, const Tempest::Matrix4x4* tr) {
@@ -290,12 +317,14 @@ void MeshObjects::Mesh::implSetObjMatrix(const Tempest::Matrix4x4& mt, const Tem
       }
     return;
     }
+  // Static attachments belong to the vob's cell, including animated nodes.
+  const Tempest::Vec3 texturePosition(mt[3][0],mt[3][1],mt[3][2]);
   for(size_t i=0; i<binds; ++i) {
     auto id = binder->bind[i];
-    sub[i].setObjMatrix(tr[id]);
+    sub[i].setObjMatrix(tr[id],texturePosition);
     }
   for(size_t i=binds; i<subCount; ++i)
-    sub[i].setObjMatrix(mt);
+    sub[i].setObjMatrix(mt,texturePosition);
   }
 
 const Bounds& MeshObjects::Node::bounds() const {

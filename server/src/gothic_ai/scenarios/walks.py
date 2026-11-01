@@ -9,7 +9,7 @@ from typing import Any
 from .. import vanilla
 from ..dialogue import DialogueManager
 from ..executor import Intent
-from ..game import GameError, GameLink
+from ..game import GameLink
 from ..llm import ToolCall
 from ..protocol import ActionResult, ActionType
 from .common import _logged, _until_async
@@ -22,8 +22,6 @@ STAIRS = "NW_XARDAS_STAIRS_01"
 
 async def check_walk(link: GameLink, dialogue: DialogueManager) -> dict[str, str]:
     """Check an occluded trip from Xardas's stairs into the bandit cave."""
-    if dialogue.llm.name != "fake":
-        raise GameError("scenario check_walk requires LLM=fake and a new game without SAVE")
     await link.wait_world()
     for npc in (CAVALORN, *BANDITS):
         await link.debug("skip_important", near=npc)
@@ -83,9 +81,7 @@ async def check_walk(link: GameLink, dialogue: DialogueManager) -> dict[str, str
 
 
 async def follow_back(link: GameLink, dialogue: DialogueManager) -> dict[str, str]:
-    """The model's repeated follow intent recalls a companion from an unfinished body check."""
-    if dialogue.llm.name != "fake":
-        raise GameError("scenario follow_back requires LLM=fake and a new game without SAVE")
+    """A repeated follow intent recalls a companion from an unfinished body check."""
     await link.wait_world()
     for npc in (CAVALORN, *BANDITS):
         await link.debug("skip_important", near=npc)

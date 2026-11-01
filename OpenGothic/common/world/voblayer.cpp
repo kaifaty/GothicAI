@@ -1,7 +1,7 @@
 #include "voblayer.h"
 #include "movablevobs.h"
 #include "gothicglb.h"
-#include "programdata.h"
+#include "game/definitions/particlecontent.h"
 
 #include <Tempest/Log>
 #include <rapidjson/document.h>
@@ -36,7 +36,8 @@ struct Light final : asset::VLight, Added {};
 struct Context {
   std::vector<Vob> removed;
   const std::map<std::string,fs::path>* ownMeshes = nullptr;
-  std::unique_ptr<zenkit::DaedalusScript> particles;
+  std::unique_ptr<zenkit::DaedalusVm> particles;
+  ParticleContent::Result ownParticles;
   };
 
 [[noreturn]] void fail(const std::string& reason) { throw std::runtime_error(reason); }
@@ -76,7 +77,8 @@ std::string meshKey(std::string name) {
   require(extension.empty() || extension==".3DS" || extension==".MRM","expected static mesh visual");
   return extension.empty() ? name : name.substr(0,name.size()-extension.size());
   }
-std::string particleName(std::string name, Context& context, const fs::path& baseWorldDir) {
+std::string particleName(std::string name, Context& context, const fs::path& baseWorldDir,
+                         const fs::path& contentRoot) {
   require(!name.empty() && name.find_first_of("/\\")==std::string::npos &&
           name.find('\0')==std::string::npos,"invalid PFX name");
   for(auto& c:name) c=char(std::toupper(uint8_t(c)));
@@ -84,25 +86,11 @@ std::string particleName(std::string name, Context& context, const fs::path& bas
   require(extension.empty() || extension==".PFX","expected PFX name");
   if(!extension.empty()) name.resize(name.size()-extension.size());
   if(context.particles==nullptr) {
-    const auto root=baseWorldDir.parent_path().parent_path();
-    const auto index=ProgramData::readIndex(root/"programs");
-    // Particle definitions request ScriptLang::NONE: VFS first, then the ordinary host script.
-    const auto* source=index.findVfs("ParticleFx.dat");
-    if(source==nullptr) source=index.findHost("_work/Data/Scripts/_compiled/ParticleFx.dat");
-    require(source!=nullptr,"ParticleFx.dat missing from program base index");
-    std::string sha256;
-    auto program=ProgramData::readProgram(index.path(*source),&sha256);
-    require(sha256==source->recordSha256,"particle program identity differs from base index");
-    context.particles=std::make_unique<zenkit::DaedalusScript>(
-        zenkit::DaedalusScript::from_program(std::move(program)));
+    context.particles=ParticleContent::openProgram(baseWorldDir.parent_path().parent_path());
+    context.ownParticles=ParticleContent::load(*context.particles,contentRoot);
     }
-  const auto& script=*context.particles;
-  const auto* symbol=script.find_symbol_by_name(name);
-  const auto* cls=script.find_symbol_by_name("C_PARTICLEFX");
-  require(symbol!=nullptr && symbol->type()==zenkit::DaedalusDataType::INSTANCE,"unknown PFX "+name);
-  auto parent=symbol;
-  while(parent!=nullptr && parent!=cls) parent=script.find_symbol_by_index(parent->parent());
-  require(cls!=nullptr && parent==cls,"unknown PFX "+name);
+  require(context.ownParticles.effects.count(name)!=0 || ParticleContent::hasBase(*context.particles,name),
+          "unknown PFX "+name);
   return name+".PFX";
   }
 void layerFields(const Json& obj, std::initializer_list<const char*> allowed) {
@@ -376,7 +364,7 @@ Result applyFile(WorldData::Data& data, Context& context, const fs::path& baseWo
             layerFields(entry,{"key","kind","position","rotation","yaw_deg","pfx"});
             auto visual=std::make_shared<VisualParticleEffect>();
             visual->type=VisualType::PARTICLE_EFFECT;
-            visual->name=particleName(layerString(member(entry,"pfx")),context,baseWorldDir);
+            visual->name=particleName(layerString(member(entry,"pfx")),context,baseWorldDir,contentRoot);
             v=std::make_shared<LayerVob>();
             v->type=VirtualObjectType::zCVob; v->show_visual=true; v->cd_static=false;
             v->visual=std::move(visual);
@@ -486,6 +474,7 @@ Result apply(WorldData::Data& data,const fs::path& baseWorldDir,const fs::path& 
     total.added+=result.added; total.removed+=result.removed; total.moved+=result.moved;
     total.errors.insert(total.errors.end(),result.errors.begin(),result.errors.end());
     }
+  total.errors.insert(total.errors.end(),context.ownParticles.errors.begin(),context.ownParticles.errors.end());
   return total;
   }
 
@@ -497,7 +486,9 @@ Result check(const fs::path& baseWorldDir,const fs::path& file,const fs::path& c
     if(previous.filename()>=file.filename()) break;
     applyFile(data,context,baseWorldDir,previous,contentRoot);
     }
-  return applyFile(data,context,baseWorldDir,file,contentRoot);
+  auto result=applyFile(data,context,baseWorldDir,file,contentRoot);
+  result.errors.insert(result.errors.end(),context.ownParticles.errors.begin(),context.ownParticles.errors.end());
+  return result;
   }
 
 } // namespace VobLayer

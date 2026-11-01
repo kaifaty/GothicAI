@@ -65,6 +65,9 @@ class MeshObjects final {
         Mesh& operator = (Mesh&& other);
 
         void   setObjMatrix(const Tempest::Matrix4x4& mt);
+        void   setTexturePosition(const Tempest::Vec3& position);
+        void   setTextureCategory(Resources::TextureCategory category);
+        void   setTextureOwner(const Tempest::Vec3& position, bool spatial);
         void   setSkeleton (const Skeleton* sk);
         void   setPose     (const Tempest::Matrix4x4& obj, const Pose& p);
         void   setPose     (const Tempest::Matrix4x4& obj, const Tempest::Matrix4x4* bones);
@@ -101,6 +104,8 @@ class MeshObjects final {
         const AttachBinder*     binder  =nullptr;
 
         bool                    cpuOnly = false;
+        bool                    textureOwnerKnown = false, textureOwnerSpatial = false;
+        std::pair<int32_t,int32_t> textureOwnerChunk;
         std::vector<CpuNode>     cpuSub;
         friend bool TestBench::ragdollBodyDrawable(const Npc& npc);
       };

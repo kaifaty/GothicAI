@@ -6,6 +6,7 @@ import httpx
 import pytest
 from websockets.asyncio.client import connect
 from websockets.asyncio.server import serve
+from websockets.exceptions import InvalidStatus
 
 from gothic_tts.providers import TtsError, Voice, make_provider, parse_spec
 from gothic_tts.providers.fake import FakeProvider
@@ -101,6 +102,22 @@ async def service():
     await asyncio.gather(task, return_exceptions=True)
 
 
+@pytest.mark.parametrize("bridge", [True, False])
+async def test_local_origin_connects(service, bridge) -> None:
+    svc, _ = service
+    url = f"ws://127.0.0.1:{svc.port}"
+    async with connect(url, origin=url if bridge else None) as ws:
+        await ws.ping()
+
+
+async def test_browser_origin_is_forbidden(service) -> None:
+    svc, _ = service
+    with pytest.raises(InvalidStatus) as exc:
+        async with connect(f"ws://127.0.0.1:{svc.port}", origin="https://evil.example"):
+            pytest.fail("browser origin connected")
+    assert exc.value.response.status_code == 403
+
+
 async def test_websocket_speak(service) -> None:
     svc, fake = service
     async with connect(f"ws://127.0.0.1:{svc.port}") as ws:
@@ -179,7 +196,8 @@ def test_original_voices_missing_manifest_disables_once(tmp_path, caplog) -> Non
         assert len(caplog.records) == 1 and caplog.records[0].levelno == logging.INFO
 
 
-async def test_health_shows_providers_left_out() -> None:
+@pytest.mark.parametrize("origin", [None, "https://evil.example"])
+async def test_health_shows_providers_left_out(origin) -> None:
     synth = Synthesizer(FakeProvider(fail=True), FakeProvider())
     await _collect(synth, "Привет")  # the primary fails and waits for its check in the background
     svc = TtsService(synth, port=0)
@@ -188,7 +206,10 @@ async def test_health_shows_providers_left_out() -> None:
     await started.wait()
     try:
         async with httpx.AsyncClient() as http:
-            r = await http.get(f"http://127.0.0.1:{svc.port}/health")
+            r = await http.get(
+                f"http://127.0.0.1:{svc.port}/health", headers={"Origin": origin} if origin else {}
+            )
+        assert r.status_code == 200
         assert r.json() == {
             "ok": True,
             "service": "gothic-tts",

@@ -24,6 +24,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 from dataclasses import replace
 from http import HTTPStatus
@@ -43,6 +44,7 @@ log = logging.getLogger(__name__)
 MAX_TEXT = 1000
 MAX_STYLE = 300
 DEFAULT_ORIGINAL_VOICES = Path.home() / ".local/share/gothic-ai/voices/original"
+LOCAL_ORIGINS = [None, re.compile(r"ws://(?:127\.0\.0\.1|localhost|\[::1\])(?::[0-9]+)?")]
 
 
 def load_original_voices(directory: str | Path = DEFAULT_ORIGINAL_VOICES) -> dict[str, Voice]:
@@ -92,7 +94,8 @@ class TtsService:
 
     async def serve_forever(self, started=None) -> None:
         async with serve(
-            self._handler, self.host, self.port, max_size=2**20, process_request=self._health
+            self._handler, self.host, self.port, max_size=2**20, process_request=self._health,
+            origins=LOCAL_ORIGINS,
         ) as server:
             self.port = server.sockets[0].getsockname()[1]
             log.info("listening on ws://%s:%d", self.host, self.port)

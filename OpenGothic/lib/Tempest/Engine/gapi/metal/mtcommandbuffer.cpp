@@ -12,8 +12,11 @@
 #include "mtaccelerationstructure.h"
 
 #include <cstdlib>
+#include <cstring>
 
 #if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+#include "frameprofile.h"
+
 // OPENGOTHIC_GPU_SKIP="SSAO,Fog-LUTs": draws and dispatches under these debug markers are dropped,
 // so the GPU time a pass costs shows up in the frame profile (docs/performance.md); the picture breaks
 static bool skipPass(const std::string& label) {
@@ -21,12 +24,129 @@ static bool skipPass(const std::string& label) {
   return !skip.empty() && !label.empty() && skip.find(","+label+",")!=std::string::npos;
   }
 #define T_SKIP_PASS() if(skipPass(activeLabel)) return
+#define T_PROFILE_DRAW() profileCommand(false)
+#define T_PROFILE_DISPATCH() profileCommand(true)
 #else
 #define T_SKIP_PASS()
+#define T_PROFILE_DRAW()
+#define T_PROFILE_DISPATCH()
 #endif
 
 using namespace Tempest;
 using namespace Tempest::Detail;
+
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+struct MtCommandBuffer::GpuProfile {
+  static constexpr size_t MaxSamples=512;
+  struct Pass {
+    FrameProfile::GpuPass data;
+    size_t first=0, samples=0;
+    std::string lastLabel;
+    };
+  NsPtr<MTL::CounterSampleBuffer> buffer;
+  std::vector<Pass> passes;
+  size_t samples=0;
+
+  explicit GpuProfile(MtDevice& device) {
+    // Apple Silicon exposes stage-boundary timestamps. Do not
+    // emulate them with extra encoders, draw barriers, or command submissions.
+    if(!device.impl->supportsCounterSampling(MTL::CounterSamplingPointAtStageBoundary))
+      return;
+    auto sets=device.impl->counterSets();
+    for(size_t i=0;i<sets->count();++i) {
+      auto set=static_cast<MTL::CounterSet*>(sets->object(i));
+      if(!set->name()->isEqualToString(MTL::CommonCounterSetTimestamp))
+        continue;
+      auto desc=NsPtr<MTL::CounterSampleBufferDescriptor>::init();
+      desc->setCounterSet(set);
+      desc->setStorageMode(MTL::StorageModeShared);
+      desc->setSampleCount(MaxSamples);
+      NS::Error* error=nullptr;
+      buffer=NsPtr<MTL::CounterSampleBuffer>(device.impl->newCounterSampleBuffer(desc.get(),&error));
+      break;
+      }
+    }
+
+  size_t begin(const char* type, size_t count) {
+    Pass pass;
+    pass.data.type=type;
+    pass.first=samples;
+    if(buffer!=nullptr && samples+count<=MaxSamples) {
+      pass.samples=count;
+      samples+=count;
+      }
+    passes.emplace_back(std::move(pass));
+    return passes.size()-1;
+    }
+
+  void label(size_t index, std::string_view label) {
+    if(index==size_t(-1)) return;
+    if(label.empty()) label="unlabelled";
+    auto& pass=passes[index];
+    if(pass.lastLabel==label) return;
+    if(!pass.data.labels.empty()) pass.data.labels+=" | ";
+    pass.data.labels+=label;
+    pass.lastLabel=label;
+    }
+  };
+
+void MtCommandBuffer::profileCommand(bool dispatch) {
+  FrameProfile::add(dispatch ? FrameProfile::Amount::DispatchCalls : FrameProfile::Amount::DrawCalls,1);
+  if(!gpuProfile || profilePass==size_t(-1))
+    return;
+  auto& pass=gpuProfile->passes[profilePass];
+  if(dispatch)
+    ++pass.data.dispatchCalls;
+  else
+    ++pass.data.drawCalls;
+  gpuProfile->label(profilePass,activeLabel);
+  }
+
+void MtCommandBuffer::submitGpuProfile() {
+  auto* record=FrameProfile::gpuPassesSubmitted();
+  if(record==nullptr || !gpuProfile)
+    return;
+  auto profile=gpuProfile;
+  impl->addCompletedHandler(^(MTL::CommandBuffer* completed) {
+    auto pool=NsPtr<NS::AutoreleasePool>::init();
+    NS::Data* resolved=nullptr;
+    if(completed->status()==MTL::CommandBufferStatusCompleted && profile->buffer!=nullptr && profile->samples>0)
+      resolved=profile->buffer->resolveCounterRange(NS::Range(0,profile->samples));
+    const auto bytes=reinterpret_cast<const void* (*)(const void*,SEL)>(objc_msgSend);
+    const auto* timestamps=resolved!=nullptr ? static_cast<const MTL::CounterResultTimestamp*>(bytes(resolved,sel_registerName("bytes"))) : nullptr;
+    const auto count=resolved!=nullptr ? resolved->length()/sizeof(MTL::CounterResultTimestamp) : 0;
+    std::vector<FrameProfile::GpuPass> passes;
+    passes.reserve(profile->passes.size());
+    for(const auto& pass:profile->passes) {
+      auto data=pass.data;
+      if(data.labels.empty()) data.labels="unlabelled";
+      bool valid=timestamps!=nullptr && pass.samples>0 && pass.first+pass.samples<=count;
+      if(valid) {
+        uint64_t first=uint64_t(-1),last=0;
+        for(size_t i=0;i<pass.samples;i+=2) {
+          const auto begin=timestamps[pass.first+i].timestamp;
+          const auto end=timestamps[pass.first+i+1].timestamp;
+          if(begin==MTL::CounterErrorValue || end==MTL::CounterErrorValue || begin==0 || end<begin) {
+            valid=false;
+            break;
+            }
+          first=std::min(first,begin);
+          last=std::max(last,end);
+          if(pass.samples==4) {
+            if(i==0) data.vertexNs=end-begin;
+            else data.fragmentNs=end-begin;
+            }
+          }
+        if(valid) data.gpuNs=last-first;
+        }
+      data.valid=valid;
+      if(!valid) data.gpuNs=data.vertexNs=data.fragmentNs=0;
+      passes.emplace_back(std::move(data));
+      }
+    FrameProfile::gpuPassesCompleted(record,std::move(passes));
+    });
+  }
+#endif
 
 static MTL::LoadAction mkLoadOp(const AccessOp m) {
   switch(m) {
@@ -86,6 +206,23 @@ void MtCommandBuffer::reset() {
 
   impl = NsPtr<MTL::CommandBuffer>(device.queue->commandBuffer(desc.get()));
   impl->retain();
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+  profilePass=size_t(-1);
+  static const bool passTiming=[] {
+    const auto* value=std::getenv("OPENGOTHIC_GPU_PASSES");
+    return value!=nullptr && std::strcmp(value,"1")==0;
+    }();
+  if(FrameProfile::enabled() && passTiming) {
+    // A completion callback owns its sample buffer until resolve has finished,
+    // independently of the fence callback and the next use of this frame slot.
+    if(!gpuProfile || gpuProfile.use_count()!=1)
+      gpuProfile=std::make_shared<GpuProfile>(device);
+    gpuProfile->passes.clear();
+    gpuProfile->samples=0;
+    }
+  else
+    gpuProfile.reset();
+#endif
   }
 
 void MtCommandBuffer::beginRendering(const FrameBufferDesc& fbo, size_t fboSize, uint32_t width, uint32_t height) {
@@ -172,6 +309,9 @@ void MtCommandBuffer::setEncoder(MtCommandBuffer::EncType e, MTL::RenderPassDesc
 
   switch(e) {
     case E_None: {
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+      profilePass=size_t(-1);
+#endif
       break;
       }
     case E_Draw: {
@@ -183,6 +323,20 @@ void MtCommandBuffer::setEncoder(MtCommandBuffer::EncType e, MTL::RenderPassDesc
         encDraw->endEncoding();
         encDraw = NsPtr<MTL::RenderCommandEncoder>();
         }
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+      if(gpuProfile) {
+        profilePass=gpuProfile->begin("render",4);
+        const auto& pass=gpuProfile->passes[profilePass];
+        if(pass.samples!=0) {
+          auto attachment=desc->sampleBufferAttachments()->object(0);
+          attachment->setSampleBuffer(gpuProfile->buffer.get());
+          attachment->setStartOfVertexSampleIndex(pass.first);
+          attachment->setEndOfVertexSampleIndex(pass.first+1);
+          attachment->setStartOfFragmentSampleIndex(pass.first+2);
+          attachment->setEndOfFragmentSampleIndex(pass.first+3);
+          }
+        }
+#endif
       encDraw = NsPtr<MTL::RenderCommandEncoder>(impl->renderCommandEncoder(desc));
       encDraw->retain();
       break;
@@ -190,14 +344,44 @@ void MtCommandBuffer::setEncoder(MtCommandBuffer::EncType e, MTL::RenderPassDesc
     case E_Comp: {
       if(encComp!=nullptr)
         return;
-      encComp = NsPtr<MTL::ComputeCommandEncoder>(impl->computeCommandEncoder());
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+      if(gpuProfile) {
+        profilePass=gpuProfile->begin("compute",2);
+        const auto& pass=gpuProfile->passes[profilePass];
+        auto computeDesc=NsPtr<MTL::ComputePassDescriptor>::init();
+        if(pass.samples!=0) {
+          auto attachment=computeDesc->sampleBufferAttachments()->object(0);
+          attachment->setSampleBuffer(gpuProfile->buffer.get());
+          attachment->setStartOfEncoderSampleIndex(pass.first);
+          attachment->setEndOfEncoderSampleIndex(pass.first+1);
+          }
+        encComp=NsPtr<MTL::ComputeCommandEncoder>(impl->computeCommandEncoder(computeDesc.get()));
+        }
+      else
+#endif
+        encComp = NsPtr<MTL::ComputeCommandEncoder>(impl->computeCommandEncoder());
       encComp->retain();
       break;
       }
     case E_Blit: {
       if(encBlit!=nullptr)
         return;
-      encBlit = NsPtr<MTL::BlitCommandEncoder>(impl->blitCommandEncoder());
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+      if(gpuProfile) {
+        profilePass=gpuProfile->begin("blit",2);
+        const auto& pass=gpuProfile->passes[profilePass];
+        auto blitDesc=NsPtr<MTL::BlitPassDescriptor>::init();
+        if(pass.samples!=0) {
+          auto attachment=blitDesc->sampleBufferAttachments()->object(0);
+          attachment->setSampleBuffer(gpuProfile->buffer.get());
+          attachment->setStartOfEncoderSampleIndex(pass.first);
+          attachment->setEndOfEncoderSampleIndex(pass.first+1);
+          }
+        encBlit=NsPtr<MTL::BlitCommandEncoder>(impl->blitCommandEncoder(blitDesc.get()));
+        }
+      else
+#endif
+        encBlit = NsPtr<MTL::BlitCommandEncoder>(impl->blitCommandEncoder());
       encBlit->retain();
       break;
       }
@@ -572,6 +756,7 @@ void MtCommandBuffer::draw(const AbstractGraphicsApi::Buffer* ivbo, size_t strid
 
   implSetUniforms(S_Graphics);
   implSetPushData(S_Graphics);
+  T_PROFILE_DRAW();
   encDraw->drawPrimitives(topology,offset,vertexCount,instanceCount,firstInstance);
   }
 
@@ -595,6 +780,7 @@ void MtCommandBuffer::drawIndexed(const AbstractGraphicsApi::Buffer* ivbo, size_
     }
   implSetUniforms(S_Graphics);
   implSetPushData(S_Graphics);
+  T_PROFILE_DRAW();
   encDraw->drawIndexedPrimitives(topology,isize,iboType,ibo.impl.get(),
                                  ioffset*mul,instanceCount,voffset,firstInstance);
   }
@@ -604,6 +790,7 @@ void MtCommandBuffer::drawIndirect(const AbstractGraphicsApi::Buffer& indirect, 
   implSetUniforms(S_Graphics);
   implSetPushData(S_Graphics);
   auto& ind = reinterpret_cast<const MtBuffer&>(indirect);
+  T_PROFILE_DRAW();
   encDraw->drawPrimitives(topology, ind.impl.get(), offset);
   }
 
@@ -614,6 +801,7 @@ void MtCommandBuffer::dispatchMesh(size_t x, size_t y, size_t z) {
   implSetUniforms(S_Graphics);
   implSetPushData(S_Graphics);
   // NOTE: for taskless pipeline `localSize` must be zero
+  T_PROFILE_DRAW();
   encDraw->drawMeshThreadgroups(MTL::Size(x,y,z), localSize, localSizeMesh);
   }
 
@@ -622,6 +810,7 @@ void MtCommandBuffer::dispatchMeshIndirect(const AbstractGraphicsApi::Buffer& in
   implSetUniforms(S_Graphics);
   implSetPushData(S_Graphics);
   auto& ind = reinterpret_cast<const MtBuffer&>(indirect);
+  T_PROFILE_DRAW();
   encDraw->drawMeshThreadgroups(ind.impl.get(), offset, localSize, localSizeMesh);
   }
 
@@ -631,6 +820,7 @@ void MtCommandBuffer::dispatch(size_t x, size_t y, size_t z) {
     return; // validation warning
   implSetUniforms(S_Compute);
   implSetPushData(S_Compute);
+  T_PROFILE_DISPATCH();
   encComp->dispatchThreadgroups(MTL::Size(x,y,z), localSize);
   }
 
@@ -639,6 +829,7 @@ void MtCommandBuffer::dispatchIndirect(const AbstractGraphicsApi::Buffer& indire
   implSetUniforms(S_Compute);
   implSetPushData(S_Compute);
   auto& ind = reinterpret_cast<const MtBuffer&>(indirect);
+  T_PROFILE_DISPATCH();
   encComp->dispatchThreadgroups(ind.impl.get(), offset, localSize);
   }
 
@@ -776,6 +967,9 @@ void MtCommandBuffer::generateMipmap(AbstractGraphicsApi::Texture &image,
                                      uint32_t /*texWidth*/, uint32_t /*texHeight*/,
                                      uint32_t /*mipLevels*/) {
   setEncoder(E_Blit,nullptr);
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+  if(gpuProfile) gpuProfile->label(profilePass,activeLabel);
+#endif
 
   auto& t = reinterpret_cast<MtTexture&>(image);
   encBlit->generateMipmaps(t.impl.get());
@@ -821,6 +1015,9 @@ void MtCommandBuffer::upscale(AbstractGraphicsApi::Texture& src, AbstractGraphic
 void MtCommandBuffer::copy(AbstractGraphicsApi::Buffer& dest, size_t offset,
                            AbstractGraphicsApi::Texture& src, uint32_t width, uint32_t height, uint32_t mip) {
   setEncoder(E_Blit,nullptr);
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+  if(gpuProfile) gpuProfile->label(profilePass,activeLabel);
+#endif
 
   auto& s = reinterpret_cast<MtTexture&>(src);
   auto& d = reinterpret_cast<MtBuffer&> (dest);

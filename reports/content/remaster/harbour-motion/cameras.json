@@ -1,0 +1,275 @@
+{
+ "cameras": [
+  {
+   "name": "ship",
+   "eye": [
+    -5000,
+    300,
+    -13800
+   ],
+   "target": [
+    -10000,
+    2400,
+    -13600
+   ],
+   "times": [
+    "day",
+    "night"
+   ],
+   "motion": true,
+   "note": "paladin ship from the beach east of the mole, 50 m: six furled sails, four flags; hero over the ship so all of them are cloth",
+   "hero": "near",
+   "regions": {
+    "flag-main": [
+     505,
+     55,
+     575,
+     100
+    ],
+    "flag-fore": [
+     730,
+     70,
+     810,
+     105
+    ],
+    "flag-aft": [
+     330,
+     140,
+     395,
+     180
+    ],
+    "sails": [
+     175,
+     230,
+     525,
+     460
+    ],
+    "still-rock": [
+     1080,
+     250,
+     1260,
+     420
+    ],
+    "still-hull": [
+     0,
+     560,
+     400,
+     700
+    ]
+   }
+  },
+  {
+   "name": "banners",
+   "eye": [
+    5818,
+    490,
+    -5773
+   ],
+   "target": [
+    6800,
+    2000,
+    -6000
+   ],
+   "times": [
+    "day"
+   ],
+   "motion": true,
+   "note": "two town banners on the wall towers east of the poor quarter, from the street where both are cloth (22 and 37 m)",
+   "hero": "near",
+   "regions": {
+    "banner-near": [
+     600,
+     370,
+     720,
+     480
+    ],
+    "banner-far": [
+     420,
+     580,
+     500,
+     660
+    ],
+    "still-wall": [
+     760,
+     420,
+     1000,
+     640
+    ]
+   }
+  },
+  {
+   "name": "quay-west",
+   "eye": [
+    -1900,
+    -10,
+    -4400
+   ],
+   "target": [
+    -6500,
+    200,
+    -5400
+   ],
+   "times": [
+    "day",
+    "night"
+   ],
+   "note": "west quay from crane C towards the fishers, 47 m: no lamp posts, braziers at the far end"
+  },
+  {
+   "name": "quay-east",
+   "eye": [
+    -7000,
+    20,
+    -5300
+   ],
+   "target": [
+    -3300,
+    150,
+    -4600
+   ],
+   "times": [
+    "day",
+    "night"
+   ],
+   "note": "the way to the ship from the fishers towards crane C, 38 m: the new braziers in a row at the foot of the paladin camp"
+  },
+  {
+   "name": "quay-north",
+   "eye": [
+    -500,
+    -16,
+    -4700
+   ],
+   "target": [
+    300,
+    0,
+    -800
+   ],
+   "times": [
+    "day",
+    "night"
+   ],
+   "note": "north quay from crane C: lamp posts along the inner edge"
+  },
+  {
+   "name": "tavern",
+   "eye": [
+    -300,
+    -4,
+    -1800
+   ],
+   "target": [
+    1700,
+    350,
+    -800
+   ],
+   "times": [
+    "day",
+    "night"
+   ],
+   "note": "harbour tavern from the quay, lamp post in front"
+  },
+  {
+   "name": "fishers",
+   "eye": [
+    -8650,
+    -83,
+    -5950
+   ],
+   "target": [
+    -8000,
+    -87,
+    -5650
+   ],
+   "times": [
+    "day",
+    "night"
+   ],
+   "note": "fishers corner from 7 m: net rack and two of the three braziers"
+  },
+  {
+   "name": "huts",
+   "eye": [
+    2512,
+    0,
+    -4106
+   ],
+   "target": [
+    4018,
+    300,
+    -4061
+   ],
+   "times": [
+    "day",
+    "night"
+   ],
+   "motion": true,
+   "note": "poor huts from the lane, 15 m: the hut whose hearth burns under a hole in its roof",
+   "regions": {
+    "smoke": [
+     585,
+     250,
+     665,
+     350
+    ],
+    "still-wall": [
+     20,
+     430,
+     200,
+     560
+    ]
+   }
+  },
+  {
+   "name": "huts-north",
+   "eye": [
+    3000,
+    30,
+    -1400
+   ],
+   "target": [
+    2880,
+    350,
+    -2500
+   ],
+   "times": [
+    "day",
+    "night"
+   ],
+   "motion": true,
+   "note": "the hut with the large hearth from the north, 11 m: hole in its roof above the fire",
+   "regions": {
+    "smoke": [
+     570,
+     205,
+     690,
+     305
+    ],
+    "still-gable": [
+     120,
+     300,
+     320,
+     460
+    ]
+   }
+  },
+  {
+   "name": "overhead",
+   "eye": [
+    -1800,
+    1901,
+    -5000
+   ],
+   "target": [
+    2400,
+    100,
+    -2000
+   ],
+   "times": [
+    "day",
+    "night"
+   ],
+   "note": "the district from above crane C, as the art bible's overview: roofs, plaza, lamp posts"
+  }
+ ]
+}

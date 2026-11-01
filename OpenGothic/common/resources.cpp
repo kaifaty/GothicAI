@@ -4,8 +4,10 @@
 #include "commandline.h"
 #include "musicnative.h"
 #include "videodata.h"
+#include "frameprofile.h"
 
 #include <Tempest/MemReader>
+#include <Tempest/File>
 #include <Tempest/Pixmap>
 #include <Tempest/Device>
 #include <Tempest/Application>
@@ -20,6 +22,8 @@
 #include <miniz.h>
 
 #include <cctype>
+#include <cassert>
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <chrono>
@@ -52,6 +56,7 @@
 #include "dmusic/directmusic.h"
 #include "utils/fileext.h"
 #include "utils/gthfont.h"
+#include "utils/userhome.h"
 
 #include "gothic.h"
 #include "contentcensus.h"
@@ -60,6 +65,7 @@
 #include "modeldata.h"
 #include "fontdata.h"
 #include "worldbase.h"
+#include "world/chunkresidency.h"
 #include "utils/string_frm.h"
 
 #include <dmusic.h>
@@ -80,6 +86,7 @@ struct Resources::VideoBase {
 
 namespace {
 thread_local bool preparingVideo = false;
+thread_local bool loadingTextureTail = false;
 
 std::string wayHeightFileStamp(const std::filesystem::path& file) {
   try {
@@ -120,6 +127,7 @@ std::filesystem::path worldContentDir(const std::filesystem::path& root, std::st
 
 Resources::Resources() {
   inst=this;
+  configureTextures();
   initCensus();
   indexMeshOverrides();
   // Sound buffers remain CPU data: native sound selection consumes RNG and
@@ -130,6 +138,7 @@ Resources::Resources() {
 Resources::Resources(Tempest::Device &device)
   : dev(&device), sound(std::make_unique<Tempest::SoundDevice>()) {
   inst=this;
+  configureTextures();
   initCensus();
 
   static const uint16_t index[] = {
@@ -293,6 +302,9 @@ void Resources::loadBase() {
   }
 
 Resources::~Resources() {
+  if(textureReload && textureReload->pending.valid())
+    textureReload->pending.wait();
+  textureReload.reset();
   if(videoBase) videoBase->cancelled->store(true);
   if(videoWorker.joinable()) videoWorker.join();
   if(videoBase && videoBase->selection.publication.valid()) videoBase->selection.publication.wait();
@@ -742,22 +754,51 @@ const Tempest::StorageImage& Resources::fallbackImage() {
 const Tempest::IndexBuffer<uint16_t>& Resources::cubeIbo() {
   return inst->cube;
   }
-Tempest::Texture2d* Resources::implLoadTexture(std::string_view cname, bool forceMips) {
+Tempest::Texture2d* Resources::implLoadTexture(std::string_view cname, bool forceMips, bool pinned) {
   if(isHeadless() || cname.empty())
     return nullptr;
 
-  //TODO: __cpp_lib_generic_unordered_lookup
-  std::string name = std::string(cname);
-  auto it=texCache.find(name);
-  if(it!=texCache.end())
+  std::string name(cname);
+  if(auto it=texCache.find(name); it!=texCache.end()) {
+    if(auto entry=textureRecords.find(it->second.get()); entry!=textureRecords.end() && pinned && !entry->second.pinned) {
+      auto& record=entry->second;
+      unqueueTexture(record);
+      record.pinned=true;
+      if(record.tail) {
+        LoadProbe::Vobs::Scope probe("texture_load");
+        auto full=decodeBaseTexture(record.source,record.mipmaps);
+        auto replacement=dev->texture(full.pixmap,full.useMipmap);
+        if(record.resident)
+          retireTexture(std::move(*record.texture));
+        *record.texture=std::move(replacement);
+        record.resident=true;
+        record.tail=false;
+        record.bytes=LoadProbe::textureBytes(*record.texture);
+        notifyTextureChanged(record);
+        ++texturesPromoted;
+        }
+      queueTexture(record);
+      }
     return it->second.get();
+    }
 
+  LoadProbe::Vobs::Scope probe("texture_load");
   const auto probeT = LoadProbe::now();
-  auto tex = implLoadTextureUncached(cname, forceMips);
+  TextureData data;
+  Texture2d tex;
+  try {
+    data=implDecodeTexture(cname,forceMips,!pinned && textureStreaming && loadingTextureTail ? textureSkipMips : 0);
+    if(!data.pixmap.isEmpty())
+      tex=device().texture(data.pixmap,data.useMipmap);
+    }
+  catch(const std::exception& error) {
+    Log::e("textures: unable to upload \"",cname,"\": ",error.what());
+    }
   LoadProbe::countTexture(tex,probeT);
   if(!tex.isEmpty()) {
-    std::unique_ptr<Texture2d> t{new Texture2d(std::move(tex))};
-    Texture2d* ret=t.get();
+    auto t = std::make_unique<Texture2d>(std::move(tex));
+    auto* ret=t.get();
+    trackTexture(ret,data,TextureKind::Color,pinned);
     texCache[std::move(name)] = std::move(t);
     return ret;
     }
@@ -902,15 +943,20 @@ void Resources::BaseIndex::validate(const std::vector<std::pair<std::string,uint
     throw std::runtime_error("selected base archives differ from base index: "+dir.string());
   }
 
-std::filesystem::path Resources::worldOverrideDir(std::string_view world) {
+std::filesystem::path Resources::contentDir() {
   if(const char* dir = std::getenv("OPENGOTHIC_CONTENT")) {
     if(dir[0]=='\0')
       return {};
-    return worldContentDir(dir,world);
+    return dir;
     }
-  if(const char* home = std::getenv("HOME"))
-    return worldContentDir(std::filesystem::path(home)/".local/share/gothic-ai/content",world);
+  if(const auto home=userHome(); !home.empty())
+    return home/".local/share/gothic-ai/content";
   return {};
+  }
+
+std::filesystem::path Resources::worldOverrideDir(std::string_view world) {
+  const auto root=contentDir();
+  return root.empty() ? std::filesystem::path{} : worldContentDir(root,world);
   }
 
 Resources::WayHeightInputs Resources::wayHeightInputs(std::string_view world) {
@@ -944,6 +990,14 @@ Resources::WayHeightInputs Resources::wayHeightInputs(std::string_view world) {
           if(entry.is_regular_file()) files.push_back(entry.path());
           }
       files.push_back(contentWorld.parent_path().parent_path()/"meshes/meshes.json");
+      // A layer file containing a collidable mesh is also rejected when one of its emitters
+      // loses its custom PFX. Include definitions even though emitters have no collision.
+      const auto particles=contentWorld.parent_path().parent_path()/"particles.d";
+      if(fs::is_directory(particles)) {
+        if(fs::is_symlink(particles)) return {};
+        for(const auto& entry:fs::directory_iterator(particles))
+          if(entry.is_regular_file() && entry.path().extension()==".json") files.push_back(entry.path());
+        }
       }
     // Indexed replacements may be shared by several worlds. The key must not
     // depend on which of them this process has already loaded.
@@ -980,8 +1034,8 @@ void Resources::indexMeshOverrides() {
     if(dir[0]=='\0')
       return;
     root = dir;
-    } else if(const char* home = std::getenv("HOME")) {
-    root = std::filesystem::path(home)/".local/share/gothic-ai/content";
+    } else if(const auto home=userHome(); !home.empty()) {
+    root = home/".local/share/gothic-ai/content";
     } else {
     return;
     }
@@ -1050,6 +1104,7 @@ bool Resources::meshReplacementLoaded(std::string_view name, MeshReplacementSour
   }
 
 asset::StaticMesh Resources::loadVisualMesh(std::string_view name, bool* replaced) {
+  LoadProbe::Vobs::Scope probe("mesh_read");
   std::lock_guard<std::recursive_mutex> guard(inst->sync);
   if(replaced!=nullptr)
     *replaced = false;
@@ -1102,8 +1157,8 @@ void Resources::indexMaterialMaps() {
     if(dir[0]=='\0')
       return;
     root = dir;
-    } else if(const char* home = std::getenv("HOME")) {
-    root = std::filesystem::path(home)/".local/share/gothic-ai/content";
+    } else if(const auto home=userHome(); !home.empty()) {
+    root = home/".local/share/gothic-ai/content";
     } else {
     return;
     }
@@ -1202,21 +1257,26 @@ void Resources::indexMaterialMaps() {
   Log::i("materials: ",materialMaps.size()," entries from \"",root.string(),"\"");
   }
 
-const Texture2d* Resources::implLoadMaterialTexture(const std::string& path, bool normalMap) {
+const Texture2d* Resources::implLoadMaterialTexture(const std::string& path, TextureKind kind) {
+  LoadProbe::Vobs::Scope probe("texture_request");
   if(path.empty())
     return nullptr;
-  // The normal map must be DXT5 even if the same file was already used as colour.
-  const auto key = (normalMap ? "normal:" : "color:")+path;
+  const auto key = (kind==TextureKind::Normal ? "normal:" : kind==TextureKind::Orm ? "orm:" : "color:")+path;
   if(auto it = materialTextureCache.find(key); it!=materialTextureCache.end())
     return it->second.get();
   std::unique_ptr<Texture2d> texture;
+  LoadProbe::Vobs::Scope loadProbe("texture_load");
   const auto probeT = LoadProbe::now();
   try {
-    Pixmap pm(path);
-    if(pm.format()!=TextureFormat::DXT5 && (normalMap || pm.format()!=TextureFormat::DXT1)) {
+    TextureData data=decodeBaseTexture(path,false,textureStreaming && loadingTextureTail ? textureSkipMips : 0);
+    if(data.pixmap.format()!=TextureFormat::DXT5 && (kind==TextureKind::Normal || data.pixmap.format()!=TextureFormat::DXT1)) {
       Log::e("materials: unsupported DDS format in \"",path,"\"");
       } else {
-      texture = std::make_unique<Texture2d>(device().texture(pm,pm.mipCount()>1));
+      data.useMipmap=data.pixmap.mipCount()>1;
+      data.source=path;
+      texture=std::make_unique<Texture2d>(device().texture(data.pixmap,data.useMipmap));
+      trackTexture(texture.get(),data,kind,false);
+      textureRecords.at(texture.get()).sourceKind=TextureSource::Material;
       }
     }
   catch(...) {
@@ -1230,22 +1290,31 @@ const Texture2d* Resources::implLoadMaterialTexture(const std::string& path, boo
   }
 
 Texture2d Resources::implLoadTextureUncached(std::string_view name, bool forceMips) {
-  if(isHeadless() || name.empty())
-    return Texture2d();
+  LoadProbe::Vobs::Scope probe("texture_load");
+  auto decoded=implDecodeTexture(name,forceMips);
+  try {
+    return decoded.pixmap.isEmpty() ? Texture2d() : device().texture(decoded.pixmap,decoded.useMipmap);
+    }
+  catch(const std::exception& error) {
+    Log::e("textures: unable to upload \"",name,"\": ",error.what());
+    return {};
+    }
+  }
 
-  // a sharper texture of our own (scripts/hd-textures.sh) instead of the game's: mipmaps from the file
-  // (DDS) or made here (PNG)
+Resources::TextureData Resources::implDecodeTexture(std::string_view name, bool forceMips, uint32_t skipMips) {
+  if(isHeadless() || name.empty())
+    return {};
+
   if(!hdTextures.empty() && FileExt::hasExt(name,"TGA")) {
     std::string key(name.substr(0,name.size()-4));
     for(auto& c:key)
       c = char(std::toupper(uint8_t(c)));
     if(auto it = hdTextures.find(key); it!=hdTextures.end()) {
       try {
-        Tempest::Pixmap pm(it->second);
-        auto texture = device().texture(pm,true);
+        TextureData decoded=decodeBaseTexture(it->second,true,skipMips);
         if(census)
           census->replaced(name,it->second);
-        return texture;
+        return decoded;
         }
       catch(...) {
         Log::e("textures: unable to load \"",it->second,"\"");
@@ -1259,13 +1328,11 @@ Texture2d Resources::implLoadTextureUncached(std::string_view name, bool forceMi
       c = char(std::toupper(static_cast<unsigned char>(c)));
     if(const auto it = baseTextures.files.find(key); it!=baseTextures.files.end()) {
       try {
-        const auto path = baseTextures.dir/it->second;
-        auto decoded = decodeBaseTexture(path,forceMips);
-        auto texture = device().texture(decoded.pixmap,decoded.useMipmap);
-        if(!texture.isEmpty()) {
+        auto decoded=decodeBaseTexture(baseTextures.dir/it->second,forceMips,skipMips);
+        if(!decoded.pixmap.isEmpty()) {
           if(census)
             census->replaced(name,"base/textures/"+it->second);
-          return texture;
+          return decoded;
           }
         Log::e("base: unable to load texture \"",it->second,"\"");
         }
@@ -1277,26 +1344,535 @@ Texture2d Resources::implLoadTextureUncached(std::string_view name, bool forceMi
 
   Log::e("base: unable to load texture \"",name,"\"");
   if(census) census->missing(name,"texture unavailable");
-  return Texture2d();
+  return {};
   }
 
-Resources::TextureData Resources::decodeBaseTexture(const std::filesystem::path& path, bool forceMips) {
+Resources::TextureData Resources::decodeBaseTexture(const std::filesystem::path& path, bool forceMips, uint32_t skipMips) {
+  if(skipMips!=0 && FileExt::hasExt(path.string(),"DDS")) {
+    Tempest::RFile input(path.string());
+    auto tail=Pixmap::loadDdsMipTail(input,skipMips);
+    if(!tail.isEmpty()) {
+      const auto mipmaps=forceMips || tail.mipCount()>1;
+      return {std::move(tail),mipmaps,path,true};
+      }
+    }
   if(FileExt::hasExt(path.string(),"PNG"))
-    return {Tempest::Pixmap(path.string()),true}; // device.texture(pm) generates mips for non-DXT originals.
-  TextureData decoded{Tempest::Pixmap(path.string())};
+    return {Tempest::Pixmap(path.string()),true,path}; // device.texture(pm) generates mips for non-DXT originals.
+  TextureData decoded{Tempest::Pixmap(path.string()),false,path};
   decoded.useMipmap = forceMips || decoded.pixmap.mipCount()>1;
   return decoded;
   }
 
+bool Resources::TextureRecord::wanted() const {
+  return pinned || std::any_of(demand.begin(),demand.end(),[](uint32_t count) { return count!=0; });
+  }
+
+std::tuple<uint32_t,uint64_t,uintptr_t> Resources::TextureRecord::demotionPriority() const {
+  const auto distance=distances.empty() ? UINT32_MAX : distances.begin()->first;
+  return {UINT32_MAX-distance,lastNeededFull,reinterpret_cast<uintptr_t>(texture)};
+  }
+
+void Resources::trackTexture(Texture2d* texture, const TextureData& data, TextureKind kind, bool pinned) {
+  TextureRecord record;
+  record.texture=texture;
+  record.source=data.source;
+  if(data.source.parent_path()==baseTextures.dir)
+    record.sourceKind=TextureSource::Base;
+  else if(kind!=TextureKind::Color || data.source.parent_path().filename()=="materials")
+    record.sourceKind=TextureSource::Material;
+  else if(std::any_of(hdTextures.begin(),hdTextures.end(),[&](const auto& entry) { return entry.second==data.source.string(); }))
+    record.sourceKind=TextureSource::Hd;
+
+  record.format=texture->format();
+  record.kind=kind;
+  record.mipmaps=data.useMipmap;
+  record.pinned=pinned;
+  record.tail=data.tail;
+  record.hasTail=data.tail || (FileExt::hasExt(data.source.string(),"DDS") && data.pixmap.mipCount()>1 &&
+                               data.pixmap.w()>=128 && data.pixmap.h()>=128);
+  record.bytes=LoadProbe::textureBytes(*texture);
+  auto entry=textureRecords.emplace(texture,std::move(record)).first;
+  queueTexture(entry->second);
+  }
+
+Resources::TextureLoadScope::TextureLoadScope(bool tail):previous(loadingTextureTail) {
+  loadingTextureTail=tail;
+  }
+
+Resources::TextureLoadScope::~TextureLoadScope() {
+  loadingTextureTail=previous;
+  }
+
+void Resources::updateNearTailTime() {
+  const auto now=std::chrono::steady_clock::now();
+  nearTailSeconds+=std::chrono::duration<double>(now-nearTailUpdated).count()*double(nearTailTextures.size());
+  nearTailUpdated=now;
+  }
+
+bool Resources::wantsFull(const TextureRecord& record) const {
+  return !textureStreaming || textureSkipMips==0 || !record.hasTail || record.pinned ||
+         record.distances.count(TextureAlwaysFull)!=0 ||
+         (!record.distances.empty() && record.distances.begin()->first<=2);
+  }
+
+void Resources::unqueueTexture(TextureRecord& record) {
+  updateNearTailTime();
+  nearTailTextures.erase(&record);
+  textureIdle.erase({record.lastDemand,reinterpret_cast<uintptr_t>(record.texture)});
+  textureMissing.erase(&record);
+  texturePromotions.erase(&record);
+  textureDemotions.erase({record.demoteAt,reinterpret_cast<uintptr_t>(record.texture)});
+  textureDemotionLru.erase(record.demotionPriority());
+  }
+
+void Resources::queueTexture(TextureRecord& record) {
+  if(record.resident && record.tail && !record.distances.empty() && record.distances.begin()->first<=1)
+    nearTailTextures.insert(&record);
+  if(record.wanted()) {
+    if(!record.failed) {
+      if(!record.resident)
+        textureMissing.insert(&record);
+      else if(record.tail && wantsFull(record))
+        texturePromotions.insert(&record);
+      }
+    if(!wantsFull(record) && (record.distances.empty() || record.distances.begin()->first>3)) {
+      if(record.demoteAt==std::chrono::steady_clock::time_point{})
+        record.demoteAt=std::chrono::steady_clock::now()+std::chrono::seconds(5);
+      if(record.resident && !record.tail && !record.failed) {
+        if(record.demoteAt<=std::chrono::steady_clock::now())
+          textureDemotionLru.emplace(record.demotionPriority(),&record);
+        else
+          textureDemotions.emplace(std::make_pair(record.demoteAt,reinterpret_cast<uintptr_t>(record.texture)),&record);
+        }
+      } else {
+      record.demoteAt={};
+      }
+    } else if(record.resident) {
+    record.demoteAt={};
+    textureIdle.emplace(std::make_pair(record.lastDemand,reinterpret_cast<uintptr_t>(record.texture)),&record);
+    }
+  }
+
+void Resources::configureTextures(std::string_view budget, std::string_view skipMips, std::string_view target) {
+  if(inst==nullptr)
+    return;
+  const auto* enabled=std::getenv("OPENGOTHIC_TEXTURE_STREAMING");
+  const auto* budgetEnv=std::getenv("OPENGOTHIC_TEXTURE_BUDGET_MB");
+  const auto* targetEnv=std::getenv("OPENGOTHIC_TEXTURE_TARGET_MB");
+  const auto* mipsEnv=std::getenv("OPENGOTHIC_TEXTURE_MIPS");
+  const auto* skipEnv=std::getenv("OPENGOTHIC_TEXTURE_FAR_SKIP_MIPS");
+  const auto integer=[](std::string_view value, int64_t fallback, const char* field, int64_t maximum) -> int64_t {
+    if(value.empty())
+      return fallback;
+    std::string text(value);
+    char* end=nullptr;
+    const auto result=std::strtoll(text.c_str(),&end,10);
+    if(end==text.c_str() || *end!='\0' || result<0 || result>maximum)
+      throw std::runtime_error(std::string(field)+" must be a nonnegative integer");
+    return result;
+    };
+  const auto megabytes=integer(budgetEnv!=nullptr ? std::string_view(budgetEnv) : budget,256,"texture_budget_mb",
+                              std::numeric_limits<int64_t>::max()/1048576);
+  const auto skip=integer(skipEnv!=nullptr ? std::string_view(skipEnv) : skipMips,2,"texture_far_skip_mips",UINT32_MAX);
+  const auto targetMegabytes=integer(targetEnv!=nullptr ? std::string_view(targetEnv) : target,192,"texture_target_mb",
+                                    std::numeric_limits<int64_t>::max()/1048576);
+  std::lock_guard<std::recursive_mutex> guard(inst->sync);
+  inst->textureBudget=uint64_t(megabytes)*1048576;
+  inst->textureTarget=uint64_t(targetMegabytes)*1048576;
+  inst->textureStreaming=enabled==nullptr || std::strcmp(enabled,"0")!=0;
+  inst->textureSkipMips=inst->textureStreaming && (mipsEnv==nullptr || std::strcmp(mipsEnv,"0")!=0) ? uint32_t(skip) : 0;
+  inst->textureOverBudget=false;
+  for(auto& entry:inst->textureRecords) {
+    inst->unqueueTexture(entry.second);
+    inst->queueTexture(entry.second);
+    }
+  }
+
+void Resources::finishTextureLoading() {
+  if(inst==nullptr || inst->dev==nullptr)
+    return;
+  std::lock_guard<std::recursive_mutex> guard(inst->sync);
+  std::array<TextureRecord*,2> records{};
+  std::array<std::future<Texture2d>,2> uploads;
+  const auto publish=[&](size_t slot) {
+    if(!uploads[slot].valid())
+      return;
+    auto texture=uploads[slot].get();
+    auto& record=*records[slot];
+    inst->unqueueTexture(record);
+    if(record.resident)
+      inst->retireTexture(std::move(*record.texture));
+    *record.texture=std::move(texture);
+    record.resident=true;
+    if(record.tail)
+      ++inst->texturesPromoted;
+    record.tail=false;
+    record.bytes=LoadProbe::textureBytes(*record.texture);
+    inst->notifyTextureChanged(record);
+    inst->queueTexture(record);
+    };
+  size_t slot=0;
+  for(auto& entry:inst->textureRecords) {
+    auto& record=entry.second;
+    if(!record.wanted() || !inst->wantsFull(record) || (record.resident && !record.tail))
+      continue;
+    publish(slot);
+    records[slot]=&record;
+    uploads[slot]=std::async(std::launch::async,[path=record.source,mipmaps=record.mipmaps,device=inst->dev] {
+      auto data=decodeBaseTexture(path,mipmaps);
+      return device->texture(data.pixmap,data.useMipmap);
+      });
+    slot=(slot+1)%uploads.size();
+    }
+  publish(slot);
+  publish((slot+1)%uploads.size());
+  }
+
+Resources::TextureStats Resources::textureStats() {
+  if(inst==nullptr)
+    return {};
+  std::lock_guard<std::recursive_mutex> guard(inst->sync);
+  inst->updateNearTailTime();
+  TextureStats stats;
+  stats.promoted=inst->texturesPromoted;
+  stats.demoted=inst->texturesDemoted;
+  stats.promotionQueue=inst->texturePromotions.size();
+  stats.nearTailCount=inst->nearTailTextures.size();
+  stats.nearTailSeconds=inst->nearTailSeconds;
+  for(const auto& queue:inst->recycled)
+    stats.retiredBytes+=queue.textureBytes;
+  stats.liveBytes=Texture2d::liveBytes();
+  stats.count=Texture2d::liveCount();
+  stats.peakBytes=Texture2d::peakBytes();
+  stats.evicted=inst->texturesEvicted;
+  stats.reloaded=inst->texturesReloaded;
+  stats.categoryBytes[size_t(TextureCategory::Other)]=stats.liveBytes;
+  stats.categoryCount[size_t(TextureCategory::Other)]=stats.count;
+  for(const auto& entry:inst->textureRecords) {
+    const auto& record=entry.second;
+    if(!record.resident)
+      continue;
+    const auto bytes=record.bytes;
+    (record.tail ? stats.tailBytes : stats.fullBytes)+=bytes;
+    stats.sourceBytes[size_t(record.sourceKind)]+=bytes;
+    if(!record.tail) {
+      stats.sourceFullBytes[size_t(record.sourceKind)]+=bytes;
+      if(record.hasTail && inst->textureStreaming && inst->textureSkipMips!=0 &&
+         !record.pinned && record.distances.count(TextureAlwaysFull)==0 &&
+         !record.distances.empty() && record.distances.begin()->first<=2)
+        stats.fullRing2Bytes+=bytes;
+      }
+    if(record.category==TextureCategory::Other)
+      continue;
+    stats.categoryBytes[size_t(record.category)]+=bytes;
+    stats.categoryCount[size_t(record.category)]+=1;
+    stats.categoryBytes[size_t(TextureCategory::Other)]-=bytes;
+    stats.categoryCount[size_t(TextureCategory::Other)]-=1;
+    }
+  uint64_t tracked=0, trackedFull=0;
+  for(const auto bytes:stats.sourceBytes)
+    tracked+=bytes;
+  for(const auto bytes:stats.sourceFullBytes)
+    trackedFull+=bytes;
+  stats.fullBytes=stats.liveBytes-stats.tailBytes;
+  stats.sourceBytes[size_t(TextureSource::Other)]+=stats.liveBytes-tracked;
+  stats.sourceFullBytes[size_t(TextureSource::Other)]+=stats.fullBytes-trackedFull;
+  return stats;
+  }
+
+uint64_t Resources::textureGeneration() {
+  if(inst==nullptr)
+    return 0;
+  std::lock_guard<std::recursive_mutex> guard(inst->sync);
+  return inst->textureEpoch;
+  }
+
+std::vector<const Texture2d*> Resources::textureChanges(uint64_t since) {
+  if(inst==nullptr)
+    return {};
+  std::lock_guard<std::recursive_mutex> guard(inst->sync);
+  std::vector<const Texture2d*> changed;
+  const auto first=inst->changedTextures.upper_bound({since,std::numeric_limits<uintptr_t>::max()});
+  for(auto it=first;it!=inst->changedTextures.end();++it)
+    changed.push_back(it->second);
+  return changed;
+  }
+
+bool Resources::texturesReady() {
+  if(inst==nullptr || inst->dev==nullptr)
+    return true;
+  std::lock_guard<std::recursive_mutex> guard(inst->sync);
+  return inst->textureMissing.empty() && inst->texturePromotions.empty();
+  }
+
+TextureFormat Resources::textureFormat(const Texture2d* texture) {
+  if(texture==nullptr)
+    return TextureFormat::Undefined;
+  if(inst==nullptr)
+    return texture->format();
+  std::lock_guard<std::recursive_mutex> guard(inst->sync);
+  if(auto record=inst->textureRecords.find(texture); record!=inst->textureRecords.end())
+    return record->second.format;
+  return texture->format();
+  }
+
+void Resources::textureDemand(const Material& material, TextureCategory category, bool add, uint32_t distance) {
+  LoadProbe::Vobs::Scope probe("texture_demand");
+  if(inst==nullptr || inst->dev==nullptr)
+    return;
+  std::lock_guard<std::recursive_mutex> guard(inst->sync);
+  std::vector<const Texture2d*> textures=material.frames;
+  textures.insert(textures.end(),{material.tex,material.normal,material.orm});
+  std::sort(textures.begin(),textures.end(),std::less<const Texture2d*>());
+  textures.erase(std::unique(textures.begin(),textures.end()),textures.end());
+  bool unmatched=false;
+  for(const auto* texture:textures) {
+    auto entry=inst->textureRecords.find(texture);
+    if(entry==inst->textureRecords.end())
+      continue;
+    auto& record=entry->second;
+    auto& count=record.demand[size_t(category)];
+    if(!add && count==0) {
+      if(!unmatched) {
+        Log::e("textures: demand released without an owner");
+        unmatched=true;
+        }
+      assert(count!=0 && "texture demand released without an owner");
+      continue;
+      }
+    const bool neededFull=record.wanted() && inst->wantsFull(record);
+    inst->unqueueTexture(record);
+    if(add) {
+      ++count;
+      ++record.distances[distance];
+      record.lastDemand=++inst->textureClock;
+      } else {
+      --count;
+      const auto found=record.distances.find(distance);
+      assert(found!=record.distances.end() && found->second!=0);
+      if(found!=record.distances.end() && --found->second==0)
+        record.distances.erase(found);
+      record.lastDemand=++inst->textureClock;
+      }
+    if(neededFull || (record.wanted() && inst->wantsFull(record)))
+      record.lastNeededFull=record.lastDemand;
+    for(size_t i=0;i<record.demand.size();++i)
+      if(record.demand[i]!=0) {
+        record.category=TextureCategory(i);
+        break;
+        }
+    inst->queueTexture(record);
+    }
+  }
+
+void Resources::retireTexture(Texture2d&& texture) {
+  if(texture.isEmpty())
+    return;
+  auto& queue=recycled[recycledId];
+  queue.textureBytes+=LoadProbe::textureBytes(texture);
+  texture.markRetired();
+  queue.textures.emplace_back(std::move(texture));
+  }
+
+void Resources::notifyTextureChanged(TextureRecord& record) {
+  const auto identity=reinterpret_cast<uintptr_t>(record.texture);
+  changedTextures.erase({record.changedGeneration,identity});
+  record.changedGeneration=textureEpoch+1;
+  changedTextures.emplace(std::make_pair(record.changedGeneration,identity),record.texture);
+  texturePayloadChanged=true;
+  }
+
+void Resources::publishTexture() {
+  const auto reload=textureReload;
+  if(!reload || reload->ready.isEmpty())
+    return;
+  auto& record=textureRecords.at(reload->identity);
+  unqueueTexture(record);
+  const bool full=wantsFull(record);
+  const bool hold=!record.distances.empty() && record.distances.begin()->first<=3;
+  const bool delayElapsed=record.demoteAt!=std::chrono::steady_clock::time_point{} &&
+                          record.demoteAt<=std::chrono::steady_clock::now();
+  // The unpublished replacement is already included in the live counter.
+  const auto liveWithoutReplacement=Texture2d::liveBytes()-LoadProbe::textureBytes(reload->ready);
+  const bool pressure=liveWithoutReplacement>textureTarget;
+  if(record.wanted() && (!reload->tail || (!full && (!record.resident || (!hold && delayElapsed && pressure))))) {
+    const bool wasResident=record.resident;
+    const bool wasTail=record.tail;
+    if(wasResident)
+      retireTexture(std::move(*record.texture));
+    *record.texture=std::move(reload->ready);
+    record.bytes=LoadProbe::textureBytes(*record.texture);
+    record.resident=true;
+    record.tail=reload->tail;
+    notifyTextureChanged(record);
+    FrameProfile::textureEvent(FrameProfile::TextureActivity::Publish);
+    if(!wasResident)
+      ++texturesReloaded;
+    else if(wasTail && !record.tail)
+      ++texturesPromoted;
+    else if(!wasTail && record.tail)
+      ++texturesDemoted;
+    }
+  queueTexture(record);
+  textureReload.reset();
+  }
+
+void Resources::updateTextures(ChunkResidency* residency) {
+  FrameProfile::Scope timing(FrameProfile::Zone::TextureUpdate);
+  if(inst==nullptr || inst->dev==nullptr)
+    return;
+  std::lock_guard<std::recursive_mutex> guard(inst->sync);
+  auto& resources=*inst;
+  resources.updateNearTailTime();
+  auto liveBytes=Texture2d::liveBytes();
+  const auto finish=[&] {
+    if(resources.texturePayloadChanged) {
+      ++resources.textureEpoch;
+      resources.texturePayloadChanged=false;
+      }
+    if(liveBytes<=resources.textureBudget) {
+      resources.textureOverBudget=false;
+      } else if(resources.textureStreaming && resources.textureIdle.empty() && !resources.textureOverBudget) {
+      Log::i("textures: budget exceeded with no unrequested resident payloads (",liveBytes," > ",resources.textureBudget," bytes)");
+      resources.textureOverBudget=true;
+      }
+    };
+  const auto deadline=ChunkResidency::Clock::now()+ChunkResidency::WorkBudget;
+
+  if(resources.textureReload) {
+    const auto reload=resources.textureReload;
+    try {
+      if(reload->pending.valid() && reload->pending.wait_for(std::chrono::seconds(0))==std::future_status::ready) {
+        auto payload=reload->pending.get();
+        if(reload->tail && !payload.tail)
+          resources.textureRecords.at(reload->identity).hasTail=false;
+        reload->tail=payload.tail;
+        reload->ready=std::move(payload.texture);
+        }
+      if(!reload->ready.isEmpty() && reload->queued.expired() && reload->ready.uploadReady()) {
+        FrameProfile::textureEvent(FrameProfile::TextureActivity::Ready);
+        if(residency==nullptr) {
+          resources.publishTexture();
+          } else {
+          auto ticket=std::make_shared<int>(0);
+          reload->queued=ticket;
+          residency->enqueue([reload,ticket](ChunkResidency::Clock::time_point deadline) {
+            if(ChunkResidency::Clock::now()>=deadline)
+              return false;
+            if(Resources::inst!=nullptr) {
+              std::lock_guard<std::recursive_mutex> guard(Resources::inst->sync);
+              if(Resources::inst->textureReload==reload)
+                Resources::inst->publishTexture();
+              }
+            return true;
+            });
+          }
+        }
+      }
+    catch(const std::exception& error) {
+      auto& record=resources.textureRecords.at(reload->identity);
+      Log::e("textures: unable to reload \"",record.source.string(),"\": ",error.what());
+      resources.unqueueTexture(record);
+      record.failed=true;
+      resources.queueTexture(record);
+      resources.textureReload.reset();
+      }
+    }
+
+  if(!resources.textureReload) {
+    const auto now=ChunkResidency::Clock::now();
+    while(!resources.textureDemotions.empty() && resources.textureDemotions.begin()->first.first<=now) {
+      auto* record=resources.textureDemotions.begin()->second;
+      resources.textureDemotionLru.emplace(record->demotionPriority(),record);
+      resources.textureDemotions.erase(resources.textureDemotions.begin());
+      }
+    TextureRecord* selected=nullptr;
+    const auto consider=[&](TextureRecord* candidate) {
+      const auto priority=[](const TextureRecord& record) {
+        return record.pinned || record.distances.count(TextureAlwaysFull)!=0 ? uint32_t(0) :
+               record.distances.empty() ? UINT32_MAX : record.distances.begin()->first;
+        };
+      if(selected==nullptr || priority(*candidate)<priority(*selected))
+        selected=candidate;
+      };
+    for(auto* record:resources.textureMissing)
+      consider(record);
+    for(auto* record:resources.texturePromotions)
+      consider(record);
+    bool tail=false;
+    if(selected!=nullptr) {
+      tail=!resources.wantsFull(*selected);
+      } else if(Texture2d::liveBytes()>resources.textureTarget && !resources.textureDemotionLru.empty()) {
+      selected=resources.textureDemotionLru.begin()->second;
+      tail=true;
+      }
+    if(selected!=nullptr) {
+      auto reload=std::make_shared<TextureReload>();
+      reload->identity=selected->texture;
+      reload->tail=tail;
+      const auto path=selected->source;
+      const auto mipmaps=selected->mipmaps;
+      const auto skip=tail ? resources.textureSkipMips : 0;
+      auto* device=resources.dev;
+      reload->pending=std::async(std::launch::async,[path,mipmaps,skip,device] {
+        const auto started=LoadProbe::now();
+        FrameProfile::TextureWork reading(FrameProfile::TextureActivity::Read);
+        auto data=Resources::decodeBaseTexture(path,mipmaps,skip);
+        reading.finish();
+        FrameProfile::TextureWork uploading(FrameProfile::TextureActivity::Upload);
+        auto texture=device->textureAsync(data.pixmap,data.useMipmap);
+        uploading.finish();
+        if(texture.isEmpty())
+          throw std::runtime_error("texture reload returned an empty image");
+        LoadProbe::countTexture(texture,started);
+        FrameProfile::textureEvent(FrameProfile::TextureActivity::Complete);
+        return TextureReload::Payload{std::move(texture),data.tail};
+        });
+      resources.textureReload=std::move(reload);
+      }
+    }
+
+  liveBytes=Texture2d::liveBytes();
+  size_t evictions=0;
+  while(resources.textureStreaming && liveBytes>resources.textureBudget && !resources.textureIdle.empty() &&
+        evictions<16 && ChunkResidency::Clock::now()<deadline) {
+    auto* record=resources.textureIdle.begin()->second;
+    assert(record->resident && !record->wanted());
+    auto& neutral=resources.texturePlaceholders[size_t(record->kind)];
+    if(neutral.isEmpty()) {
+      Pixmap placeholder(1,1,TextureFormat::RGBA8);
+      const std::array<uint8_t,4> color=record->kind==TextureKind::Normal ? std::array<uint8_t,4>{128,128,255,128} :
+                                        record->kind==TextureKind::Orm ? std::array<uint8_t,4>{255,255,0,255} :
+                                                                       std::array<uint8_t,4>{255,255,255,255};
+      std::memcpy(placeholder.data(),color.data(),color.size());
+      neutral=resources.dev->texture(placeholder,false);
+      }
+    auto replacement=neutral.shared();
+    resources.unqueueTexture(*record);
+    resources.retireTexture(std::move(*record->texture));
+    *record->texture=std::move(replacement);
+    record->resident=false;
+    resources.notifyTextureChanged(*record);
+    ++resources.texturesEvicted;
+    ++evictions;
+    liveBytes=Texture2d::liveBytes();
+    }
+  finish();
+  }
+
 ProtoMesh* Resources::implLoadMesh(std::string_view name) {
+  LoadProbe::Vobs::Scope probe("mesh_hit");
   if(name.size()==0)
     return nullptr;
 
   auto cname = std::string(name);
   auto it    = aniMeshCache.find(cname);
+  if(LoadProbe::enabled())
+    LoadProbe::Vobs::mesh(cname,it!=aniMeshCache.end());
   if(it!=aniMeshCache.end())
     return it->second.get();
 
+  probe.rename("mesh_miss");
   auto  t   = implLoadMeshMain(cname);
   auto  ret = t.get();
   aniMeshCache[cname] = std::move(t);
@@ -1307,6 +1883,7 @@ ProtoMesh* Resources::implLoadMesh(std::string_view name) {
 
 bool Resources::replaceModelMesh(asset::ModelMesh& model, std::unique_ptr<Skeleton>& skeleton,
                                  std::string_view visual, std::string_view meshFile) {
+  LoadProbe::Vobs::Scope probe("mesh_read");
   auto key = std::string(visual.substr(0,visual.find_last_of('.')));
   for(auto& c:key)
     c = char(std::toupper(uint8_t(c)));
@@ -1832,15 +2409,18 @@ GthFont &Resources::implLoadFont(std::string_view name, FontType type, const flo
   }
 
 Texture2d Resources::loadTextureUncached(std::string_view name, bool forceMips) {
+  LoadProbe::Vobs::Scope probe("texture_request");
   return inst->implLoadTextureUncached(name, forceMips);
   }
 
-const Texture2d* Resources::loadTexture(std::string_view name, bool forceMips) {
+const Texture2d* Resources::loadTexture(std::string_view name, bool forceMips, bool pinned) {
+  LoadProbe::Vobs::Scope probe("texture_request");
   std::lock_guard<std::recursive_mutex> g(inst->sync);
-  return inst->implLoadTexture(name,forceMips);
+  return inst->implLoadTexture(name,forceMips,pinned);
   }
 
 const Texture2d* Resources::loadTexture(Tempest::Color color) {
+  LoadProbe::Vobs::Scope probe("texture_request");
   if(isHeadless() || color==Color())
     return nullptr;
   std::lock_guard<std::recursive_mutex> g(inst->sync);
@@ -1849,6 +2429,7 @@ const Texture2d* Resources::loadTexture(Tempest::Color color) {
   if(it!=cache.end())
     return it->second.get();
 
+  LoadProbe::Vobs::Scope loadProbe("texture_load");
   uint8_t iv[4] = { uint8_t(255.f*color.r()), uint8_t(255.f*color.g()), uint8_t(255.f*color.b()), uint8_t(255.f*color.a()) };
   Pixmap p2(1,1,TextureFormat::RGBA8);
   std::memcpy(p2.data(),iv,4);
@@ -1886,7 +2467,7 @@ bool Resources::hasTexture(std::string_view name) const {
   return hdTextures.count(key)!=0 || baseTextures.files.count(key)!=0;
   }
 
-std::vector<const Texture2d*> Resources::loadTextureAnim(std::string_view name) {
+std::vector<const Texture2d*> Resources::loadTextureAnim(std::string_view name, bool pinned) {
   std::vector<const Texture2d*> ret;
   if(name.find("_A0")==std::string::npos &&
      name.find("_a0")==std::string::npos)
@@ -1908,10 +2489,10 @@ std::vector<const Texture2d*> Resources::loadTextureAnim(std::string_view name) 
       if(at>sizeof(buf))
         return ret;
       }
-   auto t = inst->hasTexture(buf) ? loadTexture(buf) : nullptr;
+   auto t = inst->hasTexture(buf) ? loadTexture(buf,false,pinned) : nullptr;
     if(t==nullptr) {
       string_frm buf2(buf,".TGA");
-      t = inst->hasTexture(buf2) ? loadTexture(buf2) : nullptr;
+      t = inst->hasTexture(buf2) ? loadTexture(buf2,false,pinned) : nullptr;
       if(t==nullptr)
         return ret;
       }
@@ -1920,8 +2501,10 @@ std::vector<const Texture2d*> Resources::loadTextureAnim(std::string_view name) 
   }
 
 Texture2d Resources::loadTexturePm(const Pixmap &pm) {
+  LoadProbe::Vobs::Scope probe("texture_request");
   if(isHeadless())
     return Texture2d();
+  LoadProbe::Vobs::Scope loadProbe("texture_load");
   if(pm.isEmpty()) {
     Pixmap p2(1,1,TextureFormat::R8);
     std::memset(p2.data(),0,1);
@@ -1948,9 +2531,9 @@ Resources::MaterialMaps Resources::loadMaterialMaps(std::string_view name) {
     return {};
   const auto& files = it->second;
   MaterialMaps ret;
-  ret.albedo = inst->implLoadMaterialTexture(files.albedo,false);
-  ret.normal = inst->implLoadMaterialTexture(files.normal,true);
-  ret.orm    = inst->implLoadMaterialTexture(files.orm,false);
+  ret.albedo = inst->implLoadMaterialTexture(files.albedo,TextureKind::Color);
+  ret.normal = inst->implLoadMaterialTexture(files.normal,TextureKind::Normal);
+  ret.orm    = inst->implLoadMaterialTexture(files.orm,TextureKind::Orm);
   ret.scale  = files.scale;
   ret.antitileCell = files.antitileCell;
   ret.turbidity = files.turbidity;
@@ -1963,7 +2546,7 @@ Resources::MaterialMaps Resources::loadMaterialMaps(std::string_view name) {
 const Texture2d* Resources::loadMaterialAlbedo(std::string_view name) {
   const auto maps = loadMaterialMaps(name);
   if(!maps.hasAlbedo)
-    return loadTexture(name);
+    return loadTexture(name,false,false);
   // A broken replacement must not silently open the original texture.
   if(maps.albedo==nullptr)
     return &fallbackTexture();
@@ -2034,6 +2617,7 @@ std::filesystem::path Resources::baseModelFile(std::string_view name) {
   }
 
 bool Resources::loadHierarchyData(std::string_view name, asset::ModelHierarchy& out) {
+  LoadProbe::Vobs::Scope probe("mesh_read");
   const auto file = baseModelFile(name);
   if(file.empty())
     return false;
@@ -2049,6 +2633,7 @@ bool Resources::loadHierarchyData(std::string_view name, asset::ModelHierarchy& 
   }
 
 bool Resources::loadModelMeshData(std::string_view name, asset::ModelMesh& out) {
+  LoadProbe::Vobs::Scope probe("mesh_read");
   const auto file = baseModelFile(name);
   if(file.empty())
     return false;
@@ -2064,6 +2649,7 @@ bool Resources::loadModelMeshData(std::string_view name, asset::ModelMesh& out) 
   }
 
 bool Resources::loadModelData(std::string_view name, asset::Model& out) {
+  LoadProbe::Vobs::Scope probe("mesh_read");
   const auto file = baseModelFile(name);
   if(file.empty())
     return false;
@@ -2079,6 +2665,7 @@ bool Resources::loadModelData(std::string_view name, asset::Model& out) {
   }
 
 bool Resources::loadModelScriptData(std::string_view name, asset::ModelScript& out) {
+  LoadProbe::Vobs::Scope probe("mesh_read");
   const auto file = baseModelFile(name);
   if(file.empty())
     return false;
@@ -2094,6 +2681,7 @@ bool Resources::loadModelScriptData(std::string_view name, asset::ModelScript& o
   }
 
 bool Resources::loadAnimationData(std::string_view name, asset::ModelAnimation& out) {
+  LoadProbe::Vobs::Scope probe("mesh_read");
   const auto file = baseModelFile(name);
   if(file.empty())
     return false;
@@ -2109,6 +2697,7 @@ bool Resources::loadAnimationData(std::string_view name, asset::ModelAnimation& 
   }
 
 asset::MorphMesh Resources::loadMorphData(std::string_view name) {
+  LoadProbe::Vobs::Scope probe("mesh_read");
   const auto file = baseModelFile(name);
   if(file.empty()) {
     if(inst->census) inst->census->missing(name,"missing from base index");
@@ -2160,6 +2749,9 @@ void Resources::resetRecycled(uint8_t fId) {
   inst->recycled[fId].zb.clear();
   inst->recycled[fId].arr.clear();
   inst->recycled[fId].rtas.clear();
+  inst->recycled[fId].lifetime.clear();
+  inst->recycled[fId].textures.clear();
+  inst->recycled[fId].textureBytes=0;
   }
 
 void Resources::recycle(Tempest::DescriptorArray &&arr) {
@@ -2202,6 +2794,13 @@ void Resources::recycle(Tempest::AccelerationStructure&& rtas) {
     return;
   std::lock_guard<std::recursive_mutex> g(inst->sync);
   inst->recycled[inst->recycledId].rtas.emplace_back(std::move(rtas));
+  }
+
+void Resources::recycle(std::shared_ptr<void>&& lifetime) {
+  if(!lifetime)
+    return;
+  std::lock_guard<std::recursive_mutex> g(inst->sync);
+  inst->recycled[inst->recycledId].lifetime.emplace_back(std::move(lifetime));
   }
 
 const Resources::VobTree* Resources::implLoadVobBundle(std::string_view filename) {

@@ -1,4 +1,5 @@
 #include "physicvbo.h"
+#include "loadprobe.h"
 
 #include "graphics/mesh/submesh/packedmesh.h"
 #include "collisionworld.h"
@@ -475,6 +476,7 @@ JPH::ShapeRefC PhysicVbo::shape(bool splitLargeTriangles) const {
   if(cached!=nullptr || isEmpty())
     return cached;
 
+  LoadProbe::Vobs::Scope probe("mesh_shape_cook");
   Physics::initialize();
   prepareTriangleData();
 

@@ -1,5 +1,5 @@
 # Moods of AI lines through the bridge: run with an AI server (GOTHIC_AI_URL) whose scenario makes Xardas
-# answer (m1 with the fake LLM: "[friendly] ... [angry] ..."). The camera at his face, nothing else.
+# answer (m1 with given lines on off: "[friendly] ... [angry] ..."). The camera at his face, nothing else.
 cheat god
 view clean 30
 watch nearest

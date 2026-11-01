@@ -46,8 +46,10 @@ export const pages = (lines: Word[][]) => {
   return out;
 };
 
-// the voice's words at the lower middle, the word being said in the accent colour
-export const Captions: React.FC<{lines: Word[][]; brand: boolean}> = ({lines, brand}) => {
+// the voice's words at the lower middle, the word being said in the accent colour. In a tall split (`seams`: its
+// times) they sit just under the seam, on the top of the bottom half (mostly sky), where the lower middle would
+// cover the bottom half's subject; the seam itself stays free for a comparison text
+export const Captions: React.FC<{lines: Word[][]; brand: boolean; seams?: [number, number][]}> = ({lines, brand, seams = []}) => {
   const {fps, width, height} = useVideoConfig();
   const wide = width > height;
   const safe = wide ? WIDE_SAFE : SAFE;
@@ -61,6 +63,7 @@ export const Captions: React.FC<{lines: Word[][]; brand: boolean}> = ({lines, br
   if (i < 0) {
     return null;
   }
+  const seam = !wide && seams.some(([a, b]) => t >= a && t < b);
   const fontFamily = brand ? FONT.title : FONT.body;
   const fontWeight = brand ? 700 : 900;
   // Metadata waits for the bundled fonts before measuring. Fit whole pages into at most two lines.
@@ -75,7 +78,7 @@ export const Captions: React.FC<{lines: Word[][]; brand: boolean}> = ({lines, br
       <div
         style={{
           position: 'absolute',
-          ...(wide ? {bottom: safe.bottom} : {top: 1170}),
+          ...(wide ? {bottom: safe.bottom} : seam ? {top: height / 2 + 30} : {top: 1170}),
           left: safe.left,
           width: width - safe.left - safe.right,
           textAlign: 'center',

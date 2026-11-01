@@ -14,6 +14,7 @@ from gothic_ai.director import Director, Pacing
 from gothic_ai.gamedata.storygraph import StoryGraph, load
 from gothic_ai.llm import ToolCall
 from gothic_ai.llm.fake import FakeBackend, FakeStep
+from gothic_ai.llm.off import OffBackend
 from gothic_ai.memory import MemoryStore
 from gothic_ai.story import StoryPatches
 from gothic_ai.trust import Trust
@@ -528,6 +529,20 @@ async def test_meeting_rule_requires_validated_amends_even_if_model_declines(gra
         assert "Правило встречи уже решило" in llm.calls[0][1][0].content
         talk = next(op["node"] for op in _ops(fake) if op.get("node", {}).get("id") == storylet.talk)
         assert talk["important"] and len(talk["lines"]) >= 2
+    finally:
+        await link_cm.__aexit__(None, None, None)
+
+
+async def test_meeting_demand_without_model_uses_the_rule_and_no_request(graph):
+    fake = FakeGame(branch="A")
+    llm = OffBackend()
+    link_cm, amends, chronicle = await _amends(fake, llm, graph, MemoryStore(":memory:"), crimes=True)
+    try:
+        _crime(chronicle)
+        _crime_proof(chronicle, "seen")
+        storylet = await amends.demand(LOBART, CRIME)
+        assert storylet is not None and 1 <= storylet.gold <= 50
+        assert llm.attempts == [] and llm.used == []
     finally:
         await link_cm.__aexit__(None, None, None)
 

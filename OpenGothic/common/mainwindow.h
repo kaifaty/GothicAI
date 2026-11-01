@@ -69,7 +69,10 @@ class MainWindow : public Tempest::Window {
     void paintFocus     (Tempest::Painter& p, Tempest::Rect rect);
     void paintCrosshair (Tempest::Painter& p, const Tempest::Matrix4x4& vp);
 
-    void drawBar(Tempest::Painter& p, const Tempest::Texture2d *bar, int x, int y, float v, Tempest::AlignFlag flg);
+    void drawBar(Tempest::Painter& p, const Tempest::Texture2d *bar, int x, int y, float v, Tempest::AlignFlag flg,
+                 float height = 1.f, const Tempest::Color& tint = Tempest::Color(1,1,1,1), float mark = -1.f);
+    int  barHeight() const;
+    void drawStamina(Tempest::Painter& p, const Npc& pl, bool aboveHealth);
     void drawMsg(Tempest::Painter& p);
     void drawChunks(Tempest::Painter& p, const World& world, const Camera& camera);
     void drawProgress(Tempest::Painter& p, int x, int y, int w, int h, float v);

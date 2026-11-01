@@ -59,12 +59,12 @@ float dot(const float* left, const float* right, size_t size) {
   }
 }
 
-SmallNet::TensorFile::TensorFile(const std::string& path) {
+SmallNet::TensorFile::TensorFile(const std::filesystem::path& path) {
   static_assert(sizeof(float)==4 && std::numeric_limits<float>::is_iec559,
                 "small nets require IEEE-754 float32");
   std::ifstream stream(path,std::ios::binary);
   if(!stream)
-    fail("cannot open weight file: "+path);
+    fail("cannot open weight file: "+path.string());
   std::string line;
   char byte = 0;
   bool newline = false;
@@ -87,7 +87,7 @@ SmallNet::TensorFile::TensorFile(const std::string& path) {
 
   const std::vector<unsigned char> payload{std::istreambuf_iterator<char>(stream),std::istreambuf_iterator<char>()};
   if(stream.bad())
-    fail("cannot read weight payload: "+path);
+    fail("cannot read weight payload: "+path.string());
   const auto& dataBytes = field(header,"data_nbytes");
   if(!dataBytes.IsUint64() || dataBytes.GetUint64()!=payload.size())
     fail("data_nbytes differs from payload length (truncated or extra data)");

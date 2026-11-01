@@ -21,22 +21,38 @@ or other Mac-only game paths require local execution (`auto` falls back, `ryzen`
 For performance comparisons (before/after or FPS), run both takes on the same machine:
 pin `BENCH_HOST=ryzen` or `BENCH_HOST=local`. `host.txt` and the report header identify the host.
 
-`streaming-flythrough` is the baseline for runtime chunks before unloading: a god-mode hero
+`streaming-flythrough` measures runtime GPU chunk streaming: a god-mode hero
 follows the existing WayMatrix path from `NW_CITY_MERCHANT_TRADE_04` through
 `NW_CITY_HABOUR_BENCH_01` to `NW_FOREST_PATH_16`. `route <speed_cm_s> <wp1> <wp2> ...`
 blocks command execution until the connected path is complete. Each frame places the hero at
 the interpolated path position, including waypoint height, using the normal simulation step.
 The two passes use 500 cm/s (run) and 2000 cm/s (fly), with ten seconds to settle before each.
-It records no video. The engine keeps the entire world loaded.
+It records no video. Each pass waits for all desired Near/Far chunks before measuring;
+Outside chunks can be released along the route.
 
 `scripts/bench.sh streaming-flythrough` starts a fresh `NEWWORLD`, selects `quiet` on Ryzen,
 and enables frame profiling only for this bench's build. Output `frameprofile.csv` contains
-submitted frame intervals; `streaming.csv` contains residency update/work times, counts and
+submitted frame intervals; `streaming.csv` contains residency update/work times, per-chunk
+publication times (semicolon-separated in a frame), counts and
 Near/Far transitions. `report.md` / `report.json` report each pass's frame p50/p99/max,
-Near/Far transitions (entering or leaving that state), peak Near count, and update/work p99.
+Near/Far transitions (entering or leaving that state), peak Near count, update/work p99,
+publication p99/max (one sample per chunk), published/released counts and GPU allocation
+at the end of each pass. An empty route publication sample is `n/a`, not zero. A separate
+warmup table measures Far publications before each pass: count, per-chunk p99/max,
+maximum publications in one frame and maximum queue time. These samples begin before
+the ten-second wait and end at `streaming_ready`; they do not enter route frame or
+publication/release counts. Local execution requires `OPENGOTHIC_ENABLE_FRAME_PROFILE=ON` as
+well as `OPENGOTHIC_ENABLE_APP_CADENCE=ON`; an unsupported build exits before opening a game.
 The run fails if either route does not finish or either pass lacks metrics. Use the same
 host, resolution and content overrides for later comparisons; `OPENGOTHIC_STREAMING=0`
-disables the manager and deliberately cannot produce this residency baseline.
+disables the manager and deliberately cannot produce this residency measurement.
+
+`BENCH_HOST=local OPENGOTHIC_STREAMING=0 scripts/bench.sh streaming-shots` and the same
+command with `OPENGOTHIC_STREAMING=1` capture `perf-market.png`, `perf-harbour.png` and
+`perf-forest.png` from the first viewpoints of those performance scenarios. `streaming wait`
+yields a frame for camera/residency updates, then waits until the publication queue is empty
+and all desired Near/Far chunks are published (default timeout 60000 real milliseconds).
+The disabled-streaming path is already ready. Claude compares the resulting frames on Mac.
 
 ## Frame profile
 
@@ -67,6 +83,7 @@ The complete column set is:
 | `<zone>_ns`, `<zone>_calls`, `<zone>_first_ns`, `<zone>_last_ns` | Elapsed sum in nanoseconds, call count, first start and last end as absolute `steady_clock` nanoseconds; all zero if unused |
 | `palette_calls`, `identical_calls`, `patch_calls`, `patch_blocks` | Counts |
 | `palette_bytes`, `identical_bytes`, `patch_bytes`, `grow_bytes`, `upload_execution_bytes` | Bytes |
+| `draw_calls`, `dispatch_calls` | Encoded draw and compute dispatch counts; dispatch counting currently covers Metal |
 | `gpu_ns`, `gpu_done`, `gpu_buffers` | Sum of Metal command buffer `GPUEndTime-GPUStartTime` in nanoseconds; 1 only when all submitted buffers have valid timing; submitted buffer count |
 
 The complete `<zone>` list (each produces all four columns above):
@@ -93,6 +110,13 @@ submitted during the attempt. Slot reuse cannot redirect a late completion to a 
 There are no added waits. Missing/failed/incomplete timing gives `gpu_done=0,gpu_ns=0`;
 `gpu_buffers` still counts captured Metal submissions. Vulkan and other backends currently write three zeros.
 Pending completions at CSV flush are left incomplete. This is diagnostic timing, not a performance stand.
+
+On Metal, `OPENGOTHIC_GPU_PASSES=1` additionally samples native encoder stage boundaries and writes
+`<frames.csv>.gpu.csv`: attempt, slot, segment, frame, encoder index/type, joined pass labels,
+GPU/vertex/fragment nanoseconds, draw/dispatch counts and validity. Passes sharing an encoder stay
+joined; intervals may overlap and must not be summed into total GPU time. Unsupported or invalid
+samples have `valid=0`. Detailed counters have measurable overhead: leave them off for the GPU
+acceptance runs, then enable them separately when a pass breakdown is needed.
 
 ### План и журнал
 
@@ -242,7 +266,7 @@ with the old talk loop), `lips-dialog` (the hero talks to Xardas through the dia
 the first choice: the lines of both are played the way the game plays them).
 Faces: `faces` (the face animations of a head one after another, then two of them while Xardas speaks),
 `face-fade` (faces fade in and out, one gives way to the next, three a moment apart, the lips over a
-fading face), `mood-ai` (lines of an AI server with moods: start `gothic-ai serve --scenario m1 --llm fake
+fading face), `mood-ai` (given lines of an AI server with moods: start `gothic-ai serve --scenario m1 --llm off
 --no-tts` on a port of your own and run the bench with `GOTHIC_AI_URL=ws://127.0.0.1:<port>`; with a TTS
 service instead of `--no-tts` the lines are voiced in their mood). Columns `face_neutral`, `face_friendly`,
 `face_angry`, `face_hostile`, `face_afraid`, `face_pain` of `metrics.csv`: how much of each face of the
@@ -271,10 +295,10 @@ line is being said), `ge_id` (the gesture playing, 1 is `T_DIALOGGESTURE_01`), `
 Listening: `listen` (Xardas' face close up: quiet, the hero speaks to him 6 s, he thinks 2.5 s, he answers;
 with `gestures off` on top of a copy he stands still, as before).
 Deals: `deal` (the deal window of an AI server, the interface in the frames: start `gothic-ai serve
---scenario deal_demo --llm fake --no-tts` on a port of your own and run the bench with `GOTHIC_AI_URL`;
+--scenario deal_demo --llm off --no-tts` on a port of your own and run the bench with `GOTHIC_AI_URL`;
 Xardas offers a thing he has for 50 gold the hero lacks, then for 30, and the hero accepts).
 Two people talking: `gossip` (Lobart and Hilda talk about the hero's lie at Lobart's farm, each line said to
-the other: start `gothic-ai serve --scenario gossip_demo --llm fake --no-tts` on a port of your own and run
+the other: start `gothic-ai serve --scenario gossip_demo --llm off --no-tts` on a port of your own and run
 the bench with `GOTHIC_AI_URL`; the server puts Hilda 5 m from Lobart and the hero 7 m from them; `nearby`,
 `pair` and `where` every second: during each line both look at each other, `look=talk at=<the other>`).
 
@@ -420,6 +444,7 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 |---|---|
 | `playvideo <name>` | Marvin command calling the game video player; case-insensitive name, optional `.bik`. Explicitly requests the player even with `-nointro`; the first request starts lazy preparation and is skipped while the part is not ready. Negative `scaleVideos` still disables playback. The scenario pauses during playback and resumes afterwards; `pos` records position, world tick and world time in `events.jsonl`. |
 | `wait <ms>` | game time |
+| `wait real <ms>` | wall time; the game keeps ticking while scenario commands wait |
 | `waitarrive [timeout ms]` | until the player has walked where it was sent |
 | `goto <waypoint>`, `goto pos <x> <y> <z>` | teleport (`pos`: where no waypoint is, a roof, a rock) |
 | `walkto <waypoint>` | walk there (AI path) |
@@ -428,6 +453,7 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `press\|release\|tap <key>`, `hold <key> <ms>`, `release all` | player input; keys: `forward back left right turnl turnr jump walk sneak weapon melee bow spell action parade breath` (`left`/`right` strafe; aiming a bow: hold `action`, a shot: `tap forward` while holding it; in the manual aim holding `action` draws, releasing shoots, `parade` lowers the bow, `breath` (= walk) holds the breath) |
 | `aimwalk on\|off` | the legs stepping under the aim (graphics/mesh/aimwalk); off: forward and back do nothing while aiming |
 | `animinfo <name>...` | the hero's animations of those names: layer, frames, the nodes they move (when not all), the root's way and speed, the hips' turn at a few frames |
+| `bladepath <name>\|<overlay.MDS>...` | the tip of the hero's weapon at each frame of those animations, with the grip, the root bone (the game keeps its x, z at the actor) and the speed, in the model's frame (+z ahead); the frames of the fight tags; an overlay (`HUMANS_1HST2.MDS`) is put on for the names after it |
 | `wheel <delta>` | the mouse wheel as the window gets it (-1 down, 1 up): aiming a bow by hand, down cants it for a quick shot, up straightens it |
 | `cam auto [dist] [height]` | follow the player from the side that sees the feet; switches sides if the feet stay hidden |
 | `cam follow <dist> <height> <angle>` | follow, `angle` from the facing: 0 in front, 90 on the left |
@@ -444,6 +470,7 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `overlay trail [off] [keep ms] [line]` | the arrows' ways in gold (with the zones of `showzones`), no legs, no text; turns the overlay on. A way stays `keep` ms (1500) after its arrow stops; `line`: also the straight line the arrow left along (where the bow pointed), dashed white, as far as the arrow has flown: the drop is the gap between them |
 | `rec <name> [novideo]`, `stop` | record a segment (video and metrics, or metrics only) |
 | `shot <name>` | one PNG |
+| `streaming wait [timeout_ms]` | Wait for all desired Near/Far chunks and the publication queue; timeout defaults to 60000 real ms. |
 | `ui on\|off` | the interface in the captured frames, as the player sees it: subtitles, the input line, the deal window (off by default: only the world) |
 | `label <text>` | text on the overlay |
 | `ik on\|off`, `ik param <name> <value>`, `ik params` | foot IK and its parameters, without rebuilding; `ik off` on a four-legged creature brings back the old whole-body tilt |
@@ -457,7 +484,7 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `place <dist> <angle>`, `orbit <deg> <ms>` | the hero stands around the watched npc (angle from its facing, 0 in front) or goes around it; not where no ground is found (inside a rock: it would fall through the world) |
 | `gazeinfo` | gaze state of the watched npc to `bench.log`: why it looks, at whom |
 | `lean on\|off` | the lean into turns and on slopes |
-| `blend on\|off`, `blend param <name> <value>` | transitions between animations (`AnimBlend`; off: the old cross-fade); params `min`, `max`, `scale` (blend time, s), `turn` (rad/s), `move` (cm/s), `out`, `side` |
+| `blend on\|off`, `blend param <name> <value>` | transitions between animations (`AnimBlend`; off: the old cross-fade); params `min`, `max`, `scale` (blend time, s), `turn` (rad/s), `move` (cm/s), `out`, `side`, `blow` (the longest switch into a blow of a weapon body, s) |
 | `flinch on\|off` | the upper body giving way to blows |
 | `hit <npc\|player> <angle> [strength] [height] [twist]` | a blow from that side of it (angle from its facing, 0 in front, as `place`) to the flinch only: no damage, no stumble; strength 0..1 (1), height 0 the hips .. 1 the head (0.6), twist -1..1 about up (0) |
 | `strike <victim\|player> [attacker\|player]` | the attacker's blow lands as the game deals it (the stumble, the damage, the flinch); the victim gets its hit points back below a third |
@@ -544,7 +571,7 @@ Talking, for shorts (`shorts/`; needs the AI server, see `shorts/README.md`):
 | `waitai <key> <stage> [timeout ms]` | until a thing of the AI bridge has got that far: `waitai necro fallen` (the necromancer's answer: cast, fallen, raise, risen, card; `ai necro <npc> [spell] [picture]` starts it without the server) |
 | `near <npc> [dist] [deg]`, `approach <npc>`, `face npc <npc>` | the hero in front of an npc (teleport), walks up to it, turns to it |
 | `cam shoulder\|face\|two <npc> [dist] [height] [side\|deg]`, `cam cut`, `cam smooth <k>` | shots of the hero and an npc; they glide from one to the next unless `cut`. `cam face` with an npc's name is this shot, with a number the close-up above. `cam two arena`: the two participants of a body arena, a yellow dot over the primary (`bodyreplay`, `scripts/body_replay_film.py`) |
-| `caption <text>`, `mark <text>` | events for the cut of a short |
+| `caption <text>`, `mark <text>` | events for the cut of a short; `mark stream_warm` and `mark stream_warm_5s` also record load-probe memory after landscape warmup and five real seconds later |
 | `ai <...>` | the AI bridge's console: `ai attach <npc>`, `ai skip <npc>` (its important dialogs count as told: it does not stop the hero), `ai ptt start [<wav>]\|stop\|cancel` |
 
 Every talking command writes `events.jsonl` (what was said when, in frames of the recording). A line of the
@@ -564,12 +591,12 @@ segment's sound goes into `<segment>.wav`).
 
 `scripts/body_live_capture.py` starts a local game with the production `GameServer` and
 `BodyPilot`, using `[llm].body_url` from the usual launcher settings. It uses the existing
-remote P30 service without starting or changing it. `LLM`, `ASR` and `TTS` must be `fake`;
+remote P30 service without starting or changing it. `LLM` must be `off`; `ASR` and `TTS` must be `fake`;
 no clients for these models are created. Build the engine first. Each capture checks
 `pgrep -fl Gothic2Notr` immediately before launch and refuses to share the Mac with another game.
 
 ```bash
-LLM=fake ASR=fake TTS=fake uv run --project server python scripts/body_live_capture.py \
+LLM=off ASR=fake TTS=fake uv run --project server python scripts/body_live_capture.py \
   live-takeover --output "$HOME/.local/share/gothic-ai/explain/combat-ai/footage/live-takeover"
 ```
 
@@ -813,6 +840,150 @@ Good spots near the default save (Xardas' tower): `NW_XARDAS_TOWER_VALLEY_05` (2
 forest), `NW_XARDAS_TOWER_IN1_*` (ramp inside the tower), `NW_XARDAS_STAIRS_01`..`_04`.
 
 ## Engine side
+
+### Placed world Items (physics stage 8, step 5)
+
+`placed-items-census` checks the immutable authored-geometry census and wakes
+every admitted Item for five seconds, in 12 m sections. Each section advances
+at least 300 real fixed native steps synchronously, sampling after every tick;
+rendering and game-clock time do not pace the physical interval. All admitted
+neighbouring supports within 22 m are installed asleep before the section wakes.
+It never captures images.
+Run all four fresh worlds through Ryzen's queue:
+
+```bash
+WORLD=NEWWORLD.ZEN PLACED_ITEMS=1 RYZEN_CLEAN_IDLE_HOURS=0 \
+  RYZEN_LOCK_WAIT=1200 TIMEOUT=3600 RYZEN_MAX=75m \
+  scripts/bench.sh placed-items-census "$PWD/.bench/placed-items-NEWWORLD"
+# Repeat with OLDWORLD.ZEN, ADDONWORLD.ZEN and DRAGONISLAND.ZEN.
+python3 scripts/placed_items_report.py \
+  .bench/placed-items-{NEWWORLD,OLDWORLD,ADDONWORLD,DRAGONISLAND} \
+  --known-exceptions reports/physics/2026-10-31-placed-items/known-exceptions.csv
+```
+
+`placed-items-census.jsonl` records each ZEN-ID, original pose, instance, visual,
+exclusive exclusion reason, support gap and penetration depths. The census event
+adds classification time, admitted gap buckets (0–1, 1–2, 2–4 cm) and the densest
+20 m neighbourhood among all source Items (ties prefer more admitted Items).
+After the original geometric reasons, `rooted` excludes `ItPl_*` on landscape or
+`C_Object`; `slope` excludes static supports steeper than 15°. Its normal comes
+from a downward ray at the collision shape's lowest point, rather than the
+nearest overlap contact. `irregular` rejects static support when this ray misses
+a face; it follows `slope`. `no_ground` then rejects Items on static objects or
+movable furniture when a downward COM ray, excluding that support, finds no
+landscape or other static object within 5 m below the hull bottom. Penetration
+into static geometry, furniture or another Item is limited to 2 cm; the support
+gap remains 4 cm. `on_excluded` propagates rejected Item supports through
+whole stacks. Plants on furniture or admitted Items use the ordinary rules.
+`placed-items-probe.jsonl` records maximum and final travel
+for every admitted Item. The reader requires at least 95% of the combined sample
+to move less than 5 cm, maximum travel at most 100 cm, and zero `item recovered`
+messages. Every displacement over 10 cm remains in the output with its original
+contact measurements. These limits are fixed; a failed 95% gate requires a decision.
+For linked recoveries the reader also measures the logged pre-reset pose, so a
+reset inside a native tick cannot hide an excursion from the regular samples.
+Pass the previous four run directories with `--previous-runs` to include the
+new facet-slope distributions of their >10 cm outliers, alongside admitted Items,
+in 5° bins. A missing facet normal is counted separately. Recovery messages name
+the ZEN-ID whenever the recovered Item has an authored link.
+`--known-exceptions` reads `world,zen_id,reason` CSV rows and prints those Items
+separately. They still count toward the 95% fraction, but are omitted from the
+maximum-travel and recovery gates. Raw maximum/recovery totals remain visible
+beside `gate_max_shift_cm` and `gate_recovered`. The agreed file contains exactly
+NEWWORLD 18261 (the rolling flask); every other excess still fails.
+
+`placed-items diagnose <ZEN-ID> [control]` advances that Item's original 12 m
+section for 300 native steps and writes `placed-items-diagnose.jsonl`. Each step
+records center, velocity, nearby native contacts, triangle indices, normals and
+edge lengths, plus the recovery ray result. `solver_contacts` records the real
+`OnContactAdded`/`Persisted` manifold separately from geometric snapshots. `control` removes other Items and
+movable furniture while retaining landscape and static objects. The command
+requires an authored Item and uses `tick(16)` to prevent batched native steps.
+For an excluded Item it records the verdict and verifies that neither wake nor
+activation can create a body, without attempting to simulate that Item.
+
+`placed-items-diagnose-1644` / `placed-items-diagnose-1644-control` use
+`WORLD=OLDWORLD.ZEN`; `placed-items-diagnose-6863` /
+`placed-items-diagnose-6863-control` use `WORLD=ADDONWORLD.ZEN`. Set
+`PLACED_ITEMS=1 ITEM_DEEPEST_CONTACT=1` for the fixed manifold or
+`ITEM_DEEPEST_CONTACT=0` for the upstream control, for example:
+
+```bash
+WORLD=OLDWORLD.ZEN PLACED_ITEMS=1 ITEM_DEEPEST_CONTACT=1 \
+  scripts/bench.sh placed-items-diagnose-1644 "$PWD/.bench/thin-blades/1644-on"
+```
+
+`[GAME] item_deepest_contact=1` retains the EPA pair in manifolds involving
+`C_Item` when it is more than 1 mm deeper than every clipped pair; coplanar
+face contacts keep their original support corners. Marvin
+`toggle item_deepest_contact` applies on the next
+native step. OFF uses Jolt's original clipping. See the
+[thin-blade results](../../reports/physics/2026-10-31-thin-blades/README.md).
+
+`PLACED_ITEMS=0` selects the existing body-creation paths. `[GAME] placed_items`
+defaults to 1; Marvin `toggle placed_items` changes it during play. The census is
+computed even when the feature starts disabled, so enabling it later uses the
+same original geometry. Dropped Items retain their existing physics path.
+In OFF, the existing CharacterVirtual path creates bodies within its nearby Item
+radius and can push them; the walk check records this observed behavior.
+
+`placed-items` runs the native hero passage, arrow, tavern-table and owned pickup
+checks in NEWWORLD with `PLACED_ITEMS=1` and `=0`. Both modes choose the same
+authored floor food and supported lane; nearby NPCs are removed using the
+`item-wake` fixture pattern. The arrow aims at native collision bounds. The
+Dead Harpy table tests admitted Items; `owned-table` also selects a real mixed
+table with excluded Items and native private-room ownership for the theft check.
+Ownership fields are never rewritten. Failed result events preserve the final
+FAIL while allowing later independent checks to run. It snapshots ownership before
+the checks and saves after pickup (including removal/reordering of world Items):
+`session-placed-items.sav` and `placed-items-saved.jsonl` describe the same Items.
+Start `placed-items-reload` in two successive new processes, using the preceding
+process's archive as `SAVE` each time (leave `WORLD` unset). Its first command
+captures every Item before the first native step, then saves again. Verify both
+cycles with:
+
+```bash
+python3 scripts/placed_items_report.py --save-chain \
+  .bench/placed-items-on .bench/placed-items-reload-1 .bench/placed-items-reload-2
+```
+
+The reader checks saved poses within 0.01 cm, ZEN linkage, instance, owner,
+flags and count; linked native bodies must enter asleep and excluded Items must
+have no body. Also load an actual main save with no `placed-items` entry through
+`placed-items-reload`: only unchanged instance/pose matches acquire a link.
+
+`placed-items-performance` selects the densest source-Item 20 m neighbourhood from
+the census, measures entry frames and ten steady seconds after two seconds of
+warmup. Run three fresh processes per mode on the M1 Pro with `BENCH_HOST=local`,
+`WORLD=NEWWORLD.ZEN`, `RYZEN_CLEAN_IDLE_HOURS=0` and `PLACED_ITEMS=0`/`1`.
+Before each pair, record `uptime` and `pgrep -fl '[G]othic2Notr' || echo absent`.
+Wait up to 30 minutes for load average to fall to 12 or below, and always wait
+for any existing game. If physics p95 exceeds 2 ms in both modes, repeat the
+pair in the same scene on a clean `origin/main`. ON–OFF is the main comparison
+under high background load. `placed-items-performance.csv` contains native physics
+time, frame time, total/placed body counts and `proximity_created`. The latter
+counts only the new proximity budget; the existing `item_wake` budget is separate.
+Acceptance is physics p95 ≤2 ms and ON–OFF ≤0.2 ms. The report also records the
+worst entry frame, body counts and complete world loading time including census.
+Compare complete NEWWORLD loading time using the median of three runs per mode.
+
+[Recorded results](../../reports/physics/2026-10-31-placed-items/README.md): after
+the 2 cm penetration limit and `no_ground`, the four-world probe reached
+636/660 (96.363636%) below 5 cm, maximum 123.417038 cm and two recoveries.
+The three agreed exceptions preserve that fraction and raw evidence; with the
+CSV the reader passes, with a gated maximum of 74.7259445 cm and zero other
+recoveries. The two swords remain admitted; their thin-body support crossing
+will be investigated separately.
+The corrected functional ON/OFF passes all five result checks per mode. Mac
+ON p95 is 1.394707/1.581916/1.402624 ms; each pair is below OFF and within budget.
+Both cold cycles now pass on Ryzen with all 2330 saved links after pickup,
+including authored Item 2839 below mover 2838. The load-time catalogue retains
+all 2331 authored Items independently of inherited trigger flags. The old main
+save restores all 2331 links with no duplicate Items; maximum cold pose error is
+0.00007079 cm. Version 55 and placement-entry schema 1 remain unchanged.
+The native placed-Item contract also moves the mover-child Item before saving
+and checks its identity and exact matrix on reload. Linux builds and all four
+physics contracts pass after explicit signed Guild comparisons in the fixture.
 
 `OpenGothic/common/testbench.cpp`, inert unless `OPENGOTHIC_BENCH` is set. Hooks: the fixed time step and
 the capture in `MainWindow` (in film mode the captured frame replaces the window's), the AI bridge's lines

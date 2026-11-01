@@ -44,7 +44,11 @@ Item::Item(World &owner, size_t itemInstance, Type type, const Tempest::Matrix4x
   setObjMatrix(initial);
 
   if(type!=T_Inventory) {
+    const auto* residency=world.chunkResidency();
+    Resources::TextureLoadScope textureLoadScope(residency &&
+        residency->textureDistance(ChunkId::fromPosition(pos.x,pos.z))>2);
     visual = world.addView(*hitem);
+    visual.setTextureOwner(position(),true);
     if(type==T_WorldDyn)
       setPhysicsEnable(visual);
     }
@@ -85,8 +89,12 @@ Item::Item(World &owner, Serialize &fin, Type type)
   setLocalTransform(mat);
 
   if(type!=T_Inventory) {
+    const auto* residency=world.chunkResidency();
+    Resources::TextureLoadScope textureLoadScope(residency &&
+        residency->textureDistance(ChunkId::fromPosition(pos.x,pos.z))>2);
     if(!FileExt::hasExt(hitem->visual,"ZEN"))
       visual = world.addView(*hitem);
+    visual.setTextureOwner(pos,true);
     if(type==T_WorldDyn)
       setPhysicsEnable(visual);
     }
@@ -97,7 +105,8 @@ Item::Item(World &owner, Serialize &fin, Type type)
 
 Item::Item(Item &&it)
   : Vob(it.world), hitem(std::move(it.hitem)),
-    pos(it.pos),amount(it.amount),equipped(it.equipped),itSlot(it.itSlot),visual(std::move(it.visual)) {
+    pos(it.pos),amount(it.amount),equipped(it.equipped),itSlot(it.itSlot),
+    placedZenId(it.placedZenId),placedAllowed(it.placedAllowed),visual(std::move(it.visual)) {
   hitem->user_ptr=this;
   setLocalTransform(it.localTransform());
   physic = std::move(it.physic);
@@ -192,6 +201,7 @@ void Item::setObjMatrix(const Tempest::Matrix4x4 &m) {
   pos.z = m.at(3,2);
   setLocalTransform(m);
   visual.setObjMatrix(m);
+  visual.setTextureOwner(pos,true);
   }
 
 void Item::setPhysicsMatrix(const Tempest::Matrix4x4& m) {
@@ -203,6 +213,7 @@ void Item::setPhysicsMatrix(const Tempest::Matrix4x4& m) {
   // on rounding differences, keeping the whole floating contact island awake.
   setGlobalTransform(m);
   visual.setObjMatrix(m);
+  visual.setTextureOwner(pos,true);
   }
 
 bool Item::isMission() const {
@@ -231,6 +242,8 @@ void Item::setPhysicsDisable() {
   }
 
 bool Item::wakePhysics() {
+  if(Gothic::physicsFlags().placedItems && isPlacedItem() && !placedAllowed)
+    return false;
   const bool missing = !isDynamic();
   if(missing) {
     setPhysicsEnable(world);
@@ -242,7 +255,19 @@ bool Item::wakePhysics() {
   return missing;
   }
 
+bool Item::activatePhysics() {
+  if(Gothic::physicsFlags().placedItems && isPlacedItem() && !placedAllowed)
+    return false;
+  wakePhysics();
+  if(!isDynamic())
+    return false;
+  physic.restorePhysics(transform(),false);
+  return true;
+  }
+
 void Item::setPhysicsEnable(const MeshObjects::Mesh& view) {
+  if(Gothic::physicsFlags().placedItems && isPlacedItem() && !placedAllowed)
+    return;
   if(view.nodesCount()==0)
     return;
   auto& p = *world.physic();
@@ -252,6 +277,8 @@ void Item::setPhysicsEnable(const MeshObjects::Mesh& view) {
   }
 
 void Item::setPhysicsEnable(const ProtoMesh* mesh) {
+  if(Gothic::physicsFlags().placedItems && isPlacedItem() && !placedAllowed)
+    return;
   if(mesh==nullptr)
     return;
   auto& p = *world.physic();
@@ -450,6 +477,7 @@ void Item::updateMatrix() {
 
 void Item::moveEvent() {
   visual.setObjMatrix(transform());
+  visual.setTextureOwner(pos,true);
   physic.setObjMatrix(transform());
   if(!isDynamic())
     world.invalidateVobIndex();

@@ -1,4 +1,5 @@
 #include "gothic.h"
+#include "loadprobe.h"
 
 #include <Tempest/Log>
 #include <Tempest/TextCodec>
@@ -116,12 +117,14 @@ Gothic::Gothic() {
   defaults->set("GAME", "spell_physics",       1);
   defaults->set("GAME", "movable_vobs",        1);
   defaults->set("GAME", "item_hulls",          1);
+  defaults->set("GAME", "item_deepest_contact",1);
   defaults->set("GAME", "furniture_parts",     1);
   defaults->set("GAME", "physics_noise",       1);
   defaults->set("GAME", "destruction",         1);
   defaults->set("GAME", "buoyancy",            1);
   defaults->set("GAME", "cloth",               1);
   defaults->set("GAME", "item_wake",           1);
+  defaults->set("GAME", "placed_items",        1);
   defaults->set("GAME", "static_collision_split",1);
   defaults->set("GAME", "character_virtual",   1);
   defaults->set("GAME", "npc_character_virtual",1);
@@ -132,6 +135,9 @@ Gothic::Gothic() {
   defaults->set("GAME", "melee_posture",         1);
   defaults->set("GAME", "melee_down_tactics",    1);
   defaults->set("GAME", "melee_hitstop",         1);
+  defaults->set("GAME", "melee_stamina",         1);
+  defaults->set("GAME", "melee_parry",           1);
+  defaults->set("GAME", "melee_parry_ai",        1);
 
   defaults->set("GAME", "animatedWindows",     1);
   defaults->set("GAME", "subTitles",           1);
@@ -341,6 +347,7 @@ const Tempest::Texture2d* Gothic::loadingBanner() const {
   }
 
 SoundFx *Gothic::loadSoundFx(std::string_view name) {
+  LoadProbe::Vobs::Scope probe("sound_load");
   if(name.empty())
     return nullptr;
 
@@ -362,6 +369,7 @@ SoundFx *Gothic::loadSoundFx(std::string_view name) {
   }
 
 SoundFx *Gothic::loadSoundWavFx(std::string_view name) {
+  LoadProbe::Vobs::Scope probe("sound_load");
   auto cname = std::string(name);
 
   std::lock_guard<std::mutex> guard(syncSnd);
@@ -385,10 +393,12 @@ const VisualFx* Gothic::loadVisualFx(std::string_view name) {
   }
 
 const ParticleFx* Gothic::loadParticleFx(std::string_view name, bool relaxed) {
+  LoadProbe::Vobs::Scope probe("pfx_load");
   return particleDef->get(name,relaxed);
   }
 
 const ParticleFx* Gothic::loadParticleFx(const ParticleFx* base, const VisualFx::Key* key) {
+  LoadProbe::Vobs::Scope probe("pfx_load");
   return particleDef->get(base,key);
   }
 
@@ -902,12 +912,19 @@ void Gothic::refreshPhysicsFlags() {
     settingsGetI("GAME","melee_posture")!=0,
     settingsGetI("GAME","melee_down_tactics")!=0,
     settingsGetI("GAME","item_hulls")!=0,
+    settingsGetI("GAME","item_deepest_contact")!=0,
     settingsGetI("GAME","melee_hitstop")!=0,
-    settingsGetI("GAME","furniture_parts")!=0
+    settingsGetI("GAME","melee_stamina")!=0,
+    settingsGetI("GAME","melee_parry")!=0,
+    settingsGetI("GAME","melee_parry_ai")!=0,
+    settingsGetI("GAME","furniture_parts")!=0,
+    settingsGetI("GAME","placed_items")!=0
     };
   }
 
 void Gothic::setupSettings() {
+  Resources::configureTextures(settingsGetS("GAME","texture_budget_mb"),settingsGetS("GAME","texture_far_skip_mips"),
+                               settingsGetS("GAME","texture_target_mb"));
   Resources::censusProfile(gameDatDef,ouDef,settingsGetI("GAME","language"));
   // settingsSetI/S/F emit onSettingsChanged synchronously. Publish before any
   // same-dispatch actor creation, prepare or input query can consume the change.
@@ -922,6 +939,7 @@ void Gothic::setupSettings() {
     activeWorld->physic()->setBuoyancyEnabled(physicsFlagsCache.buoyancy);
     activeWorld->physic()->setClothEnabled(physicsFlagsCache.cloth);
     activeWorld->physic()->setItemWakeEnabled(physicsFlagsCache.itemWake);
+    activeWorld->physic()->setItemDeepestContactEnabled(physicsFlagsCache.itemDeepestContact);
     }
 
   const float soundVolume = settingsSoundVolume();

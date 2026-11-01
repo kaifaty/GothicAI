@@ -92,12 +92,14 @@ class Marvin {
       C_ToggleSpellPhysics,
       C_ToggleMovableVobs,
       C_ToggleItemHulls,
+      C_ToggleItemDeepestContact,
       C_ToggleFurnitureParts,
       C_TogglePhysicsNoise,
       C_ToggleDestruction,
       C_ToggleBuoyancy,
       C_ToggleCloth,
       C_ToggleItemWake,
+      C_TogglePlacedItems,
       C_ToggleCharacterVirtual,
       C_ToggleNpcCharacterVirtual,
       C_ToggleMonsterCharacterVirtual,
@@ -107,6 +109,9 @@ class Marvin {
       C_ToggleMeleePosture,
       C_ToggleMeleeDownTactics,
       C_ToggleMeleeHitStop,
+      C_ToggleMeleeStamina,
+      C_ToggleMeleeParry,
+      C_ToggleMeleeParryAi,
       };
 
     struct Cmd {

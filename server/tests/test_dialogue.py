@@ -428,6 +428,27 @@ class HiddenQuestTool:
         return []
 
 
+async def test_situation_prepares_current_context_without_starting_a_model_turn():
+    from gothic_ai.llm.off import OffBackend
+
+    llm = OffBackend()
+    fake = FakeGame()
+    extra = SimpleNamespace(
+        prepare=AsyncMock(), situation=lambda npc: "An available quest from the extension.",
+    )
+    async with connected(fake) as link:
+        dialogue = DialogueManager(link, llm, PersonaProvider(None))
+        dialogue.extensions.append(extra)
+        link.snapshots[XARDAS] = Snapshot.model_validate(fake.snapshot(XARDAS))
+        text = await dialogue.situation(XARDAS.lower(), "Ксардас")
+        conv = dialogue.conversations[XARDAS]
+
+        assert "Обстановка" in text and "An available quest from the extension." in text
+        extra.prepare.assert_awaited_once_with(XARDAS)
+        assert conv.reply is None and conv.talked_at == float("-inf")
+        assert llm.attempts == [] and fake.said == []
+
+
 async def test_extensions_share_tool_names_once_and_the_first_definition_wins():
     class QuestTools(HiddenQuestTool):
         def __init__(self, description):
@@ -796,14 +817,18 @@ async def test_a_model_quiet_twice_gives_up():
     assert (llm.calls, fake.said) == (2, [])  # one retry a turn
 
 
-async def test_m1_scenario_with_fake_llm():
+async def test_m1_scenario_with_model_off():
+    from gothic_ai.llm.off import OffBackend
+
     fake = FakeGame()
+    llm = OffBackend()
     async with connected(fake) as link:
-        dialogue = DialogueManager(link, FakeBackend(delay=0), PersonaProvider(None))
+        dialogue = DialogueManager(link, llm, PersonaProvider(None))
         lines = await asyncio.wait_for(scenarios.m1_chat(link, dialogue), 10)
 
     assert len(lines) >= 2
     assert fake.attached == set()  # returned to routine
+    assert not llm.attempts and not llm.unused()
 
 
 async def test_tool_call_runs_in_the_game_and_its_outcome_becomes_a_note():

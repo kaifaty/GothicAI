@@ -1,6 +1,7 @@
 #include "worldcloth.h"
 
 #include "clothworlddata.h"
+#include "worldchunksruntime.h"
 
 #include <algorithm>
 #include <array>
@@ -169,7 +170,7 @@ std::vector<uint32_t> attachment(const asset::WorldMesh& mesh,const Rule& rule) 
 
 }
 
-WorldCloth::Extracted WorldCloth::extract(asset::WorldMesh& landscape) {
+WorldCloth::Extracted WorldCloth::extract(asset::WorldMesh& landscape, ChunkTable* chunks) {
   Extracted result;
   const auto faceCount=landscape.polygons.material_indices.size();
   std::vector<bool> selected(faceCount,false);
@@ -234,24 +235,13 @@ WorldCloth::Extracted WorldCloth::extract(asset::WorldMesh& landscape) {
   if(clothFaces.empty())
     return result;
   result.original=subset(landscape,clothFaces);
-  asset::PolygonList remaining;
-  const auto remainingCount=faceCount-clothFaces.size();
-  remaining.material_indices.reserve(remainingCount);
-  remaining.lightmap_indices.reserve(remainingCount);
-  remaining.flags.reserve(remainingCount);
-  remaining.vertex_indices.reserve(remainingCount*3);
-  remaining.feature_indices.reserve(remainingCount*3);
+  std::vector<uint32_t> remaining;
+  remaining.reserve(faceCount-clothFaces.size());
   for(size_t i=0;i<faceCount;++i) {
     if(selected[i])
       continue;
-    remaining.material_indices.push_back(landscape.polygons.material_indices[i]);
-    remaining.lightmap_indices.push_back(landscape.polygons.lightmap_indices[i]);
-    remaining.flags.push_back(landscape.polygons.flags[i]);
-    for(size_t c=0;c<3;++c) {
-      remaining.vertex_indices.push_back(landscape.polygons.vertex_indices[3*i+c]);
-      remaining.feature_indices.push_back(landscape.polygons.feature_indices[3*i+c]);
-      }
+    remaining.push_back(uint32_t(i));
     }
-  landscape.polygons=std::move(remaining);
+  retainWorldTriangles(landscape,remaining,chunks);
   return result;
   }

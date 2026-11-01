@@ -11,6 +11,9 @@
 #include <Tempest/Painter>
 
 #include "graphics/mesh/submesh/packedmesh.h"
+#include "graphics/shaders.h"
+#include "commandline.h"
+#include "camera.h"
 #include "graphics/visualfx.h"
 #include "graphics/clothvisual.h"
 #include "world/objects/globalfx.h"
@@ -117,6 +120,8 @@ const char* materialTag(asset::MaterialGroup src) {
 World::World(GameSession& game, std::string_view file, bool startup, std::function<void(int)> loadProgress)
   :wname(std::move(file)), game(game), wsound(game,*this), wobj(*this) {
   const auto loadStarted = std::chrono::steady_clock::now();
+  Resources::configureTextures(Gothic::settingsGetS("GAME","texture_budget_mb"),Gothic::settingsGetS("GAME","texture_far_skip_mips"),
+                               Gothic::settingsGetS("GAME","texture_target_mb"));
   if(LoadProbe::enabled())
     LoadProbe::mark("world_begin",-1,"world="+std::string(wname));
   try {
@@ -128,7 +133,15 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
     residency = ChunkResidency::create(chunks);
     loadProgress(20);
     windRooms.reset(world.bsp.mode,std::move(world.rooms));
-    auto worldCloth=WorldCloth::extract(worldMesh);
+    auto worldCloth=WorldCloth::extract(worldMesh,&chunks);
+    const bool streamLandscape=residency && !Resources::isHeadless() && !Gothic::inst().isBenchmarkMode() &&
+        !CommandLine::inst().isRayQuery() && !Shaders::options().doRtScene && !Shaders::options().doSoftwareRT;
+    if(residency && !Resources::isHeadless() && !streamLandscape) {
+      if(Gothic::inst().isBenchmarkMode())
+        Tempest::Log::i("Landscape streaming disabled: built-in benchmark requires the complete landscape");
+      else
+        Tempest::Log::i("Landscape streaming disabled: RT, GI or SWRT requires a whole-world BVH");
+      }
 
     const bool probeSerial = LoadProbe::serial();
     const auto probeLaunch = probeSerial ? std::launch::deferred : std::launch::async;
@@ -145,12 +158,33 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
       wviewFut = std::async(probeLaunch, [&]() {
         Workers::setThreadName("Loading: PackedMesh thread");
         const auto t = LoadProbe::now();
-        PackedMesh vmesh(worldMesh,PackedMesh::PK_VisualLnd);
-        if(LoadProbe::enabled())
-          LoadProbe::mark("landscape_pack",LoadProbe::msSince(t),
-                          "vertices="+std::to_string(vmesh.vertices.size())+" indices="+std::to_string(vmesh.indices.size())+
-                          " meshlet_bytes="+std::to_string(vmesh.vertices.size()*sizeof(vmesh.vertices[0])+vmesh.indices.size()*sizeof(vmesh.indices[0])));
-        auto view=std::make_unique<WorldView>(vmesh,wname);
+        std::unique_ptr<WorldView> view;
+        if(streamLandscape) {
+          const auto map=PackedMesh::landscapeMaterialMap(worldMesh);
+          {
+          Resources::TextureLoadScope textureLoadScope(true);
+          std::vector<bool> loaded(worldMesh.materials.size());
+          // Decode initially used materials before publishing landscape chunks.
+          for(auto id:worldMesh.polygons.material_indices) {
+            id=map[id];
+            if(!loaded[id]) {
+              Resources::loadMaterial(worldMesh.materials[id],true);
+              loaded[id]=true;
+              }
+            }
+          }
+          const auto& bounds=worldMesh.bbox;
+          view=std::make_unique<WorldView>(std::pair{Tempest::Vec3(bounds.min.x,bounds.min.y,bounds.min.z),
+                                                    Tempest::Vec3(bounds.max.x,bounds.max.y,bounds.max.z)},wname);
+          }
+        else {
+          PackedMesh vmesh(worldMesh,PackedMesh::PK_VisualLnd);
+          if(LoadProbe::enabled())
+            LoadProbe::mark("landscape_pack",LoadProbe::msSince(t),
+                            "vertices="+std::to_string(vmesh.vertices.size())+" indices="+std::to_string(vmesh.indices.size())+
+                            " meshlet_bytes="+std::to_string(vmesh.vertices.size()*sizeof(vmesh.vertices[0])+vmesh.indices.size()*sizeof(vmesh.indices[0])));
+          view=std::make_unique<WorldView>(vmesh,wname);
+          }
         if(!worldCloth.original.polygons.material_indices.empty()) {
           PackedMesh originalCloth(worldCloth.original,PackedMesh::PK_VisualLnd);
           view->setOriginalClothMesh(originalCloth);
@@ -175,15 +209,22 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
     auto probeT = LoadProbe::now();
     if(wviewFut.valid())
       wview = wviewFut.get();
-    if(LoadProbe::enabled())
+    if(wview)
+      wview->setTextureResidency(residency.get());
+    if(LoadProbe::enabled() && !streamLandscape)
       LoadProbe::mark("landscape_view",probeViewMs,"wait_ms="+std::to_string(LoadProbe::msSince(probeT)));
     loadProgress(60);
 
     probeT = LoadProbe::now();
     wdynamic = wdynamicFut.get();
     wdynamic->setFurniturePartsEnabled(Gothic::physicsFlags().furnitureParts);
-    if(LoadProbe::enabled())
-      LoadProbe::mark("physics_static",probePhysicsMs,"wait_ms="+std::to_string(LoadProbe::msSince(probeT)));
+    if(LoadProbe::enabled()) {
+      const auto& collision=wdynamic->staticCollisionLoadStats();
+      LoadProbe::mark("physics_static",probePhysicsMs,"wait_ms="+std::to_string(LoadProbe::msSince(probeT))+
+                      " collision="+(collision.cacheHit ? "cache" : "build")+
+                      " key_ms="+std::to_string(collision.keyMs)+" read_ms="+std::to_string(collision.readMs)+
+                      " build_ms="+std::to_string(collision.buildMs)+" write_ms="+std::to_string(collision.writeMs));
+      }
     probeT = LoadProbe::now();
     wdynamic->cloth().setExposureTest([this](const Tempest::Vec3& point) { return !isIndoor(point); });
     wdynamic->setPhysicsNoiseEnabled(Gothic::physicsFlags().physicsNoise);
@@ -191,6 +232,7 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
     wdynamic->setBuoyancyEnabled(Gothic::physicsFlags().buoyancy);
     wdynamic->setClothEnabled(Gothic::physicsFlags().cloth);
     wdynamic->setItemWakeEnabled(Gothic::physicsFlags().itemWake);
+    wdynamic->setItemDeepestContactEnabled(Gothic::physicsFlags().itemDeepestContact);
     wdynamic->setPhysicsNoiseCallback([this](const PhysicsNoise& noise) { emitPhysicsNoise(noise); });
     for(auto& surface:worldCloth.surfaces)
       if(auto visual=ClothVisual::createSurface(*this,surface.mesh,surface.pins,surface.visual,surface.id,surface.stiffness,surface.linearDamping))
@@ -198,23 +240,45 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
     if(LoadProbe::enabled())
       LoadProbe::mark("cloth_surfaces",LoadProbe::msSince(probeT),"surfaces="+std::to_string(clothSurfaces.size()));
     probeT = LoadProbe::now();
-    worldMesh = {};
+    if(streamLandscape) {
+      wview->startLandscapeStreaming(std::move(worldMesh),*residency,probeViewMs);
+      // The visual consumer owns its selected file IDs; the stitched mesh is gone.
+      std::vector<uint32_t>().swap(chunks.triangleChunks);
+      std::vector<uint32_t>().swap(chunks.triangleSources);
+      }
+    else {
+      worldMesh = {};
+      chunks.source.reset();
+      std::vector<uint32_t>().swap(chunks.triangleSources);
+      }
     loadProgress(70);
 
     globFx.reset(new GlobalEffects(*this));
     wmatrix.reset(new WayMatrix(*this, *world.waynet));
     if(LoadProbe::enabled())
       LoadProbe::mark("waynet",LoadProbe::msSince(probeT));
-    probeT = LoadProbe::now();
+    double probeVobsMs=0;
+    {
+    LoadProbe::Vobs::Stage probe;
+    {
+    Resources::TextureLoadScope textureLoadScope{bool(residency)};
     for(auto& vob:world.vobs)
       wobj.addRoot(vob,startup);
+    }
+    probeVobsMs=probe.stop();
+    }
     if(LoadProbe::enabled())
-      LoadProbe::mark("vobs",LoadProbe::msSince(probeT),
+      LoadProbe::mark("vobs",probeVobsMs,
                       "items="+std::to_string(wobj.itmCount())+" mobsi="+std::to_string(wobj.mobsiCount()));
     probeT = LoadProbe::now();
     wdynamic->finalizeMovableVobs();
     if(LoadProbe::enabled())
       LoadProbe::mark("movable_vobs",LoadProbe::msSince(probeT));
+
+    probeT = LoadProbe::now();
+    wobj.finalizePlacedItems();
+    if(LoadProbe::enabled())
+      LoadProbe::mark("placed_items",LoadProbe::msSince(probeT));
 
     probeT = LoadProbe::now();
     wmatrix->buildIndex();
@@ -232,6 +296,27 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
   }
 
 World::~World() {
+  }
+
+void World::updateLandscape(const Camera& camera) {
+  if(!residency || !npcPlayer) {
+    if(textureLoadingPending && npcPlayer) {
+      Resources::finishTextureLoading();
+      textureLoadingPending=false;
+      }
+    Resources::updateTextures(nullptr);
+    return;
+    }
+  if(wview)
+    wview->prepareLandscapeWork();
+  residency->update(npcPlayer->position(),camera.originLwc(),camera.zFar());
+  if(textureLoadingPending) {
+    Resources::finishTextureLoading();
+    textureLoadingPending=false;
+    }
+  if(wview)
+    wview->finishLandscapeUpdate();
+  Resources::updateTextures(residency.get());
   }
 
 void World::createPlayer(std::string_view cls) {
@@ -312,6 +397,7 @@ void World::save(Serialize &fout) {
   wobj.save(fout);
   wdynamic->saveMovableVobs(fout);
   saveStuckArrows(fout);
+  wobj.savePlacedItems(fout);
   }
 
 uint32_t World::npcId(const Npc *ptr) const {
@@ -731,6 +817,7 @@ void World::tick(uint64_t dt) {
   wdynamic->setBuoyancyEnabled(Gothic::physicsFlags().buoyancy);
   wdynamic->setClothEnabled(Gothic::physicsFlags().cloth);
   wdynamic->setItemWakeEnabled(Gothic::physicsFlags().itemWake);
+  wdynamic->setItemDeepestContactEnabled(Gothic::physicsFlags().itemDeepestContact);
   if(!Gothic::physicsFlags().arrowSticking)
     stuckArrows.clear();
   static bool doTicks=true;

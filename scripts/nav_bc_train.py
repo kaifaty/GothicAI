@@ -42,6 +42,8 @@ def read_index(cache):
     familiar = index.get("cache_version") == BC4_CACHE_VERSION
     hd = index.get("cache_version") in (HD_CACHE_VERSION, BC4_CACHE_VERSION)
     preprocessing = BC4_PREPROCESSING if familiar else HD_PREPROCESSING if hd else PREPROCESSING
+    if hd and not familiar and index.get("navigation_memory_version") == 4:
+        preprocessing = {**preprocessing, "navigation_memory_version": 4}
     if (index.get("cache_version") not in (CACHE_VERSION, BC3_CACHE_VERSION, HD_CACHE_VERSION, BC4_CACHE_VERSION)
             or index.get("vector_size") != VECTOR_SIZE or index.get("preprocessing") != preprocessing):
         raise ValueError("rebuild cache for NAVDEMO v2 carrot inputs without previous_keys")
@@ -55,6 +57,74 @@ def read_index(cache):
     if train & valid:
         raise ValueError("pairs leaked between training and validation")
     return index
+
+
+def aggregate_training_index(cache, extra_caches, balance_v4_cache):
+    """Combine prepared HD train caches without copying maps or reopening corpora."""
+    caches = [cache, *map(Path, extra_caches)]
+    indices = [read_index(path) for path in caches]
+    reference = indices[0]
+    if any(index["cache_version"] != HD_CACHE_VERSION for index in indices):
+        raise ValueError("DAgger aggregation requires HD caches without familiar")
+    for index in indices:
+        if any(index[name] != reference[name] for name in ("eye_layout", "heads", "classes", "near_shape", "far_shape")):
+            raise ValueError("aggregate caches have incompatible policy inputs or action heads")
+        if any(entry["split"] != "train" for entry in index["episodes"]):
+            raise ValueError("aggregate caches must contain only frozen training episodes")
+    index = {**reference, "episodes": [], "training_caches": [str(path) for path in caches]}
+    index["navigation_memory_version"] = max(part["navigation_memory_version"] for part in indices)
+    index["navdemo_version"] = max(part["navdemo_version"] for part in indices)
+    if index["navigation_memory_version"] == 4:
+        index["preprocessing"] = {**HD_PREPROCESSING, "navigation_memory_version": 4}
+    for number, (path, part) in enumerate(zip(caches, indices)):
+        for entry in part["episodes"]:
+            index["episodes"].append({**entry, "id": f"cache-{number}-{entry['id']}",
+                                      "family": "follow" if entry["family"] == "follow_below_gate" else entry["family"],
+                                      "file": str(path / entry["file"])})
+    index["class_counts"] = {"train": {head: np.sum([
+        part["class_counts"]["train"][head] for part in indices], axis=0).tolist() for head in BC3_HEADS}}
+    decisions = sum(part["action_change"]["N"] for part in indices)
+    changes = sum(part["action_change"]["n_I"] for part in indices)
+    index["action_change_weight"] = float(np.clip(decisions / changes, 1, 10)) if changes else 1.
+    index["action_change"] = {**reference["action_change"], "N": decisions, "n_I": changes}
+    index["auxiliary"] = {**reference["auxiliary"], "detour": {**reference["auxiliary"]["detour"],
+        "available_steps": sum(part["auxiliary"]["detour"]["available_steps"] for part in indices)}}
+    if balance_v4_cache:
+        baseline = read_index(Path(balance_v4_cache))
+        if (baseline.get("navigation_memory_version") != 3 or baseline.get("navdemo_version") != 2
+                or any(entry.get("source_kind", "teacher") != "teacher" or entry["split"] != "train"
+                       for entry in baseline["episodes"])):
+            raise ValueError("v4 family balance reference must contain only frozen teacher train episodes")
+        weights, balance = family_balance_weights(index["episodes"], baseline["episodes"])
+        for entry in index["episodes"]:
+            entry["family_weight"] = weights[entry["family"]]
+        index["family_balance"] = {**balance, "v4_cache": str(balance_v4_cache)}
+    return index
+
+
+def family_balance_weights(entries, v4_entries):
+    """Keep object/follow's effective decision shares at their v4 floors."""
+    counts, reference = {}, {}
+    for entries_, target in ((entries, counts), (v4_entries, reference)):
+        for entry in entries_:
+            family = "follow" if entry["family"] == "follow_below_gate" else entry["family"]
+            target[family] = target.get(family, 0.) + entry.get("effective_steps", entry["steps"])
+    floors = {family: reference.get(family, 0.) / sum(reference.values()) for family in ("object", "follow")}
+    if any(floors[family] and not counts.get(family) for family in floors):
+        raise ValueError("aggregate is missing an object/follow family present in v4")
+    active = set()
+    total = sum(counts.values())
+    while True:
+        missing = {family for family in floors if counts.get(family, 0.) < floors[family] * total - 1e-8}
+        if missing <= active:
+            break
+        active |= missing
+        total = sum(value for family, value in counts.items() if family not in active) / (1 - sum(floors[f] for f in active))
+    weighted = {family: floors[family] * total if family in active else value for family, value in counts.items()}
+    weights = {family: weighted[family] / value for family, value in counts.items()}
+    return weights, dict(method="per-decision loss weights; teacher-controlled DAgger decisions count 0.5",
+        minimum_shares=floors, v4_decisions=reference, effective_decisions=counts, weights=weights,
+        weighted_decisions=weighted, weighted_shares={family: value / total for family, value in weighted.items()})
 
 
 def load(cache, ep, *, packed=False):
@@ -210,6 +280,36 @@ def cap_dagger_steps(mask, dagger_rows, rng):
         mask[omitted[:, 0], omitted[:, 1]] = False
 
 
+def epoch_family_balance(batches, cache, segment, seed, v4_decisions, dagger_weights):
+    """Balance exactly the decisions retained by this epoch's deterministic cap."""
+    rng = np.random.default_rng(seed)
+    counts = {}
+    for entries in batches:
+        lengths = np.asarray([entry["steps"] for entry in entries])
+        dagger_rows = [entry.get("source_kind") == "dagger" for entry in entries]
+        for entry, dagger in zip(entries, dagger_rows):
+            if dagger and entry["file"] not in dagger_weights:
+                with np.load(cache / entry["file"], allow_pickle=False) as source:
+                    dagger_weights[entry["file"]] = source["sample_weight"]
+        for start in range(0, int(lengths.max()), segment):
+            mask = np.arange(segment)[None] < np.clip(lengths - start, 0, segment)[:, None]
+            cap_dagger_steps(mask, dagger_rows, rng)
+            if not mask.any():
+                break
+            for row, (entry, dagger) in enumerate(zip(entries, dagger_rows)):
+                if dagger:
+                    weights = dagger_weights[entry["file"]][start:start + segment]
+                    count = float(weights[mask[row, :len(weights)]].sum())
+                else:
+                    count = float(mask[row].sum())
+                if count:
+                    family = "follow" if entry["family"] == "follow_below_gate" else entry["family"]
+                    counts[family] = counts.get(family, 0.) + count
+    return family_balance_weights(
+        [dict(family=family, steps=count) for family, count in counts.items()],
+        [dict(family=family, steps=count) for family, count in v4_decisions.items()])
+
+
 def batch_tensors(episodes, start, length, device, dagger_rows=None, rng=None, heads=HEADS):
     stop = start + length
     arrays = {}
@@ -290,8 +390,13 @@ def train(args):
     source = getattr(args, "source", None)
     cache, out = Path(source or args.cache), Path(args.output)
     out.mkdir(parents=True, exist_ok=True)
-    index = (training_index(cache, Path(args.manifest), args.input_variant)
-             if source else read_index(cache))
+    if source:
+        index = training_index(cache, Path(args.manifest), args.input_variant)
+    else:
+        extra_caches = getattr(args, "aggregate_cache", [])
+        balance_cache = getattr(args, "balance_v4_cache", None)
+        index = (aggregate_training_index(cache, extra_caches, balance_cache)
+                 if extra_caches or balance_cache else read_index(cache))
     if index["cache_version"] in (BC3_CACHE_VERSION, HD_CACHE_VERSION, BC4_CACHE_VERSION):
         return train_bc3(args, index)
     train_eps = [e for e in index["episodes"] if e["split"] == "train"]
@@ -399,7 +504,7 @@ def initialize_bc3(model, path, index):
 
 
 def initialize_bc3_hd(model, path, index):
-    """Initialize HD from BC3, or expand HD's first convolutions for BC4."""
+    """Initialize HD from BC3, preserve HD for DAgger, or expand it for BC4."""
     from nav_bc_numpy import NumpyPolicy
     path = Path(path)
     if path.suffix != ".pt":
@@ -407,22 +512,22 @@ def initialize_bc3_hd(model, path, index):
     source = torch.load(path, map_location="cpu", weights_only=False)
     config = source["config"]
     familiar = model.format_version == 4
-    source_version = 3 if familiar else 2
-    if (config.get("format_version") != source_version or config.get("auxiliary") is not True
+    source_version = config.get("format_version")
+    if (source_version not in ((3,) if familiar else (2, 3)) or config.get("auxiliary") is not True
             or config.get("vector_size") != model.vector_size or config.get("hidden_size") != model.hidden_size):
-        raise ValueError(f"initialization requires a compatible v{source_version} checkpoint with auxiliary heads")
+        raise ValueError("initialization requires a compatible BC3/HD checkpoint with auxiliary heads")
     # Check the paired portable policy's sensor layout; the new map encoding is
     # deliberately different, while every transferred vector field stays exact.
     portable = NumpyPolicy(path.parent / "policy.navbc")
     preprocessing = portable.header.get("preprocessing", {})
-    expected_preprocessing = HD_PREPROCESSING if familiar else PREPROCESSING
+    expected_preprocessing = HD_PREPROCESSING if source_version == 3 else PREPROCESSING
     if any(preprocessing.get(name) != value for name, value in expected_preprocessing.items()):
         raise ValueError("source checkpoint preprocessing differs from the compatible input layout")
     if not np.array_equal(preprocessing.get("eye_layout"), index["eye_layout"]):
         raise ValueError("HD source eye layout differs from the demonstrations")
     state, transferred, reset, expanded = model.state_dict(), [], [], []
     for name in state:
-        if not familiar and name.startswith(("near_encoder.", "far_encoder.")):
+        if not familiar and source_version == 2 and name.startswith(("near_encoder.", "far_encoder.")):
             reset.append(name)
             continue
         if familiar and name in ("near_encoder.0.weight", "far_encoder.0.weight"):
@@ -443,6 +548,7 @@ def initialize_bc3_hd(model, path, index):
     model.load_state_dict(state)
     return dict(source=str(path), transferred=transferred, reset=reset, expanded=expanded,
                 maps=("HD tensors preserved; familiar input channel initialized to zero" if familiar else
+                      "all HD tensors preserved" if source_version == 3 else
                       "both CNNs initialized from scratch, including shape-compatible tensors"))
 
 
@@ -463,29 +569,44 @@ def bc3_targets(episodes, start, length, device):
         if count:
             target[row, :count] = episode.get("aux_near", episode["near"])[start + 1:start + count + 1]
     result["next_near"] = torch.from_numpy(target).to(device)
+    for name in ("sample_weight", "maneuver_valid"):
+        values = np.zeros((len(episodes), length), np.float32)
+        for row, episode in enumerate(episodes):
+            count = max(0, min(length, len(episode["labels"]) - start))
+            values[row, :count] = episode[name][start:start + count] if name in episode else 1.
+        result[name] = torch.from_numpy(values).to(device)
     return result
 
 
 def bc3_loss(logits, auxiliary, labels, mask, targets, class_weights, change_weight):
-    step_weights = torch.where(targets["action_change"] != 0, change_weight, 1.)[mask]
+    change_weights = torch.where(targets["action_change"] != 0, change_weight, 1.)
+    sample_weights = targets.get("sample_weight", torch.ones_like(change_weights))
     terms = {}
     for column, head in enumerate(BC3_HEADS):
-        values, truth = logits[head][mask], labels[:, :, column][mask]
+        valid = mask
+        if head == "maneuver" and "maneuver_valid" in targets:
+            valid = valid & targets["maneuver_valid"].bool()
+        if not valid.any():
+            terms[head] = logits[head].sum() * 0
+            continue
+        values, truth = logits[head][valid], labels[:, :, column][valid]
         ce = nn.functional.cross_entropy(values, truth, weight=class_weights[column], reduction="none")
-        weights = step_weights
+        weights = change_weights[valid] * sample_weights[valid]
         if head == "maneuver":
             probability = values.log_softmax(-1).gather(-1, truth[:, None]).squeeze(-1).exp()
             ce = ce * (1 - probability).square()
-            weights = weights * targets["maneuver_weight"][mask]
-        terms[head] = (ce * weights).sum() / step_weights.sum()
+            weights = weights * targets["maneuver_weight"][valid]
+        terms[head] = (ce * weights).sum() / change_weights[valid].sum()
     for head in ("stuck", "next_near", "detour"):
         valid = mask & targets[head + "_valid"].bool()
         if valid.any():
             if head == "stuck":
-                terms[head] = nn.functional.binary_cross_entropy_with_logits(
-                    auxiliary[head][valid], targets[head][valid])
+                errors = nn.functional.binary_cross_entropy_with_logits(
+                    auxiliary[head][valid], targets[head][valid], reduction="none")
             else:
-                terms[head] = nn.functional.smooth_l1_loss(auxiliary[head][valid], targets[head][valid])
+                errors = nn.functional.smooth_l1_loss(auxiliary[head][valid], targets[head][valid], reduction="none")
+                errors = errors.reshape(len(errors), -1).mean(1)
+            terms[head] = (errors * sample_weights[valid]).mean()
         else:
             terms[head] = auxiliary[head].sum() * 0
     action = sum(scale * terms[head] for head, scale in zip(BC3_HEADS, (2, 1, 2, 1, 1))) / 7
@@ -535,16 +656,29 @@ def train_bc3(args, index):
         action_change_weight=change_weight, maneuver_window_weight=5, focal_gamma=2,
         auxiliary_weights=dict(stuck=.1, next_near=.1, detour=.5),
         auxiliary_targets=index["auxiliary"], initialization=initialization,
+        family_balance=index.get("family_balance"), training_caches=index.get("training_caches", [str(cache)]),
+        max_dagger_fraction=.5, dagger_teacher_control_weight=.5,
         selection="fixed final epoch; closed-loop validation pending"))
+    dagger_weights = {}
     with BatchLoader(cache, getattr(args, "loader_workers", 0), getattr(args, "loader_prefetch", 1)) as loader:
         for epoch in range(len(history), args.epochs):
             started = time.perf_counter()
             model.train()
             total, steps, losses = 0., 0, {}
-            batches = training_batches(index["episodes"], args.batch, args.seed + epoch)
+            source_steps = dict(teacher=0, dagger=0)
+            weighted_family_steps = {}
+            epoch_batches = training_batches(index["episodes"], args.batch, args.seed + epoch)
+            epoch_weights = None
+            if "family_balance" in index:
+                epoch_weights, _ = epoch_family_balance(epoch_batches, cache, args.segment, args.seed + epoch,
+                    index["family_balance"]["v4_decisions"], dagger_weights)
+                for entry in index["episodes"]:
+                    entry["family_weight"] = epoch_weights.get(entry["family"], 1.)
+            sample_rng = np.random.default_rng(args.seed + epoch)
             next_batches = (training_batches(index["episodes"], args.batch, args.seed + epoch + 1)
                             if epoch + 1 < args.epochs else None)
-            for entries, group in loader.loaded_batches(batches, packed=hd, next_batches=next_batches):
+            for entries, group in loader.loaded_batches(epoch_batches, packed=hd, next_batches=next_batches):
+                dagger_rows = [entry.get("source_kind") == "dagger" for entry in entries]
                 hidden = None
                 for start in range(0, max(len(ep["labels"]) for ep in group), args.segment):
                     # Keep HD episodes packed and expand this truncated-BPTT segment
@@ -554,8 +688,18 @@ def train_bc3(args, index):
                     segment_start = 0 if hd else start
                     # Legacy batching uses six labels; BC3 explicitly supplies its five heads.
                     features, labels, mask = batch_tensors(segment_group, segment_start, args.segment, device,
-                                                          heads=BC3_HEADS)
+                                                          dagger_rows, sample_rng, heads=BC3_HEADS)
+                    if not mask.any():
+                        break
                     targets = bc3_targets(segment_group, segment_start, args.segment, device)
+                    for row, entry in enumerate(entries):
+                        targets["sample_weight"][row] *= entry.get("family_weight", 1.)
+                        count = int(mask[row].sum())
+                        source_steps["dagger" if dagger_rows[row] else "teacher"] += count
+                        if "family" in entry:
+                            family = entry["family"]
+                            weighted_family_steps[family] = weighted_family_steps.get(family, 0.) + float(
+                                targets["sample_weight"][row][mask[row]].sum())
                     optimizer.zero_grad(set_to_none=True)
                     logits, hidden, auxiliary = model(**features, hidden=hidden, return_auxiliary=True)
                     hidden = hidden.detach()
@@ -574,8 +718,17 @@ def train_bc3(args, index):
                 del group
             record = dict(epoch=epoch + 1, loss=total / steps, decisions=steps,
                           seconds=time.perf_counter() - started,
+                          source_decisions=source_steps,
+                          weighted_family_decisions=weighted_family_steps,
+                          weighted_family_shares={family: count / sum(weighted_family_steps.values())
+                                                  for family, count in weighted_family_steps.items()},
                           losses={name: value / steps for name, value in losses.items()},
                           **loader.wait_stats())
+            if epoch_weights is not None:
+                record["family_weights"] = epoch_weights
+                for family, minimum in index["family_balance"]["minimum_shares"].items():
+                    if record["weighted_family_shares"].get(family, 0.) + 1e-6 < minimum:
+                        raise ValueError(f"actual epoch {family} decision share is below the v4 floor")
             history.append(record)
             torch.save(dict(config=config, model=model.state_dict(), optimizer=optimizer.state_dict(),
                             history=history, navigation_memory_version=index["navigation_memory_version"],
@@ -609,7 +762,8 @@ def verify(args):
     model, state = checkpoint_model(out / ("last.pt" if bc3 else "best.pt"), "cpu")
     heads = tuple(model.head_sizes)
     model.eval()
-    export_weights(model, out / "policy.navbc", preprocessing={**index["preprocessing"], "eye_layout": index["eye_layout"]})
+    export_weights(model, out / "policy.navbc", preprocessing=state.get(
+        "preprocessing", {**index["preprocessing"], "eye_layout": index["eye_layout"]}))
     reference = NumpyPolicy(out / "policy.navbc")
     entries = [e for e in index["episodes"] if bc3 or e["split"] != "train"]
     # Prefer one uninterrupted episode >=1000, otherwise reset only at episode boundaries.
@@ -731,17 +885,24 @@ def main():
             p.add_argument("--lr", type=float, default=3e-4)
             p.add_argument("--seed", type=int, default=17)
             p.add_argument("--resume", action="store_true")
-            p.add_argument("--init", help="compatible .navbc for BC3; BC3 last.pt for HD; HD last.pt for BC4")
+            p.add_argument("--init", help="compatible .navbc for BC3; BC3/HD last.pt for HD; HD last.pt for BC4")
+            p.add_argument("--aggregate-cache", action="append", default=[],
+                           help="additional prepared HD train cache; repeat for frozen corpora/DAgger rounds")
+            p.add_argument("--balance-v4-cache", help="prepared v4 train cache supplying object/follow decision-share floors")
         if command == "verify":
             p.add_argument("--steps", type=int, default=1000)
             p.add_argument("--iterations", type=int, default=1000)
     args = parser.parse_args()
     source = getattr(args, "source", None)
-    if not Path(source or args.cache).is_absolute() or not Path(args.output).is_absolute():
+    if any(not Path(value).is_absolute() for value in
+           (source or args.cache, args.output, *getattr(args, "aggregate_cache", []),
+            *([args.balance_v4_cache] if getattr(args, "balance_v4_cache", None) else []))):
         parser.error("cache/source and output must be absolute paths")
     if source:
         if not args.manifest or not Path(args.manifest).is_absolute():
             parser.error("--source requires an absolute --manifest")
+        if args.aggregate_cache or args.balance_v4_cache:
+            parser.error("--source cannot be combined with aggregate or family-balance caches")
     elif getattr(args, "manifest", None):
         parser.error("--manifest requires --source")
     {"train": train, "evaluate": final_evaluate, "verify": verify, "plot": plot}[args.command](args)

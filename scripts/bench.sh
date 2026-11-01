@@ -21,6 +21,7 @@
 #                    goes into <segment>.wav instead of the speakers
 #      MOVABLE_VOBS  optional initial GAME movable_vobs setting (0 or 1), before world loading
 #      ITEM_HULLS    optional initial GAME item_hulls setting (0 or 1), for new item bodies
+#      ITEM_DEEPEST_CONTACT optional initial GAME item_deepest_contact setting (0 or 1)
 #      FURNITURE_PARTS optional initial GAME furniture_parts setting (0 or 1)
 #      ARROW_STICKING optional initial GAME arrow_sticking setting (0 or 1), before world loading
 #      PHYSICS_NOISE optional initial GAME physics_noise setting (0 or 1), before world loading
@@ -28,6 +29,7 @@
 #      BUOYANCY     optional initial GAME buoyancy setting (0 or 1), before world loading
 #      CLOTH        optional initial GAME cloth setting (0 or 1), before world loading
 #      ITEM_WAKE    optional initial GAME item_wake setting (0 or 1), before world loading
+#      PLACED_ITEMS optional initial GAME placed_items setting (0 or 1), before world loading
 #      STATIC_COLLISION_SPLIT optional initial GAME static_collision_split setting (0 or 1), before world loading
 #      CHARACTER_VIRTUAL optional initial GAME character_virtual setting (0 or 1), before world loading
 #      NPC_CHARACTER_VIRTUAL optional initial GAME npc_character_virtual setting (0 or 1)
@@ -36,6 +38,9 @@
 #      MELEE_POSTURE optional initial GAME melee_posture setting (0 or 1)
 #      MELEE_DOWN_TACTICS optional initial GAME melee_down_tactics setting (0 or 1)
 #      MELEE_HITSTOP optional initial GAME melee_hitstop setting (0 or 1)
+#      MELEE_STAMINA optional initial GAME melee_stamina setting (0 or 1)
+#      MELEE_PARRY optional initial GAME melee_parry setting (0 or 1)
+#      MELEE_PARRY_AI optional initial GAME melee_parry_ai setting (0 or 1)
 #      MELEE_REACTIONS optional initial GAME melee_reactions setting (0 or 1)
 #      MELEE_BLADE_SHADOW optional initial GAME melee_blade_shadow setting (0 or 1)
 #      OPENGOTHIC_TEXTURES  sharper textures (default: those of scripts/hd-textures.sh, when made; empty: none)
@@ -70,7 +75,7 @@ if [[ "$NAME" == routine-return ]]; then
   export RYZEN_MAX="${RYZEN_MAX:-75m}"
   [[ "$WORLD" == NEWWORLD.ZEN ]] || { echo "bench: routine-return requires WORLD=NEWWORLD.ZEN" >&2; exit 2; }
 fi
-if [[ "$NAME" == streaming-flythrough || "$NAME" == furniture-parts ]]; then
+if [[ "$NAME" == streaming-flythrough || "$NAME" == streaming-shots || "$NAME" == furniture-parts ]]; then
   export WORLD="${WORLD:-NEWWORLD.ZEN}"
   export RYZEN_BENCH_CLASS="${RYZEN_BENCH_CLASS:-quiet}"
 fi
@@ -161,7 +166,7 @@ fi
 
 # These fixtures use a prepared world and clock; skip the new-game chapter video
 # before their first command on NEWWORLD.
-if [[ "$NAME" == item-wake || "$NAME" == routine-return || "$NAME" == cloth* || "$NAME" == monster-character-virtual* || "$NAME" == own-mesh-* || "$NAME" == movable-census || "$NAME" == melee-physics || "$NAME" == melee-blade-shadow || "$NAME" == melee-posture-* || "$NAME" == streaming-flythrough || "$NAME" == furniture-parts ]]; then
+if [[ "$NAME" == placed-items* || "$NAME" == item-wake || "$NAME" == routine-return || "$NAME" == cloth* || "$NAME" == monster-character-virtual* || "$NAME" == own-mesh-* || "$NAME" == movable-census || "$NAME" == melee-physics || "$NAME" == melee-blade-shadow || "$NAME" == melee-posture-* || "$NAME" == streaming-flythrough || "$NAME" == streaming-shots || "$NAME" == furniture-parts || "$NAME" == loadprobe-idle || "$NAME" == loadprobe-chain ]]; then
   START_ARGS+=(-nointro)
 fi
 
@@ -190,6 +195,25 @@ if [[ "${RYZEN_BENCH:-}" != 1 && "$NEEDS_CADENCE" == 1 ]]; then
   fi
 fi
 
+# Chunk publication measurements need frame profiling as well as normal cadence.
+if [[ "${RYZEN_BENCH:-}" != 1 && "$NAME" == streaming-flythrough ]]; then
+  PROFILE_BUILD="$(dirname "$GAME_BIN")"
+  PROFILE_SUPPORTED=0
+  for ((i = 0; i < 4; i++)); do
+    if [[ -f "$PROFILE_BUILD/CMakeCache.txt" ]]; then
+      if grep -qx 'OPENGOTHIC_ENABLE_FRAME_PROFILE:BOOL=ON' "$PROFILE_BUILD/CMakeCache.txt"; then
+        PROFILE_SUPPORTED=1
+      fi
+      break
+    fi
+    PROFILE_BUILD="$(dirname "$PROFILE_BUILD")"
+  done
+  if [[ "$PROFILE_SUPPORTED" != 1 ]]; then
+    echo 'bench: streaming-flythrough requires -DOPENGOTHIC_ENABLE_FRAME_PROFILE=ON; use BENCH_HOST=ryzen to wait for Ryzen' >&2
+    exit 2
+  fi
+fi
+
 # the game reads Gothic.ini and saves from its working directory
 RUN="$OUT/run"
 mkdir -p "$RUN"
@@ -206,7 +230,7 @@ musicVolume=${MUSIC:-0}
 musicEnabled=$([[ "${MUSIC:-0}" == 0 || "${MUSIC:-0}" == 0.0 ]] && echo 0 || echo 1)
 worldSounds=${WORLD_SOUNDS:-1}
 EOF
-if [[ -n "${MOVABLE_VOBS:-}${ITEM_HULLS:-}${FURNITURE_PARTS:-}${ARROW_STICKING:-}${PHYSICS_NOISE:-}${DESTRUCTION:-}${BUOYANCY:-}${CLOTH:-}${ITEM_WAKE:-}${STATIC_COLLISION_SPLIT:-}${CHARACTER_VIRTUAL:-}${NPC_CHARACTER_VIRTUAL:-}${MONSTER_CHARACTER_VIRTUAL:-}${MELEE_BLADE_SHADOW:-}${MELEE_PHYSICS_HITS:-}${MELEE_POSTURE:-}${MELEE_REACTIONS:-}${MELEE_DOWN_TACTICS:-}${MELEE_HITSTOP:-}" ]]; then
+if [[ -n "${MOVABLE_VOBS:-}${ITEM_HULLS:-}${ITEM_DEEPEST_CONTACT:-}${FURNITURE_PARTS:-}${ARROW_STICKING:-}${PHYSICS_NOISE:-}${DESTRUCTION:-}${BUOYANCY:-}${CLOTH:-}${ITEM_WAKE:-}${PLACED_ITEMS:-}${STATIC_COLLISION_SPLIT:-}${CHARACTER_VIRTUAL:-}${NPC_CHARACTER_VIRTUAL:-}${MONSTER_CHARACTER_VIRTUAL:-}${MELEE_BLADE_SHADOW:-}${MELEE_PHYSICS_HITS:-}${MELEE_POSTURE:-}${MELEE_REACTIONS:-}${MELEE_DOWN_TACTICS:-}${MELEE_HITSTOP:-}${MELEE_STAMINA:-}${MELEE_PARRY:-}${MELEE_PARRY_AI:-}" ]]; then
   printf '\n[GAME]\n' >>"$RUN/Gothic.ini"
   if [[ -n "${MOVABLE_VOBS:-}" ]]; then
     [[ "$MOVABLE_VOBS" == 0 || "$MOVABLE_VOBS" == 1 ]] || { echo "MOVABLE_VOBS must be 0 or 1" >&2; exit 2; }
@@ -215,6 +239,10 @@ if [[ -n "${MOVABLE_VOBS:-}${ITEM_HULLS:-}${FURNITURE_PARTS:-}${ARROW_STICKING:-
   if [[ -n "${ITEM_HULLS:-}" ]]; then
     [[ "$ITEM_HULLS" == 0 || "$ITEM_HULLS" == 1 ]] || { echo "ITEM_HULLS must be 0 or 1" >&2; exit 2; }
     printf 'item_hulls=%s\n' "$ITEM_HULLS" >>"$RUN/Gothic.ini"
+  fi
+  if [[ -n "${ITEM_DEEPEST_CONTACT:-}" ]]; then
+    [[ "$ITEM_DEEPEST_CONTACT" == 0 || "$ITEM_DEEPEST_CONTACT" == 1 ]] || { echo "ITEM_DEEPEST_CONTACT must be 0 or 1" >&2; exit 2; }
+    printf 'item_deepest_contact=%s\n' "$ITEM_DEEPEST_CONTACT" >>"$RUN/Gothic.ini"
   fi
   if [[ -n "${FURNITURE_PARTS:-}" ]]; then
     [[ "$FURNITURE_PARTS" == 0 || "$FURNITURE_PARTS" == 1 ]] || { echo "FURNITURE_PARTS must be 0 or 1" >&2; exit 2; }
@@ -252,6 +280,18 @@ if [[ -n "${MOVABLE_VOBS:-}${ITEM_HULLS:-}${FURNITURE_PARTS:-}${ARROW_STICKING:-
     [[ "$MELEE_HITSTOP" == 0 || "$MELEE_HITSTOP" == 1 ]] || { echo "MELEE_HITSTOP must be 0 or 1" >&2; exit 2; }
     printf 'melee_hitstop=%s\n' "$MELEE_HITSTOP" >>"$RUN/Gothic.ini"
   fi
+  if [[ -n "${MELEE_STAMINA:-}" ]]; then
+    [[ "$MELEE_STAMINA" == 0 || "$MELEE_STAMINA" == 1 ]] || { echo "MELEE_STAMINA must be 0 or 1" >&2; exit 2; }
+    printf 'melee_stamina=%s\n' "$MELEE_STAMINA" >>"$RUN/Gothic.ini"
+  fi
+  if [[ -n "${MELEE_PARRY:-}" ]]; then
+    [[ "$MELEE_PARRY" == 0 || "$MELEE_PARRY" == 1 ]] || { echo "MELEE_PARRY must be 0 or 1" >&2; exit 2; }
+    printf 'melee_parry=%s\n' "$MELEE_PARRY" >>"$RUN/Gothic.ini"
+  fi
+  if [[ -n "${MELEE_PARRY_AI:-}" ]]; then
+    [[ "$MELEE_PARRY_AI" == 0 || "$MELEE_PARRY_AI" == 1 ]] || { echo "MELEE_PARRY_AI must be 0 or 1" >&2; exit 2; }
+    printf 'melee_parry_ai=%s\n' "$MELEE_PARRY_AI" >>"$RUN/Gothic.ini"
+  fi
   if [[ -n "${MELEE_REACTIONS:-}" ]]; then
     [[ "$MELEE_REACTIONS" == 0 || "$MELEE_REACTIONS" == 1 ]] || { echo "MELEE_REACTIONS must be 0 or 1" >&2; exit 2; }
     printf 'melee_reactions=%s\n' "$MELEE_REACTIONS" >>"$RUN/Gothic.ini"
@@ -280,6 +320,10 @@ if [[ -n "${MOVABLE_VOBS:-}${ITEM_HULLS:-}${FURNITURE_PARTS:-}${ARROW_STICKING:-
     [[ "$ITEM_WAKE" == 0 || "$ITEM_WAKE" == 1 ]] || { echo "ITEM_WAKE must be 0 or 1" >&2; exit 2; }
     printf 'item_wake=%s\n' "$ITEM_WAKE" >>"$RUN/Gothic.ini"
   fi
+  if [[ -n "${PLACED_ITEMS:-}" ]]; then
+    [[ "$PLACED_ITEMS" == 0 || "$PLACED_ITEMS" == 1 ]] || { echo "PLACED_ITEMS must be 0 or 1" >&2; exit 2; }
+    printf 'placed_items=%s\n' "$PLACED_ITEMS" >>"$RUN/Gothic.ini"
+  fi
   if [[ -n "${STATIC_COLLISION_SPLIT:-}" ]]; then
     [[ "$STATIC_COLLISION_SPLIT" == 0 || "$STATIC_COLLISION_SPLIT" == 1 ]] || { echo "STATIC_COLLISION_SPLIT must be 0 or 1" >&2; exit 2; }
     printf 'static_collision_split=%s\n' "$STATIC_COLLISION_SPLIT" >>"$RUN/Gothic.ini"
@@ -301,7 +345,7 @@ GAME_BIN="$GAME_BIN" bash "$ROOT/scripts/base-ensure.sh" "$GOTHIC_DIR"
 
 BACKGROUND=1
 if [[ "$NAME" == streaming-flythrough ]]; then
-  export OPENGOTHIC_FRAME_PROFILE="$OUT/frameprofile.csv" OPENGOTHIC_BENCH_VISIBLE=1
+  export OPENGOTHIC_FRAME_PROFILE="$OUT/frameprofile.csv" OPENGOTHIC_BENCH_VISIBLE=1 OPENGOTHIC_LOADPROBE=1
   BACKGROUND=0
 fi
 START=$(date +%s)

@@ -54,6 +54,9 @@ CREATE TABLE IF NOT EXISTS events (
     PRIMARY KEY (branch, seq)
 );
 CREATE INDEX IF NOT EXISTS events_by_npc ON events (branch, npc, seq);
+CREATE INDEX IF NOT EXISTS events_by_feat ON events (branch, seq)
+WHERE kind='fact'
+AND json_extract(content, '$.fact') IN ('feat', 'feat_epilogue', 'feat_epilogue_shown');
 """
 
 
@@ -234,6 +237,31 @@ class MemoryStore:
         ).fetchall()
         return [(int(s), content) for s, content in rows]
 
+    def feat_facts(self, branch: str) -> list[tuple[int, float, str]]:
+        """Achievement facts with their original recording time, including inherited copies."""
+        rows = self._db.execute(
+            "SELECT seq, created, content FROM events WHERE branch=? AND kind='fact' "
+            "AND json_extract(content, '$.fact') IN ('feat', 'feat_epilogue', 'feat_epilogue_shown') "
+            "ORDER BY seq",
+            (branch,),
+        ).fetchall()
+        return [(int(seq), created, content) for seq, created, content in rows]
+
+    def fact_clock(self, branch: str, seq: int) -> tuple[int, int]:
+        """Chapter and day last recorded in the shared prefix of a save fork."""
+        chapter, day = self._db.execute(
+            "SELECT (SELECT CASE WHEN json_extract(content, '$.fact')='chapter' "
+            "THEN json_extract(content, '$.value') ELSE json_extract(content, '$.chapter') END "
+            "FROM events WHERE branch=? AND kind='fact' AND seq<=? "
+            "AND (json_extract(content, '$.fact')='chapter' "
+            "OR json_extract(content, '$.chapter') IS NOT NULL) ORDER BY seq DESC LIMIT 1), "
+            "(SELECT json_extract(content, '$.day') FROM events "
+            "WHERE branch=? AND kind='fact' AND seq<=? "
+            "AND json_extract(content, '$.day') IS NOT NULL ORDER BY seq DESC LIMIT 1)",
+            (branch, seq, branch, seq),
+        ).fetchone()
+        return int(chapter or 1), int(day or 0)
+
     def add_patch(self, branch: str, op: str) -> int:
         """A change to the story graph (JSON of one operation) made on this branch."""
         return self._insert(branch, PATCHES, "patch", None, op, None, None)
@@ -246,10 +274,13 @@ class MemoryStore:
         return [row[0] for row in rows]
 
     def branches(self) -> list[BranchInfo]:
+        # Separate NPC ranges let the index skip copied '*' facts and patches.
         rows = self._db.execute(
-            "SELECT b.id, b.parent, b.parent_seq, b.created, COALESCE(MAX(e.seq), 0), "
-            "COUNT(DISTINCT CASE WHEN e.npc != '*' THEN e.npc END) "
-            "FROM branches b LEFT JOIN events e ON e.branch=b.id GROUP BY b.id ORDER BY b.created"
+            "SELECT b.id, b.parent, b.parent_seq, b.created, "
+            "COALESCE((SELECT MAX(seq) FROM events WHERE branch=b.id), 0), "
+            "(SELECT COUNT(DISTINCT npc) FROM events WHERE branch=b.id AND npc<'*') + "
+            "(SELECT COUNT(DISTINCT npc) FROM events WHERE branch=b.id AND npc>'*') "
+            "FROM branches b ORDER BY b.created"
         ).fetchall()
         return [BranchInfo(*row) for row in rows]
 

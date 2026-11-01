@@ -3,24 +3,36 @@
 #include "graphics/mesh/skeleton.h"
 #include "graphics/mesh/submesh/packedmesh.h"
 #include "graphics/meshobjects.h"
+#include "graphics/rtscene.h"
 #include "graphics/sceneglobals.h"
 #include "graphics/shaders.h"
 #include "resources.h"
+#include "world/chunkresidency.h"
 
+#include <Tempest/CommandBuffer>
 #include <Tempest/Device>
+#include <Tempest/Fence>
+#include <Tempest/MemReader>
 #include <Tempest/VulkanApi>
 #include <rapidjson/document.h>
 
+#include <algorithm>
 #include <array>
+#include <chrono>
+#include <cstring>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <numeric>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <system_error>
+#include <thread>
 #include <unistd.h>
+#include <vector>
 
 namespace {
 size_t assertions = 0;
@@ -38,31 +50,176 @@ void textFile(const std::filesystem::path& path, std::string_view text) {
     throw std::runtime_error("unable to write material fixture");
   }
 
-// One valid compressed 4x4 block. The originals deliberately have the opposite
-// format to their replacements, so consulting an original changes the result.
-void ddsFile(const std::filesystem::path& path, bool alpha) {
-  std::array<uint8_t,144> bytes{};
+// Valid compressed 4x4 blocks, optionally with the complete 2x2 and 1x1 mip
+// chain. Originals deliberately have the opposite format to their replacements.
+void ddsFile(const std::filesystem::path& path, bool alpha, bool mipmaps=false) {
+  std::array<uint8_t,176> bytes{};
+  const size_t mipCount=mipmaps ? 3 : 1;
+  const size_t blockSize=alpha ? 16 : 8;
   auto word = [&](size_t at, uint32_t value) {
     for(size_t i=0;i<4;++i)
       bytes[at*4+i] = uint8_t(value >> (i*8));
     };
   word(0,0x20534444); // DDS
   word(1,124);
-  word(2,0x81007);
+  word(2,mipmaps ? 0xa1007 : 0x81007);
   word(3,4);
   word(4,4);
   word(5,alpha ? 16 : 8);
-  word(7,1);
+  word(7,uint32_t(mipCount));
   word(19,32);
   word(20,4);
   word(21,alpha ? 0x35545844 : 0x31545844); // DXT5 / DXT1
-  word(27,0x1000);
+  word(27,mipmaps ? 0x401008 : 0x1000);
   if(alpha)
-    bytes[128] = 255;
+    for(size_t mip=0;mip<mipCount;++mip)
+      bytes[128+mip*blockSize] = 255;
   std::ofstream out(path, std::ios::binary);
-  out.write(reinterpret_cast<const char*>(bytes.data()),alpha ? 144 : 136);
+  out.write(reinterpret_cast<const char*>(bytes.data()),std::streamsize(128+mipCount*blockSize));
   if(!out)
     throw std::runtime_error("unable to write DDS fixture");
+  }
+
+struct CountingReader final : Tempest::MemReader {
+  using MemReader::MemReader;
+  size_t bytesRead = 0;
+  size_t bytesSkipped = 0;
+
+  size_t read(void* to, size_t size) override {
+    const auto count = MemReader::read(to,size);
+    bytesRead += count;
+    return count;
+    }
+
+  size_t seek(size_t size) override {
+    const auto count = MemReader::seek(size);
+    bytesSkipped += count;
+    return count;
+    }
+  };
+
+size_t mipBytes(uint32_t width, uint32_t height, size_t blockSize) {
+  return size_t((width+3)/4)*((height+3)/4)*blockSize;
+  }
+
+std::vector<uint8_t> mipDds(uint32_t fourCC, uint32_t width, uint32_t height, uint32_t mipCount) {
+  std::vector<uint8_t> bytes(128);
+  auto word = [&](size_t at, uint32_t value) {
+    for(size_t i=0;i<4;++i)
+      bytes[at*4+i] = uint8_t(value >> (i*8));
+    };
+  const size_t blockSize = fourCC==0x31545844 ? 8 : 16;
+  word(0,0x20534444);
+  word(1,124);
+  word(2,0xA1007);
+  word(3,height);
+  word(4,width);
+  word(5,uint32_t(mipBytes(width,height,blockSize)));
+  word(7,mipCount);
+  word(19,32);
+  word(20,4);
+  word(21,fourCC);
+  word(27,0x401008);
+  for(uint32_t mip=0;mip<mipCount;++mip) {
+    const auto offset = bytes.size();
+    const auto size = mipBytes(width,height,blockSize);
+    bytes.resize(offset+size);
+    for(size_t i=0;i<size;++i)
+      bytes[offset+i] = uint8_t(mip*37+i*13);
+    width = std::max(1u,width/2);
+    height = std::max(1u,height/2);
+    }
+  return bytes;
+  }
+
+void ddsMipTails() {
+  const std::array<uint32_t,3> fourCCs = {0x31545844,0x33545844,0x35545844};
+  const std::array<Tempest::TextureFormat,3> formats = {
+      Tempest::TextureFormat::DXT1,Tempest::TextureFormat::DXT3,Tempest::TextureFormat::DXT5};
+  for(size_t format=0;format<formats.size();++format) {
+    const auto bytes = mipDds(fourCCs[format],256,128,9);
+    Tempest::MemReader fullReader(bytes);
+    const Tempest::Pixmap full(fullReader);
+    require(full.w()==256 && full.h()==128 && full.mipCount()==9 && full.format()==formats[format],
+            "full DDS load must retain its dimensions, chain and format");
+    CountingReader zeroReader(bytes);
+    const auto zero = Tempest::Pixmap::loadDdsMipTail(zeroReader,0);
+    require(zero.w()==full.w() && zero.h()==full.h() && zero.mipCount()==full.mipCount() &&
+                zero.dataSize()==full.dataSize() && std::memcmp(zero.data(),full.data(),full.dataSize())==0,
+            "first mip zero must load the original DDS chain without modification");
+    size_t skipped = 0;
+    for(uint32_t mip=1;mip<=5;++mip) {
+      skipped += mipBytes(256u>>(mip-1),128u>>(mip-1),format==0 ? 8 : 16);
+      CountingReader reader(bytes);
+      const auto tail = Tempest::Pixmap::loadDdsMipTail(reader,mip,4);
+      require(tail.w()==(256u>>mip) && tail.h()==(128u>>mip) && tail.mipCount()==9-mip,
+              "DDS tail must begin at the requested mip and retain the remaining chain");
+      require(tail.format()==full.format() && tail.dataSize()==full.dataSize()-skipped,
+              "DDS tail must retain its format and exact remaining byte count");
+      require(std::memcmp(tail.data(),static_cast<const uint8_t*>(full.data())+skipped,tail.dataSize())==0,
+              "each DDS mip tail must match the corresponding full-load bytes");
+      require(reader.bytesRead<=128+tail.dataSize() && reader.bytesSkipped==skipped,
+              "DDS tail must seek past discarded mips without reading their bytes");
+      }
+    CountingReader clampedReader(bytes);
+    const auto clamped = Tempest::Pixmap::loadDdsMipTail(clampedReader,99,0);
+    require(clamped.w()==8 && clamped.h()==4 && clamped.mipCount()==4,
+            "BC tail selection must stop before either side drops below one 4x4 block");
+    CountingReader floorReader(bytes);
+    const auto floor = Tempest::Pixmap::loadDdsMipTail(floorReader,3);
+    require(floor.w()==128 && floor.h()==64 && floor.mipCount()==8,
+            "the default minimum side must clamp the requested DDS mip to 64");
+    CountingReader customFloorReader(bytes);
+    require(Tempest::Pixmap::loadDdsMipTail(customFloorReader,1,128).isEmpty(),
+            "DDS with no tail above the requested minimum side must report no tail");
+    const auto single = mipDds(fourCCs[format],256,128,1);
+    CountingReader singleReader(single);
+    require(Tempest::Pixmap::loadDdsMipTail(singleReader,1).isEmpty() && singleReader.bytesRead<=128,
+            "single-level DDS must report no tail without reading or rescaling its pixels");
+    Tempest::MemReader singleFullReader(single);
+    const auto singleFull = Tempest::Pixmap::loadDdsMipTail(singleFullReader,0);
+    require(singleFull.w()==256 && singleFull.h()==128 && singleFull.mipCount()==1,
+            "first mip zero must still load a single-level DDS");
+
+    const auto partial = mipDds(fourCCs[format],19,11,3);
+    Tempest::MemReader partialFullReader(partial);
+    const Tempest::Pixmap partialFull(partialFullReader);
+    CountingReader partialReader(partial);
+    const auto partialTail = Tempest::Pixmap::loadDdsMipTail(partialReader,1,4);
+    const auto partialSkipped = mipBytes(19,11,format==0 ? 8 : 16);
+    require(partialTail.w()==9 && partialTail.h()==5 && partialTail.mipCount()==2 &&
+                partialTail.dataSize()==partialFull.dataSize()-partialSkipped &&
+                std::memcmp(partialTail.data(),static_cast<const uint8_t*>(partialFull.data())+partialSkipped,
+                            partialTail.dataSize())==0,
+            "odd-sized DDS tails must round BC blocks up and preserve an incomplete chain");
+    require(partialReader.bytesRead==128+partialTail.dataSize() && partialReader.bytesSkipped==partialSkipped,
+            "odd-sized DDS tails must read only the header and retained BC blocks");
+    }
+
+  const auto valid = mipDds(fourCCs[0],256,128,9);
+  auto fails = [](const std::vector<uint8_t>& bytes) {
+    CountingReader reader(bytes);
+    bool failed = false;
+    try {
+      Tempest::Pixmap::loadDdsMipTail(reader,2);
+      }
+    catch(const std::system_error&) {
+      failed = true;
+      }
+    require(failed,"damaged or truncated DDS must fail with an asset-loading error");
+    };
+  auto damaged = valid;
+  damaged[0] = 0;
+  fails(damaged);
+  damaged = valid;
+  damaged.resize(127);
+  fails(damaged);
+  damaged = valid;
+  damaged.pop_back();
+  fails(damaged);
+  damaged = valid;
+  damaged[28] = 255;
+  fails(damaged);
   }
 
 struct Fixture final {
@@ -75,11 +232,11 @@ struct Fixture final {
     ddsFile(root/"materials/solid.dds",false);
     ddsFile(root/"materials/alpha.dds",true);
     for(const auto* name:{"NW_CITY_ROPE_01.TGA","HUM_BODY_V0_C0.TGA","HUM_BODY_V1_C0.TGA"})
-      ddsFile(root/"_work"/name,true);
+      ddsFile(root/"_work"/(std::filesystem::path(name).stem().string()+".dds"),true,true);
     for(const auto* name:{"NW_CITY_WOOD_01.TGA","NW_HARBOUR_WOODCRATE_01.TGA",
                          "NW_HARBOUR_WOODCRATE_02.TGA","HUM_BODY_V2_C3.TGA",
-                         "HUM_BODY_V4_C5.TGA","UNLISTED.TGA"})
-      ddsFile(root/"_work"/name,false);
+                         "HUM_BODY_V4_C5.TGA","UNLISTED.TGA","PINNED.TGA"})
+      ddsFile(root/"_work"/(std::filesystem::path(name).stem().string()+".dds"),false,true);
     textFile(root/"materials/materials.json",R"({
       "NW_CITY_ROPE_01.TGA":{"albedo":"solid.dds"},
       "NW_CITY_WOOD_01.TGA":{"albedo":"alpha.dds"},
@@ -89,7 +246,7 @@ struct Fixture final {
       "HUM_BODY_V2_C3.TGA":{"albedo":"alpha.dds"}
     })");
     setenv("OPENGOTHIC_CONTENT",root.c_str(),1);
-    setenv("OPENGOTHIC_TEXTURES","",1);
+    setenv("OPENGOTHIC_TEXTURES",(root/"_work").c_str(),1);
     setenv("OPENGOTHIC_CENSUS",(root/"census.json").c_str(),1);
     setenv("TEMPEST_AUDIO_LOOPBACK","48000",1);
     }
@@ -294,12 +451,22 @@ void census(const Fixture& fixture) {
             "no original with a replacement may be opened");
     }
   require(data.HasMember("replacements") && data["replacements"].IsArray(),"census must contain replacements");
-  require(data["replacements"].Size()==6,"all four city textures, base and selected variant must be counted");
+  size_t materialReplacements=0, originalTextures=0;
   for(const auto& entry:data["replacements"].GetArray()) {
+    const std::string_view name(entry["name"].GetString());
     const std::string_view replacement(entry["replacement"].GetString());
-    require(replacement=="materials/solid.dds" || replacement=="materials/alpha.dds",
-            "direct albedo substitutions must use the ordinary material census path");
+    if(replacement=="materials/solid.dds" || replacement=="materials/alpha.dds") {
+      ++materialReplacements;
+      } else {
+      require(name=="UNLISTED.TGA" || name=="HUM_BODY_V4_C5.TGA",
+              "no original with a material replacement may be opened through the fixture DDS index");
+      const auto expected=fixture.root/"_work"/(std::filesystem::path(name).stem().string()+".dds");
+      require(replacement==expected.string(),"the original loader must read the indexed fixture DDS");
+      ++originalTextures;
+      }
     }
+  require(materialReplacements==6,"all four city textures, base and selected variant must be counted");
+  require(originalTextures==2,"both unlisted originals must be read through the texture loader");
   }
 
 void emptyTable(Tempest::Device& device, const Fixture& fixture) {
@@ -321,10 +488,565 @@ void emptyTable(Tempest::Device& device, const Fixture& fixture) {
           "without replacements alpha classification must use the original formats");
   skinnedVariant(false);
   }
+
+void textureResidency(Tempest::Device& device, const Fixture& fixture) {
+  std::string materials=R"({"STREAM.TGA":{"albedo":"solid.dds","normal":"alpha.dds","orm":"alpha.dds"})";
+  for(size_t i=0;i<17;++i) {
+    const auto name="lru-"+std::to_string(i)+".dds";
+    ddsFile(fixture.root/"materials"/name,false);
+    materials+=",\"LRU_"+std::to_string(i)+".TGA\":{\"albedo\":\""+name+"\"}";
+    }
+  textFile(fixture.root/"materials/materials.json",materials+"}");
+  setenv("OPENGOTHIC_TEXTURE_BUDGET_MB","0",1);
+  setenv("OPENGOTHIC_TEXTURE_STREAMING","1",1);
+  Resources resources(device);
+  Shaders shaders;
+  shaders.waitCompiler();
+  const auto baselineBytes=Tempest::Texture2d::liveBytes();
+  const auto baselineCount=Tempest::Texture2d::liveCount();
+  {
+  auto payload=device.texture(Tempest::Pixmap(1,1,Tempest::TextureFormat::RGBA8),false);
+  auto shared=payload.shared();
+  Tempest::Texture2d moved(std::move(payload));
+  require(payload.isEmpty() && !moved.isEmpty() && !shared.isEmpty() &&
+          Tempest::Texture2d::liveBytes()==baselineBytes+4 && Tempest::Texture2d::liveCount()==baselineCount+1,
+          "shared and moved wrappers must count their single native texture allocation once");
+  moved.markRetired();
+  shared.markRetired();
+  require(Tempest::Texture2d::liveBytes()==baselineBytes && Tempest::Texture2d::liveCount()==baselineCount,
+          "retirement must remove a shared payload from live counters exactly once");
+  }
+  require(Tempest::Texture2d::liveBytes()==baselineBytes && Tempest::Texture2d::liveCount()==baselineCount,
+          "destroying retired shared wrappers must not subtract live counters again");
+  Material material(source("STREAM.TGA"),true);
+  material.frames={material.tex,Resources::loadTexture("UNLISTED.TGA",false,false)};
+  material.texAniFPSInv=100;
+  const Material copy=material;
+  require(material.tex!=nullptr && material.normal!=nullptr && material.orm!=nullptr &&
+          material.frames.back()!=nullptr,"streaming fixture must load every material texture kind");
+  require(material.normal!=material.orm,"normal and ORM must retain distinct identities for a shared file");
+  const auto* pinned=Resources::loadTexture("PINNED.TGA");
+  const auto initial=Resources::textureStats();
+  const auto generation=Resources::textureGeneration();
+  // Albedo/normal/ORM each have one block; the original animation frame has three mips.
+  const auto fullBytes=uint64_t(8+16+16+3*8);
+  const auto isFull=[&] {
+    return material.tex->w()==4 && material.normal->w()==4 && material.orm->w()==4 &&
+           material.frames.back()->w()==4;
+    };
+
+  std::vector<Resources::Vertex> vertices={
+    {{0,0,0},{0,0,1},{0,0},0xffffffffu},
+    {{1,0,0},{0,0,1},{1,0},0xffffffffu},
+    {{0,1,0},{0,0,1},{0,1},0xffffffffu}};
+  StaticMesh mesh(material,std::move(vertices),{0,1,2});
+  DrawBuckets buckets;
+  auto bucket=buckets.alloc(material,mesh);
+  const auto commit=[&] {
+    auto command=device.commandBuffer();
+    bool changed=false;
+    {
+    auto encoder=command.startEncoding(device);
+    changed=buckets.commit(encoder,0);
+    }
+    device.submit(command).wait();
+    return changed;
+    };
+  require(commit(),"initial bucket commit must create its descriptor arrays");
+  if(Shaders::options().doBindless)
+    require(!buckets.textures().isEmpty(),"animated material must have a real bindless array");
+  require(!commit(),"unchanged texture payloads must not rebuild descriptor arrays");
+
+  RtScene rayScene;
+  auto blas=Resources::blas(mesh.vbo,mesh.ibo,0,3);
+  if(!blas.isEmpty()) {
+    rayScene.addInstance(Tempest::Matrix4x4::mkIdentity(),blas,material,mesh,0,3,RtScene::Static);
+    rayScene.buildTlas();
+    require(!rayScene.tex.isEmpty() && !rayScene.refreshTextures(),
+            "a built RT array must retain its current texture generation");
+    }
+
+  ChunkTable table;
+  table.entries.push_back({{0,0},"",{0,0,0},{1,1,0},1});
+  ChunkResidency residency(table);
+  require(residency.indexOf({0,0})==0 && residency.indexOf({1,0})==size_t(-1),
+          "chunk identity lookup must distinguish a table entry from an absent cell");
+  const auto evict=[&](uint64_t expected) {
+    const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(5);
+    while(Resources::textureStats().evicted<expected && std::chrono::steady_clock::now()<deadline) {
+      const auto before=Resources::textureStats().evicted;
+      const auto generation=Resources::textureGeneration();
+      Resources::updateTextures(&residency);
+      require(Resources::textureStats().evicted-before<=16 && Resources::textureGeneration()-generation<=1,
+              "a texture update must retire at most sixteen payloads and publish one generation");
+      }
+    };
+  Resources::textureDemand(material,Resources::TextureCategory::Landscape,true);
+  Resources::textureDemand(material,Resources::TextureCategory::Dynamic,true);
+  Resources::updateTextures(&residency);
+  require(isFull() && Resources::textureStats().evicted==0,
+          "all demanded textures must survive a zero budget");
+  Resources::textureDemand(material,Resources::TextureCategory::Landscape,false);
+  Resources::updateTextures(&residency);
+  require(isFull(),"removing one owner must preserve another owner's texture demand");
+  Resources::textureDemand(material,Resources::TextureCategory::Dynamic,false);
+  device.waitIdle();
+  Resources::resetRecycled(0);
+  evict(4);
+  const auto evicted=Resources::textureStats();
+  require(evicted.evicted==4 && evicted.retiredBytes==fullBytes,
+          "zero-demand textures must retire every full payload exactly once");
+  require(evicted.liveBytes==initial.liveBytes-fullBytes+12 && evicted.count==initial.count-1 &&
+          evicted.peakBytes>=initial.liveBytes,
+          "live texture bytes and count must include three shared neutral GPU images exactly once");
+  require(std::all_of(evicted.categoryBytes.begin(),evicted.categoryBytes.end(),[&](auto bytes) { return bytes<=evicted.liveBytes; }) &&
+          std::all_of(evicted.categoryCount.begin(),evicted.categoryCount.end(),[&](auto count) { return count<=evicted.count; }) &&
+          std::accumulate(evicted.categoryBytes.begin(),evicted.categoryBytes.end(),uint64_t(0))==evicted.liveBytes &&
+          std::accumulate(evicted.categoryCount.begin(),evicted.categoryCount.end(),uint64_t(0))==evicted.count,
+          "texture categories must partition native live bytes and counts without double-counting placeholders");
+  require(Resources::textureGeneration()>generation && material==copy && bucket->mat==copy &&
+          mesh.sub[0].material==copy,"eviction must preserve material, mesh, frame and bucket identities");
+  require(pinned!=nullptr && pinned->w()==4,"UI texture loads must remain pinned above budget");
+  const auto pixel=[&](const Tempest::Texture2d* texture) {
+    require(texture->w()==1 && texture->h()==1,"eviction must publish a one-pixel placeholder");
+    const auto image=device.readPixels(*texture);
+    require(image.format()==Tempest::TextureFormat::RGBA8,"placeholder readback must preserve RGBA bytes");
+    std::array<uint8_t,4> result{};
+    std::copy_n(static_cast<const uint8_t*>(image.data()),result.size(),result.begin());
+    return result;
+    };
+  require(pixel(material.tex)==std::array<uint8_t,4>{255,255,255,255},
+          "color placeholder must be opaque neutral white");
+  const auto normal=pixel(material.normal);
+  require(normal[1]==128 && normal[3]==128,"DXT5nm placeholder must have zero alpha/green slope");
+  require(pixel(material.orm)==std::array<uint8_t,4>{255,255,0,255},
+          "ORM placeholder must be unoccluded, rough and nonmetallic");
+  require(commit() && !commit(),"payload replacement must refresh bindless arrays without rebuilding buckets");
+  if(!blas.isEmpty())
+    require(rayScene.refreshTextures() && !rayScene.refreshTextures(),
+            "payload replacement must refresh RT descriptors once without rebuilding the TLAS");
+  Resources::resetRecycled(1);
+  require(Resources::textureStats().retiredBytes==fullBytes,
+          "another frame slot must not free retired texture payloads");
+  device.waitIdle();
+  Resources::resetRecycled(0);
+  require(Resources::textureStats().retiredBytes==0,"the completed frame slot must free retired texture payloads");
+
+  Resources::textureDemand(material,Resources::TextureCategory::Landscape,true);
+  require(!Resources::texturesReady(),"new demand must immediately register missing resident payloads");
+  const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(5);
+  while(Resources::textureStats().reloaded<4 && std::chrono::steady_clock::now()<deadline) {
+    residency.update({0,0,0},{0,0,0},1000);
+    Resources::updateTextures(&residency);
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+  require(Resources::textureStats().reloaded==4 && isFull() && Resources::texturesReady(),
+          "new demand must reload every evicted texture through the frame queue");
+  require(material==copy && bucket->mat==copy && commit(),
+          "reload must keep identities while refreshing actual bindless descriptors");
+  if(!blas.isEmpty())
+    require(rayScene.refreshTextures(),"reload must refresh retained RT texture identities");
+  Resources::textureDemand(material,Resources::TextureCategory::Landscape,false);
+  setenv("OPENGOTHIC_TEXTURE_STREAMING","0",1);
+  Resources::configureTextures();
+  Resources::updateTextures(&residency);
+  require(isFull() && Resources::textureStats().evicted==evicted.evicted,
+          "the texture streaming opt-out must disable eviction above budget");
+
+  // Use the actual render owners as well as the direct shared-owner contract.
+  setenv("OPENGOTHIC_TEXTURE_STREAMING","1",1);
+  Resources::configureTextures();
+  SceneGlobals scene;
+  VisualObjects visuals(scene,{{0,0,0},{1,1,0}});
+  visuals.setTextureResidency(&residency);
+  auto stationary=visuals.get(mesh,material,0,mesh.sub[0].iboLength,true);
+  auto movable=visuals.get(mesh,material,0,mesh.sub[0].iboLength,false);
+  residency.update({1000000,0,1000000},{1000000,0,1000000},1000);
+  Resources::updateTextures(&residency);
+  require(isFull(),"an off-chunk static owner must not cancel a moving owner's shared demand");
+  movable=VisualObjects::Item();
+  evict(evicted.evicted+4);
+  require(material.tex->w()==1 && Resources::textureStats().evicted==evicted.evicted+4,
+          "an Outside static prototype must not retain textures after the moving visual disappears");
+
+  // One more identity than a frame may retire makes the LRU slice observable.
+  std::array<Material,17> lru;
+  for(size_t i=0;i<lru.size();++i) {
+    lru[i]=Material(source("LRU_"+std::to_string(i)+".TGA"),true);
+    Resources::textureDemand(lru[i],Resources::TextureCategory::Static,true);
+    Resources::textureDemand(lru[i],Resources::TextureCategory::Static,false);
+    }
+  // Environment mutations take effect only when configuration is refreshed.
+  setenv("OPENGOTHIC_TEXTURE_BUDGET_MB","1",1);
+  const auto beforeSlice=Resources::textureStats().evicted;
+  const auto beforeGeneration=Resources::textureGeneration();
+  Resources::updateTextures(&residency);
+  const auto retired=Resources::textureStats().evicted-beforeSlice;
+  require(retired>0 && retired<=16 && Resources::textureGeneration()==beforeGeneration+1,
+          "cached zero budget must retire a bounded LRU slice with one generation");
+  for(size_t i=0;i<lru.size();++i)
+    require(lru[i].tex!=nullptr && lru[i].tex->w()==(i<retired ? 1 : 4),
+            "incremental LRU retirement must follow the last owner release order");
+  Resources::textureDemand(lru.back(),Resources::TextureCategory::Dynamic,true);
+  evict(beforeSlice+16);
+  require(lru.back().tex->w()==4,"late demand must remove a resident texture from the eviction queue");
+  Resources::textureDemand(lru.back(),Resources::TextureCategory::Dynamic,false);
+  Resources::configureTextures();
+  Resources::updateTextures(&residency);
+  require(lru.back().tex->w()==4 && Resources::textureStats().evicted==beforeSlice+16,
+          "configuration refresh must apply the new budget without evicting an eligible texture below it");
+  device.waitIdle();
+  setenv("OPENGOTHIC_TEXTURE_STREAMING","1",1);
+  unsetenv("OPENGOTHIC_TEXTURE_BUDGET_MB");
+  }
+
+Tempest::ComputePipeline descriptorColorProbe(Tempest::Device& device) {
+  // glslangValidator -V -Os; embedded to keep this contract self-contained.
+  // #version 450
+  // #extension GL_EXT_nonuniform_qualifier : require
+  // #extension GL_EXT_samplerless_texture_functions : require
+  // layout(local_size_x=2) in;
+  // layout(binding=0) uniform texture2D images[];
+  // layout(binding=1, std430) buffer Result { uint rgba[2]; } result;
+  // void main() {
+  //   uint i=gl_GlobalInvocationID.x;
+  //   result.rgba[i]=packUnorm4x8(texelFetch(images[nonuniformEXT(i)],ivec2(0),0));
+  // }
+  static const uint32_t code[]={
+    0x07230203u,0x00010000u,0x0008000bu,0x0000002bu,0x00000000u,0x00020011u,0x00000001u,0x00020011u,
+    0x000014b5u,0x00020011u,0x000014b6u,0x00020011u,0x000014bbu,0x0008000au,0x5f565053u,0x5f545845u,
+    0x63736564u,0x74706972u,0x695f726fu,0x7865646eu,0x00676e69u,0x0006000bu,0x00000001u,0x4c534c47u,
+    0x6474732eu,0x3035342eu,0x00000000u,0x0003000eu,0x00000000u,0x00000001u,0x0006000fu,0x00000005u,
+    0x00000004u,0x6e69616du,0x00000000u,0x0000000bu,0x00060010u,0x00000004u,0x00000011u,0x00000002u,
+    0x00000001u,0x00000001u,0x00030003u,0x00000002u,0x000001c2u,0x00080004u,0x455f4c47u,0x6e5f5458u,
+    0x6e756e6fu,0x726f6669u,0x75715f6du,0x66696c61u,0x00726569u,0x000b0004u,0x455f4c47u,0x735f5458u,
+    0x6c706d61u,0x656c7265u,0x745f7373u,0x75747865u,0x665f6572u,0x74636e75u,0x736e6f69u,0x00000000u,
+    0x00040005u,0x00000004u,0x6e69616du,0x00000000u,0x00080005u,0x0000000bu,0x475f6c67u,0x61626f6cu,
+    0x766e496cu,0x7461636fu,0x496e6f69u,0x00000044u,0x00040005u,0x00000012u,0x75736552u,0x0000746cu,
+    0x00050006u,0x00000012u,0x00000000u,0x61626772u,0x00000000u,0x00040005u,0x00000014u,0x75736572u,
+    0x0000746cu,0x00040005u,0x0000001cu,0x67616d69u,0x00007365u,0x00040047u,0x0000000bu,0x0000000bu,
+    0x0000001cu,0x00040047u,0x00000011u,0x00000006u,0x00000004u,0x00030047u,0x00000012u,0x00000003u,
+    0x00050048u,0x00000012u,0x00000000u,0x00000023u,0x00000000u,0x00040047u,0x00000014u,0x00000021u,
+    0x00000001u,0x00040047u,0x00000014u,0x00000022u,0x00000000u,0x00040047u,0x0000001cu,0x00000021u,
+    0x00000000u,0x00040047u,0x0000001cu,0x00000022u,0x00000000u,0x00030047u,0x0000001eu,0x000014b4u,
+    0x00030047u,0x00000020u,0x000014b4u,0x00030047u,0x00000021u,0x000014b4u,0x00040047u,0x0000002au,
+    0x0000000bu,0x00000019u,0x00020013u,0x00000002u,0x00030021u,0x00000003u,0x00000002u,0x00040015u,
+    0x00000006u,0x00000020u,0x00000000u,0x00040017u,0x00000009u,0x00000006u,0x00000003u,0x00040020u,
+    0x0000000au,0x00000001u,0x00000009u,0x0004003bu,0x0000000au,0x0000000bu,0x00000001u,0x0004002bu,
+    0x00000006u,0x0000000cu,0x00000000u,0x00040020u,0x0000000du,0x00000001u,0x00000006u,0x0004002bu,
+    0x00000006u,0x00000010u,0x00000002u,0x0004001cu,0x00000011u,0x00000006u,0x00000010u,0x0003001eu,
+    0x00000012u,0x00000011u,0x00040020u,0x00000013u,0x00000002u,0x00000012u,0x0004003bu,0x00000013u,
+    0x00000014u,0x00000002u,0x00040015u,0x00000015u,0x00000020u,0x00000001u,0x0004002bu,0x00000015u,
+    0x00000016u,0x00000000u,0x00030016u,0x00000018u,0x00000020u,0x00090019u,0x00000019u,0x00000018u,
+    0x00000001u,0x00000000u,0x00000000u,0x00000000u,0x00000001u,0x00000000u,0x0003001du,0x0000001au,
+    0x00000019u,0x00040020u,0x0000001bu,0x00000000u,0x0000001au,0x0004003bu,0x0000001bu,0x0000001cu,
+    0x00000000u,0x00040020u,0x0000001fu,0x00000000u,0x00000019u,0x00040017u,0x00000022u,0x00000015u,
+    0x00000002u,0x0005002cu,0x00000022u,0x00000023u,0x00000016u,0x00000016u,0x00040017u,0x00000024u,
+    0x00000018u,0x00000004u,0x00040020u,0x00000027u,0x00000002u,0x00000006u,0x0004002bu,0x00000006u,
+    0x00000029u,0x00000001u,0x0006002cu,0x00000009u,0x0000002au,0x00000010u,0x00000029u,0x00000029u,
+    0x00050036u,0x00000002u,0x00000004u,0x00000000u,0x00000003u,0x000200f8u,0x00000005u,0x00050041u,
+    0x0000000du,0x0000000eu,0x0000000bu,0x0000000cu,0x0004003du,0x00000006u,0x0000000fu,0x0000000eu,
+    0x00040053u,0x00000006u,0x0000001eu,0x0000000fu,0x00050041u,0x0000001fu,0x00000020u,0x0000001cu,
+    0x0000001eu,0x0004003du,0x00000019u,0x00000021u,0x00000020u,0x0007005fu,0x00000024u,0x00000025u,
+    0x00000021u,0x00000023u,0x00000002u,0x00000016u,0x0006000cu,0x00000006u,0x00000026u,0x00000001u,
+    0x00000037u,0x00000025u,0x00060041u,0x00000027u,0x00000028u,0x00000014u,0x00000016u,0x0000000fu,
+    0x0003003eu,0x00000028u,0x00000026u,0x000100fdu,0x00010038u,
+    };
+  return device.pipeline(device.shader(code,sizeof(code)));
+  }
+
+void textureMipResidency(Tempest::Device& device, const Fixture& fixture) {
+  auto color=mipDds(0x31545844,256,256,9);
+  const auto maps=mipDds(0x35545844,256,256,9);
+  auto single=mipDds(0x31545844,256,256,1);
+  const auto paint=[](std::vector<uint8_t>& bytes, uint16_t full, uint16_t tail) {
+    for(size_t at=128;at<bytes.size();at+=8) {
+      const auto rgb=at<128+mipBytes(256,256,8) ? full : tail;
+      std::fill_n(bytes.begin()+std::ptrdiff_t(at),8,uint8_t(0));
+      bytes[at]=bytes[at+2]=uint8_t(rgb);
+      bytes[at+1]=bytes[at+3]=uint8_t(rgb>>8);
+      }
+    };
+  paint(color,0xf800,0x07e0); // Red Full, green Tail.
+  paint(single,0x001f,0x001f); // Unchanged blue neighbour.
+  const auto write=[&](const char* name, const std::vector<uint8_t>& bytes) {
+    textFile(fixture.root/"materials"/name,
+             {reinterpret_cast<const char*>(bytes.data()),bytes.size()});
+    };
+  write("mip-color.dds",color);
+  write("mip-maps.dds",maps);
+  write("mip-single.dds",single);
+  textFile(fixture.root/"materials/materials.json",R"({
+    "MIP_STREAM.TGA":{"albedo":"mip-color.dds","normal":"mip-maps.dds","orm":"mip-maps.dds"},
+    "MIP_SINGLE.TGA":{"albedo":"mip-single.dds"}
+  })");
+  setenv("OPENGOTHIC_TEXTURE_STREAMING","1",1);
+  setenv("OPENGOTHIC_TEXTURE_MIPS","1",1);
+  setenv("OPENGOTHIC_TEXTURE_FAR_SKIP_MIPS","2",1);
+  setenv("OPENGOTHIC_TEXTURE_BUDGET_MB","256",1);
+  setenv("OPENGOTHIC_TEXTURE_TARGET_MB","192",1);
+  {
+  Resources resources(device);
+  Shaders shaders;
+  shaders.waitCompiler();
+  Material material, noTail;
+  {
+  Resources::TextureLoadScope far(true);
+  material=Material(source("MIP_STREAM.TGA"),true);
+  noTail=Material(source("MIP_SINGLE.TGA"),true);
+  }
+  const Material copy=material;
+  const auto tail=[&] {
+    return material.tex->w()==64 && material.normal->w()==64 && material.orm->w()==64;
+    };
+  const auto full=[&] {
+    return material.tex->w()==256 && material.normal->w()==256 && material.orm->w()==256;
+    };
+  require(material.tex!=nullptr && material.normal!=nullptr && material.orm!=nullptr && tail(),
+          "Far initial loads must upload the DDS tail for every material map");
+  require(noTail.tex!=nullptr && noTail.tex->w()==256,
+          "a single-level DDS must remain Full in a Far loading scope");
+  Resources::textureDemand(material,Resources::TextureCategory::Static,true,4);
+  Resources::textureDemand(noTail,Resources::TextureCategory::Static,true,4);
+
+  std::vector<Resources::Vertex> vertices={
+    {{0,0,0},{0,0,1},{0,0},0xffffffffu},
+    {{1,0,0},{0,0,1},{1,0},0xffffffffu},
+    {{0,1,0},{0,0,1},{0,1},0xffffffffu}};
+  StaticMesh mesh(material,std::move(vertices),{0,1,2});
+  DrawBuckets buckets;
+  auto bucket=buckets.alloc(material,mesh);
+  auto unchangedBucket=buckets.alloc(noTail,mesh);
+  const Tempest::Detail::ResourcePtr<Tempest::Texture2d> unchangedPayload(*noTail.tex);
+  const auto* bucketIdentity=&*bucket;
+  const auto bucketId=bucket.toInt();
+  const auto commit=[&](uint8_t frame=0) {
+    auto command=device.commandBuffer();
+    bool changed=false;
+    {
+    auto encoder=command.startEncoding(device);
+    changed=buckets.commit(encoder,frame);
+    }
+    device.submit(command).wait();
+    return changed;
+    };
+  require(commit() && !commit(),"mip fixture must start with stable bucket descriptors");
+  require(Shaders::options().doBindless && !buckets.textures().isEmpty() &&
+          !buckets.normals().isEmpty() && !buckets.orm().isEmpty(),
+          "mip fixture must exercise real bindless arrays for its albedo, normal and ORM");
+  for(uint8_t frame=1;frame<Resources::MaxFramesInFlight;++frame)
+    require(commit(frame),"each frame bank must initialize its texture descriptors");
+  const auto probe=descriptorColorProbe(device);
+  const auto encodeProbe=[&](Tempest::CommandBuffer& command, const Tempest::StorageBuffer& output) {
+    auto encoder=command.startEncoding(device);
+    encoder.setPipeline(probe);
+    encoder.setBinding(0,buckets.textures());
+    encoder.setBinding(1,output);
+    encoder.dispatch(1);
+    };
+  const auto checkColors=[&](uint32_t first) {
+    auto output=device.ssbo(Tempest::Uninitialized,2*sizeof(uint32_t));
+    auto command=device.commandBuffer();
+    encodeProbe(command,output);
+    device.submit(command).wait();
+    std::array<uint32_t,2> colors{};
+    device.readBytes(output,colors.data(),sizeof(colors));
+    require(colors==std::array<uint32_t,2>{first,0xffff0000u} && unchangedBucket->mat==noTail &&
+            unchangedPayload==Tempest::Detail::ResourcePtr<Tempest::Texture2d>(*noTail.tex),
+            "a partial descriptor update must sample the changed GPU image and preserve its neighbour");
+    };
+  require(!commit(0),"returning to an unchanged frame bank must not rewrite descriptors");
+  checkColors(0xff00ff00u);
+  auto oldOutput=device.ssbo(Tempest::Uninitialized,2*sizeof(uint32_t));
+  auto oldCommand=device.commandBuffer();
+  encodeProbe(oldCommand,oldOutput);
+  uint8_t descriptorFrame=1;
+  ChunkTable table;
+  table.entries.push_back({{0,0},"",{0,0,0},{1,1,0},1});
+  ChunkResidency residency(table);
+  const auto tick=[&] {
+    const auto before=Resources::textureStats();
+    const auto generation=Resources::textureGeneration();
+    residency.update({0,0,0},{0,0,0},1000);
+    Resources::updateTextures(&residency);
+    const auto after=Resources::textureStats();
+    require(after.promoted-before.promoted+after.demoted-before.demoted<=1 &&
+            Resources::textureGeneration()-generation<=1,
+            "a frame must publish at most one mip replacement and one texture generation");
+    require(material.tex->w()>=64 && material.normal->w()>=64 && material.orm->w()>=64,
+            "a pending mip replacement must preserve its resident payload without a placeholder");
+    require(material.tex->uploadReady() && material.normal->uploadReady() && material.orm->uploadReady(),
+            "published material maps must have completed their GPU uploads before descriptor binding");
+    };
+  const auto waitFor=[&](bool wantFull) {
+    const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(5);
+    while(!(wantFull ? full() : tail()) && std::chrono::steady_clock::now()<deadline) {
+      tick();
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      }
+    require(wantFull ? full() : tail(),"requested mip replacements must finish through the frame queue");
+    require(material==copy && bucket->mat==copy && mesh.sub[0].material==copy &&
+            &*bucket==bucketIdentity && bucket.toInt()==bucketId && buckets.buckets().size()==2,
+            "mip replacement must preserve material pointers and the original mesh and bucket");
+    require(commit(descriptorFrame) && !commit(descriptorFrame),
+            "mip replacement must refresh descriptors once without rebuilding buckets");
+    checkColors(wantFull ? 0xff0000ffu : 0xff00ff00u);
+    };
+
+  Resources::textureDemand(material,Resources::TextureCategory::Static,true,2);
+  Resources::updateTextures(&residency);
+  require(tail() && !Resources::texturesReady() && Resources::textureStats().promotionQueue>0 &&
+          Resources::textureStats().nearTailCount==0,
+          "ring-two Full requests must preserve Tail while pending and remain outside the Near metric");
+  Resources::textureDemand(material,Resources::TextureCategory::Static,true,1);
+  require(Resources::textureStats().nearTailCount==3,
+          "the Near metric must count Tail maps only when an owner enters ring one");
+  waitFor(true);
+  require(Resources::textureStats().promoted==3 && Resources::textureStats().nearTailCount==0,
+          "promotion must complete every map and clear Near textures on Tail");
+  const auto retiredTail=Resources::textureStats().retiredBytes;
+  require(retiredTail>0,"the old frame bank must retain retired Tail images before its fence");
+  Resources::resetRecycled(1);
+  require(Resources::textureStats().retiredBytes==retiredTail,
+          "another frame fence must not release images referenced by the old bank");
+  auto oldFence=device.submit(oldCommand);
+  oldFence.wait();
+  std::array<uint32_t,2> oldColors{};
+  device.readBytes(oldOutput,oldColors.data(),sizeof(oldColors));
+  require(oldColors==std::array<uint32_t,2>{0xff00ff00u,0xffff0000u},
+          "a command encoded with the old bank must still sample Tail after a new bank publishes Full");
+  Resources::resetRecycled(0);
+  require(Resources::textureStats().retiredBytes==0,"completed initial mip replacements must be recyclable");
+  descriptorFrame=0;
+
+  Resources::textureDemand(material,Resources::TextureCategory::Static,true,3);
+  Resources::textureDemand(material,Resources::TextureCategory::Static,false,1);
+  Resources::textureDemand(material,Resources::TextureCategory::Static,false,2);
+  unsetenv("OPENGOTHIC_TEXTURE_TARGET_MB");
+  Resources::configureTextures({}, {}, "0");
+  std::this_thread::sleep_for(std::chrono::milliseconds(5100));
+  tick();
+  require(full() && Resources::textureStats().demoted==0,
+          "a ring-three owner must retain Full under pressure after the five-second hysteresis interval");
+  Resources::textureDemand(material,Resources::TextureCategory::Static,false,3);
+
+  setenv("OPENGOTHIC_TEXTURE_TARGET_MB","192",1);
+  Resources::configureTextures({}, {}, "0");
+  Material protectedOrm, olderColor, newerNormal;
+  protectedOrm.tex=material.orm;
+  olderColor.tex=material.tex;
+  newerNormal.tex=material.normal;
+  Resources::textureDemand(protectedOrm,Resources::TextureCategory::Static,true,1);
+  Resources::textureDemand(olderColor,Resources::TextureCategory::Static,true,2);
+  Resources::textureDemand(olderColor,Resources::TextureCategory::Static,false,2);
+  Resources::textureDemand(newerNormal,Resources::TextureCategory::Static,true,2);
+  Resources::textureDemand(newerNormal,Resources::TextureCategory::Static,false,2);
+  tick();
+  require(full() && Resources::textureStats().demoted==0,
+          "leaving ring three must start a fresh five-second delay before demotion");
+  std::this_thread::sleep_for(std::chrono::milliseconds(4900));
+  tick();
+  require(full() && Resources::textureStats().demoted==0,
+          "Far owners must retain Full until the entire five-second hysteresis has elapsed");
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  tick();
+  require(full() && Resources::textureStats().demoted==0 &&
+          Resources::textureStats().liveBytes<192*1048576,
+          "the 192 MiB target environment override must retain eligible Far Full payloads below target");
+
+  unsetenv("OPENGOTHIC_TEXTURE_TARGET_MB");
+  Resources::configureTextures({}, {}, "0");
+  bool oldestObserved=false;
+  const auto pressureDeadline=std::chrono::steady_clock::now()+std::chrono::seconds(5);
+  while(Resources::textureStats().demoted<2 && std::chrono::steady_clock::now()<pressureDeadline) {
+    tick();
+    if(Resources::textureStats().demoted==1 && !oldestObserved) {
+      require(material.tex->w()==64 && material.normal->w()==256 && material.orm->w()==256,
+              "pressure must first demote the eligible texture least recently needed at Full");
+      oldestObserved=true;
+      }
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+  require(oldestObserved && Resources::textureStats().demoted==2 && material.tex->w()==64 &&
+          material.normal->w()==64 && material.orm->w()==256 && Resources::textureStats().nearTailCount==0,
+          "pressure must demote eligible Far textures in LRU order while protecting a Near Full owner");
+  require(commit(descriptorFrame) && !commit(descriptorFrame),
+          "pressure demotion must refresh only the affected frame-bank descriptors");
+  checkColors(0xff00ff00u);
+
+  Resources::textureDemand(protectedOrm,Resources::TextureCategory::Static,false,1);
+  std::this_thread::sleep_for(std::chrono::milliseconds(4900));
+  tick();
+  require(material.orm->w()==256 && Resources::textureStats().demoted==2,
+          "a texture leaving Near must receive its own full five-second delay under pressure");
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
+  waitFor(false);
+  const auto fullBytes=uint64_t(color.size()-128+2*(maps.size()-128));
+  require(Resources::textureStats().demoted==3 && Resources::textureStats().retiredBytes==fullBytes,
+          "demotion must retire each Full payload while retaining its replacement Tail");
+  require(noTail.tex->w()==256,"a texture without a DDS tail must never be demoted");
+  Resources::resetRecycled(1);
+  require(Resources::textureStats().retiredBytes==fullBytes,
+          "a different frame slot must retain the Full payloads retired by demotion");
+  device.waitIdle();
+  Resources::resetRecycled(0);
+  require(Resources::textureStats().retiredBytes==0,
+          "the completed frame slot must release demoted Full payloads after its fence");
+
+  SceneGlobals scene;
+  VisualObjects visuals(scene,{{0,0,0},{1,1,0}});
+  visuals.setTextureResidency(&residency);
+  auto body=visuals.get(mesh,material,0,mesh.sub[0].iboLength,false);
+  const Tempest::Vec3 farOwner{float(4*ChunkId::Size+1),0,0};
+  body.setTextureOwner(farOwner,true);
+  body.setTextureOwner({farOwner.x+100,0,0},true);
+  auto bone=Tempest::Matrix4x4::mkIdentity();
+  bone.translate(1,0,0);
+  body.setObjMatrix(bone);
+  body.setTexturePosition({0,0,0});
+  require(tail() && Resources::textureStats().promotionQueue==0,
+          "a Far spatial body must retain Tail across same-cell movement and animated node transforms");
+  body.setTextureOwner({float(2*ChunkId::Size+1),0,0},true);
+  require(Resources::textureStats().promotionQueue==3 && Resources::textureStats().nearTailCount==0,
+          "a spatial body crossing into ring two must request Full outside the Near metric");
+  body.setTextureOwner(farOwner,true);
+  require(Resources::textureStats().promotionQueue==0,
+          "a spatial body leaving ring two must cancel unpublished Full requests");
+  body.setTextureOwner(farOwner,false);
+  require(Resources::textureStats().promotionQueue==3,
+          "the hero's always-Full ownership must request Full even in the same Far cell");
+  descriptorFrame=1;
+  waitFor(true);
+  body.setTextureOwner({float(8*ChunkId::Size+1),0,0},false);
+  require(full() && Resources::texturesReady(),
+          "the hero's always-Full ownership must survive movement between distant cells");
+  Resources::textureDemand(material,Resources::TextureCategory::Static,false,4);
+  Resources::textureDemand(noTail,Resources::TextureCategory::Static,false,4);
+  }
+  setenv("OPENGOTHIC_TEXTURE_MIPS","0",1);
+  {
+  Resources resources(device);
+  Resources::TextureLoadScope far(true);
+  const Material material(source("MIP_STREAM.TGA"),true);
+  require(material.tex!=nullptr && material.normal!=nullptr && material.orm!=nullptr &&
+          material.tex->w()==256 && material.normal->w()==256 && material.orm->w()==256 &&
+          Resources::textureStats().tailBytes==0,
+          "OPENGOTHIC_TEXTURE_MIPS=0 must load only Full payloads even in a Far loading scope");
+  }
+  unsetenv("OPENGOTHIC_TEXTURE_MIPS");
+  unsetenv("OPENGOTHIC_TEXTURE_FAR_SKIP_MIPS");
+  unsetenv("OPENGOTHIC_TEXTURE_BUDGET_MB");
+  unsetenv("OPENGOTHIC_TEXTURE_TARGET_MB");
+  }
 }
 
-int main() {
+int main(int argc, char** argv) {
   try {
+    ddsMipTails();
+    if(argc==2 && std::string_view(argv[1])=="--dds-mip-tail") {
+      std::cout << "{\"test\":\"dds_mip_tail\",\"passed\":true,\"assertions\":" << assertions << "}\n";
+      return 0;
+      }
     variants();
     Fixture fixture;
     CommandLine commandLine(0,nullptr);
@@ -333,6 +1055,8 @@ int main() {
     replacements(device,fixture);
     census(fixture);
     emptyTable(device,fixture);
+    textureResidency(device,fixture);
+    textureMipResidency(device,fixture);
     device.waitIdle();
     std::cout << "{\"test\":\"material_texture\",\"passed\":true,\"assertions\":" << assertions << "}\n";
     return 0;

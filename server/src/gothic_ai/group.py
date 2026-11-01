@@ -123,6 +123,10 @@ class GroupTalk:
         # the npc waits for a witness's answer (witnesses.py): it reacts to it on a turn of its own, not
         # on an answer turn to the one who named it (2026-10-29: Hilda's «Лобарт, …» before her testimony)
         self.asks: Callable[[str], bool] = lambda npc: False
+        # ...and the witness it asked speaks from its testimony only, not on an answer turn to the question
+        # said aloud (2026-10-31: Hilda's «Утром его здесь не было» to «Хильда, ты видела его утром?», then
+        # «я прежде ошиблась» once her testimony came)
+        self.witness: Callable[[str], bool] = lambda npc: False
         self._ids = itertools.count(1)
         self._tasks: set[asyncio.Task[Any]] = set()
         link.listeners.append(self.on_message)
@@ -191,7 +195,13 @@ class GroupTalk:
                 heard = "тебе" if other == to else whom
                 self.dialogue.heard(other, e.name if e is not None else other, name, text, heard)
         self._spawn(self._heard(npc, name, text, whom, told))
-        if to is not None and called == to and kind != TESTIMONY and not self.asks(to):
+        if (
+            to is not None
+            and called == to
+            and kind != TESTIMONY
+            and not self.asks(to)
+            and not self.witness(to)
+        ):
             self._give_word(npc, name, to)
 
     def participants(self) -> dict[str, Member]:

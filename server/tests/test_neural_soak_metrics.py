@@ -2,6 +2,8 @@
 
 import asyncio
 import json
+import os
+import sys
 from collections import deque
 from dataclasses import dataclass, replace
 from types import SimpleNamespace
@@ -15,11 +17,18 @@ from gothic_ai.scenarios.neural_soak import Episode
 from gothic_ai.scenarios.neural_soak_metrics import (
     SoakMetrics,
     game_rss_window,
+    rss_bytes,
     rss_window,
     scan_server_errors,
 )
 
 MIB = 1024**2
+
+
+@pytest.mark.skipif(sys.platform not in {"linux", "darwin"}, reason="RSS sampling requires Linux or macOS")
+def test_current_process_rss_is_available():
+    resident = rss_bytes(os.getpid())
+    assert resident is not None and resident > 0
 
 
 def test_rss_uses_final_twenty_minutes_and_enforces_five_percent():

@@ -2,6 +2,7 @@
 
 #include <Tempest/AbstractGraphicsApi>
 #include <Metal/Metal.hpp>
+#include <unordered_map>
 
 #include "utility/smallarray.h"
 #include "gapi/shaderreflection.h"
@@ -20,6 +21,7 @@ class MtDescriptorArray : public AbstractGraphicsApi::DescArray {
     ~MtDescriptorArray();
 
     size_t       size() const;
+    void setTexture(size_t index, AbstractGraphicsApi::Texture* texture) override;
     MTL::Buffer& data() { return *argsBuf.impl.get(); }
 
     void useResource(MTL::ComputeCommandEncoder& cmd, ShaderReflection::Stage st) const;
@@ -39,7 +41,14 @@ class MtDescriptorArray : public AbstractGraphicsApi::DescArray {
 
     MtBuffer                    argsBuf;
     std::vector<MTL::Resource*> args;
+    struct ResourceReference {
+      size_t count = 0, index = 0;
+      };
+    std::vector<MTL::Resource*> indexedArgs;
+    std::unordered_map<MTL::Resource*,ResourceReference> references;
     size_t                      cnt  = 0;
+    uint32_t                    mipLevel = uint32_t(-1);
+    bool                        textureArray = false;
   };
 }
 }

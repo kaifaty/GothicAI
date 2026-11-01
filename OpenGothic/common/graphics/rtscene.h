@@ -40,6 +40,7 @@ class RtScene {
     void addInstance(const Tempest::Matrix4x4& pos, const Tempest::AccelerationStructure& blas,
                      const Material& mat, const StaticMesh& mesh, size_t firstIndex, size_t iboLength, Category cat);
     void buildTlas();
+    bool refreshTextures();
 
     Tempest::AccelerationStructure             tlas;
 
@@ -70,6 +71,8 @@ class RtScene {
     void     addInstance(const BuildBlas& build, Tempest::AccelerationStructure& blas, Tempest::RtInstanceFlags flags);
 
     Build                          build;
+    std::vector<const Tempest::Texture2d*> textureIdentities;
+    uint64_t                       textureGeneration = 0;
     Tempest::AccelerationStructure blasStaticOpaque;
     Tempest::AccelerationStructure blasStaticAt;
 

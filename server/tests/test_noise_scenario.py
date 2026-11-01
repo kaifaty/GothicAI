@@ -104,7 +104,7 @@ async def test_noise_scenario_requires_return_to_routine_post(
         memory.close()
 
     assert set(result) == {
-        "setup", "setup_drop", "heard", "decided", "sent", "went", "idle", "routine", "memory"
+        "setup", "setup_drop", "heard", "sent", "went", "idle", "routine", "memory"
     }
     assert all(value.startswith("done") for key, value in result.items() if key != "routine"), result
     assert result["routine"].startswith("done" if returns_to_post else "failed"), result

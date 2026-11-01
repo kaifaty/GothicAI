@@ -8,7 +8,7 @@
 # display slots) and starts the scenarios inside it through a private queue on
 # Ryzen: three at once, the rest as slots free. Listed scenarios share slots here
 # (RYZEN_DISPLAY_EXCLUSIVE=0); one scenario alone is a solo run on a quiet machine.
-# Logs: .ryzen/round/TAG-N-SCENARIO/. Env: LLM (fake), TIMEOUT (600),
+# Logs: .ryzen/round/TAG-N-SCENARIO/. Env: LLM (off), TIMEOUT (600),
 # RYZEN_ROUND_PREFIX (Ryzen copy names), RYZEN_LOCK_WAIT (reservation wait, 5400 s).
 set -uo pipefail
 
@@ -53,7 +53,7 @@ for scenario in "$@"; do
   rm -rf "$dir"
   mkdir -p "$dir"
   ( GQ_HOME="~/gothic-ai/gq-$prefix" GQ_LEGACY_LOCK="~/gothic-ai/gq-$prefix/legacy.lock" \
-    RYZEN_DISPLAY_EXCLUSIVE=0 LLM="${LLM:-fake}" TIMEOUT="${TIMEOUT:-600}" OPENGOTHIC_FPS_LOG=1 \
+    RYZEN_DISPLAY_EXCLUSIVE=0 LLM="${LLM:-off}" TIMEOUT="${TIMEOUT:-600}" OPENGOTHIC_FPS_LOG=1 \
     RYZEN_WORKTREE="$prefix-$i" SCENARIO="$scenario" LOG_DIR="$dir" \
       scripts/ryzen.sh e2e >"$dir/launcher.log" 2>&1
     echo "rc=$?" >>"$dir/launcher.log" ) &

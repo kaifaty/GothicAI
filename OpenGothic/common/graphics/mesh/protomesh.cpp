@@ -1,4 +1,5 @@
 #include "protomesh.h"
+#include "loadprobe.h"
 
 #include <Tempest/Log>
 
@@ -59,6 +60,7 @@ static std::vector<Tempest::Vec3> hullVerticesOf(const PackedMesh& pm) {
 
 ProtoMesh::ProtoMesh(PackedMesh&& pm, std::string_view fname)
   :fname(fname) {
+  LoadProbe::Vobs::Scope probe("mesh_proto_cpu");
   attach.emplace_back(pm);
   submeshId.resize(attach[0].sub.size());
   points = pointsOf(pm);
@@ -92,6 +94,7 @@ ProtoMesh::ProtoMesh(PackedMesh&& pm, std::string_view fname)
 
 ProtoMesh::ProtoMesh(PackedMesh&& pm, const std::vector<asset::MorphAnimation>& aniList, std::string_view fname)
   : ProtoMesh(std::move(pm),fname) {
+  LoadProbe::Vobs::Scope probe("mesh_proto_cpu");
   if(attach.size()!=1) {
     Log::d("skip animations for: ",fname);
     return;
@@ -105,6 +108,7 @@ ProtoMesh::ProtoMesh(PackedMesh&& pm, const std::vector<asset::MorphAnimation>& 
     }
 
   if(Resources::hasGraphicsDevice()) {
+    LoadProbe::Vobs::Scope gpuProbe("mesh_gpu");
     morphIndex   = Resources::ssbo(Tempest::Uninitialized, indexSz*aniList.size());
     morphSamples = Resources::ssbo(Tempest::Uninitialized, samplesCnt*sizeof(Vec4));
     }
@@ -118,6 +122,7 @@ ProtoMesh::ProtoMesh(PackedMesh&& pm, const std::vector<asset::MorphAnimation>& 
     remap(aniList[i],pm.verticesId,remapId,samples,samplesCnt);
 
     if(Resources::hasGraphicsDevice()) {
+      LoadProbe::Vobs::Scope gpuProbe("mesh_gpu");
       morphIndex  .update(remapId.data(), i*indexSz,               remapId.size()*sizeof(remapId[0]));
       morphSamples.update(samples.data(), samplesCnt*sizeof(Vec4), samples.size()*sizeof(Vec4)      );
       }
@@ -139,6 +144,7 @@ ProtoMesh::ProtoMesh(PackedMesh&& pm, const std::vector<asset::MorphAnimation>& 
 
 ProtoMesh::ProtoMesh(const asset::ModelHierarchy& hierarchy, const asset::ModelMesh& library, std::unique_ptr<Skeleton>&& sk, std::string_view fname, bool explicitAlphaTest)
   :skeleton(std::move(sk)), fname(fname) {
+  LoadProbe::Vobs::Scope probe("mesh_proto_cpu");
   std::vector<std::vector<Tempest::Vec3>> attachPoints;
   for(auto& m:library.attachments) {
     PackedMesh pack(m.second,PackedMesh::PK_Visual,explicitAlphaTest);
@@ -225,6 +231,7 @@ ProtoMesh::ProtoMesh(const asset::ModelHierarchy& hierarchy, const asset::ModelM
 
 ProtoMesh::ProtoMesh(const asset::ModelHierarchy& library, std::unique_ptr<Skeleton>&& sk, std::string_view fname)
       :skeleton(std::move(sk)), fname(fname) {
+  LoadProbe::Vobs::Scope probe("mesh_proto_cpu");
   nodes.resize(skeleton == nullptr ? 0 : skeleton->nodes.size());
   for(size_t i = 0; i < nodes.size(); ++i) {
     Node& n = nodes[i];
@@ -261,6 +268,7 @@ ProtoMesh::ProtoMesh(const asset::ModelHierarchy& library, std::unique_ptr<Skele
 
 ProtoMesh::ProtoMesh(const asset::ModelMesh& library, std::unique_ptr<Skeleton>&& sk, std::string_view fname, bool explicitAlphaTest)
   :skeleton(std::move(sk)), fname(fname){
+  LoadProbe::Vobs::Scope probe("mesh_proto_cpu");
   std::vector<std::vector<Tempest::Vec3>> attachPoints;
   for(auto& m:library.attachments) {
     PackedMesh pack(m.second,PackedMesh::PK_Visual,explicitAlphaTest);
@@ -348,6 +356,7 @@ ProtoMesh::ProtoMesh(const asset::ModelMesh& library, std::unique_ptr<Skeleton>&
   }
 
 ProtoMesh::ProtoMesh(const Material& mat, std::vector<Resources::Vertex> vbo, std::vector<uint32_t> ibo) {
+  LoadProbe::Vobs::Scope probe("mesh_proto_cpu");
   attach.emplace_back(mat,std::move(vbo),std::move(ibo));
   submeshId.resize(attach[0].sub.size());
   auto& att = attach[0];

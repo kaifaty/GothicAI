@@ -1,5 +1,8 @@
 #pragma once
 
+#include "chronicledata.h"
+
+#include <functional>
 #include <memory>
 
 class StuckLogger;
@@ -13,6 +16,9 @@ class AiBridge final {
 
     AiBridge(const AiBridge&) = delete;
     AiBridge& operator=(const AiBridge&) = delete;
+
+    // Call on the game thread. The callback runs there, immediately when disconnected.
+    static void requestChronicle(std::function<void(const ChronicleData&)> callback);
 
   private:
     struct Impl;

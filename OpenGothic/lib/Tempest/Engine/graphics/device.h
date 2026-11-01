@@ -122,6 +122,8 @@ class Device {
     DescriptorArray       descriptors(const Texture2d* const *tex, size_t size, const Sampler& smp);
 
     Texture2d             texture    (const Pixmap& pm, const bool mips = true);
+    // Use the texture after uploadReady() returns true.
+    Texture2d             textureAsync(const Pixmap& pm, const bool mips = true);
     Attachment            attachment (TextureFormat frm, const uint32_t w, const uint32_t h, const bool mips = false);
     ZBuffer               zbuffer    (TextureFormat frm, const uint32_t w, const uint32_t h);
     StorageImage          image2d    (TextureFormat frm, const uint32_t w, const uint32_t h, const bool mips = false);
@@ -174,6 +176,7 @@ class Device {
     Props                           devProps;
     Tempest::Builtin                builtins;
 
+    Texture2d             implTexture(const Pixmap& pm, bool mips, bool async);
     Detail::VideoBuffer   createVideoBuffer(const void* data, size_t size, MemUsage usage, BufferHeap flg);
     RenderPipeline        implPipeline(const RenderState &st, const Shader* shaders[], Topology tp);
     template<class T>

@@ -1706,7 +1706,7 @@ async def test_apply_day_asks_do_only(tmp_path) -> None:
 
 
 def test_the_day_questions_share_todays_plan_state() -> None:
-    from gothic_ai.brain.situation import NpcContext, SituationBuilder, news_short
+    from gothic_ai.brain.situation import NpcContext, SituationBuilder, news_short, news_text
 
     builder = SituationBuilder(traits={"VINO": "Cynical, fond of his drink."})
     npc = NpcContext("VINO", "Вино", 8, agenda="see the hero pay for his lie", facts=("He lied to Lobart.",))
@@ -1732,6 +1732,8 @@ def test_the_day_questions_share_todays_plan_state() -> None:
     assert news_short("caught", "Лобарт") == "the hero lied to Лобарт"
     assert news_short("found_out", "Лобарт", about_you=True) == "the hero cheated you out of a reward"
     assert news_short("broken", "Лобарт") == "the hero did not pay back Лобарт"
+    assert news_short("fame", "герой") == "people talk about the hero's fame"
+    assert news_text("fame", "герой", "Вернул чужое") == "people say of the hero: 'Вернул чужое'"
 
 
 async def test_the_hero_kills_the_monster_the_danger_is_over() -> None:

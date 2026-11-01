@@ -9,7 +9,6 @@ from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from ..game import GameLink
-from ..llm.fake import FakeBackend
 from ..npc_far import FarWorld
 from ..npc_will import OWNER_NEAR_CM, ROUTINE_CM
 from ..protocol import NpcActCmd, Session, StoryEffectCmd
@@ -55,7 +54,7 @@ async def npc_far(
     facts = will.chronicle.facts
     world = FarWorld(will)
     original_cards, original_crime_cards = will.cards, crimes.cards
-    original_llm, send = dialogue.llm, link.send
+    send = link.send
     assert rumors is not None
     original_gate, original_stage = rumors.gate, rumors.stage
     neutral = {npc: replace(card, honesty=5, greed=1) for npc, card in original_cards.items()}
@@ -137,10 +136,9 @@ async def npc_far(
         if link.session is None:
             await wait_message(link, Session, timeout=10)
         if not check(
-            "enabled", will.enabled and crimes.enabled and isinstance(original_llm, FakeBackend), log_dir,
+            "enabled", will.enabled and crimes.enabled, log_dir,
         ):
             return _logged(results)
-        dialogue.llm = FakeBackend("Ну.", delay=0)
         await link.debug("player_hp", hp=5000)
         population = {str(p["npc"]): p for p in await link.story_people()}
         points = {p["name"]: p for p in await link.waypoints() if not p.get("fp")}
@@ -345,5 +343,4 @@ async def npc_far(
     finally:
         will.cards, crimes.cards = original_cards, original_crime_cards
         rumors.gate, rumors.stage = original_gate, original_stage
-        dialogue.llm = original_llm
         link.send = send  # type: ignore[method-assign]

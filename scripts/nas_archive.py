@@ -26,6 +26,28 @@ class ArchiveError(Exception):
         self.bytes = bytes
 
 
+def remove_tree(path):
+    """Remove a tree, repairing owned read-only entries after a permission error."""
+    def retry(function, name, exc_info):
+        error = exc_info[1]
+        if not isinstance(error, PermissionError) or function not in (os.unlink, os.rmdir):
+            raise error
+        failed = Path(name)
+        entries = [(entry, entry.lstat()) for entry in (failed.parent, failed)]
+        if any(info.st_uid != os.getuid() for _, info in entries):
+            raise error
+        for entry, info in entries:
+            if stat.S_ISLNK(info.st_mode):
+                continue
+            mode = stat.S_IMODE(info.st_mode) | stat.S_IWUSR
+            if stat.S_ISDIR(info.st_mode):
+                mode |= stat.S_IXUSR
+            os.chmod(entry, mode, follow_symlinks=False)
+        function(name)
+
+    shutil.rmtree(path, onerror=retry)
+
+
 def local_root():
     return Path(os.environ.get("GOTHIC_LOCAL_ROOT", "~/gothic-ai")).expanduser().resolve()
 
@@ -242,7 +264,7 @@ def move(src, *, keep_local=False, dry_run=False, cancelled=None,
             (destination / INCOMPLETE_MARKER).unlink()
         if not keep_local:
             try:
-                shutil.rmtree(source)
+                remove_tree(source)
             except OSError as error:
                 raise ArchiveError(f"verified on NAS; local cleanup failed: {error}") from None
         return size

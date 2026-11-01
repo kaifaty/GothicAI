@@ -22,7 +22,8 @@ class ClothVisual final {
   public:
     static bool supports(std::string_view visual);
     static std::unique_ptr<ClothVisual> create(MeshObjects::Mesh& view, World& world,
-                                               const asset::VirtualObject& vob, bool enableCollision);
+                                               const asset::VirtualObject& vob, bool enableCollision,
+                                               Resources::TextureCategory textureCategory);
     static std::unique_ptr<ClothVisual> createSurface(World& world, const asset::WorldMesh& source,
                                                      const std::vector<uint32_t>& pinnedSourcePositionIds,
                                                      std::string visual, uint32_t id, float stiffness, float linearDamping);
