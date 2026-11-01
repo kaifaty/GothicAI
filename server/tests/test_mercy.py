@@ -757,6 +757,10 @@ async def test_surrender_hold_accepts_without_native_combat_and_keeps_allies_cal
     assert not rig.mercy.holds
     await end_hero_hold(rig, conv)
     assert not rig.fake.attack_state and not rig.fake.native_fights[FRIEND]
+    friend_effects = [effect for row in rig.fake.story if row["npc"] == FRIEND
+                      for effect in row.get("effects", [])]
+    assert sum(effect.get("do") == "calm" for effect in friend_effects) == 1
+    assert not any(effect.get("do") == "refuse_talk" for effect in friend_effects)
     assert not any(op.get("do") == "attack" for row in rig.fake.story for op in row.get("effects", []))
     rig.link._dispatch(NpcRoster(type="npc_roster", t=2000, npcs=[
         rig.talk.people[NPC].model_copy(update={"state": "ZS_STAND"}),

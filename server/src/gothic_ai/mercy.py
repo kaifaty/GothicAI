@@ -845,7 +845,7 @@ class Mercy:
                 if resume := self._resuming.get(npc):
                     await resume
             return ToolOutcome(f"Отклонено: {output}", "rejected")
-        if hold is not None:
+        if hold is not None and (hold.resumed or hold.addressee is not None):
             allies = list(dict.fromkeys([*allies, *hold.members]))
         for member in allies:
             if member == npc or not self._alive(member):
