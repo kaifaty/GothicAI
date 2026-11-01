@@ -710,8 +710,8 @@ PY
 }
 
 if [[ "$ACTION" == setup ]]; then
-  # Run the same preflight without needing a checkout or configuring a build.
-  { declare -f toolchain; echo 'set -euo pipefail; toolchain; echo "Ryzen: toolchain OK"'; } | remote bash -s
+  base_format="$(cmake -DBASE_ROOT="$ROOT/OpenGothic" -P "$ROOT/OpenGothic/cmake/BaseFormat.cmake")"
+  videos_format="$(cmake -DVIDEO_ROOT="$ROOT/OpenGothic" -P "$ROOT/OpenGothic/cmake/VideoFormat.cmake")"
   GOTHIC_DIR="${GOTHIC_DIR:-/Volumes/DevSSD/Dev/games/Gothic II}"
   started=$SECONDS
   temporary=''
@@ -719,8 +719,8 @@ if [[ "$ACTION" == setup ]]; then
   trap 'exit 129' HUP
   trap 'exit 130' INT
   trap 'exit 143' TERM
-  # Read only the ready pointer and the two INI files, never identify the installation.
-  parts="$(python3 - "$GOTHIC_DIR" <<'PY'
+  # Select checkout-compatible ready parts without identifying or changing the installation.
+  parts="$(python3 - "$GOTHIC_DIR" "$base_format" "$videos_format" <<'PY'
 import hashlib
 import json
 from pathlib import Path
@@ -728,12 +728,18 @@ import re
 import sys
 
 game = Path(sys.argv[1]).expanduser().resolve()
-pointer = Path.home() / '.cache/gothic-ai/base/current' / (hashlib.sha256(str(game).encode()).hexdigest() + '.json')
+cache = Path.home() / '.cache/gothic-ai/base'
+pointer = cache / 'current' / (hashlib.sha256(str(game).encode()).hexdigest() + '.json')
+
+def identity(kind, directory):
+    metadata = json.loads((directory / ('base.json' if kind == 'base' else 'videos.json')).read_bytes())
+    return metadata if kind == 'base' else json.loads(metadata['identity'])
+
 try:
     current = json.loads(pointer.read_bytes())
     if current.get('version') != 1 or current.get('gothic') != str(game):
         raise ValueError('invalid or foreign game pointer')
-    for kind in ('base', 'videos'):
+    for kind, expected in zip(('base', 'videos'), sys.argv[2:]):
         part = current.get(kind)
         if kind == 'videos' and part is None:
             print('\n')
@@ -742,9 +748,34 @@ try:
                 or not isinstance(part.get('path'), str) or not Path(part['path']).is_absolute()
                 or '\n' in part['path']):
             raise ValueError(f'invalid {kind} pointer')
-        print(part['fingerprint'])
-        print(part['path'])
-except (OSError, ValueError, TypeError, AttributeError) as error:
+        fingerprint, path = part['fingerprint'], Path(part['path'])
+        pointed = identity(kind, path)
+        actual = pointed['format_sha256']
+        if actual != expected:
+            keys = ('archives', 'loose_files') if kind == 'base' else ('sources',)
+            sources = [pointed[key] for key in keys]
+            root = cache if kind == 'base' else cache / 'videos'
+            for candidate in sorted(root.glob('*/base.json' if kind == 'base' else '*/videos.json')):
+                if not re.fullmatch('[0-9a-f]{64}', candidate.parent.name):
+                    continue
+                try:
+                    cached = identity(kind, candidate.parent)
+                    if cached['format_sha256'] != expected or [cached[key] for key in keys] != sources:
+                        continue
+                except (OSError, ValueError, KeyError, TypeError, AttributeError):
+                    continue
+                fingerprint, path = candidate.parent.name, candidate.parent
+                print(f'Ryzen: Mac pointer has importer format {actual}, using Mac cache part '
+                      f'{fingerprint} of format {expected}', file=sys.stderr)
+                break
+            else:
+                raise SystemExit(
+                    f'needs_decision: Mac {kind} part {fingerprint} has importer format {actual}, '
+                    f'this checkout builds {expected}; build the engine from this checkout and run the game '
+                    'or storygraph once on Mac to import into ~/.cache/gothic-ai/base, then retry setup')
+        print(fingerprint)
+        print(path)
+except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
     raise SystemExit(f'needs_decision: cannot read ready Mac base pointer {pointer}: {error}')
 PY
 )"
@@ -752,6 +783,8 @@ PY
   base_path="$(sed -n '2p' <<<"$parts")"
   videos_fingerprint="$(sed -n '3p' <<<"$parts")"
   videos_path="$(sed -n '4p' <<<"$parts")"
+  # Preflight only after both Mac parts are compatible; failures must not copy anything.
+  { declare -f toolchain; echo 'set -euo pipefail; toolchain; echo "Ryzen: toolchain OK"'; } | remote bash -s
   [[ -n "$videos_fingerprint" ]] || echo 'Ryzen: videos will be skipped (Mac pointer has no video part)' >&2
   for kind in base videos; do
     if [[ "$kind" == base ]]; then fingerprint="$base_fingerprint"; part="$base_path"; else fingerprint="$videos_fingerprint"; part="$videos_path"; fi
