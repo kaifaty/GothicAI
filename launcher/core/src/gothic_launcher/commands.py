@@ -309,6 +309,7 @@ def services(config: Config, layout: Layout, ports: Ports, cwd: Path) -> list[Pr
     ]  # fmt: skip
     server_args += _opt("--model", s.llm.model) + _opt("--base-url", s.llm.base_url)
     server_args += _opt("--decider-url", s.llm.decider_url) + _opt("--quick-url", s.llm.quick_url)
+    server_args += _opt("--embed-url", s.llm.embed_url)
     server_args += ["--body-policy", s.llm.body_policy] + _opt("--body-url", s.llm.body_url)
     server_args += [] if s.llm.quick else ["--no-quick"]  # on by default, next to the decider
     openai_key = {"OPENAI_API_KEY": keys.openai_api_key} if keys.openai_api_key else {}

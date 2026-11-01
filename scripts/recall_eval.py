@@ -13,7 +13,11 @@ into the history too, as a stand-in for a long game.
 
     cd server && uv run --with snowballstemmer python ../scripts/recall_eval.py \
       --messages ~/.local/share/gothic-ai/evals/recall/messages.json \
-      --queries ../reports/npc-memory/2026-11-01-recall-eval/queries.json [--vectors vectors.npz]
+      --queries ../reports/npc-memory/2026-11-01-recall-eval/queries.json \
+      [--vectors vectors.npz] [--embed-url http://gpu:47837]
+
+With --embed-url, a separate method calls the service and the game's actual semantic search,
+including the float16 cache in MemoryStore. No model is loaded by this method.
 
 Embeddings are computed elsewhere (no models on the Mac), on a machine with the model:
 
@@ -24,6 +28,7 @@ Embeddings are computed elsewhere (no models on the Mac), on a machine with the 
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import math
 import re
@@ -80,6 +85,20 @@ class Current:
             out = [i for i in out if any(s in self.texts[i] for s in stems)]
         scores = {i: sum(1 for s in stems if s in self.texts[i]) for i in out}
         return sorted(out, key=lambda i: (-scores[i], -i))
+
+
+class ServiceMemory(Current):
+    """The production semantic path, with service vectors stored and read back as float16."""
+
+    def __init__(self, history: list[dict], client) -> None:
+        super().__init__(history, True)
+        self.store.embeddings = client
+        self.name = "memory semantic (service)"
+
+    async def rank(self, query: str, limit: int) -> list[int]:
+        found = await self.store.semantic_search(
+            "eval", "npc", query, before_seq=max(self.seq, default=0), limit=limit)
+        return [self.seq[r.seq] for r in found]
 
 
 class Bm25:
@@ -162,35 +181,58 @@ def histories(lines: list[dict], spec: dict, mixed: bool) -> dict[str, list[dict
     return {name: [m for m in lines if m["npc"] in npcs] for name, npcs in spec["histories"].items()}
 
 
-def evaluate(args: argparse.Namespace) -> None:
+async def evaluate(args: argparse.Namespace) -> None:
     lines, spec = load(args)
     vectors = load_vectors(args.vectors) if args.vectors else []
-    styles = sorted({s for t in spec["topics"] for s in t["queries"]}, key=["same", "form", "para"].index)
+    order = ["same", "form", "para", "para2"]
+    styles = sorted({s for t in spec["topics"] for s in t["queries"]}, key=order.index)
     report: dict = {}
-    for mixed in (False, True):
-        setting = "mixed" if mixed else "own"
-        for name, history in histories(lines, spec, mixed).items():
-            methods = [Current(history, True), Current(history, False), Bm25(history, stop=False),
-                       Bm25(history)]
-            for v in vectors:
-                dense = Dense(history, v)
-                methods += [dense, Hybrid(methods[3], dense)]
-            for topic, style, text in queries(spec):
-                if topic["history"] != name:
-                    continue
-                pattern = re.compile(topic["relevant"], re.I)
-                relevant = {i for i, m in enumerate(history) if pattern.search(m["content"])}
-                if not relevant:
-                    sys.exit(f"{topic['id']}: the regex matches no line")
-                for method in methods:
-                    ranked = method.rank(text, args.limit)
-                    rank = next((r for r, i in enumerate(ranked) if i in relevant), None)
-                    row = report.setdefault(setting, {}).setdefault(method.name, {}).setdefault(style, [])
-                    row.append({"topic": topic["id"], "query": text, "relevant": len(relevant),
-                                "rank": rank, "found": sum(1 for i in ranked if i in relevant)})
+    client = None
+    if args.embed_url:
+        from gothic_ai.embeddings import EmbedClient
+
+        client = EmbedClient(args.embed_url)
+    try:
+        for mixed in (False, True):
+            setting = "mixed" if mixed else "own"
+            for name, history in histories(lines, spec, mixed).items():
+                methods = [Current(history, True), Current(history, False), Bm25(history, stop=False),
+                           Bm25(history)]
+                try:
+                    for v in vectors:
+                        dense = Dense(history, v)
+                        methods += [dense, Hybrid(methods[3], dense)] if args.hybrid else [dense]
+                    if client is not None:
+                        semantic = ServiceMemory(history, client)
+                        methods.append(semantic)
+                        await semantic.store.backfill("eval", "npc")
+                    for topic, style, text in queries(spec):
+                        if topic["history"] != name:
+                            continue
+                        pattern = re.compile(topic["relevant"], re.I)
+                        relevant = {i for i, m in enumerate(history) if pattern.search(m["content"])}
+                        if not relevant:
+                            sys.exit(f"{topic['id']}: the regex matches no line")
+                        for method in methods:
+                            ranked = (await method.rank(text, args.limit)
+                                      if isinstance(method, ServiceMemory)
+                                      else method.rank(text, args.limit))
+                            rank = next((r for r, i in enumerate(ranked) if i in relevant), None)
+                            row = report.setdefault(setting, {}).setdefault(
+                                method.name, {}).setdefault(style, [])
+                            row.append({"topic": topic["id"], "query": text, "relevant": len(relevant),
+                                        "rank": rank, "found": sum(1 for i in ranked if i in relevant)})
+                finally:
+                    for method in methods:
+                        if isinstance(method, Current):
+                            method.store.close()
+    finally:
+        if client is not None:
+            await client.close()
     print_report(report, styles, args.limit)
     if args.json:
-        Path(args.json).write_text(json.dumps(report, ensure_ascii=False, indent=1))
+        await asyncio.to_thread(
+            Path(args.json).write_text, json.dumps(report, ensure_ascii=False, indent=1))
 
 
 def print_report(report: dict, styles: list[str], limit: int) -> None:
@@ -222,7 +264,15 @@ def cell(rows: list[dict]) -> str:
 
 # --- embeddings ---------------------------------------------------------------------------------------
 
-PREFIXES = {"intfloat/multilingual-e5": ("query: ", "passage: ")}
+# Query and document prefixes from the model cards; the first matching name wins. A model that is not
+# here and names its own "query" prompt (Qwen3-Embedding, EmbeddingGemma) gets encode_query/encode_document.
+PREFIXES = {
+    "intfloat/multilingual-e5-large-instruct": (
+        "Instruct: Given a question, retrieve conversation lines that answer it\nQuery: ", ""),
+    "intfloat/multilingual-e5": ("query: ", "passage: "),
+    "ai-forever/FRIDA": ("search_query: ", "search_document: "),
+    "deepvk/USER2": ("search_query: ", "search_document: "),
+}
 
 
 def embed(args: argparse.Namespace) -> None:
@@ -231,11 +281,16 @@ def embed(args: argparse.Namespace) -> None:
 
     lines, spec = load(args)
     model = SentenceTransformer(args.model, device=args.device)
-    q_prefix, d_prefix = next((p for k, p in PREFIXES.items() if args.model.startswith(k)), ("", ""))
     texts = sorted({m["content"] for m in lines})
     texts_q = sorted({text for _, _, text in queries(spec)})
-    docs = model.encode([d_prefix + t for t in texts], normalize_embeddings=True, batch_size=64)
-    qs = model.encode([q_prefix + t for t in texts_q], normalize_embeddings=True)
+    prefixes = next((p for k, p in PREFIXES.items() if args.model.startswith(k)), None)
+    if prefixes is None and "query" in (model.prompts or {}):
+        docs = model.encode_document(texts, normalize_embeddings=True, batch_size=64)
+        qs = model.encode_query(texts_q, normalize_embeddings=True)
+    else:
+        q_prefix, d_prefix = prefixes or ("", "")
+        docs = model.encode([d_prefix + t for t in texts], normalize_embeddings=True, batch_size=64)
+        qs = model.encode([q_prefix + t for t in texts_q], normalize_embeddings=True)
     np.savez(args.out, model=args.model, lines=docs, line_texts=np.array(texts, dtype=object),
              queries=qs, query_texts=np.array(texts_q, dtype=object))
     print(f"{args.model}: {len(texts)} lines, {len(texts_q)} queries -> {args.out}")
@@ -264,12 +319,17 @@ def main() -> None:
     parser.add_argument("--queries", required=True)
     parser.add_argument("--limit", type=int, default=6, help="lines a recall returns (MemoryStore.search)")
     parser.add_argument("--vectors", nargs="*", default=[], help="eval: .npz files from embed")
+    parser.add_argument("--hybrid", action="store_true", help="eval: also fuse BM25 with each embedding")
+    parser.add_argument("--embed-url", help="eval: run MemoryStore semantic search through this service")
     parser.add_argument("--json", help="eval: write the per-query results here")
     parser.add_argument("--model", help="embed: a sentence-transformers model")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--out", help="embed: the .npz to write")
     args = parser.parse_args()
-    (embed if args.command == "embed" else evaluate)(args)
+    if args.command == "embed":
+        embed(args)
+    else:
+        asyncio.run(evaluate(args))
 
 
 if __name__ == "__main__":
