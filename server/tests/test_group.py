@@ -7,6 +7,7 @@ import gothic_ai.dialogue
 from gothic_ai.dialogue import DialogueManager
 from gothic_ai.group import ANSWER, ANSWER_CUE, BY_NAME, QUIET_S, TESTIMONY, GroupTalk, Seat
 from gothic_ai.llm import FakeBackend
+from gothic_ai.mercy import SURRENDER
 from gothic_ai.persona import PersonaProvider
 from gothic_ai.talk import TalkDesk
 from tests.fake_game import FakeGame, connected
@@ -167,6 +168,32 @@ async def test_three_voices_to_a_phrase_of_the_hero():
     order = sorted((calls_of(llm, n)[0], n) for n in ("Лобарт", "Хильда", "Малет"))
     assert [n for _, n in order] == ["Лобарт", "Хильда", "Малет"]
     assert calls_of(llm, "Вино") == [] and says_of(fake, VINO) == []
+
+
+async def test_mercy_offers_reach_the_model_after_three_voices(monkeypatch):
+    fake = FakeGame()
+    llm = FakeBackend("Хватит!", delay=0)
+    cm, dialogue, talk, group = await _desk(fake, llm)
+    brago, mate = "BDT_1014_BANDIT_L", "BDT_1015_BANDIT_L"
+    try:
+        await fake.roster(person(brago, "Браго", 3, True), person(mate, "Бандит", 4, True))
+        await _until(lambda: len(talk.people) == 2)
+        now = group.clock()
+        group.seats = [Seat(npc, now, ready=True, ready_at=now) for npc in (LOBART, HILDA, MALETH)]
+        monkeypatch.setattr(dialogue, "_offered", lambda npc: [SURRENDER])
+        turns = []
+        for npc, name in ((brago, "Браго"), (mate, "Бандит")):
+            dialogue.open(npc, name)
+            turns.append(dialogue.event_turn(npc, "[Реши, сдаваться ли.]", kind="mercy", tools={"surrender"}))
+        await asyncio.wait_for(asyncio.gather(*turns), 3)
+        assert [call[0] for call in llm.calls] == [
+            dialogue.conversations[npc].persona.instructions for npc in (brago, mate)
+        ]
+        assert all("surrender" in {tool.name for tool in call[2]} for call in llm.calls)
+        assert len(group.seats) == 5 and not any(seat.dropped for seat in group.seats)
+        assert not await group.queue(brago, "incident")  # ordinary turns still have only three voices
+    finally:
+        await cm.__aexit__(None, None, None)
 
 
 async def test_the_heros_voice_cuts_the_floor():

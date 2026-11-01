@@ -54,6 +54,13 @@ YIELDING = (
     "Ты недавно сдался ему в бою, и он тебя пощадил. Ты помнишь, чем это могло кончиться: "
     "держишься с ним осторожнее и уступчивее, насколько позволяет твой характер."
 )
+DEFEATED = (
+    "Герой сегодня {times} сбил тебя с ног в драке. Ты знаешь, что он сильнее тебя: "
+    "держишься с ним осторожнее, насколько позволяет твой характер. Гордость можешь показать "
+    "бравадой, но угрожать ему всерьёз не станешь, пока не изменится расклад."
+)
+DEFEAT_SEEN = "Ты видел, как герой сегодня сбил с ног {name}: он опасен в драке."
+DEFEAT_BARK = "[Герой сегодня {times} сбил тебя с ног — ты знаешь, что он сильнее.]"
 SURRENDER = Tool(
     "surrender",
     "Сдаться герою и его спутникам: прекратить бой, убрать оружие и произнести words на ходу. "
@@ -93,6 +100,13 @@ def fresh_surrender(chronicle: Chronicle, npc: str, now: int) -> Fact | None:
 def fresh_yield(chronicle: Chronicle, npc: str, ticks: int) -> Fact | None:
     return next((f for f in reversed(chronicle.facts("hero_yield"))
                  if f["npc"] == npc.upper() and f["t"] <= ticks < f["deadline"]), None)
+
+
+def defeat_times(count: int) -> str:
+    if count <= 4:
+        return {1: "один раз", 2: "дважды", 3: "три раза", 4: "четыре раза"}[count]
+    ending = "раза" if count % 10 in {2, 3, 4} and count % 100 not in {12, 13, 14} else "раз"
+    return f"{count} {ending}"
 
 
 @dataclass
@@ -142,6 +156,8 @@ class Mercy:
         dialogue.surrender_hold = self.hold_surrender
         dialogue.hero_fight_held = self.held
         dialogue.surrender_context = self._fight_words.get
+        if barks is not None:
+            barks.defeat_context = self.defeat_bark
 
     def held(self, npc: str) -> bool:
         return any(npc in hold.members for hold in self.holds.values())
@@ -306,8 +322,62 @@ class Mercy:
             turn.add_done_callback(lambda _: self.offering.discard(npc))
         return turn
 
+    async def _defeat(self, hit: CombatHit, branch: str | None, now: int | None, ticks: int) -> None:
+        if self._loading or self.chronicle.branch != branch:
+            return
+        npc, attacker = hit.npc.upper(), hit.by.upper()
+        name = self.orders.talk.people[npc].name
+        try:
+            snap, views = await asyncio.gather(
+                self.link.snapshot(npc, fresh=True),
+                self.link.npc_view(list(self.orders.talk.people)),
+            )
+        except (GameError, TimeoutError) as error:
+            log.warning("%s: could not record defeat: %s", npc, error)
+            return
+        if self._loading or self.chronicle.branch != branch:
+            return
+        if now is None:
+            now = snap.world.day * 1440 + snap.world.hour * 60 + snap.world.minute
+        day = now // 1440
+        previous = next((f for f in reversed(self.chronicle.facts("defeated"))
+                         if f["npc"] == npc and f["day"] == day), None)
+        witnesses = {
+            v.npc: v.name for v in views
+            if v.npc != npc and v.hp > 0 and v.body not in {"dead", "down"}
+            and v.hero is not None and v.hero.distance <= v.senses_range
+            and self.orders.talk.people[v.npc].guild < BEASTS
+        }
+        point = snap.npc.nearest_waypoint or snap.npc.waypoint
+        place = self.places.of(point) if self.places else None
+        where = place.ru if place else point or snap.world.name
+        self.chronicle.record({
+            "fact": "defeated", "npc": npc, "name": name, "by": attacker,
+            "day": day, "time": now, "t": ticks, "until": (day + 2) * 1440,
+            "count": previous["count"] + 1 if previous else 1,
+            "place": place.id if place else point or snap.world.name, "place_name": where,
+            "witnesses": sorted(set(previous["witnesses"] if previous else ()) | witnesses.keys()),
+        })
+        who = "Герой" if attacker in {"PLAYER", "PC_HERO"} else "Спутник героя"
+        self.dialogue.remember(npc, name, f"{who} сбил тебя с ног в драке: у {where}.")
+        for witness, witness_name in witnesses.items():
+            self.dialogue.remember(
+                witness, witness_name, f"{who} сбил с ног {name} в драке: у {where}.",
+            )
+
+    def defeat_bark(self, npc: str) -> str | None:
+        now = self._now()
+        if now is not None:
+            fact = next((f for f in reversed(self.chronicle.facts("defeated"))
+                         if f["npc"] == npc.upper() and f["day"] == now // 1440), None)
+            if fact is not None:
+                return DEFEAT_BARK.format(times=defeat_times(fact["count"]))
+        return None
+
     def _hit(self, hit: CombatHit) -> None:
         npc, attacker = hit.npc.upper(), hit.by.upper()
+        if hit.hp > 0 and not hit.down and not hit.dead:
+            self._dead.discard(npc)
         if attacker in {"PLAYER", "PC_HERO"}:
             for recipient, hold in list(self._hold_turns.items()):
                 if npc in hold.members:
@@ -321,6 +391,8 @@ class Mercy:
         entry = self.orders.talk.people.get(npc)
         if entry is None or entry.guild >= BEASTS:
             return
+        if hit.down and not hit.dead:
+            self.dialogue._spawn(self._defeat(hit, self.chronicle.branch, self._now(), self._ticks))
         now = time.monotonic()
         battle = self.battles.setdefault(npc, Battle())
         if now - battle.last >= 20 and not self.dialogue.in_fight(npc):
@@ -425,6 +497,8 @@ class Mercy:
             self._ticks = msg.t
             if isinstance(msg, NpcRoster):
                 for person in msg.npcs:
+                    if person.activity in {"routine", "dialog", "fight"}:
+                        self._dead.discard(person.id.upper())
                     if person.state != "ZS_ATTACK" and not self.held(person.id):
                         self._fight_words.pop(person.id, None)
                     if person.id in self._hold_used and not self.held(person.id):
@@ -442,10 +516,12 @@ class Mercy:
                         self._minute = view.time
                     if view.hp <= 0 or view.body in {"dead", "down"}:
                         self._dead.add(view.npc.upper())
-                    elif view.hero and view.hero.weapon == "none":
-                        fact = self._latest(view.npc)
-                        if fact and fact.get("armed"):
-                            self._spare(view.npc.upper())
+                    else:
+                        self._dead.discard(view.npc.upper())
+                        if view.hero and view.hero.weapon == "none":
+                            fact = self._latest(view.npc)
+                            if fact and fact.get("armed"):
+                                self._spare(view.npc.upper())
             latest = {f["npc"]: f for f in self.chronicle.facts("surrender")}
             for npc, fact in latest.items():
                 if fact["status"] == "pending" and msg.t >= fact["deadline"]:
@@ -478,7 +554,17 @@ class Mercy:
     def situation(self, npc: str) -> str | None:
         now = self._now()
         fact = fresh_surrender(self.chronicle, npc, now) if now is not None else None
-        lines = [YIELDING] if fact and fact["status"] == "spared" else []
+        defeats: dict[str, Fact] = {}
+        for defeat in reversed(self.chronicle.facts("defeated")):
+            if now is None or not defeat["time"] <= now < defeat["until"]:
+                continue
+            if defeat["npc"] == npc or npc in defeat["witnesses"]:
+                defeats.setdefault(defeat["npc"], defeat)
+        own = defeats.pop(npc, None)
+        lines = [DEFEATED.format(times=defeat_times(own["count"]))] if own else []
+        if fact and fact["status"] == "spared":
+            lines.append(YIELDING)
+        lines.extend(DEFEAT_SEEN.format(name=f["name"]) for f in defeats.values())
         if now is not None and any(f["npc"] == npc and now < f["until"]
                                    for f in self.chronicle.facts("hero_yield")):
             lines.append(VICTOR)
