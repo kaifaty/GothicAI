@@ -26,6 +26,16 @@ class CaseSpec:
 
 
 CASE_SPECS = {
+    "live_lies": (
+        CaseSpec("seen_alibi", "Lobart catches the city alibi using his own farm sighting", 2),
+        CaseSpec("trace_age", "Lobart catches the age lie using the fresh arrow trace", 2),
+        CaseSpec("trace_control", "A stranger's arrow and denial produce no accusation", 1),
+        CaseSpec("witness_alibi", "Lobart asks a witness and catches the alibi from testimony", 4),
+        CaseSpec("vcheck_claim", "Lobart checks the field and catches the false predator claim", 3),
+        CaseSpec("crime_testimony", "Lobart catches the theft denial from Hilda's testimony", 4),
+        CaseSpec("frame_belief", "Observe blame of Malak, refusal, or a witness question", 2),
+        CaseSpec("cover_offer", "Observe Hilda's cover offer, refusal, or counterprice", 2),
+    ),
     "haggle": (CaseSpec("greedy_price", "Canthar offers less than Lutero for the same silver cup", 6),),
     "surrender_live": (
         CaseSpec("A_lobart", "Observe whether wounded Lobart surrenders, flees, or keeps fighting", 2),
@@ -112,6 +122,20 @@ class LiveCase:
     @property
     def records(self) -> list[dict[str, Any]]:
         return [record for _, record in self._turns()]
+
+    def turns(self, npc: str, text: str | None = None) -> list[dict[str, Any]]:
+        return [
+            record for record in self.records
+            if record.get("npc") == npc and record.get("status") in {"completed", "step_cap"}
+            and (text is None or text in record.get("trigger", {}).get("text", ""))
+        ]
+
+    def calls(self, npc: str, name: str | None = None) -> list[dict[str, Any]]:
+        return [
+            call for record in self.records if record.get("npc") == npc
+            for step in record.get("steps", []) for call in step.get("calls", [])
+            if name is None or call.get("name") == name
+        ]
 
     @property
     def requests(self) -> int:

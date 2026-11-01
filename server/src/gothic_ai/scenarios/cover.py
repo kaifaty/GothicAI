@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     from ..talk import TalkDesk
     from ..trust import Trust
     from ..witnesses import Witnesses
+    from .live import LiveCase
 
 log = logging.getLogger(__name__)
 HOUSE = "NW_FARM1_INHOUSE_01"
@@ -63,13 +64,14 @@ async def cover_scenario(
     *,
     subject: bool = False,
     people: PeopleKnowledge | None = None,
+    live: LiveCase | None = None,
 ) -> dict[str, str]:
     """Given cover and witness decisions, check payment, evidence, exposure and save/load.
 
     `subject` continues through the NPC rumor and witness warnings, reading the assembled situation
     without an extra model turn.
     """
-    off = model_off(dialogue)
+    off = model_off(dialogue) if live is None else None
     results: dict[str, str] = {}
     original_reflexes = talk.reflexes
     original_gate, original_stage = rumors.gate, rumors.stage
@@ -160,7 +162,7 @@ async def cover_scenario(
         await link.wait_world()
         if link.session is None:
             await wait_message(link, Session, timeout=10)
-        log.info("given: дано: решающая модель оставляет NPC слушать героя")
+        log.info("Preparing listener with FixedDecider posture=listen")
         talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
         rumors.gate, rumors.stage = lambda *_: False, None
         await link.debug("player_hp", hp=5000)
@@ -247,26 +249,50 @@ async def cover_scenario(
         hero_gold = int(await link.evaluate(["call", "NPC_HASITEMS", ["inst", "HERO"], ["sym", GOLD]]) or 0)
         if hero_gold < 100:
             await link.story_effect(HILDA, [{"do": "give", "item": GOLD, "count": 100 - hero_gold}])
-        off.given(
-            "дано: Хильда продаёт прикрытие за пять золотых",
-            who=HILDA, when=REQUEST,
-            calls=[ToolCall("propose_deal", {
-                "hero_gives": [{"item": GOLD, "count": 5}],
-                "cover": {"crime": cid, "day": day + 1, "vouch": VOUCH},
-            })],
-        )
-        off.silent("дано: Хильда молчит (прикрытие предложено)", who=HILDA, when=REQUEST)
-        off.silent(
-            "дано: Хильда молчит (сделка прикрытия состоялась)",
-            who=HILDA, when="сделка состоялась",
-        )
+        if off is not None:
+            off.given(
+                "дано: Хильда продаёт прикрытие за пять золотых",
+                who=HILDA, when=REQUEST,
+                calls=[ToolCall("propose_deal", {
+                    "hero_gives": [{"item": GOLD, "count": 5}],
+                    "cover": {"crime": cid, "day": day + 1, "vouch": VOUCH},
+                })],
+            )
+            off.silent("дано: Хильда молчит (прикрытие предложено)", who=HILDA, when=REQUEST)
+            off.silent(
+                "дано: Хильда молчит (сделка прикрытия состоялась)",
+                who=HILDA, when="сделка состоялась",
+            )
+        prior = {row["id"] for row in live.records} if live is not None else set()
         await link.debug(
             "type",
             text=(
                 f"Хильда, ты видела, как я взял кубок. {REQUEST}: "
                 "скажи, что я был с тобой. Что хочешь взамен?"
+                + (" Я заплачу золотом." if live is not None else "")
             ),
         )
+        if live is not None:
+            def decision_turns() -> list[dict[str, Any]]:
+                return [row for row in live.turns(HILDA, REQUEST) if row["id"] not in prior]
+
+            await _until(lambda: bool(decision_turns()), 60)
+            rows = decision_turns()
+            calls = [
+                call for row in rows for step in row.get("steps", []) for call in step.get("calls", [])
+            ]
+            offers = [
+                call for call in calls if call.get("name") == "propose_deal"
+                and call.get("outcome") == "accepted" and call.get("arguments", {}).get("cover")
+            ]
+            live.finish("observed" if rows else "no_decision", evidence={
+                "decision": "cover_offer" if offers else "no_cover_offer" if rows else "no_decision",
+                "calls": calls, "offers": [call["arguments"] for call in offers],
+                "honesty": dialogue.personas.cards[HILDA].honesty,
+                "words": [step.get("text", "") for row in rows for step in row.get("steps", [])],
+            })
+            return _logged(results)
+        assert off is not None
         await _until(lambda: HILDA in deals.open, 45)
         await settled()
         deal = deals.open.get(HILDA)

@@ -10,6 +10,7 @@ from typing import Any
 from ..amends import CACHE_KEY as AMENDS_KEY
 from ..amends import Amends, Brief, Proposal
 from ..brain.reflex import Reflexes
+from ..chronicle import Chronicle
 from ..deals import GOLD, Deals
 from ..dialogue import DialogueManager
 from ..feats import Feats
@@ -17,7 +18,7 @@ from ..game import GameError, GameLink
 from ..llm import ToolCall
 from ..protocol import FeatToastCmd, SayCmd, Session
 from ..quests import ATTACK_CM, SEE_CM, QuestBoard
-from ..sightings import Sightings
+from ..sightings import Sightings, _sid
 from ..social import TICK_S, Rumors
 from ..talk import TalkDesk
 from ..trace import read as read_trace
@@ -40,6 +41,7 @@ from .common import (
     model_off,
     wait_message,
 )
+from .live import LiveCase
 
 log = logging.getLogger("gothic_ai.scenarios")
 
@@ -913,7 +915,8 @@ async def vanilla_spare(
 
 
 async def vanilla_check(
-    link: GameLink, dialogue: DialogueManager, talk: TalkDesk, vanilla: VanillaQuests, giver: str = LOBART
+    link: GameLink, dialogue: DialogueManager, talk: TalkDesk, vanilla: VanillaQuests, giver: str = LOBART,
+    *, live: LiveCase | None = None,
 ) -> dict[str, str]:
     """Lies as a mechanic the player can read (stage 5), on the game: Lobart's field raiders, where Andre's
     dialog puts them, and his turnips. Lobart is given the decision to check both claims.
@@ -923,7 +926,7 @@ async def vanilla_check(
     2. The hero says the turnips are in the barn: Lobart takes his word no more (the code refuses it).
     3. The raiders are killed and the hero says so: Lobart goes to see again, sees them dead and pays; the
        scripts' ending plays (gold, the quest, the farmhands back to work)."""
-    off = model_off(dialogue)
+    off = model_off(dialogue) if live is None else None
     results: dict[str, str] = {}
 
     def check(name: str, ok: bool, detail: object = "") -> None:
@@ -971,7 +974,8 @@ async def vanilla_check(
     for bug, wp in zip(bugs, FIELD, strict=True):
         await link.story_spawn(bug, "LOBART_BUGS", 1, waypoint=wp)
     await link.debug("player_goto", to=giver, distance=250)
-    log.info("given: дано: решающая модель выбирает слушать героя")
+    if live is None:
+        log.info("given: дано: решающая модель выбирает слушать героя")
     talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
     if not await _until(lambda: giver in talk.people, 20):
         return _logged({"roster": f"failed ({giver} is not around the hero)"})
@@ -979,29 +983,55 @@ async def vanilla_check(
     field = (await link.story_state(npcs=bugs, near=giver)).get("npcs", {})
     ds = sorted(round(p.get("distance", 0) / 100) for p in field.values() if "distance" in p)
     check("field", bool(ds) and SEE_CM / 100 < ds[0] <= CHECK_CM / 100, f"{len(ds)} raiders, {ds} m")
-    for words in ("перебил всех", "правда перебил"):
-        off.given(
-            "дано: Лобарт идёт проверить слова героя",
-            who=giver, when=words, calls=[ToolCall("check_claim", {"quest": BUGS})],
+    if off is not None:
+        for words in ("перебил всех", "правда перебил"):
+            off.given(
+                "дано: Лобарт идёт проверить слова героя",
+                who=giver, when=words, calls=[ToolCall("check_claim", {"quest": BUGS})],
+            )
+            off.silent(
+                "дано: Лобарт молчит (решение проверить принято)", who=giver, when=words,
+            )
+        off.silent(
+            "дано: Лобарт молчит (увидел живых хищников)", who=giver, when="Он тебе солгал",
         )
         off.silent(
-            "дано: Лобарт молчит (решение проверить принято)", who=giver, when=words,
+            "дано: Лобарт молчит (увидел мёртвых хищников)", who=giver, when="он сказал правду",
         )
-    off.silent(
-        "дано: Лобарт молчит (увидел живых хищников)", who=giver, when="Он тебе солгал",
-    )
-    off.silent(
-        "дано: Лобарт молчит (увидел мёртвых хищников)", who=giver, when="он сказал правду",
-    )
-    off.silent("дано: Лобарт молчит (герой просит плату за репу)", who=giver, when="репа")
+        off.silent("дано: Лобарт молчит (герой просит плату за репу)", who=giver, when="репа")
     conv = dialogue.open(giver, name, warm=False)
     _, _, sight = await dialogue._situation(conv, None)
     tools = [tool.name for tool in dialogue._offered(giver, sight)]
     check("check_offered", "check_claim" in tools, tools)
     gold0 = await gold()
+    if live is not None and any(value.startswith("failed") for value in results.values()):
+        return _logged(results)
 
     # 1. the lie: he goes to see for himself and catches it
+    prior = {row["id"] for row in live.records} if live is not None else set()
     await say(f"{name}, я перебил всех полевых хищников на твоём поле. Плати.")
+    if live is not None:
+        def rows() -> list[dict[str, Any]]:
+            return [row for row in live.turns(giver) if row["id"] not in prior]
+
+        def calls() -> list[dict[str, Any]]:
+            return [call for row in rows() for step in row.get("steps", [])
+                    for call in step.get("calls", [])]
+
+        # Checking includes the walk and may outlast the initial spoken response.
+        await _until(lambda: giver not in vanilla.checking and bool(rows()), 90)
+        caught = [f for f in facts("caught") if f.get("npc") == giver and f.get("quest") == BUGS]
+        claims = [f for f in facts("claim") if f.get("npc") == giver and f.get("quest") == BUGS]
+        accepted = any(call.get("name") == "check_claim" and call.get("outcome") == "accepted"
+                       and call.get("arguments", {}).get("quest") == BUGS for call in calls())
+        success = accepted and any("сходил проверить" in f.get("how", "") for f in caught)
+        completed = bool(rows())
+        live.finish("success" if success else "failure" if completed else "no_decision", evidence={
+            "decision": "checked" if success else "paid_on_word" if claims else "did_not_check",
+            "calls": calls(), "caught": caught, "claims": claims,
+            "gold_before": gold0, "gold_after": await gold(),
+        })
+        return _logged(results)
     ok = await _until(lambda: any(f.get("quest") == BUGS for f in facts("caught")), 90)
     got = next((f for f in facts("caught") if f.get("quest") == BUGS), None)
     check("caught", ok and got is not None and "сходил проверить" in got.get("how", ""), got)
@@ -1311,6 +1341,49 @@ async def _forgiveness_deal(
     return deals.open.get(s.to) if forgiving() else None
 
 
+async def _record_live_witness(
+    live: LiveCase, chronicle: Chronicle, farmer: str, witness: str, prior: set[str],
+) -> None:
+    """Wait for the witness decision and the accusation deferred until after speech."""
+    def rows() -> list[dict[str, Any]]:
+        return [row for row in live.turns(farmer) if row["id"] not in prior]
+
+    def calls() -> list[dict[str, Any]]:
+        return [call for row in rows() for step in row.get("steps", [])
+                for call in step.get("calls", [])]
+
+    def catches() -> list[dict[str, Any]]:
+        return [call for call in calls() if call.get("name") == "catch_lie"
+                and call.get("outcome") == "accepted"
+                and _sid(str(call.get("arguments", {}).get("seen", ""))).startswith("С")]
+
+    def caught() -> list[dict[str, Any]]:
+        said = {str(call.get("arguments", {}).get("said", "")).strip().strip("«»\"' .")
+                for call in catches()}
+        return [f for f in chronicle.facts("caught") if f.get("npc") == farmer
+                and "со слов" in f.get("how", "") and f.get("title") in said]
+
+    def decided() -> bool:
+        completed = rows()
+        asked = any(call.get("name") == "ask_witness" and call.get("outcome") == "accepted"
+                    for call in calls())
+        return bool(completed) and (not asked or any(
+            "Ответ:" in row.get("trigger", {}).get("text", "") for row in completed
+        ))
+
+    await _until(lambda: decided() and (not catches() or bool(caught())), 90)
+    actions = calls()
+    asked = [call for call in actions if call.get("name") == "ask_witness"
+             and call.get("outcome") == "accepted"]
+    testimony = [f for f in chronicle.facts("testimony") if f.get("npc") == farmer]
+    success = bool(asked and catches() and caught())
+    live.finish("success" if success else "failure" if decided() else "no_decision", evidence={
+        "decision": "caught_from_witness" if success else "not_caught",
+        "staged_witness": witness, "asked": asked, "calls": actions,
+        "testimony": testimony, "caught": caught(),
+    })
+
+
 async def witness_check(
     link: GameLink,
     dialogue: DialogueManager,
@@ -1318,13 +1391,14 @@ async def witness_check(
     sightings: Sightings,
     witnesses: Witnesses,
     farmer: str = LOBART,
+    *, live: LiveCase | None = None,
 ) -> dict[str, str]:
     """Given Lobart's witness questions and accusation, check movement, testimony and trust.
 
     The witness's evidence is built by code; its code-started spoken answer is silent.
     A distant acquaintance answers at the routine meeting without a model request.
     """
-    off = model_off(dialogue)
+    off = model_off(dialogue) if live is None else None
     results: dict[str, str] = {}
 
     def check(name: str, ok: bool, detail: object = "") -> None:
@@ -1453,7 +1527,8 @@ async def witness_check(
     if not ready:
         return _logged(results)
     tier = "near"
-    log.info("given: дано: решающая модель оставляет NPC слушать героя")
+    if live is None:
+        log.info("given: дано: решающая модель оставляет NPC слушать героя")
     talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
     conv = dialogue.open(farmer, name, warm=False)
     situation, _, _ = await dialogue._situation(conv, None)
@@ -1461,25 +1536,32 @@ async def witness_check(
     check(
         "offered", "ask_witness" in offered and f"- {wname} — " in situation, offered,
     )
-    off.given(
-        f"дано: Лобарт спрашивает свидетеля {wname}", who=farmer, when="утро был в городе",
-        calls=[ToolCall("ask_witness", {"who": wname, "said": "всё утро был в городе"})],
-    )
-    off.silent(
-        "дано: Лобарт молчит (свидетель вызван)", who=farmer, when="утро был в городе",
-    )
-    off.silent(
-        f"дано: {wname} молчит (показание записано кодом)", who=witness,
-        when="спрашивает тебя о герое",
-    )
-    off.given(
-        "дано: Лобарт уличает героя по ответу свидетеля", who=farmer, when="Ответ:",
-        calls=[ToolCall("catch_lie", {"said": "всё утро был в городе", "seen": "С1"})],
-    )
-    off.silent(
-        "дано: Лобарт молчит (герой уличён по показанию)", who=farmer, when="Ответ:",
-    )
+    if off is not None:
+        off.given(
+            f"дано: Лобарт спрашивает свидетеля {wname}", who=farmer, when="утро был в городе",
+            calls=[ToolCall("ask_witness", {"who": wname, "said": "всё утро был в городе"})],
+        )
+        off.silent(
+            "дано: Лобарт молчит (свидетель вызван)", who=farmer, when="утро был в городе",
+        )
+        off.silent(
+            f"дано: {wname} молчит (показание записано кодом)", who=witness,
+            when="спрашивает тебя о герое",
+        )
+        off.given(
+            "дано: Лобарт уличает героя по ответу свидетеля", who=farmer, when="Ответ:",
+            calls=[ToolCall("catch_lie", {"said": "всё утро был в городе", "seen": "С1"})],
+        )
+        off.silent(
+            "дано: Лобарт молчит (герой уличён по показанию)", who=farmer, when="Ответ:",
+        )
+    if live is not None and any(value.startswith("failed") for value in results.values()):
+        return _logged(results)
+    prior = {row["id"] for row in live.records} if live is not None else set()
     await link.debug("type", text=f"{name}, это не я утром топтал твою репу — я всё утро был в городе.")
+    if live is not None:
+        await _record_live_witness(live, chronicle, farmer, witness, prior)
+        return _logged(results)
     caught = await _until(lambda: any(f.get("witness") for f in chronicle.facts("caught")), 90)
     testimony = next((f for f in chronicle.facts("testimony") if f.get("witness") == witness), None)
     check(
