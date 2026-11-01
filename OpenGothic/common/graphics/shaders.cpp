@@ -603,7 +603,7 @@ const RenderPipeline* Shaders::materialPipeline(const Material& mat, DrawCommand
     case Material::Multiply:
     case Material::Multiply2:
       typeVsM = "";
-      typeFsM = "_e";
+      typeFsM = "_m";
       break;
     case Material::AdditiveLight:
       typeVsM = "";

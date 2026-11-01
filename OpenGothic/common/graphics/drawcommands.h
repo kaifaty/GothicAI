@@ -95,6 +95,8 @@ class DrawCommands {
       L_CmdOffsets = 14,
       L_Normal     = 15,
       L_Orm        = 16,
+      L_FogLut     = 17,
+      L_FogLutMs   = 18,
       L_VsmPages   = L_Shadow0,
       L_Lights     = L_Shadow1,
       };

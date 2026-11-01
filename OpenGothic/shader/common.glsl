@@ -36,6 +36,10 @@ const vec3 debugColors[] = {
   vec3(0,0.5,1),
   };
 
+// depth range of the fog LUT slices (fog_view_lut.comp)
+const float dFogMin = 0;
+const float dFogMax = 0.9999;
+
 float linearDepth(float d, vec3 clipInfo) {
   // z_n * z_f,  z_n - z_f, z_f
   return (clipInfo[0] / (clipInfo[1] * d + clipInfo[2]));

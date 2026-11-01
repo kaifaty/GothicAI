@@ -439,6 +439,29 @@ void mainGBuffer(vec4 t) {
   }
 #endif
 
+#if defined(MAT_FOG)
+// Translucent surfaces don't write depth, so the fog pass, drawn before them, fogs what lies behind.
+// Here they take the fog of their own depth: in-scattered light (rgb) and transmittance (a).
+vec4 fogOwnDepth() {
+  if(scene.fogQuality==0 || scene.underWater!=0)
+    return vec4(0,0,0,1);
+
+  const vec2  uv = gl_FragCoord.xy*scene.screenResInv;
+  const float dZ = linearDepth(gl_FragCoord.z, scene.clipInfo);
+  const float d0 = linearDepth(dFogMin,        scene.clipInfo);
+  const float d1 = linearDepth(dFogMax,        scene.clipInfo);
+  const float d  = (dZ-d0)/(d1-d0);
+
+  vec4 val = textureLod(fogLut, vec3(uv,d), 0);
+  if(scene.fogQuality==2) {
+    // as fog.frag (VOLUMETRIC), without the shadow occlusion of single scattering
+    const vec4 ms = textureLod(fogLutMs, vec3(uv,d), 0);
+    val = vec4(val.rgb*min(d*64.0, 1.0) + ms.rgb, ms.a);
+    }
+  return vec4(val.rgb*scene.GSunIntensity*scene.exposure, val.a);
+  }
+#endif
+
 #if defined(FORWARD)
 void mainForward(vec4 t) {
   vec3  color = t.rgb;
@@ -452,6 +475,9 @@ void mainForward(vec4 t) {
   color *= diffuseLight(alpha);
   color *= scene.exposure;
 
+  const vec4 fog = fogOwnDepth();
+  color = color*fog.a + fog.rgb;
+
   outColor = vec4(color,alpha);
   }
 #endif
@@ -459,6 +485,9 @@ void mainForward(vec4 t) {
 #if defined(EMISSIVE)
 void mainEmissive(vec4 t) {
   vec3 color = textureEmmisive(t.rgb);
+#if defined(MAT_FOG)
+  color *= fogOwnDepth().a;
+#endif
   outColor = vec4(color,t.a);
   }
 #endif
@@ -475,7 +504,9 @@ void mainGhost(vec4 t) {
 
   vec4 back = textureLod(sceneColor, (fragCoord*0.5+0.5), 0);
 
-  outColor = vec4(mix(back.rgb * color, back.rgb, vec3(0.6)), t.a);
+  // sceneColor is stashed before the fog pass
+  const vec4 fog = fogOwnDepth();
+  outColor = vec4(mix(back.rgb * color, back.rgb, vec3(0.6))*fog.a + fog.rgb, t.a);
   }
 #endif
 
