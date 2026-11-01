@@ -371,15 +371,17 @@
 #   meet: given: Malet agrees to meet at dawn by FARM1_WOLF. Checks the deal, sleep-like clock jump,
 #       arrival, meet_kept, greeting cue and conversation partner. Group 2, LLM=off via auto;
 #       SAVE=save_slot_1.sav; TIMEOUT=600
-#   meet_missed: given: the same meeting. Checks Malet's walk, wait, broken promise, routine return
-#       and the missed meeting in his situation. Group 2, LLM=off via auto;
+#   meet_missed: given: Malet agrees to the same dawn meeting. Checks his walk, wait, broken promise,
+#       routine return and the missed meeting in his situation. Group 2, LLM=off via auto;
 #       SAVE=save_slot_1.sav; TIMEOUT=700
 #   errand: given: Lobart exposes the turnip lie and decides to tell Andre tomorrow at 7:00;
 #       the scene's lines are given. Checks the walk, rumor how=told, goal_done and two voices.
 #       Group 2, LLM=off via auto; TTS=fake; SAVE=save_slot_1.sav; TIMEOUT=1500
-#   errand_fork: given: the same errand; Andre is moved away before arrival, another militiaman hears it.
+#   errand_fork: given: Lobart decides to tell Andre tomorrow at 7:00; Andre is moved away before arrival,
+#       another militiaman hears it. The exposure and scene lines are given as in errand.
 #       Group 2, LLM=off via auto; TTS=fake; SAVE=save_slot_1.sav; TIMEOUT=1500
-#   errand_far: given: the same errand; the hero stays at the tower. Checks the distant rumor, routine
+#   errand_far: given: Lobart decides to tell Andre tomorrow at 7:00; the hero stays at the tower.
+#       The exposure is given as in errand. Checks the distant rumor, routine
 #       body and absence of a scene request. Group 2, LLM=off via auto; SAVE=save_slot_1.sav; TIMEOUT=1500
 #   errand_give: given: Hilda takes Lobart 25 gold; she also attempts to give Canthar's mission letter.
 #       Checks balances, gave, goal completion and rejection of the mission item.
