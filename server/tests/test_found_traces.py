@@ -11,7 +11,7 @@ from gothic_ai.brain.situation import SituationBuilder
 from gothic_ai.brain.stimuli import Stimulus
 from gothic_ai.chronicle import Chronicle
 from gothic_ai.crimes import SUSPECT_MIN, Crimes
-from gothic_ai.found_traces import FoundTraces
+from gothic_ai.found_traces import JUDGE_S, PRESENT_MIN, FoundTraces
 from gothic_ai.memory import MemoryStore
 from gothic_ai.npc_crimes import NpcCrimes
 from gothic_ai.perception import PerceptionDesk
@@ -85,15 +85,25 @@ class World:
         self.crimes.sightings = self.seen
         self.seen.crimes = self.crimes
         self.npc_crimes = NpcCrimes(self.link, self.chronicle, crimes=self.crimes)  # type: ignore[arg-type]
-        self.found = FoundTraces(self.seen, crimes=self.crimes, npc_crimes=self.npc_crimes)
+        self.clock = Clock()
+        self.found = FoundTraces(self.seen, crimes=self.crimes, npc_crimes=self.npc_crimes, clock=self.clock)
         self.planner = Planner()
         self.found.follow(self.planner)  # type: ignore[arg-type]
         self.finds: list[Any] = []
         self.found.on_found.append(self.finds.append)
 
-    def saw(self, *views: NpcView) -> None:
+    def saw(self, *views: NpcView, judge: bool = True) -> None:
+        """The views as the desk hands them out; then, unless `judge` is False, a later view of the last
+        viewer after JUDGE_S, which decides its finds (only after a view with traces: it extends
+        sightings)."""
         for v in views:
-            self.seen.saw(v)
+            self.seen.desk._seen(v)
+        if judge and views and views[-1].traces:
+            self.later(views[-1])
+
+    def later(self, view: NpcView, seconds: float = JUDGE_S + 1) -> None:
+        self.clock.t += seconds
+        self.seen.desk._seen(view.model_copy(update={"time": (view.time or 0) + 1}))
 
     def suspected(self) -> list[dict]:
         return [*self.chronicle.facts("crime_suspected"), *self.chronicle.facts("npc_crime_suspected")]
@@ -166,12 +176,15 @@ async def test_the_first_sight_of_a_body_is_one_find_and_suspicion_of_those_seen
     w.saw(found_view(AT_8 + 61), found_view(AT_8 + 90))  # shown again: no second find
     (find,) = w.finds
     assert (find.npc, find.body, find.died, find.place) == (LOBART, MALETH, AT_8 + 10, "FARM1_OUT")
-    assert set(find.suspects) == {"PLAYER", HILDA}
     (stimulus,) = w.stimuli()
     npc, _, kw = stimulus
     assert npc == LOBART and kw["other"] == MALETH and kw["other_name"] == "Малет"
     assert kw["detail"] == "dead for about 50 minutes"
-    assert "the hero" in kw["context"] and "Хильда" in kw["context"] and "not proof" in kw["context"]
+    assert kw["context"] == ""  # whom it suspects is decided later, not in the stimulus
+    assert {f["suspect"] for f in w.suspected()} == {"PLAYER", HILDA}
+    assert [(f["npc"], f["trace"], set(f["suspects"])) for f in w.chronicle.facts("trace_judged")] == [
+        (LOBART, BODY_ID, {"PLAYER", HILDA})
+    ]
     hero = w.chronicle.facts("crime_suspected")
     npcs = w.chronicle.facts("npc_crime_suspected")
     assert [(f["npc"], f["suspect"], f["crime"], f["body"], f["died"]) for f in hero] == [
@@ -232,14 +245,14 @@ async def test_no_suspicion_without_evidence(store, case):
     w.saw(found_view(found_at, body(age=age, waypoint=waypoint)))
     assert w.suspected() == []
     (find,) = w.finds
-    assert find.suspects == ()
+    assert len(w.chronicle.facts("trace_judged")) == 1
     assert len(w.stimuli()) == 1
     context = w.stimuli()[0][2]["context"]
     line = next(row for row in (w.seen.situation(LOBART) or "").splitlines() if "тело: Малет" in row)
     if case == "witnessed":
         assert "ты видел это сам" in line and "saw the killing" in context
     else:
-        assert "кто это сделал — не знаешь" in line and "do not know who did it" in context
+        assert "кто это сделал — не знаешь" in line and context == ""
     if case == "unknown_age":
         assert "когда умер — не знаешь" in line and find.died is None
     await asyncio.gather(*w.seen._background, *w.chronicle._background)
@@ -366,3 +379,77 @@ async def test_whose_body_is_how_the_finder_sees_it(store, dead, npc, line, othe
     traces = desk.sight(LOBART).traces or ""  # type: ignore[union-attr]
     assert line.split(";")[0] in traces and "тело: тело" not in traces
     await asyncio.gather(*w.seen._background, *w.chronicle._background)
+
+
+@pytest.mark.parametrize(("seen_before", "there"), [(PRESENT_MIN - 2, True), (20, False)])
+async def test_a_finder_who_was_there_when_he_died_suspects_no_one(store, seen_before, there):
+    """An npc's killing of an npc has no deed: Lobart, who saw Maleth alive right before the death, may be
+    his killer and must not suspect the hero he saw there; 20 minutes before is an ordinary find."""
+    w = World(store)
+    w.saw(seen_view(AT_8))  # the hero and Maleth alive in the yard
+    found_at = AT_8 + 60
+    w.saw(found_view(found_at, body(age=found_at - AT_8 - seen_before)))  # died `seen_before` after it
+    line = next(row for row in (w.seen.situation(LOBART) or "").splitlines() if "тело: Малет" in row)
+    context = w.stimuli()[0][2]["context"]
+    if there:
+        assert w.suspected() == [] and "ты был здесь, когда он умер" in line
+        assert context == " You were here when they died." and "герой" not in line
+    else:
+        assert [f["suspect"] for f in w.suspected()] == ["PLAYER"] and "подозрение" in line
+        assert context == ""
+    await asyncio.gather(*w.seen._background, *w.chronicle._background)
+
+
+async def test_suspicion_waits_for_the_deed_seen_after_the_find(store):
+    """The view with the body may come before `hero_deed`: the witness's crime_seen arrives later, and the
+    trace must not make it suspect the hero a second time."""
+    w = World(store)
+    w.saw(seen_view(AT_8))
+    view = found_view(AT_8 + 60)
+    w.saw(view, judge=False)
+    assert len(w.stimuli()) == 1  # the stimulus at once
+    w.later(view, JUDGE_S / 2)  # too early: nothing is decided
+    assert w.chronicle.facts("trace_judged") == []
+    w.chronicle.record(
+        {
+            "fact": "crime",
+            "id": "M1",
+            "kind": "murder",
+            "victim": MALETH,
+            "waypoint": YARD,
+            "day": 1,
+            "hour": 8,
+            "minute": 20,
+        }
+    )
+    w.chronicle.record({"fact": "crime_seen", "npc": LOBART, "crime": "M1"})
+    w.clock.t += 600  # no view for a long while: the decision waits for the next one
+    w.later(view)
+    assert w.suspected() == [] and len(w.chronicle.facts("trace_judged")) == 1
+    w.later(view)
+    assert len(w.chronicle.facts("trace_judged")) == 1  # decided once
+    await asyncio.gather(*w.seen._background, *w.chronicle._background)
+
+
+async def test_a_find_saved_before_its_decision_is_decided_once_after_the_load(tmp_path):
+    path = str(tmp_path / "memory.sqlite3")
+    store = MemoryStore(path)
+    store.ensure_branch("A")
+    w = World(store)
+    w.saw(seen_view(AT_8))
+    w.saw(found_view(AT_8 + 60), judge=False)  # saved right after the find
+    await asyncio.gather(*w.seen._background, *w.chronicle._background)
+    head = store.head("A")
+    assert w.chronicle.facts("trace_judged") == []
+    store.close()
+
+    store = MemoryStore(path)
+    store.ensure_branch("loaded", "A", head)
+    again = World(store, branch="loaded")
+    again.saw(found_view(AT_8 + 61), judge=False)  # the first view after the load decides it
+    again.later(found_view(AT_8 + 62))
+    assert again.finds == [] and again.stimuli() == []
+    assert [f["suspect"] for f in again.suspected()] == ["PLAYER"]
+    assert len(again.chronicle.facts("trace_judged")) == 1
+    await asyncio.gather(*again.seen._background, *again.chronicle._background)
+    store.close()

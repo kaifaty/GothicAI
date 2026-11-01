@@ -17,8 +17,10 @@ Entries (`t` is the unix time, `npc` the npc's symbol, `name` its display name):
     {"kind": "llm_error", "npc", "name", "detail"}
     {"kind": "voice_error", "npc", "detail"}
     {"kind": "feat", "id", "title", "text", "category"}   a deed recorded by the chronicler
-    {"kind": "trace_found", "npc", "trace", "trace_kind", "name", "body", "place", "died", "suspects"}
-        an npc found a trace that matters by itself, a body (found_traces.py): whom it suspects by evidence
+    {"kind": "trace_found", "npc", "trace", "trace_kind", "name", "body", "place", "died"}
+        an npc found a trace that matters by itself, a body (found_traces.py)
+    {"kind": "trace_suspected", "npc", "trace", "body", "suspects"}   whom it suspects for it, by evidence,
+        decided on a later view
 """
 
 from __future__ import annotations

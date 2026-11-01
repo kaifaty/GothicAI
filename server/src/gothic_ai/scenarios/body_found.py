@@ -99,6 +99,22 @@ async def body_found(
         view = await sightings.desk.fresh(LOBART)
         return view.time if view is not None else None
 
+    async def skip(minutes: int) -> None:
+        """The clock `minutes` game minutes on (the dead stay where they lie with body_traces=1)."""
+        now = await clock()
+        at = (now if now is not None else 8 * 60) + minutes
+        await link.debug("time", hour=at % DAY // 60, minute=at % 60)
+
+    async def judged(trace: str) -> bool:
+        """Suspicion is decided on a later view of the finder, at least JUDGE_S after the find."""
+
+        def done() -> bool:
+            return any(
+                f.get("npc") == LOBART and f.get("trace") == trace for f in chronicle.facts("trace_judged")
+            )
+
+        return await _until_async(lambda: sightings.desk.fresh(LOBART), lambda _: done(), 15)
+
     try:
         await link.wait_world()
         if link.session is None:
@@ -157,6 +173,9 @@ async def body_found(
             return _logged(results)
         await move(waypoint=HOUSE, face=None)
         await link.debug("player_goto", waypoint=AWAY)
+        # Lobart last saw Maleth alive more than PRESENT_MIN before the death and more than GAP_MIN
+        # (a sighting's break) before seeing his body: he was not there when he died
+        await skip(12)
         await link.debug("kill", npc=MALETH)
         killed = await clock()
         await move(near=MALETH, distance=250, face=MALETH)
@@ -168,6 +187,7 @@ async def body_found(
         ):
             return _logged(results)
         assert trace is not None
+        check("maleth_judged", await judged(trace.id), chronicle.facts("trace_judged"))
         first = mine(MALETH)
         # the time of death is the view's clock less the body's age: the kill, within a few game minutes
         died = (
@@ -220,6 +240,7 @@ async def body_found(
         if not check("vino_trace", trace_b is not None, trace_b.model_dump() if trace_b else "no body trace"):
             return _logged(results)
         check("vino_found", len(mine(VINO)) == 1, mine(VINO))
+        check("vino_judged", await judged(trace_b.id), chronicle.facts("trace_judged"))
         check("vino_no_suspicion", suspected(VINO) == [], suspected(VINO))
         line_b = next(
             (
@@ -232,7 +253,7 @@ async def body_found(
         check("situation_b", bool(line_b), line_b or sightings.situation(LOBART))
 
         # save and load: the finds and the suspicion are in the save branch; the bodies are not found anew
-        kept = {"a": suspected(MALETH), "b": suspected(VINO)}
+        kept = {"a": suspected(MALETH), "b": suspected(VINO), "judged": chronicle.facts("trace_judged")}
         traces = set(sightings.mind(LOBART).traces)
         count = len(finds)
         saved = await _save(link, slot)
@@ -251,7 +272,8 @@ async def body_found(
             loaded.parent == saved.branch
             and again is not None
             and again.id == trace_b.id
-            and {"a": suspected(MALETH), "b": suspected(VINO)} == kept
+            and {"a": suspected(MALETH), "b": suspected(VINO), "judged": chronicle.facts("trace_judged")}
+            == kept
             and traces <= set(sightings.mind(LOBART).traces)
             and len(finds) == count,
             {"trace": again.id if again else None, "finds": len(finds) - count},
