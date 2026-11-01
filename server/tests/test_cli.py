@@ -15,7 +15,8 @@ from gothic_ai.llm.off import ModelOff, OffBackend
     ("m0", "auto", "off"),
     *[(scenario, "auto", "off") for scenario in (
         "deal", "contract", "debt", "xardas_money", "deal_demo",
-        "bandit_parley", "bandit_bounty", "calm", "companion", "neural-talk", "rescue", "rescue_self",
+        "bandit_parley", "bandit_bounty", "road_bandits", "calm", "companion", "neural-talk",
+        "rescue", "rescue_self",
     )],
     ("haggle", "auto", "scenario haggle is live: set LLM=chatgpt|openai|local"),
     ("m0", "fake", "scenario m0 requires --llm off"),
@@ -30,6 +31,7 @@ from gothic_ai.llm.off import ModelOff, OffBackend
             "witness", "wrath", "amends", "amends_deal", "trace", "broken", "gate", "gate_vouch", "greg",
             "crime_ally", "crime_law", "crime_talk", "trace_crime", "cover", "cover_subject",
             "cheat", "frame", "crime_meet", "crime_director", "npc_director",
+            "ground", "remembers", "cave", "seen", "group", "gossip", "gossip_demo",
             "repair", "authored", "character", "chain", "own_amend", "own_repair",
             "showrunner", "vanilla_line", "feats", "feat_fame",
             "m1", "m2", "m3", "m5", "m5c", "m5e", "tts",
@@ -360,12 +362,14 @@ def test_crimes_is_enabled_by_default_including_scenarios(monkeypatch, flags):
 @pytest.mark.parametrize("crimes", [False, True])
 @pytest.mark.parametrize("planner", [False, True])
 @pytest.mark.parametrize("hold_threats", [False, True])
-def test_deed_control_is_independent_of_the_planner_and_threat_switch(crimes, planner, hold_threats):
-    args = SimpleNamespace(no_crimes=not crimes, no_hold_threats=not hold_threats)
+@pytest.mark.parametrize("parley", [False, True])
+def test_deed_control_is_independent_of_the_planner_and_threat_switch(crimes, planner, hold_threats, parley):
+    args = SimpleNamespace(no_crimes=not crimes, no_hold_threats=not hold_threats, no_parley=not parley)
     command = json.loads(cli._perception_control(args, planner=planner).to_json())
     assert command["hold"] == (planner and hold_threats)
     assert command.get("deeds", False) == crimes
     assert ("deeds" in command) == crimes
+    assert command["bandits"] == parley
 
 
 @pytest.mark.parametrize("flags", [

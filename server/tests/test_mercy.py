@@ -486,7 +486,9 @@ async def test_surrender_hold_resumes_native_fight_and_cannot_repeat(rig, monkey
     conv, probe = await begin_hero_hold(rig, monkeypatch)
     assert rig.mercy.held(NPC) is (outcome != "ally_validation_hit")
     assert rig.mercy.held(FRIEND) is (outcome != "ally_validation_hit")
-    rig.dialogue.fight_reason = lambda npc, snap: "An unrelated agreement cannot cancel a resumed fight."
+    rig.dialogue.fight_reason = lambda npc, snap, target: (
+        "An unrelated agreement cannot cancel a resumed fight."
+    )
     if outcome == "hit":
         hit(rig, npc=FRIEND, hp=80)
     elif outcome == "expired":

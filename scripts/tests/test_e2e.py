@@ -156,8 +156,8 @@ class SoakControlTests(unittest.TestCase):
                 uv = root / "uv"
                 uv.write_text('#!/bin/sh\nprintf \'%s\\n\' "$@"\n')
                 uv.chmod(0o755)
-                env = dict(PATH=f"{root}:{os.environ['PATH']}", ROOT=str(root), LOG_DIR=str(root),
-                           PORT="47827", SCENARIO="graph")
+                env = {"PATH": f"{root}:{os.environ['PATH']}", "ROOT": str(root), "LOG_DIR": str(root),
+                       "PORT": "47827", "SCENARIO": "graph"}
                 if llm is not None:
                     env["LLM"] = llm
                 done = subprocess.run(
@@ -191,6 +191,9 @@ class SoakControlTests(unittest.TestCase):
             ("bandit_parley", "0", "", "", "off", 0, "--neural-body--body-policyengine", None),
             ("bandit_bounty", "0", "", "", "off", 0, "--neural-body--body-policyengine", None),
             ("bandit_parley", "0", "", "/tmp/save.sav", "off", 2, None, None),
+            ("road_bandits", "0", "", "", None, 0, "--neural-body--body-policyengine", None),
+            ("road_bandits", "0", "", "", "off", 0, "--neural-body--body-policyengine", None),
+            ("road_bandits", "0", "", "/tmp/save.sav", "off", 2, None, None),
         ]
         for scenario, control, url, save, llm, status, body_flag, policy in cases:
             with self.subTest(scenario=scenario, control=control, url=url, save=save, llm=llm, policy=policy):
