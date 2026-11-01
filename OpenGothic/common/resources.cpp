@@ -2738,9 +2738,14 @@ bool Resources::loadModelScriptData(std::string_view name, asset::ModelScript& o
   if(content!=inst->contentModels.end()) {
     try {
       auto overlay = ModelData::readScriptOverlay(content->second);
-      const auto merge = [](auto& base, auto& other, auto& additions) {
+      for(const auto& animation:overlay.animations)
+        if(std::any_of(out.aliases.begin(),out.aliases.end(),[&](const auto& alias) { return alias.name==animation.name; }))
+          throw std::runtime_error("overlay animation changes kind: "+animation.name);
+      for(const auto& alias:overlay.aliases)
+        if(std::any_of(out.animations.begin(),out.animations.end(),[&](const auto& animation) { return animation.name==alias.name; }))
+          throw std::runtime_error("overlay alias changes kind: "+alias.name);
+      const auto merge = [](auto& base, auto& additions) {
         for(auto& entry:additions) {
-          std::erase_if(other,[&](const auto& old) { return old.name==entry.name; });
           const auto found = std::find_if(base.begin(),base.end(),[&](const auto& old) {
             return old.name==entry.name;
             });
@@ -2748,12 +2753,12 @@ bool Resources::loadModelScriptData(std::string_view name, asset::ModelScript& o
           else *found = std::move(entry);
           }
         };
-      merge(out.animations,out.aliases,overlay.animations);
-      merge(out.aliases,out.animations,overlay.aliases);
+      merge(out.animations,overlay.animations);
+      merge(out.aliases,overlay.aliases);
       if(inst->census) inst->census->replaced(name,content->second.generic_string());
       }
     catch(const std::exception& error) {
-      Log::e("content models: skipping \"",content->second.string(),"\": ",error.what());
+      Log::e("content models: skipping \"",std::filesystem::absolute(content->second).string(),"\": ",error.what());
       }
     }
   return true;
