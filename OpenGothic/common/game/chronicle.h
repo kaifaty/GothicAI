@@ -28,3 +28,13 @@ struct ChronicleData final {
   std::vector<ChronicleFeat> fate;
   std::vector<ChronicleFork> others;
   };
+
+struct FateCard final {
+  bool                       off = true;
+  std::string                title;
+  std::string                text;
+  std::vector<ChronicleFeat> feats;
+  int64_t                    chapter = 1;
+  int64_t                    day = 0;
+  int64_t                    count = 0;
+  };
