@@ -78,7 +78,7 @@ using namespace Tempest;
 
 namespace {
 
-constexpr int         ProtocolVersion = 55;
+constexpr int         ProtocolVersion = 56;
 AiBridge*             activeBridge = nullptr;
 constexpr const char* SaveEntry       = "ai_bridge/session";  // own entry in save games
 constexpr const char* DefaultUrl      = "ws://127.0.0.1:47817";
@@ -310,6 +310,8 @@ struct AiBridge::Impl final {
   bool                 connected = false;
   uint64_t             chronicleRequests = 0;
   std::unordered_map<std::string,std::function<void(const ChronicleData&)>> chronicleCallbacks;
+  uint64_t             fateCardRequests = 0;
+  std::unordered_map<std::string,std::function<void(const FateCard&)>> fateCardCallbacks;
   bool                 replaceSvm = false;
   uint64_t             svmLines = 0;
   uint64_t             bodyGeneration = 0;
@@ -627,6 +629,8 @@ void AiBridge::Impl::processInbound(World* world, Inbound& in) {
       connected = false;
       for(auto& [req,callback]:std::exchange(chronicleCallbacks,{}))
         callback({});
+      for(auto& [req,callback]:std::exchange(fateCardCallbacks,{}))
+        callback({});
       Gothic::inst().setChronicle({});
       if(in.kind==Inbound::Error)
         lastError = in.text;
@@ -914,6 +918,15 @@ void AiBridge::Impl::handle(World* world, const std::string& text) {
       auto callback = std::move(found->second);
       chronicleCallbacks.erase(found);
       callback(parseChronicle(text));
+      }
+    return;
+    }
+  if(type=="fate_card") {
+    const auto found = fateCardCallbacks.find(std::string(req));
+    if(found!=fateCardCallbacks.end()) {
+      auto callback = std::move(found->second);
+      fateCardCallbacks.erase(found);
+      callback(parseFateCard(text));
       }
     return;
     }
@@ -2266,6 +2279,19 @@ void AiBridge::requestChronicle(std::function<void(const ChronicleData&)> callba
   const auto req = "chronicle:"+std::to_string(++bridge.chronicleRequests);
   bridge.chronicleCallbacks.emplace(req,std::move(callback));
   bridge.send(JsonWriter("chronicle_get").str("req",req).finish());
+  }
+
+void AiBridge::requestFateCard(std::string kind, std::string killer, std::string name,
+                             std::function<void(const FateCard&)> callback) {
+  if(activeBridge==nullptr || activeBridge->impl==nullptr || !activeBridge->impl->connected) {
+    callback({});
+    return;
+    }
+  auto& bridge = *activeBridge->impl;
+  const auto req = "fate_card:"+std::to_string(++bridge.fateCardRequests);
+  bridge.fateCardCallbacks.emplace(req,std::move(callback));
+  bridge.send(JsonWriter("fate_end").str("req",req).str("kind",kind).str("killer",killer)
+                .str("name",TextCodec::toUtf8(name)).finish());
   }
 
 void AiBridge::Impl::askVoice(const std::string& line, const std::string& npc, const std::string& text) {
