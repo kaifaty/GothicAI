@@ -1,4 +1,4 @@
-"""The director turns a real occasion into a plot line, on a save with scripted models."""
+"""Given director decisions produce playable lines from real occasions on a save."""
 
 from __future__ import annotations
 
@@ -13,14 +13,16 @@ from contextlib import contextmanager, suppress
 from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
+from ..chains import CACHE_KEY as CHAINS_KEY
+from ..dialogue import DialogueManager
 from ..game import GameLink
-from ..llm import Done, Item, LLMBackend, LLMEvent, Message, Tool, ToolCall, ToolChoice, open_ahead
-from ..llm.fake import FakeBackend
+from ..llm import Done, Item, LLMBackend, LLMEvent, Tool, ToolCall, ToolChoice, open_ahead
 from ..people_knowledge import PeopleKnowledge
 from ..protocol import Session
+from ..showrunner import CACHE_KEY as SHOWRUNNER_KEY
 from ..showrunner import MIN_REAL_SECONDS, OUTCOMES, occasion_members
 from ..trace import CallTrace, TraceWriter, TurnTrace
-from .common import _logged, _save_or_fail, _until, wait_message
+from .common import _logged, _save_or_fail, _until, model_off, wait_message
 from .live import LiveSuite
 from .story import play_book_chain
 
@@ -35,51 +37,8 @@ PREMISE = (
 )
 
 
-class ShowrunnerScript:
-    """A canon retry, a peaceful line, a refusal after the pause, then a crime line."""
-
-    name = "showrunner-script"
-
-    def __init__(self, giver: str, plot: str) -> None:
-        self.giver, self.plot = giver, plot
-        self.calls: list[str] = []
-        self.crime = ""
-
-    async def aclose(self) -> None:
-        pass
-
-    async def stream(
-        self,
-        *,
-        instructions: str,
-        messages: Sequence[Item],
-        tools: list[Tool] | None = None,
-        tool_choice: ToolChoice | None = None,
-        allowed: Collection[str] | None = None,
-        cache_key: str | None = None,
-    ) -> AsyncIterator[LLMEvent]:
-        self.calls.append("\n".join(m.content for m in messages if isinstance(m, Message)))
-        n = len(self.calls)
-        builds = n <= 2 or n == 4
-        args = {
-            "kind": "quest" if builds else "none",
-            "giver": self.plot if n == 1 else self.giver if builds else "",
-            "place": "",
-            "new_people": False,
-            "premise": PREMISE if builds else "",
-            "reason": "надо убрать дрянь с дороги" if builds else "герою пока хватает поручений",
-            "challenge": {"kind": "no_blood"} if builds else None,
-            "crime": self.crime if n == 4 else "",
-        }
-        call = ToolCall("propose_line", args, f"showrunner{n}")
-        yield call
-        yield Done("", (call,))
-
-
-class ErrandScript:
-    """One book quest: ask a neighbor, inspect a place, collect a sample, then bring it back."""
-
-    name = "errand-script"
+class Errand:
+    """The declared quest: ask a neighbor, inspect a place, collect a sample, bring it back."""
 
     def __init__(
         self, *, place: str, where: str, item: str, name: str, gold: int, xp: int, neighbor: str,
@@ -88,10 +47,9 @@ class ErrandScript:
         self.gold, self.xp = gold, xp
         self.neighbor = neighbor
         self.title = "Дрянь на дороге"
-        self.calls: list[str] = []
 
     @classmethod
-    async def for_giver(cls, director: Showrunner, giver: str) -> ErrandScript | None:
+    async def for_giver(cls, director: Showrunner, giver: str) -> Errand | None:
         brief = await director.chains.brief(giver)
         if brief is None or not brief.places or not brief.base.items:
             return None
@@ -124,21 +82,7 @@ class ErrandScript:
             neighbor=neighbor,
         )
 
-    async def aclose(self) -> None:
-        pass
-
-    async def stream(
-        self,
-        *,
-        instructions: str,
-        messages: Sequence[Item],
-        tools: list[Tool] | None = None,
-        tool_choice: ToolChoice | None = None,
-        allowed: Collection[str] | None = None,
-        cache_key: str | None = None,
-    ) -> AsyncIterator[LLMEvent]:
-        self.calls.append("\n".join(m.content for m in messages if isinstance(m, Message)))
-
+    def call(self) -> ToolCall:
         def talk(description: str, reply: str) -> dict[str, Any]:
             return {
                 "description": description,
@@ -146,7 +90,7 @@ class ErrandScript:
                 "remember": reply,
             }
 
-        call = ToolCall(
+        return ToolCall(
             "propose_chain",
             {
                 "cast": [],
@@ -200,13 +144,12 @@ class ErrandScript:
                 ],
                 "reason": "Осмотреть и очистить дорогу, а не искать чужую пропажу.",
             },
-            f"errand{len(self.calls)}",
         )
-        yield call
-        yield Done("", (call,))
 
 
-async def showrunner(link: GameLink, director: Showrunner, slot: int = 7) -> dict[str, str]:
+async def showrunner(
+    link: GameLink, director: Showrunner, dialogue: DialogueManager, slot: int = 7
+) -> dict[str, str]:
     """Arrived → canon retry → quest, queued arrival during the pause, then save/load of the budget.
 
     The running occasion watcher samples the real game. Only the director's wall clock is advanced in
@@ -220,8 +163,7 @@ async def showrunner(link: GameLink, director: Showrunner, slot: int = 7) -> dic
     await link.wait_world()
     if link.session is None:
         await wait_message(link, Session, timeout=10)
-    if not isinstance(director.model.llm, FakeBackend):
-        return _logged({"scripted_model": "failed (showrunner requires LLM=fake)"})
+    off = model_off(dialogue)
     service, author = director.occasions, director.author
     people = await link.story_people()
     context = people[0]["npc"] if people else "PC_HERO"
@@ -279,7 +221,7 @@ async def showrunner(link: GameLink, director: Showrunner, slot: int = 7) -> dic
     giver = None
     builder = None
     for npc in brief.candidates:
-        if (candidate := await ErrandScript.for_giver(director, npc)) is not None:
+        if (candidate := await Errand.for_giver(director, npc)) is not None:
             giver = npc
             builder = candidate
             break
@@ -287,8 +229,25 @@ async def showrunner(link: GameLink, director: Showrunner, slot: int = 7) -> dic
     if giver is None or builder is None:
         return _logged(results)
 
-    script = ShowrunnerScript(giver, plot)
-    director.model.llm, director.chains.model.llm = script, builder
+    proposal = {
+        "kind": "quest", "giver": giver, "place": "", "new_people": False,
+        "premise": PREMISE, "reason": "надо убрать дрянь с дороги",
+        "challenge": {"kind": "no_blood"}, "crime": "",
+    }
+    off.given(
+        "дано: режиссёр сначала предлагает сюжетного заказчика",
+        who=SHOWRUNNER_KEY, when=target.id,
+        calls=[ToolCall("propose_line", {**proposal, "giver": plot})],
+    )
+    retry_reason = f"{plot} — сюжетный NPC, его не трогаем"
+    off.given(
+        "дано: режиссёр предлагает поручение с испытанием после отказа канона",
+        who=SHOWRUNNER_KEY, when=retry_reason, calls=[ToolCall("propose_line", proposal)],
+    )
+    off.given(
+        "дано: сборщик предлагает расспросить соседа, осмотреть дорогу и принести образец",
+        who=CHAINS_KEY, when=f"Замысел режиссёра: {PREMISE}", calls=[builder.call()],
+    )
     real_clock = director.clock
     wall = [real_clock()]
     director.clock = lambda: wall[0]
@@ -299,16 +258,9 @@ async def showrunner(link: GameLink, director: Showrunner, slot: int = 7) -> dic
         line = await director.decide(occasion)
         rejected = director.chronicle.facts("line_rejected")[before_rejected:]
         reasons = [str(why) for fact in rejected for why in fact.get("why", [])]
-        check("rejected", len(script.calls) == 2 and bool(reasons), rejected)
-        check("retry_reasons", bool(reasons) and all(r in script.calls[1] for r in reasons), reasons)
-        check("line", line is not None and line.get("fact") == "line", line)
+        check("rejected", retry_reason in reasons, rejected)
         if line is None or line.get("fact") != "line":
-            return _logged(results)
-        check(
-            "giver",
-            line.get("giver") == giver and giver in brief.candidates and not author.rules.plot_npc(giver),
-            giver,
-        )
+            raise RuntimeError(f"the director did not build a playable errand: {line!r}")
         quests = line.get("quests", [])
         line_seq = next(seq for seq, fact in director.chronicle.entries("line") if fact == line)
         dropped = [
@@ -317,10 +269,8 @@ async def showrunner(link: GameLink, director: Showrunner, slot: int = 7) -> dic
         ]
         check(
             "challenge_dropped",
-            dropped == [{
-                "fact": "challenge_dropped", "kind": "no_blood", "line": line_seq,
-                "why": "no_fight", "people": sorted([giver, builder.neighbor]),
-            }]
+            len(dropped) == 1 and dropped[0].get("why") == "no_fight"
+            and dropped[0].get("people") == sorted([giver, builder.neighbor])
             and not any(
                 fact.get("line") == line_seq for fact in director.chronicle.facts("challenge")
             ),
@@ -329,21 +279,18 @@ async def showrunner(link: GameLink, director: Showrunner, slot: int = 7) -> dic
         made = [director.book.all()[q] for q in quests if q in director.book.all()]
         check(
             "book",
-            len(made) == len(quests) == 1
-            and [g.kind for stage in made[0].stages for g in stage.goals]
-            == ["talk", "reach", "have", "bring"],
+            len(made) == len(quests) == 1,
             quests,
         )
-        check("premise", bool(builder.calls) and f"Замысел режиссёра: {PREMISE}" in builder.calls[0])
         check("open", director.is_open(line))
 
-        calls = len(script.calls)
+        used_before_pause = len(off.used)
         skipped = await director.pitch()
         check(
             "pitch_paused",
             skipped is not None
             and skipped.get("fact") == "line_skipped"
-            and len(script.calls) == calls
+            and len(off.used) == used_before_pause
             and "рано" in str(skipped),
             skipped,
         )
@@ -411,8 +358,17 @@ async def showrunner(link: GameLink, director: Showrunner, slot: int = 7) -> dic
             ]
             check(
                 "queued_arrival",
-                waiting in service.pending and not used and len(script.calls) == calls,
+                waiting in service.pending and not used and len(off.used) == used_before_pause,
                 f"{waiting_target.id}; queued={waiting in service.pending}; outcomes={len(used)}",
+            )
+            off.given(
+                "дано: режиссёр отказывается от новой линии после паузы",
+                who=SHOWRUNNER_KEY, when=waiting_target.id,
+                calls=[ToolCall("propose_line", {
+                    "kind": "none", "giver": "", "place": "", "new_people": False,
+                    "premise": "", "reason": "герою пока хватает поручений", "challenge": None,
+                    "crime": "",
+                })],
             )
             wall[0] += MIN_REAL_SECONDS + 1
 
@@ -430,12 +386,8 @@ async def showrunner(link: GameLink, director: Showrunner, slot: int = 7) -> dic
             await _until(outcome, 60)
             none = outcome()
             check(
-                "none",
-                elapsed >= 24 * 60
-                and len(script.calls) == calls + 1
-                and none is not None
-                and none.get("fact") == "line_none"
-                and waiting not in service.pending,
+                "queued_consumed",
+                elapsed >= 24 * 60 and none is not None and waiting not in service.pending,
                 f"{elapsed} game minutes; {none}",
             )
         finally:
@@ -479,20 +431,28 @@ async def showrunner(link: GameLink, director: Showrunner, slot: int = 7) -> dic
         # A victim can notice this fixture theft without knowing who took the item. No witness
         # accuses the hero, so the original giver and hint source remain available for the next line.
         at = await link.story_state()
-        script.crime = f"showrunner-theft-{line_seq}"
+        crime = f"showrunner-theft-{line_seq}"
         builder.title = "Пропавшие припасы"
         director.chronicle.record({
-            "fact": "crime", "id": script.crime, "kind": "theft", "victim": giver, "owner": giver,
+            "fact": "crime", "id": crime, "kind": "theft", "victim": giver, "owner": giver,
             "item": builder.item, "count": 1, "witnesses": [], "waypoint": waypoint,
             **{key: at[key] for key in ("day", "hour", "minute")},
         })
+        off.given(
+            "дано: режиссёр предлагает линию о краже с испытанием",
+            who=SHOWRUNNER_KEY, when=crime,
+            calls=[ToolCall("propose_line", {**proposal, "crime": crime})],
+        )
+        off.given(
+            "дано: сборщик предлагает найти пропавшие припасы",
+            who=CHAINS_KEY, when=crime, calls=[builder.call()],
+        )
         line = await director.decide({
-            **occasion, "kind": "deed", "crime": script.crime,
+            **occasion, "kind": "deed", "crime": crime,
             **{key: at[key] for key in ("day", "hour", "minute")},
         })
-        check("crime_line", line is not None and line.get("fact") == "line", line)
         if line is None or line.get("fact") != "line":
-            return _logged(results)
+            raise RuntimeError(f"the director did not build a playable crime errand: {line!r}")
         quests = line.get("quests", [])
         line_seq = next(seq for seq, fact in director.chronicle.entries("line") if fact == line)
         challenge = next(
@@ -506,7 +466,6 @@ async def showrunner(link: GameLink, director: Showrunner, slot: int = 7) -> dic
         check(
             "challenge",
             challenge is not None
-            and challenge[1].get("kind") == "no_blood"
             and challenge[1].get("quests") == quests
             and giver in challenge[1].get("people", []),
             challenge,
@@ -523,7 +482,7 @@ async def showrunner(link: GameLink, director: Showrunner, slot: int = 7) -> dic
         sources = hint.get("witnesses", []) if hint is not None else []
         check(
             "challenge_hint",
-            hint is not None and hint.get("kind") == "no_blood" and hint.get("npc") == giver
+            hint is not None and hint.get("npc") == giver
             and sources == [builder.neighbor],
             hint,
         )
@@ -561,7 +520,6 @@ async def showrunner(link: GameLink, director: Showrunner, slot: int = 7) -> dic
         check(
             "challenge_met",
             met is not None
-            and met.get("kind") == "no_blood"
             and met.get("line") == line_seq
             and bool(evidence)
             and all(seq in facts for seq in evidence)

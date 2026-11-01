@@ -46,6 +46,16 @@ OFF = {
 }
 
 GIVEN = {
+    "repair",
+    "authored",
+    "character",
+    "chain",
+    "own_amend",
+    "own_repair",
+    "showrunner",
+    "vanilla_line",
+    "feats",
+    "feat_fame",
     "crime_ally",
     "crime_law",
     "crime_talk",
