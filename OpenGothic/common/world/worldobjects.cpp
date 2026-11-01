@@ -1338,11 +1338,20 @@ void WorldObjects::resetPositionToTA() {
   for(auto& r:routines)
     r.curState = 0;
 
-  for(auto& i:npcInvalid)
-    if(i->handlePtr().use_count()>1)
-      npcArr.push_back(std::move(i)); else
+  // [GAME] body_traces: a clock leap (sleep, Wld_SetTime, world re-entry) neither retires
+  // the dead nor carries them to their routine point. Bodies lie where they fell and
+  // leave by the three-day rule (World::sweepBodies). Off: vanilla OpenGothic.
+  const bool keepBodies = Gothic::physicsFlags().bodyTraces;
+  std::vector<std::unique_ptr<Npc>> retired;
+  for(auto& i:npcInvalid) {
+    if(i->handlePtr().use_count()<=1)
       npcRemoved.push_back(std::move(i));
-  npcInvalid.clear();
+    else if(keepBodies && i->isDead())
+      retired.push_back(std::move(i)); // retired earlier: it would only be retired again
+    else
+      npcArr.push_back(std::move(i));
+    }
+  npcInvalid = std::move(retired);
 
   for(auto& i : npcArr) {
     i->attachToPoint(nullptr);
@@ -1350,6 +1359,10 @@ void WorldObjects::resetPositionToTA() {
 
   for(size_t i=0;i<npcArr.size();) {
     auto& n = *npcArr[i];
+    if(keepBodies && n.isDead() && !n.isPlayer()) {
+      ++i;
+      continue;
+      }
     if(n.resetPositionToTA()){
       ++i;
       } else {

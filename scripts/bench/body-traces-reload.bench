@@ -1,0 +1,6 @@
+# A fresh process loads session-created.sav of body-traces (SAVE=<out>/session-created.sav,
+# no WORLD): the same body ids, death times and culprits; npc_view age continues from the save.
+cheat god
+body_traces sample
+body_traces view reload
+quit

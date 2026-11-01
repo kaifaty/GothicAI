@@ -55,6 +55,7 @@ static std::string_view humansTorchOverlay = "_TORCH.MDS";
 namespace {
 
 constexpr float meleeMagnetTorsoGapCm = 18.f;
+constexpr uint32_t BodyTraceMagic = 0x31544442; // "BDT1": /body-trace of a dead NPC
 
 float meleeParryLeadMs() {
   static const float lead = [] {
@@ -568,6 +569,12 @@ void Npc::save(Serialize &fout, size_t id, std::string_view directory) {
     fout.setEntry("worlds/",fout.worldName(),directory,id,"/stuck-arrows");
     visual.saveStuckArrows(fout);
     }
+  // Optional independent entry: older builds skip it, and a body without it is a legacy one.
+  if(isDead() && bodyTraceRecord.id!=0) {
+    fout.setEntry("worlds/",fout.worldName(),directory,id,"/body-trace");
+    fout.write(BodyTraceMagic,uint16_t(1),bodyTraceRecord.id,uint64_t(bodyTraceRecord.diedAt+1),
+               uint64_t(bodyTraceRecord.clockFrom+1),bodyTraceRecord.culprit);
+    }
   }
 
 void Npc::load(Serialize &fin, size_t id, std::string_view directory) {
@@ -714,6 +721,27 @@ void Npc::load(Serialize &fin, size_t id, std::string_view directory) {
      fin.setEntry("worlds/",fin.worldName(),directory,id,"/stuck-arrows") &&
      !visual.loadStuckArrows(fin,owner))
     Log::e("arrows: invalid saved NPC attachments, keeping the body without arrows");
+  bodyTraceRecord = {};
+  if(isDead() && fin.setEntry("worlds/",fin.worldName(),directory,id,"/body-trace")) {
+    try {
+      uint32_t magic=0, traceId=0;
+      uint16_t schema=0;
+      uint64_t died=0, clock=0;
+      BodyTrace trace;
+      fin.read(magic,schema,traceId,died,clock,trace.culprit);
+      const auto minute = [](uint64_t v) { return v>0 && v<=uint64_t(INT64_MAX) ? int64_t(v-1) : int64_t(-1); };
+      trace.id        = traceId;
+      trace.diedAt    = minute(died);
+      trace.clockFrom = minute(clock);
+      if(magic==BodyTraceMagic && schema==1 && traceId!=0 && traceId!=uint32_t(-1) && trace.culprit.size()<=512)
+        bodyTraceRecord = std::move(trace); else
+        Log::e("body trace: invalid saved record, the body counts as one from an older save");
+      }
+    catch(const std::exception& e) {
+      bodyTraceRecord = {};
+      Log::e("body trace load: ",e.what());
+      }
+    }
   }
 
 void Npc::postValidate() {
@@ -1087,6 +1115,7 @@ bool Npc::checkHealth(bool onChange, bool allowUnconscious) {
   }
 
 void Npc::onNoHealth(bool death, HitSound sndMask) {
+  const bool wasDead = isDead();
   endMeleeStun("death");
   meleeParadeOrigin.reset();
   meleeKnockdown = false;
@@ -1123,6 +1152,21 @@ void Npc::onNoHealth(bool death, HitSound sndMask) {
 
   size_t fdead=owner.script().findSymbolIndex(state);
   startState(fdead,"",gtime::endOfTime(),true);
+  if(death && !wasDead) {
+    // Engine truth of the body trace: kept whatever [GAME] body_traces says, so the
+    // age and lifetime are right when the flag is turned on later.
+    BodyTrace trace;
+    trace.id        = owner.allocBodyTraceId();
+    trace.diedAt    = owner.gameMinute();
+    trace.clockFrom = trace.diedAt;
+    if(lastHit!=nullptr && lastHit!=this) {
+      if(lastHit->isPlayer())
+        trace.culprit = "PLAYER";
+      else if(auto* symbol = owner.script().findSymbol(lastHit->instanceSymbol()))
+        trace.culprit = symbol->name();
+      }
+    bodyTraceRecord = std::move(trace);
+    }
   // Note: clear perceptions for William in Jarkentar
   for(size_t i=0;i<PERC_Count;++i)
     setPerceptionDisable(PercType(i));

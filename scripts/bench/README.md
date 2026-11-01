@@ -689,6 +689,31 @@ behavior and adds no body impact damage. `[GAME] body_impact_damage` defaults to
 is `gothic-physics-contract`. Acceptance numbers and the ON/OFF duel and Mac
 physics timing comparison belong in the [body impact report](../../reports/physics/2026-11-01-body-impact/README.md).
 
+`body-traces.bench` checks bodies as physical traces (stage 8, step 4b) on a fresh
+`WORLD=NEWWORLD.ZEN` in the Xardas valley. The native fixture `body_traces`
+(`common/game/bodytracesbench.cpp`) spawns and kills, by the hero's hand, a person,
+a wolf and three people the lifetime rule keeps (an `ITM_MISSION` key, `IMMORTAL`,
+`NPCTYPE_MAIN`), and parks a living observer with perceptions off. `view` reads the
+production `npc_view` through the bridge's writer (`TestBench::npcView`): the person
+is a `body` trace with `npc`, `age` and a stable id, the wolf is none; OFF there are
+no body rows. `advance <minutes>` moves the clock alone; `sleep <hours>` sleeps like
+a bed (`World::setDayTime`); `hero near|far-visible|far-hidden` places the hero
+within 30 m, beyond 30 m with an open ray from his eyes to a body sight point, or
+beyond 30 m with none; `check <label>` fails the run on the first unmet rule.
+`save created` writes `session-created.sav`.
+
+```bash
+WORLD=NEWWORLD.ZEN scripts/bench.sh body-traces /abs/out/on
+WORLD=NEWWORLD.ZEN BODY_TRACES=0 scripts/bench.sh body-traces /abs/out/off
+SAVE=/abs/out/on/session-created.sav scripts/bench.sh body-traces-reload /abs/out/reload
+python3 scripts/body_traces_compare.py /abs/out/on /abs/out/reload
+```
+
+`body-traces-legacy-make.bench` uses only generic commands: run it with a build of
+main from before body traces to get `session-legacy.sav` (a dead person and a wolf);
+`SAVE=<that>/session-legacy.sav scripts/bench.sh body-traces-legacy` loads it with
+the current build: old bodies get an id, `age: null`, and a lifetime from the load.
+
 For stage 2, `ragdoll.bench` exercises death, sleeping/wake, controlled unconscious recovery,
 slopes, stairs, a cliff and the human/Wolf/Scavenger/Molerat/Orc models. Run it with
 `OPENGOTHIC_RAGDOLL_TRACE=1` to append `ph_ms,ph_bodies,ph_rays,rd_mode,rd_weight,rd_sleep`

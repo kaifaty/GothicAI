@@ -89,6 +89,9 @@ class WorldObjects final {
 
     uint32_t       npcId(const Npc *ptr) const;
     size_t         npcCount()    const { return npcArr.size(); }
+    // Active and retired (npcInvalid) NPCs: both are kept in a save.
+    template<class F>
+    void           forEachStoredNpc(F&& f) { for(auto& i:npcArr) f(*i); for(auto& i:npcInvalid) f(*i); }
     const Npc&     npc(size_t i) const { return *npcArr[i];    }
     Npc&           npc(size_t i)       { return *npcArr[i];    }
 

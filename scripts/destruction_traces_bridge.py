@@ -144,7 +144,7 @@ def assert_private_fields_absent(path: Path) -> int:
     """Inspect raw JSON before a schema can silently discard private fields."""
     count = 0
     private = {"actor_truth", "culprit", "traceCulprit", "trace_culprit", "appeared_at", "traceTime", "trace_time"}
-    public = {"id", "kind", "name", "waypoint", "distance", "hero_cm", "from_hero", "age"}
+    public = {"id", "kind", "name", "waypoint", "distance", "hero_cm", "from_hero", "age", "npc"}
 
     def inspect(value):
         nonlocal count

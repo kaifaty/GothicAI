@@ -13,6 +13,7 @@
 #include "game/damagecalculator.h"
 #include "game/meleeimpact.h"
 #include "world/objects/npc.h"
+#include "world/bodytraces.h"
 #include "gothic.h"
 
 #include <Tempest/Log>
@@ -985,6 +986,47 @@ namespace {
       });
     for(int i=0;i<120;++i) world.tick(17);
     require(!steps.empty(),"a fallen ragdoll must emit impact noise");
+    }
+
+  void testBodyTraces() {
+    require(Gothic::PhysicsFlags{}.bodyTraces,"body traces must default to ON");
+    require(BodyTraces::LifetimeMinutes==4320,"a body lives three game days");
+    BodyTraces::Body body;
+    body.clockFrom    = 1000;
+    body.now          = 1000+BodyTraces::LifetimeMinutes;
+    body.heroDistance = 3001;
+    require(BodyTraces::removable(body),"an unseen three-day-old body with the hero beyond 30 m must leave");
+    const auto with=[&](auto change) { auto b=body; change(b); return BodyTraces::removable(b); };
+    require(!with([](auto& b){ b.now-=1; }),"a body younger than three game days must stay");
+    require(!with([](auto& b){ b.heroDistance=3000; }),"a body exactly 30 m from the hero must stay");
+    require(!with([](auto& b){ b.heroDistance=1200; }),"a body near the hero must stay");
+    require(!with([](auto& b){ b.heroSees=true; }),"a body the hero sees must stay");
+    {
+    auto seen=body; seen.heroSees=true;
+    require(BodyTraces::removableUnseen(seen),"sight is the last test: rays only for bodies that pass the rest");
+    }
+    require(!with([](auto& b){ b.missionItems=true; }),"a body with a mission item must stay");
+    require(!with([](auto& b){ b.dragon=true; }),"a dragon must stay");
+    require(!with([](auto& b){ b.immortal=true; }),"an IMMORTAL body must stay");
+    require(!with([](auto& b){ b.storyType=true; }),"a body of a main script type must stay");
+    require(!with([](auto& b){ b.enabled=false; }),"body traces OFF must never remove a body");
+    require(!with([](auto& b){ b.dead=false; }),"the living never leave by the body rule");
+    require(!with([](auto& b){ b.player=true; }),"the hero never leaves by the body rule");
+    require(!with([](auto& b){ b.clockFrom=-1; }),"a body without a lifetime start must stay");
+    require(with([](auto& b){ b.now+=100000; b.heroDistance=1e6f; }),"an old far body must leave");
+
+    require(BodyTraces::isTrace(true,true,false,GIL_NONE,GIL_SEPERATOR_HUM),"a dead person is a trace");
+    require(BodyTraces::isTrace(true,true,false,GIL_SEPERATOR_HUM-1,GIL_SEPERATOR_HUM),"every human guild is a trace");
+    require(!BodyTraces::isTrace(true,true,false,GIL_SEPERATOR_HUM,GIL_SEPERATOR_HUM),"a monster's body is not a trace");
+    require(!BodyTraces::isTrace(true,true,false,GIL_DRAGON,GIL_SEPERATOR_HUM),"a dragon's body is not a trace");
+    require(!BodyTraces::isTrace(false,true,false,GIL_NONE,GIL_SEPERATOR_HUM),"body traces OFF: no body trace");
+    require(!BodyTraces::isTrace(true,false,false,GIL_NONE,GIL_SEPERATOR_HUM),"a living person is not a body trace");
+    require(!BodyTraces::isTrace(true,true,true,GIL_NONE,GIL_SEPERATOR_HUM),"the dead hero is not a body trace");
+
+    for(int32_t type:{1,4,7})
+      require(BodyTraces::isStoryType(type,BodyTraces::StoryTypes),"NPCTYPE_MAIN, NPCTYPE_OCMAIN and NPCTYPE_BL_MAIN are story types");
+    for(int32_t type:{0,2,3,5,6})
+      require(!BodyTraces::isStoryType(type,BodyTraces::StoryTypes),"ambient and friend types are not story types");
     }
 
   void testBodyImpactDamage() {
@@ -5442,6 +5484,7 @@ int main() {
     testPhysicsNoise();
     testRagdollNoise();
     testBodyImpactDamage();
+    testBodyTraces();
     testOffCenterImpulse();
     std::puts("Physics contracts passed");
     return EXIT_SUCCESS;

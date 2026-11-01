@@ -119,6 +119,8 @@ namespace TestBench {
   // Installed only by the opt-in bridge stuck logger; the core engine has no bridge dependency.
   extern std::function<bool(World&,std::string_view,float)> stuckBegin;
   extern std::function<bool(World&)> stuckEnd;
+  // set by the bridge: the production npc_view of one npc (a JSON array of one view, or empty)
+  extern std::function<std::string(World&,std::string_view npc)> npcView;
   // set by the main window: opens a game menu by its script name (`diary`: the diary for a look at it)
   extern std::function<void(std::string_view menu)> openMenu;
   }

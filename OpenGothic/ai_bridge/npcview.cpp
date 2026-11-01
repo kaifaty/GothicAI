@@ -279,12 +279,14 @@ void writeTraces(Writer& w, World& world, Npc& npc, float range) {
     str(w,"id",trace.id);
     str(w,"kind",trace.kind);
     str(w,"name",trace.name); // engine trace labels are UTF-8
+    if(!trace.npc.empty())
+      str(w,"npc",trace.npc); // v58 body: the dead one, as `look` names it
     if(const auto* waypoint = world.findWayPoint(trace.position))
       str(w,"waypoint",waypoint->name);
     w.Key("distance"); w.Double(std::round(double(seenTrace.dist)));
     w.Key("age");
     if(trace.appearedAt<0)
-      w.Null(); // records written before trace metadata do not reveal their age
+      w.Null(); // records written before trace metadata (bodies: before v58) do not reveal their age
     else
       w.Int64(std::max(int64_t(0),minute-trace.appearedAt));
     if(pl!=nullptr) {

@@ -733,6 +733,17 @@ class Npc final {
     Npc*      lastHitBy() const { return lastHit; }  // who hit this npc last (ai_bridge: who killed it)
     void      setLastHitBy(Npc* by) { lastHit = by; }  // ai_bridge's debug kill: the killer it names
 
+    // A body as a physical trace (physics stage 8, step 4b): stamped at death, saved
+    // with the NPC in an optional entry. The culprit is engine truth and never leaves it.
+    struct BodyTrace {
+      uint32_t    id        = 0;  // per world, never reused; 0: none yet
+      int64_t     diedAt    = -1; // game minutes; -1: unknown (a body from an older save)
+      int64_t     clockFrom = -1; // game minute its three-day lifetime started
+      std::string culprit;        // "PLAYER" or the killer's instance symbol
+      };
+    const BodyTrace& bodyTrace() const { return bodyTraceRecord; }
+    void      setBodyTrace(BodyTrace trace) { bodyTraceRecord = std::move(trace); }
+
     void      setOther(Npc* ot);
     void      setVictim(Npc* ot);
 
@@ -1100,6 +1111,7 @@ class Npc final {
 
     // last hit
     Npc*                           lastHit          = nullptr;
+    BodyTrace                      bodyTraceRecord;
     char                           lastHitType      = 'A';
     int32_t                        lastHitSpell     = 0;
 
