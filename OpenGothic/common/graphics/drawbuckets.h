@@ -90,7 +90,7 @@ class DrawBuckets {
       uint32_t       frameCount      = 0;
       uint32_t       frameDuration   = 0;
       float          turbidity        = 0.f;
-      uint32_t       padding[3]       = {};
+      uint32_t       padding0 = 0, padding1 = 0, padding2 = 0; // scalars: an array member here faulted the GPU on Metal
       };
     static_assert(sizeof(BucketGpu)==96); // GPU array stride of Bucket in scene.glsl
 

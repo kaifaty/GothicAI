@@ -102,7 +102,7 @@ struct Bucket {
   uint  frameCount;
   uint  frameDuration;
   float turbidity;
-  uint  padding[3];
+  uint  padding0, padding1, padding2; // scalars, as in BucketGpu: an array member faulted the GPU on Metal
   };
 
 #endif
