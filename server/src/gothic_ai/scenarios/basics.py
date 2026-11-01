@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from collections.abc import Sequence
 from pathlib import Path
@@ -416,6 +417,11 @@ async def tts_lines(
         "дано: реплика Ксардаса для пути озвучки", who=npc,
         when="Расскажи о драконах.", line=DEFAULT_REPLY,
     )
+    if os.environ.get("GOTHIC_TTS_RECORD") == "1":
+        off.silent(
+            "дано: Ксардас молчит (крыса напала на героя на стенде записи голоса)", who=npc,
+            when="гигантская крыса нападает на героя",
+        )
     await link.wait_world()
     await attach_when_free(link, npc)
     snap = await link.snapshot(npc)
