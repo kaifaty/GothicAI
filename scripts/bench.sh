@@ -14,6 +14,7 @@
 #      TEMPEST_WINDOW_SIZE client frame size (default: 800x600)
 #      SAVE          save to start from (default: save_slot_1.sav in the main checkout)
 #      WORLD         start a fresh game in this world instead (NEWWORLD.ZEN, OLDWORLD.ZEN, ADDONWORLD.ZEN, DRAGONISLAND.ZEN)
+#      GOTHIC_INTRO=1 play the new game's intro and the scripts' videos (default: -nointro, none)
 #      NO_BUILD=1    do not rebuild the engine first
 #      TIMEOUT=300   seconds before the game is killed
 #      KEEP=1        the game stays open after the scenario
@@ -167,9 +168,9 @@ else
   START_ARGS=(-save 1)
 fi
 
-# These fixtures use a prepared world and clock; skip the new-game chapter video
-# before their first command on NEWWORLD.
-if [[ "$NAME" == placed-items* || "$NAME" == item-wake || "$NAME" == routine-return || "$NAME" == cloth* || "$NAME" == monster-character-virtual* || "$NAME" == own-mesh-* || "$NAME" == movable-census || "$NAME" == melee-physics || "$NAME" == melee-blade-shadow || "$NAME" == melee-stagger || "$NAME" == melee-backstab || "$NAME" == melee-beast-* || "$NAME" == melee-posture-* || "$NAME" == streaming-flythrough || "$NAME" == streaming-shots || "$NAME" == furniture-parts || "$NAME" == loadprobe-idle || "$NAME" == loadprobe-chain ]]; then
+# No videos (`-nointro`), as in e2e: on a fresh WORLD the new game's INTRO.BIK otherwise plays for
+# almost two minutes, with its music, before the first command. Marvin `playvideo` still plays.
+if [[ "${GOTHIC_INTRO:-0}" != 1 ]]; then
   START_ARGS+=(-nointro)
 fi
 
