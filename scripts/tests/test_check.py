@@ -1,6 +1,7 @@
 """Test-file selection on a small repository and coverage of the real tree."""
 
 import importlib.util
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -112,10 +113,19 @@ def test_imports_cross_relative_modules_and_project_boundary(repository):
     }
 
 
-def test_relative_named_import_follows_intermediate_source(repository):
+def test_relative_named_import_follows_intermediate_source(repository, monkeypatch):
+    parsed = []
+    original_parse = check.ast.parse
+
+    def parse(source, filename, *args, **kwargs):
+        parsed.append(filename)
+        return original_parse(source, filename, *args, **kwargs)
+
+    monkeypatch.setattr(check.ast, "parse", parse)
     assert selected_files(selection(repository, "app/src/apppkg/helpers.py")) == {
         "app/tests/nested/test_nested.py"
     }
+    assert parsed and all(path.startswith("app/") for path in parsed)
 
     root, _ = repository
     (root / "app/src/apppkg/helpers.py").unlink()
@@ -151,6 +161,54 @@ def test_test_helper_selects_its_importers(repository):
     }
     (root / "app/tests/test_helper.py").unlink()
     assert selection(repository, "app/tests/test_helper.py") == []
+
+
+def test_import_cache_preserves_selection_after_edits_and_corruption(repository, monkeypatch):
+    root, _ = repository
+    cache = root / ".git/gothic-check-cache.json"
+    changed = "app/src/apppkg/helpers.py"
+    expected = {"app/tests/nested/test_nested.py"}
+    assert selected_files(selection(repository, changed)) == expected
+    assert cache.is_file()
+    original_parse = check.parse_imports
+    parsed = []
+
+    def parse(source, filename):
+        parsed.append(filename)
+        return original_parse(source, filename)
+
+    monkeypatch.setattr(check, "parse_imports", parse)
+    assert selected_files(selection(repository, changed)) == expected
+    assert parsed == []
+
+    # The same blob in two packages must keep each package's relative imports.
+    (root / "lib/src/libpkg/helpers.py").write_text("flag = 2\n")
+    (root / "lib/src/libpkg/local.py").write_text("from .helpers import flag\n")
+    (root / "lib/tests/test_local.py").write_text("from libpkg.local import flag\n")
+    assert selected_files(selection(repository, "lib/src/libpkg/helpers.py")) == {
+        "lib/tests/test_local.py"
+    }
+
+    importer = root / "app/tests/nested/test_nested.py"
+    importer.write_text("import json\nfrom apppkg.service import VALUE\n")
+    assert selection(repository, changed) == []
+    assert "app/tests/nested/test_nested.py" in parsed
+    git(root, "add", "app/tests/nested/test_nested.py")
+    parsed.clear()
+    assert selection(repository, changed) == []
+    assert parsed == []
+
+    untracked = root / "app/tests/test_new.py"
+    untracked.write_text("from apppkg.helpers import flag\n")
+    assert selected_files(selection(repository, changed)) == {"app/tests/test_new.py"}
+    untracked.write_text("import json\n")
+    assert selection(repository, changed) == []
+
+    cache.write_text("{broken")
+    parsed.clear()
+    assert selection(repository, changed) == []
+    assert parsed
+    assert json.loads(cache.read_text())["version"] == 1
 
 
 @pytest.mark.parametrize("filename", ["pyproject.toml", "uv.lock"])
@@ -349,8 +407,9 @@ def test_real_full_path_references_cross_group_boundaries(parts, expected):
         assert files == expected
 
 
-def test_real_game_change_selects_server_importers():
-    matrix = check.select_groups(ROOT, ["/".join(("server", "src", "gothic_ai", "game.py"))])
+@pytest.mark.parametrize("filename", ["game.py", "voice.py"])
+def test_real_game_change_selects_server_importers(filename):
+    matrix = check.select_groups(ROOT, ["/".join(("server", "src", "gothic_ai", filename))])
     files = selected_files(matrix)
     assert {group["name"] for group in matrix} == {"server", "scripts-torch"}
     assert "scripts/tests/test_body_live_capture.py" in files
@@ -358,10 +417,7 @@ def test_real_game_change_selects_server_importers():
     assert "server/tests/test_neural_transitions.py" in files
     assert "server/tests/test_body_control.py" in files
     total = check.discover_tests(ROOT)["server"]
-    server_files = {path for path in files if path.startswith("server/")}
-    if len(server_files) != len(total):
-        assert len(server_files) <= 0.6 * len(total)
-        assert "server/tests/test_protocol.py" not in files
+    assert files == set(total) | {"scripts/tests/test_body_live_capture.py"}
 
 
 def test_real_bridge_change_selects_only_text_references():

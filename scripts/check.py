@@ -7,11 +7,14 @@ import argparse
 import ast
 from collections import defaultdict, deque
 from dataclasses import dataclass
+import hashlib
 import json
+import os
 from pathlib import Path, PurePosixPath
 import shlex
 import subprocess
 import sys
+import tempfile
 import tomllib
 from typing import Iterable
 
@@ -150,12 +153,89 @@ def dependencies(root: Path, groups: tuple[Group, ...]) -> dict[str, set[str]]:
     return result
 
 
-def import_graph(root: Path, groups: tuple[Group, ...], files: list[str], deps: dict[str, set[str]]) -> dict[str, set[str]]:
+def parse_imports(source: str, filename: str) -> dict[str, list[str]]:
+    """Extract context-free module names and file imports for one Git blob."""
+    imported: set[str] = set()
+    file_imports: list[ast.AST] = []
+    assignments: list[ast.Assign] = []
+    may_import_file = "spec_from_file_location" in source
+    for node in ast.walk(ast.parse(source, filename=filename)):
+        if may_import_file and isinstance(node, ast.Assign):
+            assignments.append(node)
+        elif isinstance(node, ast.Import):
+            imported.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            base = "." * node.level + (node.module or "")
+            if base:
+                imported.add(base)
+            separator = "" if base.endswith(".") else "."
+            imported.update(base + separator + alias.name for alias in node.names if alias.name != "*")
+        elif isinstance(node, ast.Call):
+            function = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", "")
+            if function in {"import_module", "__import__", "importorskip"} and node.args:
+                argument = node.args[0]
+                if isinstance(argument, ast.Constant) and isinstance(argument.value, str):
+                    imported.add(argument.value)
+            if function == "spec_from_file_location" and len(node.args) >= 2:
+                file_imports.append(node.args[1])
+    filenames: set[str] = set()
+    if file_imports:
+        # Build bindings only for files that actually import another file by path.
+        bindings: dict[str, list[ast.AST]] = defaultdict(list)
+        for assignment in assignments:
+            for target in assignment.targets:
+                if isinstance(target, ast.Name):
+                    bindings[target.id].append(assignment.value)
+        visited_names: set[str] = set()
+        while file_imports:
+            for node in ast.walk(file_imports.pop()):
+                if isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value.endswith(".py"):
+                    filenames.add(PurePosixPath(node.value).name)
+                elif isinstance(node, ast.Name) and node.id not in visited_names:
+                    visited_names.add(node.id)
+                    file_imports.extend(bindings.get(node.id, ()))
+    return {"imports": sorted(imported), "files": sorted(filenames)}
+
+
+def load_import_cache(path: Path) -> dict[str, dict[str, list[str]]]:
+    try:
+        cache = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(cache, dict) or cache.get("version") != 1 or not isinstance(cache.get("entries"), dict):
+        return {}
+    return {key: entry for key, entry in cache["entries"].items()
+            if isinstance(key, str) and isinstance(entry, dict)
+            and all(isinstance(entry.get(field), list)
+                    and all(isinstance(value, str) for value in entry[field]) for field in ("imports", "files"))}
+
+
+def save_import_cache(path: Path, new_entries: dict[str, dict[str, list[str]]]) -> None:
+    temporary: Path | None = None
+    try:
+        entries = load_import_cache(path)
+        entries.update(new_entries)
+        with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, prefix="gothic-check-cache-",
+                                         suffix=".tmp", delete=False) as stream:
+            temporary = Path(stream.name)
+            json.dump({"version": 1, "entries": entries}, stream, separators=(",", ":"))
+        os.replace(temporary, path)
+    except OSError:
+        pass  # An unavailable cache must not prevent test selection.
+    finally:
+        if temporary is not None:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def import_graph(root: Path, groups: tuple[Group, ...], files: list[str], deps: dict[str, set[str]], *,
+                 parse_groups: set[str] | None = None) -> dict[str, set[str]]:
     """Reverse file edges and Torch package roots in each project's own package namespace."""
     modules: dict[str, dict[str, set[str]]] = {g.name: defaultdict(set) for g in groups}
     names: dict[str, str] = {}
     owners: dict[str, Group] = {}
-    trees: dict[str, ast.AST] = {}
     for path in files:
         group = owner(path, groups)
         if not group or not path.endswith(".py"):
@@ -174,66 +254,55 @@ def import_graph(root: Path, groups: tuple[Group, ...], files: list[str], deps: 
         # Standalone tools add their directory to sys.path, unlike src packages.
         if not source_layout:
             modules[group.name][PurePosixPath(path).stem].add(path)
-        if (root / path).is_file():
-            trees[path] = ast.parse((root / path).read_text(), filename=path)
 
+    common = Path(subprocess.check_output(["git", "rev-parse", "--git-common-dir"], cwd=root, text=True).strip())
+    cache_path = (root / common).resolve() / "gothic-check-cache.json"
+    cache = load_import_cache(cache_path)
+    staged = subprocess.check_output(["git", "ls-files", "-s", "-z"], cwd=root).decode()
+    hashes = {}
+    for record in staged.split("\0"):
+        if record:
+            metadata, path = record.split("\t", 1)
+            mode, blob, stage = metadata.split()
+            if stage == "0" and mode.startswith("100"):
+                hashes[path] = blob
+    dirty = subprocess.check_output(["git", "diff", "--name-only", "-z"], cwd=root).decode().split("\0")
+    for path in dirty:
+        hashes.pop(path, None)
+    new_entries: dict[str, dict[str, list[str]]] = {}
     reverse: dict[str, set[str]] = defaultdict(set)
     for path in names:
         if PurePosixPath(path).name == "conftest.py":
             parent = str(PurePosixPath(path).parent) + "/"
             reverse[path].update(p for p in names if p.startswith(parent)
                                  and PurePosixPath(p).name.startswith("test_"))
-    for path, tree in trees.items():
-        group = owners[path]
+    for path, group in owners.items():
+        if (parse_groups is not None and group.name not in parse_groups) or not (root / path).is_file():
+            continue
+        blob = hashes.get(path)
+        content: bytes | None = None
+        if blob is None:
+            content = (root / path).read_bytes()
+            blob = hashlib.sha1(b"blob " + str(len(content)).encode() + b"\0" + content).hexdigest()
+        entry = cache.get(blob)
+        if entry is None:
+            if content is None:
+                content = (root / path).read_bytes()
+            entry = parse_imports(content.decode("utf-8"), path)
+            cache[blob] = new_entries[blob] = entry
         visible = [group.name, *sorted(deps[group.name])]
         package = names[path].split(".")
         if PurePosixPath(path).name != "__init__.py":
             package.pop()
-        imported: set[str] = set()
-        file_imports: list[ast.AST] = []
-        bindings: dict[str, list[ast.AST]] = defaultdict(list)
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Assign):
-                for target in node.targets:
-                    if isinstance(target, ast.Name):
-                        bindings[target.id].append(node.value)
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                imported.update(alias.name for alias in node.names)
-            elif isinstance(node, ast.ImportFrom):
-                prefix = package[:len(package) - node.level + 1] if node.level else []
-                base = ".".join([*prefix, *([node.module] if node.module else [])])
-                if base:
-                    imported.add(base)
-                imported.update(".".join(filter(None, [base, alias.name]))
-                                for alias in node.names if alias.name != "*")
-            elif isinstance(node, ast.Call):
-                function = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", "")
-                if function in {"import_module", "__import__", "importorskip"} and node.args:
-                    argument = node.args[0]
-                    if isinstance(argument, ast.Constant) and isinstance(argument.value, str):
-                        name = argument.value
-                        if name.startswith("."):
-                            level = len(name) - len(name.lstrip("."))
-                            name = ".".join([*package[:len(package) - level + 1], name.lstrip(".")]).rstrip(".")
-                        imported.add(name)
-                if function == "spec_from_file_location" and len(node.args) >= 2:
-                    file_imports.append(node.args[1])
-        if file_imports:
-            # Tools often store SCRIPT = HERE / 'module.py' before calling importlib.
-            filenames: set[str] = set()
-            visited_names: set[str] = set()
-            while file_imports:
-                for node in ast.walk(file_imports.pop()):
-                    if isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value.endswith(".py"):
-                        filenames.add(PurePosixPath(node.value).name)
-                    elif isinstance(node, ast.Name) and node.id not in visited_names:
-                        visited_names.add(node.id)
-                        file_imports.extend(bindings.get(node.id, ()))
-            for target, target_group in owners.items():
-                if target_group.name in visible and PurePosixPath(target).name in filenames:
-                    reverse[target].add(path)
-        for name in imported:
+        for target, target_group in owners.items() if entry["files"] else ():
+            if target_group.name in visible and PurePosixPath(target).name in entry["files"]:
+                reverse[target].add(path)
+        for name in entry["imports"]:
+            if name.startswith("."):
+                level = len(name) - len(name.lstrip("."))
+                name = ".".join([*package[:len(package) - level + 1], name.lstrip(".")]).rstrip(".")
+            if not name:
+                continue
             parts = name.split(".")
             if parts[0] in {"torch", "gothic_body"}:
                 reverse[parts[0]].add(path)
@@ -245,6 +314,8 @@ def import_graph(root: Path, groups: tuple[Group, ...], files: list[str], deps: 
                         for target in targets:
                             reverse[target].add(path)
                         break
+    if new_entries:
+        save_import_cache(cache_path, new_entries)
     return reverse
 
 
@@ -284,8 +355,27 @@ def select_groups(root: Path, changed_files: Iterable[str], *, event: str = "pul
     changed = sorted(set(changed_files))
     files = git_files(root, untracked=True)
     deps = dependencies(root, groups)
-    reverse = (import_graph(root, groups, sorted(set(files) | set(changed)), deps)
-               if any(g.name == "scripts-torch" for g in groups) or any(p.endswith(".py") for p in changed) else {})
+    inventory = discover_tests(root, groups, graph={})
+    all_tests = {p for paths in inventory.values() for p in paths}
+    texts = {p: (root / p).read_text() for p in all_tests}
+    select_all = event == "workflow_dispatch" or any(
+        p in {"scripts/check.py", ".github/workflows/tests.yml"} for p in changed)
+    roots = {group.name for path in changed
+             if path.endswith(".py") and not documentation(root, path)
+             and (group := owner(path, groups)) is not None}
+    parse_groups = {g.name for g in groups if g.name in roots or deps[g.name] & roots}
+    # Text-only changes need no import graph unless a scripts test needs its runtime partition.
+    if "scripts-torch" in inventory and (select_all or any(
+        any(path in texts[p] or (not path.endswith(".py") and not documentation(root, path)
+                                and PurePosixPath(path).name in texts[p]) for path in changed)
+        for p in inventory["scripts"]
+    ) or any(PurePosixPath(path).name in {"pyproject.toml", "uv.lock", "conftest.py"}
+             and (group := owner(path, groups)) is not None
+             and (group.name == "scripts" or group.name in deps["scripts"])
+             for path in changed)):
+        parse_groups.update({"scripts", *deps["scripts"]})
+    reverse = (import_graph(root, groups, sorted(set(files) | set(changed)), deps, parse_groups=parse_groups)
+               if parse_groups else {})
     tests = discover_tests(root, groups, graph=reverse)
     reasons: dict[str, set[str]] = defaultdict(set)
     whole_groups: dict[str, set[str]] = defaultdict(set)
@@ -294,8 +384,7 @@ def select_groups(root: Path, changed_files: Iterable[str], *, event: str = "pul
         for path in paths:
             reasons[path].add(reason)
 
-    all_tests = {p for paths in tests.values() for p in paths}
-    if event == "workflow_dispatch" or any(p in {"scripts/check.py", ".github/workflows/tests.yml"} for p in changed):
+    if select_all:
         reason = "workflow_dispatch" if event == "workflow_dispatch" else "selector or workflow changed (rule 9)"
         select(all_tests, reason)
         for group in groups:
@@ -303,7 +392,6 @@ def select_groups(root: Path, changed_files: Iterable[str], *, event: str = "pul
     else:
         if event != "pull_request":
             raise ValueError(f"Unsupported event: {event}")
-        texts = {p: (root / p).read_text() for p in all_tests if (root / p).is_file()}
         for path in changed:
             references = [p for p, text in texts.items() if path in text]
             select(references, path + ": full path reference")
