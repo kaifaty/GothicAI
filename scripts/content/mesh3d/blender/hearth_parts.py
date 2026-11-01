@@ -139,11 +139,12 @@ def stick(P, rng, a, b, radius, material, burnt=None, sides=6):
     return part
 
 
-def turned(P, c, outer, inner, sides, material, radius_at=None):
+def turned(P, c, outer, inner, sides, material, radius_at=None, floor=None):
     """A closed turned vessel round the vertical axis at c: the outer profile [(h, r)] from the bottom up
     to the rim, then the inner profile from the rim down; caps close the bottom and the inner floor.
     radius_at(h, t, r) may bend a radius (hammer dents, an oval). UV: u = arc length, v = run along
-    the profile. Returns the part."""
+    the profile. material may be material(k) of the band from row k, floor the inner floor's material.
+    Returns the part."""
     part = P.new_part()
     rows = list(outer) + list(inner)
     bend = radius_at or (lambda h, t, r: r)
@@ -162,7 +163,7 @@ def turned(P, c, outer, inner, sides, material, radius_at=None):
         for i in range(sides):
             j = (i + 1) % sides
             a, b = 2 * math.pi * r0 * i / sides, 2 * math.pi * r0 * (i + 1) / sides
-            P.poly([rings[k][i], rings[k][j], rings[k + 1][j], rings[k + 1][i]], material,
+            P.poly([rings[k][i], rings[k][j], rings[k + 1][j], rings[k + 1][i]], material(k) if callable(material) else material,
                    [(a, run), (b, run), (b, run + step), (a, run + step)])
         run += step
     for ring, up in ((rings[0], False), (rings[-1], True)):
@@ -170,7 +171,8 @@ def turned(P, c, outer, inner, sides, material, radius_at=None):
         for i in range(sides):
             a, b = ring[i], ring[(i + 1) % sides]
             tri = [centre, a, b] if up else [centre, b, a]
-            P.poly(tri, material, [(v.co.x, v.co.y) for v in tri])
+            mat = floor if up and floor is not None else (material(0) if callable(material) else material)
+            P.poly(tri, mat, [(v.co.x, v.co.y) for v in tri])
     return part
 
 

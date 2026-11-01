@@ -28,7 +28,8 @@ cfg, out = args()
 goal, lo, hi = load_goal(cfg)
 rng = np.random.default_rng(cfg.get("seed", 3))
 keys = [z["key"] for z in goal["zones"]]
-IRON, RIVET, LIQUID = (keys.index(k) for k in ("OWN_HEARTH_IRON", "OWN_HEARTH_RIVET", "OWN_HEARTH_LIQUID"))
+IRON, RIVET, LIQUID, RUST, SCALE = (keys.index(k) for k in ("OWN_HEARTH_IRON", "OWN_HEARTH_RIVET", "OWN_HEARTH_LIQUID",
+                                                             "OWN_HEARTH_RUST", "OWN_HEARTH_SCALE"))
 P = Parts(rng, 0.1)
 sides = cfg["sides"]
 cx, cy, floor = (lo.x + hi.x) / 2, (lo.y + hi.y) / 2, lo.z
@@ -53,7 +54,7 @@ def point(h, t, r):
 
 def lathe(rows, material, part, closed=False):
     """Quads between consecutive rings rows = [(h, [r(t) ...])], the last back to the first if closed;
-    u = arc length, v = run along the profile. Returns the rings."""
+    u = arc length, v = run along the profile; material may be material(k) of the band from row k. Returns the rings."""
     rings = [[P.vert(point(h, 2 * math.pi * i / sides, rs[i]), part) for i in range(sides)] for h, rs in rows]
     pairs = list(range(len(rings) - 1)) + ([len(rings) - 1] if closed else [])
     run = 0.0
@@ -64,7 +65,7 @@ def lathe(rows, material, part, closed=False):
         for i in range(sides):
             j = (i + 1) % sides
             a, b = 2 * math.pi * np.mean(r0) * i / sides, 2 * math.pi * np.mean(r0) * (i + 1) / sides
-            P.poly([rings[k][i], rings[k][j], rings[k1][j], rings[k1][i]], material,
+            P.poly([rings[k][i], rings[k][j], rings[k1][j], rings[k1][i]], material(k) if callable(material) else material,
                    [(a, run), (b, run), (b, run + step), (a, run + step)])
         run += step
     return rings
@@ -106,13 +107,26 @@ top = heights[-1]
 liquid = cfg["liquid"]
 # The water is clear (the engine's water surface): the inner wall runs down to a floor as thick as the wall,
 # and that floor is what one sees through it.
-# Under the water the wall is seen dimly: three rings there, the fine ones above.
-inner_h = sorted({*np.linspace(wall * 1.5, liquid - 0.02, 3), *[h for h in heights if h > liquid - 0.02]}, reverse=True)
+# Under the water the wall is seen dimly: three rings there, the fine ones above. Inside, a working pot is
+# not sooted: above the water dark iron, at the water's level a pale ring of scale, under it rust.
+scale_top, scale_bottom = liquid + cfg.get("scale_ring", [0.012, 0.006])[0], liquid - cfg.get("scale_ring", [0.012, 0.006])[1]
+inner_h = sorted({*np.linspace(wall * 1.5, scale_bottom, 3), scale_top, *[h for h in heights if h > scale_top]}, reverse=True)
 inner = [(top, [radius(top, t) - rim_w for t in angles])] + \
         [(h, [radius(h, t) - wall for t in angles]) for h in inner_h if h < top]
-rings = lathe(outer + inner, IRON, pot)  # outer wall up, across the rim, inner wall down
+rows = outer + inner
+
+
+def inside(k):
+    """The zone of the band from row k: outside and above the scale ring iron, then the ring, then rust."""
+    if k < len(outer):
+        return IRON
+    low = min(rows[k][0], rows[k + 1][0])
+    return IRON if low >= scale_top - 1e-6 else SCALE if low >= scale_bottom - 1e-6 else RUST
+
+
+rings = lathe(rows, inside, pot)  # outer wall up, across the rim, inner wall down
 cap(rings[0], IRON, up=False)
-cap(rings[-1], IRON, up=True)  # the inner floor: the shell stays closed
+cap(rings[-1], RUST, up=True)  # the inner floor under the water: the shell stays closed
 # the liquid: a flat disc just above where the inner wall meets it
 surface = P.new_part(wound=True)  # an open disc: wound up by hand, the recalculation could turn it down
 lr = [radius(liquid, t) - wall - 0.001 for t in angles]

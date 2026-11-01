@@ -1,5 +1,5 @@
 {
- "base": "3436f2bee419cf7655388e6e24cd82878747ca749abb01f6dcb27ede9ac99264",
+ "base": "3f6bb9688f39f2c86ae7b798c126b83b4a0c4e246a0a130ea9ad264cc560c948",
  "targets": [
   {
    "id": "hearth-cauldron",
@@ -20,6 +20,16 @@
      "key": "OWN_HEARTH_LIQUID",
      "group": "WATER",
      "role": "the water in a pot: clear engine water (glTF alphaMode BLEND), no collision"
+    },
+    {
+     "key": "OWN_HEARTH_RUST",
+     "group": "METAL",
+     "role": "the inside of a pot under the water: iron rusted brown, seen through the clear water"
+    },
+    {
+     "key": "OWN_HEARTH_SCALE",
+     "group": "METAL",
+     "role": "the pale ring of scale the water leaves at its level inside a pot"
     }
    ],
    "kind": "mob_model",
@@ -207,6 +217,16 @@
      "key": "OWN_HEARTH_LIQUID",
      "group": "WATER",
      "role": "the water in a pot: clear engine water (glTF alphaMode BLEND), no collision"
+    },
+    {
+     "key": "OWN_HEARTH_RUST",
+     "group": "METAL",
+     "role": "the inside of a pot under the water: iron rusted brown, seen through the clear water"
+    },
+    {
+     "key": "OWN_HEARTH_SCALE",
+     "group": "METAL",
+     "role": "the pale ring of scale the water leaves at its level inside a pot"
     }
    ],
    "kind": "static_mrm",

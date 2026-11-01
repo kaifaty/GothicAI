@@ -27,7 +27,8 @@ cfg, out = args()
 goal, lo, hi = load_goal(cfg)
 rng = np.random.default_rng(cfg.get("seed", 9))
 keys = [z["key"] for z in goal["zones"]]
-WOOD, IRON, RIVET, LIQUID = (keys.index(k) for k in ("OWN_HEARTH_WOOD", "OWN_HEARTH_IRON", "OWN_HEARTH_RIVET", "OWN_HEARTH_LIQUID"))
+WOOD, IRON, RIVET, LIQUID, RUST, SCALE = (keys.index(k) for k in ("OWN_HEARTH_WOOD", "OWN_HEARTH_IRON", "OWN_HEARTH_RIVET",
+                                                                  "OWN_HEARTH_LIQUID", "OWN_HEARTH_RUST", "OWN_HEARTH_SCALE"))
 P = Parts(rng, 0.1)
 
 
@@ -51,11 +52,26 @@ y0 = profile[0][0]
 outer = [(y - y0, r) for y, r in profile]
 wall = pot["wall"]
 top_h = outer[-1][0]
-# the water is clear (engine water): the inner wall runs down to a floor as thick as the wall
+# The water is clear (engine water): the inner wall runs down to a floor as thick as the wall. Inside, a
+# working kettle is not sooted: dark iron above the water, a pale ring of scale at its level, rust under it.
 floor_h = wall * 1.5
-inner = [(top_h, outer[-1][1] - wall * 1.4)] + [(y - y0, r - wall) for y, r in reversed(profile[:-1]) if y >= pot["liquid"] - 0.02] + \
-        [(floor_h, float(np.interp(y0 + floor_h, [p[0] for p in profile], [p[1] for p in profile])) - wall)]
-turned(P, Vector((pc.x, pc.y, y0)), outer, inner, pot["sides"], IRON, radius_at=lambda h, t, r: octagon(r, t, 0.08))
+lh = pot["liquid"] - y0
+scale_top, scale_bottom = lh + pot.get("scale_ring", [0.01, 0.005])[0], lh - pot.get("scale_ring", [0.01, 0.005])[1]
+inner_r = lambda h: float(np.interp(y0 + h, [p[0] for p in profile], [p[1] for p in profile])) - wall
+inner = [(top_h, outer[-1][1] - wall * 1.4)] + [(y - y0, r - wall) for y, r in reversed(profile[:-1]) if y - y0 > scale_top] + \
+        [(scale_top, inner_r(scale_top)), (scale_bottom, inner_r(scale_bottom)), (floor_h, inner_r(floor_h))]
+
+
+def kettle_zone(k):
+    """The zone of the band from row k: outside and above the scale ring iron, then the ring, then rust."""
+    if k < len(outer):
+        return IRON
+    rows = outer + inner
+    low = min(rows[k][0], rows[k + 1][0])
+    return IRON if low >= scale_top - 1e-6 else SCALE if low >= scale_bottom - 1e-6 else RUST
+
+
+turned(P, Vector((pc.x, pc.y, y0)), outer, inner, pot["sides"], kettle_zone, radius_at=lambda h, t, r: octagon(r, t, 0.08), floor=RUST)
 # water: an open disc wound up by hand, the recalculation could turn it down
 part = P.new_part(wound=True)
 lr = [octagon(float(np.interp(pot["liquid"], [p[0] for p in profile], [p[1] for p in profile])) - wall - 0.002, 2 * math.pi * i / pot["sides"])

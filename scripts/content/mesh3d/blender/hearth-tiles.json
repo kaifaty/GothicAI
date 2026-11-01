@@ -67,6 +67,12 @@
   },
   "own_hearth_soot": {
    "copy": "~/.local/share/gothic-ai/content-staging/city-hearth/tiles/own_hearth_ash"
+  },
+  "own_hearth_rust": {
+   "copy": "~/.local/share/gothic-ai/content-staging/city-hearth/tiles/own_hearth_iron"
+  },
+  "own_hearth_scale": {
+   "copy": "~/.local/share/gothic-ai/content-staging/city-hearth/tiles/own_hearth_iron"
   }
  }
 }

@@ -33,6 +33,8 @@ def zone(key: str, group: str, role: str) -> dict:
 IRON = zone('OWN_HEARTH_IRON', 'METAL', 'forged and riveted iron: cauldrons, pan, chain, fire bowl')
 RIVET = zone('OWN_HEARTH_RIVET', 'METAL', 'bands and rivet heads on the iron')
 LIQUID = zone('OWN_HEARTH_LIQUID', 'WATER', 'the water in a pot: clear engine water (glTF alphaMode BLEND), no collision')
+RUST = zone('OWN_HEARTH_RUST', 'METAL', 'the inside of a pot under the water: iron rusted brown, seen through the clear water')
+SCALE = zone('OWN_HEARTH_SCALE', 'METAL', 'the pale ring of scale the water leaves at its level inside a pot')
 STONE = zone('OWN_HEARTH_STONE', 'STONE', 'fire-ring fieldstones, sooted inside')
 EMBER = zone('OWN_HEARTH_EMBER', 'UNDEF', 'glowing embers')
 ASH = zone('OWN_HEARTH_ASH', 'UNDEF', 'grey ash and burnt ground')
@@ -46,10 +48,10 @@ CARVING = zone('OWN_HEARTH_CARVING', 'STONE', 'dressed stone: the mantle shelf, 
 SOOT = zone('OWN_HEARTH_SOOT', 'STONE', 'the sooted firebox: back wall, hearth floor')
 
 TARGETS = [
-    {'id': 'hearth-cauldron', 'visual': 'CAULDRON_OC', 'budget_tris': 2500, 'zones': [IRON, RIVET, LIQUID]},
+    {'id': 'hearth-cauldron', 'visual': 'CAULDRON_OC', 'budget_tris': 2500, 'zones': [IRON, RIVET, LIQUID, RUST, SCALE]},
     {'id': 'hearth-ground-fire', 'visual': 'FIREPLACE_GROUND', 'budget_tris': 2000, 'zones': [STONE, EMBER, ASH, LOG]},
     {'id': 'hearth-pan', 'visual': 'PAN_OC', 'budget_tris': 2500, 'zones': [IRON, WOOD, STONE, EMBER, ASH]},
-    {'id': 'hearth-tripod', 'visual': 'OC_FIREPLACE_V5', 'budget_tris': 3000, 'zones': [WOOD, IRON, RIVET, LIQUID]},
+    {'id': 'hearth-tripod', 'visual': 'OC_FIREPLACE_V5', 'budget_tris': 3000, 'zones': [WOOD, IRON, RIVET, LIQUID, RUST, SCALE]},
     {'id': 'hearth-campfire', 'visual': 'NW_MISC_FIREPLACE_01', 'budget_tris': 4000, 'zones': [STONE, LOG, EMBER, ASH]},
     {'id': 'hearth-brazier', 'visual': 'DT_FIREPLACE_V1', 'budget_tris': 3000, 'zones': [IRON, RIVET, EMBER, ASH]},
     # wave 2: hearths in the houses

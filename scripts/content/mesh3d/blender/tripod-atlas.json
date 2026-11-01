@@ -5,7 +5,9 @@
   "OWN_HEARTH_WOOD": 2.0,
   "OWN_HEARTH_IRON": 1.0,
   "OWN_HEARTH_RIVET": 5.0,
-  "OWN_HEARTH_LIQUID": 1.0
+  "OWN_HEARTH_LIQUID": 1.0,
+  "OWN_HEARTH_RUST": 1.0,
+  "OWN_HEARTH_SCALE": 1.0
  },
  "targets": {
   "OWN_HEARTH_WOOD": [
@@ -24,9 +26,19 @@
    0.038
   ],
   "OWN_HEARTH_LIQUID": [
-   0.07,
-   0.1,
-   0.115
+   0.06,
+   0.055,
+   0.045
+  ],
+  "OWN_HEARTH_RUST": [
+   0.055,
+   0.03,
+   0.016
+  ],
+  "OWN_HEARTH_SCALE": [
+   0.13,
+   0.115,
+   0.09
   ]
  },
  "slots": {
@@ -45,6 +57,14 @@
   "OWN_HEARTH_LIQUID": [
    "OWN_HEARTH_TRIPOD_KETTLE_LIQUID",
    "WATER"
+  ],
+  "OWN_HEARTH_RUST": [
+   "OWN_HEARTH_TRIPOD_KETTLE",
+   "METAL"
+  ],
+  "OWN_HEARTH_SCALE": [
+   "OWN_HEARTH_TRIPOD_KETTLE",
+   "METAL"
   ]
  },
  "metal": [
@@ -55,7 +75,9 @@
   "OWN_HEARTH_WOOD": 0.2,
   "OWN_HEARTH_IRON": 0.08,
   "OWN_HEARTH_RIVET": 0.1,
-  "OWN_HEARTH_LIQUID": 0.0
+  "OWN_HEARTH_LIQUID": 0.0,
+  "OWN_HEARTH_RUST": 0.0,
+  "OWN_HEARTH_SCALE": 0.0
  },
  "size": 1024,
  "seed": 1,
@@ -92,9 +114,11 @@
   ]
  },
  "contrast": {
-  "OWN_HEARTH_IRON": 0.7
+  "OWN_HEARTH_IRON": 0.7,
+  "OWN_HEARTH_RUST": 1.2,
+  "OWN_HEARTH_SCALE": 1.2
  },
  "turbidity": {
-  "OWN_HEARTH_LIQUID": 0.45
+  "OWN_HEARTH_LIQUID": 0.08
  }
 }
