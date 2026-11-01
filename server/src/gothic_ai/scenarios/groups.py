@@ -46,6 +46,17 @@ OFF = {
 }
 
 GIVEN = {
+    "m1",
+    "m2",
+    "m3",
+    "m5",
+    "m5c",
+    "m5e",
+    "tts",
+    "combat_barks",
+    "mercy",
+    "hero_yield",
+    "humiliate",
     "chests",
     "lead",
     "meet",

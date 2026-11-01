@@ -265,7 +265,7 @@ class CombatBarks:
                     messages=[Message(
                         "developer", f"{self.dialogue._brief(conv)}\n{hint}",
                     )],
-                    tools=[], temperature=0.7,
+                    tools=[], temperature=0.7, cache_key=conv.npc,
                 )) as events:
                     async for delta in events:
                         if isinstance(delta, TextDelta):
