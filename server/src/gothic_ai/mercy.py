@@ -376,7 +376,6 @@ class Mercy:
 
     def _hit(self, hit: CombatHit) -> None:
         npc, attacker = hit.npc.upper(), hit.by.upper()
-        already_down = npc in self._dead
         if hit.hp > 0 and not hit.down and not hit.dead:
             self._dead.discard(npc)
         if attacker in {"PLAYER", "PC_HERO"}:
@@ -392,7 +391,7 @@ class Mercy:
         entry = self.orders.talk.people.get(npc)
         if entry is None or entry.guild >= BEASTS:
             return
-        if hit.down and not hit.dead and not already_down:
+        if hit.down and not hit.dead:
             self.dialogue._spawn(self._defeat(hit, self.chronicle.branch, self._now(), self._ticks))
         now = time.monotonic()
         battle = self.battles.setdefault(npc, Battle())

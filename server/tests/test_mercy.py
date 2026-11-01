@@ -190,9 +190,6 @@ async def test_repeated_knockdowns_context_witnesses_expiry_and_save_fork(rig):
     before = rig.memory.head(parent)
     first = 0
     for count in range(1, 4):
-        rig.link._dispatch(NpcViews(type="npc_views", t=1000 * count, views=[dict(
-            npc=brago, name="Браго", hp=100, hp_max=100, time=1920,
-        )]))
         hit(rig, npc=brago, down=True, hp=1)
         await finish(rig)
         [fact] = rig.chronicle.facts("defeated")
