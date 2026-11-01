@@ -18,6 +18,8 @@
 
 Карта описывает то, что есть сейчас. PR, который добавляет модуль, сервис, флаг, сценарий или документ, правит и эту страницу.
 
+[Замер поиска в памяти NPC](../reports/npc-memory/2026-11-01-recall-eval/README.md): [`recall_eval.py`](../scripts/recall_eval.py) сравнивает `MemoryStore.search` с BM25 и эмбеддингами на 58 вопросах по реальным репликам. Реплики хранятся вне git. Пересказ текущий поиск находит в 10 из 25 случаев, BM25 — в 12, multilingual-e5-base — в 22.
+
 Физика тонких клинков: `[GAME] item_deepest_contact=1` сохраняет глубину EPA только для `C_Item`; `placed-items-diagnose-{1644,6863}` и варианты `-control` проверяют 300 шагов ON/OFF, контракт — `gothic-physics-contract`. [Отчёт и офлайн-стенд](../reports/physics/2026-10-31-thin-blades/README.md), [текущее поведение](physics.md#как-работает-сейчас).
 
 ## Части и машины
