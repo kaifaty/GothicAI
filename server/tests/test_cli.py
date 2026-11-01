@@ -181,6 +181,8 @@ def test_scenario_start_marker_waits_for_world_and_precedes_scenario(
     backend = cli._backend(captured[0])
     monkeypatch.setattr(cli, "_backend", lambda args: backend)
     monkeypatch.setattr(cli.places.PlaceBook, "load", Mock(return_value=None))
+    parley = Mock(wraps=cli.Parley)
+    monkeypatch.setattr(cli, "Parley", parley)
     caplog.set_level("INFO", logger="gothic_ai")
 
     def markers():
@@ -245,6 +247,7 @@ def test_scenario_start_marker_waits_for_world_and_precedes_scenario(
 
         monkeypatch.setattr(cli, "GameServer", FakeServer)
         assert await asyncio.wait_for(real_serve(captured[0]), timeout=5) == code
+        assert parley.call_args.kwargs["hail"] is (scenario is None)
         assert markers() == (["scenario m0: checks started"] if scenario is not None else [])
         assert run_scenario_mock.await_count == int(scenario is not None)
         records = [record.getMessage() for record in caplog.records]

@@ -125,9 +125,11 @@ root = out.parent
 name = os.environ["SCENARIO"]
 with (root / "lock").open("w") as lock:
     fcntl.flock(lock, fcntl.LOCK_EX)
-    state = json.loads((root / "active.json").read_text()) if (root / "active.json").exists() else {{"active": 0, "peak": 0}}
+    state = (json.loads((root / "active.json").read_text()) if (root / "active.json").exists()
+             else {{"active": 0, "peak": 0}})
     state["active"] += 1
     state["peak"] = max(state["peak"], state["active"])
+    state.setdefault("events", []).append(f"start:{{name}}:{{state['active']}}")
     (root / "active.json").write_text(json.dumps(state))
 time.sleep(0.3)
 (out / "env.json").write_text(json.dumps(dict(os.environ)))
@@ -144,6 +146,7 @@ with (root / "lock").open("w") as lock:
     fcntl.flock(lock, fcntl.LOCK_EX)
     state = json.loads((root / "active.json").read_text())
     state["active"] -= 1
+    state["events"].append(f"end:{{name}}")
     (root / "active.json").write_text(json.dumps(state))
 """
     for name in ("e2e.sh", "ryzen.sh"):
@@ -172,26 +175,33 @@ def test_regression_mac_uses_run_settings_and_writes_three_done_rows(tmp_path):
         assert observed["TIMEOUT"] == str(RUN[name]["timeout"])
         assert ("SAVE" in observed) == RUN[name]["save"]
     markdown = (tmp_path / "out/regression.md").read_text()
-    rows = [line.split(" | ") for line in markdown.splitlines() if line.startswith(("| graph |", "| lie |", "| deal |"))]
+    rows = [line.split(" | ") for line in markdown.splitlines()
+            if line.startswith(("| graph |", "| lie |", "| deal |"))]
     assert len(rows) == 3
     assert all(row[2] == row[4] == row[5] == "done" for row in rows)
     assert "Known defect" in markdown
 
 
-def test_regression_ryzen_runs_three_slots_and_keeps_known_defects_failed(tmp_path):
+def test_regression_ryzen_runs_exclusive_after_three_slots_and_keeps_known_defects_failed(tmp_path):
     script, env = regression_runner(tmp_path)
     env.update(HOST="ryzen", FAIL_CHECK="lie", RETRY="graph")
     done = subprocess.run(
-        ["bash", str(script), "graph", "lie", "deal"], env=env,
+        ["bash", str(script), "neural", "graph", "lie", "companion", "deal"], env=env,
         capture_output=True, text=True, timeout=10,
     )
     assert done.returncode == 1, done.stderr + done.stdout
     report = json.loads((tmp_path / "out/regression.json").read_text())
-    assert [row["result"] for row in report["scenarios"]] == ["done", "failed", "done"]
+    assert [row["result"] for row in report["scenarios"]] == ["done", "failed", "done", "done", "done"]
+    assert [row["scenario"] for row in report["scenarios"]] == ["graph", "lie", "deal", "neural", "companion"]
     assert report["scenarios"][1]["known_defect"] == "`check`; Mac; Known defect"
     assert report["scenarios"][1]["exit_code"] == 0  # Failed checks still fail the row.
     assert report["scenarios"][0]["log"] == str(tmp_path / "out/graph/run-2/server.log")
-    assert json.loads((tmp_path / "out/active.json").read_text())["peak"] == 3
+    activity = json.loads((tmp_path / "out/active.json").read_text())
+    assert activity["peak"] == 3
+    assert activity["events"][-4:] == ["start:neural:1", "end:neural", "start:companion:1", "end:companion"]
+    for name in ("neural", "companion"):
+        observed = json.loads((tmp_path / f"out/{name}/env.json").read_text())
+        assert observed["RYZEN_DISPLAY_EXCLUSIVE"] == "1"
     slots = {
         json.loads((tmp_path / f"out/{name}/env.json").read_text())["RYZEN_WORKTREE"]
         for name in ("graph", "lie", "deal")

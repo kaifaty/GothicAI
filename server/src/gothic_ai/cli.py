@@ -1093,6 +1093,9 @@ async def serve(args: argparse.Namespace) -> int:
                 link, state.dialogue, state.chronicle,
                 perception=perception, companion=orders.companion, places=place_book, lead=state.talk.lead,
                 bodies=state.bodies, talk=state.talk, graph=graph, patches=state.story,
+                hail=args.llm != "off" or args.scenario is None or args.scenario in {
+                    "bandit_parley", "bandit_bounty", "road_bandits", "companion",
+                },
             )
             orders.parley_quiet = state.parley.quiet
             state.dialogue.extensions.append(state.parley)
