@@ -5,13 +5,16 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import time
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from ..game import GameLink
+from ..llm import ToolCall
 from ..npc_far import FarWorld
 from ..npc_will import OWNER_NEAR_CM, ROUTINE_CM
-from ..protocol import NpcActCmd, Session, StoryEffectCmd
+from ..protocol import NpcActCmd, Result, Session, StoryEffectCmd
+from ..social import Tie
 from .common import (
     HILDA,
     LOBART,
@@ -19,12 +22,13 @@ from .common import (
     _save,
     _until,
     _until_async,
+    model_off,
     prepare_npc_pose,
     wait_message,
 )
 
 SCENARIOS = {
-    "npc_far": ("OFF", {"save": True, "timeout": 720}),
+    "npc_far": ("GIVEN", {"save": True, "timeout": 720}),
 }
 
 if TYPE_CHECKING:
@@ -36,6 +40,7 @@ log = logging.getLogger("gothic_ai.scenarios")
 CHEST, HOUSE = "CHEST_LOBART", "NW_FARM1_INHOUSE_01"
 HERO_INSTANCE = "PC_HERO"
 DAY = 24 * 60
+POTIONS = ("ITPO_HEALTH_01", "ITPO_HEALTH_02", "ITPO_HEALTH_03")
 
 
 async def npc_far(
@@ -63,6 +68,9 @@ async def npc_far(
     original_gate, original_stage = rumors.gate, rumors.stage
     neutral = {npc: replace(card, honesty=5, greed=1) for npc, card in original_cards.items()}
     sent: list[NpcActCmd | StoryEffectCmd] = []
+    knockouts: dict[str, dict[str, Any]] = {}
+    boundary = False
+    meetings: list[tuple[Tie, list[tuple[int, int]]]] = []
 
     def check(name: str, ok: bool, detail: object = "") -> bool:
         results[name] = f"{'done' if ok else 'failed'}{f' ({detail})' if detail != '' else ''}"
@@ -70,15 +78,29 @@ async def npc_far(
         return ok
 
     async def sending(command: Any) -> None:
+        if isinstance(command, StoryEffectCmd) and any(
+            e.get("do") == "knockout" for e in command.effects
+        ):
+            entry: dict[str, Any] = {"before": await bodies(), "boundary": boundary}
+            if boundary:
+                # Delay the real command after the model decision, never replace its reply.
+                await link.debug("teleport", near=LOBART, distance=1000)
+                entry["entered"] = await _until_async(
+                    lambda: link.snapshot(LOBART, fresh=True),
+                    lambda s: s.player is not None and s.player.distance < 3000, 5,
+                )
+                entry["before"] = await bodies()
+            entry["sent_at"] = time.monotonic()
+            knockouts[command.req] = entry
         if isinstance(command, NpcActCmd | StoryEffectCmd):
             sent.append(command)
         await send(command)
 
-    def cards(*, greed: bool = False) -> None:
+    def cards(*, greed: bool = False, courage: int = 2) -> None:
         prepared = {
             **neutral,
             HILDA: replace(neutral[HILDA], honesty=1 if greed else 5, greed=5 if greed else 1),
-            LOBART: replace(neutral[LOBART], courage=2),
+            LOBART: replace(neutral[LOBART], courage=courage),
         }
         will.cards = crimes.cards = prepared
         # A card edit within an hour is setup; the normal hourly rule must reconsider that hour.
@@ -132,7 +154,194 @@ async def npc_far(
     def hero_facts() -> list[dict[str, Any]]:
         return [f for f in facts() if str(f.get("fact") or "").startswith("crime")]
 
+    async def bodies() -> dict[str, Any]:
+        views = {v.npc: v for v in await link.npc_view([HILDA, LOBART])}
+        observed = {}
+        for npc in (HILDA, LOBART):
+            snap = await link.snapshot(npc, fresh=True)
+            weapon, unconscious = await link.story_eval(npc, [
+                ["call", "NPC_GETEQUIPPEDMELEEWEAPON", ["inst", npc]],
+                ["call", "NPC_ISINSTATE", ["inst", npc], ["sym", "ZS_UNCONSCIOUS"]],
+            ])
+            view = views[npc]
+            observed[npc] = {
+                "hp": snap.npc.hp, "pos": snap.npc.pos, "state": view.state,
+                "body": view.body, "unconscious": unconscious, "weapon": weapon,
+                "inventory": {i.item: i.count for i in snap.npc.inventory},
+                "items": {i.item: i.count for i in view.items},
+                "ground": [i.model_dump() for i in view.items],
+                "hero_cm": snap.player.distance if snap.player is not None else None,
+            }
+        return observed
+
+    def receipt(message: Any) -> None:
+        if isinstance(message, Result) and message.req in knockouts:
+            knockouts[message.req]["reply"] = message.model_dump()
+            knockouts[message.req]["replied_at"] = time.monotonic()
+
+    async def meeting() -> None:
+        social = await rumors.prepare_social()
+        tie = social.ties[LOBART].get(HILDA)
+        if tie is None:
+            tie = Tie()
+            social.ties[LOBART][HILDA] = social.ties[HILDA][LOBART] = tie
+        meetings.append((tie, tie.meets))
+        tie.meets = [(0, DAY)]
+
+    async def load() -> Session:
+        loading = asyncio.create_task(wait_message(link, Session, lambda m: m.reason == "load", 90))
+        await asyncio.sleep(0)
+        await link.debug("load", slot)
+        loaded = await loading
+        await link.wait_world()
+        return loaded
+
+    async def fight_branch(cid: str, item: str, far_waypoint: str) -> None:
+        nonlocal boundary
+        off = model_off(dialogue)
+        # The original branch only suspects Hilda. Declare the model's attribution, not a fight
+        # or its outcome; blame still checks the real loss and the available person.
+        async with will._lock:
+            cards()
+            await link.debug("teleport", near=LOBART, distance=250)
+            dialogue.open(LOBART, "Лобарт", warm=False)
+            words = "Хильда взяла вещь из твоего сундука"
+            off.given(
+                "given: Lobart attributes his missing goods to Hilda",
+                who=LOBART, when=words, calls=[ToolCall("blame", {"who": HILDA, "crime": cid})],
+            )
+            off.silent("given: Lobart stays silent after attribution", who=LOBART)
+            await dialogue.say_as_player(LOBART, words)
+            log.info("given: Lobart has courage 3 and meets Hilda on the farm road")
+            await link.debug("npc_goto", npc=LOBART, waypoint="NW_FARM1_PATH_04")
+            await link.debug("npc_goto", npc=HILDA, to=LOBART, distance=350, face=LOBART)
+            await link.debug("player_goto", waypoint=far_waypoint)
+            await meeting()
+            fixture = await _save(link, slot)
+        if not check("fight_fixture", fixture is not None, "native inventories and HP"):
+            return
+
+        # The first branch tests the race at the simulation boundary with the actual bridge.
+        boundary = True
+        fight_kinds = {"npc_crime_defense", "npc_crime_reaction", "npc_crime_restitution"}
+        before_facts = [f for f in facts() if f.get("fact") in fight_kinds]
+        cards(courage=3)
+        await will.tick()
+        refused = next((e for e in knockouts.values() if e["boundary"]), None)
+        if not check("boundary_attempt", refused is not None, knockouts):
+            return
+        assert refused is not None
+        after = await bodies()
+        reply = refused.get("reply", {})
+        check("boundary_rejected", refused.get("entered") and not reply.get("ok", True)
+              and str(reply.get("error", "")).startswith("knockout: inside simulation"), reply)
+        check("boundary_unchanged", all(
+            all(after[n][key] == refused["before"][n][key]
+                for key in ("hp", "inventory", "weapon", "unconscious", "body", "items"))
+            for n in (HILDA, LOBART)
+        ), {"before": refused["before"], "after": after})
+        check("boundary_no_facts", [f for f in facts() if f.get("fact") in fight_kinds] == before_facts,
+              [f for f in facts() if f.get("fact") in fight_kinds])
+
+        # Reload before any native near fight can become relevant to this branch.
+        boundary = False
+        async with will._lock:
+            cards()
+            await load()
+            await meeting()
+            cards(courage=3)
+        sent_at = len(sent)
+        await will.tick()
+        await _until(lambda: any(f.get("crime") == cid for f in facts("npc_crime_defense")), 15)
+        defense = next((f for f in facts("npc_crime_defense") if f.get("crime") == cid), None)
+        if not check("far_fight", defense is not None and defense.get("far") is True
+                     and defense.get("model") == "hits_v1", defense):
+            return
+        assert defense is not None
+        applied = [e for e in knockouts.values() if not e["boundary"]]
+        if not check("one_knockout", len(applied) == 1 and applied[0].get("reply", {}).get("ok")
+                     and not any(isinstance(c, NpcActCmd) and c.action == "fight"
+                                 for c in sent[sent_at:]), applied):
+            return
+        effect = applied[0]
+        before, after = effect["before"], await bodies()
+        winner = str(defense["winner"])
+        loser = HILDA if winner == LOBART else LOBART
+        check("fight_rule", any(f.get("crime") == cid and f.get("kind") == "reclaim"
+                                and f.get("act") == "fight" and f.get("far") is True
+                                for f in facts("npc_will")), facts("npc_will"))
+        check("fight_far_humans", all(world.human(n) and before[n]["hero_cm"] > 3000
+                                     for n in (HILDA, LOBART)), before)
+        check("loser_down", after[loser]["hp"] == 1 and after[loser]["unconscious"] != 0
+              and after[loser]["state"] == "ZS_UNCONSCIOUS" and after[loser]["body"] == "down",
+              after[loser])
+        weapon = before[loser]["weapon"]
+        dropped = effect["reply"].get("value", {}).get("dropped")
+        check("loser_weapon", (
+            dropped == weapon and after[loser]["inventory"].get(weapon, 0)
+            == before[loser]["inventory"].get(weapon, 0) - 1
+            and any(i["item"] == weapon and i["distance"] <= 200 for i in after[loser]["ground"])
+        ) if weapon else dropped is None and after[loser]["items"] == before[loser]["items"],
+              {"weapon": weapon, "dropped": dropped, "before": before[loser], "after": after[loser]})
+        check("winner_hp", after[winner]["hp"] == max(1, before[winner]["hp"] - defense["loss"])
+              and after[winner]["body"] == "stand" and not after[winner]["unconscious"], after[winner])
+        returned = [f for f in facts("npc_crime_restitution") if f.get("crime") == cid]
+        check("fight_restitution", winner == LOBART and defense.get("returned") == 1
+              and len(returned) == 1 and returned[0].get("far") is True
+              and returned[0].get("npc") == LOBART and returned[0].get("item") == item
+              and after[HILDA]["inventory"].get(item, 0) == before[HILDA]["inventory"].get(item, 0) - 1
+              and after[LOBART]["inventory"].get(item, 0) == before[LOBART]["inventory"].get(item, 0) + 1,
+              {"defense": defense, "restitution": returned})
+
+        healing = await link.story_eval(loser, [
+            ["var", p] for p in ("HP_ESSENZ", "HP_EXTRAKT", "HP_ELIXIER")
+        ])
+        # Wall time is a lower bound on native time here; do not jump the game clock (it heals NPCs).
+        await asyncio.sleep(max(0, 25 - (time.monotonic() - effect["replied_at"])))
+        far = await bodies()
+        elapsed = time.monotonic() - effect["replied_at"]
+        check("recovery_far", elapsed >= 25 and all(far[n]["hero_cm"] > 3000 for n in far),
+              {"elapsed_s": round(elapsed, 3), "bodies": far})
+        await link.debug("teleport", near=loser, distance=1000)
+
+        async def recovered() -> dict[str, Any]:
+            return (await bodies())[loser]
+
+        await _until_async(recovered, lambda b: b["body"] == "stand"
+                           and not b["unconscious"] and b["state"] != "ZS_HEALSELF", 15)
+        recovered_body = await recovered()
+        consumed = [before[loser]["inventory"].get(p, 0) - recovered_body["inventory"].get(p, 0)
+                    for p in POTIONS]
+        check("approach_recovered", recovered_body["hero_cm"] < 3000
+              and recovered_body["body"] == "stand" and not recovered_body["unconscious"],
+              recovered_body)
+        check("native_healing", all(type(h) is int and h > 0 for h in healing)
+              and all(c >= 0 for c in consumed)
+              and recovered_body["hp"] - 1 == sum(c * h for c, h in zip(consumed, healing, strict=True)),
+              {"hp": recovered_body["hp"], "consumed": consumed, "healing": healing})
+
+        kinds = {"npc_crime_defense", "npc_crime_restitution", "npc_crime_reaction", "npc_will",
+                 "npc_will_outcome", "npc_crime", "blamed"}
+        kept = [f for f in facts() if f.get("fact") in kinds]
+        saved = await _save(link, slot)
+        if not check("fight_saved", saved is not None, len(kept)):
+            return
+        loaded = await load()
+        check("fight_loaded", loaded.parent == saved.branch and loaded.parent_seq == saved.seq
+              and [f for f in facts() if f.get("fact") in kinds] == kept, len(kept))
+        sent_at = len(sent)
+        await link.debug("player_goto", waypoint=far_waypoint)
+        await meeting()
+        for _ in range(2):
+            await will.tick()
+            await asyncio.sleep(1)
+        check("fight_not_repeated", [f for f in facts() if f.get("fact") in kinds] == kept
+              and not any(isinstance(c, StoryEffectCmd) and any(e.get("do") == "knockout"
+                          for e in c.effects) or isinstance(c, NpcActCmd) and c.action == "fight"
+                          for c in sent[sent_at:]), sent[sent_at:])
+
     link.send = sending  # type: ignore[method-assign]
+    link.listeners.append(receipt)
     cards()
     rumors.gate, rumors.stage = lambda *_: False, None
     try:
@@ -343,8 +552,12 @@ async def npc_far(
             checked_hours.append(now)
         check("loaded_cooldown", facts("npc_crime") == before_thefts
               and facts("npc_will") == before_attempts, checked_hours)
+        await fight_branch(cid, item, far_waypoint)
         return _logged(results)
     finally:
         will.cards, crimes.cards = original_cards, original_crime_cards
         rumors.gate, rumors.stage = original_gate, original_stage
         link.send = send  # type: ignore[method-assign]
+        link.listeners.remove(receipt)
+        for tie, meets in reversed(meetings):
+            tie.meets = meets
