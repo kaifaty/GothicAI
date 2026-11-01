@@ -174,8 +174,12 @@ def lock_feet(anim: ga.Animation, skel: ga.Skeleton, height: float = 4.0, speed:
                 anim.rotations[t, j] = -q if np.dot(q, anim.rotations[t, j]) < 0 else q
 
 
-def hold_arm(anim: ga.Animation, skel: ga.Skeleton, ref: ga.Animation, weights: list[float]) -> None:
-    for name, w in [*zip(ARM, weights), (FINGER, 1.0)]:
+def hold_arm(anim: ga.Animation, skel: ga.Skeleton, ref: ga.Animation, weights: list[float], side: str = "R") -> None:
+    """Blend clavicle, upper arm, forearm and hand of one side towards the stance's local rotations. The sword
+    hand's finger always comes from the stance; the free (left) arm is only damped, to calm Kimodo's swing."""
+    chain = [n.replace(" R ", f" {side} ") for n in ARM]
+    extra = [(FINGER, 1.0)] if side == "R" else []
+    for name, w in [*zip(chain, weights), *extra]:
         node = skel.index(name)
         if node not in anim.node_indices or node not in ref.node_indices:
             continue
@@ -218,6 +222,7 @@ def main():
     ap.add_argument("--next", default="")
     ap.add_argument("--warp", required=True, help="src:dst seconds, comma separated, from 0:0 to the end")
     ap.add_argument("--sword-arm", default="0.5,0.8,1,1", help="clavicle, upper arm, forearm, hand weights")
+    ap.add_argument("--free-arm", default="0,0,0,0", help="the left arm's weights towards the stance (damps its swing)")
     ap.add_argument("--fill", type=Path, action="append", default=[],
                     help="the overlay's jump-back: its node set is written, and it poses the toes and weapon slots the stance lacks")
     ap.add_argument("--no-foot-lock", action="store_true", help="leave the feet as retargeted")
@@ -228,6 +233,7 @@ def main():
     anim = retime(ga.read_animation(a.src), [tuple(map(float, k.split(":"))) for k in a.warp.split(",")])
     snap_ends(anim, ref, *map(float, a.fade.split(",")))
     hold_arm(anim, skel, ref, [float(w) for w in a.sword_arm.split(",")])
+    hold_arm(anim, skel, ref, [float(w) for w in a.free_arm.split(",")], side="L")
     if not a.no_foot_lock:
         lock_feet(anim, rs.with_offsets(skel, ref))
     fills = [ga.read_animation(f) for f in a.fill]
