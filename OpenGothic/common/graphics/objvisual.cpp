@@ -250,6 +250,7 @@ void ObjVisual::setVisual(const asset::VirtualObject& vob, World& world, bool st
   const bool streamStatic=staticDraw &&
       (vob.type==asset::VirtualObjectType::zCVob || vob.type==asset::VirtualObjectType::zCVobStair ||
        vob.type==asset::VirtualObjectType::zCVobAnimate);
+  const bool streamMobsi=staticDraw && dynamic_cast<const asset::VMovableObject*>(&vob)!=nullptr;
 
   if(visName.empty())
     return;
@@ -269,7 +270,7 @@ void ObjVisual::setVisual(const asset::VirtualObject& vob, World& world, bool st
       if(vob.show_visual) {
         mesh.windMode=vob.anim_mode;
         mesh.windStrength=vob.anim_strength;
-        if(streamStatic && !ClothVisual::supports(visName) && world.view()!=nullptr && world.chunkResidency()!=nullptr)
+        if((streamStatic || streamMobsi) && !ClothVisual::supports(visName) && world.view()!=nullptr && world.chunkResidency()!=nullptr)
           world.view()->addVob(*this,ChunkId::fromPosition(vob.position.x,vob.position.z));
         if(!streamView) {
           mesh.view = world.addStaticView(view,staticDraw);
@@ -313,14 +314,22 @@ void ObjVisual::setVisual(const asset::VirtualObject& vob, World& world, bool st
       mdl.proto = view;
       mdl.view.setYTranslationEnable(false);
       mdl.view.setVisual(view->skeleton.get());
+      mdl.staticBody=(view->skeleton==nullptr || view->skeleton->animation()==nullptr) && enableCollision;
 
       if(vob.show_visual) {
-        MeshObjects::Mesh visual;
-        if((view->skeleton==nullptr || view->skeleton->animation()==nullptr) && enableCollision)
-          visual=world.addStaticView(view,true); else
-          visual=world.addView(view);
-        visual.setTextureCategory(staticDraw ? Resources::TextureCategory::Static : Resources::TextureCategory::Dynamic);
-        mdl.view.setVisualBody(world,std::move(visual));
+        if(streamMobsi && world.view()!=nullptr && world.chunkResidency()!=nullptr) {
+          mdl.view.setTextureOwner({vob.position.x,vob.position.y,vob.position.z},true);
+          mdl.view.clearVisualBody();
+          world.view()->addVob(*this,ChunkId::fromPosition(vob.position.x,vob.position.z));
+          }
+        if(!streamView) {
+          MeshObjects::Mesh visual;
+          if(mdl.staticBody)
+            visual=world.addStaticView(view,true); else
+            visual=world.addView(view);
+          visual.setTextureCategory(staticDraw ? Resources::TextureCategory::Static : Resources::TextureCategory::Dynamic);
+          mdl.view.setVisualBody(world,std::move(visual));
+          }
         }
 
       if(vob.show_visual && enableCollision) {
@@ -397,10 +406,41 @@ void ObjVisual::setObjMatrix(const Tempest::Matrix4x4& obj) {
   }
 
 void ObjVisual::createView() {
+  if(type==M_Mdl) {
+    auto body=mdl.staticBody ? streamView->addStaticView(mdl.proto,true) : streamView->addView(mdl.proto);
+    body.setTextureCategory(Resources::TextureCategory::Static);
+    mdl.view.setVisualBody(*streamView,std::move(body));
+    mdl.published=!isViewMissing();
+    return;
+    }
   mesh.view=streamView->addStaticView(mesh.proto,true);
   mesh.view.setWind(mesh.windMode,mesh.windStrength);
   mesh.view.setObjMatrix(fracture && fracture->broken ? hiddenFractureMatrix() : renderMatrix);
   mesh.view.setTexturePosition(Tempest::Vec3(renderMatrix[3][0],renderMatrix[3][1],renderMatrix[3][2]));
+  mesh.published=!isViewMissing();
+  }
+
+void ObjVisual::releaseView() {
+  if(type==M_Mdl) {
+    mdl.view.clearVisualBody();
+    mdl.published=false;
+    }
+  else {
+    mesh.view={};
+    mesh.published=false;
+    }
+  }
+
+bool ObjVisual::isViewPublished() const {
+  return type==M_Mdl ? mdl.published : mesh.published;
+  }
+
+bool ObjVisual::isViewMissing() const {
+  return !protoMesh()->submeshId.empty() && viewNodesCount()==0;
+  }
+
+size_t ObjVisual::viewNodesCount() const {
+  return type==M_Mdl ? mdl.view.bodyNodesCount() : mesh.view.nodesCount();
   }
 
 void ObjVisual::setupFracture(World& world, DynamicWorld::Item& body) {

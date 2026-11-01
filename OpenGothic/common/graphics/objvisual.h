@@ -57,6 +57,8 @@ class ObjVisual {
       PhysicMesh       physic;
       MdlVisual        view;
       const ProtoMesh* proto = nullptr;
+      bool staticBody = false;
+      bool published = false;
       };
 
     struct Mesh {
@@ -86,6 +88,10 @@ class ObjVisual {
     void cleanup();
     void setType(Type t);
     void createView();
+    void releaseView();
+    bool isViewPublished() const;
+    bool isViewMissing() const;
+    size_t viewNodesCount() const;
     friend class WorldView;
     friend struct MeshGltfTest;
   };

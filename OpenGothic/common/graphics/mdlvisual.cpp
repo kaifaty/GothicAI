@@ -7,6 +7,7 @@
 #include "world/objects/interactive.h"
 #include "world/objects/item.h"
 #include "world/world.h"
+#include "graphics/worldview.h"
 #include "objvisual.h"
 #include "gothic.h"
 #include "graphics/mesh/animmath.h"
@@ -363,6 +364,48 @@ void MdlVisual::setVisualBody(World& owner, MeshObjects::Mesh&& body) {
   implSetBody(nullptr,owner,std::move(body),0);
   }
 
+void MdlVisual::setVisualBody(WorldView& owner, MeshObjects::Mesh&& body) {
+  // Mobsi keep their solver and pose while only these draw instances leave residency.
+  attach.clear();
+  if(auto proto=body.protoMesh())
+    for(const auto& slot:proto->attach)
+      if(!slot.hasNode)
+        setSlotAttachment(owner.addAtachView(slot,0),slot.name);
+  view=std::move(body);
+  bodyDetached=false;
+  if(textureOwnerKnown)
+    view.setTextureOwner(textureOwnerPosition,textureOwnerSpatial);
+  view.setSkeleton(skeleton);
+  view.setPose(pos,*skInst);
+  for(auto& slot:item)
+    if(slot.deferredProto!=nullptr) {
+      slot.view=owner.addView(slot.deferredProto);
+      if(textureOwnerKnown)
+        slot.view.setTextureOwner(textureOwnerPosition,textureOwnerSpatial);
+      }
+  syncAttaches();
+  }
+
+void MdlVisual::clearVisualBody() {
+  view={};
+  attach.clear();
+  for(auto& slot:item) {
+    if(auto proto=slot.view.protoMesh())
+      slot.deferredProto=proto;
+    slot.view={};
+    }
+  bodyDetached=true;
+  }
+
+size_t MdlVisual::bodyNodesCount() const {
+  size_t count=view.nodesCount();
+  for(const auto& slot:attach)
+    count+=slot.view.nodesCount();
+  for(const auto& slot:item)
+    count+=slot.view.nodesCount();
+  return count;
+  }
+
 // Mdl_SetVisualBody
 void MdlVisual::setVisualBody(Npc& npc, MeshObjects::Mesh &&h, MeshObjects::Mesh &&body, int32_t version) {
   bind(head,std::move(h),"BIP01 HEAD");
@@ -524,6 +567,9 @@ void MdlVisual::setSlotItem(MeshObjects::Mesh &&itm, std::string_view bone) {
 
   for(auto& i:item) {
     if(i.boneId==id) {
+      i.deferredProto=itm.protoMesh();
+      if(bodyDetached)
+        itm={};
       i.view=std::move(itm);
       syncAttaches();
       return;
@@ -532,6 +578,9 @@ void MdlVisual::setSlotItem(MeshObjects::Mesh &&itm, std::string_view bone) {
 
   MeshAttach slt;
   slt.bone = skeleton->nodes[id].name;
+  slt.deferredProto=itm.protoMesh();
+  if(bodyDetached)
+    itm={};
   bind(slt,std::move(itm),slt.bone);
   item.push_back(std::move(slt));
   syncAttaches();
