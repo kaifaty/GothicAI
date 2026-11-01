@@ -220,6 +220,7 @@ struct Npc::MeleeShadow final {
   int32_t damage = 0;
   std::vector<Contact> contacts;
   size_t consumed = 0, targetsHit = 0;
+  std::vector<uintptr_t> struckVobs; // movable vobs this swing already struck
   bool stopped = false, physicsHits = false;
   struct Magnet final {
     const Npc* target = nullptr;
@@ -1969,6 +1970,7 @@ void Npc::syncMeleeShadowSwing() {
   shadow.legacyHit = shadow.legacyBlock = shadow.legacyDodge = false;
   shadow.damage = 0;
   shadow.consumed = shadow.targetsHit = 0;
+  shadow.struckVobs.clear();
   shadow.stopped = false;
   shadow.physicsHits = Gothic::physicsFlags().meleePhysicsHits;
   shadow.outcome = "miss";
@@ -2324,6 +2326,15 @@ void Npc::consumeMeleeContacts() {
         at.identity();
         at.translate(hit.point);
         owner.addLandHitEffect(weapon!=nullptr ? ItemMaterial(weapon->handle().material) : ItemMaterial::MAT_LEATHER,hit.material,at).play();
+        // The blade bites into an intact board instead of passing it, and the board
+        // takes this blow: the hit frame that applies destruction never comes now.
+        MeleeDestructionBlow blow;
+        if(hit.movableVob!=0 && owner.physic()->destructionEnabled() && meleeDestructionBlow(blow)) {
+          const bool struck = owner.physic()->meleeStoppedMovableVob(hit,blow.weaponDamage,blow.strength,blow.kind,
+                                                                     this,swing.struckVobs);
+          if(TestBench::isActive())
+            TestBench::destructionMeleeHit(*this,struck ? 1 : 0,blow.weaponDamage+blow.strength);
+          }
         stopMeleeSwing();
         }
       continue;
@@ -4877,36 +4888,43 @@ bool Npc::setGoToLadder() {
   return false;
   }
 
+bool Npc::meleeDestructionBlow(MeleeDestructionBlow& blow) const {
+  const auto mode=weaponState();
+  if(mode!=WeaponState::Fist && mode!=WeaponState::W1H && mode!=WeaponState::W2H)
+    return false;
+  const auto& guild=owner.script().guildVal();
+  const auto gl=this->guild();
+  blow={};
+  blow.rangeCm=float(guild.fight_range_base[gl]+guild.fight_range_fist[gl]);
+  if(mode!=WeaponState::Fist) {
+    const auto* weapon=invent.activeWeapon();
+    if(weapon!=nullptr) {
+      const bool twoHand=mode==WeaponState::W2H;
+      blow.kind=twoHand ? FractureRule::Melee::TwoHand : FractureRule::Melee::OneHand;
+      blow.rangeCm=float(guild.fight_range_base[gl]+(twoHand ? guild.fight_range_2ha[gl] : guild.fight_range_1ha[gl])+
+                         weapon->swordLength());
+      blow.weaponDamage=float(weapon->handle().damage_total);
+      }
+    else blow.rangeCm=0.f;
+    }
+  blow.strength=float(attribute(ATR_STRENGTH));
+  return true;
+  }
+
 void Npc::commitDamage() {
   if(meleeKnockdown)
     return;
-  const auto mode=weaponState();
-  if(owner.physic()->destructionEnabled() &&
-     (mode==WeaponState::Fist || mode==WeaponState::W1H || mode==WeaponState::W2H)) {
-    const auto& guild=owner.script().guildVal();
-    const auto gl=this->guild();
-    auto kind=FractureRule::Melee::Fist;
-    float range=float(guild.fight_range_base[gl]+guild.fight_range_fist[gl]);
-    float weaponDamage=0.f;
-    if(mode!=WeaponState::Fist) {
-      const auto* weapon=invent.activeWeapon();
-      if(weapon!=nullptr) {
-        const bool twoHand=mode==WeaponState::W2H;
-        kind=twoHand ? FractureRule::Melee::TwoHand : FractureRule::Melee::OneHand;
-        range=float(guild.fight_range_base[gl]+(twoHand ? guild.fight_range_2ha[gl] : guild.fight_range_1ha[gl])+
-                    weapon->swordLength());
-        weaponDamage=float(weapon->handle().damage_total);
-        }
-      else range=0.f;
-      }
-    const float strength=float(attribute(ATR_STRENGTH));
-    const float angle=rotationRad();
-    const size_t affected=owner.physic()->meleeMovableVobs(collosionCenter(),{std::cos(angle),0,std::sin(angle)},
-                                                         range,weaponDamage,strength,kind,this);
-    if(TestBench::isActive())
-      TestBench::destructionMeleeHit(*this,affected,weaponDamage+strength);
-    }
   auto* shadow = meleeShadow && meleeShadow->window ? meleeShadow.get() : nullptr;
+  MeleeDestructionBlow blow;
+  if(owner.physic()->destructionEnabled() && meleeDestructionBlow(blow)) {
+    const float angle=rotationRad();
+    // A body this swing's blade already struck when it stopped is not struck again.
+    const size_t affected=owner.physic()->meleeMovableVobs(collosionCenter(),{std::cos(angle),0,std::sin(angle)},
+                                                         blow.rangeCm,blow.weaponDamage,blow.strength,blow.kind,this,
+                                                         shadow!=nullptr ? &shadow->struckVobs : nullptr);
+    if(TestBench::isActive())
+      TestBench::destructionMeleeHit(*this,affected,blow.weaponDamage+blow.strength);
+    }
   const bool physicsHits = isHuman() && (shadow!=nullptr ? shadow->physicsHits : Gothic::physicsFlags().meleePhysicsHits);
   const auto hitTrace = [&](const char* result) {
     if(shadow!=nullptr) {
