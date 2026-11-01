@@ -5553,6 +5553,13 @@ void Npc::takeFallDamage(const Vec3& fallSpeed) {
       setAnim(Anim::Fallen);
       }
     }
+  auto dmg = DamageCalculator::damageFall(*this,fallSpeed.length());
+  int32_t hp = attribute(ATR_HITPOINTS);
+  // Keep vanilla landing feedback immediate; only HP joins the impact window.
+  if(dmg.hasHit && hp>dmg.value) {
+    emitSoundSVM("SVM_%d_AARGH");
+    clearState(true);
+    }
   if(bodyImpactSpellFlight) {
     bodyImpactSpellFlight=false;
     if(Gothic::physicsFlags().bodyImpactDamage) {
@@ -5560,14 +5567,8 @@ void Npc::takeFallDamage(const Vec3& fallSpeed) {
       return;
       }
     }
-  auto dmg = DamageCalculator::damageFall(*this,fallSpeed.length());
   if(!dmg.hasHit)
     return;
-  int32_t hp = attribute(ATR_HITPOINTS);
-  if(hp>dmg.value) {
-    emitSoundSVM("SVM_%d_AARGH");
-    clearState(true);
-    }
   changeAttribute(ATR_HITPOINTS,-dmg.value,false);
   }
 
