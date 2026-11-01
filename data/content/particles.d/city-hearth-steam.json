@@ -18,8 +18,8 @@
    "name": "OWN_POT_STEAM",
    "base": "LIGHTSMOKE",
    "set": {
-    "visTexColorStart_S": "200 180 150",
-    "visTexColorEnd_S": "210 195 170",
+    "visTexColorStart_S": "225 222 215",
+    "visTexColorEnd_S": "235 233 228",
     "visAlphaFunc_S": "BLEND",
     "visAlphaStart": 90.0,
     "visAlphaEnd": 0.0,

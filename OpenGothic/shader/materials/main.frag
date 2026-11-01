@@ -484,9 +484,12 @@ void mainForward(vec4 t) {
   alpha = (alpha-0.5)*2.0;
 #endif
 
-  color = textureAlbedo(color.rgb);
-  color *= diffuseLight(alpha);
-  color *= scene.exposure;
+  const vec3 albedo = textureAlbedo(color.rgb);
+  color = albedo * diffuseLight(alpha) * scene.exposure;
+#if (MESH_TYPE==T_PFX)
+  // smoke and steam lit by the fires next to them, as light.frag lights a surface
+  color += albedo * shInp.pointLight * max(1.0, scene.exposure) * Fd_Lambert * 0.25;
+#endif
 
   const vec4 fog = fogOwnDepth();
   color = color*fog.a + fog.rgb;

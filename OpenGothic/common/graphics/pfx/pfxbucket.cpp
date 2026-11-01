@@ -1,11 +1,14 @@
 #include "pfxbucket.h"
 
+#include <algorithm>
 #include <cassert>
+#include <cmath>
 
 #include "frameprofile.h"
 #include "graphics/mesh/submesh/pfxemittermesh.h"
 #include "graphics/shaders.h"
 #include "graphics/visualobjects.h"
+#include "graphics/worldview.h"
 #include "pfxobjects.h"
 #include "particlefx.h"
 #include "world/objects/npc.h"
@@ -603,8 +606,44 @@ void PfxBucket::tickEmit(Block& p, ImplEmitter& emitter, uint64_t emited) {
     }
   }
 
+// RGB9E5: a non-negative HDR colour in 32 bits (unpackRgb9e5 in pfx.vert)
+static uint32_t packRgb9e5(const Vec3& c) {
+  const float maxV = 65408.f;
+  const float r = std::clamp(c.x, 0.f, maxV), g = std::clamp(c.y, 0.f, maxV), b = std::clamp(c.z, 0.f, maxV);
+  const float m = std::max({r, g, b});
+  if(m<=1e-6f)
+    return 0;
+  int   e     = std::max(-16, int(std::floor(std::log2(m)))) + 1 + 15;
+  float denom = std::exp2(float(e - 15 - 9));
+  if(int(std::floor(m/denom + 0.5f))==512) {
+    denom *= 2.f;
+    ++e;
+    }
+  const auto q = [&](float v) { return uint32_t(std::min(511.f, std::floor(v/denom + 0.5f))); };
+  return q(r) | (q(g) << 9) | (q(b) << 18) | (uint32_t(e) << 27);
+  }
+
+// Irradiance of point lights at a particle, as light.frag lights a surface facing them, a quarter of it (a thin
+// puff scatters to all sides and lets most light through), without the shadow; held at 1/0.02 next to the
+// source, where the inverse square would light a puff over a fire like a lamp.
+static Vec3 pointLightAt(const std::vector<LightGroup::Near>& lights, const Vec3& at) {
+  Vec3 sum;
+  for(auto& l:lights) {
+    const float factor = (l.pos-at).quadLength()/(l.range*l.range);
+    if(factor>=1.f)
+      continue;
+    const float smooth = 1.f - factor*factor;
+    sum += l.color * (0.25f/std::max(factor, 0.02f) * smooth*smooth);
+    }
+  return sum;
+  }
+
 void PfxBucket::buildSsbo() {
   buildSsboTrails();
+
+  // smoke and steam (blended, lit in the forward pass) take the light of the fires next to them
+  const bool lit = decl.visMaterial.alpha==Material::AlphaFunc::Transparent;
+  std::vector<LightGroup::Near> lights;
 
   auto  colorS          = decl.visTexColorStart;
   auto  colorE          = decl.visTexColorEnd;
@@ -617,6 +656,8 @@ void PfxBucket::buildSsbo() {
   for(auto& p:block) {
     if(p.count==0)
       continue;
+    if(lit)
+      parent.world.lights().nearLights(p.pos, 300.f, lights);
 
     for(size_t pId=0; pId<blockSize; ++pId) {
       ParState& ps = particles[pId+p.offset];
@@ -659,6 +700,7 @@ void PfxBucket::buildSsbo() {
       uint32_t colorU32;
       std::memcpy(&colorU32,&color,4);
       buildBilboard(px,p,ps, colorU32, szX,szY,szZ);
+      px.colorB = (lit && !lights.empty()) ? packRgb9e5(pointLightAt(lights, px.pos)) : 0;
       }
     }
   }

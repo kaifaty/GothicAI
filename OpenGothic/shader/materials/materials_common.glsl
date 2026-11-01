@@ -110,6 +110,10 @@ struct Varyings {
   vec4 color;
 #endif
 
+#if (MESH_TYPE==T_PFX) && defined(FORWARD)
+  vec3 pointLight; // irradiance of the point lights near a particle (pfxbucket.cpp), lit as light.frag does
+#endif
+
 #if !defined(MAT_VARYINGS)
   float dummy; // GLSL has no support for empty structs
 #endif
