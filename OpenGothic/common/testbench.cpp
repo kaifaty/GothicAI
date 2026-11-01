@@ -3,6 +3,7 @@
 #include "ui/gamemenu.h"
 #include "navbench.h"
 #include "navdemos.h"
+#include "npcdayjournal.h"
 #include "frameprofile.h"
 #include "loadprobe.h"
 
@@ -671,6 +672,9 @@ struct Bench {
     size_t vobNear = 0, vobFar = 0, vobOutside = 0, vobPending = 0, vobNearMissing = 0;
     uint64_t vobCreated = 0, vobReleased = 0;
     double vobPublicationMs = 0, vobNearMissingSeconds = 0;
+    size_t npcFull = 0, npcSimplified = 0;
+    uint64_t npcTierTransitions = 0;
+    double npcFullTickMs = 0, npcSimplifiedTickMs = 0;
     };
   std::vector<StreamingSample> streamingSamples;
   std::vector<double> streamingWarmupFarMs;
@@ -681,6 +685,7 @@ struct Bench {
   Resources::TextureStats streamingTexturesBefore;
   uint64_t streamingVobCreatedBefore = 0, streamingVobReleasedBefore = 0;
   double streamingVobMissingBefore = 0;
+  uint64_t streamingNpcTransitionsBefore = 0;
   std::vector<Vec3> routePoints;
   size_t      routeNext = 0;
   Vec3        routePosition;
@@ -754,6 +759,7 @@ struct Bench {
   uint64_t    volleyJitter = 0;  // ms more to hold, at random up to that (the sway is a function of time)
   uint64_t    volleyHoldNow = 0;
   uint32_t    lcg          = 1;  // the bench's own random numbers (seed)
+  uint32_t    scenarioSeed = 0;  // the last `seed <n>`
   std::vector<Npc*> crew;        // arc: the npcs set out, `all` of fight
   // wander: the crew walks the waynet from waypoint to waypoint near the hero (docs/navigation.md, stage 0)
   std::vector<Npc*>            wanderers;
@@ -1867,6 +1873,8 @@ void writeCharacterMoveFrame(std::FILE* file,const Bench::CharacterMoveFrame& mo
   }
 
 void finish() {
+  if(auto* world=Gothic::inst().world())
+    NpcDayJournal::stop(*world,"bench_end");
   stopBodyLive();
   npcCharacterStopMotionTrace(Gothic::inst().world());
   endAnimationControl();
@@ -1879,7 +1887,7 @@ void finish() {
   stopRecording();
   if(!bench.streamingSamples.empty()) {
     if(auto* file=std::fopen((outDir+"/streaming.csv").c_str(),"w")) {
-      std::fprintf(file,"segment,frame,update_ms,work_ms,near,far,outside,near_transitions,far_transitions,publication_ms,published,released,page_used_bytes,page_free_bytes,page_retired_bytes,page_count,tex_live_bytes,tex_retired_bytes,tex_peak_bytes,tex_live_n,tex_evicted,tex_reloaded,tex_landscape_bytes,tex_landscape_n,tex_static_bytes,tex_static_n,tex_dynamic_bytes,tex_dynamic_n,tex_other_bytes,tex_other_n,tex_full_bytes,tex_tail_bytes,tex_promoted,tex_demoted,tex_promotion_queue,tex_near_tail_n,tex_near_tail_seconds,vob_near,vob_far,vob_outside,vob_created,vob_released,vob_pending,vob_publication_ms,vob_near_missing,vob_near_missing_seconds\n");
+      std::fprintf(file,"segment,frame,update_ms,work_ms,near,far,outside,near_transitions,far_transitions,publication_ms,published,released,page_used_bytes,page_free_bytes,page_retired_bytes,page_count,tex_live_bytes,tex_retired_bytes,tex_peak_bytes,tex_live_n,tex_evicted,tex_reloaded,tex_landscape_bytes,tex_landscape_n,tex_static_bytes,tex_static_n,tex_dynamic_bytes,tex_dynamic_n,tex_other_bytes,tex_other_n,tex_full_bytes,tex_tail_bytes,tex_promoted,tex_demoted,tex_promotion_queue,tex_near_tail_n,tex_near_tail_seconds,vob_near,vob_far,vob_outside,vob_created,vob_released,vob_pending,vob_publication_ms,vob_near_missing,vob_near_missing_seconds,npc_full,npc_simplified,npc_tier_transitions,npc_full_tick_ms,npc_simplified_tick_ms\n");
       for(const auto& row:bench.streamingSamples) {
         std::fprintf(file,"%s,%llu,%.9g,%.9g,%zu,%zu,%zu,%llu,%llu,",row.segment.c_str(),
           (unsigned long long)row.frame,row.updateMs,row.workMs,row.near,row.far,row.outside,
@@ -1900,10 +1908,12 @@ void finish() {
           (unsigned long long)textures.fullBytes,(unsigned long long)textures.tailBytes,
           (unsigned long long)textures.promoted,(unsigned long long)textures.demoted,
           (unsigned long long)textures.promotionQueue,(unsigned long long)textures.nearTailCount,textures.nearTailSeconds);
-        std::fprintf(file,",%zu,%zu,%zu,%llu,%llu,%zu,%.9g,%zu,%.9g\n",
+        std::fprintf(file,",%zu,%zu,%zu,%llu,%llu,%zu,%.9g,%zu,%.9g",
           row.vobNear,row.vobFar,row.vobOutside,(unsigned long long)row.vobCreated,
           (unsigned long long)row.vobReleased,row.vobPending,row.vobPublicationMs,
           row.vobNearMissing,row.vobNearMissingSeconds);
+        std::fprintf(file,",%zu,%zu,%llu,%.9g,%.9g\n",row.npcFull,row.npcSimplified,
+          (unsigned long long)row.npcTierTransitions,row.npcFullTickMs,row.npcSimplifiedTickMs);
         }
       std::fclose(file);
       } else event("streaming_error","\"reason\":\"cannot write residency samples\"");
@@ -15994,6 +16004,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
         bench.streamingVobCreatedBefore=residency->stats().vobCreated;
         bench.streamingVobReleasedBefore=residency->stats().vobReleased;
         bench.streamingVobMissingBefore=residency->stats().vobNearMissingSeconds;
+        bench.streamingNpcTransitionsBefore=w.npcSimTierStats().toFull+w.npcSimTierStats().toSimplified;
         }
       FrameProfile::setActors(bench.crew);
       event("perf_segment","\"segment\":"+jsonStr(bench.perfSegment)+
@@ -16802,6 +16813,35 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
                   double(st.reload));
     say(buf);
     }
+  else if(c=="npcday") {
+    // npcday <game minutes> [period minutes 5] [shared]: journal every NPC over continuous game time
+    // (common/npcdayjournal.h) into npc-day*.csv; the scenario waits until the time has passed. Each NPC gets
+    // a private script random stream from the last `seed`, unless `shared`.
+    NpcDayJournal::Options opt;
+    opt.directory = outDir;
+    opt.seed      = bench.scenarioSeed;
+    size_t positional = 0;
+    bool   ok = a.size()>1;
+    for(size_t i=1; i<a.size(); ++i) {
+      if(a[i]=="shared")
+        opt.isolate = false;
+      else if(isNumber(a[i]) && positional==0 && num(a,i,0)>0)
+        opt.minutes = uint64_t(num(a,i,0)), ++positional;
+      else if(isNumber(a[i]) && positional==1 && num(a,i,0)>0)
+        opt.period = uint32_t(num(a,i,0)), ++positional;
+      else
+        ok = false;
+      }
+    std::string error;
+    if(!ok || !NpcDayJournal::start(w,opt,error)) {
+      say("npcday failed: "+(ok ? error : "usage: npcday <game minutes> [period minutes] [shared]"));
+      event("npcday_error","\"reason\":"+jsonStr(ok ? error : "usage"));
+      return;
+      }
+    say("npcday "+std::to_string(opt.minutes)+" min every "+std::to_string(opt.period)+(opt.isolate ? "" : " shared"));
+    event("npcday_start","\"minutes\":"+std::to_string(opt.minutes)+",\"period\":"+std::to_string(opt.period)+
+          ",\"isolate\":"+(opt.isolate ? "true" : "false")+",\"seed\":"+std::to_string(opt.seed));
+    }
   else if(c=="seed") {
     // seed <n>: the random numbers start over: the scripts' (the dice, the release), the bench's, the
     // hero's sway
@@ -16810,6 +16850,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     const uint32_t s = live!=nullptr && std::string_view(live)=="1" ?
                        uint32_t(std::stoul(a.at(1))) : uint32_t(num(a,1,1));
     w.script().setSeed(s);
+    bench.scenarioSeed = s;
     bench.lcg = s*2654435761u + 1u;
     bench.monsterCharacterSeed=s;
     pl.archer().reseed(s);
@@ -18716,6 +18757,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
               " landscape_retired_bytes="+std::to_string(s.landscapePageRetiredBytes);
         pages+=" "+s.vobProbeFields();
         }
+      pages+=(pages.empty() ? "" : " ")+w.npcSimTierStats().probeFields();
       LoadProbe::mark(text,-1,pages);
       }
     }
@@ -18850,7 +18892,7 @@ bool waitingForBodyLive() {
 void run(World& w, Npc& pl, PlayerControl& ctrl) {
   if(bench.routeActive || bench.placedItems.probing)return;
   if(bench.routinePhase) {routineReturnTick(w,pl,ctrl);if(bench.routinePhase)return;}
-  if(NavBench::running() || NavDemos::running()) return;
+  if(NavBench::running() || NavDemos::running() || NpcDayJournal::running()) return;
   if(bench.spellEquipPending) {
     if(pl.drawSpell(bench.spellEquipPending)) {bench.spellCastingId=bench.spellEquipPending;bench.spellEquipPending=0;}
     else if(w.tickCount()<bench.spellEquipUntil) return;
@@ -19078,7 +19120,8 @@ void run(World& w, Npc& pl, PlayerControl& ctrl) {
       }
     const std::string line = bench.prog[bench.pc++];
     exec(line,w,pl,ctrl);
-    if(bench.routeActive || bench.placedItems.probing || bench.waitStreaming || NavBench::running() || NavDemos::running()) return;
+    if(bench.routeActive || bench.placedItems.probing || bench.waitStreaming || NavBench::running() || NavDemos::running() ||
+       NpcDayJournal::running()) return;
     if(bench.spellWaitFrozen>=0 || bench.spellEquipPending) return;
     if(bench.questWait || bench.questStandingWait || bench.routinePhase) return;
 #ifdef OPENGOTHIC_ENABLE_APP_CADENCE
@@ -20695,6 +20738,7 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
   monsterCharacterFields(*world,dt);
   npcCharacterFields(*world,*player,dt);
   npcCharacterMotionTrace(*world,dt);
+  NpcDayJournal::tick(*world);
   bench.time += dt;
   if(aiBusy && aiBusy())
     bench.busyAt = bench.time;
@@ -20965,6 +21009,15 @@ void TestBench::sampleStreaming(const World& world) {
     Resources::textureStats(),stats.vobNear,stats.vobFar,stats.vobOutside,stats.vobPending,stats.vobNearMissing,
     stats.vobCreated-bench.streamingVobCreatedBefore,stats.vobReleased-bench.streamingVobReleasedBefore,
     stats.vobPublicationMs,stats.vobNearMissingSeconds-bench.streamingVobMissingBefore});
+  const auto& tiers=world.npcSimTierStats();
+  auto& sample=bench.streamingSamples.back();
+  sample.npcFull=tiers.full;
+  sample.npcSimplified=tiers.simplified;
+  // Transitions since the previous sample, like near_transitions and far_transitions.
+  sample.npcTierTransitions=tiers.toFull+tiers.toSimplified-bench.streamingNpcTransitionsBefore;
+  bench.streamingNpcTransitionsBefore=tiers.toFull+tiers.toSimplified;
+  sample.npcFullTickMs=tiers.fullTickMs;
+  sample.npcSimplifiedTickMs=tiers.simplifiedTickMs;
   bench.streamingNearBefore=stats.transitionsNear;bench.streamingFarBefore=stats.transitionsFar;
   bench.streamingPublishedBefore=stats.published;bench.streamingReleasedBefore=stats.released;
   bench.streamingVobCreatedBefore=stats.vobCreated;bench.streamingVobReleasedBefore=stats.vobReleased;

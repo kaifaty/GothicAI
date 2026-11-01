@@ -53,6 +53,10 @@ class World final {
     const ChunkTable&    chunkTable() const { return chunks; }
     ChunkResidency*      chunkResidency() const { return residency.get(); }
     void                 updateLandscape(const Camera& camera);
+    // NPC simulation tiers (world/npcsimtier.h): recomputed every world tick;
+    // loading calls updateNpcSimTiers() after the first residency update.
+    void                 updateNpcSimTiers() { wobj.updateSimTiers(); }
+    const NpcSimTiers::Stats& npcSimTierStats() const { return wobj.simTierStats(); }
     bool                 landscapeReady() const { return !wview || wview->landscapeReady(); }
 
     void                 load(Serialize& fin );
