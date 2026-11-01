@@ -1,0 +1,58 @@
+{
+ "note": "Our own key poses for the strikes of step 6, built by own_poses.py (frame and angle conventions there). Numbers and their sources: reports/Свои ключевые позы ударов.md.",
+ "stance": "HUMANS_1HST1-S_1HRUN.MAN",
+ "poses": {
+  "P_APEX": {
+   "pelvis": {"pos": [6, 87, -8], "yaw": 18, "pitch": -2},
+   "chest": {"yaw": 38, "pitch": -6},
+   "head": {"yaw": 0, "pitch": 5},
+   "feet": {"L": {"pos": [-16, 22], "yaw": -10}, "R": {"pos": [22, -26], "yaw": 60}},
+   "clavicle": {"R": {"up": 30}},
+   "arms": {
+    "R": {"hand": [14, 196, -12], "forearm": [-0.2, 0.92, -0.3], "blade": [0.3, 0.25, -1]},
+    "L": {"hand": [-12, 140, 30], "elbow": [-1, -0.5, 0], "palm": [1, 0, -0.2]}
+   }
+  },
+  "P_IMPACT": {
+   "pelvis": {"pos": [0, 84, 0], "yaw": -25, "pitch": 8},
+   "chest": {"yaw": -50, "pitch": 25},
+   "head": {"yaw": 0, "pitch": 10},
+   "feet": {"R": {"pos": [10, 40], "yaw": 10}, "L": {"pos": [-14, -50], "yaw": -45, "heel": 15}},
+   "arms": {
+    "R": {"hand": [4, 135, 70], "forearm": [0, -0.27, 1], "blade": [0, 0.36, 1]},
+    "L": {"hand": [-22, 95, -18], "elbow": [-0.4, 0, -1], "palm": [1, 0, 0]}
+   }
+  },
+  "P_FOLLOW": {
+   "pelvis": {"pos": [0, 80, 2], "yaw": -25, "pitch": 10},
+   "chest": {"yaw": -55, "pitch": 32},
+   "head": {"yaw": 0, "pitch": 15},
+   "feet": {"R": {"pos": [10, 40], "yaw": 10}, "L": {"pos": [-14, -50], "yaw": -45, "heel": 15}},
+   "arms": {
+    "R": {"hand": [-12, 80, 40], "forearm": [-0.4, -0.9, 0.05], "blade": [-0.2, -0.6, 0.77]},
+    "L": {"hand": [-24, 95, -20], "elbow": [-0.4, 0, -1], "palm": [1, 0, 0]}
+   }
+  },
+  "P_THRUST": {
+   "pelvis": {"pos": [0, 80, 0], "yaw": -28, "pitch": 6},
+   "chest": {"yaw": -55, "pitch": 20},
+   "head": {"yaw": 0, "pitch": 5},
+   "feet": {"R": {"pos": [8, 45], "yaw": 10}, "L": {"pos": [-16, -45], "yaw": -60}},
+   "arms": {
+    "R": {"hand": [-4, 108, 66], "forearm": [-0.4, 0, 0.92], "blade": [0.15, 0.1, 1]},
+    "L": {"hand": [-30, 98, -30], "elbow": [0, 0.3, -1], "palm": [0, 1, 0]}
+   }
+  },
+  "P_BARGE": {
+   "pelvis": {"pos": [0, 78, 0], "yaw": 35, "pitch": 18},
+   "chest": {"yaw": 70, "pitch": 40},
+   "head": {"yaw": 10, "pitch": 10},
+   "feet": {"L": {"pos": [-10, -6], "yaw": -15}, "R": {"pos": [15, -62], "yaw": 40, "heel": 25}},
+   "clavicle": {"L": {"up": 5, "fwd": 15}},
+   "arms": {
+    "R": {"hand": [22, 92, -30], "forearm": [0.2, -0.9, -0.4], "blade": [0.1, -0.2, -1]},
+    "L": {"hand": [4, 118, 14], "elbow": [-0.3, -1, 0.5], "palm": [0, 0, -1]}
+   }
+  }
+ }
+}

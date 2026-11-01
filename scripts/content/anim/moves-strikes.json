@@ -1,0 +1,286 @@
+{
+ "note": "Strikes of step 6 on our own key poses (own_poses.py, poses-strikes.json), the same moves and keys as the second probe so the two can be compared. The 1H combat stance S_1HRUN at both ends, as in the dodges. Travel in metres in the character's frame (x = its left, z = forward), 30 fps.",
+ "stance": "HUMANS_1HST1-S_1HRUN.MAN",
+ "samples": 8,
+ "seed": 7101,
+ "steps": 100,
+ "poses": {
+  "apex": {
+   "clip": "HUMANS-P_APEX.MAN.json"
+  },
+  "impact": {
+   "clip": "HUMANS-P_IMPACT.MAN.json"
+  },
+  "follow": {
+   "clip": "HUMANS-P_FOLLOW.MAN.json"
+  },
+  "thrust": {
+   "clip": "HUMANS-P_THRUST.MAN.json"
+  },
+  "barge": {
+   "clip": "HUMANS-P_BARGE.MAN.json"
+  }
+ },
+ "moves": [
+  {
+   "id": "barge",
+   "frames": 60,
+   "travel": [
+    0.0,
+    1.8
+   ],
+   "text": "A person charges forward and hits with the left shoulder, leaning the torso forward.",
+   "cfg": [
+    [
+     2.0,
+     2.0
+    ],
+    [
+     3.0,
+     2.0
+    ]
+   ],
+   "keys": [
+    {
+     "type": "fullbody",
+     "frame": 0,
+     "pose": "stance",
+     "at": 0
+    },
+    {
+     "type": "root2d",
+     "points": [
+      [
+       8,
+       0.05
+      ],
+      [
+       18,
+       0.5
+      ],
+      [
+       27,
+       1.0
+      ]
+     ]
+    },
+    {
+     "type": "fullbody",
+     "frame": 27,
+     "pose": "barge",
+     "at": 1.0
+    },
+    {
+     "type": "fullbody",
+     "frame": "end",
+     "pose": "stance",
+     "at": 0.89
+    }
+   ]
+  },
+  {
+   "id": "charge_windup",
+   "frames": 60,
+   "travel": [
+    0.0,
+    0.0
+   ],
+   "cfg": [
+    [
+     2.0,
+     2.0
+    ],
+    [
+     3.0,
+     2.0
+    ]
+   ],
+   "text": "A person raises the right arm high above the head and holds it there.",
+   "keys": [
+    {
+     "type": "fullbody",
+     "frame": 0,
+     "pose": "stance",
+     "at": 0
+    },
+    {
+     "type": "fullbody",
+     "frame": 15,
+     "pose": "apex",
+     "at": 0
+    },
+    {
+     "type": "right-hand",
+     "frame": 15,
+     "pose": "apex",
+     "at": 0
+    },
+    {
+     "type": "fullbody",
+     "frame": "end",
+     "pose": "apex",
+     "at": 0
+    },
+    {
+     "type": "right-hand",
+     "frame": "end",
+     "pose": "apex",
+     "at": 0
+    }
+   ]
+  },
+  {
+   "id": "charge_hold",
+   "frames": 90,
+   "travel": [
+    0.0,
+    0.0
+   ],
+   "cfg": [
+    [
+     2.0,
+     2.0
+    ],
+    [
+     3.0,
+     2.0
+    ]
+   ],
+   "text": "A person stands still with the right arm raised high above the head, ready to strike.",
+   "keys": [
+    {
+     "type": "fullbody",
+     "frame": 0,
+     "pose": "apex",
+     "at": 0
+    },
+    {
+     "type": "right-hand",
+     "frame": 0,
+     "pose": "apex",
+     "at": 0
+    },
+    {
+     "type": "fullbody",
+     "frame": "end",
+     "pose": "apex",
+     "at": 0
+    },
+    {
+     "type": "right-hand",
+     "frame": "end",
+     "pose": "apex",
+     "at": 0
+    }
+   ]
+  },
+  {
+   "id": "charge_release",
+   "frames": 60,
+   "travel": [
+    0.0,
+    0.4
+   ],
+   "cfg": [
+    [
+     2.0,
+     2.0
+    ],
+    [
+     3.0,
+     2.0
+    ]
+   ],
+   "text": "A person swings the right arm down hard from above the head to the front of the body, then returns to a ready-for-fight stance.",
+   "keys": [
+    {
+     "type": "fullbody",
+     "frame": 0,
+     "pose": "apex",
+     "at": 0
+    },
+    {
+     "type": "right-hand",
+     "frame": 0,
+     "pose": "apex",
+     "at": 0
+    },
+    {
+     "type": "fullbody",
+     "frame": 9,
+     "pose": "impact",
+     "at": 0.75
+    },
+    {
+     "type": "right-hand",
+     "frame": 9,
+     "pose": "impact",
+     "at": 0.75
+    },
+    {
+     "type": "right-hand",
+     "frame": 15,
+     "pose": "follow",
+     "at": 0.9
+    },
+    {
+     "type": "fullbody",
+     "frame": "end",
+     "pose": "stance",
+     "at": 1
+    }
+   ]
+  },
+  {
+   "id": "riposte_body",
+   "frames": 75,
+   "travel": [
+    0.0,
+    0.6
+   ],
+   "text": "A person lunges forward and thrusts the right arm straight ahead at waist height, then pulls it back into a ready-for-fight stance.",
+   "cfg": [
+    [
+     2.0,
+     2.0
+    ],
+    [
+     3.0,
+     2.0
+    ]
+   ],
+   "keys": [
+    {
+     "type": "fullbody",
+     "frame": 0,
+     "pose": "stance",
+     "at": 0
+    },
+    {
+     "type": "fullbody",
+     "frame": 15,
+     "pose": "thrust",
+     "at": 0.833
+    },
+    {
+     "type": "right-hand",
+     "frame": 15,
+     "pose": "thrust",
+     "at": 0.833
+    },
+    {
+     "type": "right-hand",
+     "frame": 24,
+     "pose": "thrust",
+     "at": 0.833
+    },
+    {
+     "type": "fullbody",
+     "frame": "end",
+     "pose": "stance",
+     "at": 0.5
+    }
+   ]
+  }
+ ]
+}
