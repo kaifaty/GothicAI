@@ -1,18 +1,172 @@
 {
- "about": "M5 of docs/world-detail-plan.md: smoke out of the roof holes over two burning hearths, two braziers along the way to the ship. Layer: scripts/content/harbour_motion.py layer. Positions in Gothic cm; offsets of a brazier's fire, smoke and light in its own axes, as the original braziers (OC_LOB_LIGHTER_HUGE3 by the fishers and the mole).",
+ "about": "M5 of docs/world-detail-plan.md: smoke out of the roof holes over two burning hearths, two braziers along the way to the ship. Layer and own PFX: scripts/content/harbour_motion.py layer. Positions in Gothic cm; offsets of a brazier's fire, smoke and light in its own axes, as the original braziers (OC_LOB_LIGHTER_HUGE3 by the fishers and the mole). Hut smoke drifts with the world wind (+z) through its own flyGravity; its sprite OWN_HUT_SMOKE comes from content/materials (harbour_motion.py texture).",
  "items": [
-  {"key": "smoke-hut04-1", "kind": "emitter", "pfx": "LIGHTSMOKE", "position": [2836, 245, -2426], "zone": "hut HAFEN04, hole 146 x 40 cm 81 cm from the large hearth"},
-  {"key": "smoke-hut04-2", "kind": "emitter", "pfx": "LIGHTSMOKE", "position": [2871, 245, -2426]},
-  {"key": "smoke-hut04-3", "kind": "emitter", "pfx": "LIGHTSMOKE", "position": [2906, 245, -2426]},
-  {"key": "smoke-hut06-1", "kind": "emitter", "pfx": "LIGHTSMOKE", "position": [3998, 262, -4061], "zone": "hut HAFEN06, hole 73 x 54 cm 91 cm from the hearth"},
-  {"key": "smoke-hut06-2", "kind": "emitter", "pfx": "LIGHTSMOKE", "position": [4038, 262, -4061]},
-  {"key": "brazier-1", "kind": "mesh", "visual": "OC_LOB_LIGHTER_HUGE3", "x": -3300, "z": -4560, "wall": 45, "yaw": 0, "collision": "mesh", "zone": "way to the ship, foot of the paladin camp, 26 m from the lamp post at crane C"},
-  {"key": "brazier-1-fire", "kind": "emitter", "pfx": "FIRE_MEDIUM", "attach": "brazier-1", "offset": [-3, 324, 6]},
-  {"key": "brazier-1-smoke", "kind": "emitter", "pfx": "FIRE_SMOKE", "attach": "brazier-1", "offset": [-6, 350, 9]},
-  {"key": "brazier-1-light", "kind": "light", "attach": "brazier-1", "offset": [4, 383, 4], "range": 500, "color": [194, 125, 56]},
-  {"key": "brazier-2", "kind": "mesh", "visual": "OC_LOB_LIGHTER_HUGE3", "x": -5600, "z": -4900, "wall": 45, "yaw": 0, "collision": "mesh", "zone": "way to the ship, 23 m on, 25 m before the fishers' braziers"},
-  {"key": "brazier-2-fire", "kind": "emitter", "pfx": "FIRE_MEDIUM", "attach": "brazier-2", "offset": [-3, 324, 6]},
-  {"key": "brazier-2-smoke", "kind": "emitter", "pfx": "FIRE_SMOKE", "attach": "brazier-2", "offset": [-6, 350, 9]},
-  {"key": "brazier-2-light", "kind": "light", "attach": "brazier-2", "offset": [4, 383, 4], "range": 500, "color": [194, 125, 56]}
+  {
+   "key": "smoke-hut04",
+   "kind": "emitter",
+   "pfx": "OWN_HUT_SMOKE_04",
+   "position": [
+    2859,
+    207,
+    -2428
+   ],
+   "zone": "hut HAFEN04: the centroid of its roof hole (120 x 37 cm along x) on the plane of the rim, 81 cm from the large hearth"
+  },
+  {
+   "key": "smoke-hut06",
+   "kind": "emitter",
+   "pfx": "OWN_HUT_SMOKE_06",
+   "position": [
+    4005,
+    257,
+    -4054
+   ],
+   "zone": "hut HAFEN06: the centroid of its roof hole (41 x 23 cm) on the plane of the rim, 91 cm from the hearth"
+  },
+  {
+   "key": "brazier-1",
+   "kind": "mesh",
+   "visual": "OC_LOB_LIGHTER_HUGE3",
+   "x": -3300,
+   "z": -4560,
+   "wall": 45,
+   "yaw": 0,
+   "collision": "mesh",
+   "zone": "way to the ship, foot of the paladin camp, 26 m from the lamp post at crane C"
+  },
+  {
+   "key": "brazier-1-fire",
+   "kind": "emitter",
+   "pfx": "FIRE_MEDIUM",
+   "attach": "brazier-1",
+   "offset": [
+    -3,
+    324,
+    6
+   ]
+  },
+  {
+   "key": "brazier-1-smoke",
+   "kind": "emitter",
+   "pfx": "FIRE_SMOKE",
+   "attach": "brazier-1",
+   "offset": [
+    -6,
+    350,
+    9
+   ]
+  },
+  {
+   "key": "brazier-1-light",
+   "kind": "light",
+   "attach": "brazier-1",
+   "offset": [
+    4,
+    383,
+    4
+   ],
+   "range": 500,
+   "color": [
+    194,
+    125,
+    56
+   ]
+  },
+  {
+   "key": "brazier-2",
+   "kind": "mesh",
+   "visual": "OC_LOB_LIGHTER_HUGE3",
+   "x": -5600,
+   "z": -4900,
+   "wall": 45,
+   "yaw": 0,
+   "collision": "mesh",
+   "zone": "way to the ship, 23 m on, 25 m before the fishers' braziers"
+  },
+  {
+   "key": "brazier-2-fire",
+   "kind": "emitter",
+   "pfx": "FIRE_MEDIUM",
+   "attach": "brazier-2",
+   "offset": [
+    -3,
+    324,
+    6
+   ]
+  },
+  {
+   "key": "brazier-2-smoke",
+   "kind": "emitter",
+   "pfx": "FIRE_SMOKE",
+   "attach": "brazier-2",
+   "offset": [
+    -6,
+    350,
+    9
+   ]
+  },
+  {
+   "key": "brazier-2-light",
+   "kind": "light",
+   "attach": "brazier-2",
+   "offset": [
+    4,
+    383,
+    4
+   ],
+   "range": 500,
+   "color": [
+    194,
+    125,
+    56
+   ]
+  }
+ ],
+ "particles": [
+  {
+   "name": "OWN_HUT_SMOKE_04",
+   "base": "LIGHTSMOKE",
+   "why": "Smoke of a hut fired without a chimney, from the hole in its roof: a veil, not a column (reports/Дым очага в игровом мире.md; reports/content/remaster/harbour-motion/README.md, r5). One source as large as the hole, a static soft sprite OWN_HUT_SMOKE (content/materials, made from the base by harbour_motion.py texture), warm grey 75 that is a little darker than the noon sky and lighter than the crowns; 8 particles/s at alpha 104, about four times the optical depth of the card's veil (r7 d4: it reads by day, a third of the background covered, no column, no glow at night), 0.75 m/s up, a cone of 10 deg, 10 s, drifting with the wind through flyGravity along +z; the rate breathes over 24 s.",
+   "set": {
+    "visName_S": "OWN_HUT_SMOKE.TGA",
+    "visTexAniFPS": 0.0,
+    "visTexAniIsLooping": 0,
+    "visAlphaFunc_S": "BLEND",
+    "visTexColorStart_S": "75 72 66",
+    "visTexColorEnd_S": "85 82 76",
+    "visAlphaStart": 104.0,
+    "visAlphaEnd": 0.0,
+    "visSizeStart_S": "70 70",
+    "visSizeEndScale": 5.0,
+    "lspPartAvg": 10000.0,
+    "lspPartVar": 1000.0,
+    "ppsValue": 8.0,
+    "ppsIsLooping": 1,
+    "ppsIsSmooth": 1,
+    "ppsFPS": 0.25,
+    "shpType_S": "CIRCLE",
+    "shpIsVolume": 1,
+    "shpOffsetVec_S": "0 30 0",
+    "dirMode_S": "DIR",
+    "dirAngleElev": 90.0,
+    "dirAngleElevVar": 10.0,
+    "dirAngleHead": 0.0,
+    "dirAngleHeadVar": 179.0,
+    "velAvg": 0.075,
+    "velVar": 0.015,
+    "flyGravity_S": "0 0 0.00001",
+    "shpDim_S": "30 0 12",
+    "ppsScaleKeys_S": "0.7 1 1.3 1 0.8 1.2"
+   }
+  },
+  {
+   "name": "OWN_HUT_SMOKE_06",
+   "base": "OWN_HUT_SMOKE_04",
+   "why": "The same smoke over the smaller hole of HAFEN06, its rate breathing in another phase.",
+   "set": {
+    "shpDim_S": "15 0 10",
+    "ppsScaleKeys_S": "1 0.8 1.2 0.7 1 1.3"
+   }
+  }
  ]
 }

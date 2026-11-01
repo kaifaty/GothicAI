@@ -244,6 +244,14 @@ def test_compose_and_enable_carry_a_vob_layer(tmp_path, monkeypatch):
     assert (tmp_path / 'content/particles.d/smoke.json').read_text() == particles.read_text()
     building_set.enable('city-1')
     assert not (tmp_path / 'content/particles.d').exists()
+    sprite = tmp_path / 'content-staging/smoke-1/materials'
+    (sprite / 'own-smoke').mkdir(parents=True)
+    (sprite / 'own-smoke/albedo.dds').write_bytes(b'smoke sprite')
+    (sprite / 'materials.json').write_text(json.dumps({'OWN_SMOKE.TGA': {'albedo': 'own-smoke/albedo.dds'}}))
+    building_set.compose('city-sprite', ['life-1', 'smoke-1'])
+    composed = tmp_path / 'content-staging/city-sprite/materials'
+    assert json.loads((composed / 'materials.json').read_text()) == {'OWN_SMOKE.TGA': {'albedo': 'own-smoke/albedo.dds'}}
+    assert (composed / 'own-smoke/albedo.dds').read_bytes() == b'smoke sprite'
     duplicate = tmp_path / 'content-staging/smoke-2/particles.d/smoke.json'
     duplicate.parent.mkdir(parents=True)
     duplicate.write_text(particles.read_text())
