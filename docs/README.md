@@ -246,6 +246,8 @@
 
 Оригинальные голоса TTS: `gothic-tts serve --game-dir DIR` через модуль [`gothic_tts.originals`](../tts-service/src/gothic_tts/originals.py) сам в фоне режет 36 снапшотов из готовой базы без ffmpeg и заранее готовит клоны Inworld; имена прежних реплик и порядок склейки закреплены в [`original_lines.json`](../tts-service/src/gothic_tts/original_lines.json), нормализация сохранена; до готовности звучат придуманные голоса. Снапшоты остаются у игрока в `~/.local/share/gothic-ai/voices/original/`, повторная нарезка нужна только при смене отпечатка источника или алгоритма. Ручные [`voice_snapshots.py`](../tts-service/scripts/voice_snapshots.py) и `gothic-tts clone-originals [--dir DIR] [ID ...]` сохранены. Сервис принимает `--original-voices-dir DIR` и `--no-original-voices`; лаунчер — `tts.original_voices` (по умолчанию `true`), шортсы выключают всю подготовку. [Текущее поведение и команды](MVP.md#как-работает-сейчас).
 
+Команды генерации данных (из `server/` через `uv run`): `gothic-ai places <world_points.json>` собирает книгу мест, `gothic-ai lore <world_points.json>` — факты; `gothic-ai cards [--only SYM,...]` пишет карточки характера в `gamedata/characters.json`. Для `cards` нужна подключённая игра вместо обычного `serve`; готовые карточки пропускаются, `--only` переписывает указанные. Это генератор, не сценарий e2e.
+
 ## Флаги `gothic-ai serve`
 
 Всё включено по умолчанию, флаг `--no-X` выключает. Полный список — `gothic-ai serve --help` или `cli.py` около строки 2200. Что выключает каждый флаг, где живёт фича и что её проверяет — в [`features.md`](features.md).
@@ -259,10 +261,13 @@
 
 ## Тесты и прогоны
 
+[Руководство e2e](e2e.md): ручная живая группа, критерии по фактам игры, несколько попыток, расход квоты и расшифровки.
+
 | Что | Как |
 |---|---|
 | pytest одного модуля | `cd server && uv run pytest tests/test_<модуль>.py -q`; на Ryzen — `scripts/ryzen.sh pytest tests/test_<модуль>.py` |
 | Строгие схемы всех инструментов сервера | `cd server && uv run pytest tests/test_tool_schemas.py -q`; обход модулей `gothic_ai`, проверка всех вложенных объектов |
+| Живой набор вручную | `SUITE=haggle RUNS=3 LLM=chatgpt scripts/e2e-live.sh`; [случаи и зачёт](e2e.md#живая-группа); вне автоматической регрессии |
 | Один сценарий e2e | `SCENARIO=<имя> scripts/ryzen.sh e2e`; на Mac — `SCENARIO=<имя> LLM=fake scripts/e2e.sh` |
 | SIGKILL игры при загрузке e2e на Ryzen | До маркера `scenario <name>: checks started` — до четырёх запусков с отдельными логами; четыре убийства подряд дают код 76 и времена, [правила](ryzen.md#как-работает-сейчас) |
 | Частота кадров e2e | На Ryzen и Mac по умолчанию `E2E_MAX_FPS=30`; `0` снимает лимит, `60` задаёт 60 FPS. `OPENGOTHIC_FPS_LOG=1` включён в e2e по умолчанию; bench и живая игра не меняются. [Настройки](ryzen.md), [приёмка 12 сценариев](../reports/compute/2026-10-19-e2e-fps-cap/README.md) |
@@ -290,7 +295,7 @@
 
 **Сценарии по областям** (модуль в `server/src/gothic_ai/scenarios/`):
 
-- **живые решения о сдаче** (`combat.py`): `surrender_live` — новая игра, `LLM=chatgpt`, живая быстрая модель из настроек или `QUICK_URL`; по одному решению Лобарта и бандита при низком HP, Лобарта/бандита/стражника на сдачу героя и бандита/Браго на просьбу унижения (Браго в своей пещере, у героя 100 золотых). После принятого `surrender` или `accept_surrender` наблюдение длится ещё 20 с. Настоящие инструменты, слова, выкуп, бой, анимации и задержки пишутся в `LOG_DIR/surrender_live.json`; для B/C добавлены время от фразы до выхода адресата из `ZS_ATTACK`, попадания по герою до решения и после паузы; любой завершённый выбор — `done`, ошибка стенда — `failed`. [Отчёт живого прогона](../reports/2026-10-26-surrender-live.md);
+- **живые решения о сдаче** (`combat.py`, общий формат `live.py`): `SUITE=surrender_live RUNS=3 LLM=chatgpt scripts/e2e-live.sh`, выбор `CASES=A_lobart,B_guard`; семь независимых случаев, решения и фактическое исполнение в `live.json`, доли и запросы в `report.md`/`report.json`. Нужна быстрая модель из настроек или `QUICK_URL`; [критерии](e2e.md#surrender_live).
 - **унижение сдавшегося героя** (`combat.py`): `humiliate` — как `hero_yield`, fake выбирает `humiliate:true`; проверки `S_PRAY`/`S_PEE`, расстояния, `said`, удержания колен и родного вставания после движения; результат содержит позиции и времена;
 - **сдача героя** (`combat.py`): `hero_yield` — новая игра, `LLM=fake`: герой с мечом и золотом говорит `player_text` в бою; NPC принимает сдачу, перестаёт атаковать за 3 с, получает всё золото героя и AIV победителя;
 - **пощада** (`combat.py`): `mercy` — новая игра, `LLM=fake`: Лобарт сдаётся после настоящего удара при HP ниже 30 %, прекращает бой, убирает оружие и получает AIV поражения; герой убирает оружие, появляется заметка пощады, `player_text` снова запускает обычный разговор;
@@ -305,7 +310,7 @@
 - **возврат спутника из похода** (`walks.py`): `follow_back` — новая игра, `LLM=fake`, без `SAVE`: Кавалорн с намерением `follow_hero` идёт к телу Браго; повторный `set_intent follow_hero` прерывает `go_to_npc` одним `follow`, снимок подтверждает следование и расстояние до героя после возврата;
 - **восприятие** (`perception.py`; `broken` — `broken.py`, `places` — прямо в `cli.py`): `see`, `seen`, `hearing`, `cave`, `ground`, `places`, `knows`, `remembers`, `trace`, `broken`;
 - **жизнь NPC** (`npc_life.py`): `day`, `noise`, `initiative`, `lead`, `meet`, `meet_missed`, `errand`, `errand_fork`, `errand_far`, `errand_give`, `chests`, `chests_lobart`;
-- **беседа** (`conversation.py`): `group`, `interject`, `gossip`, `gossip_demo`, `cards`;
+- **беседа** (`conversation.py`): `group`, `interject`, `gossip`, `gossip_demo`;
 - **сделки** (`deals.py`): `deal`, `deal_demo`, `debt`, `contract`, `xardas_money` — группа 2 «подставленное решение», `auto` выбирает общий `off`; цены, подарки, займы и поручения объявлены как «дано», проверяются обмен, долг и окно (`deal_demo` — демонстрация); `haggle` — живой сценарий. **Переговоры с бандитами**: `bandit_parley` (`bandit_parley.py`) и `bandit_bounty` (`bandit_bounty.py`) — группа 2, новая игра, `off`: заданные ультиматум, перемирие, тайна и проводы проходят настоящую проверку инструментов; проверяются отказ без повода/рычага, деньги, перемирие, ванильные последствия и движение Браго к `CASTLEMINE_HUT`;
 - **удержание встречи с бандитами** (`bandit_hold.py`): `bandit_hold` — новая игра, `LLM=fake`, без `SAVE`: рейнджер-бандиты `BDT_10300`–`10305`, 30 с без нападения на героя и свободного спутника с продлениями `parley`, затем нападение после вердикта `scripts`;
 - **ворота города** (`gate.py`): `gate` — новая игра, `LLM=fake`: сделка за 100 золотых через Y, проход у `MIL_310` и `MIL_333`, вход без `SECONDWARN`/`ATTACK`; после загрузки — `let_pass` по вере и факт заявления;
@@ -351,6 +356,7 @@
 | [`protocol.md`](protocol.md) | протокол игра ↔ сервер, версии и бронь номера | справочник |
 | [`threat-model.md`](threat-model.md), [`SECURITY.md`](../SECURITY.md) | модель угроз: что защищаем, кто атакует, границы доверия, угрозы и пробелы, шкала критичности; как сообщить об уязвимости, советы игрокам, правила проверки безопасности для ревью | справочник; путь `docs/threat-model.md` указан в проверке безопасности Codex |
 | [`features.md`](features.md) | фичи, включённые по умолчанию: выключатели, модули, проверки, пробелы покрытия | реестр |
+| [`e2e.md`](e2e.md) | ручная живая группа e2e: команды, случаи, зачёт по фактам, расход и расшифровки | сейчас + журнал |
 | [`compute.md`](compute.md), [`ryzen.md`](ryzen.md) | машины, очередь `gq`, прогоны на Ryzen | справочник |
 | [`npc-agent.md`](npc-agent.md) | агент NPC: два контура, приказы, восприятие | сейчас + справочник с журналом |
 | [`npc-tools.md`](npc-tools.md) | инструменты NPC: сделки, восприятие, карточки, беседа, поручения | сейчас + план с журналом |

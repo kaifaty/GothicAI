@@ -75,6 +75,7 @@ from .common import (
     attach_when_free,
     wait_message,
 )
+from .live import LiveSuite
 
 log = logging.getLogger("gothic_ai.scenarios")
 
@@ -387,6 +388,136 @@ def _game_minute(snap: Snapshot) -> int:
     return snap.world.day * GAME_DAY + snap.world.hour * 60 + snap.world.minute
 
 
+async def _chests_lobart(
+    link: GameLink,
+    dialogue: DialogueManager,
+    talk: TalkDesk,
+    chests: ChestDesk | None,
+    npc: str,
+    item: str,
+    ask: str,
+) -> dict[str, str]:
+    """Observe a real chest retrieval and delivery, rather than the promise to fetch it."""
+    suite = LiveSuite("chests_lobart", dialogue.trace)
+    for case_name in suite.selected:
+        with suite.case(case_name) as case:
+            if chests is None:
+                raise GameError("chests_lobart requires the chest subsystem")
+            await link.wait_world()
+            await link.debug("skip_important", near=npc)
+            await link.debug("player_goto", to=npc, distance=300)
+            if not await _until(lambda: npc in talk.people and talk.people[npc].distance <= 800, 20):
+                raise GameError("Lobart is not near the hero")
+            chest = next(
+                (c for c in await link.npc_chests(npc) if any(i.item == item and i.count for i in c.items)),
+                None,
+            )
+            if chest is None:
+                raise GameError("Lobart's chest does not contain the requested clothes")
+
+            async def hero_has() -> int:
+                expr = ["call", "NPC_HASITEMS", ["inst", "HERO"], ["sym", item]]
+                return int(await link.evaluate(expr) or 0)
+
+            before = await hero_has()
+            # The hero can pay an ordinary clothing price when an actual offer is made.
+            await link.story_effect(npc, [{"do": "give", "item": GOLD, "count": 1000}])
+            start = await link.snapshot(npc, fresh=True)
+            positions = [start.npc.pos]
+            entries: list[dict[str, Any]] = []
+
+            def refusal_words(saved: list[dict[str, Any]] = entries) -> list[str]:
+                replies = [e["text"] for e in saved if e.get("kind") == "npc" and e.get("npc") == npc]
+                # Only an explicit refusal to sell is a failure; a promise without delivery is undecided.
+                refusals = (
+                    "не продам", "не продаю", "не продается", "не продаётся", "не продаются",
+                    "не буду продавать", "не собираюсь продавать", "не могу продать", "не для продажи",
+                )
+                return replies[-1:] if replies and any(p in replies[-1].lower() for p in refusals) else []
+
+            def position(msg: GameMessage, samples: list[tuple[float, float, float]] = positions) -> None:
+                if isinstance(msg, Snapshot) and msg.npc.id.upper() == npc:
+                    samples.append(msg.npc.pos)
+
+            link.listeners.append(position)
+            journals = [dialogue.journal]
+            if chests.journal is not dialogue.journal:
+                journals.append(chests.journal)
+            sinks = [journal.sink for journal in journals]
+            for journal, sink in zip(journals, sinks, strict=True):
+
+                def keep(
+                    entry: dict[str, Any], previous: Any = sink, saved: list[dict[str, Any]] = entries,
+                ) -> None:
+                    saved.append(entry)
+                    if previous is not None:
+                        previous(entry)
+
+                journal.sink = keep
+            try:
+                talk.hear(ask, npc, {"via": "scenario"})
+                deadline = time.monotonic() + 240
+                confirmed = False
+                after = before
+                accepted: list[str] = []
+                while time.monotonic() < deadline:
+                    after = await hero_has()
+                    fetched = any(
+                        e.get("kind") == "chest" and e.get("npc") == npc
+                        and e.get("chest") == chest.id and e.get("took", {}).get(item, 0) > 0
+                        for e in entries
+                    )
+                    if fetched and after > before:
+                        break
+                    window = await link.deal_window()
+                    if window is not None and window.get("npc") == npc:
+                        accepted.append(await link.press_deal())
+                    elif not dialogue.speaking(npc) and npc not in chests._going:
+                        replies = [e for e in entries if e.get("kind") == "npc" and e.get("npc") == npc]
+                        if refusal_words():
+                            break
+                        if replies and not confirmed:
+                            # A real model may name its price before it starts walking.
+                            talk.hear("Да, беру, по рукам.", npc, {"via": "scenario"})
+                            confirmed = True
+                    await asyncio.sleep(1)
+
+                await _until(lambda: not dialogue.speaking(npc), 30)
+                end = await link.snapshot(npc, fresh=True)
+                after = await hero_has()
+                positions.append(end.npc.pos)
+                moved_cm = max(math.dist(start.npc.pos, pos) for pos in positions)
+                chest_facts = [e for e in entries if e.get("kind") == "chest" and e.get("npc") == npc]
+                fetched = any(
+                    e.get("chest") == chest.id and e.get("took", {}).get(item, 0) > 0 for e in chest_facts
+                )
+                words = [e["text"] for e in entries if e.get("kind") == "npc" and e.get("npc") == npc]
+                calls = [
+                    call for row in case.records
+                    for step in row.get("steps", []) for call in step.get("calls", [])
+                ]
+                attempted = any(call.get("name") == CHEST for call in calls)
+                refusal = refusal_words()
+                outcome = "success" if moved_cm >= 100 and fetched and after > before else (
+                    "failure" if refusal else "no_decision"
+                )
+                decision = "delivered" if outcome == "success" else (
+                    "refused" if refusal else "incomplete" if words or attempted else "none"
+                )
+                case.finish(outcome, evidence={
+                    "decision": decision,
+                    "chest": chest.id, "chest_facts": chest_facts, "tool_outcomes": calls,
+                    "npc_words": words, "refusal_words": refusal, "moved_cm": round(moved_cm, 1),
+                    "hero_items_before": before, "hero_items_after": after,
+                    "deal_acceptance": accepted, "timeout_s": 240,
+                })
+            finally:
+                link.listeners.remove(position)
+                for journal, sink in zip(journals, sinks, strict=True):
+                    journal.sink = sink
+    return suite.results()
+
+
 async def chests_scenario(
     link: GameLink,
     dialogue: DialogueManager,
@@ -409,6 +540,8 @@ async def chests_scenario(
       out; the bow is in his hands and no longer in the chest;
     - missing: having looked, he knows the gold is gone;
     - back: back from the chest, he goes on talking to the hero."""
+    if npc == LOBART:
+        return await _chests_lobart(link, dialogue, talk, chests, npc, item, ask)
     await link.wait_world()
     results: dict[str, str] = {}
     if chests is None:

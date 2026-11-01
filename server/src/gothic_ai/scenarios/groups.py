@@ -86,5 +86,4 @@ LIVE = {
     "vanilla_line_live",
     "surrender_live",
     "chests_lobart",
-    "cards",
 }

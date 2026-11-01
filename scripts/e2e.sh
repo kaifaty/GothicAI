@@ -2,6 +2,7 @@
 # End-to-end check: starts the AI server with a scenario, then a new game in OpenGothic.
 # LLM defaults to the scenario group selected in server/src/gothic_ai/scenarios/groups.py.
 # LLM=off forbids model calls except explicit scenario givens (given/silent).
+# Manual live suites: SUITE=haggle RUNS=3 LLM=chatgpt scripts/e2e-live.sh; see docs/e2e.md.
 #   check_walk: new game, no SAVE, no model; Cavalorn walks from Xardas's stairs to Brago's
 #       unseen body in the bandit cave using the native waynet, sees it and returns to the hero
 #   follow_back: new game, no SAVE, no model; repeated set_intent follow_hero recalls Cavalorn
@@ -31,8 +32,8 @@
 #       held kneeling and native exit after real Back input; records positions and game/wall times
 #   surrender_live: new game, LLM=chatgpt and live QUICK_URL (defaults to settings.toml);
 #       seven independent Lobart/bandit/guard/Brago scenes record real surrender decisions, tools, speech,
-#       transfers, humiliation and timings in surrender_live.json; any completed decision passes;
-#       SURRENDER_CASES=B_guard,C_brago runs only those scenes
+#       transfers, humiliation and timings in live.json; outcomes are scored from game facts;
+#       CASES=B_guard,C_brago runs only those scenes (see docs/e2e.md)
 #   svm_lines: new game, no SAVE, no model; QUICK_URL supplies ten live Gemma SVM lines, their native
 #       text and voice delays, then Cavalorn kills a beast and speaks its native script SVM.
 #       An unavailable QUICK_URL falls back after three errors; TTS=fake|inworld.
@@ -274,7 +275,7 @@
 #   showrunner_live: LLM=chatgpt only, stage 4 layer 3: one saved game, real arrived, human-kill deed and
 #       chapter occasions consumed by Showrunner.run; every line is finished by play_book_chain before
 #       the next occasion, with a game day and an injected 15 min between them. All three must have a
-#       line/none outcome, at least one completed line. SAVE=save_slot_1.sav; TIMEOUT=1200
+#       live.json case: completed canonical line, failed passage, or no_decision. SAVE=save_slot_1.sav
 #       GOTHIC_NO_FEAT_CHALLENGES=1 runs the director without hidden challenges (--no-feat-challenges)
 #   greg: given: Greg gives his city errand and accepts the hero's clothing claim. New game, no SAVE;
 #       Group 2, LLM=off via auto. Farmer clothes earn 50 gold, a map
@@ -285,8 +286,8 @@
 #       line and quest fields. SAVE=save_slot_1.sav; TIMEOUT=420
 #   vanilla_line_live: LLM=chatgpt only: Showrunner.run consumes two real vanilla occasions, taking and
 #       completing Lobart's turnips. Finish the first line, if any, before the second event, then advance
-#       a game day and the budget's wall clock by 15 min. Both events need a line/none outcome, at least
-#       one line, all quests completed; givers must be peaceful and outside their follows quest's cast.
+#       a game day and the budget's wall clock by 15 min. live.json scores canonical completed lines;
+#       no line is no_decision; failed construction or passage is failure.
 #       Logs include each event, proposal outcome, built quests and passage. SAVE=save_slot_1.sav; TIMEOUT=1200
 #       GOTHIC_FORCE_CHALLENGE=1 requires one hidden challenge per line and checks its hint, outcome and feat.
 #   vgive: given: Cavalorn gives and accepts his bandit quest. Native menus, the letter to Vatras,
@@ -343,9 +344,6 @@
 #       and heard-noise memory
 #       with place and game time. Without DECIDER_URL a fixed stand-in chooses investigate for this NPC;
 #       with it the server's planner logs the live choice and pins investigate. SAVE=save_slot_1.sav
-#   cards: the model writes character cards (docs/npc-tools.md, wave 1 step 3) for every npc of the world with
-#       lines of its own (GOTHIC_CARDS=SYM,...: those only) into server/src/gothic_ai/gamedata/characters.json;
-#       those with a card are skipped; needs LLM=chatgpt and a long TIMEOUT for all of them
 #   haggle: live only (LLM=chatgpt): the hero offers the same silver cup to Canthar (greedy by his card) and
 #       Lutero (fairer) and asks for more: the greedy one should offer less (wave 1 step 3)
 #   deal: given: Lobart offers goods for 50 gold, 40 after refusal and 30 after haggling.
@@ -441,7 +439,10 @@ if [[ "${GOTHIC_SOAK_CONTROL:-0}" == 1 && "$SCENARIO" != neural-soak ]]; then
 fi
 E2E_DEFAULT_TIMEOUT=240
 if [[ "$SCENARIO" == memprobe ]]; then E2E_DEFAULT_TIMEOUT=1200; fi
-if [[ "$SCENARIO" == surrender_live || "$SCENARIO" == neural-still ]]; then E2E_DEFAULT_TIMEOUT=1200; fi
+if [[ "$SCENARIO" == surrender_live || "$SCENARIO" == neural-still || "$SCENARIO" == showrunner_live || "$SCENARIO" == vanilla_line_live ]]; then E2E_DEFAULT_TIMEOUT=1200; fi
+if [[ "$SCENARIO" == haggle ]]; then E2E_DEFAULT_TIMEOUT=1200; fi
+if [[ "$SCENARIO" == interject ]]; then E2E_DEFAULT_TIMEOUT=600; fi
+if [[ "$SCENARIO" == chests_lobart ]]; then E2E_DEFAULT_TIMEOUT=420; fi
 if [[ "$SCENARIO" == feats && "$LLM" == chatgpt ]]; then E2E_DEFAULT_TIMEOUT=1020; fi
 if [[ "$SCENARIO" == feat_fame ]]; then E2E_DEFAULT_TIMEOUT=420; fi
 TIMEOUT="${TIMEOUT:-$E2E_DEFAULT_TIMEOUT}"

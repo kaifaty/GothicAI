@@ -7,14 +7,14 @@ from typing import Any
 from ..brain.reflex import Reflexes
 from ..deals import GOLD, Deals
 from ..dialogue import DialogueManager
-from ..game import GameLink
+from ..game import GameError, GameLink
 from ..llm import ToolCall
-from ..llm.fake import FakeBackend
 from ..protocol import Session
 from ..talk import TalkDesk
 from ..trace import read as read_trace
 from ..trust import Trust
 from .common import LOBART, FixedDecider, _logged, _until, model_off, wait_message
+from .live import LiveSuite
 
 log = logging.getLogger("gothic_ai.scenarios")
 
@@ -510,84 +510,102 @@ async def haggle(
     npcs: tuple[str, str] = (CANTHAR, LUTERO),
     ware: str = "ITMI_SILVERCUP",
 ) -> dict[str, str]:
-    """Character in a deal (docs/npc-tools.md, wave 1 step 3), live only (LLM=chatgpt). The hero offers the
-    same silver cup to two traders who would buy it, a greedy one and a fairer one by their character cards
-    (Canthar, Lutero), and asks for more, as a player would: he agrees in words when a price is named. What
-    each offers first and after the haggling is logged; the greedy one should offer less."""
-    results: dict[str, str] = {}
-
-    def check(name: str, ok: bool, detail: object = "") -> None:
-        results[name] = f"{'done' if ok else 'failed'}{f' ({detail})' if detail != '' else ''}"
-
-    if isinstance(dialogue.llm, FakeBackend):
-        check("live", False, "run with LLM=chatgpt")
-        return _logged(results)
+    """Compare the traders' actual offers for the same silver cup, with live decisions."""
+    suite = LiveSuite("haggle", dialogue.trace)
     await link.wait_world()
     if link.session is None:
         await wait_message(link, Session, timeout=10)
     await asyncio.sleep(1)
     talk.reflexes = Reflexes(FixedDecider({"posture": "listen"}))
-    offers: dict[str, list[int]] = {}
 
     def buying(npc: str, version: int) -> int | None:
         deal = deals.open.get(npc)
-        if deal is None or deal.version < version or not any(g.item == ware for g in deal.hero_gives):
+        if (deal is None or deal.version < version or len(deal.hero_gives) != 1
+                or deal.hero_gives[0].item != ware or deal.hero_gives[0].count != 1
+                or not deal.npc_gives or any(g.item != GOLD for g in deal.npc_gives)):
             return None
         return sum(g.count for g in deal.npc_gives if g.item == GOLD)
 
-    for npc in npcs:
-        await link.attach(npc)
-        await link.act(npc, "debug_add_item", item=GOLD, count=300)
-        await link.act(npc, "debug_add_item", item=ware, count=1)
-        await link.detach(npc)
-        await link.story_effect(npc, [{"do": "give", "item": ware, "count": 1}])  # the cup is the hero's
-        await link.debug("skip_important", near=npc)
-        await link.debug("player_goto", to=npc, distance=250)
-        # the roster must have him close: else the words would go to the one the hero talked to before
-        if not await _until(lambda npc=npc: npc in talk.people and talk.people[npc].distance <= 600, 20):
-            check(f"{npc}_near", False)
-            continue
-        name = talk.people[npc].name
-        got: list[int] = []
+    for case_id in suite.selected:
+        with suite.case(case_id) as case:
+            offers: dict[str, list[int]] = {}
+            terms: dict[str, list[dict[str, Any]]] = {}
+            for npc in npcs:
+                await link.attach(npc)
+                await link.act(npc, "debug_add_item", item=GOLD, count=300)
+                await link.act(npc, "debug_add_item", item=ware, count=1)
+                await link.detach(npc)
+                await link.story_effect(npc, [{"do": "give", "item": ware, "count": 1}])
+                await link.debug("skip_important", near=npc)
+                await link.debug("player_goto", to=npc, distance=250)
+                if not await _until(
+                    lambda npc=npc: npc in talk.people and talk.people[npc].distance <= 600, 20,
+                ):
+                    raise GameError(f"haggle: {npc} did not come within talking distance")
+                name = talk.people[npc].name
+                got: list[int] = []
+                terms[npc] = []
 
-        async def say_until(lines: list[str], version: int, npc: str = npc) -> int | None:
-            """Say the lines one by one until the npc offers a deal of `version` or later."""
-            for line in lines:
-                await link.debug("type", text=line)
-                if await _until(lambda: buying(npc, version) is not None, 45):
-                    return buying(npc, version)
-            return None
+                async def say_until(
+                    lines: list[str], version: int, npc: str = npc,
+                    terms: dict[str, list[dict[str, Any]]] = terms,
+                ) -> int | None:
+                    for line in lines:
+                        await link.debug("type", text=line)
+                        offered = await _until(lambda: buying(npc, version) is not None, 45)
+                        conv = dialogue.conversations.get(npc)
+                        if conv is not None and conv.reply is not None:
+                            await asyncio.wait({conv.reply}, timeout=90)
+                            if not conv.reply.done():
+                                conv.reply.cancel()
+                                await asyncio.gather(conv.reply, return_exceptions=True)
+                        if offered and (price := buying(npc, version)) is not None:
+                            deal = deals.open[npc]
+                            terms[npc].append({
+                                "price": price,
+                                "hero_gives": [give.term() for give in deal.hero_gives],
+                                "npc_gives": [give.term() for give in deal.npc_gives],
+                            })
+                            return price
+                    return None
 
-        first = await say_until(
-            [
-                f"{name}, купишь у меня серебряный кубок? Сколько дашь?",
-                f"{name}, назови цену.",
-                f"{name}, согласен, давай по рукам.",
-            ],
-            1,
-        )
-        if first is not None:
-            got.append(first)
-            version = deals.open[npc].version
-            more = await say_until(
-                [
-                    f"{name}, маловато. Кубок серебряный, накинь ещё.",
-                    f"{name}, ладно, на твою новую цену согласен.",
-                ],
-                version + 1,
-            )
-            if more is not None:
-                got.append(more)
-            await link.decline_deal()
-        offers[npc] = got
-        check(f"{npc}_offered", bool(got), got)
-        await asyncio.sleep(2)
-    cards = dialogue.personas.cards
-    greedy, generous = sorted(npcs, key=lambda n: -(cards[n].greed if n in cards else 3))
-    a, b = offers.get(greedy, []), offers.get(generous, [])
-    detail = f"{greedy} (greed {cards[greedy].greed if greedy in cards else '?'}): {a}; {generous}: {b}"
-    check("greedy_pays_less", bool(a) and bool(b) and a[0] < b[0], detail)
-    return _logged(results)
+                first = await say_until(
+                    [
+                        f"{name}, купишь у меня серебряный кубок? Сколько дашь?",
+                        f"{name}, назови цену.",
+                        f"{name}, согласен, давай по рукам.",
+                    ],
+                    1,
+                )
+                if first is not None:
+                    got.append(first)
+                    version = deals.open[npc].version
+                    more = await say_until(
+                        [
+                            f"{name}, маловато. Кубок серебряный, накинь ещё.",
+                            f"{name}, ладно, на твою новую цену согласен.",
+                        ],
+                        version + 1,
+                    )
+                    if more is not None:
+                        got.append(more)
+                    await link.decline_deal()
+                    conv = dialogue.conversations.get(npc)
+                    if conv is not None and conv.reply is not None:
+                        await asyncio.wait({conv.reply}, timeout=90)
+                offers[npc] = got
+                await asyncio.sleep(2)
+            canthar, lutero = (offers.get(npc, []) for npc in npcs)
+            outcome = ("no_decision" if not canthar or not lutero
+                       else "success" if canthar[0] < lutero[0] else "failure")
+            case.finish(outcome, evidence={
+                "item": ware,
+                "offers": offers,
+                "terms": terms,
+                "compared": "first price for the same cup",
+                "facts": deals.chronicle.facts("deal"),
+            })
+    return suite.results()
 
 
 async def deal_demo(link: GameLink, deals: Deals, npc: str) -> dict[str, str]:
