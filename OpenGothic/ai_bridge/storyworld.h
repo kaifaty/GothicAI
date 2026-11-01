@@ -33,7 +33,7 @@ class StoryWorld final {
     // story_tag: npcs already in the world (`npcs`, symbols) watched under `tag`, like spawned ones; how many
     // were found
     int  tag(World& world, const rapidjson::Value& msg);
-    // story_effect: effects on `npc`, as self; knockout returns winner_hp and dropped in value
+    // story_effect: effects on `npc`, as self; far-fight outcomes return HP and optional dropped item
     bool effects(World& world, const rapidjson::Value& msg, std::string& error, std::string& value);
     // story_nearby: people within `radius` cm of `npc` (alive, not the hero), as JSON
     // [{"npc", "name", "distance", "guild"}]; empty if there is no such npc

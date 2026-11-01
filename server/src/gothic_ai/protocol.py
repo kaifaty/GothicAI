@@ -31,7 +31,7 @@ CRIME_REACT_PROTOCOL = 44  # independently held hero deeds, their ids, and vanil
 CRIME_MEET_PROTOCOL = 46  # deeds switch also holds room entry; rule verdicts need no body action
 NPC_CRIME_PROTOCOL = 47  # marked NPC theft/attack and separate npc_deed snapshots
 NPC_FAR_PROTOCOL = 48  # story_effect chest_take: a checked chest-to-self transfer without a body action
-NPC_FAR_FIGHT_PROTOCOL = 59  # story_effect knockout: native nonlethal outcome outside simulation
+NPC_FAR_FIGHT_PROTOCOL = 59  # story_effect knockout/wound: nonlethal outcomes outside simulation
 
 # --- game -> server -----------------------------------------------------------
 
@@ -1940,15 +1940,18 @@ class StoryEffect(_Command):
 
     do: Literal[
         "give", "xp", "set", "journal", "end", "attack", "refuse_talk", "routine", "create",
-        "teach", "calm", "party", "knows", "crime_memory", "chest_take", "knockout",
+        "teach", "calm", "party", "knows", "crime_memory", "chest_take", "knockout", "wound",
     ]
     by: Annotated[str, Field(strict=True, min_length=1)] | None = None
     loss: Annotated[int, Field(strict=True, ge=0)] | None = None
+    by_loss: Annotated[int, Field(strict=True, ge=0)] | None = None
 
     @model_validator(mode="after")
-    def knockout_fields(self) -> StoryEffect:
-        if self.do == "knockout" and (self.by is None or self.loss is None):
-            raise ValueError("knockout needs by and loss")
+    def far_fight_fields(self) -> StoryEffect:
+        if self.do in {"knockout", "wound"} and (self.by is None or self.loss is None):
+            raise ValueError(f"{self.do} needs by and loss")
+        if self.do == "wound" and self.by_loss is None:
+            raise ValueError("wound needs by_loss")
         return self
 
 
@@ -1978,7 +1981,11 @@ class StoryEffectCmd(_Command):
     v59: `knockout` with `by` (winner instance), `loss` (nonnegative integer): self loses a far fight
     through the native unconscious state; the winner keeps at least 1 HP. Both participants are checked
     before any effect runs; inside simulation or controlled bodies reject the batch without changes.
-    `result.value` reports `winner_hp` and `dropped` (item instance or null)."""
+    `result.value` reports `winner_hp` and `dropped` (item instance or null).
+
+    v59: `wound` with `by`, `loss` (self), `by_loss` (by), both nonnegative integers: a far fight
+    reaches its deadline with no knockout. The same participant checks apply; both keep at least
+    1 HP, no weapon drops or perceptions occur. `result.value` reports `self_hp` and `by_hp`."""
 
     type: Literal["story_effect"] = "story_effect"
     req: str
@@ -1987,9 +1994,9 @@ class StoryEffectCmd(_Command):
     check: bool | None = None
 
     @model_validator(mode="after")
-    def validate_knockout(self) -> StoryEffectCmd:
+    def validate_far_fight(self) -> StoryEffectCmd:
         for effect in self.effects:
-            if effect.get("do") == "knockout":
+            if effect.get("do") in {"knockout", "wound"}:
                 StoryEffect.model_validate(effect)
         return self
 
