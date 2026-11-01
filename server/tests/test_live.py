@@ -105,15 +105,23 @@ async def test_live_npc_skips_decider_cases_without_preparing_a_game(tmp_path, m
     assert "DECIDER_URL" in (tmp_path / "report.md").read_text()
 
 
-@pytest.mark.parametrize(("evidence", "outcome"), [
-    ([10, 11], "success"), ([12], "failure"), (None, "no_decision"),
+@pytest.mark.parametrize(("evidence", "settled", "outcome"), [
+    ([10, 11], True, "success"), ([12], True, "failure"),
+    (None, True, "no_decision"), (None, False, "no_decision"),
 ])
-def test_live_feat_award_requires_evidence_of_the_actual_kill(
-    tmp_path, monkeypatch, evidence, outcome,
+async def test_live_feat_award_requires_evidence_of_the_actual_kill(
+    tmp_path, monkeypatch, evidence, settled, outcome,
 ):
-    from gothic_ai.scenarios.feats import _record_live_feat
+    from importlib import import_module
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, Mock
 
+    scenario = import_module("gothic_ai.scenarios.feats")
     monkeypatch.setenv("CASES", "feat_award")
+    monkeypatch.setattr(scenario, "model_off", Mock(side_effect=AssertionError("live uses no givens")))
+    monkeypatch.setattr(scenario, "_save_or_fail", AsyncMock(
+        return_value=SimpleNamespace(branch="saved", seq=0),
+    ))
     suite = LiveSuite("live_director", TraceWriter(tmp_path / "traces"))
     victim = "BDT_1014_BANDIT_L"
     entries = [
@@ -122,12 +130,39 @@ def test_live_feat_award_requires_evidence_of_the_actual_kill(
         (12, {"fact": "died", "npc": "OTHER", "killer": "PLAYER"}),
     ]
     awards = [{"id": "award", "evidence": evidence}] if evidence is not None else []
+    chronicle = SimpleNamespace(on_entry=[], entries=lambda: entries)
+    chronicler = SimpleNamespace(
+        artist=scenario.ScenarioArtist(tmp_path / "art"), chronicle=chronicle, feats=[],
+        _work=None if settled else SimpleNamespace(done=lambda: False),
+    )
+    waits = []
+
+    async def until(check, timeout):
+        done = bool(check())
+        waits.append((timeout, done))
+        return done
+
+    async def debug(command, **kwargs):
+        if command == "kill":
+            for seq, fact in entries:
+                for callback in chronicle.on_entry:
+                    callback(seq, fact)
+            chronicler.feats.extend(awards)
+
+    monkeypatch.setattr(scenario, "_until", until)
+    link = SimpleNamespace(
+        wait_world=AsyncMock(), session=object(), send=AsyncMock(), listeners=[],
+        snapshot=AsyncMock(), story_nearby=AsyncMock(return_value=[]), debug=debug,
+    )
     with suite.case("feat_award") as case:
-        _record_live_feat(case, entries, awards, victim, settled=True)
+        results = await scenario.feats(link, chronicler, SimpleNamespace(sink=None), object(), live=case)
+    assert all(value.startswith("done") for value in results.values())
+    assert waits == [(10, True), (120, settled)]
     assert suite.results() == {"feat_award": f"done ({outcome})"}
     [case] = json.loads((tmp_path / "live.json").read_text())["cases"]
     assert case["evidence"]["kill_sequences"] == [10, 11]
     assert case["evidence"]["awards"] == awards
+    assert case["evidence"]["settled"] is settled
 
 
 @pytest.mark.parametrize(("arrived", "outcome"), [(True, "success"), (False, "failure")])

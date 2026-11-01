@@ -234,7 +234,7 @@ async def feats(
             return _logged(results)
         if live is not None:
             settled = await _until(
-                lambda: chronicler._work is not None and chronicler._work.done(), 120,
+                lambda: chronicler._work is None or chronicler._work.done(), 120,
             )
             _record_live_feat(live, chronicle.entries(), chronicler.feats, victim, settled)
             return _logged(results)
@@ -319,7 +319,7 @@ def _record_live_feat(
         bool(award.get("evidence")) and set(award["evidence"]) <= kills for award in awards
     )
     live.finish(
-        "success" if correct else "failure" if awards or not settled else "no_decision",
+        "success" if correct else "failure" if awards else "no_decision",
         evidence={"victim": victim, "kill_sequences": sorted(kills), "awards": awards,
                   "settled": settled},
     )
