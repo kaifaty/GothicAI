@@ -30,6 +30,7 @@ from gothic_ai.llm.off import ModelOff, OffBackend
         for scenario in (
             "witness", "wrath", "amends", "amends_deal", "trace", "broken", "gate", "gate_vouch", "greg",
             "crime_ally", "crime_law", "crime_talk", "trace_crime", "cover", "cover_subject",
+            "ground", "remembers", "cave", "seen", "group", "gossip", "gossip_demo",
         )
         for llm in ("auto", "fake", "chatgpt")
     ],

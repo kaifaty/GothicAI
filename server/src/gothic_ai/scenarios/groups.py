@@ -46,6 +46,13 @@ OFF = {
 }
 
 GIVEN = {
+    "ground",
+    "remembers",
+    "cave",
+    "seen",
+    "group",
+    "gossip",
+    "gossip_demo",
     "chests",
     "lead",
     "meet",

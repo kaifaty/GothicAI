@@ -113,10 +113,11 @@
 #       view is in the model's request, `look` answers, the views of the nearest npc's are pushed each second;
 #       a wolf killed in front of Lobart is a dead wolf to him; places by name at Xardas's tower, Lobart's
 #       and Onar's farms and in the city
-#   seen: what npc's saw (v12): Lobart keeps when, where and how he saw the hero on his farm; the hero goes to
+#   seen: given: Lobart catches the hero's lie using his recorded sighting. Lobart keeps when, where and how
+#       he saw the hero on his farm; the hero goes to
 #       the city (Harad sees him), an hour passes, he comes back and says he was in the city all morning:
-#       Lobart catches the lie by what he saw (model scripted with LLM=fake); the memory follows the save;
-#       story_state's `seen` (check_claim) is the engine's sight
+#       the memory follows the save; story_state's `seen` (check_claim) is the engine's sight.
+#       Group 2, LLM=off via auto; SAVE=save_slot_1.sav.
 #   trace: given: Lobart catches a lie about an arrow's age by its fresh trace; a stranger's arrow and
 #       denied authorship are the control. Group 2, LLM=off via auto; SAVE=save_slot_1.sav.
 #   broken: given: Lobart catches a lie about fresh fence debris; another NPC's sword break is the control.
@@ -316,14 +317,17 @@
 #   initiative: given: Lobart approaches about the overdue 25 gold and offers repayment. Checks the
 #       approach, listening partner, debt window and settlement. Group 2, LLM=off via auto;
 #       SAVE=save_slot_1.sav
-#   gossip: two people near the hero talk about his lie, in their own voices (docs/npc-tools.md, wave 2
-#       step 2). Lobart catches the hero lying, Hilda in the house does not hear it; an hour later she is put
+#   gossip: given: Lobart catches the hero lying; the scene's lines and Hilda's answer are given.
+#       Two people near the hero talk in their own voices (docs/npc-tools.md, wave 2 step 2).
+#       Hilda in the house does not hear the lie; an hour later she is put
 #       5 m from Lobart, the hero 13 m off, and the pair is opened: the rumor passes as one fact (how: talked),
-#       then Lobart turns to her and they say three lines in turn, each to the other, one voice after the
+#       then Lobart turns to her and they speak in turn, each to the other, one voice after the
 #       other (game.log); from a save the scene again: the hero's voice cuts both after the second line, he
 #       asks Hilda and she has it in mind; far from the hero a pass is only the fact. Starts the TTS service
-#       (TTS=fake). Words scripted with LLM=fake. Without DECIDER_URL (with it Lobart may first come up about
-#       the lie himself); TIMEOUT=420
+#       (TTS=fake). Group 2, LLM=off via auto; SAVE=save_slot_1.sav; without DECIDER_URL;
+#       TIMEOUT=420
+#   gossip_demo: given: Lobart's caught-lie fact and the scene's lines; a bench demonstration.
+#       Group 2, LLM=off via auto; SAVE=save_slot_1.sav; no TTS service.
 #   day: given: Lobart exposes the turnip lie; Vino chooses to tell Malet; the scene's lines are given.
 #       Checks daily menus, walks, alternating voices and recipients, near/far facts and save/load.
 #       Group 2, LLM=off via auto; TTS=fake; SAVE=save_slot_1.sav; TIMEOUT=480
@@ -345,30 +349,32 @@
 #   graph: the story graph decides which dialogs an npc offers (docs/story-graph.md, stage 3): switching a
 #       dialog off, adding a condition and a dialog of the director's own, keeping that across save/load;
 #       the game checks every script condition against its lifted form ("[story] check" in game.log)
-#   ground: Cavalorn follows the hero, the hero throws his letter down: Cavalorn sees it lying there, picks it
-#       up when told «бери» (take_item, model scripted with LLM=fake) and follows the hero again (protocol v22)
-#   group: one word at a time (docs/npc-tools.md, step B2): «Пацаны, здорово!» at the bandits' cave while
+#   ground: given: Cavalorn picks up the letter with take_item on «бери». The hero drops it while Cavalorn
+#       follows; checks sight, pickup, inventory and resumed following. Group 2, LLM=off via auto; new game.
+#   group: given: each bandit's spoken line. One word at a time (docs/npc-tools.md, step B2):
+#       «Пацаны, здорово!» at the bandits' cave while
 #       Cavalorn is the current conversation partner: Brago answers first, his line is heard in the game,
 #       the others' words wait their turn and are heard
 #       after his, the second knows what he said, a fourth voice says nothing. Starts the TTS service
-#       (TTS=fake); models scripted with LLM=fake
+#       (TTS=fake). Group 2, LLM=off via auto; new game, no SAVE.
 #   interject: who speaks up, by character (docs/npc-tools.md, step B3), live only (LLM=chatgpt and
 #       DECIDER_URL): at the bandits' cave the hero says three phrases, to Brago, to his mate, to them all;
 #       no more than three voices to each, none over another, someone speaks up by the behavioral model's
 #       word; what each said is in the log, to be read. Starts the TTS service (TTS=fake)
-#   remembers: seen lately (docs/npc-tools.md, step M2): Cavalorn goes into the bandits' cave first, sees them,
-#       comes back out; «там в пещере бандиты, разберись» (model scripted with LLM=fake): it remembers them
-#       though it sees them no more, walks into the cave first and fights Brago
+#   remembers: given: Cavalorn goes to XARDAS_BANDITS first and fights Brago on «разберись».
+#       Checks remembered bandits after leaving the cave, arrival and combat (docs/npc-tools.md, step M2).
+#       Group 2, LLM=off via auto; new game, no SAVE.
 #   fight_reactions_wolf/sight/bandits/flee: Cavalorn intercepts a hunting wolf before its first bite;
 #       sees a bloodfly at 30 m; charges two bandits (one held listening), which shout and draw before
 #       contact and strike within 3 s; a coward flees Cavalorn while the hero stays passive. Actual
 #       strike/damage timestamps come from body_watch. Fixed decisions and incidental combat silence
 #       are givens; sight uses only the native party flag and opens no conversation. DECIDER_URL optional;
 #       starts TTS (TTS=fake), TIMEOUT=300 for bandits, 180 for the other cases
-#   cave: the map of places (docs/npc-tools.md, step M3): Cavalorn goes with the hero to the steps below
+#   cave: given: Cavalorn goes to XARDAS_BANDITS on «зайди в пещеру». The map of places
+#       (docs/npc-tools.md, step M3): Cavalorn goes with the hero to the steps below
 #       Xardas's tower; the bandits' cave is among the places around him, a cave entered from the steps, and
-#       `where{пещера}` finds it; «Кавалорн, зайди в пещеру.» with no place named takes him into it (model
-#       scripted with LLM=fake; LLM=chatgpt: the model chooses the cave itself)
+#       `where{пещера}` finds it; the given order takes him into it.
+#       Group 2, LLM=off via auto; new game, no SAVE.
 #   knows: what an npc knows of where people are (docs/npc-tools.md, step M4): Cavalorn by his fire knows the
 #       bandits who robbed him sit in the cave below the steps, though the hero told him nothing: the fact is in
 #       his turn's situation and in `where{пещера}`; no model
