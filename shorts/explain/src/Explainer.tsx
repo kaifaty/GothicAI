@@ -23,6 +23,7 @@ import {CombatOverlay} from './parts/CombatOverlay';
 import {sourceFrame, zoomScale, type Viewport} from './parts/followMath';
 import {enterStyle, exitStyle, flashOpacity, type TransitionType} from './parts/motion';
 import {holdPush} from './parts/timing';
+import {Sfx} from './parts/Sfx';
 import {Sight} from './parts/Sight';
 import {Tags} from './parts/Tags';
 import {Hook, Texts} from './parts/Texts';
@@ -304,6 +305,7 @@ export const Explainer: React.FC<Plan> = (plan) => {
           {plan.music && !plan.mask && (!plan.stem || plan.stem === 'music') && (
             <Music music={plan.music} spans={spans} frames={contentFrames} stem={plan.stem === 'music'} />
           )}
+          {plan.sfx && !plan.mask && (!plan.stem || plan.stem === 'sfx') && <Sfx plan={plan} />}
           {!plan.mask && (!plan.stem || plan.stem === 'voice') &&
             plan.voice.map((v) => (
               <Sequence key={v.file} from={Math.round(v.start * fps)} name={v.file}>

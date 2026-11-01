@@ -2,7 +2,7 @@
 
 Модули и их связи — [карта проекта](../docs/README.md#модули-сервера), сообщения игры — [`docs/protocol.md`](../docs/protocol.md). Общие правила — корневой [`AGENTS.md`](../AGENTS.md).
 
-- **После правки:** `uv run pytest tests/test_<модуль>.py -q` по тестам изменённого модуля и `uv run ruff check <файлы>`. Полный `pytest` — один раз перед PR, на Ryzen: `scripts/ryzen.sh pytest`.
+- **После правки:** `python3 scripts/check.py run` из корня — тесты, которые отвечают за изменённые файлы, — и `uv run ruff check <файлы>`. Полный `pytest` руками не гоняем: выбор проверяет CI PR. На Ryzen (`scripts/ryzen.sh pytest <файлы>`) — тесты, которым нужны данные игры.
 - **Один сценарий e2e на правку:** `SCENARIO=<имя> scripts/ryzen.sh e2e`, на Mac — `SCENARIO=<имя> scripts/e2e.sh`. Сценарий пройден, когда все значения результата начинаются с `done`. Группы `OFF` / `GIVEN` выбирают `off`; живые наборы запускаются вручную вне регрессии через `scripts/e2e-live.sh` и тратят квоту подписки. [Правила](../docs/e2e.md).
 - **Новая подсистема** включена по умолчанию, выключает её флаг `--no-X` в `cli.py`. Сообщения игры она получает через `link.listeners` своего `GameLink`.
 - **Сообщение протокола** живёт в трёх местах: схема в `protocol.py`, мост `OpenGothic/ai_bridge/`, `docs/protocol.md`. Правка протокола поднимает версию во всех трёх: `PROTOCOL_VERSION`, `ProtocolVersion` в `aibridge.cpp`, заголовок документа. Новый номер сначала забронируй ([бронь номера](../docs/protocol.md#бронь-номера)). Иначе сервер только пишет в лог `protocol mismatch`.

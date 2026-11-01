@@ -19,6 +19,8 @@ FPS = 30
 STING_FRAMES = round(2.2 * FPS)
 # The footage sound fades in and out over this at each beat's edges, so a hard cut does not click.
 EDGE_FADE = 0.03
+# The sound of the motion (src/parts/sfxMap.ts): the workspace's sfx/ links here (explain/scripts/sfx_lib.py).
+SFX_LIB = Path.home() / ".local/share/gothic-ai/sfx/lib"
 
 
 class ExplainError(RuntimeError):
@@ -103,14 +105,38 @@ def _run(command: list[str], *, cwd: Path | None = None) -> None:
         raise ExplainError(str(err)) from err
 
 
+def link_sfx(ws: Path, lib: Path | None = None) -> None:
+    """The workspace's sfx/: a link to the sound library, made when missing (as brand/ is by hand)."""
+    lib = lib or SFX_LIB
+    link = ws / "sfx"
+    if link.exists():
+        return
+    if not (lib / "index.json").is_file():
+        raise ExplainError(f"No sound library in {lib}: python3 explain/scripts/sfx_lib.py (or \"sfx\": false)")
+    link.symlink_to(lib, target_is_directory=True)
+
+
+def add_sfx(game: Path, sfx: Path) -> None:
+    """The sound of the motion summed into the effects, after the game's edge fades (a sound may cross a cut), in
+    32-bit float so the sum does not clip before levels sets it."""
+    mixed = game.with_name("effects.wav")
+    _run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(game), "-i", str(sfx),
+          "-filter_complex", "amix=inputs=2:normalize=0:duration=first", "-c:a", "pcm_f32le", str(mixed)])
+    mixed.replace(game)
+
+
 def render(ws: Path, plan: dict, directory: Path, *,
            stems: tuple[str | None, ...] = (None, "voice", "game", "music")) -> None:
-    """Render selected WAVs, the game stem with faded beat edges; None selects the muted H.264 picture."""
+    """Render selected WAVs, the game stem with faded beat edges and the sound of the motion added (unless the
+    plan says `sfx: false`); None selects the muted H.264 picture."""
     if any(stem not in (None, "voice", "game", "music") for stem in stems):
         raise ExplainError("unknown Remotion stem")
     format = plan.get("format", "tall")
     if format not in ("tall", "wide"):
         raise ExplainError("The plan's format must be tall or wide")
+    if plan.get("sfx", True) and "game" in stems:
+        link_sfx(ws)
+        stems = (*stems, "sfx")
     width, height = (1920, 1080) if format == "wide" else (1080, 1920)
     for stem in stems:
         props = dict(plan)
@@ -130,6 +156,8 @@ def render(ws: Path, plan: dict, directory: Path, *,
                 fade_edges(output, sound_spans(plan))
             except wave.Error as err:
                 raise ExplainError(f"{output.name}: {err}") from err
+        if stem == "sfx":
+            add_sfx(directory / "game.wav", output)
 
 
 def publish(ws: Path, plan_file: str = "plan.json", out: Path | None = None) -> Path:
