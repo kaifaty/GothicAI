@@ -16,6 +16,7 @@ from gothic_ai.protocol import (
     FIGHT_REACTION_PROTOCOL,
     NOISE_PROTOCOL,
     NPC_CRIME_PROTOCOL,
+    NPC_FAR_FIGHT_PROTOCOL,
     NPC_FAR_PROTOCOL,
     PACE_PROTOCOL,
     PROTOCOL_VERSION,
@@ -49,6 +50,7 @@ from gothic_ai.protocol import (
     RoutineEntry,
     SayCmd,
     Snapshot,
+    StoryEffect,
     StoryEffectCmd,
     StoryNpcCmd,
     StoryProgramCmd,
@@ -137,7 +139,7 @@ def test_v51_combat_hit_reports_actual_health_loss(kind):
 
 
 def test_v50_svm_lines_keep_the_native_meaning_and_addressee():
-    assert PROTOCOL_VERSION == 57
+    assert PROTOCOL_VERSION == 59
     msg = parse_game_message(_json({
         "type": "svm_line", "id": "svm-1", "npc": "X", "svm": "$KILLENEMY",
         "text": "Ещё одним монстром меньше.", "target": "WOLF", "overlay": True,
@@ -324,6 +326,32 @@ def test_v48_chest_take_names_the_source_and_keeps_self_as_taker():
         "type": "story_effect", "req": "far-theft", "npc": "BAU_951_HILDA", "check": True,
         "effects": [{"do": "chest_take", "chest": "CHEST_LOBART", "item": "ITMI_GOLD", "count": 2}],
     }
+
+
+@pytest.mark.parametrize("loss", [0, 10_000])
+def test_v59_knockout_names_the_winner_and_preserves_zero_or_large_loss(loss):
+    assert PROTOCOL_VERSION >= NPC_FAR_FIGHT_PROTOCOL == 59
+    effect = {"do": "knockout", "by": "BAU_950_LOBART", "loss": loss}
+    assert StoryEffect.model_validate(effect).do == "knockout"
+    command = StoryEffectCmd(req="far-fight", npc="BAU_951_HILDA", effects=[effect])
+    assert json.loads(command.to_json()) == {
+        "type": "story_effect", "req": "far-fight", "npc": "BAU_951_HILDA", "effects": [effect],
+    }
+    result = parse_game_message(_json({
+        "type": "result", "req": command.req, "ok": True,
+        "value": {"winner_hp": 1, "dropped": None},
+    }))
+    assert result.value == {"winner_hp": 1, "dropped": None}
+
+
+@pytest.mark.parametrize("fields", [
+    {"by": "LOBART"}, {"loss": 0}, {"by": "", "loss": 0},
+    {"by": "LOBART", "loss": -1}, {"by": "LOBART", "loss": 1.5},
+    {"by": "LOBART", "loss": True}, {"by": "LOBART", "loss": "0"},
+])
+def test_v59_knockout_requires_winner_and_nonnegative_integer_loss(fields):
+    with pytest.raises(ValidationError):
+        StoryEffectCmd(req="far-fight", npc="HILDA", effects=[{"do": "knockout", **fields}])
 
 
 def test_v48_story_state_preserves_batch_world_positions_and_legacy_absence():

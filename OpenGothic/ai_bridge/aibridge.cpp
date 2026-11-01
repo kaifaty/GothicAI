@@ -79,7 +79,7 @@ using namespace Tempest;
 
 namespace {
 
-constexpr int         ProtocolVersion = 57;
+constexpr int         ProtocolVersion = 59;
 AiBridge*             activeBridge = nullptr;
 constexpr const char* SaveEntry       = "ai_bridge/session";  // own entry in save games
 constexpr const char* DefaultUrl      = "ws://127.0.0.1:47817";
@@ -1081,17 +1081,21 @@ void AiBridge::Impl::handle(World* world, const std::string& text) {
     sendResult(req,!value.empty(),err,value);
     }
   else if(type=="story_effect") {
+    bool knockout = false;
+    if(auto effects = doc.FindMember("effects"); effects!=doc.MemberEnd() && effects->value.IsArray())
+      for(const auto& effect:effects->value.GetArray())
+        knockout = knockout || JsonRead::str(effect,"do")=="knockout";
     if(auto npc = npcBySymbol(*world,JsonRead::str(doc,"npc"));
-       npc!=nullptr && BodyController::owns(*npc)) {
+       !knockout && npc!=nullptr && BodyController::owns(*npc)) {
       BodyController::takeover(*npc,"story_takeover");
       if(BodyController::owns(*npc)) {
         sendResult(req,false,"body control is releasing at a safe boundary; retry story effect");
         return;
         }
       }
-    std::string err;
-    const bool  ok = story.effects(*world,doc,err);
-    sendResult(req,ok,err);
+    std::string err, value;
+    const bool  ok = story.effects(*world,doc,err,value);
+    sendResult(req,ok,err,value);
     }
   else if(type=="raise_dead") {
     std::string err;

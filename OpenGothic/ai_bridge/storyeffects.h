@@ -16,9 +16,11 @@ namespace zenkit {
 // in a dialog of its own, or as the consequence of a lie found out.
 struct StoryEffect final {
   std::string kind;     // give, xp, set, journal, end, attack, refuse_talk, routine, create, teach, calm, party,
-                        // knows, crime_memory, chest_take
+                        // knows, crime_memory, chest_take, knockout
   std::string item;     // give, create, chest_take: item instance
   std::string chest;    // chest_take (v48): source chest's NpcChests id
+  std::string by;       // knockout (v59): winner's npc instance
+  int64_t     loss = 0; // knockout: winner's HP loss, clamped to leave at least 1 HP
   std::string teach;    // teach: attribute, fight, circle, rune, thief, alchemy, smith, trophy (v17)
   std::string arg;      // teach: the scripts' constant (ATR_STRENGTH, NPC_TALENT_1H, SPL_*, POTION_*...)
   std::string var;      // set: global int variable
