@@ -376,10 +376,10 @@ void MainWindow::drawChunks(Painter& p, const World& world, const Camera& camera
   const int64_t radius = std::max<int64_t>({8,std::abs(int64_t(cameraId.x)-center.x)+1,
                                             std::abs(int64_t(cameraId.z)-center.z)+1});
   const int mapSize = std::min(240,std::min(w(),h())/2);
-  const int mapY = y+10*line;
+  const int mapY = y+13*line;
   const float cell = float(mapSize)/float(radius*2+1);
   p.setBrush(Color(0.f,0.f,0.f,0.8f));
-  p.drawRect(x-5,y-5,std::max(660,mapSize+10),mapSize+12*line+10);
+  p.drawRect(x-5,y-5,std::max(660,mapSize+10),mapSize+15*line+10);
 
   const auto& stats = chunks->stats();
   char text[160];
@@ -395,7 +395,16 @@ void MainWindow::drawChunks(Painter& p, const World& world, const Camera& camera
                 double(stats.landscapePageUsedBytes)/1048576.0,double(stats.landscapePageFreeBytes)/1048576.0,
                 double(stats.landscapePageRetiredBytes)/1048576.0);
   fnt.drawText(p,x,y+3*line,text);
-  drawTextures(y+4*line);
+  std::snprintf(text,sizeof(text),"Vobs: Near %zu  Far %zu  Outside %zu  pending %zu",
+                stats.vobNear,stats.vobFar,stats.vobOutside,stats.vobPending);
+  fnt.drawText(p,x,y+4*line,text);
+  std::snprintf(text,sizeof(text),"Vobs: created %llu  released %llu  publish %.3f ms",
+                static_cast<unsigned long long>(stats.vobCreated),static_cast<unsigned long long>(stats.vobReleased),
+                stats.vobPublicationMs);
+  fnt.drawText(p,x,y+5*line,text);
+  std::snprintf(text,sizeof(text),"Vobs Near missing: %zu  %.6f visual-seconds",stats.vobNearMissing,stats.vobNearMissingSeconds);
+  fnt.drawText(p,x,y+6*line,text);
+  drawTextures(y+7*line);
 
   const auto& entries = chunks->table().entries;
   for(size_t i=0;i<entries.size();++i) {

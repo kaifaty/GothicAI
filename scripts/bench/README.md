@@ -65,7 +65,11 @@ command with `OPENGOTHIC_STREAMING=1` capture `perf-market.png`, `perf-harbour.p
 `perf-forest.png` from the first viewpoints of those performance scenarios. `streaming wait`
 yields a frame for camera/residency updates, then waits until the publication queue is empty
 and all desired Near/Far chunks are published (default timeout 60000 real milliseconds).
-The disabled-streaming path is already ready. Claude compares the resulting frames on Mac.
+The wait also includes static vob views. The disabled-streaming path is already ready.
+`streaming-shots` ends with `perf-market-teleport.png`: after one update beyond the city's Far
+range, it captures the first frame back in the market without waiting for Far publication.
+Use `OPENGOTHIC_VOB_STREAMING=0` and `=1` to compare static vob residency. Claude compares
+the resulting frames on Mac.
 
 ## Frame profile
 

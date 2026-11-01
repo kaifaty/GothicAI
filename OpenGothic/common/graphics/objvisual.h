@@ -4,10 +4,12 @@
 #include "world/objects/vobbundle.h"
 #include "physics/physicmesh.h"
 #include "graphics/mdlvisual.h"
+#include "worldchunksruntime.h"
 
 class Npc;
 class World;
 class ClothVisual;
+class WorldView;
 
 class ObjVisual {
   public:
@@ -61,6 +63,9 @@ class ObjVisual {
       PhysicMesh        physic;
       MeshObjects::Mesh view;
       const ProtoMesh*  proto = nullptr;
+      asset::AnimationType windMode = asset::AnimationType::NONE;
+      float windStrength = 0;
+      bool published = false;
       };
 
     union {
@@ -75,8 +80,13 @@ class ObjVisual {
     std::shared_ptr<FractureView> fracture;
     std::unique_ptr<ClothVisual> cloth;
     Tempest::Matrix4x4 renderMatrix = Tempest::Matrix4x4::mkIdentity();
+    WorldView* streamView = nullptr;
+    ChunkId streamCell;
 
     void cleanup();
     void setType(Type t);
+    void createView();
+    friend class WorldView;
+    friend struct MeshGltfTest;
   };
 
