@@ -342,6 +342,7 @@ class Npc final {
     bool      beginMeleeRiposte();
     bool      isMeleeRiposting() const;
     bool      isMeleeRiposteHeld() const;
+    void      endMeleeAiSpecial();
     bool      canMeleeCharge() const;
     bool      beginMeleeCharge();
     void      releaseMeleeCharge();
@@ -1155,7 +1156,6 @@ class Npc final {
     bool                          tryMeleeAiBarge();
     bool                          meleeAiSpecialBusy(std::string_view move);
     void                          beginMeleeAiSpecial(MeleeAi::Special move);
-    void                          endMeleeAiSpecial();
     void                          tickMeleeAiSpecial();
     std::optional<uint64_t>        meleeParadeOrigin;
     uint64_t                      meleeParadeEnd = 0;

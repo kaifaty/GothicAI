@@ -979,6 +979,7 @@ float Npc::angleDir(float x, float z) {
   }
 
 bool Npc::resetPositionToTA() {
+  endMeleeAiSpecial();
   const bool g2       = owner.version().game==2;
   const bool isDragon = (g2 && guild()==GIL_DRAGON);
   const bool isDead   = this->isDead();
@@ -9169,8 +9170,7 @@ void Npc::tickMeleeCharge() {
                         " hold "+std::to_string(meleeAiChargeHold)+" ms, release at "+std::to_string(elapsed)+" ms").c_str());
       if(TestBench::bodyTracing())
         TestBench::bodyEvent(*this,currentTarget,"ai_charge_release",owner.tickCount(),
-                            "\"hold_ms\":"+std::to_string(meleeAiChargeHold)+",\"elapsed_ms\":"+std::to_string(elapsed)+
-                            ",\"turn_deg\":0");
+                            "\"hold_ms\":"+std::to_string(meleeAiChargeHold)+",\"elapsed_ms\":"+std::to_string(elapsed));
       }
     if(MeleeCharge::autoRelease(elapsed) && !meleeChargeReleased)
       meleeChargeNote("auto release","charge_auto_release","\"elapsed_ms\":"+std::to_string(elapsed));
