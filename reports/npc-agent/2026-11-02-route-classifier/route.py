@@ -63,16 +63,12 @@ def collect(traces: list[Path], directory: Path) -> list[dict[str, Any]]:
     for trace in traces:
         trace = trace.resolve()
         records = read(trace)
-        instructions = {r["hash"] for r in records if r.get("type") == "instructions"}
         for record in records:
             steps = record.get("steps")
             if (
                 record.get("type") != "turn"
                 or record.get("trigger", {}).get("kind") != "player"
                 or not steps
-                or steps[0].get("llm")
-                or (steps[0].get("first_token_s") or 0) < 0.3
-                or record.get("instructions") not in instructions
             ):
                 continue
             history_items, _ = _quick_context(record)
@@ -652,6 +648,9 @@ async def selftest() -> None:
                         ],
                     }
                 )
+            records[2]["steps"][0]["llm"] = "gemma-4-12b"
+            records[3]["steps"][0]["first_token_s"] = 0.1
+            records[4]["instructions"] = "missing"
             original = records[1]
             # Repeated requests with different history lengths still deduplicate by the last NPC line.
             duplicate = json.loads(json.dumps(records[2]))
@@ -662,10 +661,6 @@ async def selftest() -> None:
                 (
                     {"trigger": {"kind": "event"}},
                     {"steps": []},
-                    {"instructions": "missing"},
-                    {"steps": [{"first_token_s": 0.2}]},
-                    {"steps": [{"first_token_s": None}]},
-                    {"steps": [{"first_token_s": 1, "llm": "quick"}]},
                     {"type": "event"},
                 )
             ):
@@ -674,6 +669,7 @@ async def selftest() -> None:
         directory = root / "data"
         turns = collect(traces, directory)
         assert len(turns) == 15 and turns == collect(traces, directory)
+        assert {"turn-0-1", "turn-0-2", "turn-0-3"} <= {turn["id"] for turn in turns}
         assert {t["group"] for t in turns} == {"pure", "soft", "hard"}
         assert {t["npc"] for t in turns} == set(npcs)
         assert all(len(t["history"]) <= 6 and "[" not in t["prev_npc"] for t in turns)
