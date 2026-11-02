@@ -226,13 +226,26 @@ VkDescriptorSet VPoolCache::allocDescSet(VkDescriptorPool pool, VkDescriptorSetL
   return desc;
   }
 
+uint32_t VPoolCache::bindlessCapacity(ShaderReflection::Class cls, size_t size) {
+  // The set layout, and with it the pipeline layout of every PSO instance, follows these counts.
+  // Large arrays grow in power-of-two steps from a high floor, so a streamed world adding buckets
+  // keeps one layout instead of recompiling every pipeline whenever the array size changes.
+  // Only the array's own descriptors are copied; the tail stays unwritten (PARTIALLY_BOUND).
+  constexpr size_t LargeArray    = 1024;
+  constexpr size_t LargeCapacity = 8192;
+  if(size<LargeArray)
+    return uint32_t(size);
+  const auto capacity = dev.roundUpDescriptorCount(cls, std::bit_ceil(std::max(size, LargeCapacity)));
+  return uint32_t(std::max<size_t>(size, capacity));
+  }
+
 VPoolCache::Inst VPoolCache::allocBindless(const PushBlock& pb, const LayoutDesc& layout, const Bindings& binding) {
   auto lx = layout;
   for(uint32_t mask = lx.runtime; mask!=0;) {
     const int i = std::countr_zero(mask);
     mask ^= (1u << i);
     auto* a = reinterpret_cast<const VDescriptorArray*>(binding.data[i]);
-    lx.count[i] = uint32_t(a->size());
+    lx.count[i] = bindlessCapacity(lx.bindings[i], a->size());
     }
 
   Inst ret;
