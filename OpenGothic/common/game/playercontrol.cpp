@@ -953,10 +953,12 @@ void PlayerControl::implMove(uint64_t dt) {
     }
 
   pl.setDirectionY(rotY);
+  const bool chargeInput = chargePress || chargeTapPending || pl.isMeleeCharging();
   if(dodge && pl.meleeDodge(*dodge)) {
     chargePress.reset();
     chargeTapPending = false;
-    std::memset(actrl,0,sizeof(actrl));
+    if(chargeInput)
+      std::memset(actrl,0,sizeof(actrl));
     pl.setAnimRotate(0);
     pl.setDirection(rot);
     runAngleDest = 0;
