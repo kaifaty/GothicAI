@@ -15469,10 +15469,12 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       say("melee shadow controls " + a[2]);
       }
     else if(a.size()==3 && a[1]=="bandit") {
-      // melee-shadow bandit 1h|2h: the fixture's bandit takes the stock one- or two-hander in hand
+      // melee-shadow bandit 1h|2h|none: the fixture's bandit takes the stock one- or two-hander in hand, or puts
+      // his away (a clear gap between a blade and his body, no blade of his in between)
       if(bench.meleeShadowActors.size()!=3) {arenaAbort("melee shadow setup is required");return;}
-      if(a[2]!="1h" && a[2]!="2h") {arenaAbort("melee shadow bandit expects 1h or 2h");return;}
+      if(a[2]!="1h" && a[2]!="2h" && a[2]!="none") {arenaAbort("melee shadow bandit expects 1h, 2h or none");return;}
       auto& npc=*bench.meleeShadowActors[2];
+      if(a[2]=="none") {npc.closeWeapon(true);return;}
       const auto symbol=w.script().findSymbolIndex(a[2]=="1h"?"ITMW_1H_COMMON_01":"ITMW_2H_BAU_AXE");
       if(symbol==size_t(-1)) {arenaAbort("melee shadow bandit weapon is absent");return;}
       npc.closeWeapon(true);

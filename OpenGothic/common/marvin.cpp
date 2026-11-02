@@ -119,6 +119,7 @@ Marvin::Marvin() {
     {"ztoggle tnl",                C_Invalid},
     {"ztoggle vobbox",             C_ToggleVobBox},
     {"toggle melee_blade_draw",    C_ToggleMeleeBladeDraw},
+    {"toggle melee_blade_labels",  C_ToggleMeleeBladeLabels},
     {"zvideores %d %d %d",         C_Invalid},
 
     // game
@@ -450,6 +451,10 @@ bool Marvin::exec(std::string_view v) {
       }
     case C_ToggleMeleeBladeDraw:{
       Gothic::inst().setMeleeBladeDraw(!Gothic::inst().doMeleeBladeDraw());
+      return true;
+      }
+    case C_ToggleMeleeBladeLabels:{
+      Gothic::inst().setMeleeBladeLabels(!Gothic::inst().doMeleeBladeLabels());
       return true;
       }
     case C_ToggleTime:{
