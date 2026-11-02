@@ -23,11 +23,12 @@ A line `# @headless` in the scenario selects `gothic-body-runner --game-parity -
 without a window, GPU or sound. `BENCH_HEADLESS=1` selects this path for any scenario;
 `BENCH_HEADLESS=0` selects the window even for a marked scenario. `KEEP=1` with the headless path
 exits with code 2. The runner defaults to `gothic-body-runner` beside `GAME_BIN`; `RUNNER_BIN`
-overrides it. It uses the same `Gothic.ini`, `[GAME]` flags and `OPENGOTHIC_*` environment as the
+overrides it for local runs. It uses the same `Gothic.ini`, `[GAME]` flags and `OPENGOTHIC_*` environment as the
 window; `WORLD` becomes `--world`, otherwise the copied save becomes `--save`. Window variables
 `TEMPEST_*` are not needed. A local build selects the `gothic-body-runner` target. On Ryzen,
 preparation builds both `Gothic2Notr` and the runner together; a cached engine without an executable
-runner is rebuilt and republished for a headless bench.
+runner is rebuilt and republished for a headless bench. A rebuild without the runner removes its
+old executable before publishing the new engine digest.
 
 The headless game request defaults to `gq --class batch --threads 4 --mem 6G`, without display or
 GPU-memory resources. `RYZEN_BENCH_CLASS` still overrides the class; a `batch` request's `--max`
@@ -121,6 +122,7 @@ the resulting frames on Mac.
 
 ## План и журнал
 
+- 2026-11-02: remove stale runners from window-only rebuilds before caching; keep `RUNNER_BIN` local.
 - 2026-11-02: add marked headless lockstep benches with game-parity simulation and a Ryzen `batch`
   request without display/GPU resources; record the run method and game wall time in reports.
 - 2026-11-02: require the completion marker, publish the engine heartbeat, stream progress and stop

@@ -631,8 +631,17 @@ remote_run e2e "$TEST_ROOT/worktree" run
                          self.cache / 'storygraph' / self.story_digest / 'storygraph')
 
     def test_headless_rebuilds_a_window_only_cache_and_runs_without_desktop(self):
-        cached = self.entry(self.engine_digest)
+        cached = self.cache / self.engine_digest
         self.env['BENCH_HEADLESS'] = '1'
+        self.shell(r'''
+printf '%s\n' "''' + 'd' * 64 + r'''" > "$TEST_ROOT/worktree/inputs/run/source.sha256"
+remote_prepare bench "$TEST_ROOT/worktree" run smoke
+test -x "$TEST_ROOT/worktree/build/opengothic/gothic-body-runner"
+printf '%s\n' "''' + self.engine_digest + r'''" > "$TEST_ROOT/worktree/inputs/run/source.sha256"
+BENCH_HEADLESS=0 remote_prepare bench "$TEST_ROOT/worktree" run smoke
+''')
+        self.assertFalse((cached / 'gothic-body-runner').exists())
+        self.assertFalse((self.state / 'build/opengothic/gothic-body-runner').exists())
         (self.source / 'scripts/bench.sh').write_text('"$GAME_BIN" --test\n')
         self.shell(r'''
 engine_ready "$TEST_ROOT/worktree" "''' + self.engine_digest + r'''"
@@ -654,9 +663,9 @@ remote_bench "$TEST_ROOT/worktree" run smoke
 ''')
         calls = [json.loads(line) for line in (self.root / 'cmake-calls.jsonl').read_text().splitlines()]
         builds = [call for call in calls if '--build' in call]
-        self.assertEqual(len(builds), 1, calls)
-        self.assertEqual(builds[0][builds[0].index('--target') + 1:builds[0].index('--parallel')],
-                         ['Gothic2Notr', 'gothic-body-runner'])
+        self.assertEqual([call[call.index('--target') + 1:call.index('--parallel')] for call in builds],
+                         [['Gothic2Notr', 'gothic-body-runner'], ['Gothic2Notr'],
+                          ['Gothic2Notr', 'gothic-body-runner']])
         self.assertTrue(os.access(cached / 'gothic-body-runner', os.X_OK))
         self.assertEqual((self.root / 'game-path').read_text(), str(cached / 'Gothic2Notr'))
         self.assertFalse((self.state / 'runs/run/game.sh').exists())
@@ -1511,12 +1520,13 @@ printf '%s\n' "${ENV_ARGS[@]-}"
         result = subprocess.run(
             ['bash', '-ec', 'ENV_ARGS=()\nbench_path() { printf "%s" "$1"; }\n' + forwarding
              + '\nprintf "%s\\n" "${ENV_ARGS[@]}"\n'],
-            env=dict(self.env, TIMEOUT='71', BENCH_PROGRESS='13', BENCH_STALL='29'),
+            env=dict(self.env, TIMEOUT='71', BENCH_PROGRESS='13', BENCH_STALL='29', RUNNER_BIN='/Users/x/runner'),
             capture_output=True, text=True, timeout=5,
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         for option in ('TIMEOUT=71', 'BENCH_PROGRESS=13', 'BENCH_STALL=29'):
             self.assertIn(option, result.stdout.splitlines())
+        self.assertNotIn('RUNNER_BIN=/Users/x/runner', result.stdout.splitlines())
         scripts = self.root / 'scripts'
         scripts.mkdir()
         shutil.copyfile(BENCH_SCRIPT, scripts / 'bench.sh')
