@@ -844,17 +844,30 @@ void textureMipResidency(Tempest::Device& device, const Fixture& fixture) {
     encoder.setBinding(1,output);
     encoder.dispatch(1);
     };
-  const auto checkColors=[&](uint32_t first) {
-    auto output=device.ssbo(Tempest::Uninitialized,2*sizeof(uint32_t));
+  const auto probeColors=[&](const Tempest::StorageBuffer& output) {
     auto command=device.commandBuffer();
     encodeProbe(command,output);
     device.submit(command).wait();
     std::array<uint32_t,2> colors{};
     device.readBytes(output,colors.data(),sizeof(colors));
-    require(colors==std::array<uint32_t,2>{first,0xffff0000u} && unchangedBucket->mat==noTail &&
+    return colors;
+    };
+  // A fresh output gives every probe a new Vulkan descriptor set. The stable one reuses the set
+  // VPoolCache cached for each frame bank before any update, as the game's frames do.
+  auto stableOutput=device.ssbo(Tempest::Uninitialized,2*sizeof(uint32_t));
+  const auto checkColors=[&](uint32_t first) {
+    auto output=device.ssbo(Tempest::Uninitialized,2*sizeof(uint32_t));
+    const std::array<uint32_t,2> expected{first,0xffff0000u};
+    require(probeColors(output)==expected && unchangedBucket->mat==noTail &&
             unchangedPayload==Tempest::Detail::ResourcePtr<Tempest::Texture2d>(*noTail.tex),
             "a partial descriptor update must sample the changed GPU image and preserve its neighbour");
+    require(probeColors(stableOutput)==expected,
+            "a partial descriptor update must reach descriptor sets cached before it");
     };
+  for(uint8_t frame=1;frame<Resources::MaxFramesInFlight;++frame) {
+    require(!commit(frame),"an unchanged frame bank must not rewrite descriptors");
+    checkColors(0xff00ff00u);
+    }
   require(!commit(0),"returning to an unchanged frame bank must not rewrite descriptors");
   checkColors(0xff00ff00u);
   auto oldOutput=device.ssbo(Tempest::Uninitialized,2*sizeof(uint32_t));

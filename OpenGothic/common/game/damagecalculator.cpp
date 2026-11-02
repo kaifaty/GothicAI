@@ -17,7 +17,7 @@ static float mix(float x, float y, float a) {
   return x + (y-x)*a;
   }
 
-DamageCalculator::Val DamageCalculator::damageValue(Npc& src, Npc& other, const Bullet* b, bool isSpell, const DamageCalculator::Damage& splDmg, const CollideMask bMsk) {
+DamageCalculator::Val DamageCalculator::damageValue(Npc& src, Npc& other, const Bullet* b, bool isSpell, const DamageCalculator::Damage& splDmg, const CollideMask bMsk, bool fist) {
   DamageCalculator::Val ret;
   if(b!=nullptr) {
     ret = rangeDamage(src,other,*b,bMsk);
@@ -26,7 +26,7 @@ DamageCalculator::Val DamageCalculator::damageValue(Npc& src, Npc& other, const 
     ret = rangeDamage(src,other,splDmg,bMsk);
     }
   else {
-    ret = swordDamage(src,other);
+    ret = swordDamage(src,other,fist);
     }
 
 #if 0
@@ -187,8 +187,8 @@ DamageCalculator::Val DamageCalculator::rangeDamage(Npc&, Npc& nother, Damage dm
   return Val(value,true,invincible);
   }
 
-DamageCalculator::Val DamageCalculator::swordDamage(Npc& nsrc, Npc& nother) {
-  if(!checkDamageMask(nsrc,nother,nullptr))
+DamageCalculator::Val DamageCalculator::swordDamage(Npc& nsrc, Npc& nother, bool fist) {
+  if(fist ? nsrc.handle().damage_type==0 : !checkDamageMask(nsrc,nother,nullptr))
     return Val(0,true,true);
 
   auto& script = nsrc.world().script();
@@ -196,18 +196,30 @@ DamageCalculator::Val DamageCalculator::swordDamage(Npc& nsrc, Npc& nother) {
   auto& other  = nother.handle();
 
   // Swords/Fists
-  const int dtype      = damageTypeMask(nsrc);
+  const int dtype      = fist ? src.damage_type : damageTypeMask(nsrc);
   Talent    tal        = TALENT_UNKNOWN;
   int       str        = nsrc.attribute(Attribute::ATR_STRENGTH);
   int       critChance = int(script.rand(100,&nsrc));
 
   int value = 0;
 
-  if(auto w = nsrc.inventory().activeWeapon()) {
+  const auto* weapon = nsrc.inventory().activeWeapon();
+  if(auto w = fist ? nullptr : weapon) {
     if(w->is2H())
       tal = TALENT_2H; else
       tal = TALENT_1H;
     }
+
+  // A shoulder contact uses the unarmed damage without changing the drawn weapon or its stats.
+  const auto damage = [&](size_t i) {
+    int32_t value = src.damage[i];
+    if(fist && weapon!=nullptr) {
+      value -= weapon->handle().damage[i];
+      if((weapon->handle().damage_type & (1<<i))!=0)
+        value -= weapon->handle().damage_total;
+      }
+    return value;
+    };
 
   if(Gothic::inst().version().game==2) {
     if(nsrc.isMonster() && tal==TALENT_UNKNOWN) {
@@ -219,7 +231,7 @@ DamageCalculator::Val DamageCalculator::swordDamage(Npc& nsrc, Npc& nother) {
     for(unsigned int i=0; i<zenkit::DamageType::NUM; ++i) {
       if((dtype & (1<<i))==0)
         continue;
-      int vd = std::max(str + src.damage[i] - other.protection[i],0);
+      int vd = std::max(str + damage(i) - other.protection[i],0);
       if(src.hitchance[tal]<=critChance)
         vd = (vd-1)/10;
       if(other.protection[i]>=0) { // Filter immune
@@ -228,7 +240,9 @@ DamageCalculator::Val DamageCalculator::swordDamage(Npc& nsrc, Npc& nother) {
         }
       }
 
-    return Val(value,true,invincible);
+    Val ret(value,true,invincible);
+    ret.critical = src.hitchance[tal]>critChance;
+    return ret;
     } else {
     bool invincible = true;
     const int32_t mul = script.criticalDamageMultiplyer();
@@ -237,15 +251,17 @@ DamageCalculator::Val DamageCalculator::swordDamage(Npc& nsrc, Npc& nother) {
         continue;
       int vd = 0;
       if(nsrc.talentValue(tal)<=critChance)
-        vd = std::max(str +     src.damage[i] - other.protection[i],0); else
-        vd = std::max(str + mul*src.damage[i] - other.protection[i],0);
+        vd = std::max(str +     damage(i) - other.protection[i],0); else
+        vd = std::max(str + mul*damage(i) - other.protection[i],0);
       if(other.protection[i]>=0) { // Filter immune
         value += vd;
         invincible = false;
         }
       }
 
-    return Val(value,true,invincible);
+    Val ret(value,true,invincible);
+    ret.critical = nsrc.talentValue(tal)>critChance;
+    return ret;
     }
   }
 

@@ -58,6 +58,24 @@ rec wall-fatal novideo
 wait 1200
 body-impact report
 stop
+body-impact setup nonlethal 14
+wait 800
+body-impact launch
+rec wall-nonlethal-npc novideo
+wait 1200
+body-impact report
+# The same native unconscious End hook and AI_StandUp used after a weapon knockout.
+body-impact standup
+waitragdoll watched getup 30000
+body-impact recovered
+stop
+body-impact setup lethal 14
+wait 800
+body-impact launch
+rec wall-lethal-npc novideo
+wait 1200
+body-impact report
+stop
 body-impact setup unconscious 10
 wait 800
 body-impact launch

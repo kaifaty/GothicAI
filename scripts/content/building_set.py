@@ -29,7 +29,8 @@ with a staging set as base, it is that set with only these entries replaced.
 
 `compose SET PART...` joins the sets of several assets into one staging set for the game:
 each texture belongs to exactly one part, so a shared texture lives in its own asset. Meshes of a
-part (a prop's GLB) and particle descriptions (`particles.d/*.json`) come along.
+part (a prop's GLB), particle descriptions (`particles.d/*.json`) and vob trees
+(`vobtrees.d/*.json`) come along.
 
 `enable SET` copies a staging set into the working content `~/.local/share/gothic-ai/content`, which
 the game reads by default; only on the user's word (gate `enable`).
@@ -351,12 +352,12 @@ def compose(name: str, parts: list[str]) -> dict:
     materials. Entries of one part may share files: the barrel's wood and iron use one atlas. A part's
     world chunk edits (`worlds/<WORLD>/chunks/*.glb`, like the harbour stairs) and vob layer files
     (`worlds/<WORLD>/vobs.d/*.json`, like the harbour's traces of life) come along too; such a part may have no
-    materials at all. Particle descriptions (`particles.d/*.json`) come along as well; file and effect
-    names must belong to one part only."""
+    materials at all. Particle descriptions (`particles.d/*.json`) and vob trees (`vobtrees.d/*.json`)
+    come along as well; file and effect names must belong to one part only."""
     if len(parts) < 2 or len(set(parts)) != len(parts):
         raise ValueError('compose needs two or more distinct parts')
     staging = remaster.data_root() / 'content-staging'
-    indexes, meshes, chunks, particles, owner = {}, {}, {}, {}, {}
+    indexes, meshes, chunks, particles, trees, owner = {}, {}, {}, {}, {}, {}
     for part in parts:
         material_index = staging / part / 'materials/materials.json'
         indexes[part] = json.loads(material_index.read_text()) if material_index.is_file() else {}
@@ -367,11 +368,14 @@ def compose(name: str, parts: list[str]) -> dict:
         meshes[part] = json.loads(mesh_index.read_text()) if mesh_index.is_file() else {}
         particle_dir = staging / part / 'particles.d'
         particles[part] = sorted(p.name for p in particle_dir.glob('*.json') if p.is_file())
-        if not material_index.is_file() and not meshes[part] and not chunks[part] and not particles[part]:
-            raise ValueError(f'{part}: no materials, meshes, world chunks or particle descriptions')
+        tree_dir = staging / part / 'vobtrees.d'
+        trees[part] = sorted(p.name for p in tree_dir.glob('*.json') if p.is_file())
+        if not material_index.is_file() and not meshes[part] and not chunks[part] and not particles[part] and not trees[part]:
+            raise ValueError(f'{part}: no materials, meshes, world chunks, particle descriptions or vob trees')
         # the engine finds a visual by name without case
         for key in [*indexes[part], *(f'visual {visual.upper()}' for visual in meshes[part]),
-                    *(f'chunk {chunk.as_posix().upper()}' for chunk in chunks[part])]:
+                    *(f'chunk {chunk.as_posix().upper()}' for chunk in chunks[part]),
+                    *(f'vob tree file {filename.upper()}' for filename in trees[part])]:
             if key in owner:
                 raise ValueError(f'{key}: in both {owner[key]} and {part}')
             owner[key] = part
@@ -385,7 +389,7 @@ def compose(name: str, parts: list[str]) -> dict:
                 owner[key] = part
     output = new_staging(name)
     (output / 'materials').mkdir(parents=True)
-    copied, digests = {}, {'materials': {}, 'meshes': {}, 'worlds': {}, 'particles.d': {}}
+    copied, digests = {}, {'materials': {}, 'meshes': {}, 'worlds': {}, 'particles.d': {}, 'vobtrees.d': {}}
 
     def take(part: str, kind: str, relative: Path) -> None:
         key = f'{kind}/{relative}'
@@ -415,12 +419,15 @@ def compose(name: str, parts: list[str]) -> dict:
             take(part, 'worlds', chunk)
         for filename in particles[part]:
             take(part, 'particles.d', Path(filename))
+        for filename in trees[part]:
+            take(part, 'vobtrees.d', Path(filename))
     (output / 'materials/materials.json').write_text(json.dumps(index, indent=2) + '\n')
     if mesh_index:
         (output / 'meshes/meshes.json').write_text(json.dumps(mesh_index, indent=2) + '\n')
     composition = dict(set=name, date=datetime.now(timezone.utc).strftime('%Y-%m-%d'),
                        parts={part: sorted(part_index) + sorted(meshes[part]) + [f'worlds/{c.as_posix()}' for c in chunks[part]]
                                     + [f'particles.d/{f}' for f in particles[part]]
+                                    + [f'vobtrees.d/{f}' for f in trees[part]]
                               for part, part_index in indexes.items()},
                        dds_sha256=digests['materials'])
     if mesh_index:
@@ -429,19 +436,24 @@ def compose(name: str, parts: list[str]) -> dict:
         composition['world_sha256'] = digests['worlds']
     if digests['particles.d']:
         composition['particles_sha256'] = digests['particles.d']
+    if digests['vobtrees.d']:
+        composition['vobtrees_sha256'] = digests['vobtrees.d']
     (output / 'composition.json').write_text(json.dumps(composition, indent=2) + '\n')
     result = dict(set=name, entries=len(index), meshes=len(mesh_index),
-                  parts={part: len(i) + len(meshes[part]) + len(chunks[part]) + len(particles[part]) for part, i in indexes.items()})
+                  parts={part: len(i) + len(meshes[part]) + len(chunks[part]) + len(particles[part]) + len(trees[part])
+                         for part, i in indexes.items()})
     if digests['worlds']:
         result['chunks'] = len(digests['worlds'])
     if digests['particles.d']:
         result['particles'] = len(digests['particles.d'])
+    if digests['vobtrees.d']:
+        result['vobtrees'] = len(digests['vobtrees.d'])
     return result
 
 
 def enable(name: str) -> dict:
     """Make the staging set `name` the game's working content: `<data>/content`, which the engine reads
-    when OPENGOTHIC_CONTENT is unset. Its `materials/`, `meshes/`, `worlds/` and `particles.d/` are replaced; other folders
+    when OPENGOTHIC_CONTENT is unset. Its `materials/`, `meshes/`, `worlds/`, `particles.d/` and `vobtrees.d/` are replaced; other folders
     there stay; `enabled.json` records the set. Enabling is the user's decision (gate `enable`)."""
     staging = remaster.data_root() / 'content-staging' / name
     if not (staging / 'materials/materials.json').is_file():
@@ -450,13 +462,13 @@ def enable(name: str) -> dict:
     incoming = live / '.enable'
     shutil.rmtree(incoming, ignore_errors=True)
     incoming.mkdir(parents=True)
-    kinds = [kind for kind in ('materials', 'meshes', 'worlds', 'particles.d') if (staging / kind).is_dir()]
+    kinds = [kind for kind in ('materials', 'meshes', 'worlds', 'particles.d', 'vobtrees.d') if (staging / kind).is_dir()]
     for kind in kinds:
         shutil.copytree(staging / kind, incoming / kind)
         for source in (staging / kind).rglob('*'):
             if source.is_file() and pilot.file_digest(source) != pilot.file_digest(incoming / kind / source.relative_to(staging / kind)):
                 raise ValueError(f'{source}: copy differs')
-    for kind in ('materials', 'meshes', 'worlds', 'particles.d'):
+    for kind in ('materials', 'meshes', 'worlds', 'particles.d', 'vobtrees.d'):
         shutil.rmtree(live / kind, ignore_errors=True)
         if kind in kinds:
             (incoming / kind).rename(live / kind)

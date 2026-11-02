@@ -89,8 +89,12 @@ class DrawBuckets {
       uint32_t       diffuseFrames   = 0;
       uint32_t       frameCount      = 0;
       uint32_t       frameDuration   = 0;
+      float          turbidity        = 0.f;
+      float          turbidityDepth   = 0.f;
+      float          emissive         = 0.f;
+      uint32_t       padding2 = 0; // scalars: an array member here faulted the GPU on Metal
       };
-    static_assert(sizeof(BucketGpu)==80); // GPU array stride of Bucket in scene.glsl
+    static_assert(sizeof(BucketGpu)==96); // GPU array stride of Bucket in scene.glsl
 
     struct {
       Tempest::DescriptorArray vbo;

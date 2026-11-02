@@ -170,7 +170,7 @@ def test_scenario_groups_match_main_census():
         "noise": ("GIVEN", {"save": True, "timeout": 240}),
         "npc_deeds": ("OFF", {"save": True, "timeout": 720}),
         "npc_director": ("GIVEN", {"save": True, "timeout": 720}),
-        "npc_far": ("OFF", {"save": True, "timeout": 720}),
+        "npc_far": ("GIVEN", {"save": True, "timeout": 720}),
         "npc_will": ("OFF", {"save": True, "timeout": 240}),
         "occasions": ("OFF", {"save": True, "timeout": 240}),
         "orders": ("GIVEN", {"save": False, "timeout": 360}),

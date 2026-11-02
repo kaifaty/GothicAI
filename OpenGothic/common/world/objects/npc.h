@@ -16,6 +16,7 @@
 #include "game/meleedodge.h"
 #include "game/meleeimpact.h"
 #include "game/meleestamina.h"
+#include "game/meleefighter.h"
 #include "physics/dynamicworld.h"
 #include "physics/ragdoll.h"
 #include "world/aiqueue.h"
@@ -335,6 +336,17 @@ class Npc final {
     bool      isStaminaExhausted() const;
     bool      isMeleeStunned() const;
     void      startMeleeStun(Npc& by, std::string_view reason);
+    // Charged forward strike: transient hero-only windup/hold and an ordinary event-driven release.
+    bool      beginMeleeRiposte();
+    bool      isMeleeRiposting() const;
+    bool      canMeleeCharge() const;
+    bool      beginMeleeCharge();
+    void      releaseMeleeCharge();
+    void      cancelMeleeCharge(std::string_view reason);
+    bool      isMeleeCharging() const;
+    bool      isMeleeChargeReleasing() const;
+    float     meleeChargeMultiplier() const;
+    void      meleeChargeTap(uint64_t heldMs);
     // The melee dodge ([GAME] melee_dodge, game/meleedodge): that way relative to the facing, the move by the
     // armour, its stamina, its window without incoming harm. Any npc may call it; the hero's input does
     // (PlayerControl). false: refused, no animation, or the pose did not take it. The playing dodge is told by
@@ -606,6 +618,8 @@ class Npc final {
     const Tempest::Vec3& ragdollQuestReturnFrom() const { return ragdollQuestFrom; }
     void      prepareRagdoll();
     void      prepareLivingBody();
+    void      refreshMeleeFighter();
+    bool      isMeleeFighter() const;
     void      syncRagdoll();
     void      suspendRagdoll();
     void      finishMeleeShadowSwing(bool remove=true, bool discard=false);
@@ -677,7 +691,7 @@ class Npc final {
     bool      rotateTo(float dx, float dz, float speed, AnimationSolver::TurnType anim, uint64_t dt);
     bool      whirlTo(float dx, float dz, float step, uint64_t dt);
     bool      isRotationAllowed() const;
-    auto      playAnimByName(std::string_view name, BodyState bs) -> const Animation::Sequence*;
+    auto      playAnimByName(std::string_view name, BodyState bs, bool force = false) -> const Animation::Sequence*;
     bool      setPlayerPose(bool kneel, std::string_view reason);
     void      tickPeeStream();
     bool      tickPlayerPose();
@@ -743,6 +757,22 @@ class Npc final {
     Npc*      lastHitBy() const { return lastHit; }  // who hit this npc last (ai_bridge: who killed it)
     void      setLastHitBy(Npc* by) { lastHit = by; }  // ai_bridge's debug kill: the killer it names
 
+    // A body as a physical trace (physics stage 8, step 4b): stamped at death, saved
+    // with the NPC in an optional entry. The culprit is engine truth and never leaves it.
+    struct BodyTrace {
+      uint32_t    id        = 0;  // per world, never reused; 0: none yet
+      int64_t     diedAt    = -1; // game minutes; -1: unknown (a body from an older save)
+      int64_t     clockFrom = -1; // game minute its three-day lifetime started
+      std::string culprit;        // "PLAYER" or the killer's instance symbol
+      };
+    const BodyTrace& bodyTrace() const { return bodyTraceRecord; }
+    // Blood (physics stage 8, step 4c): game ms of the last bleeding hit, -1: none.
+    // The wound's bone: the pool of a body forms under it, not under the trunk's centre.
+    void      setBloodHit(int64_t gameMs, const Tempest::Vec3& wound);
+    int64_t   bloodHitAt() const { return bloodHit; }
+    auto      bloodWound() const -> Tempest::Vec3;
+    void      setBodyTrace(BodyTrace trace);
+
     void      setOther(Npc* ot);
     void      setVictim(Npc* ot);
 
@@ -754,8 +784,8 @@ class Npc final {
 
     bool      doAttack(Anim anim, BodyState bs);
     void      commitSpell();
-    // ignoreDefence is reserved for a confirmed contact in the devmode npc_hit fixture.
-    void      takeDamage(Npc& other, const Bullet* b, bool ignoreDefence = false, float meleeScale = 1.f, const MeleeBladeContact* contact = nullptr);
+    // Confirmed npc_hit/barge contacts bypass defence; barge filters dodge immunity before calling.
+    void      takeDamage(Npc& other, const Bullet* b, bool ignoreDefence = false, float meleeScale = 1.f, const MeleeBladeContact* contact = nullptr, bool barge = false);
     void      takeDamage(Npc& other, const Bullet* b, const VisualFx* vfx, int32_t splId);
     bool      isTargetableBySpell(TargetType t) const;
 
@@ -886,7 +916,7 @@ class Npc final {
     bool      hasAutoroll() const;
     bool      prepareTurn();
     void      stopWalkAnimation();
-    void      takeDamage(Npc& other, const Bullet* b, const CollideMask bMask, int32_t splId, bool isSpell, float meleeScale = 1.f, const MeleeBladeContact* contact = nullptr);
+    void      takeDamage(Npc& other, const Bullet* b, const CollideMask bMask, int32_t splId, bool isSpell, float meleeScale = 1.f, const MeleeBladeContact* contact = nullptr, bool barge = false);
     void      hitReaction(const Npc& other, const Bullet* b, int32_t damage, bool stumble, const MeleeBladeContact* contact = nullptr);
     void      takeFallDamage(const Tempest::Vec3& fallSpeed);
     void      takeDrownDamage();
@@ -965,6 +995,7 @@ class Npc final {
 
     DynamicWorld::NpcItem          physic;
     std::unique_ptr<Ragdoll>       living;
+    MeleeFighter::State            meleeFighter;
     MeleeBenchMode                meleeBench = MeleeBenchMode::Off;
     bool                          meleeBenchDynamicPelvis = false;
     uint64_t                      livingRetryTick = 0;
@@ -1028,10 +1059,31 @@ class Npc final {
     uint64_t                      ragdollStartTick = 0;
     bool                          ragdollLegacyDown = false;
     bool                          ragdollRecovering = false;
-    void                          applyMeleePosture(Npc& attacker, const MeleeBladeContact* contact, bool blocked, float before);
+    void                          applyMeleePosture(Npc& attacker, const MeleeBladeContact* contact, bool blocked, float before, bool barge = false);
     bool                          tickMeleePosture(uint64_t dt);
     MeleeImpact::Posture           meleePosture;
     MeleeStamina::State            meleeStamina;
+    struct Riposte final {
+      std::weak_ptr<zenkit::INpc> victim;
+      Tempest::Vec3 heroStart, from, pair;
+      uint64_t start = 0, bladeAt = 0, hitEnd = 0;
+      bool blade = false, handover = false, applying = false, blocked = false;
+      };
+    std::optional<Riposte>         meleeRiposte;
+    uint64_t                      meleeRiposteHoldUntil = 0;
+    bool                          isMeleeRiposteHeld() const;
+    void                          tickMeleeRiposte();
+    void                          meleeRiposteBlade();
+    float                         meleeRiposteMultiplier(const Npc& target) const;
+    void                          meleeRiposteNote(const Npc* victim, const std::string& text, std::string_view phase, const std::string& fields = {});
+    bool                          knockDownMelee(Npc& attacker, const Tempest::Vec3& impulse, bool barge, std::string_view reason);
+    enum class ChargePhase : uint8_t { None, Windup, Hold, Release };
+    ChargePhase                   meleeChargePhase = ChargePhase::None;
+    uint64_t                      meleeChargeStart = 0;
+    float                         meleeChargeMult = 1.f;
+    bool                          meleeChargeReleased = false;
+    void                          tickMeleeCharge();
+    void                          meleeChargeNote(const std::string& text, std::string_view phase, const std::string& fields = {});
     void                          tickMeleeStamina();
     float                         meleeAttackCost() const;
     bool                          allowStaminaAction(std::string_view action, float cost, bool fullCost = false);
@@ -1046,17 +1098,23 @@ class Npc final {
     float                         meleePostureSkillScale(const Npc& attacker) const;
     bool                          hasMeleeBeastPoise() const;
     bool                          hasMeleeSuperArmor() const;
+    bool                          hasMeleeBargeSuperArmor() const;
     float                         meleeStunBonus(const Npc& attacker) const;
     MeleeImpact::BackstabKind      meleeBackstabKind(const Npc& attacker) const;
     float                         meleeBackstabMultiplier(MeleeImpact::BackstabKind kind) const;
     struct MeleeDodgeLayer final {
       MeleeDodge::Move move;
       uint64_t         origin = 0; // the layer's start as it began: a hit stop moves its start, not this
+      uint64_t         elapsed = 0; // played clip time, including speed and hit stop (barge contact/super armor)
       };
     std::optional<MeleeDodgeLayer> meleeDodgeLayer() const;
     // An incoming blow, arrow or spell inside the dodge's window: true, it does not pass (logged)
     bool                          meleeDodgeEvades(Npc& other, std::string_view kind);
     void                          meleeDodgeNote(const std::string& text, std::string_view phase, const std::string& fields);
+    void                          tickMeleeBarge();
+    void                          meleeBargeNote(const Npc* target, uint64_t elapsed, std::string_view outcome, std::string_view predicted = {});
+    std::optional<uint64_t>        meleeBargeOrigin; // one contact per clip; transient, like posture and stun
+    bool                          meleeBargeContact = false;
     // Transient per-attacker awareness, sampled before damage perception changes combat state.
     std::vector<std::pair<const Npc*,uint64_t>> meleeRecentHits;
     std::string                   meleeStunReason;
@@ -1073,6 +1131,8 @@ class Npc final {
       };
     std::optional<MeleeParadeTiming> meleeParadeTiming; // native AI only, transient
     bool                          meleeKnockdown = false;
+    bool                          meleeBargeKnockdown = false;
+    bool                          meleeRiposteKnockdown = false;
     bool                          meleeDownStrike = false; // the chop from above at one lying is playing
     bool                          meleeGetupForced = false;
     uint64_t                      meleeFallTick = 0, meleeRiseTick = 0;
@@ -1118,6 +1178,12 @@ class Npc final {
 
     // last hit
     Npc*                           lastHit          = nullptr;
+    BodyTrace                      bodyTraceRecord;
+    bool                           bodyTraceEntered = false; // the record's death reached ZS_Dead
+    int64_t                        bloodHit       = -1;   // game ms of the last bleeding hit
+    size_t                         bloodBone      = size_t(-1); // skeleton node nearest to that wound
+    uint64_t                       bloodDeathTick = 0;    // real ms of death: the pool waits for the body to settle
+    bool                           bloodPoolDone  = true; // false only between a death and its pool
     char                           lastHitType      = 'A';
     int32_t                        lastHitSpell     = 0;
 

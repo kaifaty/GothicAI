@@ -11,9 +11,31 @@ const float RClouds  = RPlanet+3000; // Clouds height in meters
 const float RAtmos   = 6460e3;       // Radius of the atmosphere in meters
 
 const float Ffresnel = 0.02;
-const float IorWater = 1.0 / 1.52; // air / water
-const float IorAir   = 1.52;       // water /air
+const float IorWater = 1.0 / 1.333; // air / water (1.52 was glass)
+const float IorAir   = 1.333;      // water / air
 const vec3  WaterAlbedo = vec3(0.8,0.9,1.0);
+// Soft particles (cm): the fade before the scene behind a sprite, and the fade next to the camera [from, to].
+// Particle emission as a share of the sun's intensity: about 1/(exposure*GSunIntensity) at noon, where the
+// exposure is 1/(2.5*1.25*the luminance of lit white) (sky_exposure.comp).
+const float EmissiveSunRatio  = 1.7;
+const float EmissiveMaxGain   = 6.0;   // about 2.6 EV over the noon look
+// A glowing mesh (materials.json "emissive"): the colour of its heat (emberColour) times up to this before that gain.
+// Its share rides in the G-buffer ORM alpha below the own-material bit: alpha 1 - EmissiveOrmCode*share keeps the
+// "own" test (> 0.5).
+const float EmissiveMeshPeak  = 0.6;
+const float EmissiveOrmCode   = 0.49;
+// Glowing charcoal by its share of heat: dull red where a block glows through (about 700 C) to orange deep in a crack
+// (about 1000 C). Albedo as the colour went white at a peak of 4 (r3) and read as lamp-lit orange paint below it (r5).
+vec3 emberColour(float share) {
+  return mix(vec3(0.5, 0.04, 0.004), vec3(1.0, 0.3, 0.04), share);
+  }
+const float SoftParticleDepth = 15.0;
+const vec2  SoftParticleNear  = vec2(30.0, 100.0);
+const float WaterF0        = 0.0204; // ((1.333-1)/(1.333+1))^2
+// Ripples finer than the wave normal, as a GGX roughness (alpha = r^2): the sea in a 5 m/s wind has a
+// mean square slope of about 0.029 (Cox and Munk), alpha ~0.24; still water in a pot about 0.06.
+const float WaterRoughness    = 0.45;
+const float PotWaterRoughness = 0.25;
 
 // in vanilla game night time attenuated as rgb{18 16 60}
 const float GMoonIntensity = 0.36;

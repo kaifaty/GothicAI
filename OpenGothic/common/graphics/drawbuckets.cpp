@@ -232,6 +232,9 @@ bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
       }
     bx.texAniMapDirPeriod = i.mat.texAniMapDirPeriod;
     bx.waveMaxAmplitude   = i.mat.waveMaxAmplitude;
+    bx.turbidity          = i.mat.turbidity;
+    bx.turbidityDepth     = i.mat.turbidityDepth;
+    bx.emissive           = i.mat.emissive;
     bx.alphaWeight        = i.mat.alphaWeight;
     bx.envMapping         = i.mat.envMapping;
     if(i.staticMesh!=nullptr) {

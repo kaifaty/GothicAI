@@ -67,6 +67,7 @@
 #include "fontdata.h"
 #include "worldbase.h"
 #include "world/chunkresidency.h"
+#include "world/voblayer.h"
 #include "utils/string_frm.h"
 
 #include <dmusic.h>
@@ -1292,6 +1293,31 @@ void Resources::indexMaterialMaps() {
         else
           maps.antitileCell = float(value);
         }
+      }
+    // Water in a pot clouded with ash and fat: how much of the material's own lit colour covers the clear water.
+    if(const auto turbidity = entry.value.FindMember("turbidity"); turbidity!=entry.value.MemberEnd()) {
+      if(!turbidity->value.IsNumber() || !std::isfinite(turbidity->value.GetDouble()) ||
+         turbidity->value.GetDouble()<0 || turbidity->value.GetDouble()>1)
+        valid = false;
+      else
+        maps.turbidity = float(turbidity->value.GetDouble());
+      }
+    // A stew: the turbidity is reached over this many cm of liquid (Beer-Lambert), clearer where it is thin.
+    if(const auto depth = entry.value.FindMember("turbidity_depth"); depth!=entry.value.MemberEnd()) {
+      if(!depth->value.IsNumber() || !std::isfinite(depth->value.GetDouble()) ||
+         depth->value.GetDouble()<0 || depth->value.GetDouble()>1e6)
+        valid = false;
+      else
+        maps.turbidityDepth = float(depth->value.GetDouble());
+      }
+    // Embers and glowing wood: the material gives off its own albedo colour times this, where the ORM's alpha
+    // (DXT5) marks it; it slowly breathes (main.frag, mainGBuffer) and is added by the ambient pass.
+    if(const auto emissive = entry.value.FindMember("emissive"); emissive!=entry.value.MemberEnd()) {
+      if(!emissive->value.IsNumber() || !std::isfinite(emissive->value.GetDouble()) ||
+         emissive->value.GetDouble()<0 || emissive->value.GetDouble()>1)
+        valid = false;
+      else
+        maps.emissive = float(emissive->value.GetDouble());
       }
     if(const auto scale = entry.value.FindMember("scale"); scale!=entry.value.MemberEnd()) {
       if(!scale->value.IsNumber()) {
@@ -2596,6 +2622,9 @@ Resources::MaterialMaps Resources::loadMaterialMaps(std::string_view name) {
   ret.orm    = inst->implLoadMaterialTexture(files.orm,TextureKind::Orm);
   ret.scale  = files.scale;
   ret.antitileCell = files.antitileCell;
+  ret.turbidity = files.turbidity;
+  ret.turbidityDepth = files.turbidityDepth;
+  ret.emissive = files.emissive;
   ret.antitile = files.antitile;
   ret.present = true;
   ret.hasAlbedo = !files.albedo.empty();
@@ -2872,15 +2901,49 @@ const Resources::VobTree* Resources::implLoadVobBundle(std::string_view filename
     return i->second.get();
 
   std::vector<std::shared_ptr<asset::VirtualObject>> bundle;
-  try {
-    WorldData::ZenFile base;
-    if(loadBaseZen(cname,"world",base)) {
-      bundle = std::move(base.vobs);
-
+  bool overridden=false;
+  const auto content=contentDir();
+  const auto* layers=std::getenv("OPENGOTHIC_VOB_LAYERS");
+  if(!content.empty() && (layers==nullptr || std::string_view(layers)!="0")) {
+    auto file=content/"vobtrees.d";
+    try {
+      const auto separator=filename.find_last_of("/\\");
+      auto name=std::filesystem::path(std::string(filename.substr(separator==std::string_view::npos ? 0 : separator+1)))
+                  .stem().string()+".json";
+      for(auto& c:name) c=char(std::toupper(uint8_t(c)));
+      if(std::filesystem::is_directory(file))
+        for(const auto& entry:std::filesystem::directory_iterator(file)) {
+          auto candidate=entry.path().filename().string();
+          for(auto& c:candidate) c=char(std::toupper(uint8_t(c)));
+          if(candidate!=name || !entry.is_regular_file()) continue;
+          file=entry.path();
+          std::map<std::string,std::filesystem::path> ownMeshes;
+          for(const auto& [key,mesh]:meshOverrides) ownMeshes.emplace(key,mesh.file);
+          const auto result=VobLayer::readTree(bundle,baseDir(),file,content,&ownMeshes);
+          overridden=result.errors.empty();
+          if(!overridden) {
+            std::string errors;
+            for(const auto& error:result.errors) {
+              if(!errors.empty()) errors+="; ";
+              errors+=error;
+              }
+            Log::e("vob tree: skipped ",errors);
+            }
+          break;
+          }
+      }
+    catch(const std::exception& error) {
+      Log::e("vob tree: skipped ",file.string(),": ",error.what());
       }
     }
-  catch(...) {
-    Log::e("unable to load Zen-file: \"",cname,"\"");
+  if(!overridden) {
+    try {
+      WorldData::ZenFile base;
+      if(loadBaseZen(cname,"world",base)) bundle=std::move(base.vobs);
+      }
+    catch(...) {
+      Log::e("unable to load Zen-file: \"",cname,"\"");
+      }
     }
 
   auto ret = zenCache.insert(std::make_pair(filename,std::make_unique<VobTree>(std::move(bundle))));

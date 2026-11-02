@@ -402,16 +402,17 @@ class NpcPlanner:
         loudness: float | None = None,
         source: str | None = None,
         context_only: bool = False,
+        context: str = "",
     ) -> None:
         rec = self.npcs.get(npc.upper())
         if rec is None or (rec.tier is Tier.OFF and rec.activity != "fight"):
             return
         if kind == "noise" and (rec.activity != "routine" or rec.talking):
             return  # the bridge only reports sounds heard by free npc's; do not retain a late one
-        other = (other or "") if kind == "noise" else (other or "PLAYER")
+        # a sound or a find says nothing of who caused it; legacy events default to the hero
+        other = (other or "") if kind in ("noise", "trace_found") else (other or "PLAYER")
         self.stats.events += 1
         kind, detail = normalize(kind, other, other_name, detail)
-        context = ""
         if kind == "monster_killed":
             # the danger from that monster is over (all of its kind share the symbol: one more nearby is
             # sensed again soon); what it was doing stays in the words; the npc itself may have killed it

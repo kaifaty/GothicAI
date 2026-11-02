@@ -95,6 +95,9 @@ void Shaders::compileShaders() noexcept {
   ssao                = computeShader("ssao.comp.sprv");
   ssaoBlur            = computeShader("ssao_blur.comp.sprv");
 
+  bloodDecal       = bloodDecalShader(opts.doMaterialMaps);
+  bloodDecalAlbedo = bloodDecalShader(false);
+
   directLight      = postEffect(string_frm("direct_light", materialMaps),    RenderState::ZTestMode::NoEqual);
   directLightSh    = postEffect(string_frm("direct_light_sh", materialMaps), RenderState::ZTestMode::NoEqual);
   if(opts.doRayQuery && device.properties().descriptors.nonUniformIndexing)
@@ -189,6 +192,25 @@ void Shaders::compileShaders() noexcept {
 
   tonemapping        = postEffect("triangle_uv", "tonemapping",    RenderState::ZTestMode::Always);
   tonemappingUpscale = postEffect("triangle_uv", "tonemapping_up", RenderState::ZTestMode::Always);
+  bloomDownKaris     = postEffect("triangle_uv", "bloom_down_karis", RenderState::ZTestMode::Always);
+  bloomDown          = postEffect("triangle_uv", "bloom_down",       RenderState::ZTestMode::Always);
+  {
+    // up the chain onto the larger level (One, One); into the scene as scene*(1-k) + bloom*k (One, SrcAlpha)
+    auto blended = [&](std::string_view fs, RenderState::BlendMode dst) {
+      RenderState state;
+      state.setZTestMode    (RenderState::ZTestMode::Always);
+      state.setZWriteEnabled(false);
+      state.setBlendSource  (RenderState::BlendMode::One);
+      state.setBlendDest    (dst);
+      auto sh = GothicShader::get("triangle_uv.vert.sprv");
+      auto vs = device.shader(sh.data,sh.len);
+      sh      = GothicShader::get(string_frm(fs,".frag.sprv"));
+      auto ps = device.shader(sh.data,sh.len);
+      return device.pipeline(Triangles,state,vs,ps);
+      };
+    bloomUp  = blended("bloom_up",  RenderState::BlendMode::One);
+    bloomMix = blended("bloom_mix", RenderState::BlendMode::SrcAlpha);
+  }
 
   cmaa2EdgeColor2x2Presets[uint32_t(AaPreset::OFF)]    = Tempest::ComputePipeline();
   cmaa2EdgeColor2x2Presets[uint32_t(AaPreset::MEDIUM)] = computeShader("cmaa2_edges_color2x2_quality_0.comp.sprv");
@@ -738,6 +760,31 @@ RenderPipeline Shaders::fogShader(std::string_view name) {
   auto vs = device.shader(sh.data,sh.len);
 
   sh      = GothicShader::get(string_frm(name,".frag.sprv"));
+  auto fs = device.shader(sh.data,sh.len);
+  return device.pipeline(Triangles,state,vs,fs);
+  }
+
+RenderPipeline Shaders::bloodDecalShader(bool materialMaps) {
+  auto& device = Resources::device();
+
+  // No depth attachment: the fragment shader projects the box onto the scene depth itself.
+  // The box is drawn from inside (front faces culled) so it works with the camera in it too.
+  // One multiplying blend for both targets, dst*(1-a + src): the shader writes a*multiplier, so the
+  // surface shows through the blood (albedo) and the wet film scales its roughness down (ORM G).
+  RenderState state;
+  state.setZTestMode    (RenderState::ZTestMode::Always);
+  state.setZWriteEnabled(false);
+  state.setCullFaceMode (RenderState::CullMode::Back);
+  state.setBlendSource  (RenderState::BlendMode::DstColor);
+  state.setBlendDest    (RenderState::BlendMode::OneMinusSrcAlpha);
+  state.setColorWriteMask(0, RenderState::RGB); // albedo alpha holds the material hint bits
+  if(materialMaps)
+    state.setColorWriteMask(1, RenderState::G);  // roughness only: occlusion, metal and the map flag stay
+
+  auto sh = GothicShader::get("blood_decal.vert.sprv");
+  auto vs = device.shader(sh.data,sh.len);
+
+  sh      = GothicShader::get(materialMaps ? "blood_decal_orm.frag.sprv" : "blood_decal.frag.sprv");
   auto fs = device.shader(sh.data,sh.len);
   return device.pipeline(Triangles,state,vs,fs);
   }
