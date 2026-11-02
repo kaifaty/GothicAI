@@ -2,7 +2,7 @@
 microphone and streams it to the ASR service (asr-service/) as it is spoken. Partial text goes to the
 game right away; on release only the recognizer's short tail is left, and the final text is the hero's
 phrase: talk.py decides whom it is said to (the hero's focus at the key is one of the hints). Laughter
-alone («Ха-ха-ха») is said as `(смеётся)`: npc's hear that he laughs, not a word.
+alone is said as `(смеётся)`; words spoken with laughter are prefixed with `(смеясь)`.
 
 The game only reports the key (`ptt_start` / `ptt_stop` / `ptt_cancel`); no audio passes through it.
 """
@@ -46,6 +46,7 @@ MIC_DENIED = (
     "(Системные настройки → Конфиденциальность и безопасность → Микрофон)"
 )
 LAUGH = "(смеётся)"
+LAUGHING_THRESHOLD = 0.5
 _LAUGH_WORD = re.compile(r"[ао]?(?:х[аеиоыэ])+х?|(?:гы)+")
 _VOWEL = re.compile(r"[аеиоыэ]")
 
@@ -147,6 +148,7 @@ class Recognized:
     text: str
     provider: str
     latency_s: float  # from the end of the recording
+    laughing: float | None = None
 
 
 PartialCallback = Callable[[str], None]
@@ -248,6 +250,7 @@ class AsrSession:
                                 str(msg.get("text", "")).strip(),
                                 str(msg.get("provider", "")),
                                 time.monotonic() - self._ended_at,
+                                msg.get("laughing"),
                             ),
                         )
                         return
@@ -477,15 +480,22 @@ class VoiceInput:
             result.latency_s,
             utt.focus or "-",
         )
-        if not result.text:
+        text = result.text
+        laughs = result.laughing is not None and result.laughing >= LAUGHING_THRESHOLD
+        if laughter(text) or (not text and laughs):
+            text = LAUGH
+        elif laughs:
+            text = f"(смеясь) {text}"
+        if not text:
             await self._status("notice", "Не расслышал. Удерживайте T, пока говорите")
             return
         details: dict[str, Any] = {
             "via": "voice", "asr": result.provider, "latency_s": round(result.latency_s, 2)
         }
-        text = result.text
-        if laughter(text):
-            text, details["heard"] = LAUGH, result.text
+        if result.laughing is not None:
+            details["laughing"] = round(result.laughing, 2)
+        if text != result.text:
+            details["heard"] = result.text
         self.heard(text, utt.focus, details)
 
     async def _partial(self, utt: _Utterance, text: str) -> None:

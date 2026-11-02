@@ -5,12 +5,15 @@
     client  -> service binary frames: 16-bit little-endian mono PCM, sent while the player speaks
     service -> client  {"type":"partial","text":"..."}     (streaming providers: text so far)
     client  -> service {"type":"end"}            (or {"type":"cancel"} to drop the utterance)
-    service -> client  {"type":"final","text":"...","provider":"...","audio_s":2.1,"latency_s":0.3}
+    service -> client  {"type":"final","text":"...","provider":"...",
+                        "audio_s":2.1,"latency_s":0.3,"laughing":0.98}
     service -> client  {"type":"error","detail":"..."}
 
 `latency_s` counts from `end`. Utterances on one connection are handled one after another.
 `start.hints` is an optional list of names or phrases to help streaming providers recognize them.
 Providers without hint support ignore it; clients can omit it.
+`final.laughing` is the maximum laughing confidence across final voice profiles and any hint-free
+retry, or null when no profile is available. A profile without a laughing label contributes 0.0.
 
 `GET /health` on the same port answers {"ok":true,"service":"gothic-asr","providers":[{"name":"..."}]}:
 the launcher waits for it before starting the game.
@@ -143,6 +146,7 @@ async def _finish(utt: Utterance) -> dict:
         "provider": r.provider,
         "audio_s": round(r.audio_s, 3),
         "latency_s": round(r.latency_s, 3),
+        "laughing": r.laughing,
     }
 
 

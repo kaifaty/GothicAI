@@ -57,16 +57,19 @@ class InworldRealtime:
         url: str = DEFAULT_URL,
         api_key_env: str = "INWORLD_API_KEY",
         timeout: str | float = 10.0,
+        voice_profile: str | bool = True,
     ) -> None:
         self.model = model
         self.url = url
         self.api_key_env = api_key_env
         self.timeout = float(timeout)
+        self.voice_profile = bool(int(voice_profile))
         self._lock = asyncio.Lock()
         self._ws: ClientConnection | None = None
         self._reader: asyncio.Task[None] | None = None
         self._settings: tuple[str, tuple[str, ...]] | None = None
         self._active: _Stream | None = None
+        self._closing: set[asyncio.Task[None]] = set()
 
     def _key(self) -> str:
         key = os.environ.get(self.api_key_env, "")
@@ -93,15 +96,30 @@ class InworldRealtime:
         return stream
 
     async def transcribe(self, audio: np.ndarray, lang: str) -> Transcript:
-        stream = await self.open_stream(lang)
+        # A hint-free replay must leave the streaming session ready for the next phrase.
+        replay = InworldRealtime(
+            model=self.model,
+            url=self.url,
+            api_key_env=self.api_key_env,
+            timeout=self.timeout,
+            voice_profile=self.voice_profile,
+        )
+        stream = await replay.open_stream(lang)
         try:
             # Microphone-sized pieces: a phrase of one 1 s piece before `endTurn` never gets a final.
             for i in range(0, len(audio), CHUNK):
                 await stream.feed(audio[i : i + CHUNK])
-            return await stream.finish()
-        except BaseException:
-            await stream.cancel()
-            raise
+            return await stream._result()
+        finally:
+            closing = asyncio.create_task(self._close_replay(replay))
+            self._closing.add(closing)
+            closing.add_done_callback(self._closing.discard)
+
+    async def _close_replay(self, replay: InworldRealtime) -> None:
+        try:
+            await replay.aclose()
+        except (OSError, TimeoutError, WebSocketException) as err:
+            log.warning("inworld replay connection close failed: %s", err)
 
     async def _session(self, lang: str, prompts: tuple[str, ...]) -> ClientConnection:
         settings = (lang, prompts)
@@ -134,6 +152,10 @@ class InworldRealtime:
                                 "language": lang,
                                 "inworldSttV1Config": {"vadThreshold": 0},
                                 "prompts": list(prompts),
+                                **(
+                                    {"voiceProfileConfig": {"enableVoiceProfile": True}}
+                                    if self.voice_profile else {}
+                                ),
                             },
                             "audioProtocol": "BINARY",
                         },
@@ -196,6 +218,8 @@ class InworldRealtime:
             await self._active.cancel()
         async with self._lock:
             await self._drop()
+        if self._closing:
+            await asyncio.gather(*self._closing)
 
 
 class _Stream:
@@ -211,6 +235,7 @@ class _Stream:
         self._ws: ClientConnection | None = None
         self._audio: asyncio.Queue[bytes | None] = asyncio.Queue()
         self._finals: list[str] = []
+        self._laughing: float | None = None
         self._ending = False
         self._closed = False
         self._done: asyncio.Future[str] = asyncio.get_running_loop().create_future()
@@ -237,6 +262,14 @@ class _Stream:
         text = transcription.get("transcript", "").strip()
         final = transcription.get("isFinal", False)
         if final:
+            profile = transcription.get("voiceProfile")
+            if profile is not None:
+                laughing = max(
+                    (style["confidence"] for style in profile.get("vocalStyle", [])
+                     if style["label"] == "laughing"),
+                    default=0.0,
+                )
+                self._laughing = max(self._laughing or 0.0, laughing)
             if text:
                 self._finals.append(text)
             partial = " ".join(self._finals)
@@ -260,18 +293,22 @@ class _Stream:
         if len(audio):
             self._audio.put_nowait(float_to_pcm16(audio))
 
-    async def finish(self) -> Transcript:
+    async def _result(self) -> Transcript:
         self._audio.put_nowait(None)
         try:
             text = await asyncio.wait_for(asyncio.shield(self._done), self._owner.timeout)
         except TimeoutError as err:
-            await self._close(reuse=False)
             raise AsrError(f"inworld: no final transcript within {self._owner.timeout:g}s") from err
+        return Transcript(text, self._owner.name, laughing=self._laughing)
+
+    async def finish(self) -> Transcript:
+        try:
+            result = await self._result()
         except BaseException:
             await self._close(reuse=False)
             raise
         await self._close(reuse=True)
-        return Transcript(text, self._owner.name)
+        return result
 
     async def cancel(self) -> None:
         await self._close(reuse=False)

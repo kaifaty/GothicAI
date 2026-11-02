@@ -19,6 +19,7 @@ class Transcript:
     text: str
     provider: str
     confidence: float | None = None
+    laughing: float | None = None
 
 
 class AsrError(RuntimeError):

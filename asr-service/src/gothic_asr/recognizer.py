@@ -11,7 +11,7 @@ import asyncio
 import logging
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import cast
 
 import numpy as np
@@ -32,6 +32,7 @@ class Recognition:
     provider: str  # "" when the audio was skipped as silence
     audio_s: float
     latency_s: float
+    laughing: float | None = None
 
 
 class Recognizer:
@@ -88,7 +89,7 @@ class Recognizer:
                 continue
             latency = time.monotonic() - started
             log.info("%s: %.2fs of audio in %.2fs: %s", p.name, audio_s, latency, result.text)
-            return Recognition(result.text, p.name, audio_s, latency)
+            return Recognition(result.text, p.name, audio_s, latency, result.laughing)
         raise AsrError("; ".join(errors) or "no providers")
 
     async def aclose(self) -> None:
@@ -158,14 +159,21 @@ class Utterance:
                     result.text,
                 )
                 if not _echoes(result.text, self.hints):
-                    return Recognition(result.text, name, len(audio) / RATE, latency)
+                    return Recognition(result.text, name, len(audio) / RATE, latency, result.laughing)
                 log.warning("%s read the hints back: hearing it again without them", name)
                 await self._drop_stream()
                 try:
-                    return await self.recognizer._batch(audio, self.lang, providers, started)
+                    retry = await self.recognizer._batch(audio, self.lang, providers, started)
+                    laughing = max(
+                        (value for value in (result.laughing, retry.laughing) if value is not None),
+                        default=None,
+                    )
+                    return replace(retry, laughing=laughing)
                 except AsrError as err:
                     log.warning("no transcript without hints: %s", err)
-                    return Recognition("", name, len(audio) / RATE, time.monotonic() - started)
+                    return Recognition(
+                        "", name, len(audio) / RATE, time.monotonic() - started, result.laughing
+                    )
             except (AsrError, TimeoutError) as err:
                 log.warning("%s stream failed: %s", name, err or "timeout")
                 self._primary_failed = True

@@ -18,8 +18,10 @@ def tone(seconds: float = 0.5) -> np.ndarray:
     return (0.3 * np.sin(2 * np.pi * 220 * t)).astype(np.float32)
 
 
-def transcription(text: str, final: bool = False) -> str:
-    return json.dumps({"result": {"transcription": {"transcript": text, "isFinal": final}}})
+def transcription(text: str, final: bool = False, *, profile: dict | None = None) -> str:
+    return json.dumps({"result": {"transcription": {
+        "transcript": text, "isFinal": final, "voiceProfile": profile,
+    }}})
 
 
 class InworldServer:
@@ -34,6 +36,7 @@ class InworldServer:
         self.received: asyncio.Queue[tuple[int, bytes | dict]] = asyncio.Queue()
         self.providers: list[InworldRealtime] = []
         self.reply: str | None = "Кавалорн."
+        self.profile: dict | None = None
         self.close_on_request = True
         self.handshake_gate: asyncio.Event | None = None
         self.handshake_started = asyncio.Event()
@@ -65,7 +68,7 @@ class InworldServer:
                 if isinstance(message, bytes):
                     self.audio[index].append(message)
                 elif "endTurn" in message and self.reply is not None:
-                    await ws.send(transcription(self.reply, final=True))
+                    await ws.send(transcription(self.reply, final=True, profile=self.profile))
                 elif "closeStream" in message and self.close_on_request:
                     return
         except ConnectionClosed:
@@ -98,10 +101,11 @@ async def inworld_server(monkeypatch):
 
 def test_inworld_registration() -> None:
     provider = make_provider(
-        "inworld:model=test-model,url=ws://127.0.0.1:1,api_key_env=TEST_INWORLD_KEY,timeout=0.5"
+        "inworld:model=test-model,url=ws://127.0.0.1:1,api_key_env=TEST_INWORLD_KEY,timeout=0.5,voice_profile=0"
     )
     assert isinstance(provider, InworldRealtime)
     assert provider.name == "inworld" and provider.streaming is True
+    assert provider.voice_profile is False
     assert (provider.model, provider.url, provider.api_key_env, provider.timeout) == (
         "test-model", "ws://127.0.0.1:1", "TEST_INWORLD_KEY", 0.5
     )
@@ -115,9 +119,10 @@ async def test_inworld_missing_key_fails_in_warmup(monkeypatch) -> None:
     await provider.aclose()
 
 
-async def test_inworld_config_auth_and_binary_audio(inworld_server) -> None:
+@pytest.mark.parametrize("voice_profile", [True, "0"])
+async def test_inworld_config_auth_and_binary_audio(inworld_server, voice_profile) -> None:
     server = inworld_server
-    provider = server.provider(model="inworld/inworld-stt-1")
+    provider = server.provider(**({"voice_profile": voice_profile} if voice_profile == "0" else {}))
     hints = ["Кавалорн", "Долина Рудников"]
     stream = await provider.open_stream("ru", hints=hints)
     first, second = tone(0.2), tone(0.3)
@@ -126,6 +131,7 @@ async def test_inworld_config_auth_and_binary_audio(inworld_server) -> None:
     result = await stream.finish()
 
     assert (result.text, result.provider) == ("Кавалорн.", "inworld")
+    assert result.laughing is None
     assert server.configs == [
         {
             "transcribeConfig": {
@@ -136,6 +142,7 @@ async def test_inworld_config_auth_and_binary_audio(inworld_server) -> None:
                 "language": "ru",
                 "inworldSttV1Config": {"vadThreshold": 0},
                 "prompts": hints,
+                **({"voiceProfileConfig": {"enableVoiceProfile": True}} if voice_profile is True else {}),
             },
             "audioProtocol": "BINARY",
         }
@@ -144,6 +151,20 @@ async def test_inworld_config_auth_and_binary_audio(inworld_server) -> None:
     assert b"".join(server.audio[0]) == float_to_pcm16(np.concatenate([first, second]))
     messages = [await server.next_message() for _ in range(3)]
     assert messages[-1] == (0, {"endTurn": {}})
+
+
+@pytest.mark.parametrize(
+    ("profile", "laughing"),
+    [
+        (None, None),
+        ({"vocalStyle": [{"label": "neutral", "confidence": 0.9}]}, 0.0),
+        ({"vocalStyle": [{"label": "laughing", "confidence": 0.98}]}, 0.98),
+    ],
+)
+async def test_inworld_voice_profile_score(inworld_server, profile, laughing) -> None:
+    server = inworld_server
+    server.profile = profile
+    assert (await server.provider().transcribe(tone(), "ru")).laughing == laughing
 
 
 async def test_inworld_whole_recording_goes_in_tenth_second_frames(inworld_server) -> None:
@@ -229,7 +250,7 @@ async def test_inworld_failure_falls_back_with_whole_recording(inworld_server, f
     server.reply = None
     provider = server.provider()
     fallback = FakeProvider(text="запасной")
-    utterance = Recognizer(provider, fallback).utterance("ru")
+    utterance = Recognizer(provider, fallback).utterance("ru", hints=["Кавалорн"])
     await utterance.begin()
     await utterance.feed(tone(0.2))
     await utterance.feed(tone(0.3))
@@ -314,7 +335,9 @@ async def test_inworld_partials_replace_and_include_prior_final_chunks(inworld_s
     for text in ("Кава", "Кавалорн"):
         await ws.send(transcription(text))
         await wait_partial(text)
-    await ws.send(transcription("Кавалорн.", final=True))
+    await ws.send(transcription("Кавалорн.", final=True, profile={
+        "vocalStyle": [{"label": "laughing", "confidence": 0.98}],
+    }))
     await ws.send(json.dumps({"result": {"speechStarted": {}}}))
     await ws.send(json.dumps({"result": {"speechStopped": {}}}))
     await ws.send(json.dumps({"result": {"usage": {"audioSeconds": 0.5}}}))
@@ -329,9 +352,77 @@ async def test_inworld_partials_replace_and_include_prior_final_chunks(inworld_s
     async with asyncio.timeout(1.0):
         while (await server.next_message())[1] != {"endTurn": {}}:
             pass
-    await ws.send(transcription("со мной.", final=True))
+    await ws.send(transcription("со мной.", final=True, profile={
+        "vocalStyle": [{"label": "laughing", "confidence": 0.6}],
+    }))
     result = await finishing
     assert result.text == "Кавалорн. со мной."
+    assert result.laughing == 0.98
+
+
+async def test_inworld_hint_free_replay_keeps_prompted_connection_and_does_not_wait_for_close(
+    inworld_server, monkeypatch
+) -> None:
+    server = inworld_server
+    server.reply = None
+    provider = server.provider()
+    hints = ["Кавалорн", "Лотара"]
+    utterance = Recognizer(provider).utterance("ru", hints=hints)
+    await utterance.begin()
+    await utterance.feed(tone())
+    assert await server.next_config() == 0
+    prompted_ws, prompted_settings = provider._ws, provider._settings
+    close_started, release_close = asyncio.Event(), asyncio.Event()
+
+    from gothic_asr.providers import inworld
+
+    original_connect = inworld.connect
+
+    async def connect_replay(*args, **kwargs):
+        ws = await original_connect(*args, **kwargs)
+        original_close = ws.close
+
+        async def delayed_close(*args, **kwargs):
+            close_started.set()
+            await release_close.wait()
+            await original_close(*args, **kwargs)
+
+        monkeypatch.setattr(ws, "close", delayed_close)
+        return ws
+
+    monkeypatch.setattr(inworld, "connect", connect_replay)
+    finishing = asyncio.create_task(utterance.finish())
+    try:
+        async with asyncio.timeout(1.0):
+            while (await server.next_message())[1] != {"endTurn": {}}:
+                pass
+        await server.connections[0].send(transcription("Кавалорн, Лотара.", final=True, profile={
+            "vocalStyle": [{"label": "laughing", "confidence": 0.98}],
+        }))
+        assert await server.next_config() == 1
+        async with asyncio.timeout(1.0):
+            while (await server.next_message())[1] != {"endTurn": {}}:
+                pass
+        await server.connections[1].send(transcription("Ну ты лошара.", final=True))
+        result = await asyncio.wait_for(finishing, 0.25)
+        assert (result.text, result.laughing) == ("Ну ты лошара.", 0.98)
+        await asyncio.wait_for(close_started.wait(), 1.0)
+        assert provider._ws is prompted_ws and provider._settings is prompted_settings
+        assert not server.connections[0].close_code
+        assert [config["transcribeConfig"]["prompts"] for config in server.configs] == [hints, []]
+
+        server.reply = "Идём."
+        following = Recognizer(provider).utterance("ru", hints=hints)
+        await following.begin()
+        await following.feed(tone())
+        assert (await following.finish()).text == "Идём."
+        assert len(server.connections) == 2
+        messages = [server.received.get_nowait() for _ in range(server.received.qsize())]
+        assert (0, {"endTurn": {}}) in messages
+        assert not any(index == 0 and message == {"closeStream": {}} for index, message in messages)
+    finally:
+        release_close.set()
+        await provider.aclose()
 
 
 async def test_inworld_filters_hints_and_limits_them_to_first_100(inworld_server) -> None:

@@ -41,12 +41,14 @@ async def test_silence_is_skipped() -> None:
     fake = FakeProvider()
     r = await Recognizer(fake).recognize(np.zeros(RATE * 2, dtype=np.float32), "ru")
     assert r.text == "" and r.provider == "" and not fake.calls
+    assert r.laughing is None
 
 
 async def test_fallback_on_failure() -> None:
     primary, fallback = FakeProvider(fail=True), FakeProvider(text="запасной")
     r = await Recognizer(primary, fallback).recognize(tone(1), "ru")
     assert (r.text, r.provider) == ("запасной", "fake")
+    assert r.laughing is None
     assert primary.calls and fallback.calls
 
     with pytest.raises(AsrError, match="fake provider failure"):
@@ -119,6 +121,7 @@ async def test_websocket_roundtrip(service) -> None:
         await ws.send(json.dumps({"type": "end"}))
         final = json.loads(await ws.recv())
         assert final["type"] == "final" and final["text"] == "Привет, Ксардас."
+        assert final["laughing"] is None
         assert final["audio_s"] == pytest.approx(1.5, abs=0.01)
         assert fake.calls == [(int(1.5 * RATE), "ru")]
 
@@ -193,13 +196,24 @@ async def streaming_service(request):
 
 
 @pytest.mark.parametrize("streaming_service", [{}], indirect=True)
-async def test_streaming_partials_then_final(streaming_service) -> None:
+async def test_streaming_partials_then_final(streaming_service, monkeypatch) -> None:
     svc, primary, fallback = streaming_service
+    open_stream = primary.open_stream
+
+    async def with_profile(*args, **kwargs):
+        stream = await open_stream(*args, **kwargs)
+        monkeypatch.setattr(
+            stream, "finish", AsyncMock(return_value=Transcript(primary.text, "fake", laughing=0.98))
+        )
+        return stream
+
+    monkeypatch.setattr(primary, "open_stream", with_profile)
     events = await _roundtrip(svc.port, float_to_pcm16(tone(1)))
     assert events[0]["streaming"] is True
     partials = [e["text"] for e in events if e["type"] == "partial"]
     assert partials[:2] == ["Стой", "Стой здесь"] and partials[-1] == "Стой здесь и никуда не уходи."
     assert events[-1]["type"] == "final" and events[-1]["provider"] == "fake"
+    assert events[-1]["laughing"] == 0.98
     assert primary.streams[0].samples == RATE and not fallback.calls
 
 
@@ -235,7 +249,7 @@ async def test_malformed_hints_are_rejected_without_closing_client(streaming_ser
         assert len(primary.streams) == 1
 
 
-def test_realtime_cli_hints_and_provider_defaults(monkeypatch, tmp_path) -> None:
+def test_realtime_cli_hints_and_provider_defaults(monkeypatch, tmp_path, capsys) -> None:
     primary = FakeProvider(text="Кавалорн", stream=True)
     open_stream = AsyncMock(wraps=primary.open_stream)
     monkeypatch.setattr(primary, "open_stream", open_stream)
@@ -258,6 +272,7 @@ def test_realtime_cli_hints_and_provider_defaults(monkeypatch, tmp_path) -> None
         cli.main()
     assert exit_info.value.code == 0
     assert parsed[0].provider == "inworld" and parsed[0].fallback == "chatgpt"
+    assert "laughing=None] Кавалорн" in capsys.readouterr().out
     open_stream.assert_awaited_once_with("ru", None, hints=["Кавалорн", "Ватрас"])
 
 
@@ -301,19 +316,40 @@ async def _utterance(recognizer: Recognizer, audio: np.ndarray):
     return await utt.finish()
 
 
-async def test_hints_read_back_are_heard_again_without_them() -> None:
+@pytest.mark.parametrize(
+    ("hinted", "retried", "expected"),
+    [(0.98, 0.6, 0.98), (0.6, 0.99, 0.99), (None, 0.0, 0.0), (0.98, None, 0.98), (None, None, None)],
+)
+async def test_hints_read_back_are_heard_again_without_them(monkeypatch, hinted, retried, expected) -> None:
     primary = FakeProvider(text="Благо, Иннос, Инноса, Аданос, Белиар, Хорин", stream=True)
-    primary.transcribe = AsyncMock(return_value=Transcript("Ха-ха-ха.", "fake"))
+    stream = await primary.open_stream("ru")
+    monkeypatch.setattr(primary, "open_stream", AsyncMock(return_value=stream))
+    monkeypatch.setattr(
+        stream, "finish", AsyncMock(return_value=Transcript(primary.text, "fake", laughing=hinted))
+    )
+    primary.transcribe = AsyncMock(return_value=Transcript("Ха-ха-ха.", "fake", laughing=retried))
     r = await _utterance(Recognizer(primary), tone(2))
     assert (r.text, r.provider) == ("Ха-ха-ха.", "fake")
+    assert r.laughing == expected
     assert primary.transcribe.await_args.args[0].shape == (2 * RATE,)
-
-    primary.transcribe = AsyncMock(side_effect=AsrError("down"))
-    assert (await _utterance(Recognizer(primary), tone(2))).text == ""
 
     plain = FakeProvider(text="Эээ, Ксардас, привет.", stream=True)
     assert (await _utterance(Recognizer(plain), tone(1))).text == "Эээ, Ксардас, привет."
     assert not plain.calls
+
+
+@pytest.mark.parametrize("failure", [AsrError("down"), TimeoutError()])
+async def test_failed_hint_free_retry_keeps_empty_text(monkeypatch, caplog, failure) -> None:
+    primary = FakeProvider(text="Иннос, Инноса", stream=True)
+    stream = await primary.open_stream("ru")
+    monkeypatch.setattr(primary, "open_stream", AsyncMock(return_value=stream))
+    monkeypatch.setattr(
+        stream, "finish", AsyncMock(return_value=Transcript(primary.text, "fake", laughing=0.98))
+    )
+    primary.transcribe = AsyncMock(side_effect=failure)
+    result = await _utterance(Recognizer(primary), tone(2))
+    assert result.text == "" and result.laughing == 0.98
+    assert "no transcript without hints" in caplog.text
 
 
 async def test_voxtral_speaks_audiocpp_live() -> None:

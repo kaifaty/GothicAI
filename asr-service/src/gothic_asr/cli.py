@@ -82,7 +82,10 @@ async def transcribe(args: argparse.Namespace) -> int:
                 else:
                     r = await recognizer.recognize(audio, args.lang)
                 latencies.append(r.latency_s)
-            print(f"{Path(path).name}: [{r.provider} {r.audio_s:.1f}s audio, {r.latency_s:.2f}s] {r.text}")
+            print(
+                f"{Path(path).name}: [{r.provider} {r.audio_s:.1f}s audio, "
+                f"{r.latency_s:.2f}s, laughing={r.laughing}] {r.text}"
+            )
             if expected.exists():
                 print(f"{' ' * len(Path(path).name)}  expected: {expected.read_text().strip()}")
         if latencies:
