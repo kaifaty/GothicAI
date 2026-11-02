@@ -280,7 +280,7 @@ async def npc_far(
         await _until(lambda: any(f.get("crime") == cid for f in facts("npc_crime_defense")), 15)
         defense = next((f for f in facts("npc_crime_defense") if f.get("crime") == cid), None)
         if not check("far_fight", defense is not None and defense.get("far") is True
-                     and defense.get("model") == "hits_v1", defense):
+                     and defense.get("model") == "hits_v3", defense):
             return
         assert defense is not None
         timeout = defense.get("outcome") == "timeout"
