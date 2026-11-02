@@ -1,4 +1,5 @@
 #include "navdemos.h"
+#include "gothic.h"
 #include "testbench.h"
 #include "navbench.h"
 #include "navkeyteacher.h"
