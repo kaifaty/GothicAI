@@ -117,10 +117,17 @@ tier (`common/world/npcsimtier.h`); their calls count runs of consecutive same-t
 amounts `npc_full`, `npc_simplified` and `npc_tier_transitions` count NPCs per tier and tier changes.
 
 `OPENGOTHIC_NPC_LOGIC_AUDIT=1` enables the logical-body shadow audit (default 0). `npc_logic_shadow`
-measures its synchronization work; `npc_logic_samples`, `npc_logic_body_mismatch`, `npc_logic_weapon_mismatch`,
-`npc_logic_early`, `npc_logic_late`, `npc_logic_events` and `npc_logic_event_mismatch` count audit observations
-and timing differences. The `npcday` summary adds `logic_audit`, including action/animation breakdowns and
-prediction-error percentiles; the parity comparer reads its named gameplay fields and ignores these diagnostics.
+measures clock advancement and mutation-input processing. Audit compares the previous forecast before
+applying the tick's inputs. `npc_logic_samples`, `npc_logic_body_samples`, `npc_logic_weapon_samples`,
+`npc_logic_body_mismatch` and `npc_logic_weapon_mismatch` count scalar comparisons after excluding fields
+changed by explicit inputs. Unknown natural-next observations are compared before their re-anchor and are
+not reported as lifecycle matches.
+`npc_logic_early`/`npc_logic_late` observe real layer removals; `npc_logic_wait_early`/`npc_logic_wait_late`
+observe native wait releases independently. `npc_logic_reanchored` counts executor inputs by kind in JSON.
+`npc_logic_events` and `npc_logic_event_mismatch` count events, with a mismatch only beyond one world step.
+Full event schedules are audit-only; the default state retains the minimal weapon-event clock. During `npcday`,
+timing also runs with the audit disabled so the default path can be measured separately. The `npcday` summary
+adds `logic_audit`, including action/animation breakdowns and prediction-error percentiles; the parity comparer reads its named gameplay fields and ignores these diagnostics.
 
 `bodynet` sums the full local P30 policy step over active NPCs; service policies do not enter it.
 `cloth` covers main-thread preparation and the 30 Hz solver/finish; `water` sums main-thread buoyancy
