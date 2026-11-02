@@ -240,7 +240,9 @@ DamageCalculator::Val DamageCalculator::swordDamage(Npc& nsrc, Npc& nother, bool
         }
       }
 
-    return Val(value,true,invincible);
+    Val ret(value,true,invincible);
+    ret.critical = src.hitchance[tal]>critChance;
+    return ret;
     } else {
     bool invincible = true;
     const int32_t mul = script.criticalDamageMultiplyer();
@@ -257,7 +259,9 @@ DamageCalculator::Val DamageCalculator::swordDamage(Npc& nsrc, Npc& nother, bool
         }
       }
 
-    return Val(value,true,invincible);
+    Val ret(value,true,invincible);
+    ret.critical = nsrc.talentValue(tal)>critChance;
+    return ret;
     }
   }
 
