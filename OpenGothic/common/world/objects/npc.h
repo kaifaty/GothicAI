@@ -16,6 +16,7 @@
 #include "game/meleedodge.h"
 #include "game/meleeimpact.h"
 #include "game/meleestamina.h"
+#include "game/meleefighter.h"
 #include "physics/dynamicworld.h"
 #include "physics/ragdoll.h"
 #include "world/aiqueue.h"
@@ -612,6 +613,8 @@ class Npc final {
     const Tempest::Vec3& ragdollQuestReturnFrom() const { return ragdollQuestFrom; }
     void      prepareRagdoll();
     void      prepareLivingBody();
+    void      refreshMeleeFighter();
+    bool      isMeleeFighter() const;
     void      syncRagdoll();
     void      suspendRagdoll();
     void      finishMeleeShadowSwing(bool remove=true, bool discard=false);
@@ -980,6 +983,7 @@ class Npc final {
 
     DynamicWorld::NpcItem          physic;
     std::unique_ptr<Ragdoll>       living;
+    MeleeFighter::State            meleeFighter;
     MeleeBenchMode                meleeBench = MeleeBenchMode::Off;
     bool                          meleeBenchDynamicPelvis = false;
     uint64_t                      livingRetryTick = 0;
