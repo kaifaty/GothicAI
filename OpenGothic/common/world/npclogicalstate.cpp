@@ -184,12 +184,16 @@ std::string NpcLogicAudit::Stats::json() const {
   out<<"},\"body_mismatch_kinds\":{";
   comma=false;
   for(const auto& [kind,count]:bodyMismatchKinds) {
-    if(comma) out<<','; comma=true; out<<jsonQuoted(kind)<<':'<<count;
+    if(comma) out<<',';
+    comma=true;
+    out<<jsonQuoted(kind)<<':'<<count;
     }
   out<<"},\"weapon_mismatch_kinds\":{";
   comma=false;
   for(const auto& [kind,count]:weaponMismatchKinds) {
-    if(comma) out<<','; comma=true; out<<jsonQuoted(kind)<<':'<<count;
+    if(comma) out<<',';
+    comma=true;
+    out<<jsonQuoted(kind)<<':'<<count;
     }
   out<<"}}";
   return out.str();

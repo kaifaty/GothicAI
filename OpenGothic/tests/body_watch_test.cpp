@@ -856,10 +856,10 @@ void meleeRemoval(Npc& victim) {
 class NpcLogicalStateContract final {
   static constexpr uint64_t tickMs=33;
 
-  static void advance() {
+  static void advance(uint64_t dt=tickMs) {
     auto& session=*Gothic::inst().gameSession();
-    session.tick(tickMs);
-    session.updateAnimation(tickMs);
+    session.tick(dt);
+    session.updateAnimation(dt);
     }
 
   static uint64_t predictedEnd(const Pose::CombatLayer& layer,uint16_t combo) {
@@ -955,7 +955,23 @@ class NpcLogicalStateContract final {
           advance();
           npc->visual.pose().setLayerSpeed(playing->sequence,.5f,npc->world().tickCount());
           }
-        for(unsigned i=0;i<4;++i) advance();
+        if(action==AI_DrawWeaponMelee) {
+          uint64_t fightAt=UINT64_MAX;
+          for(size_t i=0;i<playing->sequence->data->events.size();++i) {
+            if(playing->sequence->data->events[i].type!=asset::MdsEventType::SET_FIGHT_MODE) continue;
+            const auto local=playing->sequence->logicTag(i).time;
+            fightAt=std::min(fightAt,playing->start+uint64_t(std::ceil(double(local)/double(playing->speed))));
+            }
+          const auto now=npc->world().tickCount();
+          expect(fightAt!=UINT64_MAX && fightAt>now+1,"weapon draw fixture is admitted before its fight-mode event");
+          // Save after positive progress while the weapon event remains pending.
+          advance(std::min(tickMs,(fightAt-now)/2));
+          expect(npc->world().tickCount()<fightAt && npc->weaponState()==WeaponState::NoWeapon,
+                 "weapon draw fixture saves before the real weapon-state change");
+          }
+        else {
+          for(unsigned i=0;i<4;++i) advance();
+          }
         const auto before=npc->logicalBodyState();
         const auto sequence=playing->sequence;
         const std::string name=sequence->name;
