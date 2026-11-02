@@ -175,8 +175,8 @@ std::vector<Vec3> anchors(World& world, const Vec3& h, size_t count) {
       const float a = float(i)*float(M_PI)/12.f;
       const auto  p = h+Vec3(std::cos(a)*dist,0,std::sin(a)*dist);
       const auto floor = world.physic()->landRay(p+Vec3(0,800,0),2400.f);
-      if(!floor.hasCol || floor.n.y<.8f || std::abs(floor.v.y-h.y)>400.f)
-        continue;
+      if(!floor.hasCol || floor.n.y<.8f || std::abs(floor.v.y-h.y)>400.f || world.isIndoor(floor.v+Vec3(0,50,0)))
+        continue; // outdoors only: placeBloodStain records World::isIndoor, and the lifetime follows it
       bool apart = true;
       for(const auto& q:found)
         apart &= (q-floor.v).length()>=600.f;
@@ -195,7 +195,7 @@ Vec3 beside(World& world, const Vec3& at, float dist) {
     const float a = float(i)*float(M_PI)/6.f;
     const auto  p = at+Vec3(std::cos(a)*dist,0,std::sin(a)*dist);
     const auto floor = world.physic()->landRay(p+Vec3(0,200,0),600.f);
-    if(floor.hasCol && floor.n.y>=.5f && std::abs(floor.v.y-at.y)<100.f)
+    if(floor.hasCol && floor.n.y>=.5f && std::abs(floor.v.y-at.y)<100.f && !world.isIndoor(floor.v+Vec3(0,50,0)))
       return floor.v;
     }
   fail("no ground "+num(dist)+" cm beside "+vec(at));
