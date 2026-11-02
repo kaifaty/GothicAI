@@ -821,7 +821,7 @@ uv() { bash "$TEST_ROOT/source/scripts/bench.sh"; }
                     self.assertEqual(selected[key], value)
                     self.assertEqual(selected['OPENGOTHIC_BASE_FINGERPRINT'], 'd' * 64)
                 else:
-                    expected = value if key == 'OPENGOTHIC_BASE_FINGERPRINT' and value else 'c' * 64
+                    expected = (value if key == 'OPENGOTHIC_BASE_FINGERPRINT' else 'c' * 64) if value else 'd' * 64
                     self.assertEqual(selected['OPENGOTHIC_BASE_FINGERPRINT'], expected)
                     if key == 'OPENGOTHIC_BASE':
                         self.assertEqual(selected[key], value)

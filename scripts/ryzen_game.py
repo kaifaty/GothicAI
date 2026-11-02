@@ -96,7 +96,7 @@ def game_environment(home=None, environ=None, assets=None, converter=None):
             store = str(shared) if shared.is_dir() else ""
         if store:
             roots.append(Path(store) / "base")
-        if "OPENGOTHIC_BASE" not in environ and "OPENGOTHIC_BASE_FINGERPRINT" not in environ:
+        if not environ.get("OPENGOTHIC_BASE") and not environ.get("OPENGOTHIC_BASE_FINGERPRINT"):
             result["OPENGOTHIC_BASE_FINGERPRINT"] = _compatible_fingerprint("base", base, formats["base"], roots)
         if videos and "OPENGOTHIC_VIDEOS_FINGERPRINT" not in environ:
             result["OPENGOTHIC_VIDEOS_FINGERPRINT"] = _compatible_fingerprint("videos", videos, formats["videos"], roots)
