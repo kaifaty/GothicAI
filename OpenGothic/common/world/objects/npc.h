@@ -137,6 +137,10 @@ class Npc final {
 
     void       setProcessPolicy(NpcProcessPolicy t);
     auto       processPolicy() const -> NpcProcessPolicy { return aiPolicy; }
+    // Simulation tier (world/npcsimtier.h), separate from processPolicy. Runtime only, not saved.
+    NpcSimTier simTier() const { return simTierValue; }
+    bool       hasSimTier() const { return simTierAssigned; }
+    void       setSimTier(NpcSimTier t) { simTierValue = t; simTierAssigned = true; }
 
     bool       isPlayer() const;
     void       setWalkMode(WalkBit m);
@@ -553,6 +557,8 @@ class Npc final {
       std::string_view point;
       };
     void      forEachRoutine(const std::function<void(const RoutineInfo&)>& f) const;
+    // Index (in forEachRoutine order) of the entry in force now, -1 without routines: diagnostics only.
+    int       currentRoutineIndex() const;
     ScriptFn  currentState() const { return aiState.funcIni; }
     // The initializer has run; installing funcIni alone does not start the state.
     bool      isStateStarted() const { return aiState.started; }
@@ -679,6 +685,7 @@ class Npc final {
     bool      isAiQueueEmpty() const;
     bool      isAiBusy() const;
     size_t    aiQueueSize() const { return aiQueue.size(); }
+    auto      aiQueueFront() const -> const AiQueue::AiAction* { return aiQueue.front(); }
     void      clearAiQueue();
 
     auto      currentWayPoint() const -> const WayPoint* { return currentFp; }
@@ -1129,6 +1136,8 @@ class Npc final {
 
     uint64_t                       aiOutputBarrier=0;
     NpcProcessPolicy               aiPolicy=NpcProcessPolicy::AiNormal;
+    NpcSimTier                     simTierValue=NpcSimTier::Full; // transient, not serialized
+    bool                           simTierAssigned=false;
     AiState                        aiState;
     ScriptFn                       aiPrevState;
     AiQueue                        aiQueue;

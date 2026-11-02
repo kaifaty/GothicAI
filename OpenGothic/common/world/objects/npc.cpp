@@ -6950,6 +6950,16 @@ void Npc::forEachRoutine(const std::function<void(const RoutineInfo&)>& f) const
     f(RoutineInfo{r.start,r.end,r.callback,r.wayPointName()});
   }
 
+int Npc::currentRoutineIndex() const {
+  if(routines.empty())
+    return -1;
+  const auto& r = currentRoutine();
+  for(size_t i=0; i<routines.size(); ++i)
+    if(&routines[i]==&r)
+      return int(i);
+  return -1;
+  }
+
 const Npc::Routine& Npc::currentRoutine(bool assertWp) const {
   // find routine for current time
   // if there is no such routine search counter clock-wise until one is found

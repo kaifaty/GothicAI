@@ -312,26 +312,30 @@ class GroupTalk:
 
     # --- the floor: one voice at a time ---------------------------------------------------------
 
+    def reserve_after(self, npc: str, after: str) -> None:
+        """The hero's phrase is passed to another npc: it answers after the addressee."""
+        at = next((i for i in reversed(range(len(self.seats)))
+                   if (s := self.seats[i]).npc == after.upper()
+                   and s.taken and not s.ready and not s.dropped), None)
+        if at is not None:
+            self.seats.insert(at + 1, Seat(npc.upper(), self.clock(), taken=False, id=next(self._ids)))
+
     async def queue(self, npc: str, kind: str) -> bool:
-        """A turn of the npc's takes its seat. The hero's words to it: the first, reserved by his phrase. Any
-        other of an npc near the hero: the next one, if there is a voice left, once those before it have
-        their text ready. An npc away from the conversation is not on its floor."""
+        """A turn takes its reserved seat, or the next one if there is a voice left. The addressee comes
+        first; a hero turn passed to another npc waits behind it until its text is ready. An npc away
+        from the conversation is not on its floor."""
         npc = npc.upper()
         self._calls.pop(npc, None)
         reserved = next(
             (s for s in self.seats if s.npc == npc and not s.taken and not s.dropped and s.kind == kind), None
         )
-        if kind == "player":
-            seat = reserved
-            if seat is None:  # words to it not through talk.py (the console, a scenario): a round of its own
-                self._new_round()
-                seat = Seat(npc, self.clock(), id=next(self._ids))
-                self.seats.append(seat)
-            seat.taken = True
-            return True
-        if reserved is not None:  # another spoke to it: its seat is right after that one's
+        if reserved is not None:  # a named reply or a hero turn passed on by the addressee
             reserved.taken = True
             return await self._wait_turn(reserved)
+        if kind == "player":  # words to it not through talk.py (the console, a scenario): its own round
+            self._new_round()
+            self.seats.append(Seat(npc, self.clock(), id=next(self._ids)))
+            return True
         if not self._near_hero(npc):
             return True
         # he speaks: his phrase opens the round, and first. Polled, as below: the floor's state is time (who
