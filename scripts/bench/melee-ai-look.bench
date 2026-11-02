@@ -1,0 +1,447 @@
+# Look of the enemies' reactions (decision 16, PR #789), video takes for the user's acceptance: a 1H master
+# dodges the hero's running swing in light, medium and heavy armour (dash, roll, heavy roll), a bandit ripostes
+# the stunned hero, and a bandit fights a guard (dodges and ripostes between NPCs). Every take starts both at the
+# same sunlit spot 16 m into the field from the fixture (the fixture's own spot lies in a tree's shadow at noon).
+# Only takes whose bench.log line says "at <ms> ms of PC_HERO's swing" show a reaction to the swing; "now, no
+# swing" is the old post-hit jump-back trigger.
+# WORLD=NEWWORLD.ZEN BENCH_HOST=ryzen OPENGOTHIC_BODY_TRACE=1 TIMEOUT=900 TEMPEST_WINDOW_SIZE=1280x720
+# OPENGOTHIC_CONTENT=/abs/content-staging/anim-strikes
+seed 73013
+set time 12 0
+release all
+overlay off
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+wait 500
+watch player
+clear 3000
+corner right go 0
+melee-shadow setup 1h
+stats hp 1000000 hpmax 1000000 str 100 1h 100 talent auto
+wait 600
+melee-shadow target 2
+wait 600
+pin WOLF 5000 90 0
+wait 34
+pin off
+pin WOLF 5000 -90 0
+wait 34
+pin off
+turn 180
+immortal player on
+still player on
+immortal BDT_1013_BANDIT_L on
+wait 2000
+stats npc BDT_1013_BANDIT_L str 60 1h 100 2h 100 talent auto
+put BDT_1013_BANDIT_L 300 0
+melee-shadow bandit 1h
+wait 1000
+cam two BDT_1013_BANDIT_L 400 60 1
+
+# Light armour: dash.
+mark light
+put-at player 61737 2198 -13323
+put-at BDT_1013_BANDIT_L 61853 2188 -13596
+face npc BDT_1013_BANDIT_L
+fight BDT_1013_BANDIT_L player
+wait 900
+rec dodge-light-01
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1700
+stop
+put-at player 61737 2198 -13323
+put-at BDT_1013_BANDIT_L 61853 2188 -13596
+face npc BDT_1013_BANDIT_L
+fight BDT_1013_BANDIT_L player
+wait 900
+rec dodge-light-02
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1700
+stop
+put-at player 61737 2198 -13323
+put-at BDT_1013_BANDIT_L 61853 2188 -13596
+face npc BDT_1013_BANDIT_L
+fight BDT_1013_BANDIT_L player
+wait 900
+rec dodge-light-03
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1700
+stop
+put-at player 61737 2198 -13323
+put-at BDT_1013_BANDIT_L 61853 2188 -13596
+face npc BDT_1013_BANDIT_L
+fight BDT_1013_BANDIT_L player
+wait 900
+rec dodge-light-04
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1700
+stop
+put-at player 61737 2198 -13323
+put-at BDT_1013_BANDIT_L 61853 2188 -13596
+face npc BDT_1013_BANDIT_L
+fight BDT_1013_BANDIT_L player
+wait 900
+rec dodge-light-05
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1700
+stop
+put-at player 61737 2198 -13323
+put-at BDT_1013_BANDIT_L 61853 2188 -13596
+face npc BDT_1013_BANDIT_L
+fight BDT_1013_BANDIT_L player
+wait 900
+rec dodge-light-06
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1700
+stop
+put-at player 61737 2198 -13323
+put-at BDT_1013_BANDIT_L 61853 2188 -13596
+face npc BDT_1013_BANDIT_L
+fight BDT_1013_BANDIT_L player
+wait 900
+rec dodge-light-07
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1700
+stop
+put-at player 61737 2198 -13323
+put-at BDT_1013_BANDIT_L 61853 2188 -13596
+face npc BDT_1013_BANDIT_L
+fight BDT_1013_BANDIT_L player
+wait 900
+rec dodge-light-08
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1700
+stop
+put-at player 61737 2198 -13323
+put-at BDT_1013_BANDIT_L 61853 2188 -13596
+face npc BDT_1013_BANDIT_L
+fight BDT_1013_BANDIT_L player
+wait 900
+rec dodge-light-09
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1700
+stop
+put-at player 61737 2198 -13323
+put-at BDT_1013_BANDIT_L 61853 2188 -13596
+face npc BDT_1013_BANDIT_L
+fight BDT_1013_BANDIT_L player
+wait 900
+rec dodge-light-10
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1700
+stop
+
+# Medium armour: roll.
+mark medium
+npcequip BDT_1013_BANDIT_L ITAR_MIL_M
+wait 600
+put-at player 61737 2198 -13323
+put-at BDT_1013_BANDIT_L 61853 2188 -13596
+face npc BDT_1013_BANDIT_L
+fight BDT_1013_BANDIT_L player
+wait 900
+rec dodge-medium-01
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1700
+stop
+put-at player 61737 2198 -13323
+put-at BDT_1013_BANDIT_L 61853 2188 -13596
+face npc BDT_1013_BANDIT_L
+fight BDT_1013_BANDIT_L player
+wait 900
+rec dodge-medium-02
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1700
+stop
+put-at player 61737 2198 -13323
+put-at BDT_1013_BANDIT_L 61853 2188 -13596
+face npc BDT_1013_BANDIT_L
+fight BDT_1013_BANDIT_L player
+wait 900
+rec dodge-medium-03
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1700
+stop
+put-at player 61737 2198 -13323
+put-at BDT_1013_BANDIT_L 61853 2188 -13596
+face npc BDT_1013_BANDIT_L
+fight BDT_1013_BANDIT_L player
+wait 900
+rec dodge-medium-04
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1700
+stop
+put-at player 61737 2198 -13323
+put-at BDT_1013_BANDIT_L 61853 2188 -13596
+face npc BDT_1013_BANDIT_L
+fight BDT_1013_BANDIT_L player
+wait 900
+rec dodge-medium-05
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1700
+stop
+put-at player 61737 2198 -13323
+put-at BDT_1013_BANDIT_L 61853 2188 -13596
+face npc BDT_1013_BANDIT_L
+fight BDT_1013_BANDIT_L player
+wait 900
+rec dodge-medium-06
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1700
+stop
+put-at player 61737 2198 -13323
+put-at BDT_1013_BANDIT_L 61853 2188 -13596
+face npc BDT_1013_BANDIT_L
+fight BDT_1013_BANDIT_L player
+wait 900
+rec dodge-medium-07
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1700
+stop
+put-at player 61737 2198 -13323
+put-at BDT_1013_BANDIT_L 61853 2188 -13596
+face npc BDT_1013_BANDIT_L
+fight BDT_1013_BANDIT_L player
+wait 900
+rec dodge-medium-08
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1700
+stop
+
+# Heavy armour: heavy roll.
+mark heavy
+npcequip BDT_1013_BANDIT_L ITAR_PAL_M
+wait 600
+put-at player 61737 2198 -13323
+put-at BDT_1013_BANDIT_L 61853 2188 -13596
+face npc BDT_1013_BANDIT_L
+fight BDT_1013_BANDIT_L player
+wait 900
+rec dodge-heavy-01
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1700
+stop
+put-at player 61737 2198 -13323
+put-at BDT_1013_BANDIT_L 61853 2188 -13596
+face npc BDT_1013_BANDIT_L
+fight BDT_1013_BANDIT_L player
+wait 900
+rec dodge-heavy-02
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1700
+stop
+put-at player 61737 2198 -13323
+put-at BDT_1013_BANDIT_L 61853 2188 -13596
+face npc BDT_1013_BANDIT_L
+fight BDT_1013_BANDIT_L player
+wait 900
+rec dodge-heavy-03
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1700
+stop
+put-at player 61737 2198 -13323
+put-at BDT_1013_BANDIT_L 61853 2188 -13596
+face npc BDT_1013_BANDIT_L
+fight BDT_1013_BANDIT_L player
+wait 900
+rec dodge-heavy-04
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1700
+stop
+put-at player 61737 2198 -13323
+put-at BDT_1013_BANDIT_L 61853 2188 -13596
+face npc BDT_1013_BANDIT_L
+fight BDT_1013_BANDIT_L player
+wait 900
+rec dodge-heavy-05
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1700
+stop
+put-at player 61737 2198 -13323
+put-at BDT_1013_BANDIT_L 61853 2188 -13596
+face npc BDT_1013_BANDIT_L
+fight BDT_1013_BANDIT_L player
+wait 900
+rec dodge-heavy-06
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1700
+stop
+put-at player 61737 2198 -13323
+put-at BDT_1013_BANDIT_L 61853 2188 -13596
+face npc BDT_1013_BANDIT_L
+fight BDT_1013_BANDIT_L player
+wait 900
+rec dodge-heavy-07
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1700
+stop
+put-at player 61737 2198 -13323
+put-at BDT_1013_BANDIT_L 61853 2188 -13596
+face npc BDT_1013_BANDIT_L
+fight BDT_1013_BANDIT_L player
+wait 900
+rec dodge-heavy-08
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1700
+stop
+
+# The stunned hero: a master ripostes him, from either side.
+mark riposte-hero
+freeze BDT_1013_BANDIT_L
+stop shadow
+npcequip BDT_1013_BANDIT_L ITAR_BDT_M
+still player off
+melee-shadow weapon 1h
+wait 600
+put-at player 61737 2198 -13323
+put-at BDT_1013_BANDIT_L 61796 2195 -13461
+face npc BDT_1013_BANDIT_L
+wait 1000
+cam two BDT_1013_BANDIT_L 380 60 1
+rec riposte-hero-a
+fight BDT_1013_BANDIT_L player
+stun player posture
+wait 3500
+stop
+freeze BDT_1013_BANDIT_L
+stop shadow
+wait 6000
+melee-shadow weapon 1h
+wait 600
+put-at player 61737 2198 -13323
+put-at BDT_1013_BANDIT_L 61796 2195 -13461
+face npc BDT_1013_BANDIT_L
+wait 1000
+cam two BDT_1013_BANDIT_L 380 60 -1
+rec riposte-hero-b
+fight BDT_1013_BANDIT_L player
+stun player posture
+wait 3500
+stop
+freeze BDT_1013_BANDIT_L
+stop shadow
+wait 6000
+
+# Two NPCs: a master bandit against a guard in medium armour, an ordinary fight; the hero stands 8 m away.
+mark npc-duel
+arc MIL_322_MILIZ 1 600 0
+npcequip MIL_322_MILIZ ITMW_1H_COMMON_01
+stats npc MIL_322_MILIZ hpmax 100000 hp 100000 str 60 1h 60 talent auto
+immortal MIL_322_MILIZ on
+put-at player 61424 2150 -12587
+wait 300
+put-at BDT_1013_BANDIT_L 61737 2198 -13323
+put-at MIL_322_MILIZ 61853 2188 -13596
+wait 800
+fight BDT_1013_BANDIT_L MIL_322_MILIZ
+fight MIL_322_MILIZ BDT_1013_BANDIT_L
+watch BDT_1013_BANDIT_L
+cam follow 440 170 90
+rec npc-duel
+wait 30000
+stop
+watch player
+release all
