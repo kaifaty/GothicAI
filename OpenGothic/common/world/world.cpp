@@ -23,6 +23,8 @@
 #include "world/triggers/abstracttrigger.h"
 #include "world/triggers/cscamera.h"
 #include "game/bodyarena.h"
+#include "game/bodycontroller.h"
+#include "navdemos.h"
 #include "game/globaleffects.h"
 #include "game/serialize.h"
 #include "game/physicssave.h"
@@ -383,6 +385,8 @@ void World::load(Serialize &fin) {
 
   wobj.load(fin);
   npcPlayer = wobj.findHero();
+  bodySweepMinute = -1;
+  loadBodyTraces(fin);
   wdynamic->setTraceTime(traceTime(*this));
   wdynamic->loadMovableVobs(fin);
   loadStuckArrows(fin);
@@ -401,6 +405,7 @@ void World::save(Serialize &fout) {
   wdynamic->saveMovableVobs(fout);
   saveStuckArrows(fout);
   wobj.savePlacedItems(fout);
+  saveBodyTraces(fout);
   }
 
 uint32_t World::npcId(const Npc *ptr) const {
@@ -481,7 +486,7 @@ bool World::stuckArrowAttachment(size_t index, uint32_t& zenId, Tempest::Matrix4
   return true;
   }
 
-std::vector<World::PhysicsTrace> World::physicsTraces() const {
+std::vector<World::PhysicsTrace> World::physicsTraces(const Tempest::Vec3* viewer, float range) const {
   std::vector<PhysicsTrace> result;
   if(Gothic::physicsFlags().arrowSticking) {
     for(const auto& pin:stuckArrows) {
@@ -525,7 +530,181 @@ std::vector<World::PhysicsTrace> World::physicsTraces() const {
     trace.culprit = item.traceCulprit;
     result.push_back(std::move(trace));
     }
+  if(Gothic::physicsFlags().bodyTraces) {
+    for(size_t i=0;i<wobj.npcCount();++i) {
+      const auto& npc   = wobj.npc(i);
+      const auto& state = npc.bodyTrace();
+      if(state.id==0 || !BodyTraces::isTrace(true,npc.isDead(),npc.isPlayer(),int32_t(npc.guild()),GIL_SEPERATOR_HUM))
+        continue;
+      // The viewer's own range test (npc_view: distance to the trace position) before the
+      // bones and strings: the same rows, built only for bodies the viewer can get.
+      if(viewer!=nullptr && (npc.position()-*viewer).length()>range)
+        continue;
+      PhysicsTrace trace;
+      trace.id          = bodyTraceId(npc);
+      trace.kind        = "body";
+      trace.name        = "тело";
+      trace.position    = npc.position();
+      trace.sightPoints = bodySightPoints(npc);
+      trace.appearedAt  = state.diedAt; // -1: a body of an older save, its age unknown
+      trace.culprit     = state.culprit;
+      if(auto* symbol = script().findSymbol(npc.instanceSymbol()))
+        trace.npc = symbol->name();
+      result.push_back(std::move(trace));
+      }
+    }
   return result;
+  }
+
+int64_t World::gameMinute() const {
+  return traceTime(*this);
+  }
+
+std::string World::bodyTraceId(const Npc& body) const {
+  return wname+":body:"+std::to_string(body.bodyTrace().id);
+  }
+
+std::array<Tempest::Vec3,6> World::bodySightPoints(const Npc& body) const {
+  // Head, pelvis, hands and feet of the posed (ragdoll) skeleton, lifted off the ground;
+  // a missing bone falls back to the body's centre height (Npc::mapBone).
+  static const char* bones[] = {"BIP01 HEAD","BIP01 PELVIS","BIP01 L HAND","BIP01 R HAND","BIP01 L FOOT","BIP01 R FOOT"};
+  std::array<Tempest::Vec3,6> points;
+  for(size_t i=0;i<points.size();++i) {
+    points[i]    = body.mapBone(bones[i]);
+    points[i].y += BodyTraces::SightLiftCm;
+    }
+  return points;
+  }
+
+bool World::heroSeesBody(const Npc& hero, const Npc& body) const {
+  // Any direction: the player turns the camera at will. Rays meet the landscape and
+  // objects only, never bodies or people (DynamicWorld::ray).
+  const auto eye = hero.mapHeadBone();
+  for(const auto& point:bodySightPoints(body))
+    if(!wdynamic->ray(eye,point).hasCol)
+      return true;
+  return false;
+  }
+
+bool World::isStoryNpcType(int32_t type) const {
+  if(!storyNpcTypesRead) {
+    storyNpcTypesRead = true;
+    const char* names[] = {"NPCTYPE_MAIN","NPCTYPE_OCMAIN","NPCTYPE_BL_MAIN"};
+    std::array<std::optional<int32_t>,3> symbols;
+    for(size_t i=0;i<symbols.size();++i) {
+      auto* symbol = script().getVm().find_symbol_by_name(names[i]);
+      if(symbol!=nullptr && symbol->type()==zenkit::DaedalusDataType::INT)
+        symbols[i] = symbol->get_int(0);
+      }
+    storyNpcTypes = BodyTraces::storyTypes(symbols);
+    }
+  return BodyTraces::isStoryType(type,storyNpcTypes);
+  }
+
+BodyTraces::Body World::bodyRule(const Npc& body, const Npc* hero) const {
+  BodyTraces::Body rule;
+  rule.enabled      = Gothic::physicsFlags().bodyTraces;
+  rule.dead         = body.isDead();
+  rule.player       = body.isPlayer();
+  rule.clockFrom    = body.bodyTrace().id!=0 ? body.bodyTrace().clockFrom : -1;
+  rule.now          = gameMinute();
+  rule.heroDistance = hero!=nullptr ? (body.position()-hero->position()).length() : 0.f;
+  rule.missionItems = body.inventory().hasMissionItems();
+  rule.dragon       = version().game==2 && body.guild()==GIL_DRAGON;
+  rule.immortal     = body.isImmortal();
+  rule.storyType    = isStoryNpcType(int32_t(body.handlePtr()->type));
+  return rule;
+  }
+
+void World::sweepBodies() {
+  // Once per game minute; rays only for bodies past their lifetime and away from the hero.
+  const auto now = gameMinute();
+  if(now==bodySweepMinute)
+    return;
+  bodySweepMinute = now;
+  const Npc* hero = player();
+  // A body that reached ZS_Dead past Npc::onNoHealth (a script's AI_StartState(ZS_Dead)) gets
+  // its record here, as a body of an older save does at loading: whatever the flag says.
+  for(size_t i=0;i<wobj.npcCount();++i) {
+    auto& npc = wobj.npc(i);
+    if(&npc==hero || npc.bodyTrace().id!=0 || !npc.isDead())
+      continue;
+    Npc::BodyTrace trace;
+    trace.id        = allocBodyTraceId();
+    trace.clockFrom = now;
+    npc.setBodyTrace(std::move(trace));
+    }
+  if(!Gothic::physicsFlags().bodyTraces || hero==nullptr)
+    return;
+  // Stands and training hold their actors by pointer: an arena, navigation demos and any
+  // bench but the one that asks for the sweep (body_traces) keep every body.
+  if(BodyArena::enabled() || BodyArena::frozenWorld() || NavDemos::running() ||
+     (TestBench::isActive() && !TestBench::bodySweepAllowed()))
+    return;
+  std::vector<Npc*> gone;
+  for(size_t i=0;i<wobj.npcCount();++i) {
+    auto& npc = wobj.npc(i);
+    if(&npc==hero || !npc.isDead())
+      continue;
+    if(BodyArena::isActor(npc) || NavDemos::fullSimulation(npc) || BodyController::owns(npc))
+      continue;
+    auto rule = bodyRule(npc,hero);
+    if(!BodyTraces::removableUnseen(rule))
+      continue;
+    rule.heroSees = heroSeesBody(*hero,npc);
+    if(BodyTraces::removable(rule))
+      gone.push_back(&npc);
+    }
+  for(auto* npc:gone) {
+    const auto* symbol = script().findSymbol(npc->instanceSymbol());
+    Tempest::Log::i("body traces: ",bodyTraceId(*npc)," (",symbol!=nullptr ? symbol->name() : std::string("?"),
+                    ") leaves the world with its inventory");
+    wobj.removeNpc(*npc);
+    }
+  }
+
+void World::saveBodyTraces(Serialize& fout) const {
+  fout.setEntry("worlds/",wname,"/body-traces");
+  fout.write(uint32_t(0x31535442),uint16_t(1),wname,nextBodyTraceId);
+  }
+
+void World::loadBodyTraces(Serialize& fin) {
+  nextBodyTraceId = 1;
+  if(fin.setEntry("worlds/",wname,"/body-traces")) {
+    try {
+      uint32_t magic=0, next=0;
+      uint16_t schema=0;
+      std::string worldName;
+      fin.read(magic,schema,worldName,next);
+      if(magic==0x31535442 && schema==1 && worldName==wname && next!=0 && next!=uint32_t(-1))
+        nextBodyTraceId = next; else
+        Tempest::Log::e("body traces: invalid saved counter, continuing after the saved bodies");
+      }
+    catch(const std::exception& e) {
+      Tempest::Log::e("body traces load: ",e.what());
+      }
+    }
+  uint32_t last = 0;
+  wobj.forEachStoredNpc([&](Npc& npc) {
+    if(npc.isDead())
+      last = std::max(last,npc.bodyTrace().id);
+    });
+  nextBodyTraceId = std::max(nextBodyTraceId,last+1);
+  // Bodies of a save from before body traces: an identity now, in save order; the age
+  // stays unknown (npc_view age: null) and the three-day lifetime starts at this load.
+  const auto now = gameMinute();
+  size_t legacy = 0;
+  wobj.forEachStoredNpc([&](Npc& npc) {
+    if(!npc.isDead() || npc.bodyTrace().id!=0)
+      return;
+    Npc::BodyTrace trace;
+    trace.id        = nextBodyTraceId++;
+    trace.clockFrom = now;
+    npc.setBodyTrace(std::move(trace));
+    ++legacy;
+    });
+  if(legacy>0)
+    Tempest::Log::i("body traces: ",legacy," bodies of an older save; age unknown, lifetime from now");
   }
 
 void World::updateStuckArrows() {
@@ -834,6 +1013,7 @@ void World::tick(uint64_t dt) {
   { FrameProfile::Scope timing(FrameProfile::Zone::Physics); wdynamic->tick(dt); }
   updateStuckArrows();
   { FrameProfile::Scope timing(FrameProfile::Zone::Sync); wobj.syncRagdolls(); }
+  sweepBodies();
   FrameProfile::Scope timing(FrameProfile::Zone::WorldMisc);
   if(auto pl = player(); pl!=nullptr && !BodyArena::frozenWorld())
     wsound.tick(*pl);

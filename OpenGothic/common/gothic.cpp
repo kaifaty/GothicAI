@@ -116,6 +116,7 @@ Gothic::Gothic() {
   defaults->set("GAME", "arrow_sticking",      1);
   defaults->set("GAME", "spell_physics",       1);
   defaults->set("GAME", "body_impact_damage",  1);
+  defaults->set("GAME", "body_traces",         1); // dead people as physical traces; bodies leave after 3 game days unseen
   defaults->set("GAME", "movable_vobs",        1);
   defaults->set("GAME", "item_hulls",          1);
   defaults->set("GAME", "item_deepest_contact",1);
@@ -928,7 +929,8 @@ void Gothic::refreshPhysicsFlags() {
     settingsGetI("GAME","furniture_parts")!=0,
     settingsGetI("GAME","placed_items")!=0,
     settingsGetI("GAME","body_impact_damage")!=0,
-    settingsGetI("GAME","melee_dodge")!=0
+    settingsGetI("GAME","melee_dodge")!=0,
+    settingsGetI("GAME","body_traces")!=0
     };
   }
 

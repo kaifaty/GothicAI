@@ -1,0 +1,14 @@
+# The current build loads session-legacy.sav of a main build (SAVE=<out>/session-legacy.sav):
+# old bodies get an id, age null, and their three-day lifetime counts from the load.
+cheat god
+body_traces sample
+body_traces check legacy
+body_traces view legacy
+body_traces hero near
+body_traces advance 4320
+wait 6000
+body_traces check stay-near
+body_traces hero far-hidden
+wait 6000
+body_traces check gone-hidden
+quit
