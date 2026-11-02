@@ -575,8 +575,10 @@ def main():
     body_nodes(anim, skel, [ref] + fills, fills[0] if fills else ref)
     if a.clear_sword:
         w0 = ga.world_pose(skel, ref, 0)
-        # the toe nodes of the stance sit about 3 cm over the sole
-        floor = min(w0[skel.index(f"BIP01 {s} TOE0")][1, 3] for s in "LR") - 3
+        # the toe nodes of the stance sit about 3 cm over the sole; the master's stance does not write its right foot
+        # (the game takes it from the layer below), whose bind toe sits 5 cm low, so only written toes count
+        toes = [skel.index(f"BIP01 {s} TOE0") for s in "LR"]
+        floor = min(w0[i][1, 3] for i in [i for i in toes if i in ref.node_indices] or toes) - 3
         print("sword clearance", clear_sword(anim, skel, floor))
     anim.name, anim.next = a.name, a.next
     a.out.parent.mkdir(parents=True, exist_ok=True)

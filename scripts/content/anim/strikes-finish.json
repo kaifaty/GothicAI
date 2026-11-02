@@ -14,7 +14,7 @@
    "lift_skims": true, "lock_turn": true, "hit": [7, 30], "sfx": [[4, "Whoosh"]]},
   {"name": "T_1HBARGE", "src": "res3/barge_c2-2/HUMANS-T_BARGE_C2-2_05.MAN.json",
    "warp": "0:0,0.9:0.5,1.17:0.66,1.96:1.0", "sword_arm": "0.5,0.8,1,1", "free_arm": "0.5,0.8,1,1",
-   "free_window": "0.6,0.85", "lift_skims": true, "lock_turn": true},
+   "free_window": "0.6,0.85", "lift_skims": true, "lock_turn": true, "clear_sword": true},
   {"name": "T_1HRIPOSTE", "src": "res6/riposte_body_c2-2/HUMANS-T_RIPOSTE_BODY_C2-2_01.MAN.json",
    "warp": "0:0,0.5:0.4,0.8:0.85,2.48:1.95", "sword_arm": "0.5,0.8,1,1", "arm_window": "0,0.3,1.0,1.6",
    "lift_skims": true, "lock_turn": true, "hit": [10, 48], "sfx": [[7, "Whoosh"]]},

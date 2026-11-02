@@ -8274,14 +8274,16 @@ bool Npc::meleeDodgeEvades(Npc& other, std::string_view kind) {
   return true;
   }
 
-void Npc::meleeBargeNote(const Npc* target, uint64_t elapsed, std::string_view outcome) {
+void Npc::meleeBargeNote(const Npc* target, uint64_t elapsed, std::string_view outcome, std::string_view predicted) {
+  const bool differs = !predicted.empty() && predicted!=outcome;
   if(TestBench::isActive())
     TestBench::note(("melee barge "+std::string(TestBench::who(this))+": contact "+
                     (target ? std::string(TestBench::who(target)) : "-")+" at "+std::to_string(elapsed)+
-                    " ms, "+std::string(outcome)).c_str());
+                    " ms, "+std::string(outcome)+(differs ? " (predicted "+std::string(predicted)+")" : "")).c_str());
   if(TestBench::bodyTracing())
     TestBench::bodyEvent(*this,target,"barge_contact",owner.tickCount(),
-                        "\"elapsed_ms\":"+std::to_string(elapsed)+",\"outcome\":"+TestBench::bodyJson(outcome),
+                        "\"elapsed_ms\":"+std::to_string(elapsed)+",\"outcome\":"+TestBench::bodyJson(outcome)+
+                        (predicted.empty() ? "" : ",\"predicted\":"+TestBench::bodyJson(predicted)),
                         visual.pose().animNames());
   }
 
@@ -8332,11 +8334,18 @@ void Npc::tickMeleeBarge() {
     return;
     }
   target->takeDamage(*this,nullptr,true,1.f,nullptr,true);
-  if(outcome==MeleeDodge::BargeOutcome::Knockdown)
+  const bool knockdown = outcome==MeleeDodge::BargeOutcome::Knockdown;
+  if(knockdown)
     target->applyMeleePosture(*this,nullptr,false,target->meleePosture.value,true);
   else
     target->startMeleeStun(*this,"barge");
-  meleeBargeNote(target,elapsed,outcome==MeleeDodge::BargeOutcome::Knockdown ? "knockdown" : "stun");
+  // The log names what happened, not what the rules predicted: the fist's damage may drop the target
+  // first, and a beast is not stunned without its poise (melee_beast_poise=0).
+  const char* result = target->isDead()        ? "dead" :
+                       target->isUnconscious() ? "unconscious" :
+                       knockdown               ? (target->meleeKnockdown ? "knockdown" : "no knockdown") :
+                       (target->isMeleeStunned() && target->meleeStunReason=="barge" ? "stun" : "no stun");
+  meleeBargeNote(target,elapsed,result,knockdown ? "knockdown" : "stun");
   }
 
 bool Npc::isMeleeRiposting() const {
