@@ -40,6 +40,8 @@
 
 [Защита рождения рэгдолла и дрейф оглушения](../reports/physics/2026-11-02-knockdown-launch/README.md): `[GAME] ragdoll_birth_guard=1`, нативные контракты, парный стенд [`knockdown-launch`](../scripts/bench/knockdown-launch.bench) (по 60 нокдаунов в ON и OFF: близко 15,8 → 2,3 м/с таза, выше 8 м/с 20 → 0 из 20). Отдельный стенд [`knockdown-drift`](../scripts/bench/knockdown-drift.bench) сравнивает оглушение на ровной точке и склоне дуэли, по 5 проб со срезами каждые 100 мс. [Текущее поведение](physics.md#как-работает-сейчас).
 
+[Второй такт оглушения равновесием](../reports/physics/2026-11-02-stun-second-beat/README.md): пошатывание вперёд `T_STUMBLE` у людей стартует, когда доиграло пошатывание назад (было 0, стало 10 из 10 проб `knockdown-drift`); корень несёт к оглушившему на 26 см на ровном и 45 см под гору. Стенд вида [`melee-stun-posture-look`](../scripts/bench/melee-stun-posture-look.bench) — видео сбоку.
+
 ```
  Mac                                         dev-ubuntu (RTX 3090, модели)
  ┌───────────────────────────┐               ┌──────────────────────────────┐
