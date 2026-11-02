@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Build, bake and pack the kitchen and hearth set (asset city-hearth): wave 1 open fire, wave 2 hearths in the houses.
+"""Build, bake and pack the kitchen and hearth set (asset city-hearth): wave 1 open fire, wave 2 hearths in the houses,
+wave 3 the street lamp.
 
     uv run --no-project --with numpy --with pillow --with scipy python scripts/content/mesh3d/hearth_set.py models [ITEM ...]
     uv run --no-project --with numpy --with pillow --with scipy python scripts/content/mesh3d/hearth_set.py bake [ITEM ...] [--ryzen]
@@ -36,13 +37,18 @@ BLENDER_DIR = rig.BLENDER_DIR
 STAGING = rig.STAGING
 LAYER = ROOT / 'data/content/world/NEWWORLD/vobs.d/city-hearth.json'
 PARTICLES = ROOT / 'data/content/particles.d/city-hearth-steam.json'
+# the street lamp's own fire (lamp-design.md): a steady candle flame and a flickering light in place of the base
+# bundle FIRETREE_LAMP.ZEN, which the 43 lamps spawn on their fire slot
+LAMP_PARTICLES = ROOT / 'data/content/particles.d/city-hearth-lamp.json'
+LAMP_TREE = ROOT / 'data/content/vobtrees.d/FIRETREE_LAMP.json'
 STEAM_TEXTURE, STEAM_DDS = 'OWN_POT_STEAM.TGA', 'own-pot-steam/albedo.dds'
 # the flame flipbook of OWN_POT_FIRE_FB: rendered from a Mantaflow sim by scripts/content/fire/fire_flipbook.py on
 # Ryzen and packed by fire_atlas.py into the sources (16 MB, outside git); reports/engine/2026-11-01-fire-rendering.md
 FIRE_SOURCES = Path.home() / '.local/share/gothic-ai/content-sources'
 FIRE_ATLASES = [('OWN_FIRE_FLIPBOOK.TGA', 'own-fire-flipbook/albedo.dds', FIRE_SOURCES / 'fire-flipbook/albedo.dds')] + [
     (f'OWN_FIRE_TONGUE_{i}.TGA', f'own-fire-tongue/tongue-{i}.dds', FIRE_SOURCES / f'fire-tongue/tongue-{i}.dds')
-    for i in (1, 2, 3)]
+    for i in (1, 2, 3)] + [
+    ('OWN_CANDLE_FLAME.TGA', 'own-candle-flame/albedo.dds', FIRE_SOURCES / 'candle-flame/albedo.dds')]  # candle_flame.py
 BUILD = STAGING / 'city-hearth/build'
 TILES = STAGING / 'city-hearth/tiles'
 BLENDER = rig.BLENDER
@@ -65,6 +71,9 @@ ITEMS = {
                            atlas='fireplace-wide-atlas.json'),
     'fireplace-wide-low': dict(visual='NW_CITY_FIREPLACE_LARGE_021', script='fireplace.py', cfg='fireplace-wide-low.json',
                                atlas='fireplace-wide-low-atlas.json'),
+    # wave 3: the street lamp; its filigree faces are an alpha-tested tile (lamp_tiles.py), not baked
+    'lamp': dict(visual='FIREPLACE_NW_LAMP_01', script='lamp.py', cfg='lamp.json', atlas='lamp-atlas.json',
+                 extra_glb='lace.glb', tiled={'OWN_HEARTH_LACE': ('OWN_HEARTH_LAMP_LACE', 'own_hearth_lace')}),
 }
 # what each model takes from a concept: the material and character; its form is the original's mesh
 CONCEPTS = {
@@ -79,6 +88,7 @@ CONCEPTS = {
     'fireplace-large': 'city-hearth/concept-hearth-fireplace-large-attempt-2.png',
     'fireplace-wide': 'city-hearth/concept-hearth-fireplace-wide-attempt-2.png',
     'fireplace-wide-low': 'city-hearth/concept-hearth-fireplace-wide-attempt-2.png (the same fireplace with the low hood)',
+    'lamp': 'city-hearth/concept-attempt-5.png (a candle in the open filigree, the lace\'s shadow)',
 }
 
 
@@ -134,8 +144,10 @@ def cmd_bake(args) -> int:
 
 
 def cmd_fire_tiles(args) -> int:
-    """Burning and charred wood tiles and the ember glow mask (fire_tiles.py), after market_tiles.py made the rest."""
+    """Burning and charred wood tiles and the ember glow mask (fire_tiles.py), the street lamp's filigree and candle
+    (lamp_tiles.py), after market_tiles.py made the rest."""
     rig.run([sys.executable, Path(__file__).with_name('fire_tiles.py'), TILES], cwd=ROOT)
+    rig.run([sys.executable, Path(__file__).with_name('lamp_tiles.py'), TILES], cwd=ROOT)
     return 0
 
 
@@ -194,7 +206,18 @@ def cmd_pack(args) -> int:
             materials[f'{key}.TGA'] = {**entry, **tail, **({'turbidity': turbidity[key]} if key in turbidity else {}),
                                      **({'turbidity_depth': depth[key]} if key in depth else {}),
                                      **({'emissive': 1.0} if key in glowing else {})}
-        used = rig.glb_edit(bake / 'model.glb', mesh_dir / 'model.glb', {}, set())
+        glb, names, masked = bake / 'model.glb', {}, set()
+        if spec.get('extra_glb'):  # parts that are not baked (the lamp's filigree) join the baked model here
+            glb = BUILD / item / 'merged.glb'
+            rig.run([BLENDER, '-b', '--factory-startup', '-P', BLENDER_DIR / 'merge_glb.py', '--', glb, bake / 'model.glb',
+                     BUILD / item / spec['extra_glb']], stdout=subprocess.DEVNULL)
+        for zone, (key, tile) in spec.get('tiled', {}).items():
+            folder = output / 'materials' / name / key.lower()
+            entry_tiled = rig.write_maps(write_dds, output / 'materials', folder, TILES / tile, alpha=True)
+            materials[f'{key}.TGA'] = {**entry_tiled, **tail}
+            names[zone] = key
+            masked.add(key)
+        used = rig.glb_edit(glb, mesh_dir / 'model.glb', names, masked)
         missing = [m for m in used if f'{m}.TGA' not in materials]
         if missing:
             raise SystemExit(f'{item}: GLB materials without an entry: {missing}')
@@ -206,11 +229,16 @@ def cmd_pack(args) -> int:
     # fire under Edda's cauldron and steam over the pots on a fire (user, 2026-11-01): a vob layer and own PFX,
     # kept in git and carried into the set the way building_set.py compose expects them
     for source, target in ((LAYER, output / 'worlds' / 'NEWWORLD' / 'vobs.d' / LAYER.name),
-                           (PARTICLES, output / 'particles.d' / PARTICLES.name)):
+                           (PARTICLES, output / 'particles.d' / PARTICLES.name),
+                           (LAMP_PARTICLES, output / 'particles.d' / LAMP_PARTICLES.name),
+                           (LAMP_TREE, output / 'vobtrees.d' / LAMP_TREE.name)):
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, target)
     write_steam_sprite(output)
     copy_fire_flipbook(output)
+    if 'lamp' in (args.items or ITEMS):
+        write_lamp_cookie(output, write_dds)
+        write_lamp_glow(output)
     ids = {r['id'] for r in records}
     old = [json.loads(line) for line in REGISTRY.read_text().splitlines()] if REGISTRY.is_file() else []
     REGISTRY.write_text(''.join(json.dumps(r, ensure_ascii=False, sort_keys=True) + '\n'
@@ -240,6 +268,42 @@ def write_steam_sprite(output: Path) -> None:
     index_path = output / 'materials' / 'materials.json'
     index = json.loads(index_path.read_text())
     index[STEAM_TEXTURE] = {'albedo': STEAM_DDS}
+    index_path.write_text(json.dumps(index, indent=2) + '\n')
+
+
+def write_lamp_glow(output: Path) -> None:
+    """OWN_LAMP_GLOW.TGA, the soft halo round the street lamp's candle (OWN_LAMP_GLOW): a candle in a lantern reads
+    as a bright point across a street, its glare in the eye, while a 4 x 8 cm flame card covers two pixels at 10 m
+    (lamp-r7). Warm, falling off as exp(-r^2) to nothing at the card's edge; additive, alpha its brightest channel."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('harbour_motion', ROOT / 'scripts/content/harbour_motion.py')
+    hm = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(hm)
+    size = 64
+    yy, xx = np.mgrid[0:size, 0:size]
+    r = np.hypot((xx + .5) / size * 2 - 1, (yy + .5) / size * 2 - 1)
+    glow = np.exp(-r * r * 3.5) * np.clip((1 - r) / 0.3, 0, 1)
+    lin = np.stack([glow, glow * 0.5, glow * 0.18], -1)
+    rgb = np.where(lin <= 0.0031308, lin * 12.92, 1.055 * np.power(lin, 1 / 2.4) - 0.055)  # particles decode sRGB
+    hm.write_soft_dds(output / 'materials' / 'own-lamp-glow' / 'albedo.dds', np.dstack([rgb, rgb.max(-1)]))
+    index_path = output / 'materials' / 'materials.json'
+    index = json.loads(index_path.read_text())
+    index['OWN_LAMP_GLOW.TGA'] = {'albedo': 'own-lamp-glow/albedo.dds'}
+    index_path.write_text(json.dumps(index, indent=2) + '\n')
+
+
+def write_lamp_cookie(output: Path, write_dds) -> None:
+    """OWN_LAMP_COOKIE.TGA, the street lamp's light mask (lamp_cookie.py from the packed lace tile): the light of
+    FIRETREE_LAMP.json leaves through the open filigree only, so the lace falls on the cobbles round the lamp."""
+    png = BUILD / 'lamp' / 'cookie.png'
+    rig.run([sys.executable, Path(__file__).with_name('lamp_cookie.py'), TILES / 'own_hearth_lace' / 'albedo.png', png], cwd=ROOT)
+    target = output / 'materials' / 'own-lamp-cookie' / 'albedo.dds'
+    target.parent.mkdir(parents=True, exist_ok=True)
+    mask = rig.read_png(png, 'L')
+    write_dds(target, np.repeat(mask[..., None], 3, axis=2))
+    index_path = output / 'materials' / 'materials.json'
+    index = json.loads(index_path.read_text())
+    index['OWN_LAMP_COOKIE.TGA'] = {'albedo': 'own-lamp-cookie/albedo.dds'}
     index_path.write_text(json.dumps(index, indent=2) + '\n')
 
 

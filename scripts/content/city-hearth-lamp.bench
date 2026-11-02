@@ -1,0 +1,119 @@
+# city-hearth street lamp (FIREPLACE_NW_LAMP_01, wave 3): head close, the usual view, the cobbles round its foot
+# and a lamp of the upper quarter, at noon and 23:00; 10 s clips of the close view and the pool at night.
+# reports/content/remaster/city-hearth/lamp-design.md; world cm, hero above the scene out of frame.
+cheat god
+clear 1000000
+overlay off
+view full
+view hide animated morph
+cam lift off
+
+# lamp-close-12: head close, 1.6 m
+set time 12 0
+cam look -530.000
+goto pos 8279.000 1112.000 -4622.000
+cam world 160.378 -500.000 60.077870
+wait 34
+cam hold
+wait 8000
+set time 12 0
+wait 300
+shot lamp-close-12
+wait 300
+
+# lamp-town-12: the usual view, 4.5 m
+set time 12 0
+cam look -530.000
+goto pos 8279.000 1062.000 -4622.000
+cam world 450.250 -500.000 60.018361
+wait 34
+cam hold
+wait 8000
+set time 12 0
+wait 300
+shot lamp-town-12
+wait 300
+
+# lamp-pool-12: the light on the cobbles round the foot, from above
+set time 12 0
+cam look -840.000
+goto pos 8279.000 1260.000 -4622.000
+cam world 319.476 -500.000 28.410076
+wait 34
+cam hold
+wait 8000
+set time 12 0
+wait 300
+shot lamp-pool-12
+wait 300
+
+# lamp-upper-12: upper quarter
+set time 12 0
+cam look -530.000
+goto pos 11409.000 1693.000 2436.000
+cam world 450.250 -500.000 60.018361
+wait 34
+cam hold
+wait 8000
+set time 12 0
+wait 300
+shot lamp-upper-12
+wait 300
+
+# lamp-close-23: head close, 1.6 m
+set time 23 0
+cam look -530.000
+goto pos 8279.000 1112.000 -4622.000
+cam world 160.378 -500.000 60.077870
+wait 34
+cam hold
+wait 8000
+set time 23 0
+wait 300
+shot lamp-close-23
+rec lamp-close-23-clip
+wait 10000
+stop
+wait 300
+
+# lamp-town-23: the usual view, 4.5 m
+set time 23 0
+cam look -530.000
+goto pos 8279.000 1062.000 -4622.000
+cam world 450.250 -500.000 60.018361
+wait 34
+cam hold
+wait 8000
+set time 23 0
+wait 300
+shot lamp-town-23
+wait 300
+
+# lamp-pool-23: the light on the cobbles round the foot, from above
+set time 23 0
+cam look -840.000
+goto pos 8279.000 1260.000 -4622.000
+cam world 319.476 -500.000 28.410076
+wait 34
+cam hold
+wait 8000
+set time 23 0
+wait 300
+shot lamp-pool-23
+rec lamp-pool-23-clip
+wait 10000
+stop
+wait 300
+
+# lamp-upper-23: upper quarter
+set time 23 0
+cam look -530.000
+goto pos 11409.000 1693.000 2436.000
+cam world 450.250 -500.000 60.018361
+wait 34
+cam hold
+wait 8000
+set time 23 0
+wait 300
+shot lamp-upper-23
+wait 300
