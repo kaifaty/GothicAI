@@ -216,6 +216,8 @@ Marvin::Marvin() {
     {"toggle melee_barge",        C_ToggleMeleeBarge},
     {"toggle melee_charge",       C_ToggleMeleeCharge},
     {"toggle melee_riposte",      C_ToggleMeleeRiposte},
+    {"toggle melee_ai_dodge",     C_ToggleMeleeAiDodge},
+    {"toggle melee_ai_riposte",   C_ToggleMeleeAiRiposte},
     {"toggle melee_down_tactics", C_ToggleMeleeDownTactics},
     {"toggle melee_hitstop",      C_ToggleMeleeHitStop},
     {"toggle melee_stamina",      C_ToggleMeleeStamina},
@@ -787,6 +789,18 @@ bool Marvin::exec(std::string_view v) {
       const bool enabled = !Gothic::physicsFlags().meleeRiposte;
       Gothic::settingsSetI("GAME","melee_riposte",enabled ? 1 : 0);
       print(enabled ? "Melee riposte: ON" : "Melee riposte: OFF");
+      return true;
+      }
+    case C_ToggleMeleeAiDodge: {
+      const bool enabled = !Gothic::physicsFlags().meleeAiDodge;
+      Gothic::settingsSetI("GAME","melee_ai_dodge",enabled ? 1 : 0);
+      print(enabled ? "Melee AI dodge: ON" : "Melee AI dodge: OFF");
+      return true;
+      }
+    case C_ToggleMeleeAiRiposte: {
+      const bool enabled = !Gothic::physicsFlags().meleeAiRiposte;
+      Gothic::settingsSetI("GAME","melee_ai_riposte",enabled ? 1 : 0);
+      print(enabled ? "Melee AI riposte: ON" : "Melee AI riposte: OFF");
       return true;
       }
     case C_ToggleMeleeDownTactics: {

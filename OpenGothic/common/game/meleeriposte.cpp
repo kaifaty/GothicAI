@@ -4,7 +4,7 @@
 #include <cmath>
 
 bool MeleeRiposte::available(const Situation& s) {
-  return s.enabled && s.player && s.standingOneHand && s.heroClip && s.victimHuman && s.victimAlive &&
+  return s.enabled && (s.player || s.aiEnabled) && s.standingOneHand && s.heroClip && s.victimHuman && s.victimAlive &&
          !s.victimDown && s.victimStunned && s.victimClip &&
          s.distanceCm>=80.f && s.distanceCm<=250.f && std::abs(s.heightCm)<=50.f &&
          std::abs(s.heroAngleDeg)<=45.f && std::abs(s.victimAngleDeg)<120.f;
