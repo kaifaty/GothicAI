@@ -174,10 +174,13 @@ while True:
 
 
 class QueueSplitTests(unittest.TestCase):
-    def run_game(self, action='e2e', prepare=True, build_exit=0, scenario='stages', window=None):
+    def run_game(self, action='e2e', prepare=True, build_exit=0, scenario='stages', window=None,
+                 *, headless=False, bench_name='smoke'):
         directory = self.enterContext(tempfile.TemporaryDirectory(prefix='ryzen-phases-test-'))
         root = Path(directory)
-        (root / 'scripts').mkdir()
+        (root / 'scripts/bench').mkdir(parents=True)
+        bench_scenario = root / f'scripts/bench/{bench_name}.bench'
+        bench_scenario.write_text(('# @headless\n' if headless else '') + 'quit\n')
         queue = root / 'scripts/gq'
         queue.write_text(f'#!{sys.executable}\n' + r'''
 import json
@@ -198,8 +201,7 @@ set -euo pipefail
 ROOT="$TEST_SESSION" SESSION="$TEST_SESSION" STATE="$TEST_SESSION/state"
 OUTPUT="$SESSION/output" RUN=run RYZEN_HOST=fake AI_PORT=''
 ACTION="$TEST_ACTION" JOBS=7 LOCK_WAIT=23 SCENARIO="$TEST_SCENARIO"
-BENCH_SCENARIO=/benchmarks/smoke.bench RYZEN_MAX=9m
-if [[ "$ACTION" == bench ]]; then BENCH_CLASS="${RYZEN_BENCH_CLASS:-quiet}"; else unset BENCH_CLASS; fi
+BENCH_SCENARIO="$TEST_BENCH_SCENARIO" RYZEN_MAX=9m WORLD=NEWWORLD.ZEN
 TUNNEL_OPEN=0 RUN_STARTED=0 RUN_FINISHED=0 RUN_RC=0
 SSH_PID=$$ ENV_ARGS=(RYZEN_JOBS=7) GQ_ARGS=()
 exec 8>"$SESSION/control"
@@ -207,6 +209,9 @@ exec 8>"$SESSION/control"
 guard_ack() { :; }
 preparation_needed() { [[ "$TEST_PREPARE" == 1 ]]; }
 '''
+        routing = SCRIPT.read_text().split('ACTION="${1:-}"\n', 1)[1].split('\nremote() {', 1)[0]
+        harness += '\nset -- "$ACTION"; if [[ "$ACTION" == bench ]]; then set -- "$ACTION" "$BENCH_SCENARIO" "$SESSION/result"; fi\n'
+        harness += routing + '\n'
         harness += '\n'.join([function('run_quick'), function('e2e_display_exclusive'),
                               function('game_queue_args'), function('run_game')])
         harness += '\nrun_game env "${ENV_ARGS[@]}" bash "$STATE/source/scripts/ryzen.sh" __remote "$ACTION" "$STATE" "$RUN" "$SCENARIO"\n'
@@ -214,7 +219,7 @@ preparation_needed() { [[ "$TEST_PREPARE" == 1 ]]; }
             ['bash', '-c', harness], capture_output=True, text=True, timeout=10,
             env=dict(os.environ, TEST_SESSION=str(root), TEST_ACTION=action,
                      TEST_PREPARE=str(int(prepare)), TEST_BUILD_EXIT=str(build_exit),
-                     TEST_SCENARIO=scenario, **(window or {})),
+                     TEST_SCENARIO=scenario, TEST_BENCH_SCENARIO=str(bench_scenario), **(window or {})),
         )
         requests = root / 'requests.jsonl'
         return result, [json.loads(line) for line in requests.read_text().splitlines()] if requests.exists() else []
@@ -229,7 +234,7 @@ preparation_needed() { [[ "$TEST_PREPARE" == 1 ]]; }
 
     def assert_game_request(self, request, action):
         options = self.queue_options(request)
-        for name, value in [('--class', 'quiet' if action == 'bench' else 'quick'),
+        for name, value in [('--class', 'quick'),
                             ('--threads', '4'), ('--mem', '5G'), ('--max', '9m'),
                             ('--gpu-mem', '4G' if action == 'bench' else '2G'),
                             ('--wait-max', '23'),
@@ -271,6 +276,29 @@ preparation_needed() { [[ "$TEST_PREPARE" == 1 ]]; }
         options = self.queue_options(requests[0])
         self.assert_option(options, '--class', 'batch')
         self.assert_option(options, '--archive', '/task/far-fight/chunk')
+
+    def test_headless_bench_uses_batch_without_display_or_gpu_memory(self):
+        for settings, expected_class in (({}, 'batch'), ({'RYZEN_BENCH_CLASS': 'quick'}, 'quick')):
+            with self.subTest(settings=settings):
+                result, requests = self.run_game('bench', headless=True, window=settings)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(len(requests), 2, requests)
+                options = self.queue_options(requests[-1])
+                for name, value in (('--class', expected_class), ('--threads', '4'), ('--mem', '6G'),
+                                    ('--max', '9m'), ('--name', 'bench smoke')):
+                    self.assert_option(options, name, value)
+                for option in ('--display', '--display-shared', '--display-exclusive', '--gpu-mem'):
+                    self.assertNotIn(option, options)
+                self.assert_option(self.queue_options(requests[0]), '--class', 'quick')
+
+    def test_headless_zero_keeps_npc_day_window_queue_request(self):
+        result, requests = self.run_game('bench', prepare=False, headless=True, bench_name='npc-day-parity',
+                                         window={'BENCH_HEADLESS': '0'})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        options = self.queue_options(requests[0])
+        self.assertEqual(options, ['--host', 'fake', 'run', '--class', 'quick', '--threads', '4',
+                                  '--mem', '5G', '--display', '--max', '9m', '--wait-max', '23',
+                                  '--gpu-mem', '4G', '--name', 'bench npc-day-parity'])
 
     def test_build_failure_returns_its_status_without_game_submission(self):
         result, requests = self.run_game(build_exit=42)
@@ -509,19 +537,20 @@ with Path(os.environ['TEST_CMAKE_CALLS']).open('a') as stream:
     stream.write(json.dumps(args) + '\n')
 if '--build' in args:
     build = Path(args[args.index('--build') + 1])
-    target = args[args.index('--target') + 1]
-    output = build / ('opengothic/Gothic2Notr' if target == 'Gothic2Notr' else 'storygraph')
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text('#!/usr/bin/env python3\nimport os, sys\nfrom pathlib import Path\n'
-                      'Path(os.environ["TEST_GAME_PATH"]).write_text(str(Path(sys.argv[0]).resolve()))\n'
-                      'if sys.argv[0].endswith("Gothic2Notr"):\n'
-                      '    assert Path(sys.argv[0]).with_name("runtime.dat").read_text() == "runtime"\n')
-    output.chmod(0o755)
-    output.with_name('runtime.dat').write_text('runtime')
-    if target == 'Gothic2Notr':
-        converter = output.with_name('content-convert')
-        converter.write_text('#!/bin/sh\nexit 0\n')
-        converter.chmod(0o755)
+    targets = args[args.index('--target') + 1:args.index('--parallel')]
+    for target in targets:
+        output = build / (f'opengothic/{target}' if target in ('Gothic2Notr', 'gothic-body-runner') else 'storygraph')
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text('#!/usr/bin/env python3\nimport os, sys\nfrom pathlib import Path\n'
+                          'Path(os.environ["TEST_GAME_PATH"]).write_text(str(Path(sys.argv[0]).resolve()))\n'
+                          'if sys.argv[0].endswith("Gothic2Notr"):\n'
+                          '    assert Path(sys.argv[0]).with_name("runtime.dat").read_text() == "runtime"\n')
+        output.chmod(0o755)
+        output.with_name('runtime.dat').write_text('runtime')
+        if target == 'Gothic2Notr':
+            converter = output.with_name('content-convert')
+            converter.write_text('#!/bin/sh\nexit 0\n')
+            converter.chmod(0o755)
 else:
     build = Path(args[args.index('-B') + 1])
     build.mkdir(parents=True, exist_ok=True)
@@ -600,6 +629,37 @@ remote_run e2e "$TEST_ROOT/worktree" run
         self.assertFalse((self.root / 'cmake-calls.jsonl').exists())
         self.assertEqual((self.source / 'OpenGothic/ai_bridge/storygraph/build/storygraph').resolve(),
                          self.cache / 'storygraph' / self.story_digest / 'storygraph')
+
+    def test_headless_rebuilds_a_window_only_cache_and_runs_without_desktop(self):
+        cached = self.entry(self.engine_digest)
+        self.env['BENCH_HEADLESS'] = '1'
+        (self.source / 'scripts/bench.sh').write_text('"$GAME_BIN" --test\n')
+        self.shell(r'''
+engine_ready "$TEST_ROOT/worktree" "''' + self.engine_digest + r'''"
+if remote_probe bench "$TEST_ROOT/worktree" run smoke; then
+  echo 'headless accepted a cache without the runner' >&2
+  exit 90
+fi
+remote_prepare bench "$TEST_ROOT/worktree" run smoke
+remote_probe bench "$TEST_ROOT/worktree" run smoke
+desktop() { echo 'headless looked for a desktop' >&2; return 91; }
+command() {
+  if [[ "$1" == -v && "$2" == ffmpeg ]]; then
+    echo 'headless required ffmpeg' >&2
+    return 92
+  fi
+  builtin command "$@"
+}
+remote_bench "$TEST_ROOT/worktree" run smoke
+''')
+        calls = [json.loads(line) for line in (self.root / 'cmake-calls.jsonl').read_text().splitlines()]
+        builds = [call for call in calls if '--build' in call]
+        self.assertEqual(len(builds), 1, calls)
+        self.assertEqual(builds[0][builds[0].index('--target') + 1:builds[0].index('--parallel')],
+                         ['Gothic2Notr', 'gothic-body-runner'])
+        self.assertTrue(os.access(cached / 'gothic-body-runner', os.X_OK))
+        self.assertEqual((self.root / 'game-path').read_text(), str(cached / 'Gothic2Notr'))
+        self.assertFalse((self.state / 'runs/run/game.sh').exists())
 
     def test_game_settings_loads_fingerprints_without_installation(self):
         result = self.shell(r'''
@@ -1491,7 +1551,7 @@ out = Path(sys.argv[3])
                 self.assertEqual(json.loads((out / 'content.json').read_text()), value)
                 self.assertEqual((out / 'host.txt').read_text(), 'ryzen\n')
 
-    def bench_game(self, mode, **settings):
+    def bench_game(self, mode, *, marked=False, scenario_name='smoke', report=False, **settings):
         scripts = self.root / 'scripts'
         scripts.mkdir()
         shutil.copyfile(BENCH_SCRIPT, scripts / 'bench.sh')
@@ -1499,20 +1559,33 @@ out = Path(sys.argv[3])
         (scripts / 'bench_report.py').write_text(
             'from pathlib import Path\nimport sys\n'
             'Path(sys.argv[1], "report-built").touch()\n')
-        scenario = self.root / 'smoke.bench'
-        scenario.write_text('quit\n')
+        if report:
+            shutil.copyfile(SCRIPT.with_name('bench_report.py'), scripts / 'bench_report.py')
+        scenario = self.root / f'{scenario_name}.bench'
+        scenario.write_text(('# @headless\n' if marked else '') + 'quit\n')
         game = self.binaries / 'game'
         game.write_text(f'#!{sys.executable}\n' + r'''
 import json
 import os
 from pathlib import Path
 import signal
+import sys
 import time
 root = Path(os.environ['TEST_ROOT'])
 (root / 'game.pid').write_text(str(os.getpid()))
+(root / 'invocation.json').write_text(json.dumps({
+    'binary': Path(sys.argv[0]).name, 'args': sys.argv[1:], 'cwd': os.getcwd(),
+    'bench_class': os.environ.get('RYZEN_BENCH_CLASS'),
+    'ini': Path('Gothic.ini').read_text(),
+    'save': Path('save_slot_1.sav').read_text() if Path('save_slot_1.sav').exists() else None,
+    'env': {key: value for key, value in os.environ.items()
+            if key.startswith(('OPENGOTHIC_', 'TEMPEST_'))},
+}))
 mode = os.environ['TEST_MODE']
 if mode in ('done', 'keep'):
     print('[bench] done', flush=True)
+    if Path(sys.argv[0]).name != 'game':
+        print(json.dumps({'status': 'done'}), flush=True)
 if mode == 'stall':
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
 if mode == 'progress':
@@ -1529,6 +1602,10 @@ if mode not in ('done', 'exit'):
     print('[bench] done', flush=True)
 ''')
         game.chmod(0o755)
+        for name in ('gothic-body-runner', 'custom-runner'):
+            runner = self.binaries / name
+            shutil.copyfile(game, runner)
+            runner.chmod(0o755)
         out = self.root / 'out'
         env = dict(self.env, BENCH_HOST='local', NO_BUILD='1', WORLD='NEWWORLD.ZEN',
                    GOTHIC_DIR=str(self.root / 'data'), GAME_BIN=str(game), TEST_MODE=mode,
@@ -1556,6 +1633,87 @@ if mode not in ('done', 'exit'):
         stdout, stderr = process.communicate(timeout=5)
         self.assertEqual(process.returncode, 0, stdout + stderr)
         self.assertTrue((out / 'report-built').exists())
+        invocation = json.loads((self.root / 'invocation.json').read_text())
+        self.assertEqual(invocation['binary'], 'game')
+        self.assertEqual(invocation['args'], ['-g', str(self.root / 'data'), '-window', '-devmode',
+                                             '-nomenu', '-w', 'NEWWORLD.ZEN', '-nointro'])
+
+    def test_headless_marker_uses_sibling_runner_and_same_game_environment(self):
+        process, out = self.bench_game('done', marked=True, scenario_name='furniture-parts', report=True, MOVABLE_VOBS='1',
+                                     OPENGOTHIC_NPC_SIM_TIER='full')
+        stdout, stderr = process.communicate(timeout=5)
+        self.assertEqual(process.returncode, 0, stdout + stderr)
+        invocation = json.loads((self.root / 'invocation.json').read_text())
+        self.assertEqual(invocation['binary'], 'gothic-body-runner')
+        self.assertEqual(invocation['args'], ['-g', str(self.root / 'data'), '-devmode',
+                                             '-nomenu', '--world', 'NEWWORLD.ZEN', '-nointro',
+                                             '--game-parity', '--scenario', str(self.root / 'furniture-parts.bench'),
+                                             '--output', str(out), '--mode', 'lockstep'])
+        self.assertEqual(invocation['cwd'], str((out / 'run').resolve()))
+        self.assertIn('[GAME]\nmovable_vobs=1\n', invocation['ini'])
+        self.assertEqual(invocation['env']['OPENGOTHIC_BENCH'], str(self.root / 'furniture-parts.bench'))
+        self.assertEqual(invocation['env']['OPENGOTHIC_BENCH_OUT'], str(out))
+        self.assertEqual(invocation['env']['OPENGOTHIC_NPC_SIM_TIER'], 'full')
+        self.assertIsNone(invocation['bench_class'])
+        self.assertFalse(any(key.startswith('TEMPEST_') for key in invocation['env']))
+        summary = json.loads((out / 'report.json').read_text())
+        self.assertEqual(summary['run_mode'], 'headless lockstep')
+        self.assertGreaterEqual(summary['game_wall_seconds'], 0)
+        self.assertIn('headless lockstep', (out / 'report.md').read_text())
+        self.assertRegex(stdout, r'bench: game ran \d+ s')
+        self.assertIn('{"status": "done"}', (out / 'game.log').read_text())
+
+    def test_headless_override_uses_custom_runner_and_save(self):
+        save = self.root / 'input.sav'
+        save.write_text('saved game')
+        process, out = self.bench_game('done', BENCH_HEADLESS='1', WORLD='', SAVE=str(save),
+                                     RUNNER_BIN=str(self.binaries / 'custom-runner'), RYZEN_BENCH='1')
+        stdout, stderr = process.communicate(timeout=5)
+        self.assertEqual(process.returncode, 0, stdout + stderr)
+        invocation = json.loads((self.root / 'invocation.json').read_text())
+        self.assertEqual(invocation['binary'], 'custom-runner')
+        self.assertEqual(invocation['save'], 'saved game')
+        self.assertEqual(invocation['args'], ['-g', str(self.root / 'data'), '-devmode',
+                                             '--save', str(out / 'run/save_slot_1.sav'), '-nointro', '-g2',
+                                             '--game-parity', '--scenario', str(self.root / 'smoke.bench'),
+                                             '--output', str(out), '--mode', 'lockstep'])
+
+    def test_headless_zero_preserves_npc_day_window_arguments(self):
+        process, out = self.bench_game('done', marked=True, scenario_name='npc-day-parity',
+                                     BENCH_HEADLESS='0', report=True)
+        stdout, stderr = process.communicate(timeout=5)
+        self.assertEqual(process.returncode, 0, stdout + stderr)
+        invocation = json.loads((self.root / 'invocation.json').read_text())
+        self.assertEqual(invocation['binary'], 'game')
+        self.assertEqual(invocation['args'], ['-g', str(self.root / 'data'), '-window', '-devmode',
+                                             '-nomenu', '-w', 'NEWWORLD.ZEN', '-nointro'])
+        self.assertEqual(json.loads((out / 'report.json').read_text())['run_mode'], 'window')
+
+    def test_headless_exit_without_done_fails(self):
+        process, out = self.bench_game('exit', marked=True)
+        stdout, stderr = process.communicate(timeout=5)
+        self.assertEqual(process.returncode, 1, stdout + stderr)
+        self.assertIn('without [bench] done', stderr)
+        self.assertTrue((out / 'report-built').exists())
+
+    def test_headless_stall_uses_the_game_watchdog(self):
+        start = time.monotonic()
+        process, out = self.bench_game('stall', marked=True, BENCH_STALL='2', TIMEOUT='30')
+        stdout, stderr = process.communicate(timeout=20)
+        self.assertEqual(process.returncode, 1, stdout + stderr)
+        self.assertIn('bench: game stalled: no output or heartbeat for 2 s, killed', stderr)
+        self.assertLess(time.monotonic() - start, 18)
+        with self.assertRaises(ProcessLookupError):
+            os.kill(int((self.root / 'game.pid').read_text()), 0)
+        self.assertTrue((out / 'report-built').exists())
+
+    def test_headless_rejects_keep_before_launch(self):
+        process, _ = self.bench_game('done', marked=True, KEEP='1')
+        stdout, stderr = process.communicate(timeout=5)
+        self.assertEqual(process.returncode, 2, stdout + stderr)
+        self.assertIn('KEEP=1', stderr)
+        self.assertIn('headless', stderr)
+        self.assertFalse((self.root / 'game.pid').exists())
 
     def test_bench_exit_without_done_fails(self):
         process, out = self.bench_game('exit')
