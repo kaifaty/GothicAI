@@ -1,9 +1,10 @@
-# Native 1H dodge replacement. Run unchanged with MELEE_AI_DODGE=1 and 0.
-# WORLD=NEWWORLD.ZEN OPENGOTHIC_BODY_TRACE=1 MELEE_DODGE=1 MELEE_STAMINA=1 MELEE_POSTURE=0 TIMEOUT=900
+# Native 1H dodge replacement: run unchanged with MELEE_AI_DODGE=1 and 0.
+# WORLD=NEWWORLD.ZEN OPENGOTHIC_BODY_TRACE=1 MELEE_DODGE=1 MELEE_STAMINA=1 MELEE_POSTURE=0 MELEE_AI_RIPOSTE=0 TIMEOUT=900
 # OPENGOTHIC_CONTENT=/Users/kaifat/.local/share/gothic-ai/content-staging/anim-strikes
-# Metrics only: each case has 24 actual input swings. ai_dodge records swing age and contact timing;
-# dodge_invulnerable / melee-blade-shadow record whether real blade contacts enter the invulnerability window.
-# Place and restart between trials to retain the specified initial distance; do not force FAI decisions.
+# Ordinary running attacks use T_1HATTACKMOVE (640 ms optimal frame), with no animation or hit-reaction overrides.
+# Prime one native fight per case. Reposition only the hero, preserving the native FAI queue and weapon stance.
+# The master gets 40 swings, the novice and controls 24. Trace stamina_spend counts actual accepted attacks.
+# ai_dodge carries swing age/contact prediction; dodge_invulnerable and hit_attempt record actual blade contacts.
 seed 73013
 set time 12 0
 release all
@@ -26,1251 +27,1417 @@ still player on
 immortal BDT_1013_BANDIT_L on
 wait 2000
 
-# a-talent100: 1h, 1H talent 100, initial distance 160 cm.
+# a-talent100: 40 running attacks, NPC 1h, 1H talent 100.
+release all
 freeze BDT_1013_BANDIT_L
-melee-shadow bandit 1h
 stats npc BDT_1013_BANDIT_L str 60 1h 100 2h 100 talent auto
+put BDT_1013_BANDIT_L 300 0
+melee-shadow bandit 1h
 wait 1000
+watch BDT_1013_BANDIT_L
+anims
+stats npc BDT_1013_BANDIT_L
+watch player
+fight BDT_1013_BANDIT_L player
+wait 800
 rec a-talent100 novideo
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark a-talent100-swing01
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark a-talent100-swing02
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark a-talent100-swing03
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark a-talent100-swing04
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark a-talent100-swing05
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark a-talent100-swing06
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark a-talent100-swing07
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark a-talent100-swing08
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark a-talent100-swing09
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark a-talent100-swing10
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark a-talent100-swing11
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark a-talent100-swing12
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark a-talent100-swing13
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark a-talent100-swing14
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark a-talent100-swing15
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark a-talent100-swing16
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark a-talent100-swing17
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark a-talent100-swing18
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark a-talent100-swing19
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark a-talent100-swing20
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark a-talent100-swing21
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark a-talent100-swing22
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark a-talent100-swing23
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark a-talent100-swing24
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing25
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing26
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing27
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing28
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing29
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing30
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing31
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing32
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing33
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing34
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing35
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing36
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing37
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing38
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing39
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing40
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
 freeze BDT_1013_BANDIT_L
 wait 1200
 stop shadow
 
-# a-talent0: 1h, 1H talent 0, initial distance 160 cm.
+# a-talent0: 24 running attacks, NPC 1h, 1H talent 0.
+release all
 freeze BDT_1013_BANDIT_L
-melee-shadow bandit 1h
 stats npc BDT_1013_BANDIT_L str 60 1h 0 2h 0 talent auto
+put BDT_1013_BANDIT_L 300 0
+melee-shadow bandit 1h
 wait 1000
+watch BDT_1013_BANDIT_L
+anims
+stats npc BDT_1013_BANDIT_L
+watch player
+fight BDT_1013_BANDIT_L player
+wait 800
 rec a-talent0 novideo
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark a-talent0-swing01
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark a-talent0-swing02
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark a-talent0-swing03
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark a-talent0-swing04
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark a-talent0-swing05
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark a-talent0-swing06
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark a-talent0-swing07
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark a-talent0-swing08
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark a-talent0-swing09
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark a-talent0-swing10
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark a-talent0-swing11
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark a-talent0-swing12
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark a-talent0-swing13
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark a-talent0-swing14
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark a-talent0-swing15
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark a-talent0-swing16
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark a-talent0-swing17
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark a-talent0-swing18
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark a-talent0-swing19
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark a-talent0-swing20
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark a-talent0-swing21
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark a-talent0-swing22
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark a-talent0-swing23
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark a-talent0-swing24
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
+wait 1600
 freeze BDT_1013_BANDIT_L
 wait 1200
 stop shadow
 
-# b-out-of-reach: 1h, 1H talent 100, initial distance 300 cm.
+# b-out-of-reach: 24 running attacks, NPC 1h, 1H talent 100.
+release all
 freeze BDT_1013_BANDIT_L
-melee-shadow bandit 1h
 stats npc BDT_1013_BANDIT_L str 60 1h 100 2h 100 talent auto
+put BDT_1013_BANDIT_L 300 0
+melee-shadow bandit 1h
 wait 1000
+# Pin is a fixed world point. Native AI stays active; the hero swings 90 degrees away to exclude the melee magnet.
+pin BDT_1013_BANDIT_L 300 0 0
+melee-shadow bandit 1h
+watch BDT_1013_BANDIT_L
+anims
+stats npc BDT_1013_BANDIT_L
+watch player
+fight BDT_1013_BANDIT_L player
+wait 800
 rec b-out-of-reach novideo
-put BDT_1013_BANDIT_L 300 0
-wait 1000
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark b-out-of-reach-swing01
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+turn 90
+pair player BDT_1013_BANDIT_L
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 300 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark b-out-of-reach-swing02
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+turn 90
+pair player BDT_1013_BANDIT_L
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 300 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark b-out-of-reach-swing03
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+turn 90
+pair player BDT_1013_BANDIT_L
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 300 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark b-out-of-reach-swing04
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+turn 90
+pair player BDT_1013_BANDIT_L
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 300 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark b-out-of-reach-swing05
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+turn 90
+pair player BDT_1013_BANDIT_L
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 300 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark b-out-of-reach-swing06
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+turn 90
+pair player BDT_1013_BANDIT_L
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 300 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark b-out-of-reach-swing07
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+turn 90
+pair player BDT_1013_BANDIT_L
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 300 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark b-out-of-reach-swing08
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+turn 90
+pair player BDT_1013_BANDIT_L
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 300 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark b-out-of-reach-swing09
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+turn 90
+pair player BDT_1013_BANDIT_L
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 300 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark b-out-of-reach-swing10
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+turn 90
+pair player BDT_1013_BANDIT_L
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 300 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark b-out-of-reach-swing11
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+turn 90
+pair player BDT_1013_BANDIT_L
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 300 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark b-out-of-reach-swing12
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+turn 90
+pair player BDT_1013_BANDIT_L
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 300 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark b-out-of-reach-swing13
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+turn 90
+pair player BDT_1013_BANDIT_L
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 300 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark b-out-of-reach-swing14
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+turn 90
+pair player BDT_1013_BANDIT_L
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 300 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark b-out-of-reach-swing15
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+turn 90
+pair player BDT_1013_BANDIT_L
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 300 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark b-out-of-reach-swing16
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+turn 90
+pair player BDT_1013_BANDIT_L
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 300 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark b-out-of-reach-swing17
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+turn 90
+pair player BDT_1013_BANDIT_L
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 300 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark b-out-of-reach-swing18
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+turn 90
+pair player BDT_1013_BANDIT_L
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 300 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark b-out-of-reach-swing19
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+turn 90
+pair player BDT_1013_BANDIT_L
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 300 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark b-out-of-reach-swing20
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+turn 90
+pair player BDT_1013_BANDIT_L
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 300 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark b-out-of-reach-swing21
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+turn 90
+pair player BDT_1013_BANDIT_L
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 300 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark b-out-of-reach-swing22
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+turn 90
+pair player BDT_1013_BANDIT_L
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 300 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark b-out-of-reach-swing23
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+turn 90
+pair player BDT_1013_BANDIT_L
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 300 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark b-out-of-reach-swing24
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+turn 90
+pair player BDT_1013_BANDIT_L
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
+wait 1600
+pin off
 freeze BDT_1013_BANDIT_L
 wait 1200
 stop shadow
 
-# c-two-handed: 2h, 1H talent 100, initial distance 160 cm.
+# c-two-handed: 24 running attacks, NPC 2h, 1H talent 100.
+release all
 freeze BDT_1013_BANDIT_L
-melee-shadow bandit 2h
 stats npc BDT_1013_BANDIT_L str 60 1h 100 2h 100 talent auto
+put BDT_1013_BANDIT_L 300 0
+melee-shadow bandit 2h
 wait 1000
+watch BDT_1013_BANDIT_L
+anims
+stats npc BDT_1013_BANDIT_L
+watch player
+fight BDT_1013_BANDIT_L player
+wait 800
 rec c-two-handed novideo
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark c-two-handed-swing01
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark c-two-handed-swing02
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark c-two-handed-swing03
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark c-two-handed-swing04
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark c-two-handed-swing05
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark c-two-handed-swing06
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark c-two-handed-swing07
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark c-two-handed-swing08
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark c-two-handed-swing09
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark c-two-handed-swing10
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark c-two-handed-swing11
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark c-two-handed-swing12
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark c-two-handed-swing13
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark c-two-handed-swing14
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark c-two-handed-swing15
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark c-two-handed-swing16
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark c-two-handed-swing17
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark c-two-handed-swing18
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark c-two-handed-swing19
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark c-two-handed-swing20
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark c-two-handed-swing21
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark c-two-handed-swing22
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark c-two-handed-swing23
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark c-two-handed-swing24
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
+wait 1600
 freeze BDT_1013_BANDIT_L
 wait 1200
 stop shadow
 
-# Marvin toggles the same setting. The final four trials invert the env setting, then restore it.
-melee-shadow bandit 1h
+# Marvin inverts the env flag for four ordinary running attacks, then restores it.
+release all
+freeze BDT_1013_BANDIT_L
 stats npc BDT_1013_BANDIT_L 1h 100 talent auto
+put BDT_1013_BANDIT_L 300 0
+melee-shadow bandit 1h
+wait 1000
 toggle melee_ai_dodge
+fight BDT_1013_BANDIT_L player
+wait 800
 rec toggle-inverted novideo
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark toggle-inverted-swing01
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark toggle-inverted-swing02
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark toggle-inverted-swing03
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
-put BDT_1013_BANDIT_L 160 0
-wait 1000
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
 mark toggle-inverted-swing04
-fight BDT_1013_BANDIT_L player
-wait 34
-face npc BDT_1013_BANDIT_L
-release all
+press forward
+wait 500
 press action
-tap forward
 wait 100
 release all
-wait 1100
+wait 1600
 freeze BDT_1013_BANDIT_L
 wait 1200
 stop shadow

@@ -15496,12 +15496,14 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       Gothic::settingsSetI("GAME","USEGOTHIC1CONTROLS",a[2]=="classic");
       say("melee shadow controls " + a[2]);
       }
-    else if(a.size()==3 && a[1]=="bandit") {
-      // melee-shadow bandit 1h|2h|none: the fixture's bandit takes the stock one- or two-hander in hand, or puts
+    else if((a.size()==3 || a.size()==4) && a[1]=="bandit") {
+      // melee-shadow bandit 1h|2h|none [npc]: the fixture's bandit takes the stock one- or two-hander in hand, or puts
       // his away (a clear gap between a blade and his body, no blade of his in between)
       if(bench.meleeShadowActors.size()!=3) {arenaAbort("melee shadow setup is required");return;}
       if(a[2]!="1h" && a[2]!="2h" && a[2]!="none") {arenaAbort("melee shadow bandit expects 1h, 2h or none");return;}
-      auto& npc=*bench.meleeShadowActors[2];
+      auto* actor=a.size()==4 ? findNpc(w,pl,a[3]) : bench.meleeShadowActors[2];
+      if(actor==nullptr) {arenaAbort("melee shadow bandit is absent");return;}
+      auto& npc=*actor;
       if(a[2]=="none") {npc.closeWeapon(true);return;}
       const auto symbol=w.script().findSymbolIndex(a[2]=="1h"?"ITMW_1H_COMMON_01":"ITMW_2H_BAU_AXE");
       if(symbol==size_t(-1)) {arenaAbort("melee shadow bandit weapon is absent");return;}
@@ -17086,8 +17088,9 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     if(more) {
       // whose, the reload as long as the animation is (the trained ones' is shorter), the hit points
       const bool cbow = wp!=nullptr && wp->isCrossbow();
-      std::snprintf(buf,sizeof(buf),"stats of %s: talent bow %d cbow %d, reload %.0f ms, hp %d of %d, point protection %d",
-                    symName(w,&n).c_str(),n.talentSkill(TALENT_BOW),n.talentSkill(TALENT_CROSSBOW),
+      std::snprintf(buf,sizeof(buf),"stats of %s: 1h %d (talent %d), 2h %d (talent %d), talent bow %d cbow %d, reload %.0f ms, hp %d of %d, point protection %d",
+                    symName(w,&n).c_str(),n.hitChance(TALENT_1H),n.talentSkill(TALENT_1H),
+                    n.hitChance(TALENT_2H),n.talentSkill(TALENT_2H),n.talentSkill(TALENT_BOW),n.talentSkill(TALENT_CROSSBOW),
                     double(n.animTime(Archery::reloadAnim(cbow))),n.attribute(ATR_HITPOINTS),n.attribute(ATR_HITPOINTSMAX),
                     n.protection(PROT_POINT));
       say(buf);

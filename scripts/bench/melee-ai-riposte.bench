@@ -86,6 +86,7 @@ arc BDT_1003_BANDIT_M 1 180 0
 npcequip BDT_1003_BANDIT_M ITMW_1H_COMMON_01
 stats npc BDT_1003_BANDIT_M hpmax 100000 hp 100000 str 60 1h 100 talent auto
 put BDT_1003_BANDIT_M 170 30
+melee-shadow bandit 1h BDT_1003_BANDIT_M
 put BDT_1013_BANDIT_L 150 0
 wait 1000
 rec c-two-bandits novideo
