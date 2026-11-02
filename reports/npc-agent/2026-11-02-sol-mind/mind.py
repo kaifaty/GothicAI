@@ -364,17 +364,18 @@ def history_text(turn: dict[str, Any]) -> str:
     )
 
 
-async def judge(directory: Path, *, sol: LLMBackend | None = None) -> None:
+async def judge(directory: Path, *, redo_minds: bool = False, sol: LLMBackend | None = None) -> None:
     mind_prompt = (HERE / "judge_mind.md").read_text(encoding="utf-8")
     answer_prompt = (HYBRID / "judge_hybrid.md").read_text(encoding="utf-8")
     turns = pilot.rows(directory / "turns.jsonl")
     minds = {r["id"]: r for r in pilot.rows(directory / "minds.jsonl")}
     answers = {(r["id"], r["variant"]): r for r in pilot.rows(directory / "answers.jsonl")}
+    if redo_minds:
+        pilot.save_rows(directory / "judge_minds.jsonl", [])
     judged_minds = {r["id"]: r for r in pilot.rows(directory / "judge_minds.jsonl")}
     judged_answers = {(r["id"], r["variant"]): r for r in pilot.rows(directory / "judge_answers.jsonl")}
     requests = []
     for group in conversations(turns):
-        prior = []
         for turn in group:
             identifier = turn["id"]
             state = minds.get(identifier)
@@ -385,15 +386,30 @@ async def judge(directory: Path, *, sol: LLMBackend | None = None) -> None:
                         for call in state["calls"]
                     ]
                     calls.extend("[Скажу] " + phrase for phrase in state["say"])
+                    history = []
+                    for data in turn["history"]:
+                        item = item_from_json(data)
+                        if isinstance(item, Message):
+                            prefix = {"user": "Герой: ", "assistant": "NPC: ", "developer": ""}[item.role]
+                            text = pilot.spoken(item.content) if item.role == "assistant" else item.content
+                            history.append(prefix + text)
+                        elif isinstance(item, ToolCall):
+                            history.append(
+                                f"Вызов: {item.name} {json.dumps(item.arguments, ensure_ascii=False)}"
+                            )
+                        elif isinstance(item, ToolResult):
+                            history.append("Итог вызова: " + item.output)
                     sections = {
                         "Описание персонажа": turn["instructions"],
                         "Обстановка": turn["situation"],
-                        "Разговор до этой минуты": "\n".join(prior),
+                        "Разговор до этой минуты": "\n".join(history),
                         "Прежний ум": state["previous_mind"],
                         "Новый ум": state["mind"],
                         "Вызовы": "\n".join(calls) or "—",
                     }
                     requests.append((identifier, None, mind_prompt, sections))
+                if redo_minds:
+                    continue
                 for variant in VARIANTS:
                     key = (identifier, variant)
                     answer = answers.get(key)
@@ -411,7 +427,6 @@ async def judge(directory: Path, *, sol: LLMBackend | None = None) -> None:
                         "Реплика NPC": answer["text"],
                     }
                     requests.append((identifier, variant, answer_prompt, sections))
-            prior.extend(("Герой: " + turn["phrase"], "NPC: " + pilot.spoken(turn["sol"])))
     if not requests:
         return
     sol = sol if sol is not None else pilot.make_backend("chatgpt", reasoning_effort="low")
@@ -771,11 +786,13 @@ async def selftest() -> None:
         route_dir.mkdir()
         npc = "BAU_4300_ADDON_CAVALORN"
         records = [{"type": "instructions", "hash": "persona", "text": "Recorded NPC description."}]
-        old_call = ToolCall("look", {}, "old-call")
+        old_call = ToolCall("look", {"target": "hero"}, "old-call")
         old_result = ToolResult("old-call", "Recorded tool output.")
+        remark = "[Event: the hero stole a purse.]"
         history = [
             Message("user", "Earlier hero."),
             Message("assistant", "[neutral] Earlier NPC."),
+            Message("developer", remark),
             old_call,
             old_result,
         ]
@@ -993,11 +1010,21 @@ async def selftest() -> None:
         )
         assert "Прежний ум\n" + EMPTY_MIND in content.content and "[Скажу] Listen." in content.content
         assert 'set_intent {"goal": "talk"}' in content.content and turns[0]["phrase"] not in content.content
+        recorded_history = "\n".join(
+            [
+                "Герой: Earlier hero.",
+                "NPC: Earlier NPC.",
+                remark,
+                'Вызов: look {"target": "hero"}',
+                "Итог вызова: Recorded tool output.",
+            ]
+        )
+        assert "Разговор до этой минуты\n" + recorded_history + "\n\nПрежний ум\n" in content.content
         later = next(
             messages[0].content for _, messages, _ in referee.calls if "Новый ум\n" + b in messages[0].content
         )
-        assert f"Герой: {turns[0]['phrase']}\nNPC: {pilot.spoken(turns[0]['sol'])}" in later
-        assert later.count("Герой: ") == 2 and "Вызовы\n—" in later
+        assert "Разговор до этой минуты\n" + recorded_history + "\n\nПрежний ум\n" in later
+        assert "Вызовы\n—" in later
         assert "Мысли NPC\nVoice note.\n\n" + a in referee.calls[1][1][0].content
         assert "Мысли NPC\nVoice note.\n\nРеплика NPC" in referee.calls[2][1][0].content
         jm[0]["error"] = ja[0]["error"] = "Synthetic judge failure"
@@ -1006,6 +1033,15 @@ async def selftest() -> None:
         await judge(directory, sol=referee)
         assert len(referee.calls) == 10
         jm, ja = pilot.rows(directory / "judge_minds.jsonl"), pilot.rows(directory / "judge_answers.jsonl")
+        ja[0]["error"] = "Synthetic judge failure"
+        pilot.save_rows(directory / "judge_answers.jsonl", ja)
+        answer_judgments = (directory / "judge_answers.jsonl").read_bytes()
+        await judge(directory, redo_minds=True, sol=referee)
+        assert len(referee.calls) == 14
+        assert (directory / "judge_answers.jsonl").read_bytes() == answer_judgments
+        jm = pilot.rows(directory / "judge_minds.jsonl")
+        assert len(jm) == 4 and all(row["error"] is None for row in jm)
+        ja[0]["error"] = None
         jm[0]["result"]["false_facts"] = ["Unsupported fact."]
         jm[0]["result"]["stale"] = ["Closed thread."]
         ja[0]["result"]["unauthorized"] = ["Unsupported commitment."]
@@ -1159,6 +1195,8 @@ def main() -> None:
         elif name == "speak":
             command.add_argument("--slot", type=int, default=0)
             command.add_argument("--quick-at")
+        elif name == "judge":
+            command.add_argument("--redo-minds", action="store_true")
         elif name == "sheet":
             command.add_argument("--seed", type=int, default=pilot.SEED)
         elif name == "summary":
