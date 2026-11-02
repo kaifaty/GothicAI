@@ -896,6 +896,7 @@ class NpcLogicalStateContract final {
         npc->setExternalControl(true);
         npc->clearState(true);
         npc->clearAiQueue();
+        npc->outWaitTime=0;
         npc->clearGoTo();
         npc->setTarget(nullptr);
         npc->clearSpeed();
@@ -972,6 +973,7 @@ class NpcLogicalStateContract final {
         npc=gothic.world()->npcById(id);
         expect(npc!=nullptr && gothic.world()->tickCount()==savedAt,"logical save/load restores the actor and exact world time");
         compare(*npc); // Before any positive simulation step or explicit sync.
+        npc->logicalBody.auditTick(*npc);
         const auto restored=npc->logicalBodyState();
         const auto layer=std::find_if(restored.layers.begin(),restored.layers.end(),[&](const auto& l) {
           return l.sequence->name==name;
@@ -982,21 +984,27 @@ class NpcLogicalStateContract final {
         const auto origin=layer->origin;
         const auto canonicalStart=layer->start;
         const auto canonicalSpeed=layer->speed;
+        const auto actionEnd=restored.action.expectedEnd;
+        const auto nativeWaitEnd=npc->aniWaitTime;
+        expect(restored.action.predictable && actionEnd>savedAt,"logical save/load rebuilds the pending action deadline");
         if(action==AI_PlayAnim)
           expect(beforeSpeed==.5f && canonicalSpeed==1.f,"fresh load applies the native save speed normalization");
         npc->setExternalControl(true);
         bool active=true;
-        uint64_t endedAt=0;
-        for(unsigned i=0;i<400 && active;++i) {
+        uint64_t endedAt=0, actionEndedAt=0;
+        for(unsigned i=0;i<400 && (active || actionEndedAt==0);++i) {
           advance();
           compare(*npc);
           active=false;
           for(const auto& real:npc->visual.pose().combatLayers(npc->world().tickCount()))
             active |= real.sequence->name==name && real.origin==origin;
-          if(!active) endedAt=npc->world().tickCount();
+          if(!active && endedAt==0) endedAt=npc->world().tickCount();
+          if(actionEndedAt==0 && (restored.actionWait ? npc->world().tickCount()>nativeWaitEnd : !active))
+            actionEndedAt=npc->world().tickCount();
           }
-        expect(!active,"logical save/load observes the real canonical animation end");
+        expect(!active && actionEndedAt!=0,"logical save/load observes the real canonical animation end");
         const auto error=int64_t(endedAt)-int64_t(expectedEnd);
+        const auto actionError=int64_t(actionEndedAt)-int64_t(actionEnd);
         const auto& audit=NpcLogicAudit::stats();
         std::cerr << "npc-logic-save {\"action\":\"" << NpcLogicAudit::actionName(action)
                   << "\",\"animation\":\"" << name << "\",\"archive_bytes\":" << bytes.size()
@@ -1004,13 +1012,17 @@ class NpcLogicalStateContract final {
                   << ",\"canonical_start\":" << canonicalStart << ",\"pre_save_end\":" << before.action.expectedEnd
                   << ",\"pre_save_speed\":" << beforeSpeed << ",\"canonical_speed\":" << canonicalSpeed
                   << ",\"canonical_action\":\"" << NpcLogicAudit::actionName(restored.action.kind) << '"'
+                  << ",\"pre_save_layer_start\":" << beforeLayer->start << ",\"pre_save_layer_end\":" << beforeLayer->expectedEnd
+                  << ",\"canonical_action_start\":" << restored.action.start << ",\"canonical_action_end\":" << actionEnd
+                  << ",\"actual_action_end\":" << actionEndedAt << ",\"action_end_error_ms\":" << actionError
                   << ",\"canonical_end\":" << expectedEnd << ",\"actual_end\":" << endedAt
                   << ",\"end_error_ms\":" << error << ",\"world_tick_ms\":" << tickMs
                   << ",\"audit_samples\":" << audit.ticks << ",\"body_mismatch\":" << audit.bodyMismatch
                   << ",\"weapon_mismatch\":" << audit.weaponMismatch << "}\n";
         expect(audit.ticks>0 && audit.bodyMismatch==0 && audit.weaponMismatch==0,
                "logical save/load shadow audit has samples and no body or weapon mismatches");
-        expect(std::abs(error)<=int64_t(tickMs),"logical save/load canonical action end is predicted within one world tick");
+        expect(std::abs(error)<=int64_t(tickMs),"logical save/load canonical sequence end is predicted within one world tick");
+        expect(std::abs(actionError)<=int64_t(tickMs),"logical save/load canonical action end is predicted within one world tick");
         }
       }
   };

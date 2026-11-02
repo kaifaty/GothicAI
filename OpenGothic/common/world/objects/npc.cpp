@@ -6135,6 +6135,7 @@ void Npc::nextAiAction(AiQueue& queue, uint64_t dt) {
       break;
     case AI_PlayAnim:{
       if(auto sq = playAnimByName(act.s0,BS_NONE)) {
+        logicalAdmission.sequence=sq;
         implAniWait(uint64_t(sq->totalTime()));
         implFaiWait(uint64_t(sq->totalTime()));
         } else {
@@ -6146,6 +6147,7 @@ void Npc::nextAiAction(AiQueue& queue, uint64_t dt) {
     case AI_PlayAnimBs:{
       BodyState bs = BodyState(act.i0);
       if(auto sq = playAnimByName(act.s0,bs)) {
+        logicalAdmission.sequence=sq;
         implAniWait(uint64_t(sq->totalTime()));
         implFaiWait(uint64_t(sq->totalTime()));
         } else {

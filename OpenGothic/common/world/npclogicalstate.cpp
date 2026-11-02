@@ -60,7 +60,7 @@ bool bodyAction(Action action) {
     }
   }
 
-std::string quoted(std::string_view value) {
+std::string jsonQuoted(std::string_view value) {
   std::ostringstream out;
   out<<std::quoted(std::string(value));
   return out.str();
@@ -142,21 +142,21 @@ std::string NpcLogicAudit::Stats::json() const {
   for(const auto& [kind,bucket]:byAction) {
     if(comma) out<<',';
     comma=true;
-    out<<quoted(actionName(kind))<<':'<<bucketJson(bucket);
+    out<<jsonQuoted(actionName(kind))<<':'<<bucketJson(bucket);
     }
   out<<"},\"by_animation\":{";
   comma=false;
   for(const auto& [name,bucket]:byAnimation) {
     if(comma) out<<',';
     comma=true;
-    out<<quoted(name)<<':'<<bucketJson(bucket);
+    out<<jsonQuoted(name)<<':'<<bucketJson(bucket);
     }
   out<<"},\"deferred_admissions\":{";
   comma=false;
   for(const auto& [reason,count]:deferred) {
     if(comma) out<<',';
     comma=true;
-    out<<quoted(reason)<<':'<<count;
+    out<<jsonQuoted(reason)<<':'<<count;
     }
   out<<"}}";
   return out.str();
@@ -187,7 +187,7 @@ float NpcLogicalState::animProgress(std::string_view name, uint64_t now) const {
   return -1;
   }
 
-void NpcLogicalState::sync(Npc& npc, bool rebuild, Action admitted) {
+void NpcLogicalState::sync(Npc& npc, bool rebuild, Action admitted, const Animation::Sequence* requested) {
   const bool audit=NpcLogicAudit::enabled();
   AuditTimer timer;
   const Pose& pose=npc.visual.pose();
@@ -272,16 +272,18 @@ void NpcLogicalState::sync(Npc& npc, bool rebuild, Action admitted) {
     }
   // A consumed AI_PlayAni can wait for one period of a loop. Its action
   // clock is finite even though that layer has no natural end.
-  if((bodyAction(admitted) || rebuild) && npc.aniWaitTime>=now) {
+  if(requested!=nullptr && npc.aniWaitTime>=now) {
+    // PlayAni may reuse an existing loop or start an intermediate transition.
+    // The native wait belongs to the requested sequence in both cases.
+    action={admitted,requested,now,now+uint64_t(requested->totalTime())+1,true};
+    nativeWaitEnd=npc.aniWaitTime;
+    actionWait=true;
+    }
+  else if(((bodyAction(admitted) && admitted!=AI_PlayAnim && admitted!=AI_PlayAnimBs) || rebuild) && npc.aniWaitTime>=now) {
     const Layer* chosen=nullptr;
-    // PlayAni waits for the sequence it just admitted, not an unrelated long
-    // layer (for example, a dialogue gesture). StandUp uses the longest layer.
-    const bool play=admitted==AI_PlayAnim || admitted==AI_PlayAnimBs;
-    for(const auto& layer:layers) {
-      if(play && (layer.origin!=now || layer.action!=admitted)) continue;
+    for(const auto& layer:layers)
       if(chosen==nullptr || layer.sequence->totalTime()/layer.speed>chosen->sequence->totalTime()/chosen->speed)
         chosen=&layer;
-      }
     if(chosen!=nullptr) {
       const auto kind=rebuild ? chosen->action : admitted;
       // Native AI waits use totalTime without playback speed, except StandUp,
@@ -396,4 +398,4 @@ NpcLogicalState::Tick::~Tick() {
   npc.syncLogicalBodyState();
   if(sample) npc.logicalBody.auditTick(npc);
   }
-NpcLogicalState::Admission::~Admission() { npc.logicalBody.sync(npc,false,kind); }
+NpcLogicalState::Admission::~Admission() { npc.logicalBody.sync(npc,false,kind,sequence); }

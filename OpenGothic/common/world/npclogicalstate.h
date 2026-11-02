@@ -74,7 +74,7 @@ struct NpcLogicalState final {
   BodyState bodyStateMasked() const;
   float animProgress(std::string_view name, uint64_t now) const;
 
-  void sync(Npc& npc, bool rebuild=false, Action admitted=AI_None);
+  void sync(Npc& npc, bool rebuild=false, Action admitted=AI_None, const Animation::Sequence* requested=nullptr);
   void auditTick(Npc& npc);
   void recordActionEnd(uint64_t now);
   void sequenceEnd(const Animation::Sequence* sequence, uint64_t origin, uint64_t now);
@@ -90,6 +90,7 @@ struct NpcLogicalState final {
   struct Admission final {
     Npc& npc;
     Action kind;
+    const Animation::Sequence* sequence=nullptr;
     Admission(Npc& npc, Action kind):npc(npc),kind(kind) {}
     ~Admission();
     };
