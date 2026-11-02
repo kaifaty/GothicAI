@@ -694,14 +694,9 @@ bool MoveAlgo::useCharacterVirtual() {
   const bool enabled = human ? Gothic::physicsFlags().npcCharacterVirtual :
                                Gothic::physicsFlags().monsterCharacterVirtual &&
                                Gothic::physicsFlags().allowsMonsterCharacterVirtual(npc.isDown(),canFlyOverWater());
-  if(!enabled || npc.isDown() || hero==nullptr) {
-    npcVirtualInRange = false;
-    return false;
-    }
-  constexpr float enterRadius = 2000.f, leaveRadius = 2200.f;
-  const float distance = npc.qDistTo(*hero);
-  npcVirtualInRange = npcVirtualInRange ? distance<=leaveRadius*leaveRadius
-                                       : distance<enterRadius*enterRadius;
+  npcVirtualInRange = MeleeFighter::keepPhysics(enabled,!npc.isDown() && hero!=nullptr,
+                                               npc.isMeleeFighter(),npcVirtualInRange,
+                                               hero!=nullptr ? npc.qDistTo(*hero) : 0.f);
   return npcVirtualInRange;
   }
 

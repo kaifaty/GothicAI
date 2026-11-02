@@ -224,6 +224,7 @@ struct Npc::MeleeShadow final {
   size_t consumed = 0, targetsHit = 0;
   std::vector<uintptr_t> struckVobs; // movable vobs this swing already struck
   bool stopped = false, physicsHits = false;
+  float heroDistanceCm = 0;
   struct Magnet final {
     const Npc* target = nullptr;
     Vec3 direction;
@@ -587,6 +588,7 @@ void Npc::load(Serialize &fin, size_t id, std::string_view directory) {
   endMeleeStun("reset");
   meleeParadeOrigin.reset();
   meleeStamina = {};
+  meleeFighter = {};
   meleePosture.reset();
   meleeKnockdown = false;
   meleeGetupForced = false;
@@ -1258,6 +1260,7 @@ void Npc::suspendRagdoll() {
   // Removed/invalid NPCs can survive until world unload and still receive a
   // transform update at deadPoint. Keep that update out of shadow physics.
   meleeShadowSuspended = true;
+  meleeFighter = {};
   clearMeleeShadow();
   pendingSpellImpulse = {};
   spellImpulseCulprit.reset();
@@ -2021,7 +2024,10 @@ void Npc::syncMeleeShadowSwing() {
   shadow.consumed = shadow.targetsHit = 0;
   shadow.struckVobs.clear();
   shadow.stopped = false;
-  shadow.physicsHits = Gothic::physicsFlags().meleePhysicsHits;
+  shadow.physicsHits = MeleeFighter::physicsHits(Gothic::physicsFlags().meleePhysicsHits,isPlayer(),
+                                                characterVirtualActive());
+  const auto* hero = owner.player();
+  shadow.heroDistanceCm = hero!=nullptr ? std::sqrt(qDistTo(*hero)) : 0.f;
   shadow.outcome = "miss";
   shadow.magnet = {};
   shadow.reachCpuMs = shadow.reachCpuMaxMs = 0;
@@ -2642,6 +2648,7 @@ void Npc::finishMeleeShadowSwing(bool remove, bool discard) {
                   ",\"result\":" + TestBench::bodyJson(shadow.legacyResult) +
                   "},\"physical\":{\"targets\":" + physical + ",\"world\":" + world + ",\"world_contacts\":" + worldContacts +
                   "},\"decision\":{\"physics_hits\":" + (shadow.physicsHits ? "true" : "false") +
+                  ",\"hero_distance_cm\":" + number(shadow.heroDistanceCm) +
                   ",\"outcome\":" + TestBench::bodyJson(shadow.outcome) +
                   ",\"magnet\":{\"eligible\":" + (shadow.magnet.eligible ? "true" : "false") +
                   ",\"preview_contact\":" + (std::isfinite(shadow.magnet.rawCm) ? "true" : "false") +
@@ -2678,8 +2685,20 @@ void Npc::finishMeleeShadowSwing(bool remove, bool discard) {
   shadow.window.reset();
   }
 
+void Npc::refreshMeleeFighter() {
+  const auto mode = weaponState();
+  const bool melee = mode==WeaponState::Fist || mode==WeaponState::W1H || mode==WeaponState::W2H;
+  const auto delta = currentTarget!=nullptr ? currentTarget->position()-position() : Vec3{};
+  if(MeleeFighter::qualifies(isPlayer(),melee,isAttack(),currentTarget!=nullptr,
+                            currentTarget!=nullptr && currentTarget->isDown(),delta.x*delta.x+delta.z*delta.z))
+    MeleeFighter::refresh(meleeFighter,currentTarget->meleeFighter,owner.tickCount());
+  }
+
+bool Npc::isMeleeFighter() const {
+  return MeleeFighter::active(meleeFighter,owner.tickCount(),isPlayer());
+  }
+
 void Npc::prepareLivingBody() {
-  constexpr float enterRadius = 2000.f, leaveRadius = 2200.f;
   const auto benchMode = meleeBenchMode();
   const bool benchRig = benchMode==MeleeBenchMode::Full || benchMode==MeleeBenchMode::Chain || benchMode==MeleeBenchMode::Blade;
   if(currentInteract!=nullptr)
@@ -2707,12 +2726,11 @@ void Npc::prepareLivingBody() {
     arrowImpacts.clear();
     }
   const auto* hero = owner.player();
-  // Population actors retain the same contact rig as actors near the hero.
-  const bool outside = !NavDemos::fullSimulation(*this) && hero!=nullptr &&
-                       (living ? qDistTo(*hero)>leaveRadius*leaveRadius
-                               : qDistTo(*hero)>=enterRadius*enterRadius);
-  if(benchMode==MeleeBenchMode::Base || isDown() || ragdoll || interacting || (!benchRig && !frozen && (isPlayer() || hero==nullptr ||
-     !Gothic::physicsFlags().livingBodies || outside))) {
+  // Fighters and population actors retain the same rig as actors near the hero.
+  const bool keep = MeleeFighter::keepPhysics(Gothic::physicsFlags().livingBodies,!isPlayer() && hero!=nullptr,
+                                             isMeleeFighter() || NavDemos::fullSimulation(*this),bool(living),
+                                             hero!=nullptr ? qDistTo(*hero) : 0.f);
+  if(benchMode==MeleeBenchMode::Base || isDown() || ragdoll || interacting || (!benchRig && !frozen && !keep)) {
     living.reset();
     livingRetryTick = 0;
     livingNeedsRebuild = false;
@@ -4974,7 +4992,8 @@ void Npc::commitDamage() {
     if(TestBench::isActive())
       TestBench::destructionMeleeHit(*this,affected,blow.weaponDamage+blow.strength);
     }
-  const bool physicsHits = isHuman() && (shadow!=nullptr ? shadow->physicsHits : Gothic::physicsFlags().meleePhysicsHits);
+  const bool physicsHits = isHuman() && (shadow!=nullptr ? shadow->physicsHits :
+      MeleeFighter::physicsHits(Gothic::physicsFlags().meleePhysicsHits,isPlayer(),characterVirtualActive()));
   const auto hitTrace = [&](const char* result) {
     if(shadow!=nullptr) {
       meleeShadow->legacyTarget = meleeShadowWho(currentTarget);

@@ -24,6 +24,8 @@
 
 Физика тонких клинков: `[GAME] item_deepest_contact=1` сохраняет глубину EPA только для `C_Item`; `placed-items-diagnose-{1644,6863}` и варианты `-control` проверяют 300 шагов ON/OFF, контракт — `gothic-physics-contract`. [Отчёт и офлайн-стенд](../reports/physics/2026-10-31-thin-blades/README.md), [текущее поведение](physics.md#как-работает-сейчас).
 
+[Ближний бой NPC вдали от героя](../reports/physics/2026-11-02-far-melee/README.md): `MeleeFighter` удерживает бойца и цель на `CharacterVirtual` и контактной обвязке вне кольца героя ещё 3 с после боя; без магнита замах NPC решается прежней проверкой. Контракт `gothic-meleefighter-contract`, стенд [`melee-far.bench`](../scripts/bench/melee-far.bench), начало `fight actor target deed`. [Текущее поведение](physics.md#как-работает-сейчас).
+
 ## Части и машины
 
 ```
