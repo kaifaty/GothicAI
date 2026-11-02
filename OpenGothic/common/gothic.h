@@ -88,6 +88,8 @@ class Gothic final {
       bool meleeRiposte = true;
       bool meleeAiDodge = true;
       bool meleeAiRiposte = true;
+      bool meleeAiCharge = true;
+      bool meleeAiBarge = true;
       bool bodyTraces = true;
       bool blood = true;
 

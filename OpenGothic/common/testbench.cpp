@@ -641,6 +641,15 @@ struct Bench {
     };
   std::optional<DodgeArm> dodgeArm;
 
+  // Respond to an actual native AI charge, leaving its decision and RNG untouched.
+  struct MeleeAiResponse {
+    Npc* npc = nullptr;
+    Npc* attacker = nullptr;
+    bool parry = false;
+    uint64_t until = 0;
+    };
+  std::optional<MeleeAiResponse> meleeAiResponse;
+
   CamMode     cam       = C_Game;
   float       camDist   = 220;
   float       camHeight = 40;
@@ -7656,6 +7665,30 @@ void meleeDodgeFields(World& world) {
   say("dodge " + symName(world,arm.npc) + " " + std::string(MeleeDodge::name(arm.dir)) + " before the blow of " +
       symName(world,arm.attacker) + ", its contact in " + std::to_string(*contact) + " ms: " +
       (ok ? "started" : "not started"));
+  }
+
+void meleeAiResponseFields(World& world) {
+  if(!bench.meleeAiResponse)
+    return;
+  const auto arm = *bench.meleeAiResponse;
+  if(world.tickCount()>arm.until) {
+    say("melee AI response: no charged contact of " + symName(world,arm.attacker) + " came in time");
+    bench.meleeAiResponse.reset();
+    return;
+    }
+  if(!arm.attacker->isMeleeChargeReleasing())
+    return;
+  const auto contact = arm.attacker->nextMeleeContactMs();
+  if(!contact || *contact>120)
+    return;
+  bench.meleeAiResponse.reset();
+  const bool started = arm.parry ? arm.npc->blockSword() : arm.npc->meleeDodge(MeleeDodge::Direction::Left);
+  const std::string response = arm.parry ? "parry" : "dodge";
+  say("melee AI response " + response + " before the charged contact of " + symName(world,arm.attacker) +
+      " in " + std::to_string(*contact) + " ms: " + (started ? "started" : "refused"));
+  TestBench::bodyEvent(*arm.npc,arm.attacker,"ai_charge_response",world.tickCount(),
+    "\"response\":"+jsonStr(response)+",\"contact_in_ms\":"+std::to_string(*contact)+
+    ",\"started\":"+(started ? "true" : "false"));
   }
 
 void placedItemsFields(World& world,Npc& player,PlayerControl& ctrl) {
@@ -18191,6 +18224,16 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     const bool ok = n->meleeDodge(dir);
     say("dodge " + symName(w,n) + " " + std::string(MeleeDodge::name(dir)) + (ok ? ": started" : ": not started"));
     }
+  else if(c=="melee-ai-response") {
+    // melee-ai-response dodge|parry <attacker> [timeout ms]: respond only to a real charged release.
+    auto* attacker = a.size()>2 ? findNpc(w,pl,a[2]) : nullptr;
+    if(a.size()<3 || a.size()>4 || (a[1]!="dodge" && a[1]!="parry") || !attacker || attacker==&pl) {
+      arenaAbort("melee AI response expects dodge|parry attacker [timeout ms]");return;
+      }
+    bench.meleeAiResponse = Bench::MeleeAiResponse{&pl,attacker,a[1]=="parry",
+      w.tickCount()+uint64_t(std::max(1.f,num(a,3,45000)))};
+    say("melee AI response " + a[1] + " armed against " + symName(w,attacker));
+    }
   else if(c=="clear") {
     // clear [radius]: the npcs around the hero leave the world (rats, wolves that would join in), not the
     // watched one
@@ -18222,6 +18265,8 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
         bench.downOther = nullptr;
       if(bench.dodgeArm && (bench.dodgeArm->npc==n || bench.dodgeArm->attacker==n))
         bench.dodgeArm.reset();
+      if(bench.meleeAiResponse && (bench.meleeAiResponse->npc==n || bench.meleeAiResponse->attacker==n))
+        bench.meleeAiResponse.reset();
       w.removeNpc(*n);
       }
     say(out);
@@ -20669,6 +20714,8 @@ void TestBench::bodyEvent(const Npc& actor, const Npc* target, std::string_view 
   }
 
 void TestBench::bodyForget(const Npc* npc) {
+  if(bodyTraceAlive && bench.meleeAiResponse &&
+     (bench.meleeAiResponse->npc==npc || bench.meleeAiResponse->attacker==npc)) bench.meleeAiResponse.reset();
   if(bodyTraceAlive && (bench.stunDrift.target==npc || bench.stunDrift.attacker==npc)) bench.stunDrift={};
   if(bodyTraceAlive) {
     if(bench.monsterCharacterRoute.npc==npc)bench.monsterCharacterRoute.npc=nullptr;
@@ -21183,6 +21230,7 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
     }
 
   meleeDodgeFields(*world);
+  meleeAiResponseFields(*world);
   placedItemsFields(*world,*player,ctrl);
   movableFields(*world);
   ownMeshFields(*world,*player);

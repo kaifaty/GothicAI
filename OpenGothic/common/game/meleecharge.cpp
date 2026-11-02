@@ -3,7 +3,7 @@
 #include <algorithm>
 
 bool MeleeCharge::available(const Situation& s) {
-  return s.enabled && s.player && s.oneHand && s.windupAnimation && s.holdAnimation && s.releaseAnimation &&
+  return s.enabled && (s.player || s.aiEnabled) && s.oneHand && s.windupAnimation && s.holdAnimation && s.releaseAnimation &&
          s.standing && !s.attacking && !s.parading && !s.stunned && !s.knockedDown && !s.inAir && !s.inWater;
   }
 

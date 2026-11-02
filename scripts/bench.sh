@@ -59,6 +59,8 @@
 #      MELEE_PARRY_AI optional initial GAME melee_parry_ai setting (0 or 1)
 #      MELEE_AI_DODGE optional initial GAME melee_ai_dodge setting (0 or 1)
 #      MELEE_AI_RIPOSTE optional initial GAME melee_ai_riposte setting (0 or 1)
+#      MELEE_AI_CHARGE optional initial GAME melee_ai_charge setting (0 or 1)
+#      MELEE_AI_BARGE optional initial GAME melee_ai_barge setting (0 or 1)
 #      MELEE_STAGGER optional initial GAME melee_stagger setting (0 or 1)
 #      MELEE_BEAST_POISE optional initial GAME melee_beast_poise setting (0 or 1)
 #      MELEE_BACKSTAB optional initial GAME melee_backstab setting (0 or 1)
@@ -297,7 +299,7 @@ musicVolume=${MUSIC:-0}
 musicEnabled=$([[ "${MUSIC:-0}" == 0 || "${MUSIC:-0}" == 0.0 ]] && echo 0 || echo 1)
 worldSounds=${WORLD_SOUNDS:-1}
 EOF
-if [[ -n "${MOVABLE_VOBS:-}${ITEM_HULLS:-}${ITEM_DEEPEST_CONTACT:-}${RAGDOLL_BIRTH_GUARD:-}${FURNITURE_PARTS:-}${ARROW_STICKING:-}${PHYSICS_NOISE:-}${DESTRUCTION:-}${BUOYANCY:-}${CLOTH:-}${ITEM_WAKE:-}${PLACED_ITEMS:-}${BODY_IMPACT_DAMAGE:-}${BODY_TRACES:-}${BLOOD:-}${STATIC_COLLISION_SPLIT:-}${CHARACTER_VIRTUAL:-}${NPC_CHARACTER_VIRTUAL:-}${MONSTER_CHARACTER_VIRTUAL:-}${MELEE_BLADE_SHADOW:-}${MELEE_PHYSICS_HITS:-}${MELEE_POSTURE:-}${MELEE_REACTIONS:-}${MELEE_DOWN_TACTICS:-}${MELEE_HITSTOP:-}${MELEE_STAMINA:-}${MELEE_PARRY:-}${MELEE_PARRY_AI:-}${MELEE_AI_DODGE:-}${MELEE_AI_RIPOSTE:-}${MELEE_STAGGER:-}${MELEE_BEAST_POISE:-}${MELEE_BACKSTAB:-}${MELEE_DODGE:-}${MELEE_BARGE:-}${MELEE_CHARGE:-}${MELEE_RIPOSTE:-}" ]]; then
+if [[ -n "${MOVABLE_VOBS:-}${ITEM_HULLS:-}${ITEM_DEEPEST_CONTACT:-}${RAGDOLL_BIRTH_GUARD:-}${FURNITURE_PARTS:-}${ARROW_STICKING:-}${PHYSICS_NOISE:-}${DESTRUCTION:-}${BUOYANCY:-}${CLOTH:-}${ITEM_WAKE:-}${PLACED_ITEMS:-}${BODY_IMPACT_DAMAGE:-}${BODY_TRACES:-}${BLOOD:-}${STATIC_COLLISION_SPLIT:-}${CHARACTER_VIRTUAL:-}${NPC_CHARACTER_VIRTUAL:-}${MONSTER_CHARACTER_VIRTUAL:-}${MELEE_BLADE_SHADOW:-}${MELEE_PHYSICS_HITS:-}${MELEE_POSTURE:-}${MELEE_REACTIONS:-}${MELEE_DOWN_TACTICS:-}${MELEE_HITSTOP:-}${MELEE_STAMINA:-}${MELEE_PARRY:-}${MELEE_PARRY_AI:-}${MELEE_AI_DODGE:-}${MELEE_AI_RIPOSTE:-}${MELEE_AI_CHARGE:-}${MELEE_AI_BARGE:-}${MELEE_STAGGER:-}${MELEE_BEAST_POISE:-}${MELEE_BACKSTAB:-}${MELEE_DODGE:-}${MELEE_BARGE:-}${MELEE_CHARGE:-}${MELEE_RIPOSTE:-}" ]]; then
   printf '\n[GAME]\n' >>"$RUN/Gothic.ini"
   if [[ -n "${MOVABLE_VOBS:-}" ]]; then
     [[ "$MOVABLE_VOBS" == 0 || "$MOVABLE_VOBS" == 1 ]] || { echo "MOVABLE_VOBS must be 0 or 1" >&2; exit 2; }
@@ -370,6 +372,14 @@ if [[ -n "${MOVABLE_VOBS:-}${ITEM_HULLS:-}${ITEM_DEEPEST_CONTACT:-}${RAGDOLL_BIR
   if [[ -n "${MELEE_AI_RIPOSTE:-}" ]]; then
     [[ "$MELEE_AI_RIPOSTE" == 0 || "$MELEE_AI_RIPOSTE" == 1 ]] || { echo "MELEE_AI_RIPOSTE must be 0 or 1" >&2; exit 2; }
     printf 'melee_ai_riposte=%s\n' "$MELEE_AI_RIPOSTE" >>"$RUN/Gothic.ini"
+  fi
+  if [[ -n "${MELEE_AI_CHARGE:-}" ]]; then
+    [[ "$MELEE_AI_CHARGE" == 0 || "$MELEE_AI_CHARGE" == 1 ]] || { echo "MELEE_AI_CHARGE must be 0 or 1" >&2; exit 2; }
+    printf 'melee_ai_charge=%s\n' "$MELEE_AI_CHARGE" >>"$RUN/Gothic.ini"
+  fi
+  if [[ -n "${MELEE_AI_BARGE:-}" ]]; then
+    [[ "$MELEE_AI_BARGE" == 0 || "$MELEE_AI_BARGE" == 1 ]] || { echo "MELEE_AI_BARGE must be 0 or 1" >&2; exit 2; }
+    printf 'melee_ai_barge=%s\n' "$MELEE_AI_BARGE" >>"$RUN/Gothic.ini"
   fi
   if [[ -n "${MELEE_STAGGER:-}" ]]; then
     [[ "$MELEE_STAGGER" == 0 || "$MELEE_STAGGER" == 1 ]] || { echo "MELEE_STAGGER must be 0 or 1" >&2; exit 2; }
