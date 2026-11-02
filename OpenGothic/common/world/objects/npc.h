@@ -16,6 +16,7 @@
 #include "game/meleedodge.h"
 #include "game/meleeimpact.h"
 #include "game/meleestamina.h"
+#include "game/meleefighter.h"
 #include "physics/dynamicworld.h"
 #include "physics/ragdoll.h"
 #include "world/aiqueue.h"
@@ -332,6 +333,15 @@ class Npc final {
     bool      isStaminaExhausted() const;
     bool      isMeleeStunned() const;
     void      startMeleeStun(Npc& by, std::string_view reason);
+    // Charged forward strike: transient hero-only windup/hold and an ordinary event-driven release.
+    bool      canMeleeCharge() const;
+    bool      beginMeleeCharge();
+    void      releaseMeleeCharge();
+    void      cancelMeleeCharge(std::string_view reason);
+    bool      isMeleeCharging() const;
+    bool      isMeleeChargeReleasing() const;
+    float     meleeChargeMultiplier() const;
+    void      meleeChargeTap(uint64_t heldMs);
     // The melee dodge ([GAME] melee_dodge, game/meleedodge): that way relative to the facing, the move by the
     // armour, its stamina, its window without incoming harm. Any npc may call it; the hero's input does
     // (PlayerControl). false: refused, no animation, or the pose did not take it. The playing dodge is told by
@@ -603,6 +613,8 @@ class Npc final {
     const Tempest::Vec3& ragdollQuestReturnFrom() const { return ragdollQuestFrom; }
     void      prepareRagdoll();
     void      prepareLivingBody();
+    void      refreshMeleeFighter();
+    bool      isMeleeFighter() const;
     void      syncRagdoll();
     void      suspendRagdoll();
     void      finishMeleeShadowSwing(bool remove=true, bool discard=false);
@@ -674,7 +686,7 @@ class Npc final {
     bool      rotateTo(float dx, float dz, float speed, AnimationSolver::TurnType anim, uint64_t dt);
     bool      whirlTo(float dx, float dz, float step, uint64_t dt);
     bool      isRotationAllowed() const;
-    auto      playAnimByName(std::string_view name, BodyState bs) -> const Animation::Sequence*;
+    auto      playAnimByName(std::string_view name, BodyState bs, bool force = false) -> const Animation::Sequence*;
     bool      setPlayerPose(bool kneel, std::string_view reason);
     void      tickPeeStream();
     bool      tickPlayerPose();
@@ -971,6 +983,7 @@ class Npc final {
 
     DynamicWorld::NpcItem          physic;
     std::unique_ptr<Ragdoll>       living;
+    MeleeFighter::State            meleeFighter;
     MeleeBenchMode                meleeBench = MeleeBenchMode::Off;
     bool                          meleeBenchDynamicPelvis = false;
     uint64_t                      livingRetryTick = 0;
@@ -1038,6 +1051,13 @@ class Npc final {
     bool                          tickMeleePosture(uint64_t dt);
     MeleeImpact::Posture           meleePosture;
     MeleeStamina::State            meleeStamina;
+    enum class ChargePhase : uint8_t { None, Windup, Hold, Release };
+    ChargePhase                   meleeChargePhase = ChargePhase::None;
+    uint64_t                      meleeChargeStart = 0;
+    float                         meleeChargeMult = 1.f;
+    bool                          meleeChargeReleased = false;
+    void                          tickMeleeCharge();
+    void                          meleeChargeNote(const std::string& text, std::string_view phase, const std::string& fields = {});
     void                          tickMeleeStamina();
     float                         meleeAttackCost() const;
     bool                          allowStaminaAction(std::string_view action, float cost, bool fullCost = false);

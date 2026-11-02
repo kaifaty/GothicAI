@@ -149,6 +149,9 @@ void Renderer::setupSettings() {
                             Resources::device().properties().spatialUpscale;
   // CMAA2 runs at internal resolution, so it needs a same-size target: native or the upscaler input
   settings.aaEnabled      = (Gothic::options().aaPreset>0) && (settings.vidResIndex==0 || settings.spatialUpscale);
+  // bloom from the HDR scene before tonemapping; OPENGOTHIC_BLOOM=0 turns it off
+  if(const char* bloom = std::getenv("OPENGOTHIC_BLOOM"))
+    settings.bloomEnabled = std::string_view(bloom)!="0";
 
   // direct lighting
   if(settings.rtsmEnabled)
@@ -182,7 +185,8 @@ void Renderer::setupSettings() {
     }
 
   Log::i("render: ray query = ", int(Shaders::options().doRayQuery), ", meshlets = ", int(Shaders::options().doMeshShading),
-         ", gi = ", int(settings.giMethod), ", aa = ", settings.aaEnabled ? int(Gothic::options().aaPreset) : 0);
+         ", gi = ", int(settings.giMethod), ", aa = ", settings.aaEnabled ? int(Gothic::options().aaPreset) : 0,
+         ", bloom = ", int(settings.bloomEnabled));
 
   if(settings.giMethod!=GiMethod::None) {
     // need a projective shadow, for gi
@@ -383,6 +387,9 @@ void Renderer::resetViewport(Tempest::Size res, Tempest::Size fullRes) {
   const uint32_t h = uint32_t(res.h);
 
   sceneLinear = device.attachment(TextureFormat::R11G11B10UF,w,h);
+  for(size_t i=0; i<bloomChain.size(); ++i)
+    bloomChain[i] = settings.bloomEnabled ? device.attachment(TextureFormat::R11G11B10UF,
+                                                              std::max(w>>(i+1),1u), std::max(h>>(i+1),1u)) : Attachment();
 
   if(settings.aaEnabled) {
     cmaa2.workingEdges               = device.image2d(TextureFormat::R8, (w + 1) / 2, h);
@@ -776,6 +783,8 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
     drawUnderwater(cmd, wview);
     }
 
+  drawBloom(cmd);
+
   auto& tonemapTarget = upscale.input.isEmpty() ? result : upscale.input;
   if(settings.aaEnabled) {
     cmd.setDebugMarker("CMAA2 & Tonemapping");
@@ -792,6 +801,36 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   //drawHashDbg(result, cmd, wview);
 
   wview.postFrameupdate();
+  }
+
+void Renderer::drawBloom(Encoder<CommandBuffer>& cmd) {
+  if(!settings.bloomEnabled || bloomChain[0].isEmpty())
+    return;
+  cmd.setDebugMarker("Bloom");
+  // down: the scene to half resolution (Karis-weighted), then each level to the next
+  for(size_t i=0; i<bloomChain.size(); ++i) {
+    cmd.setFramebuffer({{bloomChain[i], Tempest::Discard, Tempest::Preserve}});
+    cmd.setBinding(0, i==0 ? sceneLinear : bloomChain[i-1], Sampler::bilinear(ClampMode::ClampToEdge));
+    cmd.setPipeline(i==0 ? shaders.bloomDownKaris : shaders.bloomDown);
+    cmd.draw(nullptr, 0, 3);
+    }
+  // up: each level adds its tent-filtered smaller one, so the half level ends up with all of them
+  for(size_t i=bloomChain.size()-1; i>0; --i) {
+    cmd.setFramebuffer({{bloomChain[i-1], Tempest::Preserve, Tempest::Preserve}});
+    cmd.setBinding(0, bloomChain[i], Sampler::bilinear(ClampMode::ClampToEdge));
+    cmd.setPipeline(shaders.bloomUp);
+    cmd.draw(nullptr, 0, 3);
+    }
+  struct Push {
+    float strength = 0.05f;  // the share of the scene's light a lens scatters into the glow
+    float levels   = 0;
+    } push;
+  push.levels = float(bloomChain.size());
+  cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}});
+  cmd.setBinding(0, bloomChain[0], Sampler::bilinear(ClampMode::ClampToEdge));
+  cmd.setPushData(push);
+  cmd.setPipeline(shaders.bloomMix);
+  cmd.draw(nullptr, 0, 3);
   }
 
 void Renderer::drawTonemapping(Attachment& result, Encoder<CommandBuffer>& cmd, const WorldView& wview) {

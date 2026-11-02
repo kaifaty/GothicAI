@@ -5,15 +5,18 @@
 set.json: {"levels": ["HUMANS", "HUMANS_1HST1", "HUMANS_1HST2"], "moves": [
     {"name": "T_1HBARGE", "src": "<path under the sources dir>", "warp": "0:0,0.9:0.5,...", "next": "",
      "sword_arm": "0.5,0.8,1,1", "free_arm": "0,0,0,0", "arm_window": "0.6,0.85", "free_window": "0.6,0.85",
-     "fade": "0.12,0.2",
+     "fade": "0.12,0.2", "arm_ref": "HUMANS_1HST2-S_1HWALKL:9",
      "ref": "self", "start": "<an earlier move's name>", "end": "<name> | self", "lock_speed": 8,
      "lift_skims": true, "lock_turn": true, "blend_in": 0.1, "hit": [7, 13], "sfx": [[4, "Whoosh"]]}]}
 
 Each level finishes against its own stance <LEVEL>-S_1HRUN and takes the node set of its own jump-back
 <LEVEL>-T_1HPARADEJUMPB (finish.py --fill). "ref": "self" uses the move's source as the stance (a hold loop
 blends its arm to its own first frame); "start" / "end" land an end on an earlier move's finished record of the
-same level, or on the move's own first frame ("self"). "hit": [optimal frame, hit end] gives a strike the
-events of Gothic's own attacks (hit limb ZS_RIGHTHAND, DEF_OPT_FRAME, DEF_HIT_END); "sfx": [[frame, name]]
+same level, or on the move's own first frame ("self"). "arm_ref": "<record of the base>:<frame>" holds the arms
+towards that pose instead of the stance (a victim's sword hangs). "hit": [optimal frame, hit end] gives a strike the
+events of Gothic's own attacks (hit limb ZS_RIGHTHAND, DEF_OPT_FRAME, DEF_HIT_END). The hit end is the end of the
+whole move, as Gothic has it (T_1HATTACKL 29 of 1-30): the engine counts the attack finished there and puts the
+stance on, so an earlier one cuts the follow-through; the blade's own window comes from its speed; "sfx": [[frame, name]]
 plays a sound. Frames count from 0, the record's first frame. Moves are finished in the order given. Writes
 <out>/<LEVEL>/<LEVEL>-<NAME>.MAN.json and, with a content dir, packs every level into <LEVEL>.MSB.
 
@@ -93,6 +96,9 @@ def main():
             for key, flag in (("start", "--start-ref"), ("end", "--end-ref")):
                 if m.get(key):
                     args += [flag, str(pick(key))]
+            if m.get("arm_ref"):
+                name, _, frame = m["arm_ref"].partition(":")
+                args += ["--arm-ref", f"{models / (name + '.MAN.json')}:{frame or 0}"]
             if m.get("arm_window"):
                 args += ["--arm-window", m["arm_window"]]
             if m.get("free_window"):

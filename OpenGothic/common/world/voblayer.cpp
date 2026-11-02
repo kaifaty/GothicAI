@@ -370,7 +370,7 @@ Result applyFile(WorldData::Data& data, Context& context, const fs::path& baseWo
             v->visual=std::move(visual);
             v->visual_name=v->visual->name; v->associated_visual_type=v->visual->type;
             } else if(kind=="light") {
-            layerFields(entry,{"key","kind","position","rotation","yaw_deg","range","color"});
+            layerFields(entry,{"key","kind","position","rotation","yaw_deg","range","color","color_ani","range_ani","ani_fps"});
             auto light=std::make_shared<Light>();
             light->type=VirtualObjectType::zCVobLight; light->light_type=LightType::POINT;
             light->range=layerFloat(member(entry,"range")); require(light->range>0,"range must be positive");
@@ -381,6 +381,32 @@ Result applyFile(WorldData::Data& data, Context& context, const fs::path& baseWo
               rgb[i]=uint8_t(color[i].GetUint());
               }
             light->color={rgb[0],rgb[1],rgb[2],255};
+            // flicker as the original's lights have it: colour and range keys looped at ani_fps, blended smoothly
+            if(entry.HasMember("color_ani") || entry.HasMember("range_ani")) {
+              const float fps=layerFloat(member(entry,"ani_fps"));
+              require(fps>0 && fps<=60,"ani_fps must be in 0..60");
+              if(entry.HasMember("color_ani")) {
+                const auto& keys=entry["color_ani"];
+                require(keys.IsArray() && keys.Size()>=2 && keys.Size()<=256,"color_ani must be an array of 2..256 colors");
+                for(const auto& key:keys.GetArray()) {
+                  array(key,3);
+                  for(unsigned i=0;i<3;++i)
+                    require(key[i].IsUint() && key[i].GetUint()<=255,"color_ani must contain integers from 0 to 255");
+                  light->color_animation_list.push_back({uint8_t(key[0].GetUint()),uint8_t(key[1].GetUint()),uint8_t(key[2].GetUint()),255});
+                  }
+                light->color_animation_fps=fps;
+                }
+              if(entry.HasMember("range_ani")) {
+                const auto& keys=entry["range_ani"];
+                require(keys.IsArray() && keys.Size()>=2 && keys.Size()<=256,"range_ani must be an array of 2..256 scales");
+                for(const auto& key:keys.GetArray()) {
+                  const float scale=layerFloat(key);
+                  require(scale>0 && scale<=4,"range_ani scales must be in 0..4");
+                  light->range_animation_scale.push_back(scale);
+                  }
+                light->range_animation_fps=fps;
+                }
+              } else require(!entry.HasMember("ani_fps"),"ani_fps without color_ani or range_ani");
             light->is_static=true; light->on=true; light->can_move=false; light->cd_static=false;
             v=std::move(light);
             } else fail("expected kind mesh, light or emitter");

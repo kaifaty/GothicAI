@@ -482,6 +482,15 @@ if(NOT ANDROID AND NOT IOS)
   add_custom_target(check-meleestamina
     COMMAND $<TARGET_FILE:gothic-meleestamina-contract>
     DEPENDS gothic-meleestamina-contract USES_TERMINAL)
+  add_executable(gothic-meleefighter-contract EXCLUDE_FROM_ALL
+    tests/meleefighter_contract.cpp common/game/meleefighter.cpp)
+  target_include_directories(gothic-meleefighter-contract PRIVATE common)
+  if(NOT MSVC)
+    target_compile_options(gothic-meleefighter-contract PRIVATE -Wall -Wconversion -Werror)
+  endif()
+  add_custom_target(check-meleefighter
+    COMMAND $<TARGET_FILE:gothic-meleefighter-contract>
+    DEPENDS gothic-meleefighter-contract USES_TERMINAL)
   add_executable(gothic-meleeparry-contract EXCLUDE_FROM_ALL
     tests/meleeparry_contract.cpp common/game/meleeparry.cpp)
   target_include_directories(gothic-meleeparry-contract PRIVATE common)
@@ -497,6 +506,15 @@ if(NOT ANDROID AND NOT IOS)
   add_custom_target(check-meleedodge
     COMMAND $<TARGET_FILE:gothic-meleedodge-contract>
     DEPENDS gothic-meleedodge-contract USES_TERMINAL)
+  add_executable(gothic-meleecharge-contract EXCLUDE_FROM_ALL
+    tests/meleecharge_contract.cpp common/game/meleecharge.cpp common/game/meleestamina.cpp)
+  target_include_directories(gothic-meleecharge-contract PRIVATE common)
+  if(NOT MSVC)
+    target_compile_options(gothic-meleecharge-contract PRIVATE -Wall -Wconversion -Werror)
+  endif()
+  add_custom_target(check-meleecharge
+    COMMAND $<TARGET_FILE:gothic-meleecharge-contract>
+    DEPENDS gothic-meleecharge-contract USES_TERMINAL)
   add_executable(gothic-furniture-parts-contract EXCLUDE_FROM_ALL tests/furniture_parts_contract.cpp)
   target_link_libraries(gothic-furniture-parts-contract PRIVATE OpenGothic AiBridge gothic-base-import)
   add_custom_target(check-physics

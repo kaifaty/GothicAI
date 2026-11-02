@@ -365,6 +365,28 @@ def test_hold_arm_window_keeps_the_swing_and_takes_the_stance_on_the_way_back():
         assert same(anim.rotations[20:, j], np.broadcast_to(ref.rotations[0, j], (5, 4)))  # t >= 0.8 s: the stance
 
 
+def test_arm_ref_holds_the_arm_towards_a_frame_of_another_record(tmp_path):
+    import finish
+    models = base_models()
+    if models is None:
+        pytest.skip("no converted base")
+    skel = ga.read_skeleton(models / "HUMANS.MDH.json")
+    walk = ga.read_animation(models / "HUMANS_1HST2-S_1HWALKL.MAN.json")
+    arms = finish.pose_at(f"{models / 'HUMANS_1HST2-S_1HWALKL.MAN.json'}:9")
+    assert arms.frame_count == 1 and np.allclose(arms.rotations[0], walk.rotations[9])
+    assert np.allclose(finish.pose_at(str(models / "HUMANS_1HST2-S_1HWALKL.MAN.json")).rotations[0], walk.rotations[0])
+    with pytest.raises(SystemExit):
+        finish.pose_at(f"{models / 'HUMANS_1HST2-S_1HWALKL.MAN.json'}:{walk.frame_count}")
+    rng = np.random.default_rng(7)
+    rot = random_quats(rng, (10, len(walk.node_indices)))
+    anim = ga.Animation("T", "", 1, 25.0, 10, list(walk.node_indices), np.repeat(walk.positions[:1], 10, 0), rot)
+    finish.hold_arm(anim, skel, arms, [1, 1, 1, 1])
+    same = lambda a, b: np.allclose(np.abs((a * b).sum(-1)), 1.0, atol=1e-6)  # noqa: E731
+    for name in finish.ARM:
+        j = anim.node_indices.index(skel.index(name))
+        assert same(anim.rotations[:, j], np.broadcast_to(walk.rotations[9, j], (10, 4)))
+
+
 def test_lift_skims_turns_a_foot_dragged_along_the_floor_into_a_step():
     import finish
     models = base_models()
@@ -437,6 +459,6 @@ def test_lock_feet_turn_keeps_a_standing_foot_from_pivoting():
 def test_hit_events_are_the_ones_gothics_own_strikes_carry():
     import finish_set
     assert finish_set.hit_events(None) == []
-    limb, opt, end = finish_set.hit_events([7, 13])
+    limb, opt, end = finish_set.hit_events([7, 30])
     assert (limb["type"], limb["slot"]) == (16, "ZS_RIGHTHAND")
-    assert (opt["type"], opt["frames"], end["type"], end["frames"]) == (20, [7], 21, [13])
+    assert (opt["type"], opt["frames"], end["type"], end["frames"]) == (20, [7], 21, [30])

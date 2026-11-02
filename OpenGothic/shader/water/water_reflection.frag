@@ -42,19 +42,6 @@ float intersectFrustum(const vec3 pos, const vec3 dir) {
   return ret;
   }
 
-vec3 sunBloom(vec3 refl) {
-  const float sunSolidAngle  = 0.53*M_PI/180.0;
-  const float minSunCosTheta = cos(sunSolidAngle);
-
-  float cosTheta = dot(refl, scene.sunDir);
-  if(cosTheta >= minSunCosTheta)
-    return vec3(1.0);
-  float offset = minSunCosTheta - cosTheta;
-  float gaussianBloom = exp(-offset*50000.0)*0.5;
-  float invBloom = 1.0/(0.02 + offset*300.0)*0.01;
-  return vec3(gaussianBloom+invBloom);
-  }
-
 vec3 ssr(vec3 orig, vec3 start, vec3 refl, const float depth, vec3 sky) {
   const int   SSR_STEPS     = 64;
   const int   SSR_OCCLUSION = 50;
@@ -172,7 +159,6 @@ void main() {
 
   vec3 sky = vec3(0);
   if(!underWater) {
-    vec3 sun = sunBloom(refl) * scene.sunColor;
     sky += textureSkyLUT(skyLUT, vec3(0,RPlanet,0), refl, scene.sunDir) * scene.GSunIntensity;
     sky *= scene.exposure;
     }

@@ -624,6 +624,8 @@ struct Bench {
 
   std::vector<Hold>             holds;
   std::vector<KeyCodec::Action> taps;
+  uint64_t                    inputTraceUntil = 0;
+  std::string                 inputAnimation;
 
   // `dodge ... before <attacker> <ms>`: the melee dodge waits for the attacker's next blow to come that near
   struct DodgeArm {
@@ -1280,7 +1282,8 @@ struct Bench {
   std::vector<Vec3> seatPreviousParts,seatPreviousItems;
   uint64_t seatSampleTick=0;
   std::string seatPhase;
-  Npc*        downNpc      = nullptr; // waitdown: till it falls
+  Npc*        downNpc      = nullptr; // waitdown: till either participant falls
+  Npc*        downOther    = nullptr;
   uint64_t    downFrom = 0, downEnd = 0;
   Npc*        waitRagdollNpc = nullptr;
   std::string waitRagdollState;
@@ -1824,6 +1827,7 @@ bool keyAction(std::string_view k, KeyCodec::Action& a) {
     {"forward",KeyCodec::Forward}, {"back",KeyCodec::Back},       {"left",KeyCodec::Left},  {"right",KeyCodec::Right},
     {"turnl",  KeyCodec::RotateL}, {"turnr",KeyCodec::RotateR},   {"jump",KeyCodec::Jump},  {"walk", KeyCodec::Walk},
     {"sneak",  KeyCodec::Sneak},   {"weapon",KeyCodec::Weapon},   {"action",KeyCodec::ActionGeneric},
+    {"attack", KeyCodec::ActionGeneric},
     {"melee",  KeyCodec::WeaponMele},{"bow",KeyCodec::WeaponBow}, {"spell",KeyCodec::WeaponMage3},
     {"parade", KeyCodec::Parade},  {"breath",KeyCodec::Walk},     {"dodge",KeyCodec::Dodge},
     };
@@ -1836,10 +1840,22 @@ bool keyAction(std::string_view k, KeyCodec::Action& a) {
   }
 
 void press(PlayerControl& ctrl, KeyCodec::Action a) {
+  if(a==KeyCodec::ActionGeneric || a==KeyCodec::Forward) {
+    bench.inputTraceUntil = bench.time+2000;
+    const auto* world = Gothic::inst().world();
+    say("input press " + std::string(a==KeyCodec::Forward ? "forward" : "attack") + " at " +
+        std::to_string(world ? world->tickCount() : 0) + " ms");
+    }
   ctrl.onKeyPressed(a,KeyEvent::K_NoKey,KeyCodec::Mapping::Primary);
   }
 
 void release(PlayerControl& ctrl, KeyCodec::Action a) {
+  if(a==KeyCodec::ActionGeneric || a==KeyCodec::Forward) {
+    bench.inputTraceUntil = bench.time+2000;
+    const auto* world = Gothic::inst().world();
+    say("input release " + std::string(a==KeyCodec::Forward ? "forward" : "attack") + " at " +
+        std::to_string(world ? world->tickCount() : 0) + " ms");
+    }
   ctrl.onKeyReleased(a,KeyCodec::Mapping::Primary);
   }
 
@@ -2505,7 +2521,7 @@ void writeHeader() {
   std::fprintf(bench.csv,",hp_player,hp_subject");
   std::fprintf(bench.csv,",stamina_player,stamina_subject");
   std::fprintf(bench.csv,",ai_on,ai_want,ai_sigma,ai_errx,ai_erry,ai_lead,ai_pv,ai_ps");
-  std::fprintf(bench.csv,",mr_w,mr_dev,mr_hits");
+  std::fprintf(bench.csv,",mr_w,mr_dev,mr_hits,physics_ms");
   if(ragdollTrace)
     std::fprintf(bench.csv,",ph_ms,ph_bodies,ph_rays,rd_mode,rd_weight,rd_sleep");
   if(bench.questTrace)
@@ -10510,7 +10526,8 @@ void writeRow(Npc& pl) {
         dev = std::max(dev,(shown-anim).length());
         }
       }
-    std::fprintf(bench.csv,",%.3f,%.2f,%u",weight,dev,unsigned(s.meleeReactionProbe().applied));
+    std::fprintf(bench.csv,",%.3f,%.2f,%u,%.6f",weight,dev,unsigned(s.meleeReactionProbe().applied),
+                 double(s.world().physic()->physicsStats().stepMilliseconds));
   }
   if(ragdollTrace)
     writeRagdoll(pl);
@@ -15395,6 +15412,10 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
         ",\"wall_cm\":"+ragdollVector(wall.v)+",\"wall_normal\":"+ragdollVector(wall.n));
       }
     else if(a.size()==3 && a[1]=="weapon") equip(a[2]);
+    else if(a.size()==3 && a[1]=="controls" && (a[2]=="g2" || a[2]=="classic")) {
+      Gothic::settingsSetI("GAME","USEGOTHIC1CONTROLS",a[2]=="classic");
+      say("melee shadow controls " + a[2]);
+      }
     else if(a.size()==3 && a[1]=="bandit") {
       // melee-shadow bandit 1h|2h: the fixture's bandit takes the stock one- or two-hander in hand
       if(bench.meleeShadowActors.size()!=3) {arenaAbort("melee shadow setup is required");return;}
@@ -15474,7 +15495,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       for(auto* npc:bench.meleeShadowActors) if(w.npcId(npc)!=uint32_t(-1)) w.removeNpc(*npc);
       bench.meleeShadowActors.clear();bench.meleeShadowPlaces.clear();
       }
-    else {arenaAbort("melee shadow expects setup/weapon <1h|2h|fist>, target <0|1|2>, wall, live or clear");return;}
+    else {arenaAbort("melee shadow expects setup/weapon <1h|2h|fist>, controls <g2|classic>, target <0|1|2>, wall, live or clear");return;}
     }
   else if(c=="melee-physics" && a.size()==6 && a[1]=="setup") {
     const auto* enabled=std::getenv("OPENGOTHIC_MELEE_BENCH");
@@ -16322,7 +16343,10 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       }
     else {
       press(ctrl,k);
-      bench.holds.push_back({k,bench.time+uint64_t(num(a,2,1000))});
+      const auto until = bench.time+uint64_t(num(a,2,1000));
+      bench.holds.push_back({k,until});
+      if(k==KeyCodec::ActionGeneric || k==KeyCodec::Forward)
+        bench.inputTraceUntil = until+2000;
       }
     }
   else if(c=="cam") {
@@ -16533,6 +16557,15 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     say("rec " + bench.recName + (bench.recVideo ? "" : " (metrics only)") + (bench.audio!=nullptr ? " with sound" : ""));
     }
   else if(c=="stop") {
+    if(a.size()==2 && a[1]=="shadow") {
+      // Preserve each duel before the ordinary 8 MiB shadow journal rotates again.
+      for(const auto* suffix:{".jsonl",".previous.jsonl"}) {
+        const std::string source="melee-blade-shadow"+std::string(suffix);
+        if(std::filesystem::exists(source))
+          std::filesystem::copy_file(source,outDir+"/"+bench.recName+"-"+source,
+                                     std::filesystem::copy_options::overwrite_existing);
+        }
+      }
     stopRecording();
     }
   else if(c=="shot") {
@@ -17725,8 +17758,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
         " waypoints within " + std::to_string(int(r)) + " cm");
     }
   else if(c=="fight") {
-    // fight <npc|all> <target|player>: it attacks as the game's fight starts (ZS_ATTACK, to kill: an
-    // archer readies its bow from 9 m); all: the npcs of arc
+    // fight <npc|all> <target|player> [deed]: deed uses npc_act's nonlethal native start.
     std::vector<Npc*> who;
     if(a.size()>1 && a[1]=="all")
       who = bench.crew; else
@@ -17734,35 +17766,75 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       who.push_back(n);
     Npc*         tg     = findNpc(w,pl,a.size()>2 ? a[2] : "player");
     const size_t state  = w.script().findSymbolIndex("ZS_ATTACK");
+    const bool   deed   = a.size()==4 && a[3]=="deed";
     auto         reason = w.script().findSymbol("AIV_ATTACKREASON");
     auto         kill   = w.script().findSymbol("AR_KILL");
     if(tg==nullptr || state==size_t(-1)) {
       say("fight: no target or no ZS_ATTACK " + line);
       return;
       }
+    if(a.size()>3 && !deed)
+      throw std::runtime_error("fight expects actor target [deed]");
+    if(deed && (tg->isPlayer() || tg->isMonster() || tg->isDown()))
+      throw std::runtime_error("fight deed needs a standing human target");
     size_t sent = 0;
     for(auto n:who) {
       if(n==tg || n->isDown())
         continue;
+      if(deed) {
+        auto* none = w.script().findSymbol("AR_NONE");
+        const auto attack = HeroDeed::constant(*n,"AIV_ATTACKREASON");
+        const auto fight = HeroDeed::constant(*n,"AIV_LASTFIGHTAGAINSTPLAYER");
+        const auto comment = HeroDeed::constant(*n,"AIV_LASTFIGHTCOMMENT");
+        const auto valid = [](int32_t i) { return i>=0 && uint32_t(i)<zenkit::INpc::aivar_count; };
+        if(none==nullptr || !none->is_const() || none->type()!=zenkit::DaedalusDataType::INT ||
+           !valid(attack) || !valid(fight) || !valid(comment))
+          throw std::runtime_error("fight deed needs native attack variables and AR_NONE");
+        auto& aiv = n->handle().aivar;
+        aiv[size_t(attack)] = none->get_int(0);
+        aiv[size_t(fight)] = HeroDeed::constant(*n,"FIGHT_CANCEL",0);
+        aiv[size_t(comment)] = 0;
+        n->stopListening();
+        n->thinkOfAnswer(0);
+        n->clearAiQueue();
+        n->setExternalControl(false);
+        if(!n->startState(ScriptFn(state),"",gtime::endOfTime(),true))
+          throw std::runtime_error("fight deed could not start ZS_ATTACK");
+        n->setOther(tg);
+        n->setVictim(nullptr);
+        n->setTarget(tg);
+        n->setNonlethalFight(*tg);
+        n->setServerDeed("attack",tg);
+        if(n->weaponState()==WeaponState::NoWeapon)
+          n->aiPush(AiQueue::aiDrawWeapon());
+        }
+      else {
+        if(reason!=nullptr && kill!=nullptr && size_t(reason->get_int())<std::size(n->handle().aivar))
+          n->handle().aivar[size_t(reason->get_int())] = kill->get_int();
+        n->setExternalControl(false);
+        n->setTarget(tg);
+        n->aiPush(AiQueue::aiStartState(ScriptFn(state),0,tg,nullptr,""));
+        }
       ++sent;
-      if(reason!=nullptr && kill!=nullptr && size_t(reason->get_int())<std::size(n->handle().aivar))
-        n->handle().aivar[size_t(reason->get_int())] = kill->get_int();
-      n->setExternalControl(false);
-      n->setTarget(tg);
-      n->aiPush(AiQueue::aiStartState(ScriptFn(state),0,tg,nullptr,""));
       }
-    say("fight " + std::to_string(sent) + " at " + symName(w,tg));
+    say("fight " + std::to_string(sent) + " at " + symName(w,tg) + (deed ? " deed" : ""));
+    event("fight_start","\"t_game_ms\":"+std::to_string(w.tickCount())+
+          ",\"seed\":"+std::to_string(bench.scenarioSeed)+",\"target\":"+jsonStr(symName(w,tg))+
+          ",\"deed\":"+(deed ? "true" : "false"));
     }
   else dispatched=false;
   if(dispatched) return;
   dispatched=true;
   if(c=="waitdown") {
-    // waitdown <npc|player> [ms]: the scenario waits till it is down (dead, unconscious): `fight over`
+    // waitdown <npc|player> [ms] [other npc]: wait till either participant is down.
     Npc* n = findNpc(w,pl,a.size()>1 ? a[1] : "player");
     if(n==nullptr) {
       say("waitdown: no npc " + line);
       return;
       }
+    bench.downOther = a.size()>3 ? findNpc(w,pl,a[3]) : nullptr;
+    if(a.size()>3 && bench.downOther==nullptr)
+      throw std::runtime_error("waitdown has no second participant");
     bench.downNpc  = n;
     bench.downFrom = bench.time;
     bench.downEnd  = bench.time + uint64_t(num(a,2,120000));
@@ -18021,6 +18093,8 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
         bench.pinned = nullptr;
       if(bench.downNpc==n)
         bench.downNpc = nullptr;
+      if(bench.downOther==n)
+        bench.downOther = nullptr;
       if(bench.dodgeArm && (bench.dodgeArm->npc==n || bench.dodgeArm->attacker==n))
         bench.dodgeArm.reset();
       w.removeNpc(*n);
@@ -18564,13 +18638,14 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     say("faceanim " + nameUtf8(*n) + " " + a[2]);
     }
   else if(c=="ani") {
-    // ani <npc|nearest|player> <anim>: it plays an animation of its model script (T_YES, T_DIALOGGESTURE_03)
+    // ani <npc|nearest|player> <anim> [force]: it plays an animation of its model script (T_YES,
+    // T_DIALOGGESTURE_03); force cuts what plays now, as a hit reaction or a stun's stumble that a stand would wait for
     Npc* n = findNpc(w,pl,a.size()>1 ? a[1] : "nearest");
     if(n==nullptr || a.size()<3) {
       say("ani: no npc or anim " + line);
       return;
       }
-    auto sq = n->playAnimByName(a[2],BS_STAND);
+    auto sq = n->playAnimByName(a[2],BS_STAND,a.size()>3 && a[3]=="force");
     say("ani " + symName(w,n) + " " + a[2] + (sq==nullptr ? " failed" : ""));
     }
   else if(c=="dialog") {
@@ -19312,16 +19387,24 @@ void run(World& w, Npc& pl, PlayerControl& ctrl) {
       bench.duelWaiting = false;
       }
     if(bench.downNpc!=nullptr) {
-      if(!bench.downNpc->isDown() && bench.time<bench.downEnd)
+      Npc* down = bench.downNpc->isDown() ? bench.downNpc :
+                  bench.downOther!=nullptr && bench.downOther->isDown() ? bench.downOther : nullptr;
+      if(down==nullptr && bench.time<bench.downEnd)
         return;
+      event("waitdown_end","\"t_game_ms\":"+std::to_string(w.tickCount())+
+            ",\"elapsed_ms\":"+std::to_string(bench.time-bench.downFrom)+
+            ",\"outcome\":"+jsonStr(down!=nullptr ? "knockout" : "timeout")+
+            ",\"down\":"+jsonStr(symName(w,down))+
+            ",\"actor_hp\":"+std::to_string(bench.downNpc->attribute(ATR_HITPOINTS))+
+            ",\"other_hp\":"+(bench.downOther!=nullptr ? std::to_string(bench.downOther->attribute(ATR_HITPOINTS)) : "null"));
       char buf[160];
-      if(bench.downNpc->isDown())
-        std::snprintf(buf,sizeof(buf),"fight over: %s down after %llu",symName(w,bench.downNpc).c_str(),
+      if(down!=nullptr)
+        std::snprintf(buf,sizeof(buf),"fight over: %s down after %llu",symName(w,down).c_str(),
                       (unsigned long long)(bench.time-bench.downFrom)); else
         std::snprintf(buf,sizeof(buf),"waitdown: timeout, %s hp %d",symName(w,bench.downNpc).c_str(),
                       bench.downNpc->attribute(ATR_HITPOINTS));
       TestBench::note(buf);
-      bench.downNpc = nullptr;
+      bench.downNpc = bench.downOther = nullptr;
       }
     if(bench.pc>=bench.prog.size())
       break;
@@ -20973,6 +21056,13 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
   npcCharacterFields(*world,*player,dt);
   npcCharacterMotionTrace(*world,dt);
   NpcDayJournal::tick(*world);
+  if(bench.inputTraceUntil!=0 && bench.time<=bench.inputTraceUntil) {
+    const auto animation = player->animNames();
+    if(animation!=bench.inputAnimation) {
+      bench.inputAnimation = animation;
+      say("input animation PC_HERO at " + std::to_string(world->tickCount()) + " ms: " + animation);
+      }
+    }
   bench.time += dt;
   if(aiBusy && aiBusy())
     bench.busyAt = bench.time;
