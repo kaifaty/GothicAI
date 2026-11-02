@@ -103,6 +103,28 @@ def orphan_scripts(root: Path, paths: list[str]) -> list[str]:
     return sorted(set(scripts.values()) - referenced)
 
 
+def now_section_bytes(content: bytes) -> int | None:
+    start = None
+    fence = None
+    offset = 0
+    for line in content.splitlines(keepends=True):
+        text = line.rstrip(b"\r\n")
+        delimiter = re.match(rb" {0,3}(`{3,}|~{3,})(.*)$", text)
+        if fence is not None:
+            if (delimiter and delimiter[1][:1] == fence[:1] and len(delimiter[1]) >= len(fence)
+                    and not delimiter[2].strip(b" \t")):
+                fence = None
+        elif delimiter and (delimiter[1][:1] == b"~" or b"`" not in delimiter[2]):
+            fence = delimiter[1]
+        elif start is None:
+            if re.fullmatch(rb"## " + "Как работает сейчас".encode() + rb"[ \t]*", text):
+                start = offset
+        elif re.match(rb" {0,3}#{1,2}(?:[ \t]+|$)", text):
+            return offset - start
+        offset += len(line)
+    return len(content) - start if start is not None else None
+
+
 def scan(root: Path, config: dict) -> list[dict]:
     paths = git(root, "ls-tree", "-r", "--name-only", "-z", "HEAD").decode().split("\0")
     paths = sorted(path for path in paths if path)
@@ -130,10 +152,8 @@ def scan(root: Path, config: dict) -> list[dict]:
         add("hotspot", path, lines * commits[path], {"lines": lines, "commits": commits[path]})
     for path in documents:
         content = blobs[path]
-        start = re.search(rb"^## " + "Как работает сейчас".encode() + rb"[ \t]*\r?$", content, re.MULTILINE)
-        if start:
-            end = re.search(rb"^#{1,2}[ \t]+", content[start.end():], re.MULTILINE)
-            size = (start.end() + end.start() if end else len(content)) - start.start()
+        size = now_section_bytes(content)
+        if size is not None:
             add("doc-now", path, size, {"bytes": size})
         if path in config["doc-file"]["paths"]:
             add("doc-file", path, len(content), {"bytes": len(content)})
@@ -250,7 +270,8 @@ def data_marker(item: dict, config: dict) -> str:
 
 def issue_body(item: dict, config: dict) -> str:
     return (f"<!-- debt-key: {item['key']} -->\n\n{metrics_block(item, config)}\n"
-            f"{data_marker(item, config)}\n\n### Процент\n\n\n### Как погасить\n\n")
+            f"{data_marker(item, config)}\n\n### Процент\n\n_Заполняет еженедельный разбор._\n\n"
+            "### Как погасить\n\n_Заполняет еженедельный разбор._\n")
 
 
 def replace_metrics(body: str, item: dict, config: dict, previous: dict | None = None) -> str:
@@ -266,7 +287,7 @@ def sync(findings: list[dict], config: dict, client, *, apply: bool = False) -> 
     labels = list(client.list_labels())
     if any(not isinstance(label, dict) or not isinstance(label.get("name"), str) for label in labels):
         raise ValueError("Incomplete GitHub label listing")
-    by_key = {}
+    grouped = {}
     seen = set()
     for issue in issues:
         if "pull_request" in issue:
@@ -277,11 +298,21 @@ def sync(findings: list[dict], config: dict, client, *, apply: bool = False) -> 
                 or "body" not in issue or not isinstance(issue["body"], (str, type(None)))):
             raise ValueError("Incomplete GitHub issue listing")
         seen.add(issue["number"])
-        match = KEY.search(issue["body"] or "")
-        if match:
-            if match[1] in by_key:
-                raise ValueError(f"Multiple issues with debt key: {match[1]}")
-            by_key[match[1]] = issue
+        for key in set(KEY.findall(issue["body"] or "")):
+            grouped.setdefault(key, []).append(issue)
+    by_key = {}
+    for key, matches in grouped.items():
+        manual = [issue for issue in matches
+                  if not any(label.get("name") == "долг-авто" for label in issue["labels"])]
+        if manual:
+            by_key[key] = min(manual, key=lambda issue: issue["number"])
+            continue
+        owners = [issue for issue in matches
+                  if not (issue["state"] == "closed" and issue["state_reason"] == "duplicate")]
+        if len(owners) > 1:
+            raise ValueError(f"Multiple issues with debt key: {key}")
+        if owners:
+            by_key[key] = owners[0]
     current = {item["key"]: item for item in findings}
     plan = []
     operations = []
@@ -334,6 +365,7 @@ def sync(findings: list[dict], config: dict, client, *, apply: bool = False) -> 
             action("skip", key, f"#{number}: замеры не изменились")
     candidates = sorted((item for key, item in current.items() if key not in by_key),
                         key=lambda item: (item["level"] != "heavy",
+                                          config[item["kind"]]["priority"],
                                           -item["score"] / config[item["kind"]]["open_score"], item["key"]))
     created = 0
     for item in candidates:

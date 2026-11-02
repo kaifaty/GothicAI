@@ -100,6 +100,8 @@ def test_create_labels_and_issue_then_repeat_without_writes(config):
     ]
     assert len(client.issues) == 1
     assert "<!-- debt-key: hotspot:module.py -->" in client.issues[0]["body"]
+    for heading in ("### Процент", "### Как погасить"):
+        assert f"{heading}\n\n_Заполняет еженедельный разбор._" in client.issues[0]["body"]
     assert {item["name"] for item in client.issues[0]["labels"]} == {"долг", "долг-авто"}
     client.writes.clear()
     debt.sync([value], config, client, apply=True)
@@ -113,18 +115,33 @@ def test_create_labels_and_issue_then_repeat_without_writes(config):
     assert client.writes == []
 
 
-def test_create_limit_orders_heavy_before_normal_then_threshold_ratio(config):
+def test_create_limit_orders_heavy_priority_ratio_and_key(config):
+    assert {kind: config[kind]["priority"] for kind in debt.TITLES} == {
+        "hotspot": 1, "doc-now": 1, "doc-file": 1, "ruff": 2, "orphan-scripts": 3,
+    }
     values = [finding(f"normal-{index}.py", score=300_000 + index * 100_000)
               for index in range(6)]
     values += [finding("heavy.py", score=1_200_000, level="heavy"),
-               finding("manual.md", kind="doc-file", score=1_000_000, level="heavy")]
+               finding("manual.md", kind="doc-file", score=1_000_000, level="heavy"),
+               finding("heavy", kind="ruff", score=100, level="heavy"),
+               finding("normal-z.py", score=800_000),
+               finding("large.md", kind="doc-now", score=102_400),
+               finding("shorts", kind="ruff", score=96),
+               finding(kind="orphan-scripts", score=10)]
     client = FakeClient()
     plan = debt.sync(values, config, client, apply=True)
     created = [item["key"] for item in plan if item["action"] == "create"]
-    assert created == ["doc-file:manual.md", "hotspot:heavy.py", "hotspot:normal-5.py",
-                       "hotspot:normal-4.py", "hotspot:normal-3.py"]
-    assert actions(plan).count("defer") == 3
+    assert created == ["doc-file:manual.md", "hotspot:heavy.py", "ruff:heavy",
+                       "hotspot:normal-5.py", "hotspot:normal-z.py"]
+    ordered = [item["key"] for item in plan]
+    assert ordered.index("doc-now:large.md") < ordered.index("ruff:shorts")
+    assert ordered.index("ruff:shorts") < ordered.index("orphan-scripts")
+    assert actions(plan).count("defer") == 8
     assert len([call for call in client.writes if call[0] == "create"]) == 5
+    client.writes.clear()
+    next_batch = debt.sync(values, config, client, apply=True)
+    assert actions(next_batch).count("create") == 5
+    assert [call[0] for call in client.writes] == ["create"] * 5
 
 
 def test_update_preserves_human_text_and_comments_only_on_heavy_transition(config):
@@ -146,6 +163,7 @@ def test_update_preserves_human_text_and_comments_only_on_heavy_transition(confi
         return re.sub(r"<!-- debt-data: .*? -->", "DATA", body)
 
     assert human_text(client.issues[0]["body"]) == human_text(stored["body"])
+    assert client.issues[0]["body"].count("_Заполняет еженедельный разбор._") == 2
     client.writes.clear()
     debt.sync([current], config, client, apply=True)
     assert client.writes == []
@@ -154,7 +172,7 @@ def test_update_preserves_human_text_and_comments_only_on_heavy_transition(confi
     assert not [call for call in client.writes if call[0] == "comment"]
 
 
-@pytest.mark.parametrize("reason", ["completed", "not_planned", "duplicate"])
+@pytest.mark.parametrize("reason", ["completed", "not_planned"])
 def test_closed_issue_reopens_only_at_required_threshold(config, reason):
     previous = finding(score=400_000)
     client = FakeClient([issue(config, previous, state="closed", reason=reason)])
@@ -200,6 +218,40 @@ def test_manual_issue_claims_key_without_changes_and_pull_request_does_not(confi
     assert [item["key"] for item in plan if item["action"] == "create"] == ["hotspot:other.py"]
     assert client.issues[0] == manual
     assert not [call for call in client.writes if len(call) > 1 and call[1] == 1]
+
+
+@pytest.mark.parametrize("extra_automatic", [False, True])
+def test_manual_owner_accepts_duplicate_keys_without_writes(config, monkeypatch, extra_automatic):
+    value = finding()
+    manual = issue(config, value, automatic=False)
+    manual["body"] = "<!-- debt-key: another-key -->\n" + manual["body"]
+    automatic = [issue(config, value, number=2, state="closed", reason="duplicate")]
+    if extra_automatic:
+        automatic += [issue(config, value, number=3), issue(config, value, number=4)]
+    client = FakeClient([*automatic, manual])
+    plan = debt.sync([value], config, client, apply=True)
+    assert all(row["action"] == "skip" for row in plan)
+    assert value["key"] in {row["key"] for row in plan}
+    assert client.writes == []
+    monkeypatch.setenv("GITHUB_REPOSITORY", "fixture/repository")
+    monkeypatch.setattr(debt, "scan", lambda *args: [value])
+    monkeypatch.setattr(debt, "GhClient", lambda repository: client)
+    assert debt.main(["sync"]) == 0
+    assert client.writes == []
+
+
+def test_duplicate_automatic_issues_are_ignored_but_multiple_owners_fail_before_writes(config):
+    value = finding()
+    duplicate = issue(config, value, number=2, state="closed", reason="duplicate")
+    client = FakeClient([duplicate, issue(config, value)])
+    assert actions(debt.sync([value], config, client, apply=True)) == ["skip"]
+    assert client.writes == []
+    client = FakeClient([duplicate])
+    assert actions(debt.sync([value], config, client, apply=True)) == ["create"]
+    client = FakeClient([duplicate, issue(config, value), issue(config, value, number=3)], labels=())
+    with pytest.raises(ValueError, match="Multiple issues with debt key"):
+        debt.sync([value, finding("new.py")], config, client, apply=True)
+    assert client.writes == []
 
 
 @pytest.mark.parametrize("incomplete", [False, True])
@@ -352,6 +404,17 @@ def test_scan_failure_exits_nonzero_instead_of_printing_empty_findings(repositor
     assert "ruff" in result.stderr.lower()
 
 
+@pytest.mark.parametrize("fence", ["```", "~~~"])
+def test_doc_now_ignores_headings_inside_fenced_code(repository, config, fence):
+    section = ("## Как работает сейчас\n" + "я" * 80 + "\n" + fence + "bash\n"
+               "# comment\n## another comment\necho ready\n" + fence + "\nAfter the example.\n")
+    (repository / "docs/live.md").write_text(section + "## План\nNot in the section.\n")
+    commit(repository, "Document fenced example", "2026-03-02T12:00:00+00:00")
+    config["doc-now"].update(open_score=150, close_score=100, heavy_score=500)
+    values = {value["key"]: value for value in debt.scan(repository, config)}
+    assert values["doc-now:docs/live.md"]["score"] == len(section.encode("utf-8"))
+
+
 def test_scan_uses_head_clock_and_counts_changed_nonmerge_commits(repository, config):
     git(repository, "switch", "-qc", "side", "HEAD^")
     hot = repository / "src/hot.py"
@@ -366,3 +429,12 @@ def test_scan_uses_head_clock_and_counts_changed_nonmerge_commits(repository, co
     # January's initial commit is outside the HEAD-relative window. The merge itself is excluded.
     assert current["hotspot:src/hot.py"]["metrics"] == {"lines": 20, "commits": 4}
     assert current["hotspot:src/hot.py"]["score"] == 80
+
+
+def test_workflow_serializes_each_ref_without_cancelling_running_jobs():
+    workflow = (ROOT / ".github/workflows/debt.yml").read_text(encoding="utf-8")
+    concurrency = re.search(r"^concurrency:\n((?:[ \t]+[^\n]*\n)+)", workflow, re.MULTILINE)
+    assert concurrency is not None
+    settings = dict(line.strip().split(": ", 1) for line in concurrency[1].splitlines())
+    assert settings["group"] == "debt-${{ github.ref }}"
+    assert settings["cancel-in-progress"] == "false"

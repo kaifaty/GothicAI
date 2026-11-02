@@ -20,7 +20,7 @@ permissions:
   issues: write
 
 concurrency:
-  group: debt
+  group: debt-${{ github.ref }}
   cancel-in-progress: false
 
 env:
