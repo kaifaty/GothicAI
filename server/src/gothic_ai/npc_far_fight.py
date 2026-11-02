@@ -10,6 +10,7 @@ from typing import Any
 
 # Match the scoped deed-fight StateMaxMs in OpenGothic/ai_bridge/npcobserver.cpp.
 TIME_LIMIT_S = 120
+_TWO_HANDED = (1 << 16) | (1 << 17)  # Item::is2H: ITM_2HD_SWD | ITM_2HD_AXE
 
 
 @dataclass(frozen=True)
@@ -17,21 +18,36 @@ class Coefficients:
     rate_base: float
     rate_per_tier: float
     damage_scale: float
+    parry_per_tier: float = 0.0
+    starter_rate: float = 1.0
+    variant: str = "A"
+
+    @property
+    def model(self) -> str:
+        return ("hits_v2" if self.variant in ("B", "C") or self.parry_per_tier != 0
+                or self.starter_rate != 1 else "hits_v1")
 
     @classmethod
     def from_mapping(cls, value: Any) -> Coefficients:
         """Validate the versioned calibration data; there is no fallback calibration."""
         if (not isinstance(value, dict) or type(value.get("version")) is not int
-                or value["version"] != 1 or not isinstance(value.get("source"), str)
+                or value["version"] not in (1, 2) or not isinstance(value.get("source"), str)
                 or not value["source"].strip()):
             raise ValueError("Invalid far-fight calibration version or source")
-        numbers = [value.get(key) for key in ("rate_base", "rate_per_tier", "damage_scale")]
+        keys = ("rate_base", "rate_per_tier", "damage_scale")
+        if value["version"] == 2:
+            keys += ("parry_per_tier", "starter_rate")
+        numbers = [value.get(key) for key in keys]
         if any(type(number) not in (int, float) or not math.isfinite(number) for number in numbers):
             raise ValueError("Far-fight coefficients must be finite numbers")
-        base, tier, scale = numbers
+        base, tier, scale = numbers[:3]
+        parry, starter = numbers[3:] if value["version"] == 2 else (0, 1)
         if base <= 0 or tier < 0 or scale <= 0 or round(5 * scale) < 1:
             raise ValueError("Far-fight coefficients must provide positive hit rates and damage")
-        return cls(float(base), float(tier), float(scale))
+        variant = value.get("variant", "A")
+        if parry < 0 or starter <= 0 or variant not in ("A", "B", "C"):
+            raise ValueError("Invalid far-fight parry, starter rate or model variant")
+        return cls(float(base), float(tier), float(scale), float(parry), float(starter), variant)
 
 
 @dataclass(frozen=True)
@@ -44,6 +60,27 @@ class Combatant:
     protection: tuple[int, ...]
     hitchance: int
     tier: int
+
+
+def combatant_from_values(npc: str, values: list[int]) -> Combatant:
+    """Build the same melee fighter from story_eval and native calibration snapshots."""
+    _, hp, _, strength = values[:4]
+    hitchance, protection, damage = values[4:7], values[7:15], values[15:23]
+    damage_type, one_handed, two_handed, equipped, flags, melee_type, melee_total = values[23:30]
+    melee_damage = values[30:38]
+    readied_type, readied_total = values[38:40]
+    readied_damage = values[40:48]
+    # Inventory applies only the readied item's stats. Replace that contribution with the
+    # equipped melee weapon, exactly as drawing it would before swordDamage reads NPC.DAMAGE.
+    damage = tuple(damage[i] - readied_damage[i] - (readied_total if readied_type & (1 << i) else 0)
+                   + melee_damage[i] + (melee_total if melee_type & (1 << i) else 0)
+                   for i in range(8))
+    talent = (2 if flags & _TWO_HANDED else 1) if equipped else 0
+    tier = (two_handed if talent == 2 else one_handed) if equipped else 0
+    if hp <= 0 or not 0 <= tier <= 2:
+        raise ValueError("Invalid distant combatant HP or melee talent tier")
+    return Combatant(npc, hp, strength, damage, melee_type if equipped else damage_type,
+                     tuple(protection), hitchance[talent], tier)
 
 
 @dataclass(frozen=True)
@@ -78,8 +115,10 @@ def _duel(
     hp = [fighter.hp, culprit.hp]
     hits = [0, 0]
     rates = [coefficients.rate_base * (1 + coefficients.rate_per_tier * actor.tier)
-             for actor in actors]
-    clocks = [rng.expovariate(rate) for rate in rates]
+             * max(0, 1 - coefficients.parry_per_tier * actors[1 - i].tier)
+             * (coefficients.starter_rate if i == 0 else 1)
+             for i, actor in enumerate(actors)]
+    clocks = [rng.expovariate(rate) if rate > 0 else math.inf for rate in rates]
     while True:
         attacker = 0 if clocks[0] < clocks[1] else 1
         if clocks[attacker] > TIME_LIMIT_S:

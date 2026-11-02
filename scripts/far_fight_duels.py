@@ -82,7 +82,11 @@ def validate(row):
         for field in ('protection', 'damage', 'weapon_damage'):
             if len(side[field]) != 8:
                 raise ValueError(f'{role}: {field} needs 8 entries')
-        if set(side['hitchance']) != {'1h', '2h'} or len(side['talent_skills']) != 22 or len(side['talent_values']) != 22:
+        # Older recordings omitted damageTotal; calibration reads it from GOTHIC.DAT.
+        if 'weapon_damage_total' in side and type(side['weapon_damage_total']) is not int:
+            raise ValueError(f'{role}: weapon_damage_total must be an integer')
+        if (set(side['hitchance']) not in ({'1h', '2h'}, {'fist', '1h', '2h'})
+                or len(side['talent_skills']) != 22 or len(side['talent_values']) != 22):
             raise ValueError(f'{role}: incomplete talents')
         if not 0 <= side['guild'] < 16:
             raise ValueError(f'{role}: not a human guild')

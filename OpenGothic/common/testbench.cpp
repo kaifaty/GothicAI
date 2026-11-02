@@ -13540,12 +13540,14 @@ std::string npcDuelSnapshot(World& world, Npc& npc) {
     ",\"hp_before\":"+std::to_string(npc.attribute(ATR_HITPOINTS))+
     ",\"hp_max\":"+std::to_string(npc.attribute(ATR_HITPOINTSMAX))+
     ",\"str\":"+std::to_string(npc.attribute(ATR_STRENGTH))+",\"dex\":"+std::to_string(npc.attribute(ATR_DEXTERITY))+
-    ",\"hitchance\":{\"1h\":"+std::to_string(npc.hitChance(TALENT_1H))+",\"2h\":"+std::to_string(npc.hitChance(TALENT_2H))+"}"+
+    ",\"hitchance\":{\"fist\":"+std::to_string(npc.hitChance(TALENT_UNKNOWN))+
+    ",\"1h\":"+std::to_string(npc.hitChance(TALENT_1H))+",\"2h\":"+std::to_string(npc.hitChance(TALENT_2H))+"}"+
     ",\"talent_skills\":"+skills+"],\"talent_values\":"+values+"]"+
     ",\"protection\":"+npcDuelArray(h.protection)+",\"damage\":"+npcDuelArray(h.damage)+
     ",\"damagetype\":"+std::to_string(h.damage_type)+",\"weapon\":"+jsonStr(symbol ? symbol->name() : std::string_view{})+
     ",\"two_handed\":"+(weapon && weapon->is2H() ? "true" : "false")+
     ",\"weapon_damage\":"+(weapon ? npcDuelArray(weapon->handle().damage) : "[0,0,0,0,0,0,0,0]")+
+    ",\"weapon_damage_total\":"+std::to_string(weapon ? weapon->handle().damage_total : 0)+
     ",\"weapon_damagetype\":"+std::to_string(weapon ? weapon->handle().damage_type : 0)+
     ",\"immortal_before\":"+(npc.isImmortal() ? "true" : "false")+
     ",\"guild\":"+std::to_string(h.guild)+",\"fight_tactic\":"+std::to_string(h.fight_tactic);

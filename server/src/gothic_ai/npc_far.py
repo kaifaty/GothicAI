@@ -16,14 +16,13 @@ from typing import Any
 
 from .chronicle import Fact
 from .game import GameDisconnected, GameError
-from .npc_far_fight import Coefficients, Combatant, Result, resolve
+from .npc_far_fight import Coefficients, Combatant, Result, combatant_from_values, resolve
 from .social import DAY, Social, Spot
 from .storyguard import asleep
 
 SIMULATION_CM = 3000
 HUMAN_GUILD_LIMIT = 16
 _HEROES = frozenset({"PLAYER", "HERO", "PC_HERO"})
-_TWO_HANDED = (1 << 16) | (1 << 17)  # Item::is2H: ITM_2HD_SWD | ITM_2HD_AXE
 
 
 def _fight_inputs(npc: str) -> list[Any]:
@@ -46,23 +45,10 @@ def _fight_inputs(npc: str) -> list[Any]:
 
 
 def _combatant(npc: str, values: list[int]) -> Combatant:
-    _, hp, _, strength = values[:4]
-    hitchance, protection, damage = values[4:7], values[7:15], values[15:23]
-    damage_type, one_handed, two_handed, equipped, flags, melee_type, melee_total = values[23:30]
-    melee_damage = values[30:38]
-    readied_type, readied_total = values[38:40]
-    readied_damage = values[40:48]
-    # Inventory applies only the readied item's stats. Replace that contribution with the
-    # equipped melee weapon, exactly as drawing it would before swordDamage reads NPC.DAMAGE.
-    damage = tuple(damage[i] - readied_damage[i] - (readied_total if readied_type & (1 << i) else 0)
-                   + melee_damage[i] + (melee_total if melee_type & (1 << i) else 0)
-                   for i in range(8))
-    talent = (2 if flags & _TWO_HANDED else 1) if equipped else 0
-    tier = (two_handed if talent == 2 else one_handed) if equipped else 0
-    if hp <= 0 or not 0 <= tier <= 2:
-        raise GameError("Invalid distant combatant HP or melee talent tier")
-    return Combatant(npc, hp, strength, damage, melee_type if equipped else damage_type,
-                     tuple(protection), hitchance[talent], tier)
+    try:
+        return combatant_from_values(npc, values)
+    except ValueError as error:
+        raise GameError(str(error)) from error
 
 
 @dataclass
@@ -424,7 +410,8 @@ class FarWorld:
             "fighter": fighter, "act": action, "outcome": outcome,
             "reason": "deadline" if result.winner is None else "hits_to_down",
             "item": crime.get("item", ""), "count": crime.get("count", 0), "returned": returned,
-            "far": True, "model": "hits_v1", "winner": result.winner, "loss": result.loss,
+            "far": True, "model": self._fight_coefficients.model,
+            "winner": result.winner, "loss": result.loss,
             "duration_s": result.duration_s, "hits": result.hits, "p_win": round(result.p_win, 3),
             "p_timeout": round(result.p_timeout, 3),
             **({"by_loss": result.by_loss} if result.winner is None else {}),
