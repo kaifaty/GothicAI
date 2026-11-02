@@ -22,6 +22,8 @@ from pathlib import Path
 
 import bpy
 from mathutils import Vector
+from mathutils.bvhtree import BVHTree
+from mathutils.interpolate import poly_3d_calc
 from mathutils.kdtree import KDTree
 
 UNDERLAY = 'underlay'
@@ -151,6 +153,83 @@ def keep_vertex_light():
 
 
 LIGHT_NEIGHBOURS = 4     # base vertices a new vertex takes its baked light from
+OWN_LIGHT = '_OWN_LIGHT'  # a vertex an edit lit itself (keep_own_light): bake_light keeps its light
+
+
+class SurfaceLight:
+    """The baked light and the normal of the base's surface at a point: the corners of the nearest base face of the
+    chosen materials, weighted by where the point lies in it. A new vertex in a big roof panel is lit like the panel
+    at that point; the base vertices nearest to it are, on a long panel, the walls' and the attic's (the city roofs,
+    2026-11-02: the shingles came out 7-42 % darker and the holes' timber took the hearths' warm light). Its normal is
+    the panel's smooth one there: a face normal shaded the big roofs 10-27 % darker toward the ridge."""
+
+    def __init__(self, underlay, keep):
+        me = underlay.data
+        names = [gothic_name(m) for m in me.materials]
+        colour = me.color_attributes.active_color
+        corner_normals = me.corner_normals
+        verts, polys, self.faces = [], [], []
+        for p in me.polygons:
+            if not keep(names[p.material_index]):
+                continue
+            pts = [me.vertices[v].co.copy() for v in p.vertices]
+            cols = [tuple(colour.data[k if colour.domain == 'CORNER' else me.loops[k].vertex_index].color)
+                    for k in p.loop_indices]
+            nrms = [Vector(corner_normals[k].vector) for k in p.loop_indices]
+            polys.append(list(range(len(verts), len(verts) + len(pts))))
+            verts += pts
+            self.faces.append((pts, cols, nrms))
+        self.tree = BVHTree.FromPolygons(verts, polys) if polys else None
+
+    def at(self, co, within=None):
+        """RGBA at the nearest point of the chosen faces; None past `within` cm or with no such face."""
+        if self.tree is None:
+            return None
+        loc, _, index, distance = self.tree.find_nearest(co)
+        if loc is None or (within is not None and distance > within):
+            return None
+        pts, cols, _ = self.faces[index]
+        weights = poly_3d_calc(pts, loc)
+        return [sum(w * c[i] for w, c in zip(weights, cols)) for i in range(4)]
+
+    def normal_at(self, co, within=None):
+        """The smooth normal at the nearest point of the chosen faces; None past `within` cm or with no such face."""
+        if self.tree is None:
+            return None
+        loc, _, index, distance = self.tree.find_nearest(co)
+        if loc is None or (within is not None and distance > within):
+            return None
+        pts, _, nrms = self.faces[index]
+        weights = poly_3d_calc(pts, loc)
+        n = sum((w * m for w, m in zip(weights, nrms)), Vector())
+        return n.normalized() if n.length > 1e-6 else None
+
+
+def position_key(co):
+    return tuple(round(x, 2) for x in co)
+
+
+def added_vertices(me):
+    """{index: position} of the vertices edits added to the chunk (_VERTEX -1)."""
+    vid = me.attributes.get('_VERTEX')
+    return {v.index: v.co.copy() for v in me.vertices if vid is not None and vid.data[v.index].value < 0}
+
+
+def keep_own_light(me, light):
+    """An edit's own light, {vertex index: RGBA}: written on every corner of those vertices and kept by bake_light."""
+    colour = me.color_attributes.active_color
+    if colour is None or not light:
+        return
+    if colour.domain == 'CORNER':
+        for loop in me.loops:
+            if loop.vertex_index in light:
+                colour.data[loop.index].color = light[loop.vertex_index]
+    else:
+        for v, c in light.items():
+            colour.data[v].color = c
+    mark = me.attributes.get(OWN_LIGHT) or me.attributes.new(OWN_LIGHT, 'FLOAT', 'POINT')
+    for v in light:
+        mark.data[v].value = 1.0
 
 
 def bake_light(obj, underlay):
@@ -186,8 +265,11 @@ def bake_light(obj, underlay):
         lights.append([x / acc[4] for x in acc[:4]])
     tree.balance()
     light = {}
+    own = me.attributes.get(OWN_LIGHT)
     for v in me.vertices:
         key = (vid.data[v.index].value, fid.data[v.index].value)
+        if own is not None and own.data[v.index].value > 0:
+            continue                  # the edit lit it from the surface it lies on (keep_own_light)
         if key[0] >= 0 and key in known:
             light[v.index] = known[key]
         elif key[0] < 0:
@@ -202,7 +284,9 @@ def bake_light(obj, underlay):
     else:
         for v, c in light.items():
             colour.data[v].color = c
-    new = sum(1 for v in me.vertices if vid.data[v.index].value < 0)
+    new = sum(1 for v in me.vertices if vid.data[v.index].value < 0 and v.index in light)
+    if own is not None:
+        me.attributes.remove(own)     # not exported
     return len(light) - new, new
 
 
