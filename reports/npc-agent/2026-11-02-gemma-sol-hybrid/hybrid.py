@@ -200,12 +200,10 @@ def sheet(
     counts = Counter(turn["group"] for turn in eligible)
     available = Counter(turn["group"] for turn in pool)
     quotas = Counter(turn["group"] for turn in fresh) if len(fresh) < size else Counter()
+    # Group minima must fit the pool and preserve fresh turns when backfilling.
     for group in counts:
-        if not available[group]:
-            raise SystemExit("Cannot include every group without selecting excluded turns before new turns")
-        quotas[group] = max(1, quotas[group])
-    if sum(quotas.values()) > size:
-        raise SystemExit("--n cannot include every available group while keeping all new turns")
+        if available[group] and not quotas[group] and sum(quotas.values()) < size:
+            quotas[group] = 1
     while sum(quotas.values()) < size:
         group = max(
             (group for group in GROUPS[1:] if quotas[group] < available[group]),
@@ -577,6 +575,22 @@ async def selftest() -> None:
         comparison = sheet(proportional, n=4, exclude=exclude)
         assert Counter(t["group"] for t in comparison) == {"pure": 3, "soft": 1}
         assert not {t["id"] for t in comparison} & {t["id"] for t in pool[:6]}
+        for sizes, blocked in (
+            ((20, 15, 1), {"hard-0"}),
+            ((29, 1, 1), {"soft-0", "hard-0"}),
+        ):
+            pool = [
+                turns[index] | {"id": f"{group}-{i}"}
+                for index, group, count in zip((0, 2, 6), GROUPS[1:], sizes, strict=True)
+                for i in range(count)
+            ]
+            pilot.save_rows(proportional / "turns.jsonl", pool)
+            pilot.save_rows(proportional / "runs.jsonl", (runs["turn-0"] | {"id": t["id"]} for t in pool))
+            pilot.save_rows(exclude, ({"id": identifier} for identifier in blocked))
+            comparison = sheet(proportional, n=30, exclude=exclude)
+            assert len(comparison) == 30
+            assert len({t["id"] for t in comparison} - blocked) == min(30, len(pool) - len(blocked))
+            assert json.loads((proportional / "sheet.json").read_text()) == comparison
         # Fixed timings make arithmetic independent of the machine running this test.
         for index, record in enumerate(runs.values()):
             if index == 3:
