@@ -45,6 +45,7 @@ class VPoolCache {
       VkDescriptorSet       set  = VK_NULL_HANDLE;
       };
 
+    uint32_t         bindlessCapacity(ShaderReflection::Class cls, size_t size);
     VkDescriptorPool allocPool(const LayoutDesc &l);
     VkDescriptorSet  allocDescSet(VkDescriptorPool pool, VkDescriptorSetLayout lay);
     void             initDescriptorSet(VkDescriptorSet dset, const Bindings &binding, const LayoutDesc& l);

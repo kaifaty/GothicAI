@@ -1,8 +1,10 @@
 <script lang="ts">
   import Header from "../components/Header.svelte";
   import Icon from "../components/Icon.svelte";
+  import UpdateNotice from "../components/UpdateNotice.svelte";
   import { call, reveal } from "../lib/core";
   import { launcher, SERVICE_NAMES } from "../lib/launcher.svelte";
+  import { updateKind } from "../lib/status";
 
   let { onSettings, onDismiss }: { onSettings: () => void; onDismiss: () => void } = $props();
 
@@ -11,6 +13,9 @@
   const name = $derived(SERVICE_NAMES[failed.proc] ?? failed.proc);
   const lines = $derived(failed.detail.split("\n"));
   const reason = $derived(lines[0]);
+  // a newer main may already fix what failed: the update comes before a retry
+  const update = $derived(updateKind(launcher.state!.update));
+  const updating = $derived(update === "updating" || update === "restarting");
   const tail = $derived(lines.slice(1).map((l) => l.replace(/^ {4}/, "")).join("\n"));
 
   async function retry() {
@@ -41,6 +46,7 @@
         </p>
       </div>
     </div>
+    {#if update && update !== "updated"}<UpdateNotice />{/if}
     {#if tail}
       <section aria-labelledby="tail-title">
         <h2 id="tail-title" class="faint">Последние строки вывода</h2>
@@ -49,7 +55,7 @@
     {/if}
     <div class="actions">
       <button class="btn btn-primary" onclick={onSettings}>Открыть настройки</button>
-      <button class="btn btn-ghost" onclick={retry}>Повторить</button>
+      <button class="btn btn-ghost" onclick={retry} disabled={updating}>Повторить</button>
       <button class="btn btn-ghost" onclick={report}>Собрать отчёт</button>
       <button class="btn btn-ghost" onclick={onDismiss}>Назад</button>
     </div>
@@ -85,11 +91,17 @@
     line-height: 1.1;
     margin-bottom: 6px;
   }
+  section {
+    display: flex;
+    flex-direction: column;
+    min-height: 0; /* the output shrinks first when the update notice needs the room */
+  }
   h2 {
     font-weight: 500;
     margin-bottom: 8px;
   }
   pre {
+    min-height: 0;
     margin: 0;
     max-height: 220px;
     overflow: auto;

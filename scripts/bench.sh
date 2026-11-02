@@ -32,6 +32,7 @@
 #      ITEM_WAKE    optional initial GAME item_wake setting (0 or 1), before world loading
 #      PLACED_ITEMS optional initial GAME placed_items setting (0 or 1), before world loading
 #      BODY_IMPACT_DAMAGE optional initial GAME body_impact_damage setting (0 or 1)
+#      BODY_TRACES  optional initial GAME body_traces setting (0 or 1)
 #      STATIC_COLLISION_SPLIT optional initial GAME static_collision_split setting (0 or 1), before world loading
 #      CHARACTER_VIRTUAL optional initial GAME character_virtual setting (0 or 1), before world loading
 #      NPC_CHARACTER_VIRTUAL optional initial GAME npc_character_virtual setting (0 or 1)
@@ -46,6 +47,7 @@
 #      MELEE_STAGGER optional initial GAME melee_stagger setting (0 or 1)
 #      MELEE_BEAST_POISE optional initial GAME melee_beast_poise setting (0 or 1)
 #      MELEE_BACKSTAB optional initial GAME melee_backstab setting (0 or 1)
+#      MELEE_DODGE optional initial GAME melee_dodge setting (0 or 1)
 #      MELEE_REACTIONS optional initial GAME melee_reactions setting (0 or 1)
 #      MELEE_BLADE_SHADOW optional initial GAME melee_blade_shadow setting (0 or 1)
 #      OPENGOTHIC_TEXTURES  sharper textures (default: those of scripts/hd-textures.sh, when made; empty: none)
@@ -235,7 +237,7 @@ musicVolume=${MUSIC:-0}
 musicEnabled=$([[ "${MUSIC:-0}" == 0 || "${MUSIC:-0}" == 0.0 ]] && echo 0 || echo 1)
 worldSounds=${WORLD_SOUNDS:-1}
 EOF
-if [[ -n "${MOVABLE_VOBS:-}${ITEM_HULLS:-}${ITEM_DEEPEST_CONTACT:-}${FURNITURE_PARTS:-}${ARROW_STICKING:-}${PHYSICS_NOISE:-}${DESTRUCTION:-}${BUOYANCY:-}${CLOTH:-}${ITEM_WAKE:-}${PLACED_ITEMS:-}${BODY_IMPACT_DAMAGE:-}${STATIC_COLLISION_SPLIT:-}${CHARACTER_VIRTUAL:-}${NPC_CHARACTER_VIRTUAL:-}${MONSTER_CHARACTER_VIRTUAL:-}${MELEE_BLADE_SHADOW:-}${MELEE_PHYSICS_HITS:-}${MELEE_POSTURE:-}${MELEE_REACTIONS:-}${MELEE_DOWN_TACTICS:-}${MELEE_HITSTOP:-}${MELEE_STAMINA:-}${MELEE_PARRY:-}${MELEE_PARRY_AI:-}${MELEE_STAGGER:-}${MELEE_BEAST_POISE:-}${MELEE_BACKSTAB:-}" ]]; then
+if [[ -n "${MOVABLE_VOBS:-}${ITEM_HULLS:-}${ITEM_DEEPEST_CONTACT:-}${FURNITURE_PARTS:-}${ARROW_STICKING:-}${PHYSICS_NOISE:-}${DESTRUCTION:-}${BUOYANCY:-}${CLOTH:-}${ITEM_WAKE:-}${PLACED_ITEMS:-}${BODY_IMPACT_DAMAGE:-}${BODY_TRACES:-}${STATIC_COLLISION_SPLIT:-}${CHARACTER_VIRTUAL:-}${NPC_CHARACTER_VIRTUAL:-}${MONSTER_CHARACTER_VIRTUAL:-}${MELEE_BLADE_SHADOW:-}${MELEE_PHYSICS_HITS:-}${MELEE_POSTURE:-}${MELEE_REACTIONS:-}${MELEE_DOWN_TACTICS:-}${MELEE_HITSTOP:-}${MELEE_STAMINA:-}${MELEE_PARRY:-}${MELEE_PARRY_AI:-}${MELEE_STAGGER:-}${MELEE_BEAST_POISE:-}${MELEE_BACKSTAB:-}${MELEE_DODGE:-}" ]]; then
   printf '\n[GAME]\n' >>"$RUN/Gothic.ini"
   if [[ -n "${MOVABLE_VOBS:-}" ]]; then
     [[ "$MOVABLE_VOBS" == 0 || "$MOVABLE_VOBS" == 1 ]] || { echo "MOVABLE_VOBS must be 0 or 1" >&2; exit 2; }
@@ -309,6 +311,10 @@ if [[ -n "${MOVABLE_VOBS:-}${ITEM_HULLS:-}${ITEM_DEEPEST_CONTACT:-}${FURNITURE_P
     [[ "$MELEE_BACKSTAB" == 0 || "$MELEE_BACKSTAB" == 1 ]] || { echo "MELEE_BACKSTAB must be 0 or 1" >&2; exit 2; }
     printf 'melee_backstab=%s\n' "$MELEE_BACKSTAB" >>"$RUN/Gothic.ini"
   fi
+  if [[ -n "${MELEE_DODGE:-}" ]]; then
+    [[ "$MELEE_DODGE" == 0 || "$MELEE_DODGE" == 1 ]] || { echo "MELEE_DODGE must be 0 or 1" >&2; exit 2; }
+    printf 'melee_dodge=%s\n' "$MELEE_DODGE" >>"$RUN/Gothic.ini"
+  fi
   if [[ -n "${MELEE_REACTIONS:-}" ]]; then
     [[ "$MELEE_REACTIONS" == 0 || "$MELEE_REACTIONS" == 1 ]] || { echo "MELEE_REACTIONS must be 0 or 1" >&2; exit 2; }
     printf 'melee_reactions=%s\n' "$MELEE_REACTIONS" >>"$RUN/Gothic.ini"
@@ -344,6 +350,10 @@ if [[ -n "${MOVABLE_VOBS:-}${ITEM_HULLS:-}${ITEM_DEEPEST_CONTACT:-}${FURNITURE_P
   if [[ -n "${BODY_IMPACT_DAMAGE:-}" ]]; then
     [[ "$BODY_IMPACT_DAMAGE" == 0 || "$BODY_IMPACT_DAMAGE" == 1 ]] || { echo "BODY_IMPACT_DAMAGE must be 0 or 1" >&2; exit 2; }
     printf 'body_impact_damage=%s\n' "$BODY_IMPACT_DAMAGE" >>"$RUN/Gothic.ini"
+  fi
+  if [[ -n "${BODY_TRACES:-}" ]]; then
+    [[ "$BODY_TRACES" == 0 || "$BODY_TRACES" == 1 ]] || { echo "BODY_TRACES must be 0 or 1" >&2; exit 2; }
+    printf 'body_traces=%s\n' "$BODY_TRACES" >>"$RUN/Gothic.ini"
   fi
   if [[ -n "${STATIC_COLLISION_SPLIT:-}" ]]; then
     [[ "$STATIC_COLLISION_SPLIT" == 0 || "$STATIC_COLLISION_SPLIT" == 1 ]] || { echo "STATIC_COLLISION_SPLIT must be 0 or 1" >&2; exit 2; }

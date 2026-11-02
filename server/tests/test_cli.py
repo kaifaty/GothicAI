@@ -825,3 +825,48 @@ def test_neural_body_max_rejects_values_outside_engine_watch_limit(monkeypatch, 
     with pytest.raises(SystemExit) as exit:
         cli.main()
     assert exit.value.code == 2
+
+
+@pytest.mark.parametrize(("flags", "env_url", "expected"), [
+    ([], None, None),
+    (["--decider-url", "ws://gpu:47832"], None, "http://gpu:47837"),
+    (["--decider-url", "ws://[::1]:47832"], None, "http://[::1]:47837"),
+    ([], "http://env:47837", "http://env:47837"),
+    (["--embed-url", "http://explicit:47837"], "http://env:47837", "http://explicit:47837"),
+    (["--no-embeddings", "--decider-url", "ws://gpu:47832"], None, None),
+    (["--no-embeddings"], "http://env:47837", None),
+])
+def test_serve_embedding_options_create_client_only_when_enabled(monkeypatch, flags, env_url, expected):
+    real_serve = cli.serve
+    if env_url is None:
+        monkeypatch.delenv("GOTHIC_EMBED_URL", raising=False)
+    else:
+        monkeypatch.setenv("GOTHIC_EMBED_URL", env_url)
+    monkeypatch.delenv("GOTHIC_DECIDER_URL", raising=False)
+    monkeypatch.delenv("GOTHIC_SOAK_CONTROL", raising=False)
+    captured = []
+
+    async def capture(args):
+        captured.append(args)
+        return 0
+
+    monkeypatch.setattr(cli, "serve", capture)
+    monkeypatch.setattr("sys.argv", ["gothic-ai", "serve", *flags])
+    with pytest.raises(SystemExit) as exit:
+        cli.main()
+    assert exit.value.code == 0
+    monkeypatch.setattr(cli, "_backend", Mock())
+    monkeypatch.setattr(cli, "PersonaProvider", Mock())
+    monkeypatch.setattr(cli.threading, "Thread", Mock())
+    client = Mock()
+    monkeypatch.setattr(cli, "EmbedClient", client)
+    memory = Mock(side_effect=RuntimeError("memory configured"))
+    monkeypatch.setattr(cli, "MemoryStore", memory)
+    with pytest.raises(RuntimeError, match="memory configured"):
+        asyncio.run(real_serve(captured[0]))
+    if expected is None:
+        client.assert_not_called()
+        assert memory.call_args.kwargs["embeddings"] is None
+    else:
+        client.assert_called_once_with(expected)
+        assert memory.call_args.kwargs["embeddings"] is client.return_value

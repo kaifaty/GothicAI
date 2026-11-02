@@ -17,7 +17,7 @@ from ..protocol import CombatHit, GameMessage, LineStarted, PttStart, Session, S
 from ..talk import TalkDesk, fights
 from ..trace import read as read_trace
 from ..turn import ToolOutcome
-from .bandit_parley import BRAGO, CAVALORN, PARK
+from .bandit_parley import BRAGO, CAVALORN, MATE, PARK
 from .common import (
     LOBART,
     _logged,
@@ -43,7 +43,7 @@ SCENARIOS = {
 async def surrender_live(
     link: GameLink, dialogue: DialogueManager, talk: TalkDesk, mercy: Mercy,
 ) -> dict[str, str]:
-    """Observe seven independent live decisions without scripting either model or its tools."""
+    """Observe eight independent live decisions without scripting either model or its tools."""
     if (dialogue.llm.name == "off" or dialogue.quick is None
             or dialogue.quick.name == "off"):
         raise GameError("scenario surrender_live requires a live LLM and a live quick model")
@@ -61,6 +61,7 @@ async def surrender_live(
         ("B_lobart", LOBART, phrase), ("B_bandit", bandit, phrase),
         ("B_guard", guard, phrase), ("C_bandit", bandit, "Пацаны, обоссыте, но не бейте"),
         ("C_brago", BRAGO, "Браго, сдаюсь! Обоссы, но не бей"),
+        ("C_band", MATE, "Пацаны, обоссыте, но не бейте"),
     ]
     cases = [case for case in cases if case[0] in suite.selected]
     current: dict[str, Any] | None = None
@@ -71,8 +72,8 @@ async def surrender_live(
     async def record_tool(conv: Conversation, call: ToolCall, state: TurnState) -> ToolOutcome:
         # Observe the real dispatcher; arguments and results pass through unchanged.
         row = None
-        if current is not None and conv.npc == current["npc"] and started:
-            row = {"ms": round((time.monotonic() - started) * 1000),
+        if current is not None and conv.npc in current["fighters"] and started:
+            row = {"npc": conv.npc, "ms": round((time.monotonic() - started) * 1000),
                    "name": call.name, "arguments": call.arguments}
             current["tools"].append(row)
         outcome = await original_tool(conv, call, state)
@@ -91,15 +92,15 @@ async def surrender_live(
             return
         elapsed = round((time.monotonic() - started) * 1000)
         if isinstance(msg, CombatHit) and (
-            current["npc"] in {msg.npc, msg.by}
+            any(npc in {msg.npc, msg.by} for npc in current["fighters"])
             or current["player_text"] is not None and msg.npc in {"PLAYER", "PC_HERO"}
         ):
             current["observed_hits"].append({"ms": elapsed, **msg.model_dump()})
-        elif isinstance(msg, LineStarted) and msg.npc == current["npc"]:
+        elif isinstance(msg, LineStarted) and msg.npc in current["fighters"]:
             line = dialogue._lines.get(msg.line)
-            current["words"].append({"ms": elapsed, "text": line[0] if line else None,
+            current["words"].append({"npc": msg.npc, "ms": elapsed, "text": line[0] if line else None,
                                      "voiced": msg.voiced})
-        elif isinstance(msg, Snapshot) and msg.npc.id == current["npc"] and msg.player:
+        elif isinstance(msg, Snapshot) and msg.npc.id == current["decision_npc"] and msg.player:
             if msg.player.kneeling and "S_PEE" in msg.npc.animations:
                 current["humiliation_played"] = True
 
@@ -143,7 +144,10 @@ async def surrender_live(
     try:
         for case, npc, text in cases:
             with suite.case(case) as live_case:
+                decision_npc = BRAGO if case == "C_band" else npc
+                fighters = [npc, BRAGO] if case == "C_band" else [npc]
                 current = {"case": case, "npc": npc, "player_text": text, "tools": [], "words": [],
+                           "decision_npc": decision_npc, "fighters": fighters,
                            "observed_hits": [], "humiliation_played": False}
                 live_case.evidence = current
                 started = 0.0
@@ -161,17 +165,20 @@ async def surrender_live(
                         await asyncio.gather(loading, return_exceptions=True)
                     await link.wait_world(timeout=60)
                     await link.debug("skip_important", near=npc)
-                    if npc in {bandit, BRAGO}:
+                    if npc in {bandit, BRAGO, MATE}:
                         # The existing bandit setups park Cavalorn away from the road fight.
                         await link.debug("skip_important", near=CAVALORN)
                         await link.debug("npc_goto", npc=CAVALORN, waypoint=PARK)
                     await attach_when_free(link, npc)
-                    if npc == BRAGO:
-                        await link.debug("skip_important", near="BDT_1015_BANDIT_L")
-                        await link.debug("player_goto", to=BRAGO, distance=200)
+                    if npc in {BRAGO, MATE}:
+                        await link.debug("skip_important", near=BRAGO if npc == MATE else MATE)
+                        await link.debug("player_goto", to=npc, distance=200)
                     else:
                         await link.debug("teleport", near=npc, distance=200)
                     await link.act(npc, "stop")
+                    if case == "C_band":
+                        await attach_when_free(link, BRAGO)
+                        await link.act(BRAGO, "stop")
                     await link.debug("player_hp", hp=2000)
                     sword = "ITMW_SHORTSWORD1"
                     await link.debug("player_equip", item=sword)
@@ -190,20 +197,24 @@ async def surrender_live(
                         effects.append({"do": "give", "item": GOLD, "count": abs(100 - hero_gold),
                                         "to": "hero" if hero_gold < 100 else "self"})
                         await link.story_effect(npc, effects)
-                    current["gold_before"] = await link.story_eval(npc, gold)
+                    current["gold_before"] = await link.story_eval(decision_npc, gold)
                     if text is None:
                         await health(npc, 1000)
                     await link.detach(npc)
+                    if case == "C_band":
+                        await link.detach(BRAGO)
                     hits.clear()
                     # The gate guard's setup hit caused no damage; stage its native attack directly.
-                    if npc not in {guard, BRAGO}:
+                    if npc not in {guard, BRAGO, MATE}:
                         await link.debug("player_hit", npc=npc)
-                    await link.story_effect(npc, [{"do": "attack", "reason": "AR_NONE"}])
-                    if not await _until_async(lambda npc=npc: link.story_eval(npc, combat),
-                                              lambda v: v == [1, 1], 8):
-                        raise GameError("surrender_live preparation: native fight did not start")
-                    if not await _until(lambda npc=npc: fights(talk.people.get(npc)), 4):
-                        raise GameError("surrender_live preparation: fight missing from roster")
+                    for fighter in fighters:
+                        await link.story_effect(fighter, [{"do": "attack", "reason": "AR_NONE"}])
+                    for fighter in fighters:
+                        if not await _until_async(lambda fighter=fighter: link.story_eval(fighter, combat),
+                                                  lambda v: v == [1, 1], 8):
+                            raise GameError("surrender_live preparation: native fight did not start")
+                        if not await _until(lambda fighter=fighter: fights(talk.people.get(fighter)), 4):
+                            raise GameError("surrender_live preparation: fight missing from roster")
                     current["name"] = talk.people[npc].name
                     if text is not None and not await _until(
                         lambda npc=npc: any(h.npc == "PLAYER" and h.by == npc for h in hits), 30,
@@ -241,6 +252,14 @@ async def surrender_live(
                             raise GameError(
                                 "surrender_live preparation: hero focus is not the intended opponent",
                             )
+                    if case == "C_band":
+                        snap = await link.snapshot(npc, fresh=True)
+                        if not any(other.id == BRAGO and other.distance <= 1000
+                                   for other in snap.nearby_npcs):
+                            raise GameError("surrender_live preparation: Brago is not near his mate")
+                        for fighter in fighters:
+                            if await link.story_eval(fighter, combat) != [1, 1]:
+                                raise GameError("surrender_live preparation: both bandits must attack hero")
                     started, wall_started = time.monotonic(), time.time()
                     current["started_at"] = wall_started
                     if text is None:
@@ -253,7 +272,7 @@ async def surrender_live(
                         attack_watch = asyncio.create_task(watch_attack(npc, current))
                         await link.debug("type", text=text)
 
-                    def turns(npc: str = npc, text: str | None = text,
+                    def turns(npc: str = decision_npc, text: str | None = text,
                               wall_started: float = wall_started) -> list[dict[str, Any]]:
                         return [row for row in read_trace(trace.path()) if row.get("type") == "turn"
                                 and row.get("npc") == npc and row["t"] >= wall_started - 0.01
@@ -292,23 +311,29 @@ async def surrender_live(
                                      and t["outcome"] == "accepted"), None)
                     await asyncio.sleep(max(5, accepted["resolved_ms"] / 1000 + 20
                                             - (time.monotonic() - started)) if accepted else 5)
-                    state = await link.story_eval(npc, combat)
+                    state = await link.story_eval(decision_npc, combat)
                     current["fight_state"] = state
+                    current["fight_states"] = {decision_npc: state}
                     current["fight_continued"] = state == [1, 1]
-                    current["gold_after"] = await link.story_eval(npc, gold)
-                    [view] = await link.npc_view([npc])
+                    if case == "C_band":
+                        current["fight_states"][npc] = await link.story_eval(npc, combat)
+                        current["fight_continued"] = any(
+                            value[0] == 1 for value in current["fight_states"].values()
+                        )
+                    current["gold_after"] = await link.story_eval(decision_npc, gold)
+                    [view] = await link.npc_view([decision_npc])
                     current["npc_weapon"] = view.weapon
-                    snap = await link.snapshot(npc, fresh=True)
+                    snap = await link.snapshot(decision_npc, fresh=True)
                     current["npc_hp"] = snap.npc.hp
                     current["hero_hp"] = snap.player.hp if snap.player else None
                     current["hits"] = [h.model_dump() for h in hits]
                     current["chronicle"] = [
                         f for kind in ("mercy_offer", "surrender", "hero_yield", "humiliated")
-                        for f in mercy.chronicle.facts(kind) if f.get("npc") == npc
+                        for f in mercy.chronicle.facts(kind) if f.get("npc") == decision_npc
                     ]
                     current["taken"] = [f["take"] for f in current["chronicle"] if f["fact"] == "hero_yield"]
                     current["humiliation_recorded"] = any(
-                        f["npc"] == npc for f in mercy.chronicle.facts("humiliated")
+                        f["npc"] == decision_npc for f in mercy.chronicle.facts("humiliated")
                     )
                     decisions = [t["ms"] for t in current["tools"]
                                  if t["name"] in {"surrender", "accept_surrender", "set_intent"}]
@@ -351,7 +376,7 @@ async def surrender_live(
                         fact_kind = "surrender" if text is None else "hero_yield"
                         fact_recorded = any(f["fact"] == fact_kind for f in current["chronicle"])
                         resumed = current["fight_continued"] or any(
-                            h["npc"] in {"PLAYER", "PC_HERO"} and h["by"] == npc
+                            h["npc"] in {"PLAYER", "PC_HERO"} and h["by"] in fighters
                             and h["ms"] > accepted["resolved_ms"] for h in current["observed_hits"]
                         )
                         valid = fact_recorded and not resumed
@@ -380,12 +405,21 @@ async def surrender_live(
                                    and current["accepted_outcome_confirmed"] else "failure")
                         if outcome == "failure":
                             current["reason"] = "Brago did not complete the requested humiliating surrender"
+                    if case == "C_band":
+                        own_accept = any(t["name"] == "accept_surrender" and t["npc"] == MATE
+                                         for t in current["tools"])
+                        outcome = ("success" if accepted and accepted["npc"] == BRAGO
+                                   and accepted["name"] == "accept_surrender" and not own_accept
+                                   and current["accepted_outcome_confirmed"] else "failure")
+                        if outcome == "failure":
+                            current["reason"] = "Brago did not accept gang surrender and stop both fighters"
                     live_case.finish(outcome, evidence=current)
                 finally:
-                    conv = dialogue.conversations.get(npc)
-                    if conv is not None and conv.reply is not None and not conv.reply.done():
-                        conv.reply.cancel()
-                        await asyncio.gather(conv.reply, return_exceptions=True)
+                    for fighter in fighters:
+                        conv = dialogue.conversations.get(fighter)
+                        if conv is not None and conv.reply is not None and not conv.reply.done():
+                            conv.reply.cancel()
+                            await asyncio.gather(conv.reply, return_exceptions=True)
                     if attack_watch is not None:
                         attack_watch.cancel()
                         await asyncio.gather(attack_watch, return_exceptions=True)

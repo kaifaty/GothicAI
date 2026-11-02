@@ -218,6 +218,10 @@
 #       opens his chest and accuses off screen. Witness truth, save/load and cooldown are checked;
 #       Lobart's GIL_OUT farm has no community law, so guards are covered by module tests.
 #       no model; SAVE=save_slot_1.sav; TIMEOUT=720; the scene never commands harm.
+#   body_found: a body as a trace (protocol v58, engine [GAME] body_traces=1): Lobart sees the hero by
+#       Maleth, Maleth dies unseen (debug kill), Lobart finds him: one trace_found, the hero suspected of
+#       murder; then Vino dies by the unseen hero: found, no suspicion; save/load keeps both, no new finds.
+#       no model; SAVE=save_slot_1.sav; TIMEOUT=600.
 #   npc_deeds: Vino steals from CHEST_LOBART in front of Hilda, assaults Maleth to a living knockout,
 #       then steals a world item before brave Lobart, who defeats him and reclaims it. NPC knowledge,
 #       its rumor and save/load are checked; guards are covered by module tests.

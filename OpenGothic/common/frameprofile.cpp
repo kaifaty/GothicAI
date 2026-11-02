@@ -23,10 +23,12 @@ const char* names[Zones]={"tick","finish_step","camera","observations","bench","
   "storage_join","storage_commit","storage_pack","storage_dispatch","storage_grow","storage_upload_execution_elapsed",
   "bodynet","cloth","water","destruction","ai_bridge","sound","vob_sound_load",
   "texture_update","texture_demand_elapsed_sum","bindless_rebuild","bindless_patch",
+  "npc_full_tick","npc_simplified_tick",
   "encode_shadows","encode_main","encode_water","encode_post","encode_ui"};
 const char* amountNames[Amounts]={"palette_calls","palette_bytes","identical_calls","identical_bytes",
   "patch_calls","patch_bytes","patch_blocks","grow_bytes","upload_execution_bytes","draw_calls","dispatch_calls",
-  "bindless_texture_slots","bindless_buffer_slots","bindless_patched_slots"};
+  "bindless_texture_slots","bindless_buffer_slots","bindless_patched_slots",
+  "npc_full","npc_simplified","npc_tier_transitions"};
 uint64_t ns() {
   return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
   }

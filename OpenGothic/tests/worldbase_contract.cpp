@@ -12,6 +12,7 @@
 #include "worldchunksruntime.h"
 #include "worlddata.h"
 #include "world/chunkresidency.h"
+#include "world/npcsimtier.h"
 #include "world/portalrooms.h"
 
 #include <zenkit/Stream.hh>
@@ -603,6 +604,40 @@ void chunkContract(const fs::path& root) {
   else
     setenv("OPENGOTHIC_STREAMING",previousValue.c_str(),1);
   std::puts("Chunks: negative boundaries, converter ownership/AABBs, independent rings, hysteresis and disabled manager passed");
+
+  using Mode=NpcSimTiers::Mode;
+  bool valid=false;
+  require(NpcSimTiers::parseMode(nullptr,nullptr,&valid)==Mode::Auto && valid &&
+          NpcSimTiers::parseMode("auto",nullptr)==Mode::Auto && NpcSimTiers::parseMode("full",nullptr)==Mode::Full &&
+          NpcSimTiers::parseMode("simplified","1")==Mode::Simplified,
+          "OPENGOTHIC_NPC_SIM_TIER must parse auto, full and simplified");
+  require(NpcSimTiers::parseMode("bogus",nullptr,&valid)==Mode::Auto && !valid,
+          "an unknown NPC tier must fall back to auto and be reported");
+  require(NpcSimTiers::parseMode("simplified","0")==Mode::Full && NpcSimTiers::parseMode(nullptr,"0")==Mode::Full,
+          "OPENGOTHIC_STREAMING=0 must keep every NPC Full");
+  ChunkResidency tiers(single);
+  tiers.update({100,0,100},{100,0,100},100000);
+  const auto tier=[&](Mode mode, bool hero, bool keep, const ChunkResidency* residency, ChunkId cell, NpcSimTier previous) {
+    return NpcSimTiers::desired(mode,hero,keep,residency,cell,previous);
+    };
+  for(const auto mode:{Mode::Auto,Mode::Full,Mode::Simplified})
+    require(tier(mode,true,false,&tiers,ChunkId{50,50},NpcSimTier::Simplified)==NpcSimTier::Full,
+            "the hero must be Full in every mode");
+  require(tier(Mode::Full,false,false,&tiers,ChunkId{50,50},NpcSimTier::Simplified)==NpcSimTier::Full &&
+          tier(Mode::Simplified,false,true,&tiers,ChunkId{0,0},NpcSimTier::Full)==NpcSimTier::Simplified,
+          "full and simplified modes must override the residency for every NPC but the hero");
+  require(tier(Mode::Auto,false,false,nullptr,ChunkId{50,50},NpcSimTier::Simplified)==NpcSimTier::Full,
+          "auto without a residency manager must keep every NPC Full");
+  require(tier(Mode::Auto,false,true,&tiers,ChunkId{50,50},NpcSimTier::Simplified)==NpcSimTier::Full,
+          "training and arena actors must stay Full in auto mode");
+  require(tier(Mode::Auto,false,false,&tiers,ChunkId{0,0},NpcSimTier::Simplified)==NpcSimTier::Full &&
+          tier(Mode::Auto,false,false,&tiers,ChunkId{2,-2},NpcSimTier::Simplified)==NpcSimTier::Full,
+          "an NPC in a Near chunk or cell must be Full");
+  require(tier(Mode::Auto,false,false,&tiers,ChunkId{3,0},NpcSimTier::Full)==NpcSimTier::Full &&
+          tier(Mode::Auto,false,false,&tiers,ChunkId{3,0},NpcSimTier::Simplified)==NpcSimTier::Simplified &&
+          tier(Mode::Auto,false,false,&tiers,ChunkId{4,0},NpcSimTier::Full)==NpcSimTier::Simplified,
+          "the NPC tier must use the Near enter radius 2 and exit radius 3");
+  std::puts("NPC simulation tiers: modes, hero, streaming switch, Near ring and exit hysteresis passed");
   }
 }
 

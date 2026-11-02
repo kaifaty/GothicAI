@@ -109,7 +109,12 @@ The complete `<zone>` list (each produces all four columns above):
 `parallel_animation`, `native_export`, `forced_sync_animation`, `actor_animation_elapsed_sum`,
 `pose_elapsed_sum`, `palette_elapsed_sum`, `storage_join`, `storage_commit`, `storage_pack`,
 `storage_dispatch`, `storage_grow`, `storage_upload_execution_elapsed`, `bodynet`, `cloth`, `water`,
-`destruction`, `ai_bridge`, `sound`, `encode_shadows`, `encode_main`, `encode_water`, `encode_post`, `encode_ui`.
+`destruction`, `ai_bridge`, `sound`, `npc_full_tick`, `npc_simplified_tick`, `encode_shadows`, `encode_main`,
+`encode_water`, `encode_post`, `encode_ui`.
+
+`npc_full_tick` and `npc_simplified_tick` split the `Npc::tick` loop inside `world_logic` by NPC simulation
+tier (`common/world/npcsimtier.h`); their calls count runs of consecutive same-tier NPCs, not NPCs. The
+amounts `npc_full`, `npc_simplified` and `npc_tier_transitions` count NPCs per tier and tier changes.
 
 `bodynet` sums the full local P30 policy step over active NPCs; service policies do not enter it.
 `cloth` covers main-thread preparation and the 30 Hz solver/finish; `water` sums main-thread buoyancy
@@ -467,7 +472,7 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `walkto <waypoint>` | walk there (AI path) |
 | `walkmode walk\|run\|sneak` | |
 | `face uphill\|downhill\|across\|<yaw deg>`, `face wp <waypoint>`, `face rel <deg>`, `turn <deg>` | turn the player at once; `rel`: the watched npc's facing turned by that much (the angles of `place`) |
-| `press\|release\|tap <key>`, `hold <key> <ms>`, `release all` | player input; keys: `forward back left right turnl turnr jump walk sneak weapon melee bow spell action parade breath` (`left`/`right` strafe; aiming a bow: hold `action`, a shot: `tap forward` while holding it; in the manual aim holding `action` draws, releasing shoots, `parade` lowers the bow, `breath` (= walk) holds the breath) |
+| `press\|release\|tap <key>`, `hold <key> <ms>`, `release all` | player input; keys: `forward back left right turnl turnr jump walk sneak weapon melee bow spell action parade breath dodge` (`dodge`: the melee dodge's own key, the way from the movement keys held at the press; `left`/`right` strafe; aiming a bow: hold `action`, a shot: `tap forward` while holding it; in the manual aim holding `action` draws, releasing shoots, `parade` lowers the bow, `breath` (= walk) holds the breath) |
 | `aimwalk on\|off` | the legs stepping under the aim (graphics/mesh/aimwalk); off: forward and back do nothing while aiming |
 | `animinfo <name>...` | the hero's animations of those names: layer, frames, the nodes they move (when not all), the root's way and speed, the hips' turn at a few frames |
 | `bladepath <name>\|<overlay.MDS>...` | the tip of the hero's weapon at each frame of those animations, with the grip, the root bone (the game keeps its x, z at the actor) and the speed, in the model's frame (+z ahead); the frames of the fight tags; an overlay (`HUMANS_1HST2.MDS`) is put on for the names after it |
@@ -488,6 +493,7 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `rec <name> [novideo]`, `stop` | record a segment (video and metrics, or metrics only) |
 | `shot <name>` | one PNG |
 | `streaming wait [timeout_ms]` | Wait for all desired Near/Far chunks and the publication queue; timeout defaults to 60000 real ms. |
+| `npcday <game minutes> [period 5] [shared]` | Journal every NPC over continuous game time ([NPC day parity](#npc-day-parity)); the scenario waits until the time has passed. Every NPC gets a private script random stream from the last `seed`; `shared` keeps the game's one shared stream. |
 | `ui on\|off` | the interface in the captured frames, as the player sees it: subtitles, the input line, the deal window (off by default: only the world) |
 | `label <text>` | text on the overlay |
 | `ik on\|off`, `ik param <name> <value>`, `ik params` | foot IK and its parameters, without rebuilding; `ik off` on a four-legged creature brings back the old whole-body tilt |
@@ -523,6 +529,7 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `npcaim on [second\|arrow] \| off \| sigma <deg\|off> \| lead on\|off` | npc archers aim by hand (game/archerai, `[GAME] npcManualAim`, on by default: `npcaim off` for the dice): as many hits a second as G2's dice (`second`) or as sure an arrow (`arrow`); an error forced, degrees per axis (0: the bow's own spread only); the lead on a runner. Each release logs `arrow aim: at, true <the point meant>, err <right up> deg, sigma, pv <dice %> p <target %> rho, lead, hold, disturb, settled\|waited, by <npc>` |
 | `archer <npc\|all> at <npc\|player> [dice] \| archer off` | the archers stand where they are and shoot at the target every time they can, by hand (npcaim on) or by the dice: no fight AI, no perception's wait, arrows topped up (the aim's calibration) |
 | `still <npc\|player> [off]` | hit, it neither stumbles nor flinches: a target that keeps its pose (as its zones were dumped) |
+| `dodge [<npc>] back\|left\|right\|forward\|none [before <attacker> <ms>]` | the melee dodge (`[GAME] melee_dodge`, `Npc::meleeDodge`) that way relative to its facing, now, or as the attacker's next blow comes within `<ms>` of its contact (`Pose::nextMeleeContact`, 8 s at most); `bench.log`: `melee dodge <npc>: <way>, armour <class>, <move> <animation> [(no <missing>)], cost <n>, window <a>-<b> ms` or why there is none, and `... hit by <npc> at <ms> ms of <move> <a>-<b> ms: did not pass` for a blow, arrow or spell inside the window. `melee-dodge.bench`: the four ways by the dodge key, then by the jump key (the default binding; with the strafe and the turn key), one under the bandit's blow, medium and heavy armour; the same file with `MELEE_DODGE=0` checks the flag off (`tap jump` jumps: `anims` logs `bs=8`) |
 | `aimat <npc\|nearest> [head\|body\|limb\|leg] [raw]`, `aimat <x> <y> <z>`, `aimat ahead [dist] [height]`, `aimat off` | the manual aim aims at the middle of that zone of the npc (every frame) or at a point, instead of the mouse; the hero faces it. Over it by the drop of the arrow at full draw, as an archer holds over (`raw`: right at it). `limb` is the middle of all the limbs, which lies inside the trunk; `leg`: the limb capsules below the knees. A last word `mouse`: as the player does, the game's camera turns so that the center of the screen falls on it, the hero turned with the camera, and the shot goes from the center of the screen (the game's own aim: what the camera sees, the lean by where the hero looks) |
 | `open [dist cm]` | how far it is open around the hero at head height and at the knees every 15 degrees from the facing: where to put a target |
 | `volley <shots> [hold ms] [draw 0..1] [jitter ms]` | shots by hand in a row: press `action`, draw that far (1: full), hold (up to `jitter` longer at random: the sway is a function of time), release, wait for the next arrow; every arrow is in the log (`arrow shot: ..., by <npc>`, `arrow hit <npc>: <zone>, hp a -> b, draw, flew, at, by <npc>` or `arrow missed: ..., by <npc>`) |
@@ -687,6 +694,32 @@ behavior and adds no body impact damage. `[GAME] body_impact_damage` defaults to
 1; Marvin `toggle body_impact_damage` changes it during play. The native contract
 is `gothic-physics-contract`. Acceptance numbers and the ON/OFF duel and Mac
 physics timing comparison belong in the [body impact report](../../reports/physics/2026-11-01-body-impact/README.md).
+
+`body-traces.bench` checks bodies as physical traces (stage 8, step 4b) on a fresh
+`WORLD=NEWWORLD.ZEN` in the Xardas valley. The native fixture `body_traces`
+(`common/game/bodytracesbench.cpp`) spawns and kills, by the hero's hand, a person,
+a wolf and three people the lifetime rule keeps (an `ITM_MISSION` key, `IMMORTAL`,
+`NPCTYPE_MAIN`), and parks a living observer with perceptions off. `view` reads the
+production `npc_view` through the bridge's writer (`TestBench::npcView`): the person
+is a `body` trace with `npc`, `age` and a stable id, the wolf is none; OFF there are
+no body rows. `advance <minutes>` moves the clock alone; `sleep <hours>` sleeps like
+a bed (`World::setDayTime`); `hero near|far-visible|far-hidden` places the hero
+within 30 m, beyond 30 m with an open ray from his eyes to a body sight point, or
+beyond 30 m with none; `check <label>` fails the run on the first unmet rule.
+`save created` writes `session-created.sav`. A complete run ends with the
+`check sleep-far` sample: `scripts/bench.sh` does not fail a game killed by `TIMEOUT`.
+
+```bash
+WORLD=NEWWORLD.ZEN scripts/bench.sh body-traces /abs/out/on
+WORLD=NEWWORLD.ZEN BODY_TRACES=0 scripts/bench.sh body-traces /abs/out/off
+SAVE=/abs/out/on/session-created.sav scripts/bench.sh body-traces-reload /abs/out/reload
+python3 scripts/body_traces_compare.py /abs/out/on /abs/out/reload
+```
+
+`body-traces-legacy-make.bench` uses only generic commands: run it with a build of
+main from before body traces to get `session-legacy.sav` (a dead person and a wolf);
+`SAVE=<that>/session-legacy.sav scripts/bench.sh body-traces-legacy` loads it with
+the current build: old bodies get an id, `age: null`, and a lifetime from the load.
 
 For stage 2, `ragdoll.bench` exercises death, sleeping/wake, controlled unconscious recovery,
 slopes, stairs, a cliff and the human/Wolf/Scavenger/Molerat/Orc models. Run it with
@@ -875,6 +908,54 @@ clock and draws only the captured frame; `TEMPEST_AUDIO_LOOPBACK=48000` records 
 
 Good spots near the default save (Xardas' tower): `NW_XARDAS_TOWER_VALLEY_05` (27 degree slope in a
 forest), `NW_XARDAS_TOWER_IN1_*` (ramp inside the tower), `NW_XARDAS_STAIRS_01`..`_04`.
+
+## NPC day parity
+
+`npc-day-parity` (world streaming, step 1, item 6) runs one continuous game day from a fresh `NEWWORLD`
+(day 0, 08:00) and journals every NPC every 5 game minutes. No `set time`: it calls
+`resetPositionToTA` and teleports everyone. The hero stands, immortal, on open ground below Xardas'
+tower (the valley's rats and bloodflies attack him all day). Start it once per NPC simulation tier and
+compare two runs:
+
+```sh
+WORLD=NEWWORLD.ZEN OPENGOTHIC_NPC_SIM_TIER=full TIMEOUT=7200 RYZEN_MAX=120m BENCH_HOST=ryzen \
+  scripts/bench.sh npc-day-parity /absolute/out/full-1
+WORLD=NEWWORLD.ZEN OPENGOTHIC_NPC_SIM_TIER=simplified TIMEOUT=7200 RYZEN_MAX=120m BENCH_HOST=ryzen \
+  scripts/bench.sh npc-day-parity /absolute/out/simplified-1
+scripts/npc_day_parity.py /absolute/out/full-1 /absolute/out/simplified-1 --label-a full --label-b simplified \
+  --tolerances scripts/bench/npc-day-parity.tolerances.json --out /absolute/out/report.md --json /absolute/out/report.json
+```
+
+A day takes 37–45 minutes on Ryzen (exclusive window; an interactive play session closes it) and writes
+about 55 MB. On one build the journal is byte-identical between runs, so
+`scripts/bench/npc-day-parity.tolerances.json` asks for exact equality; a change of the executor adds its own
+allowance with command-line limits. `npcday` files:
+
+| File | Contents |
+|---|---|
+| `npc-day.json` | Tier mode, seed, private random streams, period, start time and hero; at the end the sample/event counts, wall time and the NPC tick time per tier |
+| `npc-day.csv` | Per NPC and sample: `t_min` (scheduled, minutes since the start), key (`SYMBOL#ordinal` by start position), alive, HP, routine entry in force (`index hh:mm-hh:mm ZS waypoint`), ZS state and its time, position (cm), nearest waypoint and distance, AI queue size and head, body state, inventory hash and item count, mobsi scheme, tier, policy, hero flag |
+| `npc-day-events.csv` | Polled every world tick: `zs_start`/`zs_end`, `ta` (routine entry change), `death`/`revive`, `insert`/`remove`, with game minutes and position |
+| `npc-day-cost.csv` | Per sample: wall seconds, NPCs within 30/60 m of the hero, world ticks, NPCs per tier, tier transitions and `Npc::tick` milliseconds per tier since the previous sample |
+
+Every NPC gets a private script random stream (`GameScript::isolateRandom`, seed from `seed`, stream from
+the key), so one NPC's extra `Hlp_Random` or dice roll does not shift every later NPC's numbers; `shared`
+keeps the game's single stream. The journal drops exactly the streams it registered when it finishes or
+stops, so commands after `npcday` use the shared stream again. Do not combine `npcday` with the body arena
+in one scenario: the arena isolates its actors and clears all streams on reset. `std::rand` (sound variants, gestures, parry variant) is not reseeded.
+States that start and end within one world tick are not seen by the event poll.
+
+`scripts/npc_day_parity.py` matches samples by time and key and leaves the hero out, with his events
+(`--min-hero-distance <m>` also leaves out NPCs near him). Completeness gates come first, because the metrics
+only see the samples both runs share: `require_done` (both `end_reason` are `done`), `require_full_length`
+(both reach their requested minutes and end at the same time), `max_only_samples` (samples present in one run
+only) and `max_missing_end` (an NPC at the end of one run and not the other; such an NPC also counts for the
+end-of-run alive and inventory checks). It reports the share of NPC-samples in the same
+ZS state and routine entry, HP and inventory, the position error (p50/p95/max, straight line, metres),
+matched ZS starts and their offset (greedy, same state, `--window` game minutes), deaths, alive and
+inventory differences at the end, the same split by run B's tier and by game hour, and the NPCs that
+diverge most. Tolerances come from `--tolerances` (JSON) or `--min-same-zs` and similar options
+(`--require-done false` turns a gate off); a failed check exits with 1. Twin monsters that spawn at the same point keep their order of the start array.
 
 ## Engine side
 

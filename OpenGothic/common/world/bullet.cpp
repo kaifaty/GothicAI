@@ -217,7 +217,7 @@ void Bullet::onCollide(asset::MaterialGroup matId) {
   }
 
 bool Bullet::onCollidePrecise(Npc& npc, const Vec3& from, const Vec3& to) {
-  if(&npc==origin() || isFinished())
+  if(&npc==origin() || isFinished() || &npc==passedDodger)
     return false;
   // between the arm and the trunk, over the head: past it
   float t = 0;
@@ -231,6 +231,17 @@ bool Bullet::onCollidePrecise(Npc& npc, const Vec3& from, const Vec3& to) {
   impactKnown = true;
   const int32_t hp = npc.attribute(ATR_HITPOINTS);
   const bool    ret = onCollide(npc);
+  if(!ret && &npc==passedDodger) {
+    if(TestBench::isActive()) {
+      const auto who = TestBench::who(&npc);
+      const auto by  = TestBench::who(origin());
+      char buf[256];
+      std::snprintf(buf,sizeof(buf),"arrow passed %.*s: inside its dodge window, flies on, by %.*s",
+                    int(who.size()),who.data(),int(by.size()),by.data());
+      TestBench::note(buf);
+      }
+    return false;
+    }
   if(TestBench::isActive()) {
     const auto p   = from + Vec3::normalize(to-from)*t;
     const auto who = TestBench::who(&npc);
@@ -246,9 +257,12 @@ bool Bullet::onCollidePrecise(Npc& npc, const Vec3& from, const Vec3& to) {
   }
 
 bool Bullet::onCollide(Npc& npc) {
-  if(&npc==origin() || isFinished())
+  if(&npc==origin() || isFinished() || &npc==passedDodger)
     return false;
 
+  // An arrow or a bolt into a dodger inside the dodge's window: takeDamage refuses it (and logs it); it is not
+  // pinned into the body and does not stop, it flies on as a miss. A spell still bursts there, harmless.
+  const bool passes = !isSpell() && npc.isMeleeDodgeInvulnerable();
   if(ow!=nullptr) {
     // no damage between ally npc's, only emit pfx effect
     const bool friendlyFire = wrld->script().isFriendlyFire(*ow, npc);
@@ -257,6 +271,13 @@ bool Bullet::onCollide(Npc& npc) {
         npc.takeDamage(*ow,this,vfx.handle(),spellId()); else
         npc.takeDamage(*ow,this);
       }
+    }
+  if(passes) {
+    passedDodger = &npc;
+    zone         = HitZones::None;
+    impactOwner  = size_t(-1);
+    impactKnown  = false;
+    return false;
     }
   applySpellPhysics(&npc);
   vfx.setKey(*wrld,SpellFxKey::Collide);

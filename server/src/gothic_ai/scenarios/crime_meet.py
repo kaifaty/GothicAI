@@ -17,6 +17,7 @@ from ..trace import CallTrace, TurnTrace
 from .common import (
     HILDA,
     LOBART,
+    SharedBodyWatch,
     WitnessReaction,
     _logged,
     _save,
@@ -130,6 +131,7 @@ async def crime_meet(
     sent: list[Any] = []
     received: list[tuple[float, GameMessage]] = []
     hero_states: list[dict[str, Any]] = []
+    hero_symbol: set[int] = set()
     meeting_origin: tuple[float, ...] | None = None
     send = link.send
 
@@ -146,7 +148,10 @@ async def crime_meet(
         received.append((time.monotonic(), message))
 
     def observe(packet: dict[str, Any]) -> None:
-        hero_states.extend(row["self"] for row in packet["observations"])
+        # The P30 pilot may add Lobart to the shared subscription: keep only the hero's rows.
+        hero_states.extend(
+            row["self"] for row in packet["observations"] if row["script_symbol"] in hero_symbol
+        )
 
     def deferred_crime(_npc: str, _crime: str) -> None:
         # Preparation is not a meeting. Avoid an eager important Amends TALK consuming the scene
@@ -226,7 +231,7 @@ async def crime_meet(
         await link.debug("load", slot + 1)
         await loading
         await link.wait_world()
-        await link.body_watch([])
+        await watch.watch([])
         sent.clear()
         hero_states.clear()
         return check(f"{label}_branch", not facts("crime"), f"{len(facts('crime'))} crimes")
@@ -437,9 +442,11 @@ async def crime_meet(
     await link.wait_world()
     if link.session is None:
         await wait_message(link, Session, timeout=10)
+    hero_symbol.update(await link.story_eval(LOBART, [["sym", "PC_HERO"]]))
     link.send = sending  # type: ignore[method-assign]
     link.listeners.append(record)
     link.raw_body_listeners.append(observe)
+    watch = SharedBodyWatch(link, "crime_meet")
     amends._queue_crime = deferred_crime  # type: ignore[method-assign]
     try:
         await link.debug("time", hour=8, minute=0)
@@ -484,7 +491,7 @@ async def crime_meet(
             cid = str(crime["id"])
             if not check("home_owner_ready", await placed(LOBART, WITNESS_POINT, ready=True)):
                 return _logged(results)
-            await link.body_watch(["PLAYER"], rate_hz=20)
+            await watch.watch(["PLAYER"])
             entered = time.monotonic()
             before_home = len(sent)
             prepared, preparation = await home_entry()
@@ -735,8 +742,9 @@ async def crime_meet(
         amends._queue_crime = original_queue  # type: ignore[method-assign]
         try:
             if not link.closed.is_set():
-                await link.body_watch([])
+                await watch.watch([])
         finally:
+            watch.close()
             link.send = send  # type: ignore[method-assign]
             link.listeners.remove(record)
             link.raw_body_listeners.remove(observe)

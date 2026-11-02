@@ -14,6 +14,7 @@ from .basics import m6_knows as m6_knows
 from .basics import svm_lines as svm_lines
 from .basics import tts_lines as tts_lines
 from .basics import websocket as websocket
+from .body_found import body_found as body_found
 from .cheat import cheat_scenario as cheat_scenario
 from .combat import combat_barks as combat_barks
 from .combat import hero_yield as hero_yield

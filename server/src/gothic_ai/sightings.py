@@ -47,7 +47,6 @@ from .llm import Tool, ToolCall
 from .memory import MemoryStore
 from .perception import WEAPON, _doing, armor_look, trace_name
 from .protocol import (
-    BROKEN_TRACE_PROTOCOL,
     NOISE_PROTOCOL,
     TRACE_PROTOCOL,
     GameMessage,
@@ -60,6 +59,7 @@ from .protocol import (
     Session,
     Snapshot,
     Trace,
+    trace_supported,
 )
 from .quests import Lie, caught
 from .turn import ToolOutcome
@@ -88,6 +88,7 @@ TRACES_SHOWN = 6
 HEARD_SHOWN = 4
 FADE_MIN = 180  # ...not longer ago than this (game minutes, about 12 minutes of real time)
 HOSTILE = ("hostile", "angry")
+AGED_TRACES = ("broken", "body")  # their age when first seen is kept: since the breakage, since the death
 
 NOTABLE = {
     "weapon": "с оружием наголо",
@@ -143,7 +144,8 @@ class Sighting:
     doing: str = ""  # what it was doing when last seen: «сидит у костра»
     saved: int = -1  # the end last written down; -1: never
     trace_kind: str = ""  # physical evidence, first seen at start; not a person or proof of a culprit
-    trace_age: int | None = None  # broken: its age when first seen, not time elapsed since seeing it
+    trace_age: int | None = None  # broken, body: its age when first seen, not time elapsed since seeing it
+    trace_npc: str = ""  # body: the dead npc's id (who lies there, not who killed him)
 
     @property
     def key(self) -> str:
@@ -163,7 +165,8 @@ class Sighting:
             **({} if self.known else {"known": False}),
             **({"doing": self.doing} if self.doing else {}),
             **({"trace_kind": self.trace_kind} if self.trace_kind else {}),
-            **({"trace_age": self.trace_age} if self.trace_kind == "broken" else {}),
+            **({"trace_age": self.trace_age} if self.trace_kind in AGED_TRACES else {}),
+            **({"trace_npc": self.trace_npc} if self.trace_npc else {}),
         }
 
     @classmethod
@@ -182,6 +185,7 @@ class Sighting:
             doing=str(record.get("doing", "")),
             trace_kind=str(record.get("trace_kind", "")),
             trace_age=record.get("trace_age"),
+            trace_npc=str(record.get("trace_npc", "")),
         )
         s.saved = s.end
         return s
@@ -268,6 +272,9 @@ class Sightings:
         self._caught: set[tuple[str, str]] = set()  # (npc, his words) caught already
         self.hearsay: Hearsay | None = None  # what witnesses told the npc (witnesses.py)
         self._background: set[asyncio.Task[Any]] = set()
+        # a trace first seen, once per npc and trace (found_traces.py): (viewer, trace, observation, view)
+        self.on_trace: list[Callable[[str, Trace, Sighting, NpcView], None]] = []
+        self.trace_note: Callable[[str, Sighting], str] | None = None  # what it made of it (found_traces)
         desk.on_view.append(self.saw)
         link.listeners.append(self._on_message)
 
@@ -333,24 +340,36 @@ class Sightings:
         hello = getattr(self.link, "hello", None)
         if hello is None or hello.protocol >= TRACE_PROTOCOL:
             for trace in view.traces:
-                if trace.kind == "broken" and hello is not None and hello.protocol < BROKEN_TRACE_PROTOCOL:
+                if not trace_supported(trace.kind, hello.protocol if hello is not None else None):
                     continue
                 who = f"TRACE:{trace.id}:{trace.kind}"
                 s = mind.traces.get(who)
                 if s is None:
                     where, place = self._where(view, trace)
+                    name, known = trace.name, True
+                    if (dead := self.desk.dead_of(view, trace)) is not None:
+                        # whose body: by name if it knew him, else by his look («незнакомец, по виду…»)
+                        known = self.desk.knows(viewer, dead)
+                        name = self.desk.label(viewer, dead).removeprefix("тело: ")
                     s = Sighting(
                         who,
-                        trace.name,
+                        name,
                         now,
                         now,
                         [where],
                         place_ids=[place] if place else [],
+                        known=known,
                         trace_kind=trace.kind,
-                        trace_age=trace.age if trace.kind == "broken" else None,
+                        trace_age=trace.age if trace.kind in AGED_TRACES else None,
+                        trace_npc=(trace.npc or "").upper() if trace.kind == "body" else "",
                     )
                     mind.traces[who] = s
                     self._write(viewer, s)
+                    for listener in self.on_trace:
+                        try:
+                            listener(viewer, trace, s, view)
+                        except Exception:
+                            log.exception("a trace listener failed")
 
     def heard(self, event: NpcEvent) -> None:
         """An actual noise event, kept separately from things seen and never usable as a В line."""
@@ -471,6 +490,11 @@ class Sightings:
                 age = "; давность при наблюдении " + (
                     f"{s.trace_age} мин" if s.trace_age is not None else "неизвестна"
                 )
+            elif s.trace_kind == "body":
+                age = "; " + (
+                    f"смерть примерно за {s.trace_age} мин до того" if s.trace_age is not None
+                    else "когда умер — не знаешь"
+                )
             return f"{_observed_when(s.start, now)} — {trace_name(s.trace_kind, s.name)}; {parts[0]}{age}"
         if s.who == HERO:
             parts.append(_wore(s) if bare or any(s.armor) else "")
@@ -506,7 +530,8 @@ class Sightings:
             for s in traces:
                 sid = f"В{len(shown) + 1}"
                 shown[sid] = s
-                lines.append(f"- {sid}: {self.words(s)}.")
+                note = self.trace_note(npc, s) if self.trace_note is not None else ""
+                lines.append(f"- {sid}: {self.words(s)}{note}.")
         deeds = self.crimes.seen(npc) if self.crimes is not None else []
         self._crime_shown[npc] = {f"Д{i}": deed for i, deed in enumerate(reversed(deeds), 1)}
         if deeds:
@@ -573,6 +598,24 @@ class Sightings:
             for s in self.noted(npc)
             if "dead" not in s.notable
         }
+
+    def present(
+        self, npc: str, place: str, at: int, window: int, *, skip: set[str] | None = None
+    ) -> list[Sighting]:
+        """Whom the npc saw at the place (the book's id) within `window` game minutes of `at`: people and
+        creatures, never traces, those seen dead, itself or `skip`. Presence, not proof of anything."""
+        npc = npc.upper()
+        skip = {npc, *(w.upper() for w in skip or ())}
+        return [
+            s
+            for s in self.mind(npc).sightings
+            if not s.trace_kind
+            and s.who not in skip
+            and "dead" not in s.notable
+            and s.end >= at - window
+            and s.start <= at + window
+            and place in s.place_ids
+        ]
 
     def where_seen(self, npc: str, who: str) -> str | None:
         """The place (the book's id) where the npc last saw `who`, lately."""

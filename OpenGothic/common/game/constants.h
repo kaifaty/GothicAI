@@ -511,6 +511,14 @@ enum class NpcProcessPolicy : uint8_t {
   AiFar2
   };
 
+// Simulation tier of an NPC (world streaming, step 1, item 6): Full near the
+// hero, Simplified elsewhere. Independent of NpcProcessPolicy. Runtime only,
+// never saved (world/npcsimtier.h).
+enum class NpcSimTier : uint8_t {
+  Full,
+  Simplified
+  };
+
 enum AiStateCode : int32_t {
   LOOP_CONTINUE = 0,
   LOOP_END      = 1,

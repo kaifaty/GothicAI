@@ -28,6 +28,7 @@
 #include <Tempest/Application>
 #include <Tempest/Log>
 #include <chrono>
+#include <optional>
 #include <stdexcept>
 #include <unordered_set>
 
@@ -372,7 +373,41 @@ void WorldObjects::loadPlacedItems(Serialize& fin) {
     }
   }
 
+void WorldObjects::updateSimTiers() {
+  const auto  mode      = NpcSimTiers::mode();
+  const auto* residency = owner.chunkResidency();
+  const auto* pl        = owner.player();
+  size_t   full = 0;
+  uint64_t toFull = 0, toSimplified = 0;
+  for(auto& ptr:npcArr) {
+    auto&      npc   = *ptr;
+    const auto pos   = npc.position();
+    const bool hero  = (&npc==pl || npc.isPlayer());
+    // Training and arena actors keep native simulation at every distance.
+    const bool keep  = NavDemos::fullSimulation(npc) || BodyArena::isActor(npc);
+    const auto prev  = npc.simTier();
+    const auto next  = NpcSimTiers::desired(mode,hero,keep,residency,ChunkId::fromPosition(pos.x,pos.z),prev);
+    if(npc.hasSimTier() && next!=prev) {
+      if(next==NpcSimTier::Full)
+        ++toFull; else
+        ++toSimplified;
+      }
+    npc.setSimTier(next);
+    full += (next==NpcSimTier::Full);
+    }
+  simTiers.mode                = mode;
+  simTiers.full                = full;
+  simTiers.simplified          = npcArr.size()-full;
+  simTiers.toFull             += toFull;
+  simTiers.toSimplified       += toSimplified;
+  simTiers.transitionsLastTick = toFull+toSimplified;
+  FrameProfile::add(FrameProfile::Amount::NpcFull,full);
+  FrameProfile::add(FrameProfile::Amount::NpcSimplified,npcArr.size()-full);
+  FrameProfile::add(FrameProfile::Amount::NpcTierTransitions,toFull+toSimplified);
+  }
+
 void WorldObjects::tick(uint64_t dt, uint64_t dtPlayer) {
+  updateSimTiers();
   tickPlacedItems();
   auto passive=std::move(sndPerc);
   sndPerc.clear();
@@ -398,6 +433,15 @@ void WorldObjects::tick(uint64_t dt, uint64_t dtPlayer) {
   const auto pl      = owner.player();
   // Body training with a frozen world: other NPCs (but the hero) and interactive objects stand still.
   const bool frozen  = BodyArena::frozenWorld();
+  // Both tiers run the same executor; only the elapsed time is split. One
+  // clock read per run of consecutive NPCs of the same tier keeps the cost
+  // proportional to tier changes along the array, not to the NPC count.
+  using Clock = std::chrono::steady_clock;
+  std::optional<FrameProfile::Scope> tierZone;
+  NpcSimTier        runTier  = NpcSimTier::Full;
+  bool              runOpen  = false;
+  Clock::time_point runStart;
+  double            tierMs[2] = {};
   for(size_t i=0; i<npcArr.size(); ++i) {
     auto& npc = *npcArr[i];
     uint64_t d = (pl==&npc ? dtPlayer : dt);
@@ -405,8 +449,27 @@ void WorldObjects::tick(uint64_t dt, uint64_t dtPlayer) {
       continue;
     if(frozen && pl!=&npc && !BodyArena::isActor(npc))
       continue;
+    const auto tier = npc.simTier();
+    if(!runOpen || tier!=runTier) {
+      const auto now = Clock::now();
+      if(runOpen)
+        tierMs[size_t(runTier)] += std::chrono::duration<double,std::milli>(now-runStart).count();
+      tierZone.reset();
+      tierZone.emplace(tier==NpcSimTier::Full ? FrameProfile::Zone::NpcFullTick : FrameProfile::Zone::NpcSimplifiedTick);
+      runTier  = tier;
+      runStart = now;
+      runOpen  = true;
+      }
     npc.tick(d);
     }
+  if(runOpen)
+    tierMs[size_t(runTier)] += std::chrono::duration<double,std::milli>(Clock::now()-runStart).count();
+  tierZone.reset();
+  simTiers.fullTickMs             = tierMs[size_t(NpcSimTier::Full)];
+  simTiers.simplifiedTickMs       = tierMs[size_t(NpcSimTier::Simplified)];
+  simTiers.fullTickMsTotal       += simTiers.fullTickMs;
+  simTiers.simplifiedTickMsTotal += simTiers.simplifiedTickMs;
+  ++simTiers.ticks;
 
   for(auto& i:routines) {
     auto s = i.stateByTime(owner.time());
@@ -1338,11 +1401,20 @@ void WorldObjects::resetPositionToTA() {
   for(auto& r:routines)
     r.curState = 0;
 
-  for(auto& i:npcInvalid)
-    if(i->handlePtr().use_count()>1)
-      npcArr.push_back(std::move(i)); else
+  // [GAME] body_traces: a clock leap (sleep, Wld_SetTime, world re-entry) neither retires
+  // the dead nor carries them to their routine point. Bodies lie where they fell and
+  // leave by the three-day rule (World::sweepBodies). Off: vanilla OpenGothic.
+  const bool keepBodies = Gothic::physicsFlags().bodyTraces;
+  std::vector<std::unique_ptr<Npc>> retired;
+  for(auto& i:npcInvalid) {
+    if(i->handlePtr().use_count()<=1)
       npcRemoved.push_back(std::move(i));
-  npcInvalid.clear();
+    else if(keepBodies && i->isDead())
+      retired.push_back(std::move(i)); // retired earlier: it would only be retired again
+    else
+      npcArr.push_back(std::move(i));
+    }
+  npcInvalid = std::move(retired);
 
   for(auto& i : npcArr) {
     i->attachToPoint(nullptr);
@@ -1350,6 +1422,10 @@ void WorldObjects::resetPositionToTA() {
 
   for(size_t i=0;i<npcArr.size();) {
     auto& n = *npcArr[i];
+    if(keepBodies && n.isDead() && !n.isPlayer()) {
+      ++i;
+      continue;
+      }
     if(n.resetPositionToTA()){
       ++i;
       } else {

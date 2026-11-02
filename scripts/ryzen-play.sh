@@ -220,6 +220,48 @@ def read_built(repo, head):
     return json.loads(path.read_text()) if path.exists() else {"good": head, "built": head}
 
 
+def snapshot(repo):
+    def commit(ref):
+        return subprocess.check_output(["git", "-C", repo, "rev-parse", ref], text=True).strip()
+
+    head = commit("HEAD")
+    built = read_built(repo, head)
+    failed_path = repo.parent / "play.failed"
+    failed = failed_path.read_text().strip() if failed_path.exists() else ""
+    latest = commit("origin/main")
+    target = built["good"] if latest == failed else latest
+    return {"head": head, "latest": latest, "target": target,
+            "good": built["good"], "built": built["built"], "failed": failed}
+
+
+def installation_status():
+    repo = Path.home() / "gothic-ai/play"
+    if not (repo / ".git").exists():
+        raise ValueError("~/gothic-ai/play is not a git clone")
+    state = snapshot(repo)
+    revisions = f'HEAD..{state["target"]}'
+    state["current"] = state["built"] == state["head"] == state["target"]
+    state["latest_failed"] = state["latest"] == state["failed"]
+    state["behind"] = int(subprocess.check_output(
+        ["git", "-C", repo, "rev-list", "--count", "--first-parent", revisions], text=True))
+    commits = subprocess.check_output(
+        ["git", "-C", repo, "log", "--first-parent", "-n", "5", "--format=%H", revisions],
+        text=True).splitlines()
+    state["changes"] = []
+    for commit in commits:
+        subject, body = subprocess.check_output(
+            ["git", "-C", repo, "show", "-s", "--format=%s%x00%b", commit], text=True).split("\0", 1)
+        merge = re.match(r"^Merge pull request #(\d+) from ", subject)
+        title = next((line.strip() for line in body.splitlines() if line.strip()), subject) if merge else subject
+        state["changes"].append({"pr": int(merge[1]) if merge else None, "title": title})
+    try:
+        state["report"] = json.loads((repo.parent / "play-update.json").read_text())
+    except (OSError, ValueError):
+        state["report"] = None
+    print(json.dumps(state, ensure_ascii=False))
+    return 0
+
+
 def auto_update(expected_origin, *, admitted=False):
     home = Path.home()
     repo = home / "gothic-ai/play"
@@ -235,23 +277,12 @@ def auto_update(expected_origin, *, admitted=False):
         atomic_write(state_path, text)
         return code
 
-    def commit(ref):
-        return subprocess.check_output(["git", "-C", repo, "rev-parse", ref], text=True).strip()
-
-    def snapshot():
-        head = commit("HEAD")
-        built = read_built(repo, head)
-        failed = failed_path.read_text().strip() if failed_path.exists() else ""
-        target = commit("origin/main")
-        if target == failed:
-            target = built["good"]
-        state.update(old_commit=head, new_commit=target, failed_commit=failed)
-        return head, target, built
-
     try:
         if not admitted:
             run(["git", "-C", repo, "fetch", "origin"])
-        head, target, built = snapshot()
+        built = snapshot(repo)
+        head, target = built["head"], built["target"]
+        state.update(old_commit=head, new_commit=target, failed_commit=built["failed"])
         if not admitted:
             if built["built"] == head == target:
                 return finish("up_to_date")
@@ -276,7 +307,9 @@ def auto_update(expected_origin, *, admitted=False):
             check_tools(home)
             check_checkout(repo, expected_origin)
             # A manual update may have finished while this job was queued.
-            head, target, built = snapshot()
+            built = snapshot(repo)
+            head, target = built["head"], built["target"]
+            state.update(old_commit=head, new_commit=target, failed_commit=built["failed"])
             if built["built"] == head == target:
                 return finish("up_to_date")
             good = built["good"]
@@ -405,6 +438,8 @@ def main(argv=None):
     try:
         if argv == ["__prepare"]:
             return prepare()
+        if argv == ["__status"]:
+            return installation_status()
         if argv[:1] == ["__auto"]:
             return auto_update(argv[1])
         if argv[:1] == ["__auto_build"]:

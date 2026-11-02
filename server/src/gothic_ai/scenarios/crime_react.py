@@ -19,7 +19,7 @@ from ..protocol import (
     Session,
     ThreatControlCmd,
 )
-from .common import HILDA, LOBART, _logged, _save, _until, _until_async, wait_message
+from .common import HILDA, LOBART, SharedBodyWatch, _logged, _save, _until, _until_async, wait_message
 from .crimes import HOUSE
 
 SCENARIOS = {
@@ -57,6 +57,7 @@ async def crime_react(
     sent: list[Any] = []
     received: list[Any] = []
     hero_states: list[dict[str, Any]] = []
+    hero_symbol: set[int] = set()
     original_cards, send = reactions.cards, link.send
     hero_cups_before = owner_cups_before = 0
 
@@ -74,8 +75,11 @@ async def crime_react(
             received.append(message)
 
     def body(packet: dict[str, Any]) -> None:
-        # Only PLAYER is watched, without taking its body or choosing an action for it.
-        hero_states.extend(row["self"] for row in packet["observations"])
+        # PLAYER is watched without taking its body or choosing an action for it. The P30
+        # pilot may add the attacker to the shared subscription: keep only the hero's rows.
+        hero_states.extend(
+            row["self"] for row in packet["observations"] if row["script_symbol"] in hero_symbol
+        )
 
     def holds(cid: str, npc: str) -> list[PerceptionHeld]:
         return [m for m in received if isinstance(m, PerceptionHeld) and m.deed == cid and m.npc == npc]
@@ -349,7 +353,7 @@ async def crime_react(
         # A passive, unarmed hero falls from real melee damage; no debug knockdown or kill is used.
         await link.debug("player_hp", hp=10 if fighting else 5000)
         if fighting:
-            await link.body_watch(["PLAYER"], rate_hz=20)
+            await watch.watch(["PLAYER"])
         if not await perception_ready(label, witness):
             return None
         sent.clear()
@@ -397,9 +401,11 @@ async def crime_react(
     await link.wait_world()
     if link.session is None:
         await wait_message(link, Session, timeout=10)
+    hero_symbol.update(await link.story_eval(LOBART, [["sym", "PC_HERO"]]))
     link.send = sending  # type: ignore[method-assign]
     link.listeners.append(record)
     link.raw_body_listeners.append(body)
+    watch = SharedBodyWatch(link, "crime_react")
     try:
         await link.debug("time", hour=8, minute=0)
         humans = {p["npc"] for p in await link.story_people()}
@@ -517,7 +523,7 @@ async def crime_react(
             f"Lobart={await count(LOBART)}, hero={await count('HERO')}",
         ):
             return _logged(results)
-        await link.body_watch([])
+        await watch.watch([])
 
         if not await clean("vanilla"):
             return _logged(results)
@@ -537,9 +543,10 @@ async def crime_react(
         reactions.cards = original_cards
         try:
             if not link.closed.is_set():
-                await link.body_watch([])
+                await watch.watch([])
                 await send(ThreatControlCmd(hold=hold_threats, deeds=True))
         finally:
+            watch.close()
             link.send = send  # type: ignore[method-assign]
             link.listeners.remove(record)
             link.raw_body_listeners.remove(body)
