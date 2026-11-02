@@ -1102,7 +1102,7 @@ class Npc final {
     bool                          meleeDodgeEvades(Npc& other, std::string_view kind);
     void                          meleeDodgeNote(const std::string& text, std::string_view phase, const std::string& fields);
     void                          tickMeleeBarge();
-    void                          meleeBargeNote(const Npc* target, uint64_t elapsed, std::string_view outcome);
+    void                          meleeBargeNote(const Npc* target, uint64_t elapsed, std::string_view outcome, std::string_view predicted = {});
     std::optional<uint64_t>        meleeBargeOrigin; // one contact per clip; transient, like posture and stun
     bool                          meleeBargeContact = false;
     // Transient per-attacker awareness, sampled before damage perception changes combat state.
