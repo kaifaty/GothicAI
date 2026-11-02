@@ -4,6 +4,11 @@
 #
 #   scripts/bench.sh <scenario file | name from scripts/bench/> [out dir]
 #
+# Completion requires [bench] done in game.log; interrupted runs exit 1 and still produce reports.
+# The engine atomically refreshes heartbeat.json about every 10 s while the scenario runs.
+# Progress is flushed to stdout. Stall/timeout shutdown sends SIGTERM, then SIGKILL after 10 s;
+# the stall watchdog stops after completion, including with KEEP=1.
+#
 # env: GOTHIC_DIR    game data (default: /Volumes/DevSSD/Dev/games/Gothic II)
 #      BENCH_HOST    auto (default): Ryzen first, ryzen: require Ryzen, local: this machine
 #      RYZEN_HOST    SSH host for Ryzen (default: ryzen)
@@ -18,6 +23,8 @@
 #      GOTHIC_INTRO=1 play the new game's intro and the scripts' videos (default: -nointro, none)
 #      NO_BUILD=1    do not rebuild the engine first
 #      TIMEOUT=300   seconds before the game is killed
+#      BENCH_PROGRESS seconds between progress lines (default: 300; 0 disables)
+#      BENCH_STALL   seconds without output changes before killing a stalled game (default: 600; 0 disables)
 #      KEEP=1        the game stays open after the scenario
 #      SOUND, MUSIC  volumes 0..1 (default 0); with TEMPEST_AUDIO_LOOPBACK=48000 the sound of a segment
 #                    goes into <segment>.wav instead of the speakers
@@ -400,21 +407,88 @@ if [[ "$NAME" == streaming-flythrough ]]; then
   export OPENGOTHIC_FRAME_PROFILE="$OUT/frameprofile.csv" OPENGOTHIC_BENCH_VISIBLE=1 OPENGOTHIC_LOADPROBE=1
   BACKGROUND=0
 fi
-START=$(date +%s)
-(cd "$RUN" && exec env TEMPEST_BACKGROUND="$BACKGROUND" TEMPEST_WINDOW_SIZE="${TEMPEST_WINDOW_SIZE:-800x600}" \
+GAME_RC=0
+env TEMPEST_BACKGROUND="$BACKGROUND" TEMPEST_WINDOW_SIZE="${TEMPEST_WINDOW_SIZE:-800x600}" \
   OPENGOTHIC_BENCH="$SCEN" OPENGOTHIC_BENCH_OUT="$OUT" ${KEEP:+OPENGOTHIC_BENCH_KEEP=1} \
-  "$GAME_BIN" -g "$GOTHIC_DIR" -window -devmode "${START_ARGS[@]}") >"$OUT/game.log" 2>&1 &
-PID=$!
-for ((i = 0; i < ${TIMEOUT:-300} * 4; i++)); do
-  kill -0 "$PID" 2>/dev/null || break
-  sleep 0.25
-done
-if kill -0 "$PID" 2>/dev/null; then
-  echo "bench: timeout, game killed" >&2
-  kill "$PID"
-fi
-wait "$PID" || true
-echo "bench: game ran $(( $(date +%s) - START )) s, output in $OUT"
+  python3 - "$OUT" "$RUN" "${TIMEOUT:-300}" "${BENCH_PROGRESS:-300}" "${BENCH_STALL:-600}" \
+  "$GAME_BIN" -g "$GOTHIC_DIR" -window -devmode "${START_ARGS[@]}" <<'PY' || GAME_RC=$?
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import time
+
+out, run = map(Path, sys.argv[1:3])
+timeout, progress, stall = map(int, sys.argv[3:6])
+heartbeat = out / 'heartbeat.json'
+# Never let a pulse from a previous run stand in for this game's progress.
+heartbeat.unlink(missing_ok=True)
+started = last_activity = time.monotonic()
+next_progress = started + progress
+activity = {}
+complete = False
+reason = ''
+log_tail = ''
+with (out / 'game.log').open('w') as log:
+    game = subprocess.Popen(sys.argv[6:], cwd=run, stdout=log, stderr=subprocess.STDOUT)
+    with (out / 'game.log').open(errors='replace') as reader:
+        while True:
+            now = time.monotonic()
+            elapsed = int(now - started)
+            # Read only newly appended log data, including the final lines after exit.
+            exited = game.poll() is not None
+            data = log_tail + reader.read()
+            complete = complete or '[bench] done' in data
+            log_tail = data[-len('[bench] done'):]
+            if exited:
+                break
+            if not complete:
+                changed = {}
+                for directory, _, files in os.walk(out):
+                    for name in files:
+                        path = Path(directory) / name
+                        try:
+                            stat = path.stat()
+                        except FileNotFoundError:
+                            continue  # Atomic heartbeat replacement can race this scan.
+                        changed[path] = (stat.st_mtime_ns, stat.st_size)
+                if changed != activity:
+                    activity = changed
+                    last_activity = now
+                if progress > 0 and now >= next_progress:
+                    try:
+                        pulse = json.loads(heartbeat.read_text())
+                        line = (f"command {pulse['command_index']}/{pulse['command_count']} "
+                                f"{pulse['command']}")
+                        if 'npcday_elapsed_minutes' in pulse:
+                            line += (f", npcday {pulse['npcday_elapsed_minutes']}/"
+                                     f"{pulse['npcday_target_minutes']} game min")
+                    except (OSError, ValueError, KeyError):
+                        line = f"starting (game.log {(out / 'game.log').stat().st_size // 1024} KB)"
+                    print(f'bench: {elapsed // 60} min, {line}', flush=True)
+                    next_progress = now + progress
+                if stall > 0 and now - last_activity >= stall:
+                    reason = f'game stalled: no heartbeat for {stall} s, killed'
+            if not reason and now - started >= timeout:
+                reason = f'timeout after {timeout} s, game killed'
+            if reason:
+                game.terminate()
+                try:
+                    game.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    game.kill()
+                    game.wait()
+                complete = complete or '[bench] done' in log_tail + reader.read()
+                break
+            time.sleep(1)
+elapsed = int(time.monotonic() - started)
+print(f'bench: game ran {elapsed} s, output in {out}', flush=True)
+if not complete:
+    reason = reason or f'scenario did not finish: game exited after {elapsed} s without [bench] done'
+    print(f'bench: {reason}', file=sys.stderr)
+    raise SystemExit(1)
+PY
 grep -E "^\[bench\] (scenario|can not|unknown|marvin failed|goto failed|walkto: no|foreach|waitarrive)" "$OUT/game.log" || true
 
 HOST=mac
@@ -516,4 +590,5 @@ if [[ "$NAME" == streaming-flythrough ]]; then
 fi
 echo "bench: ran on $HOST"
 echo "$OUT"
+if [[ "$GAME_RC" != 0 ]]; then exit "$GAME_RC"; fi
 exit "$REPORT_RC"

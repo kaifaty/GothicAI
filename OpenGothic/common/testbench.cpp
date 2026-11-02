@@ -617,6 +617,9 @@ struct Bench {
   bool        heldNow   = false;
   uint64_t    time      = 0;    // game time since the start, ms
   uint64_t    step      = 0;    // fixed steps made
+  std::chrono::steady_clock::time_point heartbeatStart, heartbeatNext;
+  int64_t     npcDayStart = 0;
+  uint64_t    npcDayMinutes = 0;
 
   uint64_t    waitUntil = 0;
   std::chrono::steady_clock::time_point realWaitUntil;
@@ -1465,6 +1468,35 @@ struct Bench {
   };
 
 Bench bench;
+
+void writeHeartbeat(const World& world) {
+  if(envStr("OPENGOTHIC_BENCH_OUT")==nullptr)
+    return;
+  const auto now = std::chrono::steady_clock::now();
+  if(now<bench.heartbeatNext)
+    return;
+  bench.heartbeatNext = now+std::chrono::seconds(10);
+  const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now-bench.heartbeatStart).count();
+  const auto command = std::min(std::max(bench.pc,size_t(1)),bench.prog.size());
+  char gameTime[80];
+  std::snprintf(gameTime,sizeof(gameTime),"day %lld %02lld:%02lld",(long long)world.time().day(),
+                (long long)world.time().hour(),(long long)world.time().minute());
+  const auto path = outDir+"/heartbeat.json";
+  std::ofstream file(path+".tmp");
+  file << "{\"elapsed_seconds\":" << elapsed << ",\"frame\":" << bench.step
+       << ",\"command_index\":" << command << ",\"command_count\":" << bench.prog.size()
+       << ",\"command\":" << jsonStr(command>0 ? bench.prog[command-1] : "")
+       << ",\"game_time\":" << jsonStr(gameTime);
+  if(NpcDayJournal::running())
+    file << ",\"npcday_elapsed_minutes\":" << double(world.time().toInt()-bench.npcDayStart)/60000.0
+         << ",\"npcday_target_minutes\":" << bench.npcDayMinutes;
+  file << "}\n";
+  file.close();
+  if(file) {
+    std::error_code error;
+    std::filesystem::rename(path+".tmp",path,error);
+    }
+  }
 
 // a line of events.jsonl: what happened when, in the recording's frames (the cut of a short lines up its
 // subtitles and sound by them); `fields` are more json members, without braces
@@ -17052,6 +17084,8 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       event("npcday_error","\"reason\":"+jsonStr(ok ? error : "usage"));
       return;
       }
+    bench.npcDayStart = w.time().toInt();
+    bench.npcDayMinutes = opt.minutes;
     say("npcday "+std::to_string(opt.minutes)+" min every "+std::to_string(opt.period)+(opt.isolate ? "" : " shared"));
     event("npcday_start","\"minutes\":"+std::to_string(opt.minutes)+",\"period\":"+std::to_string(opt.period)+
           ",\"isolate\":"+(opt.isolate ? "true" : "false")+",\"seed\":"+std::to_string(opt.seed));
@@ -20921,6 +20955,7 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
     }
   if(!bench.started) {
     bench.started = true;
+    bench.heartbeatStart = std::chrono::steady_clock::now();
     FootIk::setProbing(true);
     say("start");
     if(std::string_view(scenarioPath).find("placed-items")!=std::string_view::npos)
@@ -21012,6 +21047,7 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
     renderSound(dt);
     return false;
     }
+  writeHeartbeat(*world);
   if(dt==0)
     return false;
   NavBench::tick(*world);

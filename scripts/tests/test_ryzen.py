@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import re
+import select
 import shlex
 import shutil
 import signal
@@ -1444,6 +1445,18 @@ printf '%s\n' "${ENV_ARGS[@]-}"
         self.assertFalse((self.root / 'rsync.jsonl').exists())
 
     def test_bench_routes_content_and_remote_base_paths_to_ryzen(self):
+        forwarding = SCRIPT.read_text().split(
+            "  # Preserve game options, translating paths into this run's output directory.\n", 1)[1]
+        forwarding = forwarding.split('  HD_TEXTURES=', 1)[0]
+        result = subprocess.run(
+            ['bash', '-ec', 'ENV_ARGS=()\nbench_path() { printf "%s" "$1"; }\n' + forwarding
+             + '\nprintf "%s\\n" "${ENV_ARGS[@]}"\n'],
+            env=dict(self.env, TIMEOUT='71', BENCH_PROGRESS='13', BENCH_STALL='29'),
+            capture_output=True, text=True, timeout=5,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for option in ('TIMEOUT=71', 'BENCH_PROGRESS=13', 'BENCH_STALL=29'):
+            self.assertIn(option, result.stdout.splitlines())
         scripts = self.root / 'scripts'
         scripts.mkdir()
         shutil.copyfile(BENCH_SCRIPT, scripts / 'bench.sh')
@@ -1477,6 +1490,126 @@ out = Path(sys.argv[3])
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertEqual(json.loads((out / 'content.json').read_text()), value)
                 self.assertEqual((out / 'host.txt').read_text(), 'ryzen\n')
+
+    def bench_game(self, mode, **settings):
+        scripts = self.root / 'scripts'
+        scripts.mkdir()
+        shutil.copyfile(BENCH_SCRIPT, scripts / 'bench.sh')
+        (scripts / 'base-ensure.sh').write_text('exit 0\n')
+        (scripts / 'bench_report.py').write_text(
+            'from pathlib import Path\nimport sys\n'
+            'Path(sys.argv[1], "report-built").touch()\n')
+        scenario = self.root / 'smoke.bench'
+        scenario.write_text('quit\n')
+        game = self.binaries / 'game'
+        game.write_text(f'#!{sys.executable}\n' + r'''
+import json
+import os
+from pathlib import Path
+import signal
+import time
+root = Path(os.environ['TEST_ROOT'])
+(root / 'game.pid').write_text(str(os.getpid()))
+mode = os.environ['TEST_MODE']
+if mode in ('done', 'keep'):
+    print('[bench] done', flush=True)
+if mode == 'stall':
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+if mode == 'progress':
+    out = Path(os.environ['OPENGOTHIC_BENCH_OUT'])
+    heartbeat = {'elapsed_seconds': 1680, 'frame': 123, 'command_index': 5,
+                 'command_count': 5, 'command': 'npcday 1440', 'game_time': '18:40',
+                 'npcday_elapsed_minutes': 1060, 'npcday_target_minutes': 1440}
+    temporary = out / 'heartbeat.tmp'
+    temporary.write_text(json.dumps(heartbeat))
+    temporary.replace(out / 'heartbeat.json')
+if mode not in ('done', 'exit'):
+    while not (root / 'finish').exists():
+        time.sleep(0.02)
+    print('[bench] done', flush=True)
+''')
+        game.chmod(0o755)
+        out = self.root / 'out'
+        env = dict(self.env, BENCH_HOST='local', NO_BUILD='1', WORLD='NEWWORLD.ZEN',
+                   GOTHIC_DIR=str(self.root / 'data'), GAME_BIN=str(game), TEST_MODE=mode,
+                   TIMEOUT='10', BENCH_PROGRESS='0', BENCH_STALL='0', KEEP='')
+        env.update(settings)
+        process = subprocess.Popen(['bash', str(scripts / 'bench.sh'), str(scenario), str(out)],
+                                   env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+        def cleanup():
+            pid_file = self.root / 'game.pid'
+            if pid_file.exists():
+                try:
+                    os.kill(int(pid_file.read_text()), signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            if process.poll() is None:
+                process.kill()
+            process.communicate(timeout=5)
+
+        self.addCleanup(cleanup)
+        return process, out
+
+    def test_bench_done_succeeds(self):
+        process, out = self.bench_game('done')
+        stdout, stderr = process.communicate(timeout=5)
+        self.assertEqual(process.returncode, 0, stdout + stderr)
+        self.assertTrue((out / 'report-built').exists())
+
+    def test_bench_exit_without_done_fails(self):
+        process, out = self.bench_game('exit')
+        stdout, stderr = process.communicate(timeout=5)
+        self.assertNotIn(process.returncode, (0, 75, 76), stdout + stderr)
+        self.assertRegex(stderr, r'bench: scenario did not finish: game exited after \d+ s without \[bench\] done')
+        self.assertTrue((out / 'report-built').exists())
+
+    def test_bench_stall_kills_game_and_reports_partial_output(self):
+        start = time.monotonic()
+        process, out = self.bench_game('stall', BENCH_STALL='2', TIMEOUT='30')
+        stdout, stderr = process.communicate(timeout=20)
+        self.assertNotIn(process.returncode, (0, 75, 76), stdout + stderr)
+        self.assertIn('bench: game stalled: no heartbeat for 2 s, killed', stderr)
+        self.assertLess(time.monotonic() - start, 18)
+        with self.assertRaises(ProcessLookupError):
+            os.kill(int((self.root / 'game.pid').read_text()), 0)
+        self.assertTrue((out / 'report-built').exists())
+
+    def test_bench_progress_is_streamed_from_heartbeat(self):
+        process, _ = self.bench_game('progress', BENCH_PROGRESS='1')
+        deadline = time.monotonic() + 5
+        output = b''
+        while b'npcday 1060/1440 game min' not in output and time.monotonic() < deadline:
+            ready, _, _ = select.select([process.stdout], [], [], 0.1)
+            if ready:
+                block = os.read(process.stdout.fileno(), 4096)
+                if not block:
+                    break
+                output += block
+        self.assertIn(b'command 5/5 npcday', output)
+        self.assertIn(b'npcday 1060/1440 game min', output)
+        self.assertIsNone(process.poll(), output.decode())
+        (self.root / 'finish').touch()
+        stdout, stderr = process.communicate(timeout=5)
+        self.assertEqual(process.returncode, 0, stdout + stderr)
+
+    def test_bench_timeout_without_done_fails(self):
+        process, out = self.bench_game('timeout', TIMEOUT='2')
+        stdout, stderr = process.communicate(timeout=15)
+        self.assertNotIn(process.returncode, (0, 75, 76), stdout + stderr)
+        self.assertIn('bench: timeout after 2 s, game killed', stderr)
+        with self.assertRaises(ProcessLookupError):
+            os.kill(int((self.root / 'game.pid').read_text()), 0)
+        self.assertTrue((out / 'report-built').exists())
+
+    def test_bench_keep_timeout_after_done_succeeds(self):
+        process, out = self.bench_game('keep', KEEP='1', TIMEOUT='2', BENCH_STALL='1')
+        stdout, stderr = process.communicate(timeout=15)
+        self.assertEqual(process.returncode, 0, stdout + stderr)
+        self.assertNotIn('game stalled', stderr)
+        with self.assertRaises(ProcessLookupError):
+            os.kill(int((self.root / 'game.pid').read_text()), 0)
+        self.assertTrue((out / 'report-built').exists())
 
 
 if __name__ == '__main__':
