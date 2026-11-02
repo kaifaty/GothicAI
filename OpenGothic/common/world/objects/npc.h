@@ -674,7 +674,7 @@ class Npc final {
     bool      rotateTo(float dx, float dz, float speed, AnimationSolver::TurnType anim, uint64_t dt);
     bool      whirlTo(float dx, float dz, float step, uint64_t dt);
     bool      isRotationAllowed() const;
-    auto      playAnimByName(std::string_view name, BodyState bs) -> const Animation::Sequence*;
+    auto      playAnimByName(std::string_view name, BodyState bs, bool force = false) -> const Animation::Sequence*;
     bool      setPlayerPose(bool kneel, std::string_view reason);
     void      tickPeeStream();
     bool      tickPlayerPose();
