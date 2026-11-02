@@ -1051,7 +1051,7 @@ class Npc final {
     MeleeStamina::State            meleeStamina;
     struct Riposte final {
       std::weak_ptr<zenkit::INpc> victim;
-      Tempest::Vec3 from, pair;
+      Tempest::Vec3 heroStart, from, pair;
       uint64_t start = 0, bladeAt = 0, hitEnd = 0;
       bool blade = false, handover = false, applying = false, blocked = false;
       };

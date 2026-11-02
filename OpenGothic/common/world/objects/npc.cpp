@@ -8372,6 +8372,7 @@ bool Npc::beginMeleeRiposte() {
   const auto pair = MeleeRiposte::pairPosition({at.x,at.y,at.z},std::cos(rotationRad()),std::sin(rotationRad()));
   meleeRiposte.emplace();
   meleeRiposte->victim = victim.handlePtr();
+  meleeRiposte->heroStart = at;
   meleeRiposte->from = victim.position();
   meleeRiposte->pair = Vec3(pair.x,pair.y,pair.z);
   meleeRiposte->start = owner.tickCount();
@@ -8413,6 +8414,8 @@ void Npc::meleeRiposteBlade() {
     }
   const auto dp = victim->position()-position();
   const float distance = std::sqrt(dp.x*dp.x+dp.z*dp.z);
+  const auto startDp = victim->position()-r.heroStart;
+  const float startDistance = std::sqrt(startDp.x*startDp.x+startDp.z*startDp.z);
   r.applying = true;
   victim->takeDamage(*this,nullptr,true);
   r.applying = false;
@@ -8423,11 +8426,12 @@ void Npc::meleeRiposteBlade() {
     return;
     }
   meleeRiposteNote(victim,"blade "+std::string(TestBench::who(victim))+" at "+std::to_string(elapsed)+
-                   " ms d="+std::to_string(distance)+" mult="+std::to_string(MeleeRiposte::multiplier()),
+                   " ms d="+std::to_string(distance)+" start_d="+std::to_string(startDistance)+" mult="+std::to_string(MeleeRiposte::multiplier()),
                    "riposte_blade","\"elapsed_ms\":"+std::to_string(elapsed)+",\"distance_cm\":"+std::to_string(distance)+
-                   ",\"riposte_mult\":"+std::to_string(MeleeRiposte::multiplier()));
+                   ",\"start_distance_cm\":"+std::to_string(startDistance)+",\"riposte_mult\":"+std::to_string(MeleeRiposte::multiplier()));
   writeMeleeShadow("{\"event\":\"riposte\",\"attacker\":"+meleeShadowWho(this)+",\"target\":"+meleeShadowWho(victim)+
-                   ",\"tick_ms\":"+std::to_string(owner.tickCount())+",\"riposte_mult\":"+std::to_string(MeleeRiposte::multiplier())+"}");
+                   ",\"tick_ms\":"+std::to_string(owner.tickCount())+",\"distance_cm\":"+std::to_string(distance)+
+                   ",\"start_distance_cm\":"+std::to_string(startDistance)+",\"riposte_mult\":"+std::to_string(MeleeRiposte::multiplier())+"}");
   // The normal damage path owns death and unconsciousness; never replace those clips.
   if(victim->isDown() || victim->meleeKnockdown) {
     victim->meleeRiposteHoldUntil = 0;

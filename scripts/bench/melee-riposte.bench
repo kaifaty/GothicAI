@@ -17,17 +17,15 @@ stats hp 100000 hpmax 100000
 wait 600
 melee-shadow target 2
 wait 600
-pin WOLF 5000 90 0
-wait 34
-pin off
-pin WOLF 5000 -90 0
-wait 34
-pin off
+# Park on actual ground: a distant pin at the hero's height can leave a falling actor.
+put WOLF 5000 90
+put WOLF 5000 -90
 turn 180
 wait 2000
 rec riposte novideo
 
-# (a) Classic: starts at the press, blade at 400 ms, handover at 840 ms; roots 150..180 cm at blade.
+# (a) Classic: blade at 400 ms, handover at 840 ms. At blade the victim is 155..175 cm from
+# the hero's starting root; the moving roots are 110..130 cm apart. Snapshots follow each event by one frame.
 pin BDT_1013_BANDIT_L 150 0 0
 wait 100
 mark a-classic-150
@@ -36,13 +34,13 @@ pair player BDT_1013_BANDIT_L
 press action
 hold forward 100
 pin off
-wait 400
+wait 420
 watch BDT_1013_BANDIT_L
 anims
 pair player BDT_1013_BANDIT_L
 watch player
 anims
-wait 440
+wait 420
 watch BDT_1013_BANDIT_L
 anims
 watch player
@@ -60,12 +58,12 @@ mark a-g2-150
 stun BDT_1013_BANDIT_L posture
 hold attack 100
 pin off
-wait 400
+wait 420
 watch BDT_1013_BANDIT_L
 anims
 pair player BDT_1013_BANDIT_L
 watch player
-wait 440
+wait 420
 watch BDT_1013_BANDIT_L
 anims
 watch player
@@ -83,12 +81,12 @@ hold attack 100
 pin off
 wait 200
 pair player BDT_1013_BANDIT_L
-wait 200
+wait 220
 pair player BDT_1013_BANDIT_L
 watch BDT_1013_BANDIT_L
 anims
 watch player
-wait 440
+wait 420
 watch BDT_1013_BANDIT_L
 anims
 watch player
@@ -111,7 +109,7 @@ wait 300
 strike player BDT_1003_BANDIT_M
 anims
 tap dodge
-wait 540
+wait 560
 watch BDT_1013_BANDIT_L
 anims
 watch player
@@ -195,9 +193,7 @@ melee-shadow weapon 1h
 wait 600
 melee-shadow target 0
 turn 180
-pin BDT_1013_BANDIT_L 5000 90 0
-wait 34
-pin off
+put BDT_1013_BANDIT_L 5000 90
 pin WOLF 150 0 0
 wait 100
 mark h-stunned-wolf
@@ -211,18 +207,20 @@ wait 6000
 
 # Marvin changes the same switch. ON becomes ordinary x1.5; OFF becomes a paired x3 hit.
 melee-shadow target 2
+wait 600
 turn 180
-pin WOLF 5000 90 0
-wait 34
-pin off
-pin WOLF 5000 -90 0
-wait 34
-pin off
+put WOLF 5000 90
+put WOLF 5000 -90
 pin BDT_1013_BANDIT_L 150 0 0
 wait 100
 toggle melee_riposte
 mark toggle-inverted
 stun BDT_1013_BANDIT_L posture
+pair player BDT_1013_BANDIT_L
+watch BDT_1013_BANDIT_L
+anims
+watch player
+anims
 hold attack 100
 pin off
 wait 2400
@@ -235,13 +233,18 @@ wait 100
 stats npc BDT_1013_BANDIT_L hp 1
 mark c-lethal
 stun BDT_1013_BANDIT_L posture
-hold attack 100
-pin off
-wait 400
+pair player BDT_1013_BANDIT_L
 watch BDT_1013_BANDIT_L
 anims
 watch player
-wait 440
+anims
+hold attack 100
+pin off
+wait 420
+watch BDT_1013_BANDIT_L
+anims
+watch player
+wait 420
 watch BDT_1013_BANDIT_L
 anims
 watch player
