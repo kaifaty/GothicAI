@@ -1983,6 +1983,8 @@ void Renderer::drawLights(Encoder<CommandBuffer>& cmd, const WorldView& wview) {
   cmd.setBinding(4, wview.lights().lightsSsbo());
   if(Shaders::options().doMaterialMaps)
     cmd.setBinding(12, gbufOrm, Sampler::nearest());
+  for(size_t i=0; i<LightGroup::MaxCookies; ++i)
+    cmd.setBinding(13+i, wview.lights().cookie(i), Sampler::bilinear()); // u is the azimuth: it wraps
   if(lights.directLightPso==&shaders.lightsVsm) {
     cmd.setBinding(5, vsm.pageTblOmni);
     cmd.setBinding(6, vsm.pageData);

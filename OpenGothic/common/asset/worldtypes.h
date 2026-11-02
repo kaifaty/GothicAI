@@ -415,6 +415,9 @@ struct LightPreset {
   float color_animation_fps {0};
   bool color_animation_smooth {true};
   bool can_move {true};
+  // Own content only (vob layer, own vob trees), never read from or written to the base: a light mask
+  // (materials.json texture key) that shapes the light, as a lantern's cage does (LightGroup, light.frag).
+  std::string cookie {};
 };
 
 struct VLight : VirtualObject, LightPreset {
