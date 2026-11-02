@@ -37,10 +37,20 @@ CPU adapters сохраняют скелеты, последовательнос
 4. `Gothic::updateAnimation(dt)` обновляет CPU poses, attachments и необходимые animation passes.
 5. Камера: UI callback обычной игры либо `SimulationStep::observerCamera(dt)` в runner.
 6. `TestBench::tick(dt, player)` выполняет сценарные команды и проверяет terminal. В обычной игре после этого идут capture/render; в runner их нет.
+7. Как окно после кадра, runner вызывает `World::updateLandscape(camera)`: резидентность кусков следует за героем и камерой (уровни NPC в `auto`), видов без `WorldView` нет. С `--game-parity` затем отдаёт миру позицию камеры для радиуса эффектов.
 
 Один вызов `GameSession::tick()` не заменяет этот цикл: без animation update последующие tags и боевые окна перестают соответствовать native игре. Bench-команды исполняются после шага, поэтому созданные ими бойцы начинают обычный tick на следующем substep.
 
 Первое `finishStep(0, player)` после загрузки повторяет rendered load-finalize phase и инициализирует bench без продвижения игрового времени. После старта bench `TestBench::frameDt()` даёт фиксированные 30 Hz substeps, чередуя 33/34 мс. `timeMul` установлен в 1; ускорение lockstep достигается отсутствием ожидания wall clock.
+
+## Бенчи без окна: `--world` и `--game-parity`
+
+`--world <ZEN>` вместо `--save` начинает новую игру в этом мире, как `-w` в игре; после загрузки runner, как `Gothic::finishLoading`, зовёт `Gothic::onWorldLoaded`. `--game-parity` считает мир так же, как окно: создаёт `AiBridge`, как `game/main.cpp` (без сервера мост всё равно считает важные разговоры вокруг героя при `-nointro` сказанными, перехватывает восприятие зверей и запускает диалоги как программы графа; `GOTHIC_AI=0` выключает); после каждого шага отдаёт `World::setHeadlessViewer` позицию камеры, и `World::isInPfxRange` даёт те же 40 м, что рендер (события анимаций с эффектами и foot IK — только рядом с камерой, а не у всех NPC мира); ставит `OPENGOTHIC_BODY_TRACE=0`, если вызывающий не задал своё. С ним час `npc-day-parity` без окна побайтно равен оконному прогону той же сборки и окружения и идёт 66 с вместо 98 ([замер](../reports/compute/2026-11-02-headless-bench/README.md)). Без флага runner ведёт себя как раньше: сбор данных тел и навигации не меняется.
+
+```sh
+gothic-body-runner -g "$GOTHIC_DIR" -g2 -devmode -nointro --world NEWWORLD.ZEN --game-parity \
+  --scenario scripts/bench/npc-day-parity.bench --output /absolute/out --mode lockstep
+```
 
 ## Игрок-наблюдатель и AI LOD
 
