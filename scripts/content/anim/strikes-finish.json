@@ -1,0 +1,24 @@
+{
+ "note": "Finishing of the strikes on our own key poses (reports/Свои ключевые позы ударов.md, «Доводка»): the samples picked from the second round (the charge and the riposte from a fourth, with the blade along the slot's -X and the apex feet turned as Kimodo stands them), times from the research. Sources are probe_eval.py records (25 fps) under the sources dir; seconds below are the source's and the finished clip's.",
+ "levels": ["HUMANS", "HUMANS_1HST1", "HUMANS_1HST2"],
+ "moves": [
+  {"name": "S_1HCHARGE", "src": "res6/charge_hold_c3-2/HUMANS-T_CHARGE_HOLD_C3-2_00.MAN.json",
+   "warp": "0:0,2.96:2.96", "next": "S_1HCHARGE", "ref": "self", "end": "self", "fade": "0,0.2",
+   "sword_arm": "0.8,1,1,1", "lock_turn": true},
+  {"name": "T_1HCHARGE", "src": "res6/charge_windup_c2-2/HUMANS-T_CHARGE_WINDUP_C2-2_01.MAN.json",
+   "warp": "0:0,0.5:0.36", "next": "S_1HCHARGE", "end": "S_1HCHARGE", "fade": "0.12,0.12",
+   "sword_arm": "0.5,0.8,1,1", "arm_window": "0,0.25,9,9", "lock_speed": 1.5, "lift_skims": 1.8, "lock_turn": true},
+  {"name": "T_1HCHARGEHIT", "src": "res6/charge_release_c3-2/HUMANS-T_CHARGE_RELEASE_C3-2_05.MAN.json",
+   "warp": "0:0,0.367:0.28,0.567:0.52,1.64:1.25", "start": "S_1HCHARGE", "fade": "0.12,0.2", "blend_in": 0.1,
+   "sword_arm": "0.5,0.8,1,1", "free_arm": "0.3,0.5,0.5,0.5", "arm_window": "0.75,1.1",
+   "lift_skims": true, "lock_turn": true},
+  {"name": "T_1HBARGE", "src": "res3/barge_c2-2/HUMANS-T_BARGE_C2-2_05.MAN.json",
+   "warp": "0:0,0.9:0.5,1.17:0.66,1.96:1.0", "sword_arm": "0.5,0.8,1,1", "free_arm": "0.5,0.8,1,1",
+   "free_window": "0.6,0.85", "lift_skims": true, "lock_turn": true},
+  {"name": "T_1HRIPOSTE", "src": "res6/riposte_body_c2-2/HUMANS-T_RIPOSTE_BODY_C2-2_01.MAN.json",
+   "warp": "0:0,0.5:0.4,0.8:0.85,2.48:1.95", "sword_arm": "0.5,0.8,1,1", "arm_window": "0,0.3,1.0,1.6",
+   "lift_skims": true, "lock_turn": true},
+  {"name": "T_1HCHARGEDEMO", "concat": ["T_1HCHARGE", "S_1HCHARGE", "T_1HCHARGEHIT"],
+   "note": "bench only: the whole charged strike as one clip for `ani` (anim-strikes-look.bench)"}
+ ]
+}
