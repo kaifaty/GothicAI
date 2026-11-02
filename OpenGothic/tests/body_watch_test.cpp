@@ -975,6 +975,14 @@ class NpcLogicalStateContract final {
         compare(*npc); // Before any positive simulation step or explicit sync.
         npc->logicalBody.auditTick(*npc);
         const auto restored=npc->logicalBodyState();
+        if(action==AI_PlayAnim) {
+          auto cancelled=restored;
+          const auto wait=npc->aniWaitTime;
+          npc->aniWaitTime=0; // The native queue and body controller cancel this gate.
+          cancelled.sync(*npc);
+          expect(!cancelled.actionWait,"cancelled native wait is not retained until its old deadline");
+          npc->aniWaitTime=wait;
+          }
         const auto layer=std::find_if(restored.layers.begin(),restored.layers.end(),[&](const auto& l) {
           return l.sequence->name==name;
           });

@@ -192,6 +192,13 @@ void NpcLogicalState::sync(Npc& npc, bool rebuild, Action admitted, const Animat
   AuditTimer timer;
   const Pose& pose=npc.visual.pose();
   const uint64_t now=npc.world().tickCount();
+  if(!rebuild && actionWait && npc.aniWaitTime!=nativeWaitEnd) {
+    // Queue/state changes can cancel or replace a wait while its physical
+    // layer survives. That is not a natural completion at the old deadline.
+    action={};
+    actionWait=false;
+    nativeWaitEnd=0;
+    }
   if(!rebuild && actionWait && now>nativeWaitEnd) recordActionEnd(now);
   if(rebuild) { layers.clear(); action={}; actionWait=false; nativeWaitEnd=0; }
   for(size_t i=0;i<layers.size();) {
@@ -272,14 +279,16 @@ void NpcLogicalState::sync(Npc& npc, bool rebuild, Action admitted, const Animat
     }
   // A consumed AI_PlayAni can wait for one period of a loop. Its action
   // clock is finite even though that layer has no natural end.
-  if(requested!=nullptr && npc.aniWaitTime>=now) {
+  // implAniWait only extends its barrier. An overlay that leaves it unchanged
+  // must retain the older action clock rather than shorten its prediction.
+  if(!actionWait && requested!=nullptr && npc.aniWaitTime>=now) {
     // PlayAni may reuse an existing loop or start an intermediate transition.
     // The native wait belongs to the requested sequence in both cases.
     action={admitted,requested,now,now+uint64_t(requested->totalTime())+1,true};
     nativeWaitEnd=npc.aniWaitTime;
     actionWait=true;
     }
-  else if(((bodyAction(admitted) && admitted!=AI_PlayAnim && admitted!=AI_PlayAnimBs) || rebuild) && npc.aniWaitTime>=now) {
+  else if(!actionWait && ((bodyAction(admitted) && admitted!=AI_PlayAnim && admitted!=AI_PlayAnimBs) || rebuild) && npc.aniWaitTime>=now) {
     const Layer* chosen=nullptr;
     for(const auto& layer:layers)
       if(chosen==nullptr || layer.sequence->totalTime()/layer.speed>chosen->sequence->totalTime()/chosen->speed)
