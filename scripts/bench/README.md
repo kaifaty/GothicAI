@@ -41,6 +41,10 @@ as `headless lockstep` or `window` and include the game's wall seconds; stdout s
 For performance comparisons (before/after or FPS), run both takes on the same machine:
 pin `BENCH_HOST=ryzen` or `BENCH_HOST=local`. `host.txt` and the report header identify the host.
 
+`knockdown-launch` проверяет защиту рождения рэгдолла: SLD_826 с `ITMW_2H_SLD_AXE` (W2H) сбивает оглушённого SLD_815, по 20 проб в чередующихся диапазонах 30–40, 50–90 и 100–170 см, затем 5 проб оглушения без удара на контрольной точке и 5 на склоне дуэли. `RAGDOLL_BIRTH_GUARD=1|0` задаёт `[GAME] ragdoll_birth_guard` до загрузки мира. Сценарий генерирует `reports/physics/2026-11-02-knockdown-launch/generate.py`; фиксированные зёрна и подготовка одинаковы в ON/OFF. `ragdoll_birth_peak` пишет пики скоростей COM таза/спины/головы за первые 300 мс симуляции, дистанцию корней, виновника и снятие защиты; замер — после каждого ненулевого `Update`. `stun-drift <цель> <атакующий|player>` перед `stun <цель> posture` наблюдает корень каждые 100 мс от 0 до 1600 мс: проекцию к атакующему, горизонтальное смещение, высоту, анимацию, оглушение, скольжение, полёт и флаг второго такта. Отдельный `knockdown-drift` из того же генератора запускает только 5 ровных и 5 склоновых проб; источник оглушения — герой, цель перед оглушением освобождена от внешнего управления. `put-at <npc|player> <x> <y> <z>` ставит на землю по точным координатам (NPC замораживается и смотрит на героя). Анализ: `python3 reports/physics/2026-11-02-knockdown-launch/analyze.py --drift <папка>`; `summary.csv` нокдаунов не меняется. [Отчёт, команды и анализатор](../../reports/physics/2026-11-02-knockdown-launch/README.md).
+
+Результаты нокдаунов ON/OFF и опыта дрейфа — в отчёте; сценарий дрейфа не запускает 60 нокдаунов.
+
 `game.log` must contain `[bench] done` for a complete scenario (including an explicit `quit`).
 Closing the window, a crash, `TIMEOUT` (default 300 seconds), or the stall watchdog before that marker
 returns code 1 and prints one reason with elapsed/limit seconds to stderr. Partial output still goes

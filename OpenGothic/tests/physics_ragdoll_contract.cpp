@@ -374,6 +374,177 @@ void testKinematicPoseAndInteraction() {
     }
   }
 
+void testRagdollBirthGuard() {
+  Fixture fixture;
+  const auto posed=[&](const Tempest::Matrix4x4& object) {
+    auto pose=fixture.skeleton.tr;
+    for(auto& bone:pose) bone=object*bone;
+    return pose;
+    };
+  const auto living=[&](CollisionWorld& world, const Tempest::Matrix4x4& object) {
+    const auto pose=posed(object);
+    auto body=world.createKinematicBody(fixture.skeleton,fixture.zones,pose.data(),pose.size(),object);
+    require(bool(body),"birth guard checks need a complete native living rig");
+    return body;
+    };
+  const auto move=[&](Ragdoll& body, const Tempest::Matrix4x4& object) {
+    const auto pose=posed(object);
+    require(body.moveKinematic(pose.data(),pose.size(),object,1.f/60.f),
+            "birth guard checks must queue the actual native living pose");
+    };
+  const auto speed=[](const Ragdoll& body) {
+    float peak=0;
+    for(const auto& part:body.state().parts) peak=std::max(peak,part.linearVelocityMeters.length());
+    return peak;
+    };
+  const auto lying=[](float x) {
+    auto object=at(x,20,0); object.rotateOX(90.f);
+    return object;
+    };
+
+  const char* meleeValue=std::getenv("OPENGOTHIC_MELEE_BENCH");
+  const bool hadMelee=meleeValue!=nullptr;
+  const std::string previousMelee=hadMelee ? meleeValue : "";
+  setenv("OPENGOTHIC_MELEE_BENCH","1",1);
+  for(const int substeps:{0,2}) {
+    float peaks[2]={};
+    for(const bool enabled:{false,true}) {
+      CollisionWorld world;
+      world.setRagdollBirthGuardEnabled(enabled);
+      if(substeps!=0) world.configureMeleeBench(substeps);
+      auto object=at(0,300,-10);
+      auto rig=living(world,object);
+      auto body=fixture.create(world,at(0,300,0));
+      if(substeps!=0) require(body->restore(body->state()),"restoring native parts before birth must retain the registered guard group");
+      // A zero-delta broad-phase rebuild must leave the first solve pending.
+      world.tick(0);
+      for(int frame=0;frame<18;++frame) {
+        object.set(3,2,-10.f+20.f*float(frame+1));
+        move(*rig,object);
+        world.tick(frame%3==2 ? 16 : 17);
+        peaks[enabled ? 1 : 0]=std::max(peaks[enabled ? 1 : 0],speed(*body));
+        }
+      }
+    std::printf("ragdoll birth guard substeps=%d rig_m_s=12 duration_ms=300 peak_on_m_s=%.9g peak_off_m_s=%.9g\n",
+                substeps,double(peaks[1]),double(peaks[0]));
+    require(peaks[0]>8.f,"the unguarded overlapping fast rig must reproduce a ragdoll launch above 8 m/s");
+    require(peaks[1]<=4.f,"a newborn ragdoll inside a 12 m/s living rig must stay below 4 m/s");
+    }
+  if(hadMelee) setenv("OPENGOTHIC_MELEE_BENCH",previousMelee.c_str(),1); else unsetenv("OPENGOTHIC_MELEE_BENCH");
+
+  {
+    CollisionWorld world;
+    auto object=at(0,300,-10);
+    auto rig=living(world,object);
+    auto body=fixture.create(world,at(0,300,0));
+    world.tick(17);
+    world.setRagdollBirthGuardEnabled(false);
+    world.setRagdollBirthGuardEnabled(true);
+    float peak=0;
+    for(int frame=0;frame<18;++frame) {
+      object.set(3,2,-10.f+20.f*float(frame+1));
+      move(*rig,object);
+      world.tick(frame%3==2 ? 16 : 17);
+      peak=std::max(peak,speed(*body));
+      }
+    std::printf("ragdoll birth guard cleared rig_m_s=12 peak_m_s=%.9g\n",double(peak));
+    require(peak>8.f,"disabling must clear birth guards and reenabling must leave existing bodies unguarded");
+    }
+
+  {
+    CollisionWorld world,control;
+    control.setRagdollBirthGuardEnabled(false);
+    auto ground=floor(world),referenceGround=floor(control);
+    auto rig=living(world,lying(0)),referenceRig=living(control,lying(-300));
+    auto body=fixture.create(world,lying(0)),reference=fixture.create(control,lying(0));
+    for(int frame=0;frame<600;++frame) { world.tick(frame%3==2 ? 16 : 17); control.tick(frame%3==2 ? 16 : 17); }
+    require(body->isSleeping() && reference->isSleeping(),"separation controls must settle naturally before the returning push");
+    // Sleeping overlap cannot prove separation. Wake the isolated ragdolls for
+    // the first solve with the rig away, then return the same group slowly.
+    move(*rig,lying(-180)); move(*referenceRig,lying(-180));
+    body->activate(); reference->activate();
+    world.tick(17); control.tick(17);
+    const auto start=position(body->pelvisTransform()),referenceStart=position(reference->pelvisTransform());
+    near((start-referenceStart).length(),0,.01f,"sensor-only birth must preserve the unpushed lying control");
+    float maxError=0;
+    for(int frame=0;frame<240;++frame) {
+      const auto object=lying(-180.f+float(frame+1)*.8f);
+      move(*rig,object); move(*referenceRig,object);
+      world.tick(frame%3==2 ? 16 : 17); control.tick(frame%3==2 ? 16 : 17);
+      maxError=std::max(maxError,(position(body->pelvisTransform())-position(reference->pelvisTransform())).length());
+      }
+    const float displacement=(position(body->pelvisTransform())-start).length();
+    const float controlDisplacement=(position(reference->pelvisTransform())-referenceStart).length();
+    std::printf("ragdoll birth guard separated rig_m_s=0.48 pelvis_error_cm=%.9g displacement_cm=%.9g control_displacement_cm=%.9g\n",
+                double(maxError),double(displacement),double(controlDisplacement));
+    require(controlDisplacement>5.f,"the slow returning living rig must genuinely push the unguarded corpse");
+    require(maxError<=1.f,"a separated birth rig must push the corpse like the unguarded control within one centimetre");
+    }
+
+  {
+    CollisionWorld world,control;
+    control.setRagdollBirthGuardEnabled(false);
+    auto ground=floor(world),referenceGround=floor(control);
+    auto rig=living(world,lying(-180)),referenceRig=living(control,lying(-180));
+    auto body=fixture.create(world,lying(0)),reference=fixture.create(control,lying(0));
+    const auto initialPose=posed(lying(0));
+    std::vector<HitZones::Posed> capsules;
+    fixture.zones.posed(initialPose.data(),initialPose.size(),1.f,capsules);
+    float left=std::numeric_limits<float>::infinity(),right=-left;
+    for(const auto& capsule:capsules) {
+      left=std::min(left,std::min(capsule.a.x,capsule.b.x)-capsule.r);
+      right=std::max(right,std::max(capsule.a.x,capsule.b.x)+capsule.r);
+      }
+    const float birthGap=left-(right-180.f);
+    require(birthGap>1.f,"the unrelated living rig's complete capsule bounds must be separated at birth");
+    for(int frame=0;frame<600;++frame) { world.tick(frame%3==2 ? 16 : 17); control.tick(frame%3==2 ? 16 : 17); }
+    const auto start=position(reference->pelvisTransform());
+    float maxError=0;
+    for(int frame=0;frame<60;++frame) {
+      const auto object=lying(-180.f+float(frame+1)*1.5f);
+      move(*rig,object); move(*referenceRig,object);
+      world.tick(frame%3==2 ? 16 : 17); control.tick(frame%3==2 ? 16 : 17);
+      const auto actual=body->state(),expected=reference->state();
+      for(size_t part=0;part<actual.parts.size();++part)
+        maxError=std::max(maxError,(actual.parts[part].centerOfMassMeters-expected.parts[part].centerOfMassMeters).length());
+      }
+    const float displacement=(position(reference->pelvisTransform())-start).length();
+    std::printf("ragdoll birth guard unrelated rig_m_s=0.9 frames=60 birth_gap_cm=%.9g max_part_error_m=%.9g displacement_cm=%.9g\n",
+                double(birthGap),double(maxError),double(displacement));
+    require(displacement>5.f,"a living rig absent at birth must genuinely push the lying corpse");
+    require(maxError<=.001f,"a living rig absent at birth must preserve every part trajectory within one millimetre");
+    }
+
+  {
+    CollisionWorld world;
+    auto ground=floor(world);
+    auto object=lying(0);
+    auto rig=living(world,object);
+    auto body=fixture.create(world,object);
+    for(int frame=0;frame<600 && !body->isSleeping();++frame) world.tick(frame%3==2 ? 16 : 17);
+    require(body->isSleeping(),"a guarded corpse must fall asleep while overlapping a stationary living rig");
+    // Give native sleeping contacts time to disappear before moving the rig.
+    for(int frame=0;frame<60;++frame) world.tick(frame%3==2 ? 16 : 17);
+    require(body->isSleeping(),"stationary protected overlap must retain native sleep");
+    size_t centersInside=0;
+    for(const auto& part:body->state().parts) {
+      const auto center=part.centerOfMassMeters*100.f;
+      const auto hit=world.rayCast(center,center+Tempest::Vec3(0,1,0),1u<<DynamicWorld::C_LivingBody);
+      if(hit.hasHit && hit.fraction==0.f) ++centersInside;
+      }
+    require(centersInside>0,"the sleeping corpse must still have a native part center inside the stationary living geometry");
+    float peak=0;
+    for(int frame=0;frame<18;++frame) {
+      object.set(3,0,10.f*float(frame+1));
+      move(*rig,object);
+      world.tick(frame%3==2 ? 16 : 17);
+      peak=std::max(peak,speed(*body));
+      }
+    std::printf("ragdoll birth guard sleeping rig_m_s=6 duration_ms=300 centers_inside=%zu peak_m_s=%.9g\n",centersInside,double(peak));
+    require(peak<=4.f,"sleep inside protected overlap must not allow a subsequent 6 m/s rig launch");
+    }
+  }
+
 void testLocalMotorReactions() {
   Fixture fixture;
   for(const size_t hitBone:{size_t(6),size_t(13),size_t(3)}) {
@@ -2936,6 +3107,7 @@ int main(int argc, const char** argv) {
     require(argc==1,"usage: gothic-ragdoll-contract [--water | --benchmark20 output.json | --preflight20 output.json | --replay-creation captured.jsonl]");
     testInvalidCreationAndScale();
     testKinematicPoseAndInteraction();
+    testRagdollBirthGuard();
     testLocalMotorReactions();
     testLimpBoneImpulseOnce();
     testScaledMassAndInertia();

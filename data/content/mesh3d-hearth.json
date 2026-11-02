@@ -637,6 +637,67 @@
    "source_materials": [
     "OBJ_CITY_BOULDERBIG_02.TGA"
    ]
+  },
+  {
+   "id": "hearth-lamp",
+   "visual": "FIREPLACE_NW_LAMP_01",
+   "budget_tris": 3000,
+   "zones": [
+    {
+     "key": "OWN_HEARTH_IRON",
+     "group": "METAL",
+     "role": "forged and riveted iron: cauldrons, pan, chain, fire bowl"
+    },
+    {
+     "key": "OWN_HEARTH_RIVET",
+     "group": "METAL",
+     "role": "bands and rivet heads on the iron"
+    },
+    {
+     "key": "OWN_HEARTH_TALLOW",
+     "group": "UNDEF",
+     "role": "a tallow candle with its runs and the drips on its dish"
+    },
+    {
+     "key": "OWN_HEARTH_LACE",
+     "group": "METAL",
+     "role": "the forged vine-scroll filigree of the street lamp: an alpha-tested tile, not baked"
+    }
+   ],
+   "kind": "mob_model",
+   "bbox_min": [
+    -0.20249,
+    -1.24999,
+    -0.1754
+   ],
+   "bbox_max": [
+    0.20251,
+    1.96897,
+    0.17538
+   ],
+   "origin_in_bbox": [
+    0.499975,
+    0.388321,
+    0.500029
+   ],
+   "source_tris": 96,
+   "source_materials": [
+    "OBJ_CITY_STREETLAMP_01.TGA",
+    "OBJ_CITY_STREETLAMP_02.TGA"
+   ],
+   "source_pose": "bind",
+   "nodes": {
+    "ZS_POS0_DIST": [
+     0.0,
+     0.978,
+     1.0
+    ],
+    "BIP01 FIRE": [
+     0.0,
+     1.6107,
+     -0.0
+    ]
+   }
   }
  ]
 }

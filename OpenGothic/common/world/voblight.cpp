@@ -1,5 +1,7 @@
 #include "voblight.h"
 
+#include <cmath>
+
 #include "world.h"
 
 VobLight::VobLight(Vob* parent, World& world, const asset::VLight& vob, Flags flags)
@@ -43,6 +45,12 @@ VobLight::VobLight(Vob* parent, World& world, const asset::VLight& vob, Flags fl
 
 void VobLight::moveEvent() {
   light.setPosition(position());
+  // the light mask turns with the light's own axes: the yaw of its X axis in the world
+  auto t = transform();
+  Tempest::Vec3 o = {}, x = {1,0,0};
+  t.project(o);
+  t.project(x);
+  light.setYaw(std::atan2(x.z-o.z, x.x-o.x));
   }
 
 void VobLight::fillAttachmentSnapshot(AttachmentSnapshot& out) const {

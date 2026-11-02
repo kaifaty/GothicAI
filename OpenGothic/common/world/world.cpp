@@ -239,6 +239,7 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
     wdynamic->setClothEnabled(Gothic::physicsFlags().cloth);
     wdynamic->setItemWakeEnabled(Gothic::physicsFlags().itemWake);
     wdynamic->setItemDeepestContactEnabled(Gothic::physicsFlags().itemDeepestContact);
+    wdynamic->setRagdollBirthGuardEnabled(Gothic::physicsFlags().ragdollBirthGuard);
     wdynamic->setPhysicsNoiseCallback([this](const PhysicsNoise& noise) { emitPhysicsNoise(noise); });
     for(auto& surface:worldCloth.surfaces)
       if(auto visual=ClothVisual::createSurface(*this,surface.mesh,surface.pins,surface.visual,surface.id,surface.stiffness,surface.linearDamping))
@@ -1154,6 +1155,7 @@ void World::tick(uint64_t dt) {
   wdynamic->setClothEnabled(Gothic::physicsFlags().cloth);
   wdynamic->setItemWakeEnabled(Gothic::physicsFlags().itemWake);
   wdynamic->setItemDeepestContactEnabled(Gothic::physicsFlags().itemDeepestContact);
+  wdynamic->setRagdollBirthGuardEnabled(Gothic::physicsFlags().ragdollBirthGuard);
   if(!Gothic::physicsFlags().arrowSticking)
     stuckArrows.clear();
   static bool doTicks=true;
