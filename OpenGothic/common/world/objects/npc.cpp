@@ -4510,6 +4510,15 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
           }
         auto& timing = *meleeAiDodgeTiming;
         if(!allowStaminaAction("dodge",MeleeDodge::cost(timing.move.kind),true)) {
+          if(bodyOverride) {
+            // P30 falls back immediately; only native AI waits for dodge stamina.
+            if(visual.startAnimAndGet(*this,Anim::MoveBack,calcAniComb(),ws,walkMode())) {
+              spendStamina("jumpback",MeleeStamina::JumpBackCost);
+              implFaiWait(visual.pose().animationTotalTime());
+              consume();
+              }
+            return true;
+            }
           timing.began = 0; // Stamina recovery is not time spent waiting for a swing.
           waitForMeleeStamina(dt);
           return true;
@@ -4553,7 +4562,8 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
             }
           }
         if(meleeDodge(timing.move.direction)) {
-          const std::string description = std::string(MeleeDodge::name(timing.move.direction))+" "+std::string(MeleeDodge::name(timing.move.kind));
+          const auto kind = timing.move.kind==MeleeDodge::Kind::HeavyRoll ? "heavy roll" : MeleeDodge::name(timing.move.kind);
+          const std::string description = std::string(MeleeDodge::name(timing.move.direction))+" "+std::string(kind);
           const auto swingMs = now-timing.origin;
           const auto contactMs = timing.contact-timing.origin;
           if(TestBench::isActive())

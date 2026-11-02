@@ -893,6 +893,10 @@ class NpcLogicalStateContract final {
 
   public:
     static void meleeAi(Npc& actor,Npc& target) {
+      if(!actor.hasAnim("T_1HDASHB") || !actor.hasAnim("T_1HRIPOSTE") || !target.hasAnim("T_RIPOSTEVICTIM")) {
+        std::cerr << "melee AI fixture skipped: needs OPENGOTHIC_CONTENT with anim-strikes\n";
+        return;
+        }
       const std::array<std::pair<const char*,int>,7> settings{{
         {"melee_dodge",1},{"melee_ai_dodge",1},{"melee_riposte",1},{"melee_ai_riposte",1},
         {"melee_stagger",1},{"melee_stamina",0},{"melee_parry_ai",0},
@@ -932,8 +936,6 @@ class NpcLogicalStateContract final {
         expect(actor.fghAlgo.queuedAction()==first,"native primitive fixture loaded the requested action");
         };
       prepare();
-      expect(actor.hasAnim("T_1HDASHB") && actor.hasAnim("T_1HRIPOSTE") && target.hasAnim("T_RIPOSTEVICTIM"),
-             "melee AI executor fixture requires the accepted anim-strikes content");
 
       ++cases;
       actor.handle().hitchance[TALENT_1H]=0;
@@ -971,6 +973,31 @@ class NpcLogicalStateContract final {
       expect(actor.fghAlgo.queuedAction()==FightAlgo::MV_JUMPBACK && actor.meleeAiDodgeTiming &&
              actor.meleeAiDodgeTiming->began==0 && !actor.isMeleeDodging(),
              "a no-swing dodge keeps waiting for stamina beyond 1000 ms without spending its primitive");
+      Gothic::settingsSetI("GAME","melee_stamina",0);
+
+      ++cases;
+      prepare();
+      actor.setExternalControl(false);
+      initialWatch(actor,699);
+      expect(acquire(actor)["accepted"].GetBool(),"exhausted P30 fixture acquires its body lease");
+      expect(action(actor,FightAlgo::PolicyAction::JumpBack)["accepted"].GetBool(),"exhausted P30 jump back is accepted");
+      Gothic::settingsSetI("GAME","melee_stamina",1);
+      const auto exhaustedAt=actor.world().tickCount();
+      actor.meleeStamina={0,exhaustedAt,exhaustedAt,true,true};
+      BodyController::tick(actor,tickMs);
+      bool jumpBack=false;
+      for(const auto& layer:actor.visual.pose().combatLayers(actor.world().tickCount()))
+        jumpBack |= MeleeDodge::isJumpBackAnimation(layer.sequence->name);
+      expect(jumpBack && !actor.isMeleeDodging() && !actor.meleeAiDodgeTiming,
+             "P30 at zero stamina starts its original MoveBack immediately");
+      bool consumed=false;
+      const auto events=parse(BodyController::drainJson());
+      for(const auto& event:events["events"].GetArray())
+        if(std::string_view(event["phase"].GetString())=="started")
+          consumed |= event["primitive_consumed"].GetBool();
+      expect(consumed,"P30 MoveBack consumes the primitive when the segment starts");
+      BodyController::reset("melee_ai_fixture");
+      BodyObservations::disable();
       Gothic::settingsSetI("GAME","melee_stamina",0);
 
       for(unsigned attempt=0;attempt<3;++attempt) {
