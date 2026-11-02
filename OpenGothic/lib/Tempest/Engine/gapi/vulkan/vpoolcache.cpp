@@ -68,6 +68,36 @@ void VPoolCache::notifyDestroy(const AbstractGraphicsApi::NoCopy* res) {
     }
   }
 
+void VPoolCache::notifyUpdate(const VDescriptorArray& arr, uint32_t element) {
+  // Cached sets hold a copy of the array, and the frame binds those copies: a slot update
+  // must reach every one of them. They are bound only where the array is bound, so the
+  // caller's guarantee that the GPU is done with the array covers them as well.
+  std::lock_guard<std::mutex> guard(sync);
+
+  std::vector<VkCopyDescriptorSet> cpy;
+  for(auto& d:descriptors) {
+    for(uint32_t mask = d.arrays; mask!=0;) {
+      const int i = std::countr_zero(mask);
+      mask ^= (1u << i);
+      if(d.bindings.data[i]!=&arr)
+        continue;
+      VkCopyDescriptorSet& cx = cpy.emplace_back();
+      cx.sType           = VK_STRUCTURE_TYPE_COPY_DESCRIPTOR_SET;
+      cx.pNext           = nullptr;
+      cx.srcSet          = arr.set();
+      cx.srcBinding      = 0;
+      cx.srcArrayElement = element;
+      cx.dstSet          = d.set;
+      cx.dstBinding      = uint32_t(i);
+      cx.dstArrayElement = element;
+      cx.descriptorCount = 1;
+      }
+    }
+
+  if(!cpy.empty())
+    vkUpdateDescriptorSets(dev.device.impl, 0, nullptr, uint32_t(cpy.size()), cpy.data());
+  }
+
 VkDescriptorPool VPoolCache::allocPool() {
   {
     std::lock_guard<std::mutex> guard(sync);
@@ -264,6 +294,7 @@ VPoolCache::Inst VPoolCache::allocBindless(const PushBlock& pb, const LayoutDesc
   try {
     desc.dLay     = ret.dLay;
     desc.bindings = binding;
+    desc.arrays   = lx.active & binding.array;
     desc.pool     = allocPool(lx);
     desc.set      = allocDescSet(desc.pool, ret.dLay);
     initDescriptorSet(desc.set, binding, lx);
