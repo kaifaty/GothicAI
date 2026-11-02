@@ -16,6 +16,7 @@ from .common import (
     HILDA,
     LOBART,
     VINO,
+    SharedBodyWatch,
     _logged,
     _save,
     _until,
@@ -444,7 +445,7 @@ async def npc_will(
         if courage >= 3 and not check(f"{label}_health", await health()):
             return False
         before = {npc: await count(npc, str(crime["item"])) for npc in (HILDA, LOBART)}
-        await link.body_watch([HILDA, LOBART], rate_hz=20)
+        await watch.watch([HILDA, LOBART])
         for rows in bodies.values():
             rows.clear()
         # Keep the hero off the direct AI_GotoNpc lane while leaving both bodies within 30 m.
@@ -490,6 +491,8 @@ async def npc_will(
     will.busy = lambda npc: npc in preparing or original_busy(npc)
     link.listeners.append(record)
     link.raw_body_listeners.append(body)
+    # The P30 pilot observes Lobart's fight: keep Hilda's rows in the shared subscription.
+    watch = SharedBodyWatch(link, "npc_will")
     cards()
     rumors.gate, rumors.stage = lambda *_: False, None
     try:
@@ -539,14 +542,14 @@ async def npc_will(
         brave = await steal("brave", witnessed=True)
         if brave is None or not await tell_owner("brave", brave) or not await encounter("brave", brave, 3):
             return _logged(results)
-        await link.body_watch([])
+        await watch.watch([])
 
         if not await load_clean("timid"):
             return _logged(results)
         timid = await steal("timid", witnessed=True)
         if timid is None or not await tell_owner("timid", timid) or not await encounter("timid", timid, 2):
             return _logged(results)
-        await link.body_watch([])
+        await watch.watch([])
 
         if not await load_clean("suspect"):
             return _logged(results)
@@ -666,7 +669,8 @@ async def npc_will(
         link.send = send  # type: ignore[method-assign]
         try:
             if not link.closed.is_set():
-                await link.body_watch([])
+                await watch.watch([])
         finally:
+            watch.close()
             link.listeners.remove(record)
             link.raw_body_listeners.remove(body)

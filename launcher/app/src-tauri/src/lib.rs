@@ -68,6 +68,13 @@ fn quit_app(app: AppHandle) {
     app.exit(0);
 }
 
+/// The personal Ryzen install was updated (`update.start`): start again from the rebuilt binary and core.
+/// Exit stops the old core first, so the new one can take the install lock.
+#[tauri::command]
+fn restart_app(app: AppHandle) {
+    app.request_restart();
+}
+
 /// Shows a file or folder in Finder.
 #[tauri::command]
 fn reveal(path: String) -> Result<(), String> {
@@ -266,6 +273,7 @@ pub fn run() {
             to_menu_bar,
             show_window,
             quit_app,
+            restart_app,
             reveal,
             open_folder
         ])

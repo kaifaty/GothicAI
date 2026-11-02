@@ -18,6 +18,7 @@ from contextlib import nullcontext
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
+from urllib.parse import urlsplit
 
 from . import (
     characters,
@@ -59,6 +60,7 @@ from .daylife import DayDesk
 from .deals import Deals
 from .dialogue import REACT_HINT, SVM_HINT, DialogueManager
 from .director import Director
+from .embeddings import EmbedClient
 from .errands import Errands
 from .executor import Intent
 from .fatecard import FateCards
@@ -834,6 +836,16 @@ async def _native_combat_available(link: GameLink, pilot: BodyPilot | None, npc:
         await asyncio.sleep(0.05)
 
 
+def embed_url(url: str | None, decider_url: str | None) -> str | None:
+    """Explicit embedding service, or HTTP port 47837 on the decider's host."""
+    if url:
+        return url
+    host = urlsplit(decider_url).hostname if decider_url else None
+    if host and ":" in host:
+        host = f"[{host}]"
+    return f"http://{host}:47837" if host else None
+
+
 async def serve(args: argparse.Namespace) -> int:
     soak_control = os.environ.get("GOTHIC_SOAK_CONTROL") == "1"
     if soak_control and args.scenario != "neural-soak":
@@ -863,7 +875,9 @@ async def serve(args: argparse.Namespace) -> int:
     game_dir = Path(args.game_dir) if args.game_dir else None
     personas = PersonaProvider(game_dir if game_dir and game_dir.is_dir() else None)
     threading.Thread(target=personas.warm, name="original-lines", daemon=True).start()
-    memory = MemoryStore(args.memory_db)
+    embed_at = None if args.no_embeddings else embed_url(args.embed_url, args.decider_url)
+    embeddings = EmbedClient(embed_at) if embed_at else None
+    memory = MemoryStore(args.memory_db, embeddings=embeddings)
     asr = None if args.no_voice else AsrClient(args.asr_url)
     decider = None if args.no_brain or not args.decider_url else DeciderClient(args.decider_url)
     # npc lines in a fight: a local model, in a fraction of a second (dialogue.py)
@@ -878,6 +892,7 @@ async def serve(args: argparse.Namespace) -> int:
     budget = Budget(per_npc_per_min=args.llm_per_npc_min, total_per_min=args.llm_total_min)
     log.info("LLM backend: %s (%s)", llm.name, getattr(llm, "model", "-"))
     log.info("memory: %s", args.memory_db)
+    log.info("memory search: %s", f"semantic ({embed_at}), lexical fallback" if embeddings else "lexical")
     log.info("turn traces: %s", "off" if trace is None else args.trace_dir)
     log.info("voice: %s", "off" if asr is None else f"{args.voice_file or 'microphone'} -> {args.asr_url}")
     log.info("npc voices: %s", "off" if tts is None else args.tts_url)
@@ -2599,6 +2614,8 @@ async def serve(args: argparse.Namespace) -> int:
     if tone_quick is not None:
         await tone_quick.aclose()
     memory.close()
+    if embeddings is not None:
+        await embeddings.close()
     for task in finished:
         if not task.cancelled() and (err := task.exception()) is not None:
             log.error("%s", err)
@@ -3423,6 +3440,14 @@ def main() -> None:
         "--decider-url",
         default=os.environ.get("GOTHIC_DECIDER_URL"),
         help="gothic-decider service for npc decisions outside conversations (without it the planner is off)",
+    )
+    p.add_argument(
+        "--embed-url",
+        default=os.environ.get("GOTHIC_EMBED_URL"),
+        help="gothic-embed service for NPC memory (default: the decider's host, http://<gpu>:47837)",
+    )
+    p.add_argument(
+        "--no-embeddings", action="store_true", help="use word search for NPC memory"
     )
     p.add_argument(
         "--body-policy",
