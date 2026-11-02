@@ -1,7 +1,11 @@
-"""Inworld STT: PCM16 over a persistent WebSocket, with push-to-talk turn boundaries.
+"""Inworld STT: PCM16 over WebSocket, with push-to-talk turn boundaries.
 
 The connection is configured once for a language and name prompts. `endTurn` flushes a phrase;
 `closeStream` retires the connection. Opening runs in the background so audio can arrive immediately.
+Voice profiles use a rolling window of recent connection audio; turns under roughly 1 s do not
+refresh it. With profiles enabled, each phrase uses a fresh connection to avoid carrying laughter
+over. After a final, the used connection closes in the background while the next one opens.
+Without profiles, the connection is reused between phrases.
 With server VAD disabled, each turn must fit Inworld's roughly 30-second limit.
 With `vadThreshold: 0`, finals arrive only after `endTurn`, except at that turn limit.
 """
@@ -70,6 +74,8 @@ class InworldRealtime:
         self._settings: tuple[str, tuple[str, ...]] | None = None
         self._active: _Stream | None = None
         self._closing: set[asyncio.Task[None]] = set()
+        self._preparing: asyncio.Task[None] | None = None
+        self._preparing_settings: tuple[str, tuple[str, ...]] | None = None
 
     def _key(self) -> str:
         key = os.environ.get(self.api_key_env, "")
@@ -123,6 +129,15 @@ class InworldRealtime:
 
     async def _session(self, lang: str, prompts: tuple[str, ...]) -> ClientConnection:
         settings = (lang, prompts)
+        if self._preparing is not None and self._preparing is not asyncio.current_task():
+            preparing, self._preparing = self._preparing, None
+            matches = self._preparing_settings == settings
+            self._preparing_settings = None
+            if matches:
+                await preparing
+            else:
+                preparing.cancel()
+                await asyncio.gather(preparing, return_exceptions=True)
         if (
             self._ws is not None
             and self._ws.state is State.OPEN
@@ -200,10 +215,20 @@ class InworldRealtime:
         # find and close the old socket after it has stopped the sender.
         ws, reader = self._ws, self._reader
         self._settings = None
+        await self._close_connection(ws, reader, graceful=graceful)
+        self._ws = None
+        self._reader = None
+
+    async def _close_connection(
+        self,
+        ws: ClientConnection | None,
+        reader: asyncio.Task[None] | None,
+        *,
+        graceful: bool = True,
+    ) -> None:
         if reader is not None:
             reader.cancel()
             await asyncio.gather(reader, return_exceptions=True)
-            self._reader = None
         if ws is not None:
             if graceful and ws.state is State.OPEN:
                 try:
@@ -211,12 +236,41 @@ class InworldRealtime:
                 except (OSError, TimeoutError, WebSocketException):
                     pass
             await ws.close()
-            self._ws = None
+
+    def _rotate(self) -> None:
+        settings = self._settings
+        assert settings is not None
+        ws, reader = self._ws, self._reader
+        self._ws, self._reader, self._settings = None, None, None
+        closing = asyncio.create_task(self._retire(ws, reader))
+        self._closing.add(closing)
+        closing.add_done_callback(self._closing.discard)
+        self._preparing_settings = settings
+        self._preparing = asyncio.create_task(self._prepare(*settings))
+
+    async def _retire(
+        self, ws: ClientConnection | None, reader: asyncio.Task[None] | None
+    ) -> None:
+        try:
+            await self._close_connection(ws, reader)
+        except (OSError, TimeoutError, WebSocketException) as err:
+            log.warning("inworld transcription connection close failed: %s", err)
+
+    async def _prepare(self, lang: str, prompts: tuple[str, ...]) -> None:
+        try:
+            await self._session(lang, prompts)
+        except AsrError as err:
+            log.warning("inworld next session failed to open: %s", err)
 
     async def aclose(self) -> None:
         if self._active is not None:
             await self._active.cancel()
         async with self._lock:
+            if self._preparing is not None:
+                preparing, self._preparing = self._preparing, None
+                self._preparing_settings = None
+                preparing.cancel()
+                await asyncio.gather(preparing, return_exceptions=True)
             await self._drop()
         if self._closing:
             await asyncio.gather(*self._closing)
@@ -324,5 +378,7 @@ class _Stream:
         await asyncio.gather(self._sender, return_exceptions=True)
         if not reuse:
             await self._owner._drop(graceful=False)
+        elif self._owner.voice_profile:
+            self._owner._rotate()
         self._owner._active = None
         self._owner._lock.release()
