@@ -131,16 +131,25 @@ std::string sample(World& world) {
   return common(world)+",\"stains\":"+stainsJson(world)+",\"traces\":"+tracesJson(world);
   }
 
-// Ground below `at`, open above (no roof within 2 m): the stain lands where placeBloodStain lays it.
-Vec3 ground(World& world, Vec3 at) {
-  const auto floor = world.physic()->landRay(at+Vec3(0,400,0),1200.f);
-  if(!floor.hasCol || floor.n.y<.5f)
-    fail("no ground near "+vec(at));
-  return floor.v;
+// Gentle ground near `at`: the first spot of a small spiral with a floor below (the valley has
+// cliffs). The stain lands there as placeBloodStain lays it.
+Vec3 ground(World& world, Vec3 at, float maxR = 200.f) {
+  for(float r:{0.f,15.f,30.f,60.f,120.f,200.f}) {
+    if(r>maxR)
+      break;
+    for(int i=0;i<(r==0 ? 1 : 12);++i) {
+      const float a = float(i)*float(M_PI)/6.f;
+      const auto  p = at+Vec3(std::cos(a)*r,0,std::sin(a)*r);
+      const auto floor = world.physic()->landRay(p+Vec3(0,600,0),3000.f);
+      if(floor.hasCol && floor.n.y>=.5f)
+        return floor.v;
+      }
+    }
+  fail("no ground near "+vec(at));
   }
 
 void place(World& world, const std::string& role, const Vec3& at, BloodStains::Kind kind, float radius, uint32_t body = 0) {
-  const auto id = world.placeBloodStain(ground(world,at),kind,radius,body);
+  const auto id = world.placeBloodStain(ground(world,at,30.f),kind,radius,body);
   if(Gothic::physicsFlags().blood && id==0)
     fail("placeBloodStain failed for "+role);
   if(!Gothic::physicsFlags().blood && id!=0)
@@ -163,11 +172,13 @@ void setup(World& world, Npc& hero) {
   const float a = hero.rotationRad();
   const Vec3  f(std::cos(a),0,std::sin(a)), r(-f.z,0,f.x), h = hero.position();
 
-  // A person dies 7 m ahead: his pool and a splash beside it are his body's evidence, no blood trace.
+  // Anchors 6-12 m apart (each may move up to 2 m to find gentle ground in the valley); the
+  // stains that belong together are laid within 30 cm of their spot next to an anchor.
+  // A person dies 6 m ahead: his pool and a splash beside it are his body's evidence, no blood trace.
   const auto instance = world.script().findSymbolIndex("BDT_1000_BANDIT_L");
   if(instance==size_t(-1))
     fail("no instance BDT_1000_BANDIT_L");
-  st.victim = world.addNpc(instance,ground(world,h+f*700.f));
+  st.victim = world.addNpc(instance,ground(world,h+f*600.f));
   if(st.victim==nullptr)
     fail("cannot insert the victim");
   st.victim->setLastHitBy(&hero);
@@ -177,12 +188,13 @@ void setup(World& world, Npc& hero) {
   const auto body = st.victim->bodyTrace().id;
   const auto at   = st.victim->position();
   place(world,"pool",at,BloodStains::Kind::Pool,45.f,body);
-  place(world,"near_pool",at+r*80.f,BloodStains::Kind::Splash,15.f);
+  place(world,"near_pool",ground(world,at+r*80.f,30.f),BloodStains::Kind::Splash,15.f);
 
-  // Two splashes 1.2 m apart (one trace, named by the older, placed at the larger) and one 9 m away.
-  place(world,"a1",h+f*300.f-r*400.f,BloodStains::Kind::Splash,15.f);
-  place(world,"a2",h+f*420.f-r*400.f,BloodStains::Kind::Splash,25.f);
-  place(world,"b", h+f*300.f+r*500.f,BloodStains::Kind::Splash,20.f);
+  // Two splashes 1.2 m apart (one trace, named by the older, placed at the larger) and one far away.
+  const auto a1 = ground(world,h+f*300.f-r*600.f);
+  place(world,"a1",a1,BloodStains::Kind::Splash,15.f);
+  place(world,"a2",ground(world,a1+f*120.f,30.f),BloodStains::Kind::Splash,25.f);
+  place(world,"b", ground(world,h+f*300.f+r*600.f),BloodStains::Kind::Splash,20.f);
 
   // A meatbug's yellow blood is evidence; a golem's stone chips 1 m from it are not, and do not join it.
   BloodStains::Stain yellow;
@@ -191,16 +203,29 @@ void setup(World& world, Npc& hero) {
   yellow.radiusCm = 12.f;
   add(world,"yellow",yellow);
   BloodStains::Stain stone = yellow;
-  stone.pos       = ground(world,h-f*500.f+r*100.f);
+  stone.pos       = ground(world,yellow.pos+r*100.f,30.f);
   stone.blood     = BloodStains::Blood::Stone;
   add(world,"stone",stone);
 
   // A splash recorded indoors (the lifetime is the record's): three days, not one.
   BloodStains::Stain indoor;
-  indoor.pos      = ground(world,h-f*400.f-r*400.f);
+  indoor.pos      = ground(world,h-f*400.f-r*600.f);
   indoor.indoor   = true;
   indoor.radiusCm = 18.f;
   add(world,"in",indoor);
+
+  // The layout the checks rely on: pairs within 2 m, groups apart.
+  if(Gothic::physicsFlags().blood) {
+    const auto pos = [&](const char* role) { return stainById(world,st.ids.at(role))->pos; };
+    const auto near = [&](const char* x, const char* y) { return (pos(x)-pos(y)).length(); };
+    if(near("a1","a2")>BloodStains::GroupLinkCm || near("pool","near_pool")>BloodStains::GroupLinkCm)
+      fail("setup: a pair is farther than 2 m apart");
+    const char* groups[] = {"a1","b","pool","yellow","in"};
+    for(auto* x:groups)
+      for(auto* y:groups)
+        if(x!=y && near(x,y)<BloodStains::GroupLinkCm*2.f)
+          fail(std::string("setup: ")+x+" and "+y+" are closer than 4 m");
+    }
   }
 
 void advance(World& world, int64_t minutes) {
