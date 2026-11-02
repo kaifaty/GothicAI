@@ -755,6 +755,12 @@ pelvis, spine and head contacts with landscape, static objects or movable furnit
 capsule wall impacts and their existing landing damage share one 300 ms maximum
 speed window per NPC. Damage uses the unchanged guild fall formula; fatal
 impacts retain the attacker or caster, including the hero's kill attribution.
+Two NPC-culprit controls use the same 14 m/s wall impact: a nonlethal pair must
+enter native unconsciousness at 1 HP, drop its weapon, notify a witness of defeat,
+leave no murder or death trace, and recover through `AI_StandUp`; a lethal pair
+must die with murder attribution and a death trace. `body-impact standup` runs
+the unconscious End hook and queues native standup; `body-impact recovered`
+checks the completed handoff. With damage disabled it checks posture recovery.
 
 Run `scripts/bench.sh body-impact <absolute-output-directory>` and repeat with
 `BODY_IMPACT_DAMAGE=0`; the disabled run retains the previous animated landing
