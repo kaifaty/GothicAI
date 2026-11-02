@@ -35,6 +35,7 @@
 - **Память текстур считается по живым payload.** Зонд, `toggle chunks` и CSV/отчёт облёта показывают live/retired/пик байт, число текстур, сессионные evicted/reloaded и категории landscape / static / dynamic (NPC и предметы) / other. Категории не пересекаются: при совместном спросе приоритет landscape → static → dynamic → other; без спроса сохраняется последняя категория, до первого спроса — other. Байты — логический размер sampled texture payload по всем мипам с размером сжатых блоков, отдельно от retired; render targets, запас heap и накладные расходы драйвера в это число не входят. Это метрика текстур, а не всей GPU-памяти.
 - **Профиль CPU текстур:** сборка с `OPENGOTHIC_ENABLE_FRAME_PROFILE=ON` и включённой записью `OPENGOTHIC_FRAME_PROFILE` добавляет `texture_update` и `texture_demand_elapsed_sum` в CSV. Первый таймер охватывает `updateTextures`, включая ожидание mutex; второй — фактическую регистрацию/изменение владельцев и callbacks кусков, с суммой elapsed параллельных потоков. `bindless_rebuild` охватывает полную пересборку массивов, `bindless_patch` — поиск изменённых identity и запись слотов текущего банка; отдельные счётчики дают число вызовов и слотов. Неизменный быстрый путь не берёт mutex и не запускает часы. Фоновое декодирование/upload, отложенная публикация и обновление дескрипторов в `texture_update` не входят. Runtime-sidecar `frameprofile.csv.texture.csv` хранит интервалы чтения и upload рабочего потока, события его завершения, наблюдения готовности API и фактической публикации. Отчёт пересекает их с интервалами отправленных кадров, включая FenceBusy, и сравнивает число/p99 кадров с событием и без него; `Complete` — возврат рабочего потока, `Ready` — готовность к публикации, замеченная главным потоком: Metal проверяет завершение GPU fence без ожидания; Vulkan сохраняет прежний асинхронный upload и собственную синхронизацию использования ресурса. В обычной сборке без FRAME_PROFILE часы не вызываются.
 - **Уровни симуляции NPC (6а):** каждый тик мира `WorldObjects::updateSimTiers` даёт каждому NPC уровень `Full` или `Simplified` (`common/world/npcsimtier.*`), отдельный от политики `AiNormal/AiFar/AiFar2` (её 30/60 м и правила не меняются). `Full` — пока кусок 64 м под NPC Near в `ChunkResidency` (те же кольца 2/3 и гистерезис выхода, что у vob’ов; герой, актёры обучения и арены — всегда), иначе `Simplified`. Оба уровня пока исполняет прежний `Npc::tick`, поэтому поведение не меняется. `OPENGOTHIC_NPC_SIM_TIER=auto` (по умолчанию) | `full` (все Full) | `simplified` (все, кроме героя); `OPENGOTHIC_STREAMING=0` — все Full. Уровень не сохраняется: он пересчитывается после загрузки сохранения, нового мира и смены мира, первое назначение не считается переходом. Счётчики — число NPC по уровням, переходы и время `Npc::tick` по уровням (одно чтение часов на серию соседних NPC одного уровня): зонд (`[loadprobe-npc-tier]` на `session_end`/`stream_warm`, `scripts/loadprobe_summary.py`), `streaming.csv`, `toggle chunks` и frame profile (`npc_full_tick`/`npc_simplified_tick`). Стенд суток [`npc-day-parity.bench`](../scripts/bench/npc-day-parity.bench) (команда `npcday`) пишет журнал всех NPC каждые 5 игровых минут, [`scripts/npc_day_parity.py`](../scripts/npc_day_parity.py) сравнивает два прогона с допусками [`npc-day-parity.tolerances.json`](../scripts/bench/npc-day-parity.tolerances.json); [базовая линия](#шаг-1-пункт-6а--уровни-симуляции-npc-и-стенд-суток).
+- **Логическое тело NPC (6б):** `common/world/npclogicalstate.*` хранит состояние и флаги тела, оружие, часы последовательностей и ожидаемые события рядом с `Npc`; позиция и поворот остаются у самого NPC. Начальная загрузка читает восстановленное тело один раз; затем логическое состояние продвигает собственные часы по `Sequence`, а исполнитель передаёт только входы в точках изменения слоёв, скорости/hit-stop, combo и оружия. Аудит сравнивает прогноз до применения новых входов тика; входы, требующие повторной привязки, считаются отдельно и не объявляются совпадениями. Все игровые читатели и исполнитель прежние. `OPENGOTHIC_NPC_LOGIC_AUDIT=1` включает теневое сравнение и его счётчики (по умолчанию `0`); проверка не исполняет события. Загрузка перестраивает состояние канонически из восстановленного тела без нового формата сохранений; точная история уже снятой с очереди команды и несохранённая скорость не восстанавливаются. [Перепись читателей и границы следующих PR](#шаг-1-пункт-6б--логическое-состояние-тела-и-часы-действия).
 - **Смена мира** — экран загрузки: уходящий мир сериализуется в память; новый загружает логику и физику целиком, ландшафт и статичные визуалы — по резидентности.
 
 **Разбивка vob’ов (5а):** тот же `OPENGOTHIC_LOADPROBE=1` пишет `[loadprobe-vobs]` только внутри стадии `vobs`: число и собственное время типов без поддеревьев, собственное/полное время вложенных подстадий, уникальные mesh cache keys и hit/miss; `loadprobe_summary.py --vobs --median` сводит повторы в CSV.
@@ -1920,6 +1921,191 @@ Load average Mac перед/после каждого финального ст�
 - Сутки — 37–45 минут эксклюзивного окна Ryzen и ~55 МБ журнала; личная игра пользователя закрывает окно бенча.
 
 Проверки: сборка `Gothic2Notr` на Mac; на Ryzen `gothic-worldbase-contract` (в том числе новые проверки уровней), `gothic-mesh-gltf-test` (8850 assertions), `gothic-body-watch-test` (28 случаев, 469 assertions); e2e `check_walk` (3/3) и `load_rewind` (4/4); `scripts/check.py run` — 104 + 11 тестов.
+
+### Шаг 1, пункт 6б — логическое состояние тела и часы действия
+
+2026-11-02. Второй PR пункта 6. `NpcLogicalState` (`common/world/npclogicalstate.*`) принадлежит NPC и пока работает в тени прежнего исполнителя: игровые читатели остаются на `Pose`/`MdlVisual`. Позиция и поворот не копируются. Состояние хранит итоговый body state, состояния всех слоёв для точных `hasState`/`hasStateFlag`, маску mobsi, оружие, последовательность и часы действия. Начало, скорость, комбинация и класс loop/transition позволяют вычислять прогресс и ожидаемый конец по `Animation::Sequence`, без чтения текущего времени живой `Pose` для предсказания конца.
+
+Между входами `advance(now)` не читает `Npc` или `Pose`: сам завершает слой и запускает `Sequence::nextPtr`, вычисляет состояние тела из предсказанных слоёв и меняет оружие по времени `SET_FIGHT_MODE`. Начало/скорость копируются только при загрузке и в явной записи изменения исполнителя, не при каждом тике. Выбор следующей анимации через overlay/item destination/rotation, маска mobsi, падение и скриптовые состояния — внешние входы следующих этапов. Их повторные привязки имеют собственные счётчики; body/weapon, затронутый явным входом этого тика, исключён из скалярного сравнения. Неизвестный natural-next отдельно сравнивается и учитывается как re-anchor, без утверждения о совпадении жизненного цикла слоя.
+
+Полное расписание item insert/remove, `DEF_*`, окон, morph, шагов, звука и PFX строится только с `OPENGOTHIC_NPC_LOGIC_AUDIT=1`. В режиме по умолчанию `0` остаются часы слоёв и минимальные события оружия, необходимые самому прогнозу. В 6d нет читателей полного расписания; когда они появятся, его можно строить по запросу. Это запись, не исполнение: предметы, урон, эффекты и настоящее оружие меняет прежний исполнитель. Наблюдатель фактических событий охватывает tags, ground и morph; звук/PFX и окна не объявляются проверенными по моменту исполнения.
+
+Один раз после animation workers, на главном потоке: сначала продвигается прежний прогноз, затем сравнивается с телом, затем применяются накопленные входы этого тика. Поля, изменённые явным входом, считаются re-anchor и исключаются из скалярного сравнения. `body_samples`/`weapon_samples` показывают число выполненных сравнений. Native layer removals и weapon events являются наблюдениями, а не источником правильного прогноза; непредсказанный next отмечается отдельно перед повторной привязкой.
+
+`OPENGOTHIC_NPC_LOGIC_AUDIT=0` по умолчанию выключает сравнения и гистограммы. `npc-day.json` содержит `by_action`/`by_animation`: `end_error_ms` — ошибка относительно настоящего ухода слоя из Pose, `wait_error_ms` — отдельно относительно прохождения нативного AI-барьера. Предсказанный срок обоих сравнений берётся из собственного слоя, его начала, скорости и Sequence; `aniWaitTime` не используется для вычисления начала или конца. При неоднозначном слое сохраняется unknown. Для повторного PlayAni существующего loop вход допуска начинает один новый период Sequence; у самого loop нет естественного ухода.
+
+Распределения ошибок сохраняются в миллисекундах; события считаются mismatch только при `|error| > dt` текущего тика мира. Ранние/поздние концы и ожидания разделены. `reanchored_inputs` различает явный старт/удаление слоя, скорость, hit-stop, combo, оружие, маску mobsi, падение, script state и решения next, требующие исполнителя. Счётчики доступны в load probe и frame profile. `deferred_admissions` считает попытки допуска пути/физики (6c), поворота (6c) и dialogue output (6d), включая повторные обращения очереди.
+
+**Сохранения: каноническое восстановление, решение для 6б.** После загрузки эталон — реально восстановленное тело: слои `Pose`, оставшаяся очередь, сроки ожидания и ZS. Проверка в [`body_watch_test.cpp`](../OpenGothic/tests/body_watch_test.cpp) (`gothic-body-watch-test`) сохраняет посреди `PlayAni`, вставания и доставания оружия и сравнивает логическое состояние с этим эталоном. Формат прежний, существующие сохранения читаются тем же кодом. Равенство прежней истории действий до сохранения не обещается:
+
+- [`nextAiAction`](../OpenGothic/common/world/objects/npc.cpp#L6025) снимает команду с очереди до исполнения. Успешные [`AI_PlayAnim`/`AI_PlayAnimBs`](../OpenGothic/common/world/objects/npc.cpp#L6138) могут оставить одинаковые слои и сроки; [`AI_StandUp`/`AI_StandUpQuick`](../OpenGothic/common/world/objects/npc.cpp#L6176) также не сохраняют происхождение вставания. [`saveAiState`](../OpenGothic/common/world/objects/npc.cpp#L730) пишет сроки, ZS и оставшиеся очереди, но не уже снятую команду.
+- [`Pose::save`](../OpenGothic/common/graphics/mesh/pose.cpp#L191) сохраняет имя последовательности, body state и начало. В строках 195–204 начало при изменённой скорости пересчитывается, чтобы сохранить текущий кадр; временная скорость, hit-stop и исходное начало не записываются. Загрузка возвращает собственную скорость анимации и каноническое начало.
+- Поэтому 6б восстанавливает узнаваемый вид действия из сохранившихся слоёв и ожиданий. **Пункт 6f открыт:** для NPC без тела нужна собственная сохраняемая запись логического действия, его происхождения, часов и уже исполненных событий; существующий формат такую историю не содержит.
+
+**Перепись читателей.** Ниже ссылки перепроверены по текущему коду этой ветки. «Покрыто» означает, что данные уже представлены в `NpcLogicalState`; игровой вызов пока продолжает читать тело. Наличие таймера не означает, что в этом PR появился исполнитель без тела.
+
+| Группа | Читатели и реальные источники | Что есть в 6б; что остаётся |
+|---|---|---|
+| Общая граница состояния | [`Npc::bodyState`, `bodyStateMasked`, `hasState`, `hasStateFlag`](../OpenGothic/common/world/objects/npc.cpp#L7039); [`Pose::bodyState`, `hasState`, `hasStateFlag`](../OpenGothic/common/graphics/mesh/pose.cpp#L274); [`Npc::weaponState`](../OpenGothic/common/world/objects/npc.cpp#L7658); [`Npc::animProgress`](../OpenGothic/common/world/objects/npc.cpp#L8602) | Покрыты состояния всех слоёв, их flags/modifiers, оружие, прогресс по имени. `bodyState`: dead/unconscious/falling имеют приоритет; иначе маска mobsi заменяет агрегат слоёв; `hasState` и `hasStateFlag` проверяют отдельно каждый слой и mobsi, поэтому одного агрегата битов недостаточно. |
+| 6c: движение и повороты | [`MoveAlgo`](../OpenGothic/common/game/movealgo.cpp#L199): body/оружие, `Pose::isStanding/hasState`, `Npc::isFlyAnim/isJumpAnim/isAttackAnim`; [`Npc::isStanding/isJumpAnim/isFlyAnim/isFallingDeep`](../OpenGothic/common/world/objects/npc.cpp#L3393), `animMoveSpeed`, `prepareTurn`; [`NpcKeys`](../OpenGothic/common/game/npckeys.cpp#L58): состояние, скорость поворота, standing/attack; [`AnimationSolver`](../OpenGothic/common/graphics/mesh/animationsolver.cpp#L118): `isInAnim`, body state, standing, hasAnim | Body/weapon/идентичность и часы слоёв покрыты. Графовый путь, угол и срок поворота, root motion, прыжок, вода, падение и коллизии требуют 6c. `Pose::translateY`/кости не заменены. |
+| 6d: очередь и ожидания | [`Npc::tick`](../OpenGothic/common/world/objects/npc.cpp#L5828): hasAnim и сроки ожидания; [`nextAiAction`](../OpenGothic/common/world/objects/npc.cpp#L6025): `PlayAnim*`, remove/draw weapon, stand-up, `UseItemToState`, mobsi и output; [`MdlVisual::isStanding/hasAnim`](../OpenGothic/common/graphics/mdlvisual.cpp#L1640), [`Interactive::setMobState`](../OpenGothic/common/world/objects/interactive.cpp#L497) | Последовательности, предсказанные сроки и события записаны. Отложены исполнение событий, предметы и слоты, mobsi, доступность схемы анимации в solver, подтверждение переходов и длительность настоящего dialogue output. |
+| 6d: externals Daedalus | [`npc_getbodystate`](../OpenGothic/common/game/gamescript.cpp#L2289), [`npc_isinfightmode`](../OpenGothic/common/game/gamescript.cpp#L2502), [`npc_hasreadiedweapon/meleeweapon/rangedweapon`](../OpenGothic/common/game/gamescript.cpp#L2678), [`npc_hasbodyflag`](../OpenGothic/common/game/gamescript.cpp#L2799) | Все шесть мест читают представленные body/weapon/flags через `Npc`; ни один external не переведён на логическое состояние. |
+| 6d: мост и действия | [`npcview::weapon/body`](../OpenGothic/ai_bridge/npcview.cpp#L75), [`npccontroller`](../OpenGothic/ai_bridge/npccontroller.cpp#L682): оружие, ожидание `animProgress`, body в диагностике, [`hasAnim` перед play_ani](../OpenGothic/ai_bridge/npccontroller.cpp#L424); [`stucklogger`](../OpenGothic/ai_bridge/stucklogger.cpp#L116): item-interaction | Наблюдаемые scalar-данные покрыты; жизненный цикл контроллеров, исполнение анимаций и dialogue output остаются 6d/6f. Поведение и протокол моста прежние. |
+| 6e: бой | [`FightAlgo`](../OpenGothic/common/game/fightalgo.cpp#L48), включая `isPrehit`; [`ArcherAi`](../OpenGothic/common/game/archerai.cpp#L222), [длительность reload `animTime`](../OpenGothic/common/game/archerai.cpp#L195) из `Sequence::totalTime` через solver (не прогресс Pose); [`Npc::implAttack`](../OpenGothic/common/world/objects/npc.cpp#L3915): standing/attack, длительности и окна; [`bodyObservationState`](../OpenGothic/common/world/objects/npc.cpp#L4667); [`BodyController`](../OpenGothic/common/game/bodycontroller.cpp#L220), [`BodyObservations`](../OpenGothic/common/game/bodyobservations.cpp#L463), [`BodyTrajectory`](../OpenGothic/common/game/bodytrajectory.cpp#L214) | Body/weapon/последовательности, предсказанные события и окна записаны. Комбо/прерывания, динамическая скорость/hit-stop, точное попадание/блок/урон, P30 и физические реакции требуют 6e; время анимации не заменяет решение боя. |
+| 6e: восприятие и свидетели | [`Attention`](../OpenGothic/common/world/objects/attention.cpp#L40): armed/sneak/lie/run; [`WorldObjects::isTargetedBy`](../OpenGothic/common/world/worldobjects.cpp#L841); [`Npc::isLie`](../OpenGothic/common/world/objects/npc.cpp#L8738) → perception/witness; оружие в physics-noise; [`canSeeNpc/canSeeNpcOverEdge`](../OpenGothic/common/world/objects/npc.cpp#L9680) | Скаляры body/weapon покрыты. Голова, кости, лучи видимости/доступности выстрела, комнаты, дистанционное восприятие и бой остаются 6e. Dead/unconscious сами берутся из скриптового ZS, не из Pose. |
+| 6e: наблюдатели моста | [`npcfind`](../OpenGothic/ai_bridge/npcfind.h#L79), [`npcobserver`](../OpenGothic/ai_bridge/npcobserver.cpp#L158): weapon/lie, [`isLie` цели боя](../OpenGothic/ai_bridge/npcobserver.cpp#L1059); [`aibridge`](../OpenGothic/ai_bridge/aibridge.cpp#L1896), [`beasts`](../OpenGothic/ai_bridge/beasts.cpp#L46), [`necromancy`](../OpenGothic/ai_bridge/necromancy.cpp#L212) | Body/weapon/lie представлены; наблюдение событий, проверки доступности NPC и контроллеры не меняются. |
+| Телесное представление | [`MdlVisual`](../OpenGothic/common/graphics/mdlvisual.cpp#L964): body/weapon, reload progress, hasAnim/standing, combo, жесты `isInAnim`; [`FootIk`](../OpenGothic/common/graphics/mesh/footik.cpp#L297) | Состояния и времена представлены; IK, кости, геометрия, ammo-view, жесты и эффекты тела не исполняются логическим состоянием. Их отсутствие/возврат — 6f; предметные последствия — 6d. |
+
+Индекс всех scalar-чтений через перечисленную границу (`bodyState`, `bodyStateMasked`, `hasState`, `hasStateFlag`, `weaponState`, `animProgress`, `animDuration`); номера — строки файла, несколько вызовов в строке перечислены один раз. Он включает игрока и диагностику, чтобы они не исчезли при будущей замене читателей. Новый `npclogicalstate.cpp` читает тело только при rebuild и в аудите; эти чтения не продвигают прогноз. Прямые запросы идентичности анимации, окон и standing перечислены по группам выше.
+
+| Файл | Строки scalar-чтений |
+|---|---|
+| [`common/game/archerai.cpp`](../OpenGothic/common/game/archerai.cpp#L222) | 222, 223 |
+| [`common/game/bodyarena.cpp`](../OpenGothic/common/game/bodyarena.cpp#L435) | 435 |
+| [`common/game/bodycontroller.cpp`](../OpenGothic/common/game/bodycontroller.cpp#L220) | 220, 331, 332, 354, 869, 875, 887, 901 |
+| [`common/game/bodyobservations.cpp`](../OpenGothic/common/game/bodyobservations.cpp#L463) | 463, 467 |
+| [`common/game/fightalgo.cpp`](../OpenGothic/common/game/fightalgo.cpp#L48) | 48, 59, 68, 71, 79, 82, 384 |
+| [`common/game/gamescript.cpp`](../OpenGothic/common/game/gamescript.cpp#L2293) | 2293, 2510, 2682, 2692, 2700, 2803 |
+| [`common/game/inventory.cpp`](../OpenGothic/common/game/inventory.cpp#L911) | 911 |
+| [`common/game/movealgo.cpp`](../OpenGothic/common/game/movealgo.cpp#L199) | 199, 250, 260, 268, 303, 734, 836, 857, 940, 1070, 1072, 1364, 1482 |
+| [`common/game/npckeys.cpp`](../OpenGothic/common/game/npckeys.cpp#L58) | 58, 65, 112, 146, 148, 150 |
+| [`common/game/npckeysbench.cpp`](../OpenGothic/common/game/npckeysbench.cpp#L284) | 284 |
+| [`common/game/playercontrol.cpp`](../OpenGothic/common/game/playercontrol.cpp#L98) | 98, 131, 226, 250, 331, 373, 487, 582, 588, 742, 822, 823, 824, 1046, 1106, 1146, 1150, 1155, 1222, 1502, 1533 |
+| [`common/game/simulationstep.cpp`](../OpenGothic/common/game/simulationstep.cpp#L80) | 80 |
+| [`common/graphics/mdlvisual.cpp`](../OpenGothic/common/graphics/mdlvisual.cpp#L964) | 964, 983, 1011, 1044, 1045, 1075, 1182, 1817, 1979, 2020, 2022, 2058, 2059, 2092 |
+| [`common/graphics/mesh/animationsolver.cpp`](../OpenGothic/common/graphics/mesh/animationsolver.cpp#L128) | 128, 162, 169, 201, 325, 349, 374 |
+| [`common/graphics/mesh/footik.cpp`](../OpenGothic/common/graphics/mesh/footik.cpp#L297) | 297, 311 |
+| [`common/mainwindow.cpp`](../OpenGothic/common/mainwindow.cpp#L257) | 257, 782, 783, 889, 1181, 1257 |
+| [`common/navbench.cpp`](../OpenGothic/common/navbench.cpp#L394) | 394 |
+| [`common/navdemos.cpp`](../OpenGothic/common/navdemos.cpp#L242) | 242, 1023, 1705 |
+| [`common/navtransitions.cpp`](../OpenGothic/common/navtransitions.cpp#L109) | 109, 350, 562 |
+| [`common/npcdayjournal.cpp`](../OpenGothic/common/npcdayjournal.cpp#L178) | 178 |
+| [`common/testbench.cpp`](../OpenGothic/common/testbench.cpp#L1634) | 1634, 6112, 6151, 8116, 8183, 10277, 10333, 11355, 11356, 12709, 12710, 14550, 15265, 16384, 16385, 16597, 16606, 18292, 18494, 18551, 18578, 19638, 19658, 20002, 20849 |
+| [`common/ui/inventorymenu.cpp`](../OpenGothic/common/ui/inventorymenu.cpp#L113) | 113, 115, 208 |
+| [`common/world/objects/attention.cpp`](../OpenGothic/common/world/objects/attention.cpp#L40) | 40, 44, 63, 70 |
+| [`common/world/objects/npc.cpp`](../OpenGothic/common/world/objects/npc.cpp#L1614) | 1614, 1716, 1880, 2071, 2155, 2156, 2408, 2646, 2648, 3270, 3280, 3313, 3378, 3388, 3773, 3791, 3921, 3922, 4193, 4322, 4401, 4486, 4487, 4510, 4631, 4668, 4669, 4730, 4898, 4987, 5015, 5029, 5388, 5600, 5805, 5809, 5814, 5820, 5997, 6129, 6186, 7047, 7054, 7059, 7067, 7127, 7179, 7182, 7465, 7509, 7517, 7544, 7569, 7596, 7629, 7631, 7665, 7699, 7707, 7718, 7737, 7841, 7927, 7963, 7970, 8018, 8037, 8104, 8105, 8226, 8253, 8281, 8350, 8452, 8531, 8537, 8539, 8555, 8603, 8614, 8637, 8656, 8669, 8739, 8804, 9157, 9188, 9712, 9782, 9995, 9996 |
+| [`common/world/npclogicalstate.cpp`](../OpenGothic/common/world/npclogicalstate.cpp#L364) | 364, 529, 531, 536, 538 |
+| [`common/world/world.cpp`](../OpenGothic/common/world/world.cpp#L884) | 884, 892, 1498 |
+| [`common/world/worldobjects.cpp`](../OpenGothic/common/world/worldobjects.cpp#L841) | 841 |
+| [`common/world/worldsound.cpp`](../OpenGothic/common/world/worldsound.cpp#L349) | 349 |
+| [`ai_bridge/aibridge.cpp`](../OpenGothic/ai_bridge/aibridge.cpp#L1896) | 1896 |
+| [`ai_bridge/beasts.cpp`](../OpenGothic/ai_bridge/beasts.cpp#L46) | 46 |
+| [`ai_bridge/necromancy.cpp`](../OpenGothic/ai_bridge/necromancy.cpp#L212) | 212 |
+| [`ai_bridge/npccontroller.cpp`](../OpenGothic/ai_bridge/npccontroller.cpp#L682) | 682, 740, 772 |
+| [`ai_bridge/npcfind.h`](../OpenGothic/ai_bridge/npcfind.h#L79) | 79 |
+| [`ai_bridge/npcobserver.cpp`](../OpenGothic/ai_bridge/npcobserver.cpp#L158) | 158, 360, 422, 829 |
+| [`ai_bridge/npcview.cpp`](../OpenGothic/ai_bridge/npcview.cpp#L75) | 75, 94 |
+| [`ai_bridge/stucklogger.cpp`](../OpenGothic/ai_bridge/stucklogger.cpp#L116) | 116 |
+
+Прямые запросы `Pose`/`MdlVisual` (включая локальные ссылки `pose`/`targetPose`, доступность схем и идентичность слоёв; методы самой `Pose` не дублируются):
+
+| Файл | Строки прямых запросов |
+|---|---|
+| [`ai_bridge/npccontroller.cpp`](../OpenGothic/ai_bridge/npccontroller.cpp#L424) | 424 |
+| [`common/game/bodycontroller.cpp`](../OpenGothic/common/game/bodycontroller.cpp#L513) | 513, 918, 924, 925, 964 |
+| [`common/game/bodytrajectory.cpp`](../OpenGothic/common/game/bodytrajectory.cpp#L214) | 214, 220, 246, 266, 267, 297 |
+| [`common/game/movealgo.cpp`](../OpenGothic/common/game/movealgo.cpp#L250) | 250 |
+| [`common/graphics/mdlvisual.cpp`](../OpenGothic/common/graphics/mdlvisual.cpp#L1075) | 1075, 1182, 1622, 1629, 1636, 1641, 1817, 1872, 1979, 2029, 2045 |
+| [`common/graphics/mesh/animationsolver.cpp`](../OpenGothic/common/graphics/mesh/animationsolver.cpp#L118) | 118, 128, 162, 165, 169, 201, 325, 337, 339, 349, 371, 372, 374, 376, 381, 382, 384 |
+| [`common/world/npclogicalstate.cpp`](../OpenGothic/common/world/npclogicalstate.cpp#L354) | 354, 355, 358, 524 (только rebuild и диагностика расхождения) |
+| [`common/world/objects/interactive.cpp`](../OpenGothic/common/world/objects/interactive.cpp#L497) | 497 |
+| [`common/world/objects/npc.cpp`](../OpenGothic/common/world/objects/npc.cpp#L70) | 70, 87, 88, 705, 1450, 1891, 1933, 2119, 2367, 2368, 2644, 2646, 2648, 3077, 3079, 3374, 3380, 3390, 3394, 3414, 3418, 3426, 3937, 3940, 4006, 4009, 4018, 4087, 4099, 4116, 4219, 4259, 4284, 4298, 4338, 4437, 4438, 4456, 4471, 4484, 4485, 4695, 4696, 4697, 4698, 4699, 4700, 4702, 4707, 4712, 4714, 4802, 4970, 4974, 5174, 5178, 5179, 5180, 5215, 5218, 5881, 5958, 6144, 6156, 6197, 6811, 6820, 7047, 7059, 7067, 7659, 7735, 7749, 7754, 8019, 8026, 8037, 8039, 8063, 8146, 8196, 8427, 8603, 8825, 8829 |
+
+**Save/load, автоматическая проверка после ревью #758.** `gothic-body-watch-test`: **32 случая / 2872 проверки**, exit 0. Сразу после загрузки аудит читает уже построенный прогноз, не выполняя повторный sync. Тест подставляет устаревшие body/weapon и проверяет, что аудит обнаруживает их; отдельная копия состояния дальше идёт по `advance(now)` без входов Pose, включая конец слоя, `nextPtr` и смену оружия. Тип и собственная последовательность восстановленного действия проверены явно. В трёх фазах **240 682 выборки**, body/weapon mismatches **0/0**; шаг мира 33 мс. Draw сохраняется после положительного прогресса, до первого `SET_FIGHT_MODE`.
+
+| Действие и собственная последовательность | Начало слоя до → после, мс | Скорость до → после | Канонический тип | Конец слоя до → после, мс | Ошибка удаления слоя / освобождения wait, мс |
+|---|---:|---|---|---:|---|
+| PlayAni, `T_STAND_2_PEE` | 12046 → 12145 | 0,5 → 1 | `AI_PlayAnim` | 20048 → 16146 | +25 / −41 |
+| Вставание, `T_WOUNDED_2_STAND` | 16369 → 16369 | 1 → 1 | `AI_StandUp` | 19770 → 19770 | +31 / +31 |
+| Доставание, `T_1H_2_1HRUN` | 19999 → 19999 | 1 → 1 | `AI_DrawWeaponMelee` → `AI_DrawWeapon` | 20320 → 20320 | +29 / нет wait |
+
+Удаление слоя во всех трёх случаях укладывается в тик. Разность PlayAni с нативным ожиданием **−41 мс** теперь видна, а не скрыта вычислением прогноза из `aniWaitTime`: сохранённый барьер **16079 мс**, проход барьера **16105 мс**, прогноз конца восстановленного слоя **16146 мс**, фактический уход слоя **16171 мс**. Игра сохраняет старое ожидание, но нормализует временную скорость; это информационная потеря прежнего формата, а не ошибка независимых часов. У draw нативного wait вообще нет. После вставания native явно запускает Idle: у копии без этого нового входа body **0**, у исполнителя **98304**. Это отдельный re-anchor, не совпадение с прогнозом `nextPtr`.
+
+Существующее до 6б сохранение **9 277 540 байт** тоже прошло полный body-watch: **32 случая / 2868 проверок**, exit 0, **46,972 с с очередью**. Формат не менялся. Открытый пункт 6f о собственной сохраняемой записи остаётся в силе.
+
+**Контракты.** Штатный `~/.codex/checks/gothic/engine-targets.sh` на Ryzen через `gq quick`, 12 потоков / 13 ГиБ: worldbase — **473 502 треугольника, 403 куска, CRC32 c6175151**; mesh/glTF — **8850 проверок**; body-watch — **32/2872**. Exit **0**, **451,035 с с очередью**. Mac `Gothic2Notr`: exit **0**, **354,476 с**. `scripts/check.py run`: **6/6 за 0,76 с**, exit 0; первое ожидание числа CSV-колонок исправлено с 226 на 241 (пять новых полей в трёх стадиях).
+
+При подготовке новых проверок исправлены два ожидания стенда: копия без входов не обязана угадывать явный Idle после вставания; сохранение draw должно предшествовать fight-mode tag, а не происходить после четырёх фиксированных шагов. Оба случая затем проверены на правильной подготовке. GCC-предупреждение об отступах JSON исправлено до приёмочных сборок.
+
+**Стоимость по умолчанию, audit off.** Тихий Ryzen-прогон тех же первых **60,0058 игровых минут**, seed 73106: **1053 NPC**, **7449 тиков**, `end_reason=done`, **95,569 с** собственно журнала (**105 с** всей игры). `logic_audit.enabled=false`, гистограммы и полные event schedules отсутствуют. Сумма измеренного пути — **2 150 160 958 нс**, или **0,288651 мс/тик мира**, **0,274122 мкс/NPC-тик**. Теперь проход один после animation workers, а не 3–4 копирования Pose за тик. Время включает продвижение часов, применение входов и перестройку минимальных событий оружия; запись входа в очереди Pose вне этого таймера. Её полную цену вместе с остальным кадром проверяет отдельная пара `streaming-flythrough`. Часы стоимости включены журналом только на время этого замера; в обычной игре с audit=0 их нет.
+
+**Один тихий облёт audit off против main.** `BENCH_HOST=ryzen scripts/bench.sh streaming-flythrough`, одна пара на прежней базе `288c025e…`, неизменный маршрут/окно/контент. Main — снимок `54d65a79d` в обычной игнорируемой папке исходников; другие ветки и worktree не менялись. Оба прогона exit **0**, main **194 с**, ветка **193 с**.
+
+| Маршрут | Main p99, мс | Ветка p99, мс | Разность, мс |
+|---|---:|---:|---:|
+| run | 14,708625 | 14,643035 | −0,065591 |
+| fly | 15,255381 | 14,725794 | −0,529587 |
+
+В этой паре ухудшения не наблюдалось; это один проход каждой стороны, а не серия для оценки шума. Первый запуск ветки не завершил normal cadence и не дал frameprofile.csv за **305 с**; он исключён. Повтор на том же коде завершился. Между подготовками общий указатель базы сменился на несовместимый формат: один cost-прогон завершился до загрузки мира за **1 с**, без npc-day.json. Для принятых cost/облёта и последующих суток явно закреплены путь и fingerprint прежней базы; общий указатель не правился.
+
+**Суточная приёмка после ревью #758.** Прежние зеркальные результаты удалены. Новый full завершён: `done`, seed **73106**, **1440,003 игровых минут**, **178 759 тиков**, **1053 NPC**, **2306,280 с**. Бинарь SHA-256 `f18fb025ee23d1442ef569680c3e0506aa5e4ef59f1e152a4002bd3a21cde87f`, cache `eb6d1adb6834…`; явная прежняя база `288c025e…`. Simplified завершён на том же бинаре: **1440,003 игровых минут**, **178 759 тиков**, **2288,976 с**; в конце **1 Full / 1052 Simplified**, у full **1053 Full**. Оба журнала `done`, без усечения.
+
+| Сравнение со строгими допусками | NPC-выборок | ZS / TA / HP / инвентарь | Позиция p50 / p95 / max, м | ZS-старты | Смерти | Итог |
+|---|---:|---|---|---|---|---|
+| full → simplified | 304028 | 100 / 100 / 100 / 100 % | 0 / 0 / 0 | 100 %, сдвиг 0 | 6 / 6 | 15/15, exit 0 |
+| full → 6а `day-full-2` | 304028 | 100 / 100 / 100 / 100 % | 0 / 0 / 0 | 100 %, сдвиг 0 | 6 / 6 | 15/15, exit 0 |
+
+CSV не менялся. Дополнительный `logic_audit` в JSON comparer игнорирует без правок. Проверки полноты прошли: нет выборок только одной стороны и отсутствующих NPC в конце. Сравнение full/simplified заняло **23,816 с**, с 6а — **59,909 с**. Во всех 14472 парах ZS-стартов сдвиг 0. Копия baseline ранее сверена по SHA-256 трёх файлов с `/mnt/shared/gothic-ai/sw-npc-tier/runs/day-full-2/`.
+
+**Независимый аудит полных суток.** Все счётчики и распределения full и simplified совпадают, кроме `wall_ns`; таблицы ниже одинаковы для каждого режима. **188 233 227** NPC-тиков; сравнения body **188 061 554**, weapon **188 233 221**. Явные новые входы исключили соответствующее поле в **171 673** body-тиках и **6** weapon-тиках. Неизвестный natural-next сначала сопоставляется с прежним прогнозом, затем считается отдельным re-anchor; совпадение скаляра не объявляется совпадением неизвестного жизненного цикла слоя.
+
+| Расхождение / наблюдение | Число | Причина |
+|---|---:|---|
+| body `65536 → 98304`, T_WALKTURNL → S_WALK | 140 | Не передана роль удерживаемого поворота (6c) |
+| body `65536 → 98304`, T_WALKTURNR → S_WALK | 2027 | Та же роль поворота (6c) |
+| body `0 → 98304`, нет слоя → S_WALK | 22 | Следующий слой определён исполнителем, а не `nextPtr` (6c/6d) |
+| body, всего | **2189** | Все пары выше, других типов нет |
+| weapon | **0** | Прогноз SET_FIGHT_MODE проверен до входов |
+| удаление слоя: раньше / позже | **0 / 112645** | 112854 удаления, ещё 209 точно в срок; поздние ≤33 мс |
+| native wait: раньше / позже | **0 / 87265** | 87408 освобождений, ещё 143 точно в срок; поздние ≤33 мс |
+| event за пределами одного `dt` | **0 / 155856** | Распределение сохраняется, максимум 34 мс при шаге 33–34 мс |
+
+Причина поворотов проверена по коду: [`isRotate`](../OpenGothic/common/graphics/mesh/animation.h#L102) — флаг ассета, а [`Pose::solveNext`](../OpenGothic/common/graphics/mesh/pose.cpp#L926) удерживает только `sq==rotation`. Роль задаётся [после startAnim](../OpenGothic/common/graphics/mesh/pose.cpp#L1627); PlayAni может запустить ту же WALKTURN без этой роли. Удаление guard `isRotate` сломало бы зарегистрированные повороты. Это явно оставленный вход **6c**: role-set/clear плюс угол; его нужно также перестраивать из сохранённого имени `rotation`. Полный `executor_next_6c_6d` ниже учитывает повторные привязки, а не совпадения слоя.
+
+**Раздельные часы по типам.** `n` удаления — натуральные уходы слоя, включая канонически определённые переходы; `n` wait — реальные проходы нативного барьера. Это не уникальные команды. Прерывания не входят в распределения удаления. `—` означает, что такого наблюдения не было, а не нулевую ошибку.
+
+| Тип | n удаления | Удаление p50/p95/max, мс | n wait | Wait p50/p95/max, мс |
+|---|---:|---|---:|---|
+| `AI_RemoveWeapon` | 27 | 26/32/33 | 0 | — |
+| `AI_PlayAnim` | 38208 | 32/33/33 | 37415 | 32/33/33 |
+| `AI_PlayAnimBs` | 68778 | 32/33/33 | 48956 | 32/33/33 |
+| `AI_StandUp` | 87 | 32/33/33 | 0 | — |
+| `AI_UseMob` | 4558 | 32/33/33 | 0 | — |
+| `AI_UseItemToState` | 1091 | 6/26/33 | 1037 | 6/26/33 |
+| `AI_DrawWeaponMelee` | 36 | 26/32/32 | 0 | — |
+| `AI_Attack` | 69 | 32/33/33 | 0 | — |
+
+Во всех наблюдавшихся распределениях p95/max ≤33 мс. Для вставания с wait есть отдельная save/load проверка выше; штатные дневные вставания в этой разбивке не дали освобождения aniWaitTime. `by_animation` содержит **268 имён**, у **176** есть натуральный конец, у всех p95/max ≤33 мс. Примеры: T_STAND_2_PEE — 4 конца, 32/32/32 мс; T_1H_2_1HRUN — 32, 26/26/26 мс; T_1HRUN_2_1H — 25, 26/26/26 мс. У loop S_FISTWALKL нет натурального конца; 16737 событий, ошибка 20/27/34 мс, mismatch **0**.
+
+| Повторная привязка / непредсказанный вход | Число | Этап / значение |
+|---|---:|---|
+| `admitted_action_layer_unknown` | 105254 | собственный слой допуска не определён |
+| `combo_6e` | 1265 | combo |
+| `executor_next_6c_6d` | 21806 | следующий слой зависит от исполнителя |
+| `explicit_layer_remove` | 98252 | явное удаление слоя |
+| `explicit_weapon` | 6 | оружие вне последовательности |
+| `hit_stop_6e` | 12 | hit-stop |
+| `hit_stop_end_6e` | 12 | окончание hit-stop |
+| `interactive_mask_6d` | 1491 | маска mobsi |
+| `layer_start` | 182477 | старт или смена состояния слоя |
+| `script_state_6e` | 6 | скриптовое состояние / смерть |
+| `speed_6e` | 20 | явная скорость |
+
+Unknown — число попыток допуска, включая повторные вызовы/отсутствие нового слоя; для них часы не подбираются по самому длинному слою и нулевой ошибкой они не считаются. Следующие данные по пути, углу, dialogue и роли/next остаются входами 6c–6e.
+
+| Допуски без предсказуемого таймера | Попыток | Разбивка |
+|---|---:|---|
+| путь / физика, 6c | 17089 | GoToNpc 4622; GoToNextFp 6566; GoToPoint 5853; Flee 48 |
+| угол / выравнивание, 6c | 706241 | TurnToNpc 36317; AlignToFp 425812; AlignToWp 244112 |
+| dialogue output, 6d | 31620 | Output 567; OutputSvm 31051; OutputSvmOverlay 2 |
+
+**Цена audit on:** **75 734 597 391 нс**, **0,423669 мс/тик мира** за сутки. Это время самого пути shadow/audit, не разность полного кадра с OFF. Отдельный OFF-замер выше — первые 60 минут; периоды не выдаются за A/B-разность одинаковых кадров.
+
+**E2e на окончательном коде, audit=1:** `check_walk` **3/3 за 137 с**, `load_rewind` **4/4 за 50 с**, оба exit 0, fake ASR/TTS.
+
+Сырые данные и полные распределения: `/mnt/shared/gothic-ai/sw-npc-logic/review758/runs/review-full-pinned/` и `/mnt/shared/gothic-ai/sw-npc-logic/review758/runs/review-simplified-pinned/`; проверки и сравнения — `/mnt/shared/gothic-ai/sw-npc-logic/review758/checks/`. Архивные SHA-256 совпали с локальными для **6/6** файлов принятых суток.
+
+**Перепись:** 36 файлов scalar-чтений и 9 файлов прямых запросов Pose/MdlVisual, включая scripts externals, ai_bridge и чтения самого аудита только при rebuild/сравнении. Состояния слоёв/маски, оружие и часы представлены; движение/повороты — 6c, события/предметы/mobsi/диалоги — 6d, восприятие/бой — 6e. Сохранение собственной истории логического действия остаётся открытым для 6f.
 
 ### Рывки кадра на Vulkan от роста bindless-массивов (2026-11-02)
 

@@ -20,6 +20,7 @@
 #include "physics/dynamicworld.h"
 #include "physics/ragdoll.h"
 #include "world/aiqueue.h"
+#include "world/npclogicalstate.h"
 #include "world/objects/attention.h"
 #include "world/objects/archer.h"
 #include "world/fplock.h"
@@ -147,6 +148,8 @@ class Npc final {
     void       setWalkMode(WalkBit m);
     WalkBit    walkMode() const;
     void       tick(uint64_t dt);
+    const NpcLogicalState& logicalBodyState() const { return logicalBody; }
+    void       syncLogicalBodyState(bool rebuild=false);
     void       tickAnimationTags();
     bool       startClimb(JumpStatus jump);
 
@@ -879,6 +882,8 @@ class Npc final {
     bool      implAttack (uint64_t dt, bool bodyOverride=false, FightAlgo::Action bodyAction=FightAlgo::MV_NULL);
     void      traceCombatSnapshot();
     struct BodyMovementTrace;
+    friend struct NpcLogicalState;
+    friend class NpcLogicalStateContract;
     void      traceCombatGate(std::string_view reason);
     void      traceCombatAttempt(Anim requested, bool accepted, const std::string& before, std::string_view hook);
     std::string combatPoseIdentity() const;
@@ -1204,6 +1209,7 @@ class Npc final {
     NpcProcessPolicy               aiPolicy=NpcProcessPolicy::AiNormal;
     NpcSimTier                     simTierValue=NpcSimTier::Full; // transient, not serialized
     bool                           simTierAssigned=false;
+    NpcLogicalState                logicalBody;
     AiState                        aiState;
     ScriptFn                       aiPrevState;
     AiQueue                        aiQueue;

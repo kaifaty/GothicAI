@@ -761,11 +761,17 @@ void Npc::load(Serialize &fin, size_t id, std::string_view directory) {
       Log::e("body trace load: ",e.what());
       }
     }
+  syncLogicalBodyState(true);
+  }
+
+void Npc::syncLogicalBodyState(bool rebuild) {
+  logicalBody.sync(*this,rebuild);
   }
 
 void Npc::postValidate() {
   if(currentInteract!=nullptr && !currentInteract->isAttached(*this))
     currentInteract = nullptr;
+  syncLogicalBodyState(true);
   }
 
 void Npc::saveAiState(Serialize& fout) const {
@@ -5254,7 +5260,7 @@ bool Npc::tickMeleePosture(uint64_t dt) {
     }
   const auto now = owner.tickCount();
   lastEventTime = now;
-  visual.processLayers(owner);
+  visual.processLayers(owner,&logicalBody);
   const bool enabled = Gothic::physicsFlags().meleePosture || (meleeBargeKnockdown && Gothic::physicsFlags().meleeBarge) ||
                        (meleeRiposteKnockdown && Gothic::physicsFlags().meleeRiposte);
   if(ragdoll && (now-meleeFallTick>=1200 || !enabled)) {
@@ -5953,8 +5959,8 @@ void Npc::tickAnimationTags() {
   if(Gothic::physicsFlags().meleeBladeShadow || Gothic::physicsFlags().meleePhysicsHits || (meleeShadow && meleeShadow->window))
     syncMeleeShadowSwing();
   Animation::EvCount ev;
-  const bool hasEvents = visual.processEvents(owner,lastEventTime,ev);
-  visual.processLayers(owner);
+  const bool hasEvents = visual.processEvents(owner,lastEventTime,ev,&logicalBody);
+  visual.processLayers(owner,&logicalBody);
   visual.setNpcEffect(owner,*this,hnpc->effect,hnpc->flags);
   if(!hasEvents)
     return;
@@ -5985,6 +5991,7 @@ void Npc::tickAnimationTags() {
   }
 
 void Npc::tick(uint64_t dt) {
+  NpcLogicalState::Tick logicalTick(*this,dt);
   if(!bloodPoolDone && isDead() && owner.tickCount()-bloodDeathTick>=BloodSpawn::SettleMs) {
     bloodPoolDone = true;
     BloodSpawn::onDead(owner,*this);
@@ -6125,6 +6132,8 @@ void Npc::tick(uint64_t dt) {
   if(tickPhysicsInvestigation(dt))
     return;
 
+  if(aniWaitTime<owner.tickCount() && aniWaitTime==logicalBody.nativeWaitEnd)
+    logicalBody.waitReleased(owner.tickCount());
   if(waitTime>=owner.tickCount() || aniWaitTime>=owner.tickCount() || outWaitTime>owner.tickCount()) {
     traceCombatGate("tick_wait_or_animation_lock");
     if(physicalMovement)
@@ -6198,6 +6207,7 @@ void Npc::nextAiAction(AiQueue& queue, uint64_t dt) {
   if(queue.size()==0)
     return;
   auto act = queue.pop();
+  NpcLogicalState::Admission logicalAdmission(*this,act.act);
   switch(act.act) {
     case AI_None: break;
     case AI_LookAtNpc:{
@@ -6311,6 +6321,7 @@ void Npc::nextAiAction(AiQueue& queue, uint64_t dt) {
       break;
     case AI_PlayAnim:{
       if(auto sq = playAnimByName(act.s0,BS_NONE)) {
+        logicalAdmission.sequence=sq;
         implAniWait(uint64_t(sq->totalTime()));
         implFaiWait(uint64_t(sq->totalTime()));
         } else {
@@ -6322,6 +6333,7 @@ void Npc::nextAiAction(AiQueue& queue, uint64_t dt) {
     case AI_PlayAnimBs:{
       BodyState bs = BodyState(act.i0);
       if(auto sq = playAnimByName(act.s0,bs)) {
+        logicalAdmission.sequence=sq;
         implAniWait(uint64_t(sq->totalTime()));
         implFaiWait(uint64_t(sq->totalTime()));
         } else {

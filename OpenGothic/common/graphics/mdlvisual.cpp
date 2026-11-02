@@ -635,7 +635,7 @@ bool MdlVisual::setFightMode(asset::MdsFightMode mode) {
       break;
     }
 
-  return setToFightMode(f);
+  return setToFightMode(f,true);
   }
 
 void MdlVisual::dropWeapon(Npc& npc) {
@@ -789,10 +789,11 @@ void MdlVisual::emitBlockEffect(Npc& dest, Npc& source) {
   s.play();
   }
 
-bool MdlVisual::setToFightMode(const WeaponState f) {
+bool MdlVisual::setToFightMode(const WeaponState f, bool fromAnimation) {
   if(f==fgtMode)
     return false;
   fgtMode = f;
+  skInst->recordLogicalWeapon(f,fromAnimation);
   return true;
   }
 
@@ -1268,16 +1269,16 @@ bool MdlVisual::updateFootIk(Npc& npc, World& world, uint64_t dt, bool alignedTo
   return changed;
   }
 
-void MdlVisual::processLayers(World& world) {
+void MdlVisual::processLayers(World& world, NpcLogicalState* logic) {
   Pose&    pose      = *skInst;
   uint64_t tickCount = world.tickCount();
-  pose.processLayers(solver,tickCount);
+  pose.processLayers(solver,tickCount,logic);
   }
 
-bool MdlVisual::processEvents(World& world, uint64_t &barrier, Animation::EvCount &ev) {
+bool MdlVisual::processEvents(World& world, uint64_t &barrier, Animation::EvCount &ev, NpcLogicalState* logic) {
   Pose&    pose      = *skInst;
   uint64_t tickCount = world.tickCount();
-  return pose.processEvents(barrier,tickCount,ev);
+  return pose.processEvents(barrier,tickCount,ev,logic);
   }
 
 Vec3 MdlVisual::mapBone(const size_t boneId) const {
