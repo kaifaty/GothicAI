@@ -475,6 +475,10 @@ wait 6000
 # Barge: the same master in paladin armour against the hero holding his block; 7 s apart for the cooldown.
 mark barge
 still player off
+# G2 controls: a held parade key keeps the block up (the default scheme parries once per press).
+melee-shadow controls g2
+# The two-subject camera dives between them when the barge closes in: follow the hero from the side instead.
+cam follow 440 110 270
 npcequip BDT_1013_BANDIT_L ITAR_PAL_H
 melee-shadow weapon 1h
 wait 600
@@ -486,7 +490,7 @@ press parade
 wait 100
 rec barge-01
 fight BDT_1013_BANDIT_L player
-wait 2600
+wait 4000
 stop
 release all
 freeze BDT_1013_BANDIT_L
@@ -501,7 +505,7 @@ press parade
 wait 100
 rec barge-02
 fight BDT_1013_BANDIT_L player
-wait 2600
+wait 4000
 stop
 release all
 freeze BDT_1013_BANDIT_L
@@ -516,7 +520,7 @@ press parade
 wait 100
 rec barge-03
 fight BDT_1013_BANDIT_L player
-wait 2600
+wait 4000
 stop
 release all
 freeze BDT_1013_BANDIT_L
@@ -531,7 +535,7 @@ press parade
 wait 100
 rec barge-04
 fight BDT_1013_BANDIT_L player
-wait 2600
+wait 4000
 stop
 release all
 freeze BDT_1013_BANDIT_L
