@@ -1,8 +1,10 @@
 // A stand-in core for working on the screens in a plain browser (`bun run dev`, no Tauri): answers the
-// requests with made-up data and plays a session's events. `?scenario=fresh|failed` picks the start.
+// requests with made-up data and plays a session's events. `?scenario=fresh|failed` picks the start;
+// `update`, `update-unbuilt`, `update-failed`, `update-manual`, `updated`, `failed-update` show the Ryzen
+// install's update.
 import { mockIPC } from "@tauri-apps/api/mocks";
 import { emit } from "@tauri-apps/api/event";
-import type { JournalEntry, ServiceEvent, Session, State } from "./core";
+import type { JournalEntry, ServiceEvent, Session, State, Update } from "./core";
 import schema from "./schema.mock.json"; // `gothic-launcher` settings models, dumped; may lag behind them
 
 const scenario = new URLSearchParams(location.search).get("scenario") ?? "ready";
@@ -26,7 +28,56 @@ const state: State = {
   paths: { config: "/Users/me/.config/gothic-ai", logs: "/Users/me/Library/Logs/GothicAI", game_home: "/Users/me/.local/share/gothic-ai/game" },
 };
 
-if (scenario === "failed") {
+const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
+const update: Update | null = ["update", "update-unbuilt", "update-failed", "update-manual", "failed-update"].includes(scenario)
+  ? {
+      current: false,
+      behind: scenario === "update-unbuilt" ? 0 : 24,
+      built: scenario !== "update-unbuilt",
+      latest_failed: scenario === "update-failed",
+      head: "f5fb1cf5a2d4e6b8c0d2e4f6a8b0c2d4e6f8a0b2",
+      target: "685c693e0b1d3f5a7c9e1b3d5f7a9c1e3b5d7f9a",
+      changes:
+        scenario === "update-unbuilt"
+          ? []
+          : [
+              { pr: 723, title: "docs: решения по оставшимся дефектам e2e" },
+              { pr: 720, title: "npc memory: замер поиска recall против BM25 и эмбеддингов" },
+              { pr: 721, title: "Живая итоговая карта: случай fate_card в live_director" },
+            ],
+      report: { time: minutesAgo(9), result: "busy" },
+      auto: scenario !== "update-manual",
+      updating: null,
+    }
+  : scenario === "updated"
+    ? {
+        current: true, behind: 0, built: true, latest_failed: false, head: "685c693e0b1d", target: "685c693e0b1d",
+        changes: [], report: { time: minutesAgo(0), result: "updated" }, auto: true, updating: null,
+      }
+    : null;
+if (update?.latest_failed) Object.assign(update, { current: true, behind: 0, changes: [], report: { time: minutesAgo(4), result: "build_failed_rolled_back" } });
+
+async function runUpdate(u: Update) {
+  const lines = [
+    "gq: waiting for admission (Gothic AI install/update, quick, 12 threads)",
+    "+ git -C /home/kaifaty/gothic-ai/play reset --hard 685c693e0b1d",
+    "+ cmake --build /home/kaifaty/gothic-ai/play/OpenGothic/build --target Gothic2Notr --parallel 12",
+    "[412/1240] Building CXX object opengothic/CMakeFiles/Gothic2Notr.dir/game/world/objects/npc.cpp.o",
+    "+ /home/kaifaty/.local/bin/uv sync --locked --project /home/kaifaty/gothic-ai/play/server",
+    "+ /home/kaifaty/gothic-ai/play/scripts/build-launcher.sh --no-install",
+  ];
+  for (const detail of lines) {
+    u.updating = { state: "running", detail, started: u.updating!.started, result: null, error: null };
+    await emit("core", { event: "update", data: structuredClone(u) });
+    await sleep(1400);
+  }
+  u.updating = { state: "finished", detail: "", started: u.updating!.started, result: "updated", error: null };
+  await emit("core", { event: "update", data: structuredClone(u) });
+}
+
+state.update = update;
+
+if (scenario.startsWith("failed")) {
   state.session = {
     state: "stopped",
     mode: "continue",
@@ -38,7 +89,8 @@ if (scenario === "failed") {
     failed: {
       proc: "asr",
       detail:
-        "exited with code 2 before it was ready\n    --- 2026-10-11 18:21:04 uv run --project asr-service gothic-asr serve --provider voxtrall\n    error: unknown provider 'voxtrall', known: inworld, voxtral, chatgpt, openai, fake",
+        "exited with code 2 before it was ready\n    --- 2026-10-11 18:21:04 uv run --project asr-service gothic-asr serve --provider voxtrall\n    error: unknown provider 'voxtrall', known: inworld, voxtral, chatgpt, openai, fake"
+        + (scenario === "failed-update" ? Array.from({ length: 14 }, (_, i) => `\n    traceback line ${i + 1}`).join("") : ""),
     },
     code: 1,
   };
@@ -87,6 +139,7 @@ async function play(session: Session) {
 export function installMock(): void {
   mockIPC(
     async (cmd, args) => {
+      if (cmd === "restart_app") location.search = "?scenario=updated";
       if (cmd !== "core_call") return null; // window commands: nothing to do in a browser
       const { method, params } = args as { method: string; params: Record<string, unknown> };
       switch (method) {
@@ -163,6 +216,14 @@ export function installMock(): void {
           if (state.session) Object.assign(state.session, { state: "stopped", code: 0, ended: now() });
           await emit("core", { event: "session", data: state.session });
           return state.session;
+        case "update.start": {
+          const u = state.update;
+          if (!u?.auto) throw new Error("Автообновление не установлено: выполните scripts/ryzen-play.sh autoupdate install на Mac");
+          await sleep(300);
+          u.updating = { state: "running", detail: "Запускаю обновление", started: now(), result: null, error: null };
+          void runUpdate(u);
+          return structuredClone(u);
+        }
         case "report.create":
           return { path: "/Users/me/Library/Logs/GothicAI/report.zip" };
       }

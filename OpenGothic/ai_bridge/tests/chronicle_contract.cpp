@@ -29,7 +29,9 @@ int main() {
         {"id":"other-1","title":"Другая судьба","text":"Он выбрал иную дорогу.",
          "category":"choice","chapter":2,"day":9,"engraving":"","icon":"","epilogue":""},
         {"id":"other-2","title":"Тайна","text":"Свидетель запомнил героя.",
-         "category":"mercy","chapter":3,"day":10,"engraving":"","icon":"","epilogue":"О нём заговорили."}]},
+         "category":"mercy","chapter":3,"day":10,"engraving":"","icon":"","epilogue":"О нём заговорили."}],
+       "ends":[{"kind":"death","title":"Нёс слово","text":"Герой пал в бою.",
+                "name":"Пётр","chapter":3,"day":11}]},
       {"chapter":1,"day":2,"feats":[
         {"id":"early","title":"Ранняя дорога","text":"Начало пути.","category":"choice",
          "chapter":1,"day":3,"engraving":"","icon":"","epilogue":""}]}
@@ -56,6 +58,12 @@ int main() {
           "other fates receive converted epilogues");
   require(data.others[0].feats[0].engraving.empty() && data.others[0].feats[0].icon.empty(),
           "missing pictures remain empty");
+  require(data.others[0].ends.size()==1 && data.others[1].ends.empty(),
+          "endings stay in their fork and a missing list remains empty");
+  const auto& end = data.others[0].ends[0];
+  require(end.kind=="death" && end.chapter==3 && end.day==11,"ending kind and date are parsed");
+  require(TextCodec::toUtf8(end.title)=="Нес слово" && TextCodec::toUtf8(end.text)=="Герой пал в бою." &&
+          TextCodec::toUtf8(end.name)=="Петр","ending display text uses the game codepage");
 
   const auto emptyCard = parseFateCard(R"({"type":"fate_card","req":"empty"})");
   require(!emptyCard.off && emptyCard.title.empty() && emptyCard.text.empty() && emptyCard.feats.empty(),

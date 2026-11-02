@@ -151,7 +151,14 @@ bool MoveAlgo::tryMove(float x,float y,float z, DynamicWorld::CollisionTest& out
   }
 
 bool MoveAlgo::tryMove(const Tempest::Vec3& dp, DynamicWorld::CollisionTest& out) {
+  out.trackBodyImpact=Gothic::physicsFlags().bodyImpactDamage && npc.hasBodyImpactSpellFlight() && (flags==InAir || flags==Falling);
+  if(out.trackBodyImpact) {
+    out.bodyImpactVelocity=fallSpeed;
+    out.bodyImpactSpeed=0;
+    }
   const bool accepted = npc.tryMove(dp,out);
+  if(out.trackBodyImpact && out.bodyImpactSpeed>0.f)
+    npc.recordBodyImpact(out.bodyImpactSpeed,npc.bodyImpactCulprit(),"spell_capsule");
   if(movementTrace!=nullptr)
     movementTrace->collision(dp,accepted,out);
   return accepted;
@@ -261,9 +268,7 @@ bool MoveAlgo::implTick(uint64_t dt, MvFlags moveFlg) {
   const auto bs = npc.bodyStateMasked();
   const bool liftOff = bs==BS_JUMP && npc.isFlyAnim();
   const bool virtualEnabled = useCharacterVirtual();
-  const bool virtualWalking = virtualEnabled && !npcVirtualMobTransition &&
-                              !npc.isDown() && npc.physic.isEnabled() && !canFlyOverWater() &&
-                              (flags==Run || flags==Slide || flags==InWater) && !liftOff;
+  const bool virtualWalking = characterVirtualReady();
   if(!virtualWalking) {
     if(virtualMovementActive && flags==Run && liftOff)
       virtualJumpVelocity = virtualGroundVelocity*0.001f;
@@ -677,6 +682,13 @@ bool MoveAlgo::implTick(uint64_t dt, MvFlags moveFlg) {
   return true;
   }
 
+bool MoveAlgo::characterVirtualReady() {
+  const bool liftOff = npc.bodyStateMasked()==BS_JUMP && npc.isFlyAnim();
+  return useCharacterVirtual() && npc.interactive()==nullptr && !npc.spellFrozen() &&
+         !npcVirtualMobTransition && !npc.isDown() && npc.physic.isEnabled() && !canFlyOverWater() &&
+         (flags==Run || flags==Slide || flags==InWater) && !liftOff;
+  }
+
 bool MoveAlgo::useCharacterVirtual() {
   if(npc.isPlayer())
     return Gothic::physicsFlags().characterVirtual;
@@ -687,14 +699,9 @@ bool MoveAlgo::useCharacterVirtual() {
   const bool enabled = human ? Gothic::physicsFlags().npcCharacterVirtual :
                                Gothic::physicsFlags().monsterCharacterVirtual &&
                                Gothic::physicsFlags().allowsMonsterCharacterVirtual(npc.isDown(),canFlyOverWater());
-  if(!enabled || npc.isDown() || hero==nullptr) {
-    npcVirtualInRange = false;
-    return false;
-    }
-  constexpr float enterRadius = 2000.f, leaveRadius = 2200.f;
-  const float distance = npc.qDistTo(*hero);
-  npcVirtualInRange = npcVirtualInRange ? distance<=leaveRadius*leaveRadius
-                                       : distance<enterRadius*enterRadius;
+  npcVirtualInRange = MeleeFighter::keepPhysics(enabled,!npc.isDown() && hero!=nullptr,
+                                               npc.isMeleeFighter(),npcVirtualInRange,
+                                               hero!=nullptr ? npc.qDistTo(*hero) : 0.f);
   return npcVirtualInRange;
   }
 
@@ -1454,6 +1461,9 @@ void MoveAlgo::onMoveFailed(const Tempest::Vec3& dp, const DynamicWorld::Collisi
   static float speed     = 360.f;
 
   if(dp==Tempest::Vec3())
+    return;
+  // A melee dodge that runs into a wall or a body is neither cut nor turned: the dodger just stops there
+  if(npc.isMeleeDodging())
     return;
 
   const auto  ortho   = Tempest::Vec3::crossProduct(Tempest::Vec3::normalize(dp),Tempest::Vec3(0,1,0));

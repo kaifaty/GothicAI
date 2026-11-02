@@ -2,7 +2,7 @@
   // Stroke icons in the mockup's style; decorative unless `label` is given.
   type Name =
     | "candle" | "mic" | "speaker" | "shield" | "check" | "warn" | "play" | "stop"
-    | "sliders" | "back" | "next" | "folder" | "cross";
+    | "sliders" | "back" | "next" | "folder" | "cross" | "update";
   let { name, size = 20, color = "currentColor", label }: { name: Name; size?: number; color?: string; label?: string } =
     $props();
 </script>
@@ -48,6 +48,8 @@
     <path d="M15 5l-7 7 7 7" />
   {:else if name === "next"}
     <path d="M9 5l7 7-7 7" />
+  {:else if name === "update"}
+    <path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3" /><path d="M19.5 4.5v4h-4" />
   {:else if name === "folder"}
     <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
   {/if}

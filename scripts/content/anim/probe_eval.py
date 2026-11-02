@@ -46,6 +46,10 @@ def fails(mid: str, m: dict) -> list[str]:
         f.append("low_apex")
     if mid == "charge_release" and (m["hand_drop_cm"] < 100 or m["hand_vmax"] < 4):
         f.append("weak_swing")
+    if m.get("rearm_cm", -99) > -5:  # the sword climbs back to the head on the way to the stance
+        f.append("rearm")
+    if mid == "charge_hold" and m["pivot_deg"] > 10:  # a hold stands still; a strike's back foot may turn on its ball
+        f.append("pivot")
     if mid in ("riposte_hand", "riposte_body") and (m["lean_15"] > 35 or m["hand_ahead_cm"] < 45):
         f.append("no_thrust")  # the attacker doubling over, as in the first probe, leans ~60°
     if mid == "riposte_victim" and m["pelvis_min"] > 40:
@@ -64,7 +68,7 @@ class Probe:
 
     def blade(self, w):
         m = w[self.gi["ZS_RIGHTHAND"]]
-        return m[:3, 3], m[:3, :3] @ np.array([1.0, 0, 0])
+        return m[:3, 3], m[:3, :3] @ np.array([-1.0, 0, 0])  # the blade lies along the slot's -X
 
     def pose_world(self, name):
         return ga.world_pose(self.skel, ga.read_animation(self.pose_dir / self.spec["poses"][name]["clip"]), 0)
@@ -97,6 +101,21 @@ class Probe:
                 c = fc[:T, ch + k]
                 sl.append(np.linalg.norm(np.diff(P[:, gi[node], [0, 2]], axis=0), axis=1)[c[1:] & c[:-1]])
         sl = np.concatenate(sl)
+        # How far a planted foot turns about the vertical while it stands (Kimodo turns the feet of a pose it
+        # does not like between its keys; the ankle stays, the toe sweeps the ground).
+        pivot = [0.0]
+        for side, ch in (("L", 0), ("R", 3)):
+            v = P[:, gi[f"BIP01 {side} TOE0"]] - P[:, gi[f"BIP01 {side} FOOT"]]
+            yaw = np.degrees(np.unwrap(np.arctan2(v[:, 0], v[:, 2])))
+            c = fc[:T, ch]
+            f = 0
+            while f < T:
+                g = f
+                while g + 1 < T and c[g + 1] == c[f]:
+                    g += 1
+                if c[f] and g - f >= 2:
+                    pivot.append(float(np.abs(yaw[f:g + 1] - yaw[f]).max()))
+                f = g + 1
         tips = np.array([b[0] + 90 * b[1] for b in map(self.blade, W)])
         neck = P[:, gi["BIP01 NECK"]] - P[:, gi["BIP01 PELVIS"]]
         lean = np.degrees(np.arccos(np.clip(neck[:, 1] / np.linalg.norm(neck, axis=1), -1, 1)))
@@ -108,7 +127,7 @@ class Probe:
              "slide_med": round(float(np.median(sl)), 2), "slide_max": round(float(sl.max()), 2),
              "jerk": round(float(np.linalg.norm(np.diff(P, n=2, axis=0), axis=2).max()), 1),
              "tip_below_floor": int((tips[:, 1] < -2).sum()), "pelvis_min": round(float(pelvis_y.min()), 1),
-             "yaw_max": round(float(yaw.max()), 1)}
+             "yaw_max": round(float(yaw.max()), 1), "pivot_deg": round(max(pivot), 1)}
         misses = [self.hand_key(W[T - 1 if k["frame"] == "end" else int(k["frame"])], self.pose_world(k["pose"]))
                   for k in move["keys"] if k["type"] == "right-hand"]
         if misses:
@@ -135,6 +154,10 @@ class Probe:
             hs = np.linalg.norm(np.diff(hand[:19], axis=0), axis=1) * FPS / 100
             m["hand_drop_cm"] = round(float(hand[:3, 1].max() - hand[:19, 1].min()), 1)
             m["hand_vmax"] = round(float(hs.max()), 1)
+            # After the last hand key (the follow-through) the hand only goes down and back to the stance.
+            follow = max(int(k["frame"]) for k in move["keys"] if k["type"] == "right-hand" and k["frame"] != "end")
+            head = P[:, gi["BIP01 HEAD"], 1]
+            m["rearm_cm"] = round(float((hand[:, 1] - head)[follow + 3:T - 4].max()), 1)
         if mid in ("riposte_hand", "riposte_body"):
             m["lean_15"] = round(float(lean[15]), 1)
             m["hand_ahead_cm"] = round(float(hand[15, 2] - P[15, gi["BIP01 SPINE2"], 2]), 1)

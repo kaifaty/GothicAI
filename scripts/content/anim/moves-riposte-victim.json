@@ -1,0 +1,18 @@
+{
+ "note": "The riposte's victim: the reaction from the blade's entry (frame 10 of T_1HRIPOSTE) through the hold to the pull (frame 21), then a short stagger back; the engine hands the body to the knockdown ragdoll after the pull. Body-only prompts, the 1H combat stance at the start, no end key. Travel in metres in the character's frame (x = its left, z = forward), 30 fps.",
+ "stance": "HUMANS_1HST1-S_1HRUN.MAN",
+ "samples": 8,
+ "seed": 7301,
+ "steps": 100,
+ "cfg": [[2.0, 2.0], [3.0, 2.0]],
+ "moves": [
+  {"id": "riposte_hurt", "frames": 36, "travel": [0.0, -0.15],
+   "text": "A person is stabbed in the stomach, flinches and doubles over in pain, hunched forward, and holds still.",
+   "keys": [{"type": "fullbody", "frame": 0, "pose": "stance", "at": 0},
+            {"type": "root2d", "points": [["end", 1.0]]}]},
+  {"id": "riposte_hurt_step", "frames": 36, "travel": [0.0, -0.35],
+   "text": "A dazed person is stabbed in the stomach, doubles over in pain and staggers half a step backward.",
+   "keys": [{"type": "fullbody", "frame": 0, "pose": "stance", "at": 0},
+            {"type": "root2d", "points": [["end", 1.0]]}]}
+ ]
+}

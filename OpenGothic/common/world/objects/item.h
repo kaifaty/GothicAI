@@ -3,7 +3,6 @@
 #include <zenkit/addon/daedalus.hh>
 
 #include "graphics/objvisual.h"
-#include "graphics/meshobjects.h"
 #include "physics/dynamicworld.h"
 #include "vob.h"
 
@@ -104,7 +103,6 @@ class Item : public Vob {
 
   protected:
     void                moveEvent() override;
-    void                setPhysicsEnable(const MeshObjects::Mesh& mesh);
     void                setPhysicsEnable(const ProtoMesh* mesh);
 
   private:
@@ -123,6 +121,7 @@ class Item : public Vob {
     uint32_t                       placedZenId = uint32_t(-1);
     bool                           placedAllowed = true;
 
-    MeshObjects::Mesh              visual;
+    const ProtoMesh*               proto = nullptr;
+    ObjVisual                      visual;
     DynamicWorld::Item             physic;
   };

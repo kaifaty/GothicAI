@@ -64,6 +64,7 @@ EVENT_OPTIONS = {
     "npc_attack": {"call_help": "shout for help", "flee": "run away", "fight": "fight back"},
     "npc_threat": {"call_help": "shout for help", "flee": "run away", "fight": "ready your weapon and fight"},
     "fight_nearby": {"call_guards": "call the guards", "fight": "join the fight", "flee": "get away"},
+    "trace_found": {"call_guards": "call the guards"},
 }
 
 # and those that only make sense when the hero did it
@@ -123,10 +124,12 @@ class SituationBuilder:
         self.places = places
 
     def _describe(self, stimulus: Stimulus, now: float) -> str:
-        if stimulus.kind == "noise" and self.places is not None:
-            place = self.places.of(stimulus.place)
+        if stimulus.kind in ("noise", "trace_found"):
+            place = self.places.of(stimulus.place) if self.places is not None else None
             if place is not None:
                 stimulus = replace(stimulus, place=place.where_en)
+            elif stimulus.kind == "trace_found":
+                stimulus = replace(stimulus, place=None)  # «nearby», not a waypoint's name
         return stimulus.describe(now)
 
     def who(self, npc: NpcContext) -> str:

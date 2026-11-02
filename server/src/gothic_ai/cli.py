@@ -18,6 +18,7 @@ from contextlib import nullcontext
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
+from urllib.parse import urlsplit
 
 from . import (
     characters,
@@ -59,12 +60,14 @@ from .daylife import DayDesk
 from .deals import Deals
 from .dialogue import REACT_HINT, SVM_HINT, DialogueManager
 from .director import Director
+from .embeddings import EmbedClient
 from .errands import Errands
 from .executor import Intent
 from .fatecard import FateCards
 from .fates import Fates
 from .feat_art import DEFAULT_ROOT, Artist
 from .feats import Feats
+from .found_traces import FoundTraces
 from .game import GameError, GameLink, GameServer
 from .gamedata import storygraph
 from .gamedata.ou import load_npc_lines
@@ -295,6 +298,7 @@ class ServerState:
         self.day: DayDesk | None = None
         self.perception: PerceptionDesk | None = None
         self.sightings: Sightings | None = None
+        self.found_traces: FoundTraces | None = None
         self.whereabouts: Whereabouts | None = None
         self.lore: lore.Lore | None = None
         self.guide: Guide | None = None
@@ -493,6 +497,8 @@ class Console:
                             print(f"  {feat.id}: {feat.title}; {feat.text}")
                             if feat.epilogue:
                                 print(f"    {feat.epilogue}")
+                        for end in fork.ends:
+                            print(f"  {end.kind}: {end.title}; {end.text}")
             case "graph" if self.state.story is not None:
                 await self.graph(rest)
             case "quest" if len(rest) >= 5 and self.state.quests is not None:
@@ -832,6 +838,16 @@ async def _native_combat_available(link: GameLink, pilot: BodyPilot | None, npc:
         await asyncio.sleep(0.05)
 
 
+def embed_url(url: str | None, decider_url: str | None) -> str | None:
+    """Explicit embedding service, or HTTP port 47837 on the decider's host."""
+    if url:
+        return url
+    host = urlsplit(decider_url).hostname if decider_url else None
+    if host and ":" in host:
+        host = f"[{host}]"
+    return f"http://{host}:47837" if host else None
+
+
 async def serve(args: argparse.Namespace) -> int:
     soak_control = os.environ.get("GOTHIC_SOAK_CONTROL") == "1"
     if soak_control and args.scenario != "neural-soak":
@@ -861,7 +877,9 @@ async def serve(args: argparse.Namespace) -> int:
     game_dir = Path(args.game_dir) if args.game_dir else None
     personas = PersonaProvider(game_dir if game_dir and game_dir.is_dir() else None)
     threading.Thread(target=personas.warm, name="original-lines", daemon=True).start()
-    memory = MemoryStore(args.memory_db)
+    embed_at = None if args.no_embeddings else embed_url(args.embed_url, args.decider_url)
+    embeddings = EmbedClient(embed_at) if embed_at else None
+    memory = MemoryStore(args.memory_db, embeddings=embeddings)
     asr = None if args.no_voice else AsrClient(args.asr_url)
     decider = None if args.no_brain or not args.decider_url else DeciderClient(args.decider_url)
     # npc lines in a fight: a local model, in a fraction of a second (dialogue.py)
@@ -876,6 +894,7 @@ async def serve(args: argparse.Namespace) -> int:
     budget = Budget(per_npc_per_min=args.llm_per_npc_min, total_per_min=args.llm_total_min)
     log.info("LLM backend: %s (%s)", llm.name, getattr(llm, "model", "-"))
     log.info("memory: %s", args.memory_db)
+    log.info("memory search: %s", f"semantic ({embed_at}), lexical fallback" if embeddings else "lexical")
     log.info("turn traces: %s", "off" if trace is None else args.trace_dir)
     log.info("voice: %s", "off" if asr is None else f"{args.voice_file or 'microphone'} -> {args.asr_url}")
     log.info("npc voices: %s", "off" if tts is None else args.tts_url)
@@ -1164,6 +1183,12 @@ async def serve(args: argparse.Namespace) -> int:
             enabled=not args.no_crimes and not args.no_npc_crimes,
         )
         link.npc_crime_check = state.npc_crimes.check_command
+        if not args.no_found_traces:
+            # a body first seen is a find: a stimulus, and suspicion by evidence (stage 8 step 4б)
+            assert state.sightings is not None
+            state.found_traces = FoundTraces(
+                state.sightings, crimes=state.crimes, npc_crimes=state.npc_crimes, journal=journal,
+            )
         if state.crimes is not None:
             state.blame = Blame(
                 link, state.chronicle, state.crimes, state.npc_crimes, state.dialogue, journal=journal,
@@ -1479,6 +1504,8 @@ async def serve(args: argparse.Namespace) -> int:
             )
             planner.crime_rooms = state.crimes is not None
             state.incidents.follow(planner)  # free npc's speak when the moment calls for it
+            if state.found_traces is not None:
+                state.found_traces.follow(planner)  # a free npc decides what to do about a body it found
             state.talk.planner = planner  # npc's in a conversation are left to it; others overhear
             link.listeners.append(planner.on_message)
             # what the npc wants from the hero, from the conversation, steers it afterwards
@@ -1932,6 +1959,13 @@ async def serve(args: argparse.Namespace) -> int:
                 )
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info("scenario npc_far: %d checks, %d failed", len(results), len(bad))
+                exit_code = 1 if bad else 0
+            elif args.scenario == "body_found":
+                assert state.sightings is not None and state.found_traces is not None
+                assert state.crimes is not None
+                results = await scenarios.body_found(link, state.sightings, state.found_traces, state.crimes)
+                bad = {k: v for k, v in results.items() if not v.startswith("done")}
+                log.info("scenario body_found: %d checks, %d failed", len(results), len(bad))
                 exit_code = 1 if bad else 0
             elif args.scenario == "frame":
                 assert state.npc_will is not None and state.chests is not None
@@ -2597,6 +2631,8 @@ async def serve(args: argparse.Namespace) -> int:
     if tone_quick is not None:
         await tone_quick.aclose()
     memory.close()
+    if embeddings is not None:
+        await embeddings.close()
     for task in finished:
         if not task.cancelled() and (err := task.exception()) is not None:
             log.error("%s", err)
@@ -3347,6 +3383,7 @@ def main() -> None:
             "npc_director",
             "npc_will",
             "npc_far",
+            "body_found",
             "frame",
             "crime_meet",
             "crime_ally",
@@ -3423,6 +3460,14 @@ def main() -> None:
         help="gothic-decider service for npc decisions outside conversations (without it the planner is off)",
     )
     p.add_argument(
+        "--embed-url",
+        default=os.environ.get("GOTHIC_EMBED_URL"),
+        help="gothic-embed service for NPC memory (default: the decider's host, http://<gpu>:47837)",
+    )
+    p.add_argument(
+        "--no-embeddings", action="store_true", help="use word search for NPC memory"
+    )
+    p.add_argument(
         "--body-policy",
         choices=("engine", "service"),
         default=os.environ.get("GOTHIC_BODY_POLICY", "engine"),
@@ -3477,6 +3522,11 @@ def main() -> None:
     )
     p.add_argument(
         "--no-cover", action="store_true", help="disable witness cover deals and fear of testifying"
+    )
+    p.add_argument(
+        "--no-found-traces",
+        action="store_true",
+        help="a body first seen is only a trace: no trace_found stimulus and no suspicion of murder",
     )
     p.add_argument(
         "--no-occasions", action="store_true", help="do not watch for the director's story occasions"

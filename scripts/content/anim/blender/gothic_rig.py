@@ -112,14 +112,14 @@ def add_head(arm_obj):
 
 
 def add_sword(arm_obj):
-    """A plain 1H blade on ZS_RIGHTHAND: 0.9 m along the slot's local axis the engine uses."""
+    """A plain 1H blade on ZS_RIGHTHAND: 0.9 m along the slot's -X, where the engine's weapon meshes lie."""
     bpy.ops.mesh.primitive_cube_add(size=1)
     blade = bpy.context.active_object
     blade.name = "Sword"
     blade.scale = (0.02, 0.9, 0.05)
     bpy.ops.object.transform_apply(scale=True)
     for v in blade.data.vertices:
-        v.co.y += 0.45
+        v.co.y -= 0.45
     blade.parent = arm_obj
     blade.parent_type = "BONE"
     blade.parent_bone = "ZS_RIGHTHAND"

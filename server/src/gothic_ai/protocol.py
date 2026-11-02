@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 # story_program), v24: choices in the director's dialogs (steps choice, clear_choices; debug choices, talk,
 # menu, menu_pick), v25: story_program.own (the scripts' program under the director's), v26: the director's
 # lines in the npc's voice (line_voice).
-PROTOCOL_VERSION = 56
+PROTOCOL_VERSION = 59
 NOISE_PROTOCOL = 36  # npc_event noise and npc_act investigate
 TRACE_PROTOCOL = 37  # visible physical traces and game time on noise events
 PACE_PROTOCOL = 38  # go_to_waypoint.pace: a guide keeps the hero's pace; start_activity.place
@@ -31,6 +31,16 @@ CRIME_REACT_PROTOCOL = 44  # independently held hero deeds, their ids, and vanil
 CRIME_MEET_PROTOCOL = 46  # deeds switch also holds room entry; rule verdicts need no body action
 NPC_CRIME_PROTOCOL = 47  # marked NPC theft/attack and separate npc_deed snapshots
 NPC_FAR_PROTOCOL = 48  # story_effect chest_take: a checked chest-to-self transfer without a body action
+BODY_TRACE_PROTOCOL = 58  # a dead person is a trace: npc_view.traces kind body with the dead npc's id
+NPC_FAR_FIGHT_PROTOCOL = 59  # story_effect knockout/wound: nonlethal outcomes outside simulation
+# trace kinds newer than the traces themselves, and the protocol that brought each
+TRACE_KINDS_SINCE = {"broken": BROKEN_TRACE_PROTOCOL, "body": BODY_TRACE_PROTOCOL}
+
+
+def trace_supported(kind: str, protocol: int | None) -> bool:
+    """Whether a peer of this protocol (None: unknown, a test) sends traces of this kind."""
+    return protocol is None or protocol >= TRACE_KINDS_SINCE.get(kind, TRACE_PROTOCOL)
+
 
 # --- game -> server -----------------------------------------------------------
 
@@ -630,13 +640,16 @@ class Trace(_GameMessage):
     """A visible physical trace (v37). Its originator remains private to the engine and save."""
 
     id: str  # stable across saves; identifies the trace, not its originator
-    kind: Literal["arrow", "moved", "tilted", "broken"]
-    name: str  # arrow, table, barrel, ...; broken: a full description, e.g. «обломки ящика»
+    kind: Literal["arrow", "moved", "tilted", "broken", "body"]
+    # arrow, table, barrel, ...; broken: a full description, e.g. «обломки ящика»; body: the dead's name
+    name: str
     waypoint: str | None = None  # nearest waypoint to the trace
     distance: float = 0  # cm from the npc
     hero_cm: float | None = None
     from_hero: Side | None = None
-    age: int | None = Field(default=None, ge=0)  # game minutes since appearance; unknown in legacy saves
+    # game minutes since appearance (body: since death); unknown in legacy saves
+    age: int | None = Field(default=None, ge=0)
+    npc: str | None = None  # v58 body: the dead npc's id, as `Look.id` has it; not who killed him
 
 
 class NpcView(_GameMessage):
@@ -1686,10 +1699,20 @@ class ChronicleFeat(_Command):
     epilogue: str = ""
 
 
+class ChronicleEnd(_Command):
+    kind: Literal["death", "wrath", "finale"]
+    title: str
+    text: str
+    name: str
+    chapter: int
+    day: int
+
+
 class ChronicleFork(_Command):
     chapter: int
     day: int
     feats: list[ChronicleFeat] = Field(default_factory=list)
+    ends: list[ChronicleEnd] = Field(default_factory=list)
 
 
 class ChronicleCmd(_Command):
@@ -1922,6 +1945,28 @@ class StoryWatchCmd(_Command):
     owner: str = ""
 
 
+class StoryEffect(_Command):
+    """A world effect; existing effect-specific fields pass through unchanged."""
+
+    model_config = ConfigDict(extra="allow", frozen=True)
+
+    do: Literal[
+        "give", "xp", "set", "journal", "end", "attack", "refuse_talk", "routine", "create",
+        "teach", "calm", "party", "knows", "crime_memory", "chest_take", "knockout", "wound",
+    ]
+    by: Annotated[str, Field(strict=True, min_length=1)] | None = None
+    loss: Annotated[int, Field(strict=True, ge=0)] | None = None
+    by_loss: Annotated[int, Field(strict=True, ge=0)] | None = None
+
+    @model_validator(mode="after")
+    def far_fight_fields(self) -> StoryEffect:
+        if self.do in {"knockout", "wound"} and (self.by is None or self.loss is None):
+            raise ValueError(f"{self.do} needs by and loss")
+        if self.do == "wound" and self.by_loss is None:
+            raise ValueError("wound needs by_loss")
+        return self
+
+
 class StoryEffectCmd(_Command):
     """Effects on an npc (v8), through the scripts' own functions, the npc as self and the hero as other:
     the same as in a dialog of the director (give, xp, set, journal, end) and `attack` (`reason`: an AR_*
@@ -1943,13 +1988,29 @@ class StoryEffectCmd(_Command):
     v48: `chest_take` with `chest`, `item`, `count`: the self npc takes the exact count into its own
     inventory, without walking, animation or script perceptions. Every source chest is checked before
     any effect runs, even without `check`; missing quantities and mission items reject the whole batch.
-    The server's StoryGuard protects plot items before sending this effect."""
+    The server's StoryGuard protects plot items before sending this effect.
+
+    v59: `knockout` with `by` (winner instance), `loss` (nonnegative integer): self loses a far fight
+    through the native unconscious state; the winner keeps at least 1 HP. Both participants are checked
+    before any effect runs; inside simulation or controlled bodies reject the batch without changes.
+    `result.value` reports `winner_hp` and `dropped` (item instance or null).
+
+    v59: `wound` with `by`, `loss` (self), `by_loss` (by), both nonnegative integers: a far fight
+    reaches its deadline with no knockout. The same participant checks apply; both keep at least
+    1 HP, no weapon drops or perceptions occur. `result.value` reports `self_hp` and `by_hp`."""
 
     type: Literal["story_effect"] = "story_effect"
     req: str
     npc: str
     effects: list[dict[str, Any]]
     check: bool | None = None
+
+    @model_validator(mode="after")
+    def validate_far_fight(self) -> StoryEffectCmd:
+        for effect in self.effects:
+            if effect.get("do") in {"knockout", "wound"}:
+                StoryEffect.model_validate(effect)
+        return self
 
 
 class EndCard(BaseModel):

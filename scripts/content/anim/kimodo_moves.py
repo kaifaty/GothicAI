@@ -1,6 +1,7 @@
 """Prepare Kimodo generation folders (meta.json + constraints.json) for a list of moves.
 
-    python3 scripts/content/anim/kimodo_moves.py <moves.json> <base>/models <soma-ref.npz> <out-dir> [<pose dir>]
+    python3 scripts/content/anim/kimodo_moves.py <moves.json> <base>/models <soma-ref.npz> <out-dir> [<pose dir>] \
+        [--stance HUMANS_1HST2-S_1HRUN.MAN] [--only dash_back,...]
 
 A move is a prompt, a length in frames (Kimodo runs at 30 fps), a travel and a list of keys:
 
@@ -25,9 +26,13 @@ A move is a prompt, a length in frames (Kimodo runs at 30 fps), a travel and a l
 A "cfg" list ([[text, constraint], ...]) in the spec or in a move writes one folder per setting. The old probe
 form (a "duration" in seconds, stance keys at both ends, "end_free") still works. `run_kimodo.sh`
 runs the folders.
+
+--stance overrides the spec's stance: each talent overlay has its own combat stance S_1HRUN (and Gothic its
+own jump-back per overlay), so a dodge is generated once per overlay. --only picks moves by id.
 """
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -138,9 +143,20 @@ def build(move: dict, poses: Poses) -> list[dict]:
 
 
 def main():
-    spec_path, models, soma_ref, out = (Path(a) for a in sys.argv[1:5])
+    ap = argparse.ArgumentParser()
+    for name in ("spec", "models", "soma_ref", "out"):
+        ap.add_argument(name, type=Path)
+    ap.add_argument("pose_dir", type=Path, nargs="?")
+    ap.add_argument("--stance")
+    ap.add_argument("--only")
+    a = ap.parse_args()
+    spec_path, models, soma_ref, out = a.spec, a.models, a.soma_ref, a.out
     spec = json.loads(spec_path.read_text())
-    poses = Poses(models, spec, soma_ref, Path(sys.argv[5]) if len(sys.argv) > 5 else None)
+    if a.stance:
+        spec["stance"] = a.stance
+    if a.only:
+        spec["moves"] = [m for m in spec["moves"] if m["id"] in a.only.split(",")]
+    poses = Poses(models, spec, soma_ref, a.pose_dir)
     count = 0
     for i, move in enumerate(spec["moves"]):
         if "keys" not in move:

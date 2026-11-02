@@ -41,7 +41,6 @@ from .game import GameError, GameLink
 from .llm import Tool, ToolCall
 from .npc_tools import guild_name
 from .protocol import (
-    BROKEN_TRACE_PROTOCOL,
     TRACE_PROTOCOL,
     GameMessage,
     GroundItem,
@@ -52,6 +51,8 @@ from .protocol import (
     NpcViews,
     Session,
     Snapshot,
+    Trace,
+    trace_supported,
 )
 from .turn import ToolOutcome
 
@@ -290,8 +291,10 @@ class PerceptionDesk:
         hello = getattr(self.link, "hello", None)
         if hello is not None and hello.protocol < TRACE_PROTOCOL and view.traces:
             view = view.model_copy(update={"traces": []})
-        elif hello is not None and hello.protocol < BROKEN_TRACE_PROTOCOL and view.traces:
-            view = view.model_copy(update={"traces": [t for t in view.traces if t.kind != "broken"]})
+        elif hello is not None and any(not trace_supported(t.kind, hello.protocol) for t in view.traces):
+            # kinds an older bridge does not have (broken before v40, body before v58) are not believed
+            traces = [t for t in view.traces if trace_supported(t.kind, hello.protocol)]
+            view = view.model_copy(update={"traces": traces})
         now = self.clock()
         self._views[view.npc.upper()] = (now, view)
         recent = self._recent.setdefault(view.npc.upper(), {})
@@ -363,8 +366,17 @@ class PerceptionDesk:
             elif trace.from_hero in SIDES:
                 where.append(SIDES[trace.from_hero])
             where.append(f"давность {trace.age} мин" if trace.age is not None else "давность неизвестна")
-            told.append(f"{trace_name(trace.kind, trace.name)} ({', '.join(where)})")
+            dead = self.dead_of(view, trace)
+            what = self.label(view.npc, dead) if dead is not None else trace_name(trace.kind, trace.name)
+            told.append(f"{what} ({', '.join(where)})")
         return "Следы: " + "; ".join(told) + "."
+
+    @staticmethod
+    def dead_of(view: NpcView, trace: Trace) -> Look | None:
+        """The body a body trace is (v58), as the npc sees it: the bridge names the trace only «тело»."""
+        if trace.kind != "body" or not trace.npc:
+            return None
+        return next((o for o in view.sees if o.kind == "body" and o.id.upper() == trace.npc.upper()), None)
 
     def targets(self, view: NpcView) -> dict[str, str]:
         """Whom its intent may point to: the hero, whom it sees, saw a moment ago, whom the hero looks at
@@ -622,7 +634,7 @@ class PerceptionDesk:
         if view.traces:
             kinds = {
                 "arrow": "a stuck arrow", "moved": "a displaced object", "tilted": "a tilted object",
-                "broken": "debris",
+                "broken": "debris", "body": "a dead body",
             }
             for trace in view.traces:
                 lines.append(
@@ -675,9 +687,16 @@ def _ground(items: list[GroundItem]) -> str | None:
 def trace_name(kind: str, name: str) -> str:
     if kind == "broken":
         return name
+    if kind == "body" and name.strip().lower() in ("", "тело"):
+        return "тело"  # whose: the bridge's name says only «тело» when the npc does not see the body
     if kind == "arrow" and "стрел" in name.lower():
         return name
-    kinds = {"arrow": "застрявшая стрела", "moved": "сдвинутый предмет", "tilted": "наклонённый предмет"}
+    kinds = {
+        "arrow": "застрявшая стрела",
+        "moved": "сдвинутый предмет",
+        "tilted": "наклонённый предмет",
+        "body": "тело",
+    }
     return f"{kinds.get(kind, 'след')}: {name}"
 
 

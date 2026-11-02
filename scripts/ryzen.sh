@@ -483,6 +483,10 @@ WRAPPER
   started=$SECONDS
   # bench.sh produces the report here, before the complete output is collected.
   BENCH_HOST=local NO_BUILD=1 RYZEN_BENCH=1 bash "$ROOT/scripts/bench.sh" "$scenario" "$out" && rc=0 || rc=$?
+  if [[ -n "${RYZEN_BENCH_ARCHIVE:-}" ]]; then
+    mkdir -p "$RYZEN_BENCH_ARCHIVE"
+    cp -a "$out/." "$RYZEN_BENCH_ARCHIVE/"
+  fi
   echo "Ryzen: bench $((SECONDS - started))s, exit $rc"
   return "$rc"
 }
@@ -580,8 +584,8 @@ case "$ACTION" in setup|e2e|pytest|bench|clean|clean-cache|du) shift ;; *) echo 
 if [[ "$ACTION" == bench ]]; then
   BENCH_CLASS="${RYZEN_BENCH_CLASS:-quick}"
   case "$BENCH_CLASS" in
-    quick|quiet) ;;
-    *) echo 'RYZEN_BENCH_CLASS must be quick or quiet' >&2; exit 2 ;;
+    quick|quiet|batch) ;;
+    *) echo 'RYZEN_BENCH_CLASS must be quick, quiet or batch' >&2; exit 2 ;;
   esac
   [[ $# == 2 ]] || { echo 'Usage: scripts/ryzen.sh bench <scenario> <out>' >&2; exit 2; }
   BENCH_SCENARIO="$1"
@@ -1168,6 +1172,7 @@ game_queue_args() {
     # Arbitrary benchmark windows can cover neighbours and affect their cadence.
     # Keep the legacy exclusive display reservation even with a private tunnel.
     GQ_ARGS+=(--gpu-mem 4G --name "bench $(basename "$BENCH_SCENARIO" .bench)")
+    if [[ -n "${RYZEN_BENCH_ARCHIVE:-}" ]]; then GQ_ARGS+=(--archive "$RYZEN_BENCH_ARCHIVE"); fi
   else
     GQ_ARGS+=(--gpu-mem 2G --name "e2e ${SCENARIO:-m0}")
     # A custom size or position cannot share the default slot layout safely.
@@ -1232,6 +1237,7 @@ ENV_ARGS=("RYZEN_LOCK_WAIT=$LOCK_WAIT" "RYZEN_JOBS=$JOBS" ${BASE_ENV_ARGS[@]+"${
 sync_content
 if [[ "$ACTION" == bench ]]; then
   [[ -z "$AI_PORT" ]] || ENV_ARGS+=("RYZEN_AI_TUNNEL=1")
+  if [[ -n "${RYZEN_BENCH_ARCHIVE:-}" ]]; then ENV_ARGS+=("RYZEN_BENCH_ARCHIVE=$RYZEN_BENCH_ARCHIVE"); fi
   REMOTE_OUT="$STATE/runs/$RUN"
   bench_path() {
     python3 - "$1" "$LOG_DIR" "$REMOTE_OUT" <<'PY'
@@ -1250,7 +1256,7 @@ PY
   while IFS= read -r name; do
     case "$name" in
       GOTHIC_DIR|OPENGOTHIC_BASE*|OPENGOTHIC_VIDEOS_FINGERPRINT|OPENGOTHIC_TEXTURES|OPENGOTHIC_FRACTURE|OPENGOTHIC_CONVEX_PARTS|OPENGOTHIC_CONTENT) continue ;;
-      OPENGOTHIC_*|GOTHIC_*|TEMPEST_*|WORLD|TIMEOUT|SOUND|MUSIC|MOVABLE_VOBS|ITEM_HULLS|ITEM_DEEPEST_CONTACT|FURNITURE_PARTS|ARROW_STICKING|PHYSICS_NOISE|DESTRUCTION|BUOYANCY|CLOTH|ITEM_WAKE|PLACED_ITEMS|STATIC_COLLISION_SPLIT|CHARACTER_VIRTUAL|NPC_CHARACTER_VIRTUAL|MONSTER_CHARACTER_VIRTUAL|MELEE_BLADE_SHADOW|MELEE_PHYSICS_HITS|MELEE_POSTURE|MELEE_REACTIONS|MELEE_DOWN_TACTICS|MELEE_HITSTOP|MELEE_STAMINA|MELEE_PARRY|MELEE_PARRY_AI|MELEE_STAGGER|MELEE_BEAST_POISE|MELEE_BACKSTAB)
+      OPENGOTHIC_*|GOTHIC_*|TEMPEST_*|WORLD|TIMEOUT|SOUND|MUSIC|MOVABLE_VOBS|ITEM_HULLS|ITEM_DEEPEST_CONTACT|FURNITURE_PARTS|ARROW_STICKING|PHYSICS_NOISE|DESTRUCTION|BUOYANCY|CLOTH|ITEM_WAKE|PLACED_ITEMS|BODY_IMPACT_DAMAGE|BODY_TRACES|STATIC_COLLISION_SPLIT|CHARACTER_VIRTUAL|NPC_CHARACTER_VIRTUAL|MONSTER_CHARACTER_VIRTUAL|MELEE_BLADE_SHADOW|MELEE_PHYSICS_HITS|MELEE_POSTURE|MELEE_REACTIONS|MELEE_DOWN_TACTICS|MELEE_HITSTOP|MELEE_STAMINA|MELEE_PARRY|MELEE_PARRY_AI|MELEE_STAGGER|MELEE_BEAST_POISE|MELEE_BACKSTAB|MELEE_DODGE|MELEE_BARGE|MELEE_CHARGE)
         value="$(bench_path "${!name}")"
         ENV_ARGS+=("$name=$value") ;;
     esac

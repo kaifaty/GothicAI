@@ -11,7 +11,7 @@ from .feat_art import DEFAULT_ROOT
 from .feats import CATEGORY_ICONS
 from .game import GameError, GameLink
 from .memory import BranchInfo, MemoryStore
-from .protocol import ChronicleCmd, ChronicleFeat, ChronicleFork, ChronicleGet, GameMessage
+from .protocol import ChronicleCmd, ChronicleEnd, ChronicleFeat, ChronicleFork, ChronicleGet, GameMessage
 
 
 def _lineage(branch: str, branches: dict[str, BranchInfo]) -> dict[str, int]:
@@ -74,6 +74,11 @@ def collect_fates(
     if root is None:
         return fate, []
     kept = {feat.id for feat in fate}
+    seen_ends = {
+        (created, json.dumps(fact, sort_keys=True))
+        for _, created, fact in entries if fact.get("fact") == "fate_end"
+    }
+    ends: dict[tuple[str, int], list[tuple[float, ChronicleEnd]]] = {}
     # The first copy identifies the original recording; a revealed epilogue in a later copy
     # belongs to the same alternate fate, but never reveals it in the current branch.
     others: dict[str, tuple[tuple[str, int], float, int, ChronicleFeat]] = {}
@@ -92,7 +97,8 @@ def collect_fates(
         entries = [
             (seq, created, json.loads(content)) for seq, created, content in memory.feat_facts(other)
         ]
-        for seq, created, feat in _feats(entries, art_root, kept):
+        deeds = _feats(entries, art_root, kept)
+        for seq, created, feat in deeds:
             if feat.id not in others:
                 others[feat.id] = key, created, seq, feat
             elif feat.epilogue and not others[feat.id][3].epilogue:
@@ -100,6 +106,17 @@ def collect_fates(
                 others[feat.id] = (
                     old_key, old_created, old_seq, old_feat.model_copy(update={"epilogue": feat.epilogue}),
                 )
+        if any(others[feat.id][0] == key for _, _, feat in deeds):
+            for _, created, fact in entries:
+                if fact.get("fact") != "fate_end":
+                    continue
+                identity = created, json.dumps(fact, sort_keys=True)
+                if identity in seen_ends:
+                    continue
+                seen_ends.add(identity)
+                ends.setdefault(key, []).append((created, ChronicleEnd(
+                    **{field: fact[field] for field in ("kind", "title", "text", "name", "chapter", "day")},
+                )))
     grouped: dict[tuple[str, int], list[tuple[float, int, ChronicleFeat]]] = {}
     for key, created, seq, feat in others.values():
         grouped.setdefault(key, []).append((created, seq, feat))
@@ -112,6 +129,7 @@ def collect_fates(
         forks.append(ChronicleFork(
             chapter=chapter, day=day,
             feats=[feat for _, _, feat in sorted(feats, key=lambda item: item[:2])],
+            ends=[end for _, end in sorted(ends.get((common, cutoff), []), key=lambda item: item[0])],
         ))
     return fate, forks
 
