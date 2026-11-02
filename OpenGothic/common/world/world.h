@@ -21,6 +21,7 @@
 #include "portalrooms.h"
 #include "chunkresidency.h"
 #include "bodytraces.h"
+#include "bloodstains.h"
 
 class GameSession;
 class Focus;
@@ -95,6 +96,17 @@ class World final {
     bool                 heroSeesBody(const Npc& hero, const Npc& body) const;
     bool                 isStoryNpcType(int32_t type) const;
     BodyTraces::Body     bodyRule(const Npc& body, const Npc* hero) const; // all but heroSees
+
+    // Blood (physics stage 8, step 4c; world/bloodstains.h holds the rules). [GAME] blood=0:
+    // addBloodStain adds nothing, bloodStains() is empty and there are no `blood` traces.
+    uint32_t             addBloodStain(BloodStains::Stain stain); // its id; 0: blood is off
+    const std::vector<BloodStains::Stain>& bloodStains() const;
+    bool                 bodyInWorld(uint32_t bodyTraceId) const;  // a dead NPC with this body trace id
+    std::string          bloodTraceId(uint32_t stainId) const;     // "<world>:blood:<n>"
+    // On the ground below `near` (Marvin and bridge `blood`, benches): surface, normal and indoor
+    // from the world; 0 when blood is off or there is no ground.
+    uint32_t             placeBloodStain(const Tempest::Vec3& near, BloodStains::Kind kind, float radiusCm,
+                                         uint32_t bodyId = 0);
 
     uint32_t             mobsiId(const Interactive* ptr) const;
     Interactive*         mobsiById(uint32_t id);
@@ -306,7 +318,13 @@ class World final {
     int64_t                              bodySweepMinute  = -1;
     mutable std::array<int32_t,3>        storyNpcTypes    = BodyTraces::StoryTypes;
     mutable bool                         storyNpcTypesRead = false;
+    std::vector<BloodStains::Stain>      blood;
+    uint32_t                             nextBloodStainId = 1;
     void                                 sweepBodies();
+    void                                 sweepBodiesAt(int64_t now);
+    void                                 sweepBloodStains();
+    void                                 saveBloodStains(Serialize& fout) const;
+    void                                 loadBloodStains(Serialize& fin);
     void                                 saveBodyTraces(Serialize& fout) const;
     void                                 loadBodyTraces(Serialize& fin);
     void                                 saveStuckArrows(Serialize& fout) const;

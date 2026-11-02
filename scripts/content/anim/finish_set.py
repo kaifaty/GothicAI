@@ -7,12 +7,14 @@ set.json: {"levels": ["HUMANS", "HUMANS_1HST1", "HUMANS_1HST2"], "moves": [
      "sword_arm": "0.5,0.8,1,1", "free_arm": "0,0,0,0", "arm_window": "0.6,0.85", "free_window": "0.6,0.85",
      "fade": "0.12,0.2",
      "ref": "self", "start": "<an earlier move's name>", "end": "<name> | self", "lock_speed": 8,
-     "lift_skims": true, "lock_turn": true, "blend_in": 0.1}]}
+     "lift_skims": true, "lock_turn": true, "blend_in": 0.1, "hit": [7, 13], "sfx": [[4, "Whoosh"]]}]}
 
 Each level finishes against its own stance <LEVEL>-S_1HRUN and takes the node set of its own jump-back
 <LEVEL>-T_1HPARADEJUMPB (finish.py --fill). "ref": "self" uses the move's source as the stance (a hold loop
 blends its arm to its own first frame); "start" / "end" land an end on an earlier move's finished record of the
-same level, or on the move's own first frame ("self"). Moves are finished in the order given. Writes
+same level, or on the move's own first frame ("self"). "hit": [optimal frame, hit end] gives a strike the
+events of Gothic's own attacks (hit limb ZS_RIGHTHAND, DEF_OPT_FRAME, DEF_HIT_END); "sfx": [[frame, name]]
+plays a sound. Frames count from 0, the record's first frame. Moves are finished in the order given. Writes
 <out>/<LEVEL>/<LEVEL>-<NAME>.MAN.json and, with a content dir, packs every level into <LEVEL>.MSB.
 
 {"name": "T_1HCHARGEDEMO", "concat": ["T_1HCHARGE", "S_1HCHARGE:0-25", "T_1HCHARGEHIT"]} glues finished moves
@@ -48,6 +50,16 @@ def concat(parts: list[tuple[ga.Animation, int, int]], name: str) -> ga.Animatio
     first = parts[0][0]
     return ga.Animation(name, "", first.layer, first.fps, sum(len(p) for p in pos), list(first.node_indices),
                         np.concatenate(pos), np.concatenate(rot))
+
+
+def hit_events(hit: list[int] | None) -> list[dict]:
+    """The events of a strike as Gothic's own attacks carry them: zenkit's MdsEventType HIT_LIMB (16),
+    OPTIMAL_FRAME (20) and HIT_END (21)."""
+    if not hit:
+        return []
+    ev = {"frame": 0, "slot": "", "slot2": "", "item": "", "frames": [], "fight_mode": 6, "attached": False}
+    return [{**ev, "type": 16, "slot": "ZS_RIGHTHAND"}, {**ev, "type": 20, "frames": [hit[0]]},
+            {**ev, "type": 21, "frames": [hit[1]]}]
 
 
 def main():
@@ -99,7 +111,9 @@ def main():
         if content:
             pack = {"model": level, "script": f"{level}.MSB",
                     "animations": [{"file": str(done[m["name"]]), "next": m.get("next", ""),
-                                    "blend_in": m.get("blend_in", 0.0)} for m in spec["moves"]]}
+                                    "blend_in": m.get("blend_in", 0.0), "events": hit_events(m.get("hit")),
+                                    "sfx": [{"frame": f, "name": s, "range": 1000.0, "empty_slot": True}
+                                            for f, s in m.get("sfx", [])]} for m in spec["moves"]]}
             pack_path = out / level / "pack.json"
             pack_path.write_text(json.dumps(pack, indent=1))
             subprocess.run([sys.executable, str(HERE / "content_pack.py"), str(content), str(pack_path)], check=True)

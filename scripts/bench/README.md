@@ -721,6 +721,30 @@ main from before body traces to get `session-legacy.sav` (a dead person and a wo
 `SAVE=<that>/session-legacy.sav scripts/bench.sh body-traces-legacy` loads it with
 the current build: old bodies get an id, `age: null`, and a lifetime from the load.
 
+`blood-stains.bench` checks blood stains as records and `blood` traces (stage 8, step 4c)
+on a fresh `WORLD=NEWWORLD.ZEN` in the Xardas valley. The native fixture `blood_stains`
+(`common/game/bloodstainsbench.cpp`) kills a person 7 m ahead of the hero and lays his
+pool with a splash beside it, two splashes 1.2 m apart, one 9 m away, a meatbug's yellow
+stain with a golem's stone chips 1 m from it, and a splash recorded indoors. `check
+<label>` reads `World::physicsTraces` and fails the run on the first unmet rule: the pair
+is one trace named by its older stain, placed at its larger and aged by its fresher; the
+body's blood and the stone chips are no trace; `body gone` removes the body, and its pool
+leaves with it while the splash beside it becomes a trace; `advance <minutes>` moves the
+clock alone: after a game day only the indoor stain is left, after three days none. OFF
+(`BLOOD=0`) there are no stains and no traces. `save created` writes `session-created.sav`;
+`blood-stains-reload.bench` loads it in a fresh process, and
+`scripts/blood_stains_compare.py` checks the same ids, positions, birth times, trace ids
+and an age that continues from the saved clock. Marvin `blood <waypoint> [pool|splash]
+[radius_cm]` lays a stain by hand; `[GAME] blood` defaults to 1, Marvin `toggle blood`
+changes it during play.
+
+```bash
+WORLD=NEWWORLD.ZEN scripts/bench.sh blood-stains /abs/out/on
+WORLD=NEWWORLD.ZEN BLOOD=0 scripts/bench.sh blood-stains /abs/out/off
+SAVE=/abs/out/on/session-created.sav scripts/bench.sh blood-stains-reload /abs/out/reload
+python3 scripts/blood_stains_compare.py /abs/out/on /abs/out/reload
+```
+
 For stage 2, `ragdoll.bench` exercises death, sleeping/wake, controlled unconscious recovery,
 slopes, stairs, a cliff and the human/Wolf/Scavenger/Molerat/Orc models. Run it with
 `OPENGOTHIC_RAGDOLL_TRACE=1` to append `ph_ms,ph_bodies,ph_rays,rd_mode,rd_weight,rd_sleep`

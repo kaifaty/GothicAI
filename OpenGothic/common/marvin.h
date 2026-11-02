@@ -92,6 +92,8 @@ class Marvin {
       C_ToggleSpellPhysics,
       C_ToggleBodyImpactDamage,
       C_ToggleBodyTraces,
+      C_ToggleBlood,
+      C_Blood,
       C_ToggleMovableVobs,
       C_ToggleItemHulls,
       C_ToggleItemDeepestContact,
