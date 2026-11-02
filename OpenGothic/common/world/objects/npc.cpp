@@ -2500,7 +2500,8 @@ void Npc::drawMeleeShadow(DbgPainter& p, uint64_t now) const {
     p.setBrush(mark.world ? Tempest::Color(0.2f,0.4f,1) : Tempest::Color(1,0,0));
     p.setPen(mark.world ? Tempest::Color(0.2f,0.4f,1) : Tempest::Color(1,0,0));
     p.drawPoint(mark.point,6);
-    p.drawText(mark.point,mark.label);
+    if(Gothic::inst().doMeleeBladeLabels())
+      p.drawText(mark.point,mark.label);
     }
   }
 

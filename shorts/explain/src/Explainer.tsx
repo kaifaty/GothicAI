@@ -254,9 +254,10 @@ const Music: React.FC<{music: NonNullable<Plan['music']>; spans: Spans; frames: 
   const end = frames / fps;
   const volume = (f: number) => {
     const t = f / fps;
+    // a fade of 0 is off: a short that plays as a loop runs its bed on into its own start
     const fade = Math.min(
-      interpolate(t, [0, music.fadeIn], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'}),
-      interpolate(t, [end - music.fadeOut, end], [1, 0], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'}),
+      music.fadeIn > 0 ? interpolate(t, [0, music.fadeIn], [0, 1], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'}) : 1,
+      music.fadeOut > 0 ? interpolate(t, [end - music.fadeOut, end], [1, 0], {extrapolateLeft: 'clamp', extrapolateRight: 'clamp'}) : 1,
     );
     return stem ? fade : music.volume * fade * ducked(t, spans, music.duck, 0.35);
   };

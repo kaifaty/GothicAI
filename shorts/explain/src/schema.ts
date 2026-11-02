@@ -363,8 +363,9 @@ export const Plan = z.object({
       file: z.string(),
       volume: z.number(), // draft level in the voice's pauses
       duck: z.number().default(0.5), // draft multiplier while the voice speaks
-      fadeIn: z.number().default(1),
-      fadeOut: z.number().default(1.5),
+      // seconds; 0 turns a fade off (a short that plays as a loop, its bed running on into its own start)
+      fadeIn: z.number().nonnegative().default(1),
+      fadeOut: z.number().nonnegative().default(1.5),
     })
     .optional(),
 }).superRefine((plan, ctx) => {
