@@ -115,6 +115,7 @@ class Marvin {
       C_ToggleMeleeDodge,
       C_ToggleMeleeBarge,
       C_ToggleMeleeCharge,
+      C_ToggleMeleeRiposte,
       C_ToggleMeleeDownTactics,
       C_ToggleMeleeHitStop,
       C_ToggleMeleeStamina,
