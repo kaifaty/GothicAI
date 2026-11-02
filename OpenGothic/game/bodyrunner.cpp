@@ -52,7 +52,7 @@ using Json = rapidjson::Document;
 using Allocator = rapidjson::Document::AllocatorType;
 
 struct Options {
-  std::string save, scenario, output = ".body-runner", mode = "lockstep";
+  std::string save, world, scenario, output = ".body-runner", mode = "lockstep";
   bool stdio = false, compactReplies = false, schedulingDiagnostics = false, serialWorkers = false, forkReset = false;
   bool forkPrefix = false;
 };
@@ -67,6 +67,7 @@ Options options(int argc, const char** argv) {
       return argv[i];
     };
     if(arg=="--save") result.save = value();
+    else if(arg=="--world") result.world = value();
     else if(arg=="--scenario") result.scenario = value();
     else if(arg=="--output") result.output = value();
     else if(arg=="--mode") result.mode = value();
@@ -77,15 +78,16 @@ Options options(int argc, const char** argv) {
     else if(arg=="--fork-reset") result.forkReset = true;
     else if(arg=="--fork-prefix") result.forkPrefix = true;
   }
-  if(result.save.empty() || result.scenario.empty())
-    throw std::runtime_error("--save and --scenario are required");
+  if(result.save.empty()==result.world.empty() || result.scenario.empty())
+    throw std::runtime_error("--scenario and one of --save or --world are required");
   if(result.mode!="lockstep" && result.mode!="realtime")
     throw std::runtime_error("mode must be lockstep or realtime");
   if(result.forkReset && (!result.serialWorkers || !result.stdio))
     throw std::runtime_error("--fork-reset requires --serial-workers and --stdio");
   if(result.forkPrefix && !result.forkReset)
     throw std::runtime_error("--fork-prefix requires --fork-reset");
-  result.save = std::filesystem::absolute(result.save).string();
+  if(!result.save.empty())
+    result.save = std::filesystem::absolute(result.save).string();
   result.scenario = std::filesystem::absolute(result.scenario).string();
   result.output = std::filesystem::absolute(result.output).string();
   return result;
@@ -343,11 +345,16 @@ private:
   }
 
   void loadWorld() {
-    Tempest::RFile file(opts.save);
-    Serialize save(file);
-    gothic.setGame(std::make_unique<GameSession>(save));
+    if(!opts.world.empty()) {
+      // --world: a new game in this world, as `-w <world>` starts it in the rendered game.
+      gothic.setGame(std::make_unique<GameSession>(opts.world));
+    } else {
+      Tempest::RFile file(opts.save);
+      Serialize save(file);
+      gothic.setGame(std::make_unique<GameSession>(save));
+    }
     if(gothic.world()==nullptr || gothic.player()==nullptr || gothic.world()->physic()==nullptr)
-      throw std::runtime_error("save did not restore a playable world");
+      throw std::runtime_error("save or world did not restore a playable world");
     player = std::make_unique<PlayerControl>();
     player->clearInput();
     gothic.gameSession()->setTimeMultiplyer(1.f);
@@ -441,6 +448,9 @@ public:
     const uint64_t dt = TestBench::frameDt(33);
     SimulationStep::worldPlayerStep(dt,*player);
     SimulationStep::finishStep(dt,*player);
+    // As the rendered frame does after its step: chunk residency follows the hero and the camera
+    // (NPC simulation tiers in `auto`); without a view it publishes no visuals.
+    gothic.world()->updateLandscape(*gothic.camera());
     BodyArena::postStep();
     if(watchRequested) {
       const auto watchFrom = Clock::now();
