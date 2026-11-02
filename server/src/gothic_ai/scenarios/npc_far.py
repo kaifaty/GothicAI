@@ -258,9 +258,11 @@ async def npc_far(
         ) and not reply.get("ok", True)
               and str(reply.get("error", "")).startswith(
                   f'{refused["effects"][0]["do"]}: inside simulation'), reply)
+        # A refused effect changes no body; the routine may still start walking meanwhile.
         check("boundary_unchanged", all(
             all(after[n][key] == refused["before"][n][key]
-                for key in ("hp", "inventory", "weapon", "unconscious", "body", "items"))
+                for key in ("hp", "inventory", "weapon", "unconscious", "items"))
+            and (after[n]["body"] in UPRIGHT) == (refused["before"][n]["body"] in UPRIGHT)
             for n in (HILDA, LOBART)
         ), {"before": refused["before"], "after": after})
         after_facts = [f for f in facts() if f.get("fact") in fight_kinds and f.get("far") is True]
