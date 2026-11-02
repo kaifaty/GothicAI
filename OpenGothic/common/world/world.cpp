@@ -562,7 +562,7 @@ std::vector<World::PhysicsTrace> World::physicsTraces(const Tempest::Vec3* viewe
     // placed at its largest; a group with the pool of a body still in the world is that body.
     // Grouping runs over every stain, so ids do not depend on the viewer. No culprit: the
     // engine does not record who bled whom.
-    const auto present = [this](uint32_t id) { return bodyInWorld(id); };
+    const auto present = [this](uint32_t id) { return bodyTraceInWorld(id); };
     for(const auto& group:BloodStains::traceGroups(blood,Gothic::physicsFlags().blood,present)) {
       const auto& largest = blood[group.largest];
       if(viewer!=nullptr && (largest.pos-*viewer).length()>range)
@@ -602,6 +602,19 @@ bool World::bodyInWorld(uint32_t bodyTraceId) const {
     const auto& npc = wobj.npc(i);
     if(npc.bodyTrace().id==bodyTraceId && npc.isDead())
       return true;
+    }
+  return false;
+  }
+
+bool World::bodyTraceInWorld(uint32_t bodyTraceId) const {
+  // The body is reported as a `body` trace itself (the rule of the body rows above): a beast's
+  // corpse, or any corpse with body_traces=0, is not, and its pool stays a find of its own.
+  if(bodyTraceId==0 || !Gothic::physicsFlags().bodyTraces)
+    return false;
+  for(size_t i=0;i<wobj.npcCount();++i) {
+    const auto& npc = wobj.npc(i);
+    if(npc.bodyTrace().id==bodyTraceId)
+      return BodyTraces::isTrace(true,npc.isDead(),npc.isPlayer(),int32_t(npc.guild()),GIL_SEPERATOR_HUM);
     }
   return false;
   }
@@ -707,7 +720,8 @@ void World::sweepBloodStains() {
   }
 
 void World::saveBloodStains(Serialize& fout) const {
-  if(!Gothic::physicsFlags().blood || (blood.empty() && nextBloodStainId==1))
+  // Written with blood off too while ids were handed out: a later blood=1 must not reuse them.
+  if(blood.empty() && nextBloodStainId==1)
     return;
   fout.setEntry("worlds/",wname,"/blood-stains");
   fout.write(uint32_t(0x31444C42),uint16_t(1),wname,uint32_t(blood.size()),nextBloodStainId);
@@ -718,7 +732,9 @@ void World::saveBloodStains(Serialize& fout) const {
   }
 
 void World::loadBloodStains(Serialize& fin) {
-  if(!Gothic::physicsFlags().blood || !fin.setEntry("worlds/",wname,"/blood-stains"))
+  // Read with blood off too (bloodStains() and the traces stay empty then): the stains and the
+  // id counter come back when it is turned on again.
+  if(!fin.setEntry("worlds/",wname,"/blood-stains"))
     return; // an older save has no blood: none
   try {
     uint32_t magic=0, count=0, next=0;

@@ -102,6 +102,7 @@ class World final {
     uint32_t             addBloodStain(BloodStains::Stain stain); // its id; 0: blood is off
     const std::vector<BloodStains::Stain>& bloodStains() const;
     bool                 bodyInWorld(uint32_t bodyTraceId) const;  // a dead NPC with this body trace id
+    bool                 bodyTraceInWorld(uint32_t bodyTraceId) const; // ... and it is reported as a body trace
     std::string          bloodTraceId(uint32_t stainId) const;     // "<world>:blood:<n>"
     // On the ground below `near` (Marvin and bridge `blood`, benches): surface, normal and indoor
     // from the world; 0 when blood is off or there is no ground.

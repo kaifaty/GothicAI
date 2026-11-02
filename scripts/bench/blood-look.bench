@@ -1,0 +1,97 @@
+# Physics stage 8, step 4c: how blood looks (decals, reports/physics/2026-11-02-blood/README.md).
+# WORLD=NEWWORLD.ZEN BENCH_HOST=local. Shots and clips for the user's eye: stains laid by hand on
+# Onar's field (earth), then a real fight, the dead bandit's pool as it spreads, an hour and half a
+# day later; the same in the city market (stone).
+seed 73015
+cheat god
+set time 12 0
+release all
+overlay off
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+wait 500
+clear 3000
+# Laid by hand: does a decal draw at all, the right way up, on earth.
+blood NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02 pool 55
+blood NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02 splash 30
+hold forward 1500
+wait 800
+turn 180
+cam follow 160 230 180
+wait 1500
+shot laid-field-fresh
+wait 500
+blood_stains advance 5
+wait 1500
+shot laid-field-5min
+blood_stains advance 120
+wait 1500
+shot laid-field-2h
+# A real fight on the field: a paladin kills a bandit.
+turn -20
+arc PAL_255_RITTER 1 350 0
+npcequip PAL_255_RITTER ITMW_1H_COMMON_01
+stats npc PAL_255_RITTER hpmax 100000 hp 100000 str 80
+turn 40
+arc BDT_1013_BANDIT_L 1 350 0
+turn -20
+stats npc BDT_1013_BANDIT_L hpmax 120 hp 120
+watch BDT_1013_BANDIT_L
+cam two BDT_1013_BANDIT_L 420 120 1
+rec field-fight
+fight PAL_255_RITTER BDT_1013_BANDIT_L
+fight BDT_1013_BANDIT_L PAL_255_RITTER
+waitdown BDT_1013_BANDIT_L 60000
+wait 6000
+stop
+cam face BDT_1013_BANDIT_L 300 220 40
+wait 1000
+shot field-dead-fresh
+rec field-pool novideo
+wait 20000
+stop
+shot field-dead-20s
+blood_stains advance 5
+wait 1500
+shot field-dead-5min
+blood_stains advance 60
+wait 1500
+shot field-dead-1h
+blood_stains advance 660
+wait 1500
+shot field-dead-12h
+# The city market: stone.
+set time 12 0
+goto NW_CITY_MERCHANT_TRADE_04
+wait 800
+clear 3000
+turn -20
+arc PAL_255_RITTER 1 350 0
+npcequip PAL_255_RITTER ITMW_1H_COMMON_01
+stats npc PAL_255_RITTER hpmax 100000 hp 100000 str 80
+turn 40
+arc BDT_1013_BANDIT_L 1 350 0
+turn -20
+stats npc BDT_1013_BANDIT_L hpmax 120 hp 120
+watch BDT_1013_BANDIT_L
+cam two BDT_1013_BANDIT_L 420 120 1
+rec city-fight
+fight PAL_255_RITTER BDT_1013_BANDIT_L
+fight BDT_1013_BANDIT_L PAL_255_RITTER
+waitdown BDT_1013_BANDIT_L 60000
+wait 6000
+stop
+cam face BDT_1013_BANDIT_L 300 220 40
+wait 1000
+shot city-dead-fresh
+wait 20000
+shot city-dead-20s
+blood_stains advance 5
+wait 1500
+shot city-dead-5min
+blood_stains advance 60
+wait 1500
+shot city-dead-1h
+blood_stains advance 660
+wait 1500
+shot city-dead-12h
+quit

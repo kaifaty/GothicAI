@@ -1173,10 +1173,9 @@ void Npc::onNoHealth(bool death, HitSound sndMask) {
       }
     bodyTraceRecord  = std::move(trace);
     bodyTraceEntered = isDead();
-    }
-  if(death && !wasDead) {
-    bloodDeathTick = owner.tickCount();
-    bloodPoolDone  = false;
+    // One pool per death: later blows on a body a BodyController still owns don't restart it.
+    bloodDeathTick   = owner.tickCount();
+    bloodPoolDone    = false;
     }
   // Note: clear perceptions for William in Jarkentar
   for(size_t i=0;i<PERC_Count;++i)
