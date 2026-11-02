@@ -75,7 +75,16 @@
       "path": "reviews/r3b-hafenkneipe/merged.json"
     }
   ],
-  "gates": [],
+  "gates": [
+    {
+      "gate": "ingame",
+      "verdict": "approved",
+      "by": "user",
+      "date": "2026-11-02",
+      "quote": "Принимаю",
+      "note": null
+    }
+  ],
   "build": null,
   "backup": null
 }
