@@ -720,10 +720,24 @@ are retained. `gamedata/far_fight.json` stays `uncalibrated`.
   and a 300-duel default plan. Full calibration is a separate task. The eight v1
   zero-hit replays on Mac produced hits in 3/8 duels and five zero-hit timeouts:
   unarmed attacker seeds 17–20 (281 swings total), 2H attacker seed 18 (29 swings).
-  The attacker retained `AiNormal`; the contact journal's minimum blade/body
-  clearances remained positive (17.2–31.8 cm unarmed, 4.9 cm for 2H). Native reach
-  and the frozen magnet plan against a defender leaving on its routine still miss;
-  this bench does not change that mechanic or force the defender into combat.
+  The attacker retained `AiNormal`. The replay's `run/melee-blade-shadow.jsonl`
+  shows 245/281 unarmed swings using `T_FISTATTACKMOVE`. Across all 281 swings,
+  median starting distance is 233 cm (112–316); the running punch reaches about
+  58 cm. The target
+  moves away only 8 cm per swing (median); 244 swings stop with `no_preview`.
+  Legacy reports `applied` for 68/281, but physical HP-loss hits are zero. The
+  unarmed initiator attacks from too far away while its target has not responded;
+  the physical punch falls short and the magnet usually has no contact plan.
+  This does not establish that the target is leaving on its routine.
+  For 2H seed 18, 29 swings comprise 22 `S_2HATTACK`, four `T_2HATTACKL` and three
+  `T_2HATTACKR`. Median starting distance is 201 cm (195–346), versus median reach
+  125 cm (125–143); target retreat is 21 cm (14–80). All 29 swings have a preview
+  and stop at `predicted`; median forward magnet feed is 11.7 cm. Legacy reports
+  `applied` for 24/29, but there are no physical HP-loss hits; minimum blade/body
+  clearance is 4.9 cm. Unlike the running punch, this magnet engages, yet the
+  actual strike still falls short. The user accepted the bench with these five
+  empty duels; native reach, magnetism and AI attack choice belong to a separate
+  melee fix. The defender's native behaviour stays unchanged.
   The standard eight smoke cases, launched with `BENCH_HOST=local`, passed with
   complete hit logs/counters and 135 HP-loss hits; Linux build/CLI smoke remained
   unverified because `gq` did not admit the build.
