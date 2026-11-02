@@ -6,7 +6,7 @@
 
 namespace MeleeImpact {
   enum class Weapon : uint8_t { Fist, OneHand, TwoHand };
-  enum class HeavyHit : uint8_t { None, TwoHanded, Downward, Posture };
+  enum class HeavyHit : uint8_t { None, TwoHanded, Downward, Posture, Charged };
   enum class ArmorClass : uint8_t { Light, Medium, Heavy };
   enum class BeastSize : uint8_t { Small, Medium, Huge };
   enum class BackstabKind : uint8_t { None, Unaware, Sleeping, Stunned };

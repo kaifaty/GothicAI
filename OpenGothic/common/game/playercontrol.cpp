@@ -10,6 +10,7 @@
 #include "ui/dialogmenu.h"
 #include "ui/inventorymenu.h"
 #include "physics/dynamicworld.h"
+#include "game/meleecharge.h"
 #include "camera.h"
 #include "graphics/mesh/aim.h"
 #include "graphics/mesh/aimwalk.h"
@@ -256,11 +257,21 @@ void PlayerControl::onKeyPressed(KeyCodec::Action a, Tempest::KeyEvent::KeyType 
     }
 
   if(fk>=0) {
+    if(pl!=nullptr && (pl->isMeleeCharging() || (chargePress && fk==ActForward))) {
+      ctrl[a] = true;
+      return;
+      }
+    chargePress.reset();
+    chargeTapPending = false;
     std::memset(actrl,0,sizeof(actrl));
     actrl[ActGeneric] = ctrl[KeyCodec::ActionGeneric];
     actrl[fk]         = true;
 
     ctrl[a] = true;
+    if(fk==ActForward && pl!=nullptr && pl->canMeleeCharge()) {
+      chargePress = ChargePress{w->tickCount()};
+      actrl[ActForward] = false;
+      }
     return;
     }
 
@@ -329,6 +340,21 @@ void PlayerControl::onKeyReleased(KeyCodec::Action a, KeyCodec::Mapping mapping)
     }
 
   auto ws = pl==nullptr ? WeaponState::NoWeapon : pl->weaponState();
+  if(pl!=nullptr && (chargePress || pl->isMeleeCharging()) &&
+     (a==Action::ActionGeneric || (!g2Ctrl && a==Action::Forward))) {
+    if(pl->isMeleeCharging()) {
+      pl->releaseMeleeCharge();
+      } else {
+      const auto held = w->tickCount()-chargePress->at;
+      if(!chargePress->attempted && MeleeCharge::startsWindup(held) && pl->beginMeleeCharge()) {
+        pl->releaseMeleeCharge();
+        } else {
+        pl->meleeChargeTap(held);
+        chargeTapPending = true;
+        }
+      }
+    chargePress.reset();
+    }
   if(ws==WeaponState::Bow || ws==WeaponState::CBow || ws==WeaponState::Mage) {
     if(a==KeyCodec::ActionGeneric || (!g2Ctrl && ws==WeaponState::Mage && a==KeyCodec::Forward))
       std::memset(actrl,0,sizeof(actrl));
@@ -594,6 +620,8 @@ bool PlayerControl::dodgeKeyDodges(const Npc& pl) const {
 
 void PlayerControl::clearInput() {
   dodgeRequest.reset();
+  chargePress.reset();
+  chargeTapPending = false;
   movement.reset();
   std::memset(ctrl, 0,sizeof(ctrl));
   std::memset(actrl,0,sizeof(actrl));
@@ -822,7 +850,7 @@ void PlayerControl::implMove(uint64_t dt) {
   float rspeed    = (pl.weaponState()==WeaponState::NoWeapon ? 90.f : 180.f)*(float(dt)/1000.f);
   auto  ws        = pl.weaponState();
   auto  bs        = pl.bodyStateMasked();
-  bool  allowRot  = !ctrl[KeyCodec::ActionGeneric] && pl.isRotationAllowed();
+  bool  allowRot  = (!ctrl[KeyCodec::ActionGeneric] || chargePress || pl.isMeleeCharging()) && pl.isRotationAllowed();
 
   Npc::Anim ani = Npc::Anim::Idle;
   // a press is taken this tick or not at all
@@ -847,6 +875,8 @@ void PlayerControl::implMove(uint64_t dt) {
 
   if(pl.canSwitchWeapon()) {
     if(wctrl[WeaponClose]) {
+      chargePress.reset();
+      chargeTapPending = false;
       wctrl[WeaponClose] = !(pl.closeWeapon(false) || pl.isMonster());
       return;
       }
@@ -923,8 +953,23 @@ void PlayerControl::implMove(uint64_t dt) {
     }
 
   pl.setDirectionY(rotY);
+  const bool chargeInput = chargePress || chargeTapPending || pl.isMeleeCharging();
   if(dodge && pl.meleeDodge(*dodge)) {
+    chargePress.reset();
+    chargeTapPending = false;
+    if(chargeInput)
+      std::memset(actrl,0,sizeof(actrl));
     pl.setAnimRotate(0);
+    pl.setDirection(rot);
+    runAngleDest = 0;
+    return;
+    }
+  if(chargePress && !chargePress->attempted && MeleeCharge::startsWindup(w->tickCount()-chargePress->at)) {
+    chargePress->attempted = true;
+    if(pl.beginMeleeCharge())
+      chargePress.reset();
+    }
+  if(chargePress || pl.isMeleeCharging()) {
     pl.setDirection(rot);
     runAngleDest = 0;
     return;
@@ -1003,6 +1048,10 @@ void PlayerControl::implMove(uint64_t dt) {
       }
     }
 
+  if(chargeTapPending) {
+    actrl[ActForward] = true;
+    chargeTapPending = false;
+    }
   if(actrl[ActForward] || actrl[ActMove]) {
     ctrl [Action::Forward] = actrl[ActMove];
     actrl[ActMove]         = false;

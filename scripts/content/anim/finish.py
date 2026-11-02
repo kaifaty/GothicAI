@@ -12,6 +12,9 @@ holds the hilt. Kimodo knows nothing of the sword, so its wrist swings the blade
 --clear-sword (rolls and dashes) then moves that held arm aside where it would put the hand or the blade into the floor or
 the body: the stance arm turns with the chest and in a tumble put the blade up to 82 cm under the floor.
 
+A victim's limp arm: --arm-ref takes the arms' pose from a frame of another record instead of the stance (Gothic's
+own lowered sword, HUMANS_1HST2-S_1HWALKL:9), so the blade hangs instead of standing up in front of the attacker.
+
 Strikes: --arm-window keeps the swing and blends the arms to the stance only on the way back;
 --start-ref / --end-ref land an end on another record (a charge windup ends in the pose its hold
 loop starts from, the loop ends where it starts, the release starts there); a fade of 0 leaves an
@@ -20,6 +23,7 @@ end as it is.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import sys
 from pathlib import Path
 
@@ -257,6 +261,18 @@ def lift_skims(anim: ga.Animation, skel: ga.Skeleton, low: float = 3.0, fast: fl
             arcs.append((side, a, b, round(height, 1)))
             f = g + 1
     return arcs
+
+
+def pose_at(spec: str) -> ga.Animation:
+    """record[:frame] as a one-frame record: the pose hold_arm blends towards (frame 0 when none is given)."""
+    path, sep, frame = spec.rpartition(":")
+    if not sep or not frame.isdigit():
+        path, frame = spec, "0"
+    anim = ga.read_animation(Path(path))
+    k = int(frame)
+    if not 0 <= k < anim.frame_count:
+        raise SystemExit(f"{spec}: no frame {k}, the record has {anim.frame_count}")
+    return dataclasses.replace(anim, frame_count=1, positions=anim.positions[k:k + 1], rotations=anim.rotations[k:k + 1])
 
 
 def hold_arm(anim: ga.Animation, skel: ga.Skeleton, ref: ga.Animation, weights: list[float], side: str = "R",
@@ -536,6 +552,8 @@ def main():
                     "--sword-arm by t1 (strikes keep their swing); a,b,c,d: the stance's at the start, own from a to b, "
                     "the stance's again from c to d")
     ap.add_argument("--free-window", help="the same for the free arm and --free-arm; default --arm-window")
+    ap.add_argument("--arm-ref", help="record[:frame] whose arms --sword-arm and --free-arm blend towards; default the "
+                    "first frame of --ref")
     a = ap.parse_args()
     skel = ga.read_skeleton(a.skeleton or a.ref.parent / "HUMANS.MDH.json")
     ref = ga.read_animation(a.ref)
@@ -544,8 +562,9 @@ def main():
     snap_ends(anim, start, *map(float, a.fade.split(",")), end=ga.read_animation(a.end_ref) if a.end_ref else ref)
     window = tuple(map(float, a.arm_window.split(","))) if a.arm_window else None
     free = tuple(map(float, a.free_window.split(","))) if a.free_window else window
-    hold_arm(anim, skel, ref, [float(w) for w in a.sword_arm.split(",")], window=window)
-    hold_arm(anim, skel, ref, [float(w) for w in a.free_arm.split(",")], side="L", window=free)
+    arms = pose_at(a.arm_ref) if a.arm_ref else ref
+    hold_arm(anim, skel, arms, [float(w) for w in a.sword_arm.split(",")], window=window)
+    hold_arm(anim, skel, arms, [float(w) for w in a.free_arm.split(",")], side="L", window=free)
     if not a.no_foot_lock:
         lock_feet(anim, rs.with_offsets(skel, ref), speed=a.lock_speed, ends=a.lock_ends, keep_end=a.end_ref is not None,
                   turn=a.lock_turn)
