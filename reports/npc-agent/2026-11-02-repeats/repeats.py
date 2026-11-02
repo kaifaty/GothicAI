@@ -301,10 +301,15 @@ def summary(directory: Path, *, emit: bool = True) -> dict[str, Any]:
                 if record["error"] is None:
                     pairs[record["npc"], record["phrase"]].append(trigrams(record["text"]))
             stability = []
+            empty_pairs_n = 0
             for (npc, phrase), sets in sorted(pairs.items()):
-                scores = [len(a & b) / len(a | b) if a | b else 1.0 for a, b in combinations(sets, 2)]
+                scores = []
+                for a, b in combinations(sets, 2):
+                    if not a | b:
+                        empty_pairs_n += 1
+                        continue
+                    scores.append(len(a & b) / len(a | b))
                 if scores:
-                    # Two empty sets are identical; single-sample pairs have no stability score.
                     stability.append(
                         {
                             "npc": npc,
@@ -315,6 +320,7 @@ def summary(directory: Path, *, emit: bool = True) -> dict[str, Any]:
                     )
             result["stability"] = {
                 **pilot.distribution(pair["jaccard"] for pair in stability),
+                "empty_pairs_n": empty_pairs_n,
                 "pairs": stability,
             }
             result["common_unrelated_by_sample"] = []
@@ -338,7 +344,8 @@ def summary(directory: Path, *, emit: bool = True) -> dict[str, Any]:
             )
             if variant != "sol":
                 print(
-                    f"  stability: {result['stability']['median']} median, {result['stability']['p90']} p90"
+                    f"  stability: {result['stability']['median']} median, {result['stability']['p90']} p90, "
+                    f"empty_pairs_n={result['stability']['empty_pairs_n']}"
                 )
     (directory / "summary.json").write_text(
         json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
@@ -560,6 +567,8 @@ async def selftest() -> None:
                     (npcs[0], "shared", 2, "Белая птица летит"),
                     (npcs[1], "shared", 1, ""),
                     (npcs[0], "empty", 1, ""),
+                    (npcs[0], "polite", 1, "Не за что."),
+                    (npcs[0], "polite", 2, "Пожалуйста!"),
                 ):
                     manual.append(
                         {
@@ -596,8 +605,10 @@ async def selftest() -> None:
             if variant != "sol":
                 # The shared pair has one equal and two disjoint comparisons: (1 + 0 + 0) / 3.
                 stability = result["stability"]
-                expected = pilot.distribution([1 / 3, 0, 1])
+                expected = pilot.distribution([1 / 3, 0])
                 assert {k: stability[k] for k in expected} == expected
+                assert stability["empty_pairs_n"] == 2
+                assert not any(p["phrase"] in ("empty", "polite") for p in stability["pairs"])
                 assert (
                     next(p for p in stability["pairs"] if p["npc"] == npcs[0] and p["phrase"] == "shared")[
                         "jaccard"
