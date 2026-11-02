@@ -392,6 +392,8 @@ class DynamicWorld final {
     RayCamResult   cameraRay    (const Tempest::Vec3& from, const Tempest::Vec3& to) const;
 
     RayLandResult  ray          (const Tempest::Vec3& from, const Tempest::Vec3& to) const;
+    // Landscape and static objects only, with the surface normal for both (blood decals, physics stage 8 step 4c).
+    RayLandResult  rayStatic    (const Tempest::Vec3& from, const Tempest::Vec3& to) const;
     // Bench camera only: retain world occlusion while looking past the selected
     // cloth object's own rigid attachments. Does not alter collision filters.
     RayLandResult  rayClothCamera(const Tempest::Vec3& from, const Tempest::Vec3& to,

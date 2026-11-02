@@ -12,6 +12,7 @@
 #include "graphics/pfx/particlefx.h"
 #include "world/world.h"
 #include "world/movablevobs.h"
+#include "world/objects/vobbundle.h"
 #include "utils/workers.h"
 
 #include <Tempest/Log>
@@ -471,6 +472,111 @@ void runtimeMesh(const Fixture& f) {
 }
 
 struct WorldDataContract {
+  static void vobTrees(const Fixture& fixture, Resources& resources, World& world) {
+    const auto baseRoot=Resources::baseDir();
+    const auto file=fixture.content/"vobtrees.d/fIrEtReE_lAmP.json";
+    WorldData::ZenFile base;
+    require(Resources::loadBaseZen("FIRETREE_LAMP.ZEN","world",base) && !base.vobs.empty(),
+            "real base contains the lamp fire bundle");
+    WorldData::Data expected;
+    expected.vobs=base.vobs;
+    const auto fallback=[&](const std::string& context) {
+      WorldData::Data actual;
+      const auto* tree=Resources::loadVobBundle("FIRETREE_LAMP.ZEN");
+      require(tree!=nullptr,context+": bundle is available");
+      actual.vobs=*tree;
+      require(WorldData::compare(expected,actual).empty(),context+": every base bundle field is preserved");
+      return tree;
+      };
+    const auto* missing=fallback("missing tree");
+    require(Resources::loadVobBundle("FIRETREE_LAMP.ZEN")==missing,"base bundle is cached");
+    const auto valid="{\"format\":1,\"add\":["+emitter("own-flame","own_test_smoke.pfx")+","+
+                     emitter("base-flame","Fire_Medium.PfX")+","+mesh("slot-mesh","VOB_LAYER_TEST_CUBE")+
+                     R"(,{"key":"slot-light","kind":"light","position":[1,2,3],"rotation":[[0,0,1],[0,1,0],[-1,0,0]],"range":450,"color":[255,128,0],"color_ani":[[255,128,0],[200,90,10]],"range_ani":[1,0.85],"ani_fps":12}]})";
+    textFile(file,valid);
+    Resources::VobTree checkedTree;
+    const auto checked=VobLayer::readTree(checkedTree,baseRoot,file,fixture.content);
+    require(checked.errors.empty() && checked.added==4 && checkedTree.size()==4,
+            "offline tree validation accepts the shared emitter, mesh and light entries");
+    require(subprocess({GOTHIC_CONTENT_CONVERT,"check-vob-tree",baseRoot.string(),file.string(),fixture.content.string()})==0,
+            "converter CLI accepts a valid tree with own and base PFX names");
+    resources.zenCache.clear();
+    const auto* tree=Resources::loadVobBundle("firetree_lamp.ZeN");
+    require(tree && tree->size()==4 && (*tree)[0]->visual_name=="OWN_TEST_SMOKE.PFX" &&
+            (*tree)[1]->visual_name=="FIRE_MEDIUM.PFX" && (*tree)[2]->visual_name=="VOB_LAYER_TEST_CUBE.3DS",
+            "a case-insensitive bundle name loads the complete own tree with canonical resource names");
+    const auto& flame=*(*tree)[0];
+    require(flame.position.x==100 && flame.position.y==200 && flame.position.z==300 &&
+            std::abs(flame.rotation[0][0])<.0001f && std::abs(std::abs(flame.rotation[0][2])-1.f)<.0001f,
+            "tree emitter preserves its slot-local centimetres and yaw");
+    const auto* light=dynamic_cast<const asset::VLight*>((*tree)[3].get());
+    require(light && light->range==450 && light->color.r==255 && light->color.g==128 && light->color.b==0 &&
+            light->position.x==1 && light->position.y==2 && light->position.z==3 &&
+            light->rotation[2][0]==1 && light->rotation[0][2]==-1,
+            "tree light preserves its range, color and slot-local position and rotation");
+    require(light->color_animation_list.size()==2 && light->color_animation_list[1].r==200 &&
+            light->color_animation_list[1].g==90 && light->color_animation_list[1].b==10 &&
+            light->color_animation_fps==12 && light->range_animation_scale.size()==2 &&
+            light->range_animation_scale[1]==0.85f && light->range_animation_fps==12,
+            "tree light preserves color and range animation keys and fps");
+    {
+      VobBundle bundle(world,"FIRETREE_LAMP.ZEN",Vob::None);
+      require(bundle.rootVobs.size()==4,"own tree creates every runtime root");
+      bundle.setObjMatrix(Tempest::Matrix4x4(0,0,1,1000, 0,1,0,2000, -1,0,0,3000, 0,0,0,1));
+      require(bundle.rootVobs[0]->position()==Tempest::Vec3(1300,2200,2900) &&
+              bundle.rootVobs[3]->position()==Tempest::Vec3(1003,2002,2999) &&
+              std::abs(bundle.rootVobs[0]->transform().at(0,0)+1)<.0001f &&
+              std::abs(bundle.rootVobs[3]->transform().at(2,2)+1)<.0001f,
+              "runtime slot rotation and translation compose with authored root transforms");
+      bundle.setObjMatrix(Tempest::Matrix4x4(1,0,0,-10, 0,1,0,-20, 0,0,1,-30, 0,0,0,1));
+      require(bundle.rootVobs[0]->position()==Tempest::Vec3(90,180,270) &&
+              bundle.rootVobs[3]->position()==Tempest::Vec3(-9,-18,-27) &&
+              std::abs(bundle.rootVobs[0]->transform().at(2,0)-1)<.0001f &&
+              bundle.rootVobs[3]->transform().at(0,2)==-1,
+              "updating the slot reuses authored transforms without accumulating the previous slot");
+      }
+    fs::remove(file);
+    require(Resources::loadVobBundle("firetree_lamp.ZeN")==tree,"own bundle is cached after its file disappears");
+    textFile(file,valid);
+    for(const char* flag:{"OPENGOTHIC_VOB_LAYERS","OPENGOTHIC_CONTENT"}) {
+      setenv(flag,std::string_view(flag)=="OPENGOTHIC_CONTENT" ? "" : "0",1);
+      resources.zenCache.clear();
+      fallback(flag);
+      if(std::string_view(flag)=="OPENGOTHIC_CONTENT") setenv(flag,fixture.content.c_str(),1);
+      else unsetenv(flag);
+      }
+    const std::vector<std::pair<std::string,std::string>> bad={
+      {"kind",R"({"format":1,"add":[{"key":"unknown","kind":"npc"}]})"},
+      {"remove",R"({"format":1,"add":[],"remove":[]})"},
+      {"NO_SUCH_PFX","{\"format\":1,\"add\":["+emitter("valid-first","FIRE_SMOKE")+","+
+                        emitter("unknown","NO_SUCH_PFX")+"]}"},
+      {"format",R"({"format":2,"add":[]})"}
+      };
+    for(const auto& [reason,json]:bad) {
+      textFile(file,json);
+      resources.zenCache.clear();
+      checkedTree.clear();
+      const auto rejected=VobLayer::readTree(checkedTree,baseRoot,file,fixture.content);
+      require(!rejected.errors.empty() && checkedTree.empty() &&
+              rejected.errors.front().find(file.string())!=std::string::npos &&
+              rejected.errors.front().find(reason)!=std::string::npos,
+              reason+": offline tree validation rejects the complete file with its name and reason");
+      size_t errors=0;
+      std::string logged;
+      Tempest::Log::setOutputCallback([&](Tempest::Log::Mode mode,const char* line) {
+        if(mode==Tempest::Log::Error) { ++errors; logged=line; }
+        });
+      const auto* rejectedTree=fallback(reason);
+      require(Resources::loadVobBundle("FIRETREE_LAMP.ZEN")==rejectedTree,reason+": rejected tree fallback is cached");
+      Tempest::Log::setOutputCallback({});
+      require(errors==1 && logged.find(file.string())!=std::string::npos && logged.find(reason)!=std::string::npos,
+              reason+": one runtime error names the rejected tree file and reason");
+      require(subprocess({GOTHIC_CONTENT_CONVERT,"check-vob-tree",baseRoot.string(),file.string(),fixture.content.string()})!=0,
+              reason+": converter CLI rejects an invalid tree");
+      }
+    fs::remove(file);
+    resources.zenCache.clear();
+    }
   static void meshRegistry(const Fixture& fixture) {
     fixture.clearLayers();
     writeWorldChunks(asset::WorldMesh{},Fixture::original().source,fixture.world);
@@ -612,6 +718,7 @@ struct WorldDataContract {
       gothic.setGame(std::make_unique<GameSession>("NEWWORLD.ZEN"));
       auto& world=*gothic.world();
       if(phase==0) {
+        vobTrees(fixture,resources,world);
         baseRoots=world.wobj.rootVobs.size();
         baseline=save(world);
         require(!baseline.empty(),"save without layer writes an archive");

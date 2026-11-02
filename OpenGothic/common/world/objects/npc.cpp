@@ -1,5 +1,6 @@
 #include "npc.h"
 #include "world/bodytraces.h"
+#include "world/bloodspawn.h"
 #include "graphics/mesh/protomesh.h"
 
 #include <Tempest/Matrix4x4>
@@ -760,11 +761,17 @@ void Npc::load(Serialize &fin, size_t id, std::string_view directory) {
       Log::e("body trace load: ",e.what());
       }
     }
+  syncLogicalBodyState(true);
+  }
+
+void Npc::syncLogicalBodyState(bool rebuild) {
+  logicalBody.sync(*this,rebuild);
   }
 
 void Npc::postValidate() {
   if(currentInteract!=nullptr && !currentInteract->isAttached(*this))
     currentInteract = nullptr;
+  syncLogicalBodyState(true);
   }
 
 void Npc::saveAiState(Serialize& fout) const {
@@ -1196,6 +1203,9 @@ void Npc::onNoHealth(bool death, HitSound sndMask) {
       }
     bodyTraceRecord  = std::move(trace);
     bodyTraceEntered = isDead();
+    // One pool per death: later blows on a body a BodyController still owns don't restart it.
+    bloodDeathTick   = owner.tickCount();
+    bloodPoolDone    = false;
     }
   // Note: clear perceptions for William in Jarkentar
   for(size_t i=0;i<PERC_Count;++i)
@@ -2536,7 +2546,8 @@ void Npc::drawMeleeShadow(DbgPainter& p, uint64_t now) const {
     p.setBrush(mark.world ? Tempest::Color(0.2f,0.4f,1) : Tempest::Color(1,0,0));
     p.setPen(mark.world ? Tempest::Color(0.2f,0.4f,1) : Tempest::Color(1,0,0));
     p.drawPoint(mark.point,6);
-    p.drawText(mark.point,mark.label);
+    if(Gothic::inst().doMeleeBladeLabels())
+      p.drawText(mark.point,mark.label);
     }
   }
 
@@ -5250,7 +5261,7 @@ bool Npc::tickMeleePosture(uint64_t dt) {
     }
   const auto now = owner.tickCount();
   lastEventTime = now;
-  visual.processLayers(owner);
+  visual.processLayers(owner,&logicalBody);
   const bool enabled = Gothic::physicsFlags().meleePosture || (meleeBargeKnockdown && Gothic::physicsFlags().meleeBarge) ||
                        (meleeRiposteKnockdown && Gothic::physicsFlags().meleeRiposte);
   if(ragdoll && (now-meleeFallTick>=1200 || !enabled)) {
@@ -5506,6 +5517,23 @@ void Npc::takeDamage(Npc& other, const Bullet* b, const CollideMask bMask, int32
     }
   if(!isSpell && !isDown() && hitResult.hasHit)
     owner.addWeaponHitEffect(other,b,*this).play();
+  if(!isSpell && hitResult.hasHit && hitResult.value>0) {
+    // blood: at the blade's contact, the arrow's impact, or between the two
+    Tempest::Vec3 wound, dir;
+    if(contact!=nullptr) {
+      wound = contact->point;
+      dir   = contact->velocityCmS;
+      }
+    else if(b!=nullptr) {
+      wound = b->impactPoint();
+      dir   = b->direction();
+      }
+    else {
+      wound = (other.centerPosition()+centerPosition())*0.5f;
+      dir   = centerPosition()-other.centerPosition();
+      }
+    BloodSpawn::onHit(owner,*this,wound,dir,hitResult.value);
+    }
 
   if(isDown()) {
     onNoHealth(dontKill,HS_NoSound);
@@ -5932,8 +5960,8 @@ void Npc::tickAnimationTags() {
   if(Gothic::physicsFlags().meleeBladeShadow || Gothic::physicsFlags().meleePhysicsHits || (meleeShadow && meleeShadow->window))
     syncMeleeShadowSwing();
   Animation::EvCount ev;
-  const bool hasEvents = visual.processEvents(owner,lastEventTime,ev);
-  visual.processLayers(owner);
+  const bool hasEvents = visual.processEvents(owner,lastEventTime,ev,&logicalBody);
+  visual.processLayers(owner,&logicalBody);
   visual.setNpcEffect(owner,*this,hnpc->effect,hnpc->flags);
   if(!hasEvents)
     return;
@@ -5964,6 +5992,11 @@ void Npc::tickAnimationTags() {
   }
 
 void Npc::tick(uint64_t dt) {
+  NpcLogicalState::Tick logicalTick(*this,dt);
+  if(!bloodPoolDone && isDead() && owner.tickCount()-bloodDeathTick>=BloodSpawn::SettleMs) {
+    bloodPoolDone = true;
+    BloodSpawn::onDead(owner,*this);
+    }
   tickBodyImpact();
   tickMeleeParry();
   tickMeleeStamina();
@@ -6100,6 +6133,8 @@ void Npc::tick(uint64_t dt) {
   if(tickPhysicsInvestigation(dt))
     return;
 
+  if(aniWaitTime<owner.tickCount() && aniWaitTime==logicalBody.nativeWaitEnd)
+    logicalBody.waitReleased(owner.tickCount());
   if(waitTime>=owner.tickCount() || aniWaitTime>=owner.tickCount() || outWaitTime>owner.tickCount()) {
     traceCombatGate("tick_wait_or_animation_lock");
     if(physicalMovement)
@@ -6173,6 +6208,7 @@ void Npc::nextAiAction(AiQueue& queue, uint64_t dt) {
   if(queue.size()==0)
     return;
   auto act = queue.pop();
+  NpcLogicalState::Admission logicalAdmission(*this,act.act);
   switch(act.act) {
     case AI_None: break;
     case AI_LookAtNpc:{
@@ -6286,6 +6322,7 @@ void Npc::nextAiAction(AiQueue& queue, uint64_t dt) {
       break;
     case AI_PlayAnim:{
       if(auto sq = playAnimByName(act.s0,BS_NONE)) {
+        logicalAdmission.sequence=sq;
         implAniWait(uint64_t(sq->totalTime()));
         implFaiWait(uint64_t(sq->totalTime()));
         } else {
@@ -6297,6 +6334,7 @@ void Npc::nextAiAction(AiQueue& queue, uint64_t dt) {
     case AI_PlayAnimBs:{
       BodyState bs = BodyState(act.i0);
       if(auto sq = playAnimByName(act.s0,bs)) {
+        logicalAdmission.sequence=sq;
         implAniWait(uint64_t(sq->totalTime()));
         implFaiWait(uint64_t(sq->totalTime()));
         } else {
@@ -7553,6 +7591,29 @@ Npc::EyePose Npc::navigationEyePose() const {
   return result;
   }
 
+void Npc::setBloodHit(int64_t gameMs, const Vec3& wound) {
+  bloodHit  = gameMs;
+  bloodBone = size_t(-1);
+  auto sk = visual.visualSkeleton();
+  if(sk==nullptr)
+    return;
+  float best = 0;
+  for(size_t i=0; i<sk->nodes.size(); ++i) {
+    const float d = (visual.mapBone(i)-wound).quadLength();
+    if(bloodBone==size_t(-1) || d<best) {
+      best      = d;
+      bloodBone = i;
+      }
+    }
+  }
+
+Vec3 Npc::bloodWound() const {
+  auto sk = visual.visualSkeleton();
+  if(sk==nullptr || bloodBone>=sk->nodes.size())
+    return centerPosition();
+  return visual.mapBone(bloodBone);
+  }
+
 Vec3 Npc::mapBone(std::string_view bone) const {
   if(auto sk = visual.visualSkeleton()) {
     size_t id = sk->findNode(bone);
@@ -8274,14 +8335,16 @@ bool Npc::meleeDodgeEvades(Npc& other, std::string_view kind) {
   return true;
   }
 
-void Npc::meleeBargeNote(const Npc* target, uint64_t elapsed, std::string_view outcome) {
+void Npc::meleeBargeNote(const Npc* target, uint64_t elapsed, std::string_view outcome, std::string_view predicted) {
+  const bool differs = !predicted.empty() && predicted!=outcome;
   if(TestBench::isActive())
     TestBench::note(("melee barge "+std::string(TestBench::who(this))+": contact "+
                     (target ? std::string(TestBench::who(target)) : "-")+" at "+std::to_string(elapsed)+
-                    " ms, "+std::string(outcome)).c_str());
+                    " ms, "+std::string(outcome)+(differs ? " (predicted "+std::string(predicted)+")" : "")).c_str());
   if(TestBench::bodyTracing())
     TestBench::bodyEvent(*this,target,"barge_contact",owner.tickCount(),
-                        "\"elapsed_ms\":"+std::to_string(elapsed)+",\"outcome\":"+TestBench::bodyJson(outcome),
+                        "\"elapsed_ms\":"+std::to_string(elapsed)+",\"outcome\":"+TestBench::bodyJson(outcome)+
+                        (predicted.empty() ? "" : ",\"predicted\":"+TestBench::bodyJson(predicted)),
                         visual.pose().animNames());
   }
 
@@ -8332,11 +8395,18 @@ void Npc::tickMeleeBarge() {
     return;
     }
   target->takeDamage(*this,nullptr,true,1.f,nullptr,true);
-  if(outcome==MeleeDodge::BargeOutcome::Knockdown)
+  const bool knockdown = outcome==MeleeDodge::BargeOutcome::Knockdown;
+  if(knockdown)
     target->applyMeleePosture(*this,nullptr,false,target->meleePosture.value,true);
   else
     target->startMeleeStun(*this,"barge");
-  meleeBargeNote(target,elapsed,outcome==MeleeDodge::BargeOutcome::Knockdown ? "knockdown" : "stun");
+  // The log names what happened, not what the rules predicted: the fist's damage may drop the target
+  // first, and a beast is not stunned without its poise (melee_beast_poise=0).
+  const char* result = target->isDead()        ? "dead" :
+                       target->isUnconscious() ? "unconscious" :
+                       knockdown               ? (target->meleeKnockdown ? "knockdown" : "no knockdown") :
+                       (target->isMeleeStunned() && target->meleeStunReason=="barge" ? "stun" : "no stun");
+  meleeBargeNote(target,elapsed,result,knockdown ? "knockdown" : "stun");
   }
 
 bool Npc::isMeleeRiposting() const {

@@ -65,8 +65,8 @@ def save_rows(path: Path, records) -> None:
     temporary.replace(path)
 
 
-def pick(traces: list[Path], directory: Path, seed: int = SEED) -> list[dict[str, Any]]:
-    candidates = {(npc, group): [] for npc, quotas in QUOTAS.items() for group in quotas}
+def collect_candidates(traces: list[Path]) -> list[dict[str, Any]]:
+    candidates = []
     seen = set()
     for trace in traces:
         trace = trace.resolve()
@@ -98,7 +98,7 @@ def pick(traces: list[Path], directory: Path, seed: int = SEED) -> list[dict[str
             calls = [call["name"] for step in steps for call in step.get("calls", [])]
             group = "pure" if not calls else "soft" if set(calls) <= SOFT else "hard"
             history, situation = _quick_context(record)
-            candidates[npc, group].append(
+            candidates.append(
                 {
                     "id": record["id"],
                     "trace": str(trace),
@@ -114,6 +114,13 @@ def pick(traces: list[Path], directory: Path, seed: int = SEED) -> list[dict[str
                     "window_s": None if end is None else record["t"] - end,
                 }
             )
+    return candidates
+
+
+def pick(traces: list[Path], directory: Path, seed: int = SEED) -> list[dict[str, Any]]:
+    candidates = {(npc, group): [] for npc, quotas in QUOTAS.items() for group in quotas}
+    for turn in collect_candidates(traces):
+        candidates[turn["npc"], turn["group"]].append(turn)
     rng = random.Random(seed)
     selected = []
     for npc, quotas in QUOTAS.items():
@@ -306,6 +313,15 @@ def answers(turn: dict[str, Any], run: dict[str, Any]) -> dict[str, tuple[str, s
     return result
 
 
+def parse_judge(raw: str) -> dict[str, Any]:
+    raw = raw.strip()
+    fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", raw, re.DOTALL | re.IGNORECASE)
+    verdict = json.loads(fenced[1] if fenced else raw)
+    if not isinstance(verdict, dict):
+        raise ValueError("Judge response is not a JSON object")
+    return verdict
+
+
 async def judge(directory: Path, *, sol: LLMBackend | None = None) -> None:
     prompt = (HERE / "judge.md").read_text(encoding="utf-8")
     runs = {r["id"]: r for r in rows(directory / "runs.jsonl")}
@@ -338,12 +354,7 @@ async def judge(directory: Path, *, sol: LLMBackend | None = None) -> None:
             result.update(id=turn["id"], key=key, raw=result.pop("text"), result=None)
             if result["error"] is None:
                 try:
-                    raw = result["raw"].strip()
-                    fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", raw, re.DOTALL | re.IGNORECASE)
-                    verdict = json.loads(fenced[1] if fenced else raw)
-                    if not isinstance(verdict, dict):
-                        raise ValueError("Judge response is not a JSON object")
-                    result["result"] = verdict
+                    result["result"] = parse_judge(result["raw"])
                 except ValueError as error:
                     result["error"] = f"Invalid judge JSON: {error}"
             results[turn["id"], key] = result

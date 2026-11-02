@@ -1089,6 +1089,15 @@ DynamicWorld::RayLandResult DynamicWorld::ray(const Tempest::Vec3& from, const T
   return toResult(world->rayCast(from,to,visualMask,false), to);
   }
 
+DynamicWorld::RayLandResult DynamicWorld::rayStatic(const Tempest::Vec3& from, const Tempest::Vec3& to) const {
+  constexpr uint32_t staticMask = (1u << C_Landscape) | (1u << C_Object);
+  const auto hit = world->rayCast(from,to,staticMask,false);
+  auto ret = toResult(hit, to);
+  if(hit.hasHit)
+    ret.n = hit.normal;
+  return ret;
+  }
+
 DynamicWorld::RayLandResult DynamicWorld::rayClothCamera(const Tempest::Vec3& from,const Tempest::Vec3& to,
                                                        std::string_view ownVisual,const Tempest::Vec3* bounds,
                                                        size_t& selfHits,std::string* blockedLabel) const {

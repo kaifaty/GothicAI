@@ -28,13 +28,16 @@ enum class Zone : size_t {
   BindlessRebuild, BindlessPatch,
   // Npc::tick inside WorldLogic, split by simulation tier (world/npcsimtier.h);
   // calls count runs of consecutive same-tier NPCs, not NPCs.
-  NpcFullTick, NpcSimplifiedTick,
+  NpcFullTick, NpcSimplifiedTick, NpcLogicShadow,
   EncodeShadows, EncodeMain, EncodeWater, EncodePost, EncodeUi, Count
   };
 enum class Amount : size_t { PaletteCalls, PaletteBytes, IdenticalCalls, IdenticalBytes,
   PatchCalls, PatchBytes, PatchBlocks, GrowBytes, UploadBytes, DrawCalls, DispatchCalls,
   BindlessTextureSlots, BindlessBufferSlots, BindlessPatchedSlots,
-  NpcFull, NpcSimplified, NpcTierTransitions, Count };
+  NpcFull, NpcSimplified, NpcTierTransitions,
+  NpcLogicSamples, NpcLogicBodyMismatch, NpcLogicWeaponMismatch,
+  NpcLogicEarly, NpcLogicLate, NpcLogicEvents, NpcLogicEventMismatch,
+  NpcLogicWaitEarly, NpcLogicWaitLate, NpcLogicReanchored, NpcLogicBodySamples, NpcLogicWeaponSamples, Count };
 enum class Outcome : uint8_t { Unfinished, Submitted, FenceBusy, Capture, Error };
 enum class Flag : uint32_t { SubmitCompleted=1, PresentCompleted=2,
   CaptureRequested=4, CaptureReadCompleted=8, FenceBusy=16, Error=32 };

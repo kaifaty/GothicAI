@@ -72,6 +72,7 @@
 #include "game/knownroadsbench.h"
 #include "game/npckeysbench.h"
 #include "game/bodytracesbench.h"
+#include "game/bloodstainsbench.h"
 #include "game/serialize.h"
 #include "game/ragdollsave.h"
 #include "game/definitions/sounddefinitions.h"
@@ -616,6 +617,9 @@ struct Bench {
   bool        heldNow   = false;
   uint64_t    time      = 0;    // game time since the start, ms
   uint64_t    step      = 0;    // fixed steps made
+  std::chrono::steady_clock::time_point heartbeatStart, heartbeatNext;
+  int64_t     npcDayStart = 0;
+  uint64_t    npcDayMinutes = 0;
 
   uint64_t    waitUntil = 0;
   std::chrono::steady_clock::time_point realWaitUntil;
@@ -1471,6 +1475,35 @@ struct Bench {
   };
 
 Bench bench;
+
+void writeHeartbeat(const World& world) {
+  if(envStr("OPENGOTHIC_BENCH_OUT")==nullptr)
+    return;
+  const auto now = std::chrono::steady_clock::now();
+  if(now<bench.heartbeatNext)
+    return;
+  bench.heartbeatNext = now+std::chrono::seconds(10);
+  const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now-bench.heartbeatStart).count();
+  const auto command = std::min(std::max(bench.pc,size_t(1)),bench.prog.size());
+  char gameTime[80];
+  std::snprintf(gameTime,sizeof(gameTime),"day %lld %02lld:%02lld",(long long)world.time().day(),
+                (long long)world.time().hour(),(long long)world.time().minute());
+  const auto path = outDir+"/heartbeat.json";
+  std::ofstream file(path+".tmp");
+  file << "{\"elapsed_seconds\":" << elapsed << ",\"frame\":" << bench.step
+       << ",\"command_index\":" << command << ",\"command_count\":" << bench.prog.size()
+       << ",\"command\":" << jsonStr(command>0 ? bench.prog[command-1] : "")
+       << ",\"game_time\":" << jsonStr(gameTime);
+  if(NpcDayJournal::running())
+    file << ",\"npcday_elapsed_minutes\":" << double(world.time().toInt()-bench.npcDayStart)/60000.0
+         << ",\"npcday_target_minutes\":" << bench.npcDayMinutes;
+  file << "}\n";
+  file.close();
+  if(file) {
+    std::error_code error;
+    std::filesystem::rename(path+".tmp",path,error);
+    }
+  }
 
 // a line of events.jsonl: what happened when, in the recording's frames (the cut of a short lines up its
 // subtitles and sound by them); `fields` are more json members, without braces
@@ -13730,6 +13763,15 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     }
     return;
   }
+  if(c=="blood_stains") {
+    try {
+      event("blood_stains","\"sample\":"+BloodStainsBench::command(a,w,pl,outDir));
+    } catch(const std::exception& error) {
+      event("blood_stains_error","\"reason\":"+jsonStr(error.what()));
+      arenaAbort(error.what());
+    }
+    return;
+  }
   if(c=="keys") {
     try {
       event("keys_command","\"sample\":"+NpcKeysBench::command(a,w,pl,ctrl,outDir));
@@ -14393,6 +14435,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       {"spell_physics",&Gothic::PhysicsFlags::spellPhysics},
       {"body_impact_damage",&Gothic::PhysicsFlags::bodyImpactDamage},
       {"body_traces",&Gothic::PhysicsFlags::bodyTraces},
+      {"blood",&Gothic::PhysicsFlags::blood},
       {"movable_vobs",&Gothic::PhysicsFlags::movableVobs},
       {"item_hulls",&Gothic::PhysicsFlags::itemHulls},
       {"item_deepest_contact",&Gothic::PhysicsFlags::itemDeepestContact},
@@ -15454,10 +15497,12 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       say("melee shadow controls " + a[2]);
       }
     else if(a.size()==3 && a[1]=="bandit") {
-      // melee-shadow bandit 1h|2h: the fixture's bandit takes the stock one- or two-hander in hand
+      // melee-shadow bandit 1h|2h|none: the fixture's bandit takes the stock one- or two-hander in hand, or puts
+      // his away (a clear gap between a blade and his body, no blade of his in between)
       if(bench.meleeShadowActors.size()!=3) {arenaAbort("melee shadow setup is required");return;}
-      if(a[2]!="1h" && a[2]!="2h") {arenaAbort("melee shadow bandit expects 1h or 2h");return;}
+      if(a[2]!="1h" && a[2]!="2h" && a[2]!="none") {arenaAbort("melee shadow bandit expects 1h, 2h or none");return;}
       auto& npc=*bench.meleeShadowActors[2];
+      if(a[2]=="none") {npc.closeWeapon(true);return;}
       const auto symbol=w.script().findSymbolIndex(a[2]=="1h"?"ITMW_1H_COMMON_01":"ITMW_2H_BAU_AXE");
       if(symbol==size_t(-1)) {arenaAbort("melee shadow bandit weapon is absent");return;}
       npc.closeWeapon(true);
@@ -17076,6 +17121,8 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       event("npcday_error","\"reason\":"+jsonStr(ok ? error : "usage"));
       return;
       }
+    bench.npcDayStart = w.time().toInt();
+    bench.npcDayMinutes = opt.minutes;
     say("npcday "+std::to_string(opt.minutes)+" min every "+std::to_string(opt.period)+(opt.isolate ? "" : " shared"));
     event("npcday_start","\"minutes\":"+std::to_string(opt.minutes)+",\"period\":"+std::to_string(opt.period)+
           ",\"isolate\":"+(opt.isolate ? "true" : "false")+",\"seed\":"+std::to_string(opt.seed));
@@ -19115,6 +19162,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
         pages+=" "+s.vobProbeFields();
         }
       pages+=(pages.empty() ? "" : " ")+w.npcSimTierStats().probeFields();
+      pages+=" "+NpcLogicAudit::stats().probeFields();
       LoadProbe::mark(text,-1,pages);
       }
     }
@@ -20469,6 +20517,7 @@ void TestBench::configure(std::string scenario, std::string output, int64_t seed
   NavigationEyeBench::reset();
   NpcKeysBench::reset();
   BodyTracesBench::reset();
+  BloodStainsBench::reset();
   NavBench::reset();
   NavDemos::reset();
   stopRecording();
@@ -20970,6 +21019,7 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
     }
   if(!bench.started) {
     bench.started = true;
+    bench.heartbeatStart = std::chrono::steady_clock::now();
     FootIk::setProbing(true);
     say("start");
     if(std::string_view(scenarioPath).find("placed-items")!=std::string_view::npos)
@@ -21061,6 +21111,7 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
     renderSound(dt);
     return false;
     }
+  writeHeartbeat(*world);
   if(dt==0)
     return false;
   NavBench::tick(*world);

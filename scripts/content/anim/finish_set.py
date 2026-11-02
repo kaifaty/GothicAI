@@ -7,7 +7,8 @@ set.json: {"levels": ["HUMANS", "HUMANS_1HST1", "HUMANS_1HST2"], "moves": [
      "sword_arm": "0.5,0.8,1,1", "free_arm": "0,0,0,0", "arm_window": "0.6,0.85", "free_window": "0.6,0.85",
      "fade": "0.12,0.2", "arm_ref": "HUMANS_1HST2-S_1HWALKL:9",
      "ref": "self", "start": "<an earlier move's name>", "end": "<name> | self", "lock_speed": 8,
-     "lift_skims": true, "lock_turn": true, "blend_in": 0.1, "hit": [7, 13], "sfx": [[4, "Whoosh"]]}]}
+     "lift_skims": true, "lock_turn": true, "blend_in": 0.1, "hit": [7, 13], "sfx": [[4, "Whoosh"]],
+     "clear_sword": true}]}
 
 Each level finishes against its own stance <LEVEL>-S_1HRUN and takes the node set of its own jump-back
 <LEVEL>-T_1HPARADEJUMPB (finish.py --fill). "ref": "self" uses the move's source as the stance (a hold loop
@@ -17,7 +18,8 @@ towards that pose instead of the stance (a victim's sword hangs). "hit": [optima
 events of Gothic's own attacks (hit limb ZS_RIGHTHAND, DEF_OPT_FRAME, DEF_HIT_END). The hit end is the end of the
 whole move, as Gothic has it (T_1HATTACKL 29 of 1-30): the engine counts the attack finished there and puts the
 stance on, so an earlier one cuts the follow-through; the blade's own window comes from its speed; "sfx": [[frame, name]]
-plays a sound. Frames count from 0, the record's first frame. Moves are finished in the order given. Writes
+plays a sound. "clear_sword" runs finish.py --clear-sword: the master holds the sword low, and the barge's crouch
+put the held blade 5 cm into the floor; levels whose blade is clear stay as they are. Frames count from 0, the record's first frame. Moves are finished in the order given. Writes
 <out>/<LEVEL>/<LEVEL>-<NAME>.MAN.json and, with a content dir, packs every level into <LEVEL>.MSB.
 
 {"name": "T_1HCHARGEDEMO", "concat": ["T_1HCHARGE", "S_1HCHARGE:0-25", "T_1HCHARGEHIT"]} glues finished moves
@@ -107,6 +109,8 @@ def main():
                 args += ["--lift-skims"] + ([] if m["lift_skims"] is True else [str(m["lift_skims"])])
             if m.get("lock_turn"):
                 args.append("--lock-turn")
+            if m.get("clear_sword"):
+                args.append("--clear-sword")
             if m.get("lock_speed"):
                 args += ["--lock-speed", str(m["lock_speed"])]
             r = subprocess.run(args, capture_output=True, text=True)
