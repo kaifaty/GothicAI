@@ -1519,7 +1519,7 @@ if mode == 'progress':
     out = Path(os.environ['OPENGOTHIC_BENCH_OUT'])
     heartbeat = {'elapsed_seconds': 1680, 'frame': 123, 'command_index': 5,
                  'command_count': 5, 'command': 'npcday 1440', 'game_time': '18:40',
-                 'npcday_elapsed_minutes': 1060, 'npcday_target_minutes': 1440}
+                 'npcday_elapsed_minutes': 1060.0033, 'npcday_target_minutes': 1440}
     temporary = out / 'heartbeat.tmp'
     temporary.write_text(json.dumps(heartbeat))
     temporary.replace(out / 'heartbeat.json')
@@ -1569,7 +1569,7 @@ if mode not in ('done', 'exit'):
         process, out = self.bench_game('stall', BENCH_STALL='2', TIMEOUT='30')
         stdout, stderr = process.communicate(timeout=20)
         self.assertNotIn(process.returncode, (0, 75, 76), stdout + stderr)
-        self.assertIn('bench: game stalled: no heartbeat for 2 s, killed', stderr)
+        self.assertIn('bench: game stalled: no output or heartbeat for 2 s, killed', stderr)
         self.assertLess(time.monotonic() - start, 18)
         with self.assertRaises(ProcessLookupError):
             os.kill(int((self.root / 'game.pid').read_text()), 0)
@@ -1579,15 +1579,15 @@ if mode not in ('done', 'exit'):
         process, _ = self.bench_game('progress', BENCH_PROGRESS='1')
         deadline = time.monotonic() + 5
         output = b''
-        while b'npcday 1060/1440 game min' not in output and time.monotonic() < deadline:
+        expected = b'bench: 0 min, command 5/5 npcday 1440, npcday 1060/1440 game min\n'
+        while expected not in output and time.monotonic() < deadline:
             ready, _, _ = select.select([process.stdout], [], [], 0.1)
             if ready:
                 block = os.read(process.stdout.fileno(), 4096)
                 if not block:
                     break
                 output += block
-        self.assertIn(b'command 5/5 npcday', output)
-        self.assertIn(b'npcday 1060/1440 game min', output)
+        self.assertIn(expected, output.splitlines(keepends=True))
         self.assertIsNone(process.poll(), output.decode())
         (self.root / 'finish').touch()
         stdout, stderr = process.communicate(timeout=5)

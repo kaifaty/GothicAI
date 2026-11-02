@@ -462,14 +462,14 @@ with (out / 'game.log').open('w') as log:
                         line = (f"command {pulse['command_index']}/{pulse['command_count']} "
                                 f"{pulse['command']}")
                         if 'npcday_elapsed_minutes' in pulse:
-                            line += (f", npcday {pulse['npcday_elapsed_minutes']}/"
-                                     f"{pulse['npcday_target_minutes']} game min")
+                            line += (f", npcday {int(pulse['npcday_elapsed_minutes'])}/"
+                                     f"{int(pulse['npcday_target_minutes'])} game min")
                     except (OSError, ValueError, KeyError):
                         line = f"starting (game.log {(out / 'game.log').stat().st_size // 1024} KB)"
                     print(f'bench: {elapsed // 60} min, {line}', flush=True)
                     next_progress = now + progress
                 if stall > 0 and now - last_activity >= stall:
-                    reason = f'game stalled: no heartbeat for {stall} s, killed'
+                    reason = f'game stalled: no output or heartbeat for {stall} s, killed'
             if not reason and now - started >= timeout:
                 reason = f'timeout after {timeout} s, game killed'
             if reason:

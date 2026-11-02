@@ -41,6 +41,7 @@ The pulse stops at completion; without the output environment variable it is not
 `BENCH_PROGRESS=300` prints one flushed stdout line every 300 wall seconds while the scenario runs,
 for example `bench: 28 min, command 5/5 npcday 1440, npcday 1060/1440 game min`. Before the first
 pulse it prints `bench: N min, starting (game.log X KB)`. The time prefix includes world loading.
+Game-minute counters in progress lines are integers; fractional minutes are omitted.
 `BENCH_PROGRESS=0` disables these lines. On Ryzen they appear during the game in `scripts/gq logs <id>`.
 
 `BENCH_STALL=600` terminates a live, unfinished game if neither the heartbeat nor any other output
@@ -48,6 +49,7 @@ file changes for 600 wall seconds. Growing `game.log` counts as loading activity
 SIGTERM, waits up to 10 seconds, then sends SIGKILL and reaps the process; `TIMEOUT` uses the same
 bounded shutdown. `BENCH_STALL=0` disables the watchdog. The watchdog stops after `[bench] done`,
 including in `KEEP=1` mode. `BENCH_PROGRESS` and `BENCH_STALL` are forwarded to Ryzen like `TIMEOUT`.
+When it kills a stalled game, stderr says `bench: game stalled: no output or heartbeat for 600 s, killed`.
 Fake-game checks live in `scripts/tests/test_ryzen.py`; a short live bench checks the engine pulse.
 
 `streaming-flythrough` measures runtime GPU chunk streaming: a god-mode hero
