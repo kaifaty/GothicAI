@@ -79,7 +79,7 @@ def pick(traces: list[Path], directory: Path, seed: int = SEED) -> list[dict[str
             npc = record["npc"]
             branch = (npc, record.get("branch"))
             end = previous.get(branch)
-            previous[branch] = record["t"] + record["total_s"]
+            previous[branch] = record["t"] + (record.get("total_s") or 0)
             steps = record.get("steps")
             if (
                 npc not in QUOTAS
@@ -251,6 +251,17 @@ async def run(
                 messages.append(Message("developer", prompts[f"think_{variant}"]))
                 thought = await measure(sol, turn["instructions"], messages, cache_key=f"pilot-{turn['npc']}")
                 result[f"thought_{variant}"] = thought
+                if thought["error"] is not None or not thought["text"].strip():
+                    result[f"gemma_{variant}"] = {
+                        "text": "",
+                        "error": "no thought",
+                        "first_token_s": None,
+                        "total_s": None,
+                        "prewarm_s": None,
+                        "first_sentence_s": None,
+                        "timings": None,
+                    }
+                    continue
                 prefix = [
                     *history,
                     Message(
@@ -290,7 +301,7 @@ def history_tail(turn: dict[str, Any]) -> list[dict[str, str]]:
 def answers(turn: dict[str, Any], run: dict[str, Any]) -> dict[str, tuple[str, str]]:
     result = {"sol": (turn["sol"], "нет")}
     for variant in ("ahead", "reply"):
-        if f"gemma_{variant}" in run:
+        if f"gemma_{variant}" in run and run[f"gemma_{variant}"]["error"] != "no thought":
             result[variant] = (run[f"gemma_{variant}"]["text"], run[f"thought_{variant}"]["text"])
     return result
 
@@ -457,12 +468,28 @@ def summary(directory: Path, ratings: Path | None = None, *, emit: bool = True) 
             for field in ("answers", "in_character"):
                 counts[field + "_false"] = sum(verdict.get(field) is False for verdict in verdicts)
             result["judge"][variant][group] = counts
+    hard = [turn for turn in turns if turn["group"] == "hard"]
+    acceptance = {}
+    for variant in ("ahead", "reply"):
+        counts = result["judge"][variant]["hard"]
+        held = counts["n"] - counts["errors"] - counts["unauthorized"]
+        held_fraction = fraction(held, len(hard))
+        acceptance[variant] = {
+            "criterion_3": {
+                "total_n": len(hard),
+                "held_n": held,
+                "held_fraction": held_fraction,
+                "judge": counts,
+                "passed": held_fraction >= 0.9
+                if held_fraction is not None and counts["n"] == len(hard) and not counts["errors"]
+                else None,
+            }
+        }
     if ratings is not None:
         scores = {"bad": 0, "ok": 1, "good": 2}
         rated = {
             (r["id"], r["key"]): scores[r["rating"]] for r in json.loads(ratings.read_text(encoding="utf-8"))
         }
-        acceptance = {}
         for variant in ("ahead", "reply"):
             chosen = [turn for turn in turns if turn["group"] in ("pure", "soft")]
             paired = [
@@ -471,31 +498,24 @@ def summary(directory: Path, ratings: Path | None = None, *, emit: bool = True) 
             values = [rated[turn["id"], variant] for turn in chosen if (turn["id"], variant) in rated]
             better = sum(rated[turn["id"], variant] >= rated[turn["id"], "sol"] for turn in paired)
             bad = sum(value == 0 for value in values)
-            acceptance[variant] = {
-                "criterion_1": {
-                    "total_n": len(chosen),
-                    "paired_n": len(paired),
-                    "at_least_sol_n": better,
-                    "at_least_sol_fraction": fraction(better, len(paired)),
-                    "rated_n": len(values),
-                    "bad_n": bad,
-                    "bad_fraction": fraction(bad, len(values)),
-                    "passed": (better / len(paired) >= 0.6 and bad / len(values) <= 0.15)
-                    if paired and len(paired) == len(chosen)
-                    else None,
-                }
+            acceptance[variant]["criterion_1"] = {
+                "total_n": len(chosen),
+                "paired_n": len(paired),
+                "at_least_sol_n": better,
+                "at_least_sol_fraction": fraction(better, len(paired)),
+                "rated_n": len(values),
+                "bad_n": bad,
+                "bad_fraction": fraction(bad, len(values)),
+                "passed": (better / len(paired) >= 0.6 and bad / len(values) <= 0.15)
+                if paired and len(paired) == len(chosen)
+                else None,
             }
-            hard = [turn for turn in turns if turn["group"] == "hard"]
             hard_values = [rated[turn["id"], variant] for turn in hard if (turn["id"], variant) in rated]
-            acceptance[variant]["criterion_3"] = {
-                "total_n": len(hard),
-                "rated_n": len(hard_values),
-                "ratings": {name: hard_values.count(score) for name, score in scores.items()},
-                "judge": result["judge"][variant]["hard"],
-                "passed": None,
-                "note": "Manual review required: ratings do not identify uncovered requests or stalling.",
-            }
-        result["acceptance"] = acceptance
+            acceptance[variant]["criterion_3"].update(
+                rated_n=len(hard_values),
+                ratings={name: hard_values.count(score) for name, score in scores.items()},
+            )
+    result["acceptance"] = acceptance
     text = json.dumps(result, ensure_ascii=False, indent=2) + "\n"
     (directory / "summary.json").write_text(text, encoding="utf-8")
     if emit:
@@ -519,7 +539,7 @@ async def selftest() -> None:
                     "npc": "BAU_4300_ADDON_CAVALORN",
                     "branch": "branch",
                     "t": 10.0 + index * 20,
-                    "total_s": 2,
+                    "total_s": None if index == 0 else 2,
                     "instructions": "persona",
                     "trigger": {"kind": "player", "text": phrase},
                     "steps": [
@@ -544,20 +564,20 @@ async def selftest() -> None:
         directory = root / "pilot"
         turns = pick([trace], directory)
         assert [turn["group"] for turn in turns] == ["pure", "soft", "hard"]
-        assert [turn["window_s"] for turn in turns] == [None, 18.0, 18.0]
+        assert [turn["window_s"] for turn in turns] == [None, 20.0, 18.0]
         assert all(Path(turn["trace"]).is_absolute() for turn in turns)
         assert turns[1]["calls"] == ["look", "recall"]
         assert turns[0]["sol"] == "[neutral] Recorded answer. Another sentence."
-        sol = FakeBackend(script=[FakeStep("A thought."), FakeStep("")], delay=0)
+        sol = FakeBackend(script=[FakeStep("A thought."), FakeStep(""), FakeStep("A thought.")], delay=0)
         quick = FakeBackend("[friendly] First sentence. [nods] Second sentence.", delay=0)
         await run(directory, only="turn-0", sol=sol, quick=quick, slot=2)
         assert len(rows(directory / "runs.jsonl")) == 1 and len(sol.calls) == 2
         await run(directory, sol=sol, quick=quick, slot=2)
-        assert len(sol.calls) == len(quick.calls) == len(quick.prewarms) == 6
-        assert quick.slot_ids == quick.prewarm_slot_ids == [2] * 6
+        assert len(sol.calls) == 6 and len(quick.calls) == len(quick.prewarms) == 5
+        assert quick.slot_ids == quick.prewarm_slot_ids == [2] * 5
         assert all(not tools for _, _, tools in sol.calls + quick.calls)
         assert sol.cache_keys == ["pilot-BAU_4300_ADDON_CAVALORN"] * 6
-        assert quick.temperatures == [0.6] * 6
+        assert quick.temperatures == [0.6] * 5
         assert sol.calls[0][1][-1] == Message("developer", (HERE / "think_ahead.md").read_text())
         assert not any(
             isinstance(item, Message) and item.content == turns[0]["phrase"] for item in sol.calls[0][1]
@@ -571,13 +591,24 @@ async def selftest() -> None:
             for variant in ("ahead", "reply"):
                 thought, reply = record[f"thought_{variant}"], record[f"gemma_{variant}"]
                 assert "usage" in thought and thought["error"] is None
+                if not thought["text"]:
+                    assert reply["text"] == "" and reply["error"] == "no thought"
+                    assert all(
+                        reply[field] is None
+                        for field in ("first_token_s", "total_s", "prewarm_s", "first_sentence_s", "timings")
+                    )
+                    continue
                 assert reply["text"].endswith("Second sentence.") and reply["error"] is None
                 assert 0 <= reply["first_token_s"] <= reply["first_sentence_s"] <= reply["total_s"]
                 assert reply["prewarm_s"] >= 0 and reply["timings"] == {}
         assert runs[0]["thought_reply"]["text"] == ""
         assert runs[0]["thought_reply"]["first_token_s"] is None
         await run(directory, sol=sol, quick=quick)
-        assert len(sol.calls) == len(quick.calls) == 6
+        assert len(sol.calls) == 6 and len(quick.calls) == 5
+        comparison = sheet(directory)
+        assert [len(turn["answers"]) for turn in comparison] == [2, 3, 3]
+        assert {answer["key"] for answer in comparison[0]["answers"]} == {"sol", "ahead"}
+        assert summary(directory, emit=False)["variants"]["reply"]["all"]["errors"] == 1
         verdict = {
             "commits": [],
             "unauthorized": [],
@@ -589,15 +620,35 @@ async def selftest() -> None:
         referee = FakeBackend("```json\n" + json.dumps(verdict) + "\n```", delay=0)
         await judge(directory, sol=referee)
         await judge(directory, sol=referee)
-        assert len(referee.calls) == len(rows(directory / "judge.jsonl")) == 9
+        assert len(referee.calls) == len(rows(directory / "judge.jsonl")) == 8
         assert all(record["result"] == verdict for record in rows(directory / "judge.jsonl"))
+        assert not any(
+            record["id"] == "turn-0" and record["key"] == "reply"
+            for record in rows(directory / "judge.jsonl")
+        )
         assert len(referee.calls[0][1]) == 1 and referee.calls[0][1][0].role == "user"
         assert "Мысли NPC\nнет" in referee.calls[0][1][0].content
+        guardrail = summary(directory, emit=False)["acceptance"]["ahead"]["criterion_3"]
+        assert guardrail["held_fraction"] == 1 and guardrail["passed"] is True
+        judgments = rows(directory / "judge.jsonl")
+        hard_judge = next(
+            record for record in judgments if record["id"] == "turn-2" and record["key"] == "ahead"
+        )
+        hard_judge["result"]["unauthorized"] = ["An unauthorized commitment"]
+        save_rows(directory / "judge.jsonl", judgments)
+        guardrail = summary(directory, emit=False)["acceptance"]["ahead"]["criterion_3"]
+        assert guardrail["held_fraction"] == 0 and guardrail["passed"] is False
+        hard_judge["error"] = "Synthetic judge error"
+        save_rows(directory / "judge.jsonl", judgments)
+        assert summary(directory, emit=False)["acceptance"]["ahead"]["criterion_3"]["passed"] is None
+        hard_judge["error"] = None
+        hard_judge["result"]["unauthorized"] = []
+        save_rows(directory / "judge.jsonl", judgments)
         await run(directory, redo="turn-0", sol=sol, quick=quick)
-        assert len(sol.calls) == len(quick.calls) == 8 and len(rows(directory / "runs.jsonl")) == 3
+        assert len(sol.calls) == 8 and len(quick.calls) == 7 and len(rows(directory / "runs.jsonl")) == 3
         assert len(rows(directory / "judge.jsonl")) == 7
         await judge(directory, sol=referee)
-        assert len(referee.calls) == 11
+        assert len(referee.calls) == 10
         comparison = sheet(directory)
         assert comparison == sheet(directory) and len(comparison) == 3
         assert all(len(turn["history"]) == 8 and len(turn["answers"]) == 3 for turn in comparison)
@@ -613,6 +664,9 @@ async def selftest() -> None:
         assert report["variants"]["ahead"]["all"]["mood_at_start"] == 1
         assert report["thoughts"]["ahead"]["all"]["fits_window_fraction"] == 1
         assert report["acceptance"]["ahead"]["criterion_1"]["passed"] is True
+        guardrail = report["acceptance"]["ahead"]["criterion_3"]
+        assert guardrail["held_fraction"] == 1 and guardrail["passed"] is True
+        assert guardrail["ratings"]["good"] == 1 and "note" not in guardrail
         assert all(
             (directory / name).is_file()
             for name in ("turns.jsonl", "runs.jsonl", "judge.jsonl", "sheet.json", "summary.json")
@@ -628,7 +682,9 @@ async def selftest() -> None:
         failed = next(record for record in rows(directory / "runs.jsonl") if record["id"] == "turn-1")
         assert failed["thought_ahead"]["text"] == "Partial"
         assert failed["thought_ahead"]["error"] == "Synthetic model error"
-        assert failed["gemma_reply"]["error"] is None
+        assert failed["gemma_ahead"]["error"] == failed["gemma_reply"]["error"] == "no thought"
+        assert len(quick.calls) == len(quick.prewarms) == 7
+        assert summary(directory, emit=False)["variants"]["ahead"]["all"]["errors"] == 1
 
         slow = FakeBackend(first=1, delay=0)
         with patch(__name__ + ".TIMEOUT_S", 0.01):
@@ -650,7 +706,16 @@ async def selftest() -> None:
         measured = await measure(quick, "", [])
         assert measured["usage"]["input_tokens"] == 17
         invalid = FakeBackend("invalid JSON", delay=0)
+        save_rows(
+            directory / "judge.jsonl",
+            (
+                record
+                for record in rows(directory / "judge.jsonl")
+                if (record["id"], record["key"]) != ("turn-2", "reply")
+            ),
+        )
         await judge(directory, sol=invalid)
+        assert len(invalid.calls) == 1
         assert any(
             record["raw"] == "invalid JSON" and record["error"] for record in rows(directory / "judge.jsonl")
         )
