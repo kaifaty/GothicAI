@@ -88,6 +88,7 @@ namespace MeleeDodge {
   // No armour: light.
   Kind        kind(std::optional<MeleeImpact::ArmorClass> armor);
   Kind        kind(std::optional<MeleeImpact::ArmorClass> armor, Direction direction, bool bargeEnabled);
+  bool        bargeAllowed(bool player, bool aiEnabled);
   std::string animationName(Kind kind, Stance stance, Direction direction);
   Plan        plan(Kind kind, Stance stance, Direction direction);
   std::optional<Move> parseAnimation(std::string_view name);

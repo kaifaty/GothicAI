@@ -1,4 +1,5 @@
 #include "meleeai.h"
+#include "meleecharge.h"
 
 #include <algorithm>
 #include <cmath>
@@ -42,4 +43,76 @@ float MeleeAi::riposteChance(int talent) {
 
 bool MeleeAi::riposteRoll(int talent, float uniform) {
   return uniform<riposteChance(talent);
+  }
+
+float MeleeAi::chargeChance(int talent) {
+  return .3f*float(std::clamp(talent,0,100))/100.f;
+  }
+
+bool MeleeAi::chargeRoll(int talent, float uniform) {
+  return uniform<chargeChance(talent);
+  }
+
+uint64_t MeleeAi::chargeHoldMs(float uniform) {
+  return 400+uint64_t(800.f*uniform);
+  }
+
+bool MeleeAi::chargeRelease(uint64_t elapsedMs, uint64_t holdMs, bool inRange) {
+  return elapsedMs>=MeleeCharge::AutoReleaseMs || (elapsedMs>=holdMs && inRange);
+  }
+
+float MeleeAi::bargeChance(int talent) {
+  return float(std::clamp(talent,0,100))/100.f;
+  }
+
+bool MeleeAi::bargeRoll(int talent, float uniform) {
+  return uniform<bargeChance(talent);
+  }
+
+MeleeAi::BargeTrigger MeleeAi::bargeTrigger(bool parade, uint64_t now, std::optional<uint64_t> lastGuardedMs) {
+  if(parade)
+    return BargeTrigger::Parade;
+  if(lastGuardedMs && now-*lastGuardedMs<=2000)
+    return BargeTrigger::Guarded;
+  return BargeTrigger::None;
+  }
+
+bool MeleeAi::bargeGeometry(float distanceCm, float heightCm, float angleDeg) {
+  return 80.f<=distanceCm && distanceCm<=200.f && std::abs(heightCm)<=100.f && std::abs(angleDeg)<=50.f;
+  }
+
+bool MeleeAi::bargeArmor(std::optional<MeleeImpact::ArmorClass> armor) {
+  return armor==MeleeImpact::ArmorClass::Heavy;
+  }
+
+std::string_view MeleeAi::name(BargeTrigger trigger) {
+  switch(trigger) {
+    case BargeTrigger::None:    return "none";
+    case BargeTrigger::Parade:  return "parade";
+    case BargeTrigger::Guarded: return "guarded";
+    }
+  return "none";
+  }
+
+bool MeleeAi::specialCooldownReady(uint64_t now, std::optional<uint64_t> endedMs) {
+  return !endedMs || now-*endedMs>=6000;
+  }
+
+bool MeleeAi::SpecialSlot::busy() const {
+  return owner!=nullptr;
+  }
+
+bool MeleeAi::SpecialSlot::acquire(const void* actor, Special move) {
+  if(busy())
+    return false;
+  owner = actor;
+  kind = move;
+  return true;
+  }
+
+void MeleeAi::SpecialSlot::release(const void* actor) {
+  if(owner!=actor)
+    return;
+  owner = nullptr;
+  kind = Special::None;
   }
