@@ -31,7 +31,16 @@ CRIME_REACT_PROTOCOL = 44  # independently held hero deeds, their ids, and vanil
 CRIME_MEET_PROTOCOL = 46  # deeds switch also holds room entry; rule verdicts need no body action
 NPC_CRIME_PROTOCOL = 47  # marked NPC theft/attack and separate npc_deed snapshots
 NPC_FAR_PROTOCOL = 48  # story_effect chest_take: a checked chest-to-self transfer without a body action
+BODY_TRACE_PROTOCOL = 58  # a dead person is a trace: npc_view.traces kind body with the dead npc's id
 NPC_FAR_FIGHT_PROTOCOL = 59  # story_effect knockout/wound: nonlethal outcomes outside simulation
+# trace kinds newer than the traces themselves, and the protocol that brought each
+TRACE_KINDS_SINCE = {"broken": BROKEN_TRACE_PROTOCOL, "body": BODY_TRACE_PROTOCOL}
+
+
+def trace_supported(kind: str, protocol: int | None) -> bool:
+    """Whether a peer of this protocol (None: unknown, a test) sends traces of this kind."""
+    return protocol is None or protocol >= TRACE_KINDS_SINCE.get(kind, TRACE_PROTOCOL)
+
 
 # --- game -> server -----------------------------------------------------------
 
@@ -631,13 +640,16 @@ class Trace(_GameMessage):
     """A visible physical trace (v37). Its originator remains private to the engine and save."""
 
     id: str  # stable across saves; identifies the trace, not its originator
-    kind: Literal["arrow", "moved", "tilted", "broken"]
-    name: str  # arrow, table, barrel, ...; broken: a full description, e.g. «обломки ящика»
+    kind: Literal["arrow", "moved", "tilted", "broken", "body"]
+    # arrow, table, barrel, ...; broken: a full description, e.g. «обломки ящика»; body: the dead's name
+    name: str
     waypoint: str | None = None  # nearest waypoint to the trace
     distance: float = 0  # cm from the npc
     hero_cm: float | None = None
     from_hero: Side | None = None
-    age: int | None = Field(default=None, ge=0)  # game minutes since appearance; unknown in legacy saves
+    # game minutes since appearance (body: since death); unknown in legacy saves
+    age: int | None = Field(default=None, ge=0)
+    npc: str | None = None  # v58 body: the dead npc's id, as `Look.id` has it; not who killed him
 
 
 class NpcView(_GameMessage):
