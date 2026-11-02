@@ -8,7 +8,7 @@ cheat god
 set time 12 0
 goto NW_XARDAS_TOWER_VALLEY_091
 clear 4000
-wait 500
+wait 3000
 # Two splashes 1.2 m apart, one 9 m away, a meatbug's and a golem's stain, an indoor
 # splash, and a dead person with his pool and a splash beside it.
 blood_stains setup

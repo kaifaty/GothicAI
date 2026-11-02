@@ -166,19 +166,51 @@ void add(World& world, const std::string& role, BloodStains::Stain s) {
     st.ids[role] = id;
   }
 
+// Gentle open ground around the hero (the valley has cliffs and ravines): a ring of probes,
+// then anchors at least 6 m from one another, so the groups stay apart.
+std::vector<Vec3> anchors(World& world, const Vec3& h, size_t count) {
+  std::vector<Vec3> found;
+  for(float dist:{300.f,500.f,700.f,900.f,1100.f,1300.f}) {
+    for(int i=0;i<24;++i) {
+      const float a = float(i)*float(M_PI)/12.f;
+      const auto  p = h+Vec3(std::cos(a)*dist,0,std::sin(a)*dist);
+      const auto floor = world.physic()->landRay(p+Vec3(0,800,0),2400.f);
+      if(!floor.hasCol || floor.n.y<.8f || std::abs(floor.v.y-h.y)>400.f)
+        continue;
+      bool apart = true;
+      for(const auto& q:found)
+        apart &= (q-floor.v).length()>=600.f;
+      if(apart)
+        found.push_back(floor.v);
+      if(found.size()==count)
+        return found;
+      }
+    }
+  fail("only "+std::to_string(found.size())+" of "+std::to_string(count)+" ground anchors near the hero");
+  }
+
+// A spot `dist` cm from `at` on gentle ground, the first of 12 directions that has one.
+Vec3 beside(World& world, const Vec3& at, float dist) {
+  for(int i=0;i<12;++i) {
+    const float a = float(i)*float(M_PI)/6.f;
+    const auto  p = at+Vec3(std::cos(a)*dist,0,std::sin(a)*dist);
+    const auto floor = world.physic()->landRay(p+Vec3(0,200,0),600.f);
+    if(floor.hasCol && floor.n.y>=.5f && std::abs(floor.v.y-at.y)<100.f)
+      return floor.v;
+    }
+  fail("no ground "+num(dist)+" cm beside "+vec(at));
+  }
+
 void setup(World& world, Npc& hero) {
   st = {};
   st.world = &world;
-  const float a = hero.rotationRad();
-  const Vec3  f(std::cos(a),0,std::sin(a)), r(-f.z,0,f.x), h = hero.position();
+  const auto spots = anchors(world,hero.position(),5);
 
-  // Anchors 6-12 m apart (each may move up to 2 m to find gentle ground in the valley); the
-  // stains that belong together are laid within 30 cm of their spot next to an anchor.
-  // A person dies 6 m ahead: his pool and a splash beside it are his body's evidence, no blood trace.
+  // A person dies at the first anchor: his pool and a splash beside it are his body's evidence.
   const auto instance = world.script().findSymbolIndex("BDT_1000_BANDIT_L");
   if(instance==size_t(-1))
     fail("no instance BDT_1000_BANDIT_L");
-  st.victim = world.addNpc(instance,ground(world,h+f*600.f));
+  st.victim = world.addNpc(instance,spots[0]);
   if(st.victim==nullptr)
     fail("cannot insert the victim");
   st.victim->setLastHitBy(&hero);
@@ -188,28 +220,27 @@ void setup(World& world, Npc& hero) {
   const auto body = st.victim->bodyTrace().id;
   const auto at   = st.victim->position();
   place(world,"pool",at,BloodStains::Kind::Pool,45.f,body);
-  place(world,"near_pool",ground(world,at+r*80.f,30.f),BloodStains::Kind::Splash,15.f);
+  place(world,"near_pool",beside(world,at,80.f),BloodStains::Kind::Splash,15.f);
 
   // Two splashes 1.2 m apart (one trace, named by the older, placed at the larger) and one far away.
-  const auto a1 = ground(world,h+f*300.f-r*600.f);
-  place(world,"a1",a1,BloodStains::Kind::Splash,15.f);
-  place(world,"a2",ground(world,a1+f*120.f,30.f),BloodStains::Kind::Splash,25.f);
-  place(world,"b", ground(world,h+f*300.f+r*600.f),BloodStains::Kind::Splash,20.f);
+  place(world,"a1",spots[1],BloodStains::Kind::Splash,15.f);
+  place(world,"a2",beside(world,spots[1],120.f),BloodStains::Kind::Splash,25.f);
+  place(world,"b", spots[2],BloodStains::Kind::Splash,20.f);
 
   // A meatbug's yellow blood is evidence; a golem's stone chips 1 m from it are not, and do not join it.
   BloodStains::Stain yellow;
-  yellow.pos      = ground(world,h-f*500.f);
+  yellow.pos      = spots[3];
   yellow.blood    = BloodStains::Blood::Yellow;
   yellow.radiusCm = 12.f;
   add(world,"yellow",yellow);
   BloodStains::Stain stone = yellow;
-  stone.pos       = ground(world,yellow.pos+r*100.f,30.f);
+  stone.pos       = beside(world,yellow.pos,100.f);
   stone.blood     = BloodStains::Blood::Stone;
   add(world,"stone",stone);
 
   // A splash recorded indoors (the lifetime is the record's): three days, not one.
   BloodStains::Stain indoor;
-  indoor.pos      = ground(world,h-f*400.f-r*600.f);
+  indoor.pos      = spots[4];
   indoor.indoor   = true;
   indoor.radiusCm = 18.f;
   add(world,"in",indoor);
