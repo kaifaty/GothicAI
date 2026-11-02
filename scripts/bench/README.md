@@ -756,6 +756,10 @@ are retained. `gamedata/far_fight.json` stays `uncalibrated`.
   fallback: three legacy windows, two HP-loss hits (159 HP); the attacker has two
   swings, zero misses, and the defender one swing, one miss. This confirms that
   native `applied` is not counted as a miss and both hit paths use the same logger.
+  The complete saved check then passed (exit 0): 71 server and 58 tool tests,
+  Ruff, Linux and Mac `Gothic2Notr` builds, and CLI smoke on Ryzen. Smoke validated
+  eight unique records with 100 HP-loss hits, one timeout and zero deaths; it keeps
+  timeouts in the data rather than treating them as invalid records.
 - 2026-11-01: added the native nonlethal calibration bench and plan/run/smoke/report
   tools for user decision Б3 in [Дальний бой NPC](../../reports/Дальний%20бой%20NPC.md).
 
