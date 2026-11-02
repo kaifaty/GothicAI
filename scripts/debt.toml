@@ -1,0 +1,35 @@
+exclude = ["OpenGothic/lib", "reports", "research_notes"]
+
+[hotspot]
+extensions = [".py", ".cpp", ".h", ".hpp", ".c", ".cc", ".cxx"]
+window_days = 30
+open_lines = 2500
+close_lines = 2000
+open_score = 300000
+close_score = 150000
+heavy_score = 1200000
+
+[doc-now]
+open_score = 61440
+close_score = 20480
+heavy_score = 122880
+
+[doc-file]
+paths = ["docs/README.md", "docs/features.md"]
+open_score = 153600
+close_score = 61440
+heavy_score = 307200
+
+[ruff]
+version = "0.17.0"
+open_score = 10
+close_score = 1
+heavy_score = 100
+
+[orphan-scripts]
+open_score = 1
+close_score = 1
+
+[sync]
+max_new = 5
+reopen_factor = 1.5
