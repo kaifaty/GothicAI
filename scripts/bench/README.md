@@ -1204,13 +1204,16 @@ the AI bridge and the window's 40 m effect radius around the camera, and disable
 default. `BENCH_HEADLESS=0` restores the window for a same-build comparison.
 
 The [headless measurements](../../reports/compute/2026-11-02-headless-bench/README.md) on Ryzen
-give 66 wall seconds per game hour plus 6 seconds loading, against 98 seconds in the window.
-The windowed reference day took 2306 seconds (38.4 minutes); the note does not yet contain a completed
-headless day time. A day writes about 55 MB. The same-build hour journals matched byte for byte
-(13,689 NPC rows and 190 events); compare runs with the same build, base and environment.
-On one build the journal is byte-identical between runs, so
-`scripts/bench/npc-day-parity.tolerances.json` asks for exact equality; a change of the executor adds its own
-allowance with command-line limits. `npcday` files:
+show that a day through `scripts/bench.sh npc-day-parity` took 1553 s (25,9 min) without a window,
+as a `batch` request (`gq`: `4t 6G gpu=0G окно=0`); windowed days took 38–43 min.
+The window and `--game-parity` runner days from the same build and environment passed
+`npc_day_parity.py` with the bench tolerances (exit 0): position differences 0 m,
+ZS/TA/HP/inventory matches 100%, and `npc-day-events.csv` byte-identical. Only `queue`/`head`
+differ for Lester (`PC_PSIONIC`) when he approaches the hero to talk: `AI_ProcessInfo` is handled
+by the dialogue menu in the window; the runner has no menu. Compare only runs from the same build,
+base and environment. A day writes about 55 MB.
+Use `scripts/bench/npc-day-parity.tolerances.json` for comparisons; a change of the executor adds
+its own allowance with command-line limits. `npcday` files:
 
 | File | Contents |
 |---|---|
