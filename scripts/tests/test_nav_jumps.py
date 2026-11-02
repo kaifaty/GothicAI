@@ -161,7 +161,7 @@ raise SystemExit(subprocess.run(["bash", "-c", command], env=remote_env).returnc
     monkeypatch.setenv("SSH_QUEUE", str(queue))
     for filename, action, message, expected_calls in (
         ("nav-jumps-remote.sh", "build", "Run scripts/ryzen.sh setup first", ["ssh"]),
-        ("ryzen.sh", "pytest", "Start the game once on the Mac on this version", []),
+        ("ryzen.sh", "e2e", "Start the game once on the Mac on this version", ["ssh"]),
     ):
         calls.write_text("")
         monkeypatch.setenv("GOTHIC_DIR", "/Volumes/x")

@@ -15,11 +15,18 @@ windowed scenarios try Ryzen, then Mac. Both remote hosts use `scripts/ryzen.sh`
 Before remote `bench` and `e2e`, `ryzen.sh` selects Mac base/video parts matching this checkout's
 import formats, copies missing parts to the host's cache, and synchronizes both game INI files.
 Ready parts in the host cache or shared store need no copy; dev-ubuntu only uses its cache.
+When Mac has no compatible part, the host cache/store is searched for this checkout's format
+and the same installation as the host's `game-base.json`. A match reports `ready (host)` and
+passes its exact fingerprint without copying. If videos have no compatible replacement on
+either machine, the original host video fingerprint is retained.
 The run receives the exact fingerprints without changing a prepared host's `game-base.json`;
 a fresh host gets settings and that pointer automatically. `scripts/ryzen.sh setup` is optional.
 Explicit nonempty `OPENGOTHIC_BASE` or `OPENGOTHIC_BASE_FINGERPRINT` skips base selection/copy;
 an explicit `OPENGOTHIC_VIDEOS_FINGERPRINT`, including empty, does the same for videos.
-If a matching Mac part is missing, start the game on Mac on this version to import it.
+If neither Mac nor host has a compatible base, `bench`/`e2e` stop before locks or queue requests:
+start the game on Mac on this version to import it. Remote `pytest` instead prints one warning
+and continues with the host's `game-base.json`, without forcing a base fingerprint.
+`setup` still requires compatible Mac parts and does not use this host fallback.
 Each fallback prints one line explaining the SSH, base synchronization, lock, queue-wait or game-startup failure.
 Once returned output contains `game.log`, that host's result is final, including a failing exit code;
 the game is not run again elsewhere. The remote lock/queue wait defaults to 120 seconds in `auto`

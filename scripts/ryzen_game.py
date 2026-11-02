@@ -23,18 +23,21 @@ def _identity(directory, kind):
         return None
 
 
-def _compatible_fingerprint(kind, fingerprint, expected, roots):
+def _compatible_fingerprint(kind, fingerprint, expected, roots, ready=None):
     directories = roots if kind == "base" else [root / "videos" for root in roots]
     pointed = next((identity for root in directories
                     if (identity := _identity(root / fingerprint, kind)) is not None), None)
-    if pointed is None or pointed[0] == expected:
+    if pointed is None:
+        return fingerprint
+    if pointed[0] == expected and (ready is None or any(ready(root / fingerprint) for root in directories)):
         return fingerprint
     for root in directories:
         for directory in sorted(root.glob("*")):
             if not re.fullmatch("[0-9a-f]{64}", directory.name):
                 continue
             candidate = _identity(directory, kind)
-            if candidate is not None and candidate == (expected, pointed[1]):
+            if (candidate is not None and candidate == (expected, pointed[1])
+                    and (ready is None or ready(directory))):
                 return directory.name
     if kind == "base":
         locations = " or ".join(str(root) for root in roots)
