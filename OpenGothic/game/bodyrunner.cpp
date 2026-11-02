@@ -24,6 +24,7 @@
 #include "world/world.h"
 #include "world/waypoint.h"
 #include "utils/workers.h"
+#include "../ai_bridge/aibridge.h"
 #include "../ai_bridge/npccontroller.h"
 #include "../ai_bridge/npcobserver.h"
 
@@ -52,9 +53,9 @@ using Json = rapidjson::Document;
 using Allocator = rapidjson::Document::AllocatorType;
 
 struct Options {
-  std::string save, scenario, output = ".body-runner", mode = "lockstep";
+  std::string save, world, scenario, output = ".body-runner", mode = "lockstep";
   bool stdio = false, compactReplies = false, schedulingDiagnostics = false, serialWorkers = false, forkReset = false;
-  bool forkPrefix = false;
+  bool forkPrefix = false, gameParity = false;
 };
 
 Options options(int argc, const char** argv) {
@@ -67,6 +68,7 @@ Options options(int argc, const char** argv) {
       return argv[i];
     };
     if(arg=="--save") result.save = value();
+    else if(arg=="--world") result.world = value();
     else if(arg=="--scenario") result.scenario = value();
     else if(arg=="--output") result.output = value();
     else if(arg=="--mode") result.mode = value();
@@ -76,16 +78,18 @@ Options options(int argc, const char** argv) {
     else if(arg=="--serial-workers") result.serialWorkers = true;
     else if(arg=="--fork-reset") result.forkReset = true;
     else if(arg=="--fork-prefix") result.forkPrefix = true;
+    else if(arg=="--game-parity") result.gameParity = true;
   }
-  if(result.save.empty() || result.scenario.empty())
-    throw std::runtime_error("--save and --scenario are required");
+  if(result.save.empty()==result.world.empty() || result.scenario.empty())
+    throw std::runtime_error("--scenario and one of --save or --world are required");
   if(result.mode!="lockstep" && result.mode!="realtime")
     throw std::runtime_error("mode must be lockstep or realtime");
   if(result.forkReset && (!result.serialWorkers || !result.stdio))
     throw std::runtime_error("--fork-reset requires --serial-workers and --stdio");
   if(result.forkPrefix && !result.forkReset)
     throw std::runtime_error("--fork-prefix requires --fork-reset");
-  result.save = std::filesystem::absolute(result.save).string();
+  if(!result.save.empty())
+    result.save = std::filesystem::absolute(result.save).string();
   result.scenario = std::filesystem::absolute(result.scenario).string();
   result.output = std::filesystem::absolute(result.output).string();
   return result;
@@ -321,6 +325,13 @@ private:
       }
   }
 
+  // --game-parity: the camera origin the rendered frame hands its particle range after the step. Animation
+  // effects and foot IK then run only within 40 m of it, as in the game, not for every NPC of the world.
+  void gameView() {
+    if(opts.gameParity)
+      gothic.world()->setHeadlessViewer(gothic.camera()->originLwc());
+  }
+
   void teardown() {
     BodyArena::interrupt("reset_requested");
     BodyArena::disable();
@@ -343,16 +354,24 @@ private:
   }
 
   void loadWorld() {
-    Tempest::RFile file(opts.save);
-    Serialize save(file);
-    gothic.setGame(std::make_unique<GameSession>(save));
+    if(!opts.world.empty()) {
+      // --world: a new game in this world, as `-w <world>` starts it in the rendered game.
+      gothic.setGame(std::make_unique<GameSession>(opts.world));
+    } else {
+      Tempest::RFile file(opts.save);
+      Serialize save(file);
+      gothic.setGame(std::make_unique<GameSession>(save));
+    }
     if(gothic.world()==nullptr || gothic.player()==nullptr || gothic.world()->physic()==nullptr)
-      throw std::runtime_error("save did not restore a playable world");
+      throw std::runtime_error("save or world did not restore a playable world");
     player = std::make_unique<PlayerControl>();
     player->clearInput();
     gothic.gameSession()->setTimeMultiplyer(1.f);
     gothic.camera()->setViewport(640,480);
     player->clearFocus();
+    // The rendered game announces the loaded world here (Gothic::finishLoading): with --game-parity the AI
+    // bridge counts the important dialogs around a -nointro hero as told, as the game does.
+    gothic.onWorldLoaded();
   }
 
   void beginEpisode(const ResetPlan& p,Clock::time_point from,bool fromPrefix=false) {
@@ -360,8 +379,10 @@ private:
     (void)output;
     // Match the rendered load-finalize frame: animation/camera/bench initialize at dt=0.
     // A prefix fork already ran it, and its opening steps, in the template.
-    if(!fromPrefix)
+    if(!fromPrefix) {
       SimulationStep::finishStep(0,*player);
+      gameView();
+    }
     modeNow = mode;
     outputNow = output;
     generation++;
@@ -441,6 +462,10 @@ public:
     const uint64_t dt = TestBench::frameDt(33);
     SimulationStep::worldPlayerStep(dt,*player);
     SimulationStep::finishStep(dt,*player);
+    // As the rendered frame does after its step: chunk residency follows the hero and the camera
+    // (NPC simulation tiers in `auto`); without a view it publishes no visuals.
+    gothic.world()->updateLandscape(*gothic.camera());
+    gameView();
     BodyArena::postStep();
     if(watchRequested) {
       const auto watchFrom = Clock::now();
@@ -1413,6 +1438,9 @@ int main(int argc, const char** argv) {
   dup2(STDERR_FILENO,STDOUT_FILENO);
   try {
     const auto opts = options(argc,argv);
+    // --game-parity: no body traces unless asked, as in the rendered game (they hook into NPC fights).
+    if(opts.gameParity)
+      setenv("OPENGOTHIC_BODY_TRACE","0",0);
     Workers::setSerialExecution(opts.serialWorkers);
     // Jolt steps on this thread unless asked otherwise: one schedule for lockstep and realtime runs,
     // and a single-threaded template for --fork-reset.
@@ -1429,6 +1457,11 @@ int main(int argc, const char** argv) {
     gothic.isNpcInDialogFn = [](const Npc*) { return false; };
     gothic.setupGlobalScripts();
     GameMusic music;
+    // --game-parity: the game's AI bridge, as main.cpp creates it. Without a server it still changes the
+    // simulation (beasts' perception, -nointro dialogs, dialogs as story programs); GOTHIC_AI=0 disables it.
+    std::optional<AiBridge> aiBridge;
+    if(opts.gameParity)
+      aiBridge.emplace();
     Runner runner(gothic,opts);
     if(!opts.stdio) {
       Json reset(rapidjson::kObjectType);

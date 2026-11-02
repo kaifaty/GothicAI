@@ -250,6 +250,9 @@ class World final {
 
     bool                 isInSfxRange(const Tempest::Vec3& pos) const;
     bool                 isInPfxRange(const Tempest::Vec3& pos) const;
+    // A headless run that stands in for the rendered game: the camera origin the renderer would hand to
+    // its particle range after this step. Without it a headless world treats every point as in range.
+    void                 setHeadlessViewer(const Tempest::Vec3& pos) { headlessViewer = pos; hasHeadlessViewer = true; }
 
     void                 addDlgSound(std::string_view s, const Tempest::Vec3& pos, float range, uint64_t &timeLen,
                                      std::shared_ptr<LipSync::Track>* voice = nullptr);
@@ -297,6 +300,8 @@ class World final {
 
     std::unique_ptr<DynamicWorld>         wdynamic;
     std::unique_ptr<WorldView>            wview;
+    Tempest::Vec3                         headlessViewer;
+    bool                                  hasHeadlessViewer = false;
     std::vector<std::unique_ptr<ClothVisual>> clothSurfaces;
     mutable MeshObjects                  cpuObjects;
     std::unique_ptr<GlobalEffects>        globFx;

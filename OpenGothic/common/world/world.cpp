@@ -15,6 +15,7 @@
 #include "commandline.h"
 #include "camera.h"
 #include "graphics/visualfx.h"
+#include "graphics/pfx/pfxobjects.h"
 #include "graphics/clothvisual.h"
 #include "world/objects/globalfx.h"
 #include "world/objects/npc.h"
@@ -1778,6 +1779,8 @@ bool World::isInSfxRange(const Tempest::Vec3& pos) const {
   }
 
 bool World::isInPfxRange(const Tempest::Vec3& p) const {
+  if(Resources::isHeadless() && hasHeadlessViewer)
+    return (headlessViewer-p).quadLength()<PfxObjects::viewRage*PfxObjects::viewRage;
   if(Resources::isHeadless())
     return true; // Effects may carry gameplay collision/perception callbacks.
   return wview->isInPfxRange(p);
