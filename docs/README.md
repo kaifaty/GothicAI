@@ -24,6 +24,8 @@
 
 [Гибрид «Gemma говорит, решает Sol»](../reports/npc-agent/2026-11-02-gemma-sol-hybrid/README.md): `hybrid.py` повторяет 123 хода, Gemma по короткой мысли отвечает сама или отдаёт ход меткой `[sol]`. Мысль успевает в 96% ходов, но сама Gemma маршрут не держит. Рядом — [план фонового ума Sol](../reports/npc-agent/2026-11-02-gemma-sol-hybrid/mind.md).
 
+[Классификатор маршрута](../reports/npc-agent/2026-11-02-route-classifier/README.md): `route.py` собирает фразы героя из трасс, размечает их через Sol и сравнивает правила, Gemma «да/нет» и FRIDA с выносом трассы. Gemma по одной фразе находит 95,5% решений за 0,09 с и оставляет себе 71% простых.
+
 [Замер поиска в памяти NPC и выбор эмбеддингов](../reports/npc-memory/2026-11-01-recall-eval/README.md): [`recall_eval.py`](../scripts/recall_eval.py) сравнивает `MemoryStore.search` с BM25 и десятью моделями эмбеддингов на 83 вопросах по реальным репликам. Реплики хранятся вне git. Пересказ текущий поиск находит в 22 из 50 случаев, BM25 — в 23, FRIDA — в 47; она рекомендована для сервиса на `dev-ubuntu`.
 
 Физика тонких клинков: `[GAME] item_deepest_contact=1` сохраняет глубину EPA только для `C_Item`; `placed-items-diagnose-{1644,6863}` и варианты `-control` проверяют 300 шагов ON/OFF, контракт — `gothic-physics-contract`. [Отчёт и офлайн-стенд](../reports/physics/2026-10-31-thin-blades/README.md), [текущее поведение](physics.md#как-работает-сейчас).
