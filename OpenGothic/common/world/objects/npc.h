@@ -1052,7 +1052,7 @@ class Npc final {
     struct Riposte final {
       std::weak_ptr<zenkit::INpc> victim;
       Tempest::Vec3 from, pair;
-      uint64_t start = 0, hitEnd = 0;
+      uint64_t start = 0, bladeAt = 0, hitEnd = 0;
       bool blade = false, handover = false, applying = false, blocked = false;
       };
     std::optional<Riposte>         meleeRiposte;

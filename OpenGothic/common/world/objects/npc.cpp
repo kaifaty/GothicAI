@@ -8359,8 +8359,13 @@ bool Npc::beginMeleeRiposte() {
   const auto* seq = visual.startAnimAndGet(*this,"T_1HRIPOSTE",0,BS_HIT);
   if(seq==nullptr)
     return false;
-  if(seq->data->defHitEnd.empty())
-    throw std::runtime_error("Melee riposte requires DEF_HIT_END");
+  uint64_t bladeAt = std::numeric_limits<uint64_t>::max();
+  for(const auto& event:seq->data->events)
+    if(event.type==asset::MdsEventType::OPTIMAL_FRAME)
+      for(const auto frame:event.frames)
+        bladeAt = std::min(bladeAt,uint64_t(float(seq->data->optimalFrame(frame))*1000.f/seq->data->fpsRate));
+  if(seq->data->defHitEnd.empty() || bladeAt==std::numeric_limits<uint64_t>::max())
+    throw std::runtime_error("Melee riposte requires DEF_OPT_FRAME and DEF_HIT_END");
   spendStamina("riposte",cost);
   setDirection(angleDir(dp.x,dp.z));
   const auto at = position();
@@ -8370,6 +8375,7 @@ bool Npc::beginMeleeRiposte() {
   meleeRiposte->from = victim.position();
   meleeRiposte->pair = Vec3(pair.x,pair.y,pair.z);
   meleeRiposte->start = owner.tickCount();
+  meleeRiposte->bladeAt = bladeAt;
   meleeRiposte->hitEnd = seq->data->defHitEnd.back();
   victim.meleeStunUntil = std::max(victim.meleeStunUntil,owner.tickCount()+MeleeRiposte::HandoverMs);
   victim.meleeRiposteHoldUntil = owner.tickCount()+MeleeRiposte::HandoverMs;
@@ -8452,6 +8458,10 @@ void Npc::tickMeleeRiposte() {
       r.blocked = (desired-victim->position()).length()>1.f;
       }
     }
+  // Native event dispatch waits for the whole tagged frame to pass. A paired
+  // contact uses that tag's timestamp, so the victim starts on blade entry.
+  if(!r.blade && MeleeRiposte::bladeReady(elapsed,r.bladeAt))
+    meleeRiposteBlade();
   if(r.blade && !r.handover && MeleeRiposte::handoverReady(elapsed)) {
     r.handover = true;
     if(victim==nullptr || victim->isDown() || victim->meleeKnockdown) {
