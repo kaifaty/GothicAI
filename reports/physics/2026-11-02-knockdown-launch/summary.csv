@@ -1,0 +1,4 @@
+mode,distance,knockdowns,median_pelvis_m_s,max_pelvis_m_s,median_spine_m_s,max_spine_m_s,median_head_m_s,max_head_m_s,knockdowns_over_8_m_s,median_guard_release_ms,guards_remaining_at_300ms
+on,close,20,2.3319865,2.693123,2.6536334999999998,3.556973,3.4785500000000003,4.73053,0,183.333343,0
+on,medium,20,2.0581955,2.930855,2.6725905,4.331634,3.9517175,5.882613,0,100.000005,0
+on,far,20,2.0674609999999998,2.240126,2.996659,3.177422,4.032144499999999,4.368982,0,,0

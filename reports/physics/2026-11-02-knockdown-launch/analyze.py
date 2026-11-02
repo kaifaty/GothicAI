@@ -35,7 +35,8 @@ def summarize(mode, events):
         records = [e for e in events if e.get("kind") == "rec" and e.get("seg", "").startswith(prefix)]
         peaks = [e for e in events if e.get("kind") == "ragdoll_birth_peak" and
                  e.get("actor") == TARGET and e.get("seg", "").startswith(prefix)]
-        require(len(records) == 20, f"{mode}/{cell}: expected 20 trials, got {len(records)}")
+        require(len(records) == len({e["seg"] for e in records}) == 20,
+                f"{mode}/{cell}: expected 20 distinct trials, got {len(records)}")
         missing = {e["seg"] for e in records} - {e["seg"] for e in peaks}
         require(len(peaks) == 20 and not missing,
                 f"{mode}/{cell}: {len(peaks)}/20 births; missing segments: {sorted(missing)}")
@@ -63,15 +64,22 @@ def summarize(mode, events):
                 if max(e[f"{p}_m_s"] for p in PARTS) > 8:
                     print("MEDIUM FAST CONTACTS " + json.dumps(e, ensure_ascii=False))
 
+    drift = {}
     for requested in (0, 700, 1500):
         samples = [e for e in events if e.get("kind") == "stun_drift" and e.get("requested_ms") == requested]
-        require(len(samples) == 10, f"{mode}: {len(samples)}/10 drift samples at {requested} ms")
+        require(len(samples) == len({e["seg"] for e in samples}) == 10,
+                f"{mode}: {len(samples)}/10 distinct drift samples at {requested} ms")
+        drift[requested] = {e["seg"]: e for e in samples}
         require(all(e["actor"] == TARGET and e["attacker"] == ATTACKER for e in samples), "Wrong drift actors")
         require(all(requested <= e["elapsed_ms"] <= requested + 34 for e in samples), "Wrong drift timing")
         print(f"{mode}/drift {requested}ms: n=10, " + ", ".join(
             f"{key} median={statistics.median(e[key] for e in samples):.6f} "
             f"range=[{min(e[key] for e in samples):.6f},{max(e[key] for e in samples):.6f}]"
             for key in ("toward_cm", "horizontal_cm", "height_cm")))
+    require(drift[0].keys() == drift[700].keys() == drift[1500].keys(), "Drift probe segments differ between samples")
+    print(f"{mode}/drift 700-1500ms: " + ", ".join(
+        f"{key} median={statistics.median(drift[1500][seg][key] - drift[700][seg][key] for seg in drift[0]):.6f}"
+        for key in ("toward_cm", "height_cm")))
     return rows
 
 
