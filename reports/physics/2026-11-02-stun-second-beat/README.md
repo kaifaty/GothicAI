@@ -94,7 +94,7 @@
 
 ### Сырьё и повтор
 
-Сырьё: `/mnt/shared/gothic-ai/stun-second-beat/20261102T163155Z-drift/` и `.../20261102T163357Z-look/`. Прогоны шли с базой `032e902a…`: указатель базы Ryzen `~/gothic-ai/game-base.json` смотрит на `0c959283…` прежнего формата импорта, и игра из этой ветки с ним не стартует.
+Сырьё: `/mnt/shared/gothic-ai/stun-second-beat/20261102T163155Z-drift/` и `.../20261102T163357Z-look/`. Прогоны шли с базой `032e902a…`: указатель базы Ryzen `~/gothic-ai/game-base.json` смотрит на `0c959283…` прежнего формата импорта, и игра из этой ветки с ним не стартует. С #780 `ryzen_game.py` сам выбирает готовую базу нужного формата, и `export` ниже больше не нужен.
 
 ```bash
 export OPENGOTHIC_BASE_FINGERPRINT=032e902aee6fef6ccc54fd01fdc4f018e0a2cb80ed470cdae2e79d5ee150b14b
