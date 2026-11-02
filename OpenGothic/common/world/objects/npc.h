@@ -334,6 +334,8 @@ class Npc final {
     bool      isMeleeStunned() const;
     void      startMeleeStun(Npc& by, std::string_view reason);
     // Charged forward strike: transient hero-only windup/hold and an ordinary event-driven release.
+    bool      beginMeleeRiposte();
+    bool      isMeleeRiposting() const;
     bool      canMeleeCharge() const;
     bool      beginMeleeCharge();
     void      releaseMeleeCharge();
@@ -1051,6 +1053,20 @@ class Npc final {
     bool                          tickMeleePosture(uint64_t dt);
     MeleeImpact::Posture           meleePosture;
     MeleeStamina::State            meleeStamina;
+    struct Riposte final {
+      std::weak_ptr<zenkit::INpc> victim;
+      Tempest::Vec3 heroStart, from, pair;
+      uint64_t start = 0, bladeAt = 0, hitEnd = 0;
+      bool blade = false, handover = false, applying = false, blocked = false;
+      };
+    std::optional<Riposte>         meleeRiposte;
+    uint64_t                      meleeRiposteHoldUntil = 0;
+    bool                          isMeleeRiposteHeld() const;
+    void                          tickMeleeRiposte();
+    void                          meleeRiposteBlade();
+    float                         meleeRiposteMultiplier(const Npc& target) const;
+    void                          meleeRiposteNote(const Npc* victim, const std::string& text, std::string_view phase, const std::string& fields = {});
+    bool                          knockDownMelee(Npc& attacker, const Tempest::Vec3& impulse, bool barge, std::string_view reason);
     enum class ChargePhase : uint8_t { None, Windup, Hold, Release };
     ChargePhase                   meleeChargePhase = ChargePhase::None;
     uint64_t                      meleeChargeStart = 0;
@@ -1106,6 +1122,7 @@ class Npc final {
     std::optional<MeleeParadeTiming> meleeParadeTiming; // native AI only, transient
     bool                          meleeKnockdown = false;
     bool                          meleeBargeKnockdown = false;
+    bool                          meleeRiposteKnockdown = false;
     bool                          meleeDownStrike = false; // the chop from above at one lying is playing
     bool                          meleeGetupForced = false;
     uint64_t                      meleeFallTick = 0, meleeRiseTick = 0;

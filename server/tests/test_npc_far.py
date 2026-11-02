@@ -596,6 +596,14 @@ def test_far_fight_mirrors_are_balanced_and_act_is_repeatable():
     result = resolve(act, fighter, culprit, coefficients)
     assert 0.4 <= result.p_win <= 0.6
     assert resolve(act, fighter, culprit, coefficients) == result
+    for variant in ("B", "C"):
+        neutral = Coefficients.from_mapping({
+            "version": 2, "source": "neutral-test", "variant": variant,
+            "rate_base": 0.4, "rate_per_tier": 0.5, "damage_scale": 1.0,
+            "parry_per_tier": 0.0, "starter_rate": 1.0,
+        })
+        assert neutral.model == "hits_v2"
+        assert resolve(act, fighter, culprit, neutral) == result
     other = resolve("far:other-case:FIGHTER:reclaim:CULPRIT:", fighter, culprit, coefficients)
     assert (other.winner, other.loss, other.duration_s, other.hits) != (
         result.winner, result.loss, result.duration_s, result.hits,
@@ -628,10 +636,17 @@ def test_far_fight_durable_mirrors_time_out_with_both_losses_and_repeatable_act(
     assert result.p_win == 0
     assert result.p_timeout == 1
     assert resolve(act, fighter, culprit, coefficients) == result
+    blocked = resolve(act, replace(fighter, tier=1), replace(culprit, tier=1),
+                      Coefficients(0.4, 0.5, 1.0, parry_per_tier=1, variant="B"))
+    assert blocked.winner is None and blocked.p_timeout == 1
+    assert blocked.hits == {fighter.name: 0, culprit.name: 0}
+    assert blocked.loss == blocked.by_loss == 0
 
 
 @pytest.mark.parametrize("change", [
     {"version": 2}, {"rate_base": float("nan")}, {"damage_scale": 0},
+    {"version": 2, "parry_per_tier": -1, "starter_rate": 1},
+    {"version": 2, "parry_per_tier": 0, "starter_rate": 0},
 ])
 def test_far_fight_rejects_invalid_calibration(change):
     data = {"version": 1, "rate_base": 0.4, "rate_per_tier": 0.5,

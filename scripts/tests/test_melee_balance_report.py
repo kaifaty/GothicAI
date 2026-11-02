@@ -317,15 +317,21 @@ far_spec.loader.exec_module(far)
 
 def test_far_fight_plan_covers_pairs_roles_seeds_within_batch_limit(tmp_path):
     pairs = far.load_pairs()
-    assert len(pairs) == 12 and sum(p['holdout'] for p in pairs) == 3
+    assert len(pairs) == 15 and sum(p['holdout'] for p in pairs) == 3
+    assert not any(p['holdout'] for p in pairs[:12])
+    previous = {npc for p in pairs[:12] for npc in p['npcs']}
+    assert not previous.intersection(npc for p in pairs[12:] for npc in p['npcs'])
+    assert any('2h-2h' in p['coverage'] for p in pairs[12:])
+    assert any('talent-0-1' in p['coverage'] for p in pairs[12:])
     paths = far.plan(tmp_path, pairs)
     commands = [line for path in paths for line in path.read_text().splitlines() if line.startswith('npcduel ')]
-    assert len(commands) == len(set(commands)) == 480
-    expected = {(a, b, str(seed)) for p in pairs for a, b in (p['npcs'], p['npcs'][::-1]) for seed in range(17, 37)}
+    assert len(commands) == len(set(commands)) == 300
+    expected = {(a, b, str(seed)) for p in pairs for a, b in (p['npcs'], p['npcs'][::-1]) for seed in range(17, 27)}
     assert {tuple(line.split()[1:4]) for line in commands} == expected
     for path in paths:
         count = sum(line.startswith('npcduel ') for line in path.read_text().splitlines())
-        assert 60 + count * 181 <= 7200
+        assert 60 + count * 121 <= 7200
+        assert all(line.endswith('120000') for line in path.read_text().splitlines() if line.startswith('npcduel '))
     assert all(path.is_absolute() for path in paths)
 
 
@@ -349,6 +355,10 @@ def test_far_fight_report_eight_records_and_nonlethal_validation(tmp_path, capsy
     rows[-1].pop('winner')
     rows[-1].pop('loser')
     rows[-1]['timeout'] = True
+    # Current snapshots and legacy snapshots without damageTotal share the same report.
+    rows[0]['attacker']['weapon_damage_total'] = 40
+    rows[0]['defender']['weapon_damage_total'] = 40
+    rows[0]['attacker']['hitchance'] = dict(rows[0]['attacker']['hitchance'], fist=0)
     folder = tmp_path/'run'
     folder.mkdir()
     (folder/'events.jsonl').write_text(''.join(json.dumps(row)+'\n' for row in rows))
@@ -362,6 +372,40 @@ def test_far_fight_report_eight_records_and_nonlethal_validation(tmp_path, capsy
     assert '8 records' in capsys.readouterr().out
     assert '| Talent tier |' in (tmp_path/'far-fight.md').read_text()
     assert sum(r['deaths'] for r in result['pairs']) == 0 and '| Deaths |' in (tmp_path/'far-fight.md').read_text()
+    assert result['hit_multipliers'] == []
+    assert result['hits_by_talent'][0]['swings_per_second'] is None
+    # Mixed v1/v2 records: never turn missing old counters or response times into zero.
+    row = rows[0]
+    a, b = row['attacker']['instance'], row['defender']['instance']
+    row['attacker'].update(two_handed=True, hits=2, damage_dealt=18, swings=5, blocked=1, misses=1)
+    row['defender'].update(hits=1, damage_dealt=15, swings=3, blocked=1, misses=1)
+    row['defender_first_swing_ms'] = 2000
+    row['hit_log'] = [
+        dict(time_ms=1000, attacker=a, victim=b, hp_before=100, hp_after=88, base_damage=10,
+             critical=True, melee_scale=.8, stun_bonus=1.5, backstab_mult=1., hp_loss=12),
+        dict(time_ms=2500, attacker=b, victim=a, hp_before=100, hp_after=85, base_damage=5,
+             critical=False, melee_scale=1., stun_bonus=1., backstab_mult=3., hp_loss=15),
+        # Terminal HP clamping is retained in the measured multiplier (6/10, not 1.2).
+        dict(time_ms=5000, attacker=a, victim=b, hp_before=7, hp_after=1, base_damage=10,
+             critical=False, melee_scale=.8, stun_bonus=1.5, backstab_mult=1., hp_loss=6)]
+    (folder/'events.jsonl').write_text(''.join(json.dumps(row)+'\n' for row in rows))
+    result = far.report([folder], tmp_path, pairs)
+    assert result['hit_multipliers'] == [
+        dict(weapon='1h', n=1, values=[3.], minimum=3., median=3., maximum=3., stun_fraction=0., backstab_fraction=1.),
+        dict(weapon='2h', n=2, values=[.6, 1.2], minimum=.6, median=pytest.approx(.9), maximum=1.2,
+             stun_fraction=1., backstab_fraction=0.)]
+    rate = next(r for r in result['hits_by_talent'] if r['weapon'] == '2h')
+    assert (rate['tier'], rate['opponent_tier'], rate['swing_records']) == (0, 1, 1)
+    assert (rate['swings_per_second'], rate['blocked_per_second'], rate['misses_per_second'],
+            rate['hits_per_second']) == (.5, .1, .1, .2)
+    response = next(r for r in result['pairs'] if r['attacker'] == a and r['defender'] == b)
+    assert response['response_records'] == response['defender_responses'] == response['defender_first_hits'] == 1
+    assert response['median_defender_first_swing_ms'] == 2000
+    assert response['median_defender_first_hit_ms'] == 2500
+    row['hit_log'][0].pop('critical')
+    with pytest.raises(ValueError, match='incomplete hit_log'):
+        far.validate(row)
+    row['hit_log'][0]['critical'] = True
     rows[0]['defender']['hp_after'] = 5
     with pytest.raises(ValueError, match='1 HP'):
         far.validate(rows[0])
@@ -371,6 +415,133 @@ def test_far_fight_report_eight_records_and_nonlethal_validation(tmp_path, capsy
     (folder/'events.jsonl').write_text(''.join(json.dumps(row)+'\n' for row in rows))
     assert sum(r['deaths'] for r in far.report([folder], tmp_path, pairs)['pairs']) == 1
     rows[0]['defender'].update(hp_after=1, hp_one=True, unconscious=True)
+    rows[0]['attacker']['weapon_damage_total'] = '40'
+    with pytest.raises(ValueError, match='weapon_damage_total'):
+        far.validate(rows[0])
+    rows[0]['attacker']['weapon_damage_total'] = 40
     rows[0]['attacker'].pop('damage')
     with pytest.raises(ValueError, match='missing'):
         far.validate(rows[0])
+
+
+# Calibration shares the live server's combatant builder and exact seeded duel draws.
+import math
+
+fit_spec = importlib.util.spec_from_file_location('far_fight_fit', Path(__file__).parents[1]/'far_fight_fit.py')
+fit = importlib.util.module_from_spec(fit_spec)
+fit_spec.loader.exec_module(fit)
+from gothic_ai.npc_far import _combatant
+from gothic_ai.npc_far_fight import Coefficients, Combatant, _duel
+
+
+def fit_side(instance, **changes):
+    side = dict(instance=instance, level=10, hp_before=60, hp_after=40, hp_max=80, str=30, dex=20,
+                hitchance={'1h': 20, '2h': 70}, talent_skills=[0, 0, 2]+[0]*19,
+                talent_values=[0]*22, protection=[0, 5]+[0]*6, damage=[0]*8, damagetype=2,
+                weapon='SWORD', two_handed=True, weapon_damage=[0]*8, weapon_damagetype=4,
+                immortal_before=False, hits=4, damage_dealt=40, hp_one=False,
+                unconscious=False, weapon_dropped=False, guild=2, fight_tactic=1)
+    return dict(side, **changes)
+
+
+def fit_weapons():
+    return {'weapons': {'SWORD': {'damage_total': 40, 'damagetype': 4, 'flags': 1 << 16,
+                                  'damage': [0]*8}}, 'unarmed_hitchance': {'FIST': 0}}
+
+
+def test_far_fight_record_builder_equals_independent_server_story_eval():
+    side = fit_side('TWOHANDER')
+    # Independent live story_eval response: HP/max/STR, three hit chances, protection,
+    # raw NPC damage, talents, equipped melee stats, then absent readied item stats.
+    values = [10, 60, 80, 30, 0, 20, 70,
+              0, 5, 0, 0, 0, 0, 0, 0,
+              0, 0, 0, 0, 0, 0, 0, 0,
+              2, 0, 2, 1, 1 << 16, 4, 40,
+              0, 0, 0, 0, 0, 0, 0, 0,
+              0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    expected = Combatant('TWOHANDER', 60, 30, (0, 0, 40, 0, 0, 0, 0, 0),
+                         4, (0, 5, 0, 0, 0, 0, 0, 0), 70, 2)
+    assert len(values) == 48
+    assert fit.story_values(side, fit_weapons()) == values
+    assert fit.combatant(side, fit_weapons()) == _combatant('TWOHANDER', values) == expected
+    side['weapon_damage_total'] = 40
+    assert fit.combatant(side, fit_weapons()) == expected
+    unarmed = fit_side('FIST', weapon='', two_handed=False, weapon_damagetype=0)
+    assert fit.combatant(unarmed, fit_weapons()).hitchance == 0
+    assert fit.combatant(unarmed, fit_weapons()).tier == 0
+
+
+def test_far_fight_likelihood_manual_example_and_floor():
+    assert fit.log_likelihood([2, 1, 1], [.5, .25, .25]) == pytest.approx(2*math.log(.5)+2*math.log(.25))
+    assert fit.log_likelihood([1, 0, 1], [1., 0., 0.]) == pytest.approx(math.log(1/800))
+    assert fit.binomial_interval(10, .5) == [2, 8]
+    assert fit.binomial_interval(10, 0.) == [0, 0]
+    assert fit.binomial_interval(10, 1.) == [10, 10]
+
+
+def fit_cell(pair='first', tier=0):
+    actors = (Combatant('A', 60, 25, (0, 15, 0, 0, 0, 0, 0, 0), 2, (0,)*8, 30, tier),
+              Combatant('B', 80, 35, (0, 10, 0, 0, 0, 0, 0, 0), 2, (0,)*8, 60, 1))
+    return dict(pair=pair, attacker='A', defender='B', actors=actors, hp_max=(60, 80),
+                n=3, counts=[1, 1, 1], losses=[[.2], [.3]], deaths=0)
+
+
+@pytest.mark.parametrize('coefficients,tier', [
+    (Coefficients(.4, .5, 1.), 0),
+    (Coefficients(.12, .7, .25, .3, 1.7, 'C'), 0),
+    (Coefficients(.1, .5, .5, 1., 2., 'C'), 0),
+    (Coefficients(.1, .5, .5, 1., 2., 'C'), 1),
+])
+def test_far_fight_vector_replay_matches_all_400_scalar_draws(coefficients, tier):
+    cell = fit_cell(tier=tier)
+    evaluator = fit.Evaluator([cell])
+    probabilities, winners, losses = evaluator.simulate(0, coefficients)
+    scalar = [_duel(*cell['actors'], coefficients, seed) for seed in fit.trial_seeds(cell)]
+    expected = [2 if result[0] is None else 0 if result[0] == 'A' else 1 for result in scalar]
+    assert winners.tolist() == expected
+    assert probabilities == [expected.count(outcome)/400 for outcome in range(3)]
+    assert all(losses[i] == result[1] for i, result in enumerate(scalar) if expected[i] < 2)
+    assert evaluator.simulate(0, coefficients)[0] == probabilities
+
+
+def test_far_fight_fit_determinism_and_holdout_exclusion(tmp_path, monkeypatch):
+    # Keep the test's search tiny; production still uses the declared full grid/refinement.
+    monkeypatch.setattr(fit, 'candidate_grid', lambda variant: [
+        Coefficients(.05, 0., .25, variant=variant), Coefficients(.2, .5, 1., variant=variant)])
+    monkeypatch.setattr(fit, 'STEPS', (0.,)*5)
+    pairs = [dict(id='first', npcs=['A', 'B'], holdout=False),
+             dict(id='second', npcs=['C', 'D'], holdout=False),
+             dict(id='secret', npcs=['HOLD', 'OUT'], holdout=True)]
+    rows = []
+    for a, b in (('A', 'B'), ('C', 'D')):
+        rows.append(dict(kind='npc_duel', seed=17, duration_ms=5000, winner=a, loser=b,
+                         attacker=fit_side(a), defender=fit_side(b, hp_after=1, hp_one=True,
+                                                                   unconscious=True)))
+    # Holdout stats are deliberately invalid: train-only execution must never adapt them.
+    rows.append(dict(kind='npc_duel', attacker={'instance': 'HOLD'}, defender={'instance': 'OUT'}))
+    (tmp_path/'events.jsonl').write_text(''.join(json.dumps(row)+'\n' for row in rows))
+    first = fit.run([tmp_path], fit_weapons(), pairs)
+    rows[-1]['winner'] = 'OUT'
+    rows[-1]['attacker']['str'] = 10000000
+    (tmp_path/'events.jsonl').write_text(''.join(json.dumps(row)+'\n' for row in rows[::-1]))
+    second = fit.run([tmp_path], fit_weapons(), pairs)
+    assert first == second
+    assert first['selected'] == 'A'  # identical CV likelihood chooses the simpler variant
+    assert first['training_records'] == 2 and first['training_pairs'] == ['first', 'second']
+    assert first['acceptance'] is None
+    assert all('secret' not in fold['training_pairs'] and fold['pair'] != 'secret'
+               for variant in first['variants'] for fold in variant['folds'])
+    with pytest.raises(ValueError, match='incomplete'):
+        fit.accept([], [], Coefficients(.4, .5, 1.), pairs)
+    death = dict(rows[0], attacker=dict(rows[0]['attacker'], hp_after=0), winner='A')
+    assert fit.outcome(death) == 1
+    # Refinement must reach an optimum beyond one step per level, without drifting
+    # along equally likely base/tier coordinates. No Monte Carlo needed for this check.
+    from types import SimpleNamespace
+    with monkeypatch.context() as local:
+        local.setattr(fit, 'STEPS', (.1, .5, .25, .125, .5))
+        local.setattr(fit, 'candidate_grid', lambda variant: [Coefficients(.2, 0., 2., variant=variant)])
+        objective = SimpleNamespace(scores=lambda coefficients: (-(coefficients.damage_scale - 3.)**2,))
+        refined, score = fit.fit(objective, [0], 'A')
+        assert refined.damage_scale == 3. and score == 0.
+        assert refined.rate_base == .2 and refined.rate_per_tier == 0.

@@ -21,6 +21,12 @@ struct PhysicsNoise;
 // Inert unless OPENGOTHIC_BENCH is set. Usage: scripts/bench.sh, see scripts/bench/README.md.
 namespace TestBench {
   bool     isActive();
+  // Only the current npcduel copies retain near-hero simulation and physics at any distance.
+  bool     npcDuelActor(const Npc& npc);
+  void     npcDuelSwingStart(const Npc& npc);
+  void     npcDuelSwingEnd(const Npc& npc, std::string_view outcome);
+  void     npcDuelHit(const Npc& victim, const Npc& by, int32_t hpBefore, int32_t hpAfter,
+                      int32_t baseDamage, bool critical, float meleeScale, float stunBonus, float backstabMult);
   // Reinitialize the harness for a fresh runner generation. The caller owns world teardown/load.
   void     configure(std::string scenario, std::string output, int64_t seedOverride = -1);
   // Body runner --fork-prefix: the template stops its scenario before the first line starting with
