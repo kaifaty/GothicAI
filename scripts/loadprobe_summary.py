@@ -26,6 +26,10 @@ HEADER.extend(f"{field}_{stage}" for stage in ("end", "warm", "warm_5s") for fie
 NPC_TIER_FIELDS = ["npc_full", "npc_simplified", "npc_to_full", "npc_to_simplified", "npc_full_tick_ms",
                    "npc_simplified_tick_ms", "npc_full_tick_ms_total", "npc_simplified_tick_ms_total", "npc_tier_ticks"]
 HEADER.extend(f"{field}_{stage}" for stage in ("end", "warm", "warm_5s") for field in NPC_TIER_FIELDS)
+NPC_LOGIC_FIELDS = ["npc_logic_samples", "npc_logic_body_mismatch", "npc_logic_weapon_mismatch",
+                    "npc_logic_early", "npc_logic_late", "npc_logic_events", "npc_logic_event_mismatch",
+                    "npc_logic_wall_ms"]
+HEADER.extend(f"{field}_{stage}" for stage in ("end", "warm", "warm_5s") for field in NPC_LOGIC_FIELDS)
 VOBS_HEADER = "run,seg,world,kind,name,count,ms,inclusive_ms,stage_ms,share_pct,unique,hits,misses,cold_miss_pct,repeat_n".split(",")
 
 
@@ -49,7 +53,7 @@ def parse(path):
             if vobs:
                 pending_vobs.append(fields(vobs.group(1)))
                 continue
-            match = re.search(r"\[loadprobe(-(?:malloc|textures|vob-streaming|npc-tier))?\] stage=(\S+) (.*)", line)
+            match = re.search(r"\[loadprobe(-(?:malloc|textures|vob-streaming|npc-tier|npc-logic))?\] stage=(\S+) (.*)", line)
             if not match:
                 continue
             row = {"stage": match.group(2)}
@@ -153,6 +157,11 @@ def summary_rows(out):
                 mark = marks[-1] if marks else {}
                 values.extend((round(mark[key], 6) if "_ms" in key else int(mark[key]))
                               if key in mark else "" for key in NPC_TIER_FIELDS)
+            for stage in (end["stage"], "stream_warm", "stream_warm_5s"):
+                marks = [row for row in segment if row["stage"] == stage]
+                mark = marks[-1] if marks else {}
+                values.extend((round(mark[key], 6) if "_ms" in key else int(mark[key]))
+                              if key in mark else "" for key in NPC_LOGIC_FIELDS)
             yield values
 
 

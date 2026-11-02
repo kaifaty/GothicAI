@@ -109,12 +109,18 @@ The complete `<zone>` list (each produces all four columns above):
 `parallel_animation`, `native_export`, `forced_sync_animation`, `actor_animation_elapsed_sum`,
 `pose_elapsed_sum`, `palette_elapsed_sum`, `storage_join`, `storage_commit`, `storage_pack`,
 `storage_dispatch`, `storage_grow`, `storage_upload_execution_elapsed`, `bodynet`, `cloth`, `water`,
-`destruction`, `ai_bridge`, `sound`, `npc_full_tick`, `npc_simplified_tick`, `encode_shadows`, `encode_main`,
+`destruction`, `ai_bridge`, `sound`, `npc_full_tick`, `npc_simplified_tick`, `npc_logic_shadow`, `encode_shadows`, `encode_main`,
 `encode_water`, `encode_post`, `encode_ui`.
 
 `npc_full_tick` and `npc_simplified_tick` split the `Npc::tick` loop inside `world_logic` by NPC simulation
 tier (`common/world/npcsimtier.h`); their calls count runs of consecutive same-tier NPCs, not NPCs. The
 amounts `npc_full`, `npc_simplified` and `npc_tier_transitions` count NPCs per tier and tier changes.
+
+`OPENGOTHIC_NPC_LOGIC_AUDIT=1` enables the logical-body shadow audit (default 0). `npc_logic_shadow`
+measures its synchronization work; `npc_logic_samples`, `npc_logic_body_mismatch`, `npc_logic_weapon_mismatch`,
+`npc_logic_early`, `npc_logic_late`, `npc_logic_events` and `npc_logic_event_mismatch` count audit observations
+and timing differences. The `npcday` summary adds `logic_audit`, including action/animation breakdowns and
+prediction-error percentiles; the parity comparer reads its named gameplay fields and ignores these diagnostics.
 
 `bodynet` sums the full local P30 policy step over active NPCs; service policies do not enter it.
 `cloth` covers main-thread preparation and the 30 Hz solver/finish; `water` sums main-thread buoyancy

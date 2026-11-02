@@ -21,6 +21,7 @@ class Skeleton;
 class Serialize;
 class AnimationSolver;
 class Npc;
+struct NpcLogicalState;
 
 class Pose final {
   public:
@@ -58,8 +59,8 @@ class Pose final {
     void               setObjectMatrix(const Tempest::Matrix4x4& obj, bool sync);
     bool               update(uint64_t tickCount, bool force);
 
-    void               processLayers(AnimationSolver &solver, uint64_t tickCount);
-    bool               processEvents(uint64_t& barrier, uint64_t now, Animation::EvCount &ev) const;
+    void               processLayers(AnimationSolver &solver, uint64_t tickCount, NpcLogicalState* logic=nullptr);
+    bool               processEvents(uint64_t& barrier, uint64_t now, Animation::EvCount &ev, NpcLogicalState* logic=nullptr) const;
 
     Tempest::Vec3      animMoveSpeed(uint64_t tickCount, uint64_t dt) const;
     void               processSfx(Npc &npc, uint64_t tickCount);
@@ -168,6 +169,8 @@ class Pose final {
       BodyState state = BS_NONE;
       };
     auto               combatLayers(uint64_t tickCount) const -> std::vector<CombatLayer>;
+    size_t             logicalLayerCount() const { return lay.size(); }
+    CombatLayer        logicalLayer(size_t index) const;
 
     struct MeleeContact final {
       const Animation::Sequence* sequence = nullptr;

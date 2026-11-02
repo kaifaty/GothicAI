@@ -1,4 +1,5 @@
 #include "pose.h"
+#include "world/npclogicalstate.h"
 
 #include <Tempest/Log>
 
@@ -435,7 +436,7 @@ void Pose::stopAllAnim() {
   lay.clear();
   }
 
-void Pose::processLayers(AnimationSolver& solver, uint64_t tickCount) {
+void Pose::processLayers(AnimationSolver& solver, uint64_t tickCount, NpcLogicalState* logic) {
   if(hasTransitions==0)
     return;
 
@@ -444,6 +445,8 @@ void Pose::processLayers(AnimationSolver& solver, uint64_t tickCount) {
   for(size_t i=0; i<lay.size(); ++i) {
     auto& l = lay[i];
     if(l.seq->animCls==Animation::Transition && l.seq->isFinished(layerTime(l,tickCount),l.sAnim,combo.len())) {
+      if(logic!=nullptr)
+        logic->sequenceEnd(l.seq,l.sOrigin,tickCount);
       auto next = solveNext(solver,l);
       if(next!=l.seq) {
         needToUpdate = true;
@@ -989,14 +992,26 @@ void Pose::processPfx(MdlVisual& visual, World& world, uint64_t tickCount) {
     i.seq->processPfx(layerTime(i,lastUpdate),i.sAnim,layerTime(i,tickCount),visual,world);
   }
 
-bool Pose::processEvents(uint64_t &barrier, uint64_t now, Animation::EvCount &ev) const {
+bool Pose::processEvents(uint64_t &barrier, uint64_t now, Animation::EvCount &ev, NpcLogicalState* logic) const {
   if(hasEvents==0) {
     barrier=now;
     return false;
     }
 
-  for(auto& i:lay)
-    i.seq->processEvents(layerTime(i,barrier),i.sAnim,layerTime(i,now),ev);
+  for(auto& i:lay) {
+    if(logic!=nullptr && NpcLogicAudit::enabled()) {
+      struct Context { NpcLogicalState* logic; const Layer* layer; uint64_t now; } context{logic,&i,now};
+      Animation::LogicEventObserver observer;
+      observer.context=&context;
+      observer.fired=[](void* opaque, const Animation::LogicEvent& event) {
+        const auto& ctx=*static_cast<Context*>(opaque);
+        ctx.logic->eventFired(ctx.layer->seq,ctx.layer->sOrigin,event,ctx.now);
+        };
+      i.seq->processEvents(layerTime(i,barrier),i.sAnim,layerTime(i,now),ev,&observer);
+      } else {
+      i.seq->processEvents(layerTime(i,barrier),i.sAnim,layerTime(i,now),ev);
+      }
+    }
   barrier=now;
   return hasEvents>0;
   }
@@ -1043,6 +1058,11 @@ bool Pose::isDefence(uint64_t tickCount) const {
       return true;
     }
   return false;
+  }
+
+Pose::CombatLayer Pose::logicalLayer(size_t index) const {
+  const auto& layer=lay[index];
+  return {layer.seq,layer.sAnim,layer.sOrigin,0,layer.speed,layer.comb,layer.bs};
   }
 
 auto Pose::combatLayers(uint64_t tickCount) const -> std::vector<CombatLayer> {

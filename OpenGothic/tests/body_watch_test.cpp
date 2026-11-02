@@ -1,4 +1,7 @@
 #include <Tempest/File>
+#include <Tempest/MemReader>
+#include <Tempest/MemWriter>
+#include <Tempest/Pixmap>
 
 #include "commandline.h"
 #include "gothic.h"
@@ -21,10 +24,13 @@
 #include <rapidjson/stringbuffer.h>
 #include <rapidjson/writer.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -845,6 +851,170 @@ void meleeRemoval(Npc& victim) {
   }
 }
 
+// Uses a fresh full session, so unsaved Pose speed overrides cannot survive in
+// the object being tested. The restored native body is the canonical reference.
+class NpcLogicalStateContract final {
+  static constexpr uint64_t tickMs=33;
+
+  static void advance() {
+    auto& session=*Gothic::inst().gameSession();
+    session.tick(tickMs);
+    session.updateAnimation(tickMs);
+    }
+
+  static void compare(const Npc& npc) {
+    const auto now=npc.world().tickCount();
+    const auto& logical=npc.logicalBodyState();
+    expect(logical.body==npc.bodyState(),"restored logical body equals the canonical native body");
+    expect(logical.weapon==npc.weaponState(),"restored logical weapon equals the canonical native weapon");
+    expect(logical.bodyStateMasked()==npc.bodyStateMasked(),"restored logical body mask equals the native mask");
+    const auto real=npc.visual.pose().combatLayers(now);
+    expect(logical.layers.size()==real.size(),"restored logical clock covers every native layer");
+    for(const auto& layer:real) {
+      const auto found=std::find_if(logical.layers.begin(),logical.layers.end(),[&](const auto& shadow) {
+        return shadow.sequence==layer.sequence && shadow.origin==layer.origin;
+        });
+      expect(found!=logical.layers.end(),"restored logical layer retains canonical sequence and origin");
+      expect(found->start==layer.start && found->speed==layer.speed && found->state==layer.state,
+             "restored logical layer retains canonical start, speed and state");
+      expect(std::abs(logical.animProgress(layer.sequence->name,now)-npc.animProgress(layer.sequence->name))<.00001f,
+             "restored logical progress equals the native progress");
+      expect(logical.hasState(layer.state)==npc.hasState(layer.state),"restored logical hasState equals native hasState");
+      }
+    }
+
+  public:
+    static void run(uint32_t id,const std::string& scenario,const std::filesystem::path& output) {
+      auto& gothic=Gothic::inst();
+      // The earlier body-watch phases own pointers into the session. Retire
+      // them before the first complete session is destroyed.
+      TestBench::configure(scenario,output.string(),17);
+      for(const auto action:{AI_PlayAnim,AI_StandUp,AI_DrawWeaponMelee}) {
+        ++cases;
+        auto* npc=gothic.world()->npcById(id);
+        expect(npc!=nullptr,"logical save/load fixture actor survives the preceding session reload");
+        npc->setExternalControl(true);
+        npc->clearState(true);
+        npc->clearAiQueue();
+        npc->clearGoTo();
+        npc->setTarget(nullptr);
+        npc->clearSpeed();
+        npc->handle().attribute[ATR_HITPOINTS]=npc->attribute(ATR_HITPOINTSMAX);
+        npc->setInteraction(nullptr,true);
+        npc->closeWeapon(true);
+        npc->visual.pose().stopAllAnim();
+        expect(npc->setAnim(Npc::Anim::Idle),"logical save/load fixture starts from native idle");
+        for(unsigned i=0;i<5;++i) advance();
+        npc->clearAiQueue();
+        if(action==AI_PlayAnim) {
+          expect(npc->hasAnim("T_STAND_2_PEE"),"logical save/load PlayAni uses a real stock transition");
+          npc->aiPush(AiQueue::aiPlayAnim("T_STAND_2_PEE"));
+          }
+        else if(action==AI_StandUp) {
+          npc->visual.pose().stopAllAnim();
+          expect(npc->playAnimByName("S_WOUNDED",BS_LIE)!=nullptr,"logical save/load stand-up starts lying");
+          npc->aiPush(AiQueue::aiStandup());
+          }
+        else {
+          expect(npc->currentMeleeWeapon()!=nullptr,"logical save/load weapon draw has an equipped native weapon");
+          npc->aiPush(AiQueue::aiReadyMeleeWeapon());
+          }
+
+        std::optional<Pose::CombatLayer> playing;
+        for(unsigned i=0;i<90 && !playing;++i) {
+          advance();
+          for(const auto& layer:npc->visual.pose().combatLayers(npc->world().tickCount())) {
+            if(layer.sequence->animCls!=Animation::Transition || layer.sequence->totalTime()<300.f)
+              continue;
+            if(action==AI_PlayAnim && layer.sequence->name!="T_STAND_2_PEE")
+              continue;
+            if(action==AI_StandUp && layer.sequence->name.find("WOUNDED_2_")==std::string::npos)
+              continue;
+            playing=layer;
+            break;
+            }
+          }
+        expect(playing.has_value(),"logical save/load admits the requested native body action");
+        if(action==AI_PlayAnim) {
+          // Existing saves normalize this transient speed. It is deliberately
+          // not a before/after equality assertion.
+          advance();
+          npc->visual.pose().setLayerSpeed(playing->sequence,.5f,npc->world().tickCount());
+          }
+        for(unsigned i=0;i<4;++i) advance();
+        const auto before=npc->logicalBodyState();
+        const auto sequence=playing->sequence;
+        const std::string name=sequence->name;
+        const float progress=npc->animProgress(name);
+        expect(progress>0.f && progress<.9f,"logical save/load saves strictly inside the native action");
+        expect(before.action.kind==action,"logical save/load records the originating action before save");
+        const auto beforeLayer=std::find_if(before.layers.begin(),before.layers.end(),[&](const auto& l) {
+          return l.sequence->name==name;
+          });
+        expect(beforeLayer!=before.layers.end(),"logical save/load has a pre-save body clock for comparison");
+        const auto beforeSpeed=beforeLayer->speed;
+        std::vector<uint8_t> bytes;
+        {
+          Tempest::MemWriter writer(bytes);
+          Serialize out(writer);
+          Tempest::Pixmap preview(1,1,Tempest::TextureFormat::RGBA8);
+          std::memset(preview.data(),0,4);
+          gothic.gameSession()->save(out,"logical body mid-action",preview);
+        }
+        const auto savedAt=gothic.world()->tickCount();
+        NpcLogicAudit::reset();
+        gothic.clearGame().reset();
+        {
+          Tempest::MemReader reader(bytes);
+          Serialize in(reader);
+          gothic.setGame(std::make_unique<GameSession>(in));
+        }
+        npc=gothic.world()->npcById(id);
+        expect(npc!=nullptr && gothic.world()->tickCount()==savedAt,"logical save/load restores the actor and exact world time");
+        compare(*npc); // Before any positive simulation step or explicit sync.
+        const auto restored=npc->logicalBodyState();
+        const auto layer=std::find_if(restored.layers.begin(),restored.layers.end(),[&](const auto& l) {
+          return l.sequence->name==name;
+          });
+        expect(layer!=restored.layers.end() && layer->expectedEnd>savedAt,
+               "logical save/load rebuilds an active canonical action clock");
+        const auto expectedEnd=layer->expectedEnd;
+        const auto origin=layer->origin;
+        const auto canonicalStart=layer->start;
+        const auto canonicalSpeed=layer->speed;
+        if(action==AI_PlayAnim)
+          expect(beforeSpeed==.5f && canonicalSpeed==1.f,"fresh load applies the native save speed normalization");
+        npc->setExternalControl(true);
+        bool active=true;
+        uint64_t endedAt=0;
+        for(unsigned i=0;i<400 && active;++i) {
+          advance();
+          compare(*npc);
+          active=false;
+          for(const auto& real:npc->visual.pose().combatLayers(npc->world().tickCount()))
+            active |= real.sequence->name==name && real.origin==origin;
+          if(!active) endedAt=npc->world().tickCount();
+          }
+        expect(!active,"logical save/load observes the real canonical animation end");
+        const auto error=int64_t(endedAt)-int64_t(expectedEnd);
+        const auto& audit=NpcLogicAudit::stats();
+        std::cerr << "npc-logic-save {\"action\":\"" << NpcLogicAudit::actionName(action)
+                  << "\",\"animation\":\"" << name << "\",\"archive_bytes\":" << bytes.size()
+                  << ",\"saved_at\":" << savedAt << ",\"pre_save_start\":" << before.action.start
+                  << ",\"canonical_start\":" << canonicalStart << ",\"pre_save_end\":" << before.action.expectedEnd
+                  << ",\"pre_save_speed\":" << beforeSpeed << ",\"canonical_speed\":" << canonicalSpeed
+                  << ",\"canonical_action\":\"" << NpcLogicAudit::actionName(restored.action.kind) << '"'
+                  << ",\"canonical_end\":" << expectedEnd << ",\"actual_end\":" << endedAt
+                  << ",\"end_error_ms\":" << error << ",\"world_tick_ms\":" << tickMs
+                  << ",\"audit_samples\":" << audit.ticks << ",\"body_mismatch\":" << audit.bodyMismatch
+                  << ",\"weapon_mismatch\":" << audit.weaponMismatch << "}\n";
+        expect(audit.ticks>0 && audit.bodyMismatch==0 && audit.weaponMismatch==0,
+               "logical save/load shadow audit has samples and no body or weapon mismatches");
+        expect(std::abs(error)<=int64_t(tickMs),"logical save/load canonical action end is predicted within one world tick");
+        }
+      }
+  };
+
 int main(int argc,const char** argv) {
   std::FILE* result=fdopen(dup(STDOUT_FILENO),"w");
   dup2(STDERR_FILENO,STDOUT_FILENO);
@@ -873,6 +1043,7 @@ int main(int argc,const char** argv) {
     setenv("OPENGOTHIC_BODY_NET",missingNetwork ? "/nonexistent/gothic-body-watch-test.bodynet" : GOTHIC_BODY_ENGINE_NET,1);
 #endif
     setenv("OPENGOTHIC_PHYSICS_THREADS","0",0);
+    setenv("OPENGOTHIC_NPC_LOGIC_AUDIT","1",1);
     Workers::setSerialExecution(true);
     CommandLine commandLine(argc,argv);
     Resources resources;
@@ -930,6 +1101,7 @@ int main(int argc,const char** argv) {
     BodyController::reset();
     BodyObservations::disable();
     meleeRemoval(b);
+    NpcLogicalStateContract::run(gothic.world()->npcId(&b),scenario,output);
 #ifdef GOTHIC_BODY_ENGINE_NET
       }
 #endif

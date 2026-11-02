@@ -150,6 +150,7 @@ GameSession::GameSession(std::string file) {
       pages+=" "+s.vobProbeFields();
       }
     pages+=(pages.empty() ? "" : " ")+wrld->npcSimTierStats().probeFields();
+    pages+=" "+NpcLogicAudit::stats().probeFields();
     LoadProbe::mark("session_end",-1,pages);
     if(wrld->chunkResidency()==nullptr)
       LoadProbe::mark("stream_warm");

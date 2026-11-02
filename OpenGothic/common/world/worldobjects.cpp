@@ -408,6 +408,9 @@ void WorldObjects::updateSimTiers() {
 
 void WorldObjects::tick(uint64_t dt, uint64_t dtPlayer) {
   updateSimTiers();
+  const auto& logic = NpcLogicAudit::stats();
+  const uint64_t logicBefore[] = {logic.ticks,logic.bodyMismatch,logic.weaponMismatch,
+                                 logic.early,logic.late,logic.events,logic.eventMismatch};
   tickPlacedItems();
   auto passive=std::move(sndPerc);
   sndPerc.clear();
@@ -470,6 +473,13 @@ void WorldObjects::tick(uint64_t dt, uint64_t dtPlayer) {
   simTiers.fullTickMsTotal       += simTiers.fullTickMs;
   simTiers.simplifiedTickMsTotal += simTiers.simplifiedTickMs;
   ++simTiers.ticks;
+  FrameProfile::add(FrameProfile::Amount::NpcLogicSamples,logic.ticks-logicBefore[0]);
+  FrameProfile::add(FrameProfile::Amount::NpcLogicBodyMismatch,logic.bodyMismatch-logicBefore[1]);
+  FrameProfile::add(FrameProfile::Amount::NpcLogicWeaponMismatch,logic.weaponMismatch-logicBefore[2]);
+  FrameProfile::add(FrameProfile::Amount::NpcLogicEarly,logic.early-logicBefore[3]);
+  FrameProfile::add(FrameProfile::Amount::NpcLogicLate,logic.late-logicBefore[4]);
+  FrameProfile::add(FrameProfile::Amount::NpcLogicEvents,logic.events-logicBefore[5]);
+  FrameProfile::add(FrameProfile::Amount::NpcLogicEventMismatch,logic.eventMismatch-logicBefore[6]);
 
   for(auto& i:routines) {
     auto s = i.stateByTime(owner.time());
@@ -788,6 +798,10 @@ void WorldObjects::updateAnimation(uint64_t dt) {
     interactiveObj.parallelFor([dt](Interactive& i){
       i.updateAnimation(dt);
       });
+  // Animation workers may change layer speeds; publish the shadow after all
+  // workers and contact scripts finish, on the same thread as the audit.
+  for(auto& npc:npcArr)
+    npc->syncLogicalBodyState();
   }
 
 bool WorldObjects::isTargeted(Npc& dst) {

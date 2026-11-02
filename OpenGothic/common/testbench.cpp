@@ -18758,6 +18758,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
         pages+=" "+s.vobProbeFields();
         }
       pages+=(pages.empty() ? "" : " ")+w.npcSimTierStats().probeFields();
+      pages+=" "+NpcLogicAudit::stats().probeFields();
       LoadProbe::mark(text,-1,pages);
       }
     }

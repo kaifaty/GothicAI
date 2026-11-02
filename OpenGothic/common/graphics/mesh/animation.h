@@ -38,6 +38,27 @@ class Animation final {
       std::vector<EvMorph> morph;
       };
 
+    // Sequence-local event clock for the logical NPC body. Times are relative
+    // to the layer start, before its playback speed is applied.
+    struct LogicEvent final {
+      enum Kind : uint8_t { Tag, Ground, Morph, Sound, Particle, HitEnd, ParFrame, Window };
+      Kind                kind = Tag;
+      asset::MdsEventType  def = asset::MdsEventType::UNKNOWN;
+      uint64_t            time = 0;
+      uint64_t            frame = 0;
+      size_t              index = 0;
+      std::string_view    item;
+      std::string_view    slot[2] = {};
+      // Only these events are delivered by processEvents; sounds, particles
+      // and the queried combat-window boundaries have separate consumers.
+      bool                delivered = false;
+      };
+
+    struct LogicEventObserver final {
+      void* context = nullptr;
+      void (*fired)(void*, const LogicEvent&) = nullptr;
+      };
+
     struct MdsParticleEffect : asset::MdsParticleEffect {
       bool pfxStop = false;
       };
@@ -92,7 +113,9 @@ class Animation final {
 
       bool                                   isAttackAnim() const;
       bool                                   isPrehit(uint64_t sTime, uint64_t now) const;
-      void                                   processEvents(uint64_t barrier, uint64_t sTime, uint64_t now, EvCount& ev) const;
+      void                                   processEvents(uint64_t barrier, uint64_t sTime, uint64_t now, EvCount& ev,
+                                                           const LogicEventObserver* observer = nullptr) const;
+      void                                   logicEvents(std::vector<LogicEvent>& out) const;
       void                                   processSfx   (uint64_t barrier, uint64_t sTime, uint64_t now, Npc* npc, Interactive* mob) const;
       void                                   processPfx   (uint64_t barrier, uint64_t sTime, uint64_t now, MdlVisual& visual, World& world) const;
       void                                   processPfx   (const MdsParticleEffect& p, MdlVisual& visual, World& world) const;
@@ -118,6 +141,7 @@ class Animation final {
       std::shared_ptr<AnimData>              data;
 
       private:
+        LogicEvent                           logicEvent(LogicEvent::Kind kind, size_t index, uint64_t frame) const;
         static void                          processEvent(const asset::MdsEventTag& e, EvCount& ev, uint64_t time);
         bool                                 extractFrames(uint64_t &frameA, uint64_t &frameB, bool &invert, uint64_t barrier, uint64_t sTime, uint64_t now) const;
       };

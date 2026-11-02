@@ -715,11 +715,17 @@ void Npc::load(Serialize &fin, size_t id, std::string_view directory) {
      fin.setEntry("worlds/",fin.worldName(),directory,id,"/stuck-arrows") &&
      !visual.loadStuckArrows(fin,owner))
     Log::e("arrows: invalid saved NPC attachments, keeping the body without arrows");
+  syncLogicalBodyState(true);
+  }
+
+void Npc::syncLogicalBodyState(bool rebuild) {
+  logicalBody.sync(*this,rebuild);
   }
 
 void Npc::postValidate() {
   if(currentInteract!=nullptr && !currentInteract->isAttached(*this))
     currentInteract = nullptr;
+  syncLogicalBodyState(true);
   }
 
 void Npc::saveAiState(Serialize& fout) const {
@@ -5129,7 +5135,7 @@ bool Npc::tickMeleePosture(uint64_t dt) {
     }
   const auto now = owner.tickCount();
   lastEventTime = now;
-  visual.processLayers(owner);
+  visual.processLayers(owner,&logicalBody);
   const bool enabled = Gothic::physicsFlags().meleePosture;
   if(ragdoll && (now-meleeFallTick>=1200 || !enabled)) {
     // Use the same settled-body gate as KO, with a deadline for starting
@@ -5788,8 +5794,8 @@ void Npc::tickAnimationTags() {
   if(Gothic::physicsFlags().meleeBladeShadow || Gothic::physicsFlags().meleePhysicsHits || (meleeShadow && meleeShadow->window))
     syncMeleeShadowSwing();
   Animation::EvCount ev;
-  const bool hasEvents = visual.processEvents(owner,lastEventTime,ev);
-  visual.processLayers(owner);
+  const bool hasEvents = visual.processEvents(owner,lastEventTime,ev,&logicalBody);
+  visual.processLayers(owner,&logicalBody);
   visual.setNpcEffect(owner,*this,hnpc->effect,hnpc->flags);
   if(!hasEvents)
     return;
@@ -5820,6 +5826,7 @@ void Npc::tickAnimationTags() {
   }
 
 void Npc::tick(uint64_t dt) {
+  NpcLogicalState::Tick logicalTick(*this);
   tickBodyImpact();
   tickMeleeParry();
   tickMeleeStamina();
@@ -6014,6 +6021,7 @@ void Npc::nextAiAction(AiQueue& queue, uint64_t dt) {
   if(queue.size()==0)
     return;
   auto act = queue.pop();
+  NpcLogicalState::Admission logicalAdmission(*this,act.act);
   switch(act.act) {
     case AI_None: break;
     case AI_LookAtNpc:{

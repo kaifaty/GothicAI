@@ -2,6 +2,7 @@
 
 #include <Tempest/Log>
 #include <cctype>
+#include <cmath>
 
 #include "world/objects/npc.h"
 #include "world/objects/interactive.h"
@@ -415,7 +416,87 @@ void Animation::Sequence::processPfx(const MdsParticleEffect& p, MdlVisual& visu
     }
   }
 
-void Animation::Sequence::processEvents(uint64_t barrier, uint64_t sTime, uint64_t now, EvCount& ev) const {
+Animation::LogicEvent Animation::Sequence::logicEvent(LogicEvent::Kind kind, size_t index, uint64_t frame) const {
+  LogicEvent event;
+  event.kind = kind;
+  event.frame = frame;
+  event.index = index;
+  // extractFrames delivers forward events after their frame enters the
+  // half-open interval; reverse playback reaches that boundary from above.
+  const auto playedFrame = reverse ? uint64_t(data->numFrames)-frame : frame+1;
+  event.time = uint64_t(std::ceil(double(playedFrame)*1000.0/double(data->fpsRate)));
+  event.delivered = kind==LogicEvent::Tag || kind==LogicEvent::Ground || kind==LogicEvent::Morph;
+  if(kind==LogicEvent::Tag) {
+    const auto& tag = data->events[index];
+    event.def = tag.type;
+    event.item = tag.item;
+    event.slot[0] = tag.slot;
+    event.slot[1] = tag.slot2;
+    }
+  else if(kind==LogicEvent::Morph) {
+    event.item = data->mmStartAni[index].animation;
+    event.slot[0] = data->mmStartAni[index].node;
+    }
+  else if(kind==LogicEvent::Ground) {
+    event.item = data->gfx[index].name;
+    }
+  else if(kind==LogicEvent::Sound) {
+    event.item = data->sfx[index].name;
+    }
+  else if(kind==LogicEvent::Particle) {
+    event.item = data->pfx[index].name;
+    event.slot[0] = data->pfx[index].position;
+    }
+  return event;
+  }
+
+void Animation::Sequence::logicEvents(std::vector<LogicEvent>& out) const {
+  out.clear();
+  if(data==nullptr || data->numFrames==0 || data->fpsRate<=0.f)
+    return;
+  const auto& d = *data;
+  auto append = [&](LogicEvent::Kind kind, size_t index, int32_t frame) {
+    out.push_back(logicEvent(kind,index,frameClamp(frame,d.firstFrame,d.numFrames,d.lastFrame)));
+    };
+  for(size_t i=0; i<d.events.size(); ++i) {
+    const auto& tag = d.events[i];
+    if(tag.type==asset::MdsEventType::OPTIMAL_FRAME) {
+      for(auto frame:tag.frames)
+        out.push_back(logicEvent(LogicEvent::Tag,i,d.optimalFrame(frame)));
+      } else {
+      append(LogicEvent::Tag,i,tag.frame);
+      }
+    }
+  for(size_t i=0; i<d.gfx.size(); ++i)
+    append(LogicEvent::Ground,i,d.gfx[i].frame);
+  for(size_t i=0; i<d.mmStartAni.size(); ++i)
+    append(LogicEvent::Morph,i,d.mmStartAni[i].frame);
+  for(size_t i=0; i<d.sfx.size(); ++i)
+    append(LogicEvent::Sound,i,d.sfx[i].frame);
+  for(size_t i=0; i<d.pfx.size(); ++i)
+    append(LogicEvent::Particle,i,d.pfx[i].frame);
+  auto boundaries = [&](LogicEvent::Kind kind, asset::MdsEventType def, const std::vector<uint64_t>& times) {
+    for(size_t i=0; i<times.size(); ++i) {
+      LogicEvent event;
+      event.kind = kind;
+      event.def = def;
+      event.index = i;
+      // The combat queries use these times directly, including on reverse
+      // sequences; they do not use extractFrames' reversed event interval.
+      event.time = times[i];
+      out.push_back(event);
+      }
+    };
+  boundaries(LogicEvent::HitEnd,asset::MdsEventType::HIT_END,d.defHitEnd);
+  boundaries(LogicEvent::ParFrame,asset::MdsEventType::PARRY_FRAME,d.defParFrame);
+  boundaries(LogicEvent::Window,asset::MdsEventType::COMBO_WINDOW,d.defWindow);
+  std::stable_sort(out.begin(),out.end(),[](const LogicEvent& a,const LogicEvent& b) {
+    return a.time<b.time;
+    });
+  }
+
+void Animation::Sequence::processEvents(uint64_t barrier, uint64_t sTime, uint64_t now, EvCount& ev,
+                                        const LogicEventObserver* observer) const {
   uint64_t frameA=0,frameB=0;
   bool     invert=false;
   if(!extractFrames(frameA,frameB,invert,barrier,sTime,now))
@@ -424,33 +505,47 @@ void Animation::Sequence::processEvents(uint64_t barrier, uint64_t sTime, uint64
   auto& d       = *data;
   float fpsRate = d.fpsRate;
 
-  for(auto& e:d.events) {
+  for(size_t index=0; index<d.events.size(); ++index) {
+    const auto& e = d.events[index];
     if(e.type == asset::MdsEventType::OPTIMAL_FRAME) {
       for(auto i:e.frames) {
         uint64_t fr = d.optimalFrame(i);
-        if((frameA<=fr && fr<frameB) ^ invert)
+        if((frameA<=fr && fr<frameB) ^ invert) {
           processEvent(e,ev,uint64_t(float(fr)*1000.f/fpsRate)+sTime);
+          if(observer!=nullptr && observer->fired!=nullptr)
+            observer->fired(observer->context,logicEvent(LogicEvent::Tag,index,fr));
+          }
         }
       } else {
       uint64_t fr = frameClamp(e.frame,d.firstFrame,d.numFrames,d.lastFrame);
-      if((frameA<=fr && fr<frameB) ^ invert)
+      if((frameA<=fr && fr<frameB) ^ invert) {
         processEvent(e,ev,uint64_t(float(fr)*1000.f/fpsRate)+sTime);
+        if(observer!=nullptr && observer->fired!=nullptr)
+          observer->fired(observer->context,logicEvent(LogicEvent::Tag,index,fr));
+        }
       }
     }
 
-  for(auto& i:d.gfx){
+  for(size_t index=0; index<d.gfx.size(); ++index) {
+    const auto& i = d.gfx[index];
     uint64_t fr = frameClamp(i.frame,d.firstFrame,d.numFrames,d.lastFrame);
-    if((frameA<=fr && fr<frameB) ^ invert)
+    if((frameA<=fr && fr<frameB) ^ invert) {
       ev.groundSounds++;
+      if(observer!=nullptr && observer->fired!=nullptr)
+        observer->fired(observer->context,logicEvent(LogicEvent::Ground,index,fr));
+      }
     }
 
-  for(auto& i:d.mmStartAni){
+  for(size_t index=0; index<d.mmStartAni.size(); ++index) {
+    const auto& i = d.mmStartAni[index];
     uint64_t fr = frameClamp(i.frame,d.firstFrame,d.numFrames,d.lastFrame);
     if((frameA<=fr && fr<frameB) ^ invert) {
       EvMorph e;
       e.anim = i.animation;
       e.node = i.node;
       ev.morph.push_back(e);
+      if(observer!=nullptr && observer->fired!=nullptr)
+        observer->fired(observer->context,logicEvent(LogicEvent::Morph,index,fr));
       }
     }
   }
