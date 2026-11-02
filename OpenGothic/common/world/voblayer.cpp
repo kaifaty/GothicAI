@@ -374,7 +374,7 @@ Result applyFile(WorldData::Data& data, Context& context, const fs::path& baseRo
             v->visual=std::move(visual);
             v->visual_name=v->visual->name; v->associated_visual_type=v->visual->type;
             } else if(kind=="light") {
-            layerFields(entry,{"key","kind","position","rotation","yaw_deg","range","color","color_ani","range_ani","ani_fps"});
+            layerFields(entry,{"key","kind","position","rotation","yaw_deg","range","color","color_ani","range_ani","ani_fps","cookie"});
             auto light=std::make_shared<Light>();
             light->type=VirtualObjectType::zCVobLight; light->light_type=LightType::POINT;
             light->range=layerFloat(member(entry,"range")); require(light->range>0,"range must be positive");
@@ -411,6 +411,14 @@ Result applyFile(WorldData::Data& data, Context& context, const fs::path& baseRo
                 light->range_animation_fps=fps;
                 }
               } else require(!entry.HasMember("ani_fps"),"ani_fps without color_ani or range_ani");
+            // a light mask (materials.json texture key, LightGroup): a lantern's cage on the light
+            if(entry.HasMember("cookie")) {
+              auto cookie=layerString(entry["cookie"]);
+              for(auto& c:cookie) c=char(std::toupper(uint8_t(c)));
+              require(!cookie.empty() && cookie.find_first_of("/\\")==std::string::npos &&
+                      cookie.size()>4 && cookie.substr(cookie.size()-4)==".TGA","cookie: expected a texture name NAME.TGA");
+              light->cookie=std::move(cookie);
+              }
             light->is_static=true; light->on=true; light->can_move=false; light->cd_static=false;
             v=std::move(light);
             } else fail("expected kind mesh, light or emitter");

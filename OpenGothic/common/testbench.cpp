@@ -1463,6 +1463,13 @@ struct Bench {
   std::vector<std::shared_ptr<VoiceStem>> voiceStems;
 
   std::chrono::steady_clock::time_point wallStart;
+  struct StunDrift {
+    Npc* target=nullptr;
+    Npc* attacker=nullptr;
+    Vec3 origin,axis;
+    uint64_t start=0;
+    unsigned next=0;
+  } stunDrift;
   std::chrono::steady_clock::time_point recWall;  // when the recording started
   int64_t     lagMs     = 0;      // how far the game fell behind the wall clock (realtime)
   };
@@ -2577,6 +2584,26 @@ std::string ragdollNumber(float value) {
 
 std::string ragdollVector(const Vec3& value) {
   return "["+ragdollNumber(value.x)+","+ragdollNumber(value.y)+","+ragdollNumber(value.z)+"]";
+  }
+
+void stunDriftSample(World& world, uint64_t elapsed, uint64_t requested) {
+  const auto& drift=bench.stunDrift;
+  const auto& target=*drift.target;
+  const auto delta=target.position()-drift.origin;
+  const auto separation=drift.attacker->position()-target.position();
+  event("stun_drift","\"actor\":"+jsonStr(symName(world,&target))+
+    ",\"attacker\":"+jsonStr(symName(world,drift.attacker))+",\"elapsed_ms\":"+std::to_string(elapsed)+
+    ",\"requested_ms\":"+std::to_string(requested)+",\"position_cm\":"+ragdollVector(target.position())+
+    ",\"attacker_position_cm\":"+ragdollVector(drift.attacker->position())+
+    ",\"axis\":"+ragdollVector(drift.axis)+",\"toward_cm\":"+ragdollNumber(Vec3::dotProduct(delta,drift.axis))+
+    ",\"horizontal_cm\":"+ragdollNumber(std::hypot(delta.x,delta.z))+",\"height_cm\":"+ragdollNumber(delta.y)+
+    ",\"separation_cm\":"+ragdollNumber(std::hypot(separation.x,separation.z))+
+    ",\"stunned\":"+(target.isMeleeStunned() ? "true" : "false")+
+    ",\"slide\":"+(target.isSlide() ? "true" : "false")+
+    ",\"in_air\":"+(target.isInAir() ? "true" : "false")+
+    ",\"melee_stun_beat\":"+(target.meleeStunSecondBeat() ? "true" : "false")+
+    ",\"external\":"+(target.isExternalControl() ? "true" : "false")+
+    ",\"animation\":"+jsonStr(target.animNames()));
   }
 
 std::string ragdollMatrix(const Matrix4x4& value) {
@@ -14412,6 +14439,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       {"movable_vobs",&Gothic::PhysicsFlags::movableVobs},
       {"item_hulls",&Gothic::PhysicsFlags::itemHulls},
       {"item_deepest_contact",&Gothic::PhysicsFlags::itemDeepestContact},
+      {"ragdoll_birth_guard",&Gothic::PhysicsFlags::ragdollBirthGuard},
       {"furniture_parts",&Gothic::PhysicsFlags::furnitureParts},
       {"placed_items",&Gothic::PhysicsFlags::placedItems},
       {"cloth",&Gothic::PhysicsFlags::cloth}
@@ -16853,31 +16881,38 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     const bool ok = pl.currentRangedWeapon()!=nullptr && pl.drawWeaponBow();
     say(std::string("draw bow ") + (ok ? "ok" : "failed") + " ws=" + std::to_string(int(pl.weaponState())));
     }
-  else if(c=="put") {
+  else if(c=="put" || c=="put-at") {
     // put <npc|nearest> <dist> <angle> [dy]: the npc stands there from the hero (angle from the hero's
     // facing, 0 in front), on the ground, frozen, facing the hero
-    Npc* n = findNpc(w,pl,a.size()>1 ? a[1] : "nearest");
-    if(n==nullptr || n==&pl) {
+    // put-at <npc|player> <x> <y> <z>: the same ground placement at explicit world coordinates.
+    Npc* n = c=="put-at" && a.size()>1 && a[1]=="player" ? &pl : findNpc(w,pl,a.size()>1 ? a[1] : "nearest");
+    if(n==nullptr || (n==&pl && c!="put-at")) {
       say("put: no npc " + line);
       return;
       }
     const float d   = num(a,2,500);
     const float an  = (pl.rotation()+num(a,3,0))*float(M_PI)/180.f;
     Vec3        pos = pl.position() + Vec3(std::cos(an),0,std::sin(an))*d;
+    if(c=="put-at") {
+      if(a.size()!=5) {arenaAbort("put-at needs npc x y z");return;}
+      pos=Vec3(num(a,2,0),num(a,3,0),num(a,4,0));
+      n->clearSpeed();
+      }
     // the ground there may be far above or below (a slope): the first one from above, by short rays
     // (a long one misses the landscape)
     DynamicWorld::RayLandResult r;
-    for(float y=pos.y+num(a,4,0)+1500; y>pos.y-1500 && !r.hasCol; y-=400)
+    for(float y=pos.y+(c=="put-at" ? 0.f : num(a,4,0))+1500; y>pos.y-1500 && !r.hasCol; y-=400)
       r = w.physic()->ray({pos.x,y,pos.z},{pos.x,y-450,pos.z});
+    if(c=="put-at" && !r.hasCol) {arenaAbort("put-at found no ground");return;}
     if(r.hasCol)
       pos.y = r.v.y;
     n->setInteraction(nullptr,true);
     n->clearAiQueue();
     n->clearState(false);
-    n->setExternalControl(true);
+    if(n!=&pl) n->setExternalControl(true);
     n->setPosition(pos);
     const Vec3 dir = pl.position()-pos;
-    n->setDirection(Vec3(dir.x,0,dir.z));
+    if(n!=&pl) n->setDirection(Vec3(dir.x,0,dir.z));
     n->updateTransform();
     char buf[200];
     std::snprintf(buf,sizeof(buf),"put %s at %.0f %.0f %.0f (%.0f above the hero%s)",symName(w,n).c_str(),pos.x,pos.y,pos.z,
@@ -17714,6 +17749,16 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     bench.waitUntil = bench.time+bench.probeSoundDuration+34;
     say("bodyprobe "+mode+" verified; sound duration "+std::to_string(bench.probeSoundDuration));
     }
+  else if(c=="knockdown-launch-equip") {
+    auto* npc=findNpc(w,pl,"SLD_826_SOELDNER");
+    const auto weapon=w.script().findSymbolIndex("ITMW_2H_SLD_AXE");
+    if(npc==nullptr || weapon==size_t(-1)) {arenaAbort("knockdown launch actors or weapon missing");return;}
+    npc->setToFightMode(weapon);
+    if(npc->weaponState()!=WeaponState::W2H || npc->currentMeleeWeapon()==nullptr ||
+       npc->currentMeleeWeapon()->clsId()!=weapon) {arenaAbort("knockdown launch requires the exact drawn two-handed axe");return;}
+    event("launch_weapon","\"actor\":"+jsonStr(symName(w,npc))+",\"actor_id\":"+std::to_string(w.npcId(npc))+
+          ",\"weapon\":\"ITMW_2H_SLD_AXE\",\"state\":\"W2H\"");
+    }
   else if(c=="npcequip") {
     // npcequip <npc> <item> [count]: into its inventory, the first one put on (a bow and its arrows)
     Npc* n = findNpc(w,pl,a.size()>1 ? a[1] : "nearest");
@@ -18078,6 +18123,15 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       h.flags = zenkit::NpcFlag(uint32_t(h.flags) & ~uint32_t(zenkit::NpcFlag::IMMORTAL)); else
       h.flags = zenkit::NpcFlag(uint32_t(h.flags) |  uint32_t(zenkit::NpcFlag::IMMORTAL));
     say("immortal " + symName(w,n) + " " + (n->isImmortal() ? "on" : "off"));
+    }
+  else if(c=="stun-drift") {
+    auto* target=findNpc(w,pl,a.size()>1 ? a[1] : "");
+    auto* attacker=a.size()>2 && a[2]=="player" ? &pl : findNpc(w,pl,a.size()>2 ? a[2] : "");
+    if(target==nullptr || attacker==nullptr || target==attacker) {arenaAbort("stun-drift needs a target and attacker");return;}
+    auto axis=attacker->position()-target->position();axis.y=0;
+    if(axis.length()<1.f) {arenaAbort("stun-drift needs distinct horizontal roots");return;}
+    bench.stunDrift={target,attacker,target->position(),Vec3::normalize(axis),w.tickCount(),1};
+    stunDriftSample(w,0,0);
     }
   else if(c=="stun") {
     // stun <npc|nearest|player> [parried|guard_break|posture]: melee stun, by the hero
@@ -20600,6 +20654,7 @@ void TestBench::bodyEvent(const Npc& actor, const Npc* target, std::string_view 
   }
 
 void TestBench::bodyForget(const Npc* npc) {
+  if(bodyTraceAlive && (bench.stunDrift.target==npc || bench.stunDrift.attacker==npc)) bench.stunDrift={};
   if(bodyTraceAlive) {
     if(bench.monsterCharacterRoute.npc==npc)bench.monsterCharacterRoute.npc=nullptr;
     for(auto& actor:bench.monsterCharacterExtras)if(actor.npc==npc)actor.npc=nullptr;
@@ -20662,6 +20717,12 @@ int TestBench::bodyBlockVariant(const Npc& npc, int fallback) {
             ",\"fixture_matched\":"+(entry==nullptr ? "false" : "true")+
             ",\"source_seq\":"+std::to_string(entry==nullptr ? 0 : entry->sourceSeq)+animationActorFields(side));
   return variant;
+  }
+
+void TestBench::ragdollBirthPeak(const Npc& npc, const Npc* culprit, const std::string& fields) {
+  if(!isActive() || !bench.started || bench.done) return;
+  event("ragdoll_birth_peak","\"actor\":"+jsonStr(who(&npc))+",\"culprit\":"+(culprit ? jsonStr(who(culprit)) : "null")+
+    ",\"guard_enabled\":"+(Gothic::physicsFlags().ragdollBirthGuard ? "true" : "false")+","+fields);
   }
 
 void TestBench::note(const char* text) {
@@ -21062,6 +21123,14 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
   stickingFields(*world);
   spellFields(*world);
   bodyImpactTick(*world);
+  if(auto& drift=bench.stunDrift;drift.target!=nullptr) {
+    const uint64_t elapsed=world->tickCount()-drift.start;
+    const uint64_t requested=drift.next*100;
+    if(elapsed>=requested) {
+      stunDriftSample(*world,elapsed,requested);
+      if(++drift.next==17) drift={};
+      }
+    }
   destructionFields(*world);
   if(bench.destructionSupportTrace && bench.destructionTrace &&
      world->tickCount()-bench.destructionStart>=bench.destructionSupportNext) {

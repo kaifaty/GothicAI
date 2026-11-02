@@ -892,6 +892,51 @@
       "utc": "2026-11-01T21:04:44Z",
       "thread": "01a198ec-5ac4-7a63-b8fb-38cfa7cbbf3b",
       "parent": null
+    },
+    {
+      "file": "city-hearth/concept-attempt-4.png",
+      "role": "concept",
+      "texture": null,
+      "attempt": 4,
+      "sha256": "838707a110b496f1c16f682f33b066769149c7cebc0568d7392105b98f9766bc",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-11-02T12:41:00Z",
+      "thread": "01a19c46-6b03-7730-9447-e337130c5b6a",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-attempt-5.png",
+      "role": "concept",
+      "texture": null,
+      "attempt": 5,
+      "sha256": "bc93c0b5dd71b7531360ae01ab0c88b475e908afc7a405ed4d9cd4a9164f0fe7",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-11-02T12:42:00Z",
+      "thread": "01a19c46-6b03-7730-9447-e337130c5b6a",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-attempt-6.png",
+      "role": "concept",
+      "texture": null,
+      "attempt": 6,
+      "sha256": "ca1d71d12ab00249df2a0b696053eea7e2772d54aede4d1c6de8caa8f21cf4c5",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-11-02T12:42:57Z",
+      "thread": "01a19c46-6b03-7730-9447-e337130c5b6a",
+      "parent": null
     }
   ],
   "selected": {
@@ -918,6 +963,11 @@
     "edda-hearth-fire": {
       "file": "city-hearth/concept-attempt-3.png",
       "reason": "эталон композиции очага Эдды: поленья звездой с горящими концами, угли и зола, языки из промежутков; камни и сажа котла — по обмеру и заметке fire-composition.md (пользователь 2026-11-02: «Take 3»)",
+      "date": "2026-11-02"
+    },
+    "lamp-concept": {
+      "file": "city-hearth/concept-attempt-5.png",
+      "reason": "user 2026-11-02: candle in the open filigree and the lace shadow on the cobbles («Свеча и тень кружева»)",
       "date": "2026-11-02"
     }
   },

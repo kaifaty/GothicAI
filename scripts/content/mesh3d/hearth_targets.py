@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Measure scalar targets for the kitchen and hearth set (asset city-hearth, wave 1: open fire).
+"""Measure scalar targets for the kitchen and hearth set (asset city-hearth: open fire, house hearths, the street lamp).
 
     python3 scripts/content/mesh3d/hearth_targets.py [--base DIR] [--output data/content/mesh3d-hearth.json]
                                                      [--underlay DIR]
@@ -49,6 +49,8 @@ MASONRY = zone('OWN_HEARTH_MASONRY', 'STONE', 'rubble and block masonry of a fir
 ASHLAR = zone('OWN_HEARTH_ASHLAR', 'STONE', 'pale dressed stone of a rich fireplace')
 CARVING = zone('OWN_HEARTH_CARVING', 'STONE', 'dressed stone: the mantle shelf, the hearth slab, mouldings and the hood relief')
 SOOT = zone('OWN_HEARTH_SOOT', 'STONE', 'the sooted firebox: back wall, hearth floor')
+TALLOW = zone('OWN_HEARTH_TALLOW', 'UNDEF', 'a tallow candle with its runs and the drips on its dish')
+LACE = zone('OWN_HEARTH_LACE', 'METAL', 'the forged vine-scroll filigree of the street lamp: an alpha-tested tile, not baked')
 
 TARGETS = [
     {'id': 'hearth-cauldron', 'visual': 'CAULDRON_OC', 'budget_tris': 2500, 'zones': [IRON, RIVET, LIQUID, RUST, SCALE, BITS]},
@@ -63,6 +65,8 @@ TARGETS = [
     {'id': 'hearth-fireplace-large', 'visual': 'NW_CITY_FIREPLACE_LARGE_01', 'budget_tris': 4000, 'zones': [MASONRY, CARVING, SOOT, LOG, EMBER]},
     {'id': 'hearth-fireplace-wide', 'visual': 'NW_CITY_FIREPLACE_LARGE_02', 'budget_tris': 4000, 'zones': [ASHLAR, CARVING, SOOT, LOG, EMBER]},
     {'id': 'hearth-fireplace-wide-low', 'visual': 'NW_CITY_FIREPLACE_LARGE_021', 'budget_tris': 4000, 'zones': [ASHLAR, CARVING, SOOT, LOG, EMBER]},
+    # wave 3: the street lamp
+    {'id': 'hearth-lamp', 'visual': 'FIREPLACE_NW_LAMP_01', 'budget_tris': 3000, 'zones': [IRON, RIVET, TALLOW, LACE]},
 ]
 
 

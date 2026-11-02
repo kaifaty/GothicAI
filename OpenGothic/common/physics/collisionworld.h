@@ -203,6 +203,7 @@ class CollisionWorld final {
     bool buoyancyEnabled() const;
     void setItemWakeEnabled(bool enabled);
     void setItemDeepestContactEnabled(bool enabled);
+    void setRagdollBirthGuardEnabled(bool enabled);
     void setBodyImpactEnabled(bool enabled);
     bool itemWakeEnabled() const { return itemWake; }
     void setItemWakeCallback(std::function<size_t(const Tempest::Vec3&,const Tempest::Vec3&,size_t)> callback);
@@ -353,6 +354,7 @@ class CollisionWorld final {
     friend class ClothContractDriver;
     uint32_t registerRagdoll(Ragdoll& body);
     void unregisterRagdoll(Ragdoll& body);
+    std::vector<uint32_t> ragdollBirthGuardGroups(const Ragdoll& body) const;
     std::unique_ptr<Impl> impl;
     std::vector<CollisionBody*> bodies;
     std::vector<DynamicBody*> rigid;

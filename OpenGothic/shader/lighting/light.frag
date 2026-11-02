@@ -39,6 +39,28 @@ layout(binding  = 6)         uniform texture2D pageData;
 layout(location = 0) in vec4      cenPosition;
 layout(location = 1) in vec3      color;
 layout(location = 2) in flat uint lightId;
+layout(location = 3) in flat float cookie;
+
+// light masks (LightGroup::cookie): a lantern's cage as a latitude-longitude map round the light in its own
+// axes, glTF handed (x mirrored against the engine's), u the azimuth atan(z,x), v the angle from straight up
+layout(binding = 13) uniform sampler2D cookie1;
+layout(binding = 14) uniform sampler2D cookie2;
+layout(binding = 15) uniform sampler2D cookie3;
+layout(binding = 16) uniform sampler2D cookie4;
+
+float cookieMask(vec3 dir) {
+  const float a  = -fract(cookie)*2.0*M_PI; // into the light's own axes
+  const vec3  l  = vec3(cos(a)*dir.x - sin(a)*dir.z, dir.y, sin(a)*dir.x + cos(a)*dir.z);
+  const vec3  g  = vec3(-l.x, l.y, l.z);
+  const vec2  uv = vec2(atan(g.z, g.x)/(2.0*M_PI) + 0.5, acos(clamp(g.y, -1.0, 1.0))/M_PI);
+  switch(int(cookie)) {
+    case 1: return textureLod(cookie1, uv, 0).r;
+    case 2: return textureLod(cookie2, uv, 0).r;
+    case 3: return textureLod(cookie3, uv, 0).r;
+    case 4: return textureLod(cookie4, uv, 0).r;
+    }
+  return 1.0;
+  }
 
 bool isShadow(vec3 rayOrigin, vec3 direction, float R) {
 #if defined(RAY_QUERY)
@@ -112,6 +134,8 @@ void main() {
 
   float lambert = max(0.0,-dot(normalize(ldir),normal));
   float light   = (lambert/max(factor, 0.005)) * (smoothFactor*smoothFactor);
+  if(cookie>0.0)
+    light *= cookieMask(normalize(ldir));
   if(light<=0.0)
     discard;
 
