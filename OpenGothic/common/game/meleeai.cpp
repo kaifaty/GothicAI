@@ -43,14 +43,3 @@ float MeleeAi::riposteChance(int talent) {
 bool MeleeAi::riposteRoll(int talent, float uniform) {
   return uniform<riposteChance(talent);
   }
-
-MeleeAi::BodyReaction MeleeAi::bodyReaction(Action action, bool eligibleOneHand, bool dodgeEnabled,
-                                         bool riposteEnabled, bool targetStunned) {
-  if(!eligibleOneHand)
-    return BodyReaction::Original;
-  if(action==Action::JumpBack && dodgeEnabled)
-    return BodyReaction::DodgeBack;
-  if(action==Action::Attack && riposteEnabled && targetStunned)
-    return BodyReaction::RiposteRoll;
-  return BodyReaction::Original;
-  }

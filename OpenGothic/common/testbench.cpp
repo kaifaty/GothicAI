@@ -17031,8 +17031,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
   else if(c=="stats") {
     // stats [npc <npc>] [str <n>] [dex <n>] [1h <n>] [2h <n>] [bow <n>] [cbow <n>] [sneak <n>] [hp <n>] [hpmax <n>] [talent auto|0|1|2]:
     // the hero's (an npc's) strength, dexterity, hit chances (the skill of the manual aim), hit points;
-    // talent: the animations of the trained (G2 sets level 1 at 30%, 2 at 60%: _BOWT1, _BOWT2), auto as
-    // the hit chances say
+    // talent: archery animations, plus melee weapons explicitly named in this command; auto follows hit chances
     Npc*   np = &pl;
     size_t i0 = 1;
     if(a.size()>1 && a[1]=="npc") {
@@ -17046,6 +17045,11 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     Npc&   n    = *np;
     auto&  h    = n.handle();
     bool   more = &n!=&pl;
+    bool oneHand = false, twoHand = false;
+    for(size_t i=i0; i+1<a.size(); i+=2) {
+      oneHand |= a[i]=="1h";
+      twoHand |= a[i]=="2h";
+      }
     for(size_t i=i0; i+1<a.size(); i+=2) {
       if(a[i]=="talent") {
         auto level = [&](int32_t chance) {
@@ -17053,8 +17057,10 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
             return chance>=60 ? 2 : (chance>=30 ? 1 : 0);
           return int(num(a,i+1,0));
           };
-        n.setTalentSkill(TALENT_1H,      level(h.hitchance[TALENT_1H]));
-        n.setTalentSkill(TALENT_2H,      level(h.hitchance[TALENT_2H]));
+        if(oneHand)
+          n.setTalentSkill(TALENT_1H,level(h.hitchance[TALENT_1H]));
+        if(twoHand)
+          n.setTalentSkill(TALENT_2H,level(h.hitchance[TALENT_2H]));
         n.setTalentSkill(TALENT_BOW,     level(h.hitchance[TALENT_BOW]));
         n.setTalentSkill(TALENT_CROSSBOW,level(h.hitchance[TALENT_CROSSBOW]));
         more = true;

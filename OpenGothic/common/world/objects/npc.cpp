@@ -4042,8 +4042,6 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
   const auto bs = bodyStateMasked();
   const auto& flags = Gothic::physicsFlags();
   const bool reactions = isHuman() && ws==WeaponState::W1H;
-  const bool riposteAi = reactions && flags.meleeAiRiposte && flags.meleeRiposte && visual.hasAnim("T_1HRIPOSTE") &&
-                         currentTarget->isHuman() && currentTarget->visual.hasAnim("T_RIPOSTEVICTIM");
   const bool dodgeAi = reactions && flags.meleeAiDodge && flags.meleeDodge;
   if(bodyOverride || !dodgeAi || (meleeAiDodgeTiming && meleeAiDodgeTiming->target!=currentTarget))
     meleeAiDodgeTiming.reset();
@@ -4054,7 +4052,7 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
   const bool downTactics = !bodyOverride && flags.meleeDownTactics && flags.meleePosture && flags.meleePhysicsHits &&
                           (ws==WeaponState::W1H || ws==WeaponState::W2H);
   const bool targetKnockdown = downTactics && currentTarget->meleeKnockdown;
-  const bool targetStunned = !bodyOverride && (parryAi || riposteAi) && currentTarget->isMeleeStunned();
+  const bool targetStunned = parryAi && currentTarget->isMeleeStunned();
   // Discard the remaining native combo, but let the attack already in flight finish below.
   if(targetKnockdown || targetStunned) {
     fghAlgo.onTargetKnockdown();
@@ -4110,7 +4108,7 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
     const bool focus = fghAlgo.isInFocusAngle(*this,*currentTarget,5.f);
     auto action = FightAlgo::resolveDownTactics(downTactics,currentTarget->meleeKnockdown,rising,inRange,focus);
     if(targetStunned) {
-      switch(MeleeParry::resolveStunnedTactics(parryAi || riposteAi,true,inRange,focus)) {
+      switch(MeleeParry::resolveStunnedTactics(parryAi,true,inRange,focus)) {
         case MeleeParry::StunnedAction::Move:   action = FightAlgo::MV_MOVE; break;
         case MeleeParry::StunnedAction::Turn:   action = FightAlgo::MV_TURN2HIT; break;
         case MeleeParry::StunnedAction::Attack: action = FightAlgo::MV_ATTACK; break;
@@ -4180,10 +4178,6 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
   const bool jumpBack = act==FightAlgo::MV_JUMPBACK || ((act==FightAlgo::MV_WAIT || act==FightAlgo::MV_TURN) && jmp);
   if(!jumpBack)
     meleeAiDodgeTiming.reset();
-  const auto bodyReaction = MeleeAi::bodyReaction(
-      act==FightAlgo::MV_JUMPBACK ? MeleeAi::Action::JumpBack :
-      act==FightAlgo::MV_ATTACK ? MeleeAi::Action::Attack : MeleeAi::Action::Other,
-      reactions,dodgeAi,riposteAi,currentTarget->isMeleeStunned());
 
   // vanilla behavior, required for orcs in G1 orcgraveyard
   if(ws==WeaponState::NoWeapon && isAiQueueEmpty() && canSwitchWeapon()) {
@@ -4390,7 +4384,7 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
         consume();
         return true;
         }
-      if(bodyOverride && bodyReaction==MeleeAi::BodyReaction::RiposteRoll && tryMeleeAiRiposte()) {
+      if(bodyOverride && act==FightAlgo::MV_ATTACK && tryMeleeAiRiposte()) {
         consume();
         return true;
         }
@@ -4461,7 +4455,17 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
       consume();
       return true;
       }
-    if(dodgeAi && (!bodyOverride || bodyReaction==MeleeAi::BodyReaction::DodgeBack)) {
+    if(bodyStateMasked()==BS_PARADE) {
+      consume();
+      return true;
+      }
+    if(!fghAlgo.isInFocusAngle(*this, *currentTarget) && !jmp) {
+      //NOTE: jump-back is ultimate defence, so better to use it only if npc face player directly
+      consume();
+      aiState.loopNextTime = owner.tickCount(); // force ZS_MM_Attack_Loop call
+      return true;
+      }
+    if(dodgeAi && (!bodyOverride || act==FightAlgo::MV_JUMPBACK)) {
       const auto now = owner.tickCount();
       const auto skip = [&](std::string_view reason) {
         if(TestBench::isActive())
@@ -4505,8 +4509,15 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
           return true;
           }
         auto& timing = *meleeAiDodgeTiming;
+        if(!allowStaminaAction("dodge",MeleeDodge::cost(timing.move.kind),true)) {
+          timing.began = 0; // Stamina recovery is not time spent waiting for a swing.
+          waitForMeleeStamina(dt);
+          return true;
+          }
+        if(timing.began==0)
+          timing.began = now;
         if(!bodyOverride) {
-          if(now-timing.began>=1000) {
+          if(timing.sequence!=nullptr && now-timing.began>=1000) {
             skip("timeout");
             return true;
             }
@@ -4541,10 +4552,6 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
             return true;
             }
           }
-        if(!allowStaminaAction("dodge",MeleeDodge::cost(timing.move.kind),true)) {
-          waitForMeleeStamina(dt);
-          return true;
-          }
         if(meleeDodge(timing.move.direction)) {
           const std::string description = std::string(MeleeDodge::name(timing.move.direction))+" "+std::string(MeleeDodge::name(timing.move.kind));
           const auto swingMs = now-timing.origin;
@@ -4567,16 +4574,6 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
           }
         return true;
         }
-      }
-    if(bodyStateMasked()==BS_PARADE) {
-      consume();
-      return true;
-      }
-    if(!fghAlgo.isInFocusAngle(*this, *currentTarget) && !jmp) {
-      //NOTE: jump-back is ultimate defence, so better to use it only if npc face player directly
-      consume();
-      aiState.loopNextTime = owner.tickCount(); // force ZS_MM_Attack_Loop call
-      return true;
       }
     if(!bodyOverride && (ws==WeaponState::Fist || ws==WeaponState::W1H || ws==WeaponState::W2H) &&
        !isDive() && !allowStaminaAction("jumpback",MeleeStamina::JumpBackCost,true)) {

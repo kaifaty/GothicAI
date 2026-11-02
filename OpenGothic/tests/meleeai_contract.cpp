@@ -63,21 +63,5 @@ int main() {
   require(riposteRoll(55,.549f) && !riposteRoll(55,.55f),"a roll succeeds strictly below the probability");
   require(riposteRoll(100,.999f),"master succeeds throughout the half-open unit interval");
 
-  require(bodyReaction(Action::JumpBack,true,true,true,false)==BodyReaction::DodgeBack,
-          "P30 jump back substitutes an immediate backward dodge");
-  require(bodyReaction(Action::Attack,true,true,true,true)==BodyReaction::RiposteRoll,
-          "P30 direct attack on a stunned target substitutes a riposte roll");
-  require(bodyReaction(Action::JumpBack,true,false,true,false)==BodyReaction::Original,
-          "P30 dodge disabled preserves the original jump back");
-  require(bodyReaction(Action::Attack,true,true,false,true)==BodyReaction::Original,
-          "P30 riposte disabled preserves the original attack");
-  require(bodyReaction(Action::Attack,true,true,true,false)==BodyReaction::Original,
-          "P30 attack on an unstunned target is unchanged");
-  for(auto action:{Action::JumpBack,Action::Attack,Action::Other}) {
-    require(bodyReaction(action,false,true,true,true)==BodyReaction::Original,
-            "P30 2H, fists, nonhumans and missing clips retain their actions");
-    }
-  require(bodyReaction(Action::Other,true,true,true,true)==BodyReaction::Original,
-          "all other P30 actions are unchanged");
   std::puts("melee AI contract passed");
   }

@@ -23,8 +23,4 @@ namespace MeleeAi {
   float riposteChance(int talent);
   bool riposteRoll(int talent, float uniform);
 
-  enum class Action : uint8_t { Other, JumpBack, Attack };
-  enum class BodyReaction : uint8_t { Original, DodgeBack, RiposteRoll };
-  BodyReaction bodyReaction(Action action, bool eligibleOneHand, bool dodgeEnabled, bool riposteEnabled,
-                            bool targetStunned);
   }
