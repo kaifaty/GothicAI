@@ -8,10 +8,11 @@ import importlib.util
 import json
 import random
 import re
+import sqlite3
 import sys
 import time
 from collections import Counter
-from contextlib import aclosing
+from contextlib import aclosing, closing
 from dataclasses import asdict
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -52,7 +53,18 @@ EMPTY_MIND = "Пока пусто: разговор только начался.
 TIMEOUT_S = 90
 MIND_TOOLS = [tool for tool in TOOLS if tool.name in {"set_intent", "give_item", "end_conversation"}]
 MIND_TOOLS += [PROPOSE_TOOL, WITHDRAW_TOOL, OFFENSE_TOOL]
-FIELDS = ("Мнение о герое", "Верю", "Сомневаюсь", "Хочу", "Нити", "Настроение")
+FIELDS = (
+    "Мнение о герое",
+    "Что было между нами",
+    "Чувства",
+    "Желания",
+    "Верю",
+    "Сомневаюсь",
+    "О других",
+    "Нити",
+    "Настроение",
+    "Хочу",
+)
 
 
 def write_json(path: Path, value: Any) -> None:
@@ -63,7 +75,58 @@ def conversations(turns: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
     groups = {}
     for turn in turns:
         groups.setdefault(turn["conv"], []).append(turn)
-    return [sorted(group, key=lambda turn: turn["index"]) for group in groups.values()]
+    return sorted(
+        (sorted(group, key=lambda turn: turn["index"]) for group in groups.values()),
+        key=lambda group: group[0]["t"],
+    )
+
+
+def carry_sources(groups: list[list[dict[str, Any]]], memory_db: Path | None) -> dict[str, str | None]:
+    branches = {}
+    if memory_db is not None:
+        with closing(sqlite3.connect(memory_db.resolve().as_uri() + "?mode=ro", uri=True)) as db:
+            branches = {row[0]: row[1:] for row in db.execute("SELECT id, parent, created FROM branches")}
+    sources, processed = {}, []
+    for group in groups:
+        first = group[0]
+        limits = {first["branch"]: first["t"]}
+        branch = first["branch"]
+        while branch in branches:
+            parent, created = branches[branch]
+            if parent is None:
+                break
+            if parent in limits:
+                raise ValueError("Cycle in memory branches")
+            limits[parent] = min(first["t"], created)
+            branch = parent
+        candidates = [
+            prior
+            for prior in processed
+            if memory_db is not None
+            and prior[0]["npc"] == first["npc"]
+            and prior[0]["branch"] in limits
+            and prior[-1]["t"] < limits[prior[0]["branch"]]
+        ]
+        prior = max(candidates, key=lambda group: group[-1]["t"], default=None)
+        sources[first["conv"]] = prior[0]["conv"] if prior else None
+        processed.append(group)
+    return sources
+
+
+def closing_turn(group: list[dict[str, Any]]) -> dict[str, Any]:
+    last = group[-1]
+    return {
+        **last,
+        "id": last["conv"] + "#end",
+        "index": len(group),
+        "closing": True,
+        "history": [
+            *last["history"],
+            item_json(Message("user", last["phrase"])),
+            item_json(Message("assistant", last["sol"])),
+        ],
+        "window_s": None,
+    }
 
 
 def pick(traces: list[Path], route: Path, directory: Path) -> list[dict[str, Any]]:
@@ -222,23 +285,40 @@ async def mind(
     effort: str = "low",
     redo_conv: str | None = None,
     prompt_file: str = "mind_turn.md",
+    carry: Path | None = None,
     sol: LLMBackend | None = None,
 ) -> None:
     prompt = (HERE / prompt_file).read_text(encoding="utf-8")
     groups = conversations(pilot.rows(directory / "turns.jsonl"))
-    if redo_conv:
-        groups = [group for group in groups if group[0]["conv"] == redo_conv]
-        if not groups:
-            raise SystemExit("Unknown conversation")
+    if redo_conv and not any(group[0]["conv"] == redo_conv for group in groups):
+        raise SystemExit("Unknown conversation")
+    sources = carry_sources(groups, carry)
     results = {r["id"]: r for r in pilot.rows(directory / "minds.jsonl")}
-    pending = []
+    required = {redo_conv}
+    source = sources.get(redo_conv)
+    while source is not None:
+        end = results.get(source + "#end")
+        if end is not None and end.get("error") is None:
+            break
+        required.add(source)
+        source = sources[source]
+    pending, restarted = [], set()
     for group in groups:
-        restart = group[0]["conv"] == redo_conv
-        for turn in group:
+        conv = group[0]["conv"]
+        source = sources[conv]
+        if redo_conv and conv not in required and source not in restarted:
+            continue
+        restart = (
+            conv == redo_conv
+            or source in restarted
+            or results.get(group[0]["id"], {}).get("carried_from") != source
+        )
+        for turn in [*group, closing_turn(group)]:
             record = results.get(turn["id"])
             restart = restart or record is None or record.get("error") is not None
             if restart:
                 pending.append(turn)
+                restarted.add(conv)
     if not pending:
         return
     identifiers = {turn["id"] for turn in pending}
@@ -248,8 +328,11 @@ async def mind(
     sol = sol if sol is not None else pilot.make_backend("chatgpt", reasoning_effort=effort)
     try:
         for group in groups:
-            previous = EMPTY_MIND
-            for turn in group:
+            if group[0]["conv"] not in restarted:
+                continue
+            source = sources[group[0]["conv"]]
+            previous = results[source + "#end"]["mind"] if source else EMPTY_MIND
+            for turn in [*group, closing_turn(group)]:
                 if turn["id"] not in identifiers:
                     previous = results[turn["id"]]["mind"]
                     continue
@@ -274,6 +357,10 @@ async def mind(
                 result.update(
                     parsed, id=turn["id"], conv=turn["conv"], index=turn["index"], previous_mind=previous
                 )
+                if turn.get("closing"):
+                    result["closing"] = True
+                if turn["index"] == 0:
+                    result["carried_from"] = source
                 results[turn["id"]] = result
                 pilot.save_rows(directory / "minds.jsonl", results.values())
                 previous = result["mind"]
@@ -382,7 +469,7 @@ async def judge(directory: Path, *, redo_minds: bool = False, sol: LLMBackend | 
     judged_answers = {(r["id"], r["variant"]): r for r in pilot.rows(directory / "judge_answers.jsonl")}
     requests = []
     for group in conversations(turns):
-        for turn in group:
+        for turn in [*group, closing_turn(group)]:
             identifier = turn["id"]
             state = minds.get(identifier)
             if state is not None and state["error"] is None and not state["parse_error"]:
@@ -414,7 +501,7 @@ async def judge(directory: Path, *, redo_minds: bool = False, sol: LLMBackend | 
                         "Вызовы": "\n".join(calls) or "—",
                     }
                     requests.append((identifier, None, mind_prompt, sections))
-                if redo_minds:
+                if redo_minds or turn.get("closing"):
                     continue
                 for variant in VARIANTS:
                     key = (identifier, variant)
@@ -538,6 +625,8 @@ def sheet(directory: Path, seed: int = pilot.SEED) -> list[dict[str, Any]]:
                 "conv": group[0]["conv"],
                 "npc": group[0]["npc"],
                 "name": pilot.NAMES[group[0]["npc"]],
+                "carried_from": minds.get(group[0]["id"], {}).get("carried_from"),
+                "end_mind": minds.get(group[0]["conv"] + "#end", {}).get("mind"),
                 "turns": items,
             }
         )
@@ -554,13 +643,20 @@ def mind_fields(text: str) -> dict[str, str]:
     }
 
 
+def distribution(values) -> dict[str, Any]:
+    values = [value for value in values if value is not None]
+    return {**pilot.distribution(values), "max": max(values, default=None)}
+
+
 def summary(directory: Path, ratings: Path | None = None, *, emit: bool = True) -> dict[str, Any]:
     turns = pilot.rows(directory / "turns.jsonl")
     minds = {r["id"]: r for r in pilot.rows(directory / "minds.jsonl")}
     answers = {(r["id"], r["variant"]): r for r in pilot.rows(directory / "answers.jsonl")}
     judged_minds = {r["id"]: r for r in pilot.rows(directory / "judge_minds.jsonl")}
     judged_answers = {(r["id"], r["variant"]): r for r in pilot.rows(directory / "judge_answers.jsonl")}
-    parts = [minds[turn["id"]] for turn in turns if turn["id"] in minds]
+    groups = conversations(turns)
+    mind_turns = [turn for group in groups for turn in [*group, closing_turn(group)]]
+    parts = [minds[turn["id"]] for turn in mind_turns if turn["id"] in minds]
     successful = [part for part in parts if part["error"] is None and not part["parse_error"]]
     windows = [turn for turn in turns if turn["window_s"] is not None]
     fits = sum(
@@ -580,28 +676,53 @@ def summary(directory: Path, ratings: Path | None = None, *, emit: bool = True) 
     }
     for metric in ("first_token_s", "note_ready_s", "total_s"):
         stats[metric] = pilot.distribution(part[metric] for part in successful)
-    stats["output_tokens"] = pilot.distribution(
-        (part["usage"] or {}).get("output_tokens") for part in successful
-    )
-    changes = {}
-    comparisons = []
-    for group in conversations(turns):
-        previous = EMPTY_MIND
-        for turn in group:
+    stats["output_tokens"] = distribution((part["usage"] or {}).get("output_tokens") for part in parts)
+    lengths, closing_lengths, chain_ends, transitions = {}, {}, {}, []
+    for group in groups:
+        first = group[0]
+        source = minds.get(first["id"], {}).get("carried_from")
+        transitions.append({"conv": first["conv"], "carried_from": source, "npc": first["npc"]})
+        offset = chain_ends.get(source, -1) + 1
+        chain_ends[first["conv"]] = offset + len(group)
+        for turn in [*group, closing_turn(group)]:
             state = minds.get(turn["id"])
-            if state is not None:
-                if state["error"] is None and not state["parse_error"] and previous != EMPTY_MIND:
-                    comparisons.append((mind_fields(previous), mind_fields(state["mind"])))
-                previous = state["mind"]
+            if state is not None and state["error"] is None and not state["parse_error"]:
+                bucket = closing_lengths if turn.get("closing") else lengths
+                bucket.setdefault(offset + turn["index"], []).append(state)
+
+    def length_stats(states):
+        return {
+            "mind_chars": distribution(len(state["mind"]) for state in states),
+            "output_tokens": distribution((state["usage"] or {}).get("output_tokens") for state in states),
+        }
+
+    stats["length_by_chain_index"] = [
+        {"index": index, **length_stats(states)} for index, states in sorted(lengths.items())
+    ]
+    closing_parts = [state for states in closing_lengths.values() for state in states]
+    stats["closing"] = {
+        "n": sum(bool(part.get("closing")) for part in parts),
+        **length_stats(closing_parts),
+        "length_by_chain_index": [
+            {"index": index, **length_stats(states)} for index, states in sorted(closing_lengths.items())
+        ],
+    }
+    changes = {}
+    comparisons = [
+        (mind_fields(state["previous_mind"]), mind_fields(state["mind"]))
+        for state in successful
+        if state["previous_mind"] != EMPTY_MIND
+    ]
     for field in FIELDS:
-        changed = sum(old.get(field, "") != new.get(field, "") for old, new in comparisons)
+        common = [(old[field], new[field]) for old, new in comparisons if field in old and field in new]
+        changed = sum(old != new for old, new in common)
         changes[field] = {
-            "n": len(comparisons),
+            "n": len(common),
             "changed_n": changed,
-            "fraction": pilot.fraction(changed, len(comparisons)),
+            "fraction": pilot.fraction(changed, len(common)),
         }
     call_counts, justified_counts, call_items = Counter(), Counter(), []
-    for turn in turns:
+    for turn in mind_turns:
         state = minds.get(turn["id"], {})
         checks = list(verdict(judged_minds.get(turn["id"], {})).get("tools", []))
         for call in state.get("calls", []):
@@ -622,7 +743,7 @@ def summary(directory: Path, ratings: Path | None = None, *, emit: bool = True) 
     for field in ("false_facts", "stale"):
         items = [
             {"id": turn["id"], field: check[field]}
-            for turn in turns
+            for turn in mind_turns
             if (check := verdict(judged_minds.get(turn["id"], {}))).get(field)
         ]
         judge_stats[field] = len(items)
@@ -657,7 +778,7 @@ def summary(directory: Path, ratings: Path | None = None, *, emit: bool = True) 
     costs = []
     for group in conversations(turns):
         current = len(group)
-        with_mind = current + sum(turn["oof_predicted"] is not False for turn in group)
+        with_mind = current + 1 + sum(turn["oof_predicted"] is not False for turn in group)
         costs.append(
             {
                 "conv": group[0]["conv"],
@@ -669,6 +790,7 @@ def summary(directory: Path, ratings: Path | None = None, *, emit: bool = True) 
     current, with_mind = sum(item["current"] for item in costs), sum(item["with_mind"] for item in costs)
     result = {
         "mind": stats,
+        "transitions": transitions,
         "changes": changes,
         "calls": {
             "by_name": dict(call_counts),
@@ -896,7 +1018,9 @@ async def selftest() -> None:
                 FakeStep(reply(a, say=True), [ToolCall("set_intent", {"goal": "talk"})]),
                 FakeStep("Missing headings."),
                 FakeStep(reply(b)),
+                FakeStep(reply(b)),
                 FakeStep(reply(a)),
+                FakeStep(reply(e)),
                 FakeStep(reply(e)),
             ],
             failures={3, 5, 6},
@@ -905,11 +1029,11 @@ async def selftest() -> None:
         )
         with patch.object(asyncio, "timeout_at", wraps=asyncio.timeout_at) as deadlines:
             await mind(directory, sol=sol)
-        assert len(deadlines.call_args_list) == 8
+        assert len(deadlines.call_args_list) == 10
         assert deadlines.call_args_list[2] == deadlines.call_args_list[3]
         assert deadlines.call_args_list[4] == deadlines.call_args_list[5]
         states = {r["id"]: r for r in pilot.rows(directory / "minds.jsonl")}
-        assert len(states) == 6 and len(sol.requests) == 8
+        assert len(states) == 8 and len(sol.requests) == 10
         assert states["turn-0"]["note"] == "Voice note." and states["turn-0"]["mind"] == a
         assert states["turn-0"]["calls"] == [{"name": "set_intent", "arguments": {"goal": "talk"}}]
         assert states["turn-0"]["say"] == ["Listen.", "Wait."]
@@ -920,6 +1044,16 @@ async def selftest() -> None:
         assert states["turn-3"]["attempts"] == 2 and states["turn-3"]["error"] is not None
         assert states["turn-3"]["mind"] == b and states["turn-3"]["note"] == ""
         assert states["turn-4"]["previous_mind"] == EMPTY_MIND
+        end_ids = {conv["conv"] + "#end" for conv in convs}
+        for group, request in zip(conversations(turns), (sol.requests[6], sol.requests[9]), strict=True):
+            end = states[group[0]["conv"] + "#end"]
+            assert end["closing"] is True and end["index"] == len(group)
+            assert request["messages"][-5:-3] == [
+                Message("user", group[-1]["phrase"]),
+                Message("assistant", group[-1]["sol"]),
+            ]
+            assert request["messages"][-3] == Message("developer", group[-1]["situation"])
+        assert all(states[group[0]["id"]]["carried_from"] is None for group in conversations(turns))
         assert sol.requests[0]["messages"][-2] == Message(
             "developer", "[Твой ум до этой минуты]\n" + EMPTY_MIND
         )
@@ -998,7 +1132,15 @@ async def selftest() -> None:
         await judge(directory, sol=referee)
         await judge(directory, sol=referee)
         jm, ja = pilot.rows(directory / "judge_minds.jsonl"), pilot.rows(directory / "judge_answers.jsonl")
-        assert len(jm) == len(ja) == 4 and len(referee.calls) == 8
+        assert len(jm) == 6 and len(ja) == 4 and len(referee.calls) == 10
+        assert end_ids <= {row["id"] for row in jm}
+        assert not end_ids & {row["id"] for row in ja}
+        closing_history = next(
+            messages[0].content
+            for _, messages, _ in referee.calls
+            if "Герой: " + turns[3]["phrase"] in messages[0].content
+        )
+        assert "NPC: " + pilot.spoken(turns[3]["sol"]) in closing_history
         assert {(r["id"], r["variant"]) for r in ja} == {
             (identifier, variant) for identifier in ("turn-0", "turn-4") for variant in VARIANTS
         }
@@ -1038,16 +1180,16 @@ async def selftest() -> None:
         pilot.save_rows(directory / "judge_minds.jsonl", jm)
         pilot.save_rows(directory / "judge_answers.jsonl", ja)
         await judge(directory, sol=referee)
-        assert len(referee.calls) == 10
+        assert len(referee.calls) == 12
         jm, ja = pilot.rows(directory / "judge_minds.jsonl"), pilot.rows(directory / "judge_answers.jsonl")
         ja[0]["error"] = "Synthetic judge failure"
         pilot.save_rows(directory / "judge_answers.jsonl", ja)
         answer_judgments = (directory / "judge_answers.jsonl").read_bytes()
         await judge(directory, redo_minds=True, sol=referee)
-        assert len(referee.calls) == 14
+        assert len(referee.calls) == 18
         assert (directory / "judge_answers.jsonl").read_bytes() == answer_judgments
         jm = pilot.rows(directory / "judge_minds.jsonl")
-        assert len(jm) == 4 and all(row["error"] is None for row in jm)
+        assert len(jm) == 6 and all(row["error"] is None for row in jm)
         ja[0]["error"] = None
         jm[0]["result"]["false_facts"] = ["Unsupported fact."]
         jm[0]["result"]["stale"] = ["Closed thread."]
@@ -1072,6 +1214,8 @@ async def selftest() -> None:
         assert timeline[1]["turns"][1]["route"] == "sol"
         assert timeline[0]["turns"][0]["times"]["window_s"] == 8
         assert timeline[0]["turns"][1]["error"] == "parse_error"
+        assert timeline[0]["carried_from"] is None and timeline[0]["end_mind"] == b
+        assert timeline[1]["end_mind"] == e
         ratings = root / "ratings.json"
         write_json(
             ratings,
@@ -1080,12 +1224,12 @@ async def selftest() -> None:
         )
         report = summary(directory, ratings, emit=False)
         assert (
-            report["mind"]["n"] == 6 and report["mind"]["errors"] == 1 and report["mind"]["parse_errors"] == 1
+            report["mind"]["n"] == 8 and report["mind"]["errors"] == 1 and report["mind"]["parse_errors"] == 1
         )
         assert report["mind"]["output_tokens"]["median"] == 123
         assert report["mind"]["fits_window_n"] == 4 and report["mind"]["window_n"] == 6
-        assert report["changes"]["Мнение о герое"] == {"n": 2, "changed_n": 1, "fraction": 0.5}
-        assert report["changes"]["Верю"]["fraction"] == report["changes"]["Нити"]["fraction"] == 0.5
+        assert report["changes"]["Мнение о герое"] == {"n": 4, "changed_n": 1, "fraction": 0.25}
+        assert report["changes"]["Верю"]["fraction"] == report["changes"]["Нити"]["fraction"] == 0.25
         assert report["changes"]["Хочу"]["fraction"] == 0
         assert report["calls"]["by_name"] == {"set_intent": 1} and report["calls"]["justified_n"] == 1
         assert report["calls"]["say_n"] == 2 and report["calls"]["items"][0]["why"] == "Reason."
@@ -1094,9 +1238,9 @@ async def selftest() -> None:
         assert report["variants"]["mind"]["errors"] == 2 and report["variants"]["note"]["leaks"] == 1
         assert report["variants"]["mind"]["violations_n"] == 1
         assert report["variants"]["mind"]["first_sentence_s"]["n"] == 1
-        assert report["cost"]["current"] == 6 and report["cost"]["with_mind"] == 8
-        assert report["cost"]["ratio"] == 8 / 6
-        assert [cost["with_mind"] for cost in report["cost"]["conversations"]] == [5, 3]
+        assert report["cost"]["current"] == 6 and report["cost"]["with_mind"] == 10
+        assert report["cost"]["ratio"] == 10 / 6
+        assert [cost["with_mind"] for cost in report["cost"]["conversations"]] == [6, 4]
         assert report["ratings"]["by_key"]["mind"] == {"good": 1, "ok": 0, "bad": 0}
         assert (
             report["ratings"]["at_least_note"]["fraction"]
@@ -1144,18 +1288,20 @@ async def selftest() -> None:
         recovery = FakeBackend(reply(b), delay=0)
         await mind(directory, sol=recovery)
         recovered = {r["id"]: r for r in pilot.rows(directory / "minds.jsonl")}
-        assert len(recovery.calls) == 2 and all(state["error"] is None for state in recovered.values())
+        assert len(recovery.calls) == 3 and all(state["error"] is None for state in recovered.values())
         assert recovered["turn-0"] == states["turn-0"] and recovered["turn-4"] == states["turn-4"]
         assert recovered["turn-1"] == states["turn-1"]
         for name in ("answers.jsonl", "judge_minds.jsonl", "judge_answers.jsonl"):
-            assert not {"turn-2", "turn-3"} & {r["id"] for r in pilot.rows(directory / name)}
+            assert not {"turn-2", "turn-3", convs[0]["conv"] + "#end"} & {
+                r["id"] for r in pilot.rows(directory / name)
+            }
         await mind(directory, sol=recovery)
-        assert len(recovery.calls) == 2
+        assert len(recovery.calls) == 3
         assert {r["id"]: r for r in pilot.rows(directory / "minds.jsonl")}["turn-1"] == states["turn-1"]
         await speak(directory, quick=retry_quick)
         assert len(retry_quick.calls) == 3
         await judge(directory, sol=referee)
-        assert len(pilot.rows(directory / "judge_minds.jsonl")) == 5
+        assert len(pilot.rows(directory / "judge_minds.jsonl")) == 7
         assert len(pilot.rows(directory / "judge_answers.jsonl")) == 6
 
         before_redo = pilot.rows(directory / "minds.jsonl")
@@ -1164,11 +1310,15 @@ async def selftest() -> None:
         pilot.save_rows(directory / "minds.jsonl", before_redo)
         redo = FakeBackend(reply(a), delay=0)
         await mind(directory, redo_conv=convs[0]["conv"], sol=redo)
-        assert len(redo.calls) == 4 and redo.calls[0][1][-2].content.endswith(EMPTY_MIND)
+        assert len(redo.calls) == 5 and redo.calls[0][1][-2].content.endswith(EMPTY_MIND)
         redone = {r["id"]: r for r in pilot.rows(directory / "minds.jsonl")}
-        assert len(redone) == 6 and redone["turn-4"] == states["turn-4"] and redone["turn-5"] == unrelated
+        assert len(redone) == 8 and redone["turn-4"] == states["turn-4"] and redone["turn-5"] == unrelated
         for name in ("answers.jsonl", "judge_minds.jsonl", "judge_answers.jsonl"):
-            assert {r["id"] for r in pilot.rows(directory / name)} <= {"turn-4", "turn-5"}
+            assert {r["id"] for r in pilot.rows(directory / name)} <= {
+                "turn-4",
+                "turn-5",
+                convs[1]["conv"] + "#end",
+            }
         assert all(
             (directory / name).is_file()
             for name in (
@@ -1183,6 +1333,156 @@ async def selftest() -> None:
                 "summary.json",
             )
         )
+
+        v2 = (
+            a + "\nЧто было между нами:\n- noon: helped\n- earlier: met\n"
+            "Чувства:\n- gratitude, strength 2: helped\n"
+            "Желания:\n- now: talk\n- soon: rest\n- long ago: return\n"
+            "О других:\n- Merchant: honest"
+        )
+        v2_end = v2.replace("Opinion A", "Opinion Z")
+        fields = mind_fields(v2)
+        assert set(fields) == set(FIELDS)
+        assert fields["Что было между нами"] == "- noon: helped\n- earlier: met"
+        assert fields["Чувства"] == "- gratitude, strength 2: helped"
+        assert fields["Желания"] == "- now: talk\n- soon: rest\n- long ago: return"
+        assert fields["О других"] == "- Merchant: honest"
+        assert fields["Настроение"] == "Calm" and fields["Хочу"] == "Talk"
+        assert report["changes"]["Чувства"] == {"n": 0, "changed_n": 0, "fraction": None}
+
+        memory_db = root / "memory.sqlite3"
+        with closing(sqlite3.connect(memory_db)) as db:
+            db.execute("CREATE TABLE branches (id TEXT, parent TEXT, parent_seq INTEGER, created REAL)")
+            db.executemany(
+                "INSERT INTO branches VALUES (?, ?, 0, ?)",
+                [
+                    ("root", None, 0),
+                    ("child", "root", 50),
+                    ("grandchild", "child", 75),
+                    ("sibling", "root", 5),
+                ],
+            )
+            db.commit()
+        db_bytes = memory_db.read_bytes()
+
+        def meeting(conv, branch, at, *, character=npc):
+            return [
+                {
+                    **turns[i],
+                    "id": f"{conv}-{i}",
+                    "conv": conv,
+                    "branch": branch,
+                    "t": at + i,
+                    "index": i,
+                    "npc": character,
+                }
+                for i in range(2)
+            ]
+
+        meetings = [
+            meeting("early", "root", 10),
+            meeting("late", "root", 60),
+            meeting("child-first", "child", 70),
+            meeting("child-next", "child", 80),
+            meeting("sibling", "sibling", 90),
+            meeting("unknown", "missing", 100),
+            meeting("unknown-next", "missing", 110),
+            meeting("grandchild", "grandchild", 120),
+        ]
+        expected_sources = {
+            "early": None,
+            "late": "early",
+            "child-first": "early",
+            "child-next": "child-first",
+            "sibling": None,
+            "unknown": None,
+            "unknown-next": "unknown",
+            "grandchild": "child-first",
+        }
+        assert carry_sources(meetings, memory_db) == expected_sources
+        assert set(carry_sources(meetings, None).values()) == {None}
+        # Neither an overlapping conversation nor a different NPC can precede the child.
+        overlap = meeting("overlap", "root", 40)
+        overlap[-1]["t"] = 200
+        boundary = meeting("boundary", "root", 49)
+        another = meeting("other-npc", "child", 65, character="NONE_100_XARDAS")
+        candidates = conversations(
+            [turn for group in [*meetings, overlap, boundary, another] for turn in group]
+        )
+        assert carry_sources(candidates, memory_db)["child-first"] == "early"
+
+        carried = root / "carried"
+        carried.mkdir()
+        # Deliberately reverse the file order: the first-turn timestamp determines processing order.
+        pilot.save_rows(carried / "turns.jsonl", reversed([turn for group in meetings for turn in group]))
+        carrier = ScriptedSol(
+            script=[
+                FakeStep(reply(text))
+                for position in range(len(meetings))
+                for text in (a if position == 0 else v2, v2, v2_end)
+            ],
+            delay=0,
+        )
+        await mind(carried, carry=memory_db, prompt_file="mind_turn_v2.md", sol=carrier)
+        carried_states = {r["id"]: r for r in pilot.rows(carried / "minds.jsonl")}
+        assert len(carrier.requests) == len(carried_states) == 24
+        assert memory_db.read_bytes() == db_bytes
+        for position, group in enumerate(meetings):
+            source = expected_sources[group[0]["conv"]]
+            previous = carried_states[source + "#end"]["mind"] if source else EMPTY_MIND
+            assert carried_states[group[0]["id"]]["carried_from"] == source
+            assert carrier.requests[position * 3]["messages"][-2] == Message(
+                "developer", "[Твой ум до этой минуты]\n" + previous
+            )
+        assert carrier.requests[0]["messages"][-1] == Message(
+            "developer", (HERE / "mind_turn_v2.md").read_text()
+        )
+        await mind(carried, carry=memory_db, sol=carrier)
+        assert len(carrier.requests) == 24
+        carried_states["early#end"]["usage"]["output_tokens"] = 700
+        pilot.save_rows(carried / "minds.jsonl", carried_states.values())
+        sheet(carried)
+        carried_timeline = json.loads((carried / "timeline.json").read_text())
+        assert carried_timeline[2]["carried_from"] == "early"
+        assert carried_timeline[2]["end_mind"] == v2_end
+        growth = summary(carried, emit=False)
+        assert growth["transitions"] == [
+            {"conv": group[0]["conv"], "carried_from": expected_sources[group[0]["conv"]], "npc": npc}
+            for group in meetings
+        ]
+        assert growth["changes"]["Чувства"] == {"n": 20, "changed_n": 0, "fraction": 0}
+        assert growth["changes"]["Мнение о герое"] == {"n": 21, "changed_n": 13, "fraction": 13 / 21}
+        lengths = growth["mind"]["length_by_chain_index"]
+        assert [item["index"] for item in lengths] == [0, 1, 3, 4, 6, 7]
+        assert lengths[0]["mind_chars"] == {"n": 3, "median": len(v2), "p90": len(v2), "max": len(v2)}
+        assert lengths[-1]["output_tokens"]["median"] == lengths[-1]["output_tokens"]["max"] == 123
+        assert growth["mind"]["output_tokens"]["max"] == 700
+        ends = growth["mind"]["closing"]
+        assert ends["n"] == 8 and ends["mind_chars"]["median"] == ends["mind_chars"]["max"] == len(v2)
+        assert ends["output_tokens"]["median"] == 123 and ends["output_tokens"]["max"] == 700
+        assert [item["index"] for item in ends["length_by_chain_index"]] == [2, 5, 8]
+        assert growth["mind"]["window_n"] == 16
+
+        # A missing closing row resumes at that row and restarts every dependent meeting.
+        pilot.save_rows(
+            carried / "minds.jsonl", (r for r in carried_states.values() if r["id"] != "early#end")
+        )
+        resume = FakeBackend(reply(v2), delay=0)
+        await mind(carried, carry=memory_db, redo_conv="child-first", sol=resume)
+        assert len(resume.calls) == 13
+        completed = {r["id"]: r for r in pilot.rows(carried / "minds.jsonl")}
+        assert completed["early-0"] == carried_states["early-0"]
+        assert completed["sibling-0"] == carried_states["sibling-0"]
+        for name in ("answers.jsonl", "judge_minds.jsonl", "judge_answers.jsonl"):
+            pilot.save_rows(carried / name, ({"id": identifier} for identifier in completed))
+        redo_carried = FakeBackend(reply(v2), delay=0)
+        await mind(carried, carry=memory_db, redo_conv="child-first", sol=redo_carried)
+        assert len(redo_carried.calls) == 9
+        assert redo_carried.calls[0][1][-2] == Message("developer", "[Твой ум до этой минуты]\n" + v2)
+        for name in ("answers.jsonl", "judge_minds.jsonl", "judge_answers.jsonl"):
+            remaining = {r["id"] for r in pilot.rows(carried / name)}
+            assert "early#end" in remaining and "sibling-0" in remaining
+            assert not {"child-first-0", "child-next-1", "grandchild#end"} & remaining
     print("Selftest passed (no network)")
 
 
@@ -1200,6 +1500,7 @@ def main() -> None:
             command.add_argument("--effort", default="low")
             command.add_argument("--redo-conv")
             command.add_argument("--prompt-file", default="mind_turn.md")
+            command.add_argument("--carry", type=Path)
         elif name == "speak":
             command.add_argument("--slot", type=int, default=0)
             command.add_argument("--quick-at")
