@@ -19,6 +19,16 @@ const vec3  WaterAlbedo = vec3(0.8,0.9,1.0);
 // exposure is 1/(2.5*1.25*the luminance of lit white) (sky_exposure.comp).
 const float EmissiveSunRatio  = 1.7;
 const float EmissiveMaxGain   = 6.0;   // about 2.6 EV over the noon look
+// A glowing mesh (materials.json "emissive"): the colour of its heat (emberColour) times up to this before that gain.
+// Its share rides in the G-buffer ORM alpha below the own-material bit: alpha 1 - EmissiveOrmCode*share keeps the
+// "own" test (> 0.5).
+const float EmissiveMeshPeak  = 0.6;
+const float EmissiveOrmCode   = 0.49;
+// Glowing charcoal by its share of heat: dull red where a block glows through (about 700 C) to orange deep in a crack
+// (about 1000 C). Albedo as the colour went white at a peak of 4 (r3) and read as lamp-lit orange paint below it (r5).
+vec3 emberColour(float share) {
+  return mix(vec3(0.5, 0.04, 0.004), vec3(1.0, 0.3, 0.04), share);
+  }
 const float SoftParticleDepth = 15.0;
 const vec2  SoftParticleNear  = vec2(30.0, 100.0);
 const float WaterF0        = 0.0204; // ((1.333-1)/(1.333+1))^2

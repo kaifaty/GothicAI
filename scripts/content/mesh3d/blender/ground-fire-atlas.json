@@ -5,7 +5,9 @@
   "OWN_HEARTH_STONE": 1.5,
   "OWN_HEARTH_EMBER": 2.0,
   "OWN_HEARTH_ASH": 1.5,
-  "OWN_HEARTH_LOG": 3.0
+  "OWN_HEARTH_LOG": 3.0,
+  "OWN_HEARTH_CHAR": 4.0,
+  "OWN_HEARTH_GLOW": 4.0
  },
  "targets": {
   "OWN_HEARTH_STONE": [
@@ -27,6 +29,16 @@
    0.05,
    0.036,
    0.022
+  ],
+  "OWN_HEARTH_CHAR": [
+   0.0272,
+   0.0245,
+   0.0227
+  ],
+  "OWN_HEARTH_GLOW": [
+   0.1513,
+   0.0423,
+   0.022
   ]
  },
  "slots": {
@@ -45,6 +57,14 @@
   "OWN_HEARTH_LOG": [
    "OWN_HEARTH_GROUNDFIRE_FIREWOOD",
    "WOOD"
+  ],
+  "OWN_HEARTH_CHAR": [
+   "OWN_HEARTH_GROUNDFIRE_FIREWOOD",
+   "WOOD"
+  ],
+  "OWN_HEARTH_GLOW": [
+   "OWN_HEARTH_GROUNDFIRE_FIREWOOD",
+   "WOOD"
   ]
  },
  "metal": [],
@@ -52,7 +72,9 @@
   "OWN_HEARTH_STONE": 0.25,
   "OWN_HEARTH_EMBER": 0.0,
   "OWN_HEARTH_ASH": 0.0,
-  "OWN_HEARTH_LOG": 0.2
+  "OWN_HEARTH_LOG": 0.2,
+  "OWN_HEARTH_CHAR": 0.0,
+  "OWN_HEARTH_GLOW": 0.0
  },
  "size": 1024,
  "seed": 1,
@@ -74,5 +96,13 @@
  },
  "measure_ao": {
   "OWN_HEARTH_STONE": 0.5
+ },
+ "tile_normal": {
+  "OWN_HEARTH_CHAR": 1.0,
+  "OWN_HEARTH_GLOW": 1.0
+ },
+ "glow": {
+  "OWN_HEARTH_EMBER": 1.0,
+  "OWN_HEARTH_GLOW": 1.0
  }
 }

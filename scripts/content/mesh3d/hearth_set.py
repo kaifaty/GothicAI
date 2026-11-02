@@ -4,6 +4,7 @@
     uv run --no-project --with numpy --with pillow --with scipy python scripts/content/mesh3d/hearth_set.py models [ITEM ...]
     uv run --no-project --with numpy --with pillow --with scipy python scripts/content/mesh3d/hearth_set.py bake [ITEM ...] [--ryzen]
     uv run --no-project --with numpy --with pillow --with scipy python scripts/content/mesh3d/hearth_set.py pack --set hearth-1
+    uv run --no-project --with numpy --with pillow --with scipy python scripts/content/mesh3d/hearth_set.py fire-tiles
 
 Run from the repository root. Every item is one original visual: a Blender script and config in
 scripts/content/mesh3d/blender/, numbers from data/content/mesh3d-hearth.json (hearth_targets.py). The form
@@ -16,12 +17,16 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
 import shutil
+import struct
 import subprocess
 import sys
+
+import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import rigging_set as rig  # noqa: E402
@@ -32,6 +37,12 @@ STAGING = rig.STAGING
 LAYER = ROOT / 'data/content/world/NEWWORLD/vobs.d/city-hearth.json'
 PARTICLES = ROOT / 'data/content/particles.d/city-hearth-steam.json'
 STEAM_TEXTURE, STEAM_DDS = 'OWN_POT_STEAM.TGA', 'own-pot-steam/albedo.dds'
+# the flame flipbook of OWN_POT_FIRE_FB: rendered from a Mantaflow sim by scripts/content/fire/fire_flipbook.py on
+# Ryzen and packed by fire_atlas.py into the sources (16 MB, outside git); reports/engine/2026-11-01-fire-rendering.md
+FIRE_SOURCES = Path.home() / '.local/share/gothic-ai/content-sources'
+FIRE_ATLASES = [('OWN_FIRE_FLIPBOOK.TGA', 'own-fire-flipbook/albedo.dds', FIRE_SOURCES / 'fire-flipbook/albedo.dds')] + [
+    (f'OWN_FIRE_TONGUE_{i}.TGA', f'own-fire-tongue/tongue-{i}.dds', FIRE_SOURCES / f'fire-tongue/tongue-{i}.dds')
+    for i in (1, 2, 3)]
 BUILD = STAGING / 'city-hearth/build'
 TILES = STAGING / 'city-hearth/tiles'
 BLENDER = rig.BLENDER
@@ -122,6 +133,33 @@ def cmd_bake(args) -> int:
     return 0
 
 
+def cmd_fire_tiles(args) -> int:
+    """Burning and charred wood tiles and the ember glow mask (fire_tiles.py), after market_tiles.py made the rest."""
+    rig.run([sys.executable, Path(__file__).with_name('fire_tiles.py'), TILES], cwd=ROOT)
+    return 0
+
+
+def write_glow_orm(folder: Path, maps: Path) -> None:
+    """The ORM again as DXT5 with the glow mask of the bake (emission.png) in its alpha, as the engine reads it
+    for a material with "emissive" (main.frag, mainGBuffer). Box mips: a glowing crack fades out with distance
+    as its share of the texel does."""
+    spec = importlib.util.spec_from_file_location('material_fixture', ROOT / 'scripts/content/test-material.py')
+    dds = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(dds)
+    orm = np.stack([rig.read_png(maps / f'{n}.png', 'L') for n in ('ao', 'roughness', 'metallic')]
+                   + [rig.read_png(maps / 'emission.png', 'L')], axis=2)
+    h, w = orm.shape[:2]
+    levels = int(np.log2(min(w, h))) + 1
+    header = [124, 0xA1007, h, w, (w // 4) * (h // 4) * 16, 0, levels] + [0] * 11
+    header += [32, 4, int.from_bytes(b'DXT5', 'little'), 0, 0, 0, 0, 0, 0x401008, 0, 0, 0, 0]
+    with (folder / 'orm.dds').open('wb') as out:
+        out.write(b'DDS ' + struct.pack('<31I', *header))
+        for level in range(levels):
+            out.write(dds.bc3(dds.blocks(dds.quantize(orm))).tobytes())
+            if level + 1 < levels:
+                orm = dds.downsample(orm)
+
+
 def sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -142,6 +180,10 @@ def cmd_pack(args) -> int:
         keys = json.loads((bake / 'metrics.json').read_text())['materials']
         entry = rig.write_maps(write_dds, output / 'materials', output / 'materials' / name / 'atlas', bake / 'maps' / keys[0].lower())
         atlas_cfg = json.loads((BLENDER_DIR / spec['atlas']).read_text())
+        # embers and burning log ends: the materials of the glowing zones give off light where the ORM alpha says
+        glowing = {atlas_cfg['slots'][zone][0] for zone in atlas_cfg.get('glow', {})}
+        if glowing:
+            write_glow_orm(output / 'materials' / name / 'atlas', bake / 'maps' / keys[0].lower())
         # pot water: how cloudy the engine's clear water is (materials.json "turbidity"), by the zone's material key
         turbidity = {atlas_cfg['slots'][zone][0]: value for zone, value in atlas_cfg.get('turbidity', {}).items()}
         # ... and over how many cm of liquid it reaches that (a stew: a few cm; absent: at once, as water)
@@ -150,7 +192,8 @@ def cmd_pack(args) -> int:
             if f'{key}.TGA' in materials:
                 raise SystemExit(f'{item}: material key {key} already used by another item')
             materials[f'{key}.TGA'] = {**entry, **tail, **({'turbidity': turbidity[key]} if key in turbidity else {}),
-                                     **({'turbidity_depth': depth[key]} if key in depth else {})}
+                                     **({'turbidity_depth': depth[key]} if key in depth else {}),
+                                     **({'emissive': 1.0} if key in glowing else {})}
         used = rig.glb_edit(bake / 'model.glb', mesh_dir / 'model.glb', {}, set())
         missing = [m for m in used if f'{m}.TGA' not in materials]
         if missing:
@@ -167,6 +210,7 @@ def cmd_pack(args) -> int:
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, target)
     write_steam_sprite(output)
+    copy_fire_flipbook(output)
     ids = {r['id'] for r in records}
     old = [json.loads(line) for line in REGISTRY.read_text().splitlines()] if REGISTRY.is_file() else []
     REGISTRY.write_text(''.join(json.dumps(r, ensure_ascii=False, sort_keys=True) + '\n'
@@ -196,6 +240,21 @@ def write_steam_sprite(output: Path) -> None:
     index_path = output / 'materials' / 'materials.json'
     index = json.loads(index_path.read_text())
     index[STEAM_TEXTURE] = {'albedo': STEAM_DDS}
+    index_path.write_text(json.dumps(index, indent=2) + '\n')
+
+
+def copy_fire_flipbook(output: Path) -> None:
+    """The flame atlases of fire_atlas.py: OWN_FIRE_FLIPBOOK.TGA (the whole fire, OWN_POT_FIRE_FB) and one steady
+    tongue per log gap under Edda's cauldron, OWN_FIRE_TONGUE_<i>.TGA (fire_tongue.py, OWN_POT_TONGUE[_i])."""
+    index_path = output / 'materials' / 'materials.json'
+    index = json.loads(index_path.read_text())
+    for texture, dds, source in FIRE_ATLASES:
+        if not source.is_file():
+            raise SystemExit(f'{source}: missing, pack it with scripts/content/fire/fire_atlas.py')
+        target = output / 'materials' / dds
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+        index[texture] = {'albedo': dds}
     index_path.write_text(json.dumps(index, indent=2) + '\n')
 
 
@@ -230,6 +289,7 @@ def main() -> int:
     p = sub.add_parser('models'); p.add_argument('items', nargs='*'); p.set_defaults(func=cmd_models)
     p = sub.add_parser('bake'); p.add_argument('items', nargs='*'); p.add_argument('--ryzen', action='store_true')
     p.add_argument('--threads', type=int, default=12); p.set_defaults(func=cmd_bake)
+    p = sub.add_parser('fire-tiles'); p.set_defaults(func=cmd_fire_tiles)
     p = sub.add_parser('pack'); p.add_argument('--set', required=True); p.add_argument('items', nargs='*'); p.set_defaults(func=cmd_pack)
     args = parser.parse_args()
     return args.func(args)

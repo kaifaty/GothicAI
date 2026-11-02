@@ -1309,6 +1309,15 @@ void Resources::indexMaterialMaps() {
       else
         maps.turbidityDepth = float(depth->value.GetDouble());
       }
+    // Embers and glowing wood: the material gives off its own albedo colour times this, where the ORM's alpha
+    // (DXT5) marks it; it slowly breathes (main.frag, mainGBuffer) and is added by the ambient pass.
+    if(const auto emissive = entry.value.FindMember("emissive"); emissive!=entry.value.MemberEnd()) {
+      if(!emissive->value.IsNumber() || !std::isfinite(emissive->value.GetDouble()) ||
+         emissive->value.GetDouble()<0 || emissive->value.GetDouble()>1)
+        valid = false;
+      else
+        maps.emissive = float(emissive->value.GetDouble());
+      }
     if(const auto scale = entry.value.FindMember("scale"); scale!=entry.value.MemberEnd()) {
       if(!scale->value.IsNumber()) {
         valid = false;
@@ -2614,6 +2623,7 @@ Resources::MaterialMaps Resources::loadMaterialMaps(std::string_view name) {
   ret.antitileCell = files.antitileCell;
   ret.turbidity = files.turbidity;
   ret.turbidityDepth = files.turbidityDepth;
+  ret.emissive = files.emissive;
   ret.antitile = files.antitile;
   ret.present = true;
   ret.hasAlbedo = !files.albedo.empty();

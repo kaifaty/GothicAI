@@ -48,6 +48,7 @@ class Material final {
     float                     waveMaxAmplitude = 0;
     float                     turbidity        = 0;
     float                     turbidityDepth   = 0;
+    float                     emissive         = 0;  // own glow, 0..1 of EmissiveMeshPeak (materials.json)
     float                     envMapping       = 0;
 
     bool operator == (const Material& other) const;

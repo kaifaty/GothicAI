@@ -91,6 +91,16 @@
      "key": "OWN_HEARTH_LOG",
      "group": "WOOD",
      "role": "split logs with bark, charred ends"
+    },
+    {
+     "key": "OWN_HEARTH_CHAR",
+     "group": "WOOD",
+     "role": "charred wood behind the burning end of a log"
+    },
+    {
+     "key": "OWN_HEARTH_GLOW",
+     "group": "WOOD",
+     "role": "burning end of a log: charcoal blocks, heat in the cracks"
     }
    ],
    "kind": "mob_model",

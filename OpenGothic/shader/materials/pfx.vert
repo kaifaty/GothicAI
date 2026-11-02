@@ -174,6 +174,18 @@ vec4 processVertex(out Varyings shOut, in Vertex v, uint instanceId, uint vboOff
 #if defined(MAT_COLOR)
   shOut.color = unpackUnorm4x8(v.color);
 #endif
+#if defined(MAT_UV)
+  shOut.flip = vec3(0, 0, -1);
+  if(bitfieldExtract(v.bits0, 6, 1)!=0) {
+    // own atlas flipbook (pfxbucket.cpp): this frame and the next, cols x rows cells from the top left
+    const uvec2 grid  = uvec2(bitfieldExtract(v.bits0, 7, 3), bitfieldExtract(v.bits0, 10, 3)) + 1u;
+    const uint  f0    = bitfieldExtract(v.bits0, 13, 6);
+    const uint  f1    = bitfieldExtract(v.bits0, 19, 6);
+    const vec2  cell  = vec2(1.0)/vec2(grid);
+    shOut.uv   = (vec2(f0 % grid.x, f0 / grid.x) + v.uv) * cell;
+    shOut.flip = vec3((vec2(f1 % grid.x, f1 / grid.x) + v.uv) * cell, float(bitfieldExtract(v.bits0, 25, 7))/127.0);
+    }
+#endif
 #if defined(FORWARD)
   // billboards carry their point-light irradiance in colorB; a trail uses it for its second colour
   shOut.pointLight = bitfieldExtract(v.bits0, 3, 1)!=0 ? vec3(0) : unpackRgb9e5(pfx[instanceId].colorB);

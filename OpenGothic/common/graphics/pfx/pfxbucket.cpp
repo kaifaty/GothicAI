@@ -46,7 +46,7 @@ PfxBucket::PfxBucket(const ParticleFx &decl, PfxObjects& parent, const SceneGlob
   uint64_t lt      = decl.maxLifetime();
   uint64_t pps     = uint64_t(std::ceil(decl.maxPps()));
   uint64_t reserve = (lt*pps+1000-1)/1000;
-  blockSize        = size_t(reserve);
+  blockSize        = decl.flipSteady ? size_t(std::ceil(decl.ppsValue)) : size_t(reserve);
   if(blockSize==0)
     blockSize=1;
 
@@ -274,6 +274,9 @@ void PfxBucket::init(PfxBucket::Block& block, ImplEmitter& emitter, size_t parti
     // decal
     p.life    = uint16_t(-1)/2;
     p.maxLife = uint16_t(-1);
+    } else if(decl.flipSteady) {
+    p.life    = uint16_t(-1);
+    p.maxLife = p.life;
     } else {
     p.life    = uint16_t(randf(decl.lspPartAvg,decl.lspPartVar));
     p.maxLife = p.life;
@@ -449,6 +452,9 @@ void PfxBucket::tick(Block& sys, ImplEmitter& emitter, size_t particle, uint64_t
   if(ps.life==0)
     return;
 
+  if(decl.flipSteady)
+    return;
+
   if(ps.life<=dt){
     ps.life = 0;
     sys.count--;
@@ -531,6 +537,24 @@ void PfxBucket::implTickCommon(uint64_t dt, const Vec3& viewPos) {
     if(emitter.waitforNext>=dt)
       emitter.waitforNext-=dt;
 
+    if(decl.flipSteady && emitter.block!=size_t(-1) && (emitter.st!=S_Active || !nearby)) {
+      // steady particles never die on their own: they go with their emitter or when it is out of view range
+      auto& p = getBlock(emitter);
+      for(size_t i=0;i<blockSize;++i)
+        if(particles[p.offset+i].life!=0)
+          finalize(p.offset+i);
+      p.count = 0;
+      if(emitter.st==S_Fade || !nearby) {
+        freeBlock(emitter.block);
+        if(emitter.st==S_Fade) {
+          emitter.st = S_Free;
+          updateTextureDemand(size_t(&emitter-impl.data()));
+          }
+        doShrink = true;
+        continue;
+        }
+      }
+
     if(emitter.block!=size_t(-1)) {
       auto& p = getBlock(emitter);
       if(p.count>0) {
@@ -551,7 +575,7 @@ void PfxBucket::implTickCommon(uint64_t dt, const Vec3& viewPos) {
 
     if(emitter.st==S_Active && nearby) {
       auto& p = getBlock(emitter);
-      auto dE = ppsDiff(decl,emitter.isLoop,p.timeTotal,p.timeTotal+dt);
+      auto dE = decl.flipSteady ? (p.count==0 ? uint64_t(blockSize) : 0) : ppsDiff(decl,emitter.isLoop,p.timeTotal,p.timeTotal+dt);
       tickEmit(p,emitter,dE);
       }
 
@@ -668,11 +692,12 @@ void PfxBucket::buildSsbo() {
         continue;
         }
 
-      const float a     = ps.lifeTime();
+      const float a     = decl.flipSteady ? 0.f : ps.lifeTime();
       const Vec3  cl    = colorS*(1.f-a)        + colorE*a;
       //const float clA   = visAlphaStart*(1.f-a) + visAlphaEnd*a;
       //NOTE: particles even with harsh transition, appear to have some fade in/out anyway in bvanilla game
-      const float clA   = (std::min(a, 0.1f)/0.1f)*visAlphaStart*(1.f-a) + (std::min(1.f-a, 0.1f)/0.1f)*visAlphaEnd*a;
+      const float clA   = decl.flipSteady ? visAlphaStart
+                        : (std::min(a, 0.1f)/0.1f)*visAlphaStart*(1.f-a) + (std::min(1.f-a, 0.1f)/0.1f)*visAlphaEnd*a;
 
       const float scale = 1.f*(1.f-a) + a*visSizeEndScale;
       const float szX   = visSizeStart.x*scale;
@@ -701,6 +726,21 @@ void PfxBucket::buildSsbo() {
       std::memcpy(&colorU32,&color,4);
       buildBilboard(px,p,ps, colorU32, szX,szY,szZ);
       px.colorB = (lit && !lights.empty()) ? packRgb9e5(pointLightAt(lights, px.pos)) : 0;
+      if(decl.flipFrames>0) {
+        // the atlas frame by the particle's age (a steady one: by its emitter's clock) from its own start frame
+        // (a hash of its slot and birth time)
+        const uint32_t seed   = uint32_t(pId+p.offset)*2654435761u ^ uint32_t(ps.maxLife)*40503u;
+        const float    frames = float(decl.flipFrames);
+        const float    age    = decl.flipSteady ? float(p.timeTotal%3600000u) : float(ps.maxLife-ps.life);
+        const float    t      = age*decl.flipFps/1000.f + float(seed%997u)/997.f*frames;
+        const float    f      = std::fmod(t, frames);
+        const uint32_t f0     = uint32_t(f)%decl.flipFrames;
+        const uint32_t f1     = (f0+1)%decl.flipFrames;
+        const uint32_t blend  = uint32_t((f-std::floor(f))*127.f+0.5f);
+        px.bits0 |= 1u << 6;
+        px.bits0 |= uint32_t(decl.flipCols-1) << 7 | uint32_t(decl.flipRows-1) << 10;
+        px.bits0 |= f0 << 13 | f1 << 19 | blend << 25;
+        }
       }
     }
   }

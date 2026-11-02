@@ -110,6 +110,9 @@ struct Varyings {
   vec4 color;
 #endif
 
+#if (MESH_TYPE==T_PFX) && defined(MAT_UV)
+  vec3 flip; // atlas flipbook: the next frame's uv and the blend towards it (pfx.vert); flip.z<0 when off
+#endif
 #if (MESH_TYPE==T_PFX) && defined(FORWARD)
   vec3 pointLight; // irradiance of the point lights near a particle (pfxbucket.cpp), lit as light.frag does
 #endif

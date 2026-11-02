@@ -39,6 +39,8 @@ BITS = zone('OWN_HEARTH_BITS', 'UNDEF', 'cabbage and leek pieces floating in the
 STONE = zone('OWN_HEARTH_STONE', 'STONE', 'fire-ring fieldstones, sooted inside')
 EMBER = zone('OWN_HEARTH_EMBER', 'UNDEF', 'glowing embers')
 ASH = zone('OWN_HEARTH_ASH', 'UNDEF', 'grey ash and burnt ground')
+CHAR = zone('OWN_HEARTH_CHAR', 'WOOD', 'charred wood behind the burning end of a log')
+GLOW = zone('OWN_HEARTH_GLOW', 'WOOD', 'burning end of a log: charcoal blocks, heat in the cracks')
 WOOD = zone('OWN_HEARTH_WOOD', 'WOOD', 'dark hewn sticks, poles and handles')
 LOG = zone('OWN_HEARTH_LOG', 'WOOD', 'split logs with bark, charred ends')
 CAST = zone('OWN_HEARTH_CAST', 'METAL', 'cast-iron stove plates, rusty brown')
@@ -50,7 +52,7 @@ SOOT = zone('OWN_HEARTH_SOOT', 'STONE', 'the sooted firebox: back wall, hearth f
 
 TARGETS = [
     {'id': 'hearth-cauldron', 'visual': 'CAULDRON_OC', 'budget_tris': 2500, 'zones': [IRON, RIVET, LIQUID, RUST, SCALE, BITS]},
-    {'id': 'hearth-ground-fire', 'visual': 'FIREPLACE_GROUND', 'budget_tris': 2000, 'zones': [STONE, EMBER, ASH, LOG]},
+    {'id': 'hearth-ground-fire', 'visual': 'FIREPLACE_GROUND', 'budget_tris': 2000, 'zones': [STONE, EMBER, ASH, LOG, CHAR, GLOW]},
     {'id': 'hearth-pan', 'visual': 'PAN_OC', 'budget_tris': 2500, 'zones': [IRON, WOOD, STONE, EMBER, ASH]},
     {'id': 'hearth-tripod', 'visual': 'OC_FIREPLACE_V5', 'budget_tris': 3000, 'zones': [WOOD, IRON, RIVET, LIQUID, RUST, SCALE, BITS]},
     {'id': 'hearth-campfire', 'visual': 'NW_MISC_FIREPLACE_01', 'budget_tris': 4000, 'zones': [STONE, LOG, EMBER, ASH]},

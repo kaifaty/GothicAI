@@ -67,6 +67,9 @@ The weathering darkens before each zone is scaled to its measured mean, like the
   colour where its normal points down past "from" (z of the unit normal), fully at straight down. The
   tripod kettle's pale hammered bottom lit by the fire under it read as a lump of ash (city-hearth, R3).
 "metal_scale" multiplies the metallic of the "metal" zones: rusty, grimy iron is mostly not metal.
+"glow": {KEY: share}: embers and the burning ends of logs give off light. Each listed zone's tile has an
+emission.png (fire_tiles.py), the share of each texel that glows; it is baked times the zone's share into the
+atlas's emission.png, which the packer puts in the ORM alpha for the engine (materials.json "emissive").
 """
 import json
 import math
@@ -359,7 +362,13 @@ for slot in obj.material_slots:
     facing.inputs[1].default_value = (0.5, 0.5, 0.5)
     facing.inputs[2].default_value = (0.5, 0.5, 0.5)
     part_val = node(nodes, "ShaderNodeAttribute", attribute_type="GEOMETRY", attribute_name="part_id").outputs["Fac"]
-    passes[mat.name] = dict(nodes=nodes, links=links, output=output, emission=emission, bsdf=bsdf,
+    glow_share = cfg.get("glow", {}).get(key, 0.0)
+    if glow_share > 0:
+        glow_val = math_node(nodes, links, "MULTIPLY", tex("emission", False), float(glow_share), clamp=True)
+    else:
+        glow_val = node(nodes, "ShaderNodeValue").outputs[0]
+        glow_val.default_value = 0.0
+    passes[mat.name] = dict(nodes=nodes, links=links, output=output, emission=emission, bsdf=bsdf, glow=glow_val,
                             colour=colour, rough=rough_out, metal=metal_out, zone=zone_val,
                             position=rel_scaled.outputs[0], facing=facing.outputs[0], part_id=part_val, seam=seam_mask)
     targets[key] = cfg["targets"][key]
@@ -410,6 +419,7 @@ zone = bake_pass("zone", "EMIT", "zone", samples=1, margin=16)[:, :, 0]
 inside = bake_pass("inside", "EMIT", "zone", samples=1, margin=0)[:, :, 0] > 0.5
 normal = bake_pass("normal", "NORMAL", samples=cfg.get("colour_samples", 16))
 ao = bake_pass("ao", "AO", samples=cfg.get("ao_samples", 64))[:, :, 0]
+glow = bake_pass("glow", "EMIT", "glow", samples=cfg.get("colour_samples", 16))[:, :, 0] if cfg.get("glow") else None
 
 strength = cfg.get("ao_strength", 0.85)
 albedo = colour * (1 - strength * (1 - ao))[..., None]
@@ -664,6 +674,8 @@ for key, (atlas_key, _group) in cfg["slots"].items():
         save_png(folder / "metallic.png", metal)
         save_png(folder / "ao.png", np.ones_like(ao))  # AO is already in the albedo
         save_png(out / "atlas-ao.png", ao)
+        if glow is not None:
+            save_png(folder / "emission.png", glow)
         for name, mask in weathering.items():
             save_png(out / f"atlas-{name}.png", np.clip(mask, 0, 1))
         first = folder

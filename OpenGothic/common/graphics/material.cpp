@@ -74,6 +74,7 @@ Material::Material(const asset::Material& m, bool enableAlphaTest, bool requireA
     uvScale = maps.scale;
     antitileCell = maps.antitileCell;
     antitile = maps.antitile;
+    emissive = maps.orm!=nullptr ? maps.emissive : 0.f;
     materialMaps = maps.present;
     }
   }
@@ -122,6 +123,7 @@ bool Material::operator ==(const Material& other) const {
          waveMaxAmplitude==other.waveMaxAmplitude &&
          turbidity==other.turbidity &&
          turbidityDepth==other.turbidityDepth &&
+         emissive==other.emissive &&
          envMapping==other.envMapping;
   }
 

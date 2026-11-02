@@ -847,6 +847,51 @@
       "utc": "2026-10-31T14:44:56Z",
       "thread": "01a1926a-8444-7d42-b8ad-971781a81a6c",
       "parent": null
+    },
+    {
+      "file": "city-hearth/concept-attempt-1.png",
+      "role": "concept",
+      "texture": null,
+      "attempt": 1,
+      "sha256": "4a34d60ea476a2f97a51408decf9d23917e3c070dacbcd20787369aeb4b85f88",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-11-01T21:03:22Z",
+      "thread": "01a198ec-5ac4-7a63-b8fb-38cfa7cbbf3b",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-attempt-2.png",
+      "role": "concept",
+      "texture": null,
+      "attempt": 2,
+      "sha256": "97b7d1930b1dce0688ce81820836d89ee6ce4614a44b145a3219c2b5a661058e",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-11-01T21:04:13Z",
+      "thread": "01a198ec-5ac4-7a63-b8fb-38cfa7cbbf3b",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-attempt-3.png",
+      "role": "concept",
+      "texture": null,
+      "attempt": 3,
+      "sha256": "1ac589f7c7745056cb436ef69516779d34169157856c4d5097db70c289e0fe20",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-11-01T21:04:44Z",
+      "thread": "01a198ec-5ac4-7a63-b8fb-38cfa7cbbf3b",
+      "parent": null
     }
   ],
   "selected": {
@@ -869,6 +914,11 @@
       "file": "city-hearth/concept-hearth-brazier-attempt-9.png",
       "reason": "образец материала и характера; форма — по мешу оригинала (решение пользователя 2026-10-31)",
       "date": "2026-10-31"
+    },
+    "edda-hearth-fire": {
+      "file": "city-hearth/concept-attempt-3.png",
+      "reason": "эталон композиции очага Эдды: поленья звездой с горящими концами, угли и зола, языки из промежутков; камни и сажа котла — по обмеру и заметке fire-composition.md (пользователь 2026-11-02: «Take 3»)",
+      "date": "2026-11-02"
     }
   },
   "reviews": [

@@ -139,6 +139,57 @@ def stick(P, rng, a, b, radius, material, burnt=None, sides=6):
     return part
 
 
+def burning_log(P, rng, a, b, radius, bark, char, glow, char_len, glow_len, sides=8):
+    """A log fed into a fire from its outer end a to its burning inner end b (fire-composition.md): bark, then
+    char_len m of charred wood whose edge against the bark is ragged, then glow_len m of glowing charcoal that
+    narrows to a blunt burnt-down tip. UV: u around in metres, v along the length (grain along the log)."""
+    part = P.new_part()
+    axis = b - a
+    length = axis.length
+    d = axis.normalized()
+    u = d.cross(Vector((0, 0, 1)))
+    if u.length < 1e-3:
+        u = d.cross(Vector((1, 0, 0)))
+    u.normalize()
+    w = d.cross(u)
+    off = rng.uniform(0, 1)
+    t_char = 1 - (char_len + glow_len) / length
+    t_glow = 1 - glow_len / length
+    # rings: (t, radius share, ragged t per vertex in m, material of the band after it)
+    rings_spec = [(0.0, 1.0, 0.0, bark), (t_char * 0.5, 1.0, 0.0, bark), (t_char, 0.97, 0.025, char),
+                  ((t_char + t_glow) / 2, 0.95, 0.0, char), (t_glow, 0.92, 0.015, glow),
+                  ((t_glow + 1) / 2, 0.82, 0.0, glow), (1.0, 0.6, 0.0, None)]
+    bulge = rng.uniform(-0.06, 0.06, sides)  # a log is not a perfect cylinder
+    rings = []
+    for t, share, ragged, _ in rings_spec:
+        row = []
+        for k in range(sides):
+            ang = 2 * math.pi * k / sides
+            tt = t + (rng.uniform(-ragged, ragged) / length if ragged else 0.0)
+            r = radius * share * (1 + bulge[k] + rng.uniform(-0.03, 0.03))
+            row.append((P.vert(a + axis * tt + (u * math.cos(ang) + w * math.sin(ang)) * r, part), tt))
+        rings.append(row)
+    for s in range(len(rings) - 1):
+        mat = rings_spec[s][3]
+        for k in range(sides):
+            j = (k + 1) % sides
+            u0, u1 = 2 * math.pi * radius * k / sides, 2 * math.pi * radius * (k + 1) / sides
+            (v00, t00), (v01, t01) = rings[s][k], rings[s][j]
+            (v10, t10), (v11, t11) = rings[s + 1][k], rings[s + 1][j]
+            P.poly([v00, v01, v11, v10], mat, [(u0, off + t00 * length), (u1, off + t01 * length),
+                                                (u1, off + t11 * length), (u0, off + t10 * length)])
+    tail = [v for v, _ in rings[0]]
+    P.poly(tail, bark, [((v.co - tail[0].co).dot(u), (v.co - tail[0].co).dot(w)) for v in tail])
+    # the tip: a blunt cone of charcoal past the last ring
+    tip = P.vert(b + d * radius * 0.25, part)
+    last = [v for v, _ in rings[-1]]
+    for k in range(sides):
+        j = (k + 1) % sides
+        P.poly([last[k], last[j], tip], glow, [((last[k].co - b).dot(u), (last[k].co - b).dot(w)),
+                                              ((last[j].co - b).dot(u), (last[j].co - b).dot(w)), (0.0, 0.0)])
+    return part
+
+
 def turned(P, c, outer, inner, sides, material, radius_at=None, floor=None):
     """A closed turned vessel round the vertical axis at c: the outer profile [(h, r)] from the bottom up
     to the rim, then the inner profile from the rim down; caps close the bottom and the inner floor.

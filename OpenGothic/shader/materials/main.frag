@@ -306,6 +306,10 @@ vec4 diffuseTex() {
 #else
   vec4 tex = texture(sampler2D(textureMain[tId], samplerMain),uv);
 #endif
+#if (MESH_TYPE==T_PFX)
+  if(shInp.flip.z>=0.0)
+    tex = mix(tex, texture(sampler2D(textureMain[tId], samplerMain), shInp.flip.xy), shInp.flip.z);
+#endif
 
 #if !defined(SIMPLE_MAT)
   tex.a *= alphaWeight;
@@ -360,6 +364,17 @@ vec3 antitileOrm(uint tId, AntitileCell cell) {
   const uint texId = 0;
 #endif
   return textureGrad(sampler2D(textureOrm[texId], samplerMain), cell.uv, cell.duvdx, cell.duvdy).rgb;
+  }
+#endif
+
+#if defined(MATERIAL_MAPS) && (MESH_TYPE!=T_PFX)
+// Embers do not flicker like flames: heat creeps over them in patches of about 20-40 cm over seconds, 0.55..1.
+// The clock wraps at 20 pi seconds, where every term here completes whole periods.
+float emberBreath(vec3 pos) {
+  const float t = float(scene.tickCount32 % 62832u)*0.001;
+  const float a = sin(pos.x*0.23 + t*1.1) * sin(pos.z*0.19 - t*0.7);
+  const float b = sin((pos.x - pos.z)*0.11 + pos.y*0.3 + t*1.9);
+  return 0.775 + 0.225*(0.6*a + 0.4*b);
   }
 #endif
 
@@ -430,6 +445,16 @@ void mainGBuffer(vec4 t) {
       }
     if((bucket[bucketId].flags & BK_ORM)!=0)
       outOrm.rgb = textureGrad(sampler2D(textureOrm[tId], samplerMain), uv, duvdx, duvdy).rgb;
+    }
+  const float glow = bucket[bucketId].emissive;
+  if(glow>0.0 && !maps.antitile && (bucket[bucketId].flags & BK_ORM)!=0) {
+    // the ORM alpha marks the glowing texels (cracks of a burning log, the ember bed); they breathe slowly. Glowing
+    // charcoal is black under its own light: a lamp must not paint the heat as orange wood (r5), so the albedo goes
+    // dark by the share and the ambient pass adds the glow in the colour of its heat (emberColour, common.glsl)
+    const float mask = textureGrad(sampler2D(textureOrm[tId], samplerMain), uv, duvdx, duvdy).a;
+    const float share = clamp(glow*mask*emberBreath(shInp.pos), 0.0, 1.0);
+    outOrm.a = 1.0 - EmissiveOrmCode*share;
+    outDiffuse.rgb *= 1.0 - share;
     }
 #endif
 #endif
