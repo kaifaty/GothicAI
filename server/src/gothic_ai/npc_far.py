@@ -62,7 +62,7 @@ def _combatant(npc: str, values: list[int]) -> Combatant:
     if hp <= 0 or not 0 <= tier <= 2:
         raise GameError("Invalid distant combatant HP or melee talent tier")
     return Combatant(npc, hp, strength, damage, melee_type if equipped else damage_type,
-                     tuple(protection), hitchance[talent], tier)
+                     tuple(protection), hitchance[talent], tier, ("fist", "1h", "2h")[talent])
 
 
 @dataclass
@@ -424,7 +424,8 @@ class FarWorld:
             "fighter": fighter, "act": action, "outcome": outcome,
             "reason": "deadline" if result.winner is None else "hits_to_down",
             "item": crime.get("item", ""), "count": crime.get("count", 0), "returned": returned,
-            "far": True, "model": "hits_v1", "winner": result.winner, "loss": result.loss,
+            "far": True, "model": self._fight_coefficients.model,
+            "winner": result.winner, "loss": result.loss,
             "duration_s": result.duration_s, "hits": result.hits, "p_win": round(result.p_win, 3),
             "p_timeout": round(result.p_timeout, 3),
             **({"by_loss": result.by_loss} if result.winner is None else {}),

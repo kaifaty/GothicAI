@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Callable
 from dataclasses import replace
 from types import SimpleNamespace
@@ -14,7 +15,7 @@ from gothic_ai.game import GameDisconnected, GameError
 from gothic_ai.memory import MemoryStore
 from gothic_ai.npc_crimes import NpcCrimes
 from gothic_ai.npc_far import FarWorld, _combatant
-from gothic_ai.npc_far_fight import TIME_LIMIT_S, Coefficients, Combatant, hit_damage, resolve
+from gothic_ai.npc_far_fight import TIME_LIMIT_S, Coefficients, Combatant, Parts, _duel, hit_damage, resolve
 from gothic_ai.protocol import NpcRoster, NpcView, Session, Snapshot
 from gothic_ai.social import Social
 from tests.test_npc_crimes import NpcLink
@@ -29,6 +30,18 @@ def fight_stats(*, hp=200, strength=60, protection=30, weapon=30, flags=0,
     return [10, hp, hp, strength, *hitchance, *([protection] * 8), *damage,
             1, *skills, int(weapon > 0), flags, int(weapon > 0), weapon, *([0] * 8),
             int(readied and weapon > 0), weapon if readied else 0, *([0] * 8)]
+
+
+def part_tables() -> dict[str, Any]:
+    return {
+        "version": 3, "source": "test",
+        "swing_rate": {weapon: {str(tier): 1.0 for tier in range(3)}
+                       for weapon in ("fist", "1h", "2h")},
+        "p_hit": {weapon: {str(tier): {str(opponent): .5 for opponent in range(3)}
+                           for tier in range(3)} for weapon in ("fist", "1h", "2h")},
+        "damage_multiplier": {weapon: [.5, 1.0, 1.5] for weapon in ("fist", "1h", "2h")},
+        "response_delay": [0.0, 1.0, 2.0],
+    }
 
 
 STRONG = fight_stats()
@@ -140,6 +153,20 @@ async def world():
     if chronicle._background:
         await asyncio.gather(*chronicle._background)
     memory.close()
+
+
+@pytest.fixture(params=[(1, "hits_v1"), (3, "hits_v3")])
+def fight_model(world, tmp_path, monkeypatch, request):
+    version, model = request.param
+    tables = (part_tables() if version == 3 else {
+        "version": 1, "source": "test", "rate_base": .4, "rate_per_tier": .5, "damage_scale": 1.,
+    })
+    calibration = tmp_path / "gamedata" / "far_fight.json"
+    calibration.parent.mkdir()
+    calibration.write_text(json.dumps(tables))
+    monkeypatch.setattr("gothic_ai.npc_far.__file__", str(tmp_path / "npc_far.py"))
+    world.far = FarWorld(world.will)
+    return model
 
 
 async def test_batch_engine_positions_take_priority_over_routines_and_share_fresh_hero(world):
@@ -265,16 +292,16 @@ def crime(*, kind: str = "theft") -> dict[str, Any]:
 
 
 @pytest.mark.parametrize("wins", [True, False])
-async def test_far_fight_knocks_out_loser_before_returning_goods_and_repeats_once(world, wins):
+async def test_far_fight_knocks_out_loser_before_returning_goods_and_repeats_once(world, wins, fight_model):
     world.link.values = [*(STRONG if wins else WEAK), *(WEAK if wins else STRONG), 3]
     result = await world.far.fight(crime(), OWNER, 0)
     assert result["far"] and result["returned"] == (2 if wins else 0)
     assert result["outcome"] == ("reclaimed" if wins else "defender_down")
     loser, winner = (THIEF, OWNER) if wins else (OWNER, THIEF)
     expected = resolve(result["act"], _combatant(OWNER, world.link.values[:48]),
-                       _combatant(THIEF, world.link.values[48:96]), Coefficients(0.4, 0.5, 1.0))
+                       _combatant(THIEF, world.link.values[48:96]), world.far._fight_coefficients)
     assert result["winner"] == winner == expected.winner
-    assert (result["reason"], result["model"]) == ("hits_to_down", "hits_v1")
+    assert (result["reason"], result["model"]) == ("hits_to_down", fight_model)
     assert (result["loss"], result["duration_s"], result["hits"], result["p_win"]) == (
         expected.loss, expected.duration_s, expected.hits, round(expected.p_win, 3),
     )
@@ -322,16 +349,16 @@ async def test_far_fight_missing_goods_partial_return_and_attack(world, kind, go
     assert len(world.link.effects) == 1 + int(returned > 0)
 
 
-async def test_far_timeout_wounds_both_before_facts_without_returning_goods(world):
+async def test_far_timeout_wounds_both_before_facts_without_returning_goods(world, fight_model):
     world.link.values = [*DURABLE, *DURABLE, 3]
     world.link.after_effect = lambda: world.chronicle.facts() == [] or pytest.fail(
         "Distant fight facts preceded the effect",
     )
     result = await world.far.fight(crime(), OWNER, 0)
     expected = resolve(result["act"], _combatant(OWNER, DURABLE), _combatant(THIEF, DURABLE),
-                       Coefficients(0.4, 0.5, 1.0))
+                       world.far._fight_coefficients)
     assert (result["outcome"], result["reason"], result["model"], result["winner"]) == (
-        "timeout", "deadline", "hits_v1", None,
+        "timeout", "deadline", fight_model, None,
     )
     assert result["far"] and result["returned"] == 0 and result["duration_s"] == 120
     assert (result["loss"], result["by_loss"], result["hits"], result["p_win"],
@@ -531,8 +558,10 @@ def test_drawn_equipped_weapon_uses_native_damage_mask_and_selected_talent(
     assert (sheathed.damage, sheathed.damage_type, sheathed.hitchance, sheathed.tier) == (
         (30, *([0] * 7)), 1, expected_chance, expected_tier,
     )
+    assert sheathed.weapon == ("2h" if flags & ((1 << 16) | (1 << 17)) else "1h")
     fists = _combatant(THIEF, fight_stats(weapon=0, hitchance=(7, 60, 100)))
     assert (fists.hitchance, fists.tier, fists.damage) == (7, 0, (0,) * 8)
+    assert fists.weapon == "fist"
 
 
 def test_readied_weapon_contribution_is_replaced_including_per_type_damage():
@@ -546,7 +575,7 @@ def test_readied_weapon_contribution_is_replaced_including_per_type_damage():
     assert actor.damage_type == 1
 
 
-@pytest.mark.parametrize("contents", [None, "{", "{}"])
+@pytest.mark.parametrize("contents", [None, "{", "{}", '{"version":3,"source":"test","swing_rate":{}}'])
 def test_far_world_load_requires_valid_calibration(world, tmp_path, monkeypatch, contents):
     path = tmp_path / "npc_far.py"
     calibration = tmp_path / "gamedata" / "far_fight.json"
@@ -556,6 +585,60 @@ def test_far_world_load_requires_valid_calibration(world, tmp_path, monkeypatch,
     monkeypatch.setattr("gothic_ai.npc_far.__file__", str(path))
     with pytest.raises((FileNotFoundError, ValueError)):
         FarWorld(world.will)
+
+
+def test_shipped_far_fight_is_v3(world):
+    assert isinstance(world.far._fight_coefficients, Parts)
+    assert world.far._fight_coefficients.model == "hits_v3"
+
+
+def test_far_parts_load_and_act_is_repeatable(world, tmp_path, monkeypatch):
+    path = tmp_path / "npc_far.py"
+    calibration = tmp_path / "gamedata" / "far_fight.json"
+    calibration.parent.mkdir()
+    tables = part_tables()
+    calibration.write_text(json.dumps(tables))
+    monkeypatch.setattr("gothic_ai.npc_far.__file__", str(path))
+    parts = FarWorld(world.will)._fight_coefficients
+    assert isinstance(parts, Parts) and parts.model == "hits_v3"
+    assert parts.swing_rate == tables["swing_rate"]
+    assert parts.p_hit == tables["p_hit"]
+    assert parts.damage_multiplier["1h"] == (.5, 1.0, 1.5)
+    assert parts.response_delay == (0., 1., 2.)
+    fighter, culprit = _combatant(OWNER, STRONG), _combatant(THIEF, STRONG)
+    result = resolve("far:measured", fighter, culprit, parts)
+    assert resolve("far:measured", fighter, culprit, parts) == result
+
+
+def test_far_parts_defender_starts_after_first_hit_and_measured_delay(monkeypatch):
+    class Draws:
+        def __init__(self, seed):
+            self.swings = iter((.9, .1, .1))  # miss at 10, hit at 20, response at 25
+
+        def expovariate(self, rate):
+            return 10.
+
+        def random(self):
+            return next(self.swings)
+
+        def randrange(self, stop):
+            return 99
+
+        def choice(self, samples):
+            return samples[0]
+
+    monkeypatch.setattr("gothic_ai.npc_far_fight.random.Random", Draws)
+    tables = part_tables()
+    tables["damage_multiplier"] = {weapon: [1.] for weapon in ("fist", "1h", "2h")}
+    tables["response_delay"] = [5.]
+    fighter = Combatant("FIGHTER", 2, 0, (0,) * 8, 1, (0,) * 8, 0, 0)
+    culprit = replace(fighter, name="CULPRIT", hp=100)
+    result = _duel(fighter, culprit, Coefficients.from_mapping(tables), b"response")
+    assert result == ("CULPRIT", 5, 25., {"FIGHTER": 1, "CULPRIT": 1}, 0)
+    tables["p_hit"]["1h"]["0"]["0"] = 0.
+    Draws.random = lambda self: .9
+    result = _duel(fighter, culprit, Coefficients.from_mapping(tables), b"no-response")
+    assert result == (None, 0, 120, {"FIGHTER": 0, "CULPRIT": 0}, 0)
 
 
 @pytest.mark.parametrize("mask,damage,protection,critical,expected", [
