@@ -32,6 +32,8 @@ class LightGroup final {
         void     setColor (const Tempest::Vec3& c);
         void     setColor (const std::vector<Tempest::Vec3>& c, float fps, bool smooth);
         void     setTimeOffset(uint64_t t);
+        // the yaw of the light's own axes (radians round world Y): its light mask turns with it
+        void     setYaw(float yaw);
 
         uint64_t effectPrefferedTime() const;
 
@@ -56,6 +58,10 @@ class LightGroup final {
 
     void   dbgLights(DbgPainter& p) const;
 
+    // Light masks (cookies) of own lights, by slot 1..MaxCookies; an empty slot holds white (light.frag binds them all)
+    static constexpr size_t MaxCookies = 4;
+    const Tempest::Texture2d& cookie(size_t slot) const;
+
     struct Near {
       Tempest::Vec3 pos;
       float         range = 0;
@@ -77,7 +83,7 @@ class LightGroup final {
       Tempest::Vec3 pos;
       float         range  = 0;
       Tempest::Vec3 color;
-      float         pading = 0;
+      float         cookie = 0; // scene.glsl LightSource
       };
 
     struct VsmSsbo {
@@ -94,6 +100,9 @@ class LightGroup final {
     const asset::LightPreset& findPreset(std::string_view preset) const;
 
     std::vector<asset::LightPreset> presets;
+    uint32_t                   cookieSlot(std::string_view name);
+    std::vector<std::string>         cookieNames;
+    const Tempest::Texture2d*        cookieTex[MaxCookies] = {};
 
     mutable std::mutex               sync;
     std::vector<size_t>              freeList;

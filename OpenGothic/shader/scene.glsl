@@ -45,7 +45,7 @@ struct LightSource {
   vec3  pos;
   float range;
   vec3  color;
-  float padd0;
+  float cookie; // 0: none; else the light mask's slot (integer part) and the light's yaw in turns (fraction)
   };
 
 struct MorphDesc {
