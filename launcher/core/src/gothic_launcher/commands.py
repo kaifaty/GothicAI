@@ -173,9 +173,13 @@ def find_layout(config: Config) -> Layout:
         game_dir = Path()
     else:
         if sys.platform == "linux" and game_dir == Path.home() / "gothic-ai/game-settings":
+            argv = [sys.executable, str(repo / "scripts/ryzen_game.py"), "--json", f"--assets={game_dir}"]
+            converter = content_converter(game_bin)
+            if converter.is_file() and os.access(converter, os.X_OK):
+                argv.extend(["--converter", str(converter)])
             try:
                 result = subprocess.run(
-                    [sys.executable, str(repo / "scripts/ryzen_game.py"), "--json", f"--assets={game_dir}"],
+                    argv,
                     capture_output=True, text=True, check=True,
                 )
                 game_env = json.loads(result.stdout)
