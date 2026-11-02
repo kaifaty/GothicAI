@@ -7682,6 +7682,10 @@ void meleeAiResponseFields(World& world) {
   if(!contact || *contact>120)
     return;
   bench.meleeAiResponse.reset();
+  if(arm.parry) {
+    arm.npc->setDirection(arm.attacker->position()-arm.npc->position());
+    arm.npc->updateTransform();
+    }
   const bool started = arm.parry ? arm.npc->blockSword() : arm.npc->meleeDodge(MeleeDodge::Direction::Left);
   const std::string response = arm.parry ? "parry" : "dodge";
   say("melee AI response " + response + " before the charged contact of " + symName(world,arm.attacker) +
@@ -18225,13 +18229,12 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     say("dodge " + symName(w,n) + " " + std::string(MeleeDodge::name(dir)) + (ok ? ": started" : ": not started"));
     }
   else if(c=="melee-ai-response") {
-    // melee-ai-response dodge|parry <attacker> [timeout ms]: respond only to a real charged release.
+    // melee-ai-response dodge|parry <attacker>: respond to a real charged release within 45 seconds.
     auto* attacker = a.size()>2 ? findNpc(w,pl,a[2]) : nullptr;
-    if(a.size()<3 || a.size()>4 || (a[1]!="dodge" && a[1]!="parry") || !attacker || attacker==&pl) {
-      arenaAbort("melee AI response expects dodge|parry attacker [timeout ms]");return;
+    if(a.size()!=3 || (a[1]!="dodge" && a[1]!="parry") || !attacker || attacker==&pl) {
+      arenaAbort("melee AI response expects dodge|parry attacker");return;
       }
-    bench.meleeAiResponse = Bench::MeleeAiResponse{&pl,attacker,a[1]=="parry",
-      w.tickCount()+uint64_t(std::max(1.f,num(a,3,45000)))};
+    bench.meleeAiResponse = Bench::MeleeAiResponse{&pl,attacker,a[1]=="parry",w.tickCount()+45000};
     say("melee AI response " + a[1] + " armed against " + symName(w,attacker));
     }
   else if(c=="clear") {

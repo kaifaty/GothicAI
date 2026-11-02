@@ -51,7 +51,7 @@ face npc BDT_1013_BANDIT_L
 wait 1000
 rec b-dodge novideo
 mark b-dodge
-melee-ai-response dodge BDT_1013_BANDIT_L 45000
+melee-ai-response dodge BDT_1013_BANDIT_L
 fight BDT_1013_BANDIT_L player
 wait 45000
 hp player
@@ -67,7 +67,7 @@ face npc BDT_1013_BANDIT_L
 wait 1000
 rec b-parry novideo
 mark b-parry
-melee-ai-response parry BDT_1013_BANDIT_L 45000
+melee-ai-response parry BDT_1013_BANDIT_L
 fight BDT_1013_BANDIT_L player
 wait 45000
 hp player
