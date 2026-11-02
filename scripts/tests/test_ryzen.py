@@ -679,6 +679,158 @@ uv() { bash "$TEST_ROOT/source/scripts/bench.sh"; }
         self.assertFalse(manifest.exists())
         self.assertEqual(environment(self.home, overrides), overrides)
 
+    def format_setup(self):
+        self.base_cache = self.root / 'base-cache'
+        self.base_store = self.root / 'base-store'
+        for key in tuple(self.env):
+            if key.startswith('OPENGOTHIC_BASE') or key in ('GOTHIC_DIR', 'OPENGOTHIC_VIDEOS_FINGERPRINT'):
+                self.env.pop(key)
+        self.env.update(OPENGOTHIC_BASE_CACHE=str(self.base_cache), OPENGOTHIC_BASE_STORE=str(self.base_store))
+        self.converter = self.bin / 'content-convert'
+        self.converter.write_text(
+            f'#!{sys.executable}\nimport json, sys\nassert sys.argv[1:] == ["formats"]\n'
+            f'print(json.dumps({{"base": {"2" * 64!r}, "videos": {"4" * 64!r}}}))\n')
+        self.converter.chmod(0o755)
+        self.base_part('c' * 64, '1' * 64)
+
+    def base_part(self, fingerprint, format_sha256, root=None, **changed):
+        part = (self.base_cache if root is None else root) / fingerprint
+        part.mkdir(parents=True, exist_ok=True)
+        identity = {'fingerprint': fingerprint, 'format_sha256': format_sha256,
+                    'archives': [{'name': 'GOTHIC.VDF', 'sha256': '5' * 64}],
+                    'loose_files': [], 'sources': {'version': 'Gothic II'}}
+        identity.update(changed)
+        (part / 'base.json').write_text(json.dumps(identity))
+        return part
+
+    def video_part(self, fingerprint, format_sha256, root=None, sources=None):
+        part = (self.base_cache if root is None else root) / 'videos' / fingerprint
+        part.mkdir(parents=True, exist_ok=True)
+        identity = {'format_sha256': format_sha256,
+                    'sources': [{'name': 'INTRO.BIK', 'sha256': '6' * 64}] if sources is None else sources}
+        (part / 'videos.json').write_text(json.dumps({'identity': json.dumps(identity)}))
+
+    def game_result(self, *, converter=True, assets=None, **overrides):
+        argv = [sys.executable, str(GAME_HELPER), '--json',
+                '--assets=' + str(assets or self.home / 'gothic-ai/game-settings')]
+        if converter:
+            argv.extend(['--converter', str(self.converter)])
+        return subprocess.run(argv, env=dict(self.env, **overrides), capture_output=True, text=True, timeout=10)
+
+    def test_game_settings_replace_base_from_cache_before_store_and_ignore_unrelated_parts(self):
+        self.format_setup()
+        self.base_part('d' * 64, '2' * 64)
+        self.base_part('e' * 64, '2' * 64, self.base_store / 'base')
+        for fingerprint in ('.tmp-' + '0' * 64, '0' * 63, '.lock', '.use'):
+            self.base_part(fingerprint, '2' * 64)
+        self.base_part('0' * 64, '2' * 64).joinpath('base.json').write_text('{broken')
+        for fingerprint, changed in (('1' * 64, {'archives': []}),
+                                     ('2' * 64, {'loose_files': ['other']}),
+                                     ('3' * 64, {'sources': {'version': 'other'}})):
+            self.base_part(fingerprint, '2' * 64, **changed)
+        pointer = self.home / 'gothic-ai/game-base.json'
+        previous = pointer.read_bytes()
+        result = self.game_result()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)['OPENGOTHIC_BASE_FINGERPRINT'], 'd' * 64)
+        self.assertEqual(pointer.read_bytes(), previous)
+
+    def test_game_settings_replace_base_from_store_when_pointer_metadata_is_only_in_store(self):
+        self.format_setup()
+        stored = self.base_store / 'base'
+        stored.mkdir(parents=True)
+        shutil.move(self.base_cache / ('c' * 64), stored / ('c' * 64))
+        self.base_part('e' * 64, '2' * 64, stored)
+        result = self.game_result()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)['OPENGOTHIC_BASE_FINGERPRINT'], 'e' * 64)
+
+    def test_game_settings_replace_videos_with_same_sources_and_keep_missing_replacement(self):
+        self.format_setup()
+        self.base_part('c' * 64, '2' * 64)
+        (self.home / 'gothic-ai/game-base.json').write_text(json.dumps({'base': 'c' * 64, 'videos': 'a' * 64}))
+        self.video_part('a' * 64, '3' * 64)
+        self.video_part('0' * 64, '4' * 64, sources=[])
+        for root in (self.base_cache, self.base_store / 'base'):
+            with self.subTest(root=root):
+                self.video_part('b' * 64, '4' * 64, root)
+                result = self.game_result()
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(json.loads(result.stdout)['OPENGOTHIC_VIDEOS_FINGERPRINT'], 'b' * 64)
+                shutil.rmtree(root / 'videos' / ('b' * 64))
+        result = self.game_result()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)['OPENGOTHIC_VIDEOS_FINGERPRINT'], 'a' * 64)
+
+    def test_game_settings_missing_base_format_fails_with_exact_recovery_message(self):
+        self.format_setup()
+        for store in (str(self.base_store), ''):
+            with self.subTest(store=store):
+                result = self.game_result(OPENGOTHIC_BASE_STORE=store)
+                location = str(self.base_cache) + (f' or {store}/base' if store else '')
+                expected = (
+                    f'game-base.json names base {"c" * 64} of importer format {"1" * 12}, '
+                    f'but this engine needs {"2" * 12}; no ready base of the same installation '
+                    f'in that format in {location}. Start the game once on the Mac on this version '
+                    '(it publishes the base to the shared store), or run scripts/ryzen.sh setup.\n')
+                self.assertEqual(result.returncode, 1)
+                self.assertEqual(result.stdout, '')
+                self.assertEqual(result.stderr, expected)
+
+    def test_game_settings_keep_pointer_without_usable_converter_or_original_metadata(self):
+        self.format_setup()
+        self.base_part('d' * 64, '2' * 64)
+        working = self.converter.read_text()
+        for mode in ('matching', 'no-flag', 'missing', 'hanging', 'invalid-json', 'nonzero', 'missing-base'):
+            with self.subTest(mode=mode):
+                self.converter.write_text(working)
+                if mode == 'matching':
+                    self.base_part('c' * 64, '2' * 64)
+                else:
+                    self.base_part('c' * 64, '1' * 64)
+                if mode == 'missing':
+                    self.converter.unlink()
+                elif mode == 'hanging':
+                    self.converter.write_text(f'#!{sys.executable}\nimport time\ntime.sleep(30)\n')
+                elif mode == 'invalid-json':
+                    self.converter.write_text('#!/bin/sh\necho not-json\n')
+                elif mode == 'nonzero':
+                    self.converter.write_text('#!/bin/sh\nexit 2\n')
+                elif mode == 'missing-base':
+                    shutil.rmtree(self.base_cache / ('c' * 64))
+                if self.converter.exists():
+                    self.converter.chmod(0o755)
+                result = self.game_result(converter=mode != 'no-flag')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(json.loads(result.stdout)['OPENGOTHIC_BASE_FINGERPRINT'], 'c' * 64)
+
+    def test_game_settings_keep_explicit_content_choices_and_unrelated_assets(self):
+        self.format_setup()
+        self.base_part('d' * 64, '2' * 64)
+        (self.home / 'gothic-ai/game-base.json').write_text(json.dumps({'base': 'c' * 64, 'videos': 'a' * 64}))
+        self.video_part('a' * 64, '3' * 64)
+        self.video_part('b' * 64, '4' * 64)
+        for key, value in (('OPENGOTHIC_BASE', '/custom/base'), ('OPENGOTHIC_BASE', ''),
+                           ('OPENGOTHIC_BASE_FINGERPRINT', 'e' * 64), ('OPENGOTHIC_BASE_FINGERPRINT', ''),
+                           ('OPENGOTHIC_VIDEOS_FINGERPRINT', 'f' * 64), ('OPENGOTHIC_VIDEOS_FINGERPRINT', '')):
+            with self.subTest(key=key, value=value):
+                result = self.game_result(**{key: value})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                selected = json.loads(result.stdout)
+                if key == 'OPENGOTHIC_VIDEOS_FINGERPRINT':
+                    self.assertEqual(selected[key], value)
+                    self.assertEqual(selected['OPENGOTHIC_BASE_FINGERPRINT'], 'd' * 64)
+                else:
+                    expected = value if key == 'OPENGOTHIC_BASE_FINGERPRINT' and value else 'c' * 64
+                    self.assertEqual(selected['OPENGOTHIC_BASE_FINGERPRINT'], expected)
+                    if key == 'OPENGOTHIC_BASE':
+                        self.assertEqual(selected[key], value)
+        result = self.game_result(assets='/custom/assets')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        selected = json.loads(result.stdout)
+        self.assertEqual(selected['GOTHIC_DIR'], '/custom/assets')
+        self.assertNotIn('OPENGOTHIC_BASE_FINGERPRINT', selected)
+
     def test_pytest_requires_setup_and_uses_game_settings(self):
         storygraph = self.bin / 'storygraph'
         storygraph.write_text(f'#!{sys.executable}\n' + r'''

@@ -329,6 +329,8 @@ def test_ryzen_settings_load_shared_fingerprints_before_preparation(config, tmp_
     config.set("game.dir", str(settings))
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setattr(commands.sys, "platform", "linux")
+    monkeypatch.setenv("OPENGOTHIC_BASE_CACHE", str(tmp_path / "cache"))
+    monkeypatch.setenv("OPENGOTHIC_BASE_STORE", str(tmp_path / "store"))
     for key in (
         "GOTHIC_DIR", "OPENGOTHIC_BASE", "OPENGOTHIC_BASE_FINGERPRINT", "OPENGOTHIC_VIDEOS_FINGERPRINT"
     ):
@@ -358,6 +360,52 @@ def test_ryzen_settings_load_shared_fingerprints_before_preparation(config, tmp_
     assert find_layout(config).game_env["OPENGOTHIC_BASE_FINGERPRINT"] == "c" * 64
     monkeypatch.setenv("OPENGOTHIC_BASE", "/explicit/base")
     assert preparation(binary, settings, tmp_path, game(config, find_layout(config), PORTS).env) is None
+
+
+@posix_only
+def test_ryzen_settings_replace_stale_base_with_engine_format(config, tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    repo = home / "repo"
+    (repo / "server").mkdir(parents=True)
+    (repo / "server/pyproject.toml").touch()
+    (repo / "scripts").mkdir()
+    source = Path(__file__).resolve().parents[3] / "scripts/ryzen_game.py"
+    shutil.copyfile(source, repo / "scripts/ryzen_game.py")
+    binary = repo / "Gothic2Notr"
+    binary.touch(mode=0o755)
+    converter = repo / "content-convert"
+    converter.write_text(
+        f"#!{sys.executable}\nimport json, sys\nassert sys.argv[1:] == ['formats']\n"
+        f"print(json.dumps({{'base': {'2' * 64!r}, 'videos': {'3' * 64!r}}}))\n"
+    )
+    converter.chmod(0o755)
+    settings = home / "gothic-ai/game-settings"
+    (settings / "system").mkdir(parents=True)
+    for name in ("Gothic.ini", "SystemPack.ini"):
+        (settings / "system" / name).touch()
+    (home / "gothic-ai/game-base.json").write_text(json.dumps({"base": "a" * 64, "videos": ""}))
+    cache = tmp_path / "cache"
+    for fingerprint, format_sha256 in (("a" * 64, "1" * 64), ("b" * 64, "2" * 64)):
+        directory = cache / fingerprint
+        directory.mkdir(parents=True)
+        (directory / "base.json").write_text(json.dumps({
+            "fingerprint": fingerprint, "format_sha256": format_sha256,
+            "archives": [{"name": "GOTHIC.DAT", "sha256": "4" * 64}],
+            "loose_files": [], "sources": {"gothic": "Gothic II"},
+        }))
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(commands.sys, "platform", "linux")
+    for key in tuple(os.environ):
+        if key.startswith("OPENGOTHIC_BASE") or key in ("GOTHIC_DIR", "OPENGOTHIC_VIDEOS_FINGERPRINT"):
+            monkeypatch.delenv(key)
+    monkeypatch.setenv("OPENGOTHIC_BASE_CACHE", str(cache))
+    monkeypatch.setenv("OPENGOTHIC_BASE_STORE", str(tmp_path / "store"))
+    config.set("paths.repo", str(repo))
+    config.set("paths.uv", "/bin/sh")
+    config.set("paths.game_bin", str(binary))
+    config.set("game.dir", str(settings))
+
+    assert find_layout(config).game_env["OPENGOTHIC_BASE_FINGERPRINT"] == "b" * 64
 
 
 @posix_only
