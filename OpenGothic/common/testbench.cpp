@@ -637,6 +637,17 @@ struct Bench {
     bool pending = false;
   } npcTierTest;
 
+  struct NpcSpeedTest {
+    Npc* npc = nullptr;
+    const WayPoint* start = nullptr;
+    const WayPoint* end = nullptr;
+    Vec3 previous;
+    uint64_t began = 0, previousTick = 0, measuredMs = 0;
+    unsigned leg = 0, samples = 0;
+    float length = 0, distance = 0, expectedDistance = 0;
+    std::string firstAnimation, lastAnimation;
+  } npcSpeedTest;
+
   uint64_t    waitUntil = 0;
   std::chrono::steady_clock::time_point realWaitUntil;
   bool        waitArrive = false;
@@ -13783,8 +13794,8 @@ bool npcTierTestTick(World& world,Npc& player) {
     const bool sameGoal=turning || (goal.active && goal.point==test.destination);
     const auto* head=npc.aiQueueFront();
     const bool sameTurn=!turning || (head && head->act==AI_TurnToNpc);
-    const bool pass=npc.simTier()!=test.previous && suffix && sameGoal && sameTurn &&
-                    horizontal<=travel+0.1f && std::abs(delta.y)<=travel+30.f;
+    const float afterHeight=std::hypot(horizontal,std::max(0.f,std::abs(delta.y)-30.f));
+    const bool pass=npc.simTier()!=test.previous && suffix && sameGoal && sameTurn && afterHeight<=travel+0.1f;
     test.maximumJump=std::max(test.maximumJump,delta.length());
     test.maximumHeight=std::max(test.maximumHeight,std::abs(delta.y));
     if(npc.simTier()==NpcSimTier::Full)++test.toFull[turning?1:0];
@@ -13793,7 +13804,7 @@ bool npcTierTestTick(World& world,Npc& player) {
       ",\"action\":"+jsonStr(turning?"turn":"edge")+",\"from\":"+jsonStr(NpcSimTiers::name(test.previous))+
       ",\"to\":"+jsonStr(NpcSimTiers::name(npc.simTier()))+",\"jump_cm\":"+ragdollNumber(delta.length())+
       ",\"horizontal_cm\":"+ragdollNumber(horizontal)+",\"height_cm\":"+ragdollNumber(std::abs(delta.y))+
-      ",\"tick_travel_cm\":"+ragdollNumber(travel)+",\"angle_delta_deg\":"+
+      ",\"tick_travel_cm\":"+ragdollNumber(travel)+",\"after_height_correction_cm\":"+ragdollNumber(afterHeight)+",\"angle_delta_deg\":"+
       ragdollNumber(std::abs(std::remainder(npc.rotation()-test.beforeAngle,360.f)))+
       ",\"path_preserved\":"+(suffix?"true":"false")+",\"destination_preserved\":"+(sameGoal?"true":"false")+
       ",\"pass\":"+(pass?"true":"false"));
@@ -13809,9 +13820,11 @@ bool npcTierTestTick(World& world,Npc& player) {
     const auto* head=npc.aiQueueFront();
     const auto goal=npc.navigationGoal();
     const auto* current=npc.currentGoToPoint();
+    const auto fromStart=npc.position()-test.started;
+    const auto toWaypoint=current ? current->groundPos-npc.position() : Vec3();
     const bool ready=turning ? head && head->act==AI_TurnToNpc && turned>0.5f :
-      current && goal.active && moved>0.1f && (npc.position()-test.started).length()>50.f &&
-      (current->position()-npc.position()).length()>200.f;
+      current && goal.active && moved>0.1f && std::hypot(fromStart.x,fromStart.z)>50.f &&
+      std::hypot(toWaypoint.x,toWaypoint.z)>200.f;
     if(!ready)return true;
     test.before=npc.position();
     test.beforeAngle=npc.rotation();
@@ -13862,6 +13875,83 @@ bool npcTierTestTick(World& world,Npc& player) {
   test.npc=nullptr;
   if(!enough)arenaAbort("NPC tier transition test did not observe 20 switches each way during both actions");
   return false;
+  }
+
+bool npcSpeedPrepare(World& world) {
+  auto& test=bench.npcSpeedTest;
+  static constexpr const char* instances[]={"BAU_904_BAUER","OrcWarrior_Roam","Wolf"};
+  static constexpr WalkBit modes[]={WalkBit::WM_Walk,WalkBit::WM_Run,WalkBit::WM_Sneak};
+  if(test.leg%6==0) {
+    if(test.npc)world.removeNpc(*test.npc);
+    const auto instance=world.script().findSymbolIndex(instances[test.leg/6]);
+    test.npc=instance==size_t(-1) ? nullptr : world.addNpc(instance,test.start->groundPos);
+    if(!test.npc || !test.npc->visualSkeleton() || test.npc->isDown()) {
+      test.npc=nullptr;arenaAbort("NPC speed fixture instance is unavailable");return false;
+      }
+    }
+  auto& npc=*test.npc;
+  npc.setInteraction(nullptr,true);npc.clearAiQueue();npc.clearState(true);npc.clearGoTo();
+  npc.setTarget(nullptr);npc.setExternalControl(true);npc.stopWalking();npc.closeWeapon(true);npc.clearSpeed();
+  npc.setSimTierOverride(test.leg%2==0 ? NpcSimTier::Full : NpcSimTier::Simplified);
+  npc.setPosition(test.start->groundPos);npc.setDirection(test.end->groundPos-test.start->groundPos);
+  npc.attachToPoint(test.start);npc.updateTransform();
+  npc.aiPush(AiQueue::aiSetWalkMode(modes[(test.leg/2)%3]));
+  npc.aiPush(AiQueue::aiGoToPoint(*test.end));
+  test.began=test.previousTick=world.tickCount();test.previous=npc.position();
+  test.measuredMs=0;test.samples=0;test.distance=0;test.expectedDistance=0;
+  test.firstAnimation.clear();test.lastAnimation.clear();
+  return true;
+  }
+
+bool npcSpeedTick(World& world) {
+  auto& test=bench.npcSpeedTest;
+  if(!test.npc)return false;
+  auto& npc=*test.npc;
+  const auto now=world.tickCount();
+  if(now-test.began>600000) {
+    test.npc=nullptr;arenaAbort("NPC speed fixture did not arrive on the authored edge");return true;
+    }
+  const auto edge=test.end->groundPos-test.start->groundPos;
+  const auto offset=npc.position()-test.start->groundPos,previous=test.previous-test.start->groundPos;
+  const auto progress=[&](const Vec3& p) {return (p.x*edge.x+p.z*edge.z)/(test.length*test.length);};
+  if(now>test.previousTick && progress(previous)>=.2f && progress(offset)<=.8f) {
+    const auto expected=test.leg%2==0 ? NpcSimTier::Full : NpcSimTier::Simplified;
+    if(npc.simTier()!=expected || npc.currentGoToPoint()!=test.end) {
+      test.npc=nullptr;arenaAbort("NPC speed fixture left the requested tier or authored edge");return true;
+      }
+    const auto dt=now-test.previousTick;
+    const auto moved=npc.position()-test.previous;
+    test.distance+=(moved.x*edge.x+moved.z*edge.z)/test.length;
+    test.expectedDistance+=npc.simplifiedMoveSpeed()*float(dt);
+    test.measuredMs+=dt;++test.samples;
+    if(test.firstAnimation.empty())test.firstAnimation=npc.animNames();
+    test.lastAnimation=npc.animNames();
+    }
+  test.previous=npc.position();test.previousTick=now;
+  if(!npc.isAiQueueEmpty())return true;
+  static constexpr const char* species[]={"human","orc","wolf"};
+  static constexpr const char* modes[]={"walk","run","sneak"};
+  const bool arrived=(npc.position()-test.end->groundPos).length()<=150.f;
+  const bool pass=arrived && test.samples>=3 && test.distance>0;
+  event("npc_speed_sample","\"species\":"+jsonStr(species[test.leg/6])+
+    ",\"npc\":"+jsonStr(symName(world,&npc))+",\"walk_mode\":"+jsonStr(modes[(test.leg/2)%3])+
+    ",\"tier\":"+jsonStr(NpcSimTiers::name(npc.simTier()))+
+    ",\"from\":"+jsonStr(test.start->name)+",\"to\":"+jsonStr(test.end->name)+
+    ",\"edge_cm\":"+ragdollNumber(test.length)+",\"edge_height_cm\":"+ragdollNumber(edge.y)+
+    ",\"elapsed_ms\":"+std::to_string(now-test.began)+",\"measured_ms\":"+std::to_string(test.measuredMs)+
+    ",\"samples\":"+std::to_string(test.samples)+",\"distance_cm\":"+ragdollNumber(test.distance)+
+    ",\"sequence_speed_m_s\":"+ragdollNumber(test.measuredMs ? test.expectedDistance*10.f/float(test.measuredMs) : 0.f)+
+    ",\"observed_speed_m_s\":"+ragdollNumber(test.measuredMs ? test.distance*10.f/float(test.measuredMs) : 0.f)+
+    ",\"first_animation\":"+jsonStr(test.firstAnimation)+",\"last_animation\":"+jsonStr(test.lastAnimation)+
+    ",\"arrived\":"+(arrived?"true":"false")+",\"pass\":"+(pass?"true":"false"));
+  if(!pass) {test.npc=nullptr;arenaAbort("NPC speed fixture has no valid middle-edge measurement or arrival");return true;}
+  if(++test.leg==18) {
+    world.removeNpc(npc);test.npc=nullptr;
+    event("npc_speed_result","\"rows\":18,\"species\":3,\"walk_modes\":3,\"tiers\":2,\"pass\":true");
+    return false;
+    }
+  npcSpeedPrepare(world);
+  return true;
   }
 
 void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
@@ -17266,6 +17356,26 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     event("npc_tier_transition_start","\"npc\":"+jsonStr(symName(w,npc))+",\"from\":"+jsonStr(start->name)+
       ",\"to\":"+jsonStr(end->name));
     }
+  else if(c=="npcspeed") {
+    const auto* start=a.size()==2?w.findPoint(a[1],false):nullptr;
+    const WayPoint* end=nullptr;
+    float length=0;
+    if(start)for(const auto& connection:start->connections()) {
+      const auto edge=connection.point->groundPos-start->groundPos;
+      const float distance=std::hypot(edge.x,edge.z);
+      if(distance>length) {end=connection.point;length=distance;}
+      }
+    if(!start || !end || length<500.f) {
+      arenaAbort("npcspeed expects an authored waypoint with a connected edge at least 5 m long");return;
+      }
+    // This fresh calibration world has no ambient combat, crowding or other
+    // actors using the edge; the player's distant position is retained.
+    for(uint32_t i=w.npcCount();i>0;--i)
+      if(auto* npc=w.npcById(i-1);npc!=&pl)w.removeNpc(*npc);
+    bench.npcSpeedTest=Bench::NpcSpeedTest();
+    auto& test=bench.npcSpeedTest;test.start=start;test.end=end;test.length=length;
+    npcSpeedPrepare(w);
+    }
   else if(c=="npcday") {
     // npcday <game minutes> [period minutes 5] [shared]: journal every NPC over continuous game time
     // (common/npcdayjournal.h) into npc-day*.csv; the scenario waits until the time has passed. Each NPC gets
@@ -19466,6 +19576,7 @@ bool waitingForBodyLive() {
 
 void run(World& w, Npc& pl, PlayerControl& ctrl) {
   if(npcTierTestTick(w,pl))return;
+  if(npcSpeedTick(w))return;
   if(bench.routeActive || bench.placedItems.probing)return;
   if(bench.routinePhase) {routineReturnTick(w,pl,ctrl);if(bench.routinePhase)return;}
   if(NavBench::running() || NavDemos::running() || NpcDayJournal::running()) return;
@@ -19706,7 +19817,7 @@ void run(World& w, Npc& pl, PlayerControl& ctrl) {
     const std::string line = bench.prog[bench.pc++];
     exec(line,w,pl,ctrl);
     if(bench.routeActive || bench.placedItems.probing || bench.waitStreaming || NavBench::running() || NavDemos::running() ||
-       NpcDayJournal::running() || bench.npcTierTest.npc) return;
+       NpcDayJournal::running() || bench.npcTierTest.npc || bench.npcSpeedTest.npc) return;
     if(bench.spellWaitFrozen>=0 || bench.spellEquipPending) return;
     if(bench.questWait || bench.questStandingWait || bench.routinePhase) return;
 #ifdef OPENGOTHIC_ENABLE_APP_CADENCE

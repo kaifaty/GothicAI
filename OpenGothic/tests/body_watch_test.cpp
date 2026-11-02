@@ -18,6 +18,7 @@
 #include "testbench.h"
 #include "utils/workers.h"
 #include "world/objects/npc.h"
+#include "world/objects/item.h"
 #include "world/waypoint.h"
 #include "world/world.h"
 
@@ -897,13 +898,20 @@ class NpcLogicalStateContract final {
       auto& gothic=Gothic::inst();
       // The earlier body-watch phases own pointers into the session. Retire
       // them before the first complete session is destroyed.
+      auto* subject=gothic.world()->npcById(id);
+      const auto opponents=TestBench::bodyObservationActors();
       TestBench::configure(scenario,output.string(),17);
+      for(auto* opponent:opponents)
+        if(opponent!=subject)
+          gothic.world()->removeNpc(*opponent);
+      id=gothic.world()->npcId(subject);
+      for(const auto tier:{NpcSimTier::Full,NpcSimTier::Simplified})
       for(const auto action:{AI_PlayAnim,AI_StandUp,AI_DrawWeaponMelee}) {
         ++cases;
         auto* npc=gothic.world()->npcById(id);
         expect(npc!=nullptr,"logical save/load fixture actor survives the preceding session reload");
-        npc->setSimTierOverride(NpcSimTier::Full);
-        npc->setSimTier(NpcSimTier::Full);
+        npc->setSimTierOverride(tier);
+        npc->setSimTier(tier);
         npc->setExternalControl(true);
         npc->clearState(true);
         npc->clearAiQueue();
@@ -1004,8 +1012,8 @@ class NpcLogicalStateContract final {
         }
         npc=gothic.world()->npcById(id);
         expect(npc!=nullptr && gothic.world()->tickCount()==savedAt,"logical save/load restores the actor and exact world time");
-        npc->setSimTierOverride(NpcSimTier::Full);
-        npc->setSimTier(NpcSimTier::Full);
+        npc->setSimTierOverride(tier);
+        npc->setSimTier(tier);
         compare(*npc); // Before any positive simulation step or explicit sync.
         npc->logicalBody.auditTick(*npc);
         const auto restored=npc->logicalBodyState();
@@ -1134,7 +1142,7 @@ class NpcLogicalStateContract final {
         expect(std::abs(error)<=int64_t(tickMs),"logical save/load canonical sequence end is predicted within one world tick");
         expect(std::abs(actionError)<=int64_t(tickMs),"logical save/load canonical action end is predicted within one world tick");
         }
-      {
+      for(const bool itemGoal:{false,true}) {
         ++cases;
         auto* moving=gothic.world()->npcById(id);
         const auto* start=gothic.world()->findWayPoint("NW_XARDAS_TOWER_VALLEY_091");
@@ -1146,7 +1154,16 @@ class NpcLogicalStateContract final {
         moving->setSimTier(NpcSimTier::Simplified);
         moving->setWalkMode(WalkBit::WM_Walk);
         moving->setPosition(start->groundPos);
-        moving->aiPush(AiQueue::aiGoToPoint(*goal));
+        Item* item=nullptr;
+        uint32_t itemId=uint32_t(-1);
+        if(itemGoal) {
+          item=gothic.world()->addItem(gothic.world()->script().findSymbolIndex("ItMi_Gold"),goal->groundPos);
+          expect(item!=nullptr,"graph item save/load creates a real world target");
+          itemId=gothic.world()->itmId(&item->handle());
+          moving->aiPush(AiQueue::aiGotoItem(*item));
+          } else {
+          moving->aiPush(AiQueue::aiGoToPoint(*goal));
+          }
         moving->aiPush(AiQueue::aiWait(5000));
         bool midEdge=false;
         for(unsigned i=0;i<600;++i) {
@@ -1173,7 +1190,9 @@ class NpcLogicalStateContract final {
         const auto hint=moving->moveHint();
         const auto state=moving->currentState().ptr;
         const auto queueSize=moving->aiQueue.size();
-        expect(queueSize==1 && moving->aiQueue.front()->act==AI_Wait,"graph save/load retains an action queued after arrival");
+        expect(queueSize==(itemGoal ? 2u : 1u) &&
+               moving->aiQueue.front()->act==(itemGoal ? AI_GotoItem : AI_Wait),
+               "graph save/load retains its terminal target and an action queued after arrival");
         const float tickTravel=moving->simplifiedMoveSpeed()*float(tickMs);
         std::vector<uint8_t> bytes;
         {
@@ -1200,11 +1219,22 @@ class NpcLogicalStateContract final {
                "graph save/load preserves the exact mid-edge transform before its first tick");
         expect(moving->currentGoToPoint()!=nullptr && moving->currentGoToPoint()->name==endpoint &&
                pathNames(*moving)==path && moving->moveHint()==hint && moving->currentState().ptr==state &&
-               moving->aiQueue.size()==queueSize && moving->aiQueue.front()->act==AI_Wait,
+               moving->aiQueue.size()==queueSize && moving->aiQueue.front()->act==(itemGoal ? AI_GotoItem : AI_Wait),
                "graph save/load preserves the current edge, remaining path, destination, ZS and queued action");
+        if(itemGoal) {
+          item=gothic.world()->itmById(itemId);
+          expect(item!=nullptr && moving->aiQueue.front()->item==item && moving->navigationGoal().kind=="item",
+                 "graph save/load restores the exact live world item without changing the archive layout");
+          }
         advance();
         expect((moving->position()-nextPosition).quadLength()<=(tickTravel+.01f)*(tickTravel+.01f),
                "graph save/load continues within one tick of uninterrupted travel");
+        if(itemGoal) {
+          const auto movedItem=item->position()+Tempest::Vec3(20,0,0);
+          item->setPosition(movedItem.x,movedItem.y,movedItem.z);
+          expect((moving->navigationGoal().position-item->position()).quadLength()<.01f,
+                 "restored graph item movement follows the live target position");
+          }
         for(unsigned i=0;i<10;++i) advance();
         expect((moving->position()-position).quadLength()>tickTravel*tickTravel,
                "restored graph movement keeps advancing on the saved route");
@@ -1332,6 +1362,9 @@ int main(int argc,const char** argv) {
 #endif
     setenv("OPENGOTHIC_PHYSICS_THREADS","0",0);
     setenv("OPENGOTHIC_NPC_LOGIC_AUDIT","1",1);
+    // Canonical body fixtures keep the background native; individual cases
+    // explicitly opt their subject into Simplified.
+    setenv("OPENGOTHIC_NPC_SIM_TIER","full",1);
     Workers::setSerialExecution(true);
     CommandLine commandLine(argc,argv);
     Resources resources;

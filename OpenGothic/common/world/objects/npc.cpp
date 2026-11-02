@@ -772,6 +772,13 @@ void Npc::syncLogicalBodyState(bool rebuild) {
 void Npc::postValidate() {
   if(currentInteract!=nullptr && !currentInteract->isAttached(*this))
     currentInteract = nullptr;
+  if(const auto* pending=pendingSimpleGoTo(); pending!=nullptr && pending->act==AI_GotoItem && pending->i1>0) {
+    auto action=aiQueue.pop();
+    action.item=owner.itmById(uint32_t(action.i1-1));
+    action.i1=0;
+    simpleMovement.nativeItem=action.item;
+    aiQueue.pushFront(std::move(action));
+    }
   syncLogicalBodyState(true);
   }
 
@@ -781,7 +788,20 @@ void Npc::saveAiState(Serialize& fout) const {
   fout.write(aiState.funcIni,aiState.funcLoop,aiState.funcEnd,aiState.sTime,aiState.eTime,aiState.started,aiState.loopNextTime);
   fout.write(aiPrevState);
 
-  aiQueue.save(fout);
+  if(const auto* pending=pendingSimpleGoTo(); pending!=nullptr && pending->act==AI_GotoItem && pending->item!=nullptr) {
+    // Item pointers were never part of AiQueue's layout. Its unused i1 carries
+    // the world-item index for a retained graph terminal, without adding bytes.
+    auto saved=aiQueue;
+    auto action=saved.pop();
+    const auto id=owner.itmId(&action.item->handle());
+    if(id==uint32_t(-1))
+      throw std::runtime_error("Simplified movement item is no longer in the world");
+    action.i1=int(id)+1;
+    saved.pushFront(std::move(action));
+    saved.save(fout);
+    } else {
+    aiQueue.save(fout);
+    }
   aiQueueOverlay.save(fout);
 
   fout.write(uint32_t(routines.size()));
@@ -4002,7 +4022,202 @@ bool Npc::implWhirlTo(const Npc &oth, uint64_t dt) {
   return implTurnTo(oth,AnimationSolver::TurnType::Whirl,dt);
   }
 
+auto Npc::pendingSimpleGoTo() const -> const AiQueue::AiAction* {
+  const auto* action=aiQueue.front();
+  if(action==nullptr || action->point==nullptr)
+    return nullptr;
+  switch(action->act) {
+    case AI_GoToNpc: case AI_GotoItem: case AI_GoToNextFp:
+      return action;
+    case AI_GoToPoint:
+      return action->i0==1 ? action : nullptr;
+    default:
+      return nullptr;
+    }
+  }
+
+WayPath Npc::simpleWayTo(const WayPoint& point) const {
+  const auto connected=[](const WayPoint& p) { return p.isConnected(); };
+  const auto* near=owner.findWayPoint(position(),connected);
+  const auto* end=point.isConnected() ? &point : owner.findWayPoint(point.position(),connected);
+  if(near==nullptr || end==nullptr)
+    throw std::runtime_error("Simplified movement requires a connected waynet");
+  auto delta=near->groundPos-position();
+  float distance2=delta.x*delta.x+delta.z*delta.z;
+  for(const auto& connection:near->connections()) {
+    const auto edge=connection.point->groundPos-near->groundPos;
+    const float length2=edge.x*edge.x+edge.z*edge.z;
+    if(length2==0.f)
+      continue;
+    const float progress=std::clamp(-(delta.x*edge.x+delta.z*edge.z)/length2,0.f,1.f);
+    const auto offset=delta+edge*progress;
+    distance2=std::min(distance2,offset.x*offset.x+offset.z*offset.z);
+    }
+  // Only graph actors may recover off-network by a straight segment to Near.
+  auto path=distance2>4.f*MoveAlgo::closeToPointThreshold*MoveAlgo::closeToPointThreshold ?
+            owner.wayTo(*near,*end) : owner.wayTo(*this,*end);
+  if(path.first()==nullptr && !MoveAlgo::isClose(*this,*end))
+    throw std::runtime_error("Simplified movement has no waynet path to its target");
+  if(end!=&point) {
+    WayPath withTerminal;
+    withTerminal.add(point);
+    path.reverse();
+    while(const auto* node=path.pop())
+      withTerminal.add(*node);
+    return withTerminal;
+    }
+  return path;
+  }
+
+void Npc::beginSimpleGoTo(AiQueue::AiAction&& action, const WayPoint& point) {
+  GoTo terminal;
+  if(action.act==AI_GoToNpc) {
+    terminal.set(action.target,GT_Point);
+    terminal.pointDistance=float(action.i0);
+    terminal.nativeCombatTarget=action.nativeCombatTarget;
+    } else if(action.act==AI_GotoItem) {
+    if(action.item!=nullptr)
+      terminal.set(action.item);
+    else {
+      terminal.flag=GT_Item;
+      terminal.pos=go2.pos;
+      }
+    } else {
+    terminal.set(action.point,action.act==AI_GoToNextFp ? GT_NextFp : GT_Way);
+    attachToPoint(action.point);
+    }
+  float distance=MoveAlgo::closeToPointThreshold*(mvAlgo.checkLastBounce() ? .5f : 1.5f);
+  if(terminal.npc!=nullptr)
+    distance=fghAlgo.prefferedAttackDistance(*this,*terminal.npc,owner.script());
+  else if(terminal.wp!=nullptr && terminal.wp->useCounter()>1)
+    distance=float(MAX_AI_USE_DISTANCE);
+  if(terminal.pointDistance>0.f)
+    distance=terminal.pointDistance;
+  if(terminal.isClose(*this,distance)) {
+    wayPath.clear();
+    go2=terminal;
+    simpleMovement.edgeTo=nullptr;
+    aiQueue.pushFront(std::move(action));
+    return;
+    }
+  wayPath=simpleWayTo(point);
+  const auto* first=wayPath.pop();
+  if(first!=nullptr)
+    go2.set(first);
+  else
+    go2=terminal; // Already at the target's connected anchor.
+  simpleMovement.edgeTo=nullptr;
+  aiQueue.pushFront(std::move(action));
+  if(first!=nullptr)
+    attachToPoint(first);
+  }
+
+void Npc::refreshSimpleGoTo() {
+  const auto* pending=pendingSimpleGoTo();
+  if(pending==nullptr || (pending->act!=AI_GoToNpc && pending->act!=AI_GotoItem))
+    return;
+  if((pending->act==AI_GoToNpc && pending->target==nullptr) ||
+     (pending->act==AI_GotoItem && pending->item==nullptr && pending->i0!=1)) {
+    aiQueue.pop();
+    wayPath.clear();
+    clearGoTo();
+    return;
+    }
+  const auto target=pending->target!=nullptr ? pending->target->position() :
+                    pending->item!=nullptr ? pending->item->position() : go2.pos;
+  if(go2.flag==GT_Way && go2.wp!=nullptr) {
+    GoTo terminal;
+    float distance=MoveAlgo::closeToPointThreshold*(mvAlgo.checkLastBounce() ? .5f : 1.5f);
+    if(pending->act==AI_GoToNpc) {
+      terminal.set(pending->target,GT_Point);
+      terminal.pointDistance=float(pending->i0);
+      distance=terminal.pointDistance>0.f ? terminal.pointDistance :
+               fghAlgo.prefferedAttackDistance(*this,*terminal.npc,owner.script());
+      } else {
+      terminal.flag=GT_Item;
+      terminal.pos=target;
+      }
+    if(terminal.isClose(*this,distance)) {
+      aiQueue.pop();
+      wayPath.clear();
+      clearGoTo();
+      simpleMovement.body=BS_STAND;
+      return;
+      }
+    }
+  if(go2.flag==GT_Item)
+    go2.pos=target;
+  const auto* anchor=owner.findWayPoint(target,[](const WayPoint& p) { return p.isConnected(); });
+  if(anchor==nullptr)
+    throw std::runtime_error("Simplified movement target has no connected waypoint");
+  if(anchor==pending->point)
+    return;
+  auto action=aiQueue.pop();
+  action.point=anchor;
+  if(go2.flag==GT_Way && go2.wp!=nullptr) {
+    // Keep the current edge, replacing only its remaining suffix as a live
+    // target moves. A Full body returning here follows the same native path.
+    wayPath=owner.wayTo(*go2.wp,*anchor);
+    if(wayPath.pop()!=go2.wp)
+      throw std::runtime_error("Simplified movement lost its current waynet edge");
+    aiQueue.pushFront(std::move(action));
+    } else if(usesSimplifiedMovement() && !MoveAlgo::isClose(*this,*anchor)) {
+    beginSimpleGoTo(std::move(action),*anchor);
+    } else {
+    aiQueue.pushFront(std::move(action));
+    }
+  }
+
+bool Npc::finishSimpleGoTo(uint64_t dt) {
+  const auto* pending=pendingSimpleGoTo();
+  if(pending==nullptr)
+    return false;
+  switch(pending->act) {
+    case AI_GoToNpc:
+      go2.set(pending->target,GT_Point);
+      go2.pointDistance=float(pending->i0);
+      go2.nativeCombatTarget=pending->nativeCombatTarget;
+      break;
+    case AI_GotoItem:
+      go2.clear();
+      if(pending->item!=nullptr)
+        go2.set(pending->item);
+      else
+        go2.flag=GT_Item; // A legacy Full save has only its native snapshot.
+      break;
+    case AI_GoToNextFp:
+      go2.set(pending->point,GT_NextFp);
+      break;
+    case AI_GoToPoint:
+      go2.set(pending->point);
+      break;
+    default:
+      return false;
+    }
+  float distance=MoveAlgo::closeToPointThreshold*(mvAlgo.checkLastBounce() ? .5f : 1.5f);
+  if(go2.npc!=nullptr)
+    distance=fghAlgo.prefferedAttackDistance(*this,*go2.npc,owner.script());
+  else if(go2.wp!=nullptr && go2.wp->useCounter()>1)
+    distance=float(MAX_AI_USE_DISTANCE);
+  if(go2.pointDistance>0.f)
+    distance=go2.pointDistance;
+  if(!go2.isClose(*this,distance))
+    return implGoTo(dt,distance);
+  if(go2.flag==GT_NextFp) {
+    if(usesSimplifiedMovement())
+      prepareTurn();
+    if(implTurnTo(go2.wp,AnimationSolver::TurnType::Std,dt))
+      return true;
+    }
+  aiQueue.pop();
+  wayPath.clear();
+  clearGoTo();
+  simpleMovement.body=BS_STAND;
+  return false;
+  }
+
 bool Npc::implGoTo(uint64_t dt) {
+  refreshSimpleGoTo();
   float dist = 0;
   if(go2.npc) {
     dist = fghAlgo.prefferedAttackDistance(*this,*go2.npc,owner.script());
@@ -4050,6 +4265,8 @@ bool Npc::implGoTo(uint64_t dt, float destDist) {
         }
       }
     if(finished) {
+      if(pendingSimpleGoTo()!=nullptr)
+        return finishSimpleGoTo(dt);
       if(go2.flag==Npc::GT_NextFp && implTurnTo(go2.wp,AnimationSolver::TurnType::Std,dt))
         return true;
       clearGoTo();
@@ -4077,8 +4294,32 @@ bool Npc::implGoTo(uint64_t dt, float destDist) {
 bool Npc::implSimpleGoTo(uint64_t dt, float destDist) {
   if(go2.empty() || interactive()!=nullptr)
     return !go2.empty();
-  // The queued command already serializes the item reference. Keep it until
-  // arrival so a moved item is followed and a save needs no new format field.
+  if(pendingSimpleGoTo()==nullptr) {
+    AiQueue::AiAction terminal;
+    const WayPoint* destination=nullptr;
+    if(go2.npc!=nullptr) {
+      terminal=AiQueue::aiGoToNpc(go2.npc,int(go2.pointDistance));
+      terminal.nativeCombatTarget=go2.nativeCombatTarget;
+      destination=owner.findWayPoint(go2.npc->position(),[](const WayPoint& p) { return p.isConnected(); });
+      terminal.point=destination;
+      } else if(go2.flag==GT_Item) {
+      terminal.act=AI_GotoItem;
+      terminal.item=simpleMovement.nativeItem;
+      terminal.i0=terminal.item==nullptr ? 1 : 0;
+      destination=owner.findWayPoint(go2.pos,[](const WayPoint& p) { return p.isConnected(); });
+      terminal.point=destination;
+      } else if(go2.wp!=nullptr && go2.wp->isFreePoint()) {
+      terminal=go2.flag==GT_NextFp ? AiQueue::aiGoToNextFp("") : AiQueue::aiGoToPoint(*go2.wp);
+      terminal.point=go2.wp;
+      terminal.i0=terminal.act==AI_GoToPoint ? 1 : 0;
+      destination=go2.wp;
+      }
+    if(destination!=nullptr) {
+      beginSimpleGoTo(std::move(terminal),*destination);
+      return implGoTo(dt);
+      }
+    }
+  // Keep the terminal command until arrival so moved items remain live targets.
   if(go2.flag==GT_Item) {
     const auto* action = aiQueue.front();
     if(action!=nullptr && action->act==AI_GotoItem && action->item!=nullptr)
@@ -4091,6 +4332,8 @@ bool Npc::implSimpleGoTo(uint64_t dt, float destDist) {
       attachToPoint(go2.wp);
       simpleMovement.edgeTo = nullptr;
       } else {
+      if(pendingSimpleGoTo()!=nullptr)
+        return finishSimpleGoTo(dt);
       if(go2.flag==GT_NextFp && implTurnTo(go2.wp,AnimationSolver::TurnType::Std,dt))
         return true;
       clearGoTo();
@@ -4141,8 +4384,13 @@ bool Npc::implSimpleGoTo(uint64_t dt, float destDist) {
     }
 
   const auto direction = target-position();
-  if(go2.flag!=GT_Flee && implTurnTo(direction.x,direction.z,AnimationSolver::TurnType::Std,dt))
+  if(go2.flag!=GT_Flee && implTurnTo(direction.x,direction.z,AnimationSolver::TurnType::Std,dt)) {
+    simpleMovement.body = BS_STAND;
+    visual.stopWalkAnim(*this);
+    if(!visual.pose().hasAnim())
+      setAnim(Anim::Idle);
     return true;
+    }
   const float travel = simplifiedMoveSpeed()*float(dt);
   const auto edge = target-simpleMovement.edgeFrom;
   const float length2 = edge.x*edge.x+edge.z*edge.z;
@@ -4184,7 +4432,7 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
     return false;
     }
 
-  if(aiQueue.size()>0) {
+  if(aiQueue.size()>0 && !(aiQueue.size()==1 && pendingSimpleGoTo()!=nullptr)) {
     traceCombatGate("script_queue");
     // do not messup weapon change animations by MOVE intruction
     return false;
@@ -6350,6 +6598,10 @@ bool Npc::prepareTurn() {
   if(usesSimplifiedMovement()) {
     visual.stopWalkAnim(*this);
     setAnimRotate(0);
+    if(!visual.pose().hasAnim())
+      setAnim(Anim::Idle);
+    if(visual.pose().bodyState()==BS_STAND)
+      simpleMovement.body = BS_STAND;
     return true;
     }
   const auto st = bodyStateMasked();
@@ -6437,21 +6689,38 @@ void Npc::nextAiAction(AiQueue& queue, uint64_t dt) {
         break;
         }
       attachToPoint(nullptr);
-      go2.set(act.target,act.i0>0 ? GT_Point : GT_Way);
+      if(usesSimplifiedMovement() && act.target!=nullptr) {
+        act.point=owner.findWayPoint(act.target->position(),[](const WayPoint& p) { return p.isConnected(); });
+        if(act.point==nullptr)
+          throw std::runtime_error("Simplified NPC target has no connected waypoint");
+        const auto* anchor=act.point;
+        beginSimpleGoTo(std::move(act),*anchor);
+        break;
+        }
+      go2.set(act.target,act.point!=nullptr || act.i0>0 ? GT_Point : GT_Way);
       go2.pointDistance = float(act.i0);
       go2.nativeCombatTarget = act.nativeCombatTarget==act.target ? act.nativeCombatTarget : nullptr;
       wayPath.clear();
+      if(act.point!=nullptr)
+        queue.pushFront(std::move(act));
       break;
     case AI_GoToNextFp: {
       if(!setInteraction(nullptr)) {
         queue.pushFront(std::move(act));
         break;
         }
-      auto fp = owner.findNextFreePoint(*this,act.s0);
+      auto fp = act.point!=nullptr ? act.point : owner.findNextFreePoint(*this,act.s0);
       if(fp!=nullptr) {
         attachToPoint(fp);
+        if(usesSimplifiedMovement()) {
+          act.point=fp;
+          beginSimpleGoTo(std::move(act),*fp);
+          break;
+          }
         go2.set(fp,GoToHint::GT_NextFp);
         wayPath.clear();
+        if(act.point!=nullptr)
+          queue.pushFront(std::move(act));
         }
       break;
       }
@@ -6460,26 +6729,14 @@ void Npc::nextAiAction(AiQueue& queue, uint64_t dt) {
         queue.pushFront(std::move(act));
         break;
         }
+      if(usesSimplifiedMovement() && act.point->isFreePoint()) {
+        act.i0=1;
+        const auto* target=act.point;
+        beginSimpleGoTo(std::move(act),*target);
+        break;
+        }
       if(wayPath.last()!=act.point) {
-        const auto* near = usesSimplifiedMovement() ? owner.findWayPoint(position()) : nullptr;
-        bool offNetwork = false;
-        if(near!=nullptr) {
-          auto delta = near->groundPos-position();
-          float distance2 = delta.x*delta.x+delta.z*delta.z;
-          for(const auto& connection:near->connections()) {
-            const auto edge = connection.point->groundPos-near->groundPos;
-            const float length2 = edge.x*edge.x+edge.z*edge.z;
-            if(length2==0.f)
-              continue;
-            const float progress = std::clamp(-(delta.x*edge.x+delta.z*edge.z)/length2,0.f,1.f);
-            const auto offset = delta+edge*progress;
-            distance2 = std::min(distance2,offset.x*offset.x+offset.z*offset.z);
-            }
-          offNetwork = distance2>4.f*MoveAlgo::closeToPointThreshold*MoveAlgo::closeToPointThreshold;
-          }
-        // Only an unseen actor may take a straight recovery segment to the
-        // nearest waypoint. Full bodies retain the native admission/planner.
-        wayPath = offNetwork ? owner.wayTo(*near,*act.point) : owner.wayTo(*this,*act.point);
+        wayPath = usesSimplifiedMovement() ? simpleWayTo(*act.point) : owner.wayTo(*this,*act.point);
         simpleMovement.edgeTo = nullptr;
         auto wpoint = wayPath.pop();
 
@@ -6808,6 +7065,8 @@ void Npc::nextAiAction(AiQueue& queue, uint64_t dt) {
     case AI_AlignToFp:{
       if(auto fp = currentFp){
         if(fp->dir.x!=0.f || fp->dir.z!=0.f){
+          if(usesSimplifiedMovement())
+            prepareTurn();
           if(implTurnTo(fp->dir.x,fp->dir.z,AnimationSolver::TurnType::Std,dt))
             queue.pushFront(std::move(act));
           }
@@ -6863,16 +7122,26 @@ void Npc::nextAiAction(AiQueue& queue, uint64_t dt) {
       break;
       }
     case AI_GotoItem:{
+      simpleMovement.nativeItem=act.item;
       if(usesSimplifiedMovement()) {
-        if(act.item==nullptr)
+        if(act.item==nullptr && !(act.point!=nullptr && act.i0==1))
           break;
+        const auto target=act.item!=nullptr ? act.item->position() : go2.pos;
+        act.point=owner.findWayPoint(target,[](const WayPoint& p) { return p.isConnected(); });
+        if(act.point==nullptr)
+          throw std::runtime_error("Simplified item target has no connected waypoint");
+        const auto* anchor=act.point;
+        beginSimpleGoTo(std::move(act),*anchor);
+        break;
+        }
+      if(act.point!=nullptr) {
         go2.clear();
-        go2.set(act.item);
-        if(go2.isClose(*this,MoveAlgo::closeToPointThreshold*0.5f)) {
-          clearGoTo();
-          break;
-          }
-        queue.pushFront(std::move(act));
+        if(act.item!=nullptr)
+          go2.set(act.item);
+        else if(act.i0==1)
+          go2.flag=GT_Item;
+        if(!go2.empty())
+          queue.pushFront(std::move(act));
         break;
         }
       go2.set(act.item);
@@ -7642,6 +7911,8 @@ Item* Npc::takeItem(Item& item) {
   }
 
 void Npc::onWldItemRemoved(const Item& itm) {
+  if(simpleMovement.nativeItem==&itm)
+    simpleMovement.nativeItem=nullptr;
   aiQueue.onWldItemRemoved(itm);
   aiQueueOverlay.onWldItemRemoved(itm);
   }
@@ -7867,15 +8138,11 @@ bool Npc::rotateTo(float dx, float dz, float step, AnimationSolver::TurnType ani
   if(usesSimplifiedMovement()) {
     const float target = angleDir(dx,dz);
     const float delta = std::remainder(target-angle,360.f);
-    simpleMovement.body = BS_STAND;
     setAnimRotate(0);
     if(std::abs(delta)<=step*2.f) {
       setDirection(target);
-      if(go2.empty())
-        setAnim(Anim::Idle);
       return false;
       }
-    setAnim(Anim::Idle);
     setDirection(angle+std::clamp(delta,-step,step));
     return true;
     }
@@ -10403,6 +10670,25 @@ bool Npc::isAiQueueEmpty() const {
 auto Npc::navigationGoal() const -> NavigationGoal {
   NavigationGoal ret;
   if(!go2.empty()) {
+    if(const auto* pending=pendingSimpleGoTo()) {
+      ret.active=true;
+      if(pending->act==AI_GoToNpc) {
+        ret.npc=pending->target;
+        ret.kind="npc";
+        ret.position=pending->target!=nullptr ? pending->target->position() : go2.target();
+        } else if(pending->act==AI_GotoItem) {
+        ret.kind="item";
+        ret.position=pending->item!=nullptr ? pending->item->position() : go2.pos;
+        } else {
+        ret.point=pending->point;
+        ret.position=pending->point->position();
+        ret.kind="freepoint";
+        ret.name=pending->point->name;
+        }
+      return ret;
+      }
+    }
+  if(!go2.empty()) {
     ret.active = true;
     ret.npc = go2.npc;
     ret.point = go2.wp;
@@ -10476,6 +10762,11 @@ void Npc::clearAiQueue() {
   }
 
 void Npc::attachToPoint(const WayPoint *p) {
+  const auto* pending=pendingSimpleGoTo();
+  if(pending!=nullptr && pending->point->isFreePoint() &&
+     (pending->act==AI_GoToNextFp || pending->act==AI_GoToPoint) &&
+     currentFp==pending->point && go2.flag==GT_Way && p==go2.wp && p!=pending->point)
+    return;
   currentFp     = p;
   currentFpLock = FpLock(currentFp);
   }
@@ -10494,6 +10785,9 @@ bool Npc::goToPosition(const Vec3& position) {
   }
 
 void Npc::clearGoTo() {
+  if(pendingSimpleGoTo()!=nullptr)
+    aiQueue.pop();
+  simpleMovement.nativeItem=nullptr;
   if(usesSimplifiedMovement())
     simpleMovement.edgeTo = nullptr;
   if(!go2.empty()) {

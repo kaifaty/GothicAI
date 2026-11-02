@@ -887,6 +887,11 @@ class Npc final {
     bool      implGoTo   (uint64_t dt);
     bool      implGoTo   (uint64_t dt, float destDist);
     bool      implSimpleGoTo(uint64_t dt, float destDist);
+    auto      pendingSimpleGoTo() const -> const AiQueue::AiAction*;
+    WayPath   simpleWayTo(const WayPoint& point) const;
+    void      beginSimpleGoTo(AiQueue::AiAction&& action, const WayPoint& point);
+    bool      finishSimpleGoTo(uint64_t dt);
+    void      refreshSimpleGoTo();
     void      updateSimpleMovement();
     bool      implAttack (uint64_t dt, bool bodyOverride=false, FightAlgo::Action bodyAction=FightAlgo::MV_NULL);
     void      traceCombatSnapshot();
@@ -1284,6 +1289,7 @@ class Npc final {
       const WayPoint* edgeTo = nullptr;
       Tempest::Vec3 edgeFrom;
       std::optional<BodyState> body;
+      Item* nativeItem = nullptr;
       } simpleMovement;
 
     MoveAlgo                       mvAlgo;

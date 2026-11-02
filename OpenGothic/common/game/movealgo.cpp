@@ -232,6 +232,9 @@ void MoveAlgo::tickClimb(uint64_t dt) {
 void MoveAlgo::tick(uint64_t dt, MvFlags moveFlg) {
   if(npc.usesSimplifiedMovement()) {
     takeRagdollControl();
+    // Mobsi attachment transitions remain native until their executor in 6d.
+    if(npc.interactive()!=nullptr)
+      tickMobsi(dt);
     return;
     }
   ++movementTraceSerial;
