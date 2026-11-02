@@ -276,6 +276,10 @@ add_shader(irradiance.comp           lighting/irradiance.comp)
 add_shader(sky_exposure.comp         lighting/sky_exposure.comp)
 
 add_shader(tonemapping.frag          lighting/tonemapping.frag)
+add_shader(bloom_down_karis.frag     bloom/bloom_down.frag -DKARIS)
+add_shader(bloom_down.frag           bloom/bloom_down.frag)
+add_shader(bloom_up.frag             bloom/bloom_up.frag)
+add_shader(bloom_mix.frag            bloom/bloom_mix.frag)
 add_shader(tonemapping_up.frag       lighting/tonemapping.frag -DUPSCALE)
 
 add_shader(water_reflection.mesh     water/water_reflection.mesh)

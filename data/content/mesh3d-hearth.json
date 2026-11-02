@@ -1,0 +1,642 @@
+{
+ "base": "6942191b46c1cd3afe58785465120d3b7a717ef81a4342e52e4bcc776d9ab7f5",
+ "targets": [
+  {
+   "id": "hearth-cauldron",
+   "visual": "CAULDRON_OC",
+   "budget_tris": 2500,
+   "zones": [
+    {
+     "key": "OWN_HEARTH_IRON",
+     "group": "METAL",
+     "role": "forged and riveted iron: cauldrons, pan, chain, fire bowl"
+    },
+    {
+     "key": "OWN_HEARTH_RIVET",
+     "group": "METAL",
+     "role": "bands and rivet heads on the iron"
+    },
+    {
+     "key": "OWN_HEARTH_LIQUID",
+     "group": "WATER",
+     "role": "the stew or water in a pot: engine water (glTF alphaMode BLEND) with its turbidity, no collision"
+    },
+    {
+     "key": "OWN_HEARTH_RUST",
+     "group": "METAL",
+     "role": "the inside of a pot under the water: iron rusted brown, seen through the clear water"
+    },
+    {
+     "key": "OWN_HEARTH_SCALE",
+     "group": "METAL",
+     "role": "the pale ring of scale the water leaves at its level inside a pot"
+    },
+    {
+     "key": "OWN_HEARTH_BITS",
+     "group": "UNDEF",
+     "role": "cabbage and leek pieces floating in the stew"
+    }
+   ],
+   "kind": "mob_model",
+   "bbox_min": [
+    -0.42756,
+    -0.0,
+    0.28072
+   ],
+   "bbox_max": [
+    0.42756,
+    0.8,
+    1.13584
+   ],
+   "origin_in_bbox": [
+    0.5,
+    0.0,
+    -0.328282
+   ],
+   "source_tris": 66,
+   "source_materials": [
+    "MOMESMELT01.TGA",
+    "OWODWAT_A0.TGA"
+   ],
+   "source_pose": "bind",
+   "nodes": {
+    "ZS_POS0": [
+     -0.0,
+     0.9748,
+     0.0
+    ]
+   }
+  },
+  {
+   "id": "hearth-ground-fire",
+   "visual": "FIREPLACE_GROUND",
+   "budget_tris": 2000,
+   "zones": [
+    {
+     "key": "OWN_HEARTH_STONE",
+     "group": "STONE",
+     "role": "fire-ring fieldstones, sooted inside"
+    },
+    {
+     "key": "OWN_HEARTH_EMBER",
+     "group": "UNDEF",
+     "role": "glowing embers"
+    },
+    {
+     "key": "OWN_HEARTH_ASH",
+     "group": "UNDEF",
+     "role": "grey ash and burnt ground"
+    },
+    {
+     "key": "OWN_HEARTH_LOG",
+     "group": "WOOD",
+     "role": "split logs with bark, charred ends"
+    },
+    {
+     "key": "OWN_HEARTH_CHAR",
+     "group": "WOOD",
+     "role": "charred wood behind the burning end of a log"
+    },
+    {
+     "key": "OWN_HEARTH_GLOW",
+     "group": "WOOD",
+     "role": "burning end of a log: charcoal blocks, heat in the cracks"
+    }
+   ],
+   "kind": "mob_model",
+   "bbox_min": [
+    -0.5907,
+    -0.00507,
+    -0.58152
+   ],
+   "bbox_max": [
+    0.51822,
+    0.15725,
+    0.64416
+   ],
+   "origin_in_bbox": [
+    0.53268,
+    0.031263,
+    0.474447
+   ],
+   "source_tris": 150,
+   "source_materials": [
+    "MOSTSTONES02.TGA",
+    "MOWOWOODS01.TGA",
+    "NCODFLGREY01.TGA"
+   ],
+   "source_pose": "bind",
+   "nodes": {
+    "BIP01 FIRE": [
+     -0.0,
+     0.0,
+     0.0
+    ],
+    "ZS_POS0_DIST": [
+     0.0,
+     0.978,
+     1.0
+    ]
+   }
+  },
+  {
+   "id": "hearth-pan",
+   "visual": "PAN_OC",
+   "budget_tris": 2500,
+   "zones": [
+    {
+     "key": "OWN_HEARTH_IRON",
+     "group": "METAL",
+     "role": "forged and riveted iron: cauldrons, pan, chain, fire bowl"
+    },
+    {
+     "key": "OWN_HEARTH_WOOD",
+     "group": "WOOD",
+     "role": "dark hewn sticks, poles and handles"
+    },
+    {
+     "key": "OWN_HEARTH_STONE",
+     "group": "STONE",
+     "role": "fire-ring fieldstones, sooted inside"
+    },
+    {
+     "key": "OWN_HEARTH_EMBER",
+     "group": "UNDEF",
+     "role": "glowing embers"
+    },
+    {
+     "key": "OWN_HEARTH_ASH",
+     "group": "UNDEF",
+     "role": "grey ash and burnt ground"
+    }
+   ],
+   "kind": "mob_model",
+   "bbox_min": [
+    -0.43828,
+    -0.00028,
+    0.40061
+   ],
+   "bbox_max": [
+    0.43828,
+    0.39845,
+    1.19523
+   ],
+   "origin_in_bbox": [
+    0.5,
+    0.000707,
+    -0.504159
+   ],
+   "source_tris": 252,
+   "source_materials": [
+    "MOMEMETALS01.TGA",
+    "MOMEMETALS03.TGA",
+    "MOSTSTONES02.TGA",
+    "MOWOWOODS01.TGA",
+    "NCODFLGREY01.TGA"
+   ],
+   "source_pose": "bind",
+   "nodes": {
+    "ZS_POS0": [
+     0.0,
+     0.9772,
+     0.0738
+    ],
+    "BIP01 SMOKER": [
+     -0.0036,
+     0.32,
+     0.7984
+    ]
+   }
+  },
+  {
+   "id": "hearth-tripod",
+   "visual": "OC_FIREPLACE_V5",
+   "budget_tris": 3000,
+   "zones": [
+    {
+     "key": "OWN_HEARTH_WOOD",
+     "group": "WOOD",
+     "role": "dark hewn sticks, poles and handles"
+    },
+    {
+     "key": "OWN_HEARTH_IRON",
+     "group": "METAL",
+     "role": "forged and riveted iron: cauldrons, pan, chain, fire bowl"
+    },
+    {
+     "key": "OWN_HEARTH_RIVET",
+     "group": "METAL",
+     "role": "bands and rivet heads on the iron"
+    },
+    {
+     "key": "OWN_HEARTH_LIQUID",
+     "group": "WATER",
+     "role": "the stew or water in a pot: engine water (glTF alphaMode BLEND) with its turbidity, no collision"
+    },
+    {
+     "key": "OWN_HEARTH_RUST",
+     "group": "METAL",
+     "role": "the inside of a pot under the water: iron rusted brown, seen through the clear water"
+    },
+    {
+     "key": "OWN_HEARTH_SCALE",
+     "group": "METAL",
+     "role": "the pale ring of scale the water leaves at its level inside a pot"
+    },
+    {
+     "key": "OWN_HEARTH_BITS",
+     "group": "UNDEF",
+     "role": "cabbage and leek pieces floating in the stew"
+    }
+   ],
+   "kind": "static_mrm",
+   "bbox_min": [
+    -0.76305,
+    -1.95373,
+    -1.28757
+   ],
+   "bbox_max": [
+    1.39731,
+    1.39202,
+    1.14297
+   ],
+   "origin_in_bbox": [
+    0.353203,
+    0.583943,
+    0.529746
+   ],
+   "source_tris": 142,
+   "source_materials": [
+    "MOMEBRAZIER.TGA",
+    "MOMECHAIN01.TGA",
+    "WAT_A0.TGA"
+   ]
+  },
+  {
+   "id": "hearth-campfire",
+   "visual": "NW_MISC_FIREPLACE_01",
+   "budget_tris": 4000,
+   "zones": [
+    {
+     "key": "OWN_HEARTH_STONE",
+     "group": "STONE",
+     "role": "fire-ring fieldstones, sooted inside"
+    },
+    {
+     "key": "OWN_HEARTH_LOG",
+     "group": "WOOD",
+     "role": "split logs with bark, charred ends"
+    },
+    {
+     "key": "OWN_HEARTH_EMBER",
+     "group": "UNDEF",
+     "role": "glowing embers"
+    },
+    {
+     "key": "OWN_HEARTH_ASH",
+     "group": "UNDEF",
+     "role": "grey ash and burnt ground"
+    }
+   ],
+   "kind": "static_mrm",
+   "bbox_min": [
+    -1.0083,
+    -0.44969,
+    -0.94235
+   ],
+   "bbox_max": [
+    1.00832,
+    0.44971,
+    0.94237
+   ],
+   "origin_in_bbox": [
+    0.499995,
+    0.499989,
+    0.499995
+   ],
+   "source_tris": 1144,
+   "source_materials": [
+    "MOWOFIREPLACE01.TGA",
+    "NW_NATURE_BARK_01.TGA",
+    "NW_NATURE_STEIN_06.TGA"
+   ]
+  },
+  {
+   "id": "hearth-brazier",
+   "visual": "DT_FIREPLACE_V1",
+   "budget_tris": 3000,
+   "zones": [
+    {
+     "key": "OWN_HEARTH_IRON",
+     "group": "METAL",
+     "role": "forged and riveted iron: cauldrons, pan, chain, fire bowl"
+    },
+    {
+     "key": "OWN_HEARTH_RIVET",
+     "group": "METAL",
+     "role": "bands and rivet heads on the iron"
+    },
+    {
+     "key": "OWN_HEARTH_EMBER",
+     "group": "UNDEF",
+     "role": "glowing embers"
+    },
+    {
+     "key": "OWN_HEARTH_ASH",
+     "group": "UNDEF",
+     "role": "grey ash and burnt ground"
+    }
+   ],
+   "kind": "static_mrm",
+   "bbox_min": [
+    -0.43311,
+    -0.35485,
+    -0.4333
+   ],
+   "bbox_max": [
+    0.43311,
+    0.54224,
+    0.45943
+   ],
+   "origin_in_bbox": [
+    0.5,
+    0.39556,
+    0.485364
+   ],
+   "source_tris": 304,
+   "source_materials": [
+    "MOMEKETTLE01.TGA"
+   ]
+  },
+  {
+   "id": "hearth-stove",
+   "visual": "STOVE_NW_CITY_01",
+   "budget_tris": 3000,
+   "zones": [
+    {
+     "key": "OWN_HEARTH_CAST",
+     "group": "METAL",
+     "role": "cast-iron stove plates, rusty brown"
+    },
+    {
+     "key": "OWN_HEARTH_RIVET",
+     "group": "METAL",
+     "role": "bands and rivet heads on the iron"
+    },
+    {
+     "key": "OWN_HEARTH_COPPER",
+     "group": "METAL",
+     "role": "the hammered copper hood over the stove"
+    },
+    {
+     "key": "OWN_HEARTH_EMBER",
+     "group": "UNDEF",
+     "role": "glowing embers"
+    },
+    {
+     "key": "OWN_HEARTH_WOOD",
+     "group": "WOOD",
+     "role": "dark hewn sticks, poles and handles"
+    }
+   ],
+   "kind": "mob_model",
+   "bbox_min": [
+    -0.49999,
+    1e-05,
+    -0.50001
+   ],
+   "bbox_max": [
+    0.50001,
+    2.30001,
+    0.49999
+   ],
+   "origin_in_bbox": [
+    0.49999,
+    -4e-06,
+    0.50001
+   ],
+   "source_tris": 116,
+   "source_materials": [
+    "OBJ_CITY_GALLOW_01.TGA",
+    "OBJ_CITY_STOVE_01.TGA",
+    "OBJ_CITY_STOVE_02.TGA"
+   ],
+   "source_pose": "bind",
+   "nodes": {
+    "ZS_POS0": [
+     -0.0,
+     0.9989,
+     -0.7805
+    ]
+   }
+  },
+  {
+   "id": "hearth-fireplace",
+   "visual": "NW_CITY_FIREPLACE_NORMAL_01",
+   "budget_tris": 3000,
+   "zones": [
+    {
+     "key": "OWN_HEARTH_MASONRY",
+     "group": "STONE",
+     "role": "rubble and block masonry of a fireplace"
+    },
+    {
+     "key": "OWN_HEARTH_CARVING",
+     "group": "STONE",
+     "role": "dressed stone: the mantle shelf, the hearth slab, mouldings and the hood relief"
+    },
+    {
+     "key": "OWN_HEARTH_SOOT",
+     "group": "STONE",
+     "role": "the sooted firebox: back wall, hearth floor"
+    },
+    {
+     "key": "OWN_HEARTH_LOG",
+     "group": "WOOD",
+     "role": "split logs with bark, charred ends"
+    },
+    {
+     "key": "OWN_HEARTH_EMBER",
+     "group": "UNDEF",
+     "role": "glowing embers"
+    }
+   ],
+   "kind": "static_mrm",
+   "bbox_min": [
+    -1.20864,
+    -1.49999,
+    -0.75
+   ],
+   "bbox_max": [
+    1.20866,
+    1.50001,
+    0.75002
+   ],
+   "origin_in_bbox": [
+    0.499996,
+    0.499997,
+    0.499993
+   ],
+   "source_tris": 108,
+   "source_materials": [
+    "OBJ_CITY_BOULDERPOOR_01.TGA"
+   ]
+  },
+  {
+   "id": "hearth-fireplace-large",
+   "visual": "NW_CITY_FIREPLACE_LARGE_01",
+   "budget_tris": 4000,
+   "zones": [
+    {
+     "key": "OWN_HEARTH_MASONRY",
+     "group": "STONE",
+     "role": "rubble and block masonry of a fireplace"
+    },
+    {
+     "key": "OWN_HEARTH_CARVING",
+     "group": "STONE",
+     "role": "dressed stone: the mantle shelf, the hearth slab, mouldings and the hood relief"
+    },
+    {
+     "key": "OWN_HEARTH_SOOT",
+     "group": "STONE",
+     "role": "the sooted firebox: back wall, hearth floor"
+    },
+    {
+     "key": "OWN_HEARTH_LOG",
+     "group": "WOOD",
+     "role": "split logs with bark, charred ends"
+    },
+    {
+     "key": "OWN_HEARTH_EMBER",
+     "group": "UNDEF",
+     "role": "glowing embers"
+    }
+   ],
+   "kind": "static_mrm",
+   "bbox_min": [
+    -1.81615,
+    -1.82499,
+    -0.69925
+   ],
+   "bbox_max": [
+    1.81617,
+    1.82501,
+    0.69927
+   ],
+   "origin_in_bbox": [
+    0.499997,
+    0.499997,
+    0.499993
+   ],
+   "source_tris": 122,
+   "source_materials": [
+    "OBJ_CITY_BOULDERBIG_01.TGA"
+   ]
+  },
+  {
+   "id": "hearth-fireplace-wide",
+   "visual": "NW_CITY_FIREPLACE_LARGE_02",
+   "budget_tris": 4000,
+   "zones": [
+    {
+     "key": "OWN_HEARTH_ASHLAR",
+     "group": "STONE",
+     "role": "pale dressed stone of a rich fireplace"
+    },
+    {
+     "key": "OWN_HEARTH_CARVING",
+     "group": "STONE",
+     "role": "dressed stone: the mantle shelf, the hearth slab, mouldings and the hood relief"
+    },
+    {
+     "key": "OWN_HEARTH_SOOT",
+     "group": "STONE",
+     "role": "the sooted firebox: back wall, hearth floor"
+    },
+    {
+     "key": "OWN_HEARTH_LOG",
+     "group": "WOOD",
+     "role": "split logs with bark, charred ends"
+    },
+    {
+     "key": "OWN_HEARTH_EMBER",
+     "group": "UNDEF",
+     "role": "glowing embers"
+    }
+   ],
+   "kind": "static_mrm",
+   "bbox_min": [
+    -2.71615,
+    -1.825,
+    -0.69926
+   ],
+   "bbox_max": [
+    2.71617,
+    2.26871,
+    0.69926
+   ],
+   "origin_in_bbox": [
+    0.499998,
+    0.445806,
+    0.5
+   ],
+   "source_tris": 122,
+   "source_materials": [
+    "OBJ_CITY_BOULDERBIG_02.TGA"
+   ]
+  },
+  {
+   "id": "hearth-fireplace-wide-low",
+   "visual": "NW_CITY_FIREPLACE_LARGE_021",
+   "budget_tris": 4000,
+   "zones": [
+    {
+     "key": "OWN_HEARTH_ASHLAR",
+     "group": "STONE",
+     "role": "pale dressed stone of a rich fireplace"
+    },
+    {
+     "key": "OWN_HEARTH_CARVING",
+     "group": "STONE",
+     "role": "dressed stone: the mantle shelf, the hearth slab, mouldings and the hood relief"
+    },
+    {
+     "key": "OWN_HEARTH_SOOT",
+     "group": "STONE",
+     "role": "the sooted firebox: back wall, hearth floor"
+    },
+    {
+     "key": "OWN_HEARTH_LOG",
+     "group": "WOOD",
+     "role": "split logs with bark, charred ends"
+    },
+    {
+     "key": "OWN_HEARTH_EMBER",
+     "group": "UNDEF",
+     "role": "glowing embers"
+    }
+   ],
+   "kind": "static_mrm",
+   "bbox_min": [
+    -2.71615,
+    -1.825,
+    -0.69926
+   ],
+   "bbox_max": [
+    2.71617,
+    1.27748,
+    0.69926
+   ],
+   "origin_in_bbox": [
+    0.499998,
+    0.588239,
+    0.5
+   ],
+   "source_tris": 122,
+   "source_materials": [
+    "OBJ_CITY_BOULDERBIG_02.TGA"
+   ]
+  }
+ ]
+}
