@@ -83,6 +83,15 @@
       "date": "2026-11-02",
       "quote": "Принимаю",
       "note": null
+    },
+    {
+      "gate": "enable",
+      "verdict": "approved",
+      "by": "user",
+      "date": "2026-11-02",
+      "quote": "Включай",
+      "note": null,
+      "set": "working-10"
     }
   ],
   "build": null,
