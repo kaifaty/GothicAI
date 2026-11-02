@@ -10,9 +10,10 @@
 # the stall watchdog stops after completion, including with KEEP=1.
 #
 # env: GOTHIC_DIR    game data (default: /Volumes/DevSSD/Dev/games/Gothic II)
-#      BENCH_HOST    auto (default): Ryzen first, ryzen: require Ryzen, local: this machine
+#      BENCH_HOST    auto (default): headless dev-ubuntu, Ryzen, local; windowed Ryzen, local
 #      RYZEN_HOST    SSH host for Ryzen (default: ryzen)
-#      RYZEN_LOCK_WAIT seconds to wait for the worktree lock and gq (default: auto 120, ryzen 900)
+#      DEV_UBUNTU_HOST SSH host for headless benches (default: dev-ubuntu)
+#      RYZEN_LOCK_WAIT seconds to wait for the worktree lock and gq (default: auto 120, explicit host 900)
 #      RYZEN_MAX     gq job time limit, including the build (default: 30m)
 #      RYZEN_BENCH_CLASS quick (window default), batch (headless default), or quiet for timing
 #      RYZEN_BENCH_ARCHIVE absolute local Ryzen task path to archive a result copy through gq
@@ -82,8 +83,8 @@ FRACTURE_CACHE="$HOME/.local/share/gothic-ai/fracture"
 CONVEX_PARTS_CACHE="$HOME/.local/share/gothic-ai/convex-parts"
 BENCH_HOST="${BENCH_HOST:-auto}"
 case "$BENCH_HOST" in
-  auto|ryzen|local) ;;
-  *) echo "bench: BENCH_HOST must be auto, ryzen or local" >&2; exit 2 ;;
+  auto|ryzen|dev-ubuntu|local) ;;
+  *) echo "bench: BENCH_HOST must be auto, ryzen, dev-ubuntu or local" >&2; exit 2 ;;
 esac
 
 SCEN="${1:?usage: scripts/bench.sh <scenario> [out dir]}"
@@ -99,6 +100,10 @@ case "$BENCH_HEADLESS" in
   0|1) export BENCH_HEADLESS ;;
   *) echo 'bench: BENCH_HEADLESS must be 0 or 1' >&2; exit 2 ;;
 esac
+if [[ "$BENCH_HOST" == dev-ubuntu ]]; then
+  [[ "$BENCH_HEADLESS" == 1 ]] || { echo 'bench: окна на dev-ubuntu нет' >&2; exit 2; }
+  [[ -z "${RYZEN_BENCH_ARCHIVE:-}" ]] || { echo 'bench: RYZEN_BENCH_ARCHIVE is not supported on dev-ubuntu (no shared store)' >&2; exit 2; }
+fi
 if [[ "$BENCH_HEADLESS" == 1 && "${KEEP:-}" == 1 ]]; then
   echo 'bench: KEEP=1 is incompatible with headless lockstep' >&2
   exit 2
@@ -159,8 +164,8 @@ PY
 )"
   fi
   if [[ -n "$LOCAL_REASON" ]]; then
-    if [[ "$BENCH_HOST" == ryzen ]]; then
-      echo "bench: cannot run on Ryzen: $LOCAL_REASON" >&2
+    if [[ "$BENCH_HOST" != auto ]]; then
+      echo "bench: cannot run on $BENCH_HOST: $LOCAL_REASON" >&2
       exit 2
     fi
     echo "bench: falling back to Mac: $LOCAL_REASON" >&2
@@ -170,23 +175,35 @@ PY
     else
       LOCK_WAIT="${RYZEN_LOCK_WAIT:-900}"
     fi
-    rm -f -- "$OUT/game.log" "$OUT/host.txt"
-    RYZEN_RC=0
-    RYZEN_LOCK_WAIT="$LOCK_WAIT" "$ROOT/scripts/ryzen.sh" bench "$SCEN" "$OUT" 2>&1 | tee "$OUT/ryzen.log" \
-      || RYZEN_RC="${PIPESTATUS[0]}"
-    if [[ -f "$OUT/game.log" ]]; then
-      printf 'ryzen\n' >"$OUT/host.txt"
-      echo "bench: ran on ryzen"
-      echo "$OUT"
-      exit "$RYZEN_RC"
+    REMOTE_HOSTS=("$BENCH_HOST")
+    if [[ "$BENCH_HOST" == auto ]]; then
+      REMOTE_HOSTS=(ryzen)
+      if [[ "$BENCH_HEADLESS" == 1 ]]; then REMOTE_HOSTS=(dev-ubuntu ryzen); fi
     fi
-    if [[ "$BENCH_HOST" == ryzen ]]; then
-      # A successful transport without a game log is still a failed launch.
-      [[ "$RYZEN_RC" != 0 ]] || RYZEN_RC=1
-      exit "$RYZEN_RC"
-    fi
-    LOCAL_REASON="$(awk 'NF && !/^Ryzen: removed / && !/^bench: output in / { line=$0 } END { print line }' "$OUT/ryzen.log")"
-    echo "bench: falling back to Mac: ${LOCAL_REASON:-Ryzen did not start the game (exit $RYZEN_RC)}" >&2
+    for ((host_index = 0; host_index < ${#REMOTE_HOSTS[@]}; host_index++)); do
+      HOST="${REMOTE_HOSTS[$host_index]}"
+      SSH_HOST="${RYZEN_HOST:-ryzen}"
+      if [[ "$HOST" == dev-ubuntu ]]; then SSH_HOST="${DEV_UBUNTU_HOST:-dev-ubuntu}"; fi
+      rm -f -- "$OUT/game.log" "$OUT/host.txt"
+      RYZEN_RC=0
+      RYZEN_HOST="$SSH_HOST" RYZEN_LOCK_WAIT="$LOCK_WAIT" "$ROOT/scripts/ryzen.sh" bench "$SCEN" "$OUT" 2>&1 | tee "$OUT/$HOST.log" \
+        || RYZEN_RC="${PIPESTATUS[0]}"
+      if [[ -f "$OUT/game.log" ]]; then
+        printf '%s\n' "$HOST" >"$OUT/host.txt"
+        echo "bench: ran on $HOST"
+        echo "$OUT"
+        exit "$RYZEN_RC"
+      fi
+      if [[ "$BENCH_HOST" != auto ]]; then
+        # A successful transport without a game log is still a failed launch.
+        [[ "$RYZEN_RC" != 0 ]] || RYZEN_RC=1
+        exit "$RYZEN_RC"
+      fi
+      LOCAL_REASON="$(awk 'NF && !/^Ryzen: (removed |queue guard |preparation check |window wait |bench [0-9]+s, exit )/ && !/^bench: output in / { line=$0 } END { print line }' "$OUT/$HOST.log")"
+      NEXT_HOST=Mac
+      if (( host_index + 1 < ${#REMOTE_HOSTS[@]} )); then NEXT_HOST="${REMOTE_HOSTS[$((host_index + 1))]}"; fi
+      echo "bench: falling back to $NEXT_HOST: $HOST: ${LOCAL_REASON:-game did not start (exit $RYZEN_RC)}" >&2
+    done
   fi
 fi
 
@@ -540,7 +557,7 @@ PY
 grep -E "^\[bench\] (scenario|can not|unknown|marvin failed|goto failed|walkto: no|foreach|waitarrive)" "$OUT/game.log" || true
 
 HOST=mac
-[[ "${RYZEN_BENCH:-}" != 1 ]] || HOST=ryzen
+[[ "${RYZEN_BENCH:-}" != 1 ]] || HOST="${RYZEN_HOST:-ryzen}"
 printf '%s\n' "$HOST" >"$OUT/host.txt"
 REPORT_RC=0
 python3 "$ROOT/scripts/bench_report.py" "$OUT" || REPORT_RC=$?

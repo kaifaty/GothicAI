@@ -10,14 +10,19 @@ scripts/bench.sh smoke                      # a scenario from scripts/bench/<nam
 BENCH_HOST=local NO_BUILD=1 scripts/bench.sh ik-sweep  # local, skip the incremental build
 ```
 
-`BENCH_HOST=auto` (default) runs on Ryzen through `scripts/ryzen.sh` and copies all output back.
-It falls back to this Mac with one line explaining why if SSH, setup, the lock or game startup fails.
-Once the returned output contains `game.log`, the Ryzen result is final, including a failing exit code;
-the game is not run again locally. The lock wait defaults to 120 seconds (`RYZEN_LOCK_WAIT`).
-`BENCH_HOST=ryzen` requires Ryzen, defaults to a 900-second lock wait and never falls back;
-`BENCH_HOST=local` runs on this machine. `KEEP=1`, a VideoToolbox encoder, a custom `GOTHIC_DIR`
-or other Mac-only game paths require local execution (`auto` falls back, `ryzen` exits with code 2).
-`NO_BUILD=1` only skips a local build; Ryzen always checks its engine source hash.
+`BENCH_HOST=auto` (default) tries dev-ubuntu, then Ryzen, then this Mac for headless scenarios;
+windowed scenarios try Ryzen, then Mac. Both remote hosts use `scripts/ryzen.sh` and copy all output back.
+Each fallback prints one line explaining the SSH, setup, lock, queue-wait or game-startup failure.
+Once returned output contains `game.log`, that host's result is final, including a failing exit code;
+the game is not run again elsewhere. The remote lock/queue wait defaults to 120 seconds in `auto`
+(`RYZEN_LOCK_WAIT`). `BENCH_HOST=dev-ubuntu` and `BENCH_HOST=ryzen` require that host, default to a
+900-second wait and never fall back; `BENCH_HOST=local` runs on this machine. `DEV_UBUNTU_HOST`
+overrides the dev-ubuntu SSH alias (default `dev-ubuntu`); dispatch uses
+`RYZEN_HOST="$DEV_UBUNTU_HOST" scripts/ryzen.sh bench`. A windowed scenario with
+`BENCH_HOST=dev-ubuntu`, including `BENCH_HEADLESS=0`, exits with code 2: `окна на dev-ubuntu нет`.
+`KEEP=1`, a VideoToolbox encoder, a custom `GOTHIC_DIR` or other Mac-only game paths require local
+execution (`auto` falls back, an explicit remote host exits with code 2).
+`NO_BUILD=1` only skips a local build; remote hosts always check the engine source hash.
 
 A line `# @headless` in the scenario selects `gothic-body-runner --game-parity --mode lockstep`,
 without a window, GPU or sound. `BENCH_HEADLESS=1` selects this path for any scenario;
@@ -25,10 +30,14 @@ without a window, GPU or sound. `BENCH_HEADLESS=1` selects this path for any sce
 exits with code 2. The runner defaults to `gothic-body-runner` beside `GAME_BIN`; `RUNNER_BIN`
 overrides it for local runs. It uses the same `Gothic.ini`, `[GAME]` flags and `OPENGOTHIC_*` environment as the
 window; `WORLD` becomes `--world`, otherwise the copied save becomes `--save`. Window variables
-`TEMPEST_*` are not needed. A local build selects the `gothic-body-runner` target. On Ryzen,
+`TEMPEST_*` are not needed. A local build selects the `gothic-body-runner` target. On remote hosts,
 preparation builds both `Gothic2Notr` and the runner together; a cached engine without an executable
 runner is rebuilt and republished for a headless bench. A rebuild without the runner removes its
 old executable before publishing the new engine digest.
+
+On dev-ubuntu, preparation defaults to `gq --class quick --threads 6 --mem 10G`
+(`RYZEN_JOBS=6`); Ryzen retains its existing build request. dev-ubuntu has no shared storage:
+`RYZEN_BENCH_ARCHIVE` is rejected with code 2 before upload.
 
 The headless game request defaults to `gq --class batch --threads 4 --mem 6G`, without display or
 GPU-memory resources. `RYZEN_BENCH_CLASS` still overrides the class; a `batch` request's `--max`
@@ -39,7 +48,8 @@ as `headless lockstep` or `window` and include the game's wall seconds; stdout s
 `bench: game ran N s`.
 
 For performance comparisons (before/after or FPS), run both takes on the same machine:
-pin `BENCH_HOST=ryzen` or `BENCH_HOST=local`. `host.txt` and the report header identify the host.
+pin `BENCH_HOST=dev-ubuntu`, `BENCH_HOST=ryzen` or `BENCH_HOST=local`.
+`host.txt` and the report header identify the host, including `dev-ubuntu` when its SSH alias is overridden.
 
 `knockdown-launch` проверяет защиту рождения рэгдолла: SLD_826 с `ITMW_2H_SLD_AXE` (W2H) сбивает оглушённого SLD_815, по 20 проб в чередующихся диапазонах 30–40, 50–90 и 100–170 см, затем 5 проб оглушения без удара на контрольной точке и 5 на склоне дуэли. `RAGDOLL_BIRTH_GUARD=1|0` задаёт `[GAME] ragdoll_birth_guard` до загрузки мира. Сценарий генерирует `reports/physics/2026-11-02-knockdown-launch/generate.py`; фиксированные зёрна и подготовка одинаковы в ON/OFF. `ragdoll_birth_peak` пишет пики скоростей COM таза/спины/головы за первые 300 мс симуляции, дистанцию корней, виновника и снятие защиты; замер — после каждого ненулевого `Update`. `stun-drift <цель> <атакующий|player>` перед `stun <цель> posture` наблюдает корень каждые 100 мс от 0 до 1600 мс: проекцию к атакующему, горизонтальное смещение, высоту, анимацию, оглушение, скольжение, полёт и флаг второго такта. Отдельный `knockdown-drift` из того же генератора запускает только 5 ровных и 5 склоновых проб; источник оглушения — герой, цель перед оглушением освобождена от внешнего управления. `put-at <npc|player> <x> <y> <z>` ставит на землю по точным координатам (NPC замораживается и смотрит на героя). Анализ: `python3 reports/physics/2026-11-02-knockdown-launch/analyze.py --drift <папка>`; `summary.csv` нокдаунов не меняется. [Отчёт, команды и анализатор](../../reports/physics/2026-11-02-knockdown-launch/README.md).
 
@@ -126,6 +136,8 @@ the resulting frames on Mac.
 
 ## План и журнал
 
+- 2026-11-02: route headless `auto` benches through dev-ubuntu → Ryzen → Mac; keep windowed
+  routing unchanged. Reuse `ryzen.sh` with dev-ubuntu build limits and setup/cleanup without NAS.
 - 2026-11-02: remove stale runners from window-only rebuilds before caching; keep `RUNNER_BIN` local.
 - 2026-11-02: add marked headless lockstep benches with game-parity simulation and a Ryzen `batch`
   request without display/GPU resources; record the run method and game wall time in reports.
@@ -1190,9 +1202,9 @@ tower (the valley's rats and bloodflies attack him all day). Start it once per N
 compare two runs:
 
 ```sh
-OPENGOTHIC_NPC_SIM_TIER=full BENCH_HOST=ryzen \
+OPENGOTHIC_NPC_SIM_TIER=full BENCH_HOST=dev-ubuntu \
   scripts/bench.sh npc-day-parity /absolute/out/full-1
-OPENGOTHIC_NPC_SIM_TIER=simplified BENCH_HOST=ryzen \
+OPENGOTHIC_NPC_SIM_TIER=simplified BENCH_HOST=dev-ubuntu \
   scripts/bench.sh npc-day-parity /absolute/out/simplified-1
 scripts/npc_day_parity.py /absolute/out/full-1 /absolute/out/simplified-1 --label-a full --label-b simplified \
   --tolerances scripts/bench/npc-day-parity.tolerances.json --out /absolute/out/report.md --json /absolute/out/report.json
@@ -1201,7 +1213,10 @@ scripts/npc_day_parity.py /absolute/out/full-1 /absolute/out/simplified-1 --labe
 The scenario carries `# @headless`: it defaults to `WORLD=NEWWORLD.ZEN`, `TIMEOUT=3600` and
 `RYZEN_MAX=75m`, with a `batch` request and no window or GPU reservation. `--game-parity` supplies
 the AI bridge and the window's 40 m effect radius around the camera, and disables body traces by
-default. `BENCH_HEADLESS=0` restores the window for a same-build comparison.
+default. With `BENCH_HOST=auto`, the host order is dev-ubuntu → Ryzen → Mac; pin
+`BENCH_HOST=dev-ubuntu` to keep a comparison there. `DEV_UBUNTU_HOST` changes its SSH alias.
+`BENCH_HEADLESS=0` restores the window for a same-build comparison on Ryzen or Mac;
+`BENCH_HOST=dev-ubuntu` then exits with code 2 because that host has no window.
 
 The [headless measurements](../../reports/compute/2026-11-02-headless-bench/README.md) on Ryzen
 show that a day through `scripts/bench.sh npc-day-parity` took 1553 s (25,9 min) without a window,

@@ -5,6 +5,13 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 RYZEN_HOST="${RYZEN_HOST:-ryzen}"
+DEV_UBUNTU=0
+BUILD_MEM=12G
+if [[ "$RYZEN_HOST" == "${DEV_UBUNTU_HOST:-dev-ubuntu}" ]]; then
+  DEV_UBUNTU=1
+  RYZEN_JOBS="${RYZEN_JOBS:-6}"
+  BUILD_MEM=10G
+fi
 LOCK_WAIT="${RYZEN_LOCK_WAIT:-900}"
 [[ "$LOCK_WAIT" =~ ^[0-9]+$ ]] || { echo 'RYZEN_LOCK_WAIT must be seconds' >&2; exit 2; }
 
@@ -614,6 +621,10 @@ if [[ "$ACTION" == bench ]]; then
     0|1) export BENCH_HEADLESS ;;
     *) echo 'BENCH_HEADLESS must be 0 or 1' >&2; exit 2 ;;
   esac
+  if [[ "$DEV_UBUNTU" == 1 ]]; then
+    [[ "$BENCH_HEADLESS" == 1 ]] || { echo "Ryzen: окна на $RYZEN_HOST нет" >&2; exit 2; }
+    [[ -z "${RYZEN_BENCH_ARCHIVE:-}" ]] || { echo "Ryzen: RYZEN_BENCH_ARCHIVE is not supported on $RYZEN_HOST (no shared store)" >&2; exit 2; }
+  fi
   if [[ "$BENCH_HEADLESS" == 1 ]]; then
     [[ "${KEEP:-0}" != 1 ]] || { echo 'bench: KEEP=1 is incompatible with headless lockstep' >&2; exit 2; }
     BENCH_CLASS="${RYZEN_BENCH_CLASS:-batch}"
@@ -641,6 +652,11 @@ remote() {
 }
 
 if [[ "$ACTION" == du ]]; then
+  if [[ "$DEV_UBUNTU" == 1 ]]; then
+    echo "Ryzen: $RYZEN_HOST has no shared store or Ryzen janitor; showing local worktrees"
+    { declare -f disk_usage; echo 'set -euo pipefail; disk_usage'; } | remote bash -s
+    exit
+  fi
   RYZEN_HOST="$RYZEN_HOST" exec "$ROOT/scripts/ryzen-janitor.sh" du
 fi
 
@@ -821,17 +837,22 @@ PY
   videos_path="$(sed -n '4p' <<<"$parts")"
   # Preflight only after both Mac parts are compatible; failures must not copy anything.
   { declare -f toolchain; echo 'set -euo pipefail; toolchain; echo "Ryzen: toolchain OK"'; } | remote bash -s
+  [[ "${DEV_UBUNTU:-0}" != 1 ]] || echo "Ryzen: $RYZEN_HOST has no shared store; using its local base cache"
   [[ -n "$videos_fingerprint" ]] || echo 'Ryzen: videos will be skipped (Mac pointer has no video part)' >&2
   for kind in base videos; do
     if [[ "$kind" == base ]]; then fingerprint="$base_fingerprint"; part="$base_path"; else fingerprint="$videos_fingerprint"; part="$videos_path"; fi
     [[ -n "$fingerprint" ]] || continue
     # The shared store is only inspected. The game copies a selected stored part to its cache.
-    if { declare -f verify_base_part; cat <<'REMOTE'
+    if { declare -f verify_base_part
+      if [[ "${DEV_UBUNTU:-0}" == 1 ]]; then echo 'DEV_UBUNTU=1'; fi
+      cat <<'REMOTE'
 set -euo pipefail
 kind="$1" fingerprint="$2"
 relative="$fingerprint"
 [[ "$kind" == base ]] || relative="videos/$fingerprint"
-for root in "$HOME/.cache/gothic-ai/base" /mnt/shared/gothic-ai/base; do
+roots=("$HOME/.cache/gothic-ai/base")
+if [[ "${DEV_UBUNTU:-0}" != 1 ]]; then roots+=(/mnt/shared/gothic-ai/base); fi
+for root in "${roots[@]}"; do
   if [[ -d "$root/$relative" ]] && verify_base_part "$kind" "$root/$relative" "$fingerprint" quick; then
     echo "Ryzen: $kind ready at $root/$relative"
     exit 0
@@ -876,7 +897,7 @@ REMOTE
   remote mkdir -p gothic-ai/game-settings/system
   rsync -a --checksum "$GOTHIC_DIR/system/Gothic.ini" "$GOTHIC_DIR/system/SystemPack.ini" "$RYZEN_HOST:gothic-ai/game-settings/system/"
   remote python3 -c 'import json, os, pathlib, sys; path = pathlib.Path.home() / "gothic-ai/game-base.json"; temporary = path.with_suffix(f".json.tmp-{os.getpid()}"); temporary.write_text(json.dumps(dict(zip(("base", "videos"), sys.argv[1:]))) + "\n"); os.replace(temporary, path)' "$base_fingerprint" "$videos_fingerprint"
-  echo "Ryzen: game settings and ready fingerprints synchronized in $((SECONDS - started))s"
+  echo "Ryzen: $RYZEN_HOST game settings and ready fingerprints synchronized in $((SECONDS - started))s"
   exit
 fi
 
@@ -908,7 +929,7 @@ finish_run() {
   local found
   # A lost connection or interrupted caller may leave the remote task running.
   if [[ "$RUN_STARTED" == 1 && "$RUN_FINISHED" == 0 ]] || [[ "$RUN_RC" == 255 ]]; then
-    echo "Ryzen: remote task status unknown; keeping artifacts for $RUN on Ryzen" >&2
+    echo "Ryzen: remote task status unknown; keeping artifacts for $RUN on $RYZEN_HOST" >&2
   elif [[ "$ACTION" == pytest ]]; then
     remote rm -rf -- "$STATE/inputs/$RUN" || echo "Ryzen: could not remove $STATE/inputs/$RUN" >&2
   else
@@ -956,7 +977,7 @@ PY
             echo "Ryzen: could not remove remote artifacts for $RUN" >&2
           fi
         else
-          echo "Ryzen: could not collect all logs; keeping $STATE/runs/$RUN and $STATE/inputs/$RUN on Ryzen" >&2
+          echo "Ryzen: could not collect all logs; keeping $STATE/runs/$RUN and $STATE/inputs/$RUN on $RYZEN_HOST" >&2
         fi
         ;;
       1)
@@ -964,7 +985,7 @@ PY
         remote rm -rf -- "$STATE/inputs/$RUN" || echo "Ryzen: could not remove $STATE/inputs/$RUN" >&2
         ;;
       *)
-        echo "Ryzen: could not check remote logs; keeping artifacts for $RUN on Ryzen" >&2
+        echo "Ryzen: could not check remote logs; keeping artifacts for $RUN on $RYZEN_HOST" >&2
         ;;
     esac
   fi
@@ -1228,7 +1249,8 @@ run_game() {
   if [[ "$ACTION" == bench ]]; then scenario="$STATE/inputs/$RUN/$(basename "$BENCH_SCENARIO")"; fi
   if preparation_needed "$scenario"; then
     if [[ "$ACTION" == bench ]]; then name="bench $(basename "$BENCH_SCENARIO" .bench)"; else name="e2e ${SCENARIO:-m0}"; fi
-    GQ_ARGS=(--class quick --threads "$JOBS" --mem 12G --max "${RYZEN_MAX:-30m}" --name "build $name")
+    GQ_ARGS=(--class quick --threads "$JOBS" --mem "${BUILD_MEM:-12G}" --max "${RYZEN_MAX:-30m}" --name "build $name")
+    if [[ "${DEV_UBUNTU:-0}" == 1 ]]; then GQ_ARGS+=(--wait-max "$LOCK_WAIT"); fi
     QUEUE_RUN="$RUN-build"
     run_quick env "${ENV_ARGS[@]}" bash "$STATE/source/scripts/ryzen.sh" __remote prepare \
       "$ACTION" "$STATE" "$RUN" "$scenario" && rc=0 || rc=$?
@@ -1272,6 +1294,7 @@ else
 fi
 if [[ "$ACTION" == pytest ]]; then GQ_ARGS+=(--wait-max "$LOCK_WAIT"); fi
 ENV_ARGS=("RYZEN_LOCK_WAIT=$LOCK_WAIT" "RYZEN_JOBS=$JOBS" ${BASE_ENV_ARGS[@]+"${BASE_ENV_ARGS[@]}"})
+if [[ "$DEV_UBUNTU" == 1 ]]; then ENV_ARGS+=(RYZEN_HOST=dev-ubuntu); fi
 sync_content
 if [[ "$ACTION" == bench ]]; then
   [[ -z "$AI_PORT" ]] || ENV_ARGS+=("RYZEN_AI_TUNNEL=1")
