@@ -507,9 +507,19 @@ def test_far_fight_parts_pool_at_thirty_swings_and_use_recorded_multipliers():
     assert cells['1h', 1, 0]['scope'] == 'weapon'
     assert cells['1h', 1, 0]['used']['swings'] == 59
     assert result['calibration']['swing_rate']['1h']['0'] == pytest.approx(59/20)
+    # Defender's scheduled first swing is not a Poisson event; its wait is not exposure.
+    assert result['calibration']['swing_rate']['fist']['0'] == pytest.approx((34+4)/(9+7.5))
+    assert result['calibration']['swing_rate']['2h']['1'] == pytest.approx((29+30)/(9+10))
     assert result['calibration']['damage_multiplier']['1h'] == [2.25, 2.25]
     assert result['calibration']['response_delay'] == [0., 0., 1.5]
     assert result['negative_response_delays'] == 2
+    unanswered = dict(rows[0], duration_ms=100000, defender_first_swing_ms=None,
+                      attacker=dict(rows[0]['attacker'], swings=1, hits=1),
+                      defender=dict(rows[0]['defender'], swings=0, hits=0),
+                      hit_log=rows[0]['hit_log'][:1])
+    with_wait = fit.measure_parts([*rows, unanswered])
+    assert with_wait['calibration']['swing_rate']['fist'] == result['calibration']['swing_rate']['fist']
+    assert with_wait['response_unmeasured'] == 1
 
 
 def test_far_fight_fit_determinism_holdout_and_unarmed_attacker_exclusion(tmp_path):

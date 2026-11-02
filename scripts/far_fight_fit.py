@@ -158,25 +158,39 @@ def measure_parts(rows):
     negative_delays = 0
     for row in rows:
         sides = {row[role]['instance']: row[role] for role in ROLES}
+        received = [hit['time_ms'] for hit in row['hit_log']
+                    if hit['victim'] == row['defender']['instance']]
+        first_hit = min(received) if received else None
+        first_swing = row['defender_first_swing_ms']
         for role in ROLES:
             side = row[role]
             opponent = row['defender' if role == 'attacker' else 'attacker']
             weapon, tier = weapon_talent(side)
+            seconds, rate_swings = row['duration_ms']/1000, side['swings']
+            if role == 'defender':
+                seconds, rate_swings = 0., 0
+                if first_swing is not None:
+                    if first_hit is None or side['swings'] < 1:
+                        raise ValueError('Defender response requires a received hit and a swing')
+                    # The first response is sampled from response_delay, not the Poisson clock.
+                    seconds = (row['duration_ms'] - max(first_hit, first_swing))/1000
+                    rate_swings = side['swings'] - 1
+                elif side['swings']:
+                    raise ValueError('Defender swings require a first response time')
             samples.append(dict(weapon=weapon, tier=tier, opponent=weapon_talent(opponent)[1],
                                 swings=side['swings'], hits=side['hits'],
-                                seconds=row['duration_ms']/1000))
+                                seconds=seconds, rate_swings=rate_swings))
         for hit in row['hit_log']:
             weapon = weapon_talent(sides[hit['attacker']])[0]
             multipliers[weapon].append(hit['melee_scale'] * hit['stun_bonus'] * hit['backstab_mult'])
-        received = [hit['time_ms'] for hit in row['hit_log']
-                    if hit['victim'] == row['defender']['instance']]
-        if received and row['defender_first_swing_ms'] is not None:
-            delay = (row['defender_first_swing_ms'] - min(received))/1000
+        if first_hit is not None and first_swing is not None:
+            delay = (first_swing - first_hit)/1000
             negative_delays += delay < 0
             delays.append(max(0., delay))
 
     def totals(group):
         return dict(swings=sum(s['swings'] for s in group), hits=sum(s['hits'] for s in group),
+                    rate_swings=sum(s['rate_swings'] for s in group),
                     seconds=sum(s['seconds'] for s in group), observations=len(group))
 
     swing_rate, p_hit = {}, {}
@@ -191,7 +205,7 @@ def measure_parts(rows):
             raw = totals(own)
             rate_group = own if raw['swings'] >= MIN_SWINGS else pooled
             rate_totals = totals(rate_group)
-            rate = rate_totals['swings']/rate_totals['seconds']
+            rate = rate_totals['rate_swings']/rate_totals['seconds']
             swing_rate[weapon][str(tier)] = rate
             swing_cells.append(dict(weapon=weapon, tier=tier, raw=raw, used=rate_totals,
                                     scope='own_tier' if rate_group is own else 'weapon', rate=rate))
