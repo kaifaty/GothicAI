@@ -267,6 +267,7 @@ void MoveAlgo::tick(uint64_t dt, MvFlags moveFlg) {
 bool MoveAlgo::implTick(uint64_t dt, MvFlags moveFlg) {
   const auto bs = npc.bodyStateMasked();
   const bool liftOff = bs==BS_JUMP && npc.isFlyAnim();
+  const bool virtualEnabled = useCharacterVirtual();
   const bool virtualWalking = characterVirtualReady();
   if(!virtualWalking) {
     if(virtualMovementActive && flags==Run && liftOff)
