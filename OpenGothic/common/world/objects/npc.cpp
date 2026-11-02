@@ -12,6 +12,7 @@
 #include "graphics/effect.h"
 #include "world/objects/pfxemitter.h"
 #include "game/damagecalculator.h"
+#include "game/bodyimpact.h"
 #include "game/herodeed.h"
 #include "game/deedwitness.h"
 #include "game/bodyobservations.h"
@@ -5599,13 +5600,17 @@ void Npc::applyBodyImpact() {
   const auto damage=DamageCalculator::damageFall(*this,speed);
   const int32_t before=attribute(ATR_HITPOINTS);
   if(damage.hasHit) {
-    auto deed=culprit!=nullptr && damage.value>=before ? HeroDeed::capture(*culprit,"murder",this) : nullptr;
-    if(culprit!=nullptr && damage.value>=before) {
+    const auto decision=BodyImpact::decide(culprit!=nullptr && isNonlethalFight(*culprit),isHuman(),isPlayer(),
+                                           culprit!=nullptr,damage.value>=before-1);
+    auto deed=decision.captureMurder && damage.value>=before ? HeroDeed::capture(*culprit,"murder",this) : nullptr;
+    if(culprit!=nullptr && (decision.knockOut || damage.value>=before)) {
       lastHit=culprit;
       currentOther=culprit;
       }
-    changeAttribute(ATR_HITPOINTS,-damage.value,false);
-    if(isDead() && culprit!=nullptr)
+    changeAttribute(ATR_HITPOINTS,-damage.value,decision.knockOut);
+    if(decision.perception==BodyImpact::Perception::Defeat && isUnconscious())
+      owner.sendPassivePerc(*this,*culprit,*this,PERC_ASSESSDEFEAT);
+    else if(decision.perception==BodyImpact::Perception::Murder && isDead())
       owner.sendPassivePerc(*this,*culprit,*this,PERC_ASSESSMURDER,std::move(deed));
     }
   if(TestBench::isActive()) {
