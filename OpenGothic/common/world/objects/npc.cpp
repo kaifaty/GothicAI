@@ -8272,6 +8272,8 @@ void Npc::tickMeleeBarge() {
   else
     target->startMeleeStun(*this,"barge");
   meleeBargeNote(target,elapsed,outcome==MeleeDodge::BargeOutcome::Knockdown ? "knockdown" : "stun");
+  }
+
 bool Npc::canMeleeCharge() const {
   const auto bs = bodyStateMasked();
   MeleeCharge::Situation s;
