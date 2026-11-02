@@ -106,6 +106,8 @@ namespace TestBench {
   bool     ragdollLootOpened(const Npc& player, const Npc& target);
   // Benchmark-only inspection of the actual body drawable, excluding head/items.
   bool     ragdollBodyDrawable(const Npc& npc);
+  // First 300 ms of native simulation; inert outside an active bench.
+  void     ragdollBirthPeak(const Npc& npc, const Npc* culprit, const std::string& fields);
 
   // What the AI bridge does, for scenarios that talk (`ptt`, `waitreply`; shorts/): texts in UTF-8.
   // An npc line starts (`ms`: its length as known now; `to`: the npc it is said to, empty for the hero;
