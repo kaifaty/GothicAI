@@ -4045,7 +4045,7 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
   const bool riposteAi = reactions && flags.meleeAiRiposte && flags.meleeRiposte && visual.hasAnim("T_1HRIPOSTE") &&
                          currentTarget->isHuman() && currentTarget->visual.hasAnim("T_RIPOSTEVICTIM");
   const bool dodgeAi = reactions && flags.meleeAiDodge && flags.meleeDodge;
-  if(!dodgeAi || (meleeAiDodgeTiming && meleeAiDodgeTiming->target!=currentTarget))
+  if(bodyOverride || !dodgeAi || (meleeAiDodgeTiming && meleeAiDodgeTiming->target!=currentTarget))
     meleeAiDodgeTiming.reset();
   const bool parryAi = !bodyOverride && flags.meleeParryAi && flags.meleeParry && isHuman() &&
                        (ws==WeaponState::Fist || ws==WeaponState::W1H || ws==WeaponState::W2H);
@@ -4556,7 +4556,7 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
           if(TestBench::bodyTracing())
             TestBench::bodyEvent(*this,currentTarget,"ai_dodge",now,
                                 "\"direction\":"+TestBench::bodyJson(MeleeDodge::name(timing.move.direction))+
-                                ",\"kind\":"+TestBench::bodyJson(MeleeDodge::name(timing.move.kind))+
+                                ",\"dodge_kind\":"+TestBench::bodyJson(MeleeDodge::name(timing.move.kind))+
                                 ",\"swing\":"+(timing.sequence ? "true" : "false")+
                                 ",\"swing_ms\":"+std::to_string(timing.sequence ? swingMs : 0)+
                                 ",\"contact_ms\":"+std::to_string(timing.sequence ? contactMs : 0));
