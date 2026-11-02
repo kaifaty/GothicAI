@@ -1,6 +1,7 @@
 #include "meleedodge.h"
 
 #include <cctype>
+#include <cmath>
 
 namespace {
   std::string_view prefix(MeleeDodge::Stance stance) {
@@ -17,6 +18,7 @@ namespace {
       case MeleeDodge::Kind::Dash:      return "DASH";
       case MeleeDodge::Kind::Roll:      return "ROLL";
       case MeleeDodge::Kind::HeavyRoll: return "ROLLHEAVY";
+      case MeleeDodge::Kind::Barge:     return "BARGE";
       }
     return "DASH";
     }
@@ -63,17 +65,26 @@ MeleeDodge::Kind MeleeDodge::kind(std::optional<MeleeImpact::ArmorClass> armor) 
   return Kind::Dash;
   }
 
+MeleeDodge::Kind MeleeDodge::kind(std::optional<MeleeImpact::ArmorClass> armor, Direction direction,
+                                 bool bargeEnabled) {
+  const auto k = kind(armor);
+  return bargeEnabled && k==Kind::HeavyRoll && direction==Direction::Forward ? Kind::Barge : k;
+  }
+
 std::string MeleeDodge::animationName(Kind kind, Stance stance, Direction direction) {
   std::string name = "T_";
   name += prefix(stance);
   name += move(kind);
-  name += letter(direction);
+  if(kind!=Kind::Barge)
+    name += letter(direction);
   return name;
   }
 
 MeleeDodge::Plan MeleeDodge::plan(Kind kind, Stance stance, Direction direction) {
   Plan p;
   p.candidates.push_back({kind,animationName(kind,stance,direction)});
+  if(kind==Kind::Barge)
+    p.candidates.push_back({Kind::HeavyRoll,animationName(Kind::HeavyRoll,stance,direction)});
   if(kind!=Kind::Dash)
     p.candidates.push_back({Kind::Dash,animationName(Kind::Dash,stance,direction)});
   p.jumpBack = direction==Direction::Back;
@@ -98,6 +109,11 @@ std::optional<MeleeDodge::Move> MeleeDodge::parseAnimation(std::string_view name
     m.stance = Stance::TwoHand;
   else
     return std::nullopt;
+  if(rest=="BARGE") {
+    m.kind = Kind::Barge;
+    m.direction = Direction::Forward;
+    return m;
+    }
   if(take(rest,"DASH"))
     m.kind = Kind::Dash;
   else if(take(rest,"ROLLHEAVY"))
@@ -139,13 +155,37 @@ MeleeDodge::Window MeleeDodge::invulnerability(Kind kind) {
     case Kind::Dash:      return {40,360};
     case Kind::Roll:      return {40,470};
     case Kind::HeavyRoll: return {40,390};
+    case Kind::Barge:     return {1,0};
     }
   return {40,360};
   }
 
 bool MeleeDodge::invulnerable(Kind kind, uint64_t elapsedMs) {
+  if(kind==Kind::Barge)
+    return false;
   const auto w = invulnerability(kind);
   return w.beginMs<=elapsedMs && elapsedMs<=w.endMs;
+  }
+
+bool MeleeDodge::bargeContact(uint64_t elapsedMs) {
+  return 440<=elapsedMs && elapsedMs<=600;
+  }
+
+bool MeleeDodge::bargeSuperArmor(uint64_t elapsedMs) {
+  return elapsedMs<=600;
+  }
+
+bool MeleeDodge::bargeCanContact(const BargeTarget& target) {
+  return target.alive && !target.down && !target.knockedDown && !target.invulnerable &&
+         target.distanceCm<=130.f && std::abs(target.heightCm)<=100.f && std::abs(target.angleDeg)<=50.f;
+  }
+
+MeleeDodge::BargeOutcome MeleeDodge::bargeOutcome(const BargeTarget& target) {
+  if(!target.human && target.beastSize==MeleeImpact::BeastSize::Huge)
+    return BargeOutcome::NoneHuge;
+  if(target.human && target.stunned)
+    return BargeOutcome::Knockdown;
+  return BargeOutcome::Stun;
   }
 
 float MeleeDodge::cost(Kind kind) {
@@ -153,6 +193,7 @@ float MeleeDodge::cost(Kind kind) {
     case Kind::Dash:      return DashCost;
     case Kind::Roll:      return RollCost;
     case Kind::HeavyRoll: return HeavyRollCost;
+    case Kind::Barge:     return HeavyRollCost;
     }
   return DashCost;
   }
@@ -203,6 +244,7 @@ std::string_view MeleeDodge::name(Kind kind) {
     case Kind::Dash:      return "dash";
     case Kind::Roll:      return "roll";
     case Kind::HeavyRoll: return "heavy_roll";
+    case Kind::Barge:     return "barge";
     }
   return "dash";
   }
