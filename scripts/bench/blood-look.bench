@@ -49,7 +49,7 @@ stop
 # the paladin out of the frame: frozen 8 m behind the hero
 pin PAL_255_RITTER 800 180 0
 # cam follow keeps the watched npc by pointer, dead or alive (cam two/face look for a living one)
-cam follow 230 240 40
+cam follow 150 300 40
 rec field-pool
 wait 20000
 stop
