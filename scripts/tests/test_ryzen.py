@@ -965,8 +965,7 @@ remote_run pytest "$TEST_ROOT/worktree" run -rs tests/test_storygraph.py
         foreign = remote_cache / '.setup-another-session'
         foreign.mkdir(parents=True)
         (foreign / 'keep').touch()
-        setup = SCRIPT.read_text().split('if [[ "$ACTION" == setup ]]; then\n', 1)[1]
-        setup = setup.split('\nfi\n\n# Codex worktrees', 1)[0]
+        setup = self.base_sync_source()
         harness = r'''
 set -euo pipefail
 ACTION=setup RYZEN_HOST=test
@@ -1007,7 +1006,12 @@ rsync() {
         (part / ('base.json' if kind == 'base' else 'videos.json')).write_text(json.dumps(metadata))
         return {'fingerprint': fingerprint, 'path': str(part)}
 
-    def run_setup(self, parts, *, host='test'):
+    @staticmethod
+    def base_sync_source():
+        return 'select_mac_base_parts() {' + SCRIPT.read_text().split(
+            'select_mac_base_parts() {', 1)[1].split('\n# Validate prepared content', 1)[0]
+
+    def run_setup(self, parts, *, host='test', action='setup', overrides=None):
         game = self.root / 'installation'
         (game / 'system').mkdir(parents=True, exist_ok=True)
         for name in ('Gothic.ini', 'SystemPack.ini'):
@@ -1015,32 +1019,38 @@ rsync() {
         pointers = self.home / '.cache/gothic-ai/base/current'
         pointers.mkdir(parents=True, exist_ok=True)
         pointer = pointers / (hashlib.sha256(str(game).encode()).hexdigest() + '.json')
-        contents = json.dumps(dict(version=1, gothic=str(game), **parts))
-        pointer.write_text(contents)
+        contents = json.dumps(dict(version=1, gothic=str(game), **parts)) if parts is not None else None
+        if contents is None:
+            pointer.unlink(missing_ok=True)
+        else:
+            pointer.write_text(contents)
         (self.root / 'remote').mkdir(exist_ok=True)
-        setup = SCRIPT.read_text().split('if [[ "$ACTION" == setup ]]; then\n', 1)[1]
-        setup = setup.split('\nfi\n\n# Codex worktrees', 1)[0]
-        harness = SCRIPT.read_text().split('\ntoolchain() {', 1)[0] + r'''
-set -euo pipefail
-ACTION=setup
-ROOT="$TEST_ROOT/source"
-cmake() {
-  case "$1 $2 $3" in
-    "-DBASE_ROOT=$ROOT/OpenGothic -P $ROOT/OpenGothic/cmake/BaseFormat.cmake") printf '%064d\n' 0 | tr 0 a ;;
-    "-DVIDEO_ROOT=$ROOT/OpenGothic -P $ROOT/OpenGothic/cmake/VideoFormat.cmake") printf '%064d\n' 0 | tr 0 b ;;
-    *) return 99 ;;
-  esac
-}
-toolchain() { :; }
-remote() {
-  printf '%s\n' "$*" >>"$TEST_ROOT/remote-calls"
-  (cd "$TEST_ROOT/remote"; HOME="$PWD" "$@")
-}
-verify_base_part() { [[ -f "$2/base.json" || -f "$2/videos.json" ]]; }
-flock() { :; }
-export -f flock
-rsync() {
-  python3 - "$@" <<'PY'
+        for name in ('remote-calls', 'copies.jsonl', 'requests.jsonl'):
+            (self.root / name).unlink(missing_ok=True)
+        ssh = self.bin / 'ssh'
+        ssh.write_text(f'#!{sys.executable}\n' + r'''
+import json
+import os
+from pathlib import Path
+import shlex
+import subprocess
+import sys
+root = Path(os.environ['TEST_ROOT'])
+command = sys.argv[-1]
+with (root / 'remote-calls').open('a') as stream:
+    stream.write(json.dumps(shlex.split(command)) + '\n')
+environment = {name: value for name, value in os.environ.items()
+               if not name.startswith('OPENGOTHIC_') and name != 'GOTHIC_DIR'}
+environment['HOME'] = str(root / 'remote')
+body = None
+if shlex.split(command)[:2] == ['bash', '-s']:
+    body = sys.stdin.buffer.read().replace(b'/mnt/shared/gothic-ai/base', str(root / 'store').encode())
+sys.exit(subprocess.run(['bash', '-c', command], input=body, env=environment,
+                        cwd=root / 'remote').returncode)
+''')
+        ssh.chmod(0o755)
+        rsync = self.bin / 'rsync'
+        rsync.write_text(f'#!{sys.executable}\n' + r'''
 import json
 import os
 from pathlib import Path
@@ -1058,12 +1068,59 @@ for name in args[2:-1]:
         shutil.copytree(source, destination, dirs_exist_ok=True)
     else:
         shutil.copyfile(source, destination / source.name)
-PY
+''')
+        rsync.chmod(0o755)
+        queue = self.source / 'scripts/gq'
+        queue.write_text(f'#!{sys.executable}\n' + r'''
+import json
+import os
+from pathlib import Path
+import sys
+with (Path(os.environ['TEST_ROOT']) / 'requests.jsonl').open('a') as stream:
+    stream.write(json.dumps(sys.argv[1:]) + '\n')
+''')
+        queue.chmod(0o755)
+        (self.bin / 'flock').write_text('#!/bin/sh\nexit 0\n')
+        (self.bin / 'flock').chmod(0o755)
+        setup = self.base_sync_source()
+        harness = SCRIPT.read_text().split('\ntoolchain() {', 1)[0] + r'''
+set -euo pipefail
+ACTION="$TEST_ACTION"
+ROOT="$TEST_ROOT/source"
+cmake() {
+  case "$1 $2 $3" in
+    "-DBASE_ROOT=$ROOT/OpenGothic -P $ROOT/OpenGothic/cmake/BaseFormat.cmake") printf '%064d\n' 0 | tr 0 a ;;
+    "-DVIDEO_ROOT=$ROOT/OpenGothic -P $ROOT/OpenGothic/cmake/VideoFormat.cmake") printf '%064d\n' 0 | tr 0 b ;;
+    *) return 99 ;;
+  esac
 }
-'''+setup
+toolchain() { :; }
+verify_base_part() { [[ -f "$2/base.json" || -f "$2/videos.json" ]]; }
+''' + function('remote') + '\n' + setup
+        if action != 'setup':
+            preflight = SCRIPT.read_text().split('# Validate prepared content', 1)[1]
+            harness += '\n# Validate prepared content' + preflight.split('\nif [[ "$ACTION" == bench ]]; then', 1)[0]
+            env_args = next(line for line in SCRIPT.read_text().splitlines() if line.startswith('ENV_ARGS=('))
+            harness += r'''
+SESSION="$TEST_ROOT" STATE="$TEST_ROOT/remote/state" RUN=run JOBS=7 LOCK_WAIT=3 AI_PORT=''
+OUTPUT="$SESSION/output" SSH_PID=$$ TUNNEL_OPEN=0 RUN_STARTED=0 RUN_FINISHED=0 RUN_RC=0
+BENCH_SCENARIO=smoke.bench BENCH_HEADLESS=1 GQ_ARGS=(--class quick)
+exec 8>"$SESSION/control"
+: > "$OUTPUT"
+guard_ack() { :; }
+preparation_needed() { return 1; }
+''' + '\n' + env_args + '\n'
+            harness += '\n'.join(function(name) for name in (
+                'run_quick', 'e2e_display_exclusive', 'game_queue_args', 'run_game'))
+            harness += '\n' + ('run_quick' if action == 'pytest' else 'run_game')
+            harness += ' env "${ENV_ARGS[@]}" bash "$STATE/source/scripts/ryzen.sh" __remote "$ACTION" "$STATE" "$RUN"\n'
+        environment = {name: value for name, value in self.env.items()
+                       if not name.startswith(('OPENGOTHIC_', 'RYZEN_', 'BENCH_')) and name != 'GOTHIC_DIR'}
         result = subprocess.run(['bash', '-c', harness], capture_output=True, text=True, timeout=5,
-                                env=dict(self.env, GOTHIC_DIR=str(game), RYZEN_HOST=host, TEST_HOST=host))
-        self.assertEqual(pointer.read_text(), contents)
+                                env=dict(environment, GOTHIC_DIR=str(game), RYZEN_HOST=host,
+                                         TEST_HOST=host, TEST_ACTION=action, **(overrides or {})))
+        if contents is not None:
+            self.assertEqual(pointer.read_text(), contents)
         copies = self.root / 'copies.jsonl'
         return result, [json.loads(line) for line in copies.read_text().splitlines()] if copies.exists() else []
 
@@ -1129,6 +1186,122 @@ PY
                 self.assertEqual(copies, [])
                 self.assertFalse((self.root / 'remote-calls').exists())
                 self.assertFalse((self.root / 'remote/gothic-ai/game-base.json').exists())
+
+    def remote_game_setup(self):
+        settings = self.root / 'remote/gothic-ai/game-settings/system'
+        settings.mkdir(parents=True, exist_ok=True)
+        for name in ('Gothic.ini', 'SystemPack.ini'):
+            (settings / name).write_text('previous settings')
+        pointer = settings.parent.parent / 'game-base.json'
+        pointer.write_text('{"base": "' + '0' * 64 + '", "videos": ""}\n')
+        return pointer
+
+    def assert_synced_environment(self, expected):
+        calls = [json.loads(line) for line in (self.root / 'remote-calls').read_text().splitlines()]
+        check = next(call for call in calls if call[-1] == '--check')
+        self.assertEqual(check[0], 'env')
+        for name, value in expected.items():
+            self.assertIn(f'{name}={value}', check)
+        requests = [json.loads(line) for line in (self.root / 'requests.jsonl').read_text().splitlines()]
+        self.assertEqual(len(requests), 1, requests)
+        for name, value in expected.items():
+            self.assertIn(f'{name}={value}', requests[0])
+
+    def test_autosync_ready_parts_preserve_host_pointer_and_forward_exact_fingerprints(self):
+        parts = {kind: self.setup_part(kind, fingerprint * 64, digest * 64)
+                 for kind, fingerprint, digest in (('base', 'c', 'a'), ('videos', 'd', 'b'))}
+        pointer = self.remote_game_setup()
+        contents = pointer.read_bytes()
+        # The base can already be in the shared store, while videos are cached locally.
+        for kind, part in parts.items():
+            destination = ((self.root / 'store') if kind == 'base' else
+                           self.root / 'remote/.cache/gothic-ai/base/videos') / part['fingerprint']
+            shutil.copytree(part['path'], destination)
+        for action in ('bench', 'e2e', 'pytest'):
+            with self.subTest(action=action):
+                result, copies = self.run_setup(parts, action=action)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(len(copies), 1, copies)
+                self.assertIn('--checksum', copies[0])
+                self.assertEqual(copies[0][-1], 'test:gothic-ai/game-settings/system/')
+                self.assertIn('test: base cccccccccccc ready', result.stdout)
+                self.assertIn('test: videos dddddddddddd ready', result.stdout)
+                self.assertEqual(pointer.read_bytes(), contents)
+                for name in ('Gothic.ini', 'SystemPack.ini'):
+                    self.assertEqual((pointer.parent / 'game-settings/system' / name).read_text(), name)
+                self.assert_synced_environment({f'OPENGOTHIC_{kind.upper()}_FINGERPRINT': part['fingerprint']
+                                                for kind, part in parts.items()})
+
+    def test_autosync_initializes_dev_ubuntu_without_shared_storage(self):
+        parts = {kind: self.setup_part(kind, fingerprint * 64, digest * 64)
+                 for kind, fingerprint, digest in (('base', 'c', 'a'), ('videos', 'd', 'b'))}
+        result, copies = self.run_setup(parts, host='dev-ubuntu', action='bench')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(len(copies), 3, copies)
+        for kind, part in parts.items():
+            self.assertIn(f"dev-ubuntu: {kind} {part['fingerprint'][:12]} copied in ", result.stdout)
+            relative = ('' if kind == 'base' else 'videos/') + part['fingerprint']
+            cached = self.root / 'remote/.cache/gothic-ai/base' / relative
+            self.assertTrue((cached / ('base.json' if kind == 'base' else 'videos.json')).is_file())
+        pointer = self.root / 'remote/gothic-ai/game-base.json'
+        self.assertEqual(json.loads(pointer.read_text()), {kind: part['fingerprint'] for kind, part in parts.items()})
+        for name in ('Gothic.ini', 'SystemPack.ini'):
+            self.assertEqual((pointer.parent / 'game-settings/system' / name).read_text(), name)
+        self.assert_synced_environment({f'OPENGOTHIC_{kind.upper()}_FINGERPRINT': part['fingerprint']
+                                        for kind, part in parts.items()})
+        # Missing settings also require first-time setup, even with an existing pointer.
+        pointer.write_text(json.dumps({'base': '0' * 64, 'videos': ''}))
+        (pointer.parent / 'game-settings/system/Gothic.ini').unlink()
+        result, copies = self.run_setup(parts, host='dev-ubuntu', action='bench')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(len(copies), 1, copies)
+        self.assertEqual(json.loads(pointer.read_text()), {kind: part['fingerprint'] for kind, part in parts.items()})
+        self.assertFalse((self.root / 'store').exists())
+
+    def test_autosync_missing_checkout_format_stops_before_copy_or_queue(self):
+        for kind, digest in (('base', 'a'), ('videos', 'b')):
+            with self.subTest(kind=kind):
+                parts = {name: self.setup_part(name, fingerprint * 64,
+                                              ('f' if name == kind else format_digest) * 64,
+                                              path=self.root / f'auto-{kind}-{name}')
+                         for name, fingerprint, format_digest in (('base', 'c', 'a'), ('videos', 'd', 'b'))}
+                result, copies = self.run_setup(parts, action='e2e')
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn('Start the game once on the Mac on this version', result.stderr)
+                self.assertEqual(len(result.stderr.splitlines()), 1, result.stderr)
+                self.assertEqual(copies, [])
+                self.assertFalse((self.root / 'remote-calls').exists())
+                self.assertFalse((self.root / 'requests.jsonl').exists())
+
+    def test_autosync_respects_explicit_base_and_video_choices(self):
+        self.remote_game_setup()
+        cases = [
+            ({'OPENGOTHIC_BASE_FINGERPRINT': 'e' * 64}, 'base'),
+            ({'OPENGOTHIC_BASE': '/remote/custom-base'}, 'base'),
+            ({'OPENGOTHIC_VIDEOS_FINGERPRINT': 'f' * 64}, 'videos'),
+            ({'OPENGOTHIC_VIDEOS_FINGERPRINT': ''}, 'videos'),
+        ]
+        for index, (overrides, skipped) in enumerate(cases):
+            with self.subTest(overrides=overrides):
+                parts = {kind: self.setup_part(kind, fingerprint * 64,
+                                              ('0' if kind == skipped else digest) * 64,
+                                              path=self.root / f'override-{index}-{kind}')
+                         for kind, fingerprint, digest in (('base', 'c', 'a'), ('videos', 'd', 'b'))}
+                result, copies = self.run_setup(parts, action='e2e', overrides=overrides)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertNotIn(f'test: {skipped} ', result.stdout)
+                self.assertFalse(any(copy[2] == parts[skipped]['path'] + '/' for copy in copies))
+                other = 'videos' if skipped == 'base' else 'base'
+                self.assert_synced_environment(dict(overrides, **{
+                    f'OPENGOTHIC_{other.upper()}_FINGERPRINT': parts[other]['fingerprint']}))
+        # Fully explicit content does not need a Mac pointer at all.
+        result, copies = self.run_setup(None, action='e2e', overrides={
+            'OPENGOTHIC_BASE_FINGERPRINT': 'e' * 64, 'OPENGOTHIC_VIDEOS_FINGERPRINT': '',
+        })
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(len(copies), 1, copies)
+        self.assert_synced_environment({'OPENGOTHIC_BASE_FINGERPRINT': 'e' * 64,
+                                        'OPENGOTHIC_VIDEOS_FINGERPRINT': ''})
 
     @unittest.skipUnless(shutil.which('cmake'), 'cmake is not available')
     def test_importer_format_scripts_print_one_sha256(self):

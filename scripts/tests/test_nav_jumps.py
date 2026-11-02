@@ -159,14 +159,17 @@ raise SystemExit(subprocess.run(["bash", "-c", command], env=remote_env).returnc
     monkeypatch.setenv("SSH_CALLS", str(calls))
     queue = tmp_path / "queue-command"
     monkeypatch.setenv("SSH_QUEUE", str(queue))
-    for filename, action in (("nav-jumps-remote.sh", "build"), ("ryzen.sh", "pytest")):
+    for filename, action, message, expected_calls in (
+        ("nav-jumps-remote.sh", "build", "Run scripts/ryzen.sh setup first", ["ssh"]),
+        ("ryzen.sh", "pytest", "Start the game once on the Mac on this version", []),
+    ):
         calls.write_text("")
         monkeypatch.setenv("GOTHIC_DIR", "/Volumes/x")
         script = Path(__file__).resolve().parents[1] / filename
         result = subprocess.run(["bash", str(script), action], capture_output=True, text=True)
         assert result.returncode == 1
-        assert "Run scripts/ryzen.sh setup first" in result.stderr
-        assert calls.read_text().splitlines() == ["ssh"]
+        assert message in result.stderr
+        assert calls.read_text().splitlines() == expected_calls
         assert not (home / "gothic-ai").exists()
 
     settings = home / "gothic-ai/game-settings"

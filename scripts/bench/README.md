@@ -12,7 +12,15 @@ BENCH_HOST=local NO_BUILD=1 scripts/bench.sh ik-sweep  # local, skip the increme
 
 `BENCH_HOST=auto` (default) tries dev-ubuntu, then Ryzen, then this Mac for headless scenarios;
 windowed scenarios try Ryzen, then Mac. Both remote hosts use `scripts/ryzen.sh` and copy all output back.
-Each fallback prints one line explaining the SSH, setup, lock, queue-wait or game-startup failure.
+Before remote `bench` and `e2e`, `ryzen.sh` selects Mac base/video parts matching this checkout's
+import formats, copies missing parts to the host's cache, and synchronizes both game INI files.
+Ready parts in the host cache or shared store need no copy; dev-ubuntu only uses its cache.
+The run receives the exact fingerprints without changing a prepared host's `game-base.json`;
+a fresh host gets settings and that pointer automatically. `scripts/ryzen.sh setup` is optional.
+Explicit nonempty `OPENGOTHIC_BASE` or `OPENGOTHIC_BASE_FINGERPRINT` skips base selection/copy;
+an explicit `OPENGOTHIC_VIDEOS_FINGERPRINT`, including empty, does the same for videos.
+If a matching Mac part is missing, start the game on Mac on this version to import it.
+Each fallback prints one line explaining the SSH, base synchronization, lock, queue-wait or game-startup failure.
 Once returned output contains `game.log`, that host's result is final, including a failing exit code;
 the game is not run again elsewhere. The remote lock/queue wait defaults to 120 seconds in `auto`
 (`RYZEN_LOCK_WAIT`). `BENCH_HOST=dev-ubuntu` and `BENCH_HOST=ryzen` require that host, default to a
