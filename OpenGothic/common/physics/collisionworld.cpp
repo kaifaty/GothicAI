@@ -6,6 +6,7 @@
 #include "frameprofile.h"
 #include "loadprobe.h"
 #include "gothic.h"
+#include "testbench.h"
 #include "world/objects/item.h"
 #include "world/objects/npc.h"
 #include "world/world.h"
@@ -3209,6 +3210,8 @@ void CollisionWorld::tick(uint64_t dt) {
           finishBuoyancy(seconds);
           for(auto* body:ragdolls) body->finishKinematicStep();
           impl->finishRagdollBirthStep();
+          if(TestBench::isActive())
+            for(auto* body:ragdolls) body->sampleBirth(seconds);
           impl->meleeSample.solveMs+=std::chrono::duration<float,std::milli>(std::chrono::steady_clock::now()-solveStart).count();
           ++impl->meleeSample.updates;
           sampleMeleeBench();
@@ -3284,6 +3287,8 @@ void CollisionWorld::tick(uint64_t dt) {
       finishBuoyancy(step);
       for(auto* body:ragdolls) body->finishKinematicStep();
       impl->finishRagdollBirthStep();
+      if(TestBench::isActive())
+        for(auto* body:ragdolls) body->sampleBirth(step);
       itemWakeQueries=0;itemWakeCreated=0;
       recoverTunneledItems();
       advanced = true;
@@ -3568,6 +3573,11 @@ void CollisionWorld::unregisterRagdoll(Ragdoll& body) {
   for(auto it=impl->birthGuards.begin();it!=impl->birthGuards.end();++it)
     if(it->second.body==&body) { impl->birthGuards.erase(it);break; }
   ragdolls.erase(std::remove(ragdolls.begin(),ragdolls.end(),&body),ragdolls.end());
+  }
+
+std::vector<uint32_t> CollisionWorld::ragdollBirthGuardGroups(const Ragdoll& body) const {
+  const auto it=impl->birthGuards.find(uint32_t(body.noiseId()));
+  return it==impl->birthGuards.end() ? std::vector<uint32_t>() : it->second.livingGroups;
   }
 
 size_t CollisionWorld::bodyCount() const { return impl->system.GetNumBodies(); }

@@ -150,6 +150,7 @@ class Ragdoll final {
             bool kinematic = false);
     void prepareKinematicStep(float deltaSeconds, float targetFraction = 1.f);
     void finishKinematicStep();
+    void sampleBirth(float deltaSeconds);
     size_t boneForBodyId(uint32_t id) const;
     std::vector<uint32_t> diagnosticBodyIds() const;
     void recordImpactSpeed(float speed);

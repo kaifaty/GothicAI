@@ -354,6 +354,7 @@ class CollisionWorld final {
     friend class ClothContractDriver;
     uint32_t registerRagdoll(Ragdoll& body);
     void unregisterRagdoll(Ragdoll& body);
+    std::vector<uint32_t> ragdollBirthGuardGroups(const Ragdoll& body) const;
     std::unique_ptr<Impl> impl;
     std::vector<CollisionBody*> bodies;
     std::vector<DynamicBody*> rigid;
