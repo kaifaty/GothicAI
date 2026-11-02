@@ -132,6 +132,16 @@ void main() {
   color *= ao;
   color *= scene.exposure;
 #endif
+#if defined(MATERIAL_MAPS)
+  {
+    // own glow (embers, burning wood; main.frag mainGBuffer): its own luminance under the exposure, as a flame's
+    const vec4 ormE = texelFetch(gbufOrm, fragCoord, 0);
+    if(ormE.a>0.5 && ormE.a<0.999) {
+      const float share = (1.0 - ormE.a)/EmissiveOrmCode;
+      color += emberColour(share) * (share*EmissiveMeshPeak) * min(EmissiveSunRatio * scene.GSunIntensity * scene.exposure, EmissiveMaxGain);
+      }
+  }
+#endif
 
 #if defined(SURFEL_GI) && 1
   if(drawInt(fragCoord.xy-ivec2(100,100), int(surf.count))>0) {

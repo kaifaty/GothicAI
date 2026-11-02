@@ -22,6 +22,7 @@ class DamageCalculator {
       int32_t value      = 0;
       bool    hasHit     = false;
       bool    invincible = false;
+      bool    critical   = false;
       };
 
     struct Damage final {

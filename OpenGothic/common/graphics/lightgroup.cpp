@@ -302,6 +302,18 @@ const asset::LightPreset& LightGroup::findPreset(std::string_view preset) const 
   return zero;
   }
 
+void LightGroup::nearLights(const Vec3& at, float reach, std::vector<Near>& out) const {
+  out.clear();
+  std::lock_guard<std::mutex> guard(sync);
+  for(auto& l:lightSourceData) {
+    if(l.range<=0)
+      continue;
+    const float r = l.range + reach;
+    if((l.pos-at).quadLength()<r*r)
+      out.push_back({l.pos, l.range, l.color});
+    }
+  }
+
 void LightGroup::tick(uint64_t time) {
   for(size_t i : animatedLights) {
     auto& light = lightSourceDesc[i];

@@ -1,5 +1,5 @@
 {
-  "source": "GOTHIC.DAT from the game base; instance names, NPC_TYPE_AMBIENT and constructor equipment checked 2026-11-01. Save 1: NEWWORLD.",
+  "source": "GOTHIC.DAT from the game base; ambient NPC_TYPE_AMBIENT=0, guild < 16, constructor equipment/talents and STARTUP_NEWWORLD insertions checked 2026-11-02. Save 1 world: NEWWORLD. The three v1 holdouts are now training; v2 holdouts use six previously unseen instances.",
   "pairs": [
     {
       "id": "lobart-equals",
@@ -122,7 +122,7 @@
       "coverage": [
         "equal-peasants"
       ],
-      "holdout": true,
+      "holdout": false,
       "smoke": false
     },
     {
@@ -134,7 +134,7 @@
       "coverage": [
         "unarmed-armed"
       ],
-      "holdout": true,
+      "holdout": false,
       "smoke": false
     },
     {
@@ -144,6 +144,48 @@
         "SLD_824_SOELDNER"
       ],
       "coverage": [
+        "militia-mercenary"
+      ],
+      "holdout": false,
+      "smoke": false
+    },
+    {
+      "id": "onar-2h-equals",
+      "npcs": [
+        "SLD_818_SOELDNER",
+        "SLD_827_SOELDNER"
+      ],
+      "coverage": [
+        "2h-2h",
+        "talent-1-1",
+        "onar-farm"
+      ],
+      "holdout": true,
+      "smoke": false
+    },
+    {
+      "id": "onar-peasant-city-militia",
+      "npcs": [
+        "BAU_901_BAUER",
+        "MIL_323_MILIZ"
+      ],
+      "coverage": [
+        "1h-1h",
+        "talent-0-1",
+        "peasant-militia"
+      ],
+      "holdout": true,
+      "smoke": false
+    },
+    {
+      "id": "onar-axe-city-militia",
+      "npcs": [
+        "SLD_817_SOELDNER",
+        "MIL_326_MILIZ"
+      ],
+      "coverage": [
+        "1h-1h",
+        "talent-1-1",
         "militia-mercenary"
       ],
       "holdout": true,

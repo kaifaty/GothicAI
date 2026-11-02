@@ -56,6 +56,14 @@ class LightGroup final {
 
     void   dbgLights(DbgPainter& p) const;
 
+    struct Near {
+      Tempest::Vec3 pos;
+      float         range = 0;
+      Tempest::Vec3 color;
+      };
+    // lights whose sphere comes within reach of at (smoke and steam take their light, pfxbucket.cpp)
+    void   nearLights(const Tempest::Vec3& at, float reach, std::vector<Near>& out) const;
+
   private:
     using Vertex = Resources::VertexL;
 
@@ -87,7 +95,7 @@ class LightGroup final {
 
     std::vector<asset::LightPreset> presets;
 
-    std::mutex                       sync;
+    mutable std::mutex               sync;
     std::vector<size_t>              freeList;
     std::vector<LightSource>         lightSourceDesc;
     std::vector<LightSsbo>           lightSourceData;

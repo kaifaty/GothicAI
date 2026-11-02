@@ -1107,6 +1107,23 @@ void converterCases(const Fixture& fixture) {
     require(mesh.sub_meshes[0].mat.texture=="NAMED_TEXTURE.TGA","existing texture extension must remain unchanged");
     }
   options = {};
+  options.group = "WATER";
+  options.alpha = "BLEND";
+  glbFile(path,options);
+  mesh = loadGltfMesh(path);
+  require(mesh.sub_meshes[0].mat.group==asset::MaterialGroup::WATER &&
+          mesh.sub_meshes[0].mat.alpha_func==asset::AlphaFunction::BLEND,
+          "WATER with BLEND must load as a water surface");
+  require(mesh.sub_meshes[0].mat.disable_collision,"a water surface must not collide");
+  {
+    Resources resources;
+    fixture.mount();
+    PackedMesh packed(mesh,PackedMesh::PK_Visual,true);
+    ProtoMesh proto(std::move(packed),"WATER.MRM");
+    require(proto.attach[0].sub[0].material.alpha==Material::Water,"WATER with BLEND must draw as engine water");
+  }
+
+  options = {};
   options.mixedAlpha = true;
   glbFile(path,options);
   mesh = loadGltfMesh(path);
@@ -1157,11 +1174,11 @@ void rejectionCases(const Fixture& fixture) {
     options = {};
     options.group = "WATER";
     options.alpha = alpha;
-    invalidGlb(fixture,"WATER static material",options,"water belongs to world mesh surfaces and overrides OPAQUE/MASK");
+    invalidGlb(fixture,"WATER static material",options,"water belongs to extras.group WATER with alphaMode BLEND");
     }
   options = {};
   options.skin = true; invalidGlb(fixture,"skin",options);
-  options = {}; options.alpha = "BLEND"; invalidGlb(fixture,"BLEND",options);
+  options = {}; options.alpha = "BLEND"; invalidGlb(fixture,"BLEND",options,"BLEND only to water");
   options = {}; options.normals = false; invalidGlb(fixture,"missing NORMAL",options);
   options = {}; options.external = true; invalidGlb(fixture,"external URI",options);
   options = {}; options.positions = 65536; invalidGlb(fixture,"more than 65535 positions",options);

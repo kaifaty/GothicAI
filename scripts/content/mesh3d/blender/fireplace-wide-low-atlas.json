@@ -1,0 +1,97 @@
+{
+ "glb": "city-hearth/build/fireplace-wide-low/model.glb",
+ "maps_dir": "city-hearth/tiles",
+ "scales": {
+  "OWN_HEARTH_ASHLAR": 1.0,
+  "OWN_HEARTH_SOOT": 1.0,
+  "OWN_HEARTH_LOG": 3.0,
+  "OWN_HEARTH_EMBER": 2.0,
+  "OWN_HEARTH_CARVING": 1.0
+ },
+ "targets": {
+  "OWN_HEARTH_ASHLAR": [
+   0.3,
+   0.25,
+   0.17
+  ],
+  "OWN_HEARTH_SOOT": [
+   0.006,
+   0.0055,
+   0.005
+  ],
+  "OWN_HEARTH_LOG": [
+   0.04,
+   0.028,
+   0.016
+  ],
+  "OWN_HEARTH_EMBER": [
+   0.08,
+   0.022,
+   0.007
+  ],
+  "OWN_HEARTH_CARVING": [
+   0.36,
+   0.31,
+   0.22
+  ]
+ },
+ "slots": {
+  "OWN_HEARTH_ASHLAR": [
+   "OWN_HEARTH_FIREPLACEWIDELOW",
+   "STONE"
+  ],
+  "OWN_HEARTH_SOOT": [
+   "OWN_HEARTH_FIREPLACEWIDELOW",
+   "STONE"
+  ],
+  "OWN_HEARTH_LOG": [
+   "OWN_HEARTH_FIREPLACEWIDELOW_FIRE",
+   "WOOD"
+  ],
+  "OWN_HEARTH_EMBER": [
+   "OWN_HEARTH_FIREPLACEWIDELOW_FIRE",
+   "UNDEF"
+  ],
+  "OWN_HEARTH_CARVING": [
+   "OWN_HEARTH_FIREPLACEWIDELOW",
+   "STONE"
+  ]
+ },
+ "metal": [],
+ "edge_wear": {
+  "OWN_HEARTH_ASHLAR": 0.08,
+  "OWN_HEARTH_SOOT": 0.0,
+  "OWN_HEARTH_LOG": 0.08,
+  "OWN_HEARTH_EMBER": 0.0,
+  "OWN_HEARTH_CARVING": 0.08
+ },
+ "measure_ao": {
+  "OWN_HEARTH_ASHLAR": 0.5
+ },
+ "size": 1024,
+ "seed": 1,
+ "angle_limit": 66,
+ "margin": 0.004,
+ "metal_scale": 0.0,
+ "wet_height": 0.0,
+ "algae": 0.0,
+ "bleach": 0.0,
+ "tone_spread": 0.16,
+ "crevice": {
+  "distance": 0.03,
+  "dirt": 0.6,
+  "colour": [
+   0.004,
+   0.004,
+   0.003
+  ]
+ },
+ "contrast": {
+  "OWN_HEARTH_ASHLAR": 0.5,
+  "OWN_HEARTH_CARVING": 0.5
+ },
+ "tile_normal": {
+  "OWN_HEARTH_ASHLAR": 0.15,
+  "OWN_HEARTH_CARVING": 0.15
+ }
+}
