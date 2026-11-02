@@ -12,6 +12,7 @@ namespace Detail {
 
 class VDevice;
 class VulkanInstance;
+class VDescriptorArray;
 
 class VPoolCache {
   public:
@@ -28,6 +29,7 @@ class VPoolCache {
 
     void             setupLimits();
     void             notifyDestroy(const AbstractGraphicsApi::NoCopy* res);
+    void             notifyUpdate(const VDescriptorArray& arr, uint32_t element);
 
     VkDescriptorPool allocPool();
     void             freePool(VkDescriptorPool p);
@@ -40,6 +42,7 @@ class VPoolCache {
     struct DSet {
       VkDescriptorSetLayout dLay = VK_NULL_HANDLE;
       Bindings              bindings;
+      uint32_t              arrays = 0; // bindings copied from a descriptor array
 
       VkDescriptorPool      pool = VK_NULL_HANDLE;
       VkDescriptorSet       set  = VK_NULL_HANDLE;
