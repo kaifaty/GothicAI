@@ -175,7 +175,7 @@ while True:
 
 class QueueSplitTests(unittest.TestCase):
     def run_game(self, action='e2e', prepare=True, build_exit=0, scenario='stages', window=None,
-                 *, headless=False, bench_name='smoke'):
+                 *, headless=False, bench_name='smoke', host='fake', jobs='7'):
         directory = self.enterContext(tempfile.TemporaryDirectory(prefix='ryzen-phases-test-'))
         root = Path(directory)
         (root / 'scripts/bench').mkdir(parents=True)
@@ -196,14 +196,14 @@ if name.startswith('build ') and int(os.environ['TEST_BUILD_EXIT']):
     sys.exit(int(os.environ['TEST_BUILD_EXIT']))
 ''')
         queue.chmod(0o755)
-        harness = r'''
+        harness = SCRIPT.read_text().split('\ntoolchain() {', 1)[0] + r'''
 set -euo pipefail
 ROOT="$TEST_SESSION" SESSION="$TEST_SESSION" STATE="$TEST_SESSION/state"
-OUTPUT="$SESSION/output" RUN=run RYZEN_HOST=fake AI_PORT=''
-ACTION="$TEST_ACTION" JOBS=7 LOCK_WAIT=23 SCENARIO="$TEST_SCENARIO"
+OUTPUT="$SESSION/output" RUN=run AI_PORT=''
+ACTION="$TEST_ACTION" JOBS="${RYZEN_JOBS:-12}" LOCK_WAIT=23 SCENARIO="$TEST_SCENARIO"
 BENCH_SCENARIO="$TEST_BENCH_SCENARIO" RYZEN_MAX=9m WORLD=NEWWORLD.ZEN
 TUNNEL_OPEN=0 RUN_STARTED=0 RUN_FINISHED=0 RUN_RC=0
-SSH_PID=$$ ENV_ARGS=(RYZEN_JOBS=7) GQ_ARGS=()
+SSH_PID=$$ ENV_ARGS=("RYZEN_JOBS=$JOBS") GQ_ARGS=()
 exec 8>"$SESSION/control"
 : > "$OUTPUT"
 guard_ack() { :; }
@@ -215,9 +215,12 @@ preparation_needed() { [[ "$TEST_PREPARE" == 1 ]]; }
         harness += '\n'.join([function('run_quick'), function('e2e_display_exclusive'),
                               function('game_queue_args'), function('run_game')])
         harness += '\nrun_game env "${ENV_ARGS[@]}" bash "$STATE/source/scripts/ryzen.sh" __remote "$ACTION" "$STATE" "$RUN" "$SCENARIO"\n'
+        env = {name: value for name, value in os.environ.items() if not name.startswith(('RYZEN_', 'BENCH_'))}
+        if jobs is not None:
+            env['RYZEN_JOBS'] = jobs
         result = subprocess.run(
             ['bash', '-c', harness], capture_output=True, text=True, timeout=10,
-            env=dict(os.environ, TEST_SESSION=str(root), TEST_ACTION=action,
+            env=dict(env, TEST_SESSION=str(root), TEST_ACTION=action, RYZEN_HOST=host,
                      TEST_PREPARE=str(int(prepare)), TEST_BUILD_EXIT=str(build_exit),
                      TEST_SCENARIO=scenario, TEST_BENCH_SCENARIO=str(bench_scenario), **(window or {})),
         )
@@ -299,6 +302,20 @@ preparation_needed() { [[ "$TEST_PREPARE" == 1 ]]; }
         self.assertEqual(options, ['--host', 'fake', 'run', '--class', 'quick', '--threads', '4',
                                   '--mem', '5G', '--display', '--max', '9m', '--wait-max', '23',
                                   '--gpu-mem', '4G', '--name', 'bench npc-day-parity'])
+
+    def test_dev_ubuntu_headless_build_and_game_use_host_resources(self):
+        result, requests = self.run_game('bench', headless=True, host='dev-ubuntu', jobs=None)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(len(requests), 2, requests)
+        self.assertEqual(self.queue_options(requests[0]), [
+            '--host', 'dev-ubuntu', 'run', '--class', 'quick', '--threads', '6', '--mem', '10G',
+            '--max', '9m', '--name', 'build bench smoke', '--wait-max', '23',
+        ])
+        self.assertIn('RYZEN_JOBS=6', requests[0])
+        self.assertEqual(self.queue_options(requests[1]), [
+            '--host', 'dev-ubuntu', 'run', '--class', 'batch', '--threads', '4', '--mem', '6G',
+            '--max', '9m', '--wait-max', '23', '--name', 'bench smoke',
+        ])
 
     def test_build_failure_returns_its_status_without_game_submission(self):
         result, requests = self.run_game(build_exit=42)
@@ -990,7 +1007,7 @@ rsync() {
         (part / ('base.json' if kind == 'base' else 'videos.json')).write_text(json.dumps(metadata))
         return {'fingerprint': fingerprint, 'path': str(part)}
 
-    def run_setup(self, parts):
+    def run_setup(self, parts, *, host='test'):
         game = self.root / 'installation'
         (game / 'system').mkdir(parents=True, exist_ok=True)
         for name in ('Gothic.ini', 'SystemPack.ini'):
@@ -1003,9 +1020,9 @@ rsync() {
         (self.root / 'remote').mkdir(exist_ok=True)
         setup = SCRIPT.read_text().split('if [[ "$ACTION" == setup ]]; then\n', 1)[1]
         setup = setup.split('\nfi\n\n# Codex worktrees', 1)[0]
-        harness = r'''
+        harness = SCRIPT.read_text().split('\ntoolchain() {', 1)[0] + r'''
 set -euo pipefail
-ACTION=setup RYZEN_HOST=test
+ACTION=setup
 ROOT="$TEST_ROOT/source"
 cmake() {
   case "$1 $2 $3" in
@@ -1032,7 +1049,7 @@ import sys
 args = sys.argv[1:]
 with (Path(os.environ['TEST_ROOT']) / 'copies.jsonl').open('a') as stream:
     stream.write(json.dumps(args) + '\n')
-destination = Path(args[-1].removeprefix('test:'))
+destination = Path(args[-1].removeprefix(os.environ['TEST_HOST'] + ':'))
 if not destination.is_absolute():
     destination = Path(os.environ['TEST_ROOT']) / 'remote' / destination
 for name in args[2:-1]:
@@ -1045,10 +1062,24 @@ PY
 }
 '''+setup
         result = subprocess.run(['bash', '-c', harness], capture_output=True, text=True, timeout=5,
-                                env=dict(self.env, GOTHIC_DIR=str(game)))
+                                env=dict(self.env, GOTHIC_DIR=str(game), RYZEN_HOST=host, TEST_HOST=host))
         self.assertEqual(pointer.read_text(), contents)
         copies = self.root / 'copies.jsonl'
         return result, [json.loads(line) for line in copies.read_text().splitlines()] if copies.exists() else []
+
+    def test_dev_ubuntu_setup_reuses_its_local_cache_without_shared_storage(self):
+        base = self.setup_part('base', 'c' * 64, 'a' * 64)
+        cached = self.root / 'remote/.cache/gothic-ai/base' / ('c' * 64)
+        cached.mkdir(parents=True)
+        shutil.copyfile(Path(base['path']) / 'base.json', cached / 'base.json')
+        result, copies = self.run_setup({'base': base}, host='dev-ubuntu')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('dev-ubuntu has no shared store', result.stdout)
+        self.assertIn(f'base ready at {cached}', result.stdout)
+        self.assertEqual(len(copies), 1, copies)
+        self.assertEqual(copies[0][-1], 'dev-ubuntu:gothic-ai/game-settings/system/')
+        self.assertEqual(json.loads((self.root / 'remote/gothic-ai/game-base.json').read_text()),
+                         {'base': 'c' * 64, 'videos': ''})
 
     def test_setup_keeps_pointer_parts_with_checkout_formats(self):
         parts = {
@@ -1713,7 +1744,8 @@ out = Path(sys.argv[3])
                 self.assertEqual(json.loads((out / 'content.json').read_text()), value)
                 self.assertEqual((out / 'host.txt').read_text(), 'ryzen\n')
 
-    def bench_game(self, mode, *, marked=False, scenario_name='smoke', report=False, **settings):
+    def bench_game(self, mode, *, marked=False, scenario_name='smoke', report=False,
+                   remote_results=None, **settings):
         scripts = self.root / 'scripts'
         scripts.mkdir()
         shutil.copyfile(BENCH_SCRIPT, scripts / 'bench.sh')
@@ -1723,6 +1755,27 @@ out = Path(sys.argv[3])
             'Path(sys.argv[1], "report-built").touch()\n')
         if report:
             shutil.copyfile(SCRIPT.with_name('bench_report.py'), scripts / 'bench_report.py')
+        if remote_results is not None:
+            launcher = scripts / 'ryzen.sh'
+            launcher.write_text(f'#!{sys.executable}\n' + r'''
+import json
+import os
+from pathlib import Path
+import sys
+root = Path(os.environ['TEST_ROOT'])
+host = os.environ.get('RYZEN_HOST', 'ryzen')
+with (root / 'routes.jsonl').open('a') as stream:
+    stream.write(json.dumps({'host': host, 'wait': os.environ['RYZEN_LOCK_WAIT']}) + '\n')
+result = json.loads(os.environ['TEST_REMOTE_RESULTS'])[host]
+if result.get('game_log'):
+    Path(sys.argv[3], 'game.log').write_text('mock remote game\n')
+print(result['message'])
+print('Ryzen: queue guard complete mock-game')
+print('Ryzen: removed runs/mock and inputs/mock')
+print(f'bench: output in {sys.argv[3]}')
+sys.exit(result['rc'])
+''')
+            launcher.chmod(0o755)
         scenario = self.root / f'{scenario_name}.bench'
         scenario.write_text(('# @headless\n' if marked else '') + 'quit\n')
         game = self.binaries / 'game'
@@ -1772,6 +1825,8 @@ if mode not in ('done', 'exit'):
         env = dict(self.env, BENCH_HOST='local', NO_BUILD='1', WORLD='NEWWORLD.ZEN',
                    GOTHIC_DIR=str(self.root / 'data'), GAME_BIN=str(game), TEST_MODE=mode,
                    TIMEOUT='10', BENCH_PROGRESS='0', BENCH_STALL='0', KEEP='')
+        if remote_results is not None:
+            env['TEST_REMOTE_RESULTS'] = json.dumps(remote_results)
         env.update(settings)
         process = subprocess.Popen(['bash', str(scripts / 'bench.sh'), str(scenario), str(out)],
                                    env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -1789,6 +1844,120 @@ if mode not in ('done', 'exit'):
 
         self.addCleanup(cleanup)
         return process, out
+
+    def test_headless_auto_uses_dev_ubuntu_and_keeps_a_returned_game_failure(self):
+        process, out = self.bench_game('done', marked=True, BENCH_HOST='auto',
+                                       DEV_UBUNTU_HOST='bench-dev',
+                                       GOTHIC_DIR='/Volumes/DevSSD/Dev/games/Gothic II',
+                                       remote_results={
+                                           'bench-dev': {'rc': 1, 'message': 'game failed', 'game_log': True},
+                                       })
+        stdout, stderr = process.communicate(timeout=5)
+        self.assertEqual(process.returncode, 1, stdout + stderr)
+        self.assertEqual([json.loads(line) for line in (self.root / 'routes.jsonl').read_text().splitlines()],
+                         [{'host': 'bench-dev', 'wait': '120'}])
+        self.assertEqual((out / 'host.txt').read_text(), 'dev-ubuntu\n')
+        self.assertNotIn('falling back', stderr)
+        self.assertFalse((self.root / 'invocation.json').exists())
+
+    def test_headless_auto_falls_back_through_ryzen_to_mac_with_reasons(self):
+        process, out = self.bench_game('done', marked=True, BENCH_HOST='auto',
+                                       GOTHIC_DIR='/Volumes/DevSSD/Dev/games/Gothic II',
+                                       remote_results={
+                                           'dev-ubuntu': {'rc': 255, 'message': 'dev-ubuntu setup unavailable'},
+                                           'ryzen': {'rc': 75, 'message': 'Ryzen queue busy'},
+                                       })
+        stdout, stderr = process.communicate(timeout=5)
+        self.assertEqual(process.returncode, 0, stdout + stderr)
+        self.assertEqual([json.loads(line) for line in (self.root / 'routes.jsonl').read_text().splitlines()],
+                         [{'host': 'dev-ubuntu', 'wait': '120'}, {'host': 'ryzen', 'wait': '120'}])
+        fallbacks = [line for line in stderr.splitlines() if 'falling back' in line]
+        self.assertEqual(len(fallbacks), 2, stderr)
+        self.assertIn('falling back to ryzen', fallbacks[0].lower())
+        self.assertIn('dev-ubuntu setup unavailable', fallbacks[0])
+        self.assertIn('Mac', fallbacks[1])
+        self.assertIn('Ryzen queue busy', fallbacks[1])
+        self.assertEqual(json.loads((self.root / 'invocation.json').read_text())['binary'],
+                         'gothic-body-runner')
+        self.assertEqual((out / 'host.txt').read_text(), 'mac\n')
+
+    def test_window_auto_uses_ryzen_then_mac_without_dev_ubuntu(self):
+        process, out = self.bench_game('done', BENCH_HOST='auto',
+                                       GOTHIC_DIR='/Volumes/DevSSD/Dev/games/Gothic II',
+                                       remote_results={'ryzen': {'rc': 255, 'message': 'Ryzen SSH unavailable'}})
+        stdout, stderr = process.communicate(timeout=5)
+        self.assertEqual(process.returncode, 0, stdout + stderr)
+        self.assertEqual([json.loads(line) for line in (self.root / 'routes.jsonl').read_text().splitlines()],
+                         [{'host': 'ryzen', 'wait': '120'}])
+        fallbacks = [line for line in stderr.splitlines() if 'falling back' in line]
+        self.assertEqual(len(fallbacks), 1, stderr)
+        self.assertIn('Ryzen SSH unavailable', fallbacks[0])
+        self.assertEqual((out / 'host.txt').read_text(), 'mac\n')
+
+    def test_explicit_dev_ubuntu_rejects_window_scenarios_before_ssh(self):
+        ssh = self.binaries / 'ssh'
+        ssh.write_text('#!/bin/sh\nprintf called > "$TEST_ROOT/unexpected-transport"\nexit 99\n')
+        ssh.chmod(0o755)
+        scenario = self.root / 'window.bench'
+        for marked, override in ((False, {}), (True, {'BENCH_HEADLESS': '0'})):
+            with self.subTest(marked=marked):
+                scenario.write_text(('# @headless\n' if marked else '') + 'quit\n')
+                result = subprocess.run(
+                    ['bash', str(BENCH_SCRIPT), str(scenario), str(self.root / 'out')],
+                    env=dict(self.env, BENCH_HOST='dev-ubuntu', **override),
+                    capture_output=True, text=True, timeout=5,
+                )
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn('окна на dev-ubuntu нет', result.stderr)
+        self.assertFalse((self.root / 'unexpected-transport').exists())
+
+    def test_dev_ubuntu_archive_is_rejected_before_ssh_or_upload(self):
+        for name in ('ssh', 'rsync'):
+            command = self.binaries / name
+            command.write_text('#!/bin/sh\nprintf called > "$TEST_ROOT/unexpected-transport"\nexit 99\n')
+            command.chmod(0o755)
+        scenario = self.root / 'headless.bench'
+        scenario.write_text('# @headless\nquit\n')
+        result = subprocess.run(
+            ['bash', str(SCRIPT), 'bench', str(scenario), str(self.root / 'out')],
+            env=dict(self.env, RYZEN_HOST='dev-ubuntu', WORLD='NEWWORLD.ZEN',
+                     RYZEN_BENCH_ARCHIVE='/task/result'),
+            capture_output=True, text=True, timeout=5,
+        )
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn('RYZEN_BENCH_ARCHIVE', result.stderr)
+        self.assertIn('dev-ubuntu', result.stderr)
+        self.assertFalse((self.root / 'unexpected-transport').exists())
+
+    def test_dev_ubuntu_du_lists_local_worktrees_without_ryzen_janitor(self):
+        task = self.root / 'remote/gothic-ai/e2e/own'
+        task.mkdir(parents=True)
+        (task / 'result').write_text('local result')
+        ssh = self.binaries / 'ssh'
+        ssh.write_text(f'#!{sys.executable}\n' + r'''
+import os
+from pathlib import Path
+import shlex
+import sys
+root = Path(os.environ['TEST_ROOT'])
+assert sys.argv[-2] == 'dev-ubuntu', sys.argv
+assert shlex.split(sys.argv[-1]) == ['bash', '-s'], sys.argv
+os.environ['HOME'] = str(root / 'remote')
+os.execvp('bash', ['bash', '-c', sys.argv[-1]])
+''')
+        ssh.chmod(0o755)
+        df = self.binaries / 'df'
+        df.write_text('#!/bin/sh\nprintf "Avail\\n100G\\n"\n')
+        df.chmod(0o755)
+        result = subprocess.run(
+            ['bash', str(SCRIPT), 'du'], env=dict(self.env, RYZEN_HOST='dev-ubuntu'),
+            capture_output=True, text=True, timeout=5,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('dev-ubuntu has no shared store or Ryzen janitor', result.stdout)
+        self.assertIn('disk free 100G', result.stdout)
+        self.assertIn('own=', result.stdout)
+        self.assertEqual((task / 'result').read_text(), 'local result')
 
     def test_bench_done_succeeds(self):
         process, out = self.bench_game('done')
@@ -1829,7 +1998,8 @@ if mode not in ('done', 'exit'):
         save = self.root / 'input.sav'
         save.write_text('saved game')
         process, out = self.bench_game('done', BENCH_HEADLESS='1', WORLD='', SAVE=str(save),
-                                     RUNNER_BIN=str(self.binaries / 'custom-runner'), RYZEN_BENCH='1')
+                                     RUNNER_BIN=str(self.binaries / 'custom-runner'), RYZEN_BENCH='1',
+                                     RYZEN_HOST='dev-ubuntu', report=True)
         stdout, stderr = process.communicate(timeout=5)
         self.assertEqual(process.returncode, 0, stdout + stderr)
         invocation = json.loads((self.root / 'invocation.json').read_text())
@@ -1839,6 +2009,8 @@ if mode not in ('done', 'exit'):
                                              '--save', str(out / 'run/save_slot_1.sav'), '-nointro', '-g2',
                                              '--game-parity', '--scenario', str(self.root / 'smoke.bench'),
                                              '--output', str(out), '--mode', 'lockstep'])
+        self.assertEqual((out / 'host.txt').read_text(), 'dev-ubuntu\n')
+        self.assertIn('Host: dev-ubuntu', (out / 'report.md').read_text())
 
     def test_headless_zero_preserves_npc_day_window_arguments(self):
         process, out = self.bench_game('done', marked=True, scenario_name='npc-day-parity',
