@@ -195,11 +195,14 @@ root.mkdir(parents=True, exist_ok=True)
 parent = root if kind == 'engine' else root / 'storygraph'
 binary = 'Gothic2Notr' if kind == 'engine' else 'storygraph'
 entry = parent / digest
+require_runner = kind == 'engine' and sys.argv[6:7] == ['1']
 staging = None
 garbage = []
 
 def ready(path, name):
     names = (name, 'content-convert') if name == 'Gothic2Notr' else (name,)
+    if require_runner:
+        names += ('gothic-body-runner',)
     return all((path / item).is_file() and os.access(path / item, os.X_OK) for item in names)
 
 def retire(path):
@@ -294,14 +297,15 @@ build_storygraph() {
 }
 
 engine_ready() {
-  local state="$1" digest="$2" cached
-  if cached="$(cache_artifact get engine "$digest")"; then
+  local state="$1" digest="$2" require_runner="${3:-0}" cached
+  if cached="$(cache_artifact get engine "$digest" '' "$require_runner")"; then
     export RYZEN_GAME_BIN="$cached/Gothic2Notr"
     return
   fi
   [[ -x "$state/build/opengothic/Gothic2Notr" && -x "$state/build/opengothic/content-convert" && -f "$state/build/source.sha256" && -f "$state/build/CMakeCache.txt" ]] && \
      [[ "$(cat "$state/build/source.sha256")" == "$digest" ]] && \
      grep -qx 'OPENGOTHIC_ENABLE_APP_CADENCE:BOOL=ON' "$state/build/CMakeCache.txt" || return 1
+  [[ "$require_runner" != 1 || -x "$state/build/opengothic/gothic-body-runner" ]] || return 1
   export RYZEN_GAME_BIN="$state/build/opengothic/Gothic2Notr"
 }
 
@@ -347,12 +351,13 @@ PY
 remote_probe() {
   local action="$1" state="$2" run="$3" scenario="$4" digest project
   toolchain
-  local frame_profile=OFF
+  local frame_profile=OFF require_runner=0
   if [[ "$action" == bench && "$(basename "$scenario")" == streaming-flythrough.bench ]]; then frame_profile=ON; fi
+  if [[ "$action" == bench && "${BENCH_HEADLESS:-0}" == 1 ]]; then require_runner=1; fi
   digest="$(source_digest "$frame_profile")"
   printf '%s\n' "$digest" >"$state/inputs/$run/source.sha256"
   if [[ "$action" == e2e ]]; then check_protocol || return 2; fi
-  engine_ready "$state" "$digest" || return 1
+  engine_ready "$state" "$digest" "$require_runner" || return 1
   # A ready worktree build still needs publication in the no-display preparation
   # job. Never copy the runtime directory in this probe or the game request.
   [[ "$RYZEN_GAME_BIN" == "$HOME/gothic-ai/engine-cache/$digest/Gothic2Notr" ]] || return 1
@@ -372,9 +377,10 @@ remote_prepare() {
   toolchain
   digest="$(cat "$state/inputs/$run/source.sha256")"
   if [[ "$action" == e2e ]]; then check_protocol; fi
-  local frame_profile=OFF
+  local frame_profile=OFF require_runner=0
   if [[ "$action" == bench && "$(basename "$scenario")" == streaming-flythrough.bench ]]; then frame_profile=ON; fi
-  build_engine "$state" "$digest" "$frame_profile"
+  if [[ "$action" == bench && "${BENCH_HEADLESS:-0}" == 1 ]]; then require_runner=1; fi
+  build_engine "$state" "$digest" "$frame_profile" "$require_runner"
   if [[ "$action" == e2e ]]; then
     # Probe can stop at the missing engine before scanning the smaller tool tree.
     digest="$(storygraph_digest)"
@@ -388,9 +394,10 @@ remote_prepare() {
 }
 
 require_prepared() {
-  local action="$1" state="$2" run="$3" scenario="$4" digest
+  local action="$1" state="$2" run="$3" scenario="$4" digest require_runner=0
+  if [[ "$action" == bench && "${BENCH_HEADLESS:-0}" == 1 ]]; then require_runner=1; fi
   digest="$(cat "$state/inputs/$run/source.sha256")" || return 1
-  if [[ -z "$digest" ]] || ! engine_ready "$state" "$digest"; then
+  if [[ -z "$digest" ]] || ! engine_ready "$state" "$digest" "$require_runner"; then
     echo 'Ryzen: engine does not match snapshot source.sha256; refusing to build with the display reserved. Run preparation again.' >&2
     return 1
   fi
@@ -414,8 +421,8 @@ game_settings() {
 }
 
 build_engine() {
-  local state="$1" digest="$2" frame_profile="${3:-OFF}" started=$SECONDS
-  if engine_ready "$state" "$digest"; then
+  local state="$1" digest="$2" frame_profile="${3:-OFF}" require_runner="${4:-0}" started=$SECONDS
+  if engine_ready "$state" "$digest" "$require_runner"; then
     if [[ "$RYZEN_GAME_BIN" != "$state/build/opengothic/Gothic2Notr" ]]; then
       echo "Ryzen: engine from cache ${digest:0:12} (0s)"
       return
@@ -433,14 +440,20 @@ build_engine() {
       -DOPENGOTHIC_ENABLE_APP_CADENCE=ON -DOPENGOTHIC_ENABLE_FRAME_PROFILE="$frame_profile" \
       -DCMAKE_CXX_FLAGS="-I$VULKAN_SDK/include" -DCMAKE_EXE_LINKER_FLAGS="-L$VULKAN_SDK/lib" \
       >"$state/build/configure.log" 2>&1 || { local rc=$?; cat "$state/build/configure.log"; return "$rc"; }
-    cmake --build "$state/build" --target Gothic2Notr --parallel "$jobs" \
+    local targets=(Gothic2Notr)
+    if [[ "$require_runner" == 1 ]]; then
+      targets+=(gothic-body-runner)
+    else
+      rm -f "$state/build/opengothic/gothic-body-runner"
+    fi
+    cmake --build "$state/build" --target "${targets[@]}" --parallel "$jobs" \
       >"$state/build/build.log" 2>&1 || { local rc=$?; tail -80 "$state/build/build.log"; return "$rc"; }
     tail -5 "$state/build/build.log"
     printf '%s\n' "$digest" >"$state/build/source.sha256"
     echo "Ryzen: engine configure + build $((SECONDS - started))s"
   fi
   local cached
-  cached="$(cache_artifact publish engine "$digest" "$state/build/opengothic")"
+  cached="$(cache_artifact publish engine "$digest" "$state/build/opengothic" "$require_runner")"
   export RYZEN_GAME_BIN="$cached/Gothic2Notr"
 }
 
@@ -468,17 +481,23 @@ PY
   fi
   toolchain
   game_settings
-  command -v ffmpeg >/dev/null || { echo 'Missing tool: ffmpeg' >&2; return 1; }
-  desktop
+  if [[ "${BENCH_HEADLESS:-0}" != 1 ]]; then
+    command -v ffmpeg >/dev/null || { echo 'Missing tool: ffmpeg' >&2; return 1; }
+    desktop
+  fi
   require_prepared bench "$state" "$run" "$scenario"
   local out="$state/runs/$run"
   mkdir -p "$out"
-  cat >"$out/game.sh" <<'WRAPPER'
+  if [[ "${BENCH_HEADLESS:-0}" == 1 ]]; then
+    export GAME_BIN="$RYZEN_GAME_BIN"
+  else
+    cat >"$out/game.sh" <<'WRAPPER'
 #!/usr/bin/env bash
 exec "$RYZEN_GAME_BIN" "$@" -g2 -window
 WRAPPER
-  chmod +x "$out/game.sh"
-  export GAME_BIN="$out/game.sh"
+    chmod +x "$out/game.sh"
+    export GAME_BIN="$out/game.sh"
+  fi
   echo "Ryzen: prepare/start overhead $((SECONDS - started))s"
   started=$SECONDS
   # bench.sh produces the report here, before the complete output is collected.
@@ -582,16 +601,29 @@ fi
 ACTION="${1:-}"
 case "$ACTION" in setup|e2e|pytest|bench|clean|clean-cache|du) shift ;; *) echo 'Usage: scripts/ryzen.sh setup|e2e|pytest [args...]|bench <scenario> <out>|clean|clean-cache|du' >&2; exit 2 ;; esac
 if [[ "$ACTION" == bench ]]; then
-  BENCH_CLASS="${RYZEN_BENCH_CLASS:-quick}"
-  case "$BENCH_CLASS" in
-    quick|quiet|batch) ;;
-    *) echo 'RYZEN_BENCH_CLASS must be quick, quiet or batch' >&2; exit 2 ;;
-  esac
   [[ $# == 2 ]] || { echo 'Usage: scripts/ryzen.sh bench <scenario> <out>' >&2; exit 2; }
   BENCH_SCENARIO="$1"
   [[ -f "$BENCH_SCENARIO" ]] || BENCH_SCENARIO="$ROOT/scripts/bench/$1.bench"
   [[ -f "$BENCH_SCENARIO" ]] || { echo "No scenario: $1" >&2; exit 2; }
   BENCH_SCENARIO="$(cd "$(dirname "$BENCH_SCENARIO")" && pwd)/$(basename "$BENCH_SCENARIO")"
+  if [[ -z "${BENCH_HEADLESS+x}" ]]; then
+    BENCH_HEADLESS=0
+    if grep -qx '# @headless' "$BENCH_SCENARIO"; then BENCH_HEADLESS=1; fi
+  fi
+  case "$BENCH_HEADLESS" in
+    0|1) export BENCH_HEADLESS ;;
+    *) echo 'BENCH_HEADLESS must be 0 or 1' >&2; exit 2 ;;
+  esac
+  if [[ "$BENCH_HEADLESS" == 1 ]]; then
+    [[ "${KEEP:-0}" != 1 ]] || { echo 'bench: KEEP=1 is incompatible with headless lockstep' >&2; exit 2; }
+    BENCH_CLASS="${RYZEN_BENCH_CLASS:-batch}"
+  else
+    BENCH_CLASS="${RYZEN_BENCH_CLASS:-quick}"
+  fi
+  case "$BENCH_CLASS" in
+    quick|quiet|batch) ;;
+    *) echo 'RYZEN_BENCH_CLASS must be quick, quiet or batch' >&2; exit 2 ;;
+  esac
   LOG_DIR="$2"
   if [[ -z "${WORLD:-}" && -z "${SAVE:-}" ]]; then
     COMMON="$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir)"
@@ -1000,6 +1032,7 @@ $(printf 'WORKTREE_LOCK=%q' "$STATE.lock")
 take_lock
 $(if [[ "$ACTION" != clean ]]; then echo auto_clean; fi)
 disk_usage
+$(if [[ "$ACTION" == bench ]]; then printf 'export BENCH_HEADLESS=%q\n' "$BENCH_HEADLESS"; fi)
 $(if [[ -n "${GQ_HOME+set}" ]]; then printf 'export GQ_HOME=%q\n' "$GQ_HOME"; fi)
 $(printf 'exec python3 -u -c %q %q %q' "$(cat "$ROOT/scripts/ryzen-lock.py")" "$STATE" "$REMOTE_HOME/gothic-ai/bin/gq")"
 printf -v bootstrap_command 'bash -c %q' "$bootstrap"
@@ -1169,9 +1202,14 @@ e2e_display_exclusive() {
 game_queue_args() {
   GQ_ARGS=(--class "${BENCH_CLASS:-quick}" --threads 4 --mem 5G --display --max "${RYZEN_MAX:-30m}" --wait-max "$LOCK_WAIT")
   if [[ "$ACTION" == bench ]]; then
-    # Arbitrary benchmark windows can cover neighbours and affect their cadence.
-    # Keep the legacy exclusive display reservation even with a private tunnel.
-    GQ_ARGS+=(--gpu-mem 4G --name "bench $(basename "$BENCH_SCENARIO" .bench)")
+    if [[ "${BENCH_HEADLESS:-0}" == 1 ]]; then
+      GQ_ARGS=(--class "${BENCH_CLASS:-batch}" --threads 4 --mem 6G --max "${RYZEN_MAX:-30m}" --wait-max "$LOCK_WAIT")
+    else
+      # Arbitrary benchmark windows can cover neighbours and affect their cadence.
+      # Keep the legacy exclusive display reservation even with a private tunnel.
+      GQ_ARGS+=(--gpu-mem 4G)
+    fi
+    GQ_ARGS+=(--name "bench $(basename "$BENCH_SCENARIO" .bench)")
     if [[ -n "${RYZEN_BENCH_ARCHIVE:-}" ]]; then GQ_ARGS+=(--archive "$RYZEN_BENCH_ARCHIVE"); fi
   else
     GQ_ARGS+=(--gpu-mem 2G --name "e2e ${SCENARIO:-m0}")
@@ -1256,7 +1294,7 @@ PY
   while IFS= read -r name; do
     case "$name" in
       GOTHIC_DIR|OPENGOTHIC_BASE*|OPENGOTHIC_VIDEOS_FINGERPRINT|OPENGOTHIC_TEXTURES|OPENGOTHIC_FRACTURE|OPENGOTHIC_CONVEX_PARTS|OPENGOTHIC_CONTENT) continue ;;
-      OPENGOTHIC_*|GOTHIC_*|TEMPEST_*|WORLD|TIMEOUT|BENCH_PROGRESS|BENCH_STALL|SOUND|MUSIC|MOVABLE_VOBS|ITEM_HULLS|ITEM_DEEPEST_CONTACT|RAGDOLL_BIRTH_GUARD|FURNITURE_PARTS|ARROW_STICKING|PHYSICS_NOISE|DESTRUCTION|BUOYANCY|CLOTH|ITEM_WAKE|PLACED_ITEMS|BODY_IMPACT_DAMAGE|BODY_TRACES|BLOOD|STATIC_COLLISION_SPLIT|CHARACTER_VIRTUAL|NPC_CHARACTER_VIRTUAL|MONSTER_CHARACTER_VIRTUAL|MELEE_BLADE_SHADOW|MELEE_PHYSICS_HITS|MELEE_POSTURE|MELEE_REACTIONS|MELEE_DOWN_TACTICS|MELEE_HITSTOP|MELEE_STAMINA|MELEE_PARRY|MELEE_PARRY_AI|MELEE_STAGGER|MELEE_BEAST_POISE|MELEE_BACKSTAB|MELEE_DODGE|MELEE_BARGE|MELEE_CHARGE|MELEE_RIPOSTE)
+      OPENGOTHIC_*|GOTHIC_*|TEMPEST_*|WORLD|TIMEOUT|BENCH_HEADLESS|BENCH_PROGRESS|BENCH_STALL|SOUND|MUSIC|MOVABLE_VOBS|ITEM_HULLS|ITEM_DEEPEST_CONTACT|RAGDOLL_BIRTH_GUARD|FURNITURE_PARTS|ARROW_STICKING|PHYSICS_NOISE|DESTRUCTION|BUOYANCY|CLOTH|ITEM_WAKE|PLACED_ITEMS|BODY_IMPACT_DAMAGE|BODY_TRACES|BLOOD|STATIC_COLLISION_SPLIT|CHARACTER_VIRTUAL|NPC_CHARACTER_VIRTUAL|MONSTER_CHARACTER_VIRTUAL|MELEE_BLADE_SHADOW|MELEE_PHYSICS_HITS|MELEE_POSTURE|MELEE_REACTIONS|MELEE_DOWN_TACTICS|MELEE_HITSTOP|MELEE_STAMINA|MELEE_PARRY|MELEE_PARRY_AI|MELEE_STAGGER|MELEE_BEAST_POISE|MELEE_BACKSTAB|MELEE_DODGE|MELEE_BARGE|MELEE_CHARGE|MELEE_RIPOSTE)
         value="$(bench_path "${!name}")"
         ENV_ARGS+=("$name=$value") ;;
     esac

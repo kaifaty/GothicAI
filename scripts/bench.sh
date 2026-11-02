@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runs a test-bench scenario inside the game: video with a debug overlay, per-frame metrics, a report.
+# Runs a test-bench scenario through the windowed game or the headless lockstep runner.
 # See scripts/bench/README.md.
 #
 #   scripts/bench.sh <scenario file | name from scripts/bench/> [out dir]
@@ -14,9 +14,11 @@
 #      RYZEN_HOST    SSH host for Ryzen (default: ryzen)
 #      RYZEN_LOCK_WAIT seconds to wait for the worktree lock and gq (default: auto 120, ryzen 900)
 #      RYZEN_MAX     gq job time limit, including the build (default: 30m)
-#      RYZEN_BENCH_CLASS quick (default), batch for calibration, or quiet for timing
+#      RYZEN_BENCH_CLASS quick (window default), batch (headless default), or quiet for timing
 #      RYZEN_BENCH_ARCHIVE absolute local Ryzen task path to archive a result copy through gq
 #      GAME_BIN      game executable (default: OpenGothic/build/opengothic/Gothic2Notr)
+#      BENCH_HEADLESS 1: runner in lockstep, 0: window; default: scenario's # @headless marker
+#      RUNNER_BIN    headless executable (default: gothic-body-runner beside GAME_BIN)
 #      TEMPEST_WINDOW_SIZE client frame size (default: 800x600)
 #      SAVE          save to start from (default: save_slot_1.sav in the main checkout)
 #      WORLD         start a fresh game in this world instead (NEWWORLD.ZEN, OLDWORLD.ZEN, ADDONWORLD.ZEN, DRAGONISLAND.ZEN)
@@ -25,7 +27,7 @@
 #      TIMEOUT=300   seconds before the game is killed
 #      BENCH_PROGRESS seconds between progress lines (default: 300; 0 disables)
 #      BENCH_STALL   seconds without output changes before killing a stalled game (default: 600; 0 disables)
-#      KEEP=1        the game stays open after the scenario
+#      KEEP=1        the window stays open after the scenario (incompatible with headless)
 #      SOUND, MUSIC  volumes 0..1 (default 0); with TEMPEST_AUDIO_LOOPBACK=48000 the sound of a segment
 #                    goes into <segment>.wav instead of the speakers
 #      MOVABLE_VOBS  optional initial GAME movable_vobs setting (0 or 1), before world loading
@@ -89,15 +91,31 @@ SCEN="${1:?usage: scripts/bench.sh <scenario> [out dir]}"
 [[ -f "$SCEN" ]] || { echo "no scenario: $1" >&2; exit 2; }
 SCEN="$(cd "$(dirname "$SCEN")" && pwd)/$(basename "$SCEN")"
 NAME="$(basename "$SCEN" .bench)"
-if [[ "$NAME" == routine-return ]]; then
+if [[ -z "${BENCH_HEADLESS+x}" ]]; then
+  BENCH_HEADLESS=0
+  if grep -qx '# @headless' "$SCEN"; then BENCH_HEADLESS=1; fi
+fi
+case "$BENCH_HEADLESS" in
+  0|1) export BENCH_HEADLESS ;;
+  *) echo 'bench: BENCH_HEADLESS must be 0 or 1' >&2; exit 2 ;;
+esac
+if [[ "$BENCH_HEADLESS" == 1 && "${KEEP:-}" == 1 ]]; then
+  echo 'bench: KEEP=1 is incompatible with headless lockstep' >&2
+  exit 2
+fi
+if [[ "$NAME" == routine-return || "$NAME" == npc-day-parity ]]; then
   export WORLD="${WORLD:-NEWWORLD.ZEN}"
   export TIMEOUT="${TIMEOUT:-3600}"
   export RYZEN_MAX="${RYZEN_MAX:-75m}"
-  [[ "$WORLD" == NEWWORLD.ZEN ]] || { echo "bench: routine-return requires WORLD=NEWWORLD.ZEN" >&2; exit 2; }
+  if [[ "$NAME" == routine-return ]]; then
+    [[ "$WORLD" == NEWWORLD.ZEN ]] || { echo "bench: routine-return requires WORLD=NEWWORLD.ZEN" >&2; exit 2; }
+  fi
 fi
 if [[ "$NAME" == streaming-flythrough || "$NAME" == streaming-shots || "$NAME" == furniture-parts ]]; then
   export WORLD="${WORLD:-NEWWORLD.ZEN}"
-  export RYZEN_BENCH_CLASS="${RYZEN_BENCH_CLASS:-quiet}"
+  if [[ "$BENCH_HEADLESS" == 0 ]]; then
+    export RYZEN_BENCH_CLASS="${RYZEN_BENCH_CLASS:-quiet}"
+  fi
 fi
 NEEDS_CADENCE=0
 if awk '$1 == "cadence" { found=1 } END { exit !found }' "$SCEN"; then NEEDS_CADENCE=1; fi
@@ -173,7 +191,11 @@ PY
 fi
 
 if [[ -n "${WORLD:-}" ]]; then
-  START_ARGS=(-nomenu -w "$WORLD")
+  if [[ "$BENCH_HEADLESS" == 1 ]]; then
+    START_ARGS=(-nomenu --world "$WORLD")
+  else
+    START_ARGS=(-nomenu -w "$WORLD")
+  fi
 else
   if [[ -z "${SAVE:-}" ]]; then
     # worktrees share the save of the main checkout
@@ -181,7 +203,11 @@ else
     SAVE="$(dirname "$COMMON")/save_slot_1.sav"
   fi
   [[ -f "$SAVE" ]] || { echo "no save: $SAVE (set SAVE=...)" >&2; exit 2; }
-  START_ARGS=(-save 1)
+  if [[ "$BENCH_HEADLESS" == 1 ]]; then
+    START_ARGS=(--save "$OUT/run/save_slot_1.sav")
+  else
+    START_ARGS=(-save 1)
+  fi
 fi
 
 # No videos (`-nointro`), as in e2e: on a fresh WORLD the new game's INTRO.BIK otherwise plays for
@@ -191,7 +217,9 @@ if [[ "${GOTHIC_INTRO:-0}" != 1 ]]; then
 fi
 
 if [[ "${NO_BUILD:-}" != 1 ]]; then
-  cmake --build "$ROOT/OpenGothic/build" --target Gothic2Notr >"$OUT/build.log" 2>&1 \
+  BUILD_TARGET=Gothic2Notr
+  if [[ "$BENCH_HEADLESS" == 1 ]]; then BUILD_TARGET=gothic-body-runner; fi
+  cmake --build "$ROOT/OpenGothic/build" --target "$BUILD_TARGET" >"$OUT/build.log" 2>&1 \
     || { tail -30 "$OUT/build.log"; exit 1; }
 fi
 
@@ -413,10 +441,21 @@ if [[ "$NAME" == streaming-flythrough ]]; then
   BACKGROUND=0
 fi
 GAME_RC=0
-env TEMPEST_BACKGROUND="$BACKGROUND" TEMPEST_WINDOW_SIZE="${TEMPEST_WINDOW_SIZE:-800x600}" \
+RUN_MODE=window
+if [[ "$BENCH_HEADLESS" == 1 ]]; then
+  RUN_MODE='headless lockstep'
+  GAME_ARGS=("${RUNNER_BIN:-$(dirname "$GAME_BIN")/gothic-body-runner}" -g "$GOTHIC_DIR" -devmode "${START_ARGS[@]}")
+  if [[ "${RYZEN_BENCH:-}" == 1 ]]; then GAME_ARGS+=(-g2); fi
+  GAME_ARGS+=(--game-parity --scenario "$SCEN" --output "$OUT" --mode lockstep)
+  WINDOW_ENV=()
+else
+  GAME_ARGS=("$GAME_BIN" -g "$GOTHIC_DIR" -window -devmode "${START_ARGS[@]}")
+  WINDOW_ENV=(TEMPEST_BACKGROUND="$BACKGROUND" TEMPEST_WINDOW_SIZE="${TEMPEST_WINDOW_SIZE:-800x600}")
+fi
+env ${WINDOW_ENV[@]+"${WINDOW_ENV[@]}"} BENCH_RUN_MODE="$RUN_MODE" \
   OPENGOTHIC_BENCH="$SCEN" OPENGOTHIC_BENCH_OUT="$OUT" ${KEEP:+OPENGOTHIC_BENCH_KEEP=1} \
   python3 - "$OUT" "$RUN" "${TIMEOUT:-300}" "${BENCH_PROGRESS:-300}" "${BENCH_STALL:-600}" \
-  "$GAME_BIN" -g "$GOTHIC_DIR" -window -devmode "${START_ARGS[@]}" <<'PY' || GAME_RC=$?
+  "${GAME_ARGS[@]}" <<'PY' || GAME_RC=$?
 import json
 import os
 from pathlib import Path
@@ -436,6 +475,8 @@ complete = False
 reason = ''
 log_tail = ''
 with (out / 'game.log').open('w') as log:
+    log.write(f"[bench] run mode: {os.environ['BENCH_RUN_MODE']}\n")
+    log.flush()
     game = subprocess.Popen(sys.argv[6:], cwd=run, stdout=log, stderr=subprocess.STDOUT)
     with (out / 'game.log').open(errors='replace') as reader:
         while True:
@@ -488,6 +529,8 @@ with (out / 'game.log').open('w') as log:
                 break
             time.sleep(1)
 elapsed = int(time.monotonic() - started)
+with (out / 'game.log').open('a') as log:
+    log.write(f'[bench] game wall seconds: {elapsed}\n')
 print(f'bench: game ran {elapsed} s, output in {out}', flush=True)
 if not complete:
     reason = reason or f'scenario did not finish: game exited after {elapsed} s without [bench] done'

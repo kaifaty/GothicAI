@@ -2,9 +2,8 @@
 
 ## Как работает сейчас
 
-Runs a scenario inside the game and records what happens: a video with a debug overlay, per-frame
-metrics and a report that points at suspicious frames. Built so that an agent can find bugs and edge
-cases of a mechanic (foot IK first) without a person watching the game.
+Runs a scenario through the windowed game or the headless runner and records metrics and a report.
+Windowed scenarios can also capture video with a debug overlay and point at suspicious frames.
 
 ```bash
 scripts/bench.sh smoke                      # a scenario from scripts/bench/<name>.bench, or a path
@@ -19,6 +18,25 @@ the game is not run again locally. The lock wait defaults to 120 seconds (`RYZEN
 `BENCH_HOST=local` runs on this machine. `KEEP=1`, a VideoToolbox encoder, a custom `GOTHIC_DIR`
 or other Mac-only game paths require local execution (`auto` falls back, `ryzen` exits with code 2).
 `NO_BUILD=1` only skips a local build; Ryzen always checks its engine source hash.
+
+A line `# @headless` in the scenario selects `gothic-body-runner --game-parity --mode lockstep`,
+without a window, GPU or sound. `BENCH_HEADLESS=1` selects this path for any scenario;
+`BENCH_HEADLESS=0` selects the window even for a marked scenario. `KEEP=1` with the headless path
+exits with code 2. The runner defaults to `gothic-body-runner` beside `GAME_BIN`; `RUNNER_BIN`
+overrides it for local runs. It uses the same `Gothic.ini`, `[GAME]` flags and `OPENGOTHIC_*` environment as the
+window; `WORLD` becomes `--world`, otherwise the copied save becomes `--save`. Window variables
+`TEMPEST_*` are not needed. A local build selects the `gothic-body-runner` target. On Ryzen,
+preparation builds both `Gothic2Notr` and the runner together; a cached engine without an executable
+runner is rebuilt and republished for a headless bench. A rebuild without the runner removes its
+old executable before publishing the new engine digest.
+
+The headless game request defaults to `gq --class batch --threads 4 --mem 6G`, without display or
+GPU-memory resources. `RYZEN_BENCH_CLASS` still overrides the class; a `batch` request's `--max`
+is capped at two hours. Unmarked windowed scenarios keep their existing queue settings.
+Both paths use the same completion marker, heartbeat, progress, watchdog and post-run checks below.
+The runner's final JSON status remains in `game.log`. `report.md` and `report.json` identify the run
+as `headless lockstep` or `window` and include the game's wall seconds; stdout still prints
+`bench: game ran N s`.
 
 For performance comparisons (before/after or FPS), run both takes on the same machine:
 pin `BENCH_HOST=ryzen` or `BENCH_HOST=local`. `host.txt` and the report header identify the host.
@@ -108,6 +126,9 @@ the resulting frames on Mac.
 
 ## План и журнал
 
+- 2026-11-02: remove stale runners from window-only rebuilds before caching; keep `RUNNER_BIN` local.
+- 2026-11-02: add marked headless lockstep benches with game-parity simulation and a Ryzen `batch`
+  request without display/GPU resources; record the run method and game wall time in reports.
 - 2026-11-02: require the completion marker, publish the engine heartbeat, stream progress and stop
   stalled games before the outer Ryzen job limit; preserve reports from interrupted runs.
 
@@ -1169,18 +1190,30 @@ tower (the valley's rats and bloodflies attack him all day). Start it once per N
 compare two runs:
 
 ```sh
-WORLD=NEWWORLD.ZEN OPENGOTHIC_NPC_SIM_TIER=full TIMEOUT=7200 RYZEN_MAX=120m BENCH_HOST=ryzen \
+OPENGOTHIC_NPC_SIM_TIER=full BENCH_HOST=ryzen \
   scripts/bench.sh npc-day-parity /absolute/out/full-1
-WORLD=NEWWORLD.ZEN OPENGOTHIC_NPC_SIM_TIER=simplified TIMEOUT=7200 RYZEN_MAX=120m BENCH_HOST=ryzen \
+OPENGOTHIC_NPC_SIM_TIER=simplified BENCH_HOST=ryzen \
   scripts/bench.sh npc-day-parity /absolute/out/simplified-1
 scripts/npc_day_parity.py /absolute/out/full-1 /absolute/out/simplified-1 --label-a full --label-b simplified \
   --tolerances scripts/bench/npc-day-parity.tolerances.json --out /absolute/out/report.md --json /absolute/out/report.json
 ```
 
-A day takes 37–45 minutes on Ryzen (exclusive window; an interactive play session closes it) and writes
-about 55 MB. On one build the journal is byte-identical between runs, so
-`scripts/bench/npc-day-parity.tolerances.json` asks for exact equality; a change of the executor adds its own
-allowance with command-line limits. `npcday` files:
+The scenario carries `# @headless`: it defaults to `WORLD=NEWWORLD.ZEN`, `TIMEOUT=3600` and
+`RYZEN_MAX=75m`, with a `batch` request and no window or GPU reservation. `--game-parity` supplies
+the AI bridge and the window's 40 m effect radius around the camera, and disables body traces by
+default. `BENCH_HEADLESS=0` restores the window for a same-build comparison.
+
+The [headless measurements](../../reports/compute/2026-11-02-headless-bench/README.md) on Ryzen
+show that a day through `scripts/bench.sh npc-day-parity` took 1553 s (25,9 min) without a window,
+as a `batch` request (`gq`: `4t 6G gpu=0G окно=0`); windowed days took 38–43 min.
+The window and `--game-parity` runner days from the same build and environment passed
+`npc_day_parity.py` with the bench tolerances (exit 0): position differences 0 m,
+ZS/TA/HP/inventory matches 100%, and `npc-day-events.csv` byte-identical. Only `queue`/`head`
+differ for Lester (`PC_PSIONIC`) when he approaches the hero to talk: `AI_ProcessInfo` is handled
+by the dialogue menu in the window; the runner has no menu. Compare only runs from the same build,
+base and environment. A day writes about 55 MB.
+Use `scripts/bench/npc-day-parity.tolerances.json` for comparisons; a change of the executor adds
+its own allowance with command-line limits. `npcday` files:
 
 | File | Contents |
 |---|---|
