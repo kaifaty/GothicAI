@@ -77,7 +77,7 @@ std::string meshKey(std::string name) {
   require(extension.empty() || extension==".3DS" || extension==".MRM","expected static mesh visual");
   return extension.empty() ? name : name.substr(0,name.size()-extension.size());
   }
-std::string particleName(std::string name, Context& context, const fs::path& baseWorldDir,
+std::string particleName(std::string name, Context& context, const fs::path& baseRoot,
                          const fs::path& contentRoot) {
   require(!name.empty() && name.find_first_of("/\\")==std::string::npos &&
           name.find('\0')==std::string::npos,"invalid PFX name");
@@ -86,7 +86,7 @@ std::string particleName(std::string name, Context& context, const fs::path& bas
   require(extension.empty() || extension==".PFX","expected PFX name");
   if(!extension.empty()) name.resize(name.size()-extension.size());
   if(context.particles==nullptr) {
-    context.particles=ParticleContent::openProgram(baseWorldDir.parent_path().parent_path());
+    context.particles=ParticleContent::openProgram(baseRoot);
     context.ownParticles=ParticleContent::load(*context.particles,contentRoot);
     }
   require(context.ownParticles.effects.count(name)!=0 || ParticleContent::hasBase(*context.particles,name),
@@ -153,7 +153,7 @@ rapidjson::Document layerIndex(const fs::path& file) {
   return doc;
   }
 std::map<std::string,std::shared_ptr<Visual>> layerVisuals(const WorldData::Data& data, const Context& context,
-                                                        const fs::path& baseWorldDir, const fs::path& contentRoot) {
+                                                        const fs::path& base, const fs::path& contentRoot) {
   std::map<std::string,std::shared_ptr<Visual>> result;
   const auto staticVisual=[&](const std::string& key) {
     auto visual=std::make_shared<VisualMesh>();
@@ -179,7 +179,6 @@ std::map<std::string,std::shared_ptr<Visual>> layerVisuals(const WorldData::Data
     };
   visitVobs(data.vobs,baseVisual);
   visitVobs(context.removed,baseVisual);
-  const auto base=baseWorldDir.parent_path().parent_path();
   if(fs::exists(base/"meshes/meshes.json")) {
     auto index=layerIndex(base/"meshes/meshes.json");
     if(index.HasMember("meshes") && index["meshes"].IsObject())
@@ -314,8 +313,8 @@ const asset::VirtualObject* saveBound(const asset::VirtualObject& vob) {
   return nullptr;
   }
 
-Result applyFile(WorldData::Data& data, Context& context, const fs::path& baseWorldDir, const fs::path& file,
-                            const fs::path& contentRoot) {
+Result applyFile(WorldData::Data& data, Context& context, const fs::path& baseRoot, const fs::path& file,
+                 const fs::path& contentRoot, bool treeOnly = false) {
   Result result;
   auto error=[&](const std::string& context,const std::exception& e) {
     auto text=file.string()+": "+context+e.what();
@@ -324,7 +323,12 @@ Result applyFile(WorldData::Data& data, Context& context, const fs::path& baseWo
     };
   try {
     auto doc=document(file);
-    layerFields(doc,{"format","add","remove","move"});
+    if(treeOnly) {
+      layerFields(doc,{"format","add"});
+      array(member(doc,"add"));
+      } else {
+      layerFields(doc,{"format","add","remove","move"});
+      }
     std::unordered_map<uint32_t,Vob> base;
     std::set<uint32_t> ids;
     std::set<std::string> keys;
@@ -334,7 +338,7 @@ Result applyFile(WorldData::Data& data, Context& context, const fs::path& baseWo
       };
     visitVobs(data.vobs,collect);
     visitVobs(context.removed,[&](const Vob& v) { ids.insert(v->id); });
-    const auto visuals=layerVisuals(data,context,baseWorldDir,contentRoot);
+    const auto visuals=layerVisuals(data,context,baseRoot,contentRoot);
     std::vector<Vob> additions;
     std::vector<uint32_t> removals;
     struct Move { Vob target; Vec3 position; Mat3 rotation; };
@@ -364,7 +368,7 @@ Result applyFile(WorldData::Data& data, Context& context, const fs::path& baseWo
             layerFields(entry,{"key","kind","position","rotation","yaw_deg","pfx"});
             auto visual=std::make_shared<VisualParticleEffect>();
             visual->type=VisualType::PARTICLE_EFFECT;
-            visual->name=particleName(layerString(member(entry,"pfx")),context,baseWorldDir,contentRoot);
+            visual->name=particleName(layerString(member(entry,"pfx")),context,baseRoot,contentRoot);
             v=std::make_shared<LayerVob>();
             v->type=VirtualObjectType::zCVob; v->show_visual=true; v->cd_static=false;
             v->visual=std::move(visual);
@@ -492,7 +496,7 @@ Result apply(WorldData::Data& data,const fs::path& baseWorldDir,const fs::path& 
   Context context;
   context.ownMeshes = ownMeshes;
   for(const auto& file:files) {
-    const auto result=applyFile(data,context,baseWorldDir,file,worldContentDir.parent_path().parent_path());
+    const auto result=applyFile(data,context,baseWorldDir.parent_path().parent_path(),file,worldContentDir.parent_path().parent_path());
     if(result.errors.empty())
       Tempest::Log::i("vob layer: ",file.string(),": applied added=",result.added," removed=",result.removed," moved=",result.moved);
     else
@@ -510,10 +514,20 @@ Result check(const fs::path& baseWorldDir,const fs::path& file,const fs::path& c
   Context context;
   for(const auto& previous:layerFiles(world)) {
     if(previous.filename()>=file.filename()) break;
-    applyFile(data,context,baseWorldDir,previous,contentRoot);
+    applyFile(data,context,baseWorldDir.parent_path().parent_path(),previous,contentRoot);
     }
-  auto result=applyFile(data,context,baseWorldDir,file,contentRoot);
+  auto result=applyFile(data,context,baseWorldDir.parent_path().parent_path(),file,contentRoot);
   result.errors.insert(result.errors.end(),context.ownParticles.errors.begin(),context.ownParticles.errors.end());
+  return result;
+  }
+
+Result readTree(std::vector<Vob>& tree, const fs::path& baseRoot, const fs::path& file,
+                const fs::path& contentRoot, const std::map<std::string,fs::path>* ownMeshes) {
+  WorldData::Data data;
+  Context context;
+  context.ownMeshes=ownMeshes;
+  auto result=applyFile(data,context,baseRoot,file,contentRoot,true);
+  if(result.errors.empty()) tree=std::move(data.vobs);
   return result;
   }
 
