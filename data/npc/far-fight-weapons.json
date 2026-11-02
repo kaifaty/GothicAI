@@ -1,0 +1,121 @@
+{
+  "source": {
+    "program": "GOTHIC.DAT",
+    "sha256": "b6cd55ed7e9963ba24251f8484a510d39a1b36e3883af978f1ea2917a14d530b",
+    "base_program": "aceda6611a113f2594ba6f7ca702d214b6a41e2208e705965ec6daab8f46a7d6",
+    "date": "2026-11-02",
+    "reader": "zenkit 1.3.0.4 (Python binding)",
+    "method": "Instantiate the original compiled C_ITEM constructors in DaedalusVm; read damage_total (damageTotal), damage_type (damagetype), flags and damage[8]. The original DAT hash matches the game base programs.json source. Weapon names were collected from EQUIPITEM calls while instantiating all NPC constructors in far-fight-pairs.json; unrelated external calls were ignored. Unarmed HITCHANCE[0] was read from the VLK_474_BUERGER constructor; Npc::hitChance returns this script field directly.",
+    "command": "uv run --no-project --with zenkit==1.3.0.4 python - \"$GOTHIC_DAT\" <<'PY'\nimport hashlib, json, pathlib, sys, zenkit\nfrom zenkit.daedalus.npc import NpcInstanceTalent\nfrom zenkit.daedalus.item import DamageType\npath = pathlib.Path(sys.argv[1])\nvm = zenkit.DaedalusVm.load(str(path))\nnames = ('ITMW_1H_BAU_AXE', 'ITMW_1H_BAU_MACE', 'ITMW_1H_MIL_SWORD', 'ITMW_1H_SLD_AXE', 'ITMW_1H_SLD_SWORD', 'ITMW_2H_SLD_AXE', 'ITMW_2H_SLD_SWORD')\nweapons = {}\nfor name in names:\n    item = vm.init_instance(name, zenkit.DaedalusInstanceType.ITEM)\n    weapons[name] = dict(damage_total=item.damage_total, damagetype=item.damage_type, flags=item.flags, damage=[item.get_damage(DamageType(i)) for i in range(8)])\nvm.register_external_default(lambda symbol: None)\nnpc = vm.init_instance('VLK_474_BUERGER', zenkit.DaedalusInstanceType.NPC)\nprint(json.dumps(dict(sha256=hashlib.sha256(path.read_bytes()).hexdigest(), weapons=weapons, unarmed_hitchance={'VLK_474_BUERGER': npc.get_hit_chance(NpcInstanceTalent.UNKNOWN)}), indent=2))\nPY"
+  },
+  "weapons": {
+    "ITMW_1H_BAU_AXE": {
+      "damage_total": 7,
+      "damagetype": 4,
+      "flags": 32768,
+      "damage": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "ITMW_1H_BAU_MACE": {
+      "damage_total": 10,
+      "damagetype": 2,
+      "flags": 32768,
+      "damage": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "ITMW_1H_MIL_SWORD": {
+      "damage_total": 40,
+      "damagetype": 4,
+      "flags": 16384,
+      "damage": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "ITMW_1H_SLD_AXE": {
+      "damage_total": 40,
+      "damagetype": 4,
+      "flags": 32768,
+      "damage": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "ITMW_1H_SLD_SWORD": {
+      "damage_total": 40,
+      "damagetype": 4,
+      "flags": 32768,
+      "damage": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "ITMW_2H_SLD_AXE": {
+      "damage_total": 60,
+      "damagetype": 4,
+      "flags": 131072,
+      "damage": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "ITMW_2H_SLD_SWORD": {
+      "damage_total": 60,
+      "damagetype": 4,
+      "flags": 65536,
+      "damage": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    }
+  },
+  "unarmed_hitchance": {
+    "VLK_474_BUERGER": 0
+  }
+}
