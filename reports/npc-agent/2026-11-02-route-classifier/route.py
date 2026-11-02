@@ -502,12 +502,22 @@ def evaluate(directory: Path, *, emit: bool = True) -> dict[str, Any]:
                 train_x = np.array([values[t["id"]] for t in training], dtype=float)
                 test_x = np.array([values[t["id"]] for t in testing], dtype=float)
                 if method.startswith("frida_"):
-                    if not training:
-                        raise ValueError("No training embeddings")
-                    train_scores, test_scores = logistic_scores(train_x, train_y, test_x)
+                    if len(fold["train_traces"]) < 2:
+                        raise ValueError("FRIDA threshold needs at least two training traces")
+                    train_traces = np.array([t["trace"] for t in training])
+                    train_scores = np.empty(len(training))
+                    for inner_trace in fold["train_traces"]:
+                        held_out = train_traces == inner_trace
+                        _, train_scores[held_out] = logistic_scores(
+                            train_x[~held_out],
+                            train_y[~held_out],
+                            train_x[held_out],
+                        )
+                    cutoff = threshold(train_scores, train_y)
+                    _, test_scores = logistic_scores(train_x, train_y, test_x)
                 else:
                     train_scores, test_scores = train_x, test_x
-                cutoff = 0.5 if method == "rules" else threshold(train_scores, train_y)
+                    cutoff = 0.5 if method == "rules" else threshold(train_scores, train_y)
                 if method != "rules":
                     fold["threshold"] = cutoff
                     fold["training_recall"] = float(np.mean(train_scores[train_y] >= cutoff))
@@ -864,7 +874,7 @@ async def selftest() -> None:
 
         with patch(__name__ + ".logistic_scores", wraps=logistic_scores) as fit:
             report = evaluate(directory)
-        assert fit.call_count == 6
+        assert fit.call_count == 18
         for call in fit.call_args_list:
             train_x, _, test_x = call.args
             assert set(train_x[:, 2]).isdisjoint(test_x[:, 2])
@@ -911,9 +921,56 @@ async def selftest() -> None:
         (directory / "scores_gemma_phrase.jsonl").unlink()
         incomplete = evaluate(directory, emit=False)["classifiers"]["gemma_phrase"]
         assert incomplete["missing_n"] == 14 and incomplete["n"] == 0 and incomplete["roc_auc"] is None
+
+        # Unique features let the model memorize labels without generalizing to an unseen trace.
+        overfit = root / "overfit"
+        overfit.mkdir()
+        vectors = np.eye(9)
+        labels = np.tile([True, True, False], 3)
+        overfit_turns = [turns[0] | {"id": f"unique-{i}", "trace": str(traces[i // 3])} for i in range(9)]
+        pilot.save_rows(overfit / "turns.jsonl", overfit_turns)
+        pilot.save_rows(
+            overfit / "gold.jsonl",
+            (
+                {"id": turn["id"], "label": bool(value), "kind": "item" if value else "none"}
+                for turn, value in zip(overfit_turns, labels, strict=True)
+            ),
+        )
+        for variant in VARIANTS:
+            save_vectors(
+                overfit / f"frida_{variant}.npz",
+                {turn["id"]: vector for turn, vector in zip(overfit_turns, vectors, strict=True)},
+            )
+        overfit_report = evaluate(overfit, emit=False)
+        fitted, outer_scores = logistic_scores(vectors[:6], labels[:6], vectors[6:])
+        _, inner_scores = logistic_scores(vectors[:3], labels[:3], vectors[3:6])
+        inner_cutoff = threshold(inner_scores, labels[3:6])
+        fitted_cutoff = threshold(fitted, labels[:6])
+        assert inner_cutoff + 1e-3 < outer_scores.min()
+        assert outer_scores.max() + 1e-3 < fitted_cutoff
+        for variant in VARIANTS:
+            values = overfit_report["classifiers"][f"frida_{variant}"]
+            assert values["n"] == 9
+            assert all(
+                np.isclose(f["threshold"], inner_cutoff) and f["training_recall"] == 1
+                for f in values["folds"]
+            )
+            assert np.allclose([p["score"] for p in values["predictions"]], np.tile(outer_scores, 3))
+            assert all(
+                np.isclose(p["threshold"], inner_cutoff) and p["predicted"] for p in values["predictions"]
+            )
+
+        pilot.save_rows(overfit / "turns.jsonl", overfit_turns[:6])
+        impossible = evaluate(overfit, emit=False)
+        for variant in VARIANTS:
+            values = impossible["classifiers"][f"frida_{variant}"]
+            assert values["n"] == 0 and values["missing_n"] == 6
+            assert all(
+                f["error"] == "FRIDA threshold needs at least two training traces" for f in values["folds"]
+            )
         print(
             "Selftest passed: 15 turns, 3 traces, 6 classifiers; full pipeline, resume, errors, "
-            "disputes/overrides, logprobs/text, fold thresholds, AUC, misses, latency."
+            "disputes/overrides, logprobs/text, nested fold thresholds, overfitting, AUC, misses, latency."
         )
 
 
