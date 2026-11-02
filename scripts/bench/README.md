@@ -1,5 +1,7 @@
 # Test bench
 
+## Как работает сейчас
+
 Runs a scenario inside the game and records what happens: a video with a debug overlay, per-frame
 metrics and a report that points at suspicious frames. Built so that an agent can find bugs and edge
 cases of a mechanic (foot IK first) without a person watching the game.
@@ -20,6 +22,35 @@ or other Mac-only game paths require local execution (`auto` falls back, `ryzen`
 
 For performance comparisons (before/after or FPS), run both takes on the same machine:
 pin `BENCH_HOST=ryzen` or `BENCH_HOST=local`. `host.txt` and the report header identify the host.
+
+`game.log` must contain `[bench] done` for a complete scenario (including an explicit `quit`).
+Closing the window, a crash, `TIMEOUT` (default 300 seconds), or the stall watchdog before that marker
+returns code 1 and prints one reason with elapsed/limit seconds to stderr. Partial output still goes
+through `bench_report.py` and the existing scenario checks. Code 0 means completion and successful
+report/checks; code 2 covers invalid setup/options. Ryzen admission/transport codes are preserved;
+scenario interruption never returns the special codes 75 or 76. After the marker, closing or timing
+out a game left open by `KEEP=1` keeps the usual report/check exit status.
+
+With `OPENGOTHIC_BENCH_OUT`, the engine publishes `heartbeat.json` at scenario start and about every
+10 wall seconds, including long `wait` and `npcday` commands. It writes a temporary file and renames
+it over the previous pulse. Fields are `elapsed_seconds` since scenario start, `frame`, one-based
+`command_index`, `command_count`, full `command` text, and `game_time` (`day N HH:MM`). While `npcday`
+runs, `npcday_elapsed_minutes` and `npcday_target_minutes` give elapsed and requested game minutes.
+The pulse stops at completion; without the output environment variable it is not written.
+
+`BENCH_PROGRESS=300` prints one flushed stdout line every 300 wall seconds while the scenario runs,
+for example `bench: 28 min, command 5/5 npcday 1440, npcday 1060/1440 game min`. Before the first
+pulse it prints `bench: N min, starting (game.log X KB)`. The time prefix includes world loading.
+Game-minute counters in progress lines are integers; fractional minutes are omitted.
+`BENCH_PROGRESS=0` disables these lines. On Ryzen they appear during the game in `scripts/gq logs <id>`.
+
+`BENCH_STALL=600` terminates a live, unfinished game if neither the heartbeat nor any other output
+file changes for 600 wall seconds. Growing `game.log` counts as loading activity. The watchdog sends
+SIGTERM, waits up to 10 seconds, then sends SIGKILL and reaps the process; `TIMEOUT` uses the same
+bounded shutdown. `BENCH_STALL=0` disables the watchdog. The watchdog stops after `[bench] done`,
+including in `KEEP=1` mode. `BENCH_PROGRESS` and `BENCH_STALL` are forwarded to Ryzen like `TIMEOUT`.
+When it kills a stalled game, stderr says `bench: game stalled: no output or heartbeat for 600 s, killed`.
+Fake-game checks live in `scripts/tests/test_ryzen.py`; a short live bench checks the engine pulse.
 
 `streaming-flythrough` measures runtime GPU chunk streaming: a god-mode hero
 follows the existing WayMatrix path from `NW_CITY_MERCHANT_TRADE_04` through
@@ -70,6 +101,11 @@ The wait also includes static vob views. The disabled-streaming path is already 
 range, it captures the first frame back in the market without waiting for Far publication.
 Use `OPENGOTHIC_VOB_STREAMING=0` and `=1` to compare static vob residency. Claude compares
 the resulting frames on Mac.
+
+## План и журнал
+
+- 2026-11-02: require the completion marker, publish the engine heartbeat, stream progress and stop
+  stalled games before the outer Ryzen job limit; preserve reports from interrupted runs.
 
 ## Frame profile
 
