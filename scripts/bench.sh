@@ -9,7 +9,8 @@
 #      RYZEN_HOST    SSH host for Ryzen (default: ryzen)
 #      RYZEN_LOCK_WAIT seconds to wait for the worktree lock and gq (default: auto 120, ryzen 900)
 #      RYZEN_MAX     gq job time limit, including the build (default: 30m)
-#      RYZEN_BENCH_CLASS quick (default) or quiet for timing without other jobs
+#      RYZEN_BENCH_CLASS quick (default), batch for calibration, or quiet for timing
+#      RYZEN_BENCH_ARCHIVE absolute local Ryzen task path to archive a result copy through gq
 #      GAME_BIN      game executable (default: OpenGothic/build/opengothic/Gothic2Notr)
 #      TEMPEST_WINDOW_SIZE client frame size (default: 800x600)
 #      SAVE          save to start from (default: save_slot_1.sav in the main checkout)
@@ -48,6 +49,7 @@
 #      MELEE_BEAST_POISE optional initial GAME melee_beast_poise setting (0 or 1)
 #      MELEE_BACKSTAB optional initial GAME melee_backstab setting (0 or 1)
 #      MELEE_DODGE optional initial GAME melee_dodge setting (0 or 1)
+#      MELEE_BARGE optional initial GAME melee_barge setting (0 or 1)
 #      MELEE_CHARGE optional initial GAME melee_charge setting (0 or 1)
 #      MELEE_REACTIONS optional initial GAME melee_reactions setting (0 or 1)
 #      MELEE_BLADE_SHADOW optional initial GAME melee_blade_shadow setting (0 or 1)
@@ -238,7 +240,7 @@ musicVolume=${MUSIC:-0}
 musicEnabled=$([[ "${MUSIC:-0}" == 0 || "${MUSIC:-0}" == 0.0 ]] && echo 0 || echo 1)
 worldSounds=${WORLD_SOUNDS:-1}
 EOF
-if [[ -n "${MOVABLE_VOBS:-}${ITEM_HULLS:-}${ITEM_DEEPEST_CONTACT:-}${FURNITURE_PARTS:-}${ARROW_STICKING:-}${PHYSICS_NOISE:-}${DESTRUCTION:-}${BUOYANCY:-}${CLOTH:-}${ITEM_WAKE:-}${PLACED_ITEMS:-}${BODY_IMPACT_DAMAGE:-}${BODY_TRACES:-}${STATIC_COLLISION_SPLIT:-}${CHARACTER_VIRTUAL:-}${NPC_CHARACTER_VIRTUAL:-}${MONSTER_CHARACTER_VIRTUAL:-}${MELEE_BLADE_SHADOW:-}${MELEE_PHYSICS_HITS:-}${MELEE_POSTURE:-}${MELEE_REACTIONS:-}${MELEE_DOWN_TACTICS:-}${MELEE_HITSTOP:-}${MELEE_STAMINA:-}${MELEE_PARRY:-}${MELEE_PARRY_AI:-}${MELEE_STAGGER:-}${MELEE_BEAST_POISE:-}${MELEE_BACKSTAB:-}${MELEE_DODGE:-}${MELEE_CHARGE:-}" ]]; then
+if [[ -n "${MOVABLE_VOBS:-}${ITEM_HULLS:-}${ITEM_DEEPEST_CONTACT:-}${FURNITURE_PARTS:-}${ARROW_STICKING:-}${PHYSICS_NOISE:-}${DESTRUCTION:-}${BUOYANCY:-}${CLOTH:-}${ITEM_WAKE:-}${PLACED_ITEMS:-}${BODY_IMPACT_DAMAGE:-}${BODY_TRACES:-}${STATIC_COLLISION_SPLIT:-}${CHARACTER_VIRTUAL:-}${NPC_CHARACTER_VIRTUAL:-}${MONSTER_CHARACTER_VIRTUAL:-}${MELEE_BLADE_SHADOW:-}${MELEE_PHYSICS_HITS:-}${MELEE_POSTURE:-}${MELEE_REACTIONS:-}${MELEE_DOWN_TACTICS:-}${MELEE_HITSTOP:-}${MELEE_STAMINA:-}${MELEE_PARRY:-}${MELEE_PARRY_AI:-}${MELEE_STAGGER:-}${MELEE_BEAST_POISE:-}${MELEE_BACKSTAB:-}${MELEE_DODGE:-}${MELEE_BARGE:-}${MELEE_CHARGE:-}" ]]; then
   printf '\n[GAME]\n' >>"$RUN/Gothic.ini"
   if [[ -n "${MOVABLE_VOBS:-}" ]]; then
     [[ "$MOVABLE_VOBS" == 0 || "$MOVABLE_VOBS" == 1 ]] || { echo "MOVABLE_VOBS must be 0 or 1" >&2; exit 2; }
@@ -315,6 +317,10 @@ if [[ -n "${MOVABLE_VOBS:-}${ITEM_HULLS:-}${ITEM_DEEPEST_CONTACT:-}${FURNITURE_P
   if [[ -n "${MELEE_DODGE:-}" ]]; then
     [[ "$MELEE_DODGE" == 0 || "$MELEE_DODGE" == 1 ]] || { echo "MELEE_DODGE must be 0 or 1" >&2; exit 2; }
     printf 'melee_dodge=%s\n' "$MELEE_DODGE" >>"$RUN/Gothic.ini"
+  fi
+  if [[ -n "${MELEE_BARGE:-}" ]]; then
+    [[ "$MELEE_BARGE" == 0 || "$MELEE_BARGE" == 1 ]] || { echo "MELEE_BARGE must be 0 or 1" >&2; exit 2; }
+    printf 'melee_barge=%s\n' "$MELEE_BARGE" >>"$RUN/Gothic.ini"
   fi
   if [[ -n "${MELEE_CHARGE:-}" ]]; then
     [[ "$MELEE_CHARGE" == 0 || "$MELEE_CHARGE" == 1 ]] || { echo "MELEE_CHARGE must be 0 or 1" >&2; exit 2; }

@@ -207,6 +207,7 @@ Marvin::Marvin() {
     {"toggle melee_beast_poise",  C_ToggleMeleeBeastPoise},
     {"toggle melee_backstab",     C_ToggleMeleeBackstab},
     {"toggle melee_dodge",        C_ToggleMeleeDodge},
+    {"toggle melee_barge",        C_ToggleMeleeBarge},
     {"toggle melee_charge",       C_ToggleMeleeCharge},
     {"toggle melee_down_tactics", C_ToggleMeleeDownTactics},
     {"toggle melee_hitstop",      C_ToggleMeleeHitStop},
@@ -721,6 +722,12 @@ bool Marvin::exec(std::string_view v) {
       const bool enabled = !Gothic::physicsFlags().meleeDodge;
       Gothic::settingsSetI("GAME","melee_dodge",enabled ? 1 : 0);
       print(enabled ? "Melee dodge: ON" : "Melee dodge: OFF");
+      return true;
+      }
+    case C_ToggleMeleeBarge: {
+      const bool enabled = Gothic::settingsGetI("GAME","melee_barge")==0;
+      Gothic::settingsSetI("GAME","melee_barge",enabled ? 1 : 0);
+      print(enabled ? "Melee barge: ON" : "Melee barge: OFF");
       return true;
       }
     case C_ToggleMeleeCharge: {

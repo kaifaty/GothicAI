@@ -12,6 +12,7 @@
 #include "graphics/effect.h"
 #include "world/objects/pfxemitter.h"
 #include "game/damagecalculator.h"
+#include "game/bodyimpact.h"
 #include "game/herodeed.h"
 #include "game/deedwitness.h"
 #include "game/bodyobservations.h"
@@ -593,7 +594,9 @@ void Npc::load(Serialize &fin, size_t id, std::string_view directory) {
   meleeChargeMult = 1.f;
   meleeChargeReleased = false;
   meleePosture.reset();
+  meleeBargeOrigin.reset();
   meleeKnockdown = false;
+  meleeBargeKnockdown = false;
   meleeGetupForced = false;
   meleeFallTick = meleeRiseTick = 0;
   meleeSlowSince = 0;
@@ -1025,7 +1028,9 @@ void Npc::resetNavigationEpisode() {
   ragdollDormant.reset();
   ragdollLegacyDown = ragdollRecovering = ragdollHasLastPosition = false;
   meleePosture.reset();
+  meleeBargeOrigin.reset();
   meleeKnockdown = false;
+  meleeBargeKnockdown = false;
   meleeGetupForced = false;
   meleeFallTick = meleeRiseTick = 0;
   meleeSlowSince = 0;
@@ -1131,6 +1136,7 @@ void Npc::onNoHealth(bool death, HitSound sndMask) {
   endMeleeStun("death");
   meleeParadeOrigin.reset();
   meleeKnockdown = false;
+  meleeBargeKnockdown = false;
   meleeSlowSince = 0;
   meleePosture.reset();
   living.reset();
@@ -5076,12 +5082,12 @@ float Npc::meleePostureSkillScale(const Npc& attacker) const {
                                         hasMeleeBeastPoise() ? 0 : std::max(hitChance(TALENT_1H),hitChance(TALENT_2H)));
   }
 
-void Npc::applyMeleePosture(Npc& attacker, const MeleeBladeContact* contact, bool blocked, float before) {
+void Npc::applyMeleePosture(Npc& attacker, const MeleeBladeContact* contact, bool blocked, float before, bool barge) {
   if((isMeleeCharging() || isMeleeChargeReleasing()) && hasMeleeSuperArmor())
     return;
   const bool beast = hasMeleeBeastPoise();
   const bool beastAttacker = isHuman() && attacker.hasMeleeBeastPoise();
-  if(!Gothic::physicsFlags().meleePosture || (!isHuman() && !beast) || (!attacker.isHuman() && !beastAttacker))
+  if((!Gothic::physicsFlags().meleePosture && !barge) || (!isHuman() && !beast) || (!attacker.isHuman() && !beastAttacker))
     return;
   if(beastAttacker && (DamageCalculator::damageTypeMask(attacker)&(1<<zenkit::DamageType::FLY))!=0)
     return;
@@ -5112,11 +5118,12 @@ void Npc::applyMeleePosture(Npc& attacker, const MeleeBladeContact* contact, boo
                                          !beastAttacker && contact ? contact->velocityCmS : Vec3(),
                                          MeleeImpact::postureIncrease(impulse.length(),physicsMass(),thresholdScale,
                                                                      MeleeImpact::postureThresholdScale()));
-  const bool heavyOnStaggered = !beast && stagger && stunned && meleeStunReason=="posture" && heavy!=MeleeImpact::HeavyHit::None;
+  const bool heavyOnStaggered = !beast && stunned && (barge ||
+      (stagger && meleeStunReason=="posture" && heavy!=MeleeImpact::HeavyHit::None));
   bool knocked = false, staggered = false;
   const bool eligible = canAccumulateMeleePosture(true,blocked,meleeKnockdown,isDown()) &&
                         (!beast || MeleeImpact::beastCanAccumulatePosture(physicsMass()));
-  const bool full = eligible && (!stagger || !stunned) &&
+  const bool full = !barge && eligible && (!stagger || !stunned) &&
                     meleePosture.hit(impulse.length(),physicsMass(),owner.tickCount(),thresholdScale);
   if(full && stagger) {
     startMeleeStun(attacker,"posture");
@@ -5138,6 +5145,7 @@ void Npc::applyMeleePosture(Npc& attacker, const MeleeBladeContact* contact, boo
       endMeleeStun("knockdown");
       meleeParadeOrigin.reset();
       meleeKnockdown = true;
+      meleeBargeKnockdown = barge;
       // Keep an ordinary live animation underneath the native body, so a save
       // omitting this transient fall loads standing rather than replaying a hit.
       visual.pose().stopAllAnim();
@@ -5179,13 +5187,14 @@ void Npc::applyMeleePosture(Npc& attacker, const MeleeBladeContact* contact, boo
   if(staggered)
     writeMeleePosture("{\"event\":\"stagger\",\"tick_ms\":"+std::to_string(owner.tickCount())+
                      ",\"attacker\":"+meleeShadowWho(&attacker)+",\"target\":"+who+beastFields+attackerFields+"}");
-  const char* heavyReason = heavy==MeleeImpact::HeavyHit::TwoHanded ? "two_handed" :
+  const char* heavyReason = barge ? "barge" : heavy==MeleeImpact::HeavyHit::TwoHanded ? "two_handed" :
                             heavy==MeleeImpact::HeavyHit::Downward ? "downward" :
                             heavy==MeleeImpact::HeavyHit::Charged ? "charged" : "posture";
   if(knocked)
     writeMeleePosture("{\"event\":\"knockdown\",\"tick_ms\":"+std::to_string(meleeFallTick)+
                      ",\"fall_ms\":"+std::to_string(meleeFallTick)+",\"target\":"+who+attackerFields+
-                     (heavyOnStaggered ? ",\"cause\":\"heavy_on_staggered\",\"heavy\":"+TestBench::bodyJson(heavyReason) : "")+"}");
+                     (heavyOnStaggered ? ",\"cause\":"+TestBench::bodyJson(barge ? "barge" : "heavy_on_staggered")+
+                                          ",\"heavy\":"+TestBench::bodyJson(heavyReason) : "")+"}");
   }
 
 bool Npc::tickMeleePosture(uint64_t dt) {
@@ -5199,7 +5208,7 @@ bool Npc::tickMeleePosture(uint64_t dt) {
   const auto now = owner.tickCount();
   lastEventTime = now;
   visual.processLayers(owner);
-  const bool enabled = Gothic::physicsFlags().meleePosture;
+  const bool enabled = Gothic::physicsFlags().meleePosture || (meleeBargeKnockdown && Gothic::physicsFlags().meleeBarge);
   if(ragdoll && (now-meleeFallTick>=1200 || !enabled)) {
     // Use the same settled-body gate as KO, with a deadline for starting
     // the authored get-up rather than a deadline for finishing it.
@@ -5245,6 +5254,7 @@ bool Npc::tickMeleePosture(uint64_t dt) {
         setAnim(Anim::Idle);
         }
       meleeKnockdown = false;
+      meleeBargeKnockdown = false;
       ragdollRecovering = false;
       meleePosture.recover(now);
       writeMeleePosture("{\"event\":"+TestBench::bodyJson(enabled ? "recover" : "cancel")+",\"tick_ms\":"+std::to_string(now)+
@@ -5262,7 +5272,7 @@ bool Npc::tickMeleePosture(uint64_t dt) {
   return true;
   }
 
-void Npc::takeDamage(Npc &other, const Bullet* b, bool ignoreDefence, float meleeScale, const MeleeBladeContact* contact) {
+void Npc::takeDamage(Npc &other, const Bullet* b, bool ignoreDefence, float meleeScale, const MeleeBladeContact* contact, bool barge) {
   if(isDown())
     return;
   // Inside a dodge's window nothing passes: no damage, balance, reaction or perception
@@ -5298,7 +5308,7 @@ void Npc::takeDamage(Npc &other, const Bullet* b, bool ignoreDefence, float mele
   owner.sendPassivePerc(*this,other,*this,PERC_ASSESSFIGHTSOUND);
 
   if(!(isBlock || isJumpb) || b!=nullptr) {
-    takeDamage(other,b,COLL_DOEVERYTHING,0,false,meleeScale,contact);
+    takeDamage(other,b,COLL_DOEVERYTHING,0,false,meleeScale,contact,barge);
     } else {
     if(isBlock) {
       if(Gothic::physicsFlags().meleeParry && isHuman() && parade)
@@ -5328,7 +5338,7 @@ void Npc::takeDamage(Npc& other, const Bullet* b, const VisualFx* vfx, int32_t s
   takeDamage(other,b,bMask,splId,true);
   }
 
-void Npc::takeDamage(Npc& other, const Bullet* b, const CollideMask bMask, int32_t splId, bool isSpell, float meleeScale, const MeleeBladeContact* contact) {
+void Npc::takeDamage(Npc& other, const Bullet* b, const CollideMask bMask, int32_t splId, bool isSpell, float meleeScale, const MeleeBladeContact* contact, bool barge) {
   const int32_t traceHpBefore = attribute(ATR_HITPOINTS);
   const bool traceKnockdownBefore = meleeKnockdown;
   const auto traceAttackerAnimation = TestBench::bodyTracing() ? other.visual.pose().animNames() : std::string();
@@ -5338,6 +5348,7 @@ void Npc::takeDamage(Npc& other, const Bullet* b, const CollideMask bMask, int32
   const float backstabMult = meleeBackstabMultiplier(backstab);
   const float stunBonus = !isSpell && b==nullptr && backstab==MeleeImpact::BackstabKind::None ? meleeStunBonus(other) : 1.f;
   const bool superArmor = hasMeleeSuperArmor();
+  const bool bargeArmor = hasMeleeBargeSuperArmor();
   const float chargeMult = !isSpell && b==nullptr ? other.meleeChargeMultiplier() : 1.f;
   float a  = angleDir(other.x-x,other.z-z);
   float da = a-angle;
@@ -5350,7 +5361,7 @@ void Npc::takeDamage(Npc& other, const Bullet* b, const CollideMask bMask, int32
   SpellCategory            splCat     = SpellCategory::SPELL_BAD;
   const bool               dontKill   = isNonlethalFight(other) ||
                                        (((b==nullptr && splId==0) || (bMask & COLL_DONTKILL)) && (!isSwim()));
-  int32_t                  damageType = DamageCalculator::damageTypeMask(other);
+  int32_t                  damageType = barge ? other.handle().damage_type : DamageCalculator::damageTypeMask(other);
 
   if(isSpell) {
     auto& spl  = owner.script().spellDesc(splId);
@@ -5369,7 +5380,7 @@ void Npc::takeDamage(Npc& other, const Bullet* b, const CollideMask bMask, int32
     stopPhysicsInvestigation(false);
     perceptionProcess(other,this,0,PERC_ASSESSDAMAGE,other.isPlayer() ? heroAttack : nullptr);
     // Keep a beast's in-flight bite and native wait intact under size super armor.
-    if(!(superArmor && hasMeleeBeastPoise())) {
+    if(!bargeArmor && !(superArmor && hasMeleeBeastPoise())) {
       const auto tracePrimitiveBefore = fghAlgo.queuedAction();
       fghAlgo.onTakeHit();
       BodyController::takeHit(*this);
@@ -5380,7 +5391,7 @@ void Npc::takeDamage(Npc& other, const Bullet* b, const CollideMask bMask, int32
       }
     }
 
-  hitResult = DamageCalculator::damageValue(other,*this,b,isSpell,dmg,bMask);
+  hitResult = DamageCalculator::damageValue(other,*this,b,isSpell,dmg,bMask,barge);
   if((contact!=nullptr || stunBonus!=1.f || backstabMult!=1.f || chargeMult!=1.f) && hitResult.hasHit && !hitResult.invincible)
     hitResult.value = int32_t(std::lround(float(hitResult.value)*meleeScale*stunBonus*backstabMult*chargeMult));
   if(hitResult.hasHit && !hitResult.invincible) {
@@ -5446,7 +5457,7 @@ void Npc::takeDamage(Npc& other, const Bullet* b, const CollideMask bMask, int32
     return;
     }
 
-  if(hitResult.hasHit && !benchStill && !meleeKnockdown) {
+  if(hitResult.hasHit && !benchStill && !meleeKnockdown && !bargeArmor) {
     if(superArmor && hasMeleeBeastPoise() && TestBench::bodyTracing())
       TestBench::bodyEvent(*this,&other,"super_armor",owner.tickCount(),
                           "\"active\":true"+meleeBeastFields(physicsMass()));
@@ -5472,7 +5483,7 @@ void Npc::takeDamage(Npc& other, const Bullet* b, const CollideMask bMask, int32
   // throw enemy
   const bool physicalWind = isSpell && Gothic::physicsFlags().spellPhysics &&
                             owner.script().physicalSpell(splId)==GameScript::PhysicalSpell::WindFist;
-  if(hitResult.hasHit && (damageType & (1<<zenkit::DamageType::FLY)) && !physicalWind &&
+  if(hitResult.hasHit && (damageType & (1<<zenkit::DamageType::FLY)) && !physicalWind && !bargeArmor &&
      !(superArmor && (isMeleeCharging() || isMeleeChargeReleasing()))) {
     mvAlgo.accessDamFly(x-other.x, z-other.z, lastHitType);
     }
@@ -5501,7 +5512,7 @@ void Npc::takeDamage(Npc& other, const Bullet* b, const CollideMask bMask, int32
         }
       }
     }
-  if(hitResult.hasHit && !isSpell && b==nullptr)
+  if(hitResult.hasHit && !isSpell && b==nullptr && !barge && !bargeArmor)
     applyMeleePosture(other,contact,false,postureBefore);
   traceDamage();
   }
@@ -5623,13 +5634,17 @@ void Npc::applyBodyImpact() {
   const auto damage=DamageCalculator::damageFall(*this,speed);
   const int32_t before=attribute(ATR_HITPOINTS);
   if(damage.hasHit) {
-    auto deed=culprit!=nullptr && damage.value>=before ? HeroDeed::capture(*culprit,"murder",this) : nullptr;
-    if(culprit!=nullptr && damage.value>=before) {
+    const auto decision=BodyImpact::decide(culprit!=nullptr && isNonlethalFight(*culprit),isHuman(),isPlayer(),
+                                           culprit!=nullptr,damage.value>=before-1);
+    auto deed=decision.captureMurder && damage.value>=before ? HeroDeed::capture(*culprit,"murder",this) : nullptr;
+    if(culprit!=nullptr && (decision.knockOut || damage.value>=before)) {
       lastHit=culprit;
       currentOther=culprit;
       }
-    changeAttribute(ATR_HITPOINTS,-damage.value,false);
-    if(isDead() && culprit!=nullptr)
+    changeAttribute(ATR_HITPOINTS,-damage.value,decision.knockOut);
+    if(decision.perception==BodyImpact::Perception::Defeat && isUnconscious())
+      owner.sendPassivePerc(*this,*culprit,*this,PERC_ASSESSDEFEAT);
+    else if(decision.perception==BodyImpact::Perception::Murder && isDead())
       owner.sendPassivePerc(*this,*culprit,*this,PERC_ASSESSMURDER,std::move(deed));
     }
   if(TestBench::isActive()) {
@@ -5896,6 +5911,7 @@ void Npc::tick(uint64_t dt) {
   tickBodyImpact();
   tickMeleeParry();
   tickMeleeStamina();
+  tickMeleeBarge();
   tickMeleeCharge();
   // Only NPCs inserted in the live world are ticked. A restored NPC starts
   // with fresh shadow geometry, never a sweep from its former holding point.
@@ -7807,7 +7823,15 @@ bool Npc::hasMeleeBeastPoise() const {
   return Gothic::physicsFlags().meleeBeastPoise && isMonster() && invent.activeWeapon()==nullptr;
   }
 
+bool Npc::hasMeleeBargeSuperArmor() const {
+  const auto layer = meleeDodgeLayer();
+  return isPlayer() && Gothic::physicsFlags().meleeBarge && layer && layer->move.kind==MeleeDodge::Kind::Barge &&
+         MeleeDodge::bargeSuperArmor(layer->elapsed);
+  }
+
 bool Npc::hasMeleeSuperArmor() const {
+  if(hasMeleeBargeSuperArmor())
+    return true;
   if(isMeleeCharging())
     return MeleeCharge::superArmor(true,false,0,0);
   if(isMeleeChargeReleasing()) {
@@ -7848,7 +7872,7 @@ bool Npc::hasMeleeSuperArmor() const {
   }
 
 bool Npc::isMeleeStunned() const {
-  const bool enabled = meleeStunReason=="posture" ? Gothic::physicsFlags().meleeStagger && (isHuman() || hasMeleeBeastPoise()) : Gothic::physicsFlags().meleeParry;
+  const bool enabled = meleeStunReason=="barge" ? Gothic::physicsFlags().meleeBarge : meleeStunReason=="posture" ? Gothic::physicsFlags().meleeStagger && (isHuman() || hasMeleeBeastPoise()) : Gothic::physicsFlags().meleeParry;
   return enabled && owner.tickCount()<meleeStunUntil;
   }
 
@@ -7862,9 +7886,9 @@ bool Npc::allowMeleeStunAction(std::string_view action) {
   }
 
 void Npc::startMeleeStun(Npc& by, std::string_view reason) {
-  const bool enabled = reason=="posture" ? Gothic::physicsFlags().meleeStagger : Gothic::physicsFlags().meleeParry;
-  const bool beast = reason=="posture" && hasMeleeBeastPoise() && MeleeImpact::beastCanAccumulatePosture(physicsMass());
-  if(!enabled || (!isHuman() && !beast) || isDown() || meleeKnockdown || isMeleeStunned())
+  const bool enabled = reason=="barge" ? Gothic::physicsFlags().meleeBarge : reason=="posture" ? Gothic::physicsFlags().meleeStagger : Gothic::physicsFlags().meleeParry;
+  const bool beast = (reason=="posture" || reason=="barge") && hasMeleeBeastPoise() && MeleeImpact::beastCanAccumulatePosture(physicsMass());
+  if(!enabled || (!isHuman() && !beast) || isDown() || meleeKnockdown || (isMeleeStunned() && reason!="barge") || hasMeleeBargeSuperArmor())
     return;
   endMeleeStun("timeout");
   meleeStunReason = reason;
@@ -7970,7 +7994,7 @@ void Npc::tickMeleeParry() {
   if(!Gothic::physicsFlags().meleeParryAi || !Gothic::physicsFlags().meleeParry ||
      currentTarget==nullptr || isDown() || meleeKnockdown || isMeleeStunned())
     meleeParadeTiming.reset();
-  const bool stunEnabled = meleeStunReason=="posture" ? Gothic::physicsFlags().meleeStagger && (isHuman() || hasMeleeBeastPoise()) : Gothic::physicsFlags().meleeParry;
+  const bool stunEnabled = meleeStunReason=="barge" ? Gothic::physicsFlags().meleeBarge : meleeStunReason=="posture" ? Gothic::physicsFlags().meleeStagger && (isHuman() || hasMeleeBeastPoise()) : Gothic::physicsFlags().meleeParry;
   if(meleeStunUntil!=0 && (!stunEnabled || now>=meleeStunUntil))
     endMeleeStun(stunEnabled ? "timeout" : "reset");
   if(!Gothic::physicsFlags().meleeParry) {
@@ -8124,7 +8148,7 @@ std::optional<Npc::MeleeDodgeLayer> Npc::meleeDodgeLayer() const {
   for(const auto& layer:pose.combatLayers(owner.tickCount()))
     if(layer.state==BS_PARADE)
       if(auto move = MeleeDodge::parseAnimation(layer.sequence->name))
-        return MeleeDodgeLayer{*move,layer.origin};
+        return MeleeDodgeLayer{*move,layer.origin,layer.time-layer.start};
   return std::nullopt;
   }
 
@@ -8134,7 +8158,7 @@ bool Npc::isMeleeDodging() const {
 
 bool Npc::isMeleeDodgeRoll() const {
   const auto layer = meleeDodgeLayer();
-  return layer && layer->move.kind!=MeleeDodge::Kind::Dash;
+  return layer && (layer->move.kind==MeleeDodge::Kind::Roll || layer->move.kind==MeleeDodge::Kind::HeavyRoll);
   }
 
 bool Npc::isMeleeDodgeInvulnerable() const {
@@ -8185,6 +8209,69 @@ bool Npc::meleeDodgeEvades(Npc& other, std::string_view kind) {
   return true;
   }
 
+void Npc::meleeBargeNote(const Npc* target, uint64_t elapsed, std::string_view outcome) {
+  if(TestBench::isActive())
+    TestBench::note(("melee barge "+std::string(TestBench::who(this))+": contact "+
+                    (target ? std::string(TestBench::who(target)) : "-")+" at "+std::to_string(elapsed)+
+                    " ms, "+std::string(outcome)).c_str());
+  if(TestBench::bodyTracing())
+    TestBench::bodyEvent(*this,target,"barge_contact",owner.tickCount(),
+                        "\"elapsed_ms\":"+std::to_string(elapsed)+",\"outcome\":"+TestBench::bodyJson(outcome),
+                        visual.pose().animNames());
+  }
+
+void Npc::tickMeleeBarge() {
+  if(!meleeBargeOrigin || meleeBargeContact)
+    return;
+  const auto now = owner.tickCount();
+  const auto layer = meleeDodgeLayer();
+  const auto elapsed = layer ? layer->elapsed : (now>=*meleeBargeOrigin ? now-*meleeBargeOrigin : 0);
+  if(!isPlayer() || !Gothic::physicsFlags().meleeBarge || isDown() || !layer ||
+     layer->move.kind!=MeleeDodge::Kind::Barge || layer->origin!=*meleeBargeOrigin || elapsed>600) {
+    meleeBargeContact = true;
+    meleeBargeNote(nullptr,elapsed,"miss");
+    return;
+    }
+  if(!MeleeDodge::bargeContact(elapsed))
+    return;
+
+  Npc* target = nullptr;
+  MeleeDodge::BargeOutcome outcome = MeleeDodge::BargeOutcome::Stun;
+  owner.detectNpc(position(),165.f,[&](Npc& other) {
+    const bool beast = other.isMonster() && other.inventory().activeWeapon()==nullptr;
+    if(target!=nullptr || &other==this || (!other.isHuman() && !beast))
+      return;
+    const auto dp = other.position()-position();
+    MeleeDodge::BargeTarget candidate;
+    candidate.distanceCm = std::sqrt(dp.x*dp.x+dp.z*dp.z);
+    candidate.heightCm = dp.y;
+    candidate.angleDeg = std::remainder(angleDir(dp.x,dp.z)-angle,360.f);
+    candidate.alive = !other.isDead();
+    candidate.human = other.isHuman();
+    candidate.down = other.isDown();
+    candidate.knockedDown = other.meleeKnockdown;
+    candidate.invulnerable = other.isMeleeDodgeInvulnerable();
+    candidate.stunned = other.isMeleeStunned();
+    candidate.beastSize = MeleeImpact::beastSize(other.physicsMass());
+    if(!MeleeDodge::bargeCanContact(candidate))
+      return;
+    target = &other;
+    outcome = MeleeDodge::bargeOutcome(candidate);
+    });
+  if(target==nullptr)
+    return;
+
+  meleeBargeContact = true; // Damage perceptions may re-enter combat; the clip spends its contact first.
+  if(outcome==MeleeDodge::BargeOutcome::NoneHuge) {
+    meleeBargeNote(target,elapsed,"none huge");
+    return;
+    }
+  target->takeDamage(*this,nullptr,true,1.f,nullptr,true);
+  if(outcome==MeleeDodge::BargeOutcome::Knockdown)
+    target->applyMeleePosture(*this,nullptr,false,target->meleePosture.value,true);
+  else
+    target->startMeleeStun(*this,"barge");
+  meleeBargeNote(target,elapsed,outcome==MeleeDodge::BargeOutcome::Knockdown ? "knockdown" : "stun");
 bool Npc::canMeleeCharge() const {
   const auto bs = bodyStateMasked();
   MeleeCharge::Situation s;
@@ -8313,7 +8400,7 @@ bool Npc::meleeDodge(MeleeDodge::Direction direction) {
   auto*      armor = invent.currentArmor();
   const auto armorClass = armor!=nullptr ? std::optional<MeleeImpact::ArmorClass>(MeleeImpact::armorClass(armor->handle().protection[PROT_EDGE])) :
                                            std::optional<MeleeImpact::ArmorClass>();
-  const auto wanted = MeleeDodge::kind(armorClass);
+  const auto wanted = MeleeDodge::kind(armorClass,direction,isPlayer() && Gothic::physicsFlags().meleeBarge);
   const std::string dir    = std::string(MeleeDodge::name(direction));
   const std::string armour = std::string(MeleeDodge::name(armorClass));
   const std::string head   = "\"direction\":"+TestBench::bodyJson(dir)+",\"armour\":"+TestBench::bodyJson(armour)+
@@ -8417,12 +8504,20 @@ bool Npc::meleeDodge(MeleeDodge::Direction direction) {
     return false;
     }
   cancelMeleeCharge("dodge");
+  if(kind==MeleeDodge::Kind::Barge) {
+    meleeBargeOrigin = now;
+    meleeBargeContact = false;
+    if(TestBench::bodyTracing())
+      TestBench::bodyEvent(*this,currentTarget,"barge_start",now,
+                          "\"animation_name\":"+TestBench::bodyJson(chosen->name));
+    }
   const float staminaBefore = stamina();
   const float cost          = MeleeDodge::charged(kind,hasStamina());
   spendStamina("dodge",cost);
   meleeDodgeNote(dir+", armour "+armour+", "+moveText+", cost "+std::to_string(int(cost))+
-                 (hasStamina() ? "" : " (melee_stamina off)")+", window "+std::to_string(window.beginMs)+"-"+
-                 std::to_string(window.endMs)+" ms",
+                 (hasStamina() ? "" : " (melee_stamina off)")+", window "+
+                 (kind==MeleeDodge::Kind::Barge ? "none, contact 440-600 ms, super armor 0-600 ms" :
+                  std::to_string(window.beginMs)+"-"+std::to_string(window.endMs)+" ms"),
                  "dodge",head+",\"kind\":"+TestBench::bodyJson(MeleeDodge::name(kind))+
                  ",\"animation_name\":"+TestBench::bodyJson(chosen->name)+",\"fallback\":"+(fallback ? "true" : "false")+
                  ",\"missing\":"+TestBench::bodyJson(missing)+",\"cost\":"+std::to_string(cost)+
