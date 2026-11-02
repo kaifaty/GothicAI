@@ -81,3 +81,54 @@
 
 - Храповик в PR: горячие файлы не растут, «Как работает сейчас» не растёт выше порога. Сначала предупреждение, потом проверка. Отдельный PR после этого.
 - Длинные функции (`lizard`, C++ и Python) и дубли кода — после того, как увидим шум первых пяти видов.
+
+## Проверка реализации 2026-11-02
+
+Контрольный коммит — `246e8efec` (`scripts: track technical debt with weekly issue reconciliation`). Проверки выполнялись в ветке `codex/debt-ci`; `sync --apply` не запускался, issues и метки на GitHub не менялись.
+
+`python3 scripts/check.py run`: **16 passed**, 2,47 с, выход 0. Тесты проверяют все строки сверки, приоритет и лимит пяти созданий, метки, сохранение текста вне машинных маркеров, обновление порогов, повтор уже записанных находок без записей, dry-run, сбои пагинации без записей, summary и scan на временном git-репозитории. В scan проверены все пять видов, `open`/`hold`/`heavy`, UTF-8, снимок HEAD при грязном рабочем дереве, окно до даты HEAD, исключение merge-коммитов и ненулевой выход при сбое ruff. Ruff 0.17.0 для двух новых Python-файлов — 0 нарушений.
+
+`python3 scripts/debt.py scan`: выход 0, **18 находок `open`**, в точности таблица «Сегодня»: 8 `hotspot`, 6 `doc-now`, 2 `doc-file`, 1 `ruff:shorts` (96 нарушений), 1 `orphan-scripts` (10 файлов). Дополнительно JSON содержит **15 `hold`**: 4 `hotspot`, 9 `doc-now`, 2 `ruff`; это требуемое состояние гистерезиса, а не новые открываемые долги. Расхождений с таблицей нет. После исходного `45936fb` добавлены `d8086e2aa` (эта исследовательская заметка) и `246e8efec` (реализация); набор открываемых находок они не изменили.
+
+`python3 scripts/debt.py sync` против `kaifaty/GothicAI`: выход 0, **создать 5, отложить 13**, ещё 15 `hold` пропущены. Без `--apply` записей нет. При заданном `GITHUB_STEP_SUMMARY` тот же план записан таблицей из 33 строк. Полный вывод:
+
+```text
+создать | hotspot:OpenGothic/common/testbench.cpp | выше порога открытия, уровень heavy
+создать | hotspot:OpenGothic/common/world/objects/npc.cpp | выше порога открытия, уровень heavy
+создать | orphan-scripts | выше порога открытия, уровень normal
+создать | ruff:shorts | выше порога открытия, уровень normal
+создать | hotspot:server/src/gothic_ai/cli.py | выше порога открытия, уровень normal
+отложить | hotspot:OpenGothic/tests/physics_contract.cpp | лимит 5 новых issues за прогон
+отложить | doc-now:docs/world-streaming.md | лимит 5 новых issues за прогон
+отложить | doc-now:docs/physics.md | лимит 5 новых issues за прогон
+отложить | doc-now:docs/own-content.md | лимит 5 новых issues за прогон
+отложить | doc-now:docs/navigation.md | лимит 5 новых issues за прогон
+отложить | doc-now:docs/npc-agent.md | лимит 5 новых issues за прогон
+отложить | doc-file:docs/features.md | лимит 5 новых issues за прогон
+отложить | doc-file:docs/README.md | лимит 5 новых issues за прогон
+отложить | hotspot:OpenGothic/common/physics/collisionworld.cpp | лимит 5 новых issues за прогон
+отложить | hotspot:server/src/gothic_ai/dialogue.py | лимит 5 новых issues за прогон
+отложить | doc-now:docs/asset-migration.md | лимит 5 новых issues за прогон
+отложить | hotspot:OpenGothic/common/physics/dynamicworld.cpp | лимит 5 новых issues за прогон
+отложить | hotspot:OpenGothic/ai_bridge/aibridge.cpp | лимит 5 новых issues за прогон
+пропустить | doc-now:docs/ryzen.md | ниже порога открытия, issue ещё нет
+пропустить | hotspot:server/tests/test_bodypilot.py | ниже порога открытия, issue ещё нет
+пропустить | doc-now:docs/npc-wave3.md | ниже порога открытия, issue ещё нет
+пропустить | hotspot:OpenGothic/common/resources.cpp | ниже порога открытия, issue ещё нет
+пропустить | doc-now:docs/npc-body-control-plan.md | ниже порога открытия, issue ещё нет
+пропустить | doc-now:docs/remaster-pipeline.md | ниже порога открытия, issue ещё нет
+пропустить | hotspot:server/src/gothic_ai/protocol.py | ниже порога открытия, issue ещё нет
+пропустить | doc-now:docs/compute.md | ниже порога открытия, issue ещё нет
+пропустить | hotspot:server/tests/test_dialogue.py | ниже порога открытия, issue ещё нет
+пропустить | doc-now:docs/achievements.md | ниже порога открытия, issue ещё нет
+пропустить | doc-now:docs/crime.md | ниже порога открытия, issue ещё нет
+пропустить | doc-now:docs/performance.md | ниже порога открытия, issue ещё нет
+пропустить | doc-now:docs/launcher.md | ниже порога открытия, issue ещё нет
+пропустить | ruff:launcher/core | ниже порога открытия, issue ещё нет
+пропустить | ruff:site | ниже порога открытия, issue ещё нет
+создать 5, отложить 13, пропустить 15
+```
+
+Требуется решение по противоречию в приёмке: лимит и фраза «остальные ждут следующего прогона» требуют создать следующую пятёрку при повторном запуске с ещё не заведёнными находками, а требование «повтор на тех же данных — 0 записей» это запрещает. Реализация применяет лимит отдельно к каждому запуску; ноль записей проверен для уже заведённых находок. Механизм подавления следующей партии того же замера без согласования не добавлялся.
+
+PR публикует надзиратель; проверки GitHub `tests` и `debt` можно принять после публикации. Workflow вручную не запускался.
