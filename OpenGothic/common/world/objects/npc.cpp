@@ -8192,7 +8192,8 @@ void Npc::tickMeleeBarge() {
   Npc* target = nullptr;
   MeleeDodge::BargeOutcome outcome = MeleeDodge::BargeOutcome::Stun;
   owner.detectNpc(position(),165.f,[&](Npc& other) {
-    if(target!=nullptr || &other==this || (!other.isHuman() && !other.isMonster()))
+    const bool beast = other.isMonster() && other.inventory().activeWeapon()==nullptr;
+    if(target!=nullptr || &other==this || (!other.isHuman() && !beast))
       return;
     const auto dp = other.position()-position();
     MeleeDodge::BargeTarget candidate;
