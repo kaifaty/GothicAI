@@ -71,15 +71,29 @@ int main() {
   requirePoint(pair,{109.f,20.f,162.f},"pair is 165 cm along the hero's starting facing direction");
   const Point victim{209.f,40.f,262.f};
   requirePoint(alignment(victim,pair,0),victim,"alignment begins at the victim's root");
-  requirePoint(alignment(victim,pair,100),{193.375f,36.875f,246.375f},"alignment uses smoothstep");
-  requirePoint(alignment(victim,pair,200),{159.f,30.f,212.f},"alignment is halfway at 200 ms");
-  requirePoint(alignment(victim,pair,400),pair,"alignment reaches the pair at 400 ms");
-  requirePoint(alignment(victim,pair,500),pair,"alignment remains at the pair after 400 ms");
+  requirePoint(alignment(victim,pair,100),{193.375f,40.f,246.375f},"horizontal alignment uses smoothstep and preserves the victim's height");
+  requirePoint(alignment(victim,pair,200),{159.f,40.f,212.f},"horizontal alignment is halfway at 200 ms without changing height");
+  requirePoint(alignment(victim,pair,400),{109.f,40.f,162.f},"alignment reaches the horizontal pair at 400 ms");
+  requirePoint(alignment(victim,pair,500),{109.f,40.f,162.f},"alignment remains at the horizontal pair after 400 ms");
 
-  require(!bladeReady(399,400) && bladeReady(400,400),"blade enters at the clip's DEF_OPT_FRAME");
-  require(!bladeReady(439,440) && bladeReady(440,440),"blade timing follows supplied animation metadata");
+  const auto bladeAt25 = frameTimeMs(10,25.f);
+  const auto bladeAt50 = frameTimeMs(10,50.f);
+  const auto shiftedBlade = frameTimeMs(11,25.f);
+  require(bladeAt25==400 && bladeAt50==200 && shiftedBlade==440,"DEF_OPT_FRAME timing follows the clip's frame and fps");
+  require(!bladeReady(399,bladeAt25) && bladeReady(400,bladeAt25),"blade enters at frame 10 of a 25 fps clip");
+  require(!bladeReady(199,bladeAt50) && bladeReady(200,bladeAt50),"blade enters at frame 10 of a 50 fps clip");
+  require(!bladeReady(439,shiftedBlade) && bladeReady(440,shiftedBlade),"blade timing follows a changed DEF_OPT_FRAME");
   require(!handoverReady(839) && handoverReady(840),"handover occurs at 840 ms, extraction frame 21");
-  requireNear(multiplier(),3.f,"riposte replaces the stunned 1.5 multiplier with 3");
+  const auto riposte = damageMultipliers(multiplier(),1.5f,3.f);
+  requireNear(riposte.riposte,3.f,"riposte damage multiplier is 3");
+  requireNear(riposte.stun,1.f,"riposte replaces the stunned 1.5 multiplier");
+  requireNear(riposte.backstab,1.f,"riposte does not stack with a backstab multiplier");
+  const auto ordinary = damageMultipliers(1.f,1.5f,1.f);
+  requireNear(ordinary.riposte,1.f,"ordinary attacks have no riposte multiplier");
+  requireNear(ordinary.stun,1.5f,"ordinary attacks keep their stunned multiplier");
+  requireNear(ordinary.backstab,1.f,"ordinary attacks keep their backstab selection");
+  const auto backstab = damageMultipliers(1.f,1.f,3.f);
+  requireNear(backstab.backstab,3.f,"ordinary backstabs keep their multiplier");
   require(superArmor(true,0,1920) && superArmor(true,1919,1920) && superArmor(true,1920,1920),
           "super armor covers attack start through DEF_HIT_END");
   require(!superArmor(true,1921,1920) && !superArmor(false,0,1920),"super armor ends after DEF_HIT_END");

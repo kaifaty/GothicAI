@@ -71,8 +71,9 @@ wait 1600
 hp BDT_1013_BANDIT_L
 wait 8000
 
-# (b) The target starts 230 cm away and moves towards the 165 cm pair point.
-pin BDT_1013_BANDIT_L 230 0 0
+# (b) Start 230 cm away and 30 cm above the hero. After release, gravity owns height while
+# horizontal alignment reaches the 165 cm pair point; landing must not count as a blocked approach.
+pin BDT_1013_BANDIT_L 230 0 30
 wait 100
 mark b-g2-230
 stun BDT_1013_BANDIT_L posture

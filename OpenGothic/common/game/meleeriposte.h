@@ -30,13 +30,21 @@ namespace MeleeRiposte {
     float z = 0;
     };
 
+  struct DamageMultipliers final {
+    float riposte  = 1.f;
+    float stun     = 1.f;
+    float backstab = 1.f;
+    };
+
   bool  available(const Situation& situation);
   // Forward is the hero's horizontal unit direction after facing the victim.
   Point pairPosition(Point hero, float forwardX, float forwardZ);
   Point alignment(Point from, Point pair, uint64_t elapsedMs);
+  uint64_t frameTimeMs(uint32_t normalizedFrame, float fps);
   bool  bladeReady(uint64_t elapsedMs, uint64_t optFrameMs);
   bool  handoverReady(uint64_t elapsedMs);
   float multiplier();
+  DamageMultipliers damageMultipliers(float riposte, float stun, float backstab);
   float cost(float attackCost, bool staminaEnabled);
   // The attack covers DEF_HIT_END itself, like charge super armor.
   bool  superArmor(bool active, uint64_t elapsedMs, uint64_t hitEndMs);

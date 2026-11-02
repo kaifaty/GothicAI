@@ -17,7 +17,11 @@ MeleeRiposte::Point MeleeRiposte::pairPosition(Point hero, float forwardX, float
 MeleeRiposte::Point MeleeRiposte::alignment(Point from, Point pair, uint64_t elapsedMs) {
   const float t = float(std::min(elapsedMs,AlignmentMs))/float(AlignmentMs);
   const float amount = t*t*(3.f-2.f*t);
-  return {from.x+(pair.x-from.x)*amount,from.y+(pair.y-from.y)*amount,from.z+(pair.z-from.z)*amount};
+  return {from.x+(pair.x-from.x)*amount,from.y,from.z+(pair.z-from.z)*amount};
+  }
+
+uint64_t MeleeRiposte::frameTimeMs(uint32_t normalizedFrame, float fps) {
+  return uint64_t(float(normalizedFrame)*1000.f/fps);
   }
 
 bool MeleeRiposte::bladeReady(uint64_t elapsedMs, uint64_t optFrameMs) {
@@ -30,6 +34,10 @@ bool MeleeRiposte::handoverReady(uint64_t elapsedMs) {
 
 float MeleeRiposte::multiplier() {
   return 3.f;
+  }
+
+MeleeRiposte::DamageMultipliers MeleeRiposte::damageMultipliers(float riposte, float stun, float backstab) {
+  return riposte!=1.f ? DamageMultipliers{riposte,1.f,1.f} : DamageMultipliers{riposte,stun,backstab};
   }
 
 float MeleeRiposte::cost(float attackCost, bool staminaEnabled) {

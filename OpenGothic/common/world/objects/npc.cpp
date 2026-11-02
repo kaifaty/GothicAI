@@ -5388,9 +5388,13 @@ void Npc::takeDamage(Npc& other, const Bullet* b, const CollideMask bMask, int32
   const float postureBefore = meleePosture.value;
   const auto backstab = !isSpell && b==nullptr ? meleeBackstabKind(other) : MeleeImpact::BackstabKind::None;
   const float backstabAngle = MeleeImpact::backstabAngle(angle,angleDir(other.x-x,other.z-z));
-  const float riposteMult = !isSpell && b==nullptr ? other.meleeRiposteMultiplier(*this) : 1.f;
-  const float backstabMult = riposteMult==1.f ? meleeBackstabMultiplier(backstab) : 1.f;
-  const float stunBonus = riposteMult==1.f && !isSpell && b==nullptr && backstab==MeleeImpact::BackstabKind::None ? meleeStunBonus(other) : 1.f;
+  const auto multipliers = MeleeRiposte::damageMultipliers(
+      !isSpell && b==nullptr ? other.meleeRiposteMultiplier(*this) : 1.f,
+      !isSpell && b==nullptr && backstab==MeleeImpact::BackstabKind::None ? meleeStunBonus(other) : 1.f,
+      meleeBackstabMultiplier(backstab));
+  const float riposteMult = multipliers.riposte;
+  const float backstabMult = multipliers.backstab;
+  const float stunBonus = multipliers.stun;
   const bool superArmor = hasMeleeSuperArmor();
   const bool bargeArmor = hasMeleeBargeSuperArmor();
   const bool riposteArmor = isMeleeRiposteHeld() || (superArmor && isMeleeRiposting());
@@ -8385,7 +8389,7 @@ bool Npc::beginMeleeRiposte() {
   for(const auto& event:seq->data->events)
     if(event.type==asset::MdsEventType::OPTIMAL_FRAME)
       for(const auto frame:event.frames)
-        bladeAt = std::min(bladeAt,uint64_t(float(seq->data->optimalFrame(frame))*1000.f/seq->data->fpsRate));
+        bladeAt = std::min(bladeAt,MeleeRiposte::frameTimeMs(seq->data->optimalFrame(frame),seq->data->fpsRate));
   if(seq->data->defHitEnd.empty() || bladeAt==std::numeric_limits<uint64_t>::max())
     throw std::runtime_error("Melee riposte requires DEF_OPT_FRAME and DEF_HIT_END");
   spendStamina("riposte",cost);
@@ -8409,7 +8413,8 @@ bool Npc::beginMeleeRiposte() {
   mvAlgo.clearSpeed();
   finishMeleeShadowSwing(true,true);
   meleeRiposteNote(&victim,"start "+std::string(TestBench::who(&victim))+" at "+std::to_string(s.distanceCm)+" cm",
-                   "riposte_start","\"distance_cm\":"+std::to_string(s.distanceCm)+",\"cost\":"+std::to_string(cost));
+                   "riposte_start","\"distance_cm\":"+std::to_string(s.distanceCm)+",\"cost\":"+std::to_string(cost)+
+                   ",\"hero_y_cm\":"+std::to_string(y)+",\"victim_y_cm\":"+std::to_string(victim.y));
   return true;
   }
 
@@ -8430,10 +8435,8 @@ void Npc::meleeRiposteBlade() {
     return;
     }
   // Last alignment sample is taken at the event, including a frame that crosses 400 ms.
-  if(!r.blocked) {
-    const auto pair = r.pair;
-    victim->tryMove(pair-victim->position());
-    }
+  if(!r.blocked)
+    victim->tryMove(Vec3(r.pair.x-victim->x,0,r.pair.z-victim->z));
   const auto dp = victim->position()-position();
   const float distance = std::sqrt(dp.x*dp.x+dp.z*dp.z);
   const auto startDp = victim->position()-r.heroStart;
@@ -8450,7 +8453,10 @@ void Npc::meleeRiposteBlade() {
   meleeRiposteNote(victim,"blade "+std::string(TestBench::who(victim))+" at "+std::to_string(elapsed)+
                    " ms d="+std::to_string(distance)+" start_d="+std::to_string(startDistance)+" mult="+std::to_string(MeleeRiposte::multiplier()),
                    "riposte_blade","\"elapsed_ms\":"+std::to_string(elapsed)+",\"distance_cm\":"+std::to_string(distance)+
-                   ",\"start_distance_cm\":"+std::to_string(startDistance)+",\"riposte_mult\":"+std::to_string(MeleeRiposte::multiplier()));
+                   ",\"start_distance_cm\":"+std::to_string(startDistance)+",\"riposte_mult\":"+std::to_string(MeleeRiposte::multiplier())+
+                   ",\"victim_y_cm\":"+std::to_string(victim->y)+
+                   ",\"pair_distance_cm\":"+std::to_string(std::hypot(r.pair.x-victim->x,r.pair.z-victim->z))+
+                   ",\"blocked\":"+(r.blocked ? "true" : "false"));
   writeMeleeShadow("{\"event\":\"riposte\",\"attacker\":"+meleeShadowWho(this)+",\"target\":"+meleeShadowWho(victim)+
                    ",\"tick_ms\":"+std::to_string(owner.tickCount())+",\"distance_cm\":"+std::to_string(distance)+
                    ",\"start_distance_cm\":"+std::to_string(startDistance)+",\"riposte_mult\":"+std::to_string(MeleeRiposte::multiplier())+"}");
@@ -8479,10 +8485,15 @@ void Npc::tickMeleeRiposte() {
     victim->setDirection(angleDir(x-victim->x,z-victim->z));
     if(!r.blocked) {
       const auto p = MeleeRiposte::alignment({r.from.x,r.from.y,r.from.z},{r.pair.x,r.pair.y,r.pair.z},elapsed);
-      const Vec3 desired(p.x,p.y,p.z);
-      victim->tryMove(desired-victim->position());
-      r.blocked = (desired-victim->position()).length()>1.f;
+      victim->tryMove(Vec3(p.x-victim->x,0,p.z-victim->z));
+      const auto remaining = Vec3(p.x-victim->x,0,p.z-victim->z);
+      r.blocked = remaining.quadLength()>1.f;
       }
+    if(TestBench::bodyTracing())
+      TestBench::bodyEvent(*this,victim,"riposte_alignment",owner.tickCount(),
+                          "\"elapsed_ms\":"+std::to_string(elapsed)+",\"victim_y_cm\":"+std::to_string(victim->y)+
+                          ",\"pair_distance_cm\":"+std::to_string(std::hypot(r.pair.x-victim->x,r.pair.z-victim->z))+
+                          ",\"blocked\":"+(r.blocked ? "true" : "false"));
     }
   // Native event dispatch waits for the whole tagged frame to pass. A paired
   // contact uses that tag's timestamp, so the victim starts on blade entry.
