@@ -520,6 +520,22 @@ async def test_native_timeout_is_terminal_and_does_not_reclaim_or_restart_fight(
     assert system.chronicle.facts("npc_crime_defense")[0]["outcome"] == "timeout"
 
 
+@pytest.mark.parametrize("far", [False, True])
+async def test_timeout_fact_already_finishes_the_same_defense(system, far):
+    fact = system.deeds.record(deed(owner=LOBART))
+    timeout = {
+        "fact": "npc_crime_defense", "crime": fact["id"], "culprit": THIEF, "fighter": LOBART,
+        "act": "fight-1", "outcome": "timeout", "reason": "deadline", "returned": 0,
+        **({"far": True} if far else {}),
+    }
+    system.chronicle.record(timeout)
+    system.deeds._defense_finished(fact, LOBART, "fight-1", "timeout", "deadline", 0)
+    assert system.chronicle.facts("npc_crime_defense") == [timeout]
+    assert not system.deeds.settled(fact["id"])
+    assert not system.chronicle.facts("npc_crime_restitution")
+    assert system.link.actions == [] and system.link.effects == []
+
+
 async def test_server_waits_for_native_timeout_receipt_reserve_then_finishes_once(system):
     fact = system.deeds.record(deed(owner=LOBART))
     moments = iter([0.0, 121.0, 181.0])

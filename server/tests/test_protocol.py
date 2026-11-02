@@ -16,6 +16,7 @@ from gothic_ai.protocol import (
     FIGHT_REACTION_PROTOCOL,
     NOISE_PROTOCOL,
     NPC_CRIME_PROTOCOL,
+    NPC_FAR_FIGHT_PROTOCOL,
     NPC_FAR_PROTOCOL,
     PACE_PROTOCOL,
     PROTOCOL_VERSION,
@@ -49,6 +50,7 @@ from gothic_ai.protocol import (
     RoutineEntry,
     SayCmd,
     Snapshot,
+    StoryEffect,
     StoryEffectCmd,
     StoryNpcCmd,
     StoryProgramCmd,
@@ -137,7 +139,7 @@ def test_v51_combat_hit_reports_actual_health_loss(kind):
 
 
 def test_v50_svm_lines_keep_the_native_meaning_and_addressee():
-    assert PROTOCOL_VERSION == 58
+    assert PROTOCOL_VERSION == 59
     msg = parse_game_message(_json({
         "type": "svm_line", "id": "svm-1", "npc": "X", "svm": "$KILLENEMY",
         "text": "Ещё одним монстром меньше.", "target": "WOLF", "overlay": True,
@@ -324,6 +326,48 @@ def test_v48_chest_take_names_the_source_and_keeps_self_as_taker():
         "type": "story_effect", "req": "far-theft", "npc": "BAU_951_HILDA", "check": True,
         "effects": [{"do": "chest_take", "chest": "CHEST_LOBART", "item": "ITMI_GOLD", "count": 2}],
     }
+
+
+@pytest.mark.parametrize("loss", [0, 10_000])
+@pytest.mark.parametrize("kind", ["knockout", "wound"])
+def test_v59_far_fight_names_both_participants_and_preserves_zero_or_large_loss(loss, kind):
+    assert PROTOCOL_VERSION >= NPC_FAR_FIGHT_PROTOCOL == 59
+    effect = {"do": kind, "by": "BAU_950_LOBART", "loss": loss}
+    if kind == "wound":
+        effect["by_loss"] = loss
+    assert StoryEffect.model_validate(effect).do == kind
+    command = StoryEffectCmd(req="far-fight", npc="BAU_951_HILDA", effects=[effect])
+    assert json.loads(command.to_json()) == {
+        "type": "story_effect", "req": "far-fight", "npc": "BAU_951_HILDA", "effects": [effect],
+    }
+    value = {"winner_hp": 1, "dropped": None} if kind == "knockout" else {"self_hp": 1, "by_hp": 1}
+    result = parse_game_message(_json({
+        "type": "result", "req": command.req, "ok": True,
+        "value": value,
+    }))
+    assert result.value == value
+
+
+@pytest.mark.parametrize("fields", [
+    {"by": "LOBART"}, {"loss": 0}, {"by": "", "loss": 0},
+    {"by": "LOBART", "loss": -1}, {"by": "LOBART", "loss": 1.5},
+    {"by": "LOBART", "loss": True}, {"by": "LOBART", "loss": "0"},
+])
+@pytest.mark.parametrize("kind", ["knockout", "wound"])
+def test_v59_far_fight_requires_by_and_nonnegative_integer_loss(fields, kind):
+    if kind == "wound":
+        fields = {**fields, "by_loss": 0}
+    with pytest.raises(ValidationError):
+        StoryEffectCmd(req="far-fight", npc="HILDA", effects=[{"do": kind, **fields}])
+
+
+@pytest.mark.parametrize("fields", [{}, {"by_loss": -1}, {"by_loss": 1.5}, {"by_loss": True},
+                                     {"by_loss": "0"}])
+def test_v59_wound_requires_nonnegative_integer_by_loss(fields):
+    with pytest.raises(ValidationError):
+        StoryEffectCmd(req="far-timeout", npc="HILDA", effects=[{
+            "do": "wound", "by": "LOBART", "loss": 0, **fields,
+        }])
 
 
 def test_v48_story_state_preserves_batch_world_positions_and_legacy_absence():
