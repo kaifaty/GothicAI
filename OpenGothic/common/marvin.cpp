@@ -185,6 +185,7 @@ Marvin::Marvin() {
     {"toggle arrow_sticking",     C_ToggleArrowSticking},
     {"toggle spell_physics",      C_ToggleSpellPhysics},
     {"toggle body_impact_damage", C_ToggleBodyImpactDamage},
+    {"toggle body_traces",        C_ToggleBodyTraces},
     {"toggle movable_vobs",       C_ToggleMovableVobs},
     {"toggle item_hulls",         C_ToggleItemHulls},
     {"toggle item_deepest_contact",C_ToggleItemDeepestContact},
@@ -205,6 +206,8 @@ Marvin::Marvin() {
     {"toggle melee_stagger",      C_ToggleMeleeStagger},
     {"toggle melee_beast_poise",  C_ToggleMeleeBeastPoise},
     {"toggle melee_backstab",     C_ToggleMeleeBackstab},
+    {"toggle melee_dodge",        C_ToggleMeleeDodge},
+    {"toggle melee_barge",        C_ToggleMeleeBarge},
     {"toggle melee_down_tactics", C_ToggleMeleeDownTactics},
     {"toggle melee_hitstop",      C_ToggleMeleeHitStop},
     {"toggle melee_stamina",      C_ToggleMeleeStamina},
@@ -612,6 +615,9 @@ bool Marvin::exec(std::string_view v) {
     case C_ToggleBodyImpactDamage:
       Gothic::settingsSetI("GAME","body_impact_damage",Gothic::settingsGetI("GAME","body_impact_damage")==0 ? 1 : 0);
       return true;
+    case C_ToggleBodyTraces:
+      Gothic::settingsSetI("GAME","body_traces",Gothic::settingsGetI("GAME","body_traces")==0 ? 1 : 0);
+      return true;
     case C_ToggleMovableVobs:
       Gothic::settingsSetI("GAME","movable_vobs",Gothic::settingsGetI("GAME","movable_vobs")==0 ? 1 : 0);
       return true;
@@ -709,6 +715,18 @@ bool Marvin::exec(std::string_view v) {
       const bool enabled = !Gothic::physicsFlags().meleeBackstab;
       Gothic::settingsSetI("GAME","melee_backstab",enabled ? 1 : 0);
       print(enabled ? "Melee backstab: ON" : "Melee backstab: OFF");
+      return true;
+      }
+    case C_ToggleMeleeDodge: {
+      const bool enabled = !Gothic::physicsFlags().meleeDodge;
+      Gothic::settingsSetI("GAME","melee_dodge",enabled ? 1 : 0);
+      print(enabled ? "Melee dodge: ON" : "Melee dodge: OFF");
+      return true;
+      }
+    case C_ToggleMeleeBarge: {
+      const bool enabled = Gothic::settingsGetI("GAME","melee_barge")==0;
+      Gothic::settingsSetI("GAME","melee_barge",enabled ? 1 : 0);
+      print(enabled ? "Melee barge: ON" : "Melee barge: OFF");
       return true;
       }
     case C_ToggleMeleeDownTactics: {

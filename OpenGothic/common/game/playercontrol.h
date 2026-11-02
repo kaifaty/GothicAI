@@ -4,8 +4,10 @@
 #include "utils/keycodec.h"
 #include "constants.h"
 #include "aimstep.h"
+#include "meleedodge.h"
 
 #include <array>
+#include <optional>
 
 class DialogMenu;
 class InventoryMenu;
@@ -185,12 +187,18 @@ class PlayerControl final {
     AimStep        aimStep;
     bool           aimStepStopped = false;
 
+    // The melee dodge asked for at the press of its key, with the way the movement keys pointed then;
+    // implMove plays it (Npc::meleeDodge) or drops it.
+    std::optional<MeleeDodge::Direction> dodgeRequest;
+
     DialogMenu*    dlg = nullptr;
     InventoryMenu* inv = nullptr;
 
     void           setupSettings();
     void           assessThreat(Npc& pl, Npc& other);
     bool           canInteract() const;
+    // The dodge key dodges now: [GAME] melee_dodge, a melee weapon or the fists drawn, the hero's camera
+    bool           dodgeKeyDodges(const Npc& pl) const;
     void           marvinF8(uint64_t dt);
     void           marvinK(uint64_t dt);
     void           marvinO();

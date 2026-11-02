@@ -96,6 +96,8 @@ class GameScript final {
     // depend on how many draws the rest of the world made before it.
     void         isolateRandom(const Npc& actor, uint32_t seed, uint32_t stream);
     void         clearIsolatedRandom() { isolatedRandom.clear(); }
+    // Drops one actor's private stream; only the pointer value is used, the NPC may be gone.
+    void         releaseIsolatedRandom(const Npc* actor) { isolatedRandom.erase(actor); }
     std::string  randomState(const Npc* actor) const;
     void         removeItem(Item& it);
 

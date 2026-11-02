@@ -305,8 +305,12 @@ inline void mark(std::string_view stage, double stageMs = -1, std::string_view e
   processMb(rss,fp);
   size_t stagingCount=0, stagingBytes=0;
   tempestProbeUploadBuffers(stagingCount,stagingBytes);
-  const auto vobStart=extra.find("vob_near=");
-  const auto landscapeExtra=extra.substr(0,vobStart);
+  // Extra fields in order: landscape (main line), vob_near=... (vob
+  // streaming), npc_full=... (NPC simulation tiers, world/npcsimtier.h).
+  const auto npcStart=extra.find("npc_full=");
+  const auto beforeNpc=extra.substr(0,npcStart);
+  const auto vobStart=beforeNpc.find("vob_near=");
+  const auto landscapeExtra=beforeNpc.substr(0,vobStart);
   char buf[512];
   std::snprintf(buf,sizeof(buf),
                 "[loadprobe] stage=%.*s stage_ms=%.1f t_ms=%.1f rss_mb=%.1f footprint_mb=%.1f gpu_mb=%.1f "
@@ -316,20 +320,29 @@ inline void mark(std::string_view stage, double stageMs = -1, std::string_view e
                 (unsigned long long)texCount.load(),double(texBytes.load())/1048576.0,double(texNs.load())/1e6,
                 int(landscapeExtra.size()),landscapeExtra.empty() ? "" : landscapeExtra.data());
   Tempest::Log::i(buf);
-  if(vobStart!=std::string_view::npos) {
-    // Tempest's log line is limited to 255 bytes. Keep the vob measurements
-    // in short records with the same timestamp as the loading checkpoint.
-    auto fields=extra.substr(vobStart);
+  // Tempest's log line is limited to 255 bytes. Keep the vob and NPC
+  // measurements in short records with the same timestamp as the checkpoint.
+  const auto records=[&](const char* tag, std::string_view fields) {
+    while(!fields.empty() && fields.back()==' ')
+      fields.remove_suffix(1);
     while(!fields.empty()) {
-      const size_t count=fields.size()>150 ? fields.rfind(' ',150) : fields.size();
-      std::snprintf(buf,sizeof(buf),"[loadprobe-vob-streaming] stage=%.*s t_ms=%.1f %.*s",
+      size_t count=fields.size();
+      if(count>150) {
+        const auto space=fields.rfind(' ',150);
+        count=(space==std::string_view::npos || space==0) ? 150 : space;
+        }
+      std::snprintf(buf,sizeof(buf),"[%s] stage=%.*s t_ms=%.1f %.*s",tag,
                     int(stage.size()),stage.data(),elapsed,int(count),fields.data());
       Tempest::Log::i(buf);
       fields.remove_prefix(count);
       if(!fields.empty())
         fields.remove_prefix(1);
       }
-    }
+    };
+  if(vobStart!=std::string_view::npos)
+    records("loadprobe-vob-streaming",beforeNpc.substr(vobStart));
+  if(npcStart!=std::string_view::npos)
+    records("loadprobe-npc-tier",extra.substr(npcStart));
   const auto textures = Resources::textureStats();
   char textureBuf[512];
   std::snprintf(textureBuf,sizeof(textureBuf),

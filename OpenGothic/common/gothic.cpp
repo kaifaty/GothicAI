@@ -116,6 +116,7 @@ Gothic::Gothic() {
   defaults->set("GAME", "arrow_sticking",      1);
   defaults->set("GAME", "spell_physics",       1);
   defaults->set("GAME", "body_impact_damage",  1);
+  defaults->set("GAME", "body_traces",         1); // dead people as physical traces; bodies leave after 3 game days unseen
   defaults->set("GAME", "movable_vobs",        1);
   defaults->set("GAME", "item_hulls",          1);
   defaults->set("GAME", "item_deepest_contact",1);
@@ -142,6 +143,8 @@ Gothic::Gothic() {
   defaults->set("GAME", "melee_stamina",         1);
   defaults->set("GAME", "melee_parry",           1);
   defaults->set("GAME", "melee_parry_ai",        1);
+  defaults->set("GAME", "melee_dodge",           1);
+  defaults->set("GAME", "melee_barge",           1);
 
   defaults->set("GAME", "animatedWindows",     1);
   defaults->set("GAME", "subTitles",           1);
@@ -926,7 +929,10 @@ void Gothic::refreshPhysicsFlags() {
     settingsGetI("GAME","melee_parry_ai")!=0,
     settingsGetI("GAME","furniture_parts")!=0,
     settingsGetI("GAME","placed_items")!=0,
-    settingsGetI("GAME","body_impact_damage")!=0
+    settingsGetI("GAME","body_impact_damage")!=0,
+    settingsGetI("GAME","melee_dodge")!=0,
+    settingsGetI("GAME","melee_dodge")!=0 && settingsGetI("GAME","melee_barge")!=0,
+    settingsGetI("GAME","body_traces")!=0
     };
   }
 

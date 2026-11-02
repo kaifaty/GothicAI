@@ -13,6 +13,7 @@
 #include "game/damagecalculator.h"
 #include "game/meleeimpact.h"
 #include "world/objects/npc.h"
+#include "world/bodytraces.h"
 #include "gothic.h"
 
 #include <Tempest/Log>
@@ -987,6 +988,66 @@ namespace {
     require(!steps.empty(),"a fallen ragdoll must emit impact noise");
     }
 
+  void testBodyTraces() {
+    require(Gothic::PhysicsFlags{}.bodyTraces,"body traces must default to ON");
+    require(BodyTraces::LifetimeMinutes==4320,"a body lives three game days");
+    BodyTraces::Body body;
+    body.clockFrom    = 1000;
+    body.now          = 1000+BodyTraces::LifetimeMinutes;
+    body.heroDistance = 3001;
+    require(BodyTraces::removable(body),"an unseen three-day-old body with the hero beyond 30 m must leave");
+    const auto with=[&](auto change) { auto b=body; change(b); return BodyTraces::removable(b); };
+    require(!with([](auto& b){ b.now-=1; }),"a body younger than three game days must stay");
+    require(!with([](auto& b){ b.heroDistance=3000; }),"a body exactly 30 m from the hero must stay");
+    require(!with([](auto& b){ b.heroDistance=1200; }),"a body near the hero must stay");
+    require(!with([](auto& b){ b.heroSees=true; }),"a body the hero sees must stay");
+    {
+    auto seen=body; seen.heroSees=true;
+    require(BodyTraces::removableUnseen(seen),"sight is the last test: rays only for bodies that pass the rest");
+    }
+    require(!with([](auto& b){ b.missionItems=true; }),"a body with a mission item must stay");
+    require(!with([](auto& b){ b.dragon=true; }),"a dragon must stay");
+    require(!with([](auto& b){ b.immortal=true; }),"an IMMORTAL body must stay");
+    require(!with([](auto& b){ b.storyType=true; }),"a body of a main script type must stay");
+    require(!with([](auto& b){ b.enabled=false; }),"body traces OFF must never remove a body");
+    require(!with([](auto& b){ b.dead=false; }),"the living never leave by the body rule");
+    require(!with([](auto& b){ b.player=true; }),"the hero never leaves by the body rule");
+    require(!with([](auto& b){ b.clockFrom=-1; }),"a body without a lifetime start must stay");
+    require(with([](auto& b){ b.now+=100000; b.heroDistance=1e6f; }),"an old far body must leave");
+
+    require(BodyTraces::isTrace(true,true,false,GIL_NONE,GIL_SEPERATOR_HUM),"a dead person is a trace");
+    require(BodyTraces::isTrace(true,true,false,GIL_SEPERATOR_HUM-1,GIL_SEPERATOR_HUM),"every human guild is a trace");
+    require(!BodyTraces::isTrace(true,true,false,GIL_SEPERATOR_HUM,GIL_SEPERATOR_HUM),"a monster's body is not a trace");
+    require(!BodyTraces::isTrace(true,true,false,GIL_DRAGON,GIL_SEPERATOR_HUM),"a dragon's body is not a trace");
+    require(!BodyTraces::isTrace(false,true,false,GIL_NONE,GIL_SEPERATOR_HUM),"body traces OFF: no body trace");
+    require(!BodyTraces::isTrace(true,false,false,GIL_NONE,GIL_SEPERATOR_HUM),"a living person is not a body trace");
+    require(!BodyTraces::isTrace(true,true,true,GIL_NONE,GIL_SEPERATOR_HUM),"the dead hero is not a body trace");
+
+    for(int32_t type:{1,4,7})
+      require(BodyTraces::isStoryType(type,BodyTraces::StoryTypes),"NPCTYPE_MAIN, NPCTYPE_OCMAIN and NPCTYPE_BL_MAIN are story types");
+    for(int32_t type:{0,2,3,5,6})
+      require(!BodyTraces::isStoryType(type,BodyTraces::StoryTypes),"ambient and friend types are not story types");
+
+    // Story types from the scripts: the Gothic II fallback only when no symbol exists at all.
+    {
+    const auto none = BodyTraces::storyTypes({std::nullopt,std::nullopt,std::nullopt});
+    require(none==BodyTraces::StoryTypes,"no NPCTYPE symbol at all: the Gothic II values 1, 4, 7");
+    const auto g1 = BodyTraces::storyTypes({1,std::nullopt,std::nullopt});
+    require(g1==std::array<int32_t,3>{1,-1,-1},"a missing symbol beside a present one must match nothing (-1)");
+    require(BodyTraces::isStoryType(1,g1) && !BodyTraces::isStoryType(4,g1) && !BodyTraces::isStoryType(7,g1),
+            "with only NPCTYPE_MAIN defined, types 4 and 7 are not exceptions");
+    const auto all = BodyTraces::storyTypes({11,14,17});
+    require(all==std::array<int32_t,3>{11,14,17},"the scripts' own values win");
+    }
+
+    // One death stamps the record once: a BodyController defers ZS_Dead, later blows keep it.
+    require(BodyTraces::stampsDeath(true,false,0,false),"the first fatal blow stamps the body record");
+    require(!BodyTraces::stampsDeath(true,false,4,false),"a blow before the deferred ZS_Dead keeps the first record");
+    require(!BodyTraces::stampsDeath(true,true,4,true),"a blow on a corpse keeps its record");
+    require(!BodyTraces::stampsDeath(false,false,0,false),"unconsciousness stamps nothing");
+    require(BodyTraces::stampsDeath(true,false,4,true),"a body that rose again (it reached ZS_Dead) dies anew");
+    }
+
   void testBodyImpactDamage() {
     require(Gothic::PhysicsFlags{}.bodyImpactDamage,"body impact damage must default to ON");
     require(Npc::canTakeBodyImpact(true,false,false,false),"a living physical body must receive impact damage");
@@ -1522,6 +1583,81 @@ namespace {
               "broken fences must restore even when movable-vobs is disabled");
       loaded.setMovableVobsEnabled(!movable);
       require(loadedFence.isBroken(),"toggling movable-vobs must not resurrect a broken static fence");
+      }
+    for(const bool movable:{false,true}) {
+      // A blade stopped by an intact fence bites into it: the board takes that blow at
+      // the contact, once per swing, and breaks when its health runs out.
+      DynamicWorld world(nullptr,movableFloor());
+      world.setMovableVobsEnabled(movable);
+      auto fence=world.addMovableVob(proto,"NW_NATURE_FENCE_01.MRM",at(100,50,0),.04f,true,"fence",true,zenId);
+      const auto fenceId=world.movableVobSnapshot()[0].id;
+      int actorId=0;
+      auto* actor=reinterpret_cast<Npc*>(&actorId);
+      const auto blow=[&](uint64_t swing,float z) {
+        const uint64_t t=swing*1000;
+        world.updateShadowBlade(actor,swing,{{{-10,30,z},{-10,70,z},{0,0,1},2}},t,double(t),double(t+100));
+        world.flushShadowBlades();
+        world.updateShadowBlade(actor,swing,{{{200,30,z},{200,70,z},{0,0,1},2}},t+100,double(t),double(t+100));
+        world.flushShadowBlades();
+        const auto contacts=world.takeShadowBladeContacts(actor);
+        const auto stop=std::find_if(contacts.begin(),contacts.end(),[](const MeleeBladeContact& c) {
+          return c.world && c.stopsSwing;
+          });
+        require(stop!=contacts.end(),"an intact fence must stop the blow");
+        return *stop;
+        };
+      const auto health=[&]() { return world.movableVobSnapshot()[0].health; };
+      std::vector<uintptr_t> struck;
+      const auto first=blow(1,0);
+      require(first.movableVob==fenceId,"a blow stopped by a fence must carry the struck movable vob");
+      require(world.meleeStoppedMovableVob(first,40,100,FractureRule::Melee::OneHand,nullptr,struck) &&
+              struck.size()==1 && struck[0]==fenceId,
+              "a stopped blow must strike the destructible fence it stopped at");
+      requireNear(health(),30.f,.001f,"a stopped blow must use the hit-frame damage rule");
+      require(!world.meleeStoppedMovableVob(first,40,100,FractureRule::Melee::OneHand,nullptr,struck),
+              "one swing must strike a stopping fence only once");
+      require(world.meleeMovableVobs({0,50,0},{1,0,0},150,40,100,FractureRule::Melee::OneHand,nullptr,&struck)==0,
+              "the hit frame of a swing that already struck a fence must not strike it again");
+      requireNear(health(),30.f,.001f,"a repeated strike in one swing must leave health untouched");
+      MeleeBladeContact wall=first;
+      wall.movableVob=0;
+      std::vector<uintptr_t> none;
+      require(!world.meleeStoppedMovableVob(wall,40,100,FractureRule::Melee::OneHand,nullptr,none) && none.empty(),
+              "a blow stopped by a plain wall must deliver no strike");
+      std::vector<uintptr_t> next;
+      require(world.meleeStoppedMovableVob(blow(2,10),40,100,FractureRule::Melee::OneHand,nullptr,next),
+              "the next swing must strike the fence again");
+      world.tick(17);
+      require(fence.isBroken() && world.fragmentSnapshot().size()==8,
+              "two stopped one-handed blows must break the fence");
+      require(!world.meleeStoppedMovableVob(first,40,100,FractureRule::Melee::OneHand,nullptr,none),
+              "a broken fence must not take stopped blows");
+      // Disabling destruction restores the intact fence, which must still ignore stopped blows.
+      world.setDestructionEnabled(false);
+      require(!fence.isBroken() && !world.meleeStoppedMovableVob(blow(3,0),40,100,FractureRule::Melee::OneHand,nullptr,none) &&
+              none.empty() && world.movableVobSnapshot()[0].health>99.f,
+              "destruction=0 must ignore stopped blows");
+      if(movable) {
+        DynamicWorld plain(nullptr,movableFloor());
+        plain.setMovableVobsEnabled(true);
+        // No fracture table entry for this visual: a large crate that cannot break.
+        auto crate=plain.addMovableVob(proto,"CONTRACT_PLAIN_CRATE.MRM",at(100,50,0),.04f,true,"crate",true,zenId+1);
+        require(!crate.isEmpty() && !plain.movableVobSnapshot()[0].destructible,
+                "the plain crate fixture must be a non-destructible movable vob");
+        plain.updateShadowBlade(actor,1,{{{-10,30,0},{-10,70,0},{0,0,1},2}},0,0,100);
+        plain.flushShadowBlades();
+        plain.updateShadowBlade(actor,1,{{{200,30,0},{200,70,0},{0,0,1},2}},100,0,100);
+        plain.flushShadowBlades();
+        const auto contacts=plain.takeShadowBladeContacts(actor);
+        const auto stop=std::find_if(contacts.begin(),contacts.end(),[](const MeleeBladeContact& c) {
+          return c.world && c.stopsSwing;
+          });
+        require(stop!=contacts.end() && stop->movableVob!=0,"a large movable vob must still stop the blow");
+        std::vector<uintptr_t> plainStruck;
+        require(!plain.meleeStoppedMovableVob(*stop,40,100,FractureRule::Melee::OneHand,nullptr,plainStruck) &&
+                plainStruck.empty(),"a non-destructible movable vob must stop the blow without a strike");
+        }
+      std::printf("Stopped blow fence movable %d: health 100 -> 30 -> broken\n",int(movable));
       }
     for(const bool fence:{false,true}) {
       const auto origin=at(100,50,0);
@@ -5442,6 +5578,7 @@ int main() {
     testPhysicsNoise();
     testRagdollNoise();
     testBodyImpactDamage();
+    testBodyTraces();
     testOffCenterImpulse();
     std::puts("Physics contracts passed");
     return EXIT_SUCCESS;

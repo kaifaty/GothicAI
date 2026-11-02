@@ -153,9 +153,12 @@ async def feat_fame(
 
 async def feats(
     link: GameLink, chronicler: Feats, journal: Journal, dialogue: DialogueManager, slot: int = 8,
-    *, live: LiveCase | None = None,
+    *, live: LiveCase | None = None, card: bool = False,
 ) -> dict[str, str]:
-    """Check a native kill's toast, fame and rollback with a given chronicler verdict."""
+    """Check a native kill's toast, fame and rollback with a given chronicler verdict.
+
+    Live, `card` goes on past the feat: the hero dies and the live chronicler writes the final card.
+    """
     off = model_off(dialogue) if live is None else None
     if off is not None and chronicler.model.llm is not off:
         raise RuntimeError("chronicler must use the shared scenario backend")
@@ -187,6 +190,7 @@ async def feats(
     toasted_at: dict[str, float] = {}
     fate_ends: list[FateEnd] = []  # the hero's death asks for the final card (fate_end, v56)
     fate_cards: list[FateCardCmd] = []
+    card_times: dict[str, float] = {}  # when fate_end came and fate_card left
     entries: list[dict[str, Any]] = []
     loading: asyncio.Task[Session] | None = None
 
@@ -207,6 +211,7 @@ async def feats(
             toasted_at[cmd.feat] = time.monotonic()
         if isinstance(cmd, FateCardCmd):
             fate_cards.append(cmd)
+            card_times.setdefault("card", time.monotonic())
 
     def keep(entry: dict[str, Any]) -> None:
         entries.append(entry)
@@ -218,6 +223,7 @@ async def feats(
             chronicle_asks.append(time.monotonic())
         if isinstance(msg, FateEnd):
             fate_ends.append(msg)
+            card_times.setdefault("end", time.monotonic())
 
     link.listeners.append(asked)
     chronicle.on_entry.append(record)
@@ -247,7 +253,15 @@ async def feats(
             settled = await _until(
                 lambda: chronicler._work is None or chronicler._work.done(), 120,
             )
-            _record_live_feat(live, chronicle.entries(), chronicler.feats, victim, settled)
+            if not card:
+                _record_live_feat(live, chronicle.entries(), chronicler.feats, victim, settled)
+                return _logged(results)
+            awards = [award["id"] for award in chronicler.feats]
+            await link.debug("kill", npc="PLAYER", by="NONE_100_XARDAS")
+            await _until(lambda: bool(fate_cards), 60)
+            _record_live_card(live, fate_cards, chronicle.facts("fate_end"), awards, card_times)
+            # the card stays on screen a while, for a frame of the window taken from outside
+            await asyncio.sleep(CARD_HOLD)
             return _logged(results)
         if not await _until(lambda: bool(chronicler.feats), 60):
             raise RuntimeError("given feat did not reach the chronicle within 60 s")
@@ -333,6 +347,33 @@ async def feats(
         link.send = send  # type: ignore[method-assign]
         link.listeners.remove(asked)
         chronicle.on_entry.remove(record)
+
+
+CARD_HOLD = 10  # seconds the live card case keeps the game on the card
+CARD_WAIT = 30  # the game gives up on the card after this long (FateEnd::AnswerMs)
+
+
+def _record_live_card(
+    live: LiveCase, cards: list[FateCardCmd], facts: list[Fact], awards: list[str],
+    times: dict[str, float],
+) -> None:
+    card = cards[0] if cards else None
+    fact = facts[-1] if facts else None
+    latency = round(times["card"] - times["end"], 1) if "card" in times and "end" in times else None
+    written = card is not None and not card.off and fact is not None and fact.get("fallback") is False
+    in_time = latency is not None and latency <= CARD_WAIT
+    if card is None:
+        outcome = "no_decision"
+    else:
+        outcome = "success" if written and in_time else "failure"
+    live.finish(outcome, evidence={
+        "awards": awards, "latency": latency, "fallback": None if fact is None else fact.get("fallback"),
+        "card": None if card is None else {
+            "off": card.off, "title": card.title, "text": card.text,
+            "feats": [feat.id for feat in card.feats], "count": card.count,
+            "chapter": card.chapter, "day": card.day,
+        },
+    })
 
 
 def _record_live_feat(

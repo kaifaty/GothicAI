@@ -85,7 +85,7 @@ def arm_to(rot, root, side, hand_at, blade_dir=None):
     rs.two_bone_ik(rot, root, skel, chain, np.asarray(hand_at, float))
     if blade_dir is not None:
         slot = gi["ZS_RIGHTHAND"]
-        blade = rot[chain[2]] @ skel.nodes[slot].rest[:3, :3] @ np.array([1.0, 0, 0])
+        blade = rot[chain[2]] @ skel.nodes[slot].rest[:3, :3] @ np.array([-1.0, 0, 0])  # the slot's -X
         r = rs.shortest_arc(blade, np.asarray(blade_dir, float) / np.linalg.norm(blade_dir))
         for i in subtree(f"BIP01 {side} HAND"):
             rot[i] = r @ rot[i]

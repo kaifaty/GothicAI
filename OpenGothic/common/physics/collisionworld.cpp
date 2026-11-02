@@ -2683,6 +2683,9 @@ void CollisionWorld::stepShadowBlades(float fraction, bool bodiesLocked) {
             auto* object=reinterpret_cast<CollisionBody*>(body.GetUserData());
             if(object!=nullptr)
               contact.material=object->mesh!=nullptr ? object->mesh->materialId(Physics::triangleData(*body.GetShape(),hit.mSubShapeID2)) : object->noiseSurface;
+            // A board, crate or fence: the body that may take a stopped blow.
+            if(object!=nullptr && object->ptrType()==DynamicWorld::P_MovableVob)
+              contact.movableVob=reinterpret_cast<uintptr_t>(object->payload());
             }
 
           auto bounds=cast.mShapeWorldBounds;

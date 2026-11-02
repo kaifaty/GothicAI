@@ -29,6 +29,7 @@ ENV_KEYS = {
     "GOTHIC_AI_CHAT_SCALE": "game.chat_scale",
     "GOTHIC_AI_LLM": "llm.backend",
     "GOTHIC_DECIDER_URL": "llm.decider_url",
+    "GOTHIC_EMBED_URL": "llm.embed_url",
     "GOTHIC_QUICK_LLM_URL": "llm.quick_url",
     "GOTHIC_BODY_URL": "llm.body_url",
     "GOTHIC_BODY_POLICY": "llm.body_policy",
@@ -76,6 +77,11 @@ class LlmSettings(_Section):
         None,
         title="Адрес быстрой модели",
         description="Strands decider (ws://…): первый звук, жесты, тело, распорядок NPC. Пусто: выключена",
+    )
+    embed_url: str | None = Field(
+        None,
+        title="Адрес смыслового поиска памяти",
+        description="gothic-embed (http://…). Пусто: сервер decider, порт 47837",
     )
     quick: bool = Field(
         True,

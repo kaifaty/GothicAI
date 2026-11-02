@@ -1,0 +1,45 @@
+# Physics stage 8, step 4b: a dead person is a `body` trace in npc_view; every body
+# leaves the world three game days after death, only with the hero beyond 30 m and
+# unable to see it. Run on WORLD=NEWWORLD.ZEN as is and with BODY_TRACES=0; the native
+# fixture (common/game/bodytracesbench.cpp) reads the production npc_view and fails the
+# run at the first unmet rule. A fresh process loads session-created.sav with
+# body-traces-reload; scripts/body_traces_compare.py compares the two runs.
+seed 73013
+cheat god
+set time 12 0
+goto NW_XARDAS_TOWER_VALLEY_091
+clear 4000
+wait 500
+# A person (victim), a wolf, and three bodies the rule keeps: a mission item, IMMORTAL, NPCTYPE_MAIN.
+body_traces setup
+wait 6000
+body_traces view first
+body_traces advance 17
+wait 500
+body_traces view aged
+body_traces save created
+# Three game days on the clock alone (no clock leap): the hero near, then far but in sight, then far and hidden.
+body_traces hero near
+body_traces advance 4320
+wait 6000
+body_traces check stay-near
+body_traces hero far-visible
+wait 6000
+body_traces check stay-visible
+body_traces hero far-hidden
+wait 6000
+body_traces check gone-hidden
+# Sleep (Wld_SetTime): an hour beside two fresh bodies, then three days far away.
+body_traces setup sleep
+wait 6000
+body_traces hero near
+wait 1000
+body_traces sleep 1
+wait 6000
+body_traces check sleep-near
+body_traces hero far-hidden
+wait 1000
+body_traces sleep 72
+wait 6000
+body_traces check sleep-far
+quit

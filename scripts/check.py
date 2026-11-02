@@ -32,7 +32,7 @@ class Group:
 
 LOCKED_PROJECTS = (
     "server", "asr-service", "tts-service", "launcher/core",
-    "libs/chatgpt-auth", "shorts", "site", "decider-service",
+    "libs/chatgpt-auth", "shorts", "site", "decider-service", "embed-service",
 )
 PYTEST = ("pytest", "-q", "-rs", "--timeout=120", "--timeout-method=signal")
 # The pip interface scopes the CPU index to torch; uv run's --index affects all packages.

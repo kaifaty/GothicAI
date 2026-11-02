@@ -468,6 +468,14 @@ if(NOT ANDROID AND NOT IOS)
   target_link_libraries(gothic-physics-contract PRIVATE OpenGothic AiBridge gothic-base-import)
   add_executable(gothic-placed-items-contract EXCLUDE_FROM_ALL tests/placed_items_contract.cpp)
   target_link_libraries(gothic-placed-items-contract PRIVATE OpenGothic AiBridge gothic-base-import)
+  add_executable(gothic-bodyimpact-contract EXCLUDE_FROM_ALL tests/bodyimpact_contract.cpp)
+  target_include_directories(gothic-bodyimpact-contract PRIVATE common)
+  if(NOT MSVC)
+    target_compile_options(gothic-bodyimpact-contract PRIVATE -Wall -Wconversion -Werror)
+  endif()
+  add_custom_target(check-bodyimpact
+    COMMAND $<TARGET_FILE:gothic-bodyimpact-contract>
+    DEPENDS gothic-bodyimpact-contract USES_TERMINAL)
   add_executable(gothic-meleestamina-contract EXCLUDE_FROM_ALL
     tests/meleestamina_contract.cpp common/game/meleestamina.cpp)
   target_include_directories(gothic-meleestamina-contract PRIVATE common)
@@ -480,6 +488,15 @@ if(NOT ANDROID AND NOT IOS)
   add_custom_target(check-meleeparry
     COMMAND $<TARGET_FILE:gothic-meleeparry-contract>
     DEPENDS gothic-meleeparry-contract USES_TERMINAL)
+  add_executable(gothic-meleedodge-contract EXCLUDE_FROM_ALL
+    tests/meleedodge_contract.cpp common/game/meleedodge.cpp common/game/meleestamina.cpp common/game/meleeimpact.cpp)
+  target_include_directories(gothic-meleedodge-contract PRIVATE common)
+  if(NOT MSVC)
+    target_compile_options(gothic-meleedodge-contract PRIVATE -Wall -Wconversion -Werror)
+  endif()
+  add_custom_target(check-meleedodge
+    COMMAND $<TARGET_FILE:gothic-meleedodge-contract>
+    DEPENDS gothic-meleedodge-contract USES_TERMINAL)
   add_executable(gothic-furniture-parts-contract EXCLUDE_FROM_ALL tests/furniture_parts_contract.cpp)
   target_link_libraries(gothic-furniture-parts-contract PRIVATE OpenGothic AiBridge gothic-base-import)
   add_custom_target(check-physics

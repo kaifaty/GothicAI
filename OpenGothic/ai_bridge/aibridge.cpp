@@ -79,7 +79,7 @@ using namespace Tempest;
 
 namespace {
 
-constexpr int         ProtocolVersion = 56;
+constexpr int         ProtocolVersion = 59;
 AiBridge*             activeBridge = nullptr;
 constexpr const char* SaveEntry       = "ai_bridge/session";  // own entry in save games
 constexpr const char* DefaultUrl      = "ws://127.0.0.1:47817";
@@ -457,6 +457,13 @@ AiBridge::Impl::Impl() {
       return (key=="necro" && necro.reached(stage)) || (key=="fate" && fate.reached(stage));
       };
   if(TestBench::isActive())
+    TestBench::npcView = [](World& world, std::string_view npc) {
+      // The production npc_view writer, for native stands without a server (body-traces).
+      rapidjson::Document names(rapidjson::kArrayType);
+      names.PushBack(rapidjson::Value(npc.data(),rapidjson::SizeType(npc.size()),names.GetAllocator()),names.GetAllocator());
+      return NpcView([](std::string&&) {}).views(world,names);
+      };
+  if(TestBench::isActive())
     TestBench::aiBusy = [this]() {
       for(auto& v:voices)
         if(v.drainedAt==0)
@@ -534,6 +541,7 @@ AiBridge::Impl::~Impl() {
   gothic.sessionStartFn    = nullptr;
   TestBench::aiBusy        = nullptr;
   TestBench::aiReached     = nullptr;
+  TestBench::npcView       = nullptr;
   BodyObservations::disable();
   voices.clear();  // before the game's sound device goes
   chat.reset();
@@ -1081,17 +1089,21 @@ void AiBridge::Impl::handle(World* world, const std::string& text) {
     sendResult(req,!value.empty(),err,value);
     }
   else if(type=="story_effect") {
+    bool farFight = false;
+    if(auto effects = doc.FindMember("effects"); effects!=doc.MemberEnd() && effects->value.IsArray())
+      for(const auto& effect:effects->value.GetArray())
+        farFight = farFight || JsonRead::str(effect,"do")=="knockout" || JsonRead::str(effect,"do")=="wound";
     if(auto npc = npcBySymbol(*world,JsonRead::str(doc,"npc"));
-       npc!=nullptr && BodyController::owns(*npc)) {
+       !farFight && npc!=nullptr && BodyController::owns(*npc)) {
       BodyController::takeover(*npc,"story_takeover");
       if(BodyController::owns(*npc)) {
         sendResult(req,false,"body control is releasing at a safe boundary; retry story effect");
         return;
         }
       }
-    std::string err;
-    const bool  ok = story.effects(*world,doc,err);
-    sendResult(req,ok,err);
+    std::string err, value;
+    const bool  ok = story.effects(*world,doc,err,value);
+    sendResult(req,ok,err,value);
     }
   else if(type=="raise_dead") {
     std::string err;

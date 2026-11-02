@@ -1,0 +1,156 @@
+# All twelve own 1H dodges (step 6.2 of the melee port, reports/Свои анимации для боя.md) played with `ani` at 1H
+# talent 2 (HUMANS_1HST2, which the fixture's re-arm puts on): dash, roll and heavy roll back, left, right, forward.
+# Back and forward from the side, left and right from the front; the rolls back, left and the heavy roll back again
+# slowed 3x. Content from scripts/content/anim/content_pack.py; the look is judged by Claude from the clips.
+# After an `ani` the hero idles in S_1H, so each take re-arms; after a goto ~2 s on the ground before `ani`.
+# WORLD=NEWWORLD.ZEN OPENGOTHIC_CONTENT=/abs/content
+seed 73013
+cheat god
+set time 12 0
+release all
+overlay off
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+wait 500
+watch player
+clear 3000
+melee-shadow weapon 1h
+wait 1500
+animinfo S_1HRUN T_1HDASHB T_1HROLLB T_1HROLLHEAVYB
+
+cam follow 400 110 270
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+melee-shadow weapon 1h
+wait 2000
+rec dashb
+ani player T_1HDASHB
+wait 1300
+stop
+
+cam follow 420 120 0
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+melee-shadow weapon 1h
+wait 2000
+rec dashl
+ani player T_1HDASHL
+wait 1300
+stop
+
+cam follow 420 120 0
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+melee-shadow weapon 1h
+wait 2000
+rec dashr
+ani player T_1HDASHR
+wait 1300
+stop
+
+cam follow 400 110 270
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+melee-shadow weapon 1h
+wait 2000
+rec dashf
+ani player T_1HDASHF
+wait 1300
+stop
+
+cam follow 400 110 270
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+melee-shadow weapon 1h
+wait 2000
+rec rollb
+ani player T_1HROLLB
+wait 1620
+stop
+
+cam follow 420 120 0
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+melee-shadow weapon 1h
+wait 2000
+rec rolll
+ani player T_1HROLLL
+wait 1620
+stop
+
+cam follow 420 120 0
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+melee-shadow weapon 1h
+wait 2000
+rec rollr
+ani player T_1HROLLR
+wait 1620
+stop
+
+cam follow 400 110 270
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+melee-shadow weapon 1h
+wait 2000
+rec rollf
+ani player T_1HROLLF
+wait 1620
+stop
+
+cam follow 400 110 270
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+melee-shadow weapon 1h
+wait 2000
+rec rollheavyb
+ani player T_1HROLLHEAVYB
+wait 1980
+stop
+
+cam follow 420 120 0
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+melee-shadow weapon 1h
+wait 2000
+rec rollheavyl
+ani player T_1HROLLHEAVYL
+wait 1980
+stop
+
+cam follow 420 120 0
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+melee-shadow weapon 1h
+wait 2000
+rec rollheavyr
+ani player T_1HROLLHEAVYR
+wait 1980
+stop
+
+cam follow 400 110 270
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+melee-shadow weapon 1h
+wait 2000
+rec rollheavyf
+ani player T_1HROLLHEAVYF
+wait 1980
+stop
+
+slowmo 3
+cam follow 400 110 270
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+melee-shadow weapon 1h
+wait 2000
+rec rollb-slow
+ani player T_1HROLLB
+wait 1620
+stop
+
+cam follow 420 120 0
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+melee-shadow weapon 1h
+wait 2000
+rec rolll-slow
+ani player T_1HROLLL
+wait 1620
+stop
+
+cam follow 400 110 270
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+melee-shadow weapon 1h
+wait 2000
+rec rollheavyb-slow
+ani player T_1HROLLHEAVYB
+wait 1980
+stop
+
+slowmo 1

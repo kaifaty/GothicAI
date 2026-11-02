@@ -21,6 +21,9 @@ secrets/
 data/
 !/data/
 /data/*
+!/data/npc/
+/data/npc/*
+!/data/npc/far-fight-pairs.json
 !/data/content/
 /data/content/*
 !/data/content/registry.jsonl

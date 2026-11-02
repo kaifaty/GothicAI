@@ -839,7 +839,7 @@ class BodyFight:
         self._policy_watchdog_at: float | None = None
         self._last_events_poll = 0.0
         self._last_events_success_at: float | None = None
-        self._ownership_poll_timeouts = 0
+        self._ownership_poll_timeouts = self._heartbeat_timeouts = 0
         self._ownership_poll_max_gap_ms = 0.0
         self._acquiring = False
         self._acquire_cancel = asyncio.Event()
@@ -1056,7 +1056,7 @@ class BodyFight:
     async def _heartbeats(self, lease: BodyLease) -> None:
         """Renew from send time, independently of policy calls and ownership polling."""
         loop = asyncio.get_running_loop()
-        deadline = loop.time()
+        deadline = renewed_at = loop.time()
         while self.lease == lease and not self._closing and self._reason is None:
             await asyncio.sleep(max(0.0, deadline - loop.time()))
             if self.lease != lease or self._closing or self._reason is not None:
@@ -1068,12 +1068,29 @@ class BodyFight:
             sent_at = loop.time()
             try:
                 await self.link.body_heartbeat(lease, timeout=HEARTBEAT_TIMEOUT)
+            except TimeoutError:
+                # A frame hitch (world chunks built after a teleport) holds every reply. The
+                # engine renews on receipt and its watchdog waits LEASE_TIMEOUT_MS by the wall
+                # clock, so keep renewing until no heartbeat succeeded for that long.
+                self._heartbeat_timeouts += 1
+                gap_ms = (loop.time() - renewed_at) * 1000
+                log.warning(
+                    "neural-body heartbeat timeout npc=%s heartbeat_timeouts=%d renewal_gap_ms=%.1f",
+                    self.npc, self._heartbeat_timeouts, gap_ms,
+                )
+                if gap_ms <= LEASE_TIMEOUT_MS:
+                    deadline = sent_at + HEARTBEAT_INTERVAL
+                    continue
+                self._set_reason(self._reason or "lease_lost")
+                self._wake.set()
+                return
             except Exception:
                 # Never let a detached keepalive task fail silently and leave the
                 # main loop accepting policy decisions for an unrenewed lease.
                 self._set_reason(self._reason or "lease_lost")
                 self._wake.set()
                 return
+            renewed_at = sent_at
             deadline = sent_at + HEARTBEAT_INTERVAL
 
     def _policy_response_age(self) -> float | None:
@@ -2139,7 +2156,7 @@ class BodyFight:
         self._policy_timeouts = self._policy_timeouts_consecutive = 0
         self._policy_timeout_waits.clear()
         self._last_events_success_at = None
-        self._ownership_poll_timeouts = 0
+        self._ownership_poll_timeouts = self._heartbeat_timeouts = 0
         self._ownership_poll_max_gap_ms = 0.0
         self._target_absent_game_ms = self._invisible_at = self._invisible_game_ms = None
         self._invisible_seconds_max = 0.0
