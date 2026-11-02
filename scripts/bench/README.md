@@ -717,7 +717,16 @@ are retained. `gamedata/far_fight.json` stays `uncalibrated`.
 
 - 2026-11-02: v2 bench keeps only its two copies in full simulation at any observer
   distance; records native hit factors and swing outcomes; adds three fresh holdouts
-  and a 300-duel default plan. Full calibration is a separate task.
+  and a 300-duel default plan. Full calibration is a separate task. The eight v1
+  zero-hit replays on Mac produced hits in 3/8 duels and five zero-hit timeouts:
+  unarmed attacker seeds 17–20 (281 swings total), 2H attacker seed 18 (29 swings).
+  The attacker retained `AiNormal`; the contact journal's minimum blade/body
+  clearances remained positive (17.2–31.8 cm unarmed, 4.9 cm for 2H). Native reach
+  and the frozen magnet plan against a defender leaving on its routine still miss;
+  this bench does not change that mechanic or force the defender into combat.
+  The standard eight smoke cases, launched with `BENCH_HOST=local`, passed with
+  complete hit logs/counters and 135 HP-loss hits; Linux build/CLI smoke remained
+  unverified because `gq` did not admit the build.
 - 2026-11-01: added the native nonlethal calibration bench and plan/run/smoke/report
   tools for user decision Б3 in [Дальний бой NPC](../../reports/Дальний%20бой%20NPC.md).
 
