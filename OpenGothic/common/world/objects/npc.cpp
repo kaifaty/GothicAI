@@ -1,5 +1,6 @@
 #include "npc.h"
 #include "world/bodytraces.h"
+#include "world/bloodspawn.h"
 #include "graphics/mesh/protomesh.h"
 
 #include <Tempest/Matrix4x4>
@@ -1196,6 +1197,9 @@ void Npc::onNoHealth(bool death, HitSound sndMask) {
       }
     bodyTraceRecord  = std::move(trace);
     bodyTraceEntered = isDead();
+    // One pool per death: later blows on a body a BodyController still owns don't restart it.
+    bloodDeathTick   = owner.tickCount();
+    bloodPoolDone    = false;
     }
   // Note: clear perceptions for William in Jarkentar
   for(size_t i=0;i<PERC_Count;++i)
@@ -5506,6 +5510,23 @@ void Npc::takeDamage(Npc& other, const Bullet* b, const CollideMask bMask, int32
     }
   if(!isSpell && !isDown() && hitResult.hasHit)
     owner.addWeaponHitEffect(other,b,*this).play();
+  if(!isSpell && hitResult.hasHit && hitResult.value>0) {
+    // blood: at the blade's contact, the arrow's impact, or between the two
+    Tempest::Vec3 wound, dir;
+    if(contact!=nullptr) {
+      wound = contact->point;
+      dir   = contact->velocityCmS;
+      }
+    else if(b!=nullptr) {
+      wound = b->impactPoint();
+      dir   = b->direction();
+      }
+    else {
+      wound = (other.centerPosition()+centerPosition())*0.5f;
+      dir   = centerPosition()-other.centerPosition();
+      }
+    BloodSpawn::onHit(owner,*this,wound,dir,hitResult.value);
+    }
 
   if(isDown()) {
     onNoHealth(dontKill,HS_NoSound);
@@ -5964,6 +5985,10 @@ void Npc::tickAnimationTags() {
   }
 
 void Npc::tick(uint64_t dt) {
+  if(!bloodPoolDone && isDead() && owner.tickCount()-bloodDeathTick>=BloodSpawn::SettleMs) {
+    bloodPoolDone = true;
+    BloodSpawn::onDead(owner,*this);
+    }
   tickBodyImpact();
   tickMeleeParry();
   tickMeleeStamina();
@@ -7551,6 +7576,29 @@ Npc::EyePose Npc::navigationEyePose() const {
   result.right = Vec3::normalize(result.right);
   result.up = Vec3::normalize(Vec3::crossProduct(result.right,result.forward));
   return result;
+  }
+
+void Npc::setBloodHit(int64_t gameMs, const Vec3& wound) {
+  bloodHit  = gameMs;
+  bloodBone = size_t(-1);
+  auto sk = visual.visualSkeleton();
+  if(sk==nullptr)
+    return;
+  float best = 0;
+  for(size_t i=0; i<sk->nodes.size(); ++i) {
+    const float d = (visual.mapBone(i)-wound).quadLength();
+    if(bloodBone==size_t(-1) || d<best) {
+      best      = d;
+      bloodBone = i;
+      }
+    }
+  }
+
+Vec3 Npc::bloodWound() const {
+  auto sk = visual.visualSkeleton();
+  if(sk==nullptr || bloodBone>=sk->nodes.size())
+    return centerPosition();
+  return visual.mapBone(bloodBone);
   }
 
 Vec3 Npc::mapBone(std::string_view bone) const {

@@ -763,6 +763,11 @@ class Npc final {
       std::string culprit;        // "PLAYER" or the killer's instance symbol
       };
     const BodyTrace& bodyTrace() const { return bodyTraceRecord; }
+    // Blood (physics stage 8, step 4c): game ms of the last bleeding hit, -1: none.
+    // The wound's bone: the pool of a body forms under it, not under the trunk's centre.
+    void      setBloodHit(int64_t gameMs, const Tempest::Vec3& wound);
+    int64_t   bloodHitAt() const { return bloodHit; }
+    auto      bloodWound() const -> Tempest::Vec3;
     void      setBodyTrace(BodyTrace trace);
 
     void      setOther(Npc* ot);
@@ -1170,6 +1175,10 @@ class Npc final {
     Npc*                           lastHit          = nullptr;
     BodyTrace                      bodyTraceRecord;
     bool                           bodyTraceEntered = false; // the record's death reached ZS_Dead
+    int64_t                        bloodHit       = -1;   // game ms of the last bleeding hit
+    size_t                         bloodBone      = size_t(-1); // skeleton node nearest to that wound
+    uint64_t                       bloodDeathTick = 0;    // real ms of death: the pool waits for the body to settle
+    bool                           bloodPoolDone  = true; // false only between a death and its pool
     char                           lastHitType      = 'A';
     int32_t                        lastHitSpell     = 0;
 

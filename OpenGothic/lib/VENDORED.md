@@ -69,6 +69,10 @@ Keep these when updating a library from upstream.
   every build, not only without `NDEBUG`; the MSL source is still dumped only in debug builds. The
   unconditional `Log::d(msl)` of every mesh shader is removed (with `-ms 1` it put about 24 000 lines
   into `game.log`).
+- `Tempest/Engine/graphics/renderstate.h`, `gapi/metal/mtpipeline.cpp`, `gapi/vulkan/vpipeline.cpp` and
+  `gapi/directx12/dxpipeline.cpp`: `RenderState::setColorWriteMask` sets the written channels per color
+  attachment (all by default). Blood decals change the GBuffer albedo without its alpha, which holds the
+  material hint bits (`shader/blood/blood_decal.frag`).
 - `rapidjson/include/rapidjson/document.h`: `GenericStringRef::operator=` deleted (GCC 15 diagnoses the
   old one), and `memcpy` into `GenericValue`/`Member` storage goes through `void*`, as upstream does now
   (clang's `-Wnontrivial-memcall`; the engine builds with `-Werror`).

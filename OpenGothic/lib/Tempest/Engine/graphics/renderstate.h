@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 
 namespace Tempest {
@@ -50,6 +51,15 @@ class RenderState final {
       NoCull
       };
 
+    enum ColorMask : uint8_t {
+      R   = 1,
+      G   = 2,
+      B   = 4,
+      A   = 8,
+      RGB = R|G|B,
+      All = R|G|B|A,
+      };
+
     void      setBlendSource(BlendMode s) { blendS=s; }
     void      setBlendDest  (BlendMode d) { blendD=d; }
     void      setBlendOp    (BlendOp   o) { blendO=o; }
@@ -72,6 +82,14 @@ class RenderState final {
     CullMode  cullFaceMode() const { return cull; }
     void      setCullFaceMode(CullMode use) { cull=use; }
 
+    // Channels written to a color attachment (ColorMask bits); attachments 0..7, all channels by default.
+    void      setColorWriteMask(size_t attachment, uint8_t mask) {
+      const uint32_t sh = uint32_t(attachment*4);
+      wmask = (wmask & ~(0xFu<<sh)) | (uint32_t(mask&0xF)<<sh);
+      }
+    uint8_t   colorWriteMask(size_t attachment) const { return attachment<8 ? uint8_t((wmask>>(attachment*4)) & 0xF) : uint8_t(All); }
+    bool      hasColorWriteMask() const { return wmask!=0xFFFFFFFFu; }
+
   private:
     BlendMode blendS   = BlendMode::One;
     BlendMode blendD   = BlendMode::Zero;
@@ -80,6 +98,7 @@ class RenderState final {
     CullMode  cull     = CullMode::Back;
     bool      discard  = false;
     bool      zdiscard = false;
+    uint32_t  wmask    = 0xFFFFFFFFu;
   };
 
 }
