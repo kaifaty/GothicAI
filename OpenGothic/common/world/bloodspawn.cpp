@@ -67,7 +67,7 @@ BloodSpawn::GuildBlood BloodSpawn::guildBlood(const World& world, int32_t guild)
   const std::string_view tex = gv.blood_texture[guild];
   if(tex.empty()) {
     // people use the engine's default red; a beast without a texture (skeletons) leaves none
-    ret.decal = guild<GIL_SEPERATOR_HUM;
+    ret.decal = guild<int32_t(GIL_SEPERATOR_HUM);
     }
   else {
     ret.decal = true;
