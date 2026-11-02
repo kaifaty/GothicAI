@@ -15720,12 +15720,14 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       Gothic::settingsSetI("GAME","USEGOTHIC1CONTROLS",a[2]=="classic");
       say("melee shadow controls " + a[2]);
       }
-    else if(a.size()==3 && a[1]=="bandit") {
-      // melee-shadow bandit 1h|2h|none: the fixture's bandit takes the stock one- or two-hander in hand, or puts
+    else if((a.size()==3 || a.size()==4) && a[1]=="bandit") {
+      // melee-shadow bandit 1h|2h|none [npc]: the fixture's bandit takes the stock one- or two-hander in hand, or puts
       // his away (a clear gap between a blade and his body, no blade of his in between)
       if(bench.meleeShadowActors.size()!=3) {arenaAbort("melee shadow setup is required");return;}
       if(a[2]!="1h" && a[2]!="2h" && a[2]!="none") {arenaAbort("melee shadow bandit expects 1h, 2h or none");return;}
-      auto& npc=*bench.meleeShadowActors[2];
+      auto* actor=a.size()==4 ? findNpc(w,pl,a[3]) : bench.meleeShadowActors[2];
+      if(actor==nullptr) {arenaAbort("melee shadow bandit is absent");return;}
+      auto& npc=*actor;
       if(a[2]=="none") {npc.closeWeapon(true);return;}
       const auto symbol=w.script().findSymbolIndex(a[2]=="1h"?"ITMW_1H_COMMON_01":"ITMW_2H_BAU_AXE");
       if(symbol==size_t(-1)) {arenaAbort("melee shadow bandit weapon is absent");return;}
@@ -17251,10 +17253,9 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     say(pl.bowDump());
     }
   else if(c=="stats") {
-    // stats [npc <npc>] [str <n>] [dex <n>] [bow <n>] [cbow <n>] [sneak <n>] [hp <n>] [hpmax <n>] [talent auto|0|1|2]:
+    // stats [npc <npc>] [str <n>] [dex <n>] [1h <n>] [2h <n>] [bow <n>] [cbow <n>] [sneak <n>] [hp <n>] [hpmax <n>] [talent auto|0|1|2]:
     // the hero's (an npc's) strength, dexterity, hit chances (the skill of the manual aim), hit points;
-    // talent: the animations of the trained (G2 sets level 1 at 30%, 2 at 60%: _BOWT1, _BOWT2), auto as
-    // the hit chances say
+    // talent: archery animations, plus melee weapons explicitly named in this command; auto follows hit chances
     Npc*   np = &pl;
     size_t i0 = 1;
     if(a.size()>1 && a[1]=="npc") {
@@ -17268,6 +17269,11 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     Npc&   n    = *np;
     auto&  h    = n.handle();
     bool   more = &n!=&pl;
+    bool oneHand = false, twoHand = false;
+    for(size_t i=i0; i+1<a.size(); i+=2) {
+      oneHand |= a[i]=="1h";
+      twoHand |= a[i]=="2h";
+      }
     for(size_t i=i0; i+1<a.size(); i+=2) {
       if(a[i]=="talent") {
         auto level = [&](int32_t chance) {
@@ -17275,6 +17281,10 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
             return chance>=60 ? 2 : (chance>=30 ? 1 : 0);
           return int(num(a,i+1,0));
           };
+        if(oneHand)
+          n.setTalentSkill(TALENT_1H,level(h.hitchance[TALENT_1H]));
+        if(twoHand)
+          n.setTalentSkill(TALENT_2H,level(h.hitchance[TALENT_2H]));
         n.setTalentSkill(TALENT_BOW,     level(h.hitchance[TALENT_BOW]));
         n.setTalentSkill(TALENT_CROSSBOW,level(h.hitchance[TALENT_CROSSBOW]));
         more = true;
@@ -17285,6 +17295,10 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
         h.attribute[ATR_STRENGTH] = v;
       else if(a[i]=="dex")
         h.attribute[ATR_DEXTERITY] = v;
+      else if(a[i]=="1h")
+        h.hitchance[TALENT_1H] = v;
+      else if(a[i]=="2h")
+        h.hitchance[TALENT_2H] = v;
       else if(a[i]=="bow")
         h.hitchance[TALENT_BOW] = v;
       else if(a[i]=="cbow")
@@ -17304,8 +17318,9 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     if(more) {
       // whose, the reload as long as the animation is (the trained ones' is shorter), the hit points
       const bool cbow = wp!=nullptr && wp->isCrossbow();
-      std::snprintf(buf,sizeof(buf),"stats of %s: talent bow %d cbow %d, reload %.0f ms, hp %d of %d, point protection %d",
-                    symName(w,&n).c_str(),n.talentSkill(TALENT_BOW),n.talentSkill(TALENT_CROSSBOW),
+      std::snprintf(buf,sizeof(buf),"stats of %s: 1h %d (talent %d), 2h %d (talent %d), talent bow %d cbow %d, reload %.0f ms, hp %d of %d, point protection %d",
+                    symName(w,&n).c_str(),n.hitChance(TALENT_1H),n.talentSkill(TALENT_1H),
+                    n.hitChance(TALENT_2H),n.talentSkill(TALENT_2H),n.talentSkill(TALENT_BOW),n.talentSkill(TALENT_CROSSBOW),
                     double(n.animTime(Archery::reloadAnim(cbow))),n.attribute(ATR_HITPOINTS),n.attribute(ATR_HITPOINTSMAX),
                     n.protection(PROT_POINT));
       say(buf);

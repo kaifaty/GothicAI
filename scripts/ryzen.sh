@@ -761,20 +761,17 @@ except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
 PY
 }
 
-if [[ "$ACTION" == setup ]]; then
-  base_format="$(cmake -DBASE_ROOT="$ROOT/OpenGothic" -P "$ROOT/OpenGothic/cmake/BaseFormat.cmake")"
-  videos_format="$(cmake -DVIDEO_ROOT="$ROOT/OpenGothic" -P "$ROOT/OpenGothic/cmake/VideoFormat.cmake")"
+select_mac_base_parts() {
+  local parts
+  base_format='' videos_format=''
+  if [[ "$auto_base" == 1 ]]; then base_format="$(cmake -DBASE_ROOT="$ROOT/OpenGothic" -P "$ROOT/OpenGothic/cmake/BaseFormat.cmake")"; fi
+  if [[ "$auto_videos" == 1 ]]; then videos_format="$(cmake -DVIDEO_ROOT="$ROOT/OpenGothic" -P "$ROOT/OpenGothic/cmake/VideoFormat.cmake")"; fi
   GOTHIC_DIR="${GOTHIC_DIR:-/Volumes/DevSSD/Dev/games/Gothic II}"
-  started=$SECONDS
-  temporary=''
-  trap 'if [[ -n "$temporary" ]]; then remote rm -rf -- "$temporary" || echo "Ryzen: could not remove setup copy $temporary" >&2; fi' EXIT
-  trap 'exit 129' HUP
-  trap 'exit 130' INT
-  trap 'exit 143' TERM
   # Select checkout-compatible ready parts without identifying or changing the installation.
-  parts="$(python3 - "$GOTHIC_DIR" "$base_format" "$videos_format" <<'PY'
+  parts="$(python3 - "$GOTHIC_DIR" "$base_format" "$videos_format" "$auto_base" "$auto_videos" "$ACTION" <<'PY'
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import sys
@@ -787,63 +784,178 @@ def identity(kind, directory):
     metadata = json.loads((directory / ('base.json' if kind == 'base' else 'videos.json')).read_bytes())
     return metadata if kind == 'base' else json.loads(metadata['identity'])
 
-try:
-    current = json.loads(pointer.read_bytes())
-    if current.get('version') != 1 or current.get('gothic') != str(game):
-        raise ValueError('invalid or foreign game pointer')
-    for kind, expected in zip(('base', 'videos'), sys.argv[2:]):
-        part = current.get(kind)
-        if kind == 'videos' and part is None:
-            print('\n')
-            continue
-        if (not isinstance(part, dict) or not re.fullmatch('[0-9a-f]{64}', part.get('fingerprint', ''))
-                or not isinstance(part.get('path'), str) or not Path(part['path']).is_absolute()
-                or '\n' in part['path']):
-            raise ValueError(f'invalid {kind} pointer')
-        fingerprint, path = part['fingerprint'], Path(part['path'])
-        pointed = identity(kind, path)
-        actual = pointed['format_sha256']
-        if actual != expected:
-            keys = ('archives', 'loose_files') if kind == 'base' else ('sources',)
-            sources = [pointed[key] for key in keys]
-            root = cache if kind == 'base' else cache / 'videos'
-            for candidate in sorted(root.glob('*/base.json' if kind == 'base' else '*/videos.json')):
-                if not re.fullmatch('[0-9a-f]{64}', candidate.parent.name):
+action = sys.argv[6]
+
+def import_required(message):
+    if action == 'setup':
+        raise SystemExit(message)
+    reason = message.removeprefix('needs_decision: ').split(';', 1)[0]
+    raise SystemExit(f'Mac: {reason}; Start the game once on the Mac on this version '
+                     'to import the base into ~/.cache/gothic-ai/base, then retry')
+
+def select(kind, expected):
+    part = current.get(kind)
+    if kind == 'videos' and part is None:
+        print('\n')
+        return
+    if (not isinstance(part, dict) or not re.fullmatch('[0-9a-f]{64}', part.get('fingerprint', ''))
+            or not isinstance(part.get('path'), str) or not Path(part['path']).is_absolute()
+            or '\n' in part['path']):
+        raise ValueError(f'invalid {kind} pointer')
+    fingerprint, path = part['fingerprint'], Path(part['path'])
+    pointed = identity(kind, path)
+    actual = pointed['format_sha256']
+    if actual != expected:
+        keys = ('archives', 'loose_files') if kind == 'base' else ('sources',)
+        sources = [pointed[key] for key in keys]
+        root = cache if kind == 'base' else cache / 'videos'
+        for candidate in sorted(root.glob('*/base.json' if kind == 'base' else '*/videos.json')):
+            if not re.fullmatch('[0-9a-f]{64}', candidate.parent.name):
+                continue
+            try:
+                cached = identity(kind, candidate.parent)
+                if cached['format_sha256'] != expected or [cached[key] for key in keys] != sources:
                     continue
-                try:
-                    cached = identity(kind, candidate.parent)
-                    if cached['format_sha256'] != expected or [cached[key] for key in keys] != sources:
-                        continue
-                except (OSError, ValueError, KeyError, TypeError, AttributeError):
-                    continue
-                fingerprint, path = candidate.parent.name, candidate.parent
+            except (OSError, ValueError, KeyError, TypeError, AttributeError):
+                continue
+            fingerprint, path = candidate.parent.name, candidate.parent
+            if action == 'setup':
                 print(f'Ryzen: Mac pointer has importer format {actual}, using Mac cache part '
                       f'{fingerprint} of format {expected}', file=sys.stderr)
-                break
-            else:
-                raise SystemExit(
-                    f'needs_decision: Mac {kind} part {fingerprint} has importer format {actual}, '
-                    f'this checkout builds {expected}; build the engine from this checkout and run the game '
-                    'or storygraph once on Mac to import into ~/.cache/gothic-ai/base, then retry setup')
-        print(fingerprint)
-        print(path)
+            break
+        else:
+            import_required(
+                f'needs_decision: Mac {kind} part {fingerprint} has importer format {actual}, '
+                f'this checkout builds {expected}; build the engine from this checkout and run the game '
+                'or storygraph once on Mac to import into ~/.cache/gothic-ai/base, then retry setup')
+    print(fingerprint)
+    print(path)
+
+try:
+    current = json.loads(pointer.read_bytes()) if '1' in sys.argv[4:6] else {}
+    if '1' in sys.argv[4:6] and (current.get('version') != 1 or current.get('gothic') != str(game)):
+        raise ValueError('invalid or foreign game pointer')
 except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
-    raise SystemExit(f'needs_decision: cannot read ready Mac base pointer {pointer}: {error}')
+    if action == 'setup':
+        import_required(f'needs_decision: cannot read ready Mac base pointer {pointer}: {error}')
+    current = {}
+
+for kind, expected, enabled in zip(('base', 'videos'), sys.argv[2:4], sys.argv[4:6]):
+    if enabled != '1':
+        name = 'OPENGOTHIC_BASE_FINGERPRINT' if kind == 'base' else 'OPENGOTHIC_VIDEOS_FINGERPRINT'
+        print(os.environ.get(name, ''))
+        print('')
+        continue
+    try:
+        select(kind, expected)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
+        if action == 'setup':
+            import_required(f'needs_decision: cannot read ready Mac base pointer {pointer}: {error}')
+        print('\n')
+    except SystemExit:
+        if action == 'setup':
+            raise
+        print('\n')
 PY
 )"
   base_fingerprint="$(sed -n '1p' <<<"$parts")"
   base_path="$(sed -n '2p' <<<"$parts")"
   videos_fingerprint="$(sed -n '3p' <<<"$parts")"
   videos_path="$(sed -n '4p' <<<"$parts")"
+}
+
+host_base_part() {
+  { declare -f verify_base_part
+    cat <<'REMOTE'
+set -euo pipefail
+export -f verify_base_part
+{
+  # Source the helper without running its CLI; use the checkout's format directly.
+  printf "__name__ = 'ryzen_game'\n"
+  printf '%s\n' "$3"
+  cat <<'PY_HOST'
+kind, expected = sys.argv[1:]
+fingerprint = ''
+try:
+    parts = json.loads((Path.home() / 'gothic-ai/game-base.json').read_text())
+    fingerprint = parts[kind]
+    if not isinstance(fingerprint, str) or not re.fullmatch('[0-9a-f]{64}', fingerprint):
+        fingerprint = ''
+        raise ValueError('no host fingerprint')
+    roots = [Path.home() / '.cache/gothic-ai/base']
+    store = Path('/mnt/shared/gothic-ai/base')
+    if store.is_dir():
+        roots.append(store)
+
+    def ready(directory):
+        return subprocess.run(
+            ['bash', '-c', 'verify_base_part "$@"', '--', kind, str(directory), directory.name, 'quick'],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        ).returncode == 0
+
+    selected = _compatible_fingerprint(kind, fingerprint, expected, roots, ready=ready)
+    for root in roots:
+        directory = root / selected if kind == 'base' else root / 'videos' / selected
+        identity = _identity(directory, kind)
+        if identity is not None and identity[0] == expected and ready(directory):
+            print(selected)
+            sys.exit(0)
+except (OSError, ValueError, KeyError, TypeError):
+    pass
+print(fingerprint)
+sys.exit(3)
+PY_HOST
+} | python3 - "$1" "$2"
+REMOTE
+  } | remote bash -s -- "$1" "$2" "$(cat "$ROOT/scripts/ryzen_game.py")"
+}
+
+resolve_host_base_parts() {
+  local kind expected enabled fingerprint selected rc
+  for kind in base videos; do
+    if [[ "$kind" == base ]]; then
+      expected="$base_format" enabled="$auto_base" fingerprint="$base_fingerprint"
+    else
+      expected="$videos_format" enabled="$auto_videos" fingerprint="$videos_fingerprint"
+    fi
+    [[ "$enabled" == 1 && -z "$fingerprint" ]] || continue
+    if selected="$(host_base_part "$kind" "$expected")"; then
+      echo "$RYZEN_HOST: $kind ${selected:0:12} ready (host)"
+    else
+      rc=$?
+      [[ "$rc" == 3 ]] || exit "$rc"
+      if [[ "$kind" == base ]]; then
+        local recovery="Mac: no ready base for importer format $expected; Start the game once on the Mac on this version to import the base into ~/.cache/gothic-ai/base, then retry"
+        [[ "$ACTION" == pytest ]] || { echo "$recovery" >&2; exit 1; }
+        echo "Warning: pytest: $recovery; using host game-base.json" >&2
+        auto_base=0
+      else
+        auto_videos=0
+      fi
+    fi
+    if [[ "$kind" == base ]]; then base_fingerprint="$selected"; else videos_fingerprint="$selected"; fi
+  done
+}
+
+sync_base_parts() {
+  local started=$SECONDS kind fingerprint part relative rc part_started initialize=0
+  # EXIT runs after function locals are gone; retain the copy path for cleanup.
+  temporary=''
+  trap 'if [[ -n "$temporary" ]]; then remote rm -rf -- "$temporary" || echo "Ryzen: could not remove setup copy $temporary" >&2; fi' EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
   # Preflight only after both Mac parts are compatible; failures must not copy anything.
   { declare -f toolchain; echo 'set -euo pipefail; toolchain; echo "Ryzen: toolchain OK"'; } | remote bash -s
-  [[ "${DEV_UBUNTU:-0}" != 1 ]] || echo "Ryzen: $RYZEN_HOST has no shared store; using its local base cache"
-  [[ -n "$videos_fingerprint" ]] || echo 'Ryzen: videos will be skipped (Mac pointer has no video part)' >&2
+  [[ "$ACTION" != setup || "${DEV_UBUNTU:-0}" != 1 ]] || echo "Ryzen: $RYZEN_HOST has no shared store; using its local base cache"
+  [[ "$ACTION" != setup || -n "$videos_fingerprint" ]] || echo 'Ryzen: videos will be skipped (Mac pointer has no video part)' >&2
   for kind in base videos; do
     if [[ "$kind" == base ]]; then fingerprint="$base_fingerprint"; part="$base_path"; else fingerprint="$videos_fingerprint"; part="$videos_path"; fi
-    [[ -n "$fingerprint" ]] || continue
+    [[ -n "$part" ]] || continue
+    part_started=$SECONDS
     # The shared store is only inspected. The game copies a selected stored part to its cache.
     if { declare -f verify_base_part
+      printf 'ACTION=%q\n' "$ACTION"
       if [[ "${DEV_UBUNTU:-0}" == 1 ]]; then echo 'DEV_UBUNTU=1'; fi
       cat <<'REMOTE'
 set -euo pipefail
@@ -854,13 +966,14 @@ roots=("$HOME/.cache/gothic-ai/base")
 if [[ "${DEV_UBUNTU:-0}" != 1 ]]; then roots+=(/mnt/shared/gothic-ai/base); fi
 for root in "${roots[@]}"; do
   if [[ -d "$root/$relative" ]] && verify_base_part "$kind" "$root/$relative" "$fingerprint" quick; then
-    echo "Ryzen: $kind ready at $root/$relative"
+    [[ "$ACTION" != setup ]] || echo "Ryzen: $kind ready at $root/$relative"
     exit 0
   fi
 done
 exit 3
 REMOTE
     } | remote bash -s -- "$kind" "$fingerprint"; then
+      [[ "$ACTION" == setup ]] || echo "$RYZEN_HOST: $kind ${fingerprint:0:12} ready"
       continue
     else
       rc=$?
@@ -872,7 +985,7 @@ REMOTE
     [[ "$kind" == base ]] || relative="videos/$fingerprint"
     temporary="$(remote bash -c 'mkdir -p "$HOME/.cache/gothic-ai/base/$1"; mktemp -d "$HOME/.cache/gothic-ai/base/$1/.setup-XXXXXXXX"' -- "$(dirname "$relative")")"
     rsync -a --checksum "$part/" "$RYZEN_HOST:$temporary/"
-    { declare -f verify_base_part; cat <<'REMOTE'
+    { declare -f verify_base_part; printf 'ACTION=%q\n' "$ACTION"; cat <<'REMOTE'
 set -euo pipefail
 kind="$1" fingerprint="$2" temporary="$3" relative="$4"
 verify_base_part "$kind" "$temporary" "$fingerprint" full
@@ -889,16 +1002,52 @@ else
   rm -rf -- "$destination"
   mv -- "$temporary" "$destination"
 fi
-echo "Ryzen: $kind copied and verified at $destination"
+[[ "$ACTION" != setup ]] || echo "Ryzen: $kind copied and verified at $destination"
 REMOTE
     } | remote bash -s -- "$kind" "$fingerprint" "$temporary" "$relative"
     temporary=''
+    [[ "$ACTION" == setup ]] || echo "$RYZEN_HOST: $kind ${fingerprint:0:12} copied in $((SECONDS - part_started))s"
   done
+  if [[ "$ACTION" == setup ]]; then
+    initialize=1
+  elif remote bash -c '[[ -f ~/gothic-ai/game-base.json && -f ~/gothic-ai/game-settings/system/Gothic.ini && -f ~/gothic-ai/game-settings/system/SystemPack.ini ]]'; then
+    initialize=0
+  else
+    rc=$?
+    [[ "$rc" == 1 ]] || exit "$rc"
+    initialize=1
+  fi
   remote mkdir -p gothic-ai/game-settings/system
   rsync -a --checksum "$GOTHIC_DIR/system/Gothic.ini" "$GOTHIC_DIR/system/SystemPack.ini" "$RYZEN_HOST:gothic-ai/game-settings/system/"
-  remote python3 -c 'import json, os, pathlib, sys; path = pathlib.Path.home() / "gothic-ai/game-base.json"; temporary = path.with_suffix(f".json.tmp-{os.getpid()}"); temporary.write_text(json.dumps(dict(zip(("base", "videos"), sys.argv[1:]))) + "\n"); os.replace(temporary, path)' "$base_fingerprint" "$videos_fingerprint"
-  echo "Ryzen: $RYZEN_HOST game settings and ready fingerprints synchronized in $((SECONDS - started))s"
+  if [[ "$initialize" == 1 && ( -n "$base_fingerprint" || -n "${OPENGOTHIC_BASE:-}" ) ]]; then
+    remote python3 -c 'import json, os, pathlib, sys
+path = pathlib.Path.home() / "gothic-ai/game-base.json"
+base, videos, explicit = sys.argv[1:]
+if not base and explicit:
+    base = json.loads((pathlib.Path(explicit).expanduser() / "base.json").read_text())["fingerprint"]
+temporary = path.with_suffix(f".json.tmp-{os.getpid()}")
+temporary.write_text(json.dumps({"base": base, "videos": videos}) + "\n")
+os.replace(temporary, path)' "$base_fingerprint" "$videos_fingerprint" "${OPENGOTHIC_BASE:-}"
+  fi
+  [[ "$ACTION" != setup ]] || echo "Ryzen: $RYZEN_HOST game settings and ready fingerprints synchronized in $((SECONDS - started))s"
+  trap - EXIT HUP INT TERM
+}
+
+if [[ "$ACTION" == setup ]]; then
+  auto_base=1 auto_videos=1
+  select_mac_base_parts
+  sync_base_parts
   exit
+fi
+if [[ "$ACTION" == bench || "$ACTION" == e2e || "$ACTION" == pytest ]]; then
+  auto_base=1 auto_videos=1
+  if [[ -n "${OPENGOTHIC_BASE:-}" || -n "${OPENGOTHIC_BASE_FINGERPRINT:-}" ]]; then auto_base=0; fi
+  if [[ -n "${OPENGOTHIC_VIDEOS_FINGERPRINT+x}" ]]; then auto_videos=0; fi
+  select_mac_base_parts
+  resolve_host_base_parts
+  sync_base_parts
+  if [[ "$auto_base" == 1 ]]; then export OPENGOTHIC_BASE_FINGERPRINT="$base_fingerprint"; fi
+  if [[ "$auto_videos" == 1 ]]; then export OPENGOTHIC_VIDEOS_FINGERPRINT="$videos_fingerprint"; fi
 fi
 
 # Validate prepared content before creating a run directory, lock or queue request.
@@ -1317,7 +1466,7 @@ PY
   while IFS= read -r name; do
     case "$name" in
       GOTHIC_DIR|OPENGOTHIC_BASE*|OPENGOTHIC_VIDEOS_FINGERPRINT|OPENGOTHIC_TEXTURES|OPENGOTHIC_FRACTURE|OPENGOTHIC_CONVEX_PARTS|OPENGOTHIC_CONTENT) continue ;;
-      OPENGOTHIC_*|GOTHIC_*|TEMPEST_*|WORLD|TIMEOUT|BENCH_HEADLESS|BENCH_PROGRESS|BENCH_STALL|SOUND|MUSIC|MOVABLE_VOBS|ITEM_HULLS|ITEM_DEEPEST_CONTACT|RAGDOLL_BIRTH_GUARD|FURNITURE_PARTS|ARROW_STICKING|PHYSICS_NOISE|DESTRUCTION|BUOYANCY|CLOTH|ITEM_WAKE|PLACED_ITEMS|BODY_IMPACT_DAMAGE|BODY_TRACES|BLOOD|STATIC_COLLISION_SPLIT|CHARACTER_VIRTUAL|NPC_CHARACTER_VIRTUAL|MONSTER_CHARACTER_VIRTUAL|MELEE_BLADE_SHADOW|MELEE_PHYSICS_HITS|MELEE_POSTURE|MELEE_REACTIONS|MELEE_DOWN_TACTICS|MELEE_HITSTOP|MELEE_STAMINA|MELEE_PARRY|MELEE_PARRY_AI|MELEE_STAGGER|MELEE_BEAST_POISE|MELEE_BACKSTAB|MELEE_DODGE|MELEE_BARGE|MELEE_CHARGE|MELEE_RIPOSTE)
+      OPENGOTHIC_*|GOTHIC_*|TEMPEST_*|WORLD|TIMEOUT|BENCH_HEADLESS|BENCH_PROGRESS|BENCH_STALL|SOUND|MUSIC|MOVABLE_VOBS|ITEM_HULLS|ITEM_DEEPEST_CONTACT|RAGDOLL_BIRTH_GUARD|FURNITURE_PARTS|ARROW_STICKING|PHYSICS_NOISE|DESTRUCTION|BUOYANCY|CLOTH|ITEM_WAKE|PLACED_ITEMS|BODY_IMPACT_DAMAGE|BODY_TRACES|BLOOD|STATIC_COLLISION_SPLIT|CHARACTER_VIRTUAL|NPC_CHARACTER_VIRTUAL|MONSTER_CHARACTER_VIRTUAL|MELEE_BLADE_SHADOW|MELEE_PHYSICS_HITS|MELEE_POSTURE|MELEE_REACTIONS|MELEE_DOWN_TACTICS|MELEE_HITSTOP|MELEE_STAMINA|MELEE_PARRY|MELEE_PARRY_AI|MELEE_AI_DODGE|MELEE_AI_RIPOSTE|MELEE_STAGGER|MELEE_BEAST_POISE|MELEE_BACKSTAB|MELEE_DODGE|MELEE_BARGE|MELEE_CHARGE|MELEE_RIPOSTE)
         value="$(bench_path "${!name}")"
         ENV_ARGS+=("$name=$value") ;;
     esac

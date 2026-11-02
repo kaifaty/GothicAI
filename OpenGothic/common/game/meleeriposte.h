@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-// Pure rules for the hero's paired finisher, [GAME] melee_riposte.
+// Pure rules for the paired finisher, [GAME] melee_riposte and melee_ai_riposte.
 namespace MeleeRiposte {
   constexpr uint64_t AlignmentMs    = 400;
   constexpr uint64_t HandoverMs     = 840;
@@ -11,6 +11,7 @@ namespace MeleeRiposte {
   struct Situation final {
     bool enabled         = true;
     bool player          = false;
+    bool aiEnabled       = false;
     bool standingOneHand = false;
     bool heroClip        = false;
     bool victimHuman     = false;

@@ -14,6 +14,7 @@
 #include "game/gamescript.h"
 #include "game/ragdollsave.h"
 #include "game/meleedodge.h"
+#include "game/meleeai.h"
 #include "game/meleeimpact.h"
 #include "game/meleestamina.h"
 #include "game/meleefighter.h"
@@ -346,6 +347,7 @@ class Npc final {
     // Charged forward strike: transient hero-only windup/hold and an ordinary event-driven release.
     bool      beginMeleeRiposte();
     bool      isMeleeRiposting() const;
+    bool      isMeleeRiposteHeld() const;
     bool      canMeleeCharge() const;
     bool      beginMeleeCharge();
     void      releaseMeleeCharge();
@@ -1085,7 +1087,8 @@ class Npc final {
       };
     std::optional<Riposte>         meleeRiposte;
     uint64_t                      meleeRiposteHoldUntil = 0;
-    bool                          isMeleeRiposteHeld() const;
+    bool                          meleeRiposteAiHeld = false;
+    bool                          tryMeleeAiRiposte();
     void                          tickMeleeRiposte();
     void                          meleeRiposteBlade();
     float                         meleeRiposteMultiplier(const Npc& target) const;
@@ -1134,6 +1137,21 @@ class Npc final {
     std::string                   meleeStunReason;
     bool                          meleeStunBeat = true; // the second beat of a lost balance is played
     uint64_t                      meleeStunUntil = 0;
+    uint64_t                      meleeStunSerial = 0;
+    struct MeleeAiRiposteRoll final {
+      std::weak_ptr<zenkit::INpc> victim;
+      uint64_t stun = 0;
+      };
+    std::vector<MeleeAiRiposteRoll> meleeAiRiposteRolls;
+    struct MeleeAiDodgeTiming final {
+      const Npc* target = nullptr;
+      const Animation::Sequence* sequence = nullptr;
+      uint64_t origin = 0, began = 0, contact = 0;
+      float errorMs = 0;
+      MeleeDodge::Move move;
+      };
+    std::optional<MeleeAiDodgeTiming> meleeAiDodgeTiming;
+    MeleeAi::DodgeStreak            meleeAiDodgeStreak;
     std::optional<uint64_t>        meleeParadeOrigin;
     uint64_t                      meleeParadeEnd = 0;
     bool                          meleeParadeContact = false;

@@ -1,0 +1,1445 @@
+# Native 1H dodge replacement: run unchanged with MELEE_AI_DODGE=1 and 0.
+# WORLD=NEWWORLD.ZEN OPENGOTHIC_BODY_TRACE=1 MELEE_DODGE=1 MELEE_STAMINA=1 MELEE_POSTURE=0 MELEE_AI_RIPOSTE=0 TIMEOUT=900
+# OPENGOTHIC_CONTENT=/Users/kaifat/.local/share/gothic-ai/content-staging/anim-strikes
+# Ordinary running attacks use T_1HATTACKMOVE; NPC animations and hit reactions run normally.
+# Prime one native fight per case. Reposition only the hero, preserving the native FAI queue and weapon stance.
+# The master gets 40 swings, the novice and controls 24. Trace stamina_spend counts actual accepted attacks.
+# ai_dodge carries swing age/contact prediction; dodge_invulnerable and hit_attempt record actual blade contacts.
+seed 73013
+set time 12 0
+release all
+overlay off
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+wait 500
+watch player
+clear 3000
+corner right go 0
+melee-shadow setup 1h
+stats hp 1000000 hpmax 1000000 str 100 1h 100 talent auto
+wait 600
+melee-shadow target 2
+wait 600
+put WOLF 5000 90
+put WOLF 5000 -90
+turn 180
+immortal player on
+still player on
+immortal BDT_1013_BANDIT_L on
+wait 2000
+
+# a-talent100: 40 running attacks, NPC 1h, 1H talent 100.
+release all
+freeze BDT_1013_BANDIT_L
+stats npc BDT_1013_BANDIT_L str 60 1h 100 2h 100 talent auto
+put BDT_1013_BANDIT_L 300 0
+melee-shadow bandit 1h
+wait 1000
+watch BDT_1013_BANDIT_L
+anims
+stats npc BDT_1013_BANDIT_L
+watch player
+fight BDT_1013_BANDIT_L player
+wait 800
+rec a-talent100 novideo
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing01
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing02
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing03
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing04
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing05
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing06
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing07
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing08
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing09
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing10
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing11
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing12
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing13
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing14
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing15
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing16
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing17
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing18
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing19
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing20
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing21
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing22
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing23
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing24
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing25
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing26
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing27
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing28
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing29
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing30
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing31
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing32
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing33
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing34
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing35
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing36
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing37
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing38
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing39
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent100-swing40
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+freeze BDT_1013_BANDIT_L
+wait 1200
+stop shadow
+
+# a-talent0: 24 running attacks, NPC 1h, 1H talent 0.
+release all
+freeze BDT_1013_BANDIT_L
+stats npc BDT_1013_BANDIT_L str 60 1h 0 2h 0 talent auto
+put BDT_1013_BANDIT_L 300 0
+melee-shadow bandit 1h
+wait 1000
+watch BDT_1013_BANDIT_L
+anims
+stats npc BDT_1013_BANDIT_L
+watch player
+fight BDT_1013_BANDIT_L player
+wait 800
+rec a-talent0 novideo
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent0-swing01
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent0-swing02
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent0-swing03
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent0-swing04
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent0-swing05
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent0-swing06
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent0-swing07
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent0-swing08
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent0-swing09
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent0-swing10
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent0-swing11
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent0-swing12
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent0-swing13
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent0-swing14
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent0-swing15
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent0-swing16
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent0-swing17
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent0-swing18
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent0-swing19
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent0-swing20
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent0-swing21
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent0-swing22
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent0-swing23
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark a-talent0-swing24
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+freeze BDT_1013_BANDIT_L
+wait 1200
+stop shadow
+
+# b-out-of-reach: 24 running attacks, NPC 1h, 1H talent 100.
+release all
+freeze BDT_1013_BANDIT_L
+stats npc BDT_1013_BANDIT_L str 60 1h 100 2h 100 talent auto
+put BDT_1013_BANDIT_L 300 0
+melee-shadow bandit 1h
+wait 1000
+# Pin is a fixed world point. Native AI stays active; the hero swings 90 degrees away to exclude the melee magnet.
+pin BDT_1013_BANDIT_L 300 0 0
+melee-shadow bandit 1h
+watch BDT_1013_BANDIT_L
+anims
+stats npc BDT_1013_BANDIT_L
+watch player
+fight BDT_1013_BANDIT_L player
+wait 800
+rec b-out-of-reach novideo
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark b-out-of-reach-swing01
+turn 90
+pair player BDT_1013_BANDIT_L
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark b-out-of-reach-swing02
+turn 90
+pair player BDT_1013_BANDIT_L
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark b-out-of-reach-swing03
+turn 90
+pair player BDT_1013_BANDIT_L
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark b-out-of-reach-swing04
+turn 90
+pair player BDT_1013_BANDIT_L
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark b-out-of-reach-swing05
+turn 90
+pair player BDT_1013_BANDIT_L
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark b-out-of-reach-swing06
+turn 90
+pair player BDT_1013_BANDIT_L
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark b-out-of-reach-swing07
+turn 90
+pair player BDT_1013_BANDIT_L
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark b-out-of-reach-swing08
+turn 90
+pair player BDT_1013_BANDIT_L
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark b-out-of-reach-swing09
+turn 90
+pair player BDT_1013_BANDIT_L
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark b-out-of-reach-swing10
+turn 90
+pair player BDT_1013_BANDIT_L
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark b-out-of-reach-swing11
+turn 90
+pair player BDT_1013_BANDIT_L
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark b-out-of-reach-swing12
+turn 90
+pair player BDT_1013_BANDIT_L
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark b-out-of-reach-swing13
+turn 90
+pair player BDT_1013_BANDIT_L
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark b-out-of-reach-swing14
+turn 90
+pair player BDT_1013_BANDIT_L
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark b-out-of-reach-swing15
+turn 90
+pair player BDT_1013_BANDIT_L
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark b-out-of-reach-swing16
+turn 90
+pair player BDT_1013_BANDIT_L
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark b-out-of-reach-swing17
+turn 90
+pair player BDT_1013_BANDIT_L
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark b-out-of-reach-swing18
+turn 90
+pair player BDT_1013_BANDIT_L
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark b-out-of-reach-swing19
+turn 90
+pair player BDT_1013_BANDIT_L
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark b-out-of-reach-swing20
+turn 90
+pair player BDT_1013_BANDIT_L
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark b-out-of-reach-swing21
+turn 90
+pair player BDT_1013_BANDIT_L
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark b-out-of-reach-swing22
+turn 90
+pair player BDT_1013_BANDIT_L
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark b-out-of-reach-swing23
+turn 90
+pair player BDT_1013_BANDIT_L
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark b-out-of-reach-swing24
+turn 90
+pair player BDT_1013_BANDIT_L
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+pin off
+freeze BDT_1013_BANDIT_L
+wait 1200
+stop shadow
+
+# c-two-handed: 24 running attacks, NPC 2h, 1H talent 100.
+release all
+freeze BDT_1013_BANDIT_L
+stats npc BDT_1013_BANDIT_L str 60 1h 100 2h 100 talent auto
+put BDT_1013_BANDIT_L 300 0
+melee-shadow bandit 2h
+wait 1000
+watch BDT_1013_BANDIT_L
+anims
+stats npc BDT_1013_BANDIT_L
+watch player
+fight BDT_1013_BANDIT_L player
+wait 800
+rec c-two-handed novideo
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark c-two-handed-swing01
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark c-two-handed-swing02
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark c-two-handed-swing03
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark c-two-handed-swing04
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark c-two-handed-swing05
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark c-two-handed-swing06
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark c-two-handed-swing07
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark c-two-handed-swing08
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark c-two-handed-swing09
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark c-two-handed-swing10
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark c-two-handed-swing11
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark c-two-handed-swing12
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark c-two-handed-swing13
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark c-two-handed-swing14
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark c-two-handed-swing15
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark c-two-handed-swing16
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark c-two-handed-swing17
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark c-two-handed-swing18
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark c-two-handed-swing19
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark c-two-handed-swing20
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark c-two-handed-swing21
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark c-two-handed-swing22
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark c-two-handed-swing23
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark c-two-handed-swing24
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+freeze BDT_1013_BANDIT_L
+wait 1200
+stop shadow
+
+# Marvin inverts the env flag for four ordinary running attacks, then restores it.
+release all
+freeze BDT_1013_BANDIT_L
+stats npc BDT_1013_BANDIT_L 1h 100 talent auto
+put BDT_1013_BANDIT_L 300 0
+melee-shadow bandit 1h
+wait 1000
+toggle melee_ai_dodge
+fight BDT_1013_BANDIT_L player
+wait 800
+rec toggle-inverted novideo
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark toggle-inverted-swing01
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark toggle-inverted-swing02
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark toggle-inverted-swing03
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+release all
+watch BDT_1013_BANDIT_L
+place 300 0
+watch player
+mark toggle-inverted-swing04
+press forward
+wait 500
+press action
+wait 100
+release all
+wait 1600
+freeze BDT_1013_BANDIT_L
+wait 1200
+stop shadow
+toggle melee_ai_dodge
+release all

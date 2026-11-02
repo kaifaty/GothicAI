@@ -190,10 +190,16 @@ def run_variant(args: argparse.Namespace, name: str, *, serial: bool, trace: boo
     parry_ai = os.environ.get("MELEE_PARRY_AI")
     if parry_ai is not None and parry_ai not in ("0", "1"):
         raise ValueError("MELEE_PARRY_AI must be 0 or 1")
+    ai_dodge = os.environ.get("MELEE_AI_DODGE")
+    if ai_dodge is not None and ai_dodge not in ("0", "1"):
+        raise ValueError("MELEE_AI_DODGE must be 0 or 1")
+    ai_riposte = os.environ.get("MELEE_AI_RIPOSTE")
+    if ai_riposte is not None and ai_riposte not in ("0", "1"):
+        raise ValueError("MELEE_AI_RIPOSTE must be 0 or 1")
     stagger = os.environ.get("MELEE_STAGGER")
     if stagger is not None and stagger not in ("0", "1"):
         raise ValueError("MELEE_STAGGER must be 0 or 1")
-    if melee_shadow is not None or down_tactics is not None or hit_stop is not None or stamina is not None or parry is not None or parry_ai is not None or stagger is not None:
+    if melee_shadow is not None or down_tactics is not None or hit_stop is not None or stamina is not None or parry is not None or parry_ai is not None or ai_dodge is not None or ai_riposte is not None or stagger is not None:
         # Both collectors copy this private INI; the archived reference stays unchanged.
         variant.reference = output/"reference"
         settings = variant.reference/"run/Gothic.ini"
@@ -218,6 +224,10 @@ def run_variant(args: argparse.Namespace, name: str, *, serial: bool, trace: boo
             config.set("GAME", "melee_parry", parry)
         if parry_ai is not None:
             config.set("GAME", "melee_parry_ai", parry_ai)
+        if ai_dodge is not None:
+            config.set("GAME", "melee_ai_dodge", ai_dodge)
+        if ai_riposte is not None:
+            config.set("GAME", "melee_ai_riposte", ai_riposte)
         if stagger is not None:
             config.set("GAME", "melee_stagger", stagger)
         with settings.open("w") as stream:

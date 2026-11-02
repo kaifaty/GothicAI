@@ -12,7 +12,22 @@ BENCH_HOST=local NO_BUILD=1 scripts/bench.sh ik-sweep  # local, skip the increme
 
 `BENCH_HOST=auto` (default) tries dev-ubuntu, then Ryzen, then this Mac for headless scenarios;
 windowed scenarios try Ryzen, then Mac. Both remote hosts use `scripts/ryzen.sh` and copy all output back.
-Each fallback prints one line explaining the SSH, setup, lock, queue-wait or game-startup failure.
+Before remote `bench` and `e2e`, `ryzen.sh` selects Mac base/video parts matching this checkout's
+import formats, copies missing parts to the host's cache, and synchronizes both game INI files.
+Ready parts in the host cache or shared store need no copy; dev-ubuntu only uses its cache.
+When Mac has no compatible part, the host cache/store is searched for this checkout's format
+and the same installation as the host's `game-base.json`. A match reports `ready (host)` and
+passes its exact fingerprint without copying. If videos have no compatible replacement on
+either machine, the original host video fingerprint is retained.
+The run receives the exact fingerprints without changing a prepared host's `game-base.json`;
+a fresh host gets settings and that pointer automatically. `scripts/ryzen.sh setup` is optional.
+Explicit nonempty `OPENGOTHIC_BASE` or `OPENGOTHIC_BASE_FINGERPRINT` skips base selection/copy;
+an explicit `OPENGOTHIC_VIDEOS_FINGERPRINT`, including empty, does the same for videos.
+If neither Mac nor host has a compatible base, `bench`/`e2e` stop before locks or queue requests:
+start the game on Mac on this version to import it. Remote `pytest` instead prints one warning
+and continues with the host's `game-base.json`, without forcing a base fingerprint.
+`setup` still requires compatible Mac parts and does not use this host fallback.
+Each fallback prints one line explaining the SSH, base synchronization, lock, queue-wait or game-startup failure.
 Once returned output contains `game.log`, that host's result is final, including a failing exit code;
 the game is not run again elsewhere. The remote lock/queue wait defaults to 120 seconds in `auto`
 (`RYZEN_LOCK_WAIT`). `BENCH_HOST=dev-ubuntu` and `BENCH_HOST=ryzen` require that host, default to a
@@ -607,7 +622,7 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `bowgeom` | the bow and the bow hand of the hero in the arrow's frame (x along it from its slot, y up, z to the side), cm: the bow's box, the grip, the string's middle at rest and drawn by `S_READY` and `S_DRAWN`, the bow hand's bones, the head |
 | `animspeed <anim> <k>` | the hero's animation of that name plays k times as fast from its next start (`Pose::setAnimSpeed`: a layer keeps its speed, the next one starts at 1). The manual aim sets `T_BOWRELOAD` from dexterity (`stats` prints it: `reload x`); this overrides it until dexterity changes. The hero's animation events go to bench.log (`anim event <type> <item> <slot>`, `anim morph <anim> <slot>`): at any tempo each once, in the same order |
 | `sfx <name>...` | the files a sound effect plays (its variants `_A1`..), `(missing)` if the game's data has no such file. The hero's sounds go to bench.log (`sound <name>`) |
-| `stats [npc <npc>] [str <n>] [dex <n>] [bow <n>] [cbow <n>] [hp <n>] [hpmax <n>] [talent auto\|0\|1\|2]` | the hero's (an npc's) strength, dexterity, hit chances (the skill), hit points; prints what the manual aim makes of them (sway, draw, hold, arrow speed). `talent`: the trained archers' animations (`_BOWT1` at 30%, `_BOWT2` at 60% in G2; `auto` as the hit chances say); with it or `npc` also `stats of <npc>: talent, reload ms, hp, point protection` |
+| `stats [npc <npc>] [str <n>] [dex <n>] [1h <n>] [2h <n>] [bow <n>] [cbow <n>] [hp <n>] [hpmax <n>] [talent auto\|0\|1\|2]` | the hero's (an npc's) strength, dexterity, hit chances (the skill), hit points; prints what the manual aim makes of them (sway, draw, hold, arrow speed). Arguments apply left to right. `talent` sets the trained archers' animations (`_BOWT1` at 30%, `_BOWT2` at 60% in G2; `auto` as the hit chances say), and the 1H/2H animation level only when that weapon's hit chance is explicit in the same command; with it or `npc` also `stats of <npc>: melee hit chances and animation levels, archery talent, reload ms, hp, point protection` |
 | `seed <n>` | the random numbers start over: the scripts' (the dice, the release cone), the bench's (`volley` jitter), the hero's sway |
 | `npcequip <npc> <item> [count]` | into the npc's inventory, the first put on |
 | `arc <npc> <count> <dist> <step deg>` | that many of the npc stand that far in front of the hero, a step apart round it, facing it: the crew of `fight all` (a new arc replaces it, `clear` takes the gone out) |
