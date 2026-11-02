@@ -408,6 +408,10 @@ void WorldObjects::updateSimTiers() {
 
 void WorldObjects::tick(uint64_t dt, uint64_t dtPlayer) {
   updateSimTiers();
+  const auto& logic = NpcLogicAudit::stats();
+  const uint64_t logicBefore[] = {logic.ticks,logic.bodyMismatch,logic.weaponMismatch,
+                                 logic.early,logic.late,logic.events,logic.eventMismatch,
+                                 logic.waitEarly,logic.waitLate,logic.reanchoredCount(),logic.bodySamples,logic.weaponSamples};
   tickPlacedItems();
   auto passive=std::move(sndPerc);
   sndPerc.clear();
@@ -473,6 +477,18 @@ void WorldObjects::tick(uint64_t dt, uint64_t dtPlayer) {
   simTiers.fullTickMsTotal       += simTiers.fullTickMs;
   simTiers.simplifiedTickMsTotal += simTiers.simplifiedTickMs;
   ++simTiers.ticks;
+  FrameProfile::add(FrameProfile::Amount::NpcLogicSamples,logic.ticks-logicBefore[0]);
+  FrameProfile::add(FrameProfile::Amount::NpcLogicBodyMismatch,logic.bodyMismatch-logicBefore[1]);
+  FrameProfile::add(FrameProfile::Amount::NpcLogicWeaponMismatch,logic.weaponMismatch-logicBefore[2]);
+  FrameProfile::add(FrameProfile::Amount::NpcLogicEarly,logic.early-logicBefore[3]);
+  FrameProfile::add(FrameProfile::Amount::NpcLogicLate,logic.late-logicBefore[4]);
+  FrameProfile::add(FrameProfile::Amount::NpcLogicEvents,logic.events-logicBefore[5]);
+  FrameProfile::add(FrameProfile::Amount::NpcLogicEventMismatch,logic.eventMismatch-logicBefore[6]);
+  FrameProfile::add(FrameProfile::Amount::NpcLogicWaitEarly,logic.waitEarly-logicBefore[7]);
+  FrameProfile::add(FrameProfile::Amount::NpcLogicWaitLate,logic.waitLate-logicBefore[8]);
+  FrameProfile::add(FrameProfile::Amount::NpcLogicReanchored,logic.reanchoredCount()-logicBefore[9]);
+  FrameProfile::add(FrameProfile::Amount::NpcLogicBodySamples,logic.bodySamples-logicBefore[10]);
+  FrameProfile::add(FrameProfile::Amount::NpcLogicWeaponSamples,logic.weaponSamples-logicBefore[11]);
 
   for(auto& i:routines) {
     auto s = i.stateByTime(owner.time());
@@ -791,6 +807,26 @@ void WorldObjects::updateAnimation(uint64_t dt) {
     interactiveObj.parallelFor([dt](Interactive& i){
       i.updateAnimation(dt);
       });
+  // Audit the previous prediction after the body has advanced, then consume
+  // this tick's mutation inputs on the main thread (including worker speed changes).
+  const auto& logic = NpcLogicAudit::stats();
+  const uint64_t logicBefore[] = {logic.ticks,logic.bodyMismatch,logic.weaponMismatch,
+                                 logic.early,logic.late,logic.events,logic.eventMismatch,
+                                 logic.waitEarly,logic.waitLate,logic.reanchoredCount(),logic.bodySamples,logic.weaponSamples};
+  for(auto& npc:npcArr)
+    npc->syncLogicalBodyState();
+  FrameProfile::add(FrameProfile::Amount::NpcLogicSamples,logic.ticks-logicBefore[0]);
+  FrameProfile::add(FrameProfile::Amount::NpcLogicBodyMismatch,logic.bodyMismatch-logicBefore[1]);
+  FrameProfile::add(FrameProfile::Amount::NpcLogicWeaponMismatch,logic.weaponMismatch-logicBefore[2]);
+  FrameProfile::add(FrameProfile::Amount::NpcLogicEarly,logic.early-logicBefore[3]);
+  FrameProfile::add(FrameProfile::Amount::NpcLogicLate,logic.late-logicBefore[4]);
+  FrameProfile::add(FrameProfile::Amount::NpcLogicEvents,logic.events-logicBefore[5]);
+  FrameProfile::add(FrameProfile::Amount::NpcLogicEventMismatch,logic.eventMismatch-logicBefore[6]);
+  FrameProfile::add(FrameProfile::Amount::NpcLogicWaitEarly,logic.waitEarly-logicBefore[7]);
+  FrameProfile::add(FrameProfile::Amount::NpcLogicWaitLate,logic.waitLate-logicBefore[8]);
+  FrameProfile::add(FrameProfile::Amount::NpcLogicReanchored,logic.reanchoredCount()-logicBefore[9]);
+  FrameProfile::add(FrameProfile::Amount::NpcLogicBodySamples,logic.bodySamples-logicBefore[10]);
+  FrameProfile::add(FrameProfile::Amount::NpcLogicWeaponSamples,logic.weaponSamples-logicBefore[11]);
   }
 
 bool WorldObjects::isTargeted(Npc& dst) {

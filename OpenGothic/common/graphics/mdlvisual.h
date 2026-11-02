@@ -17,6 +17,7 @@
 class Serialize;
 class ObjVisual;
 class Npc;
+struct NpcLogicalState;
 class Item;
 class WorldView;
 namespace TestBench { bool ragdollBodyDrawable(const Npc& npc); }
@@ -88,7 +89,7 @@ class MdlVisual final {
     void                           setFatness  (float f);
     void                           emitBlockEffect(Npc& dst, Npc& src);
 
-    bool                           setToFightMode(const WeaponState ws);
+    bool                           setToFightMode(const WeaponState ws, bool fromAnimation=false);
     void                           updateWeaponSkeleton(const Item *sword, const Item *bow);
 
     void                           setTorch(bool t, World& owner);
@@ -128,8 +129,8 @@ class MdlVisual final {
     bool                           updateFlinch(Npc& npc, uint64_t dt);
     void                           flinch(const Npc& npc, const Flinch::Hit& hit);
     bool                           updateGaze(Npc& npc, uint64_t dt);
-    void                           processLayers  (World& world);
-    bool                           processEvents(World& world, uint64_t &barrier, Animation::EvCount &ev);
+    void                           processLayers  (World& world, NpcLogicalState* logic=nullptr);
+    bool                           processEvents(World& world, uint64_t &barrier, Animation::EvCount &ev, NpcLogicalState* logic=nullptr);
     auto                           mapBone(const size_t boneId) const -> Tempest::Vec3;
     auto                           mapWeaponBone() const -> Tempest::Vec3;
     auto                           mapHeadBone() const -> Tempest::Vec3;

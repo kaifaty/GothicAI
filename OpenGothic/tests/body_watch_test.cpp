@@ -1,4 +1,7 @@
 #include <Tempest/File>
+#include <Tempest/MemReader>
+#include <Tempest/MemWriter>
+#include <Tempest/Pixmap>
 
 #include "commandline.h"
 #include "gothic.h"
@@ -21,10 +24,13 @@
 #include <rapidjson/stringbuffer.h>
 #include <rapidjson/writer.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -845,6 +851,331 @@ void meleeRemoval(Npc& victim) {
   }
 }
 
+// Uses a fresh full session, so unsaved Pose speed overrides cannot survive in
+// the object being tested. The restored native body is the canonical reference.
+class NpcLogicalStateContract final {
+  static constexpr uint64_t tickMs=33;
+
+  static void advance(uint64_t dt=tickMs) {
+    auto& session=*Gothic::inst().gameSession();
+    session.tick(dt);
+    session.updateAnimation(dt);
+    }
+
+  static uint64_t predictedEnd(const Pose::CombatLayer& layer,uint16_t combo) {
+    if(layer.sequence->animCls==Animation::Loop) return 0;
+    const double duration=std::min(layer.sequence->atkTotalTime(combo),layer.sequence->totalTime());
+    return layer.start+uint64_t(std::ceil((std::floor(duration)+1.)/double(layer.speed)));
+    }
+
+  static void compare(const Npc& npc) {
+    const auto now=npc.world().tickCount();
+    const auto& logical=npc.logicalBodyState();
+    expect(logical.body==npc.bodyState(),"restored logical body equals the canonical native body");
+    expect(logical.weapon==npc.weaponState(),"restored logical weapon equals the canonical native weapon");
+    expect(logical.bodyStateMasked()==npc.bodyStateMasked(),"restored logical body mask equals the native mask");
+    const auto real=npc.visual.pose().combatLayers(now);
+    expect(logical.layers.size()==real.size(),"restored logical clock covers every native layer");
+    for(const auto& layer:real) {
+      const auto found=std::find_if(logical.layers.begin(),logical.layers.end(),[&](const auto& shadow) {
+        return shadow.sequence==layer.sequence && shadow.origin==layer.origin;
+        });
+      expect(found!=logical.layers.end(),"restored logical layer retains canonical sequence and origin");
+      expect(found->start==layer.start && found->speed==layer.speed && found->state==layer.state,
+             "restored logical layer retains canonical start, speed and state");
+      expect(found->expectedEnd==predictedEnd(layer,npc.visual.pose().comboLength()),
+             "restored logical layer deadline comes from its own native sequence metadata");
+      expect(std::abs(logical.animProgress(layer.sequence->name,now)-npc.animProgress(layer.sequence->name))<.00001f,
+             "restored logical progress equals the native progress");
+      expect(logical.hasState(layer.state)==npc.hasState(layer.state),"restored logical hasState equals native hasState");
+      }
+    }
+
+  public:
+    static void run(uint32_t id,const std::string& scenario,const std::filesystem::path& output) {
+      auto& gothic=Gothic::inst();
+      // The earlier body-watch phases own pointers into the session. Retire
+      // them before the first complete session is destroyed.
+      TestBench::configure(scenario,output.string(),17);
+      for(const auto action:{AI_PlayAnim,AI_StandUp,AI_DrawWeaponMelee}) {
+        ++cases;
+        auto* npc=gothic.world()->npcById(id);
+        expect(npc!=nullptr,"logical save/load fixture actor survives the preceding session reload");
+        npc->setExternalControl(true);
+        npc->clearState(true);
+        npc->clearAiQueue();
+        npc->outWaitTime=0;
+        npc->clearGoTo();
+        npc->setTarget(nullptr);
+        npc->clearSpeed();
+        npc->handle().attribute[ATR_HITPOINTS]=npc->attribute(ATR_HITPOINTSMAX);
+        npc->setInteraction(nullptr,true);
+        npc->closeWeapon(true);
+        npc->visual.pose().stopAllAnim();
+        expect(npc->setAnim(Npc::Anim::Idle),"logical save/load fixture starts from native idle");
+        for(unsigned i=0;i<5;++i) advance();
+        npc->clearAiQueue();
+        if(action==AI_PlayAnim) {
+          expect(npc->hasAnim("T_STAND_2_PEE"),"logical save/load PlayAni uses a real stock transition");
+          npc->aiPush(AiQueue::aiPlayAnim("T_STAND_2_PEE"));
+          }
+        else if(action==AI_StandUp) {
+          npc->visual.pose().stopAllAnim();
+          expect(npc->playAnimByName("S_WOUNDED",BS_LIE)!=nullptr,"logical save/load stand-up starts lying");
+          npc->aiPush(AiQueue::aiStandup());
+          }
+        else {
+          expect(npc->currentMeleeWeapon()!=nullptr,"logical save/load weapon draw has an equipped native weapon");
+          npc->aiPush(AiQueue::aiReadyMeleeWeapon());
+          }
+
+        std::optional<Pose::CombatLayer> playing;
+        for(unsigned i=0;i<90 && !playing;++i) {
+          advance();
+          for(const auto& layer:npc->visual.pose().combatLayers(npc->world().tickCount())) {
+            if(layer.sequence->animCls!=Animation::Transition || layer.sequence->totalTime()<300.f)
+              continue;
+            if(action==AI_PlayAnim && layer.sequence->name!="T_STAND_2_PEE")
+              continue;
+            if(action==AI_StandUp && layer.sequence->name.find("WOUNDED_2_")==std::string::npos)
+              continue;
+            if(action==AI_DrawWeaponMelee &&
+               std::none_of(layer.sequence->data->events.begin(),layer.sequence->data->events.end(),[](const auto& event) {
+                 return event.type==asset::MdsEventType::SET_FIGHT_MODE;
+                 }))
+              continue;
+            playing=layer;
+            break;
+            }
+          }
+        expect(playing.has_value(),"logical save/load admits the requested native body action");
+        if(action==AI_PlayAnim) {
+          // Existing saves normalize this transient speed. It is deliberately
+          // not a before/after equality assertion.
+          advance();
+          npc->visual.pose().setLayerSpeed(playing->sequence,.5f,npc->world().tickCount());
+          }
+        if(action==AI_DrawWeaponMelee) {
+          uint64_t fightAt=UINT64_MAX;
+          for(size_t i=0;i<playing->sequence->data->events.size();++i) {
+            if(playing->sequence->data->events[i].type!=asset::MdsEventType::SET_FIGHT_MODE) continue;
+            const auto local=playing->sequence->logicTag(i).time;
+            fightAt=std::min(fightAt,playing->start+uint64_t(std::ceil(double(local)/double(playing->speed))));
+            }
+          const auto now=npc->world().tickCount();
+          expect(fightAt!=UINT64_MAX && fightAt>now+1,"weapon draw fixture is admitted before its fight-mode event");
+          // Save after positive progress while the weapon event remains pending.
+          advance(std::min(tickMs,(fightAt-now)/2));
+          expect(npc->world().tickCount()<fightAt && npc->weaponState()==WeaponState::NoWeapon,
+                 "weapon draw fixture saves before the real weapon-state change");
+          }
+        else {
+          for(unsigned i=0;i<4;++i) advance();
+          }
+        const auto before=npc->logicalBodyState();
+        const auto sequence=playing->sequence;
+        const std::string name=sequence->name;
+        const float progress=npc->animProgress(name);
+        expect(progress>0.f && progress<.9f,"logical save/load saves strictly inside the native action");
+        expect(before.action.kind==action,"logical save/load records the originating action before save");
+        const auto beforeLayer=std::find_if(before.layers.begin(),before.layers.end(),[&](const auto& l) {
+          return l.sequence->name==name;
+          });
+        expect(beforeLayer!=before.layers.end(),"logical save/load has a pre-save body clock for comparison");
+        const auto beforeSpeed=beforeLayer->speed;
+        std::vector<uint8_t> bytes;
+        {
+          Tempest::MemWriter writer(bytes);
+          Serialize out(writer);
+          Tempest::Pixmap preview(1,1,Tempest::TextureFormat::RGBA8);
+          std::memset(preview.data(),0,4);
+          gothic.gameSession()->save(out,"logical body mid-action",preview);
+        }
+        const auto savedAt=gothic.world()->tickCount();
+        NpcLogicAudit::reset();
+        gothic.clearGame().reset();
+        {
+          Tempest::MemReader reader(bytes);
+          Serialize in(reader);
+          gothic.setGame(std::make_unique<GameSession>(in));
+        }
+        npc=gothic.world()->npcById(id);
+        expect(npc!=nullptr && gothic.world()->tickCount()==savedAt,"logical save/load restores the actor and exact world time");
+        compare(*npc); // Before any positive simulation step or explicit sync.
+        npc->logicalBody.auditTick(*npc);
+        const auto restored=npc->logicalBodyState();
+        auto stale=restored;
+        stale.body=restored.body==BS_NONE ? BS_STAND : BS_NONE;
+        NpcLogicAudit::reset();
+        stale.auditTick(*npc);
+        expect(NpcLogicAudit::stats().bodyMismatch==1 && NpcLogicAudit::stats().weaponMismatch==0,
+               "body audit detects stale logical input before any native resynchronization");
+        stale=restored;
+        stale.weapon=restored.weapon==WeaponState::NoWeapon ? WeaponState::Fist : WeaponState::NoWeapon;
+        NpcLogicAudit::reset();
+        stale.auditTick(*npc);
+        expect(NpcLogicAudit::stats().bodyMismatch==0 && NpcLogicAudit::stats().weaponMismatch==1,
+               "weapon audit detects stale logical input before any native resynchronization");
+        NpcLogicAudit::reset();
+        npc->logicalBody.auditTick(*npc);
+        const auto layer=std::find_if(restored.layers.begin(),restored.layers.end(),[&](const auto& l) {
+          return l.sequence->name==name;
+          });
+        expect(layer!=restored.layers.end() && layer->expectedEnd>savedAt,
+               "logical save/load rebuilds an active canonical action clock");
+        const auto canonicalAction=action==AI_DrawWeaponMelee ? AI_DrawWeapon : action;
+        expect(restored.action.kind==canonicalAction,
+               "logical save/load recovers the canonical action kind from the saved body");
+        expect(restored.action.sequence==layer->sequence,
+               "logical save/load binds the action to its own sequence rather than an unrelated layer");
+        const auto expectedEnd=layer->expectedEnd;
+        const auto origin=layer->origin;
+        const auto canonicalStart=layer->start;
+        const auto canonicalSpeed=layer->speed;
+        const auto actionEnd=restored.action.expectedEnd;
+        const auto nativeWaitEnd=npc->aniWaitTime;
+        uint32_t bodyAfterSequence=BS_NONE;
+        for(const auto& clock:restored.layers) {
+          auto state=clock.state;
+          if(clock.sequence==layer->sequence && clock.origin==origin) {
+            if(clock.sequence->nextPtr==nullptr) continue;
+            if((state&BS_MAX)==BS_STUMBLE || (state&BS_MAX)==BS_PARADE) state=BS_NONE;
+            }
+          bodyAfterSequence=std::max(bodyAfterSequence,uint32_t(state&(BS_MAX|BS_FLAG_MASK)));
+          }
+        if(restored.interactiveState) bodyAfterSequence=uint32_t(*restored.interactiveState);
+        if(restored.externalState) bodyAfterSequence=uint32_t(*restored.externalState);
+        expect(restored.action.predictable && actionEnd>savedAt,"logical save/load rebuilds the pending action deadline");
+        expect(actionEnd==expectedEnd,"restored action deadline follows its own canonical layer rather than the saved AI wait");
+        if(action==AI_PlayAnim)
+          expect(beforeSpeed==.5f && canonicalSpeed==1.f,"fresh load applies the native save speed normalization");
+        // This copy receives no further Pose inputs. Its layer, body and
+        // weapon changes must follow the retained sequence clock alone.
+        auto detached=restored;
+        detached.advance(expectedEnd-1);
+        expect(std::any_of(detached.layers.begin(),detached.layers.end(),[&](const auto& l) {
+          return l.sequence->name==name && l.origin==origin && !l.finished;
+          }),"detached logical clock keeps its own layer until the metadata deadline");
+        detached.advance(expectedEnd);
+        expect(std::none_of(detached.layers.begin(),detached.layers.end(),[&](const auto& l) {
+          return l.sequence->name==name && l.origin==origin && !l.finished;
+          }),"detached logical clock finishes its own layer without a Pose resynchronization");
+        expect(uint32_t(detached.body)==bodyAfterSequence,
+               "detached logical body follows the sequence successor metadata without executor inputs");
+        if(action==AI_DrawWeaponMelee) {
+          expect(std::any_of(layer->events.begin(),layer->events.end(),[&](const auto& event) {
+            return event.source.def==asset::MdsEventType::SET_FIGHT_MODE && event.expected>savedAt;
+            }),"weapon save fixture precedes a pending native fight-mode event");
+          expect(detached.weapon!=restored.weapon,
+                 "detached logical weapon advances at its sequence fight-mode event without native input");
+          }
+        detached=restored;
+        npc->setExternalControl(true);
+        bool active=true;
+        uint64_t endedAt=0, nativeWaitReleasedAt=0;
+        BodyState nativeBodyAtRemoval=BS_NONE, detachedBodyAtRemoval=BS_NONE;
+        const bool pendingNativeWait=nativeWaitEnd>=savedAt;
+        for(unsigned i=0;i<400 && (active || (pendingNativeWait && nativeWaitReleasedAt==0));++i) {
+          advance();
+          compare(*npc);
+          detached.advance(npc->world().tickCount());
+          active=false;
+          for(const auto& real:npc->visual.pose().combatLayers(npc->world().tickCount()))
+            active |= real.sequence->name==name && real.origin==origin;
+          if(active)
+            expect(detached.body==npc->bodyState(),"detached logical body follows the real body while its own layer is active");
+          if(!active && endedAt==0) endedAt=npc->world().tickCount();
+          if(!active && endedAt==npc->world().tickCount()) {
+            expect(std::none_of(detached.layers.begin(),detached.layers.end(),[&](const auto& l) {
+              return l.sequence->name==name && l.origin==origin && !l.finished;
+              }),"detached logical clock finishes its own layer when the native layer is removed");
+            expect(uint32_t(detached.body)==bodyAfterSequence,
+                   "detached logical body follows its metadata after the native layer is removed");
+            // Npc::tick can start Idle explicitly after a sequence with no
+            // successor. A detached clock has not received that executor input.
+            nativeBodyAtRemoval=npc->bodyState();
+            detachedBodyAtRemoval=detached.body;
+            expect(detached.weapon==npc->weaponState(),"detached logical weapon follows the real event result without Pose inputs");
+            }
+          if(pendingNativeWait && nativeWaitReleasedAt==0 && npc->world().tickCount()>nativeWaitEnd)
+            nativeWaitReleasedAt=npc->world().tickCount();
+          }
+        expect(!active,"logical save/load observes the real canonical animation end");
+        expect(!pendingNativeWait || nativeWaitReleasedAt!=0,"logical save/load separately observes the native AI wait release");
+        const auto error=int64_t(endedAt)-int64_t(expectedEnd);
+        const auto actionError=int64_t(endedAt)-int64_t(actionEnd);
+        const auto nativeWaitError=pendingNativeWait ? int64_t(nativeWaitReleasedAt)-int64_t(actionEnd) : 0;
+        const auto& audit=NpcLogicAudit::stats();
+        std::cerr << "npc-logic-save {\"action\":\"" << NpcLogicAudit::actionName(action)
+                  << "\",\"animation\":\"" << name << "\",\"archive_bytes\":" << bytes.size()
+                  << ",\"saved_at\":" << savedAt << ",\"pre_save_start\":" << before.action.start
+                  << ",\"canonical_start\":" << canonicalStart << ",\"pre_save_end\":" << before.action.expectedEnd
+                  << ",\"pre_save_speed\":" << beforeSpeed << ",\"canonical_speed\":" << canonicalSpeed
+                  << ",\"canonical_action\":\"" << NpcLogicAudit::actionName(restored.action.kind) << '"'
+                  << ",\"pre_save_layer_start\":" << beforeLayer->start << ",\"pre_save_layer_end\":" << beforeLayer->expectedEnd
+                  << ",\"canonical_action_start\":" << restored.action.start << ",\"canonical_action_end\":" << actionEnd
+                  << ",\"actual_action_end\":" << endedAt << ",\"action_end_error_ms\":" << actionError
+                  << ",\"native_wait_end\":" << nativeWaitEnd << ",\"native_wait_released_at\":" << nativeWaitReleasedAt
+                  << ",\"native_wait_error_ms\":" << nativeWaitError
+                  << ",\"canonical_end\":" << expectedEnd << ",\"actual_end\":" << endedAt
+                  << ",\"end_error_ms\":" << error << ",\"world_tick_ms\":" << tickMs
+                  << ",\"detached_body_at_removal\":" << uint32_t(detachedBodyAtRemoval)
+                  << ",\"native_body_at_removal\":" << uint32_t(nativeBodyAtRemoval)
+                  << ",\"removal_body_difference\":\"" << (detachedBodyAtRemoval==nativeBodyAtRemoval ? "none" : "executor_idle_reanchor") << '"'
+                  << ",\"audit_samples\":" << audit.ticks << ",\"body_mismatch\":" << audit.bodyMismatch
+                  << ",\"weapon_mismatch\":" << audit.weaponMismatch << "}\n";
+        expect(audit.ticks>0 && audit.bodyMismatch==0 && audit.weaponMismatch==0,
+               "logical save/load shadow audit has samples and no body or weapon mismatches");
+        expect(std::abs(error)<=int64_t(tickMs),"logical save/load canonical sequence end is predicted within one world tick");
+        expect(std::abs(actionError)<=int64_t(tickMs),"logical save/load canonical action end is predicted within one world tick");
+        }
+      // Native float frame rounding can fire a loop event one millisecond
+      // before its integer schedule. The audit must match the same cycle.
+      ++cases;
+      auto* npc=gothic.world()->npcById(id);
+      npc->closeWeapon(true);
+      npc->visual.pose().stopAllAnim();
+      const auto* sequence=npc->playAnimByName("S_FISTWALKL",BS_WALK);
+      expect(sequence!=nullptr && sequence->animCls==Animation::Loop,"loop clock fixture uses the stock fist walk");
+      npc->syncLogicalBodyState();
+      auto clock=npc->logicalBodyState();
+      const auto layer=std::find_if(clock.layers.begin(),clock.layers.end(),[&](const auto& l) { return l.sequence==sequence; });
+      expect(layer!=clock.layers.end() && !layer->events.empty(),"loop clock fixture has native event metadata");
+      struct Probe {
+        NpcLogicalState& clock;
+        const NpcLogicalState::Layer& layer;
+        const Animation::LogicEvent* target=nullptr;
+        uint64_t now=0;
+        bool fired=false;
+        } probe{clock,*layer};
+      Animation::LogicEventObserver observer{&probe,[](void* opaque,const Animation::LogicEvent& event) {
+        auto& p=*static_cast<Probe*>(opaque);
+        if(event.kind!=p.target->kind || event.index!=p.target->index || event.frame!=p.target->frame) return;
+        p.fired=true;
+        p.clock.eventFired(p.layer.sequence,p.layer.origin,event,p.now);
+        }};
+      NpcLogicAudit::reset();
+      for(uint64_t cycle=1;cycle<=65536 && !probe.fired;++cycle) {
+        for(const auto& event:layer->events) {
+          if(!event.source.delivered) continue;
+          probe.target=&event.source;
+          probe.now=event.expected+uint64_t(double(cycle)*sequence->totalTime())-1;
+          Animation::EvCount events;
+          sequence->processEvents(probe.now-1,layer->start,probe.now,events,&observer);
+          if(probe.fired) break;
+          }
+        }
+      expect(probe.fired,"loop clock fixture observes a native event before its integer deadline");
+      const auto& errors=NpcLogicAudit::stats().byAnimation.at(sequence->name).eventErrorMs;
+      expect(errors.size()==1 && errors.begin()->first==1,"an early native loop event has a one millisecond audit error");
+      expect(NpcLogicAudit::stats().eventMismatch==0,"an event inside the world step is not a mismatch");
+      NpcLogicAudit::reset();
+      const auto& event=layer->events.front();
+      clock.eventFired(sequence,layer->origin,event.source,event.expected+clock.worldStep+1);
+      expect(NpcLogicAudit::stats().eventMismatch==1,"an event beyond the world step is a mismatch");
+      }
+  };
+
 int main(int argc,const char** argv) {
   std::FILE* result=fdopen(dup(STDOUT_FILENO),"w");
   dup2(STDERR_FILENO,STDOUT_FILENO);
@@ -873,6 +1204,7 @@ int main(int argc,const char** argv) {
     setenv("OPENGOTHIC_BODY_NET",missingNetwork ? "/nonexistent/gothic-body-watch-test.bodynet" : GOTHIC_BODY_ENGINE_NET,1);
 #endif
     setenv("OPENGOTHIC_PHYSICS_THREADS","0",0);
+    setenv("OPENGOTHIC_NPC_LOGIC_AUDIT","1",1);
     Workers::setSerialExecution(true);
     CommandLine commandLine(argc,argv);
     Resources resources;
@@ -930,6 +1262,7 @@ int main(int argc,const char** argv) {
     BodyController::reset();
     BodyObservations::disable();
     meleeRemoval(b);
+    NpcLogicalStateContract::run(gothic.world()->npcId(&b),scenario,output);
 #ifdef GOTHIC_BODY_ENGINE_NET
       }
 #endif

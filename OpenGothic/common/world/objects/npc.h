@@ -20,6 +20,7 @@
 #include "physics/dynamicworld.h"
 #include "physics/ragdoll.h"
 #include "world/aiqueue.h"
+#include "world/npclogicalstate.h"
 #include "world/objects/attention.h"
 #include "world/objects/archer.h"
 #include "world/fplock.h"
@@ -147,6 +148,8 @@ class Npc final {
     void       setWalkMode(WalkBit m);
     WalkBit    walkMode() const;
     void       tick(uint64_t dt);
+    const NpcLogicalState& logicalBodyState() const { return logicalBody; }
+    void       syncLogicalBodyState(bool rebuild=false);
     void       tickAnimationTags();
     bool       startClimb(JumpStatus jump);
 
@@ -763,6 +766,11 @@ class Npc final {
       std::string culprit;        // "PLAYER" or the killer's instance symbol
       };
     const BodyTrace& bodyTrace() const { return bodyTraceRecord; }
+    // Blood (physics stage 8, step 4c): game ms of the last bleeding hit, -1: none.
+    // The wound's bone: the pool of a body forms under it, not under the trunk's centre.
+    void      setBloodHit(int64_t gameMs, const Tempest::Vec3& wound);
+    int64_t   bloodHitAt() const { return bloodHit; }
+    auto      bloodWound() const -> Tempest::Vec3;
     void      setBodyTrace(BodyTrace trace);
 
     void      setOther(Npc* ot);
@@ -874,6 +882,8 @@ class Npc final {
     bool      implAttack (uint64_t dt, bool bodyOverride=false, FightAlgo::Action bodyAction=FightAlgo::MV_NULL);
     void      traceCombatSnapshot();
     struct BodyMovementTrace;
+    friend struct NpcLogicalState;
+    friend class NpcLogicalStateContract;
     void      traceCombatGate(std::string_view reason);
     void      traceCombatAttempt(Anim requested, bool accepted, const std::string& before, std::string_view hook);
     std::string combatPoseIdentity() const;
@@ -1102,7 +1112,7 @@ class Npc final {
     bool                          meleeDodgeEvades(Npc& other, std::string_view kind);
     void                          meleeDodgeNote(const std::string& text, std::string_view phase, const std::string& fields);
     void                          tickMeleeBarge();
-    void                          meleeBargeNote(const Npc* target, uint64_t elapsed, std::string_view outcome);
+    void                          meleeBargeNote(const Npc* target, uint64_t elapsed, std::string_view outcome, std::string_view predicted = {});
     std::optional<uint64_t>        meleeBargeOrigin; // one contact per clip; transient, like posture and stun
     bool                          meleeBargeContact = false;
     // Transient per-attacker awareness, sampled before damage perception changes combat state.
@@ -1170,6 +1180,10 @@ class Npc final {
     Npc*                           lastHit          = nullptr;
     BodyTrace                      bodyTraceRecord;
     bool                           bodyTraceEntered = false; // the record's death reached ZS_Dead
+    int64_t                        bloodHit       = -1;   // game ms of the last bleeding hit
+    size_t                         bloodBone      = size_t(-1); // skeleton node nearest to that wound
+    uint64_t                       bloodDeathTick = 0;    // real ms of death: the pool waits for the body to settle
+    bool                           bloodPoolDone  = true; // false only between a death and its pool
     char                           lastHitType      = 'A';
     int32_t                        lastHitSpell     = 0;
 
@@ -1195,6 +1209,7 @@ class Npc final {
     NpcProcessPolicy               aiPolicy=NpcProcessPolicy::AiNormal;
     NpcSimTier                     simTierValue=NpcSimTier::Full; // transient, not serialized
     bool                           simTierAssigned=false;
+    NpcLogicalState                logicalBody;
     AiState                        aiState;
     ScriptFn                       aiPrevState;
     AiQueue                        aiQueue;

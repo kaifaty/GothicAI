@@ -86,6 +86,7 @@ class Gothic final {
       bool meleeCharge = true;
       bool meleeRiposte = true;
       bool bodyTraces = true;
+      bool blood = true;
 
       bool allowsMonsterCharacterVirtual(bool down, bool flying) const {
         return monsterCharacterVirtual && !down && !flying;
@@ -196,6 +197,8 @@ class Gothic final {
 
     bool         doMeleeBladeDraw() const { return meleeBladeDraw; }
     void         setMeleeBladeDraw(bool v) { meleeBladeDraw = v; }
+    bool         doMeleeBladeLabels() const { return meleeBladeLabels; }
+    void         setMeleeBladeLabels(bool v) { meleeBladeLabels = v; }
 
     bool         isBenchmarkMode() const;
     bool         isBenchmarkModeCi() const;
@@ -333,6 +336,7 @@ class Gothic final {
     bool                                    vobBox         = false;
     bool                                    vobRays        = false;
     bool                                    meleeBladeDraw = false;
+    bool                                    meleeBladeLabels = true;
     Benchmark                               isBenchmark    = Benchmark::None;
 
     std::string                             wrldDef, plDef, gameDatDef, ouDef;

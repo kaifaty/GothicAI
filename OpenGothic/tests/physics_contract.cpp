@@ -14,6 +14,7 @@
 #include "game/meleeimpact.h"
 #include "world/objects/npc.h"
 #include "world/bodytraces.h"
+#include "world/bloodstains.h"
 #include "gothic.h"
 
 #include <Tempest/Log>
@@ -1046,6 +1047,140 @@ namespace {
     require(!BodyTraces::stampsDeath(true,true,4,true),"a blow on a corpse keeps its record");
     require(!BodyTraces::stampsDeath(false,false,0,false),"unconsciousness stamps nothing");
     require(BodyTraces::stampsDeath(true,false,4,true),"a body that rose again (it reached ZS_Dead) dies anew");
+    }
+
+  void testBloodStains() {
+    using namespace BloodStains;
+    using Tempest::Vec3;
+    require(Gothic::PhysicsFlags{}.blood,"blood must default to ON");
+    require(Limit==256,"a world keeps 256 stains");
+
+    // Lifetime: outdoors one game day, indoors three.
+    Stain out;
+    out.bornAt = 5*MinuteMs;
+    require(!expired(out,out.bornAt+LifetimeOutMs-1),"an outdoor stain lives just under a game day");
+    require(expired(out,out.bornAt+24*60*MinuteMs),"an outdoor stain is gone after 24 game hours");
+    Stain in = out;
+    in.indoor = true;
+    require(!expired(in,in.bornAt+24*60*MinuteMs),"an indoor stain outlives one game day");
+    require(!expired(in,in.bornAt+LifetimeInMs-1),"an indoor stain lives just under three game days");
+    require(expired(in,in.bornAt+3*24*60*MinuteMs),"an indoor stain is gone after three game days");
+
+    // Evidence: people's and beasts' blood, a meatbug's, a zombie's; never a golem's stone chips.
+    for(auto b:{Blood::Red,Blood::Yellow,Blood::Gore}) {
+      Stain s; s.blood = b;
+      require(isEvidence(s),"red, yellow and gore blood are evidence");
+      }
+    {
+    Stain s; s.blood = Blood::Stone;
+    require(!isEvidence(s),"stone chips are not evidence");
+    }
+
+    // Adding: ids never reused or zero, the birth stamped from the clock, nothing with blood off.
+    const auto noBody   = [](uint32_t) { return false; };
+    const auto body7    = [](uint32_t id) { return id==7; };
+    {
+    std::vector<Stain> stains;
+    uint32_t next = 1;
+    require(add(stains,next,Stain{},1000,false,noBody)==0 && stains.empty() && next==1,
+            "blood OFF: addBloodStain adds nothing and returns 0");
+    const auto first = add(stains,next,Stain{},1000,true,noBody);
+    require(first==1 && stains.back().bornAt==1000,"a new stain takes id 1 and the current game time");
+    Stain born; born.bornAt = 400;
+    require(add(stains,next,born,1000,true,noBody)==2 && stains.back().bornAt==400,"a stain born earlier keeps its time");
+    stains.clear();
+    require(add(stains,next,Stain{},2000,true,noBody)==3,"ids are never reused, even after the stains are gone");
+    }
+
+    // Eviction at the limit: the oldest goes; a pool whose body is still in the world goes last.
+    {
+    std::vector<Stain> stains;
+    uint32_t next = 1;
+    Stain pool; pool.kind = Kind::Pool; pool.bodyId = 7; pool.bornAt = 1;
+    const auto poolId = add(stains,next,pool,1,true,body7);
+    for(int64_t i=0;stains.size()<Limit;++i) {
+      Stain s; s.bornAt = 10+i;
+      add(stains,next,s,10+i,true,body7);
+      }
+    require(evictIndex(stains,body7)==1,"the oldest stain but a living body's pool leaves first");
+    Stain extra; extra.bornAt = 100000;
+    add(stains,next,extra,100000,true,body7);
+    require(stains.size()==Limit && stains.front().id==poolId && stains[1].bornAt==11,
+            "a full world drops its oldest splash, not the pool of a body still there");
+    require(evictIndex(stains,noBody)==0,"once the body has left, its pool is the oldest stain and leaves first");
+    std::vector<Stain> pools(3,pool);
+    pools[0].bornAt = 30; pools[1].bornAt = 20; pools[2].bornAt = 25;
+    for(uint32_t i=0;i<3;++i) pools[i].id = i+1;
+    require(evictIndex(pools,body7)==1,"among pools of bodies still there, the oldest leaves");
+    require(evictIndex(std::vector<Stain>{},noBody)==0,"nothing to evict in an empty world");
+    }
+
+    // The minute sweep: past lifetime, or a pool whose body left; blood off clears all.
+    {
+    std::vector<Stain> stains(4);
+    stains[0].id = 1; stains[0].bornAt = 0;                         // outdoor, a day old
+    stains[1].id = 2; stains[1].bornAt = 0; stains[1].indoor = true; // indoor, a day old
+    stains[2].id = 3; stains[2].bornAt = 60*MinuteMs; stains[2].kind = Kind::Pool; stains[2].bodyId = 7;
+    stains[3].id = 4; stains[3].bornAt = 60*MinuteMs; stains[3].kind = Kind::Pool; stains[3].bodyId = 9;
+    auto kept = stains;
+    sweep(kept,LifetimeOutMs,true,body7);
+    require(kept.size()==2 && kept[0].id==2 && kept[1].id==3,
+            "the sweep takes the day-old outdoor stain and the pool of a body that left, keeps the rest");
+    kept = stains;
+    sweep(kept,0,false,body7);
+    require(kept.empty(),"blood OFF leaves no stain in the world");
+    }
+
+    // Grouping into `blood` traces: single linkage within 2 m, evidence only.
+    {
+    std::vector<Stain> stains(7);
+    const auto at = [&](size_t i, Vec3 p, float r, int64_t born) {
+      stains[i].id = uint32_t(i+1); stains[i].pos = p; stains[i].radiusCm = r; stains[i].bornAt = born;
+      };
+    at(0,{0,0,0},10,500);    // chain: 0 - 1 - 2, each link under 2 m, the ends 3.8 m apart
+    at(1,{190,0,0},30,300);
+    at(2,{380,0,0},15,900);
+    at(3,{1000,0,0},20,100); // alone
+    at(4,{1150,0,0},40,50);  // stone chips 1.5 m from it: no evidence, no link
+    stains[4].blood = Blood::Stone;
+    at(5,{3000,0,0},50,700); // a body's pool and a splash beside it
+    stains[5].kind = Kind::Pool; stains[5].bodyId = 7;
+    at(6,{3100,0,0},10,800);
+    const auto groups = evidenceGroups(stains,body7);
+    require(groups.size()==3,"three evidence groups: the chain, the lone splash, the body's blood");
+    require(groups[0].members==std::vector<size_t>{0,1,2},"single linkage joins a chain of stains under 2 m apart");
+    require(groups[0].oldest==1 && groups[0].largest==1 && groups[0].freshest==2,
+            "a group is named by its oldest stain, placed at its largest, aged by its freshest");
+    require(groups[1].members==std::vector<size_t>{3},"stone chips never join or form a trace");
+    require(groups[2].heldByBody,"a group with the pool of a body still there is that body's");
+    const auto traces = traceGroups(stains,true,body7);
+    require(traces.size()==2,"the body's blood gives no second find");
+    require(traceGroups(stains,true,noBody).size()==3,"once the body is gone, its blood is a trace of its own");
+    require(traceGroups(stains,false,noBody).empty(),"blood OFF: no blood traces");
+    std::vector<Stain> far(2);
+    far[0].pos = {0,0,0}; far[1].pos = {200.5f,0,0};
+    require(evidenceGroups(far,noBody).size()==2,"stains farther than 2 m are separate traces");
+    far[1].pos = {200,0,0};
+    require(evidenceGroups(far,noBody).size()==1,"stains exactly 2 m apart are one trace");
+    }
+
+    // Sight points: the centre and four rim points, 5 cm off the surface along its normal.
+    {
+    Stain s;
+    s.pos = {100,50,-20}; s.radiusCm = 30; s.normal = {0,1,0}; s.dir = {1,0,0};
+    const auto p = sightPoints(s);
+    requireNear(p[0].y,55.f,1e-3f,"the centre sight point is 5 cm above the stain");
+    for(size_t i=1;i<p.size();++i) {
+      requireNear((p[i]-p[0]).length(),30.f,1e-3f,"rim sight points lie on the radius");
+      requireNear(p[i].y,55.f,1e-3f,"rim sight points are lifted with the centre");
+      }
+    Stain wall = s;
+    wall.normal = {0,0,-2}; wall.dir = {0,0,1}; // a wall splash whose direction runs into the wall
+    const auto w = sightPoints(wall);
+    requireNear(w[0].z,-25.f,1e-3f,"a wall stain's sight points stand off the wall along its normal");
+    for(size_t i=1;i<w.size();++i)
+      requireNear(w[i].z,-25.f,1e-3f,"a wall stain's rim lies in the wall's plane");
+    }
     }
 
   void testBodyImpactDamage() {
@@ -5579,6 +5714,7 @@ int main() {
     testRagdollNoise();
     testBodyImpactDamage();
     testBodyTraces();
+    testBloodStains();
     testOffCenterImpulse();
     std::puts("Physics contracts passed");
     return EXIT_SUCCESS;

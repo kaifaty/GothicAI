@@ -308,6 +308,7 @@ inline void mark(std::string_view stage, double stageMs = -1, std::string_view e
   // Extra fields in order: landscape (main line), vob_near=... (vob
   // streaming), npc_full=... (NPC simulation tiers, world/npcsimtier.h).
   const auto npcStart=extra.find("npc_full=");
+  const auto logicStart=extra.find("npc_logic_samples=");
   const auto beforeNpc=extra.substr(0,npcStart);
   const auto vobStart=beforeNpc.find("vob_near=");
   const auto landscapeExtra=beforeNpc.substr(0,vobStart);
@@ -342,7 +343,9 @@ inline void mark(std::string_view stage, double stageMs = -1, std::string_view e
   if(vobStart!=std::string_view::npos)
     records("loadprobe-vob-streaming",beforeNpc.substr(vobStart));
   if(npcStart!=std::string_view::npos)
-    records("loadprobe-npc-tier",extra.substr(npcStart));
+    records("loadprobe-npc-tier",extra.substr(npcStart,logicStart==std::string_view::npos ? logicStart : logicStart-npcStart));
+  if(logicStart!=std::string_view::npos)
+    records("loadprobe-npc-logic",extra.substr(logicStart));
   const auto textures = Resources::textureStats();
   char textureBuf[512];
   std::snprintf(textureBuf,sizeof(textureBuf),

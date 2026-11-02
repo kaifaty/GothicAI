@@ -1,5 +1,7 @@
 # Test bench
 
+## Как работает сейчас
+
 Runs a scenario inside the game and records what happens: a video with a debug overlay, per-frame
 metrics and a report that points at suspicious frames. Built so that an agent can find bugs and edge
 cases of a mechanic (foot IK first) without a person watching the game.
@@ -20,6 +22,35 @@ or other Mac-only game paths require local execution (`auto` falls back, `ryzen`
 
 For performance comparisons (before/after or FPS), run both takes on the same machine:
 pin `BENCH_HOST=ryzen` or `BENCH_HOST=local`. `host.txt` and the report header identify the host.
+
+`game.log` must contain `[bench] done` for a complete scenario (including an explicit `quit`).
+Closing the window, a crash, `TIMEOUT` (default 300 seconds), or the stall watchdog before that marker
+returns code 1 and prints one reason with elapsed/limit seconds to stderr. Partial output still goes
+through `bench_report.py` and the existing scenario checks. Code 0 means completion and successful
+report/checks; code 2 covers invalid setup/options. Ryzen admission/transport codes are preserved;
+scenario interruption never returns the special codes 75 or 76. After the marker, closing or timing
+out a game left open by `KEEP=1` keeps the usual report/check exit status.
+
+With `OPENGOTHIC_BENCH_OUT`, the engine publishes `heartbeat.json` at scenario start and about every
+10 wall seconds, including long `wait` and `npcday` commands. It writes a temporary file and renames
+it over the previous pulse. Fields are `elapsed_seconds` since scenario start, `frame`, one-based
+`command_index`, `command_count`, full `command` text, and `game_time` (`day N HH:MM`). While `npcday`
+runs, `npcday_elapsed_minutes` and `npcday_target_minutes` give elapsed and requested game minutes.
+The pulse stops at completion; without the output environment variable it is not written.
+
+`BENCH_PROGRESS=300` prints one flushed stdout line every 300 wall seconds while the scenario runs,
+for example `bench: 28 min, command 5/5 npcday 1440, npcday 1060/1440 game min`. Before the first
+pulse it prints `bench: N min, starting (game.log X KB)`. The time prefix includes world loading.
+Game-minute counters in progress lines are integers; fractional minutes are omitted.
+`BENCH_PROGRESS=0` disables these lines. On Ryzen they appear during the game in `scripts/gq logs <id>`.
+
+`BENCH_STALL=600` terminates a live, unfinished game if neither the heartbeat nor any other output
+file changes for 600 wall seconds. Growing `game.log` counts as loading activity. The watchdog sends
+SIGTERM, waits up to 10 seconds, then sends SIGKILL and reaps the process; `TIMEOUT` uses the same
+bounded shutdown. `BENCH_STALL=0` disables the watchdog. The watchdog stops after `[bench] done`,
+including in `KEEP=1` mode. `BENCH_PROGRESS` and `BENCH_STALL` are forwarded to Ryzen like `TIMEOUT`.
+When it kills a stalled game, stderr says `bench: game stalled: no output or heartbeat for 600 s, killed`.
+Fake-game checks live in `scripts/tests/test_ryzen.py`; a short live bench checks the engine pulse.
 
 `streaming-flythrough` measures runtime GPU chunk streaming: a god-mode hero
 follows the existing WayMatrix path from `NW_CITY_MERCHANT_TRADE_04` through
@@ -71,6 +102,11 @@ range, it captures the first frame back in the market without waiting for Far pu
 Use `OPENGOTHIC_VOB_STREAMING=0` and `=1` to compare static vob residency. Claude compares
 the resulting frames on Mac.
 
+## План и журнал
+
+- 2026-11-02: require the completion marker, publish the engine heartbeat, stream progress and stop
+  stalled games before the outer Ryzen job limit; preserve reports from interrupted runs.
+
 ## Frame profile
 
 ### Как работает сейчас
@@ -109,12 +145,25 @@ The complete `<zone>` list (each produces all four columns above):
 `parallel_animation`, `native_export`, `forced_sync_animation`, `actor_animation_elapsed_sum`,
 `pose_elapsed_sum`, `palette_elapsed_sum`, `storage_join`, `storage_commit`, `storage_pack`,
 `storage_dispatch`, `storage_grow`, `storage_upload_execution_elapsed`, `bodynet`, `cloth`, `water`,
-`destruction`, `ai_bridge`, `sound`, `npc_full_tick`, `npc_simplified_tick`, `encode_shadows`, `encode_main`,
+`destruction`, `ai_bridge`, `sound`, `npc_full_tick`, `npc_simplified_tick`, `npc_logic_shadow`, `encode_shadows`, `encode_main`,
 `encode_water`, `encode_post`, `encode_ui`.
 
 `npc_full_tick` and `npc_simplified_tick` split the `Npc::tick` loop inside `world_logic` by NPC simulation
 tier (`common/world/npcsimtier.h`); their calls count runs of consecutive same-tier NPCs, not NPCs. The
 amounts `npc_full`, `npc_simplified` and `npc_tier_transitions` count NPCs per tier and tier changes.
+
+`OPENGOTHIC_NPC_LOGIC_AUDIT=1` enables the logical-body shadow audit (default 0). `npc_logic_shadow`
+measures clock advancement and mutation-input processing. Audit compares the previous forecast before
+applying the tick's inputs. `npc_logic_samples`, `npc_logic_body_samples`, `npc_logic_weapon_samples`,
+`npc_logic_body_mismatch` and `npc_logic_weapon_mismatch` count scalar comparisons after excluding fields
+changed by explicit inputs. Unknown natural-next observations are compared before their re-anchor and are
+not reported as lifecycle matches.
+`npc_logic_early`/`npc_logic_late` observe real layer removals; `npc_logic_wait_early`/`npc_logic_wait_late`
+observe native wait releases independently. `npc_logic_reanchored` counts executor inputs by kind in JSON.
+`npc_logic_events` and `npc_logic_event_mismatch` count events, with a mismatch only beyond one world step.
+Full event schedules are audit-only; the default state retains the minimal weapon-event clock. During `npcday`,
+timing also runs with the audit disabled so the default path can be measured separately. The `npcday` summary
+adds `logic_audit`, including action/animation breakdowns and prediction-error percentiles; the parity comparer reads its named gameplay fields and ignores these diagnostics.
 
 `bodynet` sums the full local P30 policy step over active NPCs; service policies do not enter it.
 `cloth` covers main-thread preparation and the 30 Hz solver/finish; `water` sums main-thread buoyancy
@@ -876,6 +925,48 @@ python3 scripts/body_traces_compare.py /abs/out/on /abs/out/reload
 main from before body traces to get `session-legacy.sav` (a dead person and a wolf);
 `SAVE=<that>/session-legacy.sav scripts/bench.sh body-traces-legacy` loads it with
 the current build: old bodies get an id, `age: null`, and a lifetime from the load.
+
+`blood-stains.bench` checks blood stains as records and `blood` traces (stage 8, step 4c)
+on a fresh `WORLD=NEWWORLD.ZEN` in the Xardas valley. The native fixture `blood_stains`
+(`common/game/bloodstainsbench.cpp`) kills a person 7 m ahead of the hero and lays his
+pool with a splash beside it, two splashes 1.2 m apart, one 9 m away, a meatbug's yellow
+stain with a golem's stone chips 1 m from it, and a splash recorded indoors. `check
+<label>` reads `World::physicsTraces` and fails the run on the first unmet rule: the pair
+is one trace named by its older stain, placed at its larger and aged by its fresher; the
+body's blood and the stone chips are no trace; `body gone` removes the body, and its pool
+leaves with it while the splash beside it becomes a trace; `advance <minutes>` moves the
+clock alone: after a game day only the indoor stain is left, after three days none. OFF
+(`BLOOD=0`) there are no stains and no traces. `save created` writes `session-created.sav`;
+`blood-stains-reload.bench` loads it in a fresh process, and
+`scripts/blood_stains_compare.py` checks the same ids, positions, birth times, trace ids
+and an age that continues from the saved clock. Marvin `blood <waypoint> [pool|splash]
+[radius_cm]` lays a stain by hand; `[GAME] blood` defaults to 1, Marvin `toggle blood`
+changes it during play.
+
+```bash
+WORLD=NEWWORLD.ZEN scripts/bench.sh blood-stains /abs/out/on
+WORLD=NEWWORLD.ZEN BLOOD=0 scripts/bench.sh blood-stains /abs/out/off
+SAVE=/abs/out/on/session-created.sav scripts/bench.sh blood-stains-reload /abs/out/reload
+python3 scripts/blood_stains_compare.py /abs/out/on /abs/out/reload
+```
+
+How blood looks: `blood-probe.bench` lays a pool by hand on Onar's field at 06:00 and shoots it at
+noon and at 18:00 (does a decal draw, and how it dries). `blood-look.bench` lays a pool and a splash on
+the field, then a paladin kills a bandit there and on the harbour pier: a clip of each fight, a clip of
+the pool spreading (`cam follow` keeps the dead bandit by pointer; `cam two`/`cam face` look for a
+living npc of that name and lose him), stills 5 min, 1 h, 6 h and 10 h later in daylight. A `shot`
+is written at the end of its frame, so each one waits before the clock moves. `blood-cost.bench` lays
+256 stains (`blood_stains fill 256 125`, a 20 m grid round the hero) and measures 30 s of normal app
+cadence (`blood_stains measure` starts the window); it needs a build with
+`OPENGOTHIC_ENABLE_APP_CADENCE=ON`, and `OPENGOTHIC_GPU_PASSES=1` on a frame-profile build gives the
+"Blood decals" pass alone.
+
+```bash
+WORLD=NEWWORLD.ZEN BENCH_HOST=local scripts/bench.sh blood-look /abs/out/look
+GAME_BIN=OpenGothic/build-profile-on/opengothic/Gothic2Notr BLOOD=1 WORLD=NEWWORLD.ZEN BENCH_HOST=local scripts/bench.sh blood-cost /abs/out/on
+GAME_BIN=OpenGothic/build-profile-on/opengothic/Gothic2Notr BLOOD=0 WORLD=NEWWORLD.ZEN BENCH_HOST=local scripts/bench.sh blood-cost /abs/out/off
+python3 scripts/blood_cost_read.py /abs/out/on -- /abs/out/off
+```
 
 For stage 2, `ragdoll.bench` exercises death, sleeping/wake, controlled unconscious recovery,
 slopes, stairs, a cliff and the human/Wolf/Scavenger/Molerat/Orc models. Run it with

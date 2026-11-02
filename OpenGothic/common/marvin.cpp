@@ -6,6 +6,7 @@
 
 #include "utils/string_frm.h"
 #include "world/objects/npc.h"
+#include "world/world.h"
 #include "world/objects/item.h"
 #include "world/triggers/abstracttrigger.h"
 #include "graphics/mesh/footik.h"
@@ -118,6 +119,7 @@ Marvin::Marvin() {
     {"ztoggle tnl",                C_Invalid},
     {"ztoggle vobbox",             C_ToggleVobBox},
     {"toggle melee_blade_draw",    C_ToggleMeleeBladeDraw},
+    {"toggle melee_blade_labels",  C_ToggleMeleeBladeLabels},
     {"zvideores %d %d %d",         C_Invalid},
 
     // game
@@ -186,6 +188,9 @@ Marvin::Marvin() {
     {"toggle spell_physics",      C_ToggleSpellPhysics},
     {"toggle body_impact_damage", C_ToggleBodyImpactDamage},
     {"toggle body_traces",        C_ToggleBodyTraces},
+    {"toggle blood",              C_ToggleBlood},
+    // blood <waypoint> [pool|splash] [radius_cm]: a stain on the ground at the point (empty: splash, default size)
+    {"blood %s %s %d",            C_Blood},
     {"toggle movable_vobs",       C_ToggleMovableVobs},
     {"toggle item_hulls",         C_ToggleItemHulls},
     {"toggle item_deepest_contact",C_ToggleItemDeepestContact},
@@ -448,6 +453,10 @@ bool Marvin::exec(std::string_view v) {
       Gothic::inst().setMeleeBladeDraw(!Gothic::inst().doMeleeBladeDraw());
       return true;
       }
+    case C_ToggleMeleeBladeLabels:{
+      Gothic::inst().setMeleeBladeLabels(!Gothic::inst().doMeleeBladeLabels());
+      return true;
+      }
     case C_ToggleTime:{
       Gothic::inst().setClock(!Gothic::inst().doClock());
       return true;
@@ -620,6 +629,39 @@ bool Marvin::exec(std::string_view v) {
     case C_ToggleBodyTraces:
       Gothic::settingsSetI("GAME","body_traces",Gothic::settingsGetI("GAME","body_traces")==0 ? 1 : 0);
       return true;
+    case C_ToggleBlood: {
+      const bool enabled = Gothic::settingsGetI("GAME","blood")==0;
+      Gothic::settingsSetI("GAME","blood",enabled ? 1 : 0);
+      print(enabled ? "Blood: ON" : "Blood: OFF");
+      return true;
+      }
+    case C_Blood: {
+      World* world = Gothic::inst().world();
+      if(world==nullptr)
+        return false;
+      const auto* point = world->findPoint(ret.argv[0],false);
+      const auto  kind  = ret.argv[1];
+      if(point==nullptr || (!kind.empty() && kind!="pool" && kind!="splash")) {
+        print("blood <waypoint> [pool|splash] [radius_cm]");
+        return false;
+        }
+      const bool pool   = kind=="pool";
+      float      radius = pool ? 40.f : 15.f;
+      if(!ret.argv[2].empty()) {
+        int value = 0;
+        auto err  = std::from_chars(ret.argv[2].data(),ret.argv[2].data()+ret.argv[2].size(),value).ec;
+        if(err!=std::errc() || value<=0) {
+          print("blood: radius_cm must be a positive number");
+          return false;
+          }
+        radius = float(value);
+        }
+      const auto id = world->placeBloodStain(point->position(),pool ? BloodStains::Kind::Pool : BloodStains::Kind::Splash,radius);
+      if(id!=0)
+        print("blood stain "+std::to_string(id)+" at "+point->name); else
+        print("blood: none placed (off, or no ground)");
+      return id!=0;
+      }
     case C_ToggleMovableVobs:
       Gothic::settingsSetI("GAME","movable_vobs",Gothic::settingsGetI("GAME","movable_vobs")==0 ? 1 : 0);
       return true;

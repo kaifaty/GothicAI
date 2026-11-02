@@ -18,7 +18,9 @@ OWN_ROOF_HOLE_SHADE and OWN_ROOF_HOLE_WALL come from roof_hole_shade.py.
 The converted chunk is Gothic content (a derivative, user's decision 2026-10-24): it stays outside git.
 """
 import json
+import math
 from pathlib import Path
+import sys
 
 import bmesh
 import bpy
@@ -26,11 +28,15 @@ from mathutils import Vector
 from mathutils.bvhtree import BVHTree
 from mathutils.geometry import tessellate_polygon
 
-from world_bpy import gothic_name, to_gothic
+from world_bpy import SurfaceLight, added_vertices, gothic_name, keep_own_light, position_key, to_gothic
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import chunk_glb  # noqa: E402
 
 ROOF = 'NW_CITY_ROOF_01'
 INSIDE = 'ROOF_INSIDE_01'      # the inside skin's material ends with this (sector prefixes differ per hut)
 WOOD = 'NW_CITY_WOODBEAM_02'   # sides of the hole, lath and rafter: the roof's own timber
+WOOD_FROM = '0_-1'             # a base chunk holding WOOD's record, for the chunks that have none (the lighthouse)
 BOX = (2570.0, 4930.0, -4490.0, -1990.0)   # block B037 in Gothic cm (x0, x1, z0, z1): census of the harbour
 LATH = (10.0, 4.0)             # cm: width down the slope, depth (shingle_bake.py LATH)
 RAFTER = (16.0, 20.0)          # cm: width across, depth (shingle_bake.py RAFTER)
@@ -39,9 +45,14 @@ SINK = 2.0                     # cm under the shingles: a panel is two triangles
 OVER = 5.0                     # cm the cutter stands out of each skin
 SEAM = .8                      # cm the sides of a hole reach past its cut edge
 MIN_SHARE = .3                 # a hole clipped by its panel's edge to less than this share is left painted
+MIN_SHARE_TILES = .6           # the same in the city: on the big roofs' fans a clipped hole is a slit along a seam
+MATE_ANGLE = math.radians(4)   # the city: a triangle sharing an edge is the panel's mate only in (nearly) its plane;
+                               # across a ridge or a bend a hole cut through both broke (reviewers, 2026-11-02)
 WOOD_UV = 150.0                # cm of wood per texture repeat along the grain
 SHADE = 'OWN_ROOF_HOLE_SHADE'  # multiply face at the bottom of a hole, facing out (roof_hole_shade.py)
 WALL = 'OWN_ROOF_HOLE_WALL'    # sides of a hole: the roof's timber darkened, the cavity under the shingles
+DARK = 'OWN_ROOF_HOLE_DARK'    # closed bottom of a hole with no inside skin under it: the dark attic (roof_hole_shade.py)
+CLOSED_DEPTH = 30.0            # cm under the shingles of a closed bottom: the huts' skins are 15-55 cm apart
 HOLES = Path(__file__).resolve().parents[3] / 'data/content/world/roof01-holes.json'
 INPUTS = [HOLES]
 PARAMETERS = {'box_cm': list(BOX), 'lath_cm': list(LATH), 'rafter_cm': list(RAFTER), 'reach_cm': REACH,
@@ -113,14 +124,42 @@ class Panel:
         """Where UV t lies on the panel: through the triangle of the panel that holds it, as the texture does."""
         return max([self] + self.mates, key=lambda q: q.inside(t)).affine(t)
 
+    def holds(self, t):
+        """t lies on the panel: in this triangle or in one of its mates."""
+        return max(q.inside(t) for q in [self] + self.mates) >= -1e-4
 
-def edit(ctx, box=BOX):
+
+def mapped(face, uv):
+    """The face's texture mapping can be inverted: its UVs do not lie on one line."""
+    lp = face.loops
+    t1, t2 = lp[1][uv].uv - lp[0][uv].uv, lp[2][uv].uv - lp[0][uv].uv
+    return abs(t1.x * t2.y - t1.y * t2.x) > 1e-9
+
+
+def edit(ctx, box=BOX, tiles=False, dark=None, max_gap=None):
+    """Cut the holes of every roof panel in `box`.
+
+    The pilot (B037) runs with the defaults. city_roof_holes.py adds: `tiles` - a panel's UV may span several
+    squares of the texture (the big roofs): every copy of the five holes on it is cut; a hole that runs off the
+    panel's triangles (a panel split by the chunk border) stays painted. `dark` - a hole with no inside skin under
+    it gets a closed bottom of this material CLOSED_DEPTH under the shingles, not an opening into the void.
+    `max_gap` - an inside skin farther than this under a hole is another building's: the hole has none."""
     holes = json.loads(HOLES.read_text())['holes']
+    # what the edits before this one added (a stair): this edit lights only its own vertices
+    earlier = {position_key(co) for co in added_vertices(ctx.mesh).values()} if tiles else set()
     obj = ctx.obj
     me = ctx.mesh
     names = [gothic_name(m) for m in me.materials]
     roof_slot = names.index(ROOF)
-    wood_slot = names.index(WOOD)
+    if WOOD in names:
+        wood_slot = names.index(WOOD)
+    else:
+        doc, _ = chunk_glb.read_glb(Path(ctx.base_chunks) / f'{WOOD_FROM}.glb')
+        m = bpy.data.materials.new(WOOD)
+        m['gothic'] = next(r['extras']['gothic'] for r in doc['materials'] if r.get('name') == WOOD)
+        me.materials.append(m)
+        wood_slot = len(me.materials) - 1
+        names.append(WOOD)
     # the shade: the wood's record with its own name and texture, multiply blend, no collision, no source index
     def own_material(name, **fields):
         m = bpy.data.materials.new(name)
@@ -132,6 +171,7 @@ def edit(ctx, box=BOX):
         return len(me.materials) - 1
     shade_slot = own_material(SHADE, alpha_func=5, disable_collision=True, color=[128, 128, 128, 255])
     wall_slot = own_material(WALL)
+    dark_slot = own_material(dark, disable_collision=True) if dark else None
     uv_name = me.uv_layers.active.name
     color_name = me.color_attributes.active_color.name if me.color_attributes.active_color else None
     old_normals = [Vector(n.vector) for n in me.corner_normals]
@@ -147,37 +187,52 @@ def edit(ctx, box=BOX):
     outer = [f for f in bm.faces if f.material_index == roof_slot and in_box(f)]
     inner = [f for f in bm.faces if names[f.material_index].endswith(INSIDE) and in_box(f)]
     inner_tree = BVHTree.FromPolygons([v.co for v in bm.verts], [[v.index for v in f.verts] for f in inner]) if inner else None
-    panels = [Panel(f, uv) for f in outer]
+    # in the city some ROOF_01 faces look down (the underside of an eave): no hole is cut from below
+    panels = [Panel(f, uv) for f in outer if mapped(f, uv) and (not tiles or f.normal.z > .2)]
+    if tiles:
+        # the shingles before the cut: a beam must lie under them everywhere (the big roofs bend between triangles)
+        bm.verts.index_update()
+        outer_tree = BVHTree.FromPolygons([v.co.copy() for v in bm.verts], [[v.index for v in f.verts] for f in outer])
     pos_key = lambda co: tuple(round(x, 3) for x in co)
     by_vert = {}
     for p in panels:
         for v in p.face.verts:
             by_vert.setdefault(pos_key(v.co), []).append(p)
 
-    cutters = []    # (outer polygon, inner polygon, panel, hole)
+    cutters = []    # (outer polygon, inner polygon, panel, hole, gap, cut in UV, cutter's depth, hole's square)
+    off_panel = 0
     for p in panels:
         # the panel's UV rectangle: this triangle and the one sharing its long edge
         mates = {q for v in p.face.verts for q in by_vert[pos_key(v.co)]
-                 if q is not p and sum(pos_key(w.co) in {pos_key(x.co) for x in p.face.verts} for w in q.face.verts) == 2}
+                 if q is not p and sum(pos_key(w.co) in {pos_key(x.co) for x in p.face.verts} for w in q.face.verts) == 2
+                 and (not tiles or q.normal.angle(p.normal, 0.0) < MATE_ANGLE)}
         p.mates = list(mates)
         uvs = p.uvs + [t for q in mates for t in q.uvs]
         u0, u1 = min(t.x for t in uvs) + .003, max(t.x for t in uvs) - .003
         v0, v1 = min(t.y for t in uvs) + .003, max(t.y for t in uvs) - .003
-        for h in holes:
-            poly = [Vector((u, 1.0 - v)) for u, v in h['outline']]     # Blender stores 1 - v
+        # the squares of the texture the panel spans, in glTF UV (v from the top; Blender stores 1 - v)
+        squares = [(iu, iv) for iu in range(math.floor(u0) - 1, math.floor(u1) + 1)
+                   for iv in range(math.floor(1 - v1) - 1, math.floor(1 - v0) + 1)] if tiles else [(0, 0)]
+        for (iu, iv), h in ((s, h) for s in squares for h in holes):
+            poly = [Vector((u + iu, 1.0 - (v + iv))) for u, v in h['outline']]
             if area2(poly) < 0:
                 poly.reverse()
             centre = sum(poly, Vector((0, 0))) / len(poly)
             if not p.contains(centre):
                 continue
             cut = clip(poly, u0, u1, v0, v1)
-            if len(cut) < 3 or abs(area2(cut)) < MIN_SHARE * abs(area2(poly)):
+            if len(cut) < 3 or abs(area2(cut)) < (MIN_SHARE_TILES if tiles else MIN_SHARE) * abs(area2(poly)):
+                continue
+            if tiles and not all(p.holds(t) for t in cut):
+                off_panel += 1
                 continue
             top = [p.point(t) for t in cut]
             n = p.normal
             mid = sum(top, Vector()) / len(top)
             hit = inner_tree.ray_cast(mid - n * .1, -n, 200.0) if inner_tree else (None,)
             gap = (hit[3] + .1) if hit[0] is not None else None
+            if gap is not None and max_gap is not None and gap > max_gap:
+                gap = None
             if gap is not None:
                 # the inside skin is not quite parallel: the shade and the sides stop above its nearest point,
                 # the cutter goes past its farthest (near the eaves there may be no inside skin at all)
@@ -187,14 +242,16 @@ def edit(ctx, box=BOX):
                 reach = max(depths + [gap])
             else:
                 reach = 10.0
-            bottom = [q - n * (gap or 10.0) for q in top]
+            bottom = [q - n * (gap or (CLOSED_DEPTH if dark else 10.0)) for q in top]
             deep = [q - n * reach for q in top]
-            cutters.append((top, bottom, p, h, gap, cut, deep))
+            cutters.append((top, bottom, p, h, gap, cut, deep, (iu, iv)))
             g, gn = to_gothic(mid), to_gothic(n)
             print(f'hole {h["box"][0]:.2f}: centre {g.x:.0f} {g.y:.0f} {g.z:.0f} cm, normal {gn.x:.2f} {gn.y:.2f} {gn.z:.2f}, '
                   f'size {max(t.x for t in cut) * p.du.length - min(t.x for t in cut) * p.du.length:.0f} x '
                   f'{max(t.y for t in cut) * p.dv.length - min(t.y for t in cut) * p.dv.length:.0f} cm, gap {gap and round(gap)} cm')
-    print(f'{len(panels)} roof triangles, {len(inner)} inside triangles, {len(cutters)} holes cut')
+    closed = sum(1 for c in cutters if c[4] is None) if dark else 0
+    print(f'{len(panels)} roof triangles, {len(inner)} inside triangles, {len(cutters)} holes cut'
+          + (f', {closed} with a closed bottom, {off_panel} off their panel left painted' if tiles or dark else ''))
 
     # --- cut both skins with the prisms (exact boolean on a copy holding only the roof's faces)
     roof_faces = set(outer) | set(inner)
@@ -216,7 +273,7 @@ def edit(ctx, box=BOX):
     bpy.context.scene.collection.objects.link(roof_obj)
     cm = bpy.data.meshes.new('cutter')
     cbm = bmesh.new()
-    for top, bottom, p, h, gap, cut, deep in cutters:
+    for top, bottom, p, h, gap, cut, deep, _ in cutters:
         n = p.normal
         a = [cbm.verts.new(q + n * OVER) for q in top]
         b = [cbm.verts.new(q - n * OVER) for q in deep]
@@ -239,6 +296,12 @@ def edit(ctx, box=BOX):
 
     # --- put the cut roof back: original vertices where positions match, new ones marked -1
     old_planes = [(f.normal.copy(), f.calc_center_median().copy()) for f in roof_faces]
+    # a piece of a skin lies on its old face, not only in its plane: with many roofs in the box a face of the
+    # cutter can lie in the plane of another hut's panel (the huts are copies of one another)
+    skins = list(roof_faces)
+    bm.verts.index_update()
+    skin_tree = BVHTree.FromPolygons([v.co for v in bm.verts], [[v.index for v in f.verts] for f in skins])
+    skin_normals = [f.normal.copy() for f in skins]       # the faces are deleted before the test
     # the skins come back cut: their old outline may open where the cut moved it
     ctx.allow_open(roof_faces, 'outline of the roof skins before the cut')
     built = []
@@ -280,6 +343,8 @@ def edit(ctx, box=BOX):
         c, nn = f.calc_center_median(), f.normal
         if not any(abs((c - o).dot(on)) < .5 and abs(nn.dot(on)) > .99 for on, o in old_planes):
             continue          # a face of the cutter, not of the skins
+        if not any(abs(nn.dot(skin_normals[k])) > .99 for _, _, k, _ in skin_tree.find_nearest_range(c, .5)):
+            continue          # a face of the cutter in the plane of another roof
         pairs = []     # merged positions can repeat a vertex: drop the repeats
         for lp in f.loops:
             w = vmap[lp.vert]
@@ -327,12 +392,20 @@ def edit(ctx, box=BOX):
             lp[loop_index] = -1
         return f
 
-    def beam(origin, along, across, down, length, width, depth):
+    dropped = [0]
+
+    def beam(origin, along, across, down, length, width, depth, floor=None):
         """A box: origin at the top centre of one end; `along` the grain, `across`, `down` (unit vectors)."""
         a0 = origin - across * (width / 2)
         corners = lambda s: [a0 + along * s, a0 + along * s + across * width,
                              a0 + along * s + across * width + down * depth, a0 + along * s + down * depth]
         e0, e1 = corners(0), corners(length)
+        if tiles and not (all(outer_tree.ray_cast(q, -down, 40.0)[0] is not None for q in e0[:2] + e1[:2])
+                          and all(outer_tree.ray_cast(q, -down, floor - 1.0)[0] is not None for q in e0[2:] + e1[2:])):
+            # a top corner is not under the shingles, or a bottom one under the hole's floor: on a bent panel the
+            # beam stood out of the roof or through the floor (a rafter broken into triangles, reviewers 2026-11-02)
+            dropped[0] += 1
+            return
         L = length / WOOD_UV
         sides = [(e0[0], e0[1], e1[1], e1[0], -down), (e0[1], e0[2], e1[2], e1[1], across),
                  (e0[2], e0[3], e1[3], e1[2], down), (e0[3], e0[0], e1[0], e1[3], -across)]
@@ -342,10 +415,11 @@ def edit(ctx, box=BOX):
         for e, facing in ((e0, -along), (e1, along)):
             quad(e, [Vector((0, 0)), Vector((.02, 0)), Vector((.02, .02)), Vector((0, .02))], facing)
 
-    for top, bottom, p, h, gap, cut, deep in cutters:
+    for top, bottom, p, h, gap, cut, deep, (iu, iv) in cutters:
         n = p.normal
         centre = sum(top, Vector()) / len(top)
         run = 0.0
+        depth = gap or (CLOSED_DEPTH if dark else 10)
         def out(q):
             d = q - centre
             d -= n * d.dot(n)
@@ -359,33 +433,55 @@ def edit(ctx, box=BOX):
             facing = (centre - (a + b) / 2)
             facing -= n * facing.dot(n)
             quad([a, b, c, d], [Vector((run / WOOD_UV, 0)), Vector(((run + edge) / WOOD_UV, 0)),
-                                Vector(((run + edge) / WOOD_UV, (gap or 10) / WOOD_UV)),
-                                Vector((run / WOOD_UV, (gap or 10) / WOOD_UV))], facing, wall_slot)
+                                Vector(((run + edge) / WOOD_UV, depth / WOOD_UV)),
+                                Vector((run / WOOD_UV, depth / WOOD_UV))], facing, wall_slot)
             run += edge
         depth_room = (gap or 30.0) - 3.0
-        # the shade over the hut's lit interior: a centimetre above the inside skin, seen only from outside
+        # the stepped outline is concave: triangulate it flat in the panel's UV, not as one n-gon
         if gap is not None:
+            # the shade over the hut's lit interior: a centimetre above the inside skin, seen only from outside
             veil = [q + n * 1.0 for q in bottom]
-            # the stepped outline is concave: triangulate it flat in the panel's UV, not as one n-gon
             for tri in tessellate_polygon([[(t.x, t.y, 0.0) for t in cut]]):
                 quad([veil[k] for k in tri], [Vector((0, 0))] * 3, n, shade_slot)
+        elif dark:
+            # no inside skin under the hole: the dark of the attic closes it where the sides end
+            for tri in tessellate_polygon([[(t.x, t.y, 0.0) for t in cut]]):
+                quad([bot_o[k] for k in tri], [Vector((0, 0))] * 3, n, dark_slot)
         across_u = p.du.normalized()           # along the courses
         down_v = p.dv.normalized()             # V grows up the slope in Blender's UV
-        us = [t.x for t in [Vector((u, 1 - v)) for u, v in h['outline']]]
-        vs = [1 - v for u, v in h['outline']]
-        if h.get('lath_v') is not None:
-            lv = 1.0 - h['lath_v']
-            t0 = Vector((min(us), lv))
-            start = p.point(t0) - across_u * REACH
-            length = (max(us) - min(us)) * p.du.length + 2 * REACH
-            beam(start - n * SINK, across_u, down_v, -n, length, LATH[0], min(LATH[1], depth_room))
-        if h.get('rafter_u') is not None:
-            t0 = Vector((h['rafter_u'], min(vs)))
-            start = p.point(t0) - down_v * REACH
-            length = (max(vs) - min(vs)) * p.dv.length + 2 * REACH
-            top_off = LATH[1] + SINK
-            beam(start - n * top_off, down_v, across_u, -n, length, RAFTER[0], min(RAFTER[1], depth_room - LATH[1]))
+        if tiles:
+            # the beams run under the part of the hole that is cut, and on past it only while the panel goes on:
+            # under a panel of another slope they would stand out of the roof (the big roofs, 2026-11-02)
+            us, vs = [t.x for t in cut], [t.y for t in cut]
+        else:
+            us = [t.x for t in [Vector((u + iu, 1 - (v + iv))) for u, v in h['outline']]]
+            vs = [1 - (v + iv) for u, v in h['outline']]
 
+        def reach(a, b):
+            return REACH if not tiles or (p.holds(a) and p.holds(b)) else 0.0
+        if h.get('lath_v') is not None:
+            lv = 1.0 - (h['lath_v'] + iv)
+            ru = REACH / p.du.length
+            r = reach(Vector((min(us) - ru, lv)), Vector((max(us) + ru, lv)))
+            if not tiles or min(vs) <= lv <= max(vs):
+                t0 = Vector((min(us), lv))
+                start = p.point(t0) - across_u * r
+                length = (max(us) - min(us)) * p.du.length + 2 * r
+                beam(start - n * SINK, across_u, down_v, -n, length, LATH[0], min(LATH[1], depth_room), depth)
+        if h.get('rafter_u') is not None:
+            uu = h['rafter_u'] + iu
+            rv = REACH / p.dv.length
+            r = reach(Vector((uu, min(vs) - rv)), Vector((uu, max(vs) + rv)))
+            if not tiles or min(us) <= uu <= max(us):
+                t0 = Vector((uu, min(vs)))
+                start = p.point(t0) - down_v * r
+                length = (max(vs) - min(vs)) * p.dv.length + 2 * r
+                top_off = LATH[1] + SINK
+                beam(start - n * top_off, down_v, across_u, -n, length, RAFTER[0], min(RAFTER[1], depth_room - LATH[1]),
+                     depth)
+
+    if tiles:
+        print(f'{dropped[0]} laths and rafters left out: not under the shingles everywhere')
     # the edges of the holes, the sides standing on their own, the free laths and rafters
     ctx.allow_open(built, 'cut edges of the holes, their sides, laths and rafters')
     bm.to_mesh(me)
@@ -398,14 +494,29 @@ def edit(ctx, box=BOX):
     for poly in me.polygons:
         for k in poly.loop_indices:
             poly_of_loop[k] = poly.index
+    if tiles:
+        skins = SurfaceLight(ctx.underlay, lambda name: name == ROOF or name.endswith(INSIDE))
+        shingles = SurfaceLight(ctx.underlay, lambda name: name == ROOF)
+        skin = {i for i, m in enumerate(me.materials) if gothic_name(m) == ROOF or gothic_name(m).endswith(INSIDE)}
     normals = []
     for k in range(len(me.loops)):
         old = li[k].value
-        normals.append(old_normals[old] if old >= 0 else Vector(me.polygons[poly_of_loop[k]].normal))
+        poly = me.polygons[poly_of_loop[k]]
+        smooth = None
+        if old < 0 and tiles and poly.material_index in skin:
+            # a cut skin keeps the smooth normal of the panel it lies on: a face normal shaded the big roofs darker
+            smooth = skins.normal_at(me.vertices[me.loops[k].vertex_index].co, within=.5)
+        normals.append(old_normals[old] if old >= 0 else smooth or Vector(poly.normal))
     me.normals_split_custom_set(normals)
     me.attributes.remove(me.attributes['loop_index'])
     for o in (roof_obj, cutter):
         bpy.data.objects.remove(o)
+    if tiles:
+        # the cut skins take the light of the face they lie on, the hole's timber that of the shingles above it
+        light = {v: skins.at(co, within=.5) or shingles.at(co) for v, co in added_vertices(me).items()
+                 if position_key(co) not in earlier}
+        keep_own_light(me, {v: c for v, c in light.items() if c is not None})
+        print(f'{len(light)} new vertices lit from the roof surface')
 
     tris = sum(len(poly.vertices) - 2 for poly in me.polygons)
     print(f'chunk: {len(me.polygons)} faces, {tris} triangles after the roof holes')
