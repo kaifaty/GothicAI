@@ -281,23 +281,23 @@ def replace_metrics(body: str, item: dict, config: dict, previous: dict | None =
     return DATA.sub(lambda _: data_marker(item, config), updated, count=1)
 
 
-def sync(findings: list[dict], config: dict, client, *, apply: bool = False) -> list[dict]:
+def read_issues(client) -> tuple[dict, list[dict], dict]:
     # Materialize and validate all reads before building or applying any writes.
     issues = list(client.list_issues())
     labels = list(client.list_labels())
     if any(not isinstance(label, dict) or not isinstance(label.get("name"), str) for label in labels):
         raise ValueError("Incomplete GitHub label listing")
     grouped = {}
-    seen = set()
+    by_number = {}
     for issue in issues:
         if "pull_request" in issue:
             continue
-        if (not isinstance(issue.get("number"), int) or issue["number"] in seen
+        if (not isinstance(issue.get("number"), int) or issue["number"] in by_number
                 or issue.get("state") not in {"open", "closed"}
                 or "state_reason" not in issue or not isinstance(issue.get("labels"), list)
                 or "body" not in issue or not isinstance(issue["body"], (str, type(None)))):
             raise ValueError("Incomplete GitHub issue listing")
-        seen.add(issue["number"])
+        by_number[issue["number"]] = issue
         for key in set(KEY.findall(issue["body"] or "")):
             grouped.setdefault(key, []).append(issue)
     by_key = {}
@@ -313,6 +313,11 @@ def sync(findings: list[dict], config: dict, client, *, apply: bool = False) -> 
             raise ValueError(f"Multiple issues with debt key: {key}")
         if owners:
             by_key[key] = owners[0]
+    return by_number, labels, by_key
+
+
+def sync(findings: list[dict], config: dict, client, *, apply: bool = False) -> list[dict]:
+    _, labels, by_key = read_issues(client)
     current = {item["key"]: item for item in findings}
     plan = []
     operations = []
@@ -388,8 +393,216 @@ def sync(findings: list[dict], config: dict, client, *, apply: bool = False) -> 
     return plan
 
 
+def load_audit(path: Path) -> dict:
+    text = path.read_text(encoding="utf-8")
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        openings = re.findall(r"^ {0,3}```json[ \t]*\r?$", text, re.MULTILINE)
+        blocks = re.findall(r"^ {0,3}```json[ \t]*\r?\n(.*?)^ {0,3}```[ \t]*\r?$",
+                            text, re.MULTILINE | re.DOTALL)
+        if len(openings) != 1 or len(blocks) != 1:
+            raise ValueError(f"Expected JSON or exactly one json block: {path}") from None
+        return json.loads(blocks[0])
+
+
+def audit_path(path: str, config: dict) -> None:
+    if (not isinstance(path, str) or not path or path.startswith("/")
+            or any(part in {"", ".", ".."} for part in path.split("/"))
+            or any(char in path for char in "\r\n\0")):
+        raise ValueError(f"Invalid repository path: {path!r}")
+    if any(path == prefix or path.startswith(prefix + "/") for prefix in config["exclude"]):
+        raise ValueError(f"Excluded path: {path}")
+
+
+def validate_audit_finding(root: Path, item: dict, head: str, config: dict) -> str:
+    if not isinstance(item, dict):
+        raise ValueError("Finding must be an object")
+    for field in ("kind", "path", "symbol", "severity", "title", "what", "interest", "fix", "size", "match"):
+        if not isinstance(item.get(field), str) or not item[field].strip():
+            raise ValueError(f"Missing or invalid field: {field}")
+    for field, allowed in (("kind", config["kinds"]), ("severity", {"high", "medium"}),
+                           ("size", {"S", "M", "L"})):
+        if item[field] not in allowed:
+            raise ValueError(f"Invalid {field}: {item[field]}")
+    if item["match"] != "new" and not re.fullmatch(r"#[1-9][0-9]*", item["match"]):
+        raise ValueError(f"Invalid match: {item['match']}")
+    if (not isinstance(item.get("prs"), list)
+            or any(type(number) is not int or number < 1 for number in item["prs"])):
+        raise ValueError("Missing or invalid field: prs")
+    evidence = item.get("evidence")
+    if not isinstance(evidence, list) or not 1 <= len(evidence) <= 4:
+        raise ValueError("Evidence must contain 1-4 citations")
+    audit_path(item["path"], config)
+    for citation in evidence:
+        if not isinstance(citation, dict):
+            raise ValueError("Citation must be an object")
+        audit_path(citation.get("path"), config)
+        if not isinstance(citation.get("note"), str) or not citation["note"].strip():
+            raise ValueError("Missing or invalid citation note")
+        start, end = citation.get("start"), citation.get("end")
+        if type(start) is not int or type(end) is not int or not 1 <= start <= end:
+            raise ValueError("Invalid citation lines: require 1 <= start <= end")
+        try:
+            content = git(root, "cat-file", "blob", f"{head}:{citation['path']}")
+        except subprocess.CalledProcessError:
+            raise ValueError(f"Citation file missing at {head}: {citation['path']}") from None
+        if end > len(content.splitlines()):
+            raise ValueError(f"Citation lines outside file at {head}: {citation['path']}")
+    return f"codex:{item['kind']}:{item['path']}#{item['symbol']}"
+
+
+def codex_issue_body(item: dict, audit: dict, repository: str, key: str) -> str:
+    citations = "\n".join(
+        f"- [{quote['path']}:{quote['start']}-{quote['end']}]"
+        f"(https://github.com/{repository}/blob/{audit['head']}/{quote['path']}"
+        f"#L{quote['start']}-L{quote['end']}): {quote['note']}"
+        for quote in item["evidence"])
+    prs = ", ".join(f"#{number}" for number in item["prs"]) or "—"
+    return (f"<!-- debt-key: {key} -->\n\n### Что\n\n{item['what']}\n\n"
+            f"### Где\n\n{citations}\n\n### Процент\n\n{item['interest']}\n\n"
+            f"### Как погасить\n\n{item['fix']}\n\n"
+            f"Вид: {item['kind']}; тяжесть: {item['severity']}; размер: {item['size']}; "
+            f"PR недели: {prs}; аудит: срез {audit['slice']}, `{audit['base']}`…`{audit['head']}`\n")
+
+
+def annotate_body(body: str, item: dict) -> tuple[str, list[str]]:
+    skipped = []
+    placeholder = "_Заполняет еженедельный разбор._"
+    for heading, field in (("Процент", "interest"), ("Как погасить", "fix")):
+        section = re.search(r"^### " + heading + r"[ \t]*\r?\n(?:(?!^#{1,3}(?:[ \t]|$)).)*",
+                            body, re.MULTILINE | re.DOTALL)
+        if not section or placeholder not in section[0]:
+            skipped.append(heading)
+            continue
+        text = item[field]
+        if field == "fix":
+            newline = "\r\n" if section[0].split("\n", 1)[0].endswith("\r") else "\n"
+            text += newline + "Размер: " + item["size"]
+        start = section.start() + section[0].index(placeholder)
+        body = body[:start] + text + body[start + len(placeholder):]
+    return body, skipped
+
+
+def ingest(root: Path, audits: list[dict], config: dict, client, *, apply: bool = False,
+           only: set[str] | None = None) -> list[dict]:
+    prepared = []
+    identifiers = set()
+    for audit in audits:
+        if not isinstance(audit, dict):
+            raise ValueError("Audit must be an object")
+        for field in ("slice", "base", "head"):
+            if not isinstance(audit.get(field), str) or not audit[field].strip():
+                raise ValueError(f"Missing or invalid audit field: {field}")
+        for field in ("findings", "annotations", "bugs"):
+            if not isinstance(audit.get(field), list):
+                raise ValueError(f"Missing or invalid audit field: {field}")
+        try:
+            head = git(root, "rev-parse", "--verify", "--end-of-options",
+                       audit["head"] + "^{commit}").decode().strip()
+        except subprocess.CalledProcessError:
+            raise ValueError(f"Missing audit commit: {audit['head']}") from None
+        for index, item in enumerate(audit["findings"], 1):
+            identifier = f"{audit['slice']}{index}"
+            if identifier in identifiers:
+                raise ValueError(f"Ambiguous finding ID: {identifier}")
+            identifiers.add(identifier)
+        identifiers.update(f"D:{item.get('issue', '?')}" for item in audit["annotations"]
+                           if isinstance(item, dict))
+        prepared.append((audit, head))
+    if only is not None and (unknown := only - identifiers):
+        raise ValueError("Unknown IDs: " + ", ".join(sorted(unknown)))
+
+    issues, labels, by_key = read_issues(client)
+    plan = []
+    candidates = []
+    seen = set()
+    updates = {}
+
+    def action(name, identifier, reason, key=None):
+        plan.append({"action": name, "id": identifier,
+                     "key": f"{identifier} {key}" if key else identifier, "reason": reason})
+
+    for audit, head in prepared:
+        for index, item in enumerate(audit["findings"], 1):
+            identifier = f"{audit['slice']}{index}"
+            try:
+                key = validate_audit_finding(root, item, head, config["codex"])
+            except ValueError as error:
+                action("reject", identifier, str(error))
+                continue
+            if key in seen:
+                action("skip", identifier, "дубль в прогоне", key)
+                continue
+            seen.add(key)
+            if key in by_key:
+                action("skip", identifier, f"#{by_key[key]['number']}: ключ уже есть", key)
+            elif item["match"] != "new":
+                number = int(item["match"][1:])
+                if number in issues:
+                    action("skip", identifier, f"сопоставлено с #{number}", key)
+                else:
+                    action("reject", identifier, f"Issue #{number} is not in the debt listing", key)
+            elif only is not None and identifier not in only:
+                action("skip", identifier, "не выбран в --only", key)
+            else:
+                candidates.append((identifier, key, item, audit))
+        for item in audit["annotations"]:
+            identifier = f"D:{item.get('issue', '?')}" if isinstance(item, dict) else "D:?"
+            if (not isinstance(item, dict) or type(item.get("issue")) is not int or item["issue"] < 1
+                    or any(not isinstance(item.get(field), str) or not item[field].strip()
+                           for field in ("interest", "fix", "size"))
+                    or item["size"] not in {"S", "M", "L"}):
+                action("reject", identifier, "Missing or invalid annotation fields")
+                continue
+            number = item["issue"]
+            issue = issues.get(number)
+            if (issue is None or issue["state"] != "open"
+                    or not any(label.get("name") == "долг-авто" for label in issue["labels"])):
+                action("reject", identifier, "Annotation requires an open долг-авто issue")
+                continue
+            if only is not None and identifier not in only:
+                action("skip", identifier, "не выбран в --only")
+                continue
+            body = updates.get(number, issue["body"] or "")
+            updated, skipped = annotate_body(body, item)
+            for heading in skipped:
+                action("skip", identifier, f"#{number}: раздел «{heading}» уже заполнен или отсутствует")
+            if updated != body:
+                updates[number] = updated
+                action("update", identifier, f"#{number}: заполнены заглушки разбора")
+        for index, bug in enumerate(audit["bugs"], 1):
+            if not isinstance(bug, dict):
+                raise ValueError("Bug must be an object")
+            action("error", f"{audit['slice']}:bug{index}",
+                   f"{bug.get('path')}:{bug.get('start')}-{bug.get('end')}: {bug.get('what')}")
+
+    candidates.sort(key=lambda candidate: candidate[2]["severity"] != "high")
+    creations = []
+    for identifier, key, item, audit in candidates:
+        if only is None and len(creations) >= config["codex"]["max_new"]:
+            action("defer", identifier, f"лимит {config['codex']['max_new']} новых issues за прогон", key)
+        else:
+            body = codex_issue_body(item, audit, client.endpoint.removeprefix("repos/"), key)
+            creations.append((item["title"], body))
+            action("create", identifier, f"новая находка, тяжесть {item['severity']}", key)
+    if apply:
+        if creations:
+            existing = {label["name"] for label in labels}
+            required = {"долг": LABELS["долг"], "долг-codex": ("5319E7", "Технический долг из аудита Codex")}
+            for name, (color, description) in required.items():
+                if name not in existing:
+                    client.create_label(name, color, description)
+        for title, body in creations:
+            client.create_issue(title="Долг: " + title, body=body, labels=["долг", "долг-codex"])
+        for number, body in updates.items():
+            client.update_issue(number, body=body)
+    return plan
+
+
 ACTIONS = {"create": "создать", "update": "обновить", "comment": "комментарий", "reopen": "переоткрыть",
-           "close": "закрыть", "defer": "отложить", "skip": "пропустить"}
+           "close": "закрыть", "defer": "отложить", "skip": "пропустить", "reject": "отбросить",
+           "error": "ошибка"}
 
 
 def print_plan(plan: list[dict]) -> None:
@@ -411,11 +624,15 @@ def main(argv=None) -> int:
     commands.add_parser("scan")
     reconcile = commands.add_parser("sync")
     reconcile.add_argument("--apply", action="store_true", help="Write issues and labels")
+    ingest_command = commands.add_parser("ingest")
+    ingest_command.add_argument("files", nargs="+", type=Path)
+    ingest_command.add_argument("--apply", action="store_true", help="Write issues and labels")
+    ingest_command.add_argument("--only", help="Approved finding or annotation IDs, comma-separated")
     args = parser.parse_args(argv)
     try:
         root = Path(git(Path.cwd(), "rev-parse", "--show-toplevel").decode().strip())
         config = load_config(Path(__file__).with_suffix(".toml"))
-        findings = scan(root, config)
+        findings = scan(root, config) if args.command != "ingest" else None
         if args.command == "scan":
             print(json.dumps(findings, ensure_ascii=False, indent=2))
         else:
@@ -423,7 +640,13 @@ def main(argv=None) -> int:
                 ["gh", "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"],
                 cwd=root, capture_output=True, text=True, check=True,
             ).stdout.strip()
-            print_plan(sync(findings, config, GhClient(repository), apply=args.apply))
+            client = GhClient(repository)
+            if args.command == "ingest":
+                only = set(args.only.split(",")) if args.only is not None else None
+                print_plan(ingest(root, [load_audit(path) for path in args.files], config, client,
+                                  apply=args.apply, only=only))
+            else:
+                print_plan(sync(findings, config, client, apply=args.apply))
         return 0
     except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:
         print(f"debt: {error}", file=sys.stderr)

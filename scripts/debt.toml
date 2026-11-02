@@ -38,3 +38,8 @@ close_score = 1
 [sync]
 max_new = 5
 reopen_factor = 1.5
+
+[codex]
+kinds = ["duplicate-logic", "workaround", "stale-flag", "dead-code", "layer-breach", "untested-logic", "fragile-test", "doc-drift"]
+exclude = ["OpenGothic/shader", "OpenGothic/common/graphics", "OpenGothic/common/ui", "scripts/content", "scripts/meshes", "scripts/hd", "shorts", "site", "launcher/app"]
+max_new = 3
