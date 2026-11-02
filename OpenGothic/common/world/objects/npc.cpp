@@ -3252,8 +3252,8 @@ void Npc::setScale(float x, float y, float z) {
   physic.setScale(Vec3{x,y,z});
   }
 
-const Animation::Sequence* Npc::playAnimByName(std::string_view name, BodyState bs) {
-  return visual.startAnimAndGet(*this,name,calcAniComb(),bs);
+const Animation::Sequence* Npc::playAnimByName(std::string_view name, BodyState bs, bool force) {
+  return visual.startAnimAndGet(*this,name,calcAniComb(),bs,force);
   }
 
 bool Npc::setPlayerPose(bool kneel, std::string_view reason) {

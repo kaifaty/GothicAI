@@ -18564,13 +18564,14 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     say("faceanim " + nameUtf8(*n) + " " + a[2]);
     }
   else if(c=="ani") {
-    // ani <npc|nearest|player> <anim>: it plays an animation of its model script (T_YES, T_DIALOGGESTURE_03)
+    // ani <npc|nearest|player> <anim> [force]: it plays an animation of its model script (T_YES,
+    // T_DIALOGGESTURE_03); force cuts what plays now, as a hit reaction or a stun's stumble that a stand would wait for
     Npc* n = findNpc(w,pl,a.size()>1 ? a[1] : "nearest");
     if(n==nullptr || a.size()<3) {
       say("ani: no npc or anim " + line);
       return;
       }
-    auto sq = n->playAnimByName(a[2],BS_STAND);
+    auto sq = n->playAnimByName(a[2],BS_STAND,a.size()>3 && a[3]=="force");
     say("ani " + symName(w,n) + " " + a[2] + (sq==nullptr ? " failed" : ""));
     }
   else if(c=="dialog") {
