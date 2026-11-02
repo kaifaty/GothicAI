@@ -45,6 +45,7 @@ struct Stats {
   double   fullTickMsTotal = 0, simplifiedTickMsTotal = 0;
   uint64_t ticks = 0;
   uint64_t fullNpcTicks = 0, simplifiedNpcTicks = 0;
+  uint64_t nativeCombatNpcTicks = 0;
   Mode     mode = Mode::Auto;
 
   std::string probeFields() const;

@@ -77,13 +77,13 @@ NpcSimTier NpcSimTiers::desired(Mode mode, bool hero, bool alwaysFull, const Chu
   }
 
 std::string Stats::probeFields() const {
-  char buf[320];
+  char buf[384];
   std::snprintf(buf,sizeof(buf),
                 "npc_full=%zu npc_simplified=%zu npc_to_full=%llu npc_to_simplified=%llu "
                 "npc_full_tick_ms=%.6f npc_simplified_tick_ms=%.6f npc_full_tick_ms_total=%.3f "
-                "npc_simplified_tick_ms_total=%.3f npc_tier_ticks=%llu npc_tier_mode=%s",
+                "npc_simplified_tick_ms_total=%.3f npc_tier_ticks=%llu npc_tier_mode=%s npc_native_combat_ticks=%llu",
                 full,simplified,(unsigned long long)toFull,(unsigned long long)toSimplified,
                 fullTickMs,simplifiedTickMs,fullTickMsTotal,simplifiedTickMsTotal,
-                (unsigned long long)ticks,name(mode));
+                (unsigned long long)ticks,name(mode),(unsigned long long)nativeCombatNpcTicks);
   return buf;
   }

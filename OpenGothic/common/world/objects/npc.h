@@ -151,6 +151,7 @@ class Npc final {
     void       setWalkMode(WalkBit m);
     WalkBit    walkMode() const;
     bool       usesSimplifiedMovement() const;
+    bool       nativeCombatMovement() const;
     auto       simplifiedBodyState() const -> std::optional<BodyState>;
     float      simplifiedMoveSpeed() const;
     void       tick(uint64_t dt);
@@ -889,6 +890,7 @@ class Npc final {
     bool      implGoTo   (uint64_t dt);
     bool      implGoTo   (uint64_t dt, float destDist);
     bool      implSimpleGoTo(uint64_t dt, float destDist);
+    bool      nativeBodyAction() const;
     auto      pendingSimpleGoTo() const -> const AiQueue::AiAction*;
     WayPath   simpleWayTo(const WayPoint& point) const;
     void      beginSimpleGoTo(AiQueue::AiAction&& action, const WayPoint& point);

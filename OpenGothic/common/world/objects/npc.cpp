@@ -42,6 +42,7 @@
 #include "resources.h"
 #include "frameprofile.h"
 #include "navdemos.h"
+#include "npcdayjournal.h"
 
 #include <chrono>
 #include <filesystem>
@@ -1134,11 +1135,59 @@ bool Npc::usesSimplifiedMovement() const {
     const auto* value = std::getenv("OPENGOTHIC_NPC_SIMPLE_MOVE");
     return value==nullptr || value[0]!='0';
     }();
-  return enabled && simTier()==NpcSimTier::Simplified && !isPlayer();
+  return enabled && simTier()==NpcSimTier::Simplified && !isPlayer() && !nativeCombatMovement();
+  }
+
+bool Npc::nativeCombatMovement() const {
+  // Routine locomotion is 6c; combat, pursuit and escape keep their native
+  // body and physics executor until 6e. Keep every admission rule here.
+  if(weaponState()!=WeaponState::NoWeapon || currentTarget!=nullptr || go2.nativeCombatTarget!=nullptr ||
+     fghAlgo.hasInstructions() || go2.flag==GT_Flee || go2.flag==GT_Enemy || go2.flag==GT_EnemyG ||
+     meleeKnockdown || isMeleeStunned() || visual.pose().isAttackAnim())
+    return true;
+  const std::string_view state=aiState.hint;
+  return state=="ZS_ATTACK" || state=="ZS_MM_ATTACK" || state=="ZS_FLEE" ||
+         state=="ZS_FLEETOWP" || state=="ZS_MAGICFLEE" || state=="ZS_MM_FLEE" ||
+         state=="ZS_MM_THREATENENEMY" || state=="ZS_MM_EATBODY" || state=="ZS_WATCHFIGHT";
   }
 
 auto Npc::simplifiedBodyState() const -> std::optional<BodyState> {
-  return usesSimplifiedMovement() ? simpleMovement.body : std::nullopt;
+  if(!usesSimplifiedMovement() || !simpleMovement.body || nativeBodyAction())
+    return std::nullopt;
+  const auto& pose=visual.pose();
+  if(pose.logicalLayerCount()==0)
+    return std::nullopt;
+  // Start/stop transitions retain their native layer state and logical clock.
+  // A requested graph role does not admit or finish the underlying animation.
+  for(size_t i=0;i<pose.logicalLayerCount();++i)
+    if(pose.logicalLayer(i).sequence->animCls==Animation::Transition)
+      return std::nullopt;
+  return simpleMovement.body;
+  }
+
+bool Npc::nativeBodyAction() const {
+  const auto now=owner.tickCount();
+  if(interactive()!=nullptr || aniWaitTime>=now || outWaitTime>now || Gothic::inst().isNpcInDialog(*this))
+    return true;
+  const auto& pose=visual.pose();
+  for(size_t i=0;i<pose.logicalLayerCount();++i) {
+    const auto layer=pose.logicalLayer(i);
+    // Native rotation ownership is Pose bookkeeping; authored turn clips
+    // such as T_WALKTURNL need not carry the MDS ROTATE flag.
+    if(pose.isRotationLayer(layer.sequence))
+      continue;
+    const auto state=BodyState(layer.state&(BS_MAX|BS_FLAG_MASK));
+    if(state==BS_STAND && layer.sequence->animCls==Animation::Loop &&
+       (pose.isStanding() || layer.sequence==visual.idleSequence(walkMode(),weaponState(),*this) ||
+        layer.sequence==visual.idleSequence(WalkBit::WM_Run,weaponState(),*this) ||
+        layer.sequence==visual.idleSequence(WalkBit::WM_Walk,weaponState(),*this) ||
+        layer.sequence==visual.idleSequence(WalkBit::WM_Sneak,weaponState(),*this)))
+      continue;
+    if(state==BS_WALK || state==BS_RUN || state==BS_SNEAK || state==BS_SPRINT)
+      continue;
+    return true;
+    }
+  return false;
   }
 
 float Npc::simplifiedMoveSpeed() const {
@@ -1175,7 +1224,8 @@ void Npc::updateSimpleMovement() {
     // The ghost remains a combat/perception sensor. Pair collision filtering
     // excludes graph actors; it must not become invisible to targeting rays.
     physic.setEnable(sensorEnabled);
-    setAnimRotate(0);
+    if(!nativeBodyAction())
+      setAnimRotate(0);
     resetCharacterVisualHeight();
     } else {
     // Only the returning Full body needs a ground ray. The path and queue
@@ -4039,10 +4089,13 @@ auto Npc::pendingSimpleGoTo() const -> const AiQueue::AiAction* {
   }
 
 WayPath Npc::simpleWayTo(const WayPoint& point) const {
+  // Native freepoint routes are terminal segments. Sending an unconnected
+  // point through a nearby waynet can cross a different floor or an island.
+  if(!point.isConnected())
+    return owner.wayTo(*this,point);
   const auto connected=[](const WayPoint& p) { return p.isConnected(); };
   const auto* near=owner.findWayPoint(position(),connected);
-  const auto* end=point.isConnected() ? &point : owner.findWayPoint(point.position(),connected);
-  if(near==nullptr || end==nullptr)
+  if(near==nullptr)
     throw std::runtime_error("Simplified movement requires a connected waynet");
   auto delta=near->groundPos-position();
   float distance2=delta.x*delta.x+delta.z*delta.z;
@@ -4057,17 +4110,9 @@ WayPath Npc::simpleWayTo(const WayPoint& point) const {
     }
   // Only graph actors may recover off-network by a straight segment to Near.
   auto path=distance2>4.f*MoveAlgo::closeToPointThreshold*MoveAlgo::closeToPointThreshold ?
-            owner.wayTo(*near,*end) : owner.wayTo(*this,*end);
-  if(path.first()==nullptr && !MoveAlgo::isClose(*this,*end))
+            owner.wayTo(*near,point) : owner.wayTo(*this,point);
+  if(path.first()==nullptr && !MoveAlgo::isClose(*this,point))
     throw std::runtime_error("Simplified movement has no waynet path to its target");
-  if(end!=&point) {
-    WayPath withTerminal;
-    withTerminal.add(point);
-    path.reverse();
-    while(const auto* node=path.pop())
-      withTerminal.add(*node);
-    return withTerminal;
-    }
   return path;
   }
 
@@ -4140,6 +4185,7 @@ void Npc::refreshSimpleGoTo() {
       terminal.pos=target;
       }
     if(terminal.isClose(*this,distance)) {
+      NpcDayJournal::arrived(*this);
       aiQueue.pop();
       wayPath.clear();
       clearGoTo();
@@ -4211,6 +4257,7 @@ bool Npc::finishSimpleGoTo(uint64_t dt) {
     if(implTurnTo(go2.wp,AnimationSolver::TurnType::Std,dt))
       return true;
     }
+  NpcDayJournal::arrived(*this);
   aiQueue.pop();
   wayPath.clear();
   clearGoTo();
@@ -4237,7 +4284,9 @@ bool Npc::implGoTo(uint64_t dt) {
   }
 
 bool Npc::implGoTo(uint64_t dt, float destDist) {
-  if(usesSimplifiedMovement())
+  // Native admission owns item/mobsi exits and other body transitions until
+  // they release the body. The graph resumes the same path afterward.
+  if(usesSimplifiedMovement() && !nativeBodyAction())
     return implSimpleGoTo(dt,destDist);
   if(go2.flag==GT_No)
     return false;
@@ -4271,6 +4320,7 @@ bool Npc::implGoTo(uint64_t dt, float destDist) {
         return finishSimpleGoTo(dt);
       if(go2.flag==Npc::GT_NextFp && implTurnTo(go2.wp,AnimationSolver::TurnType::Std,dt))
         return true;
+      NpcDayJournal::arrived(*this);
       clearGoTo();
       }
     }
@@ -4338,6 +4388,7 @@ bool Npc::implSimpleGoTo(uint64_t dt, float destDist) {
         return finishSimpleGoTo(dt);
       if(go2.flag==GT_NextFp && implTurnTo(go2.wp,AnimationSolver::TurnType::Std,dt))
         return true;
+      NpcDayJournal::arrived(*this);
       clearGoTo();
       simpleMovement.body = BS_STAND;
       return false;
@@ -4414,9 +4465,9 @@ bool Npc::implSimpleGoTo(uint64_t dt, float destDist) {
   else if(length2==0.f && travel>0.f && target.y!=y) {
     setPosition(Vec3(x,y+std::copysign(std::min(std::abs(target.y-y),travel),target.y-y),z));
     }
-  simpleMovement.body = bool(walkMode()&WalkBit::WM_Sneak) ? BS_SNEAK :
-                        bool(walkMode()&WalkBit::WM_Walk) ? BS_WALK : BS_RUN;
-  setAnim(AnimationSolver::Move);
+  if(setAnim(AnimationSolver::Move))
+    simpleMovement.body = bool(walkMode()&WalkBit::WM_Sneak) ? BS_SNEAK :
+                          bool(walkMode()&WalkBit::WM_Walk) ? BS_WALK : BS_RUN;
   return true;
   }
 
@@ -6750,6 +6801,10 @@ void Npc::tick(uint64_t dt) {
 
 bool Npc::prepareTurn() {
   if(usesSimplifiedMovement()) {
+    // A dialogue can queue a heading before its next line. Turn only the
+    // angle; its native body layers retain ownership between voiced lines.
+    if(nativeBodyAction())
+      return Gothic::inst().isNpcInDialog(*this);
     visual.stopWalkAnim(*this);
     setAnimRotate(0);
     if(!visual.pose().hasAnim())
@@ -8282,7 +8337,8 @@ bool Npc::rotateTo(float dx, float dz, float step, AnimationSolver::TurnType ani
   step *= (float(dt)/1000.f);
 
   if(dx==0.f && dz==0.f) {
-    setAnimRotate(0);
+    if(!usesSimplifiedMovement() || !nativeBodyAction())
+      setAnimRotate(0);
     return false;
     }
 
@@ -8292,7 +8348,8 @@ bool Npc::rotateTo(float dx, float dz, float step, AnimationSolver::TurnType ani
   if(usesSimplifiedMovement()) {
     const float target = angleDir(dx,dz);
     const float delta = std::remainder(target-angle,360.f);
-    setAnimRotate(0);
+    if(!nativeBodyAction())
+      setAnimRotate(0);
     if(std::abs(delta)<=step*2.f) {
       setDirection(target);
       return false;

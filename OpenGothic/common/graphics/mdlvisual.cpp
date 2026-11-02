@@ -1655,6 +1655,10 @@ const Animation::Sequence* MdlVisual::movementSequence(WalkBit mode, WeaponState
   return solver.solveAnim(AnimationSolver::Move,weapon,mode,*skInst,&npc);
   }
 
+const Animation::Sequence* MdlVisual::idleSequence(WalkBit mode, WeaponState weapon, const Npc& npc) const {
+  return solver.solveAnim(AnimationSolver::Idle,weapon,mode,*skInst,&npc);
+  }
+
 const Animation::Sequence* MdlVisual::startAnimAndGet(std::string_view name, uint64_t tickCount, bool forceAnim) {
   auto sq = solver.solveFrm(name);
   if(sq!=nullptr) {

@@ -170,6 +170,7 @@ class Pose final {
       };
     auto               combatLayers(uint64_t tickCount) const -> std::vector<CombatLayer>;
     size_t             logicalLayerCount() const { return lay.size(); }
+    bool               isRotationLayer(const Animation::Sequence* sequence) const { return sequence!=nullptr && rotation==sequence; }
     CombatLayer        logicalLayer(size_t index) const;
     const auto&        logicalDefaultSpeeds() const { return speeds; }
 

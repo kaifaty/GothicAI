@@ -1043,14 +1043,13 @@ class NpcLogicalStateContract final {
 
     static void run(uint32_t id,const std::string& scenario,const std::filesystem::path& output) {
       auto& gothic=Gothic::inst();
-      // The earlier body-watch phases own pointers into the session. Retire
-      // them before the first complete session is destroyed.
+      // Isolate canonical action clocks from unrelated ambient transitions.
+      // The complete-world audit remains part of npc-day-parity.
       auto* subject=gothic.world()->npcById(id);
-      const auto opponents=TestBench::bodyObservationActors();
       TestBench::configure(scenario,output.string(),17);
-      for(auto* opponent:opponents)
-        if(opponent!=subject)
-          gothic.world()->removeNpc(*opponent);
+      for(uint32_t i=gothic.world()->npcCount();i>0;--i)
+        if(auto* npc=gothic.world()->npcById(i-1);npc!=nullptr && npc!=subject && !npc->isPlayer())
+          gothic.world()->removeNpc(*npc);
       id=gothic.world()->npcId(subject);
       for(const auto tier:{NpcSimTier::Full,NpcSimTier::Simplified})
       for(const auto action:{AI_PlayAnim,AI_StandUp,AI_DrawWeaponMelee}) {
@@ -1107,6 +1106,17 @@ class NpcLogicalStateContract final {
             }
           }
         expect(playing.has_value(),"logical save/load admits the requested native body action");
+        if(npc->usesSimplifiedMovement()) {
+          const auto native=npc->visual.pose().combatLayers(npc->world().tickCount());
+          expect(!npc->prepareTurn(),"a native body action retains ownership against the graph turn puppet");
+          expect(!npc->simplifiedBodyState(),"a native body action retains its own logical layer state");
+          const auto after=npc->visual.pose().combatLayers(npc->world().tickCount());
+          expect(native.size()==after.size(),"the graph turn puppet leaves every native action layer in place");
+          for(size_t i=0;i<native.size();++i)
+            expect(native[i].sequence==after[i].sequence && native[i].start==after[i].start &&
+                   native[i].origin==after[i].origin && native[i].state==after[i].state,
+                   "the graph turn puppet preserves native action sequence, clock and state");
+          }
         if(action==AI_PlayAnim) {
           // Existing saves normalize this transient speed. It is deliberately
           // not a before/after equality assertion.
@@ -1296,7 +1306,37 @@ class NpcLogicalStateContract final {
         const auto* goal=gothic.world()->findWayPoint("NW_FARM1_PATH_CITY_05");
         expect(moving!=nullptr && start!=nullptr && goal!=nullptr,"graph save/load uses authored route endpoints");
         moving->clearAiQueue(); moving->clearState(true); moving->clearGoTo();
+        moving->closeWeapon(true);
+        moving->setTarget(nullptr);
         moving->setExternalControl(true);
+        if(!itemGoal) {
+          // Native SetWalkMode need not replace the preceding idle loop. A
+          // handoff during its turn must accept that old locomotion idle.
+          moving->setSimTierOverride(NpcSimTier::Full);
+          moving->setSimTier(NpcSimTier::Full);
+          moving->setWalkMode(WalkBit::WM_Run);
+          moving->visual.pose().stopAllAnim();
+          expect(moving->setAnim(Npc::Anim::Idle),"mid-turn handoff starts from a native run idle");
+          const auto toward=gothic.player()->position()-moving->position();
+          moving->setDirection(Tempest::Vec3(toward.z,0,-toward.x));
+          moving->setWalkMode(WalkBit::WM_Walk);
+          moving->aiPush(AiQueue::aiTurnToNpc(gothic.player()));
+          advance();
+          expect(moving->aiQueue.front()!=nullptr && moving->aiQueue.front()->act==AI_TurnToNpc &&
+                 moving->visual.pose().logicalLayerCount()>1,
+                 "mid-turn handoff retains the old idle alongside its native turn layer");
+          const auto angle=moving->rotation();
+          moving->setSimTierOverride(NpcSimTier::Simplified);
+          moving->setSimTier(NpcSimTier::Simplified);
+          advance();
+          const bool turnProgress=moving->usesSimplifiedMovement() &&
+                                  std::abs(std::remainder(moving->rotation()-angle,360.f))>0.001f;
+          expect(turnProgress,
+                 "a mode change before a native turn does not stall its graph handoff");
+          for(unsigned i=0;i<90 && moving->aiQueue.size()>0;++i)
+            advance();
+          expect(moving->aiQueue.size()==0,"the graph handoff finishes the same mode-changed turn");
+          }
         moving->setSimTierOverride(NpcSimTier::Simplified);
         moving->setSimTier(NpcSimTier::Simplified);
         moving->setWalkMode(WalkBit::WM_Walk);
