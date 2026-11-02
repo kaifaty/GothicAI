@@ -263,8 +263,6 @@ async def mind(
                     if result["error"] is None
                     else {"note": "", "mind": None, "say": [], "parse_error": False}
                 )
-                if parsed["parse_error"]:
-                    result["error"] = "parse_error"
                 if parsed["mind"] is None:
                     parsed["mind"] = previous
                 result.update(
@@ -273,7 +271,8 @@ async def mind(
                 results[turn["id"]] = result
                 pilot.save_rows(directory / "minds.jsonl", results.values())
                 previous = result["mind"]
-                print(f"Mind {turn['id']}: {result['error'] or 'ok'}", file=sys.stderr)
+                status = result["error"] or ("parse_error" if result["parse_error"] else "ok")
+                print(f"Mind {turn['id']}: {status}", file=sys.stderr)
     finally:
         await sol.aclose()
 
@@ -379,7 +378,7 @@ async def judge(directory: Path, *, sol: LLMBackend | None = None) -> None:
         for turn in group:
             identifier = turn["id"]
             state = minds.get(identifier)
-            if state is not None and state["error"] is None:
+            if state is not None and state["error"] is None and not state["parse_error"]:
                 if identifier not in judged_minds or judged_minds[identifier]["error"] is not None:
                     calls = [
                         f"{call['name']} {json.dumps(call['arguments'], ensure_ascii=False)}"
@@ -510,7 +509,7 @@ def sheet(directory: Path, seed: int = pilot.SEED) -> list[dict[str, Any]]:
                         "total_s": state.get("total_s"),
                         "window_s": turn["window_s"],
                     },
-                    "error": state.get("error"),
+                    "error": state.get("error") or ("parse_error" if state.get("parse_error") else None),
                 }
             )
         timeline.append(
@@ -541,10 +540,11 @@ def summary(directory: Path, ratings: Path | None = None, *, emit: bool = True) 
     judged_minds = {r["id"]: r for r in pilot.rows(directory / "judge_minds.jsonl")}
     judged_answers = {(r["id"], r["variant"]): r for r in pilot.rows(directory / "judge_answers.jsonl")}
     parts = [minds[turn["id"]] for turn in turns if turn["id"] in minds]
-    successful = [part for part in parts if part["error"] is None]
+    successful = [part for part in parts if part["error"] is None and not part["parse_error"]]
     windows = [turn for turn in turns if turn["window_s"] is not None]
     fits = sum(
         minds.get(turn["id"], {}).get("error") is None
+        and not minds.get(turn["id"], {}).get("parse_error")
         and minds.get(turn["id"], {}).get("note_ready_s") is not None
         and minds[turn["id"]]["note_ready_s"] <= turn["window_s"]
         for turn in windows
@@ -569,7 +569,7 @@ def summary(directory: Path, ratings: Path | None = None, *, emit: bool = True) 
         for turn in group:
             state = minds.get(turn["id"])
             if state is not None:
-                if state["error"] is None:
+                if state["error"] is None and not state["parse_error"] and previous != EMPTY_MIND:
                     comparisons.append((mind_fields(previous), mind_fields(state["mind"])))
                 previous = state["mind"]
     for field in FIELDS:
@@ -891,7 +891,7 @@ async def selftest() -> None:
         assert states["turn-0"]["calls"] == [{"name": "set_intent", "arguments": {"goal": "talk"}}]
         assert states["turn-0"]["say"] == ["Listen.", "Wait."]
         assert states["turn-0"]["usage"]["output_tokens"] == 123
-        assert states["turn-1"]["parse_error"] is True and states["turn-1"]["error"] == "parse_error"
+        assert states["turn-1"]["parse_error"] is True and states["turn-1"]["error"] is None
         assert states["turn-1"]["mind"] == a and states["turn-1"]["note"] == ""
         assert states["turn-2"]["attempts"] == 2 and states["turn-2"]["error"] is None
         assert states["turn-3"]["attempts"] == 2 and states["turn-3"]["error"] is not None
@@ -924,7 +924,7 @@ async def selftest() -> None:
         }
         assert all(request["cache_key"] == f"mind-{npc}" for request in sol.requests)
         for state in states.values():
-            if state["error"] is None:
+            if state["error"] is None and not state["parse_error"]:
                 assert 0 <= state["first_token_s"] < state["note_ready_s"] <= state["total_s"]
         assert parse_mind("[Голосу] Note only.")["parse_error"] is True
 
@@ -1037,13 +1037,13 @@ async def selftest() -> None:
         )
         report = summary(directory, ratings, emit=False)
         assert (
-            report["mind"]["n"] == 6 and report["mind"]["errors"] == 2 and report["mind"]["parse_errors"] == 1
+            report["mind"]["n"] == 6 and report["mind"]["errors"] == 1 and report["mind"]["parse_errors"] == 1
         )
         assert report["mind"]["output_tokens"]["median"] == 123
         assert report["mind"]["fits_window_n"] == 4 and report["mind"]["window_n"] == 6
-        assert report["changes"]["Мнение о герое"]["fraction"] == 0.75
-        assert report["changes"]["Верю"]["fraction"] == report["changes"]["Нити"]["fraction"] == 0.75
-        assert report["changes"]["Хочу"]["fraction"] == 0.5
+        assert report["changes"]["Мнение о герое"] == {"n": 2, "changed_n": 1, "fraction": 0.5}
+        assert report["changes"]["Верю"]["fraction"] == report["changes"]["Нити"]["fraction"] == 0.5
+        assert report["changes"]["Хочу"]["fraction"] == 0
         assert report["calls"]["by_name"] == {"set_intent": 1} and report["calls"]["justified_n"] == 1
         assert report["calls"]["say_n"] == 2 and report["calls"]["items"][0]["why"] == "Reason."
         assert report["judge"]["false_facts"] == report["judge"]["stale"] == 1
@@ -1093,20 +1093,27 @@ async def selftest() -> None:
             (r["id"], r["variant"]) for r in pilot.rows(directory / "judge_answers.jsonl")
         }
 
+        before_recovery = pilot.rows(directory / "minds.jsonl")
+        next(state for state in before_recovery if state["id"] == "turn-2")["error"] = (
+            "Synthetic model failure"
+        )
+        pilot.save_rows(directory / "minds.jsonl", before_recovery)
         recovery = FakeBackend(reply(b), delay=0)
         await mind(directory, sol=recovery)
         recovered = {r["id"]: r for r in pilot.rows(directory / "minds.jsonl")}
-        assert len(recovery.calls) == 3 and all(state["error"] is None for state in recovered.values())
+        assert len(recovery.calls) == 2 and all(state["error"] is None for state in recovered.values())
         assert recovered["turn-0"] == states["turn-0"] and recovered["turn-4"] == states["turn-4"]
+        assert recovered["turn-1"] == states["turn-1"]
         for name in ("answers.jsonl", "judge_minds.jsonl", "judge_answers.jsonl"):
-            assert not {"turn-1", "turn-2", "turn-3"} & {r["id"] for r in pilot.rows(directory / name)}
+            assert not {"turn-2", "turn-3"} & {r["id"] for r in pilot.rows(directory / name)}
         await mind(directory, sol=recovery)
-        assert len(recovery.calls) == 3
+        assert len(recovery.calls) == 2
+        assert {r["id"]: r for r in pilot.rows(directory / "minds.jsonl")}["turn-1"] == states["turn-1"]
         await speak(directory, quick=retry_quick)
-        assert len(retry_quick.calls) == 5
+        assert len(retry_quick.calls) == 3
         await judge(directory, sol=referee)
-        assert len(pilot.rows(directory / "judge_minds.jsonl")) == 6
-        assert len(pilot.rows(directory / "judge_answers.jsonl")) == 8
+        assert len(pilot.rows(directory / "judge_minds.jsonl")) == 5
+        assert len(pilot.rows(directory / "judge_answers.jsonl")) == 6
 
         before_redo = pilot.rows(directory / "minds.jsonl")
         unrelated = next(state for state in before_redo if state["id"] == "turn-5")
