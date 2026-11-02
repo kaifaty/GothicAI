@@ -2024,8 +2024,10 @@ void Npc::syncMeleeShadowSwing() {
   shadow.consumed = shadow.targetsHit = 0;
   shadow.struckVobs.clear();
   shadow.stopped = false;
+  refreshMeleeFighter();
+  // The previous movement tick can still report a controller after its gates changed.
   shadow.physicsHits = MeleeFighter::physicsHits(Gothic::physicsFlags().meleePhysicsHits,isPlayer(),
-                                                characterVirtualActive());
+                                                !isPlayer() && mvAlgo.characterVirtualReady());
   const auto* hero = owner.player();
   shadow.heroDistanceCm = hero!=nullptr ? std::sqrt(qDistTo(*hero)) : 0.f;
   shadow.outcome = "miss";
@@ -4993,7 +4995,8 @@ void Npc::commitDamage() {
       TestBench::destructionMeleeHit(*this,affected,blow.weaponDamage+blow.strength);
     }
   const bool physicsHits = isHuman() && (shadow!=nullptr ? shadow->physicsHits :
-      MeleeFighter::physicsHits(Gothic::physicsFlags().meleePhysicsHits,isPlayer(),characterVirtualActive()));
+      MeleeFighter::physicsHits(Gothic::physicsFlags().meleePhysicsHits,isPlayer(),
+                               !isPlayer() && mvAlgo.characterVirtualReady()));
   const auto hitTrace = [&](const char* result) {
     if(shadow!=nullptr) {
       meleeShadow->legacyTarget = meleeShadowWho(currentTarget);

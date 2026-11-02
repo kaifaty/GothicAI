@@ -267,10 +267,7 @@ void MoveAlgo::tick(uint64_t dt, MvFlags moveFlg) {
 bool MoveAlgo::implTick(uint64_t dt, MvFlags moveFlg) {
   const auto bs = npc.bodyStateMasked();
   const bool liftOff = bs==BS_JUMP && npc.isFlyAnim();
-  const bool virtualEnabled = useCharacterVirtual();
-  const bool virtualWalking = virtualEnabled && !npcVirtualMobTransition &&
-                              !npc.isDown() && npc.physic.isEnabled() && !canFlyOverWater() &&
-                              (flags==Run || flags==Slide || flags==InWater) && !liftOff;
+  const bool virtualWalking = characterVirtualReady();
   if(!virtualWalking) {
     if(virtualMovementActive && flags==Run && liftOff)
       virtualJumpVelocity = virtualGroundVelocity*0.001f;
@@ -682,6 +679,13 @@ bool MoveAlgo::implTick(uint64_t dt, MvFlags moveFlg) {
   // something went wrong - back to origin then
   // npc.setPosition(pos0);
   return true;
+  }
+
+bool MoveAlgo::characterVirtualReady() {
+  const bool liftOff = npc.bodyStateMasked()==BS_JUMP && npc.isFlyAnim();
+  return useCharacterVirtual() && npc.interactive()==nullptr && !npc.spellFrozen() &&
+         !npcVirtualMobTransition && !npc.isDown() && npc.physic.isEnabled() && !canFlyOverWater() &&
+         (flags==Run || flags==Slide || flags==InWater) && !liftOff;
   }
 
 bool MoveAlgo::useCharacterVirtual() {
