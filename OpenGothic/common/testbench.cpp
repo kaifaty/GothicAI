@@ -72,6 +72,7 @@
 #include "game/knownroadsbench.h"
 #include "game/npckeysbench.h"
 #include "game/bodytracesbench.h"
+#include "game/bloodstainsbench.h"
 #include "game/serialize.h"
 #include "game/ragdollsave.h"
 #include "game/definitions/sounddefinitions.h"
@@ -13539,6 +13540,15 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     }
     return;
   }
+  if(c=="blood_stains") {
+    try {
+      event("blood_stains","\"sample\":"+BloodStainsBench::command(a,w,pl,outDir));
+    } catch(const std::exception& error) {
+      event("blood_stains_error","\"reason\":"+jsonStr(error.what()));
+      arenaAbort(error.what());
+    }
+    return;
+  }
   if(c=="keys") {
     try {
       event("keys_command","\"sample\":"+NpcKeysBench::command(a,w,pl,ctrl,outDir));
@@ -14202,6 +14212,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       {"spell_physics",&Gothic::PhysicsFlags::spellPhysics},
       {"body_impact_damage",&Gothic::PhysicsFlags::bodyImpactDamage},
       {"body_traces",&Gothic::PhysicsFlags::bodyTraces},
+      {"blood",&Gothic::PhysicsFlags::blood},
       {"movable_vobs",&Gothic::PhysicsFlags::movableVobs},
       {"item_hulls",&Gothic::PhysicsFlags::itemHulls},
       {"item_deepest_contact",&Gothic::PhysicsFlags::itemDeepestContact},
@@ -20079,6 +20090,7 @@ void TestBench::configure(std::string scenario, std::string output, int64_t seed
   NavigationEyeBench::reset();
   NpcKeysBench::reset();
   BodyTracesBench::reset();
+  BloodStainsBench::reset();
   NavBench::reset();
   NavDemos::reset();
   stopRecording();

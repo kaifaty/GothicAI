@@ -292,7 +292,8 @@ class PerceptionDesk:
         if hello is not None and hello.protocol < TRACE_PROTOCOL and view.traces:
             view = view.model_copy(update={"traces": []})
         elif hello is not None and any(not trace_supported(t.kind, hello.protocol) for t in view.traces):
-            # kinds an older bridge does not have (broken before v40, body before v58) are not believed
+            # kinds an older bridge does not have (broken before v40, body before v58, blood before v60)
+            # are not believed
             traces = [t for t in view.traces if trace_supported(t.kind, hello.protocol)]
             view = view.model_copy(update={"traces": traces})
         now = self.clock()
@@ -634,7 +635,7 @@ class PerceptionDesk:
         if view.traces:
             kinds = {
                 "arrow": "a stuck arrow", "moved": "a displaced object", "tilted": "a tilted object",
-                "broken": "debris", "body": "a dead body",
+                "broken": "debris", "body": "a dead body", "blood": "blood on the ground",
             }
             for trace in view.traces:
                 lines.append(
@@ -689,6 +690,8 @@ def trace_name(kind: str, name: str) -> str:
         return name
     if kind == "body" and name.strip().lower() in ("", "тело"):
         return "тело"  # whose: the bridge's name says only «тело» when the npc does not see the body
+    if kind == "blood":
+        return name.strip() or "кровь"  # the bridge's «кровь» / «лужа крови» says it all
     if kind == "arrow" and "стрел" in name.lower():
         return name
     kinds = {

@@ -13,13 +13,20 @@ also a find:
   witnessed) or when it was there when he died (it saw him alive at that place until `PRESENT_MIN`
   before the death: an npc's killing of an npc has no deed, and the killer must not suspect others).
 
+- for blood (v60): suspicion by the same rule around the freshest stain (`view.time - age`): whom the finder
+  saw at that place within half an hour of it is suspected of an attack (crime "attack", the trace), the
+  hero through Crimes, people through NpcCrimes. Never the finder or a trace. No suspicion without the
+  time or a place, or when the finder saw an attack or a killing there itself (a deed it witnessed at that
+  place within the half hour). Seen nobody: only the knowledge «someone was hurt here». Blood under a
+  body still in the world never comes: the engine reports that body, not its pool.
+
 Suspicion is decided later than the find, on a later view of the finder at least `JUDGE_S` real seconds
 after it: the hero's deed (`hero_deed` → `crime_seen`) may come after the view with the body. A
 `trace_judged` fact marks the decision in the save branch, so a find saved before its decision is
 decided after the load, and none is decided twice.
 
-Only `body` is a find now; blood and missing things are later kinds of the same event. Who killed is
-the engine's truth and never comes here: a find is the knowledge «someone was killed here».
+`body` and `blood` are finds now; missing things are a later kind of the same event. Who killed or hurt
+is the engine's truth and never comes here: a find is the knowledge «someone was killed (hurt) here».
 """
 
 from __future__ import annotations
@@ -31,6 +38,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from .chronicle import Fact
+from .crimes import SUSPECT_MIN
 from .journal import Journal
 from .protocol import GameMessage, Loading, NpcView, Session, Trace
 
@@ -42,7 +50,7 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-FOUND = frozenset({"body"})  # trace kinds whose first sight is a find
+FOUND = frozenset({"body", "blood"})  # trace kinds whose first sight is a find
 HERO = "PLAYER"
 SUSPICIONS = ("crime_suspected", "npc_crime_suspected")
 JUDGED = "trace_judged"
@@ -61,6 +69,7 @@ class Found:
     place: str  # the book's id, "" when unknown
     body: str = ""  # body: the dead npc's id
     died: int | None = None  # body: game minutes since the first day began; None when unknown
+    bled: int | None = None  # blood: when its freshest stain appeared, game minutes; None when unknown
 
 
 class FoundTraces:
@@ -120,6 +129,7 @@ class FoundTraces:
             body=find.body,
             place=find.place,
             died=find.died,
+            bled=find.bled,
         )
         if self.planner is not None:
             self.planner.on_event(
@@ -132,6 +142,7 @@ class FoundTraces:
                 detail=_since(trace),
                 place=trace.waypoint,
                 context=self._context(find),
+                **({"source": "blood"} if trace.kind == "blood" else {}),  # its own wording (stimuli.py)
             )
         for listener in self.on_found:
             try:
@@ -164,7 +175,10 @@ class FoundTraces:
         """Suspicion for one find, by what the finder knows now; marked decided in the branch."""
         npc = npc.upper()
         find = self._find(npc, s)
-        suspicions = self._suspect(find) if find.body else []
+        if find.body:
+            suspicions = self._suspect(find)
+        else:
+            suspicions = self._suspect_blood(find) if find.kind == "blood" else []
         self._judged.add((npc, find.trace))
         self.chronicle.record(
             {
@@ -197,8 +211,9 @@ class FoundTraces:
     def _find(self, npc: str, s: Sighting) -> Found:
         body = s.trace_npc if s.trace_kind == "body" else ""
         died = s.start - s.trace_age if body and s.trace_age is not None else None
+        bled = s.start - s.trace_age if s.trace_kind == "blood" and s.trace_age is not None else None
         return Found(
-            npc, trace_id(s), s.trace_kind, s.name, s.place_ids[0] if s.place_ids else "", body, died
+            npc, trace_id(s), s.trace_kind, s.name, s.place_ids[0] if s.place_ids else "", body, died, bled
         )
 
     def _suspect(self, find: Found) -> list[Fact]:
@@ -213,6 +228,41 @@ class FoundTraces:
         if self.npc_crimes is not None:
             out += self.npc_crimes.suspect_body(npc, body, find.trace, died=died, place=place)
         return out
+
+    def _suspect_blood(self, find: Found) -> list[Fact]:
+        npc, at, place = find.npc, find.bled, find.place
+        if at is None or not place:
+            return []  # no time or place is better than accusing everyone seen that day
+        if self.witnessed_attack(npc, place, at):
+            return []  # it saw the attack itself: the blood adds no suspicion of its own
+        out: list[Fact] = []
+        if self.crimes is not None:
+            out += self.crimes.suspect_blood(npc, find.trace, at=at, place=place)
+        if self.npc_crimes is not None:
+            out += self.npc_crimes.suspect_blood(npc, find.trace, at=at, place=place)
+        return out
+
+    def _saw_attack(self, find: Found) -> bool:
+        if find.bled is None or not find.place:
+            return False
+        return self.witnessed_attack(find.npc, find.place, find.bled)
+
+    def witnessed_attack(self, npc: str, place: str, at: int) -> bool:
+        """It saw an attack or a killing at that place within half an hour of the blood: a deed it witnessed,
+        the hero's or an npc's. Who bled is not known, so the place and the time tie the blood to it."""
+        seen = [*(self.crimes.seen(npc) if self.crimes is not None else [])]
+        seen += self.npc_crimes.seen(npc) if self.npc_crimes is not None else []
+        book = self.crimes.places if self.crimes is not None else None
+        for f in seen:
+            if f.get("kind") not in ("attack", "murder"):
+                continue
+            where = book.of(f.get("waypoint", "")) if book is not None and f.get("waypoint") else None
+            if where is None or where.id != place:
+                continue
+            when = int(f.get("day", 0)) * 1440 + int(f.get("hour", 0)) * 60 + int(f.get("minute", 0))
+            if abs(when - at) <= SUSPECT_MIN:
+                return True
+        return False
 
     def witnessed(self, npc: str, body: str) -> bool:
         """It saw the killing itself: a deed of murder of this body it witnessed, the hero's or an npc's."""
@@ -240,14 +290,26 @@ class FoundTraces:
             f
             for kind in SUSPICIONS
             for f in self.chronicle.facts(kind)
-            if f.get("npc") == npc and f.get("crime") == "murder" and f.get("trace") == trace
+            if f.get("npc") == npc and f.get("crime") in ("murder", "attack") and f.get("trace") == trace
         ]
 
     def note(self, npc: str, s: Sighting) -> str:
         """What the npc makes of a find, after its line in «Следы, которые ты видел»."""
-        if s.trace_kind != "body" or "body" not in self.kinds:
+        if s.trace_kind not in self.kinds:
             return ""
         find = self._find(npc.upper(), s)
+        if find.kind == "blood":
+            if self._saw_attack(find):
+                return "; здесь кого-то ранили, ты видел это сам"
+            names = list(dict.fromkeys(_name(f) for f in self.suspicions(npc, find.trace)))
+            if not names:
+                return "; здесь кого-то ранили, кто и кого — не знаешь"
+            return (
+                f"; здесь кого-то ранили. Около того времени ты сам видел здесь: {', '.join(names)} — "
+                "это подозрение, не доказательство"
+            )
+        if s.trace_kind != "body":
+            return ""
         if find.body and self.witnessed(npc, find.body):
             return "; здесь его убили, ты видел это сам"
         if (
@@ -268,6 +330,10 @@ class FoundTraces:
     def _context(self, find: Found) -> str:
         """The find for the behavioral model (English), after the stimulus' own words. Whom it suspects is
         not decided yet (`judge`); only what it knows of the death itself."""
+        if find.kind == "blood":
+            if self._saw_attack(find):
+                return " You saw the fight here yourself."
+            return ""
         if find.kind != "body":
             return ""
         if find.body and self.witnessed(find.npc, find.body):
@@ -294,6 +360,13 @@ def _name(fact: Fact) -> str:
 
 
 def _since(trace: Trace) -> str:
+    if trace.kind == "blood":
+        if trace.age is None:
+            return "you cannot tell how old it is"
+        if trace.age < 90:
+            return f"spilled about {max(5, round(trace.age / 5) * 5)} minutes ago"
+        hours = round(trace.age / 60)
+        return "spilled about two hours ago" if hours == 2 else f"spilled about {hours} hours ago"
     if trace.kind != "body":
         return f"{trace.age} minutes old" if trace.age is not None else "of unknown age"
     if trace.age is None:

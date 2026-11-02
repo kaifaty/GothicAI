@@ -370,6 +370,8 @@ void World::load(Serialize &fin) {
   spellFields.clear();
   stuckArrows.clear();
   nextArrowTraceId = 1;
+  blood.clear();
+  nextBloodStainId = 1;
   fin.setContext(this);
   fin.setEntry("worlds/",wname,"/world");
 
@@ -390,6 +392,7 @@ void World::load(Serialize &fin) {
   wdynamic->setTraceTime(traceTime(*this));
   wdynamic->loadMovableVobs(fin);
   loadStuckArrows(fin);
+  loadBloodStains(fin);
   }
 
 void World::save(Serialize &fout) {
@@ -406,6 +409,7 @@ void World::save(Serialize &fout) {
   saveStuckArrows(fout);
   wobj.savePlacedItems(fout);
   saveBodyTraces(fout);
+  saveBloodStains(fout);
   }
 
 uint32_t World::npcId(const Npc *ptr) const {
@@ -553,7 +557,78 @@ std::vector<World::PhysicsTrace> World::physicsTraces(const Tempest::Vec3* viewe
       result.push_back(std::move(trace));
       }
     }
+  if(!blood.empty()) {
+    // Evidence stains within 2 m of one another are one trace, named by its oldest stain and
+    // placed at its largest; a group with the pool of a body still in the world is that body.
+    // Grouping runs over every stain, so ids do not depend on the viewer. No culprit: the
+    // engine does not record who bled whom.
+    const auto present = [this](uint32_t id) { return bodyInWorld(id); };
+    for(const auto& group:BloodStains::traceGroups(blood,Gothic::physicsFlags().blood,present)) {
+      const auto& largest = blood[group.largest];
+      if(viewer!=nullptr && (largest.pos-*viewer).length()>range)
+        continue;
+      bool pool = false;
+      for(auto i:group.members)
+        pool |= blood[i].kind==BloodStains::Kind::Pool;
+      PhysicsTrace trace;
+      trace.id         = bloodTraceId(blood[group.oldest].id);
+      trace.kind       = "blood";
+      trace.name       = pool ? "лужа крови" : "кровь";
+      trace.position   = largest.pos;
+      const auto points = BloodStains::sightPoints(largest);
+      for(size_t i=0;i<trace.sightPoints.size();++i)
+        trace.sightPoints[i] = points[i%points.size()];
+      trace.appearedAt = blood[group.freshest].bornAt/BloodStains::MinuteMs;
+      result.push_back(std::move(trace));
+      }
+    }
   return result;
+  }
+
+uint32_t World::addBloodStain(BloodStains::Stain stain) {
+  const auto present = [this](uint32_t id) { return bodyInWorld(id); };
+  return BloodStains::add(blood,nextBloodStainId,stain,time().toInt(),Gothic::physicsFlags().blood,present);
+  }
+
+const std::vector<BloodStains::Stain>& World::bloodStains() const {
+  static const std::vector<BloodStains::Stain> none;
+  return Gothic::physicsFlags().blood ? blood : none;
+  }
+
+bool World::bodyInWorld(uint32_t bodyTraceId) const {
+  if(bodyTraceId==0)
+    return false;
+  for(size_t i=0;i<wobj.npcCount();++i) {
+    const auto& npc = wobj.npc(i);
+    if(npc.bodyTrace().id==bodyTraceId && npc.isDead())
+      return true;
+    }
+  return false;
+  }
+
+std::string World::bloodTraceId(uint32_t stainId) const {
+  return wname+":blood:"+std::to_string(stainId);
+  }
+
+uint32_t World::placeBloodStain(const Tempest::Vec3& near, BloodStains::Kind kind, float radiusCm, uint32_t bodyId) {
+  if(!Gothic::physicsFlags().blood)
+    return 0;
+  const auto ground = wdynamic->landRay(near+Tempest::Vec3(0,100,0),1000);
+  if(!ground.hasCol)
+    return 0;
+  BloodStains::Stain stain;
+  stain.kind     = kind;
+  stain.pos      = ground.v;
+  stain.normal   = ground.n.length()>1e-4f ? Tempest::Vec3::normalize(ground.n) : Tempest::Vec3(0,1,0);
+  stain.radiusCm = std::max(1.f,radiusCm);
+  stain.indoor   = isIndoor(ground.v+Tempest::Vec3(0,50,0));
+  stain.bodyId   = bodyId;
+  switch(ground.mat) {
+    case asset::MaterialGroup::EARTH: stain.surface = BloodStains::Surface::Earth; break;
+    case asset::MaterialGroup::SNOW:  stain.surface = BloodStains::Surface::Snow;  break;
+    default:                          stain.surface = BloodStains::Surface::Hard;  break;
+    }
+  return addBloodStain(stain);
   }
 
 int64_t World::gameMinute() const {
@@ -617,11 +692,73 @@ BodyTraces::Body World::bodyRule(const Npc& body, const Npc* hero) const {
   }
 
 void World::sweepBodies() {
-  // Once per game minute; rays only for bodies past their lifetime and away from the hero.
+  // Once per game minute: bodies, then blood (a pool leaves with its body in the same minute).
   const auto now = gameMinute();
   if(now==bodySweepMinute)
     return;
   bodySweepMinute = now;
+  sweepBodiesAt(now);
+  sweepBloodStains();
+  }
+
+void World::sweepBloodStains() {
+  const auto present = [this](uint32_t id) { return bodyInWorld(id); };
+  BloodStains::sweep(blood,time().toInt(),Gothic::physicsFlags().blood,present);
+  }
+
+void World::saveBloodStains(Serialize& fout) const {
+  if(!Gothic::physicsFlags().blood || (blood.empty() && nextBloodStainId==1))
+    return;
+  fout.setEntry("worlds/",wname,"/blood-stains");
+  fout.write(uint32_t(0x31444C42),uint16_t(1),wname,uint32_t(blood.size()),nextBloodStainId);
+  for(const auto& s:blood) {
+    fout.write(s.id,uint8_t(s.kind),uint8_t(s.blood),uint8_t(s.surface),s.indoor,s.variant,
+               s.pos,s.normal,s.dir,s.radiusCm,uint64_t(s.bornAt),s.bodyId);
+    }
+  }
+
+void World::loadBloodStains(Serialize& fin) {
+  if(!Gothic::physicsFlags().blood || !fin.setEntry("worlds/",wname,"/blood-stains"))
+    return; // an older save has no blood: none
+  try {
+    uint32_t magic=0, count=0, next=0;
+    uint16_t schema=0;
+    std::string worldName;
+    fin.read(magic,schema,worldName,count,next);
+    if(magic!=0x31444C42 || schema!=1 || worldName!=wname || count>BloodStains::Limit) {
+      Tempest::Log::e("blood stains: invalid saved entry, the world starts without blood");
+      return;
+      }
+    const auto finite = [](const Tempest::Vec3& v) { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z); };
+    std::vector<BloodStains::Stain> stains;
+    uint32_t last = 0;
+    for(uint32_t i=0;i<count;++i) {
+      BloodStains::Stain s;
+      uint8_t kind=0, type=0, surface=0;
+      uint64_t born=0;
+      fin.read(s.id,kind,type,surface,s.indoor,s.variant,s.pos,s.normal,s.dir,s.radiusCm,born,s.bodyId);
+      if(s.id==0 || kind>uint8_t(BloodStains::Kind::Smear) || type>uint8_t(BloodStains::Blood::Stone) ||
+         surface>uint8_t(BloodStains::Surface::Snow) || born>uint64_t(INT64_MAX) || !finite(s.pos) ||
+         !finite(s.normal) || !finite(s.dir) || !std::isfinite(s.radiusCm) || s.radiusCm<0)
+        continue;
+      s.kind    = BloodStains::Kind(kind);
+      s.blood   = BloodStains::Blood(type);
+      s.surface = BloodStains::Surface(surface);
+      s.bornAt  = int64_t(born);
+      last      = std::max(last,s.id);
+      stains.push_back(s);
+      }
+    blood            = std::move(stains);
+    nextBloodStainId = std::max(next!=0 ? next : 1u,last+1);
+    }
+  catch(const std::exception& e) {
+    blood.clear();
+    Tempest::Log::e("blood stains load: ",e.what());
+    }
+  }
+
+void World::sweepBodiesAt(int64_t now) {
+  // Rays only for bodies past their lifetime and away from the hero.
   const Npc* hero = player();
   // A body that reached ZS_Dead past Npc::onNoHealth (a script's AI_StartState(ZS_Dead)) gets
   // its record here, as a body of an older save does at loading: whatever the flag says.

@@ -1,0 +1,34 @@
+# Physics stage 8, step 4c: blood stains as records and `blood` traces. Run on
+# WORLD=NEWWORLD.ZEN as is and with BLOOD=0; the native fixture
+# (common/game/bloodstainsbench.cpp) lays stains near the hero and fails the run at
+# the first unmet rule. A fresh process loads session-created.sav with
+# blood-stains-reload; scripts/blood_stains_compare.py compares the two runs.
+seed 73014
+cheat god
+set time 12 0
+goto NW_XARDAS_TOWER_VALLEY_091
+clear 4000
+wait 500
+# Two splashes 1.2 m apart, one 9 m away, a meatbug's and a golem's stain, an indoor
+# splash, and a dead person with his pool and a splash beside it.
+blood_stains setup
+wait 2000
+blood_stains check fresh
+blood_stains advance 17
+wait 2000
+blood_stains check aged
+blood_stains save created
+# The body leaves the world: its pool goes with it, the splash beside it becomes a trace.
+blood_stains body gone
+blood_stains advance 1
+wait 2000
+blood_stains check body-gone
+# A game day on the clock alone: outdoor stains are gone, the indoor one stays.
+blood_stains advance 1440
+wait 2000
+blood_stains check day
+# Three days: none left.
+blood_stains advance 2880
+wait 2000
+blood_stains check gone
+quit

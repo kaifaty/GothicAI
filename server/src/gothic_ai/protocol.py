@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 # story_program), v24: choices in the director's dialogs (steps choice, clear_choices; debug choices, talk,
 # menu, menu_pick), v25: story_program.own (the scripts' program under the director's), v26: the director's
 # lines in the npc's voice (line_voice).
-PROTOCOL_VERSION = 58
+PROTOCOL_VERSION = 60
 NOISE_PROTOCOL = 36  # npc_event noise and npc_act investigate
 TRACE_PROTOCOL = 37  # visible physical traces and game time on noise events
 PACE_PROTOCOL = 38  # go_to_waypoint.pace: a guide keeps the hero's pace; start_activity.place
@@ -32,8 +32,13 @@ CRIME_MEET_PROTOCOL = 46  # deeds switch also holds room entry; rule verdicts ne
 NPC_CRIME_PROTOCOL = 47  # marked NPC theft/attack and separate npc_deed snapshots
 NPC_FAR_PROTOCOL = 48  # story_effect chest_take: a checked chest-to-self transfer without a body action
 BODY_TRACE_PROTOCOL = 58  # a dead person is a trace: npc_view.traces kind body with the dead npc's id
+BLOOD_TRACE_PROTOCOL = 60  # blood on the ground is a trace: npc_view.traces kind blood (engine [GAME] blood)
 # trace kinds newer than the traces themselves, and the protocol that brought each
-TRACE_KINDS_SINCE = {"broken": BROKEN_TRACE_PROTOCOL, "body": BODY_TRACE_PROTOCOL}
+TRACE_KINDS_SINCE = {
+    "broken": BROKEN_TRACE_PROTOCOL,
+    "body": BODY_TRACE_PROTOCOL,
+    "blood": BLOOD_TRACE_PROTOCOL,
+}
 
 
 def trace_supported(kind: str, protocol: int | None) -> bool:
@@ -639,14 +644,16 @@ class Trace(_GameMessage):
     """A visible physical trace (v37). Its originator remains private to the engine and save."""
 
     id: str  # stable across saves; identifies the trace, not its originator
-    kind: Literal["arrow", "moved", "tilted", "broken", "body"]
-    # arrow, table, barrel, ...; broken: a full description, e.g. «обломки ящика»; body: the dead's name
+    kind: Literal["arrow", "moved", "tilted", "broken", "body", "blood"]
+    # arrow, table, barrel, ...; broken: a full description, e.g. «обломки ящика»; body: the dead's name;
+    # blood (v60): «кровь» or «лужа крови», stains within 2 m of one another as one trace
     name: str
     waypoint: str | None = None  # nearest waypoint to the trace
     distance: float = 0  # cm from the npc
     hero_cm: float | None = None
     from_hero: Side | None = None
-    # game minutes since appearance (body: since death); unknown in legacy saves
+    # game minutes since appearance (body: since death; blood: since its freshest stain); unknown in
+    # legacy saves
     age: int | None = Field(default=None, ge=0)
     npc: str | None = None  # v58 body: the dead npc's id, as `Look.id` has it; not who killed him
 
@@ -1777,6 +1784,7 @@ DebugCommand = Literal[
     "physics_noise",  # v36: native tavern fixture, devmode only
     "physics_traces",  # v37: physical traces fixture, devmode only
     "destruction_traces",  # v40: broken debris fixture, devmode only
+    "blood",  # v60: a blood stain on the ground (engine [GAME] blood), devmode only
 ]
 
 
@@ -1812,7 +1820,10 @@ class DebugCmd(_Command):
     (`npc`, `by`) confirms one melee contact between distinct living npcs within 500 cm, bypassing only
     parry/backstep. It requires a drawn melee weapon and a mortal victim vulnerable to its damage;
     armour, damage calculation and perceptions stay native. `value` contains `attacker`, `victim`,
-    `game_ms`, `hp_before`, `hp_after`; no HP loss is a failed command.
+    `game_ms`, `hp_before`, `hp_after`; no HP loss is a failed command. v60: `blood` lays a blood stain
+    on the ground at a `waypoint`, `distance` cm (default 300) in front of npc `near`, or under a dead
+    `npc` as the pool of his body (`kind`: pool or splash, default pool under an npc, splash elsewhere;
+    `radius` cm), as Marvin `blood` does (`value`: {id}).
 
     The story graph (v8): `dialogs` — the dialogs `npc` offers the player now (`value`: their ids, as the
     menu would list them); `choose` — plays dialog `node` of `npc` as if the player chose it in the menu;
@@ -1850,6 +1861,8 @@ class DebugCmd(_Command):
     chest: str | None = None  # chest_take: the chest's id (v28)
     count: int | None = None  # chest_take
     like: str | None = None  # own_npc: the script's npc it is made like (v33)
+    kind: Literal["pool", "splash"] | None = None  # blood: what stain (v60)
+    radius: int | None = None  # blood: its size, cm (v60)
 
 
 class GraphPatchCmd(_Command):
