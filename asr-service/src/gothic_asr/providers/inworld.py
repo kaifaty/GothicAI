@@ -263,13 +263,16 @@ class _Stream:
         final = transcription.get("isFinal", False)
         if final:
             profile = transcription.get("voiceProfile")
-            if profile is not None:
-                laughing = max(
-                    (style["confidence"] for style in profile.get("vocalStyle", [])
-                     if style["label"] == "laughing"),
-                    default=0.0,
-                )
-                self._laughing = max(self._laughing or 0.0, laughing)
+            if isinstance(profile, dict):
+                self._laughing = self._laughing or 0.0
+                styles = profile.get("vocalStyle")
+                if isinstance(styles, list):
+                    for style in styles:
+                        if not isinstance(style, dict) or style.get("label") != "laughing":
+                            continue
+                        confidence = style.get("confidence")
+                        if type(confidence) in (int, float):
+                            self._laughing = max(self._laughing, confidence)
             if text:
                 self._finals.append(text)
             partial = " ".join(self._finals)

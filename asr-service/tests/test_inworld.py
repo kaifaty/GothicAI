@@ -18,7 +18,7 @@ def tone(seconds: float = 0.5) -> np.ndarray:
     return (0.3 * np.sin(2 * np.pi * 220 * t)).astype(np.float32)
 
 
-def transcription(text: str, final: bool = False, *, profile: dict | None = None) -> str:
+def transcription(text: str, final: bool = False, *, profile: dict | list | None = None) -> str:
     return json.dumps({"result": {"transcription": {
         "transcript": text, "isFinal": final, "voiceProfile": profile,
     }}})
@@ -36,7 +36,7 @@ class InworldServer:
         self.received: asyncio.Queue[tuple[int, bytes | dict]] = asyncio.Queue()
         self.providers: list[InworldRealtime] = []
         self.reply: str | None = "Кавалорн."
-        self.profile: dict | None = None
+        self.profile: dict | list | None = None
         self.close_on_request = True
         self.handshake_gate: asyncio.Event | None = None
         self.handshake_started = asyncio.Event()
@@ -157,14 +157,25 @@ async def test_inworld_config_auth_and_binary_audio(inworld_server, voice_profil
     ("profile", "laughing"),
     [
         (None, None),
+        ([], None),
+        ({}, 0.0),
+        ({"vocalStyle": None}, 0.0),
+        ({"vocalStyle": {}}, 0.0),
+        ({"vocalStyle": [None]}, 0.0),
+        ({"vocalStyle": [{"confidence": 0.98}]}, 0.0),
+        ({"vocalStyle": [{"label": "laughing"}]}, 0.0),
+        ({"vocalStyle": [{"label": "laughing", "confidence": "invalid"}]}, 0.0),
+        ({"vocalStyle": [{"label": "laughing", "confidence": True}]}, 0.0),
         ({"vocalStyle": [{"label": "neutral", "confidence": 0.9}]}, 0.0),
         ({"vocalStyle": [{"label": "laughing", "confidence": 0.98}]}, 0.98),
+        ({"vocalStyle": [None, {"label": "laughing"}, {"label": "laughing", "confidence": 0.98}]}, 0.98),
     ],
 )
 async def test_inworld_voice_profile_score(inworld_server, profile, laughing) -> None:
     server = inworld_server
     server.profile = profile
-    assert (await server.provider().transcribe(tone(), "ru")).laughing == laughing
+    result = await server.provider().transcribe(tone(), "ru")
+    assert (result.text, result.provider, result.laughing) == ("Кавалорн.", "inworld", laughing)
 
 
 async def test_inworld_whole_recording_goes_in_tenth_second_frames(inworld_server) -> None:
