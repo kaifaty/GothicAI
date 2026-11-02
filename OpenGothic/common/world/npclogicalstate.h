@@ -21,6 +21,9 @@ struct Bucket final {
 struct Stats final {
   uint64_t ticks=0, bodyMismatch=0, weaponMismatch=0, early=0, late=0;
   uint64_t events=0, eventMismatch=0, wallNs=0, bodySamples=0, weaponSamples=0;
+  // Overrides share their source with Npc::bodyState and do not test layers.
+  uint64_t bodyInteractiveSamples=0, bodyExternalSamples=0;
+  uint64_t simplifiedBodySamples=0, simplifiedBodyMismatch=0;
   uint64_t waitEarly=0, waitLate=0;
   std::map<std::string,uint64_t> reanchored, bodyMismatchKinds, weaponMismatchKinds;
   std::map<Action,Bucket> byAction;
@@ -74,6 +77,7 @@ struct NpcLogicalState final {
   bool initialized=false;
   uint64_t worldStep=34;
   std::optional<BodyState> externalState;
+  std::optional<BodyState> executorState;
   std::map<std::string,float> speeds;
   struct PendingAction { Action kind; const Animation::Sequence* sequence; uint64_t at, wait; };
   std::vector<PendingAction> admissions;

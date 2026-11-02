@@ -189,6 +189,7 @@ class Pose final {
       std::string name;
       };
     void               enableLogicalInputs() { logicalInputEnabled=true; }
+    void               disableLogicalInputs() { logicalInputEnabled=false; logicalInputQueue.clear(); }
     const auto&        logicalInputs() const { return logicalInputQueue; }
     void               clearLogicalInputs() { logicalInputQueue.clear(); }
     void               recordLogicalWeapon(WeaponState weapon, bool natural);

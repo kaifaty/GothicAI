@@ -18,6 +18,7 @@
 #include "testbench.h"
 #include "utils/workers.h"
 #include "world/objects/npc.h"
+#include "world/waypoint.h"
 #include "world/world.h"
 
 #include <rapidjson/document.h>
@@ -901,6 +902,8 @@ class NpcLogicalStateContract final {
         ++cases;
         auto* npc=gothic.world()->npcById(id);
         expect(npc!=nullptr,"logical save/load fixture actor survives the preceding session reload");
+        npc->setSimTierOverride(NpcSimTier::Full);
+        npc->setSimTier(NpcSimTier::Full);
         npc->setExternalControl(true);
         npc->clearState(true);
         npc->clearAiQueue();
@@ -1001,6 +1004,8 @@ class NpcLogicalStateContract final {
         }
         npc=gothic.world()->npcById(id);
         expect(npc!=nullptr && gothic.world()->tickCount()==savedAt,"logical save/load restores the actor and exact world time");
+        npc->setSimTierOverride(NpcSimTier::Full);
+        npc->setSimTier(NpcSimTier::Full);
         compare(*npc); // Before any positive simulation step or explicit sync.
         npc->logicalBody.auditTick(*npc);
         const auto restored=npc->logicalBodyState();
@@ -1129,6 +1134,85 @@ class NpcLogicalStateContract final {
         expect(std::abs(error)<=int64_t(tickMs),"logical save/load canonical sequence end is predicted within one world tick");
         expect(std::abs(actionError)<=int64_t(tickMs),"logical save/load canonical action end is predicted within one world tick");
         }
+      {
+        ++cases;
+        auto* moving=gothic.world()->npcById(id);
+        const auto* start=gothic.world()->findWayPoint("NW_XARDAS_TOWER_VALLEY_091");
+        const auto* goal=gothic.world()->findWayPoint("NW_FARM1_PATH_CITY_05");
+        expect(moving!=nullptr && start!=nullptr && goal!=nullptr,"graph save/load uses authored route endpoints");
+        moving->clearAiQueue(); moving->clearState(true); moving->clearGoTo();
+        moving->setExternalControl(true);
+        moving->setSimTierOverride(NpcSimTier::Simplified);
+        moving->setSimTier(NpcSimTier::Simplified);
+        moving->setWalkMode(WalkBit::WM_Walk);
+        moving->setPosition(start->groundPos);
+        moving->aiPush(AiQueue::aiGoToPoint(*goal));
+        moving->aiPush(AiQueue::aiWait(5000));
+        bool midEdge=false;
+        for(unsigned i=0;i<600;++i) {
+          advance();
+          const auto* next=moving->currentGoToPoint();
+          if(next!=nullptr && next!=start && (moving->position()-start->groundPos).quadLength()>100.f*100.f &&
+             (moving->position()-next->groundPos).quadLength()>100.f*100.f) {
+            midEdge=true;
+            break;
+            }
+          }
+        const auto pathNames=[](const Npc& actor) {
+          std::vector<std::string> names;
+          auto path=actor.navigationPath();
+          while(const auto* point=path.pop()) names.push_back(point->name);
+          return names;
+          };
+        expect(midEdge && moving->usesSimplifiedMovement() && moving->currentGoToPoint()!=nullptr && !pathNames(*moving).empty(),
+               "graph save/load saves an active edge with a remaining native path");
+        const auto position=moving->position();
+        const auto angle=moving->rotation();
+        const auto path=pathNames(*moving);
+        const auto endpoint=moving->currentGoToPoint()->name;
+        const auto hint=moving->moveHint();
+        const auto state=moving->currentState().ptr;
+        const auto queueSize=moving->aiQueue.size();
+        expect(queueSize==1 && moving->aiQueue.front()->act==AI_Wait,"graph save/load retains an action queued after arrival");
+        const float tickTravel=moving->simplifiedMoveSpeed()*float(tickMs);
+        std::vector<uint8_t> bytes;
+        {
+          Tempest::MemWriter writer(bytes);
+          Serialize out(writer);
+          Tempest::Pixmap preview(1,1,Tempest::TextureFormat::RGBA8);
+          std::memset(preview.data(),0,4);
+          gothic.gameSession()->save(out,"simplified NPC mid-edge",preview);
+        }
+        advance();
+        const auto nextPosition=moving->position();
+        gothic.clearGame().reset();
+        {
+          Tempest::MemReader reader(bytes);
+          Serialize in(reader);
+          gothic.setGame(std::make_unique<GameSession>(in));
+        }
+        moving=gothic.world()->npcById(id);
+        expect(moving!=nullptr,"graph save/load restores the same NPC identity");
+        moving->setExternalControl(true);
+        moving->setSimTierOverride(NpcSimTier::Simplified);
+        moving->setSimTier(NpcSimTier::Simplified);
+        expect((moving->position()-position).quadLength()<.01f && moving->rotation()==angle,
+               "graph save/load preserves the exact mid-edge transform before its first tick");
+        expect(moving->currentGoToPoint()!=nullptr && moving->currentGoToPoint()->name==endpoint &&
+               pathNames(*moving)==path && moving->moveHint()==hint && moving->currentState().ptr==state &&
+               moving->aiQueue.size()==queueSize && moving->aiQueue.front()->act==AI_Wait,
+               "graph save/load preserves the current edge, remaining path, destination, ZS and queued action");
+        advance();
+        expect((moving->position()-nextPosition).quadLength()<=(tickTravel+.01f)*(tickTravel+.01f),
+               "graph save/load continues within one tick of uninterrupted travel");
+        for(unsigned i=0;i<10;++i) advance();
+        expect((moving->position()-position).quadLength()>tickTravel*tickTravel,
+               "restored graph movement keeps advancing on the saved route");
+        moving->clearAiQueue(); moving->clearGoTo();
+        moving->setSimTierOverride(NpcSimTier::Full);
+        moving->setSimTier(NpcSimTier::Full);
+        moving->updateSimpleMovement();
+      }
       // Native float frame rounding can fire a loop event one millisecond
       // before its integer schedule. The audit must match the same cycle.
       ++cases;
@@ -1173,6 +1257,49 @@ class NpcLogicalStateContract final {
       const auto& event=layer->events.front();
       clock.eventFired(sequence,layer->origin,event.source,event.expected+clock.worldStep+1);
       expect(NpcLogicAudit::stats().eventMismatch==1,"an event beyond the world step is a mismatch");
+
+      ++cases;
+      NpcLogicAudit::reset();
+      clock.auditTick(*npc);
+      clock.interactiveState=BS_SIT;
+      clock.updateBody();
+      clock.auditTick(*npc);
+      clock.externalState=BS_DEAD; // External state takes precedence over mobsi.
+      clock.updateBody();
+      clock.auditTick(*npc);
+      const auto& samples=NpcLogicAudit::stats();
+      expect(samples.bodySamples==1 && samples.bodyInteractiveSamples==1 && samples.bodyExternalSamples==1,
+             "body audit separates informative, interactive and external samples without double counting");
+      expect(samples.ticks==3 && samples.bodyMismatch==0,
+             "body overrides cannot turn hidden layer forecasts into body comparisons");
+
+      ++cases;
+      auto retained=npc->handlePtr(); // Keep the invalid actor eligible for revival.
+      const auto* waypoint=npc->world().findWayPoint(npc->position());
+      expect(waypoint!=nullptr,"inactive logical-state fixture has a valid return point");
+      const auto returnPoint=waypoint->name;
+      npc->clearRoutine();
+      npc->handle().wp="__BODY_WATCH_INVALID_POINT";
+      npc->world().resetPositionToTA();
+      expect(npc->world().npcId(npc)==uint32_t(-1) && !npc->logicalBody.initialized && npc->visual.pose().logicalInputs().empty(),
+             "retiring an invalid routine discards queued inputs and invalidates its logical shadow");
+      npc->visual.pose().stopAllAnim();
+      expect(npc->playAnimByName("S_FISTWALKL",BS_WALK)!=nullptr && npc->visual.pose().logicalInputs().empty(),
+             "inactive NPC animation mutations do not accumulate logical inputs");
+      npc->handle().wp=returnPoint;
+      npc->world().resetPositionToTA();
+      expect(npc->world().npcId(npc)!=uint32_t(-1) && npc->logicalBody.initialized && npc->visual.pose().logicalInputs().empty(),
+             "routine revival rebuilds the current body without replaying inactive inputs");
+      compare(*npc);
+      npc->visual.pose().stopAllAnim();
+      expect(npc->playAnimByName("S_FISTWALKL",BS_WALK)!=nullptr && !npc->visual.pose().logicalInputs().empty(),
+             "revived NPC resumes collecting live logical inputs");
+      npc->world().removeNpc(*npc);
+      expect(!npc->logicalBody.initialized && npc->visual.pose().logicalInputs().empty(),
+             "explicit NPC removal discards live logical inputs");
+      npc->visual.pose().stopAllAnim();
+      expect(npc->playAnimByName("S_FISTWALKL",BS_WALK)!=nullptr && npc->visual.pose().logicalInputs().empty(),
+             "removed NPC no longer collects logical inputs");
       }
   };
 

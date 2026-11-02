@@ -18,10 +18,10 @@ HEADER = ("t_min,at_min,key,symbol,alive,hp,hp_max,ta,zs,zs_ms,x,y,z,wp,wp_dist,
 
 
 def row(t, key, *, alive=1, hp=100, ta="0 08:00-20:00 ZS_STAND NW_A", zs="ZS_STAND", x=0.0, inv="00ff",
-        tier="full", hero="-"):
+        tier="full", hero="-", body=0):
     return {"t_min": t, "at_min": t + 0.004, "key": key, "symbol": key.split("#")[0], "alive": alive, "hp": hp,
             "hp_max": 100, "ta": ta, "zs": zs, "zs_ms": 0, "x": x, "y": 0, "z": 0, "wp": "NW_A", "wp_dist": 0,
-            "queue": 0, "head": "-", "body": 0, "inv_hash": inv, "inv_items": 1, "mob": "-", "tier": tier,
+            "queue": 0, "head": "-", "body": body, "inv_hash": inv, "inv_items": 1, "mob": "-", "tier": tier,
             "policy": "far2", "hero": hero}
 
 
@@ -102,6 +102,21 @@ def test_compare_metrics(tmp_path):
     assert result["by_hour"][1]["same_zs"] == 3 / 6
     assert result["worst_npcs"][0]["key"] == "BAU_2#0" and result["first_zs_divergence_min"] == 60
     assert [npc["key"] for npc in result["worst_npcs"]] == ["BAU_2#0", "WOLF#1"]
+    assert result["hp_diff_end"] == ["WOLF#1"]
+    assert result["by_movement"]["stationary_both"]["samples"] == 12
+
+    # A large moving deviation must not inflate the stationary guard rail. Final
+    # HP remains strict even when intermediate HP and positions have an allowance.
+    moving = [row(t, "MIL_1#0", body=3, x=5000) if t < 90 else row(t, "MIL_1#0", hp=99)
+              for t in (0, 30, 60, 90)]
+    other = tmp_path / "movement"
+    journal(other, moving, [], {"tier_mode": "simplified", **DONE})
+    measured = npc_day_parity.compare(npc_day_parity.load(a), npc_day_parity.load(other))
+    assert measured["by_movement"]["moving_either"]["pos_p95"] == 50
+    assert measured["by_movement"]["stationary_both"]["pos_p95"] == 0
+    assert "MIL_1#0" in measured["hp_diff_end"]
+    checks = npc_day_parity.evaluate(measured, {"max_stationary_pos_p95": 1, "max_hp_diff_end": 0})
+    assert [check["pass"] for check in checks] == [True, False]
 
 
 def test_events_after_the_last_common_sample_are_ignored(tmp_path):

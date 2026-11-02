@@ -143,13 +143,19 @@ class Npc final {
     NpcSimTier simTier() const { return simTierValue; }
     bool       hasSimTier() const { return simTierAssigned; }
     void       setSimTier(NpcSimTier t) { simTierValue = t; simTierAssigned = true; }
+    void       setSimTierOverride(std::optional<NpcSimTier> t) { simTierOverrideValue = t; }
+    auto       simTierOverride() const -> std::optional<NpcSimTier> { return simTierOverrideValue; }
 
     bool       isPlayer() const;
     void       setWalkMode(WalkBit m);
     WalkBit    walkMode() const;
+    bool       usesSimplifiedMovement() const;
+    auto       simplifiedBodyState() const -> std::optional<BodyState>;
+    float      simplifiedMoveSpeed() const;
     void       tick(uint64_t dt);
     const NpcLogicalState& logicalBodyState() const { return logicalBody; }
     void       syncLogicalBodyState(bool rebuild=false);
+    void       suspendLogicalBodyState();
     void       tickAnimationTags();
     bool       startClimb(JumpStatus jump);
 
@@ -880,6 +886,8 @@ class Npc final {
     bool      implWhirlTo(const Npc& oth, uint64_t dt);
     bool      implGoTo   (uint64_t dt);
     bool      implGoTo   (uint64_t dt, float destDist);
+    bool      implSimpleGoTo(uint64_t dt, float destDist);
+    void      updateSimpleMovement();
     bool      implAttack (uint64_t dt, bool bodyOverride=false, FightAlgo::Action bodyAction=FightAlgo::MV_NULL);
     void      traceCombatSnapshot();
     struct BodyMovementTrace;
@@ -1210,6 +1218,7 @@ class Npc final {
     NpcProcessPolicy               aiPolicy=NpcProcessPolicy::AiNormal;
     NpcSimTier                     simTierValue=NpcSimTier::Full; // transient, not serialized
     bool                           simTierAssigned=false;
+    std::optional<NpcSimTier>       simTierOverrideValue; // bench-only, not serialized
     NpcLogicalState                logicalBody;
     AiState                        aiState;
     ScriptFn                       aiPrevState;
@@ -1267,6 +1276,15 @@ class Npc final {
     const WayPoint*                currentFp      =nullptr;
     FpLock                         currentFpLock;
     WayPath                        wayPath;
+
+    // The path and transform are already serialized. Reconstruct the edge on
+    // load/tier entry instead of adding another saved movement cursor.
+    struct SimpleMovement {
+      bool active = false;
+      const WayPoint* edgeTo = nullptr;
+      Tempest::Vec3 edgeFrom;
+      std::optional<BodyState> body;
+      } simpleMovement;
 
     MoveAlgo                       mvAlgo;
     FightAlgo                      fghAlgo;

@@ -58,7 +58,7 @@ const char* NpcSimTiers::name(NpcSimTier tier) {
 
 NpcSimTier NpcSimTiers::desired(Mode mode, bool hero, bool alwaysFull, const ChunkResidency* residency,
                                 ChunkId cell, NpcSimTier previous) {
-  if(hero)
+  if(hero || alwaysFull)
     return NpcSimTier::Full;
   switch(mode) {
     case Mode::Full:
@@ -68,7 +68,7 @@ NpcSimTier NpcSimTiers::desired(Mode mode, bool hero, bool alwaysFull, const Chu
     case Mode::Auto:
       break;
     }
-  if(alwaysFull || residency==nullptr)
+  if(residency==nullptr)
     return NpcSimTier::Full;
   // The previous tier selects the Near exit radius, exactly as a vob view
   // keeps its previous residency state.

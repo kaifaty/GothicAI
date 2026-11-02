@@ -137,7 +137,10 @@ std::string NpcLogicAudit::Stats::probeFields() const {
   std::ostringstream out;
   uint64_t inputs=0;
   for(const auto& [kind,count]:reanchored) { (void)kind; inputs+=count; }
-  out<<"npc_logic_body_samples="<<bodySamples<<" npc_logic_weapon_samples="<<weaponSamples
+  out<<"npc_logic_body_samples="<<bodySamples
+     <<" npc_logic_body_interactive_samples="<<bodyInteractiveSamples
+     <<" npc_logic_body_external_samples="<<bodyExternalSamples
+     <<" npc_logic_weapon_samples="<<weaponSamples
      <<" npc_logic_wait_early="<<waitEarly<<" npc_logic_wait_late="<<waitLate<<" npc_logic_reanchored="<<inputs
      <<" npc_logic_samples="<<ticks<<" npc_logic_body_mismatch="<<bodyMismatch
      <<" npc_logic_weapon_mismatch="<<weaponMismatch<<" npc_logic_early="<<early
@@ -149,7 +152,12 @@ std::string NpcLogicAudit::Stats::probeFields() const {
 std::string NpcLogicAudit::Stats::json() const {
   std::ostringstream out;
   out<<"{\"enabled\":"<<(enabled() ? "true" : "false")<<",\"samples\":"<<ticks
-     <<",\"body_samples\":"<<bodySamples<<",\"weapon_samples\":"<<weaponSamples
+     <<",\"body_samples\":"<<bodySamples
+     <<",\"body_interactive_samples\":"<<bodyInteractiveSamples
+     <<",\"body_external_samples\":"<<bodyExternalSamples
+     <<",\"simplified_body_samples\":"<<simplifiedBodySamples
+     <<",\"simplified_body_mismatch\":"<<simplifiedBodyMismatch
+     <<",\"weapon_samples\":"<<weaponSamples
      <<",\"wait_early\":"<<waitEarly<<",\"wait_late\":"<<waitLate
      <<",\"body_mismatch\":"<<bodyMismatch<<",\"weapon_mismatch\":"<<weaponMismatch
      <<",\"early\":"<<early<<",\"late\":"<<late<<",\"events\":"<<events
@@ -200,14 +208,20 @@ std::string NpcLogicAudit::Stats::json() const {
   }
 
 bool NpcLogicalState::hasState(BodyState value) const {
+  if(executorState && (value==BS_STAND || value==BS_WALK || value==BS_RUN || value==BS_SNEAK))
+    return value==*executorState;
   for(const auto& layer:layers)
     if(!layer.finished && layer.state==value) return true;
   return interactiveState && *interactiveState==value;
   }
 
 bool NpcLogicalState::hasStateFlag(BodyState value) const {
-  for(const auto& layer:layers)
+  if(executorState && (*executorState&(BS_FLAG_MASK|BS_MOD_MASK))==value) return true;
+  for(const auto& layer:layers) {
+    const auto state=BodyState(layer.state&(BS_MAX|BS_FLAG_MASK));
+    if(executorState && (state==BS_STAND || state==BS_WALK || state==BS_RUN || state==BS_SNEAK)) continue;
     if(!layer.finished && (layer.state&(BS_FLAG_MASK|BS_MOD_MASK))==value) return true;
+    }
   return interactiveState && (*interactiveState&(BS_FLAG_MASK|BS_MOD_MASK))==value;
   }
 
@@ -261,6 +275,7 @@ void NpcLogicalState::updateBody() {
   uint32_t state=BS_NONE;
   for(const auto& layer:layers)
     if(!layer.finished) state=std::max(state,uint32_t(layer.state&(BS_MAX|BS_FLAG_MASK)));
+  if(executorState) state=uint32_t(*executorState);
   if(interactiveState) state=uint32_t(*interactiveState);
   if(externalState) state=uint32_t(*externalState);
   body=BodyState(state);
@@ -348,6 +363,7 @@ void NpcLogicalState::sync(Npc& npc, bool rebuild, Action admitted, const Animat
   const bool audit=NpcLogicAudit::enabled();
   auto mobState=npc.interactive() ? std::optional<BodyState>(BodyState(npc.interactive()->stateMask())) : std::nullopt;
   const auto external=externalBody(npc);
+  const auto executor=npc.simplifiedBodyState();
   if(rebuild || !initialized) {
     layers.clear(); admissions.clear(); speeds.clear(); action={}; actionWait=false;
     for(const auto& [name,speed]:pose.logicalDefaultSpeeds()) speeds[name]=speed;
@@ -361,7 +377,7 @@ void NpcLogicalState::sync(Npc& npc, bool rebuild, Action admitted, const Animat
       for(auto& event:layer.weaponEvents) if(event.first<=now) event.first=UINT64_MAX;
       layers.push_back(std::move(layer));
       }
-    interactiveState=mobState; externalState=external; weapon=npc.weaponState();
+    interactiveState=mobState; externalState=external; executorState=executor; weapon=npc.weaponState();
     updateBody();
     pose.enableLogicalInputs(); pose.clearLogicalInputs(); initialized=true;
     // The saved wait identifies that a wait exists, never its predicted time.
@@ -383,7 +399,7 @@ void NpcLogicalState::sync(Npc& npc, bool rebuild, Action admitted, const Animat
 
   advance(now);
   const auto& inputs=pose.logicalInputs();
-  bool bodyInput=mobState!=interactiveState || external!=externalState;
+  bool bodyInput=mobState!=interactiveState || external!=externalState || executor!=executorState;
   bool weaponInput=false;
   if(audit && mobState!=interactiveState) ++totals.reanchored["interactive_mask_6d"];
   if(audit && external!=externalState) {
@@ -481,7 +497,7 @@ void NpcLogicalState::sync(Npc& npc, bool rebuild, Action admitted, const Animat
     }
   pose.clearLogicalInputs();
   layers.erase(std::remove_if(layers.begin(),layers.end(),[](const Layer& l){return l.finished;}),layers.end());
-  interactiveState=mobState; externalState=external; updateBody();
+  interactiveState=mobState; externalState=external; executorState=executor; updateBody();
 
   if(actionWait && npc.aniWaitTime!=nativeWaitEnd) {
     if(audit) ++totals.reanchored["wait_cancelled_or_replaced"];
@@ -524,11 +540,21 @@ void NpcLogicalState::auditTick(Npc& npc, bool bodyInput, bool weaponInput) {
     if(pose.logicalLayerCount()>0) key+=pose.logicalLayer(0).sequence->name;
     return key;
     };
-  if(!bodyInput) {
+  if(!bodyInput && externalState) {
+    ++totals.bodyExternalSamples;
+    } else if(!bodyInput && interactiveState) {
+    ++totals.bodyInteractiveSamples;
+    } else if(!bodyInput) {
     ++totals.bodySamples;
-    if(body!=npc.bodyState()) {
+    const bool simplified=npc.usesSimplifiedMovement();
+    if(simplified) ++totals.simplifiedBodySamples;
+    // Executor roles must be checked against the puppet, not the same role
+    // returned by Npc::bodyState. Mobsi and script overrides are counted above.
+    const auto actual=executorState ? npc.visual.pose().bodyState() : npc.bodyState();
+    if(body!=actual) {
       ++totals.bodyMismatch;
-      ++totals.bodyMismatchKinds[std::to_string(uint32_t(body))+"->"+std::to_string(uint32_t(npc.bodyState()))+":"+context()];
+      if(simplified) ++totals.simplifiedBodyMismatch;
+      ++totals.bodyMismatchKinds[std::to_string(uint32_t(body))+"->"+std::to_string(uint32_t(actual))+":"+context()];
       }
     }
   if(!weaponInput) {
@@ -599,3 +625,8 @@ NpcLogicalState::Tick::Tick(Npc& value,uint64_t dt):npc(value) {
   npc.logicalBody.worldStep=dt;
   }
 NpcLogicalState::Admission::~Admission() { npc.logicalBody.admit(npc,kind,sequence); }
+
+void Npc::suspendLogicalBodyState() {
+  visual.pose().disableLogicalInputs();
+  logicalBody={};
+  }

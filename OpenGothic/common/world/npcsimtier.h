@@ -13,12 +13,12 @@ class ChunkResidency;
 // while its 64 m chunk is Near in ChunkResidency (the same ring and exit
 // hysteresis as the other consumers; the hero is always Full), Simplified
 // otherwise. The tier is separate from NpcProcessPolicy, whose 30/60 m rules
-// remain unchanged. Both tiers currently run the same executor. The tier is
+// remain unchanged. The tier is
 // runtime-only: it is not saved and is recomputed right after a load.
 namespace NpcSimTiers {
 
 // OPENGOTHIC_NPC_SIM_TIER: auto (default), full (every NPC Full) or
-// simplified (every NPC but the hero Simplified). OPENGOTHIC_STREAMING=0
+// simplified (every NPC but the hero and native training/arena actors Simplified). OPENGOTHIC_STREAMING=0
 // forces full, as it keeps every other streaming consumer on the old path.
 enum class Mode : uint8_t { Auto, Full, Simplified };
 
@@ -44,6 +44,7 @@ struct Stats {
   double   fullTickMs = 0, simplifiedTickMs = 0;
   double   fullTickMsTotal = 0, simplifiedTickMsTotal = 0;
   uint64_t ticks = 0;
+  uint64_t fullNpcTicks = 0, simplifiedNpcTicks = 0;
   Mode     mode = Mode::Auto;
 
   std::string probeFields() const;

@@ -38,6 +38,7 @@ struct Journal {
   std::FILE*                               samples = nullptr;
   std::FILE*                               events  = nullptr;
   std::FILE*                               cost    = nullptr;
+  std::FILE*                               heights = nullptr;
   std::unordered_map<const Npc*,Entry>     entries;
   std::map<std::string,uint32_t>           nextOrdinal;
   // Every private random stream this journal registered, kept after an NPC leaves the world.
@@ -167,6 +168,13 @@ void writeSample(World& w, Journal& j, int64_t scheduledMs) {
     const auto  inv   = inventoryHash(*npc);
     const int   ta    = npc->currentRoutineIndex();
     const auto* mob   = npc->interactive();
+    if(j.heights!=nullptr && npc->usesSimplifiedMovement() && !npc->isDead() && mob==nullptr) {
+      // Verification only, at journal sample times; movement itself never rays.
+      const auto ground=w.physic()->landRay(p+Tempest::Vec3(0,100,0));
+      std::fprintf(j.heights,"%.0f,%s,%.1f,%.1f,%.1f,%s,%d,%.3f\n",t,key->c_str(),
+                   double(p.x),double(p.y),double(p.z),wp!=nullptr ? clean(wp->name).c_str() : "-",
+                   ground.hasCol ? 1 : 0,ground.hasCol ? double(std::abs(p.y-ground.v.y))/100.0 : -1.0);
+      }
     std::fprintf(j.samples,
                  "%.0f,%.4f,%s,%s,%d,%d,%d,%s,%s,%llu,%.1f,%.1f,%.1f,%s,%.1f,%zu,%s,%u,%016llx,%llu,%s,%s,%s,%s\n",
                  t,at,key->c_str(),e.symbol.c_str(),npc->isDead() ? 0 : 1,
@@ -186,6 +194,7 @@ void writeSample(World& w, Journal& j, int64_t scheduledMs) {
     ++j.rowCount;
     }
   std::fflush(j.samples);
+  if(j.heights!=nullptr) std::fflush(j.heights);
   if(j.events!=nullptr)
     std::fflush(j.events);
   if(j.cost!=nullptr) {
@@ -205,10 +214,12 @@ void writeSample(World& w, Journal& j, int64_t scheduledMs) {
         near60 += d<6000.f*6000.f;
         }
       }
-    std::fprintf(j.cost,"%.0f,%.3f,%zu,%zu,%llu,%zu,%zu,%llu,%llu,%.6f,%.6f\n",t,wall,near30,near60,
+    std::fprintf(j.cost,"%.0f,%.3f,%zu,%zu,%llu,%zu,%zu,%llu,%llu,%.6f,%.6f,%llu,%llu\n",t,wall,near30,near60,
                  (unsigned long long)(s.ticks-prev.ticks),s.full,s.simplified,
                  (unsigned long long)(s.toFull-prev.toFull),(unsigned long long)(s.toSimplified-prev.toSimplified),
-                 s.fullTickMsTotal-prev.fullTickMsTotal,s.simplifiedTickMsTotal-prev.simplifiedTickMsTotal);
+                 s.fullTickMsTotal-prev.fullTickMsTotal,s.simplifiedTickMsTotal-prev.simplifiedTickMsTotal,
+                 (unsigned long long)(s.fullNpcTicks-prev.fullNpcTicks),
+                 (unsigned long long)(s.simplifiedNpcTicks-prev.simplifiedNpcTicks));
     std::fflush(j.cost);
     j.tiersAtSample = s;
     }
@@ -257,12 +268,15 @@ void finish(World& w, Journal& j, const char* reason) {
   std::snprintf(buf,sizeof(buf),
                 ",\"end_reason\":\"%s\",\"end_world_ms\":%lld,\"elapsed_game_min\":%.4f,\"wall_s\":%.3f,"
                 "\"samples\":%llu,\"rows\":%llu,\"events\":%llu,\"inserted\":%llu,\"removed\":%llu,\"deaths\":%llu,"
-                "\"world_ticks\":%llu,\"npc_full_tick_ms\":%.3f,\"npc_simplified_tick_ms\":%.3f,"
+                "\"world_ticks\":%llu,\"npc_full_ticks\":%llu,\"npc_simplified_ticks\":%llu,"
+                "\"npc_full_tick_ms\":%.3f,\"npc_simplified_tick_ms\":%.3f,"
                 "\"npc_to_full\":%llu,\"npc_to_simplified\":%llu,\"npc_full_end\":%zu,\"npc_simplified_end\":%zu",
                 reason,(long long)w.time().toInt(),relativeMinutes(j,w.time().toInt()),wall,
                 (unsigned long long)j.sampleCount,(unsigned long long)j.rowCount,(unsigned long long)j.eventCount,
                 (unsigned long long)j.inserted,(unsigned long long)j.removed,(unsigned long long)j.deaths,
-                (unsigned long long)ticks,fullMs,simpMs,
+                (unsigned long long)ticks,
+                (unsigned long long)(s.fullNpcTicks-j.tiersAtStart.fullNpcTicks),
+                (unsigned long long)(s.simplifiedNpcTicks-j.tiersAtStart.simplifiedNpcTicks),fullMs,simpMs,
                 (unsigned long long)(s.toFull-j.tiersAtStart.toFull),
                 (unsigned long long)(s.toSimplified-j.tiersAtStart.toSimplified),s.full,s.simplified);
   writeHeader(w,j,std::string(buf)+",\"logic_audit\":"+NpcLogicAudit::stats().json());
@@ -272,7 +286,7 @@ void finish(World& w, Journal& j, const char* reason) {
   for(const auto* npc:j.isolated)
     w.script().releaseIsolatedRandom(npc);
   j.isolated.clear();
-  for(auto** f:{&j.samples,&j.events,&j.cost})
+  for(auto** f:{&j.samples,&j.events,&j.cost,&j.heights})
     if(*f!=nullptr) {
       std::fclose(*f);
       *f = nullptr;
@@ -305,8 +319,10 @@ bool NpcDayJournal::start(World& w, const Options& options, std::string& error) 
   j.samples = std::fopen((base+"npc-day.csv").c_str(),"w");
   j.events  = std::fopen((base+"npc-day-events.csv").c_str(),"w");
   j.cost    = std::fopen((base+"npc-day-cost.csv").c_str(),"w");
-  if(j.samples==nullptr || j.events==nullptr || j.cost==nullptr) {
-    for(auto** f:{&j.samples,&j.events,&j.cost})
+  if(NpcLogicAudit::enabled())
+    j.heights=std::fopen((base+"npc-day-heights.csv").c_str(),"w");
+  if(j.samples==nullptr || j.events==nullptr || j.cost==nullptr || (NpcLogicAudit::enabled() && j.heights==nullptr)) {
+    for(auto** f:{&j.samples,&j.events,&j.cost,&j.heights})
       if(*f!=nullptr) {
         std::fclose(*f);
         *f = nullptr;
@@ -318,7 +334,9 @@ bool NpcDayJournal::start(World& w, const Options& options, std::string& error) 
                          "inv_hash,inv_items,mob,tier,policy,hero\n");
   std::fprintf(j.events,"t_min,key,kind,value,x,y,z\n");
   std::fprintf(j.cost,"t_min,wall_s,near_hero_30m,near_hero_60m,world_ticks,npc_full,npc_simplified,to_full,"
-                      "to_simplified,full_tick_ms,simplified_tick_ms\n");
+                      "to_simplified,full_tick_ms,simplified_tick_ms,full_npc_ticks,simplified_npc_ticks\n");
+  if(j.heights!=nullptr)
+    std::fprintf(j.heights,"t_min,key,x,y,z,nearest_wp,ground_hit,height_error_m\n");
   j.active       = true;
   j.startMs      = w.time().toInt();
   j.endMs        = j.startMs+int64_t(options.minutes)*60000;

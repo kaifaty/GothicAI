@@ -230,6 +230,10 @@ void MoveAlgo::tickClimb(uint64_t dt) {
   }
 
 void MoveAlgo::tick(uint64_t dt, MvFlags moveFlg) {
+  if(npc.usesSimplifiedMovement()) {
+    takeRagdollControl();
+    return;
+    }
   ++movementTraceSerial;
   MovementTrace trace(*this,dt,moveFlg);
   if(npc.isDown() && (flags==Swim || flags==Dive)) {
@@ -690,6 +694,8 @@ bool MoveAlgo::characterVirtualReady() {
   }
 
 bool MoveAlgo::useCharacterVirtual() {
+  if(npc.usesSimplifiedMovement())
+    return false;
   if(npc.isPlayer())
     return Gothic::physicsFlags().characterVirtual;
   if(NavDemos::forceCharacterVirtual(npc) && npc.isHuman() && !npc.isDown())

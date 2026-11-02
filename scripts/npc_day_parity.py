@@ -43,6 +43,9 @@ CHECKS = {
     "max_zs_offset_p95": ("max", "matched ZS start offset p95, game min"),
     "max_alive_diff": ("max", "NPCs alive in one run and dead (or missing) in the other at the end"),
     "max_inventory_diff_end": ("max", "NPCs whose inventory differs (or who are missing) at the end"),
+    "max_hp_diff_end": ("max", "NPCs whose HP differs (or who are missing) at the end"),
+    "min_deaths_matched": ("min", "death events matched, share"),
+    "max_stationary_pos_p95": ("max", "position error p95 when stationary in both runs, m"),
     "min_same_inventory": ("min", "same inventory, share of NPC-samples"),
     "min_same_hp": ("min", "same HP, share of NPC-samples"),
 }
@@ -81,7 +84,7 @@ def load(run):
                 continue
             rows[(t, row["key"])] = (
                 row["alive"] == "1", int(row["hp"]), row["ta"], row["zs"],
-                float(row["x"]), float(row["y"]), float(row["z"]), row["inv_hash"], row["tier"], row["head"])
+                float(row["x"]), float(row["y"]), float(row["z"]), row["inv_hash"], row["tier"], row["head"], int(row["body"]))
             keys[row["key"]] = row["symbol"]
     events = {}
     path = find(run, "npc-day-events.csv")
@@ -197,20 +200,23 @@ def completeness(run):
 
 
 def end_differences(a, b):
-    """The end of each run against the other's end: NPCs missing in one, alive and inventory."""
-    missing, alive, inventory = [], [], []
+    """Compare final presence, life, HP and inventory independently of intermediate samples."""
+    missing, alive, inventory, hp = [], [], [], []
     for key in sorted(a["end_keys"] | b["end_keys"]):
         ra, rb = a["rows"].get((a["last"], key)), b["rows"].get((b["last"], key))
         if ra is None or rb is None:
             missing.append(key)
             alive.append(key)
             inventory.append(key)
+            hp.append(key)
             continue
         if ra[0] != rb[0]:
             alive.append(key)
         if ra[7] != rb[7]:
             inventory.append(key)
-    return missing, alive, inventory
+        if ra[1] != rb[1]:
+            hp.append(key)
+    return missing, alive, inventory, hp
 
 
 def compare(a, b, window=60.0, min_hero_distance=0.0):
@@ -224,12 +230,16 @@ def compare(a, b, window=60.0, min_hero_distance=0.0):
         common = kept
     if not common:
         raise SystemExit("no common NPC-samples: different worlds or empty journals")
-    total, by_tier, by_hour, per_npc = Tally(), {}, {}, {}
+    total, by_tier, by_hour, per_npc, by_movement = Tally(), {}, {}, {}, {}
     for t, key in common:
         ra, rb = a["rows"][(t, key)], b["rows"][(t, key)]
         total.add(ra, rb)
         by_tier.setdefault(rb[8], Tally()).add(ra, rb)
         by_hour.setdefault(t // 60, Tally()).add(ra, rb)
+        # Body states 1..10 are walk/sneak/run/sprint/swim/crawl/dive/jump/climb/fall
+        # (common/game/constants.h); the journal already strips state flags.
+        movement = "moving_either" if 1 <= ra[10] <= 10 or 1 <= rb[10] <= 10 else "stationary_both"
+        by_movement.setdefault(movement, Tally()).add(ra, rb)
         npc = per_npc.setdefault(key, {"zs_diff": 0, "pos_max": 0.0, "first_zs_diff": None, "samples": 0})
         npc["samples"] += 1
         if ra[3] != rb[3]:
@@ -239,7 +249,7 @@ def compare(a, b, window=60.0, min_hero_distance=0.0):
         if ra[0] and rb[0]:
             npc["pos_max"] = max(npc["pos_max"], math.dist(ra[4:7], rb[4:7]) / 100)
     last = max(t for t, _ in common)
-    missing_end, alive_diff, inventory_diff = end_differences(a, b)
+    missing_end, alive_diff, inventory_diff, hp_diff = end_differences(a, b)
     # Events count only up to the last common sample: a longer run must not add unmatched ones.
     def kind(run, name, value=None):
         return {key: [(t, value or v) for t, v in events if t <= last]
@@ -264,12 +274,14 @@ def compare(a, b, window=60.0, min_hero_distance=0.0):
         "total": total.summary(),
         "by_tier": {tier: tally.summary() for tier, tally in sorted(by_tier.items())},
         "by_hour": {int(hour): tally.summary() for hour, tally in sorted(by_hour.items())},
+        "by_movement": {name: tally.summary() for name, tally in sorted(by_movement.items())},
         "zs_starts": zs,
         "deaths": deaths,
         "deaths_a": sum(len(v) for v in kind(a, "death").values()),
         "deaths_b": sum(len(v) for v in kind(b, "death").values()),
         "alive_diff_end": alive_diff,
         "inventory_diff_end": inventory_diff,
+        "hp_diff_end": hp_diff,
         "diverged_npcs": len(diverged),
         "first_zs_divergence_min": min(first) if first else None,
         "worst_npcs": sorted(({"key": key, **npc} for key, npc in per_npc.items() if npc["pos_max"] > 0 or npc["zs_diff"]),
@@ -291,6 +303,9 @@ def check_values(result):
         "min_zs_matched": result["zs_starts"]["matched"], "max_zs_offset_p95": result["zs_starts"]["offset_p95"],
         "max_alive_diff": len(result["alive_diff_end"]), "min_same_inventory": total["same_inventory"],
         "max_inventory_diff_end": len(result["inventory_diff_end"]),
+        "max_hp_diff_end": len(result["hp_diff_end"]),
+        "min_deaths_matched": result["deaths"]["matched"],
+        "max_stationary_pos_p95": result["by_movement"].get("stationary_both", {}).get("pos_p95"),
         "min_same_hp": total["same_hp"],
     }
 
@@ -356,6 +371,7 @@ def markdown(result, checks, label_a, label_b):
               f"| NPCs missing in one run at the end | {len(result['missing_end'])} |",
               f"| alive differs at the end (missing counts) | {len(result['alive_diff_end'])} |",
               f"| inventory differs at the end (missing counts) | {len(result['inventory_diff_end'])} |",
+              f"| HP differs at the end (missing counts) | {len(result['hp_diff_end'])} |",
               f"| NPCs with any ZS difference or >5 m apart | {result['diverged_npcs']} of {result['npcs']} |",
               f"| first ZS difference, game min | {fmt(result['first_zs_divergence_min'])} |", ""]
     if checks:
@@ -373,6 +389,11 @@ def markdown(result, checks, label_a, label_b):
     for tier, item in result["by_tier"].items():
         lines.append(f"| {tier} | {item['samples']} | {pct(item['same_zs'])} | {pct(item['same_ta'])} | "
                      f"{fmt(item['pos_p50'], 2)} / {fmt(item['pos_p95'], 2)} / {fmt(item['pos_max'], 1)} |")
+    lines += ["", "## By movement", "", "| Samples | Count | Position p50 / p95 / max, m |",
+              "|---|---|---|"]
+    for name, item in result["by_movement"].items():
+        lines.append(f"| {name} | {item['samples']} | {fmt(item['pos_p50'], 2)} / "
+                     f"{fmt(item['pos_p95'], 2)} / {fmt(item['pos_max'], 1)} |")
     lines += ["", "## By game hour since the start", "", "| Hour | Same ZS | Same TA | Position p95, m | Max, m |",
               "|---|---|---|---|---|"]
     for hour, item in result["by_hour"].items():

@@ -585,6 +585,7 @@ void Npc::save(Serialize &fout, size_t id, std::string_view directory) {
   }
 
 void Npc::load(Serialize &fin, size_t id, std::string_view directory) {
+  simpleMovement = {};
   bodyImpactWindow.clear();
   bodyImpactLaunchCulprit.reset();
   bodyImpactPendingCulprit.reset();
@@ -1108,6 +1109,64 @@ WalkBit Npc::walkMode() const {
   return wlk;
   }
 
+bool Npc::usesSimplifiedMovement() const {
+  static const bool enabled = [] {
+    const auto* value = std::getenv("OPENGOTHIC_NPC_SIMPLE_MOVE");
+    return value==nullptr || value[0]!='0';
+    }();
+  return enabled && simTier()==NpcSimTier::Simplified && !isPlayer();
+  }
+
+auto Npc::simplifiedBodyState() const -> std::optional<BodyState> {
+  return usesSimplifiedMovement() ? simpleMovement.body : std::nullopt;
+  }
+
+float Npc::simplifiedMoveSpeed() const {
+  const auto* sequence = visual.movementSequence(walkMode(),weaponState(),*this);
+  if(sequence==nullptr || sequence->totalTime()<=0.f)
+    return 0.f;
+  const auto duration = uint64_t(sequence->totalTime());
+  const auto displacement = sequence->speed(0,duration);
+  float playback = 1.f;
+  const auto& pose = visual.pose();
+  for(const auto& [name,speed]:pose.logicalDefaultSpeeds())
+    if(name==sequence->name)
+      playback = speed;
+  for(size_t i=0;i<pose.logicalLayerCount();++i) {
+    const auto layer = pose.logicalLayer(i);
+    if(layer.sequence==sequence)
+      playback = layer.speed;
+    }
+  return std::sqrt(displacement.x*displacement.x+displacement.z*displacement.z)*playback/float(duration);
+  }
+
+void Npc::updateSimpleMovement() {
+  const bool simple = usesSimplifiedMovement();
+  simpleMovement.body.reset();
+  if(simple)
+    mvAlgo.takeRagdollControl();
+  if(simple==simpleMovement.active)
+    return;
+  simpleMovement.active = simple;
+  simpleMovement.edgeTo = nullptr;
+  if(simple) {
+    const bool sensorEnabled = physic.isEnabled();
+    suspendRagdoll();
+    // The ghost remains a combat/perception sensor. Pair collision filtering
+    // excludes graph actors; it must not become invisible to targeting rays.
+    physic.setEnable(sensorEnabled);
+    setAnimRotate(0);
+    resetCharacterVisualHeight();
+    } else {
+    // Only the returning Full body needs a ground ray. The path and queue
+    // survive the handoff; do not call resetPositionToTA/fixNpcPosition here.
+    const auto ground = owner.physic()->landRay(position()+Vec3(0,30,0));
+    if(ground.hasCol)
+      setPosition(Vec3(x,ground.v.y,z));
+    mvAlgo.takeRagdollControl();
+    }
+  }
+
 bool Npc::isPlayer() const {
   return aiPolicy==NpcProcessPolicy::Player;
   }
@@ -1309,6 +1368,8 @@ void Npc::suspendRagdoll() {
   }
 
 bool Npc::createRagdoll() {
+  if(usesSimplifiedMovement())
+    return false;
   const auto* skeleton = visual.visualSkeleton();
   if(skeleton==nullptr || !visual.hitZoneShape().isValid())
     return false;
@@ -1433,6 +1494,8 @@ bool Npc::recoverRagdoll(bool force) {
   }
 
 void Npc::updateRagdollQuestAnchor() {
+  if(usesSimplifiedMovement())
+    return;
   // Training (OPENGOTHIC_FREEZE_WORLD): NPCs outside the arena stand still, so their anchors
   // keep the value sampled before the arena; resampling all of them costs two rays each.
   if(BodyArena::frozenWorld() && !BodyArena::isActor(*this))
@@ -1512,6 +1575,8 @@ bool Npc::recoverSpellThrow() {
   }
 
 void Npc::prepareRagdoll() {
+  if(usesSimplifiedMovement())
+    return;
   if(!isDown() || !Gothic::physicsFlags().spellPhysics)
     pendingSpellImpulse = {};
   if(!Gothic::physicsFlags().spellPhysics || (!isDown() && !isInAir()))
@@ -2743,6 +2808,10 @@ bool Npc::isMeleeFighter() const {
   }
 
 void Npc::prepareLivingBody() {
+  if(usesSimplifiedMovement()) {
+    living.reset();
+    return;
+    }
   const auto benchMode = meleeBenchMode();
   const bool benchRig = benchMode==MeleeBenchMode::Full || benchMode==MeleeBenchMode::Chain || benchMode==MeleeBenchMode::Blade;
   if(currentInteract!=nullptr)
@@ -3951,6 +4020,8 @@ bool Npc::implGoTo(uint64_t dt) {
   }
 
 bool Npc::implGoTo(uint64_t dt, float destDist) {
+  if(usesSimplifiedMovement())
+    return implSimpleGoTo(dt,destDist);
   if(go2.flag==GT_No)
     return false;
 
@@ -4001,6 +4072,102 @@ bool Npc::implGoTo(uint64_t dt, float destDist) {
     return true;
     }
   return false;
+  }
+
+bool Npc::implSimpleGoTo(uint64_t dt, float destDist) {
+  if(go2.empty() || interactive()!=nullptr)
+    return !go2.empty();
+  // The queued command already serializes the item reference. Keep it until
+  // arrival so a moved item is followed and a save needs no new format field.
+  if(go2.flag==GT_Item) {
+    const auto* action = aiQueue.front();
+    if(action!=nullptr && action->act==AI_GotoItem && action->item!=nullptr)
+      go2.pos = action->item->position();
+    }
+
+  if(go2.flag!=GT_Flee && go2.isClose(*this,destDist)) {
+    if(go2.flag==GT_Way && go2.wp!=nullptr && wayPath.first()!=nullptr) {
+      go2.wp = wayPath.pop();
+      attachToPoint(go2.wp);
+      simpleMovement.edgeTo = nullptr;
+      } else {
+      if(go2.flag==GT_NextFp && implTurnTo(go2.wp,AnimationSolver::TurnType::Std,dt))
+        return true;
+      clearGoTo();
+      simpleMovement.body = BS_STAND;
+      return false;
+      }
+    }
+
+  auto target = go2.target();
+  if(go2.wp!=nullptr)
+    target = go2.wp->groundPos;
+  else if(go2.npc!=nullptr)
+    target = go2.npc->position();
+  if(go2.flag==GT_Flee) {
+    const float travel = simplifiedMoveSpeed()*float(dt);
+    const auto direction = Vec3(std::cos(rotationRad()),0,std::sin(rotationRad()));
+    target = position()+direction*travel;
+    }
+
+  if(simpleMovement.edgeTo!=go2.wp || go2.wp==nullptr) {
+    simpleMovement.edgeTo = go2.wp;
+    simpleMovement.edgeFrom = position();
+    // A saved/full actor can be between waypoints. Recover the current edge
+    // from its endpoint's connections and project progress, never restart it.
+    float best = MoveAlgo::closeToPointThreshold*MoveAlgo::closeToPointThreshold*4.f;
+    if(go2.wp!=nullptr) {
+      for(const auto& connection:go2.wp->connections()) {
+        const auto from = connection.point->groundPos;
+        const auto edge = target-from;
+        const float length2 = edge.x*edge.x+edge.z*edge.z;
+        if(length2==0.f)
+          continue;
+        const auto offset = position()-from;
+        const float progress = std::clamp((offset.x*edge.x+offset.z*edge.z)/length2,0.f,1.f);
+        const auto projection = from+edge*progress;
+        const float error = (projection.x-x)*(projection.x-x)+(projection.z-z)*(projection.z-z);
+        if(error<best) {
+          best = error;
+          simpleMovement.edgeFrom = from;
+          }
+        }
+      }
+    else if(const auto* near = owner.findWayPoint(target)) {
+      // Native go-to-NPC/item/mob approaches have a final direct segment.
+      // Its ground endpoint also comes from the waynet, without a tick ray.
+      target.y = near->groundPos.y;
+      }
+    }
+
+  const auto direction = target-position();
+  if(go2.flag!=GT_Flee && implTurnTo(direction.x,direction.z,AnimationSolver::TurnType::Std,dt))
+    return true;
+  const float travel = simplifiedMoveSpeed()*float(dt);
+  const auto edge = target-simpleMovement.edgeFrom;
+  const float length2 = edge.x*edge.x+edge.z*edge.z;
+  if(length2>0.f && travel>0.f) {
+    const auto offset = position()-simpleMovement.edgeFrom;
+    const float progress = std::clamp((offset.x*edge.x+offset.z*edge.z)/length2,0.f,1.f);
+    const float nextProgress = std::min(1.f,progress+travel/std::sqrt(length2));
+    auto next = simpleMovement.edgeFrom+edge*nextProgress;
+    const auto correction = next-position();
+    const float horizontal = std::sqrt(correction.x*correction.x+correction.z*correction.z);
+    if(horizontal>travel) {
+      next.x = x+correction.x*travel/horizontal;
+      next.z = z+correction.z*travel/horizontal;
+      const auto along = next-simpleMovement.edgeFrom;
+      next.y = simpleMovement.edgeFrom.y+edge.y*std::clamp((along.x*edge.x+along.z*edge.z)/length2,0.f,1.f);
+      }
+    setPosition(next);
+    }
+  else if(length2==0.f && travel>0.f && target.y!=y) {
+    setPosition(Vec3(x,y+std::copysign(std::min(std::abs(target.y-y),travel),target.y-y),z));
+    }
+  simpleMovement.body = bool(walkMode()&WalkBit::WM_Sneak) ? BS_SNEAK :
+                        bool(walkMode()&WalkBit::WM_Walk) ? BS_WALK : BS_RUN;
+  setAnim(AnimationSolver::Move);
+  return true;
   }
 
 bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyAction) {
@@ -5992,6 +6159,7 @@ void Npc::tickAnimationTags() {
   }
 
 void Npc::tick(uint64_t dt) {
+  updateSimpleMovement();
   NpcLogicalState::Tick logicalTick(*this,dt);
   if(!bloodPoolDone && isDead() && owner.tickCount()-bloodDeathTick>=BloodSpawn::SettleMs) {
     bloodPoolDone = true;
@@ -6179,6 +6347,11 @@ void Npc::tick(uint64_t dt) {
   }
 
 bool Npc::prepareTurn() {
+  if(usesSimplifiedMovement()) {
+    visual.stopWalkAnim(*this);
+    setAnimRotate(0);
+    return true;
+    }
   const auto st = bodyStateMasked();
   if(interactive()==nullptr && (st==BS_WALK || st==BS_SNEAK)) {
     visual.stopWalkAnim(*this);
@@ -6288,7 +6461,26 @@ void Npc::nextAiAction(AiQueue& queue, uint64_t dt) {
         break;
         }
       if(wayPath.last()!=act.point) {
-        wayPath     = owner.wayTo(*this,*act.point);
+        const auto* near = usesSimplifiedMovement() ? owner.findWayPoint(position()) : nullptr;
+        bool offNetwork = false;
+        if(near!=nullptr) {
+          auto delta = near->groundPos-position();
+          float distance2 = delta.x*delta.x+delta.z*delta.z;
+          for(const auto& connection:near->connections()) {
+            const auto edge = connection.point->groundPos-near->groundPos;
+            const float length2 = edge.x*edge.x+edge.z*edge.z;
+            if(length2==0.f)
+              continue;
+            const float progress = std::clamp(-(delta.x*edge.x+delta.z*edge.z)/length2,0.f,1.f);
+            const auto offset = delta+edge*progress;
+            distance2 = std::min(distance2,offset.x*offset.x+offset.z*offset.z);
+            }
+          offNetwork = distance2>4.f*MoveAlgo::closeToPointThreshold*MoveAlgo::closeToPointThreshold;
+          }
+        // Only an unseen actor may take a straight recovery segment to the
+        // nearest waypoint. Full bodies retain the native admission/planner.
+        wayPath = offNetwork ? owner.wayTo(*near,*act.point) : owner.wayTo(*this,*act.point);
+        simpleMovement.edgeTo = nullptr;
         auto wpoint = wayPath.pop();
 
         if(wpoint!=nullptr) {
@@ -6671,6 +6863,18 @@ void Npc::nextAiAction(AiQueue& queue, uint64_t dt) {
       break;
       }
     case AI_GotoItem:{
+      if(usesSimplifiedMovement()) {
+        if(act.item==nullptr)
+          break;
+        go2.clear();
+        go2.set(act.item);
+        if(go2.isClose(*this,MoveAlgo::closeToPointThreshold*0.5f)) {
+          clearGoTo();
+          break;
+          }
+        queue.pushFront(std::move(act));
+        break;
+        }
       go2.set(act.item);
       break;
       }
@@ -7237,6 +7441,8 @@ BodyState Npc::bodyState() const {
     return BS_FALL;
 
   uint32_t s = visual.pose().bodyState();
+  if(const auto simple = simplifiedBodyState())
+    s = uint32_t(*simple);
   if(auto i = interactive())
     s = i->stateMask();
   return BodyState(s);
@@ -7248,6 +7454,10 @@ BodyState Npc::bodyStateMasked() const {
   }
 
 bool Npc::hasState(BodyState s) const {
+  if(const auto simple = simplifiedBodyState()) {
+    if(s==BS_STAND || s==BS_WALK || s==BS_RUN || s==BS_SNEAK)
+      return s==*simple;
+    }
   if(visual.pose().hasState(s))
     return true;
   if(auto i = interactive())
@@ -7256,8 +7466,20 @@ bool Npc::hasState(BodyState s) const {
   }
 
 bool Npc::hasStateFlag(BodyState flg) const {
-  if(visual.pose().hasStateFlag(flg))
-    return true;
+  if(const auto simple = simplifiedBodyState()) {
+    if((*simple&(BS_FLAG_MASK|BS_MOD_MASK))==flg)
+      return true;
+    for(size_t i=0;i<visual.pose().logicalLayerCount();++i) {
+      const auto layer = visual.pose().logicalLayer(i);
+      const auto state = BodyState(layer.state&(BS_MAX|BS_FLAG_MASK));
+      if(state==BS_STAND || state==BS_WALK || state==BS_RUN || state==BS_SNEAK)
+        continue;
+      if((layer.state&(BS_FLAG_MASK|BS_MOD_MASK))==flg)
+        return true;
+      }
+    } else if(visual.pose().hasStateFlag(flg)) {
+      return true;
+      }
   if(auto i = interactive())
     return flg==(i->stateMask() & (BS_FLAG_MASK|BS_MOD_MASK));
   return false;
@@ -7641,6 +7863,22 @@ bool Npc::rotateTo(float dx, float dz, float step, AnimationSolver::TurnType ani
 
   if(!isRotationAllowed())
     return false;
+
+  if(usesSimplifiedMovement()) {
+    const float target = angleDir(dx,dz);
+    const float delta = std::remainder(target-angle,360.f);
+    simpleMovement.body = BS_STAND;
+    setAnimRotate(0);
+    if(std::abs(delta)<=step*2.f) {
+      setDirection(target);
+      if(go2.empty())
+        setAnim(Anim::Idle);
+      return false;
+      }
+    setAnim(Anim::Idle);
+    setDirection(angle+std::clamp(delta,-step,step));
+    return true;
+    }
 
   float a  = angleDir(dx,dz);
   float da = a-angle;
@@ -10256,6 +10494,8 @@ bool Npc::goToPosition(const Vec3& position) {
   }
 
 void Npc::clearGoTo() {
+  if(usesSimplifiedMovement())
+    simpleMovement.edgeTo = nullptr;
   if(!go2.empty()) {
     stopWalking();
     go2.clear();
@@ -10619,6 +10859,8 @@ void Npc::resetCharacterVisualHeight() {
   }
 
 void Npc::updateCharacterVisualHeight() {
+  if(usesSimplifiedMovement())
+    return;
   const bool characterFlag = isPlayer() ? Gothic::physicsFlags().characterVirtual :
                              isHuman() ? Gothic::physicsFlags().npcCharacterVirtual :
                                          Gothic::physicsFlags().monsterCharacterVirtual;
@@ -10799,6 +11041,8 @@ void Npc::updateAnimation(uint64_t dt, bool force) {
   }
 
 bool Npc::updateLyingVisualHeight() {
+  if(usesSimplifiedMovement())
+    return false;
   if(!isHuman() || ragdoll || spellFrozen() || !isLie() || mvAlgo.state()!=MoveAlgo::Run || interactive()!=nullptr)
     return false;
   Vec3 lowest;
