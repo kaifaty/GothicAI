@@ -1645,6 +1645,42 @@ printf '%s\n' "${ENV_ARGS[@]-}"
         self.assertEqual(len(calls), 2)
         self.assertEqual(calls[0][-2], f'{content.resolve()}/')
 
+    def test_balance_uploads_with_the_same_run_name_keep_both_snapshots(self):
+        source = SCRIPT.with_name('melee-balance-remote.sh').read_text()
+        run_series = re.search(r'^run_series\(\) \{\n.*?^\}', source, re.M | re.S).group(0)
+        remote = self.root / 'remote'
+        remote.mkdir()
+        content = self.root / 'content'
+        content.mkdir()
+        clip = content / 'clip.man'
+        (self.binaries / 'rsync').write_text(f'#!{sys.executable}\n' + r'''
+import os
+from pathlib import Path
+import shutil
+import sys
+host, destination = sys.argv[-1].split(':', 1)
+assert host == 'test'
+shutil.copytree(sys.argv[-2], Path(os.environ['TEST_ROOT']) / 'remote' / destination, dirs_exist_ok=True)
+''')
+        harness = r'''
+set -euo pipefail
+HOST=test TASK=gothic-ai/melee-balance-test RUN_NAME=shared
+EPISODES=1 SEED=1 TIMEOUT_MS=1000 SERIES=native-posture-on-1h
+ssh() { (cd "$TEST_ROOT/remote" && bash -c "${@: -1}"); }
+remote_script() { cat >/dev/null; printf '%s\n' "$8"; }
+''' + run_series + '\nrun_series\n'
+        snapshots = []
+        for value in ('first', 'second'):
+            clip.write_text(value)
+            result = subprocess.run(['bash', '-c', harness],
+                                    env=dict(self.env, OPENGOTHIC_CONTENT=str(content)),
+                                    capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            snapshots.append(remote / result.stdout.strip())
+        self.assertNotEqual(snapshots[0], snapshots[1])
+        self.assertEqual((snapshots[0] / 'clip.man').read_text(), 'first')
+        self.assertEqual((snapshots[1] / 'clip.man').read_text(), 'second')
+
     def test_empty_value_disables_remote_default_without_upload(self):
         result = self.sync(value='')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

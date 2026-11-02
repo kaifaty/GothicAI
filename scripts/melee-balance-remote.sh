@@ -35,7 +35,6 @@ changes the importer, or in a new folder, run under gq once:
     <folder>/build/opengothic/content-convert resolve-base ~/gothic-ai/body-baseline/assets
 MELEE_BALANCE_PYTHON selects a remote Python with torch (default: body/.venv).
 OPENGOTHIC_CONTENT uploads explicit content into this task for each run.
-OPENGOTHIC_BASE_STORE overrides the shared base store (default: /mnt/shared/gothic-ai/melee-balance).
 MELEE_POSTURE_SCALE multiplies the knockdown threshold in every series (sweeps).
 MELEE_DOWN_TACTICS sets GAME melee_down_tactics in every series (0 or 1).
 MELEE_HITSTOP sets GAME melee_hitstop in every series (0 or 1).
@@ -85,7 +84,7 @@ done
 remote_script() {
   local remote_args='' remote_env='' arg key
   for arg in "$@"; do printf -v remote_args '%s %q' "$remote_args" "$arg"; done
-  for key in GQ_BIN GQ_PROFILE OPENGOTHIC_BASE_STORE MELEE_BALANCE_PYTHON MELEE_POSTURE_SCALE MELEE_DOWN_TACTICS MELEE_HITSTOP MELEE_STAMINA MELEE_PARRY MELEE_PARRY_AI MELEE_AI_DODGE MELEE_AI_RIPOSTE MELEE_STAGGER; do
+  for key in GQ_BIN GQ_PROFILE MELEE_BALANCE_PYTHON MELEE_POSTURE_SCALE MELEE_DOWN_TACTICS MELEE_HITSTOP MELEE_STAMINA MELEE_PARRY MELEE_PARRY_AI MELEE_AI_DODGE MELEE_AI_RIPOSTE MELEE_STAGGER; do
     if [[ -n "${!key:-}" ]]; then printf -v remote_env '%s %q' "$remote_env" "$key=${!key}"; fi
   done
   {
@@ -100,8 +99,8 @@ sync_sources() {
   remote_script "$TASK" <<'REMOTE'
 set -euo pipefail
 mkdir -p "$HOME/$1/source" "$HOME/$1/provenance" "$HOME/$1/runs"
-mkdir -p "${OPENGOTHIC_BASE_STORE:-/mnt/shared/gothic-ai/melee-balance}"
-df -h "$HOME" "${OPENGOTHIC_BASE_STORE:-/mnt/shared/gothic-ai/melee-balance}"
+mkdir -p /mnt/shared/gothic-ai/melee-balance
+df -h "$HOME" /mnt/shared/gothic-ai/melee-balance
 REMOTE
   for directory in OpenGothic scripts body-service; do
     rsync -a --delete --exclude=.git --exclude=build/ --exclude='build-*/' \
@@ -149,9 +148,10 @@ run_series() {
   if [[ -n "$content" ]]; then
     content="$(python3 -c 'import os, sys; print(os.path.realpath(os.path.expanduser(sys.argv[1])))' "$content")"
     [[ -d "$content" ]] || { echo "Missing OPENGOTHIC_CONTENT directory: $content" >&2; exit 2; }
-    ssh -o BatchMode=yes "$HOST" "mkdir -p '$TASK/inputs/$RUN_NAME/content'"
-    rsync -a --delete "$content/" "$HOST:$TASK/inputs/$RUN_NAME/content/"
-    content="$TASK/inputs/$RUN_NAME/content"
+    local snapshot
+    snapshot="$(ssh -o BatchMode=yes "$HOST" "mkdir -p '$TASK/inputs/$RUN_NAME'; mktemp -d '$TASK/inputs/$RUN_NAME/content.XXXXXX'")"
+    rsync -a "$content/" "$HOST:$snapshot/"
+    content="$snapshot"
   fi
   remote_script "$TASK" "$RUN_NAME" "$EPISODES" "$SEED" "$TIMEOUT_MS" "$SERIES" "${OPENGOTHIC_CONTENT+x}" "$content" <<'REMOTE'
 set -euo pipefail
@@ -225,7 +225,7 @@ for name in "${series[@]}"; do
     "VK_DRIVER_FILES=/nonexistent/melee-balance-no-vulkan.json" \
     "VK_ICD_FILENAMES=/nonexistent/melee-balance-no-vulkan.json" "OPENGOTHIC_TEXTURES=" \
     "OPENGOTHIC_BASE=" "OPENGOTHIC_BASE_CACHE=$task_root/base-cache" \
-    "OPENGOTHIC_BASE_STORE=${OPENGOTHIC_BASE_STORE:-/mnt/shared/gothic-ai/melee-balance}" "${scale_env[@]}" \
+    "OPENGOTHIC_BASE_STORE=/mnt/shared/gothic-ai/melee-balance" "${scale_env[@]}" \
     bash -c 'out="$1"; shift; exec "$@" > "$out/launcher.log" 2>&1' bash "$out" \
     "$python" "$task_root/source/scripts/body_sim_bench.py" --runner "$runner" \
     --assets "$HOME/gothic-ai/body-baseline/assets" --save "$reference/run/save_slot_1.sav" \
