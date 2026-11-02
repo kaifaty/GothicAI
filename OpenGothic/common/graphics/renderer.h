@@ -10,6 +10,7 @@
 
 #include "worldview.h"
 #include "shaders.h"
+#include "blooddecals.h"
 
 class Camera;
 class InventoryMenu;
@@ -320,4 +321,5 @@ class Renderer final {
     Tempest::TextureFormat    zBufferFormat = Tempest::TextureFormat::Depth16;
 
     Shaders&                  shaders = Shaders::inst(false);
+    BloodDecals               blood;
   };

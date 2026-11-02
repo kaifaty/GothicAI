@@ -95,6 +95,8 @@ void Shaders::compileShaders() noexcept {
   ssao                = computeShader("ssao.comp.sprv");
   ssaoBlur            = computeShader("ssao_blur.comp.sprv");
 
+  bloodDecal       = bloodDecalShader(opts.doMaterialMaps);
+
   directLight      = postEffect(string_frm("direct_light", materialMaps),    RenderState::ZTestMode::NoEqual);
   directLightSh    = postEffect(string_frm("direct_light_sh", materialMaps), RenderState::ZTestMode::NoEqual);
   if(opts.doRayQuery && device.properties().descriptors.nonUniformIndexing)
@@ -738,6 +740,29 @@ RenderPipeline Shaders::fogShader(std::string_view name) {
   auto vs = device.shader(sh.data,sh.len);
 
   sh      = GothicShader::get(string_frm(name,".frag.sprv"));
+  auto fs = device.shader(sh.data,sh.len);
+  return device.pipeline(Triangles,state,vs,fs);
+  }
+
+RenderPipeline Shaders::bloodDecalShader(bool materialMaps) {
+  auto& device = Resources::device();
+
+  // No depth attachment: the fragment shader projects the box onto the scene depth itself.
+  // The box is drawn from inside (front faces culled) so it works with the camera in it too.
+  RenderState state;
+  state.setZTestMode    (RenderState::ZTestMode::Always);
+  state.setZWriteEnabled(false);
+  state.setCullFaceMode (RenderState::CullMode::Back);
+  state.setBlendSource  (RenderState::BlendMode::SrcAlpha);
+  state.setBlendDest    (RenderState::BlendMode::OneMinusSrcAlpha);
+  state.setColorWriteMask(0, RenderState::RGB); // albedo alpha holds the material hint bits
+  if(materialMaps)
+    state.setColorWriteMask(1, RenderState::G|RenderState::B|RenderState::A); // keep the surface's occlusion
+
+  auto sh = GothicShader::get("blood_decal.vert.sprv");
+  auto vs = device.shader(sh.data,sh.len);
+
+  sh      = GothicShader::get(materialMaps ? "blood_decal_orm.frag.sprv" : "blood_decal.frag.sprv");
   auto fs = device.shader(sh.data,sh.len);
   return device.pipeline(Triangles,state,vs,fs);
   }

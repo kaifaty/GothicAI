@@ -1,5 +1,6 @@
 #include "npc.h"
 #include "world/bodytraces.h"
+#include "world/bloodspawn.h"
 #include "graphics/mesh/protomesh.h"
 
 #include <Tempest/Matrix4x4>
@@ -1172,6 +1173,10 @@ void Npc::onNoHealth(bool death, HitSound sndMask) {
       }
     bodyTraceRecord  = std::move(trace);
     bodyTraceEntered = isDead();
+    }
+  if(death && !wasDead) {
+    bloodDeathTick = owner.tickCount();
+    bloodPoolDone  = false;
     }
   // Note: clear perceptions for William in Jarkentar
   for(size_t i=0;i<PERC_Count;++i)
@@ -5417,6 +5422,23 @@ void Npc::takeDamage(Npc& other, const Bullet* b, const CollideMask bMask, int32
     }
   if(!isSpell && !isDown() && hitResult.hasHit)
     owner.addWeaponHitEffect(other,b,*this).play();
+  if(!isSpell && hitResult.hasHit && hitResult.value>0) {
+    // blood: at the blade's contact, the arrow's impact, or between the two
+    Tempest::Vec3 wound, dir;
+    if(contact!=nullptr) {
+      wound = contact->point;
+      dir   = contact->velocityCmS;
+      }
+    else if(b!=nullptr) {
+      wound = b->impactPoint();
+      dir   = b->direction();
+      }
+    else {
+      wound = (other.centerPosition()+centerPosition())*0.5f;
+      dir   = centerPosition()-other.centerPosition();
+      }
+    BloodSpawn::onHit(owner,*this,wound,dir,hitResult.value);
+    }
 
   if(isDown()) {
     onNoHealth(dontKill,HS_NoSound);
@@ -5869,6 +5891,10 @@ void Npc::tickAnimationTags() {
   }
 
 void Npc::tick(uint64_t dt) {
+  if(!bloodPoolDone && isDead() && owner.tickCount()-bloodDeathTick>=BloodSpawn::SettleMs) {
+    bloodPoolDone = true;
+    BloodSpawn::onDead(owner,*this);
+    }
   tickBodyImpact();
   tickMeleeParry();
   tickMeleeStamina();

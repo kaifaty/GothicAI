@@ -237,7 +237,7 @@ VkPipeline VPipeline::initGraphicsPipeline(VDevice& device,
     if(nativeIsDepthFormat(frm))
       continue;
     auto& a = blendAtt[i];
-    a.colorWriteMask      = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    a.colorWriteMask      = VkColorComponentFlags(st.colorWriteMask(i)); // RenderState::ColorMask bits match VK_COLOR_COMPONENT_*
     a.blendEnable         = st.hasBlend() ? VK_TRUE : VK_FALSE;
     a.dstColorBlendFactor = nativeFormat(st.blendDest());
     a.srcColorBlendFactor = nativeFormat(st.blendSource());

@@ -749,6 +749,9 @@ class Npc final {
       std::string culprit;        // "PLAYER" or the killer's instance symbol
       };
     const BodyTrace& bodyTrace() const { return bodyTraceRecord; }
+    // Blood (physics stage 8, step 4c): game ms of the last bleeding hit, -1: none.
+    void      setBloodHit(int64_t gameMs) { bloodHit = gameMs; }
+    int64_t   bloodHitAt() const { return bloodHit; }
     void      setBodyTrace(BodyTrace trace);
 
     void      setOther(Npc* ot);
@@ -1126,6 +1129,9 @@ class Npc final {
     Npc*                           lastHit          = nullptr;
     BodyTrace                      bodyTraceRecord;
     bool                           bodyTraceEntered = false; // the record's death reached ZS_Dead
+    int64_t                        bloodHit       = -1;   // game ms of the last bleeding hit
+    uint64_t                       bloodDeathTick = 0;    // real ms of death: the pool waits for the body to settle
+    bool                           bloodPoolDone  = true; // false only between a death and its pool
     char                           lastHitType      = 'A';
     int32_t                        lastHitSpell     = 0;
 
