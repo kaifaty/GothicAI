@@ -332,6 +332,15 @@ class Npc final {
     bool      isStaminaExhausted() const;
     bool      isMeleeStunned() const;
     void      startMeleeStun(Npc& by, std::string_view reason);
+    // Charged forward strike: transient hero-only windup/hold and an ordinary event-driven release.
+    bool      canMeleeCharge() const;
+    bool      beginMeleeCharge();
+    void      releaseMeleeCharge();
+    void      cancelMeleeCharge(std::string_view reason);
+    bool      isMeleeCharging() const;
+    bool      isMeleeChargeReleasing() const;
+    float     meleeChargeMultiplier() const;
+    void      meleeChargeTap(uint64_t heldMs);
     // The melee dodge ([GAME] melee_dodge, game/meleedodge): that way relative to the facing, the move by the
     // armour, its stamina, its window without incoming harm. Any npc may call it; the hero's input does
     // (PlayerControl). false: refused, no animation, or the pose did not take it. The playing dodge is told by
@@ -1038,6 +1047,13 @@ class Npc final {
     bool                          tickMeleePosture(uint64_t dt);
     MeleeImpact::Posture           meleePosture;
     MeleeStamina::State            meleeStamina;
+    enum class ChargePhase : uint8_t { None, Windup, Hold, Release };
+    ChargePhase                   meleeChargePhase = ChargePhase::None;
+    uint64_t                      meleeChargeStart = 0;
+    float                         meleeChargeMult = 1.f;
+    bool                          meleeChargeReleased = false;
+    void                          tickMeleeCharge();
+    void                          meleeChargeNote(const std::string& text, std::string_view phase, const std::string& fields = {});
     void                          tickMeleeStamina();
     float                         meleeAttackCost() const;
     bool                          allowStaminaAction(std::string_view action, float cost, bool fullCost = false);
