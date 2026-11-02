@@ -1825,15 +1825,18 @@ freeze SLD_815_SOELDNER
 stats npc SLD_815_SOELDNER hpmax 100000 hp 100000
 wait 600
 watch SLD_826_SOELDNER
-rec drift-seed-85000 novideo
 place 1000 180
 put SLD_815_SOELDNER 1120 0
-wait 200
-stun-drift SLD_815_SOELDNER SLD_826_SOELDNER
-stun SLD_815_SOELDNER posture
-wait 1600
-stop
+watch SLD_815_SOELDNER
+place 120 0
+put SLD_826_SOELDNER 4000 90
 watch player
+rec drift-flat-seed-85000 novideo
+freeze SLD_815_SOELDNER off
+stun-drift SLD_815_SOELDNER player
+stun SLD_815_SOELDNER posture
+wait 1700
+stop
 clear 3000
 
 seed 85001
@@ -1854,15 +1857,17 @@ freeze SLD_815_SOELDNER
 stats npc SLD_815_SOELDNER hpmax 100000 hp 100000
 wait 600
 watch SLD_826_SOELDNER
-rec drift-seed-85001 novideo
-place 1000 180
-put SLD_815_SOELDNER 1120 0
+put-at player 65184.6 2315.5 -12179
 wait 200
-stun-drift SLD_815_SOELDNER SLD_826_SOELDNER
-stun SLD_815_SOELDNER posture
-wait 1600
-stop
+put SLD_826_SOELDNER 4000 90
+put-at SLD_815_SOELDNER 65138.5 2379.98 -12072.3
 watch player
+rec drift-duel-slope-seed-85001 novideo
+freeze SLD_815_SOELDNER off
+stun-drift SLD_815_SOELDNER player
+stun SLD_815_SOELDNER posture
+wait 1700
+stop
 clear 3000
 
 seed 85002
@@ -1883,15 +1888,18 @@ freeze SLD_815_SOELDNER
 stats npc SLD_815_SOELDNER hpmax 100000 hp 100000
 wait 600
 watch SLD_826_SOELDNER
-rec drift-seed-85002 novideo
 place 1000 180
 put SLD_815_SOELDNER 1120 0
-wait 200
-stun-drift SLD_815_SOELDNER SLD_826_SOELDNER
-stun SLD_815_SOELDNER posture
-wait 1600
-stop
+watch SLD_815_SOELDNER
+place 120 0
+put SLD_826_SOELDNER 4000 90
 watch player
+rec drift-flat-seed-85002 novideo
+freeze SLD_815_SOELDNER off
+stun-drift SLD_815_SOELDNER player
+stun SLD_815_SOELDNER posture
+wait 1700
+stop
 clear 3000
 
 seed 85003
@@ -1912,15 +1920,17 @@ freeze SLD_815_SOELDNER
 stats npc SLD_815_SOELDNER hpmax 100000 hp 100000
 wait 600
 watch SLD_826_SOELDNER
-rec drift-seed-85003 novideo
-place 1000 180
-put SLD_815_SOELDNER 1120 0
+put-at player 65184.6 2315.5 -12179
 wait 200
-stun-drift SLD_815_SOELDNER SLD_826_SOELDNER
-stun SLD_815_SOELDNER posture
-wait 1600
-stop
+put SLD_826_SOELDNER 4000 90
+put-at SLD_815_SOELDNER 65138.5 2379.98 -12072.3
 watch player
+rec drift-duel-slope-seed-85003 novideo
+freeze SLD_815_SOELDNER off
+stun-drift SLD_815_SOELDNER player
+stun SLD_815_SOELDNER posture
+wait 1700
+stop
 clear 3000
 
 seed 85004
@@ -1941,15 +1951,18 @@ freeze SLD_815_SOELDNER
 stats npc SLD_815_SOELDNER hpmax 100000 hp 100000
 wait 600
 watch SLD_826_SOELDNER
-rec drift-seed-85004 novideo
 place 1000 180
 put SLD_815_SOELDNER 1120 0
-wait 200
-stun-drift SLD_815_SOELDNER SLD_826_SOELDNER
-stun SLD_815_SOELDNER posture
-wait 1600
-stop
+watch SLD_815_SOELDNER
+place 120 0
+put SLD_826_SOELDNER 4000 90
 watch player
+rec drift-flat-seed-85004 novideo
+freeze SLD_815_SOELDNER off
+stun-drift SLD_815_SOELDNER player
+stun SLD_815_SOELDNER posture
+wait 1700
+stop
 clear 3000
 
 seed 85005
@@ -1970,15 +1983,17 @@ freeze SLD_815_SOELDNER
 stats npc SLD_815_SOELDNER hpmax 100000 hp 100000
 wait 600
 watch SLD_826_SOELDNER
-rec drift-seed-85005 novideo
-place 1000 180
-put SLD_815_SOELDNER 1120 0
+put-at player 65184.6 2315.5 -12179
 wait 200
-stun-drift SLD_815_SOELDNER SLD_826_SOELDNER
-stun SLD_815_SOELDNER posture
-wait 1600
-stop
+put SLD_826_SOELDNER 4000 90
+put-at SLD_815_SOELDNER 65138.5 2379.98 -12072.3
 watch player
+rec drift-duel-slope-seed-85005 novideo
+freeze SLD_815_SOELDNER off
+stun-drift SLD_815_SOELDNER player
+stun SLD_815_SOELDNER posture
+wait 1700
+stop
 clear 3000
 
 seed 85006
@@ -1999,15 +2014,18 @@ freeze SLD_815_SOELDNER
 stats npc SLD_815_SOELDNER hpmax 100000 hp 100000
 wait 600
 watch SLD_826_SOELDNER
-rec drift-seed-85006 novideo
 place 1000 180
 put SLD_815_SOELDNER 1120 0
-wait 200
-stun-drift SLD_815_SOELDNER SLD_826_SOELDNER
-stun SLD_815_SOELDNER posture
-wait 1600
-stop
+watch SLD_815_SOELDNER
+place 120 0
+put SLD_826_SOELDNER 4000 90
 watch player
+rec drift-flat-seed-85006 novideo
+freeze SLD_815_SOELDNER off
+stun-drift SLD_815_SOELDNER player
+stun SLD_815_SOELDNER posture
+wait 1700
+stop
 clear 3000
 
 seed 85007
@@ -2028,15 +2046,17 @@ freeze SLD_815_SOELDNER
 stats npc SLD_815_SOELDNER hpmax 100000 hp 100000
 wait 600
 watch SLD_826_SOELDNER
-rec drift-seed-85007 novideo
-place 1000 180
-put SLD_815_SOELDNER 1120 0
+put-at player 65184.6 2315.5 -12179
 wait 200
-stun-drift SLD_815_SOELDNER SLD_826_SOELDNER
-stun SLD_815_SOELDNER posture
-wait 1600
-stop
+put SLD_826_SOELDNER 4000 90
+put-at SLD_815_SOELDNER 65138.5 2379.98 -12072.3
 watch player
+rec drift-duel-slope-seed-85007 novideo
+freeze SLD_815_SOELDNER off
+stun-drift SLD_815_SOELDNER player
+stun SLD_815_SOELDNER posture
+wait 1700
+stop
 clear 3000
 
 seed 85008
@@ -2057,15 +2077,18 @@ freeze SLD_815_SOELDNER
 stats npc SLD_815_SOELDNER hpmax 100000 hp 100000
 wait 600
 watch SLD_826_SOELDNER
-rec drift-seed-85008 novideo
 place 1000 180
 put SLD_815_SOELDNER 1120 0
-wait 200
-stun-drift SLD_815_SOELDNER SLD_826_SOELDNER
-stun SLD_815_SOELDNER posture
-wait 1600
-stop
+watch SLD_815_SOELDNER
+place 120 0
+put SLD_826_SOELDNER 4000 90
 watch player
+rec drift-flat-seed-85008 novideo
+freeze SLD_815_SOELDNER off
+stun-drift SLD_815_SOELDNER player
+stun SLD_815_SOELDNER posture
+wait 1700
+stop
 clear 3000
 
 seed 85009
@@ -2086,15 +2109,17 @@ freeze SLD_815_SOELDNER
 stats npc SLD_815_SOELDNER hpmax 100000 hp 100000
 wait 600
 watch SLD_826_SOELDNER
-rec drift-seed-85009 novideo
-place 1000 180
-put SLD_815_SOELDNER 1120 0
+put-at player 65184.6 2315.5 -12179
 wait 200
-stun-drift SLD_815_SOELDNER SLD_826_SOELDNER
-stun SLD_815_SOELDNER posture
-wait 1600
-stop
+put SLD_826_SOELDNER 4000 90
+put-at SLD_815_SOELDNER 65138.5 2379.98 -12072.3
 watch player
+rec drift-duel-slope-seed-85009 novideo
+freeze SLD_815_SOELDNER off
+stun-drift SLD_815_SOELDNER player
+stun SLD_815_SOELDNER posture
+wait 1700
+stop
 clear 3000
 
 quit

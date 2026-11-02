@@ -2553,6 +2553,26 @@ std::string ragdollVector(const Vec3& value) {
   return "["+ragdollNumber(value.x)+","+ragdollNumber(value.y)+","+ragdollNumber(value.z)+"]";
   }
 
+void stunDriftSample(World& world, uint64_t elapsed, uint64_t requested) {
+  const auto& drift=bench.stunDrift;
+  const auto& target=*drift.target;
+  const auto delta=target.position()-drift.origin;
+  const auto separation=drift.attacker->position()-target.position();
+  event("stun_drift","\"actor\":"+jsonStr(symName(world,&target))+
+    ",\"attacker\":"+jsonStr(symName(world,drift.attacker))+",\"elapsed_ms\":"+std::to_string(elapsed)+
+    ",\"requested_ms\":"+std::to_string(requested)+",\"position_cm\":"+ragdollVector(target.position())+
+    ",\"attacker_position_cm\":"+ragdollVector(drift.attacker->position())+
+    ",\"axis\":"+ragdollVector(drift.axis)+",\"toward_cm\":"+ragdollNumber(Vec3::dotProduct(delta,drift.axis))+
+    ",\"horizontal_cm\":"+ragdollNumber(std::hypot(delta.x,delta.z))+",\"height_cm\":"+ragdollNumber(delta.y)+
+    ",\"separation_cm\":"+ragdollNumber(std::hypot(separation.x,separation.z))+
+    ",\"stunned\":"+(target.isMeleeStunned() ? "true" : "false")+
+    ",\"slide\":"+(target.isSlide() ? "true" : "false")+
+    ",\"in_air\":"+(target.isInAir() ? "true" : "false")+
+    ",\"melee_stun_beat\":"+(target.meleeStunSecondBeat() ? "true" : "false")+
+    ",\"external\":"+(target.isExternalControl() ? "true" : "false")+
+    ",\"animation\":"+jsonStr(target.animNames()));
+  }
+
 std::string ragdollMatrix(const Matrix4x4& value) {
   std::string result="[";
   for(size_t i=0;i<16;++i) {
@@ -16816,31 +16836,38 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     const bool ok = pl.currentRangedWeapon()!=nullptr && pl.drawWeaponBow();
     say(std::string("draw bow ") + (ok ? "ok" : "failed") + " ws=" + std::to_string(int(pl.weaponState())));
     }
-  else if(c=="put") {
+  else if(c=="put" || c=="put-at") {
     // put <npc|nearest> <dist> <angle> [dy]: the npc stands there from the hero (angle from the hero's
     // facing, 0 in front), on the ground, frozen, facing the hero
-    Npc* n = findNpc(w,pl,a.size()>1 ? a[1] : "nearest");
-    if(n==nullptr || n==&pl) {
+    // put-at <npc|player> <x> <y> <z>: the same ground placement at explicit world coordinates.
+    Npc* n = c=="put-at" && a.size()>1 && a[1]=="player" ? &pl : findNpc(w,pl,a.size()>1 ? a[1] : "nearest");
+    if(n==nullptr || (n==&pl && c!="put-at")) {
       say("put: no npc " + line);
       return;
       }
     const float d   = num(a,2,500);
     const float an  = (pl.rotation()+num(a,3,0))*float(M_PI)/180.f;
     Vec3        pos = pl.position() + Vec3(std::cos(an),0,std::sin(an))*d;
+    if(c=="put-at") {
+      if(a.size()!=5) {arenaAbort("put-at needs npc x y z");return;}
+      pos=Vec3(num(a,2,0),num(a,3,0),num(a,4,0));
+      n->clearSpeed();
+      }
     // the ground there may be far above or below (a slope): the first one from above, by short rays
     // (a long one misses the landscape)
     DynamicWorld::RayLandResult r;
-    for(float y=pos.y+num(a,4,0)+1500; y>pos.y-1500 && !r.hasCol; y-=400)
+    for(float y=pos.y+(c=="put-at" ? 0.f : num(a,4,0))+1500; y>pos.y-1500 && !r.hasCol; y-=400)
       r = w.physic()->ray({pos.x,y,pos.z},{pos.x,y-450,pos.z});
+    if(c=="put-at" && !r.hasCol) {arenaAbort("put-at found no ground");return;}
     if(r.hasCol)
       pos.y = r.v.y;
     n->setInteraction(nullptr,true);
     n->clearAiQueue();
     n->clearState(false);
-    n->setExternalControl(true);
+    if(n!=&pl) n->setExternalControl(true);
     n->setPosition(pos);
     const Vec3 dir = pl.position()-pos;
-    n->setDirection(Vec3(dir.x,0,dir.z));
+    if(n!=&pl) n->setDirection(Vec3(dir.x,0,dir.z));
     n->updateTransform();
     char buf[200];
     std::snprintf(buf,sizeof(buf),"put %s at %.0f %.0f %.0f (%.0f above the hero%s)",symName(w,n).c_str(),pos.x,pos.y,pos.z,
@@ -18052,15 +18079,12 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     }
   else if(c=="stun-drift") {
     auto* target=findNpc(w,pl,a.size()>1 ? a[1] : "");
-    auto* attacker=findNpc(w,pl,a.size()>2 ? a[2] : "");
+    auto* attacker=a.size()>2 && a[2]=="player" ? &pl : findNpc(w,pl,a.size()>2 ? a[2] : "");
     if(target==nullptr || attacker==nullptr || target==attacker) {arenaAbort("stun-drift needs a target and attacker");return;}
     auto axis=attacker->position()-target->position();axis.y=0;
     if(axis.length()<1.f) {arenaAbort("stun-drift needs distinct horizontal roots");return;}
-    bench.stunDrift={target,attacker,target->position(),Vec3::normalize(axis),w.tickCount(),0};
-    event("stun_drift","\"actor\":"+jsonStr(symName(w,target))+",\"attacker\":"+jsonStr(symName(w,attacker))+
-      ",\"elapsed_ms\":0,\"requested_ms\":0,\"position_cm\":"+ragdollVector(target->position())+
-      ",\"axis\":"+ragdollVector(bench.stunDrift.axis)+",\"toward_cm\":0,\"horizontal_cm\":0,\"height_cm\":0"+
-      ",\"separation_cm\":"+ragdollNumber(axis.length()));
+    bench.stunDrift={target,attacker,target->position(),Vec3::normalize(axis),w.tickCount(),1};
+    stunDriftSample(w,0,0);
     }
   else if(c=="stun") {
     // stun <npc|nearest|player> [parried|guard_break|posture]: melee stun, by the hero
@@ -21050,17 +21074,10 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
   bodyImpactTick(*world);
   if(auto& drift=bench.stunDrift;drift.target!=nullptr) {
     const uint64_t elapsed=world->tickCount()-drift.start;
-    const uint64_t requested=drift.next==0 ? 700 : 1500;
+    const uint64_t requested=drift.next*100;
     if(elapsed>=requested) {
-      const auto delta=drift.target->position()-drift.origin;
-      event("stun_drift","\"actor\":"+jsonStr(symName(*world,drift.target))+
-        ",\"attacker\":"+jsonStr(symName(*world,drift.attacker))+",\"elapsed_ms\":"+std::to_string(elapsed)+
-        ",\"requested_ms\":"+std::to_string(requested)+",\"position_cm\":"+ragdollVector(drift.target->position())+
-        ",\"axis\":"+ragdollVector(drift.axis)+",\"toward_cm\":"+ragdollNumber(Vec3::dotProduct(delta,drift.axis))+
-        ",\"horizontal_cm\":"+ragdollNumber(std::hypot(delta.x,delta.z))+",\"height_cm\":"+ragdollNumber(delta.y)+
-        ",\"stunned\":"+(drift.target->isMeleeStunned() ? "true" : "false")+
-        ",\"animation\":"+jsonStr(drift.target->animNames()));
-      if(++drift.next==2) drift={};
+      stunDriftSample(*world,elapsed,requested);
+      if(++drift.next==17) drift={};
       }
     }
   destructionFields(*world);

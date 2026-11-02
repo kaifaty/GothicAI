@@ -332,6 +332,7 @@ class Npc final {
     float     staminaFraction() const;
     bool      isStaminaExhausted() const;
     bool      isMeleeStunned() const;
+    bool      meleeStunSecondBeat() const { return meleeStunBeat; }
     void      startMeleeStun(Npc& by, std::string_view reason);
     // Charged forward strike: transient hero-only windup/hold and an ordinary event-driven release.
     bool      beginMeleeRiposte();

@@ -4,6 +4,7 @@
 import argparse
 import csv
 import json
+import re
 import statistics
 from pathlib import Path
 
@@ -22,6 +23,41 @@ def read(path):
     source = path / "events.jsonl" if path.is_dir() else path
     with source.open() as stream:
         return [json.loads(line) for line in stream if line.strip()]
+
+
+def summarize_drift(events):
+    total_second = 0
+    for group in ("flat", "duel-slope"):
+        prefix = f"drift-{group}-seed-"
+        records = [e["seg"] for e in events if e.get("kind") == "rec" and e.get("seg", "").startswith(prefix)]
+        require(len(records) == len(set(records)) == 5, f"{group}: expected 5 distinct probes")
+        samples = [e for e in events if e.get("kind") == "stun_drift" and e.get("seg", "").startswith(prefix)]
+        require(len(samples) == 85, f"{group}: expected 85 slices, got {len(samples)}")
+        trials = {}
+        for seg in records:
+            trial = [e for e in samples if e["seg"] == seg]
+            require([e["requested_ms"] for e in trial] == list(range(0, 1601, 100)), f"{seg}: expected 17 slices")
+            require(all(e["requested_ms"] <= e["elapsed_ms"] <= e["requested_ms"] + 34 for e in trial),
+                    f"{seg}: late slice")
+            require(all(e["actor"] == TARGET and e["attacker"] == "PC_HERO" and not e["external"] for e in trial),
+                    f"{seg}: wrong actors or external control")
+            require(all(e["stunned"] for e in trial if 100 <= e["requested_ms"] <= 1400), f"{seg}: stun missing")
+            trials[seg] = trial
+        second = sum(any(re.search(r"\bT_STUMBLE(?:A)?\b", e["animation"]) for e in trial) for trial in trials.values())
+        flagged = sum(any(e["stunned"] and e["melee_stun_beat"] for e in trial) for trial in trials.values())
+        total_second += second
+        print(f"drift/{group}: probes=5, slices={len(samples)}, second_clip={second}/5, second_flag={flagged}/5, " +
+              ", ".join(f"{key}={sum(e[key] for e in samples)}/{len(samples)} "
+                        f"({sum(e[key] for e in samples) / len(samples):.2%})" for key in ("slide", "in_air")))
+        for requested in (300, 700, 1000, 1500):
+            at = [e for e in samples if e["requested_ms"] == requested]
+            print(f"drift/{group} {requested}ms: " + ", ".join(
+                f"{key}={statistics.median(e[key] for e in at):.6f}"
+                for key in ("toward_cm", "horizontal_cm", "height_cm", "separation_cm")) +
+                f", animations={sorted({e['animation'] for e in at})}")
+        initial = [e for e in samples if e["requested_ms"] == 0]
+        print(f"drift/{group} initial: target={initial[0]['position_cm']}, hero={initial[0]['attacker_position_cm']}")
+    print(f"Drift complete: 10 probes, 170 slices; second clip in {total_second}/10 probes")
 
 
 def summarize(mode, events):
@@ -64,6 +100,9 @@ def summarize(mode, events):
                 if max(e[f"{p}_m_s"] for p in PARTS) > 8:
                     print("MEDIUM FAST CONTACTS " + json.dumps(e, ensure_ascii=False))
 
+    if any(e.get("seg", "").startswith("drift-flat-seed-") for e in events):
+        summarize_drift(events)
+        return rows
     drift = {}
     for requested in (0, 700, 1500):
         samples = [e for e in events if e.get("kind") == "stun_drift" and e.get("requested_ms") == requested]
@@ -85,10 +124,16 @@ def summarize(mode, events):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("on", type=Path)
-    parser.add_argument("off", type=Path)
+    parser.add_argument("on", type=Path, nargs="?")
+    parser.add_argument("off", type=Path, nargs="?")
+    parser.add_argument("--drift", type=Path, help="Analyze only the flat/duel-slope drift probes; do not write summary.csv")
     parser.add_argument("--output", type=Path, default=Path(__file__).parent / "summary.csv")
     args = parser.parse_args()
+    if args.drift:
+        summarize_drift(read(args.drift))
+        return
+    if args.on is None or args.off is None:
+        parser.error("provide ON OFF or --drift DIRECTORY")
     on, off = read(args.on), read(args.off)
     recordings = lambda events: [e["seg"] for e in events if e.get("kind") == "rec"]
     require(recordings(on) == recordings(off), "ON/OFF recording order and seeds differ")

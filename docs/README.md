@@ -30,7 +30,7 @@
 
 ## Части и машины
 
-[Защита рождения рэгдолла и дрейф оглушения](../reports/physics/2026-11-02-knockdown-launch/README.md): `[GAME] ragdoll_birth_guard=1`, нативные контракты, парный стенд [`knockdown-launch`](../scripts/bench/knockdown-launch.bench) (60 нокдаунов и 10 проб дрейфа в каждом режиме). Приёмка частичная: `summary.csv` пока содержит только ON, подготовка дрейфа требует проверки. [Текущее поведение](physics.md#как-работает-сейчас).
+[Защита рождения рэгдолла и дрейф оглушения](../reports/physics/2026-11-02-knockdown-launch/README.md): `[GAME] ragdoll_birth_guard=1`, нативные контракты, парный стенд [`knockdown-launch`](../scripts/bench/knockdown-launch.bench) (60 нокдаунов и 10 проб дрейфа в каждом режиме). Сводка `summary.csv` содержит нокдауны ON; отдельный стенд [`knockdown-drift`](../scripts/bench/knockdown-drift.bench) сравнивает оглушение на ровной точке и склоне дуэли, по 5 проб со срезами каждые 100 мс. [Текущее поведение](physics.md#как-работает-сейчас).
 
 ```
  Mac                                         dev-ubuntu (RTX 3090, модели)
