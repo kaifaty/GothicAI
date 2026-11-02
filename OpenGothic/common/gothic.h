@@ -82,6 +82,8 @@ class Gothic final {
       bool placedItems = true;
       bool bodyImpactDamage = true;
       bool meleeDodge = true;
+      bool meleeBarge = true;
+      bool meleeCharge = true;
       bool bodyTraces = true;
 
       bool allowsMonsterCharacterVirtual(bool down, bool flying) const {

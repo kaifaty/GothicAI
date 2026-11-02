@@ -624,6 +624,8 @@ struct Bench {
 
   std::vector<Hold>             holds;
   std::vector<KeyCodec::Action> taps;
+  uint64_t                    inputTraceUntil = 0;
+  std::string                 inputAnimation;
 
   // `dodge ... before <attacker> <ms>`: the melee dodge waits for the attacker's next blow to come that near
   struct DodgeArm {
@@ -1825,6 +1827,7 @@ bool keyAction(std::string_view k, KeyCodec::Action& a) {
     {"forward",KeyCodec::Forward}, {"back",KeyCodec::Back},       {"left",KeyCodec::Left},  {"right",KeyCodec::Right},
     {"turnl",  KeyCodec::RotateL}, {"turnr",KeyCodec::RotateR},   {"jump",KeyCodec::Jump},  {"walk", KeyCodec::Walk},
     {"sneak",  KeyCodec::Sneak},   {"weapon",KeyCodec::Weapon},   {"action",KeyCodec::ActionGeneric},
+    {"attack", KeyCodec::ActionGeneric},
     {"melee",  KeyCodec::WeaponMele},{"bow",KeyCodec::WeaponBow}, {"spell",KeyCodec::WeaponMage3},
     {"parade", KeyCodec::Parade},  {"breath",KeyCodec::Walk},     {"dodge",KeyCodec::Dodge},
     };
@@ -1837,10 +1840,22 @@ bool keyAction(std::string_view k, KeyCodec::Action& a) {
   }
 
 void press(PlayerControl& ctrl, KeyCodec::Action a) {
+  if(a==KeyCodec::ActionGeneric || a==KeyCodec::Forward) {
+    bench.inputTraceUntil = bench.time+2000;
+    const auto* world = Gothic::inst().world();
+    say("input press " + std::string(a==KeyCodec::Forward ? "forward" : "attack") + " at " +
+        std::to_string(world ? world->tickCount() : 0) + " ms");
+    }
   ctrl.onKeyPressed(a,KeyEvent::K_NoKey,KeyCodec::Mapping::Primary);
   }
 
 void release(PlayerControl& ctrl, KeyCodec::Action a) {
+  if(a==KeyCodec::ActionGeneric || a==KeyCodec::Forward) {
+    bench.inputTraceUntil = bench.time+2000;
+    const auto* world = Gothic::inst().world();
+    say("input release " + std::string(a==KeyCodec::Forward ? "forward" : "attack") + " at " +
+        std::to_string(world ? world->tickCount() : 0) + " ms");
+    }
   ctrl.onKeyReleased(a,KeyCodec::Mapping::Primary);
   }
 
@@ -15397,6 +15412,10 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
         ",\"wall_cm\":"+ragdollVector(wall.v)+",\"wall_normal\":"+ragdollVector(wall.n));
       }
     else if(a.size()==3 && a[1]=="weapon") equip(a[2]);
+    else if(a.size()==3 && a[1]=="controls" && (a[2]=="g2" || a[2]=="classic")) {
+      Gothic::settingsSetI("GAME","USEGOTHIC1CONTROLS",a[2]=="classic");
+      say("melee shadow controls " + a[2]);
+      }
     else if(a.size()==3 && a[1]=="bandit") {
       // melee-shadow bandit 1h|2h: the fixture's bandit takes the stock one- or two-hander in hand
       if(bench.meleeShadowActors.size()!=3) {arenaAbort("melee shadow setup is required");return;}
@@ -15476,7 +15495,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       for(auto* npc:bench.meleeShadowActors) if(w.npcId(npc)!=uint32_t(-1)) w.removeNpc(*npc);
       bench.meleeShadowActors.clear();bench.meleeShadowPlaces.clear();
       }
-    else {arenaAbort("melee shadow expects setup/weapon <1h|2h|fist>, target <0|1|2>, wall, live or clear");return;}
+    else {arenaAbort("melee shadow expects setup/weapon <1h|2h|fist>, controls <g2|classic>, target <0|1|2>, wall, live or clear");return;}
     }
   else if(c=="melee-physics" && a.size()==6 && a[1]=="setup") {
     const auto* enabled=std::getenv("OPENGOTHIC_MELEE_BENCH");
@@ -16324,7 +16343,10 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       }
     else {
       press(ctrl,k);
-      bench.holds.push_back({k,bench.time+uint64_t(num(a,2,1000))});
+      const auto until = bench.time+uint64_t(num(a,2,1000));
+      bench.holds.push_back({k,until});
+      if(k==KeyCodec::ActionGeneric || k==KeyCodec::Forward)
+        bench.inputTraceUntil = until+2000;
       }
     }
   else if(c=="cam") {
@@ -18616,13 +18638,14 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     say("faceanim " + nameUtf8(*n) + " " + a[2]);
     }
   else if(c=="ani") {
-    // ani <npc|nearest|player> <anim>: it plays an animation of its model script (T_YES, T_DIALOGGESTURE_03)
+    // ani <npc|nearest|player> <anim> [force]: it plays an animation of its model script (T_YES,
+    // T_DIALOGGESTURE_03); force cuts what plays now, as a hit reaction or a stun's stumble that a stand would wait for
     Npc* n = findNpc(w,pl,a.size()>1 ? a[1] : "nearest");
     if(n==nullptr || a.size()<3) {
       say("ani: no npc or anim " + line);
       return;
       }
-    auto sq = n->playAnimByName(a[2],BS_STAND);
+    auto sq = n->playAnimByName(a[2],BS_STAND,a.size()>3 && a[3]=="force");
     say("ani " + symName(w,n) + " " + a[2] + (sq==nullptr ? " failed" : ""));
     }
   else if(c=="dialog") {
@@ -21033,6 +21056,13 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
   npcCharacterFields(*world,*player,dt);
   npcCharacterMotionTrace(*world,dt);
   NpcDayJournal::tick(*world);
+  if(bench.inputTraceUntil!=0 && bench.time<=bench.inputTraceUntil) {
+    const auto animation = player->animNames();
+    if(animation!=bench.inputAnimation) {
+      bench.inputAnimation = animation;
+      say("input animation PC_HERO at " + std::to_string(world->tickCount()) + " ms: " + animation);
+      }
+    }
   bench.time += dt;
   if(aiBusy && aiBusy())
     bench.busyAt = bench.time;
