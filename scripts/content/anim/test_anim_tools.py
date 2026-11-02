@@ -298,7 +298,7 @@ def test_clear_sword_lifts_the_blade_off_the_floor_and_keeps_the_ends():
     frames = 7
     pos = np.array([offsets] * frames, dtype=float)
     rot = np.tile(np.array([1.0, 0, 0, 0]), (frames, len(names), 1))
-    rot[:, 7] = [np.sqrt(0.5), 0, -np.sqrt(0.5), 0]  # the slot's X (the blade) points forward
+    rot[:, 7] = [np.sqrt(0.5), 0, np.sqrt(0.5), 0]  # the slot's -X (the blade) points forward
     lying = [2, 3, 4]
     pos[:, 0] = [0, 95.0, 0]
     pos[lying, 0] = [0, 30.0, 0]
@@ -309,7 +309,7 @@ def test_clear_sword_lifts_the_blade_off_the_floor_and_keeps_the_ends():
         out = []
         for f in range(frames):
             w = ga.world_pose(skel, a, f)
-            tip = w[7][:3, 3] + w[7][:3, :3] @ np.array([finish.BLADE_CM, 0, 0])
+            tip = w[7][:3, 3] + w[7][:3, :3] @ np.array([-finish.BLADE_CM, 0, 0])
             out.append(min(w[6][1, 3], tip[1]))
         return np.array(out)
 
@@ -324,7 +324,7 @@ def test_clear_sword_lifts_the_blade_off_the_floor_and_keeps_the_ends():
         w = ga.world_pose(skel, anim, f)
         a, b = w[1][:3, 3], w[2][:3, 3]
         for t in np.linspace(0.1, 1, 10):
-            x = w[7][:3, 3] + w[7][:3, :3] @ np.array([finish.BLADE_CM * t, 0, 0])
+            x = w[7][:3, 3] + w[7][:3, :3] @ np.array([-finish.BLADE_CM * t, 0, 0])
             u = np.clip(np.dot(x - a, b - a) / np.dot(b - a, b - a), 0, 1)
             assert np.linalg.norm(x - (a + u * (b - a))) > 14
 

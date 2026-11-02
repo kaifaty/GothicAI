@@ -9,8 +9,8 @@ start, the active phase and the recovery are squeezed by different amounts. The 
 key. --sword-arm blends the right clavicle, upper arm, forearm and hand towards the stance's local
 rotations (0 keeps Kimodo's, 1 is the stance's); the finger always comes from the stance, since it
 holds the hilt. Kimodo knows nothing of the sword, so its wrist swings the blade through the body.
---clear-sword (rolls) then moves that held arm aside where it would put the hand or the blade into the floor or
-the body: the stance arm turns with the chest and in a tumble went up to 70 cm under the floor.
+--clear-sword (rolls and dashes) then moves that held arm aside where it would put the hand or the blade into the floor or
+the body: the stance arm turns with the chest and in a tumble put the blade up to 82 cm under the floor.
 
 Strikes: --arm-window keeps the swing and blends the arms to the stance only on the way back;
 --start-ref / --end-ref land an end on another record (a charge windup ends in the pose its hold
@@ -290,7 +290,7 @@ def hold_arm(anim: ga.Animation, skel: ga.Skeleton, ref: ga.Animation, weights: 
 
 DETOUR = 4  # steps of 5° past a forearm's smallest clearing shoulder turn that the path may take
 STEP = 6.0  # a step of x° between two frames costs x²/STEP: 6° as much as 6° off the held arm, 60° ten times more
-BLADE_CM = 90.0  # a long 1H sword lies along ZS_RIGHTHAND's +X: the base's sword meshes run 1-89 cm along it
+BLADE_CM = 90.0  # a long 1H sword lies along ZS_RIGHTHAND's -X in the game (the converted .glb meshes are mirrored)
 # What the sword arm keeps out of: capsules (from node, to node, radius cm); the head's runs 14 cm past its node.
 # The last is the torso's shadow on the floor: a blade kept just off the floor slid under the rolling body.
 BODY = (("BIP01 PELVIS", "BIP01 NECK", 14.0), ("BIP01 NECK", "BIP01 HEAD", 11.0), ("BIP01 HEAD", None, 11.0),
@@ -322,7 +322,7 @@ def axis_matrix(axis: np.ndarray, angle: float) -> np.ndarray:
 def clear_sword(anim: ga.Animation, skel: ga.Skeleton, floor: float, hand: float = 5.0, blade: float = 5.0,
                 spare: float = 4.0) -> dict:
     """Keep the sword hand and the blade off the floor and out of the body: in a roll the held stance arm turns
-    with the chest and drove the hand 4-38 cm and the blade 35-52 cm under the floor.
+    with the chest and drove the grip up to 33 cm and the blade up to 82 cm under the floor.
 
     A clear arm puts the elbow and the fist `hand` cm and every point of the blade `blade` cm over `floor`, the
     blade clear of the torso, head and legs and of the floor under the torso, the fist clear of the torso and head. To get there the arm may
@@ -367,7 +367,7 @@ def clear_sword(anim: ga.Animation, skel: ga.Skeleton, floor: float, hand: float
     frames = []  # per frame: the shoulder, the arm's points from it, the elbow's hinge, the forearm, its bend, the body
     for w in worlds:
         s, e, h = (w[i][:3, 3] for i in (ua, fa, hd))
-        tip = w[slot][:3, :3] @ np.array([BLADE_CM, 0, 0])
+        tip = w[slot][:3, :3] @ np.array([-BLADE_CM, 0, 0])
         arm = np.vstack([[e], [w[i][:3, 3] for i in fist], w[slot][:3, 3] + np.linspace(0.1, 1, 10)[:, None] * tip]) - s
         hinge = np.cross(e - s, h - e)
         if np.linalg.norm(hinge) < 1e-3 * np.linalg.norm(e - s) * np.linalg.norm(h - e):
@@ -528,7 +528,7 @@ def main():
                     "shuffle of a few cm a frame in a slow move is a step, not a stand)")
     ap.add_argument("--fade", default="0.12,0.2", help="seconds of stance matching at the start and at the end")
     ap.add_argument("--clear-sword", action="store_true",
-                    help="turn the sword arm at the shoulder so hand and blade stay off the floor and out of the body (rolls)")
+                    help="turn the sword arm at the shoulder so hand and blade stay off the floor and out of the body (rolls, dashes)")
     ap.add_argument("--start-ref", type=Path, help="land the start on this record's frame 0 instead of --ref")
     ap.add_argument("--end-ref", type=Path, help="land the end on this record's frame 0 instead of --ref (a windup "
                     "ends where its hold loop starts; a loop ends where it starts)")
