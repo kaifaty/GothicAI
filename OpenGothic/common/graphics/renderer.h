@@ -95,6 +95,7 @@ class Renderer final {
     void drawSky          (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& view);
     void drawAmbient      (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& view);
     void drawTonemapping  (Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
+    void drawBloom        (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawCMAA2        (Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
     void drawUpscale      (Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawReflections  (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
@@ -145,6 +146,7 @@ class Renderer final {
 
       GiMethod       giMethod           = GiMethod::None;
       bool           aaEnabled          = false;
+      bool           bloomEnabled       = true;
 
       float          zVidBrightness     = 0.5;
       float          zVidContrast       = 0.5;
@@ -165,6 +167,8 @@ class Renderer final {
     Tempest::Vec3             clipInfo;
 
     Tempest::Attachment       sceneLinear;
+    // bloom chain: half, quarter, ... of the internal resolution (drawBloom)
+    std::array<Tempest::Attachment,6> bloomChain;
     Tempest::ZBuffer          zbuffer, shadowMap[Resources::ShadowLayers];
     Tempest::ZBuffer          zbufferUi;
 

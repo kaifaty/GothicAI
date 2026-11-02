@@ -490,7 +490,7 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `view hide static movable morph pfx animated` | hide draw types (debugging only: static and movable objects share draw commands, hiding them hides parts of creatures too) |
 | `overlay on\|off`, `overlay zoom on\|off`, `overlay bright on\|off` | `bright` stretches dark images (forests, interiors) |
 | `overlay trail [off] [keep ms] [line]` | the arrows' ways in gold (with the zones of `showzones`), no legs, no text; turns the overlay on. A way stays `keep` ms (1500) after its arrow stops; `line`: also the straight line the arrow left along (where the bow pointed), dashed white, as far as the arrow has flown: the drop is the gap between them |
-| `rec <name> [novideo]`, `stop` | record a segment (video and metrics, or metrics only) |
+| `rec <name> [novideo]`, `stop [shadow]` | record a segment (video and metrics, or metrics only); `stop shadow` also copies both rolling melee shadow journals into segment files (filter cumulative rows by fight game-time interval) |
 | `shot <name>` | one PNG |
 | `streaming wait [timeout_ms]` | Wait for all desired Near/Far chunks and the publication queue; timeout defaults to 60000 real ms. |
 | `npcday <game minutes> [period 5] [shared]` | Journal every NPC over continuous game time ([NPC day parity](#npc-day-parity)); the scenario waits until the time has passed. Every NPC gets a private script random stream from the last `seed`; `shared` keeps the game's one shared stream. |
@@ -524,8 +524,8 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `arc <npc> <count> <dist> <step deg>` | that many of the npc stand that far in front of the hero, a step apart round it, facing it: the crew of `fight all` (a new arc replaces it, `clear` takes the gone out) |
 | `wander [radius cm 3000] [walk\|run]`, `wander stats` | the npcs of `arc` are held (as the AI server holds a body) and walk by the waynet to a random waypoint within the radius of the hero, then to another: a crowd for the speed probe of docs/navigation.md; `stats`: how many walk, how many ways they went |
 | `stuck begin <label> [radius cm 3000]`, `stuck end` | measure native routine walks around the hero's position at `begin`, without controlling NPCs; requires `OPENGOTHIC_STUCK_LOG=<absolute JSONL path>`. Default observation radius is 30 m. `end` writes the observation summary to `<path>.summary.json` and closes ongoing episodes as censored (`observation_end`). |
-| `fight <npc\|all> <target\|player>` | it attacks as the game starts a fight (`ZS_ATTACK`, attack reason to kill: archers keep the bow beyond 9 m) |
-| `waitdown <npc\|player> [ms]` | the scenario waits till it is down: `fight over: <npc> down after <ms>`, else `waitdown: timeout` |
+| `fight <npc\|all> <target\|player> [deed]` | it attacks as the game starts a fight (`ZS_ATTACK`, attack reason to kill: archers keep the bow beyond 9 m); `deed` uses the nonlethal native `npc_act fight{deed:true}` start for a standing human NPC target |
+| `waitdown <npc\|player> [ms] [other npc]` | waits till either participant is down, or times out; writes `waitdown_end` with outcome, elapsed time and HP |
 | `npcaim on [second\|arrow] \| off \| sigma <deg\|off> \| lead on\|off` | npc archers aim by hand (game/archerai, `[GAME] npcManualAim`, on by default: `npcaim off` for the dice): as many hits a second as G2's dice (`second`) or as sure an arrow (`arrow`); an error forced, degrees per axis (0: the bow's own spread only); the lead on a runner. Each release logs `arrow aim: at, true <the point meant>, err <right up> deg, sigma, pv <dice %> p <target %> rho, lead, hold, disturb, settled\|waited, by <npc>` |
 | `archer <npc\|all> at <npc\|player> [dice] \| archer off` | the archers stand where they are and shoot at the target every time they can, by hand (npcaim on) or by the dice: no fight AI, no perception's wait, arrows topped up (the aim's calibration) |
 | `still <npc\|player> [off]` | hit, it neither stumbles nor flinches: a target that keeps its pose (as its zones were dumped) |
@@ -613,6 +613,156 @@ textures; by default those of `scripts/hd-textures.sh` when they have been made,
 empty: the game's own), `SOUND` and `MUSIC` (volumes 0..1, default 0; with `TEMPEST_AUDIO_LOOPBACK=48000` a
 segment's sound goes into `<segment>.wav`).
 
+## Native NPC calibration duels
+
+### Как работает сейчас
+
+`npcduel <attacker instance> <defender instance> <seed> [timeout_ms]` creates two fresh
+script NPCs, 3 m apart and 12 m in front of the stationary immortal observer, as in
+`bodyduel`. Only these two copies retain `AiNormal`, the near-hero contact rig and
+character controller (respecting the physics flags), including swing magnetism, at any
+distance from the observer via `NavDemos::fullSimulation` / `forceCharacterVirtual`.
+Constructors keep their attributes, talents, tactics,
+weapons and armour; only immortality is removed and its original value is recorded.
+The attacker starts the same `ZS_ATTACK` / `AR_NONE` / `setNonlethalFight` path as
+`npc_act fight{deed:true}`. The defender responds through native perceptions.
+The command waits for the first `isDown()` or the timeout (default 180000 game ms),
+writes one `kind: npc_duel` row in `events.jsonl`, then removes the copies and their
+dropped items. `bodyduel` retains its separate mortal, normalized reference setup.
+
+Each row contains `seed`, `duration_ms`, `winner`/`loser` instance names or `timeout:true`,
+and `attacker`/`defender` objects. Those retain raw script `DAMAGE[8]`, `PROTECTION[8]`,
+`DAMAGETYPE`, `HITCHANCE` (fist/1H/2H), all 22 talent skills/values, level, STR/DEX,
+HP before/after/max, guild/tactic, melee weapon instance/two-handedness and original
+immortality. `weapon_damage[8]`, `weapon_damage_total` and `weapon_damagetype` are the separate equipped-item
+script fields: consumers can use the same inputs as `story_eval`, without a precombined
+NPC/weapon damage array. `hits` counts this side's positive HP-loss combat callbacks;
+`damage_dealt` sums actual lost HP (including the final clamp to 1), with no frame sampling.
+`hp_one`, `unconscious` (`ZS_UNCONSCIOUS`) and `weapon_dropped` retain the terminal
+body state. Drop detection requires a dynamic world item with the NPC's owner and
+original weapon instance. An unarmed loser has `weapon_dropped:false`.
+
+Each positive HP-loss hit is also stored in `hit_log`: `time_ms` since duel start,
+`attacker`/`victim` instance names, `hp_before`/`hp_after`, `base_damage` from
+`DamageCalculator::damageValue` (after its minimum of 5, before impact multipliers),
+`critical` from the original damage roll, `melee_scale`, `stun_bonus` (1 or 1.5),
+`backstab_mult` (1 or 3) and actual `hp_loss`, including the nonlethal HP clamp.
+No damage formula is repeated in the bench. Each side records `swings` at native
+attack-window start, `blocked` for completed parried/guarded swings and `misses`
+for completed windows without a hit or block (including evades, walls and interrupted
+swings). Counters use the selected hit path: physical outcomes or native legacy
+results (`applied` is a hit), and both paths share the HP-loss hit logger. An active
+window at duel end is counted as a swing, without inventing an outcome. `defender_first_swing_ms` is null until the defender starts its first swing;
+the first HP-loss response is available separately from `hit_log`.
+
+The [15 pairs](../../data/npc/far-fight-pairs.json) cover Lobart's equal peasants,
+peasant/militia, militia/Onar mercenary, unarmed/armed, level disparity and 1H/2H.
+All are ambient humans from save 1's world. The 12 v1 pairs are training, including
+the three already used v1 holdouts. Three new pairs use six instances absent from v1:
+
+| New holdout | Native weapons | Talent tiers |
+|---|---|---|
+| `SLD_818_SOELDNER` / `SLD_827_SOELDNER` | 2H axe / 2H axe | 1 / 1 |
+| `BAU_901_BAUER` / `MIL_323_MILIZ` | 1H axe / 1H sword | 0 / 1 |
+| `SLD_817_SOELDNER` / `MIL_326_MILIZ` | 1H axe / 1H sword | 1 / 1 |
+
+Names, `type=0` (ambient), `guild < 16`, equipment and talent skills were checked
+by executing the base's original `GOTHIC.DAT` constructors through ZenKit;
+`STARTUP_NEWWORLD` inserts all six at `BIGFARM` or `NW_CITY_ENTRANCE_01`. Equal
+peasants retain their different native mace/axe. No talents or equipment are normalized.
+
+```bash
+# Only the smoke suite runs here: 2 pairs × both roles × seeds 17,18 = 8 duels.
+python3 scripts/far_fight_duels.py smoke
+# Prepare the full party without running it: 15 × 2 × 10 = 300 duels, 120 s each.
+python3 scripts/far_fight_duels.py plan --out .bench/far-fight-plan
+# The lead runs this after merging:
+python3 scripts/far_fight_duels.py run .bench/far-fight-plan --out .bench/far-fight-run
+python3 scripts/far_fight_duels.py report .bench/far-fight-run/duels-* --out .bench/far-fight-summary
+```
+
+`plan` budgets each duel's full timeout plus one second, and 60 seconds per chunk;
+by default at most 59 duels (120 s timeout) fit a two-hour batch request. `run` calls
+`BENCH_HOST=ryzen scripts/bench.sh` per chunk, which builds there through `gq quick`
+and launches through `gq batch` (`smoke`: `quick`). It reads the prepared base directly
+from the cache or NAS via `OPENGOTHIC_BASE`. It uses absolute paths, including
+base cache/store below `~/gothic-ai/far-fight/`. Bench's existing output is collected
+back to the supplied output directory. `RYZEN_BENCH_ARCHIVE` gives the game request
+an `--archive` source at `~/gothic-ai/far-fight/<output-name>/<chunk>`; before finishing,
+it copies its result there. `gq` verifies and moves it to
+`/mnt/shared/gothic-ai/far-fight/<output-name>/<chunk>`. Use a fresh output name per run.
+The queue's `--archive` argument is the **local source**, not the NAS destination.
+Full batches are never started by `plan`, `smoke` or the test suite.
+
+`smoke` rejects missing/extra/duplicate duels, incomplete fields, and resolved losers
+without 1 HP and `ZS_UNCONSCIOUS`. It requires the hit log and counters, while the reader still accepts v1 records
+without them. A timeout remains a timeout. `report` writes
+`far-fight.json` and `far-fight.md` and prints the table: n, attacker wins divided by
+all duels (timeouts stay in the denominator), timeout count, median resolved winner
+HP loss, median duration across all duels, and HP-loss hits per full duel second
+pooled by weapon type, own talent tier and opponent tier. The same buckets include
+swings, blocked swings and misses per second. Missing legacy counters are `n/a`,
+with their exposure reported separately. By weapon type, `hit_multipliers` contains
+the full empirical distribution of `hp_loss / base_damage` plus min/median/max,
+stun and backstab fractions; terminal clamping is retained in that ratio. Response
+tables give the median first defender swing and first HP-loss hit since duel start,
+with observed/responding counts (no response is null, not zero). These are empirical
+observations for the separate v2 model task; no coefficient fitting happens here.
+
+The v1 fitting tool [`far_fight_fit.py`](../far_fight_fit.py),
+[weapon table](../../data/npc/far-fight-weapons.json) and
+[rejected calibration report](../../reports/Дальний%20бой%20NPC%20—%20калибровка.md)
+are retained. `gamedata/far_fight.json` stays `uncalibrated`.
+
+### План и журнал
+
+- 2026-11-02: v2 bench keeps only its two copies in full simulation at any observer
+  distance; records native hit factors and swing outcomes; adds three fresh holdouts
+  and a 300-duel default plan. Full calibration is a separate task. The eight v1
+  zero-hit replays on Mac before #751 produced hits in 3/8 duels and five zero-hit timeouts:
+  unarmed attacker seeds 17–20 (281 swings total), 2H attacker seed 18 (29 swings).
+  The attacker retained `AiNormal`. The replay's `run/melee-blade-shadow.jsonl`
+  shows 245/281 unarmed swings using `T_FISTATTACKMOVE`. Across all 281 swings,
+  median starting distance is 233 cm (112–316); the running punch reaches about
+  58 cm. The target moves away only 8 cm per swing (median); 244 swings stop with
+  `no_preview`.
+  Legacy reports `applied` for 68/281, but physical HP-loss hits are zero. The
+  unarmed initiator attacks from too far away while its target has not responded;
+  the physical punch falls short and the magnet usually has no contact plan.
+  This does not establish that the target is leaving on its routine.
+  For 2H seed 18, 29 swings comprise 22 `S_2HATTACK`, four `T_2HATTACKL` and three
+  `T_2HATTACKR`. Median starting distance is 201 cm (195–346), versus median reach
+  125 cm (125–143); target retreat is 21 cm (14–80). All 29 swings have a preview
+  and stop at `predicted`; median forward magnet feed is 11.7 cm. Legacy reports
+  `applied` for 24/29, but there are no physical HP-loss hits; minimum blade/body
+  clearance is 4.9 cm. Unlike the running punch, this magnet engages, yet the
+  actual strike still falls short. The lead accepted the bench with these five
+  empty duels; native reach, magnetism and AI attack choice belong to a separate
+  melee fix. The defender's native behaviour stays unchanged.
+  Before #751, the eight Mac smoke cases yielded 135 HP-loss hits; this is
+  historical data, not validation of the #751 integration.
+- 2026-11-02, after merging #751 (`54d65a79d`): replayed the same eight commands
+  from `.bench/far-fight-v2-zero-hit-replay/duels-000.bench` on Ryzen, with absolute
+  output `.bench/far-fight-v2-zero-hit-replay-ryzen-p751-20261102-141051` under the
+  worktree. All eight records validated: **4/8 duels with hits, 28 HP-loss hits,
+  four zero-hit timeouts and zero deaths**, versus **3/8, 12 hits and five zero-hit
+  timeouts** on Mac before #751. All four 2H duels now have hits: seeds 17/18/19/20
+  have 9/1/6/12 hits respectively; seed 18 no longer times out. The four unarmed
+  initiator duels still have zero hits (70/79/66/72 swings). Host and code revision
+  both differ, so this is a new measurement, not an isolated effect estimate for #751.
+  All 352 shadow windows selected physical hits; their applied damage agrees with
+  the 28 hit-log entries (2067 HP total). Results were archived through `gq`.
+  A separate one-duel check with existing `NPC_CHARACTER_VIRTUAL=0` exercised the
+  fallback: three legacy windows, two HP-loss hits (159 HP); the attacker has two
+  swings, zero misses, and the defender one swing, one miss. This confirms that
+  native `applied` is not counted as a miss and both hit paths use the same logger.
+  The complete saved check then passed (exit 0): 71 server and 58 tool tests,
+  Ruff, Linux and Mac `Gothic2Notr` builds, and CLI smoke on Ryzen. Smoke validated
+  eight unique records with 100 HP-loss hits, one timeout and zero deaths; it keeps
+  timeouts in the data rather than treating them as invalid records.
+- 2026-11-01: added the native nonlethal calibration bench and plan/run/smoke/report
+  tools for user decision Б3 in [Дальний бой NPC](../../reports/Дальний%20бой%20NPC.md).
+
 ## Live P30 capture on Mac
 
 `scripts/body_live_capture.py` starts a local game with the production `GameServer` and
@@ -687,6 +837,12 @@ pelvis, spine and head contacts with landscape, static objects or movable furnit
 capsule wall impacts and their existing landing damage share one 300 ms maximum
 speed window per NPC. Damage uses the unchanged guild fall formula; fatal
 impacts retain the attacker or caster, including the hero's kill attribution.
+Two NPC-culprit controls use the same 14 m/s wall impact: a nonlethal pair must
+enter native unconsciousness at 1 HP, drop its weapon, notify a witness of defeat,
+leave no murder or death trace, and recover through `AI_StandUp`; a lethal pair
+must die with murder attribution and a death trace. `body-impact standup` runs
+the unconscious End hook and queues native standup; `body-impact recovered`
+checks the completed handoff. With damage disabled it checks posture recovery.
 
 Run `scripts/bench.sh body-impact <absolute-output-directory>` and repeat with
 `BODY_IMPACT_DAMAGE=0`; the disabled run retains the previous animated landing

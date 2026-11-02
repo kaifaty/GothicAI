@@ -1089,17 +1089,21 @@ void AiBridge::Impl::handle(World* world, const std::string& text) {
     sendResult(req,!value.empty(),err,value);
     }
   else if(type=="story_effect") {
+    bool farFight = false;
+    if(auto effects = doc.FindMember("effects"); effects!=doc.MemberEnd() && effects->value.IsArray())
+      for(const auto& effect:effects->value.GetArray())
+        farFight = farFight || JsonRead::str(effect,"do")=="knockout" || JsonRead::str(effect,"do")=="wound";
     if(auto npc = npcBySymbol(*world,JsonRead::str(doc,"npc"));
-       npc!=nullptr && BodyController::owns(*npc)) {
+       !farFight && npc!=nullptr && BodyController::owns(*npc)) {
       BodyController::takeover(*npc,"story_takeover");
       if(BodyController::owns(*npc)) {
         sendResult(req,false,"body control is releasing at a safe boundary; retry story effect");
         return;
         }
       }
-    std::string err;
-    const bool  ok = story.effects(*world,doc,err);
-    sendResult(req,ok,err);
+    std::string err, value;
+    const bool  ok = story.effects(*world,doc,err,value);
+    sendResult(req,ok,err,value);
     }
   else if(type=="raise_dead") {
     std::string err;

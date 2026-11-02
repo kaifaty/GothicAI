@@ -1,11 +1,14 @@
 #include "pfxbucket.h"
 
+#include <algorithm>
 #include <cassert>
+#include <cmath>
 
 #include "frameprofile.h"
 #include "graphics/mesh/submesh/pfxemittermesh.h"
 #include "graphics/shaders.h"
 #include "graphics/visualobjects.h"
+#include "graphics/worldview.h"
 #include "pfxobjects.h"
 #include "particlefx.h"
 #include "world/objects/npc.h"
@@ -43,7 +46,7 @@ PfxBucket::PfxBucket(const ParticleFx &decl, PfxObjects& parent, const SceneGlob
   uint64_t lt      = decl.maxLifetime();
   uint64_t pps     = uint64_t(std::ceil(decl.maxPps()));
   uint64_t reserve = (lt*pps+1000-1)/1000;
-  blockSize        = size_t(reserve);
+  blockSize        = decl.flipSteady ? size_t(std::ceil(decl.ppsValue)) : size_t(reserve);
   if(blockSize==0)
     blockSize=1;
 
@@ -271,6 +274,9 @@ void PfxBucket::init(PfxBucket::Block& block, ImplEmitter& emitter, size_t parti
     // decal
     p.life    = uint16_t(-1)/2;
     p.maxLife = uint16_t(-1);
+    } else if(decl.flipSteady) {
+    p.life    = uint16_t(-1);
+    p.maxLife = p.life;
     } else {
     p.life    = uint16_t(randf(decl.lspPartAvg,decl.lspPartVar));
     p.maxLife = p.life;
@@ -446,6 +452,9 @@ void PfxBucket::tick(Block& sys, ImplEmitter& emitter, size_t particle, uint64_t
   if(ps.life==0)
     return;
 
+  if(decl.flipSteady)
+    return;
+
   if(ps.life<=dt){
     ps.life = 0;
     sys.count--;
@@ -528,6 +537,24 @@ void PfxBucket::implTickCommon(uint64_t dt, const Vec3& viewPos) {
     if(emitter.waitforNext>=dt)
       emitter.waitforNext-=dt;
 
+    if(decl.flipSteady && emitter.block!=size_t(-1) && (emitter.st!=S_Active || !nearby)) {
+      // steady particles never die on their own: they go with their emitter or when it is out of view range
+      auto& p = getBlock(emitter);
+      for(size_t i=0;i<blockSize;++i)
+        if(particles[p.offset+i].life!=0)
+          finalize(p.offset+i);
+      p.count = 0;
+      if(emitter.st==S_Fade || !nearby) {
+        freeBlock(emitter.block);
+        if(emitter.st==S_Fade) {
+          emitter.st = S_Free;
+          updateTextureDemand(size_t(&emitter-impl.data()));
+          }
+        doShrink = true;
+        continue;
+        }
+      }
+
     if(emitter.block!=size_t(-1)) {
       auto& p = getBlock(emitter);
       if(p.count>0) {
@@ -548,7 +575,7 @@ void PfxBucket::implTickCommon(uint64_t dt, const Vec3& viewPos) {
 
     if(emitter.st==S_Active && nearby) {
       auto& p = getBlock(emitter);
-      auto dE = ppsDiff(decl,emitter.isLoop,p.timeTotal,p.timeTotal+dt);
+      auto dE = decl.flipSteady ? (p.count==0 ? uint64_t(blockSize) : 0) : ppsDiff(decl,emitter.isLoop,p.timeTotal,p.timeTotal+dt);
       tickEmit(p,emitter,dE);
       }
 
@@ -603,8 +630,44 @@ void PfxBucket::tickEmit(Block& p, ImplEmitter& emitter, uint64_t emited) {
     }
   }
 
+// RGB9E5: a non-negative HDR colour in 32 bits (unpackRgb9e5 in pfx.vert)
+static uint32_t packRgb9e5(const Vec3& c) {
+  const float maxV = 65408.f;
+  const float r = std::clamp(c.x, 0.f, maxV), g = std::clamp(c.y, 0.f, maxV), b = std::clamp(c.z, 0.f, maxV);
+  const float m = std::max({r, g, b});
+  if(m<=1e-6f)
+    return 0;
+  int   e     = std::max(-16, int(std::floor(std::log2(m)))) + 1 + 15;
+  float denom = std::exp2(float(e - 15 - 9));
+  if(int(std::floor(m/denom + 0.5f))==512) {
+    denom *= 2.f;
+    ++e;
+    }
+  const auto q = [&](float v) { return uint32_t(std::min(511.f, std::floor(v/denom + 0.5f))); };
+  return q(r) | (q(g) << 9) | (q(b) << 18) | (uint32_t(e) << 27);
+  }
+
+// Irradiance of point lights at a particle, as light.frag lights a surface facing them, a quarter of it (a thin
+// puff scatters to all sides and lets most light through), without the shadow; held at 1/0.02 next to the
+// source, where the inverse square would light a puff over a fire like a lamp.
+static Vec3 pointLightAt(const std::vector<LightGroup::Near>& lights, const Vec3& at) {
+  Vec3 sum;
+  for(auto& l:lights) {
+    const float factor = (l.pos-at).quadLength()/(l.range*l.range);
+    if(factor>=1.f)
+      continue;
+    const float smooth = 1.f - factor*factor;
+    sum += l.color * (0.25f/std::max(factor, 0.02f) * smooth*smooth);
+    }
+  return sum;
+  }
+
 void PfxBucket::buildSsbo() {
   buildSsboTrails();
+
+  // smoke and steam (blended, lit in the forward pass) take the light of the fires next to them
+  const bool lit = decl.visMaterial.alpha==Material::AlphaFunc::Transparent;
+  std::vector<LightGroup::Near> lights;
 
   auto  colorS          = decl.visTexColorStart;
   auto  colorE          = decl.visTexColorEnd;
@@ -617,6 +680,8 @@ void PfxBucket::buildSsbo() {
   for(auto& p:block) {
     if(p.count==0)
       continue;
+    if(lit)
+      parent.world.lights().nearLights(p.pos, 300.f, lights);
 
     for(size_t pId=0; pId<blockSize; ++pId) {
       ParState& ps = particles[pId+p.offset];
@@ -627,11 +692,12 @@ void PfxBucket::buildSsbo() {
         continue;
         }
 
-      const float a     = ps.lifeTime();
+      const float a     = decl.flipSteady ? 0.f : ps.lifeTime();
       const Vec3  cl    = colorS*(1.f-a)        + colorE*a;
       //const float clA   = visAlphaStart*(1.f-a) + visAlphaEnd*a;
       //NOTE: particles even with harsh transition, appear to have some fade in/out anyway in bvanilla game
-      const float clA   = (std::min(a, 0.1f)/0.1f)*visAlphaStart*(1.f-a) + (std::min(1.f-a, 0.1f)/0.1f)*visAlphaEnd*a;
+      const float clA   = decl.flipSteady ? visAlphaStart
+                        : (std::min(a, 0.1f)/0.1f)*visAlphaStart*(1.f-a) + (std::min(1.f-a, 0.1f)/0.1f)*visAlphaEnd*a;
 
       const float scale = 1.f*(1.f-a) + a*visSizeEndScale;
       const float szX   = visSizeStart.x*scale;
@@ -659,6 +725,22 @@ void PfxBucket::buildSsbo() {
       uint32_t colorU32;
       std::memcpy(&colorU32,&color,4);
       buildBilboard(px,p,ps, colorU32, szX,szY,szZ);
+      px.colorB = (lit && !lights.empty()) ? packRgb9e5(pointLightAt(lights, px.pos)) : 0;
+      if(decl.flipFrames>0) {
+        // the atlas frame by the particle's age (a steady one: by its emitter's clock) from its own start frame
+        // (a hash of its slot and birth time)
+        const uint32_t seed   = uint32_t(pId+p.offset)*2654435761u ^ uint32_t(ps.maxLife)*40503u;
+        const float    frames = float(decl.flipFrames);
+        const float    age    = decl.flipSteady ? float(p.timeTotal%3600000u) : float(ps.maxLife-ps.life);
+        const float    t      = age*decl.flipFps/1000.f + float(seed%997u)/997.f*frames;
+        const float    f      = std::fmod(t, frames);
+        const uint32_t f0     = uint32_t(f)%decl.flipFrames;
+        const uint32_t f1     = (f0+1)%decl.flipFrames;
+        const uint32_t blend  = uint32_t((f-std::floor(f))*127.f+0.5f);
+        px.bits0 |= 1u << 6;
+        px.bits0 |= uint32_t(decl.flipCols-1) << 7 | uint32_t(decl.flipRows-1) << 10;
+        px.bits0 |= f0 << 13 | f1 << 19 | blend << 25;
+        }
       }
     }
   }
@@ -850,6 +932,11 @@ void PfxBucket::drawCommon(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const 
   if(view==SceneGlobals::V_Main && mat.isSceneInfoRequired()) {
     cmd.setBinding(L_SceneClr, *scene.sceneColor, Sampler::bilinear(ClampMode::MirroredRepeat));
     cmd.setBinding(L_GDepth,   *scene.sceneDepth, Sampler::nearest (ClampMode::MirroredRepeat));
+    }
+
+  if(view==SceneGlobals::V_Main && (mat.alpha==Material::Transparent || mat.alpha==Material::AdditiveLight)) {
+    // soft particles (main_pfx_f/_e): the opaque depth, to fade where a sprite meets the scene
+    cmd.setBinding(L_GDepth, *scene.sceneDepth, Sampler::nearest(ClampMode::ClampToEdge));
     }
 
   if(view==SceneGlobals::V_Main && mat.isFogRequired()) {

@@ -198,7 +198,7 @@ ROOT="$TEST_SESSION" SESSION="$TEST_SESSION" STATE="$TEST_SESSION/state"
 OUTPUT="$SESSION/output" RUN=run RYZEN_HOST=fake AI_PORT=''
 ACTION="$TEST_ACTION" JOBS=7 LOCK_WAIT=23 SCENARIO="$TEST_SCENARIO"
 BENCH_SCENARIO=/benchmarks/smoke.bench RYZEN_MAX=9m
-if [[ "$ACTION" == bench ]]; then BENCH_CLASS=quiet; else unset BENCH_CLASS; fi
+if [[ "$ACTION" == bench ]]; then BENCH_CLASS="${RYZEN_BENCH_CLASS:-quiet}"; else unset BENCH_CLASS; fi
 TUNNEL_OPEN=0 RUN_STARTED=0 RUN_FINISHED=0 RUN_RC=0
 SSH_PID=$$ ENV_ARGS=(RYZEN_JOBS=7) GQ_ARGS=()
 exec 8>"$SESSION/control"
@@ -263,6 +263,13 @@ preparation_needed() { [[ "$TEST_PREPARE" == 1 ]]; }
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertEqual(len(requests), 1, requests)
                 self.assert_game_request(requests[0], action)
+        result, requests = self.run_game('bench', prepare=False, window={
+            'RYZEN_BENCH_CLASS': 'batch', 'RYZEN_BENCH_ARCHIVE': '/task/far-fight/chunk',
+        })
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        options = self.queue_options(requests[0])
+        self.assert_option(options, '--class', 'batch')
+        self.assert_option(options, '--archive', '/task/far-fight/chunk')
 
     def test_build_failure_returns_its_status_without_game_submission(self):
         result, requests = self.run_game(build_exit=42)
@@ -926,7 +933,8 @@ remote_run e2e "$TEST_ROOT/worktree" run
         self.entry(self.story_digest, 'storygraph')
         for name in ('PORT', 'ASR_PORT', 'TTS_PORT'):
             self.env.pop(name, None)
-        self.env.update(GQ_DISPLAY_SLOT='2', TEMPEST_WINDOW_SIZE='960x540')
+        self.env.update(GQ_DISPLAY_SLOT='2', TEMPEST_WINDOW_SIZE='960x540',
+                        RYZEN_BENCH_ARCHIVE=str(self.root/'archive'))
         (self.bin / 'ffmpeg').write_text('#!/bin/sh\nexit 0\n')
         (self.bin / 'ffmpeg').chmod(0o755)
         (self.source / 'scripts/bench.sh').write_text('''
@@ -946,6 +954,7 @@ remote_bench "$TEST_ROOT/worktree" run smoke
         self.assertEqual(json.loads((self.root / 'bench-env.json').read_text()),
                          {'PORT': None, 'ASR_PORT': None, 'TTS_PORT': None,
                           'TEMPEST_WINDOW_SIZE': '960x540'})
+        self.assertTrue((self.root/'archive/game.sh').is_file())
 
     def test_e2e_retains_rebuilt_graph_in_worktree_cache(self):
         self.entry(self.engine_digest)

@@ -22,13 +22,16 @@ PhysicMeshShape* PhysicMeshShape::load(PackedMesh&& packed) {
 
 PhysicMeshShape::PhysicMeshShape(PackedMesh&& sPacked)
   :mesh(std::move(sPacked)) {
-  size_t largest = 0;
+  size_t largest = 0, colliding = 0;
   for(auto& i:sPacked.subMeshes) {
+    if(i.material.disable_collision || i.iboLength==0)
+      continue;  // the water in a pot takes no part in the pot's friction
     frict += DynamicWorld::materialFriction(i.material.group);
-    if(!i.material.disable_collision && i.iboLength>largest) {
+    colliding++;
+    if(i.iboLength>largest) {
       material = i.material.group;
       largest = i.iboLength;
       }
     }
-  frict = frict/float(sPacked.subMeshes.size());
+  frict = frict/float(colliding);
   }

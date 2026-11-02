@@ -191,6 +191,13 @@ class PlayerControl final {
     // implMove plays it (Npc::meleeDodge) or drops it.
     std::optional<MeleeDodge::Direction> dodgeRequest;
 
+    struct ChargePress {
+      uint64_t at = 0;
+      bool attempted = false;
+      };
+    std::optional<ChargePress> chargePress;
+    bool chargeTapPending = false;
+
     DialogMenu*    dlg = nullptr;
     InventoryMenu* inv = nullptr;
 

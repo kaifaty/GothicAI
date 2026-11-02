@@ -145,6 +145,9 @@ Gothic::Gothic() {
   defaults->set("GAME", "melee_parry",           1);
   defaults->set("GAME", "melee_parry_ai",        1);
   defaults->set("GAME", "melee_dodge",           1);
+  defaults->set("GAME", "melee_barge",           1);
+  defaults->set("GAME", "melee_charge",          1);
+  defaults->set("GAME", "melee_riposte",         1);
 
   defaults->set("GAME", "animatedWindows",     1);
   defaults->set("GAME", "subTitles",           1);
@@ -931,6 +934,9 @@ void Gothic::refreshPhysicsFlags() {
     settingsGetI("GAME","placed_items")!=0,
     settingsGetI("GAME","body_impact_damage")!=0,
     settingsGetI("GAME","melee_dodge")!=0,
+    settingsGetI("GAME","melee_dodge")!=0 && settingsGetI("GAME","melee_barge")!=0,
+    settingsGetI("GAME","melee_charge")!=0,
+    settingsGetI("GAME","melee_riposte")!=0,
     settingsGetI("GAME","body_traces")!=0,
     settingsGetI("GAME","blood")!=0
     };

@@ -147,8 +147,9 @@ Result load(zenkit::DaedalusVm& vm, const fs::path& contentRoot) {
       const auto& effects=member(doc,"effects");
       require(effects.IsArray(),"effects: expected array");
       decltype(result.effects) pending;
+      decltype(result.flipbooks) pendingFlipbooks;
       for(const auto& entry:effects.GetArray()) {
-        fields(entry,{"name","base","set"});
+        fields(entry,{"name","base","set","flipbook"});
         const auto name=text(member(entry,"name"));
         require(!name.empty() && std::all_of(name.begin(),name.end(),[](char c) {
           return (c>='A' && c<='Z') || (c>='0' && c<='9') || c=='_';
@@ -163,9 +164,41 @@ Result load(zenkit::DaedalusVm& vm, const fs::path& contentRoot) {
         require(original!=nullptr,"unknown base PFX "+baseName+" for "+name);
         auto definition=std::make_shared<Def::ParticleEffect>(*original);
         overrideFields(vm,*definition,member(entry,"set"));
+        // a flipbook comes with the entry, or from an own base that has one
+        if(entry.HasMember("flipbook")) {
+          const auto& fb=entry["flipbook"];
+          fields(fb,{"cols","rows","frames","fps","yaw","steady"});
+          auto integer=[&](const char* key) {
+            const auto& v=member(fb,key);
+            require(v.IsInt(),std::string("flipbook.")+key+": expected integer");
+            return v.GetInt();
+            };
+          Flipbook book;
+          book.cols=integer("cols"); book.rows=integer("rows"); book.frames=integer("frames");
+          const auto& fps=member(fb,"fps");
+          require(fps.IsNumber(),"flipbook.fps: expected number");
+          book.fps=float(fps.GetDouble());
+          require(book.cols>=1 && book.cols<=8 && book.rows>=1 && book.rows<=8,"flipbook: cols and rows are 1..8");
+          require(book.frames>=1 && book.frames<=book.cols*book.rows,"flipbook: frames are 1..cols*rows");
+          require(std::isfinite(book.fps) && book.fps>0 && book.fps<=120,"flipbook.fps: 0..120");
+          if(fb.HasMember("yaw")) {
+            require(fb["yaw"].IsBool(),"flipbook.yaw: expected boolean");
+            book.yaw=fb["yaw"].GetBool();
+            }
+          if(fb.HasMember("steady")) {
+            require(fb["steady"].IsBool(),"flipbook.steady: expected boolean");
+            book.steady=fb["steady"].GetBool();
+            }
+          pendingFlipbooks.emplace(name,book);
+          }
+        else if(const auto f=pendingFlipbooks.find(baseName); f!=pendingFlipbooks.end())
+          pendingFlipbooks.emplace(name,f->second);
+        else if(const auto f=result.flipbooks.find(baseName); f!=result.flipbooks.end())
+          pendingFlipbooks.emplace(name,f->second);
         pending.emplace(name,std::move(definition));
         }
       result.effects.insert(pending.begin(),pending.end());
+      result.flipbooks.insert(pendingFlipbooks.begin(),pendingFlipbooks.end());
       }
     catch(const std::exception& error) { result.errors.push_back(file.string()+": "+error.what()); }
     }

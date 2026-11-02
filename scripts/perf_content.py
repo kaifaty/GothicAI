@@ -233,7 +233,8 @@ def launch(args):
         subprocess.run(["rsync", "-a", *flags, str(local), f"{host}:{destination}"], check=True)
     sync(str(ROOT / "OpenGothic") + "/", source + "/OpenGothic/", "--delete", "--exclude=/build*/", "--exclude=.git")
     sync(str(ROOT / "scripts/convert") + "/", source + "/scripts/convert/", "--delete", "--exclude=/build*/")
-    for name in ("perf-content.sh", "perf_content.py", "perf.sh", "perf_report.py", "ryzen_game.py", "base-ensure.sh"):
+    for name in ("perf-content.sh", "perf_content.py", "perf.sh", "perf_report.py", "ryzen_game.py", "base-ensure.sh",
+                 "ryzen-build.sh"):
         sync(ROOT / "scripts" / name, source + "/scripts/")
     for scenario in (ROOT / "scripts/bench").glob("perf-*.bench"):
         sync(scenario, source + "/scripts/bench/")

@@ -192,6 +192,25 @@ void Shaders::compileShaders() noexcept {
 
   tonemapping        = postEffect("triangle_uv", "tonemapping",    RenderState::ZTestMode::Always);
   tonemappingUpscale = postEffect("triangle_uv", "tonemapping_up", RenderState::ZTestMode::Always);
+  bloomDownKaris     = postEffect("triangle_uv", "bloom_down_karis", RenderState::ZTestMode::Always);
+  bloomDown          = postEffect("triangle_uv", "bloom_down",       RenderState::ZTestMode::Always);
+  {
+    // up the chain onto the larger level (One, One); into the scene as scene*(1-k) + bloom*k (One, SrcAlpha)
+    auto blended = [&](std::string_view fs, RenderState::BlendMode dst) {
+      RenderState state;
+      state.setZTestMode    (RenderState::ZTestMode::Always);
+      state.setZWriteEnabled(false);
+      state.setBlendSource  (RenderState::BlendMode::One);
+      state.setBlendDest    (dst);
+      auto sh = GothicShader::get("triangle_uv.vert.sprv");
+      auto vs = device.shader(sh.data,sh.len);
+      sh      = GothicShader::get(string_frm(fs,".frag.sprv"));
+      auto ps = device.shader(sh.data,sh.len);
+      return device.pipeline(Triangles,state,vs,ps);
+      };
+    bloomUp  = blended("bloom_up",  RenderState::BlendMode::One);
+    bloomMix = blended("bloom_mix", RenderState::BlendMode::SrcAlpha);
+  }
 
   cmaa2EdgeColor2x2Presets[uint32_t(AaPreset::OFF)]    = Tempest::ComputePipeline();
   cmaa2EdgeColor2x2Presets[uint32_t(AaPreset::MEDIUM)] = computeShader("cmaa2_edges_color2x2_quality_0.comp.sprv");

@@ -87,6 +87,7 @@ class MoveAlgo final {
     // Telemetry counter only: records real MoveAlgo invocations, never advances simulation.
     uint64_t traceTickSerial() const { return movementTraceSerial; }
     bool    characterVirtualActive() const { return virtualMovementActive; }
+    bool    characterVirtualReady();
     auto    characterVirtualGroundVelocity() const -> Tempest::Vec3 { return virtualGroundVelocity; }
 
     asset::MaterialGroup groundMaterial() const;

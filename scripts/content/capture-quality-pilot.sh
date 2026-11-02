@@ -11,6 +11,7 @@
 # QUALITY_PILOT_TASK=gothic-ai/remaster-ASSET selects ASSET.bench; a set must replace every entry of its own index.
 # QUALITY_PILOT_SCENARIO=FILE.bench overrides the scenario, e.g. the same cameras at another time of day.
 # QUALITY_PILOT_TIMEOUT=SECONDS gives the game longer than 240 s (a long scenario on a busy Ryzen).
+# QUALITY_PILOT_WAIT_MAX=SECONDS waits longer than 900 s for the window in the gq queue (a busy Ryzen).
 # QUALITY_PILOT_INI="SECTION.key=value ..." adds Gothic.ini settings, e.g. INTERNAL.halfResAoFog=0.
 # QUALITY_PILOT_TEXTURES=DIR (on Ryzen) gives the game OPENGOTHIC_TEXTURES, e.g. an own particle texture;
 #   empty by default, so HD textures never leak into a capture.
@@ -221,7 +222,7 @@ if [[ "${1:-}" == --capture ]]; then
   rc=0
   GQ_OWNER="${TASK##*/}" "$ROOT/scripts/gq" --host "$HOST" run --class quick \
     --threads 4 --mem 5G --gpu-mem 4G --display --display-exclusive \
-    --max 6m --wait-max 900 --name "pilot $variant captures" -- \
+    --max 6m --wait-max "${QUALITY_PILOT_WAIT_MAX:-900}" --name "pilot $variant captures" -- \
     env ${GAME_ENV[@]+"${GAME_ENV[@]}"} QUALITY_PILOT_TASK="$TASK" QUALITY_PILOT_SCENARIO="$SCENARIO" \
     bash "$TASK/scripts/capture-quality-pilot.sh" --remote-capture "$variant" || rc=$?
   rsync -a "$HOST:$TASK/runs/$variant/" "$out/$variant/"

@@ -1,0 +1,90 @@
+{
+  "asset": "city-roof-volume",
+  "title": "Объём гонтовых кровель Хориниса",
+  "kind": "building",
+  "created": "2026-11-02",
+  "goal": "the same Gothic, better made",
+  "namespaces": [
+    "city-roof-volume"
+  ],
+  "sources": [],
+  "selected": {},
+  "reviews": [
+    {
+      "id": "r3-huts-south",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "PASS",
+      "date": "2026-11-02",
+      "path": "reviews/r3-huts-south/merged.json"
+    },
+    {
+      "id": "r3-puff",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "REJECT",
+      "date": "2026-11-02",
+      "path": "reviews/r3-puff/merged.json"
+    },
+    {
+      "id": "r3-lagerhaus",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "REJECT",
+      "date": "2026-11-02",
+      "path": "reviews/r3-lagerhaus/merged.json"
+    },
+    {
+      "id": "r3-hafenkneipe",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "REJECT",
+      "date": "2026-11-02",
+      "path": "reviews/r3-hafenkneipe/merged.json"
+    },
+    {
+      "id": "r3b-huts-south",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "PASS",
+      "date": "2026-11-02",
+      "path": "reviews/r3b-huts-south/merged.json"
+    },
+    {
+      "id": "r3b-puff",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "REJECT",
+      "date": "2026-11-02",
+      "path": "reviews/r3b-puff/merged.json"
+    },
+    {
+      "id": "r3b-lagerhaus",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "REJECT",
+      "date": "2026-11-02",
+      "path": "reviews/r3b-lagerhaus/merged.json"
+    },
+    {
+      "id": "r3b-hafenkneipe",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "REJECT",
+      "date": "2026-11-02",
+      "path": "reviews/r3b-hafenkneipe/merged.json"
+    }
+  ],
+  "gates": [
+    {
+      "gate": "ingame",
+      "verdict": "approved",
+      "by": "user",
+      "date": "2026-11-02",
+      "quote": "Принимаю",
+      "note": null
+    }
+  ],
+  "build": null,
+  "backup": null
+}
