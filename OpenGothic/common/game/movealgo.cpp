@@ -268,9 +268,7 @@ bool MoveAlgo::implTick(uint64_t dt, MvFlags moveFlg) {
   const auto bs = npc.bodyStateMasked();
   const bool liftOff = bs==BS_JUMP && npc.isFlyAnim();
   const bool virtualEnabled = useCharacterVirtual();
-  const bool virtualWalking = virtualEnabled && !npcVirtualMobTransition &&
-                              !npc.isDown() && npc.physic.isEnabled() && !canFlyOverWater() &&
-                              (flags==Run || flags==Slide || flags==InWater) && !liftOff;
+  const bool virtualWalking = characterVirtualReady();
   if(!virtualWalking) {
     if(virtualMovementActive && flags==Run && liftOff)
       virtualJumpVelocity = virtualGroundVelocity*0.001f;
@@ -684,6 +682,13 @@ bool MoveAlgo::implTick(uint64_t dt, MvFlags moveFlg) {
   return true;
   }
 
+bool MoveAlgo::characterVirtualReady() {
+  const bool liftOff = npc.bodyStateMasked()==BS_JUMP && npc.isFlyAnim();
+  return useCharacterVirtual() && npc.interactive()==nullptr && !npc.spellFrozen() &&
+         !npcVirtualMobTransition && !npc.isDown() && npc.physic.isEnabled() && !canFlyOverWater() &&
+         (flags==Run || flags==Slide || flags==InWater) && !liftOff;
+  }
+
 bool MoveAlgo::useCharacterVirtual() {
   if(npc.isPlayer())
     return Gothic::physicsFlags().characterVirtual;
@@ -694,14 +699,9 @@ bool MoveAlgo::useCharacterVirtual() {
   const bool enabled = human ? Gothic::physicsFlags().npcCharacterVirtual :
                                Gothic::physicsFlags().monsterCharacterVirtual &&
                                Gothic::physicsFlags().allowsMonsterCharacterVirtual(npc.isDown(),canFlyOverWater());
-  if(!enabled || npc.isDown() || hero==nullptr) {
-    npcVirtualInRange = false;
-    return false;
-    }
-  constexpr float enterRadius = 2000.f, leaveRadius = 2200.f;
-  const float distance = npc.qDistTo(*hero);
-  npcVirtualInRange = npcVirtualInRange ? distance<=leaveRadius*leaveRadius
-                                       : distance<enterRadius*enterRadius;
+  npcVirtualInRange = MeleeFighter::keepPhysics(enabled,!npc.isDown() && hero!=nullptr,
+                                               npc.isMeleeFighter(),npcVirtualInRange,
+                                               hero!=nullptr ? npc.qDistTo(*hero) : 0.f);
   return npcVirtualInRange;
   }
 
