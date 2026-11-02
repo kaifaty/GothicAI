@@ -30,6 +30,8 @@
 
 [Повторы у разных персонажей](../reports/npc-agent/2026-11-02-repeats/README.md): `repeats.py` даёт 10 персонажам 12 одинаковых фраз героя и сравнивает обороты Sol, Gemma без мысли и Gemma по мысли. Gemma по мысли повторяет чужие обороты на уровне Sol, без мысли — говорит штампами.
 
+[Ум Sol](../reports/npc-agent/2026-11-02-sol-mind/README.md): `mind.py` проигрывает записанные разговоры; перед каждой фразой героя Sol обновляет ум NPC и мысль голосу, Gemma отвечает по ним. `initiative.py` проверяет, делает ли ум действия за голос.
+
 [Замер поиска в памяти NPC и выбор эмбеддингов](../reports/npc-memory/2026-11-01-recall-eval/README.md): [`recall_eval.py`](../scripts/recall_eval.py) сравнивает `MemoryStore.search` с BM25 и десятью моделями эмбеддингов на 83 вопросах по реальным репликам. Реплики хранятся вне git. Пересказ текущий поиск находит в 22 из 50 случаев, BM25 — в 23, FRIDA — в 47; она рекомендована для сервиса на `dev-ubuntu`.
 
 Физика тонких клинков: `[GAME] item_deepest_contact=1` сохраняет глубину EPA только для `C_Item`; `placed-items-diagnose-{1644,6863}` и варианты `-control` проверяют 300 шагов ON/OFF, контракт — `gothic-physics-contract`. [Отчёт и офлайн-стенд](../reports/physics/2026-10-31-thin-blades/README.md), [текущее поведение](physics.md#как-работает-сейчас).
