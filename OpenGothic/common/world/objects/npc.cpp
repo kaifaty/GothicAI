@@ -2704,7 +2704,7 @@ void Npc::finishMeleeShadowSwing(bool remove, bool discard) {
                   ",\"cap_forward\":" + (shadow.magnet.rawCm>=120.f && std::isfinite(shadow.magnet.rawCm) ? "true" : "false") +
                   ",\"cap_backward\":" + (shadow.magnet.rawCm<=-40.f ? "true" : "false") + "}" +
                   "},\"diagnostic\":" + diagnostic + ",\"comparison\":" + comparison + "}");
-  TestBench::npcDuelSwingEnd(*this,shadow.outcome);
+  TestBench::npcDuelSwingEnd(*this,shadow.physicsHits ? shadow.outcome : shadow.legacyResult);
   shadow.contacts.clear();
   shadow.window.reset();
   }

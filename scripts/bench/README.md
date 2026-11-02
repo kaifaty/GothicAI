@@ -650,8 +650,9 @@ Each positive HP-loss hit is also stored in `hit_log`: `time_ms` since duel star
 No damage formula is repeated in the bench. Each side records `swings` at native
 attack-window start, `blocked` for completed parried/guarded swings and `misses`
 for completed windows without a hit or block (including evades, walls and interrupted
-swings). An active window at duel end is counted as a swing, without inventing an
-outcome. `defender_first_swing_ms` is null until the defender starts its first swing;
+swings). Counters use the selected hit path: physical outcomes or native legacy
+results (`applied` is a hit), and both paths share the HP-loss hit logger. An active
+window at duel end is counted as a swing, without inventing an outcome. `defender_first_swing_ms` is null until the defender starts its first swing;
 the first HP-loss response is available separately from `hit_log`.
 
 The [15 pairs](../../data/npc/far-fight-pairs.json) cover Lobart's equal peasants,
@@ -718,13 +719,13 @@ are retained. `gamedata/far_fight.json` stays `uncalibrated`.
 - 2026-11-02: v2 bench keeps only its two copies in full simulation at any observer
   distance; records native hit factors and swing outcomes; adds three fresh holdouts
   and a 300-duel default plan. Full calibration is a separate task. The eight v1
-  zero-hit replays on Mac produced hits in 3/8 duels and five zero-hit timeouts:
+  zero-hit replays on Mac before #751 produced hits in 3/8 duels and five zero-hit timeouts:
   unarmed attacker seeds 17–20 (281 swings total), 2H attacker seed 18 (29 swings).
   The attacker retained `AiNormal`. The replay's `run/melee-blade-shadow.jsonl`
   shows 245/281 unarmed swings using `T_FISTATTACKMOVE`. Across all 281 swings,
   median starting distance is 233 cm (112–316); the running punch reaches about
-  58 cm. The target
-  moves away only 8 cm per swing (median); 244 swings stop with `no_preview`.
+  58 cm. The target moves away only 8 cm per swing (median); 244 swings stop with
+  `no_preview`.
   Legacy reports `applied` for 68/281, but physical HP-loss hits are zero. The
   unarmed initiator attacks from too far away while its target has not responded;
   the physical punch falls short and the magnet usually has no contact plan.
@@ -735,12 +736,26 @@ are retained. `gamedata/far_fight.json` stays `uncalibrated`.
   and stop at `predicted`; median forward magnet feed is 11.7 cm. Legacy reports
   `applied` for 24/29, but there are no physical HP-loss hits; minimum blade/body
   clearance is 4.9 cm. Unlike the running punch, this magnet engages, yet the
-  actual strike still falls short. The user accepted the bench with these five
+  actual strike still falls short. The lead accepted the bench with these five
   empty duels; native reach, magnetism and AI attack choice belong to a separate
   melee fix. The defender's native behaviour stays unchanged.
-  The standard eight smoke cases, launched with `BENCH_HOST=local`, passed with
-  complete hit logs/counters and 135 HP-loss hits; Linux build/CLI smoke remained
-  unverified because `gq` did not admit the build.
+  Before #751, the eight Mac smoke cases yielded 135 HP-loss hits; this is
+  historical data, not validation of the #751 integration.
+- 2026-11-02, after merging #751 (`54d65a79d`): replayed the same eight commands
+  from `.bench/far-fight-v2-zero-hit-replay/duels-000.bench` on Ryzen, with absolute
+  output `.bench/far-fight-v2-zero-hit-replay-ryzen-p751-20261102-141051` under the
+  worktree. All eight records validated: **4/8 duels with hits, 28 HP-loss hits,
+  four zero-hit timeouts and zero deaths**, versus **3/8, 12 hits and five zero-hit
+  timeouts** on Mac before #751. All four 2H duels now have hits: seeds 17/18/19/20
+  have 9/1/6/12 hits respectively; seed 18 no longer times out. The four unarmed
+  initiator duels still have zero hits (70/79/66/72 swings). Host and code revision
+  both differ, so this is a new measurement, not an isolated effect estimate for #751.
+  All 352 shadow windows selected physical hits; their applied damage agrees with
+  the 28 hit-log entries (2067 HP total). Results were archived through `gq`.
+  A separate one-duel check with existing `NPC_CHARACTER_VIRTUAL=0` exercised the
+  fallback: three legacy windows, two HP-loss hits (159 HP); the attacker has two
+  swings, zero misses, and the defender one swing, one miss. This confirms that
+  native `applied` is not counted as a miss and both hit paths use the same logger.
 - 2026-11-01: added the native nonlethal calibration bench and plan/run/smoke/report
   tools for user decision Б3 in [Дальний бой NPC](../../reports/Дальний%20бой%20NPC.md).
 

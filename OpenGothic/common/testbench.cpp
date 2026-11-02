@@ -19901,7 +19901,7 @@ void TestBench::npcDuelSwingEnd(const Npc& npc, std::string_view outcome) {
   auto& duel=bench.npcDuel;
   const size_t i=duel.actors[0]==&npc ? 0 : 1;
   if(outcome=="blocked")++duel.blocked[i];
-  else if(outcome!="hit")++duel.misses[i];
+  else if(outcome!="hit" && outcome!="applied")++duel.misses[i];
   }
 
 void TestBench::npcDuelHit(const Npc& victim, const Npc& by, int32_t hpBefore, int32_t hpAfter,
