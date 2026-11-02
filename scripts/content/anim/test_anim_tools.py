@@ -384,3 +384,11 @@ def test_lock_feet_turn_keeps_a_standing_foot_from_pivoting():
     after = yaws(anim)
     assert np.ptp(before) > 10
     assert np.ptp(after) < 1.0
+
+
+def test_hit_events_are_the_ones_gothics_own_strikes_carry():
+    import finish_set
+    assert finish_set.hit_events(None) == []
+    limb, opt, end = finish_set.hit_events([7, 13])
+    assert (limb["type"], limb["slot"]) == (16, "ZS_RIGHTHAND")
+    assert (opt["type"], opt["frames"], end["type"], end["frames"]) == (20, [7], 21, [13])
