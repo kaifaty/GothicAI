@@ -1,5 +1,5 @@
 {
- "note": "Finishing of the strikes on our own key poses (reports/Свои ключевые позы ударов.md, «Доводка»): the samples picked from the second round (the charge and the riposte from a fourth, with the blade along the slot's -X and the apex feet turned as Kimodo stands them), times from the research. Sources are probe_eval.py records (25 fps) under the sources dir; seconds below are the source's and the finished clip's.",
+ "note": "Finishing of the strikes on our own key poses (reports/Свои ключевые позы ударов.md, «Доводка»): the samples picked from the second round (the charge and the riposte from a fourth, with the blade along the slot's -X and the apex feet turned as Kimodo stands them; the riposte's victim from its own round), times from the research. Sources are probe_eval.py records (25 fps) under the sources dir; seconds below are the source's and the finished clip's.",
  "levels": ["HUMANS", "HUMANS_1HST1", "HUMANS_1HST2"],
  "moves": [
   {"name": "S_1HCHARGE", "src": "res6/charge_hold_c3-2/HUMANS-T_CHARGE_HOLD_C3-2_00.MAN.json",
@@ -18,6 +18,10 @@
   {"name": "T_1HRIPOSTE", "src": "res6/riposte_body_c2-2/HUMANS-T_RIPOSTE_BODY_C2-2_01.MAN.json",
    "warp": "0:0,0.5:0.4,0.8:0.85,2.48:1.95", "sword_arm": "0.5,0.8,1,1", "arm_window": "0,0.3,1.0,1.6",
    "lift_skims": true, "lock_turn": true, "hit": [10, 48], "sfx": [[7, "Whoosh"]]},
+  {"name": "T_RIPOSTEVICTIM", "src": "res7/riposte_hurt_step_c3-2/HUMANS-T_RIPOSTE_HURT_STEP_C3-2_02.MAN.json",
+   "warp": "0:0,1.2:1.2", "fade": "0,0", "arm_ref": "HUMANS_1HST2-S_1HWALKL:9", "sword_arm": "0,0.3,0.6,1",
+   "lift_skims": true, "lock_turn": true, "blend_in": 0.12,
+   "note": "the riposte's victim (moves-riposte-victim.json): from the stun at the blade's entry, the sword hanging as in the walk"},
   {"name": "T_1HCHARGEDEMO", "concat": ["T_1HCHARGE", "S_1HCHARGE", "T_1HCHARGEHIT"],
    "note": "bench only: the whole charged strike as one clip for `ani` (anim-strikes-look.bench)"}
  ]
