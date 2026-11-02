@@ -149,7 +149,18 @@ run_series() {
     content="$(python3 -c 'import os, sys; print(os.path.realpath(os.path.expanduser(sys.argv[1])))' "$content")"
     [[ -d "$content" ]] || { echo "Missing OPENGOTHIC_CONTENT directory: $content" >&2; exit 2; }
     local snapshot
-    snapshot="$(ssh -o BatchMode=yes "$HOST" "mkdir -p '$TASK/inputs/$RUN_NAME'; mktemp -d '$TASK/inputs/$RUN_NAME/content.XXXXXX'")"
+    snapshot="$(ssh -o BatchMode=yes "$HOST" "bash -s -- '$TASK' '$RUN_NAME' '$SERIES'" <<'REMOTE'
+set -euo pipefail
+IFS=, read -r -a series <<<"$3"
+for name in "${series[@]}"; do
+  [[ ! -e "$1/runs/$2/$name" && ! -e "/mnt/shared/$1/runs/$2/$name" ]] || {
+    echo "Series exists: $name; choose a fresh run name" >&2; exit 1;
+  }
+done
+mkdir -p "$1/inputs/$2"
+mktemp -d "$1/inputs/$2/content.XXXXXX"
+REMOTE
+)"
     rsync -a "$content/" "$HOST:$snapshot/"
     content="$snapshot"
   fi
