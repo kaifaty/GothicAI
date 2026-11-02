@@ -155,6 +155,20 @@ async def world():
     memory.close()
 
 
+@pytest.fixture(params=[(1, "hits_v1"), (3, "hits_v3")])
+def fight_model(world, tmp_path, monkeypatch, request):
+    version, model = request.param
+    tables = (part_tables() if version == 3 else {
+        "version": 1, "source": "test", "rate_base": .4, "rate_per_tier": .5, "damage_scale": 1.,
+    })
+    calibration = tmp_path / "gamedata" / "far_fight.json"
+    calibration.parent.mkdir()
+    calibration.write_text(json.dumps(tables))
+    monkeypatch.setattr("gothic_ai.npc_far.__file__", str(tmp_path / "npc_far.py"))
+    world.far = FarWorld(world.will)
+    return model
+
+
 async def test_batch_engine_positions_take_priority_over_routines_and_share_fresh_hero(world):
     world.link.runtime[THIEF]["pos"] = [3000, 0, 0]
     position = await world.far.position(THIEF, 0)
@@ -278,10 +292,7 @@ def crime(*, kind: str = "theft") -> dict[str, Any]:
 
 
 @pytest.mark.parametrize("wins", [True, False])
-@pytest.mark.parametrize("measured", [False, True])
-async def test_far_fight_knocks_out_loser_before_returning_goods_and_repeats_once(world, wins, measured):
-    if measured:
-        world.far._fight_coefficients = Coefficients.from_mapping(part_tables())
+async def test_far_fight_knocks_out_loser_before_returning_goods_and_repeats_once(world, wins, fight_model):
     world.link.values = [*(STRONG if wins else WEAK), *(WEAK if wins else STRONG), 3]
     result = await world.far.fight(crime(), OWNER, 0)
     assert result["far"] and result["returned"] == (2 if wins else 0)
@@ -290,7 +301,7 @@ async def test_far_fight_knocks_out_loser_before_returning_goods_and_repeats_onc
     expected = resolve(result["act"], _combatant(OWNER, world.link.values[:48]),
                        _combatant(THIEF, world.link.values[48:96]), world.far._fight_coefficients)
     assert result["winner"] == winner == expected.winner
-    assert (result["reason"], result["model"]) == ("hits_to_down", world.far._fight_coefficients.model)
+    assert (result["reason"], result["model"]) == ("hits_to_down", fight_model)
     assert (result["loss"], result["duration_s"], result["hits"], result["p_win"]) == (
         expected.loss, expected.duration_s, expected.hits, round(expected.p_win, 3),
     )
@@ -338,7 +349,7 @@ async def test_far_fight_missing_goods_partial_return_and_attack(world, kind, go
     assert len(world.link.effects) == 1 + int(returned > 0)
 
 
-async def test_far_timeout_wounds_both_before_facts_without_returning_goods(world):
+async def test_far_timeout_wounds_both_before_facts_without_returning_goods(world, fight_model):
     world.link.values = [*DURABLE, *DURABLE, 3]
     world.link.after_effect = lambda: world.chronicle.facts() == [] or pytest.fail(
         "Distant fight facts preceded the effect",
@@ -347,7 +358,7 @@ async def test_far_timeout_wounds_both_before_facts_without_returning_goods(worl
     expected = resolve(result["act"], _combatant(OWNER, DURABLE), _combatant(THIEF, DURABLE),
                        world.far._fight_coefficients)
     assert (result["outcome"], result["reason"], result["model"], result["winner"]) == (
-        "timeout", "deadline", world.far._fight_coefficients.model, None,
+        "timeout", "deadline", fight_model, None,
     )
     assert result["far"] and result["returned"] == 0 and result["duration_s"] == 120
     assert (result["loss"], result["by_loss"], result["hits"], result["p_win"],
@@ -574,6 +585,11 @@ def test_far_world_load_requires_valid_calibration(world, tmp_path, monkeypatch,
     monkeypatch.setattr("gothic_ai.npc_far.__file__", str(path))
     with pytest.raises((FileNotFoundError, ValueError)):
         FarWorld(world.will)
+
+
+def test_shipped_far_fight_is_v3(world):
+    assert isinstance(world.far._fight_coefficients, Parts)
+    assert world.far._fight_coefficients.model == "hits_v3"
 
 
 def test_far_parts_load_and_act_is_repeatable(world, tmp_path, monkeypatch):
