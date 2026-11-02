@@ -980,6 +980,8 @@ class NpcLogicalStateContract final {
       actor.setExternalControl(false);
       initialWatch(actor,699);
       expect(acquire(actor)["accepted"].GetBool(),"exhausted P30 fixture acquires its body lease");
+      advance();
+      BodyObservations::sampleAll(true);
       expect(action(actor,FightAlgo::PolicyAction::JumpBack)["accepted"].GetBool(),"exhausted P30 jump back is accepted");
       Gothic::settingsSetI("GAME","melee_stamina",1);
       const auto exhaustedAt=actor.world().tickCount();
