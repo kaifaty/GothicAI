@@ -69,4 +69,11 @@
 
 ## Цена
 
-Ц1 (`scripts/perf-content.sh harbour-volume-4 cityroofs-test-3 harbour market`) стоит в очереди Ryzen. Он меряет `cityroofs-test-3`: в нём на 8 тыс. треугольников больше, чем в окончательном наборе, при тех же материалах. Если пройдёт он, окончательный пройдёт тоже. По пути найдено и исправлено: Ц1 не собирался ни у кого, потому что `perf_content.py` не переносил `ryzen-build.sh` ([kaifaty/GothicAI#752](https://github.com/kaifaty/GothicAI/pull/752)).
+Ц1 на Ryzen, `harbour-volume-4 → cityroofs-test-3`, порт и рынок, A B B A ([отчёт](../../../performance/2026-11-02-content-cost/harbour-volume-4-vs-cityroofs-test-3/report.md)):
+
+| Место | Δ p50 | Δ p95 | Треугольники/кадр | Вызовы отрисовки |
+|---|---:|---:|---:|---:|
+| порт | −0,19 % | −1,99 % | 1 021 тыс. → 1 082 тыс. (+6,0 %) | 73,1 → 73,1 |
+| рынок | −0,20 % | −0,22 % | 957 тыс. → 1 002 тыс. (+4,7 %) | 71,3 → 71,3 |
+
+Вердикт — «в шуме» на обоих местах. В `cityroofs-test-3` на 8 тыс. треугольников больше, чем в окончательном наборе, при тех же материалах, поэтому окончательный набор не дороже. Замер шёл после исправления [kaifaty/GothicAI#752](https://github.com/kaifaty/GothicAI/pull/752): до него Ц1 не собирался ни у кого, `perf_content.py` не переносил `ryzen-build.sh`.
