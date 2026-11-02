@@ -116,6 +116,7 @@ class Animation final {
       void                                   processEvents(uint64_t barrier, uint64_t sTime, uint64_t now, EvCount& ev,
                                                            const LogicEventObserver* observer = nullptr) const;
       void                                   logicEvents(std::vector<LogicEvent>& out) const;
+      LogicEvent                             logicTag(size_t index) const;
       void                                   processSfx   (uint64_t barrier, uint64_t sTime, uint64_t now, Npc* npc, Interactive* mob) const;
       void                                   processPfx   (uint64_t barrier, uint64_t sTime, uint64_t now, MdlVisual& visual, World& world) const;
       void                                   processPfx   (const MdsParticleEffect& p, MdlVisual& visual, World& world) const;

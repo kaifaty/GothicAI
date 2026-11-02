@@ -4,6 +4,7 @@
 #include "world/objects/interactive.h"
 #include "world/world.h"
 #include "frameprofile.h"
+#include "npcdayjournal.h"
 
 #include <algorithm>
 #include <chrono>
@@ -19,7 +20,7 @@ using Clock=std::chrono::steady_clock;
 // All entry points run on the main thread. Nested admissions/events are timed
 // once, so wallNs measures total shadow work rather than elapsed sums.
 struct AuditTimer final {
-  bool active=NpcLogicAudit::enabled();
+  bool active=NpcLogicAudit::enabled() || NpcDayJournal::running();
   bool outer=active && depth++==0;
   Clock::time_point start=outer ? Clock::now() : Clock::time_point{};
   FrameProfile::Scope zone{FrameProfile::Zone::NpcLogicShadow,outer};
@@ -40,7 +41,7 @@ Action canonical(const Animation::Sequence& sequence, BodyState state) {
   const auto& name=sequence.name;
   for(const auto& event:sequence.data->events) {
     if(event.type==asset::MdsEventType::SET_FIGHT_MODE)
-      return name.find("_2_STAND")!=std::string::npos ? AI_RemoveWeapon : AI_DrawWeapon;
+      return event.fight_mode==asset::MdsFightMode::NONE ? AI_RemoveWeapon : AI_DrawWeapon;
     if(event.type==asset::MdsEventType::ITEM_INSERT || event.type==asset::MdsEventType::ITEM_REMOVE)
       return AI_UseItemToState;
     }
@@ -88,6 +89,8 @@ std::string distribution(const std::map<int64_t,uint64_t>& values) {
 std::string bucketJson(const NpcLogicAudit::Bucket& bucket) {
   std::ostringstream out;
   out<<"{\"count\":"<<bucket.count<<",\"early\":"<<bucket.early<<",\"late\":"<<bucket.late
+     <<",\"wait_count\":"<<bucket.waitCount<<",\"wait_early\":"<<bucket.waitEarly<<",\"wait_late\":"<<bucket.waitLate
+     <<",\"wait_error_ms\":"<<distribution(bucket.waitErrorMs)
      <<",\"unpredictable_admissions\":"<<bucket.unpredictable<<",\"interrupted\":"<<bucket.interrupted<<",\"end_error_ms\":"<<distribution(bucket.endErrorMs)
      <<",\"events\":"<<bucket.events<<",\"event_mismatch\":"<<bucket.eventMismatch
      <<",\"event_error_ms\":"<<distribution(bucket.eventErrorMs)<<'}';
@@ -124,9 +127,19 @@ std::string NpcLogicAudit::actionName(Action action) {
 #undef LOGIC_ACTION
   }
 
+uint64_t NpcLogicAudit::Stats::reanchoredCount() const {
+  uint64_t count=0;
+  for(const auto& entry:reanchored) count+=entry.second;
+  return count;
+  }
+
 std::string NpcLogicAudit::Stats::probeFields() const {
   std::ostringstream out;
-  out<<"npc_logic_samples="<<ticks<<" npc_logic_body_mismatch="<<bodyMismatch
+  uint64_t inputs=0;
+  for(const auto& [kind,count]:reanchored) { (void)kind; inputs+=count; }
+  out<<"npc_logic_body_samples="<<bodySamples<<" npc_logic_weapon_samples="<<weaponSamples
+     <<" npc_logic_wait_early="<<waitEarly<<" npc_logic_wait_late="<<waitLate<<" npc_logic_reanchored="<<inputs
+     <<" npc_logic_samples="<<ticks<<" npc_logic_body_mismatch="<<bodyMismatch
      <<" npc_logic_weapon_mismatch="<<weaponMismatch<<" npc_logic_early="<<early
      <<" npc_logic_late="<<late<<" npc_logic_events="<<events
      <<" npc_logic_event_mismatch="<<eventMismatch<<" npc_logic_wall_ms="<<double(wallNs)/1e6;
@@ -136,6 +149,8 @@ std::string NpcLogicAudit::Stats::probeFields() const {
 std::string NpcLogicAudit::Stats::json() const {
   std::ostringstream out;
   out<<"{\"enabled\":"<<(enabled() ? "true" : "false")<<",\"samples\":"<<ticks
+     <<",\"body_samples\":"<<bodySamples<<",\"weapon_samples\":"<<weaponSamples
+     <<",\"wait_early\":"<<waitEarly<<",\"wait_late\":"<<waitLate
      <<",\"body_mismatch\":"<<bodyMismatch<<",\"weapon_mismatch\":"<<weaponMismatch
      <<",\"early\":"<<early<<",\"late\":"<<late<<",\"events\":"<<events
      <<",\"event_mismatch\":"<<eventMismatch<<",\"wall_ns\":"<<wallNs<<",\"by_action\":{";
@@ -159,19 +174,36 @@ std::string NpcLogicAudit::Stats::json() const {
     comma=true;
     out<<jsonQuoted(reason)<<':'<<count;
     }
+  out<<"},\"reanchored_inputs\":{";
+  comma=false;
+  for(const auto& [reason,count]:reanchored) {
+    if(comma) out<<',';
+    comma=true;
+    out<<jsonQuoted(reason)<<':'<<count;
+    }
+  out<<"},\"body_mismatch_kinds\":{";
+  comma=false;
+  for(const auto& [kind,count]:bodyMismatchKinds) {
+    if(comma) out<<','; comma=true; out<<jsonQuoted(kind)<<':'<<count;
+    }
+  out<<"},\"weapon_mismatch_kinds\":{";
+  comma=false;
+  for(const auto& [kind,count]:weaponMismatchKinds) {
+    if(comma) out<<','; comma=true; out<<jsonQuoted(kind)<<':'<<count;
+    }
   out<<"}}";
   return out.str();
   }
 
 bool NpcLogicalState::hasState(BodyState value) const {
   for(const auto& layer:layers)
-    if(layer.state==value) return true;
+    if(!layer.finished && layer.state==value) return true;
   return interactiveState && *interactiveState==value;
   }
 
 bool NpcLogicalState::hasStateFlag(BodyState value) const {
   for(const auto& layer:layers)
-    if((layer.state&(BS_FLAG_MASK|BS_MOD_MASK))==value) return true;
+    if(!layer.finished && (layer.state&(BS_FLAG_MASK|BS_MOD_MASK))==value) return true;
   return interactiveState && (*interactiveState&(BS_FLAG_MASK|BS_MOD_MASK))==value;
   }
 
@@ -179,7 +211,7 @@ BodyState NpcLogicalState::bodyStateMasked() const { return BodyState(body&(BS_M
 
 float NpcLogicalState::animProgress(std::string_view name, uint64_t now) const {
   for(const auto& layer:layers) {
-    if(layer.sequence->name!=name) continue;
+    if(layer.finished || layer.sequence->name!=name) continue;
     const float total=layer.sequence->totalTime();
     if(total<=0.f) return 1;
     const auto played=now>layer.start ? uint64_t(double(now-layer.start)*double(layer.speed)) : 0;
@@ -188,194 +220,348 @@ float NpcLogicalState::animProgress(std::string_view name, uint64_t now) const {
   return -1;
   }
 
-void NpcLogicalState::sync(Npc& npc, bool rebuild, Action admitted, const Animation::Sequence* requested) {
-  const bool audit=NpcLogicAudit::enabled();
-  AuditTimer timer;
-  const Pose& pose=npc.visual.pose();
-  const uint64_t now=npc.world().tickCount();
-  if(!rebuild && actionWait && npc.aniWaitTime!=nativeWaitEnd) {
-    // Queue/state changes can cancel or replace a wait while its physical
-    // layer survives. That is not a natural completion at the old deadline.
-    action={};
-    actionWait=false;
-    nativeWaitEnd=0;
+namespace {
+WeaponState fightMode(asset::MdsFightMode mode) {
+  switch(mode) {
+    case asset::MdsFightMode::FIST: return WeaponState::Fist;
+    case asset::MdsFightMode::SINGLE_HANDED: return WeaponState::W1H;
+    case asset::MdsFightMode::DUAL_HANDED: return WeaponState::W2H;
+    case asset::MdsFightMode::BOW: return WeaponState::Bow;
+    case asset::MdsFightMode::CROSSBOW: return WeaponState::CBow;
+    case asset::MdsFightMode::MAGIC: return WeaponState::Mage;
+    default: return WeaponState::NoWeapon;
     }
-  if(!rebuild && actionWait && now>nativeWaitEnd) recordActionEnd(now);
-  if(rebuild) { layers.clear(); action={}; actionWait=false; nativeWaitEnd=0; }
-  for(size_t i=0;i<layers.size();) {
-    bool found=false;
-    for(size_t p=0;p<pose.logicalLayerCount();++p) {
-      const auto layer=pose.logicalLayer(p);
-      if(layers[i].sequence==layer.sequence && layers[i].origin==layer.origin) { found=true; break; }
-      }
-    if(found) { ++i; continue; }
-    if(audit && !layers[i].finished && layers[i].sequence->animCls!=Animation::Loop) {
-      ++totals.byAction[layers[i].action].interrupted;
-      ++totals.byAnimation[layers[i].sequence->name].interrupted;
-      }
-    if(!actionWait && action.sequence==layers[i].sequence && action.start==layers[i].origin)
-      action={};
-    layers.erase(layers.begin()+ptrdiff_t(i));
+  }
+std::optional<BodyState> externalBody(const Npc& npc) {
+  if(npc.isDead()) return BS_DEAD;
+  if(npc.isUnconscious()) return BS_UNCONSCIOUS;
+  if(npc.isFalling()) return BS_FALL;
+  return {};
+  }
+void endSample(NpcLogicAudit::Bucket& bucket, int64_t error, bool wait) {
+  if(wait) {
+    ++bucket.waitCount;
+    ++bucket.waitErrorMs[std::abs(error)];
+    if(error<0) ++bucket.waitEarly;
+    if(error>0) ++bucket.waitLate;
+    } else {
+    ++bucket.count;
+    ++bucket.endErrorMs[std::abs(error)];
+    if(error<0) ++bucket.early;
+    if(error>0) ++bucket.late;
     }
+  }
+}
+
+void NpcLogicalState::updateBody() {
   uint32_t state=BS_NONE;
-  for(size_t p=0;p<pose.logicalLayerCount();++p) {
-    const auto source=pose.logicalLayer(p);
-    state=std::max(state,uint32_t(source.state&(BS_MAX|BS_FLAG_MASK)));
-    auto found=std::find_if(layers.begin(),layers.end(),[&](const Layer& layer) {
-      return layer.sequence==source.sequence && layer.origin==source.origin;
-      });
-    bool fresh=found==layers.end();
-    if(fresh) {
-      layers.emplace_back();
-      found=layers.end()-1;
-      found->sequence=source.sequence;
-      found->origin=source.origin;
-      found->action=bodyAction(admitted) ? admitted : canonical(*source.sequence,source.state);
-      }
-    auto& layer=*found;
-    const bool changed=fresh || layer.start!=source.start || layer.speed!=source.speed;
-    layer.start=source.start;
-    layer.speed=source.speed;
-    layer.state=source.state;
-    layer.combo=pose.comboLength();
-    layer.expectedEnd=source.sequence->animCls==Animation::Loop ? 0 :
-        deadline(layer.start,double(std::min(source.sequence->atkTotalTime(layer.combo),source.sequence->totalTime())),layer.speed);
-    if(!actionWait && action.sequence==layer.sequence && action.start==layer.origin)
-      action.expectedEnd=layer.expectedEnd;
-    if(changed) {
-      std::vector<Animation::LogicEvent> schedule;
-      source.sequence->logicEvents(schedule);
-      layer.events.resize(schedule.size());
-      for(size_t e=0;e<schedule.size();++e) {
-        layer.events[e].source=schedule[e];
-        layer.events[e].expected=layer.start+uint64_t(std::ceil(double(schedule[e].time)/double(layer.speed)));
-        }
-      }
-    }
-  interactiveState.reset();
-  if(auto* mob=npc.interactive()) {
-    interactiveState=BodyState(mob->stateMask());
-    state=uint32_t(*interactiveState);
-    }
-  if(npc.isDead()) state=BS_DEAD;
-  else if(npc.isUnconscious()) state=BS_UNCONSCIOUS;
-  else if(npc.isFalling()) state=BS_FALL;
+  for(const auto& layer:layers)
+    if(!layer.finished) state=std::max(state,uint32_t(layer.state&(BS_MAX|BS_FLAG_MASK)));
+  if(interactiveState) state=uint32_t(*interactiveState);
+  if(externalState) state=uint32_t(*externalState);
   body=BodyState(state);
-  weapon=npc.weaponState();
-  if(admitted!=AI_None && !bodyAction(admitted)) {
-    const char* reason=nullptr;
-    switch(admitted) {
-      case AI_GoToNpc: case AI_GoToPoint: case AI_GoToNextFp: case AI_GotoItem: case AI_Flee:
-        reason="path_or_physics_6c"; break;
-      case AI_TurnToNpc: case AI_TurnAway: case AI_WhirlToNpc: case AI_AlignToFp: case AI_AlignToWp:
-        reason="turn_by_angle_6c"; break;
-      case AI_Output: case AI_OutputSvm: case AI_OutputSvmOverlay: case AI_ProcessInfo:
-        reason="dialogue_output_6d"; break;
-      default: break;
-      }
-    if(audit && reason!=nullptr) {
-      ++totals.byAction[admitted].unpredictable;
-      ++totals.deferred[reason];
-      }
+  }
+
+void NpcLogicalState::schedule(Layer& layer) {
+  const auto& sequence=*layer.sequence;
+  layer.expectedEnd=sequence.animCls==Animation::Loop ? 0 :
+      deadline(layer.start,std::min(sequence.atkTotalTime(layer.combo),sequence.totalTime()),layer.speed);
+  layer.events.clear();
+  if(NpcLogicAudit::enabled()) {
+    std::vector<Animation::LogicEvent> events;
+    sequence.logicEvents(events);
+    for(const auto& event:events)
+      layer.events.push_back({event,layer.start+uint64_t(std::ceil(double(event.time)/double(layer.speed)))});
     }
-  // A consumed AI_PlayAni can wait for one period of a loop. Its action
-  // clock is finite even though that layer has no natural end.
-  // implAniWait only extends its barrier. An overlay that leaves it unchanged
-  // must retain the older action clock rather than shorten its prediction.
-  if(!actionWait && requested!=nullptr && npc.aniWaitTime>=now) {
-    // PlayAni may reuse an existing loop or start an intermediate transition.
-    // The native wait belongs to the requested sequence in both cases.
-    action={admitted,requested,now,now+uint64_t(requested->totalTime())+1,true};
-    nativeWaitEnd=npc.aniWaitTime;
-    actionWait=true;
-    }
-  else if(!actionWait && ((bodyAction(admitted) && admitted!=AI_PlayAnim && admitted!=AI_PlayAnimBs) || rebuild) && npc.aniWaitTime>=now) {
-    const Layer* chosen=nullptr;
-    for(const auto& layer:layers)
-      if(chosen==nullptr || layer.sequence->totalTime()/layer.speed>chosen->sequence->totalTime()/chosen->speed)
-        chosen=&layer;
-    if(chosen!=nullptr) {
-      const auto kind=rebuild ? chosen->action : admitted;
-      // Native AI waits use totalTime without playback speed, except StandUp,
-      // which uses Pose::animationTotalTime. Rebuild their admission time from
-      // the saved wait and metadata; layer starts can be rebased by Pose::save.
-      const float speed=kind==AI_StandUp || kind==AI_StandUpQuick ? chosen->speed : 1.f;
-      const auto duration=uint64_t(chosen->sequence->totalTime()/speed);
-      const uint64_t start=rebuild ? npc.aniWaitTime-std::min(npc.aniWaitTime,duration) : now;
-      action={kind,chosen->sequence,start,
-              start+duration+1,true};
-      nativeWaitEnd=npc.aniWaitTime;
-      actionWait=true;
-      }
-    }
-  if(!actionWait && (action.sequence==nullptr || rebuild)) {
-    action={};
-    for(const auto& layer:layers) {
-      if(layer.finished || layer.expectedEnd==0 || layer.expectedEnd<now) continue;
-      if(action.sequence==nullptr || layer.origin>=action.start)
-        action={layer.action,layer.sequence,layer.origin,layer.expectedEnd,true};
-      }
-    }
-  if(action.sequence==nullptr) {
-    if(npc.go2.flag!=Npc::GT_No) {
-      action.kind=npc.go2.flag==Npc::GT_NextFp ? AI_GoToNextFp :
-                  npc.go2.flag==Npc::GT_Flee ? AI_Flee :
-                  npc.go2.flag==Npc::GT_Item ? AI_GotoItem : AI_GoToPoint;
-      } else if(npc.outWaitTime>now) {
-      action.kind=AI_Output;
-      } else if(const auto* queued=npc.aiQueue.front()) {
-      action.kind=queued->act;
-      }
+  // Weapon prediction needs only SET_FIGHT_MODE, also with audit disabled.
+  // Full item/sound/PFX/window schedules are allocated only for the audit.
+  layer.weaponEvents.clear();
+  for(size_t i=0;i<sequence.data->events.size();++i) {
+    const auto& event=sequence.data->events[i];
+    if(event.type!=asset::MdsEventType::SET_FIGHT_MODE) continue;
+    const auto local=sequence.logicTag(i).time;
+    layer.weaponEvents.emplace_back(layer.start+uint64_t(std::ceil(double(local)/double(layer.speed))),fightMode(event.fight_mode));
     }
   }
 
-void NpcLogicalState::auditTick(Npc& npc) {
-  if(!NpcLogicAudit::enabled()) return;
-  AuditTimer timer;
-  ++totals.ticks;
-  if(body!=npc.bodyState()) ++totals.bodyMismatch;
-  if(weapon!=npc.weaponState()) ++totals.weaponMismatch;
-  }
-
-void NpcLogicalState::recordActionEnd(uint64_t now) {
-  if(NpcLogicAudit::enabled() && action.sequence!=nullptr && action.predictable) {
-    const int64_t error=int64_t(now)-int64_t(action.expectedEnd);
-    const int64_t magnitude=std::abs(error);
-    const auto record=[&](NpcLogicAudit::Bucket& bucket) {
-      ++bucket.count;
-      ++bucket.endErrorMs[magnitude];
-      if(error<0) ++bucket.early;
-      if(error>0) ++bucket.late;
-      };
-    record(totals.byAction[action.kind]);
-    if(error<0) ++totals.early;
-    if(error>0) ++totals.late;
-    }
-  action={};
-  actionWait=false;
-  nativeWaitEnd=0;
-  }
-
-void NpcLogicalState::sequenceEnd(const Animation::Sequence* sequence, uint64_t origin, uint64_t now) {
-  AuditTimer timer;
-  for(auto& layer:layers) {
-    if(layer.sequence!=sequence || layer.origin!=origin || layer.finished || layer.expectedEnd==0) continue;
+void NpcLogicalState::advance(uint64_t now) {
+  for(size_t i=0,count=layers.size();i<count;++i) {
+    auto& layer=layers[i];
+    if(layer.finished) continue;
+    for(auto& [at,mode]:layer.weaponEvents) {
+      if(at>now) continue;
+      weapon=mode;
+      if(layer.sequence->animCls==Animation::Loop && layer.sequence->totalTime()>0) {
+        const auto period=double(layer.sequence->totalTime())/layer.speed;
+        at+=uint64_t((std::floor(double(now-at)/period)+1)*period);
+        } else at=UINT64_MAX;
+      }
+    if(layer.expectedEnd==0 || now<layer.expectedEnd) continue;
+    const auto* next=layer.sequence->nextPtr;
+    // These resolutions depend on executor state, not just Sequence metadata.
+    // Retain them until an observed mutation and report that re-anchor.
+    if(layer.sequence->isRotate() || (layer.state&BS_ITEMINTERACT)==BS_ITEMINTERACT || next==layer.sequence) continue;
     layer.finished=true;
-    if(NpcLogicAudit::enabled()) {
-      const int64_t error=int64_t(now)-int64_t(layer.expectedEnd);
-      auto& bucket=totals.byAnimation[sequence->name];
-      ++bucket.count;
-      ++bucket.endErrorMs[std::abs(error)];
-      if(error<0) ++bucket.early;
-      if(error>0) ++bucket.late;
+    if(next!=nullptr) {
+      Layer successor;
+      successor.sequence=next;
+      successor.origin=successor.start=now;
+      successor.state=layer.state;
+      const auto base=layer.state&BS_MAX;
+      if(base==BS_STUMBLE || base==BS_PARADE) successor.state=BS_NONE;
+      successor.combo=layer.combo;
+      successor.action=canonical(*next,successor.state);
+      if(const auto found=speeds.find(next->name);found!=speeds.end()) successor.speed=found->second;
+      schedule(successor);
+      layers.push_back(std::move(successor));
       }
-    if(!actionWait && action.sequence==sequence && action.start==origin) recordActionEnd(now);
+    }
+  updateBody();
+  }
+
+void NpcLogicalState::admit(Npc& npc, Action kind, const Animation::Sequence* requested) {
+  AuditTimer timer;
+  admissions.push_back({kind,requested,npc.world().tickCount(),npc.aniWaitTime});
+  if(!NpcLogicAudit::enabled() || bodyAction(kind)) return;
+  const char* reason=nullptr;
+  switch(kind) {
+    case AI_GoToNpc: case AI_GoToPoint: case AI_GoToNextFp: case AI_GotoItem: case AI_Flee:
+      reason="path_or_physics_6c"; break;
+    case AI_TurnToNpc: case AI_TurnAway: case AI_WhirlToNpc: case AI_AlignToFp: case AI_AlignToWp:
+      reason="turn_by_angle_6c"; break;
+    case AI_Output: case AI_OutputSvm: case AI_OutputSvmOverlay: case AI_ProcessInfo:
+      reason="dialogue_output_6d"; break;
+    default: break;
+    }
+  if(reason) { ++totals.byAction[kind].unpredictable; ++totals.deferred[reason]; }
+  }
+
+void NpcLogicalState::sync(Npc& npc, bool rebuild, Action admitted, const Animation::Sequence* requested) {
+  AuditTimer timer;
+  auto& pose=npc.visual.pose();
+  const auto now=npc.world().tickCount();
+  if(admitted!=AI_None) admit(npc,admitted,requested);
+  const bool audit=NpcLogicAudit::enabled();
+  auto mobState=npc.interactive() ? std::optional<BodyState>(BodyState(npc.interactive()->stateMask())) : std::nullopt;
+  const auto external=externalBody(npc);
+  if(rebuild || !initialized) {
+    layers.clear(); admissions.clear(); speeds.clear(); action={}; actionWait=false;
+    for(const auto& [name,speed]:pose.logicalDefaultSpeeds()) speeds[name]=speed;
+    for(size_t i=0;i<pose.logicalLayerCount();++i) {
+      const auto source=pose.logicalLayer(i);
+      Layer layer;
+      layer.sequence=source.sequence; layer.start=source.start; layer.origin=source.origin;
+      layer.speed=source.speed; layer.state=source.state; layer.combo=pose.comboLength();
+      layer.action=canonical(*source.sequence,source.state);
+      schedule(layer);
+      for(auto& event:layer.weaponEvents) if(event.first<=now) event.first=UINT64_MAX;
+      layers.push_back(std::move(layer));
+      }
+    interactiveState=mobState; externalState=external; weapon=npc.weaponState();
+    updateBody();
+    pose.enableLogicalInputs(); pose.clearLogicalInputs(); initialized=true;
+    // The saved wait identifies that a wait exists, never its predicted time.
+    // Ambiguous layers stay unknown; selecting the longest is not evidence.
+    {
+      const Layer* own=nullptr;
+      for(const auto& layer:layers) {
+        if(layer.expectedEnd==0 || layer.expectedEnd<=now || layer.sequence->isRotate()) continue;
+        if(own) { own=nullptr; break; }
+        own=&layer;
+        }
+      if(own) {
+        action={own->action,own->sequence,own->start,own->origin,own->expectedEnd,true};
+        actionWait=npc.aniWaitTime>=now; nativeWaitEnd=npc.aniWaitTime;
+        } else if(audit && npc.aniWaitTime>=now) ++totals.reanchored["load_action_unknown"];
+      }
     return;
     }
+
+  advance(now);
+  const auto& inputs=pose.logicalInputs();
+  bool bodyInput=mobState!=interactiveState || external!=externalState;
+  bool weaponInput=false;
+  if(audit && mobState!=interactiveState) ++totals.reanchored["interactive_mask_6d"];
+  if(audit && external!=externalState) {
+    const auto state=external ? *external : (externalState ? *externalState : BS_NONE);
+    ++totals.reanchored[state==BS_FALL ? "falling_6c" : "script_state_6e"];
+    }
+  using Kind=Pose::LogicalInput::Kind;
+  using Cause=Pose::LogicalInput::Cause;
+  for(const auto& input:inputs) {
+    if(input.cause==Cause::Natural) continue;
+    if(input.kind==Kind::Weapon) weaponInput=true;
+    else if(input.sequence!=nullptr || input.kind==Kind::Combo) bodyInput=true;
+    if(audit) {
+      const char* reason="layer_start";
+      switch(input.kind) {
+        case Kind::LayerRemove: reason="explicit_layer_remove"; break;
+        case Kind::Speed: reason="speed_6e"; break;
+        case Kind::HitStop: reason="hit_stop_6e"; break;
+        case Kind::HitStopEnd: reason="hit_stop_end_6e"; break;
+        case Kind::Combo: reason="combo_6e"; break;
+        case Kind::Weapon: reason="explicit_weapon"; break;
+        default: break;
+        }
+      ++totals.reanchored[reason];
+      }
+    }
+  // Observe the forecast from the previous boundary before applying ANY of
+  // this tick's executor inputs. Input-affected fields are excluded, not matches.
+  auditTick(npc,bodyInput,weaponInput);
+
+  for(const auto& input:inputs) {
+    auto found=std::find_if(layers.begin(),layers.end(),[&](const Layer& layer) {
+      return layer.sequence==input.sequence && layer.origin==input.origin;
+      });
+    if(input.cause==Cause::Natural) {
+      if(input.kind==Kind::LayerRemove) {
+        sequenceEnd(input.sequence,input.origin,input.at);
+        if(found!=layers.end() && !found->finished) {
+          if(audit) ++totals.reanchored["executor_next_6c_6d"];
+          found->finished=true;
+          }
+        } else if(input.kind==Kind::LayerSet && found==layers.end()) {
+        // Overlay lookup, item-use destination and rotation retention are
+        // executor decisions. Never turn their observed result into a match.
+        if(audit) ++totals.reanchored["executor_next_6c_6d"];
+        layers.erase(std::remove_if(layers.begin(),layers.end(),[&](const Layer& layer) {
+          return layer.sequence->layer==input.sequence->layer;
+          }),layers.end());
+        Layer layer;
+        layer.sequence=input.sequence; layer.start=input.start; layer.origin=input.origin;
+        layer.speed=input.speed; layer.state=input.state; layer.combo=input.combo;
+        layer.action=canonical(*input.sequence,input.state); schedule(layer);
+        layers.push_back(std::move(layer));
+        }
+      continue;
+      }
+    if(input.kind==Kind::Weapon) { weapon=input.weapon; continue; }
+    if(input.kind==Kind::Speed && input.sequence==nullptr) { speeds[input.name]=input.speed; continue; }
+    if(input.kind==Kind::Combo && input.sequence==nullptr) {
+      for(auto& layer:layers) { layer.combo=input.combo; schedule(layer); }
+      continue;
+      }
+    if(input.kind==Kind::LayerRemove) {
+      if(found!=layers.end()) {
+        if(audit && !found->finished) {
+          ++totals.byAnimation[found->sequence->name].interrupted;
+          ++totals.byAction[found->action].interrupted;
+          }
+        layers.erase(found);
+        }
+      continue;
+      }
+    if(input.kind==Kind::LayerSet) {
+      layers.erase(std::remove_if(layers.begin(),layers.end(),[&](const Layer& layer) {
+        return layer.sequence->layer==input.sequence->layer &&
+            (layer.sequence!=input.sequence || layer.origin!=input.origin);
+        }),layers.end());
+      found=std::find_if(layers.begin(),layers.end(),[&](const Layer& layer) {
+        return layer.sequence==input.sequence && layer.origin==input.origin;
+        });
+      }
+    if(found==layers.end()) {
+      if(input.kind!=Kind::LayerSet) continue;
+      layers.emplace_back(); found=layers.end()-1;
+      }
+    auto& layer=*found;
+    layer.sequence=input.sequence; layer.start=input.start; layer.origin=input.origin;
+    layer.speed=input.speed; layer.state=input.state; layer.combo=input.combo;
+    layer.finished=false; layer.action=canonical(*input.sequence,input.state);
+    schedule(layer);
+    if(input.kind!=Kind::LayerSet)
+      for(auto& event:layer.weaponEvents) if(event.first<=input.at) event.first=UINT64_MAX;
+    if(action.sequence==layer.sequence && action.origin==layer.origin)
+      action.expectedEnd=layer.expectedEnd!=0 ? layer.expectedEnd : deadline(layer.start,layer.sequence->totalTime(),layer.speed);
+    }
+  pose.clearLogicalInputs();
+  layers.erase(std::remove_if(layers.begin(),layers.end(),[](const Layer& l){return l.finished;}),layers.end());
+  interactiveState=mobState; externalState=external; updateBody();
+
+  if(actionWait && npc.aniWaitTime!=nativeWaitEnd) {
+    if(audit) ++totals.reanchored["wait_cancelled_or_replaced"];
+    actionWait=false;
+    }
+  for(const auto& admission:admissions) {
+    if(!bodyAction(admission.kind)) continue;
+    if(actionWait && nativeWaitEnd==admission.wait) continue;
+    const Layer* own=nullptr;
+    for(const auto& layer:layers) {
+      if(admission.sequence ? layer.sequence!=admission.sequence : layer.origin!=admission.at) continue;
+      if(layer.sequence->isRotate()) continue;
+      if(own) { own=nullptr; break; }
+      own=&layer;
+      }
+    if(!own) {
+      if(audit) ++totals.reanchored["admitted_action_layer_unknown"];
+      continue;
+      }
+    // A loop never leaves Pose naturally. PlayAni admits one new logical
+    // period, even when the executor reuses a loop that began long ago.
+    const auto start=own->expectedEnd!=0 ? own->start : admission.at;
+    const uint64_t end=own->expectedEnd!=0 ? own->expectedEnd : deadline(start,own->sequence->totalTime(),own->speed);
+    action={admission.kind,own->sequence,start,own->origin,end,true};
+    for(auto& layer:layers)
+      if(layer.sequence==own->sequence && layer.origin==own->origin) layer.action=admission.kind;
+    if(admission.wait>=now) { actionWait=true; nativeWaitEnd=admission.wait; }
+    }
+  admissions.clear();
   }
 
-void NpcLogicalState::eventFired(const Animation::Sequence* sequence, uint64_t origin,
-                               const Animation::LogicEvent& source, uint64_t now) {
+void NpcLogicalState::auditTick(Npc& npc, bool bodyInput, bool weaponInput) {
+  if(!NpcLogicAudit::enabled()) return;
+  ++totals.ticks;
+  const auto context=[&] {
+    std::string key;
+    for(const auto& layer:layers) if(!layer.finished) { key=layer.sequence->name; break; }
+    key+="/";
+    const auto& pose=npc.visual.pose();
+    if(pose.logicalLayerCount()>0) key+=pose.logicalLayer(0).sequence->name;
+    return key;
+    };
+  if(!bodyInput) {
+    ++totals.bodySamples;
+    if(body!=npc.bodyState()) {
+      ++totals.bodyMismatch;
+      ++totals.bodyMismatchKinds[std::to_string(uint32_t(body))+"->"+std::to_string(uint32_t(npc.bodyState()))+":"+context()];
+      }
+    }
+  if(!weaponInput) {
+    ++totals.weaponSamples;
+    if(weapon!=npc.weaponState()) {
+      ++totals.weaponMismatch;
+      ++totals.weaponMismatchKinds[std::to_string(uint32_t(weapon))+"->"+std::to_string(uint32_t(npc.weaponState()))+":"+context()];
+      }
+    }
+  }
+
+void NpcLogicalState::waitReleased(uint64_t now) {
+  if(!actionWait) return;
+  recordActionEnd(now);
+  }
+void NpcLogicalState::recordActionEnd(uint64_t now) {
+  if(NpcLogicAudit::enabled() && action.sequence && action.predictable) {
+    const auto error=int64_t(now)-int64_t(action.expectedEnd);
+    endSample(totals.byAction[action.kind],error,true);
+    if(error<0) ++totals.waitEarly;
+    if(error>0) ++totals.waitLate;
+    }
+  actionWait=false;
+  }
+void NpcLogicalState::sequenceEnd(const Animation::Sequence* sequence,uint64_t origin,uint64_t now) {
+  if(!NpcLogicAudit::enabled()) return;
+  const auto found=std::find_if(layers.begin(),layers.end(),[&](const Layer& l) {return l.sequence==sequence && l.origin==origin;});
+  if(found==layers.end() || found->expectedEnd==0) return;
+  const auto error=int64_t(now)-int64_t(found->expectedEnd);
+  endSample(totals.byAnimation[sequence->name],error,false);
+  endSample(totals.byAction[found->action],error,false);
+  if(error<0) ++totals.early;
+  if(error>0) ++totals.late;
+  }
+
+void NpcLogicalState::eventFired(const Animation::Sequence* sequence,uint64_t origin,
+                               const Animation::LogicEvent& source,uint64_t now) {
   if(!NpcLogicAudit::enabled()) return;
   AuditTimer timer;
   for(const auto& layer:layers) {
@@ -385,30 +571,27 @@ void NpcLogicalState::eventFired(const Animation::Sequence* sequence, uint64_t o
       });
     if(scheduled==layer.events.end()) return;
     uint64_t expected=scheduled->expected;
-    if(sequence->animCls==Animation::Loop && sequence->totalTime()>0) {
+    if(sequence->animCls==Animation::Loop && sequence->totalTime()>0 && now>expected) {
       const double period=double(sequence->totalTime())/double(layer.speed);
-      // Pose's float frame arithmetic can fire just before the integer
-      // deadline. Match that occurrence, including a slightly early cycle,
-      // rather than attributing it to the previous repetition.
-      if(now>expected) expected+=uint64_t(std::round(double(now-expected)/period)*period);
+      expected+=uint64_t(std::round(double(now-expected)/period)*period);
       }
-    const int64_t error=std::abs(int64_t(now)-int64_t(expected));
+    const auto error=std::abs(int64_t(now)-int64_t(expected));
     ++totals.events;
-    if(error!=0) ++totals.eventMismatch;
+    const bool mismatch=uint64_t(error)>worldStep;
+    if(mismatch) ++totals.eventMismatch;
     const auto record=[&](NpcLogicAudit::Bucket& bucket) {
       ++bucket.events;
-      if(error!=0) ++bucket.eventMismatch;
+      if(mismatch) ++bucket.eventMismatch;
       ++bucket.eventErrorMs[error];
       };
-    record(totals.byAction[layer.action]);
-    record(totals.byAnimation[sequence->name]);
+    record(totals.byAction[layer.action]); record(totals.byAnimation[sequence->name]);
     return;
     }
+  ++totals.reanchored["event_before_layer_input"];
   }
 
-NpcLogicalState::Tick::Tick(Npc& value, bool count):npc(value),sample(count) { npc.syncLogicalBodyState(); }
-NpcLogicalState::Tick::~Tick() {
-  npc.syncLogicalBodyState();
-  if(sample) npc.logicalBody.auditTick(npc);
+NpcLogicalState::Tick::Tick(Npc& value,uint64_t dt):npc(value) {
+  if(!npc.logicalBody.initialized) npc.syncLogicalBodyState(true);
+  npc.logicalBody.worldStep=dt;
   }
-NpcLogicalState::Admission::~Admission() { npc.logicalBody.sync(npc,false,kind,sequence); }
+NpcLogicalState::Admission::~Admission() { npc.logicalBody.admit(npc,kind,sequence); }

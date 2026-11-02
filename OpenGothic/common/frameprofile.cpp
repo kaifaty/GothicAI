@@ -30,7 +30,8 @@ const char* amountNames[Amounts]={"palette_calls","palette_bytes","identical_cal
   "bindless_texture_slots","bindless_buffer_slots","bindless_patched_slots",
   "npc_full","npc_simplified","npc_tier_transitions",
   "npc_logic_samples","npc_logic_body_mismatch","npc_logic_weapon_mismatch",
-  "npc_logic_early","npc_logic_late","npc_logic_events","npc_logic_event_mismatch"};
+  "npc_logic_early","npc_logic_late","npc_logic_events","npc_logic_event_mismatch",
+  "npc_logic_wait_early","npc_logic_wait_late","npc_logic_reanchored","npc_logic_body_samples","npc_logic_weapon_samples"};
 uint64_t ns() {
   return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
   }

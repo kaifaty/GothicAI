@@ -28,7 +28,8 @@ NPC_TIER_FIELDS = ["npc_full", "npc_simplified", "npc_to_full", "npc_to_simplifi
 HEADER.extend(f"{field}_{stage}" for stage in ("end", "warm", "warm_5s") for field in NPC_TIER_FIELDS)
 NPC_LOGIC_FIELDS = ["npc_logic_samples", "npc_logic_body_mismatch", "npc_logic_weapon_mismatch",
                     "npc_logic_early", "npc_logic_late", "npc_logic_events", "npc_logic_event_mismatch",
-                    "npc_logic_wall_ms"]
+                    "npc_logic_wall_ms", "npc_logic_wait_early", "npc_logic_wait_late", "npc_logic_reanchored",
+                    "npc_logic_body_samples", "npc_logic_weapon_samples"]
 HEADER.extend(f"{field}_{stage}" for stage in ("end", "warm", "warm_5s") for field in NPC_LOGIC_FIELDS)
 VOBS_HEADER = "run,seg,world,kind,name,count,ms,inclusive_ms,stage_ms,share_pct,unique,hits,misses,cold_miss_pct,repeat_n".split(",")
 

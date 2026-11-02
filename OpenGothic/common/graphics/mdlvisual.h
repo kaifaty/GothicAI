@@ -89,7 +89,7 @@ class MdlVisual final {
     void                           setFatness  (float f);
     void                           emitBlockEffect(Npc& dst, Npc& src);
 
-    bool                           setToFightMode(const WeaponState ws);
+    bool                           setToFightMode(const WeaponState ws, bool fromAnimation=false);
     void                           updateWeaponSkeleton(const Item *sword, const Item *bow);
 
     void                           setTorch(bool t, World& owner);

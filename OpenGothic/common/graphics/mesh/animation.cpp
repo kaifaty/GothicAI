@@ -450,6 +450,11 @@ Animation::LogicEvent Animation::Sequence::logicEvent(LogicEvent::Kind kind, siz
   return event;
   }
 
+Animation::LogicEvent Animation::Sequence::logicTag(size_t index) const {
+  const auto& d=*data;
+  return logicEvent(LogicEvent::Tag,index,frameClamp(d.events[index].frame,d.firstFrame,d.numFrames,d.lastFrame));
+  }
+
 void Animation::Sequence::logicEvents(std::vector<LogicEvent>& out) const {
   out.clear();
   if(data==nullptr || data->numFrames==0 || data->fpsRate<=0.f)

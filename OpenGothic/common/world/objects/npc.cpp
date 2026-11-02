@@ -5826,7 +5826,7 @@ void Npc::tickAnimationTags() {
   }
 
 void Npc::tick(uint64_t dt) {
-  NpcLogicalState::Tick logicalTick(*this);
+  NpcLogicalState::Tick logicalTick(*this,dt);
   tickBodyImpact();
   tickMeleeParry();
   tickMeleeStamina();
@@ -5948,6 +5948,8 @@ void Npc::tick(uint64_t dt) {
   if(tickPhysicsInvestigation(dt))
     return;
 
+  if(aniWaitTime<owner.tickCount() && aniWaitTime==logicalBody.nativeWaitEnd)
+    logicalBody.waitReleased(owner.tickCount());
   if(waitTime>=owner.tickCount() || aniWaitTime>=owner.tickCount() || outWaitTime>owner.tickCount()) {
     traceCombatGate("tick_wait_or_animation_lock");
     if(physicalMovement)

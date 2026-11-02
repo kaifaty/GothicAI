@@ -36,7 +36,8 @@ enum class Amount : size_t { PaletteCalls, PaletteBytes, IdenticalCalls, Identic
   BindlessTextureSlots, BindlessBufferSlots, BindlessPatchedSlots,
   NpcFull, NpcSimplified, NpcTierTransitions,
   NpcLogicSamples, NpcLogicBodyMismatch, NpcLogicWeaponMismatch,
-  NpcLogicEarly, NpcLogicLate, NpcLogicEvents, NpcLogicEventMismatch, Count };
+  NpcLogicEarly, NpcLogicLate, NpcLogicEvents, NpcLogicEventMismatch,
+  NpcLogicWaitEarly, NpcLogicWaitLate, NpcLogicReanchored, NpcLogicBodySamples, NpcLogicWeaponSamples, Count };
 enum class Outcome : uint8_t { Unfinished, Submitted, FenceBusy, Capture, Error };
 enum class Flag : uint32_t { SubmitCompleted=1, PresentCompleted=2,
   CaptureRequested=4, CaptureReadCompleted=8, FenceBusy=16, Error=32 };

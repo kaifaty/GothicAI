@@ -635,7 +635,7 @@ bool MdlVisual::setFightMode(asset::MdsFightMode mode) {
       break;
     }
 
-  return setToFightMode(f);
+  return setToFightMode(f,true);
   }
 
 void MdlVisual::dropWeapon(Npc& npc) {
@@ -789,10 +789,11 @@ void MdlVisual::emitBlockEffect(Npc& dest, Npc& source) {
   s.play();
   }
 
-bool MdlVisual::setToFightMode(const WeaponState f) {
+bool MdlVisual::setToFightMode(const WeaponState f, bool fromAnimation) {
   if(f==fgtMode)
     return false;
   fgtMode = f;
+  skInst->recordLogicalWeapon(f,fromAnimation);
   return true;
   }
 
