@@ -117,7 +117,16 @@ async def blood_found(
         """Lobart at the spot, blood three metres in front of him: he finds it at once."""
         await move(waypoint=spot, face=None)
         known = {f.trace for f in blood_finds()}
-        await link.debug("blood", near=LOBART, distance=300, kind="splash", radius=20)
+        for distance in (
+            300,
+            200,
+            120,
+        ):  # in front of him on the ground; closer when a wall or a slope is there
+            try:
+                await link.debug("blood", near=LOBART, distance=distance, kind="splash", radius=20)
+                break
+            except GameError as err:
+                log.info("blood_found blood at %d cm: %s", distance, err)
         laid = await clock()
         traces = await view_traces("blood", want=lambda ts: any(t.id not in known for t in ts))
         trace = next((t for t in traces if t.id not in known), None)
@@ -140,6 +149,7 @@ async def blood_found(
             for p in points.values()
             if p["name"].startswith("NW_FARM1_")
             and not p.get("room")
+            and (p.get("roof") or 0) <= 2  # mostly open sky (`roof`: rays up of 5 blocked): no cave
             and book is not None
             and book.of(p["name"]) is not None
         ]
