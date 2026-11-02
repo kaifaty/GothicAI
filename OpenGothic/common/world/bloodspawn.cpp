@@ -132,7 +132,7 @@ void BloodSpawn::onHit(World& world, Npc& victim, const Vec3& wound, const Vec3&
   s.indoor  = world.isIndoor(s.pos);
   s.variant = variantOf(s.pos, uint32_t(damage));
   world.addBloodStain(s);
-  victim.setBloodHit(world.time().toInt());
+  victim.setBloodHit(world.time().toInt(), wound);
   }
 
 void BloodSpawn::onDead(World& world, Npc& body) {
@@ -148,7 +148,14 @@ void BloodSpawn::onDead(World& world, Npc& body) {
   if(phys==nullptr)
     return;
 
-  const Vec3 c = body.centerPosition();
+  // Blood runs out of the wound and spreads past the body, which hides what lies under it: the pool
+  // is centred below the wound, moved out from the trunk by half its radius.
+  const Vec3 trunk = body.centerPosition();
+  const Vec3 wound = body.bloodWound();
+  Vec3 out = Vec3(wound.x-trunk.x, 0, wound.z-trunk.z);
+  out = out.quadLength()>1.f ? Vec3::normalize(out) : Vec3(0,0,0);
+  const float r0 = poolRadius(body.physicsMass(), BloodStains::Surface::Hard);
+  const Vec3 c = wound + out*(0.5f*r0);
   auto ground = phys->rayStatic(c+Vec3(0,50,0), c-Vec3(0,250,0));
   if(!ground.hasCol)
     return;

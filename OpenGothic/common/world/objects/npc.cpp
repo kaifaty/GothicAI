@@ -7468,6 +7468,29 @@ Npc::EyePose Npc::navigationEyePose() const {
   return result;
   }
 
+void Npc::setBloodHit(int64_t gameMs, const Vec3& wound) {
+  bloodHit  = gameMs;
+  bloodBone = size_t(-1);
+  auto sk = visual.visualSkeleton();
+  if(sk==nullptr)
+    return;
+  float best = 0;
+  for(size_t i=0; i<sk->nodes.size(); ++i) {
+    const float d = (visual.mapBone(i)-wound).quadLength();
+    if(bloodBone==size_t(-1) || d<best) {
+      best      = d;
+      bloodBone = i;
+      }
+    }
+  }
+
+Vec3 Npc::bloodWound() const {
+  auto sk = visual.visualSkeleton();
+  if(sk==nullptr || bloodBone>=sk->nodes.size())
+    return centerPosition();
+  return visual.mapBone(bloodBone);
+  }
+
 Vec3 Npc::mapBone(std::string_view bone) const {
   if(auto sk = visual.visualSkeleton()) {
     size_t id = sk->findNode(bone);

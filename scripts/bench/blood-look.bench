@@ -13,18 +13,18 @@ clear 3000
 # Laid by hand: does a decal draw at all, the right way up, on earth.
 blood NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02 pool 55
 blood NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02 splash 30
-hold forward 1500
-wait 800
-turn 180
-cam follow 160 230 180
+hold back 900
+hold right 900
+wait 2500
+cam follow 230 250 200
 wait 1500
 shot laid-field-fresh
 wait 500
 blood_stains advance 5
-wait 1500
+wait 4000
 shot laid-field-5min
 blood_stains advance 120
-wait 1500
+wait 4000
 shot laid-field-2h
 # A real fight on the field: a paladin kills a bandit.
 turn -20
@@ -36,29 +36,35 @@ arc BDT_1013_BANDIT_L 1 350 0
 turn -20
 stats npc BDT_1013_BANDIT_L hpmax 120 hp 120
 watch BDT_1013_BANDIT_L
-cam two BDT_1013_BANDIT_L 420 120 1
+cam follow 480 220 70
 rec field-fight
 fight PAL_255_RITTER BDT_1013_BANDIT_L
 fight BDT_1013_BANDIT_L PAL_255_RITTER
 waitdown BDT_1013_BANDIT_L 60000
 wait 6000
 stop
-cam face BDT_1013_BANDIT_L 300 220 40
+# cam follow keeps the watched npc by pointer, dead or alive (cam two/face look for a living one)
+cam follow 230 240 40
 wait 1000
 shot field-dead-fresh
+blood_stains sample
 rec field-pool novideo
 wait 20000
 stop
 shot field-dead-20s
+blood_stains sample
 blood_stains advance 5
-wait 1500
+wait 4000
 shot field-dead-5min
+blood_stains sample
 blood_stains advance 60
-wait 1500
+wait 4000
 shot field-dead-1h
+blood_stains sample
 blood_stains advance 660
-wait 1500
+wait 4000
 shot field-dead-12h
+blood_stains sample
 # The city market: stone.
 set time 12 0
 goto NW_CITY_MERCHANT_TRADE_04
@@ -73,25 +79,31 @@ arc BDT_1013_BANDIT_L 1 350 0
 turn -20
 stats npc BDT_1013_BANDIT_L hpmax 120 hp 120
 watch BDT_1013_BANDIT_L
-cam two BDT_1013_BANDIT_L 420 120 1
+cam follow 480 220 70
 rec city-fight
 fight PAL_255_RITTER BDT_1013_BANDIT_L
 fight BDT_1013_BANDIT_L PAL_255_RITTER
 waitdown BDT_1013_BANDIT_L 60000
 wait 6000
 stop
-cam face BDT_1013_BANDIT_L 300 220 40
+# cam follow keeps the watched npc by pointer, dead or alive (cam two/face look for a living one)
+cam follow 230 240 40
 wait 1000
 shot city-dead-fresh
+blood_stains sample
 wait 20000
 shot city-dead-20s
+blood_stains sample
 blood_stains advance 5
-wait 1500
+wait 4000
 shot city-dead-5min
+blood_stains sample
 blood_stains advance 60
-wait 1500
+wait 4000
 shot city-dead-1h
+blood_stains sample
 blood_stains advance 660
-wait 1500
+wait 4000
 shot city-dead-12h
+blood_stains sample
 quit

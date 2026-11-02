@@ -95,7 +95,9 @@ void Shaders::compileShaders() noexcept {
   ssao                = computeShader("ssao.comp.sprv");
   ssaoBlur            = computeShader("ssao_blur.comp.sprv");
 
-  bloodDecal       = bloodDecalShader(opts.doMaterialMaps);
+  bloodDecal       = bloodDecalShader(opts.doMaterialMaps, false);
+  if(opts.doMaterialMaps)
+    bloodDecalOrm  = bloodDecalShader(true, true);
 
   directLight      = postEffect(string_frm("direct_light", materialMaps),    RenderState::ZTestMode::NoEqual);
   directLightSh    = postEffect(string_frm("direct_light_sh", materialMaps), RenderState::ZTestMode::NoEqual);
@@ -744,7 +746,7 @@ RenderPipeline Shaders::fogShader(std::string_view name) {
   return device.pipeline(Triangles,state,vs,fs);
   }
 
-RenderPipeline Shaders::bloodDecalShader(bool materialMaps) {
+RenderPipeline Shaders::bloodDecalShader(bool materialMaps, bool orm) {
   auto& device = Resources::device();
 
   // No depth attachment: the fragment shader projects the box onto the scene depth itself.
@@ -753,11 +755,20 @@ RenderPipeline Shaders::bloodDecalShader(bool materialMaps) {
   state.setZTestMode    (RenderState::ZTestMode::Always);
   state.setZWriteEnabled(false);
   state.setCullFaceMode (RenderState::CullMode::Back);
-  state.setBlendSource  (RenderState::BlendMode::SrcAlpha);
-  state.setBlendDest    (RenderState::BlendMode::OneMinusSrcAlpha);
-  state.setColorWriteMask(0, RenderState::RGB); // albedo alpha holds the material hint bits
-  if(materialMaps)
+  if(!orm) {
+    // albedo*(1-a + a*tint): the shader writes a*tint, the surface shows through the blood
+    state.setBlendSource(RenderState::BlendMode::DstColor);
+    state.setBlendDest  (RenderState::BlendMode::OneMinusSrcAlpha);
+    state.setColorWriteMask(0, RenderState::RGB); // albedo alpha holds the material hint bits
+    if(materialMaps)
+      state.setColorWriteMask(1, 0);
+    } else {
+    // premultiplied: roughness and the material-map flag toward the wet film
+    state.setBlendSource(RenderState::BlendMode::One);
+    state.setBlendDest  (RenderState::BlendMode::OneMinusSrcAlpha);
+    state.setColorWriteMask(0, 0);
     state.setColorWriteMask(1, RenderState::G|RenderState::B|RenderState::A); // keep the surface's occlusion
+    }
 
   auto sh = GothicShader::get("blood_decal.vert.sprv");
   auto vs = device.shader(sh.data,sh.len);

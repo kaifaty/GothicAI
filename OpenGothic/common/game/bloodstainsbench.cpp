@@ -392,5 +392,23 @@ std::string BloodStainsBench::command(const std::vector<std::string>& a, World& 
     return save(world,a[2],out);
   if(c=="sample")
     return "{"+sample(world)+",\"pass\":true}";
+  if(c=="fill" && (a.size()==3 || a.size()==4)) {
+    // fill <count> [spacing cm]: the cost bench's load, a square grid round the hero, pools and
+    // splashes in turn (blood off: none, the same scene)
+    const int   count = std::max(1,std::stoi(a[2]));
+    const float step  = a.size()==4 ? std::stof(a[3]) : 125.f;
+    const int   side  = int(std::ceil(std::sqrt(float(count))));
+    const auto  at    = player.position();
+    int laid = 0;
+    for(int i=0; i<count; ++i) {
+      const float x = (float(i%side) - float(side-1)*0.5f)*step;
+      const float z = (float(i/side) - float(side-1)*0.5f)*step;
+      const bool  pool = (i%2)==0;
+      if(world.placeBloodStain(at+Tempest::Vec3(x,150,z),pool ? BloodStains::Kind::Pool : BloodStains::Kind::Splash,
+                               pool ? 40.f : 20.f)!=0)
+        ++laid;
+      }
+    return "{"+common(world)+",\"laid\":"+std::to_string(laid)+",\"pass\":true}";
+    }
   fail("unknown command "+c);
   }

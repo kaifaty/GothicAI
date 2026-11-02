@@ -64,17 +64,20 @@ void main() {
   if(a<=0.002)
     discard;
 
-  // colour: thin blood is red, thick is near black-red; drying turns it brown; soil drinks it darker
-  const vec3 fresh = d.tint.rgb;
-  vec3 col = mix(fresh, fresh*vec3(0.42,0.30,0.32), thick);
-  col = mix(col, vec3(0.13,0.055,0.04)*(1.0-0.4*thick), d.look.z);
-  col *= 1.0 - 0.35*soak;
-  outDiffuse = vec4(col, a);
+  // Colour as a multiplier of the surface's albedo (the blend does albedo*(1-a + a*mul)), so the
+  // ground stays visible through the film: thin blood tints it red, thick blood is near black-red,
+  // drying turns it brown, soil drinks it darker and duller.
+  const vec3 thin = d.tint.rgb;
+  vec3 mul = mix(thin, thin*vec3(0.50,0.33,0.33), thick);
+  mul = mix(mul, vec3(0.46,0.24,0.18)*(1.0-0.35*thick), d.look.z);
+  mul *= mix(vec3(1.0), vec3(0.80,0.70,0.68), soak);
+  outDiffuse = vec4(a*mul, a);
 
 #if defined(MATERIAL_MAPS)
-  // wet: a mirror-like film where it is thick; soaked or dried blood is matte
-  const float wet   = d.look.y*(0.35+0.65*thick)*(1.0-soak);
+  // wet: a mirror-like film where it is thick; soaked or dried blood is matte.
+  // Premultiplied; R (the surface's occlusion) is masked off, A turns material maps on.
+  const float wet   = d.look.y*(0.35+0.65*thick)*(1.0-0.8*soak);
   const float rough = mix(0.72, 0.06, wet);
-  outOrm = vec4(1.0, rough, 0.0, a);
+  outOrm = vec4(a, a*rough, 0.0, a);
 #endif
   }

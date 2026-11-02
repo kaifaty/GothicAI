@@ -158,16 +158,18 @@ void pool(Tile& t, uint32_t seed) {
       }
   }
 
+// What thin fresh blood does to the surface's albedo: a multiplier (texture space), so the soil or
+// stone under it stays visible as through a real film. The shader darkens it where it is thick.
 Vec3 bloodTint(const BloodStains::Stain& s) {
   switch(s.blood) {
-    case BloodStains::Blood::Yellow: return Vec3(0.40f,0.34f,0.07f);
-    case BloodStains::Blood::Gore:   return Vec3(0.20f,0.06f,0.04f);
-    case BloodStains::Blood::Stone:  return Vec3(0.30f,0.29f,0.27f);
+    case BloodStains::Blood::Yellow: return Vec3(0.85f,0.72f,0.25f);
+    case BloodStains::Blood::Gore:   return Vec3(0.42f,0.30f,0.20f);
+    case BloodStains::Blood::Stone:  return Vec3(0.80f,0.78f,0.74f);
     case BloodStains::Blood::Red:    break;
     }
   if(s.surface==BloodStains::Surface::Snow)
-    return Vec3(0.50f,0.02f,0.04f);
-  return Vec3(0.36f,0.025f,0.03f);
+    return Vec3(0.85f,0.08f,0.08f);
+  return Vec3(0.72f,0.10f,0.08f);
   }
 
 float smooth01(float x) {
@@ -293,6 +295,11 @@ void BloodDecals::draw(Encoder<CommandBuffer>& cmd, uint8_t fId, const SceneGlob
   cmd.setBinding(2, gbufNormal, Sampler::nearest());
   cmd.setBinding(3, atlas,      Sampler::trillinear());
   cmd.setBinding(4, buf);
+  // albedo: multiplied; then, with material maps, the wet film's roughness (two blend modes)
   cmd.setPipeline(Shaders::inst().bloodDecal);
   cmd.draw(nullptr, 0, 36, 0, count);
+  if(gbufOrm!=nullptr) {
+    cmd.setPipeline(Shaders::inst().bloodDecalOrm);
+    cmd.draw(nullptr, 0, 36, 0, count);
+    }
   }
