@@ -12,8 +12,10 @@
 `latency_s` counts from `end`. Utterances on one connection are handled one after another.
 `start.hints` is an optional list of names or phrases to help streaming providers recognize them.
 Providers without hint support ignore it; clients can omit it.
-`final.laughing` is the maximum laughing confidence across final voice profiles and any hint-free
-retry, or null when no profile is available. A profile without a laughing label contributes 0.0.
+`final.laughing` is the local CPU laughter detector's maximum score across the recording's windows.
+Detection runs alongside transcription and may add at most 0.15 s after the text is ready. The score
+is null for silence, when detection is disabled or unavailable, on detector failure, or when it is
+not ready by that deadline. Hint-free transcription retries do not change the detector's input.
 
 `GET /health` on the same port answers {"ok":true,"service":"gothic-asr","providers":[{"name":"..."}]}:
 the launcher waits for it before starting the game.

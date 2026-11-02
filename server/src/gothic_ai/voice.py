@@ -46,7 +46,7 @@ MIC_DENIED = (
     "(Системные настройки → Конфиденциальность и безопасность → Микрофон)"
 )
 LAUGH = "(смеётся)"
-LAUGHING_THRESHOLD = 0.5
+LAUGHING_THRESHOLD = 0.9
 _LAUGH_WORD = re.compile(r"[ао]?(?:х[аеиоыэ])+х?|(?:гы)+")
 _VOWEL = re.compile(r"[аеиоыэ]")
 
