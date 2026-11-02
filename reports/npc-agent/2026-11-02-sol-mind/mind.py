@@ -34,6 +34,7 @@ from gothic_ai.llm import (
 from gothic_ai.npc_tools import TOOLS
 from gothic_ai.replay import _quick_context
 from gothic_ai.trace import item_from_json, item_json, read
+from gothic_ai.wrath import TOOL as OFFENSE_TOOL
 
 HERE = Path(__file__).resolve().parent
 modules = {}
@@ -50,7 +51,7 @@ VARIANTS = ("mind", "note")
 EMPTY_MIND = "Пока пусто: разговор только начался."
 TIMEOUT_S = 90
 MIND_TOOLS = [tool for tool in TOOLS if tool.name in {"set_intent", "give_item", "end_conversation"}]
-MIND_TOOLS += [PROPOSE_TOOL, WITHDRAW_TOOL]
+MIND_TOOLS += [PROPOSE_TOOL, WITHDRAW_TOOL, OFFENSE_TOOL]
 FIELDS = ("Мнение о герое", "Верю", "Сомневаюсь", "Хочу", "Нити", "Настроение")
 
 
@@ -216,9 +217,14 @@ def invalidate(directory: Path, identifiers: set[str], names: tuple[str, ...]) -
 
 
 async def mind(
-    directory: Path, *, effort: str = "low", redo_conv: str | None = None, sol: LLMBackend | None = None
+    directory: Path,
+    *,
+    effort: str = "low",
+    redo_conv: str | None = None,
+    prompt_file: str = "mind_turn.md",
+    sol: LLMBackend | None = None,
 ) -> None:
-    prompt = (HERE / "mind_turn.md").read_text(encoding="utf-8")
+    prompt = (HERE / prompt_file).read_text(encoding="utf-8")
     groups = conversations(pilot.rows(directory / "turns.jsonl"))
     if redo_conv:
         groups = [group for group in groups if group[0]["conv"] == redo_conv]
@@ -938,6 +944,7 @@ async def selftest() -> None:
             "end_conversation",
             "propose_deal",
             "withdraw_deal",
+            "take_offense",
         }
         assert all(request["cache_key"] == f"mind-{npc}" for request in sol.requests)
         for state in states.values():
@@ -1192,6 +1199,7 @@ def main() -> None:
         if name == "mind":
             command.add_argument("--effort", default="low")
             command.add_argument("--redo-conv")
+            command.add_argument("--prompt-file", default="mind_turn.md")
         elif name == "speak":
             command.add_argument("--slot", type=int, default=0)
             command.add_argument("--quick-at")
