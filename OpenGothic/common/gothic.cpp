@@ -120,6 +120,7 @@ Gothic::Gothic() {
   defaults->set("GAME", "movable_vobs",        1);
   defaults->set("GAME", "item_hulls",          1);
   defaults->set("GAME", "item_deepest_contact",1);
+  defaults->set("GAME", "ragdoll_birth_guard",1);
   defaults->set("GAME", "furniture_parts",     1);
   defaults->set("GAME", "physics_noise",       1);
   defaults->set("GAME", "destruction",         1);
@@ -924,6 +925,7 @@ void Gothic::refreshPhysicsFlags() {
     settingsGetI("GAME","melee_down_tactics")!=0,
     settingsGetI("GAME","item_hulls")!=0,
     settingsGetI("GAME","item_deepest_contact")!=0,
+    settingsGetI("GAME","ragdoll_birth_guard")!=0,
     settingsGetI("GAME","melee_hitstop")!=0,
     settingsGetI("GAME","melee_stamina")!=0,
     settingsGetI("GAME","melee_parry")!=0,
@@ -956,6 +958,7 @@ void Gothic::setupSettings() {
     activeWorld->physic()->setClothEnabled(physicsFlagsCache.cloth);
     activeWorld->physic()->setItemWakeEnabled(physicsFlagsCache.itemWake);
     activeWorld->physic()->setItemDeepestContactEnabled(physicsFlagsCache.itemDeepestContact);
+    activeWorld->physic()->setRagdollBirthGuardEnabled(physicsFlagsCache.ragdollBirthGuard);
     }
 
   const float soundVolume = settingsSoundVolume();

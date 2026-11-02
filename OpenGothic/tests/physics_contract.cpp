@@ -4366,6 +4366,7 @@ namespace {
 
   void testItemDeepestContact() {
     require(Gothic::PhysicsFlags{}.itemDeepestContact,"item deepest contact must default to ON");
+    require(Gothic::PhysicsFlags{}.ragdollBirthGuard,"ragdoll birth guard must default to ON");
     // Inflated body-frame hull vertices (metres), poses and original volumes
     // from Claude's thin-blade dumps. No game assets or hull inflation run here.
     const JPH::Vec3 canePoints[] = {

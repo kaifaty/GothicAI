@@ -1762,6 +1762,10 @@ void DynamicWorld::setItemDeepestContactEnabled(bool enabled) {
   world->setItemDeepestContactEnabled(enabled);
   }
 
+void DynamicWorld::setRagdollBirthGuardEnabled(bool enabled) {
+  world->setRagdollBirthGuardEnabled(enabled);
+  }
+
 bool DynamicWorld::buoyancyEnabled() const {
   return world->buoyancyEnabled();
   }

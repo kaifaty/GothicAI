@@ -203,6 +203,7 @@ class CollisionWorld final {
     bool buoyancyEnabled() const;
     void setItemWakeEnabled(bool enabled);
     void setItemDeepestContactEnabled(bool enabled);
+    void setRagdollBirthGuardEnabled(bool enabled);
     void setBodyImpactEnabled(bool enabled);
     bool itemWakeEnabled() const { return itemWake; }
     void setItemWakeCallback(std::function<size_t(const Tempest::Vec3&,const Tempest::Vec3&,size_t)> callback);
