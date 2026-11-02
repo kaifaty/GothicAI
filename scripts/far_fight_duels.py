@@ -27,7 +27,7 @@ def load_pairs(path=PAIRS):
     return json.loads(Path(path).read_text())['pairs']
 
 
-def plan(out, pairs, seeds=20, first_seed=17, timeout_ms=180000, max_seconds=7200):
+def plan(out, pairs, seeds=10, first_seed=17, timeout_ms=120000, max_seconds=7200):
     """Budget every timeout in real time, plus setup and between-duel overhead."""
     if seeds < 1 or timeout_ms < 1 or not 60 < max_seconds <= 7200:
         raise ValueError('positive seeds/timeout and a batch limit in (60, 7200] seconds required')
@@ -90,6 +90,32 @@ def validate(row):
             raise ValueError(f'{role}: incomplete talents')
         if not 0 <= side['guild'] < 16:
             raise ValueError(f'{role}: not a human guild')
+    if 'hit_log' in row:
+        sides = {row[r]['instance']: row[r] for r in ('attacker', 'defender')}
+        totals = {name: [0, 0] for name in sides}
+        for hit in row['hit_log']:
+            required = {'time_ms', 'attacker', 'victim', 'hp_before', 'hp_after', 'base_damage',
+                        'critical', 'melee_scale', 'stun_bonus', 'backstab_mult', 'hp_loss'}
+            if required - hit.keys():
+                raise ValueError('incomplete hit_log entry')
+            if ({hit['attacker'], hit['victim']} != set(sides)
+                    or not 0 <= hit['time_ms'] <= row['duration_ms']
+                    or hit['hp_loss'] != hit['hp_before'] - hit['hp_after'] or hit['hp_loss'] <= 0
+                    or hit['base_damage'] <= 0 or type(hit['critical']) is not bool
+                    or any(not math.isfinite(hit[k]) or hit[k] <= 0
+                           for k in ('melee_scale', 'stun_bonus', 'backstab_mult'))):
+                raise ValueError('invalid hit_log entry')
+            totals[hit['attacker']][0] += 1
+            totals[hit['attacker']][1] += hit['hp_loss']
+        for role in ('attacker', 'defender'):
+            side = row[role]
+            if any(type(side.get(k)) is not int or side[k] < 0 for k in ('swings', 'blocked', 'misses')):
+                raise ValueError(f'{role}: incomplete swing counters')
+            if totals[side['instance']] != [side['hits'], side['damage_dealt']]:
+                raise ValueError(f'{role}: hit_log totals differ')
+        response = row['defender_first_swing_ms']
+        if response is not None and not 0 <= response <= row['duration_ms']:
+            raise ValueError('invalid defender_first_swing_ms')
     if row.get('timeout') is True:
         return
     sides = {row[r]['instance']: row[r] for r in ('attacker', 'defender')}
@@ -107,21 +133,25 @@ def _killed(row):
         row[r] for r in ('attacker', 'defender') if row[r]['instance'] == row['loser'])['hp_after'] <= 0
 
 
+def weapon_talent(side):
+    weapon = '2h' if side['two_handed'] else '1h' if side['weapon'] else 'fist'
+    return weapon, side['talent_skills'][2 if side['two_handed'] else 1] if side['weapon'] else 0
+
+
 def summarize(rows, pairs):
     lookup = {frozenset(p['npcs']): p for p in pairs}
-    groups, talents = defaultdict(list), defaultdict(lambda: [0, 0.0, 0])
+    groups, talents, multipliers = defaultdict(list), defaultdict(list), defaultdict(list)
     for row in rows:
         a, b = row['attacker']['instance'], row['defender']['instance']
         pair = lookup[frozenset((a, b))]
         groups[(pair['id'], a, b)].append(row)
         for role in ('attacker', 'defender'):
             side = row[role]
-            talent = 2 if side['two_handed'] else 1
-            tier = side['talent_skills'][talent] if side['weapon'] else 0
-            bucket = talents[('2h' if side['two_handed'] else '1h' if side['weapon'] else 'fist', tier)]
-            bucket[0] += side['hits']
-            bucket[1] += row['duration_ms'] / 1000
-            bucket[2] += 1
+            opponent = row['defender' if role == 'attacker' else 'attacker']
+            talents[(*weapon_talent(side), weapon_talent(opponent)[1])].append((side, row['duration_ms']/1000))
+        sides = {row[r]['instance']: row[r] for r in ('attacker', 'defender')}
+        for hit in row.get('hit_log', []):
+            multipliers[weapon_talent(sides[hit['attacker']])[0]].append(hit)
     results = []
     for (pair_id, a, b), samples in sorted(groups.items()):
         losses = []
@@ -130,15 +160,42 @@ def summarize(rows, pairs):
                 continue
             winner = next(row[r] for r in ('attacker', 'defender') if row[r]['instance'] == row['winner'])
             losses.append(winner['hp_before'] - winner['hp_after'])
+        responses = [r['defender_first_swing_ms'] for r in samples if r.get('defender_first_swing_ms') is not None]
+        first_hits = [next((h['time_ms'] for h in r['hit_log'] if h['attacker'] == b), None)
+                      for r in samples if 'hit_log' in r]
+        first_hits = [time for time in first_hits if time is not None]
         results.append(dict(pair=pair_id, holdout=lookup[frozenset((a, b))]['holdout'], attacker=a, defender=b,
                             n=len(samples), win_rate=sum(r.get('winner') == a for r in samples)/len(samples),
                             timeouts=sum(r.get('timeout', False) for r in samples),
                             deaths=sum(_killed(r) for r in samples),
+                            response_records=sum('hit_log' in r for r in samples),
+                            defender_responses=len(responses),
+                            median_defender_first_swing_ms=statistics.median(responses) if responses else None,
+                            defender_first_hits=len(first_hits),
+                            median_defender_first_hit_ms=statistics.median(first_hits) if first_hits else None,
                             median_winner_hp_loss=statistics.median(losses) if losses else None,
                             median_duration_ms=statistics.median(r['duration_ms'] for r in samples)))
-    return dict(records=len(rows), pairs=results, hits_by_talent=[
-        dict(weapon=weapon, tier=tier, n=n, hits=hits, seconds=seconds, hits_per_second=hits/seconds)
-        for (weapon, tier), (hits, seconds, n) in sorted(talents.items())])
+    rates = []
+    for (weapon, tier, opponent_tier), samples in sorted(talents.items()):
+        seconds = sum(seconds for _, seconds in samples)
+        hits = sum(side['hits'] for side, _ in samples)
+        traced = [(side, seconds) for side, seconds in samples if 'swings' in side]
+        traced_seconds = sum(seconds for _, seconds in traced)
+        counters = {key: sum(side[key] for side, _ in traced) if traced else None
+                    for key in ('swings', 'blocked', 'misses')}
+        rates.append(dict(weapon=weapon, tier=tier, opponent_tier=opponent_tier, n=len(samples),
+                          hits=hits, seconds=seconds, hits_per_second=hits/seconds,
+                          swing_records=len(traced), swing_seconds=traced_seconds, **counters,
+                          **{key+'_per_second': value/traced_seconds if traced else None
+                             for key, value in counters.items()}))
+    distributions = []
+    for weapon, hits in sorted(multipliers.items()):
+        values = sorted(h['hp_loss']/h['base_damage'] for h in hits)
+        distributions.append(dict(weapon=weapon, n=len(hits), values=values, minimum=min(values),
+                                  median=statistics.median(values), maximum=max(values),
+                                  stun_fraction=sum(h['stun_bonus'] != 1 for h in hits)/len(hits),
+                                  backstab_fraction=sum(h['backstab_mult'] != 1 for h in hits)/len(hits)))
+    return dict(records=len(rows), pairs=results, hits_by_talent=rates, hit_multipliers=distributions)
 
 
 def report(folders, out, pairs):
@@ -151,10 +208,25 @@ def report(folders, out, pairs):
         lines.append(f'| {row["pair"]} | {row["holdout"]} | {row["attacker"]} → {row["defender"]} | '
                      f'{row["n"]} | {row["win_rate"]:.3f} | {row["timeouts"]} | {row["deaths"]} | '
                      f'{loss if loss is not None else "n/a"} | {row["median_duration_ms"]/1000:.3f} |')
-    lines += ['', '| Weapon | Talent tier | n | HP-loss hits | Duel seconds | Hits/s |', '|---|---:|---:|---:|---:|---:|']
+    lines += ['', '| Weapon | Talent tier | Opponent tier | n | HP-loss hits | Duel seconds | Hits/s | Swings/s | Blocked/s | Misses/s | Swing records |',
+              '|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|']
+    def number(value):
+        return f'{value:.4f}' if value is not None else 'n/a'
     for row in result['hits_by_talent']:
-        lines.append(f'| {row["weapon"]} | {row["tier"]} | {row["n"]} | {row["hits"]} | '
-                     f'{row["seconds"]:.3f} | {row["hits_per_second"]:.4f} |')
+        lines.append(f'| {row["weapon"]} | {row["tier"]} | {row["opponent_tier"]} | {row["n"]} | {row["hits"]} | '
+                     f'{row["seconds"]:.3f} | {row["hits_per_second"]:.4f} | {number(row["swings_per_second"])} | '
+                     f'{number(row["blocked_per_second"])} | {number(row["misses_per_second"])} | {row["swing_records"]} |')
+    lines += ['', '| Weapon | Hits | HP loss / base: min | Median | Max | Stun fraction | Backstab fraction |',
+              '|---|---:|---:|---:|---:|---:|---:|']
+    for row in result['hit_multipliers']:
+        lines.append(f'| {row["weapon"]} | {row["n"]} | {row["minimum"]:.4f} | {row["median"]:.4f} | '
+                     f'{row["maximum"]:.4f} | {row["stun_fraction"]:.4f} | {row["backstab_fraction"]:.4f} |')
+    lines += ['', '| Pair | Defender | Response records | First swings | First swing, median ms | First hits | First hit, median ms |',
+              '|---|---|---:|---:|---:|---:|---:|']
+    for row in result['pairs']:
+        lines.append(f'| {row["pair"]} | {row["defender"]} | {row["response_records"]} | {row["defender_responses"]} | '
+                     f'{number(row["median_defender_first_swing_ms"])} | {row["defender_first_hits"]} | '
+                     f'{number(row["median_defender_first_hit_ms"])} |')
     out = Path(out).resolve()
     out.mkdir(parents=True, exist_ok=True)
     (out / 'far-fight.json').write_text(json.dumps(result, indent=2) + '\n')
@@ -207,9 +279,9 @@ def main(argv=None):
     sub = parser.add_subparsers(dest='command', required=True)
     p = sub.add_parser('plan')
     p.add_argument('--out', type=Path, required=True)
-    p.add_argument('--seeds', type=int, default=20)
+    p.add_argument('--seeds', type=int, default=10)
     p.add_argument('--first-seed', type=int, default=17)
-    p.add_argument('--timeout-ms', type=int, default=180000)
+    p.add_argument('--timeout-ms', type=int, default=120000)
     p.add_argument('--max-seconds', type=int, default=7200)
     p = sub.add_parser('run')
     p.add_argument('plan', type=Path)
@@ -242,6 +314,8 @@ def main(argv=None):
         result = report(folders, args.out, pairs)
         if args.command == 'smoke' and result['records'] != 8:
             raise ValueError(f'smoke expected 8 records, got {result["records"]}')
+        if args.command == 'smoke' and any('hit_log' not in r for r in read_records(folders)):
+            raise ValueError('smoke requires hit_log records')
     return 0
 
 

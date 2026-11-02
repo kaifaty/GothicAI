@@ -317,15 +317,21 @@ far_spec.loader.exec_module(far)
 
 def test_far_fight_plan_covers_pairs_roles_seeds_within_batch_limit(tmp_path):
     pairs = far.load_pairs()
-    assert len(pairs) == 12 and sum(p['holdout'] for p in pairs) == 3
+    assert len(pairs) == 15 and sum(p['holdout'] for p in pairs) == 3
+    assert not any(p['holdout'] for p in pairs[:12])
+    previous = {npc for p in pairs[:12] for npc in p['npcs']}
+    assert not previous.intersection(npc for p in pairs[12:] for npc in p['npcs'])
+    assert any('2h-2h' in p['coverage'] for p in pairs[12:])
+    assert any('talent-0-1' in p['coverage'] for p in pairs[12:])
     paths = far.plan(tmp_path, pairs)
     commands = [line for path in paths for line in path.read_text().splitlines() if line.startswith('npcduel ')]
-    assert len(commands) == len(set(commands)) == 480
-    expected = {(a, b, str(seed)) for p in pairs for a, b in (p['npcs'], p['npcs'][::-1]) for seed in range(17, 37)}
+    assert len(commands) == len(set(commands)) == 300
+    expected = {(a, b, str(seed)) for p in pairs for a, b in (p['npcs'], p['npcs'][::-1]) for seed in range(17, 27)}
     assert {tuple(line.split()[1:4]) for line in commands} == expected
     for path in paths:
         count = sum(line.startswith('npcduel ') for line in path.read_text().splitlines())
-        assert 60 + count * 181 <= 7200
+        assert 60 + count * 121 <= 7200
+        assert all(line.endswith('120000') for line in path.read_text().splitlines() if line.startswith('npcduel '))
     assert all(path.is_absolute() for path in paths)
 
 
@@ -366,6 +372,40 @@ def test_far_fight_report_eight_records_and_nonlethal_validation(tmp_path, capsy
     assert '8 records' in capsys.readouterr().out
     assert '| Talent tier |' in (tmp_path/'far-fight.md').read_text()
     assert sum(r['deaths'] for r in result['pairs']) == 0 and '| Deaths |' in (tmp_path/'far-fight.md').read_text()
+    assert result['hit_multipliers'] == []
+    assert result['hits_by_talent'][0]['swings_per_second'] is None
+    # Mixed v1/v2 records: never turn missing old counters or response times into zero.
+    row = rows[0]
+    a, b = row['attacker']['instance'], row['defender']['instance']
+    row['attacker'].update(two_handed=True, hits=2, damage_dealt=18, swings=5, blocked=1, misses=1)
+    row['defender'].update(hits=1, damage_dealt=15, swings=3, blocked=1, misses=1)
+    row['defender_first_swing_ms'] = 2000
+    row['hit_log'] = [
+        dict(time_ms=1000, attacker=a, victim=b, hp_before=100, hp_after=88, base_damage=10,
+             critical=True, melee_scale=.8, stun_bonus=1.5, backstab_mult=1., hp_loss=12),
+        dict(time_ms=2500, attacker=b, victim=a, hp_before=100, hp_after=85, base_damage=5,
+             critical=False, melee_scale=1., stun_bonus=1., backstab_mult=3., hp_loss=15),
+        # Terminal HP clamping is retained in the measured multiplier (6/10, not 1.2).
+        dict(time_ms=5000, attacker=a, victim=b, hp_before=7, hp_after=1, base_damage=10,
+             critical=False, melee_scale=.8, stun_bonus=1.5, backstab_mult=1., hp_loss=6)]
+    (folder/'events.jsonl').write_text(''.join(json.dumps(row)+'\n' for row in rows))
+    result = far.report([folder], tmp_path, pairs)
+    assert result['hit_multipliers'] == [
+        dict(weapon='1h', n=1, values=[3.], minimum=3., median=3., maximum=3., stun_fraction=0., backstab_fraction=1.),
+        dict(weapon='2h', n=2, values=[.6, 1.2], minimum=.6, median=pytest.approx(.9), maximum=1.2,
+             stun_fraction=1., backstab_fraction=0.)]
+    rate = next(r for r in result['hits_by_talent'] if r['weapon'] == '2h')
+    assert (rate['tier'], rate['opponent_tier'], rate['swing_records']) == (0, 1, 1)
+    assert (rate['swings_per_second'], rate['blocked_per_second'], rate['misses_per_second'],
+            rate['hits_per_second']) == (.5, .1, .1, .2)
+    response = next(r for r in result['pairs'] if r['attacker'] == a and r['defender'] == b)
+    assert response['response_records'] == response['defender_responses'] == response['defender_first_hits'] == 1
+    assert response['median_defender_first_swing_ms'] == 2000
+    assert response['median_defender_first_hit_ms'] == 2500
+    row['hit_log'][0].pop('critical')
+    with pytest.raises(ValueError, match='incomplete hit_log'):
+        far.validate(row)
+    row['hit_log'][0]['critical'] = True
     rows[0]['defender']['hp_after'] = 5
     with pytest.raises(ValueError, match='1 HP'):
         far.validate(rows[0])

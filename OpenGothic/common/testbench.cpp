@@ -1329,6 +1329,9 @@ struct Bench {
     std::string before[2];
     size_t weapons[2] = {size_t(-1),size_t(-1)};
     int hits[2] = {}, damage[2] = {};
+    int swings[2] = {}, blocked[2] = {}, misses[2] = {};
+    int64_t firstResponseMs = -1;
+    std::string hitLog = "[";
     int loser = -1;
     uint32_t seed = 0;
     uint64_t from = 0, end = 0;
@@ -13572,7 +13575,9 @@ bool tickNpcDuel(World& world) {
   if(!down[0] && !down[1] && now<duel.end)return true;
   Gothic::inst().onCombatHit.ubind(&duel,&Bench::NpcDuel::hit);
   duel.active=false;
-  std::string fields="\"seed\":"+std::to_string(duel.seed)+",\"duration_ms\":"+std::to_string(now-duel.from);
+  std::string fields="\"seed\":"+std::to_string(duel.seed)+",\"duration_ms\":"+std::to_string(now-duel.from)+
+    ",\"hit_log\":"+duel.hitLog+"],\"defender_first_swing_ms\":"+
+    (duel.firstResponseMs<0 ? "null" : std::to_string(duel.firstResponseMs));
   if(down[0] || down[1]) {
     const size_t loser=duel.loser>=0 ? size_t(duel.loser) : (down[0] ? 0 : 1);
     fields+=",\"winner\":"+jsonStr(symName(world,duel.actors[1-loser]))+
@@ -13590,6 +13595,8 @@ bool tickNpcDuel(World& world) {
     fields+=std::string(i==0 ? ",\"attacker\":{" : ",\"defender\":{")+duel.before[i]+
       ",\"hp_after\":"+std::to_string(npc.attribute(ATR_HITPOINTS))+
       ",\"hits\":"+std::to_string(duel.hits[i])+",\"damage_dealt\":"+std::to_string(duel.damage[i])+
+      ",\"swings\":"+std::to_string(duel.swings[i])+",\"blocked\":"+std::to_string(duel.blocked[i])+
+      ",\"misses\":"+std::to_string(duel.misses[i])+
       ",\"hp_one\":"+(npc.attribute(ATR_HITPOINTS)==1 ? "true" : "false")+
       ",\"unconscious\":"+(stateName(world,npc)=="ZS_UNCONSCIOUS" ? "true" : "false")+
       ",\"weapon_dropped\":"+(weaponDropped ? "true" : "false")+"}";
@@ -19734,6 +19741,41 @@ void writeVideo(const Pixmap& pm) {
   }
 
 }
+
+bool TestBench::npcDuelActor(const Npc& npc) {
+  return bench.npcDuel.active && (bench.npcDuel.actors[0]==&npc || bench.npcDuel.actors[1]==&npc);
+  }
+
+void TestBench::npcDuelSwingStart(const Npc& npc) {
+  if(!npcDuelActor(npc))return;
+  auto& duel=bench.npcDuel;
+  const size_t i=duel.actors[0]==&npc ? 0 : 1;
+  ++duel.swings[i];
+  if(i==1 && duel.firstResponseMs<0)
+    duel.firstResponseMs=int64_t(npc.world().tickCount()-duel.from);
+  }
+
+void TestBench::npcDuelSwingEnd(const Npc& npc, std::string_view outcome) {
+  if(!npcDuelActor(npc))return;
+  auto& duel=bench.npcDuel;
+  const size_t i=duel.actors[0]==&npc ? 0 : 1;
+  if(outcome=="blocked")++duel.blocked[i];
+  else if(outcome!="hit")++duel.misses[i];
+  }
+
+void TestBench::npcDuelHit(const Npc& victim, const Npc& by, int32_t hpBefore, int32_t hpAfter,
+                           int32_t baseDamage, bool critical, float meleeScale, float stunBonus, float backstabMult) {
+  if(!npcDuelActor(by) || !npcDuelActor(victim) || &by==&victim || hpBefore<=hpAfter)return;
+  auto& duel=bench.npcDuel;
+  auto& log=duel.hitLog;
+  if(log.size()>1)log+=',';
+  log+="{\"time_ms\":"+std::to_string(by.world().tickCount()-duel.from)+
+    ",\"attacker\":"+jsonStr(who(&by))+",\"victim\":"+jsonStr(who(&victim))+
+    ",\"hp_before\":"+std::to_string(hpBefore)+",\"hp_after\":"+std::to_string(hpAfter)+
+    ",\"base_damage\":"+std::to_string(baseDamage)+",\"critical\":"+(critical ? "true" : "false")+
+    ",\"melee_scale\":"+std::to_string(meleeScale)+",\"stun_bonus\":"+std::to_string(stunBonus)+
+    ",\"backstab_mult\":"+std::to_string(backstabMult)+",\"hp_loss\":"+std::to_string(hpBefore-hpAfter)+"}";
+  }
 
 bool TestBench::isActive() {
   return scenarioPath!=nullptr;

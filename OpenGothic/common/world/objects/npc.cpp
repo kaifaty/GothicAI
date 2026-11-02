@@ -2023,6 +2023,7 @@ void Npc::syncMeleeShadowSwing() {
   shadow.stopped = false;
   shadow.physicsHits = Gothic::physicsFlags().meleePhysicsHits;
   shadow.outcome = "miss";
+  TestBench::npcDuelSwingStart(*this);
   shadow.magnet = {};
   shadow.reachCpuMs = shadow.reachCpuMaxMs = 0;
   shadow.reachQueries = 0;
@@ -2674,6 +2675,7 @@ void Npc::finishMeleeShadowSwing(bool remove, bool discard) {
                   ",\"cap_forward\":" + (shadow.magnet.rawCm>=120.f && std::isfinite(shadow.magnet.rawCm) ? "true" : "false") +
                   ",\"cap_backward\":" + (shadow.magnet.rawCm<=-40.f ? "true" : "false") + "}" +
                   "},\"diagnostic\":" + diagnostic + ",\"comparison\":" + comparison + "}");
+  TestBench::npcDuelSwingEnd(*this,shadow.outcome);
   shadow.contacts.clear();
   shadow.window.reset();
   }
@@ -5360,6 +5362,7 @@ void Npc::takeDamage(Npc& other, const Bullet* b, const CollideMask bMask, int32
     }
 
   hitResult = DamageCalculator::damageValue(other,*this,b,isSpell,dmg,bMask);
+  const int32_t baseDamage = hitResult.value;
   if((contact!=nullptr || stunBonus!=1.f || backstabMult!=1.f) && hitResult.hasHit && !hitResult.invincible)
     hitResult.value = int32_t(std::lround(float(hitResult.value)*meleeScale*stunBonus*backstabMult));
   if(hitResult.hasHit && !hitResult.invincible) {
@@ -5381,8 +5384,11 @@ void Npc::takeDamage(Npc& other, const Bullet* b, const CollideMask bMask, int32
   const auto traceDamage = [&] {
     BodyObservations::noteEvent(*this,&other,hitResult.value>0 ? "damage_received" : "damage_no_loss",owner.tickCount());
     const int32_t lost = traceHpBefore-attribute(ATR_HITPOINTS);
-    if(lost>0)
+    if(lost>0) {
       Gothic::inst().onCombatHit(*this,other,lost,isSpell ? "spell" : (b==nullptr ? "melee" : "ranged"));
+      TestBench::npcDuelHit(*this,other,traceHpBefore,attribute(ATR_HITPOINTS),baseDamage,
+                           hitResult.critical,meleeScale,stunBonus,backstabMult);
+      }
     if(TestBench::bodyTracing())
       TestBench::bodyEvent(*this,&other,"damage",owner.tickCount(),
                           "\"damage_kind\":" + TestBench::bodyJson(isSpell ? "spell" : (b==nullptr ? "melee" : "ranged")) +
