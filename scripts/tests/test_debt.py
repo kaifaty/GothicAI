@@ -49,6 +49,7 @@ def issue(config, value, *, number=1, state="open", reason=None, automatic=True)
 
 class FakeClient:
     def __init__(self, issues=(), *, labels=("долг", "долг-авто"), incomplete=False):
+        self.endpoint = "repos/fixture/repository"
         self.issues = deepcopy(list(issues))
         self.labels = [{"name": name} for name in labels]
         self.writes = []
@@ -438,3 +439,284 @@ def test_workflow_serializes_each_ref_without_cancelling_running_jobs():
     settings = dict(line.strip().split(": ", 1) for line in concurrency[1].splitlines())
     assert settings["group"] == "debt-${{ github.ref }}"
     assert settings["cancel-in-progress"] == "false"
+
+
+def audit_finding(*, symbol="handle_request", severity="high", **fields):
+    return {
+        "match": "new", "kind": "workaround", "path": "src/hot.py", "symbol": symbol,
+        "severity": severity, "title": f"Обход в {symbol}", "what": "Особый случай в обработчике.",
+        "evidence": [{"path": "src/hot.py", "start": 2, "end": 4, "note": "Повторная проверка."}],
+        "interest": "Три PR меняли одну проверку.", "fix": "Убрать обход; проверить контракт.",
+        "size": "M", "prs": [791, 792], **fields,
+    }
+
+
+def audit(repository, findings=(), *, slice="A", annotations=(), bugs=()):
+    return {
+        "slice": slice, "base": git(repository, "rev-parse", "HEAD^"),
+        "head": git(repository, "rev-parse", "HEAD"), "findings": list(findings),
+        "annotations": list(annotations), "bugs": list(bugs),
+    }
+
+
+def test_ingest_config_has_audit_kinds_visual_exclusions_and_limit(config):
+    assert set(config["codex"]["kinds"]) == {
+        "duplicate-logic", "workaround", "stale-flag", "dead-code", "layer-breach",
+        "untested-logic", "fragile-test", "doc-drift",
+    }
+    assert set(config["codex"]["exclude"]) == {
+        "OpenGothic/shader", "OpenGothic/common/graphics", "OpenGothic/common/ui",
+        "scripts/content", "scripts/meshes", "scripts/hd", "shorts", "site", "launcher/app",
+    }
+    assert config["codex"]["max_new"] == 3
+
+
+@pytest.mark.parametrize("change", [
+    {"kind": "style"}, {"severity": "low"}, {"size": "XL"}, {"match": "#abc"},
+    {"evidence": []}, {"evidence": [{"path": "src/hot.py", "start": 1, "end": 1,
+                                   "note": "Repeated."}] * 5},
+    {"path": "OpenGothic/common/graphics/render.cpp"},
+    {"evidence": [{"path": "scripts/content/mesh.py", "start": 1, "end": 1, "note": "Excluded."}]},
+    {"evidence": [{"path": "src/missing.py", "start": 1, "end": 1, "note": "Missing."}]},
+    {"evidence": [{"path": "src/hot.py", "start": 0, "end": 1, "note": "Invalid."}]},
+    {"evidence": [{"path": "src/hot.py", "start": 4, "end": 2, "note": "Invalid."}]},
+    {"evidence": [{"path": "src/hot.py", "start": 1, "end": 21, "note": "Invalid."}]},
+    {"evidence": [{"path": "src/hot.py", "start": 1, "end": 2}]},
+])
+def test_ingest_rejects_invalid_finding_with_reason(repository, config, change):
+    client = FakeClient()
+    value = audit_finding(**change)
+    plan = debt.ingest(repository, [audit(repository, [value])], config, client, apply=True)
+    assert actions(plan) == ["reject"]
+    assert "A1" in plan[0]["key"] and plan[0]["reason"]
+    assert client.writes == []
+
+
+def test_ingest_rejects_missing_required_field(repository, config):
+    value = audit_finding()
+    del value["fix"]
+    client = FakeClient()
+    plan = debt.ingest(repository, [audit(repository, [value])], config, client, apply=True)
+    assert actions(plan) == ["reject"] and "fix" in plan[0]["reason"]
+    assert client.writes == []
+
+
+def test_ingest_uses_audit_head_for_blobs_and_line_bounds(repository, config):
+    document = audit(repository, [audit_finding()])
+    (repository / "src/hot.py").unlink()
+    (repository / "src/new.py").write_text("Only present after the audit.\n")
+    commit(repository, "Move beyond audit head", "2026-03-02T12:00:00+00:00")
+    document["findings"] += [audit_finding(symbol="new_file", evidence=[{
+        "path": "src/new.py", "start": 1, "end": 1, "note": "Too new.",
+    }])]
+    client = FakeClient()
+    plan = debt.ingest(repository, [document], config, client, apply=True)
+    assert actions(plan).count("create") == 1 and actions(plan).count("reject") == 1
+    assert document["head"] in client.issues[0]["body"]
+    document["head"] = "f" * 40
+    client = FakeClient(labels=())
+    with pytest.raises((ValueError, subprocess.CalledProcessError)):
+        debt.ingest(repository, [document], config, client, apply=True)
+    assert client.writes == []
+
+
+@pytest.mark.parametrize("state,reason", [("open", None), ("closed", "completed"),
+                                         ("closed", "not_planned")])
+def test_ingest_existing_key_in_any_state_is_skipped(repository, config, state, reason):
+    value = audit_finding()
+    stored = issue(config, finding(), number=44, state=state, reason=reason, automatic=False)
+    stored["body"] = "<!-- debt-key: codex:workaround:src/hot.py#handle_request -->"
+    client = FakeClient([stored])
+    plan = debt.ingest(repository, [audit(repository, [value])], config, client, apply=True)
+    assert actions(plan) == ["skip"] and "#44" in plan[0]["reason"]
+    assert client.writes == []
+
+
+def test_ingest_manual_owner_wins_and_closed_automatic_duplicate_is_ignored(repository, config):
+    value = audit_finding()
+    key = "<!-- debt-key: codex:workaround:src/hot.py#handle_request -->"
+    duplicate = issue(config, finding(), number=1, state="closed", reason="duplicate")
+    duplicate["body"] = key
+    manual = issue(config, finding(), number=44, automatic=False)
+    manual["body"] = key
+    automatic = issue(config, finding(), number=2)
+    automatic["body"] = key
+    client = FakeClient([duplicate, automatic, manual])
+    plan = debt.ingest(repository, [audit(repository, [value])], config, client, apply=True)
+    assert actions(plan) == ["skip"] and "#44" in plan[0]["reason"]
+    assert client.writes == []
+    client = FakeClient([duplicate])
+    assert actions(debt.ingest(repository, [audit(repository, [value])], config, client)) == ["create"]
+    assert client.writes == []
+
+
+def test_ingest_matches_known_issue_rejects_unknown_and_skips_run_duplicate(repository, config):
+    document = audit(repository, [audit_finding(match="#44"), audit_finding(symbol="missing", match="#999"),
+                                  audit_finding(symbol="first"), audit_finding(symbol="first")])
+    client = FakeClient([issue(config, finding(), number=44, state="closed", reason="completed")])
+    plan = debt.ingest(repository, [document], config, client, apply=True)
+    assert actions(plan).count("create") == 1 and actions(plan).count("reject") == 1
+    skipped = [row for row in plan if row["action"] == "skip"]
+    assert any("сопоставлено с #44" in row["reason"] for row in skipped)
+    assert any("дубль в прогоне" in row["reason"] for row in skipped)
+    assert len([call for call in client.writes if call[0] == "create"]) == 1
+
+
+def test_ingest_limit_orders_severity_then_files_and_only_bypasses_limit(repository, config):
+    documents = [
+        audit(repository, [audit_finding(symbol="a1", severity="medium"),
+                           audit_finding(symbol="a2"), audit_finding(symbol="a3")]),
+        audit(repository, [audit_finding(symbol="b1"), audit_finding(symbol="b2", severity="medium"),
+                           audit_finding(symbol="b3", severity="medium")], slice="B"),
+    ]
+    client = FakeClient()
+    plan = debt.ingest(repository, documents, config, client, apply=True)
+    created = [row["key"] for row in plan if row["action"] == "create"]
+    assert len(created) == 3 and all(identifier in key for identifier, key in zip(["A2", "A3", "B1"], created))
+    assert actions(plan).count("defer") == 3
+    client = FakeClient()
+    plan = debt.ingest(repository, documents, config, client, only={"A1", "A2", "A3", "B2"}, apply=True)
+    created = [row["key"] for row in plan if row["action"] == "create"]
+    assert len(created) == 4
+    assert not any("B1" in key or "B3" in key for key in created)
+    client = FakeClient(labels=())
+    with pytest.raises(ValueError, match="B99"):
+        debt.ingest(repository, documents, config, client, only={"A1", "B99"}, apply=True)
+    assert client.writes == []
+
+
+def test_ingest_creates_codex_label_body_and_sync_keeps_it_manual(repository, config):
+    value = audit_finding()
+    document = audit(repository, [value])
+    client = FakeClient()
+    plan = debt.ingest(repository, [document], config, client, apply=True)
+    assert actions(plan) == ["create"]
+    assert [call for call in client.writes if call[0] == "label"] == [("label", "долг-codex")]
+    created = client.issues[0]
+    assert created["title"] == f"Долг: {value['title']}"
+    assert {label["name"] for label in created["labels"]} == {"долг", "долг-codex"}
+    body = created["body"]
+    assert body.startswith("<!-- debt-key: codex:workaround:src/hot.py#handle_request -->")
+    assert "debt-data" not in body and "debt-metrics" not in body and "### Замеры" not in body
+    headings = ["### Что", "### Где", "### Процент", "### Как погасить"]
+    assert [body.index(heading) for heading in headings] == sorted(body.index(heading) for heading in headings)
+    for text in [value["what"], value["interest"], value["fix"], value["evidence"][0]["note"],
+                 f"https://github.com/fixture/repository/blob/{document['head']}/src/hot.py#L2-L4",
+                 "Вид: workaround", "тяжесть: high", "размер: M", "PR недели: #791, #792",
+                 f"аудит: срез A, `{document['base']}`…`{document['head']}`"]:
+        assert text in body
+    client.writes.clear()
+    assert actions(debt.ingest(repository, [document], config, client, apply=True)) == ["skip"]
+    assert client.writes == []
+    assert actions(debt.sync([], config, client, apply=True)) == ["skip"]
+    assert client.writes == []
+
+
+def test_ingest_annotations_replace_only_target_placeholders_preserving_rest(repository, config):
+    stored = issue(config, finding(), number=793)
+    placeholder = "_Заполняет еженедельный разбор._"
+    prefix = f"Outside placeholder: {placeholder}\r\nKeep  spaces  \n"
+    suffix = f"\r\n### Human appendix\r\n{placeholder}\r\n"
+    original = prefix + stored["body"].replace("\n", "\r\n") + suffix
+    stored["body"] = original
+    annotation = {"issue": 793, "interest": "Четыре правки в неделю.", "fix": "Разделить обработчики.", "size": "L"}
+    document = audit(repository, annotations=[annotation])
+    client = FakeClient([stored])
+    plan = debt.ingest(repository, [document], config, client, apply=True)
+    assert actions(plan) == ["update"]
+    assert [call[0] for call in client.writes] == ["update"]
+    expected = original.replace("### Процент\r\n\r\n" + placeholder,
+                                "### Процент\r\n\r\n" + annotation["interest"])
+    expected = expected.replace("### Как погасить\r\n\r\n" + placeholder,
+                                "### Как погасить\r\n\r\n" + annotation["fix"] + "\r\nРазмер: L")
+    assert client.issues[0]["body"].encode() == expected.encode()
+    client.writes.clear()
+    plan = debt.ingest(repository, [document], config, client, apply=True)
+    assert all(row["action"] == "skip" for row in plan)
+    assert client.writes == []
+
+
+def test_ingest_annotation_leaves_filled_section_and_only_selects_named_issue(repository, config):
+    first = issue(config, finding(), number=793)
+    first["body"] = first["body"].replace("_Заполняет еженедельный разбор._", "Human interest.", 1)
+    second = issue(config, finding("other.py"), number=794)
+    annotations = [{"issue": number, "interest": "Audit interest.", "fix": "Audit fix.", "size": "S"}
+                   for number in (793, 794)]
+    client = FakeClient([first, second])
+    plan = debt.ingest(repository, [audit(repository, annotations=annotations)], config, client,
+                       only={"D:793"}, apply=True)
+    assert any(row["action"] == "skip" and "Процент" in row["reason"] for row in plan)
+    assert "Human interest." in client.issues[0]["body"]
+    assert "Audit interest." not in client.issues[0]["body"]
+    assert "Audit fix." in client.issues[0]["body"]
+    assert client.issues[1] == second
+    assert [call[0:2] for call in client.writes] == [("update", 793)]
+
+
+@pytest.mark.parametrize("state,automatic,exists", [("closed", True, True),
+                                                   ("open", False, True), ("open", True, False)])
+def test_ingest_rejects_annotation_not_on_open_automatic_issue(repository, config, state, automatic, exists):
+    stored = issue(config, finding(), number=793, state=state, automatic=automatic)
+    client = FakeClient([stored] if exists else [])
+    document = audit(repository, annotations=[{"issue": 793, "interest": "Cost.", "fix": "Fix.", "size": "M"}])
+    plan = debt.ingest(repository, [document], config, client, apply=True)
+    assert actions(plan) == ["reject"] and plan[0]["reason"]
+    assert client.writes == []
+
+
+def test_ingest_bugs_are_plan_errors_without_writes(repository, config, capsys, monkeypatch, tmp_path):
+    client = FakeClient(labels=())
+    document = audit(repository, bugs=[{"path": "src/hot.py", "start": 1, "end": 2, "what": "Обратное условие."}])
+    plan = debt.ingest(repository, [document], config, client, apply=True)
+    assert actions(plan) == ["error"]
+    assert "Обратное условие." in plan[0]["reason"]
+    assert client.writes == []
+    summary = tmp_path / "ingest-summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
+    debt.print_plan(plan)
+    assert "ошибка |" in capsys.readouterr().out
+    assert "| ошибка |" in summary.read_text()
+
+
+def test_ingest_dry_run_and_read_failure_never_write(repository, config, monkeypatch):
+    document = audit(repository, [audit_finding()], annotations=[{
+        "issue": 793, "interest": "Cost.", "fix": "Fix.", "size": "M",
+    }])
+    stored = issue(config, finding(), number=793)
+    client = FakeClient([stored], labels=())
+    plan = debt.ingest(repository, [document], config, client)
+    assert {"create", "update"} <= set(actions(plan))
+    assert client.writes == []
+    client = FakeClient([stored], labels=(), incomplete=True)
+    with pytest.raises(RuntimeError, match="incomplete"):
+        debt.ingest(repository, [document], config, client, apply=True)
+    assert client.writes == []
+    monkeypatch.chdir(repository)
+    monkeypatch.setenv("GITHUB_REPOSITORY", "fixture/repository")
+    monkeypatch.setattr(debt, "GhClient", lambda repository: client)
+    source = repository / "audit.json"
+    source.write_text(json.dumps(document))
+    assert debt.main(["ingest", str(source), "--apply"]) == 1
+    assert client.writes == []
+
+
+@pytest.mark.parametrize("markdown", [False, True])
+def test_ingest_loads_json_and_markdown_and_cli_does_not_scan(repository, config, monkeypatch, markdown):
+    document = audit(repository, [audit_finding()])
+    text = json.dumps(document, ensure_ascii=False)
+    if markdown:
+        text = "Scout finished.\n\n```json\n" + text + "\n```\nFinal note.\n"
+    source = repository / "audit.txt"
+    source.write_text(text)
+    assert debt.load_audit(source) == document
+    client = FakeClient()
+    monkeypatch.chdir(repository)
+    monkeypatch.setenv("GITHUB_REPOSITORY", "fixture/repository")
+    monkeypatch.setattr(debt, "GhClient", lambda repository: client)
+    monkeypatch.setattr(debt, "scan", lambda *args: pytest.fail("ingest must not scan the repository"))
+    assert debt.main(["ingest", str(source), "--only", "A1"]) == 0
+    assert client.writes == []
+    if markdown:
+        source.write_text(text + "\n```json\n{}\n```\n")
+        with pytest.raises(ValueError):
+            debt.load_audit(source)
