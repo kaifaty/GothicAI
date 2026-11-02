@@ -56,6 +56,11 @@ class BloodDecals final {
 
     Tempest::Texture2d          atlas;
     Tempest::StorageBuffer      ssbo[Resources::MaxFramesInFlight];
+    struct Near {
+      float                     dist  = 0;
+      const BloodStains::Stain* stain = nullptr;
+      };
+    std::vector<Near>           near;
     std::vector<Gpu>            data;
     size_t                      count = 0;
   };

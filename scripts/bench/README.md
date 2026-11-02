@@ -745,6 +745,24 @@ SAVE=/abs/out/on/session-created.sav scripts/bench.sh blood-stains-reload /abs/o
 python3 scripts/blood_stains_compare.py /abs/out/on /abs/out/reload
 ```
 
+How blood looks: `blood-probe.bench` lays a pool by hand on Onar's field at 06:00 and shoots it at
+noon and at 18:00 (does a decal draw, and how it dries). `blood-look.bench` lays a pool and a splash on
+the field, then a paladin kills a bandit there and on the harbour pier: a clip of each fight, a clip of
+the pool spreading (`cam follow` keeps the dead bandit by pointer; `cam two`/`cam face` look for a
+living npc of that name and lose him), stills 5 min, 1 h, 6 h and 10 h later in daylight. A `shot`
+is written at the end of its frame, so each one waits before the clock moves. `blood-cost.bench` lays
+256 stains (`blood_stains fill 256 125`, a 20 m grid round the hero) and measures 30 s of normal app
+cadence (`blood_stains measure` starts the window); it needs a build with
+`OPENGOTHIC_ENABLE_APP_CADENCE=ON`, and `OPENGOTHIC_GPU_PASSES=1` on a frame-profile build gives the
+"Blood decals" pass alone.
+
+```bash
+WORLD=NEWWORLD.ZEN BENCH_HOST=local scripts/bench.sh blood-look /abs/out/look
+GAME_BIN=OpenGothic/build-profile-on/opengothic/Gothic2Notr BLOOD=1 WORLD=NEWWORLD.ZEN BENCH_HOST=local scripts/bench.sh blood-cost /abs/out/on
+GAME_BIN=OpenGothic/build-profile-on/opengothic/Gothic2Notr BLOOD=0 WORLD=NEWWORLD.ZEN BENCH_HOST=local scripts/bench.sh blood-cost /abs/out/off
+python3 scripts/blood_cost_read.py /abs/out/on -- /abs/out/off
+```
+
 For stage 2, `ragdoll.bench` exercises death, sleeping/wake, controlled unconscious recovery,
 slopes, stairs, a cliff and the human/Wolf/Scavenger/Molerat/Orc models. Run it with
 `OPENGOTHIC_RAGDOLL_TRACE=1` to append `ph_ms,ph_bodies,ph_rays,rd_mode,rd_weight,rd_sleep`

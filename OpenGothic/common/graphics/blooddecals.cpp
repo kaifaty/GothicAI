@@ -233,11 +233,26 @@ bool BloodDecals::prepare(uint8_t /*fId*/, const World& world, const SceneGlobal
   const int64_t now   = world.time().toInt();
   const float   range = BloodStains::DrawRangeCm;
   const float   inset = 0.5f/float(256*AtlasTiles);
+
+  // The nearest within range, at most DrawLimit of them: 256 decals filling the screen cost ~0.8 ms
+  // on an M1 Pro at 1600x1200, over the 0.2 ms budget; far stains are small and least missed.
+  near.clear();
   for(auto& s:stains) {
     if(s.blood==BloodStains::Blood::Stone)
       continue; // golem chips: not drawn yet
-    if((s.pos-camera).quadLength() > (range+s.radiusCm)*(range+s.radiusCm))
+    const float d = (s.pos-camera).quadLength();
+    if(d > (range+s.radiusCm)*(range+s.radiusCm))
       continue;
+    near.push_back({d, &s});
+    }
+  if(near.size()>BloodStains::DrawLimit) {
+    std::nth_element(near.begin(), near.begin()+BloodStains::DrawLimit, near.end(),
+                     [](const Near& a, const Near& b) { return a.dist<b.dist; });
+    near.resize(BloodStains::DrawLimit);
+    }
+
+  for(const auto& it:near) {
+    const auto& s = *it.stain;
     const Look lk = look(s, now);
     if(lk.opacity<=0.f)
       continue;

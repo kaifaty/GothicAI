@@ -21,6 +21,7 @@ namespace BloodStains {
   constexpr int64_t LifetimeInMs    = 3*24*60*MinuteMs;  // indoors
   constexpr size_t  Limit           = 256;               // stains kept in a world
   constexpr float   DrawRangeCm     = 4000.f;            // decals farther away are not drawn
+  constexpr size_t  DrawLimit       = 128;               // drawn per frame: the nearest (user, 2026-11-02: the cost)
   constexpr float   SightRangeCm    = 1500.f;            // as other traces
 
   enum class Kind : uint8_t {
