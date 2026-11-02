@@ -117,7 +117,8 @@ std::string NpcLogicAudit::actionName(Action action) {
     LOGIC_ACTION(AI_GoToNpc); LOGIC_ACTION(AI_GoToPoint); LOGIC_ACTION(AI_GoToNextFp);
     LOGIC_ACTION(AI_TurnToNpc); LOGIC_ACTION(AI_TurnAway); LOGIC_ACTION(AI_WhirlToNpc);
     LOGIC_ACTION(AI_Output); LOGIC_ACTION(AI_OutputSvm); LOGIC_ACTION(AI_OutputSvmOverlay);
-    LOGIC_ACTION(AI_Wait);
+    LOGIC_ACTION(AI_Wait); LOGIC_ACTION(AI_Flee); LOGIC_ACTION(AI_GotoItem);
+    LOGIC_ACTION(AI_AlignToFp); LOGIC_ACTION(AI_AlignToWp); LOGIC_ACTION(AI_ProcessInfo);
     default: return "AI_"+std::to_string(uint32_t(action));
     }
 #undef LOGIC_ACTION
@@ -386,7 +387,10 @@ void NpcLogicalState::eventFired(const Animation::Sequence* sequence, uint64_t o
     uint64_t expected=scheduled->expected;
     if(sequence->animCls==Animation::Loop && sequence->totalTime()>0) {
       const double period=double(sequence->totalTime())/double(layer.speed);
-      if(now>expected) expected+=uint64_t(std::floor(double(now-expected)/period)*period);
+      // Pose's float frame arithmetic can fire just before the integer
+      // deadline. Match that occurrence, including a slightly early cycle,
+      // rather than attributing it to the previous repetition.
+      if(now>expected) expected+=uint64_t(std::round(double(now-expected)/period)*period);
       }
     const int64_t error=std::abs(int64_t(now)-int64_t(expected));
     ++totals.events;

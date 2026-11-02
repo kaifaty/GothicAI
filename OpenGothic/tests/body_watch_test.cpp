@@ -1032,6 +1032,45 @@ class NpcLogicalStateContract final {
         expect(std::abs(error)<=int64_t(tickMs),"logical save/load canonical sequence end is predicted within one world tick");
         expect(std::abs(actionError)<=int64_t(tickMs),"logical save/load canonical action end is predicted within one world tick");
         }
+      // Native float frame rounding can fire a loop event one millisecond
+      // before its integer schedule. The audit must match the same cycle.
+      ++cases;
+      auto* npc=gothic.world()->npcById(id);
+      npc->closeWeapon(true);
+      npc->visual.pose().stopAllAnim();
+      const auto* sequence=npc->playAnimByName("S_FISTWALKL",BS_WALK);
+      expect(sequence!=nullptr && sequence->animCls==Animation::Loop,"loop clock fixture uses the stock fist walk");
+      npc->syncLogicalBodyState();
+      auto clock=npc->logicalBodyState();
+      const auto layer=std::find_if(clock.layers.begin(),clock.layers.end(),[&](const auto& l) { return l.sequence==sequence; });
+      expect(layer!=clock.layers.end() && !layer->events.empty(),"loop clock fixture has native event metadata");
+      struct Probe {
+        NpcLogicalState& clock;
+        const NpcLogicalState::Layer& layer;
+        const Animation::LogicEvent* target=nullptr;
+        uint64_t now=0;
+        bool fired=false;
+        } probe{clock,*layer};
+      Animation::LogicEventObserver observer{&probe,[](void* opaque,const Animation::LogicEvent& event) {
+        auto& p=*static_cast<Probe*>(opaque);
+        if(event.kind!=p.target->kind || event.index!=p.target->index || event.frame!=p.target->frame) return;
+        p.fired=true;
+        p.clock.eventFired(p.layer.sequence,p.layer.origin,event,p.now);
+        }};
+      NpcLogicAudit::reset();
+      for(uint64_t cycle=1;cycle<=65536 && !probe.fired;++cycle) {
+        for(const auto& event:layer->events) {
+          if(!event.source.delivered) continue;
+          probe.target=&event.source;
+          probe.now=event.expected+uint64_t(double(cycle)*sequence->totalTime())-1;
+          Animation::EvCount events;
+          sequence->processEvents(probe.now-1,layer->start,probe.now,events,&observer);
+          if(probe.fired) break;
+          }
+        }
+      expect(probe.fired,"loop clock fixture observes a native event before its integer deadline");
+      const auto& errors=NpcLogicAudit::stats().byAnimation.at(sequence->name).eventErrorMs;
+      expect(errors.size()==1 && errors.begin()->first==1,"an early native loop event has a one millisecond audit error");
       }
   };
 
