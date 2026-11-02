@@ -675,8 +675,8 @@ def summary(directory: Path, ratings: Path | None = None, *, emit: bool = True) 
         "fits_window_fraction": pilot.fraction(fits, len(windows)),
     }
     for metric in ("first_token_s", "note_ready_s", "total_s"):
-        stats[metric] = pilot.distribution(part[metric] for part in successful)
-    stats["output_tokens"] = distribution((part["usage"] or {}).get("output_tokens") for part in parts)
+        stats[metric] = pilot.distribution(part[metric] for part in successful if not part.get("closing"))
+    stats["output_tokens"] = distribution((part["usage"] or {}).get("output_tokens") for part in successful)
     lengths, closing_lengths, chain_ends, transitions = {}, {}, {}, []
     for group in groups:
         first = group[0]
@@ -1222,11 +1222,14 @@ async def selftest() -> None:
             [{"id": "turn-0", "key": key, "rating": "good"} for key in ("sol", *VARIANTS)]
             + [{"id": "turn-1", "rating": "unkeyed row is skipped"}],
         )
+        states["turn-1"]["usage"]["output_tokens"] = 999
+        pilot.save_rows(directory / "minds.jsonl", states.values())
         report = summary(directory, ratings, emit=False)
         assert (
             report["mind"]["n"] == 8 and report["mind"]["errors"] == 1 and report["mind"]["parse_errors"] == 1
         )
-        assert report["mind"]["output_tokens"]["median"] == 123
+        assert report["mind"]["output_tokens"] == {"n": 6, "median": 123, "p90": 123, "max": 123}
+        assert report["mind"]["note_ready_s"]["n"] == 4
         assert report["mind"]["fits_window_n"] == 4 and report["mind"]["window_n"] == 6
         assert report["changes"]["Мнение о герое"] == {"n": 4, "changed_n": 1, "fraction": 0.25}
         assert report["changes"]["Верю"]["fraction"] == report["changes"]["Нити"]["fraction"] == 0.25
