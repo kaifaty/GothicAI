@@ -19,5 +19,6 @@ shot cost-view
 wait 500
 cadence normal
 wait 34
+blood_stains measure
 cadence wait
 quit

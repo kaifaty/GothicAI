@@ -1,5 +1,7 @@
 #include "bloodspawn.h"
 
+#include <algorithm>
+
 #include <cctype>
 #include <string>
 
@@ -149,13 +151,18 @@ void BloodSpawn::onDead(World& world, Npc& body) {
     return;
 
   // Blood runs out of the wound and spreads past the body, which hides what lies under it: the pool
-  // is centred below the wound, moved out from the trunk by half its radius.
+  // is centred beside the spine on the wound's side, level with the wound, tucked under the body's edge.
   const Vec3 trunk = body.centerPosition();
   const Vec3 wound = body.bloodWound();
-  Vec3 out = Vec3(wound.x-trunk.x, 0, wound.z-trunk.z);
-  out = out.quadLength()>1.f ? Vec3::normalize(out) : Vec3(0,0,0);
-  const float r0 = poolRadius(body.physicsMass(), BloodStains::Surface::Hard);
-  const Vec3 c = wound + out*(0.5f*r0);
+  const Vec3 head  = body.mapBone("BIP01 HEAD");
+  Vec3 axis = Vec3(head.x-trunk.x, 0, head.z-trunk.z);
+  axis = axis.quadLength()>1.f ? Vec3::normalize(axis) : Vec3(1,0,0);
+  const Vec3  side  = Vec3(axis.z, 0, -axis.x);
+  const Vec3  rel   = wound-trunk;
+  const float along = std::clamp(Vec3::dotProduct(rel,axis), -60.f, 60.f);
+  const float sign  = Vec3::dotProduct(rel,side)<0 ? -1.f : 1.f;
+  const float r0    = poolRadius(body.physicsMass(), BloodStains::Surface::Hard);
+  const Vec3  c     = trunk + axis*along + side*(sign*(25.f+0.65f*r0));
   auto ground = phys->rayStatic(c+Vec3(0,50,0), c-Vec3(0,250,0));
   if(!ground.hasCol)
     return;

@@ -95,9 +95,8 @@ void Shaders::compileShaders() noexcept {
   ssao                = computeShader("ssao.comp.sprv");
   ssaoBlur            = computeShader("ssao_blur.comp.sprv");
 
-  bloodDecal       = bloodDecalShader(opts.doMaterialMaps, false);
-  if(opts.doMaterialMaps)
-    bloodDecalOrm  = bloodDecalShader(true, true);
+  bloodDecal       = bloodDecalShader(opts.doMaterialMaps);
+  bloodDecalAlbedo = bloodDecalShader(false);
 
   directLight      = postEffect(string_frm("direct_light", materialMaps),    RenderState::ZTestMode::NoEqual);
   directLightSh    = postEffect(string_frm("direct_light_sh", materialMaps), RenderState::ZTestMode::NoEqual);
@@ -746,29 +745,22 @@ RenderPipeline Shaders::fogShader(std::string_view name) {
   return device.pipeline(Triangles,state,vs,fs);
   }
 
-RenderPipeline Shaders::bloodDecalShader(bool materialMaps, bool orm) {
+RenderPipeline Shaders::bloodDecalShader(bool materialMaps) {
   auto& device = Resources::device();
 
   // No depth attachment: the fragment shader projects the box onto the scene depth itself.
   // The box is drawn from inside (front faces culled) so it works with the camera in it too.
+  // One multiplying blend for both targets, dst*(1-a + src): the shader writes a*multiplier, so the
+  // surface shows through the blood (albedo) and the wet film scales its roughness down (ORM G).
   RenderState state;
   state.setZTestMode    (RenderState::ZTestMode::Always);
   state.setZWriteEnabled(false);
   state.setCullFaceMode (RenderState::CullMode::Back);
-  if(!orm) {
-    // albedo*(1-a + a*tint): the shader writes a*tint, the surface shows through the blood
-    state.setBlendSource(RenderState::BlendMode::DstColor);
-    state.setBlendDest  (RenderState::BlendMode::OneMinusSrcAlpha);
-    state.setColorWriteMask(0, RenderState::RGB); // albedo alpha holds the material hint bits
-    if(materialMaps)
-      state.setColorWriteMask(1, 0);
-    } else {
-    // premultiplied: roughness and the material-map flag toward the wet film
-    state.setBlendSource(RenderState::BlendMode::One);
-    state.setBlendDest  (RenderState::BlendMode::OneMinusSrcAlpha);
-    state.setColorWriteMask(0, 0);
-    state.setColorWriteMask(1, RenderState::G|RenderState::B|RenderState::A); // keep the surface's occlusion
-    }
+  state.setBlendSource  (RenderState::BlendMode::DstColor);
+  state.setBlendDest    (RenderState::BlendMode::OneMinusSrcAlpha);
+  state.setColorWriteMask(0, RenderState::RGB); // albedo alpha holds the material hint bits
+  if(materialMaps)
+    state.setColorWriteMask(1, RenderState::G);  // roughness only: occlusion, metal and the map flag stay
 
   auto sh = GothicShader::get("blood_decal.vert.sprv");
   auto vs = device.shader(sh.data,sh.len);

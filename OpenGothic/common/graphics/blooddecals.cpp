@@ -295,11 +295,6 @@ void BloodDecals::draw(Encoder<CommandBuffer>& cmd, uint8_t fId, const SceneGlob
   cmd.setBinding(2, gbufNormal, Sampler::nearest());
   cmd.setBinding(3, atlas,      Sampler::trillinear());
   cmd.setBinding(4, buf);
-  // albedo: multiplied; then, with material maps, the wet film's roughness (two blend modes)
-  cmd.setPipeline(Shaders::inst().bloodDecal);
+  cmd.setPipeline(gbufOrm!=nullptr ? Shaders::inst().bloodDecal : Shaders::inst().bloodDecalAlbedo);
   cmd.draw(nullptr, 0, 36, 0, count);
-  if(gbufOrm!=nullptr) {
-    cmd.setPipeline(Shaders::inst().bloodDecalOrm);
-    cmd.draw(nullptr, 0, 36, 0, count);
-    }
   }

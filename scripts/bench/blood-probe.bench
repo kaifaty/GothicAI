@@ -1,48 +1,32 @@
-# Physics stage 8, step 4c: do blood decals draw, and how. Pools laid by hand at their real size on
-# Onar's field (earth) and in the city (stone), the hero stepped back, the camera behind him.
+# Physics stage 8, step 4c: do blood decals draw, and how they age. A pool laid by hand at its real
+# size on Onar's field (earth) at 06:00, seen at noon (6 h old) and at 18:00 next to a fresh one.
 seed 73015
 cheat god
-set time 12 0
+set time 6 0
 release all
 overlay off
 goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
 wait 500
 clear 3000
-blood NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02 pool 40
-blood_stains advance 10
+blood NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02 pool 45
 hold back 900
 hold right 900
-wait 2500
-cam follow 230 250 200
 wait 1500
-shot field-pool
-wait 500
-cam follow 330 70 200
+set time 12 0
+cam follow 200 230 200
+wait 5000
+shot aged-6h-noon
+blood_stains sample
+wait 1000
+set time 18 0
+wait 5000
+shot aged-12h-evening
+wait 1000
+hold left 1500
 wait 1500
-shot field-pool-low
-wait 500
-cam follow 90 330 200
-wait 1500
-shot field-pool-top
-wait 500
-goto NW_CITY_MERCHANT_PATH_09
-wait 1500
-clear 3000
-blood NW_CITY_MERCHANT_PATH_09 pool 47
-blood_stains advance 10
-hold back 900
-hold right 900
-wait 2500
-cam follow 230 250 200
-wait 1500
-shot city-pool
-wait 500
-cam follow 330 70 200
-wait 1500
-shot city-pool-low
-wait 500
-cam follow 90 330 200
-wait 1500
-shot city-pool-top
-wait 500
+blood NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02 pool 45
+wait 3000
+shot fresh-evening
+blood_stains sample
+wait 2000
 quit

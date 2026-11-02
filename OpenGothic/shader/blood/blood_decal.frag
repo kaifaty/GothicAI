@@ -74,10 +74,9 @@ void main() {
   outDiffuse = vec4(a*mul, a);
 
 #if defined(MATERIAL_MAPS)
-  // wet: a mirror-like film where it is thick; soaked or dried blood is matte.
-  // Premultiplied; R (the surface's occlusion) is masked off, A turns material maps on.
-  const float wet   = d.look.y*(0.35+0.65*thick)*(1.0-0.8*soak);
-  const float rough = mix(0.72, 0.06, wet);
-  outOrm = vec4(a, a*rough, 0.0, a);
+  // wet: a mirror-like film where it is thick; soaked or dried blood keeps the surface's roughness.
+  // The same multiplying blend: roughness*(1-a + a*k), k = 0.08 for a fresh thick film.
+  const float wet = d.look.y*(0.35+0.65*thick)*(1.0-0.8*soak);
+  outOrm = vec4(0.0, a*mix(1.0, 0.08, wet), 0.0, a);
 #endif
   }

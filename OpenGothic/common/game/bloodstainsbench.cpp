@@ -18,6 +18,7 @@
 #include "world/objects/npc.h"
 #include "world/world.h"
 #include "gothic.h"
+#include "appcadence.h"
 
 using namespace Tempest;
 
@@ -392,6 +393,16 @@ std::string BloodStainsBench::command(const std::vector<std::string>& a, World& 
     return save(world,a[2],out);
   if(c=="sample")
     return "{"+sample(world)+",\"pass\":true}";
+#ifdef OPENGOTHIC_ENABLE_APP_CADENCE
+  if(c=="measure") {
+    // the cost bench's normal-clock window, after `cadence normal`; its mode is the blood flag
+    const bool on = Gothic::physicsFlags().blood;
+    if(!AppCadence::normalClock() || !AppCadence::arm(on))
+      fail("measure: the normal-clock cadence window could not start");
+    AppCadence::counts(true,uint32_t(world.bloodStains().size()),0,0,0,0);
+    return "{"+common(world)+",\"mode\":"+jsonStr(on ? "on" : "off")+",\"pass\":true}";
+    }
+#endif
   if(c=="fill" && (a.size()==3 || a.size()==4)) {
     // fill <count> [spacing cm]: the cost bench's load, a square grid round the hero, pools and
     // splashes in turn (blood off: none, the same scene)

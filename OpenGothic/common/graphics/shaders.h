@@ -68,7 +68,7 @@ class Shaders {
     Tempest::RenderPipeline  fog3dHQ;
 
     // Blood on the GBuffer (physics stage 8, step 4c): albedo RGB, and roughness with material maps
-    Tempest::RenderPipeline  bloodDecal, bloodDecalOrm;
+    Tempest::RenderPipeline  bloodDecal, bloodDecalAlbedo; // with and without the ORM target
     Tempest::RenderPipeline  sun;
     Tempest::ComputePipeline cloudsLut, fogOcclusion;
     Tempest::ComputePipeline fogViewLut3d, fogViewLutSep;
@@ -189,7 +189,7 @@ class Shaders {
     Tempest::RenderPipeline  inWaterShader   (std::string_view name, bool isScattering);
     Tempest::RenderPipeline  reflectionShader(std::string_view name, bool hasMeshlets);
     Tempest::RenderPipeline  ambientLightShader(std::string_view name);
-    Tempest::RenderPipeline bloodDecalShader(bool materialMaps, bool orm);
+    Tempest::RenderPipeline bloodDecalShader(bool materialMaps);
 
     Options         opts;
     static Shaders* instance;
