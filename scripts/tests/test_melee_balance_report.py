@@ -431,7 +431,7 @@ fit_spec = importlib.util.spec_from_file_location('far_fight_fit', Path(__file__
 fit = importlib.util.module_from_spec(fit_spec)
 fit_spec.loader.exec_module(fit)
 from gothic_ai.npc_far import _combatant
-from gothic_ai.npc_far_fight import Coefficients, Combatant, _duel
+from gothic_ai.npc_far_fight import Coefficients, Combatant
 
 
 def fit_side(instance, **changes):
@@ -460,7 +460,7 @@ def test_far_fight_record_builder_equals_independent_server_story_eval():
               0, 0, 0, 0, 0, 0, 0, 0,
               0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
     expected = Combatant('TWOHANDER', 60, 30, (0, 0, 40, 0, 0, 0, 0, 0),
-                         4, (0, 5, 0, 0, 0, 0, 0, 0), 70, 2)
+                         4, (0, 5, 0, 0, 0, 0, 0, 0), 70, 2, weapon='2h')
     assert len(values) == 48
     assert fit.story_values(side, fit_weapons()) == values
     assert fit.combatant(side, fit_weapons()) == _combatant('TWOHANDER', values) == expected
@@ -479,69 +479,97 @@ def test_far_fight_likelihood_manual_example_and_floor():
     assert fit.binomial_interval(10, 1.) == [10, 10]
 
 
-def fit_cell(pair='first', tier=0):
-    actors = (Combatant('A', 60, 25, (0, 15, 0, 0, 0, 0, 0, 0), 2, (0,)*8, 30, tier),
-              Combatant('B', 80, 35, (0, 10, 0, 0, 0, 0, 0, 0), 2, (0,)*8, 60, 1))
-    return dict(pair=pair, attacker='A', defender='B', actors=actors, hp_max=(60, 80),
-                n=3, counts=[1, 1, 1], losses=[[.2], [.3]], deaths=0)
+def test_far_fight_parts_pool_at_thirty_swings_and_use_recorded_multipliers():
+    def side(name, weapon, tier, swings, hits):
+        return dict(instance=name, weapon=weapon, two_handed=weapon == '2h',
+                    talent_skills=[0, tier, tier]+[0]*19, swings=swings, hits=hits)
+
+    def row(a, b, first_swing=500):
+        return dict(attacker=a, defender=b, duration_ms=10000,
+                    defender_first_swing_ms=first_swing, hit_log=[dict(
+                        attacker=a['instance'], victim=b['instance'], time_ms=1000,
+                        melee_scale=.5, stun_bonus=1.5, backstab_mult=3.,
+                        hp_loss=1, base_damage=100)])
+
+    rows = [row(side('A', '1h', 0, 29, 10), side('B', '', 0, 35, 5)),
+            row(side('C', '1h', 0, 30, 20), side('D', '2h', 1, 30, 10)),
+            row(side('E', '2h', 1, 30, 10), side('F', '', 0, 5, 2), first_swing=2500)]
+    # Supply measured fist multipliers too; final clamped HP loss must never be used.
+    rows[0]['hit_log'].append(dict(rows[0]['hit_log'][0], attacker='B', victim='A'))
+    result = fit.measure_parts(rows)
+    cells = {(r['weapon'], r['tier'], r['opponent_tier']): r for r in result['hit_cells']}
+    assert cells['1h', 0, 0]['raw']['swings'] == 29
+    assert cells['1h', 0, 0]['scope'] == 'own_tier'
+    assert cells['1h', 0, 0]['used']['swings'] == 59
+    assert cells['1h', 0, 0]['probability'] == pytest.approx(30/59)
+    assert cells['1h', 0, 1]['raw']['swings'] == 30
+    assert cells['1h', 0, 1]['scope'] == 'own_and_opponent_tier'
+    assert cells['1h', 1, 0]['scope'] == 'weapon'
+    assert cells['1h', 1, 0]['used']['swings'] == 59
+    assert result['calibration']['swing_rate']['1h']['0'] == pytest.approx(59/20)
+    assert result['calibration']['damage_multiplier']['1h'] == [2.25, 2.25]
+    assert result['calibration']['response_delay'] == [0., 0., 1.5]
+    assert result['negative_response_delays'] == 2
 
 
-@pytest.mark.parametrize('coefficients,tier', [
-    (Coefficients(.4, .5, 1.), 0),
-    (Coefficients(.12, .7, .25, .3, 1.7, 'C'), 0),
-    (Coefficients(.1, .5, .5, 1., 2., 'C'), 0),
-    (Coefficients(.1, .5, .5, 1., 2., 'C'), 1),
-])
-def test_far_fight_vector_replay_matches_all_400_scalar_draws(coefficients, tier):
-    cell = fit_cell(tier=tier)
-    evaluator = fit.Evaluator([cell])
-    probabilities, winners, losses = evaluator.simulate(0, coefficients)
-    scalar = [_duel(*cell['actors'], coefficients, seed) for seed in fit.trial_seeds(cell)]
-    expected = [2 if result[0] is None else 0 if result[0] == 'A' else 1 for result in scalar]
-    assert winners.tolist() == expected
-    assert probabilities == [expected.count(outcome)/400 for outcome in range(3)]
-    assert all(losses[i] == result[1] for i, result in enumerate(scalar) if expected[i] < 2)
-    assert evaluator.simulate(0, coefficients)[0] == probabilities
-
-
-def test_far_fight_fit_determinism_and_holdout_exclusion(tmp_path, monkeypatch):
-    # Keep the test's search tiny; production still uses the declared full grid/refinement.
-    monkeypatch.setattr(fit, 'candidate_grid', lambda variant: [
-        Coefficients(.05, 0., .25, variant=variant), Coefficients(.2, .5, 1., variant=variant)])
-    monkeypatch.setattr(fit, 'STEPS', (0.,)*5)
+def test_far_fight_fit_determinism_holdout_and_unarmed_attacker_exclusion(tmp_path):
+    weapons = fit_weapons()
+    weapons['weapons']['AXE'] = dict(weapons['weapons']['SWORD'], flags=0)
     pairs = [dict(id='first', npcs=['A', 'B'], holdout=False),
              dict(id='second', npcs=['C', 'D'], holdout=False),
+             dict(id='fists', npcs=['E', 'FIST'], holdout=False),
              dict(id='secret', npcs=['HOLD', 'OUT'], holdout=True)]
     rows = []
-    for a, b in (('A', 'B'), ('C', 'D')):
+    for a, b, weapon in (('A', 'B', 'SWORD'), ('C', 'D', 'AXE'), ('E', 'FIST', 'AXE')):
+        attacker = fit_side(a, weapon=weapon, two_handed=weapon == 'SWORD', swings=40,
+                            blocked=0, misses=38, hits=2, damage_dealt=59)
+        defender = fit_side(b, weapon=weapon if b != 'FIST' else '',
+                            two_handed=weapon == 'SWORD', swings=40, blocked=0, misses=39,
+                            hits=1, damage_dealt=5 if b == 'FIST' else 6, hp_after=1,
+                            hp_one=True, unconscious=True)
+        # Both equipped fixtures use mask 4 and total 40: critical base = 30+40 = 70.
+        attacker['hp_after'] = 55 if b == 'FIST' else 54
+        hit = dict(time_ms=1000, attacker=a, victim=b, hp_before=60, hp_after=54,
+                   hp_loss=6, base_damage=6, critical=False, melee_scale=1.,
+                   stun_bonus=1., backstab_mult=1.)
+        response = dict(hit, time_ms=2500, attacker=b, victim=a,
+                        hp_after=attacker['hp_after'], hp_loss=defender['damage_dealt'],
+                        base_damage=defender['damage_dealt'])
+        terminal = dict(hit, time_ms=4000, hp_before=54, hp_after=1, hp_loss=53,
+                        base_damage=70, critical=True)
         rows.append(dict(kind='npc_duel', seed=17, duration_ms=5000, winner=a, loser=b,
-                         attacker=fit_side(a), defender=fit_side(b, hp_after=1, hp_one=True,
-                                                                   unconscious=True)))
-    # Holdout stats are deliberately invalid: train-only execution must never adapt them.
+                         attacker=attacker, defender=defender, hit_log=[hit, response, terminal],
+                         defender_first_swing_ms=2000))
+    excluded = dict(rows[-1], seed=18, attacker=dict(rows[-1]['defender'], hp_after=60,
+                    hp_one=False, unconscious=False), defender=dict(rows[-1]['attacker'], hp_after=60),
+                    hit_log=[], timeout=True, defender_first_swing_ms=None)
+    for role in fit.ROLES:
+        excluded[role].update(hits=0, damage_dealt=0)
+    rows.append(excluded)
+    # Holdout contents cannot influence measurement or training diagnostics.
     rows.append(dict(kind='npc_duel', attacker={'instance': 'HOLD'}, defender={'instance': 'OUT'}))
     (tmp_path/'events.jsonl').write_text(''.join(json.dumps(row)+'\n' for row in rows))
-    first = fit.run([tmp_path], fit_weapons(), pairs)
+    first = fit.run([tmp_path], weapons, pairs)
     rows[-1]['winner'] = 'OUT'
     rows[-1]['attacker']['str'] = 10000000
     (tmp_path/'events.jsonl').write_text(''.join(json.dumps(row)+'\n' for row in rows[::-1]))
-    second = fit.run([tmp_path], fit_weapons(), pairs)
+    second = fit.run([tmp_path], weapons, pairs)
     assert first == second
-    assert first['selected'] == 'A'  # identical CV likelihood chooses the simpler variant
-    assert first['training_records'] == 2 and first['training_pairs'] == ['first', 'second']
+    assert first['training_records'] == 3 and first['excluded_training_duels'] == 1
+    assert first['training_pairs'] == ['first', 'fists', 'second']
     assert first['acceptance'] is None
-    assert all('secret' not in fold['training_pairs'] and fold['pair'] != 'secret'
-               for variant in first['variants'] for fold in variant['folds'])
+    assert first['base_damage_verification'] == dict(hits=9, matches=9)
+    assert first['calibration']['damage_multiplier']['fist'] == [1.]
+    rate = next(r for r in first['swing_cells'] if r['weapon'] == '1h' and r['tier'] == 0)
+    assert rate['raw']['swings'] == 120
+    # The excluded unarmed starter contributes neither counters nor the armed defender.
+    selected, excluded_rows = fit.split_rows(rows, pairs)
+    assert len(selected) == 3 and len(excluded_rows) == 1
+    assert all(row['attacker']['weapon'] for row in selected)
     with pytest.raises(ValueError, match='incomplete'):
-        fit.accept([], [], Coefficients(.4, .5, 1.), pairs)
+        fit.accept([], [], Coefficients(.4, .5, 1.), pairs, [])
     death = dict(rows[0], attacker=dict(rows[0]['attacker'], hp_after=0), winner='A')
     assert fit.outcome(death) == 1
-    # Refinement must reach an optimum beyond one step per level, without drifting
-    # along equally likely base/tier coordinates. No Monte Carlo needed for this check.
-    from types import SimpleNamespace
-    with monkeypatch.context() as local:
-        local.setattr(fit, 'STEPS', (.1, .5, .25, .125, .5))
-        local.setattr(fit, 'candidate_grid', lambda variant: [Coefficients(.2, 0., 2., variant=variant)])
-        objective = SimpleNamespace(scores=lambda coefficients: (-(coefficients.damage_scale - 3.)**2,))
-        refined, score = fit.fit(objective, [0], 'A')
-        assert refined.damage_scale == 3. and score == 0.
-        assert refined.rate_base == .2 and refined.rate_per_tier == 0.
+    rows[0]['hit_log'][0]['base_damage'] += 1
+    with pytest.raises(ValueError, match='Base damage mismatch'):
+        fit.verify_base_damage([rows[0]], weapons)

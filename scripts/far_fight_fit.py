@@ -1,46 +1,43 @@
 #!/usr/bin/env python3
-"""Calibrate distant NPC duels on training pairs, then optionally accept on holdouts.
+"""Measure distant-fight v3 parts on training pairs; --accept checks holdouts once.
 
-Run with the server environment (numpy is an existing server dependency)::
+Run with the server environment::
 
     cd server && uv run python ../scripts/far_fight_fit.py FOLDERS... --out RESULT.json
 
-Add --accept only after training/selection to evaluate the held-out pairs. No game is
-started and no calibration file is modified. All objective values are log likelihoods
-of individual duel outcomes, with probabilities floored at 1/800 without renormalizing.
+No outcome fitting or game runs: clocks, hit probabilities, damage multipliers and
+response delays come directly from training counters/logs. No server file is written.
 """
 from __future__ import annotations
 
 import argparse
-from collections import defaultdict
-from dataclasses import asdict, replace
-from functools import lru_cache
 import hashlib
-import itertools
 import json
 import math
-from pathlib import Path
-import random
 import statistics
 import sys
-
-import numpy as np
+from collections import defaultdict
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'server/src'))
 sys.path.insert(0, str(ROOT / 'scripts'))
-from far_fight_duels import load_pairs, summarize, validate  # noqa: E402
+from far_fight_duels import load_pairs, validate, weapon_talent  # noqa: E402
+
 from gothic_ai.npc_far_fight import (  # noqa: E402
-    TIME_LIMIT_S, Coefficients, combatant_from_values, hit_damage,
+    TIME_LIMIT_S,
+    Coefficients,
+    _duel,
+    combatant_from_values,
+    hit_damage,
 )
 
 DRAWS = 400
 PROBABILITY_FLOOR = 1 / 800
 SEED_NAMESPACE = 'far-fight-fit-v1'
-PARAMETERS = ('rate_base', 'rate_per_tier', 'damage_scale', 'parry_per_tier', 'starter_rate')
-GRID = ((.05, .2, .8), (0., .5, 2.), (.25, 1., 2.), (0., .25, .5), (.5, 1., 2.))
-BOUNDS = ((.01, 1.6), (0., 4.), (.11, 4.), (0., 1.), (.125, 8.))
-STEPS = (.1, .5, .25, .125, .5)
+MIN_SWINGS = 30
+WEAPONS = ('fist', '1h', '2h')
+ROLES = ('attacker', 'defender')
 UNCALIBRATED = Coefficients(.4, .5, 1.)
 
 
@@ -86,40 +83,141 @@ def outcome(row):
     return 0 if row['winner'] == row['attacker']['instance'] else 1
 
 
-def cells_from_rows(rows, pairs, weapons, *, holdout=False):
+def split_rows(rows, pairs, *, holdout=False):
+    lookup = {frozenset(pair['npcs']): pair for pair in pairs}
+    included, excluded = [], []
+    for row in rows:
+        pair = lookup[frozenset(row[role]['instance'] for role in ROLES)]
+        if pair['holdout'] != holdout:
+            continue
+        # Exclude the whole role-cell, including its armed opponent's measurements.
+        (included if row['attacker']['weapon'] else excluded).append(row)
+    def key(row):
+        return (lookup[frozenset(row[role]['instance'] for role in ROLES)]['id'],
+                row['attacker']['instance'], row['seed'])
+    return sorted(included, key=key), sorted(excluded, key=key)
+
+
+def verify_base_damage(rows, weapons):
+    matches = 0
+    for row in rows:
+        validate(row)
+        if 'hit_log' not in row:
+            raise ValueError('v3 calibration requires npcduel v2 hit logs and swing counters')
+        actors = {row[role]['instance']: combatant(row[role], weapons) for role in ROLES}
+        for hit in row['hit_log']:
+            actual = hit_damage(actors[hit['attacker']], actors[hit['victim']],
+                                hit['critical'], UNCALIBRATED)
+            if actual != hit['base_damage']:
+                raise ValueError(f'Base damage mismatch: seed={row["seed"]}, '
+                                 f'{hit["attacker"]} -> {hit["victim"]}, '
+                                 f'critical={hit["critical"]}, '
+                                 f'recorded={hit["base_damage"]}, calculated={actual}')
+            matches += 1
+    return dict(hits=matches, matches=matches)
+
+
+def cells_from_rows(rows, pairs, weapons):
     lookup = {frozenset(pair['npcs']): pair for pair in pairs}
     groups = defaultdict(list)
     for row in rows:
-        pair = lookup[frozenset(row[role]['instance'] for role in ('attacker', 'defender'))]
-        # Holdout contents never reach validation, adaptation or fitting in train-only mode.
-        if pair['holdout'] != holdout:
-            continue
-        validate(row)
+        pair = lookup[frozenset(row[role]['instance'] for role in ROLES)]
         groups[(pair['id'], row['attacker']['instance'], row['defender']['instance'])].append(row)
     cells = []
     for key, samples in sorted(groups.items()):
-        actors = tuple(combatant(samples[0][role], weapons) for role in ('attacker', 'defender'))
-        hp_max = tuple(samples[0][role]['hp_max'] for role in ('attacker', 'defender'))
+        actors = tuple(combatant(samples[0][role], weapons) for role in ROLES)
+        hp_max = tuple(samples[0][role]['hp_max'] for role in ROLES)
         seeds = set()
         counts = [0, 0, 0]
-        losses = [[], []]
+        losses = []
         for row in samples:
             if row['seed'] in seeds:
                 raise ValueError(f'Duplicate duel seed in {key}')
             seeds.add(row['seed'])
-            if (tuple(combatant(row[role], weapons) for role in ('attacker', 'defender')) != actors
-                    or tuple(row[role]['hp_max'] for role in ('attacker', 'defender')) != hp_max):
+            if (tuple(combatant(row[role], weapons) for role in ROLES) != actors
+                    or tuple(row[role]['hp_max'] for role in ROLES) != hp_max):
                 raise ValueError(f'Combatants changed within cell {key}')
             result = outcome(row)
             counts[result] += 1
             if result < 2:
-                side = row[('attacker', 'defender')[result]]
-                losses[result].append((side['hp_before'] - side['hp_after']) / side['hp_max'])
+                side = row[ROLES[result]]
+                losses.append((side['hp_before'] - side['hp_after']) / side['hp_max'])
         cells.append(dict(pair=key[0], attacker=key[1], defender=key[2], actors=actors,
                           hp_max=hp_max, n=len(samples), counts=counts, losses=losses,
-                          deaths=sum(any(row[role]['hp_after'] <= 0 for role in ('attacker', 'defender'))
+                          median_duration_s=statistics.median(row['duration_ms']/1000 for row in samples),
+                          deaths=sum(any(row[role]['hp_after'] <= 0 for role in ROLES)
                                      for row in samples)))
     return cells
+
+
+def measure_parts(rows):
+    """Fixed pooling: <30 swings drops opponent tier, then own tier. Never use outcomes."""
+    samples = []
+    multipliers = {weapon: [] for weapon in WEAPONS}
+    delays = []
+    negative_delays = 0
+    for row in rows:
+        sides = {row[role]['instance']: row[role] for role in ROLES}
+        for role in ROLES:
+            side = row[role]
+            opponent = row['defender' if role == 'attacker' else 'attacker']
+            weapon, tier = weapon_talent(side)
+            samples.append(dict(weapon=weapon, tier=tier, opponent=weapon_talent(opponent)[1],
+                                swings=side['swings'], hits=side['hits'],
+                                seconds=row['duration_ms']/1000))
+        for hit in row['hit_log']:
+            weapon = weapon_talent(sides[hit['attacker']])[0]
+            multipliers[weapon].append(hit['melee_scale'] * hit['stun_bonus'] * hit['backstab_mult'])
+        received = [hit['time_ms'] for hit in row['hit_log']
+                    if hit['victim'] == row['defender']['instance']]
+        if received and row['defender_first_swing_ms'] is not None:
+            delay = (row['defender_first_swing_ms'] - min(received))/1000
+            negative_delays += delay < 0
+            delays.append(max(0., delay))
+
+    def totals(group):
+        return dict(swings=sum(s['swings'] for s in group), hits=sum(s['hits'] for s in group),
+                    seconds=sum(s['seconds'] for s in group), observations=len(group))
+
+    swing_rate, p_hit = {}, {}
+    swing_cells, hit_cells = [], []
+    for weapon in WEAPONS:
+        pooled = [s for s in samples if s['weapon'] == weapon]
+        if sum(s['swings'] for s in pooled) < MIN_SWINGS:
+            raise ValueError(f'Fewer than {MIN_SWINGS} training swings for weapon {weapon}')
+        swing_rate[weapon], p_hit[weapon] = {}, {}
+        for tier in range(3):
+            own = [s for s in pooled if s['tier'] == tier]
+            raw = totals(own)
+            rate_group = own if raw['swings'] >= MIN_SWINGS else pooled
+            rate_totals = totals(rate_group)
+            rate = rate_totals['swings']/rate_totals['seconds']
+            swing_rate[weapon][str(tier)] = rate
+            swing_cells.append(dict(weapon=weapon, tier=tier, raw=raw, used=rate_totals,
+                                    scope='own_tier' if rate_group is own else 'weapon', rate=rate))
+            p_hit[weapon][str(tier)] = {}
+            for opponent in range(3):
+                exact = [s for s in own if s['opponent'] == opponent]
+                raw_hit = totals(exact)
+                group, scope = exact, 'own_and_opponent_tier'
+                if raw_hit['swings'] < MIN_SWINGS:
+                    group, scope = own, 'own_tier'
+                if sum(s['swings'] for s in group) < MIN_SWINGS:
+                    group, scope = pooled, 'weapon'
+                used = totals(group)
+                probability = used['hits']/used['swings']
+                p_hit[weapon][str(tier)][str(opponent)] = probability
+                hit_cells.append(dict(weapon=weapon, tier=tier, opponent_tier=opponent,
+                                      raw=raw_hit, used=used, scope=scope, probability=probability))
+    calibration = dict(version=3, source=('npcduel v2; training pairs only; '
+                                         f'{len(rows)} duels; unarmed attackers excluded'),
+                       swing_rate=swing_rate, p_hit=p_hit,
+                       damage_multiplier={w: sorted(values) for w, values in multipliers.items()},
+                       response_delay=sorted(delays))
+    Coefficients.from_mapping(calibration)
+    return dict(calibration=calibration, swing_cells=swing_cells, hit_cells=hit_cells,
+                response_records=len(delays), response_unmeasured=len(rows)-len(delays),
+                negative_response_delays=negative_delays)
 
 
 def log_likelihood(counts, probabilities):
@@ -134,164 +232,16 @@ def trial_seeds(cell):
 
 
 class Evaluator:
-    """Replay the scalar model's exact RNG stream in 400 parallel trials.
-
-    Base rate scales the entire timeline, so a cached completed path can be censored
-    at TIME_LIMIT_S for every base. Critical draws and exponentials are consumed in
-    chronological event order, exactly as _duel (including skipped zero-rate draws).
-    """
+    """Use the server's exact seeded simulator for both v3 and the uncalibrated baseline."""
     def __init__(self, cells):
         self.cells = cells
-        self._tapes = {}
-        self.evaluations = 0
-
-    def tape(self, index, positive):
-        key = index, positive
-        if key not in self._tapes:
-            cell = self.cells[index]
-            # Every hit removes >=1 HP. This bound includes the final knockout hit.
-            length = sum(actor.hp for actor in cell['actors'])
-            initial = np.full((2, DRAWS), math.inf)
-            critical = np.empty((length, DRAWS), dtype=np.int16)
-            exponential = np.empty((length, DRAWS))
-            for trial, seed in enumerate(trial_seeds(cell)):
-                rng = random.Random(int.from_bytes(seed, 'big'))
-                for actor in range(2):
-                    if positive[actor]:
-                        initial[actor, trial] = rng.expovariate(1)
-                for event in range(length):
-                    critical[event, trial] = rng.randrange(100)
-                    exponential[event, trial] = rng.expovariate(1)
-            self._tapes[key] = initial, critical, exponential
-        return self._tapes[key]
-
-    @lru_cache(maxsize=8192)
-    def path(self, index, tier, scale, parry, starter):
-        actors = self.cells[index]['actors']
-        rates = [(1 + tier * actor.tier) * max(0., 1 - parry * actors[1 - i].tier)
-                 * (starter if i == 0 else 1) for i, actor in enumerate(actors)]
-        initial, critical, exponential = self.tape(index, tuple(rate > 0 for rate in rates))
-        clocks = initial.copy()
-        for actor, rate in enumerate(rates):
-            if rate:
-                clocks[actor] /= rate
-        hp = np.array([[actor.hp] * DRAWS for actor in actors], dtype=np.int64)
-        winner = np.full(DRAWS, 2, dtype=np.int8)
-        duration = np.full(DRAWS, math.inf)
-        loss = np.zeros(DRAWS, dtype=np.int64)
-        active = np.ones(DRAWS, dtype=bool) if any(rates) else np.zeros(DRAWS, dtype=bool)
-        coefficients = Coefficients(1., tier, scale, parry, starter)
-        damages = [[hit_damage(actors[i], actors[1 - i], crit, coefficients) for crit in (False, True)]
-                   for i in range(2)]
-        for event in range(critical.shape[0]):
-            if not active.any():
-                break
-            chosen = np.where(clocks[0] < clocks[1], 0, 1)
-            for attacker in range(2):
-                trials = np.flatnonzero(active & (chosen == attacker))
-                if not len(trials):
-                    continue
-                defender = 1 - attacker
-                damage = np.where(critical[event, trials] < actors[attacker].hitchance,
-                                  damages[attacker][1], damages[attacker][0])
-                hp[defender, trials] = np.maximum(1, hp[defender, trials] - damage)
-                ended = trials[hp[defender, trials] == 1]
-                winner[ended] = attacker
-                duration[ended] = clocks[attacker, ended]
-                loss[ended] = actors[attacker].hp - hp[attacker, ended]
-                active[ended] = False
-                continuing = trials[hp[defender, trials] != 1]
-                clocks[attacker, continuing] += exponential[event, continuing] / rates[attacker]
-        if active.any():
-            raise AssertionError('HP bound exhausted before knockout')
-        return winner, duration, loss
 
     def simulate(self, index, coefficients):
-        winner, duration, loss = self.path(index, coefficients.rate_per_tier, coefficients.damage_scale,
-                                           coefficients.parry_per_tier, coefficients.starter_rate)
-        winner = np.where(duration / coefficients.rate_base <= TIME_LIMIT_S, winner, 2)
-        probabilities = [int(np.count_nonzero(winner == result)) / DRAWS for result in range(3)]
-        return probabilities, winner, loss
-
-    @lru_cache(maxsize=16384)
-    def scores(self, coefficients):
-        self.evaluations += 1
-        return tuple(log_likelihood(cell['counts'], self.simulate(index, coefficients)[0])
-                     for index, cell in enumerate(self.cells))
-
-
-def candidate_grid(variant):
-    axes = list(GRID[:3]) + [GRID[3] if variant in ('B', 'C') else (0.,),
-                            GRID[4] if variant == 'C' else (1.,)]
-    return [Coefficients(*values, variant) for values in itertools.product(*axes)]
-
-
-def fit(evaluator, indices, variant):
-    def score(coefficients):
-        scores = evaluator.scores(coefficients)
-        return sum(scores[index] for index in indices)
-
-    def ranking(coefficients):
-        return (-score(coefficients), *(getattr(coefficients, name) for name in PARAMETERS))
-
-    best = min(candidate_grid(variant), key=ranking)
-    dimensions = 3 if variant == 'A' else 4 if variant == 'B' else 5
-    for refinement in range(3):
-        while True:
-            improved = False
-            for dimension in range(dimensions):
-                name = PARAMETERS[dimension]
-                step = STEPS[dimension] / 2 ** refinement
-                low, high = BOUNDS[dimension]
-                choices = [best]
-                for direction in (-1, 1):
-                    value = round(getattr(best, name) + direction * step, 8)
-                    if low <= value <= high:
-                        choices.append(replace(best, **{name: value}))
-                candidate = min(choices, key=ranking)
-                # Resolve improving candidates lexicographically, but never walk a
-                # likelihood plateau. Repeat complete sweeps to a coordinate optimum.
-                if score(candidate) > score(best):
-                    best = candidate
-                    improved = True
-            if not improved:
-                break
-    return best, score(best)
-
-
-def calibrate(cells):
-    if not cells:
-        raise ValueError('No training cells')
-    evaluator = Evaluator(cells)
-    pairs = sorted({cell['pair'] for cell in cells})
-    if len(pairs) < 2:
-        raise ValueError('Cross-validation requires at least two training pairs')
-    variants = []
-    n = sum(cell['n'] for cell in cells)
-    for variant in ('A', 'B', 'C'):
-        folds = []
-        for pair in pairs:
-            training = [i for i, cell in enumerate(cells) if cell['pair'] != pair]
-            testing = [i for i, cell in enumerate(cells) if cell['pair'] == pair]
-            coefficients, training_ll = fit(evaluator, training, variant)
-            scores = evaluator.scores(coefficients)
-            folds.append(dict(pair=pair, training_pairs=sorted(set(pairs) - {pair}),
-                              coefficients=asdict(coefficients), train_log_likelihood=training_ll,
-                              log_likelihood=sum(scores[i] for i in testing),
-                              n=sum(cells[i]['n'] for i in testing)))
-            print(f'far-fight-fit: {variant}, held out {pair}, '
-                  f'log likelihood {folds[-1]["log_likelihood"]:.6f}', file=sys.stderr, flush=True)
-        final, training_ll = fit(evaluator, list(range(len(cells))), variant)
-        cv_ll = sum(fold['log_likelihood'] for fold in folds)
-        variants.append(dict(variant=variant, coefficients=asdict(final), folds=folds,
-                             train_log_likelihood=training_ll, cv_log_likelihood=cv_ll,
-                             cv_likelihood_per_duel=math.exp(cv_ll / n)))
-    best = max(value['cv_log_likelihood'] for value in variants)
-    selected = next(value for value in variants
-                    if (best - value['cv_log_likelihood']) / n < math.log(1.01))
-    coefficients = Coefficients(**selected['coefficients'])
-    return dict(selected=selected['variant'], coefficients=asdict(coefficients), variants=variants,
-                training_records=n, training_pairs=pairs, evaluations=evaluator.evaluations), evaluator
+        cell = self.cells[index]
+        draws = [_duel(*cell['actors'], coefficients, seed) for seed in trial_seeds(cell)]
+        winners = [2 if d[0] is None else 0 if d[0] == cell['attacker'] else 1 for d in draws]
+        return dict(probabilities=[winners.count(role)/DRAWS for role in range(3)],
+                    winners=winners, losses=[d[1] for d in draws], durations=[d[2] for d in draws])
 
 
 def binomial_interval(n, probability):
@@ -309,56 +259,51 @@ def binomial_interval(n, probability):
 
 
 def cell_result(cell, evaluator, index, coefficients):
-    probabilities, winner, loss = evaluator.simulate(index, coefficients)
-    medians = [float(np.median(loss[winner == role] / cell['hp_max'][role]))
-               if np.any(winner == role) else None for role in range(2)]
-    observed = [statistics.median(values) if values else None for values in cell['losses']]
-    pooled_observed = [value for values in cell['losses'] for value in values]
-    pooled_model = [float(loss[trial] / cell['hp_max'][role])
-                    for trial, role in enumerate(winner) if role < 2]
+    draws = evaluator.simulate(index, coefficients)
+    winner_losses = [draws['losses'][i]/cell['hp_max'][role]
+                     for i, role in enumerate(draws['winners']) if role < 2]
     return dict(pair=cell['pair'], attacker=cell['attacker'], defender=cell['defender'], n=cell['n'],
-                counts=cell['counts'], probabilities=probabilities, deaths=cell['deaths'],
-                observed_winner_loss=observed, model_winner_loss=medians,
-                observed_median_winner_loss=statistics.median(pooled_observed) if pooled_observed else None,
-                model_median_winner_loss=statistics.median(pooled_model) if pooled_model else None,
-                log_likelihood=log_likelihood(cell['counts'], probabilities))
+                counts=cell['counts'], probabilities=draws['probabilities'], deaths=cell['deaths'],
+                observed_median_winner_loss=statistics.median(cell['losses']) if cell['losses'] else None,
+                model_median_winner_loss=statistics.median(winner_losses) if winner_losses else None,
+                observed_median_duration_s=cell['median_duration_s'],
+                model_median_duration_s=statistics.median(draws['durations']),
+                log_likelihood=log_likelihood(cell['counts'], draws['probabilities']))
 
 
-def accept(cells, training, coefficients, pairs):
+def accept(cells, training, coefficients, pairs, excluded):
     expected = {(pair['id'], a, b) for pair in pairs if pair['holdout']
                 for a, b in (pair['npcs'], pair['npcs'][::-1])}
+    excluded_keys = {(frozenset(row[role]['instance'] for role in ROLES), row['attacker']['instance'])
+                     for row in excluded}
+    expected = {key for key in expected if (frozenset(key[1:]), key[1]) not in excluded_keys}
     actual = {(cell['pair'], cell['attacker'], cell['defender']) for cell in cells}
-    if actual != expected:
-        raise ValueError(f'Holdout cells incomplete: expected {len(expected)}, got {len(actual)}')
+    if actual != expected or any(cell['n'] != 10 for cell in cells):
+        raise ValueError(f'Holdout cells incomplete: expected {len(expected)} cells of 10, got {len(actual)}')
     evaluator = Evaluator(cells)
     total = sum(cell['n'] for cell in training)
     constant = [sum(cell['counts'][result] for cell in training) / total for result in range(3)]
     results = []
     for index, cell in enumerate(cells):
         result = cell_result(cell, evaluator, index, coefficients)
-        result['intervals'] = {name: binomial_interval(cell['n'], result['probabilities'][outcome_id])
-                               for name, outcome_id in (('attacker_wins', 0), ('timeouts', 2))}
-        result['count_checks'] = {name: interval[0] <= cell['counts'][outcome_id] <= interval[1]
-                                  for (name, outcome_id), interval in zip(
-                                      (('attacker_wins', 0), ('timeouts', 2)),
-                                      result['intervals'].values(), strict=True)}
-        result['winner_counts'] = [len(values) for values in cell['losses']]
-        result['hp_check'] = None if sum(result['winner_counts']) < 3 else (
-            result['model_median_winner_loss'] is not None
-            and abs(result['model_median_winner_loss'] - result['observed_median_winner_loss']) <= .15)
+        result['attacker_win_interval'] = binomial_interval(cell['n'], result['probabilities'][0])
+        low, high = result['attacker_win_interval']
+        result['count_check'] = low <= cell['counts'][0] <= high
         result['uncalibrated_log_likelihood'] = log_likelihood(
-            cell['counts'], evaluator.simulate(index, UNCALIBRATED)[0])
+            cell['counts'], evaluator.simulate(index, UNCALIBRATED)['probabilities'])
         result['constant_log_likelihood'] = log_likelihood(cell['counts'], constant)
-        result['passed'] = all(result['count_checks'].values()) and result['hp_check'] is not False
         results.append(result)
     n = sum(cell['n'] for cell in cells)
     scores = {name: sum(cell[name] for cell in results) for name in (
         'log_likelihood', 'uncalibrated_log_likelihood', 'constant_log_likelihood')}
     better = scores['log_likelihood'] > max(scores['uncalibrated_log_likelihood'],
                                            scores['constant_log_likelihood'])
-    return dict(passed=better and all(cell['passed'] for cell in results), cells=results,
-                records=n, constant_probabilities=constant, better_than_baselines=better,
-                **scores, likelihood_per_duel={name: math.exp(score / n) for name, score in scores.items()})
+    counts_pass = all(cell['count_check'] for cell in results)
+    return dict(passed=better and counts_pass, cells=results, records=n,
+                constant_probabilities=constant, better_than_baselines=better,
+                all_attacker_counts_in_interval=counts_pass, **scores,
+                mean_log_likelihood={name: score/n for name, score in scores.items()},
+                likelihood_per_duel={name: math.exp(score/n) for name, score in scores.items()})
 
 
 def run(folders, weapons, pairs, *, acceptance=False):
@@ -370,26 +315,33 @@ def run(folders, weapons, pairs, *, acceptance=False):
                 raise ValueError(row['reason'])
             if row.get('kind') == 'npc_duel':
                 rows.append(row)
-    training = cells_from_rows(rows, pairs, weapons)
-    result, evaluator = calibrate(training)
-    coefficients = Coefficients(**result['coefficients'])
-    result['settings'] = dict(draws=DRAWS, probability_floor=PROBABILITY_FLOOR,
-                              time_limit_s=TIME_LIMIT_S, seed_namespace=SEED_NAMESPACE,
-                              grid=dict(zip(PARAMETERS, GRID, strict=True)),
-                              bounds=dict(zip(PARAMETERS, BOUNDS, strict=True)),
-                              refinement_steps=STEPS, refinement_levels=3,
-                              refinement_strategy=('repeat coordinate sweeps at each step size until no strict '
-                                                   'log-likelihood improvement; lexicographic candidate ties, '
-                                                   'no plateau moves'),
-                              selection_threshold='simplest within 1% of best CV likelihood per duel')
+    train_rows, excluded_train = split_rows(rows, pairs)
+    if not train_rows:
+        raise ValueError('No training duels')
+    # Verify even excluded training hits; exclusion applies only to estimation/acceptance.
+    verification = verify_base_damage(train_rows + excluded_train, weapons)
+    training = cells_from_rows(train_rows, pairs, weapons)
+    result = measure_parts(train_rows)
+    coefficients = Coefficients.from_mapping(result['calibration'])
+    result.update(training_records=len(train_rows), training_pairs=sorted({c['pair'] for c in training}),
+                  excluded_training_duels=len(excluded_train), base_damage_verification=verification,
+                  settings=dict(draws=DRAWS, probability_floor=PROBABILITY_FLOOR,
+                                time_limit_s=TIME_LIMIT_S, seed_namespace=SEED_NAMESPACE,
+                                minimum_swings=MIN_SWINGS,
+                                pooling=('exact <30 swings -> ignore opponent tier; '
+                                         'still <30 -> ignore own tier')),
+                  folders=[Path(folder).name for folder in sorted(map(Path, folders))])
+    evaluator = Evaluator(training)
     result['training_cells'] = [cell_result(cell, evaluator, i, coefficients)
                                 for i, cell in enumerate(training)]
-    train_rows = [row for row in rows if frozenset(row[role]['instance'] for role in ('attacker', 'defender'))
-                  in {frozenset(pair['npcs']) for pair in pairs if not pair['holdout']}]
-    result['training_summary'] = summarize(train_rows, pairs)
-    result['folders'] = [Path(folder).name for folder in sorted(map(Path, folders))]
-    result['acceptance'] = (accept(cells_from_rows(rows, pairs, weapons, holdout=True), training,
-                                   coefficients, pairs) if acceptance else None)
+    result['acceptance'] = None
+    if acceptance:
+        holdout_rows, excluded_holdout = split_rows(rows, pairs, holdout=True)
+        verified = verify_base_damage(holdout_rows + excluded_holdout, weapons)
+        result['base_damage_verification'] = {key: verification[key]+verified[key] for key in verification}
+        result['excluded_holdout_duels'] = len(excluded_holdout)
+        result['acceptance'] = accept(cells_from_rows(holdout_rows, pairs, weapons), training,
+                                      coefficients, pairs, excluded_holdout)
     return result
 
 
@@ -405,10 +357,12 @@ def main(argv=None):
                  acceptance=args.accept)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False) + '\n')
-    print(json.dumps({key: result[key] for key in ('selected', 'coefficients', 'training_records')}))
+    print(json.dumps({key: result[key] for key in ('training_records', 'excluded_training_duels',
+                                                 'base_damage_verification')}))
     if result['acceptance'] is not None:
         print(json.dumps({'acceptance': result['acceptance']['passed'],
-                          'records': result['acceptance']['records']}))
+                          'records': result['acceptance']['records'],
+                          'mean_log_likelihood': result['acceptance']['mean_log_likelihood']}))
     return 0
 
 
