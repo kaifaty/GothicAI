@@ -1,0 +1,1098 @@
+{
+  "asset": "city-hearth",
+  "title": "Кухня и очаг: котёл, сковорода, кострища, плита, камины, уличный светильник",
+  "kind": "props",
+  "created": "2026-10-31",
+  "goal": "the same Gothic, better made",
+  "namespaces": [
+    "city-hearth"
+  ],
+  "sources": [
+    {
+      "file": "city-hearth/concept-hearth-cauldron-attempt-1.png",
+      "role": "concept",
+      "texture": "hearth-cauldron",
+      "attempt": 1,
+      "sha256": "b77e31a1f188e1ac35b247efcdf7886337022e246b4848ccff700ba28c241fec",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T12:44:13Z",
+      "thread": "01a191fc-629a-7350-ab99-58ed9488dbc9",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-cauldron-attempt-2.png",
+      "role": "concept",
+      "texture": "hearth-cauldron",
+      "attempt": 2,
+      "sha256": "184caf949c898df14cb00cc4648502f05f43d2479221ea577608eb0cfde965cc",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T12:44:44Z",
+      "thread": "01a191fc-629a-7350-ab99-58ed9488dbc9",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-cauldron-attempt-3.png",
+      "role": "concept",
+      "texture": "hearth-cauldron",
+      "attempt": 3,
+      "sha256": "d45132b7448ec1bb51d0af6d7e856902e7370fad4c8730109dd569cad28acb29",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T12:45:10Z",
+      "thread": "01a191fc-629a-7350-ab99-58ed9488dbc9",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-pan-attempt-1.png",
+      "role": "concept",
+      "texture": "hearth-pan",
+      "attempt": 1,
+      "sha256": "d8bcef74a49e924838082c33080902780e81d603ae19fb72cd9a0c683ea67cef",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T12:44:08Z",
+      "thread": "01a191fc-72f4-7ca0-b716-f61bc9752677",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-pan-attempt-2.png",
+      "role": "concept",
+      "texture": "hearth-pan",
+      "attempt": 2,
+      "sha256": "1055ffba4e4a60d000724ffe59e03814aba84ed431ef4b8c1fe23a52027f215d",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T12:44:46Z",
+      "thread": "01a191fc-72f4-7ca0-b716-f61bc9752677",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-pan-attempt-3.png",
+      "role": "concept",
+      "texture": "hearth-pan",
+      "attempt": 3,
+      "sha256": "0f2b254ccfe36afa1249b4f4cf5d59383f55997aa337ed33e8c060ccbbc8f8e4",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T12:45:12Z",
+      "thread": "01a191fc-72f4-7ca0-b716-f61bc9752677",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-tripod-attempt-1.png",
+      "role": "concept",
+      "texture": "hearth-tripod",
+      "attempt": 1,
+      "sha256": "9261678f07697d7981a2fa9ebd16638d7c75c0315471459a4578bbcce13cd63c",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T12:43:37Z",
+      "thread": "01a191fc-89cb-7061-bca4-0305f3a56354",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-tripod-attempt-2.png",
+      "role": "concept",
+      "texture": "hearth-tripod",
+      "attempt": 2,
+      "sha256": "1a18a4e3d0ac64673af098c69bbc929fc5c8ca53221c5e043cff732cd372c9c5",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T12:44:32Z",
+      "thread": "01a191fc-89cb-7061-bca4-0305f3a56354",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-tripod-attempt-3.png",
+      "role": "concept",
+      "texture": "hearth-tripod",
+      "attempt": 3,
+      "sha256": "f8c86f810d0ebea3284d3f3c986c041b262cc1de18a409057b2453621a5d1c0e",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T12:44:56Z",
+      "thread": "01a191fc-89cb-7061-bca4-0305f3a56354",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-brazier-attempt-1.png",
+      "role": "concept",
+      "texture": "hearth-brazier",
+      "attempt": 1,
+      "sha256": "554f5720ca2bc6c63ef94762614f4dbf9979ba126a2ca7831e2694f95d85a70f",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T12:44:11Z",
+      "thread": "01a191fc-9fd5-7a93-80d6-2bba3148b506",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-brazier-attempt-2.png",
+      "role": "concept",
+      "texture": "hearth-brazier",
+      "attempt": 2,
+      "sha256": "3e46dea38824c46a035fe3c773b29824518f9266cc713891a3d88b5cbc0c3471",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T12:44:49Z",
+      "thread": "01a191fc-9fd5-7a93-80d6-2bba3148b506",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-brazier-attempt-3.png",
+      "role": "concept",
+      "texture": "hearth-brazier",
+      "attempt": 3,
+      "sha256": "92da37879b8614763b5a38d7bbf03aaa8c1fca9c2917b12a49ab813fdce42da6",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T12:45:25Z",
+      "thread": "01a191fc-9fd5-7a93-80d6-2bba3148b506",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-cauldron-attempt-4.png",
+      "role": "concept",
+      "texture": "hearth-cauldron",
+      "attempt": 4,
+      "sha256": "483aaeb4f84719c878d39c97656e82825aff488aef36c43cfb1ecc20b95ac5e5",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T12:52:58Z",
+      "thread": "01a19204-b84a-7ce1-a0fb-a5c23f4c41ff",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-cauldron-attempt-5.png",
+      "role": "concept",
+      "texture": "hearth-cauldron",
+      "attempt": 5,
+      "sha256": "ee400731f3dcaeb736e537316101c19fdd1bc28319fa5595ac8e13d6e049687d",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T12:53:34Z",
+      "thread": "01a19204-b84a-7ce1-a0fb-a5c23f4c41ff",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-cauldron-attempt-6.png",
+      "role": "concept",
+      "texture": "hearth-cauldron",
+      "attempt": 6,
+      "sha256": "7c04e93d5a268d75caf73f34d7a46298556f64db3dcb2d4c725f7e57b3faba14",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T12:54:08Z",
+      "thread": "01a19204-b84a-7ce1-a0fb-a5c23f4c41ff",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-pan-attempt-4.png",
+      "role": "concept",
+      "texture": "hearth-pan",
+      "attempt": 4,
+      "sha256": "04bc3861020001577443c40063ebfc9c7c55db34f5eb93b3fb983ee234636a72",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T12:53:01Z",
+      "thread": "01a19204-c861-78e2-84c8-5e29497c774b",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-pan-attempt-5.png",
+      "role": "concept",
+      "texture": "hearth-pan",
+      "attempt": 5,
+      "sha256": "886b5d0316d60e050c1a3181d4214dceff1644c0cf9a93c2115170ba6d7cde8a",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T12:53:39Z",
+      "thread": "01a19204-c861-78e2-84c8-5e29497c774b",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-pan-attempt-6.png",
+      "role": "concept",
+      "texture": "hearth-pan",
+      "attempt": 6,
+      "sha256": "2e4b90f13bb9ea1df59878a09c4fedf63bd17c5d16feb99ebcee8d7f73ccd181",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T12:54:05Z",
+      "thread": "01a19204-c861-78e2-84c8-5e29497c774b",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-tripod-attempt-4.png",
+      "role": "concept",
+      "texture": "hearth-tripod",
+      "attempt": 4,
+      "sha256": "be37bd4d83351e90e75b9802c2b55fb8d6d8e3382c615608ab12e9c4331adb2b",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T12:52:47Z",
+      "thread": "01a19204-d858-7492-a240-e123025d5943",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-tripod-attempt-5.png",
+      "role": "concept",
+      "texture": "hearth-tripod",
+      "attempt": 5,
+      "sha256": "2ccdf4b9d3caa0d163d511b911468462f76ecf45f7f8ec1905ead8fc4624b20f",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T12:53:39Z",
+      "thread": "01a19204-d858-7492-a240-e123025d5943",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-tripod-attempt-6.png",
+      "role": "concept",
+      "texture": "hearth-tripod",
+      "attempt": 6,
+      "sha256": "f4bd9974772f5c4e7a214a26181f0e0412f624c1981adcc14544b3351e0b8875",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T12:54:01Z",
+      "thread": "01a19204-d858-7492-a240-e123025d5943",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-brazier-attempt-4.png",
+      "role": "concept",
+      "texture": "hearth-brazier",
+      "attempt": 4,
+      "sha256": "6486e1dd31275ac86b6595159eba5d46165b492c178808766a268b62fff27f74",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T12:53:18Z",
+      "thread": "01a19204-e5cc-7e52-a502-c8aa2b482f0f",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-brazier-attempt-5.png",
+      "role": "concept",
+      "texture": "hearth-brazier",
+      "attempt": 5,
+      "sha256": "b1e799866593221cdceaa1beee368d4560f44f02f0fd3561a8a0baab4d37a15f",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T12:53:42Z",
+      "thread": "01a19204-e5cc-7e52-a502-c8aa2b482f0f",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-brazier-attempt-6.png",
+      "role": "concept",
+      "texture": "hearth-brazier",
+      "attempt": 6,
+      "sha256": "178f96e33eec1a438bbb88926cb10df2131aa1b35c49ae3e0fcb856b6f3abc2d",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T12:54:09Z",
+      "thread": "01a19204-e5cc-7e52-a502-c8aa2b482f0f",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-cauldron-attempt-7.png",
+      "role": "concept",
+      "texture": "hearth-cauldron",
+      "attempt": 7,
+      "sha256": "c7fc0ad7c5a5789315fe63f044e78fd2f246f67a57cc9cd8fe07cb04b3e383e5",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T13:01:02Z",
+      "thread": "01a1920b-e7bd-7fa1-84eb-02479c7031d5",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-cauldron-attempt-8.png",
+      "role": "concept",
+      "texture": "hearth-cauldron",
+      "attempt": 8,
+      "sha256": "10219ccc9c2d0ba8aec93fad5f564b5708880a31180801c00c0568a63af84a9e",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T13:01:35Z",
+      "thread": "01a1920b-e7bd-7fa1-84eb-02479c7031d5",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-cauldron-attempt-9.png",
+      "role": "concept",
+      "texture": "hearth-cauldron",
+      "attempt": 9,
+      "sha256": "1d01ec717de3cb49b859169f77368d8b762f6ccae2d6672e6a7bf9b79404bf9f",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T13:02:00Z",
+      "thread": "01a1920b-e7bd-7fa1-84eb-02479c7031d5",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-pan-attempt-7.png",
+      "role": "concept",
+      "texture": "hearth-pan",
+      "attempt": 7,
+      "sha256": "4ffa77d732e2649b938e67ffa0f24a91e74fd40b2665ce69632c51f5eeb04bf8",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T13:01:08Z",
+      "thread": "01a1920b-f96b-72a1-ba6d-38ae1fd7f55b",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-pan-attempt-8.png",
+      "role": "concept",
+      "texture": "hearth-pan",
+      "attempt": 8,
+      "sha256": "4c348de819f1b2d81c0940bee1d2fa5b5c9c40e50ec21b38149639c852ced752",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T13:01:30Z",
+      "thread": "01a1920b-f96b-72a1-ba6d-38ae1fd7f55b",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-pan-attempt-9.png",
+      "role": "concept",
+      "texture": "hearth-pan",
+      "attempt": 9,
+      "sha256": "4ec5b3f0df5b6e41af592701791366f4a8bdec5ad57ac78dcfb28b95d876e0e5",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T13:01:58Z",
+      "thread": "01a1920b-f96b-72a1-ba6d-38ae1fd7f55b",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-tripod-attempt-7.png",
+      "role": "concept",
+      "texture": "hearth-tripod",
+      "attempt": 7,
+      "sha256": "23c5170d47d6825100b24e4ad60871cdd9b25fb08b02317769b670fbb1b1f2cf",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T13:00:58Z",
+      "thread": "01a1920c-098c-7d30-8965-40f9fece9bf2",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-tripod-attempt-8.png",
+      "role": "concept",
+      "texture": "hearth-tripod",
+      "attempt": 8,
+      "sha256": "acefb0327668b2f949897454d382fe8d0ee306f06e71ff267f7ced3a1fa95b50",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T13:01:24Z",
+      "thread": "01a1920c-098c-7d30-8965-40f9fece9bf2",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-tripod-attempt-9.png",
+      "role": "concept",
+      "texture": "hearth-tripod",
+      "attempt": 9,
+      "sha256": "a64342fcbfc8388f3e240114ccfb01659e2d41b07b13363385fcd807dc9a4479",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T13:01:46Z",
+      "thread": "01a1920c-098c-7d30-8965-40f9fece9bf2",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-brazier-attempt-7.png",
+      "role": "concept",
+      "texture": "hearth-brazier",
+      "attempt": 7,
+      "sha256": "6e3919c42d1866786df1f507a55b5a2e4de6129738cd09783325692cfc60f75c",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T13:01:17Z",
+      "thread": "01a1920c-19d2-75b3-b21e-b3c8a33194b2",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-brazier-attempt-8.png",
+      "role": "concept",
+      "texture": "hearth-brazier",
+      "attempt": 8,
+      "sha256": "1ada320cd0e550fe4960621006d02469fcbf8f1896202f3c68aca4edf7825a53",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T13:01:42Z",
+      "thread": "01a1920c-19d2-75b3-b21e-b3c8a33194b2",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-brazier-attempt-9.png",
+      "role": "concept",
+      "texture": "hearth-brazier",
+      "attempt": 9,
+      "sha256": "774ad4d679fa40aa262b4f7d8489dd525e64cc3ee3abb477ffba6e120d58fd30",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T13:02:12Z",
+      "thread": "01a1920c-19d2-75b3-b21e-b3c8a33194b2",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/tile-stone-attempt-1.png",
+      "role": "texture",
+      "texture": "tile-stone",
+      "attempt": 1,
+      "sha256": "287f3e2623c6d7b5932c0808138b4b9e6880d3e234170fbcddd39d0e62460e59",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T13:16:52Z",
+      "thread": "01a1921a-f508-71e0-8cb8-d7a66abc414b",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/tile-stone-attempt-2.png",
+      "role": "texture",
+      "texture": "tile-stone",
+      "attempt": 2,
+      "sha256": "4981a0c7d7ea578d8ec6729a133c92a3d2749c2b4e72c303f4753c6870993480",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T13:17:34Z",
+      "thread": "01a1921a-f508-71e0-8cb8-d7a66abc414b",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/tile-ember-attempt-1.png",
+      "role": "texture",
+      "texture": "tile-ember",
+      "attempt": 1,
+      "sha256": "927a1719fbd74c301697dc1c7674b993c5a3d22cbc9d86cada8b86a0a09f9e4b",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T13:17:16Z",
+      "thread": "01a1921b-0342-7872-ab42-3403bbb325b5",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/tile-ember-attempt-2.png",
+      "role": "texture",
+      "texture": "tile-ember",
+      "attempt": 2,
+      "sha256": "38ab2b77055f3456cf8e263b9f543e97bc2978e1d0a4a854e84b3e5fe574fe2c",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T13:17:47Z",
+      "thread": "01a1921b-0342-7872-ab42-3403bbb325b5",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/tile-ash-attempt-1.png",
+      "role": "texture",
+      "texture": "tile-ash",
+      "attempt": 1,
+      "sha256": "fc689b93fafb77a5f2eb61c6413bcb23b8165cf2d3a2e39859cc64371ae50dd4",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T13:17:12Z",
+      "thread": "01a1921b-152c-77c0-a518-7acc61dc02b8",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/tile-ash-attempt-2.png",
+      "role": "texture",
+      "texture": "tile-ash",
+      "attempt": 2,
+      "sha256": "9a2dc03fc281b5a89815508934293b376121b324f9b22434e35ab2051c380868",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T13:17:42Z",
+      "thread": "01a1921b-152c-77c0-a518-7acc61dc02b8",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/tile-iron-attempt-1.png",
+      "role": "texture",
+      "texture": "tile-iron",
+      "attempt": 1,
+      "sha256": "555acf96d9ba9371d803e3c6f3ac3ca2fb9beda40b0c3ac208ac6cf297fc895c",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T13:25:21Z",
+      "thread": "01a19222-7114-7cb2-ab9c-a2495c424f2f",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/tile-iron-attempt-2.png",
+      "role": "texture",
+      "texture": "tile-iron",
+      "attempt": 2,
+      "sha256": "8842211ea17d5fb810c0fd6c6c7ebcd41495920e8734ec79ba3eceee7bb78c2d",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T13:25:48Z",
+      "thread": "01a19222-7114-7cb2-ab9c-a2495c424f2f",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-stove-attempt-1.png",
+      "role": "concept",
+      "texture": "hearth-stove",
+      "attempt": 1,
+      "sha256": "8b1790402c0773c461df2cc5b97571d5172252270cf70310fb67c5e8752b8b0f",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T14:44:15Z",
+      "thread": "01a1926a-5af8-74e1-939a-457e86f7165c",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-stove-attempt-2.png",
+      "role": "concept",
+      "texture": "hearth-stove",
+      "attempt": 2,
+      "sha256": "a3bc2ad776bada0fa7a50d6f66f2f300c8242a985fcba4375864c4e83aa87222",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T14:44:58Z",
+      "thread": "01a1926a-5af8-74e1-939a-457e86f7165c",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-stove-attempt-3.png",
+      "role": "concept",
+      "texture": "hearth-stove",
+      "attempt": 3,
+      "sha256": "b9c46bec0676940a523aa7ff9d7738d3be7c2b71d83eab0ccc7e457de6b5b57d",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T14:45:34Z",
+      "thread": "01a1926a-5af8-74e1-939a-457e86f7165c",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-fireplace-attempt-1.png",
+      "role": "concept",
+      "texture": "hearth-fireplace",
+      "attempt": 1,
+      "sha256": "a2a5bf88729fa1021aaeab7090e0072d823f77bd102d2684703ddb566248af63",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T14:44:16Z",
+      "thread": "01a1926a-684d-79c0-a30d-9091ed76b76c",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-fireplace-attempt-2.png",
+      "role": "concept",
+      "texture": "hearth-fireplace",
+      "attempt": 2,
+      "sha256": "80d75b1dabc5fc74301eed590248f6f5247228edf621d1ec60e73b798893e29f",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T14:44:43Z",
+      "thread": "01a1926a-684d-79c0-a30d-9091ed76b76c",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-fireplace-attempt-3.png",
+      "role": "concept",
+      "texture": "hearth-fireplace",
+      "attempt": 3,
+      "sha256": "5da0dff073956fc4bf522d32b7dc3e261cca55e8353936d4ee5d9c6e6b4b62c0",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T14:45:04Z",
+      "thread": "01a1926a-684d-79c0-a30d-9091ed76b76c",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-fireplace-large-attempt-1.png",
+      "role": "concept",
+      "texture": "hearth-fireplace-large",
+      "attempt": 1,
+      "sha256": "5e885951971e64a9b4e264a4b69f232bb3d7e75b011a3214d35bf049e32c84ea",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T14:44:05Z",
+      "thread": "01a1926a-7765-71c1-ae06-29c22021c4f9",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-fireplace-large-attempt-2.png",
+      "role": "concept",
+      "texture": "hearth-fireplace-large",
+      "attempt": 2,
+      "sha256": "59d66c28ebea63fdd1cd0f07f0a12289b6392306203559d5e0d60d51db498d2d",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T14:44:29Z",
+      "thread": "01a1926a-7765-71c1-ae06-29c22021c4f9",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-fireplace-large-attempt-3.png",
+      "role": "concept",
+      "texture": "hearth-fireplace-large",
+      "attempt": 3,
+      "sha256": "8f779bc6c1a6b6234004e1e1108f5f0d1f012551984aaf062522cbcca9a63223",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T14:44:52Z",
+      "thread": "01a1926a-7765-71c1-ae06-29c22021c4f9",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-fireplace-wide-attempt-1.png",
+      "role": "concept",
+      "texture": "hearth-fireplace-wide",
+      "attempt": 1,
+      "sha256": "99b4a0e6c470c6c522342ae1c518350c11df85fa37a9f1e0dceea4fa4ac69b4e",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T14:44:02Z",
+      "thread": "01a1926a-8444-7d42-b8ad-971781a81a6c",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-fireplace-wide-attempt-2.png",
+      "role": "concept",
+      "texture": "hearth-fireplace-wide",
+      "attempt": 2,
+      "sha256": "b193007704fe2bfe1ca43aada78a0b703f12c3c5170a880cd77dafbd5198d2d1",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T14:44:34Z",
+      "thread": "01a1926a-8444-7d42-b8ad-971781a81a6c",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-hearth-fireplace-wide-attempt-3.png",
+      "role": "concept",
+      "texture": "hearth-fireplace-wide",
+      "attempt": 3,
+      "sha256": "65a20d6e2f1e3c65251fd85f2fc32ca16035fcca50f6728e0e2c7fb310024a48",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-10-31T14:44:56Z",
+      "thread": "01a1926a-8444-7d42-b8ad-971781a81a6c",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-attempt-1.png",
+      "role": "concept",
+      "texture": null,
+      "attempt": 1,
+      "sha256": "4a34d60ea476a2f97a51408decf9d23917e3c070dacbcd20787369aeb4b85f88",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-11-01T21:03:22Z",
+      "thread": "01a198ec-5ac4-7a63-b8fb-38cfa7cbbf3b",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-attempt-2.png",
+      "role": "concept",
+      "texture": null,
+      "attempt": 2,
+      "sha256": "97b7d1930b1dce0688ce81820836d89ee6ce4614a44b145a3219c2b5a661058e",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-11-01T21:04:13Z",
+      "thread": "01a198ec-5ac4-7a63-b8fb-38cfa7cbbf3b",
+      "parent": null
+    },
+    {
+      "file": "city-hearth/concept-attempt-3.png",
+      "role": "concept",
+      "texture": null,
+      "attempt": 3,
+      "sha256": "1ac589f7c7745056cb436ef69516779d34169157856c4d5097db70c289e0fe20",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-11-01T21:04:44Z",
+      "thread": "01a198ec-5ac4-7a63-b8fb-38cfa7cbbf3b",
+      "parent": null
+    }
+  ],
+  "selected": {
+    "hearth-cauldron": {
+      "file": "city-hearth/concept-hearth-cauldron-attempt-6.png",
+      "reason": "образец материала и характера; форма — по мешу оригинала (решение пользователя 2026-10-31)",
+      "date": "2026-10-31"
+    },
+    "hearth-pan": {
+      "file": "city-hearth/concept-hearth-pan-attempt-8.png",
+      "reason": "образец материала и характера; форма — по мешу оригинала (решение пользователя 2026-10-31)",
+      "date": "2026-10-31"
+    },
+    "hearth-tripod": {
+      "file": "city-hearth/concept-hearth-tripod-attempt-6.png",
+      "reason": "образец материала и характера; форма — по мешу оригинала (решение пользователя 2026-10-31)",
+      "date": "2026-10-31"
+    },
+    "hearth-brazier": {
+      "file": "city-hearth/concept-hearth-brazier-attempt-9.png",
+      "reason": "образец материала и характера; форма — по мешу оригинала (решение пользователя 2026-10-31)",
+      "date": "2026-10-31"
+    },
+    "edda-hearth-fire": {
+      "file": "city-hearth/concept-attempt-3.png",
+      "reason": "эталон композиции очага Эдды: поленья звездой с горящими концами, угли и зола, языки из промежутков; камни и сажа котла — по обмеру и заметке fire-composition.md (пользователь 2026-11-02: «Take 3»)",
+      "date": "2026-11-02"
+    }
+  },
+  "reviews": [
+    {
+      "id": "r1-cauldron",
+      "stage": "concept",
+      "mode": "reference",
+      "verdict": "REJECT",
+      "date": "2026-10-31",
+      "path": "reviews/r1-cauldron/merged.json"
+    },
+    {
+      "id": "r1-pan",
+      "stage": "concept",
+      "mode": "reference",
+      "verdict": "REJECT",
+      "date": "2026-10-31",
+      "path": "reviews/r1-pan/merged.json"
+    },
+    {
+      "id": "r1-tripod",
+      "stage": "concept",
+      "mode": "reference",
+      "verdict": "REJECT",
+      "date": "2026-10-31",
+      "path": "reviews/r1-tripod/merged.json"
+    },
+    {
+      "id": "r1-brazier",
+      "stage": "concept",
+      "mode": "reference",
+      "verdict": "REJECT",
+      "date": "2026-10-31",
+      "path": "reviews/r1-brazier/merged.json"
+    },
+    {
+      "id": "r1b-cauldron",
+      "stage": "concept",
+      "mode": "reference",
+      "verdict": "REJECT",
+      "date": "2026-10-31",
+      "path": "reviews/r1b-cauldron/merged.json"
+    },
+    {
+      "id": "r1b-pan",
+      "stage": "concept",
+      "mode": "reference",
+      "verdict": "REJECT",
+      "date": "2026-10-31",
+      "path": "reviews/r1b-pan/merged.json"
+    },
+    {
+      "id": "r1b-tripod",
+      "stage": "concept",
+      "mode": "reference",
+      "verdict": "REJECT",
+      "date": "2026-10-31",
+      "path": "reviews/r1b-tripod/merged.json"
+    },
+    {
+      "id": "r1b-brazier",
+      "stage": "concept",
+      "mode": "reference",
+      "verdict": "REJECT",
+      "date": "2026-10-31",
+      "path": "reviews/r1b-brazier/merged.json"
+    },
+    {
+      "id": "r1c-cauldron",
+      "stage": "concept",
+      "mode": "reference",
+      "verdict": "REJECT",
+      "date": "2026-10-31",
+      "path": "reviews/r1c-cauldron/merged.json"
+    },
+    {
+      "id": "r1c-pan",
+      "stage": "concept",
+      "mode": "reference",
+      "verdict": "REJECT",
+      "date": "2026-10-31",
+      "path": "reviews/r1c-pan/merged.json"
+    },
+    {
+      "id": "r1c-tripod",
+      "stage": "concept",
+      "mode": "reference",
+      "verdict": "REJECT",
+      "date": "2026-10-31",
+      "path": "reviews/r1c-tripod/merged.json"
+    },
+    {
+      "id": "r1c-brazier",
+      "stage": "concept",
+      "mode": "reference",
+      "verdict": "REJECT",
+      "date": "2026-10-31",
+      "path": "reviews/r1c-brazier/merged.json"
+    },
+    {
+      "id": "r3-cauldron-close",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "REJECT",
+      "date": "2026-10-31",
+      "path": "reviews/r3-cauldron-close/merged.json"
+    },
+    {
+      "id": "r3-pan-fishers",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "REJECT",
+      "date": "2026-10-31",
+      "path": "reviews/r3-pan-fishers/merged.json"
+    },
+    {
+      "id": "r3-tripod-quay",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "REJECT",
+      "date": "2026-10-31",
+      "path": "reviews/r3-tripod-quay/merged.json"
+    },
+    {
+      "id": "r3-brazier-poor",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "REJECT",
+      "date": "2026-10-31",
+      "path": "reviews/r3-brazier-poor/merged.json"
+    },
+    {
+      "id": "r3-hearth-harbour",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "REJECT",
+      "date": "2026-10-31",
+      "path": "reviews/r3-hearth-harbour/merged.json"
+    },
+    {
+      "id": "r3-hearth-large-town",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "REJECT",
+      "date": "2026-10-31",
+      "path": "reviews/r3-hearth-large-town/merged.json"
+    },
+    {
+      "id": "r3-hearth-wide-upper",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "REJECT",
+      "date": "2026-10-31",
+      "path": "reviews/r3-hearth-wide-upper/merged.json"
+    }
+  ],
+  "gates": [
+    {
+      "gate": "preserve",
+      "verdict": "approved",
+      "by": "user",
+      "date": "2026-10-31",
+      "quote": "Принимаю",
+      "note": null
+    },
+    {
+      "gate": "concept",
+      "verdict": "approved",
+      "by": "user",
+      "date": "2026-10-31",
+      "quote": "Строить по мешу",
+      "note": "Волна 1. Три попытки Р1 без PASS (тон, уровень варева, высота треноги, ровное кольцо ломались по очереди). Пользователь выбрал: концепты — образец материала и характера (котёл attempt-6, сковорода attempt-8, тренога attempt-6, жаровня attempt-9), а размеры, профили, уровень варева, высоты и неровность кольца модель берёт из меша оригинала; тон — атлас по замерам кадра. Проверка — Р3 в игре."
+    }
+  ],
+  "build": null,
+  "backup": null
+}

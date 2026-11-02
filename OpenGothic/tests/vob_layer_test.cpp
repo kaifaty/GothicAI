@@ -146,7 +146,7 @@ void validLayers(const Fixture& f) {
   f.clearLayers();
   textFile(f.layers/"10-add.json","{\"format\":1,\"add\":["+mesh("base-solid","BASE.3DS","mesh")+","+
            mesh("own-ghost","VOB_LAYER_TEST_CUBE","none")+
-           R"(,{"key":"lamp","kind":"light","position":[1,2,3],"rotation":[[0,0,1],[0,1,0],[-1,0,0]],"range":450,"color":[255,128,0]}],"remove":[19],"move":[{"id":7,"position":[11,22,33],"yaw_deg":0}]})");
+           R"(,{"key":"lamp","kind":"light","position":[1,2,3],"rotation":[[0,0,1],[0,1,0],[-1,0,0]],"range":450,"color":[255,128,0],"color_ani":[[255,128,0],[200,90,10],[240,120,30]],"range_ani":[1,0.85],"ani_fps":12}],"remove":[19],"move":[{"id":7,"position":[11,22,33],"yaw_deg":0}]})");
   textFile(f.layers/"20-move.json",R"({"format":1,"move":[{"id":7,"position":[44,55,66],"rotation":[[0,0,1],[0,1,0],[-1,0,0]]},{"id":43,"position":[10,20,30],"yaw_deg":90}]})");
   const auto checked=VobLayer::check(f.world,f.layers/"10-add.json",f.content);
   require(checked.errors.empty() && checked.added==3 && checked.removed==1 && checked.moved==1,"offline checker valid layer counts");
@@ -166,6 +166,9 @@ void validLayers(const Fixture& f) {
           std::abs(std::abs(data.vobs[2]->rotation.columns[0].z)-1.f)<.0001f,"yaw rotates about the vertical axis");
   const auto* light=dynamic_cast<asset::VLight*>(data.vobs[4].get());
   require(light!=nullptr && light->is_static && light->range==450 && light->color.r==255 && light->color.g==128 && light->color.b==0,"static light properties");
+  require(light->color_animation_list.size()==3 && light->color_animation_list[1].r==200 && light->color_animation_list[1].b==10 &&
+          light->color_animation_fps==12 && light->range_animation_scale.size()==2 && light->range_animation_scale[1]==0.85f &&
+          light->range_animation_fps==12,"light flicker keys");
   const float rotationRows[3][3]={{0,0,1},{0,1,0},{-1,0,0}};
   for(unsigned row=0;row<3;++row) for(unsigned column=0;column<3;++column)
     require(light->rotation[column][row]==rotationRows[row][column] &&
@@ -185,6 +188,9 @@ void rejectedLayers(const Fixture& f) {
     {"duplicate-remove",R"({"format":1,"remove":[19,19]})"},
     {"unknown-visual","{\"format\":1,\"add\":["+mesh("missing","NO_SUCH_VISUAL")+"]}"},
     {"schema",R"({"format":1,"add":[{"key":"bad-schema","kind":"mesh","position":[0,0],"yaw_deg":0,"visual":"BASE","collision":"none"}]})"},
+    {"light-ani-fps",R"({"format":1,"add":[{"key":"bad-flicker","kind":"light","position":[0,0,0],"yaw_deg":0,"range":100,"color":[1,2,3],"color_ani":[[1,2,3],[4,5,6]]}]})"},
+    {"light-ani-scale",R"({"format":1,"add":[{"key":"bad-flicker","kind":"light","position":[0,0,0],"yaw_deg":0,"range":100,"color":[1,2,3],"range_ani":[1,5],"ani_fps":10}]})"},
+    {"light-ani-alone",R"({"format":1,"add":[{"key":"bad-flicker","kind":"light","position":[0,0,0],"yaw_deg":0,"range":100,"color":[1,2,3],"ani_fps":10}]})"},
     {"format",R"({"format":2})"}
     };
   for(const auto& [name,text]:bad) {
@@ -368,11 +374,19 @@ void particleDefinitions(const Fixture& f, const fs::path& baseRoot) {
     {"name":"OWN_TEST_SMOKE","base":"FIRE_SMOKE","set":{"visTexColorStart_S":"80 80 80","visAlphaStart":200,"lspPartAvg":12000,"ppsIsSmooth":1}},
     {"name":"OWN_TEST_CHAIN","base":"own_test_smoke.pfx","set":{"velAvg":0.23}}]})");
   textFile(directory/"20-chain.json",R"({"format":1,"effects":[{"name":"OWN_TEST_NEXT","base":"own_test_chain.PfX","set":{}}]})");
+  textFile(directory/"30-flip.json",R"({"format":1,"effects":[
+    {"name":"OWN_TEST_FLIP","base":"FIRE_SMOKE","set":{},"flipbook":{"cols":8,"rows":4,"frames":30,"fps":24,"yaw":true,"steady":true}},
+    {"name":"OWN_TEST_FLIP_CHILD","base":"OWN_TEST_FLIP","set":{"velAvg":0.1}}]})");
   auto vm=ParticleContent::openProgram(baseRoot);
   const auto original=ParticleContent::base(*vm,"FIRE_SMOKE");
   require(original!=nullptr,"base FIRE_SMOKE definition");
   const auto loaded=ParticleContent::load(*vm,f.content);
-  require(loaded.errors.empty() && loaded.effects.size()==4,"own definitions load in filename and declaration order");
+  require(loaded.errors.empty() && loaded.effects.size()==6,"own definitions load in filename and declaration order");
+  const auto flip=loaded.flipbooks.find("OWN_TEST_FLIP");
+  require(flip!=loaded.flipbooks.end() && flip->second.cols==8 && flip->second.rows==4 && flip->second.frames==30 &&
+          flip->second.fps==24.f && flip->second.yaw && flip->second.steady,"flipbook fields are read");
+  require(loaded.flipbooks.count("OWN_TEST_FLIP_CHILD")==1 && loaded.flipbooks.at("OWN_TEST_FLIP_CHILD").frames==30 &&
+          loaded.flipbooks.count("OWN_TEST_SMOKE")==0,"a flipbook is inherited from an own base only");
   particleFields(*vm,*loaded.effects.at("OWN_TEST_COPY"),*original);
   auto expected=*original;
   expected.vis_tex_color_start_s="80 80 80"; expected.vis_alpha_start=200;
@@ -393,7 +407,12 @@ void particleDefinitions(const Fixture& f, const fs::path& baseRoot) {
     {"base-conflict",R"({"name":"FIRE_SMOKE","base":"LIGHTSMOKE","set":{}})"},
     {"duplicate",R"({"name":"OWN_PREVIOUS","base":"FIRE_SMOKE","set":{}})"},
     {"format",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{}})"},
-    {"name",R"({"name":"own-smoke","base":"FIRE_SMOKE","set":{}})"}
+    {"name",R"({"name":"own-smoke","base":"FIRE_SMOKE","set":{}})"},
+    {"flip-frames",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"flipbook":{"cols":2,"rows":2,"frames":5,"fps":24}})"},
+    {"flip-grid",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"flipbook":{"cols":9,"rows":1,"frames":4,"fps":24}})"},
+    {"flip-field",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"flipbook":{"cols":2,"rows":2,"frames":4,"fps":24,"loop":1}})"},
+    {"flip-yaw",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"flipbook":{"cols":2,"rows":2,"frames":4,"fps":24,"yaw":1}})"},
+    {"flip-steady",R"({"name":"OWN_BAD","base":"FIRE_SMOKE","set":{},"flipbook":{"cols":2,"rows":2,"frames":4,"fps":24,"steady":1}})"}
     };
   const auto errorsRoot=f.root/"particle-errors";
   for(const auto& [kind,entry]:invalid) {
@@ -432,6 +451,10 @@ void runtimeParticles(Gothic& gothic, const Fixture& f, const fs::path& baseRoot
   const auto* chain=gothic.loadParticleFx("OWN_TEST_NEXT");
   require(chain && chain->velAvg==0.23f && chain->lspPartAvg==12000 &&
           chain->visTexColorStart==custom->visTexColorStart,"runtime resolves chains across particle files");
+  const auto* flip=gothic.loadParticleFx("OWN_TEST_FLIP_CHILD");
+  require(flip && flip->flipCols==8 && flip->flipRows==4 && flip->flipFrames==30 && flip->flipFps==24.f &&
+          flip->visYawAlign && flip->flipSteady && flip->velAvg==0.1f,"an inherited flipbook reaches the native effect, upright cards");
+  require(custom->flipFrames==0 && !custom->visYawAlign && !custom->flipSteady,"effects without a flipbook keep the sprite");
   }
 
 void runtimeMesh(const Fixture& f) {

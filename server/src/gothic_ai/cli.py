@@ -1184,7 +1184,7 @@ async def serve(args: argparse.Namespace) -> int:
         )
         link.npc_crime_check = state.npc_crimes.check_command
         if not args.no_found_traces:
-            # a body first seen is a find: a stimulus, and suspicion by evidence (stage 8 step 4б)
+            # a body or blood first seen is a find: a stimulus, and suspicion by evidence (stage 8, 4б and 4в)
             assert state.sightings is not None
             state.found_traces = FoundTraces(
                 state.sightings, crimes=state.crimes, npc_crimes=state.npc_crimes, journal=journal,
@@ -1966,6 +1966,13 @@ async def serve(args: argparse.Namespace) -> int:
                 results = await scenarios.body_found(link, state.sightings, state.found_traces, state.crimes)
                 bad = {k: v for k, v in results.items() if not v.startswith("done")}
                 log.info("scenario body_found: %d checks, %d failed", len(results), len(bad))
+                exit_code = 1 if bad else 0
+            elif args.scenario == "blood_found":
+                assert state.sightings is not None and state.found_traces is not None
+                assert state.crimes is not None
+                results = await scenarios.blood_found(link, state.sightings, state.found_traces, state.crimes)
+                bad = {k: v for k, v in results.items() if not v.startswith("done")}
+                log.info("scenario blood_found: %d checks, %d failed", len(results), len(bad))
                 exit_code = 1 if bad else 0
             elif args.scenario == "frame":
                 assert state.npc_will is not None and state.chests is not None
@@ -3384,6 +3391,7 @@ def main() -> None:
             "npc_will",
             "npc_far",
             "body_found",
+            "blood_found",
             "frame",
             "crime_meet",
             "crime_ally",
@@ -3526,7 +3534,7 @@ def main() -> None:
     p.add_argument(
         "--no-found-traces",
         action="store_true",
-        help="a body first seen is only a trace: no trace_found stimulus and no suspicion of murder",
+        help="a body or blood first seen is only a trace: no trace_found stimulus and no suspicion",
     )
     p.add_argument(
         "--no-occasions", action="store_true", help="do not watch for the director's story occasions"

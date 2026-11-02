@@ -88,7 +88,8 @@ TRACES_SHOWN = 6
 HEARD_SHOWN = 4
 FADE_MIN = 180  # ...not longer ago than this (game minutes, about 12 minutes of real time)
 HOSTILE = ("hostile", "angry")
-AGED_TRACES = ("broken", "body")  # their age when first seen is kept: since the breakage, since the death
+AGED_TRACES = ("broken", "body", "blood")  # their age when first seen is kept: since the breakage, the death,
+# the freshest blood
 
 NOTABLE = {
     "weapon": "с оружием наголо",
@@ -494,6 +495,11 @@ class Sightings:
                 age = "; " + (
                     f"смерть примерно за {s.trace_age} мин до того" if s.trace_age is not None
                     else "когда умер — не знаешь"
+                )
+            elif s.trace_kind == "blood":
+                age = "; " + (
+                    f"пролита примерно за {s.trace_age} мин до того" if s.trace_age is not None
+                    else "когда пролита — не знаешь"
                 )
             return f"{_observed_when(s.start, now)} — {trace_name(s.trace_kind, s.name)}; {parts[0]}{age}"
         if s.who == HERO:

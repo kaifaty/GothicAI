@@ -1293,6 +1293,31 @@ void Resources::indexMaterialMaps() {
           maps.antitileCell = float(value);
         }
       }
+    // Water in a pot clouded with ash and fat: how much of the material's own lit colour covers the clear water.
+    if(const auto turbidity = entry.value.FindMember("turbidity"); turbidity!=entry.value.MemberEnd()) {
+      if(!turbidity->value.IsNumber() || !std::isfinite(turbidity->value.GetDouble()) ||
+         turbidity->value.GetDouble()<0 || turbidity->value.GetDouble()>1)
+        valid = false;
+      else
+        maps.turbidity = float(turbidity->value.GetDouble());
+      }
+    // A stew: the turbidity is reached over this many cm of liquid (Beer-Lambert), clearer where it is thin.
+    if(const auto depth = entry.value.FindMember("turbidity_depth"); depth!=entry.value.MemberEnd()) {
+      if(!depth->value.IsNumber() || !std::isfinite(depth->value.GetDouble()) ||
+         depth->value.GetDouble()<0 || depth->value.GetDouble()>1e6)
+        valid = false;
+      else
+        maps.turbidityDepth = float(depth->value.GetDouble());
+      }
+    // Embers and glowing wood: the material gives off its own albedo colour times this, where the ORM's alpha
+    // (DXT5) marks it; it slowly breathes (main.frag, mainGBuffer) and is added by the ambient pass.
+    if(const auto emissive = entry.value.FindMember("emissive"); emissive!=entry.value.MemberEnd()) {
+      if(!emissive->value.IsNumber() || !std::isfinite(emissive->value.GetDouble()) ||
+         emissive->value.GetDouble()<0 || emissive->value.GetDouble()>1)
+        valid = false;
+      else
+        maps.emissive = float(emissive->value.GetDouble());
+      }
     if(const auto scale = entry.value.FindMember("scale"); scale!=entry.value.MemberEnd()) {
       if(!scale->value.IsNumber()) {
         valid = false;
@@ -2596,6 +2621,9 @@ Resources::MaterialMaps Resources::loadMaterialMaps(std::string_view name) {
   ret.orm    = inst->implLoadMaterialTexture(files.orm,TextureKind::Orm);
   ret.scale  = files.scale;
   ret.antitileCell = files.antitileCell;
+  ret.turbidity = files.turbidity;
+  ret.turbidityDepth = files.turbidityDepth;
+  ret.emissive = files.emissive;
   ret.antitile = files.antitile;
   ret.present = true;
   ret.hasAlbedo = !files.albedo.empty();

@@ -281,6 +281,54 @@ def test_eval_rejects_a_sword_climbing_back_after_the_follow_through():
     assert pe.fails("charge_release", m) == []
 
 
+def test_clear_sword_lifts_the_blade_off_the_floor_and_keeps_the_ends():
+    import finish
+    # A torso with a hanging right arm and the blade held forward; in the middle frames the body pitches forward
+    # onto its front at 30 cm, so the arm runs along the body and the blade points 60 cm into the floor
+    names = ["BIP01", "BIP01 PELVIS", "BIP01 NECK", "BIP01 HEAD", "BIP01 R UPPERARM", "BIP01 R FOREARM",
+             "BIP01 R HAND", "ZS_RIGHTHAND"]
+    parents = [-1, 0, 1, 2, 2, 4, 5, 6]
+    offsets = [[0, 0, 0], [0, 0, 0], [0, 55, 0], [0, 10, 0], [20, -5, 0], [0, -28, 0], [0, -25, 0], [0, -5, 0]]
+    rests = []
+    for o in offsets:
+        r = np.eye(4)
+        r[:3, 3] = o
+        rests.append(r)
+    skel = ga.Skeleton([ga.Node(n, p, r) for n, p, r in zip(names, parents, rests)], np.zeros(3))
+    frames = 7
+    pos = np.array([offsets] * frames, dtype=float)
+    rot = np.tile(np.array([1.0, 0, 0, 0]), (frames, len(names), 1))
+    rot[:, 7] = [np.sqrt(0.5), 0, np.sqrt(0.5), 0]  # the slot's -X (the blade) points forward
+    lying = [2, 3, 4]
+    pos[:, 0] = [0, 95.0, 0]
+    pos[lying, 0] = [0, 30.0, 0]
+    rot[lying, 0] = [np.sqrt(0.5), np.sqrt(0.5), 0, 0]  # pitched forward 90°: up becomes forward, forward down
+    anim = ga.Animation("T", "", 1, 25.0, frames, list(range(len(names))), pos, rot.copy())
+
+    def lowest(a):
+        out = []
+        for f in range(frames):
+            w = ga.world_pose(skel, a, f)
+            tip = w[7][:3, 3] + w[7][:3, :3] @ np.array([-finish.BLADE_CM, 0, 0])
+            out.append(min(w[6][1, 3], tip[1]))
+        return np.array(out)
+
+    assert lowest(anim)[lying].max() < -50
+    report = finish.clear_sword(anim, skel, floor=0.0)
+    assert report["before_cm"] < -50 and report["after_cm"] >= 0
+    assert (lowest(anim) >= 5 - 0.5).all()  # hand and blade 5 cm over the floor
+    assert np.allclose(anim.rotations[[0, frames - 1]], rot[[0, frames - 1]])  # the ends stay the stance
+    changed = [j for j in range(len(names)) if not np.allclose(anim.rotations[:, j], rot[:, j])]
+    assert set(changed) <= {4, 5}  # only the upper arm and the forearm turn
+    for f in lying:  # and the blade stays out of the torso (pelvis to neck, 14 cm)
+        w = ga.world_pose(skel, anim, f)
+        a, b = w[1][:3, 3], w[2][:3, 3]
+        for t in np.linspace(0.1, 1, 10):
+            x = w[7][:3, 3] + w[7][:3, :3] @ np.array([-finish.BLADE_CM * t, 0, 0])
+            u = np.clip(np.dot(x - a, b - a) / np.dot(b - a, b - a), 0, 1)
+            assert np.linalg.norm(x - (a + u * (b - a))) > 14
+
+
 def test_snap_ends_can_land_the_end_on_another_record_or_leave_an_end_alone():
     import finish
     rng = np.random.default_rng(11)
@@ -315,6 +363,28 @@ def test_hold_arm_window_keeps_the_swing_and_takes_the_stance_on_the_way_back():
         j = anim.node_indices.index(skel.index(name))
         assert same(anim.rotations[:10, j], rot[:10, j])  # t < 0.4 s: the clip's own swing
         assert same(anim.rotations[20:, j], np.broadcast_to(ref.rotations[0, j], (5, 4)))  # t >= 0.8 s: the stance
+
+
+def test_arm_ref_holds_the_arm_towards_a_frame_of_another_record(tmp_path):
+    import finish
+    models = base_models()
+    if models is None:
+        pytest.skip("no converted base")
+    skel = ga.read_skeleton(models / "HUMANS.MDH.json")
+    walk = ga.read_animation(models / "HUMANS_1HST2-S_1HWALKL.MAN.json")
+    arms = finish.pose_at(f"{models / 'HUMANS_1HST2-S_1HWALKL.MAN.json'}:9")
+    assert arms.frame_count == 1 and np.allclose(arms.rotations[0], walk.rotations[9])
+    assert np.allclose(finish.pose_at(str(models / "HUMANS_1HST2-S_1HWALKL.MAN.json")).rotations[0], walk.rotations[0])
+    with pytest.raises(SystemExit):
+        finish.pose_at(f"{models / 'HUMANS_1HST2-S_1HWALKL.MAN.json'}:{walk.frame_count}")
+    rng = np.random.default_rng(7)
+    rot = random_quats(rng, (10, len(walk.node_indices)))
+    anim = ga.Animation("T", "", 1, 25.0, 10, list(walk.node_indices), np.repeat(walk.positions[:1], 10, 0), rot)
+    finish.hold_arm(anim, skel, arms, [1, 1, 1, 1])
+    same = lambda a, b: np.allclose(np.abs((a * b).sum(-1)), 1.0, atol=1e-6)  # noqa: E731
+    for name in finish.ARM:
+        j = anim.node_indices.index(skel.index(name))
+        assert same(anim.rotations[:, j], np.broadcast_to(walk.rotations[9, j], (10, 4)))
 
 
 def test_lift_skims_turns_a_foot_dragged_along_the_floor_into_a_step():
@@ -384,3 +454,11 @@ def test_lock_feet_turn_keeps_a_standing_foot_from_pivoting():
     after = yaws(anim)
     assert np.ptp(before) > 10
     assert np.ptp(after) < 1.0
+
+
+def test_hit_events_are_the_ones_gothics_own_strikes_carry():
+    import finish_set
+    assert finish_set.hit_events(None) == []
+    limb, opt, end = finish_set.hit_events([7, 30])
+    assert (limb["type"], limb["slot"]) == (16, "ZS_RIGHTHAND")
+    assert (opt["type"], opt["frames"], end["type"], end["frames"]) == (20, [7], 21, [30])

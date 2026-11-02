@@ -9,7 +9,8 @@
 #      RYZEN_HOST    SSH host for Ryzen (default: ryzen)
 #      RYZEN_LOCK_WAIT seconds to wait for the worktree lock and gq (default: auto 120, ryzen 900)
 #      RYZEN_MAX     gq job time limit, including the build (default: 30m)
-#      RYZEN_BENCH_CLASS quick (default) or quiet for timing without other jobs
+#      RYZEN_BENCH_CLASS quick (default), batch for calibration, or quiet for timing
+#      RYZEN_BENCH_ARCHIVE absolute local Ryzen task path to archive a result copy through gq
 #      GAME_BIN      game executable (default: OpenGothic/build/opengothic/Gothic2Notr)
 #      TEMPEST_WINDOW_SIZE client frame size (default: 800x600)
 #      SAVE          save to start from (default: save_slot_1.sav in the main checkout)
@@ -33,6 +34,7 @@
 #      PLACED_ITEMS optional initial GAME placed_items setting (0 or 1), before world loading
 #      BODY_IMPACT_DAMAGE optional initial GAME body_impact_damage setting (0 or 1)
 #      BODY_TRACES  optional initial GAME body_traces setting (0 or 1)
+#      BLOOD        optional initial GAME blood setting (0 or 1)
 #      STATIC_COLLISION_SPLIT optional initial GAME static_collision_split setting (0 or 1), before world loading
 #      CHARACTER_VIRTUAL optional initial GAME character_virtual setting (0 or 1), before world loading
 #      NPC_CHARACTER_VIRTUAL optional initial GAME npc_character_virtual setting (0 or 1)
@@ -48,6 +50,9 @@
 #      MELEE_BEAST_POISE optional initial GAME melee_beast_poise setting (0 or 1)
 #      MELEE_BACKSTAB optional initial GAME melee_backstab setting (0 or 1)
 #      MELEE_DODGE optional initial GAME melee_dodge setting (0 or 1)
+#      MELEE_BARGE optional initial GAME melee_barge setting (0 or 1)
+#      MELEE_CHARGE optional initial GAME melee_charge setting (0 or 1)
+#      MELEE_RIPOSTE optional initial GAME melee_riposte setting (0 or 1)
 #      MELEE_REACTIONS optional initial GAME melee_reactions setting (0 or 1)
 #      MELEE_BLADE_SHADOW optional initial GAME melee_blade_shadow setting (0 or 1)
 #      OPENGOTHIC_TEXTURES  sharper textures (default: those of scripts/hd-textures.sh, when made; empty: none)
@@ -237,7 +242,7 @@ musicVolume=${MUSIC:-0}
 musicEnabled=$([[ "${MUSIC:-0}" == 0 || "${MUSIC:-0}" == 0.0 ]] && echo 0 || echo 1)
 worldSounds=${WORLD_SOUNDS:-1}
 EOF
-if [[ -n "${MOVABLE_VOBS:-}${ITEM_HULLS:-}${ITEM_DEEPEST_CONTACT:-}${FURNITURE_PARTS:-}${ARROW_STICKING:-}${PHYSICS_NOISE:-}${DESTRUCTION:-}${BUOYANCY:-}${CLOTH:-}${ITEM_WAKE:-}${PLACED_ITEMS:-}${BODY_IMPACT_DAMAGE:-}${BODY_TRACES:-}${STATIC_COLLISION_SPLIT:-}${CHARACTER_VIRTUAL:-}${NPC_CHARACTER_VIRTUAL:-}${MONSTER_CHARACTER_VIRTUAL:-}${MELEE_BLADE_SHADOW:-}${MELEE_PHYSICS_HITS:-}${MELEE_POSTURE:-}${MELEE_REACTIONS:-}${MELEE_DOWN_TACTICS:-}${MELEE_HITSTOP:-}${MELEE_STAMINA:-}${MELEE_PARRY:-}${MELEE_PARRY_AI:-}${MELEE_STAGGER:-}${MELEE_BEAST_POISE:-}${MELEE_BACKSTAB:-}${MELEE_DODGE:-}" ]]; then
+if [[ -n "${MOVABLE_VOBS:-}${ITEM_HULLS:-}${ITEM_DEEPEST_CONTACT:-}${FURNITURE_PARTS:-}${ARROW_STICKING:-}${PHYSICS_NOISE:-}${DESTRUCTION:-}${BUOYANCY:-}${CLOTH:-}${ITEM_WAKE:-}${PLACED_ITEMS:-}${BODY_IMPACT_DAMAGE:-}${BODY_TRACES:-}${BLOOD:-}${STATIC_COLLISION_SPLIT:-}${CHARACTER_VIRTUAL:-}${NPC_CHARACTER_VIRTUAL:-}${MONSTER_CHARACTER_VIRTUAL:-}${MELEE_BLADE_SHADOW:-}${MELEE_PHYSICS_HITS:-}${MELEE_POSTURE:-}${MELEE_REACTIONS:-}${MELEE_DOWN_TACTICS:-}${MELEE_HITSTOP:-}${MELEE_STAMINA:-}${MELEE_PARRY:-}${MELEE_PARRY_AI:-}${MELEE_STAGGER:-}${MELEE_BEAST_POISE:-}${MELEE_BACKSTAB:-}${MELEE_DODGE:-}${MELEE_BARGE:-}${MELEE_CHARGE:-}${MELEE_RIPOSTE:-}" ]]; then
   printf '\n[GAME]\n' >>"$RUN/Gothic.ini"
   if [[ -n "${MOVABLE_VOBS:-}" ]]; then
     [[ "$MOVABLE_VOBS" == 0 || "$MOVABLE_VOBS" == 1 ]] || { echo "MOVABLE_VOBS must be 0 or 1" >&2; exit 2; }
@@ -315,6 +320,18 @@ if [[ -n "${MOVABLE_VOBS:-}${ITEM_HULLS:-}${ITEM_DEEPEST_CONTACT:-}${FURNITURE_P
     [[ "$MELEE_DODGE" == 0 || "$MELEE_DODGE" == 1 ]] || { echo "MELEE_DODGE must be 0 or 1" >&2; exit 2; }
     printf 'melee_dodge=%s\n' "$MELEE_DODGE" >>"$RUN/Gothic.ini"
   fi
+  if [[ -n "${MELEE_BARGE:-}" ]]; then
+    [[ "$MELEE_BARGE" == 0 || "$MELEE_BARGE" == 1 ]] || { echo "MELEE_BARGE must be 0 or 1" >&2; exit 2; }
+    printf 'melee_barge=%s\n' "$MELEE_BARGE" >>"$RUN/Gothic.ini"
+  fi
+  if [[ -n "${MELEE_CHARGE:-}" ]]; then
+    [[ "$MELEE_CHARGE" == 0 || "$MELEE_CHARGE" == 1 ]] || { echo "MELEE_CHARGE must be 0 or 1" >&2; exit 2; }
+    printf 'melee_charge=%s\n' "$MELEE_CHARGE" >>"$RUN/Gothic.ini"
+  fi
+  if [[ -n "${MELEE_RIPOSTE:-}" ]]; then
+    [[ "$MELEE_RIPOSTE" == 0 || "$MELEE_RIPOSTE" == 1 ]] || { echo "MELEE_RIPOSTE must be 0 or 1" >&2; exit 2; }
+    printf 'melee_riposte=%s\n' "$MELEE_RIPOSTE" >>"$RUN/Gothic.ini"
+  fi
   if [[ -n "${MELEE_REACTIONS:-}" ]]; then
     [[ "$MELEE_REACTIONS" == 0 || "$MELEE_REACTIONS" == 1 ]] || { echo "MELEE_REACTIONS must be 0 or 1" >&2; exit 2; }
     printf 'melee_reactions=%s\n' "$MELEE_REACTIONS" >>"$RUN/Gothic.ini"
@@ -354,6 +371,10 @@ if [[ -n "${MOVABLE_VOBS:-}${ITEM_HULLS:-}${ITEM_DEEPEST_CONTACT:-}${FURNITURE_P
   if [[ -n "${BODY_TRACES:-}" ]]; then
     [[ "$BODY_TRACES" == 0 || "$BODY_TRACES" == 1 ]] || { echo "BODY_TRACES must be 0 or 1" >&2; exit 2; }
     printf 'body_traces=%s\n' "$BODY_TRACES" >>"$RUN/Gothic.ini"
+  fi
+  if [[ -n "${BLOOD:-}" ]]; then
+    [[ "$BLOOD" == 0 || "$BLOOD" == 1 ]] || { echo "BLOOD must be 0 or 1" >&2; exit 2; }
+    printf 'blood=%s\n' "$BLOOD" >>"$RUN/Gothic.ini"
   fi
   if [[ -n "${STATIC_COLLISION_SPLIT:-}" ]]; then
     [[ "$STATIC_COLLISION_SPLIT" == 0 || "$STATIC_COLLISION_SPLIT" == 1 ]] || { echo "STATIC_COLLISION_SPLIT must be 0 or 1" >&2; exit 2; }

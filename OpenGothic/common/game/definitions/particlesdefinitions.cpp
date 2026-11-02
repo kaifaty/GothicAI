@@ -44,6 +44,15 @@ const ParticleFx* ParticlesDefinitions::implGet(std::string_view name, bool rela
   if(!decl)
     return nullptr;
   std::unique_ptr<ParticleFx> p{new ParticleFx(*decl,name)};
+  if(const auto book=content.flipbooks.find(cname); book!=content.flipbooks.end()) {
+    p->flipCols   = uint8_t(book->second.cols);
+    p->flipRows   = uint8_t(book->second.rows);
+    p->flipFrames = uint8_t(book->second.frames);
+    p->flipFps    = book->second.fps;
+    if(book->second.yaw)
+      p->visYawAlign = true;
+    p->flipSteady = book->second.steady;
+    }
   auto elt = pfx.insert(std::make_pair(std::move(cname),std::move(p)));
 
   return elt.first->second.get();

@@ -442,6 +442,9 @@ void WorldObjects::tick(uint64_t dt, uint64_t dtPlayer) {
   bool              runOpen  = false;
   Clock::time_point runStart;
   double            tierMs[2] = {};
+  // Mark both participants before either moves, independent of NPC list order.
+  for(auto& npc:npcArr)
+    npc->refreshMeleeFighter();
   for(size_t i=0; i<npcArr.size(); ++i) {
     auto& npc = *npcArr[i];
     uint64_t d = (pl==&npc ? dtPlayer : dt);

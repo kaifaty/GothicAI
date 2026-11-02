@@ -71,6 +71,7 @@ void VDescriptorArray::setTexture(size_t index, AbstractGraphicsApi::Texture* te
   write.descriptorCount=1;
   write.pImageInfo=&image;
   vkUpdateDescriptorSets(dev.device.impl,1,&write,0,nullptr);
+  dev.descPool.notifyUpdate(*this,uint32_t(index));
   }
 
 void VDescriptorArray::alloc(VkDescriptorSetLayout lay, VDevice &dev, ShaderReflection::Class cls, size_t cnt) {

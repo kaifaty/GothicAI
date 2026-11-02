@@ -272,10 +272,19 @@ add_shader(light_rq_orm.frag           lighting/light.frag -DRAY_QUERY -DMATERIA
 add_shader(light_rq_at_orm.frag        lighting/light.frag -DRAY_QUERY -DRAY_QUERY_AT -DMATERIAL_MAPS)
 add_shader(light_vsm_orm.frag          lighting/light.frag -DVIRTUAL_SHADOW -DMATERIAL_MAPS)
 
+# blood decals on the GBuffer (physics stage 8, step 4c)
+add_shader(blood_decal.vert          blood/blood_decal.vert)
+add_shader(blood_decal.frag          blood/blood_decal.frag)
+add_shader(blood_decal_orm.frag      blood/blood_decal.frag -DMATERIAL_MAPS)
+
 add_shader(irradiance.comp           lighting/irradiance.comp)
 add_shader(sky_exposure.comp         lighting/sky_exposure.comp)
 
 add_shader(tonemapping.frag          lighting/tonemapping.frag)
+add_shader(bloom_down_karis.frag     bloom/bloom_down.frag -DKARIS)
+add_shader(bloom_down.frag           bloom/bloom_down.frag)
+add_shader(bloom_up.frag             bloom/bloom_up.frag)
+add_shader(bloom_mix.frag            bloom/bloom_mix.frag)
 add_shader(tonemapping_up.frag       lighting/tonemapping.frag -DUPSCALE)
 
 add_shader(water_reflection.mesh     water/water_reflection.mesh)

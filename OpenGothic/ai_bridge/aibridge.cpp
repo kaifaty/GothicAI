@@ -79,7 +79,7 @@ using namespace Tempest;
 
 namespace {
 
-constexpr int         ProtocolVersion = 58;
+constexpr int         ProtocolVersion = 60;
 AiBridge*             activeBridge = nullptr;
 constexpr const char* SaveEntry       = "ai_bridge/session";  // own entry in save games
 constexpr const char* DefaultUrl      = "ws://127.0.0.1:47817";
@@ -1089,17 +1089,21 @@ void AiBridge::Impl::handle(World* world, const std::string& text) {
     sendResult(req,!value.empty(),err,value);
     }
   else if(type=="story_effect") {
+    bool farFight = false;
+    if(auto effects = doc.FindMember("effects"); effects!=doc.MemberEnd() && effects->value.IsArray())
+      for(const auto& effect:effects->value.GetArray())
+        farFight = farFight || JsonRead::str(effect,"do")=="knockout" || JsonRead::str(effect,"do")=="wound";
     if(auto npc = npcBySymbol(*world,JsonRead::str(doc,"npc"));
-       npc!=nullptr && BodyController::owns(*npc)) {
+       !farFight && npc!=nullptr && BodyController::owns(*npc)) {
       BodyController::takeover(*npc,"story_takeover");
       if(BodyController::owns(*npc)) {
         sendResult(req,false,"body control is releasing at a safe boundary; retry story effect");
         return;
         }
       }
-    std::string err;
-    const bool  ok = story.effects(*world,doc,err);
-    sendResult(req,ok,err);
+    std::string err, value;
+    const bool  ok = story.effects(*world,doc,err,value);
+    sendResult(req,ok,err,value);
     }
   else if(type=="raise_dead") {
     std::string err;
@@ -1324,7 +1328,8 @@ void AiBridge::Impl::onDebug(const rapidjson::Value& msg) {
   if(cmd=="spawn" || cmd=="player_weapon" || cmd=="player_equip" || cmd=="waypoints" || cmd=="player_goto" || cmd=="ptt" || cmd=="type" || cmd=="kill" ||
      cmd=="time" || cmd=="teleport" || cmd=="skip_important" || cmd=="deal" || cmd=="deal_accept" ||
      cmd=="deal_decline" || cmd=="npc_goto" || cmd=="npc_los" || cmd=="player_hp" || cmd=="player_drop" || cmd=="chest_take" || cmd=="npc_drop" || cmd=="player_hit" || cmd=="npc_hit" || cmd=="spawn_item" ||
-     cmd=="player_take" || cmd=="own_npc" || cmd=="physics_noise" || cmd=="physics_traces" || cmd=="destruction_traces") {
+     cmd=="player_take" || cmd=="own_npc" || cmd=="physics_noise" || cmd=="physics_traces" || cmd=="destruction_traces" ||
+     cmd=="blood") {
     // world changes that are safe within the tick
     runWorldDebug(msg);
     return;
@@ -1396,6 +1401,59 @@ void AiBridge::Impl::runWorldDebug(const rapidjson::Value& msg) {
     value.Key("head_clear"); value.Bool(distance<=5000 && observer->canRayHitPoint(target->mapHeadBone(),true,extra));
     value.EndObject();
     sendResult(req,true,"",std::string_view(buf.GetString(),buf.GetSize()));
+    return;
+    }
+  if(cmd=="blood") {
+    // v60: a blood stain on the ground (physics stage 8, step 4c), as Marvin `blood` lays it.
+    // `waypoint`: at that point; `near`: `distance` cm (default 300) in front of that npc or the
+    // hero; `npc`: under that dead npc, a pool of his body trace (bodyId).
+    // `kind` pool|splash (default: pool under an npc, splash elsewhere), `radius` cm.
+    const auto waypoint = JsonRead::str(msg,"waypoint");
+    const auto name     = JsonRead::str(msg,"npc");
+    const auto nearName = JsonRead::str(msg,"near");
+    const auto kindName = JsonRead::str(msg,"kind");
+    Tempest::Vec3 at;
+    uint32_t      body = 0;
+    if(!nearName.empty()) {
+      Npc* near = nearName=="PLAYER" || nearName=="PC_HERO" ? pl : npcBySymbol(*world,nearName);
+      if(near==nullptr) {
+        sendResult(req,false,"no such npc");
+        return;
+        }
+      const float dist = float(JsonRead::integer(msg,"distance",300));
+      at    = near->position();
+      at.x += dist*std::cos(near->rotationRad());
+      at.z += dist*std::sin(near->rotationRad());
+      }
+    else if(!name.empty()) {
+      Npc* npc = npcBySymbol(*world,name);
+      if(npc==nullptr || !npc->isDead() || npc->bodyTrace().id==0) {
+        sendResult(req,false,npc==nullptr ? "no such npc" : "no body trace of that npc yet");
+        return;
+        }
+      at   = npc->position();
+      body = npc->bodyTrace().id;
+      }
+    else if(const auto* point = world->findPoint(waypoint,false); point!=nullptr) {
+      at = point->position();
+      }
+    else {
+      sendResult(req,false,"blood needs a waypoint or a dead npc");
+      return;
+      }
+    if(!kindName.empty() && kindName!="pool" && kindName!="splash") {
+      sendResult(req,false,"kind must be pool or splash");
+      return;
+      }
+    const bool  pool   = kindName.empty() ? body!=0 : kindName=="pool";
+    const float radius = float(JsonRead::integer(msg,"radius",pool ? 40 : 15));
+    const auto  id     = world->placeBloodStain(at,pool ? BloodStains::Kind::Pool : BloodStains::Kind::Splash,radius,
+                                                pool ? body : 0);
+    if(id==0) {
+      sendResult(req,false,Gothic::physicsFlags().blood ? "no ground there" : "blood is off ([GAME] blood=0)");
+      return;
+      }
+    sendResult(req,true,"","{\"id\":"+std::to_string(id)+"}");
     return;
     }
   if(cmd=="physics_noise") {
