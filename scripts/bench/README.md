@@ -1225,7 +1225,7 @@ OPENGOTHIC_NPC_SIM_TIER=full BENCH_HOST=dev-ubuntu \
 OPENGOTHIC_NPC_SIM_TIER=simplified BENCH_HOST=dev-ubuntu \
   scripts/bench.sh npc-day-parity /absolute/out/simplified-1
 scripts/npc_day_parity.py /absolute/out/full-1 /absolute/out/simplified-1 --label-a full --label-b simplified \
-  --tolerances scripts/bench/npc-day-parity.tolerances.json --out /absolute/out/report.md --json /absolute/out/report.json
+  --tolerances scripts/bench/npc-day-parity.tolerances-6c.json --out /absolute/out/report.md --json /absolute/out/report.json
 ```
 
 The scenario carries `# @headless`: it defaults to `WORLD=NEWWORLD.ZEN`, `TIMEOUT=3600` and
@@ -1240,15 +1240,25 @@ The [headless measurements](../../reports/compute/2026-11-02-headless-bench/READ
 show that a day through `scripts/bench.sh npc-day-parity` took 1553 s (25,9 min) without a window,
 as a `batch` request (`gq`: `4t 6G gpu=0G окно=0`); windowed days took 38–43 min.
 The window and `--game-parity` runner days from the same build and environment passed
-`npc_day_parity.py` with the bench tolerances (exit 0): position differences 0 m,
+the historical numeric bench tolerances (exit 0): position differences 0 m,
 ZS/TA/HP/inventory matches 100%, and `npc-day-events.csv` byte-identical. Only `queue`/`head`
 differ for Lester (`PC_PSIONIC`) when he approaches the hero to talk: `AI_ProcessInfo` is handled
-by the dialogue menu in the window; the runner has no menu. Compare only runs from the same build,
+by the dialogue menu in the window; the runner has no menu. The current exact-journal control
+also checks those fields, so window/runner comparisons need to report this difference explicitly.
+Compare only runs from the same build,
 base and environment. A day writes about 55 MB.
 With `OPENGOTHIC_NPC_LOGIC_AUDIT=1`, `npc-day-heights.csv` compares sampled Simplified positions with a ground ray; movement itself does not cast these verification rays. The comparer splits position errors into `stationary_both` and `moving_either` from the existing body-state column, and accepts final-HP, matched-death and stationary-p95 guards.
 
-Use `scripts/bench/npc-day-parity.tolerances.json` for comparisons; a change of the executor adds
-its own allowance with command-line limits. `npcday` files:
+Use `npc-day-parity.tolerances.json` for Full and `OPENGOTHIC_NPC_SIMPLE_MOVE=0` controls against
+the current-main noise floor. It requires identical nonhero sample fields except `tier` and all
+nonhero events, including the final post-sample tick. Active Simplified/auto use
+`npc-day-parity.tolerances-6c.json`: TA ≥99.5%, ZS and standard start coverage ≥99%, stationary
+position p95 ≤1 m and mutual-nearest start shift p95 ≤8 game seconds. Deaths, final HP and NPC
+presence remain strict. At most three NPCs may have different final inventory, and every case
+needs an exact attested script-created/random-item hash pair; unexplained differences fail.
+Moving positions and standard greedy offsets are report-only. The
+[acceptance decision and measurements](../../docs/world-streaming.md#шаг-1-пункт-6в--графовое-движение-и-повороты)
+explain the bounds and remaining combat/body work. `npcday` files:
 
 | File | Contents |
 |---|---|
