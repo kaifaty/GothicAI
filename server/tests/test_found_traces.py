@@ -408,7 +408,7 @@ async def test_a_finder_who_was_there_when_he_died_suspects_no_one(store, seen_b
 @pytest.mark.parametrize("deed_before", [False, True])
 @pytest.mark.parametrize("delay", [0.001, 600.0])
 async def test_suspicion_waits_for_the_deed_seen_after_the_find(store, found_trace, deed_before, delay):
-    """The deed precedes the next pushed view, regardless of elapsed real time."""
+    """The deed precedes the next game minute, regardless of elapsed real time or view source."""
     w = World(store)
     w.saw(seen_view(AT_8).model_copy(update={"sees": []}))  # only the hero was seen near the trace
     view = found_view(AT_8 + 60, found_trace)
@@ -431,21 +431,27 @@ async def test_suspicion_waits_for_the_deed_seen_after_the_find(store, found_tra
             listener(deed)
     assert w.crimes.seen(LOBART)[0]["id"] == deed.id
     assert w.chronicle.facts("trace_judged") == []  # time alone never decides
-    w.later(view)
+    w.seen.desk._store(view.model_copy(update={"time": view.time + 1}))  # requested view, no push
     assert w.suspected() == [] and len(w.chronicle.facts("trace_judged")) == 1
     w.later(view)
     assert len(w.chronicle.facts("trace_judged")) == 1  # decided once
     await asyncio.gather(*w.seen._background, *w.chronicle._background)
 
 
-async def test_the_next_pushed_view_decides_without_elapsed_real_time(store, found_trace):
+@pytest.mark.parametrize("requested", [False, True])
+async def test_the_next_minute_decides_without_elapsed_real_time(store, found_trace, requested):
     w = World(store)
     w.saw(seen_view(AT_8).model_copy(update={"sees": []}))
     view = found_view(AT_8 + 60, found_trace)
     w.saw(view, judge=False)
     assert len(w.stimuli()) == 1 and w.suspected() == []
     assert w.chronicle.facts("trace_judged") == []
-    w.later(view, 0.001)  # less than the former two-second delay
+    w.clock.t += 0.001  # less than the former two-second delay
+    later = view.model_copy(update={"time": view.time + 1})
+    if requested:
+        w.seen.desk._store(later)
+    else:
+        w.saw(later, judge=False)
     assert [f["suspect"] for f in w.suspected()] == ["PLAYER"]
     assert len(w.chronicle.facts("trace_judged")) == 1
     w.later(view)
@@ -453,20 +459,47 @@ async def test_the_next_pushed_view_decides_without_elapsed_real_time(store, fou
     await asyncio.gather(*w.seen._background, *w.chronicle._background)
 
 
-async def test_requested_views_do_not_advance_the_decision(store, found_trace):
+async def test_requested_views_wait_for_a_later_game_minute(store, found_trace):
     w = World(store)
     w.saw(seen_view(AT_8).model_copy(update={"sees": []}))
     view = found_view(AT_8 + 60, found_trace)
-    w.seen.desk._store(view)  # a request can find the trace before the push in the same engine tick
+    w.seen.desk._store(view)  # a distant finder receives only requested views
     assert len(w.stimuli()) == 1
-    w.saw(view, judge=False)
-    assert w.chronicle.facts("trace_judged") == []
     w.clock.t += 600
-    w.seen.desk._store(view)  # requested views never count as another engine tick
+    w.seen.desk._store(view)  # the same game minute never decides, despite elapsed process time
     assert w.chronicle.facts("trace_judged") == []
-    w.later(view)
+    w.saw(view, judge=False)  # nor does a push in the same game minute
+    assert w.chronicle.facts("trace_judged") == []
+    w.seen.desk._store(view.model_copy(update={"time": view.time + 1}))
     assert [f["suspect"] for f in w.suspected()] == ["PLAYER"]
     assert len(w.stimuli()) == 1 and len(w.chronicle.facts("trace_judged")) == 1
+    await asyncio.gather(*w.seen._background, *w.chronicle._background)
+
+
+@pytest.mark.parametrize("missing", ["find", "later"])
+async def test_missing_time_decides_on_the_next_view(store, found_trace, missing):
+    w = World(store)
+    w.saw(seen_view(AT_8).model_copy(update={"sees": []}))
+    view = found_view(AT_8 + 60, found_trace)
+    untimed = view.model_copy(update={"time": None})
+    if missing == "find":
+        # Sightings rejects untimed views; exercise the find callback's fallback directly.
+        trace = view.traces[0]
+        s = Sighting(
+            f"TRACE:{trace.id}:{trace.kind}", trace.name, view.time, view.time,
+            place_ids=["FARM1_OUT"], trace_kind=trace.kind, trace_age=trace.age,
+            trace_npc=trace.npc or "",
+        )
+        w.seen.mind(LOBART).traces[s.who] = s
+        w.found.found(LOBART, trace, s, untimed)
+        w.found.viewed(untimed)
+    else:
+        w.saw(view, judge=False)
+    assert len(w.stimuli()) == 1 and w.chronicle.facts("trace_judged") == []
+    w.seen.desk._store(untimed)
+    assert [f["suspect"] for f in w.suspected()] == ["PLAYER"]
+    w.seen.desk._store(untimed)
+    assert len(w.chronicle.facts("trace_judged")) == 1
     await asyncio.gather(*w.seen._background, *w.chronicle._background)
 
 
@@ -485,7 +518,7 @@ async def test_a_find_saved_before_its_decision_is_decided_once_after_the_load(t
     store = MemoryStore(path)
     store.ensure_branch("loaded", "A", head)
     again = World(store, branch="loaded")
-    again.saw(found_view(AT_8 + 61, found_trace), judge=False)  # the first push after the load decides it
+    again.seen.desk._store(found_view(AT_8 + 60, found_trace))  # first view after load, same minute
     assert len(again.chronicle.facts("trace_judged")) == 1
     again.later(found_view(AT_8 + 62, found_trace))
     assert again.finds == [] and again.stimuli() == []

@@ -114,7 +114,7 @@ async def body_found(
         await link.debug("time", hour=at % DAY // 60, minute=at % 60)
 
     async def judged(trace: str) -> bool:
-        """Suspicion is decided on the next pushed view after the first push that knows the find."""
+        """Suspicion is decided on the first view in a later game minute, including requested views."""
 
         def done() -> bool:
             return any(

@@ -20,17 +20,17 @@ also a find:
   place within the half hour). Seen nobody: only the knowledge «someone was hurt here». Blood under a
   body still in the world never comes: the engine reports that body, not its pool.
 
-Suspicion is decided on the finder's next pushed view after the first push that knows the find.
-Requests (`npc_view` results) can find traces and give stimuli, but never advance this decision.
-The bridge pushes each npc at most once per tick (OpenGothic/ai_bridge/npcview.cpp:401-431), before the
-world update (common/gothic.cpp:674-677). A hit queues its deed after the tick's passive queue was taken
+Suspicion is decided on the finder's first view whose game minute is later than the finding view's.
+Both pushed and requested views count: distant finders receive only requested views. They share
+world.time() (OpenGothic/ai_bridge/npcview.cpp:338-339), read before the world update
+(common/gothic.cpp:674-677). A hit queues its deed after the tick's passive queue was taken
 (common/world/worldobjects.cpp:418-419, 1388); that deed is sent at the end of the following world update
-(:590-592), possibly after the first view of its trace, but before the next pushed view. GameLink
-dispatches in wire order and Crimes records crime/crime_seen synchronously. Thus that next push knows
-all the relevant deeds, without a real-time delay. A requested find waits through its first push too:
-the request can precede that push in the same tick (ai_bridge/aibridge.cpp:565-575).
+(:590-592), possibly after the first view of its trace. A view in a later game minute is from a later
+tick, after that deed. GameLink dispatches in wire order and Crimes records crime/crime_seen
+synchronously. Thus the decision knows the relevant deeds, without a real-time delay. Views in the
+same game minute never advance it. If either view lacks time, the next view decides instead.
 A `trace_judged` fact marks the decision in the save branch, so a find saved before its decision is
-decided on the first push after the load, and none is decided twice.
+decided on the first view after the load, and none is decided twice.
 
 `body` and `blood` are finds now; missing things are a later kind of the same event. Who killed or hurt
 is the engine's truth and never comes here: a find is the knowledge «someone was killed (hurt) here».
@@ -47,7 +47,7 @@ from typing import TYPE_CHECKING
 from .chronicle import Fact
 from .crimes import SUSPECT_MIN
 from .journal import Journal
-from .protocol import GameMessage, Loading, NpcView, NpcViews, Session, Trace
+from .protocol import GameMessage, Loading, NpcView, Session, Trace
 
 if TYPE_CHECKING:
     from .brain.planner import NpcPlanner
@@ -101,11 +101,12 @@ class FoundTraces:
         self.planner: NpcPlanner | None = None
         self.on_found: list[Callable[[Found], None]] = []
         self.on_judged: list[Callable[[Found, list[Fact]], None]] = []
-        self._unready: set[tuple[str, str]] = set()  # new finds awaiting their first pushed view
+        self._found_at: dict[tuple[str, str], int | None] = {}  # new finds' game minutes
         self._judged: set[tuple[str, str]] = set()  # decided in this branch, as far as read
         sightings.on_trace.append(self.found)
         sightings.trace_note = self.note
-        # After PerceptionDesk/Sightings: only wire pushes advance the decision, never requested views.
+        # After Sightings.saw: both pushed and requested views can decide earlier finds.
+        sightings.desk.on_view.append(self.viewed)
         sightings.link.listeners.append(self._on_message)
 
     def follow(self, planner: NpcPlanner) -> None:
@@ -115,10 +116,7 @@ class FoundTraces:
     def _on_message(self, msg: GameMessage) -> None:
         if isinstance(msg, Session | Loading):
             self._judged.clear()  # another branch: its own decisions, read from its facts
-            self._unready.clear()
-        elif isinstance(msg, NpcViews):
-            for view in msg.views:
-                self.viewed(view)
+            self._found_at.clear()
 
     def found(self, viewer: str, trace: Trace, s: Sighting, view: NpcView) -> None:
         """The first sight of a trace by an npc (Sightings.on_trace): once per npc and trace."""
@@ -126,7 +124,7 @@ class FoundTraces:
             return
         viewer = viewer.upper()
         find = self._find(viewer, s)
-        self._unready.add((viewer, trace.id))
+        self._found_at[(viewer, trace.id)] = view.time
         log.info("%s found %s %s at %s", viewer, trace.kind, s.name, find.place)
         self.journal.add(
             "trace_found",
@@ -159,7 +157,7 @@ class FoundTraces:
                 log.exception("a find listener failed")
 
     def viewed(self, view: NpcView) -> None:
-        """A pushed view: decide finds already known at the previous push (once per branch)."""
+        """Any view in a later game minute decides the find (once per branch)."""
         if self.sightings.branch is None:
             return
         npc = view.npc.upper()
@@ -173,9 +171,13 @@ class FoundTraces:
             if self._decided(npc, trace):
                 self._judged.add(key)
                 continue
-            if key in self._unready:
-                self._unready.remove(key)
-                continue
+            if key in self._found_at:
+                found_at = self._found_at[key]
+                if found_at is None:
+                    del self._found_at[key]  # no time in the finding view: the next view decides
+                    continue
+                if view.time is not None and view.time <= found_at:
+                    continue
             self.judge(npc, s)
 
     def judge(self, npc: str, s: Sighting) -> list[Fact]:
