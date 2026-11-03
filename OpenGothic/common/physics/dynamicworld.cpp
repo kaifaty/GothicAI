@@ -13,6 +13,7 @@
 #include "frameprofile.h"
 #include "loadprobe.h"
 #include "basestore.h"
+#include "sha256.h"
 #include <Tempest/Log>
 #include "graphics/mesh/skeleton.h"
 #include "graphics/mesh/protomesh.h"
@@ -27,6 +28,8 @@
 #include <Jolt/Physics/Collision/CastResult.h>
 #include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
 #include <Jolt/Geometry/ClosestPoint.h>
+#include <Jolt/Core/StreamOut.h>
+#include <Jolt/Core/UnorderedMap.h>
 
 #include <algorithm>
 #include <cmath>
@@ -1517,6 +1520,74 @@ std::vector<DynamicWorld::PlacedItemCensusEntry> DynamicWorld::placedItemCensus(
         }
     }
   return result;
+  }
+
+namespace {
+// Streams Jolt shape state straight into a digest. Vec3 writes omit W, so the
+// bytes depend only on the shape data that native queries read.
+class DigestStream final : public JPH::StreamOut {
+  public:
+    void WriteBytes(const void* data, size_t size) override { digest.update(data,size); }
+    bool IsFailed() const override { return false; }
+    void raw(const void* data, size_t size) { digest.update(data,size); }
+    void u32(uint32_t value) { raw(&value,sizeof(value)); }
+    void u64(uint64_t value) { raw(&value,sizeof(value)); }
+    void text(std::string_view value) { u64(value.size()); raw(value.data(),value.size()); }
+    void matrix(const Tempest::Matrix4x4& value) { raw(value.data(),16*sizeof(float)); }
+    Sha256 digest;
+  };
+}
+
+std::string DynamicWorld::placedItemCensusInputs(const std::vector<PlacedItemCandidate>& candidates) const {
+  DigestStream out;
+  JPH::Shape::ShapeToIDMap shapes;
+  JPH::Shape::MaterialToIDMap materials;
+  const auto body=[&](const CollisionWorld::CollisionBody* body) {
+    if(body==nullptr || body->shape()==nullptr) {
+      out.u32(0);
+      return;
+      }
+    out.u32(1);
+    out.u32(uint32_t(body->category()));
+    out.matrix(body->matrix());
+    JPH::Vec3 min,max;
+    body->getAabb(min,max);
+    out.Write(min);
+    out.Write(max);
+    // Shared hulls are written once; later references write only their ID.
+    body->shape()->SaveWithChildren(out,shapes,materials);
+    };
+  out.text("candidates");
+  out.u64(candidates.size());
+  for(const auto& candidate:candidates) {
+    out.u32(candidate.mission ? 1 : 0);
+    out.u32(candidate.zenId);
+    out.u64(uint64_t(candidate.instance));
+    out.text(candidate.visual);
+    const auto* handle=candidate.body;
+    body(handle!=nullptr && handle->obj!=nullptr ? handle->obj->body.get() : nullptr);
+    }
+  // Furniture and other movable vobs are supports and penetration targets.
+  // Offline convex parts are outside the base fingerprint: hash their shapes.
+  out.text("movable");
+  const auto* movable=movableVobs.get();
+  out.u64(movable!=nullptr ? movable->bodies.size() : 0);
+  if(movable!=nullptr)
+    for(const auto* vob:movable->bodies) {
+      out.text(vob->visual);
+      out.text(vob->className);
+      out.text(vob->disposition);
+      out.u32(vob->pose->zenId);
+      out.matrix(vob->origin);
+      body(vob->body.get());
+      out.u64(vob->query.size());
+      for(const auto& query:vob->query) {
+        // Query meshes come from base meshes; their pose and layer decide hits.
+        out.u32(uint32_t(query->category()));
+        out.matrix(query->matrix());
+        }
+      }
+  return out.digest.finish();
   }
 
 DynamicWorld::Item DynamicWorld::addMovableVob(const ProtoMesh& proto, std::string_view visual,
@@ -3290,8 +3361,9 @@ bool DynamicWorld::NpcItem::virtualDiagnostics(CharacterVirtualDiagnostics& out)
 
 DynamicWorld::NpcItem::VirtualMoveResult DynamicWorld::NpcItem::moveVirtual(
     const Tempest::Vec3& displacement, uint64_t dt, float stepHeight, float maxSlope, float mass, Npc* culprit,
-    bool limitStairAdvance, bool bounceOnSteepContact) {
-  return implMoveVirtual(displacement,dt,stepHeight,maxSlope,mass,culprit,false,limitStairAdvance,bounceOnSteepContact);
+    bool limitStairAdvance, bool bounceOnSteepContact, bool standing) {
+  return implMoveVirtual(displacement,dt,stepHeight,maxSlope,mass,culprit,false,limitStairAdvance,bounceOnSteepContact,
+                         standing);
   }
 
 DynamicWorld::NpcItem::VirtualMoveResult DynamicWorld::NpcItem::carryVirtual(uint64_t dt, Npc* culprit) {
@@ -3300,7 +3372,7 @@ DynamicWorld::NpcItem::VirtualMoveResult DynamicWorld::NpcItem::carryVirtual(uin
 
 DynamicWorld::NpcItem::VirtualMoveResult DynamicWorld::NpcItem::implMoveVirtual(
     const Tempest::Vec3& displacement, uint64_t dt, float stepHeight, float maxSlope, float mass, Npc* culprit, bool carry,
-    bool limitStairAdvance, bool bounceOnSteepContact) {
+    bool limitStairAdvance, bool bounceOnSteepContact, bool standing) {
   VirtualMoveResult result;
   if(obj==nullptr)
     return result;
@@ -3390,7 +3462,7 @@ DynamicWorld::NpcItem::VirtualMoveResult DynamicWorld::NpcItem::implMoveVirtual(
   const auto requested = clipNpc(initial+displacement,requestClipped,
                                  npcDiagnostic!=nullptr ? &npcDiagnostic->requestCollision : nullptr)-initial;
   auto moved = carry ? obj->virtualCharacter->carry(dt) :
-                       obj->virtualCharacter->move(requested,dt,stepHeight,maxSlope,mass,culprit,limitStairAdvance);
+                       obj->virtualCharacter->move(requested,dt,stepHeight,maxSlope,mass,culprit,limitStairAdvance,standing);
   if(carry && !moved.supportMoved)
     return result;
   bool resolvedClipped = false;

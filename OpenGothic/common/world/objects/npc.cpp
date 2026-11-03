@@ -8290,6 +8290,21 @@ void Npc::setToFistMode() {
   hnpc->weapon  = 1;
   }
 
+void Npc::setToBowMode(const size_t item) {
+  // The ranged counterpart of setToFightMode: draw without the draw animation.
+  if(invent.itemCount(item)==0)
+    addItem(item,1);
+  invent.equip(item,*this,true);
+  invent.switchActiveWeapon(*this,2);
+  auto w = invent.currentRangedWeapon();
+  if(w==nullptr || w->clsId()!=item)
+    return;
+  const auto st = w->isCrossbow() ? WeaponState::CBow : WeaponState::Bow;
+  if(visual.setToFightMode(st))
+    updateWeaponSkeleton();
+  hnpc->weapon = (st==WeaponState::Bow ? 5:6);
+  }
+
 void Npc::aiPush(AiQueue::AiAction&& a) {
   // Vanilla quiet-sound scripts aim at OTHER. A physical sound is located at the
   // collision, and OTHER may be null or a distant culprit, so native turning owns it.

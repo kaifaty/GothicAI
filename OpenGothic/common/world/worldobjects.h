@@ -78,8 +78,17 @@ class WorldObjects final {
       DynamicWorld::PlacedItemCensusEntry validation;
       };
     void           finalizePlacedItems();
+    std::vector<DynamicWorld::PlacedItemCensusEntry> placedCensusVerdicts(
+        const std::vector<DynamicWorld::PlacedItemCandidate>& candidates);
     const std::vector<PlacedItem>& placedItemCensus() const { return placedItems; }
     double         placedItemValidationMilliseconds() const { return placedValidationMs; }
+    struct PlacedCensusLoad {
+      std::string status = "off"; // off, cache, or the miss reason (absent, version, inputs, corrupt)
+      size_t items = 0;
+      bool checked = false;
+      double keyMs = 0, readMs = 0, censusMs = 0, writeMs = 0, checkMs = 0;
+      };
+    const PlacedCensusLoad& placedCensusLoad() const { return placedCensus; }
     size_t         placedItemsCreatedThisFrame() const { return placedCreatedThisFrame; }
 
     Npc*           addNpc(size_t itemInstance, std::string_view     at);
@@ -216,6 +225,7 @@ class WorldObjects final {
     std::vector<std::unique_ptr<Item>> itemArr;
     std::vector<PlacedItem>            placedItems;
     double                            placedValidationMs = 0;
+    PlacedCensusLoad                  placedCensus;
     size_t                            placedCreatedThisFrame = 0;
     std::list<MobStates>               routines;
 

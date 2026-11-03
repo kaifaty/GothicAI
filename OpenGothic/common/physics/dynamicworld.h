@@ -187,7 +187,8 @@ class DynamicWorld final {
         // Walking only: displacement in cm, dt in ms, slope in radians, mass in kg.
         VirtualMoveResult moveVirtual(const Tempest::Vec3& displacement, uint64_t dt,
                                       float stepHeight, float maxSlope, float mass, Npc* culprit = nullptr,
-                                      bool limitStairAdvance = false, bool bounceOnSteepContact = false);
+                                      bool limitStairAdvance = false, bool bounceOnSteepContact = false,
+                                      bool standing = false);
         VirtualMoveResult carryVirtual(uint64_t dt, Npc* culprit = nullptr);
         void resetVirtual();
         void setVirtualDiagnosticsEnabled(bool enabled);
@@ -203,7 +204,8 @@ class DynamicWorld final {
         void  implSetPosition(const Tempest::Vec3& pos);
         VirtualMoveResult implMoveVirtual(const Tempest::Vec3& displacement, uint64_t dt,
                                          float stepHeight, float maxSlope, float mass, Npc* culprit, bool carry,
-                                         bool limitStairAdvance = false, bool bounceOnSteepContact = false);
+                                         bool limitStairAdvance = false, bool bounceOnSteepContact = false,
+                                      bool standing = false);
 
       friend class DynamicWorld;
       };
@@ -427,6 +429,8 @@ class DynamicWorld final {
       const Item* body = nullptr;
       bool mission = false;
       std::string_view visual = {};
+      uint32_t zenId = uint32_t(-1);
+      size_t instance = size_t(-1);
       };
     struct PlacedItemCensusEntry {
       std::string disposition;
@@ -444,6 +448,9 @@ class DynamicWorld final {
     // All handles must still have their authored poses. Decisions preserve the
     // input order and are made together, before any candidate body is removed.
     std::vector<PlacedItemCensusEntry> placedItemCensus(const std::vector<PlacedItemCandidate>& candidates) const;
+    // Digest of everything placedItemCensus reads besides the static world:
+    // candidate identity, pose, native shape, and every movable vob body.
+    std::string placedItemCensusInputs(const std::vector<PlacedItemCandidate>& candidates) const;
     Item           addMovableVob(const ProtoMesh& mesh, std::string_view visual, const Tempest::Matrix4x4& matrix,
                                  float massMultiplier, bool blocksWalking, std::string_view className = {},
                                  bool legacyCollision = true, uint32_t zenId = uint32_t(-1));
@@ -675,6 +682,7 @@ class DynamicWorld final {
       double keyMs = 0, readMs = 0, buildMs = 0, writeMs = 0;
       };
     const StaticCollisionLoadStats& staticCollisionLoadStats() const { return collisionLoadStats; }
+    bool staticCollisionSplit() const { return splitStaticTriangles; }
     uint64_t simulationStep() const;
 
     // Called explicitly by the runner; ordinary worlds never build a navmesh.

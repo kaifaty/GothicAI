@@ -216,17 +216,20 @@ class Parts:
         bpy.context.scene.collection.objects.link(obj)
         return obj, open_edges
 
-    def finish(self, goal, out, lo, hi, extra=None):
-        """Triangulate, export model.glb with zone materials and "_part", write metrics.json."""
-        return finish_nodes(goal, out, lo, hi, [(goal["id"], self)], extra)
+    def finish(self, goal, out, lo, hi, extra=None, prepare=None):
+        """Triangulate, export model.glb with zone materials and "_part", write metrics.json.
+        prepare(obj) may set up the object before the export (its modifiers are applied)."""
+        return finish_nodes(goal, out, lo, hi, [(goal["id"], self)], extra, prepare)
 
 
-def finish_nodes(goal, out, lo, hi, nodes, extra=None):
+def finish_nodes(goal, out, lo, hi, nodes, extra=None, prepare=None):
     """Export one GLB node per (name, Parts): a model with several attachments (a chest body and
     its lid) keeps each attachment's node name. Part numbers must not repeat across the nodes."""
     objects, open_edges, nails, parts, inside_out = [], 0, 0, 0, 0
     for name, P in nodes:
         obj, edges = P.to_object(goal, name)
+        if prepare is not None:
+            prepare(obj)
         inside_out += len(P.inside_out)
         objects.append(obj)
         open_edges += edges

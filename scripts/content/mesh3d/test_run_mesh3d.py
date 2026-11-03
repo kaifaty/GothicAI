@@ -241,18 +241,25 @@ def test_restores_only_the_unit_actually_stopped(tmp_path):
     assert "gothic-gemma" in ledger and "gothic-decider" not in ledger
 
 
-@pytest.mark.parametrize("available_gib,memory_max,expected_rc", [
-    (23, 21474836480, 75), (24, 10737418240, 1),
-])
-def test_memory_preflight_refuses_before_stopping_services(tmp_path, available_gib, memory_max, expected_rc):
-    result, state, calls, task = run_window(tmp_path, available_gib=available_gib, memory_max=memory_max)
-    assert result.returncode == expected_rc, result.stdout + result.stderr
+def test_cgroup_preflight_refuses_before_stopping_services(tmp_path):
+    result, state, calls, task = run_window(tmp_path, available_gib=24, memory_max=10737418240)
+    assert result.returncode == 1, result.stdout + result.stderr
     assert not service_actions(calls, "stop")
     assert not service_actions(calls, "start")
     assert not generation_calls(calls)
     assert not (task / "authorizations" / f"{AUTHORIZATION}.tsv").exists()
     scope = next(call for call in calls if call["command"] == "systemd-run")
     assert "MemoryMax=20G" in scope["args"] and "MemorySwapMax=0" in scope["args"]
+
+
+def test_memory_short_after_the_stops_restores_services(tmp_path):
+    # RAM is checked after Gemma/Decider stop (user, 2026-11-02): Gemma alone holds about 12 GB.
+    result, state, calls, task = run_window(tmp_path, available_gib=23)
+    assert result.returncode == 75, result.stdout + result.stderr
+    assert "after the stops" in result.stderr
+    assert service_actions(calls, "stop") == service_actions(calls, "start")
+    assert service_actions(calls, "stop")
+    assert not generation_calls(calls)
 
 
 def test_consumed_authorization_refuses_before_stop(tmp_path):

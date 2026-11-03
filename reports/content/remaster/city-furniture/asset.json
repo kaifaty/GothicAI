@@ -1,0 +1,508 @@
+{
+  "asset": "city-furniture",
+  "title": "Мебель дома: стулья, кровати, шкафы, троны, столы",
+  "kind": "props",
+  "created": "2026-11-02",
+  "goal": "the same Gothic, better made",
+  "namespaces": [
+    "city-furniture"
+  ],
+  "sources": [
+    {
+      "file": "city-furniture/concept-attempt-1.png",
+      "role": "concept",
+      "texture": null,
+      "attempt": 1,
+      "sha256": "028ad6d3335fce998aeb3f69db3fa6caf1c311c98c42854fbe32d9689ce336ca",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-11-02T15:38:52Z",
+      "thread": "01a19ce9-9de5-7441-b6d7-02c53bf05081",
+      "parent": null
+    },
+    {
+      "file": "city-furniture/concept-attempt-2.png",
+      "role": "concept",
+      "texture": null,
+      "attempt": 2,
+      "sha256": "70d0406a9df479465e82719e6a4e0387f3f2a5b2e735b331800285bdc3717be0",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-11-02T15:40:01Z",
+      "thread": "01a19ce9-9de5-7441-b6d7-02c53bf05081",
+      "parent": null
+    },
+    {
+      "file": "city-furniture/concept-attempt-3.png",
+      "role": "concept",
+      "texture": null,
+      "attempt": 3,
+      "sha256": "0cecb42a665ecb3145a45725352ffcc0f9ef7310a4fd613f4eb70a650dfb4421",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-11-02T15:40:55Z",
+      "thread": "01a19ce9-9de5-7441-b6d7-02c53bf05081",
+      "parent": null
+    },
+    {
+      "file": "city-furniture/concept-attempt-4.png",
+      "role": "concept",
+      "texture": null,
+      "attempt": 4,
+      "sha256": "e6fbdee8241c81195f8d41f7fadf53a9004412e9b189533e4f83f96de3477adc",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-11-02T15:41:37Z",
+      "thread": "01a19ce9-9de5-7441-b6d7-02c53bf05081",
+      "parent": null
+    },
+    {
+      "file": "city-furniture/concept-attempt-5.png",
+      "role": "concept",
+      "texture": null,
+      "attempt": 5,
+      "sha256": "b19370cb14c8a025e04a6d343263abb60d2e0dc10c80488cc15ff8af2d2931e1",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-11-02T15:42:32Z",
+      "thread": "01a19ce9-9de5-7441-b6d7-02c53bf05081",
+      "parent": null
+    },
+    {
+      "file": "city-furniture/concept-attempt-6.png",
+      "role": "concept",
+      "texture": null,
+      "attempt": 6,
+      "sha256": "dbbd66f846fb752d0bffc079863a683b6f990053cf8415262d7a9d39a1b151de",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-11-02T15:43:13Z",
+      "thread": "01a19ce9-9de5-7441-b6d7-02c53bf05081",
+      "parent": null
+    },
+    {
+      "file": "city-furniture/concept-attempt-7.png",
+      "role": "concept",
+      "texture": null,
+      "attempt": 7,
+      "sha256": "e3efc3bd184335efca2d9a9dd02ff953aa211a1edaccf1981e72d6169f80d45e",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-11-02T15:43:57Z",
+      "thread": "01a19ce9-9de5-7441-b6d7-02c53bf05081",
+      "parent": null
+    },
+    {
+      "file": "city-furniture/concept-attempt-8.png",
+      "role": "concept",
+      "texture": null,
+      "attempt": 8,
+      "sha256": "25bbd3849cf71f46a1ee96b622245d9fd78275352f871e42e559f0d46aeecfa7",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-11-02T15:44:39Z",
+      "thread": "01a19ce9-9de5-7441-b6d7-02c53bf05081",
+      "parent": null
+    },
+    {
+      "file": "city-furniture/concept-attempt-9.png",
+      "role": "concept",
+      "texture": null,
+      "attempt": 9,
+      "sha256": "221f7d9c753699b3160c550b1ee52d37fea9671a2dd3445a762422db897120eb",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-11-02T15:55:16Z",
+      "thread": "01a19cf7-df7e-7d02-a86a-9aa9386ff610",
+      "parent": null
+    },
+    {
+      "file": "city-furniture/concept-attempt-10.png",
+      "role": "concept",
+      "texture": null,
+      "attempt": 10,
+      "sha256": "c0d27f44180fab44c48c664de6ab66586586836189bbcde1cd253f1e1d8fdc57",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-11-02T15:56:20Z",
+      "thread": "01a19cf7-df7e-7d02-a86a-9aa9386ff610",
+      "parent": null
+    },
+    {
+      "file": "city-furniture/concept-attempt-11.png",
+      "role": "concept",
+      "texture": null,
+      "attempt": 11,
+      "sha256": "3fc0d25d5cc2320de9552d67a72036d93ea50b34ef3e7cb07ab680a6f6e8359f",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-11-02T15:57:10Z",
+      "thread": "01a19cf7-df7e-7d02-a86a-9aa9386ff610",
+      "parent": null
+    },
+    {
+      "file": "city-furniture/concept-attempt-12.png",
+      "role": "concept",
+      "texture": null,
+      "attempt": 12,
+      "sha256": "37380faf2bd5212020692b86a6b115cb6f3eb29c794e34be7a200bca59ca3323",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-11-02T15:58:05Z",
+      "thread": "01a19cf7-df7e-7d02-a86a-9aa9386ff610",
+      "parent": null
+    },
+    {
+      "file": "city-furniture/concept-attempt-13.png",
+      "role": "concept",
+      "texture": null,
+      "attempt": 13,
+      "sha256": "c608b513ac4c0e2122eb21f63a178639df0a7574a9d569d80f27820dccf44165",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-11-02T16:17:17Z",
+      "thread": "01a19d0c-71b8-7633-a95a-8b646bb6cc19",
+      "parent": null
+    },
+    {
+      "file": "city-furniture/concept-attempt-14.png",
+      "role": "concept",
+      "texture": null,
+      "attempt": 14,
+      "sha256": "9ee5f6f6cd6ec4a767d86753021528696f73cec581fff9303b357f7545650f92",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-11-02T16:18:13Z",
+      "thread": "01a19d0c-71b8-7633-a95a-8b646bb6cc19",
+      "parent": null
+    },
+    {
+      "file": "city-furniture/concept-attempt-15.png",
+      "role": "concept",
+      "texture": null,
+      "attempt": 15,
+      "sha256": "473b692ab5a7b89e9d79afcafe132d24fa6102cc36927727ac862443acedb952",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-11-02T16:19:07Z",
+      "thread": "01a19d0c-71b8-7633-a95a-8b646bb6cc19",
+      "parent": null
+    },
+    {
+      "file": "city-furniture/concept-attempt-16.png",
+      "role": "concept",
+      "texture": null,
+      "attempt": 16,
+      "sha256": "13552de243c26deeaa6bd2c7dd55c853f7289f1104ad4cf7fc4de7e788ec7a4a",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-11-02T16:19:46Z",
+      "thread": "01a19d0c-71b8-7633-a95a-8b646bb6cc19",
+      "parent": null
+    },
+    {
+      "file": "city-furniture/concept-attempt-17.png",
+      "role": "concept",
+      "texture": null,
+      "attempt": 17,
+      "sha256": "bb3c64ada20c1507e004aaf8ab58c1430d2df61c058d3d5832ea3983a6146eae",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-11-02T16:20:29Z",
+      "thread": "01a19d0c-71b8-7633-a95a-8b646bb6cc19",
+      "parent": null
+    },
+    {
+      "file": "city-furniture/concept-attempt-18.png",
+      "role": "concept",
+      "texture": null,
+      "attempt": 18,
+      "sha256": "1496bedf61b07f7f37abe729fbe7ed186343686baebdbeb67d202ca0eae28025",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-11-02T16:21:11Z",
+      "thread": "01a19d0c-71b8-7633-a95a-8b646bb6cc19",
+      "parent": null
+    },
+    {
+      "file": "city-furniture/concept-attempt-19.png",
+      "role": "concept",
+      "texture": null,
+      "attempt": 19,
+      "sha256": "0cdad844b95ffd42510f16d515b000ffb7b44415c4506b8a996b249ff8808b5c",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-11-02T16:21:56Z",
+      "thread": "01a19d0c-71b8-7633-a95a-8b646bb6cc19",
+      "parent": null
+    },
+    {
+      "file": "city-furniture/concept-attempt-20.png",
+      "role": "concept",
+      "texture": null,
+      "attempt": 20,
+      "sha256": "ba22f96dfa32dfbb0ff59955dbc9db6325a8cf6247247ee134fe8c7f320324ae",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-11-02T16:22:41Z",
+      "thread": "01a19d0c-71b8-7633-a95a-8b646bb6cc19",
+      "parent": null
+    },
+    {
+      "file": "city-furniture/concept-attempt-21.png",
+      "role": "concept",
+      "texture": null,
+      "attempt": 21,
+      "sha256": "7ecc39700316981a52f12490e9ce99d858f4671ba6f383458391d322bb32d523",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-11-02T16:23:27Z",
+      "thread": "01a19d0c-71b8-7633-a95a-8b646bb6cc19",
+      "parent": null
+    },
+    {
+      "file": "city-furniture/concept-attempt-22.png",
+      "role": "concept",
+      "texture": null,
+      "attempt": 22,
+      "sha256": "821dbc1b140ac404a2287cc4f60a8435813e1c94e486e3367047dfead3aef95e",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-11-02T16:24:14Z",
+      "thread": "01a19d0c-71b8-7633-a95a-8b646bb6cc19",
+      "parent": null
+    },
+    {
+      "file": "city-furniture/concept-attempt-23.png",
+      "role": "concept",
+      "texture": null,
+      "attempt": 23,
+      "sha256": "160dd57e237db624500f3d53e2e5f6c6c3459045512c53dc20359515063b36c4",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-11-02T16:24:58Z",
+      "thread": "01a19d0c-71b8-7633-a95a-8b646bb6cc19",
+      "parent": null
+    },
+    {
+      "file": "city-furniture/concept-attempt-24.png",
+      "role": "concept",
+      "texture": null,
+      "attempt": 24,
+      "sha256": "adf03b7d249c8fb7f6b66a7e8350915b21e96459d60807d553d9574fb986c56a",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-11-02T16:25:38Z",
+      "thread": "01a19d0c-71b8-7633-a95a-8b646bb6cc19",
+      "parent": null
+    },
+    {
+      "file": "city-furniture/concept-attempt-25.png",
+      "role": "concept",
+      "texture": null,
+      "attempt": 25,
+      "sha256": "fc7ee03995a18b2294ca437116bfbcc9c074f6ef7a4ee5fd595b1979870a566a",
+      "c2pa": {
+        "agent": "ChatGPT",
+        "version": "gpt-image"
+      },
+      "model": "ChatGPT gpt-image",
+      "utc": "2026-11-02T16:26:22Z",
+      "thread": "01a19d0c-71b8-7633-a95a-8b646bb6cc19",
+      "parent": null
+    }
+  ],
+  "selected": {
+    "concept-stool": {
+      "file": "city-furniture/concept-attempt-13.png",
+      "reason": "material and character; form from the original mesh (user 2026-11-02: «Да, по мешу»)",
+      "date": "2026-11-02"
+    },
+    "concept-stool-rich": {
+      "file": "city-furniture/concept-attempt-14.png",
+      "reason": "material and character; form from the original mesh (user 2026-11-02: «Да, по мешу»)",
+      "date": "2026-11-02"
+    },
+    "concept-armchair": {
+      "file": "city-furniture/concept-attempt-15.png",
+      "reason": "material and character; form from the original mesh (user 2026-11-02: «Да, по мешу»)",
+      "date": "2026-11-02"
+    },
+    "concept-bed": {
+      "file": "city-furniture/concept-attempt-16.png",
+      "reason": "material and character; form from the original mesh (user 2026-11-02: «Да, по мешу»)",
+      "date": "2026-11-02"
+    },
+    "concept-bed-rich": {
+      "file": "city-furniture/concept-attempt-17.png",
+      "reason": "material and character; form from the original mesh (user 2026-11-02: «Да, по мешу»)",
+      "date": "2026-11-02"
+    },
+    "concept-bed-master": {
+      "file": "city-furniture/concept-attempt-18.png",
+      "reason": "material and character; form from the original mesh (user 2026-11-02: «Да, по мешу»)",
+      "date": "2026-11-02"
+    },
+    "concept-dresser": {
+      "file": "city-furniture/concept-attempt-19.png",
+      "reason": "material and character; form from the original mesh (user 2026-11-02: «Да, по мешу»)",
+      "date": "2026-11-02"
+    },
+    "concept-dresser-rich": {
+      "file": "city-furniture/concept-attempt-20.png",
+      "reason": "material and character; form from the original mesh (user 2026-11-02: «Да, по мешу»)",
+      "date": "2026-11-02"
+    },
+    "concept-sideboard": {
+      "file": "city-furniture/concept-attempt-21.png",
+      "reason": "material and character; form from the original mesh (user 2026-11-02: «Да, по мешу»)",
+      "date": "2026-11-02"
+    },
+    "concept-lectern": {
+      "file": "city-furniture/concept-attempt-22.png",
+      "reason": "material and character; form from the original mesh (user 2026-11-02: «Да, по мешу»)",
+      "date": "2026-11-02"
+    },
+    "concept-table": {
+      "file": "city-furniture/concept-attempt-23.png",
+      "reason": "material and character; form from the original mesh (user 2026-11-02: «Да, по мешу»)",
+      "date": "2026-11-02"
+    },
+    "concept-table-rich": {
+      "file": "city-furniture/concept-attempt-24.png",
+      "reason": "material and character; form from the original mesh (user 2026-11-02: «Да, по мешу»)",
+      "date": "2026-11-02"
+    },
+    "concept-bench": {
+      "file": "city-furniture/concept-attempt-25.png",
+      "reason": "material and character; form from the original mesh (user 2026-11-02: «Да, по мешу»)",
+      "date": "2026-11-02"
+    }
+  },
+  "reviews": [
+    {
+      "id": "r1-set",
+      "stage": "concept",
+      "mode": "reference",
+      "verdict": "REJECT",
+      "date": "2026-11-02",
+      "path": "reviews/r1-set/merged.json"
+    },
+    {
+      "id": "r1b-set",
+      "stage": "concept",
+      "mode": "reference",
+      "verdict": "REJECT",
+      "date": "2026-11-02",
+      "path": "reviews/r1b-set/merged.json"
+    },
+    {
+      "id": "r1c-set",
+      "stage": "concept",
+      "mode": "reference",
+      "verdict": "REJECT",
+      "date": "2026-11-02",
+      "path": "reviews/r1c-set/merged.json"
+    },
+    {
+      "id": "r1c-set",
+      "stage": "concept",
+      "mode": "reference",
+      "verdict": "REJECT",
+      "date": "2026-11-02",
+      "path": "reviews/r1c-set/merged.json"
+    }
+  ],
+  "gates": [
+    {
+      "gate": "preserve",
+      "verdict": "approved",
+      "by": "user",
+      "date": "2026-11-02",
+      "quote": "Принято",
+      "note": null
+    },
+    {
+      "gate": "concept",
+      "verdict": "approved",
+      "by": "user",
+      "date": "2026-11-02",
+      "quote": "Да, по мешу",
+      "note": null
+    }
+  ],
+  "build": null,
+  "backup": null
+}
