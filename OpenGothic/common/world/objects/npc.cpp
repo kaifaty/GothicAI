@@ -4401,7 +4401,22 @@ bool Npc::implSimpleGoTo(uint64_t dt, float destDist) {
       go2.pos = action->item->position();
     }
 
-  if(go2.flag!=GT_Flee && go2.isClose(*this,destDist)) {
+  const auto* pending=pendingSimpleGoTo();
+  const bool internal=go2.flag==GT_Way && go2.wp!=nullptr &&
+                      (wayPath.first()!=nullptr || (pending!=nullptr &&
+                       (pending->act==AI_GoToNpc || pending->act==AI_GotoItem || pending->point!=go2.wp)));
+  bool reached=false;
+  if(internal) {
+    // Occupancy enlarges terminal admission, not an internal graph vertex:
+    // changing edges early would replace the authored corner with a chord.
+    auto vertex=go2.wp->groundPos;
+    if(simpleMovement.edgeTo==go2.wp && simpleMovement.ground!=nullptr)
+      vertex.y=simpleMovement.ground->heightAt(vertex);
+    reached=(vertex-position()).quadLength()<=.01f*.01f;
+    } else {
+    reached=go2.isClose(*this,destDist);
+    }
+  if(go2.flag!=GT_Flee && reached) {
     if(go2.flag==GT_Way && go2.wp!=nullptr && wayPath.first()!=nullptr) {
       go2.wp = go2.wp->hasLadderConn(wayPath.first()) ? wayPath.first() : wayPath.pop();
       attachToPoint(go2.wp);

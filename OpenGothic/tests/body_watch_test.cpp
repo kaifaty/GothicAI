@@ -36,6 +36,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <stdexcept>
 #include <string>
@@ -1425,6 +1426,66 @@ class NpcLogicalStateContract final {
         for(unsigned i=0;i<10;++i) advance();
         expect((moving->position()-position).quadLength()>tickTravel*tickTravel,
                "restored graph movement keeps advancing on the saved route");
+        moving->clearAiQueue(); moving->clearGoTo();
+        moving->setSimTierOverride(NpcSimTier::Full);
+        moving->setSimTier(NpcSimTier::Full);
+        moving->updateSimpleMovement();
+      }
+      {
+        ++cases;
+        auto* moving=gothic.world()->npcById(id);
+        auto* hero=gothic.player();
+        const auto* start=gothic.world()->findWayPoint("NW_CITY_MERCHANT_PATH_23");
+        const auto* corner=gothic.world()->findWayPoint("NW_CITY_MERCHANT_PATH_18");
+        const auto* goal=gothic.world()->findWayPoint("NW_CITY_MERCHANT_TAVERN01_BACKROOM");
+        expect(moving!=nullptr && hero!=nullptr && start!=nullptr && corner!=nullptr && goal!=nullptr,
+               "graph corner fixture uses the authored tavern route");
+        auto route=gothic.world()->wayTo(*start,*goal);
+        expect(route.pop()==start && route.pop()==corner && route.pop()==goal && route.first()==nullptr,
+               "the native planner routes the tavern walk through PATH18");
+        const auto* heroPoint=hero->currentWayPoint();
+        hero->attachToPoint(corner);
+        moving->clearAiQueue(); moving->clearState(true); moving->clearGoTo();
+        moving->closeWeapon(true); moving->setTarget(nullptr); moving->setExternalControl(true);
+        moving->setSimTierOverride(NpcSimTier::Simplified);
+        moving->setSimTier(NpcSimTier::Simplified);
+        moving->setWalkMode(WalkBit::WM_Walk);
+        moving->setPosition(start->groundPos);
+        moving->setDirection(corner->groundPos-start->groundPos);
+        moving->attachToPoint(start);
+        moving->visual.pose().stopAllAnim();
+        expect(moving->setAnim(Npc::Anim::Idle),"graph corner fixture starts from the native walk idle");
+        moving->aiPush(AiQueue::aiGoToPoint(*goal));
+        moving->aiPush(AiQueue::aiWait(5000));
+        bool started=false,occupied=false,arrived=false,waitPreserved=true;
+        float closest=std::numeric_limits<float>::max();
+        float tickTravel=0;
+        for(unsigned step=0;step<1200;++step) {
+          advance();
+          const auto delta=moving->position()-corner->groundPos;
+          closest=std::min(closest,std::hypot(delta.x,delta.z));
+          tickTravel=std::max(tickTravel,moving->simplifiedMoveSpeed()*float(tickMs));
+          if(moving->currentGoToPoint()==corner)
+            occupied|=corner->useCounter()>1;
+          if(moving->moveHint()!=Npc::GT_No) {
+            started=true;
+            const auto* head=moving->aiQueue.front();
+            waitPreserved&=head!=nullptr && head->act==AI_Wait;
+            }
+          else if(started) {
+            arrived=true;
+            break;
+            }
+          }
+        const float finalDistance=MoveAlgo::closeToPointThreshold*(moving->mvAlgo.checkLastBounce() ? .5f : 1.5f);
+        expect(occupied && closest<=tickTravel+.01f,
+               "an occupied internal vertex is visited within one tick instead of cutting the tavern corner");
+        expect(arrived && moving->usesSimplifiedMovement() && MoveAlgo::isClose(*moving,*goal,finalDistance),
+               "the graph route arrives using the native terminal distance");
+        const auto* head=moving->aiQueue.front();
+        expect(waitPreserved && ((head!=nullptr && head->act==AI_Wait) || moving->waitTime>moving->world().tickCount()),
+               "the occupied-corner route preserves and releases its following wait");
+        hero->attachToPoint(heroPoint);
         moving->clearAiQueue(); moving->clearGoTo();
         moving->setSimTierOverride(NpcSimTier::Full);
         moving->setSimTier(NpcSimTier::Full);
