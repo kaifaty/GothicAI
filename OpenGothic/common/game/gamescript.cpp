@@ -1357,6 +1357,13 @@ bool GameScript::startHotkeyPotion(Npc& pl, bool mana) {
     return false;
     }
   note(vm.find_symbol_by_index(uint32_t(selected))->name());
+  if(pl.weaponState()!=WeaponState::NoWeapon && pl.itemUseInHandAnimation(*pl.getItem(selected)).empty()) {
+    if(TestBench::isActive())
+      TestBench::note(("item use "+std::string(TestBench::who(&pl))+": "+
+                      vm.find_symbol_by_index(uint32_t(selected))->name()+" holster path: no compatible in-hand clip or deferred effect").c_str());
+    pl.stopAnim("");
+    pl.aiPush(AiQueue::aiRemoveWeapon());
+    }
   pl.aiPush(AiQueue::aiUseItem(int32_t(selected)));
   return true;
   }

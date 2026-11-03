@@ -674,6 +674,7 @@ class Npc final {
     void      useItem    (size_t item, uint8_t slotHint, bool force);
     void      beginItemUseEffect(const Item& item);
     bool      startItemUse(const Item& item, bool allowMissing);
+    std::string itemUseInHandAnimation(const Item& item) const;
     bool      isUsingItemInHand() const;
     void      setCurrentItem(size_t item);
     void      unequipItem(size_t item);

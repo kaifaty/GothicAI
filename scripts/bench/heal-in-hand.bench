@@ -119,6 +119,75 @@ hold turnl 900
 wait 6000
 healing check hand-potion
 
+# Refused combat actions preserve the drink: exhaustion is created by real swings.
+healing begin refused-dodge ItPo_Health_01
+healing arm 1h
+wait 600
+healing exhaust
+healing use direct
+wait 600
+healing action dodge
+wait 5400
+healing check refused-action
+
+healing begin refused-attack ItPo_Health_01
+healing arm 1h
+wait 600
+healing exhaust
+healing use direct
+wait 600
+healing action attack
+wait 5400
+healing check refused-action
+
+healing begin refused-parade ItPo_Health_01
+healing arm 1h
+wait 600
+healing exhaust
+healing use direct
+wait 600
+healing action parade
+wait 5400
+healing check refused-action
+
+healing begin refused-charge ItPo_Health_01
+healing arm 1h
+wait 600
+healing exhaust
+healing use direct
+wait 600
+healing action charge
+wait 5400
+healing check refused-action
+
+# Input toggles update the stored mode, independently of the clip's forced walking.
+healing begin toggle-walk ItPo_Health_01
+healing arm 1h
+wait 600
+healing use direct
+wait 600
+healing toggle walk
+wait 5400
+healing check hand-potion
+healing begin toggle-sneak ItPo_Health_01
+healing arm 1h
+wait 600
+healing use direct
+wait 600
+healing toggle sneak
+wait 5400
+healing check hand-potion
+
+# Selecting run explicitly cuts an in-hand use; held movement above only walks.
+healing begin own-run ItPo_Health_01
+healing arm 1h
+wait 600
+healing use direct
+wait 600
+healing action run
+wait 5400
+healing check hand-cancel
+
 # Own combat actions win before ITEM_DESTROY; OFF remains a holster control.
 healing begin own-dodge ItPo_Health_01
 healing arm 1h
@@ -153,3 +222,29 @@ wait 600
 healing use direct
 wait 20000
 healing check wine
+
+# The bandit's queued run waits for its one-off in-hand clip to finish.
+healing begin npc-queue ItPo_Health_01
+healing npc-queue
+wait 6000
+healing check npc-queue
+
+# Turning off the category's Part A flag retains its immediate native effect.
+healing begin original-potion ItPo_Health_01
+healing arm 1h
+wait 600
+healing original potion
+healing use direct
+wait 600
+healing action dodge
+wait 5400
+healing check original-potion
+healing begin original-food ItFo_Bread
+healing arm 1h
+wait 600
+healing original food
+healing use direct
+wait 600
+healing action dodge
+wait 11400
+healing check original-food
