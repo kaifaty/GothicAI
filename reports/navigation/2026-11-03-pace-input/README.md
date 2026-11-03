@@ -17,7 +17,7 @@ HD — `/mnt/shared/gothic-ai/archive/nav-dagger3-20261030/hd-run`: `policy.navb
 
 ## Обучение
 
-`nav_bc_train.py train --pace-input` учит v5 на готовых HD-кэшах, в том числе на агрегате `--aggregate-cache`. Вход темпа — метка walk учителя на том же решении, взятая из меток кэша; новый кэш не нужен. Метка walk не учится. Смены действия пересчитываются без walk; глобальный вес `clip(N/n_I, 1, 10)` считается по меткам кэшей. Веса остальных голов прежние: (2, 1, 2, 1)/7. `--init` принимает HD `last.pt` (с тем же преобразованием, что у конвертера) или v5 `last.pt`. Не поддерживаются: прямое чтение записей (`--source`), BC4-вход и PPO; на это есть явные ошибки.
+`nav_bc_train.py train --pace-input` учит v5 на готовых HD-кэшах, в том числе на агрегате `--aggregate-cache`. Вход темпа — метка walk учителя на том же решении, взятая из меток кэша; новый кэш не нужен. Метка walk не учится. Смены действия пересчитываются без walk; глобальный вес `clip(N/n_I, 1, 10)` считается по меткам кэшей. Веса остальных голов прежние: (2, 1, 2, 1)/7. `--init` принимает HD `last.pt` (с тем же преобразованием, что у конвертера) или v5 `last.pt`. Не поддерживаются прямое чтение записей (`--source`), BC4-вход и PPO. `--pace-input` с любым кэшем, кроме HD (версия 5), и с `--source` отказывает сразу после чтения индекса, до выбора тренера и до создания папки вывода. Раньше компактный кэш версии 3 молча обучал прежнюю модель с головой walk. Проверяет `test_pace_input_refuses_compact_caches_before_choosing_a_trainer` (версии кэша 3 и 4).
 
 ## Стенд
 
@@ -25,6 +25,7 @@ HD — `/mnt/shared/gothic-ai/archive/nav-dagger3-20261030/hd-run`: `policy.navb
 - Цель `follow` (семейство follow и места follow живого набора) при навязанном темпе всегда бежит. Это относится и к старым весам с флагом; без флага старые веса не меняются.
 - Без флага `drive` с v5 отказывает: «Pace-input weights (.navbc v5) need --force-pace walk|run; the stand never picks a pace by default». Runner отказывает при загрузке весов, `population` v5 не принимает.
 - `episode.json` пишет `pace_input` и фактический `pace` (`walk`, `run` или `null`).
+- **Живой набор.** Темп места задан полем `pace` в [`scripts/nav-live/scenarios.json`](../../../scripts/nav-live/scenarios.json) и переходит в замороженный `qualified-suite.json`: follow (№3) — run, возврат к распорядку (№2, три позиции) — walk, остальные семь мест — run. Набор отвергает follow не с run. Для весов v5 `nav_live.py` сам ставит `OPENGOTHIC_NAV_FORCE_PACE` в окружение игры внутри заявки: gq окружение отправителя не пересылает, а `nav-live.sh` унаследованное значение снимает. Темп пишется в `episode.json` (`forced_pace`) и в `summary.json` (`forced_pace` и применённый `pace`). Для v5 он входит в `identity.json`; место без `pace` с v5 отказывает. Старые веса (v1–v4) идут без темпа, их команды и `identity.json` прежние.
 - В обычной игре v5 не включён. Правило этапа «в мир» записано в [navigation.md](../../../docs/navigation.md#как-работает-сейчас): темп из режима ходьбы NPC, спутник — бег.
 
 ## Проверки
@@ -54,7 +55,7 @@ HD — `/mnt/shared/gothic-ai/archive/nav-dagger3-20261030/hd-run`: `policy.navb
 
 ### Стенд
 
-Заявка `26410e7fa255`, runner из ветки и runner из main `479573c94` на той же базе `032e902a…0b14b` (только чтение с NAS). Validation v5 (`/mnt/shared/gothic-ai/nav-demos-v5/manifest.json`), первый сценарий каждого семейства point, object, follow_below_gate (индексы 0, 60, 239), action seed 18102027, lean, CV, sampling, β=0, лимит 240 с. Веса v5 — v5 из HD. Доля walk считается по строкам решений `actions.txt` без последней строки: это сброс клавиш после конца эпизода, в нём walk=1 у всех весов.
+Заявка `eecf02f69058` (снимок ветки `abcf1215039d3f9a560c`), runner из ветки и runner из main `1539faa3c` на той же базе `032e902a…0b14b` (только чтение с NAS). Validation v5 (`/mnt/shared/gothic-ai/nav-demos-v5/manifest.json`), первый сценарий каждого семейства point, object, follow_below_gate (индексы 0, 60, 239), action seed 18102027, lean, CV, sampling, β=0, лимит 240 с. Веса v5 — v5 из HD. Доля walk считается по строкам решений `actions.txt` без последней строки: это сброс клавиш после конца эпизода, в нём walk=1 у всех весов.
 
 | Веса / флаг | Семейство | Успех | Время, мс | Решений | `pace` | walk, % | sha256 actions |
 |---|---|---|---:|---:|---|---:|---|
@@ -64,22 +65,48 @@ HD — `/mnt/shared/gothic-ai/archive/nav-dagger3-20261030/hd-run`: `policy.navb
 | v5 / walk | point | да | 77833 | 779 | walk | 100 | `953a9263…` |
 | v5 / walk | object | да | 48167 | 482 | walk | 100 | `c4f0b09a…` |
 | v5 / walk | follow | да | 240000 | 2400 | run | 0 | `6ba7930d…` |
-| HD без флага, main | point | да | 75633 | 757 | — | 100 | `9b6a8b0c…` |
-| HD без флага, main | object | да | 50333 | 504 | — | 98,6 | `e14efdd2…` |
-| HD без флага, main | follow | да | 240000 | 2400 | — | 77,5 | `b9cf206b…` |
-| HD без флага, ветка | point | да | 75633 | 757 | `null` | 100 | `9b6a8b0c…` |
-| HD без флага, ветка | object | да | 50333 | 504 | `null` | 98,6 | `e14efdd2…` |
-| HD без флага, ветка | follow | да | 240000 | 2400 | `null` | 77,5 | `b9cf206b…` |
 
 - follow с `--force-pace walk` бежит и побайтно повторяет follow с `run`: при обоих флагах вход и клавиша одинаковы.
-- HD без флага: `actions.txt` и `trajectory.txt` ветки и main совпали побайтно в 3/3 эпизодах.
+- Старые форматы без флага: `actions.txt` и `trajectory.txt` ветки и main совпали побайтно в 9/9 эпизодах (по три на формат; seed 18102027, те же три сценария). Веса только читались.
+
+| Формат | Веса (sha256) | Семейство | Успех | Время, мс | Решений | walk, % | actions main = ветка | trajectory main = ветка |
+|---|---|---|---|---:|---:|---:|---|---|
+| v1 | PPO it35 `archive/nav-ppo/run/iter-000035/update` (`6bd12291…`) | point | да | 74100 | 741 | 100 | `6cda59ed…` да | `d125935d…` да |
+| v1 | | object | да | 45400 | 454 | 100 | `59d1bd5b…` да | `ef6c0cc7…` да |
+| v1 | | follow | нет | 240000 | 2400 | 100 | `f7d4956d…` да | `9a0d6394…` да |
+| v2 | BC3 `archive/nav-bc3-20261029/run/it35` (`7e603b76…`) | point | да | 22233 | 223 | 13,5 | `8a7f523a…` да | `120b8397…` да |
+| v2 | | object | да | 37367 | 374 | 85,6 | `42c4ba11…` да | `442979e5…` да |
+| v2 | | follow | да | 240000 | 2400 | 71,9 | `2617033a…` да | `17db8cd3…` да |
+| v3 | HD `archive/nav-dagger3-20261030/hd-run` (`304ea6c6…`) | point | да | 75633 | 757 | 100 | `9b6a8b0c…` да | `3de936d4…` да |
+| v3 | | object | да | 50333 | 504 | 98,6 | `e14efdd2…` да | `d76fc87d…` да |
+| v3 | | follow | да | 240000 | 2400 | 77,5 | `b9cf206b…` да | `21c0af25…` да |
+
+  У ветки `pace_input=false`, `pace=null`. Первое сравнение HD с main `479573c94` (заявка `26410e7fa255`) дало те же хеши.
 - Без флага `nav_rl.py drive` с v5 вышел с кодом 1 до запуска игры: «Pace-input weights (.navbc v5) need --force-pace walk|run; the stand never picks a pace by default».
 - Если обойти эту проверку Python, runner отказывает при загрузке весов: «Runner rejected advance: navdemos: pace-input weights (.navbc v5) need OPENGOTHIC_NAV_FORCE_PACE=walk|run (nav_rl.py drive --force-pace); the stand never picks a pace by default». `episode.json` при этом не появляется.
 - Итог — `/mnt/shared/gothic-ai/nav-pace-input/drive/drive.json`.
 
+### Живой smoke v5
+
+Заявка `64f6a785d4b3`, gq quick с окном, тот же снимок `abcf1215…`. Сборка Gothic2Notr из снимка, `nav_live.run_episode` без записи видео, веса v5 из HD, места и темп — из `scripts/nav-live/scenarios.json`. Лимит сокращён до 5 с: проверяется дорога до решений, а не доходимость.
+
+| Место | `pace` места | `forced_pace` | применённый `pace` | Решений | Решений шагом | Итог эпизода |
+|---|---|---|---|---:|---:|---|
+| 03-follow-hero | run | run | run | 50 | 0 | `follow_band_below_threshold` |
+| 02-routine-return-forest-tree | walk | walk | walk | 50 | 50 | `path_timeout` |
+| 05-wall-pocket | run | run | run | 50 | 0 | `path_timeout` |
+
+Итог — `/mnt/shared/gothic-ai/nav-pace-input/live/live.json`. Тест `test_live_game_gets_frozen_place_pace_only_for_pace_input_weights` проверяет окружение игры для follow, routine-return и прочих мест у v5 и у v3. Значение отправителя до игры не доходит.
+
+### Лаунчер
+
+- Каждая заявка `nav-pace-remote.sh` идёт из своего неизменяемого снимка `~/gothic-ai/nav-pace-input/source/<хеш>`. Хеш берётся по `OpenGothic/`, `scripts/`, `AGENTS.md` и manifest v5; копия сначала ложится во временную папку и переименовывается. Существующий снимок не перезаписывается, и повторный запуск с другими исходниками создаёт новую папку. Main лежит в `main/<ревизия>`.
+- Сборка, venv, кэш navmesh и рабочие файлы у каждой заявки свои (`build/<этап>-<снимок>`, `venv-<этап>`, `work/<этап>-<снимок>`).
+- Условия drive и live проверяются отдельными командами с явной остановкой до диска и сборки: «run the smoke stage first», «no converted weights», «missing main snapshot». Прежнее `test -f … && test -x …` под `set -e` не останавливало заявку. Проверяет `test_pace_launcher_stops_each_missing_precondition_explicitly`.
+
 ### Тесты и сборка
 
-- Mac: `scripts/build-engine.sh` — exit 0; `gothic-navpolicy-contract` собран, синтетический v5 на 200 шагах: признаки 0, логиты 1,86·10⁻⁹. `python3 scripts/check.py run`: scripts — 199 passed, scripts-torch — 53 passed и 35 subtests.
+- Mac: `scripts/build-engine.sh` — exit 0; `gothic-navpolicy-contract` собран, синтетический v5 на 200 шагах: признаки 0, логиты 1,86·10⁻⁹. `python3 scripts/check.py run` после правок ревью: scripts — 546 passed, scripts-torch — 55 passed и 35 subtests.
 - Ryzen (smoke): `test_nav_bc_model.py`, `test_nav_bc_train.py`, `test_nav_bc_contract.py`, `test_nav_bc_data.py`, `test_nav_rl.py`, `test_nav_drive.py` — 280 passed, 35 subtests. Заявка smoke `3222bf54fb85` — 330 с, exit 0.
 
 ## Шаг учителя и обстановка
@@ -169,9 +196,11 @@ HD — `/mnt/shared/gothic-ai/archive/nav-dagger3-20261030/hd-run`: `policy.navb
 - Сильнее всего шаг зависит от расстояния до цели в follow: <5 м — 70,1/71,7%, 5–20 м — 9,0/14,9%, 20–50 м — 15,4/17,2%. В approach шаг чаще у цели: 90,3/78,4% при <5 м против 46–57/34–42% дальше.
 - Учитель в follow идёт шагом в 60–63% решений, а на стенде follow всегда бежит. Значит, на validation ученик v5 увидит в follow вход run и там, где в обучении учитель шёл шагом.
 
+Решение руководителя задачи (2026-11-03): вход темпа в данных остаётся фактическим темпом учителя, чтобы данные согласовывались с движением тела; учителя follow, который всегда бежит, переделывают отдельной задачей — она даст новые follow-примеры с бегом.
+
 ## Цена
 
-Заявки Ryzen: teacher 45 с, smoke 330 с, drive 757 с (`26410e7fa255`). Три прежние заявки drive остановились на подготовке стенда, а не на механике темпа, и исправлены в лаунчере:
+Заявки Ryzen: teacher 45 с, smoke 330 с, drive 757 с (`26410e7fa255`); после ревью drive 1521 с (`eecf02f69058`) и live 191 с (`64f6a785d4b3`). Три прежние заявки drive остановились на подготовке стенда, а не на механике темпа, и исправлены в лаунчере:
 
 - `4380c061d5e5`, 6 с: в копию main не попал `scripts/convert`, CMake не настроился;
 - `31e24caf7999`, 341 с: проверка доли walk считала строку сброса; эпизоды v5/run были верны, 0 решений walk;
