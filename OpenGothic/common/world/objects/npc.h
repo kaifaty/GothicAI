@@ -313,6 +313,7 @@ class Npc final {
 
     void      setToFightMode(const size_t item);
     void      setToFistMode();
+    void      setToBowMode(const size_t item);
 
     void      aiPush(AiQueue::AiAction&& a);
     void      resumeAiRoutine();
