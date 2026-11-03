@@ -162,7 +162,8 @@ character idle snapshot npc-steeper-bow-end
 character idle hero steeper
 wait 500
 character idle weapon 1h
-character idle camera 320 70
+# world yaw across the downhill direction of the steeper site
+cam world 320 70 230.868
 wait 1500
 cam hold
 character idle begin
@@ -176,7 +177,8 @@ character idle snapshot clip-1h-end
 character idle hero steeper
 wait 500
 character idle weapon bow
-character idle camera 320 70
+# world yaw across the downhill direction of the steeper site
+cam world 320 70 230.868
 wait 1500
 cam hold
 character idle begin

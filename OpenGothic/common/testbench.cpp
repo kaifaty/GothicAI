@@ -12054,19 +12054,6 @@ void characterIdleWeapon(World& world,std::string_view kind) {
     ",\"weapon_state\":"+std::to_string(int(npc.weaponState()))+",\"body_state\":"+std::to_string(uint32_t(npc.bodyStateMasked())));
   }
 
-// A world-fixed camera beside the slope, across its downhill direction, so a
-// following `cam hold` keeps a frame in which drift down the slope is visible.
-void characterIdleCamera(World& world,float dist,float height) {
-  auto& idle=bench.characterIdle;
-  if(!idle.actor) {arenaAbort("character idle camera needs a prepared actor");return;}
-  float angle=0,rough=0;Vec3 down;
-  if(!slopeAt(world,idle.actor->position(),angle,down,rough)) {arenaAbort("character idle camera found no slope");return;}
-  bench.cam=C_World;bench.camAuto=false;bench.smValid=false;bench.camDist=dist;bench.camHeight=height;
-  bench.camAngle=std::atan2(down.z,down.x)*180.f/float(M_PI)+90.f;
-  event("character_idle_camera","\"slope_deg\":"+ragdollNumber(angle)+",\"downhill\":"+ragdollVector(down)+
-    ",\"camera_yaw_deg\":"+ragdollNumber(bench.camAngle));
-  }
-
 void characterIdleSnapshot(World& world,std::string_view label,bool begin=false) {
   auto& idle=bench.characterIdle;
   if(!idle.actor) {arenaAbort("character idle snapshot needs a prepared actor");return;}
@@ -14956,8 +14943,6 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     characterIdlePrepare(w,pl,ctrl,a[2],a.size()==4?a[3]:"gentle");
   else if(c=="character" && a.size()==3 && a[1]=="idle" && a[2]=="begin") characterIdleSnapshot(w,"begin",true);
   else if(c=="character" && a.size()==4 && a[1]=="idle" && a[2]=="weapon") characterIdleWeapon(w,a[3]);
-  else if(c=="character" && a.size()>=3 && a.size()<=5 && a[1]=="idle" && a[2]=="camera")
-    characterIdleCamera(w,num(a,3,300),num(a,4,60));
   else if(c=="character" && a.size()==4 && a[1]=="idle" && a[2]=="snapshot") characterIdleSnapshot(w,a[3]);
   else if(c=="character" && a.size()==2 && (a[1]=="on" || a[1]=="off")) {
     Gothic::settingsSetI("GAME","character_virtual",a[1]=="on");
