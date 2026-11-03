@@ -39,8 +39,8 @@ if [[ "$stage" != run ]]; then
     git -C "$ROOT" worktree add -q --detach "$main/tree" origin/main
     trap 'git -C "$ROOT" worktree remove --force "$main/tree"; rm -rf "$main"' EXIT
     ssh ryzen "mkdir -p '$task/main-source'"
-    rsync -a --delete --no-links --exclude=build --exclude='build-*' --exclude=.git \
-      "$main/tree/OpenGothic" "ryzen:$task/main-source/"
+    rsync -a --delete --no-links --exclude=build --exclude='build-*' --exclude=.git --exclude=__pycache__ \
+      "$main/tree/OpenGothic" "$main/tree/scripts" "ryzen:$task/main-source/"
     git -C "$main/tree" rev-parse HEAD | ssh ryzen "cat > '$task/main-source/REVISION'"
   fi
   case "$stage" in
