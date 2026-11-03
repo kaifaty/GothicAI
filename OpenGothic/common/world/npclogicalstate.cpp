@@ -274,7 +274,8 @@ void endSample(NpcLogicAudit::Bucket& bucket, int64_t error, bool wait) {
 void NpcLogicalState::updateBody() {
   uint32_t state=BS_NONE;
   for(const auto& layer:layers)
-    if(!layer.finished) state=std::max(state,uint32_t(layer.state&(BS_MAX|BS_FLAG_MASK)));
+    if(!layer.finished && !(layer.state==BS_ITEMINTERACT && layer.sequence->layer==21))
+      state=std::max(state,uint32_t(layer.state&(BS_MAX|BS_FLAG_MASK)));
   if(executorState) state=uint32_t(*executorState);
   if(interactiveState) state=uint32_t(*interactiveState);
   if(externalState) state=uint32_t(*externalState);

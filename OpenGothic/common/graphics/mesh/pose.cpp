@@ -274,7 +274,8 @@ void Pose::setFlags(Pose::Flags f) {
 BodyState Pose::bodyState() const {
   uint32_t b = BS_NONE;
   for(auto& i:lay)
-    b = std::max(b,uint32_t(i.bs&(BS_MAX | BS_FLAG_MASK)));
+    if(!(i.bs==BS_ITEMINTERACT && i.seq->layer==21))
+      b = std::max(b,uint32_t(i.bs&(BS_MAX | BS_FLAG_MASK)));
   return BodyState(b);
   }
 
@@ -894,7 +895,7 @@ void Pose::implMkSkeleton(const Tempest::Matrix4x4 &mt, size_t parent) {
 const Animation::Sequence* Pose::solveNext(const AnimationSolver &solver, const Layer& lay) {
   auto sq = lay.seq;
 
-  if((lay.bs & BS_ITEMINTERACT)==BS_ITEMINTERACT && itemUseSt!=itemUseDestSt) {
+  if(lay.seq->layer!=21 && (lay.bs & BS_ITEMINTERACT)==BS_ITEMINTERACT && itemUseSt!=itemUseDestSt) {
     int sA = itemUseSt, sB = itemUseSt, nextState = 0;
     if(itemUseSt<itemUseDestSt) {
       sB++;
@@ -1173,9 +1174,17 @@ bool Pose::isFlyAnim() const {
   }
 
 bool Pose::isStanding() const {
-  if(lay.size()!=1 || lay[0].seq->animCls==Animation::Transition)
+  const Animation::Sequence* base = nullptr;
+  for(const auto& i:lay) {
+    if(i.bs==BS_ITEMINTERACT && i.seq->layer==21)
+      continue;
+    if(base!=nullptr)
+      return false;
+    base = i.seq;
+    }
+  if(base==nullptr || base->animCls==Animation::Transition)
     return false;
-  auto& s = *lay[0].seq;
+  auto& s = *base;
   if(s.isIdle())
     return true;
   // check common idle animations
@@ -1186,6 +1195,13 @@ bool Pose::isStanding() const {
          s.name=="S_FISTWALK" || s.name=="S_MAGWALK" ||
          s.name=="S_1HWALK"   || s.name=="S_BOWWALK" ||
          s.name=="S_2HWALK"   || s.name=="S_CBOWWALK";
+  }
+
+bool Pose::isUsingItemInHand() const {
+  for(const auto& i:lay)
+    if(i.bs==BS_ITEMINTERACT && i.seq->layer==21)
+      return true;
+  return false;
   }
 
 bool Pose::isPrehit(uint64_t now) const {

@@ -121,6 +121,7 @@ class Marvin {
       C_ToggleMeleeCharge,
       C_ToggleMeleeRiposte,
       C_ToggleMeleeHealInterrupt,
+      C_ToggleMeleeUseInHand,
       C_ToggleFoodOverTime,
       C_ToggleMeleeAiDodge,
       C_ToggleMeleeAiRiposte,

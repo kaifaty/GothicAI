@@ -656,9 +656,19 @@ struct Bench {
     size_t portions = 0, savedSamples = 0;
     int hp = 0, healed = 0, damage = 0, savedHealed = 0, savedDamage = 0;
     bool sawDrink = false;
+    bool armed = false, sawHand = false, heldWeapon = true, handLayer = false, leftInsert = false, sound = false;
+    bool walking = false, baseline = false, walkOnly = true, actionExecuted = false;
+    WeaponState weapon = WeaponState::NoWeapon;
+    std::string clip, action, motion;
+    Vec3 previous;
+    float distance = 0, previousYaw = 0, yawTravel = 0;
+    uint64_t observedAt = 0, handStart = 0, handEnd = 0, destroyAt = 0, movingMs = 0, strikeDelay = 0;
+    unsigned direction = 0;
+    size_t secondItem = size_t(-1);
     std::vector<std::pair<uint64_t,int>> samples;
     std::vector<uint8_t> saved;
     } healing;
+  float healingWalkSpeed[2] = {};
 
   uint64_t    waitUntil = 0;
   std::chrono::steady_clock::time_point realWaitUntil;
@@ -14007,6 +14017,42 @@ bool npcSpeedTick(World& world) {
 void healingObserve(World& world,Npc& player) {
   auto& test=bench.healing;
   if(test.label.empty())return;
+  const auto now=world.tickCount();
+  const bool hand=player.isUsingItemInHand();
+  if(test.armed) {
+    if(!test.handEnd)test.heldWeapon&=player.weaponState()==test.weapon;
+    if(hand) {
+      test.sawHand=true;
+      if(!test.handStart)test.handStart=now;
+      for(const auto& layer:player.logicalBodyState().layers) {
+        if(layer.sequence==nullptr)continue;
+        const auto& seq=*layer.sequence;
+        if(seq.name==test.clip) {
+          test.handLayer|=seq.layer==21;
+          std::vector<Animation::LogicEvent> events;
+          seq.logicEvents(events);
+          for(const auto& e:events) {
+            test.leftInsert|=e.def==asset::MdsEventType::ITEM_INSERT && e.slot[0]=="ZS_LEFTHAND";
+            test.sound|=e.kind==Animation::LogicEvent::Sound;
+            if(e.def==asset::MdsEventType::ITEM_DESTROY)test.destroyAt=layer.start+uint64_t(double(e.time)/layer.speed);
+            }
+          }
+        if(test.walking && seq.layer<21)
+          test.walkOnly&=seq.name.find("RUNL")==std::string::npos && seq.name.find("RUNSTRAFE")==std::string::npos;
+        }
+      if(test.walking)test.walkOnly&=bool(player.walkMode()&WalkBit::WM_Walk);
+      }
+    else if(test.sawHand && !test.handEnd)test.handEnd=now;
+    }
+  if(test.walking && (test.baseline || hand || (test.sawHand && !test.handEnd))) {
+    auto delta=player.position()-test.previous;delta.y=0;
+    test.distance+=delta.length();
+    test.yawTravel+=std::abs(std::remainder(player.rotation()-test.previousYaw,360.f));
+    if(test.observedAt)test.movingMs+=now-test.observedAt;
+    }
+  if(test.action=="dodge")test.actionExecuted|=player.isMeleeDodging();
+  if(test.action=="attack")test.actionExecuted|=player.isAttackAnim();
+  test.previous=player.position();test.previousYaw=player.rotation();test.observedAt=now;
   const int hp=player.attribute(ATR_HITPOINTS);
   if(hp>test.hp) {
     test.healed+=hp-test.hp;
@@ -14021,6 +14067,10 @@ void healingObserve(World& world,Npc& player) {
     }
   test.lastItems=count;
   test.sawDrink|=player.hasState(BS_ITEMINTERACT);
+  if(test.strikeDelay && player.hasState(BS_ITEMINTERACT)) {
+    test.strikeAt=now+test.strikeDelay;test.strikeDelay=0;
+    say("healing native use reached; strike at "+std::to_string(test.strikeAt-test.start)+" ms after request");
+    }
   if(test.lastConsume && world.tickCount()>=test.nextSecond) {
     const auto elapsed=world.tickCount()-test.lastConsume-test.paused;
     test.samples.emplace_back(elapsed,test.healed);
@@ -14048,6 +14098,79 @@ void healingCommand(const std::vector<std::string>& a,World& world,Npc& player,P
     Gothic::settingsSetI("GAME","usePotionKeys",1);
     say("healing begin "+test.label+": hp "+std::to_string(hp)+"/1000 at "+std::to_string(test.start)+" ms, interrupt "+
       std::to_string(Gothic::physicsFlags().meleeHealInterrupt)+", food "+std::to_string(Gothic::physicsFlags().foodOverTime));
+    }
+  else if(a.size()==3 && a[1]=="arm") {
+    exec("melee-shadow weapon "+a[2],world,player,ctrl);
+    test.armed=true;test.weapon=player.weaponState();
+    const auto* item=player.getItem(test.item);
+    // begin removes this fixture item, so obtain its scheme from a temporary inventory instance.
+    if(item==nullptr)player.addItem(test.item,1);
+    const auto& scheme=player.getItem(test.item)->handle().scheme_name;
+    const char* suffix=scheme=="POTIONFAST" ? "DRINK" : scheme=="FOOD" ? "EATAPPLE" :
+                       scheme=="FOODHUGE" ? "EATBREAD" : scheme=="MEAT" ? "EATMEAT" : "";
+    test.clip="T_"+(a[2]=="fist" ? std::string("FIST") : a[2]=="1h" ? std::string("1H") : std::string("2H"))+suffix;
+    player.setWalkMode(WalkBit::WM_Run);
+    }
+  else if(a.size()==3 && a[1]=="use") {
+    test.start=world.tickCount();test.observedAt=test.start;test.previous=player.position();
+    test.lastItems=player.itemCount(test.item);test.heldWeapon=true;
+    if(test.lastItems!=1)throw std::runtime_error("healing in-hand fixture requires exactly one item");
+    if(a[2]=="direct")player.useItem(test.item);
+    else if(a[2]=="ai")player.aiPush(AiQueue::aiUseItem(int32_t(test.item)));
+    else if(a[2]=="hotkey")exec("release heal",world,player,ctrl);
+    else throw std::runtime_error("healing use expects direct, ai or hotkey");
+    healingObserve(world,player);
+    }
+  else if(a.size()==3 && (a[1]=="baseline" || a[1]=="move")) {
+    if(a[2]!="forward" && a[2]!="side")throw std::runtime_error("healing movement expects forward or side");
+    test.direction=a[2]=="forward" ? 0u : 1u;
+    test.walking=true;test.baseline=a[1]=="baseline";
+    test.distance=0;test.movingMs=0;test.previous=player.position();test.observedAt=world.tickCount();
+    if(test.baseline)player.setWalkMode(WalkBit::WM_Walk);
+    // The in-hand case keeps run selected; the item layer must force the ordinary combat walk.
+    exec("press "+std::string(test.direction==0 ? "forward" : "right"),world,player,ctrl);
+    }
+  else if(a.size()==3 && a[1]=="motion") {
+    if(a[2]!="back" && a[2]!="turn")throw std::runtime_error("healing motion expects back or turn");
+    test.motion=a[2];test.walking=true;
+    test.distance=0;test.yawTravel=0;test.previous=player.position();test.previousYaw=player.rotation();
+    test.observedAt=world.tickCount();
+    }
+  else if(a.size()==2 && a[1]=="baseline-end") {
+    healingObserve(world,player);
+    if(test.movingMs==0 || test.distance<20)throw std::runtime_error("healing walk reference did not move");
+    const float speed=test.distance*1000.f/float(test.movingMs);
+    bench.healingWalkSpeed[test.direction]=speed;
+    say("healing walk reference "+std::to_string(test.direction)+": "+std::to_string(test.distance)+
+        " cm in "+std::to_string(test.movingMs)+" ms, "+std::to_string(speed)+" cm/s");
+    test.walking=false;
+    exec("release all",world,player,ctrl);
+    player.setAnim(Npc::Anim::Idle);
+    }
+  else if(a.size()==2 && a[1]=="second") {
+    test.secondItem=world.script().findSymbolIndex("ITFO_APPLE");
+    if(test.secondItem==size_t(-1))throw std::runtime_error("healing second item is absent");
+    const auto count=player.itemCount(test.secondItem);
+    if(count)player.delItem(test.secondItem,uint32_t(count));
+    player.addItem(test.secondItem,1);
+    player.useItem(test.secondItem);
+    say("healing second item requested at "+std::to_string(world.tickCount()-test.start)+" ms");
+    }
+  else if(a.size()==3 && a[1]=="action") {
+    if(!Gothic::physicsFlags().meleeUseInHand) {
+      say("healing action "+a[2]+": OFF holster control, no input");
+      return;
+      }
+    test.action=a[2];
+    if(a[2]=="dodge")test.actionExecuted=player.meleeDodge(MeleeDodge::Direction::Back);
+    else if(a[2]=="attack")test.actionExecuted=player.doAttack(Npc::Anim::Attack,BS_HIT);
+    else throw std::runtime_error("healing action expects dodge or attack");
+    say("healing action "+a[2]+": accepted "+std::to_string(test.actionExecuted)+", anim "+player.animNames());
+    healingObserve(world,player);
+    }
+  else if(a.size()==3 && a[1]=="hit") {
+    test.strikeDelay=uint64_t(std::stoul(a[2]));
+    healingObserve(world,player);
     }
   else if(a.size()==3 && a[1]=="strike") {
     test.strikeAt=world.tickCount()+uint64_t(std::stoul(a[2]));
@@ -14139,6 +14262,39 @@ void healingCommand(const std::vector<std::string>& a,World& world,Npc& player,P
         pass&=potion ? player.weaponState()==WeaponState::NoWeapon : player.weaponState()!=WeaponState::NoWeapon;
         }
       }
+    else if(a[2]=="hand-potion" || a[2]=="hand-food" || a[2]=="hand-cancel" || a[2]=="hand-hit" || a[2]=="wine" || a[2]=="walk") {
+      const bool enabled=Gothic::physicsFlags().meleeUseInHand && a[2]!="wine";
+      const bool cancelled=a[2]=="hand-hit" || (a[2]=="hand-cancel" && enabled);
+      if(cancelled)pass=test.healed==0 && items==1 && (a[2]=="hand-hit" ? test.damage>0 : test.actionExecuted);
+      else if(a[2]=="hand-food")pass=a.size()==4 && test.healed==std::stoi(a[3]) && items==0 && foodElapsed>=9900 && foodElapsed<=10100;
+      else if(a[2]=="wine")pass=items==0 && test.lastConsume>test.start+5000;
+      else pass=test.healed==50 && items==0 && test.firstHeal==test.lastConsume;
+      if(enabled && !test.motion.empty()) {
+        pass&=test.walkOnly && (test.motion=="back" ? test.distance>10 : test.yawTravel>10);
+        say("healing motion "+test.motion+": "+std::to_string(test.distance)+" cm, "+std::to_string(test.yawTravel)+" degrees");
+        }
+      if(test.secondItem!=size_t(-1))pass&=player.itemCount(test.secondItem)==1;
+      if(enabled) {
+        pass&=test.sawHand && test.heldWeapon && test.handLayer && test.leftInsert && test.sound;
+        if(!cancelled)pass&=test.destroyAt!=0 && test.lastConsume>=test.destroyAt && test.lastConsume<=test.destroyAt+34;
+        }
+      else pass&=!test.sawHand && player.weaponState()==WeaponState::NoWeapon && !test.heldWeapon;
+      if(a[2]=="walk") {
+        const float speed=test.movingMs==0 ? 0 : test.distance*1000.f/float(test.movingMs);
+        const float reference=bench.healingWalkSpeed[test.direction];
+        if(enabled)pass&=test.walkOnly && test.distance>20 && reference>0 && std::abs(speed/reference-1.f)<=.15f;
+        say("healing walk "+test.label+": "+std::to_string(test.distance)+" cm in "+std::to_string(test.movingMs)+
+            " ms, "+std::to_string(speed)+" cm/s, combat walk "+std::to_string(reference)+
+            " cm/s, ratio "+std::to_string(reference==0 ? 0 : speed/reference)+", walk only "+std::to_string(test.walkOnly));
+        }
+      say("healing hand "+test.label+": clip "+test.clip+", layer21 "+std::to_string(test.handLayer)+
+          ", held weapon "+std::to_string(test.heldWeapon)+", hand duration "+std::to_string(test.handEnd>test.handStart ? test.handEnd-test.handStart : 0)+
+          " ms, destroy "+std::to_string(test.destroyAt>test.start ? test.destroyAt-test.start : 0)+
+          " ms, left insert "+std::to_string(test.leftInsert)+", sound "+std::to_string(test.sound)+
+          ", action "+test.action+", executed "+std::to_string(test.actionExecuted));
+      test.walking=false;
+      exec("release all",world,player,ctrl);
+      }
     else if(a[2]=="interrupted")pass=potion ? test.healed==0 && items==1 && test.damage>0 : test.healed==50 && test.firstHeal==test.start;
     else if(a[2]=="refused")pass=test.healed==0 && items==1 && !player.hasState(BS_ITEMINTERACT);
     else if(a[2]=="food" && a.size()==4) {
@@ -14170,7 +14326,7 @@ void healingCommand(const std::vector<std::string>& a,World& world,Npc& player,P
       ",\"pass\":"+(pass?"true":"false"));
     if(!pass)throw std::runtime_error("healing mechanic check failed: "+test.label);
     }
-  else throw std::runtime_error("healing expects begin/strike/busy/retry/arrow/save/load/check");
+  else throw std::runtime_error("healing expects begin/arm/use/baseline/move/motion/baseline-end/second/action/hit/strike/busy/retry/arrow/save/load/check");
   }
 
 void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {

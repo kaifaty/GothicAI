@@ -87,6 +87,7 @@ class Gothic final {
       bool meleeCharge = true;
       bool meleeRiposte = true;
       bool meleeHealInterrupt = true;
+      bool meleeUseInHand = true;
       bool foodOverTime = true;
       bool meleeAiDodge = true;
       bool meleeAiRiposte = true;

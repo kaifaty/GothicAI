@@ -102,6 +102,8 @@ void AnimationSolver::update(uint64_t tickCount) {
   }
 
 const Animation::Sequence* AnimationSolver::solveAnim(AnimationSolver::Anim a, WeaponState st, WalkBit wlkMode, const Pose& pose, const Npc* npc) const {
+  if(a==MoveBack && pose.isUsingItemInHand())
+    return solveFrm("S_%sWALKBL",st);
   if(0<a && a<=AnimationSolver::CacheLast && int(st)<2 && int(wlkMode)<2) {
     auto& ptr = cache[a-1][int(st)][int(wlkMode)];
     if(ptr==nullptr)

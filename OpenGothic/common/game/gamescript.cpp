@@ -1357,10 +1357,6 @@ bool GameScript::startHotkeyPotion(Npc& pl, bool mana) {
     return false;
     }
   note(vm.find_symbol_by_index(uint32_t(selected))->name());
-  if(pl.weaponState()!=WeaponState::NoWeapon) {
-    pl.stopAnim("");
-    pl.aiPush(AiQueue::aiRemoveWeapon());
-    }
   pl.aiPush(AiQueue::aiUseItem(int32_t(selected)));
   return true;
   }

@@ -150,6 +150,7 @@ Gothic::Gothic() {
   defaults->set("GAME", "melee_charge",          1);
   defaults->set("GAME", "melee_riposte",         1);
   defaults->set("GAME", "melee_heal_interrupt",  1);
+  defaults->set("GAME", "melee_use_in_hand",     1);
   defaults->set("GAME", "food_over_time",        1);
   defaults->set("GAME", "melee_ai_dodge",        1);
   defaults->set("GAME", "melee_ai_riposte",      1);
@@ -949,6 +950,7 @@ void Gothic::refreshPhysicsFlags() {
     settingsGetI("GAME","melee_charge")!=0,
     settingsGetI("GAME","melee_riposte")!=0,
     settingsGetI("GAME","melee_heal_interrupt")!=0,
+    settingsGetI("GAME","melee_use_in_hand")!=0,
     settingsGetI("GAME","food_over_time")!=0,
     settingsGetI("GAME","melee_ai_dodge")!=0,
     settingsGetI("GAME","melee_ai_riposte")!=0,
