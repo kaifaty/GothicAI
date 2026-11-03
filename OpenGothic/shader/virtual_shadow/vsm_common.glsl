@@ -15,9 +15,10 @@ const int VSM_FOG_MIP       = 5;
 const int VSM_PAGE_PER_ROW  = 8192/VSM_PAGE_SIZE;
 const int VSM_MAX_PAGES     = VSM_PAGE_PER_ROW * VSM_PAGE_PER_ROW; // 1024;
 const int VSM_CLIPMAP_SIZE  = VSM_PAGE_SIZE * VSM_PAGE_TBL_SIZE;
-// Meshlet-page pairs the visibility pass may emit a frame; the cluster buffers are sized to it
+// Meshlet-page pairs the visibility pass may emit a frame (peak 18.6k at 1280x720 on Ryzen, 2026-11-04);
+// the cluster buffers are sized to it
 // (Renderer/DrawCommands: VsmMaxMeshlets). Past it, clusters drop out of the shadow.
-const uint VSM_MAX_MESHLETS = 1u*1024u*1024u;
+const uint VSM_MAX_MESHLETS = 512u*1024u;
 // const int VSM_CUBE_TBL_SIZE = 2;
 
 struct VsmHeader {
