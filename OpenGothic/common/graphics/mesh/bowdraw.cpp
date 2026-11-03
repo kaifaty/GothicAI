@@ -432,6 +432,13 @@ Vec3 BowDraw::releaseOffset(const Matrix4x4* tr, size_t numBones, const Vec3& ax
   return axis*(-back) + side*out;
   }
 
+float BowDraw::followBefore() const {
+  if(followT>=FollowT)
+    return 0.f;
+  const float bump = std::sin(float(M_PI)*followT/FollowT);
+  return Follow*bump*bump;
+  }
+
 void BowDraw::turnBow(Matrix4x4* tr, const Vec3& up, const Vec3& axis) {
   if(bowTurn==0.f || bowHand==size_t(-1))
     return;
@@ -528,7 +535,10 @@ void BowDraw::reload(Matrix4x4* tr, size_t numBones, const Vec3& nock, const Vec
     // shot), the follow through would hardly show
     const Vec3 off = releaseOffset(tr,numBones,axis)*(1.f-toQuiver*toQuiver);
     relShown = length(off);
+    seen     = off + axis*followBefore();
     at += off;
+    } else {
+    seen     = axis*followBefore();
     }
   if(!moveHand(tr,at,&elbow))
     return;
@@ -538,6 +548,7 @@ void BowDraw::reload(Matrix4x4* tr, size_t numBones, const Vec3& nock, const Vec
 
 void BowDraw::implApply(Matrix4x4* tr, size_t numBones) {
   relShown = 0;
+  seen     = Vec3();
   travel   = 0;
   miss     = 0;
   shown    = 1;
@@ -659,6 +670,7 @@ void BowDraw::implApply(Matrix4x4* tr, size_t numBones) {
   // the follow through: back past the face
   const Vec3 off  = releaseOffset(tr,numBones,axis);
   relShown = length(off);
+  seen     = off + axis*followBefore();
   const Vec3 move = shift + way*travel + off;
   if(length(move)<0.01f)
     return;

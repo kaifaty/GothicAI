@@ -616,7 +616,7 @@ void Pose::mkSkeleton(const Tempest::Matrix4x4& mt, float ikFloorY) {
   else if(physicalReturning)
     applyRagdollReturn();
   aim.finish(tr,numBones,Vec3(mt.at(3,0),mt.at(3,1),mt.at(3,2)),
-             Vec3(mt.at(2,0),0,mt.at(2,2)));
+             Vec3(mt.at(2,0),0,mt.at(2,2)),bowDraw.seenOnly());
   }
 
 bool Pose::setRagdollPose(const Skeleton* expected, const std::vector<Matrix4x4>& worldBones,

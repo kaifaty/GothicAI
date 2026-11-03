@@ -1336,7 +1336,9 @@ bool MdlVisual::arrowRay(Vec3& p, Vec3& d) const {
   if(id==size_t(-1) || id>=skInst->boneCount())
     return false;
   const auto& m = skInst->bone(id);
-  p = Vec3(m.at(3,0),m.at(3,1),m.at(3,2));
+  // where the arrow is for the aim: the follow through after the shot moves the hand only to be seen
+  // (graphics/mesh/bowdraw), the aim goes on from where the hand would be without it
+  p = Vec3(m.at(3,0),m.at(3,1),m.at(3,2)) - skInst->bowDrawIk().seenOnly();
   d = Vec3::normalize(Vec3(-m.at(0,0),-m.at(0,1),-m.at(0,2)));
   return true;
   }

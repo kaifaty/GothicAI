@@ -120,9 +120,10 @@ class Aim final {
     bool           update(const Input& in);
     void           apply(Tempest::Matrix4x4* tr, size_t numBones, const Tempest::Vec3& origin,
                          const Tempest::Vec3& facing);
-    // Capture the final head and arrow slot after BowDraw and the remaining pose passes.
+    // Capture the final head and arrow slot after BowDraw and the remaining pose passes. seen: how far
+    // the arrow slot is moved only to be seen (BowDraw's follow through), not taken for the aim
     void           finish(const Tempest::Matrix4x4* tr, size_t numBones, const Tempest::Vec3& origin,
-                          const Tempest::Vec3& facing);
+                          const Tempest::Vec3& facing, const Tempest::Vec3& seen = {});
     void           probe(Probe& p) const;
 
     static Probe       playerProbe;   // filled every frame for the hero

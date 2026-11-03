@@ -117,6 +117,10 @@ class BowDraw final {
     float          aligned() const { return align; }
     // The string held by hand has just been let go: a shot
     bool           loosed() const { return followT<FollowTime; }
+    // How far the drawing hand is now off where the follow through of before (OPENGOTHIC_BOWRELEASE=0: 4 cm
+    // back and to the face again) would have it: moved only to be seen. The aim takes the arrow from where
+    // it would be without it, so the release changes the look, not the shots (world, cm)
+    Tempest::Vec3  seenOnly() const { return seen; }
 
     // Moves the smoothed state toward the input; true if the pose has to be rebuilt
     bool           update(const Input& in);
@@ -148,6 +152,8 @@ class BowDraw final {
     // the drawing hand turned round the arrow's line (through at) as the bow is canted: the fingers on the
     // string
     // the bow turned in the hand about the grip after the shot (the top limb forward, the shake)
+    // cm back the hand was taken after the shot before the release as an archer's (4 cm, there and back)
+    float               followBefore() const;
     void                turnBow(Tempest::Matrix4x4* tr, const Tempest::Vec3& up, const Tempest::Vec3& axis);
     // the drawing hand after the shot: back along the arrow toward the ear, a little out from the head
     Tempest::Vec3       releaseOffset(const Tempest::Matrix4x4* tr, size_t numBones, const Tempest::Vec3& axis) const;
@@ -194,6 +200,7 @@ class BowDraw final {
     float               relFade  = 1;  // ...that much of it (the hand on to the quiver, the shot long over)
     float               bowKick  = 0;  // cm the bow hand is thrown back
     float               bowTurn  = 0;  // degrees the bow turns in the hand
+    Tempest::Vec3       seen     = {}; // seenOnly()
     float               relShown = 0;  // cm the follow through moves the drawing hand now (over the reload's way)
 
     // the upper body held in the reload: the bones from the spine up, relative to the body's facing at the
