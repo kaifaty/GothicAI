@@ -117,6 +117,20 @@ def snap_ends(anim: ga.Animation, target: ga.Animation, fade_in: float, fade_out
             anim.positions[:, j] += w[:, None] * dp
 
 
+def complete(ref: ga.Animation, below: ga.Animation) -> ga.Animation:
+    """The stance with the nodes it does not write taken from frame 0 of the layer below, as the game shows it.
+    Without them the ends were not snapped there: the master's right foot kept Kimodo's turn, toe 15 cm in the floor."""
+    add = [n for n in below.node_indices if n not in ref.node_indices]
+    if not add:
+        return ref
+    cols = [below.node_indices.index(n) for n in add]
+    shape = (ref.frame_count, len(cols))
+    return dataclasses.replace(
+        ref, node_indices=ref.node_indices + add,
+        positions=np.concatenate([ref.positions, np.broadcast_to(below.positions[:1, cols], (*shape, 3))], axis=1),
+        rotations=np.concatenate([ref.rotations, np.broadcast_to(below.rotations[:1, cols], (*shape, 4))], axis=1))
+
+
 LEGS = {"L": ("BIP01 L THIGH", "BIP01 L CALF", "BIP01 L FOOT"), "R": ("BIP01 R THIGH", "BIP01 R CALF", "BIP01 R FOOT")}
 
 
@@ -545,6 +559,8 @@ def main():
     ap.add_argument("--fade", default="0.12,0.2", help="seconds of stance matching at the start and at the end")
     ap.add_argument("--clear-sword", action="store_true",
                     help="turn the sword arm at the shoulder so hand and blade stay off the floor and out of the body (rolls, dashes)")
+    ap.add_argument("--ref-below", type=Path, help="the stance of the layer below: nodes --ref does not write come "
+                    "from its frame 0 (the master's S_1HRUN leaves the right foot to HUMANS-S_1HRUN)")
     ap.add_argument("--start-ref", type=Path, help="land the start on this record's frame 0 instead of --ref")
     ap.add_argument("--end-ref", type=Path, help="land the end on this record's frame 0 instead of --ref (a windup "
                     "ends where its hold loop starts; a loop ends where it starts)")
@@ -557,6 +573,8 @@ def main():
     a = ap.parse_args()
     skel = ga.read_skeleton(a.skeleton or a.ref.parent / "HUMANS.MDH.json")
     ref = ga.read_animation(a.ref)
+    if a.ref_below:
+        ref = complete(ref, ga.read_animation(a.ref_below))
     anim = retime(ga.read_animation(a.src), [tuple(map(float, k.split(":"))) for k in a.warp.split(",")])
     start = ga.read_animation(a.start_ref) if a.start_ref else ref
     snap_ends(anim, start, *map(float, a.fade.split(",")), end=ga.read_animation(a.end_ref) if a.end_ref else ref)
