@@ -374,3 +374,18 @@ def test_pace_input_training_reads_teacher_walk_and_exports_v5(tmp_path):
     episode = train.pace_episode(train.load(cache, entries[1]))
     np.testing.assert_array_equal(episode["vector"][:, -1], walks[1])
     assert episode["labels"].shape == (4, 4)
+
+
+@pytest.mark.parametrize("version", [train.CACHE_VERSION, train.BC3_CACHE_VERSION])
+def test_pace_input_refuses_compact_caches_before_choosing_a_trainer(tmp_path, monkeypatch, version):
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    (cache / "index.json").write_text(json.dumps(dict(cache_version=version, vector_size=train.VECTOR_SIZE,
+                                                      preprocessing=train.PREPROCESSING, episodes=[])))
+    monkeypatch.setattr(train, "train_bc3", lambda *_: pytest.fail("pace input reached a trainer"))
+    args = SimpleNamespace(cache=str(cache), output=str(tmp_path / "run"), pace_input=True)
+    with pytest.raises(ValueError, match="--pace-input requires HD caches"):
+        train.train(args)
+    assert not (tmp_path / "run").exists()
+    with pytest.raises(ValueError, match="not --source"):
+        train.train(SimpleNamespace(**vars(args), source=str(cache)))

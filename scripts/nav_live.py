@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 MAX_BYTES = 5_000_000_000
 MIN_FREE = 20 * 1024**3
 ACTION_SEEDS = [18102027, 18102028, 18102029]
+PACES = ('walk', 'run')
 
 
 def read_json(path):
@@ -61,6 +62,10 @@ def suite_cases(suite):
                 raise ValueError('Each live case needs its fixed seed or three distinct seeds')
             if case.get('goal_kind', 'point') not in ('point', 'object', 'follow', 'approach'):
                 raise ValueError('Unsupported live goal kind')
+            # Pace for pace-input weights: a companion always runs.
+            if 'pace' in case and (case['pace'] not in PACES
+                                   or (case.get('goal_kind') == 'follow' and case['pace'] != 'run')):
+                raise ValueError(f"Invalid place pace: {case['id']}")
             if case.get('teacher_qualification_required') is False and case['number'] != 3:
                 raise ValueError('Only the fixed follow comparison may use an unqualified teacher reference')
             for field in ('id', 'npc', 'start', 'goal'):
@@ -90,11 +95,27 @@ def models(weights, suite):
         name = re.sub(r'[^A-Za-z0-9_.-]', '-', name)
         if any(model['name'] == name for model in result):
             raise ValueError(f'Duplicate model name: {name}')
-        result.append(dict(name=name, weights=str(path), sha256=sha256(path), order=index))
+        result.append(dict(name=name, weights=str(path), sha256=sha256(path), order=index, **pace_input(path)))
     bc4 = Path(suite.get('bc4_weights', '/mnt/shared/gothic-ai/nav-bc4/bc4/policy.navbc'))
     if not bc4.is_file():
         raise ValueError(f'Missing familiar-channel control: {bc4}')
-    return result, dict(name='bc4', weights=str(bc4), sha256=sha256(bc4))
+    return result, dict(name='bc4', weights=str(bc4), sha256=sha256(bc4), **pace_input(bc4))
+
+
+def pace_input(path):
+    """Mark .navbc v5, which reads walk/run as an input; older model entries stay unchanged."""
+    with Path(path).open('rb') as stream:
+        line = stream.readline(4 * 1024 * 1024)
+    return dict(pace_input=True) if line.endswith(b'\n') and json.loads(line).get('version') == 5 else {}
+
+
+def episode_pace(case, model):
+    """The frozen place pace for pace-input weights; None leaves older weights as they were."""
+    if model is None or not model.get('pace_input'):
+        return None
+    if case.get('pace') not in PACES:
+        raise ValueError(f"Place {case['id']} has no frozen pace for pace-input weights")
+    return case['pace']
 
 
 def check_space(output):
@@ -226,8 +247,12 @@ def case_binary(args, case):
 
 def actual_inputs(args, case, model, seed, recorded=True):
     _, digest = case_binary(args, case)
-    return dict(case=behavioral_case(case), model_sha256=model['sha256'] if model else None, seed=seed,
-                binary_sha256=digest, input_sha256=args.input_sha256, recorded=recorded)
+    result = dict(case=behavioral_case(case), model_sha256=model['sha256'] if model else None, seed=seed,
+                  binary_sha256=digest, input_sha256=args.input_sha256, recorded=recorded)
+    pace = episode_pace(case, model)
+    if pace is not None:
+        result['pace'] = pace
+    return result
 
 
 def teacher_directory(args, case):
@@ -285,8 +310,13 @@ def run_episode(args, case, model, seed, directory, teacher=None, recorded=True)
             OPENGOTHIC_BENCH_ENCODER='-c:v libx264 -preset veryfast -crf 30 -maxrate 800k -bufsize 1600k -vf fps=15',
             OMP_NUM_THREADS='1', OPENBLAS_NUM_THREADS='1',
             TIMEOUT=str(min(600, int(remaining) - 20)))
-        for key in ('OPENGOTHIC_NAV_JOURNEY_MEMORY', 'OPENGOTHIC_NAV_FAMILIAR_MAP', 'OPENGOTHIC_BENCH_REALTIME'):
+        for key in ('OPENGOTHIC_NAV_JOURNEY_MEMORY', 'OPENGOTHIC_NAV_FAMILIAR_MAP', 'OPENGOTHIC_BENCH_REALTIME',
+                    'OPENGOTHIC_NAV_FORCE_PACE'):
             environment.pop(key, None)
+        # gq does not forward the submitter's environment: the job sets the place pace itself.
+        pace = episode_pace(case, model)
+        if pace is not None:
+            environment['OPENGOTHIC_NAV_FORCE_PACE'] = pace
         with (directory / 'launcher.log').open('w') as log:
             result = subprocess.run(['bash', str(ROOT / 'scripts/bench.sh'), str(scenario), str(directory)],
                                     env=environment, stdout=log, stderr=subprocess.STDOUT,
@@ -299,6 +329,8 @@ def run_episode(args, case, model, seed, directory, teacher=None, recorded=True)
             raise ValueError(f'Incomplete game run: {directory}; see launcher.log and game.log')
         episode = read_json(directory / 'episode.json')
         episode['base_fingerprint'] = environment.get('OPENGOTHIC_BASE_FINGERPRINT') or None
+        if pace is not None:
+            episode['forced_pace'] = pace
         write_json(directory / 'episode.json', episode)
         # The save is input, not a per-seed output. Keep only the small bench ini.
         saved = directory / 'run/save_slot_1.sav'

@@ -2,16 +2,18 @@
 # Pace-input navigation policy (.navbc v5) checks on Ryzen; each stage is one gq job under nav_job.py.
 #   bash scripts/nav-pace-remote.sh smoke    # targeted tests, runner build, HD -> v5 conversion,
 #                                            # Torch/NumPy/C++ parity, one training epoch on a v4/v5 slice
-#   bash scripts/nav-pace-remote.sh drive    # after smoke: v5 drives with forced run/walk, refusal without it,
-#                                            # HD without the flag on the main and branch runners
+#   bash scripts/nav-pace-remote.sh drive    # after smoke: v5 drives with forced run/walk, refusal without it;
+#                                            # v1/v2/v3 without the flag on the main and branch runners
+#   bash scripts/nav-pace-remote.sh live     # after smoke: v5 in the windowed game on three live places
 #   bash scripts/nav-pace-remote.sh teacher  # teacher walk share by family, obstacles and goal distance
-# HD and r1 weights are only read. Results: /mnt/shared/gothic-ai/nav-pace-input/; work: ~/gothic-ai/nav-pace-input/.
-# Remove the work folder with: bash scripts/nav-pace-remote.sh clean
+# Every job runs from its own immutable source snapshot ~/gothic-ai/nav-pace-input/source/<hash>; a later
+# launch never rewrites the sources of a queued or running job. HD and older weights are only read.
+# Results: /mnt/shared/gothic-ai/nav-pace-input/. Remove the work folder with: bash scripts/nav-pace-remote.sh clean
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-usage='Usage: bash scripts/nav-pace-remote.sh smoke | drive | teacher | clean'
+usage='Usage: bash scripts/nav-pace-remote.sh smoke | drive | live | teacher | clean'
 stage="${1:-}"
-archive=/mnt/shared/gothic-ai/nav-pace-input
+archive="${NAV_PACE_ARCHIVE:-/mnt/shared/gothic-ai/nav-pace-input}"  # tests point it at a temporary folder
 hd=/mnt/shared/gothic-ai/archive/nav-dagger3-20261030/hd-run
 v4=/mnt/shared/gothic-ai/archive/nav-demos-v4-20261029
 v5=/mnt/shared/gothic-ai/nav-lean-data/corpus-v5
@@ -20,82 +22,134 @@ v5_validation=/mnt/shared/gothic-ai/nav-demos-v5/manifest.json
 base_fingerprint=032e902aee6fef6ccc54fd01fdc4f018e0a2cb80ed470cdae2e79d5ee150b14b
 videos_fingerprint=6ce7e0b2ed13967e04bb8efcd8fb4bbbbbe63d58acb60a50c6703d2a1a2083e7
 seed=18102027
+v5_compact=reports/navigation/2026-10-22-demos-v5/manifest.json
 
 if [[ "$stage" != run ]]; then
-  [[ $# == 1 && "$stage" =~ ^(smoke|drive|teacher|clean)$ ]] || { echo "$usage" >&2; exit 2; }
+  [[ $# == 1 && "$stage" =~ ^(smoke|drive|live|teacher|clean)$ ]] || { echo "$usage" >&2; exit 2; }
   task="$(ssh -o BatchMode=yes -o ConnectTimeout=10 ryzen 'printf "%s/gothic-ai/nav-pace-input" "$HOME"')"
   if [[ "$stage" == clean ]]; then
     ssh ryzen "rm -rf '$task'; df -h ~ | tail -1"
     exit
   fi
-  ssh ryzen "mkdir -p '$task/source' '$task/input' '$archive/logs'"
-  rsync -a --delete --no-links --exclude=build --exclude='build-*' --exclude=__pycache__ --exclude=.pytest_cache \
-    --exclude=.venv --exclude=.git "$ROOT/OpenGothic" "$ROOT/scripts" "$ROOT/AGENTS.md" "ryzen:$task/source/"
-  rsync -t "$ROOT/reports/navigation/2026-10-22-demos-v5/manifest.json" "ryzen:$task/input/v5-compact.json"
+  publish() { # DESTINATION ROOT PATH...: copy once; an existing snapshot is never rewritten.
+    local destination="$1" root="$2" incoming
+    shift 2
+    if ssh ryzen "test -d '$destination'"; then return; fi
+    incoming="$destination.incoming-$$"
+    ssh ryzen "mkdir -p '$incoming'"
+    (cd "$root" && rsync -aR --no-links --exclude=build --exclude='build-*' --exclude=__pycache__ \
+      --exclude=.pytest_cache --exclude=.venv --exclude=.git "$@" "ryzen:$incoming/")
+    ssh ryzen "mv -T '$incoming' '$destination' 2>/dev/null || rm -rf '$incoming'"
+  }
+  snapshot="$(python3 - "$ROOT" OpenGothic scripts AGENTS.md "$v5_compact" <<'HASH'
+import hashlib
+import os
+from pathlib import Path
+import sys
+root = Path(sys.argv[1])
+skip = lambda name: name in ('build', '.git', '__pycache__', '.pytest_cache', '.venv') or name.startswith('build-')
+files = []
+for name in sys.argv[2:]:
+    if (root / name).is_file():
+        files.append(Path(name))
+        continue
+    for directory, folders, names in os.walk(root / name):
+        folders[:] = sorted(folder for folder in folders if not skip(folder))
+        base = Path(directory).relative_to(root)
+        files += [base / item for item in names if not skip(item) and not (root / base / item).is_symlink()]
+digest = hashlib.sha256()
+for relative in sorted(files):
+    digest.update(relative.as_posix().encode() + b'\0' + (root / relative).read_bytes())
+print(digest.hexdigest()[:20])
+HASH
+)"
+  ssh ryzen "mkdir -p '$task/source' '$task/main' '$archive/logs'"
+  publish "$task/source/$snapshot" "$ROOT" OpenGothic scripts AGENTS.md "$v5_compact"
+  main_revision=-
   if [[ "$stage" == drive ]]; then
-    # The unchanged main runner is the reference for byte-equal HD actions without the flag.
-    main="$(mktemp -d)"
+    # The unchanged main runner is the reference for byte-equal actions of older weights without the flag.
     git -C "$ROOT" fetch -q origin main
-    git -C "$ROOT" worktree add -q --detach "$main/tree" origin/main
-    trap 'git -C "$ROOT" worktree remove --force "$main/tree"; rm -rf "$main"' EXIT
-    ssh ryzen "mkdir -p '$task/main-source'"
-    rsync -a --delete --no-links --exclude=build --exclude='build-*' --exclude=.git --exclude=__pycache__ \
-      "$main/tree/OpenGothic" "$main/tree/scripts" "ryzen:$task/main-source/"
-    git -C "$main/tree" rev-parse HEAD | ssh ryzen "cat > '$task/main-source/REVISION'"
+    main_revision="$(git -C "$ROOT" rev-parse origin/main)"
+    if ! ssh ryzen "test -d '$task/main/$main_revision'"; then
+      main="$(mktemp -d)"
+      git -C "$ROOT" worktree add -q --detach "$main/tree" "$main_revision"
+      trap 'git -C "$ROOT" worktree remove --force "$main/tree"; rm -rf "$main"' EXIT
+      publish "$task/main/$main_revision" "$main/tree" OpenGothic scripts
+    fi
   fi
   case "$stage" in
     smoke) resources=(--class batch --threads 12 --cpu-quota 1200% --mem 16G --gpu-mem 4G --max 2h) ;;
     drive) resources=(--class batch --threads 12 --cpu-quota 1200% --mem 14G --max 2h) ;;
+    live) resources=(--class quick --threads 12 --cpu-quota 1200% --mem 10G --gpu-mem 3G --display --display-shared --max 59m) ;;
     teacher) resources=(--class batch --threads 12 --cpu-quota 1200% --mem 16G --max 2h) ;;
   esac
-  GQ_OWNER=nav-pace-input "$ROOT/scripts/gq" submit "${resources[@]}" --name "nav pace input $stage" -- \
-    python3 -X faulthandler -I "$task/source/scripts/nav_job.py" --max-seconds 7200 -- \
-    bash "$task/source/scripts/nav-pace-remote.sh" run "$stage"
+  GQ_OWNER=nav-pace-input "$ROOT/scripts/gq" submit "${resources[@]}" --name "nav pace input $stage $snapshot" -- \
+    python3 -X faulthandler -I "$task/source/$snapshot/scripts/nav_job.py" --max-seconds 7200 -- \
+    bash "$task/source/$snapshot/scripts/nav-pace-remote.sh" run "$stage" "$snapshot" "$main_revision"
   exit
 fi
 
-# Ryzen job body.
-stage="${2:?stage}"
+# Ryzen job body: everything below reads only this job's snapshot.
+stage="${2:?stage}"; snapshot="${3:?snapshot}"; main_revision="${4:?main revision}"
 task="$HOME/gothic-ai/nav-pace-input"
-mkdir -p "$archive/$stage" "$archive/logs" "$task/tmp"
+source="$task/source/$snapshot"
+stop() { echo "nav-pace $stage: $*" >&2; exit 1; }
+[[ -d "$source/scripts" ]] || stop "missing source snapshot $source"
+mkdir -p "$archive/$stage" "$archive/logs" "$task/tmp/$stage" "$task/input"
 exec > >(tee -a "$archive/logs/$stage.log") 2>&1
-trap 'printf "nav_pace_%s_exit=%s\n" "$stage" "$?"' EXIT
-export TMPDIR="$task/tmp" UV_CACHE_DIR="$HOME/.cache/uv"
+trap 'printf "nav_pace_%s_exit=%s snapshot=%s\n" "$stage" "$?" "$snapshot"' EXIT
+export TMPDIR="$task/tmp/$stage" UV_CACHE_DIR="$HOME/.cache/uv"
 export VULKAN_SDK="$HOME/gothic-ai/body-baseline/toolchain/vulkan-1.4.341.0"
 export PATH="$HOME/.local/bin:$VULKAN_SDK/bin:$PATH"
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 export PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 OPENGOTHIC_BODY_TRACE=0
 unset OPENGOTHIC_NAV_FORCE_PACE OPENGOTHIC_NAV_JOURNEY_MEMORY OPENGOTHIC_NAV_FAMILIAR_MAP
-cd "$task/source"
+cd "$source"
+# Each precondition is its own command with an explicit stop: `a && b` would not stop under set -e.
+if [[ "$stage" == drive || "$stage" == live ]]; then
+  [[ -f "$archive/smoke/passed" ]] || stop "no $archive/smoke/passed; run the smoke stage first"
+  [[ -f "$archive/pace-from-hd/policy.navbc" ]] || stop "no converted weights $archive/pace-from-hd/policy.navbc"
+fi
+if [[ "$stage" == drive ]]; then
+  [[ -d "$task/main/$main_revision/OpenGothic" ]] || stop "missing main snapshot $task/main/$main_revision"
+fi
 df -h "$HOME" /mnt/shared
 python3 -c 'import pathlib,shutil; assert shutil.disk_usage(pathlib.Path.home()).free >= 26*1024**3, "Less than 26 GiB free"'
-python="$task/.venv/bin/python"
-if [[ ! -x "$python" ]]; then uv venv --python 3.12 "$task/.venv"; fi
+python="$task/venv-$stage/bin/python"
+if [[ ! -x "$python" ]]; then uv venv --python 3.12 "$task/venv-$stage"; fi
 uv pip install --python "$python" numpy pytest pillow matplotlib
-build() { # SOURCE BUILD
-  source "$task/source/scripts/ryzen-build.sh"
+build() { # SOURCE BUILD TARGET...
+  source "$source/scripts/ryzen-build.sh"
   cmake -S "$1" -B "$2" -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
     "${RYZEN_CMAKE_FLAGS[@]}" -DOPENGOTHIC_JOLT_X86=x86-64-v3 \
     -DCMAKE_CXX_FLAGS="-I$VULKAN_SDK/include" -DCMAKE_EXE_LINKER_FLAGS="-L$VULKAN_SDK/lib"
   cmake --build "$2" --target "${@:3}" --parallel 12
 }
-contract="$task/build/opengothic/gothic-navpolicy-contract"
+build_dir="$task/build/$snapshot"
+contract="$build_dir/opengothic/gothic-navpolicy-contract"
+game_environment() { # Read-only shared base and videos of this engine format; caches stay in the task.
+  if [[ ! -e "$task/input/base" ]]; then ln -s "/mnt/shared/gothic-ai/base/$base_fingerprint" "$task/input/base"; fi
+  export GOTHIC_DIR="$HOME/gothic-ai/game-settings" OPENGOTHIC_BASE="$task/input/base"
+  export OPENGOTHIC_BASE_FINGERPRINT="$base_fingerprint" OPENGOTHIC_VIDEOS_FINGERPRINT="$videos_fingerprint"
+  export OPENGOTHIC_BASE_CACHE="$task/base-cache" OPENGOTHIC_BASE_STORE="$task/base-store"
+}
 
 if [[ "$stage" == teacher ]]; then
   "$python" -X faulthandler -B -I scripts/nav_pace_teacher.py --output "$archive/teacher/teacher-pace.json" \
-    --workers 12 --corpus v4 "$v4" "$v4/manifest.json" --corpus v5 "$v5" "$task/input/v5-compact.json"
+    --workers 12 --corpus v4 "$v4" "$v4/manifest.json" --corpus v5 "$v5" "$source/$v5_compact"
   exit
 fi
 
 if [[ "$stage" == smoke ]]; then
   uv pip install --python "$python" 'torch==2.9.1+cu128' --index-url https://download.pytorch.org/whl/cu128
-  "$python" -X faulthandler -B -m pytest -q -p no:cacheprovider --basetemp "$task/tmp/pytest" \
+  "$python" -X faulthandler -B -m pytest -q -p no:cacheprovider --basetemp "$task/tmp/$stage/pytest" \
     scripts/tests/test_nav_bc_model.py scripts/tests/test_nav_bc_train.py scripts/tests/test_nav_bc_contract.py \
     scripts/tests/test_nav_bc_data.py scripts/tests/test_nav_rl.py scripts/tests/test_nav_drive.py
-  build "$task/source/OpenGothic" "$task/build" gothic-body-runner gothic-navpolicy-contract
+  build "$source/OpenGothic" "$build_dir" gothic-body-runner gothic-navpolicy-contract
   "$contract" --live-format
+  work="$task/work/smoke-$snapshot"
   parity() { # NAME WEIGHTS [synthetic version]: Torch/NumPy fixture, then the C++ reader on the same steps.
-    local fixture="$task/parity/$1"
+    local fixture="$work/parity/$1"
     if [[ $# == 3 ]]; then
       "$python" -B -I scripts/check_nav_policy.py --output "$fixture" --weight-version "$3" --steps 1000 --torch
     else
@@ -105,45 +159,119 @@ if [[ "$stage" == smoke ]]; then
     "$contract" --memory "$2" | tee "$archive/smoke/memory-$1.json"
     rm -rf "$fixture"
   }
-  for version in 1 2 3 4 5; do parity "synthetic-v$version" "$task/parity/synthetic-v$version/fixture.navbc" "$version"; done
+  for version in 1 2 3 4 5; do parity "synthetic-v$version" "$work/parity/synthetic-v$version/fixture.navbc" "$version"; done
   "$python" -B -I scripts/nav_pace_convert.py --source "$hd" --output "$archive/pace-from-hd" --steps 256
   parity hd "$hd/policy.navbc"
   parity pace-from-hd "$archive/pace-from-hd/policy.navbc"
   # One epoch from the converted HD on the first eight training episodes of v4 and of v5.
-  cp -n "$v5_input/accepted-links.txt" "$task/input/accepted-links.txt"
-  "$python" -X faulthandler -B -I - "$task" "$v4" "$v5" <<'PREPARE'
+  "$python" -X faulthandler -B -I - "$work" "$v4" "$v5" "$source/$v5_compact" "$v5_input/accepted-links.txt" <<'PREPARE'
 from pathlib import Path
 import sys
 sys.path.insert(0, str(Path.cwd() / "scripts"))
 import nav_bc_data as data
-task, v4, v5 = map(Path, sys.argv[1:])
-for name, source, manifest, links in (("v4", v4, v4 / "manifest.json", None),
-                                      ("v5", v5, task / "input/v5-compact.json", task / "input/accepted-links.txt")):
-    data.prepare_manifest(source, task / "cache" / name, manifest, input_variant="hd",
-                          maneuver_links=links, episode_range=(0, 8))
+work, v4, v5, compact, links = map(Path, sys.argv[1:])
+for name, source, manifest, maneuver_links in (("v4", v4, v4 / "manifest.json", None), ("v5", v5, compact, links)):
+    data.prepare_manifest(source, work / "cache" / name, manifest, input_variant="hd",
+                          maneuver_links=maneuver_links, episode_range=(0, 8))
 PREPARE
-  "$python" -X faulthandler -B -I scripts/nav_bc_train.py train --cache "$task/cache/v4" \
-    --aggregate-cache "$task/cache/v5" --pace-input --init "$archive/pace-from-hd/last.pt" \
+  "$python" -X faulthandler -B -I scripts/nav_bc_train.py train --cache "$work/cache/v4" \
+    --aggregate-cache "$work/cache/v5" --pace-input --init "$archive/pace-from-hd/last.pt" \
     --epochs 1 --output "$archive/smoke/run" --threads 6 --device cuda
   parity smoke-run "$archive/smoke/run/policy.navbc"
-  rm -rf "$task/cache" "$task/parity"
-  touch "$archive/smoke/passed"
+  rm -rf "$work"
+  printf '%s\n' "$snapshot" > "$archive/smoke/passed"
+  exit
+fi
+
+if [[ "$stage" == live ]]; then
+  build "$source/OpenGothic" "$build_dir" Gothic2Notr
+  game_environment
+  # Windowed game on the admitted gq display slot, as in scripts/nav-live.sh.
+  export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+  export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+  desktop_found=0
+  for auth in "$XDG_RUNTIME_DIR"/.mutter-Xwaylandauth.* "$HOME/.Xauthority"; do
+    [[ -r "$auth" ]] || continue
+    for socket in /tmp/.X11-unix/X*; do
+      [[ -S "$socket" ]] || continue
+      if DISPLAY=":${socket##*/X}" XAUTHORITY="$auth" xdpyinfo >/dev/null 2>&1; then
+        export DISPLAY=":${socket##*/X}" XAUTHORITY="$auth"
+        desktop_found=1
+        break 2
+      fi
+    done
+  done
+  [[ "$desktop_found" == 1 ]] || stop 'no accessible Xwayland desktop'
+  export VK_DRIVER_FILES=/usr/share/vulkan/icd.d/nvidia_icd.json VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json
+  [[ -r "$VK_DRIVER_FILES" ]] || stop 'missing NVIDIA Vulkan ICD'
+  export ALSOFT_DRIVERS=null TEMPEST_BACKGROUND=1 RYZEN_BENCH=1
+  slot="${GQ_DISPLAY_SLOT:-0}"
+  export TEMPEST_WINDOW_POS="$((100+(10#$slot % 2)*700)),$((100+(10#$slot / 2)*460))"
+  mkdir -p "$task/live-navmesh"
+  cp -n /mnt/shared/gothic-ai/archive/nav-dagger3-20261030/hd-measure-cache/ordinary/*.navmesh "$task/live-navmesh/"
+  "$python" -X faulthandler -B -I - "$task" "$archive" "$build_dir/opengothic/Gothic2Notr" <<'LIVE'
+import json
+from pathlib import Path
+import shutil
+import sys
+import time
+from types import SimpleNamespace
+
+import numpy as np
+
+sys.path.insert(0, str(Path.cwd() / "scripts"))
+import nav_live as live
+
+task, archive, binary = map(Path, sys.argv[1:])
+suite = Path.cwd() / "scripts/nav-live/scenarios.json"
+cases = {case["id"]: case for case in live.suite_cases(live.read_json(suite))}
+inputs = dict(live.read_json(suite)["inputs"], cache=str(task / "live-navmesh"))
+output = task / "live-output"
+shutil.rmtree(output, ignore_errors=True)
+output.mkdir(parents=True)
+args = SimpleNamespace(suite=suite, output=output, binary=binary, inputs=inputs, deadline=time.monotonic() + 2700,
+                       input_sha256={name: live.sha256(inputs[name]) for name in ("save", "roads", "familiar", "links")})
+weights = archive / "pace-from-hd/policy.navbc"
+model = dict(name="pace-from-hd", weights=str(weights), sha256=live.sha256(weights), order=0, **live.pace_input(weights))
+assert model.get("pace_input") is True
+result = dict(suite=str(suite), suite_sha256=live.sha256(suite), binary_sha256=live.sha256(binary), runs={})
+for case_id in ("03-follow-hero", "02-routine-return-forest-tree", "05-wall-pocket"):
+    case = dict(cases[case_id], limit_ms=5000)  # A short smoke: the frozen place and pace, five seconds.
+    directory = output / case_id
+    episode = live.run_episode(args, case, model, case["seeds"][0], directory, recorded=False)
+    actions = np.loadtxt(directory / "actions.txt", ndmin=2)
+    # A complete episode ends with the terminal key reset after its last decision.
+    decisions = actions[:-1] if len(actions) == episode["decisions"] + 1 else actions
+    expected_walk = case["pace"] == "walk" and case["goal_kind"] != "follow"
+    row = dict(id=case_id, place_pace=case["pace"], forced_pace=episode.get("forced_pace"), pace=episode.get("pace"),
+               pace_input=episode.get("pace_input"), decisions=episode["decisions"], elapsed_ms=episode["elapsed_ms"],
+               success=episode.get("success"), failure=episode.get("failure"),
+               walk_decisions=int((decisions[:, 4] != 0).sum()), decision_rows=len(decisions))
+    result["runs"][case_id] = row
+    print(json.dumps(row), flush=True)
+    if (episode["decisions"] < 1 or row["forced_pace"] != case["pace"] or row["pace_input"] is not True
+            or row["pace"] != ("walk" if expected_walk else "run")
+            or row["walk_decisions"] != (row["decision_rows"] if expected_walk else 0)):
+        raise AssertionError(f"live pace smoke failed: {row}")
+(archive / "live/live.json").write_text(json.dumps(result, indent=2) + "\n")
+shutil.rmtree(output)
+LIVE
   exit
 fi
 
 # drive
-test -f "$archive/smoke/passed" && test -x "$task/build/opengothic/gothic-body-runner"
-build "$task/main-source/OpenGothic" "$task/build-main" gothic-body-runner
-for name in save.sav places.json accepted-links.txt; do cp -n "$v5_input/$name" "$task/input/$name"; done
-if [[ ! -e "$task/input/base" ]]; then ln -s "/mnt/shared/gothic-ai/base/$base_fingerprint" "$task/input/base"; fi
+build "$source/OpenGothic" "$build_dir" gothic-body-runner
+main_build="$task/build-main/$main_revision"
+build "$task/main/$main_revision/OpenGothic" "$main_build" gothic-body-runner
+game_environment
+navmesh="$task/navmesh/$snapshot"
 for worker in 0 1 2; do
-  mkdir -p "$task/navmesh/ordinary/$worker"
-  cp -n /mnt/shared/gothic-ai/archive/nav-dagger3-20261030/hd-measure-cache/ordinary/*.navmesh "$task/navmesh/ordinary/$worker/"
+  mkdir -p "$navmesh/ordinary/$worker"
+  cp -n /mnt/shared/gothic-ai/archive/nav-dagger3-20261030/hd-measure-cache/ordinary/*.navmesh "$navmesh/ordinary/$worker/"
 done
-export GOTHIC_DIR="$HOME/gothic-ai/game-settings" OPENGOTHIC_BASE="$task/input/base"
-export OPENGOTHIC_BASE_FINGERPRINT="$base_fingerprint" OPENGOTHIC_VIDEOS_FINGERPRINT="$videos_fingerprint"
-export OPENGOTHIC_BASE_CACHE="$task/base-cache" OPENGOTHIC_BASE_STORE="$task/base-store"
-"$python" -X faulthandler -B -I - "$task" "$archive" "$hd/policy.navbc" "$v5_validation" "$seed" <<'DRIVE'
+"$python" -X faulthandler -B -I - "$task/work/drive-$snapshot" "$archive" "$hd/policy.navbc" "$v5_validation" "$seed" \
+    "$build_dir/opengothic/gothic-body-runner" "$main_build/opengothic/gothic-body-runner" "$main_revision" \
+    "$navmesh" "$v5_input" <<'DRIVE'
 import contextlib
 import hashlib
 import io
@@ -158,8 +286,10 @@ import numpy as np
 sys.path.insert(0, str(Path.cwd() / "scripts"))
 import nav_rl as rl
 
-task, archive, hd, manifest = map(Path, sys.argv[1:5])
+work, archive, hd, manifest = map(Path, sys.argv[1:5])
 seed = int(sys.argv[5])
+branch, main = map(Path, sys.argv[6:8])
+main_revision, navmesh, inputs = sys.argv[8], Path(sys.argv[9]), Path(sys.argv[10])
 pace_weights = archive / "pace-from-hd/policy.navbc"
 families = "point,object,follow_below_gate"
 values = rl.validation_scenarios(manifest, families)
@@ -168,11 +298,11 @@ indices = [next(index for index, value in enumerate(values) if value["family"] =
 
 
 def drive(name, runner, weights, pace=None, configure=None):
-    output = task / "drive" / name
+    output = work / name
     shutil.rmtree(output, ignore_errors=True)
     argv = ["nav_rl.py", "drive", "--runner", runner, "--assets", os.environ["GOTHIC_DIR"],
-            "--save", task / "input/save.sav", "--cache", task / "navmesh",
-            "--links", task / "input/accepted-links.txt", "--roads", task / "input/places.json",
+            "--save", inputs / "save.sav", "--cache", navmesh,
+            "--links", inputs / "accepted-links.txt", "--roads", inputs / "places.json",
             "--weights", weights, "--output", output, "--physics", "cv", "--parallel", 3,
             "--action-mode", "sample", "--action-seeds", seed, "--manifest", manifest, "--lean",
             "--families", families, "--indices", ",".join(map(str, indices)), "--watchdog-seconds", 1800]
@@ -213,10 +343,7 @@ def drive(name, runner, weights, pace=None, configure=None):
     return episodes
 
 
-branch = task / "build/opengothic/gothic-body-runner"
-main = task / "build-main/opengothic/gothic-body-runner"
-result = dict(seed=seed, families=families, indices=indices, manifest=str(manifest),
-              main_revision=(task / "main-source/REVISION").read_text().strip(),
+result = dict(seed=seed, families=families, indices=indices, manifest=str(manifest), main_revision=main_revision,
               base_fingerprint=os.environ["OPENGOTHIC_BASE_FINGERPRINT"])
 for pace in ("run", "walk"):
     result[f"v5_{pace}"] = drive(f"v5-{pace}", branch, pace_weights, pace)
@@ -228,7 +355,7 @@ try:
     drive("v5-none", branch, pace_weights)
     raise AssertionError("nav_rl drive accepted v5 weights without a forced pace")
 except RuntimeError as error:
-    if "need --force-pace walk|run" not in str(error) or any((task / "drive/v5-none").rglob("episode.json")):
+    if "need --force-pace walk|run" not in str(error) or any((work / "v5-none").rglob("episode.json")):
         raise
     result["refusal_python"] = str(error)
 
@@ -239,17 +366,27 @@ try:
     drive("v5-runner-none", branch, pace_weights, configure=bypass)
     raise AssertionError("runner accepted v5 weights without a forced pace")
 except RuntimeError as error:  # The runner's refusal reaches nav_rl through the collector.
-    if "need OPENGOTHIC_NAV_FORCE_PACE" not in str(error) or any((task / "drive/v5-runner-none").rglob("episode.json")):
+    if "need OPENGOTHIC_NAV_FORCE_PACE" not in str(error) or any((work / "v5-runner-none").rglob("episode.json")):
         raise
     result["refusal_runner"] = str(error)
-result["hd_main"] = drive("hd-main", main, hd)
-result["hd_branch"] = drive("hd-branch", branch, hd)
-result["hd_equal"] = {family: all(result["hd_main"][family][key] == result["hd_branch"][family][key]
-                                  for key in ("actions_sha256", "trajectory_sha256"))
-                      for family in result["hd_main"]}
+# Older formats without the flag: main and branch runners must act byte for byte alike.
+legacy = dict(v1=Path("/mnt/shared/gothic-ai/archive/nav-ppo/run/iter-000035/update/policy.navbc"),
+              v2=Path("/mnt/shared/gothic-ai/archive/nav-bc3-20261029/run/it35/policy.navbc"), v3=hd)
+result["legacy"] = {}
+for name, weights in legacy.items():
+    with weights.open("rb") as stream:
+        version = json.loads(stream.readline())["version"]
+    if f"v{version}" != name:
+        raise ValueError(f"{weights} is .navbc v{version}, expected {name}")
+    runs = dict(main=drive(f"{name}-main", main, weights), branch=drive(f"{name}-branch", branch, weights))
+    equal = {family: all(runs["main"][family][key] == runs["branch"][family][key]
+                         for key in ("actions_sha256", "trajectory_sha256")) for family in runs["main"]}
+    result["legacy"][name] = dict(weights=str(weights), sha256=hashlib.sha256(weights.read_bytes()).hexdigest(),
+                                  equal=equal, **runs)
 (archive / "drive/drive.json").write_text(json.dumps(result, indent=2) + "\n")
-print(json.dumps({key: value for key, value in result.items() if key.startswith(("hd_equal", "refusal"))}, indent=2))
-if not all(result["hd_equal"].values()):
-    raise AssertionError("HD actions without the flag differ between main and branch runners")
+print(json.dumps(dict(refusal_python=result["refusal_python"], refusal_runner=result["refusal_runner"],
+                      legacy_equal={name: value["equal"] for name, value in result["legacy"].items()}), indent=2))
+if not all(all(value["equal"].values()) for value in result["legacy"].values()):
+    raise AssertionError("older weights without the flag act differently on the main and branch runners")
 DRIVE
-rm -rf "$task/drive"
+rm -rf "$task/work/drive-$snapshot"

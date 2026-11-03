@@ -390,8 +390,10 @@ def checkpoint_model(path, device):
 
 def train(args):
     source = getattr(args, "source", None)
+    pace = getattr(args, "pace_input", False)
+    if pace and source:
+        raise ValueError("--pace-input requires prepared HD caches, not --source recordings")
     cache, out = Path(source or args.cache), Path(args.output)
-    out.mkdir(parents=True, exist_ok=True)
     if source:
         index = training_index(cache, Path(args.manifest), args.input_variant)
     else:
@@ -399,6 +401,11 @@ def train(args):
         balance_cache = getattr(args, "balance_v4_cache", None)
         index = (aggregate_training_index(cache, extra_caches, balance_cache)
                  if extra_caches or balance_cache else read_index(cache))
+    # Refuse before choosing a trainer: the legacy one would silently learn a walk head.
+    if pace and index["cache_version"] != HD_CACHE_VERSION:
+        raise ValueError(f"--pace-input requires HD caches (cache version {HD_CACHE_VERSION}) without familiar; "
+                         f"got cache version {index['cache_version']}")
+    out.mkdir(parents=True, exist_ok=True)
     if index["cache_version"] in (BC3_CACHE_VERSION, HD_CACHE_VERSION, BC4_CACHE_VERSION):
         return train_bc3(args, index)
     train_eps = [e for e in index["episodes"] if e["split"] == "train"]
