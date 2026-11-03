@@ -28,7 +28,7 @@ from .crime_talk import crime_talk as crime_talk_scenario
 from .crimes import crimes as crimes_scenario
 
 if TYPE_CHECKING:
-    from ..cli import ServerState
+    from ..session import ServerState
 
 log = logging.getLogger("gothic_ai")
 

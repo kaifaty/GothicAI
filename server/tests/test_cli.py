@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from gothic_ai import cli, scenarios
+from gothic_ai import cli, scenarios, session
 from gothic_ai.llm.off import ModelOff, OffBackend
 
 
@@ -372,8 +372,8 @@ def test_scenario_start_marker_waits_for_world_and_precedes_scenario(
     backend = cli._backend(captured[0])
     monkeypatch.setattr(cli, "_backend", lambda args: backend)
     monkeypatch.setattr(cli.places.PlaceBook, "load", Mock(return_value=None))
-    parley = Mock(wraps=cli.Parley)
-    monkeypatch.setattr(cli, "Parley", parley)
+    parley = Mock(wraps=session.Parley)
+    monkeypatch.setattr(session, "Parley", parley)
     caplog.set_level("INFO", logger="gothic_ai")
 
     def markers():
@@ -489,7 +489,7 @@ def test_serve_arguments_control_showrunner_task(monkeypatch, flags, running):
     showrunner = SimpleNamespace(run=AsyncMock())
 
     async def serve(args):
-        task = cli._start_showrunner(args, showrunner)
+        task = session._start_showrunner(args, showrunner)
         assert isinstance(task, asyncio.Task) is running
         if task is not None:
             await task
@@ -589,7 +589,7 @@ def test_crimes_is_enabled_by_default_including_scenarios(monkeypatch, flags):
 @pytest.mark.parametrize("parley", [False, True])
 def test_deed_control_is_independent_of_the_planner_and_threat_switch(crimes, planner, hold_threats, parley):
     args = SimpleNamespace(no_crimes=not crimes, no_hold_threats=not hold_threats, no_parley=not parley)
-    command = json.loads(cli._perception_control(args, planner=planner).to_json())
+    command = json.loads(session._perception_control(args, planner=planner).to_json())
     assert command["hold"] == (planner and hold_threats)
     assert command.get("deeds", False) == crimes
     assert ("deeds" in command) == crimes
@@ -630,10 +630,10 @@ def test_npc_cheat_flag_and_scenario_are_available(monkeypatch, flags):
 
 async def test_no_crimes_starts_no_encounter_worker_or_approach(monkeypatch):
     meeting, approach = Mock(), Mock()
-    monkeypatch.setattr(cli, "CrimeMeet", meeting)
-    monkeypatch.setattr(cli, "ImportantApproach", approach)
+    monkeypatch.setattr(session, "CrimeMeet", meeting)
+    monkeypatch.setattr(session, "ImportantApproach", approach)
     state = cli.ServerState()
-    assert cli._start_crime_meet(state, Mock(), {}) is None
+    assert session._start_crime_meet(state, Mock(), {}) is None
     assert state.crime_meet is None
     meeting.assert_not_called()
     approach.assert_not_called()
@@ -659,13 +659,13 @@ async def test_encounter_worker_starts_without_a_behavioral_planner(monkeypatch)
     meeting = Mock(return_value=SimpleNamespace(
         run=AsyncMock(), refuses=Mock(return_value=False), refusal=Mock(return_value=None)
     ))
-    monkeypatch.setattr(cli, "CrimeMeet", meeting)
-    monkeypatch.setattr(cli, "ImportantApproach", Mock())
+    monkeypatch.setattr(session, "CrimeMeet", meeting)
+    monkeypatch.setattr(session, "ImportantApproach", Mock())
     state = cli.ServerState()
     state.crimes = state.crime_react = state.crime_memory = Mock()
     state.bodies = state.talk = state.chronicle = Mock()
     assert state.brain is None
-    task = cli._start_crime_meet(state, Mock(), {})
+    task = session._start_crime_meet(state, Mock(), {})
     assert task is not None
     await task
     assert state.crime_meet is meeting.return_value
@@ -736,14 +736,14 @@ def test_serve_arguments_enable_pilot_only_with_neural_body(
     else:
         monkeypatch.setenv("GOTHIC_BODY_URL", env_url)
     factory = Mock()
-    monkeypatch.setattr(cli, "BodyPilot", factory)
+    monkeypatch.setattr(session, "BodyPilot", factory)
     link = SimpleNamespace(body_watch=AsyncMock(), body_acquire=AsyncMock())
     talk = SimpleNamespace(orders=SimpleNamespace(companion=Mock()), attached=set(), partner=None)
 
     async def serve(args):
         assert args.neural_body is enabled
         assert args.body_url == expected_url
-        pilot = cli._start_bodypilot(args, link, talk)
+        pilot = session._start_bodypilot(args, link, talk)
         if created:
             assert pilot is factory.return_value
             assert factory.call_args.args == (link, expected_url)
@@ -765,9 +765,9 @@ def test_serve_arguments_enable_pilot_only_with_neural_body(
 
 def test_bodypilot_distinguishes_conversation_partner_from_attached_npcs(monkeypatch):
     factory = Mock()
-    monkeypatch.setattr(cli, "BodyPilot", factory)
+    monkeypatch.setattr(session, "BodyPilot", factory)
     talk = SimpleNamespace(orders=SimpleNamespace(companion=Mock()), attached=set(), partner=None)
-    cli._start_bodypilot(
+    session._start_bodypilot(
         SimpleNamespace(neural_body=True, body_url="tcp://policy:47835", neural_body_max=4), Mock(), talk,
     )
     unavailable = factory.call_args.kwargs["unavailable"]
@@ -804,12 +804,12 @@ def test_body_policy_environment_selects_default(monkeypatch, policy):
 @pytest.mark.parametrize("maximum", [1, 4])
 def test_neural_body_max_passes_supported_limit_to_pilot(monkeypatch, maximum):
     factory = Mock()
-    monkeypatch.setattr(cli, "BodyPilot", factory)
+    monkeypatch.setattr(session, "BodyPilot", factory)
     talk = SimpleNamespace(orders=SimpleNamespace(companion=Mock()), attached=set(), partner=None)
 
     async def serve(args):
         assert args.neural_body_max == maximum
-        cli._start_bodypilot(args, Mock(), talk)
+        session._start_bodypilot(args, Mock(), talk)
         assert factory.call_args.kwargs["max_fights"] == maximum
         return 0
 
