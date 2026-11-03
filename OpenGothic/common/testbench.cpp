@@ -17225,6 +17225,13 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       Archery::setEnabled(m=="on"); else
       say("unknown manual command: " + line);
     }
+  else if(c=="bowstrength") {
+    // bowstrength on|off: strength sets a bow's draw speed and limit (game/archery)
+    const std::string m = a.size()>1 ? a[1] : "";
+    if(m=="on" || m=="off")
+      Archery::setBowStrengthEnabled(m=="on"); else
+      say("unknown bowstrength command: " + line);
+    }
   else if(c=="sfx") {
     // sfx <name>...: the files a sound effect plays (its variants _A1.. too), whether they load
     for(size_t k=1; k<a.size(); ++k) {
@@ -17351,7 +17358,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       }
     const auto  wp = n.currentRangedWeapon();
     const auto  st = Archery::stats(n,wp);
-    char buf[440];
+    char buf[520];
     if(more) {
       // whose, the reload as long as the animation is (the trained ones' is shorter), the hit points
       const bool cbow = wp!=nullptr && wp->isCrossbow();
@@ -17364,12 +17371,12 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       }
     // an npc's: by name (the report takes `stats str` for the hero's)
     const std::string who = &n!=&pl ? " npc " + symName(w,&n) : "";
-    std::snprintf(buf,sizeof(buf),"stats%s str %d dex %d bow %d cbow %d, weapon damage %d: skill %.2f strength %.2f sway %.2f deg settle %.2f s breath %.1f s draw %.2f s hold %.1f s speed %.1f m/s cone %.2f deg reload x%.2f",
+    std::snprintf(buf,sizeof(buf),"stats%s str %d dex %d bow %d cbow %d, weapon damage %d: skill %.2f strength %.2f sway %.2f deg settle %.2f s breath %.1f s draw %.2f s hold %.1f s speed %.1f m/s cone %.2f deg reload x%.2f need %.2f r %.3f f_s %.3f f_b %.3f",
                   who.c_str(),n.attribute(ATR_STRENGTH),n.attribute(ATR_DEXTERITY),n.hitChance(TALENT_BOW),n.hitChance(TALENT_CROSSBOW),
                   wp!=nullptr ? int(wp->handle().damage_total) : -1,
                   double(st.skill),double(st.strength),double(st.sway*180.f/float(M_PI)),double(st.settle),double(st.breath),
                   double(st.drawTime),double(std::min(st.holdLimit,999.f)),double(st.speed*10.f),double(st.cone*180.f/float(M_PI)),
-                  double(st.reload));
+                  double(st.reload),double(st.need),double(st.strength),double(st.steadyDraw),double(st.burstDraw));
     say(buf);
     }
   else if(c=="npctier") {
@@ -19537,6 +19544,11 @@ void tickVolley(PlayerControl& ctrl) {
       bench.volleyT     = bench.time;
       break;
     case 1: {
+      if(mp.valid && mp.stage==Archer::Held && mp.draw<Archery::MinDraw) {
+        stop("the draw limit is below the release threshold");
+        break;
+        }
+      // Held means the archer reached its own limit, which can be below the requested draw.
       const bool drawn = mp.valid && (mp.stage==Archer::Held || (mp.stage==Archer::Drawing && mp.draw>=bench.volleyDraw));
       if(drawn) {
         bench.volleyPhase   = 2;
@@ -21709,12 +21721,15 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
        !bench.aimNpc->hitZoneCenter(HitZones::Body,at))
       at = bench.aimNpc->collosionCenter();
     if(bench.aimNpc!=nullptr && !bench.aimRaw) {
-      // as an archer does: over it by how much the arrow drops on the way (at full draw), from the nock
+      // As an archer does: compensate the arrow's drop from the nock at the current draw.
       const auto st = Archery::stats(*player,player->currentRangedWeapon());
       Vec3       nock, dir;
       if(!player->arrowRay(nock,dir))
         nock = player->position() + Vec3(0,145,0);
-      at = Archery::launch(nock,at,Archery::speedAt(st,1.f));
+      const auto& ar = player->archer();
+      const float draw = st.bowStrength ?
+                         ((ar.stage()==Archer::Drawing || ar.stage()==Archer::Held) ? std::max(ar.draw(),Archery::MinDraw) : st.burstDraw) : 1.f;
+      at = Archery::launch(nock,at,Archery::speedAt(st,draw));
       }
     auto cam = Gothic::inst().camera();
     if(!bench.aimMouse) {

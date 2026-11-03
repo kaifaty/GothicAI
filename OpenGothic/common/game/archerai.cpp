@@ -22,7 +22,7 @@ constexpr float    ChestRaise  = 15.f;    // cm over the body's middle (a man 16
                                           // where head and limb hits even out (x2, x0.6)
 constexpr float    HeadHeight  = 160.f;
 constexpr float    HumanHeight = 180.f;   // a man as big as the spread below is for
-constexpr float    MinHold     = 0.2f;    // seconds held at full draw at least (it can be seen: drawn, held)...
+constexpr float    MinHold     = 0.2f;    // seconds held at its draw limit at least (drawn, held)...
 constexpr float    Settled     = 0.25f;   // ...then let go once the aim has settled (Archer's disturb)...
 constexpr float    ReleaseTrack= 0.5f;    // ...and the arrow is on the point, degrees...
 constexpr float    ReleaseWait = 1.f;     // ...or after that long anyway
@@ -106,7 +106,7 @@ void ArcherAi::setEnabled(bool e) {
 bool ArcherAi::isDriving(Npc& npc) const {
   if(!isEnabled() || npc.isPlayer() || !npc.canAimByHand())
     return false;
-  return !(diceOnly && weapon==npc.currentRangedWeapon());
+  return !(diceOnly && weapon==npc.currentRangedWeapon() && (!diceWeak || Archery::isBowStrengthEnabled()));
   }
 
 float ArcherAi::gauss() {
@@ -193,7 +193,9 @@ void ArcherAi::spread(Npc& npc, const Npc& tg) {
   // its cadence as it shoots (the fight AI's waits, the steadying, the draw), till it has one: the reload,
   // the draw, the hold
   const float reload = npc.animTime(Archery::reloadAnim(st.crossbow));
-  const float tNpc   = cycle>0.f ? cycle : reload/std::max(st.reload,0.1f) + Resteady + (st.drawTime+MinHold)*1000.f;
+  const float drawTime = st.bowStrength && st.steadyDraw<Archery::MinDraw ?
+                         Archery::drawTime(st.strength,st.burstDraw,st.drawSpeed) : st.drawTime;
+  const float tNpc   = cycle>0.f ? cycle : reload/std::max(st.reload,0.1f) + Resteady + (drawTime+MinHold)*1000.f;
   const float tDice  = reload + 67.f;
   rho = std::clamp(tNpc/std::max(tDice,1.f),1.f,RhoMax);
   ps  = mode==PerArrow ? pv : std::max(pv,std::min(PMax,pv*rho));
@@ -240,15 +242,17 @@ void ArcherAi::tick(Npc& npc, uint64_t dt) {
   const float dtS = float(dt)/1000.f;
   auto&       ar  = npc.archer();
   const auto  st  = Archery::stats(npc,npc.currentRangedWeapon());
-  if(ar.stage()==Archer::Raising && now-raiseAt>RaiseStuck) {
-    // never steady (an animation Aim cannot hold): the dice for this weapon
+  const bool tooWeak = st.bowStrength && st.burstDraw<Archery::MinDraw;
+  if(tooWeak || (ar.stage()==Archer::Raising && now-raiseAt>RaiseStuck)) {
+    // Cannot shoot by hand (too weak, or an animation Aim cannot hold): the dice for this weapon.
     diceOnly = true;
+    diceWeak = tooWeak;
     weapon   = npc.currentRangedWeapon();
     end(npc);
     if(TestBench::isActive()) {
       const auto by = TestBench::who(&npc);
       char buf[160];
-      std::snprintf(buf,sizeof(buf),"archer %.*s: dice from now (raise stuck)",int(by.size()),by.data());
+      std::snprintf(buf,sizeof(buf),"archer %.*s: dice from now (%s)",int(by.size()),by.data(),tooWeak ? "draw below minimum" : "raise stuck");
       TestBench::note(buf);
       }
     return;
@@ -288,7 +292,9 @@ void ArcherAi::tick(Npc& npc, uint64_t dt) {
   Vec3 head;
   if(tg->hitZoneCenter(HitZones::Head,head) && head.y>c.y)
     c.y += ChestRaise*std::clamp((head.y-tp.y)/HeadHeight,0.5f,2.f);
-  const float speed = Archery::speedAt(st,1.f);
+  const bool burst = st.bowStrength && st.steadyDraw<Archery::MinDraw;
+  const float releaseDraw = st.bowStrength ? (burst ? st.burstDraw : st.steadyDraw) : 1.f;
+  const float speed = Archery::speedAt(st,ar.stage()==Archer::Held ? ar.draw() : releaseDraw);
   lead = 0;
   if(leadOn && speed>0.f) {
     Vec3 ahead = c;
@@ -336,6 +342,7 @@ void ArcherAi::tick(Npc& npc, uint64_t dt) {
     }
   Archer::Input in;
   in.draw = ar.stage()==Archer::Drawing || (want && (ar.stage()==Archer::Nocked || ar.stage()==Archer::Held) && !letGo);
+  in.burst = burst;
   in.dt   = dt;
   if(npc.tickManualAim(at,in,st)) {
     if(shotAt>0 && now-shotAt<CycleGap)
