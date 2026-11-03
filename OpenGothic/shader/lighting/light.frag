@@ -114,6 +114,27 @@ const vec2 omniFilter[12] = {
 const float OmniZk        = 0.0309278; // vsmApplyProjective: z = k*(1/fz - 1), k = zNear/(zFar - zNear)
 const float OmniMaxRadius = 24.0;      // texels: the widest search and filter
 
+vec3 lwcAt(ivec2 p, float z) {
+  const vec2 scr = ((vec2(p) + 0.5)/vec2(textureSize(depth,0)))*2.0 - 1.0;
+  const vec4 w   = scene.viewProjectLwcInv*vec4(scr, z, 1.0);
+  return w.xyz/w.w;
+  }
+
+// normal of the visible surface from the depth buffer: on each axis the neighbour nearer in depth, so a crease
+// or a silhouette does not tilt it (screen-space derivatives would mix the two surfaces there)
+vec3 depthNormal(ivec2 c, float d) {
+  const ivec2 sz = textureSize(depth, 0) - ivec2(1);
+  const ivec2 r  = min(c + ivec2(1,0), sz), l = max(c - ivec2(1,0), ivec2(0));
+  const ivec2 u  = min(c + ivec2(0,1), sz), b = max(c - ivec2(0,1), ivec2(0));
+  const float dr = texelFetch(depth, r, 0).x, dl = texelFetch(depth, l, 0).x;
+  const float du = texelFetch(depth, u, 0).x, db = texelFetch(depth, b, 0).x;
+  const vec3  p0 = lwcAt(c, d);
+  const vec3  dx = abs(dr-d)<abs(dl-d) ? lwcAt(r, dr) - p0 : p0 - lwcAt(l, dl);
+  const vec3  dy = abs(du-d)<abs(db-d) ? lwcAt(u, du) - p0 : p0 - lwcAt(b, db);
+  const vec3  n  = cross(dx, dy);
+  return dot(n,n)>1e-12 ? normalize(n) : vec3(0);
+  }
+
 float omniGather(const vec3 d, const uint home, const vec3 P, const vec3 n, const float R, const vec2 atlasInv,
                  inout float blockRatio, inout float blockCount) {
   uint face  = vsmLightDirToFace(d);
@@ -210,10 +231,6 @@ void main() {
 
   vec4 pos = scene.viewProjectLwcInv*vec4(scr.x,scr.y,z,1.0);
   pos.xyz/=pos.w;
-#if defined(VIRTUAL_SHADOW)
-  // geometric normal from the depth buffer, before any discard (derivatives)
-  vec3 geomNormal = cross(dFdx(pos.xyz), dFdy(pos.xyz));
-#endif
   pos.xyz += push.origin;
 
   vec3 ldir = (pos.xyz-cenPosition.xyz);
@@ -239,8 +256,8 @@ void main() {
 #endif
 #if defined(VIRTUAL_SHADOW)
   {
-    // the plane for the shadow's depth test: the geometric one, unless it is a silhouette's or disagrees much
-    geomNormal = dot(geomNormal,geomNormal)>1e-12 ? normalize(geomNormal) : vec3(0);
+    // the plane for the shadow's depth test: the geometric one, unless it disagrees much (a thin edge, a normal map)
+    vec3 geomNormal = depthNormal(ivec2(gl_FragCoord.xy), z);
     geomNormal *= sign(dot(geomNormal, normal));
     const vec3 planeN = dot(geomNormal, normal)>=0.3 ? geomNormal : normal;
     light *= omniShadow(pos.xyz - cenPosition.xyz, planeN, cenPosition.w, lights[lightId].sourceSize);

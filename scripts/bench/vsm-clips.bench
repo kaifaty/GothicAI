@@ -27,19 +27,22 @@ cloth camera-turn 35 7000
 wait 1000
 stop
 
-# 2. The hero walks past brazier 2 (a man in its light: his shadow on the ground and on the wall behind him).
-goto pos -5920 160 -4900
-face 0
-walkmode walk
+# 2. The hero walks past brazier 1, 80 cm in front of it: his shadow sweeps over the ground and the wall.
+#    The camera is set on the brazier and held there.
+goto pos -3297 140 -4524
 watch player
 cam look 110
-cam world 650 200 100
-wait 8000
-cam fixed
+cam world 700 220 90
+wait 6000
+cam hold
+goto pos -3650 140 -4524
+face 0
+walkmode walk
+wait 2000
 shot walk-brazier-start
 rec walk-brazier
-hold forward 6500
-wait 7500
+hold forward 4500
+wait 5500
 stop
 shot walk-brazier-end
 
@@ -125,3 +128,4 @@ cam world 850 300 180
 wait 500
 cam hold
 shot harbour-day-b
+wait 1000

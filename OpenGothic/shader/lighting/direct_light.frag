@@ -102,6 +102,26 @@ vec3 vsmShadowPos(vec4 wpos, vec4 offset) {
   return shPos.xyz;
   }
 
+vec3 lwcAt(ivec2 p, float z) {
+  const vec4 w = worldPosLwc(vec2(p) + 0.5, z);
+  return w.xyz/w.w;
+  }
+
+// normal of the visible surface from the depth buffer: on each axis the neighbour nearer in depth, so a crease
+// or a silhouette does not tilt it (screen-space derivatives would mix the two surfaces there)
+vec3 depthNormal(ivec2 c, float d) {
+  const ivec2 sz = textureSize(depth, 0) - ivec2(1);
+  const ivec2 r  = min(c + ivec2(1,0), sz), l = max(c - ivec2(1,0), ivec2(0));
+  const ivec2 u  = min(c + ivec2(0,1), sz), b = max(c - ivec2(0,1), ivec2(0));
+  const float dr = texelFetch(depth, r, 0).r, dl = texelFetch(depth, l, 0).r;
+  const float du = texelFetch(depth, u, 0).r, db = texelFetch(depth, b, 0).r;
+  const vec3  p0 = lwcAt(c, d);
+  const vec3  dx = abs(dr-d)<abs(dl-d) ? lwcAt(r, dr) - p0 : p0 - lwcAt(l, dl);
+  const vec3  dy = abs(du-d)<abs(db-d) ? lwcAt(u, du) - p0 : p0 - lwcAt(b, db);
+  const vec3  n  = cross(dx, dy);
+  return dot(n,n)>1e-12 ? normalize(n) : vec3(0);
+  }
+
 // texel of the virtual clipmap 'mip' (0..VSM_CLIPMAP_SIZE): stored depth, or -1 where no page holds it
 float vsmSunTexel(ivec2 tx, int mip) {
   if(any(lessThan(tx, ivec2(0))) || any(greaterThanEqual(tx, ivec2(VSM_CLIPMAP_SIZE))))
@@ -231,16 +251,6 @@ float shadowFactor(const float depth, const vec3 normal, bool isFlat) {
 void main(void) {
   const ivec2 fragCoord = ivec2(gl_FragCoord.xy);
   const float d         = texelFetch(depth, fragCoord, 0).r;
-#if defined(VIRTUAL_SHADOW)
-  {
-    // derivatives before any early return; across a silhouette the cross product is useless and is dropped below
-    const vec4 p4 = worldPosLwc(gl_FragCoord.xy, d);
-    const vec3 p  = p4.xyz/p4.w;
-    const vec3 gn = cross(dFdx(p), dFdy(p));
-    if(dot(gn,gn)>1e-12)
-      geomNormal = normalize(gn);
-  }
-#endif
   if(d==1.0) {
     outColor = vec4(0);
     return;
@@ -249,7 +259,8 @@ void main(void) {
   const vec4  diff   = texelFetch(gbufDiffuse, fragCoord, 0);
   const vec3  normal = normalFetch(gbufNormal, fragCoord);
 #if defined(VIRTUAL_SHADOW)
-  // face the geometric normal like the shading one; a disagreeing one is a silhouette or a deep normal map
+  // face the geometric normal like the shading one; a disagreeing one is a thin edge or a deep normal map
+  geomNormal = depthNormal(fragCoord, d);
   geomNormal *= sign(dot(geomNormal, normal));
   if(dot(geomNormal, normal)<0.3)
     geomNormal = vec3(0);
