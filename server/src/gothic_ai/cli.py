@@ -945,7 +945,11 @@ async def serve(args: argparse.Namespace) -> int:
         reflexes = Reflexes(decider, apply_threats=args.apply_threats) if decider is not None else None
         state.incidents = IncidentDesk(link, state.dialogue, reflexes, budget, trace)
         # the hero talks to the world: whom he speaks to, the conversation, the body meanwhile (M5e)
-        state.talk = TalkDesk(link, state.dialogue, reflexes, journal=journal, trace=trace)
+        state.talk = TalkDesk(
+            link, state.dialogue, reflexes, journal=journal, trace=trace,
+            known_names={npc: card.name for npc, card in personas.cards.items()},
+            name_fix=not args.no_name_fix,
+        )
         # orders to the hero's companions ("Стой!", "За мной!"): carried out at once, no model call
         state.talk.orders = Orders(link, state.talk, state.dialogue, journal=journal, places=place_book)
         state.dialogue.extensions.append(state.talk.orders)  # places around a companion, go_to
@@ -1101,6 +1105,7 @@ async def serve(args: argparse.Namespace) -> int:
         # who and what is where, as each npc knows it from its dialogs (docs/npc-tools.md М4)
         state.lore = lore.Lore.load(place_book, state.knowledge, link=link, desk=perception)
         if state.lore is not None:
+            state.talk.known_names = {**state.lore.names, **state.talk.known_names}
             state.dialogue.extensions.append(state.lore)
         log.info("lore: %s", f"{len(state.lore.facts)} npc's know" if state.lore else "no book of facts")
         state.whereabouts = Whereabouts(
@@ -3455,6 +3460,7 @@ def main() -> None:
     p.add_argument("--journal", action="store_true", help="print lines and actions as JOURNAL {json} lines")
     p.add_argument("--trace-dir", default=str(DEFAULT_TRACE_DIR), help="where turn traces go (a file a day)")
     p.add_argument("--no-trace", action="store_true", help="do not write turn traces")
+    p.add_argument("--no-name-fix", action="store_true", help="disable correction of misheard hero names")
     p.add_argument(
         "--llm-per-npc-min",
         type=float,

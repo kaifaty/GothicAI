@@ -31,11 +31,12 @@ import asyncio
 import logging
 import re
 import time
+from collections import Counter
 from collections.abc import Callable, Collection, Coroutine, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from . import commands
+from . import commands, lore
 from .brain.day import describe
 from .brain.planner import NpcPlanner
 from .brain.reflex import POSTURE_OPTIONS, Reflexes
@@ -104,6 +105,7 @@ HERO_ACTS = {
 PERC_ACTS = {"DRAWWEAPON": "weapon_drawn", "ASSESSTHREAT": "threatened"}
 
 _WORD = re.compile(r"[a-zа-я]+")
+_NAME_WORD = re.compile(r"[a-zа-яё]+", re.IGNORECASE)
 
 
 def words(text: str) -> list[str]:
@@ -186,7 +188,8 @@ _STRETCH = re.compile(r"[^,.!?;:…—–]+")
 # what the hero calls someone by instead of a name: never a misheard name ("Да, мастер." is not "Бастер")
 _ADDRESS = frozenset(
     "мастер господин госпожа брат сестра сэр лорд друг дружище приятель старик старина парень командир "
-    "капитан генерал отец сынок учитель хозяин торговец кузнец страж стражник маг".split()
+    "капитан генерал отец сынок учитель хозяин торговец кузнец страж стражник маг "
+    "братан братишка братуха бро кореш дружок чувак мужик".split()
 )
 
 _WORLD_HINTS = (
@@ -260,6 +263,70 @@ def named(phrase: list[str], name: str, called: list[str] | None = None) -> floa
     found = [name_edits(w, p) for p in parts for w in phrase]
     found += [name_edits(w, p, misheard=True) for p in parts for w in called or ()]
     return min((d for d in found if d is not None), default=None)
+
+
+def fix_names(
+    text: str, near: Collection[str], known: Collection[str],
+) -> tuple[str, list[tuple[str, str]]]:
+    """Correct misheard name stems, preserving punctuation and the spoken case ending.
+
+    `known` keeps repeated names of different people; overlap with `near` is not another person.
+    Only calls to someone nearby allow the wider speech-recognition tolerance.
+    """
+    def normalize(s: str) -> str:
+        return s.lower().replace("ё", "е")
+
+    nearby = {normalize(n) for n in near}
+    counts = Counter(map(normalize, known)) | Counter(map(normalize, near))
+    common = {normalize(n) for n in lore.COMMON_NAMES} | {n for n, c in counts.items() if c > 1}
+    parts: dict[str, tuple[str, bool, bool]] = {}
+    for name in (*near, *known):
+        full = normalize(name)
+        for match in _NAME_WORD.finditer(name):
+            part = normalize(match.group())
+            if len(part) < 3:
+                continue
+            spelling = name[match.start():match.end()]
+            previous = parts.get(part)
+            is_near = full in nearby
+            allowed = full not in common and part not in _ADDRESS
+            if previous is None or is_near:
+                parts[part] = (spelling, is_near, allowed)
+    called = set(calls(text))
+    replacements: list[tuple[str, str]] = []
+    fixed: dict[str, str] = {}
+
+    def replace(match: re.Match[str]) -> str:
+        word = normalize(match.group())
+        if word not in fixed:
+            fixed[word] = word
+            if word in _ADDRESS or any(name_edits(word, p) == 0 for p in parts):
+                return text[match.start():match.end()]
+            candidates = []
+            for part, (spelling, is_near, allowed) in parts.items():
+                if not allowed:
+                    continue
+                distance = name_edits(word, part, misheard=is_near and word in called)
+                if distance is not None and distance > 0:
+                    candidates.append((distance, not is_near, part, spelling))
+            if candidates:
+                distance, _, part, spelling = min(candidates)
+                # Use the same eligible stems as name_edits; prefer the uncut card on a tie.
+                _, w_cut, p_cut = min(
+                    (edits(w, p, distance), w_cut, p_cut)
+                    for w, w_cut in _forms(word)
+                    for p, p_cut in _forms(part)
+                    if (w_cut or not p_cut)
+                    and not (part[-1] not in _SOFT and not p_cut and w_cut in _PLURAL)
+                )
+                fixed[word] = (spelling[:-len(p_cut)] if p_cut else spelling) + w_cut
+        original = text[match.start():match.end()]
+        if fixed[word] == word:
+            return original
+        replacements.append((original, fixed[word]))
+        return fixed[word]
+
+    return _NAME_WORD.sub(replace, text), replacements
 
 
 @dataclass(frozen=True)
@@ -373,6 +440,8 @@ class TalkDesk:
         clock: Callable[[], float] = time.monotonic,
         planner: NpcPlanner | None = None,
         end_silence_s: float = END_SILENCE_S,
+        known_names: dict[str, str] | None = None,
+        name_fix: bool = True,
     ) -> None:
         self.link = link
         self.dialogue = dialogue
@@ -381,6 +450,8 @@ class TalkDesk:
         self.trace = trace
         self.clock = clock
         self.planner = planner
+        self.known_names = dict(known_names or {})
+        self.name_fix = name_fix
         # what an npc perceives now, for the behavioral model (perception.py)
         self.view_of: Callable[[str], tuple[str, ...]] = lambda npc: ()
         self.refuses: Callable[[str], bool] = lambda npc: False
@@ -495,6 +566,14 @@ class TalkDesk:
             ours=self.orders.companion if self.orders is not None else lambda npc: False,
             lead=self.lead,
         )
+        if self.name_fix:
+            near = [e.name for e in self.people.values() if e.activity != "down" and e.earshot <= NAME_CM]
+            known = {**self.known_names, **{npc: e.name for npc, e in self.people.items()}}
+            corrected, replacements = fix_names(text, near, list(known.values()))
+            if replacements:
+                details = {"heard": text, **(details or {})}
+                log.info("hero name fixes: %s", "; ".join(f"{a} -> {b}" for a, b in replacements))
+                text = corrected
         order = commands.parse(text, self._is_name)
         if self.orders is not None:
             explicit_attack = self.orders.parse_attack(text)
