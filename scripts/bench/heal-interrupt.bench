@@ -1,4 +1,4 @@
-# WORLD=NEWWORLD.ZEN; run with MELEE_HEAL_INTERRUPT=1 FOOD_OVER_TIME=1, then both 0.
+# WORLD=NEWWORLD.ZEN MELEE_USE_IN_HAND=0; run with MELEE_HEAL_INTERRUPT=1 FOOD_OVER_TIME=1, then both 0.
 # Real useItem, native melee takeDamage and a native arrow collision; no scripted healing.
 seed 73013
 set time 12 0

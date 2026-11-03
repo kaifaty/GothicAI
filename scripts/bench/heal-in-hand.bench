@@ -1,0 +1,250 @@
+# WORLD=NEWWORLD.ZEN; OPENGOTHIC_CONTENT=.../content-staging/anim-uses-1.
+# Run once with MELEE_USE_IN_HAND=1 and once with 0; Part A flags stay enabled.
+# Native item events, player controls, AI_UseItem, dodge/attack and bandit takeDamage.
+seed 73013
+set time 12 0
+release all
+overlay off
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+wait 500
+watch player
+clear 3000
+corner right go 0
+melee-shadow setup 1h
+wait 600
+melee-shadow target 2
+wait 600
+pin WOLF 5000 90 0
+wait 34
+pin off
+pin WOLF 5000 -90 0
+wait 34
+pin off
+turn 180
+pin BDT_1013_BANDIT_L 140 0 0
+wait 300
+pin off
+
+# 1H uses the actual potion hotkey; repeated items cannot replace the current use.
+healing begin 1h-potion ItPo_Health_01
+healing arm 1h
+wait 600
+healing use hotkey
+wait 300
+healing second
+wait 5700
+healing check hand-potion
+
+# The same path through native AI_UseItem and direct inventory use.
+healing begin 2h-potion ItPo_Health_01
+healing arm 2h
+wait 600
+healing use ai
+wait 6000
+healing check hand-potion
+healing begin fist-potion ItPo_Health_01
+healing arm fist
+wait 600
+healing use direct
+wait 6000
+healing check hand-potion
+
+healing begin bread ItFo_Bread
+healing arm 1h
+wait 600
+healing use direct
+wait 16000
+healing check hand-food 10
+healing begin meat ItFoMutton
+healing arm 2h
+wait 600
+healing use direct
+wait 16000
+healing check hand-food 12
+
+# Ordinary combat walk references on the same open ground and for the same interval.
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+healing begin walk-reference-forward ItPo_Health_01
+healing arm 1h
+wait 600
+healing baseline forward
+wait 1500
+healing baseline-end
+wait 400
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+healing begin walk-forward ItPo_Health_01
+healing arm 1h
+wait 600
+healing use direct
+healing move forward
+wait 1800
+release all
+wait 4200
+healing check walk
+
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+healing begin walk-reference-side ItPo_Health_01
+healing arm 1h
+wait 600
+healing baseline side
+wait 1500
+healing baseline-end
+wait 400
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+healing begin walk-side ItPo_Health_01
+healing arm 1h
+wait 600
+healing use direct
+healing move side
+wait 1800
+release all
+wait 4200
+healing check walk
+
+# Backward and turn input must leave the item layer running and permit its effect.
+healing begin walk-back ItPo_Health_01
+healing arm 1h
+wait 600
+healing use direct
+healing motion back
+hold back 900
+wait 6000
+healing check hand-potion
+healing begin turn ItPo_Health_01
+healing arm 1h
+wait 600
+healing use direct
+healing motion turn
+hold turnl 900
+wait 6000
+healing check hand-potion
+
+# Refused combat actions preserve the drink: exhaustion is created by real swings.
+healing begin refused-dodge ItPo_Health_01
+healing arm 1h
+wait 600
+healing exhaust
+healing use direct
+wait 600
+healing action dodge
+wait 5400
+healing check refused-action
+
+healing begin refused-attack ItPo_Health_01
+healing arm 1h
+wait 600
+healing exhaust
+healing use direct
+wait 600
+healing action attack
+wait 5400
+healing check refused-action
+
+healing begin refused-parade ItPo_Health_01
+healing arm 1h
+wait 600
+healing exhaust
+healing use direct
+wait 600
+healing action parade
+wait 5400
+healing check refused-action
+
+healing begin refused-charge ItPo_Health_01
+healing arm 1h
+wait 600
+healing exhaust
+healing use direct
+wait 600
+healing action charge
+wait 5400
+healing check refused-action
+
+# Input toggles update the stored mode, independently of the clip's forced walking.
+healing begin toggle-walk ItPo_Health_01
+healing arm 1h
+wait 600
+healing use direct
+wait 600
+healing toggle walk
+wait 5400
+healing check hand-potion
+healing begin toggle-sneak ItPo_Health_01
+healing arm 1h
+wait 600
+healing use direct
+wait 600
+healing toggle sneak
+wait 5400
+healing check hand-potion
+
+# Selecting run explicitly cuts an in-hand use; held movement above only walks.
+healing begin own-run ItPo_Health_01
+healing arm 1h
+wait 600
+healing use direct
+wait 600
+healing action run
+wait 5400
+healing check hand-cancel
+
+# Own combat actions win before ITEM_DESTROY; OFF remains a holster control.
+healing begin own-dodge ItPo_Health_01
+healing arm 1h
+wait 600
+healing use direct
+wait 600
+healing action dodge
+wait 5400
+healing check hand-cancel
+healing begin own-attack ItPo_Health_01
+healing arm 1h
+wait 600
+healing use direct
+wait 600
+healing action attack
+wait 5400
+healing check hand-cancel
+
+# Part A's actual native damage interruption is unchanged in ON and OFF.
+healing begin bandit-hit ItPo_Health_01
+healing arm 1h
+wait 600
+healing use direct
+healing hit 600
+wait 6000
+healing check hand-hit
+
+# POTION (wine) is intentionally outside the four supported schemes.
+healing begin wine ItFo_Wine
+healing arm 1h
+wait 600
+healing use direct
+wait 20000
+healing check wine
+
+# The bandit's queued run waits for its one-off in-hand clip to finish.
+healing begin npc-queue ItPo_Health_01
+healing npc-queue
+wait 6000
+healing check npc-queue
+
+# Turning off the category's Part A flag retains its immediate native effect.
+healing begin original-potion ItPo_Health_01
+healing arm 1h
+wait 600
+healing original potion
+healing use direct
+wait 600
+healing action dodge
+wait 5400
+healing check original-potion
+healing begin original-food ItFo_Bread
+healing arm 1h
+wait 600
+healing original food
+healing use direct
+wait 600
+healing action dodge
+wait 11400
+healing check original-food

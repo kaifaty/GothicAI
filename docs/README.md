@@ -42,6 +42,8 @@
 
 Лечение в бою, часть А (шаг 7 NRFTW): [`healing.*`](../OpenGothic/common/game/healing.h) — момент эффекта, запас еды HP/маны на 10 с и скриптовый выбор зелья горячей клавиши; `[GAME] melee_heal_interrupt` / `food_over_time`, оба по умолчанию 1, Marvin и `MELEE_HEAL_INTERRUPT` / `FOOD_OVER_TIME` в `bench.sh` / `ryzen.sh`. Контракт [`gothic-healing-contract`](../OpenGothic/tests/healing_contract.cpp), численный стенд [`heal-interrupt.bench`](../scripts/bench/heal-interrupt.bench) ON/OFF; [текущее поведение и журнал](physics.md#как-работает-сейчас), [замысел и порядок частей](../reports/Лечение%20в%20бою.md).
 
+Лечение в бою, часть Б: `[GAME] melee_use_in_hand=1`, Marvin и `MELEE_USE_IN_HAND` в `bench.sh` / `ryzen.sh`; общий путь `Inventory::use` выбирает клипы левой руки на слое 21 для кулаков, 1H и 2H с боевой ходьбой и отменой своими действиями. Численный стенд [`heal-in-hand.bench`](../scripts/bench/heal-in-hand.bench) ON/OFF с готовым контентом `anim-uses-1`; [текущее поведение и ограничения инвентаря](physics.md#как-работает-сейчас), [замысел и факты движка](../reports/Питьё%20с%20оружием%20в%20руке.md).
+
 ## Части и машины
 
 [Защита рождения рэгдолла и дрейф оглушения](../reports/physics/2026-11-02-knockdown-launch/README.md): `[GAME] ragdoll_birth_guard=1`, нативные контракты, парный стенд [`knockdown-launch`](../scripts/bench/knockdown-launch.bench) (по 60 нокдаунов в ON и OFF: близко 15,8 → 2,3 м/с таза, выше 8 м/с 20 → 0 из 20). Отдельный стенд [`knockdown-drift`](../scripts/bench/knockdown-drift.bench) сравнивает оглушение на ровной точке и склоне дуэли, по 5 проб со срезами каждые 100 мс. [Текущее поведение](physics.md#как-работает-сейчас).

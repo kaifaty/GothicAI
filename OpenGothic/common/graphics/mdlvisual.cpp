@@ -1735,12 +1735,14 @@ const Animation::Sequence* MdlVisual::startAnimAndGet(Npc& npc, AnimationSolver:
     case AnimationSolver::Anim::Move:
     case AnimationSolver::Anim::MoveL:
     case AnimationSolver::Anim::MoveR:
-      if(bool(wlk & WalkBit::WM_Walk))
+      if(npc.isUsingItemInHand() || bool(wlk & WalkBit::WM_Walk))
         bs = BS_WALK; else
         bs = BS_RUN;
       break;
     case AnimationSolver::Anim::MoveBack:
-      if(st==WeaponState::Fist || st==WeaponState::W1H || st==WeaponState::W2H)
+      if(npc.isUsingItemInHand())
+        bs = BS_WALK;
+      else if(st==WeaponState::Fist || st==WeaponState::W1H || st==WeaponState::W2H)
         bs = BS_PARADE; else
         bs = BS_RUN;
     case AnimationSolver::Anim::RotL:

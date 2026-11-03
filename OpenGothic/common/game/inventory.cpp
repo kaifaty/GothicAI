@@ -920,7 +920,7 @@ bool Inventory::use(size_t cls, Npc &owner, uint8_t slotHint, bool force) {
   const auto& physics = Gothic::physicsFlags();
   const bool deferred = ((mainflag & ITM_CAT_POTION) && physics.meleeHealInterrupt) ||
                         ((mainflag & ITM_CAT_FOOD) && physics.foodOverTime);
-  if(!owner.setAnimItem(itData.scheme_name,-1,deferred))
+  if(!owner.startItemUse(*it,deferred))
     return false;
 
   // owner.stopDlgAnim();

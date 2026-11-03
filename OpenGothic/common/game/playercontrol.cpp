@@ -596,9 +596,9 @@ void PlayerControl::toggleSneakMode() {
   if(w==nullptr || w->player()==nullptr)
     return;
   auto pl = w->player();
-  if(!pl->canSneak() || (pl->walkMode()&WalkBit::WM_Sneak)==WalkBit::WM_Sneak) {
+  if((pl->walkMode()&WalkBit::WM_Sneak)==WalkBit::WM_Sneak) {
     pl->setWalkMode(pl->walkMode() & (~WalkBit::WM_Sneak));
-    } else {
+    } else if(pl->canSneak()) {
     pl->setWalkMode(pl->walkMode()^WalkBit::WM_Sneak);
     }
   }

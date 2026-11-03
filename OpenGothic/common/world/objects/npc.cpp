@@ -1207,6 +1207,8 @@ void Npc::setSimTier(NpcSimTier t) {
   }
 
 void Npc::setWalkMode(WalkBit m) {
+  if(isUsingItemInHand() && !bool(m&WalkBit::WM_Walk))
+    interruptItemUse("run");
   //NOTE: other bits are situational, and should not be set directly
   wlkMode = m & (WalkBit::WM_Run | WalkBit::WM_Walk | WalkBit::WM_Sneak);
   }
@@ -3634,7 +3636,7 @@ const Animation::Sequence* Npc::setAnimAngGet(Anim a, uint8_t comb) {
   const auto before = trace ? combatPoseIdentity() : std::string();
   auto st  = weaponState();
   auto wlk = walkMode();
-  const bool costsStamina = a==Anim::MoveBack && hasStamina() &&
+  const bool costsStamina = a==Anim::MoveBack && !isUsingItemInHand() && hasStamina() &&
                            (st==WeaponState::Fist || st==WeaponState::W1H || st==WeaponState::W2H) &&
                            !isSwim() && !isDive() && (!isPlayer() || !bool(wlk&WalkBit::WM_Sneak));
   if(costsStamina && !allowStaminaAction("jumpback",MeleeStamina::JumpBackCost,
@@ -3659,6 +3661,9 @@ const Animation::Sequence* Npc::setAnimAngGet(Anim a, uint8_t comb) {
       }
     }
   const auto result = visual.startAnimAndGet(*this,a,comb,st,wlk);
+  if(result!=nullptr && isUsingItemInHand() && (a==Anim::AttackBlock || a==Anim::Jump || a==Anim::JumpUp ||
+     a==Anim::JumpUpLow || a==Anim::JumpUpMid || a==Anim::JumpHang))
+    interruptItemUse(a==Anim::AttackBlock ? "parade" : "jump");
   if(result!=nullptr && costsStamina && staminaBefore!=meleeStaminaIdentity(visual.pose(),owner.tickCount()))
     spendStamina("jumpback",MeleeStamina::JumpBackCost);
   if(result!=nullptr && a==Anim::AttackBlock) {
@@ -8694,6 +8699,74 @@ bool Npc::hasItemUseAnimation() const {
   return false;
   }
 
+bool Npc::isUsingItemInHand() const {
+  return visual.pose().isUsingItemInHand();
+  }
+
+std::string Npc::itemUseInHandAnimation(const Item& item) const {
+  const auto& flags = Gothic::physicsFlags();
+  const auto main = ItmFlags(item.handle().main_flag);
+  const bool deferred = ((main & ITM_CAT_POTION) && flags.meleeHealInterrupt) ||
+                        ((main & ITM_CAT_FOOD) && flags.foodOverTime);
+  if(!flags.meleeUseInHand || !isHuman() || !deferred)
+    return {};
+  const auto& scheme = item.handle().scheme_name;
+  const auto weapon = weaponState();
+  const char* stance = weapon==WeaponState::Fist ? "FIST" : weapon==WeaponState::W1H ? "1H" :
+                       weapon==WeaponState::W2H ? "2H" : nullptr;
+  const char* use = scheme=="POTIONFAST" ? "DRINK" : scheme=="FOOD" ? "EATAPPLE" :
+                    scheme=="FOODHUGE" ? "EATBREAD" : scheme=="MEAT" ? "EATMEAT" : nullptr;
+  if(stance==nullptr || use==nullptr)
+    return {};
+  string_frm clip("T_",stance,use);
+  return visual.hasAnim(clip) ? std::string(clip.c_str()) : std::string();
+  }
+
+bool Npc::startItemUse(const Item& item, bool allowMissing) {
+  if(hasItemUseAnimation())
+    return false;
+  const auto clip = itemUseInHandAnimation(item);
+  if(!clip.empty()) {
+    const auto bs = bodyStateMasked();
+    if(interactive()!=nullptr || (bs!=BS_STAND && bs!=BS_NONE && bs!=BS_WALK && bs!=BS_RUN))
+      return false;
+    const auto* sq = visual.startAnimAndGet(*this,clip,0,BS_ITEMINTERACT);
+    if(sq==nullptr)
+      return false;
+    if(!isPlayer())
+      implAniWait(uint64_t(sq->totalTime()));
+    if(TestBench::isActive()) {
+      const auto* symbol = owner.script().findSymbol(item.clsId());
+      TestBench::note(("item use "+std::string(TestBench::who(this))+": "+
+                      (symbol==nullptr ? item.handle().name : symbol->name())+" in hand "+sq->name+", layer 21").c_str());
+      }
+    return true;
+    }
+  if(TestBench::isActive()) {
+    const auto& flags = Gothic::physicsFlags();
+    const auto& scheme = item.handle().scheme_name;
+    const auto main = ItmFlags(item.handle().main_flag);
+    const auto weapon = weaponState();
+    std::string reason = "missing clip";
+    if(scheme!="POTIONFAST" && scheme!="FOOD" && scheme!="FOODHUGE" && scheme!="MEAT")
+      reason = "scheme "+scheme;
+    else if(!flags.meleeUseInHand)
+      reason = "melee_use_in_hand=0";
+    else if(!isHuman())
+      reason = "not human";
+    else if(((main & ITM_CAT_POTION) && !flags.meleeHealInterrupt) ||
+            ((main & ITM_CAT_FOOD) && !flags.foodOverTime))
+      reason = "category effect is immediate";
+    else if(weapon!=WeaponState::Fist && weapon!=WeaponState::W1H && weapon!=WeaponState::W2H)
+      reason = weapon==WeaponState::Bow ? "bow" : weapon==WeaponState::CBow ? "crossbow" :
+               weapon==WeaponState::Mage ? "spell" : "no melee weapon";
+    const auto* symbol = owner.script().findSymbol(item.clsId());
+    TestBench::note(("item use "+std::string(TestBench::who(this))+": "+
+                    (symbol==nullptr ? item.handle().name : symbol->name())+" holster path: "+reason).c_str());
+    }
+  return setAnimItem(item.handle().scheme_name,-1,allowMissing);
+  }
+
 void Npc::beginItemUseEffect(const Item& item) {
   const auto& flags = Gothic::physicsFlags();
   const auto main = ItmFlags(item.handle().main_flag);
@@ -8752,12 +8825,14 @@ void Npc::finishItemUseEffect(const char* moment) {
   }
 
 void Npc::interruptItemUse(std::string_view cause) {
-  if(itemUse.item==0)
+  const bool inHand = isUsingItemInHand();
+  if(itemUse.item==0 && !inHand)
     return;
-  if(TestBench::isActive()) {
+  if(itemUse.item!=0 && TestBench::isActive()) {
     const auto* symbol = owner.script().findSymbol(itemUse.item);
     TestBench::note(("item use "+std::string(TestBench::who(this))+": "+
-                    (symbol==nullptr ? std::to_string(itemUse.item) : symbol->name())+" interrupted by "+
+                    (symbol==nullptr ? std::to_string(itemUse.item) : symbol->name())+
+                    (inHand ? " cancelled by " : " interrupted by ")+
                     std::string(cause)+" at "+std::to_string(owner.tickCount()-itemUse.started)+" ms, item kept").c_str());
     }
   itemUse = {};
@@ -8810,6 +8885,8 @@ bool Npc::closeWeapon(bool noAnim) {
     return true;
   if(!noAnim && !visual.startAnim(*this,WeaponState::NoWeapon))
     return false;
+  if(isUsingItemInHand())
+    interruptItemUse("weapon sheathed");
   visual.setAnimRotate(*this,0);
   if(isPlayer())
     setTarget(nullptr);
@@ -9977,6 +10054,8 @@ bool Npc::beginMeleeCharge() {
     return false;
   if(visual.startAnimAndGet(*this,"T_1HCHARGE",0,BS_HIT)==nullptr)
     return false;
+  if(isUsingItemInHand())
+    interruptItemUse("attack");
   if(!isPlayer())
     beginMeleeAiSpecial(MeleeAi::Special::Charge);
   spendStamina("charge",cost);
@@ -10145,7 +10224,24 @@ bool Npc::meleeDodge(MeleeDodge::Direction direction) {
       visual.interrupt();
       cancelMeleeCharge("dodge");
       }
-    const bool  ok     = setAnim(Anim::MoveBack);
+    bool ok = false;
+    if(isUsingItemInHand()) {
+      const bool costsStamina = hasStamina() && (!isPlayer() || !bool(walkMode()&WalkBit::WM_Sneak));
+      if(!allowMeleeStunAction("jumpback") ||
+         (costsStamina && !allowStaminaAction("jumpback",MeleeStamina::JumpBackCost,
+                                             !isPlayer() && !BodyController::owns(*this))))
+        return false;
+      const char* clip = ws==WeaponState::Fist ? "T_FISTPARADEJUMPB" :
+                         ws==WeaponState::W1H ? "T_1HJUMPB" : "T_2HJUMPB";
+      ok = visual.startAnimAndGet(*this,clip,calcAniComb(),BS_PARADE)!=nullptr;
+      if(ok) {
+        interruptItemUse("dodge");
+        if(costsStamina)
+          spendStamina("jumpback",MeleeStamina::JumpBackCost);
+        }
+      } else {
+      ok = setAnim(Anim::MoveBack);
+      }
     const auto  cost   = before-stamina();
     meleeDodgeNote(dir+", armour "+armour+", "+std::string(MeleeDodge::name(wanted))+": the original jump back "+
                    visual.pose().animNames()+" (no "+missing+"), "+(ok ? "started" : "refused")+", cost "+
@@ -10187,6 +10283,8 @@ bool Npc::meleeDodge(MeleeDodge::Direction direction) {
                    "dodge_refused",head+",\"reason\":\"pose\"");
     return false;
     }
+  if(isUsingItemInHand())
+    interruptItemUse("dodge");
   cancelMeleeCharge("dodge");
   if(kind==MeleeDodge::Kind::Barge) {
     if(!isPlayer())
@@ -10233,6 +10331,8 @@ bool Npc::doAttack(Anim anim, BodyState bs) {
   const bool trace = TestBench::bodyTracing() && currentTarget!=nullptr;
   const auto before = trace ? combatPoseIdentity() : std::string();
   const auto result = [&](bool accepted) {
+    if(accepted && isUsingItemInHand())
+      interruptItemUse(bs==BS_PARADE ? "parade" : "attack");
     if(accepted && (bs==BS_HIT || bs==BS_PARADE))
       meleeAiDodgeStreak.reset();
     if(accepted && costsStamina && staminaBefore!=meleeStaminaIdentity(visual.pose(),owner.tickCount()))
