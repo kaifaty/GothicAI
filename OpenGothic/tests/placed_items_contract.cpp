@@ -1,4 +1,5 @@
 #include "physics/dynamicworld.h"
+#include "physics/placedcensuscache.h"
 #include "graphics/bounds.h"
 #include "graphics/mesh/protomesh.h"
 #include "graphics/mesh/submesh/packedmesh.h"
@@ -13,6 +14,11 @@
 #include <Tempest/MemWriter>
 
 #include <algorithm>
+#include <chrono>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <string>
 #include <array>
 #include <cmath>
 #include <cstdio>
@@ -120,6 +126,84 @@ void census() {
   for(size_t i=0;i<result.size();++i)
     require(result[i].disposition==reversed[result.size()-1-i].disposition,
             "simultaneous census decisions must not depend on candidate iteration order");
+  }
+
+void censusCache() {
+  namespace fs = std::filesystem;
+  Resources resources;
+  constexpr const char* visual = "CONTRACT_PLACED_CACHE.MRM";
+  ProtoMesh proto(PackedMesh(box({20,20,20}),PackedMesh::PK_Visual),visual);
+  Bounds bounds;
+  bounds.assign(proto.bboxMesh);
+  DynamicWorld world(nullptr,floor());
+  auto furniture = world.addMovableVob(proto,visual,at(300,10),.25f,false,"utensil",true,903);
+  world.finalizeMovableVobs();
+  std::vector<DynamicWorld::Item> bodies;
+  bodies.reserve(3);
+  for(const auto& origin:{at(0,11),at(300,31),at(600,40)}) {
+    bodies.push_back(world.addDynamicObj(origin,bounds,asset::MaterialGroup::WOOD,&proto,visual,true));
+    bodies.back().restorePhysics(origin,true);
+    }
+  std::vector<DynamicWorld::PlacedItemCandidate> candidates;
+  for(size_t i=0;i<bodies.size();++i)
+    candidates.push_back({&bodies[i],false,visual,uint32_t(100+i),i});
+  const auto inputs = world.placedItemCensusInputs(candidates);
+  require(inputs.size()==64 && inputs==world.placedItemCensusInputs(candidates),
+          "census inputs must be a stable digest of the same world");
+  const auto live = world.placedItemCensus(candidates);
+
+  const fs::path root = fs::current_path()/("placed-census-contract-"+
+      std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  struct Cleanup { fs::path path; ~Cleanup() { std::error_code e; fs::remove_all(path,e); } } cleanup{root};
+  using Status = PlacedCensusCache::Status;
+  const PlacedCensusCache::Key key{"0123abcd","CONTRACT","content",0,inputs};
+  PlacedCensusCache cache(root,key);
+  std::vector<PlacedCensusCache::Entry> stored;
+  require(cache.read(live.size(),stored)==Status::Absent,"cold census cache must miss as absent");
+  cache.save(live);
+  require(cache.read(live.size(),stored)==Status::Hit && stored.size()==live.size(),"saved census must hit");
+  for(size_t i=0;i<live.size();++i)
+    require(PlacedCensusCache::differences(stored[i],live[i]).empty(),"cached census must equal the live census bit for bit");
+  require(cache.read(live.size()+1,stored)==Status::Corrupt,"a different candidate count must not reuse the census");
+
+  // Moving one item must change the digest and miss the stored census.
+  auto moved = at(0,12);
+  bodies[0].restorePhysics(moved,true);
+  auto movedKey = key;
+  movedKey.inputs = world.placedItemCensusInputs(candidates);
+  require(movedKey.inputs!=inputs,"a changed item transform must change the census inputs");
+  require(PlacedCensusCache(root,movedKey).read(live.size(),stored)==Status::Inputs,"a changed transform must miss");
+  bodies[0].restorePhysics(at(0,11),true);
+  require(world.placedItemCensusInputs(candidates)==inputs,"restoring the pose must restore the digest");
+  auto identity = candidates;
+  identity[1].instance = 77;
+  require(world.placedItemCensusInputs(identity)!=inputs,"a changed item instance must change the census inputs");
+
+  auto versionKey = key;
+  ++versionKey.version;
+  require(PlacedCensusCache(root,versionKey).read(live.size(),stored)==Status::Version,"a census rules bump must miss");
+
+  std::string bytes;
+  {
+    std::ifstream input(cache.path(),std::ios::binary);
+    bytes.assign(std::istreambuf_iterator<char>(input),std::istreambuf_iterator<char>());
+  }
+  bytes.back() ^= 1;
+  {
+    std::ofstream output(cache.path(),std::ios::binary|std::ios::trunc);
+    output.write(bytes.data(),std::streamsize(bytes.size()));
+  }
+  require(cache.read(live.size(),stored)==Status::Corrupt && stored.empty(),"a damaged census payload must be rejected");
+  fs::remove(cache.path());
+
+  setenv("OPENGOTHIC_PLACED_CENSUS_CACHE","0",1);
+  PlacedCensusCache disabled(root,key);
+  require(disabled.read(live.size(),stored)==Status::Disabled,"the disabled census cache must not read");
+  disabled.save(live);
+  require(!fs::exists(cache.path()),"the disabled census cache must not write");
+  unsetenv("OPENGOTHIC_PLACED_CENSUS_CACHE");
+  require(furniture.mass()>0,"census cache fixture must retain its movable vob");
+  std::puts("Placed census cache: hit equals live; transform, instance, version, count and damage miss; disabled bypass");
   }
 
 void rootedAndStack() {
@@ -410,6 +494,7 @@ int main() {
   try {
     census();
     rootedAndStack();
+    censusCache();
     slopes();
     penetrationLimit();
     groundBelowSupport();
