@@ -9,9 +9,10 @@
 #   bash scripts/nav-pace-remote.sh train-1 # prepare the HD corpus, convert HD, time the first epoch
 #   bash scripts/nav-pace-remote.sh train-{5,10,15,20} # resume to the named epoch, one bounded job each
 #   bash scripts/nav-pace-remote.sh parity  # final trained weights, Torch/NumPy/C++
-# Every job runs from its own immutable source snapshot ~/gothic-ai/nav-pace-input/source/<hash>; a later
-# launch never rewrites the sources of a queued or running job. HD and older weights are only read.
-# Results: /mnt/shared/gothic-ai/nav-pace-input/. Remove the work folder with: bash scripts/nav-pace-remote.sh clean
+# Jobs use immutable snapshots in ~/gothic-ai/{nav-pace-input,nav-pace-v5}/source/<hash>.
+# A later launch never rewrites queued/running sources. HD and older weights are only read.
+# Check results: /mnt/shared/gothic-ai/nav-pace-input/; trained v5: /mnt/shared/gothic-ai/nav-pace-v5/.
+# Remove the respective work folders with clean or clean-v5.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 usage='Usage: bash scripts/nav-pace-remote.sh smoke|drive|live|teacher|train-{1,5,10,15,20}|parity|compare-{hd,v5}-{run,walk}-{main,detour,follow}|live-v5|clean-v5|clean'
@@ -90,7 +91,8 @@ HASH
     drive) resources=(--class batch --threads 12 --cpu-quota 1200% --mem 14G --max 2h) ;;
     live) resources=(--class quick --threads 12 --cpu-quota 1200% --mem 10G --gpu-mem 3G --display --display-shared --max 59m) ;;
     teacher) resources=(--class batch --threads 12 --cpu-quota 1200% --mem 16G --max 2h) ;;
-    train-*) resources=(--class batch --threads 12 --cpu-quota 1200% --mem 14G --gpu-mem 4G --max 2h) ;;
+    train-1) resources=(--class batch --threads 12 --cpu-quota 1200% --mem 14G --gpu-mem 4G --max 2h) ;;
+    train-*) resources=(--class batch --threads 6 --cpu-quota 600% --mem 8G --gpu-mem 4G --max 2h) ;;
     parity) resources=(--class quick --threads 6 --cpu-quota 600% --mem 8G --gpu-mem 2G --max 30m) ;;
     compare-*) resources=(--class batch --threads 24 --cpu-quota 2400% --mem 14G --max 2h) ;;
     live-v5) resources=(--class batch --threads 12 --cpu-quota 1200% --mem 12G --gpu-mem 4G --display --display-shared --max 2h) ;;
@@ -111,7 +113,8 @@ stop() { echo "nav-pace $stage: $*" >&2; exit 1; }
 mkdir -p "$archive/$stage" "$archive/logs" "$task/tmp/$stage" "$task/input"
 exec > >(tee -a "$archive/logs/$stage.log") 2>&1
 trap 'printf "nav_pace_%s_exit=%s snapshot=%s\n" "$stage" "$?" "$snapshot"' EXIT
-export TMPDIR="$task/tmp/$stage" UV_CACHE_DIR="$task/uv-cache" CCACHE_DIR="$task/ccache"
+export TMPDIR="$task/tmp/$stage" UV_CACHE_DIR="$HOME/.cache/uv"
+if [[ "$task_name" == nav-pace-v5 ]]; then export UV_CACHE_DIR="$task/uv-cache" CCACHE_DIR="$task/ccache"; fi
 export VULKAN_SDK="$HOME/gothic-ai/body-baseline/toolchain/vulkan-1.4.341.0"
 export PATH="$HOME/.local/bin:$VULKAN_SDK/bin:$PATH"
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
