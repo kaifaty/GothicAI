@@ -125,7 +125,7 @@ build() { # SOURCE BUILD TARGET...
     -DCMAKE_CXX_FLAGS="-I$VULKAN_SDK/include" -DCMAKE_EXE_LINKER_FLAGS="-L$VULKAN_SDK/lib"
   cmake --build "$2" --target "${@:3}" --parallel 12
 }
-build_dir="$task/build/$snapshot"
+build_dir="$task/build/$stage-$snapshot"  # one build folder per job: no two jobs share it
 contract="$build_dir/opengothic/gothic-navpolicy-contract"
 game_environment() { # Read-only shared base and videos of this engine format; caches stay in the task.
   if [[ ! -e "$task/input/base" ]]; then ln -s "/mnt/shared/gothic-ai/base/$base_fingerprint" "$task/input/base"; fi
