@@ -10,7 +10,6 @@ dependencies = [
     "chatgpt-auth",
     "httpx>=0.28.1",
     "numpy>=2.0",
-    "onnxruntime",
     "websockets>=17.2",
 ]
 
@@ -29,6 +28,7 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+    "aiohttp>=3.13.3",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "ruff>=0.17.0",

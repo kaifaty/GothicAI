@@ -50,6 +50,7 @@ def by_name(procs):
 def test_services_get_their_settings_and_find_each_other(config, tmp_path):
     config.set("voice.provider", "voxtral")
     config.set("voice.voxtral_url", "http://gpu:47830")
+    config.set("voice.laughter_url", "http://laughter:47838")
     config.set("tts.provider", "voxcpm")
     config.set("tts.fallback", "none")
     config.set("tts.loudness", "-16")
@@ -66,7 +67,10 @@ def test_services_get_their_settings_and_find_each_other(config, tmp_path):
     assert [p.name for p in procs] == ["asr", "tts", "server"]
     asr, tts, server = by_name(procs).values()
     assert asr.argv[:5] == ["/bin/uv", "run", "--project", "/repo/asr-service", "gothic-asr"]
-    assert asr.argv[5:] == ["serve", "--port", "50002", "--provider", "voxtral", "--fallback", "chatgpt"]
+    assert asr.argv[5:] == [
+        "serve", "--port", "50002", "--provider", "voxtral", "--fallback", "chatgpt",
+        "--laughter-url", "http://laughter:47838",
+    ]
     assert asr.env["GOTHIC_VOXTRAL_URL"] == "http://gpu:47830"
     assert tts.argv[5:] == [
         "serve",
@@ -97,6 +101,20 @@ def test_services_get_their_settings_and_find_each_other(config, tmp_path):
     disabled = by_name(services(config, LAYOUT, PORTS, tmp_path))["tts"]
     assert "--no-original-voices" in disabled.argv
     assert disabled.argv[disabled.argv.index("--game-dir") + 1] == "/games/G2"
+
+
+@pytest.mark.parametrize(
+    "decider,expected",
+    [(None, None), ("ws://gpu:47832/decide", "http://gpu:47838"),
+     ("ws://[::1]:47832/decide", "http://[::1]:47838")],
+)
+def test_laughter_address_defaults_to_the_decider_host(config, tmp_path, decider, expected):
+    config.set("llm.decider_url", decider)
+    asr = by_name(services(config, LAYOUT, PORTS, tmp_path))["asr"]
+    if expected is None:
+        assert "--laughter-url" not in asr.argv
+    else:
+        assert asr.argv[asr.argv.index("--laughter-url") + 1] == expected
 
 
 @pytest.mark.parametrize("key", [None, "iw-secret"])

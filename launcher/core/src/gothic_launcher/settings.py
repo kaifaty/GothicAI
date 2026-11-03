@@ -37,6 +37,7 @@ ENV_KEYS = {
     "GOTHIC_ASR_PROVIDER": "voice.provider",
     "GOTHIC_ASR_FALLBACK": "voice.fallback",
     "GOTHIC_VOXTRAL_URL": "voice.voxtral_url",
+    "GOTHIC_LAUGHTER_URL": "voice.laughter_url",
     "GOTHIC_TTS_PROVIDER": "tts.provider",
     "GOTHIC_TTS_FALLBACK": "tts.fallback",
     "GOTHIC_VOXCPM_URL": "tts.voxcpm_url",
@@ -120,6 +121,10 @@ class VoiceSettings(_Section):
     )
     fallback: str = Field("chatgpt", title="Запасное распознавание", description="none: без запасного")
     voxtral_url: str | None = Field(None, title="Адрес Voxtral")
+    laughter_url: str | None = Field(
+        None, title="Адрес детектора смеха",
+        description="gothic-laughter (http://…). Пусто: сервер decider, порт 47838",
+    )
     mic_device: str | None = Field(None, title="Микрофон", description="Имя или номер; пусто: системный")
 
 

@@ -18,7 +18,7 @@ from typing import cast
 import numpy as np
 
 from .audio import RATE, rms_dbfs
-from .laughter import HOP, WINDOW, LaughterDetector, window_starts
+from .laughter import HOP, WINDOW, RemoteLaughter, window_starts
 from .providers import AsrError, AsrProvider
 from .providers.base import AsrStream, PartialCallback, StreamingProvider
 
@@ -44,7 +44,7 @@ class Recognizer:
         primary: AsrProvider,
         fallback: AsrProvider | None = None,
         timeout: float = 20.0,
-        laughter: LaughterDetector | None = None,
+        laughter: RemoteLaughter | None = None,
     ) -> None:
         self.primary = primary
         self.fallback = fallback
@@ -105,6 +105,8 @@ class Recognizer:
             await p.aclose()
         if self._laughter_worker is not None:
             await asyncio.to_thread(self._laughter_worker.shutdown, wait=True, cancel_futures=True)
+        if self.laughter is not None:
+            await asyncio.to_thread(self.laughter.close)
 
     def _laughing(self, audio: np.ndarray) -> float | None:
         try:
