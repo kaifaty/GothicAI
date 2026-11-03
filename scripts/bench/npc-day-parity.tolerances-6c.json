@@ -1,0 +1,49 @@
+{
+  "comment": "Accepted measured approximation by user decision of 2026-11-03 (docs/world-streaming.md, item 6c). Only active Simplified/auto use this profile; Full and switch=0 use npc-day-parity.tolerances.json. Seed 73106 completed days on binary 2224ffa81a7e: TA 100%, ZS 99.91514/99.93159%, stationary p95 0.546195/0.358517 m, standard raw starts matched 99.31836/99.33130%. Mutual-nearest raw start p95 6.276/4.350 game seconds: 8 seconds gives 1.724 seconds (27.5%) headroom above the worse measurement. Standard greedy offsets are reported without a bound because missing repeated attack/eat cycles shift ordinal pairing. Inventory cap 3 NPCs gives one NPC headroom above measured 2/1, but every difference still needs an exact attested hash pair and script cause; headroom never admits an unproved third NPC. Moving positions are report-only. Both journals must finish: an aborted or truncated run cannot pass.",
+  "tolerances": {
+    "require_done": true,
+    "require_full_length": true,
+    "max_only_samples": 0,
+    "max_missing_end": 0,
+    "min_same_ta": 0.995,
+    "min_same_zs": 0.99,
+    "max_stationary_pos_p95": 1.0,
+    "min_zs_matched": 0.99,
+    "min_raw_zs_matched": 0.99,
+    "max_zs_mutual_offset_p95_s": 8.0,
+    "max_alive_diff": 0,
+    "max_hp_diff_end": 0,
+    "min_deaths_matched": 1.0,
+    "max_inventory_diff_end": 3,
+    "require_script_inventory_evidence": true
+  },
+  "inventory_script_evidence": [
+    {
+      "key": "VLK_406_HEROLD#0",
+      "reference_hash": "e5d0fa5f3feac372",
+      "candidate_hash": "37cfd3e884cf5588",
+      "item": "FAKESCROLL",
+      "delta": 2,
+      "cause": "extra_script_iterations",
+      "evidence": "DAT B_ANNOUNCE_HEROLD unconditionally creates FAKESCROLL; reconstructed Full=21 and Simplified=23 item maps exactly reproduce these hashes."
+    },
+    {
+      "key": "VLK_406_HEROLD#0",
+      "reference_hash": "e5d0fa5f3feac372",
+      "candidate_hash": "2c9b094b63ea1031",
+      "item": "FAKESCROLL",
+      "delta": 1,
+      "cause": "extra_script_iterations",
+      "evidence": "Same proven announcement creation; reconstructed auto=22 item map exactly reproduces this hash."
+    },
+    {
+      "key": "VLK_495_BUERGERIN#0",
+      "reference_hash": "5359caf6bb2375e1",
+      "candidate_hash": "1c6063113c3eb207",
+      "item": "ITFO_BACON",
+      "delta": 1,
+      "cause": "script_random_draw",
+      "evidence": "Two fewer smalltalk loops change at least four NPC-isolated draws. ZS_STAND_EATING randomly chooses and creates absent food. Reconstructed maps prove exactly one extra ITFO_BACON, not an executor inventory write."
+    }
+  ]
+}
