@@ -476,7 +476,18 @@ def qualify(args):
     print(json.dumps(summary))
 
 
+def configure_forced_pace(args):
+    args.force_pace = getattr(args, "force_pace", None) or os.environ.get("OPENGOTHIC_NAV_FORCE_PACE") or None
+    if args.force_pace not in (None, "walk", "run"):
+        raise ValueError("OPENGOTHIC_NAV_FORCE_PACE must be walk or run")
+    if args.force_pace is not None:
+        if args.action_mode != "sample" or getattr(args, "dagger_scenarios", None) is not None:
+            raise ValueError("Forced pace requires sampled evaluation drive")
+        os.environ["OPENGOTHIC_NAV_FORCE_PACE"] = args.force_pace
+
+
 def drive(args):
+    configure_forced_pace(args)
     if getattr(args, "dagger_scenarios", None) is not None:
         return drive_dagger(args)
     if (getattr(args, "manifest", None) is not None or getattr(args, "detour_scenarios", None) is not None
@@ -1062,6 +1073,7 @@ def safety_scenarios(args):
 
 
 def drive_validation(args):
+    configure_forced_pace(args)
     if args.action_mode != "sample":
         raise ValueError("Frozen manifest validation requires softmax sampling")
     checked_paths(args, policy=True)
@@ -1124,6 +1136,7 @@ def drive_validation(args):
                         if (not args.resume or existing.get("validation_scenario", value) != value
                                 or existing.get("action_seed", seed) != seed
                                 or existing.get("weights", str(args.weights)) != str(args.weights)
+                                or existing.get("forced_pace") != args.force_pace
                                 or (lean and cached and (existing.get("validation_scenario") != value
                                     or existing.get("action_seed") != seed
                                     or existing.get("weights") != str(args.weights)))):
@@ -1196,7 +1209,7 @@ def drive_validation(args):
                         if key in value:
                             episode[key] = value[key]
                     episode.update(index=index, validation_scenario=value, scenario_seed=value["seed"], action_seed=seed,
-                                   weights=str(args.weights))
+                                   weights=str(args.weights), forced_pace=args.force_pace)
                     if started is not None:
                         episode["collector_wall_s"] = time.monotonic() - started
                         episode["base_fingerprint"] = os.environ.get("OPENGOTHIC_BASE_FINGERPRINT") or None
@@ -1441,7 +1454,7 @@ def text_episode_metrics(directory):
     result.update(episode=str(directory), elapsed_s=elapsed / 1000, action_counts=counts,
         action_fraction={key: count / steps for key, count in counts.items()}, action_presses=presses,
         travelled_xz_cm=float(np.linalg.norm(np.diff(trajectory[:, [1, 3]], axis=0), axis=1).sum()),
-        recording="text_only", base_fingerprint=episode.get("base_fingerprint"))
+        recording="text_only", base_fingerprint=episode.get("base_fingerprint"), forced_pace=episode.get("forced_pace"))
     for key in ("familiar_input_decisions", "familiar_input_nonzero_decisions",
                 "familiar_near_input_nonzero_decisions", "familiar_far_input_nonzero_decisions"):
         if key in episode:
@@ -1456,9 +1469,12 @@ def detour_episode_metrics(directory):
 
 
 def text_group_metrics(episodes):
+    paces = {value.get("forced_pace") for value in episodes}
+    if len(paces) != 1:
+        raise ValueError("Cannot combine episodes with different forced pace")
     decisions = sum(value["decisions"] for value in episodes)
     counts = {key: sum(value["action_counts"][key] for value in episodes) for key in episodes[0]["action_counts"]}
-    return dict(n=len(episodes), arrived=sum(bool(value["success"]) for value in episodes),
+    return dict(forced_pace=paces.pop(), n=len(episodes), arrived=sum(bool(value["success"]) for value in episodes),
         arrival_fraction=sum(bool(value["success"]) for value in episodes) / len(episodes), decisions=decisions,
         median_elapsed_s=statistics.median(value["elapsed_s"] for value in episodes),
         blocked_spans=sum(value["blocked_spans"] for value in episodes),
@@ -1474,7 +1490,8 @@ def text_group_metrics(episodes):
 def detour_summary(episodes):
     """Pool lean detour outcomes without inventing unavailable teacher agreement."""
     fingerprints = {episode.get("base_fingerprint") for episode in episodes}
-    return dict(base_fingerprint=fingerprints.pop() if len(fingerprints) == 1 else None,
+    return dict(forced_pace=episodes[0].get("forced_pace"),
+        base_fingerprint=fingerprints.pop() if len(fingerprints) == 1 else None,
         all=text_group_metrics(episodes),
         by_seed={str(seed): text_group_metrics([ep for ep in episodes if ep["action_seed"] == seed])
                  for seed in sorted({ep["action_seed"] for ep in episodes})},
@@ -1603,7 +1620,8 @@ def validation_summary(episodes, lean=False):
         return {family: group([ep for ep in values if ep["family"] == family])
                 for family in sorted({ep["family"] for ep in values})}
     fingerprints = {episode.get("base_fingerprint") for episode in episodes}
-    result = dict(base_fingerprint=fingerprints.pop() if len(fingerprints) == 1 else None,
+    result = dict(forced_pace=episodes[0].get("forced_pace"),
+        base_fingerprint=fingerprints.pop() if len(fingerprints) == 1 else None,
         all=group(episodes), by_family=families(episodes),
         by_seed={str(seed): dict(all=group([ep for ep in episodes if ep["action_seed"] == seed]),
                                 by_family=families([ep for ep in episodes if ep["action_seed"] == seed]))
@@ -1723,7 +1741,7 @@ def summarize(args):
     if not episodes:
         raise ValueError(f"No recorded policy episodes in {args.source}")
     drive_module = module("nav_drive")
-    result = dict(all=drive_module.group_metrics(episodes),
+    result = dict(forced_pace=episodes[0].get("forced_pace"), all=drive_module.group_metrics(episodes),
                   by_region={region: drive_module.group_metrics([ep for ep in episodes if ep["region"] == region])
                              for region in sorted({ep["region"] for ep in episodes})}, episodes=episodes)
     write_json(args.output / "metrics.json", result)
@@ -2050,6 +2068,7 @@ def main():
     parser.add_argument("--families", help="Comma-separated validation families; default all five")
     parser.add_argument("--object-probes", type=Path, help="Frozen object Detour probes for validation summary")
     parser.add_argument("--action-seeds", help="Fixed sampling seeds; default 18102027,18102028,18102029")
+    parser.add_argument("--force-pace", choices=("walk", "run"), help="Override only the policy walk/run choice; default off")
     parser.add_argument("--jump-links", type=Path, help="Frozen jump links, used only for the jump family")
     parser.add_argument("--safety-fixtures", type=Path, help="Existing physically qualified nav-perception-safety fixtures")
     parser.add_argument("--fence-control", action="store_true", help="Include the existing Maleth fence control")
@@ -2087,6 +2106,8 @@ def main():
     args = parser.parse_args()
     if args.parallel < 1:
         parser.error("--parallel must be a positive integer")
+    if args.force_pace is not None and args.command != "drive":
+        parser.error("--force-pace requires drive")
     if args.action_mode is None:
         args.action_mode = "sample"
     for key, value in vars(args).items():

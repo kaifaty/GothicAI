@@ -269,18 +269,22 @@ def test_population_cli_allows_parallel_recording(tmp_path, monkeypatch):
     assert len(calls) == 1 and calls[0].parallel == 4 and calls[0].record
 
 
-@pytest.mark.parametrize("parallel", [None, 1, 2, 4, 8, 18, 28])
-def test_drive_cli_accepts_positive_parallel_counts(tmp_path, monkeypatch, parallel):
+@pytest.mark.parametrize("parallel,pace", [(None, None), (1, "walk"), (2, "run"), (4, None),
+                                        (8, "walk"), (18, "run"), (28, None)])
+def test_drive_cli_accepts_positive_parallel_counts(tmp_path, monkeypatch, parallel, pace):
     calls = []
     monkeypatch.setattr(rl, "drive", calls.append)
     argv = ["nav_rl.py", "drive", "--output", str(tmp_path),
             "--pairs", str(tmp_path / "pairs.jsonl")]
     if parallel is not None:
         argv.extend(["--parallel", str(parallel)])
+    if pace is not None:
+        argv.extend(["--force-pace", pace])
     monkeypatch.setattr(rl.sys, "argv", argv)
     rl.main()
     assert len(calls) == 1
     assert calls[0].parallel == (1 if parallel is None else parallel)
+    assert calls[0].force_pace == pace
 
 
 @pytest.mark.parametrize("parallel,error", [("0", "--parallel must be a positive integer"),
@@ -1022,8 +1026,10 @@ def test_detour_drive_cli_requires_no_pairs_and_rejects_other_commands(tmp_path,
         rl.main()
 
 
+@pytest.mark.parametrize("pace", [None, "walk", "run"])
 def test_detour_drive_is_sampled_record_off_and_keeps_policy_outputs_separate(tmp_path, monkeypatch,
-                                                                           validation_disk_space):
+                                                                           validation_disk_space, pace):
+    monkeypatch.setenv("OPENGOTHIC_NAV_FORCE_PACE", "walk" if pace == "walk" else "")
     path, value = frozen_detour(tmp_path)
     calls = []
     monkeypatch.setattr(rl, "checked_paths", lambda *args, **kwargs: None)
@@ -1031,6 +1037,7 @@ def test_detour_drive_is_sampled_record_off_and_keeps_policy_outputs_separate(tm
     monkeypatch.setattr(rl, "module", lambda name: pytest.fail("Detour evaluation must not read NAVDEMO or retain a tail"))
     def scenario(args, runner, name, commands, directory):
         assert "navdemos record off" in commands
+        assert (rl.os.environ.get("OPENGOTHIC_NAV_FORCE_PACE") or None) == pace
         seed = int(directory.name.removeprefix("seed-"))
         calls.append((args.weights.stem, args.seed, seed))
         metadata = validation_runner_metadata(value, seed)
@@ -1042,6 +1049,7 @@ def test_detour_drive_is_sampled_record_off_and_keeps_policy_outputs_separate(tm
     for policy in ("bc3", "it35"):
         args = validation_drive_args(tmp_path, None, policy, family=None)
         args.detour_scenarios = path
+        args.force_pace = "run" if pace == "run" else None
         rl.drive(args)
         episodes = list(args.output.rglob("episode.json"))
         assert len(episodes) == 3
@@ -1050,7 +1058,12 @@ def test_detour_drive_is_sampled_record_off_and_keeps_policy_outputs_separate(tm
             saved = rl.read_json(episode)
             assert saved["validation_scenario"] == value
             assert saved["weights"] == f"/{policy}.navbc"
+            assert saved["forced_pace"] == pace
     assert calls == [(policy, 19, seed) for policy in ("bc3", "it35") for seed in rl.ACTION_SEEDS]
+    args.resume = True
+    args.force_pace = "run" if pace != "run" else "walk"
+    with pytest.raises(ValueError, match="Existing or different validation episode"):
+        rl.drive_validation(args)
 
 
 def test_eval_screen_reader_keeps_frozen_scenarios_and_three_action_seeds(tmp_path):
@@ -1145,7 +1158,8 @@ def test_eval_screen_cli_drives_mixed_families_lean_without_selection_overrides(
     assert all(rl.read_json(path)["base_fingerprint"] == "a" * 64 for path in args.output.rglob("episode.json"))
 
 
-def test_detour_text_metrics_count_executed_rising_edges_without_teacher_labels(tmp_path):
+@pytest.mark.parametrize("pace", [None, "walk", "run"])
+def test_detour_text_metrics_count_executed_rising_edges_without_teacher_labels(tmp_path, pace):
     _, value = frozen_detour(tmp_path)
     directory = tmp_path / "episode"
     metadata = validation_runner_metadata(value, 7)
@@ -1153,6 +1167,8 @@ def test_detour_text_metrics_count_executed_rising_edges_without_teacher_labels(
         scenario_seed=value["seed"], action_seed=7, start="A", goal="B", decisions=4, elapsed_ms=400,
         success=True, blocked_spans=1, blocked_ms=200, max_blocked_ms=200, teacher_control_decisions=0,
         failure="", distance_cm=0, validation_scenario=value)
+    if pace is not None:
+        metadata["forced_pace"] = pace
     rl.write_json(directory / "episode.json", metadata)
     actions = np.zeros((5, 9))
     actions[:, 0] = np.arange(5) * 100
@@ -1164,12 +1180,14 @@ def test_detour_text_metrics_count_executed_rising_edges_without_teacher_labels(
     np.savetxt(directory / "actions.txt", actions)
     np.savetxt(directory / "trajectory.txt", [[0, 0, 0, 0, 0], [400, 100, 0, 0, 0]])
     measured = rl.detour_episode_metrics(directory)
+    assert measured["forced_pace"] == pace
     assert measured["action_presses"] == dict(jump=dict(presses=2, per_1000_decisions=500),
         climb=dict(presses=1, per_1000_decisions=250))
     assert measured["action_fraction"]["turn_only"] == .25
     assert measured["travelled_xz_cm"] == 100
     assert "disagreement_counts" not in measured
     summary = rl.detour_summary([measured])
+    assert summary["forced_pace"] == summary["all"]["forced_pace"] == pace
     assert summary["all"]["arrived"] == 1
     assert summary["all"]["blocked_ms"] == 200
     assert summary["all"]["teacher_control_decisions"] == 0
