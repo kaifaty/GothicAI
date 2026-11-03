@@ -85,6 +85,40 @@ BC4_PREPROCESSING = {
     "map_order": [*HD_PREPROCESSING["map_order"], "familiar"],
 }
 
+# Pace-input learner (.navbc v5): HD maps, the walk head removed, and one more
+# vector value after body. The game chooses the pace; the policy only reads it.
+PACE_HEADS = ("forward", "strafe", "turn", "maneuver")
+PACE_LABEL_COLUMNS = (0, 1, 2, 4)
+PACE_VECTOR_SIZE = VECTOR_SIZE + 1
+PACE_DESCRIPTION = "walk=1, run=0; chosen outside the policy: teacher walk key in training, forced pace on the stand"
+
+
+def pace_preprocessing(preprocessing: dict[str, Any]) -> dict[str, Any]:
+    """Declare the pace input on top of HD preprocessing; other fields stay exact."""
+    if (preprocessing.get("input_variant") != "hd" or preprocessing.get("navdemo_version") != 2
+            or preprocessing.get("vector_order") != ["eye", "roads", "body"]):
+        raise ValueError("pace input requires HD NAVDEMO v2 preprocessing")
+    return {**preprocessing, "input_fields": [*preprocessing["input_fields"], "pace"],
+            "vector_order": [*preprocessing["vector_order"], "pace"], "pace": PACE_DESCRIPTION}
+
+
+def pace_episode(episode: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+    """Pace-input view of a packed or unpacked BC3/HD episode.
+
+    The teacher's walk label on the same decision becomes the last vector input
+    and leaves the labels. Action changes are recounted without walk.
+    """
+    labels = np.asarray(episode["labels"])
+    if labels.ndim != 2 or labels.shape[1] != len(BC3_HEADS):
+        raise ValueError("pace input requires BC3 labels with a walk column")
+    result = dict(episode)
+    walk = labels[:, 3:4].astype(episode["vector"].dtype)
+    result["vector"] = np.concatenate((episode["vector"], walk), axis=1)
+    result["labels"] = labels[:, PACE_LABEL_COLUMNS]
+    result["baseline"] = np.asarray(episode["baseline"])[:, PACE_LABEL_COLUMNS]
+    result["action_change"] = label_action_changes(result["labels"])
+    return result
+
 
 def _nearest_height(memory: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Infer the height origin entirely from the learner's remembered ground."""

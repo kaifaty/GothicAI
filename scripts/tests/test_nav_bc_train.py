@@ -316,3 +316,61 @@ def test_bc3_initialization_preserves_actor_and_conditions_exclusive_maneuvers(t
     assert initialization["reset"] == [] and initialization["expanded"] == []
     for name, value in hd.state_dict().items():
         torch.testing.assert_close(learner.state_dict()[name], value)
+
+
+def test_pace_input_training_reads_teacher_walk_and_exports_v5(tmp_path):
+    import gzip
+
+    import torch
+    from nav_bc_model import NavPolicy, export_weights
+    from nav_bc_numpy import NumpyPolicy
+    demos = train.nav_demos
+    layout = np.tile(np.array([0, 0, 1000], dtype=np.float32), (demos.RAY_COUNT, 1))
+    cache = tmp_path / "cache"
+    (cache / "episodes").mkdir(parents=True)
+    entries, walks = [], ([1, 1, 0, 0], [0, 1, 1, 0])
+    for number, walk in enumerate(walks):
+        records = np.zeros(4, dtype=demos.RECORD_V2_DTYPE)
+        records["time_ms"] = np.arange(4) * demos.PERIOD_MS
+        records["eye"]["distance_cm"] = 1000
+        records["roads"]["carrot_direction"][:, 2] = 1
+        records["keys"]["forward"] = 1
+        records["keys"]["walk"] = walk
+        samples = tmp_path / f"{number}.bin.gz"
+        with gzip.open(samples, "wb") as stream:
+            stream.write(demos.HEADER.pack(demos.MAGIC, 2, demos.RECORD_BYTES, demos.RAY_COUNT,
+                                           demos.NEAR_SIZE, demos.FAR_SIZE, demos.PERIOD_MS))
+            stream.write(records.tobytes())
+        arrays = train.encode_episode(samples, layout, 3, "hd")
+        np.savez_compressed(cache / f"episodes/{number}.npz", **arrays)
+        entries.append(dict(id=str(number), pair=[str(number), "goal"], family="point", split="train",
+                            steps=4, file=f"episodes/{number}.npz", source_kind="teacher"))
+    counts = {head: [8 if index == 0 else 0 for index in range(classes)]
+              for head, classes in zip(train.BC3_HEADS, train.BC3_CLASSES)}
+    index = dict(cache_version=train.HD_CACHE_VERSION, navdemo_version=2, navigation_memory_version=3,
+                 preprocessing=train.HD_PREPROCESSING, vector_size=train.VECTOR_SIZE,
+                 near_shape=list(train.HD_NEAR_SHAPE), far_shape=list(train.HD_FAR_SHAPE),
+                 eye_layout=layout.tolist(), episodes=entries, class_counts=dict(train=counts),
+                 action_change_weight=1., auxiliary={})
+    (cache / "index.json").write_text(json.dumps(index))
+    source = tmp_path / "hd"
+    source.mkdir()
+    hd = NavPolicy(train.VECTOR_SIZE, 256, format_version=3, auxiliary=True)
+    torch.save(dict(config=dict(vector_size=train.VECTOR_SIZE, hidden_size=256, format_version=3, auxiliary=True),
+                    model=hd.state_dict()), source / "last.pt")
+    export_weights(hd, source / "policy.navbc", {**train.HD_PREPROCESSING, "eye_layout": layout.tolist()})
+    output = tmp_path / "run"
+    train.train(SimpleNamespace(cache=str(cache), output=str(output), epochs=1, batch=2, segment=3, seed=17,
+        threads=1, device="cpu", lr=3e-4, init=str(source / "last.pt"), resume=False, pace_input=True))
+    config = json.loads((output / "training_config.json").read_text())
+    # Walk changes only (0->1 and 1->0 twice) no longer count as action changes.
+    assert config["pace_input"]["action_change"] == dict(N=8, n_I=0, weight=1., heads=list(train.PACE_HEADS),
+                                                         walk_excluded=True)
+    assert config["initialization"]["source_format_version"] == 3
+    history = json.loads((output / "history.json").read_text())
+    assert np.isfinite(history[0]["loss"]) and "walk" not in history[0]["losses"]
+    policy = NumpyPolicy(output / "policy.navbc")
+    assert policy.format_version == 5 and policy.head_names == train.PACE_HEADS
+    episode = train.pace_episode(train.load(cache, entries[1]))
+    np.testing.assert_array_equal(episode["vector"][:, -1], walks[1])
+    assert episode["labels"].shape == (4, 4)

@@ -269,6 +269,23 @@ def test_population_cli_allows_parallel_recording(tmp_path, monkeypatch):
     assert len(calls) == 1 and calls[0].parallel == 4 and calls[0].record
 
 
+@pytest.mark.parametrize("version", [3, 5])
+def test_pace_input_weights_refuse_drive_without_forced_pace(tmp_path, monkeypatch, version):
+    monkeypatch.setenv("OPENGOTHIC_NAV_FORCE_PACE", "")
+    weights = tmp_path / "policy.navbc"
+    weights.write_bytes(json.dumps({"format": "gothic-nav-bc", "version": version}).encode() + b"\n")
+    args = SimpleNamespace(weights=weights, force_pace=None, action_mode="sample")
+    if version == 5:
+        with pytest.raises(ValueError, match="need --force-pace walk|run"):
+            rl.configure_forced_pace(args)
+    else:
+        rl.configure_forced_pace(args)
+        assert args.force_pace is None
+    args.force_pace = "walk"
+    rl.configure_forced_pace(args)
+    assert rl.os.environ["OPENGOTHIC_NAV_FORCE_PACE"] == "walk"
+
+
 @pytest.mark.parametrize("parallel,pace", [(None, None), (1, "walk"), (2, "run"), (4, None),
                                         (8, "walk"), (18, "run"), (28, None)])
 def test_drive_cli_accepts_positive_parallel_counts(tmp_path, monkeypatch, parallel, pace):
