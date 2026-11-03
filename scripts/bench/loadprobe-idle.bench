@@ -7,4 +7,6 @@ streaming wait
 mark stream_warm
 wait real 5000
 mark stream_warm_5s
+# Keep presenting through the complete first-10-second pipeline window.
+wait real 5000
 stop

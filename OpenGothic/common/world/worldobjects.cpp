@@ -1,3 +1,4 @@
+#include "loadprobe.h"
 #include "worldobjects.h"
 
 #include "game/serialize.h"
@@ -22,6 +23,9 @@
 #include "utils/dbgpainter.h"
 #include "gothic.h"
 #include "frameprofile.h"
+#include "camera.h"
+#include "game/gamesession.h"
+#include "graphics/dynamic/frustrum.h"
 #include "navdemos.h"
 
 #include <Tempest/Painter>
@@ -251,12 +255,14 @@ void WorldObjects::linkPlacedItem(PlacedItem& source, Item& item) {
   }
 
 void WorldObjects::finalizePlacedItems() {
+  LoadProbe::Startup::Scope probe(LoadProbe::Startup::Other,true,"placed-items");
   const auto started=std::chrono::steady_clock::now();
   std::vector<DynamicWorld::PlacedItemCandidate> candidates;
   candidates.reserve(placedItems.size());
   // Build all authored shapes before querying any of them. The same Item path
   // selects item_hulls and applies scale for both the census and live bodies.
   for(auto& source:placedItems) {
+    LoadProbe::Startup::Scope prepareProbe(LoadProbe::Startup::PhysicsPrepare,false,"placed-items");
     source.item->setPhysicsEnable(owner);
     candidates.push_back({&source.item->physic,source.item->isMission(),source.visual});
     }
@@ -267,7 +273,10 @@ void WorldObjects::finalizePlacedItems() {
     source.validation=verdicts[i];
     source.item->placedAllowed=source.validation.enabled;
     allowed+=source.validation.enabled;
+    {
+    LoadProbe::Startup::Scope removeProbe(LoadProbe::Startup::PhysicsRemove,false,"placed-items");
     source.item->setPhysicsDisable();
+    }
     }
   placedValidationMs=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started).count();
   Tempest::Log::i("placed item geometry: ",placedItems.size()," candidates, ",allowed,
@@ -619,6 +628,8 @@ uint32_t WorldObjects::mobsiId(const void* ptr) const {
   }
 
 Npc* WorldObjects::addNpc(size_t npcInstance, std::string_view at) {
+  LoadProbe::Startup::Scope startupProbe(LoadProbe::Startup::Npc);
+  LoadProbe::Startup::Scope::bytes(LoadProbe::Startup::Npc,sizeof(Npc));
   Npc* npc = new Npc(owner,npcInstance,at);
   if(auto pos = npc->currentTaPoint()) {
     if(pos->isLocked()) {
@@ -647,6 +658,8 @@ Npc* WorldObjects::addNpc(size_t npcInstance, std::string_view at) {
   }
 
 Npc* WorldObjects::addNpc(size_t npcInstance, const Vec3& pos) {
+  LoadProbe::Startup::Scope startupProbe(LoadProbe::Startup::Npc);
+  LoadProbe::Startup::Scope::bytes(LoadProbe::Startup::Npc,sizeof(Npc));
   auto point = owner.findWayPoint(pos);
   if(point==nullptr) {
     point = owner.findFreePoint(pos, "");
@@ -786,12 +799,27 @@ void WorldObjects::updateAnimation(uint64_t dt) {
     }();
   const bool frozen = BodyArena::frozenWorld();
   const auto pl     = owner.player();
-  Workers::parallelTasks(npcArr,[dt,frozen,pl](std::unique_ptr<Npc>& i){
+  bool animationProbe=FrameProfile::enabled();
+  std::optional<Frustrum> frustum;
+  if(animationProbe) frustum.emplace().make(owner.gameSession().camera().viewProj(),1,1);
+  Workers::parallelTasks(npcArr,[dt,frozen,pl,animationProbe,&frustum](std::unique_ptr<Npc>& i){
     if(skipFar && i->processPolicy()==NpcProcessPolicy::AiFar2 && !BodyObservations::watched(*i))
       return;
     if(frozen && i.get()!=pl && !BodyArena::isActor(*i))
       return;
-    i->updateAnimation(dt);
+    if(animationProbe) {
+      // Conservative body sphere in world coordinates; no occlusion test.
+      const auto bounds=i->bounds();
+      auto center=(bounds.bbox[0]+bounds.bbox[1])*0.5f;
+      i->transform().project(center);
+      const bool visible=frustum->testPoint(center,bounds.rConservative);
+      const auto started=std::chrono::steady_clock::now();
+      i->updateAnimation(dt);
+      const auto ns=std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now()-started).count();
+      FrameProfile::npcAnimation(size_t(i->simTier()),size_t(i->processPolicy()),visible,uint64_t(ns));
+      } else {
+      i->updateAnimation(dt);
+      }
     });
   // Retiring a shadow window can also run damage scripts here. Scripts may
   // append or remove NPCs, so retain neither vector iterators nor references.
@@ -1626,4 +1654,11 @@ bool WorldObjects::testObj(T &src, const Npc &pl, const WorldObjects::SearchOpt 
     return true;
     }
   return false;
+  }
+
+
+size_t WorldObjects::probeVobBytes() const {
+  size_t bytes=rootVobs.capacity()*sizeof(rootVobs[0]);
+  for(const auto& vob:rootVobs) bytes+=vob->probeBaseBytes();
+  return bytes;
   }

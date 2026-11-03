@@ -50,6 +50,8 @@ class PatternList;
 
 class Resources final {
   public:
+    static void probeMemory(std::string_view stage);
+
     // Simulation resources: base geometry, skeletons and animation data,
     // without constructing a graphics or audio device.
     Resources();

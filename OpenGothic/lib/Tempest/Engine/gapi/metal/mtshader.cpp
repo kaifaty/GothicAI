@@ -1,3 +1,4 @@
+#include "graphics/loadprobe.h"
 #if defined(TEMPEST_BUILD_METAL)
 
 #include "mtshader.h"
@@ -125,7 +126,9 @@ MtShader::MtShader(MtDevice& dev, const void* source, size_t srcSize)
   NS::Error* err = nullptr;
   auto       str = NsPtr<NS::String>(NS::String::string(msl.c_str(),NS::UTF8StringEncoding));
   str->retain();
+  TempestLoadProbe::PipelineScope pipelineProbe(TempestLoadProbe::Library);
   library = NsPtr<MTL::Library>(dev.impl->newLibrary(str.get(), opt.get(), &err));
+  pipelineProbe.stop();
 
   if(err!=nullptr) {
     const char* e = err->localizedDescription()->utf8String();

@@ -601,3 +601,17 @@ ProtoMesh::Morph ProtoMesh::mkAnimation(const asset::MorphAnimation& a) {
     i = maxStrength>0 ? i/maxStrength : 0;
   return ret;
   }
+
+
+size_t ProtoMesh::probeCpuBytes() const {
+  size_t bytes=sizeof(*this)+skined.capacity()*sizeof(skined[0])+morph.capacity()*sizeof(morph[0])+
+               attach.capacity()*sizeof(attach[0])+nodes.capacity()*sizeof(nodes[0])+submeshId.capacity()*sizeof(submeshId[0])+
+               pos.capacity()*sizeof(pos[0])+points.capacity()*sizeof(points[0])+skinVertices.capacity()*sizeof(skinVertices[0]);
+  for(const auto& skin:skined) bytes+=skin.sub.capacity()*sizeof(skin.sub[0]);
+  for(const auto& part:attach) bytes+=part.hullVertices.capacity()*sizeof(part.hullVertices[0]);
+  for(const auto* lists:{&nodePoints,&attachPoints}) {
+    bytes+=lists->capacity()*sizeof((*lists)[0]);
+    for(const auto& list:*lists) bytes+=list.capacity()*sizeof(list[0]);
+    }
+  return bytes;
+  }

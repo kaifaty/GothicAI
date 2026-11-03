@@ -81,6 +81,7 @@ GameSession::GameSession(std::string file) {
 
   if(LoadProbe::enabled())
     LoadProbe::mark("session_begin");
+  LoadProbe::Requests::begin();
   auto probeT = LoadProbe::now();
   vm.reset(new GameScript(*this));
   initPerceptions();
@@ -151,7 +152,10 @@ GameSession::GameSession(std::string file) {
       }
     pages+=(pages.empty() ? "" : " ")+wrld->npcSimTierStats().probeFields();
     pages+=" "+NpcLogicAudit::stats().probeFields();
+    wrld->probeMemory("session_end");
+    LoadProbe::Requests::end();
     LoadProbe::mark("session_end",-1,pages);
+    LoadProbe::loaded();
     if(wrld->chunkResidency()==nullptr)
       LoadProbe::mark("stream_warm");
     }
@@ -590,6 +594,7 @@ void GameSession::initPerceptions() {
   }
 
 void GameSession::initScripts(bool firstTime) {
+  LoadProbe::Startup::Scope probe(LoadProbe::Startup::Script,true);
   auto wname = wrld->name();
   auto dot   = wname.rfind('.');
   auto name  = (dot==std::string::npos ? wname : wname.substr(0,dot));
@@ -610,5 +615,6 @@ void GameSession::initScripts(bool firstTime) {
   if(vm->hasSymbolName(init))
     vm->getVm().call_function(init);
 
+  LoadProbe::Startup::Scope placementProbe(LoadProbe::Startup::NpcPlacement);
   wrld->resetPositionToTA();
   }

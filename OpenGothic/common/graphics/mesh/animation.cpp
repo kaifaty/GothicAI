@@ -1,3 +1,4 @@
+#include <unordered_set>
 #include "animation.h"
 
 #include <Tempest/Log>
@@ -745,4 +746,21 @@ void Animation::AnimData::setupEvents(float fpsRate) {
     if(r.type==asset::MdsEventType::COMBO_WINDOW)
       setupTime(defWindow,r.frames,fpsRate);
     }
+  }
+
+
+size_t Animation::probeCpuBytes() const {
+  size_t bytes=sizeof(*this)+sequences.capacity()*sizeof(Sequence)+ref.capacity()*sizeof(ref[0])+mesh.capacity()*sizeof(mesh[0]);
+  std::unordered_set<const AnimData*> seen;
+  for(const auto& sq:sequences) {
+    bytes+=sq.comb.capacity()*sizeof(sq.comb[0]);
+    if(!sq.data || !seen.insert(sq.data.get()).second) continue;
+    const auto& d=*sq.data;
+    bytes+=sizeof(d)+d.samples.capacity()*sizeof(d.samples[0])+d.nodeIndex.capacity()*sizeof(d.nodeIndex[0])+
+           d.tr.capacity()*sizeof(d.tr[0])+d.gfx.capacity()*sizeof(d.gfx[0])+d.sfx.capacity()*sizeof(d.sfx[0])+
+           d.pfx.capacity()*sizeof(d.pfx[0])+d.tag.capacity()*sizeof(d.tag[0])+d.events.capacity()*sizeof(d.events[0])+
+           d.mmStartAni.capacity()*sizeof(d.mmStartAni[0])+d.defHitEnd.capacity()*sizeof(d.defHitEnd[0])+
+           d.defParFrame.capacity()*sizeof(d.defParFrame[0])+d.defWindow.capacity()*sizeof(d.defWindow[0]);
+    }
+  return bytes;
   }

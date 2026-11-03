@@ -12,6 +12,8 @@ class Serialize;
 
 class Vob {
   public:
+    size_t probeBaseBytes() const;
+
     struct AttachmentSnapshot {
       uint32_t zenId = uint32_t(-1), parentZenId = uint32_t(-1);
       std::string visual;

@@ -818,3 +818,19 @@ bool WorldView::updateRtScene() {
 void WorldView::postFrameupdate() {
   visuals.postFrameupdate();
   }
+
+
+void WorldView::probeMemory(std::string_view stage) const {
+  if(!LoadProbe::enabled()) return;
+  size_t source=0,physics=0;
+  if(streaming) {
+    source=streaming->source->memoryBytes()+streaming->materials.capacity()*sizeof(streaming->materials[0])+
+           streaming->triangles.capacity()*sizeof(streaming->triangles[0]);
+    for(const auto& list:streaming->triangles) source+=list.capacity()*sizeof(list[0]);
+    }
+  if(vobStreaming)
+    for(const auto& [key,chunk]:vobStreaming->chunks)
+      for(const auto* visual:chunk.visuals) physics+=visual->probePhysicsBytes();
+  Tempest::Log::i("[loadprobe-owner] stage=",stage," name=world_source_cpu bytes=",source);
+  Tempest::Log::i("[loadprobe-owner] stage=",stage," name=physicmesh_items_cpu bytes=",physics);
+  }

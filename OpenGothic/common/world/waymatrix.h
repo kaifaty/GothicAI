@@ -19,6 +19,8 @@ class WayHeights;
 
 class WayMatrix final {
   public:
+    size_t probeCpuBytes() const;
+
     WayMatrix(World& owner, const asset::WayNet& dat);
 
     const WayPoint* findWayPoint (const Tempest::Vec3& at, const std::function<bool(const WayPoint&)>& filter) const;

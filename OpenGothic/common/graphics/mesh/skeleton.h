@@ -10,6 +10,8 @@
 
 class Skeleton final {
   public:
+    size_t probeCpuBytes() const;
+
     Skeleton(const asset::ModelHierarchy& src, const Animation* anim, std::string_view name);
 
     struct Node final {
