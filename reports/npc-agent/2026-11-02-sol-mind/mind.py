@@ -11,8 +11,10 @@ import re
 import sqlite3
 import sys
 import time
+import unicodedata
 from collections import Counter
 from contextlib import aclosing, closing
+from copy import deepcopy
 from dataclasses import asdict
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -65,6 +67,250 @@ FIELDS = (
     "Настроение",
     "Хочу",
 )
+SECTIONS = {
+    "б": ("events", "Что было между нами", "было"),
+    "ч": ("feelings", "Чувства", "чувство"),
+    "ж": ("wishes", "Желания", "хочу"),
+    "в": ("beliefs", "Верю", "верю"),
+    "с": ("doubts", "Сомневаюсь", "сомневаюсь"),
+    "д": ("others", "О других", "о"),
+    "н": ("threads", "Нити", "нить"),
+}
+DURATIONS = {"час": 60, "день": 1440, "долго": 10080}
+WISH_TERMS = ("сейчас", "скоро", "давно")
+BELIEF_SOURCES = ("видел", "сказал", "слышал")
+
+
+def new_state() -> dict[str, Any]:
+    return {
+        "opinion": "",
+        "mood": "",
+        "minute": None,
+        "time": "—",
+        "counters": dict.fromkeys(SECTIONS, 0),
+        **{key: [] for key, _, _ in SECTIONS.values()},
+    }
+
+
+def render(state: dict[str, Any], ids: bool) -> str:
+    if not (state["opinion"] or state["mood"] or any(state[s[0]] for s in SECTIONS.values())):
+        return EMPTY_MIND
+    lines = ["Мнение о герое: " + (state["opinion"] or "—")]
+    for letter, (key, heading, _) in SECTIONS.items():
+        lines.append(heading + ":")
+        items = state[key]
+        if letter == "б":
+            items = sorted(
+                sorted(
+                    items,
+                    key=lambda item: (item["importance"], item["minute"], int(item["id"][1:])),
+                    reverse=True,
+                )[:12],
+                key=lambda item: (item["minute"], int(item["id"][1:])),
+            )
+        if not items:
+            lines.append("- —")
+        for item in items:
+            prefix = item["id"] if ids else ""
+            if letter == "б":
+                detail = item["time"]
+                if ids:
+                    detail += f", важность {item['importance']}"
+                prefix += f" ({detail})"
+            elif letter == "ч":
+                prefix += f" (сила {item['strength']}, {item['duration']})"
+            elif letter == "ж":
+                prefix += f" ({item['term']})"
+            elif letter == "в":
+                prefix += f" ({item['source']})"
+            elif letter == "д":
+                prefix += " " + item["name"]
+            lines.append("- " + ((prefix.strip() + ": ") if prefix.strip() else "") + item["text"])
+    lines.append("Настроение: " + (state["mood"] or "—"))
+    return "\n".join(lines)
+
+
+def prepare_state(state: dict[str, Any], situation: str) -> tuple[str, dict[str, list]]:
+    changes = {"cooled": [], "cap_dropped": [], "forgotten": []}
+    previous_minute = state["minute"]
+    match = re.search(r"(?m)^Время: (день (\d+), (\d{2}):(\d{2}))", situation)
+    if match:
+        state["time"] = match[1]
+        state["minute"] = int(match[2]) * 1440 + int(match[3]) * 60 + int(match[4])
+    minute = state["minute"] or 0
+    for item in list(state["feelings"]):
+        periods = max(0, (minute - item["updated_minute"]) // DURATIONS[item["duration"]])
+        item["strength"] -= periods
+        item["updated_minute"] += periods * DURATIONS[item["duration"]]
+        if item["strength"] <= 0:
+            state["feelings"].remove(item)
+            changes["cooled"].append({"id": item["id"], "text": item["text"]})
+    previous = render(state, ids=True)
+    elapsed = minute - previous_minute if previous_minute is not None else 0
+    if elapsed > 60:
+        days, hours = divmod(elapsed // 60, 24)
+        parts = ([f"{days} дн."] if days else []) + ([f"{hours} ч"] if hours else [])
+        previous = "С прошлого раза прошло: " + " ".join(parts) + "\n" + previous
+    return previous, changes
+
+
+def parse_patches(text: str) -> dict[str, Any]:
+    match = re.search(r"\[Голосу\](.*?)\[Правки\](.*)", text, re.DOTALL)
+    if match is None:
+        return {"note": "", "patches": [], "say": [], "parse_error": True}
+    rest = match[2]
+    return {
+        "note": match[1].strip(),
+        "patches": [
+            line for line in re.split(r"(?m)^\[Скажу\]", rest, maxsplit=1)[0].splitlines() if line.strip()
+        ],
+        "say": re.findall(r"(?m)^\[Скажу\][ \t]*(.+)$", rest),
+        "parse_error": False,
+    }
+
+
+def patch_params(letter: str, params: str, *, adding: bool) -> dict[str, Any]:
+    tokens = params.split()
+    if not tokens:
+        if adding and letter in "бчжвд":
+            raise ValueError("syntax")
+        return {}
+    if letter == "б" and len(tokens) == 1 and tokens[0].isdigit() and 1 <= int(tokens[0]) <= 10:
+        return {"importance": int(tokens[0])}
+    if letter == "ч":
+        values = {}
+        if tokens[0].isdigit():
+            values["strength"] = int(tokens.pop(0))
+            if not 1 <= values["strength"] <= 3:
+                raise ValueError("bad_param")
+        if tokens and tokens[0] in DURATIONS:
+            values["duration"] = tokens.pop(0)
+        if not tokens and values and (not adding or len(values) == 2):
+            return values
+    if letter == "ж" and len(tokens) == 1 and params in WISH_TERMS:
+        return {"term": params}
+    if letter == "в" and len(tokens) == 1 and params in BELIEF_SOURCES:
+        return {"source": params}
+    if letter == "д":
+        return {"name": params}
+    raise ValueError("bad_param")
+
+
+def normalized(text: str) -> str:
+    text = " ".join(text.casefold().split())
+    while text and unicodedata.category(text[-1]).startswith("P"):
+        text = text[:-1].rstrip()
+    return text
+
+
+def enforce_caps(state: dict[str, Any], changes: dict[str, list]) -> None:
+    for key, limit in (("beliefs", 10), ("doubts", 5), ("others", 8), ("threads", 8), ("wishes", 2)):
+        for term in WISH_TERMS if key == "wishes" else (None,):
+            items = [item for item in state[key] if term is None or item["term"] == term]
+            for item in items[:-limit]:
+                state[key].remove(item)
+                changes["cap_dropped"].append({"id": item["id"], "text": item["text"]})
+
+
+def apply_patches(state: dict[str, Any], lines: list[str], changes: dict[str, list]) -> list[dict]:
+    applied = []
+    for raw in lines:
+        line = raw.strip()
+        record = {"line": raw, "op": None, "ok": False, "error": None, "id": None}
+        applied.append(record)
+        try:
+            if line in ("—", "–", "-"):
+                record["op"] = "noop"
+            elif line.startswith("="):
+                record["op"] = "="
+                match = re.fullmatch(r"=\s*(мнение|настроение)\s*:\s*(.+)", line)
+                if match is None:
+                    raise ValueError("syntax")
+                state["opinion" if match[1] == "мнение" else "mood"] = match[2].strip()
+            elif line.startswith("+"):
+                record["op"] = "+"
+                match = re.fullmatch(
+                    r"\+\s*(было|чувство|хочу|верю|сомневаюсь|нить|о)(?:\s+([^:]*?))?\s*:\s*(.+)",
+                    line,
+                )
+                if match is None:
+                    raise ValueError("syntax")
+                letter = next(letter for letter, s in SECTIONS.items() if s[2] == match[1])
+                values = patch_params(letter, (match[2] or "").strip(), adding=True)
+                values["text"] = match[3].strip()
+                items = state[SECTIONS[letter][0]]
+                existing = next(
+                    (
+                        item
+                        for item in items
+                        if letter == "д" and item["name"].casefold() == values["name"].casefold()
+                    ),
+                    None,
+                )
+                if existing is None and any(
+                    normalized(item["text"]) == normalized(values["text"])
+                    and (letter != "д" or normalized(item["name"]) == normalized(values["name"]))
+                    for item in items
+                ):
+                    raise ValueError("duplicate")
+                if existing is not None:
+                    existing["text"] = values["text"]
+                    record["id"] = existing["id"]
+                else:
+                    state["counters"][letter] += 1
+                    record["id"] = letter + str(state["counters"][letter])
+                    if letter == "б":
+                        values.update(time=state["time"], minute=state["minute"] or 0)
+                    elif letter == "ч":
+                        values["updated_minute"] = state["minute"] or 0
+                    items.append({"id": record["id"], **values})
+            elif line.startswith(("~", "-", "–", "−")):
+                record["op"] = "~" if line.startswith("~") else "-"
+                pattern = (
+                    r"~\s*([бчжвсдн]\d+)(?=\s|:|$)(.*)"
+                    if record["op"] == "~"
+                    else r"[\-–−]\s*([бчжвсдн]\d+)(.*)"
+                )
+                match = re.fullmatch(pattern, line)
+                if match is None:
+                    raise ValueError("syntax")
+                identifier, tail = match[1], match[2].strip()
+                record["id"] = identifier
+                items = state[SECTIONS[identifier[0]][0]]
+                item = next((item for item in items if item["id"] == identifier), None)
+                if item is None:
+                    raise ValueError("unknown_id")
+                if record["op"] == "-":
+                    items.remove(item)
+                else:
+                    params, _, text = tail.partition(":")
+                    values = patch_params(identifier[0], params.strip(), adding=False)
+                    if text.strip():
+                        values["text"] = text.strip()
+                    if not values:
+                        raise ValueError("syntax")
+                    if identifier[0] == "ч":
+                        values["updated_minute"] = state["minute"] or 0
+                    item.update(values)
+            else:
+                raise ValueError("syntax")
+            record["ok"] = True
+            enforce_caps(state, changes)
+        except ValueError as error:
+            record["error"] = str(error)
+    return applied
+
+
+def forget_events(state: dict[str, Any], changes: dict[str, list]) -> None:
+    """After a conversation: trifles are forgotten, and what the npc wanted from this talk is over."""
+    for key, over in (
+        ("events", lambda item: item["importance"] <= 3),
+        ("wishes", lambda item: item["term"] == "сейчас"),
+    ):
+        for item in list(state[key]):
+            if over(item):
+                state[key].remove(item)
+                changes["forgotten"].append({"id": item["id"], "text": item["text"]})
 
 
 def write_json(path: Path, value: Any) -> None:
@@ -219,7 +465,13 @@ def parse_mind(text: str) -> dict[str, Any]:
 
 
 async def mind_stream(
-    sol: LLMBackend, turn: dict[str, Any], previous: str, prompt: str, deadline: float
+    sol: LLMBackend,
+    turn: dict[str, Any],
+    previous: str,
+    prompt: str,
+    deadline: float,
+    *,
+    patch: bool = False,
 ) -> dict[str, Any]:
     result = {
         "text": "",
@@ -261,7 +513,8 @@ async def mind_stream(
                 elif isinstance(event, Done):
                     result["text"] = event.text
                     result["usage"] = asdict(event.usage) if event.usage is not None else None
-                if result["note_ready_s"] is None and "[Ум]" in result["text"]:
+                marker = "[Правки]" if patch else "[Ум]"
+                if result["note_ready_s"] is None and marker in result["text"]:
                     result["note_ready_s"] = elapsed
     except TimeoutError:
         result["error"] = f"Timeout after {TIMEOUT_S:g} s"
@@ -284,11 +537,14 @@ async def mind(
     *,
     effort: str = "low",
     redo_conv: str | None = None,
-    prompt_file: str = "mind_turn.md",
+    prompt_file: str | None = None,
     carry: Path | None = None,
+    patch: bool = False,
     sol: LLMBackend | None = None,
 ) -> None:
-    prompt = (HERE / prompt_file).read_text(encoding="utf-8")
+    prompt = (HERE / (prompt_file or ("mind_turn_v3.md" if patch else "mind_turn.md"))).read_text(
+        encoding="utf-8"
+    )
     groups = conversations(pilot.rows(directory / "turns.jsonl"))
     if redo_conv and not any(group[0]["conv"] == redo_conv for group in groups):
         raise SystemExit("Unknown conversation")
@@ -298,7 +554,7 @@ async def mind(
     source = sources.get(redo_conv)
     while source is not None:
         end = results.get(source + "#end")
-        if end is not None and end.get("error") is None:
+        if end is not None and end.get("error") is None and (not patch or "state" in end):
             break
         required.add(source)
         source = sources[source]
@@ -312,6 +568,7 @@ async def mind(
             conv == redo_conv
             or source in restarted
             or results.get(group[0]["id"], {}).get("carried_from") != source
+            or (patch and "state" not in results.get(group[0]["id"], {}))
         )
         for turn in [*group, closing_turn(group)]:
             record = results.get(turn["id"])
@@ -332,14 +589,19 @@ async def mind(
                 continue
             source = sources[group[0]["conv"]]
             previous = results[source + "#end"]["mind"] if source else EMPTY_MIND
+            state = deepcopy(results[source + "#end"]["state"]) if patch and source else new_state()
             for turn in [*group, closing_turn(group)]:
                 if turn["id"] not in identifiers:
                     previous = results[turn["id"]]["mind"]
+                    if patch:
+                        state = deepcopy(results[turn["id"]]["state"])
                     continue
+                if patch:
+                    previous, code_changes = prepare_state(state, turn["situation"])
                 started = time.monotonic()
                 for attempt in range(1, 3):
                     offset = time.monotonic() - started
-                    result = await mind_stream(sol, turn, previous, prompt, started + TIMEOUT_S)
+                    result = await mind_stream(sol, turn, previous, prompt, started + TIMEOUT_S, patch=patch)
                     result["attempts"] = attempt
                     for metric in ("first_token_s", "note_ready_s"):
                         if result[metric] is not None:
@@ -347,13 +609,29 @@ async def mind(
                     result["total_s"] = time.monotonic() - started
                     if result["error"] is None:
                         break
-                parsed = (
-                    parse_mind(result["text"])
-                    if result["error"] is None
-                    else {"note": "", "mind": None, "say": [], "parse_error": False}
-                )
-                if parsed["mind"] is None:
-                    parsed["mind"] = previous
+                if patch:
+                    parsed = (
+                        parse_patches(result["text"])
+                        if result["error"] is None
+                        else {"note": "", "patches": [], "say": [], "parse_error": False}
+                    )
+                    parsed["applied"] = apply_patches(state, parsed["patches"], code_changes)
+                    if turn.get("closing"):
+                        forget_events(state, code_changes)
+                    parsed.update(
+                        state=deepcopy(state),
+                        code_changes=code_changes,
+                        mind=render(state, ids=True),
+                        mind_plain=render(state, ids=False),
+                    )
+                else:
+                    parsed = (
+                        parse_mind(result["text"])
+                        if result["error"] is None
+                        else {"note": "", "mind": None, "say": [], "parse_error": False}
+                    )
+                    if parsed["mind"] is None:
+                        parsed["mind"] = previous
                 result.update(
                     parsed, id=turn["id"], conv=turn["conv"], index=turn["index"], previous_mind=previous
                 )
@@ -419,7 +697,9 @@ async def speak(
                         "developer",
                         turn["situation"]
                         + "\n\n"
-                        + prompts[variant].format(thought=state["note"], mind=state["mind"]),
+                        + prompts[variant].format(
+                            thought=state["note"], mind=state.get("mind_plain", state["mind"])
+                        ),
                     ),
                 ]
                 result = await pilot.measure(
@@ -618,6 +898,7 @@ def sheet(directory: Path, seed: int = pilot.SEED) -> list[dict[str, Any]]:
                         "window_s": turn["window_s"],
                     },
                     "error": state.get("error") or ("parse_error" if state.get("parse_error") else None),
+                    **{key: state[key] for key in ("patches", "applied", "code_changes") if key in state},
                 }
             )
         timeline.append(
@@ -666,6 +947,13 @@ def summary(directory: Path, ratings: Path | None = None, *, emit: bool = True) 
         and minds[turn["id"]]["note_ready_s"] <= turn["window_s"]
         for turn in windows
     )
+    total_fits = sum(
+        minds.get(turn["id"], {}).get("error") is None
+        and not minds.get(turn["id"], {}).get("parse_error")
+        and minds.get(turn["id"], {}).get("total_s") is not None
+        and minds[turn["id"]]["total_s"] <= turn["window_s"]
+        for turn in windows
+    )
     stats = {
         "n": len(parts),
         "errors": sum(part["error"] is not None for part in parts),
@@ -673,7 +961,28 @@ def summary(directory: Path, ratings: Path | None = None, *, emit: bool = True) 
         "window_n": len(windows),
         "fits_window_n": fits,
         "fits_window_fraction": pilot.fraction(fits, len(windows)),
+        "total_fits_window_n": total_fits,
+        "total_fits_window_fraction": pilot.fraction(total_fits, len(windows)),
     }
+    patch_parts = [part for part in parts if "state" in part]
+    if patch_parts:
+        applied = [item for part in patch_parts for item in part.get("applied", [])]
+        errors = Counter(item["error"] for item in applied if not item["ok"])
+        closing_chars = {part["conv"]: len(part["mind"]) for part in patch_parts if part.get("closing")}
+        stats["patches"] = {
+            "per_turn": distribution(len(part.get("patches", [])) for part in patch_parts),
+            "by_op": dict(Counter(item["op"] or "unknown" for item in applied)),
+            "by_error": dict(errors),
+            "error_n": sum(errors.values()),
+            "line_n": len(applied),
+            "error_fraction": pilot.fraction(sum(errors.values()), len(applied)),
+            "code_changes": {
+                key: sum(len(part.get("code_changes", {}).get(key, [])) for part in patch_parts)
+                for key in ("cooled", "cap_dropped", "forgotten")
+            },
+            "closing_mind_chars_by_conv": closing_chars,
+            "closing_mind_chars_max": max(closing_chars.values(), default=None),
+        }
     for metric in ("first_token_s", "note_ready_s", "total_s"):
         stats[metric] = pilot.distribution(part[metric] for part in successful if not part.get("closing"))
     stats["output_tokens"] = distribution((part["usage"] or {}).get("output_tokens") for part in successful)
@@ -904,6 +1213,151 @@ async def selftest() -> None:
                     event = Done(event.text, event.items, Usage(output_tokens=123))
                 yield event
 
+    def situation_at(minute):
+        day, within_day = divmod(minute, 1440)
+        hour, minute = divmod(within_day, 60)
+        return f"Время: день {day}, {hour:02}:{minute:02}. Ты у точки TEST_WAYPOINT."
+
+    state = new_state()
+    assert render(state, True) == render(state, False) == EMPTY_MIND
+    previous, changes = prepare_state(state, "Время: день 1, 08:20, утро.")
+    assert previous == EMPTY_MIND and state["minute"] == 1940
+    parsed = parse_patches(
+        "[Голосу]\nVoice note.\n[Правки]\n\n+ было 8: Helped.\n—\n[Скажу] Listen.\n[Скажу] Wait."
+    )
+    assert parsed == {
+        "note": "Voice note.",
+        "patches": ["+ было 8: Helped.", "—"],
+        "say": ["Listen.", "Wait."],
+        "parse_error": False,
+    }
+    assert parse_patches("[Голосу] Note without patches.")["parse_error"]
+    assert parse_patches("[Правки]\n+ было 8: Helped.")["parse_error"]
+    added = apply_patches(
+        state,
+        [
+            "+ было 8: Helped.",
+            "+ чувство 2 долго: Grateful.",
+            "+ хочу сейчас: Talk.",
+            "+ верю сказал: A promise.",
+            "+ сомневаюсь: His story.",
+            "+ о Old Merchant: Honest.",
+            "+ нить: A letter.",
+            "= мнение: Helpful.",
+            "= настроение: Calm.",
+            "—",
+        ],
+        changes,
+    )
+    assert all(item["ok"] and item["error"] is None for item in added)
+    assert {item["op"] for item in added} == {"+", "=", "noop"}
+    assert state["events"][0] == {
+        "id": "б1",
+        "time": "день 1, 08:20",
+        "minute": 1940,
+        "importance": 8,
+        "text": "Helped.",
+    }
+    assert state["feelings"][0]["updated_minute"] == 1940
+    changed = apply_patches(
+        state,
+        [
+            "~ б1 9: Helped again.",
+            "~ ч1 3 час",
+            "~ ж1 скоро",
+            "~ в1 видел: Saw it.",
+            "~ с1: A different story.",
+            "~ н1: Another letter.",
+            "+ о old merchant: Reliable.",
+        ],
+        changes,
+    )
+    assert all(item["ok"] for item in changed)
+    assert state["events"][0]["importance"] == 9
+    assert state["feelings"][0]["strength"] == 3
+    assert state["feelings"][0]["duration"] == "час"
+    assert state["wishes"][0]["term"] == "скоро"
+    assert state["beliefs"][0]["source"] == "видел"
+    assert state["others"][0]["id"] == "д1" and len(state["others"]) == 1
+    assert state["others"][0]["text"] == "Reliable."
+    assert apply_patches(state, ["+ о Another Merchant: Reliable."], changes)[0]["id"] == "д2"
+    assert len(state["others"]) == 2
+    rejected = apply_patches(
+        state,
+        ["garbage", "+ было 11: Invalid.", "~ ч99 2", "+ верю сказал:  SAW   IT!!!"],
+        changes,
+    )
+    assert [item["error"] for item in rejected] == ["syntax", "bad_param", "unknown_id", "duplicate"]
+    assert all(not item["ok"] for item in rejected)
+    plain = render(state, False)
+    assert not re.search(r"[бчжвсдн]\d+", plain) and "важность" not in plain
+    assert "(день 1, 08:20)" in plain and "(сила 3, час)" in plain
+    assert "(скоро)" in plain and "(видел)" in plain and "Old Merchant" in plain
+    assert "Мнение о герое: Helpful." in plain and "Настроение: Calm." in plain
+    removed = apply_patches(state, ["- с1—closed", "– н1.done", "− ж1 ignored tail"], changes)
+    assert all(item["ok"] and item["op"] == "-" for item in removed)
+    assert not state["doubts"] and not state["threads"] and not state["wishes"]
+    assert apply_patches(state, ["+ нить: New letter."], changes)[0]["id"] == "н2"
+    assert "Сомневаюсь:\n- —" in render(state, True)
+
+    for duration, interval in (("час", 60), ("день", 1440), ("долго", 10080)):
+        cooling = new_state()
+        _, cooling_changes = prepare_state(cooling, situation_at(1440))
+        apply_patches(cooling, [f"+ чувство 3 {duration}: Anger."], cooling_changes)
+        prepare_state(cooling, situation_at(1440 + 2 * interval + 17))
+        feeling = cooling["feelings"][0]
+        assert feeling["strength"] == 1 and feeling["updated_minute"] == 1440 + 2 * interval
+        _, cooling_changes = prepare_state(cooling, situation_at(1440 + 3 * interval))
+        assert not cooling["feelings"] and cooling_changes["cooled"] == [{"id": "ч1", "text": "Anger."}]
+    refreshing = new_state()
+    _, refreshing_changes = prepare_state(refreshing, situation_at(1440))
+    apply_patches(refreshing, ["+ чувство 3 час: Anger."], refreshing_changes)
+    prepare_state(refreshing, situation_at(1510))
+    apply_patches(refreshing, ["~ ч1: Renewed anger."], refreshing_changes)
+    assert refreshing["feelings"][0]["updated_minute"] == 1510
+    assert not prepare_state(refreshing, situation_at(1570))[0].startswith("С прошлого раза")
+    elapsed, _ = prepare_state(refreshing, situation_at(1570 + 2 * 1440 + 3 * 60))
+    assert elapsed.startswith("С прошлого раза прошло: 2 дн. 3 ч\n")
+    old_minute = refreshing["minute"]
+    prepare_state(refreshing, "No recorded time.")
+    assert refreshing["minute"] == old_minute
+
+    capped = new_state()
+    _, cap_changes = prepare_state(capped, situation_at(1440))
+    for section, prefix, cap in (
+        ("beliefs", "+ верю слышал:", 10),
+        ("doubts", "+ сомневаюсь:", 5),
+        ("threads", "+ нить:", 8),
+        ("others", "+ о Person", 8),
+    ):
+        lines = [
+            f"{prefix} {index}: Item {index}." if section == "others" else f"{prefix} Item {index}."
+            for index in range(cap + 1)
+        ]
+        assert all(item["ok"] for item in apply_patches(capped, lines, cap_changes))
+        assert len(capped[section]) == cap and capped[section][0]["text"] == "Item 1."
+    for term in ("сейчас", "скоро", "давно"):
+        apply_patches(capped, [f"+ хочу {term}: {term} {i}." for i in range(3)], cap_changes)
+        assert sum(item["term"] == term for item in capped["wishes"]) == 2
+    assert len(cap_changes["cap_dropped"]) == 7
+
+    events = new_state()
+    for index in range(15):
+        _, event_changes = prepare_state(events, situation_at(1440 + index))
+        importance = 10 if index == 0 else 4
+        apply_patches(events, [f"+ было {importance}: Event {index}."], event_changes)
+    event_lines = render(events, True).splitlines()
+    assert [re.match(r"- (б\d+) ", line)[1] for line in event_lines if line.startswith("- б")] == [
+        "б1",
+        *[f"б{i}" for i in range(5, 16)],
+    ]
+    apply_patches(
+        events, ["+ было 3: Greeting.", "+ хочу сейчас: Talk.", "+ хочу скоро: Rest."], event_changes
+    )
+    forget_events(events, event_changes)
+    assert event_changes["forgotten"] == [{"id": "б16", "text": "Greeting."}, {"id": "ж1", "text": "Talk."}]
+    assert len(events["events"]) == 15 and [item["id"] for item in events["wishes"]] == ["ж2"]
+
     with (
         TemporaryDirectory(prefix="sol-mind-") as temporary,
         patch.object(pilot, "make_backend", side_effect=AssertionError("Selftest must use a fake Sol")),
@@ -1054,6 +1508,7 @@ async def selftest() -> None:
             ]
             assert request["messages"][-3] == Message("developer", group[-1]["situation"])
         assert all(states[group[0]["id"]]["carried_from"] is None for group in conversations(turns))
+        assert all("state" not in state and "mind_plain" not in state for state in states.values())
         assert sol.requests[0]["messages"][-2] == Message(
             "developer", "[Твой ум до этой минуты]\n" + EMPTY_MIND
         )
@@ -1486,6 +1941,110 @@ async def selftest() -> None:
             remaining = {r["id"] for r in pilot.rows(carried / name)}
             assert "early#end" in remaining and "sibling-0" in remaining
             assert not {"child-first-0", "child-next-1", "grandchild#end"} & remaining
+
+        patched = root / "patched"
+        patched.mkdir()
+        patch_turns = [
+            {**turn, "situation": situation_at(minute) if minute is not None else "No recorded time."}
+            for turn, minute in zip([*meetings[0], *meetings[2]], [1940, 1941, 2062, None], strict=True)
+        ]
+        pilot.save_rows(patched / "turns.jsonl", patch_turns)
+
+        def patch_reply(lines):
+            return "[Голосу]\nVoice note.\n[Правки]\n" + lines
+
+        patch_sol = ScriptedSol(
+            script=[
+                FakeStep(
+                    patch_reply(
+                        "+ было 8: Shared help.\n+ чувство 2 час: Gratitude.\n+ нить: Letter.\n"
+                        "+ было 3: Greeting.\n+ верю сказал: Promise.\n"
+                        "= мнение: Helpful.\n= настроение: Calm."
+                    )
+                ),
+                FakeStep(
+                    patch_reply(
+                        "- н1\n+ нить: New question.\n+ верю сказал: PROMISE!!!\n~ ч99 2\n"
+                        "+ было 11: Invalid.\ngarbage\n~ ч1 3\n~ в1 видел: Saw help."
+                    )
+                ),
+                FakeStep(patch_reply("+ нить: End question.\n+ было 2: Waited.")),
+                FakeStep("[Голосу] Missing patch marker.\n+ было 10: Must not apply."),
+                FakeStep(patch_reply("—")),
+                FakeStep(patch_reply("+ было 1: Farewell.")),
+            ],
+            delay=0,
+            chunk=1,
+        )
+        await mind(patched, patch=True, carry=memory_db, sol=patch_sol)
+        patch_rows = {r["id"]: r for r in pilot.rows(patched / "minds.jsonl")}
+        assert len(patch_rows) == len(patch_sol.requests) == 6
+        assert patch_sol.requests[0]["messages"][-1].content == (HERE / "mind_turn_v3.md").read_text()
+        assert patch_sol.requests[0]["messages"][-2].content.endswith(EMPTY_MIND)
+        first_end = patch_rows["early#end"]
+        next_first = patch_rows["child-first-0"]
+        assert first_end["state"]["events"] == patch_rows["early-0"]["state"]["events"][:1]
+        assert first_end["state"]["counters"]["б"] == 3
+        assert first_end["code_changes"]["forgotten"] == [
+            {"id": "б2", "text": "Greeting."},
+            {"id": "б3", "text": "Waited."},
+        ]
+        assert next_first["carried_from"] == "early" and next_first["parse_error"]
+        assert next_first["patches"] == next_first["applied"] == []
+        assert next_first["state"]["feelings"][0]["strength"] == 1
+        assert next_first["state"]["feelings"][0]["updated_minute"] == 2061
+        assert next_first["state"]["threads"] == first_end["state"]["threads"]
+        assert next_first["previous_mind"].startswith("С прошлого раза прошло: 2 ч\n")
+        assert patch_rows["child-first#end"]["state"]["counters"]["б"] == 4
+        for row, request in zip(patch_rows.values(), patch_sol.requests, strict=True):
+            assert request["messages"][-2].content == "[Твой ум до этой минуты]\n" + row["previous_mind"]
+            assert row["mind"] == render(row["state"], True)
+            assert row["mind_plain"] == render(row["state"], False)
+            if not row["parse_error"]:
+                assert 0 <= row["first_token_s"] < row["note_ready_s"] <= row["total_s"]
+        assert next_first["note_ready_s"] is None
+        await mind(patched, patch=True, carry=memory_db, sol=patch_sol)
+        assert len(patch_sol.requests) == 6 and memory_db.read_bytes() == db_bytes
+
+        patch_quick = FakeBackend("[neutral] Understood.", delay=0)
+        await speak(patched, quick=patch_quick)
+        assert patch_rows["early-0"]["mind_plain"] in patch_quick.calls[0][1][-2].content
+        assert "важность" not in patch_quick.calls[0][1][-2].content
+        sheet(patched)
+        timeline = json.loads((patched / "timeline.json").read_text())
+        for key in ("patches", "applied", "code_changes"):
+            assert timeline[0]["turns"][0][key] == patch_rows["early-0"][key]
+
+        patch_rows["early-0"]["total_s"] = patch_turns[0]["window_s"]
+        patch_rows["early-1"]["total_s"] = patch_turns[1]["window_s"] + 1
+        patch_rows["child-first-1"]["total_s"] = patch_turns[3]["window_s"]
+        pilot.save_rows(patched / "minds.jsonl", patch_rows.values())
+        patch_stats = summary(patched, emit=False)["mind"]
+        assert patch_stats["total_fits_window_n"] == 2
+        assert patch_stats["total_fits_window_fraction"] == 0.5
+        assert "patches" not in report["mind"]
+        stats = patch_stats["patches"]
+        assert stats["per_turn"] == {"n": 6, "median": 1.5, "p90": 7.5, "max": 8}
+        assert stats["by_op"] == {"+": 11, "=": 2, "-": 1, "~": 3, "unknown": 1, "noop": 1}
+        assert stats["by_error"] == {"syntax": 1, "bad_param": 1, "unknown_id": 1, "duplicate": 1}
+        assert stats["error_n"] == 4 and stats["line_n"] == 19 and stats["error_fraction"] == 4 / 19
+        assert stats["code_changes"] == {"cooled": 0, "cap_dropped": 0, "forgotten": 3}
+        assert stats["closing_mind_chars_by_conv"] == {
+            conv: len(patch_rows[conv + "#end"]["mind"]) for conv in ("early", "child-first")
+        }
+        assert stats["closing_mind_chars_max"] == max(stats["closing_mind_chars_by_conv"].values())
+
+        override = ScriptedSol(patch_reply("—"), delay=0)
+        await mind(
+            patched,
+            patch=True,
+            prompt_file="mind_turn_v2.md",
+            carry=memory_db,
+            redo_conv="child-first",
+            sol=override,
+        )
+        assert len(override.requests) == 3
+        assert override.requests[0]["messages"][-1].content == (HERE / "mind_turn_v2.md").read_text()
     print("Selftest passed (no network)")
 
 
@@ -1502,8 +2061,9 @@ def main() -> None:
         if name == "mind":
             command.add_argument("--effort", default="low")
             command.add_argument("--redo-conv")
-            command.add_argument("--prompt-file", default="mind_turn.md")
+            command.add_argument("--prompt-file")
             command.add_argument("--carry", type=Path)
+            command.add_argument("--patch", action="store_true")
         elif name == "speak":
             command.add_argument("--slot", type=int, default=0)
             command.add_argument("--quick-at")
