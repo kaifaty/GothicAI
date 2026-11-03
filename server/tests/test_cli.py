@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from gothic_ai import cli
+from gothic_ai import cli, scenarios
 from gothic_ai.llm.off import ModelOff, OffBackend
 
 
@@ -411,7 +411,7 @@ def test_scenario_start_marker_waits_for_world_and_precedes_scenario(
             return []
 
         run_scenario_mock = AsyncMock(side_effect=run_scenario)
-        monkeypatch.setattr(cli.scenarios, "m0_smoke", run_scenario_mock)
+        monkeypatch.setattr(scenarios, "m0_smoke", run_scenario_mock)
 
         class FakeServer:
             def __init__(self, host, port, on_link):
