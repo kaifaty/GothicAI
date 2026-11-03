@@ -20,10 +20,17 @@ also a find:
   place within the half hour). Seen nobody: only the knowledge «someone was hurt here». Blood under a
   body still in the world never comes: the engine reports that body, not its pool.
 
-Suspicion is decided later than the find, on a later view of the finder at least `JUDGE_S` real seconds
-after it: the hero's deed (`hero_deed` → `crime_seen`) may come after the view with the body. A
-`trace_judged` fact marks the decision in the save branch, so a find saved before its decision is
-decided after the load, and none is decided twice.
+Suspicion is decided on the finder's first view whose game minute is later than the finding view's.
+Both pushed and requested views count: distant finders receive only requested views. They share
+world.time() (OpenGothic/ai_bridge/npcview.cpp:338-339), read before the world update
+(common/gothic.cpp:674-677). A hit queues its deed after the tick's passive queue was taken
+(common/world/worldobjects.cpp:418-419, 1388); that deed is sent at the end of the following world update
+(:590-592), possibly after the first view of its trace. A view in a later game minute is from a later
+tick, after that deed. GameLink dispatches in wire order and Crimes records crime/crime_seen
+synchronously. Thus the decision knows the relevant deeds, without a real-time delay. Views in the
+same game minute never advance it. If either view lacks time, the next view decides instead.
+A `trace_judged` fact marks the decision in the save branch, so a find saved before its decision is
+decided on the first view after the load, and none is decided twice.
 
 `body` and `blood` are finds now; missing things are a later kind of the same event. Who killed or hurt
 is the engine's truth and never comes here: a find is the knowledge «someone was killed (hurt) here».
@@ -54,7 +61,6 @@ FOUND = frozenset({"body", "blood"})  # trace kinds whose first sight is a find
 HERO = "PLAYER"
 SUSPICIONS = ("crime_suspected", "npc_crime_suspected")
 JUDGED = "trace_judged"
-JUDGE_S = 2.0  # real seconds from a find to its suspicion: the deed the finder witnessed comes first
 PRESENT_MIN = 5  # it saw the victim alive there until this many game minutes before the death: it was there
 
 
@@ -95,11 +101,11 @@ class FoundTraces:
         self.planner: NpcPlanner | None = None
         self.on_found: list[Callable[[Found], None]] = []
         self.on_judged: list[Callable[[Found, list[Fact]], None]] = []
-        self._found_at: dict[tuple[str, str], float] = {}  # (npc, trace) -> when found, in this process
+        self._found_at: dict[tuple[str, str], int | None] = {}  # new finds' game minutes
         self._judged: set[tuple[str, str]] = set()  # decided in this branch, as far as read
         sightings.on_trace.append(self.found)
         sightings.trace_note = self.note
-        # after Sightings.saw: a view first records its new traces, then decides the older finds
+        # After Sightings.saw: both pushed and requested views can decide earlier finds.
         sightings.desk.on_view.append(self.viewed)
         sightings.link.listeners.append(self._on_message)
 
@@ -118,7 +124,7 @@ class FoundTraces:
             return
         viewer = viewer.upper()
         find = self._find(viewer, s)
-        self._found_at[(viewer, trace.id)] = self.clock()
+        self._found_at[(viewer, trace.id)] = view.time
         log.info("%s found %s %s at %s", viewer, trace.kind, s.name, find.place)
         self.journal.add(
             "trace_found",
@@ -151,11 +157,10 @@ class FoundTraces:
                 log.exception("a find listener failed")
 
     def viewed(self, view: NpcView) -> None:
-        """A later view of a finder: its finds old enough are decided (once per branch)."""
+        """Any view in a later game minute decides the find (once per branch)."""
         if self.sightings.branch is None:
             return
         npc = view.npc.upper()
-        now = self.clock()
         for s in list(self.sightings.mind(npc).traces.values()):
             if s.trace_kind not in self.kinds:
                 continue
@@ -166,9 +171,13 @@ class FoundTraces:
             if self._decided(npc, trace):
                 self._judged.add(key)
                 continue
-            found_at = self._found_at.get(key)  # None: found before a load or a restart, long enough ago
-            if found_at is not None and now - found_at < JUDGE_S:
-                continue
+            if key in self._found_at:
+                found_at = self._found_at[key]
+                if found_at is None:
+                    del self._found_at[key]  # no time in the finding view: the next view decides
+                    continue
+                if view.time is not None and view.time <= found_at:
+                    continue
             self.judge(npc, s)
 
     def judge(self, npc: str, s: Sighting) -> list[Fact]:
