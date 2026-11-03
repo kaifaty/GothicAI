@@ -365,6 +365,15 @@ def _batch_record(batch_output, **record):
     print(json.dumps(record, ensure_ascii=False), flush=True)
 
 
+def trim_heap():
+    """Hand freed heap back to the system. Without it a TRELLIS.2 batch held 20.4 GiB from the first item on (the fp32
+    checkpoints pass through RAM) and the window's 20 GiB scope killed it at the 9th of 24 variants (2026-11-03)."""
+    import ctypes
+    gc.collect()
+    if sys.platform.startswith("linux"):  # glibc only; the tests run on the Mac
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+
+
 def generate_batch(args):
     """Keep one model resident while persisting every input/seed independently."""
     from adapter import assert_clean_imports, load_pipeline
@@ -421,6 +430,7 @@ def generate_batch(args):
                                          pipeline_type=pipeline_type)
                 pipeline.cuda()
                 loaded = True
+                trim_heap()
                 with telemetry.lock:
                     meta["model_load_seconds"] = round(time.monotonic() - started, 3)
             telemetry.update_attempt(stage="inference")
@@ -454,7 +464,7 @@ def generate_batch(args):
             telemetry.stop()
             meta["outcome"] = meta["attempts"][-1]["outcome"]
             telemetry.sample()
-            gc.collect()
+            trim_heap()
             torch.cuda.empty_cache()
         record = {key: meta[key] for key in ("seconds", "peak_rss_mib", "peak_allocated_mib",
                                              "peak_reserved_mib", "mesh", "model_load_seconds",

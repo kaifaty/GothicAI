@@ -11,9 +11,12 @@ REVISIONS = {
     "trellis2": ("microsoft/TRELLIS.2-4B", "af44b45f2e35a493886929c6d786e563ec68364d"),
     "trellis-v1": ("microsoft/TRELLIS-image-large", "25e0d31ffbebe4b5a97464dd851910efc3002d96"),
     "dinov3": ("facebook/dinov3-vitl16-pretrain-lvd1689m", "ea8dc2863c51be0a264bab82070e3e8836b02d51"),
+    "pixal3d": ("TencentARC/Pixal3D", "b0cb2e1b794cab9aa0ac38a95d794a4d9337437f"),
 }
 DINO2_URL = "https://dl.fbaipublicfiles.com/dinov2/dinov2_vitl14/dinov2_vitl14_reg4_pretrain.pth"
 DINO2_SHA256 = "36e4deffbaef061a2576705b0c36f93621e2ae20bf6274694821b0b492551b51"
+NAF_URL = "https://github.com/valeoai/NAF/releases/download/model/naf_release.pth"
+NAF_SHA256 = "c096c1ab2217a5c3ac136365f721685e2201379cb69d509cfb0261183847c98f"
 
 
 def download_public(root):
@@ -61,6 +64,41 @@ def download_public(root):
     print(f"DINOv2 SHA256 {digest.hexdigest()}", flush=True)
 
 
+def fetch_pinned(url, target, sha256):
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if not target.exists():
+        temporary = target.with_suffix(".part")
+        urllib.request.urlretrieve(url, temporary)
+        temporary.replace(target)
+    digest = hashlib.sha256()
+    with target.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    if digest.hexdigest() != sha256:
+        raise ValueError(f"{target.name} SHA256 does not match the pinned weights")
+
+
+def download_pixal3d(root):
+    """Pixal3D's single- and multi-view checkpoints; its configs lose the RMBG-2.0 entry (CC BY-NC) and point the
+    image features at the local DINOv3. NAF, the feature upsampler it loads through torch.hub, comes pinned."""
+    repo, revision = REVISIONS["pixal3d"]
+    allowed = ["README.md", "LICENSE", "NOTICE", "pipeline.json", "pipeline_mv.json"]
+    for name in ("pipeline.json", "pipeline_mv.json"):
+        config = json.loads(Path(hf_hub_download(repo, name, revision=revision, token=False,
+                                                 cache_dir=root / "hf/hub")).read_text())
+        allowed += [c + suffix for c in config["args"]["models"].values() for suffix in (".json", ".safetensors")]
+    target = root / "models/pixal3d"
+    snapshot_download(repo, revision=revision, token=False, local_dir=target, allow_patterns=allowed, max_workers=2)
+    for name in ("pipeline.json", "pipeline_mv.json"):
+        config = json.loads((target / name).read_text())
+        config["args"].pop("rembg_model", None)
+        config["args"]["image_cond_model"]["args"]["model_name"] = str(root / "models/dinov3")
+        (target / name).write_text(json.dumps(config, indent=2) + "\n")
+    print(f"Downloaded {repo}@{revision}", flush=True)
+    fetch_pinned(NAF_URL, root / "models/naf/naf_release.pth", NAF_SHA256)
+    print("NAF checkpoint verified", flush=True)
+
+
 def dino_token():
     token = (Path.home() / "gothic-ai/materials/hf/token").read_text().strip()
     if not token or any(character.isspace() for character in token):
@@ -81,7 +119,7 @@ def download_dinov3(root):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["public", "dinov3"])
+    parser.add_argument("command", choices=["public", "dinov3", "pixal3d"])
     parser.add_argument("--root", type=Path, default=Path.home() / "gothic-ai/mesh3d")
     args = parser.parse_args()
-    {"public": download_public, "dinov3": download_dinov3}[args.command](args.root.resolve())
+    {"public": download_public, "dinov3": download_dinov3, "pixal3d": download_pixal3d}[args.command](args.root.resolve())
