@@ -34,9 +34,7 @@ static const char* errorText(NS::Error* err) {
 MtPipelineCache::~MtPipelineCache() {
   if(saver.joinable())
     saver.join();
-  if(archive!=nullptr && !dirty)
-    Log::i("pipeline cache: unchanged (hits=",hits.load()," misses=",misses.load()," failures=",failures.load(),")");
-  save();
+  save("exit");
   }
 
 void MtPipelineCache::saveAsync() {
@@ -44,7 +42,7 @@ void MtPipelineCache::saveAsync() {
     return;
   if(saver.joinable())
     saver.join();
-  saver = std::thread([this](){ save(); });
+  saver = std::thread([this](){ save("play"); });
   }
 
 void MtPipelineCache::init(MTL::Device& dev, const std::string& identity) {
@@ -143,15 +141,17 @@ MTL::ComputePipelineState* MtPipelineCache::compute(MTL::Device& dev, MTL::Compu
     [&](NS::Error** e) { return archive->addComputePipelineFunctions(&desc,e); });
   }
 
-void MtPipelineCache::save() {
+void MtPipelineCache::save(const char* reason) {
   if(archive==nullptr)
     return;
   auto pool = NsPtr<NS::AutoreleasePool>::init();
   std::lock_guard<std::mutex> saveGuard(saveSync);
   // Shared: serializing only reads the archive, so pipeline lookups go on; additions wait.
   std::shared_lock<std::shared_mutex> guard(sync);
-  if(!dirty)
+  if(!dirty) {
+    Log::i("pipeline cache: unchanged (",reason,", hits=",hits.load()," misses=",misses.load()," failures=",failures.load(),")");
     return;
+    }
   const auto start = std::chrono::steady_clock::now();
   const auto tmp   = PipelineCacheFile::temporaryPath(file);
   auto       url   = fileUrl(tmp);
@@ -172,7 +172,7 @@ void MtPipelineCache::save() {
   dirty = false;
   const auto ms   = std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count();
   const auto size = fs::file_size(file,ec);
-  Log::i("pipeline cache: saved ",size_t(ec ? 0 : size)," bytes in ",int(ms)," ms (hits=",hits.load(),
+  Log::i("pipeline cache: saved ",size_t(ec ? 0 : size)," bytes in ",int(ms)," ms (",reason,", hits=",hits.load(),
          " misses=",misses.load()," failures=",failures.load(),")");
   }
 

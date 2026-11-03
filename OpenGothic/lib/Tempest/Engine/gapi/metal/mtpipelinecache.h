@@ -23,7 +23,7 @@ class MtPipelineCache {
     ~MtPipelineCache();
 
     void init(MTL::Device& dev, const std::string& identity);
-    void save();
+    void save(const char* reason = "request");
     // Serializes on a background thread; the destructor joins it and writes the final state.
     void saveAsync();
 

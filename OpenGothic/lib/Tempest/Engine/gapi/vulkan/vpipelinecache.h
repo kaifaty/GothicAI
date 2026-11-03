@@ -35,7 +35,7 @@ class VPipelineCache {
       uint64_t checksum;
       };
 
-    void        saveNow();
+    void        saveNow(const char* reason);
     void        joinSaver();
 
     VkDevice              dev = VK_NULL_HANDLE;

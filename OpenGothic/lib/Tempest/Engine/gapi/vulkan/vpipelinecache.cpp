@@ -117,9 +117,9 @@ void VPipelineCache::save(bool async) {
     return;
   joinSaver();
   if(async)
-    saver = std::thread([this](){ saveNow(); });
+    saver = std::thread([this](){ saveNow("play"); });
   else
-    saveNow();
+    saveNow("request");
   }
 
 void VPipelineCache::joinSaver() {
@@ -127,7 +127,7 @@ void VPipelineCache::joinSaver() {
     saver.join();
   }
 
-void VPipelineCache::saveNow() {
+void VPipelineCache::saveNow(const char* reason) {
   std::lock_guard<std::mutex> guard(sync);
   const auto start = std::chrono::steady_clock::now();
   // The cache is internally synchronized: reading it does not block pipeline creation on other threads.
@@ -141,8 +141,10 @@ void VPipelineCache::saveNow() {
 
   const uint8_t* payload = bytes.data()+sizeof(FileHeader);
   const uint64_t h       = PipelineCacheFile::hash(payload,size);
-  if(h==lastHash && size==lastSize)
+  if(h==lastHash && size==lastSize) {
+    Log::i("pipeline cache: unchanged (",reason,")");
     return;
+    }
 
   FileHeader head = ident;
   head.dataSize = size;
@@ -151,7 +153,7 @@ void VPipelineCache::saveNow() {
   if(PipelineCacheFile::writeAtomic(file,bytes.data(),bytes.size())) {
     lastHash = h;
     lastSize = size;
-    Log::i("pipeline cache: saved ",size," bytes in ",int(msSince(start))," ms");
+    Log::i("pipeline cache: saved ",size," bytes in ",int(msSince(start))," ms (",reason,")");
     }
   }
 
@@ -159,7 +161,7 @@ void VPipelineCache::destroy() {
   joinSaver();
   if(impl==VK_NULL_HANDLE)
     return;
-  saveNow();
+  saveNow("exit");
   vkDestroyPipelineCache(dev,impl,nullptr);
   impl = VK_NULL_HANDLE;
   }
