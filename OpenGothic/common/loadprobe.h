@@ -282,18 +282,20 @@ inline void markMalloc(std::string_view stage, double elapsed) {
 // STARTUP is synchronous. Exclusive clocks and signed allocator deltas subtract
 // nested work on this thread; footprint is a process-wide observation, not ownership.
 namespace Startup {
-enum Kind : size_t { Script, Npc, Model, Skeleton, Animation, Texture, Item, NpcPlacement, Count };
-inline constexpr const char* names[]={"script","npc","model","skeleton","animation","texture","item","npc_placement"};
+enum Kind : size_t { Script, Npc, Model, Skeleton, Animation, Texture, Item, NpcPlacement, Other, PhysicsPrepare, PhysicsBody, PlacementQueries, PhysicsRemove, Count };
+inline constexpr const char* names[]={"script","npc","model","skeleton","animation","texture","item","npc_placement","other","physics_prepare","physics_body","placement_queries","physics_remove"};
 struct Counter { uint64_t count=0, ns=0, inclusiveNs=0, bytes=0; int64_t malloc=0, footprint=0; };
 inline thread_local std::array<Counter,Count> counters;
 inline thread_local bool active=false;
+inline thread_local const char* group="startup";
 inline thread_local uint64_t samplingNs=0,samplingCount=0;
 class Scope {
   public:
-    explicit Scope(Kind kind,bool start=false):kind(kind) {
-      if(!enabled() || (!active && !start)) return;
+    explicit Scope(Kind kind,bool start=false,const char* onlyGroup=nullptr):kind(kind) {
+      if(!enabled() || (!active && !start) || (!start && onlyGroup && std::strcmp(group,onlyGroup)!=0)) return;
       if(start && !active) {
         counters={};
+        group=onlyGroup ? onlyGroup : "startup";
         samplingNs=samplingCount=0;
         active=true;
         root=true;
@@ -337,15 +339,17 @@ class Scope {
         }
       if(root) {
         active=false;
-        for(size_t i=0;i<Count;++i) {
+        for(size_t i=0;i<(std::strcmp(group,"startup")==0 ? size_t(Other) : size_t(Count));++i) {
           const auto& v=counters[i];
           char line[256];
-          std::snprintf(line,sizeof(line),"[loadprobe-startup] name=%s count=%llu ms=%.6f inclusive_ms=%.6f bytes=%llu malloc_bytes=%lld footprint_bytes=%lld memory_sampled=%u",
-                        names[i],(unsigned long long)v.count,double(v.ns)/1e6,double(v.inclusiveNs)/1e6,
+          std::snprintf(line,sizeof(line),"[loadprobe-%s] name=%s count=%llu ms=%.6f inclusive_ms=%.6f bytes=%llu malloc_bytes=%lld footprint_bytes=%lld memory_sampled=%u",
+                        group,names[i],(unsigned long long)v.count,double(v.ns)/1e6,double(v.inclusiveNs)/1e6,
                         (unsigned long long)v.bytes,(long long)v.malloc,(long long)v.footprint,unsigned(serial()));
           Tempest::Log::i(line);
           }
-        Tempest::Log::i("[loadprobe-overhead] startup_memory_ns=",samplingNs," startup_memory_samples=",samplingCount);
+        Tempest::Log::i("[loadprobe-overhead] ",std::strcmp(group,"startup")==0 ? "startup" : "placed_items",
+                       "_memory_ns=",samplingNs," ",std::strcmp(group,"startup")==0 ? "startup" : "placed_items",
+                       "_memory_samples=",samplingCount);
         }
       }
     static void bytes(Kind kind,uint64_t value) {
@@ -379,7 +383,7 @@ inline void add(size_t kind,std::string_view name) {
   if(!enabled() || !active) return;
   std::lock_guard lock(sync);
   ++requests[kind]; unique[kind].emplace(name);
-  if(kind==0 && Startup::active) npcModels.emplace(name);
+  if(kind==0 && Startup::active && std::strcmp(Startup::group,"startup")==0) npcModels.emplace(name);
   }
 inline void end() {
   if(!enabled()) return;

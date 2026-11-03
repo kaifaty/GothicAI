@@ -501,6 +501,7 @@ void GameScript::initializeInstanceNpc(const std::shared_ptr<zenkit::INpc>& npc,
 
 void GameScript::initializeInstanceItem(const std::shared_ptr<zenkit::IItem>& item, size_t instance) {
   LoadProbe::Vobs::Scope probe("script_item");
+  LoadProbe::Startup::Scope itemProbe(LoadProbe::Startup::Script,false,"placed-items");
   auto sym = vm.find_symbol_by_index(uint32_t(instance));
 
   if(sym == nullptr) {

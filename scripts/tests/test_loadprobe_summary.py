@@ -32,6 +32,8 @@ def test_session_and_world_change_csv(tmp_path):
         ("world_begin", 19000, -1, 225, 75, 15, 25, 1600, "world=ADDONWORLD.ZEN"),
     ):
         if stage == "scripts_startup" and elapsed == 4900:
+            log += "[loadprobe-placed-items] name=placement_queries count=1 ms=800.25 inclusive_ms=800.25 bytes=0 malloc_bytes=0 footprint_bytes=0 memory_sampled=0\n"
+            log += "[loadprobe] stage=placed_items stage_ms=846 t_ms=4800 rss_mb=170 footprint_mb=170 gpu_mb=30 tex_n=12 tex_mb=22 tex_ms=1100\n"
             log += "[loadprobe-overhead] startup_memory_ns=1200 startup_memory_samples=6\n"
             log += "[loadprobe-startup] name=model count=3 ms=12.25 inclusive_ms=20.5 bytes=4096 malloc_bytes=1024 footprint_bytes=-2048\n"
         if stage == "scripts_startup" and elapsed == 17800:
@@ -79,9 +81,12 @@ def test_session_and_world_change_csv(tmp_path):
     output = subprocess.check_output([sys.executable, str(SCRIPT), str(tmp_path)], text=True)
     reader = csv.DictReader(io.StringIO(output))
     rows = list(reader)
-    assert len(reader.fieldnames) == 447
+    assert len(reader.fieldnames) == 540
     assert len(rows) == 2
     assert rows[0]["load_1"] == "1.25"
+    assert rows[0]["placed_items_placement_queries_ms"] == "800.25"
+    assert rows[0]["placed_items_placement_queries_malloc_bytes"] == ""
+    assert rows[1]["placed_items_placement_queries_ms"] == ""
     assert rows[0]["startup_memory_ns"] == "1200.0"
     assert rows[1]["startup_script_memory_sampled"] == "0.0"
     assert rows[1]["startup_script_malloc_bytes"] == rows[1]["startup_script_footprint_bytes"] == ""

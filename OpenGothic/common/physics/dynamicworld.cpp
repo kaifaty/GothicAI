@@ -11,6 +11,7 @@
 #include "gothic.h"
 #include "arrowtrace.h"
 #include "frameprofile.h"
+#include "loadprobe.h"
 #include "basestore.h"
 #include <Tempest/Log>
 #include "graphics/mesh/skeleton.h"
@@ -1409,6 +1410,7 @@ DynamicWorld::Item DynamicWorld::addDynamicObj(const Tempest::Matrix4x4& pos, co
 
 std::vector<DynamicWorld::PlacedItemCensusEntry> DynamicWorld::placedItemCensus(
     const std::vector<PlacedItemCandidate>& candidates) const {
+  LoadProbe::Startup::Scope probe(LoadProbe::Startup::PlacementQueries,false,"placed-items");
   constexpr float supportLimitCm = 4.f, penetrationLimitCm = 2.f;
   constexpr uint32_t mask = (1u<<C_Landscape)|(1u<<C_Object)|(1u<<C_MovableVob)|(1u<<C_Item);
   std::vector<PlacedItemCensusEntry> result(candidates.size());

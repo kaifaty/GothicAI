@@ -33,6 +33,7 @@ NPC_LOGIC_FIELDS = ["npc_logic_samples", "npc_logic_body_mismatch", "npc_logic_w
 HEADER.extend(f"{field}_{stage}" for stage in ("end", "warm", "warm_5s") for field in NPC_LOGIC_FIELDS)
 STARTUP_KINDS = ("script", "npc", "model", "skeleton", "animation", "texture", "item", "npc_placement")
 STARTUP_FIELDS = ("count", "ms", "inclusive_ms", "bytes", "malloc_bytes", "footprint_bytes", "memory_sampled")
+PLACED_ITEM_KINDS = STARTUP_KINDS + ("other", "physics_prepare", "physics_body", "placement_queries", "physics_remove")
 OWNER_NAMES = ("npc_model_cpu", "model_cpu", "skeleton_cpu", "animation_cpu", "world_source_cpu", "physicmesh_items_cpu",
                "waynet_cpu", "vob_objects_cpu", "script_vm_cpu")
 MEMORY_STAGES = ("session_begin", "scripts_vm", "world_data_read", "mesh_chunks_read", "landscape_pack",
@@ -50,6 +51,8 @@ HEADER.extend(f"pipeline_{stage}_{kind}_{field}" for stage in ("load_end", "firs
 HEADER.extend(f"owner_{name}_{stage}_bytes" for stage in ("end", "warm", "warm_5s") for name in OWNER_NAMES)
 EXTRA_TIME_STAGES = ("placed_items", "waynet", "trigger_start", "world_read_total")
 HEADER.extend(f"{stage}_ms" for stage in EXTRA_TIME_STAGES)
+HEADER.extend(f"placed_items_{kind}_{field}" for kind in PLACED_ITEM_KINDS for field in STARTUP_FIELDS)
+HEADER.extend(("placed_items_memory_ns", "placed_items_memory_samples"))
 VOBS_HEADER = "run,seg,world,kind,name,count,ms,inclusive_ms,stage_ms,share_pct,unique,hits,misses,cold_miss_pct,repeat_n".split(",")
 
 
@@ -67,6 +70,7 @@ def parse(path):
     rows = []
     marks = {}
     pending_vobs = []
+    pending_placed_items = {}
     pending_startup = {}
     pending_requests = {}
     pending_owners = {}
@@ -79,14 +83,17 @@ def parse(path):
                 continue
             overhead = re.search(r"\[loadprobe-overhead\] (.*)", line)
             if overhead:
-                pending_startup["overhead"] = fields(overhead.group(1))
+                data = fields(overhead.group(1))
+                (pending_placed_items if "placed_items_memory_ns" in data else pending_startup)["overhead"] = data
                 continue
-            detail = re.search(r"\[loadprobe-(startup|requests|owner|pipelines)\] (.*)", line)
+            detail = re.search(r"\[loadprobe-(startup|placed-items|requests|owner|pipelines)\] (.*)", line)
             if detail:
                 kind, text = detail.groups()
                 item = fields(text)
                 if kind == "startup":
                     pending_startup[item["name"]] = item
+                elif kind == "placed-items":
+                    pending_placed_items[item["name"]] = item
                 elif kind == "requests":
                     pending_requests[item["name"]] = item
                 elif kind == "owner":
@@ -116,6 +123,9 @@ def parse(path):
                     pending_vobs = []
                 elif row["stage"] in ("session_begin", "change_begin", "world_begin"):
                     pending_vobs = []
+                if row["stage"] == "placed_items":
+                    row["placed_items"] = pending_placed_items
+                    pending_placed_items = {}
                 if row["stage"] == "scripts_startup":
                     row["startup"] = pending_startup
                     pending_startup = {}
@@ -238,6 +248,10 @@ def summary_rows(out):
             values.extend(by_stage.get(stage, {}).get("owners", {}).get(name, "")
                           for stage in (end["stage"], "stream_warm", "stream_warm_5s") for name in OWNER_NAMES)
             values.extend(by_stage.get(stage, {}).get("stage_ms", "") for stage in EXTRA_TIME_STAGES)
+            placed = by_stage.get("placed_items", {}).get("placed_items", {})
+            values.extend("" if field in ("malloc_bytes", "footprint_bytes") and placed.get(kind, {}).get("memory_sampled") == 0
+                          else placed.get(kind, {}).get(field, "") for kind in PLACED_ITEM_KINDS for field in STARTUP_FIELDS)
+            values.extend(placed.get("overhead", {}).get(field, "") for field in ("placed_items_memory_ns", "placed_items_memory_samples"))
             yield values
 
 

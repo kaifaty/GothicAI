@@ -38,14 +38,14 @@ for tag in "$@"; do
     # This Mac is shared. Skip after a short wait; never disturb other work.
     ready=0
     for attempt in {1..7}; do
-      if ! LC_ALL=C pgrep -x Gothic2Notr >/dev/null && python3 -c 'import os, sys; sys.exit(os.getloadavg()[0] > 4)'; then
+      if ! LC_ALL=C pgrep -fl Gothic2Notr >"$out/game-before.txt" && python3 -c 'import os, sys; sys.exit(os.getloadavg()[0] > 8)'; then
         ready=1
         break
       fi
       [[ "$attempt" == 7 ]] || sleep 10
     done
     uptime >"$out/host-load.txt"
-    [[ "$ready" == 1 ]] || { echo 'loadprobe: Mac busy (game running or load average above 4); skipped' >&2; exit 75; }
+    [[ "$ready" == 1 ]] || { echo 'loadprobe: Mac busy (game running or load average above 8); skipped' >&2; exit 75; }
   fi
   echo "== $tag"
   env "${envs[@]}" "WORLD=$world.ZEN" "$ROOT/scripts/bench.sh" "$scenario" "$out" >"$out.stdout" 2>&1 || {
@@ -60,5 +60,16 @@ for tag in "$@"; do
   grep -q '"kind":"rec_stop"' "$out/events.jsonl" || {
     echo "loadprobe: scenario did not finish in $out/events.jsonl" >&2; exit 1;
   }
+  if [[ "$HOST" == local ]] && ! python3 - "$out/game.log" <<'PYLOAD'
+import re
+import sys
+text = open(sys.argv[1]).read()
+loads = re.findall(r'\[loadprobe-host\] load_1=([0-9.]+)', text)
+sys.exit(not loads or float(loads[0]) > 8)
+PYLOAD
+  then
+    echo 'loadprobe: Mac started above load average 8; discard and repeat' >&2
+    exit 75
+  fi
   echo "$(grep -c '\[loadprobe\]' "$out/game.log") probe lines: $out/game.log"
 done

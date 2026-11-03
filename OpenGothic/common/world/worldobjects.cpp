@@ -255,12 +255,14 @@ void WorldObjects::linkPlacedItem(PlacedItem& source, Item& item) {
   }
 
 void WorldObjects::finalizePlacedItems() {
+  LoadProbe::Startup::Scope probe(LoadProbe::Startup::Other,true,"placed-items");
   const auto started=std::chrono::steady_clock::now();
   std::vector<DynamicWorld::PlacedItemCandidate> candidates;
   candidates.reserve(placedItems.size());
   // Build all authored shapes before querying any of them. The same Item path
   // selects item_hulls and applies scale for both the census and live bodies.
   for(auto& source:placedItems) {
+    LoadProbe::Startup::Scope prepareProbe(LoadProbe::Startup::PhysicsPrepare,false,"placed-items");
     source.item->setPhysicsEnable(owner);
     candidates.push_back({&source.item->physic,source.item->isMission(),source.visual});
     }
@@ -271,7 +273,10 @@ void WorldObjects::finalizePlacedItems() {
     source.validation=verdicts[i];
     source.item->placedAllowed=source.validation.enabled;
     allowed+=source.validation.enabled;
+    {
+    LoadProbe::Startup::Scope removeProbe(LoadProbe::Startup::PhysicsRemove,false,"placed-items");
     source.item->setPhysicsDisable();
+    }
     }
   placedValidationMs=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started).count();
   Tempest::Log::i("placed item geometry: ",placedItems.size()," candidates, ",allowed,
