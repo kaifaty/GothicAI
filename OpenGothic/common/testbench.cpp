@@ -12048,7 +12048,9 @@ void characterIdleWeapon(World& world,std::string_view kind) {
     npc.setToBowMode(id);
     }
   else {arenaAbort("character idle weapon expects fist|1h|2h|bow");return;}
-  event("character_idle_weapon","\"role\":"+jsonStr(idle.role)+",\"kind\":"+jsonStr(kind)+
+  // An NPC held by an AI wait does not re-pick its stand animation by itself.
+  npc.setAnim(Npc::Anim::Idle);
+  event("character_idle_weapon","\"role\":"+jsonStr(idle.role)+",\"weapon\":"+jsonStr(kind)+
     ",\"weapon_state\":"+std::to_string(int(npc.weaponState()))+",\"body_state\":"+std::to_string(uint32_t(npc.bodyStateMasked())));
   }
 
