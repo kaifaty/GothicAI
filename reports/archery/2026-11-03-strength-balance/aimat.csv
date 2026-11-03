@@ -1,0 +1,3 @@
+version,shots,drawing_frames,disturb_mean,disturb_max,within_draw_rises,max_rise
+before,3,87,0.9522758620689655,1.68,12,1.1349999999999998
+after,3,87,0.18736781609195402,0.545,0,0
