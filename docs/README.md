@@ -187,7 +187,7 @@
 
 | Группа | Модули |
 |---|---|
-| Вход и связь | `cli` (точка входа, `ServerState`), `game` (WebSocket), `protocol` (pydantic-схемы), `trace`, `replay`, `journal` (журнал для человека) |
+| Вход и связь | `cli` (точка входа, флаги), `session` (сборка и закрытие сеанса, подключение подсистем, `SessionEnv`, `ServerState`), `console` (интерактивная `Console`), `game` (WebSocket), `protocol` (pydantic-схемы), `trace`, `replay`, `journal` (журнал для человека) |
 | Разговор | `mercy` (сдача NPC и героя, выкуп, пощада и память ветки; `--no-mercy`), `combat_barks` (крики по реальному урону), `dialogue`, `talk`, `turn`, `voice`, `tts`, `persona`, `memory` (SQLite, ветвится с сейвами; общая таблица векторов), `embeddings` (HTTP-клиент смыслового поиска памяти, `--no-embeddings`), `budget`, `npc_tools`, `executor`, `parley` (дорожные шайки, оклик главаря, аренда тишины, повод для драки, ультиматум, перемирие с шайкой; `--no-parley`), `bounty` (ступени знания охоты, тайны за рычаг, ванильные последствия и слух; `--no-bounty`), `commands`, `orders`, `group` (общая беседа), `interject`, `llm/` (`chatgpt`, `openai`, `local`, `off`; `fake` — только юнит-тесты) |
 | Быстрый контур и тело | `brain/` (`decider`, `planner`, `reflex`, `day`, `apply`, `tiers`, `stimuli`, `incident`, `situation`), `incidents`, `daylife`, `initiative`, `bodies` (исход мягких действий), `bodypilot` (боевое тело P30), `beasts` (волки слышат тон), `wrath` (терпение к оскорблениям) |
 | Восприятие и знание | `perception`, `sightings`, `found_traces`, `places`, `lore`, `whereabouts`, `knowledge`, `social`, `gossip`, `trust`, `people_knowledge`, `attitudes`, `concerns` |
