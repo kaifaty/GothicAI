@@ -59,6 +59,8 @@ class World final {
     // loading calls updateNpcSimTiers() after the first residency update.
     void                 updateNpcSimTiers() { wobj.updateSimTiers(); }
     const NpcSimTiers::Stats& npcSimTierStats() const { return wobj.simTierStats(); }
+    void noteGraphFpLoadResolution() { wobj.noteGraphFpLoadResolution(); }
+    void noteNpcGraphFallback(bool ground) { wobj.noteNpcGraphFallback(ground); }
     bool                 landscapeReady() const { return !wview || wview->landscapeReady(); }
 
     void                 load(Serialize& fin );

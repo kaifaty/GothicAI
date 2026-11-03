@@ -20321,6 +20321,10 @@ bool TestBench::isActive() {
   return scenarioPath!=nullptr;
   }
 
+bool TestBench::strictGraphMovement(const Npc& npc) {
+  return isActive() && (bench.npcTierTest.npc==&npc || bench.npcSpeedTest.npc==&npc);
+  }
+
 bool TestBench::isPhysicsNoiseDebug() {
   return bodyTraceAlive && bench.noiseBridgeDebug;
   }

@@ -472,11 +472,14 @@ void WorldObjects::tick(uint64_t dt, uint64_t dtPlayer) {
     ++tierTicks[size_t(tier)];
     const bool nativeCombat=tier==NpcSimTier::Simplified && npc.nativeCombatMovement();
     const bool nativeMobsi=tier==NpcSimTier::Simplified && npc.nativeMobsiApproach();
+    const bool graphFallback=npc.graphMovementFallback();
     npc.tick(d);
     if(tier==NpcSimTier::Simplified && (nativeCombat || npc.nativeCombatMovement()))
       ++simTiers.nativeCombatNpcTicks;
     if(tier==NpcSimTier::Simplified && (nativeMobsi || npc.nativeMobsiApproach()))
       ++simTiers.nativeMobsiApproachNpcTicks;
+    if(graphFallback || npc.graphMovementFallback())
+      ++simTiers.graphFallbackNpcTicks;
     }
   if(runOpen)
     tierMs[size_t(runTier)] += std::chrono::duration<double,std::milli>(Clock::now()-runStart).count();

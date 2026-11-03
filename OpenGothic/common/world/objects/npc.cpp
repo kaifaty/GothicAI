@@ -631,6 +631,8 @@ void Npc::load(Serialize &fin, size_t id, std::string_view directory) {
     sym->set_instance(hnpc);
 
   fin.read(x,y,z,angle,sz);
+  loadedFpPosition = position();
+  loadedFpReferences = true;
   resetCharacterVisualHeight();
   lieVisualYOffset=0;
   fin.read(wlkMode,trGuild,talentsSk,talentsVl,refuseTalkMilis);
@@ -1114,6 +1116,65 @@ void Npc::setProcessPolicy(NpcProcessPolicy t) {
   visual.setTextureOwner(position(),!isPlayer());
   }
 
+void Npc::setSimTier(NpcSimTier t) {
+  simTierValue = t;
+  simTierAssigned = true;
+  if(!loadedFpReferences)
+    return;
+  loadedFpReferences = false;
+  if(t!=NpcSimTier::Simplified || isPlayer() || !simplifiedMovementEnabled())
+    return;
+
+  // Names are the existing save representation. Defer their disambiguation
+  // until the loaded world has assigned tiers, using the original saved pose.
+  const auto resolve=[&](const WayPoint* point,const char* reference) {
+    if(point==nullptr || !point->isFreePoint())
+      return point;
+    const WayPoint* nearest=nullptr;
+    size_t matches=0;
+    float distance=std::numeric_limits<float>::max();
+    owner.forEachWayPoint([&](const WayPoint& candidate) {
+      if(!candidate.isFreePoint() || candidate.name!=point->name)
+        return;
+      ++matches;
+      const float d=(candidate.position()-loadedFpPosition).quadLength();
+      if(d<distance) {
+        distance=d;
+        nearest=&candidate;
+        }
+      });
+    if(matches<=1)
+      return point;
+    owner.noteGraphFpLoadResolution();
+    const auto* symbol=owner.script().findSymbol(instanceSymbol());
+    Log::i("npc_graph_fp_load_resolution npc=",symbol!=nullptr ? symbol->name() : displayName(),
+           " world_id=",owner.npcId(this)," id=",hnpc->id," fp=",point->name," reference=",reference,
+           " candidates=",matches," saved=(",loadedFpPosition.x,",",loadedFpPosition.y,",",loadedFpPosition.z,
+           ") resolved=(",nearest->position().x,",",nearest->position().y,",",nearest->position().z,
+           ") changed=",nearest!=point);
+    return nearest;
+    };
+  currentFp=resolve(currentFp,"currentFp");
+  currentFpLock=FpLock(resolve(currentFpLock.point(),"currentFpLock"));
+  go2.wp=resolve(go2.wp,"goTo");
+  WayPath path;
+  while(const auto* point=wayPath.pop())
+    path.add(*resolve(point,"path"));
+  path.reverse();
+  wayPath=std::move(path);
+  for(auto* queue:{&aiQueue,&aiQueueOverlay}) {
+    std::vector<AiQueue::AiAction> actions;
+    actions.reserve(queue->size());
+    while(queue->size()>0) {
+      auto action=queue->pop();
+      action.point=resolve(action.point,"queue");
+      actions.push_back(std::move(action));
+      }
+    for(auto i=actions.rbegin();i!=actions.rend();++i)
+      queue->pushFront(std::move(*i));
+    }
+  }
+
 void Npc::setWalkMode(WalkBit m) {
   //NOTE: other bits are situational, and should not be set directly
   wlkMode = m & (WalkBit::WM_Run | WalkBit::WM_Walk | WalkBit::WM_Sneak);
@@ -1130,12 +1191,17 @@ WalkBit Npc::walkMode() const {
   return wlk;
   }
 
-bool Npc::usesSimplifiedMovement() const {
+bool Npc::simplifiedMovementEnabled() {
   static const bool enabled = [] {
     const auto* value = std::getenv("OPENGOTHIC_NPC_SIMPLE_MOVE");
     return value==nullptr || value[0]!='0';
     }();
-  return enabled && simTier()==NpcSimTier::Simplified && !isPlayer() &&
+  return enabled;
+  }
+
+bool Npc::usesSimplifiedMovement() const {
+  return simplifiedMovementEnabled() && !simpleMovement.nativeFallback &&
+         simTier()==NpcSimTier::Simplified && !isPlayer() &&
          !nativeCombatMovement() && !nativeMobsiApproach() && !nativeMobsiTransition();
   }
 
@@ -4107,15 +4173,38 @@ auto Npc::pendingSimpleGoTo() const -> const AiQueue::AiAction* {
     }
   }
 
-WayPath Npc::simpleWayTo(const WayPoint& point) const {
+void Npc::fallbackSimpleMovement(std::string_view reason, bool ground) {
+  if(!simpleMovement.nativeFallback) {
+    const auto* symbol=owner.script().findSymbol(instanceSymbol());
+    const auto from=position();
+    const auto to=go2.empty() ? from : go2.target();
+    Log::e("npc_graph_fallback_",ground ? "ground" : "segment",": npc=",
+           symbol!=nullptr ? symbol->name() : std::to_string(instanceSymbol()),
+           " world_id=",owner.npcId(this)," id=",hnpc->id,
+           " tick=",owner.tickCount()," game_ms=",owner.time().toInt(),
+           " segment=",from.x,",",from.y,",",from.z," -> ",to.x,",",to.y,",",to.z,
+           " reason=",reason);
+    owner.noteNpcGraphFallback(ground);
+    }
+  simpleMovement.nativeFallback=true;
+  if(TestBench::strictGraphMovement(*this))
+    throw std::runtime_error(std::string(reason));
+  // Preserve the action, its remaining path and the transform. The native
+  // body owns this action until arrival/cancellation, including tier changes.
+  updateSimpleMovement();
+  }
+
+WayPath Npc::simpleWayTo(const WayPoint& point) {
   // Native freepoint routes are terminal segments. Sending an unconnected
   // point through a nearby waynet can cross a different floor or an island.
   if(!point.isConnected())
     return owner.wayTo(*this,point);
   const auto connected=[](const WayPoint& p) { return p.isConnected(); };
   const auto* near=owner.findWayPoint(position(),connected);
-  if(near==nullptr)
-    throw std::runtime_error("Simplified movement requires a connected waynet");
+  if(near==nullptr) {
+    fallbackSimpleMovement("no connected waynet");
+    return owner.wayTo(*this,point);
+    }
   auto delta=near->groundPos-position();
   float distance2=delta.x*delta.x+delta.z*delta.z;
   for(const auto& connection:near->connections()) {
@@ -4130,8 +4219,10 @@ WayPath Npc::simpleWayTo(const WayPoint& point) const {
   // Only graph actors may recover off-network by a straight segment to Near.
   auto path=distance2>4.f*MoveAlgo::closeToPointThreshold*MoveAlgo::closeToPointThreshold ?
             owner.wayTo(*near,point) : owner.wayTo(*this,point);
-  if(path.first()==nullptr && !MoveAlgo::isClose(*this,point))
-    throw std::runtime_error("Simplified movement has no waynet path to its target");
+  if(path.first()==nullptr && !MoveAlgo::isClose(*this,point)) {
+    fallbackSimpleMovement("no waynet path to target");
+    return owner.wayTo(*this,point);
+    }
   return path;
   }
 
@@ -4215,22 +4306,31 @@ void Npc::refreshSimpleGoTo() {
   if(go2.flag==GT_Item)
     go2.pos=target;
   const auto* anchor=owner.findWayPoint(target,[](const WayPoint& p) { return p.isConnected(); });
-  if(anchor==nullptr)
-    throw std::runtime_error("Simplified movement target has no connected waypoint");
+  if(anchor==nullptr) {
+    fallbackSimpleMovement("live target has no connected waypoint");
+    return;
+    }
   if(anchor==pending->point)
     return;
-  auto action=aiQueue.pop();
-  action.point=anchor;
   if(go2.flag==GT_Way && go2.wp!=nullptr) {
     // Keep the current edge, replacing only its remaining suffix as a live
     // target moves. A Full body returning here follows the same native path.
-    wayPath=owner.wayTo(*go2.wp,*anchor);
-    if(wayPath.pop()!=go2.wp)
-      throw std::runtime_error("Simplified movement lost its current waynet edge");
+    auto suffix=owner.wayTo(*go2.wp,*anchor);
+    if(suffix.pop()!=go2.wp) {
+      fallbackSimpleMovement("live target suffix lost current waynet edge");
+      return;
+      }
+    auto action=aiQueue.pop();
+    action.point=anchor;
+    wayPath=std::move(suffix);
     aiQueue.pushFront(std::move(action));
     } else if(usesSimplifiedMovement() && !MoveAlgo::isClose(*this,*anchor)) {
+    auto action=aiQueue.pop();
+    action.point=anchor;
     beginSimpleGoTo(std::move(action),*anchor);
     } else {
+    auto action=aiQueue.pop();
+    action.point=anchor;
     aiQueue.pushFront(std::move(action));
     }
   }
@@ -4491,10 +4591,8 @@ bool Npc::implSimpleGoTo(uint64_t dt, float destDist) {
         }
       }
     catch(const std::runtime_error& error) {
-      const auto* symbol=owner.script().findSymbol(instanceSymbol());
-      const auto name=symbol!=nullptr ? std::string(symbol->name()) : std::to_string(instanceSymbol());
-      throw std::runtime_error(name+" at world tick "+std::to_string(owner.tickCount())+
-                               ", game ms "+std::to_string(owner.time().toInt())+": "+error.what());
+      fallbackSimpleMovement(error.what(),true);
+      return implGoTo(dt,destDist);
       }
     }
 
@@ -6968,11 +7066,13 @@ void Npc::nextAiAction(AiQueue& queue, uint64_t dt) {
       attachToPoint(nullptr);
       if(usesSimplifiedMovement() && act.target!=nullptr) {
         act.point=owner.findWayPoint(act.target->position(),[](const WayPoint& p) { return p.isConnected(); });
-        if(act.point==nullptr)
-          throw std::runtime_error("Simplified NPC target has no connected waypoint");
-        const auto* anchor=act.point;
-        beginSimpleGoTo(std::move(act),*anchor);
-        break;
+        if(act.point==nullptr) {
+          fallbackSimpleMovement("NPC target has no connected waypoint");
+          } else {
+          const auto* anchor=act.point;
+          beginSimpleGoTo(std::move(act),*anchor);
+          break;
+          }
         }
       go2.set(act.target,act.point!=nullptr || act.i0>0 ? GT_Point : GT_Way);
       go2.pointDistance = float(act.i0);
@@ -7405,11 +7505,13 @@ void Npc::nextAiAction(AiQueue& queue, uint64_t dt) {
           break;
         const auto target=act.item!=nullptr ? act.item->position() : go2.pos;
         act.point=owner.findWayPoint(target,[](const WayPoint& p) { return p.isConnected(); });
-        if(act.point==nullptr)
-          throw std::runtime_error("Simplified item target has no connected waypoint");
-        const auto* anchor=act.point;
-        beginSimpleGoTo(std::move(act),*anchor);
-        break;
+        if(act.point==nullptr) {
+          fallbackSimpleMovement("item target has no connected waypoint");
+          } else {
+          const auto* anchor=act.point;
+          beginSimpleGoTo(std::move(act),*anchor);
+          break;
+          }
         }
       if(act.point!=nullptr) {
         go2.clear();
@@ -11113,6 +11215,7 @@ void Npc::clearGoTo() {
     stopWalking();
     go2.clear();
     }
+  simpleMovement.nativeFallback=false;
   }
 
 void Npc::stopWalking() {

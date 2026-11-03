@@ -260,14 +260,18 @@ void writeSample(World& w, Journal& j, int64_t scheduledMs) {
         near60 += d<6000.f*6000.f;
         }
       }
-    std::fprintf(j.cost,"%.0f,%.3f,%zu,%zu,%llu,%zu,%zu,%llu,%llu,%.6f,%.6f,%llu,%llu,%llu,%llu\n",t,wall,near30,near60,
+    std::fprintf(j.cost,"%.0f,%.3f,%zu,%zu,%llu,%zu,%zu,%llu,%llu,%.6f,%.6f,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu\n",t,wall,near30,near60,
                  (unsigned long long)(s.ticks-prev.ticks),s.full,s.simplified,
                  (unsigned long long)(s.toFull-prev.toFull),(unsigned long long)(s.toSimplified-prev.toSimplified),
                  s.fullTickMsTotal-prev.fullTickMsTotal,s.simplifiedTickMsTotal-prev.simplifiedTickMsTotal,
                  (unsigned long long)(s.fullNpcTicks-prev.fullNpcTicks),
                  (unsigned long long)(s.simplifiedNpcTicks-prev.simplifiedNpcTicks),
                  (unsigned long long)(s.nativeCombatNpcTicks-prev.nativeCombatNpcTicks),
-                 (unsigned long long)(s.nativeMobsiApproachNpcTicks-prev.nativeMobsiApproachNpcTicks));
+                 (unsigned long long)(s.nativeMobsiApproachNpcTicks-prev.nativeMobsiApproachNpcTicks),
+                 (unsigned long long)(s.fpLoadResolutions-prev.fpLoadResolutions),
+                 (unsigned long long)(s.graphFallbackGround-prev.graphFallbackGround),
+                 (unsigned long long)(s.graphFallbackSegment-prev.graphFallbackSegment),
+                 (unsigned long long)(s.graphFallbackNpcTicks-prev.graphFallbackNpcTicks));
     std::fflush(j.cost);
     j.tiersAtSample = s;
     }
@@ -313,12 +317,14 @@ void finish(World& w, Journal& j, const char* reason) {
   const double fullMs = s.fullTickMsTotal-j.tiersAtStart.fullTickMsTotal;
   const double simpMs = s.simplifiedTickMsTotal-j.tiersAtStart.simplifiedTickMsTotal;
   const uint64_t ticks = s.ticks-j.tiersAtStart.ticks;
-  char buf[1024];
+  char buf[1536];
   std::snprintf(buf,sizeof(buf),
                 ",\"end_reason\":\"%s\",\"end_world_ms\":%lld,\"elapsed_game_min\":%.4f,\"wall_s\":%.3f,"
                 "\"samples\":%llu,\"rows\":%llu,\"events\":%llu,\"inserted\":%llu,\"removed\":%llu,\"deaths\":%llu,"
                 "\"world_ticks\":%llu,\"npc_full_ticks\":%llu,\"npc_simplified_ticks\":%llu,\"npc_native_combat_ticks\":%llu,"
                 "\"npc_native_mobsi_approach_ticks\":%llu,"
+                "\"npc_graph_fp_load_resolutions\":%llu,\"npc_graph_fallback_ground\":%llu,"
+                "\"npc_graph_fallback_segment\":%llu,\"npc_graph_fallback_ticks\":%llu,"
                 "\"npc_full_tick_ms\":%.3f,\"npc_simplified_tick_ms\":%.3f,"
                 "\"npc_to_full\":%llu,\"npc_to_simplified\":%llu,\"npc_full_end\":%zu,\"npc_simplified_end\":%zu",
                 reason,(long long)w.time().toInt(),relativeMinutes(j,w.time().toInt()),wall,
@@ -328,7 +334,11 @@ void finish(World& w, Journal& j, const char* reason) {
                 (unsigned long long)(s.fullNpcTicks-j.tiersAtStart.fullNpcTicks),
                 (unsigned long long)(s.simplifiedNpcTicks-j.tiersAtStart.simplifiedNpcTicks),
                 (unsigned long long)(s.nativeCombatNpcTicks-j.tiersAtStart.nativeCombatNpcTicks),
-                (unsigned long long)(s.nativeMobsiApproachNpcTicks-j.tiersAtStart.nativeMobsiApproachNpcTicks),fullMs,simpMs,
+                (unsigned long long)(s.nativeMobsiApproachNpcTicks-j.tiersAtStart.nativeMobsiApproachNpcTicks),
+                (unsigned long long)s.fpLoadResolutions,
+                (unsigned long long)(s.graphFallbackGround-j.tiersAtStart.graphFallbackGround),
+                (unsigned long long)(s.graphFallbackSegment-j.tiersAtStart.graphFallbackSegment),
+                (unsigned long long)(s.graphFallbackNpcTicks-j.tiersAtStart.graphFallbackNpcTicks),fullMs,simpMs,
                 (unsigned long long)(s.toFull-j.tiersAtStart.toFull),
                 (unsigned long long)(s.toSimplified-j.tiersAtStart.toSimplified),s.full,s.simplified);
   writeHeader(w,j,std::string(buf)+",\"logic_audit\":"+NpcLogicAudit::stats().json());
@@ -390,7 +400,8 @@ bool NpcDayJournal::start(World& w, const Options& options, std::string& error) 
                          "inv_hash,inv_items,mob,tier,policy,hero\n");
   std::fprintf(j.events,"t_min,key,kind,value,x,y,z\n");
   std::fprintf(j.cost,"t_min,wall_s,near_hero_30m,near_hero_60m,world_ticks,npc_full,npc_simplified,to_full,"
-                      "to_simplified,full_tick_ms,simplified_tick_ms,full_npc_ticks,simplified_npc_ticks,native_combat_npc_ticks,native_mobsi_approach_npc_ticks\n");
+                      "to_simplified,full_tick_ms,simplified_tick_ms,full_npc_ticks,simplified_npc_ticks,native_combat_npc_ticks,native_mobsi_approach_npc_ticks,"
+                      "npc_graph_fp_load_resolutions,npc_graph_fallback_ground,npc_graph_fallback_segment,npc_graph_fallback_ticks\n");
   if(j.heights!=nullptr)
     std::fprintf(j.heights,"t_min,key,x,y,z,nearest_wp,ground_hit,height_error_m,guild,slide_angle_deg,step_height_cm,edge_to,goal_kind,goal_name\n");
   if(j.arrivals!=nullptr)

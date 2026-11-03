@@ -47,6 +47,8 @@ struct Stats {
   uint64_t fullNpcTicks = 0, simplifiedNpcTicks = 0;
   uint64_t nativeCombatNpcTicks = 0;
   uint64_t nativeMobsiApproachNpcTicks = 0;
+  uint64_t fpLoadResolutions = 0;
+  uint64_t graphFallbackGround = 0, graphFallbackSegment = 0, graphFallbackNpcTicks = 0;
   Mode     mode = Mode::Auto;
 
   std::string probeFields() const;

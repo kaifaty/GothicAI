@@ -144,7 +144,7 @@ class Npc final {
     // Simulation tier (world/npcsimtier.h), separate from processPolicy. Runtime only, not saved.
     NpcSimTier simTier() const { return simTierValue; }
     bool       hasSimTier() const { return simTierAssigned; }
-    void       setSimTier(NpcSimTier t) { simTierValue = t; simTierAssigned = true; }
+    void       setSimTier(NpcSimTier t);
     void       setSimTierOverride(std::optional<NpcSimTier> t) { simTierOverrideValue = t; }
     auto       simTierOverride() const -> std::optional<NpcSimTier> { return simTierOverrideValue; }
 
@@ -152,6 +152,7 @@ class Npc final {
     void       setWalkMode(WalkBit m);
     WalkBit    walkMode() const;
     bool       usesSimplifiedMovement() const;
+    bool       graphMovementFallback() const { return simpleMovement.nativeFallback; }
     bool       nativeCombatMovement() const;
     bool       nativeMobsiApproach() const;
     bool       nativeMobsiTransition() const;
@@ -895,7 +896,9 @@ class Npc final {
     bool      implSimpleGoTo(uint64_t dt, float destDist);
     bool      nativeBodyAction() const;
     auto      pendingSimpleGoTo() const -> const AiQueue::AiAction*;
-    WayPath   simpleWayTo(const WayPoint& point) const;
+    static bool simplifiedMovementEnabled();
+    void      fallbackSimpleMovement(std::string_view reason, bool ground = false);
+    WayPath   simpleWayTo(const WayPoint& point);
     void      beginSimpleGoTo(AiQueue::AiAction&& action, const WayPoint& point);
     bool      finishSimpleGoTo(uint64_t dt);
     void      refreshSimpleGoTo();
@@ -1246,6 +1249,8 @@ class Npc final {
     NpcProcessPolicy               aiPolicy=NpcProcessPolicy::AiNormal;
     NpcSimTier                     simTierValue=NpcSimTier::Full; // transient, not serialized
     bool                           simTierAssigned=false;
+    bool                           loadedFpReferences=false;
+    Tempest::Vec3                  loadedFpPosition;
     std::optional<NpcSimTier>       simTierOverrideValue; // bench-only, not serialized
     NpcLogicalState                logicalBody;
     AiState                        aiState;
@@ -1309,6 +1314,7 @@ class Npc final {
     // load/tier entry instead of adding another saved movement cursor.
     struct SimpleMovement {
       bool active = false;
+      bool nativeFallback = false;
       const WayPoint* edgeTo = nullptr;
       Tempest::Vec3 edgeFrom;
       const WayHeights::Profile* ground = nullptr;

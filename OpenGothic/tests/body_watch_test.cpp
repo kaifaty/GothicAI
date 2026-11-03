@@ -1300,6 +1300,58 @@ class NpcLogicalStateContract final {
         expect(std::abs(error)<=int64_t(tickMs),"logical save/load canonical sequence end is predicted within one world tick");
         expect(std::abs(actionError)<=int64_t(tickMs),"logical save/load canonical action end is predicted within one world tick");
         }
+      {
+        ++cases;
+        auto& world=*gothic.world();
+        auto* moving=world.npcById(id);
+        const auto* first=world.findPoint("FP_ROAM_CITY_TO_FOREST_15",false);
+        const WayPoint* second=nullptr;
+        world.forEachWayPoint([&](const WayPoint& point) {
+          if(first!=nullptr && point.isFreePoint() && point.name==first->name && &point!=first)
+            second=&point;
+          });
+        expect(first!=nullptr && second!=nullptr,"FP save/load fixture uses duplicate authored freepoint names");
+        moving->clearAiQueue(); moving->clearState(true); moving->clearGoTo();
+        moving->setTarget(nullptr);
+        moving->setExternalControl(true);
+        moving->setPosition(second->groundPos);
+        moving->attachToPoint(second);
+        moving->go2.set(second);
+        moving->wayPath.add(*second);
+        moving->aiPush(AiQueue::aiGoToPoint(*second));
+        std::vector<uint8_t> bytes;
+        {
+          Tempest::MemWriter writer(bytes);
+          Serialize out(writer);
+          out.setContext(&world);
+          moving->save(out,id,"/npc/");
+        }
+        const auto load=[&](NpcSimTier tier) {
+          moving->currentFpLock=FpLock();
+          Tempest::MemReader reader(bytes);
+          Serialize in(reader);
+          in.setContext(&world);
+          moving->load(in,id,"/npc/");
+          moving->postValidate();
+          moving->setSimTier(tier);
+          };
+        load(NpcSimTier::Full);
+        expect(moving->currentFp==first && moving->currentFpLock.point()==first &&
+               moving->go2.wp==first && moving->wayPath.last()==first && moving->aiQueue.front()->point==first,
+               "Full save/load keeps native first-match FP references");
+        const auto count=world.npcSimTierStats().fpLoadResolutions;
+        load(NpcSimTier::Simplified);
+        expect(moving->currentFp==second && moving->currentFpLock.point()==second &&
+               moving->go2.wp==second && moving->wayPath.last()==second && moving->aiQueue.front()->point==second &&
+               world.npcSimTierStats().fpLoadResolutions==count+5,
+               "Simplified save/load resolves every ambiguous saved reference against the saved NPC position");
+        moving->setSimTier(NpcSimTier::Full);
+        expect(moving->currentFp==second && moving->currentFpLock.point()==second &&
+               moving->go2.wp==second && moving->wayPath.last()==second && moving->aiQueue.front()->point==second &&
+               world.npcSimTierStats().fpLoadResolutions==count+5,
+               "a later Full tier continues the resolved FP action without another lookup");
+        moving->clearAiQueue(); moving->clearGoTo(); moving->attachToPoint(nullptr);
+        }
       for(const bool itemGoal:{false,true}) {
         ++cases;
         auto* moving=gothic.world()->npcById(id);
@@ -1457,6 +1509,8 @@ class NpcLogicalStateContract final {
         expect(moving->setAnim(Npc::Anim::Idle),"graph corner fixture starts from the native walk idle");
         moving->aiPush(AiQueue::aiGoToPoint(*goal));
         moving->aiPush(AiQueue::aiWait(5000));
+        const auto graphFailures=gothic.world()->npcSimTierStats().graphFallbackGround+
+                                 gothic.world()->npcSimTierStats().graphFallbackSegment;
         bool started=false,occupied=false,arrived=false,waitPreserved=true;
         float closest=std::numeric_limits<float>::max();
         float tickTravel=0;
@@ -1482,14 +1536,29 @@ class NpcLogicalStateContract final {
                "an occupied internal vertex is visited within one tick instead of cutting the tavern corner");
         expect(arrived && moving->usesSimplifiedMovement() && MoveAlgo::isClose(*moving,*goal,finalDistance),
                "the graph route arrives using the native terminal distance");
+        expect(graphFailures==gothic.world()->npcSimTierStats().graphFallbackGround+
+                              gothic.world()->npcSimTierStats().graphFallbackSegment,
+               "the graph corner contract never substitutes native movement for a failed segment");
         const auto* head=moving->aiQueue.front();
         expect(waitPreserved && ((head!=nullptr && head->act==AI_Wait) || moving->waitTime>moving->world().tickCount()),
                "the occupied-corner route preserves and releases its following wait");
         hero->attachToPoint(heroPoint);
         moving->clearAiQueue(); moving->clearGoTo();
+        moving->setPosition(start->groundPos+Tempest::Vec3(0,500,0));
+        moving->go2.set(goal);
+        moving->simpleMovement.edgeTo=nullptr;
+        const auto groundFailures=gothic.world()->npcSimTierStats().graphFallbackGround;
+        expect(moving->implGoTo(tickMs) && moving->graphMovementFallback() &&
+               gothic.world()->npcSimTierStats().graphFallbackGround==groundFailures+1 &&
+               moving->currentGoToPoint()==goal,
+               "unsupported graph ground hands the same remaining action to native movement without throwing");
         moving->setSimTierOverride(NpcSimTier::Full);
         moving->setSimTier(NpcSimTier::Full);
         moving->updateSimpleMovement();
+        expect(moving->graphMovementFallback() && moving->currentGoToPoint()==goal,
+               "a graph fallback keeps its native action through a tier switch");
+        moving->clearGoTo();
+        expect(!moving->graphMovementFallback(),"native fallback ends with its action");
       }
       // Native float frame rounding can fire a loop event one millisecond
       // before its integer schedule. The audit must match the same cycle.

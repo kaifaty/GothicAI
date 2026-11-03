@@ -21,6 +21,8 @@ struct PhysicsNoise;
 // Inert unless OPENGOTHIC_BENCH is set. Usage: scripts/bench.sh, see scripts/bench/README.md.
 namespace TestBench {
   bool     isActive();
+  // Explicit graph fixtures must fail instead of accepting a native fallback.
+  bool     strictGraphMovement(const Npc& npc);
   // Only the current npcduel copies retain near-hero simulation and physics at any distance.
   bool     npcDuelActor(const Npc& npc);
   void     npcDuelSwingStart(const Npc& npc);
