@@ -154,6 +154,9 @@ class BowDraw final {
     // the bow turned in the hand about the grip after the shot (the top limb forward, the shake)
     // cm back the hand was taken after the shot before the release as an archer's (4 cm, there and back)
     float               followBefore() const;
+    // the follow through's move (off) of the drawing hand from base kept out of the head
+    Tempest::Vec3       clearHead(const Tempest::Matrix4x4* tr, size_t numBones, const Tempest::Vec3& base,
+                                  const Tempest::Vec3& off) const;
     void                turnBow(Tempest::Matrix4x4* tr, const Tempest::Vec3& up, const Tempest::Vec3& axis);
     // the drawing hand after the shot: back along the arrow toward the ear, a little out from the head
     Tempest::Vec3       releaseOffset(const Tempest::Matrix4x4* tr, size_t numBones, const Tempest::Vec3& axis) const;

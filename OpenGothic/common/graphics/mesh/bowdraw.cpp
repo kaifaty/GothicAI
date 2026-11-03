@@ -41,7 +41,7 @@ constexpr float SnapT     = 0.06f; // ...in that many seconds
 constexpr float BackMin   = 3.f;   // cm on back along the neck toward the ear, a light bow drawn short...
 constexpr float BackKick  = 6.f;   // ...and that much more for the hardest kick
 constexpr float BackT     = 0.3f;  // seconds: there by then (eased out), held
-constexpr float OutMin    = 0.5f;  // cm out from the head on the way (not into the cheek)...
+constexpr float OutMin    = 1.5f;  // cm out from the head with the snap (the fingers go back along the cheek: not into it)...
 constexpr float OutKick   = 1.f;
 constexpr float FadeAt    = 0.6f;  // seconds: the hand let go of the follow through (if not gone on to the
 constexpr float FadeT     = 0.3f;  // quiver), so slowly
@@ -57,6 +57,8 @@ constexpr float ShakeDeg  = 1.5f;  // degrees: the bow's shake at the hardest ki
 constexpr float ShakeHz   = 16.f;  // ...as the limbs ring (14..18 Hz)...
 constexpr float ShakeTau  = 0.1f;  // ...dying out (seconds, by the archer's strength: Archery::releaseSettle)
 constexpr float RelT      = FadeAt+FadeT; // seconds the release goes on
+constexpr float HeadIn    = 1.5f;  // cm: the follow through takes the hand no deeper into the head (the capsule
+                                   // of the hair) than that, or than the pose had it
 
 bool enabled = []() {
   const char* v = std::getenv("OPENGOTHIC_BOWDRAW");
@@ -276,7 +278,7 @@ bool BowDraw::update(const Input& in) {
     const float t = followT;
     const bool  on = t<RelT;
     relBack = on ? Snap*easeOut(t/SnapT) + (BackMin+BackKick*kickK)*easeOut((t-SnapT)/(BackT-SnapT)) : 0.f;
-    relOut  = on ? (OutMin+OutKick*kickK)*easeOut(t/BackT) : 0.f;
+    relOut  = on ? (OutMin+OutKick*kickK)*easeOut(t/SnapT) : 0.f;
     relFade = on ? 1.f - smooth((t-FadeAt)/FadeT) : 0.f;
     follow  = relBack*relFade;
     const float kick = BowKickMin+BowKickK*kickK;
@@ -439,6 +441,25 @@ float BowDraw::followBefore() const {
   return Follow*bump*bump;
   }
 
+Vec3 BowDraw::clearHead(const Matrix4x4* tr, size_t numBones, const Vec3& base, const Vec3& off) const {
+  if(head>=numBones || off==Vec3())
+    return off;
+  // the hand goes back along the cheek to the ear: off the head's axis as far as it has to
+  const Vec3  h0 = position(tr[head]);
+  const Vec3  h1 = crown<numBones ? position(tr[crown]) : h0+Vec3(0,20,0);
+  const Vec3  hd = h1-h0;
+  const float hl = dot(hd,hd);
+  auto        on = [&](const Vec3& p) { return h0 + hd*(hl>0.f ? std::clamp(dot(p-h0,hd)/hl,0.f,1.f) : 0.f); };
+  const float limit = std::min(length(base-on(base))-HeadR,-HeadIn);
+  const Vec3  p  = base+off;
+  const Vec3  c  = on(p);
+  const Vec3  r  = p-c;
+  const float gap = length(r)-HeadR;
+  if(gap>=limit || length(r)<1e-3f)
+    return off;
+  return off + normalize(r)*(limit-gap);
+  }
+
 void BowDraw::turnBow(Matrix4x4* tr, const Vec3& up, const Vec3& axis) {
   if(bowTurn==0.f || bowHand==size_t(-1))
     return;
@@ -533,7 +554,7 @@ void BowDraw::reload(Matrix4x4* tr, size_t numBones, const Vec3& nock, const Vec
   if(toString<=0.f) {
     // let go of slowly at first: the hand is off to the quiver as soon as the reload starts (40 ms after the
     // shot), the follow through would hardly show
-    const Vec3 off = releaseOffset(tr,numBones,axis)*(1.f-toQuiver*toQuiver);
+    const Vec3 off = clearHead(tr,numBones,at,releaseOffset(tr,numBones,axis)*(1.f-toQuiver*toQuiver));
     relShown = length(off);
     seen     = off + axis*followBefore();
     at += off;
@@ -668,7 +689,7 @@ void BowDraw::implApply(Matrix4x4* tr, size_t numBones) {
   travel = full*(1.f-draw)*weight;
   shown  = 1.f - travel/span;
   // the follow through: back past the face
-  const Vec3 off  = releaseOffset(tr,numBones,axis);
+  const Vec3 off  = clearHead(tr,numBones,position(tr[hand])+shift+way*travel,releaseOffset(tr,numBones,axis));
   relShown = length(off);
   seen     = off + axis*followBefore();
   const Vec3 move = shift + way*travel + off;
