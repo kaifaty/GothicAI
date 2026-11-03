@@ -1,0 +1,472 @@
+{
+ "note": "Drinking and eating with the left hand over a fight stance (reports/Питьё с оружием в руке.md). Times in seconds from the start; insert, sfx and destroy at Gothic's own shares; hand keys in the chest frame (up, left, forward cm); head pitch > 0 leans back.",
+ "fps": 25,
+ "layer": 21,
+ "stances": [
+  {
+   "level": "HUMANS",
+   "prefix": "FIST",
+   "stance": "S_FISTRUN"
+  },
+  {
+   "level": "HUMANS",
+   "prefix": "1H",
+   "stance": "S_1HRUN"
+  },
+  {
+   "level": "HUMANS_1HST1",
+   "prefix": "1H",
+   "stance": "S_1HRUN"
+  },
+  {
+   "level": "HUMANS_1HST2",
+   "prefix": "1H",
+   "stance": "S_1HRUN"
+  },
+  {
+   "level": "HUMANS",
+   "prefix": "2H",
+   "stance": "S_2HRUN"
+  },
+  {
+   "level": "HUMANS_2HST1",
+   "prefix": "2H",
+   "stance": "S_2HRUN"
+  },
+  {
+   "level": "HUMANS_2HST2",
+   "prefix": "2H",
+   "stance": "S_2HRUN"
+  }
+ ],
+ "uses": [
+  {
+   "name": "DRINK",
+   "seconds": 1.52,
+   "insert": 0.16,
+   "sfx": [
+    0.68,
+    "DrinkBottle"
+   ],
+   "destroy": 1.32,
+   "measure": {
+    "clip": "T_POTIONFAST_S0_2_STAND",
+    "frame": 12
+   },
+   "head": [
+    [
+     0,
+     0
+    ],
+    [
+     0.4,
+     6
+    ],
+    [
+     0.68,
+     40
+    ],
+    [
+     1.0,
+     38
+    ],
+    [
+     1.28,
+     8
+    ],
+    [
+     1.52,
+     0
+    ]
+   ],
+   "keys": [
+    {
+     "t": 0,
+     "hand": "stance"
+    },
+    {
+     "t": 0.2,
+     "hand": {
+      "chest": [
+       -30,
+       14,
+       18
+      ]
+     },
+     "turn": 0.1,
+     "elbow": [
+      0.2,
+      1,
+      -0.6
+     ]
+    },
+    {
+     "t": 0.5,
+     "hand": "mouth",
+     "elbow": [
+      0.55,
+      0.55,
+      0.65
+     ]
+    },
+    {
+     "t": 0.68,
+     "hand": "mouth",
+     "elbow": [
+      0.55,
+      0.55,
+      0.65
+     ]
+    },
+    {
+     "t": 1.04,
+     "hand": "mouth",
+     "elbow": [
+      0.55,
+      0.55,
+      0.65
+     ]
+    },
+    {
+     "t": 1.32,
+     "hand": {
+      "chest": [
+       -22,
+       18,
+       30
+      ]
+     },
+     "turn": 0.4,
+     "elbow": [
+      0.2,
+      0.9,
+      0.3
+     ]
+    },
+    {
+     "t": 1.52,
+     "hand": "stance"
+    }
+   ],
+   "wrist_pole": 0.5
+  },
+  {
+   "name": "EATAPPLE",
+   "seconds": 1.12,
+   "insert": 0.2,
+   "sfx": [
+    0.68,
+    "Eat_Apple"
+   ],
+   "destroy": 0.92,
+   "measure": {
+    "clip": "T_FOOD_S0_2_STAND",
+    "frame": 8
+   },
+   "head": [
+    [
+     0,
+     0
+    ],
+    [
+     0.45,
+     -4
+    ],
+    [
+     0.68,
+     -9
+    ],
+    [
+     0.84,
+     -6
+    ],
+    [
+     1.12,
+     0
+    ]
+   ],
+   "keys": [
+    {
+     "t": 0,
+     "hand": "stance"
+    },
+    {
+     "t": 0.24,
+     "hand": {
+      "chest": [
+       -30,
+       14,
+       18
+      ]
+     },
+     "turn": 0.1,
+     "elbow": [
+      0.2,
+      1,
+      -0.6
+     ]
+    },
+    {
+     "t": 0.5,
+     "hand": "mouth",
+     "elbow": [
+      0.4,
+      0.7,
+      0.6
+     ]
+    },
+    {
+     "t": 0.68,
+     "hand": "mouth",
+     "elbow": [
+      0.4,
+      0.7,
+      0.6
+     ]
+    },
+    {
+     "t": 0.84,
+     "hand": "mouth",
+     "elbow": [
+      0.4,
+      0.7,
+      0.6
+     ]
+    },
+    {
+     "t": 1.12,
+     "hand": "stance"
+    }
+   ],
+   "wrist_pole": 0.5
+  },
+  {
+   "name": "EATBREAD",
+   "seconds": 1.56,
+   "insert": 0.24,
+   "sfx": [
+    0.68,
+    "EAT_BREAD"
+   ],
+   "destroy": 1.32,
+   "measure": {
+    "clip": "T_FOODHUGE_S0_2_STAND",
+    "frame": 8
+   },
+   "head": [
+    [
+     0,
+     0
+    ],
+    [
+     0.45,
+     -4
+    ],
+    [
+     0.68,
+     -9
+    ],
+    [
+     0.9,
+     -5
+    ],
+    [
+     1.1,
+     -9
+    ],
+    [
+     1.3,
+     -4
+    ],
+    [
+     1.56,
+     0
+    ]
+   ],
+   "keys": [
+    {
+     "t": 0,
+     "hand": "stance"
+    },
+    {
+     "t": 0.26,
+     "hand": {
+      "chest": [
+       -30,
+       14,
+       18
+      ]
+     },
+     "turn": 0.1,
+     "elbow": [
+      0.2,
+      1,
+      -0.6
+     ]
+    },
+    {
+     "t": 0.52,
+     "hand": "mouth",
+     "elbow": [
+      -0.1,
+      0.9,
+      0.4
+     ]
+    },
+    {
+     "t": 0.68,
+     "hand": "mouth",
+     "elbow": [
+      -0.1,
+      0.9,
+      0.4
+     ]
+    },
+    {
+     "t": 0.9,
+     "hand": {
+      "chest": [
+       10,
+       12,
+       40
+      ]
+     },
+     "turn": 0.85,
+     "elbow": [
+      0.2,
+      0.9,
+      0.3
+     ]
+    },
+    {
+     "t": 1.1,
+     "hand": "mouth",
+     "elbow": [
+      -0.1,
+      0.9,
+      0.4
+     ]
+    },
+    {
+     "t": 1.56,
+     "hand": "stance"
+    }
+   ],
+   "wrist_pole": 0.5
+  },
+  {
+   "name": "EATMEAT",
+   "seconds": 1.52,
+   "insert": 0.24,
+   "sfx": [
+    0.68,
+    "Eat_Meat"
+   ],
+   "destroy": 1.16,
+   "measure": {
+    "clip": "T_MEAT_S0_2_STAND",
+    "frame": 8
+   },
+   "head": [
+    [
+     0,
+     0
+    ],
+    [
+     0.45,
+     -4
+    ],
+    [
+     0.68,
+     -10
+    ],
+    [
+     0.9,
+     -6
+    ],
+    [
+     1.12,
+     -9
+    ],
+    [
+     1.3,
+     -3
+    ],
+    [
+     1.52,
+     0
+    ]
+   ],
+   "keys": [
+    {
+     "t": 0,
+     "hand": "stance"
+    },
+    {
+     "t": 0.26,
+     "hand": {
+      "chest": [
+       -30,
+       14,
+       18
+      ]
+     },
+     "turn": 0.1,
+     "elbow": [
+      0.2,
+      1,
+      -0.6
+     ]
+    },
+    {
+     "t": 0.52,
+     "hand": "mouth",
+     "elbow": [
+      0.2,
+      0.9,
+      0.4
+     ]
+    },
+    {
+     "t": 0.68,
+     "hand": "mouth",
+     "elbow": [
+      0.2,
+      0.9,
+      0.4
+     ]
+    },
+    {
+     "t": 0.9,
+     "hand": {
+      "chest": [
+       8,
+       12,
+       40
+      ]
+     },
+     "turn": 0.85,
+     "elbow": [
+      0.2,
+      0.9,
+      0.3
+     ]
+    },
+    {
+     "t": 1.12,
+     "hand": "mouth",
+     "elbow": [
+      0.2,
+      0.9,
+      0.4
+     ]
+    },
+    {
+     "t": 1.52,
+     "hand": "stance"
+    }
+   ],
+   "wrist_pole": 0.5
+  }
+ ]
+}
