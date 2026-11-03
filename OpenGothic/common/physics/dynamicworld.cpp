@@ -29,6 +29,7 @@
 #include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
 #include <Jolt/Geometry/ClosestPoint.h>
 #include <Jolt/Core/StreamOut.h>
+#include <Jolt/Core/UnorderedMap.h>
 
 #include <algorithm>
 #include <cmath>
