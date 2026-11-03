@@ -234,7 +234,7 @@ def build(st: Stance, use: dict, fps: float, layer: int, mouth: np.ndarray, name
         dots = np.abs(np.sum(q[1:] * q[:-1], axis=1)).clip(0, 1)
         sp = np.degrees(2 * np.arccos(dots)) * fps
         if sp.max() > report["speed"]:
-            report["speed"], report["speed_at"] = round(float(sp.max())), f"{n[6:] if n.startswith('BIP01 ') else n} {t[int(sp.argmax()) + 1]:.2f}"
+            report["speed"], report["speed_at"] = round(float(sp.max())), f"{n.removeprefix('BIP01 ')} {t[int(sp.argmax()) + 1]:.2f}"
     anim = ga.Animation(name, "", layer, fps, frames, [st.gi[n] for n in NODES], loc, rot)
     report.update(checks(st, anim, use, mouth, fps))
     return anim, report
