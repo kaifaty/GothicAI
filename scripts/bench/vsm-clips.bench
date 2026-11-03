@@ -116,15 +116,21 @@ wait 500
 cam hold
 shot market-day-b
 wait 500
-goto pos 5391 320 -5822
+# the harbour water at the way to the ship: the boat at the waterline, the bay with the ship, the quay and crane
+# (the water is forward-lit: its sun shadow comes from VSM too)
+goto NW_CITY_WAY_TO_SHIP_FISCHER_06
 watch player
 cam look 120
-cam world 850 300 0
+cam world 900 500 90
 wait 10000
 cam hold
 shot harbour-day-a
-cam world 850 300 180
+cam world 900 500 180
 wait 500
 cam hold
 shot harbour-day-b
+cam world 900 500 270
+wait 500
+cam hold
+shot harbour-day-c
 wait 1000
