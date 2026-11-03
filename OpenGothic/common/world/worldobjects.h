@@ -30,6 +30,8 @@ struct PhysicsNoise;
 
 class WorldObjects final {
   public:
+    size_t probeVobBytes() const;
+
     WorldObjects(World &owner);
     ~WorldObjects();
 

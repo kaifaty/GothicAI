@@ -356,3 +356,11 @@ void WayHeights::save() {
     Tempest::Log::e("waypoints: cache write failed: ",error.what());
     }
   }
+
+
+size_t WayHeights::probeCpuBytes() const {
+  size_t bytes=sizeof(*this)+points.size()*sizeof(decltype(points)::value_type)+
+               baked.capacity()*sizeof(baked[0])+profiles.size()*sizeof(decltype(profiles)::value_type);
+  for(const auto& [key,profile]:profiles) bytes+=profile.samples.capacity()*sizeof(profile.samples[0]);
+  return bytes;
+  }

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import socket
 import threading
 import time
 from types import SimpleNamespace
@@ -9,12 +10,13 @@ from unittest.mock import AsyncMock, Mock
 import httpx
 import numpy as np
 import pytest
+from aiohttp import web
 from websockets.asyncio.client import connect
 from websockets.exceptions import InvalidStatus
 
 from gothic_asr import cli
 from gothic_asr.audio import RATE, float_to_pcm16, resample
-from gothic_asr.laughter import WINDOW, LaughterDetector
+from gothic_asr.laughter import DEFAULT_URL, WINDOW, RemoteLaughter
 from gothic_asr.providers import AsrError, make_provider, parse_spec
 from gothic_asr.providers.base import Transcript
 from gothic_asr.providers.fake import FakeProvider
@@ -28,9 +30,12 @@ def tone(seconds: float, rate: int = RATE) -> np.ndarray:
     return (0.3 * np.sin(2 * np.pi * 220 * t)).astype(np.float32)
 
 
-def _laughter(score: float = 0.98) -> LaughterDetector:
-    detector = LaughterDetector()
-    detector._session = SimpleNamespace(run=Mock(return_value=[np.array([score])]))
+def _laughter(score: float = 0.98) -> RemoteLaughter:
+    detector = RemoteLaughter()
+    detector.close()
+    detector._client = SimpleNamespace(
+        request=Mock(return_value=httpx.Response(200, json={"laughing": score})), close=Mock(),
+    )
     return detector
 
 
@@ -58,7 +63,7 @@ async def test_silence_is_skipped() -> None:
         cancelled = recognizer.utterance("ru")
         await cancelled.feed(tone(1))
         await cancelled.cancel()
-        detector._session.run.assert_not_called()
+        detector._client.request.assert_not_called()
     finally:
         await recognizer.aclose()
 
@@ -337,7 +342,7 @@ async def test_hints_read_back_are_heard_again_without_them() -> None:
         r = await _utterance(recognizer, tone(2))
         assert (r.text, r.provider, r.laughing) == ("Ха-ха-ха.", "fake", 0.98)
         assert primary.transcribe.await_args.args[0].shape == (2 * RATE,)
-        detector._session.run.assert_called_once()
+        detector._client.request.assert_called_once()
     finally:
         await recognizer.aclose()
 
@@ -372,13 +377,13 @@ async def test_incremental_laughter_matches_whole_recording(seconds, starts, qui
     entered = threading.Event()
     seen: list[float] = []
 
-    def run(_outputs, inputs):
+    def run(_method, _url, *, content, headers):
         entered.set()
-        seen.append(float(inputs["waveform"][0, 0]))
-        window = inputs["waveform"][0, : inputs["n_valid"][0]]
-        return [np.array([window.mean() if np.any(window) else 0.99])]
+        window = np.frombuffer(content, dtype="<f4")
+        seen.append(float(window[0]))
+        return httpx.Response(200, json={"laughing": float(window.mean()) if np.any(window) else 0.99})
 
-    detector._session.run.side_effect = run
+    detector._client.request.side_effect = run
     expected = detector.score(audio)
     seen.clear()
     entered.clear()
@@ -401,11 +406,11 @@ async def test_slow_laughter_does_not_hold_the_transcript(caplog) -> None:
     release = threading.Event()
     detector = _laughter()
 
-    def blocked(_outputs, _inputs):
+    def blocked(*args, **kwargs):
         release.wait(2)
-        return [np.array([0.99])]
+        return httpx.Response(200, json={"laughing": 0.99})
 
-    detector._session.run.side_effect = blocked
+    detector._client.request.side_effect = blocked
     recognizer = Recognizer(FakeProvider(text="Привет."), laughter=detector)
     try:
         started = time.monotonic()
@@ -421,7 +426,7 @@ async def test_slow_laughter_does_not_hold_the_transcript(caplog) -> None:
 
 async def test_laughter_failure_keeps_the_transcript(caplog) -> None:
     detector = _laughter()
-    detector._session.run.side_effect = RuntimeError("detector failed")
+    detector._client.request.side_effect = httpx.ReadError("detector failed")
     recognizer = Recognizer(FakeProvider(text="Привет."), laughter=detector)
     try:
         for _ in range(2):
@@ -506,161 +511,163 @@ async def test_voxtral_speaks_audiocpp_live() -> None:
     assert headers["transfer-encoding"] == "chunked"
 
 
-def test_laughter_onnx_inputs_and_cpu_options(monkeypatch, tmp_path) -> None:
-    from types import SimpleNamespace
+@pytest.fixture
+async def laughter_server():
+    state = {"requests": [], "health": 0, "delay": 0.0, "status": 200, "body": {"laughing": 0.875}}
 
-    import onnxruntime as ort
+    async def health(request):
+        state["health"] += 1
+        return web.json_response({"device": "cuda", "provider": "CUDAExecutionProvider"})
 
-    from gothic_asr.laughter import WINDOW, LaughterDetector
+    async def window(request):
+        state["requests"].append(await request.read())
+        await asyncio.sleep(state["delay"])
+        if isinstance(state["body"], str):
+            return web.Response(text=state["body"], status=state["status"])
+        return web.json_response(state["body"], status=state["status"])
 
-    seen = {}
-
-    def run(outputs, inputs):
-        seen["outputs"], seen["inputs"] = outputs, inputs
-        return [np.array([0.875], dtype=np.float32)]
-
-    def session(path, *, sess_options, providers):
-        seen.update(path=path, threads=sess_options.intra_op_num_threads, providers=providers)
-        return SimpleNamespace(run=run)
-
-    monkeypatch.setattr(ort, "InferenceSession", session)
-    model = tmp_path / "model.onnx"
-    detector = LaughterDetector(model)
-    detector._load()
-    audio = tone(1.25)
-    assert detector.score(audio) == 0.875
-    assert (seen["path"], seen["threads"], seen["providers"]) == (
-        str(model), 4, ["CPUExecutionProvider"]
-    )
-    assert seen["outputs"] == ["clip_prob"]
-    waveform = seen["inputs"]["waveform"]
-    valid = seen["inputs"]["n_valid"]
-    assert waveform.shape == (1, WINDOW) and waveform.dtype == np.float32
-    assert valid.shape == (1,) and valid.dtype == np.int64 and valid[0] == len(audio)
-    np.testing.assert_array_equal(waveform[0, : len(audio)], audio)
-    assert not np.any(waveform[0, len(audio) :])
+    app = web.Application()
+    app.router.add_get("/health", health)
+    app.router.add_post("/window", window)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    port = site._server.sockets[0].getsockname()[1]
+    try:
+        yield f"http://127.0.0.1:{port}", state
+    finally:
+        await runner.cleanup()
 
 
-@pytest.mark.parametrize("corrupt", [False, True])
-async def test_laughter_model_download_is_verified_before_publish(monkeypatch, tmp_path, corrupt) -> None:
-    import hashlib
-    from pathlib import Path
+async def test_remote_laughter_score_and_prepare(laughter_server) -> None:
+    url, state = laughter_server
+    detector = RemoteLaughter(url)
+    audio = tone(1)
+    try:
+        assert await detector.prepare()
+        assert state["health"] == 1
+        assert await asyncio.to_thread(detector.window, audio) == 0.875
+        assert state["requests"] == [audio.astype("<f4").tobytes()]
+        assert detector._client.timeout.connect == 0.5 and detector._client.timeout.read == 1.0
+    finally:
+        detector.close()
 
+
+async def test_remote_laughter_refusal_backoff_and_recovery(monkeypatch, caplog) -> None:
     from gothic_asr import laughter
 
-    body = b"fake ONNX model"
-    payload = bytes([body[0] ^ 1]) + body[1:] if corrupt else body
-    monkeypatch.setattr(laughter, "MODEL_BYTES", len(body))
-    monkeypatch.setattr(laughter, "MODEL_SHA256", hashlib.sha256(body).hexdigest())
-    model = tmp_path / "laughter" / "model.onnx"
-    partial = model.with_name("model.onnx.part")
+    # Reserve a local port without listening so the first connection is refused.
+    reserved = socket.socket()
+    reserved.bind(("127.0.0.1", 0))
+    port = reserved.getsockname()[1]
+    detector = RemoteLaughter(f"http://127.0.0.1:{port}")
+    clock = [100.0]
+    monkeypatch.setattr(laughter, "monotonic", lambda: clock[0])
+    caplog.set_level("INFO", logger="gothic_asr.laughter")
     requests = []
-    published = []
 
-    def response(request):
-        requests.append(str(request.url))
-        assert not model.exists()
-        return httpx.Response(200, content=payload)
+    async def window(request):
+        requests.append(await request.read())
+        return web.json_response({"laughing": 0.95})
 
-    original_client = httpx.AsyncClient
-    monkeypatch.setattr(
-        laughter.httpx, "AsyncClient",
-        lambda **kwargs: original_client(transport=httpx.MockTransport(response), **kwargs),
-    )
-    original_replace = Path.replace
-
-    def publish(source, target):
-        assert source == partial and target == model
-        assert not model.exists() and source.read_bytes() == body
-        published.append(source)
-        return original_replace(source, target)
-
-    monkeypatch.setattr(Path, "replace", publish)
-    if corrupt:
-        with pytest.raises(ValueError, match="verification failed"):
-            await laughter.fetch_model(model)
-        assert not model.exists() and published == []
-    else:
-        assert await laughter.fetch_model(model) == model
-        assert model.read_bytes() == body and published == [partial]
-        assert await laughter.fetch_model(model) == model
-    assert not partial.exists()
-    assert requests == [laughter.MODEL_URL]
+    app = web.Application()
+    app.router.add_post("/window", window)
+    runner = web.AppRunner(app)
+    try:
+        started = time.monotonic()
+        assert await asyncio.to_thread(detector.window, tone(1)) is None
+        assert time.monotonic() - started < 0.6
+        reserved.close()
+        await runner.setup()
+        await web.TCPSite(runner, "127.0.0.1", port).start()
+        for offset in (0.0, 1.0, 9.99):
+            clock[0] = 100.0 + offset
+            assert await asyncio.to_thread(detector.window, tone(1)) is None
+        assert requests == []
+        assert caplog.text.count("laughter detector unavailable") == 1
+        clock[0] = 110.0
+        assert await asyncio.to_thread(detector.window, tone(1)) == 0.95
+        assert len(requests) == 1 and "laughter detector recovered" in caplog.text
+    finally:
+        reserved.close()
+        detector.close()
+        await runner.cleanup()
 
 
-@pytest.mark.parametrize("failure", [False, True])
-def test_fetch_laughter_cli_reports_download_failure(monkeypatch, tmp_path, capsys, failure) -> None:
-    model = tmp_path / "custom.onnx"
-    fetch = AsyncMock(return_value=model, side_effect=OSError("download failed") if failure else None)
-    monkeypatch.setattr(cli, "fetch_model", fetch)
-    monkeypatch.setattr(cli, "load_env_file", lambda: None)
-    monkeypatch.setattr(
-        "sys.argv", ["gothic-asr", "fetch-laughter", "--laughter-model", str(model)]
-    )
-    with pytest.raises(SystemExit) as exit_info:
-        cli.main()
-    assert exit_info.value.code == int(failure)
-    fetch.assert_awaited_once_with(model)
-    output = capsys.readouterr()
-    assert "download failed" in output.err if failure else str(model) in output.out
+async def test_remote_laughter_timeout(laughter_server, caplog) -> None:
+    url, state = laughter_server
+    state["delay"] = 1.1
+    detector = RemoteLaughter(url)
+    try:
+        started = time.monotonic()
+        assert await asyncio.to_thread(detector.window, tone(1)) is None
+        assert 0.9 < time.monotonic() - started < 1.5
+        assert len(state["requests"]) == 1
+        assert caplog.text.count("laughter detector unavailable") == 1
+    finally:
+        detector.close()
 
 
-async def test_no_laughter_skips_detector_creation(monkeypatch, tmp_path) -> None:
-    from types import SimpleNamespace
+@pytest.mark.parametrize(("status", "body"), [
+    (503, {"error": "loading"}), (201, {"laughing": 0.5}), (200, "invalid JSON"),
+])
+async def test_remote_laughter_bad_response_stays_out_of_recognition(laughter_server, caplog, status, body):
+    url, state = laughter_server
+    state.update(status=status, body=body)
+    recognizer = Recognizer(FakeProvider(text="Привет."), laughter=RemoteLaughter(url))
+    try:
+        for _ in range(2):
+            result = await recognizer.recognize(tone(1), "ru")
+            assert result.text == "Привет." and result.laughing is None
+        assert caplog.text.count("laughter detector unavailable") == 1
+    finally:
+        await recognizer.aclose()
 
+
+async def test_no_laughter_skips_detector_creation(monkeypatch) -> None:
     def unexpected_detector(*args, **kwargs):
         pytest.fail("disabled laughter detector must not be created")
 
-    monkeypatch.setattr(cli, "LaughterDetector", unexpected_detector)
+    monkeypatch.setattr(cli, "RemoteLaughter", unexpected_detector)
     args = SimpleNamespace(
-        provider="fake", fallback="none", timeout=4.0, no_laughter=True,
-        laughter_model=tmp_path / "absent.onnx", laughter_threads=4,
+        provider="fake", fallback="none", timeout=4.0, no_laughter=True, laughter_url=DEFAULT_URL,
     )
     recognizer = cli._recognizer(args)
     assert recognizer.laughter is None
     await recognizer.aclose()
 
 
-async def test_laughter_real_model_when_installed(monkeypatch) -> None:
-    from gothic_asr import laughter
-
-    if not laughter.DEFAULT_MODEL.is_file():
-        pytest.skip("laughter ONNX model is not installed")
-
-    def unexpected_download(*args, **kwargs):
-        pytest.fail("installed model smoke test must not download weights")
-
-    monkeypatch.setattr(laughter.httpx, "AsyncClient", unexpected_download)
-    detector = laughter.LaughterDetector()
-    assert await detector.prepare()
-    score = await asyncio.to_thread(detector.score, tone(1.0))
-    assert score is not None and 0.0 <= score <= 1.0
-
-
-def test_laughter_cli_scores_each_wav(monkeypatch, tmp_path, capsys) -> None:
-    from types import SimpleNamespace
-    from unittest.mock import Mock
-
-    detector = SimpleNamespace(prepare=AsyncMock(return_value=True), score=Mock(return_value=0.987))
+@pytest.mark.parametrize(("explicit", "environment", "expected"), [
+    ("http://explicit:47838", "http://environment:47838", "http://explicit:47838"),
+    (None, "http://environment:47838", "http://environment:47838"),
+    (None, None, DEFAULT_URL),
+])
+def test_laughter_cli_scores_each_wav(monkeypatch, capsys, explicit, environment, expected) -> None:
+    detector = SimpleNamespace(
+        prepare=AsyncMock(return_value=True), score=Mock(return_value=0.987), close=Mock(),
+    )
     options = []
 
-    def make_detector(model, threads):
-        options.append((model, threads))
+    def make_detector(url):
+        options.append(url)
         return detector
 
-    model = tmp_path / "custom.onnx"
-    monkeypatch.setattr(cli, "LaughterDetector", make_detector)
+    monkeypatch.setattr(cli, "RemoteLaughter", make_detector)
     monkeypatch.setattr(cli, "load_env_file", lambda: None)
     monkeypatch.setattr(cli, "read_wav", lambda _: (tone(1.0, 8000), 8000))
-    monkeypatch.setattr("sys.argv", [
-        "gothic-asr", "laughter", "--laughter-model", str(model), "--laughter-threads", "2",
-        "first.wav", "second.wav",
-    ])
+    if environment:
+        monkeypatch.setenv("GOTHIC_LAUGHTER_URL", environment)
+    else:
+        monkeypatch.delenv("GOTHIC_LAUGHTER_URL", raising=False)
+    options_arg = ["--laughter-url", explicit] if explicit else []
+    monkeypatch.setattr("sys.argv", ["gothic-asr", "laughter", *options_arg, "first.wav", "second.wav"])
     with pytest.raises(SystemExit) as exit_info:
         cli.main()
     assert exit_info.value.code == 0
-    assert options == [(model, 2)]
+    assert options == [expected]
     detector.prepare.assert_awaited_once_with()
+    detector.close.assert_called_once_with()
     assert detector.score.call_count == 2
     assert all(call.args[0].shape == (RATE,) for call in detector.score.call_args_list)
     assert capsys.readouterr().out.splitlines() == [

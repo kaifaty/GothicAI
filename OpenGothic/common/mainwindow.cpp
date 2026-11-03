@@ -1,3 +1,4 @@
+#include "loadprobe.h"
 #include "appcadence.h"
 #include "mainwindow.h"
 
@@ -1582,6 +1583,8 @@ void MainWindow::render(){
     profile.flag(FrameProfile::Flag::SubmitCompleted);
     { FrameProfile::Scope timing(FrameProfile::Zone::Present); device.present(swapchain); }
     profile.flag(FrameProfile::Flag::PresentCompleted);
+    if(LoadProbe::enabled() && Gothic::inst().isInGame() && Gothic::inst().checkLoading()==Gothic::LoadState::Idle)
+      LoadProbe::presented();
     profile.outcome(FrameProfile::Outcome::Submitted);
     cmdId = (cmdId+1u)%Resources::MaxFramesInFlight;
 

@@ -15,6 +15,8 @@ class WayPoint;
 // Derived initial-vob ground positions; independent of the immutable game base.
 class WayHeights final {
   public:
+    size_t probeCpuBytes() const;
+
     static constexpr uint32_t BakeVersion = 1;
     struct Key {
       std::string base, world, content;

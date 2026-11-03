@@ -2072,3 +2072,15 @@ int32_t World::guildOfRoom(std::string_view portalName) {
     }
   return GIL_NONE;
   }
+
+
+void World::probeMemory(std::string_view stage) const {
+  if(!LoadProbe::enabled()) return;
+  Resources::probeMemory(stage);
+  if(wview) wview->probeMemory(stage);
+  Tempest::Log::i("[loadprobe-owner] stage=",stage," name=waynet_cpu bytes=",wmatrix->probeCpuBytes());
+  Tempest::Log::i("[loadprobe-owner] stage=",stage," name=vob_objects_cpu bytes=",wobj.probeVobBytes());
+  auto& vm=game.script()->getVm();
+  Tempest::Log::i("[loadprobe-owner] stage=",stage," name=script_vm_cpu bytes=",
+                 sizeof(vm)+vm.symbols().capacity()*sizeof(vm.symbols()[0])+vm.size());
+  }

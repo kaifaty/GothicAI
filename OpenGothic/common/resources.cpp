@@ -783,6 +783,7 @@ Tempest::Texture2d* Resources::implLoadTexture(std::string_view cname, bool forc
       record.pinned=true;
       if(record.tail) {
         LoadProbe::Vobs::Scope probe("texture_load");
+        LoadProbe::Startup::Scope startupProbe(LoadProbe::Startup::Texture);
         auto full=decodeBaseTexture(record.source,record.mipmaps);
         auto replacement=dev->texture(full.pixmap,full.useMipmap);
         if(record.resident)
@@ -800,6 +801,7 @@ Tempest::Texture2d* Resources::implLoadTexture(std::string_view cname, bool forc
     }
 
   LoadProbe::Vobs::Scope probe("texture_load");
+  LoadProbe::Startup::Scope startupProbe(LoadProbe::Startup::Texture);
   const auto probeT = LoadProbe::now();
   TextureData data;
   Texture2d tex;
@@ -1344,6 +1346,7 @@ void Resources::indexMaterialMaps() {
   }
 
 const Texture2d* Resources::implLoadMaterialTexture(const std::string& path, TextureKind kind) {
+  LoadProbe::Requests::add(2,path);
   LoadProbe::Vobs::Scope probe("texture_request");
   if(path.empty())
     return nullptr;
@@ -1352,6 +1355,7 @@ const Texture2d* Resources::implLoadMaterialTexture(const std::string& path, Tex
     return it->second.get();
   std::unique_ptr<Texture2d> texture;
   LoadProbe::Vobs::Scope loadProbe("texture_load");
+  LoadProbe::Startup::Scope startupProbe(LoadProbe::Startup::Texture);
   const auto probeT = LoadProbe::now();
   try {
     TextureData data=decodeBaseTexture(path,false,textureStreaming && loadingTextureTail ? textureSkipMips : 0);
@@ -1377,6 +1381,7 @@ const Texture2d* Resources::implLoadMaterialTexture(const std::string& path, Tex
 
 Texture2d Resources::implLoadTextureUncached(std::string_view name, bool forceMips) {
   LoadProbe::Vobs::Scope probe("texture_load");
+  LoadProbe::Startup::Scope startupProbe(LoadProbe::Startup::Texture);
   auto decoded=implDecodeTexture(name,forceMips);
   try {
     return decoded.pixmap.isEmpty() ? Texture2d() : device().texture(decoded.pixmap,decoded.useMipmap);
@@ -1947,6 +1952,7 @@ void Resources::updateTextures(ChunkResidency* residency) {
   }
 
 ProtoMesh* Resources::implLoadMesh(std::string_view name) {
+  LoadProbe::Requests::add(0,name);
   LoadProbe::Vobs::Scope probe("mesh_hit");
   if(name.size()==0)
     return nullptr;
@@ -1959,8 +1965,10 @@ ProtoMesh* Resources::implLoadMesh(std::string_view name) {
     return it->second.get();
 
   probe.rename("mesh_miss");
+  LoadProbe::Startup::Scope startupProbe(LoadProbe::Startup::Model);
   auto  t   = implLoadMeshMain(cname);
   auto  ret = t.get();
+  if(LoadProbe::enabled() && ret) LoadProbe::Startup::Scope::bytes(LoadProbe::Startup::Model,ret->probeCpuBytes());
   aniMeshCache[cname] = std::move(t);
   if(ret==nullptr)
     Log::e("unable to load mesh \"",cname,"\"");
@@ -2500,6 +2508,7 @@ Texture2d Resources::loadTextureUncached(std::string_view name, bool forceMips) 
   }
 
 const Texture2d* Resources::loadTexture(std::string_view name, bool forceMips, bool pinned) {
+  LoadProbe::Requests::add(2,name);
   LoadProbe::Vobs::Scope probe("texture_request");
   std::lock_guard<std::recursive_mutex> g(inst->sync);
   return inst->implLoadTexture(name,forceMips,pinned);
@@ -2516,6 +2525,7 @@ const Texture2d* Resources::loadTexture(Tempest::Color color) {
     return it->second.get();
 
   LoadProbe::Vobs::Scope loadProbe("texture_load");
+  LoadProbe::Startup::Scope startupProbe(LoadProbe::Startup::Texture);
   uint8_t iv[4] = { uint8_t(255.f*color.r()), uint8_t(255.f*color.g()), uint8_t(255.f*color.b()), uint8_t(255.f*color.a()) };
   Pixmap p2(1,1,TextureFormat::RGBA8);
   std::memcpy(p2.data(),iv,4);
@@ -2591,6 +2601,7 @@ Texture2d Resources::loadTexturePm(const Pixmap &pm) {
   if(isHeadless())
     return Texture2d();
   LoadProbe::Vobs::Scope loadProbe("texture_load");
+  LoadProbe::Startup::Scope startupProbe(LoadProbe::Startup::Texture);
   if(pm.isEmpty()) {
     Pixmap p2(1,1,TextureFormat::R8);
     std::memset(p2.data(),0,1);
@@ -2680,6 +2691,7 @@ const Skeleton* Resources::loadSkeleton(std::string_view name) {
   }
 
 const Animation* Resources::loadAnimation(std::string_view name) {
+  LoadProbe::Requests::add(1,name);
   auto cname = std::string(name);
 
   std::lock_guard<std::recursive_mutex> g(inst->sync);
@@ -2687,8 +2699,10 @@ const Animation* Resources::loadAnimation(std::string_view name) {
   auto it=cache.find(cname);
   if(it!=cache.end())
     return it->second.get();
+  LoadProbe::Startup::Scope startupProbe(LoadProbe::Startup::Animation);
   auto t       = inst->implLoadAnimation(cname);
   auto ret     = t.get();
+  if(LoadProbe::enabled() && ret) LoadProbe::Startup::Scope::bytes(LoadProbe::Startup::Animation,ret->probeCpuBytes());
   cache[cname] = std::move(t);
   return ret;
   }
@@ -2739,6 +2753,7 @@ bool Resources::loadModelRecord(std::string_view name, T& out, T (*read)(const s
   }
 
 bool Resources::loadHierarchyData(std::string_view name, asset::ModelHierarchy& out) {
+  LoadProbe::Startup::Scope startupProbe(LoadProbe::Startup::Skeleton);
   return loadModelRecord(name,out,ModelData::readHierarchy);
   }
 
@@ -2794,6 +2809,7 @@ bool Resources::loadModelScriptData(std::string_view name, asset::ModelScript& o
   }
 
 bool Resources::loadAnimationData(std::string_view name, asset::ModelAnimation& out) {
+  LoadProbe::Requests::add(1,name);
   return loadModelRecord(name,out,ModelData::readAnimation);
   }
 
@@ -3085,4 +3101,21 @@ Tempest::VertexBuffer<Resources::Vertex> Resources::sphere(int passCount, float 
     }
 
   return device().vbo(r);
+  }
+
+
+void Resources::probeMemory(std::string_view stage) {
+  if(!LoadProbe::enabled()) return;
+  std::lock_guard<std::recursive_mutex> lock(inst->sync);
+  size_t models=0,npcModels=0,skeletons=0,animations=0;
+  for(const auto& [name,mesh]:inst->aniMeshCache) {
+    if(!mesh) continue;
+    models+=mesh->probeCpuBytes();
+    if(LoadProbe::Requests::npcModels.count(name)) npcModels+=mesh->probeCpuBytes();
+    if(mesh->skeleton) skeletons+=mesh->skeleton->probeCpuBytes();
+    }
+  for(const auto& [name,animation]:inst->animCache)
+    if(animation) animations+=animation->probeCpuBytes();
+  for(const auto& [name,bytes]:{std::pair{"model_cpu",models},std::pair{"npc_model_cpu",npcModels},std::pair{"skeleton_cpu",skeletons},std::pair{"animation_cpu",animations}})
+    Tempest::Log::i("[loadprobe-owner] stage=",stage," name=",name," bytes=",bytes);
   }

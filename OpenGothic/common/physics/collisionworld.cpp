@@ -1882,6 +1882,7 @@ std::unique_ptr<CollisionWorld::CollisionBody> CollisionWorld::addCollisionBody(
                                                                                float friction, int category, bool movable, bool sensor,
                                                                                const PhysicVbo* mesh) {
   LoadProbe::Vobs::Scope probe("physics_body");
+  LoadProbe::Startup::Scope itemProbe(LoadProbe::Startup::PhysicsBody,false,"placed-items");
   auto result = std::unique_ptr<CollisionBody>(new CollisionBody(*this,std::move(shape),category));
   result->mesh = mesh;
   addBody(*result,matrix,friction,movable,sensor,0.f);
@@ -1891,6 +1892,7 @@ std::unique_ptr<CollisionWorld::CollisionBody> CollisionWorld::addCollisionBody(
 std::unique_ptr<CollisionWorld::DynamicBody> CollisionWorld::addDynamicBody(JPH::ShapeRefC shape, const Tempest::Matrix4x4& matrix,
                                                                            float friction, float mass, int category, bool startSleeping) {
   LoadProbe::Vobs::Scope probe("physics_body");
+  LoadProbe::Startup::Scope itemProbe(LoadProbe::Startup::PhysicsBody,false,"placed-items");
   mass = std::isfinite(mass) && mass>0.f ? mass : 1.f;
   auto result = std::unique_ptr<DynamicBody>(new DynamicBody(*this,std::move(shape),mass,category));
   addBody(*result,matrix,friction,false,false,mass,startSleeping);

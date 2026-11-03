@@ -585,3 +585,10 @@ const Tempest::Matrix4x4& ObjVisual::bone(size_t i) const {
   static const Tempest::Matrix4x4 m;
   return m;
   }
+
+
+size_t ObjVisual::probePhysicsBytes() const {
+  if(type==M_Mdl) return mdl.physic.probeCpuBytes();
+  if(type==M_Mesh) return mesh.physic.probeCpuBytes();
+  return 0;
+  }

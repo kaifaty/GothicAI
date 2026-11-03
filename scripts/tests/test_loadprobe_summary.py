@@ -12,7 +12,7 @@ SCRIPT = Path(__file__).parents[1] / "loadprobe_summary.py"
 def test_session_and_world_change_csv(tmp_path):
     run = tmp_path / "runs" / "ryzen-work-NEWWORLD-chain"
     run.mkdir(parents=True)
-    log = "unrelated game output\n"
+    log = "unrelated game output\n[loadprobe-host] load_1=1.25 load_5=2.5 load_15=3.75\n"
     for stage, elapsed, duration, footprint, gpu, count, mb, texture_ms, extra in (
         ("session_begin", 100, -1, 100, 10, 2, 2, 100, ""),
         ("world_begin", 200, -1, 100, 10, 2, 2, 100, "world=NEWWORLD.ZEN"),
@@ -20,17 +20,33 @@ def test_session_and_world_change_csv(tmp_path):
         ("vobs", 1000, 200, 170, 30, 5, 12, 500, "items=23"),
         ("scripts_startup", 4900, 321.6, 220, 50, 12, 22, 1100, "npcs=10"),
         ("session_end", 5100, -1, 210, 50, 12, 22, 1100, ""),
+        ("first_frame", 5300, 200, 220, 55, 12, 22, 1100, ""),
         ("stream_warm", 5500, -1, 235, 60, 12, 22, 1100, ""),
         ("stream_warm_5s", 10500, -1, 230, 58, 12, 22, 1100, ""),
-        ("change_begin", 13000, -1, 210, 50, 12, 22, 1100, "to=OLDWORLD.ZEN"),
-        ("world_begin", 13100, -1, 200, 50, 12, 22, 1100, "world=OLDWORLD.ZEN"),
-        ("vobs", 13500, 90.4, 250, 70, 14, 24, 1400, "items=7"),
-        ("scripts_startup", 14800, 42.3, 230, 75, 15, 25, 1600, "npcs=4"),
-        ("change_end", 15000, -1, 225, 75, 15, 25, 1600, ""),
-        ("world_begin", 16000, -1, 225, 75, 15, 25, 1600, "world=ADDONWORLD.ZEN"),
+        ("pipelines_10s", 15100, 10000, 230, 58, 12, 22, 1100, ""),
+        ("change_begin", 16000, -1, 210, 50, 12, 22, 1100, "to=OLDWORLD.ZEN"),
+        ("world_begin", 16100, -1, 200, 50, 12, 22, 1100, "world=OLDWORLD.ZEN"),
+        ("vobs", 16500, 90.4, 250, 70, 14, 24, 1400, "items=7"),
+        ("scripts_startup", 17800, 42.3, 230, 75, 15, 25, 1600, "npcs=4"),
+        ("change_end", 18000, -1, 225, 75, 15, 25, 1600, ""),
+        ("world_begin", 19000, -1, 225, 75, 15, 25, 1600, "world=ADDONWORLD.ZEN"),
     ):
+        if stage == "scripts_startup" and elapsed == 4900:
+            log += "[loadprobe-placed-items] name=placement_queries count=1 ms=800.25 inclusive_ms=800.25 bytes=0 malloc_bytes=0 footprint_bytes=0 memory_sampled=0\n"
+            log += "[loadprobe] stage=placed_items stage_ms=846 t_ms=4800 rss_mb=170 footprint_mb=170 gpu_mb=30 tex_n=12 tex_mb=22 tex_ms=1100\n"
+            log += "[loadprobe-overhead] startup_memory_ns=1200 startup_memory_samples=6\n"
+            log += "[loadprobe-startup] name=model count=3 ms=12.25 inclusive_ms=20.5 bytes=4096 malloc_bytes=1024 footprint_bytes=-2048\n"
+        if stage == "scripts_startup" and elapsed == 17800:
+            log += "[loadprobe-startup] name=script count=1 ms=42.3 inclusive_ms=42.3 bytes=0 malloc_bytes=0 footprint_bytes=0 memory_sampled=0\n"
+        if stage == "session_end":
+            log += "[loadprobe-requests] name=model count=10 unique=3 repeated=7\n"
+            log += "[loadprobe-owner] stage=session_end name=model_cpu bytes=65536\n"
         log += (f"[loadprobe] stage={stage} stage_ms={duration} t_ms={elapsed} rss_mb={footprint} "
                 f"footprint_mb={footprint} gpu_mb={gpu} tex_n={count} tex_mb={mb} tex_ms={texture_ms} {extra}\n")
+        if stage in ("session_end", "first_frame", "pipelines_10s"):
+            pipeline_stage = "load_end" if stage == "session_end" else stage
+            log += (f"[loadprobe-pipelines] stage={pipeline_stage} name=graphics count=12 ms=30.5 "
+                    "post_load_count=2 post_load_ms=4.125\n")
         if stage in ("session_end", "stream_warm", "stream_warm_5s"):
             for values in (
                 "vob_near=120 vob_far=800 vob_outside=900",
@@ -65,8 +81,24 @@ def test_session_and_world_change_csv(tmp_path):
     output = subprocess.check_output([sys.executable, str(SCRIPT), str(tmp_path)], text=True)
     reader = csv.DictReader(io.StringIO(output))
     rows = list(reader)
-    assert len(reader.fieldnames) == 241
+    assert len(reader.fieldnames) == 540
     assert len(rows) == 2
+    assert rows[0]["load_1"] == "1.25"
+    assert rows[0]["placed_items_placement_queries_ms"] == "800.25"
+    assert rows[0]["placed_items_placement_queries_malloc_bytes"] == ""
+    assert rows[1]["placed_items_placement_queries_ms"] == ""
+    assert rows[0]["startup_memory_ns"] == "1200.0"
+    assert rows[1]["startup_script_memory_sampled"] == "0.0"
+    assert rows[1]["startup_script_malloc_bytes"] == rows[1]["startup_script_footprint_bytes"] == ""
+    assert rows[1]["load_1"] == ""
+    assert rows[0]["startup_model_ms"] == "12.25"
+    assert rows[0]["startup_model_footprint_bytes"] == "-2048.0"
+    assert rows[0]["requests_model_unique"] == "3.0"
+    assert rows[0]["owner_model_cpu_end_bytes"] == "65536.0"
+    assert rows[0]["first_frame_ms"] == "200.0"
+    assert rows[0]["pipeline_pipelines_10s_graphics_post_load_ms"] == "4.125"
+    assert rows[1]["startup_model_ms"] == ""
+    assert rows[1]["first_frame_ms"] == ""
     assert [(row["seg"], row["world"], row["total_s"]) for row in rows] == [
         ("0", "NEWWORLD", "5.0"), ("1", "OLDWORLD", "2.0")]
     assert all(row["run"] == run.name for row in rows)

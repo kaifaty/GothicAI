@@ -18,6 +18,8 @@ class PhysicMeshShape;
 
 class ProtoMesh {
   public:
+    size_t probeCpuBytes() const;
+
     using Vertex = Resources::VertexA;
 
     ProtoMesh(PackedMesh&&  pm, std::string_view fname);
