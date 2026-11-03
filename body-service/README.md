@@ -3,22 +3,30 @@
 Numerical GRU-256 and an eight-observation MLP baseline for native NPC combat primitives.
 The package provides dataset projection, BC training, evaluation and a bounded JSONL runtime.
 
-Live combat defaults to P30 inside the game engine (`--body-policy engine`, v54).
+P30 is disabled by default until full retraining (user decision, 2026-11-03).
+Live combat uses native `FightAlgo`; start `gothic-ai serve --neural-body` to enable
+the existing P30 pilot for experiments. Its default policy runs inside the game
+engine (`--body-policy engine`, v54).
 The engine loads `~/.local/share/gothic-ai/body/nets/p30.bodynet`, or the path in
 `OPENGOTHIC_BODY_NET`; no TCP service is needed. The server keeps the lease alive
 and reads interval `body_policy` summaries. If the engine reports an unavailable
 network in `hello.body_net`, a configured body URL selects this fallback service;
 without a URL, combat stays with native AI. Use
-`--body-policy service --body-url tcp://host:47835` (or `GOTHIC_BODY_POLICY=service`
-and `GOTHIC_BODY_URL`) to select it explicitly; `--no-neural-body` disables both paths.
+`--neural-body --body-policy service --body-url tcp://host:47835` (or
+`--neural-body` with `GOTHIC_BODY_POLICY=service` and `GOTHIC_BODY_URL`) to select it
+explicitly; `--no-neural-body` disables both paths and remains valid with the new default.
 
 The `gothic-body` unit on **dev-ubuntu** was stopped and disabled on **2026-10-28**
 by the user's decision. Start it manually only for experiments and comparisons in
 `service` mode. Training and heavy checks run on Ryzen or dev-ubuntu, while the
-small exported network also runs inside the game on Mac. `neural-soak` defaults
-to engine combat without `GOTHIC_BODY_URL`; explicit service mode still uses its
-own data. Engine `body_policy` summaries include interval action and memory-reset
-counters for the same soak thresholds.
+small exported network can also run inside the game on Mac when explicitly enabled.
+The launcher does not pass `--neural-body`; its `llm.body_policy` setting only applies
+when the server starts with `--neural-body`. E2E enables the pilot explicitly for
+`neural`, `neural-companion`, `neural-group`, `neural-talk`, `neural-load`,
+`neural-soak`, and `neural-still`; all other scenarios and the `neural-soak` control
+run without it. These network scenarios default to engine combat without
+`GOTHIC_BODY_URL`; explicit service mode still uses its own data. Engine `body_policy`
+summaries include interval action and memory-reset counters for the same soak thresholds.
 Use the repository's
 [stage 7 workflow](../docs/npc-body-bc.md) and [remote launcher](../scripts/body-bc-remote.sh).
 It creates a separate uv environment and freezes package/helper/config bytes per run.

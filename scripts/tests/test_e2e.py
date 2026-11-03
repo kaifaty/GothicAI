@@ -190,17 +190,22 @@ class SoakControlTests(unittest.TestCase):
             ("neural-soak", "0", "", "", "off", 2, None, "service"),
             ("neural-soak", "1", "", "/tmp/save.sav", "off", 2, None, None),
             ("neural-load", "1", "tcp://policy:47835", "", "off", 2, None, None),
-            ("bandit_parley", "0", "", "", None, 0, "--neural-body--body-policyengine", None),
-            ("feats", "0", "", "", None, 0, "--neural-body--body-policyengine", None),
-            ("feat_fame", "0", "", "", None, 0, "--neural-body--body-policyengine", None),
-            ("feats", "0", "", "", "off", 0, "--neural-body--body-policyengine", None),
-            ("feat_fame", "0", "", "", "off", 0, "--neural-body--body-policyengine", None),
-            ("bandit_parley", "0", "", "", "off", 0, "--neural-body--body-policyengine", None),
-            ("bandit_bounty", "0", "", "", "off", 0, "--neural-body--body-policyengine", None),
+            ("bandit_parley", "0", "", "", None, 0, "--no-neural-body", None),
+            ("feats", "0", "", "", None, 0, "--no-neural-body", None),
+            ("feat_fame", "0", "", "", None, 0, "--no-neural-body", None),
+            ("feats", "0", "", "", "off", 0, "--no-neural-body", None),
+            ("feat_fame", "0", "", "", "off", 0, "--no-neural-body", None),
+            ("bandit_parley", "0", "", "", "off", 0, "--no-neural-body", None),
+            ("bandit_bounty", "0", "", "", "off", 0, "--no-neural-body", None),
             ("bandit_parley", "0", "", "/tmp/save.sav", "off", 2, None, None),
-            ("road_bandits", "0", "", "", None, 0, "--neural-body--body-policyengine", None),
-            ("road_bandits", "0", "", "", "off", 0, "--neural-body--body-policyengine", None),
+            ("road_bandits", "0", "", "", None, 0, "--no-neural-body", None),
+            ("road_bandits", "0", "", "", "off", 0, "--no-neural-body", None),
             ("road_bandits", "0", "", "/tmp/save.sav", "off", 2, None, None),
+        ]
+        cases += [
+            (scenario, "0", "", "", "off", 0, "--neural-body--body-policyengine", None)
+            for scenario in ("neural", "neural-companion", "neural-group", "neural-talk",
+                             "neural-load", "neural-still")
         ]
         for scenario, control, url, save, llm, status, body_flag, policy in cases:
             with self.subTest(scenario=scenario, control=control, url=url, save=save, llm=llm, policy=policy):

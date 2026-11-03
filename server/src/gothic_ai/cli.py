@@ -3489,8 +3489,8 @@ def main() -> None:
     p.add_argument(
         "--neural-body",
         action=argparse.BooleanOptionalAction,
-        default=True,
-        help="let the body policy fight the hero or companions with eligible npcs (default: on)",
+        default=False,
+        help="let the body policy fight the hero or companions with eligible npcs (default: off)",
     )
     p.add_argument(
         "--neural-body-max",

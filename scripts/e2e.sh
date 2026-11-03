@@ -2,6 +2,9 @@
 # End-to-end check: starts the AI server with a scenario, then a new game in OpenGothic.
 # LLM defaults to the scenario group selected in server/src/gothic_ai/scenarios/groups.py.
 # LLM=off forbids model calls except explicit scenario givens (given/silent).
+# P30 is enabled only for neural, neural-companion, neural-group, neural-talk,
+# neural-load, neural-soak and neural-still; all other scenarios use --no-neural-body.
+# GOTHIC_SOAK_CONTROL=1 also keeps neural-soak on native combat.
 # Manual live suites: SUITE=haggle RUNS=3 LLM=chatgpt scripts/e2e-live.sh; see docs/e2e.md.
 #   check_walk: new game, no SAVE, no model; Cavalorn walks from Xardas's stairs to Brago's
 #       unseen body in the bandit cave using the native waynet, sees it and returns to the hero
@@ -446,8 +449,7 @@ if [[ "$LLM" == fake ]]; then
   exit 2
 fi
 BODY_POLICY="${GOTHIC_BODY_POLICY:-engine}"
-BODY_ARGS=(--neural-body --body-policy "$BODY_POLICY")
-if [[ "$SCENARIO" == memprobe ]]; then BODY_ARGS=(--no-neural-body); fi
+BODY_ARGS=(--no-neural-body)
 if [[ "${GOTHIC_SOAK_CONTROL:-0}" == 1 && "$SCENARIO" != neural-soak ]]; then
   echo 'GOTHIC_SOAK_CONTROL requires SCENARIO=neural-soak' >&2
   exit 2
@@ -469,6 +471,7 @@ if [[ "$SCENARIO" = neural || "$SCENARIO" = neural-companion || "$SCENARIO" = ne
   if [[ "$SCENARIO" == neural-soak && "${GOTHIC_SOAK_CONTROL:-0}" == 1 ]]; then
     BODY_ARGS=(--no-neural-body)
   else
+    BODY_ARGS=(--neural-body --body-policy "$BODY_POLICY")
     if [[ "$BODY_POLICY" == service ]]; then
       [ -n "${GOTHIC_BODY_URL:-}" ] || { echo "scenario $SCENARIO with service policy requires GOTHIC_BODY_URL=tcp://host:port" >&2; exit 2; }
     fi
