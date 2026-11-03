@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # End-to-end check: starts the AI server with a scenario, then a new game in OpenGothic.
 # LLM defaults to the scenario group selected in server/src/gothic_ai/scenarios/groups.py.
-# Unset TIMEOUT and SAVE take the scenario's RUN timeout and save (slot 1), as in e2e-regression.sh;
-# an explicit TIMEOUT, SAVE or empty SAVE= (a new game) wins.
+# Unset TIMEOUT/SAVE take the scenario's RUN timeout and save (slot 1); explicit TIMEOUT, SAVE or empty SAVE= win.
 # LLM=off forbids model calls except explicit scenario givens (given/silent).
 # P30 is enabled only for neural, neural-companion, neural-group, neural-talk,
 # neural-load, neural-soak and neural-still; all other scenarios use --no-neural-body.
