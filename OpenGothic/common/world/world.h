@@ -138,6 +138,8 @@ class World final {
 
     WayPath              wayTo(const Npc& pos,const WayPoint& end) const;
     WayPath              wayTo(const WayPoint& begin, const WayPoint& end) const;
+    const WayHeights::Profile& groundProfile(const Tempest::Vec3& from,const Tempest::Vec3& to,
+                                             float stepHeight,float slopeCos) const;
 
     WorldView*           view()     const { return wview.get();    }
     WorldSound*          sound()          { return &wsound;        }

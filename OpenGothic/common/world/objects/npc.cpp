@@ -1135,7 +1135,25 @@ bool Npc::usesSimplifiedMovement() const {
     const auto* value = std::getenv("OPENGOTHIC_NPC_SIMPLE_MOVE");
     return value==nullptr || value[0]!='0';
     }();
-  return enabled && simTier()==NpcSimTier::Simplified && !isPlayer() && !nativeCombatMovement();
+  return enabled && simTier()==NpcSimTier::Simplified && !isPlayer() &&
+         !nativeCombatMovement() && !nativeMobsiApproach() && !nativeMobsiTransition();
+  }
+
+bool Npc::nativeMobsiApproach() const {
+  // AI_UseMob's direct final approach needs native body support and root
+  // movement. A preceding waypoint route remains graph locomotion.
+  if(go2.flag!=GT_Point || go2.wp!=nullptr || go2.npc!=nullptr)
+    return false;
+  const auto* action=aiQueue.front();
+  return action!=nullptr && action->act==AI_UseMob;
+  }
+
+bool Npc::nativeMobsiTransition() const {
+  const auto& pose=visual.pose();
+  // Match MoveAlgo's native ToStand ownership, including a loaded pose whose
+  // transient virtual-mob flag was reset. Walking transitions stay graph-owned.
+  return interactive()==nullptr && !pose.isStanding() &&
+         (pose.hasState(BS_MOBINTERACT) || pose.hasState(BS_CLIMB));
   }
 
 bool Npc::nativeCombatMovement() const {
@@ -1218,6 +1236,7 @@ void Npc::updateSimpleMovement() {
     return;
   simpleMovement.active = simple;
   simpleMovement.edgeTo = nullptr;
+  simpleMovement.ground = nullptr;
   if(simple) {
     const bool sensorEnabled = physic.isEnabled();
     suspendRagdoll();
@@ -4346,6 +4365,10 @@ bool Npc::implGoTo(uint64_t dt, float destDist) {
 bool Npc::implSimpleGoTo(uint64_t dt, float destDist) {
   if(go2.empty() || interactive()!=nullptr)
     return !go2.empty();
+  if(setGoToLadder()) {
+    mvAlgo.tick(dt);
+    return true;
+    }
   if(pendingSimpleGoTo()==nullptr) {
     AiQueue::AiAction terminal;
     const WayPoint* destination=nullptr;
@@ -4380,9 +4403,13 @@ bool Npc::implSimpleGoTo(uint64_t dt, float destDist) {
 
   if(go2.flag!=GT_Flee && go2.isClose(*this,destDist)) {
     if(go2.flag==GT_Way && go2.wp!=nullptr && wayPath.first()!=nullptr) {
-      go2.wp = wayPath.pop();
+      go2.wp = go2.wp->hasLadderConn(wayPath.first()) ? wayPath.first() : wayPath.pop();
       attachToPoint(go2.wp);
       simpleMovement.edgeTo = nullptr;
+      if(setGoToLadder()) {
+        mvAlgo.tick(dt);
+        return true;
+        }
       } else {
       if(pendingSimpleGoTo()!=nullptr)
         return finishSimpleGoTo(dt);
@@ -4434,6 +4461,26 @@ bool Npc::implSimpleGoTo(uint64_t dt, float destDist) {
       // Its ground endpoint also comes from the waynet, without a tick ray.
       target.y = near->groundPos.y;
       }
+    const auto& guild=owner.script().guildVal();
+    const float step=guild.step_height[this->guild()]>0 ? float(guild.step_height[this->guild()]) : 50.f;
+    const float slope=std::clamp(std::sin((90.f-float(guild.slide_angle[this->guild()]))*(float(M_PI)/180.f)),0.f,1.f);
+    try {
+      if(go2.wp!=nullptr) {
+        // Bake once on segment admission. The profile follows the real support
+        // between these endpoints; its target-anchored grid survives save/load.
+        const float distance=std::hypot(target.x-x,target.z-z);
+        simpleMovement.ground=distance>0.f ? &owner.groundProfile(position(),target,step,slope) : nullptr;
+        }
+      else if(simpleMovement.ground==nullptr) {
+        simpleMovement.ground=&owner.groundProfile(position(),position(),step,slope);
+        }
+      }
+    catch(const std::runtime_error& error) {
+      const auto* symbol=owner.script().findSymbol(instanceSymbol());
+      const auto name=symbol!=nullptr ? std::string(symbol->name()) : std::to_string(instanceSymbol());
+      throw std::runtime_error(name+" at world tick "+std::to_string(owner.tickCount())+
+                               ", game ms "+std::to_string(owner.time().toInt())+": "+error.what());
+      }
     }
 
   const auto direction = target-position();
@@ -4459,6 +4506,12 @@ bool Npc::implSimpleGoTo(uint64_t dt, float destDist) {
       next.z = z+correction.z*travel/horizontal;
       const auto along = next-simpleMovement.edgeFrom;
       next.y = simpleMovement.edgeFrom.y+edge.y*std::clamp((along.x*edge.x+along.z*edge.z)/length2,0.f,1.f);
+      }
+    if(simpleMovement.ground!=nullptr) {
+      // A live NPC/item tail uses the last anchor's cached support plane as a
+      // local approximation. Its current X/Z still follows the moving target;
+      // a changed waynet anchor admits a new profile, never a per-tick ray.
+      next.y=go2.wp!=nullptr ? simpleMovement.ground->heightAt(next) : simpleMovement.ground->terminalHeightAt(next);
       }
     setPosition(next);
     }
@@ -11035,6 +11088,7 @@ bool Npc::goToPosition(const Vec3& position) {
   }
 
 void Npc::clearGoTo() {
+  simpleMovement.ground=nullptr;
   if(pendingSimpleGoTo()!=nullptr)
     aiQueue.pop();
   simpleMovement.nativeItem=nullptr;

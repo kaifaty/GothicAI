@@ -213,10 +213,11 @@ void writeSample(World& w, Journal& j, int64_t scheduledMs) {
       const auto ground=w.physic()->landRay(p+Tempest::Vec3(0,100,0));
       const auto* edge=npc->currentGoToPoint();
       const auto goal=npc->navigationGoal();
-      std::fprintf(j.heights,"%.0f,%s,%.1f,%.1f,%.1f,%s,%d,%.3f,%d,%.1f,%s,%s,%s\n",t,key->c_str(),
+      const auto step=w.script().guildVal().step_height[npc->guild()];
+      std::fprintf(j.heights,"%.0f,%s,%.1f,%.1f,%.1f,%s,%d,%.3f,%d,%.1f,%.1f,%s,%s,%s\n",t,key->c_str(),
                    double(p.x),double(p.y),double(p.z),wp!=nullptr ? clean(wp->name).c_str() : "-",
                    ground.hasCol ? 1 : 0,ground.hasCol ? double(std::abs(p.y-ground.v.y))/100.0 : -1.0,
-                   int(npc->guild()),double(w.script().guildVal().slide_angle[npc->guild()]),
+                   int(npc->guild()),double(w.script().guildVal().slide_angle[npc->guild()]),double(step>0 ? step : 50),
                    edge!=nullptr ? clean(edge->name).c_str() : "-",clean(goal.kind).c_str(),clean(goal.name).c_str());
       }
     std::fprintf(j.samples,
@@ -259,13 +260,14 @@ void writeSample(World& w, Journal& j, int64_t scheduledMs) {
         near60 += d<6000.f*6000.f;
         }
       }
-    std::fprintf(j.cost,"%.0f,%.3f,%zu,%zu,%llu,%zu,%zu,%llu,%llu,%.6f,%.6f,%llu,%llu,%llu\n",t,wall,near30,near60,
+    std::fprintf(j.cost,"%.0f,%.3f,%zu,%zu,%llu,%zu,%zu,%llu,%llu,%.6f,%.6f,%llu,%llu,%llu,%llu\n",t,wall,near30,near60,
                  (unsigned long long)(s.ticks-prev.ticks),s.full,s.simplified,
                  (unsigned long long)(s.toFull-prev.toFull),(unsigned long long)(s.toSimplified-prev.toSimplified),
                  s.fullTickMsTotal-prev.fullTickMsTotal,s.simplifiedTickMsTotal-prev.simplifiedTickMsTotal,
                  (unsigned long long)(s.fullNpcTicks-prev.fullNpcTicks),
                  (unsigned long long)(s.simplifiedNpcTicks-prev.simplifiedNpcTicks),
-                 (unsigned long long)(s.nativeCombatNpcTicks-prev.nativeCombatNpcTicks));
+                 (unsigned long long)(s.nativeCombatNpcTicks-prev.nativeCombatNpcTicks),
+                 (unsigned long long)(s.nativeMobsiApproachNpcTicks-prev.nativeMobsiApproachNpcTicks));
     std::fflush(j.cost);
     j.tiersAtSample = s;
     }
@@ -316,6 +318,7 @@ void finish(World& w, Journal& j, const char* reason) {
                 ",\"end_reason\":\"%s\",\"end_world_ms\":%lld,\"elapsed_game_min\":%.4f,\"wall_s\":%.3f,"
                 "\"samples\":%llu,\"rows\":%llu,\"events\":%llu,\"inserted\":%llu,\"removed\":%llu,\"deaths\":%llu,"
                 "\"world_ticks\":%llu,\"npc_full_ticks\":%llu,\"npc_simplified_ticks\":%llu,\"npc_native_combat_ticks\":%llu,"
+                "\"npc_native_mobsi_approach_ticks\":%llu,"
                 "\"npc_full_tick_ms\":%.3f,\"npc_simplified_tick_ms\":%.3f,"
                 "\"npc_to_full\":%llu,\"npc_to_simplified\":%llu,\"npc_full_end\":%zu,\"npc_simplified_end\":%zu",
                 reason,(long long)w.time().toInt(),relativeMinutes(j,w.time().toInt()),wall,
@@ -324,7 +327,8 @@ void finish(World& w, Journal& j, const char* reason) {
                 (unsigned long long)ticks,
                 (unsigned long long)(s.fullNpcTicks-j.tiersAtStart.fullNpcTicks),
                 (unsigned long long)(s.simplifiedNpcTicks-j.tiersAtStart.simplifiedNpcTicks),
-                (unsigned long long)(s.nativeCombatNpcTicks-j.tiersAtStart.nativeCombatNpcTicks),fullMs,simpMs,
+                (unsigned long long)(s.nativeCombatNpcTicks-j.tiersAtStart.nativeCombatNpcTicks),
+                (unsigned long long)(s.nativeMobsiApproachNpcTicks-j.tiersAtStart.nativeMobsiApproachNpcTicks),fullMs,simpMs,
                 (unsigned long long)(s.toFull-j.tiersAtStart.toFull),
                 (unsigned long long)(s.toSimplified-j.tiersAtStart.toSimplified),s.full,s.simplified);
   writeHeader(w,j,std::string(buf)+",\"logic_audit\":"+NpcLogicAudit::stats().json());
@@ -386,9 +390,9 @@ bool NpcDayJournal::start(World& w, const Options& options, std::string& error) 
                          "inv_hash,inv_items,mob,tier,policy,hero\n");
   std::fprintf(j.events,"t_min,key,kind,value,x,y,z\n");
   std::fprintf(j.cost,"t_min,wall_s,near_hero_30m,near_hero_60m,world_ticks,npc_full,npc_simplified,to_full,"
-                      "to_simplified,full_tick_ms,simplified_tick_ms,full_npc_ticks,simplified_npc_ticks,native_combat_npc_ticks\n");
+                      "to_simplified,full_tick_ms,simplified_tick_ms,full_npc_ticks,simplified_npc_ticks,native_combat_npc_ticks,native_mobsi_approach_npc_ticks\n");
   if(j.heights!=nullptr)
-    std::fprintf(j.heights,"t_min,key,x,y,z,nearest_wp,ground_hit,height_error_m,guild,slide_angle_deg,edge_to,goal_kind,goal_name\n");
+    std::fprintf(j.heights,"t_min,key,x,y,z,nearest_wp,ground_hit,height_error_m,guild,slide_angle_deg,step_height_cm,edge_to,goal_kind,goal_name\n");
   if(j.arrivals!=nullptr)
     std::fprintf(j.arrivals,"t_min,key,world_tick_ms,start_tick_ms,start_t_min,start_observed,kind,destination,target_id,target_key,"
                             "target_x,target_y,target_z,x,y,z,zs,queue_head,body,executor\n");

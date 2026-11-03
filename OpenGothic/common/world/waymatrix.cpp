@@ -36,6 +36,21 @@ WayMatrix::WayMatrix(World &world, const asset::WayNet& dat)
   stk[1].reserve(256);
   }
 
+const WayHeights::Profile& WayMatrix::groundProfile(const Tempest::Vec3& from,const Tempest::Vec3& to,
+                                                   float stepHeight,float slopeCos) {
+  if(heightCache==nullptr) {
+    std::filesystem::path cacheRoot;
+    try { cacheRoot=BaseStore::cacheRoot(); }
+    catch(const std::exception&) { }
+    const auto inputs=Resources::wayHeightInputs(world.name());
+    const auto& flags=Gothic::physicsFlags();
+    heightCache=std::make_unique<WayHeights>(cacheRoot,WayHeights::Key{inputs.baseFingerprint,
+       std::filesystem::path(world.name()).stem().string(),inputs.contentFingerprint,
+       uint32_t(flags.cloth)|(uint32_t(flags.movableVobs)<<1)});
+    }
+  return heightCache->profile(from,to,stepHeight,slopeCos,*world.physic());
+  }
+
 void WayMatrix::buildIndex() {
   const auto started = std::chrono::steady_clock::now();
   stats = {};

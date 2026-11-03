@@ -26,6 +26,7 @@
 #include "world/objects/archer.h"
 #include "world/fplock.h"
 #include "world/waypath.h"
+#include "world/wayheights.h"
 
 #include <array>
 #include <cstdint>
@@ -152,6 +153,8 @@ class Npc final {
     WalkBit    walkMode() const;
     bool       usesSimplifiedMovement() const;
     bool       nativeCombatMovement() const;
+    bool       nativeMobsiApproach() const;
+    bool       nativeMobsiTransition() const;
     auto       simplifiedBodyState() const -> std::optional<BodyState>;
     float      simplifiedMoveSpeed() const;
     void       tick(uint64_t dt);
@@ -1308,6 +1311,7 @@ class Npc final {
       bool active = false;
       const WayPoint* edgeTo = nullptr;
       Tempest::Vec3 edgeFrom;
+      const WayHeights::Profile* ground = nullptr;
       std::optional<BodyState> body;
       Item* nativeItem = nullptr;
       } simpleMovement;

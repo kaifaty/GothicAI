@@ -231,6 +231,9 @@ void MoveAlgo::tickClimb(uint64_t dt) {
 
 void MoveAlgo::tick(uint64_t dt, MvFlags moveFlg) {
   if(npc.usesSimplifiedMovement()) {
+    // Detached native Mobsi ownership has finished before the graph resumes.
+    if(npc.interactive()==nullptr)
+      npcVirtualMobTransition=false;
     takeRagdollControl();
     // Mobsi attachment transitions remain native until their executor in 6d.
     if(npc.interactive()!=nullptr)
