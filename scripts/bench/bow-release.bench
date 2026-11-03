@@ -1,0 +1,61 @@
+# Bow release (research for reports/archery/2026-11-03-release-follow-through): what plays after the hand
+# lets the string go, as the engine has it now. animinfo: the bow animations of G2 (frames, fps, ms) at
+# each talent; then a shot of a light bow drawn half and of a heavy bow drawn fully, with the per-frame
+# columns of the bow draw (bd_follow, rh_*, hd_hand, bd_nockgap, bd_bowmiss) around the release, and the
+# log's "arrow shot", "anim event", "anim morph" lines with their times
+cheat god
+set time 12 0
+view clean
+goto NW_XARDAS_TOWER_VALLEY_01
+turn 225
+wait 500
+manual on
+equip ItRw_Bow_L_01
+give ItRw_Arrow 100
+insert BAU_904_BAUER
+wait 300
+immortal BAU_904_BAUER on
+pin BAU_904_BAUER 1000 0 0
+aimat BAU_904_BAUER body
+
+stats str 15 dex 15 bow 10 talent 1
+tap bow
+wait 1500
+animinfo S_BOWAIM S_BOWSHOOT T_BOWRELOAD T_BOWAIM_2_BOWSHOOT T_BOWSHOOT_2_BOWAIM S_BOWRUN T_BOWRUN_2_BOWAIM
+stats talent 2
+wait 300
+animinfo S_BOWAIM S_BOWSHOOT T_BOWRELOAD
+stats talent 0
+wait 300
+animinfo S_BOWAIM S_BOWSHOOT T_BOWRELOAD
+stats talent auto
+
+cam follow 220 150 90             # the left side: the arrow's line across the frame
+cam look 145
+wait 300
+
+# a light bow, a weak archer, drawn half
+stats str 15 dex 15 bow 10
+rec light_half
+volley 1 400 0.5
+wait 300
+stop
+
+# a heavy bow, a strong archer, drawn fully
+equip ItRw_Bow_H_03
+give ItRw_Arrow 20
+wait 300
+tap bow
+wait 1500
+stats str 120 dex 120 bow 100
+rec heavy_full
+volley 1 400 1
+wait 300
+stop
+
+cam follow 170 150 -50            # in front, on the right: the drawing hand past the face
+wait 300
+rec heavy_front
+volley 1 400 1
+wait 300
+stop
