@@ -47,15 +47,42 @@
 
 ## Цена
 
-`scripts/perf.sh market forest interior` на Ryzen (RTX 3080, окно 1728×1117), с TAA и без. Числа — ЗАПОЛНИТЬ.
+**Ryzen**, RTX 3080, Vulkan, окно 1728×1117: `BENCH_HOST=ryzen PERF_ENV=OPENGOTHIC_TAA=1|0 scripts/perf.sh market forest interior`, коммит `ef4a3cd8e`.
+
+На Vulkan `perf.sh` не снимает время GPU: `GPU mean` — `n/a`, засчитано 0 кадров. Поэтому ниже время кадра. Кадр на Ryzen в GPU не упирается ([performance.md](../../../docs/performance.md)), и разница — это верхняя граница цены, а не её замер.
+
+| Место | Кадр mean, мс: TAA / CMAA2 | p95, мс: TAA / CMAA2 | FPS: TAA / CMAA2 |
+|---|---|---|---|
+| рынок | 12,70 / 12,54 | 13,65 / 13,44 | 78,7 / 79,8 |
+| лес | 12,12 / 12,01 | 12,97 / 12,87 | 82,5 / 83,3 |
+| интерьер | 12,37 / 12,28 | 13,35 / 13,47 | 80,8 / 81,4 |
+
+Запуски: TAA — `/Users/kaifat/.codex/worktrees/claude-taa-1a/gothic/.bench/perf-20261103T210957Z-22176`, CMAA2 — `/Users/kaifat/.codex/worktrees/claude-taa-1a/gothic/.bench/perf-20261103T211746Z-37877`. В логах всех трёх мест стоит `render: taa = 1` и `= 0` соответственно.
+
+**Mac**, M1 Pro, Metal, 3456×1918, полное разрешение, `scripts/perf.sh shot` в фоне (`TEMPEST_BACKGROUND=1`). Здесь время GPU есть. Прогоны подряд:
+
+| Вариант | GPU mean, мс | GPU p95, мс | Запуск |
+|---|---|---|---|
+| TAA | 26,08 | 28,67 | `perf-20261103T212600Z-57514` |
+| TAA, проход пропущен (`OPENGOTHIC_GPU_SKIP=TAA`) | 24,47 | 28,35 | `perf-20261103T212754Z-59515` |
+| CMAA2 (`OPENGOTHIC_TAA=0`) | 24,64 | 27,84 | `perf-20261103T212939Z-61931` |
+
+Цена прохода резолва вычитанием — около 1,6 мс GPU. Против CMAA2 кадр дороже на 1,4 мс. Шум между прогонами на Mac того же порядка: два прогона CMAA2 дали 23,11 и 24,64 мс (`perf-20261103T212324Z-53705`), первый прогон TAA — 29,28 мс (`perf-20261103T203335Z-48784`, сразу после сборки). Поэтому число 1,4–1,6 мс — оценка, а не замер с повторами.
 
 ## Клипы
 
-ЗАПОЛНИТЬ: пути на Mac обоих прогонов.
+`scripts/bench/taa-clips.bench` на Ryzen, Vulkan, окно 800×600, по 7 с. Оба прогона дали код 0, по 4 клипа.
+
+- **TAA** (`OPENGOTHIC_TAA=1`, в логе `render: taa = 1`): `/Users/kaifat/.codex/worktrees/claude-taa-1a/gothic/.bench/taa-clips-20261104-000952/`
+  - `taa-market.mp4`, `taa-forest.mp4`, `taa-roofs-turn.mp4`, `taa-harbour-night.mp4`
+- **CMAA2** (`OPENGOTHIC_TAA=0`, в логе `render: taa = 0`, `aa = 1`): `/Users/kaifat/.codex/worktrees/claude-taa-1a/gothic/.bench/taa-clips-20261104-001205/`
+  - те же четыре файла
+
+Листы по 16 кадров — в `sheets/` рядом с клипами. Первый прогон CMAA2 (`taa-clips-20261103-233340`) снят на старой версии стенда: со строкой `cadence normal` (код 1, замер времени не нужен) и с поворотом из-под навеса. Для сравнения он не годится.
 
 ## Mac
 
-`TEMPEST_BACKGROUND=1 BENCH_HOST=local PERF_ENV=OPENGOTHIC_TAA=1 scripts/perf.sh shot` на M1 Pro, Metal, 3456×1918, полное разрешение (`PERF_VID_RES=0`): 4 ракурса, 1298 кадров, код выхода 0. В логе `render: taa = 1`, ошибок нет. GPU в среднем 29,3 мс, p95 36,5 мс; кадр в среднем 32,4 мс. Прогон без TAA на Mac не делали, поэтому разницы здесь нет. Запуск: `.bench/perf-20261103T203335Z-48784`.
+Игра и шейдеры собираются на Mac (`scripts/build-engine.sh`, сборка `build-perf`). `perf-shot` в фоне с TAA (`TEMPEST_BACKGROUND=1 BENCH_HOST=local`) прошёл дважды. Это 4 ракурса, кадры `market-a`, `market-b`, `forest`, `interior`, код 0. В логе `render: taa = 1`, ошибок Metal нет. Числа — в таблице выше.
 
 ## Ограничения
 
