@@ -714,17 +714,20 @@ async def test_serve_validates_scenario_backend_and_soak_control(
 @pytest.mark.parametrize(
     ("flags", "env_url", "enabled", "expected_url", "created"),
     [
-        ([], None, True, None, True),
-        ([], "tcp://policy:47835", True, "tcp://policy:47835", True),
+        ([], None, False, None, False),
+        ([], "tcp://policy:47835", False, "tcp://policy:47835", False),
         (["--no-neural-body"], "tcp://policy:47835", False, "tcp://policy:47835", False),
+        (["--neural-body"], None, True, None, True),
         (["--neural-body", "--body-url", "tcp://explicit:47835"], None, True, "tcp://explicit:47835", True),
-        (["--body-url", "tcp://explicit:47835"], "tcp://policy:47835", True, "tcp://explicit:47835", True),
-        (["--body-url", ""], "tcp://policy:47835", True, "", True),
-        (["--body-policy", "service"], None, True, None, False),
-        (["--body-policy", "service"], "tcp://policy:47835", True, "tcp://policy:47835", True),
+        (["--neural-body", "--body-url", "tcp://explicit:47835"], "tcp://policy:47835", True,
+         "tcp://explicit:47835", True),
+        (["--neural-body", "--body-url", ""], "tcp://policy:47835", True, "", True),
+        (["--neural-body", "--body-policy", "service"], None, True, None, False),
+        (["--neural-body", "--body-policy", "service"], "tcp://policy:47835", True,
+         "tcp://policy:47835", True),
     ],
 )
-def test_serve_arguments_create_engine_pilot_without_url_and_service_with_url(
+def test_serve_arguments_enable_pilot_only_with_neural_body(
     monkeypatch, flags, env_url, enabled, expected_url, created
 ):
     monkeypatch.delenv("GOTHIC_BODY_POLICY", raising=False)
@@ -812,7 +815,8 @@ def test_neural_body_max_passes_supported_limit_to_pilot(monkeypatch, maximum):
 
     monkeypatch.setattr(cli, "serve", serve)
     monkeypatch.setattr("sys.argv", [
-        "gothic-ai", "serve", "--body-url", "tcp://policy:47835", "--neural-body-max", str(maximum),
+        "gothic-ai", "serve", "--neural-body", "--body-url", "tcp://policy:47835",
+        "--neural-body-max", str(maximum),
     ])
     with pytest.raises(SystemExit) as exit:
         cli.main()

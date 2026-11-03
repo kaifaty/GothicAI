@@ -1,8 +1,10 @@
 # План реализации GRU слоя управления телом NPC
 
-Статус: P30 по умолчанию ведёт бой в движке через `body_acquire` с `policy:"engine"` (v54, 28 октября 2026 года). Сервер и лаунчер выбирают этот путь по `hello.body_net`; TCP-сервис остановлен и выключен 28 октября, его поднимают вручную для опытов и сравнения. Пилот ведёт до четырёх NPC с одноручным оружием; для нескольких боёв — протокол движка ≥45 в `hello`. Развитие обучения — в [плане и журнале](#план-и-журнал).
+Статус: P30 по умолчанию выключен до полного переобучения (решение пользователя 2026-11-03) и в следующих планах не учитывается. Бои в живой игре ведёт native `FightAlgo`; `gothic-ai serve --neural-body` включает прежний пилот для опытов. В этом режиме по умолчанию используется P30 в движке через `body_acquire` с `policy:"engine"` (v54); TCP-сервис остаётся запасным путём и запускается вручную. Пилот ведёт до четырёх NPC с одноручным оружием; для нескольких боёв — протокол движка ≥45 в `hello`. Предыдущие этапы — в [плане и журнале](#план-и-журнал).
 
 ## Как работает сейчас
+
+Без `--neural-body` сервер не создаёт `BodyPilot`, пишет `neural body: policy=off …` и оставляет бои родному ИИ. `--no-neural-body` явно сохраняет этот режим. Ниже описаны сохранённые возможности P30 при явном включении для опытов.
 
 ### Вывод P30 на C++
 
@@ -34,7 +36,7 @@ checkpoint и ошибку. `body_acquire` с `policy:"engine"` требует �
 формат `neural-body end …` сохраняется; `engine_max_interval_p50_us` явно обозначает максимум
 интервальных медиан. Сводка боя сохраняет максимумы интервальных p50/p99,
 поскольку отдельные длительности шагов серверу не передаются.
-`body_observations` продолжает идти. Сервер запрашивает `policy:"engine"` по умолчанию
+`body_observations` продолжает идти. С `--neural-body` сервер запрашивает `policy:"engine"` по умолчанию
 и сохраняет `body_heartbeat`: локальные решения lease не продлевают. В этом режиме
 нет `PolicyClient`, серверных `body_action` и сторожа таймаутов сервиса.
 
@@ -49,15 +51,17 @@ checkpoint и ошибку. `body_acquire` с `policy:"engine"` требует �
 Урон любой стороне или замах цели снимает предел. Входы и память GRU не меняются.
 Предел есть только в движке; запасной `service` его не применяет.
 
-`--body-policy engine|service` (`GOTHIC_BODY_POLICY`, по умолчанию `engine`) выбирает
-путь для текущего подключения. При `hello.body_net.loaded:true` используется движок;
+При включённом `--neural-body` флаг `--body-policy engine|service` (`GOTHIC_BODY_POLICY`,
+по умолчанию `engine`) выбирает путь для текущего подключения. При `hello.body_net.loaded:true` используется движок;
 без сети (в том числе без поля `body_net`) — сервис из `--body-url` / `GOTHIC_BODY_URL`,
 если адрес задан, иначе родной ИИ. Причина из `hello.body_net.error` пишется один раз
 для подключения. Явный `service` требует адрес. Юнит `gothic-body` на dev-ubuntu
 остановлен и выключен 2026-10-28 по решению пользователя; сервис поднимают вручную
 только для опытов и сравнения. `--no-neural-body` выключает пилот.
-Лаунчер хранит `llm.body_policy` и необязательный `llm.body_net`: последний передаёт
-игре `OPENGOTHIC_BODY_NET`; без него действует путь движка по умолчанию.
+Лаунчер не передаёт `--neural-body`, поэтому запускает игру без P30. Сохранённая
+настройка `llm.body_policy` действует, только когда сервер запущен с `--neural-body`.
+Необязательный `llm.body_net` передаёт игре `OPENGOTHIC_BODY_NET`; без него действует
+путь весов движка по умолчанию.
 
 `check-bodypolicy` создаёт случайную NumPy-фикстуру из 1280 шагов и сравнивает входы
 (1e-5), логиты и память (1e-4), действия, причины и сбросы (точно).
@@ -139,10 +143,10 @@ runner и 0,6–0,9 мс Python на воркер. Как профилирова
 
 **Веса:** движок загружает `.bodynet` по пути выше; checkpoint SHA-256 виден в `hello.body_net`. Запасной [сервис](../body-service/deploy/run.sh) на dev-ubuntu использует CPU и `BODY_CHECKPOINT`, по умолчанию `~/gothic-ai/body/models/working/best.pt`. Веса в git не входят.
 
-**Как выключить:** `gothic-ai serve --no-neural-body`. В engine пилот создаётся и без URL; только явный service без `--body-url` / `GOTHIC_BODY_URL` не создаёт его; разбор флагов — в [cli.py](../server/src/gothic_ai/cli.py).
+**Как включить:** `gothic-ai serve --neural-body` для опытов до полного переобучения P30. В engine пилот создаётся и без URL; `--neural-body --body-policy service` требует `--body-url` / `GOTHIC_BODY_URL`. Без `--neural-body` пилота нет, `--no-neural-body` остаётся рабочим явным выключателем; разбор флагов — в [cli.py](../server/src/gothic_ai/cli.py).
 В `gothic-body serve-net` проверку возраста строк только для памяти возвращает `--no-allow-stale-memory-only`; обычный runtime, gate, арена и сбор сохраняют прежнюю проверку.
 
-**Проверки:** `gothic-body-watch-test` проверяет изменение подписки под lease и с заявкой на захват; сценарии `neural`, `neural-companion` и `neural-group` в [scripts/e2e.sh](../scripts/e2e.sh) и [scenarios/companions.py](../server/src/gothic_ai/scenarios/companions.py). `neural-group` запускает три бандита с разными символами против пассивного героя и спутника-мечника: проверяет три одновременных lease, ≥10 решений и 0 fallback у каждого, release ≤2 с от наблюдаемого конца каждого боя, p99 шага движка ≤2000 мкс (в service — p95 сервиса ≤20 мс) и пустую подписку после боя; выводит отдельные сводки с отказами по причинам и временем шага. В engine URL не нужен, в service без `GOTHIC_BODY_URL` сценарии завершаются с кодом 2 до запуска игры. Модульные проверки — [test_bodypilot.py](../server/tests/test_bodypilot.py), [test_body_control.py](../server/tests/test_body_control.py), [test_body_observations.py](../server/tests/test_body_observations.py).
+**Проверки:** `scripts/e2e.sh` явно включает `--neural-body --body-policy "$BODY_POLICY"` только для `neural`, `neural-companion`, `neural-group`, `neural-talk`, `neural-load`, `neural-soak` и `neural-still`; контроль `GOTHIC_SOAK_CONTROL=1` и все остальные сценарии получают `--no-neural-body`. `gothic-body-watch-test` проверяет изменение подписки под lease и с заявкой на захват; сценарии `neural`, `neural-companion` и `neural-group` в [scripts/e2e.sh](../scripts/e2e.sh) и [scenarios/companions.py](../server/src/gothic_ai/scenarios/companions.py). `neural-group` запускает три бандита с разными символами против пассивного героя и спутника-мечника: проверяет три одновременных lease, ≥10 решений и 0 fallback у каждого, release ≤2 с от наблюдаемого конца каждого боя, p99 шага движка ≤2000 мкс (в service — p95 сервиса ≤20 мс) и пустую подписку после боя; выводит отдельные сводки с отказами по причинам и временем шага. В engine URL не нужен, в service без `GOTHIC_BODY_URL` сценарии завершаются с кодом 2 до запуска игры. Модульные проверки — [test_bodypilot.py](../server/tests/test_bodypilot.py), [test_body_control.py](../server/tests/test_body_control.py), [test_body_observations.py](../server/tests/test_body_observations.py).
 
 Переходы проверяют `neural-talk` (`companions.py`, `LLM=fake`) и `neural-load`
 ([neural_load.py](../server/src/gothic_ai/scenarios/neural_load.py), `LLM=auto` → `off`). Первый начинает с
@@ -248,6 +252,8 @@ TIMEOUT=2400 scripts/ryzen.sh e2e`; URL в engine не нужен. Штатны�
 **Ограничения:** двуручное оружие, луки, магия, монстры и бой с посторонними NPC остаются родному ИИ. Для нескольких боёв нужен `hello` с протоколом ≥45; при старой или неизвестной версии новые кандидаты ждут завершения текущего боя. Нужна загруженная `.bodynet` либо доступный запасной сервис политики; веса в репозитории не хранятся. P30 ждёт пассивного противника: возможны серии `wait_200` до 4 с, дальше в движке действует предел застоя (выше); в `service` серии не ограничены. Однократный удар героя не гарантирует ответную атаку; это качество политики для длительного прогона, а не критерий перехода в повторном бою `neural-talk`.
 
 ## План и журнал
+
+2026-11-03: по решению пользователя P30 выключен по умолчанию до полного переобучения и в следующих планах не учитывается. `gothic-ai serve` без флага и запуск из лаунчера оставляют бои native `FightAlgo`; `--neural-body` включает прежний пилот для опытов. E2E явно включает сеть только в семи сценариях `neural*`, кроме контроля `neural-soak`; остальные сценарии работают без P30. Движок, веса и обучение не менялись.
 
 2 ноября 2026 года: удержанных кадров больше нет. Их причина — не синхронная постройка кусков мира, а пересборка всех PSO кадра на Vulkan при каждом росте bindless-массивов ([world-streaming.md](world-streaming.md#рывки-кадра-на-vulkan-от-роста-bindless-массивов-2026-11-02)). Пилот и бой не менялись. В `neural`, `neural-group` и `neural-soak` на Ryzen кадры в бою — 34–81 мс, `body_watch_timeout` и `lease_lost` нет. Остались дефекты самого пилота и боя ([e2e.md](e2e.md#известные-дефекты)): третий бой `neural-group` кончается `target_lost` рядом с нокдауном, захват в `neural-soak` — 11/13.
 
