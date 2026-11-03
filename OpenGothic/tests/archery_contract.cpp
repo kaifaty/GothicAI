@@ -117,6 +117,14 @@ int main() {
   near(cbow.sway,oldCbow.sway,0.000001f,"crossbow sway stays unchanged");
   near(speedAt(cbow,0.4f),speedAt(oldCbow,0.4f),0.000001f,"crossbow speed stays unchanged");
 
+  // the release as it is seen: the kick by the energy the bow stored (reports/archery/2026-11-03-release-follow-through)
+  near(releaseKick(0.5f,10.f),0.15f,0.000001f,"a light bow drawn half kicks at the floor");
+  near(releaseKick(1.f,27.5f),27.5f/70.f,0.000001f,"a middle bow drawn fully kicks 0.39");
+  near(releaseKick(1.f,70.f),1.f,0.000001f,"a heavy bow drawn fully kicks fully");
+  near(releaseKick(1.f,150.f),1.f,0.000001f,"the kick is not over 1");
+  near(releaseSettle(1.f),1.f,0.000001f,"an archer as strong as the bow settles it in the base time");
+  near(releaseSettle(4.f),0.7f,0.000001f,"a strong archer settles the bow faster, to the bound");
+
   Archer archer;
   auto input = startDrawing(archer,bow,false);
   drawToLimit(archer,bow,input);

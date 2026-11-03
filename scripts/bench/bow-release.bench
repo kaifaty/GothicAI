@@ -1,8 +1,11 @@
-# Bow release (research for reports/archery/2026-11-03-release-follow-through): what plays after the hand
-# lets the string go, as the engine has it now. animinfo: the bow animations of G2 (frames, fps, ms) at
-# each talent; then a shot of a light bow drawn half and of a heavy bow drawn fully, with the per-frame
-# columns of the bow draw (bd_follow, rh_*, hd_hand, bd_nockgap, bd_bowmiss) around the release, and the
-# log's "arrow shot", "anim event", "anim morph" lines with their times
+# Bow release (graphics/mesh/bowdraw, reports/archery/2026-11-03-release-follow-through): the drawing hand
+# flies back to the ear, the bow hand is thrown back a moment, the bow turns in the hand and rings, as hard
+# as the bow stored (Archery::releaseKick: a light bow drawn half 0.15, a heavy one drawn fully 1).
+# Every take is slowed 8 times (slowmo 8: a frame is 1/240 s of the game): every 4th frame is the shot at
+# 60 fps, all of them at 60 fps are 0.25 of the speed. Columns bd_back (cm the drawing hand is from where
+# it let go), bd_kick (cm the bow hand is thrown back), bd_turn (degrees the bow turns in the hand) beside
+# hd_hand, bd_bowmiss, bd_overgrip, rh_*; the log's "arrow shot ... draw" is f.
+# `bowrelease off` (OPENGOTHIC_BOWRELEASE=0): as before (the hand 4 cm back and to the face again)
 cheat god
 set time 12 0
 view clean
@@ -21,41 +24,111 @@ aimat BAU_904_BAUER body
 stats str 15 dex 15 bow 10 talent 1
 tap bow
 wait 1500
-animinfo S_BOWAIM S_BOWSHOOT T_BOWRELOAD T_BOWAIM_2_BOWSHOOT T_BOWSHOOT_2_BOWAIM S_BOWRUN T_BOWRUN_2_BOWAIM
-stats talent 2
-wait 300
-animinfo S_BOWAIM S_BOWSHOOT T_BOWRELOAD
-stats talent 0
-wait 300
 animinfo S_BOWAIM S_BOWSHOOT T_BOWRELOAD
 stats talent auto
 
+# 1. a light bow, a weak archer, drawn half (let go as it gets there): from the side, in front
+stats str 15 dex 15 bow 10
 cam follow 220 150 90             # the left side: the arrow's line across the frame
 cam look 145
 wait 300
-
-# a light bow, a weak archer, drawn half
-stats str 15 dex 15 bow 10
-rec light_half
-volley 1 400 0.5
+slowmo 8
+rec light_half_side
+volley 1 0 0.5
 wait 300
 stop
+slowmo 1
+cam follow 170 150 -50            # in front, on the right: the drawing hand past the face
+wait 300
+slowmo 8
+rec light_half_front
+volley 1 0 0.5
+wait 300
+stop
+slowmo 1
+# the same as before the release (bowrelease off): the reload's own jerks and the bow in the hand to compare
+cam follow 220 150 90
+cam look 145
+wait 300
+bowrelease off
+slowmo 8
+rec light_half_off
+volley 1 0 0.5
+wait 300
+stop
+slowmo 1
+bowrelease on
 
-# a heavy bow, a strong archer, drawn fully
+# 2. a heavy bow, a strong archer, drawn fully: from the side, in front
 equip ItRw_Bow_H_03
-give ItRw_Arrow 20
+give ItRw_Arrow 40
 wait 300
 tap bow
 wait 1500
 stats str 120 dex 120 bow 100
-rec heavy_full
+cam follow 220 150 90
+cam look 145
+wait 300
+slowmo 8
+rec heavy_full_side
 volley 1 400 1
 wait 300
 stop
+slowmo 1
+cam follow 170 150 -50
+wait 300
+slowmo 8
+rec heavy_full_front
+volley 1 400 1
+wait 300
+stop
+slowmo 1
 
-cam follow 170 150 -50            # in front, on the right: the drawing hand past the face
+# 4. the master's series: three shots, the reload at the master's tempo (dexterity), from the side
+cam follow 220 150 90
+cam look 145
 wait 300
-rec heavy_front
-volley 1 400 1
+slowmo 8
+rec master_series
+volley 3 300
 wait 300
 stop
+slowmo 1
+
+# 5. as the player sees it: the game's camera over the shoulder
+view full
+cam game
+wait 500
+slowmo 8
+rec game
+volley 2 300
+wait 300
+stop
+slowmo 1
+view clean
+manual off
+tap bow
+wait 1000
+
+# 3. an NPC archer (a bandit, its own bow: `archers` prints its draw weight and r) shooting at the hero, from the side
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+turn 210
+wait 500
+clear 3000
+immortal player on
+still player on
+arc BDT_1003_BANDIT_M 1 1350 0
+wait 300
+stats npc BDT_1003_BANDIT_M talent auto
+npcaim on second
+archers
+archer all at player
+watch BDT_1003_BANDIT_M
+cam follow 260 150 90
+wait 2000
+slowmo 8
+rec npc_side
+wait 5000
+stop
+slowmo 1
+archer off

@@ -261,6 +261,7 @@ PR, который добавляет фичу или выключатель, д
 | Вздрагивание от ударов | `OPENGOTHIC_FLINCH=0` | `flinch.*` | бенч `flinch` | — |
 | Стрелок поворачивает корпус к цели | `OPENGOTHIC_AIM=0` | `aim.*` | бенч `aim` | — |
 | Тетива натягивается рукой | `OPENGOTHIC_BOWDRAW=0` | `bowdraw.*` | бенч `bow-draw` | [manual-aim.md](manual-aim.md) |
+| Выпуск стрелы как у лучника: кисть к уху, лук бьёт, поворачивается и дрожит в руке, тетива по силе выстрела | `OPENGOTHIC_BOWRELEASE=0`; стенд `bowrelease on\|off` | `bowdraw.*`, `common/game/archery.*` (`releaseKick`) | бенч `bow-release`, контракт `gothic-archery-contract` | [manual-aim.md](manual-aim.md) |
 | Шаги с поднятым луком | `OPENGOTHIC_AIMWALK=0` | `aimwalk.*` | бенч `aim-walk` | [manual-aim.md](manual-aim.md) |
 | Зоны попадания по костям | нет | `hitzones.*` | бенч `zones` | — |
 

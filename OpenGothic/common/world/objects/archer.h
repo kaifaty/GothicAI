@@ -64,6 +64,11 @@ class Archer final {
     bool          tick(const Input& in, const Archery::Stats& st);
     // After a release: the arrow left (reload) or could not (the string let down)
     void          onShot(bool shot);
+    // The last shot as it is seen: how hard the bow kicked (Archery::releaseKick, of the draw and the draw
+    // weight as it was let go) and how fast its shake settles (Archery::releaseSettle)
+    void          setRelease(float kick, float settle) { relKick = kick; relSettle = settle; }
+    float         releaseKick()   const { return relKick; }
+    float         releaseSettle() const { return relSettle; }
 
     Stage         stage() const { return stg; }
     float         draw()  const { return drawAmt; }
@@ -106,6 +111,8 @@ class Archer final {
     Tempest::Vec2 sw;
     Tempest::Vec2 trm;
     Tempest::Vec3 shk;
+    float         relKick   = 0;
+    float         relSettle = 1;
 
     float         wander(float t, uint32_t axis) const;
     float         tremor(float t, uint32_t axis) const;

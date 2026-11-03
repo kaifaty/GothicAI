@@ -35,10 +35,44 @@ constexpr float Shelf    = 10.f;  // cm the bow goes up in the hand: the arrow a
 constexpr float Follow   = 4.f;   // cm the hand flies back past the face as the string goes...
 constexpr float FollowT  = BowDraw::FollowTime; // ...for that long, there and back (smooth at both ends)
 
+// the release as an archer's (reports/archery/2026-11-03-release-follow-through): times from the shot
+constexpr float Snap      = 3.f;   // cm the fingers fly back off the string at once...
+constexpr float SnapT     = 0.06f; // ...in that many seconds
+constexpr float BackMin   = 3.f;   // cm on back along the neck toward the ear, a light bow drawn short...
+constexpr float BackKick  = 6.f;   // ...and that much more for the hardest kick
+constexpr float BackT     = 0.3f;  // seconds: there by then (eased out), held
+constexpr float OutMin    = 0.5f;  // cm out from the head on the way (not into the cheek)...
+constexpr float OutKick   = 1.f;
+constexpr float FadeAt    = 0.6f;  // seconds: the hand let go of the follow through (if not gone on to the
+constexpr float FadeT     = 0.3f;  // quiver), so slowly
+constexpr float BowKickMin = 0.5f; // cm the bow hand is thrown back toward the archer...
+constexpr float BowKickK   = 1.f;
+constexpr float BowKickT   = 0.03f; // ...in that long (Klopsteg's photographs), back on the line after
+constexpr float BowBackT   = 0.09f;
+constexpr float TurnMin   = 2.f;   // degrees the bow turns in the closed hand, the top limb forward...
+constexpr float TurnKick  = 6.f;
+constexpr float TurnT     = 0.03f; // ...at once, upright again in TurnBack
+constexpr float TurnBack  = 0.2f;
+constexpr float ShakeDeg  = 1.5f;  // degrees: the bow's shake at the hardest kick...
+constexpr float ShakeHz   = 16.f;  // ...as the limbs ring (14..18 Hz)...
+constexpr float ShakeTau  = 0.1f;  // ...dying out (seconds, by the archer's strength: Archery::releaseSettle)
+constexpr float RelT      = FadeAt+FadeT; // seconds the release goes on
+
 bool enabled = []() {
   const char* v = std::getenv("OPENGOTHIC_BOWDRAW");
   return v==nullptr || v[0]!='0';
   }();
+
+bool releaseOn = []() {
+  const char* v = std::getenv("OPENGOTHIC_BOWRELEASE");
+  return v==nullptr || v[0]!='0';
+  }();
+
+float easeOut(float x) {
+  x = std::clamp(x,0.f,1.f);
+  const float y = 1.f-x;
+  return 1.f-y*y*y;
+  }
 
 float smooth(float x) {
   x = std::clamp(x,0.f,1.f);
@@ -104,6 +138,19 @@ bool BowDraw::isEnabled() {
 void BowDraw::setEnabled(bool e) {
   enabled = e;
   Log::i("bowdraw: ", e ? "on" : "off");
+  }
+
+bool BowDraw::isReleaseEnabled() {
+  return releaseOn;
+  }
+
+void BowDraw::setReleaseEnabled(bool e) {
+  releaseOn = e;
+  Log::i("bowrelease: ", e ? "on" : "off");
+  }
+
+float BowDraw::looseIntensity(float kick) {
+  return releaseOn ? 0.4f + 0.6f*std::clamp(kick,0.f,1.f) : 1.f;
   }
 
 void BowDraw::setSkeleton(const Skeleton* sk) {
@@ -215,13 +262,40 @@ bool BowDraw::update(const Input& in) {
   toString = holding ? smooth((in.reload-grab)/(nock-grab)) : 0.f;
   // the shot: the string held drawn goes (not held still any more, not let down): the hand follows through
   if(in.active && wasReady && !in.ready && draw>=MinShot && weight>0.f) {
-    followT = 0;
-    shotAt  = travel;
+    followT   = 0;
+    shotAt    = travel;
+    kickK     = std::clamp(in.kick,0.f,1.f);
+    settleK   = in.settle;
     }
   wasReady = in.active && in.ready;
-  followT  = std::min(FollowT, followT+dt);
-  const float bump = std::sin(float(M_PI)*followT/FollowT);
-  follow   = followT<FollowT ? Follow*bump*bump : 0.f;
+  const float prevKick = bowKick, prevTurn2 = bowTurn, prevOut = relOut, prevFade = relFade;
+  if(releaseOn) {
+    // the hand flies back off the string and on toward the ear, does not come back: the reload takes it on
+    // from there; the bow hand is thrown back and comes to the line again, the bow turns in it and rings
+    followT = std::min(RelT, followT+dt);
+    const float t = followT;
+    const bool  on = t<RelT;
+    relBack = on ? Snap*easeOut(t/SnapT) + (BackMin+BackKick*kickK)*easeOut((t-SnapT)/(BackT-SnapT)) : 0.f;
+    relOut  = on ? (OutMin+OutKick*kickK)*easeOut(t/BackT) : 0.f;
+    relFade = on ? 1.f - smooth((t-FadeAt)/FadeT) : 0.f;
+    follow  = relBack*relFade;
+    const float kick = BowKickMin+BowKickK*kickK;
+    bowKick = t<BowKickT ? kick*easeOut(t/BowKickT) : kick*(1.f-smooth((t-BowKickT)/BowBackT));
+    const float tau   = ShakeTau*settleK;
+    const float turn  = TurnMin+TurnKick*kickK;
+    const float shape = t<TurnT ? easeOut(t/TurnT) : 1.f-smooth((t-TurnT)/TurnBack);
+    const float shake = ShakeDeg*kickK*std::exp(-t/std::max(tau,1e-3f))*std::sin(2.f*float(M_PI)*ShakeHz*t);
+    bowTurn = on ? turn*shape + shake : 0.f;
+    } else {
+    followT = std::min(FollowT, followT+dt);
+    const float bump = std::sin(float(M_PI)*followT/FollowT);
+    follow  = followT<FollowT ? Follow*bump*bump : 0.f;
+    relBack = follow;
+    relOut  = 0;
+    relFade = 1;
+    bowKick = 0;
+    bowTurn = 0;
+    }
   if(on) {
     weight = std::min(1.f, weight + dt/BlendIn);
     // drawn as it is; let down (no shot) back a bit slower
@@ -242,6 +316,7 @@ bool BowDraw::update(const Input& in) {
     alignT = std::max(0.f, alignT - dt/BlendOut);
   align = smooth(alignT);
   return weight!=prev || (weight>0.f && draw!=prevDraw) || follow!=prevBack || holding || align!=prevTurn ||
+         bowKick!=prevKick || bowTurn!=prevTurn2 || relOut!=prevOut || relFade!=prevFade ||
          (align>0.f && cantK!=prevCant);
   }
 
@@ -319,7 +394,8 @@ void BowDraw::alignBow(Matrix4x4* tr, const Vec3& up, const Vec3& nock, const Ve
   Vec3 rest, pull;
   stringNow(tr,rest,pull);
   const Vec3 from = position(tr[lHand]);
-  Vec3       to   = from + (nock-(rest+pull))*align;
+  // after the shot the bow hand is thrown back toward the archer a moment, along the arrow
+  Vec3       to   = from + (nock-(rest+pull))*align - axis*bowKick;
   Mat3       turn = rotationOf(tr[lHand]);
   if(lean!=0.f) {
     const Mat3 r = axisAngle(axis,lean);
@@ -337,6 +413,37 @@ void BowDraw::alignBow(Matrix4x4* tr, const Vec3& up, const Vec3& nock, const Ve
   // the hand keeps its turn: the bow upright (canted as it is turned)
   rotateAbout(tr,lHandTree,mul(turn,transpose(rotationOf(tr[lHand]))),position(tr[lHand]));
   bowMiss = length(position(tr[lHand])-to);
+  }
+
+Vec3 BowDraw::releaseOffset(const Matrix4x4* tr, size_t numBones, const Vec3& axis) const {
+  if(!releaseOn)
+    return axis*(-follow);
+  const float back = relBack*relFade;
+  const float out  = relOut*relFade;
+  if(back<=0.f && out<=0.f)
+    return Vec3();
+  // out: across the arrow, level, away from the head (the hand's side of it)
+  Vec3 side = cross(Up,axis);
+  if(length(side)<1e-3f)
+    return axis*(-back);
+  side = normalize(side);
+  if(head<numBones && hand<numBones && dot(side,position(tr[hand])-position(tr[head]))<0.f)
+    side = side*-1.f;
+  return axis*(-back) + side*out;
+  }
+
+void BowDraw::turnBow(Matrix4x4* tr, const Vec3& up, const Vec3& axis) {
+  if(bowTurn==0.f || bowHand==size_t(-1))
+    return;
+  // about the grip (the bow is slid up in the hand that far), the top limb toward the arrow's way
+  const Vec3 n = cross(up,axis);
+  if(length(n)<1e-3f)
+    return;
+  const Mat3 r    = axisAngle(normalize(n),bowTurn*float(M_PI)/180.f);
+  const Vec3 at   = position(tr[bowHand]);
+  const Vec3 grip = at-slid;
+  slid = mul(r,slid);
+  tr[bowHand] = compose(mul(r,rotationOf(tr[bowHand])),grip+slid);
   }
 
 void BowDraw::cantHand(Matrix4x4* tr, const Vec3& at, const Vec3& axis, float lean) {
@@ -415,8 +522,14 @@ void BowDraw::reload(Matrix4x4* tr, size_t numBones, const Vec3& nock, const Vec
     turn  = toMat3(slerp(toQuat(rB),toQuat(rA),s));
     elbow = eB + (eA-eB)*s;
     }
-  // the follow through: back past the face
-  at -= axis*follow;
+  // the follow through: back past the face (to the ear), the way to the quiver goes on from there
+  if(toString<=0.f) {
+    // let go of slowly at first: the hand is off to the quiver as soon as the reload starts (40 ms after the
+    // shot), the follow through would hardly show
+    const Vec3 off = releaseOffset(tr,numBones,axis)*(1.f-toQuiver*toQuiver);
+    relShown = length(off);
+    at += off;
+    }
   if(!moveHand(tr,at,&elbow))
     return;
   rotateAbout(tr,handTree,mul(turn,transpose(rotationOf(tr[hand]))),position(tr[hand]));
@@ -424,6 +537,7 @@ void BowDraw::reload(Matrix4x4* tr, size_t numBones, const Vec3& nock, const Vec
   }
 
 void BowDraw::implApply(Matrix4x4* tr, size_t numBones) {
+  relShown = 0;
   travel   = 0;
   miss     = 0;
   shown    = 1;
@@ -463,6 +577,7 @@ void BowDraw::implApply(Matrix4x4* tr, size_t numBones) {
   // held so that it is drawn straight back to there, the hand going straight along the arrow
   Vec3 shift = {};
   Vec3 up    = {};
+  bool bowHeld = false; // the bow held as an archer holds it: it turns in the hand after the shot
   Vec3 nock  = slotAt;
   if(hasString) {
     const Vec3 high = turnOf(tr[bowHand],stringHigh);
@@ -492,6 +607,7 @@ void BowDraw::implApply(Matrix4x4* tr, size_t numBones) {
           lean = 0;
         }
       alignBow(tr,up,nock,axis,lean);
+      bowHeld = true;
       stringNow(tr,rest,pull);
       // the limbs as the bow is held now
       if(lean!=0.f)
@@ -524,20 +640,26 @@ void BowDraw::implApply(Matrix4x4* tr, size_t numBones) {
     // the reload: the string rests till the nock is at it, then shows drawn as far as it is (a little)
     shown = (1.f - full/span)*smooth((toString-0.8f)/0.2f);
     reload(tr,numBones,h0+way*full,axis);
+    if(bowHeld)
+      turnBow(tr,up,axis);
     if(hasString)
       measurePose(tr,numBones,slotAt,axis,up,nock,handAnim);
     return;
     }
+  if(bowHeld)
+    turnBow(tr,up,axis);
   if(hasString)
     measurePose(tr,numBones,slotAt,axis,up,nock,handAnim);
-  if(weight<=0.f && follow<=0.f)
+  if(weight<=0.f && relBack*relFade<=0.f)
     return;
 
   // the whole draw over what the arm reaches: the hand moves all the way, the string with it
   travel = full*(1.f-draw)*weight;
   shown  = 1.f - travel/span;
   // the follow through: back past the face
-  const Vec3 move = shift + way*travel - axis*follow;
+  const Vec3 off  = releaseOffset(tr,numBones,axis);
+  relShown = length(off);
+  const Vec3 move = shift + way*travel + off;
   if(length(move)<0.01f)
     return;
   const Vec3 target = position(tr[hand]) + move;
@@ -556,6 +678,9 @@ void BowDraw::probe(Probe& p) const {
   p.travel  = travel;
   p.miss    = miss;
   p.follow  = follow;
+  p.back    = relShown;
+  p.kick    = bowKick;
+  p.turn    = bowTurn;
   p.fit     = fit;
   p.offset  = offset;
   p.angle   = angle;

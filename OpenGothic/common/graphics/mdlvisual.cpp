@@ -1163,6 +1163,8 @@ bool MdlVisual::updateAim(Npc& npc, uint64_t dt) {
                                         npc.manualAimShake().z/std::max(bd.span,1.f) : 0.f));
   bd.arrow  = !ammunition.view.isEmpty() && ammunition.bone=="ZS_RIGHTHAND";
   bd.cant   = npc.aimCant();
+  bd.kick   = ar.releaseKick();
+  bd.settle = ar.releaseSettle();
   if(auto p = bow.view.protoMesh()) {
     bool high = false, straight = false;
     for(auto& m:p->morph) {
@@ -1201,7 +1203,8 @@ bool MdlVisual::updateAim(Npc& npc, uint64_t dt) {
     bow.view.startMMAnim(BowHeld,0,0);
     bow.view.startMMAnim(BowDraw::StringDrawn,0,0);
     if(pose.bowDrawIk().loosed()) {
-      bow.view.startMMAnim(held>0.5f ? BowDraw::StringLoose : BowLoose,1,uint64_t(-1));
+      // as hard as the shot: a heavy bow drawn fully rings, a light one drawn short less
+      bow.view.startMMAnim(held>0.5f ? BowDraw::StringLoose : BowLoose,BowDraw::looseIntensity(ar.releaseKick()),uint64_t(-1));
       looseAt = npc.world().tickCount();
       }
     stringByHand = false;
