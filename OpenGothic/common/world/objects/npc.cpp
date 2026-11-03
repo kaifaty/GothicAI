@@ -796,18 +796,21 @@ void Npc::saveAiState(Serialize& fout) const {
   fout.write(aiState.funcIni,aiState.funcLoop,aiState.funcEnd,aiState.sTime,aiState.eTime,aiState.started,aiState.loopNextTime);
   fout.write(aiPrevState);
 
-  if(const auto* pending=pendingSimpleGoTo(); pending!=nullptr && pending->act==AI_GotoItem && pending->item!=nullptr) {
+  const auto* pending=pendingSimpleGoTo();
+  const uint32_t pendingItem = (pending!=nullptr && pending->act==AI_GotoItem && pending->item!=nullptr) ?
+                               owner.itmId(&pending->item->handle()) : uint32_t(-1);
+  if(pendingItem!=uint32_t(-1)) {
     // Item pointers were never part of AiQueue's layout. Its unused i1 carries
     // the world-item index for a retained graph terminal, without adding bytes.
     auto saved=aiQueue;
     auto action=saved.pop();
-    const auto id=owner.itmId(&action.item->handle());
-    if(id==uint32_t(-1))
-      throw std::runtime_error("Simplified movement item is no longer in the world");
-    action.i1=int(id)+1;
+    action.i1=int(pendingItem)+1;
     saved.pushFront(std::move(action));
     saved.save(fout);
     } else {
+    // A vanished item must not fail the save: the action loads as a plain GotoItem.
+    if(pending!=nullptr && pending->act==AI_GotoItem && pending->item!=nullptr)
+      Log::e("npc_graph: ",displayName()," GotoItem target is no longer in the world; saved without it");
     aiQueue.save(fout);
     }
   aiQueueOverlay.save(fout);
