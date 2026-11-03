@@ -38,8 +38,8 @@ walkmode walk
 wait 4000
 shot walk-brazier-start
 rec walk-brazier
-hold forward 4500
-wait 5500
+hold forward 3500
+wait 4000
 stop
 shot walk-brazier-end
 
