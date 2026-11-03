@@ -4,6 +4,7 @@
 
 #include <atomic>
 #include <filesystem>
+#include <mutex>
 #include <shared_mutex>
 #include <string>
 #include <thread>
@@ -37,7 +38,8 @@ class MtPipelineCache {
     NsPtr<MTL::BinaryArchive>  archive;
     NsPtr<NS::Array>           list;
     std::filesystem::path      file;
-    bool                       dirty = false;
+    std::mutex                 saveSync;
+    std::atomic<bool>          dirty{false};
     std::atomic<uint32_t>      hits{0}, misses{0}, failures{0};
     std::thread                saver;
   };

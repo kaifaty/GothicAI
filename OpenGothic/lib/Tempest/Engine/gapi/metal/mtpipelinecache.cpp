@@ -34,6 +34,8 @@ static const char* errorText(NS::Error* err) {
 MtPipelineCache::~MtPipelineCache() {
   if(saver.joinable())
     saver.join();
+  if(archive!=nullptr && !dirty)
+    Log::i("pipeline cache: unchanged (hits=",hits.load()," misses=",misses.load()," failures=",failures.load(),")");
   save();
   }
 
@@ -94,7 +96,7 @@ State* MtPipelineCache::create(Desc& desc, NS::Error** err, Make make, Add add) 
   if(archive==nullptr)
     return make(MTL::PipelineOptionNone,err);
 
-  auto pool = NsPtr<NS::AutoreleasePool>::init();
+  // No local autorelease pool: *err must stay valid for the caller.
   {
     std::shared_lock<std::shared_mutex> guard(sync);
     desc.setBinaryArchives(list.get());
@@ -145,7 +147,9 @@ void MtPipelineCache::save() {
   if(archive==nullptr)
     return;
   auto pool = NsPtr<NS::AutoreleasePool>::init();
-  std::unique_lock<std::shared_mutex> guard(sync);
+  std::lock_guard<std::mutex> saveGuard(saveSync);
+  // Shared: serializing only reads the archive, so pipeline lookups go on; additions wait.
+  std::shared_lock<std::shared_mutex> guard(sync);
   if(!dirty)
     return;
   const auto start = std::chrono::steady_clock::now();

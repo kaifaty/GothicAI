@@ -123,7 +123,7 @@ MtDevice::MtDevice(std::string_view name, bool validation)
   {
     std::string identity = impl->name()->utf8String();
     identity += "\n";
-    identity += [[[NSProcessInfo processInfo] operatingSystemVersionString] UTF8String];
+    identity += NS::ProcessInfo::processInfo()->operatingSystemVersionString()->utf8String();
     identity += "\nmsl=" + std::to_string(uint32_t(prop.mslVersion));
     psoCache.init(*impl,identity);
   }
