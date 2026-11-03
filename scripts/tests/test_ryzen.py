@@ -497,6 +497,55 @@ remote_probe e2e "$TEST_ROOT/state" run "$TEST_SCENARIO"
             self.assertFalse((state / 'build-was-called').exists())
 
 
+    def test_e2e_uploads_declared_save_and_forwards_declared_timeout(self):
+        source = SCRIPT.read_text()
+        start = source.index("# Resolve the scenario's declared run settings here")
+        block = source[start:source.index('echo "Ryzen: upload', start)]
+        cases = [
+            # scenario, explicit TIMEOUT, expected forwarded arguments, uploaded save
+            ('errand', None, ['TIMEOUT=1500', 'SAVE=/remote/state/inputs/run/SAVE'], True),
+            ('check_walk', None, ['TIMEOUT=240', 'SAVE='], False),
+            ('errand', '600', ['TIMEOUT=600', 'SAVE=/remote/state/inputs/run/SAVE'], True),
+        ]
+        for scenario, timeout, expected, uploaded in cases:
+            with self.subTest(scenario=scenario, timeout=timeout), \
+                    tempfile.TemporaryDirectory(prefix='ryzen-run-defaults-') as directory:
+                root = Path(directory).resolve()
+                (root / 'scripts').mkdir()
+                (root / 'server').mkdir()
+                shutil.copyfile(SCRIPT.with_name('e2e-services.sh'), root / 'scripts/e2e-services.sh')
+                subprocess.run(['git', 'init', '-q', str(root)], check=True)
+                (root / 'save_slot_1.sav').write_text('slot 1')
+                binaries = root / 'bin'
+                binaries.mkdir()
+                # A stand-in for RUN: errand is declared with a save, check_walk without one.
+                (binaries / 'uv').write_text(
+                    '#!/bin/sh\ncat >/dev/null\n'
+                    'case "$4" in errand) echo "1500 1" ;; check_walk) echo "240 0" ;; esac\n')
+                (binaries / 'rsync').write_text('#!/bin/sh\nprintf \'%s\\n\' "$*" >>"$TEST_ROOT/rsync"\n')
+                for executable in binaries.iterdir():
+                    executable.chmod(0o755)
+                env = {name: value for name, value in os.environ.items()
+                       if name not in ('SAVE', 'TIMEOUT', 'VOICE_FILE', 'E2E_RUN_DEFAULTS')}
+                env.update(PATH=str(binaries) + os.pathsep + os.environ['PATH'], TEST_ROOT=str(root),
+                           ROOT=str(root), SCENARIO=scenario)
+                carried = ''
+                if timeout is not None:
+                    # The carry loop above has already forwarded an explicit TIMEOUT.
+                    env['TIMEOUT'] = timeout
+                    carried = f'TIMEOUT={timeout}'
+                harness = ('set -euo pipefail\nACTION=e2e STATE=/remote/state REMOTE=gothic-ai/e2e/own '
+                           f'RUN=run RYZEN_HOST=test ENV_ARGS=({carried})\n'
+                           + block + 'printf \'%s\\n\' "${ENV_ARGS[@]}"\n')
+                result = subprocess.run(['bash', '-c', harness], env=env,
+                                        capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(result.stdout.splitlines(), expected)
+                uploads = (root / 'rsync').read_text().splitlines() if (root / 'rsync').exists() else []
+                self.assertEqual(uploads, [f'-a -- {root}/save_slot_1.sav test:gothic-ai/e2e/own/inputs/run/SAVE']
+                                 if uploaded else [])
+
+
 class AutoCleanTests(unittest.TestCase):
     def test_controller_marks_only_own_session_and_preserves_other_data(self):
         with tempfile.TemporaryDirectory(prefix='ryzen-autoclean-test-') as directory:

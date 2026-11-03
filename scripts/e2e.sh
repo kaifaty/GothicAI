@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # End-to-end check: starts the AI server with a scenario, then a new game in OpenGothic.
 # LLM defaults to the scenario group selected in server/src/gothic_ai/scenarios/groups.py.
+# Unset TIMEOUT and SAVE take the scenario's RUN timeout and save (slot 1), as in e2e-regression.sh;
+# an explicit TIMEOUT, SAVE or empty SAVE= (a new game) wins.
 # LLM=off forbids model calls except explicit scenario givens (given/silent).
 # P30 is enabled only for neural, neural-companion, neural-group, neural-talk,
 # neural-load, neural-soak and neural-still; all other scenarios use --no-neural-body.
@@ -442,6 +444,9 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 GOTHIC_DIR="${GOTHIC_DIR:-/Volumes/DevSSD/Dev/games/Gothic II}"
 GAME_BIN="${GAME_BIN:-$ROOT/OpenGothic/build/opengothic/Gothic2Notr}"
 LOG_DIR="${LOG_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/gothic-e2e.XXXXXX")}"
+source "$ROOT/scripts/e2e-services.sh"
+# Unset TIMEOUT and SAVE take the scenario's declared run settings (RUN), before the checks below.
+e2e_run_defaults "${SCENARIO:-m0}"
 SCENARIO="${SCENARIO:-m0}"
 LLM="${LLM:-auto}"
 if [[ "$LLM" == fake ]]; then
@@ -455,13 +460,11 @@ if [[ "${GOTHIC_SOAK_CONTROL:-0}" == 1 && "$SCENARIO" != neural-soak ]]; then
   exit 2
 fi
 E2E_DEFAULT_TIMEOUT=240
-if [[ "$SCENARIO" == memprobe ]]; then E2E_DEFAULT_TIMEOUT=1200; fi
-if [[ "$SCENARIO" == surrender_live || "$SCENARIO" == neural-still || "$SCENARIO" == showrunner_live || "$SCENARIO" == vanilla_line_live ]]; then E2E_DEFAULT_TIMEOUT=1200; fi
+if [[ "$SCENARIO" == surrender_live || "$SCENARIO" == showrunner_live || "$SCENARIO" == vanilla_line_live ]]; then E2E_DEFAULT_TIMEOUT=1200; fi
 if [[ "$SCENARIO" == haggle ]]; then E2E_DEFAULT_TIMEOUT=1200; fi
 if [[ "$SCENARIO" == live_lies || "$SCENARIO" == live_deals || "$SCENARIO" == live_npc || "$SCENARIO" == live_director ]]; then E2E_DEFAULT_TIMEOUT=2400; fi
 if [[ "$SCENARIO" == interject ]]; then E2E_DEFAULT_TIMEOUT=600; fi
 if [[ "$SCENARIO" == chests_lobart ]]; then E2E_DEFAULT_TIMEOUT=420; fi
-if [[ "$SCENARIO" == feat_fame ]]; then E2E_DEFAULT_TIMEOUT=420; fi
 TIMEOUT="${TIMEOUT:-$E2E_DEFAULT_TIMEOUT}"
 if [[ "${GOTHIC_TTS_RECORD:-0}" == 1 && "$SCENARIO" != tts ]]; then
   echo 'GOTHIC_TTS_RECORD requires SCENARIO=tts' >&2

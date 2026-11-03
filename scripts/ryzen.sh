@@ -571,7 +571,8 @@ WRAPPER
       export LOG_DIR="$out/run-$run_number"
       mkdir -p "$LOG_DIR"
     fi
-    bash "$ROOT/scripts/e2e.sh" 2>&1 | tee "$LOG_DIR/e2e.log" && rc=0 || rc=$?
+    # The controller has resolved the scenario's RUN settings before the upload.
+    E2E_RUN_DEFAULTS=0 bash "$ROOT/scripts/e2e.sh" 2>&1 | tee "$LOG_DIR/e2e.log" && rc=0 || rc=$?
     grep -E 'GPU = ' "$LOG_DIR/game.log" || true
     killed_at="$(sed -n 's/^game killed before checks at //p' "$LOG_DIR/e2e.log")"
     [[ -n "$killed_at" ]] || break
@@ -1572,6 +1573,15 @@ if [[ "$ACTION" == e2e ]]; then
   fi
 elif [[ -n "${OPENGOTHIC_CONVEX_PARTS+set}" ]]; then
   ENV_ARGS+=("OPENGOTHIC_CONVEX_PARTS=$OPENGOTHIC_CONVEX_PARTS")
+fi
+# Resolve the scenario's declared run settings here: its save is uploaded from this machine.
+# The remote e2e.sh takes TIMEOUT and SAVE as given; an empty SAVE= is a new game.
+if [[ "$ACTION" == e2e ]]; then
+  source "$ROOT/scripts/e2e-services.sh"
+  EXPLICIT_TIMEOUT="${TIMEOUT:-}"
+  e2e_run_defaults "${SCENARIO:-m0}"
+  if [[ -z "$EXPLICIT_TIMEOUT" && -n "${TIMEOUT:-}" ]]; then ENV_ARGS+=("TIMEOUT=$TIMEOUT"); fi
+  [[ -n "${SAVE:-}" ]] || ENV_ARGS+=("SAVE=")
 fi
 for name in SAVE VOICE_FILE; do
   if [[ -n "${!name:-}" ]]; then
