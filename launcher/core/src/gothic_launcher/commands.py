@@ -19,6 +19,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from . import base
 from .settings import CONFIG_DIR, Config
@@ -325,6 +326,13 @@ def services(config: Config, layout: Layout, ports: Ports, cwd: Path) -> list[Pr
         if keys.inworld_api_key:
             env["INWORLD_API_KEY"] = keys.inworld_api_key
         argv = ["--port", str(ports.asr), "--provider", s.voice.provider, "--fallback", s.voice.fallback]
+        laughter_url = s.voice.laughter_url
+        if not laughter_url and s.llm.decider_url:
+            host = urlsplit(s.llm.decider_url).hostname
+            if host and ":" in host:
+                host = f"[{host}]"
+            laughter_url = f"http://{host}:47838" if host else None
+        argv += _opt("--laughter-url", laughter_url)
         procs.append(_service(layout, "asr", "asr-service", "gothic-asr", argv, env, ports.asr, cwd))
         server_args += ["--asr-url", f"ws://127.0.0.1:{ports.asr}"] + _opt("--mic-device", s.voice.mic_device)
     else:

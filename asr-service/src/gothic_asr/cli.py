@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 
 from .audio import RATE, read_wav, resample
-from .laughter import DEFAULT_MODEL, LaughterDetector, fetch_model
+from .laughter import DEFAULT_URL, RemoteLaughter
 from .providers import PROVIDERS, AsrError, make_provider
 from .recognizer import Recognizer
 from .service import AsrService
@@ -44,9 +44,7 @@ def _recognizer(args: argparse.Namespace) -> Recognizer:
         make_provider(args.provider),
         make_provider(args.fallback) if args.fallback and args.fallback != "none" else None,
         timeout=args.timeout,
-        laughter=(
-            None if args.no_laughter else LaughterDetector(args.laughter_model, args.laughter_threads)
-        ),
+        laughter=None if args.no_laughter else RemoteLaughter(args.laughter_url),
     )
 
 
@@ -120,44 +118,33 @@ async def transcribe(args: argparse.Namespace) -> int:
     return 0
 
 
-async def fetch_laughter(args: argparse.Namespace) -> int:
-    try:
-        path = await fetch_model(args.laughter_model)
-    except Exception as err:
-        print(f"error: could not fetch laughter model: {err}", file=sys.stderr)
-        return 1
-    print(path)
-    return 0
-
-
 async def laughter(args: argparse.Namespace) -> int:
-    detector = LaughterDetector(args.laughter_model, args.laughter_threads)
-    if not await detector.prepare():
-        print("error: laughter detector is unavailable", file=sys.stderr)
-        return 1
-    code = 0
-    for path in args.files:
-        try:
-            audio, rate = read_wav(path)
-            score = await asyncio.to_thread(detector.score, resample(audio, rate))
-        except (OSError, ValueError) as err:
-            print(f"error: {path}: {err}", file=sys.stderr)
-            return 1
-        print(f"{Path(path).name}: laughing={score}")
-        if score is None:
-            code = 1
-    return code
+    detector = RemoteLaughter(args.laughter_url)
+    try:
+        await detector.prepare()
+        code = 0
+        for path in args.files:
+            try:
+                audio, rate = read_wav(path)
+                score = await asyncio.to_thread(detector.score, resample(audio, rate))
+            except (OSError, ValueError) as err:
+                print(f"error: {path}: {err}", file=sys.stderr)
+                return 1
+            print(f"{Path(path).name}: laughing={score}")
+            if score is None:
+                code = 1
+        return code
+    finally:
+        await asyncio.to_thread(detector.close)
 
 
 def _add_laughter_args(p: argparse.ArgumentParser, *, optional: bool = False) -> None:
     p.add_argument(
-        "--laughter-model", type=Path, default=DEFAULT_MODEL, help="path to the laughter ONNX model"
+        "--laughter-url", default=os.environ.get("GOTHIC_LAUGHTER_URL", DEFAULT_URL),
+        help="URL of the laughter HTTP service",
     )
-    p.add_argument("--laughter-threads", type=int, default=4, help="CPU threads for laughter inference")
     if optional:
-        p.add_argument(
-            "--no-laughter", action="store_true", help="disable laughter detection and model download"
-        )
+        p.add_argument("--no-laughter", action="store_true", help="disable laughter detection")
 
 
 def _add_provider_args(p: argparse.ArgumentParser) -> None:
@@ -203,11 +190,6 @@ def main() -> None:
     _add_provider_args(p)
     _add_laughter_args(p, optional=True)
 
-    p = sub.add_parser("fetch-laughter", help="download and verify the laughter model")
-    p.add_argument(
-        "--laughter-model", type=Path, default=DEFAULT_MODEL, help="path to the laughter ONNX model"
-    )
-
     p = sub.add_parser("laughter", help="score laughter in wav files")
     p.add_argument("files", nargs="+")
     _add_laughter_args(p)
@@ -228,8 +210,6 @@ def main() -> None:
                 code = asyncio.run(serve(args))
             case "transcribe":
                 code = asyncio.run(transcribe(args))
-            case "fetch-laughter":
-                code = asyncio.run(fetch_laughter(args))
             case "laughter":
                 code = asyncio.run(laughter(args))
             case _:
