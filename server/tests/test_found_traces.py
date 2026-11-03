@@ -11,15 +11,15 @@ from gothic_ai.brain.situation import SituationBuilder
 from gothic_ai.brain.stimuli import Stimulus
 from gothic_ai.chronicle import Chronicle
 from gothic_ai.crimes import SUSPECT_MIN, Crimes
-from gothic_ai.found_traces import JUDGE_S, PRESENT_MIN, FoundTraces
+from gothic_ai.found_traces import PRESENT_MIN, FoundTraces
 from gothic_ai.memory import MemoryStore
 from gothic_ai.npc_crimes import NpcCrimes
 from gothic_ai.perception import PerceptionDesk
-from gothic_ai.protocol import BODY_TRACE_PROTOCOL, PROTOCOL_VERSION, NpcView, parse_game_message
+from gothic_ai.protocol import BODY_TRACE_PROTOCOL, PROTOCOL_VERSION, HeroDeed, NpcView, parse_game_message
 from gothic_ai.sightings import Sighting, Sightings
 from tests.fakes import Clock
 from tests.test_perception import HILDA, LOBART, MALETH, Social, look, physical_trace
-from tests.test_sightings import AT_8, BOOK, Link
+from tests.test_sightings import AT_8, BOOK, Link, push
 from tests.test_sightings import sightings as make_sightings
 
 BODY_ID = "NEWWORLD.ZEN:body:3"  # the world numbers its dead; not the npc symbol
@@ -93,17 +93,15 @@ class World:
         self.found.on_found.append(self.finds.append)
 
     def saw(self, *views: NpcView, judge: bool = True) -> None:
-        """The views as the desk hands them out; then, unless `judge` is False, a later view of the last
-        viewer after JUDGE_S, which decides its finds (only after a view with traces: it extends
-        sightings)."""
+        """Pushed views; unless `judge` is False, the last finder gets its next pushed view too."""
         for v in views:
-            self.seen.desk._seen(v)
+            push(self.seen, v)
         if judge and views and views[-1].traces:
             self.later(views[-1])
 
-    def later(self, view: NpcView, seconds: float = JUDGE_S + 1) -> None:
+    def later(self, view: NpcView, seconds: float = 0.0) -> None:
         self.clock.t += seconds
-        self.seen.desk._seen(view.model_copy(update={"time": (view.time or 0) + 1}))
+        push(self.seen, view.model_copy(update={"time": (view.time or 0) + 1}))
 
     def suspected(self) -> list[dict]:
         return [*self.chronicle.facts("crime_suspected"), *self.chronicle.facts("npc_crime_suspected")]
@@ -118,6 +116,13 @@ def store():
     s.ensure_branch("A")
     yield s
     s.close()
+
+
+@pytest.fixture(params=["body", "blood"])
+def found_trace(request):
+    if request.param == "body":
+        return body()
+    return physical_trace("NEWWORLD.ZEN:blood:12", "blood", "кровь", age=50, waypoint=YARD)
 
 
 def test_v58_body_trace_parses_with_the_dead_npc():
@@ -400,30 +405,32 @@ async def test_a_finder_who_was_there_when_he_died_suspects_no_one(store, seen_b
     await asyncio.gather(*w.seen._background, *w.chronicle._background)
 
 
-async def test_suspicion_waits_for_the_deed_seen_after_the_find(store):
-    """The view with the body may come before `hero_deed`: the witness's crime_seen arrives later, and the
-    trace must not make it suspect the hero a second time."""
+@pytest.mark.parametrize("deed_before", [False, True])
+@pytest.mark.parametrize("delay", [0.001, 600.0])
+async def test_suspicion_waits_for_the_deed_seen_after_the_find(store, found_trace, deed_before, delay):
+    """The deed precedes the next pushed view, regardless of elapsed real time."""
     w = World(store)
-    w.saw(seen_view(AT_8))
-    view = found_view(AT_8 + 60)
+    w.saw(seen_view(AT_8).model_copy(update={"sees": []}))  # only the hero was seen near the trace
+    view = found_view(AT_8 + 60, found_trace)
+    deed = HeroDeed.model_validate({
+        "type": "hero_deed", "id": "M1",
+        "kind": "murder" if found_trace["kind"] == "body" else "attack",
+        "victim": MALETH, "victim_guild": 8, "witnesses": [LOBART],
+        "waypoint": YARD, "position": {"x": 0, "y": 0, "z": 0},
+        "day": 1, "hour": 8, "minute": 20,
+    })
+    if deed_before:
+        for listener in w.link.listeners:
+            listener(deed)
     w.saw(view, judge=False)
     assert len(w.stimuli()) == 1  # the stimulus at once
-    w.later(view, JUDGE_S / 2)  # too early: nothing is decided
     assert w.chronicle.facts("trace_judged") == []
-    w.chronicle.record(
-        {
-            "fact": "crime",
-            "id": "M1",
-            "kind": "murder",
-            "victim": MALETH,
-            "waypoint": YARD,
-            "day": 1,
-            "hour": 8,
-            "minute": 20,
-        }
-    )
-    w.chronicle.record({"fact": "crime_seen", "npc": LOBART, "crime": "M1"})
-    w.clock.t += 600  # no view for a long while: the decision waits for the next one
+    w.clock.t += delay
+    if not deed_before:
+        for listener in w.link.listeners:
+            listener(deed)
+    assert w.crimes.seen(LOBART)[0]["id"] == deed.id
+    assert w.chronicle.facts("trace_judged") == []  # time alone never decides
     w.later(view)
     assert w.suspected() == [] and len(w.chronicle.facts("trace_judged")) == 1
     w.later(view)
@@ -431,13 +438,45 @@ async def test_suspicion_waits_for_the_deed_seen_after_the_find(store):
     await asyncio.gather(*w.seen._background, *w.chronicle._background)
 
 
-async def test_a_find_saved_before_its_decision_is_decided_once_after_the_load(tmp_path):
+async def test_the_next_pushed_view_decides_without_elapsed_real_time(store, found_trace):
+    w = World(store)
+    w.saw(seen_view(AT_8).model_copy(update={"sees": []}))
+    view = found_view(AT_8 + 60, found_trace)
+    w.saw(view, judge=False)
+    assert len(w.stimuli()) == 1 and w.suspected() == []
+    assert w.chronicle.facts("trace_judged") == []
+    w.later(view, 0.001)  # less than the former two-second delay
+    assert [f["suspect"] for f in w.suspected()] == ["PLAYER"]
+    assert len(w.chronicle.facts("trace_judged")) == 1
+    w.later(view)
+    assert len(w.stimuli()) == 1 and len(w.chronicle.facts("trace_judged")) == 1
+    await asyncio.gather(*w.seen._background, *w.chronicle._background)
+
+
+async def test_requested_views_do_not_advance_the_decision(store, found_trace):
+    w = World(store)
+    w.saw(seen_view(AT_8).model_copy(update={"sees": []}))
+    view = found_view(AT_8 + 60, found_trace)
+    w.seen.desk._store(view)  # a request can find the trace before the push in the same engine tick
+    assert len(w.stimuli()) == 1
+    w.saw(view, judge=False)
+    assert w.chronicle.facts("trace_judged") == []
+    w.clock.t += 600
+    w.seen.desk._store(view)  # requested views never count as another engine tick
+    assert w.chronicle.facts("trace_judged") == []
+    w.later(view)
+    assert [f["suspect"] for f in w.suspected()] == ["PLAYER"]
+    assert len(w.stimuli()) == 1 and len(w.chronicle.facts("trace_judged")) == 1
+    await asyncio.gather(*w.seen._background, *w.chronicle._background)
+
+
+async def test_a_find_saved_before_its_decision_is_decided_once_after_the_load(tmp_path, found_trace):
     path = str(tmp_path / "memory.sqlite3")
     store = MemoryStore(path)
     store.ensure_branch("A")
     w = World(store)
-    w.saw(seen_view(AT_8))
-    w.saw(found_view(AT_8 + 60), judge=False)  # saved right after the find
+    w.saw(seen_view(AT_8).model_copy(update={"sees": []}))
+    w.saw(found_view(AT_8 + 60, found_trace), judge=False)  # saved right after the find
     await asyncio.gather(*w.seen._background, *w.chronicle._background)
     head = store.head("A")
     assert w.chronicle.facts("trace_judged") == []
@@ -446,8 +485,9 @@ async def test_a_find_saved_before_its_decision_is_decided_once_after_the_load(t
     store = MemoryStore(path)
     store.ensure_branch("loaded", "A", head)
     again = World(store, branch="loaded")
-    again.saw(found_view(AT_8 + 61), judge=False)  # the first view after the load decides it
-    again.later(found_view(AT_8 + 62))
+    again.saw(found_view(AT_8 + 61, found_trace), judge=False)  # the first push after the load decides it
+    assert len(again.chronicle.facts("trace_judged")) == 1
+    again.later(found_view(AT_8 + 62, found_trace))
     assert again.finds == [] and again.stimuli() == []
     assert [f["suspect"] for f in again.suspected()] == ["PLAYER"]
     assert len(again.chronicle.facts("trace_judged")) == 1
