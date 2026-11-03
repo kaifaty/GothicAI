@@ -4,6 +4,8 @@
 
 Автоматические сценарии запускаются без выбора модели: `SCENARIO=<имя> scripts/ryzen.sh e2e`, на Mac — `SCENARIO=<имя> scripts/e2e.sh`. `auto` выбирает `off` для групп `OFF` и `GIVEN`; сценарий вне групп отклоняется при запуске. `--llm fake` удалён; `FakeBackend` остался только для unit-тестов. ASR и TTS в e2e по-прежнему используют свои бесплатные заглушки.
 
+Нужные сценарию TTS и ASR объявлены в `scripts/e2e-services.sh`: `e2e.sh` по нему запускает сервисы, а `dependency_projects` в `ryzen.sh` читает его из копии checkout и готовит соответствующие проекты через `uv sync --frozen` до занятия окна игры. `server` готовится всегда. Согласованность запуска и подготовки проверяет `scripts/tests/test_ryzen.py` без игры и SSH.
+
 P30 по умолчанию выключен до полного переобучения (решение пользователя 2026-11-03), бои ведёт native `FightAlgo`. `scripts/e2e.sh` явно передаёт `--neural-body --body-policy "$BODY_POLICY"` только сценариям сети: `neural`, `neural-companion`, `neural-group`, `neural-talk`, `neural-load`, `neural-soak`, `neural-still`. В `engine` URL не нужен; `service` по-прежнему требует `GOTHIC_BODY_URL`. Контроль `GOTHIC_SOAK_CONTROL=1` для `neural-soak` и все остальные сценарии получают `--no-neural-body`. Пассивное наблюдение тел в `crime_react`, `crime_meet`, `frame`, `npc_will` сохраняет `SharedBodyWatch` из `scenarios/common.py` и отбор по `script_symbol`; у `npc_deeds` и `fight_reactions_bandits` остаются свои обёртки.
 
 При `--llm off --scenario` фоновое приветствие главаря у стоянки (`bandit_hail`) включено только для сценариев, которые его проверяют: `bandit_parley`, `bandit_bounty`, `road_bandits`, `companion`. Остальные правила переговоров сохраняются: бандиты не нападают без повода и отвечают на слова героя. В обычной игре и с живой моделью приветствие работает как прежде.
@@ -478,6 +480,8 @@ SAVE=/Volumes/DevSSD/Dev/projects/gothic/save_slot_1.sav SUITE=live_deals RUNS=1
 `cards` не является набором: `cd server && uv run gothic-ai cards [--only SYM,...]` — [команда генерации](README.md#сервисы).
 
 ## План и журнал
+
+2026-11-03: списки сценариев с TTS и ASR объединены в `scripts/e2e-services.sh` (#804). Подготовка Ryzen теперь включает TTS и для `svm_lines`, `mercy`, `hero_yield`, `humiliate`, `surrender_live`, `live_npc`, `live_director`; набор запускаемых сервисов не изменился.
 
 2026-11-02: убраны удержанные кадры 0,6–0,75 с из записи 2026-11-01 ниже. Их давал не стриминг кусков сам по себе, а Vulkan: раскладка bindless шла от точного размера массивов, и каждый рост числа бакетов после телепорта пересобирал 18–26 PSO кадра ([разбор](world-streaming.md#рывки-кадра-на-vulkan-от-роста-bindless-массивов-2026-11-02)). Строка `[app-cadence]` теперь пишет и самый долгий кадр окна `max_ms`. Прогоны на Ryzen поодиночке: `neural` 7/7, самый долгий кадр в бою 81 мс. `neural-group` — кадры в бою 34–54 мс, но третий бой дважды кончился `target_lost` рядом с нокдауном. `neural-soak` — кадры в волнах по 34 мс, `fault_fallbacks` и `server_log` проходят, захват 11/13. Строки обоих в «Известных дефектах» переписаны: оставшиеся причины в пилоте P30 и бою.
 

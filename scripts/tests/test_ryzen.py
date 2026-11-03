@@ -54,6 +54,7 @@ class KilledGameRetryTests(unittest.TestCase):
         (settings.parent.parent / 'game-base.json').write_text(json.dumps({'base': 'c' * 64, 'videos': ''}))
         binaries.mkdir()
         shutil.copyfile(SCRIPT.with_name('e2e.sh'), source / 'scripts/e2e.sh')
+        shutil.copyfile(SCRIPT.with_name('e2e-services.sh'), source / 'scripts/e2e-services.sh')
         # Base preparation has its own tests; here the base is already ready.
         (source / 'scripts/base-ensure.sh').write_text('exit 0\n')
         # Keep the production shell monitor, but replace its services and game.
@@ -378,17 +379,27 @@ preparation_needed() { [[ "$TEST_PREPARE" == 1 ]]; }
                 self.assertEqual('--display-shared' in options, shared)
                 self.assertEqual('--display-exclusive' in options, not shared)
 
-    def test_tts_preparation_installs_missing_dependencies(self):
-        for scenario in ('errand', 'errand_fork', 'errand_far', 'errand_give',
+    def test_service_preparation_installs_e2e_dependencies(self):
+        e2e = SCRIPT.with_name('e2e.sh').read_text()
+        services = e2e[e2e.index('ASR_PID=""'):e2e.index('\ncase "$SCENARIO" in', e2e.index('ASR_PID=""'))]
+        for scenario in ('tts', 'svm_lines', 'combat_barks', 'mercy', 'hero_yield',
+                         'humiliate', 'surrender_live', 'live_npc', 'live_director',
+                         'gossip', 'day', 'group', 'interject', 'programs',
+                         'errand', 'errand_fork', 'errand_far', 'errand_give',
                          'fight_reactions_wolf', 'fight_reactions_sight',
-                         'fight_reactions_bandits', 'fight_reactions_flee'):
+                         'fight_reactions_bandits', 'fight_reactions_flee', 'm3', 'm5e'):
             with self.subTest(scenario=scenario), tempfile.TemporaryDirectory(prefix='ryzen-deps-test-') as directory:
                 root = Path(directory)
                 source = root / 'source'
                 state = root / 'state'
+                (source / 'scripts').mkdir(parents=True)
+                helper = SCRIPT.with_name('e2e-services.sh')
+                if helper.exists():
+                    shutil.copyfile(helper, source / 'scripts/e2e-services.sh')
                 (source / 'server/.venv').mkdir(parents=True)
                 (source / 'server/.venv/ready').touch()
                 (source / 'tts-service').mkdir()
+                (source / 'asr-service').mkdir()
                 (state / 'inputs/run').mkdir(parents=True)
                 (root / 'bin').mkdir()
                 uv = root / 'bin/uv'
@@ -400,6 +411,8 @@ import sys
 args = sys.argv[1:]
 with Path(os.environ['TEST_UV_CALLS']).open('a') as stream:
     stream.write(json.dumps({'project': Path.cwd().name, 'args': args}) + '\n')
+if args[0] == 'run':
+    sys.exit(0)
 marker = Path('.venv/ready')
 if args == ['sync', '--check', '--frozen']:
     sys.exit(0 if marker.exists() else 1)
@@ -410,6 +423,16 @@ if args == ['sync', '--frozen']:
 sys.exit('unexpected uv arguments: ' + repr(args))
 ''')
                 uv.chmod(0o755)
+                startup = subprocess.run(
+                    ['bash', '-ec', services + '\nwait'], capture_output=True, text=True, timeout=5,
+                    env=dict(os.environ, ROOT=str(source), SCENARIO=scenario, LOG_DIR=directory,
+                             TTS='fake', ASR='fake', TTS_PORT='47840', ASR_PORT='47830',
+                             VOICE_FILE='/unused.wav', TEST_UV_CALLS=str(root / 'startup.jsonl'),
+                             PATH=str(root / 'bin') + os.pathsep + os.environ['PATH']),
+                )
+                self.assertEqual(startup.returncode, 0, startup.stdout + startup.stderr)
+                projects = ('server', *(json.loads(line)['project']
+                                        for line in (root / 'startup.jsonl').read_text().splitlines()))
                 harness = r'''
 set -euo pipefail
 ROOT="$TEST_ROOT/source"
@@ -439,12 +462,13 @@ remote_probe e2e "$TEST_ROOT/state" run "$TEST_SCENARIO"
                              TEST_UV_CALLS=str(calls), PATH=str(root / 'bin') + os.pathsep + os.environ['PATH']),
                 )
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                self.assertTrue((source / 'tts-service/.venv/ready').exists())
+                for project in projects:
+                    self.assertTrue((source / project / '.venv/ready').exists())
                 self.assertEqual([json.loads(line) for line in calls.read_text().splitlines()], [
                     {'project': project, 'args': args}
                     for args in (['sync', '--check', '--frozen'], ['sync', '--frozen'],
                                  ['sync', '--check', '--frozen'])
-                    for project in ('server', 'tts-service')
+                    for project in projects
                 ])
 
     def test_game_rejects_stale_engine_without_building(self):
@@ -530,6 +554,7 @@ class CacheTests(unittest.TestCase):
         (self.source / 'server').mkdir()
         shutil.copyfile(GAME_HELPER, self.source / 'scripts/ryzen_game.py')
         shutil.copyfile(SCRIPT.with_name('ryzen-build.sh'), self.source / 'scripts/ryzen-build.sh')
+        shutil.copyfile(SCRIPT.with_name('e2e-services.sh'), self.source / 'scripts/e2e-services.sh')
         (self.source / 'OpenGothic/ai_bridge/storygraph').mkdir(parents=True)
         settings = self.home / 'gothic-ai/game-settings/system'
         settings.mkdir(parents=True)
