@@ -37,14 +37,26 @@ Warm экономит **574,6 мс** стадии (медиана off − warm) 
 
 ## Ryzen, из сейва
 
-SAVE_TABLE
+Сейв — `session-placed-items.sav` стенда `placed-items` (NEWWORLD, 10 071 510 байт): предметы сдвинуты прохождением, стрелой и толчком стола. `scripts/bench.sh loadprobe-idle` с `SAVE=…`, `gq quiet`, тот же изолированный кэш. По одному запуску, n=1, разброс не оценивается. В пути загрузки сейва зонд не пишет `session_begin`/`session_end` и LA1; вместо load взято время до `world_end` от первой метки зонда.
+
+| | cold (файла нет) | warm | warm + сверка |
+|---|---|---|---|
+| Статус кэша | `absent`, записано 2331 | `cache` | `cache`, сверка passed |
+| Стадия placed items, мс | 888,8 | **272,2** | 881,9 (живая перепись ради сверки) |
+| Перепись (`placement_queries`), мс | 608,9 | **0** | 592,3 |
+| Подготовка физики, мс | 251,2 | 251,8 | 253,0 |
+| Ключ / чтение / запись, мс | 15,40 / 0,01 / 1,19 | 6,89 / 1,27 / — | 6,85 / 0,93 / — |
+| До `world_end`, мс | 3826,1 | **3115,1** | 3747,9 |
+
+Из сейва warm экономит **616,6 мс** стадии и **711 мс** до конца мира. Сейв читает тот же файл, что и новый старт, потому что перепись идёт по позам ZEN.
 
 ## Эквивалентность
 
 - **Новый старт, режим сверки:** `OPENGOTHIC_PLACED_CENSUS_CHECK=1`, зонд NEWWORLD на тёплом кэше — `hit, 2331 items`, `check: passed, 2331 items identical`, exit 0.
 - **`load_rewind` в режиме сверки** (изолированный кэш, файл удалён перед запуском): новый старт — `miss (absent), recomputed 2331 items`, запись 1,19 мс. Загрузка слота 7 — `hit, 2331 items`, `check: passed, 2331 items identical` (живая перепись при сверке 592,1 мс). Сценарий — 4 проверки, 0 провалов, exit 0.
 - **Тела и их сон:** стенд `placed-items-census` (NEWWORLD, 126 участков по 12 м, ≥300 нативных шагов на каждый) при `OPENGOTHIC_PLACED_CENSUS_CACHE=0` и при тёплом кэше. `placed-items-census.jsonl` (2331 строка) совпал побайтно. Все 227 строк `placed-items-probe.jsonl` совпали во всех полях: `sleeping` 226/226, `native_steps`, `max_shift_cm`/`final_shift_cm` побитно, контакты NPC. Все 129 событий стенда совпали, кроме времени загрузки мира: `world_load_ms` 3998,7 → 3323,3 мс. Сводка пробы в обоих: 216 из 227 меньше 5 см, максимум 45,282 см.
-- SAVE_EQUIV
+- **Сейв со сдвинутыми предметами, режим сверки:** `session-placed-items.sav` → `hit, 2331 items`, `check: passed, 2331 items identical`, exit 0.
+- **Стенд `placed-items`** (численный стенд шага 5 этапа 8; e2e-сценария для него нет) на ветке завершился `ragdoll arena failed: placed Item owned table preparation requires admitted owned and excluded authored Items on one native table`, exit 1. Чистая `main` (`9a72c18c3`, временный worktree, кэш переписи там отсутствует) падает на том же шаге с тем же текстом, exit 1. Значит, причина не в этой правке. Все 13 событий `placed_items_*` до провала совпали с `main`, кроме размера архива сейва (`bytes`). `placed-items-census.jsonl` ветки и `main` совпал побайтно.
 
 ## Mac
 
@@ -56,4 +68,4 @@ SAVE_TABLE
 
 ## Данные
 
-[census-cache.csv](census-cache.csv) — 16 строк серии (prep, off/cold/warm ×5), SAVE_CSV. Сырые журналы — `/mnt/shared/gothic-ai/census-cache/raw/`.
+[census-cache.csv](census-cache.csv) — 16 строк серии (prep, off/cold/warm ×5). Строки сейва — в таблице выше. Сырые журналы — `/mnt/shared/gothic-ai/census-cache/raw/`: `series/` (зонд), `bench-{off,warm}`, `check-fresh`, `e2e-check`, `placed-items`, `placed-items-main`, `save-{cold,warm,check}` (там же сейв).
