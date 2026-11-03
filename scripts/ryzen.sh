@@ -571,8 +571,7 @@ WRAPPER
       export LOG_DIR="$out/run-$run_number"
       mkdir -p "$LOG_DIR"
     fi
-    # The controller has resolved the scenario's RUN settings before the upload.
-    E2E_RUN_DEFAULTS=0 bash "$ROOT/scripts/e2e.sh" 2>&1 | tee "$LOG_DIR/e2e.log" && rc=0 || rc=$?
+    bash "$ROOT/scripts/e2e.sh" 2>&1 | tee "$LOG_DIR/e2e.log" && rc=0 || rc=$?
     grep -E 'GPU = ' "$LOG_DIR/game.log" || true
     killed_at="$(sed -n 's/^game killed before checks at //p' "$LOG_DIR/e2e.log")"
     [[ -n "$killed_at" ]] || break

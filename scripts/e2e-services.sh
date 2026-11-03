@@ -18,10 +18,12 @@ e2e_needs_asr() {
 # Fill TIMEOUT and SAVE from the scenario's run settings in RUN
 # (server/src/gothic_ai/scenarios/groups.py), as scripts/e2e-regression.sh does.
 # An explicit TIMEOUT, SAVE or empty SAVE= (a new game) wins; a scenario without
-# a RUN entry keeps both untouched. E2E_RUN_DEFAULTS=0 skips the lookup.
+# a RUN entry keeps both untouched; LIVE scenarios have none and skip the lookup.
 e2e_run_defaults() {
   local declared timeout save
-  [[ "${E2E_RUN_DEFAULTS:-1}" != 0 ]] || return 0
+  case "$1" in
+    chests_lobart|haggle|interject|live_deals|live_director|live_lies|live_npc|showrunner_live|surrender_live|vanilla_line_live) return 0 ;;
+  esac
   [[ -z "${TIMEOUT:-}" || -z "${SAVE+set}" ]] || return 0
   declared="$(cd "$ROOT/server" && uv run python - "$1" <<'PY'
 import sys

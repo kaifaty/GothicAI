@@ -117,7 +117,7 @@ while True:
             ['bash', '-c', harness], capture_output=True, text=True, timeout=20,
             env=dict(os.environ, HOME=str(root / 'home'), TEST_ROOT=str(root),
                      TEST_MODE=mode, SCENARIO='stages', GQ_PROFILE='ryzen',
-                     LLM='off', SAVE='', GAME_EXTRA_ENV='', GOTHIC_TTS_RECORD='0', GOTHIC_SOAK_CONTROL='0',
+                     LLM='off', SAVE='', TIMEOUT='240', GAME_EXTRA_ENV='', GOTHIC_TTS_RECORD='0', GOTHIC_SOAK_CONTROL='0',
                      PATH=str(binaries) + os.pathsep + os.environ['PATH']),
         )
         return result, root / 'state/runs/run', int((root / 'starts').read_text())
@@ -526,7 +526,7 @@ remote_probe e2e "$TEST_ROOT/state" run "$TEST_SCENARIO"
                 for executable in binaries.iterdir():
                     executable.chmod(0o755)
                 env = {name: value for name, value in os.environ.items()
-                       if name not in ('SAVE', 'TIMEOUT', 'VOICE_FILE', 'E2E_RUN_DEFAULTS')}
+                       if name not in ('SAVE', 'TIMEOUT', 'VOICE_FILE')}
                 env.update(PATH=str(binaries) + os.pathsep + os.environ['PATH'], TEST_ROOT=str(root),
                            ROOT=str(root), SCENARIO=scenario)
                 carried = ''
