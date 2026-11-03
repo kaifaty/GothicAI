@@ -196,6 +196,7 @@
 | Сюжет | `story`, `validator`, `storyguard`, `programs`, `director`, `questbook`, `questlog`, `triggers`, `occasions`, `showrunner`, `challenges`, `authoring`, `casting`, `cast`, `characters` (карточки характера), `chains` |
 | Данные | `gamedata/`: `far_fight.json` (измеренные части v3 дальнего боя, принятое игровое приближение), `characters.json`, `lore.json`, `places.json`, `stash.json`, `quest_rewards.json` (добавки к наградам ванильных квестов), `gates.json` (уважаемые поручители и их положение), `bandit_bounty.json` (истина охоты и ступени знания бандитов), `ou.py` (реплики OU.BIN), `storygraph.py` |
 | Сценарии e2e | `scenarios/`: группы моделей в `groups.py`, общее в `common.py`, поддельный Responses WS/HTTP-сервер — в `responses_server.py`; модуль каждой области — в списке «Сценарии по областям» ниже; точки входа — в `__init__.py` |
+| Диспетчер e2e | `scenarios/dispatch.py`: `run_scenario` выбирает сценарий, получает сервисы через `ScenarioContext` из `cli.serve` и возвращает код выхода |
 
 ## Движок: наши подсистемы
 
