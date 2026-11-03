@@ -104,6 +104,7 @@ void WorldObjects::load(Serialize &fin) {
     for(size_t i=0; i<npcInvalid.size(); ++i) {
       npcInvalid[i]->load(fin,i,"/npc_invalid/");
       npcInvalid[i]->suspendRagdoll();
+      npcInvalid[i]->suspendLogicalBodyState();
       }
     }
 
@@ -386,7 +387,8 @@ void WorldObjects::updateSimTiers() {
     // Training and arena actors keep native simulation at every distance.
     const bool keep  = NavDemos::fullSimulation(npc) || BodyArena::isActor(npc);
     const auto prev  = npc.simTier();
-    const auto next  = NpcSimTiers::desired(mode,hero,keep,residency,ChunkId::fromPosition(pos.x,pos.z),prev);
+    const auto next  = !hero && !keep && npc.simTierOverride().has_value() ? *npc.simTierOverride() :
+                      NpcSimTiers::desired(mode,hero,keep,residency,ChunkId::fromPosition(pos.x,pos.z),prev);
     if(npc.hasSimTier() && next!=prev) {
       if(next==NpcSimTier::Full)
         ++toFull; else
@@ -437,8 +439,7 @@ void WorldObjects::tick(uint64_t dt, uint64_t dtPlayer) {
   const auto pl      = owner.player();
   // Body training with a frozen world: other NPCs (but the hero) and interactive objects stand still.
   const bool frozen  = BodyArena::frozenWorld();
-  // Both tiers run the same executor; only the elapsed time is split. One
-  // clock read per run of consecutive NPCs of the same tier keeps the cost
+  // One clock read per run of consecutive NPCs of the same tier keeps the cost
   // proportional to tier changes along the array, not to the NPC count.
   using Clock = std::chrono::steady_clock;
   std::optional<FrameProfile::Scope> tierZone;
@@ -446,6 +447,7 @@ void WorldObjects::tick(uint64_t dt, uint64_t dtPlayer) {
   bool              runOpen  = false;
   Clock::time_point runStart;
   double            tierMs[2] = {};
+  uint64_t          tierTicks[2] = {};
   // Mark both participants before either moves, independent of NPC list order.
   for(auto& npc:npcArr)
     npc->refreshMeleeFighter();
@@ -467,7 +469,17 @@ void WorldObjects::tick(uint64_t dt, uint64_t dtPlayer) {
       runStart = now;
       runOpen  = true;
       }
+    ++tierTicks[size_t(tier)];
+    const bool nativeCombat=tier==NpcSimTier::Simplified && npc.nativeCombatMovement();
+    const bool nativeMobsi=tier==NpcSimTier::Simplified && npc.nativeMobsiApproach();
+    const bool graphFallback=npc.graphMovementFallback();
     npc.tick(d);
+    if(tier==NpcSimTier::Simplified && (nativeCombat || npc.nativeCombatMovement()))
+      ++simTiers.nativeCombatNpcTicks;
+    if(tier==NpcSimTier::Simplified && (nativeMobsi || npc.nativeMobsiApproach()))
+      ++simTiers.nativeMobsiApproachNpcTicks;
+    if(graphFallback || npc.graphMovementFallback())
+      ++simTiers.graphFallbackNpcTicks;
     }
   if(runOpen)
     tierMs[size_t(runTier)] += std::chrono::duration<double,std::milli>(Clock::now()-runStart).count();
@@ -476,6 +488,8 @@ void WorldObjects::tick(uint64_t dt, uint64_t dtPlayer) {
   simTiers.simplifiedTickMs       = tierMs[size_t(NpcSimTier::Simplified)];
   simTiers.fullTickMsTotal       += simTiers.fullTickMs;
   simTiers.simplifiedTickMsTotal += simTiers.simplifiedTickMs;
+  simTiers.fullNpcTicks         += tierTicks[size_t(NpcSimTier::Full)];
+  simTiers.simplifiedNpcTicks   += tierTicks[size_t(NpcSimTier::Simplified)];
   ++simTiers.ticks;
   FrameProfile::add(FrameProfile::Amount::NpcLogicSamples,logic.ticks-logicBefore[0]);
   FrameProfile::add(FrameProfile::Amount::NpcLogicBodyMismatch,logic.bodyMismatch-logicBefore[1]);
@@ -625,6 +639,7 @@ Npc* WorldObjects::addNpc(size_t npcInstance, std::string_view at) {
     npc->attachToPoint(nullptr);
     npc->setPosition(point.position());
     npc->updateTransform();
+    npc->suspendLogicalBodyState();
     npcInvalid.emplace_back(npc);
     }
 
@@ -691,6 +706,7 @@ void WorldObjects::removeNpc(Npc& npc) {
   npc.attachToPoint(nullptr);
   npc.setPosition(point.position());
   npc.updateTransform();
+  npc.suspendLogicalBodyState();
   npcRemoved.emplace_back(std::move(ptr));
   }
 
@@ -1467,6 +1483,7 @@ void WorldObjects::resetPositionToTA() {
       continue;
       }
     if(n.resetPositionToTA()){
+      n.syncLogicalBodyState(true);
       ++i;
       } else {
       npcInvalid.emplace_back(std::move(npcArr[i]));
@@ -1478,6 +1495,7 @@ void WorldObjects::resetPositionToTA() {
       npc.attachToPoint(nullptr);
       npc.setPosition(point.position());
       npc.updateTransform();
+      npc.suspendLogicalBodyState();
       }
     }
   for(auto& i:routines) {

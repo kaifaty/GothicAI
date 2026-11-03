@@ -1249,6 +1249,8 @@ bool MdlVisual::hasQuadrupedIk() const {
   }
 
 bool MdlVisual::updateFootIk(Npc& npc, World& world, uint64_t dt, bool alignedToGround) {
+  if(npc.usesSimplifiedMovement())
+    return false;
   Pose& pose = *skInst;
   auto& ik   = pose.footIk();
   if(!ik.isValid()) {
@@ -1647,6 +1649,14 @@ bool MdlVisual::hasAnim(std::string_view scheme) const {
 
 bool MdlVisual::hasAnim(AnimationSolver::Anim a, WeaponState st, WalkBit wlk) const {
   return solver.solveAnim(a,st,wlk,*skInst)!=nullptr;
+  }
+
+const Animation::Sequence* MdlVisual::movementSequence(WalkBit mode, WeaponState weapon, const Npc& npc) const {
+  return solver.solveAnim(AnimationSolver::Move,weapon,mode,*skInst,&npc);
+  }
+
+const Animation::Sequence* MdlVisual::idleSequence(WalkBit mode, WeaponState weapon, const Npc& npc) const {
+  return solver.solveAnim(AnimationSolver::Idle,weapon,mode,*skInst,&npc);
   }
 
 const Animation::Sequence* MdlVisual::startAnimAndGet(std::string_view name, uint64_t tickCount, bool forceAnim) {

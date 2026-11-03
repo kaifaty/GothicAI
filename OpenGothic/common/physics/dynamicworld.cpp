@@ -380,7 +380,7 @@ struct DynamicWorld::NpcBody {
     return (dir * radius).length();
     }
 
-  Npc* toNpc() {
+  Npc* toNpc() const {
     return reinterpret_cast<Npc*>(userPointer);
     }
 
@@ -681,6 +681,9 @@ struct DynamicWorld::NpcBodyList final {
     }
 
   bool hasCollision(const NpcBody& a, const NpcBody& b, Tempest::Vec3& normal, float& colDepth) const {
+    if((a.toNpc()!=nullptr && a.toNpc()->usesSimplifiedMovement()) ||
+       (b.toNpc()!=nullptr && b.toNpc()->usesSimplifiedMovement()))
+      return false;
     const float objMaxRXZ = a.maxRXZ + b.maxRXZ;
     const float objMaxRY  = a.maxRY  + b.maxRY;
 
@@ -2893,7 +2896,7 @@ void DynamicWorld::tick(uint64_t dt) {
   for(const auto* records:{&npcList->body,&npcList->frozen})
     for(const auto& record:*records)
       if(record.body!=nullptr && record.body->virtualCharacter!=nullptr)
-        if(auto* npc=record.body->toNpc())
+        if(auto* npc=record.body->toNpc(); npc!=nullptr && !npc->usesSimplifiedMovement())
           riders.push_back(npc);
   for(auto* npc:riders)
     npc->finishCharacterVirtualSupport(dt);

@@ -26,6 +26,7 @@
 #include "world/objects/archer.h"
 #include "world/fplock.h"
 #include "world/waypath.h"
+#include "world/wayheights.h"
 
 #include <array>
 #include <cstdint>
@@ -143,14 +144,24 @@ class Npc final {
     // Simulation tier (world/npcsimtier.h), separate from processPolicy. Runtime only, not saved.
     NpcSimTier simTier() const { return simTierValue; }
     bool       hasSimTier() const { return simTierAssigned; }
-    void       setSimTier(NpcSimTier t) { simTierValue = t; simTierAssigned = true; }
+    void       setSimTier(NpcSimTier t);
+    void       setSimTierOverride(std::optional<NpcSimTier> t) { simTierOverrideValue = t; }
+    auto       simTierOverride() const -> std::optional<NpcSimTier> { return simTierOverrideValue; }
 
     bool       isPlayer() const;
     void       setWalkMode(WalkBit m);
     WalkBit    walkMode() const;
+    bool       usesSimplifiedMovement() const;
+    bool       graphMovementFallback() const { return simpleMovement.nativeFallback; }
+    bool       nativeCombatMovement() const;
+    bool       nativeMobsiApproach() const;
+    bool       nativeMobsiTransition() const;
+    auto       simplifiedBodyState() const -> std::optional<BodyState>;
+    float      simplifiedMoveSpeed() const;
     void       tick(uint64_t dt);
     const NpcLogicalState& logicalBodyState() const { return logicalBody; }
     void       syncLogicalBodyState(bool rebuild=false);
+    void       suspendLogicalBodyState();
     void       tickAnimationTags();
     bool       startClimb(JumpStatus jump);
 
@@ -883,6 +894,16 @@ class Npc final {
     bool      implWhirlTo(const Npc& oth, uint64_t dt);
     bool      implGoTo   (uint64_t dt);
     bool      implGoTo   (uint64_t dt, float destDist);
+    bool      implSimpleGoTo(uint64_t dt, float destDist);
+    bool      nativeBodyAction() const;
+    auto      pendingSimpleGoTo() const -> const AiQueue::AiAction*;
+    static bool simplifiedMovementEnabled();
+    void      fallbackSimpleMovement(std::string_view reason, bool ground = false);
+    WayPath   simpleWayTo(const WayPoint& point);
+    void      beginSimpleGoTo(AiQueue::AiAction&& action, const WayPoint& point);
+    bool      finishSimpleGoTo(uint64_t dt);
+    void      refreshSimpleGoTo();
+    void      updateSimpleMovement();
     bool      implAttack (uint64_t dt, bool bodyOverride=false, FightAlgo::Action bodyAction=FightAlgo::MV_NULL);
     void      traceCombatSnapshot();
     struct BodyMovementTrace;
@@ -1246,6 +1267,9 @@ class Npc final {
     NpcProcessPolicy               aiPolicy=NpcProcessPolicy::AiNormal;
     NpcSimTier                     simTierValue=NpcSimTier::Full; // transient, not serialized
     bool                           simTierAssigned=false;
+    bool                           loadedFpReferences=false;
+    Tempest::Vec3                  loadedFpPosition;
+    std::optional<NpcSimTier>       simTierOverrideValue; // bench-only, not serialized
     NpcLogicalState                logicalBody;
     AiState                        aiState;
     ScriptFn                       aiPrevState;
@@ -1303,6 +1327,18 @@ class Npc final {
     const WayPoint*                currentFp      =nullptr;
     FpLock                         currentFpLock;
     WayPath                        wayPath;
+
+    // The path and transform are already serialized. Reconstruct the edge on
+    // load/tier entry instead of adding another saved movement cursor.
+    struct SimpleMovement {
+      bool active = false;
+      bool nativeFallback = false;
+      const WayPoint* edgeTo = nullptr;
+      Tempest::Vec3 edgeFrom;
+      const WayHeights::Profile* ground = nullptr;
+      std::optional<BodyState> body;
+      Item* nativeItem = nullptr;
+      } simpleMovement;
 
     MoveAlgo                       mvAlgo;
     FightAlgo                      fghAlgo;

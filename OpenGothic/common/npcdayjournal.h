@@ -4,6 +4,7 @@
 #include <string>
 
 class World;
+class Npc;
 
 // Bench-only journal of every NPC over continuous game time, for the
 // day-parity check of the NPC simulation tiers (world streaming, step 1,
@@ -15,6 +16,7 @@ class World;
 //   npc-day.csv          one row per NPC every `period` game minutes
 //   npc-day-events.csv   ZS starts/ends, routine-entry changes, deaths, inserts, removals
 //   npc-day-cost.csv     NPC tier counts and per-tier tick time at every sample
+//   npc-day-arrivals.csv terminal arrivals and observed movement starts (logical audit only)
 namespace NpcDayJournal {
 
 struct Options {
@@ -34,6 +36,9 @@ bool start(World& world, const Options& options, std::string& error);
 // Every bench tick after the world step: event polling and due samples. It
 // writes the final sample and the summary when the requested time is reached.
 void tick(World& world);
+// A passive terminal-success observation, immediately before the destination
+// is cleared. It never changes the queues, path or ordinary day journals.
+void arrived(const Npc& npc);
 bool running();
 void stop(World& world, const char* reason);
 

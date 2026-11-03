@@ -112,7 +112,7 @@ if [[ "$BENCH_HEADLESS" == 1 && "${KEEP:-}" == 1 ]]; then
   echo 'bench: KEEP=1 is incompatible with headless lockstep' >&2
   exit 2
 fi
-if [[ "$NAME" == routine-return || "$NAME" == npc-day-parity ]]; then
+if [[ "$NAME" == routine-return || "$NAME" == npc-day-parity || "$NAME" == npc-tier-transitions ]]; then
   export WORLD="${WORLD:-NEWWORLD.ZEN}"
   export TIMEOUT="${TIMEOUT:-3600}"
   export RYZEN_MAX="${RYZEN_MAX:-75m}"

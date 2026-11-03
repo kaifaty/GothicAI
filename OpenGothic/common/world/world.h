@@ -59,6 +59,8 @@ class World final {
     // loading calls updateNpcSimTiers() after the first residency update.
     void                 updateNpcSimTiers() { wobj.updateSimTiers(); }
     const NpcSimTiers::Stats& npcSimTierStats() const { return wobj.simTierStats(); }
+    void noteGraphFpLoadResolution() { wobj.noteGraphFpLoadResolution(); }
+    void noteNpcGraphFallback(bool ground) { wobj.noteNpcGraphFallback(ground); }
     bool                 landscapeReady() const { return !wview || wview->landscapeReady(); }
 
     void                 load(Serialize& fin );
@@ -138,6 +140,8 @@ class World final {
 
     WayPath              wayTo(const Npc& pos,const WayPoint& end) const;
     WayPath              wayTo(const WayPoint& begin, const WayPoint& end) const;
+    const WayHeights::Profile& groundProfile(const Tempest::Vec3& from,const Tempest::Vec3& to,
+                                             float stepHeight,float slopeCos) const;
 
     WorldView*           view()     const { return wview.get();    }
     WorldSound*          sound()          { return &wsound;        }

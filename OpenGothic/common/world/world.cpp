@@ -1978,6 +1978,11 @@ WayPath World::wayTo(const WayPoint& begin, const WayPoint& end) const {
   return wmatrix->wayTo(&first,1,begin.position(),end);
   }
 
+const WayHeights::Profile& World::groundProfile(const Tempest::Vec3& from,const Tempest::Vec3& to,
+                                               float stepHeight,float slopeCos) const {
+  return wmatrix->groundProfile(from,to,stepHeight,slopeCos);
+  }
+
 WayPath World::wayTo(const Npc &npc, const WayPoint &end) const {
   const auto npcPos = npc.centerPosition();
 

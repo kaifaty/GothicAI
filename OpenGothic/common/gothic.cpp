@@ -262,6 +262,9 @@ Gothic::Gothic() {
   }
 
 Gothic::~Gothic() {
+  // Session teardown still queries the singleton and its definitions.
+  pendingGame.reset();
+  game.reset();
   instance = nullptr;
   }
 
