@@ -192,7 +192,7 @@ def spin(st: Stance, use: dict, keys: list, hk: np.ndarray, chest: np.ndarray, m
 def build(st: Stance, use: dict, fps: float, layer: int, mouth: np.ndarray, name: str) -> tuple[ga.Animation, dict]:
     """Each key's arm by IK once; between keys the joints turn by an eased slerp, so every key is met
     exactly and no frame can flip the arm."""
-    frames = int(round(use["seconds"] * fps))
+    frames = round(use["seconds"] * fps)
     t = np.arange(frames) / fps
     hk = np.array(use["head"], float)
     pitch = monotone_cubic(hk[:, 0], hk[:, 1], t)
@@ -243,7 +243,7 @@ def build(st: Stance, use: dict, fps: float, layer: int, mouth: np.ndarray, name
 def checks(st: Stance, anim: ga.Animation, use: dict, mouth: np.ndarray, fps: float) -> dict:
     """At the gulp or bite the item against the measured mouth transform; the elbow and hand out of the
     torso; the hand out of the head except at the mouth."""
-    bite = int(round(use["sfx"][0] * fps))
+    bite = round(use["sfx"][0] * fps)
     full = composite(st, anim)
     worlds = [ga.world_pose(st.skel, full, f) for f in range(anim.frame_count)]
     w = ga.world_pose(st.skel, full, bite)
@@ -312,9 +312,9 @@ def main():
             ga.write_animation(dst, anim, source=f"layer_use {use['name']} over {s['level']}-{s['stance']}")
             ga.write_animation(dst.with_name(dst.name.replace(".MAN", "_PREVIEW.MAN")), composite(st, anim), source="preview")
             print(s["level"], name, json.dumps(report))
-            ev = [{**EVENT, "type": 2, "slot": "ZS_LEFTHAND", "frame": int(round(use["insert"] * fps))},
-                  {**EVENT, "type": 4, "frame": int(round(use["destroy"] * fps))}]
-            sfx = [{"frame": int(round(use["sfx"][0] * fps)), "name": use["sfx"][1], "range": 1000.0, "empty_slot": False}]
+            ev = [{**EVENT, "type": 2, "slot": "ZS_LEFTHAND", "frame": round(use["insert"] * fps)},
+                  {**EVENT, "type": 4, "frame": round(use["destroy"] * fps)}]
+            sfx = [{"frame": round(use["sfx"][0] * fps), "name": use["sfx"][1], "range": 1000.0, "empty_slot": False}]
             packs.setdefault(s["level"], []).append({"file": str(dst), "layer": layer, "blend_in": 0.1, "blend_out": 0.1,
                                                      "events": ev, "sfx": sfx})
     if content:
