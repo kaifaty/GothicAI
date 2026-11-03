@@ -18299,6 +18299,45 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     say("npcaim " + std::string(ArcherAi::isEnabled() ? "on" : "off") + (ArcherAi::mode==ArcherAi::PerArrow ? " arrow" : " second") +
         " sigma " + std::to_string(ArcherAi::forcedSigma) + " lead " + (ArcherAi::leadOn ? "on" : "off"));
     }
+  else if(c=="archers") {
+    // One primary ranged weapon per NPC: equipped first, otherwise the strongest in its inventory.
+    uint32_t total = 0, weak = 0, dice = 0;
+    for(uint32_t id=0; id<w.npcCount(); ++id) {
+      auto* n = w.npcById(id);
+      if(n==nullptr || n->isPlayer())
+        continue;
+      const Item* weapon = n->currentRangedWeapon();
+      if(weapon==nullptr)
+        for(auto item=n->inventory().iterator(Inventory::T_Inventory); item.isValid(); ++item) {
+          if((item->mainFlag() & ITM_CAT_FF)==0)
+            continue;
+          if(weapon==nullptr || std::make_pair(item->handle().damage_total,item->handle().value)>
+                                std::make_pair(weapon->handle().damage_total,weapon->handle().value))
+            weapon = &*item;
+          }
+      if(weapon==nullptr)
+        continue;
+      const auto st = Archery::stats(*n,weapon);
+      const bool below = st.bowStrength && st.burstDraw<Archery::MinDraw;
+      const bool burst = st.bowStrength && st.steadyDraw<Archery::MinDraw && !below;
+      const char* mode = below ? "dice (draw below minimum)" : (burst ? "hands burst" : "hands steady");
+      const auto name = n->displayName();
+      const auto symbol = symName(w,n);
+      const auto weaponName = w.script().findSymbol(weapon->clsId())->name();
+      char buf[640];
+      std::snprintf(buf,sizeof(buf),"archers npc %s name %.*s: str %d dex %d weapon %.*s damage %d need %.2f r %.4f f_s %.4f f_b %.4f mode %s",
+                    symbol.c_str(),int(name.size()),name.data(),
+                    n->attribute(ATR_STRENGTH),n->attribute(ATR_DEXTERITY),
+                    int(weaponName.size()),weaponName.data(),
+                    int(weapon->handle().damage_total),double(st.need),double(st.strength),
+                    double(st.steadyDraw),double(st.burstDraw),mode);
+      say(buf);
+      ++total;
+      weak += st.strength<1.f ? 1u : 0u;
+      dice += below ? 1u : 0u;
+      }
+    say("archers summary: total " + std::to_string(total) + " r<1 " + std::to_string(weak) + " dice " + std::to_string(dice));
+    }
   else if(c=="archer") {
     // archer <npc|all> at <npc|player> [dice] | archer off: it stands where it is and shoots at the target
     // every time it can, by hand (npcaim on) or by the dice: no fight AI, no perception's wait (the aim's
@@ -21721,14 +21760,14 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
        !bench.aimNpc->hitZoneCenter(HitZones::Body,at))
       at = bench.aimNpc->collosionCenter();
     if(bench.aimNpc!=nullptr && !bench.aimRaw) {
-      // As an archer does: compensate the arrow's drop from the nock at the current draw.
+      // Aim for the release draw throughout drawing, so the changing trajectory does not shake the aim.
       const auto st = Archery::stats(*player,player->currentRangedWeapon());
       Vec3       nock, dir;
       if(!player->arrowRay(nock,dir))
         nock = player->position() + Vec3(0,145,0);
       const auto& ar = player->archer();
-      const float draw = st.bowStrength ?
-                         ((ar.stage()==Archer::Drawing || ar.stage()==Archer::Held) ? std::max(ar.draw(),Archery::MinDraw) : st.burstDraw) : 1.f;
+      const float releaseDraw = bench.volleyLeft>0 ? std::min(st.burstDraw,bench.volleyDraw) : st.burstDraw;
+      const float draw = st.bowStrength ? (ar.stage()==Archer::Held ? ar.draw() : releaseDraw) : 1.f;
       at = Archery::launch(nock,at,Archery::speedAt(st,draw));
       }
     auto cam = Gothic::inst().camera();

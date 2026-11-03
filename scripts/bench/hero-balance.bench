@@ -1,4 +1,4 @@
-# The hero's balance by hand against G2's dice (docs/manual-aim.md, stage 4): four tiers as G2 has them (the
+# The hero's balance by hand against G2's dice (docs/manual-aim.md, stage 4): four tiers as G2 has them plus three strength/dexterity builds (the
 # talent, the bow, its strength and dexterity, the trained animations), at a farmer 10, 20 and 30 m off, aimed
 # at the body and at the head; 30 shots each, held 300-600 ms (the sway is a function of time), a seed each
 cheat god
@@ -201,5 +201,149 @@ stop
 aimat BAU_904_BAUER head
 seed 24
 rec mas30_head novideo
+volley 30 300 1 300
+stop
+
+tap parade
+wait 800
+tap bow
+wait 1500
+equip ItRw_Bow_H_03
+stats str 40 dex 150 bow 100 talent auto
+tap bow
+wait 1500
+pin BAU_904_BAUER 1000 0 0
+wait 300
+zones BAU_904_BAUER
+aimat BAU_904_BAUER body
+seed 19
+rec dexh10_body novideo
+volley 30 300 1 300
+stop
+aimat BAU_904_BAUER head
+seed 20
+rec dexh10_head novideo
+volley 30 300 1 300
+stop
+pin BAU_904_BAUER 2000 0 0
+wait 300
+zones BAU_904_BAUER
+aimat BAU_904_BAUER body
+seed 21
+rec dexh20_body novideo
+volley 30 300 1 300
+stop
+aimat BAU_904_BAUER head
+seed 22
+rec dexh20_head novideo
+volley 30 300 1 300
+stop
+pin BAU_904_BAUER 3000 0 0
+wait 300
+zones BAU_904_BAUER
+aimat BAU_904_BAUER body
+seed 23
+rec dexh30_body novideo
+volley 30 300 1 300
+stop
+aimat BAU_904_BAUER head
+seed 24
+rec dexh30_head novideo
+volley 30 300 1 300
+stop
+
+tap parade
+wait 800
+tap bow
+wait 1500
+equip ItRw_Bow_M_01
+stats str 40 dex 150 bow 100 talent auto
+tap bow
+wait 1500
+pin BAU_904_BAUER 1000 0 0
+wait 300
+zones BAU_904_BAUER
+aimat BAU_904_BAUER body
+seed 19
+rec dexl10_body novideo
+volley 30 300 1 300
+stop
+aimat BAU_904_BAUER head
+seed 20
+rec dexl10_head novideo
+volley 30 300 1 300
+stop
+pin BAU_904_BAUER 2000 0 0
+wait 300
+zones BAU_904_BAUER
+aimat BAU_904_BAUER body
+seed 21
+rec dexl20_body novideo
+volley 30 300 1 300
+stop
+aimat BAU_904_BAUER head
+seed 22
+rec dexl20_head novideo
+volley 30 300 1 300
+stop
+pin BAU_904_BAUER 3000 0 0
+wait 300
+zones BAU_904_BAUER
+aimat BAU_904_BAUER body
+seed 23
+rec dexl30_body novideo
+volley 30 300 1 300
+stop
+aimat BAU_904_BAUER head
+seed 24
+rec dexl30_head novideo
+volley 30 300 1 300
+stop
+
+tap parade
+wait 800
+tap bow
+wait 1500
+equip ItRw_Bow_H_03
+stats str 150 dex 20 bow 100 talent auto
+tap bow
+wait 1500
+pin BAU_904_BAUER 1000 0 0
+wait 300
+zones BAU_904_BAUER
+aimat BAU_904_BAUER body
+seed 19
+rec strh10_body novideo
+volley 30 300 1 300
+stop
+aimat BAU_904_BAUER head
+seed 20
+rec strh10_head novideo
+volley 30 300 1 300
+stop
+pin BAU_904_BAUER 2000 0 0
+wait 300
+zones BAU_904_BAUER
+aimat BAU_904_BAUER body
+seed 21
+rec strh20_body novideo
+volley 30 300 1 300
+stop
+aimat BAU_904_BAUER head
+seed 22
+rec strh20_head novideo
+volley 30 300 1 300
+stop
+pin BAU_904_BAUER 3000 0 0
+wait 300
+zones BAU_904_BAUER
+aimat BAU_904_BAUER body
+seed 23
+rec strh30_body novideo
+volley 30 300 1 300
+stop
+aimat BAU_904_BAUER head
+seed 24
+rec strh30_head novideo
 volley 30 300 1 300
 stop
