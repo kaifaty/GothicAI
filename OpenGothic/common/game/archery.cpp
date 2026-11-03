@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <limits>
 
 #include "world/objects/npc.h"
 #include "world/objects/item.h"
@@ -37,7 +38,7 @@ constexpr float DamageLight    = 30.f;
 constexpr float DamageHeavy    = 150.f;
 constexpr float ConeNovice     = 0.6f;  // degrees
 constexpr float ConeMaster     = 0.1f;
-constexpr float NeedPerDamage  = 0.6f;  // strength a bow needs per its damage: a bow of 100 wants 60
+constexpr float NeedPerDamage  = 0.6f;  // legacy bows and crossbows: strength per point of damage
 constexpr float NeedMin        = 10.f;
 constexpr float SlowSpeed      = 0.4f;  // of the speed at no draw (MinDraw shoots a bit faster)
 constexpr float CbowSteady     = 0.8f;  // a crossbow braced at the shoulder sways less than a drawn bow...
@@ -55,7 +56,8 @@ constexpr float CantCone       = 0.3f;  // ...and the release throws it off by t
 constexpr float HeadDamage     = 2.f;
 constexpr float LimbDamage     = 0.6f;
 
-int enabled = -1; // -1: as Gothic.ini says
+int enabled     = -1; // -1: as Gothic.ini says
+int bowStrength = -1;
 
 float lerp(float a, float b, float t) {
   return a + (b-a)*std::clamp(t,0.f,1.f);
@@ -79,33 +81,124 @@ void Archery::setEnabled(bool e) {
   Log::i("manual aim: ", e ? "on" : "off");
   }
 
-Archery::Stats Archery::stats(Npc& npc, const Item* w) {
-  Stats s;
-  s.crossbow = w!=nullptr && w->isCrossbow();
+bool Archery::isBowStrengthEnabled() {
+  if(bowStrength<0) {
+    const char* v = std::getenv("OPENGOTHIC_BOWSTRENGTH");
+    if(v!=nullptr && v[0]!='\0')
+      bowStrength = v[0]!='0' ? 1 : 0; else
+      bowStrength = Gothic::settingsGetI("GAME","bowDrawByStrength")!=0 ? 1 : 0;
+    }
+  return bowStrength!=0;
+  }
 
+void Archery::setBowStrengthEnabled(bool e) {
+  bowStrength = e ? 1 : 0;
+  Log::i("bow draw by strength: ",e ? "on" : "off");
+  }
+
+float Archery::bowDrawWeight(float damage, float strengthRequirement) {
+  return std::max({10.f+0.5f*(damage-30.f),strengthRequirement,NeedMin});
+  }
+
+float Archery::steadyDraw(float r) {
+  return std::clamp(r,0.f,1.f);
+  }
+
+float Archery::burstDraw(float r) {
+  return std::clamp(Burst*r,0.f,1.f);
+  }
+
+float Archery::baseDrawSpeed() {
+  return (Burst/DrawT1)*(-4.f/Burst-5.f*std::log(1.f-1.f/Burst));
+  }
+
+float Archery::drawSpeed(float r, float draw, float v0) {
+  if(r<=0.f)
+    return 0.f;
+  const float phi = std::clamp(draw/(Burst*r),0.f,1.f);
+  return v0*std::max((1.f-phi)/(1.f+4.f*phi),DrawEpsilon);
+  }
+
+float Archery::drawTime(float r, float draw, float v0) {
+  if(draw<=0.f)
+    return 0.f;
+  if(r<=0.f || v0<=0.f || draw>burstDraw(r))
+    return std::numeric_limits<float>::infinity();
+  // Integral of (1+4 phi)/(1-phi); after the epsilon crossover the speed is constant.
+  const double phi   = double(draw)/(double(Burst)*double(r));
+  const double floor = (1.-double(DrawEpsilon))/(1.+4.*double(DrawEpsilon));
+  const double p     = std::min(phi,floor);
+  const double time  = -4.*p-5.*std::log1p(-p)+(phi-p)/double(DrawEpsilon);
+  return float(double(Burst)*double(r)/double(v0)*time);
+  }
+
+float Archery::advanceDraw(float r, float draw, float dt, float v0) {
+  const float target = burstDraw(r);
+  if(r<=0.f)
+    return 0.f;
+  draw = std::clamp(draw,0.f,target);
+  if(dt<=0.f || v0<=0.f)
+    return draw;
+  const float time = drawTime(r,draw,v0)+dt;
+  if(time>=drawTime(r,target,v0))
+    return target;
+  float lo = draw, hi = target;
+  // Invert the same integral each tick: the result does not depend on the frame duration.
+  for(int i=0; i<24; ++i) {
+    const float mid = (lo+hi)*0.5f;
+    if(drawTime(r,mid,v0)<time)
+      lo = mid; else
+      hi = mid;
+    }
+  return (lo+hi)*0.5f;
+  }
+
+float Archery::rohmert(float phi) {
+  if(phi<0.4f)
+    // Match the high-load branch at 0.4 instead of the approximate 20.5/0.9 multiplier.
+    return 1.5625f*std::exp(6.8f*(0.4f-phi));
+  return -1.5f + 2.1f/phi - 0.6f/(phi*phi) + 0.1f/(phi*phi*phi);
+  }
+
+float Archery::holdLimit(float r, float draw) {
+  if(draw<=0.f)
+    return 8.f;
+  if(r<=0.f)
+    return 0.f;
+  const float phi = std::clamp(draw/(Burst*r),0.f,1.f);
+  return std::min(8.f,3.f*rohmert(phi)/rohmert(1.f/Burst));
+  }
+
+Archery::Stats Archery::stats(Npc& npc, const Item* w) {
+  const bool crossbow = w!=nullptr && w->isCrossbow();
   const bool  g2  = Gothic::inst().version().game==2;
   const float dex = float(npc.attribute(ATR_DEXTERITY));
   const float str = float(npc.attribute(ATR_STRENGTH));
-  if(g2)
-    s.skill = float(npc.hitChance(s.crossbow ? TALENT_CROSSBOW : TALENT_BOW))/100.f; else
-    s.skill = dex/100.f;
-  s.skill = std::clamp(s.skill,0.f,1.f);
-
-  // how heavy the weapon is, in strength: from its damage, or what it asks for
+  const float skill = g2 ? float(npc.hitChance(crossbow ? TALENT_CROSSBOW : TALENT_BOW))/100.f : dex/100.f;
   const float dmg  = w!=nullptr ? float(w->handle().damage_total) : DamageLight;
-  float       need = dmg*NeedPerDamage;
+  float requirement = 0;
   if(w!=nullptr) {
     auto& h = w->handle();
     for(size_t i=0; i<std::size(h.cond_atr); ++i)
       if(h.cond_atr[i]==ATR_STRENGTH)
-        need = std::max(need,float(h.cond_value[i]));
+        requirement = std::max(requirement,float(h.cond_value[i]));
     }
-  need       = std::max(need,NeedMin);
+  return stats(str,dex,skill,dmg,requirement,crossbow,isBowStrengthEnabled());
+  }
+
+Archery::Stats Archery::stats(float str, float dex, float skill, float dmg, float requirement,
+                            bool crossbow, bool strengthModel) {
+  Stats s;
+  s.crossbow    = crossbow;
+  s.bowStrength = !crossbow && strengthModel;
+  s.skill      = std::clamp(skill,0.f,1.f);
+  const float need = s.bowStrength ? bowDrawWeight(dmg,requirement) : std::max({dmg*NeedPerDamage,requirement,NeedMin});
+  s.need     = need;
   s.strength = str/need;
 
   const float weak = std::max(0.f,1.f-s.strength);
   const float dexK = dex/DexFull;
-  s.sway      = lerp(SwayNovice,SwayMaster,s.skill)*(1.f+weak)*Deg;
+  s.sway      = lerp(SwayNovice,SwayMaster,s.skill)*(s.bowStrength ? 1.f : 1.f+weak)*Deg;
   if(s.crossbow)
     s.sway *= CbowSteady*lerp(CbowLight,CbowHeavy,(need-NeedLight)/(NeedHeavy-NeedLight));
   s.settle    = lerp(SettleNovice,SettleMaster,s.skill)*lerp(1.2f,0.8f,dexK);
@@ -115,6 +208,13 @@ Archery::Stats Archery::stats(Npc& npc, const Item* w) {
   s.speed     = lerp(SpeedLight,SpeedHeavy,(dmg-DamageLight)/(DamageHeavy-DamageLight))*(s.crossbow ? CbowSpeed : 1.f);
   s.cone      = lerp(ConeNovice,ConeMaster,s.skill)*Deg;
   s.reload    = s.crossbow ? lerp(CReloadSlow,CReloadFast,(s.strength-0.5f)/1.5f) : lerp(ReloadSlow,ReloadFast,dexK);
+  if(s.bowStrength) {
+    s.steadyDraw = steadyDraw(s.strength);
+    s.burstDraw  = burstDraw(s.strength);
+    s.drawSpeed  = baseDrawSpeed();
+    s.drawTime   = drawTime(s.strength,s.steadyDraw,s.drawSpeed);
+    s.holdLimit  = holdLimit(s.strength,s.burstDraw);
+    }
   return s;
   }
 
@@ -124,6 +224,7 @@ Archery::Stats Archery::canted(const Stats& s, float k) {
   if(s.crossbow || k<=0.f)
     return c;
   c.drawTime *= lerp(1.f,CantDraw,k);
+  c.drawSpeed /= lerp(1.f,CantDraw,k);
   c.settle   *= lerp(1.f,CantSettle,k);
   c.sway     *= lerp(1.f,CantSway,k);
   c.cone     += CantCone*Deg*k;
@@ -146,6 +247,8 @@ Tempest::Vec3 Archery::launch(const Vec3& from, const Vec3& to, float speed) {
   }
 
 float Archery::speedAt(const Stats& s, float draw) {
+  if(s.bowStrength)
+    return s.speed*std::clamp(draw,0.f,1.f);
   return s.speed*lerp(SlowSpeed,1.f,draw);
   }
 

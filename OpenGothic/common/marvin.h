@@ -83,6 +83,7 @@ class Marvin {
       C_ToggleGestures,
       C_ToggleBlink,
       C_ToggleManualAim,
+      C_ToggleBowStrength,
       C_ToggleNpcManualAim,
       C_ToggleFlinch,
       C_ToggleRagdoll,
