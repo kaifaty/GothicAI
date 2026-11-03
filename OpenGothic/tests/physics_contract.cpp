@@ -3361,6 +3361,40 @@ namespace {
       }
     }
 
+  void testCharacterVirtualStandingSway() {
+    // An armed stance (S_1HRUN, S_BOWRUN) sways the root: MoveAlgo passes a
+    // small oscillating X/Z displacement while the body stands. A standing
+    // character keeps static friction on a walkable slope; without the flag
+    // the same sway slides it downhill, as before 2026-11-03.
+    constexpr float radians=.01745329252f, angle=22.f*radians, maxSlope=50.f*radians;
+    constexpr float radius=25.f, padding=1.f;
+    const float sine=std::sin(angle), cosine=std::cos(angle);
+    float drift[2]={};
+    for(bool standing:{true,false}) {
+      CollisionWorld world;
+      auto matrix=at(50.f*sine,-50.f*cosine,0);
+      matrix.rotateOZ(22.f);
+      auto support=world.addCollisionBody(new JPH::BoxShape(JPH::Vec3(20,.5f,20)),matrix,.7f,DynamicWorld::C_Landscape);
+      const Tempest::Vec3 initial(0,(radius+padding)/cosine-radius-padding,0);
+      auto walker=world.createVirtualCharacter(radius,180,initial);
+      auto state=walker->move({},0,50,maxSlope,80,nullptr);
+      require(state.grounded,"standing sway fixture must start supported on its walkable incline");
+      uint64_t elapsed=0;
+      for(int frame=1;frame<=240;++frame) {
+        const uint64_t dt=frame%3==0 ? 34 : 33;
+        elapsed+=dt;
+        const float sway=.15f*std::sin(float(elapsed)*0.001f*float(M_PI));
+        state=walker->move({sway,0,sway},dt,50,maxSlope,80,nullptr,false,standing);
+        }
+      drift[standing ? 0 : 1]=std::hypot(state.position.x-initial.x,state.position.z-initial.z);
+      require(state.grounded,"standing sway must retain walkable slope support");
+      }
+    std::printf("CharacterVirtual 22 deg standing sway 8 s: standing %.4f cm, not standing %.4f cm\n",
+                double(drift[0]),double(drift[1]));
+    require(drift[0]<1.f,"a standing character whose stance sways its root must drift less than 1 cm in 8 s on a walkable slope");
+    require(drift[1]>10.f,"the same sway without the standing flag must keep the ordinary gravity response");
+    }
+
   void testCharacterVirtualIdleStairIntent() {
     constexpr float radians=.01745329252f, angle=14.f*radians, maxSlope=50.f*radians;
     constexpr float radius=25.f, padding=1.f;
@@ -4008,6 +4042,7 @@ namespace {
     testCharacterVirtualIdleSlopes();
     testCharacterVirtualSupports();
     testCharacterVirtualSlopeRest();
+    testCharacterVirtualStandingSway();
     testCharacterVirtualIdleStairIntent();
     testCharacterVirtualSlopedRiser();
     testMonsterCharacterVirtual();

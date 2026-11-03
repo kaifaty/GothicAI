@@ -123,7 +123,7 @@ class MoveAlgo final {
     void    tickClimb (uint64_t dt);
     void    tickJumpup(uint64_t dt);
     bool    implTick  (uint64_t dt, MvFlags fai);
-    bool    tickCharacterVirtual(uint64_t dt, const Tempest::Vec3& displacement);
+    bool    tickCharacterVirtual(uint64_t dt, const Tempest::Vec3& displacement, bool standing = false);
     bool    useCharacterVirtual();
     bool    preserveMovementImpulse(uint64_t generation, State previousState, std::string_view backend);
 
