@@ -330,13 +330,10 @@ storygraph_ready() {
 }
 
 dependency_projects() {
+  source "$ROOT/scripts/e2e-services.sh"
   echo server
-  case "$1" in
-    tts|combat_barks|gossip|day|group|interject|programs|errand*|fight_reactions_*) echo tts-service ;;
-  esac
-  case "$1" in
-    m3|m5e) echo asr-service ;;
-  esac
+  if e2e_needs_tts "$1"; then echo tts-service; fi
+  if e2e_needs_asr "$1"; then echo asr-service; fi
 }
 
 check_protocol() {
