@@ -27,6 +27,8 @@ namespace asset { struct WorldMesh; }
 
 class WorldView {
   public:
+    void probeMemory(std::string_view stage) const;
+
     WorldView(const PackedMesh& wmesh, std::string_view skyPreset);
     WorldView(std::pair<Tempest::Vec3,Tempest::Vec3> bounds, std::string_view skyPreset);
     ~WorldView();

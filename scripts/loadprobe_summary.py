@@ -31,6 +31,25 @@ NPC_LOGIC_FIELDS = ["npc_logic_samples", "npc_logic_body_mismatch", "npc_logic_w
                     "npc_logic_wall_ms", "npc_logic_wait_early", "npc_logic_wait_late", "npc_logic_reanchored",
                     "npc_logic_body_samples", "npc_logic_weapon_samples"]
 HEADER.extend(f"{field}_{stage}" for stage in ("end", "warm", "warm_5s") for field in NPC_LOGIC_FIELDS)
+STARTUP_KINDS = ("script", "npc", "model", "skeleton", "animation", "texture", "item", "npc_placement")
+STARTUP_FIELDS = ("count", "ms", "inclusive_ms", "bytes", "malloc_bytes", "footprint_bytes", "memory_sampled")
+OWNER_NAMES = ("npc_model_cpu", "model_cpu", "skeleton_cpu", "animation_cpu", "world_source_cpu", "physicmesh_items_cpu",
+               "waynet_cpu", "vob_base_cpu", "vob_objects_cpu", "script_vm_cpu")
+MEMORY_STAGES = ("session_begin", "scripts_vm", "world_data_read", "mesh_chunks_read", "landscape_pack",
+                 "landscape_view", "physics_static", "cloth_surfaces", "waynet", "vobs", "movable_vobs",
+                 "placed_items", "waynet_index", "world_end", "dialogs", "player_postinit", "scripts_startup")
+MEMORY_FIELDS = ("rss_mb", "footprint_mb", "malloc_in_use_mb", "malloc_allocated_mb")
+HEADER.extend(f"startup_{kind}_{field}" for kind in STARTUP_KINDS for field in STARTUP_FIELDS)
+HEADER.extend(("startup_memory_ns", "startup_memory_samples"))
+HEADER.extend(f"requests_{kind}_{field}" for kind in ("model", "animation", "texture")
+              for field in ("count", "unique", "repeated"))
+HEADER.extend(f"{stage}_{field}" for stage in MEMORY_STAGES for field in MEMORY_FIELDS)
+HEADER.extend(("load_1", "load_5", "load_15", "first_frame_ms"))
+HEADER.extend(f"pipeline_{stage}_{kind}_{field}" for stage in ("load_end", "first_frame", "pipelines_10s")
+              for kind in ("library", "graphics", "compute") for field in ("count", "ms", "post_load_count", "post_load_ms"))
+HEADER.extend(f"owner_{name}_{stage}_bytes" for stage in ("end", "warm", "warm_5s") for name in OWNER_NAMES)
+EXTRA_TIME_STAGES = ("placed_items", "waynet", "trigger_start", "world_read_total")
+HEADER.extend(f"{stage}_ms" for stage in EXTRA_TIME_STAGES)
 VOBS_HEADER = "run,seg,world,kind,name,count,ms,inclusive_ms,stage_ms,share_pct,unique,hits,misses,cold_miss_pct,repeat_n".split(",")
 
 
@@ -48,8 +67,36 @@ def parse(path):
     rows = []
     marks = {}
     pending_vobs = []
+    pending_startup = {}
+    pending_requests = {}
+    pending_owners = {}
+    pending_host = {}
     with open(path, errors="replace") as source:
         for line in source:
+            host = re.search(r"\[loadprobe-host\] (.*)", line)
+            if host:
+                pending_host = fields(host.group(1))
+                continue
+            overhead = re.search(r"\[loadprobe-overhead\] (.*)", line)
+            if overhead:
+                pending_startup["overhead"] = fields(overhead.group(1))
+                continue
+            detail = re.search(r"\[loadprobe-(startup|requests|owner|pipelines)\] (.*)", line)
+            if detail:
+                kind, text = detail.groups()
+                item = fields(text)
+                if kind == "startup":
+                    pending_startup[item["name"]] = item
+                elif kind == "requests":
+                    pending_requests[item["name"]] = item
+                elif kind == "owner":
+                    pending_owners.setdefault(item["stage"], {})[item["name"]] = item["bytes"]
+                else:
+                    stage = "session_end" if item["stage"] == "load_end" else item["stage"]
+                    mark = next((row for row in reversed(rows) if row["stage"] == stage), None)
+                    if mark is not None:
+                        mark.setdefault("pipelines", {})[item["name"]] = item
+                continue
             vobs = re.search(r"\[loadprobe-vobs\] (.*)", line)
             if vobs:
                 pending_vobs.append(fields(vobs.group(1)))
@@ -69,6 +116,16 @@ def parse(path):
                     pending_vobs = []
                 elif row["stage"] in ("session_begin", "change_begin", "world_begin"):
                     pending_vobs = []
+                if row["stage"] == "scripts_startup":
+                    row["startup"] = pending_startup
+                    pending_startup = {}
+                if row["stage"] == "session_end":
+                    row["requests"] = pending_requests
+                    pending_requests = {}
+                if row["stage"] in ("session_begin", "change_begin"):
+                    row.update(pending_host)
+                    pending_host = {}
+                row["owners"] = pending_owners.pop(row["stage"], {})
                 rows.append(row)
                 marks[key] = row
     return rows
@@ -78,7 +135,7 @@ def segments(rows):
     current = []
     complete = False
     for row in rows:
-        if complete and row["stage"] not in ("stream_warm", "stream_warm_5s"):
+        if complete and row["stage"] not in ("stream_warm", "stream_warm_5s", "first_frame", "pipelines_10s"):
             yield current
             current = []
             complete = False
@@ -163,6 +220,24 @@ def summary_rows(out):
                 mark = marks[-1] if marks else {}
                 values.extend((round(mark[key], 6) if "_ms" in key else int(mark[key]))
                               if key in mark else "" for key in NPC_LOGIC_FIELDS)
+            startup = next((row.get("startup", {}) for row in segment if row["stage"] == "scripts_startup"), {})
+            values.extend("" if field in ("malloc_bytes", "footprint_bytes") and startup.get(kind, {}).get("memory_sampled") == 0
+                          else startup.get(kind, {}).get(field, "") for kind in STARTUP_KINDS for field in STARTUP_FIELDS)
+            values.extend(startup.get("overhead", {}).get(field, "") for field in ("startup_memory_ns", "startup_memory_samples"))
+            requests = end.get("requests", {})
+            values.extend(requests.get(kind, {}).get(field, "") for kind in ("model", "animation", "texture")
+                          for field in ("count", "unique", "repeated"))
+            by_stage = {row["stage"]: row for row in segment}
+            values.extend(by_stage.get(stage, {}).get(field, "") for stage in MEMORY_STAGES for field in MEMORY_FIELDS)
+            values.extend(begin.get(field, "") for field in ("load_1", "load_5", "load_15"))
+            values.append(by_stage.get("first_frame", {}).get("stage_ms", ""))
+            values.extend(by_stage.get(stage, {}).get("pipelines", {}).get(kind, {}).get(field, "")
+                          for stage in (end["stage"], "first_frame", "pipelines_10s")
+                          for kind in ("library", "graphics", "compute")
+                          for field in ("count", "ms", "post_load_count", "post_load_ms"))
+            values.extend(by_stage.get(stage, {}).get("owners", {}).get(name, "")
+                          for stage in (end["stage"], "stream_warm", "stream_warm_5s") for name in OWNER_NAMES)
+            values.extend(by_stage.get(stage, {}).get("stage_ms", "") for stage in EXTRA_TIME_STAGES)
             yield values
 
 

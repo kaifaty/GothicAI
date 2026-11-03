@@ -431,3 +431,17 @@ void WayMatrix::forEachPoint(const std::function<void(const WayPoint&)>& f) cons
   for(auto& w:freePoints)
     f(w);
   }
+
+
+size_t WayMatrix::probeCpuBytes() const {
+  size_t bytes=sizeof(*this)+edges.capacity()*sizeof(edges[0])+indexPoints.capacity()*sizeof(indexPoints[0])+
+               fpInd.capacity()*sizeof(fpInd[0])+fpIndex.capacity()*sizeof(fpIndex[0]);
+  for(const auto* list:{&wayPoints,&freePoints,&startPoints}) {
+    bytes+=list->capacity()*sizeof((*list)[0]);
+    for(const auto& point:*list) bytes+=point.connections().capacity()*sizeof(point.connections()[0]);
+    }
+  for(const auto& index:fpIndex) bytes+=index.index.capacity()*sizeof(index.index[0]);
+  for(const auto& list:stk) bytes+=list.capacity()*sizeof(list[0]);
+  if(heightCache) bytes+=heightCache->probeCpuBytes();
+  return bytes;
+  }

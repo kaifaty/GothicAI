@@ -12,6 +12,8 @@ class World;
 
 class Animation final {
   public:
+    size_t probeCpuBytes() const;
+
     enum AnimClass : uint8_t {
       UnknownAnim=0,
       Transition,

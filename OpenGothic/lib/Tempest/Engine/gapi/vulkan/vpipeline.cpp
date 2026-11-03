@@ -1,3 +1,4 @@
+#include "graphics/loadprobe.h"
 #if defined(TEMPEST_BUILD_VULKAN)
 
 #include "vpipeline.h"
@@ -322,7 +323,9 @@ VkPipeline VPipeline::initGraphicsPipeline(VDevice& device,
     }
 
   VkPipeline graphicsPipeline = VK_NULL_HANDLE;
+  TempestLoadProbe::PipelineScope pipelineProbe(TempestLoadProbe::Graphics);
   const auto err = vkCreateGraphicsPipelines(device.device.impl,VK_NULL_HANDLE,1,&pipelineInfo,nullptr,&graphicsPipeline);
+  pipelineProbe.stop();
   if(err!=VK_SUCCESS)
     throw std::system_error(Tempest::GraphicsErrc::InvalidShaderModule);
   return graphicsPipeline;
@@ -419,7 +422,9 @@ VCompPipeline::VCompPipeline(VDevice& device, const VShader& comp)
       createFlags2.pNext = info.pNext;
       info.pNext         = &createFlags2;
       }
+    TempestLoadProbe::PipelineScope pipelineProbe(TempestLoadProbe::Compute);
     const auto err = vkCreateComputePipelines(dev, VK_NULL_HANDLE, 1, &info, nullptr, &impl);
+    pipelineProbe.stop();
     if(err!=VK_SUCCESS)
       throw std::system_error(Tempest::GraphicsErrc::InvalidShaderModule);
 
@@ -477,7 +482,9 @@ VkPipeline VCompPipeline::instance(VkPipelineLayout pLay) {
     info.flags              = VK_PIPELINE_CREATE_DERIVATIVE_BIT;
     info.basePipelineHandle = impl;
     info.basePipelineIndex  = -1;
+    TempestLoadProbe::PipelineScope pipelineProbe(TempestLoadProbe::Compute);
     const auto err = vkCreateComputePipelines(dev, VK_NULL_HANDLE, 1, &info, nullptr, &val);
+    pipelineProbe.stop();
     if(err!=VK_SUCCESS)
       throw std::system_error(Tempest::GraphicsErrc::InvalidShaderModule);
 

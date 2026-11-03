@@ -13,6 +13,8 @@ class WorldView;
 
 class ObjVisual {
   public:
+    size_t probePhysicsBytes() const;
+
     ObjVisual();
     ObjVisual(ObjVisual&& other);
     ObjVisual& operator = (ObjVisual&& other);

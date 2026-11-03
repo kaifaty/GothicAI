@@ -472,6 +472,7 @@ void GameScript::loadDialogOU() {
   }
 
 void GameScript::initializeInstanceNpc(const std::shared_ptr<zenkit::INpc>& npc, size_t instance) {
+  LoadProbe::Startup::Scope startupProbe(LoadProbe::Startup::Script);
   auto sym = vm.find_symbol_by_index(uint32_t(instance));
 
   if(sym == nullptr) {

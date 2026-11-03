@@ -382,3 +382,18 @@ void Vob::load(Serialize& fin) {
     }
   moveEvent();
   }
+
+
+size_t Vob::probeBaseBytes() const {
+  // Only rootVobs/child unique_ptr allocations call this traversal. Include
+  // the derived object's inline storage, including ObjVisual's pose arrays.
+  size_t bytes=sizeof(Vob);
+#if defined(__APPLE__)
+  bytes=malloc_size(dynamic_cast<const void*>(this));
+#elif defined(__GLIBC__)
+  bytes=malloc_usable_size(const_cast<void*>(dynamic_cast<const void*>(this)));
+#endif
+  bytes+=child.capacity()*sizeof(child[0]);
+  for(const auto& vob:child) bytes+=vob->probeBaseBytes();
+  return bytes;
+  }

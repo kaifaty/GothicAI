@@ -1,3 +1,4 @@
+#include "graphics/loadprobe.h"
 #if defined(TEMPEST_BUILD_METAL)
 
 #include "mtpipeline.h"
@@ -117,14 +118,18 @@ MTL::RenderPipelineState& MtPipeline::inst(const MtFboLayout& lay, size_t stride
     mdesc->setDepthAttachmentPixelFormat(lay.depthFormat);
 
     NS::Error* error = nullptr;
+    TempestLoadProbe::PipelineScope pipelineProbe(TempestLoadProbe::Graphics);
     ix.pso = NsPtr<MTL::RenderPipelineState>(device.impl->newRenderPipelineState(mdesc.get(),MTL::PipelineOptionNone,nullptr,&error));
+    pipelineProbe.stop();
     mtAssert(ix.pso.get(),error);
     } else {
     vdesc->layouts()->object(vboIndex)->setStride(stride);
     pdesc->setDepthAttachmentPixelFormat(lay.depthFormat);
 
     NS::Error* error = nullptr;
+    TempestLoadProbe::PipelineScope pipelineProbe(TempestLoadProbe::Graphics);
     ix.pso = NsPtr<MTL::RenderPipelineState>(device.impl->newRenderPipelineState(pdesc.get(),&error));
+    pipelineProbe.stop();
     mtAssert(ix.pso.get(),error);
     }
 
@@ -229,7 +234,9 @@ MtCompPipeline::MtCompPipeline(MtDevice &device, const MtShader &sh)
     }
 
   NS::Error* error = nullptr;
+  TempestLoadProbe::PipelineScope pipelineProbe(TempestLoadProbe::Compute);
   impl = NsPtr<MTL::ComputePipelineState>(device.impl->newComputePipelineState(desc.get(), MTL::PipelineOptionNone, nullptr, &error));
+  pipelineProbe.stop();
   if(error!=nullptr) {
     const char* e = error->localizedDescription()->utf8String();
 #if !defined(NDEBUG)
