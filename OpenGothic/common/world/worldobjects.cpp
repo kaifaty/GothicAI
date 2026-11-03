@@ -321,12 +321,11 @@ std::vector<DynamicWorld::PlacedItemCensusEntry> WorldObjects::placedCensusVerdi
       if(fields.empty())
         continue;
       ++differing;
-      std::string names;
-      for(const auto field:fields)
-        names+=(names.empty() ? "" : ",")+std::string(field);
+      // One short line per field: Tempest truncates a log line at 255 bytes.
       Tempest::Log::e("placed item census check: index=",i," zen=",placedItems[i].zenId," visual=",placedItems[i].visual,
-                      " fields=",names," cached={",PlacedCensusCache::describe(verdicts[i]),
-                      "} live={",PlacedCensusCache::describe(live[i]),"}");
+                      " differing_fields=",fields.size());
+      for(const auto& field:fields)
+        Tempest::Log::e("placed item census check: index=",i," ",field.field," cached=",field.a," live=",field.b);
       }
     if(differing>0) {
       Tempest::Log::e("placed item census check: FAILED, ",differing," of ",live.size()," items differ");

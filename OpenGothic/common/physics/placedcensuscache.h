@@ -39,9 +39,9 @@ class PlacedCensusCache final {
     void   save(const std::vector<Entry>& entries) const;
     const std::filesystem::path& path() const { return file; }
 
-    // Bit-exact comparison; returns the names of differing fields.
-    static std::vector<std::string_view> differences(const Entry& a, const Entry& b);
-    static std::string describe(const Entry& entry);
+    // Bit-exact comparison of every field; floats are printed with their bits.
+    struct Difference { std::string_view field; std::string a, b; };
+    static std::vector<Difference> differences(const Entry& a, const Entry& b);
 
   private:
     std::filesystem::path file;

@@ -9,6 +9,7 @@
 #include <bit>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -250,34 +251,32 @@ void PlacedCensusCache::save(const std::vector<Entry>& entries) const {
     }
   }
 
-std::vector<std::string_view> PlacedCensusCache::differences(const Entry& a, const Entry& b) {
-  std::vector<std::string_view> ret;
-  if(a.disposition!=b.disposition)                  ret.push_back("disposition");
-  if(!same(a.supportGapCm,b.supportGapCm))          ret.push_back("supportGapCm");
-  if(!same(a.staticDepthCm,b.staticDepthCm))        ret.push_back("staticDepthCm");
-  if(!same(a.furnitureDepthCm,b.furnitureDepthCm))  ret.push_back("furnitureDepthCm");
-  if(!same(a.itemDepthCm,b.itemDepthCm))            ret.push_back("itemDepthCm");
-  if(a.supportCategory!=b.supportCategory)          ret.push_back("supportCategory");
-  if(a.supportLabel!=b.supportLabel)                ret.push_back("supportLabel");
-  if(!same(a.supportNormal,b.supportNormal))        ret.push_back("supportNormal");
-  if(!same(a.hullLowPointCm,b.hullLowPointCm))      ret.push_back("hullLowPointCm");
-  if(!same(a.supportFaceNormal,b.supportFaceNormal)) ret.push_back("supportFaceNormal");
-  if(!same(a.supportSlopeDeg,b.supportSlopeDeg))    ret.push_back("supportSlopeDeg");
-  if(a.supportZenId!=b.supportZenId)                ret.push_back("supportZenId");
-  if(a.supportItemIndex!=b.supportItemIndex)        ret.push_back("supportItemIndex");
-  if(a.enabled!=b.enabled)                          ret.push_back("enabled");
-  return ret;
-  }
-
-std::string PlacedCensusCache::describe(const Entry& e) {
-  const auto vec=[](const Tempest::Vec3& v) {
-    return std::to_string(v.x)+","+std::to_string(v.y)+","+std::to_string(v.z);
+std::vector<PlacedCensusCache::Difference> PlacedCensusCache::differences(const Entry& a, const Entry& b) {
+  std::vector<Difference> ret;
+  const auto real=[](float v) {
+    char text[48];
+    std::snprintf(text,sizeof(text),"%.9g(0x%08x)",double(v),std::bit_cast<uint32_t>(v));
+    return std::string(text);
     };
-  return e.disposition+" gap="+std::to_string(e.supportGapCm)+" static="+std::to_string(e.staticDepthCm)+
-         " furniture="+std::to_string(e.furnitureDepthCm)+" item="+std::to_string(e.itemDepthCm)+
-         " category="+std::to_string(e.supportCategory)+" label="+e.supportLabel+
-         " normal="+vec(e.supportNormal)+" low="+vec(e.hullLowPointCm)+" face="+vec(e.supportFaceNormal)+
-         " slope="+std::to_string(e.supportSlopeDeg)+" zen="+std::to_string(e.supportZenId)+
-         " support_item="+(e.supportItemIndex==size_t(-1) ? std::string("-") : std::to_string(e.supportItemIndex))+
-         " enabled="+(e.enabled ? "1" : "0");
+  const auto vec=[&](const Tempest::Vec3& v) { return real(v.x)+","+real(v.y)+","+real(v.z); };
+  const auto text=[&](std::string_view field, bool equal, std::string x, std::string y) {
+    if(!equal)
+      ret.push_back({field,std::move(x),std::move(y)});
+    };
+  text("disposition",a.disposition==b.disposition,a.disposition,b.disposition);
+  text("supportGapCm",same(a.supportGapCm,b.supportGapCm),real(a.supportGapCm),real(b.supportGapCm));
+  text("staticDepthCm",same(a.staticDepthCm,b.staticDepthCm),real(a.staticDepthCm),real(b.staticDepthCm));
+  text("furnitureDepthCm",same(a.furnitureDepthCm,b.furnitureDepthCm),real(a.furnitureDepthCm),real(b.furnitureDepthCm));
+  text("itemDepthCm",same(a.itemDepthCm,b.itemDepthCm),real(a.itemDepthCm),real(b.itemDepthCm));
+  text("supportCategory",a.supportCategory==b.supportCategory,std::to_string(a.supportCategory),std::to_string(b.supportCategory));
+  text("supportLabel",a.supportLabel==b.supportLabel,a.supportLabel,b.supportLabel);
+  text("supportNormal",same(a.supportNormal,b.supportNormal),vec(a.supportNormal),vec(b.supportNormal));
+  text("hullLowPointCm",same(a.hullLowPointCm,b.hullLowPointCm),vec(a.hullLowPointCm),vec(b.hullLowPointCm));
+  text("supportFaceNormal",same(a.supportFaceNormal,b.supportFaceNormal),vec(a.supportFaceNormal),vec(b.supportFaceNormal));
+  text("supportSlopeDeg",same(a.supportSlopeDeg,b.supportSlopeDeg),real(a.supportSlopeDeg),real(b.supportSlopeDeg));
+  text("supportZenId",a.supportZenId==b.supportZenId,std::to_string(a.supportZenId),std::to_string(b.supportZenId));
+  text("supportItemIndex",a.supportItemIndex==b.supportItemIndex,std::to_string(int64_t(a.supportItemIndex)),
+       std::to_string(int64_t(b.supportItemIndex)));
+  text("enabled",a.enabled==b.enabled,a.enabled ? "1" : "0",b.enabled ? "1" : "0");
+  return ret;
   }

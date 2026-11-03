@@ -8,6 +8,7 @@
 #include <chrono>
 
 #include <Tempest/Log>
+#include <cstdio>
 #include <Tempest/Painter>
 
 #include "graphics/mesh/submesh/packedmesh.h"
@@ -285,12 +286,14 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
     probeT = LoadProbe::now();
     wobj.finalizePlacedItems();
     if(LoadProbe::enabled()) {
+      // Tempest limits a log line to 255 bytes: census timings get their own record.
       const auto& census=wobj.placedCensusLoad();
-      LoadProbe::mark("placed_items",LoadProbe::msSince(probeT),
-                      "census="+census.status+" census_items="+std::to_string(census.items)+
-                      " census_key_ms="+std::to_string(census.keyMs)+" census_read_ms="+std::to_string(census.readMs)+
-                      " census_build_ms="+std::to_string(census.censusMs)+" census_write_ms="+std::to_string(census.writeMs)+
-                      " census_check_ms="+std::to_string(census.checkMs));
+      LoadProbe::mark("placed_items",LoadProbe::msSince(probeT),"census="+census.status);
+      char line[240];
+      std::snprintf(line,sizeof(line),"[loadprobe-placed-census] status=%s items=%zu key_ms=%.3f read_ms=%.3f "
+                    "build_ms=%.3f write_ms=%.3f check_ms=%.3f",census.status.c_str(),census.items,census.keyMs,
+                    census.readMs,census.censusMs,census.writeMs,census.checkMs);
+      Tempest::Log::i(line);
       }
 
     probeT = LoadProbe::now();
