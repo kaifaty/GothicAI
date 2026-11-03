@@ -8,6 +8,7 @@
 
 #include <chrono>
 #include <mutex>
+#include <vector>
 
 using namespace Tempest;
 using namespace Tempest::Detail;
@@ -16,8 +17,8 @@ namespace fs = std::filesystem;
 
 // Bump when the way pipelines are put into the archive changes.
 static constexpr const char* MetalArchiveFormat = "tempest-metal-archive-1";
-// Re-serializing an archive loaded from disk can grow it far beyond its content (5 MB -> 27 MB after
-// one added pipeline on macOS 27); a larger file is dropped and the archive starts over.
+// Safety net: a larger file is dropped and the archive starts over. Writes rebuild a fresh archive
+// (see save()), which keeps the file at the size of the pipelines actually used.
 static constexpr uintmax_t   MaxArchiveSize     = 64u*1024u*1024u;
 
 static NsPtr<NS::URL> fileUrl(const fs::path& p) {
@@ -93,6 +94,7 @@ void MtPipelineCache::init(MTL::Device& dev, const std::string& identity) {
 
   list = NsPtr<NS::Array>(NS::Array::array(archive.get()));
   list->retain();
+  device = &dev;
   }
 
 template<class Desc, class State, class Make, class Add>
@@ -109,6 +111,7 @@ State* MtPipelineCache::create(Desc& desc, NS::Error** err, Make make, Add add) 
     desc.setBinaryArchives(nullptr);
     if(ret!=nullptr) {
       hits.fetch_add(1,std::memory_order_relaxed);
+      remember(desc);
       return ret;
       }
   }
@@ -128,11 +131,26 @@ State* MtPipelineCache::create(Desc& desc, NS::Error** err, Make make, Add add) 
     return make(MTL::PipelineOptionNone,err);
     }
 
-  std::shared_lock<std::shared_mutex> guard(sync);
-  desc.setBinaryArchives(list.get());
-  State* ret = make(MTL::PipelineOptionNone,err);
-  desc.setBinaryArchives(nullptr);
+  State* ret = nullptr;
+  {
+    std::shared_lock<std::shared_mutex> guard(sync);
+    desc.setBinaryArchives(list.get());
+    ret = make(MTL::PipelineOptionNone,err);
+    desc.setBinaryArchives(nullptr);
+  }
+  if(ret!=nullptr)
+    remember(desc);
   return ret;
+  }
+
+void MtPipelineCache::remember(MTL::RenderPipelineDescriptor& desc) {
+  std::lock_guard<std::mutex> guard(descSync);
+  renderDesc.emplace_back(desc.copy());
+  }
+
+void MtPipelineCache::remember(MTL::ComputePipelineDescriptor& desc) {
+  std::lock_guard<std::mutex> guard(descSync);
+  computeDesc.emplace_back(desc.copy());
   }
 
 MTL::RenderPipelineState* MtPipelineCache::render(MTL::Device& dev, MTL::RenderPipelineDescriptor& desc, NS::Error** err) {
@@ -159,10 +177,47 @@ void MtPipelineCache::save(const char* reason) {
     return;
     }
   const auto start = std::chrono::steady_clock::now();
-  const auto tmp   = PipelineCacheFile::temporaryPath(file);
-  auto       url   = fileUrl(tmp);
-  NS::Error* err   = nullptr;
-  if(!archive->serializeToURL(url.get(),&err) || err!=nullptr) {
+  // Re-serializing the archive Metal loaded from disk, after additions, first bloated it (5 -> 27 MB for
+  // one new pipeline) and then failed outright ("expecting 'fragment' stage in pipeline no. N").
+  // So every write builds a fresh archive from this session's pipelines; their binaries come from the
+  // loaded archive. Pipelines that this session did not create drop out of the file.
+  std::vector<MTL::RenderPipelineDescriptor*>  render;
+  std::vector<MTL::ComputePipelineDescriptor*> compute;
+  {
+    std::lock_guard<std::mutex> g(descSync);
+    for(auto& d:renderDesc)  { d->retain(); render.push_back(d.get());  }
+    for(auto& d:computeDesc) { d->retain(); compute.push_back(d.get()); }
+  }
+  auto       fdesc  = NsPtr<MTL::BinaryArchiveDescriptor>::init();
+  NS::Error* err    = nullptr;
+  auto       fresh  = NsPtr<MTL::BinaryArchive>(device->newBinaryArchive(fdesc.get(),&err));
+  size_t     copied = 0, lost = 0;
+  for(auto* d:render) {
+    if(fresh!=nullptr) {
+      NS::Error* e = nullptr;
+      d->setBinaryArchives(list.get());
+      (fresh->addRenderPipelineFunctions(d,&e) ? copied : lost)++;
+      d->setBinaryArchives(nullptr);
+      }
+    d->release();
+    }
+  for(auto* d:compute) {
+    if(fresh!=nullptr) {
+      NS::Error* e = nullptr;
+      d->setBinaryArchives(list.get());
+      (fresh->addComputePipelineFunctions(d,&e) ? copied : lost)++;
+      d->setBinaryArchives(nullptr);
+      }
+    d->release();
+    }
+  if(fresh==nullptr) {
+    Log::e("pipeline cache: write failed: ",file.string()," (",errorText(err),")");
+    return;
+    }
+  const auto tmp = PipelineCacheFile::temporaryPath(file);
+  auto       url = fileUrl(tmp);
+  err = nullptr;
+  if(!fresh->serializeToURL(url.get(),&err) || err!=nullptr) {
     std::error_code ignored;
     fs::remove(tmp,ignored);
     Log::e("pipeline cache: write failed: ",file.string()," (",errorText(err),")");
@@ -179,7 +234,7 @@ void MtPipelineCache::save(const char* reason) {
   const auto ms   = std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count();
   const auto size = fs::file_size(file,ec);
   Log::i("pipeline cache: saved ",size_t(ec ? 0 : size)," bytes in ",int(ms)," ms (",reason,", hits=",hits.load(),
-         " misses=",misses.load()," failures=",failures.load(),")");
+         " misses=",misses.load()," failures=",failures.load(),", pipelines=",copied," lost=",lost,")");
   }
 
 #endif

@@ -8,6 +8,7 @@
 #include <shared_mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "nsptr.h"
 
@@ -33,6 +34,8 @@ class MtPipelineCache {
   private:
     template<class Desc, class State, class Make, class Add>
     State* create(Desc& desc, NS::Error** err, Make make, Add add);
+    void   remember(MTL::RenderPipelineDescriptor& desc);
+    void   remember(MTL::ComputePipelineDescriptor& desc);
 
     std::shared_mutex          sync;
     NsPtr<MTL::BinaryArchive>  archive;
@@ -42,6 +45,11 @@ class MtPipelineCache {
     std::atomic<bool>          dirty{false};
     std::atomic<uint32_t>      hits{0}, misses{0}, failures{0};
     std::thread                saver;
+    MTL::Device*               device = nullptr;
+    // Copies of every pipeline descriptor created this session: a write rebuilds the archive from them.
+    std::mutex                 descSync;
+    std::vector<NsPtr<MTL::RenderPipelineDescriptor>>  renderDesc;
+    std::vector<NsPtr<MTL::ComputePipelineDescriptor>> computeDesc;
   };
 
 }
