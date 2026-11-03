@@ -36,7 +36,7 @@ namespace Archery {
   static constexpr float MinDraw = 0.3f; // drawn less: the arrow is not shot, the string let down
   static constexpr float GiveUp  = 4.f;  // seconds trembling past the hold limit: the arms let it down
   static constexpr float Burst   = 1.4f; // strength reserve available for a burst
-  static constexpr float DrawT1  = 1.f;  // seconds to full draw with strength equal to draw weight
+  static constexpr float DrawT1  = 1.25f; // seconds to full draw with strength equal to draw weight (hero-balance tempo, #814)
   static constexpr float DrawEpsilon = 0.05f; // minimum draw-speed fraction at the burst limit
 
   // Manual aim on (GAME/manualAim in Gothic.ini, on by default; Marvin: toggle manualaim): the hero aims a
