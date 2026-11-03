@@ -17,12 +17,12 @@ namespace {
   }
 
 Healing::EffectMoment Healing::effectMoment(Category category, bool potionEnabled, bool foodEnabled,
-                                            bool hasAnimation, bool hasDestroyEvent) {
+                                            bool hasAnimation) {
   const bool deferred = (category==Category::Potion && potionEnabled) ||
                         (category==Category::Food && foodEnabled);
   if(!deferred || !hasAnimation)
     return EffectMoment::Immediate;
-  return hasDestroyEvent ? EffectMoment::Destroy : EffectMoment::AnimationEnd;
+  return EffectMoment::Destroy;
   }
 
 size_t Healing::choosePotion(std::span<const Potion> candidates, int missing) {

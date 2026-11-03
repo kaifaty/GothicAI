@@ -9,10 +9,10 @@ namespace Healing {
   constexpr size_t NoPotion = size_t(-1);
 
   enum class Category { Other, Potion, Food };
-  enum class EffectMoment { Immediate, Destroy, AnimationEnd };
+  enum class EffectMoment { Immediate, Destroy };
 
   EffectMoment effectMoment(Category category, bool potionEnabled, bool foodEnabled,
-                            bool hasAnimation, bool hasDestroyEvent);
+                            bool hasAnimation);
 
   struct Potion final {
     size_t item = NoPotion;

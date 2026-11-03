@@ -44,17 +44,15 @@ namespace {
 int main() {
   using namespace Healing;
 
-  require(effectMoment(Category::Potion,true,true,true,true)==EffectMoment::Destroy,
+  require(effectMoment(Category::Potion,true,true,true)==EffectMoment::Destroy,
           "enabled potion waits for ITEM_DESTROY");
-  require(effectMoment(Category::Food,true,true,true,true)==EffectMoment::Destroy,
+  require(effectMoment(Category::Food,true,true,true)==EffectMoment::Destroy,
           "enabled food waits for ITEM_DESTROY");
-  require(effectMoment(Category::Potion,true,true,true,false)==EffectMoment::AnimationEnd,
-          "animation without ITEM_DESTROY waits for its end");
-  require(effectMoment(Category::Potion,true,true,false,false)==EffectMoment::Immediate,
+  require(effectMoment(Category::Potion,true,true,false)==EffectMoment::Immediate,
           "item without animation executes immediately");
-  require(effectMoment(Category::Potion,false,true,true,true)==EffectMoment::Immediate &&
-          effectMoment(Category::Food,true,false,true,true)==EffectMoment::Immediate &&
-          effectMoment(Category::Other,true,true,true,true)==EffectMoment::Immediate,
+  require(effectMoment(Category::Potion,false,true,true)==EffectMoment::Immediate &&
+          effectMoment(Category::Food,true,false,true)==EffectMoment::Immediate &&
+          effectMoment(Category::Other,true,true,true)==EffectMoment::Immediate,
           "disabled flags and other items preserve immediate effects");
 
   std::array<Potion,3> potions{{{1,50,true},{2,70,true},{3,100,true}}};

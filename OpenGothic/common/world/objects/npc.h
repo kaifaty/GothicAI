@@ -720,6 +720,7 @@ class Npc final {
     bool      isAiBusy() const;
     size_t    aiQueueSize() const { return aiQueue.size(); }
     auto      aiQueueFront() const -> const AiQueue::AiAction* { return aiQueue.front(); }
+    bool      hasQueuedItemUse() const { return aiQueue.hasItemUse(); }
     void      clearAiQueue();
 
     auto      currentWayPoint() const -> const WayPoint* { return currentFp; }

@@ -30,6 +30,22 @@ equip ItPo_Health_01
 wait 2500
 healing check potion
 
+# A known clip refused by a busy layer must not become an immediate use.
+healing begin busy-potion ItPo_Health_01
+healing busy
+equip ItPo_Health_01
+wait 2500
+healing check refused
+
+# Saving after ITEM_INSERT preserves the deferred effect and its item.
+healing begin saved-potion ItPo_Health_01
+equip ItPo_Health_01
+wait 700
+healing save
+healing load
+wait 2500
+healing check potion
+
 # The scheduled frame ends exactly at the requested millisecond after useItem.
 # Each retry consumes the kept potion, without giving another in the ON run.
 healing begin hit-1 ItPo_Health_01
@@ -73,6 +89,15 @@ equip ItFo_Bread
 wait 12000
 healing check food 10
 
+# The same saved-use path applies before food has created its pool.
+healing begin saved-food-use ItFo_Bread
+equip ItFo_Bread
+wait 700
+healing save
+healing load
+wait 12000
+healing check food 10
+
 # The next apple adds to the remaining pool and extends its deadline.
 healing begin five-apples ItFo_Apple
 equip ItFo_Apple
@@ -98,10 +123,14 @@ wait 8000
 healing check food 10
 
 # Same actual player-control key-release path as the game, with sword drawn.
-healing begin hotkey ItPo_Health_01
-give ItPo_Health_01
+healing begin hotkey-double ItPo_Health_01 950
+give ItPo_Health_01 2
 melee-shadow weapon 1h
 wait 600
 release heal
-wait 6000
+# Repeated input while sheathing and then while drinking keeps the second potion.
+release heal
+wait 600
+release heal
+wait 5400
 healing check hotkey

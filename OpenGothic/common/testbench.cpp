@@ -651,9 +651,12 @@ struct Bench {
   struct Healing {
     std::string label;
     size_t item = size_t(-1), lastItems = 0;
-    uint64_t start = 0, firstHeal = 0, lastConsume = 0, nextSecond = 0, strikeAt = 0;
+    uint64_t start = 0, firstHeal = 0, lastHeal = 0, lastConsume = 0, nextSecond = 0, strikeAt = 0, hotkeyAt = 0;
+    uint64_t paused = 0, savedAt = 0, savedPaused = 0, savedLastHeal = 0, savedNextSecond = 0;
+    size_t portions = 0, savedSamples = 0;
     int hp = 0, healed = 0, damage = 0, savedHealed = 0, savedDamage = 0;
     bool sawDrink = false;
+    std::vector<std::pair<uint64_t,int>> samples;
     std::vector<uint8_t> saved;
     } healing;
 
@@ -14008,17 +14011,20 @@ void healingObserve(World& world,Npc& player) {
   if(hp>test.hp) {
     test.healed+=hp-test.hp;
     if(!test.firstHeal)test.firstHeal=world.tickCount();
+    test.lastHeal=world.tickCount();
     }
   if(hp<test.hp)test.damage+=test.hp-hp;
   test.hp=hp;
   const auto count=player.inventory().itemCount(test.item);
   if(count<test.lastItems) {
-    test.lastConsume=world.tickCount();test.nextSecond=test.lastConsume;
+    test.lastConsume=world.tickCount();test.nextSecond=test.lastConsume;test.paused=0;++test.portions;
     }
   test.lastItems=count;
   test.sawDrink|=player.hasState(BS_ITEMINTERACT);
   if(test.lastConsume && world.tickCount()>=test.nextSecond) {
-    say("healing sample "+test.label+": "+std::to_string(world.tickCount()-test.lastConsume)+
+    const auto elapsed=world.tickCount()-test.lastConsume-test.paused;
+    test.samples.emplace_back(elapsed,test.healed);
+    say("healing sample "+test.label+": "+std::to_string(elapsed)+
       " ms after consume, hp "+std::to_string(hp)+", healed "+std::to_string(test.healed)+
       ", damage "+std::to_string(test.damage)+", items "+std::to_string(count));
     test.nextSecond+=1000;
@@ -14027,30 +14033,38 @@ void healingObserve(World& world,Npc& player) {
 
 void healingCommand(const std::vector<std::string>& a,World& world,Npc& player,PlayerControl& ctrl) {
   auto& test=bench.healing;
-  if(a.size()==4 && a[1]=="begin") {
+  if((a.size()==4 || a.size()==5) && a[1]=="begin") {
     exec("disarm",world,player,ctrl);
     const auto item=world.script().findSymbolIndex(a[3]);
     if(item==size_t(-1))throw std::runtime_error("healing fixture item is absent");
     // Start every case with ample room for healing and a real strike safely above one-third HP.
     player.handle().attribute[ATR_HITPOINTSMAX]=1000;
-    player.handle().attribute[ATR_HITPOINTS]=700;
+    const int hp=a.size()==5 ? std::stoi(a[4]) : 700;
+    player.handle().attribute[ATR_HITPOINTS]=hp;
     player.handle().flags=zenkit::NpcFlag(uint32_t(player.handle().flags)&~uint32_t(zenkit::NpcFlag::IMMORTAL));
     const auto count=player.inventory().itemCount(item);
     if(count)player.delItem(item,uint32_t(count));
-    test={};test.label=a[2];test.item=item;test.hp=700;test.start=world.tickCount();
+    test={};test.label=a[2];test.item=item;test.hp=hp;test.start=world.tickCount();
     Gothic::settingsSetI("GAME","usePotionKeys",1);
-    say("healing begin "+test.label+": hp 700/1000 at "+std::to_string(test.start)+" ms, interrupt "+
+    say("healing begin "+test.label+": hp "+std::to_string(hp)+"/1000 at "+std::to_string(test.start)+" ms, interrupt "+
       std::to_string(Gothic::physicsFlags().meleeHealInterrupt)+", food "+std::to_string(Gothic::physicsFlags().foodOverTime));
     }
   else if(a.size()==3 && a[1]=="strike") {
     test.strikeAt=world.tickCount()+uint64_t(std::stoul(a[2]));
     say("healing strike scheduled "+a[2]+" ms after use");
     }
+  else if(a.size()==2 && a[1]=="busy") {
+    const auto now=world.tickCount();
+    const auto* animation=player.playAnimByName("T_1HATTACKL",BS_STAND,true);
+    if(animation==nullptr || animation->layer!=1 || animation->canInterrupt(now,now,0))
+      throw std::runtime_error("healing busy fixture requires a noninterruptible layer-one transition");
+    }
   else if(a.size()==2 && a[1]=="retry") {
     exec("disarm",world,player,ctrl);
     const auto item=test.item;
     const auto count=player.inventory().itemCount(item);
-    test.label+="-retry";test.start=world.tickCount();test.firstHeal=test.lastConsume=test.nextSecond=0;
+    test.label+="-retry";test.start=world.tickCount();test.firstHeal=test.lastHeal=test.lastConsume=test.nextSecond=0;
+    test.paused=0;test.portions=0;test.samples.clear();
     test.healed=test.damage=0;test.hp=player.attribute(ATR_HITPOINTS);test.lastItems=count;test.sawDrink=false;
     if(!count)player.addItem(item,1); // OFF may already have consumed the first potion.
     player.useItem(item);
@@ -14086,6 +14100,8 @@ void healingCommand(const std::vector<std::string>& a,World& world,Npc& player,P
     }
   else if(a.size()==2 && a[1]=="save") {
     test.saved.clear();test.savedHealed=test.healed;test.savedDamage=test.damage;
+    test.savedAt=world.tickCount();test.savedPaused=test.paused;test.savedLastHeal=test.lastHeal;
+    test.savedNextSecond=test.nextSecond;test.savedSamples=test.samples.size();
     {MemWriter writer(test.saved);Serialize out(writer);out.setContext(&world);out.setVersion(Serialize::Current);
     player.save(out,world.npcId(&player),"/npc/");}
     std::ofstream file(outDir+"/healing-npc.zip",std::ios::binary);
@@ -14098,6 +14114,10 @@ void healingCommand(const std::vector<std::string>& a,World& world,Npc& player,P
     {MemReader reader(test.saved);Serialize in(reader);in.setContext(&world);in.setVersion(Serialize::Current);
     player.load(in,world.npcId(&player),"/npc/");player.postValidate();}
     test.hp=player.attribute(ATR_HITPOINTS);test.healed=test.savedHealed;test.damage=test.savedDamage;
+    test.lastHeal=test.savedLastHeal;test.samples.resize(test.savedSamples);
+    const auto pause=world.tickCount()-test.savedAt;
+    test.paused=test.savedPaused+pause;
+    test.nextSecond=test.savedNextSecond ? test.savedNextSecond+pause : 0;
     say("healing loaded: hp "+std::to_string(test.hp)+", healed "+std::to_string(test.healed));
     }
   else if(a.size()>=3 && a[1]=="check") {
@@ -14106,24 +14126,51 @@ void healingCommand(const std::vector<std::string>& a,World& world,Npc& player,P
     const bool food=Gothic::physicsFlags().foodOverTime;
     const auto items=player.inventory().itemCount(test.item);
     const uint64_t first=test.firstHeal ? test.firstHeal-test.start : 0;
+    const uint64_t last=test.lastHeal ? test.lastHeal-test.start : 0;
+    const auto foodElapsed=test.lastHeal>test.lastConsume+test.paused ? test.lastHeal-test.lastConsume-test.paused : 0;
     bool pass=false;
     if(a[2]=="potion" || a[2]=="hotkey") {
-      pass=test.healed==50 && (!potion || (first>1000 && test.sawDrink && test.lastConsume==test.firstHeal));
-      if(a[2]=="hotkey")pass&=potion ? player.weaponState()==WeaponState::NoWeapon : player.weaponState()!=WeaponState::NoWeapon;
+      const auto requested=a[2]=="potion" ? test.start : test.hotkeyAt;
+      pass=test.healed==50 && (potion ? test.firstHeal>requested+1000 && test.sawDrink && test.lastConsume==test.firstHeal :
+                                     test.firstHeal==requested);
+      if(a[2]=="potion")pass&=items==0;
+      if(a[2]=="hotkey") {
+        pass&=items==(potion ? 1u : 0u); // The original script also consumes a potion at full HP.
+        pass&=potion ? player.weaponState()==WeaponState::NoWeapon : player.weaponState()!=WeaponState::NoWeapon;
+        }
       }
-    else if(a[2]=="interrupted")pass=potion ? test.healed==0 && items==1 && test.damage>0 : test.healed==50;
-    else if(a[2]=="food" && a.size()==4)pass=test.healed==std::stoi(a[3]) && items==0 && (!food || first>1000);
+    else if(a[2]=="interrupted")pass=potion ? test.healed==0 && items==1 && test.damage>0 : test.healed==50 && test.firstHeal==test.start;
+    else if(a[2]=="refused")pass=test.healed==0 && items==1 && !player.hasState(BS_ITEMINTERACT);
+    else if(a[2]=="food" && a.size()==4) {
+      const int amount=std::stoi(a[3]);
+      pass=test.healed==amount && items==0;
+      if(food) {
+        pass&=foodElapsed>=9900 && foodElapsed<=10100;
+        for(const auto& [elapsed,healed]:test.samples) {
+          if(elapsed<9900 && healed>=amount)pass=false;
+          if(test.portions==1) {
+            const auto low=elapsed>100 ? elapsed-100 : 0;
+            const auto high=std::min(elapsed+100,uint64_t(10000));
+            pass&=healed>=int(uint64_t(amount)*std::min(low,uint64_t(10000))/10000) &&
+                  healed<=int(uint64_t(amount)*high/10000);
+            }
+          }
+        }
+      else pass&=test.firstHeal==test.start;
+      }
     say("healing check "+test.label+": healed "+std::to_string(test.healed)+", damage "+std::to_string(test.damage)+
       ", items "+std::to_string(items)+", first heal "+std::to_string(first)+" ms, consume "+
-      std::to_string(test.lastConsume?test.lastConsume-test.start:0)+" ms, drink "+std::to_string(test.sawDrink)+
+      std::to_string(test.lastConsume?test.lastConsume-test.start:0)+" ms, last heal "+std::to_string(last)+
+      " ms, food elapsed "+std::to_string(foodElapsed)+" ms, drink "+std::to_string(test.sawDrink)+
       ", weapon "+std::to_string(int(player.weaponState()))+", pass "+std::to_string(pass));
     event("healing_check","\"case\":"+jsonStr(test.label)+",\"healed\":"+std::to_string(test.healed)+
       ",\"damage\":"+std::to_string(test.damage)+",\"items\":"+std::to_string(items)+",\"first_heal_ms\":"+
-      std::to_string(first)+",\"consume_ms\":"+std::to_string(test.lastConsume?test.lastConsume-test.start:0)+
+      std::to_string(first)+",\"last_heal_ms\":"+std::to_string(last)+",\"food_elapsed_ms\":"+std::to_string(foodElapsed)+
+      ",\"consume_ms\":"+std::to_string(test.lastConsume?test.lastConsume-test.start:0)+
       ",\"pass\":"+(pass?"true":"false"));
     if(!pass)throw std::runtime_error("healing mechanic check failed: "+test.label);
     }
-  else throw std::runtime_error("healing expects begin/strike/retry/arrow/save/load/check");
+  else throw std::runtime_error("healing expects begin/strike/busy/retry/arrow/save/load/check");
   }
 
 void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
@@ -16819,6 +16866,8 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       bench.holds.push_back({k,uint64_t(-1)});
       }
     else if(c=="release") {
+      if((k==KeyCodec::Heal || k==KeyCodec::Potion) && !bench.healing.label.empty() && !bench.healing.hotkeyAt)
+        bench.healing.hotkeyAt=w.tickCount();
       release(ctrl,k);
       bench.holds.erase(std::remove_if(bench.holds.begin(),bench.holds.end(),[k](const Hold& h){ return h.a==k; }),bench.holds.end());
       }

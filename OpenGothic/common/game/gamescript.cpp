@@ -1332,6 +1332,8 @@ bool GameScript::startHotkeyPotion(Npc& pl, bool mana) {
     note("none");
     return true;
     }
+  if(pl.hasState(BS_ITEMINTERACT) || pl.hasQueuedItemUse())
+    return true;
 
   const char* healthItems[] = {"ITPO_HEALTH_01","ITPO_HEALTH_02","ITPO_HEALTH_03"};
   const char* manaItems[] = {"ITPO_MANA_01","ITPO_MANA_02","ITPO_MANA_03"};

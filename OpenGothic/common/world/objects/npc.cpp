@@ -589,6 +589,10 @@ void Npc::save(Serialize &fout, size_t id, std::string_view directory) {
     fout.setEntry("worlds/",fout.worldName(),directory,id,"/food-pool");
     Healing::save(fout,foodPool);
     }
+  if(itemUse.item!=0) {
+    fout.setEntry("worlds/",fout.worldName(),directory,id,"/item-use");
+    fout.write(uint32_t(itemUse.item),itemUse.started,itemUse.food);
+    }
   }
 
 void Npc::load(Serialize &fin, size_t id, std::string_view directory) {
@@ -703,6 +707,11 @@ void Npc::load(Serialize &fin, size_t id, std::string_view directory) {
 
   if(fin.setEntry("worlds/",fin.worldName(),directory,id,"/inventory"))
     invent.load(fin,*this);
+  if(fin.setEntry("worlds/",fin.worldName(),directory,id,"/item-use")) {
+    uint32_t item = 0;
+    fin.read(item,itemUse.started,itemUse.food);
+    itemUse.item = item;
+    }
   if(fin.setEntry("worlds/",fin.worldName(),directory,id,"/food-pool"))
     Healing::load(fin,foodPool);
   if(isDown() || !Gothic::physicsFlags().foodOverTime)
@@ -3672,11 +3681,13 @@ bool Npc::setAnimItem(std::string_view scheme, int state, bool allowMissing) {
     setAnim(Anim::Idle);
     return false;
     }
+  if(allowMissing && !visual.hasAnim(string_frm("T_",scheme,"_STAND_2_S0")))
+    return true;
   if(auto sq = visual.startAnimItem(*this,scheme,state)) {
     implAniWait(uint64_t(sq->totalTime()));
     return true;
     }
-  return allowMissing;
+  return false;
   }
 
 void Npc::stopAnim(std::string_view ani) {
@@ -8696,7 +8707,7 @@ void Npc::beginItemUseEffect(const Item& item) {
     return;
     }
   const auto moment = Healing::effectMoment(category,flags.meleeHealInterrupt,flags.foodOverTime,
-                                           hasItemUseAnimation(),true);
+                                           hasItemUseAnimation());
   itemUse = {item.clsId(),owner.tickCount(),category==Healing::Category::Food};
   if(moment==Healing::EffectMoment::Immediate)
     finishItemUseEffect("immediate");
@@ -8705,9 +8716,13 @@ void Npc::beginItemUseEffect(const Item& item) {
 void Npc::finishItemUseEffect(const char* moment) {
   const auto use = itemUse;
   itemUse = {};
+  invent.setCurrentItem(0);
+  invent.clearSlot(*this,"",false);
   const auto* item = invent.getItem(use.item);
-  if(item==nullptr)
+  if(item==nullptr) {
+    clearSlotItem("");
     return;
+    }
   const auto name = item->handle().name;
   const auto function = uint32_t(item->handle().on_state[0]);
   tickFoodPool();
@@ -8733,8 +8748,6 @@ void Npc::finishItemUseEffect(const char* moment) {
                     std::to_string(use.food ? foodMana : attribute(ATR_MANA)-mana)+" mana at "+
                     std::to_string(owner.tickCount()-use.started)+" ms").c_str());
     }
-  invent.setCurrentItem(0);
-  invent.clearSlot(*this,"",false);
   delItem(use.item,1);
   }
 
