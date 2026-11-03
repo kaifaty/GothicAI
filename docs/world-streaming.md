@@ -2239,7 +2239,7 @@ LLDB подтвердил exit139: singleton обнулялся раньше NPC
 |---|---|
 | Mac Gothic2Notr + body-watch после исправления угла | build exit0, 22,06 с; body 44 случая / 5331 проверка, exit0, 44,55 с |
 | Mac старый save после исправления угла | 44 / 5327, exit0, 38,27 с; каноническая фикстура изолирует фоновых NPC, неоднозначные FP всего мира проверяются load_rewind |
-| Ryzen worldbase / mesh / body-watch, `b004ff90e` | exit0, 150,26 с; 473502 треугольника / 403 чанка, mesh 8860 assertions, body 43 / 5326. Два отказа подготовки базы (142,15/112,51 с) устранены до выполнения механики |
+| Ryzen worldbase / mesh / body-watch после исправления угла | exit0, 224,56 с; 473502 треугольника / 403 чанка, mesh 8860 assertions, body 44 / 5332. Предыдущая проверка `b004ff90e` тоже прошла за 150,26 с; два отказа подготовки базы (142,15/112,51 с) устранены до выполнения механики |
 | Python `scripts/check.py run` | 232 passed + 101 subtests, 179,94 с; итоговый plan выбирает те же 2 проекта / 6 файлов |
 | e2e check_walk, `b004ff90e` | 3/3, exit0, 183 с игры; 199,909 с заявки, ожидание сборки 1772,266 с |
 | e2e без SCENARIO (m0), `b004ff90e` | 7/7, exit0, 71 с игры; 89,103 с заявки, ожидание сборки 1768,934 с |
@@ -2250,4 +2250,15 @@ LLDB подтвердил exit139: singleton обнулялся раньше NPC
 
 Нужно выбрать правило для существующих неоднозначных FP-ссылок: ближайшая одноимённая FP к сохранённой позиции, native исполнение такого старого действия до окончания либо отдельное исправление FP-save перед продолжением 6в. Выбор не сделан; новый формат сохранений и неоговорённый fallback не добавлены. Для новых сохранений точную ссылку можно разместить в существующем поле после выбора схемы. После решения нужны завершённые (б)/(в), окончательные (а)/(г) на итоговом бинаре, допуск с обоснованием, first-divergence каждого человека/Лестера, суточные height/cost/audit, load_rewind и полная регрессия.
 
-Результаты (текстовые пути): `/mnt/shared/gothic-ai/sw-npc-move/runs/main-current-full-{1,2}/`, `/mnt/shared/gothic-ai/sw-npc-move/checks-main-noise/`, `/mnt/shared/gothic-ai/sw-npc-move/runs/branch-final-{full,off,simplified}-1/`, `/mnt/shared/gothic-ai/sw-npc-move/checks-current-branch-final-{full,off}-1/`, `/mnt/shared/gothic-ai/sw-npc-move/runs/transitions-speed-final-1/`, `/mnt/shared/gothic-ai/sw-npc-move/runs/height-profile-routes-4/`, `/mnt/shared/gothic-ai/sw-npc-move/runs/height-{probe-3,tavern-edge-geometry-1,load-rewind-context-1}/`, `/mnt/shared/gothic-ai/sw-npc-move/checks-current/`, `/mnt/shared/gothic-ai/sw-npc-move/e2e-final-b004ff90e/`. Результат к слиянию не готов.
+Результаты (текстовые пути):
+
+- Контроль main: `/mnt/shared/gothic-ai/sw-npc-move/runs/main-current-full-1/`, `/mnt/shared/gothic-ai/sw-npc-move/runs/main-current-full-2/`, `/mnt/shared/gothic-ai/sw-npc-move/checks-main-noise/`.
+- Сутки ветки: `/mnt/shared/gothic-ai/sw-npc-move/runs/branch-final-full-1/`, `/mnt/shared/gothic-ai/sw-npc-move/runs/branch-final-off-1/`, `/mnt/shared/gothic-ai/sw-npc-move/runs/branch-final-simplified-1/` (последний не завершён).
+- Строгие сравнения: `/mnt/shared/gothic-ai/sw-npc-move/checks-current-branch-final-full-1/`, `/mnt/shared/gothic-ai/sw-npc-move/checks-current-branch-final-off-1/`.
+- Переходы и скорости: `/mnt/shared/gothic-ai/sw-npc-move/runs/transitions-speed-final-1/`.
+- Завершённые 150 мин: `/mnt/shared/gothic-ai/sw-npc-move/runs/height-profile-routes-4/`.
+- Высотная диагностика: `/mnt/shared/gothic-ai/sw-npc-move/runs/height-probe-3/`, `/mnt/shared/gothic-ai/sw-npc-move/runs/height-tavern-edge-geometry-1/`, `/mnt/shared/gothic-ai/sw-npc-move/runs/height-load-rewind-context-1/`.
+- Контракты: `/mnt/shared/gothic-ai/sw-npc-move/checks-current/`, `/mnt/shared/gothic-ai/sw-npc-move/checks-corner/`.
+- E2E: `/mnt/shared/gothic-ai/sw-npc-move/e2e-final-b004ff90e/check-walk/`, `/mnt/shared/gothic-ai/sw-npc-move/e2e-final-b004ff90e/load-rewind/`, `/mnt/shared/gothic-ai/sw-npc-move/e2e-final-b004ff90e/m0/`.
+
+Результат к слиянию не готов.
