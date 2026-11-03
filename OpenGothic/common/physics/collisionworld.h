@@ -160,7 +160,7 @@ class CollisionWorld final {
         ~VirtualCharacter();
         CharacterMoveResult move(const Tempest::Vec3& displacement, uint64_t dt,
                                  float stepHeight, float maxSlope, float mass, Npc* culprit,
-                                 bool limitStairAdvance = false);
+                                 bool limitStairAdvance = false, bool standing = false);
         CharacterMoveResult carry(uint64_t dt);
         void setPosition(const Tempest::Vec3& feet);
         void setDiagnosticsEnabled(bool enabled);

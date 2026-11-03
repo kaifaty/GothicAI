@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # Run from the Mac worktree after setup-dev-ubuntu.sh; one window for both models.
-# Usage: run-mesh3d.sh --batch --max-downtime 3600 --authorization LABEL
+# Usage: run-mesh3d.sh --batch [--model trellis2 --images-dir DIR] --max-downtime 3600 --authorization LABEL
+#        run-mesh3d.sh --model pixal3d (--image RGBA.png [--fov RAD] | --views DIR) --seed N ...  (setup-pixal3d.sh)
 set -euo pipefail
 
 image=
+views=
+fov=0.3490658503988659
 seed=
 model=both
 batch=0
@@ -13,18 +16,21 @@ authorization=
 while (( $# > 0 )); do
   case "$1" in
     --batch) batch=1; shift ;;
-    --image|--seed|--model|--max-downtime|--authorization)
+    --image|--views|--fov|--seed|--model|--images-dir|--max-downtime|--authorization)
       (( $# >= 2 )) || exit 2
       case "$1" in
         --image) image="$2" ;;
+        --views) views="$2" ;;
+        --fov) fov="$2" ;;
         --seed) seed="$2" ;;
         --model) model="$2" ;;
+        --images-dir) images_dir="$2" ;;
         --max-downtime) max_downtime="$2" ;;
         --authorization) authorization="$2" ;;
       esac
       shift 2 ;;
     --help|-h)
-      echo 'Usage: run-mesh3d.sh (--batch | --image RGBA.png --seed N) [--model both|trellis2|trellis] --max-downtime SECONDS --authorization LABEL'
+      echo 'Usage: run-mesh3d.sh (--batch [--images-dir DIR] | --image RGBA.png --seed N | --views DIR --seed N) [--model both|trellis2|trellis|pixal3d] [--fov RAD] --max-downtime SECONDS --authorization LABEL'
       exit 0 ;;
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
   esac
@@ -34,15 +40,23 @@ done
 }
 (( max_downtime > 600 && max_downtime <= 3600 )) || { echo 'Downtime must be 601..3600 seconds (600 reserved for recovery)' >&2; exit 2; }
 if (( batch )); then
-  [[ -z "$image" && -z "$seed" && "$model" == both && -d "$images_dir" ]] || exit 2
+  # A whole furniture set goes through TRELLIS.2 alone in one window (2026-11-03); both models stay the default.
+  [[ -z "$image" && -z "$views" && -z "$seed" && ( "$model" == both || "$model" == trellis2 ) && -d "$images_dir" ]] || exit 2
   shopt -s nullglob
   images=("$images_dir"/*.png)
   (( ${#images[@]} > 0 )) || { echo 'No PNG inputs' >&2; exit 2; }
+elif [[ -n "$views" ]]; then
+  # Posed views for Pixal3D's multi-view mode: RGBA PNGs and the transforms.json that names them.
+  [[ "$model" == pixal3d && -z "$image" && -f "$views/transforms.json" && "$seed" =~ ^[0-9]+$ ]] || exit 2
+  shopt -s nullglob
+  images=("$views"/*.png "$views/transforms.json")
+  (( ${#images[@]} > 1 )) || { echo 'No PNG views' >&2; exit 2; }
 else
   [[ -f "$image" && "$seed" =~ ^[0-9]+$ ]] || { echo 'An RGBA PNG and a nonnegative seed are required' >&2; exit 2; }
   images=("$image")
 fi
-case "$model" in both|trellis2|trellis) ;; *) exit 2 ;; esac
+case "$model" in both|trellis2|trellis|pixal3d) ;; *) exit 2 ;; esac
+[[ "$fov" =~ ^[0-9]*\.?[0-9]+$ ]] || exit 2
 script_dir="$(cd "$(dirname "$0")" && pwd)"
 run_id="$(date -u +%Y%m%dT%H%M%SZ)-${authorization}-$$"
 
@@ -58,12 +72,16 @@ check_mac_game() {
 }
 check_mac_game
 ssh -T dev-ubuntu mkdir -p "gothic-ai/mesh3d/inputs/$run_id"
-scp "$script_dir/generate_trellis.py" "$script_dir/adapter.py" dev-ubuntu:gothic-ai/mesh3d/
+scp "$script_dir/generate_trellis.py" "$script_dir/generate_pixal3d.py" "$script_dir/adapter.py" dev-ubuntu:gothic-ai/mesh3d/
 scp "${images[@]}" "dev-ubuntu:gothic-ai/mesh3d/inputs/$run_id/"
 # Repeat after transfer, immediately before allowing service downtime.
 check_mac_game
 
-ssh -T dev-ubuntu bash -s -- "$run_id" "${seed:-1}" "$model" "$batch" "$max_downtime" "$authorization" <<'REMOTE'
+# ssh joins the arguments into one command line, where an empty one vanishes: the input kind is always a word.
+input_kind=image
+[[ -z "$views" ]] || input_kind=views
+ssh -T dev-ubuntu bash -s -- "$run_id" "${seed:-1}" "$model" "$batch" "$max_downtime" "$authorization" \
+  "$input_kind" "$fov" <<'REMOTE'
 set -euo pipefail
 run_id="$1"
 seed="$2"
@@ -71,6 +89,9 @@ model="$3"
 batch="$4"
 max_downtime="$5"
 authorization="$6"
+views=
+[[ "${7:-image}" != views ]] || views=1
+fov="${8:-0.3490658503988659}"
 cd "$HOME/gothic-ai/mesh3d"
 export HF_HOME="$PWD/hf" HF_HUB_DISABLE_IMPLICIT_TOKEN=1
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
@@ -252,12 +273,6 @@ grep -qw memory "/sys/fs/cgroup$manager_cg/cgroup.controllers"
 grep -qw memory "/sys/fs/cgroup$manager_cg/cgroup.subtree_control"
 systemd-run "${scope_properties[@]}" --unit="mesh3d-preflight-$run_id" \
   bash "$PWD/runs/$run_id/limited-exec.sh" "$PWD/runs/$run_id/preflight-cgroup.txt" true
-available_kib=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)
-(( available_kib >= 24 * 1024 * 1024 )) || {
-  echo "MemAvailable below 24 GiB: $available_kib KiB; no services stopped" >&2
-  exit 75
-}
-log_event memory-preflight "available_kib=$available_kib memory_max=21474836480 swap_max=0 oom_group=1"
 log_event window-start "$model batch=$batch authorization=$authorization max_downtime=$max_downtime"
 timeout 5 nvidia-smi > "runs/$run_id/nvidia-before.txt"
 free_mib=$(free_memory)
@@ -290,6 +305,14 @@ for unit in gothic-gemma gothic-decider; do
 done
 timeout 5 nvidia-smi > "runs/$run_id/nvidia-ready.txt"
 (( free_mib >= min_free_mib )) || { echo "Insufficient GPU memory: $free_mib MiB free, require $min_free_mib MiB" >&2; exit 75; }
+# RAM is checked after the stops (user, 2026-11-02): Gemma alone holds about 12 GB, so before them dev-ubuntu sat at
+# 23 GiB and the window never opened. Short of 24 GiB the trap starts the stopped services again.
+available_kib=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)
+(( available_kib >= 24 * 1024 * 1024 )) || {
+  echo "MemAvailable below 24 GiB after the stops: $available_kib KiB; services restored" >&2
+  exit 75
+}
+log_event memory-preflight "available_kib=$available_kib memory_max=21474836480 swap_max=0 oom_group=1"
 
 monitor_scope() {
   local path_file="$1" journal="$2" cgdir value peak events
@@ -312,7 +335,11 @@ monitor_scope() {
 # 20480 MiB scope limit. Do not admit that known oversized variant in this pilot.
 variants=()
 for current in "${models[@]}"; do
-  if [[ "$current" == trellis ]]; then variants+=(trellis); else variants+=(trellis2-512); fi
+  case "$current" in
+    trellis) variants+=(trellis) ;;
+    pixal3d) variants+=(pixal3d-1024) ;;  # bf16 flow models one at a time: within the 20 GiB scope
+    *) variants+=(trellis2-512) ;;
+  esac
 done
 generation_rc=0
 (( deadline > 0 )) || deadline=$(( $(date +%s) + generation_budget - 30 ))
@@ -321,8 +348,15 @@ for variant in "${variants[@]}"; do
   (( budget > 0 )) || { echo 'Generation deadline reached' >&2; exit 124; }
   current=trellis
   pipeline_args=()
-  if [[ "$variant" == trellis2-* ]]; then
+  model_args=(--model trellis)
+  generator=generate_trellis.py
+  if [[ "$variant" == pixal3d-* ]]; then
+    current=pixal3d
+    model_args=()
+    generator=generate_pixal3d.py
+  elif [[ "$variant" == trellis2-* ]]; then
     current=trellis2
+    model_args=(--model trellis2)
     pipeline_args=(--pipeline-type "${variant#trellis2-}")
   fi
   output="$PWD/runs/$run_id/$variant"
@@ -330,6 +364,11 @@ for variant in "${variants[@]}"; do
   if (( batch )); then
     output="$PWD/runs/$run_id/batch"
     input_args=(--images-dir "$PWD/inputs/$run_id" --seeds 1 2 --deadline "$deadline")
+  elif [[ "$current" == pixal3d && -n "$views" ]]; then
+    input_args=(--views "$PWD/inputs/$run_id" --seed "$seed")
+  elif [[ "$current" == pixal3d ]]; then
+    inputs=("$PWD/inputs/$run_id/"*.png)
+    input_args=(--image "${inputs[0]}" --fov "$fov" --seed "$seed")
   else
     inputs=("$PWD/inputs/$run_id/"*.png)
     input_args=(--image "${inputs[0]}" --seed "$seed")
@@ -339,8 +378,8 @@ for variant in "${variants[@]}"; do
   log_event generation-start "$variant budget_seconds=$budget scope=$run_scope memory_max=21474836480"
   setsid timeout --signal=TERM --kill-after=10 "$budget" systemd-run "${scope_properties[@]}" --unit="$run_scope" \
     bash "$PWD/runs/$run_id/limited-exec.sh" "$path_file" \
-    "$PWD/.venv-$current/bin/python" -u "$PWD/generate_trellis.py" \
-    --root "$PWD" --model "$current" "${input_args[@]}" \
+    "$PWD/.venv-$current/bin/python" -u "$PWD/$generator" ${model_args[@]+"${model_args[@]}"} \
+    --root "$PWD" "${input_args[@]}" \
     --output "$output" ${pipeline_args[@]+"${pipeline_args[@]}"} > "runs/$run_id/$variant.log" 2>&1 &
   run_pid=$!
   monitor_scope "$path_file" "$PWD/runs/$run_id/$variant.cgroup-memory.tsv" &
@@ -364,7 +403,7 @@ for variant in "${variants[@]}"; do
     generation_rc=1
   fi
 done
-if [[ "$model" != trellis ]]; then
+if [[ "$model" == trellis2 || "$model" == both ]]; then
   log_event generation-skip 'trellis2-1024_cascade estimated_rss_mib=26638 memory_max_mib=20480; prior measured decode exceeds cap even after unused weights removed'
 fi
 printf 'Results: ~/gothic-ai/mesh3d/runs/%s\n' "$run_id"

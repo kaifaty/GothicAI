@@ -105,8 +105,8 @@ def model_parts(models: Path, visual: str):
     for node in hierarchy['nodes']:
         local = np.array(node['transform'], dtype=float).reshape(4, 4).T
         if node['parent_index'] < 0:  # the engine's global matrices include the root translation (PAN_OC: 0.8 m)
-            local = local.copy()
-            local[:3, 3] += root
+            local = local.copy()  # as Skeleton does, tr.translate(root): turned by the node, so a root node turned
+            local[:3, 3] += local[:3, :3] @ root  # 180 degrees (BOOK_NW_CITY_CUPBOARD_01) puts it behind, not in front
         world.append(local if node['parent_index'] < 0 else world[node['parent_index']] @ local)
     names = [node['name'] for node in hierarchy['nodes']]
     mesh = record['data'].get('mesh') or record['data']
