@@ -41,6 +41,9 @@
 
 using namespace Tempest;
 
+// Seconds of play before the first pipeline-cache write (the device writes it again on clean shutdown).
+static constexpr uint64_t PipelineCacheSaveDelay = 20000;
+
 MainWindow::MainWindow(Device& device)
   : Window(TestBench::isActive() ?
       (std::getenv("OPENGOTHIC_BENCH_VISIBLE")!=nullptr && std::strcmp(std::getenv("OPENGOTHIC_BENCH_VISIBLE"),"1")==0 ? Normal : Minimized) : Maximized),
@@ -1585,6 +1588,16 @@ void MainWindow::render(){
     profile.flag(FrameProfile::Flag::PresentCompleted);
     if(LoadProbe::enabled() && Gothic::inst().isInGame() && Gothic::inst().checkLoading()==Gothic::LoadState::Idle)
       LoadProbe::presented();
+    if(!pipelineCacheSaved && Gothic::inst().isInGame() && Gothic::inst().checkLoading()==Gothic::LoadState::Idle) {
+      const uint64_t now = Application::tickCount();
+      if(pipelineCacheSaveAt==0) {
+        pipelineCacheSaveAt = now+PipelineCacheSaveDelay;
+        }
+      else if(now>=pipelineCacheSaveAt) {
+        pipelineCacheSaved = true;
+        device.savePipelineCache();
+        }
+      }
     profile.outcome(FrameProfile::Outcome::Submitted);
     cmdId = (cmdId+1u)%Resources::MaxFramesInFlight;
 

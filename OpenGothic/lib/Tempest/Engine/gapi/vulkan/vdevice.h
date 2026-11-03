@@ -20,6 +20,7 @@
 #include "gapi/vulkan/vpsolayoutcache.h"
 #include "gapi/vulkan/vdescriptorallocator.h"
 #include "gapi/vulkan/vsamplercache.h"
+#include "gapi/vulkan/vpipelinecache.h"
 #include "gapi/uploadengine.h"
 #include "exceptions/exception.h"
 #include "utility/compiller_hints.h"
@@ -389,6 +390,7 @@ class VDevice : public AbstractGraphicsApi::Device {
       };
 
     void                    waitIdle() override;
+    void                    savePipelineCache() override;
     std::shared_ptr<VFence> submit(VCommandBuffer& cmd);
 
     static std::vector<VkExtensionProperties> extensionsList(VkPhysicalDevice dev);
@@ -434,6 +436,7 @@ class VDevice : public AbstractGraphicsApi::Device {
 
     VDescriptorAllocator    descAlloc;
     VSamplerCache           samplers;
+    VPipelineCache          pipelineCache;
 
     VkProps                 props = {};
 #if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE

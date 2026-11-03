@@ -120,6 +120,13 @@ MtDevice::MtDevice(std::string_view name, bool validation)
     prop.transposedRtMatrix = true;
     }
   deductProps(prop,*impl);
+  {
+    std::string identity = impl->name()->utf8String();
+    identity += "\n";
+    identity += [[[NSProcessInfo processInfo] operatingSystemVersionString] UTF8String];
+    identity += "\nmsl=" + std::to_string(uint32_t(prop.mslVersion));
+    psoCache.init(*impl,identity);
+  }
   if(tempestLoadProbeEnabled()) {
     std::lock_guard<std::mutex> guard(probeDeviceSync);
     probeDevice = impl.get();
@@ -133,6 +140,10 @@ MtDevice::~MtDevice() {
   std::lock_guard<std::mutex> guard(probeDeviceSync);
   if(probeDevice==impl.get())
     probeDevice = nullptr;
+  }
+
+void MtDevice::savePipelineCache() {
+  psoCache.saveAsync();
   }
 
 void MtDevice::onSubmit() {

@@ -8,7 +8,8 @@
 bool tempestLoadProbeEnabled();
 
 namespace TempestLoadProbe {
-enum Operation : size_t { Library, Graphics, Compute, Count };
+// Convert: SPIR-V to MSL translation (Metal only), measured to compare with the library compile.
+enum Operation : size_t { Library, Graphics, Compute, Convert, Count };
 struct Counter {
   std::atomic<uint64_t> calls{0}, ns{0}, postLoadCalls{0}, postLoadNs{0};
   };
