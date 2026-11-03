@@ -1,3 +1,4 @@
+#include "loadprobe.h"
 #include "worldobjects.h"
 
 #include "game/serialize.h"
@@ -22,6 +23,9 @@
 #include "utils/dbgpainter.h"
 #include "gothic.h"
 #include "frameprofile.h"
+#include "camera.h"
+#include "game/gamesession.h"
+#include "graphics/dynamic/frustrum.h"
 #include "navdemos.h"
 
 #include <Tempest/Painter>
@@ -104,6 +108,7 @@ void WorldObjects::load(Serialize &fin) {
     for(size_t i=0; i<npcInvalid.size(); ++i) {
       npcInvalid[i]->load(fin,i,"/npc_invalid/");
       npcInvalid[i]->suspendRagdoll();
+      npcInvalid[i]->suspendLogicalBodyState();
       }
     }
 
@@ -250,12 +255,14 @@ void WorldObjects::linkPlacedItem(PlacedItem& source, Item& item) {
   }
 
 void WorldObjects::finalizePlacedItems() {
+  LoadProbe::Startup::Scope probe(LoadProbe::Startup::Other,true,"placed-items");
   const auto started=std::chrono::steady_clock::now();
   std::vector<DynamicWorld::PlacedItemCandidate> candidates;
   candidates.reserve(placedItems.size());
   // Build all authored shapes before querying any of them. The same Item path
   // selects item_hulls and applies scale for both the census and live bodies.
   for(auto& source:placedItems) {
+    LoadProbe::Startup::Scope prepareProbe(LoadProbe::Startup::PhysicsPrepare,false,"placed-items");
     source.item->setPhysicsEnable(owner);
     candidates.push_back({&source.item->physic,source.item->isMission(),source.visual});
     }
@@ -266,7 +273,10 @@ void WorldObjects::finalizePlacedItems() {
     source.validation=verdicts[i];
     source.item->placedAllowed=source.validation.enabled;
     allowed+=source.validation.enabled;
+    {
+    LoadProbe::Startup::Scope removeProbe(LoadProbe::Startup::PhysicsRemove,false,"placed-items");
     source.item->setPhysicsDisable();
+    }
     }
   placedValidationMs=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started).count();
   Tempest::Log::i("placed item geometry: ",placedItems.size()," candidates, ",allowed,
@@ -386,7 +396,8 @@ void WorldObjects::updateSimTiers() {
     // Training and arena actors keep native simulation at every distance.
     const bool keep  = NavDemos::fullSimulation(npc) || BodyArena::isActor(npc);
     const auto prev  = npc.simTier();
-    const auto next  = NpcSimTiers::desired(mode,hero,keep,residency,ChunkId::fromPosition(pos.x,pos.z),prev);
+    const auto next  = !hero && !keep && npc.simTierOverride().has_value() ? *npc.simTierOverride() :
+                      NpcSimTiers::desired(mode,hero,keep,residency,ChunkId::fromPosition(pos.x,pos.z),prev);
     if(npc.hasSimTier() && next!=prev) {
       if(next==NpcSimTier::Full)
         ++toFull; else
@@ -437,8 +448,7 @@ void WorldObjects::tick(uint64_t dt, uint64_t dtPlayer) {
   const auto pl      = owner.player();
   // Body training with a frozen world: other NPCs (but the hero) and interactive objects stand still.
   const bool frozen  = BodyArena::frozenWorld();
-  // Both tiers run the same executor; only the elapsed time is split. One
-  // clock read per run of consecutive NPCs of the same tier keeps the cost
+  // One clock read per run of consecutive NPCs of the same tier keeps the cost
   // proportional to tier changes along the array, not to the NPC count.
   using Clock = std::chrono::steady_clock;
   std::optional<FrameProfile::Scope> tierZone;
@@ -446,6 +456,7 @@ void WorldObjects::tick(uint64_t dt, uint64_t dtPlayer) {
   bool              runOpen  = false;
   Clock::time_point runStart;
   double            tierMs[2] = {};
+  uint64_t          tierTicks[2] = {};
   // Mark both participants before either moves, independent of NPC list order.
   for(auto& npc:npcArr)
     npc->refreshMeleeFighter();
@@ -467,7 +478,17 @@ void WorldObjects::tick(uint64_t dt, uint64_t dtPlayer) {
       runStart = now;
       runOpen  = true;
       }
+    ++tierTicks[size_t(tier)];
+    const bool nativeCombat=tier==NpcSimTier::Simplified && npc.nativeCombatMovement();
+    const bool nativeMobsi=tier==NpcSimTier::Simplified && npc.nativeMobsiApproach();
+    const bool graphFallback=npc.graphMovementFallback();
     npc.tick(d);
+    if(tier==NpcSimTier::Simplified && (nativeCombat || npc.nativeCombatMovement()))
+      ++simTiers.nativeCombatNpcTicks;
+    if(tier==NpcSimTier::Simplified && (nativeMobsi || npc.nativeMobsiApproach()))
+      ++simTiers.nativeMobsiApproachNpcTicks;
+    if(graphFallback || npc.graphMovementFallback())
+      ++simTiers.graphFallbackNpcTicks;
     }
   if(runOpen)
     tierMs[size_t(runTier)] += std::chrono::duration<double,std::milli>(Clock::now()-runStart).count();
@@ -476,6 +497,8 @@ void WorldObjects::tick(uint64_t dt, uint64_t dtPlayer) {
   simTiers.simplifiedTickMs       = tierMs[size_t(NpcSimTier::Simplified)];
   simTiers.fullTickMsTotal       += simTiers.fullTickMs;
   simTiers.simplifiedTickMsTotal += simTiers.simplifiedTickMs;
+  simTiers.fullNpcTicks         += tierTicks[size_t(NpcSimTier::Full)];
+  simTiers.simplifiedNpcTicks   += tierTicks[size_t(NpcSimTier::Simplified)];
   ++simTiers.ticks;
   FrameProfile::add(FrameProfile::Amount::NpcLogicSamples,logic.ticks-logicBefore[0]);
   FrameProfile::add(FrameProfile::Amount::NpcLogicBodyMismatch,logic.bodyMismatch-logicBefore[1]);
@@ -605,6 +628,8 @@ uint32_t WorldObjects::mobsiId(const void* ptr) const {
   }
 
 Npc* WorldObjects::addNpc(size_t npcInstance, std::string_view at) {
+  LoadProbe::Startup::Scope startupProbe(LoadProbe::Startup::Npc);
+  LoadProbe::Startup::Scope::bytes(LoadProbe::Startup::Npc,sizeof(Npc));
   Npc* npc = new Npc(owner,npcInstance,at);
   if(auto pos = npc->currentTaPoint()) {
     if(pos->isLocked()) {
@@ -625,6 +650,7 @@ Npc* WorldObjects::addNpc(size_t npcInstance, std::string_view at) {
     npc->attachToPoint(nullptr);
     npc->setPosition(point.position());
     npc->updateTransform();
+    npc->suspendLogicalBodyState();
     npcInvalid.emplace_back(npc);
     }
 
@@ -632,6 +658,8 @@ Npc* WorldObjects::addNpc(size_t npcInstance, std::string_view at) {
   }
 
 Npc* WorldObjects::addNpc(size_t npcInstance, const Vec3& pos) {
+  LoadProbe::Startup::Scope startupProbe(LoadProbe::Startup::Npc);
+  LoadProbe::Startup::Scope::bytes(LoadProbe::Startup::Npc,sizeof(Npc));
   auto point = owner.findWayPoint(pos);
   if(point==nullptr) {
     point = owner.findFreePoint(pos, "");
@@ -685,11 +713,13 @@ void WorldObjects::removeNpc(Npc& npc) {
   auto ptr = takeNpc(&npc);
   if(ptr==nullptr)
     return;
+  npc.endMeleeAiSpecial();
   BodyObservations::forget(&npc);
   auto& point = owner.deadPoint();
   npc.attachToPoint(nullptr);
   npc.setPosition(point.position());
   npc.updateTransform();
+  npc.suspendLogicalBodyState();
   npcRemoved.emplace_back(std::move(ptr));
   }
 
@@ -769,12 +799,27 @@ void WorldObjects::updateAnimation(uint64_t dt) {
     }();
   const bool frozen = BodyArena::frozenWorld();
   const auto pl     = owner.player();
-  Workers::parallelTasks(npcArr,[dt,frozen,pl](std::unique_ptr<Npc>& i){
+  bool animationProbe=FrameProfile::enabled();
+  std::optional<Frustrum> frustum;
+  if(animationProbe) frustum.emplace().make(owner.gameSession().camera().viewProj(),1,1);
+  Workers::parallelTasks(npcArr,[dt,frozen,pl,animationProbe,&frustum](std::unique_ptr<Npc>& i){
     if(skipFar && i->processPolicy()==NpcProcessPolicy::AiFar2 && !BodyObservations::watched(*i))
       return;
     if(frozen && i.get()!=pl && !BodyArena::isActor(*i))
       return;
-    i->updateAnimation(dt);
+    if(animationProbe) {
+      // Conservative body sphere in world coordinates; no occlusion test.
+      const auto bounds=i->bounds();
+      auto center=(bounds.bbox[0]+bounds.bbox[1])*0.5f;
+      i->transform().project(center);
+      const bool visible=frustum->testPoint(center,bounds.rConservative);
+      const auto started=std::chrono::steady_clock::now();
+      i->updateAnimation(dt);
+      const auto ns=std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now()-started).count();
+      FrameProfile::npcAnimation(size_t(i->simTier()),size_t(i->processPolicy()),visible,uint64_t(ns));
+      } else {
+      i->updateAnimation(dt);
+      }
     });
   // Retiring a shadow window can also run damage scripts here. Scripts may
   // append or remove NPCs, so retain neither vector iterators nor references.
@@ -1466,6 +1511,7 @@ void WorldObjects::resetPositionToTA() {
       continue;
       }
     if(n.resetPositionToTA()){
+      n.syncLogicalBodyState(true);
       ++i;
       } else {
       npcInvalid.emplace_back(std::move(npcArr[i]));
@@ -1477,6 +1523,7 @@ void WorldObjects::resetPositionToTA() {
       npc.attachToPoint(nullptr);
       npc.setPosition(point.position());
       npc.updateTransform();
+      npc.suspendLogicalBodyState();
       }
     }
   for(auto& i:routines) {
@@ -1607,4 +1654,11 @@ bool WorldObjects::testObj(T &src, const Npc &pl, const WorldObjects::SearchOpt 
     return true;
     }
   return false;
+  }
+
+
+size_t WorldObjects::probeVobBytes() const {
+  size_t bytes=rootVobs.capacity()*sizeof(rootVobs[0]);
+  for(const auto& vob:rootVobs) bytes+=vob->probeBaseBytes();
+  return bytes;
   }

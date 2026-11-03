@@ -108,6 +108,7 @@ Gothic::Gothic() {
   defaults->set("GAME", "highlightMeleeFocus", 0);
   defaults->set("GAME", "useQuickSaveKeys",    1);
   defaults->set("GAME", "manualAim",           1); // the bow aimed by hand (game/archery)
+  defaults->set("GAME", "bowDrawByStrength",   1); // strength sets a bow's draw speed and limit
   defaults->set("GAME", "npcManualAim",        1); // npc archers aim by hand too (game/archerai)
   defaults->set("GAME", "ragdoll",             1); // physical death/KO bodies; GAME/ragdoll=0 keeps animation-only behavior
   defaults->set("GAME", "ragdoll_quest_guard", 1);
@@ -121,6 +122,7 @@ Gothic::Gothic() {
   defaults->set("GAME", "movable_vobs",        1);
   defaults->set("GAME", "item_hulls",          1);
   defaults->set("GAME", "item_deepest_contact",1);
+  defaults->set("GAME", "ragdoll_birth_guard",1);
   defaults->set("GAME", "furniture_parts",     1);
   defaults->set("GAME", "physics_noise",       1);
   defaults->set("GAME", "destruction",         1);
@@ -148,6 +150,13 @@ Gothic::Gothic() {
   defaults->set("GAME", "melee_barge",           1);
   defaults->set("GAME", "melee_charge",          1);
   defaults->set("GAME", "melee_riposte",         1);
+  defaults->set("GAME", "melee_heal_interrupt",  1);
+  defaults->set("GAME", "melee_use_in_hand",     1);
+  defaults->set("GAME", "food_over_time",        1);
+  defaults->set("GAME", "melee_ai_dodge",        1);
+  defaults->set("GAME", "melee_ai_riposte",      1);
+  defaults->set("GAME", "melee_ai_charge",       1);
+  defaults->set("GAME", "melee_ai_barge",        1);
 
   defaults->set("GAME", "animatedWindows",     1);
   defaults->set("GAME", "subTitles",           1);
@@ -257,6 +266,9 @@ Gothic::Gothic() {
   }
 
 Gothic::~Gothic() {
+  // Session teardown still queries the singleton and its definitions.
+  pendingGame.reset();
+  game.reset();
   instance = nullptr;
   }
 
@@ -926,6 +938,7 @@ void Gothic::refreshPhysicsFlags() {
     settingsGetI("GAME","melee_down_tactics")!=0,
     settingsGetI("GAME","item_hulls")!=0,
     settingsGetI("GAME","item_deepest_contact")!=0,
+    settingsGetI("GAME","ragdoll_birth_guard")!=0,
     settingsGetI("GAME","melee_hitstop")!=0,
     settingsGetI("GAME","melee_stamina")!=0,
     settingsGetI("GAME","melee_parry")!=0,
@@ -937,6 +950,13 @@ void Gothic::refreshPhysicsFlags() {
     settingsGetI("GAME","melee_dodge")!=0 && settingsGetI("GAME","melee_barge")!=0,
     settingsGetI("GAME","melee_charge")!=0,
     settingsGetI("GAME","melee_riposte")!=0,
+    settingsGetI("GAME","melee_heal_interrupt")!=0,
+    settingsGetI("GAME","melee_use_in_hand")!=0,
+    settingsGetI("GAME","food_over_time")!=0,
+    settingsGetI("GAME","melee_ai_dodge")!=0,
+    settingsGetI("GAME","melee_ai_riposte")!=0,
+    settingsGetI("GAME","melee_ai_charge")!=0,
+    settingsGetI("GAME","melee_ai_barge")!=0,
     settingsGetI("GAME","body_traces")!=0,
     settingsGetI("GAME","blood")!=0
     };
@@ -960,6 +980,7 @@ void Gothic::setupSettings() {
     activeWorld->physic()->setClothEnabled(physicsFlagsCache.cloth);
     activeWorld->physic()->setItemWakeEnabled(physicsFlagsCache.itemWake);
     activeWorld->physic()->setItemDeepestContactEnabled(physicsFlagsCache.itemDeepestContact);
+    activeWorld->physic()->setRagdollBirthGuardEnabled(physicsFlagsCache.ragdollBirthGuard);
     }
 
   const float soundVolume = settingsSoundVolume();

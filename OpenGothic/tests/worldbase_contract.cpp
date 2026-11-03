@@ -624,12 +624,13 @@ void chunkContract(const fs::path& root) {
     require(tier(mode,true,false,&tiers,ChunkId{50,50},NpcSimTier::Simplified)==NpcSimTier::Full,
             "the hero must be Full in every mode");
   require(tier(Mode::Full,false,false,&tiers,ChunkId{50,50},NpcSimTier::Simplified)==NpcSimTier::Full &&
-          tier(Mode::Simplified,false,true,&tiers,ChunkId{0,0},NpcSimTier::Full)==NpcSimTier::Simplified,
-          "full and simplified modes must override the residency for every NPC but the hero");
+          tier(Mode::Simplified,false,false,&tiers,ChunkId{0,0},NpcSimTier::Full)==NpcSimTier::Simplified,
+          "full and simplified modes must override residency for ordinary NPCs");
   require(tier(Mode::Auto,false,false,nullptr,ChunkId{50,50},NpcSimTier::Simplified)==NpcSimTier::Full,
           "auto without a residency manager must keep every NPC Full");
-  require(tier(Mode::Auto,false,true,&tiers,ChunkId{50,50},NpcSimTier::Simplified)==NpcSimTier::Full,
-          "training and arena actors must stay Full in auto mode");
+  for(const auto mode:{Mode::Auto,Mode::Full,Mode::Simplified})
+    require(tier(mode,false,true,&tiers,ChunkId{50,50},NpcSimTier::Simplified)==NpcSimTier::Full,
+            "training and arena actors must stay Full in every mode");
   require(tier(Mode::Auto,false,false,&tiers,ChunkId{0,0},NpcSimTier::Simplified)==NpcSimTier::Full &&
           tier(Mode::Auto,false,false,&tiers,ChunkId{2,-2},NpcSimTier::Simplified)==NpcSimTier::Full,
           "an NPC in a Near chunk or cell must be Full");

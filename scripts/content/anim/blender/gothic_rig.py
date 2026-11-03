@@ -7,7 +7,7 @@ config.json:
      "anims": ["HUMANS-T_JUMPB.MAN", "/abs/path/OUR-T_DASHB.MAN.json"],
      "blend": "/abs/out/rig.blend",                         # optional
      "render": {"dir": "/abs/out/frames", "views": ["side", "front"], "size": [640, 640],
-                "sword": true}}                                # optional
+                "sword": true, "bottle": true}}                # optional
 
 Gothic is left-handed, Y up, centimetres, facing +Z. Blender gets (x, z, y) in metres: the swap
 is a reflection, which is what turns the left-handed frame into Blender's right-handed one.
@@ -127,6 +127,21 @@ def add_sword(arm_obj):
     return blade
 
 
+def add_bottle(arm_obj, offset):
+    """A stand-in potion on ZS_LEFTHAND: 21 cm along the slot's +Y, as the bottle meshes lie (ItPo_*: Y from
+    its foot at -1 cm to its neck at +20)."""
+    bpy.ops.mesh.primitive_cylinder_add(radius=0.04, depth=0.21, location=(0, 0, 0.095))
+    bottle = bpy.context.active_object
+    bottle.name = "Bottle"
+    bpy.ops.object.transform_apply(location=True)
+    bottle.parent = arm_obj
+    bottle.parent_type = "BONE"
+    bottle.parent_bone = "ZS_LEFTHAND"
+    # Gothic's node Y is Blender's Z in the node frame (SWAP); the bone frame differs from it by `offset`.
+    bottle.matrix_world = arm_obj.matrix_world @ arm_obj.pose.bones["ZS_LEFTHAND"].matrix @ offset["ZS_LEFTHAND"].inverted()
+    return bottle
+
+
 def apply_animation(arm_obj, offset, skel: ga.Skeleton, anim: ga.Animation, start: int) -> int:
     """Key the clip's frames from `start`; returns the next free frame."""
     names = [n.name for n in skel.nodes]
@@ -217,6 +232,8 @@ def main():
     rcfg = cfg.get("render")
     if rcfg and rcfg.get("sword"):
         add_sword(arm_obj).color = (0.75, 0.75, 0.8, 1)
+    if rcfg and rcfg.get("bottle"):
+        add_bottle(arm_obj, offset).color = (0.7, 0.15, 0.12, 1)
     frame = 1
     roots = []
     marks = []

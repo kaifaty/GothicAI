@@ -16,6 +16,9 @@ SPEC = importlib.util.spec_from_file_location("nav_bc_data", MODULE_PATH)
 data = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(data)
 demos = data.nav_demos
+LEAN_SPEC = importlib.util.spec_from_file_location("nav_lean_data", MODULE_PATH.with_name("nav_lean_data.py"))
+lean = importlib.util.module_from_spec(LEAN_SPEC)
+LEAN_SPEC.loader.exec_module(lean)
 
 
 def test_circling_analysis_separates_labels_controllers_and_similar_inputs():
@@ -387,15 +390,28 @@ def test_bc3_manifest_uses_exact_train_refs_including_failed_follow(tmp_path, mo
     for entry in manifest["episodes"]:
         original = Path(entry["episode"])
         directory = relocated / original.relative_to(source)
-        directory.mkdir(parents=True)
+        conversion_entry = {**entry, "directory": original}
+        result = lean.convert_episode(conversion_entry, directory)
+        assert result["reused"] is False
         samples = directory / "samples.bin.xz"
-        with gzip.open(original / "samples.bin.gz", "rb") as stream:
-            samples.write_bytes(lzma.compress(stream.read(), preset=6))
-        metadata = json.loads((original / "episode.json").read_text())
-        metadata["navdemo_storage"] = {"source_samples_sha256": entry["samples_sha256"],
-                                       "samples_sha256": hashlib.sha256(samples.read_bytes()).hexdigest()}
-        metadata["nav_bc_stats"] = data.episode_stats(original, 3, chunk_records=2)
-        (directory / "episode.json").write_text(json.dumps(metadata))
+        metadata_file = directory / "episode.json"
+        with gzip.open(original / "samples.bin.gz", "rb") as incoming, lzma.open(samples, "rb") as restored:
+            assert restored.read() == incoming.read()
+        metadata = json.loads(metadata_file.read_text())
+        assert metadata["nav_bc_stats"] == data.episode_stats(original, 3, chunk_records=2)
+        before = {file: (file.read_bytes(), file.stat().st_mtime_ns) for file in (samples, metadata_file)}
+        assert lean.convert_episode(conversion_entry, directory)["reused"] is True
+        assert {file: (file.read_bytes(), file.stat().st_mtime_ns) for file in before} == before
+        corrupted = bytearray(before[samples][0])
+        corrupted[len(corrupted) // 2] ^= 1
+        samples.write_bytes(corrupted)
+        with pytest.raises(ValueError, match="Existing converted episode differs"):
+            lean.convert_episode(conversion_entry, directory)
+        samples.write_bytes(before[samples][0])
+        metadata_file.write_text(json.dumps({**metadata, "id": "changed"}))
+        with pytest.raises(ValueError, match="Existing converted episode differs"):
+            lean.convert_episode(conversion_entry, directory)
+        metadata_file.write_bytes(before[metadata_file][0])
     def unexpected_stats(*_args, **_kwargs):
         raise AssertionError("Converted metadata must avoid a statistics pass")
     monkeypatch.setattr(data, "episode_stats", unexpected_stats)
@@ -404,6 +420,38 @@ def test_bc3_manifest_uses_exact_train_refs_including_failed_follow(tmp_path, mo
         assert converted[name] == index[name]
     assert all(entry["file"].endswith(".xz") for entry in converted["episodes"])
     assert not (relocated / "index.json").exists()
+
+
+def test_convert_episode_recovers_partial_temporary_output(tmp_path):
+    _, _, _, manifest, _, _ = write_bc3_manifest(tmp_path)
+    entry = manifest["episodes"][0]
+    destination = tmp_path / "converted" / "episode"
+    temporary = destination.with_name(destination.name + ".tmp")
+    temporary.mkdir(parents=True)
+    (temporary / "samples.bin.xz").write_bytes(b"partial XZ")
+
+    result = lean.convert_episode({**entry, "directory": Path(entry["episode"])}, destination)
+
+    assert result["reused"] is False
+    assert not temporary.exists()
+    assert (destination / "samples.bin.xz").is_file()
+    assert (destination / "episode.json").is_file()
+
+
+def test_convert_episode_preserves_unrelated_temporary_file(tmp_path):
+    _, _, _, manifest, _, _ = write_bc3_manifest(tmp_path)
+    entry = manifest["episodes"][0]
+    destination = tmp_path / "converted" / "episode"
+    temporary = destination.with_name(destination.name + ".tmp")
+    temporary.mkdir(parents=True)
+    unrelated = temporary / "unrelated.txt"
+    unrelated.write_text("keep me")
+
+    with pytest.raises(OSError, match="Directory not empty"):
+        lean.convert_episode({**entry, "directory": Path(entry["episode"])}, destination)
+
+    assert unrelated.read_text() == "keep me"
+    assert not destination.exists()
 
 
 @pytest.mark.parametrize("relative", ["point/train/point-0", "../outside", "/outside"])

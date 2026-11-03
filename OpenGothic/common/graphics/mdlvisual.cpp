@@ -1070,6 +1070,7 @@ bool MdlVisual::updateAim(Npc& npc, uint64_t dt) {
         in.referenceDir = aimAt()-from;
         in.sway   = npc.manualAimSway();
         in.tremor = npc.manualAimTremor();
+        in.shake  = Tempest::Vec2(npc.manualAimShake().x,npc.manualAimShake().y);
         in.manual = true;
         in.follow = (1.f - CrouchSlow*npc.aimCrouch())*(1.f + CantQuick*(ws==WeaponState::Bow ? npc.aimCant() : 0.f));
         in.reload = pose.animProgress(ws==WeaponState::CBow ? Archery::CBowReload : Archery::BowReload,npc.world().tickCount())>=0.f;
@@ -1155,8 +1156,11 @@ bool MdlVisual::updateAim(Npc& npc, uint64_t dt) {
   bd.dt     = dt;
   bd.active = manual && in.active && ws==WeaponState::Bow;
   bd.ready  = ar.stage()==Archer::Nocked || ar.stage()==Archer::Drawing || ar.stage()==Archer::Held;
-  bd.draw   = ar.draw();
   bd.span   = bowSpan();
+  // straining, the drawing hand loses ground along the arrow and wins it back (seen only: the arrow leaves
+  // drawn as far as Archer says)
+  bd.draw   = std::max(0.f,ar.draw() - (ar.stage()==Archer::Drawing || ar.stage()==Archer::Held ?
+                                        npc.manualAimShake().z/std::max(bd.span,1.f) : 0.f));
   bd.arrow  = !ammunition.view.isEmpty() && ammunition.bone=="ZS_RIGHTHAND";
   bd.cant   = npc.aimCant();
   if(auto p = bow.view.protoMesh()) {
@@ -1249,6 +1253,8 @@ bool MdlVisual::hasQuadrupedIk() const {
   }
 
 bool MdlVisual::updateFootIk(Npc& npc, World& world, uint64_t dt, bool alignedToGround) {
+  if(npc.usesSimplifiedMovement())
+    return false;
   Pose& pose = *skInst;
   auto& ik   = pose.footIk();
   if(!ik.isValid()) {
@@ -1649,6 +1655,14 @@ bool MdlVisual::hasAnim(AnimationSolver::Anim a, WeaponState st, WalkBit wlk) co
   return solver.solveAnim(a,st,wlk,*skInst)!=nullptr;
   }
 
+const Animation::Sequence* MdlVisual::movementSequence(WalkBit mode, WeaponState weapon, const Npc& npc) const {
+  return solver.solveAnim(AnimationSolver::Move,weapon,mode,*skInst,&npc);
+  }
+
+const Animation::Sequence* MdlVisual::idleSequence(WalkBit mode, WeaponState weapon, const Npc& npc) const {
+  return solver.solveAnim(AnimationSolver::Idle,weapon,mode,*skInst,&npc);
+  }
+
 const Animation::Sequence* MdlVisual::startAnimAndGet(std::string_view name, uint64_t tickCount, bool forceAnim) {
   auto sq = solver.solveFrm(name);
   if(sq!=nullptr) {
@@ -1725,12 +1739,14 @@ const Animation::Sequence* MdlVisual::startAnimAndGet(Npc& npc, AnimationSolver:
     case AnimationSolver::Anim::Move:
     case AnimationSolver::Anim::MoveL:
     case AnimationSolver::Anim::MoveR:
-      if(bool(wlk & WalkBit::WM_Walk))
+      if(npc.isUsingItemInHand() || bool(wlk & WalkBit::WM_Walk))
         bs = BS_WALK; else
         bs = BS_RUN;
       break;
     case AnimationSolver::Anim::MoveBack:
-      if(st==WeaponState::Fist || st==WeaponState::W1H || st==WeaponState::W2H)
+      if(npc.isUsingItemInHand())
+        bs = BS_WALK;
+      else if(st==WeaponState::Fist || st==WeaponState::W1H || st==WeaponState::W2H)
         bs = BS_PARADE; else
         bs = BS_RUN;
     case AnimationSolver::Anim::RotL:

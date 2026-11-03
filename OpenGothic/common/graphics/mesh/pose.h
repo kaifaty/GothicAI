@@ -73,6 +73,7 @@ class Pose final {
     bool               isJumpAnim() const;
     bool               isFlyAnim() const;
     bool               isStanding() const;
+    bool               isUsingItemInHand() const;
     bool               isPrehit(uint64_t now) const;
     bool               isAttackAnim() const;
     bool               isIdle() const;
@@ -139,6 +140,7 @@ class Pose final {
     void               setAnimRotate(const AnimationSolver &solver, const Npc &npc, WeaponState fightMode, AnimationSolver::TurnType turn, int dir);
     auto               setAnimItem(const AnimationSolver &solver, Npc &npc, std::string_view scheme, int state) -> const Animation::Sequence*;
     bool               stopItemStateAnim(const AnimationSolver &solver, uint64_t tickCount);
+    void               interruptItemUse();
 
     const Tempest::Matrix4x4* transform() const;
 
@@ -170,6 +172,7 @@ class Pose final {
       };
     auto               combatLayers(uint64_t tickCount) const -> std::vector<CombatLayer>;
     size_t             logicalLayerCount() const { return lay.size(); }
+    bool               isRotationLayer(const Animation::Sequence* sequence) const { return sequence!=nullptr && rotation==sequence; }
     CombatLayer        logicalLayer(size_t index) const;
     const auto&        logicalDefaultSpeeds() const { return speeds; }
 
@@ -189,6 +192,7 @@ class Pose final {
       std::string name;
       };
     void               enableLogicalInputs() { logicalInputEnabled=true; }
+    void               disableLogicalInputs() { logicalInputEnabled=false; logicalInputQueue.clear(); }
     const auto&        logicalInputs() const { return logicalInputQueue; }
     void               clearLogicalInputs() { logicalInputQueue.clear(); }
     void               recordLogicalWeapon(WeaponState weapon, bool natural);

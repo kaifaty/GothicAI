@@ -178,10 +178,12 @@ cd tts-service && uv run gothic-tts say "Драконы уже здесь." --vo
 cd server && uv run gothic-ai serve
 ```
 
-Боевая сеть P30 считается в самом движке. Веса движок берёт из `OPENGOTHIC_BODY_NET`, по умолчанию
-`~/.local/share/gothic-ai/body/nets/p30.bodynet`; без файла бой остаётся родному ИИ игры. Сервер
-(`--body-policy engine`, по умолчанию) отдаёт сети до четырёх боёв сразу (`--neural-body-max`),
-`--no-neural-body` её выключает. Подробности — [карта проекта](README.md#два-контура-npc) и
+Боевая сеть P30 по умолчанию выключена до полного переобучения (решение пользователя 2026-11-03):
+бои ведёт native `FightAlgo`. Для опытов запустите `gothic-ai serve --neural-body`: тогда сеть
+считается в движке (`--body-policy engine`, по умолчанию), до четырёх боёв сразу (`--neural-body-max`).
+Веса движок берёт из `OPENGOTHIC_BODY_NET`, по умолчанию `~/.local/share/gothic-ai/body/nets/p30.bodynet`;
+без файла и запасного `--body-url` бой остаётся родному ИИ. `--neural-body --body-policy service`
+с адресом выбирает сервис для опытов; `--no-neural-body` явно выключает пилот. Подробности — [карта проекта](README.md#два-контура-npc) и
 [план тела](npc-body-control-plan.md#как-работает-сейчас).
 
 Каждый ход NPC и каждая реакция его тела пишутся в трассу `~/.local/share/gothic-ai/traces/<дата>.jsonl` (`--no-trace` выключает). Устройство агента NPC — [docs/npc-agent.md](npc-agent.md). Прогнать последний записанный ход заново, например на другой модели или с сегодняшней персоной:

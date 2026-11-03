@@ -71,6 +71,10 @@ MeleeDodge::Kind MeleeDodge::kind(std::optional<MeleeImpact::ArmorClass> armor, 
   return bargeEnabled && k==Kind::HeavyRoll && direction==Direction::Forward ? Kind::Barge : k;
   }
 
+bool MeleeDodge::bargeAllowed(bool player, bool aiEnabled) {
+  return player || aiEnabled;
+  }
+
 std::string MeleeDodge::animationName(Kind kind, Stance stance, Direction direction) {
   std::string name = "T_";
   name += prefix(stance);

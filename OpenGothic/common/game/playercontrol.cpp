@@ -134,7 +134,8 @@ void PlayerControl::onKeyPressed(KeyCodec::Action a, Tempest::KeyEvent::KeyType 
 
   if(w!=nullptr && w->isCutsceneLock())
     return;
-  if(pl!=nullptr && (pl->isMeleeKnockedDown() || pl->isMeleeRiposting()) && (c==nullptr || !c->isFree())) {
+  if(pl!=nullptr && (pl->isMeleeRiposteHeld() ||
+                    ((pl->isMeleeKnockedDown() || pl->isMeleeRiposting()) && (c==nullptr || !c->isFree())))) {
     clearInput();
     return;
     }
@@ -326,7 +327,7 @@ void PlayerControl::onKeyReleased(KeyCodec::Action a, KeyCodec::Mapping mapping)
 
   auto w  = Gothic::inst().world();
   auto pl = w ? w->player() : nullptr;
-  if(pl!=nullptr && (pl->isMeleeKnockedDown() || pl->isMeleeRiposting())) {
+  if(pl!=nullptr && (pl->isMeleeKnockedDown() || pl->isMeleeRiposting() || pl->isMeleeRiposteHeld())) {
     clearInput();
     return;
     }
@@ -595,9 +596,9 @@ void PlayerControl::toggleSneakMode() {
   if(w==nullptr || w->player()==nullptr)
     return;
   auto pl = w->player();
-  if(!pl->canSneak() || (pl->walkMode()&WalkBit::WM_Sneak)==WalkBit::WM_Sneak) {
+  if((pl->walkMode()&WalkBit::WM_Sneak)==WalkBit::WM_Sneak) {
     pl->setWalkMode(pl->walkMode() & (~WalkBit::WM_Sneak));
-    } else {
+    } else if(pl->canSneak()) {
     pl->setWalkMode(pl->walkMode()^WalkBit::WM_Sneak);
     }
   }
@@ -763,7 +764,7 @@ bool PlayerControl::tickMove(uint64_t dt) {
   if(pl==nullptr)
     return true;
 
-  if(pl->isMeleeRiposting()) {
+  if(pl->isMeleeRiposting() || pl->isMeleeRiposteHeld()) {
     clearInput();
     rotMouse = rotMouseY = 0;
     runAngleDest = 0;

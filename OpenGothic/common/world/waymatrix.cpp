@@ -36,6 +36,21 @@ WayMatrix::WayMatrix(World &world, const asset::WayNet& dat)
   stk[1].reserve(256);
   }
 
+const WayHeights::Profile& WayMatrix::groundProfile(const Tempest::Vec3& from,const Tempest::Vec3& to,
+                                                   float stepHeight,float slopeCos) {
+  if(heightCache==nullptr) {
+    std::filesystem::path cacheRoot;
+    try { cacheRoot=BaseStore::cacheRoot(); }
+    catch(const std::exception&) { }
+    const auto inputs=Resources::wayHeightInputs(world.name());
+    const auto& flags=Gothic::physicsFlags();
+    heightCache=std::make_unique<WayHeights>(cacheRoot,WayHeights::Key{inputs.baseFingerprint,
+       std::filesystem::path(world.name()).stem().string(),inputs.contentFingerprint,
+       uint32_t(flags.cloth)|(uint32_t(flags.movableVobs)<<1)});
+    }
+  return heightCache->profile(from,to,stepHeight,slopeCos,*world.physic());
+  }
+
 void WayMatrix::buildIndex() {
   const auto started = std::chrono::steady_clock::now();
   stats = {};
@@ -415,4 +430,18 @@ void WayMatrix::forEachPoint(const std::function<void(const WayPoint&)>& f) cons
     f(w);
   for(auto& w:freePoints)
     f(w);
+  }
+
+
+size_t WayMatrix::probeCpuBytes() const {
+  size_t bytes=sizeof(*this)+edges.capacity()*sizeof(edges[0])+indexPoints.capacity()*sizeof(indexPoints[0])+
+               fpInd.capacity()*sizeof(fpInd[0])+fpIndex.capacity()*sizeof(fpIndex[0]);
+  for(const auto* list:{&wayPoints,&freePoints,&startPoints}) {
+    bytes+=list->capacity()*sizeof((*list)[0]);
+    for(const auto& point:*list) bytes+=point.connections().capacity()*sizeof(point.connections()[0]);
+    }
+  for(const auto& index:fpIndex) bytes+=index.index.capacity()*sizeof(index.index[0]);
+  for(const auto& list:stk) bytes+=list.capacity()*sizeof(list[0]);
+  if(heightCache) bytes+=heightCache->probeCpuBytes();
+  return bytes;
   }

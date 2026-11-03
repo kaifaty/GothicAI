@@ -1,27 +1,42 @@
 import asyncio
 import json
 import os
-from unittest.mock import AsyncMock
+import socket
+import threading
+import time
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
 
 import httpx
 import numpy as np
 import pytest
+from aiohttp import web
 from websockets.asyncio.client import connect
 from websockets.exceptions import InvalidStatus
 
 from gothic_asr import cli
 from gothic_asr.audio import RATE, float_to_pcm16, resample
+from gothic_asr.laughter import DEFAULT_URL, WINDOW, RemoteLaughter
 from gothic_asr.providers import AsrError, make_provider, parse_spec
 from gothic_asr.providers.base import Transcript
 from gothic_asr.providers.fake import FakeProvider
 from gothic_asr.providers.remote import OpenAICompatible
-from gothic_asr.recognizer import Recognizer, _echoes
+from gothic_asr.recognizer import LAUGHTER_WAIT, Recognizer, _echoes
 from gothic_asr.service import AsrService
 
 
 def tone(seconds: float, rate: int = RATE) -> np.ndarray:
     t = np.arange(int(seconds * rate)) / rate
     return (0.3 * np.sin(2 * np.pi * 220 * t)).astype(np.float32)
+
+
+def _laughter(score: float = 0.98) -> RemoteLaughter:
+    detector = RemoteLaughter()
+    detector.close()
+    detector._client = SimpleNamespace(
+        request=Mock(return_value=httpx.Response(200, json={"laughing": score})), close=Mock(),
+    )
+    return detector
 
 
 def test_parse_spec() -> None:
@@ -39,14 +54,25 @@ def test_parse_spec() -> None:
 
 async def test_silence_is_skipped() -> None:
     fake = FakeProvider()
-    r = await Recognizer(fake).recognize(np.zeros(RATE * 2, dtype=np.float32), "ru")
-    assert r.text == "" and r.provider == "" and not fake.calls
+    detector = _laughter()
+    recognizer = Recognizer(fake, laughter=detector)
+    try:
+        r = await recognizer.recognize(np.zeros(RATE * 5, dtype=np.float32), "ru")
+        assert r.text == "" and r.provider == "" and not fake.calls
+        assert r.laughing is None
+        cancelled = recognizer.utterance("ru")
+        await cancelled.feed(tone(1))
+        await cancelled.cancel()
+        detector._client.request.assert_not_called()
+    finally:
+        await recognizer.aclose()
 
 
 async def test_fallback_on_failure() -> None:
     primary, fallback = FakeProvider(fail=True), FakeProvider(text="запасной")
     r = await Recognizer(primary, fallback).recognize(tone(1), "ru")
     assert (r.text, r.provider) == ("запасной", "fake")
+    assert r.laughing is None
     assert primary.calls and fallback.calls
 
     with pytest.raises(AsrError, match="fake provider failure"):
@@ -75,6 +101,7 @@ async def service():
     yield svc, fake
     task.cancel()
     await asyncio.gather(task, return_exceptions=True)
+    await svc.recognizer.aclose()
 
 
 @pytest.mark.parametrize("origin", [None, "https://evil.example"])
@@ -119,6 +146,7 @@ async def test_websocket_roundtrip(service) -> None:
         await ws.send(json.dumps({"type": "end"}))
         final = json.loads(await ws.recv())
         assert final["type"] == "final" and final["text"] == "Привет, Ксардас."
+        assert final["laughing"] is None
         assert final["audio_s"] == pytest.approx(1.5, abs=0.01)
         assert fake.calls == [(int(1.5 * RATE), "ru")]
 
@@ -190,16 +218,19 @@ async def streaming_service(request):
     yield svc, primary, fallback
     task.cancel()
     await asyncio.gather(task, return_exceptions=True)
+    await svc.recognizer.aclose()
 
 
 @pytest.mark.parametrize("streaming_service", [{}], indirect=True)
 async def test_streaming_partials_then_final(streaming_service) -> None:
     svc, primary, fallback = streaming_service
+    svc.recognizer = Recognizer(primary, fallback, laughter=_laughter())
     events = await _roundtrip(svc.port, float_to_pcm16(tone(1)))
     assert events[0]["streaming"] is True
     partials = [e["text"] for e in events if e["type"] == "partial"]
     assert partials[:2] == ["Стой", "Стой здесь"] and partials[-1] == "Стой здесь и никуда не уходи."
     assert events[-1]["type"] == "final" and events[-1]["provider"] == "fake"
+    assert events[-1]["laughing"] == 0.98
     assert primary.streams[0].samples == RATE and not fallback.calls
 
 
@@ -235,7 +266,7 @@ async def test_malformed_hints_are_rejected_without_closing_client(streaming_ser
         assert len(primary.streams) == 1
 
 
-def test_realtime_cli_hints_and_provider_defaults(monkeypatch, tmp_path) -> None:
+def test_realtime_cli_hints_and_provider_defaults(monkeypatch, tmp_path, capsys) -> None:
     primary = FakeProvider(text="Кавалорн", stream=True)
     open_stream = AsyncMock(wraps=primary.open_stream)
     monkeypatch.setattr(primary, "open_stream", open_stream)
@@ -258,6 +289,7 @@ def test_realtime_cli_hints_and_provider_defaults(monkeypatch, tmp_path) -> None
         cli.main()
     assert exit_info.value.code == 0
     assert parsed[0].provider == "inworld" and parsed[0].fallback == "chatgpt"
+    assert "laughing=None] Кавалорн" in capsys.readouterr().out
     open_stream.assert_awaited_once_with("ru", None, hints=["Кавалорн", "Ватрас"])
 
 
@@ -304,16 +336,105 @@ async def _utterance(recognizer: Recognizer, audio: np.ndarray):
 async def test_hints_read_back_are_heard_again_without_them() -> None:
     primary = FakeProvider(text="Благо, Иннос, Инноса, Аданос, Белиар, Хорин", stream=True)
     primary.transcribe = AsyncMock(return_value=Transcript("Ха-ха-ха.", "fake"))
-    r = await _utterance(Recognizer(primary), tone(2))
-    assert (r.text, r.provider) == ("Ха-ха-ха.", "fake")
-    assert primary.transcribe.await_args.args[0].shape == (2 * RATE,)
-
-    primary.transcribe = AsyncMock(side_effect=AsrError("down"))
-    assert (await _utterance(Recognizer(primary), tone(2))).text == ""
+    detector = _laughter()
+    recognizer = Recognizer(primary, laughter=detector)
+    try:
+        r = await _utterance(recognizer, tone(2))
+        assert (r.text, r.provider, r.laughing) == ("Ха-ха-ха.", "fake", 0.98)
+        assert primary.transcribe.await_args.args[0].shape == (2 * RATE,)
+        detector._client.request.assert_called_once()
+    finally:
+        await recognizer.aclose()
 
     plain = FakeProvider(text="Эээ, Ксардас, привет.", stream=True)
     assert (await _utterance(Recognizer(plain), tone(1))).text == "Эээ, Ксардас, привет."
     assert not plain.calls
+
+
+@pytest.mark.parametrize("failure", [AsrError("down"), TimeoutError()])
+async def test_failed_hint_free_retry_keeps_empty_text(caplog, failure) -> None:
+    primary = FakeProvider(text="Иннос, Инноса", stream=True)
+    primary.transcribe = AsyncMock(side_effect=failure)
+    recognizer = Recognizer(primary, laughter=_laughter())
+    try:
+        result = await _utterance(recognizer, tone(2))
+        assert result.text == "" and result.laughing == 0.98
+        assert "no transcript without hints" in caplog.text
+    finally:
+        await recognizer.aclose()
+
+
+@pytest.mark.parametrize(
+    ("seconds", "starts", "quiet_start"),
+    [(1, [0], False), (4, [0], False), (5, [0, 1], False),
+     (9, [0, 2, 4, 5], False), (9, [0, 2, 4, 5], True)],
+)
+async def test_incremental_laughter_matches_whole_recording(seconds, starts, quiet_start) -> None:
+    audio = np.linspace(0.1, 0.9, seconds * RATE, dtype=np.float32)
+    if quiet_start:
+        audio[:WINDOW] = 0
+    detector = _laughter()
+    entered = threading.Event()
+    seen: list[float] = []
+
+    def run(_method, _url, *, content, headers):
+        entered.set()
+        window = np.frombuffer(content, dtype="<f4")
+        seen.append(float(window[0]))
+        return httpx.Response(200, json={"laughing": float(window.mean()) if np.any(window) else 0.99})
+
+    detector._client.request.side_effect = run
+    expected = detector.score(audio)
+    seen.clear()
+    entered.clear()
+    recognizer = Recognizer(FakeProvider(stream=True), laughter=detector)
+    try:
+        utterance = recognizer.utterance("ru")
+        await utterance.begin()
+        for start in range(0, len(audio), RATE // 10):
+            await utterance.feed(audio[start : start + RATE // 10])
+            if start + RATE // 10 == WINDOW and not quiet_start:
+                assert await asyncio.to_thread(entered.wait, 0.5)  # inference started before finish
+        result = await utterance.finish()
+        assert result.laughing == expected
+        assert seen == [float(audio[start * RATE]) for start in starts]
+    finally:
+        await recognizer.aclose()
+
+
+async def test_slow_laughter_does_not_hold_the_transcript(caplog) -> None:
+    release = threading.Event()
+    detector = _laughter()
+
+    def blocked(*args, **kwargs):
+        release.wait(2)
+        return httpx.Response(200, json={"laughing": 0.99})
+
+    detector._client.request.side_effect = blocked
+    recognizer = Recognizer(FakeProvider(text="Привет."), laughter=detector)
+    try:
+        started = time.monotonic()
+        result = await recognizer.recognize(tone(1), "ru")
+        elapsed = time.monotonic() - started
+        assert result.text == "Привет." and result.laughing is None
+        assert LAUGHTER_WAIT - 0.02 <= elapsed < LAUGHTER_WAIT + 0.06
+        assert "laughter detection exceeded" in caplog.text
+    finally:
+        release.set()
+        await recognizer.aclose()
+
+
+async def test_laughter_failure_keeps_the_transcript(caplog) -> None:
+    detector = _laughter()
+    detector._client.request.side_effect = httpx.ReadError("detector failed")
+    recognizer = Recognizer(FakeProvider(text="Привет."), laughter=detector)
+    try:
+        for _ in range(2):
+            result = await recognizer.recognize(tone(1), "ru")
+            assert result.text == "Привет." and result.laughing is None
+        assert caplog.text.count("laughter detector unavailable") == 1
+    finally:
+        await recognizer.aclose()
 
 
 async def test_voxtral_speaks_audiocpp_live() -> None:
@@ -388,3 +509,167 @@ async def test_voxtral_speaks_audiocpp_live() -> None:
     assert path == "POST /v1/audio/transcriptions/live"
     assert query == "model=voxtral-test&sample_rate=16000&channels=1&sample_format=s16le&language=ru"
     assert headers["transfer-encoding"] == "chunked"
+
+
+@pytest.fixture
+async def laughter_server():
+    state = {"requests": [], "health": 0, "delay": 0.0, "status": 200, "body": {"laughing": 0.875}}
+
+    async def health(request):
+        state["health"] += 1
+        return web.json_response({"device": "cuda", "provider": "CUDAExecutionProvider"})
+
+    async def window(request):
+        state["requests"].append(await request.read())
+        await asyncio.sleep(state["delay"])
+        if isinstance(state["body"], str):
+            return web.Response(text=state["body"], status=state["status"])
+        return web.json_response(state["body"], status=state["status"])
+
+    app = web.Application()
+    app.router.add_get("/health", health)
+    app.router.add_post("/window", window)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    port = site._server.sockets[0].getsockname()[1]
+    try:
+        yield f"http://127.0.0.1:{port}", state
+    finally:
+        await runner.cleanup()
+
+
+async def test_remote_laughter_score_and_prepare(laughter_server) -> None:
+    url, state = laughter_server
+    detector = RemoteLaughter(url)
+    audio = tone(1)
+    try:
+        assert await detector.prepare()
+        assert state["health"] == 1
+        assert await asyncio.to_thread(detector.window, audio) == 0.875
+        assert state["requests"] == [audio.astype("<f4").tobytes()]
+        assert detector._client.timeout.connect == 0.5 and detector._client.timeout.read == 1.0
+    finally:
+        detector.close()
+
+
+async def test_remote_laughter_refusal_backoff_and_recovery(monkeypatch, caplog) -> None:
+    from gothic_asr import laughter
+
+    # Reserve a local port without listening so the first connection is refused.
+    reserved = socket.socket()
+    reserved.bind(("127.0.0.1", 0))
+    port = reserved.getsockname()[1]
+    detector = RemoteLaughter(f"http://127.0.0.1:{port}")
+    clock = [100.0]
+    monkeypatch.setattr(laughter, "monotonic", lambda: clock[0])
+    caplog.set_level("INFO", logger="gothic_asr.laughter")
+    requests = []
+
+    async def window(request):
+        requests.append(await request.read())
+        return web.json_response({"laughing": 0.95})
+
+    app = web.Application()
+    app.router.add_post("/window", window)
+    runner = web.AppRunner(app)
+    try:
+        started = time.monotonic()
+        assert await asyncio.to_thread(detector.window, tone(1)) is None
+        assert time.monotonic() - started < 0.6
+        reserved.close()
+        await runner.setup()
+        await web.TCPSite(runner, "127.0.0.1", port).start()
+        for offset in (0.0, 1.0, 9.99):
+            clock[0] = 100.0 + offset
+            assert await asyncio.to_thread(detector.window, tone(1)) is None
+        assert requests == []
+        assert caplog.text.count("laughter detector unavailable") == 1
+        clock[0] = 110.0
+        assert await asyncio.to_thread(detector.window, tone(1)) == 0.95
+        assert len(requests) == 1 and "laughter detector recovered" in caplog.text
+    finally:
+        reserved.close()
+        detector.close()
+        await runner.cleanup()
+
+
+async def test_remote_laughter_timeout(laughter_server, caplog) -> None:
+    url, state = laughter_server
+    state["delay"] = 1.1
+    detector = RemoteLaughter(url)
+    try:
+        started = time.monotonic()
+        assert await asyncio.to_thread(detector.window, tone(1)) is None
+        assert 0.9 < time.monotonic() - started < 1.5
+        assert len(state["requests"]) == 1
+        assert caplog.text.count("laughter detector unavailable") == 1
+    finally:
+        detector.close()
+
+
+@pytest.mark.parametrize(("status", "body"), [
+    (503, {"error": "loading"}), (201, {"laughing": 0.5}), (200, "invalid JSON"),
+])
+async def test_remote_laughter_bad_response_stays_out_of_recognition(laughter_server, caplog, status, body):
+    url, state = laughter_server
+    state.update(status=status, body=body)
+    recognizer = Recognizer(FakeProvider(text="Привет."), laughter=RemoteLaughter(url))
+    try:
+        for _ in range(2):
+            result = await recognizer.recognize(tone(1), "ru")
+            assert result.text == "Привет." and result.laughing is None
+        assert caplog.text.count("laughter detector unavailable") == 1
+    finally:
+        await recognizer.aclose()
+
+
+async def test_no_laughter_skips_detector_creation(monkeypatch) -> None:
+    def unexpected_detector(*args, **kwargs):
+        pytest.fail("disabled laughter detector must not be created")
+
+    monkeypatch.setattr(cli, "RemoteLaughter", unexpected_detector)
+    args = SimpleNamespace(
+        provider="fake", fallback="none", timeout=4.0, no_laughter=True, laughter_url=DEFAULT_URL,
+    )
+    recognizer = cli._recognizer(args)
+    assert recognizer.laughter is None
+    await recognizer.aclose()
+
+
+@pytest.mark.parametrize(("explicit", "environment", "expected"), [
+    ("http://explicit:47838", "http://environment:47838", "http://explicit:47838"),
+    (None, "http://environment:47838", "http://environment:47838"),
+    (None, None, DEFAULT_URL),
+])
+def test_laughter_cli_scores_each_wav(monkeypatch, capsys, explicit, environment, expected) -> None:
+    detector = SimpleNamespace(
+        prepare=AsyncMock(return_value=True), score=Mock(return_value=0.987), close=Mock(),
+    )
+    options = []
+
+    def make_detector(url):
+        options.append(url)
+        return detector
+
+    monkeypatch.setattr(cli, "RemoteLaughter", make_detector)
+    monkeypatch.setattr(cli, "load_env_file", lambda: None)
+    monkeypatch.setattr(cli, "read_wav", lambda _: (tone(1.0, 8000), 8000))
+    if environment:
+        monkeypatch.setenv("GOTHIC_LAUGHTER_URL", environment)
+    else:
+        monkeypatch.delenv("GOTHIC_LAUGHTER_URL", raising=False)
+    options_arg = ["--laughter-url", explicit] if explicit else []
+    monkeypatch.setattr("sys.argv", ["gothic-asr", "laughter", *options_arg, "first.wav", "second.wav"])
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main()
+    assert exit_info.value.code == 0
+    assert options == [expected]
+    detector.prepare.assert_awaited_once_with()
+    detector.close.assert_called_once_with()
+    assert detector.score.call_count == 2
+    assert all(call.args[0].shape == (RATE,) for call in detector.score.call_args_list)
+    assert capsys.readouterr().out.splitlines() == [
+        "first.wav: laughing=0.987", "second.wav: laughing=0.987"
+    ]

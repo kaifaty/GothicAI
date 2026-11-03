@@ -74,6 +74,7 @@ class Gothic final {
       bool meleeDownTactics = true;
       bool itemHulls = true;
       bool itemDeepestContact = true;
+      bool ragdollBirthGuard = true;
       bool meleeHitStop = true;
       bool meleeStamina = true;
       bool meleeParry = true;
@@ -85,6 +86,13 @@ class Gothic final {
       bool meleeBarge = true;
       bool meleeCharge = true;
       bool meleeRiposte = true;
+      bool meleeHealInterrupt = true;
+      bool meleeUseInHand = true;
+      bool foodOverTime = true;
+      bool meleeAiDodge = true;
+      bool meleeAiRiposte = true;
+      bool meleeAiCharge = true;
+      bool meleeAiBarge = true;
       bool bodyTraces = true;
       bool blood = true;
 

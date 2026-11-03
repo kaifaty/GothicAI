@@ -50,6 +50,7 @@ void setActors(const std::vector<Npc*>& actors);
 void observer(uint64_t dt, std::chrono::steady_clock::time_point now);
 void sample(std::string_view segment, uint64_t frame);
 void add(Amount amount, uint64_t value);
+void npcAnimation(size_t tier, size_t policy, bool visible, uint64_t elapsedNs);
 void flush();
 // Separate timestamps preserve worker overlap across submitted-frame boundaries.
 void textureEvent(TextureActivity activity);
@@ -113,6 +114,7 @@ constexpr void setActors(const std::vector<Npc*>&) noexcept {}
 constexpr void observer(uint64_t, std::chrono::steady_clock::time_point) noexcept {}
 constexpr void sample(std::string_view, uint64_t) noexcept {}
 constexpr void add(Amount, uint64_t) noexcept {}
+constexpr void npcAnimation(size_t, size_t, bool, uint64_t) noexcept {}
 constexpr void flush() noexcept {}
 constexpr void textureEvent(TextureActivity) noexcept {}
 class TextureWork final {

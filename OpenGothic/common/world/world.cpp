@@ -15,6 +15,7 @@
 #include "commandline.h"
 #include "camera.h"
 #include "graphics/visualfx.h"
+#include "graphics/pfx/pfxobjects.h"
 #include "graphics/clothvisual.h"
 #include "world/objects/globalfx.h"
 #include "world/objects/npc.h"
@@ -238,6 +239,7 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
     wdynamic->setClothEnabled(Gothic::physicsFlags().cloth);
     wdynamic->setItemWakeEnabled(Gothic::physicsFlags().itemWake);
     wdynamic->setItemDeepestContactEnabled(Gothic::physicsFlags().itemDeepestContact);
+    wdynamic->setRagdollBirthGuardEnabled(Gothic::physicsFlags().ragdollBirthGuard);
     wdynamic->setPhysicsNoiseCallback([this](const PhysicsNoise& noise) { emitPhysicsNoise(noise); });
     for(auto& surface:worldCloth.surfaces)
       if(auto visual=ClothVisual::createSurface(*this,surface.mesh,surface.pins,surface.visual,surface.id,surface.stiffness,surface.linearDamping))
@@ -1153,6 +1155,7 @@ void World::tick(uint64_t dt) {
   wdynamic->setClothEnabled(Gothic::physicsFlags().cloth);
   wdynamic->setItemWakeEnabled(Gothic::physicsFlags().itemWake);
   wdynamic->setItemDeepestContactEnabled(Gothic::physicsFlags().itemDeepestContact);
+  wdynamic->setRagdollBirthGuardEnabled(Gothic::physicsFlags().ragdollBirthGuard);
   if(!Gothic::physicsFlags().arrowSticking)
     stuckArrows.clear();
   static bool doTicks=true;
@@ -1776,6 +1779,8 @@ bool World::isInSfxRange(const Tempest::Vec3& pos) const {
   }
 
 bool World::isInPfxRange(const Tempest::Vec3& p) const {
+  if(Resources::isHeadless() && hasHeadlessViewer)
+    return (headlessViewer-p).quadLength()<PfxObjects::viewRage*PfxObjects::viewRage;
   if(Resources::isHeadless())
     return true; // Effects may carry gameplay collision/perception callbacks.
   return wview->isInPfxRange(p);
@@ -1973,6 +1978,11 @@ WayPath World::wayTo(const WayPoint& begin, const WayPoint& end) const {
   return wmatrix->wayTo(&first,1,begin.position(),end);
   }
 
+const WayHeights::Profile& World::groundProfile(const Tempest::Vec3& from,const Tempest::Vec3& to,
+                                               float stepHeight,float slopeCos) const {
+  return wmatrix->groundProfile(from,to,stepHeight,slopeCos);
+  }
+
 WayPath World::wayTo(const Npc &npc, const WayPoint &end) const {
   const auto npcPos = npc.centerPosition();
 
@@ -2061,4 +2071,16 @@ int32_t World::guildOfRoom(std::string_view portalName) {
       return bsp.sectorsData[i].guild;
     }
   return GIL_NONE;
+  }
+
+
+void World::probeMemory(std::string_view stage) const {
+  if(!LoadProbe::enabled()) return;
+  Resources::probeMemory(stage);
+  if(wview) wview->probeMemory(stage);
+  Tempest::Log::i("[loadprobe-owner] stage=",stage," name=waynet_cpu bytes=",wmatrix->probeCpuBytes());
+  Tempest::Log::i("[loadprobe-owner] stage=",stage," name=vob_objects_cpu bytes=",wobj.probeVobBytes());
+  auto& vm=game.script()->getVm();
+  Tempest::Log::i("[loadprobe-owner] stage=",stage," name=script_vm_cpu bytes=",
+                 sizeof(vm)+vm.symbols().capacity()*sizeof(vm.symbols()[0])+vm.size());
   }

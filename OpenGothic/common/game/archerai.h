@@ -66,14 +66,15 @@ class ArcherAi final {
     bool          active   = false;
     bool          want     = false; // the fight AI asked for an arrow...
     bool          done     = false; // ...and it left
-    bool          diceOnly = false; // never got the bow steady: the dice for this weapon
+    bool          diceOnly = false; // cannot steady or draw the bow: the dice for this weapon
+    bool          diceWeak = false; // strength-model fallback; ignored when that model is disabled
     bool          seeded   = false;
     uint64_t      wantAt   = 0;     // ms the arrow was asked for...
     uint64_t      askedAt  = 0;     // ...and the last time (the fight AI stops asking: dropped)
     uint32_t      epochSeen = 0;
     const void*   tgLast   = nullptr; // the target its speed and error are for (compared only)
     uint64_t      raiseAt  = 0;     // ms the bow went up
-    uint64_t      heldAt   = 0;     // ms it was held at full draw
+    uint64_t      heldAt   = 0;     // ms it reached the chosen draw limit
     uint64_t      shotAt   = 0;     // ms of the last arrow...
     float         cycle    = 0;     // ...ms between its arrows, as it shoots them (smoothed), 0: not yet
     uint32_t      rng      = 1;

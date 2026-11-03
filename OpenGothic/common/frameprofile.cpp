@@ -49,6 +49,7 @@ struct Record {
   FrameProfile::Outcome outcome=FrameProfile::Outcome::Unfinished;
   char segment[64]={};
   Counter zones[Zones];
+  Counter npcAnimation[16];
   std::atomic<uint64_t> amounts[Amounts]{};
   std::atomic<uint64_t> gpuNs{0};
   std::atomic<uint32_t> gpuBuffers{0}, gpuCompleted{0}, gpuValid{0};
@@ -86,6 +87,10 @@ struct Recorder {
       std::fprintf(file,"attempt,cmd_id,dt,segment,frame,begin_ns,observer_ns,end_ns,outcome,flags,overflow");
       for(const auto* name:names) std::fprintf(file,",%s_ns,%s_calls,%s_first_ns,%s_last_ns",name,name,name,name);
       for(const auto* name:amountNames) std::fprintf(file,",%s",name);
+      for(const auto* tier:{"full","simplified"})
+        for(const auto* policy:{"player","normal","far","far2"})
+          for(const auto* visible:{"out","in"})
+            std::fprintf(file,",npc_anim_%s_%s_%s_n,npc_anim_%s_%s_%s_ns",tier,policy,visible,tier,policy,visible);
       std::fprintf(file,",gpu_ns,gpu_done,gpu_buffers,triangles,geometry_done\n");
       for(size_t i=0;i<count;++i) {
         const auto& r=records[i];
@@ -95,6 +100,8 @@ struct Recorder {
         for(const auto& z:r.zones) std::fprintf(file,",%llu,%llu,%llu,%llu",(unsigned long long)z.sum.load(),
           (unsigned long long)z.calls.load(),(unsigned long long)z.first.load(),(unsigned long long)z.last.load());
         for(const auto& amount:r.amounts) std::fprintf(file,",%llu",(unsigned long long)amount.load());
+        for(const auto& cell:r.npcAnimation)
+          std::fprintf(file,",%llu,%llu",(unsigned long long)cell.calls.load(),(unsigned long long)cell.sum.load());
         const auto completed=r.gpuCompleted.load(std::memory_order_acquire);
         const auto buffers=r.gpuBuffers.load(std::memory_order_relaxed);
         const bool done=buffers>0 && completed==buffers && r.gpuValid.load(std::memory_order_relaxed)==buffers;
@@ -232,6 +239,14 @@ void FrameProfile::add(Amount amount,uint64_t value) {
   auto* r=recorder().current.load(std::memory_order_relaxed);
   if(r==nullptr && amount==Amount::UploadBytes) r=recorder().latest.load(std::memory_order_relaxed);
   if(r!=nullptr) r->amounts[size_t(amount)].fetch_add(value,std::memory_order_relaxed);
+  }
+void FrameProfile::npcAnimation(size_t tier,size_t policy,bool visible,uint64_t elapsedNs) {
+  if(!enabled()) return;
+  if(auto* r=recorder().current.load(std::memory_order_relaxed)) {
+    auto& cell=r->npcAnimation[(tier*4+policy)*2+size_t(visible)];
+    cell.calls.fetch_add(1,std::memory_order_relaxed);
+    cell.sum.fetch_add(elapsedNs,std::memory_order_relaxed);
+    }
   }
 void FrameProfile::flush() { recorder().flush(); }
 

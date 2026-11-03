@@ -22,6 +22,7 @@ import argparse
 import bisect
 import csv
 import gzip
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -31,6 +32,8 @@ import sys
 # "flag" checks that the value is true when the tolerance is true (false skips it).
 CHECKS = {
     "require_done": ("flag", "both runs finished the journal (end_reason done)"),
+    "require_journal_identical": ("flag", "all nonhero sample fields except tier and all events identical"),
+    "require_script_inventory_evidence": ("flag", "every inventory difference has attested script provenance"),
     "require_full_length": ("flag", "both runs reach their requested minutes and end at the same time"),
     "max_only_samples": ("max", "NPC-samples present in only one run"),
     "max_missing_end": ("max", "NPCs present at the end of one run and missing in the other"),
@@ -40,9 +43,14 @@ CHECKS = {
     "max_pos_p95": ("max", "position error p95, m"),
     "max_pos_max": ("max", "position error max, m"),
     "min_zs_matched": ("min", "ZS starts matched within the window, share"),
+    "min_raw_zs_matched": ("min", "all raw ZS starts matched within the window, share"),
+    "max_zs_mutual_offset_p95_s": ("max", "mutual-nearest raw ZS start offset p95, game seconds"),
     "max_zs_offset_p95": ("max", "matched ZS start offset p95, game min"),
     "max_alive_diff": ("max", "NPCs alive in one run and dead (or missing) in the other at the end"),
     "max_inventory_diff_end": ("max", "NPCs whose inventory differs (or who are missing) at the end"),
+    "max_hp_diff_end": ("max", "NPCs whose HP differs (or who are missing) at the end"),
+    "min_deaths_matched": ("min", "death events matched, share"),
+    "max_stationary_pos_p95": ("max", "position error p95 when stationary in both runs, m"),
     "min_same_inventory": ("min", "same inventory, share of NPC-samples"),
     "min_same_hp": ("min", "same HP, share of NPC-samples"),
 }
@@ -71,6 +79,7 @@ def load(run):
     hero = {}
     hero_keys = set()
     times = set()
+    sample_digest, event_digest = hashlib.sha256(), hashlib.sha256()
     with opener(samples) as stream:
         for row in csv.DictReader(stream):
             t = int(float(row["t_min"]))
@@ -79,9 +88,11 @@ def load(run):
                 hero[t] = (float(row["x"]), float(row["y"]), float(row["z"]))
                 hero_keys.add(row["key"])
                 continue
+            sample_digest.update(json.dumps({k: v for k, v in row.items() if k != "tier"},
+                                            sort_keys=True).encode() + b"\n")
             rows[(t, row["key"])] = (
                 row["alive"] == "1", int(row["hp"]), row["ta"], row["zs"],
-                float(row["x"]), float(row["y"]), float(row["z"]), row["inv_hash"], row["tier"], row["head"])
+                float(row["x"]), float(row["y"]), float(row["z"]), row["inv_hash"], row["tier"], row["head"], int(row["body"]))
             keys[row["key"]] = row["symbol"]
     events = {}
     path = find(run, "npc-day-events.csv")
@@ -90,6 +101,7 @@ def load(run):
             for row in csv.DictReader(stream):
                 if row["key"] in hero_keys:
                     continue  # the hero is left out of events too
+                event_digest.update(json.dumps(row, sort_keys=True).encode() + b"\n")
                 events.setdefault(row["kind"], {}).setdefault(row["key"], []).append((float(row["t_min"]), row["value"]))
     header = {}
     path = find(run, "npc-day.json")
@@ -99,7 +111,8 @@ def load(run):
         except (OSError, ValueError):
             header = {}
     last = max(times) if times else None
-    return {"rows": rows, "keys": keys, "hero": hero, "events": events, "header": header, "path": str(samples.parent),
+    return {"sample_digest": sample_digest.hexdigest(), "event_digest": event_digest.hexdigest(),
+            "rows": rows, "keys": keys, "hero": hero, "events": events, "header": header, "path": str(samples.parent),
             "last": last, "end_keys": {key for t, key in rows if t == last}}
 
 
@@ -179,6 +192,42 @@ def match_events(a, b, window):
             "offset_max": max(offsets) if offsets else None}
 
 
+def match_events_mutual(a, b, window):
+    """Reciprocal nearest events in the original sets, grouped by NPC and value.
+
+    This diagnostic does not consume matches: missing repeated cycles cannot shift
+    the ordinal pairing of later attack/eat cycles. Its matched share is reported
+    separately; acceptance still checks the standard greedy matcher's coverage.
+    """
+    offsets, total = [], 0
+    for key in sorted(set(a) | set(b)):
+        groups = []
+        for events in (a.get(key, []), b.get(key, [])):
+            values = {}
+            for t, value in events:
+                values.setdefault(value, []).append(t)
+            groups.append({value: sorted(times) for value, times in values.items()})
+            total += len(events)
+        for value in groups[0].keys() & groups[1].keys():
+            aa, bb = groups[0][value], groups[1][value]
+
+            def nearest(times, t):
+                index = bisect.bisect_left(times, t)
+                candidates = [j for j in (index - 1, index) if 0 <= j < len(times)]
+                return min(candidates, key=lambda j: abs(times[j] - t))
+
+            for i, t in enumerate(aa):
+                j = nearest(bb, t)
+                if nearest(aa, bb[j]) == i and abs(bb[j] - t) <= window:
+                    offsets.append(abs(bb[j] - t) * 60)
+    if not total:
+        return {"events": 0, "matched_pairs": 0, "matched": 1.0,
+                "offset_p50_s": 0.0, "offset_p95_s": 0.0, "offset_max_s": 0.0}
+    return {"events": total, "matched_pairs": len(offsets), "matched": share(2 * len(offsets), total),
+            "offset_p50_s": percentile(offsets, 0.5), "offset_p95_s": percentile(offsets, 0.95),
+            "offset_max_s": max(offsets) if offsets else None}
+
+
 def near_hero(run, t, position, metres):
     hero = run["hero"].get(t)
     return hero is not None and math.dist(hero, position) < metres * 100
@@ -197,20 +246,23 @@ def completeness(run):
 
 
 def end_differences(a, b):
-    """The end of each run against the other's end: NPCs missing in one, alive and inventory."""
-    missing, alive, inventory = [], [], []
+    """Compare final presence, life, HP and inventory independently of intermediate samples."""
+    missing, alive, inventory, hp = [], [], [], []
     for key in sorted(a["end_keys"] | b["end_keys"]):
         ra, rb = a["rows"].get((a["last"], key)), b["rows"].get((b["last"], key))
         if ra is None or rb is None:
             missing.append(key)
             alive.append(key)
             inventory.append(key)
+            hp.append(key)
             continue
         if ra[0] != rb[0]:
             alive.append(key)
         if ra[7] != rb[7]:
             inventory.append(key)
-    return missing, alive, inventory
+        if ra[1] != rb[1]:
+            hp.append(key)
+    return missing, alive, inventory, hp
 
 
 def compare(a, b, window=60.0, min_hero_distance=0.0):
@@ -224,12 +276,16 @@ def compare(a, b, window=60.0, min_hero_distance=0.0):
         common = kept
     if not common:
         raise SystemExit("no common NPC-samples: different worlds or empty journals")
-    total, by_tier, by_hour, per_npc = Tally(), {}, {}, {}
+    total, by_tier, by_hour, per_npc, by_movement = Tally(), {}, {}, {}, {}
     for t, key in common:
         ra, rb = a["rows"][(t, key)], b["rows"][(t, key)]
         total.add(ra, rb)
         by_tier.setdefault(rb[8], Tally()).add(ra, rb)
         by_hour.setdefault(t // 60, Tally()).add(ra, rb)
+        # Body states 1..10 are walk/sneak/run/sprint/swim/crawl/dive/jump/climb/fall
+        # (common/game/constants.h); the journal already strips state flags.
+        movement = "moving_either" if 1 <= ra[10] <= 10 or 1 <= rb[10] <= 10 else "stationary_both"
+        by_movement.setdefault(movement, Tally()).add(ra, rb)
         npc = per_npc.setdefault(key, {"zs_diff": 0, "pos_max": 0.0, "first_zs_diff": None, "samples": 0})
         npc["samples"] += 1
         if ra[3] != rb[3]:
@@ -239,13 +295,14 @@ def compare(a, b, window=60.0, min_hero_distance=0.0):
         if ra[0] and rb[0]:
             npc["pos_max"] = max(npc["pos_max"], math.dist(ra[4:7], rb[4:7]) / 100)
     last = max(t for t, _ in common)
-    missing_end, alive_diff, inventory_diff = end_differences(a, b)
+    missing_end, alive_diff, inventory_diff, hp_diff = end_differences(a, b)
     # Events count only up to the last common sample: a longer run must not add unmatched ones.
     def kind(run, name, value=None):
         return {key: [(t, value or v) for t, v in events if t <= last]
                 for key, events in run["events"].get(name, {}).items()}
     deaths = match_events(kind(a, "death", "death"), kind(b, "death", "death"), window)
     zs = match_events(kind(a, "zs_start"), kind(b, "zs_start"), window)
+    raw_zs_a, raw_zs_b = a["events"].get("zs_start", {}), b["events"].get("zs_start", {})
     diverged = [key for key, npc in per_npc.items() if npc["zs_diff"] or npc["pos_max"] > 5]
     first = [npc["first_zs_diff"] for npc in per_npc.values() if npc["first_zs_diff"] is not None]
     return {
@@ -264,12 +321,20 @@ def compare(a, b, window=60.0, min_hero_distance=0.0):
         "total": total.summary(),
         "by_tier": {tier: tally.summary() for tier, tally in sorted(by_tier.items())},
         "by_hour": {int(hour): tally.summary() for hour, tally in sorted(by_hour.items())},
+        "by_movement": {name: tally.summary() for name, tally in sorted(by_movement.items())},
         "zs_starts": zs,
+        "raw_zs_starts": match_events(raw_zs_a, raw_zs_b, window),
+        "zs_starts_mutual": match_events_mutual(raw_zs_a, raw_zs_b, window),
+        "journal_identical": a["sample_digest"] == b["sample_digest"] and a["event_digest"] == b["event_digest"],
+        "inventory_end_hashes": {key: {"a": a["rows"].get((a["last"], key), (None,) * 8)[7],
+                                       "b": b["rows"].get((b["last"], key), (None,) * 8)[7]}
+                                 for key in inventory_diff},
         "deaths": deaths,
         "deaths_a": sum(len(v) for v in kind(a, "death").values()),
         "deaths_b": sum(len(v) for v in kind(b, "death").values()),
         "alive_diff_end": alive_diff,
         "inventory_diff_end": inventory_diff,
+        "hp_diff_end": hp_diff,
         "diverged_npcs": len(diverged),
         "first_zs_divergence_min": min(first) if first else None,
         "worst_npcs": sorted(({"key": key, **npc} for key, npc in per_npc.items() if npc["pos_max"] > 0 or npc["zs_diff"]),
@@ -278,25 +343,36 @@ def compare(a, b, window=60.0, min_hero_distance=0.0):
     }
 
 
-def check_values(result):
+def check_values(result, inventory_evidence=()):
     total = result["total"]
     ca, cb = result["complete_a"], result["complete_b"]
+    attested = {(item["key"], item["reference_hash"], item["candidate_hash"]) for item in inventory_evidence
+                if item.get("cause") in {"script_random_draw", "extra_script_iterations"} and item.get("item")
+                and isinstance(item.get("delta"), int) and item["delta"] != 0}
     return {
+        "require_journal_identical": result["journal_identical"],
+        "require_script_inventory_evidence": all((key, pair["a"], pair["b"]) in attested
+                                                 for key, pair in result["inventory_end_hashes"].items()),
         "require_done": ca["end_reason"] == "done" and cb["end_reason"] == "done",
         "require_full_length": ca["full_length"] and cb["full_length"] and ca["last_t_min"] == cb["last_t_min"],
         "max_only_samples": result["only_a"] + result["only_b"],
         "max_missing_end": len(result["missing_end"]),
         "min_same_zs": total["same_zs"], "min_same_ta": total["same_ta"],
         "max_pos_p50": total["pos_p50"], "max_pos_p95": total["pos_p95"], "max_pos_max": total["pos_max"],
+        "min_raw_zs_matched": result["raw_zs_starts"]["matched"],
+        "max_zs_mutual_offset_p95_s": result["zs_starts_mutual"]["offset_p95_s"],
         "min_zs_matched": result["zs_starts"]["matched"], "max_zs_offset_p95": result["zs_starts"]["offset_p95"],
         "max_alive_diff": len(result["alive_diff_end"]), "min_same_inventory": total["same_inventory"],
         "max_inventory_diff_end": len(result["inventory_diff_end"]),
+        "max_hp_diff_end": len(result["hp_diff_end"]),
+        "min_deaths_matched": result["deaths"]["matched"],
+        "max_stationary_pos_p95": result["by_movement"].get("stationary_both", {}).get("pos_p95"),
         "min_same_hp": total["same_hp"],
     }
 
 
-def evaluate(result, tolerances):
-    values = check_values(result)
+def evaluate(result, tolerances, inventory_evidence=()):
+    values = check_values(result, inventory_evidence)
     checks = []
     for name, limit in tolerances.items():
         if limit is None:
@@ -351,11 +427,15 @@ def markdown(result, checks, label_a, label_b):
               f"| same inventory | {pct(total['same_inventory'])} |",
               f"| position error p50 / p95 / max, m | {fmt(total['pos_p50'], 2)} / {fmt(total['pos_p95'], 2)} / {fmt(total['pos_max'], 1)} |",
               f"| ZS starts matched (±{fmt(result['zs_window_min'], 0)} min) | {pct(result['zs_starts']['matched'])} of {result['zs_starts']['events']} |",
+              f"| all raw ZS starts matched (including final post-sample tick) | {pct(result['raw_zs_starts']['matched'])} of {result['raw_zs_starts']['events']} |",
+              f"| mutual-nearest raw ZS starts matched | {pct(result['zs_starts_mutual']['matched'])} |",
+              f"| mutual-nearest raw ZS start offset p50 / p95 / max, game s | {fmt(result['zs_starts_mutual']['offset_p50_s'])} / {fmt(result['zs_starts_mutual']['offset_p95_s'])} / {fmt(result['zs_starts_mutual']['offset_max_s'])} |",
               f"| matched ZS start offset p50 / p95 / max, game min | {fmt(result['zs_starts']['offset_p50'], 2)} / {fmt(result['zs_starts']['offset_p95'], 2)} / {fmt(result['zs_starts']['offset_max'], 1)} |",
               f"| deaths {label_a} / {label_b}; matched pairs | {result['deaths_a']} / {result['deaths_b']}; {result['deaths']['matched_pairs']} |",
               f"| NPCs missing in one run at the end | {len(result['missing_end'])} |",
               f"| alive differs at the end (missing counts) | {len(result['alive_diff_end'])} |",
               f"| inventory differs at the end (missing counts) | {len(result['inventory_diff_end'])} |",
+              f"| HP differs at the end (missing counts) | {len(result['hp_diff_end'])} |",
               f"| NPCs with any ZS difference or >5 m apart | {result['diverged_npcs']} of {result['npcs']} |",
               f"| first ZS difference, game min | {fmt(result['first_zs_divergence_min'])} |", ""]
     if checks:
@@ -373,6 +453,11 @@ def markdown(result, checks, label_a, label_b):
     for tier, item in result["by_tier"].items():
         lines.append(f"| {tier} | {item['samples']} | {pct(item['same_zs'])} | {pct(item['same_ta'])} | "
                      f"{fmt(item['pos_p50'], 2)} / {fmt(item['pos_p95'], 2)} / {fmt(item['pos_max'], 1)} |")
+    lines += ["", "## By movement", "", "| Samples | Count | Position p50 / p95 / max, m |",
+              "|---|---|---|"]
+    for name, item in result["by_movement"].items():
+        lines.append(f"| {name} | {item['samples']} | {fmt(item['pos_p50'], 2)} / "
+                     f"{fmt(item['pos_p95'], 2)} / {fmt(item['pos_max'], 1)} |")
     lines += ["", "## By game hour since the start", "", "| Hour | Same ZS | Same TA | Position p95, m | Max, m |",
               "|---|---|---|---|---|"]
     for hour, item in result["by_hour"].items():
@@ -394,10 +479,11 @@ def markdown(result, checks, label_a, label_b):
     return "\n".join(lines) + "\n"
 
 
-def tolerances_from(args):
+def tolerances_from(args, data=None):
     tolerances = {}
     if args.tolerances:
-        data = json.loads(Path(args.tolerances).read_text())
+        if data is None:
+            data = json.loads(Path(args.tolerances).read_text())
         data = data.get("tolerances", data)
         unknown = set(data) - set(CHECKS)
         if unknown:
@@ -429,9 +515,10 @@ def main(argv=None):
         else:
             parser.add_argument("--" + name.replace("_", "-"), dest=name, type=float, help=f"{kind} {label}")
     args = parser.parse_args(argv)
-    tolerances = tolerances_from(args)
+    policy = json.loads(Path(args.tolerances).read_text()) if args.tolerances else {}
+    tolerances = tolerances_from(args, policy)
     result = compare(load(args.run_a), load(args.run_b), args.window, args.min_hero_distance)
-    checks = evaluate(result, tolerances)
+    checks = evaluate(result, tolerances, policy.get("inventory_script_evidence", ()))
     report = markdown(result, checks, args.label_a, args.label_b)
     if args.out:
         Path(args.out).write_text(report)

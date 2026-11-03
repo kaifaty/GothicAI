@@ -38,6 +38,8 @@ struct HeroDeed;
 
 class World final {
   public:
+    void probeMemory(std::string_view stage) const;
+
     World()=delete;
     World(const World&)=delete;
     World(GameSession& game, std::string_view file, bool startup, std::function<void(int)> loadProgress);
@@ -59,6 +61,8 @@ class World final {
     // loading calls updateNpcSimTiers() after the first residency update.
     void                 updateNpcSimTiers() { wobj.updateSimTiers(); }
     const NpcSimTiers::Stats& npcSimTierStats() const { return wobj.simTierStats(); }
+    void noteGraphFpLoadResolution() { wobj.noteGraphFpLoadResolution(); }
+    void noteNpcGraphFallback(bool ground) { wobj.noteNpcGraphFallback(ground); }
     bool                 landscapeReady() const { return !wview || wview->landscapeReady(); }
 
     void                 load(Serialize& fin );
@@ -138,6 +142,8 @@ class World final {
 
     WayPath              wayTo(const Npc& pos,const WayPoint& end) const;
     WayPath              wayTo(const WayPoint& begin, const WayPoint& end) const;
+    const WayHeights::Profile& groundProfile(const Tempest::Vec3& from,const Tempest::Vec3& to,
+                                             float stepHeight,float slopeCos) const;
 
     WorldView*           view()     const { return wview.get();    }
     WorldSound*          sound()          { return &wsound;        }
@@ -250,6 +256,9 @@ class World final {
 
     bool                 isInSfxRange(const Tempest::Vec3& pos) const;
     bool                 isInPfxRange(const Tempest::Vec3& pos) const;
+    // A headless run that stands in for the rendered game: the camera origin the renderer would hand to
+    // its particle range after this step. Without it a headless world treats every point as in range.
+    void                 setHeadlessViewer(const Tempest::Vec3& pos) { headlessViewer = pos; hasHeadlessViewer = true; }
 
     void                 addDlgSound(std::string_view s, const Tempest::Vec3& pos, float range, uint64_t &timeLen,
                                      std::shared_ptr<LipSync::Track>* voice = nullptr);
@@ -297,6 +306,8 @@ class World final {
 
     std::unique_ptr<DynamicWorld>         wdynamic;
     std::unique_ptr<WorldView>            wview;
+    Tempest::Vec3                         headlessViewer;
+    bool                                  hasHeadlessViewer = false;
     std::vector<std::unique_ptr<ClothVisual>> clothSurfaces;
     mutable MeshObjects                  cpuObjects;
     std::unique_ptr<GlobalEffects>        globFx;

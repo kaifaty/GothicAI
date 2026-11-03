@@ -19,6 +19,7 @@
 #include <Tempest/Texture2d>
 
 #include "resources.h"
+#include <Tempest/LoadProbe>
 
 #if defined(__APPLE__)
 #include <mach/mach.h>
@@ -238,16 +239,15 @@ inline void processMb(double& rss, double& footprint) {
 #endif
   }
 
-inline void markMalloc(std::string_view stage, double elapsed) {
-  if(stage!="session_end" && stage!="stream_warm" && stage!="stream_warm_5s")
-    return;
+struct MallocBytes { size_t inUse=0, allocated=0; };
+inline MallocBytes mallocBytes() {
   size_t inUse=0, allocated=0;
 #if defined(__APPLE__)
   vm_address_t* zones=nullptr;
   unsigned count=0;
   if(malloc_get_all_zones(mach_task_self(),nullptr,&zones,&count)!=KERN_SUCCESS) {
     Tempest::Log::e("[loadprobe-malloc] malloc_get_all_zones failed");
-    return;
+    return {};
     }
   for(unsigned i=0; i<count; ++i) {
     malloc_statistics_t stats={};
@@ -261,16 +261,161 @@ inline void markMalloc(std::string_view stage, double elapsed) {
   inUse     = stats.uordblks;
   allocated = stats.arena+stats.hblkhd;
 #else
-  return;
+  return {};
 #endif
 #else
-  return;
+  return {};
 #endif
+  return {inUse,allocated};
+  }
+
+inline void markMalloc(std::string_view stage, double elapsed) {
+  const auto [inUse,allocated]=mallocBytes();
   char buf[192];
   std::snprintf(buf,sizeof(buf),
                 "[loadprobe-malloc] stage=%.*s t_ms=%.1f malloc_in_use_mb=%.3f malloc_allocated_mb=%.3f",
                 int(stage.size()),stage.data(),elapsed,double(inUse)/1048576.0,double(allocated)/1048576.0);
   Tempest::Log::i(buf);
+  }
+
+
+// STARTUP is synchronous. Exclusive clocks and signed allocator deltas subtract
+// nested work on this thread; footprint is a process-wide observation, not ownership.
+namespace Startup {
+enum Kind : size_t { Script, Npc, Model, Skeleton, Animation, Texture, Item, NpcPlacement, Other, PhysicsPrepare, PhysicsBody, PlacementQueries, PhysicsRemove, Count };
+inline constexpr const char* names[]={"script","npc","model","skeleton","animation","texture","item","npc_placement","other","physics_prepare","physics_body","placement_queries","physics_remove"};
+struct Counter { uint64_t count=0, ns=0, inclusiveNs=0, bytes=0; int64_t malloc=0, footprint=0; };
+inline thread_local std::array<Counter,Count> counters;
+inline thread_local bool active=false;
+inline thread_local const char* group="startup";
+inline thread_local uint64_t samplingNs=0,samplingCount=0;
+class Scope {
+  public:
+    explicit Scope(Kind kind,bool start=false,const char* onlyGroup=nullptr):kind(kind) {
+      if(!enabled() || (!active && !start) || (!start && onlyGroup && std::strcmp(group,onlyGroup)!=0)) return;
+      if(start && !active) {
+        counters={};
+        group=onlyGroup ? onlyGroup : "startup";
+        samplingNs=samplingCount=0;
+        active=true;
+        root=true;
+        }
+      previous=top;
+      top=this;
+      if(serial()) {
+        const auto sampleStart=std::chrono::steady_clock::now();
+        allocation=int64_t(mallocBytes().inUse);
+        double rss=0,fp=0;
+        processMb(rss,fp);
+        footprint=int64_t(fp*1048576.0);
+        samplingNs+=uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now()-sampleStart).count());
+        ++samplingCount;
+        }
+      started=std::chrono::steady_clock::now();
+      running=true;
+      }
+    ~Scope() {
+      if(!running) return;
+      const auto ns=uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                             std::chrono::steady_clock::now()-started).count());
+      int64_t delta=0,fpDelta=0;
+      if(serial()) {
+        const auto sampleStart=std::chrono::steady_clock::now();
+        delta=int64_t(mallocBytes().inUse)-allocation;
+        double rss=0,fp=0;
+        processMb(rss,fp);
+        fpDelta=int64_t(fp*1048576.0)-footprint;
+        samplingNs+=uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now()-sampleStart).count());
+        ++samplingCount;
+        }
+      auto& c=counters[kind];
+      ++c.count; c.ns+=ns-childNs; c.inclusiveNs+=ns;
+      c.malloc+=delta-childMalloc; c.footprint+=fpDelta-childFootprint;
+      top=previous;
+      if(previous) {
+        previous->childNs+=ns;
+        previous->childMalloc+=delta;
+        previous->childFootprint+=fpDelta;
+        }
+      if(root) {
+        active=false;
+        for(size_t i=0;i<(std::strcmp(group,"startup")==0 ? size_t(Other) : size_t(Count));++i) {
+          const auto& v=counters[i];
+          char line[256];
+          std::snprintf(line,sizeof(line),"[loadprobe-%s] name=%s count=%llu ms=%.6f inclusive_ms=%.6f bytes=%llu malloc_bytes=%lld footprint_bytes=%lld memory_sampled=%u",
+                        group,names[i],(unsigned long long)v.count,double(v.ns)/1e6,double(v.inclusiveNs)/1e6,
+                        (unsigned long long)v.bytes,(long long)v.malloc,(long long)v.footprint,unsigned(serial()));
+          Tempest::Log::i(line);
+          }
+        Tempest::Log::i("[loadprobe-overhead] ",std::strcmp(group,"startup")==0 ? "startup" : "placed_items",
+                       "_memory_ns=",samplingNs," ",std::strcmp(group,"startup")==0 ? "startup" : "placed_items",
+                       "_memory_samples=",samplingCount);
+        }
+      }
+    static void bytes(Kind kind,uint64_t value) {
+      if(enabled() && active) counters[kind].bytes+=value;
+      }
+  private:
+    inline static thread_local Scope* top=nullptr;
+    Scope* previous=nullptr;
+    Kind kind;
+    bool running=false,root=false;
+    uint64_t childNs=0;
+    int64_t allocation=0,footprint=0,childMalloc=0,childFootprint=0;
+    std::chrono::steady_clock::time_point started;
+  };
+}
+
+namespace Requests {
+inline std::atomic<bool> active{false};
+inline std::mutex sync;
+inline constexpr const char* names[]={"model","animation","texture"};
+inline std::array<std::unordered_set<std::string>,3> unique;
+inline std::array<uint64_t,3> requests{};
+inline std::unordered_set<std::string> npcModels;
+inline void begin() {
+  if(!enabled()) return;
+  std::lock_guard lock(sync);
+  for(auto& set:unique) set.clear();
+  requests={}; npcModels.clear(); active=true;
+  }
+inline void add(size_t kind,std::string_view name) {
+  if(!enabled() || !active) return;
+  std::lock_guard lock(sync);
+  ++requests[kind]; unique[kind].emplace(name);
+  if(kind==0 && Startup::active && std::strcmp(Startup::group,"startup")==0) npcModels.emplace(name);
+  }
+inline void end() {
+  if(!enabled()) return;
+  std::lock_guard lock(sync);
+  active=false;
+  for(size_t i=0;i<unique.size();++i) {
+    Tempest::Log::i("[loadprobe-requests] name=",names[i]," count=",requests[i]," unique=",unique[i].size(),
+                   " repeated=",requests[i]-unique[i].size());
+    unique[i].clear(); unique[i].rehash(0);
+    }
+  }
+}
+
+inline std::chrono::steady_clock::time_point loadFinished;
+inline bool firstFramePending=false, pipelinesPending=false;
+inline void pipelines(std::string_view stage) {
+  constexpr const char* names[]={"library","graphics","compute"};
+  for(size_t i=0;i<TempestLoadProbe::Count;++i) {
+    const auto& c=TempestLoadProbe::pipelines[i];
+    char line[256];
+    std::snprintf(line,sizeof(line),"[loadprobe-pipelines] stage=%.*s name=%s count=%llu ms=%.6f post_load_count=%llu post_load_ms=%.6f",
+                  int(stage.size()),stage.data(),names[i],(unsigned long long)c.calls.load(),double(c.ns.load())/1e6,
+                  (unsigned long long)c.postLoadCalls.load(),double(c.postLoadNs.load())/1e6);
+    Tempest::Log::i(line);
+    }
+  }
+inline void loaded() {
+  if(!enabled()) return;
+  loadFinished=std::chrono::steady_clock::now();
+  TempestLoadProbe::loadEndNs=TempestLoadProbe::clockNs();
+  firstFramePending=pipelinesPending=true;
+  pipelines("load_end");
   }
 
 inline uint64_t textureBytes(const Tempest::Texture2d& t) {
@@ -293,6 +438,7 @@ inline void countTexture(const Tempest::Texture2d& t, std::chrono::steady_clock:
     return;
   texCount++;
   texBytes += textureBytes(t);
+  Startup::Scope::bytes(Startup::Texture,textureBytes(t));
   texNs    += uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now()-started).count());
   }
 
@@ -301,6 +447,16 @@ inline void mark(std::string_view stage, double stageMs = -1, std::string_view e
   if(!enabled())
     return;
   const double elapsed = msSince(origin());
+#if defined(__APPLE__) || defined(__linux__)
+  if(stage=="session_begin" || stage=="change_begin") {
+    double load[3]={};
+    if(::getloadavg(load,3)==3) {
+      char line[160];
+      std::snprintf(line,sizeof(line),"[loadprobe-host] load_1=%.2f load_5=%.2f load_15=%.2f",load[0],load[1],load[2]);
+      Tempest::Log::i(line);
+      }
+    }
+#endif
   double rss=0, fp=0;
   processMb(rss,fp);
   size_t stagingCount=0, stagingBytes=0;
@@ -394,6 +550,21 @@ inline void mark(std::string_view stage, double stageMs = -1, std::string_view e
                 int(stage.size()),stage.data(),elapsed,stagingCount,stagingBytes);
   Tempest::Log::i(buf);
   markMalloc(stage,elapsed);
+  }
+
+
+inline void presented() {
+  if(!enabled() || !pipelinesPending) return;
+  if(firstFramePending) {
+    firstFramePending=false;
+    mark("first_frame",msSince(loadFinished));
+    pipelines("first_frame");
+    }
+  if(msSince(loadFinished)>=10000) {
+    pipelinesPending=false;
+    mark("pipelines_10s",msSince(loadFinished));
+    pipelines("pipelines_10s");
+    }
   }
 
 }

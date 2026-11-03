@@ -1,0 +1,4 @@
+condition,path,exists,bytes,inventory_n,load_1,snapshot_time
+existing_current_fingerprint_not_a_run,/Users/kaifat/.cache/gothic-ai/base/derived/032e902aee6fef6ccc54fd01fdc4f018e0a2cb80ed470cdae2e79d5ee150b14b/NEWWORLD.collision,1,31516389,1,186.6,2026-11-03T22:19:19+03:00
+existing_current_fingerprint_not_a_run,/Users/kaifat/.cache/gothic-ai/base/derived/032e902aee6fef6ccc54fd01fdc4f018e0a2cb80ed470cdae2e79d5ee150b14b/NEWWORLD.wayheights,1,277615,1,186.6,2026-11-03T22:19:19+03:00
+existing_current_fingerprint_not_a_run,/Users/kaifat/.cache/gothic-ai/base/derived/032e902aee6fef6ccc54fd01fdc4f018e0a2cb80ed470cdae2e79d5ee150b14b/NEWWORLD.wayheights.profiles,1,57172,1,186.6,2026-11-03T22:19:19+03:00

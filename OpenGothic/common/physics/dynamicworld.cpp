@@ -11,6 +11,7 @@
 #include "gothic.h"
 #include "arrowtrace.h"
 #include "frameprofile.h"
+#include "loadprobe.h"
 #include "basestore.h"
 #include <Tempest/Log>
 #include "graphics/mesh/skeleton.h"
@@ -380,7 +381,7 @@ struct DynamicWorld::NpcBody {
     return (dir * radius).length();
     }
 
-  Npc* toNpc() {
+  Npc* toNpc() const {
     return reinterpret_cast<Npc*>(userPointer);
     }
 
@@ -681,6 +682,9 @@ struct DynamicWorld::NpcBodyList final {
     }
 
   bool hasCollision(const NpcBody& a, const NpcBody& b, Tempest::Vec3& normal, float& colDepth) const {
+    if((a.toNpc()!=nullptr && a.toNpc()->usesSimplifiedMovement()) ||
+       (b.toNpc()!=nullptr && b.toNpc()->usesSimplifiedMovement()))
+      return false;
     const float objMaxRXZ = a.maxRXZ + b.maxRXZ;
     const float objMaxRY  = a.maxRY  + b.maxRY;
 
@@ -1406,6 +1410,7 @@ DynamicWorld::Item DynamicWorld::addDynamicObj(const Tempest::Matrix4x4& pos, co
 
 std::vector<DynamicWorld::PlacedItemCensusEntry> DynamicWorld::placedItemCensus(
     const std::vector<PlacedItemCandidate>& candidates) const {
+  LoadProbe::Startup::Scope probe(LoadProbe::Startup::PlacementQueries,false,"placed-items");
   constexpr float supportLimitCm = 4.f, penetrationLimitCm = 2.f;
   constexpr uint32_t mask = (1u<<C_Landscape)|(1u<<C_Object)|(1u<<C_MovableVob)|(1u<<C_Item);
   std::vector<PlacedItemCensusEntry> result(candidates.size());
@@ -1769,6 +1774,10 @@ void DynamicWorld::setItemWakeEnabled(bool enabled) {
 
 void DynamicWorld::setItemDeepestContactEnabled(bool enabled) {
   world->setItemDeepestContactEnabled(enabled);
+  }
+
+void DynamicWorld::setRagdollBirthGuardEnabled(bool enabled) {
+  world->setRagdollBirthGuardEnabled(enabled);
   }
 
 bool DynamicWorld::buoyancyEnabled() const {
@@ -2889,7 +2898,7 @@ void DynamicWorld::tick(uint64_t dt) {
   for(const auto* records:{&npcList->body,&npcList->frozen})
     for(const auto& record:*records)
       if(record.body!=nullptr && record.body->virtualCharacter!=nullptr)
-        if(auto* npc=record.body->toNpc())
+        if(auto* npc=record.body->toNpc(); npc!=nullptr && !npc->usesSimplifiedMovement())
           riders.push_back(npc);
   for(auto* npc:riders)
     npc->finishCharacterVirtualSupport(dt);

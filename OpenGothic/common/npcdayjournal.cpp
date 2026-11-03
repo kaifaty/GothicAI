@@ -38,6 +38,18 @@ struct Journal {
   std::FILE*                               samples = nullptr;
   std::FILE*                               events  = nullptr;
   std::FILE*                               cost    = nullptr;
+  std::FILE*                               heights = nullptr;
+  std::FILE*                               arrivals = nullptr;
+  struct Movement {
+    uint64_t tick = 0;
+    int64_t gameMs = 0;
+    const WayPoint* point = nullptr;
+    const Npc* target = nullptr;
+    Tempest::Vec3 position;
+    std::string kind;
+    };
+  // Only active walks need a start clock; idle NPCs have no movement entry.
+  std::unordered_map<const Npc*,Movement>  movements;
   std::unordered_map<const Npc*,Entry>     entries;
   std::map<std::string,uint32_t>           nextOrdinal;
   // Every private random stream this journal registered, kept after an NPC leaves the world.
@@ -73,7 +85,7 @@ std::string clean(std::string_view s) {
   return ret;
   }
 
-std::string symbolName(World& w, size_t symbol) {
+std::string symbolName(const World& w, size_t symbol) {
   if(symbol==size_t(-1))
     return "-";
   auto* sym = w.script().findSymbol(symbol);
@@ -110,6 +122,35 @@ std::pair<uint64_t,uint64_t> inventoryHash(const Npc& npc) {
 
 double relativeMinutes(const Journal& j, int64_t ms) {
   return double(ms-j.startMs)/60000.0;
+  }
+
+bool sameMovement(const Journal::Movement& previous,const Npc::NavigationGoal& goal) {
+  if(previous.point!=goal.point || previous.target!=goal.npc || previous.kind!=goal.kind)
+    return false;
+  // Live NPC/item targets keep one admission while their position changes.
+  return goal.kind!="point" || (previous.position-goal.position).quadLength()<1.f;
+  }
+
+void observeMovement(World& w,Journal& j,const Npc& npc) {
+  if(j.arrivals==nullptr)
+    return;
+  if(npc.moveHint()==Npc::GT_No) {
+    j.movements.erase(&npc);
+    return;
+    }
+  const auto goal=npc.navigationGoal();
+  if(!goal.active)
+    return;
+  auto [it,inserted]=j.movements.try_emplace(&npc);
+  auto& previous=it->second;
+  if(!inserted && sameMovement(previous,goal))
+    return;
+  previous.tick=w.tickCount();
+  previous.gameMs=w.time().toInt();
+  previous.point=goal.point;
+  previous.target=goal.npc;
+  previous.position=goal.position;
+  previous.kind=goal.kind;
   }
 
 void event(World& w, Journal& j, const Npc& npc, const Entry& e, const char* kind, std::string_view value) {
@@ -167,6 +208,18 @@ void writeSample(World& w, Journal& j, int64_t scheduledMs) {
     const auto  inv   = inventoryHash(*npc);
     const int   ta    = npc->currentRoutineIndex();
     const auto* mob   = npc->interactive();
+    if(j.heights!=nullptr && npc->usesSimplifiedMovement() && !npc->isDead() && mob==nullptr) {
+      // Verification only, at journal sample times; movement itself never rays.
+      const auto ground=w.physic()->landRay(p+Tempest::Vec3(0,100,0));
+      const auto* edge=npc->currentGoToPoint();
+      const auto goal=npc->navigationGoal();
+      const auto step=w.script().guildVal().step_height[npc->guild()];
+      std::fprintf(j.heights,"%.0f,%s,%.1f,%.1f,%.1f,%s,%d,%.3f,%d,%.1f,%.1f,%s,%s,%s\n",t,key->c_str(),
+                   double(p.x),double(p.y),double(p.z),wp!=nullptr ? clean(wp->name).c_str() : "-",
+                   ground.hasCol ? 1 : 0,ground.hasCol ? double(std::abs(p.y-ground.v.y))/100.0 : -1.0,
+                   int(npc->guild()),double(w.script().guildVal().slide_angle[npc->guild()]),double(step>0 ? step : 50),
+                   edge!=nullptr ? clean(edge->name).c_str() : "-",clean(goal.kind).c_str(),clean(goal.name).c_str());
+      }
     std::fprintf(j.samples,
                  "%.0f,%.4f,%s,%s,%d,%d,%d,%s,%s,%llu,%.1f,%.1f,%.1f,%s,%.1f,%zu,%s,%u,%016llx,%llu,%s,%s,%s,%s\n",
                  t,at,key->c_str(),e.symbol.c_str(),npc->isDead() ? 0 : 1,
@@ -186,6 +239,8 @@ void writeSample(World& w, Journal& j, int64_t scheduledMs) {
     ++j.rowCount;
     }
   std::fflush(j.samples);
+  if(j.heights!=nullptr) std::fflush(j.heights);
+  if(j.arrivals!=nullptr) std::fflush(j.arrivals);
   if(j.events!=nullptr)
     std::fflush(j.events);
   if(j.cost!=nullptr) {
@@ -205,10 +260,18 @@ void writeSample(World& w, Journal& j, int64_t scheduledMs) {
         near60 += d<6000.f*6000.f;
         }
       }
-    std::fprintf(j.cost,"%.0f,%.3f,%zu,%zu,%llu,%zu,%zu,%llu,%llu,%.6f,%.6f\n",t,wall,near30,near60,
+    std::fprintf(j.cost,"%.0f,%.3f,%zu,%zu,%llu,%zu,%zu,%llu,%llu,%.6f,%.6f,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu\n",t,wall,near30,near60,
                  (unsigned long long)(s.ticks-prev.ticks),s.full,s.simplified,
                  (unsigned long long)(s.toFull-prev.toFull),(unsigned long long)(s.toSimplified-prev.toSimplified),
-                 s.fullTickMsTotal-prev.fullTickMsTotal,s.simplifiedTickMsTotal-prev.simplifiedTickMsTotal);
+                 s.fullTickMsTotal-prev.fullTickMsTotal,s.simplifiedTickMsTotal-prev.simplifiedTickMsTotal,
+                 (unsigned long long)(s.fullNpcTicks-prev.fullNpcTicks),
+                 (unsigned long long)(s.simplifiedNpcTicks-prev.simplifiedNpcTicks),
+                 (unsigned long long)(s.nativeCombatNpcTicks-prev.nativeCombatNpcTicks),
+                 (unsigned long long)(s.nativeMobsiApproachNpcTicks-prev.nativeMobsiApproachNpcTicks),
+                 (unsigned long long)(s.fpLoadResolutions-prev.fpLoadResolutions),
+                 (unsigned long long)(s.graphFallbackGround-prev.graphFallbackGround),
+                 (unsigned long long)(s.graphFallbackSegment-prev.graphFallbackSegment),
+                 (unsigned long long)(s.graphFallbackNpcTicks-prev.graphFallbackNpcTicks));
     std::fflush(j.cost);
     j.tiersAtSample = s;
     }
@@ -227,6 +290,7 @@ Entry& track(World& w, Journal& j, Npc& npc, bool initial) {
   e.ta    = npc.currentRoutineIndex();
   e.dead  = npc.isDead();
   auto& ret = j.entries.emplace(&npc,std::move(e)).first->second;
+  observeMovement(w,j,npc);
   if(j.opt.isolate) {
     w.script().isolateRandom(npc,j.opt.seed,hash32(ret.key));
     j.isolated.push_back(&npc);
@@ -253,16 +317,28 @@ void finish(World& w, Journal& j, const char* reason) {
   const double fullMs = s.fullTickMsTotal-j.tiersAtStart.fullTickMsTotal;
   const double simpMs = s.simplifiedTickMsTotal-j.tiersAtStart.simplifiedTickMsTotal;
   const uint64_t ticks = s.ticks-j.tiersAtStart.ticks;
-  char buf[1024];
+  char buf[1536];
   std::snprintf(buf,sizeof(buf),
                 ",\"end_reason\":\"%s\",\"end_world_ms\":%lld,\"elapsed_game_min\":%.4f,\"wall_s\":%.3f,"
                 "\"samples\":%llu,\"rows\":%llu,\"events\":%llu,\"inserted\":%llu,\"removed\":%llu,\"deaths\":%llu,"
-                "\"world_ticks\":%llu,\"npc_full_tick_ms\":%.3f,\"npc_simplified_tick_ms\":%.3f,"
+                "\"world_ticks\":%llu,\"npc_full_ticks\":%llu,\"npc_simplified_ticks\":%llu,\"npc_native_combat_ticks\":%llu,"
+                "\"npc_native_mobsi_approach_ticks\":%llu,"
+                "\"npc_graph_fp_load_resolutions\":%llu,\"npc_graph_fallback_ground\":%llu,"
+                "\"npc_graph_fallback_segment\":%llu,\"npc_graph_fallback_ticks\":%llu,"
+                "\"npc_full_tick_ms\":%.3f,\"npc_simplified_tick_ms\":%.3f,"
                 "\"npc_to_full\":%llu,\"npc_to_simplified\":%llu,\"npc_full_end\":%zu,\"npc_simplified_end\":%zu",
                 reason,(long long)w.time().toInt(),relativeMinutes(j,w.time().toInt()),wall,
                 (unsigned long long)j.sampleCount,(unsigned long long)j.rowCount,(unsigned long long)j.eventCount,
                 (unsigned long long)j.inserted,(unsigned long long)j.removed,(unsigned long long)j.deaths,
-                (unsigned long long)ticks,fullMs,simpMs,
+                (unsigned long long)ticks,
+                (unsigned long long)(s.fullNpcTicks-j.tiersAtStart.fullNpcTicks),
+                (unsigned long long)(s.simplifiedNpcTicks-j.tiersAtStart.simplifiedNpcTicks),
+                (unsigned long long)(s.nativeCombatNpcTicks-j.tiersAtStart.nativeCombatNpcTicks),
+                (unsigned long long)(s.nativeMobsiApproachNpcTicks-j.tiersAtStart.nativeMobsiApproachNpcTicks),
+                (unsigned long long)s.fpLoadResolutions,
+                (unsigned long long)(s.graphFallbackGround-j.tiersAtStart.graphFallbackGround),
+                (unsigned long long)(s.graphFallbackSegment-j.tiersAtStart.graphFallbackSegment),
+                (unsigned long long)(s.graphFallbackNpcTicks-j.tiersAtStart.graphFallbackNpcTicks),fullMs,simpMs,
                 (unsigned long long)(s.toFull-j.tiersAtStart.toFull),
                 (unsigned long long)(s.toSimplified-j.tiersAtStart.toSimplified),s.full,s.simplified);
   writeHeader(w,j,std::string(buf)+",\"logic_audit\":"+NpcLogicAudit::stats().json());
@@ -272,7 +348,7 @@ void finish(World& w, Journal& j, const char* reason) {
   for(const auto* npc:j.isolated)
     w.script().releaseIsolatedRandom(npc);
   j.isolated.clear();
-  for(auto** f:{&j.samples,&j.events,&j.cost})
+  for(auto** f:{&j.samples,&j.events,&j.cost,&j.heights,&j.arrivals})
     if(*f!=nullptr) {
       std::fclose(*f);
       *f = nullptr;
@@ -280,6 +356,7 @@ void finish(World& w, Journal& j, const char* reason) {
   Tempest::Log::i("npcday: ",reason,", ",j.sampleCount," samples, ",j.rowCount," rows, ",j.eventCount," events, ",wall," s");
   j.active = false;
   j.entries.clear();
+  j.movements.clear();
   j.nextOrdinal.clear();
   }
 
@@ -305,8 +382,13 @@ bool NpcDayJournal::start(World& w, const Options& options, std::string& error) 
   j.samples = std::fopen((base+"npc-day.csv").c_str(),"w");
   j.events  = std::fopen((base+"npc-day-events.csv").c_str(),"w");
   j.cost    = std::fopen((base+"npc-day-cost.csv").c_str(),"w");
-  if(j.samples==nullptr || j.events==nullptr || j.cost==nullptr) {
-    for(auto** f:{&j.samples,&j.events,&j.cost})
+  if(NpcLogicAudit::enabled()) {
+    j.heights=std::fopen((base+"npc-day-heights.csv").c_str(),"w");
+    j.arrivals=std::fopen((base+"npc-day-arrivals.csv").c_str(),"w");
+    }
+  if(j.samples==nullptr || j.events==nullptr || j.cost==nullptr ||
+     (NpcLogicAudit::enabled() && (j.heights==nullptr || j.arrivals==nullptr))) {
+    for(auto** f:{&j.samples,&j.events,&j.cost,&j.heights,&j.arrivals})
       if(*f!=nullptr) {
         std::fclose(*f);
         *f = nullptr;
@@ -318,7 +400,13 @@ bool NpcDayJournal::start(World& w, const Options& options, std::string& error) 
                          "inv_hash,inv_items,mob,tier,policy,hero\n");
   std::fprintf(j.events,"t_min,key,kind,value,x,y,z\n");
   std::fprintf(j.cost,"t_min,wall_s,near_hero_30m,near_hero_60m,world_ticks,npc_full,npc_simplified,to_full,"
-                      "to_simplified,full_tick_ms,simplified_tick_ms\n");
+                      "to_simplified,full_tick_ms,simplified_tick_ms,full_npc_ticks,simplified_npc_ticks,native_combat_npc_ticks,native_mobsi_approach_npc_ticks,"
+                      "npc_graph_fp_load_resolutions,npc_graph_fallback_ground,npc_graph_fallback_segment,npc_graph_fallback_ticks\n");
+  if(j.heights!=nullptr)
+    std::fprintf(j.heights,"t_min,key,x,y,z,nearest_wp,ground_hit,height_error_m,guild,slide_angle_deg,step_height_cm,edge_to,goal_kind,goal_name\n");
+  if(j.arrivals!=nullptr)
+    std::fprintf(j.arrivals,"t_min,key,world_tick_ms,start_tick_ms,start_t_min,start_observed,kind,destination,target_id,target_key,"
+                            "target_x,target_y,target_z,x,y,z,zs,queue_head,body,executor\n");
   j.active       = true;
   j.startMs      = w.time().toInt();
   j.endMs        = j.startMs+int64_t(options.minutes)*60000;
@@ -373,6 +461,7 @@ void NpcDayJournal::tick(World& w) {
     auto* npc = w.npcById(i);
     auto& e   = track(w,j,*npc,false);
     e.lastSeen = j.tick;
+    observeMovement(w,j,*npc);
     const size_t state = npc->currentState().ptr;
     if(state!=e.state) {
       if(e.state!=size_t(-1))
@@ -405,6 +494,7 @@ void NpcDayJournal::tick(World& w) {
       ++j.eventCount;
       }
     ++j.removed;
+    j.movements.erase(it->first);
     it = j.entries.erase(it);
     }
   const int64_t now = w.time().toInt();
@@ -414,6 +504,55 @@ void NpcDayJournal::tick(World& w) {
     }
   if(j.active && now>=j.endMs)
     finish(w,j,"done");
+  }
+
+void NpcDayJournal::arrived(const Npc& npc) {
+  auto& j=journal();
+  if(!j.active || j.arrivals==nullptr)
+    return;
+  const auto entry=j.entries.find(&npc);
+  if(entry==j.entries.end())
+    return;
+  const auto& w=npc.world();
+  auto goal=npc.navigationGoal();
+  // Native waypoint arrival pops the last path point before clearing GoTo;
+  // the point it attached to still identifies the completed destination.
+  if(goal.point==nullptr && npc.moveHint()==Npc::GT_Way) {
+    goal.point=npc.currentWayPoint();
+    if(goal.point!=nullptr) {
+      goal.kind=goal.point->isFreePoint() ? "freepoint" : "waypoint";
+      goal.name=goal.point->name;
+      goal.position=goal.point->position();
+      }
+    }
+  if(!goal.active)
+    return;
+  const auto movement=j.movements.find(&npc);
+  const bool observed=movement!=j.movements.end() && sameMovement(movement->second,goal);
+  const auto tick=w.tickCount();
+  const auto gameMs=w.time().toInt();
+  const auto p=npc.position();
+  const auto* head=npc.aiQueueFront();
+  uint32_t targetId=uint32_t(-1);
+  std::string targetKey="-";
+  if(goal.npc!=nullptr) {
+    targetId=w.npcId(goal.npc);
+    const auto target=j.entries.find(goal.npc);
+    targetKey=target!=j.entries.end() ? target->second.key : symbolName(w,size_t(goal.npc->instanceSymbol()));
+    }
+  else if(goal.kind=="item" && head!=nullptr && head->act==AI_GotoItem && head->item!=nullptr)
+    targetId=w.itmId(&head->item->handle());
+  std::fprintf(j.arrivals,"%.4f,%s,%llu,%llu,%.4f,%d,%s,%s,%lld,%s,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%s,%s,%u,%s\n",
+               relativeMinutes(j,gameMs),entry->second.key.c_str(),(unsigned long long)tick,
+               (unsigned long long)(observed ? movement->second.tick : tick),
+               relativeMinutes(j,observed ? movement->second.gameMs : gameMs),observed ? 1 : 0,
+               clean(goal.kind).c_str(),clean(goal.name).c_str(),targetId==uint32_t(-1) ? -1ll : (long long)targetId,
+               targetKey.c_str(),double(goal.position.x),double(goal.position.y),double(goal.position.z),
+               double(p.x),double(p.y),double(p.z),symbolName(w,npc.currentState().ptr).c_str(),
+               head!=nullptr ? actionName(uint32_t(head->act)) : "-",uint32_t(npc.bodyStateMasked()),
+               npc.usesSimplifiedMovement() ? "graph" : "native");
+  if(movement!=j.movements.end())
+    j.movements.erase(movement);
   }
 
 void NpcDayJournal::stop(World& w, const char* reason) {

@@ -1233,7 +1233,7 @@ async def test_native_held_threat_combat_waits_for_the_pilot(claimed) -> None:
     from types import SimpleNamespace
 
     from gothic_ai.brain.apply import GameApplier
-    from gothic_ai.cli import _native_combat_available
+    from gothic_ai.session import _native_combat_available
 
     class Link:
         def __init__(self):

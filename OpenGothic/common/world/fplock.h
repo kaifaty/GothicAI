@@ -15,6 +15,7 @@ class FpLock final {
 
     void load(Serialize& fin);
     void save(Serialize& fout) const;
+    const WayPoint* point() const { return pt; }
 
   private:
     const WayPoint* pt=nullptr;

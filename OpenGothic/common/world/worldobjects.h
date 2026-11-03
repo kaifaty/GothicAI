@@ -30,6 +30,8 @@ struct PhysicsNoise;
 
 class WorldObjects final {
   public:
+    size_t probeVobBytes() const;
+
     WorldObjects(World &owner);
     ~WorldObjects();
 
@@ -60,6 +62,10 @@ class WorldObjects final {
     // first, loading calls it once the hero, camera and residency are ready.
     void           updateSimTiers();
     const NpcSimTiers::Stats& simTierStats() const { return simTiers; }
+    void noteGraphFpLoadResolution() { ++simTiers.fpLoadResolutions; }
+    void noteNpcGraphFallback(bool ground) {
+      if(ground) ++simTiers.graphFallbackGround; else ++simTiers.graphFallbackSegment;
+      }
     void           prepareRagdolls();
     void           syncRagdolls();
 

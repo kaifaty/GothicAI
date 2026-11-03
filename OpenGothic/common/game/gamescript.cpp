@@ -10,6 +10,7 @@
 #include "game/definitions/spelldefinitions.h"
 #include "game/serialize.h"
 #include "game/herodeed.h"
+#include "game/healing.h"
 #include "utils/string_frm.h"
 #include "world/objects/npc.h"
 #include "world/objects/item.h"
@@ -21,6 +22,7 @@
 #include "gothic.h"
 #include "loadprobe.h"
 #include "navdemos.h"
+#include "testbench.h"
 
 using namespace Tempest;
 
@@ -470,6 +472,7 @@ void GameScript::loadDialogOU() {
   }
 
 void GameScript::initializeInstanceNpc(const std::shared_ptr<zenkit::INpc>& npc, size_t instance) {
+  LoadProbe::Startup::Scope startupProbe(LoadProbe::Startup::Script);
   auto sym = vm.find_symbol_by_index(uint32_t(instance));
 
   if(sym == nullptr) {
@@ -498,6 +501,7 @@ void GameScript::initializeInstanceNpc(const std::shared_ptr<zenkit::INpc>& npc,
 
 void GameScript::initializeInstanceItem(const std::shared_ptr<zenkit::IItem>& item, size_t instance) {
   LoadProbe::Vobs::Scope probe("script_item");
+  LoadProbe::Startup::Scope itemProbe(LoadProbe::Startup::Script,false,"placed-items");
   auto sym = vm.find_symbol_by_index(uint32_t(instance));
 
   if(sym == nullptr) {
@@ -1297,6 +1301,9 @@ void GameScript::playerHotLamePotion(Npc& pl) {
   if(fn==nullptr)
     return;
 
+  if(Gothic::physicsFlags().meleeHealInterrupt && startHotkeyPotion(pl,true))
+    return;
+
   ScopeVar self(*vm.global_self(), pl.handlePtr());
   vm.call_function<void>(fn);
   }
@@ -1310,8 +1317,57 @@ void GameScript::playerHotLameHeal(Npc& pl) {
   if(fn==nullptr)
     return;
 
+  if(Gothic::physicsFlags().meleeHealInterrupt && startHotkeyPotion(pl,false))
+    return;
+
   ScopeVar self(*vm.global_self(), pl.handlePtr());
   vm.call_function<void>(fn);
+  }
+
+bool GameScript::startHotkeyPotion(Npc& pl, bool mana) {
+  const char* kind = mana ? "mana" : "health";
+  auto note = [kind](std::string_view item) {
+    if(TestBench::isActive())
+      TestBench::note(string_frm("heal hotkey ",kind,": ",item).c_str());
+    };
+  if(pl.isDown()) {
+    note("none");
+    return true;
+    }
+  if(pl.hasState(BS_ITEMINTERACT) || pl.hasQueuedItemUse())
+    return true;
+
+  const char* healthItems[] = {"ITPO_HEALTH_01","ITPO_HEALTH_02","ITPO_HEALTH_03"};
+  const char* manaItems[] = {"ITPO_MANA_01","ITPO_MANA_02","ITPO_MANA_03"};
+  const char* healthAmounts[] = {"HP_ESSENZ","HP_EXTRAKT","HP_ELIXIER"};
+  const char* manaAmounts[] = {"MANA_ESSENZ","MANA_EXTRAKT","MANA_ELIXIER"};
+  Healing::Potion candidates[3] = {};
+  for(size_t i=0; i<3; ++i) {
+    auto* item = vm.find_symbol_by_name(mana ? manaItems[i] : healthItems[i]);
+    auto* amount = vm.find_symbol_by_name(mana ? manaAmounts[i] : healthAmounts[i]);
+    if(item==nullptr || amount==nullptr)
+      throw std::runtime_error("Missing potion hotkey item or amount symbol");
+    candidates[i] = {item->index(),amount->get_int(),pl.itemCount(item->index())>0};
+    }
+  const auto missing = pl.attribute(mana ? ATR_MANAMAX : ATR_HITPOINTSMAX) -
+                       pl.attribute(mana ? ATR_MANA : ATR_HITPOINTS);
+  // PLAYER_HOTKEY_LAME_* uses the strongest dose that fits the missing amount,
+  // otherwise the weakest available dose. Its no-item/full-gauge messages still run below.
+  const auto selected = Healing::choosePotion(candidates,missing);
+  if(selected==Healing::NoPotion) {
+    note("none");
+    return false;
+    }
+  note(vm.find_symbol_by_index(uint32_t(selected))->name());
+  if(pl.weaponState()!=WeaponState::NoWeapon && pl.itemUseInHandAnimation(*pl.getItem(selected)).empty()) {
+    if(TestBench::isActive())
+      TestBench::note(("item use "+std::string(TestBench::who(&pl))+": "+
+                      vm.find_symbol_by_index(uint32_t(selected))->name()+" holster path: no compatible in-hand clip or deferred effect").c_str());
+    pl.stopAnim("");
+    pl.aiPush(AiQueue::aiRemoveWeapon());
+    }
+  pl.aiPush(AiQueue::aiUseItem(int32_t(selected)));
+  return true;
   }
 
 std::string_view GameScript::spellCastAnim(Npc&, Item &it) {

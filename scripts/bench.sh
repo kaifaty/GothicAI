@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runs a test-bench scenario inside the game: video with a debug overlay, per-frame metrics, a report.
+# Runs a test-bench scenario through the windowed game or the headless lockstep runner.
 # See scripts/bench/README.md.
 #
 #   scripts/bench.sh <scenario file | name from scripts/bench/> [out dir]
@@ -10,13 +10,16 @@
 # the stall watchdog stops after completion, including with KEEP=1.
 #
 # env: GOTHIC_DIR    game data (default: /Volumes/DevSSD/Dev/games/Gothic II)
-#      BENCH_HOST    auto (default): Ryzen first, ryzen: require Ryzen, local: this machine
+#      BENCH_HOST    auto (default): headless dev-ubuntu, Ryzen, local; windowed Ryzen, local
 #      RYZEN_HOST    SSH host for Ryzen (default: ryzen)
-#      RYZEN_LOCK_WAIT seconds to wait for the worktree lock and gq (default: auto 120, ryzen 900)
+#      DEV_UBUNTU_HOST SSH host for headless benches (default: dev-ubuntu)
+#      RYZEN_LOCK_WAIT seconds to wait for the worktree lock and gq (default: auto 120, explicit host 900)
 #      RYZEN_MAX     gq job time limit, including the build (default: 30m)
-#      RYZEN_BENCH_CLASS quick (default), batch for calibration, or quiet for timing
+#      RYZEN_BENCH_CLASS quick (window default), batch (headless default), or quiet for timing
 #      RYZEN_BENCH_ARCHIVE absolute local Ryzen task path to archive a result copy through gq
 #      GAME_BIN      game executable (default: OpenGothic/build/opengothic/Gothic2Notr)
+#      BENCH_HEADLESS 1: runner in lockstep, 0: window; default: scenario's # @headless marker
+#      RUNNER_BIN    headless executable (default: gothic-body-runner beside GAME_BIN)
 #      TEMPEST_WINDOW_SIZE client frame size (default: 800x600)
 #      SAVE          save to start from (default: save_slot_1.sav in the main checkout)
 #      WORLD         start a fresh game in this world instead (NEWWORLD.ZEN, OLDWORLD.ZEN, ADDONWORLD.ZEN, DRAGONISLAND.ZEN)
@@ -25,12 +28,13 @@
 #      TIMEOUT=300   seconds before the game is killed
 #      BENCH_PROGRESS seconds between progress lines (default: 300; 0 disables)
 #      BENCH_STALL   seconds without output changes before killing a stalled game (default: 600; 0 disables)
-#      KEEP=1        the game stays open after the scenario
+#      KEEP=1        the window stays open after the scenario (incompatible with headless)
 #      SOUND, MUSIC  volumes 0..1 (default 0); with TEMPEST_AUDIO_LOOPBACK=48000 the sound of a segment
 #                    goes into <segment>.wav instead of the speakers
 #      MOVABLE_VOBS  optional initial GAME movable_vobs setting (0 or 1), before world loading
 #      ITEM_HULLS    optional initial GAME item_hulls setting (0 or 1), for new item bodies
 #      ITEM_DEEPEST_CONTACT optional initial GAME item_deepest_contact setting (0 or 1)
+#      RAGDOLL_BIRTH_GUARD optional initial GAME ragdoll_birth_guard setting (0 or 1)
 #      FURNITURE_PARTS optional initial GAME furniture_parts setting (0 or 1)
 #      ARROW_STICKING optional initial GAME arrow_sticking setting (0 or 1), before world loading
 #      PHYSICS_NOISE optional initial GAME physics_noise setting (0 or 1), before world loading
@@ -53,6 +57,10 @@
 #      MELEE_STAMINA optional initial GAME melee_stamina setting (0 or 1)
 #      MELEE_PARRY optional initial GAME melee_parry setting (0 or 1)
 #      MELEE_PARRY_AI optional initial GAME melee_parry_ai setting (0 or 1)
+#      MELEE_AI_DODGE optional initial GAME melee_ai_dodge setting (0 or 1)
+#      MELEE_AI_RIPOSTE optional initial GAME melee_ai_riposte setting (0 or 1)
+#      MELEE_AI_CHARGE optional initial GAME melee_ai_charge setting (0 or 1)
+#      MELEE_AI_BARGE optional initial GAME melee_ai_barge setting (0 or 1)
 #      MELEE_STAGGER optional initial GAME melee_stagger setting (0 or 1)
 #      MELEE_BEAST_POISE optional initial GAME melee_beast_poise setting (0 or 1)
 #      MELEE_BACKSTAB optional initial GAME melee_backstab setting (0 or 1)
@@ -60,6 +68,9 @@
 #      MELEE_BARGE optional initial GAME melee_barge setting (0 or 1)
 #      MELEE_CHARGE optional initial GAME melee_charge setting (0 or 1)
 #      MELEE_RIPOSTE optional initial GAME melee_riposte setting (0 or 1)
+#      MELEE_HEAL_INTERRUPT optional initial GAME melee_heal_interrupt setting (0 or 1)
+#      MELEE_USE_IN_HAND optional initial GAME melee_use_in_hand setting (0 or 1)
+#      FOOD_OVER_TIME optional initial GAME food_over_time setting (0 or 1)
 #      MELEE_REACTIONS optional initial GAME melee_reactions setting (0 or 1)
 #      MELEE_BLADE_SHADOW optional initial GAME melee_blade_shadow setting (0 or 1)
 #      OPENGOTHIC_TEXTURES  sharper textures (default: those of scripts/hd-textures.sh, when made; empty: none)
@@ -79,8 +90,8 @@ FRACTURE_CACHE="$HOME/.local/share/gothic-ai/fracture"
 CONVEX_PARTS_CACHE="$HOME/.local/share/gothic-ai/convex-parts"
 BENCH_HOST="${BENCH_HOST:-auto}"
 case "$BENCH_HOST" in
-  auto|ryzen|local) ;;
-  *) echo "bench: BENCH_HOST must be auto, ryzen or local" >&2; exit 2 ;;
+  auto|ryzen|dev-ubuntu|local) ;;
+  *) echo "bench: BENCH_HOST must be auto, ryzen, dev-ubuntu or local" >&2; exit 2 ;;
 esac
 
 SCEN="${1:?usage: scripts/bench.sh <scenario> [out dir]}"
@@ -88,15 +99,35 @@ SCEN="${1:?usage: scripts/bench.sh <scenario> [out dir]}"
 [[ -f "$SCEN" ]] || { echo "no scenario: $1" >&2; exit 2; }
 SCEN="$(cd "$(dirname "$SCEN")" && pwd)/$(basename "$SCEN")"
 NAME="$(basename "$SCEN" .bench)"
-if [[ "$NAME" == routine-return ]]; then
+if [[ -z "${BENCH_HEADLESS+x}" ]]; then
+  BENCH_HEADLESS=0
+  if grep -qx '# @headless' "$SCEN"; then BENCH_HEADLESS=1; fi
+fi
+case "$BENCH_HEADLESS" in
+  0|1) export BENCH_HEADLESS ;;
+  *) echo 'bench: BENCH_HEADLESS must be 0 or 1' >&2; exit 2 ;;
+esac
+if [[ "$BENCH_HOST" == dev-ubuntu ]]; then
+  [[ "$BENCH_HEADLESS" == 1 ]] || { echo 'bench: окна на dev-ubuntu нет' >&2; exit 2; }
+  [[ -z "${RYZEN_BENCH_ARCHIVE:-}" ]] || { echo 'bench: RYZEN_BENCH_ARCHIVE is not supported on dev-ubuntu (no shared store)' >&2; exit 2; }
+fi
+if [[ "$BENCH_HEADLESS" == 1 && "${KEEP:-}" == 1 ]]; then
+  echo 'bench: KEEP=1 is incompatible with headless lockstep' >&2
+  exit 2
+fi
+if [[ "$NAME" == routine-return || "$NAME" == npc-day-parity || "$NAME" == npc-tier-transitions ]]; then
   export WORLD="${WORLD:-NEWWORLD.ZEN}"
   export TIMEOUT="${TIMEOUT:-3600}"
   export RYZEN_MAX="${RYZEN_MAX:-75m}"
-  [[ "$WORLD" == NEWWORLD.ZEN ]] || { echo "bench: routine-return requires WORLD=NEWWORLD.ZEN" >&2; exit 2; }
+  if [[ "$NAME" == routine-return ]]; then
+    [[ "$WORLD" == NEWWORLD.ZEN ]] || { echo "bench: routine-return requires WORLD=NEWWORLD.ZEN" >&2; exit 2; }
+  fi
 fi
 if [[ "$NAME" == streaming-flythrough || "$NAME" == streaming-shots || "$NAME" == furniture-parts ]]; then
   export WORLD="${WORLD:-NEWWORLD.ZEN}"
-  export RYZEN_BENCH_CLASS="${RYZEN_BENCH_CLASS:-quiet}"
+  if [[ "$BENCH_HEADLESS" == 0 ]]; then
+    export RYZEN_BENCH_CLASS="${RYZEN_BENCH_CLASS:-quiet}"
+  fi
 fi
 NEEDS_CADENCE=0
 if awk '$1 == "cadence" { found=1 } END { exit !found }' "$SCEN"; then NEEDS_CADENCE=1; fi
@@ -140,8 +171,8 @@ PY
 )"
   fi
   if [[ -n "$LOCAL_REASON" ]]; then
-    if [[ "$BENCH_HOST" == ryzen ]]; then
-      echo "bench: cannot run on Ryzen: $LOCAL_REASON" >&2
+    if [[ "$BENCH_HOST" != auto ]]; then
+      echo "bench: cannot run on $BENCH_HOST: $LOCAL_REASON" >&2
       exit 2
     fi
     echo "bench: falling back to Mac: $LOCAL_REASON" >&2
@@ -151,28 +182,44 @@ PY
     else
       LOCK_WAIT="${RYZEN_LOCK_WAIT:-900}"
     fi
-    rm -f -- "$OUT/game.log" "$OUT/host.txt"
-    RYZEN_RC=0
-    RYZEN_LOCK_WAIT="$LOCK_WAIT" "$ROOT/scripts/ryzen.sh" bench "$SCEN" "$OUT" 2>&1 | tee "$OUT/ryzen.log" \
-      || RYZEN_RC="${PIPESTATUS[0]}"
-    if [[ -f "$OUT/game.log" ]]; then
-      printf 'ryzen\n' >"$OUT/host.txt"
-      echo "bench: ran on ryzen"
-      echo "$OUT"
-      exit "$RYZEN_RC"
+    REMOTE_HOSTS=("$BENCH_HOST")
+    if [[ "$BENCH_HOST" == auto ]]; then
+      REMOTE_HOSTS=(ryzen)
+      if [[ "$BENCH_HEADLESS" == 1 ]]; then REMOTE_HOSTS=(dev-ubuntu ryzen); fi
     fi
-    if [[ "$BENCH_HOST" == ryzen ]]; then
-      # A successful transport without a game log is still a failed launch.
-      [[ "$RYZEN_RC" != 0 ]] || RYZEN_RC=1
-      exit "$RYZEN_RC"
-    fi
-    LOCAL_REASON="$(awk 'NF && !/^Ryzen: removed / && !/^bench: output in / { line=$0 } END { print line }' "$OUT/ryzen.log")"
-    echo "bench: falling back to Mac: ${LOCAL_REASON:-Ryzen did not start the game (exit $RYZEN_RC)}" >&2
+    for ((host_index = 0; host_index < ${#REMOTE_HOSTS[@]}; host_index++)); do
+      HOST="${REMOTE_HOSTS[$host_index]}"
+      SSH_HOST="${RYZEN_HOST:-ryzen}"
+      if [[ "$HOST" == dev-ubuntu ]]; then SSH_HOST="${DEV_UBUNTU_HOST:-dev-ubuntu}"; fi
+      rm -f -- "$OUT/game.log" "$OUT/host.txt"
+      RYZEN_RC=0
+      RYZEN_HOST="$SSH_HOST" RYZEN_LOCK_WAIT="$LOCK_WAIT" "$ROOT/scripts/ryzen.sh" bench "$SCEN" "$OUT" 2>&1 | tee "$OUT/$HOST.log" \
+        || RYZEN_RC="${PIPESTATUS[0]}"
+      if [[ -f "$OUT/game.log" ]]; then
+        printf '%s\n' "$HOST" >"$OUT/host.txt"
+        echo "bench: ran on $HOST"
+        echo "$OUT"
+        exit "$RYZEN_RC"
+      fi
+      if [[ "$BENCH_HOST" != auto ]]; then
+        # A successful transport without a game log is still a failed launch.
+        [[ "$RYZEN_RC" != 0 ]] || RYZEN_RC=1
+        exit "$RYZEN_RC"
+      fi
+      LOCAL_REASON="$(awk 'NF && !/^Ryzen: (removed |queue guard |preparation check |window wait |bench [0-9]+s, exit )/ && !/^bench: output in / { line=$0 } END { print line }' "$OUT/$HOST.log")"
+      NEXT_HOST=Mac
+      if (( host_index + 1 < ${#REMOTE_HOSTS[@]} )); then NEXT_HOST="${REMOTE_HOSTS[$((host_index + 1))]}"; fi
+      echo "bench: falling back to $NEXT_HOST: $HOST: ${LOCAL_REASON:-game did not start (exit $RYZEN_RC)}" >&2
+    done
   fi
 fi
 
 if [[ -n "${WORLD:-}" ]]; then
-  START_ARGS=(-nomenu -w "$WORLD")
+  if [[ "$BENCH_HEADLESS" == 1 ]]; then
+    START_ARGS=(-nomenu --world "$WORLD")
+  else
+    START_ARGS=(-nomenu -w "$WORLD")
+  fi
 else
   if [[ -z "${SAVE:-}" ]]; then
     # worktrees share the save of the main checkout
@@ -180,7 +227,11 @@ else
     SAVE="$(dirname "$COMMON")/save_slot_1.sav"
   fi
   [[ -f "$SAVE" ]] || { echo "no save: $SAVE (set SAVE=...)" >&2; exit 2; }
-  START_ARGS=(-save 1)
+  if [[ "$BENCH_HEADLESS" == 1 ]]; then
+    START_ARGS=(--save "$OUT/run/save_slot_1.sav")
+  else
+    START_ARGS=(-save 1)
+  fi
 fi
 
 # No videos (`-nointro`), as in e2e: on a fresh WORLD the new game's INTRO.BIK otherwise plays for
@@ -190,7 +241,9 @@ if [[ "${GOTHIC_INTRO:-0}" != 1 ]]; then
 fi
 
 if [[ "${NO_BUILD:-}" != 1 ]]; then
-  cmake --build "$ROOT/OpenGothic/build" --target Gothic2Notr >"$OUT/build.log" 2>&1 \
+  BUILD_TARGET=Gothic2Notr
+  if [[ "$BENCH_HEADLESS" == 1 ]]; then BUILD_TARGET=gothic-body-runner; fi
+  cmake --build "$ROOT/OpenGothic/build" --target "$BUILD_TARGET" >"$OUT/build.log" 2>&1 \
     || { tail -30 "$OUT/build.log"; exit 1; }
 fi
 
@@ -249,7 +302,7 @@ musicVolume=${MUSIC:-0}
 musicEnabled=$([[ "${MUSIC:-0}" == 0 || "${MUSIC:-0}" == 0.0 ]] && echo 0 || echo 1)
 worldSounds=${WORLD_SOUNDS:-1}
 EOF
-if [[ -n "${MOVABLE_VOBS:-}${ITEM_HULLS:-}${ITEM_DEEPEST_CONTACT:-}${FURNITURE_PARTS:-}${ARROW_STICKING:-}${PHYSICS_NOISE:-}${DESTRUCTION:-}${BUOYANCY:-}${CLOTH:-}${ITEM_WAKE:-}${PLACED_ITEMS:-}${BODY_IMPACT_DAMAGE:-}${BODY_TRACES:-}${BLOOD:-}${STATIC_COLLISION_SPLIT:-}${CHARACTER_VIRTUAL:-}${NPC_CHARACTER_VIRTUAL:-}${MONSTER_CHARACTER_VIRTUAL:-}${MELEE_BLADE_SHADOW:-}${MELEE_PHYSICS_HITS:-}${MELEE_POSTURE:-}${MELEE_REACTIONS:-}${MELEE_DOWN_TACTICS:-}${MELEE_HITSTOP:-}${MELEE_STAMINA:-}${MELEE_PARRY:-}${MELEE_PARRY_AI:-}${MELEE_STAGGER:-}${MELEE_BEAST_POISE:-}${MELEE_BACKSTAB:-}${MELEE_DODGE:-}${MELEE_BARGE:-}${MELEE_CHARGE:-}${MELEE_RIPOSTE:-}" ]]; then
+if [[ -n "${MOVABLE_VOBS:-}${ITEM_HULLS:-}${ITEM_DEEPEST_CONTACT:-}${RAGDOLL_BIRTH_GUARD:-}${FURNITURE_PARTS:-}${ARROW_STICKING:-}${PHYSICS_NOISE:-}${DESTRUCTION:-}${BUOYANCY:-}${CLOTH:-}${ITEM_WAKE:-}${PLACED_ITEMS:-}${BODY_IMPACT_DAMAGE:-}${BODY_TRACES:-}${BLOOD:-}${STATIC_COLLISION_SPLIT:-}${CHARACTER_VIRTUAL:-}${NPC_CHARACTER_VIRTUAL:-}${MONSTER_CHARACTER_VIRTUAL:-}${MELEE_BLADE_SHADOW:-}${MELEE_PHYSICS_HITS:-}${MELEE_POSTURE:-}${MELEE_REACTIONS:-}${MELEE_DOWN_TACTICS:-}${MELEE_HITSTOP:-}${MELEE_STAMINA:-}${MELEE_PARRY:-}${MELEE_PARRY_AI:-}${MELEE_AI_DODGE:-}${MELEE_AI_RIPOSTE:-}${MELEE_AI_CHARGE:-}${MELEE_AI_BARGE:-}${MELEE_STAGGER:-}${MELEE_BEAST_POISE:-}${MELEE_BACKSTAB:-}${MELEE_DODGE:-}${MELEE_BARGE:-}${MELEE_CHARGE:-}${MELEE_RIPOSTE:-}${MELEE_HEAL_INTERRUPT:-}${MELEE_USE_IN_HAND:-}${FOOD_OVER_TIME:-}" ]]; then
   printf '\n[GAME]\n' >>"$RUN/Gothic.ini"
   if [[ -n "${MOVABLE_VOBS:-}" ]]; then
     [[ "$MOVABLE_VOBS" == 0 || "$MOVABLE_VOBS" == 1 ]] || { echo "MOVABLE_VOBS must be 0 or 1" >&2; exit 2; }
@@ -262,6 +315,10 @@ if [[ -n "${MOVABLE_VOBS:-}${ITEM_HULLS:-}${ITEM_DEEPEST_CONTACT:-}${FURNITURE_P
   if [[ -n "${ITEM_DEEPEST_CONTACT:-}" ]]; then
     [[ "$ITEM_DEEPEST_CONTACT" == 0 || "$ITEM_DEEPEST_CONTACT" == 1 ]] || { echo "ITEM_DEEPEST_CONTACT must be 0 or 1" >&2; exit 2; }
     printf 'item_deepest_contact=%s\n' "$ITEM_DEEPEST_CONTACT" >>"$RUN/Gothic.ini"
+  fi
+  if [[ -n "${RAGDOLL_BIRTH_GUARD:-}" ]]; then
+    [[ "$RAGDOLL_BIRTH_GUARD" == 0 || "$RAGDOLL_BIRTH_GUARD" == 1 ]] || { echo "RAGDOLL_BIRTH_GUARD must be 0 or 1" >&2; exit 2; }
+    printf 'ragdoll_birth_guard=%s\n' "$RAGDOLL_BIRTH_GUARD" >>"$RUN/Gothic.ini"
   fi
   if [[ -n "${FURNITURE_PARTS:-}" ]]; then
     [[ "$FURNITURE_PARTS" == 0 || "$FURNITURE_PARTS" == 1 ]] || { echo "FURNITURE_PARTS must be 0 or 1" >&2; exit 2; }
@@ -311,6 +368,22 @@ if [[ -n "${MOVABLE_VOBS:-}${ITEM_HULLS:-}${ITEM_DEEPEST_CONTACT:-}${FURNITURE_P
     [[ "$MELEE_PARRY_AI" == 0 || "$MELEE_PARRY_AI" == 1 ]] || { echo "MELEE_PARRY_AI must be 0 or 1" >&2; exit 2; }
     printf 'melee_parry_ai=%s\n' "$MELEE_PARRY_AI" >>"$RUN/Gothic.ini"
   fi
+  if [[ -n "${MELEE_AI_DODGE:-}" ]]; then
+    [[ "$MELEE_AI_DODGE" == 0 || "$MELEE_AI_DODGE" == 1 ]] || { echo "MELEE_AI_DODGE must be 0 or 1" >&2; exit 2; }
+    printf 'melee_ai_dodge=%s\n' "$MELEE_AI_DODGE" >>"$RUN/Gothic.ini"
+  fi
+  if [[ -n "${MELEE_AI_RIPOSTE:-}" ]]; then
+    [[ "$MELEE_AI_RIPOSTE" == 0 || "$MELEE_AI_RIPOSTE" == 1 ]] || { echo "MELEE_AI_RIPOSTE must be 0 or 1" >&2; exit 2; }
+    printf 'melee_ai_riposte=%s\n' "$MELEE_AI_RIPOSTE" >>"$RUN/Gothic.ini"
+  fi
+  if [[ -n "${MELEE_AI_CHARGE:-}" ]]; then
+    [[ "$MELEE_AI_CHARGE" == 0 || "$MELEE_AI_CHARGE" == 1 ]] || { echo "MELEE_AI_CHARGE must be 0 or 1" >&2; exit 2; }
+    printf 'melee_ai_charge=%s\n' "$MELEE_AI_CHARGE" >>"$RUN/Gothic.ini"
+  fi
+  if [[ -n "${MELEE_AI_BARGE:-}" ]]; then
+    [[ "$MELEE_AI_BARGE" == 0 || "$MELEE_AI_BARGE" == 1 ]] || { echo "MELEE_AI_BARGE must be 0 or 1" >&2; exit 2; }
+    printf 'melee_ai_barge=%s\n' "$MELEE_AI_BARGE" >>"$RUN/Gothic.ini"
+  fi
   if [[ -n "${MELEE_STAGGER:-}" ]]; then
     [[ "$MELEE_STAGGER" == 0 || "$MELEE_STAGGER" == 1 ]] || { echo "MELEE_STAGGER must be 0 or 1" >&2; exit 2; }
     printf 'melee_stagger=%s\n' "$MELEE_STAGGER" >>"$RUN/Gothic.ini"
@@ -338,6 +411,18 @@ if [[ -n "${MOVABLE_VOBS:-}${ITEM_HULLS:-}${ITEM_DEEPEST_CONTACT:-}${FURNITURE_P
   if [[ -n "${MELEE_RIPOSTE:-}" ]]; then
     [[ "$MELEE_RIPOSTE" == 0 || "$MELEE_RIPOSTE" == 1 ]] || { echo "MELEE_RIPOSTE must be 0 or 1" >&2; exit 2; }
     printf 'melee_riposte=%s\n' "$MELEE_RIPOSTE" >>"$RUN/Gothic.ini"
+  fi
+  if [[ -n "${MELEE_HEAL_INTERRUPT:-}" ]]; then
+    [[ "$MELEE_HEAL_INTERRUPT" == 0 || "$MELEE_HEAL_INTERRUPT" == 1 ]] || { echo "MELEE_HEAL_INTERRUPT must be 0 or 1" >&2; exit 2; }
+    printf 'melee_heal_interrupt=%s\n' "$MELEE_HEAL_INTERRUPT" >>"$RUN/Gothic.ini"
+  fi
+  if [[ -n "${MELEE_USE_IN_HAND:-}" ]]; then
+    [[ "$MELEE_USE_IN_HAND" == 0 || "$MELEE_USE_IN_HAND" == 1 ]] || { echo "MELEE_USE_IN_HAND must be 0 or 1" >&2; exit 2; }
+    printf 'melee_use_in_hand=%s\n' "$MELEE_USE_IN_HAND" >>"$RUN/Gothic.ini"
+  fi
+  if [[ -n "${FOOD_OVER_TIME:-}" ]]; then
+    [[ "$FOOD_OVER_TIME" == 0 || "$FOOD_OVER_TIME" == 1 ]] || { echo "FOOD_OVER_TIME must be 0 or 1" >&2; exit 2; }
+    printf 'food_over_time=%s\n' "$FOOD_OVER_TIME" >>"$RUN/Gothic.ini"
   fi
   if [[ -n "${MELEE_REACTIONS:-}" ]]; then
     [[ "$MELEE_REACTIONS" == 0 || "$MELEE_REACTIONS" == 1 ]] || { echo "MELEE_REACTIONS must be 0 or 1" >&2; exit 2; }
@@ -408,10 +493,21 @@ if [[ "$NAME" == streaming-flythrough ]]; then
   BACKGROUND=0
 fi
 GAME_RC=0
-env TEMPEST_BACKGROUND="$BACKGROUND" TEMPEST_WINDOW_SIZE="${TEMPEST_WINDOW_SIZE:-800x600}" \
+RUN_MODE=window
+if [[ "$BENCH_HEADLESS" == 1 ]]; then
+  RUN_MODE='headless lockstep'
+  GAME_ARGS=("${RUNNER_BIN:-$(dirname "$GAME_BIN")/gothic-body-runner}" -g "$GOTHIC_DIR" -devmode "${START_ARGS[@]}")
+  if [[ "${RYZEN_BENCH:-}" == 1 ]]; then GAME_ARGS+=(-g2); fi
+  GAME_ARGS+=(--game-parity --scenario "$SCEN" --output "$OUT" --mode lockstep)
+  WINDOW_ENV=()
+else
+  GAME_ARGS=("$GAME_BIN" -g "$GOTHIC_DIR" -window -devmode "${START_ARGS[@]}")
+  WINDOW_ENV=(TEMPEST_BACKGROUND="$BACKGROUND" TEMPEST_WINDOW_SIZE="${TEMPEST_WINDOW_SIZE:-800x600}")
+fi
+env ${WINDOW_ENV[@]+"${WINDOW_ENV[@]}"} BENCH_RUN_MODE="$RUN_MODE" \
   OPENGOTHIC_BENCH="$SCEN" OPENGOTHIC_BENCH_OUT="$OUT" ${KEEP:+OPENGOTHIC_BENCH_KEEP=1} \
   python3 - "$OUT" "$RUN" "${TIMEOUT:-300}" "${BENCH_PROGRESS:-300}" "${BENCH_STALL:-600}" \
-  "$GAME_BIN" -g "$GOTHIC_DIR" -window -devmode "${START_ARGS[@]}" <<'PY' || GAME_RC=$?
+  "${GAME_ARGS[@]}" <<'PY' || GAME_RC=$?
 import json
 import os
 from pathlib import Path
@@ -431,6 +527,8 @@ complete = False
 reason = ''
 log_tail = ''
 with (out / 'game.log').open('w') as log:
+    log.write(f"[bench] run mode: {os.environ['BENCH_RUN_MODE']}\n")
+    log.flush()
     game = subprocess.Popen(sys.argv[6:], cwd=run, stdout=log, stderr=subprocess.STDOUT)
     with (out / 'game.log').open(errors='replace') as reader:
         while True:
@@ -483,6 +581,8 @@ with (out / 'game.log').open('w') as log:
                 break
             time.sleep(1)
 elapsed = int(time.monotonic() - started)
+with (out / 'game.log').open('a') as log:
+    log.write(f'[bench] game wall seconds: {elapsed}\n')
 print(f'bench: game ran {elapsed} s, output in {out}', flush=True)
 if not complete:
     reason = reason or f'scenario did not finish: game exited after {elapsed} s without [bench] done'
@@ -492,7 +592,7 @@ PY
 grep -E "^\[bench\] (scenario|can not|unknown|marvin failed|goto failed|walkto: no|foreach|waitarrive)" "$OUT/game.log" || true
 
 HOST=mac
-[[ "${RYZEN_BENCH:-}" != 1 ]] || HOST=ryzen
+[[ "${RYZEN_BENCH:-}" != 1 ]] || HOST="${RYZEN_HOST:-ryzen}"
 printf '%s\n' "$HOST" >"$OUT/host.txt"
 REPORT_RC=0
 python3 "$ROOT/scripts/bench_report.py" "$OUT" || REPORT_RC=$?

@@ -18,6 +18,8 @@
 #include "testbench.h"
 #include "utils/workers.h"
 #include "world/objects/npc.h"
+#include "world/objects/item.h"
+#include "world/waypoint.h"
 #include "world/world.h"
 
 #include <rapidjson/document.h>
@@ -34,6 +36,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <stdexcept>
 #include <string>
@@ -892,15 +895,170 @@ class NpcLogicalStateContract final {
     }
 
   public:
+    static void meleeAi(Npc& actor,Npc& target) {
+      if(!actor.hasAnim("T_1HDASHB") || !actor.hasAnim("T_1HRIPOSTE") || !target.hasAnim("T_RIPOSTEVICTIM")) {
+        std::cerr << "melee AI fixture skipped: needs OPENGOTHIC_CONTENT with anim-strikes\n";
+        return;
+        }
+      const std::array<std::pair<const char*,int>,7> settings{{
+        {"melee_dodge",1},{"melee_ai_dodge",1},{"melee_riposte",1},{"melee_ai_riposte",1},
+        {"melee_stagger",1},{"melee_stamina",0},{"melee_parry_ai",0},
+        }};
+      std::array<int,settings.size()> saved{};
+      for(size_t i=0;i<settings.size();++i) {
+        saved[i]=Gothic::settingsGetI("GAME",settings[i].first);
+        Gothic::settingsSetI("GAME",settings[i].first,settings[i].second);
+        }
+      const auto talent=actor.hitChance(TALENT_1H);
+      const auto prepare=[&](float distance=150.f,float yaw=0.f) {
+        for(auto* npc:{&actor,&target}) {
+          npc->endMeleeStun("fixture"); npc->meleeRiposte.reset();
+          npc->meleeRiposteHoldUntil=0; npc->meleeRiposteAiHeld=false; npc->meleeAiRiposteRolls.clear();
+          }
+        actor.meleeAiDodgeTiming.reset(); actor.meleeAiDodgeStreak.reset();
+        BodyController::fixturePrepare(actor,target,distance,yaw);
+        actor.setExternalControl(true);
+        target.setTarget(&actor);
+        target.setDirection(actor.position()-target.position()); target.updateTransform();
+        };
+      const auto queue=[&](FightAlgo::Action first,FightAlgo::Action second=FightAlgo::MV_NULL) {
+        std::vector<uint8_t> bytes;
+        {
+          Tempest::MemWriter writer(bytes);
+          Serialize out(writer);
+          out.setEntry("fight");
+          out.write(int32_t(0));
+          for(int i=0;i<FightAlgo::MV_MAX;++i)
+            out.write(uint8_t(i==0 ? first : i==1 ? second : FightAlgo::MV_NULL));
+          out.write(false);
+          }
+        Tempest::MemReader reader(bytes);
+        Serialize in(reader);
+        expect(in.setEntry("fight"),"native primitive fixture archive entry exists");
+        actor.fghAlgo.load(in);
+        expect(actor.fghAlgo.queuedAction()==first,"native primitive fixture loaded the requested action");
+        };
+      prepare();
+
+      ++cases;
+      actor.handle().hitchance[TALENT_1H]=0;
+      target.startMeleeStun(actor,"posture");
+      expect(target.isMeleeStunned(),"native combo fixture has a stunned target");
+      queue(FightAlgo::MV_ATTACKL,FightAlgo::MV_ATTACKR);
+      actor.implAttack(tickMs);
+      expect(actor.fghAlgo.queuedAction()==FightAlgo::MV_ATTACKR && actor.meleeAiRiposteRolls.empty(),
+             "parry AI off preserves the native combo against a stunned target");
+
+      for(const bool parade:{false,true}) {
+        ++cases;
+        prepare(300,parade ? 0.f : 90.f);
+        if(parade) {
+          expect(actor.blockSword() && actor.bodyStateMasked()==BS_PARADE,"jump-back guard fixture starts in parade");
+          }
+        queue(FightAlgo::MV_JUMPBACK);
+        const auto at=actor.position();
+        actor.implAttack(tickMs);
+        expect(actor.fghAlgo.queuedAction()==FightAlgo::MV_NULL && !actor.isMeleeDodging() &&
+               (actor.position()-at).quadLength()<.001f,
+               "parade and off-focus jump backs are consumed without a dodge or movement");
+        }
+
+      ++cases;
+      prepare(300);
+      Gothic::settingsSetI("GAME","melee_stamina",1);
+      const auto now=actor.world().tickCount();
+      actor.meleeStamina={0,now,now,true,true};
+      queue(FightAlgo::MV_JUMPBACK);
+      actor.implAttack(tickMs);
+      for(unsigned i=0;i<34;++i) advance();
+      actor.visual.pose().stopAllAnim(); actor.setAnim(Npc::Anim::Idle); actor.faiWaitTime=0;
+      actor.implAttack(tickMs);
+      expect(actor.fghAlgo.queuedAction()==FightAlgo::MV_JUMPBACK && actor.meleeAiDodgeTiming &&
+             actor.meleeAiDodgeTiming->began==0 && !actor.isMeleeDodging(),
+             "a no-swing dodge keeps waiting for stamina beyond 1000 ms without spending its primitive");
+      Gothic::settingsSetI("GAME","melee_stamina",0);
+
+      ++cases;
+      prepare();
+      actor.setExternalControl(false);
+      initialWatch(actor,699);
+      expect(acquire(actor)["accepted"].GetBool(),"exhausted P30 fixture acquires its body lease");
+      advance();
+      BodyObservations::sampleAll(true);
+      expect(action(actor,FightAlgo::PolicyAction::JumpBack)["accepted"].GetBool(),"exhausted P30 jump back is accepted");
+      Gothic::settingsSetI("GAME","melee_stamina",1);
+      const auto exhaustedAt=actor.world().tickCount();
+      actor.meleeStamina={0,exhaustedAt,exhaustedAt,true,true};
+      BodyController::tick(actor,tickMs);
+      bool jumpBack=false;
+      for(const auto& layer:actor.visual.pose().combatLayers(actor.world().tickCount()))
+        jumpBack |= MeleeDodge::isJumpBackAnimation(layer.sequence->name);
+      expect(jumpBack && !actor.isMeleeDodging() && !actor.meleeAiDodgeTiming,
+             "P30 at zero stamina starts its original MoveBack immediately");
+      bool consumed=false;
+      const auto events=parse(BodyController::drainJson());
+      for(const auto& event:events["events"].GetArray())
+        if(std::string_view(event["phase"].GetString())=="started")
+          consumed |= event["primitive_consumed"].GetBool();
+      expect(consumed,"P30 MoveBack consumes the primitive when the segment starts");
+      BodyController::reset("melee_ai_fixture");
+      BodyObservations::disable();
+      Gothic::settingsSetI("GAME","melee_stamina",0);
+
+      for(unsigned attempt=0;attempt<3;++attempt) {
+        ++cases;
+        prepare();
+        target.swingSword();
+        const auto swing=target.visual.pose().nextMeleeContact(actor.world().tickCount());
+        expect(swing.has_value(),"P30 dodge fixture has a real visible incoming swing");
+        actor.meleeAiDodgeTiming=Npc::MeleeAiDodgeTiming{&target,swing->sequence,swing->origin,
+            actor.world().tickCount(),swing->contact,0,{MeleeDodge::Kind::Dash,MeleeDodge::Stance::OneHand,MeleeDodge::Direction::Left}};
+        actor.meleeAiDodgeStreak={2,actor.world().tickCount()};
+        actor.implAttack(tickMs,true,FightAlgo::MV_JUMPBACK);
+        expect(actor.isMeleeDodging() && !actor.meleeAiDodgeTiming && actor.meleeAiDodgeStreak.count==2,
+               "P30 jump back starts immediately despite a swing and a full native dodge streak");
+        bool backward=false;
+        for(const auto& layer:actor.visual.pose().combatLayers(actor.world().tickCount()))
+          if(const auto move=MeleeDodge::parseAnimation(layer.sequence->name)) {
+            expect(move->direction==MeleeDodge::Direction::Back,"P30 jump back never inherits a native side dodge");
+            backward=true;
+            }
+        expect(backward,"P30 jump back starts an actual backward dodge animation");
+        }
+
+      ++cases;
+      prepare();
+      actor.handle().hitchance[TALENT_1H]=100;
+      target.startMeleeStun(actor,"posture");
+      expect(target.isMeleeStunned(),"P30 riposte fixture has a stunned target");
+      actor.implAttack(tickMs,true,FightAlgo::MV_ATTACK);
+      expect(actor.isMeleeRiposting() && target.isMeleeRiposteHeld() && !actor.meleeAiRiposteRolls.empty(),
+             "P30 direct attack on a stunned target reaches the real riposte roll and paired execution");
+      prepare(300);
+      actor.handle().hitchance[TALENT_1H]=talent;
+      actor.meleeStamina={};
+      actor.setExternalControl(false);
+      for(size_t i=0;i<settings.size();++i)
+        Gothic::settingsSetI("GAME",settings[i].first,saved[i]);
+      }
+
     static void run(uint32_t id,const std::string& scenario,const std::filesystem::path& output) {
       auto& gothic=Gothic::inst();
-      // The earlier body-watch phases own pointers into the session. Retire
-      // them before the first complete session is destroyed.
+      // Isolate canonical action clocks from unrelated ambient transitions.
+      // The complete-world audit remains part of npc-day-parity.
+      auto* subject=gothic.world()->npcById(id);
       TestBench::configure(scenario,output.string(),17);
+      for(uint32_t i=gothic.world()->npcCount();i>0;--i)
+        if(auto* npc=gothic.world()->npcById(i-1);npc!=nullptr && npc!=subject && !npc->isPlayer())
+          gothic.world()->removeNpc(*npc);
+      id=gothic.world()->npcId(subject);
+      for(const auto tier:{NpcSimTier::Full,NpcSimTier::Simplified})
       for(const auto action:{AI_PlayAnim,AI_StandUp,AI_DrawWeaponMelee}) {
         ++cases;
         auto* npc=gothic.world()->npcById(id);
         expect(npc!=nullptr,"logical save/load fixture actor survives the preceding session reload");
+        npc->setSimTierOverride(tier);
+        npc->setSimTier(tier);
         npc->setExternalControl(true);
         npc->clearState(true);
         npc->clearAiQueue();
@@ -949,6 +1107,17 @@ class NpcLogicalStateContract final {
             }
           }
         expect(playing.has_value(),"logical save/load admits the requested native body action");
+        if(npc->usesSimplifiedMovement()) {
+          const auto native=npc->visual.pose().combatLayers(npc->world().tickCount());
+          expect(!npc->prepareTurn(),"a native body action retains ownership against the graph turn puppet");
+          expect(!npc->simplifiedBodyState(),"a native body action retains its own logical layer state");
+          const auto after=npc->visual.pose().combatLayers(npc->world().tickCount());
+          expect(native.size()==after.size(),"the graph turn puppet leaves every native action layer in place");
+          for(size_t i=0;i<native.size();++i)
+            expect(native[i].sequence==after[i].sequence && native[i].start==after[i].start &&
+                   native[i].origin==after[i].origin && native[i].state==after[i].state,
+                   "the graph turn puppet preserves native action sequence, clock and state");
+          }
         if(action==AI_PlayAnim) {
           // Existing saves normalize this transient speed. It is deliberately
           // not a before/after equality assertion.
@@ -1001,6 +1170,8 @@ class NpcLogicalStateContract final {
         }
         npc=gothic.world()->npcById(id);
         expect(npc!=nullptr && gothic.world()->tickCount()==savedAt,"logical save/load restores the actor and exact world time");
+        npc->setSimTierOverride(tier);
+        npc->setSimTier(tier);
         compare(*npc); // Before any positive simulation step or explicit sync.
         npc->logicalBody.auditTick(*npc);
         const auto restored=npc->logicalBodyState();
@@ -1129,6 +1300,269 @@ class NpcLogicalStateContract final {
         expect(std::abs(error)<=int64_t(tickMs),"logical save/load canonical sequence end is predicted within one world tick");
         expect(std::abs(actionError)<=int64_t(tickMs),"logical save/load canonical action end is predicted within one world tick");
         }
+      {
+        ++cases;
+        auto& world=*gothic.world();
+        auto* moving=world.npcById(id);
+        const auto* first=world.findPoint("FP_ROAM_CITY_TO_FOREST_15",false);
+        const WayPoint* second=nullptr;
+        world.forEachWayPoint([&](const WayPoint& point) {
+          if(first!=nullptr && point.isFreePoint() && point.name==first->name && &point!=first)
+            second=&point;
+          });
+        expect(first!=nullptr && second!=nullptr,"FP save/load fixture uses duplicate authored freepoint names");
+        moving->clearAiQueue(); moving->clearState(true); moving->clearGoTo();
+        moving->setTarget(nullptr);
+        moving->setExternalControl(true);
+        moving->setPosition(second->groundPos);
+        moving->attachToPoint(second);
+        moving->go2.set(second);
+        moving->wayPath.add(*second);
+        moving->aiPush(AiQueue::aiGoToPoint(*second));
+        std::vector<uint8_t> bytes;
+        {
+          Tempest::MemWriter writer(bytes);
+          Serialize out(writer);
+          out.setContext(&world);
+          moving->save(out,id,"/npc/");
+        }
+        const auto load=[&](NpcSimTier tier) {
+          moving->currentFpLock=FpLock();
+          Tempest::MemReader reader(bytes);
+          Serialize in(reader);
+          in.setContext(&world);
+          moving->load(in,id,"/npc/");
+          moving->postValidate();
+          moving->setSimTier(tier);
+          };
+        load(NpcSimTier::Full);
+        expect(moving->currentFp==first && moving->currentFpLock.point()==first &&
+               moving->go2.wp==first && moving->wayPath.last()==first && moving->aiQueue.front()->point==first,
+               "Full save/load keeps native first-match FP references");
+        const auto count=world.npcSimTierStats().fpLoadResolutions;
+        load(NpcSimTier::Simplified);
+        expect(moving->currentFp==second && moving->currentFpLock.point()==second &&
+               moving->go2.wp==second && moving->wayPath.last()==second && moving->aiQueue.front()->point==second &&
+               world.npcSimTierStats().fpLoadResolutions==count+5,
+               "Simplified save/load resolves every ambiguous saved reference against the saved NPC position");
+        moving->setSimTier(NpcSimTier::Full);
+        expect(moving->currentFp==second && moving->currentFpLock.point()==second &&
+               moving->go2.wp==second && moving->wayPath.last()==second && moving->aiQueue.front()->point==second &&
+               world.npcSimTierStats().fpLoadResolutions==count+5,
+               "a later Full tier continues the resolved FP action without another lookup");
+        moving->clearAiQueue(); moving->clearGoTo(); moving->attachToPoint(nullptr);
+        }
+      for(const bool itemGoal:{false,true}) {
+        ++cases;
+        auto* moving=gothic.world()->npcById(id);
+        const auto* start=gothic.world()->findWayPoint("NW_XARDAS_TOWER_VALLEY_091");
+        const auto* goal=gothic.world()->findWayPoint("NW_FARM1_PATH_CITY_05");
+        expect(moving!=nullptr && start!=nullptr && goal!=nullptr,"graph save/load uses authored route endpoints");
+        moving->clearAiQueue(); moving->clearState(true); moving->clearGoTo();
+        moving->closeWeapon(true);
+        moving->setTarget(nullptr);
+        moving->setExternalControl(true);
+        if(!itemGoal) {
+          // Native SetWalkMode need not replace the preceding idle loop. A
+          // handoff during its turn must accept that old locomotion idle.
+          moving->setSimTierOverride(NpcSimTier::Full);
+          moving->setSimTier(NpcSimTier::Full);
+          moving->setWalkMode(WalkBit::WM_Run);
+          moving->visual.pose().stopAllAnim();
+          expect(moving->setAnim(Npc::Anim::Idle),"mid-turn handoff starts from a native run idle");
+          const auto toward=gothic.player()->position()-moving->position();
+          moving->setDirection(Tempest::Vec3(toward.z,0,-toward.x));
+          moving->setWalkMode(WalkBit::WM_Walk);
+          moving->aiPush(AiQueue::aiTurnToNpc(gothic.player()));
+          advance();
+          expect(moving->aiQueue.front()!=nullptr && moving->aiQueue.front()->act==AI_TurnToNpc &&
+                 moving->visual.pose().logicalLayerCount()>1,
+                 "mid-turn handoff retains the old idle alongside its native turn layer");
+          const auto angle=moving->rotation();
+          moving->setSimTierOverride(NpcSimTier::Simplified);
+          moving->setSimTier(NpcSimTier::Simplified);
+          advance();
+          const bool turnProgress=moving->usesSimplifiedMovement() &&
+                                  std::abs(std::remainder(moving->rotation()-angle,360.f))>0.001f;
+          expect(turnProgress,
+                 "a mode change before a native turn does not stall its graph handoff");
+          for(unsigned i=0;i<90 && moving->aiQueue.size()>0;++i)
+            advance();
+          expect(moving->aiQueue.size()==0,"the graph handoff finishes the same mode-changed turn");
+          }
+        moving->setSimTierOverride(NpcSimTier::Simplified);
+        moving->setSimTier(NpcSimTier::Simplified);
+        moving->setWalkMode(WalkBit::WM_Walk);
+        moving->setPosition(start->groundPos);
+        Item* item=nullptr;
+        uint32_t itemId=uint32_t(-1);
+        if(itemGoal) {
+          item=gothic.world()->addItem(gothic.world()->script().findSymbolIndex("ItMi_Gold"),goal->groundPos);
+          expect(item!=nullptr,"graph item save/load creates a real world target");
+          itemId=gothic.world()->itmId(&item->handle());
+          moving->aiPush(AiQueue::aiGotoItem(*item));
+          } else {
+          moving->aiPush(AiQueue::aiGoToPoint(*goal));
+          }
+        moving->aiPush(AiQueue::aiWait(5000));
+        bool midEdge=false;
+        for(unsigned i=0;i<600;++i) {
+          advance();
+          const auto* next=moving->currentGoToPoint();
+          if(next!=nullptr && next!=start && (moving->position()-start->groundPos).quadLength()>100.f*100.f &&
+             (moving->position()-next->groundPos).quadLength()>100.f*100.f) {
+            midEdge=true;
+            break;
+            }
+          }
+        const auto pathNames=[](const Npc& actor) {
+          std::vector<std::string> names;
+          auto path=actor.navigationPath();
+          while(const auto* point=path.pop()) names.push_back(point->name);
+          return names;
+          };
+        expect(midEdge && moving->usesSimplifiedMovement() && moving->currentGoToPoint()!=nullptr && !pathNames(*moving).empty(),
+               "graph save/load saves an active edge with a remaining native path");
+        const auto position=moving->position();
+        const auto angle=moving->rotation();
+        const auto path=pathNames(*moving);
+        const auto endpoint=moving->currentGoToPoint()->name;
+        const auto hint=moving->moveHint();
+        const auto state=moving->currentState().ptr;
+        const auto queueSize=moving->aiQueue.size();
+        expect(queueSize==(itemGoal ? 2u : 1u) &&
+               moving->aiQueue.front()->act==(itemGoal ? AI_GotoItem : AI_Wait),
+               "graph save/load retains its terminal target and an action queued after arrival");
+        const float tickTravel=moving->simplifiedMoveSpeed()*float(tickMs);
+        std::vector<uint8_t> bytes;
+        {
+          Tempest::MemWriter writer(bytes);
+          Serialize out(writer);
+          Tempest::Pixmap preview(1,1,Tempest::TextureFormat::RGBA8);
+          std::memset(preview.data(),0,4);
+          gothic.gameSession()->save(out,"simplified NPC mid-edge",preview);
+        }
+        advance();
+        const auto nextPosition=moving->position();
+        gothic.clearGame().reset();
+        {
+          Tempest::MemReader reader(bytes);
+          Serialize in(reader);
+          gothic.setGame(std::make_unique<GameSession>(in));
+        }
+        moving=gothic.world()->npcById(id);
+        expect(moving!=nullptr,"graph save/load restores the same NPC identity");
+        moving->setExternalControl(true);
+        moving->setSimTierOverride(NpcSimTier::Simplified);
+        moving->setSimTier(NpcSimTier::Simplified);
+        expect((moving->position()-position).quadLength()<.01f && moving->rotation()==angle,
+               "graph save/load preserves the exact mid-edge transform before its first tick");
+        expect(moving->currentGoToPoint()!=nullptr && moving->currentGoToPoint()->name==endpoint &&
+               pathNames(*moving)==path && moving->moveHint()==hint && moving->currentState().ptr==state &&
+               moving->aiQueue.size()==queueSize && moving->aiQueue.front()->act==(itemGoal ? AI_GotoItem : AI_Wait),
+               "graph save/load preserves the current edge, remaining path, destination, ZS and queued action");
+        if(itemGoal) {
+          item=gothic.world()->itmById(itemId);
+          expect(item!=nullptr && moving->aiQueue.front()->item==item && moving->navigationGoal().kind=="item",
+                 "graph save/load restores the exact live world item without changing the archive layout");
+          }
+        advance();
+        expect((moving->position()-nextPosition).quadLength()<=(tickTravel+.01f)*(tickTravel+.01f),
+               "graph save/load continues within one tick of uninterrupted travel");
+        if(itemGoal) {
+          const auto movedItem=item->position()+Tempest::Vec3(20,0,0);
+          item->setPosition(movedItem.x,movedItem.y,movedItem.z);
+          expect((moving->navigationGoal().position-item->position()).quadLength()<.01f,
+                 "restored graph item movement follows the live target position");
+          }
+        for(unsigned i=0;i<10;++i) advance();
+        expect((moving->position()-position).quadLength()>tickTravel*tickTravel,
+               "restored graph movement keeps advancing on the saved route");
+        moving->clearAiQueue(); moving->clearGoTo();
+        moving->setSimTierOverride(NpcSimTier::Full);
+        moving->setSimTier(NpcSimTier::Full);
+        moving->updateSimpleMovement();
+      }
+      {
+        ++cases;
+        auto* moving=gothic.world()->npcById(id);
+        auto* hero=gothic.player();
+        const auto* start=gothic.world()->findWayPoint("NW_CITY_MERCHANT_PATH_23");
+        const auto* corner=gothic.world()->findWayPoint("NW_CITY_MERCHANT_PATH_18");
+        const auto* goal=gothic.world()->findWayPoint("NW_CITY_MERCHANT_TAVERN01_BACKROOM");
+        expect(moving!=nullptr && hero!=nullptr && start!=nullptr && corner!=nullptr && goal!=nullptr,
+               "graph corner fixture uses the authored tavern route");
+        auto route=gothic.world()->wayTo(*start,*goal);
+        expect(route.pop()==start && route.pop()==corner && route.pop()==goal && route.first()==nullptr,
+               "the native planner routes the tavern walk through PATH18");
+        const auto* heroPoint=hero->currentWayPoint();
+        hero->attachToPoint(corner);
+        moving->clearAiQueue(); moving->clearState(true); moving->clearGoTo();
+        moving->closeWeapon(true); moving->setTarget(nullptr); moving->setExternalControl(true);
+        moving->setSimTierOverride(NpcSimTier::Simplified);
+        moving->setSimTier(NpcSimTier::Simplified);
+        moving->setWalkMode(WalkBit::WM_Walk);
+        moving->setPosition(start->groundPos);
+        moving->setDirection(corner->groundPos-start->groundPos);
+        moving->attachToPoint(start);
+        moving->visual.pose().stopAllAnim();
+        expect(moving->setAnim(Npc::Anim::Idle),"graph corner fixture starts from the native walk idle");
+        moving->aiPush(AiQueue::aiGoToPoint(*goal));
+        moving->aiPush(AiQueue::aiWait(5000));
+        const auto graphFailures=gothic.world()->npcSimTierStats().graphFallbackGround+
+                                 gothic.world()->npcSimTierStats().graphFallbackSegment;
+        bool started=false,occupied=false,arrived=false,waitPreserved=true;
+        float closest=std::numeric_limits<float>::max();
+        float tickTravel=0;
+        for(unsigned step=0;step<1200;++step) {
+          advance();
+          const auto delta=moving->position()-corner->groundPos;
+          closest=std::min(closest,std::hypot(delta.x,delta.z));
+          tickTravel=std::max(tickTravel,moving->simplifiedMoveSpeed()*float(tickMs));
+          if(moving->currentGoToPoint()==corner)
+            occupied|=corner->useCounter()>1;
+          if(moving->moveHint()!=Npc::GT_No) {
+            started=true;
+            const auto* head=moving->aiQueue.front();
+            waitPreserved&=head!=nullptr && head->act==AI_Wait;
+            }
+          else if(started) {
+            arrived=true;
+            break;
+            }
+          }
+        const float finalDistance=MoveAlgo::closeToPointThreshold*(moving->mvAlgo.checkLastBounce() ? .5f : 1.5f);
+        expect(occupied && closest<=tickTravel+.01f,
+               "an occupied internal vertex is visited within one tick instead of cutting the tavern corner");
+        expect(arrived && moving->usesSimplifiedMovement() && MoveAlgo::isClose(*moving,*goal,finalDistance),
+               "the graph route arrives using the native terminal distance");
+        expect(graphFailures==gothic.world()->npcSimTierStats().graphFallbackGround+
+                              gothic.world()->npcSimTierStats().graphFallbackSegment,
+               "the graph corner contract never substitutes native movement for a failed segment");
+        const auto* head=moving->aiQueue.front();
+        expect(waitPreserved && ((head!=nullptr && head->act==AI_Wait) || moving->waitTime>moving->world().tickCount()),
+               "the occupied-corner route preserves and releases its following wait");
+        hero->attachToPoint(heroPoint);
+        moving->clearAiQueue(); moving->clearGoTo();
+        moving->visual.pose().stopAllAnim();
+        expect(moving->setAnim(Npc::Anim::Idle) && !moving->nativeBodyAction(),
+               "unsupported-ground fixture admits graph movement from a clean native idle");
+        moving->setPosition(start->groundPos+Tempest::Vec3(0,500,0));
+        moving->go2.set(goal);
+        moving->simpleMovement.edgeTo=nullptr;
+        const auto groundFailures=gothic.world()->npcSimTierStats().graphFallbackGround;
+        expect(moving->implGoTo(tickMs) && moving->graphMovementFallback() &&
+               gothic.world()->npcSimTierStats().graphFallbackGround==groundFailures+1 &&
+               moving->currentGoToPoint()==goal,
+               "unsupported graph ground hands the same remaining action to native movement without throwing");
+        moving->setSimTierOverride(NpcSimTier::Full);
+        moving->setSimTier(NpcSimTier::Full);
+        moving->updateSimpleMovement();
+        expect(moving->graphMovementFallback() && moving->currentGoToPoint()==goal,
+               "a graph fallback keeps its native action through a tier switch");
+        moving->clearGoTo();
+        expect(!moving->graphMovementFallback(),"native fallback ends with its action");
+      }
       // Native float frame rounding can fire a loop event one millisecond
       // before its integer schedule. The audit must match the same cycle.
       ++cases;
@@ -1173,6 +1607,49 @@ class NpcLogicalStateContract final {
       const auto& event=layer->events.front();
       clock.eventFired(sequence,layer->origin,event.source,event.expected+clock.worldStep+1);
       expect(NpcLogicAudit::stats().eventMismatch==1,"an event beyond the world step is a mismatch");
+
+      ++cases;
+      NpcLogicAudit::reset();
+      clock.auditTick(*npc);
+      clock.interactiveState=BS_SIT;
+      clock.updateBody();
+      clock.auditTick(*npc);
+      clock.externalState=BS_DEAD; // External state takes precedence over mobsi.
+      clock.updateBody();
+      clock.auditTick(*npc);
+      const auto& samples=NpcLogicAudit::stats();
+      expect(samples.bodySamples==1 && samples.bodyInteractiveSamples==1 && samples.bodyExternalSamples==1,
+             "body audit separates informative, interactive and external samples without double counting");
+      expect(samples.ticks==3 && samples.bodyMismatch==0,
+             "body overrides cannot turn hidden layer forecasts into body comparisons");
+
+      ++cases;
+      auto retained=npc->handlePtr(); // Keep the invalid actor eligible for revival.
+      const auto* waypoint=npc->world().findWayPoint(npc->position());
+      expect(waypoint!=nullptr,"inactive logical-state fixture has a valid return point");
+      const auto returnPoint=waypoint->name;
+      npc->clearRoutine();
+      npc->handle().wp="__BODY_WATCH_INVALID_POINT";
+      npc->world().resetPositionToTA();
+      expect(npc->world().npcId(npc)==uint32_t(-1) && !npc->logicalBody.initialized && npc->visual.pose().logicalInputs().empty(),
+             "retiring an invalid routine discards queued inputs and invalidates its logical shadow");
+      npc->visual.pose().stopAllAnim();
+      expect(npc->playAnimByName("S_FISTWALKL",BS_WALK)!=nullptr && npc->visual.pose().logicalInputs().empty(),
+             "inactive NPC animation mutations do not accumulate logical inputs");
+      npc->handle().wp=returnPoint;
+      npc->world().resetPositionToTA();
+      expect(npc->world().npcId(npc)!=uint32_t(-1) && npc->logicalBody.initialized && npc->visual.pose().logicalInputs().empty(),
+             "routine revival rebuilds the current body without replaying inactive inputs");
+      compare(*npc);
+      npc->visual.pose().stopAllAnim();
+      expect(npc->playAnimByName("S_FISTWALKL",BS_WALK)!=nullptr && !npc->visual.pose().logicalInputs().empty(),
+             "revived NPC resumes collecting live logical inputs");
+      npc->world().removeNpc(*npc);
+      expect(!npc->logicalBody.initialized && npc->visual.pose().logicalInputs().empty(),
+             "explicit NPC removal discards live logical inputs");
+      npc->visual.pose().stopAllAnim();
+      expect(npc->playAnimByName("S_FISTWALKL",BS_WALK)!=nullptr && npc->visual.pose().logicalInputs().empty(),
+             "removed NPC no longer collects logical inputs");
       }
   };
 
@@ -1205,6 +1682,9 @@ int main(int argc,const char** argv) {
 #endif
     setenv("OPENGOTHIC_PHYSICS_THREADS","0",0);
     setenv("OPENGOTHIC_NPC_LOGIC_AUDIT","1",1);
+    // Canonical body fixtures keep the background native; individual cases
+    // explicitly opt their subject into Simplified.
+    setenv("OPENGOTHIC_NPC_SIM_TIER","full",1);
     Workers::setSerialExecution(true);
     CommandLine commandLine(argc,argv);
     Resources resources;
@@ -1242,6 +1722,7 @@ int main(int argc,const char** argv) {
     const auto wireStatus=parse(BodyController::statusJson(&a));
     for(const char* field:{"process_policy","segment_remaining_ms","fai_gate","ani_gate","ai_gate","output_gate","interruptible"})
       expect(!wireStatus["actors"][0].HasMember(field),"wire status keeps the strict server schema; boundary diagnostics are opt-in");
+    if(!missingNetwork) NpcLogicalStateContract::meleeAi(a,b);
 #ifdef GOTHIC_BODY_ENGINE_NET
     if(missingNetwork) {
       missingEngineNetwork(a);
@@ -1263,6 +1744,27 @@ int main(int argc,const char** argv) {
     BodyObservations::disable();
     meleeRemoval(b);
     NpcLogicalStateContract::run(gothic.world()->npcId(&b),scenario,output);
+    {
+      const auto statsScenario=output/"melee-stats.bench";
+      {
+        std::ofstream commands(statsScenario);
+        commands << "stats 1h 100 2h 100 talent 2\nwait 33\n"
+                    "stats bow 100 talent 0\nwait 33\n"
+                    "stats 1h 0 talent auto\nwait 33\n"
+                    "stats 2h 0 talent auto\nwait 33\n";
+        }
+      TestBench::configure(statsScenario.string(),output.string(),17);
+      player.clearInput(); player.clearFocus();
+      SimulationStep::finishStep(0,player);
+      const std::array<std::pair<int,int>,4> levels{{{2,2},{2,2},{0,2},{0,0}}};
+      for(const auto& expected:levels) {
+        ++cases;
+        step(player);
+        expect(gothic.player()->talentSkill(TALENT_1H)==expected.first &&
+               gothic.player()->talentSkill(TALENT_2H)==expected.second,
+               "stats changes melee animation levels only for explicitly supplied melee skills");
+        }
+    }
 #ifdef GOTHIC_BODY_ENGINE_NET
       }
 #endif

@@ -5,12 +5,17 @@
     client  -> service binary frames: 16-bit little-endian mono PCM, sent while the player speaks
     service -> client  {"type":"partial","text":"..."}     (streaming providers: text so far)
     client  -> service {"type":"end"}            (or {"type":"cancel"} to drop the utterance)
-    service -> client  {"type":"final","text":"...","provider":"...","audio_s":2.1,"latency_s":0.3}
+    service -> client  {"type":"final","text":"...","provider":"...",
+                        "audio_s":2.1,"latency_s":0.3,"laughing":0.98}
     service -> client  {"type":"error","detail":"..."}
 
 `latency_s` counts from `end`. Utterances on one connection are handled one after another.
 `start.hints` is an optional list of names or phrases to help streaming providers recognize them.
 Providers without hint support ignore it; clients can omit it.
+`final.laughing` is the local CPU laughter detector's maximum score across the recording's windows.
+Detection runs alongside transcription and may add at most 0.15 s after the text is ready. The score
+is null for silence, when detection is disabled or unavailable, on detector failure, or when it is
+not ready by that deadline. Hint-free transcription retries do not change the detector's input.
 
 `GET /health` on the same port answers {"ok":true,"service":"gothic-asr","providers":[{"name":"..."}]}:
 the launcher waits for it before starting the game.
@@ -143,6 +148,7 @@ async def _finish(utt: Utterance) -> dict:
         "provider": r.provider,
         "audio_s": round(r.audio_s, 3),
         "latency_s": round(r.latency_s, 3),
+        "laughing": r.laughing,
     }
 
 

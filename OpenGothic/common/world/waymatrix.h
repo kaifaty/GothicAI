@@ -7,9 +7,11 @@
 
 #include <vector>
 #include <functional>
+#include <memory>
 
 #include "waypath.h"
 #include "waypoint.h"
+#include "wayheights.h"
 
 class World;
 class DbgPainter;
@@ -17,6 +19,8 @@ class WayHeights;
 
 class WayMatrix final {
   public:
+    size_t probeCpuBytes() const;
+
     WayMatrix(World& owner, const asset::WayNet& dat);
 
     const WayPoint* findWayPoint (const Tempest::Vec3& at, const std::function<bool(const WayPoint&)>& filter) const;
@@ -37,6 +41,8 @@ class WayMatrix final {
     void            forEachPoint(const std::function<void(const WayPoint&)>& f) const;
 
     WayPath         wayTo(const WayPoint** begin, size_t beginSz, const Tempest::Vec3 exactBegin, const WayPoint& end) const;
+    const WayHeights::Profile& groundProfile(const Tempest::Vec3& from,const Tempest::Vec3& to,
+                                             float stepHeight,float slopeCos);
 
   private:
     friend struct WorldDataContract;
@@ -51,6 +57,7 @@ class WayMatrix final {
       };
 
     World&                 world;
+    std::unique_ptr<WayHeights> heightCache;
     // scripting doc says 20m, but number seems to be incorrect
     // Vatras requires at least 8.1 meters; Vatras is broken in vanilla
     // Keroloth requires less than 8.18 meters

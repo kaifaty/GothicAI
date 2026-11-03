@@ -79,6 +79,13 @@ int AiQueue::aiOutputOrderId() const {
   return v;
   }
 
+bool AiQueue::hasItemUse() const {
+  for(const auto& action:aiActions)
+    if(action.act==AI_UseItem)
+      return true;
+  return false;
+  }
+
 bool AiQueue::nativeCombatOnly(const Npc* target) const {
   if(target==nullptr)
     return false;

@@ -6,10 +6,56 @@ import os
 from pathlib import Path
 import re
 import shlex
+import subprocess
 import sys
 
 
-def game_environment(home=None, environ=None, assets=None):
+def _installation_identity(identity, kind):
+    """Return installation inputs, excluding import-generated base bindings."""
+    keys = ("archives", "loose_files") if kind == "base" else ("sources",)
+    return [identity[key] for key in keys]
+
+
+def _identity(directory, kind):
+    try:
+        metadata = json.loads((directory / ("base.json" if kind == "base" else "videos.json")).read_bytes())
+        identity = metadata if kind == "base" else json.loads(metadata["identity"])
+        format_sha256 = identity["format_sha256"]
+        if not isinstance(format_sha256, str) or not re.fullmatch("[0-9a-f]{64}", format_sha256):
+            return None
+        return format_sha256, _installation_identity(identity, kind)
+    except (OSError, ValueError, KeyError, TypeError, UnicodeError):
+        return None
+
+
+def _compatible_fingerprint(kind, fingerprint, expected, roots, ready=None):
+    directories = roots if kind == "base" else [root / "videos" for root in roots]
+    pointed = next((identity for root in directories
+                    if (identity := _identity(root / fingerprint, kind)) is not None), None)
+    if pointed is None:
+        return fingerprint
+    if pointed[0] == expected and (ready is None or any(ready(root / fingerprint) for root in directories)):
+        return fingerprint
+    for root in directories:
+        for directory in sorted(root.glob("*")):
+            if not re.fullmatch("[0-9a-f]{64}", directory.name):
+                continue
+            candidate = _identity(directory, kind)
+            if (candidate is not None and candidate == (expected, pointed[1])
+                    and (ready is None or ready(directory))):
+                return directory.name
+    if kind == "base":
+        locations = " or ".join(str(root) for root in roots)
+        raise ValueError(
+            f"game-base.json names base {fingerprint} of importer format {pointed[0][:12]}, "
+            f"but this engine needs {expected[:12]}; no ready base of the same installation "
+            f"in that format in {locations}. Start the game once on the Mac on this version "
+            "(it publishes the base to the shared store), or run scripts/ryzen.sh setup."
+        )
+    return fingerprint
+
+
+def game_environment(home=None, environ=None, assets=None, converter=None):
     """Read setup without creating directories; retain caller content overrides."""
     home = Path.home() if home is None else Path(home)
     environ = os.environ if environ is None else environ
@@ -39,6 +85,29 @@ def game_environment(home=None, environ=None, assets=None):
     result.update(overrides)
     if not result["OPENGOTHIC_BASE_FINGERPRINT"]:
         result["OPENGOTHIC_BASE_FINGERPRINT"] = base
+    if converter is not None:
+        try:
+            output = subprocess.run([str(converter), "formats"], capture_output=True, check=True, timeout=5)
+            formats = json.loads(output.stdout)
+            if not all(isinstance(formats[key], str) and re.fullmatch("[0-9a-f]{64}", formats[key])
+                       for key in ("base", "videos")):
+                return result
+        except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError, UnicodeError):
+            return result
+        cache = environ.get("OPENGOTHIC_BASE_CACHE", str(home / ".cache/gothic-ai/base"))
+        if not cache:
+            return result  # Let the engine report an explicitly empty cache path.
+        roots = [Path(cache).resolve()]
+        store = environ.get("OPENGOTHIC_BASE_STORE")
+        if store is None:
+            shared = Path("/mnt/shared/gothic-ai")
+            store = str(shared) if shared.is_dir() else ""
+        if store:
+            roots.append(Path(store) / "base")
+        if not environ.get("OPENGOTHIC_BASE") and not environ.get("OPENGOTHIC_BASE_FINGERPRINT"):
+            result["OPENGOTHIC_BASE_FINGERPRINT"] = _compatible_fingerprint("base", base, formats["base"], roots)
+        if videos and "OPENGOTHIC_VIDEOS_FINGERPRINT" not in environ:
+            result["OPENGOTHIC_VIDEOS_FINGERPRINT"] = _compatible_fingerprint("videos", videos, formats["videos"], roots)
     return result
 
 
@@ -48,9 +117,10 @@ def main(argv=None):
     output.add_argument("--check", action="store_true")
     output.add_argument("--json", action="store_true")
     parser.add_argument("--assets")
+    parser.add_argument("--converter", type=Path)
     args = parser.parse_args(argv)
     try:
-        environment = game_environment(assets=args.assets)
+        environment = game_environment(assets=args.assets, converter=args.converter)
     except ValueError as error:
         print(error, file=sys.stderr)
         return 1

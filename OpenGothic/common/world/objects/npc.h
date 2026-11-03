@@ -14,8 +14,10 @@
 #include "game/gamescript.h"
 #include "game/ragdollsave.h"
 #include "game/meleedodge.h"
+#include "game/meleeai.h"
 #include "game/meleeimpact.h"
 #include "game/meleestamina.h"
+#include "game/healing.h"
 #include "game/meleefighter.h"
 #include "physics/dynamicworld.h"
 #include "physics/ragdoll.h"
@@ -25,6 +27,7 @@
 #include "world/objects/archer.h"
 #include "world/fplock.h"
 #include "world/waypath.h"
+#include "world/wayheights.h"
 
 #include <array>
 #include <cstdint>
@@ -142,14 +145,24 @@ class Npc final {
     // Simulation tier (world/npcsimtier.h), separate from processPolicy. Runtime only, not saved.
     NpcSimTier simTier() const { return simTierValue; }
     bool       hasSimTier() const { return simTierAssigned; }
-    void       setSimTier(NpcSimTier t) { simTierValue = t; simTierAssigned = true; }
+    void       setSimTier(NpcSimTier t);
+    void       setSimTierOverride(std::optional<NpcSimTier> t) { simTierOverrideValue = t; }
+    auto       simTierOverride() const -> std::optional<NpcSimTier> { return simTierOverrideValue; }
 
     bool       isPlayer() const;
     void       setWalkMode(WalkBit m);
     WalkBit    walkMode() const;
+    bool       usesSimplifiedMovement() const;
+    bool       graphMovementFallback() const { return simpleMovement.nativeFallback; }
+    bool       nativeCombatMovement() const;
+    bool       nativeMobsiApproach() const;
+    bool       nativeMobsiTransition() const;
+    auto       simplifiedBodyState() const -> std::optional<BodyState>;
+    float      simplifiedMoveSpeed() const;
     void       tick(uint64_t dt);
     const NpcLogicalState& logicalBodyState() const { return logicalBody; }
     void       syncLogicalBodyState(bool rebuild=false);
+    void       suspendLogicalBodyState();
     void       tickAnimationTags();
     bool       startClimb(JumpStatus jump);
 
@@ -207,7 +220,7 @@ class Npc final {
     auto       setAnimAngGet(Anim a) -> const Animation::Sequence*;
     auto       setAnimAngGet(Anim a, uint8_t comb) -> const Animation::Sequence*;
     void       setAnimRotate(int rot);
-    bool       setAnimItem(std::string_view scheme, int state);
+    bool       setAnimItem(std::string_view scheme, int state, bool allowMissing = false);
     void       stopAnim(std::string_view ani);
     void       startFaceAnim(std::string_view anim, float intensity, uint64_t duration);
     float      faceWeight(std::string_view anim);  // how much of the face anim shows now, 0..1 (test bench)
@@ -335,10 +348,13 @@ class Npc final {
     float     staminaFraction() const;
     bool      isStaminaExhausted() const;
     bool      isMeleeStunned() const;
+    bool      meleeStunSecondBeat() const { return meleeStunBeat; }
     void      startMeleeStun(Npc& by, std::string_view reason);
     // Charged forward strike: transient hero-only windup/hold and an ordinary event-driven release.
     bool      beginMeleeRiposte();
     bool      isMeleeRiposting() const;
+    bool      isMeleeRiposteHeld() const;
+    void      endMeleeAiSpecial();
     bool      canMeleeCharge() const;
     bool      beginMeleeCharge();
     void      releaseMeleeCharge();
@@ -370,7 +386,7 @@ class Npc final {
     // the bow aimed by hand (game/archery): the hero's input drives it (PlayerControl)
     Archer&   archer() { return arch; }
     void      setManualAim(bool on, const Tempest::Vec3& point = {}, const Tempest::Vec2& sway = {},
-                           const Tempest::Vec2& tremor = {});
+                           const Tempest::Vec2& tremor = {}, const Tempest::Vec3& shake = {});
     bool      hasManualAim() const { return manualAim; }
     // the stance aiming by hand: crouched 0..1, leaning out sideways -1 (left)..1 (right), the bow canted
     // for a quick shot 0..1, as smooth as whoever drives it makes it (PlayerControl); stepping -1 (back)..1
@@ -402,6 +418,7 @@ class Npc final {
     auto      manualAimPoint() const -> Tempest::Vec3 { return manualPoint; }
     auto      manualAimSway() const -> Tempest::Vec2 { return manualSway; }
     auto      manualAimTremor() const -> Tempest::Vec2 { return manualTremor; }
+    auto      manualAimShake() const -> Tempest::Vec3 { return manualShake; }
     bool      isAimSteady() const;
     float     aimTrackError() const { return visual.aimTrackError(); }
     // the arrow on the string as posed: its nock, where it points (the crosshair, the shot)
@@ -656,6 +673,10 @@ class Npc final {
     void      delItem    (size_t id, uint32_t amount);
     void      useItem    (size_t item);
     void      useItem    (size_t item, uint8_t slotHint, bool force);
+    void      beginItemUseEffect(const Item& item);
+    bool      startItemUse(const Item& item, bool allowMissing);
+    std::string itemUseInHandAnimation(const Item& item) const;
+    bool      isUsingItemInHand() const;
     void      setCurrentItem(size_t item);
     void      unequipItem(size_t item);
     void      addItem    (size_t id, Interactive& chest, size_t count=1);
@@ -703,6 +724,7 @@ class Npc final {
     bool      isAiBusy() const;
     size_t    aiQueueSize() const { return aiQueue.size(); }
     auto      aiQueueFront() const -> const AiQueue::AiAction* { return aiQueue.front(); }
+    bool      hasQueuedItemUse() const { return aiQueue.hasItemUse(); }
     void      clearAiQueue();
 
     auto      currentWayPoint() const -> const WayPoint* { return currentFp; }
@@ -879,6 +901,16 @@ class Npc final {
     bool      implWhirlTo(const Npc& oth, uint64_t dt);
     bool      implGoTo   (uint64_t dt);
     bool      implGoTo   (uint64_t dt, float destDist);
+    bool      implSimpleGoTo(uint64_t dt, float destDist);
+    bool      nativeBodyAction() const;
+    auto      pendingSimpleGoTo() const -> const AiQueue::AiAction*;
+    static bool simplifiedMovementEnabled();
+    void      fallbackSimpleMovement(std::string_view reason, bool ground = false);
+    WayPath   simpleWayTo(const WayPoint& point);
+    void      beginSimpleGoTo(AiQueue::AiAction&& action, const WayPoint& point);
+    bool      finishSimpleGoTo(uint64_t dt);
+    void      refreshSimpleGoTo();
+    void      updateSimpleMovement();
     bool      implAttack (uint64_t dt, bool bodyOverride=false, FightAlgo::Action bodyAction=FightAlgo::MV_NULL);
     void      traceCombatSnapshot();
     struct BodyMovementTrace;
@@ -1063,6 +1095,20 @@ class Npc final {
     bool                          tickMeleePosture(uint64_t dt);
     MeleeImpact::Posture           meleePosture;
     MeleeStamina::State            meleeStamina;
+    struct ItemUse final {
+      size_t item = 0;
+      uint64_t started = 0;
+      bool food = false;
+      };
+    ItemUse                       itemUse;
+    Healing::Pool                 foodPool;
+    uint64_t                      foodPoolTick = 0;
+    bool                          collectingFood = false;
+    int32_t                       foodHp = 0, foodMana = 0;
+    bool                          hasItemUseAnimation() const;
+    void                          finishItemUseEffect(const char* moment);
+    void                          interruptItemUse(std::string_view cause);
+    void                          tickFoodPool();
     struct Riposte final {
       std::weak_ptr<zenkit::INpc> victim;
       Tempest::Vec3 heroStart, from, pair;
@@ -1071,7 +1117,8 @@ class Npc final {
       };
     std::optional<Riposte>         meleeRiposte;
     uint64_t                      meleeRiposteHoldUntil = 0;
-    bool                          isMeleeRiposteHeld() const;
+    bool                          meleeRiposteAiHeld = false;
+    bool                          tryMeleeAiRiposte();
     void                          tickMeleeRiposte();
     void                          meleeRiposteBlade();
     float                         meleeRiposteMultiplier(const Npc& target) const;
@@ -1120,6 +1167,38 @@ class Npc final {
     std::string                   meleeStunReason;
     bool                          meleeStunBeat = true; // the second beat of a lost balance is played
     uint64_t                      meleeStunUntil = 0;
+    uint64_t                      meleeStunSerial = 0;
+    struct MeleeAiRiposteRoll final {
+      std::weak_ptr<zenkit::INpc> victim;
+      uint64_t stun = 0;
+      };
+    std::vector<MeleeAiRiposteRoll> meleeAiRiposteRolls;
+    struct MeleeAiDodgeTiming final {
+      const Npc* target = nullptr;
+      const Animation::Sequence* sequence = nullptr;
+      uint64_t origin = 0, began = 0, contact = 0;
+      float errorMs = 0;
+      MeleeDodge::Move move;
+      };
+    std::optional<MeleeAiDodgeTiming> meleeAiDodgeTiming;
+    MeleeAi::DodgeStreak            meleeAiDodgeStreak;
+    MeleeAi::SpecialSlot           meleeAiSpecialSlot; // held by an attacker of this NPC
+    std::weak_ptr<zenkit::INpc>    meleeAiSpecialTarget;
+    MeleeAi::Special               meleeAiSpecial = MeleeAi::Special::None;
+    std::optional<uint64_t>        meleeAiSpecialEnded;
+    uint64_t                      meleeAiChargeHold = 0;
+    float                         meleeAiChargeYaw = 0.f, meleeAiChargeTurn = 0.f;
+    struct MeleeAiBargeMemory final {
+      std::weak_ptr<zenkit::INpc> target;
+      std::optional<uint64_t> guarded, guardedRoll, paradeRoll;
+      const Animation::Sequence* paradeSequence = nullptr;
+      };
+    std::vector<MeleeAiBargeMemory> meleeAiBargeMemory;
+    bool                          tryMeleeAiCharge();
+    bool                          tryMeleeAiBarge();
+    bool                          meleeAiSpecialBusy(std::string_view move);
+    void                          beginMeleeAiSpecial(MeleeAi::Special move);
+    void                          tickMeleeAiSpecial();
     std::optional<uint64_t>        meleeParadeOrigin;
     uint64_t                      meleeParadeEnd = 0;
     bool                          meleeParadeContact = false;
@@ -1209,6 +1288,9 @@ class Npc final {
     NpcProcessPolicy               aiPolicy=NpcProcessPolicy::AiNormal;
     NpcSimTier                     simTierValue=NpcSimTier::Full; // transient, not serialized
     bool                           simTierAssigned=false;
+    bool                           loadedFpReferences=false;
+    Tempest::Vec3                  loadedFpPosition;
+    std::optional<NpcSimTier>       simTierOverrideValue; // bench-only, not serialized
     NpcLogicalState                logicalBody;
     AiState                        aiState;
     ScriptFn                       aiPrevState;
@@ -1240,6 +1322,7 @@ class Npc final {
     Tempest::Vec3                  manualPoint = {};
     Tempest::Vec2                  manualSway  = {};
     Tempest::Vec2                  manualTremor = {};
+    Tempest::Vec3                  manualShake  = {};
     float                          stanceCrouch = 0;
     float                          stancePeek   = 0;
     float                          stanceCant   = 0;
@@ -1266,6 +1349,18 @@ class Npc final {
     const WayPoint*                currentFp      =nullptr;
     FpLock                         currentFpLock;
     WayPath                        wayPath;
+
+    // The path and transform are already serialized. Reconstruct the edge on
+    // load/tier entry instead of adding another saved movement cursor.
+    struct SimpleMovement {
+      bool active = false;
+      bool nativeFallback = false;
+      const WayPoint* edgeTo = nullptr;
+      Tempest::Vec3 edgeFrom;
+      const WayHeights::Profile* ground = nullptr;
+      std::optional<BodyState> body;
+      Item* nativeItem = nullptr;
+      } simpleMovement;
 
     MoveAlgo                       mvAlgo;
     FightAlgo                      fghAlgo;

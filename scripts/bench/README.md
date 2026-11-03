@@ -2,26 +2,73 @@
 
 ## Как работает сейчас
 
-Runs a scenario inside the game and records what happens: a video with a debug overlay, per-frame
-metrics and a report that points at suspicious frames. Built so that an agent can find bugs and edge
-cases of a mechanic (foot IK first) without a person watching the game.
+Runs a scenario through the windowed game or the headless runner and records metrics and a report.
+Windowed scenarios can also capture video with a debug overlay and point at suspicious frames.
 
 ```bash
 scripts/bench.sh smoke                      # a scenario from scripts/bench/<name>.bench, or a path
 BENCH_HOST=local NO_BUILD=1 scripts/bench.sh ik-sweep  # local, skip the incremental build
 ```
 
-`BENCH_HOST=auto` (default) runs on Ryzen through `scripts/ryzen.sh` and copies all output back.
-It falls back to this Mac with one line explaining why if SSH, setup, the lock or game startup fails.
-Once the returned output contains `game.log`, the Ryzen result is final, including a failing exit code;
-the game is not run again locally. The lock wait defaults to 120 seconds (`RYZEN_LOCK_WAIT`).
-`BENCH_HOST=ryzen` requires Ryzen, defaults to a 900-second lock wait and never falls back;
-`BENCH_HOST=local` runs on this machine. `KEEP=1`, a VideoToolbox encoder, a custom `GOTHIC_DIR`
-or other Mac-only game paths require local execution (`auto` falls back, `ryzen` exits with code 2).
-`NO_BUILD=1` only skips a local build; Ryzen always checks its engine source hash.
+`BENCH_HOST=auto` (default) tries dev-ubuntu, then Ryzen, then this Mac for headless scenarios;
+windowed scenarios try Ryzen, then Mac. Both remote hosts use `scripts/ryzen.sh` and copy all output back.
+Before remote `bench` and `e2e`, `ryzen.sh` selects Mac base/video parts matching this checkout's
+import formats, copies missing parts to the host's cache, and synchronizes both game INI files.
+Ready parts in the host cache or shared store need no copy; dev-ubuntu only uses its cache.
+When Mac has no compatible part, the host cache/store is searched for this checkout's format
+and the same installation as the host's `game-base.json`. A match reports `ready (host)` and
+passes its exact fingerprint without copying. If videos have no compatible replacement on
+either machine, the original host video fingerprint is retained.
+The run receives the exact fingerprints without changing a prepared host's `game-base.json`;
+a fresh host gets settings and that pointer automatically. `scripts/ryzen.sh setup` is optional.
+Explicit nonempty `OPENGOTHIC_BASE` or `OPENGOTHIC_BASE_FINGERPRINT` skips base selection/copy;
+an explicit `OPENGOTHIC_VIDEOS_FINGERPRINT`, including empty, does the same for videos.
+If neither Mac nor host has a compatible base, `bench`/`e2e` stop before locks or queue requests:
+start the game on Mac on this version to import it. Remote `pytest` instead prints one warning
+and continues with the host's `game-base.json`, without forcing a base fingerprint.
+`setup` still requires compatible Mac parts and does not use this host fallback.
+Each fallback prints one line explaining the SSH, base synchronization, lock, queue-wait or game-startup failure.
+Once returned output contains `game.log`, that host's result is final, including a failing exit code;
+the game is not run again elsewhere. The remote lock/queue wait defaults to 120 seconds in `auto`
+(`RYZEN_LOCK_WAIT`). `BENCH_HOST=dev-ubuntu` and `BENCH_HOST=ryzen` require that host, default to a
+900-second wait and never fall back; `BENCH_HOST=local` runs on this machine. `DEV_UBUNTU_HOST`
+overrides the dev-ubuntu SSH alias (default `dev-ubuntu`); dispatch uses
+`RYZEN_HOST="$DEV_UBUNTU_HOST" scripts/ryzen.sh bench`. A windowed scenario with
+`BENCH_HOST=dev-ubuntu`, including `BENCH_HEADLESS=0`, exits with code 2: `окна на dev-ubuntu нет`.
+`KEEP=1`, a VideoToolbox encoder, a custom `GOTHIC_DIR` or other Mac-only game paths require local
+execution (`auto` falls back, an explicit remote host exits with code 2).
+`NO_BUILD=1` only skips a local build; remote hosts always check the engine source hash.
+
+A line `# @headless` in the scenario selects `gothic-body-runner --game-parity --mode lockstep`,
+without a window, GPU or sound. `BENCH_HEADLESS=1` selects this path for any scenario;
+`BENCH_HEADLESS=0` selects the window even for a marked scenario. `KEEP=1` with the headless path
+exits with code 2. The runner defaults to `gothic-body-runner` beside `GAME_BIN`; `RUNNER_BIN`
+overrides it for local runs. It uses the same `Gothic.ini`, `[GAME]` flags and `OPENGOTHIC_*` environment as the
+window; `WORLD` becomes `--world`, otherwise the copied save becomes `--save`. Window variables
+`TEMPEST_*` are not needed. A local build selects the `gothic-body-runner` target. On remote hosts,
+preparation builds both `Gothic2Notr` and the runner together; a cached engine without an executable
+runner is rebuilt and republished for a headless bench. A rebuild without the runner removes its
+old executable before publishing the new engine digest.
+
+On dev-ubuntu, preparation defaults to `gq --class quick --threads 6 --mem 10G`
+(`RYZEN_JOBS=6`); Ryzen retains its existing build request. dev-ubuntu has no shared storage:
+`RYZEN_BENCH_ARCHIVE` is rejected with code 2 before upload.
+
+The headless game request defaults to `gq --class batch --threads 4 --mem 6G`, without display or
+GPU-memory resources. `RYZEN_BENCH_CLASS` still overrides the class; a `batch` request's `--max`
+is capped at two hours. Unmarked windowed scenarios keep their existing queue settings.
+Both paths use the same completion marker, heartbeat, progress, watchdog and post-run checks below.
+The runner's final JSON status remains in `game.log`. `report.md` and `report.json` identify the run
+as `headless lockstep` or `window` and include the game's wall seconds; stdout still prints
+`bench: game ran N s`.
 
 For performance comparisons (before/after or FPS), run both takes on the same machine:
-pin `BENCH_HOST=ryzen` or `BENCH_HOST=local`. `host.txt` and the report header identify the host.
+pin `BENCH_HOST=dev-ubuntu`, `BENCH_HOST=ryzen` or `BENCH_HOST=local`.
+`host.txt` and the report header identify the host, including `dev-ubuntu` when its SSH alias is overridden.
+
+`knockdown-launch` проверяет защиту рождения рэгдолла: SLD_826 с `ITMW_2H_SLD_AXE` (W2H) сбивает оглушённого SLD_815, по 20 проб в чередующихся диапазонах 30–40, 50–90 и 100–170 см, затем 5 проб оглушения без удара на контрольной точке и 5 на склоне дуэли. `RAGDOLL_BIRTH_GUARD=1|0` задаёт `[GAME] ragdoll_birth_guard` до загрузки мира. Сценарий генерирует `reports/physics/2026-11-02-knockdown-launch/generate.py`; фиксированные зёрна и подготовка одинаковы в ON/OFF. `ragdoll_birth_peak` пишет пики скоростей COM таза/спины/головы за первые 300 мс симуляции, дистанцию корней, виновника и снятие защиты; замер — после каждого ненулевого `Update`. `stun-drift <цель> <атакующий|player>` перед `stun <цель> posture` наблюдает корень каждые 100 мс от 0 до 1600 мс: проекцию к атакующему, горизонтальное смещение, высоту, анимацию, оглушение, скольжение, полёт и флаг второго такта. Отдельный `knockdown-drift` из того же генератора запускает только 5 ровных и 5 склоновых проб; источник оглушения — герой, цель перед оглушением освобождена от внешнего управления. `put-at <npc|player> <x> <y> <z>` ставит на землю по точным координатам (NPC замораживается и смотрит на героя). Анализ: `python3 reports/physics/2026-11-02-knockdown-launch/analyze.py --drift <папка>`; `summary.csv` нокдаунов не меняется. [Отчёт, команды и анализатор](../../reports/physics/2026-11-02-knockdown-launch/README.md).
+
+Результаты нокдаунов ON/OFF и опыта дрейфа — в отчёте; сценарий дрейфа не запускает 60 нокдаунов.
 
 `game.log` must contain `[bench] done` for a complete scenario (including an explicit `quit`).
 Closing the window, a crash, `TIMEOUT` (default 300 seconds), or the stall watchdog before that marker
@@ -104,6 +151,11 @@ the resulting frames on Mac.
 
 ## План и журнал
 
+- 2026-11-02: route headless `auto` benches through dev-ubuntu → Ryzen → Mac; keep windowed
+  routing unchanged. Reuse `ryzen.sh` with dev-ubuntu build limits and setup/cleanup without NAS.
+- 2026-11-02: remove stale runners from window-only rebuilds before caching; keep `RUNNER_BIN` local.
+- 2026-11-02: add marked headless lockstep benches with game-parity simulation and a Ryzen `batch`
+  request without display/GPU resources; record the run method and game wall time in reports.
 - 2026-11-02: require the completion marker, publish the engine heartbeat, stream progress and stop
   stalled games before the outer Ryzen job limit; preserve reports from interrupted runs.
 
@@ -542,6 +594,9 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `rec <name> [novideo]`, `stop [shadow]` | record a segment (video and metrics, or metrics only); `stop shadow` also copies both rolling melee shadow journals into segment files (filter cumulative rows by fight game-time interval) |
 | `shot <name>` | one PNG |
 | `streaming wait [timeout_ms]` | Wait for all desired Near/Far chunks and the publication queue; timeout defaults to 60000 real ms. |
+| `npctier <npc> full\|simplified\|auto` | Override one NPC tier until reset or reload. Hero, training and arena actors stay Full. |
+| `npctier-test <npc> <start waypoint> <end waypoint>` | Verify 20 switches in each direction during movement and turns, unchanged remaining path/destination and every arrival. `npc-tier-transitions` runs the fixture on a fresh NEWWORLD. |
+| `npcspeed <start waypoint>` | Compare Sequence speed with Full and Simplified movement on one authored edge for human/orc/wolf in walk/run/sneak; appended to `npc-tier-transitions`. Removes ambient NPCs for calibration. |
 | `npcday <game minutes> [period 5] [shared]` | Journal every NPC over continuous game time ([NPC day parity](#npc-day-parity)); the scenario waits until the time has passed. Every NPC gets a private script random stream from the last `seed`; `shared` keeps the game's one shared stream. |
 | `ui on\|off` | the interface in the captured frames, as the player sees it: subtitles, the input line, the deal window (off by default: only the world) |
 | `label <text>` | text on the overlay |
@@ -567,7 +622,7 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `bowgeom` | the bow and the bow hand of the hero in the arrow's frame (x along it from its slot, y up, z to the side), cm: the bow's box, the grip, the string's middle at rest and drawn by `S_READY` and `S_DRAWN`, the bow hand's bones, the head |
 | `animspeed <anim> <k>` | the hero's animation of that name plays k times as fast from its next start (`Pose::setAnimSpeed`: a layer keeps its speed, the next one starts at 1). The manual aim sets `T_BOWRELOAD` from dexterity (`stats` prints it: `reload x`); this overrides it until dexterity changes. The hero's animation events go to bench.log (`anim event <type> <item> <slot>`, `anim morph <anim> <slot>`): at any tempo each once, in the same order |
 | `sfx <name>...` | the files a sound effect plays (its variants `_A1`..), `(missing)` if the game's data has no such file. The hero's sounds go to bench.log (`sound <name>`) |
-| `stats [npc <npc>] [str <n>] [dex <n>] [bow <n>] [cbow <n>] [hp <n>] [hpmax <n>] [talent auto\|0\|1\|2]` | the hero's (an npc's) strength, dexterity, hit chances (the skill), hit points; prints what the manual aim makes of them (sway, draw, hold, arrow speed). `talent`: the trained archers' animations (`_BOWT1` at 30%, `_BOWT2` at 60% in G2; `auto` as the hit chances say); with it or `npc` also `stats of <npc>: talent, reload ms, hp, point protection` |
+| `stats [npc <npc>] [str <n>] [dex <n>] [1h <n>] [2h <n>] [bow <n>] [cbow <n>] [hp <n>] [hpmax <n>] [talent auto\|0\|1\|2]` | the hero's (an npc's) strength, dexterity, hit chances (the skill), hit points; prints what the manual aim makes of them (sway, draw, hold, arrow speed). Arguments apply left to right. `talent` sets the trained archers' animations (`_BOWT1` at 30%, `_BOWT2` at 60% in G2; `auto` as the hit chances say), and the 1H/2H animation level only when that weapon's hit chance is explicit in the same command; with it or `npc` also `stats of <npc>: melee hit chances and animation levels, archery talent, reload ms, hp, point protection` |
 | `seed <n>` | the random numbers start over: the scripts' (the dice, the release cone), the bench's (`volley` jitter), the hero's sway |
 | `npcequip <npc> <item> [count]` | into the npc's inventory, the first put on |
 | `arc <npc> <count> <dist> <step deg>` | that many of the npc stand that far in front of the hero, a step apart round it, facing it: the crew of `fight all` (a new arc replaces it, `clear` takes the gone out) |
@@ -1165,25 +1220,53 @@ tower (the valley's rats and bloodflies attack him all day). Start it once per N
 compare two runs:
 
 ```sh
-WORLD=NEWWORLD.ZEN OPENGOTHIC_NPC_SIM_TIER=full TIMEOUT=7200 RYZEN_MAX=120m BENCH_HOST=ryzen \
+OPENGOTHIC_NPC_SIM_TIER=full BENCH_HOST=dev-ubuntu \
   scripts/bench.sh npc-day-parity /absolute/out/full-1
-WORLD=NEWWORLD.ZEN OPENGOTHIC_NPC_SIM_TIER=simplified TIMEOUT=7200 RYZEN_MAX=120m BENCH_HOST=ryzen \
+OPENGOTHIC_NPC_SIM_TIER=simplified BENCH_HOST=dev-ubuntu \
   scripts/bench.sh npc-day-parity /absolute/out/simplified-1
 scripts/npc_day_parity.py /absolute/out/full-1 /absolute/out/simplified-1 --label-a full --label-b simplified \
-  --tolerances scripts/bench/npc-day-parity.tolerances.json --out /absolute/out/report.md --json /absolute/out/report.json
+  --tolerances scripts/bench/npc-day-parity.tolerances-6c.json --out /absolute/out/report.md --json /absolute/out/report.json
 ```
 
-A day takes 37–45 minutes on Ryzen (exclusive window; an interactive play session closes it) and writes
-about 55 MB. On one build the journal is byte-identical between runs, so
-`scripts/bench/npc-day-parity.tolerances.json` asks for exact equality; a change of the executor adds its own
-allowance with command-line limits. `npcday` files:
+The scenario carries `# @headless`: it defaults to `WORLD=NEWWORLD.ZEN`, `TIMEOUT=3600` and
+`RYZEN_MAX=75m`, with a `batch` request and no window or GPU reservation. `--game-parity` supplies
+the AI bridge and the window's 40 m effect radius around the camera, and disables body traces by
+default. With `BENCH_HOST=auto`, the host order is dev-ubuntu → Ryzen → Mac; pin
+`BENCH_HOST=dev-ubuntu` to keep a comparison there. `DEV_UBUNTU_HOST` changes its SSH alias.
+`BENCH_HEADLESS=0` restores the window for a same-build comparison on Ryzen or Mac;
+`BENCH_HOST=dev-ubuntu` then exits with code 2 because that host has no window.
+
+The [headless measurements](../../reports/compute/2026-11-02-headless-bench/README.md) on Ryzen
+show that a day through `scripts/bench.sh npc-day-parity` took 1553 s (25,9 min) without a window,
+as a `batch` request (`gq`: `4t 6G gpu=0G окно=0`); windowed days took 38–43 min.
+The window and `--game-parity` runner days from the same build and environment passed
+the historical numeric bench tolerances (exit 0): position differences 0 m,
+ZS/TA/HP/inventory matches 100%, and `npc-day-events.csv` byte-identical. Only `queue`/`head`
+differ for Lester (`PC_PSIONIC`) when he approaches the hero to talk: `AI_ProcessInfo` is handled
+by the dialogue menu in the window; the runner has no menu. The current exact-journal control
+also checks those fields, so window/runner comparisons need to report this difference explicitly.
+Compare only runs from the same build,
+base and environment. A day writes about 55 MB.
+With `OPENGOTHIC_NPC_LOGIC_AUDIT=1`, `npc-day-heights.csv` compares sampled Simplified positions with a ground ray; movement itself does not cast these verification rays. The comparer splits position errors into `stationary_both` and `moving_either` from the existing body-state column, and accepts final-HP, matched-death and stationary-p95 guards.
+
+Use `npc-day-parity.tolerances.json` for Full and `OPENGOTHIC_NPC_SIMPLE_MOVE=0` controls against
+the current-main noise floor. It requires identical nonhero sample fields except `tier` and all
+nonhero events, including the final post-sample tick. Active Simplified/auto use
+`npc-day-parity.tolerances-6c.json`: TA ≥99.5%, ZS and standard start coverage ≥99%, stationary
+position p95 ≤1 m and mutual-nearest start shift p95 ≤8 game seconds. Deaths, final HP and NPC
+presence remain strict. At most three NPCs may have different final inventory, and every case
+needs an exact attested script-created/random-item hash pair; unexplained differences fail.
+Moving positions and standard greedy offsets are report-only. The
+[acceptance decision and measurements](../../docs/world-streaming.md#шаг-1-пункт-6в--графовое-движение-и-повороты)
+explain the bounds and remaining combat/body work. `npcday` files:
 
 | File | Contents |
 |---|---|
 | `npc-day.json` | Tier mode, seed, private random streams, period, start time and hero; at the end the sample/event counts, wall time and the NPC tick time per tier |
 | `npc-day.csv` | Per NPC and sample: `t_min` (scheduled, minutes since the start), key (`SYMBOL#ordinal` by start position), alive, HP, routine entry in force (`index hh:mm-hh:mm ZS waypoint`), ZS state and its time, position (cm), nearest waypoint and distance, AI queue size and head, body state, inventory hash and item count, mobsi scheme, tier, policy, hero flag |
 | `npc-day-events.csv` | Polled every world tick: `zs_start`/`zs_end`, `ta` (routine entry change), `death`/`revive`, `insert`/`remove`, with game minutes and position |
-| `npc-day-cost.csv` | Per sample: wall seconds, NPCs within 30/60 m of the hero, world ticks, NPCs per tier, tier transitions and `Npc::tick` milliseconds per tier since the previous sample |
+| `npc-day-cost.csv` | Per sample: wall seconds, NPCs within 30/60 m of the hero, world ticks, NPCs per tier, tier transitions, `Npc::tick` milliseconds and NPC-tick counts per tier, plus Simplified combat ticks using the native executor since the previous sample |
+| `npc-day-arrivals.csv` | Audit-only exact terminal arrivals, observed movement start, final goal identity, actor/target position, ZS, queue and executor; it adds no records to the strict samples/events files. |
 
 Every NPC gets a private script random stream (`GameScript::isolateRandom`, seed from `seed`, stream from
 the key), so one NPC's extra `Hlp_Random` or dice roll does not shift every later NPC's numbers; `shared`

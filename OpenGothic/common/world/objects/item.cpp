@@ -1,3 +1,4 @@
+#include "loadprobe.h"
 #include "item.h"
 
 #include <Tempest/Log>
@@ -34,6 +35,8 @@ asset::MaterialGroup physicsMaterial(int32_t material) {
 
 Item::Item(World &owner, size_t itemInstance, Type type, const Tempest::Matrix4x4& initial)
   :Vob(owner) {
+  LoadProbe::Startup::Scope startupProbe(LoadProbe::Startup::Item);
+  LoadProbe::Startup::Scope::bytes(LoadProbe::Startup::Item,sizeof(Item));
   assert(itemInstance!=size_t(-1));
   hitem = std::make_shared<zenkit::IItem>();
   hitem->user_ptr=this;

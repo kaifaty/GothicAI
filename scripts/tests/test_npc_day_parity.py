@@ -12,16 +12,17 @@ import npc_day_parity  # noqa: E402
 
 SCRIPT = Path(__file__).parents[1] / "npc_day_parity.py"
 STRICT = Path(__file__).parents[1] / "bench" / "npc-day-parity.tolerances.json"
+SIX_C = Path(__file__).parents[1] / "bench" / "npc-day-parity.tolerances-6c.json"
 DONE = {"seed": 7, "isolate": True, "minutes": 90, "period_min": 30, "end_reason": "done"}
 HEADER = ("t_min,at_min,key,symbol,alive,hp,hp_max,ta,zs,zs_ms,x,y,z,wp,wp_dist,queue,head,body,"
           "inv_hash,inv_items,mob,tier,policy,hero").split(",")
 
 
 def row(t, key, *, alive=1, hp=100, ta="0 08:00-20:00 ZS_STAND NW_A", zs="ZS_STAND", x=0.0, inv="00ff",
-        tier="full", hero="-"):
+        tier="full", hero="-", body=0):
     return {"t_min": t, "at_min": t + 0.004, "key": key, "symbol": key.split("#")[0], "alive": alive, "hp": hp,
             "hp_max": 100, "ta": ta, "zs": zs, "zs_ms": 0, "x": x, "y": 0, "z": 0, "wp": "NW_A", "wp_dist": 0,
-            "queue": 0, "head": "-", "body": 0, "inv_hash": inv, "inv_items": 1, "mob": "-", "tier": tier,
+            "queue": 0, "head": "-", "body": body, "inv_hash": inv, "inv_items": 1, "mob": "-", "tier": tier,
             "policy": "far2", "hero": hero}
 
 
@@ -102,6 +103,21 @@ def test_compare_metrics(tmp_path):
     assert result["by_hour"][1]["same_zs"] == 3 / 6
     assert result["worst_npcs"][0]["key"] == "BAU_2#0" and result["first_zs_divergence_min"] == 60
     assert [npc["key"] for npc in result["worst_npcs"]] == ["BAU_2#0", "WOLF#1"]
+    assert result["hp_diff_end"] == ["WOLF#1"]
+    assert result["by_movement"]["stationary_both"]["samples"] == 12
+
+    # A large moving deviation must not inflate the stationary guard rail. Final
+    # HP remains strict even when intermediate HP and positions have an allowance.
+    moving = [row(t, "MIL_1#0", body=3, x=5000) if t < 90 else row(t, "MIL_1#0", hp=99)
+              for t in (0, 30, 60, 90)]
+    other = tmp_path / "movement"
+    journal(other, moving, [], {"tier_mode": "simplified", **DONE})
+    measured = npc_day_parity.compare(npc_day_parity.load(a), npc_day_parity.load(other))
+    assert measured["by_movement"]["moving_either"]["pos_p95"] == 50
+    assert measured["by_movement"]["stationary_both"]["pos_p95"] == 0
+    assert "MIL_1#0" in measured["hp_diff_end"]
+    checks = npc_day_parity.evaluate(measured, {"max_stationary_pos_p95": 1, "max_hp_diff_end": 0})
+    assert [check["pass"] for check in checks] == [True, False]
 
 
 def test_events_after_the_last_common_sample_are_ignored(tmp_path):
@@ -152,7 +168,7 @@ def test_truncated_run_with_a_missing_npc_fails(tmp_path):
     result, failed = gates(a, b)
     assert result["total"]["same_zs"] == 1.0 and result["only_a"] == 6
     assert failed == {"require_done", "require_full_length", "max_only_samples", "max_missing_end", "max_alive_diff",
-                      "max_inventory_diff_end"}
+                      "max_inventory_diff_end", "require_journal_identical"}
     done = subprocess.run([sys.executable, str(SCRIPT), str(a), str(b), "--tolerances", str(STRICT)],
                           capture_output=True, text=True)
     assert done.returncode == 1 and "require_done" in done.stderr
@@ -180,7 +196,7 @@ def test_short_or_unequal_length_fails(tmp_path):
 def test_samples_in_only_one_run_fail(tmp_path):
     rows = [row(t, key) for t in (0, 30, 60, 90) for key in ("MIL_1#0", "BAU_2#0") if (t, key) != (30, "BAU_2#0")]
     result, failed = gates(*identical(tmp_path, rows))
-    assert result["only_a"] == 1 and result["only_b"] == 0 and failed == {"max_only_samples"}
+    assert result["only_a"] == 1 and result["only_b"] == 0 and failed == {"max_only_samples", "require_journal_identical"}
 
 
 def test_npc_missing_at_the_end_fails(tmp_path):
@@ -188,7 +204,8 @@ def test_npc_missing_at_the_end_fails(tmp_path):
     result, failed = gates(*identical(tmp_path, rows))
     assert result["missing_end"] == ["BAU_2#0"]
     assert result["alive_diff_end"] == ["BAU_2#0"] and result["inventory_diff_end"] == ["BAU_2#0"]
-    assert failed == {"max_missing_end", "max_alive_diff", "max_inventory_diff_end", "max_only_samples"}
+    assert failed == {"max_missing_end", "max_alive_diff", "max_inventory_diff_end", "max_only_samples",
+                      "require_journal_identical"}
 
 
 def test_hero_events_are_left_out(tmp_path):
@@ -206,3 +223,54 @@ def test_unknown_tolerance_is_rejected(tmp_path):
     done = subprocess.run([sys.executable, str(SCRIPT), str(a), str(b), "--tolerances", str(tolerances)],
                           capture_output=True, text=True)
     assert done.returncode != 0 and "unknown tolerance" in done.stderr
+
+
+def test_6c_profile_admits_only_proven_script_inventory_and_bounded_start_shift(tmp_path):
+    policy = json.loads(SIX_C.read_text())
+    proof = policy["inventory_script_evidence"]
+    # Both measured script-created items are allowed, while a moving actor's
+    # displacement is report-only and stationary positions retain the 1 m bound.
+    a_rows, b_rows = [], []
+    for t in (0, 30, 60, 90):
+        for evidence in (proof[0], proof[2]):
+            a_rows.append(row(t, evidence["key"], inv=evidence["reference_hash"]))
+            b_rows.append(row(t, evidence["key"], inv=evidence["candidate_hash"], tier="simplified", x=50))
+        a_rows.append(row(t, "MIL_1#0", body=3))
+        b_rows.append(row(t, "MIL_1#0", body=3, x=5000, tier="simplified"))
+    a, b = tmp_path / "a", tmp_path / "b"
+    journal(a, a_rows, [(1, "MIL_1#0", "zs_start", "ZS_STAND", 0, 0, 0)], {"tier_mode": "full", **DONE})
+    journal(b, b_rows, [(1.1, "MIL_1#0", "zs_start", "ZS_STAND", 0, 0, 0)],
+            {"tier_mode": "simplified", **DONE})
+    result = npc_day_parity.compare(npc_day_parity.load(a), npc_day_parity.load(b))
+    assert len(result["inventory_diff_end"]) == 2
+    assert result["zs_starts_mutual"]["offset_p95_s"] < 8
+    assert result["by_movement"]["moving_either"]["pos_p95"] == 50
+    assert all(check["pass"] for check in npc_day_parity.evaluate(result, policy["tolerances"], proof))
+    done = subprocess.run([sys.executable, str(SCRIPT), str(a), str(b), "--tolerances", str(SIX_C)],
+                          capture_output=True, text=True)
+    assert done.returncode == 0, done.stderr
+    # The same known NPC with an unproved hash is not covered by the count cap.
+    result["inventory_end_hashes"][proof[0]["key"]]["b"] = "unproved-item-loss"
+    checks = npc_day_parity.evaluate(result, policy["tolerances"], proof)
+    assert {check["name"] for check in checks if not check["pass"]} == {"require_script_inventory_evidence"}
+    # Numeric headroom is also enforced when provenance is independently supplied.
+    result["inventory_diff_end"] = ["A", "B", "C", "D"]
+    checks = npc_day_parity.evaluate(result, {"max_inventory_diff_end": 3})
+    assert checks[0]["pass"] is False
+    # A diagnostic offset beyond its bound cannot hide behind a 100% match rate.
+    result["zs_starts_mutual"]["offset_p95_s"] = 8.01
+    checks = npc_day_parity.evaluate(result, {"max_zs_mutual_offset_p95_s": 8})
+    assert checks[0]["pass"] is False
+
+
+def test_strict_profile_checks_queue_and_events_outside_sample_window(tmp_path):
+    a, b = identical(tmp_path)
+    samples = b / "npc-day.csv"
+    samples.write_text(samples.read_text().replace(",0,-,0,00ff,", ",1,PlayAni,0,00ff,", 1))
+    assert gates(a, b)[1] == {"require_journal_identical"}
+    samples.write_bytes((a / "npc-day.csv").read_bytes())
+    # Older scalar checks intentionally ignore this post-sample event; exact
+    # control comparisons must nevertheless fail it.
+    with (b / "npc-day-events.csv").open("a", newline="") as stream:
+        csv.writer(stream).writerow((90.001, "MIL_1#0", "zs_start", "ZS_STAND", 0, 0, 0))
+    assert gates(a, b)[1] == {"require_journal_identical"}

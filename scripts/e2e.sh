@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 # End-to-end check: starts the AI server with a scenario, then a new game in OpenGothic.
 # LLM defaults to the scenario group selected in server/src/gothic_ai/scenarios/groups.py.
+# Unset TIMEOUT/SAVE take the scenario's RUN timeout and save (slot 1); explicit TIMEOUT, SAVE or empty SAVE= win.
 # LLM=off forbids model calls except explicit scenario givens (given/silent).
+# P30 is enabled only for neural, neural-companion, neural-group, neural-talk,
+# neural-load, neural-soak and neural-still; all other scenarios use --no-neural-body.
+# GOTHIC_SOAK_CONTROL=1 also keeps neural-soak on native combat.
 # Manual live suites: SUITE=haggle RUNS=3 LLM=chatgpt scripts/e2e-live.sh; see docs/e2e.md.
 #   check_walk: new game, no SAVE, no model; Cavalorn walks from Xardas's stairs to Brago's
 #       unseen body in the bandit cave using the native waynet, sees it and returns to the hero
@@ -439,6 +443,9 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 GOTHIC_DIR="${GOTHIC_DIR:-/Volumes/DevSSD/Dev/games/Gothic II}"
 GAME_BIN="${GAME_BIN:-$ROOT/OpenGothic/build/opengothic/Gothic2Notr}"
 LOG_DIR="${LOG_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/gothic-e2e.XXXXXX")}"
+source "$ROOT/scripts/e2e-services.sh"
+# Unset TIMEOUT and SAVE take the scenario's declared run settings (RUN), before the checks below.
+e2e_run_defaults "${SCENARIO:-m0}"
 SCENARIO="${SCENARIO:-m0}"
 LLM="${LLM:-auto}"
 if [[ "$LLM" == fake ]]; then
@@ -446,20 +453,17 @@ if [[ "$LLM" == fake ]]; then
   exit 2
 fi
 BODY_POLICY="${GOTHIC_BODY_POLICY:-engine}"
-BODY_ARGS=(--neural-body --body-policy "$BODY_POLICY")
-if [[ "$SCENARIO" == memprobe ]]; then BODY_ARGS=(--no-neural-body); fi
+BODY_ARGS=(--no-neural-body)
 if [[ "${GOTHIC_SOAK_CONTROL:-0}" == 1 && "$SCENARIO" != neural-soak ]]; then
   echo 'GOTHIC_SOAK_CONTROL requires SCENARIO=neural-soak' >&2
   exit 2
 fi
 E2E_DEFAULT_TIMEOUT=240
-if [[ "$SCENARIO" == memprobe ]]; then E2E_DEFAULT_TIMEOUT=1200; fi
-if [[ "$SCENARIO" == surrender_live || "$SCENARIO" == neural-still || "$SCENARIO" == showrunner_live || "$SCENARIO" == vanilla_line_live ]]; then E2E_DEFAULT_TIMEOUT=1200; fi
+if [[ "$SCENARIO" == surrender_live || "$SCENARIO" == showrunner_live || "$SCENARIO" == vanilla_line_live ]]; then E2E_DEFAULT_TIMEOUT=1200; fi
 if [[ "$SCENARIO" == haggle ]]; then E2E_DEFAULT_TIMEOUT=1200; fi
 if [[ "$SCENARIO" == live_lies || "$SCENARIO" == live_deals || "$SCENARIO" == live_npc || "$SCENARIO" == live_director ]]; then E2E_DEFAULT_TIMEOUT=2400; fi
 if [[ "$SCENARIO" == interject ]]; then E2E_DEFAULT_TIMEOUT=600; fi
 if [[ "$SCENARIO" == chests_lobart ]]; then E2E_DEFAULT_TIMEOUT=420; fi
-if [[ "$SCENARIO" == feat_fame ]]; then E2E_DEFAULT_TIMEOUT=420; fi
 TIMEOUT="${TIMEOUT:-$E2E_DEFAULT_TIMEOUT}"
 if [[ "${GOTHIC_TTS_RECORD:-0}" == 1 && "$SCENARIO" != tts ]]; then
   echo 'GOTHIC_TTS_RECORD requires SCENARIO=tts' >&2
@@ -469,6 +473,7 @@ if [[ "$SCENARIO" = neural || "$SCENARIO" = neural-companion || "$SCENARIO" = ne
   if [[ "$SCENARIO" == neural-soak && "${GOTHIC_SOAK_CONTROL:-0}" == 1 ]]; then
     BODY_ARGS=(--no-neural-body)
   else
+    BODY_ARGS=(--neural-body --body-policy "$BODY_POLICY")
     if [[ "$BODY_POLICY" == service ]]; then
       [ -n "${GOTHIC_BODY_URL:-}" ] || { echo "scenario $SCENARIO with service policy requires GOTHIC_BODY_URL=tcp://host:port" >&2; exit 2; }
     fi
@@ -587,13 +592,14 @@ ASR_PID=""
 TTS_PID=""
 VOICE_ARGS=(--no-voice)
 TTS_ARGS=(--no-tts)
-if [ "$SCENARIO" = "tts" ] || [ "$SCENARIO" = "svm_lines" ] || [ "$SCENARIO" = "combat_barks" ] || [ "$SCENARIO" = "mercy" ] || [ "$SCENARIO" = "hero_yield" ] || [ "$SCENARIO" = "humiliate" ] || [ "$SCENARIO" = "surrender_live" ] || [ "$SCENARIO" = "live_npc" ] || [ "$SCENARIO" = "live_director" ] || [ "$SCENARIO" = "gossip" ] || [ "$SCENARIO" = "day" ] || [ "$SCENARIO" = "group" ] || [ "$SCENARIO" = "interject" ] || [ "$SCENARIO" = "programs" ] || [ "${SCENARIO#errand}" != "$SCENARIO" ] || [ "${SCENARIO#fight_reactions_}" != "$SCENARIO" ]; then
+source "$ROOT/scripts/e2e-services.sh"
+if e2e_needs_tts "$SCENARIO"; then
   (cd "$ROOT/tts-service" && exec uv run gothic-tts serve --port "$TTS_PORT" --provider "$TTS" --fallback none) >"$LOG_DIR/tts.log" 2>&1 &
   TTS_PID=$!
   TTS_ARGS=(--tts-url "ws://127.0.0.1:$TTS_PORT")
 fi
-if [ "$SCENARIO" = "m3" ] || [ "$SCENARIO" = "m5e" ]; then
-  (cd "$ROOT/asr-service" && exec uv run gothic-asr serve --port "$ASR_PORT" --provider "$ASR" --fallback none) >"$LOG_DIR/asr.log" 2>&1 &
+if e2e_needs_asr "$SCENARIO"; then
+  (cd "$ROOT/asr-service" && exec uv run gothic-asr serve --port "$ASR_PORT" --provider "$ASR" --fallback none --no-laughter) >"$LOG_DIR/asr.log" 2>&1 &
   ASR_PID=$!
   VOICE_ARGS=(--asr-url "ws://127.0.0.1:$ASR_PORT" --voice-file "$VOICE_FILE")
 fi

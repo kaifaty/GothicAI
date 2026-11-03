@@ -459,6 +459,11 @@ if(NOT ANDROID AND NOT IOS)
   add_custom_target(check-aim
     COMMAND $<TARGET_FILE:gothic-aim-contract>
     DEPENDS gothic-aim-contract USES_TERMINAL)
+  add_executable(gothic-archery-contract EXCLUDE_FROM_ALL tests/archery_contract.cpp)
+  target_link_libraries(gothic-archery-contract PRIVATE OpenGothic AiBridge gothic-base-import)
+  add_custom_target(check-archery
+    COMMAND $<TARGET_FILE:gothic-archery-contract>
+    DEPENDS gothic-archery-contract USES_TERMINAL)
   add_executable(gothic-aimwalk-contract EXCLUDE_FROM_ALL tests/aimwalk_contract.cpp)
   target_link_libraries(gothic-aimwalk-contract PRIVATE OpenGothic AiBridge gothic-base-import)
   add_custom_target(check-aimwalk
@@ -482,6 +487,15 @@ if(NOT ANDROID AND NOT IOS)
   add_custom_target(check-meleestamina
     COMMAND $<TARGET_FILE:gothic-meleestamina-contract>
     DEPENDS gothic-meleestamina-contract USES_TERMINAL)
+  add_executable(gothic-healing-contract EXCLUDE_FROM_ALL
+    tests/healing_contract.cpp common/game/healing.cpp)
+  target_include_directories(gothic-healing-contract PRIVATE common)
+  if(NOT MSVC)
+    target_compile_options(gothic-healing-contract PRIVATE -Wall -Wconversion -Werror)
+  endif()
+  add_custom_target(check-healing
+    COMMAND $<TARGET_FILE:gothic-healing-contract>
+    DEPENDS gothic-healing-contract USES_TERMINAL)
   add_executable(gothic-meleefighter-contract EXCLUDE_FROM_ALL
     tests/meleefighter_contract.cpp common/game/meleefighter.cpp)
   target_include_directories(gothic-meleefighter-contract PRIVATE common)
@@ -497,6 +511,15 @@ if(NOT ANDROID AND NOT IOS)
   add_custom_target(check-meleeparry
     COMMAND $<TARGET_FILE:gothic-meleeparry-contract>
     DEPENDS gothic-meleeparry-contract USES_TERMINAL)
+  add_executable(gothic-meleeai-contract EXCLUDE_FROM_ALL
+    tests/meleeai_contract.cpp common/game/meleeai.cpp)
+  target_include_directories(gothic-meleeai-contract PRIVATE common)
+  if(NOT MSVC)
+    target_compile_options(gothic-meleeai-contract PRIVATE -Wall -Wconversion -Werror)
+  endif()
+  add_custom_target(check-meleeai
+    COMMAND $<TARGET_FILE:gothic-meleeai-contract>
+    DEPENDS gothic-meleeai-contract USES_TERMINAL)
   add_executable(gothic-meleedodge-contract EXCLUDE_FROM_ALL
     tests/meleedodge_contract.cpp common/game/meleedodge.cpp common/game/meleestamina.cpp common/game/meleeimpact.cpp)
   target_include_directories(gothic-meleedodge-contract PRIVATE common)

@@ -42,6 +42,7 @@
 #include "resources.h"
 #include "frameprofile.h"
 #include "navdemos.h"
+#include "npcdayjournal.h"
 
 #include <chrono>
 #include <filesystem>
@@ -494,6 +495,7 @@ Npc::Npc(World &owner, size_t instance, std::string_view waypoint, NpcProcessPol
   }
 
 Npc::~Npc(){
+  endMeleeAiSpecial();
   clearMeleeShadow();
   if(std::getenv("OPENGOTHIC_MELEE_BENCH")!=nullptr && owner.physic()!=nullptr)
     owner.physic()->removeMeleeBlade(this);
@@ -507,6 +509,7 @@ Npc::~Npc(){
   }
 
 void Npc::save(Serialize &fout, size_t id, std::string_view directory) {
+  tickFoodPool();
   fout.setEntry("worlds/",fout.worldName(),directory,id,"/data");
   fout.write(*hnpc);
   fout.write(body,head,vHead,vTeeth,bdColor,vColor,bdFatness);
@@ -582,9 +585,22 @@ void Npc::save(Serialize &fout, size_t id, std::string_view directory) {
     fout.write(BodyTraceMagic,uint16_t(1),bodyTraceRecord.id,uint64_t(bodyTraceRecord.diedAt+1),
                uint64_t(bodyTraceRecord.clockFrom+1),bodyTraceRecord.culprit);
     }
+  if(foodPool.remaining>0) {
+    fout.setEntry("worlds/",fout.worldName(),directory,id,"/food-pool");
+    Healing::save(fout,foodPool);
+    }
+  if(itemUse.item!=0) {
+    fout.setEntry("worlds/",fout.worldName(),directory,id,"/item-use");
+    fout.write(uint32_t(itemUse.item),itemUse.started,itemUse.food);
+    }
   }
 
 void Npc::load(Serialize &fin, size_t id, std::string_view directory) {
+  simpleMovement = {};
+  endMeleeAiSpecial();
+  meleeAiSpecialSlot = {};
+  meleeAiSpecialEnded.reset();
+  meleeAiBargeMemory.clear();
   bodyImpactWindow.clear();
   bodyImpactLaunchCulprit.reset();
   bodyImpactPendingCulprit.reset();
@@ -592,6 +608,10 @@ void Npc::load(Serialize &fin, size_t id, std::string_view directory) {
   endMeleeStun("reset");
   meleeParadeOrigin.reset();
   meleeStamina = {};
+  itemUse = {};
+  Healing::clear(foodPool);
+  foodPoolTick = owner.tickCount();
+  collectingFood = false;
   meleeRiposte.reset();
   meleeRiposteHoldUntil = 0;
   meleeFighter = {};
@@ -629,6 +649,8 @@ void Npc::load(Serialize &fin, size_t id, std::string_view directory) {
     sym->set_instance(hnpc);
 
   fin.read(x,y,z,angle,sz);
+  loadedFpPosition = position();
+  loadedFpReferences = true;
   resetCharacterVisualHeight();
   lieVisualYOffset=0;
   fin.read(wlkMode,trGuild,talentsSk,talentsVl,refuseTalkMilis);
@@ -685,6 +707,15 @@ void Npc::load(Serialize &fin, size_t id, std::string_view directory) {
 
   if(fin.setEntry("worlds/",fin.worldName(),directory,id,"/inventory"))
     invent.load(fin,*this);
+  if(fin.setEntry("worlds/",fin.worldName(),directory,id,"/item-use")) {
+    uint32_t item = 0;
+    fin.read(item,itemUse.started,itemUse.food);
+    itemUse.item = item;
+    }
+  if(fin.setEntry("worlds/",fin.worldName(),directory,id,"/food-pool"))
+    Healing::load(fin,foodPool);
+  if(isDown() || !Gothic::physicsFlags().foodOverTime)
+    Healing::clear(foodPool);
 
   // post-alignment
   updateTransform();
@@ -771,6 +802,13 @@ void Npc::syncLogicalBodyState(bool rebuild) {
 void Npc::postValidate() {
   if(currentInteract!=nullptr && !currentInteract->isAttached(*this))
     currentInteract = nullptr;
+  if(const auto* pending=pendingSimpleGoTo(); pending!=nullptr && pending->act==AI_GotoItem && pending->i1>0) {
+    auto action=aiQueue.pop();
+    action.item=owner.itmById(uint32_t(action.i1-1));
+    action.i1=0;
+    simpleMovement.nativeItem=action.item;
+    aiQueue.pushFront(std::move(action));
+    }
   syncLogicalBodyState(true);
   }
 
@@ -780,7 +818,23 @@ void Npc::saveAiState(Serialize& fout) const {
   fout.write(aiState.funcIni,aiState.funcLoop,aiState.funcEnd,aiState.sTime,aiState.eTime,aiState.started,aiState.loopNextTime);
   fout.write(aiPrevState);
 
-  aiQueue.save(fout);
+  const auto* pending=pendingSimpleGoTo();
+  const uint32_t pendingItem = (pending!=nullptr && pending->act==AI_GotoItem && pending->item!=nullptr) ?
+                               owner.itmId(&pending->item->handle()) : uint32_t(-1);
+  if(pendingItem!=uint32_t(-1)) {
+    // Item pointers were never part of AiQueue's layout. Its unused i1 carries
+    // the world-item index for a retained graph terminal, without adding bytes.
+    auto saved=aiQueue;
+    auto action=saved.pop();
+    action.i1=int(pendingItem)+1;
+    saved.pushFront(std::move(action));
+    saved.save(fout);
+    } else {
+    // A vanished item must not fail the save: the action loads as a plain GotoItem.
+    if(pending!=nullptr && pending->act==AI_GotoItem && pending->item!=nullptr)
+      Log::e("npc_graph: ",displayName()," GotoItem target is no longer in the world; saved without it");
+    aiQueue.save(fout);
+    }
   aiQueueOverlay.save(fout);
 
   fout.write(uint32_t(routines.size()));
@@ -974,6 +1028,7 @@ float Npc::angleDir(float x, float z) {
   }
 
 bool Npc::resetPositionToTA() {
+  endMeleeAiSpecial();
   const bool g2       = owner.version().game==2;
   const bool isDragon = (g2 && guild()==GIL_DRAGON);
   const bool isDead   = this->isDead();
@@ -1092,7 +1147,68 @@ void Npc::setProcessPolicy(NpcProcessPolicy t) {
   visual.setTextureOwner(position(),!isPlayer());
   }
 
+void Npc::setSimTier(NpcSimTier t) {
+  simTierValue = t;
+  simTierAssigned = true;
+  if(!loadedFpReferences)
+    return;
+  loadedFpReferences = false;
+  if(t!=NpcSimTier::Simplified || isPlayer() || !simplifiedMovementEnabled())
+    return;
+
+  // Names are the existing save representation. Defer their disambiguation
+  // until the loaded world has assigned tiers, using the original saved pose.
+  const auto resolve=[&](const WayPoint* point,const char* reference) {
+    if(point==nullptr || !point->isFreePoint())
+      return point;
+    const WayPoint* nearest=nullptr;
+    size_t matches=0;
+    float distance=std::numeric_limits<float>::max();
+    owner.forEachWayPoint([&](const WayPoint& candidate) {
+      if(!candidate.isFreePoint() || candidate.name!=point->name)
+        return;
+      ++matches;
+      const float d=(candidate.position()-loadedFpPosition).quadLength();
+      if(d<distance) {
+        distance=d;
+        nearest=&candidate;
+        }
+      });
+    if(matches<=1)
+      return point;
+    owner.noteGraphFpLoadResolution();
+    const auto* symbol=owner.script().findSymbol(instanceSymbol());
+    Log::i("npc_graph_fp_load_resolution npc=",symbol!=nullptr ? symbol->name() : displayName(),
+           " world_id=",owner.npcId(this)," id=",hnpc->id," fp=",point->name," reference=",reference,
+           " candidates=",matches," saved=(",loadedFpPosition.x,",",loadedFpPosition.y,",",loadedFpPosition.z,
+           ") resolved=(",nearest->position().x,",",nearest->position().y,",",nearest->position().z,
+           ") changed=",nearest!=point);
+    return nearest;
+    };
+  currentFp=resolve(currentFp,"currentFp");
+  currentFpLock=FpLock(resolve(currentFpLock.point(),"currentFpLock"));
+  go2.wp=resolve(go2.wp,"goTo");
+  WayPath path;
+  while(const auto* point=wayPath.pop())
+    path.add(*resolve(point,"path"));
+  path.reverse();
+  wayPath=std::move(path);
+  for(auto* queue:{&aiQueue,&aiQueueOverlay}) {
+    std::vector<AiQueue::AiAction> actions;
+    actions.reserve(queue->size());
+    while(queue->size()>0) {
+      auto action=queue->pop();
+      action.point=resolve(action.point,"queue");
+      actions.push_back(std::move(action));
+      }
+    for(auto i=actions.rbegin();i!=actions.rend();++i)
+      queue->pushFront(std::move(*i));
+    }
+  }
+
 void Npc::setWalkMode(WalkBit m) {
+  if(isUsingItemInHand() && !bool(m&WalkBit::WM_Walk))
+    interruptItemUse("run");
   //NOTE: other bits are situational, and should not be set directly
   wlkMode = m & (WalkBit::WM_Run | WalkBit::WM_Walk | WalkBit::WM_Sneak);
   }
@@ -1106,6 +1222,137 @@ WalkBit Npc::walkMode() const {
   else if(mvAlgo.isInWater())
     wlk = WalkBit::WM_Water;
   return wlk;
+  }
+
+bool Npc::simplifiedMovementEnabled() {
+  static const bool enabled = [] {
+    const auto* value = std::getenv("OPENGOTHIC_NPC_SIMPLE_MOVE");
+    return value==nullptr || value[0]!='0';
+    }();
+  return enabled;
+  }
+
+bool Npc::usesSimplifiedMovement() const {
+  return simplifiedMovementEnabled() && !simpleMovement.nativeFallback &&
+         simTier()==NpcSimTier::Simplified && !isPlayer() &&
+         !nativeCombatMovement() && !nativeMobsiApproach() && !nativeMobsiTransition();
+  }
+
+bool Npc::nativeMobsiApproach() const {
+  // AI_UseMob's direct final approach needs native body support and root
+  // movement. A preceding waypoint route remains graph locomotion.
+  if(go2.flag!=GT_Point || go2.wp!=nullptr || go2.npc!=nullptr)
+    return false;
+  const auto* action=aiQueue.front();
+  return action!=nullptr && action->act==AI_UseMob;
+  }
+
+bool Npc::nativeMobsiTransition() const {
+  const auto& pose=visual.pose();
+  // Match MoveAlgo's native ToStand ownership, including a loaded pose whose
+  // transient virtual-mob flag was reset. Walking transitions stay graph-owned.
+  return interactive()==nullptr && !pose.isStanding() &&
+         (pose.hasState(BS_MOBINTERACT) || pose.hasState(BS_CLIMB));
+  }
+
+bool Npc::nativeCombatMovement() const {
+  // Routine locomotion is 6c; combat, pursuit and escape keep their native
+  // body and physics executor until 6e. Keep every admission rule here.
+  if(weaponState()!=WeaponState::NoWeapon || currentTarget!=nullptr || go2.nativeCombatTarget!=nullptr ||
+     fghAlgo.hasInstructions() || go2.flag==GT_Flee || go2.flag==GT_Enemy || go2.flag==GT_EnemyG ||
+     meleeKnockdown || isMeleeStunned() || visual.pose().isAttackAnim())
+    return true;
+  const std::string_view state=aiState.hint;
+  return state=="ZS_ATTACK" || state=="ZS_MM_ATTACK" || state=="ZS_FLEE" ||
+         state=="ZS_FLEETOWP" || state=="ZS_MAGICFLEE" || state=="ZS_MM_FLEE" ||
+         state=="ZS_MM_THREATENENEMY" || state=="ZS_MM_EATBODY" || state=="ZS_WATCHFIGHT";
+  }
+
+auto Npc::simplifiedBodyState() const -> std::optional<BodyState> {
+  if(!usesSimplifiedMovement() || !simpleMovement.body || nativeBodyAction())
+    return std::nullopt;
+  const auto& pose=visual.pose();
+  if(pose.logicalLayerCount()==0)
+    return std::nullopt;
+  // Start/stop transitions retain their native layer state and logical clock.
+  // A requested graph role does not admit or finish the underlying animation.
+  for(size_t i=0;i<pose.logicalLayerCount();++i)
+    if(pose.logicalLayer(i).sequence->animCls==Animation::Transition)
+      return std::nullopt;
+  return simpleMovement.body;
+  }
+
+bool Npc::nativeBodyAction() const {
+  const auto now=owner.tickCount();
+  if(interactive()!=nullptr || aniWaitTime>=now || outWaitTime>now || Gothic::inst().isNpcInDialog(*this))
+    return true;
+  const auto& pose=visual.pose();
+  for(size_t i=0;i<pose.logicalLayerCount();++i) {
+    const auto layer=pose.logicalLayer(i);
+    // Native rotation ownership is Pose bookkeeping; authored turn clips
+    // such as T_WALKTURNL need not carry the MDS ROTATE flag.
+    if(pose.isRotationLayer(layer.sequence))
+      continue;
+    const auto state=BodyState(layer.state&(BS_MAX|BS_FLAG_MASK));
+    if(state==BS_STAND && layer.sequence->animCls==Animation::Loop &&
+       (pose.isStanding() || layer.sequence==visual.idleSequence(walkMode(),weaponState(),*this) ||
+        layer.sequence==visual.idleSequence(WalkBit::WM_Run,weaponState(),*this) ||
+        layer.sequence==visual.idleSequence(WalkBit::WM_Walk,weaponState(),*this) ||
+        layer.sequence==visual.idleSequence(WalkBit::WM_Sneak,weaponState(),*this)))
+      continue;
+    if(state==BS_WALK || state==BS_RUN || state==BS_SNEAK || state==BS_SPRINT)
+      continue;
+    return true;
+    }
+  return false;
+  }
+
+float Npc::simplifiedMoveSpeed() const {
+  const auto* sequence = visual.movementSequence(walkMode(),weaponState(),*this);
+  if(sequence==nullptr || sequence->totalTime()<=0.f)
+    return 0.f;
+  const auto duration = uint64_t(sequence->totalTime());
+  const auto displacement = sequence->speed(0,duration);
+  float playback = 1.f;
+  const auto& pose = visual.pose();
+  for(const auto& [name,speed]:pose.logicalDefaultSpeeds())
+    if(name==sequence->name)
+      playback = speed;
+  for(size_t i=0;i<pose.logicalLayerCount();++i) {
+    const auto layer = pose.logicalLayer(i);
+    if(layer.sequence==sequence)
+      playback = layer.speed;
+    }
+  return std::sqrt(displacement.x*displacement.x+displacement.z*displacement.z)*playback/float(duration);
+  }
+
+void Npc::updateSimpleMovement() {
+  const bool simple = usesSimplifiedMovement();
+  simpleMovement.body.reset();
+  if(simple)
+    mvAlgo.takeRagdollControl();
+  if(simple==simpleMovement.active)
+    return;
+  simpleMovement.active = simple;
+  simpleMovement.edgeTo = nullptr;
+  simpleMovement.ground = nullptr;
+  if(simple) {
+    const bool sensorEnabled = physic.isEnabled();
+    suspendRagdoll();
+    // The ghost remains a combat/perception sensor. Pair collision filtering
+    // excludes graph actors; it must not become invisible to targeting rays.
+    physic.setEnable(sensorEnabled);
+    if(!nativeBodyAction())
+      setAnimRotate(0);
+    resetCharacterVisualHeight();
+    } else {
+    // Only the returning Full body needs a ground ray. The path and queue
+    // survive the handoff; do not call resetPositionToTA/fixNpcPosition here.
+    const auto ground = owner.physic()->landRay(position()+Vec3(0,30,0));
+    if(ground.hasCol)
+      setPosition(Vec3(x,ground.v.y,z));
+    mvAlgo.takeRagdollControl();
+    }
   }
 
 bool Npc::isPlayer() const {
@@ -1145,6 +1392,9 @@ bool Npc::checkHealth(bool onChange, bool allowUnconscious) {
   }
 
 void Npc::onNoHealth(bool death, HitSound sndMask) {
+  interruptItemUse(death ? "death" : "unconscious");
+  Healing::clear(foodPool);
+  endMeleeAiSpecial();
   const bool wasDead = isDead();
   meleeChargePhase = ChargePhase::None;
   meleeChargeMult = 1.f;
@@ -1309,6 +1559,8 @@ void Npc::suspendRagdoll() {
   }
 
 bool Npc::createRagdoll() {
+  if(usesSimplifiedMovement())
+    return false;
   const auto* skeleton = visual.visualSkeleton();
   if(skeleton==nullptr || !visual.hitZoneShape().isValid())
     return false;
@@ -1433,6 +1685,8 @@ bool Npc::recoverRagdoll(bool force) {
   }
 
 void Npc::updateRagdollQuestAnchor() {
+  if(usesSimplifiedMovement())
+    return;
   // Training (OPENGOTHIC_FREEZE_WORLD): NPCs outside the arena stand still, so their anchors
   // keep the value sampled before the arena; resampling all of them costs two rays each.
   if(BodyArena::frozenWorld() && !BodyArena::isActor(*this))
@@ -1512,6 +1766,8 @@ bool Npc::recoverSpellThrow() {
   }
 
 void Npc::prepareRagdoll() {
+  if(usesSimplifiedMovement())
+    return;
   if(!isDown() || !Gothic::physicsFlags().spellPhysics)
     pendingSpellImpulse = {};
   if(!Gothic::physicsFlags().spellPhysics || (!isDown() && !isInAir()))
@@ -2282,6 +2538,8 @@ auto Npc::meleeStep(uint64_t dt) -> Vec3 {
     const float fraction = std::clamp(float(end-double(swing.tick))/magnet.durationMs,0.f,1.f);
     const float yawLeft = magnet.yawRequested*fraction-magnet.yawApplied;
     yawStep = std::clamp(yawLeft,-.18f*plannedMs,.18f*plannedMs);
+    if(meleeAiSpecial==MeleeAi::Special::Charge && isMeleeChargeReleasing())
+      yawStep = 0.f;
     setDirection(angle+yawStep);
     magnet.yawApplied += yawStep;
     magnet.peakYawDegS = std::max(magnet.peakYawDegS,std::abs(yawStep)*1000.f/float(dt));
@@ -2743,6 +3001,10 @@ bool Npc::isMeleeFighter() const {
   }
 
 void Npc::prepareLivingBody() {
+  if(usesSimplifiedMovement()) {
+    living.reset();
+    return;
+    }
   const auto benchMode = meleeBenchMode();
   const bool benchRig = benchMode==MeleeBenchMode::Full || benchMode==MeleeBenchMode::Chain || benchMode==MeleeBenchMode::Blade;
   if(currentInteract!=nullptr)
@@ -3374,7 +3636,7 @@ const Animation::Sequence* Npc::setAnimAngGet(Anim a, uint8_t comb) {
   const auto before = trace ? combatPoseIdentity() : std::string();
   auto st  = weaponState();
   auto wlk = walkMode();
-  const bool costsStamina = a==Anim::MoveBack && hasStamina() &&
+  const bool costsStamina = a==Anim::MoveBack && !isUsingItemInHand() && hasStamina() &&
                            (st==WeaponState::Fist || st==WeaponState::W1H || st==WeaponState::W2H) &&
                            !isSwim() && !isDive() && (!isPlayer() || !bool(wlk&WalkBit::WM_Sneak));
   if(costsStamina && !allowStaminaAction("jumpback",MeleeStamina::JumpBackCost,
@@ -3399,10 +3661,15 @@ const Animation::Sequence* Npc::setAnimAngGet(Anim a, uint8_t comb) {
       }
     }
   const auto result = visual.startAnimAndGet(*this,a,comb,st,wlk);
+  if(result!=nullptr && isUsingItemInHand() && (a==Anim::AttackBlock || a==Anim::Jump || a==Anim::JumpUp ||
+     a==Anim::JumpUpLow || a==Anim::JumpUpMid || a==Anim::JumpHang))
+    interruptItemUse(a==Anim::AttackBlock ? "parade" : "jump");
   if(result!=nullptr && costsStamina && staminaBefore!=meleeStaminaIdentity(visual.pose(),owner.tickCount()))
     spendStamina("jumpback",MeleeStamina::JumpBackCost);
-  if(result!=nullptr && a==Anim::AttackBlock)
+  if(result!=nullptr && a==Anim::AttackBlock) {
+    meleeAiDodgeStreak.reset();
     tickMeleeParry();
+    }
   if(trace)
     traceCombatAttempt(a,result!=nullptr,before,"set_anim");
   return result;
@@ -3412,13 +3679,15 @@ void Npc::setAnimRotate(int rot) {
   visual.setAnimRotate(*this,rot);
   }
 
-bool Npc::setAnimItem(std::string_view scheme, int state) {
+bool Npc::setAnimItem(std::string_view scheme, int state, bool allowMissing) {
   if(scheme.empty())
     return true;
   if(bodyStateMasked()!=BS_STAND) {
     setAnim(Anim::Idle);
     return false;
     }
+  if(allowMissing && !visual.hasAnim(string_frm("T_",scheme,"_STAND_2_S0")))
+    return true;
   if(auto sq = visual.startAnimItem(*this,scheme,state)) {
     implAniWait(uint64_t(sq->totalTime()));
     return true;
@@ -3679,6 +3948,11 @@ void Npc::changeAttribute(Attribute a, int32_t val, bool allowUnconscious) {
   if(a>=ATR_MAX || val==0)
     return;
 
+  if(collectingFood && val>0 && (a==ATR_HITPOINTS || a==ATR_MANA)) {
+    (a==ATR_HITPOINTS ? foodHp : foodMana) += val;
+    return;
+    }
+
   if(val<0 && a==ATR_HITPOINTS) {
     if(isPlayer() && Gothic::inst().isGodMode())
       return;
@@ -3686,6 +3960,8 @@ void Npc::changeAttribute(Attribute a, int32_t val, bool allowUnconscious) {
       return;
     if(isImmortal())
       return;
+    if(attribute(ATR_HITPOINTS)>0)
+      interruptItemUse("hp loss");
     }
 
   hnpc->attribute[a]+=val;
@@ -3872,6 +4148,8 @@ bool Npc::implTurnAway(const Npc &oth, uint64_t dt) {
   }
 
 bool Npc::implTurnToFai(const Npc& oth, uint64_t dt) {
+  if(meleeAiSpecial==MeleeAi::Special::Charge && isMeleeChargeReleasing())
+    return false;
   if(&oth==this || oth.isDown())
     return false;
 
@@ -3933,7 +4211,233 @@ bool Npc::implWhirlTo(const Npc &oth, uint64_t dt) {
   return implTurnTo(oth,AnimationSolver::TurnType::Whirl,dt);
   }
 
+auto Npc::pendingSimpleGoTo() const -> const AiQueue::AiAction* {
+  const auto* action=aiQueue.front();
+  if(action==nullptr || action->point==nullptr)
+    return nullptr;
+  switch(action->act) {
+    case AI_GoToNpc: case AI_GotoItem: case AI_GoToNextFp:
+      return action;
+    case AI_GoToPoint:
+      return action->i0==1 ? action : nullptr;
+    default:
+      return nullptr;
+    }
+  }
+
+void Npc::fallbackSimpleMovement(std::string_view reason, bool ground) {
+  if(!simpleMovement.nativeFallback) {
+    const auto* symbol=owner.script().findSymbol(instanceSymbol());
+    const auto from=position();
+    const auto to=go2.empty() ? from : go2.target();
+    Log::e("npc_graph_fallback_",ground ? "ground" : "segment",": npc=",
+           symbol!=nullptr ? symbol->name() : std::to_string(instanceSymbol()),
+           " world_id=",owner.npcId(this)," id=",hnpc->id,
+           " tick=",owner.tickCount()," game_ms=",owner.time().toInt(),
+           " segment=",from.x,",",from.y,",",from.z," -> ",to.x,",",to.y,",",to.z,
+           " reason=",reason);
+    owner.noteNpcGraphFallback(ground);
+    }
+  simpleMovement.nativeFallback=true;
+  if(TestBench::strictGraphMovement(*this))
+    throw std::runtime_error(std::string(reason));
+  // Preserve the action, its remaining path and the transform. The native
+  // body owns this action until arrival/cancellation, including tier changes.
+  updateSimpleMovement();
+  }
+
+WayPath Npc::simpleWayTo(const WayPoint& point) {
+  // Native freepoint routes are terminal segments. Sending an unconnected
+  // point through a nearby waynet can cross a different floor or an island.
+  if(!point.isConnected())
+    return owner.wayTo(*this,point);
+  const auto connected=[](const WayPoint& p) { return p.isConnected(); };
+  const auto* near=owner.findWayPoint(position(),connected);
+  if(near==nullptr) {
+    fallbackSimpleMovement("no connected waynet");
+    return owner.wayTo(*this,point);
+    }
+  auto delta=near->groundPos-position();
+  float distance2=delta.x*delta.x+delta.z*delta.z;
+  for(const auto& connection:near->connections()) {
+    const auto edge=connection.point->groundPos-near->groundPos;
+    const float length2=edge.x*edge.x+edge.z*edge.z;
+    if(length2==0.f)
+      continue;
+    const float progress=std::clamp(-(delta.x*edge.x+delta.z*edge.z)/length2,0.f,1.f);
+    const auto offset=delta+edge*progress;
+    distance2=std::min(distance2,offset.x*offset.x+offset.z*offset.z);
+    }
+  // Only graph actors may recover off-network by a straight segment to Near.
+  auto path=distance2>4.f*MoveAlgo::closeToPointThreshold*MoveAlgo::closeToPointThreshold ?
+            owner.wayTo(*near,point) : owner.wayTo(*this,point);
+  if(path.first()==nullptr && !MoveAlgo::isClose(*this,point)) {
+    fallbackSimpleMovement("no waynet path to target");
+    return owner.wayTo(*this,point);
+    }
+  return path;
+  }
+
+void Npc::beginSimpleGoTo(AiQueue::AiAction&& action, const WayPoint& point) {
+  GoTo terminal;
+  if(action.act==AI_GoToNpc) {
+    terminal.set(action.target,GT_Point);
+    terminal.pointDistance=float(action.i0);
+    terminal.nativeCombatTarget=action.nativeCombatTarget;
+    } else if(action.act==AI_GotoItem) {
+    if(action.item!=nullptr)
+      terminal.set(action.item);
+    else {
+      terminal.flag=GT_Item;
+      terminal.pos=go2.pos;
+      }
+    } else {
+    terminal.set(action.point,action.act==AI_GoToNextFp ? GT_NextFp : GT_Way);
+    attachToPoint(action.point);
+    }
+  float distance=MoveAlgo::closeToPointThreshold*(mvAlgo.checkLastBounce() ? .5f : 1.5f);
+  if(terminal.npc!=nullptr)
+    distance=fghAlgo.prefferedAttackDistance(*this,*terminal.npc,owner.script());
+  else if(terminal.wp!=nullptr && terminal.wp->useCounter()>1)
+    distance=float(MAX_AI_USE_DISTANCE);
+  if(terminal.pointDistance>0.f)
+    distance=terminal.pointDistance;
+  if(terminal.isClose(*this,distance)) {
+    wayPath.clear();
+    go2=terminal;
+    simpleMovement.edgeTo=nullptr;
+    aiQueue.pushFront(std::move(action));
+    return;
+    }
+  wayPath=simpleWayTo(point);
+  const auto* first=wayPath.pop();
+  if(first!=nullptr)
+    go2.set(first);
+  else
+    go2=terminal; // Already at the target's connected anchor.
+  simpleMovement.edgeTo=nullptr;
+  aiQueue.pushFront(std::move(action));
+  if(first!=nullptr)
+    attachToPoint(first);
+  }
+
+void Npc::refreshSimpleGoTo() {
+  const auto* pending=pendingSimpleGoTo();
+  if(pending==nullptr || (pending->act!=AI_GoToNpc && pending->act!=AI_GotoItem))
+    return;
+  if((pending->act==AI_GoToNpc && pending->target==nullptr) ||
+     (pending->act==AI_GotoItem && pending->item==nullptr && pending->i0!=1)) {
+    aiQueue.pop();
+    wayPath.clear();
+    clearGoTo();
+    return;
+    }
+  const auto target=pending->target!=nullptr ? pending->target->position() :
+                    pending->item!=nullptr ? pending->item->position() : go2.pos;
+  if(go2.flag==GT_Way && go2.wp!=nullptr) {
+    GoTo terminal;
+    float distance=MoveAlgo::closeToPointThreshold*(mvAlgo.checkLastBounce() ? .5f : 1.5f);
+    if(pending->act==AI_GoToNpc) {
+      terminal.set(pending->target,GT_Point);
+      terminal.pointDistance=float(pending->i0);
+      distance=terminal.pointDistance>0.f ? terminal.pointDistance :
+               fghAlgo.prefferedAttackDistance(*this,*terminal.npc,owner.script());
+      } else {
+      terminal.flag=GT_Item;
+      terminal.pos=target;
+      }
+    if(terminal.isClose(*this,distance)) {
+      NpcDayJournal::arrived(*this);
+      aiQueue.pop();
+      wayPath.clear();
+      clearGoTo();
+      simpleMovement.body=BS_STAND;
+      return;
+      }
+    }
+  if(go2.flag==GT_Item)
+    go2.pos=target;
+  const auto* anchor=owner.findWayPoint(target,[](const WayPoint& p) { return p.isConnected(); });
+  if(anchor==nullptr) {
+    fallbackSimpleMovement("live target has no connected waypoint");
+    return;
+    }
+  if(anchor==pending->point)
+    return;
+  if(go2.flag==GT_Way && go2.wp!=nullptr) {
+    // Keep the current edge, replacing only its remaining suffix as a live
+    // target moves. A Full body returning here follows the same native path.
+    auto suffix=owner.wayTo(*go2.wp,*anchor);
+    if(suffix.pop()!=go2.wp) {
+      fallbackSimpleMovement("live target suffix lost current waynet edge");
+      return;
+      }
+    auto action=aiQueue.pop();
+    action.point=anchor;
+    wayPath=std::move(suffix);
+    aiQueue.pushFront(std::move(action));
+    } else if(usesSimplifiedMovement() && !MoveAlgo::isClose(*this,*anchor)) {
+    auto action=aiQueue.pop();
+    action.point=anchor;
+    beginSimpleGoTo(std::move(action),*anchor);
+    } else {
+    auto action=aiQueue.pop();
+    action.point=anchor;
+    aiQueue.pushFront(std::move(action));
+    }
+  }
+
+bool Npc::finishSimpleGoTo(uint64_t dt) {
+  const auto* pending=pendingSimpleGoTo();
+  if(pending==nullptr)
+    return false;
+  switch(pending->act) {
+    case AI_GoToNpc:
+      go2.set(pending->target,GT_Point);
+      go2.pointDistance=float(pending->i0);
+      go2.nativeCombatTarget=pending->nativeCombatTarget;
+      break;
+    case AI_GotoItem:
+      go2.clear();
+      if(pending->item!=nullptr)
+        go2.set(pending->item);
+      else
+        go2.flag=GT_Item; // A legacy Full save has only its native snapshot.
+      break;
+    case AI_GoToNextFp:
+      go2.set(pending->point,GT_NextFp);
+      break;
+    case AI_GoToPoint:
+      go2.set(pending->point);
+      break;
+    default:
+      return false;
+    }
+  float distance=MoveAlgo::closeToPointThreshold*(mvAlgo.checkLastBounce() ? .5f : 1.5f);
+  if(go2.npc!=nullptr)
+    distance=fghAlgo.prefferedAttackDistance(*this,*go2.npc,owner.script());
+  else if(go2.wp!=nullptr && go2.wp->useCounter()>1)
+    distance=float(MAX_AI_USE_DISTANCE);
+  if(go2.pointDistance>0.f)
+    distance=go2.pointDistance;
+  if(!go2.isClose(*this,distance))
+    return implGoTo(dt,distance);
+  if(go2.flag==GT_NextFp) {
+    if(usesSimplifiedMovement())
+      prepareTurn();
+    if(implTurnTo(go2.wp,AnimationSolver::TurnType::Std,dt))
+      return true;
+    }
+  NpcDayJournal::arrived(*this);
+  aiQueue.pop();
+  wayPath.clear();
+  clearGoTo();
+  simpleMovement.body=BS_STAND;
+  return false;
+  }
+
 bool Npc::implGoTo(uint64_t dt) {
+  refreshSimpleGoTo();
   float dist = 0;
   if(go2.npc) {
     dist = fghAlgo.prefferedAttackDistance(*this,*go2.npc,owner.script());
@@ -3951,6 +4455,10 @@ bool Npc::implGoTo(uint64_t dt) {
   }
 
 bool Npc::implGoTo(uint64_t dt, float destDist) {
+  // Native admission owns item/mobsi exits and other body transitions until
+  // they release the body. The graph resumes the same path afterward.
+  if(usesSimplifiedMovement() && !nativeBodyAction())
+    return implSimpleGoTo(dt,destDist);
   if(go2.flag==GT_No)
     return false;
 
@@ -3979,8 +4487,11 @@ bool Npc::implGoTo(uint64_t dt, float destDist) {
         }
       }
     if(finished) {
+      if(pendingSimpleGoTo()!=nullptr)
+        return finishSimpleGoTo(dt);
       if(go2.flag==Npc::GT_NextFp && implTurnTo(go2.wp,AnimationSolver::TurnType::Std,dt))
         return true;
+      NpcDayJournal::arrived(*this);
       clearGoTo();
       }
     }
@@ -4003,9 +4514,185 @@ bool Npc::implGoTo(uint64_t dt, float destDist) {
   return false;
   }
 
+bool Npc::implSimpleGoTo(uint64_t dt, float destDist) {
+  if(go2.empty() || interactive()!=nullptr)
+    return !go2.empty();
+  if(setGoToLadder()) {
+    mvAlgo.tick(dt);
+    return true;
+    }
+  if(pendingSimpleGoTo()==nullptr) {
+    AiQueue::AiAction terminal;
+    const WayPoint* destination=nullptr;
+    if(go2.npc!=nullptr) {
+      terminal=AiQueue::aiGoToNpc(go2.npc,int(go2.pointDistance));
+      terminal.nativeCombatTarget=go2.nativeCombatTarget;
+      destination=owner.findWayPoint(go2.npc->position(),[](const WayPoint& p) { return p.isConnected(); });
+      terminal.point=destination;
+      } else if(go2.flag==GT_Item) {
+      terminal.act=AI_GotoItem;
+      terminal.item=simpleMovement.nativeItem;
+      terminal.i0=terminal.item==nullptr ? 1 : 0;
+      destination=owner.findWayPoint(go2.pos,[](const WayPoint& p) { return p.isConnected(); });
+      terminal.point=destination;
+      } else if(go2.wp!=nullptr && go2.wp->isFreePoint()) {
+      terminal=go2.flag==GT_NextFp ? AiQueue::aiGoToNextFp("") : AiQueue::aiGoToPoint(*go2.wp);
+      terminal.point=go2.wp;
+      terminal.i0=terminal.act==AI_GoToPoint ? 1 : 0;
+      destination=go2.wp;
+      }
+    if(destination!=nullptr) {
+      beginSimpleGoTo(std::move(terminal),*destination);
+      return implGoTo(dt);
+      }
+    }
+  // Keep the terminal command until arrival so moved items remain live targets.
+  if(go2.flag==GT_Item) {
+    const auto* action = aiQueue.front();
+    if(action!=nullptr && action->act==AI_GotoItem && action->item!=nullptr)
+      go2.pos = action->item->position();
+    }
+
+  const auto* pending=pendingSimpleGoTo();
+  const bool internal=go2.flag==GT_Way && go2.wp!=nullptr &&
+                      (wayPath.first()!=nullptr || (pending!=nullptr &&
+                       (pending->act==AI_GoToNpc || pending->act==AI_GotoItem || pending->point!=go2.wp)));
+  bool reached=false;
+  if(internal) {
+    // Occupancy enlarges terminal admission, not an internal graph vertex:
+    // changing edges early would replace the authored corner with a chord.
+    auto vertex=go2.wp->groundPos;
+    if(simpleMovement.edgeTo==go2.wp && simpleMovement.ground!=nullptr)
+      vertex.y=simpleMovement.ground->heightAt(vertex);
+    reached=(vertex-position()).quadLength()<=.01f*.01f;
+    } else {
+    reached=go2.isClose(*this,destDist);
+    }
+  if(go2.flag!=GT_Flee && reached) {
+    if(go2.flag==GT_Way && go2.wp!=nullptr && wayPath.first()!=nullptr) {
+      go2.wp = go2.wp->hasLadderConn(wayPath.first()) ? wayPath.first() : wayPath.pop();
+      attachToPoint(go2.wp);
+      simpleMovement.edgeTo = nullptr;
+      if(setGoToLadder()) {
+        mvAlgo.tick(dt);
+        return true;
+        }
+      } else {
+      if(pendingSimpleGoTo()!=nullptr)
+        return finishSimpleGoTo(dt);
+      if(go2.flag==GT_NextFp && implTurnTo(go2.wp,AnimationSolver::TurnType::Std,dt))
+        return true;
+      NpcDayJournal::arrived(*this);
+      clearGoTo();
+      simpleMovement.body = BS_STAND;
+      return false;
+      }
+    }
+
+  auto target = go2.target();
+  if(go2.wp!=nullptr)
+    target = go2.wp->groundPos;
+  else if(go2.npc!=nullptr)
+    target = go2.npc->position();
+  if(go2.flag==GT_Flee) {
+    const float travel = simplifiedMoveSpeed()*float(dt);
+    const auto direction = Vec3(std::cos(rotationRad()),0,std::sin(rotationRad()));
+    target = position()+direction*travel;
+    }
+
+  if(simpleMovement.edgeTo!=go2.wp || go2.wp==nullptr) {
+    simpleMovement.edgeTo = go2.wp;
+    simpleMovement.edgeFrom = position();
+    // A saved/full actor can be between waypoints. Recover the current edge
+    // from its endpoint's connections and project progress, never restart it.
+    float best = MoveAlgo::closeToPointThreshold*MoveAlgo::closeToPointThreshold*4.f;
+    if(go2.wp!=nullptr) {
+      for(const auto& connection:go2.wp->connections()) {
+        const auto from = connection.point->groundPos;
+        const auto edge = target-from;
+        const float length2 = edge.x*edge.x+edge.z*edge.z;
+        if(length2==0.f)
+          continue;
+        const auto offset = position()-from;
+        const float progress = std::clamp((offset.x*edge.x+offset.z*edge.z)/length2,0.f,1.f);
+        const auto projection = from+edge*progress;
+        const float error = (projection.x-x)*(projection.x-x)+(projection.z-z)*(projection.z-z);
+        if(error<best) {
+          best = error;
+          simpleMovement.edgeFrom = from;
+          }
+        }
+      }
+    else if(const auto* near = owner.findWayPoint(target)) {
+      // Native go-to-NPC/item/mob approaches have a final direct segment.
+      // Its ground endpoint also comes from the waynet, without a tick ray.
+      target.y = near->groundPos.y;
+      }
+    const auto& guild=owner.script().guildVal();
+    const float step=guild.step_height[this->guild()]>0 ? float(guild.step_height[this->guild()]) : 50.f;
+    const float slope=std::clamp(std::sin((90.f-float(guild.slide_angle[this->guild()]))*(float(M_PI)/180.f)),0.f,1.f);
+    try {
+      if(go2.wp!=nullptr) {
+        // Bake once on segment admission. The profile follows the real support
+        // between these endpoints; its target-anchored grid survives save/load.
+        const float distance=std::hypot(target.x-x,target.z-z);
+        simpleMovement.ground=distance>0.f ? &owner.groundProfile(position(),target,step,slope) : nullptr;
+        }
+      else if(simpleMovement.ground==nullptr) {
+        simpleMovement.ground=&owner.groundProfile(position(),position(),step,slope);
+        }
+      }
+    catch(const std::runtime_error& error) {
+      fallbackSimpleMovement(error.what(),true);
+      return implGoTo(dt,destDist);
+      }
+    }
+
+  const auto direction = target-position();
+  if(go2.flag!=GT_Flee && implTurnTo(direction.x,direction.z,AnimationSolver::TurnType::Std,dt)) {
+    simpleMovement.body = BS_STAND;
+    visual.stopWalkAnim(*this);
+    if(!visual.pose().hasAnim())
+      setAnim(Anim::Idle);
+    return true;
+    }
+  const float travel = simplifiedMoveSpeed()*float(dt);
+  const auto edge = target-simpleMovement.edgeFrom;
+  const float length2 = edge.x*edge.x+edge.z*edge.z;
+  if(length2>0.f && travel>0.f) {
+    const auto offset = position()-simpleMovement.edgeFrom;
+    const float progress = std::clamp((offset.x*edge.x+offset.z*edge.z)/length2,0.f,1.f);
+    const float nextProgress = std::min(1.f,progress+travel/std::sqrt(length2));
+    auto next = simpleMovement.edgeFrom+edge*nextProgress;
+    const auto correction = next-position();
+    const float horizontal = std::sqrt(correction.x*correction.x+correction.z*correction.z);
+    if(horizontal>travel) {
+      next.x = x+correction.x*travel/horizontal;
+      next.z = z+correction.z*travel/horizontal;
+      const auto along = next-simpleMovement.edgeFrom;
+      next.y = simpleMovement.edgeFrom.y+edge.y*std::clamp((along.x*edge.x+along.z*edge.z)/length2,0.f,1.f);
+      }
+    if(simpleMovement.ground!=nullptr) {
+      // A live NPC/item tail uses the last anchor's cached support plane as a
+      // local approximation. Its current X/Z still follows the moving target;
+      // a changed waynet anchor admits a new profile, never a per-tick ray.
+      next.y=go2.wp!=nullptr ? simpleMovement.ground->heightAt(next) : simpleMovement.ground->terminalHeightAt(next);
+      }
+    setPosition(next);
+    }
+  else if(length2==0.f && travel>0.f && target.y!=y) {
+    setPosition(Vec3(x,y+std::copysign(std::min(std::abs(target.y-y),travel),target.y-y),z));
+    }
+  if(setAnim(AnimationSolver::Move))
+    simpleMovement.body = bool(walkMode()&WalkBit::WM_Sneak) ? BS_SNEAK :
+                          bool(walkMode()&WalkBit::WM_Walk) ? BS_WALK : BS_RUN;
+  return true;
+  }
+
 bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyAction) {
   if(currentTarget==nullptr || isPlayer() || isTalk()) {
     meleeParadeTiming.reset();
+    meleeAiDodgeTiming.reset();
     return false;
     }
 
@@ -4017,15 +4704,31 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
     return false;
     }
 
-  if(aiQueue.size()>0) {
+  if(aiQueue.size()>0 && !(aiQueue.size()==1 && pendingSimpleGoTo()!=nullptr)) {
     traceCombatGate("script_queue");
     // do not messup weapon change animations by MOVE intruction
     return false;
     }
 
+  // A paired victim belongs to its riposter until handover (or the victim clip ends).
+  if(currentTarget->meleeRiposteAiHeld && currentTarget->isMeleeRiposteHeld()) {
+    meleeParadeTiming.reset();
+    meleeAiDodgeTiming.reset();
+    visual.stopWalkAnim(*this);
+    if(!visual.pose().isStanding())
+      setAnim(Anim::Idle);
+    implTurnToFai(*currentTarget,dt);
+    mvAlgo.tick(dt,MoveAlgo::WaitMove);
+    return true;
+    }
+
   const auto ws = weaponState();
   const auto bs = bodyStateMasked();
   const auto& flags = Gothic::physicsFlags();
+  const bool reactions = isHuman() && ws==WeaponState::W1H;
+  const bool dodgeAi = reactions && flags.meleeAiDodge && flags.meleeDodge;
+  if(bodyOverride || !dodgeAi || (meleeAiDodgeTiming && meleeAiDodgeTiming->target!=currentTarget))
+    meleeAiDodgeTiming.reset();
   const bool parryAi = !bodyOverride && flags.meleeParryAi && flags.meleeParry && isHuman() &&
                        (ws==WeaponState::Fist || ws==WeaponState::W1H || ws==WeaponState::W2H);
   if(!parryAi || (meleeParadeTiming && meleeParadeTiming->target!=currentTarget))
@@ -4038,6 +4741,7 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
   if(targetKnockdown || targetStunned) {
     fghAlgo.onTargetKnockdown();
     meleeParadeTiming.reset();
+    meleeAiDodgeTiming.reset();
     }
   const bool magnetHeading = visual.pose().isAttackAnim() && meleeShadow && meleeShadow->window && meleeShadow->physicsHits &&
                              meleeShadow->magnet.eligible;
@@ -4054,6 +4758,7 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
 
   if(!bodyOverride && !targetKnockdown && !targetStunned && !fghAlgo.hasInstructions()) {
     meleeParadeTiming.reset();
+    meleeAiDodgeTiming.reset();
     traceCombatGate("no_instructions");
     return false;
     }
@@ -4075,6 +4780,11 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
     if(!magnetHeading)
       implTurnToFai(*currentTarget,dt);
     mvAlgo.tick(dt,MoveAlgo::FaiMove);
+    return true;
+    }
+
+  if(!bodyOverride && tryMeleeAiBarge()) {
+    mvAlgo.tick(dt,MoveAlgo::WaitMove);
     return true;
     }
 
@@ -4112,6 +4822,8 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
         setAnim(Anim::Idle);
       implTurnToFai(*currentTarget,dt);
       if(action==FightAlgo::MV_ATTACK && visual.pose().isStanding()) {
+        if(targetStunned && tryMeleeAiRiposte())
+          return true;
         if(!allowStaminaAction("attack",meleeAttackCost(),true)) {
           waitForMeleeStamina(dt);
           return true;
@@ -4133,6 +4845,7 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
     meleeParadeTiming.reset();
   const auto consume = [&] {
     meleeParadeTiming.reset();
+    meleeAiDodgeTiming.reset();
     if(bodyOverride) { BodyController::consumed(*this); return; }
     const auto before = fghAlgo.queuedAction();
     BodyTrajectory::nativeConsumed(*this);
@@ -4151,6 +4864,9 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
   nativeResolution.inCloseup = fghAlgo.isInCloseupRange(*this,*currentTarget,owner.script());
   nativeResolution.focus30 = nativeResolution.inCloseup && fghAlgo.isInFocusAngle(*this,*currentTarget);
   const bool jmp = FightAlgo::resolveNative(FightAlgo::MV_WAIT,nativeResolution)==FightAlgo::MV_JUMPBACK;
+  const bool jumpBack = act==FightAlgo::MV_JUMPBACK || ((act==FightAlgo::MV_WAIT || act==FightAlgo::MV_TURN) && jmp);
+  if(!jumpBack)
+    meleeAiDodgeTiming.reset();
 
   // vanilla behavior, required for orcs in G1 orcgraveyard
   if(ws==WeaponState::NoWeapon && isAiQueueEmpty() && canSwitchWeapon()) {
@@ -4357,6 +5073,14 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
         consume();
         return true;
         }
+      if(bodyOverride && act==FightAlgo::MV_ATTACK && tryMeleeAiRiposte()) {
+        consume();
+        return true;
+        }
+      if(!bodyOverride && act==FightAlgo::MV_ATTACK && tryMeleeAiCharge()) {
+        consume();
+        return true;
+        }
       const auto atkType = (ws==WeaponState::Fist) ? Anim::Attack : ani[act-FightAlgo::MV_ATTACK];
       const bool atk     = doAttack(atkType, BS_HIT);
 
@@ -4419,7 +5143,7 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
     return true;
     }
 
-  if(act==FightAlgo::MV_JUMPBACK || (act==FightAlgo::MV_WAIT && jmp) || (act==FightAlgo::MV_TURN && jmp)) {
+  if(jumpBack) {
     if(isSwim()) {
       consume();
       return true;
@@ -4433,6 +5157,126 @@ bool Npc::implAttack(uint64_t dt, bool bodyOverride, FightAlgo::Action bodyActio
       consume();
       aiState.loopNextTime = owner.tickCount(); // force ZS_MM_Attack_Loop call
       return true;
+      }
+    if(dodgeAi && (!bodyOverride || act==FightAlgo::MV_JUMPBACK)) {
+      const auto now = owner.tickCount();
+      const auto skip = [&](std::string_view reason) {
+        if(TestBench::isActive())
+          TestBench::note(("melee ai dodge "+std::string(TestBench::who(this))+": skipped "+std::string(reason)).c_str());
+        if(TestBench::bodyTracing())
+          TestBench::bodyEvent(*this,currentTarget,"ai_dodge_skipped",now,"\"reason\":"+TestBench::bodyJson(reason));
+        consume();
+        };
+      const auto hold = [&] {
+        visual.stopWalkAnim(*this);
+        if(!visual.pose().isStanding())
+          setAnim(Anim::Idle);
+        implTurnToFai(*currentTarget,dt);
+        mvAlgo.tick(dt,MoveAlgo::WaitMove);
+        };
+      if(!meleeAiDodgeTiming) {
+        const auto* armor = invent.currentArmor();
+        const auto kind = MeleeDodge::kind(armor ? std::optional<MeleeImpact::ArmorClass>(MeleeImpact::armorClass(armor->handle().protection[PROT_EDGE])) :
+                                                 std::optional<MeleeImpact::ArmorClass>());
+        const auto choose = [&](MeleeDodge::Direction dir) -> std::optional<MeleeDodge::Move> {
+          for(const auto& candidate:MeleeDodge::plan(kind,MeleeDodge::Stance::OneHand,dir).candidates)
+            if(visual.hasAnim(candidate.name))
+              return MeleeDodge::Move{candidate.kind,MeleeDodge::Stance::OneHand,dir};
+          return {};
+          };
+        const auto back = choose(MeleeDodge::Direction::Back);
+        if(back || (!bodyOverride && (choose(MeleeDodge::Direction::Left) || choose(MeleeDodge::Direction::Right)))) {
+          const auto direction = bodyOverride ? MeleeDodge::Direction::Back :
+                                 MeleeAi::dodgeDirection(float(owner.script().rand(1u<<24,this))/float(1u<<24));
+          auto move = choose(direction);
+          if(!move)
+            move = back;
+          if(move)
+            meleeAiDodgeTiming = MeleeAiDodgeTiming{currentTarget,nullptr,0,now,0,0,*move};
+          }
+        }
+      // With no usable clip execute the original jump back below, including its price.
+      if(meleeAiDodgeTiming) {
+        if(!bodyOverride && !meleeAiDodgeStreak.allows(now)) {
+          skip("streak");
+          return true;
+          }
+        auto& timing = *meleeAiDodgeTiming;
+        if(!allowStaminaAction("dodge",MeleeDodge::cost(timing.move.kind),true)) {
+          if(bodyOverride) {
+            // P30 falls back immediately; only native AI waits for dodge stamina.
+            if(visual.startAnimAndGet(*this,Anim::MoveBack,calcAniComb(),ws,walkMode())) {
+              spendStamina("jumpback",MeleeStamina::JumpBackCost);
+              implFaiWait(visual.pose().animationTotalTime());
+              consume();
+              }
+            return true;
+            }
+          timing.began = 0; // Stamina recovery is not time spent waiting for a swing.
+          waitForMeleeStamina(dt);
+          return true;
+          }
+        if(timing.began==0)
+          timing.began = now;
+        if(!bodyOverride) {
+          if(timing.sequence!=nullptr && now-timing.began>=1000) {
+            skip("timeout");
+            return true;
+            }
+          const auto swing = currentTarget->visual.pose().nextMeleeContact(now);
+          if(!swing && timing.sequence!=nullptr) {
+            bool same = false;
+            for(const auto& layer:currentTarget->visual.pose().combatLayers(now))
+              same |= layer.sequence==timing.sequence && layer.origin==timing.origin;
+            if(!same) {
+              skip("swing_gone");
+              return true;
+              }
+            }
+          if((swing || timing.sequence!=nullptr) && !fghAlgo.isInWRange(*currentTarget,*this,owner.script())) {
+            skip("out_of_reach");
+            return true;
+            }
+          const int talent = hitChance(TALENT_1H);
+          if(swing && (timing.sequence!=swing->sequence || timing.origin!=swing->origin)) {
+            const double u = (double(owner.script().rand(1u<<24,this))+.5)/double(1u<<24);
+            const double v = (double(owner.script().rand(1u<<24,this))+.5)/double(1u<<24);
+            timing.sequence = swing->sequence;
+            timing.origin = swing->origin;
+            timing.errorMs = MeleeParry::timingSigmaMs(talent)*float(std::sqrt(-2.*std::log(u))*std::cos(2.*M_PI*v));
+            }
+          if(swing)
+            timing.contact = swing->contact;
+          const auto window = MeleeDodge::invulnerability(timing.move.kind);
+          const auto start = MeleeAi::dodgeStartMs(timing.origin,timing.contact,float(window.beginMs+window.endMs)*.5f,talent,timing.errorMs);
+          if(timing.sequence!=nullptr && now<start) {
+            hold();
+            return true;
+            }
+          }
+        if(meleeDodge(timing.move.direction)) {
+          const auto kind = timing.move.kind==MeleeDodge::Kind::HeavyRoll ? "heavy roll" : MeleeDodge::name(timing.move.kind);
+          const std::string description = std::string(MeleeDodge::name(timing.move.direction))+" "+std::string(kind);
+          const auto swingMs = now-timing.origin;
+          const auto contactMs = timing.contact-timing.origin;
+          if(TestBench::isActive())
+            TestBench::note(("melee ai dodge "+std::string(TestBench::who(this))+": "+description+
+                            (timing.sequence ? " at "+std::to_string(swingMs)+" ms of "+std::string(TestBench::who(currentTarget))+"'s swing, contact "+std::to_string(contactMs)+" ms" :
+                                               " now, no swing")).c_str());
+          if(TestBench::bodyTracing())
+            TestBench::bodyEvent(*this,currentTarget,"ai_dodge",now,
+                                "\"direction\":"+TestBench::bodyJson(MeleeDodge::name(timing.move.direction))+
+                                ",\"dodge_kind\":"+TestBench::bodyJson(MeleeDodge::name(timing.move.kind))+
+                                ",\"swing\":"+(timing.sequence ? "true" : "false")+
+                                ",\"swing_ms\":"+std::to_string(timing.sequence ? swingMs : 0)+
+                                ",\"contact_ms\":"+std::to_string(timing.sequence ? contactMs : 0));
+          if(!bodyOverride)
+            meleeAiDodgeStreak.dodged(now);
+          implFaiWait(visual.pose().animationTotalTime());
+          consume();
+          }
+        return true;
+        }
       }
     if(!bodyOverride && (ws==WeaponState::Fist || ws==WeaponState::W1H || ws==WeaponState::W2H) &&
        !isDive() && !allowStaminaAction("jumpback",MeleeStamina::JumpBackCost,true)) {
@@ -5131,6 +5975,7 @@ float Npc::meleePostureSkillScale(const Npc& attacker) const {
   }
 
 bool Npc::knockDownMelee(Npc& attacker, const Vec3& impulse, bool barge, std::string_view reason) {
+  interruptItemUse("knockdown");
   setInteraction(nullptr,true);
   attachToPoint(nullptr);
   updateRagdollQuestAnchor();
@@ -5331,6 +6176,9 @@ bool Npc::tickMeleePosture(uint64_t dt) {
 void Npc::takeDamage(Npc &other, const Bullet* b, bool ignoreDefence, float meleeScale, const MeleeBladeContact* contact, bool barge) {
   if(isDown())
     return;
+  // An already flying NPC blow must not hit somebody else's paired victim either.
+  if(b==nullptr && !other.isPlayer() && meleeRiposteAiHeld && isMeleeRiposteHeld() && other.meleeRiposteMultiplier(*this)==1.f)
+    return;
   // Inside a dodge's window nothing passes: no damage, balance, reaction or perception
   if(!ignoreDefence && meleeDodgeEvades(other,b==nullptr ? "melee" : "ranged"))
     return;
@@ -5367,6 +6215,14 @@ void Npc::takeDamage(Npc &other, const Bullet* b, bool ignoreDefence, float mele
     takeDamage(other,b,COLL_DOEVERYTHING,0,false,meleeScale,contact,barge);
     } else {
     if(isBlock) {
+      auto& memories = other.meleeAiBargeMemory;
+      const auto handle = handlePtr();
+      auto memory = std::find_if(memories.begin(),memories.end(),[&](const auto& m) { return m.target.lock()==handle; });
+      if(memory==memories.end()) {
+        memories.push_back({handle,{},{},{},nullptr});
+        memory = std::prev(memories.end());
+        }
+      memory->guarded = owner.tickCount();
       if(Gothic::physicsFlags().meleeParry && isHuman() && parade)
         applyMeleeParry(other,contact);
       else
@@ -5870,6 +6726,10 @@ void Npc::tickTimedEvt(Animation::EvCount& ev) {
         }
       case asset::MdsEventType::ITEM_REMOVE:
       case asset::MdsEventType::ITEM_DESTROY: {
+        if(i.def==asset::MdsEventType::ITEM_DESTROY && itemUse.item!=0) {
+          finishItemUseEffect("destroy");
+          break;
+          }
         invent.clearSlot(*this, "", i.def != asset::MdsEventType::ITEM_REMOVE);
         break;
         }
@@ -5950,6 +6810,8 @@ void Npc::tickRegen(int32_t& v, const int32_t max, const int32_t chg, const uint
 
   int32_t nextV = std::max(0,std::min(v+val1-val0,max));
   if(v!=nextV) {
+    if(&v==&hnpc->attribute[ATR_HITPOINTS] && nextV<v)
+      interruptItemUse("regeneration");
     v = nextV;
     // check health, in case of negative chg
     checkHealth(true,false);
@@ -5960,9 +6822,17 @@ void Npc::tickAnimationTags() {
   if(Gothic::physicsFlags().meleeBladeShadow || Gothic::physicsFlags().meleePhysicsHits || (meleeShadow && meleeShadow->window))
     syncMeleeShadowSwing();
   Animation::EvCount ev;
+  if(itemUse.item!=0 && !hasItemUseAnimation())
+    interruptItemUse("animation interrupted");
   const bool hasEvents = visual.processEvents(owner,lastEventTime,ev,&logicalBody);
   visual.processLayers(owner,&logicalBody);
   visual.setNpcEffect(owner,*this,hnpc->effect,hnpc->flags);
+  if(itemUse.item!=0 && !hasItemUseAnimation()) {
+    tickTimedEvt(ev);
+    ev.timed.clear();
+    if(itemUse.item!=0)
+      finishItemUseEffect("animation end");
+    }
   if(!hasEvents)
     return;
 
@@ -5992,17 +6862,21 @@ void Npc::tickAnimationTags() {
   }
 
 void Npc::tick(uint64_t dt) {
+  TestBench::beforeNpcTick(*this);
+  updateSimpleMovement();
   NpcLogicalState::Tick logicalTick(*this,dt);
   if(!bloodPoolDone && isDead() && owner.tickCount()-bloodDeathTick>=BloodSpawn::SettleMs) {
     bloodPoolDone = true;
     BloodSpawn::onDead(owner,*this);
     }
   tickBodyImpact();
+  tickFoodPool();
   tickMeleeParry();
   tickMeleeStamina();
   tickMeleeBarge();
   tickMeleeCharge();
   tickMeleeRiposte();
+  tickMeleeAiSpecial();
   // Only NPCs inserted in the live world are ticked. A restored NPC starts
   // with fresh shadow geometry, never a sweep from its former holding point.
   meleeShadowSuspended = false;
@@ -6053,6 +6927,14 @@ void Npc::tick(uint64_t dt) {
 
   if(!visual.pose().hasAnim())
     setAnim(AnimationSolver::Idle);
+
+  if(meleeAiSpecial==MeleeAi::Special::Charge || meleeAiSpecial==MeleeAi::Special::Barge) {
+    if(meleeAiSpecial==MeleeAi::Special::Charge && isMeleeCharging() && currentTarget!=nullptr)
+      implTurnToFai(*currentTarget,dt);
+    mvAlgo.clearSpeed();
+    mvAlgo.tick(dt,MoveAlgo::WaitMove);
+    return;
+    }
 
   if(isMeleeRiposting() || isMeleeRiposteHeld()) {
     mvAlgo.clearSpeed();
@@ -6179,6 +7061,19 @@ void Npc::tick(uint64_t dt) {
   }
 
 bool Npc::prepareTurn() {
+  if(usesSimplifiedMovement()) {
+    // A dialogue can queue a heading before its next line. Turn only the
+    // angle; its native body layers retain ownership between voiced lines.
+    if(nativeBodyAction())
+      return Gothic::inst().isNpcInDialog(*this);
+    visual.stopWalkAnim(*this);
+    setAnimRotate(0);
+    if(!visual.pose().hasAnim())
+      setAnim(Anim::Idle);
+    if(visual.pose().bodyState()==BS_STAND)
+      simpleMovement.body = BS_STAND;
+    return true;
+    }
   const auto st = bodyStateMasked();
   if(interactive()==nullptr && (st==BS_WALK || st==BS_SNEAK)) {
     visual.stopWalkAnim(*this);
@@ -6264,21 +7159,40 @@ void Npc::nextAiAction(AiQueue& queue, uint64_t dt) {
         break;
         }
       attachToPoint(nullptr);
-      go2.set(act.target,act.i0>0 ? GT_Point : GT_Way);
+      if(usesSimplifiedMovement() && act.target!=nullptr) {
+        act.point=owner.findWayPoint(act.target->position(),[](const WayPoint& p) { return p.isConnected(); });
+        if(act.point==nullptr) {
+          fallbackSimpleMovement("NPC target has no connected waypoint");
+          } else {
+          const auto* anchor=act.point;
+          beginSimpleGoTo(std::move(act),*anchor);
+          break;
+          }
+        }
+      go2.set(act.target,act.point!=nullptr || act.i0>0 ? GT_Point : GT_Way);
       go2.pointDistance = float(act.i0);
       go2.nativeCombatTarget = act.nativeCombatTarget==act.target ? act.nativeCombatTarget : nullptr;
       wayPath.clear();
+      if(act.point!=nullptr)
+        queue.pushFront(std::move(act));
       break;
     case AI_GoToNextFp: {
       if(!setInteraction(nullptr)) {
         queue.pushFront(std::move(act));
         break;
         }
-      auto fp = owner.findNextFreePoint(*this,act.s0);
+      auto fp = act.point!=nullptr ? act.point : owner.findNextFreePoint(*this,act.s0);
       if(fp!=nullptr) {
         attachToPoint(fp);
+        if(usesSimplifiedMovement()) {
+          act.point=fp;
+          beginSimpleGoTo(std::move(act),*fp);
+          break;
+          }
         go2.set(fp,GoToHint::GT_NextFp);
         wayPath.clear();
+        if(act.point!=nullptr)
+          queue.pushFront(std::move(act));
         }
       break;
       }
@@ -6287,8 +7201,15 @@ void Npc::nextAiAction(AiQueue& queue, uint64_t dt) {
         queue.pushFront(std::move(act));
         break;
         }
+      if(usesSimplifiedMovement() && act.point->isFreePoint()) {
+        act.i0=1;
+        const auto* target=act.point;
+        beginSimpleGoTo(std::move(act),*target);
+        break;
+        }
       if(wayPath.last()!=act.point) {
-        wayPath     = owner.wayTo(*this,*act.point);
+        wayPath = usesSimplifiedMovement() ? simpleWayTo(*act.point) : owner.wayTo(*this,*act.point);
+        simpleMovement.edgeTo = nullptr;
         auto wpoint = wayPath.pop();
 
         if(wpoint!=nullptr) {
@@ -6616,6 +7537,8 @@ void Npc::nextAiAction(AiQueue& queue, uint64_t dt) {
     case AI_AlignToFp:{
       if(auto fp = currentFp){
         if(fp->dir.x!=0.f || fp->dir.z!=0.f){
+          if(usesSimplifiedMovement())
+            prepareTurn();
           if(implTurnTo(fp->dir.x,fp->dir.z,AnimationSolver::TurnType::Std,dt))
             queue.pushFront(std::move(act));
           }
@@ -6671,6 +7594,30 @@ void Npc::nextAiAction(AiQueue& queue, uint64_t dt) {
       break;
       }
     case AI_GotoItem:{
+      simpleMovement.nativeItem=act.item;
+      if(usesSimplifiedMovement()) {
+        if(act.item==nullptr && !(act.point!=nullptr && act.i0==1))
+          break;
+        const auto target=act.item!=nullptr ? act.item->position() : go2.pos;
+        act.point=owner.findWayPoint(target,[](const WayPoint& p) { return p.isConnected(); });
+        if(act.point==nullptr) {
+          fallbackSimpleMovement("item target has no connected waypoint");
+          } else {
+          const auto* anchor=act.point;
+          beginSimpleGoTo(std::move(act),*anchor);
+          break;
+          }
+        }
+      if(act.point!=nullptr) {
+        go2.clear();
+        if(act.item!=nullptr)
+          go2.set(act.item);
+        else if(act.i0==1)
+          go2.flag=GT_Item;
+        if(!go2.empty())
+          queue.pushFront(std::move(act));
+        break;
+        }
       go2.set(act.item);
       break;
       }
@@ -7237,6 +8184,8 @@ BodyState Npc::bodyState() const {
     return BS_FALL;
 
   uint32_t s = visual.pose().bodyState();
+  if(const auto simple = simplifiedBodyState())
+    s = uint32_t(*simple);
   if(auto i = interactive())
     s = i->stateMask();
   return BodyState(s);
@@ -7248,6 +8197,10 @@ BodyState Npc::bodyStateMasked() const {
   }
 
 bool Npc::hasState(BodyState s) const {
+  if(const auto simple = simplifiedBodyState()) {
+    if(s==BS_STAND || s==BS_WALK || s==BS_RUN || s==BS_SNEAK)
+      return s==*simple;
+    }
   if(visual.pose().hasState(s))
     return true;
   if(auto i = interactive())
@@ -7256,8 +8209,20 @@ bool Npc::hasState(BodyState s) const {
   }
 
 bool Npc::hasStateFlag(BodyState flg) const {
-  if(visual.pose().hasStateFlag(flg))
-    return true;
+  if(const auto simple = simplifiedBodyState()) {
+    if((*simple&(BS_FLAG_MASK|BS_MOD_MASK))==flg)
+      return true;
+    for(size_t i=0;i<visual.pose().logicalLayerCount();++i) {
+      const auto layer = visual.pose().logicalLayer(i);
+      const auto state = BodyState(layer.state&(BS_MAX|BS_FLAG_MASK));
+      if(state==BS_STAND || state==BS_WALK || state==BS_RUN || state==BS_SNEAK)
+        continue;
+      if((layer.state&(BS_FLAG_MASK|BS_MOD_MASK))==flg)
+        return true;
+      }
+    } else if(visual.pose().hasStateFlag(flg)) {
+      return true;
+      }
   if(auto i = interactive())
     return flg==(i->stateMask() & (BS_FLAG_MASK|BS_MOD_MASK));
   return false;
@@ -7420,6 +8385,8 @@ Item* Npc::takeItem(Item& item) {
   }
 
 void Npc::onWldItemRemoved(const Item& itm) {
+  if(simpleMovement.nativeItem==&itm)
+    simpleMovement.nativeItem=nullptr;
   aiQueue.onWldItemRemoved(itm);
   aiQueueOverlay.onWldItemRemoved(itm);
   }
@@ -7635,12 +8602,26 @@ bool Npc::rotateTo(float dx, float dz, float step, AnimationSolver::TurnType ani
   step *= (float(dt)/1000.f);
 
   if(dx==0.f && dz==0.f) {
-    setAnimRotate(0);
+    if(!usesSimplifiedMovement() || !nativeBodyAction())
+      setAnimRotate(0);
     return false;
     }
 
   if(!isRotationAllowed())
     return false;
+
+  if(usesSimplifiedMovement()) {
+    const float target = angleDir(dx,dz);
+    const float delta = std::remainder(target-angle,360.f);
+    if(!nativeBodyAction())
+      setAnimRotate(0);
+    if(std::abs(delta)<=step*2.f) {
+      setDirection(target);
+      return false;
+      }
+    setDirection(angle+std::clamp(delta,-step,step));
+    return true;
+    }
 
   float a  = angleDir(dx,dz);
   float da = a-angle;
@@ -7710,6 +8691,173 @@ void Npc::useItem(size_t item, uint8_t slotHint, bool force) {
   invent.use(item,*this,slotHint,force);
   }
 
+bool Npc::hasItemUseAnimation() const {
+  const auto& pose = visual.pose();
+  for(size_t i=0;i<pose.logicalLayerCount();++i)
+    if(pose.logicalLayer(i).state==BS_ITEMINTERACT)
+      return true;
+  return false;
+  }
+
+bool Npc::isUsingItemInHand() const {
+  return visual.pose().isUsingItemInHand();
+  }
+
+std::string Npc::itemUseInHandAnimation(const Item& item) const {
+  const auto& flags = Gothic::physicsFlags();
+  const auto main = ItmFlags(item.handle().main_flag);
+  const bool deferred = ((main & ITM_CAT_POTION) && flags.meleeHealInterrupt) ||
+                        ((main & ITM_CAT_FOOD) && flags.foodOverTime);
+  if(!flags.meleeUseInHand || !isHuman() || !deferred)
+    return {};
+  const auto& scheme = item.handle().scheme_name;
+  const auto weapon = weaponState();
+  const char* stance = weapon==WeaponState::Fist ? "FIST" : weapon==WeaponState::W1H ? "1H" :
+                       weapon==WeaponState::W2H ? "2H" : nullptr;
+  const char* use = scheme=="POTIONFAST" ? "DRINK" : scheme=="FOOD" ? "EATAPPLE" :
+                    scheme=="FOODHUGE" ? "EATBREAD" : scheme=="MEAT" ? "EATMEAT" : nullptr;
+  if(stance==nullptr || use==nullptr)
+    return {};
+  string_frm clip("T_",stance,use);
+  return visual.hasAnim(clip) ? std::string(clip.c_str()) : std::string();
+  }
+
+bool Npc::startItemUse(const Item& item, bool allowMissing) {
+  if(hasItemUseAnimation())
+    return false;
+  const auto clip = itemUseInHandAnimation(item);
+  if(!clip.empty()) {
+    const auto bs = bodyStateMasked();
+    if(interactive()!=nullptr || (bs!=BS_STAND && bs!=BS_NONE && bs!=BS_WALK && bs!=BS_RUN))
+      return false;
+    const auto* sq = visual.startAnimAndGet(*this,clip,0,BS_ITEMINTERACT);
+    if(sq==nullptr)
+      return false;
+    if(!isPlayer())
+      implAniWait(uint64_t(sq->totalTime()));
+    if(TestBench::isActive()) {
+      const auto* symbol = owner.script().findSymbol(item.clsId());
+      TestBench::note(("item use "+std::string(TestBench::who(this))+": "+
+                      (symbol==nullptr ? item.handle().name : symbol->name())+" in hand "+sq->name+", layer 21").c_str());
+      }
+    return true;
+    }
+  if(TestBench::isActive()) {
+    const auto& flags = Gothic::physicsFlags();
+    const auto& scheme = item.handle().scheme_name;
+    const auto main = ItmFlags(item.handle().main_flag);
+    const auto weapon = weaponState();
+    std::string reason = "missing clip";
+    if(scheme!="POTIONFAST" && scheme!="FOOD" && scheme!="FOODHUGE" && scheme!="MEAT")
+      reason = "scheme "+scheme;
+    else if(!flags.meleeUseInHand)
+      reason = "melee_use_in_hand=0";
+    else if(!isHuman())
+      reason = "not human";
+    else if(((main & ITM_CAT_POTION) && !flags.meleeHealInterrupt) ||
+            ((main & ITM_CAT_FOOD) && !flags.foodOverTime))
+      reason = "category effect is immediate";
+    else if(weapon!=WeaponState::Fist && weapon!=WeaponState::W1H && weapon!=WeaponState::W2H)
+      reason = weapon==WeaponState::Bow ? "bow" : weapon==WeaponState::CBow ? "crossbow" :
+               weapon==WeaponState::Mage ? "spell" : "no melee weapon";
+    const auto* symbol = owner.script().findSymbol(item.clsId());
+    TestBench::note(("item use "+std::string(TestBench::who(this))+": "+
+                    (symbol==nullptr ? item.handle().name : symbol->name())+" holster path: "+reason).c_str());
+    }
+  return setAnimItem(item.handle().scheme_name,-1,allowMissing);
+  }
+
+void Npc::beginItemUseEffect(const Item& item) {
+  const auto& flags = Gothic::physicsFlags();
+  const auto main = ItmFlags(item.handle().main_flag);
+  const auto category = (main & ITM_CAT_POTION) ? Healing::Category::Potion :
+                        (main & ITM_CAT_FOOD) ? Healing::Category::Food : Healing::Category::Other;
+  const bool enabled = (category==Healing::Category::Potion && flags.meleeHealInterrupt) ||
+                       (category==Healing::Category::Food && flags.foodOverTime);
+  if(!enabled) {
+    if(item.handle().on_state[0]!=0)
+      owner.script().invokeItem(this,uint32_t(item.handle().on_state[0]));
+    return;
+    }
+  const auto moment = Healing::effectMoment(category,flags.meleeHealInterrupt,flags.foodOverTime,
+                                           hasItemUseAnimation());
+  itemUse = {item.clsId(),owner.tickCount(),category==Healing::Category::Food};
+  if(moment==Healing::EffectMoment::Immediate)
+    finishItemUseEffect("immediate");
+  }
+
+void Npc::finishItemUseEffect(const char* moment) {
+  const auto use = itemUse;
+  itemUse = {};
+  invent.setCurrentItem(0);
+  invent.clearSlot(*this,"",false);
+  const auto* item = invent.getItem(use.item);
+  if(item==nullptr) {
+    clearSlotItem("");
+    return;
+    }
+  const auto name = item->handle().name;
+  const auto function = uint32_t(item->handle().on_state[0]);
+  tickFoodPool();
+  const auto hp = attribute(ATR_HITPOINTS), mana = attribute(ATR_MANA);
+  foodHp = foodMana = 0;
+  collectingFood = use.food && Gothic::physicsFlags().foodOverTime;
+  if(function!=0)
+    owner.script().invokeItem(this,function);
+  collectingFood = false;
+  if(use.food && !isDown()) {
+    Healing::add(foodPool,foodHp,foodMana);
+    if(TestBench::isActive()) {
+      TestBench::note(("food pool "+std::string(TestBench::who(this))+": +"+std::to_string(foodHp)+
+                      " hp +"+std::to_string(foodMana)+" mana over "+std::to_string(Healing::FoodDuration)+
+                      " ms, pool "+std::to_string(foodPool.hp)+"/"+std::to_string(foodPool.mana)).c_str());
+      }
+    }
+  if(TestBench::isActive()) {
+    const auto* symbol = owner.script().findSymbol(use.item);
+    TestBench::note(("item use "+std::string(TestBench::who(this))+": "+
+                    (symbol==nullptr ? name : symbol->name())+" effect at "+moment+", +"+
+                    std::to_string(use.food ? foodHp : attribute(ATR_HITPOINTS)-hp)+" hp +"+
+                    std::to_string(use.food ? foodMana : attribute(ATR_MANA)-mana)+" mana at "+
+                    std::to_string(owner.tickCount()-use.started)+" ms").c_str());
+    }
+  delItem(use.item,1);
+  }
+
+void Npc::interruptItemUse(std::string_view cause) {
+  const bool inHand = isUsingItemInHand();
+  if(itemUse.item==0 && !inHand)
+    return;
+  if(itemUse.item!=0 && TestBench::isActive()) {
+    const auto* symbol = owner.script().findSymbol(itemUse.item);
+    TestBench::note(("item use "+std::string(TestBench::who(this))+": "+
+                    (symbol==nullptr ? std::to_string(itemUse.item) : symbol->name())+
+                    (inHand ? " cancelled by " : " interrupted by ")+
+                    std::string(cause)+" at "+std::to_string(owner.tickCount()-itemUse.started)+" ms, item kept").c_str());
+    }
+  itemUse = {};
+  if(hasItemUseAnimation()) {
+    visual.pose().interruptItemUse();
+    aniWaitTime = 0;
+    }
+  invent.setCurrentItem(0);
+  invent.clearSlot(*this,"",false);
+  }
+
+void Npc::tickFoodPool() {
+  const auto now = owner.tickCount();
+  const auto dt = now>=foodPoolTick ? now-foodPoolTick : 0;
+  foodPoolTick = now;
+  if(!Gothic::physicsFlags().foodOverTime || isDown()) {
+    Healing::clear(foodPool);
+    return;
+    }
+  const auto dose = Healing::advance(foodPool,dt,attribute(ATR_HITPOINTSMAX)-attribute(ATR_HITPOINTS),
+                                               attribute(ATR_MANAMAX)-attribute(ATR_MANA));
+  changeAttribute(ATR_HITPOINTS,dose.hp,false);
+  changeAttribute(ATR_MANA,dose.mana,false);
+  }
+
 void Npc::setCurrentItem(size_t item) {
   invent.setCurrentItem(item);
   }
@@ -7737,6 +8885,8 @@ bool Npc::closeWeapon(bool noAnim) {
     return true;
   if(!noAnim && !visual.startAnim(*this,WeaponState::NoWeapon))
     return false;
+  if(isUsingItemInHand())
+    interruptItemUse("weapon sheathed");
   visual.setAnimRotate(*this,0);
   if(isPlayer())
     setTarget(nullptr);
@@ -7949,7 +9099,8 @@ bool Npc::hasMeleeBeastPoise() const {
 
 bool Npc::hasMeleeBargeSuperArmor() const {
   const auto layer = meleeDodgeLayer();
-  return isPlayer() && Gothic::physicsFlags().meleeBarge && layer && layer->move.kind==MeleeDodge::Kind::Barge &&
+  return MeleeDodge::bargeAllowed(isPlayer(),Gothic::physicsFlags().meleeAiBarge) &&
+         Gothic::physicsFlags().meleeBarge && layer && layer->move.kind==MeleeDodge::Kind::Barge &&
          MeleeDodge::bargeSuperArmor(layer->elapsed);
   }
 
@@ -8016,9 +9167,11 @@ void Npc::startMeleeStun(Npc& by, std::string_view reason) {
   const bool beast = (reason=="posture" || reason=="barge") && hasMeleeBeastPoise() && MeleeImpact::beastCanAccumulatePosture(physicsMass());
   if(!enabled || (!isHuman() && !beast) || isDown() || meleeKnockdown || (isMeleeStunned() && reason!="barge") || hasMeleeBargeSuperArmor() || isMeleeRiposteHeld() || (isMeleeRiposting() && hasMeleeSuperArmor()))
     return;
+  interruptItemUse("stagger");
   endMeleeStun("timeout");
   meleeStunReason = reason;
   meleeStunUntil = owner.tickCount()+MeleeImpact::stunDuration(reason);
+  ++meleeStunSerial;
   if(beast)
     meleePosture.value = 0;
   stopMeleeSwing();
@@ -8085,9 +9238,9 @@ void Npc::meleeStunLook(const Npc& by) {
   }
 
 void Npc::tickMeleeStunLook() {
-  // Balance lost, second beat: the stagger back runs out (730 ms) and the body lurches forward
-  // to catch itself (the original stagger from behind, slowed), instead of standing frozen in
-  // the end of the first one for the rest of the stun. A beast's own stumble fills what is left.
+  // Balance lost, second beat: the stagger back runs out (720 ms) and the body lurches forward
+  // to catch itself (the original stagger from behind, slowed), instead of standing in the run
+  // pose for the rest of the stun. A beast's own stumble fills what is left.
   if(meleeStunBeat || meleeStunReason!="posture")
     return;
   const auto now   = owner.tickCount();
@@ -8096,11 +9249,10 @@ void Npc::tickMeleeStunLook() {
     return;
   constexpr float recoverSpeed = 0.6f;
   auto seq = setAnimAngGet(Anim::StumbleA);
-  if(seq==nullptr && !isHuman())
-    return; // a beast's stumble back cannot be cut: lurch forward the tick it runs out
+  if(seq==nullptr)
+    return; // the stumble back cannot be cut: lurch forward the tick it runs out
   meleeStunBeat = true;
-  if(seq)
-    visual.setLayerSpeed(seq,isHuman() ? recoverSpeed : beastStumbleSpeed(*seq,float(meleeStunUntil-now)),now);
+  visual.setLayerSpeed(seq,isHuman() ? recoverSpeed : beastStumbleSpeed(*seq,float(meleeStunUntil-now)),now);
   }
 
 void Npc::endMeleeStun(std::string_view reason) {
@@ -8354,7 +9506,8 @@ void Npc::tickMeleeBarge() {
   const auto now = owner.tickCount();
   const auto layer = meleeDodgeLayer();
   const auto elapsed = layer ? layer->elapsed : (now>=*meleeBargeOrigin ? now-*meleeBargeOrigin : 0);
-  if(!isPlayer() || !Gothic::physicsFlags().meleeBarge || isDown() || !layer ||
+  if(!MeleeDodge::bargeAllowed(isPlayer(),Gothic::physicsFlags().meleeAiBarge) ||
+     !Gothic::physicsFlags().meleeBarge || isDown() || !layer ||
      layer->move.kind!=MeleeDodge::Kind::Barge || layer->origin!=*meleeBargeOrigin || elapsed>600) {
     meleeBargeContact = true;
     meleeBargeNote(nullptr,elapsed,"miss");
@@ -8417,6 +9570,247 @@ bool Npc::isMeleeRiposteHeld() const {
   return owner.tickCount()<meleeRiposteHoldUntil && !isDown() && !meleeKnockdown;
   }
 
+bool Npc::meleeAiSpecialBusy(std::string_view move) {
+  if(currentTarget==nullptr || !currentTarget->meleeAiSpecialSlot.busy())
+    return false;
+  if(TestBench::isActive())
+    TestBench::note(("melee ai "+std::string(move)+" "+std::string(TestBench::who(this))+": "+
+                    std::string(TestBench::who(currentTarget))+" skipped busy").c_str());
+  if(TestBench::bodyTracing())
+    TestBench::bodyEvent(*this,currentTarget,"ai_special_busy",owner.tickCount(),
+                        "\"special\":"+TestBench::bodyJson(move));
+  return true;
+  }
+
+void Npc::beginMeleeAiSpecial(MeleeAi::Special move) {
+  if(currentTarget==nullptr || meleeAiSpecial!=MeleeAi::Special::None ||
+     !currentTarget->meleeAiSpecialSlot.acquire(this,move))
+    throw std::runtime_error("Melee AI special target is already occupied");
+  meleeAiSpecialTarget = currentTarget->handlePtr();
+  meleeAiSpecial = move;
+  if(TestBench::bodyTracing())
+    TestBench::bodyEvent(*this,currentTarget,"ai_special_start",owner.tickCount(),
+                        "\"special\":"+TestBench::bodyJson(move==MeleeAi::Special::Charge ? "charge" :
+                                                          move==MeleeAi::Special::Barge ? "barge" : "riposte"));
+  }
+
+void Npc::endMeleeAiSpecial() {
+  if(meleeAiSpecial==MeleeAi::Special::None)
+    return;
+  const auto handle = meleeAiSpecialTarget.lock();
+  auto* target = handle ? reinterpret_cast<Npc*>(handle->user_ptr) : nullptr;
+  if(target!=nullptr)
+    target->meleeAiSpecialSlot.release(this);
+  const auto move = meleeAiSpecial;
+  if(move!=MeleeAi::Special::Riposte)
+    meleeAiSpecialEnded = owner.tickCount();
+  if(move==MeleeAi::Special::Charge && TestBench::isActive())
+    TestBench::note(("melee ai charge "+std::string(TestBench::who(this))+": release turn "+
+                    std::to_string(meleeAiChargeTurn)+" deg").c_str());
+  if(TestBench::bodyTracing()) {
+    if(move==MeleeAi::Special::Charge)
+      TestBench::bodyEvent(*this,target,"ai_charge_end",owner.tickCount(),
+                          "\"turn_deg\":"+std::to_string(meleeAiChargeTurn));
+    TestBench::bodyEvent(*this,target,"ai_special_end",owner.tickCount(),
+                        "\"special\":"+TestBench::bodyJson(move==MeleeAi::Special::Charge ? "charge" :
+                                                          move==MeleeAi::Special::Barge ? "barge" : "riposte"));
+    }
+  meleeAiSpecialTarget.reset();
+  meleeAiSpecial = MeleeAi::Special::None;
+  }
+
+void Npc::tickMeleeAiSpecial() {
+  bool active = false;
+  switch(meleeAiSpecial) {
+    case MeleeAi::Special::None:
+      return;
+    case MeleeAi::Special::Charge:
+      active = isMeleeCharging();
+      if(isMeleeChargeReleasing()) {
+        meleeAiChargeTurn += std::abs(std::remainder(angle-meleeAiChargeYaw,360.f));
+        meleeAiChargeYaw = angle;
+        for(const auto& layer:visual.pose().combatLayers(owner.tickCount()))
+          if(layer.sequence->name=="T_1HCHARGEHIT" && !layer.sequence->data->defHitEnd.empty())
+            active |= layer.time-layer.start<=layer.sequence->data->defHitEnd.back();
+        }
+      break;
+    case MeleeAi::Special::Barge: {
+      const auto layer = meleeDodgeLayer();
+      active = layer && layer->move.kind==MeleeDodge::Kind::Barge && meleeBargeOrigin==layer->origin;
+      break;
+      }
+    case MeleeAi::Special::Riposte:
+      active = meleeRiposte && !meleeRiposte->handover;
+      break;
+    }
+  if(!active || isDown())
+    endMeleeAiSpecial();
+  }
+
+bool Npc::tryMeleeAiCharge() {
+  const auto& flags = Gothic::physicsFlags();
+  if(!flags.meleeAiCharge || !flags.meleeCharge || !isHuman() || weaponState()!=WeaponState::W1H ||
+     currentTarget==nullptr || !visual.pose().isStanding())
+    return false;
+  const auto skip = [&](std::string_view reason) {
+    if(TestBench::isActive())
+      TestBench::note(("melee ai charge "+std::string(TestBench::who(this))+": "+std::string(TestBench::who(currentTarget))+
+                      " skipped "+std::string(reason)).c_str());
+    };
+  if(!fghAlgo.isInWRange(*this,*currentTarget,owner.script()) || !fghAlgo.isInFocusAngle(*this,*currentTarget,5.f)) {
+    skip("range");
+    return false;
+    }
+  if(currentTarget->isMeleeStunned() || currentTarget->visual.pose().nextMeleeContact(owner.tickCount())) {
+    skip("target_attacking_or_stunned");
+    return false;
+    }
+  if(!canMeleeCharge()) {
+    skip("stance_or_clips");
+    return false;
+    }
+  if(!MeleeAi::specialCooldownReady(owner.tickCount(),meleeAiSpecialEnded)) {
+    skip("cooldown");
+    return false;
+    }
+  if(meleeAiSpecialBusy("charge"))
+    return false;
+  if(!allowStaminaAction("charge",MeleeCharge::cost(meleeAttackCost(),hasStamina()),true)) {
+    skip("stamina");
+    return false;
+    }
+  const int talent = hitChance(TALENT_1H);
+  const float chance = MeleeAi::chargeChance(talent);
+  const float uniform = float(owner.script().rand(1u<<24,this))/float(1u<<24);
+  const bool charge = MeleeAi::chargeRoll(talent,uniform) && beginMeleeCharge();
+  if(charge) {
+    meleeAiChargeHold = MeleeAi::chargeHoldMs(float(owner.script().rand(1u<<24,this))/float(1u<<24));
+    meleeAiChargeTurn = 0.f;
+    meleeAiDodgeStreak.reset();
+    }
+  if(TestBench::isActive())
+    TestBench::note(("melee ai charge "+std::string(TestBench::who(this))+": "+std::string(TestBench::who(currentTarget))+
+                    " chance "+std::to_string(chance)+" → "+(charge ? "charge" : "attack")).c_str());
+  if(TestBench::bodyTracing())
+    TestBench::bodyEvent(*this,currentTarget,"ai_charge_roll",owner.tickCount(),
+                        "\"chance\":"+std::to_string(chance)+",\"roll\":"+std::to_string(uniform)+
+                        ",\"hold_ms\":"+std::to_string(charge ? meleeAiChargeHold : 0)+
+                        ",\"outcome\":"+TestBench::bodyJson(charge ? "charge" : "attack"));
+  return charge;
+  }
+
+bool Npc::tryMeleeAiBarge() {
+  const auto& flags = Gothic::physicsFlags();
+  if(!flags.meleeAiBarge || !flags.meleeBarge || !flags.meleeDodge || !isHuman() ||
+     weaponState()!=WeaponState::W1H || currentTarget==nullptr || !visual.hasAnim("T_1HBARGE") ||
+     !visual.pose().isStanding() || !isStanding() || isMeleeStunned() || isMeleeCharging() ||
+     isMeleeRiposting() || interactive()!=nullptr)
+    return false;
+  const auto* armor = invent.currentArmor();
+  if(!MeleeAi::bargeArmor(armor ? std::optional<MeleeImpact::ArmorClass>(MeleeImpact::armorClass(armor->handle().protection[PROT_EDGE])) :
+                                std::nullopt))
+    return false;
+  const auto now = owner.tickCount();
+  if(!MeleeAi::specialCooldownReady(now,meleeAiSpecialEnded))
+    return false;
+  const auto dp = currentTarget->position()-position();
+  if(!MeleeAi::bargeGeometry(std::hypot(dp.x,dp.z),dp.y,std::remainder(angleDir(dp.x,dp.z)-angle,360.f)))
+    return false;
+  auto& memories = meleeAiBargeMemory;
+  memories.erase(std::remove_if(memories.begin(),memories.end(),[](const auto& m) { return m.target.expired(); }),memories.end());
+  const auto handle = currentTarget->handlePtr();
+  auto memory = std::find_if(memories.begin(),memories.end(),[&](const auto& m) { return m.target.lock()==handle; });
+  const auto parade = meleeParadeLayer(currentTarget->visual.pose(),now);
+  const bool defending = parade && currentTarget->visual.pose().isDefence(now) &&
+                         MeleeDodge::cutsParade(parade->sequence->name,true);
+  const bool paradeRolled = defending && memory!=memories.end() && memory->paradeRoll==parade->origin &&
+                            memory->paradeSequence==parade->sequence;
+  const auto trigger = MeleeAi::bargeTrigger(defending && !paradeRolled,now,
+                                            memory==memories.end() ? std::nullopt : memory->guarded);
+  if(trigger==MeleeAi::BargeTrigger::None)
+    return false;
+  if(memory==memories.end()) {
+    memories.push_back({handle,{},{},{},nullptr});
+    memory = std::prev(memories.end());
+    }
+  if(trigger==MeleeAi::BargeTrigger::Guarded && memory->guardedRoll==memory->guarded)
+    return false;
+  if(meleeAiSpecialBusy("barge"))
+    return false;
+  tickMeleeStamina();
+  if(!MeleeDodge::staminaAllows(meleeStamina,MeleeDodge::Kind::Barge,true,hasStamina()))
+    return false;
+  // The move's shared refusal and clip admission run before the single roll is spent.
+  MeleeDodge::Situation situation;
+  situation.meleeWeapon = true;
+  situation.attacking = isAttackAnim();
+  situation.stunned = isMeleeStunned();
+  situation.knockedDown = meleeKnockdown || isDown();
+  situation.inAir = isInAir() || isFalling() || isSlide() || isJump() || isJumpUp();
+  situation.inWater = isInWater() || isSwim() || isDive();
+  situation.dodging = isMeleeDodging();
+  const auto bs = bodyStateMasked();
+  situation.activity = bs==BS_STAND || bs==BS_NONE ? MeleeDodge::Activity::Stand : MeleeDodge::Activity::Other;
+  if(MeleeDodge::refusal(situation)!=MeleeDodge::Refusal::None)
+    return false;
+  if(trigger==MeleeAi::BargeTrigger::Parade) {
+    memory->paradeRoll = parade->origin;
+    memory->paradeSequence = parade->sequence;
+    } else {
+    memory->guardedRoll = memory->guarded;
+    }
+  const int talent = hitChance(TALENT_1H);
+  const float chance = MeleeAi::bargeChance(talent);
+  const float uniform = float(owner.script().rand(1u<<24,this))/float(1u<<24);
+  const bool barge = MeleeAi::bargeRoll(talent,uniform) && meleeDodge(MeleeDodge::Direction::Forward);
+  if(barge)
+    meleeAiDodgeStreak.reset();
+  if(TestBench::isActive())
+    TestBench::note(("melee ai barge "+std::string(TestBench::who(this))+": "+std::string(TestBench::who(currentTarget))+" "+
+                    std::string(MeleeAi::name(trigger))+" chance "+std::to_string(chance)+" → "+(barge ? "barge" : "none")).c_str());
+  if(TestBench::bodyTracing())
+    TestBench::bodyEvent(*this,currentTarget,"ai_barge_roll",now,
+                        "\"trigger\":"+TestBench::bodyJson(MeleeAi::name(trigger))+
+                        ",\"chance\":"+std::to_string(chance)+",\"roll\":"+std::to_string(uniform)+
+                        ",\"outcome\":"+TestBench::bodyJson(barge ? "barge" : "none"));
+  return barge;
+  }
+
+bool Npc::tryMeleeAiRiposte() {
+  const auto& flags = Gothic::physicsFlags();
+  if(!flags.meleeAiRiposte || !flags.meleeRiposte || !isHuman() || weaponState()!=WeaponState::W1H ||
+     !visual.hasAnim("T_1HRIPOSTE") || currentTarget==nullptr || !currentTarget->isMeleeStunned() ||
+     currentTarget->isMeleeRiposteHeld() || !currentTarget->isHuman() ||
+     !currentTarget->visual.hasAnim("T_RIPOSTEVICTIM"))
+    return false;
+  auto& victim = *currentTarget;
+  if(meleeAiSpecialBusy("riposte"))
+    return false;
+  const auto handle = victim.handlePtr();
+  auto& rolls = meleeAiRiposteRolls;
+  rolls.erase(std::remove_if(rolls.begin(),rolls.end(),[](const auto& roll) { return roll.victim.expired(); }),rolls.end());
+  auto roll = std::find_if(rolls.begin(),rolls.end(),[&](const auto& r) { return r.victim.lock()==handle; });
+  if(roll!=rolls.end() && roll->stun==victim.meleeStunSerial)
+    return false;
+  if(roll==rolls.end())
+    rolls.push_back({handle,victim.meleeStunSerial});
+  else
+    roll->stun = victim.meleeStunSerial;
+  const int talent = hitChance(TALENT_1H);
+  const float chance = MeleeAi::riposteChance(talent);
+  const float uniform = float(owner.script().rand(1u<<24,this))/float(1u<<24);
+  const bool riposte = MeleeAi::riposteRoll(talent,uniform) && beginMeleeRiposte();
+  if(TestBench::isActive())
+    TestBench::note(("melee ai riposte "+std::string(TestBench::who(this))+": "+std::string(TestBench::who(&victim))+
+                    " chance "+std::to_string(chance)+" → "+(riposte ? "riposte" : "attack")).c_str());
+  if(TestBench::bodyTracing())
+    TestBench::bodyEvent(*this,&victim,"ai_riposte_roll",owner.tickCount(),
+                        "\"chance\":"+std::to_string(chance)+",\"roll\":"+std::to_string(uniform)+
+                        ",\"stun\":"+std::to_string(victim.meleeStunSerial)+
+                        ",\"outcome\":"+TestBench::bodyJson(riposte ? "riposte" : "attack"));
+  return riposte;
+  }
+
 float Npc::meleeRiposteMultiplier(const Npc& target) const {
   return meleeRiposte && meleeRiposte->applying && meleeRiposte->victim.lock()==target.handlePtr() ?
          MeleeRiposte::multiplier() : 1.f;
@@ -8438,6 +9832,7 @@ bool Npc::beginMeleeRiposte() {
   MeleeRiposte::Situation s;
   s.enabled = Gothic::physicsFlags().meleeRiposte;
   s.player = isPlayer() && isHuman();
+  s.aiEnabled = isHuman() && Gothic::physicsFlags().meleeAiRiposte;
   s.standingOneHand = weaponState()==WeaponState::W1H && (bs==BS_STAND || bs==BS_NONE) &&
                       isStanding() && interactive()==nullptr && !isMeleeCharging() && !isAttackAnim() &&
                       !hasState(BS_PARADE) && !isMeleeStunned() && !meleeKnockdown && !isDown() &&
@@ -8453,7 +9848,7 @@ bool Npc::beginMeleeRiposte() {
   s.heightCm = dp.y;
   s.heroAngleDeg = std::remainder(angleDir(dp.x,dp.z)-angle,360.f);
   s.victimAngleDeg = MeleeImpact::backstabAngle(victim.angle,angleDir(-dp.x,-dp.z));
-  if(!MeleeRiposte::available(s))
+  if(!MeleeRiposte::available(s) || (!isPlayer() && meleeAiSpecialBusy("riposte")))
     return false;
   const float cost = MeleeRiposte::cost(meleeAttackCost(),hasStamina());
   if(!allowStaminaAction("riposte",cost,true))
@@ -8468,7 +9863,10 @@ bool Npc::beginMeleeRiposte() {
         bladeAt = std::min(bladeAt,MeleeRiposte::frameTimeMs(seq->data->optimalFrame(frame),seq->data->fpsRate));
   if(seq->data->defHitEnd.empty() || bladeAt==std::numeric_limits<uint64_t>::max())
     throw std::runtime_error("Melee riposte requires DEF_OPT_FRAME and DEF_HIT_END");
+  if(!isPlayer())
+    beginMeleeAiSpecial(MeleeAi::Special::Riposte);
   spendStamina("riposte",cost);
+  meleeAiDodgeStreak.reset();
   setDirection(angleDir(dp.x,dp.z));
   const auto at = position();
   const auto pair = MeleeRiposte::pairPosition({at.x,at.y,at.z},std::cos(rotationRad()),std::sin(rotationRad()));
@@ -8482,6 +9880,7 @@ bool Npc::beginMeleeRiposte() {
   meleeRiposte->hitEnd = seq->data->defHitEnd.back();
   victim.meleeStunUntil = std::max(victim.meleeStunUntil,owner.tickCount()+MeleeRiposte::HandoverMs);
   victim.meleeRiposteHoldUntil = owner.tickCount()+MeleeRiposte::HandoverMs;
+  victim.meleeRiposteAiHeld = !isPlayer();
   victim.setDirection(angleDir(-dp.x,-dp.z));
   victim.clearGoTo();
   victim.mvAlgo.clearSpeed();
@@ -8607,6 +10006,7 @@ bool Npc::canMeleeCharge() const {
   MeleeCharge::Situation s;
   s.enabled          = Gothic::physicsFlags().meleeCharge;
   s.player           = isPlayer() && isHuman();
+  s.aiEnabled        = isHuman() && Gothic::physicsFlags().meleeAiCharge;
   s.oneHand          = weaponState()==WeaponState::W1H;
   s.windupAnimation  = visual.hasAnim("T_1HCHARGE");
   s.holdAnimation    = visual.hasAnim("S_1HCHARGE");
@@ -8647,13 +10047,17 @@ void Npc::meleeChargeTap(uint64_t heldMs) {
   }
 
 bool Npc::beginMeleeCharge() {
-  if(!canMeleeCharge())
+  if(!canMeleeCharge() || (!isPlayer() && (currentTarget==nullptr || meleeAiSpecialBusy("charge"))))
     return false;
   const float cost = MeleeCharge::cost(meleeAttackCost(),hasStamina());
   if(!allowStaminaAction("charge",cost,true))
     return false;
   if(visual.startAnimAndGet(*this,"T_1HCHARGE",0,BS_HIT)==nullptr)
     return false;
+  if(isUsingItemInHand())
+    interruptItemUse("attack");
+  if(!isPlayer())
+    beginMeleeAiSpecial(MeleeAi::Special::Charge);
   spendStamina("charge",cost);
   meleeChargePhase = ChargePhase::Windup;
   meleeChargeStart = owner.tickCount();
@@ -8689,6 +10093,18 @@ void Npc::cancelMeleeCharge(std::string_view reason) {
 void Npc::tickMeleeCharge() {
   if(meleeChargePhase==ChargePhase::None)
     return;
+  if(!isPlayer() && isMeleeCharging()) {
+    const auto handle = meleeAiSpecialTarget.lock();
+    auto* target = handle ? reinterpret_cast<Npc*>(handle->user_ptr) : nullptr;
+    if(!Gothic::physicsFlags().meleeAiCharge || target==nullptr || target!=currentTarget || target->isDown() ||
+       target->isLie() || target->meleeKnockdown) {
+      cancelMeleeCharge("AI target unavailable");
+      return;
+      }
+    if(MeleeAi::chargeRelease(owner.tickCount()-meleeChargeStart,meleeAiChargeHold,
+                             fghAlgo.isInWRange(*this,*target,owner.script())))
+      meleeChargeReleased = true;
+    }
   if(!Gothic::physicsFlags().meleeCharge || weaponState()!=WeaponState::W1H || isDown()) {
     cancelMeleeCharge(!Gothic::physicsFlags().meleeCharge ? "flag disabled" : isDown() ? "down" : "weapon sheathed");
     meleeChargePhase = ChargePhase::None;
@@ -8708,6 +10124,16 @@ void Npc::tickMeleeCharge() {
       throw std::runtime_error("Melee charge release animation disappeared");
     meleeChargePhase = ChargePhase::Release;
     meleeChargeMult = MeleeCharge::multiplier(elapsed);
+    if(meleeAiSpecial==MeleeAi::Special::Charge) {
+      meleeAiChargeYaw = angle;
+      meleeAiChargeTurn = 0.f;
+      if(TestBench::isActive())
+        TestBench::note(("melee ai charge "+std::string(TestBench::who(this))+": "+std::string(TestBench::who(currentTarget))+
+                        " hold "+std::to_string(meleeAiChargeHold)+" ms, release at "+std::to_string(elapsed)+" ms").c_str());
+      if(TestBench::bodyTracing())
+        TestBench::bodyEvent(*this,currentTarget,"ai_charge_release",owner.tickCount(),
+                            "\"hold_ms\":"+std::to_string(meleeAiChargeHold)+",\"elapsed_ms\":"+std::to_string(elapsed));
+      }
     if(MeleeCharge::autoRelease(elapsed) && !meleeChargeReleased)
       meleeChargeNote("auto release","charge_auto_release","\"elapsed_ms\":"+std::to_string(elapsed));
     char text[128];
@@ -8732,7 +10158,12 @@ bool Npc::meleeDodge(MeleeDodge::Direction direction) {
   auto*      armor = invent.currentArmor();
   const auto armorClass = armor!=nullptr ? std::optional<MeleeImpact::ArmorClass>(MeleeImpact::armorClass(armor->handle().protection[PROT_EDGE])) :
                                            std::optional<MeleeImpact::ArmorClass>();
-  const auto wanted = MeleeDodge::kind(armorClass,direction,isPlayer() && Gothic::physicsFlags().meleeBarge);
+  const auto& flags = Gothic::physicsFlags();
+  const auto wanted = MeleeDodge::kind(armorClass,direction,flags.meleeBarge &&
+                                     MeleeDodge::bargeAllowed(isPlayer(),isHuman() && ws==WeaponState::W1H && flags.meleeAiBarge));
+  if(wanted==MeleeDodge::Kind::Barge && !isPlayer() &&
+     (currentTarget==nullptr || meleeAiSpecialBusy("barge")))
+    return false;
   const std::string dir    = std::string(MeleeDodge::name(direction));
   const std::string armour = std::string(MeleeDodge::name(armorClass));
   const std::string head   = "\"direction\":"+TestBench::bodyJson(dir)+",\"armour\":"+TestBench::bodyJson(armour)+
@@ -8793,7 +10224,24 @@ bool Npc::meleeDodge(MeleeDodge::Direction direction) {
       visual.interrupt();
       cancelMeleeCharge("dodge");
       }
-    const bool  ok     = setAnim(Anim::MoveBack);
+    bool ok = false;
+    if(isUsingItemInHand()) {
+      const bool costsStamina = hasStamina() && (!isPlayer() || !bool(walkMode()&WalkBit::WM_Sneak));
+      if(!allowMeleeStunAction("jumpback") ||
+         (costsStamina && !allowStaminaAction("jumpback",MeleeStamina::JumpBackCost,
+                                             !isPlayer() && !BodyController::owns(*this))))
+        return false;
+      const char* clip = ws==WeaponState::Fist ? "T_FISTPARADEJUMPB" :
+                         ws==WeaponState::W1H ? "T_1HJUMPB" : "T_2HJUMPB";
+      ok = visual.startAnimAndGet(*this,clip,calcAniComb(),BS_PARADE)!=nullptr;
+      if(ok) {
+        interruptItemUse("dodge");
+        if(costsStamina)
+          spendStamina("jumpback",MeleeStamina::JumpBackCost);
+        }
+      } else {
+      ok = setAnim(Anim::MoveBack);
+      }
     const auto  cost   = before-stamina();
     meleeDodgeNote(dir+", armour "+armour+", "+std::string(MeleeDodge::name(wanted))+": the original jump back "+
                    visual.pose().animNames()+" (no "+missing+"), "+(ok ? "started" : "refused")+", cost "+
@@ -8806,7 +10254,7 @@ bool Npc::meleeDodge(MeleeDodge::Direction direction) {
   const auto kind      = chosen->kind;
   const bool fallback  = kind!=wanted;
   const auto window    = MeleeDodge::invulnerability(kind);
-  const bool fullCost  = !isPlayer() && !BodyController::owns(*this);
+  const bool fullCost  = !isPlayer();
   const auto moveText  = std::string(MeleeDodge::name(wanted))+(fallback ? " -> "+std::string(MeleeDodge::name(kind)) : "")+" "+
                          chosen->name+(fallback ? " (no "+missing+")" : "");
   tickMeleeStamina();
@@ -8835,8 +10283,12 @@ bool Npc::meleeDodge(MeleeDodge::Direction direction) {
                    "dodge_refused",head+",\"reason\":\"pose\"");
     return false;
     }
+  if(isUsingItemInHand())
+    interruptItemUse("dodge");
   cancelMeleeCharge("dodge");
   if(kind==MeleeDodge::Kind::Barge) {
+    if(!isPlayer())
+      beginMeleeAiSpecial(MeleeAi::Special::Barge);
     meleeBargeOrigin = now;
     meleeBargeContact = false;
     if(TestBench::bodyTracing())
@@ -8879,6 +10331,10 @@ bool Npc::doAttack(Anim anim, BodyState bs) {
   const bool trace = TestBench::bodyTracing() && currentTarget!=nullptr;
   const auto before = trace ? combatPoseIdentity() : std::string();
   const auto result = [&](bool accepted) {
+    if(accepted && isUsingItemInHand())
+      interruptItemUse(bs==BS_PARADE ? "parade" : "attack");
+    if(accepted && (bs==BS_HIT || bs==BS_PARADE))
+      meleeAiDodgeStreak.reset();
     if(accepted && costsStamina && staminaBefore!=meleeStaminaIdentity(visual.pose(),owner.tickCount()))
       spendStamina("attack",meleeAttackCost());
     if(accepted && bs==BS_PARADE)
@@ -9247,11 +10703,13 @@ float Npc::animProgress(std::string_view name) const {
   return visual.pose().animProgress(name,owner.tickCount());
   }
 
-void Npc::setManualAim(bool on, const Tempest::Vec3& point, const Tempest::Vec2& sway, const Tempest::Vec2& tremor) {
+void Npc::setManualAim(bool on, const Tempest::Vec3& point, const Tempest::Vec2& sway, const Tempest::Vec2& tremor,
+                       const Tempest::Vec3& shake) {
   manualAim    = on;
   manualPoint  = point;
   manualSway   = on ? sway   : Tempest::Vec2();
   manualTremor = on ? tremor : Tempest::Vec2();
+  manualShake  = on ? shake  : Tempest::Vec3();
   }
 
 bool Npc::isAimSteady() const {
@@ -9285,7 +10743,7 @@ bool Npc::tickManualAim(const Tempest::Vec3& at, Archer::Input in, const Archery
     shot = releaseArrow(arch.draw(),st);
     arch.onShot(shot);
     }
-  setManualAim(true,at,arch.sway(),arch.tremor());
+  setManualAim(true,at,arch.sway(),arch.tremor(),arch.shake());
   return shot;
   }
 
@@ -10166,6 +11624,25 @@ bool Npc::isAiQueueEmpty() const {
 auto Npc::navigationGoal() const -> NavigationGoal {
   NavigationGoal ret;
   if(!go2.empty()) {
+    if(const auto* pending=pendingSimpleGoTo()) {
+      ret.active=true;
+      if(pending->act==AI_GoToNpc) {
+        ret.npc=pending->target;
+        ret.kind="npc";
+        ret.position=pending->target!=nullptr ? pending->target->position() : go2.target();
+        } else if(pending->act==AI_GotoItem) {
+        ret.kind="item";
+        ret.position=pending->item!=nullptr ? pending->item->position() : go2.pos;
+        } else {
+        ret.point=pending->point;
+        ret.position=pending->point->position();
+        ret.kind="freepoint";
+        ret.name=pending->point->name;
+        }
+      return ret;
+      }
+    }
+  if(!go2.empty()) {
     ret.active = true;
     ret.npc = go2.npc;
     ret.point = go2.wp;
@@ -10239,6 +11716,11 @@ void Npc::clearAiQueue() {
   }
 
 void Npc::attachToPoint(const WayPoint *p) {
+  const auto* pending=pendingSimpleGoTo();
+  if(pending!=nullptr && pending->point->isFreePoint() &&
+     (pending->act==AI_GoToNextFp || pending->act==AI_GoToPoint) &&
+     currentFp==pending->point && go2.flag==GT_Way && p==go2.wp && p!=pending->point)
+    return;
   currentFp     = p;
   currentFpLock = FpLock(currentFp);
   }
@@ -10257,10 +11739,17 @@ bool Npc::goToPosition(const Vec3& position) {
   }
 
 void Npc::clearGoTo() {
+  simpleMovement.ground=nullptr;
+  if(pendingSimpleGoTo()!=nullptr)
+    aiQueue.pop();
+  simpleMovement.nativeItem=nullptr;
+  if(usesSimplifiedMovement())
+    simpleMovement.edgeTo = nullptr;
   if(!go2.empty()) {
     stopWalking();
     go2.clear();
     }
+  simpleMovement.nativeFallback=false;
   }
 
 void Npc::stopWalking() {
@@ -10620,6 +12109,8 @@ void Npc::resetCharacterVisualHeight() {
   }
 
 void Npc::updateCharacterVisualHeight() {
+  if(usesSimplifiedMovement())
+    return;
   const bool characterFlag = isPlayer() ? Gothic::physicsFlags().characterVirtual :
                              isHuman() ? Gothic::physicsFlags().npcCharacterVirtual :
                                          Gothic::physicsFlags().monsterCharacterVirtual;
@@ -10800,6 +12291,8 @@ void Npc::updateAnimation(uint64_t dt, bool force) {
   }
 
 bool Npc::updateLyingVisualHeight() {
+  if(usesSimplifiedMovement())
+    return false;
   if(!isHuman() || ragdoll || spellFrozen() || !isLie() || mvAlgo.state()!=MoveAlgo::Run || interactive()!=nullptr)
     return false;
   Vec3 lowest;

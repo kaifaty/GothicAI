@@ -21,6 +21,8 @@ struct PhysicsNoise;
 // Inert unless OPENGOTHIC_BENCH is set. Usage: scripts/bench.sh, see scripts/bench/README.md.
 namespace TestBench {
   bool     isActive();
+  // Explicit graph fixtures must fail instead of accepting a native fallback.
+  bool     strictGraphMovement(const Npc& npc);
   // Only the current npcduel copies retain near-hero simulation and physics at any distance.
   bool     npcDuelActor(const Npc& npc);
   void     npcDuelSwingStart(const Npc& npc);
@@ -48,6 +50,8 @@ namespace TestBench {
   uint64_t frameDt(uint64_t dt);
   // Move synthetic support fixtures before both NPC and player world steps.
   void     beforeWorldTick(uint64_t dt);
+  // Exact healing strikes run at the advanced clock before the player consumes animation events.
+  void     beforeNpcTick(Npc& npc);
   // Runs the scenario after the world update; true if this frame has to be captured
   bool     tick(uint64_t dt, PlayerControl& player);
   // Called after the frame's residency update; deferred metrics for perf route segments.
@@ -106,6 +110,8 @@ namespace TestBench {
   bool     ragdollLootOpened(const Npc& player, const Npc& target);
   // Benchmark-only inspection of the actual body drawable, excluding head/items.
   bool     ragdollBodyDrawable(const Npc& npc);
+  // First 300 ms of native simulation; inert outside an active bench.
+  void     ragdollBirthPeak(const Npc& npc, const Npc* culprit, const std::string& fields);
 
   // What the AI bridge does, for scenarios that talk (`ptt`, `waitreply`; shorts/): texts in UTF-8.
   // An npc line starts (`ms`: its length as known now; `to`: the npc it is said to, empty for the hero;
