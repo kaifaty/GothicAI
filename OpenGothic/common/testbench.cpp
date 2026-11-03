@@ -12028,6 +12028,37 @@ void characterIdlePrepare(World& world,Npc& player,PlayerControl& ctrl,std::stri
     ",\"hero_distance_cm\":"+ragdollNumber((player.position()-idle.actor->position()).length()));
   }
 
+// Give and draw a weapon to the prepared idle actor without the draw animation,
+// so the hero and an NPC enter the same armed stance on the same frame.
+void characterIdleWeapon(World& world,std::string_view kind) {
+  auto& idle=bench.characterIdle;
+  if(!idle.actor) {arenaAbort("character idle weapon needs a prepared actor");return;}
+  auto& npc=*idle.actor;
+  npc.closeWeapon(true);
+  const auto item=[&](std::string_view name) {
+    const size_t id=world.script().findSymbolIndex(name);
+    if(id==size_t(-1)) arenaAbort("character idle weapon: no item "+std::string(name));
+    return id;
+    };
+  if(kind=="fist") npc.setToFistMode();
+  else if(kind=="1h" || kind=="2h") {
+    const size_t id=item(kind=="1h" ? "ItMw_1h_Common_01" : "ItMw_Zweihaender1");
+    if(id==size_t(-1))return;
+    npc.setToFightMode(id);
+    }
+  else if(kind=="bow") {
+    const size_t id=item("ItRw_Bow_L_01"),arrows=item("ItRw_Arrow");
+    if(id==size_t(-1) || arrows==size_t(-1))return;
+    npc.addItem(arrows,50);
+    npc.setToBowMode(id);
+    }
+  else {arenaAbort("character idle weapon expects fist|1h|2h|bow");return;}
+  // An NPC held by an AI wait does not re-pick its stand animation by itself.
+  npc.setAnim(Npc::Anim::Idle);
+  event("character_idle_weapon","\"role\":"+jsonStr(idle.role)+",\"weapon\":"+jsonStr(kind)+
+    ",\"weapon_state\":"+std::to_string(int(npc.weaponState()))+",\"body_state\":"+std::to_string(uint32_t(npc.bodyStateMasked())));
+  }
+
 void characterIdleSnapshot(World& world,std::string_view label,bool begin=false) {
   auto& idle=bench.characterIdle;
   if(!idle.actor) {arenaAbort("character idle snapshot needs a prepared actor");return;}
@@ -14916,6 +14947,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
   else if(c=="character" && (a.size()==3 || a.size()==4) && a[1]=="idle" && (a[2]=="hero" || a[2]=="npc"))
     characterIdlePrepare(w,pl,ctrl,a[2],a.size()==4?a[3]:"gentle");
   else if(c=="character" && a.size()==3 && a[1]=="idle" && a[2]=="begin") characterIdleSnapshot(w,"begin",true);
+  else if(c=="character" && a.size()==4 && a[1]=="idle" && a[2]=="weapon") characterIdleWeapon(w,a[3]);
   else if(c=="character" && a.size()==4 && a[1]=="idle" && a[2]=="snapshot") characterIdleSnapshot(w,a[3]);
   else if(c=="character" && a.size()==2 && (a[1]=="on" || a[1]=="off")) {
     Gothic::settingsSetI("GAME","character_virtual",a[1]=="on");
