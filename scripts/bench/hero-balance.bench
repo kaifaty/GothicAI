@@ -1,13 +1,15 @@
 # The hero's balance by hand against G2's dice (docs/manual-aim.md, stage 4): four tiers as G2 has them plus three strength/dexterity builds (the
 # talent, the bow, its strength and dexterity, the trained animations), at a farmer 10, 20 and 30 m off, aimed
 # at the body and at the head; 30 shots each, held 300-600 ms (the sway is a function of time), a seed each
+# Balance ratios remain unaccepted until the hero's position is controlled; see the strength-balance report.
 cheat god
 set time 12 0
 view clean
-goto NW_XARDAS_TOWER_VALLEY_01
-turn 225
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+turn 210
 wait 500
 manual on
+arrow feature off
 give ItRw_Arrow 2000
 insert BAU_904_BAUER
 wait 300
@@ -20,7 +22,7 @@ equip ItRw_Bow_L_01
 stats str 10 dex 10 bow 10 talent auto
 tap bow
 wait 1500
-pin BAU_904_BAUER 1000 0 0
+put BAU_904_BAUER 1000 0 0
 wait 300
 zones BAU_904_BAUER
 aimat BAU_904_BAUER body
@@ -33,7 +35,7 @@ seed 2
 rec nov10_head novideo
 volley 30 300 1 300
 stop
-pin BAU_904_BAUER 2000 0 0
+put BAU_904_BAUER 2000 0 0
 wait 300
 zones BAU_904_BAUER
 aimat BAU_904_BAUER body
@@ -46,7 +48,7 @@ seed 4
 rec nov20_head novideo
 volley 30 300 1 300
 stop
-pin BAU_904_BAUER 3000 0 0
+put BAU_904_BAUER 3000 0 0
 wait 300
 zones BAU_904_BAUER
 aimat BAU_904_BAUER body
@@ -68,7 +70,7 @@ equip ItRw_Bow_L_03
 stats str 30 dex 30 bow 30 talent auto
 tap bow
 wait 1500
-pin BAU_904_BAUER 1000 0 0
+put BAU_904_BAUER 1000 0 0
 wait 300
 zones BAU_904_BAUER
 aimat BAU_904_BAUER body
@@ -81,7 +83,7 @@ seed 8
 rec lrn10_head novideo
 volley 30 300 1 300
 stop
-pin BAU_904_BAUER 2000 0 0
+put BAU_904_BAUER 2000 0 0
 wait 300
 zones BAU_904_BAUER
 aimat BAU_904_BAUER body
@@ -94,7 +96,7 @@ seed 10
 rec lrn20_head novideo
 volley 30 300 1 300
 stop
-pin BAU_904_BAUER 3000 0 0
+put BAU_904_BAUER 3000 0 0
 wait 300
 zones BAU_904_BAUER
 aimat BAU_904_BAUER body
@@ -116,7 +118,7 @@ equip ItRw_Bow_M_01
 stats str 60 dex 60 bow 60 talent auto
 tap bow
 wait 1500
-pin BAU_904_BAUER 1000 0 0
+put BAU_904_BAUER 1000 0 0
 wait 300
 zones BAU_904_BAUER
 aimat BAU_904_BAUER body
@@ -129,7 +131,7 @@ seed 14
 rec mid10_head novideo
 volley 30 300 1 300
 stop
-pin BAU_904_BAUER 2000 0 0
+put BAU_904_BAUER 2000 0 0
 wait 300
 zones BAU_904_BAUER
 aimat BAU_904_BAUER body
@@ -142,7 +144,7 @@ seed 16
 rec mid20_head novideo
 volley 30 300 1 300
 stop
-pin BAU_904_BAUER 3000 0 0
+put BAU_904_BAUER 3000 0 0
 wait 300
 zones BAU_904_BAUER
 aimat BAU_904_BAUER body
@@ -164,7 +166,7 @@ equip ItRw_Bow_H_03
 stats str 150 dex 150 bow 100 talent auto
 tap bow
 wait 1500
-pin BAU_904_BAUER 1000 0 0
+put BAU_904_BAUER 1000 0 0
 wait 300
 zones BAU_904_BAUER
 aimat BAU_904_BAUER body
@@ -177,7 +179,7 @@ seed 20
 rec mas10_head novideo
 volley 30 300 1 300
 stop
-pin BAU_904_BAUER 2000 0 0
+put BAU_904_BAUER 2000 0 0
 wait 300
 zones BAU_904_BAUER
 aimat BAU_904_BAUER body
@@ -190,7 +192,7 @@ seed 22
 rec mas20_head novideo
 volley 30 300 1 300
 stop
-pin BAU_904_BAUER 3000 0 0
+put BAU_904_BAUER 3000 0 0
 wait 300
 zones BAU_904_BAUER
 aimat BAU_904_BAUER body
@@ -212,7 +214,7 @@ equip ItRw_Bow_H_03
 stats str 40 dex 150 bow 100 talent auto
 tap bow
 wait 1500
-pin BAU_904_BAUER 1000 0 0
+put BAU_904_BAUER 1000 0 0
 wait 300
 zones BAU_904_BAUER
 aimat BAU_904_BAUER body
@@ -225,7 +227,7 @@ seed 20
 rec dexh10_head novideo
 volley 30 300 1 300
 stop
-pin BAU_904_BAUER 2000 0 0
+put BAU_904_BAUER 2000 0 0
 wait 300
 zones BAU_904_BAUER
 aimat BAU_904_BAUER body
@@ -238,7 +240,7 @@ seed 22
 rec dexh20_head novideo
 volley 30 300 1 300
 stop
-pin BAU_904_BAUER 3000 0 0
+put BAU_904_BAUER 3000 0 0
 wait 300
 zones BAU_904_BAUER
 aimat BAU_904_BAUER body
@@ -260,7 +262,7 @@ equip ItRw_Bow_M_01
 stats str 40 dex 150 bow 100 talent auto
 tap bow
 wait 1500
-pin BAU_904_BAUER 1000 0 0
+put BAU_904_BAUER 1000 0 0
 wait 300
 zones BAU_904_BAUER
 aimat BAU_904_BAUER body
@@ -273,7 +275,7 @@ seed 20
 rec dexl10_head novideo
 volley 30 300 1 300
 stop
-pin BAU_904_BAUER 2000 0 0
+put BAU_904_BAUER 2000 0 0
 wait 300
 zones BAU_904_BAUER
 aimat BAU_904_BAUER body
@@ -286,7 +288,7 @@ seed 22
 rec dexl20_head novideo
 volley 30 300 1 300
 stop
-pin BAU_904_BAUER 3000 0 0
+put BAU_904_BAUER 3000 0 0
 wait 300
 zones BAU_904_BAUER
 aimat BAU_904_BAUER body
@@ -308,7 +310,7 @@ equip ItRw_Bow_H_03
 stats str 150 dex 20 bow 100 talent auto
 tap bow
 wait 1500
-pin BAU_904_BAUER 1000 0 0
+put BAU_904_BAUER 1000 0 0
 wait 300
 zones BAU_904_BAUER
 aimat BAU_904_BAUER body
@@ -321,7 +323,7 @@ seed 20
 rec strh10_head novideo
 volley 30 300 1 300
 stop
-pin BAU_904_BAUER 2000 0 0
+put BAU_904_BAUER 2000 0 0
 wait 300
 zones BAU_904_BAUER
 aimat BAU_904_BAUER body
@@ -334,7 +336,7 @@ seed 22
 rec strh20_head novideo
 volley 30 300 1 300
 stop
-pin BAU_904_BAUER 3000 0 0
+put BAU_904_BAUER 3000 0 0
 wait 300
 zones BAU_904_BAUER
 aimat BAU_904_BAUER body

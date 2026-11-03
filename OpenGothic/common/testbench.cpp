@@ -17166,9 +17166,8 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     DynamicWorld::RayLandResult r;
     for(float y=pos.y+(c=="put-at" ? 0.f : num(a,4,0))+1500; y>pos.y-1500 && !r.hasCol; y-=400)
       r = w.physic()->ray({pos.x,y,pos.z},{pos.x,y-450,pos.z});
-    if(c=="put-at" && !r.hasCol) {arenaAbort("put-at found no ground");return;}
-    if(r.hasCol)
-      pos.y = r.v.y;
+    if(!r.hasCol) {arenaAbort(c+" found no ground");return;}
+    pos.y = r.v.y;
     n->setInteraction(nullptr,true);
     n->clearAiQueue();
     n->clearState(false);
