@@ -1544,6 +1544,9 @@ class NpcLogicalStateContract final {
                "the occupied-corner route preserves and releases its following wait");
         hero->attachToPoint(heroPoint);
         moving->clearAiQueue(); moving->clearGoTo();
+        moving->visual.pose().stopAllAnim();
+        expect(moving->setAnim(Npc::Anim::Idle) && !moving->nativeBodyAction(),
+               "unsupported-ground fixture admits graph movement from a clean native idle");
         moving->setPosition(start->groundPos+Tempest::Vec3(0,500,0));
         moving->go2.set(goal);
         moving->simpleMovement.edgeTo=nullptr;
