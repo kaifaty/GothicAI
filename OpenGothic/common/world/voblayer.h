@@ -13,6 +13,9 @@ struct Result {
 // Runtime-only own records identify additions without changing the base schema.
 bool isAdded(const asset::VirtualObject& vob);
 const std::string& key(const asset::VirtualObject& vob);
+// A layer light's flame size in cm ("source_cm"): the soft edge of its shadow (VSM, light.frag); 6, a torch, else
+inline constexpr float DefaultLightSourceCm = 6.f;
+float lightSourceCm(const asset::VirtualObject& vob);
 
 // Sorted *.json files commit individually; a rejected file leaves the world untouched.
 Result apply(WorldData::Data& data, const std::filesystem::path& baseWorldDir,

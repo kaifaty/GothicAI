@@ -171,7 +171,7 @@ void validLayers(const Fixture& f) {
           light->color_animation_fps==12 && light->range_animation_scale.size()==2 && light->range_animation_scale[1]==0.85f &&
           light->range_animation_fps==12,"light flicker keys");
   require(light->cookie=="OWN_LAMP_COOKIE.TGA","light mask name, upper case");
-  require(light->source_cm==1.5f,"light source size");
+  require(VobLayer::lightSourceCm(*light)==1.5f,"light source size");
   const float rotationRows[3][3]={{0,0,1},{0,1,0},{-1,0,0}};
   for(unsigned row=0;row<3;++row) for(unsigned column=0;column<3;++column)
     require(light->rotation[column][row]==rotationRows[row][column] &&

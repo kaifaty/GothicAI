@@ -32,7 +32,9 @@ struct Added {
   std::string key;
   };
 struct LayerVob final : asset::VirtualObject, Added {};
-struct Light final : asset::VLight, Added {};
+struct Light final : asset::VLight, Added {
+  float sourceCm = VobLayer::DefaultLightSourceCm; // the flame's size ("source_cm")
+  };
 struct Context {
   std::vector<Vob> removed;
   const std::map<std::string,fs::path>* ownMeshes = nullptr;
@@ -421,8 +423,8 @@ Result applyFile(WorldData::Data& data, Context& context, const fs::path& baseRo
               }
             // the flame's size (cm): the soft edge of the light's shadow, 6 by default (a torch)
             if(entry.HasMember("source_cm")) {
-              light->source_cm=layerFloat(entry["source_cm"]);
-              require(light->source_cm>0 && light->source_cm<=500,"source_cm must be in 0..500");
+              light->sourceCm=layerFloat(entry["source_cm"]);
+              require(light->sourceCm>0 && light->sourceCm<=500,"source_cm must be in 0..500");
               }
             light->is_static=true; light->on=true; light->can_move=false; light->cd_static=false;
             v=std::move(light);
@@ -484,6 +486,11 @@ Result applyFile(WorldData::Data& data, Context& context, const fs::path& baseRo
 
 bool isAdded(const asset::VirtualObject& vob) {
   return dynamic_cast<const Added*>(&vob)!=nullptr;
+  }
+
+float lightSourceCm(const asset::VirtualObject& vob) {
+  if(const auto* light=dynamic_cast<const Light*>(&vob)) return light->sourceCm;
+  return DefaultLightSourceCm;
   }
 
 const std::string& key(const asset::VirtualObject& vob) {
