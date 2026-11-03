@@ -812,7 +812,7 @@ uv() { bash "$TEST_ROOT/source/scripts/bench.sh"; }
         self.base_part('0' * 64, '2' * 64).joinpath('base.json').write_text('{broken')
         for fingerprint, changed in (('1' * 64, {'archives': []}),
                                      ('2' * 64, {'loose_files': ['other']}),
-                                     ('3' * 64, {'sources': {'version': 'other'}})):
+                                     ('3' * 64, {'archives': [{'name': 'GOTHIC.VDF', 'sha256': '0' * 64}]})):
             self.base_part(fingerprint, '2' * 64, **changed)
         pointer = self.home / 'gothic-ai/game-base.json'
         previous = pointer.read_bytes()
@@ -820,6 +820,74 @@ uv() { bash "$TEST_ROOT/source/scripts/bench.sh"; }
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout)['OPENGOTHIC_BASE_FINGERPRINT'], 'd' * 64)
         self.assertEqual(pointer.read_bytes(), previous)
+
+    def test_mac_and_ryzen_select_the_same_installation_across_formats(self):
+        self.format_setup()
+        shared_cache = self.home / '.cache/gothic-ai/base'
+        shared_cache.parent.mkdir(parents=True)
+        shutil.move(self.base_cache, shared_cache)
+        self.base_cache = shared_cache
+        self.env['OPENGOTHIC_BASE_CACHE'] = str(shared_cache)
+        game = self.root / 'installation'
+        pointers = shared_cache / 'current'
+        pointers.mkdir()
+        mac_pointer = pointers / (hashlib.sha256(str(game).encode()).hexdigest() + '.json')
+        host_pointer = self.home / 'gothic-ai/game-base.json'
+        binding = {'path': 'sources/sources.json', 'size': 123, 'sha256': '7' * 64}
+        harness = '\n'.join([
+            'set -euo pipefail', function('select_mac_base_parts'),
+            'ROOT="$TEST_ROOT/source" ACTION=setup',
+            'auto_base="$TEST_BASE" auto_videos="$TEST_VIDEOS"',
+            'cmake() { if [[ "$1" == -DBASE_ROOT=* ]]; then printf "%s\\n" "$TEST_BASE_FORMAT"; '
+            'else printf "%s\\n" "$TEST_VIDEO_FORMAT"; fi; }',
+            'select_mac_base_parts',
+            'printf "%s\\n" "$base_fingerprint" "$videos_fingerprint"',
+        ])
+        for kind, field, value, accepted in (
+            ('base', 'sources', dict(binding, size=456, sha256='8' * 64), True),
+            ('base', 'archives', [{'name': 'OTHER.VDF', 'sha256': '5' * 64}], False),
+            ('base', 'loose_files', [{'path': '_work/other.dat', 'sha256': '6' * 64}], False),
+            ('videos', 'sources', [{'name': 'OTHER.BIK', 'sha256': '6' * 64}], False),
+        ):
+            with self.subTest(kind=kind, field=field):
+                base = self.base_part('c' * 64, ('1' if kind == 'base' else '2') * 64,
+                                      sources=binding)
+                if kind == 'base':
+                    pointed, candidate = base, self.base_part('d' * 64, '2' * 64, sources=binding)
+                    metadata = json.loads((candidate / 'base.json').read_text())
+                    metadata[field] = value
+                    (candidate / 'base.json').write_text(json.dumps(metadata))
+                    old, new = 'c' * 64, 'd' * 64
+                else:
+                    self.video_part('a' * 64, '3' * 64)
+                    self.video_part('b' * 64, '4' * 64, sources=value)
+                    pointed = shared_cache / 'videos' / ('a' * 64)
+                    old, new = 'a' * 64, 'b' * 64
+                mac_pointer.write_text(json.dumps({
+                    'version': 1, 'gothic': str(game), kind: {'fingerprint': old, 'path': str(pointed)},
+                }))
+                host_pointer.write_text(json.dumps({'base': 'c' * 64, 'videos': old if kind == 'videos' else ''}))
+                previous = [pointer.read_bytes() for pointer in (mac_pointer, host_pointer)]
+                mac = subprocess.run(
+                    ['bash', '-c', harness], capture_output=True, text=True, timeout=5,
+                    env=dict(self.env, GOTHIC_DIR=str(game), TEST_BASE=str(int(kind == 'base')),
+                             TEST_VIDEOS=str(int(kind == 'videos')), TEST_BASE_FORMAT='2' * 64,
+                             TEST_VIDEO_FORMAT='4' * 64),
+                )
+                ryzen = self.game_result()
+                self.assertEqual(mac.returncode, 0 if accepted else 1, mac.stdout + mac.stderr)
+                if accepted:
+                    self.assertEqual(mac.stdout.splitlines()[0 if kind == 'base' else 1], new)
+                else:
+                    self.assertIn(f'needs_decision: Mac {kind} part {old} has importer format', mac.stderr)
+                self.assertEqual(ryzen.returncode, 0 if accepted or kind == 'videos' else 1,
+                                 ryzen.stdout + ryzen.stderr)
+                if ryzen.returncode == 0:
+                    key = 'OPENGOTHIC_BASE_FINGERPRINT' if kind == 'base' else 'OPENGOTHIC_VIDEOS_FINGERPRINT'
+                    self.assertEqual(json.loads(ryzen.stdout)[key], new if accepted else old)
+                else:
+                    self.assertIn('no ready base of the same installation', ryzen.stderr)
+                self.assertEqual([pointer.read_bytes() for pointer in (mac_pointer, host_pointer)], previous)
 
     def test_game_settings_replace_base_from_store_when_pointer_metadata_is_only_in_store(self):
         self.format_setup()

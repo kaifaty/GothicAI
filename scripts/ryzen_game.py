@@ -10,6 +10,12 @@ import subprocess
 import sys
 
 
+def _installation_identity(identity, kind):
+    """Return installation inputs, excluding import-generated base bindings."""
+    keys = ("archives", "loose_files") if kind == "base" else ("sources",)
+    return [identity[key] for key in keys]
+
+
 def _identity(directory, kind):
     try:
         metadata = json.loads((directory / ("base.json" if kind == "base" else "videos.json")).read_bytes())
@@ -17,8 +23,7 @@ def _identity(directory, kind):
         format_sha256 = identity["format_sha256"]
         if not isinstance(format_sha256, str) or not re.fullmatch("[0-9a-f]{64}", format_sha256):
             return None
-        keys = ("archives", "loose_files", "sources") if kind == "base" else ("sources",)
-        return format_sha256, [identity[key] for key in keys]
+        return format_sha256, _installation_identity(identity, kind)
     except (OSError, ValueError, KeyError, TypeError, UnicodeError):
         return None
 

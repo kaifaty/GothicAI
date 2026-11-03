@@ -768,13 +768,16 @@ select_mac_base_parts() {
   if [[ "$auto_videos" == 1 ]]; then videos_format="$(cmake -DVIDEO_ROOT="$ROOT/OpenGothic" -P "$ROOT/OpenGothic/cmake/VideoFormat.cmake")"; fi
   GOTHIC_DIR="${GOTHIC_DIR:-/Volumes/DevSSD/Dev/games/Gothic II}"
   # Select checkout-compatible ready parts without identifying or changing the installation.
-  parts="$(python3 - "$GOTHIC_DIR" "$base_format" "$videos_format" "$auto_base" "$auto_videos" "$ACTION" <<'PY'
+  parts="$(python3 - "$GOTHIC_DIR" "$base_format" "$videos_format" "$auto_base" "$auto_videos" "$ACTION" "$ROOT/scripts" <<'PY'
 import hashlib
 import json
 import os
 from pathlib import Path
 import re
 import sys
+
+sys.path.insert(0, sys.argv[7])
+from ryzen_game import _installation_identity
 
 game = Path(sys.argv[1]).expanduser().resolve()
 cache = Path.home() / '.cache/gothic-ai/base'
@@ -806,15 +809,14 @@ def select(kind, expected):
     pointed = identity(kind, path)
     actual = pointed['format_sha256']
     if actual != expected:
-        keys = ('archives', 'loose_files') if kind == 'base' else ('sources',)
-        sources = [pointed[key] for key in keys]
+        sources = _installation_identity(pointed, kind)
         root = cache if kind == 'base' else cache / 'videos'
         for candidate in sorted(root.glob('*/base.json' if kind == 'base' else '*/videos.json')):
             if not re.fullmatch('[0-9a-f]{64}', candidate.parent.name):
                 continue
             try:
                 cached = identity(kind, candidate.parent)
-                if cached['format_sha256'] != expected or [cached[key] for key in keys] != sources:
+                if cached['format_sha256'] != expected or _installation_identity(cached, kind) != sources:
                     continue
             except (OSError, ValueError, KeyError, TypeError, AttributeError):
                 continue
