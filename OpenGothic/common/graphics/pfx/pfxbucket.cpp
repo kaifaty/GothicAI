@@ -8,6 +8,7 @@
 #include "graphics/mesh/submesh/pfxemittermesh.h"
 #include "graphics/shaders.h"
 #include "graphics/visualobjects.h"
+#include "graphics/drawcommands.h"
 #include "graphics/worldview.h"
 #include "pfxobjects.h"
 #include "particlefx.h"
@@ -927,6 +928,7 @@ void PfxBucket::drawCommon(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const 
   if(view==SceneGlobals::V_Main && mat.isShadowmapRequired()) {
     cmd.setBinding(L_Shadow0,  *scene.shadowMap[0],Resources::shadowSampler());
     cmd.setBinding(L_Shadow1,  *scene.shadowMap[1],Resources::shadowSampler());
+    DrawCommands::bindSunVsm(cmd, scene, L_VsmPageTbl, L_VsmPageAtlas);
     }
 
   if(view==SceneGlobals::V_Main && mat.isSceneInfoRequired()) {

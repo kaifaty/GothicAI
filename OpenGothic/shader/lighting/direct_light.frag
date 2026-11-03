@@ -17,7 +17,7 @@
 #include "lighting/material_brdf.glsl"
 #endif
 #if defined(VIRTUAL_SHADOW)
-#include "virtual_shadow/vsm_common.glsl"
+#include "virtual_shadow/vsm_sun_shadow.glsl"
 #endif
 
 layout(location = 0) out vec4 outColor;
@@ -85,17 +85,6 @@ float calcShadow(vec3 pos, const vec3 normal) { return 1.0; }
 #endif
 
 #if defined(VIRTUAL_SHADOW)
-// Sun from the virtual shadow map: the page and mip as vsm_mark_pages.comp picks them (only those pages exist),
-// then a 4x4 texel tent (a 3-texel box over bilinear weights, as the cascades' four gathers) in virtual texels,
-// each texel through the page table. The receiver's depth at every texel centre comes from its plane, so the
-// filter does not shadow the surface by itself on slopes; a texel whose page is missing takes the centre's answer.
-int vsmShadowLod(vec2 dx, vec2 dy) {
-  float px     = dot(dx, dx);
-  float py     = dot(dy, dy);
-  float minLod = 0.5 * log2(min(px, py));
-  return max(0, int(minLod + push.vsmMipBias));
-  }
-
 vec3 vsmShadowPos(vec4 wpos, vec4 offset) {
   vec4 shPos = scene.viewVirtualShadowLwc * wpos + offset;
   shPos.xyz /= shPos.w;
@@ -122,68 +111,15 @@ vec3 depthNormal(ivec2 c, float d) {
   return dot(n,n)>1e-12 ? normalize(n) : vec3(0);
   }
 
-// texel of the virtual clipmap 'mip' (0..VSM_CLIPMAP_SIZE): stored depth, or -1 where no page holds it
-float vsmSunTexel(ivec2 tx, int mip) {
-  if(any(lessThan(tx, ivec2(0))) || any(greaterThanEqual(tx, ivec2(VSM_CLIPMAP_SIZE))))
-    return -1;
-  const uint pageD = texelFetch(pageTbl, ivec3(tx/VSM_PAGE_SIZE, mip), 0).x;
-  if(pageD==0)
-    return -1;
-  const ivec2 at = unpackVsmPageId(pageD >> 16u)*VSM_PAGE_SIZE + (tx%VSM_PAGE_SIZE);
-  return texelFetch(pageData, at, 0).x;
-  }
-
-float vsmSunShadow(const float depth, const vec3 normal) {
-  const vec2  frag = gl_FragCoord.xy;
-  const vec4  wpos = worldPosLwc(frag, depth) + vec4(normal*0.002, 0);
-
+// the sun's virtual shadow map (virtual_shadow/vsm_sun_shadow.glsl) at this pixel; the normal offset is the
+// mark pass's, so the same page is found
+float sunShadowVsm(const float depth, const vec3 normal) {
+  const vec4 wpos   = worldPosLwc(gl_FragCoord.xy, depth) + vec4(normal*0.002, 0);
   const vec3 shPos0 = vsmShadowPos(wpos, vec4(0));
   const vec2 shPos1 = vsmShadowPos(wpos, scene.vsmDdx).xy;
   const vec2 shPos2 = vsmShadowPos(wpos, scene.vsmDdy).xy;
-
-  int mip = vsmShadowLod((shPos1 - shPos0.xy)*VSM_CLIPMAP_SIZE, (shPos2 - shPos0.xy)*VSM_CLIPMAP_SIZE);
-  mip = vsmCalcMipIndex(shPos0.xy, mip);
-  if(mip>=VSM_PAGE_MIPS)
-    return 1.0;
-
-  // receiver plane in shadow space: depth change per texel of this mip
-  const mat4  m  = scene.viewVirtualShadowLwc;
-  const vec3  r0 = vec3(m[0][0], m[1][0], m[2][0]);
-  const vec3  r1 = vec3(m[0][1], m[1][1], m[2][1]);
-  const vec3  r2 = vec3(m[0][2], m[1][2], m[2][2]);
-  const vec3  pn = (geomNormal!=vec3(0)) ? geomNormal : normal;
-  const vec3  pm = vec3(dot(r0,pn)/dot(r0,r0), dot(r1,pn)/dot(r1,r1), dot(r2,pn)/dot(r2,r2));
-  const float mz = max(pm.z, 0.1*length(pm)); // steeper than ~84 degrees counts as 84
-  const vec2  dz = -(pm.xy/mz) * (2.0*float(1 << mip)/float(VSM_CLIPMAP_SIZE));
-  const float bias = 2.0/65535.0;
-
-  const vec2  t    = (shPos0.xy/float(1 << mip)*0.5 + 0.5)*float(VSM_CLIPMAP_SIZE) - 0.5;
-  const ivec2 base = ivec2(floor(t));
-  const vec2  f    = t - vec2(base);
-  const float refZ = shPos0.z + bias;
-
-  // centre texel: the answer for the taps without a page
-  const ivec2 near = ivec2(floor(t + 0.5));
-  const float zc   = vsmSunTexel(near, mip);
-  const float lc   = (zc<=0 || zc < refZ + dot(dz, vec2(near) - t)) ? 1.0 : 0.0;
-
-  const vec4 wx = vec4(1.0-f.x, 1.0, 1.0, f.x);
-  const vec4 wy = vec4(1.0-f.y, 1.0, 1.0, f.y);
-
-  float sum = 0;
-  [[unroll]]
-  for(int y=0; y<4; ++y) {
-    [[unroll]]
-    for(int x=0; x<4; ++x) {
-      const ivec2 tx = base + ivec2(x-1, y-1);
-      const float z  = vsmSunTexel(tx, mip);
-      float lit = lc;
-      if(z>=0)
-        lit = (z==0 || z < refZ + dot(dz, vec2(tx) - t)) ? 1.0 : 0.0;
-      sum += lit*wx[x]*wy[y];
-      }
-    }
-  return sum/9.0;
+  const vec3 planeN = (geomNormal!=vec3(0)) ? geomNormal : normal;
+  return vsmSunShadow(shPos0, shPos1, shPos2, scene.viewVirtualShadowLwc, planeN, push.vsmMipBias, pageTbl, pageData);
   }
 #endif
 
@@ -234,7 +170,7 @@ float shadowFactor(const float depth, const vec3 normal, bool isFlat) {
     return 0;
 
 #if defined(VIRTUAL_SHADOW)
-  light *= vsmSunShadow(depth, normal);
+  light *= sunShadowVsm(depth, normal);
 #else
   light *= calcShadow(wpos, normal);
 #endif

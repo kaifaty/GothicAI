@@ -51,6 +51,8 @@ const uint L_Normal     = 15;
 const uint L_Orm        = 16;
 const uint L_FogLut     = 17;
 const uint L_FogLutMs   = 18;
+const uint L_VsmPageTbl = 19; // the sun's virtual shadow map in the forward pass (vsm_sun_shadow.glsl)
+const uint L_VsmPageAtlas = 20;
 const uint L_VsmPages   = L_Shadow0;
 const uint L_VsmLights  = L_Shadow1;
 
@@ -150,8 +152,12 @@ layout(binding = L_Morph,    std430) readonly buffer MSmp { vec4    samples[];  
 #endif
 
 #if defined(GL_FRAGMENT_SHADER) && (defined(FORWARD) || defined(WATER)) && !defined(DEPTH_ONLY)
+#define MAT_SUN_SHADOW 1
 layout(binding = L_Shadow0)          uniform sampler2D textureSm0;
 layout(binding = L_Shadow1)          uniform sampler2D textureSm1;
+// under VSM the page table and atlas; else a 1x1x1 table, and the two cascades above are read
+layout(binding = L_VsmPageTbl)       uniform utexture3D vsmPageTbl;
+layout(binding = L_VsmPageAtlas)     uniform texture2D  vsmPageAtlas;
 #endif
 
 #if defined(GL_FRAGMENT_SHADER) && (defined(FORWARD) || (defined(EMISSIVE) && !defined(MULTIPLY)) || defined(GHOST)) && !defined(DEPTH_ONLY)

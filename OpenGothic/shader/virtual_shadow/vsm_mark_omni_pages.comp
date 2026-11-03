@@ -127,9 +127,7 @@ void processLightTiles(const vec3 pos, const vec3 pos1, const vec3 pos2, const v
 
     int  size = VSM_PAGE_SIZE * 4;
     int  lod  = shadowLod((uv1-uv0)*size, (uv2-uv0)*size);
-    if(lod>5)
-      continue; // TODO: refine
-
+    // a face too small on screen still gets the coarsest page (1x1): without one its light would pass the walls
     lod = min(4, lod);
     int  pageCnt = (size / (1 << lod))/VSM_PAGE_SIZE;
     atomicMax(pageTblOmniTmp[i*6 + fc], pageCnt+1); //TODO: page bitmask

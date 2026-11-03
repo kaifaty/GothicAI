@@ -12,6 +12,9 @@
 #include "lighting/shadow_sampling.glsl"
 #include "lighting/tonemapping.glsl"
 #include "lighting/material_brdf.glsl"
+#if defined(MAT_SUN_SHADOW)
+#include "virtual_shadow/vsm_sun_shadow.glsl"
+#endif
 
 #if defined(MAT_VARYINGS)
 layout(location = 0) in flat uint bucketId;
@@ -103,6 +106,27 @@ vec3 flatNormal() {
   }
 #endif
 
+#if defined(MAT_SUN_SHADOW)
+// The sun's shadow for the forward pass: from the virtual shadow map under VSM (the deferred sun's test), else
+// from the two cascades. Forward geometry marks no pages: vsmSunShadow takes the next coarser mip that has one.
+float sunShadow(const vec3 pos, const vec3 normal) {
+  const vec3 dpdx = dFdx(pos);
+  const vec3 dpdy = dFdy(pos);
+  if(textureSize(vsmPageTbl, 0).z==VSM_PAGE_MIPS) {
+    const mat4 m      = scene.viewVirtualShadow;
+    const vec4 sh0    = m*vec4(pos, 1);
+    const vec4 sh1    = m*vec4(pos + dpdx, 1);
+    const vec4 sh2    = m*vec4(pos + dpdy, 1);
+    vec3       planeN = cross(dpdx, dpdy);
+    planeN = dot(planeN,planeN)>1e-12 ? normalize(planeN) : normal;
+    if(dot(planeN, normal)<0)
+      planeN = -planeN;
+    return vsmSunShadow(sh0.xyz/sh0.w, sh1.xy/sh1.w, sh2.xy/sh2.w, m, planeN, 0.25, vsmPageTbl, vsmPageAtlas);
+    }
+  return calcShadow(vec4(pos,1), 0, scene, textureSm0, textureSm1);
+  }
+#endif
+
 #if defined(FORWARD)
 float lambert(const vec3 normal) {
   return clamp(dot(scene.sunDir,normal), 0.0, 1.0);
@@ -123,7 +147,7 @@ vec3 diffuseLight(float a) {
 #else
   float light  = lambert(norm);
 #endif
-  float shadow = calcShadow(vec4(shInp.pos,1), 0, scene, textureSm0, textureSm1);
+  float shadow = sunShadow(shInp.pos, norm);
 
   vec3  lcolor  = scene.sunColor * light * shadow;
   vec3  ambient = scene.ambient + (norm.y*0.25+0.75) * NightAmbient * Fd_Lambert;
@@ -653,7 +677,7 @@ void mainWater(vec4 t) {
     }
 
   outColor = waterShading(t,wx.normal);
-  const float shadow = scene.underWater==0 ? calcShadow(vec4(shInp.pos,1), 0, scene, textureSm0, textureSm1) : 0.0;
+  const float shadow = scene.underWater==0 ? sunShadow(shInp.pos, normalize(shInp.normal)) : 0.0;
   if(turbidity>0.0) {
     // Water in a pot clouded with ash and fat, or a stew: the material's colour, lit like a surface, over the clear water.
     // With a depth (cm) the cloud thickens with the liquid it is seen through (Beer-Lambert): a stew is clearer at the wall.

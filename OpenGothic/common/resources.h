@@ -121,6 +121,8 @@ class Resources final {
     static const Tempest::Texture2d& fallbackBlack();
     static auto                      fallbackImage() -> const Tempest::StorageImage&;
     static auto                      fallbackImage3d() -> const Tempest::StorageImage&;
+    // an R32U 1x1x1 image: the VSM page table bound where VSM is off (materials/main.frag reads the cascades then)
+    static auto                      fallbackPageTable() -> const Tempest::StorageImage&;
     static Tempest::Texture2d        loadTextureUncached(std::string_view name, bool forceMips = false);
     static const Tempest::Texture2d* loadTexture(std::string_view name, bool forceMips = false, bool pinned = true);
     static const Tempest::Texture2d* loadTexture(Tempest::Color color);
@@ -371,7 +373,7 @@ class Resources final {
     Tempest::VertexBuffer<Vertex> sphere(int passCount, float R);
 
     Tempest::Texture2d fallback, fbZero;
-    Tempest::StorageImage fbImg, fbImg3d;
+    Tempest::StorageImage fbImg, fbImg3d, fbPageTbl;
 
     using BindK  = std::tuple<const Skeleton*,const ProtoMesh*>;
     using FontK  = std::tuple<const std::string,FontType,float>;

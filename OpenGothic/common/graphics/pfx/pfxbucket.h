@@ -90,6 +90,8 @@ class PfxBucket {
       L_Morph    = 11,
       L_SceneClr = 12,
       L_GDepth   = 13,
+      L_VsmPageTbl   = 19, // materials_common.glsl
+      L_VsmPageAtlas = 20,
       L_FogLut   = 17,
       L_FogLutMs = 18,
       };

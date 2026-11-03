@@ -65,6 +65,18 @@ DrawCommands::DrawCommands(VisualObjects& owner, DrawBuckets& buckets, DrawClust
 DrawCommands::~DrawCommands() {
   }
 
+void DrawCommands::bindSunVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals& scene,
+                              uint32_t tblSlot, uint32_t atlasSlot) {
+  // the forward pass's sun shadow (materials/main.frag sunShadow): VSM when its pages are there, else the cascades
+  if(scene.vsmEnabled && scene.vsmPageTbl!=nullptr && !scene.vsmPageTbl->isEmpty() && scene.vsmPageData!=nullptr) {
+    cmd.setBinding(tblSlot,   *scene.vsmPageTbl);
+    cmd.setBinding(atlasSlot, *scene.vsmPageData);
+    } else {
+    cmd.setBinding(tblSlot,   Resources::fallbackPageTable());
+    cmd.setBinding(atlasSlot, Resources::fallbackBlack());
+    }
+  }
+
 bool DrawCommands::isViewEnabled(SceneGlobals::VisCamera viewport) const {
   if(viewport==SceneGlobals::V_Vsm && !(vsmSupported && scene.vsmEnabled))
     return false;
@@ -130,6 +142,7 @@ void DrawCommands::setBindings(Tempest::Encoder<CommandBuffer>& cmd, const DrawC
   if(v==SceneGlobals::V_Main && cx.isShadowmapRequired()) {
     cmd.setBinding(L_Shadow0, *scene.shadowMap[0], Resources::shadowSampler());
     cmd.setBinding(L_Shadow1, *scene.shadowMap[1], Resources::shadowSampler());
+    bindSunVsm(cmd, scene, L_VsmPageTbl, L_VsmPageAtlas);
     }
 
   if(cx.type==Morph && cx.isBindless()) {

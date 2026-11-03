@@ -13,7 +13,7 @@ layout(local_size_x = 32, local_size_y = 32) in;
 layout(binding = 0, std430) buffer Pages { VsmHeader header; uint  pageList[]; } vsm;
 layout(binding = 1, r32ui)  uniform uimage3D pageTbl;
 layout(binding = 2, std430) buffer Omni  { uint pageTblOmni[]; };
-layout(binding = 3, std430) buffer PTmp  { uint size; uint  pageList[]; } vsmTmp;
+layout(binding = 3, std430) coherent buffer PTmp  { uint size; uint  pageList[]; } vsmTmp;
 
 layout(binding = 4, r32ui)  uniform uimage2D dbg;
 
@@ -21,6 +21,7 @@ const uint NumThreads = gl_WorkGroupSize.x*gl_WorkGroupSize.y*gl_WorkGroupSize.z
 
 shared uint pageListSize;
 shared uint pageList[VSM_MAX_PAGES];
+shared uint entryCount;
 
 shared uint bits[(NumThreads+31)/32];
 
@@ -66,12 +67,14 @@ uint bitCountShared(uint till) {
   return r;
   }
 
+// the entries vsm_list_pages.comp listed, kept in vsmTmp: layoutPages compacts into the shared pageList
 void listPages() {
-  const uint lane = gl_LocalInvocationIndex;
-
-  pageListSize = vsm.header.pageCount;
-  for(uint i=lane; i<pageListSize; i+=NumThreads)
-    pageList[i] = vsm.pageList[i];
+  const uint lane  = gl_LocalInvocationIndex;
+  const uint count = min(vsm.header.pageCount, uint(vsmTmp.pageList.length()));
+  for(uint i=lane; i<count; i+=NumThreads)
+    vsmTmp.pageList[i] = vsm.pageList[i];
+  if(lane==0)
+    entryCount = count;
   }
 
 ivec2 findRowCol(in uint page, const uvec2 size) {
@@ -160,6 +163,7 @@ void main() {
   barrier();
 
   listPages();
+  memoryBarrierBuffer();
   barrier();
 
   for(uint i=lane; i<vsm.pageList.length(); i+=NumThreads)
@@ -167,14 +171,19 @@ void main() {
   memoryBarrierBuffer();
   barrier();
 
-  const uint  frag = lane<pageListSize ? pageList[lane] : 0;
-  const bool  omni = vsmPageIsOmni(frag);
-  const uvec2 size = unpackVsmPageSize(frag);
-  barrier();
+  // a workgroup's worth of entries at a time: sun pages first, then the light faces, until the pool is full
+  // (before, entries past the first 1024 were dropped with the pool still free)
+  const uint count = entryCount;
+  for(uint base=0; base<count; base+=NumThreads) {
+    const uint  frag = base+lane<count ? vsmTmp.pageList[base+lane] : 0;
+    const bool  omni = vsmPageIsOmni(frag);
+    const uvec2 size = unpackVsmPageSize(frag);
+    barrier();
 
-  layoutPages(frag, omni, size, uvec2(4));
-  layoutPages(frag, omni, size, uvec2(1, 4));
-  layoutPages(frag, omni, size, uvec2(2));
-  layoutPages(frag, omni, size, uvec2(1, 2));
-  layoutPages(frag, omni, size, uvec2(1));
+    layoutPages(frag, omni, size, uvec2(4));
+    layoutPages(frag, omni, size, uvec2(1, 4));
+    layoutPages(frag, omni, size, uvec2(2));
+    layoutPages(frag, omni, size, uvec2(1, 2));
+    layoutPages(frag, omni, size, uvec2(1));
+    }
   }
