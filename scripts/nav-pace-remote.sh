@@ -44,9 +44,9 @@ if [[ "$stage" != run ]]; then
     git -C "$main/tree" rev-parse HEAD | ssh ryzen "cat > '$task/main-source/REVISION'"
   fi
   case "$stage" in
-    smoke) resources=(--class batch --threads 12 --cpu-quota 1200% --mem 20G --gpu-mem 4G --max 2h) ;;
-    drive) resources=(--class batch --threads 12 --cpu-quota 1200% --mem 16G --max 2h) ;;
-    teacher) resources=(--class batch --threads 12 --cpu-quota 1200% --mem 24G --max 2h) ;;
+    smoke) resources=(--class batch --threads 12 --cpu-quota 1200% --mem 16G --gpu-mem 4G --max 2h) ;;
+    drive) resources=(--class batch --threads 12 --cpu-quota 1200% --mem 14G --max 2h) ;;
+    teacher) resources=(--class batch --threads 12 --cpu-quota 1200% --mem 16G --max 2h) ;;
   esac
   GQ_OWNER=nav-pace-input "$ROOT/scripts/gq" submit "${resources[@]}" --name "nav pace input $stage" -- \
     python3 -X faulthandler -I "$task/source/scripts/nav_job.py" --max-seconds 7200 -- \
