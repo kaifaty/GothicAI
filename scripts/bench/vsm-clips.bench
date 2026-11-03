@@ -42,6 +42,7 @@ hold forward 3500
 wait 4000
 stop
 shot walk-brazier-end
+wait 500
 
 # 3. The candle- and torch-lit harbour house of perf-interior: four views, then a slow pan.
 set time 22 0
@@ -114,6 +115,7 @@ cam world 700 280 270
 wait 500
 cam hold
 shot market-day-b
+wait 500
 goto pos 5391 320 -5822
 watch player
 cam look 120
