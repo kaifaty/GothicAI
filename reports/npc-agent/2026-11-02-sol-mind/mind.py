@@ -302,10 +302,15 @@ def apply_patches(state: dict[str, Any], lines: list[str], changes: dict[str, li
 
 
 def forget_events(state: dict[str, Any], changes: dict[str, list]) -> None:
-    for item in list(state["events"]):
-        if item["importance"] <= 3:
-            state["events"].remove(item)
-            changes["forgotten"].append({"id": item["id"], "text": item["text"]})
+    """After a conversation: trifles are forgotten, and what the npc wanted from this talk is over."""
+    for key, over in (
+        ("events", lambda item: item["importance"] <= 3),
+        ("wishes", lambda item: item["term"] == "сейчас"),
+    ):
+        for item in list(state[key]):
+            if over(item):
+                state[key].remove(item)
+                changes["forgotten"].append({"id": item["id"], "text": item["text"]})
 
 
 def write_json(path: Path, value: Any) -> None:
@@ -1346,10 +1351,12 @@ async def selftest() -> None:
         "б1",
         *[f"б{i}" for i in range(5, 16)],
     ]
-    apply_patches(events, ["+ было 3: Greeting."], event_changes)
+    apply_patches(
+        events, ["+ было 3: Greeting.", "+ хочу сейчас: Talk.", "+ хочу скоро: Rest."], event_changes
+    )
     forget_events(events, event_changes)
-    assert event_changes["forgotten"] == [{"id": "б16", "text": "Greeting."}]
-    assert len(events["events"]) == 15
+    assert event_changes["forgotten"] == [{"id": "б16", "text": "Greeting."}, {"id": "ж1", "text": "Talk."}]
+    assert len(events["events"]) == 15 and [item["id"] for item in events["wishes"]] == ["ж2"]
 
     with (
         TemporaryDirectory(prefix="sol-mind-") as temporary,
