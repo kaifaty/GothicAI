@@ -8742,6 +8742,28 @@ bool Npc::startItemUse(const Item& item, bool allowMissing) {
       }
     return true;
     }
+  if(TestBench::isActive()) {
+    const auto& flags = Gothic::physicsFlags();
+    const auto& scheme = item.handle().scheme_name;
+    const auto main = ItmFlags(item.handle().main_flag);
+    const auto weapon = weaponState();
+    std::string reason = "missing clip";
+    if(scheme!="POTIONFAST" && scheme!="FOOD" && scheme!="FOODHUGE" && scheme!="MEAT")
+      reason = "scheme "+scheme;
+    else if(!flags.meleeUseInHand)
+      reason = "melee_use_in_hand=0";
+    else if(!isHuman())
+      reason = "not human";
+    else if(((main & ITM_CAT_POTION) && !flags.meleeHealInterrupt) ||
+            ((main & ITM_CAT_FOOD) && !flags.foodOverTime))
+      reason = "category effect is immediate";
+    else if(weapon!=WeaponState::Fist && weapon!=WeaponState::W1H && weapon!=WeaponState::W2H)
+      reason = weapon==WeaponState::Bow ? "bow" : weapon==WeaponState::CBow ? "crossbow" :
+               weapon==WeaponState::Mage ? "spell" : "no melee weapon";
+    const auto* symbol = owner.script().findSymbol(item.clsId());
+    TestBench::note(("item use "+std::string(TestBench::who(this))+": "+
+                    (symbol==nullptr ? item.handle().name : symbol->name())+" holster path: "+reason).c_str());
+    }
   return setAnimItem(item.handle().scheme_name,-1,allowMissing);
   }
 

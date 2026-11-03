@@ -657,16 +657,17 @@ struct Bench {
     int hp = 0, healed = 0, damage = 0, savedHealed = 0, savedDamage = 0;
     bool sawDrink = false;
     bool armed = false, sawHand = false, heldWeapon = true, handLayer = false, leftInsert = false, sound = false;
+    bool leftHeld = true, sawLeftItem = false;
     bool walking = false, baseline = false, walkOnly = true, actionExecuted = false;
     bool hotkey = false, checkWalk = false;
     WalkBit expectedWalk = WalkBit::WM_Run;
     Npc* npc = nullptr;
     uint64_t queueRunAt = 0;
     WeaponState weapon = WeaponState::NoWeapon;
-    std::string clip, action, motion;
+    std::string clip, nativeClip, action, motion;
     Vec3 previous;
     float distance = 0, previousYaw = 0, yawTravel = 0;
-    uint64_t observedAt = 0, handStart = 0, handEnd = 0, destroyAt = 0, movingMs = 0, strikeDelay = 0;
+    uint64_t observedAt = 0, handStart = 0, handEnd = 0, insertAt = 0, destroyAt = 0, movingMs = 0, strikeDelay = 0;
     unsigned direction = 0;
     size_t secondItem = size_t(-1);
     std::vector<std::pair<uint64_t,int>> samples;
@@ -14026,10 +14027,13 @@ void healingObserve(World& world,Npc& player) {
   if(test.npc!=nullptr && !test.queueRunAt && actor.walkMode()==WalkBit::WM_Run)
     test.queueRunAt=now;
   const bool hand=actor.isUsingItemInHand();
+  test.sawHand|=hand;
+  if(test.label=="wine")
+    for(const auto& layer:actor.logicalBodyState().layers)
+      if(layer.sequence!=nullptr && layer.sequence->name=="T_POTION_STAND_2_S0")test.nativeClip=layer.sequence->name;
   if(test.armed) {
     if(!test.handEnd)test.heldWeapon&=actor.weaponState()==test.weapon;
     if(hand) {
-      test.sawHand=true;
       if(!test.handStart)test.handStart=now;
       for(const auto& layer:actor.logicalBodyState().layers) {
         if(layer.sequence==nullptr)continue;
@@ -14040,12 +14044,20 @@ void healingObserve(World& world,Npc& player) {
           seq.logicEvents(events);
           for(const auto& e:events) {
             test.leftInsert|=e.def==asset::MdsEventType::ITEM_INSERT && e.slot[0]=="ZS_LEFTHAND";
+            if(e.def==asset::MdsEventType::ITEM_INSERT && e.slot[0]=="ZS_LEFTHAND")
+              test.insertAt=layer.start+uint64_t(double(e.time)/layer.speed);
             test.sound|=e.kind==Animation::LogicEvent::Sound;
             if(e.def==asset::MdsEventType::ITEM_DESTROY)test.destroyAt=layer.start+uint64_t(double(e.time)/layer.speed);
             }
           }
         if(test.walking && seq.layer<21)
           test.walkOnly&=seq.name.find("RUNL")==std::string::npos && seq.name.find("RUNSTRAFE")==std::string::npos;
+        }
+      // Events are applied during the NPC tick; check complete frames inside the insert/destroy interval.
+      if(test.insertAt && now>test.insertAt+34 && now<test.destroyAt) {
+        const auto* item=actor.inventory().slotItem("ZS_LEFTHAND");
+        const bool held=item!=nullptr && item->clsId()==test.item;
+        test.leftHeld&=held;test.sawLeftItem|=held;
         }
       }
     else if(test.sawHand && !test.handEnd)test.handEnd=now;
@@ -14307,7 +14319,9 @@ void healingCommand(const std::vector<std::string>& a,World& world,Npc& player,P
       if(a[2]=="potion")pass&=items==0;
       if(a[2]=="hotkey") {
         pass&=items==(potion ? 1u : 0u); // The original script also consumes a potion at full HP.
-        pass&=potion ? actor.weaponState()==WeaponState::NoWeapon : actor.weaponState()!=WeaponState::NoWeapon;
+        pass&=potion ? actor.weaponState()==WeaponState::NoWeapon ||
+                      (Gothic::physicsFlags().meleeUseInHand && test.sawHand && actor.weaponState()==WeaponState::W1H) :
+                      actor.weaponState()!=WeaponState::NoWeapon;
         }
       }
     else if(a[2]=="hand-potion" || a[2]=="hand-food" || a[2]=="hand-cancel" || a[2]=="hand-hit" || a[2]=="wine" || a[2]=="walk" || a[2]=="refused-action" || a[2]=="npc-queue") {
@@ -14315,13 +14329,26 @@ void healingCommand(const std::vector<std::string>& a,World& world,Npc& player,P
       const bool cancelled=a[2]=="hand-hit" || (a[2]=="hand-cancel" && enabled);
       if(cancelled)pass=test.healed==0 && items==1 && (a[2]=="hand-hit" ? test.damage>0 : test.actionExecuted);
       else if(a[2]=="hand-food")pass=a.size()==4 && test.healed==std::stoi(a[3]) && items==0 && foodElapsed>=9900 && foodElapsed<=10100;
-      else if(a[2]=="wine")pass=items==0 && test.lastConsume>test.start+5000;
+      else if(a[2]=="wine") {
+        bool logged=false;
+        std::ifstream log(outDir+"/bench.log");
+        for(std::string line;std::getline(log,line);)
+          logged|=line.find(": ITFO_WINE holster path: scheme POTION")!=std::string::npos;
+        pass=items==0 && test.lastConsume>test.start+5000 && !test.nativeClip.empty() && logged;
+        say("healing wine fallback: "+test.nativeClip+", scheme POTION logged "+std::to_string(logged));
+        }
       else pass=test.healed==50 && items==0 && test.firstHeal==test.lastConsume;
       if(enabled && !test.motion.empty()) {
         pass&=test.walkOnly && (test.motion=="back" ? test.distance>10 : test.yawTravel>10);
         say("healing motion "+test.motion+": "+std::to_string(test.distance)+" cm, "+std::to_string(test.yawTravel)+" degrees");
         }
       if(a[2]=="refused-action" && enabled)pass&=!test.actionExecuted;
+      if(a[2]=="hand-cancel" && enabled) {
+        const bool empty=actor.inventory().slotItem("ZS_LEFTHAND")==nullptr;
+        pass&=empty;
+        if(test.action=="run")pass&=actor.walkMode()==WalkBit::WM_Run;
+        say("healing cancelled hand: empty "+std::to_string(empty)+", walk mode "+std::to_string(int(actor.walkMode())));
+        }
       if(test.checkWalk)pass&=actor.walkMode()==test.expectedWalk;
       if(a[2]=="npc-queue") {
         pass&=test.queueRunAt!=0 && actor.isAiQueueEmpty();
@@ -14331,7 +14358,7 @@ void healingCommand(const std::vector<std::string>& a,World& world,Npc& player,P
         }
       if(test.secondItem!=size_t(-1))pass&=actor.itemCount(test.secondItem)==1;
       if(enabled) {
-        pass&=test.sawHand && test.heldWeapon && test.handLayer && test.leftInsert && test.sound;
+        pass&=test.sawHand && test.heldWeapon && test.handLayer && test.leftInsert && test.sound && test.sawLeftItem && test.leftHeld;
         if(!cancelled)pass&=test.destroyAt!=0 && test.lastConsume>=test.destroyAt && test.lastConsume<=test.destroyAt+34;
         }
       else pass&=!test.sawHand && (test.hotkey ? actor.weaponState()==WeaponState::NoWeapon && !test.heldWeapon :
@@ -14348,6 +14375,7 @@ void healingCommand(const std::vector<std::string>& a,World& world,Npc& player,P
           ", held weapon "+std::to_string(test.heldWeapon)+", hand duration "+std::to_string(test.handEnd>test.handStart ? test.handEnd-test.handStart : 0)+
           " ms, destroy "+std::to_string(test.destroyAt>test.start ? test.destroyAt-test.start : 0)+
           " ms, left insert "+std::to_string(test.leftInsert)+", sound "+std::to_string(test.sound)+
+          ", left item seen "+std::to_string(test.sawLeftItem)+", left item held "+std::to_string(test.leftHeld)+
           ", action "+test.action+", executed "+std::to_string(test.actionExecuted));
       test.walking=false;
       exec("release all",world,player,ctrl);
