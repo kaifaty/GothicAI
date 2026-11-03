@@ -16,6 +16,9 @@ namespace fs = std::filesystem;
 
 // Bump when the way pipelines are put into the archive changes.
 static constexpr const char* MetalArchiveFormat = "tempest-metal-archive-1";
+// Re-serializing an archive loaded from disk can grow it far beyond its content (5 MB -> 27 MB after
+// one added pipeline on macOS 27); a larger file is dropped and the archive starts over.
+static constexpr uintmax_t   MaxArchiveSize     = 64u*1024u*1024u;
 
 static NsPtr<NS::URL> fileUrl(const fs::path& p) {
   auto str = NsPtr<NS::String>(NS::String::string(p.c_str(),NS::UTF8StringEncoding));
@@ -58,7 +61,10 @@ void MtPipelineCache::init(MTL::Device& dev, const std::string& identity) {
 
   std::error_code ec;
   fs::create_directories(dir,ec);
-  const bool exists = fs::is_regular_file(file,ec) && fs::file_size(file,ec)>0;
+  const uintmax_t size   = fs::is_regular_file(file,ec) ? fs::file_size(file,ec) : 0;
+  const bool      exists = !ec && size>0 && size<=MaxArchiveSize;
+  if(!ec && size>MaxArchiveSize)
+    Log::i("pipeline cache: ignored ",file.string(),": too large (",size_t(size)," bytes)");
 
   auto desc = NsPtr<MTL::BinaryArchiveDescriptor>::init();
   if(exists) {
