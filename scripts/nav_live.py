@@ -176,10 +176,11 @@ def pace_v5_round(args):
             raise ValueError(f'Pace V5 live recording is incomplete: {case["id"]}/{model["name"]}/{seed}')
         directory = run_directory(args.output, case, model, seed)
         value = read_json(directory / 'summary.json')
-        if value.get('base_fingerprint') != base_fingerprint or value.get('forced_pace') != case['pace']:
+        if (value.get('base_fingerprint') != base_fingerprint or value.get('forced_pace') != case['pace']
+                or value.get('pace') != case['pace']):
             raise ValueError(f'Pace V5 live summary has different base or pace: {directory}')
         rows.append({**value, 'place': case['id'], 'model': model['name'], 'seed': seed,
-                     'pace': case['pace'], 'output': str(directory)})
+                     'output': str(directory)})
     write_json(args.output / 'live-summary.json', dict(complete=True, places=11, completed=len(rows), expected=54,
                binary_sha256=binary_sha256, base_fingerprint=base_fingerprint, rows=rows))
     print(json.dumps(dict(event='pace_v5_live_complete', places=11, completed=len(rows), expected=54,
