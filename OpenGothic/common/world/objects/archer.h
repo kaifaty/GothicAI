@@ -74,6 +74,10 @@ class Archer final {
     // breathing) moves the chest; the trembling (tired, too weak for the bow) the arms
     Tempest::Vec2 sway()   const { return sw; }
     Tempest::Vec2 tremor() const { return trm; }
+    // The arms straining past their strength, as it is seen: x to the side, y up (cm: both hands and the
+    // bow together, the arrow keeps its line - the tremor above is the aim's error), z the drawing hand
+    // losing ground forward along the arrow (cm, >= 0)
+    Tempest::Vec3 shake()  const { return shk; }
     // How far off the arrow may go now, radians: the sway's reach, trembling, the release
     float         spread() const { return spr; }
 
@@ -101,8 +105,10 @@ class Archer final {
     float         skill     = 0;
     Tempest::Vec2 sw;
     Tempest::Vec2 trm;
+    Tempest::Vec3 shk;
 
     float         wander(float t, uint32_t axis) const;
     float         tremor(float t, uint32_t axis) const;
+    float         shiver(float t, uint32_t axis) const;
     void          setStage(Stage s);
   };

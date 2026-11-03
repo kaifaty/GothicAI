@@ -10703,11 +10703,13 @@ float Npc::animProgress(std::string_view name) const {
   return visual.pose().animProgress(name,owner.tickCount());
   }
 
-void Npc::setManualAim(bool on, const Tempest::Vec3& point, const Tempest::Vec2& sway, const Tempest::Vec2& tremor) {
+void Npc::setManualAim(bool on, const Tempest::Vec3& point, const Tempest::Vec2& sway, const Tempest::Vec2& tremor,
+                       const Tempest::Vec3& shake) {
   manualAim    = on;
   manualPoint  = point;
   manualSway   = on ? sway   : Tempest::Vec2();
   manualTremor = on ? tremor : Tempest::Vec2();
+  manualShake  = on ? shake  : Tempest::Vec3();
   }
 
 bool Npc::isAimSteady() const {
@@ -10741,7 +10743,7 @@ bool Npc::tickManualAim(const Tempest::Vec3& at, Archer::Input in, const Archery
     shot = releaseArrow(arch.draw(),st);
     arch.onShot(shot);
     }
-  setManualAim(true,at,arch.sway(),arch.tremor());
+  setManualAim(true,at,arch.sway(),arch.tremor(),arch.shake());
   return shot;
   }
 
