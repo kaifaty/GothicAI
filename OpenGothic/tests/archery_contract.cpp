@@ -126,6 +126,22 @@ int main() {
   input = startDrawing(archer,bow,true);
   drawToLimit(archer,bow,input);
   near(archer.draw(),bow.burstDraw,0.000001f,"hero holds at the burst limit");
+  // the burst is seen: the arms shake across the arrow, the drawing hand creeps along it
+  float shakeMax = 0, creepMax = 0;
+  for(int i=0; i<60; ++i) {
+    archer.tick(input,bow);
+    shakeMax = std::max(shakeMax,std::hypot(archer.shake().x,archer.shake().y));
+    creepMax = std::max(creepMax,archer.shake().z);
+    }
+  require(shakeMax>0.5f && shakeMax<4.f,"burst shakes the arms by centimetres");
+  require(creepMax>0.5f && creepMax<=2.5f,"burst creeps the drawing hand along the arrow");
+  const auto strong = stats(140,150,1,150,0,false,true);
+  input = startDrawing(archer,strong,true);
+  drawToLimit(archer,strong,input);
+  for(int i=0; i<60; ++i) {
+    archer.tick(input,strong);
+    require(archer.shake().x==0.f && archer.shake().y==0.f && archer.shake().z==0.f,"strong enough: no shake seen");
+    }
   const auto weak = stats(10,150,1,150,0,false,true);
   input = startDrawing(archer,weak,true);
   drawToLimit(archer,weak,input);

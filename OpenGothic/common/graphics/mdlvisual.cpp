@@ -1070,6 +1070,7 @@ bool MdlVisual::updateAim(Npc& npc, uint64_t dt) {
         in.referenceDir = aimAt()-from;
         in.sway   = npc.manualAimSway();
         in.tremor = npc.manualAimTremor();
+        in.shake  = Tempest::Vec2(npc.manualAimShake().x,npc.manualAimShake().y);
         in.manual = true;
         in.follow = (1.f - CrouchSlow*npc.aimCrouch())*(1.f + CantQuick*(ws==WeaponState::Bow ? npc.aimCant() : 0.f));
         in.reload = pose.animProgress(ws==WeaponState::CBow ? Archery::CBowReload : Archery::BowReload,npc.world().tickCount())>=0.f;
@@ -1155,8 +1156,11 @@ bool MdlVisual::updateAim(Npc& npc, uint64_t dt) {
   bd.dt     = dt;
   bd.active = manual && in.active && ws==WeaponState::Bow;
   bd.ready  = ar.stage()==Archer::Nocked || ar.stage()==Archer::Drawing || ar.stage()==Archer::Held;
-  bd.draw   = ar.draw();
   bd.span   = bowSpan();
+  // straining, the drawing hand loses ground along the arrow and wins it back (seen only: the arrow leaves
+  // drawn as far as Archer says)
+  bd.draw   = std::max(0.f,ar.draw() - (ar.stage()==Archer::Drawing || ar.stage()==Archer::Held ?
+                                        npc.manualAimShake().z/std::max(bd.span,1.f) : 0.f));
   bd.arrow  = !ammunition.view.isEmpty() && ammunition.bone=="ZS_RIGHTHAND";
   bd.cant   = npc.aimCant();
   if(auto p = bow.view.protoMesh()) {

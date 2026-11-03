@@ -29,6 +29,8 @@ class Aim final {
       Tempest::Vec2 sway    = {};      // radians, the manual aim (Archer): yaw, pitch (+ up) off where the
                                        // shot has to go, as it is: the chest
       Tempest::Vec2 tremor  = {};      // and the arms trembling (not smoothed: fast): the arms, not the head
+      Tempest::Vec2 shake   = {};      // cm: the arms straining, seen - both hands and the bow move together
+                                       // to the side and up, the arrow keeps its line (Archer::shake)
       bool          manual  = false;   // aimed by hand: the upper body follows the mouse faster
       bool          reload  = false;   // the reload plays: the arrow is not on the string, not measured (the
                                        // hand holds still at the quiver for a while)
@@ -149,6 +151,7 @@ class Aim final {
     float               sideAmt = 0;  // radians, leaning out sideways, smoothed
     Tempest::Vec2       sway    = {};
     Tempest::Vec2       tremor  = {};
+    Tempest::Vec2       shake   = {};
     Tempest::Vec3       wantB   = {}; // where the shot has to go, body's frame, smoothed
     Tempest::Vec3       nockedOffsetB = {}; // release origin relative to referenceDir's origin, body's frame
     bool               nockedOrigin = false;

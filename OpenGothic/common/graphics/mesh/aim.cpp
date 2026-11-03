@@ -475,6 +475,10 @@ bool Aim::update(const Input& in) {
   if(tm.x!=tremor.x || tm.y!=tremor.y)
     changed = true;
   tremor = tm;
+  const Tempest::Vec2 sk = on ? in.shake : Tempest::Vec2();
+  if(sk.x!=shake.x || sk.y!=shake.y)
+    changed = true;
+  shake = sk;
   if(ready)
     approach(rot,goal,1.f - std::exp(-BodyRate*fast*dt),MaxBody*fast*dt,changed);
 
@@ -572,6 +576,17 @@ void Aim::apply(Matrix4x4* tr, size_t numBones, const Vec3& origin, const Vec3& 
   if(tremor.x!=0.f || tremor.y!=0.f) {
     const Mat3 rt = mul(axisAngle(Up,tremor.x*weight),axisAngle(side,tremor.y*weight));
     rotateAbout(tr,armsTree.empty() ? chestTree : armsTree,rt,position(tr[chest]));
+    }
+  // straining past their strength the arms shake where it is seen: both hands, the bow and the arrow move
+  // together, across the arrow (the arrow keeps its line: the aim's error is the tremor)
+  if((shake.x!=0.f || shake.y!=0.f) && !armsTree.empty()) {
+    const Vec3 up = normalize(cross(side,want));
+    const Vec3 d  = (side*shake.x + up*shake.y)*weight;
+    for(auto i:armsTree) {
+      tr[i].set(3,0,tr[i].at(3,0)+d.x);
+      tr[i].set(3,1,tr[i].at(3,1)+d.y);
+      tr[i].set(3,2,tr[i].at(3,2)+d.z);
+      }
     }
   }
 

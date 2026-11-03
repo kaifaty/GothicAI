@@ -386,7 +386,7 @@ class Npc final {
     // the bow aimed by hand (game/archery): the hero's input drives it (PlayerControl)
     Archer&   archer() { return arch; }
     void      setManualAim(bool on, const Tempest::Vec3& point = {}, const Tempest::Vec2& sway = {},
-                           const Tempest::Vec2& tremor = {});
+                           const Tempest::Vec2& tremor = {}, const Tempest::Vec3& shake = {});
     bool      hasManualAim() const { return manualAim; }
     // the stance aiming by hand: crouched 0..1, leaning out sideways -1 (left)..1 (right), the bow canted
     // for a quick shot 0..1, as smooth as whoever drives it makes it (PlayerControl); stepping -1 (back)..1
@@ -418,6 +418,7 @@ class Npc final {
     auto      manualAimPoint() const -> Tempest::Vec3 { return manualPoint; }
     auto      manualAimSway() const -> Tempest::Vec2 { return manualSway; }
     auto      manualAimTremor() const -> Tempest::Vec2 { return manualTremor; }
+    auto      manualAimShake() const -> Tempest::Vec3 { return manualShake; }
     bool      isAimSteady() const;
     float     aimTrackError() const { return visual.aimTrackError(); }
     // the arrow on the string as posed: its nock, where it points (the crosshair, the shot)
@@ -1321,6 +1322,7 @@ class Npc final {
     Tempest::Vec3                  manualPoint = {};
     Tempest::Vec2                  manualSway  = {};
     Tempest::Vec2                  manualTremor = {};
+    Tempest::Vec3                  manualShake  = {};
     float                          stanceCrouch = 0;
     float                          stancePeek   = 0;
     float                          stanceCant   = 0;
