@@ -71,15 +71,32 @@ def damage_rows(output: Path) -> list[dict]:
                 if (row := json.loads(line)).get("kind") == "body_combat" and row.get("phase") == "damage"]
 
 
+def _melee_journal_groups(episodes: list[dict], path: Path) -> dict[int, list[dict]]:
+    """Merge saved native/policy duels with the live tail, once per journal row."""
+    groups = {}
+    seeds = {episode["seed"] for episode in episodes}
+    sources = [(path.parent.parent / episode.get("name", f"episode-{index}") / path.name, episode["seed"])
+               for index, episode in enumerate(episodes)]
+    sources.append((path, None))
+    seen = set()
+    for source, expected_seed in sources:
+        if not source.is_file():
+            continue
+        with source.open() as stream:
+            for line in stream:
+                row = json.loads(line)
+                seed = row["arena_seed"]
+                if seed not in seeds or (expected_seed is not None and seed != expected_seed):
+                    raise RuntimeError(f"{source}: journal contains an unknown duel seed {seed}")
+                if line not in seen:
+                    groups.setdefault(seed, []).append(row)
+                    seen.add(line)
+    return groups
+
+
 def add_posture_metrics(episodes: list[dict], path: Path, *, enabled: bool) -> dict:
     """Match journal rows by the configured duel seed and count subsequent defeats."""
-    groups = {}
-    for line in path.read_text().splitlines() if path.is_file() else ():
-        row = json.loads(line)
-        groups.setdefault(row["arena_seed"], []).append(row)
-    seeds = {episode["seed"] for episode in episodes}
-    if groups.keys()-seeds:
-        raise RuntimeError("posture journal contains an unknown duel seed")
+    groups = _melee_journal_groups(episodes, path)
     for episode in episodes:
         rows = groups.get(episode["seed"], [])
         if enabled and not rows and any(d["damage_kind"] == "melee" and d["has_hit"] for d in episode["damage"]):
@@ -113,19 +130,12 @@ def add_posture_metrics(episodes: list[dict], path: Path, *, enabled: bool) -> d
 
 
 def shadow_coverage(path: Path, episodes: list[dict]) -> dict:
-    """Each fork starts at the same game time; account for its final hit too."""
-    groups = []
-    previous = -1
-    with path.open() as stream:
-        for line in stream:
-            row = json.loads(line)
-            if not groups or row["end_time_ms"] < previous:
-                groups.append([])
-            groups[-1].append(row)
-            previous = row["end_time_ms"]
+    """Match each duel's saved shadow rows, including the final live hit."""
+    groups = _melee_journal_groups(episodes, path)
     differences = []
     damage_count = hits = 0
-    for index, (episode, rows) in enumerate(zip(episodes, groups)):
+    for index, episode in enumerate(episodes):
+        rows = groups.get(episode["seed"], [])
         expected = Counter((d["target"], d["actor"], max(0, d["hp_before"]-d["hp_after"]))
                            for d in episode["damage"] if d["damage_kind"] == "melee" and d["has_hit"])
         actual = Counter((r["attacker"]["name"], r["legacy"]["target"]["name"], r["legacy"]["damage"])

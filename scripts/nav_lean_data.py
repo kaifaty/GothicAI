@@ -82,9 +82,13 @@ def convert_episode(entry, destination):
         # Publish the pair together. A killed writer cannot leave a complete
         # samples file next to absent or unrelated training statistics.
         temporary = destination.with_name(destination.name + ".tmp")
-        temporary.mkdir(parents=True, exist_ok=False)
         temporary_samples = temporary / "samples.bin.xz"
         temporary_metadata = temporary / "episode.json"
+        if temporary.exists():
+            temporary_samples.unlink(missing_ok=True)
+            temporary_metadata.unlink(missing_ok=True)
+            temporary.rmdir()
+        temporary.mkdir(parents=True, exist_ok=False)
         counts = {head: np.zeros(count, np.int64)
                   for head, count in zip(data.BC3_HEADS, data.BC3_CLASSES)}
         decisions, changes, detour_steps, previous = 0, 0, 0, None
