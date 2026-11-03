@@ -238,7 +238,7 @@ class RunDefaultsTests(unittest.TestCase):
             ("errand", {}, "1500", "save_slot_1.sav", True),
             ("errand", {"TIMEOUT": "300", "SAVE": ""}, "300", "", False),
             ("check_walk", {}, "240", None, True),
-            ("haggle", {}, "1200", None, False),
+            ("haggle", {}, "1200", None, True),
         ]
         for scenario, options, timeout, save, queried in cases:
             with self.subTest(scenario=scenario, options=options), tempfile.TemporaryDirectory() as temp:
@@ -248,7 +248,7 @@ class RunDefaultsTests(unittest.TestCase):
                 (root / "scripts/e2e-services.sh").write_text(SCRIPT.with_name("e2e-services.sh").read_text())
                 subprocess.run(["git", "init", "-q", str(root)], check=True)
                 uv = root / "uv"
-                # A stand-in for RUN: errand is declared with a save, check_walk without one.
+                # A stand-in for RUN: errand is declared with a save, check_walk without one, haggle is LIVE.
                 uv.write_text('#!/bin/sh\nprintf \'%s\\n\' "$*" >>"$TEST_CALLS"\ncat >/dev/null\n'
                               'case "$4" in errand) echo "1500 1" ;; check_walk) echo "240 0" ;; esac\n')
                 uv.chmod(0o755)

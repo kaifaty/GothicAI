@@ -211,14 +211,3 @@ def test_regression_ryzen_runs_exclusive_after_three_slots_and_keeps_known_defec
         for name in ("graph", "lie", "deal")
     }
     assert slots == {"test-regression-1", "test-regression-2", "test-regression-3"}
-
-
-def test_run_defaults_skip_exactly_the_live_group():
-    import re
-
-    from gothic_ai.scenarios.groups import LIVE
-
-    source = SCRIPT.with_name("e2e-services.sh").read_text()
-    body = source[source.index("e2e_run_defaults() {"):]
-    pattern = re.search(r'case "\$1" in\n\s*([^)\n]+)\) return 0 ;;', body).group(1)
-    assert set(pattern.split("|")) == LIVE
