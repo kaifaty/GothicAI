@@ -114,20 +114,6 @@ float shadowTest(float z, vec3 normal, out vec3 page, out int mip) {
 void main() {
   outColor = vec4(0,0,0, 1);
 
-#if 1
-  if(drawInt(gl_FragCoord.xy-vec2(100,100), int(vsm.header.pageCount))>0) {
-    outColor = vec4(1);
-    return;
-    }
-  if(drawInt(gl_FragCoord.xy-vec2(100,150), int(vsm.header.pageOmniCount))>0) {
-    outColor = vec4(1);
-    return;
-    }
-  if(drawInt(gl_FragCoord.xy-vec2(100,200), int(vsm.header.meshletCount))>0) {
-    outColor = vec4(1);
-    return;
-    }
-#endif
 
   const ivec2 fragCoord = ivec2(gl_FragCoord.xy);
   const float z         = texelFetch(depth, fragCoord, 0).r;

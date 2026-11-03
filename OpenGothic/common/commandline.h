@@ -70,7 +70,7 @@ class CommandLine {
     bool                isMeshSh     = true;
 #endif
     bool                isBindlessSh = true;
-    bool                isVsm        = false;
+    bool                isVsm        = true;  // virtual shadow maps: sun and lamp shadows, where the GPU can (Shaders::isVsmSupported)
     bool                isRtSm       = false;
     GiMethod            isGi         = GiMethod::None;
     bool                isGiSet      = false;  // -gi given: else Gothic picks by the device

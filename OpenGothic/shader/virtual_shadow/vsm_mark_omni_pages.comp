@@ -26,12 +26,14 @@ layout(binding = 4, std430) readonly buffer Lbo { LightSource  lights[]; };
 layout(binding = 5, std430) readonly buffer VId { uint visLightCount; uvec4 visLights[]; };
 layout(binding = 6, std430) buffer Omni         { uint         pageTblOmni[]; };
 layout(binding = 7, r32ui)  uniform uimage2D   dbgImg;
+layout(binding = 8, std430) buffer Pages        { VsmHeader header; uint pageList[]; } vsm;
 
 const uint NumLights = NumThreads/6;
 
 shared uint  tileDepthMin, tileDepthMax;
 shared uint  lightCount;
 shared uint  lightId[NumThreads];
+shared float lightRank[NumThreads];
 shared uint  pageTblOmniTmp[NumLights*6];
 
 // shared uint  lightFineCount; //dbg
@@ -159,10 +161,18 @@ bool pricesLightsHiZ(uint i, float tMin, float tMax) {
   return true;
   }
 
+// How much a light's shadow matters to the frame: bright, wide lights near the camera first
+float lightImportance(uint i) {
+  const LightSource lx   = lights[i];
+  const float       lum  = max(lx.color.r, max(lx.color.g, lx.color.b));
+  const float       dist = max(distance(lx.pos, scene.camPos), 0.25*lx.range);
+  return lum * lx.range / max(dist, 1.0);
+  }
+
 bool pricesLightsHiZ() {
   const uint  laneId = gl_LocalInvocationIndex;
 
-  uint id = (laneId<lightCount) ? lightId[laneId] : 0xFFFFFFFF;
+  uint id = (laneId<min(lightCount, NumThreads)) ? lightId[laneId] : 0xFFFFFFFF;
   barrier();
 
   const float tMin = uintBitsToFloat(tileDepthMin);
@@ -170,14 +180,39 @@ bool pricesLightsHiZ() {
   if(!pricesLightsHiZ(id, tMin, tMax))
     id = 0xFFFFFFFF;
   lightCount = 0;
+  lightRank[laneId] = (id != 0xFFFFFFFF) ? lightImportance(id) : -1.0;
   barrier();
 
-  if(id != 0xFFFFFFFF) {
-    uint ix = atomicAdd(lightCount, 1);
-    if(ix<NumLights) {
-      //TODO: incremental processing
-      lightId[ix] = id;
+  if(id != 0xFFFFFFFF)
+    atomicAdd(lightCount, 1);
+  barrier();
+
+  const uint candidates = lightCount;
+  bool keep = (id != 0xFFFFFFFF);
+  if(candidates>NumLights && keep) {
+    // more lights than the tile holds: keep the NumLights most important ones, not the first ones
+    const float self = lightRank[laneId];
+    uint        rank = 0;
+    for(uint i=0; i<NumThreads; ++i) {
+      const float other = lightRank[i];
+      if(other>self || (other==self && i<laneId))
+        rank++;
       }
+    keep = rank<NumLights;
+    }
+  if(laneId==0 && candidates>0) {
+    atomicMax(vsm.header.omniTileLightsMax, candidates);
+    if(candidates>NumLights)
+      atomicAdd(vsm.header.omniTileOverflow, 1);
+    }
+  barrier();
+
+  lightCount = 0;
+  barrier();
+
+  if(keep) {
+    uint ix = atomicAdd(lightCount, 1);
+    lightId[ix] = id;
     }
   barrier();
 
@@ -225,8 +260,8 @@ void processLights() {
   if(!pricesLightsHiZ())
     return;
 
-  if(lightCount>=NumLights)
-    return; // overflow
+  if(lightCount>NumLights)
+    return; // cannot happen: pricesLightsHiZ keeps at most NumLights
 
   const float z      = fragDepth;
   const vec3  normal = fragNorm;

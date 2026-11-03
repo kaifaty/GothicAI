@@ -374,7 +374,7 @@ Result applyFile(WorldData::Data& data, Context& context, const fs::path& baseRo
             v->visual=std::move(visual);
             v->visual_name=v->visual->name; v->associated_visual_type=v->visual->type;
             } else if(kind=="light") {
-            layerFields(entry,{"key","kind","position","rotation","yaw_deg","range","color","color_ani","range_ani","ani_fps","cookie"});
+            layerFields(entry,{"key","kind","position","rotation","yaw_deg","range","color","color_ani","range_ani","ani_fps","cookie","source_cm"});
             auto light=std::make_shared<Light>();
             light->type=VirtualObjectType::zCVobLight; light->light_type=LightType::POINT;
             light->range=layerFloat(member(entry,"range")); require(light->range>0,"range must be positive");
@@ -418,6 +418,11 @@ Result applyFile(WorldData::Data& data, Context& context, const fs::path& baseRo
               require(!cookie.empty() && cookie.find_first_of("/\\")==std::string::npos &&
                       cookie.size()>4 && cookie.substr(cookie.size()-4)==".TGA","cookie: expected a texture name NAME.TGA");
               light->cookie=std::move(cookie);
+              }
+            // the flame's size (cm): the soft edge of the light's shadow, 6 by default (a torch)
+            if(entry.HasMember("source_cm")) {
+              light->source_cm=layerFloat(entry["source_cm"]);
+              require(light->source_cm>0 && light->source_cm<=500,"source_cm must be in 0..500");
               }
             light->is_static=true; light->on=true; light->can_move=false; light->cd_static=false;
             v=std::move(light);

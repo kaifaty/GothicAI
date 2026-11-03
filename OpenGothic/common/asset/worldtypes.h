@@ -418,6 +418,9 @@ struct LightPreset {
   // Own content only (vob layer, own vob trees), never read from or written to the base: a light mask
   // (materials.json texture key) that shapes the light, as a lantern's cage does (LightGroup, light.frag).
   std::string cookie {};
+  // Own content only, as cookie: the flame's size in cm, the soft edge of the light's shadow (VSM, light.frag)
+  static constexpr float DefaultSourceCm = 6.f;
+  float source_cm {DefaultSourceCm};
 };
 
 struct VLight : VirtualObject, LightPreset {

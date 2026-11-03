@@ -2,6 +2,7 @@
 
 #include <Tempest/Log>
 #include <Tempest/TextCodec>
+#include <cstdlib>
 #include <cstring>
 #include <cassert>
 
@@ -32,6 +33,9 @@ static int intArg(std::string_view v) {
 
 CommandLine::CommandLine(int argc, const char** argv) {
   instance = this;
+  // OPENGOTHIC_VSM=0|1: the default of -vsm for benches and scripts that cannot pass flags; -vsm wins
+  if(const char* vsm = std::getenv("OPENGOTHIC_VSM"))
+    isVsm = boolArg(vsm);
   if(argc<1)
     return;
 
@@ -135,7 +139,7 @@ CommandLine::CommandLine(int argc, const char** argv) {
         isBindlessSh = boolArg(argv[i]);
       }
     else if(arg=="-vsm") {
-      // not to document - debug only
+      // virtual shadow maps for the sun and the lamps, on by default; -vsm 0 brings back the two cascades
       ++i;
       if(i<argc)
         isVsm = boolArg(argv[i]);

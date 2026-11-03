@@ -331,8 +331,7 @@ void DrawCommands::visibilityVsm(Encoder<CommandBuffer>& cmd) {
   auto& shaders = Shaders::inst();
 
   auto& view = views[SceneGlobals::V_Vsm];
-  const size_t vsmMax = 1024*1024*4*4; // arbitrary: ~1k clusters per page
-  const size_t visClustersSz = vsmMax*sizeof(uint32_t)*4;
+  const size_t visClustersSz = size_t(VsmMaxMeshlets)*sizeof(uint32_t)*4;
 
   usesSsbo(view.vsmClusters, visClustersSz);
   usesSsbo(view.visClusters, visClustersSz);
@@ -367,7 +366,7 @@ void DrawCommands::visibilityVsm(Encoder<CommandBuffer>& cmd) {
   cmd.setBinding(3, view.indirectCmd);
   cmd.setBinding(4, *scene.vsmPageList);
   cmd.setPipeline(shaders.vsmPackDraw1);
-  cmd.dispatch(8096); // TODO: indirect
+  cmd.dispatch((VsmMaxMeshlets+127)/128); // vsm_pack_draws.comp: 128 threads; TODO: indirect
   // cmd.dispatchIndirect(vsmIndirectCmd, 0);
   }
 

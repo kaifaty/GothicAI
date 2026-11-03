@@ -32,6 +32,8 @@ void storePage(ivec2 pId, ivec3 at, ivec2 tile, ivec2 size) {
 
   vsm.pageList[pageId] = packVsmPageInfo(at, size);
   atomicMax(vsm.header.pageCount, pageId+1);
+  if(size.x>0)
+    atomicAdd(vsm.header.pagePlaced, 1);
 
   at += ivec3(tile,0);
   const uint prime = imageLoad(pageTbl, at).r & 0x1;
@@ -45,8 +47,11 @@ void storePage(ivec2 pId, uint lightId, uint face, ivec2 at, ivec2 tile, ivec2 s
 
   vsm.pageList[pageId] = packVsmPageInfo(lightId, face, at, size);
   atomicMax(vsm.header.pageCount, pageId+1);
-
-  pageTblOmni[lightId*6+face] = (pageId << 16u) | (size.x&0xF);
+  // only the block's first tile carries its size: the other tiles of the face must not overwrite it
+  if(size.x>0) {
+    atomicAdd(vsm.header.pagePlaced, 1);
+    pageTblOmni[lightId*6+face] = (pageId << 16u) | (size.x&0xF);
+    }
   //imageStore(dbg, pId, uvec4(size.y>0 ? 9 : 0));
   imageStore(dbg, pId, uvec4(size.y));
   }

@@ -179,6 +179,11 @@ LightGroup::Light LightGroup::add(const asset::LightPreset& vob) {
 LightGroup::Light LightGroup::add(const asset::VLight& vob) {
   auto l = add(static_cast<const asset::LightPreset&>(vob));
   l.setPosition(Vec3(vob.position.x,vob.position.y,vob.position.z));
+  if(vob.source_cm!=asset::LightPreset::DefaultSourceCm) {
+    std::lock_guard<std::mutex> guard(sync);
+    lightSourceData[l.id].sourceSize = vob.source_cm;
+    markAsDurtyNoSync(l.id);
+    }
   if(!vob.cookie.empty()) {
     std::lock_guard<std::mutex> guard(sync);
     if(const uint32_t slot = cookieSlot(vob.cookie)) {
@@ -370,6 +375,7 @@ void LightGroup::tick(uint64_t time) {
     ssbo.color  = light.currentColor();
     ssbo.range  = light.isEnabled() ? clampRange(light.currentRange()) : 0;
     ssbo.cookie = dst.cookie;
+    ssbo.sourceSize = dst.sourceSize;
 
     if(std::memcmp(&dst, &ssbo, sizeof(ssbo))==0)
       continue;

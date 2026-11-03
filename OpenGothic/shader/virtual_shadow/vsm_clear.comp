@@ -31,6 +31,10 @@ void main() {
     header.meshletCount = 0;
     header.counterM     = 0;
     header.counterV     = 0;
+    header.pageListCount     = 0;
+    header.pagePlaced        = 0;
+    header.omniTileOverflow  = 0;
+    header.omniTileLightsMax = 0;
     }
 
   if(gl_LocalInvocationIndex<16) {

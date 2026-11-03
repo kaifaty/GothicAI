@@ -12,6 +12,9 @@ class DrawClusters;
 
 class DrawCommands {
   public:
+    // Meshlet-page pairs the VSM visibility pass may emit a frame: VSM_MAX_MESHLETS in vsm_common.glsl
+    static constexpr uint32_t VsmMaxMeshlets = 1024*1024;
+
     enum Type : uint8_t {
       Landscape,
       Static,

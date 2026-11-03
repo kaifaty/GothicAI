@@ -147,7 +147,7 @@ void validLayers(const Fixture& f) {
   f.clearLayers();
   textFile(f.layers/"10-add.json","{\"format\":1,\"add\":["+mesh("base-solid","BASE.3DS","mesh")+","+
            mesh("own-ghost","VOB_LAYER_TEST_CUBE","none")+
-           R"(,{"key":"lamp","kind":"light","position":[1,2,3],"rotation":[[0,0,1],[0,1,0],[-1,0,0]],"range":450,"color":[255,128,0],"color_ani":[[255,128,0],[200,90,10],[240,120,30]],"range_ani":[1,0.85],"ani_fps":12,"cookie":"own_lamp_cookie.tga"}],"remove":[19],"move":[{"id":7,"position":[11,22,33],"yaw_deg":0}]})");
+           R"(,{"key":"lamp","kind":"light","position":[1,2,3],"rotation":[[0,0,1],[0,1,0],[-1,0,0]],"range":450,"color":[255,128,0],"color_ani":[[255,128,0],[200,90,10],[240,120,30]],"range_ani":[1,0.85],"ani_fps":12,"cookie":"own_lamp_cookie.tga","source_cm":1.5}],"remove":[19],"move":[{"id":7,"position":[11,22,33],"yaw_deg":0}]})");
   textFile(f.layers/"20-move.json",R"({"format":1,"move":[{"id":7,"position":[44,55,66],"rotation":[[0,0,1],[0,1,0],[-1,0,0]]},{"id":43,"position":[10,20,30],"yaw_deg":90}]})");
   const auto checked=VobLayer::check(f.world,f.layers/"10-add.json",f.content);
   require(checked.errors.empty() && checked.added==3 && checked.removed==1 && checked.moved==1,"offline checker valid layer counts");
@@ -171,6 +171,7 @@ void validLayers(const Fixture& f) {
           light->color_animation_fps==12 && light->range_animation_scale.size()==2 && light->range_animation_scale[1]==0.85f &&
           light->range_animation_fps==12,"light flicker keys");
   require(light->cookie=="OWN_LAMP_COOKIE.TGA","light mask name, upper case");
+  require(light->source_cm==1.5f,"light source size");
   const float rotationRows[3][3]={{0,0,1},{0,1,0},{-1,0,0}};
   for(unsigned row=0;row<3;++row) for(unsigned column=0;column<3;++column)
     require(light->rotation[column][row]==rotationRows[row][column] &&
@@ -193,6 +194,7 @@ void rejectedLayers(const Fixture& f) {
     {"light-ani-fps",R"({"format":1,"add":[{"key":"bad-flicker","kind":"light","position":[0,0,0],"yaw_deg":0,"range":100,"color":[1,2,3],"color_ani":[[1,2,3],[4,5,6]]}]})"},
     {"light-ani-scale",R"({"format":1,"add":[{"key":"bad-flicker","kind":"light","position":[0,0,0],"yaw_deg":0,"range":100,"color":[1,2,3],"range_ani":[1,5],"ani_fps":10}]})"},
     {"light-cookie",R"({"format":1,"add":[{"key":"bad-cookie","kind":"light","position":[0,0,0],"yaw_deg":0,"range":100,"color":[1,2,3],"cookie":"masks/LAMP.TGA"}]})"},
+    {"light-source",R"({"format":1,"add":[{"key":"bad-source","kind":"light","position":[0,0,0],"yaw_deg":0,"range":100,"color":[1,2,3],"source_cm":0}]})"},
     {"light-ani-alone",R"({"format":1,"add":[{"key":"bad-flicker","kind":"light","position":[0,0,0],"yaw_deg":0,"range":100,"color":[1,2,3],"ani_fps":10}]})"},
     {"format",R"({"format":2})"}
     };

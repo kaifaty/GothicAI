@@ -1,6 +1,7 @@
 #include "renderer.h"
 #include "physics/cloth.h"
 
+#include <Tempest/Application>
 #include <Tempest/Color>
 #include <Tempest/Fence>
 #include <Tempest/Log>
@@ -9,6 +10,7 @@
 
 #include "ui/inventorymenu.h"
 #include "ui/videowidget.h"
+#include "graphics/drawcommands.h"
 #include "camera.h"
 #include "frameprofile.h"
 #include "gothic.h"
@@ -94,6 +96,8 @@ Renderer::Renderer() {
   settings.rtsmEnabled      = Shaders::options().doSoftwareShadow;
   settings.swrEnabled       = Shaders::options().swRenderingPreset>0;
   settings.swrtEnabled      = Shaders::options().doSoftwareRT;
+  if(const char* stats = std::getenv("OPENGOTHIC_VSM_STATS"))
+    settings.vsmStats = std::string_view(stats)=="1";
 
   sky.sampler = Tempest::Sampler::bilinear();
   sky.sampler.vClamp = ClampMode::ClampToEdge;
@@ -157,7 +161,7 @@ void Renderer::setupSettings() {
   if(settings.rtsmEnabled)
     shadow.directLightPso = &shaders.rtsmDirectLight;
   else if(settings.vsmEnabled)
-    shadow.directLightPso = &shaders.vsmDirectLight; //TODO: naming
+    shadow.directLightPso = &shaders.vsmDirectLight;
   else if(Shaders::options().doRayQuery && settings.shadowResolution>0)
     shadow.directLightPso = &shaders.directLightRq;
   else if(settings.shadowResolution>0)
@@ -187,6 +191,7 @@ void Renderer::setupSettings() {
   Log::i("render: ray query = ", int(Shaders::options().doRayQuery), ", meshlets = ", int(Shaders::options().doMeshShading),
          ", gi = ", int(settings.giMethod), ", aa = ", settings.aaEnabled ? int(Gothic::options().aaPreset) : 0,
          ", bloom = ", int(settings.bloomEnabled));
+  Log::i("render: vsm = ", int(settings.vsmEnabled), ", rtsm = ", int(settings.rtsmEnabled));
 
   if(settings.giMethod!=GiMethod::None) {
     // need a projective shadow, for gi
@@ -1289,7 +1294,9 @@ void Renderer::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView&
   auto& sceneUbo   = scene.uboGlobal[SceneGlobals::V_Main];
   auto& lightsSsbo = wview.lights().lightsSsbo();
 
-  auto& vsmDbg   = usesImage2d(vsm.vsmDbg,   TextureFormat::R32U, zbuffer.size());
+  logVsmStats(wview);
+
+  auto& vsmDbg   = usesImage2d(vsm.vsmDbg,   TextureFormat::R32U, 1, 1); // vsm_mark_omni_pages: debug writes are off
   auto& pageTbl  = usesImage3d(vsm.pageTbl,  TextureFormat::R32U, 32, 32, 16);
   auto& pageHiZ  = usesImage3d(vsm.pageHiZ,  TextureFormat::R32U, 32, 32, 16);
   auto& pageData = usesZBuffer(vsm.pageData, shadowFormat,        8192, 8192);
@@ -1356,6 +1363,7 @@ void Renderer::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView&
     cmd.setBinding(5, visibleLights);
     cmd.setBinding(6, pageTblOmni);
     cmd.setBinding(7, vsmDbg);
+    cmd.setBinding(8, pageList);
     cmd.setPushData(&push, sizeof(push));
     cmd.setPipeline(shaders.vsmMarkOmniPages);
     cmd.dispatchThreads(zbuffer.size());
@@ -1411,6 +1419,39 @@ void Renderer::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView&
   cmd.setDebugMarker("VSM-rendering");
   cmd.setFramebuffer({}, {pageData, 0.f, Tempest::Preserve});
   wview.drawVsm(cmd);
+  }
+
+void Renderer::logVsmStats(const WorldView& wview) {
+  // OPENGOTHIC_VSM_STATS=1: the previous frames' counters (VsmHeader, vsm_common.glsl) once in 5 s; a read waits
+  // for the GPU, so without the variable nothing is read back
+  if(!settings.vsmStats || vsm.pageList.isEmpty() || vsm.visibleLights.isEmpty())
+    return;
+  const uint64_t now = Application::tickCount();
+  if(vsm.statsTime!=0 && now<vsm.statsTime+5000)
+    return;
+  vsm.statsTime = now;
+
+  struct Header {
+    uint32_t pageCount, meshletCount, counterM, counterV;
+    uint32_t pagePerMip[16];
+    int32_t  pageBbox[16][4];
+    uint32_t pageOmniCount, pageListCount, pagePlaced, omniTileOverflow, omniTileLightsMax;
+    } h = {};
+  uint32_t visibleLights = 0;
+  auto& device = Resources::device();
+  device.waitIdle();
+  device.readBytes(vsm.pageList,      &h,             sizeof(h));
+  device.readBytes(vsm.visibleLights, &visibleLights, sizeof(visibleLights));
+
+  const uint32_t poolPages = uint32_t(vsm.pageData.w()/VSM_PAGE_SIZE) * uint32_t(vsm.pageData.h()/VSM_PAGE_SIZE);
+  const uint32_t dropped   = h.pageListCount>h.pagePlaced ? h.pageListCount-h.pagePlaced : 0;
+  Log::i("vsm stats: pageCount = ", h.pageCount, "/", poolPages,
+         ", entries = ", h.pageListCount, " (sun ", h.pageListCount-h.pageOmniCount, ", pageOmniCount ", h.pageOmniCount, ")",
+         ", placed = ", h.pagePlaced, ", dropped = ", dropped,
+         ", meshletCount = ", h.meshletCount, "/", DrawCommands::VsmMaxMeshlets,
+         (h.meshletCount>DrawCommands::VsmMaxMeshlets ? " OVERFLOW" : ""),
+         ", lights = ", visibleLights, "/", uint32_t(wview.lights().size()),
+         ", tile lights max = ", h.omniTileLightsMax, ", tiles over limit = ", h.omniTileOverflow);
   }
 
 void Renderer::drawRtsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& wview) {
@@ -1921,8 +1962,10 @@ void Renderer::drawShadowResolve(Encoder<CommandBuffer>& cmd, const WorldView& w
   auto& scene = wview.sceneGlobals();
   cmd.setDebugMarker(settings.vsmEnabled ? "DirectSunLight-VSM" : "DirectSunLight");
 
-  auto originLwc = scene.originLwc;
-  cmd.setPushData(&originLwc, sizeof(originLwc));
+  struct Push { Vec3 originLwc; float vsmMipBias; } push = {scene.originLwc, settings.vsmMipBias};
+  if(shadow.directLightPso==&shaders.vsmDirectLight)
+    cmd.setPushData(&push, sizeof(push)); else
+    cmd.setPushData(&push.originLwc, sizeof(push.originLwc));
   cmd.setBinding(0, scene.uboGlobal[SceneGlobals::V_Main]);
   cmd.setBinding(1, gbufDiffuse, Sampler::nearest());
   cmd.setBinding(2, gbufNormal,  Sampler::nearest());
@@ -1931,9 +1974,7 @@ void Renderer::drawShadowResolve(Encoder<CommandBuffer>& cmd, const WorldView& w
     cmd.setBinding(12, gbufOrm, Sampler::nearest());
   if(shadow.directLightPso==&shaders.vsmDirectLight) {
     cmd.setBinding(4, vsm.pageTbl);
-    cmd.setBinding(5, vsm.pageList);
     cmd.setBinding(6, vsm.pageData);
-    cmd.setBinding(8, scene.vsmDbg);
     }
   else if(shadow.directLightPso==&shaders.directLightRq) {
     for(size_t r=0; r<Resources::ShadowLayers; ++r) {
@@ -1961,10 +2002,6 @@ void Renderer::drawShadowResolve(Encoder<CommandBuffer>& cmd, const WorldView& w
     }
 
   cmd.setPipeline(*shadow.directLightPso);
-  if(settings.vsmEnabled) {
-    cmd.setPushData(settings.vsmMipBias);
-    cmd.setPipeline(*shadow.directLightPso);
-    }
   cmd.draw(nullptr, 0, 3);
   }
 
@@ -1990,7 +2027,7 @@ void Renderer::drawLights(Encoder<CommandBuffer>& cmd, const WorldView& wview) {
     cmd.setBinding(13+i, wview.lights().cookie(i), Sampler::bilinear()); // u is the azimuth: it wraps
   if(lights.directLightPso==&shaders.lightsVsm) {
     cmd.setBinding(5, vsm.pageTblOmni);
-    cmd.setBinding(6, vsm.pageData);
+    cmd.setBinding(6, vsm.pageData, Sampler::nearest(ClampMode::ClampToEdge)); // textureGather inside a face block
     }
   if(lights.directLightPso==&shaders.lightsRq) {
     cmd.setBinding(6, scene.rtScene.tlas);

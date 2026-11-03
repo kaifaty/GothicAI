@@ -56,8 +56,8 @@ void mainCmd() {
 
 void mainClusters() {
   uint index = gl_GlobalInvocationID.x;
-  if(index>=vsm.header.meshletCount)
-    return;
+  if(index>=min(vsm.header.meshletCount, VSM_MAX_MESHLETS))
+    return; // the counter runs on past the cap, the payload does not
 
   const uvec4 cluster    = payloadSrc[index];
   const uint  instanceId = cluster.x;
