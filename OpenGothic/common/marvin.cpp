@@ -216,6 +216,8 @@ Marvin::Marvin() {
     {"toggle melee_barge",        C_ToggleMeleeBarge},
     {"toggle melee_charge",       C_ToggleMeleeCharge},
     {"toggle melee_riposte",      C_ToggleMeleeRiposte},
+    {"toggle melee_heal_interrupt", C_ToggleMeleeHealInterrupt},
+    {"toggle food_over_time",     C_ToggleFoodOverTime},
     {"toggle melee_ai_dodge",     C_ToggleMeleeAiDodge},
     {"toggle melee_ai_riposte",   C_ToggleMeleeAiRiposte},
     {"toggle melee_ai_charge",    C_ToggleMeleeAiCharge},
@@ -791,6 +793,18 @@ bool Marvin::exec(std::string_view v) {
       const bool enabled = !Gothic::physicsFlags().meleeRiposte;
       Gothic::settingsSetI("GAME","melee_riposte",enabled ? 1 : 0);
       print(enabled ? "Melee riposte: ON" : "Melee riposte: OFF");
+      return true;
+      }
+    case C_ToggleMeleeHealInterrupt: {
+      const bool enabled = !Gothic::physicsFlags().meleeHealInterrupt;
+      Gothic::settingsSetI("GAME","melee_heal_interrupt",enabled ? 1 : 0);
+      print(enabled ? "Melee heal interrupt: ON" : "Melee heal interrupt: OFF");
+      return true;
+      }
+    case C_ToggleFoodOverTime: {
+      const bool enabled = !Gothic::physicsFlags().foodOverTime;
+      Gothic::settingsSetI("GAME","food_over_time",enabled ? 1 : 0);
+      print(enabled ? "Food over time: ON" : "Food over time: OFF");
       return true;
       }
     case C_ToggleMeleeAiDodge: {

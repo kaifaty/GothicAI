@@ -648,6 +648,15 @@ struct Bench {
     std::string firstAnimation, lastAnimation;
   } npcSpeedTest;
 
+  struct Healing {
+    std::string label;
+    size_t item = size_t(-1), lastItems = 0;
+    uint64_t start = 0, firstHeal = 0, lastConsume = 0, nextSecond = 0, strikeAt = 0;
+    int hp = 0, healed = 0, damage = 0, savedHealed = 0, savedDamage = 0;
+    bool sawDrink = false;
+    std::vector<uint8_t> saved;
+    } healing;
+
   uint64_t    waitUntil = 0;
   std::chrono::steady_clock::time_point realWaitUntil;
   bool        waitArrive = false;
@@ -1909,6 +1918,7 @@ bool keyAction(std::string_view k, KeyCodec::Action& a) {
     {"attack", KeyCodec::ActionGeneric},
     {"melee",  KeyCodec::WeaponMele},{"bow",KeyCodec::WeaponBow}, {"spell",KeyCodec::WeaponMage3},
     {"parade", KeyCodec::Parade},  {"breath",KeyCodec::Walk},     {"dodge",KeyCodec::Dodge},
+    {"heal", KeyCodec::Heal},      {"potion",KeyCodec::Potion},
     };
   for(auto& i:keys)
     if(i.name==k) {
@@ -13991,12 +14001,142 @@ bool npcSpeedTick(World& world) {
   return true;
   }
 
+void healingObserve(World& world,Npc& player) {
+  auto& test=bench.healing;
+  if(test.label.empty())return;
+  const int hp=player.attribute(ATR_HITPOINTS);
+  if(hp>test.hp) {
+    test.healed+=hp-test.hp;
+    if(!test.firstHeal)test.firstHeal=world.tickCount();
+    }
+  if(hp<test.hp)test.damage+=test.hp-hp;
+  test.hp=hp;
+  const auto count=player.inventory().itemCount(test.item);
+  if(count<test.lastItems) {
+    test.lastConsume=world.tickCount();test.nextSecond=test.lastConsume;
+    }
+  test.lastItems=count;
+  test.sawDrink|=player.hasState(BS_ITEMINTERACT);
+  if(test.lastConsume && world.tickCount()>=test.nextSecond) {
+    say("healing sample "+test.label+": "+std::to_string(world.tickCount()-test.lastConsume)+
+      " ms after consume, hp "+std::to_string(hp)+", healed "+std::to_string(test.healed)+
+      ", damage "+std::to_string(test.damage)+", items "+std::to_string(count));
+    test.nextSecond+=1000;
+    }
+  }
+
+void healingCommand(const std::vector<std::string>& a,World& world,Npc& player,PlayerControl& ctrl) {
+  auto& test=bench.healing;
+  if(a.size()==4 && a[1]=="begin") {
+    exec("disarm",world,player,ctrl);
+    const auto item=world.script().findSymbolIndex(a[3]);
+    if(item==size_t(-1))throw std::runtime_error("healing fixture item is absent");
+    // Start every case with ample room for healing and a real strike safely above one-third HP.
+    player.handle().attribute[ATR_HITPOINTSMAX]=1000;
+    player.handle().attribute[ATR_HITPOINTS]=700;
+    player.handle().flags=zenkit::NpcFlag(uint32_t(player.handle().flags)&~uint32_t(zenkit::NpcFlag::IMMORTAL));
+    const auto count=player.inventory().itemCount(item);
+    if(count)player.delItem(item,uint32_t(count));
+    test={};test.label=a[2];test.item=item;test.hp=700;test.start=world.tickCount();
+    Gothic::settingsSetI("GAME","usePotionKeys",1);
+    say("healing begin "+test.label+": hp 700/1000 at "+std::to_string(test.start)+" ms, interrupt "+
+      std::to_string(Gothic::physicsFlags().meleeHealInterrupt)+", food "+std::to_string(Gothic::physicsFlags().foodOverTime));
+    }
+  else if(a.size()==3 && a[1]=="strike") {
+    test.strikeAt=world.tickCount()+uint64_t(std::stoul(a[2]));
+    say("healing strike scheduled "+a[2]+" ms after use");
+    }
+  else if(a.size()==2 && a[1]=="retry") {
+    exec("disarm",world,player,ctrl);
+    const auto item=test.item;
+    const auto count=player.inventory().itemCount(item);
+    test.label+="-retry";test.start=world.tickCount();test.firstHeal=test.lastConsume=test.nextSecond=0;
+    test.healed=test.damage=0;test.hp=player.attribute(ATR_HITPOINTS);test.lastItems=count;test.sawDrink=false;
+    if(!count)player.addItem(item,1); // OFF may already have consumed the first potion.
+    player.useItem(item);
+    healingObserve(world,player);
+    }
+  else if(a.size()==2 && a[1]=="arrow") {
+    auto* attacker=findNpc(world,player,"BDT_1013_BANDIT_L");
+    const auto symbol=world.script().findSymbolIndex("ITRW_ARROW");
+    if(!attacker || symbol==size_t(-1))throw std::runtime_error("healing arrow fixture is absent");
+    const auto side=Vec3(-facing(player).z,0,facing(player).x);
+    Vec3 from,to;bool found=false;
+    for(float height:{100.f,120.f,80.f,140.f}) {
+      from=player.position()+Vec3(0,height,0)+side*120.f;to=from-side*240.f;
+      float distance=0;
+      if(player.rayHitZone(from,to,distance)!=HitZones::None) {found=true;break;}
+      }
+    if(!found)throw std::runtime_error("healing arrow has no native bone intersection");
+    Item item(world,symbol,Item::T_Inventory);
+    Bullet arrow(world,item,from);arrow.setOrigin(attacker);arrow.setPrecise(1.f);
+    DamageCalculator::Damage damage;damage[PROT_POINT]=20;arrow.setDamage(damage);
+    constexpr uint64_t dt=100;
+    const auto direction=(to-from)/float(dt)+Vec3(0,.5f*DynamicWorld::gravity*float(dt),0);
+    arrow.setDirection(direction);
+    DynamicWorld::BulletBody step(world.physic(),&arrow);
+    step.setPosition(from);step.setDirection(direction);
+    const int hp=player.attribute(ATR_HITPOINTS);
+    ClothBulletBenchDriver::step(*world.physic(),step,direction,dt);
+    say("healing arrow: hp "+std::to_string(hp)+" -> "+std::to_string(player.attribute(ATR_HITPOINTS))+
+      ", native hit "+std::to_string(arrow.hitZone()!=HitZones::None)+" at "+std::to_string(world.tickCount()-test.start)+" ms");
+    if(player.attribute(ATR_HITPOINTS)>=hp || arrow.hitZone()==HitZones::None)
+      throw std::runtime_error("healing arrow did not deal native projectile damage");
+    healingObserve(world,player);
+    }
+  else if(a.size()==2 && a[1]=="save") {
+    test.saved.clear();test.savedHealed=test.healed;test.savedDamage=test.damage;
+    {MemWriter writer(test.saved);Serialize out(writer);out.setContext(&world);out.setVersion(Serialize::Current);
+    player.save(out,world.npcId(&player),"/npc/");}
+    std::ofstream file(outDir+"/healing-npc.zip",std::ios::binary);
+    file.write(reinterpret_cast<const char*>(test.saved.data()),std::streamsize(test.saved.size()));
+    if(!file)throw std::runtime_error("cannot write healing NPC save");
+    say("healing saved: hp "+std::to_string(player.attribute(ATR_HITPOINTS))+", bytes "+std::to_string(test.saved.size()));
+    }
+  else if(a.size()==2 && a[1]=="load") {
+    if(test.saved.empty())throw std::runtime_error("healing load requires a saved NPC");
+    {MemReader reader(test.saved);Serialize in(reader);in.setContext(&world);in.setVersion(Serialize::Current);
+    player.load(in,world.npcId(&player),"/npc/");player.postValidate();}
+    test.hp=player.attribute(ATR_HITPOINTS);test.healed=test.savedHealed;test.damage=test.savedDamage;
+    say("healing loaded: hp "+std::to_string(test.hp)+", healed "+std::to_string(test.healed));
+    }
+  else if(a.size()>=3 && a[1]=="check") {
+    healingObserve(world,player);
+    const bool potion=Gothic::physicsFlags().meleeHealInterrupt;
+    const bool food=Gothic::physicsFlags().foodOverTime;
+    const auto items=player.inventory().itemCount(test.item);
+    const uint64_t first=test.firstHeal ? test.firstHeal-test.start : 0;
+    bool pass=false;
+    if(a[2]=="potion" || a[2]=="hotkey") {
+      pass=test.healed==50 && (!potion || (first>1000 && test.sawDrink && test.lastConsume==test.firstHeal));
+      if(a[2]=="hotkey")pass&=potion ? player.weaponState()==WeaponState::NoWeapon : player.weaponState()!=WeaponState::NoWeapon;
+      }
+    else if(a[2]=="interrupted")pass=potion ? test.healed==0 && items==1 && test.damage>0 : test.healed==50;
+    else if(a[2]=="food" && a.size()==4)pass=test.healed==std::stoi(a[3]) && items==0 && (!food || first>1000);
+    say("healing check "+test.label+": healed "+std::to_string(test.healed)+", damage "+std::to_string(test.damage)+
+      ", items "+std::to_string(items)+", first heal "+std::to_string(first)+" ms, consume "+
+      std::to_string(test.lastConsume?test.lastConsume-test.start:0)+" ms, drink "+std::to_string(test.sawDrink)+
+      ", weapon "+std::to_string(int(player.weaponState()))+", pass "+std::to_string(pass));
+    event("healing_check","\"case\":"+jsonStr(test.label)+",\"healed\":"+std::to_string(test.healed)+
+      ",\"damage\":"+std::to_string(test.damage)+",\"items\":"+std::to_string(items)+",\"first_heal_ms\":"+
+      std::to_string(first)+",\"consume_ms\":"+std::to_string(test.lastConsume?test.lastConsume-test.start:0)+
+      ",\"pass\":"+(pass?"true":"false"));
+    if(!pass)throw std::runtime_error("healing mechanic check failed: "+test.label);
+    }
+  else throw std::runtime_error("healing expects begin/strike/retry/arrow/save/load/check");
+  }
+
 void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
   const auto a = split(line);
   if(a.empty())
     return;
   const std::string& c = a[0];
 
+  if(c=="healing") {
+    try {healingCommand(a,w,pl,ctrl);}
+    catch(const std::exception& error) {arenaAbort(error.what());}
+    return;
+  }
   if(c=="roads") {
     try {
       event("roads_command","\"sample\":"+KnownRoadsBench::command(a,w,outDir));
@@ -16693,6 +16833,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       if(k==KeyCodec::ActionGeneric || k==KeyCodec::Forward)
         bench.inputTraceUntil = until+2000;
       }
+    healingObserve(w,pl);
     }
   else if(c=="cam") {
     const std::string m = a.size()>1 ? a[1] : "";
@@ -17120,6 +17261,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     pl.addItem(id,size_t(c=="give" ? num(a,2,1) : 1));
     if(c=="equip")
       pl.useItem(id,Item::NSLOT,true); // whatever the hero's strength
+    healingObserve(w,pl);
     say(c + " " + name);
     }
   else if(c=="disarm") {
@@ -21151,12 +21293,18 @@ uint64_t TestBench::frameDt(uint64_t dt) {
       bench.lagMs = std::max<int64_t>(bench.lagMs,duration_cast<milliseconds>(now-due).count());
     }
   bench.frameMs = (bench.step*1000)/Fps - ((bench.step-1)*1000)/Fps;
+  const auto healingStep=[&](uint64_t step) {
+    const auto* world=Gothic::inst().world();
+    if(world && bench.healing.strikeAt>world->tickCount())
+      return std::min(step,bench.healing.strikeAt-world->tickCount());
+    return step;
+    };
   if(bench.slow<=1.f)
-    return bench.frameMs;
+    return healingStep(bench.frameMs);
   bench.slowAcc += uint64_t(float(bench.frameMs*1000)/bench.slow);
   const uint64_t dtGame = bench.slowAcc/1000;
   bench.slowAcc -= dtGame*1000;
-  return dtGame;
+  return healingStep(dtGame);
   }
 
 void TestBench::beforeWorldTick(uint64_t dt) {
@@ -21474,6 +21622,12 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
   stickingFields(*world);
   spellFields(*world);
   bodyImpactTick(*world);
+  healingObserve(*world,*player);
+  if(bench.healing.strikeAt && world->tickCount()>=bench.healing.strikeAt) {
+    bench.healing.strikeAt=0;
+    exec("strike player BDT_1013_BANDIT_L",*world,*player,ctrl);
+    healingObserve(*world,*player);
+    }
   if(auto& drift=bench.stunDrift;drift.target!=nullptr) {
     const uint64_t elapsed=world->tickCount()-drift.start;
     const uint64_t requested=drift.next*100;
