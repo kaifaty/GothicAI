@@ -144,7 +144,9 @@ export GOTHIC_DIR="$HOME/gothic-ai/game-settings" OPENGOTHIC_BASE="$task/input/b
 export OPENGOTHIC_BASE_FINGERPRINT="$base_fingerprint" OPENGOTHIC_VIDEOS_FINGERPRINT="$videos_fingerprint"
 export OPENGOTHIC_BASE_CACHE="$task/base-cache" OPENGOTHIC_BASE_STORE="$task/base-store"
 "$python" -X faulthandler -B -I - "$task" "$archive" "$hd/policy.navbc" "$v5_validation" "$seed" <<'DRIVE'
+import contextlib
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -182,7 +184,12 @@ def drive(name, runner, weights, pace=None, configure=None):
     if configure is not None:
         rl.configure_forced_pace = configure
     try:
-        rl.main()
+        # main() reports ValueError/RuntimeError as "nav-rl: ..." and exit 1.
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            rl.main()
+    except SystemExit as error:
+        raise RuntimeError(f"exit {error.code}: {stderr.getvalue().strip()}") from None
     finally:
         rl.configure_forced_pace = original
         os.environ.pop("OPENGOTHIC_NAV_FORCE_PACE", None)
@@ -220,7 +227,9 @@ for pace in ("run", "walk"):
 try:
     drive("v5-none", branch, pace_weights)
     raise AssertionError("nav_rl drive accepted v5 weights without a forced pace")
-except ValueError as error:
+except RuntimeError as error:
+    if "need --force-pace walk|run" not in str(error) or any((task / "drive/v5-none").rglob("episode.json")):
+        raise
     result["refusal_python"] = str(error)
 
 
@@ -229,8 +238,8 @@ def bypass(args):
 try:
     drive("v5-runner-none", branch, pace_weights, configure=bypass)
     raise AssertionError("runner accepted v5 weights without a forced pace")
-except Exception as error:  # The runner's refusal reaches Python through the collector.
-    if "need OPENGOTHIC_NAV_FORCE_PACE" not in str(error):
+except RuntimeError as error:  # The runner's refusal reaches nav_rl through the collector.
+    if "need OPENGOTHIC_NAV_FORCE_PACE" not in str(error) or any((task / "drive/v5-runner-none").rglob("episode.json")):
         raise
     result["refusal_runner"] = str(error)
 result["hd_main"] = drive("hd-main", main, hd)
