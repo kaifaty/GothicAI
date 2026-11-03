@@ -1127,7 +1127,7 @@ bool CollisionWorld::VirtualCharacter::diagnostics(CharacterVirtualDiagnostics& 
 
 CollisionWorld::CharacterMoveResult CollisionWorld::VirtualCharacter::move(
     const Tempest::Vec3& displacement, uint64_t dt, float stepHeight, float maxSlope, float mass, Npc* culprit,
-    bool limitStairAdvance) {
+    bool limitStairAdvance, bool standing) {
   const auto started = std::chrono::steady_clock::now();
   auto& state = *impl;
   auto& character = *state.character;
@@ -1215,7 +1215,10 @@ CollisionWorld::CharacterMoveResult CollisionWorld::VirtualCharacter::move(
     if(onGround)
       velocity += groundVelocity;
     auto gravityStep = JPH::Vec3(0,-DynamicWorld::gravityMS*seconds,0);
-    if(displacement==Tempest::Vec3() && onGround) {
+    // A standing body may still pass its stance's root sway (S_1HRUN,
+    // S_BOWRUN): it stands as firmly as one with zero displacement.
+    const bool idle = displacement==Tempest::Vec3() || standing;
+    if(idle && onGround) {
       // A supported idle character has static friction. Feeding vertical
       // gravity to Jolt's frictionless contact solver adds a downhill tangent
       // every frame, even on a walkable slope. Keep only pressure into the
@@ -1253,7 +1256,7 @@ CollisionWorld::CharacterMoveResult CollisionWorld::VirtualCharacter::move(
     const auto desiredVelocity = character.GetLinearVelocity();
     if(diagnostic!=nullptr)
       diagnostic->stairDesiredVelocity = toCentimeters(desiredVelocity);
-    state.idleSupportMotionObserved = inferredGroundVelocity && onGround && displacement==Tempest::Vec3();
+    state.idleSupportMotionObserved = inferredGroundVelocity && onGround && idle;
     character.ExtendedUpdate(seconds,JPH::Vec3(0,-DynamicWorld::gravityMS,0),settings,
                              broadFilter,layerFilter,bodyFilter,shapeFilter,world.allocator);
     state.idleSupportMotionObserved = false;

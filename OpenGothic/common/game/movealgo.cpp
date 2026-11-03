@@ -332,8 +332,11 @@ bool MoveAlgo::implTick(uint64_t dt, MvFlags moveFlg) {
       dp.y = 0.f; // walking root bob cannot detach the controller from its support
     const auto root = dp;
     dp += assist;
+    // A body at rest passes only its stance's root sway: it must not slide
+    // down a walkable slope (the controller's static friction).
+    const bool standing = bs==BS_STAND && assist==Tempest::Vec3() && state!=Slide;
     const auto assistOrigin = npc.position();
-    const bool moved = tickCharacterVirtual(dt,dp);
+    const bool moved = tickCharacterVirtual(dt,dp,standing);
     npc.noteMeleeStep(root,assist,npc.position()-assistOrigin,dt);
     if(impulseGeneration!=movementImpulseGeneration)
       return moved;
@@ -717,7 +720,7 @@ bool MoveAlgo::useCharacterVirtual() {
   return npcVirtualInRange;
   }
 
-bool MoveAlgo::tickCharacterVirtual(uint64_t dt, const Tempest::Vec3& displacement) {
+bool MoveAlgo::tickCharacterVirtual(uint64_t dt, const Tempest::Vec3& displacement, bool standing) {
   const auto origin = npc.position();
   auto& world = npc.world();
   std::vector<Item*> nearbyItems;
@@ -734,7 +737,7 @@ bool MoveAlgo::tickCharacterVirtual(uint64_t dt, const Tempest::Vec3& displaceme
   const auto previousState=flags;
   const bool limitStairAdvance = !npc.isPlayer() && !npc.isHuman();
   const auto moved = npc.physic.moveVirtual(displacement,dt,stepHeight(),maxSlope,npc.physicsMass(),&npc,
-                                           limitStairAdvance,limitStairAdvance);
+                                           limitStairAdvance,limitStairAdvance,standing);
   if(preserveMovementImpulse(impulseGeneration,previousState,"virtual"))
     return true;
   npc.setViewPosition(moved.position);
