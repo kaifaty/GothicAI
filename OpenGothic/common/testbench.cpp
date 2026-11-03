@@ -1479,6 +1479,7 @@ struct Bench {
   float       sightFan  = 700;
   float       camSmooth = 0.12f; // share of the way to the wanted camera per frame; 1: no smoothing
   bool        smValid   = false;
+  bool        cutPending = false; // `cam cut`: the next placement of the camera is a cut (Camera::markCut)
   Vec3        smOrg, smTgt;
   bool        speaking  = false;  // the talk key is held while a recording is said
   uint64_t    speakUntil = 0;
@@ -2383,6 +2384,10 @@ void lookFrom(const Vec3& org, const Vec3& tgt) {
   c->setPosition(org);
   c->setSpin(PointF(-pit,yaw));
   c->setAngles(PointF(-pit,yaw));
+  if(bench.cutPending) {
+    c->markCut();
+    bench.cutPending = false;
+    }
   bench.camPos = org;
   bench.camHeldAngles = PointF(-pit,yaw);
   }
@@ -17194,7 +17199,8 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       bench.camLook   = num(a,5,80);
       }
     else if(m=="cut") {
-      bench.smValid = false;  // the next shot starts where it is, without moving there
+      bench.smValid  = false;  // the next shot starts where it is, without moving there
+      bench.cutPending = true; // and TAA starts its history over there (lookFrom)
       }
     else if(m=="smooth") {
       bench.camSmooth = std::clamp(num(a,2,0.12f),0.01f,1.f);

@@ -87,6 +87,7 @@ Gothic::Gothic() {
     }
 
   opts.aaPreset = CommandLine::inst().aaPreset();
+  opts.taa      = CommandLine::inst().doTaa();
 
   wrldDef = CommandLine::inst().wrldDef;
 
@@ -94,6 +95,10 @@ Gothic::Gothic() {
   iniFile    .reset(new IniFile(u"Gothic.ini"));
   // 75 % where MetalFX upscales it (as sharp as full resolution, +15-20 FPS on an M1 Pro), full resolution elsewhere
   const int vidResDefault = (Resources::hasGraphicsDevice() && Resources::device().properties().spatialUpscale) ? 1 : 0;
+  // temporal AA on by default; [INTERNAL] taa=0 turns it off (with -taa 0 and OPENGOTHIC_TAA, Renderer::setupSettings)
+  if(!iniFile->has("INTERNAL", "taa")) {
+    iniFile->set("INTERNAL", "taa", 1);
+    }
   if(!iniFile->has("INTERNAL", "vidResIndex")) {
     iniFile->set("INTERNAL", "vidResIndex", vidResDefault);
     }

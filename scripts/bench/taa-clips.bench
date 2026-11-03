@@ -1,0 +1,61 @@
+# TAA by the camera (docs/graphics-plan.md, step 1a): the same four clips with OPENGOTHIC_TAA=0 (CMAA2) and =1,
+# judged side by side as clips, not stills (reports/render-features/2026-11-03-taa).
+#   OPENGOTHIC_TAA=0 BENCH_HOST=ryzen scripts/bench.sh scripts/bench/taa-clips.bench
+#   OPENGOTHIC_TAA=1 BENCH_HOST=ryzen scripts/bench.sh scripts/bench/taa-clips.bench
+seed 73013
+cheat god
+set time 12 0
+cadence normal
+overlay off
+ui off
+view full
+cam lift off
+# 1. The market at noon: the hero walks, the camera follows, passers-by around (their trails until step 1b)
+goto NW_CITY_MERCHANT_TRADE_04
+watch player
+walkmode walk
+cam look 120
+cam follow 380 170 160
+wait 10000
+walkto NW_CITY_MERCHANT_PATH_09
+wait 500
+rec taa-market
+wait 7000
+stop
+# 2. The forest road: leaves in the wind, the camera holds still
+cam cut
+goto NW_FOREST_PATH_16
+watch player
+cam look 150
+cam world 500 230 0
+wait 10000
+cam hold
+rec taa-forest
+wait 7000
+stop
+# 3. A slow turn of the camera on the spot by the market roofs: it stands, the hero walks off and it turns after him
+cam cut
+goto NW_CITY_MERCHANT_TRADE_04
+watch player
+walkmode walk
+cam look 450
+cam world 900 260 90
+wait 10000
+cam fixed
+walkto NW_CITY_MERCHANT_SHOP01_FRONT_03
+wait 500
+rec taa-roofs-turn
+wait 7000
+stop
+# 4. The harbour at midnight by the braziers: fire and smoke (translucent, without a mask until step 1c)
+cam cut
+set time 0 0
+goto pos 5391 320 -5822
+watch player
+cam look 120
+cam world 850 300 0
+wait 10000
+cam hold
+rec taa-harbour-night
+wait 7000
+stop

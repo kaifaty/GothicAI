@@ -48,6 +48,10 @@ class Camera final {
 
     void reset();
     void reset(const Npc* pl);
+    // a cut: the next frame does not continue this one (TAA starts its history over); counted, the renderer
+    // compares the count
+    void     markCut() { ++cutCount; }
+    uint32_t cuts() const { return cutCount; }
     // a blow along `dir` (world) nods the view by about `deg` and lets it back within a tenth of a second
     void impact(const Tempest::Vec3& dir, float deg);
 
@@ -189,6 +193,7 @@ class Camera final {
     bool                  inWater       = false;
 
     mutable int           raysCasted = 0;
+    uint32_t              cutCount   = 0;
 
     bool                  aimOn      = false;
     float                 aimBlend   = 0;   // 0..1: from the usual camera to over the shoulder

@@ -193,6 +193,9 @@ void DialogMenu::dialogCamera(Camera& camera) {
 
       camera.setDialogDistance(l);
       camera.setSpin(PointF(0,a));
+      if(camSide!=int(curentIsPl))
+        camera.markCut();
+      camSide = int(curentIsPl);
       }
     }
   }

@@ -147,8 +147,22 @@ void Renderer::setupSettings() {
   // MetalFX spatial upscaling of reduced internal resolution; Lanczos in the tonemapping pass otherwise
   settings.spatialUpscale = Gothic::settingsGetI("INTERNAL","spatialUpscale")!=0 &&
                             Resources::device().properties().spatialUpscale;
+  // temporal AA by the camera (docs/graphics-plan.md, step 1a), on by default: -taa 0 or [INTERNAL] taa=0 turn it
+  // off and bring back CMAA2; OPENGOTHIC_TAA=0|1 (test benches) overrides both
+  {
+    bool taa = Gothic::options().taa && Gothic::settingsGetI("INTERNAL","taa")!=0;
+    if(const char* e = std::getenv("OPENGOTHIC_TAA"))
+      taa = std::string_view(e)!="0";
+    settings.taaEnabled = taa && Resources::device().properties().hasAttachFormat(TextureFormat::RGBA16F);
+    static int logged = -1;
+    if(logged!=int(settings.taaEnabled)) {
+      logged = int(settings.taaEnabled);
+      Log::i("render: taa = ", logged);
+      }
+  }
   // CMAA2 runs at internal resolution, so it needs a same-size target: native or the upscaler input
-  settings.aaEnabled      = (Gothic::options().aaPreset>0) && (settings.vidResIndex==0 || settings.spatialUpscale);
+  settings.aaEnabled      = !settings.taaEnabled && (Gothic::options().aaPreset>0) &&
+                            (settings.vidResIndex==0 || settings.spatialUpscale);
   // bloom from the HDR scene before tonemapping; OPENGOTHIC_BLOOM=0 turns it off
   if(const char* bloom = std::getenv("OPENGOTHIC_BLOOM"))
     settings.bloomEnabled = std::string_view(bloom)!="0";
@@ -241,6 +255,7 @@ void Renderer::togglePathtrace() {
 
 void Renderer::onWorldChanged() {
   sky.lutIsInitialized = false;
+  taa.valid            = false;
   resetSkyFog();
   }
 
@@ -268,6 +283,37 @@ void Renderer::updateCamera(const WorldView& wview, const Camera& camera) {
   clipInfo.x = zNear*zFar;
   clipInfo.y = zNear-zFar;
   clipInfo.z = zFar;
+  }
+
+void Renderer::prepareTaa(WorldView& wview, const Camera& camera) {
+  // the path tracer accumulates its own frames, with a camera that stands still
+  taa.active = settings.taaEnabled && !settings.pathTraceEnabled && !taa.output.isEmpty();
+  if(!taa.active) {
+    taa.valid = false;
+    wview.setJitter(nullptr);
+    return;
+    }
+
+  // without jitter, as the camera gives it; the shadows (Camera::viewShadow*) are made from it too
+  Taa::View cur;
+  cur.proj    = proj;
+  cur.viewLwc = camera.viewLwc();
+  cur.origin  = camera.originLwc();
+  if(camera.cuts()!=taa.cuts || Taa::isCameraJump(cur, taa.prev))
+    taa.valid = false;
+  taa.cuts = camera.cuts();
+
+  const Vec2 px = Taa::jitterPx(taa.frame++);
+  const auto j  = Taa::jitterMatrix(px, uint32_t(zbuffer.w()), uint32_t(zbuffer.h()));
+  if(taa.valid)
+    taa.reproject = Taa::reprojection(cur, taa.prev, j);
+  taa.prev = cur;
+
+  // the main view only: the frustum, SSAO and everything in SceneGlobals; not the shadows, UI or inventory
+  auto m = j; m.mul(proj);        proj        = m;
+  m      = j; m.mul(viewProj);    viewProj    = m;
+  m      = j; m.mul(viewProjLwc); viewProjLwc = m;
+  wview.setJitter(&j);
   }
 
 bool Renderer::requiresRtScene() const {
@@ -390,6 +436,18 @@ void Renderer::resetViewport(Tempest::Size res, Tempest::Size fullRes) {
   for(size_t i=0; i<bloomChain.size(); ++i)
     bloomChain[i] = settings.bloomEnabled ? device.attachment(TextureFormat::R11G11B10UF,
                                                               std::max(w>>(i+1),1u), std::max(h>>(i+1),1u)) : Attachment();
+
+  // TAA: the frame resolved with the history is written into `output`, which then swaps with sceneLinear
+  if(settings.taaEnabled) {
+    taa.output     = device.attachment(TextureFormat::R11G11B10UF,w,h);
+    taa.history[0] = device.attachment(TextureFormat::RGBA16F,w,h);
+    taa.history[1] = device.attachment(TextureFormat::RGBA16F,w,h);
+    } else {
+    taa.output     = Attachment();
+    taa.history[0] = Attachment();
+    taa.history[1] = Attachment();
+    }
+  taa.valid = false;
 
   if(settings.aaEnabled) {
     cmaa2.workingEdges               = device.image2d(TextureFormat::R8, (w + 1) / 2, h);
@@ -583,6 +641,7 @@ void Renderer::draw(Attachment& result, Encoder<CommandBuffer>& cmd, uint8_t fId
     draw(result, cmd, fId, *wview, *camera);
     cmd.setFramebuffer({{result, Tempest::Preserve, Tempest::Preserve}});
     } else {
+    taa.valid = false; // a video or no world: the next world frame starts over
     cmd.setFramebuffer({{result, Vec4(), Tempest::Preserve}});
     }
   FrameProfile::Scope uiTiming(FrameProfile::Zone::EncodeUi);
@@ -648,7 +707,10 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   shaders.waitCompiler();
 
   const auto res = internalResolution(result.size());
-  if(res!=zbuffer.size()) {
+  // a switch between TAA and CMAA2 (settings) needs their buffers
+  const bool aaReady  = !settings.aaEnabled  || !cmaa2.workingEdges.isEmpty();
+  const bool taaReady = !settings.taaEnabled || !taa.output.isEmpty();
+  if(res!=zbuffer.size() || !aaReady || !taaReady) {
     resetViewport(res, result.size());
     }
 
@@ -660,6 +722,7 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
     prepareLightsBvh(cmd, wview);
 
   updateCamera(wview, camera);
+  prepareTaa(wview, camera);
 
   static bool updFr = true;
   if(updFr){
@@ -786,6 +849,8 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
     drawUnderwater(cmd, wview);
     }
 
+  if(taa.active)
+    drawTaa(cmd);
   drawBloom(cmd);
 
   auto& tonemapTarget = upscale.input.isEmpty() ? result : upscale.input;
@@ -928,6 +993,33 @@ void Renderer::drawCMAA2(Tempest::Attachment& result, Tempest::Encoder<Tempest::
   cmd.setPushData(&p, sizeof(p));
   cmd.setPipeline(shaders.cmaa2DeferredColorApply2x2);
   cmd.drawIndirect(cmaa2.indirectBuffer, 3*sizeof(uint32_t));
+  }
+
+void Renderer::drawTaa(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
+  // In linear HDR after the translucent and underwater passes, before bloom (shader/antialiasing/taa_resolve.frag)
+  struct Push {
+    Matrix4x4 reproject;
+    float     alpha = 0.1f; // the share of the new frame
+    uint32_t  reset = 0;    // no history: the frame as it is
+    } push;
+  push.reproject = taa.reproject;
+  push.reset     = taa.valid ? 0 : 1;
+
+  auto& next = taa.history[taa.cur];
+  auto& prev = taa.history[taa.cur^1];
+  cmd.setDebugMarker("TAA");
+  cmd.setFramebuffer({{next, Tempest::Discard, Tempest::Preserve}, {taa.output, Tempest::Discard, Tempest::Preserve}});
+  cmd.setBinding(0, sceneLinear, Sampler::nearest(ClampMode::ClampToEdge));
+  cmd.setBinding(1, zbuffer,     Sampler::nearest(ClampMode::ClampToEdge));
+  cmd.setBinding(2, prev,        Sampler::bilinear(ClampMode::ClampToEdge));
+  cmd.setPushData(push);
+  cmd.setPipeline(shaders.taaResolve);
+  cmd.draw(nullptr, 0, 3);
+
+  // bloom and tonemapping go on from the resolved frame
+  std::swap(sceneLinear, taa.output);
+  taa.cur  ^= 1;
+  taa.valid = true;
   }
 
 void Renderer::drawUpscale(Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
