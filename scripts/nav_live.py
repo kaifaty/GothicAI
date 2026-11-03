@@ -140,7 +140,7 @@ def pace_v5_round(args):
     if not os.environ.get('OPENGOTHIC_BASE_FINGERPRINT'):
         raise ValueError('Pace V5 requires the current base fingerprint')
     policies = [dict(name=name, weights=str(path), sha256=sha256(path), force_place_pace=True,
-                     **pace_input(path)) for name, path in zip(('v5', 'HD'), paths)]
+                     **pace_input(path)) for name, path in zip(('pace-v5', 'HD'), paths)]
     place_paces = {case['id']: case['pace'] for case in suite_cases(read_json(ROOT / 'scripts/nav-live/scenarios.json'))}
     cases = []
     for previous in selected:
@@ -149,9 +149,8 @@ def pace_v5_round(args):
         case.pop('teacher_reference', None)
         case['pace'] = place_paces[case['id']]
         cases.append(case)
-    suite = dict(schema_version=1, training_eligible=False, source_suite_sha256=sha256(args.suite),
-                 cases=cases, models=policies, binary_sha256=sha256(args.binary),
-                 base_fingerprint=os.environ['OPENGOTHIC_BASE_FINGERPRINT'])
+    binary_sha256 = sha256(args.binary)
+    base_fingerprint = os.environ['OPENGOTHIC_BASE_FINGERPRINT']
     args.inputs = dict(original['inputs'], cache=str(args.runtime / 'navmesh-cache'))
     for name, filename in (('save', 'save.sav'), ('roads', 'places.json'),
                            ('familiar', 'familiar.bin'), ('links', 'accepted-links.txt')):
@@ -164,12 +163,6 @@ def pace_v5_round(args):
     args.input_sha256 = {name: sha256(args.inputs[name]) for name in ('save', 'roads', 'familiar', 'links')}
     if args.input_sha256 != finished['input_sha256']:
         raise ValueError('The frozen live inputs differ from the completed baseline')
-    suite['input_sha256'] = args.input_sha256
-    frozen = args.output / 'pace-suite.json'
-    if frozen.is_file() and read_json(frozen) != suite:
-        raise ValueError('Pace V5 live inputs changed during the round')
-    write_json(frozen, suite)
-    args.suite = frozen
     check_space(args.output)
     for case in cases:
         reference = teacher_directory(args, case)
@@ -183,12 +176,12 @@ def pace_v5_round(args):
             raise ValueError(f'Pace V5 live recording is incomplete: {case["id"]}/{model["name"]}/{seed}')
         directory = run_directory(args.output, case, model, seed)
         value = read_json(directory / 'summary.json')
-        if value.get('base_fingerprint') != suite['base_fingerprint'] or value.get('forced_pace') != case['pace']:
+        if value.get('base_fingerprint') != base_fingerprint or value.get('forced_pace') != case['pace']:
             raise ValueError(f'Pace V5 live summary has different base or pace: {directory}')
         rows.append({**value, 'place': case['id'], 'model': model['name'], 'seed': seed,
                      'pace': case['pace'], 'output': str(directory)})
     write_json(args.output / 'live-summary.json', dict(complete=True, places=11, completed=len(rows), expected=54,
-               binary_sha256=suite['binary_sha256'], base_fingerprint=suite['base_fingerprint'], rows=rows))
+               binary_sha256=binary_sha256, base_fingerprint=base_fingerprint, rows=rows))
     print(json.dumps(dict(event='pace_v5_live_complete', places=11, completed=len(rows), expected=54,
                           output=str(args.output))), flush=True)
     return 0

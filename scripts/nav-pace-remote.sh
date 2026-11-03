@@ -90,7 +90,7 @@ HASH
     drive) resources=(--class batch --threads 12 --cpu-quota 1200% --mem 14G --max 2h) ;;
     live) resources=(--class quick --threads 12 --cpu-quota 1200% --mem 10G --gpu-mem 3G --display --display-shared --max 59m) ;;
     teacher) resources=(--class batch --threads 12 --cpu-quota 1200% --mem 16G --max 2h) ;;
-    train-*) resources=(--class batch --threads 12 --cpu-quota 1200% --mem 16G --gpu-mem 4G --max 2h) ;;
+    train-*) resources=(--class batch --threads 12 --cpu-quota 1200% --mem 14G --gpu-mem 4G --max 2h) ;;
     parity) resources=(--class quick --threads 6 --cpu-quota 600% --mem 8G --gpu-mem 2G --max 30m) ;;
     compare-*) resources=(--class batch --threads 24 --cpu-quota 2400% --mem 14G --max 2h) ;;
     live-v5) resources=(--class batch --threads 12 --cpu-quota 1200% --mem 12G --gpu-mem 4G --display --display-shared --max 2h) ;;
@@ -267,48 +267,6 @@ COMPARE
   exit
 fi
 
-if [[ "$stage" == live-v5 ]]; then
-  [[ -f "$archive/comparison.json" ]] || stop 'missing complete comparison and gate'
-  "$python" -B -I - "$archive/comparison.json" <<'GATE'
-import json, sys
-assert json.load(open(sys.argv[1]))["gate_passed"] is True, "Pace V5 comparison gate did not pass"
-GATE
-  game_environment
-  export XDG_RUNTIME_DIR="/run/user/$(id -u)" ALSOFT_DRIVERS=null TEMPEST_BACKGROUND=1 RYZEN_BENCH=1
-  export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
-  desktop_found=0
-  for auth in "$XDG_RUNTIME_DIR"/.mutter-Xwaylandauth.* "$HOME/.Xauthority"; do
-    [[ -r "$auth" ]] || continue
-    for socket in /tmp/.X11-unix/X*; do
-      [[ -S "$socket" ]] || continue
-      if DISPLAY=":${socket##*/X}" XAUTHORITY="$auth" xdpyinfo >/dev/null 2>&1; then
-        export DISPLAY=":${socket##*/X}" XAUTHORITY="$auth"
-        desktop_found=1
-        break 2
-      fi
-    done
-  done
-  [[ "$desktop_found" == 1 ]] || stop 'no accessible Xwayland desktop'
-  export VK_DRIVER_FILES=/usr/share/vulkan/icd.d/nvidia_icd.json VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json
-  slot="${GQ_DISPLAY_SLOT:-0}"
-  export TEMPEST_WINDOW_POS="$((100+(10#$slot % 2)*700)),$((100+(10#$slot / 2)*460))"
-  mkdir -p "$task/navmesh-cache"
-  cp -n /mnt/shared/gothic-ai/archive/nav-dagger3-20261030/hd-measure-cache/ordinary/*.navmesh "$task/navmesh-cache/"
-  export NAVLIVE_DEADLINE="$(( $(date +%s) + 6900 ))"
-  suite="$("$python" -B -I - <<'LIVE_SUITE'
-import json
-from pathlib import Path
-root = Path('/mnt/shared/gothic-ai/nav-live/baseline')
-value = json.loads((root / 'complete.json').read_text())
-print(value['suite_path'])
-LIVE_SUITE
-)"
-  "$python" -X faulthandler -B -I scripts/nav_live.py pace-v5 \
-    --suite "$suite" \
-    --runtime "$task" --output "$archive/live" --weights "$NAV_PACE_WEIGHTS,$hd/policy.navbc"
-  exit
-fi
-
 if [[ "$stage" == teacher ]]; then
   "$python" -X faulthandler -B -I scripts/nav_pace_teacher.py --output "$archive/teacher/teacher-pace.json" \
     --workers 12 --corpus v4 "$v4" "$v4/manifest.json" --corpus v5 "$v5" "$source/$v5_compact"
@@ -358,8 +316,16 @@ PREPARE
   exit
 fi
 
-if [[ "$stage" == live ]]; then
-  build "$source/OpenGothic" "$build_dir" Gothic2Notr
+if [[ "$stage" == live || "$stage" == live-v5 ]]; then
+  if [[ "$stage" == live-v5 ]]; then
+    [[ -f "$archive/comparison.json" ]] || stop 'missing complete comparison and gate'
+    "$python" -B -I - "$archive/comparison.json" <<'GATE'
+import json, sys
+assert json.load(open(sys.argv[1]))["gate_passed"] is True, "Pace V5 comparison gate did not pass"
+GATE
+  else
+    build "$source/OpenGothic" "$build_dir" Gothic2Notr
+  fi
   game_environment
   # Windowed game on the admitted gq display slot, as in scripts/nav-live.sh.
   export XDG_RUNTIME_DIR="/run/user/$(id -u)"
@@ -382,8 +348,24 @@ if [[ "$stage" == live ]]; then
   export ALSOFT_DRIVERS=null TEMPEST_BACKGROUND=1 RYZEN_BENCH=1
   slot="${GQ_DISPLAY_SLOT:-0}"
   export TEMPEST_WINDOW_POS="$((100+(10#$slot % 2)*700)),$((100+(10#$slot / 2)*460))"
-  mkdir -p "$task/live-navmesh"
-  cp -n /mnt/shared/gothic-ai/archive/nav-dagger3-20261030/hd-measure-cache/ordinary/*.navmesh "$task/live-navmesh/"
+  live_cache="$task/live-navmesh"
+  if [[ "$stage" == live-v5 ]]; then live_cache="$task/navmesh-cache"; fi
+  mkdir -p "$live_cache"
+  cp -n /mnt/shared/gothic-ai/archive/nav-dagger3-20261030/hd-measure-cache/ordinary/*.navmesh "$live_cache/"
+  if [[ "$stage" == live-v5 ]]; then
+    export NAVLIVE_DEADLINE="$(( $(date +%s) + 6900 ))"
+    suite="$("$python" -B -I - <<'LIVE_SUITE'
+import json
+from pathlib import Path
+root = Path('/mnt/shared/gothic-ai/nav-live/baseline')
+value = json.loads((root / 'complete.json').read_text())
+print(value['suite_path'])
+LIVE_SUITE
+)"
+    "$python" -X faulthandler -B -I scripts/nav_live.py pace-v5 --suite "$suite" \
+      --runtime "$task" --output "$archive/live" --weights "$NAV_PACE_WEIGHTS,$hd/policy.navbc"
+    exit
+  fi
   "$python" -X faulthandler -B -I - "$task" "$archive" "$build_dir/opengothic/Gothic2Notr" <<'LIVE'
 import json
 from pathlib import Path
