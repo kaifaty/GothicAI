@@ -199,6 +199,8 @@ Pure `FightAlgo` resolver получает числовое/boolean состоя
 
 Сборка: `cmake --build OpenGothic/build --target gothic-body-watch-test`. Запуск из корня репозитория: `OpenGothic/build/opengothic/gothic-body-watch-test -g "$GOTHIC_DIR" -g2 -devmode --scenario "$PWD/scripts/bench/body-api.bench"`. Нужны игровые assets; сохранение не требуется. На Ryzen сборка и запуск идут через `scripts/gq`.
 
+Блок реакций melee AI требует `OPENGOTHIC_CONTENT=<content-staging/anim-strikes>`. Без клипов `T_1HDASHB`, `T_1HRIPOSTE` или `T_RIPOSTEVICTIM` он пишет `melee AI fixture skipped: needs OPENGOTHIC_CONTENT with anim-strikes` и пропускается; остальные фазы теста выполняются.
+
 ## Запуск на dev-ubuntu
 
 Отдельный mutable runtime: `~/gothic-ai/body-api/source`, `build`, `runs`. Assets/save и baseline этапов 1–3 используются из архивов. Mac выполняет только SSH orchestration.

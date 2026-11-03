@@ -49,7 +49,7 @@ def speech(seconds: float = 1.0) -> bytes:
 
 
 @asynccontextmanager
-async def fake_asr(text: str = "Дай мне зелье"):
+async def fake_asr(text: str = "Дай мне зелье", laughing: float | None = None):
     """ASR service stand-in: a partial per audio chunk, then `text` as the final."""
     utterances: list[int] = []
 
@@ -67,7 +67,9 @@ async def fake_asr(text: str = "Дай мне зелье"):
                 size = 0
             elif msg["type"] == "end":
                 utterances.append(size)
-                await ws.send(json.dumps({"type": "final", "text": text, "provider": "fake"}))
+                await ws.send(json.dumps({
+                    "type": "final", "text": text, "provider": "fake", "laughing": laughing
+                }))
 
     async with serve(handler, "127.0.0.1", 0) as server:
         port = server.sockets[0].getsockname()[1]
@@ -141,6 +143,71 @@ async def test_laughter_is_said_as_a_laugh_not_as_words():
         assert fake.transcripts == [LAUGH]
         assert llm.calls[-1][1][-1].content == LAUGH
         assert (entries[0]["text"], entries[0]["heard"]) == (LAUGH, "Ха-ха-ха.")
+
+
+@pytest.mark.parametrize(
+    ("text", "laughing", "expected"),
+    [
+        ("Ха-ха-ха.", 0.1, LAUGH),
+        ("Ха-ха-ха.", 0.99, LAUGH),
+        ("", 0.9, LAUGH),
+        ("Ха-ха, ну ты лошара.", 0.987, "(смеясь) Ха-ха, ну ты лошара."),
+        ("Привет.", 0.9, "(смеясь) Привет."),
+        ("Привет.", 0.89, "Привет."),
+        ("Привет.", None, "Привет."),
+        ("", 0.89, None),
+        ("", None, None),
+    ],
+)
+async def test_voice_uses_laughing_score_and_keeps_the_recognized_text_in_details(
+    text, laughing, expected
+):
+    fake = FakeGame()
+    heard: list[tuple] = []
+    async with fake_asr(text, laughing) as (url, _), connected(fake) as link:
+        asr = AsrClient(url)
+        voice = VoiceInput(link, lambda *args: heard.append(args), FakeSource(speech()), asr)
+        voice.start(XARDAS)
+        voice.stop(recognize=True)
+        if expected is None:
+            await _until(lambda: fake.statuses[-1:] == ["notice"])
+            assert heard == []
+            assert fake.received[-1]["detail"] == "Не расслышал. Удерживайте T, пока говорите"
+        else:
+            await _until(lambda: len(heard) == 1)
+            phrase, focus, details = heard[0]
+            assert (phrase, focus) == (expected, XARDAS)
+            if laughing is None:
+                assert "laughing" not in details
+            else:
+                assert details["laughing"] == round(laughing, 2)
+            if expected != text:
+                assert details["heard"] == text
+            else:
+                assert "heard" not in details
+        await asr.aclose()
+
+
+async def test_words_spoken_with_laughter_reach_talk_hear_with_parentheses():
+    fake = FakeGame()
+    llm = FakeBackend("Очень смешно.", delay=0)
+    entries: list[dict] = []
+    async with fake_asr("Ну ты лошара.", 0.98) as (url, _), connected(fake) as link:
+        journal = Journal(entries.append)
+        dialogue = DialogueManager(link, llm, PersonaProvider(None), journal=journal)
+        talk = TalkDesk(link, dialogue)
+        asr = AsrClient(url)
+        voice = VoiceInput(link, talk.hear, FakeSource(speech()), asr, journal=journal)
+        await fake.roster(XARDAS_NEAR)
+        voice.start(XARDAS)
+        voice.stop(recognize=True)
+        await _until(lambda: fake.said == ["Очень смешно."])
+
+        assert fake.transcripts == ["(смеясь) Ну ты лошара."]
+        assert llm.calls[-1][1][-1].content == "(смеясь) Ну ты лошара."
+        assert entries[0]["heard"] == "Ну ты лошара."
+        assert entries[0]["laughing"] == 0.98
+        await asr.aclose()
 
 
 async def test_short_tap_is_cancelled_without_recognition():
@@ -257,7 +324,8 @@ async def test_asr_restarts_with_the_same_hints_and_recording():
         hints.append("Декстер")
         pcm = speech()
         await session.feed(pcm)
-        assert (await session.finish()).text == "Привет"
+        result = await session.finish()
+        assert result.text == "Привет" and result.laughing is None
         assert len(starts) == 2
         assert starts[0] == starts[1]
         assert starts[0]["hints"] == ["Ксардас", "Ксардаса"]

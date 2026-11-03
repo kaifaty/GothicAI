@@ -641,6 +641,15 @@ struct Bench {
     };
   std::optional<DodgeArm> dodgeArm;
 
+  // Respond to an actual native AI charge, leaving its decision and RNG untouched.
+  struct MeleeAiResponse {
+    Npc* npc = nullptr;
+    Npc* attacker = nullptr;
+    bool parry = false;
+    uint64_t until = 0;
+    };
+  std::optional<MeleeAiResponse> meleeAiResponse;
+
   CamMode     cam       = C_Game;
   float       camDist   = 220;
   float       camHeight = 40;
@@ -7656,6 +7665,34 @@ void meleeDodgeFields(World& world) {
   say("dodge " + symName(world,arm.npc) + " " + std::string(MeleeDodge::name(arm.dir)) + " before the blow of " +
       symName(world,arm.attacker) + ", its contact in " + std::to_string(*contact) + " ms: " +
       (ok ? "started" : "not started"));
+  }
+
+void meleeAiResponseFields(World& world) {
+  if(!bench.meleeAiResponse)
+    return;
+  const auto arm = *bench.meleeAiResponse;
+  if(world.tickCount()>arm.until) {
+    say("melee AI response: no charged contact of " + symName(world,arm.attacker) + " came in time");
+    bench.meleeAiResponse.reset();
+    return;
+    }
+  if(!arm.attacker->isMeleeChargeReleasing())
+    return;
+  const auto contact = arm.attacker->nextMeleeContactMs();
+  if(!contact || *contact>120)
+    return;
+  bench.meleeAiResponse.reset();
+  if(arm.parry) {
+    arm.npc->setDirection(arm.attacker->position()-arm.npc->position());
+    arm.npc->updateTransform();
+    }
+  const bool started = arm.parry ? arm.npc->blockSword() : arm.npc->meleeDodge(MeleeDodge::Direction::Left);
+  const std::string response = arm.parry ? "parry" : "dodge";
+  say("melee AI response " + response + " before the charged contact of " + symName(world,arm.attacker) +
+      " in " + std::to_string(*contact) + " ms: " + (started ? "started" : "refused"));
+  TestBench::bodyEvent(*arm.npc,arm.attacker,"ai_charge_response",world.tickCount(),
+    "\"response\":"+jsonStr(response)+",\"contact_in_ms\":"+std::to_string(*contact)+
+    ",\"started\":"+(started ? "true" : "false"));
   }
 
 void placedItemsFields(World& world,Npc& player,PlayerControl& ctrl) {
@@ -15496,12 +15533,14 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       Gothic::settingsSetI("GAME","USEGOTHIC1CONTROLS",a[2]=="classic");
       say("melee shadow controls " + a[2]);
       }
-    else if(a.size()==3 && a[1]=="bandit") {
-      // melee-shadow bandit 1h|2h|none: the fixture's bandit takes the stock one- or two-hander in hand, or puts
+    else if((a.size()==3 || a.size()==4) && a[1]=="bandit") {
+      // melee-shadow bandit 1h|2h|none [npc]: the fixture's bandit takes the stock one- or two-hander in hand, or puts
       // his away (a clear gap between a blade and his body, no blade of his in between)
       if(bench.meleeShadowActors.size()!=3) {arenaAbort("melee shadow setup is required");return;}
       if(a[2]!="1h" && a[2]!="2h" && a[2]!="none") {arenaAbort("melee shadow bandit expects 1h, 2h or none");return;}
-      auto& npc=*bench.meleeShadowActors[2];
+      auto* actor=a.size()==4 ? findNpc(w,pl,a[3]) : bench.meleeShadowActors[2];
+      if(actor==nullptr) {arenaAbort("melee shadow bandit is absent");return;}
+      auto& npc=*actor;
       if(a[2]=="none") {npc.closeWeapon(true);return;}
       const auto symbol=w.script().findSymbolIndex(a[2]=="1h"?"ITMW_1H_COMMON_01":"ITMW_2H_BAU_AXE");
       if(symbol==size_t(-1)) {arenaAbort("melee shadow bandit weapon is absent");return;}
@@ -17027,10 +17066,9 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     say(pl.bowDump());
     }
   else if(c=="stats") {
-    // stats [npc <npc>] [str <n>] [dex <n>] [bow <n>] [cbow <n>] [sneak <n>] [hp <n>] [hpmax <n>] [talent auto|0|1|2]:
+    // stats [npc <npc>] [str <n>] [dex <n>] [1h <n>] [2h <n>] [bow <n>] [cbow <n>] [sneak <n>] [hp <n>] [hpmax <n>] [talent auto|0|1|2]:
     // the hero's (an npc's) strength, dexterity, hit chances (the skill of the manual aim), hit points;
-    // talent: the animations of the trained (G2 sets level 1 at 30%, 2 at 60%: _BOWT1, _BOWT2), auto as
-    // the hit chances say
+    // talent: archery animations, plus melee weapons explicitly named in this command; auto follows hit chances
     Npc*   np = &pl;
     size_t i0 = 1;
     if(a.size()>1 && a[1]=="npc") {
@@ -17044,6 +17082,11 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     Npc&   n    = *np;
     auto&  h    = n.handle();
     bool   more = &n!=&pl;
+    bool oneHand = false, twoHand = false;
+    for(size_t i=i0; i+1<a.size(); i+=2) {
+      oneHand |= a[i]=="1h";
+      twoHand |= a[i]=="2h";
+      }
     for(size_t i=i0; i+1<a.size(); i+=2) {
       if(a[i]=="talent") {
         auto level = [&](int32_t chance) {
@@ -17051,6 +17094,10 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
             return chance>=60 ? 2 : (chance>=30 ? 1 : 0);
           return int(num(a,i+1,0));
           };
+        if(oneHand)
+          n.setTalentSkill(TALENT_1H,level(h.hitchance[TALENT_1H]));
+        if(twoHand)
+          n.setTalentSkill(TALENT_2H,level(h.hitchance[TALENT_2H]));
         n.setTalentSkill(TALENT_BOW,     level(h.hitchance[TALENT_BOW]));
         n.setTalentSkill(TALENT_CROSSBOW,level(h.hitchance[TALENT_CROSSBOW]));
         more = true;
@@ -17061,6 +17108,10 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
         h.attribute[ATR_STRENGTH] = v;
       else if(a[i]=="dex")
         h.attribute[ATR_DEXTERITY] = v;
+      else if(a[i]=="1h")
+        h.hitchance[TALENT_1H] = v;
+      else if(a[i]=="2h")
+        h.hitchance[TALENT_2H] = v;
       else if(a[i]=="bow")
         h.hitchance[TALENT_BOW] = v;
       else if(a[i]=="cbow")
@@ -17080,8 +17131,9 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     if(more) {
       // whose, the reload as long as the animation is (the trained ones' is shorter), the hit points
       const bool cbow = wp!=nullptr && wp->isCrossbow();
-      std::snprintf(buf,sizeof(buf),"stats of %s: talent bow %d cbow %d, reload %.0f ms, hp %d of %d, point protection %d",
-                    symName(w,&n).c_str(),n.talentSkill(TALENT_BOW),n.talentSkill(TALENT_CROSSBOW),
+      std::snprintf(buf,sizeof(buf),"stats of %s: 1h %d (talent %d), 2h %d (talent %d), talent bow %d cbow %d, reload %.0f ms, hp %d of %d, point protection %d",
+                    symName(w,&n).c_str(),n.hitChance(TALENT_1H),n.talentSkill(TALENT_1H),
+                    n.hitChance(TALENT_2H),n.talentSkill(TALENT_2H),n.talentSkill(TALENT_BOW),n.talentSkill(TALENT_CROSSBOW),
                     double(n.animTime(Archery::reloadAnim(cbow))),n.attribute(ATR_HITPOINTS),n.attribute(ATR_HITPOINTSMAX),
                     n.protection(PROT_POINT));
       say(buf);
@@ -18176,6 +18228,15 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     const bool ok = n->meleeDodge(dir);
     say("dodge " + symName(w,n) + " " + std::string(MeleeDodge::name(dir)) + (ok ? ": started" : ": not started"));
     }
+  else if(c=="melee-ai-response") {
+    // melee-ai-response dodge|parry <attacker>: respond to a real charged release within 45 seconds.
+    auto* attacker = a.size()>2 ? findNpc(w,pl,a[2]) : nullptr;
+    if(a.size()!=3 || (a[1]!="dodge" && a[1]!="parry") || !attacker || attacker==&pl) {
+      arenaAbort("melee AI response expects dodge|parry attacker");return;
+      }
+    bench.meleeAiResponse = Bench::MeleeAiResponse{&pl,attacker,a[1]=="parry",w.tickCount()+45000};
+    say("melee AI response " + a[1] + " armed against " + symName(w,attacker));
+    }
   else if(c=="clear") {
     // clear [radius]: the npcs around the hero leave the world (rats, wolves that would join in), not the
     // watched one
@@ -18207,6 +18268,8 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
         bench.downOther = nullptr;
       if(bench.dodgeArm && (bench.dodgeArm->npc==n || bench.dodgeArm->attacker==n))
         bench.dodgeArm.reset();
+      if(bench.meleeAiResponse && (bench.meleeAiResponse->npc==n || bench.meleeAiResponse->attacker==n))
+        bench.meleeAiResponse.reset();
       w.removeNpc(*n);
       }
     say(out);
@@ -20654,6 +20717,8 @@ void TestBench::bodyEvent(const Npc& actor, const Npc* target, std::string_view 
   }
 
 void TestBench::bodyForget(const Npc* npc) {
+  if(bodyTraceAlive && bench.meleeAiResponse &&
+     (bench.meleeAiResponse->npc==npc || bench.meleeAiResponse->attacker==npc)) bench.meleeAiResponse.reset();
   if(bodyTraceAlive && (bench.stunDrift.target==npc || bench.stunDrift.attacker==npc)) bench.stunDrift={};
   if(bodyTraceAlive) {
     if(bench.monsterCharacterRoute.npc==npc)bench.monsterCharacterRoute.npc=nullptr;
@@ -21168,6 +21233,7 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
     }
 
   meleeDodgeFields(*world);
+  meleeAiResponseFields(*world);
   placedItemsFields(*world,*player,ctrl);
   movableFields(*world);
   ownMeshFields(*world,*player);

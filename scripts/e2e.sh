@@ -593,7 +593,7 @@ if [ "$SCENARIO" = "tts" ] || [ "$SCENARIO" = "svm_lines" ] || [ "$SCENARIO" = "
   TTS_ARGS=(--tts-url "ws://127.0.0.1:$TTS_PORT")
 fi
 if [ "$SCENARIO" = "m3" ] || [ "$SCENARIO" = "m5e" ]; then
-  (cd "$ROOT/asr-service" && exec uv run gothic-asr serve --port "$ASR_PORT" --provider "$ASR" --fallback none) >"$LOG_DIR/asr.log" 2>&1 &
+  (cd "$ROOT/asr-service" && exec uv run gothic-asr serve --port "$ASR_PORT" --provider "$ASR" --fallback none --no-laughter) >"$LOG_DIR/asr.log" 2>&1 &
   ASR_PID=$!
   VOICE_ARGS=(--asr-url "ws://127.0.0.1:$ASR_PORT" --voice-file "$VOICE_FILE")
 fi

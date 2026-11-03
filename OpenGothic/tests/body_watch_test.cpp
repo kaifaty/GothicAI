@@ -892,6 +892,153 @@ class NpcLogicalStateContract final {
     }
 
   public:
+    static void meleeAi(Npc& actor,Npc& target) {
+      if(!actor.hasAnim("T_1HDASHB") || !actor.hasAnim("T_1HRIPOSTE") || !target.hasAnim("T_RIPOSTEVICTIM")) {
+        std::cerr << "melee AI fixture skipped: needs OPENGOTHIC_CONTENT with anim-strikes\n";
+        return;
+        }
+      const std::array<std::pair<const char*,int>,7> settings{{
+        {"melee_dodge",1},{"melee_ai_dodge",1},{"melee_riposte",1},{"melee_ai_riposte",1},
+        {"melee_stagger",1},{"melee_stamina",0},{"melee_parry_ai",0},
+        }};
+      std::array<int,settings.size()> saved{};
+      for(size_t i=0;i<settings.size();++i) {
+        saved[i]=Gothic::settingsGetI("GAME",settings[i].first);
+        Gothic::settingsSetI("GAME",settings[i].first,settings[i].second);
+        }
+      const auto talent=actor.hitChance(TALENT_1H);
+      const auto prepare=[&](float distance=150.f,float yaw=0.f) {
+        for(auto* npc:{&actor,&target}) {
+          npc->endMeleeStun("fixture"); npc->meleeRiposte.reset();
+          npc->meleeRiposteHoldUntil=0; npc->meleeRiposteAiHeld=false; npc->meleeAiRiposteRolls.clear();
+          }
+        actor.meleeAiDodgeTiming.reset(); actor.meleeAiDodgeStreak.reset();
+        BodyController::fixturePrepare(actor,target,distance,yaw);
+        actor.setExternalControl(true);
+        target.setTarget(&actor);
+        target.setDirection(actor.position()-target.position()); target.updateTransform();
+        };
+      const auto queue=[&](FightAlgo::Action first,FightAlgo::Action second=FightAlgo::MV_NULL) {
+        std::vector<uint8_t> bytes;
+        {
+          Tempest::MemWriter writer(bytes);
+          Serialize out(writer);
+          out.setEntry("fight");
+          out.write(int32_t(0));
+          for(int i=0;i<FightAlgo::MV_MAX;++i)
+            out.write(uint8_t(i==0 ? first : i==1 ? second : FightAlgo::MV_NULL));
+          out.write(false);
+          }
+        Tempest::MemReader reader(bytes);
+        Serialize in(reader);
+        expect(in.setEntry("fight"),"native primitive fixture archive entry exists");
+        actor.fghAlgo.load(in);
+        expect(actor.fghAlgo.queuedAction()==first,"native primitive fixture loaded the requested action");
+        };
+      prepare();
+
+      ++cases;
+      actor.handle().hitchance[TALENT_1H]=0;
+      target.startMeleeStun(actor,"posture");
+      expect(target.isMeleeStunned(),"native combo fixture has a stunned target");
+      queue(FightAlgo::MV_ATTACKL,FightAlgo::MV_ATTACKR);
+      actor.implAttack(tickMs);
+      expect(actor.fghAlgo.queuedAction()==FightAlgo::MV_ATTACKR && actor.meleeAiRiposteRolls.empty(),
+             "parry AI off preserves the native combo against a stunned target");
+
+      for(const bool parade:{false,true}) {
+        ++cases;
+        prepare(300,parade ? 0.f : 90.f);
+        if(parade) {
+          expect(actor.blockSword() && actor.bodyStateMasked()==BS_PARADE,"jump-back guard fixture starts in parade");
+          }
+        queue(FightAlgo::MV_JUMPBACK);
+        const auto at=actor.position();
+        actor.implAttack(tickMs);
+        expect(actor.fghAlgo.queuedAction()==FightAlgo::MV_NULL && !actor.isMeleeDodging() &&
+               (actor.position()-at).quadLength()<.001f,
+               "parade and off-focus jump backs are consumed without a dodge or movement");
+        }
+
+      ++cases;
+      prepare(300);
+      Gothic::settingsSetI("GAME","melee_stamina",1);
+      const auto now=actor.world().tickCount();
+      actor.meleeStamina={0,now,now,true,true};
+      queue(FightAlgo::MV_JUMPBACK);
+      actor.implAttack(tickMs);
+      for(unsigned i=0;i<34;++i) advance();
+      actor.visual.pose().stopAllAnim(); actor.setAnim(Npc::Anim::Idle); actor.faiWaitTime=0;
+      actor.implAttack(tickMs);
+      expect(actor.fghAlgo.queuedAction()==FightAlgo::MV_JUMPBACK && actor.meleeAiDodgeTiming &&
+             actor.meleeAiDodgeTiming->began==0 && !actor.isMeleeDodging(),
+             "a no-swing dodge keeps waiting for stamina beyond 1000 ms without spending its primitive");
+      Gothic::settingsSetI("GAME","melee_stamina",0);
+
+      ++cases;
+      prepare();
+      actor.setExternalControl(false);
+      initialWatch(actor,699);
+      expect(acquire(actor)["accepted"].GetBool(),"exhausted P30 fixture acquires its body lease");
+      advance();
+      BodyObservations::sampleAll(true);
+      expect(action(actor,FightAlgo::PolicyAction::JumpBack)["accepted"].GetBool(),"exhausted P30 jump back is accepted");
+      Gothic::settingsSetI("GAME","melee_stamina",1);
+      const auto exhaustedAt=actor.world().tickCount();
+      actor.meleeStamina={0,exhaustedAt,exhaustedAt,true,true};
+      BodyController::tick(actor,tickMs);
+      bool jumpBack=false;
+      for(const auto& layer:actor.visual.pose().combatLayers(actor.world().tickCount()))
+        jumpBack |= MeleeDodge::isJumpBackAnimation(layer.sequence->name);
+      expect(jumpBack && !actor.isMeleeDodging() && !actor.meleeAiDodgeTiming,
+             "P30 at zero stamina starts its original MoveBack immediately");
+      bool consumed=false;
+      const auto events=parse(BodyController::drainJson());
+      for(const auto& event:events["events"].GetArray())
+        if(std::string_view(event["phase"].GetString())=="started")
+          consumed |= event["primitive_consumed"].GetBool();
+      expect(consumed,"P30 MoveBack consumes the primitive when the segment starts");
+      BodyController::reset("melee_ai_fixture");
+      BodyObservations::disable();
+      Gothic::settingsSetI("GAME","melee_stamina",0);
+
+      for(unsigned attempt=0;attempt<3;++attempt) {
+        ++cases;
+        prepare();
+        target.swingSword();
+        const auto swing=target.visual.pose().nextMeleeContact(actor.world().tickCount());
+        expect(swing.has_value(),"P30 dodge fixture has a real visible incoming swing");
+        actor.meleeAiDodgeTiming=Npc::MeleeAiDodgeTiming{&target,swing->sequence,swing->origin,
+            actor.world().tickCount(),swing->contact,0,{MeleeDodge::Kind::Dash,MeleeDodge::Stance::OneHand,MeleeDodge::Direction::Left}};
+        actor.meleeAiDodgeStreak={2,actor.world().tickCount()};
+        actor.implAttack(tickMs,true,FightAlgo::MV_JUMPBACK);
+        expect(actor.isMeleeDodging() && !actor.meleeAiDodgeTiming && actor.meleeAiDodgeStreak.count==2,
+               "P30 jump back starts immediately despite a swing and a full native dodge streak");
+        bool backward=false;
+        for(const auto& layer:actor.visual.pose().combatLayers(actor.world().tickCount()))
+          if(const auto move=MeleeDodge::parseAnimation(layer.sequence->name)) {
+            expect(move->direction==MeleeDodge::Direction::Back,"P30 jump back never inherits a native side dodge");
+            backward=true;
+            }
+        expect(backward,"P30 jump back starts an actual backward dodge animation");
+        }
+
+      ++cases;
+      prepare();
+      actor.handle().hitchance[TALENT_1H]=100;
+      target.startMeleeStun(actor,"posture");
+      expect(target.isMeleeStunned(),"P30 riposte fixture has a stunned target");
+      actor.implAttack(tickMs,true,FightAlgo::MV_ATTACK);
+      expect(actor.isMeleeRiposting() && target.isMeleeRiposteHeld() && !actor.meleeAiRiposteRolls.empty(),
+             "P30 direct attack on a stunned target reaches the real riposte roll and paired execution");
+      prepare(300);
+      actor.handle().hitchance[TALENT_1H]=talent;
+      actor.meleeStamina={};
+      actor.setExternalControl(false);
+      for(size_t i=0;i<settings.size();++i)
+        Gothic::settingsSetI("GAME",settings[i].first,saved[i]);
+      }
+
     static void run(uint32_t id,const std::string& scenario,const std::filesystem::path& output) {
       auto& gothic=Gothic::inst();
       // The earlier body-watch phases own pointers into the session. Retire
@@ -1242,6 +1389,7 @@ int main(int argc,const char** argv) {
     const auto wireStatus=parse(BodyController::statusJson(&a));
     for(const char* field:{"process_policy","segment_remaining_ms","fai_gate","ani_gate","ai_gate","output_gate","interruptible"})
       expect(!wireStatus["actors"][0].HasMember(field),"wire status keeps the strict server schema; boundary diagnostics are opt-in");
+    if(!missingNetwork) NpcLogicalStateContract::meleeAi(a,b);
 #ifdef GOTHIC_BODY_ENGINE_NET
     if(missingNetwork) {
       missingEngineNetwork(a);
@@ -1263,6 +1411,27 @@ int main(int argc,const char** argv) {
     BodyObservations::disable();
     meleeRemoval(b);
     NpcLogicalStateContract::run(gothic.world()->npcId(&b),scenario,output);
+    {
+      const auto statsScenario=output/"melee-stats.bench";
+      {
+        std::ofstream commands(statsScenario);
+        commands << "stats 1h 100 2h 100 talent 2\nwait 33\n"
+                    "stats bow 100 talent 0\nwait 33\n"
+                    "stats 1h 0 talent auto\nwait 33\n"
+                    "stats 2h 0 talent auto\nwait 33\n";
+        }
+      TestBench::configure(statsScenario.string(),output.string(),17);
+      player.clearInput(); player.clearFocus();
+      SimulationStep::finishStep(0,player);
+      const std::array<std::pair<int,int>,4> levels{{{2,2},{2,2},{0,2},{0,0}}};
+      for(const auto& expected:levels) {
+        ++cases;
+        step(player);
+        expect(gothic.player()->talentSkill(TALENT_1H)==expected.first &&
+               gothic.player()->talentSkill(TALENT_2H)==expected.second,
+               "stats changes melee animation levels only for explicitly supplied melee skills");
+        }
+    }
 #ifdef GOTHIC_BODY_ENGINE_NET
       }
 #endif

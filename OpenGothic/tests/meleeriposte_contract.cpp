@@ -45,25 +45,32 @@ int main() {
   auto s = stance;
   s.victimDown = true;
   require(!available(s),"a prone or knocked down victim cannot be riposted");
-  for(float distance:{79.f,80.f,250.f,251.f}) {
-    s = stance;
-    s.distanceCm = distance;
-    require(available(s)==(distance>=80.f && distance<=250.f),"distance includes 80 and 250 cm only");
-    }
-  for(float height:{50.f,51.f,-50.f,-51.f}) {
-    s = stance;
-    s.heightCm = height;
-    require(available(s)==(std::abs(height)<=50.f),"height includes 50 cm in either direction");
-    }
-  for(float angle:{45.f,46.f,-45.f,-46.f}) {
-    s = stance;
-    s.heroAngleDeg = angle;
-    require(available(s)==(std::abs(angle)<=45.f),"hero facing includes 45 degrees in either direction");
-    }
-  for(float angle:{119.f,120.f,-119.f,-120.f}) {
-    s = stance;
-    s.victimAngleDeg = angle;
-    require(available(s)==(std::abs(angle)<120.f),"120 degrees follows the existing backstab path");
+  auto ai = stance;
+  ai.player = false;
+  require(!available(ai),"AI without melee_ai_riposte cannot riposte");
+  ai.aiEnabled = true;
+  require(available(ai),"melee_ai_riposte admits AI in the same standing 1H situation");
+  for(const auto& actor:{stance,ai}) {
+    for(float distance:{79.f,80.f,250.f,251.f}) {
+      s = actor;
+      s.distanceCm = distance;
+      require(available(s)==(distance>=80.f && distance<=250.f),"hero and AI distance includes 80 and 250 cm only");
+      }
+    for(float height:{50.f,51.f,-50.f,-51.f}) {
+      s = actor;
+      s.heightCm = height;
+      require(available(s)==(std::abs(height)<=50.f),"hero and AI height includes 50 cm in either direction");
+      }
+    for(float angle:{45.f,46.f,-45.f,-46.f}) {
+      s = actor;
+      s.heroAngleDeg = angle;
+      require(available(s)==(std::abs(angle)<=45.f),"hero and AI facing includes 45 degrees in either direction");
+      }
+    for(float angle:{119.f,120.f,-119.f,-120.f}) {
+      s = actor;
+      s.victimAngleDeg = angle;
+      require(available(s)==(std::abs(angle)<120.f),"hero and AI 120 degrees follows the existing backstab path");
+      }
     }
 
   const Point hero{10.f,20.f,30.f};

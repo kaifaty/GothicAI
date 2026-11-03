@@ -786,8 +786,16 @@ class Mercy:
             self._scene = None
         return completed
 
+    async def _refund_ransom(self, npc: str, gives: list[Give], branch: str | None) -> None:
+        if not gives or self._loading or self.chronicle.branch != branch:
+            return
+        try:
+            await self.link.story_effect(npc, [g.effect("hero") for g in gives], check=True)
+        except (GameError, TimeoutError) as error:
+            log.warning("%s: surrender ransom could not be returned: %s", npc, error)
+
     async def _accept(self, conv: Conversation, call: ToolCall, snap: Snapshot | None) -> ToolOutcome:
-        npc, now = conv.npc, self._now()
+        npc, now, branch = conv.npc, self._now(), self.chronicle.branch
         hold = self._hold_turns.get(npc)
         try:
             eligible = (npc in self.accepting and self._hero_turn(npc)
@@ -864,12 +872,14 @@ class Mercy:
                     self._end_hold(npc, hold, force=True)
                     if resume := self._resuming.get(npc):
                         await resume
+                await self._refund_ransom(npc, gives, branch)
                 return ToolOutcome(f"Отклонено: {output}", "rejected")
         if npc not in self.accepting:
             if resume := self._resuming.get(npc):
                 await resume
             if hold is not None:
                 await self._resume_hold(hold)
+            await self._refund_ransom(npc, gives, branch)
             return ToolOutcome("Отклонено: герой нарушил паузу боя.", "rejected")
         if hold is not None:
             self._release_hold(npc, hold)

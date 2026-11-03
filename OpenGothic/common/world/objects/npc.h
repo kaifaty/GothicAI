@@ -14,6 +14,7 @@
 #include "game/gamescript.h"
 #include "game/ragdollsave.h"
 #include "game/meleedodge.h"
+#include "game/meleeai.h"
 #include "game/meleeimpact.h"
 #include "game/meleestamina.h"
 #include "game/meleefighter.h"
@@ -340,6 +341,8 @@ class Npc final {
     // Charged forward strike: transient hero-only windup/hold and an ordinary event-driven release.
     bool      beginMeleeRiposte();
     bool      isMeleeRiposting() const;
+    bool      isMeleeRiposteHeld() const;
+    void      endMeleeAiSpecial();
     bool      canMeleeCharge() const;
     bool      beginMeleeCharge();
     void      releaseMeleeCharge();
@@ -1072,7 +1075,8 @@ class Npc final {
       };
     std::optional<Riposte>         meleeRiposte;
     uint64_t                      meleeRiposteHoldUntil = 0;
-    bool                          isMeleeRiposteHeld() const;
+    bool                          meleeRiposteAiHeld = false;
+    bool                          tryMeleeAiRiposte();
     void                          tickMeleeRiposte();
     void                          meleeRiposteBlade();
     float                         meleeRiposteMultiplier(const Npc& target) const;
@@ -1121,6 +1125,38 @@ class Npc final {
     std::string                   meleeStunReason;
     bool                          meleeStunBeat = true; // the second beat of a lost balance is played
     uint64_t                      meleeStunUntil = 0;
+    uint64_t                      meleeStunSerial = 0;
+    struct MeleeAiRiposteRoll final {
+      std::weak_ptr<zenkit::INpc> victim;
+      uint64_t stun = 0;
+      };
+    std::vector<MeleeAiRiposteRoll> meleeAiRiposteRolls;
+    struct MeleeAiDodgeTiming final {
+      const Npc* target = nullptr;
+      const Animation::Sequence* sequence = nullptr;
+      uint64_t origin = 0, began = 0, contact = 0;
+      float errorMs = 0;
+      MeleeDodge::Move move;
+      };
+    std::optional<MeleeAiDodgeTiming> meleeAiDodgeTiming;
+    MeleeAi::DodgeStreak            meleeAiDodgeStreak;
+    MeleeAi::SpecialSlot           meleeAiSpecialSlot; // held by an attacker of this NPC
+    std::weak_ptr<zenkit::INpc>    meleeAiSpecialTarget;
+    MeleeAi::Special               meleeAiSpecial = MeleeAi::Special::None;
+    std::optional<uint64_t>        meleeAiSpecialEnded;
+    uint64_t                      meleeAiChargeHold = 0;
+    float                         meleeAiChargeYaw = 0.f, meleeAiChargeTurn = 0.f;
+    struct MeleeAiBargeMemory final {
+      std::weak_ptr<zenkit::INpc> target;
+      std::optional<uint64_t> guarded, guardedRoll, paradeRoll;
+      const Animation::Sequence* paradeSequence = nullptr;
+      };
+    std::vector<MeleeAiBargeMemory> meleeAiBargeMemory;
+    bool                          tryMeleeAiCharge();
+    bool                          tryMeleeAiBarge();
+    bool                          meleeAiSpecialBusy(std::string_view move);
+    void                          beginMeleeAiSpecial(MeleeAi::Special move);
+    void                          tickMeleeAiSpecial();
     std::optional<uint64_t>        meleeParadeOrigin;
     uint64_t                      meleeParadeEnd = 0;
     bool                          meleeParadeContact = false;

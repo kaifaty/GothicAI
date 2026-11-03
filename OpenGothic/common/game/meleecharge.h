@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-// Pure rules for the hero's charged forward strike, [GAME] melee_charge.
+// Pure rules for the charged forward strike, [GAME] melee_charge.
 namespace MeleeCharge {
   constexpr uint64_t HoldThresholdMs = 200;
   constexpr uint64_t WindupMs        = 400;
@@ -11,6 +11,7 @@ namespace MeleeCharge {
   struct Situation final {
     bool enabled          = true;
     bool player           = false;
+    bool aiEnabled        = false; // [GAME] melee_ai_charge
     bool oneHand          = false;
     bool windupAnimation  = false;
     bool holdAnimation    = false;
