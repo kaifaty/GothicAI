@@ -34,7 +34,7 @@ HEADER.extend(f"{field}_{stage}" for stage in ("end", "warm", "warm_5s") for fie
 STARTUP_KINDS = ("script", "npc", "model", "skeleton", "animation", "texture", "item", "npc_placement")
 STARTUP_FIELDS = ("count", "ms", "inclusive_ms", "bytes", "malloc_bytes", "footprint_bytes", "memory_sampled")
 OWNER_NAMES = ("npc_model_cpu", "model_cpu", "skeleton_cpu", "animation_cpu", "world_source_cpu", "physicmesh_items_cpu",
-               "waynet_cpu", "vob_base_cpu", "vob_objects_cpu", "script_vm_cpu")
+               "waynet_cpu", "vob_objects_cpu", "script_vm_cpu")
 MEMORY_STAGES = ("session_begin", "scripts_vm", "world_data_read", "mesh_chunks_read", "landscape_pack",
                  "landscape_view", "physics_static", "cloth_surfaces", "waynet", "vobs", "movable_vobs",
                  "placed_items", "waynet_index", "world_end", "dialogs", "player_postinit", "scripts_startup")
