@@ -2501,3 +2501,7 @@ LLDB установил причину exit139: `Gothic::~ → GameSession::~ �
 | в | `VLK_497_BUERGERIN#0` | 1320.0075 | `-` → `ZS_STAND_EATING` | (102.00, 2.70, 47.33) → (102.00, 2.70, 47.32) | +6.282 | R |
 
 </details>
+
+### Кэш пайплайнов на диске (пункт 2 исследования оптимизации, 2026-11-03)
+
+Сделано: один `VkPipelineCache` на устройство Vulkan и `MTLBinaryArchive` для render/compute-PSO на Metal. Файлы лежат в `<OPENGOTHIC_BASE_CACHE>/derived/pipelines/` и записываются атомарно при выходе и один раз через 20 с игры. Выключатель — `OPENGOTHIC_PIPELINE_CACHE=0`. На Ryzen (n=5) тёплый кэш даёт первый кадр 1194 → 149 мс и load 6,45 → 5,23 с: загрузка ждала компиляцию 97 compute-пайплайнов. p99 облёта не изменился (run −0,29 мс, fly +0,55 мс). На Mac при тёплом системном кэше Metal архив отдаёт все 150 PSO, но выигрыш около 15 мс, в шуме; главная статья там — SPIRV-Cross, ~0,3 с. Замеры, выбор механизма Metal и открытые вопросы — [pipeline-cache.md](../reports/engine/2026-11-03-streaming-optimisation/pipeline-cache.md).
