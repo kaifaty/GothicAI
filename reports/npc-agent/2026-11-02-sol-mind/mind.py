@@ -133,7 +133,7 @@ def render(state: dict[str, Any], ids: bool) -> str:
 def prepare_state(state: dict[str, Any], situation: str) -> tuple[str, dict[str, list]]:
     changes = {"cooled": [], "cap_dropped": [], "forgotten": []}
     previous_minute = state["minute"]
-    match = re.search(r"(?m)^Время: (день (\d+), (\d{2}):(\d{2}))\s*$", situation)
+    match = re.search(r"(?m)^Время: (день (\d+), (\d{2}):(\d{2}))", situation)
     if match:
         state["time"] = match[1]
         state["minute"] = int(match[2]) * 1440 + int(match[3]) * 60 + int(match[4])
@@ -1211,11 +1211,11 @@ async def selftest() -> None:
     def situation_at(minute):
         day, within_day = divmod(minute, 1440)
         hour, minute = divmod(within_day, 60)
-        return f"Время: день {day}, {hour:02}:{minute:02}"
+        return f"Время: день {day}, {hour:02}:{minute:02}. Ты у точки TEST_WAYPOINT."
 
     state = new_state()
     assert render(state, True) == render(state, False) == EMPTY_MIND
-    previous, changes = prepare_state(state, "Время: день 1, 08:20")
+    previous, changes = prepare_state(state, "Время: день 1, 08:20, утро.")
     assert previous == EMPTY_MIND and state["minute"] == 1940
     parsed = parse_patches(
         "[Голосу]\nVoice note.\n[Правки]\n\n+ было 8: Helped.\n—\n[Скажу] Listen.\n[Скажу] Wait."
