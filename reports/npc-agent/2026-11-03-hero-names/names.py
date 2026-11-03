@@ -38,7 +38,7 @@ def live(turns_path: Path, labels_path: Path) -> dict[str, int]:
             other["npc"].upper() for other in turns
             if other["trace"] == turn["trace"] and abs(other["t"] - turn["t"]) <= 600
         }
-        corrected, replacements = fix_names(turn["phrase"], [cards[npc] for npc in sorted(nearby)], known)
+        corrected, replacements = fix_names(turn["phrase"], [cards[npc] for npc in sorted(nearby) if npc in cards], known)
         label = expected.get(turn["id"])
         allowed: Counter[tuple[str, str]] = Counter()
         if label is not None:
