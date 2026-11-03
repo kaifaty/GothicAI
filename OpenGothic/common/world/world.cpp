@@ -15,6 +15,7 @@
 #include "commandline.h"
 #include "camera.h"
 #include "graphics/visualfx.h"
+#include "graphics/pfx/pfxobjects.h"
 #include "graphics/clothvisual.h"
 #include "world/objects/globalfx.h"
 #include "world/objects/npc.h"
@@ -23,6 +24,8 @@
 #include "world/triggers/abstracttrigger.h"
 #include "world/triggers/cscamera.h"
 #include "game/bodyarena.h"
+#include "game/bodycontroller.h"
+#include "navdemos.h"
 #include "game/globaleffects.h"
 #include "game/serialize.h"
 #include "game/physicssave.h"
@@ -209,8 +212,11 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
     auto probeT = LoadProbe::now();
     if(wviewFut.valid())
       wview = wviewFut.get();
-    if(wview)
+    if(wview) {
       wview->setTextureResidency(residency.get());
+      if(residency && !Gothic::inst().isBenchmarkMode())
+        wview->startVobStreaming(*residency);
+      }
     if(LoadProbe::enabled() && !streamLandscape)
       LoadProbe::mark("landscape_view",probeViewMs,"wait_ms="+std::to_string(LoadProbe::msSince(probeT)));
     loadProgress(60);
@@ -233,6 +239,7 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
     wdynamic->setClothEnabled(Gothic::physicsFlags().cloth);
     wdynamic->setItemWakeEnabled(Gothic::physicsFlags().itemWake);
     wdynamic->setItemDeepestContactEnabled(Gothic::physicsFlags().itemDeepestContact);
+    wdynamic->setRagdollBirthGuardEnabled(Gothic::physicsFlags().ragdollBirthGuard);
     wdynamic->setPhysicsNoiseCallback([this](const PhysicsNoise& noise) { emitPhysicsNoise(noise); });
     for(auto& surface:worldCloth.surfaces)
       if(auto visual=ClothVisual::createSurface(*this,surface.mesh,surface.pins,surface.visual,surface.id,surface.stiffness,surface.linearDamping))
@@ -310,12 +317,12 @@ void World::updateLandscape(const Camera& camera) {
   if(wview)
     wview->prepareLandscapeWork();
   residency->update(npcPlayer->position(),camera.originLwc(),camera.zFar());
+  if(wview)
+    wview->finishLandscapeUpdate();
   if(textureLoadingPending) {
     Resources::finishTextureLoading();
     textureLoadingPending=false;
     }
-  if(wview)
-    wview->finishLandscapeUpdate();
   Resources::updateTextures(residency.get());
   }
 
@@ -365,6 +372,8 @@ void World::load(Serialize &fin) {
   spellFields.clear();
   stuckArrows.clear();
   nextArrowTraceId = 1;
+  blood.clear();
+  nextBloodStainId = 1;
   fin.setContext(this);
   fin.setEntry("worlds/",wname,"/world");
 
@@ -380,9 +389,12 @@ void World::load(Serialize &fin) {
 
   wobj.load(fin);
   npcPlayer = wobj.findHero();
+  bodySweepMinute = -1;
+  loadBodyTraces(fin);
   wdynamic->setTraceTime(traceTime(*this));
   wdynamic->loadMovableVobs(fin);
   loadStuckArrows(fin);
+  loadBloodStains(fin);
   }
 
 void World::save(Serialize &fout) {
@@ -398,6 +410,8 @@ void World::save(Serialize &fout) {
   wdynamic->saveMovableVobs(fout);
   saveStuckArrows(fout);
   wobj.savePlacedItems(fout);
+  saveBodyTraces(fout);
+  saveBloodStains(fout);
   }
 
 uint32_t World::npcId(const Npc *ptr) const {
@@ -478,7 +492,7 @@ bool World::stuckArrowAttachment(size_t index, uint32_t& zenId, Tempest::Matrix4
   return true;
   }
 
-std::vector<World::PhysicsTrace> World::physicsTraces() const {
+std::vector<World::PhysicsTrace> World::physicsTraces(const Tempest::Vec3* viewer, float range) const {
   std::vector<PhysicsTrace> result;
   if(Gothic::physicsFlags().arrowSticking) {
     for(const auto& pin:stuckArrows) {
@@ -522,7 +536,330 @@ std::vector<World::PhysicsTrace> World::physicsTraces() const {
     trace.culprit = item.traceCulprit;
     result.push_back(std::move(trace));
     }
+  if(Gothic::physicsFlags().bodyTraces) {
+    for(size_t i=0;i<wobj.npcCount();++i) {
+      const auto& npc   = wobj.npc(i);
+      const auto& state = npc.bodyTrace();
+      if(state.id==0 || !BodyTraces::isTrace(true,npc.isDead(),npc.isPlayer(),int32_t(npc.guild()),GIL_SEPERATOR_HUM))
+        continue;
+      // The viewer's own range test (npc_view: distance to the trace position) before the
+      // bones and strings: the same rows, built only for bodies the viewer can get.
+      if(viewer!=nullptr && (npc.position()-*viewer).length()>range)
+        continue;
+      PhysicsTrace trace;
+      trace.id          = bodyTraceId(npc);
+      trace.kind        = "body";
+      trace.name        = "тело";
+      trace.position    = npc.position();
+      trace.sightPoints = bodySightPoints(npc);
+      trace.appearedAt  = state.diedAt; // -1: a body of an older save, its age unknown
+      trace.culprit     = state.culprit;
+      if(auto* symbol = script().findSymbol(npc.instanceSymbol()))
+        trace.npc = symbol->name();
+      result.push_back(std::move(trace));
+      }
+    }
+  if(!blood.empty()) {
+    // Evidence stains within 2 m of one another are one trace, named by its oldest stain and
+    // placed at its largest; a group with the pool of a body still in the world is that body.
+    // Grouping runs over every stain, so ids do not depend on the viewer. No culprit: the
+    // engine does not record who bled whom.
+    const auto present = [this](uint32_t id) { return bodyTraceInWorld(id); };
+    for(const auto& group:BloodStains::traceGroups(blood,Gothic::physicsFlags().blood,present)) {
+      const auto& largest = blood[group.largest];
+      if(viewer!=nullptr && (largest.pos-*viewer).length()>range)
+        continue;
+      bool pool = false;
+      for(auto i:group.members)
+        pool |= blood[i].kind==BloodStains::Kind::Pool;
+      PhysicsTrace trace;
+      trace.id         = bloodTraceId(blood[group.oldest].id);
+      trace.kind       = "blood";
+      trace.name       = pool ? "лужа крови" : "кровь";
+      trace.position   = largest.pos;
+      const auto points = BloodStains::sightPoints(largest);
+      for(size_t i=0;i<trace.sightPoints.size();++i)
+        trace.sightPoints[i] = points[i%points.size()];
+      trace.appearedAt = blood[group.freshest].bornAt/BloodStains::MinuteMs;
+      result.push_back(std::move(trace));
+      }
+    }
   return result;
+  }
+
+uint32_t World::addBloodStain(BloodStains::Stain stain) {
+  const auto present = [this](uint32_t id) { return bodyInWorld(id); };
+  return BloodStains::add(blood,nextBloodStainId,stain,time().toInt(),Gothic::physicsFlags().blood,present);
+  }
+
+const std::vector<BloodStains::Stain>& World::bloodStains() const {
+  static const std::vector<BloodStains::Stain> none;
+  return Gothic::physicsFlags().blood ? blood : none;
+  }
+
+bool World::bodyInWorld(uint32_t bodyTraceId) const {
+  if(bodyTraceId==0)
+    return false;
+  for(size_t i=0;i<wobj.npcCount();++i) {
+    const auto& npc = wobj.npc(i);
+    if(npc.bodyTrace().id==bodyTraceId && npc.isDead())
+      return true;
+    }
+  return false;
+  }
+
+bool World::bodyTraceInWorld(uint32_t bodyTraceId) const {
+  // The body is reported as a `body` trace itself (the rule of the body rows above): a beast's
+  // corpse, or any corpse with body_traces=0, is not, and its pool stays a find of its own.
+  if(bodyTraceId==0 || !Gothic::physicsFlags().bodyTraces)
+    return false;
+  for(size_t i=0;i<wobj.npcCount();++i) {
+    const auto& npc = wobj.npc(i);
+    if(npc.bodyTrace().id==bodyTraceId)
+      return BodyTraces::isTrace(true,npc.isDead(),npc.isPlayer(),int32_t(npc.guild()),GIL_SEPERATOR_HUM);
+    }
+  return false;
+  }
+
+std::string World::bloodTraceId(uint32_t stainId) const {
+  return wname+":blood:"+std::to_string(stainId);
+  }
+
+uint32_t World::placeBloodStain(const Tempest::Vec3& near, BloodStains::Kind kind, float radiusCm, uint32_t bodyId) {
+  if(!Gothic::physicsFlags().blood)
+    return 0;
+  const auto ground = wdynamic->landRay(near+Tempest::Vec3(0,100,0),1000);
+  if(!ground.hasCol)
+    return 0;
+  BloodStains::Stain stain;
+  stain.kind     = kind;
+  stain.pos      = ground.v;
+  stain.normal   = ground.n.length()>1e-4f ? Tempest::Vec3::normalize(ground.n) : Tempest::Vec3(0,1,0);
+  stain.radiusCm = std::max(1.f,radiusCm);
+  stain.indoor   = isIndoor(ground.v+Tempest::Vec3(0,50,0));
+  stain.bodyId   = bodyId;
+  switch(ground.mat) {
+    case asset::MaterialGroup::EARTH: stain.surface = BloodStains::Surface::Earth; break;
+    case asset::MaterialGroup::SNOW:  stain.surface = BloodStains::Surface::Snow;  break;
+    default:                          stain.surface = BloodStains::Surface::Hard;  break;
+    }
+  return addBloodStain(stain);
+  }
+
+int64_t World::gameMinute() const {
+  return traceTime(*this);
+  }
+
+std::string World::bodyTraceId(const Npc& body) const {
+  return wname+":body:"+std::to_string(body.bodyTrace().id);
+  }
+
+std::array<Tempest::Vec3,6> World::bodySightPoints(const Npc& body) const {
+  // Head, pelvis, hands and feet of the posed (ragdoll) skeleton, lifted off the ground;
+  // a missing bone falls back to the body's centre height (Npc::mapBone).
+  static const char* bones[] = {"BIP01 HEAD","BIP01 PELVIS","BIP01 L HAND","BIP01 R HAND","BIP01 L FOOT","BIP01 R FOOT"};
+  std::array<Tempest::Vec3,6> points;
+  for(size_t i=0;i<points.size();++i) {
+    points[i]    = body.mapBone(bones[i]);
+    points[i].y += BodyTraces::SightLiftCm;
+    }
+  return points;
+  }
+
+bool World::heroSeesBody(const Npc& hero, const Npc& body) const {
+  // Any direction: the player turns the camera at will. Rays meet the landscape and
+  // objects only, never bodies or people (DynamicWorld::ray).
+  const auto eye = hero.mapHeadBone();
+  for(const auto& point:bodySightPoints(body))
+    if(!wdynamic->ray(eye,point).hasCol)
+      return true;
+  return false;
+  }
+
+bool World::isStoryNpcType(int32_t type) const {
+  if(!storyNpcTypesRead) {
+    storyNpcTypesRead = true;
+    const char* names[] = {"NPCTYPE_MAIN","NPCTYPE_OCMAIN","NPCTYPE_BL_MAIN"};
+    std::array<std::optional<int32_t>,3> symbols;
+    for(size_t i=0;i<symbols.size();++i) {
+      auto* symbol = script().getVm().find_symbol_by_name(names[i]);
+      if(symbol!=nullptr && symbol->type()==zenkit::DaedalusDataType::INT)
+        symbols[i] = symbol->get_int(0);
+      }
+    storyNpcTypes = BodyTraces::storyTypes(symbols);
+    }
+  return BodyTraces::isStoryType(type,storyNpcTypes);
+  }
+
+BodyTraces::Body World::bodyRule(const Npc& body, const Npc* hero) const {
+  BodyTraces::Body rule;
+  rule.enabled      = Gothic::physicsFlags().bodyTraces;
+  rule.dead         = body.isDead();
+  rule.player       = body.isPlayer();
+  rule.clockFrom    = body.bodyTrace().id!=0 ? body.bodyTrace().clockFrom : -1;
+  rule.now          = gameMinute();
+  rule.heroDistance = hero!=nullptr ? (body.position()-hero->position()).length() : 0.f;
+  rule.missionItems = body.inventory().hasMissionItems();
+  rule.dragon       = version().game==2 && body.guild()==GIL_DRAGON;
+  rule.immortal     = body.isImmortal();
+  rule.storyType    = isStoryNpcType(int32_t(body.handlePtr()->type));
+  return rule;
+  }
+
+void World::sweepBodies() {
+  // Once per game minute: bodies, then blood (a pool leaves with its body in the same minute).
+  const auto now = gameMinute();
+  if(now==bodySweepMinute)
+    return;
+  bodySweepMinute = now;
+  sweepBodiesAt(now);
+  sweepBloodStains();
+  }
+
+void World::sweepBloodStains() {
+  const auto present = [this](uint32_t id) { return bodyInWorld(id); };
+  BloodStains::sweep(blood,time().toInt(),Gothic::physicsFlags().blood,present);
+  }
+
+void World::saveBloodStains(Serialize& fout) const {
+  // Written with blood off too while ids were handed out: a later blood=1 must not reuse them.
+  if(blood.empty() && nextBloodStainId==1)
+    return;
+  fout.setEntry("worlds/",wname,"/blood-stains");
+  fout.write(uint32_t(0x31444C42),uint16_t(1),wname,uint32_t(blood.size()),nextBloodStainId);
+  for(const auto& s:blood) {
+    fout.write(s.id,uint8_t(s.kind),uint8_t(s.blood),uint8_t(s.surface),s.indoor,s.variant,
+               s.pos,s.normal,s.dir,s.radiusCm,uint64_t(s.bornAt),s.bodyId);
+    }
+  }
+
+void World::loadBloodStains(Serialize& fin) {
+  // Read with blood off too (bloodStains() and the traces stay empty then): the stains and the
+  // id counter come back when it is turned on again.
+  if(!fin.setEntry("worlds/",wname,"/blood-stains"))
+    return; // an older save has no blood: none
+  try {
+    uint32_t magic=0, count=0, next=0;
+    uint16_t schema=0;
+    std::string worldName;
+    fin.read(magic,schema,worldName,count,next);
+    if(magic!=0x31444C42 || schema!=1 || worldName!=wname || count>BloodStains::Limit) {
+      Tempest::Log::e("blood stains: invalid saved entry, the world starts without blood");
+      return;
+      }
+    const auto finite = [](const Tempest::Vec3& v) { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z); };
+    std::vector<BloodStains::Stain> stains;
+    uint32_t last = 0;
+    for(uint32_t i=0;i<count;++i) {
+      BloodStains::Stain s;
+      uint8_t kind=0, type=0, surface=0;
+      uint64_t born=0;
+      fin.read(s.id,kind,type,surface,s.indoor,s.variant,s.pos,s.normal,s.dir,s.radiusCm,born,s.bodyId);
+      if(s.id==0 || kind>uint8_t(BloodStains::Kind::Smear) || type>uint8_t(BloodStains::Blood::Stone) ||
+         surface>uint8_t(BloodStains::Surface::Snow) || born>uint64_t(INT64_MAX) || !finite(s.pos) ||
+         !finite(s.normal) || !finite(s.dir) || !std::isfinite(s.radiusCm) || s.radiusCm<0)
+        continue;
+      s.kind    = BloodStains::Kind(kind);
+      s.blood   = BloodStains::Blood(type);
+      s.surface = BloodStains::Surface(surface);
+      s.bornAt  = int64_t(born);
+      last      = std::max(last,s.id);
+      stains.push_back(s);
+      }
+    blood            = std::move(stains);
+    nextBloodStainId = std::max(next!=0 ? next : 1u,last+1);
+    }
+  catch(const std::exception& e) {
+    blood.clear();
+    Tempest::Log::e("blood stains load: ",e.what());
+    }
+  }
+
+void World::sweepBodiesAt(int64_t now) {
+  // Rays only for bodies past their lifetime and away from the hero.
+  const Npc* hero = player();
+  // A body that reached ZS_Dead past Npc::onNoHealth (a script's AI_StartState(ZS_Dead)) gets
+  // its record here, as a body of an older save does at loading: whatever the flag says.
+  for(size_t i=0;i<wobj.npcCount();++i) {
+    auto& npc = wobj.npc(i);
+    if(&npc==hero || npc.bodyTrace().id!=0 || !npc.isDead())
+      continue;
+    Npc::BodyTrace trace;
+    trace.id        = allocBodyTraceId();
+    trace.clockFrom = now;
+    npc.setBodyTrace(std::move(trace));
+    }
+  if(!Gothic::physicsFlags().bodyTraces || hero==nullptr)
+    return;
+  // Stands and training hold their actors by pointer: an arena, navigation demos and any
+  // bench but the one that asks for the sweep (body_traces) keep every body.
+  if(BodyArena::enabled() || BodyArena::frozenWorld() || NavDemos::running() ||
+     (TestBench::isActive() && !TestBench::bodySweepAllowed()))
+    return;
+  std::vector<Npc*> gone;
+  for(size_t i=0;i<wobj.npcCount();++i) {
+    auto& npc = wobj.npc(i);
+    if(&npc==hero || !npc.isDead())
+      continue;
+    if(BodyArena::isActor(npc) || NavDemos::fullSimulation(npc) || BodyController::owns(npc))
+      continue;
+    auto rule = bodyRule(npc,hero);
+    if(!BodyTraces::removableUnseen(rule))
+      continue;
+    rule.heroSees = heroSeesBody(*hero,npc);
+    if(BodyTraces::removable(rule))
+      gone.push_back(&npc);
+    }
+  for(auto* npc:gone) {
+    const auto* symbol = script().findSymbol(npc->instanceSymbol());
+    Tempest::Log::i("body traces: ",bodyTraceId(*npc)," (",symbol!=nullptr ? symbol->name() : std::string("?"),
+                    ") leaves the world with its inventory");
+    wobj.removeNpc(*npc);
+    }
+  }
+
+void World::saveBodyTraces(Serialize& fout) const {
+  fout.setEntry("worlds/",wname,"/body-traces");
+  fout.write(uint32_t(0x31535442),uint16_t(1),wname,nextBodyTraceId);
+  }
+
+void World::loadBodyTraces(Serialize& fin) {
+  nextBodyTraceId = 1;
+  if(fin.setEntry("worlds/",wname,"/body-traces")) {
+    try {
+      uint32_t magic=0, next=0;
+      uint16_t schema=0;
+      std::string worldName;
+      fin.read(magic,schema,worldName,next);
+      if(magic==0x31535442 && schema==1 && worldName==wname && next!=0 && next!=uint32_t(-1))
+        nextBodyTraceId = next; else
+        Tempest::Log::e("body traces: invalid saved counter, continuing after the saved bodies");
+      }
+    catch(const std::exception& e) {
+      Tempest::Log::e("body traces load: ",e.what());
+      }
+    }
+  uint32_t last = 0;
+  wobj.forEachStoredNpc([&](Npc& npc) {
+    if(npc.isDead())
+      last = std::max(last,npc.bodyTrace().id);
+    });
+  nextBodyTraceId = std::max(nextBodyTraceId,last+1);
+  // Bodies of a save from before body traces: an identity now, in save order; the age
+  // stays unknown (npc_view age: null) and the three-day lifetime starts at this load.
+  const auto now = gameMinute();
+  size_t legacy = 0;
+  wobj.forEachStoredNpc([&](Npc& npc) {
+    if(!npc.isDead() || npc.bodyTrace().id!=0)
+      return;
+    Npc::BodyTrace trace;
+    trace.id        = nextBodyTraceId++;
+    trace.clockFrom = now;
+    npc.setBodyTrace(std::move(trace));
+    ++legacy;
+    });
+  if(legacy>0)
+    Tempest::Log::i("body traces: ",legacy," bodies of an older save; age unknown, lifetime from now");
   }
 
 void World::updateStuckArrows() {
@@ -818,6 +1155,7 @@ void World::tick(uint64_t dt) {
   wdynamic->setClothEnabled(Gothic::physicsFlags().cloth);
   wdynamic->setItemWakeEnabled(Gothic::physicsFlags().itemWake);
   wdynamic->setItemDeepestContactEnabled(Gothic::physicsFlags().itemDeepestContact);
+  wdynamic->setRagdollBirthGuardEnabled(Gothic::physicsFlags().ragdollBirthGuard);
   if(!Gothic::physicsFlags().arrowSticking)
     stuckArrows.clear();
   static bool doTicks=true;
@@ -831,6 +1169,7 @@ void World::tick(uint64_t dt) {
   { FrameProfile::Scope timing(FrameProfile::Zone::Physics); wdynamic->tick(dt); }
   updateStuckArrows();
   { FrameProfile::Scope timing(FrameProfile::Zone::Sync); wobj.syncRagdolls(); }
+  sweepBodies();
   FrameProfile::Scope timing(FrameProfile::Zone::WorldMisc);
   if(auto pl = player(); pl!=nullptr && !BodyArena::frozenWorld())
     wsound.tick(*pl);
@@ -1440,6 +1779,8 @@ bool World::isInSfxRange(const Tempest::Vec3& pos) const {
   }
 
 bool World::isInPfxRange(const Tempest::Vec3& p) const {
+  if(Resources::isHeadless() && hasHeadlessViewer)
+    return (headlessViewer-p).quadLength()<PfxObjects::viewRage*PfxObjects::viewRage;
   if(Resources::isHeadless())
     return true; // Effects may carry gameplay collision/perception callbacks.
   return wview->isInPfxRange(p);
@@ -1635,6 +1976,11 @@ void World::detectItem(const Tempest::Vec3& p, const float r, const std::functio
 WayPath World::wayTo(const WayPoint& begin, const WayPoint& end) const {
   const auto* first = &begin;
   return wmatrix->wayTo(&first,1,begin.position(),end);
+  }
+
+const WayHeights::Profile& World::groundProfile(const Tempest::Vec3& from,const Tempest::Vec3& to,
+                                               float stepHeight,float slopeCos) const {
+  return wmatrix->groundProfile(from,to,stepHeight,slopeCos);
   }
 
 WayPath World::wayTo(const Npc &npc, const WayPoint &end) const {

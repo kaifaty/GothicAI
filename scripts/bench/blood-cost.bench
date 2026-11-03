@@ -1,0 +1,24 @@
+# Physics stage 8, step 4c: what blood decals cost. 256 stains (the limit) on a 20 m grid round the hero
+# on Onar's field, the camera high behind him so most are in view; 30 s of normal app cadence without
+# video. Run with BLOOD=1 and BLOOD=0 (the same scene without decals); the target is p95 frame +0.2 ms.
+# OPENGOTHIC_GPU_PASSES=1 on a frame-profile build gives the "Blood decals" pass alone.
+seed 73015
+cheat god
+set time 12 0
+release all
+overlay off
+view full
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+wait 500
+clear 3000
+blood_stains fill 256 125
+blood_stains advance 10
+cam follow 700 650 180
+wait 3000
+shot cost-view
+wait 500
+cadence normal
+wait 34
+blood_stains measure
+cadence wait
+quit

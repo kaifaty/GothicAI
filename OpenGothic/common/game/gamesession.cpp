@@ -136,6 +136,7 @@ GameSession::GameSession(std::string file) {
     LoadProbe::mark("trigger_start",LoadProbe::msSince(probeT));
   cam->reset(wrld->player());
   wrld->updateLandscape(*cam);
+  wrld->updateNpcSimTiers();
   Gothic::inst().setLoadingProgress(96);
   ticks = 1;
   // wrld->setDayTime(8,0);
@@ -146,7 +147,10 @@ GameSession::GameSession(std::string file) {
       pages="landscape_used_bytes="+std::to_string(s.landscapePageUsedBytes)+
             " landscape_free_bytes="+std::to_string(s.landscapePageFreeBytes)+
             " landscape_retired_bytes="+std::to_string(s.landscapePageRetiredBytes);
+      pages+=" "+s.vobProbeFields();
       }
+    pages+=(pages.empty() ? "" : " ")+wrld->npcSimTierStats().probeFields();
+    pages+=" "+NpcLogicAudit::stats().probeFields();
     LoadProbe::mark("session_end",-1,pages);
     if(wrld->chunkResidency()==nullptr)
       LoadProbe::mark("stream_warm");
@@ -212,6 +216,7 @@ GameSession::GameSession(Serialize &fin) {
   fin.setEntry("game/camera");
   cam->load(fin,wrld->player());
   wrld->updateLandscape(*cam);
+  wrld->updateNpcSimTiers();
   Gothic::inst().setLoadingProgress(96);
   if(auto& fn = Gothic::inst().sessionStartFn)
     fn(&fin);
@@ -511,6 +516,7 @@ auto GameSession::implChangeWorld(std::unique_ptr<GameSession>&& game,
 
   cam->reset(wrld->player());
   wrld->updateLandscape(*cam);
+  wrld->updateNpcSimTiers();
   if(LoadProbe::enabled())
     LoadProbe::mark("change_end");
   Log::i("Done loading world[",world,"]");

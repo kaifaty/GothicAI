@@ -396,6 +396,11 @@ def test_capture_rejects_incomplete_or_incorrect_work(tmp_path, failure):
 
 @pytest.mark.parametrize("escape", ["../outside.dds", "/outside.dds", "escape.dds"])
 def test_packed_set_rejects_dds_paths_escaping_material_directory(tmp_path, escape):
+    # the script checks the game on Ryzen before it packs: a stub ssh answers, so the test stays on this machine
+    stub = tmp_path / "bin"
+    stub.mkdir()
+    (stub / "ssh").write_text("#!/bin/sh\nexit 0\n")
+    (stub / "ssh").chmod(0o755)
     source = tmp_path / "content/materials"
     source.mkdir(parents=True)
     (tmp_path / "content/outside.dds").write_bytes(b"not a generated map")
@@ -405,7 +410,7 @@ def test_packed_set_rejects_dds_paths_escaping_material_directory(tmp_path, esca
     }))
     result = subprocess.run(
         ["bash", str(SCRIPT), "--content-root", str(source.parent), "--output", str(tmp_path / "output")],
-        capture_output=True, text=True,
+        capture_output=True, text=True, env={**os.environ, "PATH": f"{stub}{os.pathsep}{os.environ['PATH']}"},
     )
     assert result.returncode != 0
     assert "unsafe DDS path" in result.stderr

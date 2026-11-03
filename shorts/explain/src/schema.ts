@@ -345,7 +345,8 @@ const Word = z.object({text: z.string(), start: z.number(), end: z.number()});
 
 export const Plan = z.object({
   format: z.enum(['tall', 'wide']).default('tall'),
-  stem: z.enum(['voice', 'game', 'music']).optional(), // uncalibrated sources for publication through gothic_shorts.levels
+  stem: z.enum(['voice', 'game', 'music', 'sfx']).optional(), // uncalibrated sources for publication through gothic_shorts.levels
+  sfx: z.boolean().default(true), // the sound of the motion (parts/sfxMap.ts): false leaves it out
   mask: z.boolean().optional(), // the safe-zone check (gothic_shorts.delivery): our drawing alone, no footage
   brand: z.boolean().default(true),
   brandVolume: z.number().nonnegative().default(0.355), // draft mix only; levels sets the published sting level
@@ -362,8 +363,9 @@ export const Plan = z.object({
       file: z.string(),
       volume: z.number(), // draft level in the voice's pauses
       duck: z.number().default(0.5), // draft multiplier while the voice speaks
-      fadeIn: z.number().default(1),
-      fadeOut: z.number().default(1.5),
+      // seconds; 0 turns a fade off (a short that plays as a loop, its bed running on into its own start)
+      fadeIn: z.number().nonnegative().default(1),
+      fadeOut: z.number().nonnegative().default(1.5),
     })
     .optional(),
 }).superRefine((plan, ctx) => {

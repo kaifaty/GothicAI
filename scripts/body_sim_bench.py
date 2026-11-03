@@ -71,15 +71,32 @@ def damage_rows(output: Path) -> list[dict]:
                 if (row := json.loads(line)).get("kind") == "body_combat" and row.get("phase") == "damage"]
 
 
+def _melee_journal_groups(episodes: list[dict], path: Path) -> dict[int, list[dict]]:
+    """Merge saved native/policy duels with the live tail, once per journal row."""
+    groups = {}
+    seeds = {episode["seed"] for episode in episodes}
+    sources = [(path.parent.parent / episode.get("name", f"episode-{index}") / path.name, episode["seed"])
+               for index, episode in enumerate(episodes)]
+    sources.append((path, None))
+    seen = set()
+    for source, expected_seed in sources:
+        if not source.is_file():
+            continue
+        with source.open() as stream:
+            for line in stream:
+                row = json.loads(line)
+                seed = row["arena_seed"]
+                if seed not in seeds or (expected_seed is not None and seed != expected_seed):
+                    raise RuntimeError(f"{source}: journal contains an unknown duel seed {seed}")
+                if line not in seen:
+                    groups.setdefault(seed, []).append(row)
+                    seen.add(line)
+    return groups
+
+
 def add_posture_metrics(episodes: list[dict], path: Path, *, enabled: bool) -> dict:
     """Match journal rows by the configured duel seed and count subsequent defeats."""
-    groups = {}
-    for line in path.read_text().splitlines() if path.is_file() else ():
-        row = json.loads(line)
-        groups.setdefault(row["arena_seed"], []).append(row)
-    seeds = {episode["seed"] for episode in episodes}
-    if groups.keys()-seeds:
-        raise RuntimeError("posture journal contains an unknown duel seed")
+    groups = _melee_journal_groups(episodes, path)
     for episode in episodes:
         rows = groups.get(episode["seed"], [])
         if enabled and not rows and any(d["damage_kind"] == "melee" and d["has_hit"] for d in episode["damage"]):
@@ -113,19 +130,12 @@ def add_posture_metrics(episodes: list[dict], path: Path, *, enabled: bool) -> d
 
 
 def shadow_coverage(path: Path, episodes: list[dict]) -> dict:
-    """Each fork starts at the same game time; account for its final hit too."""
-    groups = []
-    previous = -1
-    with path.open() as stream:
-        for line in stream:
-            row = json.loads(line)
-            if not groups or row["end_time_ms"] < previous:
-                groups.append([])
-            groups[-1].append(row)
-            previous = row["end_time_ms"]
+    """Match each duel's saved shadow rows, including the final live hit."""
+    groups = _melee_journal_groups(episodes, path)
     differences = []
     damage_count = hits = 0
-    for index, (episode, rows) in enumerate(zip(episodes, groups)):
+    for index, episode in enumerate(episodes):
+        rows = groups.get(episode["seed"], [])
         expected = Counter((d["target"], d["actor"], max(0, d["hp_before"]-d["hp_after"]))
                            for d in episode["damage"] if d["damage_kind"] == "melee" and d["has_hit"])
         actual = Counter((r["attacker"]["name"], r["legacy"]["target"]["name"], r["legacy"]["damage"])
@@ -190,7 +200,22 @@ def run_variant(args: argparse.Namespace, name: str, *, serial: bool, trace: boo
     parry_ai = os.environ.get("MELEE_PARRY_AI")
     if parry_ai is not None and parry_ai not in ("0", "1"):
         raise ValueError("MELEE_PARRY_AI must be 0 or 1")
-    if melee_shadow is not None or down_tactics is not None or hit_stop is not None or stamina is not None or parry is not None or parry_ai is not None:
+    ai_dodge = os.environ.get("MELEE_AI_DODGE")
+    if ai_dodge is not None and ai_dodge not in ("0", "1"):
+        raise ValueError("MELEE_AI_DODGE must be 0 or 1")
+    ai_riposte = os.environ.get("MELEE_AI_RIPOSTE")
+    if ai_riposte is not None and ai_riposte not in ("0", "1"):
+        raise ValueError("MELEE_AI_RIPOSTE must be 0 or 1")
+    ai_charge = os.environ.get("MELEE_AI_CHARGE")
+    if ai_charge is not None and ai_charge not in ("0", "1"):
+        raise ValueError("MELEE_AI_CHARGE must be 0 or 1")
+    ai_barge = os.environ.get("MELEE_AI_BARGE")
+    if ai_barge is not None and ai_barge not in ("0", "1"):
+        raise ValueError("MELEE_AI_BARGE must be 0 or 1")
+    stagger = os.environ.get("MELEE_STAGGER")
+    if stagger is not None and stagger not in ("0", "1"):
+        raise ValueError("MELEE_STAGGER must be 0 or 1")
+    if melee_shadow is not None or down_tactics is not None or hit_stop is not None or stamina is not None or parry is not None or parry_ai is not None or ai_dodge is not None or ai_riposte is not None or ai_charge is not None or ai_barge is not None or stagger is not None:
         # Both collectors copy this private INI; the archived reference stays unchanged.
         variant.reference = output/"reference"
         settings = variant.reference/"run/Gothic.ini"
@@ -215,6 +240,16 @@ def run_variant(args: argparse.Namespace, name: str, *, serial: bool, trace: boo
             config.set("GAME", "melee_parry", parry)
         if parry_ai is not None:
             config.set("GAME", "melee_parry_ai", parry_ai)
+        if ai_dodge is not None:
+            config.set("GAME", "melee_ai_dodge", ai_dodge)
+        if ai_riposte is not None:
+            config.set("GAME", "melee_ai_riposte", ai_riposte)
+        if ai_charge is not None:
+            config.set("GAME", "melee_ai_charge", ai_charge)
+        if ai_barge is not None:
+            config.set("GAME", "melee_ai_barge", ai_barge)
+        if stagger is not None:
+            config.set("GAME", "melee_stagger", stagger)
         with settings.open("w") as stream:
             config.write(stream)
     os.environ.pop("OPENGOTHIC_BODY_TRACE", None)

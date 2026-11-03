@@ -1,4 +1,5 @@
 #include "pose.h"
+#include "world/npclogicalstate.h"
 
 #include <Tempest/Log>
 
@@ -273,7 +274,8 @@ void Pose::setFlags(Pose::Flags f) {
 BodyState Pose::bodyState() const {
   uint32_t b = BS_NONE;
   for(auto& i:lay)
-    b = std::max(b,uint32_t(i.bs&(BS_MAX | BS_FLAG_MASK)));
+    if(!(i.bs==BS_ITEMINTERACT && i.seq->layer==21))
+      b = std::max(b,uint32_t(i.bs&(BS_MAX | BS_FLAG_MASK)));
   return BodyState(b);
   }
 
@@ -318,6 +320,8 @@ void Pose::setSkeleton(const Skeleton* sk) {
   needToUpdate = true;
   if(lay.size()>0) //TODO
     Log::d("WARNING: ",__func__," animation adjustment is not implemented");
+  for(const auto& layer:lay)
+    recordLogicalInput(LogicalInput::Kind::LayerRemove,&layer,lastUpdate);
   lay.clear();
 
   if(skeleton!=nullptr)
@@ -339,7 +343,10 @@ bool Pose::startAnim(const AnimationSolver& solver, const Animation::Sequence *s
       const bool finished  = i.seq->isFinished(layerTime(i,tickCount),i.sAnim,combo.len()) && !hasNext && (i.seq->animCls!=Animation::Loop);
       const bool interrupt = force || i.seq->canInterrupt(layerTime(i,tickCount),i.sAnim,combo.len());
       if(i.seq==sq && i.comb==comb && !finished) {
+        const bool changed=i.bs!=bs;
         i.bs = bs;
+        if(changed)
+          recordLogicalInput(LogicalInput::Kind::LayerSet,&i,tickCount);
         return true;
         }
       if(!interrupt && !finished)
@@ -364,13 +371,13 @@ bool Pose::startAnim(const AnimationSolver& solver, const Animation::Sequence *s
         tr = solver.solveFrm(tansition);
         bs = tr ? i.bs : bs;
         }
-      onRemoveLayer(i);
+      onRemoveLayer(i,LogicalInput::Cause::Explicit,tickCount);
       i.seq      = tr ? tr : sq;
       i.sAnim    = tickCount;
       i.sOrigin  = tickCount;
       i.comb     = comb;
       i.bs       = bs;
-      onAddLayer(i);
+      onAddLayer(i,LogicalInput::Cause::Explicit,tickCount);
       return true;
       }
   addLayer(sq,bs,comb,tickCount);
@@ -435,7 +442,7 @@ void Pose::stopAllAnim() {
   lay.clear();
   }
 
-void Pose::processLayers(AnimationSolver& solver, uint64_t tickCount) {
+void Pose::processLayers(AnimationSolver& solver, uint64_t tickCount, NpcLogicalState*) {
   if(hasTransitions==0)
     return;
 
@@ -447,7 +454,7 @@ void Pose::processLayers(AnimationSolver& solver, uint64_t tickCount) {
       auto next = solveNext(solver,l);
       if(next!=l.seq) {
         needToUpdate = true;
-        onRemoveLayer(l);
+        onRemoveLayer(l,LogicalInput::Cause::Natural,tickCount);
 
         if(next!=nullptr) {
           if(l.seq==rotation)
@@ -462,7 +469,7 @@ void Pose::processLayers(AnimationSolver& solver, uint64_t tickCount) {
           l.seq   = next;
           l.sAnim = tickCount;
           l.sOrigin = tickCount;
-          onAddLayer(l);
+          onAddLayer(l,LogicalInput::Cause::Natural,tickCount);
           ret++;
           }
         continue;
@@ -888,7 +895,7 @@ void Pose::implMkSkeleton(const Tempest::Matrix4x4 &mt, size_t parent) {
 const Animation::Sequence* Pose::solveNext(const AnimationSolver &solver, const Layer& lay) {
   auto sq = lay.seq;
 
-  if((lay.bs & BS_ITEMINTERACT)==BS_ITEMINTERACT && itemUseSt!=itemUseDestSt) {
+  if(lay.seq->layer!=21 && (lay.bs & BS_ITEMINTERACT)==BS_ITEMINTERACT && itemUseSt!=itemUseDestSt) {
     int sA = itemUseSt, sB = itemUseSt, nextState = 0;
     if(itemUseSt<itemUseDestSt) {
       sB++;
@@ -939,7 +946,7 @@ void Pose::addLayer(const Animation::Sequence *seq, BodyState bs, uint8_t comb, 
     });
   }
 
-void Pose::onAddLayer(Pose::Layer& l) {
+void Pose::onAddLayer(Pose::Layer& l, LogicalInput::Cause cause, uint64_t at) {
   l.speed     = speedOf(l.seq);
   l.stopFrom  = 0; // a new animation is not held by the last one's hit stop
   l.catchFrom = 0;
@@ -950,9 +957,11 @@ void Pose::onAddLayer(Pose::Layer& l) {
   if(l.seq->animCls==Animation::Transition)
     hasTransitions++;
   needToUpdate = true;
+  recordLogicalInput(LogicalInput::Kind::LayerSet,&l,at==uint64_t(-1) ? l.sOrigin : at,cause);
   }
 
-void Pose::onRemoveLayer(const Pose::Layer &l) {
+void Pose::onRemoveLayer(const Pose::Layer &l, LogicalInput::Cause cause, uint64_t at) {
+  recordLogicalInput(LogicalInput::Kind::LayerRemove,&l,at==uint64_t(-1) ? lastUpdate : at,cause);
   if(l.seq==rotation)
     rotation=nullptr;
   if(hasLayerEvents(l))
@@ -963,6 +972,33 @@ void Pose::onRemoveLayer(const Pose::Layer &l) {
     isFlyCombined--;
   // the layers under it take the bones back (AnimBlend sees the switch): even a still one
   needToUpdate = true;
+  }
+
+void Pose::recordLogicalInput(LogicalInput::Kind kind, const Layer* layer, uint64_t at,
+                              LogicalInput::Cause cause, uint64_t until) {
+  if(!logicalInputEnabled)
+    return;
+  logicalInputQueue.emplace_back();
+  auto& input=logicalInputQueue.back();
+  input.kind=kind;
+  input.cause=cause;
+  input.at=at;
+  input.until=until;
+  input.combo=combo.len();
+  if(layer!=nullptr) {
+    input.sequence=layer->seq;
+    input.start=layer->sAnim;
+    input.origin=layer->sOrigin;
+    input.speed=layer->speed;
+    input.state=layer->bs;
+    }
+  }
+
+void Pose::recordLogicalWeapon(WeaponState weapon, bool natural) {
+  recordLogicalInput(LogicalInput::Kind::Weapon,nullptr,lastUpdate,
+                     natural ? LogicalInput::Cause::Natural : LogicalInput::Cause::Explicit);
+  if(logicalInputEnabled)
+    logicalInputQueue.back().weapon=weapon;
   }
 
 bool Pose::hasLayerEvents(const Pose::Layer& l) {
@@ -989,14 +1025,26 @@ void Pose::processPfx(MdlVisual& visual, World& world, uint64_t tickCount) {
     i.seq->processPfx(layerTime(i,lastUpdate),i.sAnim,layerTime(i,tickCount),visual,world);
   }
 
-bool Pose::processEvents(uint64_t &barrier, uint64_t now, Animation::EvCount &ev) const {
+bool Pose::processEvents(uint64_t &barrier, uint64_t now, Animation::EvCount &ev, NpcLogicalState* logic) const {
   if(hasEvents==0) {
     barrier=now;
     return false;
     }
 
-  for(auto& i:lay)
-    i.seq->processEvents(layerTime(i,barrier),i.sAnim,layerTime(i,now),ev);
+  for(auto& i:lay) {
+    if(logic!=nullptr && NpcLogicAudit::enabled()) {
+      struct Context { NpcLogicalState* logic; const Layer* layer; uint64_t now; } context{logic,&i,now};
+      Animation::LogicEventObserver observer;
+      observer.context=&context;
+      observer.fired=[](void* opaque, const Animation::LogicEvent& event) {
+        const auto& ctx=*static_cast<Context*>(opaque);
+        ctx.logic->eventFired(ctx.layer->seq,ctx.layer->sOrigin,event,ctx.now);
+        };
+      i.seq->processEvents(layerTime(i,barrier),i.sAnim,layerTime(i,now),ev,&observer);
+      } else {
+      i.seq->processEvents(layerTime(i,barrier),i.sAnim,layerTime(i,now),ev);
+      }
+    }
   barrier=now;
   return hasEvents>0;
   }
@@ -1043,6 +1091,11 @@ bool Pose::isDefence(uint64_t tickCount) const {
       return true;
     }
   return false;
+  }
+
+Pose::CombatLayer Pose::logicalLayer(size_t index) const {
+  const auto& layer=lay[index];
+  return {layer.seq,layer.sAnim,layer.sOrigin,0,layer.speed,layer.comb,layer.bs};
   }
 
 auto Pose::combatLayers(uint64_t tickCount) const -> std::vector<CombatLayer> {
@@ -1121,9 +1174,17 @@ bool Pose::isFlyAnim() const {
   }
 
 bool Pose::isStanding() const {
-  if(lay.size()!=1 || lay[0].seq->animCls==Animation::Transition)
+  const Animation::Sequence* base = nullptr;
+  for(const auto& i:lay) {
+    if(i.bs==BS_ITEMINTERACT && i.seq->layer==21)
+      continue;
+    if(base!=nullptr)
+      return false;
+    base = i.seq;
+    }
+  if(base==nullptr || base->animCls==Animation::Transition)
     return false;
-  auto& s = *lay[0].seq;
+  auto& s = *base;
   if(s.isIdle())
     return true;
   // check common idle animations
@@ -1134,6 +1195,13 @@ bool Pose::isStanding() const {
          s.name=="S_FISTWALK" || s.name=="S_MAGWALK" ||
          s.name=="S_1HWALK"   || s.name=="S_BOWWALK" ||
          s.name=="S_2HWALK"   || s.name=="S_CBOWWALK";
+  }
+
+bool Pose::isUsingItemInHand() const {
+  for(const auto& i:lay)
+    if(i.bs==BS_ITEMINTERACT && i.seq->layer==21)
+      return true;
+  return false;
   }
 
 bool Pose::isPrehit(uint64_t now) const {
@@ -1204,6 +1272,7 @@ const Animation::Sequence* Pose::continueCombo(const AnimationSolver &solver, co
 
   if(prev==nullptr) {
     combo = ComboState();
+    recordLogicalInput(LogicalInput::Kind::Combo,nullptr,tickCount);
     return nullptr;
     }
 
@@ -1215,6 +1284,7 @@ const Animation::Sequence* Pose::continueCombo(const AnimationSolver &solver, co
     if(!startAnim(solver,sq,prev->comb,bs,Pose::NoHint,tickCount))
       return nullptr;
     combo = ComboState();
+    recordLogicalInput(LogicalInput::Kind::Combo,nullptr,tickCount);
     return sq;
     }
 
@@ -1222,17 +1292,21 @@ const Animation::Sequence* Pose::continueCombo(const AnimationSolver &solver, co
     // hit -> block
     startAnim(solver,sq,prev->comb,bs,Pose::Force,tickCount);
     combo = ComboState();
+    recordLogicalInput(LogicalInput::Kind::Combo,nullptr,tickCount);
     return sq;
     }
 
   if(id+1>=d.defWindow.size()) {
     combo.setBreak();
+    recordLogicalInput(LogicalInput::Kind::Combo,nullptr,tickCount);
     return nullptr;
     }
 
   if(!(d.defWindow[id+0]<t && t<=d.defWindow[id+1])) {
-    if(prev->seq->name==sq->name && sq->data->defHitEnd.size()>0)
+    if(prev->seq->name==sq->name && sq->data->defHitEnd.size()>0) {
       combo.setBreak();
+      recordLogicalInput(LogicalInput::Kind::Combo,nullptr,tickCount);
+      }
     return nullptr;
     }
 
@@ -1242,6 +1316,7 @@ const Animation::Sequence* Pose::continueCombo(const AnimationSolver &solver, co
   if(prev->seq->name!=sq->name) {
     startAnim(solver,sq,prev->comb,bs,Pose::Force,tickCount);
     combo = ComboState();
+    recordLogicalInput(LogicalInput::Kind::Combo,nullptr,tickCount);
     return sq;
     }
 
@@ -1257,6 +1332,7 @@ const Animation::Sequence* Pose::continueCombo(const AnimationSolver &solver, co
     prev->sAnim = prev->sOrigin = tickCount - std::min(tickCount,back);
     }
   combo.incLen();
+  recordLogicalInput(LogicalInput::Kind::Combo,prev,tickCount);
   return prev->seq;
   }
 
@@ -1352,15 +1428,25 @@ float Pose::speedOf(const Animation::Sequence* seq) const {
   }
 
 void Pose::setAnimSpeed(std::string_view name, float k) {
+  auto record=[&] {
+    if(!logicalInputEnabled) return;
+    recordLogicalInput(LogicalInput::Kind::Speed,nullptr,lastUpdate);
+    logicalInputQueue.back().name=name;
+    logicalInputQueue.back().speed=k;
+    };
   for(size_t i=0; i<speeds.size(); ++i)
     if(speeds[i].first==name) {
+      if(speeds[i].second!=k)
+        record();
       if(k==1.f)
         speeds.erase(speeds.begin()+ptrdiff_t(i)); else
         speeds[i].second = k;
       return;
       }
-  if(k!=1.f)
+  if(k!=1.f) {
     speeds.emplace_back(std::string(name),k);
+    record();
+    }
   }
 
 void Pose::setLayerSpeed(const Animation::Sequence* seq, float k, uint64_t now) {
@@ -1373,6 +1459,7 @@ void Pose::setLayerSpeed(const Animation::Sequence* seq, float k, uint64_t now) 
         }
       l.speed = k;
       l.catchFrom = 0; // a speed set on purpose; a hit stop under way still keeps it (endHitStop)
+      recordLogicalInput(LogicalInput::Kind::Speed,&l,now);
       }
   }
 
@@ -1403,6 +1490,8 @@ void Pose::hitStop(uint64_t until, float k) {
       }
     if(!rebaseLayer(l,l.stopFrom*k,lastUpdate))
       l.stopFrom = 0;
+    recordLogicalInput(LogicalInput::Kind::HitStop,&l,lastUpdate,
+                       LogicalInput::Cause::Explicit,std::max(stopUntil,until));
     }
   stopUntil = std::max(stopUntil,until);
   }
@@ -1429,6 +1518,7 @@ void Pose::endHitStop() {
         l.catchFrom = k>base ? base : 0.f;
       }
     l.stopFrom = 0;
+    recordLogicalInput(LogicalInput::Kind::HitStopEnd,&l,lastUpdate);
     }
   stopUntil = 0;
   }
@@ -1576,13 +1666,25 @@ bool Pose::stopItemStateAnim(const AnimationSolver& solver, uint64_t tickCount) 
       auto next = solveNext(solver,i);
       if(next==nullptr)
         continue;
-      onRemoveLayer(i);
+      onRemoveLayer(i,LogicalInput::Cause::Explicit,tickCount);
       i.seq   = next;
       i.sAnim = tickCount;
       i.sOrigin = tickCount;
-      onAddLayer(i);
+      onAddLayer(i,LogicalInput::Cause::Explicit,tickCount);
       }
   return true;
+  }
+
+void Pose::interruptItemUse() {
+  for(size_t i=0;i<lay.size();) {
+    if(lay[i].bs==BS_ITEMINTERACT) {
+      onRemoveLayer(lay[i]);
+      lay.erase(lay.begin()+std::ptrdiff_t(i));
+      } else {
+      ++i;
+      }
+    }
+  itemUseSt = itemUseDestSt = -1;
   }
 
 const Matrix4x4* Pose::transform() const {

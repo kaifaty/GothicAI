@@ -1,5 +1,5 @@
 # Fixed performance viewpoints for Claude's comparison on Mac.
-# Run with OPENGOTHIC_TEXTURE_MIPS=0 and =1; wait for Far and texture publication.
+# Run with OPENGOTHIC_VOB_STREAMING=0 and =1; wait for Far and texture publication.
 seed 73013
 cheat god
 world-check NEWWORLD.ZEN
@@ -43,4 +43,15 @@ wait 10000
 cam hold
 streaming wait
 shot perf-island
+wait 34
+# Leave the city's Far range for one update, then capture the first return frame.
+# No streaming wait between the return teleport and the screenshot.
+goto pos 200000 10000 200000
+cam look 120
+cam world 700 280 0
+wait 34
+goto NW_CITY_MERCHANT_TRADE_04
+cam look 120
+cam world 700 280 0
+shot perf-market-teleport
 wait 34

@@ -1,6 +1,8 @@
 #include "lightgroup.h"
 #include "loadprobe.h"
 
+#include <cmath>
+
 #include <Tempest/Dir>
 #include <Tempest/Log>
 
@@ -107,6 +109,18 @@ void LightGroup::Light::setTimeOffset(uint64_t t) {
   data.setTimeOffset(t);
   }
 
+void LightGroup::Light::setYaw(float yaw) {
+  if(owner==nullptr)
+    return;
+  auto& ssbo = owner->lightSourceData[id];
+  if(ssbo.cookie<=0)
+    return;
+  float turns = yaw/6.2831853f;
+  turns -= std::floor(turns);
+  ssbo.cookie = std::floor(ssbo.cookie) + std::min(turns, 0.999f);
+  owner->markAsDurty(id);
+  }
+
 uint64_t LightGroup::Light::effectPrefferedTime() const {
   if(owner==nullptr)
     return 0;
@@ -165,7 +179,38 @@ LightGroup::Light LightGroup::add(const asset::LightPreset& vob) {
 LightGroup::Light LightGroup::add(const asset::VLight& vob) {
   auto l = add(static_cast<const asset::LightPreset&>(vob));
   l.setPosition(Vec3(vob.position.x,vob.position.y,vob.position.z));
+  if(!vob.cookie.empty()) {
+    std::lock_guard<std::mutex> guard(sync);
+    if(const uint32_t slot = cookieSlot(vob.cookie)) {
+      lightSourceData[l.id].cookie = float(slot);
+      markAsDurtyNoSync(l.id);
+      }
+    }
   return l;
+  }
+
+uint32_t LightGroup::cookieSlot(std::string_view name) {
+  for(size_t i=0; i<cookieNames.size(); ++i)
+    if(cookieNames[i]==name)
+      return uint32_t(i+1);
+  if(cookieNames.size()>=MaxCookies) {
+    Log::e("light: more than ", MaxCookies, " light masks, \"", name, "\" ignored");
+    return 0;
+    }
+  auto* tex = Resources::loadMaterialAlbedo(name); // an own texture: materials.json, as particle sprites
+  if(tex==nullptr) {
+    Log::e("light: unable to load light mask \"", name, "\"");
+    return 0;
+    }
+  cookieTex[cookieNames.size()] = tex;
+  cookieNames.emplace_back(name);
+  return uint32_t(cookieNames.size());
+  }
+
+const Tempest::Texture2d& LightGroup::cookie(size_t slot) const {
+  if(slot<MaxCookies && cookieTex[slot]!=nullptr)
+    return *cookieTex[slot];
+  return *Resources::loadTexture(Tempest::Color(1,1,1,1));
   }
 
 LightGroup::Light LightGroup::add(std::string_view preset) {
@@ -302,17 +347,30 @@ const asset::LightPreset& LightGroup::findPreset(std::string_view preset) const 
   return zero;
   }
 
+void LightGroup::nearLights(const Vec3& at, float reach, std::vector<Near>& out) const {
+  out.clear();
+  std::lock_guard<std::mutex> guard(sync);
+  for(auto& l:lightSourceData) {
+    if(l.range<=0)
+      continue;
+    const float r = l.range + reach;
+    if((l.pos-at).quadLength()<r*r)
+      out.push_back({l.pos, l.range, l.color});
+    }
+  }
+
 void LightGroup::tick(uint64_t time) {
   for(size_t i : animatedLights) {
     auto& light = lightSourceDesc[i];
     light.update(time);
 
-    LightSsbo ssbo;
-    ssbo.pos   = light.position();
-    ssbo.color = light.currentColor();
-    ssbo.range = light.isEnabled() ? clampRange(light.currentRange()) : 0;
-
     auto& dst = lightSourceData[i];
+    LightSsbo ssbo;
+    ssbo.pos    = light.position();
+    ssbo.color  = light.currentColor();
+    ssbo.range  = light.isEnabled() ? clampRange(light.currentRange()) : 0;
+    ssbo.cookie = dst.cookie;
+
     if(std::memcmp(&dst, &ssbo, sizeof(ssbo))==0)
       continue;
     dst = ssbo;

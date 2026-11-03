@@ -10,6 +10,7 @@
 #include "ui/dialogmenu.h"
 #include "ui/inventorymenu.h"
 #include "physics/dynamicworld.h"
+#include "game/meleecharge.h"
 #include "camera.h"
 #include "graphics/mesh/aim.h"
 #include "graphics/mesh/aimwalk.h"
@@ -24,6 +25,35 @@ constexpr float SpreadClose = 0.2f;                  // ...closes
 constexpr float StanceRate  = 6.f;                   // 1/s: crouching, leaning out eases in and out
 constexpr float HeadOverHips = 70.f;                 // cm: leaning out tilts the trunk from the hips
 constexpr float CantRate     = 10.f;                 // 1/s: the bow canted, straightened (a quick shot)
+
+const char* playerPoseEndReason(KeyCodec::Action a) {
+  switch(a) {
+    case KeyCodec::Forward:       return "key Forward";
+    case KeyCodec::Back:          return "key Back";
+    case KeyCodec::Left:          return "key Left";
+    case KeyCodec::Right:         return "key Right";
+    case KeyCodec::RotateL:       return "key RotateL";
+    case KeyCodec::RotateR:       return "key RotateR";
+    case KeyCodec::Jump:          return "key Jump";
+    case KeyCodec::Dodge:         return "key Dodge";
+    case KeyCodec::ActionGeneric: return "key ActionGeneric";
+    case KeyCodec::ActionLeft:    return "key ActionLeft";
+    case KeyCodec::ActionRight:   return "key ActionRight";
+    case KeyCodec::Parade:        return "key Parade";
+    case KeyCodec::Weapon:        return "key Weapon";
+    case KeyCodec::WeaponMele:    return "key WeaponMele";
+    case KeyCodec::WeaponBow:     return "key WeaponBow";
+    case KeyCodec::WeaponMage3:   return "key WeaponMage3";
+    case KeyCodec::WeaponMage4:   return "key WeaponMage4";
+    case KeyCodec::WeaponMage5:   return "key WeaponMage5";
+    case KeyCodec::WeaponMage6:   return "key WeaponMage6";
+    case KeyCodec::WeaponMage7:   return "key WeaponMage7";
+    case KeyCodec::WeaponMage8:   return "key WeaponMage8";
+    case KeyCodec::WeaponMage9:   return "key WeaponMage9";
+    case KeyCodec::WeaponMage10:  return "key WeaponMage10";
+    default:                     return nullptr;
+    }
+  }
 
 // a critically damped spring moves v toward goal, smooth seconds (about half the time it takes): it eases
 // in and out, no jerks when the goal jumps; vel is its speed
@@ -104,18 +134,16 @@ void PlayerControl::onKeyPressed(KeyCodec::Action a, Tempest::KeyEvent::KeyType 
 
   if(w!=nullptr && w->isCutsceneLock())
     return;
-  if(pl!=nullptr && pl->isMeleeKnockedDown() && (c==nullptr || !c->isFree())) {
+  if(pl!=nullptr && (pl->isMeleeRiposteHeld() ||
+                    ((pl->isMeleeKnockedDown() || pl->isMeleeRiposting()) && (c==nullptr || !c->isFree())))) {
     clearInput();
     return;
     }
 
   handleMovementAction(KeyCodec::ActionMapping{a,mapping}, true);
-  if(pl!=nullptr && (a==Action::Forward || a==Action::Back || a==Action::Left || a==Action::Right ||
-                    a==Action::RotateL || a==Action::RotateR || a==Action::Jump ||
-                    a==Action::ActionGeneric || a==Action::ActionLeft || a==Action::ActionRight ||
-                    a==Action::Parade || a==Action::Weapon || a==Action::WeaponMele ||
-                    a==Action::WeaponBow || (a>=Action::WeaponMage3 && a<=Action::WeaponMage10)))
-    pl->setPlayerPose(false);
+  if(pl!=nullptr)
+    if(auto* reason = playerPoseEndReason(a))
+      pl->setPlayerPose(false,reason);
 
   if(pl!=nullptr && !pl->spellFrozen() && pl->interactive()!=nullptr && c!=nullptr && !c->isFree()) {
     auto inter = pl->interactive();
@@ -128,6 +156,17 @@ void PlayerControl::onKeyPressed(KeyCodec::Action a, Tempest::KeyEvent::KeyType 
       return;
       }
     }
+
+  // The melee dodge: its own key, or the jump key (by default) with a melee weapon or the fists drawn. The way is
+  // read from the movement keys now, relative to the hero's facing: forward/back, else the strafe keys, else the
+  // keys that turn the hero (the arrows); none: back. Out of melee the jump key jumps.
+  if(pl!=nullptr && (a==Action::Dodge || (a==Action::Jump && KeyCodec::dodgeOnJump(mapping))) && dodgeKeyDodges(*pl)) {
+    dodgeRequest = MeleeDodge::direction(movement.forwardBackward.value(),movement.strafeRightLeft.value(),
+                                         movement.turnRightLeft.value());
+    return;
+    }
+  if(a==Action::Dodge)
+    return;
 
   if(pl!=nullptr) {
     if(a==Action::Weapon) {
@@ -219,11 +258,23 @@ void PlayerControl::onKeyPressed(KeyCodec::Action a, Tempest::KeyEvent::KeyType 
     }
 
   if(fk>=0) {
+    if(pl!=nullptr && (pl->isMeleeCharging() || (chargePress && fk==ActForward))) {
+      ctrl[a] = true;
+      return;
+      }
+    chargePress.reset();
+    chargeTapPending = false;
     std::memset(actrl,0,sizeof(actrl));
     actrl[ActGeneric] = ctrl[KeyCodec::ActionGeneric];
     actrl[fk]         = true;
 
     ctrl[a] = true;
+    if(fk==ActForward && pl!=nullptr && pl->beginMeleeRiposte()) {
+      actrl[ActForward] = false;
+      } else if(fk==ActForward && pl!=nullptr && pl->canMeleeCharge()) {
+      chargePress = ChargePress{w->tickCount()};
+      actrl[ActForward] = false;
+      }
     return;
     }
 
@@ -276,7 +327,7 @@ void PlayerControl::onKeyReleased(KeyCodec::Action a, KeyCodec::Mapping mapping)
 
   auto w  = Gothic::inst().world();
   auto pl = w ? w->player() : nullptr;
-  if(pl!=nullptr && pl->isMeleeKnockedDown()) {
+  if(pl!=nullptr && (pl->isMeleeKnockedDown() || pl->isMeleeRiposting() || pl->isMeleeRiposteHeld())) {
     clearInput();
     return;
     }
@@ -292,6 +343,21 @@ void PlayerControl::onKeyReleased(KeyCodec::Action a, KeyCodec::Mapping mapping)
     }
 
   auto ws = pl==nullptr ? WeaponState::NoWeapon : pl->weaponState();
+  if(pl!=nullptr && (chargePress || pl->isMeleeCharging()) &&
+     (a==Action::ActionGeneric || (!g2Ctrl && a==Action::Forward))) {
+    if(pl->isMeleeCharging()) {
+      pl->releaseMeleeCharge();
+      } else {
+      const auto held = w->tickCount()-chargePress->at;
+      if(!chargePress->attempted && MeleeCharge::startsWindup(held) && pl->beginMeleeCharge()) {
+        pl->releaseMeleeCharge();
+        } else {
+        pl->meleeChargeTap(held);
+        chargeTapPending = true;
+        }
+      }
+    chargePress.reset();
+    }
   if(ws==WeaponState::Bow || ws==WeaponState::CBow || ws==WeaponState::Mage) {
     if(a==KeyCodec::ActionGeneric || (!g2Ctrl && ws==WeaponState::Mage && a==KeyCodec::Forward))
       std::memset(actrl,0,sizeof(actrl));
@@ -322,11 +388,6 @@ bool PlayerControl::isPressed(KeyCodec::Action a) const {
   }
 
 void PlayerControl::onRotateMouse(float dAngleX, float dAngleY) {
-  if(dAngleX!=0.f) {
-    if(auto* w = Gothic::inst().world())
-      if(auto* pl = w->player())
-        pl->setPlayerPose(false);
-    }
   rotMouse  += dAngleX;
   rotMouseY += dAngleY;
   }
@@ -535,9 +596,9 @@ void PlayerControl::toggleSneakMode() {
   if(w==nullptr || w->player()==nullptr)
     return;
   auto pl = w->player();
-  if(!pl->canSneak() || (pl->walkMode()&WalkBit::WM_Sneak)==WalkBit::WM_Sneak) {
+  if((pl->walkMode()&WalkBit::WM_Sneak)==WalkBit::WM_Sneak) {
     pl->setWalkMode(pl->walkMode() & (~WalkBit::WM_Sneak));
-    } else {
+    } else if(pl->canSneak()) {
     pl->setWalkMode(pl->walkMode()^WalkBit::WM_Sneak);
     }
   }
@@ -552,7 +613,18 @@ bool PlayerControl::canInteract() const {
   return true;
   }
 
+bool PlayerControl::dodgeKeyDodges(const Npc& pl) const {
+  const auto ws = pl.weaponState();
+  const auto c  = Gothic::inst().camera();
+  return Gothic::physicsFlags().meleeDodge && pl.isHuman() &&
+         (ws==WeaponState::Fist || ws==WeaponState::W1H || ws==WeaponState::W2H) &&
+         pl.interactive()==nullptr && (c==nullptr || !c->isFree());
+  }
+
 void PlayerControl::clearInput() {
+  dodgeRequest.reset();
+  chargePress.reset();
+  chargeTapPending = false;
   movement.reset();
   std::memset(ctrl, 0,sizeof(ctrl));
   std::memset(actrl,0,sizeof(actrl));
@@ -692,7 +764,16 @@ bool PlayerControl::tickMove(uint64_t dt) {
   if(pl==nullptr)
     return true;
 
+  if(pl->isMeleeRiposting() || pl->isMeleeRiposteHeld()) {
+    clearInput();
+    rotMouse = rotMouseY = 0;
+    runAngleDest = 0;
+    return true;
+    }
+
   if(pl->isMeleeStunned()) {
+    if(dodgeRequest)
+      pl->meleeDodge(*dodgeRequest); // refused: stunned
     if(actrl[ActForward] || actrl[ActMove] || actrl[ActKill] || actrl[ActLeft] || actrl[ActRight])
       pl->doAttack(Npc::Anim::Attack,BS_HIT);
     if(actrl[ActBack]) {
@@ -726,10 +807,18 @@ bool PlayerControl::tickMove(uint64_t dt) {
     return true;
     }
 
-  if(movement.forwardBackward.any() || movement.strafeRightLeft.any() || movement.turnRightLeft.any() ||
-     ctrl[Action::ActionGeneric] || ctrl[Action::Jump])
-    pl->setPlayerPose(false);
+  if(movement.forwardBackward.any())
+    pl->setPlayerPose(false,movement.forwardBackward.value()>0.f ? "key Forward" : "key Back");
+  else if(movement.strafeRightLeft.any())
+    pl->setPlayerPose(false,movement.strafeRightLeft.value()>0.f ? "key Right" : "key Left");
+  else if(movement.turnRightLeft.any())
+    pl->setPlayerPose(false,movement.turnRightLeft.value()>0.f ? "key RotateR" : "key RotateL");
+  else if(ctrl[Action::ActionGeneric] || ctrl[Action::Jump])
+    pl->setPlayerPose(false,ctrl[Action::ActionGeneric] ? "key ActionGeneric" : "key Jump");
   if(pl->tickPlayerPose()) {
+    dodgeRequest.reset();
+    pl->setDirection(pl->rotation()+rotMouse);
+    rotMouse = rotMouseY = 0;
     runAngleDest = 0;
     return true;
     }
@@ -771,9 +860,12 @@ void PlayerControl::implMove(uint64_t dt) {
   float rspeed    = (pl.weaponState()==WeaponState::NoWeapon ? 90.f : 180.f)*(float(dt)/1000.f);
   auto  ws        = pl.weaponState();
   auto  bs        = pl.bodyStateMasked();
-  bool  allowRot  = !ctrl[KeyCodec::ActionGeneric] && pl.isRotationAllowed();
+  bool  allowRot  = (!ctrl[KeyCodec::ActionGeneric] || chargePress || pl.isMeleeCharging()) && pl.isRotationAllowed();
 
   Npc::Anim ani = Npc::Anim::Idle;
+  // a press is taken this tick or not at all
+  const auto dodge = dodgeRequest;
+  dodgeRequest.reset();
 
   if(bs==BS_DEAD)
     return;
@@ -793,6 +885,8 @@ void PlayerControl::implMove(uint64_t dt) {
 
   if(pl.canSwitchWeapon()) {
     if(wctrl[WeaponClose]) {
+      chargePress.reset();
+      chargeTapPending = false;
       wctrl[WeaponClose] = !(pl.closeWeapon(false) || pl.isMonster());
       return;
       }
@@ -869,6 +963,27 @@ void PlayerControl::implMove(uint64_t dt) {
     }
 
   pl.setDirectionY(rotY);
+  const bool chargeInput = chargePress || chargeTapPending || pl.isMeleeCharging();
+  if(dodge && pl.meleeDodge(*dodge)) {
+    chargePress.reset();
+    chargeTapPending = false;
+    if(chargeInput)
+      std::memset(actrl,0,sizeof(actrl));
+    pl.setAnimRotate(0);
+    pl.setDirection(rot);
+    runAngleDest = 0;
+    return;
+    }
+  if(chargePress && !chargePress->attempted && MeleeCharge::startsWindup(w->tickCount()-chargePress->at)) {
+    chargePress->attempted = true;
+    if(pl.beginMeleeCharge())
+      chargePress.reset();
+    }
+  if(chargePress || pl.isMeleeCharging()) {
+    pl.setDirection(rot);
+    runAngleDest = 0;
+    return;
+    }
   if(pl.isFalling() || pl.isSlide() || pl.isInAir() || pl.isJump() || pl.isJumpUp()){
     pl.setDirection(rot);
     runAngleDest = 0;
@@ -943,6 +1058,10 @@ void PlayerControl::implMove(uint64_t dt) {
       }
     }
 
+  if(chargeTapPending) {
+    actrl[ActForward] = true;
+    chargeTapPending = false;
+    }
   if(actrl[ActForward] || actrl[ActMove]) {
     ctrl [Action::Forward] = actrl[ActMove];
     actrl[ActMove]         = false;

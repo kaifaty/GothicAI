@@ -46,6 +46,8 @@ void ChunkResidency::update(const Tempest::Vec3& hero, const Tempest::Vec3& came
   const bool focusChanged=!focused || heroCell!=nextHeroCell || cameraCell!=nextCameraCell;
   heroCell=nextHeroCell;
   cameraCell=nextCameraCell;
+  cameraPosition=camera;
+  farDistance=zFar;
   focused=true;
   counters.near=0;
   counters.far=0;
@@ -119,6 +121,35 @@ ChunkResidency::State ChunkResidency::desired(ChunkId id) const {
   if(index!=size_t(-1))
     return states[index];
   throw std::out_of_range("chunk is not in the world table");
+  }
+
+ChunkResidency::State ChunkResidency::desired(ChunkId id, State previous) const {
+  const auto index=indexOf(id);
+  if(index!=size_t(-1) && chunks.entries[index].triangleCount!=0)
+    return desired(index);
+  if(!focused)
+    return State::Outside;
+  const auto radius=previous==State::Near ? NearExitRadius : NearRadius;
+  if(cellDistance(id,heroCell)<=radius || cellDistance(id,cameraCell)<=radius)
+    return State::Near;
+  // Vobs can occupy cells with no landscape triangles. Their horizontal cell
+  // bounds still participate in the same Far distance and exit hysteresis.
+  const float minX=float(id.x)*ChunkId::Size, minZ=float(id.z)*ChunkId::Size;
+  const float dx=std::max({minX-cameraPosition.x,0.f,cameraPosition.x-minX-ChunkId::Size});
+  const float dz=std::max({minZ-cameraPosition.z,0.f,cameraPosition.z-minZ-ChunkId::Size});
+  const float far=farDistance+(previous==State::Far ? FarExitMargin : 0.f);
+  return dx*dx+dz*dz<=far*far ? State::Far : State::Outside;
+  }
+
+std::string ChunkResidency::Stats::vobProbeFields() const {
+  return "vob_near="+std::to_string(vobNear)+" vob_far="+std::to_string(vobFar)+
+      " vob_outside="+std::to_string(vobOutside)+" vob_created="+std::to_string(vobCreated)+
+      " vob_released="+std::to_string(vobReleased)+" vob_pending="+std::to_string(vobPending)+
+      " vob_draw_instances="+std::to_string(vobDrawInstances)+
+      " vob_publication_ms="+std::to_string(vobPublicationMs)+" vob_create_ms="+std::to_string(vobCreateMs)+
+      " vob_near_missing="+std::to_string(vobNearMissing)+
+      " vob_near_missing_seconds="+std::to_string(vobNearMissingSeconds)+
+      " vob_ready_ms="+std::to_string(vobReadyMs);
   }
 
 size_t ChunkResidency::indexOf(ChunkId id) const {

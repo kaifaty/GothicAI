@@ -106,6 +106,11 @@ MTL::RenderPipelineState& MtPipeline::inst(const MtFboLayout& lay, size_t stride
     clr->setDestinationAlphaBlendFactor(nativeFormat(rs.blendDest()));
     clr->setSourceRGBBlendFactor       (nativeFormat(rs.blendSource()));
     clr->setSourceAlphaBlendFactor     (nativeFormat(rs.blendSource()));
+    const uint8_t wm = rs.colorWriteMask(i);
+    clr->setWriteMask(MTL::ColorWriteMask(((wm&RenderState::R) ? MTL::ColorWriteMaskRed   : 0) |
+                                          ((wm&RenderState::G) ? MTL::ColorWriteMaskGreen : 0) |
+                                          ((wm&RenderState::B) ? MTL::ColorWriteMaskBlue  : 0) |
+                                          ((wm&RenderState::A) ? MTL::ColorWriteMaskAlpha : 0)));
     }
 
   if(mdesc!=nullptr) {

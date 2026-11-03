@@ -32,6 +32,24 @@ def test_session_and_world_change_csv(tmp_path):
         log += (f"[loadprobe] stage={stage} stage_ms={duration} t_ms={elapsed} rss_mb={footprint} "
                 f"footprint_mb={footprint} gpu_mb={gpu} tex_n={count} tex_mb={mb} tex_ms={texture_ms} {extra}\n")
         if stage in ("session_end", "stream_warm", "stream_warm_5s"):
+            for values in (
+                "vob_near=120 vob_far=800 vob_outside=900",
+                "vob_created=950 vob_released=30 vob_draw_instances=1840",
+                "vob_pending=2 vob_publication_ms=0.125 vob_create_ms=12.5",
+                "vob_near_missing=0 vob_near_missing_seconds=0 vob_ready_ms=420.123456789",
+            ):
+                log += f"[loadprobe-vob-streaming] stage={stage} t_ms={elapsed} {values}\n"
+            log += (f"[loadprobe-npc-tier] stage={stage} t_ms={elapsed} npc_full=37 npc_simplified=1016 "
+                    "npc_to_full=4 npc_to_simplified=3 npc_full_tick_ms=0.250000 npc_simplified_tick_ms=2.125000\n")
+            log += (f"[loadprobe-npc-tier] stage={stage} t_ms={elapsed} npc_full_tick_ms_total=12.500 "
+                    "npc_simplified_tick_ms_total=106.250 npc_tier_ticks=50 npc_tier_mode=auto\n")
+            log += (f"[loadprobe-npc-logic] stage={stage} t_ms={elapsed} npc_logic_samples=52650 "
+                    "npc_logic_body_mismatch=0 npc_logic_weapon_mismatch=0 npc_logic_early=2 npc_logic_late=1\n")
+            log += (f"[loadprobe-npc-logic] stage={stage} t_ms={elapsed} npc_logic_events=45 "
+                    "npc_logic_event_mismatch=3 npc_logic_wall_ms=0.125\n")
+            log += (f"[loadprobe-npc-logic] stage={stage} t_ms={elapsed} npc_logic_wait_early=4 "
+                    "npc_logic_wait_late=3 npc_logic_reanchored=10 "
+                    "npc_logic_body_samples=52640 npc_logic_weapon_samples=52500\n")
             log += (f"[loadprobe-malloc] stage={stage} t_ms={elapsed} "
                     f"malloc_in_use_mb={footprint - 30.123} malloc_allocated_mb={footprint + 10.234}\n")
             log += (f"[loadprobe-textures] stage={stage} t_ms={elapsed} tex_live_bytes={elapsed + 1000} "
@@ -47,7 +65,7 @@ def test_session_and_world_change_csv(tmp_path):
     output = subprocess.check_output([sys.executable, str(SCRIPT), str(tmp_path)], text=True)
     reader = csv.DictReader(io.StringIO(output))
     rows = list(reader)
-    assert len(reader.fieldnames) == 139
+    assert len(reader.fieldnames) == 241
     assert len(rows) == 2
     assert [(row["seg"], row["world"], row["total_s"]) for row in rows] == [
         ("0", "NEWWORLD", "5.0"), ("1", "OLDWORLD", "2.0")]
@@ -80,6 +98,20 @@ def test_session_and_world_change_csv(tmp_path):
         "32", "32000", "4", "3", "1", "10900", "1", "300", "1", "200", "1", "100", "1"]
     texture_fields = [key for key in reader.fieldnames if key.startswith("tex_") and key.endswith(("_end", "_warm", "_warm_5s"))]
     assert all(rows[1][key] == "" for key in texture_fields)
+    assert [rows[0][f"vob_{field}_warm"] for field in (
+        "near", "far", "outside", "created", "released", "draw_instances", "pending", "publication_ms", "create_ms",
+        "near_missing", "near_missing_seconds", "ready_ms")] == [
+        "120", "800", "900", "950", "30", "1840", "2", "0.125", "12.5", "0", "0.0", "420.123456789"]
+    assert all(rows[1][key] == "" for key in reader.fieldnames if key.startswith("vob_"))
+    assert [rows[0][f"npc_{field}_warm_5s"] for field in (
+        "full", "simplified", "to_full", "to_simplified", "full_tick_ms", "simplified_tick_ms",
+        "full_tick_ms_total", "simplified_tick_ms_total", "tier_ticks")] == [
+        "37", "1016", "4", "3", "0.25", "2.125", "12.5", "106.25", "50"]
+    assert all(rows[1][key] == "" for key in reader.fieldnames if key.startswith("npc_") and key != "npcs")
+    assert [rows[0][f"npc_logic_{field}_warm_5s"] for field in (
+        "samples", "body_mismatch", "weapon_mismatch", "early", "late", "events", "event_mismatch", "wall_ms",
+        "wait_early", "wait_late", "reanchored", "body_samples", "weapon_samples")] == [
+        "52650", "0", "0", "2", "1", "45", "3", "0.125", "4", "3", "10", "52640", "52500"]
 
     (run / "game.log").write_text(log.split("[loadprobe] stage=change_begin")[0])
     output = subprocess.check_output([sys.executable, str(SCRIPT), str(tmp_path)], text=True)

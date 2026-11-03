@@ -10,6 +10,7 @@ dependencies = [
     "chatgpt-auth",
     "httpx>=0.28.1",
     "numpy>=2.0",
+    "onnxruntime",
     "websockets>=17.2",
 ]
 

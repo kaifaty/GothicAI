@@ -21,6 +21,7 @@ class Skeleton;
 class Serialize;
 class AnimationSolver;
 class Npc;
+struct NpcLogicalState;
 
 class Pose final {
   public:
@@ -58,8 +59,8 @@ class Pose final {
     void               setObjectMatrix(const Tempest::Matrix4x4& obj, bool sync);
     bool               update(uint64_t tickCount, bool force);
 
-    void               processLayers(AnimationSolver &solver, uint64_t tickCount);
-    bool               processEvents(uint64_t& barrier, uint64_t now, Animation::EvCount &ev) const;
+    void               processLayers(AnimationSolver &solver, uint64_t tickCount, NpcLogicalState* logic=nullptr);
+    bool               processEvents(uint64_t& barrier, uint64_t now, Animation::EvCount &ev, NpcLogicalState* logic=nullptr) const;
 
     Tempest::Vec3      animMoveSpeed(uint64_t tickCount, uint64_t dt) const;
     void               processSfx(Npc &npc, uint64_t tickCount);
@@ -72,6 +73,7 @@ class Pose final {
     bool               isJumpAnim() const;
     bool               isFlyAnim() const;
     bool               isStanding() const;
+    bool               isUsingItemInHand() const;
     bool               isPrehit(uint64_t now) const;
     bool               isAttackAnim() const;
     bool               isIdle() const;
@@ -138,6 +140,7 @@ class Pose final {
     void               setAnimRotate(const AnimationSolver &solver, const Npc &npc, WeaponState fightMode, AnimationSolver::TurnType turn, int dir);
     auto               setAnimItem(const AnimationSolver &solver, Npc &npc, std::string_view scheme, int state) -> const Animation::Sequence*;
     bool               stopItemStateAnim(const AnimationSolver &solver, uint64_t tickCount);
+    void               interruptItemUse();
 
     const Tempest::Matrix4x4* transform() const;
 
@@ -168,6 +171,31 @@ class Pose final {
       BodyState state = BS_NONE;
       };
     auto               combatLayers(uint64_t tickCount) const -> std::vector<CombatLayer>;
+    size_t             logicalLayerCount() const { return lay.size(); }
+    bool               isRotationLayer(const Animation::Sequence* sequence) const { return sequence!=nullptr && rotation==sequence; }
+    CombatLayer        logicalLayer(size_t index) const;
+    const auto&        logicalDefaultSpeeds() const { return speeds; }
+
+    // NPC-owned poses retain mutation inputs until the main-thread audit.
+    // Natural layer/weapon changes are observations, not predictor inputs.
+    struct LogicalInput final {
+      enum class Kind : uint8_t { LayerSet, LayerRemove, Speed, HitStop, HitStopEnd, Combo, Weapon };
+      enum class Cause : uint8_t { Explicit, Natural };
+      Kind kind = Kind::LayerSet;
+      Cause cause = Cause::Explicit;
+      const Animation::Sequence* sequence = nullptr;
+      uint64_t at=0, start=0, origin=0, until=0;
+      float speed=1;
+      BodyState state=BS_NONE;
+      uint16_t combo=0;
+      WeaponState weapon=WeaponState::NoWeapon;
+      std::string name;
+      };
+    void               enableLogicalInputs() { logicalInputEnabled=true; }
+    void               disableLogicalInputs() { logicalInputEnabled=false; logicalInputQueue.clear(); }
+    const auto&        logicalInputs() const { return logicalInputQueue; }
+    void               clearLogicalInputs() { logicalInputQueue.clear(); }
+    void               recordLogicalWeapon(WeaponState weapon, bool natural);
 
     struct MeleeContact final {
       const Animation::Sequence* sequence = nullptr;
@@ -232,8 +260,10 @@ class Pose final {
     const Animation::Sequence* solveNext(const AnimationSolver& solver, const Layer& lay);
 
     void addLayer(const Animation::Sequence* seq, BodyState bs, uint8_t comb, uint64_t tickCount);
-    void onAddLayer   (Layer& l);
-    void onRemoveLayer(const Layer& l);
+    void onAddLayer   (Layer& l, LogicalInput::Cause cause=LogicalInput::Cause::Explicit, uint64_t at=uint64_t(-1));
+    void onRemoveLayer(const Layer& l, LogicalInput::Cause cause=LogicalInput::Cause::Explicit, uint64_t at=uint64_t(-1));
+    void recordLogicalInput(LogicalInput::Kind kind, const Layer* layer, uint64_t at,
+                            LogicalInput::Cause cause=LogicalInput::Cause::Explicit, uint64_t until=0);
 
     static bool hasLayerEvents(const Layer& l);
 
@@ -255,6 +285,8 @@ class Pose final {
     uint8_t                         isFlyCombined = 0;
     uint8_t                         hasTransitions = 0;
     std::vector<std::pair<std::string,float>> speeds; // setAnimSpeed
+    bool                            logicalInputEnabled=false;
+    std::vector<LogicalInput>       logicalInputQueue;
 
     float                           headRotX = 0, headRotY = 0;
     FootIk                          ik;

@@ -25,6 +25,10 @@ from .common import (
     wait_npc_visibility,
 )
 
+SCENARIOS = {
+    "npc_deeds": ("OFF", {"save": True, "timeout": 720}),
+}
+
 if TYPE_CHECKING:
     from ..dialogue import DialogueManager
     from ..npc_crimes import NpcCrimes

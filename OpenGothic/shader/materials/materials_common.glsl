@@ -49,6 +49,8 @@ const uint L_GDepth     = 13;
 const uint L_CmdOffsets = 14;
 const uint L_Normal     = 15;
 const uint L_Orm        = 16;
+const uint L_FogLut     = 17;
+const uint L_FogLutMs   = 18;
 const uint L_VsmPages   = L_Shadow0;
 const uint L_VsmLights  = L_Shadow1;
 
@@ -108,6 +110,13 @@ struct Varyings {
   vec4 color;
 #endif
 
+#if (MESH_TYPE==T_PFX) && defined(MAT_UV)
+  vec3 flip; // atlas flipbook: the next frame's uv and the blend towards it (pfx.vert); flip.z<0 when off
+#endif
+#if (MESH_TYPE==T_PFX) && defined(FORWARD)
+  vec3 pointLight; // irradiance of the point lights near a particle (pfxbucket.cpp), lit as light.frag does
+#endif
+
 #if !defined(MAT_VARYINGS)
   float dummy; // GLSL has no support for empty structs
 #endif
@@ -140,13 +149,26 @@ layout(binding = L_MorphId,  std430) readonly buffer MId  { int     index[];    
 layout(binding = L_Morph,    std430) readonly buffer MSmp { vec4    samples[];     } morph[];
 #endif
 
-#if defined(GL_FRAGMENT_SHADER) && defined(FORWARD) && !defined(DEPTH_ONLY)
+#if defined(GL_FRAGMENT_SHADER) && (defined(FORWARD) || defined(WATER)) && !defined(DEPTH_ONLY)
 layout(binding = L_Shadow0)          uniform sampler2D textureSm0;
 layout(binding = L_Shadow1)          uniform sampler2D textureSm1;
 #endif
 
+#if defined(GL_FRAGMENT_SHADER) && (defined(FORWARD) || (defined(EMISSIVE) && !defined(MULTIPLY)) || defined(GHOST)) && !defined(DEPTH_ONLY)
+#define MAT_FOG 1
+layout(binding = L_FogLut)           uniform sampler3D fogLut;
+layout(binding = L_FogLutMs)         uniform sampler3D fogLutMs;
+#endif
+
+#if defined(GL_FRAGMENT_SHADER) && (MESH_TYPE==T_PFX) && (defined(FORWARD) || (defined(EMISSIVE) && !defined(MULTIPLY))) && !defined(DEPTH_ONLY)
+// Soft particles: a sprite reads the opaque depth to fade where it meets the scene (pfxbucket.cpp binds it).
+#define SOFT_PARTICLE 1
+#endif
+
 #if defined(GL_FRAGMENT_SHADER) && (defined(WATER) || defined(GHOST))
 layout(binding = L_SceneClr)         uniform sampler2D sceneColor;
+layout(binding = L_GDepth  )         uniform sampler2D gbufferDepth;
+#elif defined(SOFT_PARTICLE)
 layout(binding = L_GDepth  )         uniform sampler2D gbufferDepth;
 #endif
 

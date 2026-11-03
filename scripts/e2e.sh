@@ -2,6 +2,9 @@
 # End-to-end check: starts the AI server with a scenario, then a new game in OpenGothic.
 # LLM defaults to the scenario group selected in server/src/gothic_ai/scenarios/groups.py.
 # LLM=off forbids model calls except explicit scenario givens (given/silent).
+# P30 is enabled only for neural, neural-companion, neural-group, neural-talk,
+# neural-load, neural-soak and neural-still; all other scenarios use --no-neural-body.
+# GOTHIC_SOAK_CONTROL=1 also keeps neural-soak on native combat.
 # Manual live suites: SUITE=haggle RUNS=3 LLM=chatgpt scripts/e2e-live.sh; see docs/e2e.md.
 #   check_walk: new game, no SAVE, no model; Cavalorn walks from Xardas's stairs to Brago's
 #       unseen body in the bandit cave using the native waynet, sees it and returns to the hero
@@ -136,6 +139,11 @@
 #       denied authorship are the control. Group 2, LLM=off via auto; SAVE=save_slot_1.sav.
 #   live_lies: live-only lie/evidence cases, reusing the Group 2 fixtures without given decisions.
 #       Run through scripts/e2e-live.sh; CASES selects cases; SAVE=save_slot_1.sav; TIMEOUT=2400.
+#   live_npc: live-only offense, companion errands and knowledge, reusing the Group 2 fixtures.
+#       scripts/e2e-live.sh; new game, unset SAVE; CASES selects cases; TIMEOUT=2400.
+#       initiative_debt and rescue_call are skipped without DECIDER_URL.
+#   live_director: live-only director/chronicler proposals, validated and played in the game.
+#       scripts/e2e-live.sh; new game, unset SAVE; CASES selects cases; TIMEOUT=2400; dummy artist.
 #   live_deals: live-only bargaining and promise cases using the Group 2 fixtures without givens.
 #       Run through scripts/e2e-live.sh; CASES selects cases; SAVE=save_slot_1.sav; TIMEOUT=2400.
 #   broken: given: Lobart catches a lie about fresh fence debris; another NPC's sword break is the control.
@@ -213,6 +221,14 @@
 #       opens his chest and accuses off screen. Witness truth, save/load and cooldown are checked;
 #       Lobart's GIL_OUT farm has no community law, so guards are covered by module tests.
 #       no model; SAVE=save_slot_1.sav; TIMEOUT=720; the scene never commands harm.
+#   blood_found: blood as a trace (protocol v60, engine [GAME] blood=1): Lobart sees Vino at a spot,
+#       two hours later the hero; blood appears there (debug blood): one trace_found, the hero suspected of
+#       an attack, Vino not; blood by the unseen hero: no suspicion; Maleth's pool under his body: one find
+#       (the body). no model; SAVE=save_slot_1.sav; TIMEOUT=600.
+#   body_found: a body as a trace (protocol v58, engine [GAME] body_traces=1): Lobart sees the hero by
+#       Maleth, Maleth dies unseen (debug kill), Lobart finds him: one trace_found, the hero suspected of
+#       murder; then Vino dies by the unseen hero: found, no suspicion; save/load keeps both, no new finds.
+#       no model; SAVE=save_slot_1.sav; TIMEOUT=600.
 #   npc_deeds: Vino steals from CHEST_LOBART in front of Hilda, assaults Maleth to a living knockout,
 #       then steals a world item before brave Lobart, who defeats him and reclaims it. NPC knowledge,
 #       its rumor and save/load are checked; guards are covered by module tests.
@@ -433,8 +449,7 @@ if [[ "$LLM" == fake ]]; then
   exit 2
 fi
 BODY_POLICY="${GOTHIC_BODY_POLICY:-engine}"
-BODY_ARGS=(--neural-body --body-policy "$BODY_POLICY")
-if [[ "$SCENARIO" == memprobe ]]; then BODY_ARGS=(--no-neural-body); fi
+BODY_ARGS=(--no-neural-body)
 if [[ "${GOTHIC_SOAK_CONTROL:-0}" == 1 && "$SCENARIO" != neural-soak ]]; then
   echo 'GOTHIC_SOAK_CONTROL requires SCENARIO=neural-soak' >&2
   exit 2
@@ -443,7 +458,7 @@ E2E_DEFAULT_TIMEOUT=240
 if [[ "$SCENARIO" == memprobe ]]; then E2E_DEFAULT_TIMEOUT=1200; fi
 if [[ "$SCENARIO" == surrender_live || "$SCENARIO" == neural-still || "$SCENARIO" == showrunner_live || "$SCENARIO" == vanilla_line_live ]]; then E2E_DEFAULT_TIMEOUT=1200; fi
 if [[ "$SCENARIO" == haggle ]]; then E2E_DEFAULT_TIMEOUT=1200; fi
-if [[ "$SCENARIO" == live_lies || "$SCENARIO" == live_deals ]]; then E2E_DEFAULT_TIMEOUT=2400; fi
+if [[ "$SCENARIO" == live_lies || "$SCENARIO" == live_deals || "$SCENARIO" == live_npc || "$SCENARIO" == live_director ]]; then E2E_DEFAULT_TIMEOUT=2400; fi
 if [[ "$SCENARIO" == interject ]]; then E2E_DEFAULT_TIMEOUT=600; fi
 if [[ "$SCENARIO" == chests_lobart ]]; then E2E_DEFAULT_TIMEOUT=420; fi
 if [[ "$SCENARIO" == feat_fame ]]; then E2E_DEFAULT_TIMEOUT=420; fi
@@ -456,14 +471,15 @@ if [[ "$SCENARIO" = neural || "$SCENARIO" = neural-companion || "$SCENARIO" = ne
   if [[ "$SCENARIO" == neural-soak && "${GOTHIC_SOAK_CONTROL:-0}" == 1 ]]; then
     BODY_ARGS=(--no-neural-body)
   else
+    BODY_ARGS=(--neural-body --body-policy "$BODY_POLICY")
     if [[ "$BODY_POLICY" == service ]]; then
       [ -n "${GOTHIC_BODY_URL:-}" ] || { echo "scenario $SCENARIO with service policy requires GOTHIC_BODY_URL=tcp://host:port" >&2; exit 2; }
     fi
   fi
   [ -z "${SAVE:-}" ] || { echo "scenario $SCENARIO requires a new game (unset SAVE)" >&2; exit 2; }
 fi
-if [[ "$SCENARIO" == surrender_live && -n "${SAVE:-}" ]]; then
-  echo 'scenario surrender_live requires a new game (unset SAVE)' >&2
+if [[ ( "$SCENARIO" == surrender_live || "$SCENARIO" == live_npc || "$SCENARIO" == live_director ) && -n "${SAVE:-}" ]]; then
+  echo "scenario $SCENARIO requires a new game (unset SAVE)" >&2
   exit 2
 fi
 if [[ ( "$SCENARIO" == live_lies || "$SCENARIO" == live_deals ) && -z "${SAVE:-}" ]]; then
@@ -574,13 +590,14 @@ ASR_PID=""
 TTS_PID=""
 VOICE_ARGS=(--no-voice)
 TTS_ARGS=(--no-tts)
-if [ "$SCENARIO" = "tts" ] || [ "$SCENARIO" = "svm_lines" ] || [ "$SCENARIO" = "combat_barks" ] || [ "$SCENARIO" = "mercy" ] || [ "$SCENARIO" = "hero_yield" ] || [ "$SCENARIO" = "humiliate" ] || [ "$SCENARIO" = "surrender_live" ] || [ "$SCENARIO" = "gossip" ] || [ "$SCENARIO" = "day" ] || [ "$SCENARIO" = "group" ] || [ "$SCENARIO" = "interject" ] || [ "$SCENARIO" = "programs" ] || [ "${SCENARIO#errand}" != "$SCENARIO" ] || [ "${SCENARIO#fight_reactions_}" != "$SCENARIO" ]; then
+source "$ROOT/scripts/e2e-services.sh"
+if e2e_needs_tts "$SCENARIO"; then
   (cd "$ROOT/tts-service" && exec uv run gothic-tts serve --port "$TTS_PORT" --provider "$TTS" --fallback none) >"$LOG_DIR/tts.log" 2>&1 &
   TTS_PID=$!
   TTS_ARGS=(--tts-url "ws://127.0.0.1:$TTS_PORT")
 fi
-if [ "$SCENARIO" = "m3" ] || [ "$SCENARIO" = "m5e" ]; then
-  (cd "$ROOT/asr-service" && exec uv run gothic-asr serve --port "$ASR_PORT" --provider "$ASR" --fallback none) >"$LOG_DIR/asr.log" 2>&1 &
+if e2e_needs_asr "$SCENARIO"; then
+  (cd "$ROOT/asr-service" && exec uv run gothic-asr serve --port "$ASR_PORT" --provider "$ASR" --fallback none --no-laughter) >"$LOG_DIR/asr.log" 2>&1 &
   ASR_PID=$!
   VOICE_ARGS=(--asr-url "ws://127.0.0.1:$ASR_PORT" --voice-file "$VOICE_FILE")
 fi

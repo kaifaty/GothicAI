@@ -183,7 +183,9 @@ def test_percentiles_dynamic_columns_segments_and_no_gpu(tmp_path):
                                          "tex_landscape_bytes", "tex_landscape_n", "tex_static_bytes", "tex_static_n",
                                          "tex_dynamic_bytes", "tex_dynamic_n", "tex_other_bytes", "tex_other_n",
                                          "tex_full_bytes", "tex_tail_bytes", "tex_promoted", "tex_demoted",
-                                         "tex_promotion_queue", "tex_near_tail_n", "tex_near_tail_seconds"])
+                                         "tex_promotion_queue", "tex_near_tail_n", "tex_near_tail_seconds",
+                                         "vob_near", "vob_far", "vob_outside", "vob_created", "vob_released", "vob_pending",
+                                         "vob_publication_ms", "vob_near_missing", "vob_near_missing_seconds"])
         writer.writeheader()
         writer.writerows({"segment": f"streaming-flythrough/{name}", "frame": frame,
                           "update_ms": .001 * (frame + 1), "work_ms": .0001,
@@ -203,7 +205,11 @@ def test_percentiles_dynamic_columns_segments_and_no_gpu(tmp_path):
                           "tex_full_bytes": 12*1048576, "tex_tail_bytes": (8-frame)*1048576,
                           "tex_promoted": 10+frame, "tex_demoted": 5+frame,
                           "tex_promotion_queue": 2-frame, "tex_near_tail_n": frame,
-                          "tex_near_tail_seconds": 40+frame*.125}
+                          "tex_near_tail_seconds": 40+frame*.125,
+                          "vob_near": 100+frame, "vob_far": 700-frame, "vob_outside": 200,
+                          "vob_created": frame, "vob_released": int(frame==2), "vob_pending": 2-frame,
+                          "vob_publication_ms": frame*.25, "vob_near_missing": frame,
+                          "vob_near_missing_seconds": frame*.125}
                          for name in ("run", "fly") for frame in range(3))
     (streaming / "events.jsonl").write_text("\n".join(
         json.dumps(event) for event in [
@@ -249,6 +255,11 @@ def test_percentiles_dynamic_columns_segments_and_no_gpu(tmp_path):
             textures["near_tail_peak"], textures["near_tail_seconds"]) == (3, 2, 2, 2, .25)
     combined = report.build_report(streaming)["places"]["streaming-flythrough"]["summary"]["streaming"]["textures"]
     assert (combined["promoted"], combined["demoted"], combined["near_tail_seconds"]) == (8, 6, 1)
+    vobs = data["run"]["streaming"]["vobs"]
+    assert (vobs["near_end"], vobs["far_end"], vobs["outside_end"], vobs["created"], vobs["released"],
+            vobs["pending_peak"], vobs["near_missing_peak"], vobs["near_missing_seconds"]) == (102, 698, 200, 3, 1, 2, 2, .25)
+    assert vobs["publication_ms"]["max"] == .5
+    assert report.build_report(streaming)["places"]["streaming-flythrough"]["summary"]["streaming"]["vobs"]["near_missing_seconds"] == .5
     warmup = data["run"]["streaming"]
     assert warmup["warmup_far_count"] == 2
     assert warmup["warmup_far_publication_ms"]["p99"] == pytest.approx(.597)
@@ -261,7 +272,7 @@ def test_percentiles_dynamic_columns_segments_and_no_gpu(tmp_path):
     assert "| 2 | 6.00 / 4.00 / 2.00 | 12.00 |" in (streaming / "report.md").read_text()
     assert "| run | 7 | 18.00 / 2.00 | 24.00 | 5 / 3 |" in (streaming / "report.md").read_text()
     with (streaming / "streaming.csv").open(newline="") as stream:
-        legacy_rows = [{key: value for key, value in row.items() if not key.startswith(("page_", "tex_"))}
+        legacy_rows = [{key: value for key, value in row.items() if not key.startswith(("page_", "tex_", "vob_"))}
                        for row in csv.DictReader(stream)]
     with (streaming / "streaming.csv").open("w", newline="") as stream:
         writer = csv.DictWriter(stream, legacy_rows[0])
@@ -270,6 +281,7 @@ def test_percentiles_dynamic_columns_segments_and_no_gpu(tmp_path):
     legacy = report.build_report(streaming)["places"]["streaming-flythrough"]["views"]["run"]["streaming"]
     assert legacy["page_used_end_bytes"] is None and legacy["page_capacity_peak_bytes"] is None
     assert legacy["textures"] is None
+    assert legacy["vobs"] is None
     assert report.main(["run", str(streaming)]) == 0
 
 
@@ -369,3 +381,62 @@ def test_compare_repeat_noise_sorted_regressions_and_leaf_inputs(tmp_path):
     leaf = json.loads((right / "compare.json").read_text())
     assert leaf["places"]["market"]["zones"][0]["within_noise"] is None
     assert (right / "compare.md").exists()
+
+
+@pytest.mark.parametrize("spread,failed_pass", [(2.0, None), (.3, "run"), (.3, "fly")])
+def test_series_p99_medians_off_noise_and_exit_code(tmp_path, capsys, spread, failed_pass):
+    directories = {side: [tmp_path / f"{side}-{index}" for index in (1, 2)] for side in ("off", "on")}
+    for side, roots in directories.items():
+        for index, root in enumerate(roots):
+            rows = []
+            for name, offset, base in (("run", 0, 10), ("fly", 1000, 20)):
+                change = 1.4 if failed_pass is None or name == failed_pass else .5
+                step = base + ((index - .5) * spread if side == "off" else change)
+                rows.extend({"segment": f"streaming-flythrough/{name}", "begin_ns": round(value * 1e6)}
+                            for value in (offset, offset + step, offset + 2 * step + 1))
+            profile(root, rows)
+            (root / "events.jsonl").write_text("\n".join(json.dumps(
+                {"kind": "route_end", "speed_cm_s": speed, "pass": True}) for speed in (500, 2000)))
+    args = ["series", "--off", *map(str, directories["off"]), "--on", *map(str, directories["on"])]
+    output = directories["on"][-1]
+    if failed_pass is None:
+        output = tmp_path / "result"
+        args += ["--out", str(output)]
+    assert report.main(args) == (1 if failed_pass else 0)
+    data = json.loads((output / "series.json").read_text())
+    markdown = (output / "series.md").read_text()
+    assert capsys.readouterr().out.strip() == markdown.strip()
+    assert data["minimum_tolerance_ms"] == 1.0
+    for name, base in (("run", 10), ("fly", 20)):
+        stats = data["passes"][name]
+        for side, roots in directories.items():
+            assert [run["directory"] for run in stats[side]] == [str(root.resolve()) for root in roots]
+            expected = [report.build_report(root)["places"]["streaming-flythrough"]["views"][name]
+                        ["frame_ms"]["p99"] for root in roots]
+            assert [run["p99_ms"] for run in stats[side]] == pytest.approx(expected)
+            assert all(f"{value:.3f}" in markdown for value in expected)
+        change = 1.4 if failed_pass is None or name == failed_pass else .5
+        assert stats["off_median_p99_ms"] == pytest.approx(base + .99)
+        assert stats["on_median_p99_ms"] == pytest.approx(base + .99 + change)
+        assert stats["delta_ms"] == pytest.approx(change)
+        assert stats["off_spread_ms"] == pytest.approx(spread)
+        assert stats["tolerance_ms"] == pytest.approx(max(1.0, spread))
+        assert stats["verdict"] == ("fail" if name == failed_pass else "pass")
+        assert f"| {name} |" in markdown
+    if failed_pass == "run":
+        assert report.main([*args, "--tolerance-ms", "1.5"]) == 0
+        adjusted = json.loads((output / "series.json").read_text())
+        assert adjusted["passes"]["run"]["tolerance_ms"] == 1.5
+
+
+@pytest.mark.parametrize("short_side", ["off", "on"])
+def test_series_requires_at_least_two_runs_per_side(tmp_path, capsys, short_side):
+    args = ["series"]
+    for side in ("off", "on"):
+        args += [f"--{side}", str(tmp_path / f"{side}-1")]
+        if side != short_side:
+            args.append(str(tmp_path / f"{side}-2"))
+    with pytest.raises(SystemExit) as error:
+        report.main(args)
+    assert error.value.code == 2
+    assert "at least two" in capsys.readouterr().err

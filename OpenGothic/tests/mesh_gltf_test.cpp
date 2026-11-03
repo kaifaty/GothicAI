@@ -7,8 +7,10 @@
 #include "graphics/shaders.h"
 #include "graphics/mesh/protomesh.h"
 #include "graphics/mesh/skeleton.h"
+#include "graphics/mesh/pose.h"
 #include "graphics/mesh/submesh/packedmesh.h"
 #include "graphics/worldview.h"
+#include "graphics/objvisual.h"
 #include "world/chunkresidency.h"
 #include "loadprobe.h"
 #include "graphics/mesh/submesh/pfxemittermesh.h"
@@ -61,6 +63,52 @@
 #include <vector>
 #include <sys/wait.h>
 #include <unistd.h>
+
+struct MeshGltfTest {
+  static void attach(ObjVisual& visual, WorldView& view, const ProtoMesh* proto, const Tempest::Vec3& position,
+                     bool worldItem = false, int32_t material = 0) {
+    visual.setType(ObjVisual::M_Mesh);
+    visual.mesh.proto=proto;
+    visual.mesh.worldItem=worldItem;
+    visual.mesh.material=material;
+    if(!worldItem) {
+      visual.mesh.windMode=asset::AnimationType::WIND;
+      visual.mesh.windStrength=.5f;
+      }
+    auto matrix=Tempest::Matrix4x4::mkIdentity();
+    matrix.translate(position);
+    visual.setObjMatrix(matrix);
+    view.addVob(visual,ChunkId::fromPosition(position.x,position.z));
+    }
+
+  static bool drawable(const ObjVisual& visual) { return !visual.mesh.view.isEmpty(); }
+  static Tempest::Matrix4x4 matrix(const ObjVisual& visual) { return visual.mesh.view.node(0).position(); }
+  static const Material& material(const ObjVisual& visual) { return visual.mesh.view.node(0).material(); }
+
+  static void attachModel(ObjVisual& visual, WorldView& view, const ProtoMesh* proto, const Tempest::Vec3& position) {
+    visual.setType(ObjVisual::M_Mdl);
+    visual.mdl.proto=proto;
+    visual.mdl.view.setYTranslationEnable(false);
+    visual.mdl.view.setVisual(proto->skeleton.get());
+    auto matrix=Tempest::Matrix4x4::mkIdentity();
+    matrix.translate(position);
+    visual.setObjMatrix(matrix);
+    visual.mdl.view.setTextureOwner(position,true);
+    visual.mdl.view.clearVisualBody();
+    view.addVob(visual,ChunkId::fromPosition(position.x,position.z));
+    }
+
+  static Pose& modelPose(ObjVisual& visual) { return visual.mdl.view.pose(); }
+  static bool modelDrawable(const ObjVisual& visual) { return !visual.mdl.view.view.isEmpty(); }
+  static Tempest::Matrix4x4 modelMatrix(const ObjVisual& visual) { return visual.mdl.view.view.node(0).position(); }
+  static bool modelSlotDrawable(const ObjVisual& visual) { return !visual.mdl.view.item.at(0).view.isEmpty(); }
+  static Tempest::Matrix4x4 modelSlotMatrix(const ObjVisual& visual) { return visual.mdl.view.item.at(0).view.node(0).position(); }
+  static const Tempest::Texture2d* modelSlotTexture(const ObjVisual& visual) { return visual.mdl.view.item.at(0).view.node(0).material().tex; }
+  static const ProtoMesh* modelSlotProto(const ObjVisual& visual) { return visual.mdl.view.item.at(0).deferredProto; }
+  static bool startModelAnimation(ObjVisual& visual, const Animation::Sequence& sequence) {
+    return visual.mdl.view.pose().startAnim(visual.mdl.view.solver,&sequence,0,BS_NONE,Pose::Force,0);
+    }
+  };
 
 namespace {
 size_t assertions = 0;
@@ -374,7 +422,7 @@ struct Fixture {
     if(std::filesystem::is_regular_file(root/"_work/ORIGINAL.FNT")) {
       std::filesystem::copy_file(root/"materials/transparent-bc1.dds",base/"textures/FONT_ATLAS.dds",
                                  std::filesystem::copy_options::overwrite_existing);
-      textures=R"({"ORIGINAL":"FONT_ATLAS.dds","ORIGINAL_HI":"FONT_ATLAS.dds"})";
+      textures=R"({"ORIGINAL":"FONT_ATLAS.dds","ORIGINAL_HI":"FONT_ATLAS.dds","VOB_DECAL":"FONT_ATLAS.dds"})";
       }
     textFile(base/"textures/textures.json","{\"format\":\"gothic-textures\",\"version\":1,\"archives\":"+archives+",\"textures\":"+textures+"}");
     textFile(base/"zen/zen.json","{\"format\":1,\"archives\":"+archives+",\"loose_files\":[],\"files\":{}}");
@@ -1059,6 +1107,23 @@ void converterCases(const Fixture& fixture) {
     require(mesh.sub_meshes[0].mat.texture=="NAMED_TEXTURE.TGA","existing texture extension must remain unchanged");
     }
   options = {};
+  options.group = "WATER";
+  options.alpha = "BLEND";
+  glbFile(path,options);
+  mesh = loadGltfMesh(path);
+  require(mesh.sub_meshes[0].mat.group==asset::MaterialGroup::WATER &&
+          mesh.sub_meshes[0].mat.alpha_func==asset::AlphaFunction::BLEND,
+          "WATER with BLEND must load as a water surface");
+  require(mesh.sub_meshes[0].mat.disable_collision,"a water surface must not collide");
+  {
+    Resources resources;
+    fixture.mount();
+    PackedMesh packed(mesh,PackedMesh::PK_Visual,true);
+    ProtoMesh proto(std::move(packed),"WATER.MRM");
+    require(proto.attach[0].sub[0].material.alpha==Material::Water,"WATER with BLEND must draw as engine water");
+  }
+
+  options = {};
   options.mixedAlpha = true;
   glbFile(path,options);
   mesh = loadGltfMesh(path);
@@ -1109,11 +1174,11 @@ void rejectionCases(const Fixture& fixture) {
     options = {};
     options.group = "WATER";
     options.alpha = alpha;
-    invalidGlb(fixture,"WATER static material",options,"water belongs to world mesh surfaces and overrides OPAQUE/MASK");
+    invalidGlb(fixture,"WATER static material",options,"water belongs to extras.group WATER with alphaMode BLEND");
     }
   options = {};
   options.skin = true; invalidGlb(fixture,"skin",options);
-  options = {}; options.alpha = "BLEND"; invalidGlb(fixture,"BLEND",options);
+  options = {}; options.alpha = "BLEND"; invalidGlb(fixture,"BLEND",options,"BLEND only to water");
   options = {}; options.normals = false; invalidGlb(fixture,"missing NORMAL",options);
   options = {}; options.external = true; invalidGlb(fixture,"external URI",options);
   options = {}; options.positions = 65536; invalidGlb(fixture,"more than 65535 positions",options);
@@ -1533,6 +1598,333 @@ void landscapeLifetime(const Fixture& fixture, Tempest::Device& device) {
   std::cout << "landscape streaming lifetime: 2 Near/Outside cycles, live_buffers=" << baseline << '\n';
 }
 
+void staticVobLifetime(Tempest::Device& device) {
+  setenv("OPENGOTHIC_VOB_STREAMING","1",1);
+  setenv("OPENGOTHIC_TEXTURE_STREAMING","1",1);
+  setenv("OPENGOTHIC_TEXTURE_BUDGET_MB","0",1);
+  Resources::configureTextures("0","0");
+  Gothic gothic;
+  ChunkTable table;
+  table.entries.push_back({{0,0},"",{0,0,0},{6400,1000,6400},1});
+  ChunkResidency residency(table);
+  WorldView view(std::pair{Tempest::Vec3{0,0,0},Tempest::Vec3{6400,1000,6400}},"CONTRACT.ZEN");
+  view.setTextureResidency(&residency);
+  view.startVobStreaming(residency);
+  const auto* proto=Resources::loadMesh("OWN_OPAQUE.3DS");
+  asset::VisualDecal decal;
+  decal.name="VOB_DECAL.TGA";
+  decal.dimension={50,50};
+  const auto* decalProto=Resources::decalMesh(decal);
+  require(proto!=nullptr && decalProto!=nullptr,"static vob lifetime requires mesh and decal prototypes");
+  const std::array textures={proto->attach[0].sub[0].material.tex,decalProto->attach[0].sub[0].material.tex};
+  require(std::all_of(textures.begin(),textures.end(),[](auto* texture) { return texture!=nullptr && texture->w()==4; }),
+          "static vob lifetime must use resident mesh and decal textures");
+  ObjVisual meshVisual,decalVisual;
+  MeshGltfTest::attach(meshVisual,view,proto,{100,100,100});
+  MeshGltfTest::attach(decalVisual,view,decalProto,{200,100,100});
+  require(!MeshGltfTest::drawable(meshVisual) && !MeshGltfTest::drawable(decalVisual),
+          "Outside registration must retain prototypes without creating draw instances");
+  const auto update=[&](const Tempest::Vec3& position, float range=1000) {
+    view.prepareLandscapeWork();
+    residency.update(position,position,range);
+    view.finishLandscapeUpdate();
+    Resources::updateTextures(&residency);
+    };
+  const auto textureWidth=[&](const Tempest::Vec3& position, int width, float range=1000) {
+    const auto matches=[&] {
+      return std::all_of(textures.begin(),textures.end(),[&](auto* texture) { return texture->w()==width; });
+      };
+    const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(5);
+    while(!matches() && std::chrono::steady_clock::now()<deadline) {
+      update(position,range);
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      }
+    require(matches(),width==1 ? "Outside must release all mesh/decal texture demand" :
+                                "Resident Near/Far visuals must restore mesh/decal texture demand");
+    };
+  const Tempest::Vec3 near={100,100,100},outside={1000000,0,1000000};
+  update({25600,100,100},100000);
+  require(residency.stats().vobFar==2 && residency.stats().vobPending==2 &&
+          residency.stats().vobNearMissing==0 && !view.landscapeReady(),
+          "Far readiness must account for unpublished mesh and decal instances");
+  size_t clusters=0;
+  for(size_t cycle=0;cycle<2;++cycle) {
+    update(near);
+    const auto& stats=residency.stats();
+    require(MeshGltfTest::drawable(meshVisual) && MeshGltfTest::drawable(decalVisual) &&
+            stats.vobNear==2 && stats.vobCreated==2*(cycle+1) && stats.vobNearMissing==0 &&
+            stats.vobNearMissingSeconds==0,
+            "Near must synchronously publish both static visuals without a missing interval");
+    textureWidth(near,4);
+    if(cycle==0)
+      clusters=view.clusters().size();
+    else
+      require(view.clusters().size()==clusters,"republishing static vobs must reuse their draw-instance slots");
+    update(outside);
+    require(!MeshGltfTest::drawable(meshVisual) && !MeshGltfTest::drawable(decalVisual) &&
+            stats.vobOutside==2 && stats.vobReleased==2*(cycle+1) && stats.vobPending==0 &&
+            meshVisual.protoMesh()==proto && decalVisual.protoMesh()==decalProto,
+            "Outside must release draw instances while retaining both prototypes");
+    textureWidth(outside,1);
+    auto changed=Tempest::Matrix4x4::mkIdentity();
+    changed.translate(300.f+float(cycle),200,100);
+    meshVisual.setObjMatrix(changed);
+    }
+  update(near);
+  textureWidth(near,4);
+  const auto matrix=MeshGltfTest::matrix(meshVisual);
+  require(close(matrix[3][0],301) && close(matrix[3][1],200) && close(matrix[3][2],100) &&
+          view.clusters().size()==clusters && residency.stats().vobNearMissing==0,
+          "returning Near must restore the latest deferred transform without accumulating instances");
+  // A vob-only cell has no Far landscape, but its published draw instances
+  // must keep texture demand until the vob cell itself leaves Far.
+  table.entries[0].triangleCount=0;
+  const Tempest::Vec3 far={25600,100,100};
+  const auto createdBeforeFar=residency.stats().vobCreated;
+  const auto releasedBeforeFar=residency.stats().vobReleased;
+  update(far,100000);
+  require(MeshGltfTest::drawable(meshVisual) && MeshGltfTest::drawable(decalVisual) &&
+          residency.stats().vobCreated==createdBeforeFar && residency.stats().vobReleased==releasedBeforeFar,
+          "Near to Far must retain vob-only cell views without releasing or recreating instances");
+  textureWidth(far,4,100000);
+  for(size_t frame=0;frame<32;++frame)
+    update(far,100000);
+  require(residency.stats().vobFar==2 && MeshGltfTest::drawable(meshVisual) &&
+          MeshGltfTest::drawable(decalVisual) && textures[0]->w()==4 && textures[1]->w()==4,
+          "published Far vobs in a cell without landscape must retain their texture demand");
+  update(outside);
+  textureWidth(outside,1);
+  device.waitIdle();
+  unsetenv("OPENGOTHIC_VOB_STREAMING");
+  unsetenv("OPENGOTHIC_TEXTURE_STREAMING");
+  unsetenv("OPENGOTHIC_TEXTURE_BUDGET_MB");
+  Resources::configureTextures();
+  std::cout << "static vob streaming lifetime: 2 Near/Outside/Near cycles, texture demand released\n";
+  }
+
+void itemVobLifetime(Tempest::Device& device) {
+  setenv("OPENGOTHIC_VOB_STREAMING","1",1);
+  setenv("OPENGOTHIC_TEXTURE_STREAMING","1",1);
+  setenv("OPENGOTHIC_TEXTURE_BUDGET_MB","0",1);
+  Resources::configureTextures("0","0");
+  Gothic gothic;
+  ChunkTable table;
+  table.entries.push_back({{0,0},"",{0,0,0},{6400,1000,6400},1});
+  ChunkResidency residency(table);
+  WorldView view(std::pair{Tempest::Vec3{0,0,0},Tempest::Vec3{6400,1000,6400}},"CONTRACT.ZEN");
+  view.setTextureResidency(&residency);
+  view.startVobStreaming(residency);
+  const auto* proto=Resources::loadMesh("OWN_OPAQUE.3DS");
+  require(proto!=nullptr,"world item lifetime requires a mesh prototype");
+  const auto* texture=proto->attach[0].sub[0].material.tex;
+  require(texture!=nullptr,"world item lifetime requires a resident texture");
+  auto immediate=view.addView(proto,3);
+  const auto material=immediate.node(0).material();
+  immediate={};
+  ObjVisual visual;
+  MeshGltfTest::attach(visual,view,proto,{100,100,100},true,3);
+  require(!MeshGltfTest::drawable(visual),"Outside world item registration must not create a view");
+  const auto update=[&](const Tempest::Vec3& position, float range=1000) {
+    view.prepareLandscapeWork();
+    residency.update(position,position,range);
+    view.finishLandscapeUpdate();
+    Resources::updateTextures(&residency);
+    };
+  const auto textureWidth=[&](const Tempest::Vec3& position, int width) {
+    const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(5);
+    while(texture->w()!=width && std::chrono::steady_clock::now()<deadline) {
+      update(position);
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      }
+    require(texture->w()==width,"world item view residency must control its texture demand");
+    };
+  const Tempest::Vec3 near={100,100,100},outside={1000000,0,1000000};
+  update({25600,100,100},100000);
+  require(residency.stats().vobFar==1 && residency.stats().vobPending==1 &&
+          !MeshGltfTest::drawable(visual),"Far world item views must use the publication queue");
+  size_t clusters=0;
+  auto deferred=Tempest::Matrix4x4::mkIdentity();
+  for(size_t cycle=0;cycle<2;++cycle) {
+    update(near);
+    textureWidth(near,4);
+    require(MeshGltfTest::drawable(visual) && residency.stats().vobNear==1 &&
+            residency.stats().vobNearMissing==0 && residency.stats().vobNearMissingSeconds==0 &&
+            MeshGltfTest::material(visual)==material,
+            "Near must publish the world item synchronously with its original material");
+    if(cycle==0)
+      clusters=view.clusters().size();
+    else
+      require(view.clusters().size()==clusters,"world item cycles must reuse draw-instance slots");
+    update(outside);
+    textureWidth(outside,1);
+    require(!MeshGltfTest::drawable(visual) && visual.protoMesh()==proto &&
+            residency.stats().vobReleased==cycle+1 && residency.stats().vobPending==0,
+            "Outside must release only the world item view and retain its CPU prototype");
+    deferred.identity();
+    deferred.translate(300.f+float(cycle),200,100);
+    deferred.rotateOY(35);
+    visual.setObjMatrix(deferred);
+    }
+  ObjVisual moved(std::move(visual));
+  update(near);
+  textureWidth(near,4);
+  const auto matrix=MeshGltfTest::matrix(moved);
+  require(matrix==deferred &&
+          MeshGltfTest::material(moved)==material && view.clusters().size()==clusters,
+          "moving the item owner must retain registration, deferred pose and material");
+  auto distant=matrix;
+  distant.set(3,0,outside.x);
+  distant.set(3,2,outside.z);
+  moved.setObjMatrix(distant);
+  update(near);
+  require(!MeshGltfTest::drawable(moved) && residency.stats().vobOutside==1 && residency.stats().vobNear==0,
+          "a moving world item must release its view when crossing into an Outside cell");
+  textureWidth(near,1);
+  moved.setObjMatrix(matrix);
+  update(near);
+  require(MeshGltfTest::drawable(moved) && residency.stats().vobNear==1 && residency.stats().vobNearMissing==0,
+          "a moving world item must publish synchronously when crossing back into Near");
+  moved=ObjVisual();
+  update(near);
+  textureWidth(near,1);
+  require(residency.stats().vobNear==0 && residency.stats().vobOutside==0 && residency.stats().vobPending==0,
+          "pickup must remove the item from residency and release its texture demand");
+  MeshGltfTest::attach(moved,view,proto,near,true,3);
+  update(near);
+  textureWidth(near,4);
+  require(MeshGltfTest::drawable(moved) && residency.stats().vobNear==1 &&
+          residency.stats().vobNearMissing==0 && view.clusters().size()==clusters,
+          "a dropped item must register in its current cell without leaking draw-instance slots");
+  moved=ObjVisual();
+  update(near);
+  textureWidth(near,1);
+  device.waitIdle();
+  unsetenv("OPENGOTHIC_VOB_STREAMING");
+  unsetenv("OPENGOTHIC_TEXTURE_STREAMING");
+  unsetenv("OPENGOTHIC_TEXTURE_BUDGET_MB");
+  Resources::configureTextures();
+  std::cout << "world item streaming lifetime: 2 Near/Outside/Near cycles, move, pickup/drop, texture demand released\n";
+  }
+
+void mobsiVobLifetime(Tempest::Device& device) {
+  setenv("OPENGOTHIC_VOB_STREAMING","1",1);
+  setenv("OPENGOTHIC_TEXTURE_STREAMING","1",1);
+  setenv("OPENGOTHIC_TEXTURE_BUDGET_MB","0",1);
+  Resources::configureTextures("0","0");
+  Gothic gothic;
+  ChunkTable table;
+  table.entries.push_back({{0,0},"",{0,0,0},{6400,1000,6400},1});
+  ChunkResidency residency(table);
+  WorldView view(std::pair{Tempest::Vec3{0,0,0},Tempest::Vec3{6400,1000,6400}},"CONTRACT.ZEN");
+  view.setTextureResidency(&residency);
+  view.startVobStreaming(residency);
+  const auto* proto=Resources::loadMesh("OWN_MODEL_ROTATION.MDL");
+  require(proto!=nullptr && proto->skeleton!=nullptr && proto->attach.size()==1 && !proto->submeshId.empty(),
+          "mobsi lifetime requires a model with a skeleton and a drawable attachment");
+  const auto* skeleton=proto->skeleton.get();
+  const auto root=skeleton->findNode(proto->attach[0].name),slot=skeleton->findNode("ZS_POS0");
+  require(root<skeleton->nodes.size() && slot<skeleton->nodes.size(),
+          "mobsi lifetime requires a body bone and a logical usage attachment point");
+  const auto* texture=proto->attach[0].sub[0].material.tex;
+  require(texture!=nullptr,"mobsi lifetime must use a real texture demand");
+  Animation::Sequence sequence;
+  sequence.name="T_MOBSI_TEST";
+  sequence.data=std::make_shared<Animation::AnimData>();
+  sequence.data->fpsRate=1;
+  sequence.data->numFrames=2;
+  sequence.data->nodeIndex={uint32_t(root)};
+  sequence.data->samples={{{0,0,0},{1,0,0,0}},{{0,0,0},{.70710678f,0,.70710678f,0}}};
+  ObjVisual visual;
+  const Tempest::Vec3 near={100,100,100},outside={1000000,0,1000000};
+  MeshGltfTest::attachModel(visual,view,proto,near);
+  const auto* slotProto=Resources::loadMesh("OWN_SLOT.3DS");
+  require(slotProto!=nullptr && slotProto->attach.size()==1 && slotProto->attach[0].sub.size()==1,
+          "mobsi slot fixture must have a textured mesh");
+  auto slotView=view.addView("OWN_SLOT.3DS",1,0,1);
+  require(!slotView.isEmpty(),"mobsi slot fixture must create the requested material variant");
+  const auto* slotTexture=slotView.node(0).material().tex;
+  require(slotTexture==Resources::loadMaterialAlbedo("SLOT_V1.TGA") &&
+          slotTexture!=slotProto->attach[0].sub[0].material.tex,
+          "mobsi slot fixture must select a texture distinct from its prototype's default material");
+  visual.setSlotItem(std::move(slotView),"ZS_POS0",1);
+  const std::array textures={texture,slotTexture};
+  auto* pose=&MeshGltfTest::modelPose(visual);
+  require(!MeshGltfTest::modelDrawable(visual) && !MeshGltfTest::modelSlotDrawable(visual) &&
+          MeshGltfTest::modelSlotProto(visual)==slotProto && pose->boneCount()==skeleton->nodes.size() &&
+          MeshGltfTest::startModelAnimation(visual,sequence),
+          "Outside must retain a usable skeleton, solver and slot item without creating draw instances");
+  pose->update(0,true);
+  const auto initialSlot=visual.bone(slot);
+  const auto update=[&](const Tempest::Vec3& position) {
+    view.prepareLandscapeWork();
+    residency.update(position,position,1000);
+    view.finishLandscapeUpdate();
+    Resources::updateTextures(&residency);
+    };
+  const auto textureWidth=[&](const Tempest::Vec3& position, int width) {
+    const auto matches=[&] {
+      return std::all_of(textures.begin(),textures.end(),[&](auto* item) { return item->w()==width; });
+      };
+    const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(5);
+    while(!matches() && std::chrono::steady_clock::now()<deadline) {
+      update(position);
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      }
+    require(matches(),width==1 ? "Outside mobsi must release body and slot variant texture demand" :
+                                "Near mobsi must restore body and slot variant texture demand");
+    };
+  size_t clusters=0;
+  for(size_t cycle=0;cycle<2;++cycle) {
+    update(near);
+    require(MeshGltfTest::modelDrawable(visual) && MeshGltfTest::modelSlotDrawable(visual) && residency.stats().vobNear==1 &&
+            residency.stats().vobCreated==cycle+1 && residency.stats().vobNearMissing==0 &&
+            residency.stats().vobNearMissingSeconds==0,
+            "Near must synchronously publish mobsi and include it in the missing-view counters");
+    sameMatrix(MeshGltfTest::modelMatrix(visual),visual.bone(root),
+               "a newly published mobsi body must use its current bone pose");
+    sameMatrix(MeshGltfTest::modelSlotMatrix(visual),visual.bone(slot),
+               "an item inserted outside residency must appear on its current posed attachment point");
+    require(MeshGltfTest::modelSlotTexture(visual)==slotTexture,
+            "republishing a mobsi slot item must preserve its selected material variant");
+    textureWidth(near,4);
+    if(cycle==0)
+      clusters=view.clusters().size();
+    else
+      require(view.clusters().size()==clusters,"republishing mobsi must reuse its draw-instance slots");
+    update(outside);
+    require(!MeshGltfTest::modelDrawable(visual) && !MeshGltfTest::modelSlotDrawable(visual) && residency.stats().vobOutside==1 &&
+            residency.stats().vobReleased==cycle+1 && residency.stats().vobPending==0 &&
+            visual.protoMesh()==proto && &MeshGltfTest::modelPose(visual)==pose &&
+            pose->isInAnim(sequence.name) && MeshGltfTest::modelSlotProto(visual)==slotProto,
+            "Outside must release mobsi and slot draw instances while retaining proto, pose and animation state");
+    textureWidth(outside,1);
+    require(pose->update(500*(cycle+1),true) && pose->isInAnim(sequence.name),
+            "mobsi pose must continue animating while its body is absent");
+    }
+  const auto currentSlot=visual.bone(slot);
+  require(!close(currentSlot.at(3,0),initialSlot.at(3,0)) || !close(currentSlot.at(3,2),initialSlot.at(3,2)),
+          "logical usage attachment points must follow the animation outside residency");
+  const auto animationState=visual.animNames();
+  update(near);
+  textureWidth(near,4);
+  sameMatrix(MeshGltfTest::modelMatrix(visual),visual.bone(root),
+             "returning Near must restore the current animated body rather than its initial frame");
+  sameMatrix(MeshGltfTest::modelSlotMatrix(visual),visual.bone(slot),
+             "returning Near must restore the slot item at its current animated attachment point");
+  require(view.clusters().size()==clusters && residency.stats().vobNearMissing==0 &&
+          &MeshGltfTest::modelPose(visual)==pose && visual.animNames()==animationState &&
+          MeshGltfTest::modelSlotTexture(visual)==slotTexture,
+          "recreating a mobsi body must neither accumulate instances nor reset its animation");
+  update(outside);
+  textureWidth(outside,1);
+  device.waitIdle();
+  unsetenv("OPENGOTHIC_VOB_STREAMING");
+  unsetenv("OPENGOTHIC_TEXTURE_STREAMING");
+  unsetenv("OPENGOTHIC_TEXTURE_BUDGET_MB");
+  Resources::configureTextures();
+  std::cout << "mobsi streaming lifetime: 2 Near/Outside/Near cycles, resident animated pose, texture demand released\n";
+  }
+
 void maskBc1Policy(const Fixture& fixture) {
   std::filesystem::create_directories(fixture.root/"materials");
   alphaDdsFile(fixture.root/"materials/transparent-bc1.dds",true);
@@ -1541,6 +1933,8 @@ void maskBc1Policy(const Fixture& fixture) {
   textFile(fixture.root/"materials/materials.json",R"({
     "OWN_TEST_BARREL_WOOD.TGA":{"albedo":"transparent-bc1.dds"},
     "ORIGINAL.TGA":{"albedo":"transparent-bc1.dds"},
+    "SLOT_V0.TGA":{"albedo":"transparent-bc1.dds"},
+    "SLOT_V1.TGA":{"albedo":"opaque-bc3.dds"},
     "OPAQUE_BC1.TGA":{"albedo":"opaque-bc1.dds"},
     "OPAQUE_BC3.TGA":{"albedo":"opaque-bc3.dds"}
   })");
@@ -1563,6 +1957,9 @@ void maskBc1Policy(const Fixture& fixture) {
   glbFile(fixture.root/"meshes/test/own.glb",options);
   glbFile(fixture.root/"meshes/test/opaque.glb");
   options = {};
+  options.texture = "SLOT_V0.TGA";
+  glbFile(fixture.root/"meshes/test/slot.glb",options);
+  options = {};
   options.rotated = true;
   glbFile(fixture.root/"meshes/test/oblique.glb",options);
   const auto rotation = modelFiles(fixture);
@@ -1576,6 +1973,7 @@ void maskBc1Policy(const Fixture& fixture) {
   fixture.index(R"({
     "OWN_MESH":{"glb":"test/own.glb"},
     "OWN_OPAQUE":{"glb":"test/opaque.glb"},
+    "OWN_SLOT":{"glb":"test/slot.glb"},
     "OWN_MODEL_ROTATION":{"glb":"test/opaque.glb"},
     "OWN_MODEL_MASK":{"glb":"test/own.glb"},
     "OWN_MODEL_SCALED":{"glb":"test/oblique.glb"},
@@ -1688,6 +2086,9 @@ void maskBc1Policy(const Fixture& fixture) {
             "material equality fixture must have the same visible alpha classification");
     require(!(legacyPolicy==forcedPolicy),"material equality must distinguish native and forced MASK policies");
     landscapeLifetime(fixture,device);
+    staticVobLifetime(device);
+    itemVobLifetime(device);
+    mobsiVobLifetime(device);
     }
   multiModelGpuCases(fixture,device);
   device.waitIdle();

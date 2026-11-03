@@ -122,7 +122,7 @@ Gothic AI — одиночная игра. Движок OpenGothic с ИИ-мо�
 
 - **Ключи** лежат в `secrets.toml` (0600). Сервисам они идут через переменные окружения, не через аргументы. Окно видит только, задан ли ключ.
 - **Отчёт для диагностики** (zip) скрывает значения из `secrets.toml`, `access_token` и `refresh_token` из `chatgpt.json`, если файл есть, и любую строку `Bearer <токен>` (`_redact` в `control.py`). Другие секреты, которых нет в этих файлах и которые идут без `Bearer`, он не узнаёт.
-- **Окно на Tauri:** CSP `default-src 'self'`, автообновления нет. Команды `reveal` и `open_folder` передают путь из окна в `open`/`xdg-open` без проверки.
+- **Окно на Tauri:** CSP `default-src 'self'`, своего автообновления нет. На Ryzen кнопка окна только запускает пользовательский `gothic-play-update.service` — тот же код и тот же `origin`, что у таймера; параметров из окна в него не передаётся. Команды `reveal` и `open_folder` передают путь из окна в `open`/`xdg-open` без проверки.
 - **Сеть:** проверка провайдера Inworld и локальные проверки здоровья сервисов (`trust_env=False`).
 - **Зависимости:** на Windows сервисы запускаются через `uv run --locked`; на Mac и Linux — `uv run --project` без `--locked`.
 
@@ -141,6 +141,10 @@ Gothic AI — одиночная игра. Движок OpenGothic с ИИ-мо�
   - запускается на `push` в `main`, на `pull_request` (не `pull_request_target`) и вручную;
   - права `contents: read`; запись в Pages только у деплоя и только из `main`;
   - секретов не использует.
+- **`tests.yml`:**
+  - запускается на `pull_request` (не `pull_request_target`) и вручную; права `contents: read`, секретов не использует, `checkout` с `persist-credentials: false`;
+  - Actions закреплены SHA, `uv` — точной версией;
+  - команды групп берутся из `scripts/check.py` ветки PR и идут через `env`, а не подстановкой в скрипт; тесты ставят зависимости по `uv.lock`, а группы без lock (`body-service`, тесты `scripts/`) — с PyPI и индекса PyTorch CPU по диапазонам версий.
 - **`windows-release.yml`:**
   - только ручной запуск; `contents: write` нужен только черновику выпуска на последнем шаге;
   - `checkout` с `persist-credentials: false`;

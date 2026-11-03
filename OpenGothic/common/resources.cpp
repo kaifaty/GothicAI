@@ -34,6 +34,7 @@
 #include <limits>
 #include <stdexcept>
 #include <thread>
+#include <type_traits>
 #include <cstdio>
 
 #if defined(__GNUC__)
@@ -66,6 +67,7 @@
 #include "fontdata.h"
 #include "worldbase.h"
 #include "world/chunkresidency.h"
+#include "world/voblayer.h"
 #include "utils/string_frm.h"
 
 #include <dmusic.h>
@@ -73,6 +75,8 @@
 #include <unordered_map>
 
 using namespace Tempest;
+
+namespace ModelData { asset::ModelScript readScriptOverlay(const std::filesystem::path& file); }
 
 Resources* Resources::inst=nullptr;
 
@@ -87,6 +91,14 @@ struct Resources::VideoBase {
 namespace {
 thread_local bool preparingVideo = false;
 thread_local bool loadingTextureTail = false;
+
+std::string modelKey(std::string_view name) {
+  const auto separator = name.find_last_of("/\\");
+  std::string key(separator==std::string_view::npos ? name : name.substr(separator+1));
+  for(auto& c:key)
+    c = char(std::toupper(static_cast<unsigned char>(c)));
+  return key;
+  }
 
 std::string wayHeightFileStamp(const std::filesystem::path& file) {
   try {
@@ -189,7 +201,8 @@ Resources::Resources(Tempest::Device &device)
   fbZero = device.texture(pm);
   }
 
-  fbImg = device.image2d(TextureFormat::R32U,1,1);
+  fbImg   = device.image2d(TextureFormat::R32U,1,1);
+  fbImg3d = device.image3d(TextureFormat::RGBA8,1,1,1);
 
   // Set up the DirectMusic loader
   DmResult rv = DmLoader_create(&dmLoader, DmLoader_DOWNLOAD);
@@ -751,6 +764,10 @@ const Tempest::StorageImage& Resources::fallbackImage() {
   return inst->fbImg;
   }
 
+const Tempest::StorageImage& Resources::fallbackImage3d() {
+  return inst->fbImg3d;
+  }
+
 const Tempest::IndexBuffer<uint16_t>& Resources::cubeIbo() {
   return inst->cube;
   }
@@ -845,6 +862,7 @@ void Resources::indexBaseContent() {
   baseMeshes.load(root,"meshes");
   baseZen.load(root,"zen");
   baseModels.load(root,"models");
+  indexContentModels();
   baseFonts.load(root,"fonts");
   basePrograms = ProgramData::readIndex(root/"programs");
   baseOutputUnits = OutputUnits::readIndex(root/"outputunits");
@@ -861,6 +879,57 @@ void Resources::indexBaseContent() {
     const std::filesystem::path file(entry["path"].GetString());
     if(file.parent_path().parent_path()=="worlds" && file.filename()=="world.json")
       baseWorlds.emplace(file.parent_path().filename().string());
+    }
+  }
+
+void Resources::indexContentModels() {
+  contentModels.clear();
+  const auto root = contentDir();
+  if(root.empty())
+    return;
+  const auto folder = root/"models";
+  const auto index = folder/"models.json";
+  std::ifstream file(index,std::ios::binary);
+  if(!file) {
+    std::error_code ec;
+    if(std::filesystem::exists(index,ec) || ec)
+      Log::e("content models: cannot read \"",index.string(),"\"");
+    return;
+    }
+  try {
+    const std::string text{std::istreambuf_iterator<char>(file),std::istreambuf_iterator<char>()};
+    rapidjson::Document table;
+    table.Parse<rapidjson::kParseValidateEncodingFlag>(text.data(),text.size());
+    if(table.HasParseError() || !table.IsObject() ||
+       !table.HasMember("format") || !table["format"].IsString() ||
+       std::string_view(table["format"].GetString(),table["format"].GetStringLength())!="gothic-models" ||
+       !table.HasMember("version") || !table["version"].IsUint() || table["version"].GetUint()!=1 ||
+       !table.HasMember("files") || !table["files"].IsObject())
+      throw std::runtime_error("expected gothic-models index version 1 with files object");
+    for(const auto& entry:table["files"].GetObject()) {
+      const std::string key(entry.name.GetString(),entry.name.GetStringLength());
+      if(key.empty() || key.find_first_of("/\\")!=std::string::npos || key.find('\0')!=std::string::npos ||
+         key!=modelKey(key) || !entry.value.IsString()) {
+        Log::e("content models: invalid entry \"",key,"\" in \"",index.string(),"\"");
+        continue;
+        }
+      const std::string path(entry.value.GetString(),entry.value.GetStringLength());
+      const std::filesystem::path relative(path);
+      if(path.empty() || path.find('\0')!=std::string::npos || path.find('\\')!=std::string::npos ||
+         relative.is_absolute() || relative.has_root_name() ||
+         std::any_of(relative.begin(),relative.end(),[](const auto& part) { return part==".."; })) {
+        Log::e("content models: invalid path for \"",key,"\" in \"",index.string(),"\"");
+        continue;
+        }
+      if((FileExt::hasExt(key,"MSB") || FileExt::hasExt(key,"MDS")) && baseModels.files.count(key)==0) {
+        Log::e("content models: warning: no base script for overlay \"",(folder/relative).string(),"\" (",key,")");
+        continue;
+        }
+      contentModels.emplace(key,folder/relative);
+      }
+    }
+  catch(const std::exception& error) {
+    Log::e("content models: \"",index.string(),"\": ",error.what());
     }
   }
 
@@ -1224,6 +1293,31 @@ void Resources::indexMaterialMaps() {
         else
           maps.antitileCell = float(value);
         }
+      }
+    // Water in a pot clouded with ash and fat: how much of the material's own lit colour covers the clear water.
+    if(const auto turbidity = entry.value.FindMember("turbidity"); turbidity!=entry.value.MemberEnd()) {
+      if(!turbidity->value.IsNumber() || !std::isfinite(turbidity->value.GetDouble()) ||
+         turbidity->value.GetDouble()<0 || turbidity->value.GetDouble()>1)
+        valid = false;
+      else
+        maps.turbidity = float(turbidity->value.GetDouble());
+      }
+    // A stew: the turbidity is reached over this many cm of liquid (Beer-Lambert), clearer where it is thin.
+    if(const auto depth = entry.value.FindMember("turbidity_depth"); depth!=entry.value.MemberEnd()) {
+      if(!depth->value.IsNumber() || !std::isfinite(depth->value.GetDouble()) ||
+         depth->value.GetDouble()<0 || depth->value.GetDouble()>1e6)
+        valid = false;
+      else
+        maps.turbidityDepth = float(depth->value.GetDouble());
+      }
+    // Embers and glowing wood: the material gives off its own albedo colour times this, where the ORM's alpha
+    // (DXT5) marks it; it slowly breathes (main.frag, mainGBuffer) and is added by the ambient pass.
+    if(const auto emissive = entry.value.FindMember("emissive"); emissive!=entry.value.MemberEnd()) {
+      if(!emissive->value.IsNumber() || !std::isfinite(emissive->value.GetDouble()) ||
+         emissive->value.GetDouble()<0 || emissive->value.GetDouble()>1)
+        valid = false;
+      else
+        maps.emissive = float(emissive->value.GetDouble());
       }
     if(const auto scale = entry.value.FindMember("scale"); scale!=entry.value.MemberEnd()) {
       if(!scale->value.IsNumber()) {
@@ -2528,6 +2622,9 @@ Resources::MaterialMaps Resources::loadMaterialMaps(std::string_view name) {
   ret.orm    = inst->implLoadMaterialTexture(files.orm,TextureKind::Orm);
   ret.scale  = files.scale;
   ret.antitileCell = files.antitileCell;
+  ret.turbidity = files.turbidity;
+  ret.turbidityDepth = files.turbidityDepth;
+  ret.emissive = files.emissive;
   ret.antitile = files.antitile;
   ret.present = true;
   ret.hasAlbedo = !files.albedo.empty();
@@ -2597,23 +2694,41 @@ const Animation* Resources::loadAnimation(std::string_view name) {
   }
 
 std::filesystem::path Resources::baseModelFile(std::string_view name) {
-  const auto separator = name.find_last_of("/\\");
-  std::string key(separator==std::string_view::npos ? name : name.substr(separator+1));
-  for(auto& c:key)
-    c = char(std::toupper(static_cast<unsigned char>(c)));
-  const auto found = inst->baseModels.files.find(key);
+  const auto found = inst->baseModels.files.find(modelKey(name));
   if(found==inst->baseModels.files.end())
     return {};
   return inst->baseModels.dir/found->second;
   }
 
-bool Resources::loadHierarchyData(std::string_view name, asset::ModelHierarchy& out) {
+template<class T>
+bool Resources::loadModelRecord(std::string_view name, T& out, T (*read)(const std::filesystem::path&)) {
   LoadProbe::Vobs::Scope probe("mesh_read");
+  const auto content = inst->contentModels.find(modelKey(name));
+  if(content!=inst->contentModels.end()) {
+    try {
+      auto record = read(content->second);
+      if constexpr(std::is_same_v<T,asset::ModelAnimation>) {
+        if(record.frame_count==0 || record.node_count==0 || record.fps<=0 ||
+           record.node_indices.size()!=record.node_count ||
+           uint64_t(record.frame_count)*record.node_count!=record.samples.size() ||
+           std::any_of(record.node_indices.begin(),record.node_indices.end(),[](uint32_t node) {
+             return node>=MAX_NUM_SKELETAL_NODES;
+             }))
+          throw std::runtime_error("invalid animation frames, nodes, samples or fps");
+        }
+      out = std::move(record);
+      if(inst->census) inst->census->replaced(name,content->second.generic_string());
+      return true;
+      }
+    catch(const std::exception& error) {
+      Log::e("content models: skipping \"",content->second.string(),"\": ",error.what());
+      }
+    }
   const auto file = baseModelFile(name);
   if(file.empty())
     return false;
   try {
-    out = ModelData::readHierarchy(file);
+    out = read(file);
     }
   catch(const std::exception& error) {
     if(inst->census) inst->census->missing(name,error.what());
@@ -2621,38 +2736,18 @@ bool Resources::loadHierarchyData(std::string_view name, asset::ModelHierarchy& 
     }
   if(inst->census) inst->census->replaced(name,"base/models/"+file.filename().string());
   return true;
+  }
+
+bool Resources::loadHierarchyData(std::string_view name, asset::ModelHierarchy& out) {
+  return loadModelRecord(name,out,ModelData::readHierarchy);
   }
 
 bool Resources::loadModelMeshData(std::string_view name, asset::ModelMesh& out) {
-  LoadProbe::Vobs::Scope probe("mesh_read");
-  const auto file = baseModelFile(name);
-  if(file.empty())
-    return false;
-  try {
-    out = ModelData::readMesh(file);
-    }
-  catch(const std::exception& error) {
-    if(inst->census) inst->census->missing(name,error.what());
-    throw;
-    }
-  if(inst->census) inst->census->replaced(name,"base/models/"+file.filename().string());
-  return true;
+  return loadModelRecord(name,out,ModelData::readMesh);
   }
 
 bool Resources::loadModelData(std::string_view name, asset::Model& out) {
-  LoadProbe::Vobs::Scope probe("mesh_read");
-  const auto file = baseModelFile(name);
-  if(file.empty())
-    return false;
-  try {
-    out = ModelData::readModel(file);
-    }
-  catch(const std::exception& error) {
-    if(inst->census) inst->census->missing(name,error.what());
-    throw;
-    }
-  if(inst->census) inst->census->replaced(name,"base/models/"+file.filename().string());
-  return true;
+  return loadModelRecord(name,out,ModelData::readModel);
   }
 
 bool Resources::loadModelScriptData(std::string_view name, asset::ModelScript& out) {
@@ -2668,41 +2763,46 @@ bool Resources::loadModelScriptData(std::string_view name, asset::ModelScript& o
     throw;
     }
   if(inst->census) inst->census->replaced(name,"base/models/"+file.filename().string());
+  const auto content = inst->contentModels.find(modelKey(name));
+  if(content!=inst->contentModels.end()) {
+    try {
+      auto overlay = ModelData::readScriptOverlay(content->second);
+      for(const auto& animation:overlay.animations)
+        if(std::any_of(out.aliases.begin(),out.aliases.end(),[&](const auto& alias) { return alias.name==animation.name; }))
+          throw std::runtime_error("overlay animation changes kind: "+animation.name);
+      for(const auto& alias:overlay.aliases)
+        if(std::any_of(out.animations.begin(),out.animations.end(),[&](const auto& animation) { return animation.name==alias.name; }))
+          throw std::runtime_error("overlay alias changes kind: "+alias.name);
+      const auto merge = [](auto& base, auto& additions) {
+        for(auto& entry:additions) {
+          const auto found = std::find_if(base.begin(),base.end(),[&](const auto& old) {
+            return old.name==entry.name;
+            });
+          if(found==base.end()) base.push_back(std::move(entry));
+          else *found = std::move(entry);
+          }
+        };
+      merge(out.animations,overlay.animations);
+      merge(out.aliases,overlay.aliases);
+      if(inst->census) inst->census->replaced(name,content->second.generic_string());
+      }
+    catch(const std::exception& error) {
+      Log::e("content models: skipping \"",std::filesystem::absolute(content->second).string(),"\": ",error.what());
+      }
+    }
   return true;
   }
 
 bool Resources::loadAnimationData(std::string_view name, asset::ModelAnimation& out) {
-  LoadProbe::Vobs::Scope probe("mesh_read");
-  const auto file = baseModelFile(name);
-  if(file.empty())
-    return false;
-  try {
-    out = ModelData::readAnimation(file);
-    }
-  catch(const std::exception& error) {
-    if(inst->census) inst->census->missing(name,error.what());
-    throw;
-    }
-  if(inst->census) inst->census->replaced(name,"base/models/"+file.filename().string());
-  return true;
+  return loadModelRecord(name,out,ModelData::readAnimation);
   }
 
 asset::MorphMesh Resources::loadMorphData(std::string_view name) {
-  LoadProbe::Vobs::Scope probe("mesh_read");
-  const auto file = baseModelFile(name);
-  if(file.empty()) {
+  asset::MorphMesh out;
+  if(!loadModelRecord(name,out,ModelData::readMorph)) {
     if(inst->census) inst->census->missing(name,"missing from base index");
     throw std::runtime_error("failed to open resource: " + std::string(name));
     }
-  asset::MorphMesh out;
-  try {
-    out = ModelData::readMorph(file);
-    }
-  catch(const std::exception& error) {
-    if(inst->census) inst->census->missing(name,error.what());
-    throw;
-    }
-  if(inst->census) inst->census->replaced(name,"base/models/"+file.filename().string());
   return out;
   }
 
@@ -2801,15 +2901,49 @@ const Resources::VobTree* Resources::implLoadVobBundle(std::string_view filename
     return i->second.get();
 
   std::vector<std::shared_ptr<asset::VirtualObject>> bundle;
-  try {
-    WorldData::ZenFile base;
-    if(loadBaseZen(cname,"world",base)) {
-      bundle = std::move(base.vobs);
-
+  bool overridden=false;
+  const auto content=contentDir();
+  const auto* layers=std::getenv("OPENGOTHIC_VOB_LAYERS");
+  if(!content.empty() && (layers==nullptr || std::string_view(layers)!="0")) {
+    auto file=content/"vobtrees.d";
+    try {
+      const auto separator=filename.find_last_of("/\\");
+      auto name=std::filesystem::path(std::string(filename.substr(separator==std::string_view::npos ? 0 : separator+1)))
+                  .stem().string()+".json";
+      for(auto& c:name) c=char(std::toupper(uint8_t(c)));
+      if(std::filesystem::is_directory(file))
+        for(const auto& entry:std::filesystem::directory_iterator(file)) {
+          auto candidate=entry.path().filename().string();
+          for(auto& c:candidate) c=char(std::toupper(uint8_t(c)));
+          if(candidate!=name || !entry.is_regular_file()) continue;
+          file=entry.path();
+          std::map<std::string,std::filesystem::path> ownMeshes;
+          for(const auto& [key,mesh]:meshOverrides) ownMeshes.emplace(key,mesh.file);
+          const auto result=VobLayer::readTree(bundle,baseDir(),file,content,&ownMeshes);
+          overridden=result.errors.empty();
+          if(!overridden) {
+            std::string errors;
+            for(const auto& error:result.errors) {
+              if(!errors.empty()) errors+="; ";
+              errors+=error;
+              }
+            Log::e("vob tree: skipped ",errors);
+            }
+          break;
+          }
+      }
+    catch(const std::exception& error) {
+      Log::e("vob tree: skipped ",file.string(),": ",error.what());
       }
     }
-  catch(...) {
-    Log::e("unable to load Zen-file: \"",cname,"\"");
+  if(!overridden) {
+    try {
+      WorldData::ZenFile base;
+      if(loadBaseZen(cname,"world",base)) bundle=std::move(base.vobs);
+      }
+    catch(...) {
+      Log::e("unable to load Zen-file: \"",cname,"\"");
+      }
     }
 
   auto ret = zenCache.insert(std::make_pair(filename,std::make_unique<VobTree>(std::move(bundle))));

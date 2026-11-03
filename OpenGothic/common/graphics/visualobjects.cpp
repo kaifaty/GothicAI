@@ -364,7 +364,7 @@ bool VisualObjects::textureChunkActive(const Vec3& position) const {
     return true;
   const auto chunk=ChunkId::fromPosition(position.x,position.z);
   const auto index=textureResidency->indexOf(chunk);
-  if(index!=size_t(-1))
+  if(index!=size_t(-1) && textureResidency->table().entries[index].triangleCount!=0)
     return textureResidency->desired(index)!=ChunkResidency::State::Outside;
   // Some visuals occupy cells without landscape triangles.
   return true;
@@ -950,10 +950,13 @@ void VisualObjects::visibilityVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd)
   drawCmd.visibilityVsm(cmd);
   }
 
-void VisualObjects::drawTranslucent(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
-  // return;
+void VisualObjects::drawMultiply(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
   drawCmd.drawCommon(cmd, SceneGlobals::V_Main, Material::Multiply);
   drawCmd.drawCommon(cmd, SceneGlobals::V_Main, Material::Multiply2);
+  }
+
+void VisualObjects::drawTranslucent(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
+  // return;
   drawCmd.drawCommon(cmd, SceneGlobals::V_Main, Material::Ghost);
   drawCmd.drawCommon(cmd, SceneGlobals::V_Main, Material::AdditiveLight);
   drawCmd.drawCommon(cmd, SceneGlobals::V_Main, Material::Transparent);

@@ -1,4 +1,5 @@
 import asyncio
+import os
 import stat
 from pathlib import Path
 
@@ -92,7 +93,19 @@ def calls(tmp_path: Path) -> int:
     return len(path.read_text().splitlines()) if path.exists() else 0
 
 
-async def test_draw_stores_the_picture_and_its_prompt(tmp_path):
+@pytest.mark.parametrize("sign_commits", [False, True])
+async def test_draw_stores_the_picture_and_its_prompt(tmp_path, monkeypatch, sign_commits):
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    for variable in ("GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"):
+        monkeypatch.delenv(variable, raising=False)
+    if sign_commits:
+        config = tmp_path / "gitconfig"
+        config.write_text("[commit]\n\tgpgsign = true\n")
+        monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(config))
     raw = woodcut(tmp_path / "gen.png")
     artist = Artist(tmp_path / "feats", codex=fake_codex(tmp_path, f'echo "Saved to {raw}"'))
     picture = await artist.draw("abc123", "a coiled snake under a cart")

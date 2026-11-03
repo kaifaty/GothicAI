@@ -20,6 +20,8 @@
 #include "waymatrix.h"
 #include "portalrooms.h"
 #include "chunkresidency.h"
+#include "bodytraces.h"
+#include "bloodstains.h"
 
 class GameSession;
 class Focus;
@@ -53,6 +55,12 @@ class World final {
     const ChunkTable&    chunkTable() const { return chunks; }
     ChunkResidency*      chunkResidency() const { return residency.get(); }
     void                 updateLandscape(const Camera& camera);
+    // NPC simulation tiers (world/npcsimtier.h): recomputed every world tick;
+    // loading calls updateNpcSimTiers() after the first residency update.
+    void                 updateNpcSimTiers() { wobj.updateSimTiers(); }
+    const NpcSimTiers::Stats& npcSimTierStats() const { return wobj.simTierStats(); }
+    void noteGraphFpLoadResolution() { wobj.noteGraphFpLoadResolution(); }
+    void noteNpcGraphFallback(bool ground) { wobj.noteNpcGraphFallback(ground); }
     bool                 landscapeReady() const { return !wview || wview->landscapeReady(); }
 
     void                 load(Serialize& fin );
@@ -76,8 +84,32 @@ class World final {
       std::array<Tempest::Vec3,6> sightPoints;
       int64_t appearedAt = -1; // game minutes; -1 for traces from legacy saves
       std::string culprit; // engine truth: never serialize this field to the AI bridge
+      std::string npc;     // a body: the dead one's instance symbol, as npc_view's look names it
       };
-    std::vector<PhysicsTrace> physicsTraces() const;
+    // `viewer` (with `range`, cm): body rows farther from it are not built; the rows that are
+    // built do not change. Without it, every trace of the world.
+    std::vector<PhysicsTrace> physicsTraces(const Tempest::Vec3* viewer = nullptr, float range = 0) const;
+
+    // Bodies (physics stage 8, step 4b; world/bodytraces.h holds the rules).
+    int64_t              gameMinute() const;                  // minutes since the first day began
+    uint32_t             allocBodyTraceId() { return nextBodyTraceId++; }
+    std::string          bodyTraceId(const Npc& body) const;  // "<world>:body:<n>"
+    std::array<Tempest::Vec3,6> bodySightPoints(const Npc& body) const;
+    bool                 heroSeesBody(const Npc& hero, const Npc& body) const;
+    bool                 isStoryNpcType(int32_t type) const;
+    BodyTraces::Body     bodyRule(const Npc& body, const Npc* hero) const; // all but heroSees
+
+    // Blood (physics stage 8, step 4c; world/bloodstains.h holds the rules). [GAME] blood=0:
+    // addBloodStain adds nothing, bloodStains() is empty and there are no `blood` traces.
+    uint32_t             addBloodStain(BloodStains::Stain stain); // its id; 0: blood is off
+    const std::vector<BloodStains::Stain>& bloodStains() const;
+    bool                 bodyInWorld(uint32_t bodyTraceId) const;  // a dead NPC with this body trace id
+    bool                 bodyTraceInWorld(uint32_t bodyTraceId) const; // ... and it is reported as a body trace
+    std::string          bloodTraceId(uint32_t stainId) const;     // "<world>:blood:<n>"
+    // On the ground below `near` (Marvin and bridge `blood`, benches): surface, normal and indoor
+    // from the world; 0 when blood is off or there is no ground.
+    uint32_t             placeBloodStain(const Tempest::Vec3& near, BloodStains::Kind kind, float radiusCm,
+                                         uint32_t bodyId = 0);
 
     uint32_t             mobsiId(const Interactive* ptr) const;
     Interactive*         mobsiById(uint32_t id);
@@ -108,6 +140,8 @@ class World final {
 
     WayPath              wayTo(const Npc& pos,const WayPoint& end) const;
     WayPath              wayTo(const WayPoint& begin, const WayPoint& end) const;
+    const WayHeights::Profile& groundProfile(const Tempest::Vec3& from,const Tempest::Vec3& to,
+                                             float stepHeight,float slopeCos) const;
 
     WorldView*           view()     const { return wview.get();    }
     WorldSound*          sound()          { return &wsound;        }
@@ -220,6 +254,9 @@ class World final {
 
     bool                 isInSfxRange(const Tempest::Vec3& pos) const;
     bool                 isInPfxRange(const Tempest::Vec3& pos) const;
+    // A headless run that stands in for the rendered game: the camera origin the renderer would hand to
+    // its particle range after this step. Without it a headless world treats every point as in range.
+    void                 setHeadlessViewer(const Tempest::Vec3& pos) { headlessViewer = pos; hasHeadlessViewer = true; }
 
     void                 addDlgSound(std::string_view s, const Tempest::Vec3& pos, float range, uint64_t &timeLen,
                                      std::shared_ptr<LipSync::Track>* voice = nullptr);
@@ -267,6 +304,8 @@ class World final {
 
     std::unique_ptr<DynamicWorld>         wdynamic;
     std::unique_ptr<WorldView>            wview;
+    Tempest::Vec3                         headlessViewer;
+    bool                                  hasHeadlessViewer = false;
     std::vector<std::unique_ptr<ClothVisual>> clothSurfaces;
     mutable MeshObjects                  cpuObjects;
     std::unique_ptr<GlobalEffects>        globFx;
@@ -285,6 +324,19 @@ class World final {
       };
     std::vector<StuckArrow>               stuckArrows;
     uint64_t                             nextArrowTraceId = 1;
+    uint32_t                             nextBodyTraceId  = 1;
+    int64_t                              bodySweepMinute  = -1;
+    mutable std::array<int32_t,3>        storyNpcTypes    = BodyTraces::StoryTypes;
+    mutable bool                         storyNpcTypesRead = false;
+    std::vector<BloodStains::Stain>      blood;
+    uint32_t                             nextBloodStainId = 1;
+    void                                 sweepBodies();
+    void                                 sweepBodiesAt(int64_t now);
+    void                                 sweepBloodStains();
+    void                                 saveBloodStains(Serialize& fout) const;
+    void                                 loadBloodStains(Serialize& fin);
+    void                                 saveBodyTraces(Serialize& fout) const;
+    void                                 loadBodyTraces(Serialize& fin);
     void                                 saveStuckArrows(Serialize& fout) const;
     void                                 loadStuckArrows(Serialize& fin);
     void                                 updateStuckArrows();

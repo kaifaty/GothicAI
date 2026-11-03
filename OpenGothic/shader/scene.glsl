@@ -38,13 +38,14 @@ struct SceneDesc {
   ivec2 screenRes;
   vec4  cloudsDir;
   float probeGridBias;
+  uint  fogQuality; // 0 - none, 1 - fog LUT, 2 - separate single and multi-scattering LUTs
   };
 
 struct LightSource {
   vec3  pos;
   float range;
   vec3  color;
-  float padd0;
+  float cookie; // 0: none; else the light mask's slot (integer part) and the light's yaw in turns (fraction)
   };
 
 struct MorphDesc {
@@ -101,6 +102,10 @@ struct Bucket {
   uint  diffuseFrames;
   uint  frameCount;
   uint  frameDuration;
+  float turbidity;
+  float turbidityDepth;
+  float emissive;
+  uint  padding2; // scalars, as in BucketGpu: an array member faulted the GPU on Metal
   };
 
 #endif

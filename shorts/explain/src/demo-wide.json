@@ -1,6 +1,7 @@
 {
   "format": "wide",
   "brand": false,
+  "sfx": false,
   "lang": "ru",
   "hook": {"text": "Механика в широком кадре", "until": 1.8},
   "beats": [

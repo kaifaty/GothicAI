@@ -7,8 +7,8 @@
 #include "game/archery.h"
 
 // Archer: a bow drawn by hand (the manual aim). The string is drawn while the button is held and the bow
-// holds still, held at full draw until the arms tire, let go with the button. The aim sways meanwhile:
-// less with skill, more when too weak for the bow, tired, out of breath, right after a turn or a shot.
+// holds still, held at its draw limit until the arms tire, let go with the button. The aim sways meanwhile:
+// less with skill, more when drawing beyond comfortable strength, tired, out of breath, after a turn or shot.
 // The hero's input drives it (PlayerControl), npc archers later
 class Archer final {
   public:
@@ -17,7 +17,7 @@ class Archer final {
       Raising,   // being raised, an arrow nocked (the animation): no draw yet
       Nocked,    // ready, the string not drawn
       Drawing,
-      Held,      // at full draw
+      Held,      // at the chosen draw limit, possibly below full draw
       Reloading, // shot: the next arrow
       };
 
@@ -25,6 +25,7 @@ class Archer final {
       bool     raised = false; // the bow is up (the stance)
       bool     ready  = false; // the bow holds still in the aim: an arrow on the string
       bool     draw   = false; // the button is held
+      bool     burst  = true;  // draw beyond the comfortable strength limit
       bool     breath = false; // the breath is held
       float    turn   = 0;     // radians the aim turned since the last tick
       bool     reload = false; // the reload animation still plays: the next arrow is not on the string yet
@@ -40,7 +41,7 @@ class Archer final {
       bool  valid    = false;
       Stage stage    = Lowered;
       float draw     = 0;
-      float hold     = 0;  // seconds at full draw
+      float hold     = 0;  // seconds at the chosen draw limit
       float fatigue  = 0;
       float breath   = 0;  // seconds of breath left
       bool  holding  = false;

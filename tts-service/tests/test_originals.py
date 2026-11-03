@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import re
 import struct
 from pathlib import Path
 from types import SimpleNamespace
@@ -212,6 +213,9 @@ def test_base_helper_matches_server_contract():
 
 
 def test_pinned_lines_keep_reference_order_and_fail_explicitly(tmp_path, monkeypatch):
+    samples = json.loads(Path(originals.__file__).with_name("original_samples.json").read_text())
+    assert list(samples) == list(originals.ORIGINAL_LINES) == list(originals.CHARACTERS)
+    assert all(re.fullmatch(r"[0-9a-f]{16}", digest) for digest in samples.values())
     assert set(originals.ORIGINAL_LINES) == set(originals.CHARACTERS)
     assert len(originals.ORIGINAL_LINES) == 36
     assert all(

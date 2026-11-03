@@ -55,6 +55,7 @@ def test_services_get_their_settings_and_find_each_other(config, tmp_path):
     config.set("tts.loudness", "-16")
     config.set("llm.model", "gpt-6.1-sol")
     config.set("llm.decider_url", "ws://gpu:47832")
+    config.set("llm.embed_url", "http://gpu:47837")
     config.set("llm.quick_url", "http://gpu:47834/v1")
     config.set("llm.body_url", "tcp://gpu:47835")
     config.set("secrets.inworld_api_key", "iw-secret")
@@ -86,6 +87,7 @@ def test_services_get_their_settings_and_find_each_other(config, tmp_path):
     assert args[args.index("--tts-url") + 1] == "ws://127.0.0.1:50003"
     assert args[args.index("--model") + 1] == "gpt-6.1-sol" and "--no-console" in args
     assert args[args.index("--decider-url") + 1] == "ws://gpu:47832"
+    assert args[args.index("--embed-url") + 1] == "http://gpu:47837"
     assert args[args.index("--quick-url") + 1] == "http://gpu:47834/v1" and "--no-quick" not in args
     assert args[args.index("--body-url") + 1] == "tcp://gpu:47835"
     assert args[args.index("--game-dir") + 1] == "/games/G2"
@@ -327,6 +329,8 @@ def test_ryzen_settings_load_shared_fingerprints_before_preparation(config, tmp_
     config.set("game.dir", str(settings))
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setattr(commands.sys, "platform", "linux")
+    monkeypatch.setenv("OPENGOTHIC_BASE_CACHE", str(tmp_path / "cache"))
+    monkeypatch.setenv("OPENGOTHIC_BASE_STORE", str(tmp_path / "store"))
     for key in (
         "GOTHIC_DIR", "OPENGOTHIC_BASE", "OPENGOTHIC_BASE_FINGERPRINT", "OPENGOTHIC_VIDEOS_FINGERPRINT"
     ):
@@ -359,6 +363,52 @@ def test_ryzen_settings_load_shared_fingerprints_before_preparation(config, tmp_
 
 
 @posix_only
+def test_ryzen_settings_replace_stale_base_with_engine_format(config, tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    repo = home / "repo"
+    (repo / "server").mkdir(parents=True)
+    (repo / "server/pyproject.toml").touch()
+    (repo / "scripts").mkdir()
+    source = Path(__file__).resolve().parents[3] / "scripts/ryzen_game.py"
+    shutil.copyfile(source, repo / "scripts/ryzen_game.py")
+    binary = repo / "Gothic2Notr"
+    binary.touch(mode=0o755)
+    converter = repo / "content-convert"
+    converter.write_text(
+        f"#!{sys.executable}\nimport json, sys\nassert sys.argv[1:] == ['formats']\n"
+        f"print(json.dumps({{'base': {'2' * 64!r}, 'videos': {'3' * 64!r}}}))\n"
+    )
+    converter.chmod(0o755)
+    settings = home / "gothic-ai/game-settings"
+    (settings / "system").mkdir(parents=True)
+    for name in ("Gothic.ini", "SystemPack.ini"):
+        (settings / "system" / name).touch()
+    (home / "gothic-ai/game-base.json").write_text(json.dumps({"base": "a" * 64, "videos": ""}))
+    cache = tmp_path / "cache"
+    for fingerprint, format_sha256 in (("a" * 64, "1" * 64), ("b" * 64, "2" * 64)):
+        directory = cache / fingerprint
+        directory.mkdir(parents=True)
+        (directory / "base.json").write_text(json.dumps({
+            "fingerprint": fingerprint, "format_sha256": format_sha256,
+            "archives": [{"name": "GOTHIC.DAT", "sha256": "4" * 64}],
+            "loose_files": [], "sources": {"gothic": "Gothic II"},
+        }))
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(commands.sys, "platform", "linux")
+    for key in tuple(os.environ):
+        if key.startswith("OPENGOTHIC_BASE") or key in ("GOTHIC_DIR", "OPENGOTHIC_VIDEOS_FINGERPRINT"):
+            monkeypatch.delenv(key)
+    monkeypatch.setenv("OPENGOTHIC_BASE_CACHE", str(cache))
+    monkeypatch.setenv("OPENGOTHIC_BASE_STORE", str(tmp_path / "store"))
+    config.set("paths.repo", str(repo))
+    config.set("paths.uv", "/bin/sh")
+    config.set("paths.game_bin", str(binary))
+    config.set("game.dir", str(settings))
+
+    assert find_layout(config).game_env["OPENGOTHIC_BASE_FINGERPRINT"] == "b" * 64
+
+
+@posix_only
 def test_linux_missing_credentials_is_a_short_cli_error(config, tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(cli.sys, "platform", "linux")
     monkeypatch.setattr(cli.sys, "argv", ["gothic-launcher", "up", "--continue"])
@@ -387,6 +437,7 @@ def test_openai_credentials_are_checked_only_when_selected(config, tmp_path, mon
 
 def test_smoke_overrides_never_spend_model_quota_or_change_saved_settings(config, tmp_path, monkeypatch):
     config.set("llm.decider_url", "ws://gpu:47832")
+    config.set("llm.embed_url", "http://gpu:47837")
     config.set("llm.quick_url", "http://gpu:47834/v1")
     config.set("llm.body_url", "tcp://gpu:47835")
     config.save()
@@ -398,7 +449,7 @@ def test_smoke_overrides_never_spend_model_quota_or_change_saved_settings(config
     assert server.name == "server"
     assert server.argv[server.argv.index("--llm") + 1] == "fake"
     assert {"--no-quick", "--no-voice", "--no-tts"}.issubset(server.argv)
-    assert not {"--decider-url", "--quick-url", "--body-url"}.intersection(server.argv)
+    assert not {"--decider-url", "--quick-url", "--body-url", "--embed-url"}.intersection(server.argv)
     assert server.argv[server.argv.index("--body-policy") + 1] == "service"
     assert config.settings_path.read_text() == saved
 

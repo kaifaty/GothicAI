@@ -1,0 +1,180 @@
+# Functional backstab smoke; run unchanged with MELEE_BACKSTAB=1 and 0.
+# BENCH_HOST=local WORLD=NEWWORLD.ZEN MELEE_STAGGER=1 OPENGOTHIC_BODY_TRACE=1
+# Each direct strike enters ordinary melee defence, damage and hero-deed handling.
+# A final real sword swing also exercises the blade journal.
+# Watch/place keeps the nearest inserted actor; near resolves the original script instance elsewhere.
+seed 73013
+set time 12 0
+release all
+overlay off
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+wait 500
+watch player
+clear 3000
+wait 34
+corner right go 0
+melee-shadow setup 1h
+stats hp 100000 hpmax 100000
+wait 600
+melee-shadow clear
+turn 180
+rec smoke novideo
+
+# (a) Unaware, behind, sneak trained; (f) the immediate second blow is remembered.
+insert BDT_1013_Bandit_L
+put BDT_1013_BANDIT_L 140 0
+wait 100
+stats npc BDT_1013_BANDIT_L hp 100000 hpmax 100000
+still BDT_1013_BANDIT_L on
+stats sneak 1
+watch BDT_1013_BANDIT_L
+place 140 180
+pair player BDT_1013_BANDIT_L
+mark a-unaware-rear
+seed 73013
+strike BDT_1013_BANDIT_L
+mark f-repeat-rear
+seed 73013
+strike BDT_1013_BANDIT_L
+watch player
+clear 3000
+wait 34
+
+# (b) The same rear attack, without sneak.
+insert BDT_1013_Bandit_L
+put BDT_1013_BANDIT_L 140 0
+wait 100
+stats npc BDT_1013_BANDIT_L hp 100000 hpmax 100000
+still BDT_1013_BANDIT_L on
+stats sneak 0
+watch BDT_1013_BANDIT_L
+place 140 180
+pair player BDT_1013_BANDIT_L
+mark b-untrained-rear
+seed 73013
+strike BDT_1013_BANDIT_L
+watch player
+clear 3000
+wait 34
+
+# (c) Sneak trained, in front of an awake target.
+insert BDT_1013_Bandit_L
+put BDT_1013_BANDIT_L 140 0
+wait 100
+stats npc BDT_1013_BANDIT_L hp 100000 hpmax 100000
+still BDT_1013_BANDIT_L on
+stats sneak 1
+watch BDT_1013_BANDIT_L
+place 140 0
+pair player BDT_1013_BANDIT_L
+mark c-trained-front
+seed 73013
+strike BDT_1013_BANDIT_L
+watch player
+clear 3000
+wait 34
+
+# (d) Set the native magic-sleep state before damage, without an intervening scripted wake tick.
+insert BDT_1013_Bandit_L
+put BDT_1013_BANDIT_L 140 0
+wait 100
+stats npc BDT_1013_BANDIT_L hp 100000 hpmax 100000
+still BDT_1013_BANDIT_L on
+state BDT_1013_BANDIT_L ZS_MAGICSLEEP NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+stats sneak 1
+watch BDT_1013_BANDIT_L
+place 140 0
+pair player BDT_1013_BANDIT_L
+mark d-sleeping-front
+seed 73013
+strike BDT_1013_BANDIT_L
+watch player
+clear 3000
+wait 34
+
+# (e) Posture stun, without sneak: rear replaces the existing 1.5x bonus; front keeps it.
+insert BDT_1013_Bandit_L
+put BDT_1013_BANDIT_L 140 0
+wait 100
+stats npc BDT_1013_BANDIT_L hp 100000 hpmax 100000
+still BDT_1013_BANDIT_L on
+stats sneak 0
+stun BDT_1013_BANDIT_L posture
+watch BDT_1013_BANDIT_L
+place 140 180
+pair player BDT_1013_BANDIT_L
+mark e-stunned-rear
+seed 73013
+strike BDT_1013_BANDIT_L
+watch player
+clear 3000
+wait 34
+insert BDT_1013_Bandit_L
+put BDT_1013_BANDIT_L 140 0
+wait 100
+stats npc BDT_1013_BANDIT_L hp 100000 hpmax 100000
+still BDT_1013_BANDIT_L on
+stun BDT_1013_BANDIT_L posture
+watch BDT_1013_BANDIT_L
+place 140 0
+pair player BDT_1013_BANDIT_L
+mark e-stunned-front
+seed 73013
+strike BDT_1013_BANDIT_L
+watch player
+clear 3000
+wait 34
+
+# (g) Huge beasts receive only 1.5x.
+insert Troll
+put TROLL 250 0
+wait 100
+stats npc TROLL hp 100000 hpmax 100000
+still TROLL on
+stats sneak 1
+watch TROLL
+place 250 180
+pair player TROLL
+mark g-huge-rear
+seed 73013
+strike TROLL
+watch player
+clear 3000
+wait 34
+
+# A native 1H side swing, with a fresh unaware target, records backstab_mult in the blade log.
+insert BDT_1013_Bandit_L
+put BDT_1013_BANDIT_L 125 0
+wait 100
+stats npc BDT_1013_BANDIT_L hp 100000 hpmax 100000
+still BDT_1013_BANDIT_L on
+stats sneak 1
+watch BDT_1013_BANDIT_L
+place 125 180
+pair player BDT_1013_BANDIT_L
+watch player
+mark blade-unaware-rear
+seed 73013
+press action
+tap left
+wait 600
+release all
+hp BDT_1013_BANDIT_L
+# The same rear attack with Marvin's setting inverted must follow the opposite mode.
+release all
+watch player
+clear 3000
+wait 34
+insert BDT_1013_Bandit_L
+put BDT_1013_BANDIT_L 140 0
+wait 100
+stats npc BDT_1013_BANDIT_L hp 100000 hpmax 100000
+still BDT_1013_BANDIT_L on
+watch BDT_1013_BANDIT_L
+place 140 180
+toggle melee_backstab
+mark toggle-rear
+seed 73013
+strike BDT_1013_BANDIT_L
+toggle melee_backstab
+stop

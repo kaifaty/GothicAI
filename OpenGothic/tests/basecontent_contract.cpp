@@ -1,3 +1,4 @@
+#define MINIZ_NO_ZLIB_COMPATIBLE_NAMES
 #include "asset/fromzenkit.h"
 #include "audiodata.h"
 #include "baseimport.h"
@@ -10,6 +11,9 @@
 #include "gltfmesh.h"
 #include "gothicglb.h"
 #include "graphics/mesh/submesh/packedmesh.h"
+#include "graphics/mesh/pose.h"
+#include "graphics/mesh/skeleton.h"
+#include "game/serialize.h"
 #include "physics/physicvbo.h"
 #include "resources.h"
 #include "sha256.h"
@@ -42,6 +46,8 @@
 #include <zenkit/addon/daedalus.hh>
 #include <Tempest/Dir>
 #include <Tempest/MemReader>
+#include <Tempest/MemWriter>
+#include <Tempest/Log>
 #include <Tempest/File>
 #include <Tempest/Sound>
 #include <Tempest/Texture2d>
@@ -657,6 +663,224 @@ struct BaseContentContract {
     for(const auto& [extension,count]:counts) std::printf("; %s=%zu",extension.c_str(),count);
     std::puts("; selected through Resources; every owned field and native attachment order equal");
     return names.size();
+    }
+
+  static void contentAnimations(const fs::path& base, const fs::path& temporary) {
+    setenv("OPENGOTHIC_BASE",base.c_str(),1);
+    setenv("OPENGOTHIC_CONTENT","",1);
+    asset::ModelAnimation baseline;
+    asset::ModelScript baseScript;
+    asset::ModelHierarchy hierarchy;
+    Animation::AnimData baseSequence;
+    {
+    Resources resources;
+    Resources::loadBase();
+    Gothic gothic;
+    require(Resources::loadAnimationData("HUMANS-T_JUMPB.MAN",baseline),"base jump record must load");
+    require(Resources::loadModelScriptData("HUMANS.MSB",baseScript),"base human script must load");
+    require(Resources::loadHierarchyData("HUMANS.MDH",hierarchy),"base human hierarchy must load");
+    const auto* animation=Resources::loadAnimation("HUMANS.MSB");
+    require(animation && !animation->sequence("T_TESTDASHB"),"base must not contain the synthetic dash");
+    const auto* jump=animation->sequence("T_JUMPB");
+    require(jump!=nullptr,"base must contain T_JUMPB");
+    equal(jump->data->numFrames,14u,"base jump frames");
+    baseSequence=*jump->data;
+    }
+    equal(hierarchy.nodes.size(),34u,"human node count");
+    require(hierarchy.nodes.front().name=="BIP01","human root must be BIP01");
+    equal(baseline.node_indices.size(),34u,"base jump animated nodes");
+    require(!baseScript.aliases.empty(),"human script must contain an alias to replace");
+
+    const auto content=temporary/"animation-content";
+    const auto models=content/"models";
+    const auto indexFile=models/"models.json";
+    const auto scriptFile=models/"HUMANS.MSB.json";
+    const auto badFile=models/"HUMANS-T_TESTBROKENB.MAN.json";
+    const auto missingScript=models/"NO_SUCH_MODEL.MSB.json";
+    fs::create_directories(models);
+    const auto writeAnimation=[&](const char* name,uint32_t frames,float distance) {
+      auto record=baseline;
+      record.name=name; record.next=""; record.layer=1; record.frame_count=frames;
+      record.fps=25.f; record.fps_source=25.f; record.events.clear();
+      record.samples.resize(size_t(frames)*record.node_count);
+      for(uint32_t frame=0;frame<frames;++frame)
+        for(size_t node=0;node<record.node_count;++node) {
+          auto sample=baseline.samples[node];
+          if(record.node_indices[node]==0) sample.position.z-=distance*float(frame)/float(frames-1);
+          record.samples[size_t(frame)*record.node_count+node]=sample;
+          }
+      const auto file=models/(std::string("HUMANS-")+name+".MAN.json");
+      ModelData::writeAnimation(record,file);
+      require(std::string_view(json(file)["data"]["samples"]["encoding"].GetString())=="float32",
+              "synthetic animation must use float32 samples");
+      };
+    writeAnimation("T_TESTDASHB",14,150.f);
+    writeAnimation("T_JUMPB",20,240.f);
+    const auto definition=[](const char* name,uint32_t frames) {
+      asset::MdsAnimation out{};
+      out.name=name; out.layer=1; out.next="S_RUN"; out.flags=asset::AnimationFlags::MOVE;
+      out.direction=asset::AnimationDirection::FORWARD; out.first_frame=0; out.last_frame=int32_t(frames)-1;
+      out.fps=25.f; out.speed=1.f; out.collision_volume_scale=1.f;
+      return out;
+      };
+    asset::ModelScript overlay;
+    overlay.animations={definition("T_TESTDASHB",14),definition("T_JUMPB",20),definition("T_TESTBROKENB",14)};
+    asset::MdsEventTag window{};
+    window.type=asset::MdsEventType::COMBO_WINDOW; window.frames={1,10};
+    overlay.animations.front().events.push_back(window);
+    asset::MdsAnimationAlias alias{};
+    alias.name="T_TESTDASHB_ALIAS"; alias.layer=2; alias.next="S_RUN";
+    alias.flags=asset::AnimationFlags::MOVE; alias.alias="T_TESTDASHB";
+    alias.direction=asset::AnimationDirection::FORWARD;
+    overlay.aliases={alias};
+    alias.name=baseScript.aliases.front().name;
+    overlay.aliases.push_back(alias);
+    const auto writeOverlay=[&](const fs::path& file) {
+      ModelData::writeScript(overlay,file);
+      auto record=json(file);
+      record["kind"].SetString("script-overlay",record.GetAllocator());
+      auto& data=record["data"];
+      for(const char* key:{"skeleton","meshes","disabled_animations","combinations","blends","model_tags"})
+        data.RemoveMember(key);
+      writeJson(file,record);
+      };
+    writeOverlay(scriptFile);
+    writeOverlay(missingScript);
+    const std::string invalid="{";
+    gothicglb::writeFile(badFile,invalid.data(),invalid.size());
+    const std::string index=R"({"format":"gothic-models","version":1,"files":{
+      "HUMANS.MSB":"HUMANS.MSB.json",
+      "HUMANS-T_TESTDASHB.MAN":"HUMANS-T_TESTDASHB.MAN.json",
+      "HUMANS-T_JUMPB.MAN":"HUMANS-T_JUMPB.MAN.json",
+      "HUMANS-T_TESTBROKENB.MAN":"HUMANS-T_TESTBROKENB.MAN.json",
+      "NO_SUCH_MODEL.MSB":"NO_SUCH_MODEL.MSB.json"}})";
+    gothicglb::writeFile(indexFile,index.data(),index.size());
+    setenv("OPENGOTHIC_CONTENT",content.c_str(),1);
+    std::vector<uint8_t> saved;
+    std::vector<std::string> logs;
+    Tempest::Log::setOutputCallback([&](Tempest::Log::Mode,const char* line) { logs.emplace_back(line); });
+    const auto logged=[&](const fs::path& file) {
+      return std::any_of(logs.begin(),logs.end(),[&](const auto& line) { return line.find(file.string())!=std::string::npos; });
+      };
+    try {
+      {
+      Resources resources;
+      Resources::loadBase();
+      Gothic gothic;
+      asset::ModelScript merged;
+      require(Resources::loadModelScriptData("HUMANS.MSB",merged),"content human script must load");
+      equal(merged.animations.size(),baseScript.animations.size()+2,"overlay appends two animation names");
+      equal(merged.aliases.size(),baseScript.aliases.size()+1,"overlay appends one alias name");
+      const auto replaced=std::find_if(merged.animations.begin(),merged.animations.end(),[](const auto& value) { return value.name=="T_JUMPB"; });
+      require(replaced!=merged.animations.end() && replaced->events.empty() && replaced->sfx.empty() && replaced->next=="S_RUN",
+              "overlay replaces the whole animation entry");
+      merged.animations=baseScript.animations; merged.aliases=baseScript.aliases;
+      require(ModelData::compare(baseScript,merged).empty(),"overlay must retain every other base script field");
+      require(!Resources::loadModelScriptData("NO_SUCH_MODEL.MSB",merged),"overlay without base model must be skipped");
+      const auto* animation=Resources::loadAnimation("HUMANS.MSB");
+      require(animation!=nullptr,"human animation must load with content");
+      const auto* dash=animation->sequence("T_TESTDASHB");
+      require(dash!=nullptr,"content dash must be indexed");
+      equal(dash->data->numFrames,14u,"dash frames");
+      equal(dash->data->fpsRate,25.f,"dash fps");
+      equal(dash->data->nodeIndex.size(),34u,"dash nodes");
+      equal(dash->layer,1u,"dash layer");
+      require(dash->isMove(),"dash must retain M flag");
+      require(std::fabs(dash->data->moveTr.x)<.5f && std::fabs(dash->data->moveTr.y)<.5f &&
+              std::fabs(dash->data->moveTr.z+150.f)<.5f,"dash root path must be (0,0,-150) cm");
+      vector(dash->data->defWindow,std::vector<uint64_t>{40,400},"dash defence window milliseconds");
+      require(dash->next.empty() && dash->nextPtr==nullptr,"DEF_WINDOW must clear next");
+      const auto* jump=animation->sequence("T_JUMPB");
+      require(jump!=nullptr,"content replacement jump must load");
+      equal(jump->data->numFrames,20u,"replacement jump frames");
+      require(std::fabs(jump->data->moveTr.z+240.f)<.5f,"replacement jump root path must change");
+      for(const auto& entry:overlay.aliases) {
+        const auto* loaded=animation->sequence(entry.name);
+        require(loaded && loaded->data==dash->data && loaded->layer==2,"content alias must add or replace by name");
+        }
+      require(animation->sequence("S_RUN")!=nullptr && !animation->sequence("T_TESTBROKENB"),
+              "broken content animation must not prevent other animations loading");
+      Skeleton skeleton(hierarchy,animation,"HUMANS.MSB");
+      AnimationSolver solver; solver.setSkeleton(&skeleton);
+      Pose pose; pose.setSkeleton(&skeleton);
+      require(pose.startAnim(solver,dash,0,BS_RUN,Pose::Force,1000),"dash must start before saving");
+      { Tempest::MemWriter writer(saved); Serialize out(writer); out.setEntry("pose"); pose.save(out); }
+      Pose restored; restored.setSkeleton(&skeleton);
+      { Tempest::MemReader reader(saved); Serialize in(reader); require(in.setEntry("pose"),"saved pose must exist"); restored.load(in,solver); }
+      require(restored.isInAnim("T_TESTDASHB"),"saved dash must restore with content");
+      }
+      require(logged(badFile),"broken content record log must contain its full path");
+      require(logged(missingScript),"unknown base model warning must contain overlay path");
+
+      alias.name="S_RUN"; alias.alias="T_JUMPB"; alias.next="";
+      overlay.aliases.push_back(alias);
+      writeOverlay(scriptFile);
+      logs.clear();
+      {
+      Resources resources; Resources::loadBase(); Gothic gothic;
+      asset::ModelScript loaded;
+      require(Resources::loadModelScriptData("HUMANS.MSB",loaded),"cross-kind collision must keep base script");
+      require(ModelData::compare(baseScript,loaded).empty(),"cross-kind collision must reject the whole overlay before merging");
+      const auto* animation=Resources::loadAnimation("HUMANS.MSB");
+      require(animation!=nullptr,"base human animation must load after rejecting overlay");
+      const auto* walk=animation->sequence("S_WALK");
+      const auto* run=animation->sequence("S_RUN");
+      require(walk && run && walk->data==run->data,"rejected overlay must preserve the base S_WALK alias to S_RUN");
+      }
+      require(std::any_of(logs.begin(),logs.end(),[&](const auto& line) {
+        return line.find(scriptFile.string())!=std::string::npos && line.find("S_RUN")!=std::string::npos;
+        }),"cross-kind collision log must contain overlay path and offending name");
+      overlay.aliases.pop_back();
+      writeOverlay(scriptFile);
+
+      auto badOverlay=json(scriptFile);
+      auto& badEvent=badOverlay["data"]["animations"][0]["events"][0];
+      badEvent["type"].SetInt(int(asset::MdsEventType::OPTIMAL_FRAME));
+      badEvent["frames"].SetArray();
+      writeJson(scriptFile,badOverlay);
+      logs.clear();
+      {
+      Resources resources; Resources::loadBase();
+      asset::ModelScript loaded;
+      require(Resources::loadModelScriptData("HUMANS.MSB",loaded),"broken overlay must keep base script");
+      require(ModelData::compare(baseScript,loaded).empty(),"broken overlay must not partly mutate base script");
+      }
+      require(logged(scriptFile),"broken overlay log must contain its full path");
+      writeOverlay(scriptFile);
+      gothicglb::writeFile(indexFile,invalid.data(),invalid.size());
+      logs.clear();
+      {
+      Resources resources; Resources::loadBase(); Gothic gothic;
+      const auto* animation=Resources::loadAnimation("HUMANS.MSB");
+      require(animation && !animation->sequence("T_TESTDASHB"),"broken content index must leave the base usable");
+      equal(animation->sequence("T_JUMPB")->data->numFrames,14u,"broken index base jump frames");
+      }
+      require(logged(indexFile),"broken index log must contain its full path");
+      }
+    catch(...) { Tempest::Log::setOutputCallback({}); throw; }
+    Tempest::Log::setOutputCallback({});
+
+    setenv("OPENGOTHIC_CONTENT","",1);
+    {
+    Resources resources; Resources::loadBase(); Gothic gothic;
+    asset::ModelAnimation loaded;
+    require(Resources::loadAnimationData("HUMANS-T_JUMPB.MAN",loaded),"base jump must load after disabling content");
+    require(ModelData::compare(baseline,loaded).empty(),"no-content jump record must be bit-identical to base");
+    const auto* animation=Resources::loadAnimation("HUMANS.MSB");
+    require(animation && !animation->sequence("T_TESTDASHB"),"disabled content must remove dash");
+    const auto* jump=animation->sequence("T_JUMPB");
+    require(jump!=nullptr,"base jump sequence must remain available");
+    equal(jump->data->numFrames,baseSequence.numFrames,"restored base jump frames");
+    equal(jump->data->fpsRate,baseSequence.fpsRate,"restored base jump fps");
+    vector(jump->data->nodeIndex,baseSequence.nodeIndex,"restored base jump nodes");
+    vector(jump->data->samples,baseSequence.samples,"restored base jump sample bits");
+    Skeleton skeleton(hierarchy,animation,"HUMANS.MSB");
+    AnimationSolver solver; solver.setSkeleton(&skeleton);
+    Pose restored; restored.setSkeleton(&skeleton);
+    { Tempest::MemReader reader(saved); Serialize in(reader); require(in.setEntry("pose"),"saved pose without content must exist"); restored.load(in,solver); }
+    require(!restored.hasAnim(),"saved unknown dash must be skipped without content");
+    }
+    std::puts("Content animations: dash 14 frames/25 fps/34 nodes/-150 cm, DEF_WINDOW 40-400 ms; jump replacement 20 frames/-240 cm; aliases merged; broken content skipped with paths; pose restored with and without content; base identity and sample bits unchanged");
     }
 
   static void fontNames(const zenkit::VfsNode& directory, std::set<std::string>& names) {
@@ -3085,6 +3309,7 @@ struct BaseContentContract {
     equal(selected["replacements"].Size(),1u,"own replacement count");
     require(std::string(selected["replacements"][0]["kind"].GetString())=="mesh","own replacement census kind");
     std::puts("Selection: invalid base rejected; missing resources recorded; own content wins; census kinds stay separate");
+    contentAnimations(base,temporary);
     }
   };
 

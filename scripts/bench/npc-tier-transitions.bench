@@ -1,0 +1,11 @@
+# Graph movement continuity: 20 switches each way while walking and turning.
+# Every leg uses the native waynet; events contain travel bounds and route checks.
+# @headless
+seed 73106
+cheat god
+world-check NEWWORLD.ZEN
+goto NW_CITY_MERCHANT_SHOP01_FRONT_03
+npctier BAU_952_VINO full
+npctier-test BAU_952_VINO NW_FARM1_OUT_01 NW_FARM1_PATH_CITY_05
+npctier BAU_952_VINO auto
+npcspeed NW_FARM1_OUT_01

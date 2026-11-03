@@ -1,6 +1,6 @@
 """Our model over the original's mesh: three orthographic views and both bboxes, for Claude to compare.
 
-blender -b --factory-startup -P underlay_check.py -- BASE_MESH.glb OUR_MODEL.glb OUT_PREFIX
+blender -b --factory-startup -P underlay_check.py -- BASE_MESH.glb|.obj OUR_MODEL.glb OUT_PREFIX
 Writes OUT_PREFIX-{top,front,side}.png: the original in flat grey, ours as a red wireframe on top, and
 OUT_PREFIX.json with both bboxes in Blender metres and the share of the original's bbox each axis of
 ours spans. The original stays an underlay (docs/own-content.md, «граница с оригиналом»): nothing of it
@@ -18,8 +18,12 @@ bpy.ops.wm.read_factory_settings(use_empty=True)
 
 
 def load(path):
+    """A GLB, or an OBJ in the same glTF axes (Y up, metres; hearth_targets.py --underlay writes mob models so)."""
     before = set(bpy.context.scene.objects)
-    bpy.ops.import_scene.gltf(filepath=path)
+    if path.lower().endswith(".obj"):
+        bpy.ops.wm.obj_import(filepath=path, forward_axis="NEGATIVE_Z", up_axis="Y")
+    else:
+        bpy.ops.import_scene.gltf(filepath=path)
     return [o for o in bpy.context.scene.objects if o not in before and o.type == "MESH"]
 
 

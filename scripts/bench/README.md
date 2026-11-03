@@ -1,25 +1,103 @@
 # Test bench
 
-Runs a scenario inside the game and records what happens: a video with a debug overlay, per-frame
-metrics and a report that points at suspicious frames. Built so that an agent can find bugs and edge
-cases of a mechanic (foot IK first) without a person watching the game.
+## Как работает сейчас
+
+Runs a scenario through the windowed game or the headless runner and records metrics and a report.
+Windowed scenarios can also capture video with a debug overlay and point at suspicious frames.
 
 ```bash
 scripts/bench.sh smoke                      # a scenario from scripts/bench/<name>.bench, or a path
 BENCH_HOST=local NO_BUILD=1 scripts/bench.sh ik-sweep  # local, skip the incremental build
 ```
 
-`BENCH_HOST=auto` (default) runs on Ryzen through `scripts/ryzen.sh` and copies all output back.
-It falls back to this Mac with one line explaining why if SSH, setup, the lock or game startup fails.
-Once the returned output contains `game.log`, the Ryzen result is final, including a failing exit code;
-the game is not run again locally. The lock wait defaults to 120 seconds (`RYZEN_LOCK_WAIT`).
-`BENCH_HOST=ryzen` requires Ryzen, defaults to a 900-second lock wait and never falls back;
-`BENCH_HOST=local` runs on this machine. `KEEP=1`, a VideoToolbox encoder, a custom `GOTHIC_DIR`
-or other Mac-only game paths require local execution (`auto` falls back, `ryzen` exits with code 2).
-`NO_BUILD=1` only skips a local build; Ryzen always checks its engine source hash.
+`BENCH_HOST=auto` (default) tries dev-ubuntu, then Ryzen, then this Mac for headless scenarios;
+windowed scenarios try Ryzen, then Mac. Both remote hosts use `scripts/ryzen.sh` and copy all output back.
+Before remote `bench` and `e2e`, `ryzen.sh` selects Mac base/video parts matching this checkout's
+import formats, copies missing parts to the host's cache, and synchronizes both game INI files.
+Ready parts in the host cache or shared store need no copy; dev-ubuntu only uses its cache.
+When Mac has no compatible part, the host cache/store is searched for this checkout's format
+and the same installation as the host's `game-base.json`. A match reports `ready (host)` and
+passes its exact fingerprint without copying. If videos have no compatible replacement on
+either machine, the original host video fingerprint is retained.
+The run receives the exact fingerprints without changing a prepared host's `game-base.json`;
+a fresh host gets settings and that pointer automatically. `scripts/ryzen.sh setup` is optional.
+Explicit nonempty `OPENGOTHIC_BASE` or `OPENGOTHIC_BASE_FINGERPRINT` skips base selection/copy;
+an explicit `OPENGOTHIC_VIDEOS_FINGERPRINT`, including empty, does the same for videos.
+If neither Mac nor host has a compatible base, `bench`/`e2e` stop before locks or queue requests:
+start the game on Mac on this version to import it. Remote `pytest` instead prints one warning
+and continues with the host's `game-base.json`, without forcing a base fingerprint.
+`setup` still requires compatible Mac parts and does not use this host fallback.
+Each fallback prints one line explaining the SSH, base synchronization, lock, queue-wait or game-startup failure.
+Once returned output contains `game.log`, that host's result is final, including a failing exit code;
+the game is not run again elsewhere. The remote lock/queue wait defaults to 120 seconds in `auto`
+(`RYZEN_LOCK_WAIT`). `BENCH_HOST=dev-ubuntu` and `BENCH_HOST=ryzen` require that host, default to a
+900-second wait and never fall back; `BENCH_HOST=local` runs on this machine. `DEV_UBUNTU_HOST`
+overrides the dev-ubuntu SSH alias (default `dev-ubuntu`); dispatch uses
+`RYZEN_HOST="$DEV_UBUNTU_HOST" scripts/ryzen.sh bench`. A windowed scenario with
+`BENCH_HOST=dev-ubuntu`, including `BENCH_HEADLESS=0`, exits with code 2: `окна на dev-ubuntu нет`.
+`KEEP=1`, a VideoToolbox encoder, a custom `GOTHIC_DIR` or other Mac-only game paths require local
+execution (`auto` falls back, an explicit remote host exits with code 2).
+`NO_BUILD=1` only skips a local build; remote hosts always check the engine source hash.
+
+A line `# @headless` in the scenario selects `gothic-body-runner --game-parity --mode lockstep`,
+without a window, GPU or sound. `BENCH_HEADLESS=1` selects this path for any scenario;
+`BENCH_HEADLESS=0` selects the window even for a marked scenario. `KEEP=1` with the headless path
+exits with code 2. The runner defaults to `gothic-body-runner` beside `GAME_BIN`; `RUNNER_BIN`
+overrides it for local runs. It uses the same `Gothic.ini`, `[GAME]` flags and `OPENGOTHIC_*` environment as the
+window; `WORLD` becomes `--world`, otherwise the copied save becomes `--save`. Window variables
+`TEMPEST_*` are not needed. A local build selects the `gothic-body-runner` target. On remote hosts,
+preparation builds both `Gothic2Notr` and the runner together; a cached engine without an executable
+runner is rebuilt and republished for a headless bench. A rebuild without the runner removes its
+old executable before publishing the new engine digest.
+
+On dev-ubuntu, preparation defaults to `gq --class quick --threads 6 --mem 10G`
+(`RYZEN_JOBS=6`); Ryzen retains its existing build request. dev-ubuntu has no shared storage:
+`RYZEN_BENCH_ARCHIVE` is rejected with code 2 before upload.
+
+The headless game request defaults to `gq --class batch --threads 4 --mem 6G`, without display or
+GPU-memory resources. `RYZEN_BENCH_CLASS` still overrides the class; a `batch` request's `--max`
+is capped at two hours. Unmarked windowed scenarios keep their existing queue settings.
+Both paths use the same completion marker, heartbeat, progress, watchdog and post-run checks below.
+The runner's final JSON status remains in `game.log`. `report.md` and `report.json` identify the run
+as `headless lockstep` or `window` and include the game's wall seconds; stdout still prints
+`bench: game ran N s`.
 
 For performance comparisons (before/after or FPS), run both takes on the same machine:
-pin `BENCH_HOST=ryzen` or `BENCH_HOST=local`. `host.txt` and the report header identify the host.
+pin `BENCH_HOST=dev-ubuntu`, `BENCH_HOST=ryzen` or `BENCH_HOST=local`.
+`host.txt` and the report header identify the host, including `dev-ubuntu` when its SSH alias is overridden.
+
+`knockdown-launch` проверяет защиту рождения рэгдолла: SLD_826 с `ITMW_2H_SLD_AXE` (W2H) сбивает оглушённого SLD_815, по 20 проб в чередующихся диапазонах 30–40, 50–90 и 100–170 см, затем 5 проб оглушения без удара на контрольной точке и 5 на склоне дуэли. `RAGDOLL_BIRTH_GUARD=1|0` задаёт `[GAME] ragdoll_birth_guard` до загрузки мира. Сценарий генерирует `reports/physics/2026-11-02-knockdown-launch/generate.py`; фиксированные зёрна и подготовка одинаковы в ON/OFF. `ragdoll_birth_peak` пишет пики скоростей COM таза/спины/головы за первые 300 мс симуляции, дистанцию корней, виновника и снятие защиты; замер — после каждого ненулевого `Update`. `stun-drift <цель> <атакующий|player>` перед `stun <цель> posture` наблюдает корень каждые 100 мс от 0 до 1600 мс: проекцию к атакующему, горизонтальное смещение, высоту, анимацию, оглушение, скольжение, полёт и флаг второго такта. Отдельный `knockdown-drift` из того же генератора запускает только 5 ровных и 5 склоновых проб; источник оглушения — герой, цель перед оглушением освобождена от внешнего управления. `put-at <npc|player> <x> <y> <z>` ставит на землю по точным координатам (NPC замораживается и смотрит на героя). Анализ: `python3 reports/physics/2026-11-02-knockdown-launch/analyze.py --drift <папка>`; `summary.csv` нокдаунов не меняется. [Отчёт, команды и анализатор](../../reports/physics/2026-11-02-knockdown-launch/README.md).
+
+Результаты нокдаунов ON/OFF и опыта дрейфа — в отчёте; сценарий дрейфа не запускает 60 нокдаунов.
+
+`game.log` must contain `[bench] done` for a complete scenario (including an explicit `quit`).
+Closing the window, a crash, `TIMEOUT` (default 300 seconds), or the stall watchdog before that marker
+returns code 1 and prints one reason with elapsed/limit seconds to stderr. Partial output still goes
+through `bench_report.py` and the existing scenario checks. Code 0 means completion and successful
+report/checks; code 2 covers invalid setup/options. Ryzen admission/transport codes are preserved;
+scenario interruption never returns the special codes 75 or 76. After the marker, closing or timing
+out a game left open by `KEEP=1` keeps the usual report/check exit status.
+
+With `OPENGOTHIC_BENCH_OUT`, the engine publishes `heartbeat.json` at scenario start and about every
+10 wall seconds, including long `wait` and `npcday` commands. It writes a temporary file and renames
+it over the previous pulse. Fields are `elapsed_seconds` since scenario start, `frame`, one-based
+`command_index`, `command_count`, full `command` text, and `game_time` (`day N HH:MM`). While `npcday`
+runs, `npcday_elapsed_minutes` and `npcday_target_minutes` give elapsed and requested game minutes.
+The pulse stops at completion; without the output environment variable it is not written.
+
+`BENCH_PROGRESS=300` prints one flushed stdout line every 300 wall seconds while the scenario runs,
+for example `bench: 28 min, command 5/5 npcday 1440, npcday 1060/1440 game min`. Before the first
+pulse it prints `bench: N min, starting (game.log X KB)`. The time prefix includes world loading.
+Game-minute counters in progress lines are integers; fractional minutes are omitted.
+`BENCH_PROGRESS=0` disables these lines. On Ryzen they appear during the game in `scripts/gq logs <id>`.
+
+`BENCH_STALL=600` terminates a live, unfinished game if neither the heartbeat nor any other output
+file changes for 600 wall seconds. Growing `game.log` counts as loading activity. The watchdog sends
+SIGTERM, waits up to 10 seconds, then sends SIGKILL and reaps the process; `TIMEOUT` uses the same
+bounded shutdown. `BENCH_STALL=0` disables the watchdog. The watchdog stops after `[bench] done`,
+including in `KEEP=1` mode. `BENCH_PROGRESS` and `BENCH_STALL` are forwarded to Ryzen like `TIMEOUT`.
+When it kills a stalled game, stderr says `bench: game stalled: no output or heartbeat for 600 s, killed`.
+Fake-game checks live in `scripts/tests/test_ryzen.py`; a short live bench checks the engine pulse.
 
 `streaming-flythrough` measures runtime GPU chunk streaming: a god-mode hero
 follows the existing WayMatrix path from `NW_CITY_MERCHANT_TRADE_04` through
@@ -47,12 +125,39 @@ The run fails if either route does not finish or either pass lacks metrics. Use 
 host, resolution and content overrides for later comparisons; `OPENGOTHIC_STREAMING=0`
 disables the manager and deliberately cannot produce this residency measurement.
 
+Run comparison series in alternating order (OFF, ON, OFF, ON), with at least two runs
+per side on the same host. Judge `run` and `fly` with `perf_report.py series`: it compares
+the median per-run p99 and accepts ON − OFF <= max(1 ms, OFF p99 max − min), so the
+measurement's own OFF spread sets the allowance when it exceeds the configured tolerance.
+It prints the per-run values and verdicts and writes `series.md` / `series.json` to `--out`
+(the last `--on` directory by default); exit code 0 means both passes pass, 1 means a failure,
+and 2 means invalid arguments.
+
+```bash
+python3 scripts/perf_report.py series --off /path/off-1 /path/off-2 \
+  --on /path/on-1 /path/on-2 --tolerance-ms 1.0 --out /path/series
+```
+
 `BENCH_HOST=local OPENGOTHIC_STREAMING=0 scripts/bench.sh streaming-shots` and the same
 command with `OPENGOTHIC_STREAMING=1` capture `perf-market.png`, `perf-harbour.png` and
 `perf-forest.png` from the first viewpoints of those performance scenarios. `streaming wait`
 yields a frame for camera/residency updates, then waits until the publication queue is empty
 and all desired Near/Far chunks are published (default timeout 60000 real milliseconds).
-The disabled-streaming path is already ready. Claude compares the resulting frames on Mac.
+The wait also includes static vob views. The disabled-streaming path is already ready.
+`streaming-shots` ends with `perf-market-teleport.png`: after one update beyond the city's Far
+range, it captures the first frame back in the market without waiting for Far publication.
+Use `OPENGOTHIC_VOB_STREAMING=0` and `=1` to compare static vob residency. Claude compares
+the resulting frames on Mac.
+
+## План и журнал
+
+- 2026-11-02: route headless `auto` benches through dev-ubuntu → Ryzen → Mac; keep windowed
+  routing unchanged. Reuse `ryzen.sh` with dev-ubuntu build limits and setup/cleanup without NAS.
+- 2026-11-02: remove stale runners from window-only rebuilds before caching; keep `RUNNER_BIN` local.
+- 2026-11-02: add marked headless lockstep benches with game-parity simulation and a Ryzen `batch`
+  request without display/GPU resources; record the run method and game wall time in reports.
+- 2026-11-02: require the completion marker, publish the engine heartbeat, stream progress and stop
+  stalled games before the outer Ryzen job limit; preserve reports from interrupted runs.
 
 ## Frame profile
 
@@ -92,7 +197,25 @@ The complete `<zone>` list (each produces all four columns above):
 `parallel_animation`, `native_export`, `forced_sync_animation`, `actor_animation_elapsed_sum`,
 `pose_elapsed_sum`, `palette_elapsed_sum`, `storage_join`, `storage_commit`, `storage_pack`,
 `storage_dispatch`, `storage_grow`, `storage_upload_execution_elapsed`, `bodynet`, `cloth`, `water`,
-`destruction`, `ai_bridge`, `sound`, `encode_shadows`, `encode_main`, `encode_water`, `encode_post`, `encode_ui`.
+`destruction`, `ai_bridge`, `sound`, `npc_full_tick`, `npc_simplified_tick`, `npc_logic_shadow`, `encode_shadows`, `encode_main`,
+`encode_water`, `encode_post`, `encode_ui`.
+
+`npc_full_tick` and `npc_simplified_tick` split the `Npc::tick` loop inside `world_logic` by NPC simulation
+tier (`common/world/npcsimtier.h`); their calls count runs of consecutive same-tier NPCs, not NPCs. The
+amounts `npc_full`, `npc_simplified` and `npc_tier_transitions` count NPCs per tier and tier changes.
+
+`OPENGOTHIC_NPC_LOGIC_AUDIT=1` enables the logical-body shadow audit (default 0). `npc_logic_shadow`
+measures clock advancement and mutation-input processing. Audit compares the previous forecast before
+applying the tick's inputs. `npc_logic_samples`, `npc_logic_body_samples`, `npc_logic_weapon_samples`,
+`npc_logic_body_mismatch` and `npc_logic_weapon_mismatch` count scalar comparisons after excluding fields
+changed by explicit inputs. Unknown natural-next observations are compared before their re-anchor and are
+not reported as lifecycle matches.
+`npc_logic_early`/`npc_logic_late` observe real layer removals; `npc_logic_wait_early`/`npc_logic_wait_late`
+observe native wait releases independently. `npc_logic_reanchored` counts executor inputs by kind in JSON.
+`npc_logic_events` and `npc_logic_event_mismatch` count events, with a mismatch only beyond one world step.
+Full event schedules are audit-only; the default state retains the minimal weapon-event clock. During `npcday`,
+timing also runs with the audit disabled so the default path can be measured separately. The `npcday` summary
+adds `logic_audit`, including action/animation breakdowns and prediction-error percentiles; the parity comparer reads its named gameplay fields and ignores these diagnostics.
 
 `bodynet` sums the full local P30 policy step over active NPCs; service policies do not enter it.
 `cloth` covers main-thread preparation and the 30 Hz solver/finish; `water` sums main-thread buoyancy
@@ -450,7 +573,7 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `walkto <waypoint>` | walk there (AI path) |
 | `walkmode walk\|run\|sneak` | |
 | `face uphill\|downhill\|across\|<yaw deg>`, `face wp <waypoint>`, `face rel <deg>`, `turn <deg>` | turn the player at once; `rel`: the watched npc's facing turned by that much (the angles of `place`) |
-| `press\|release\|tap <key>`, `hold <key> <ms>`, `release all` | player input; keys: `forward back left right turnl turnr jump walk sneak weapon melee bow spell action parade breath` (`left`/`right` strafe; aiming a bow: hold `action`, a shot: `tap forward` while holding it; in the manual aim holding `action` draws, releasing shoots, `parade` lowers the bow, `breath` (= walk) holds the breath) |
+| `press\|release\|tap <key>`, `hold <key> <ms>`, `release all` | player input; keys: `forward back left right turnl turnr jump walk sneak weapon melee bow spell action parade breath dodge` (`dodge`: the melee dodge's own key, the way from the movement keys held at the press; `left`/`right` strafe; aiming a bow: hold `action`, a shot: `tap forward` while holding it; in the manual aim holding `action` draws, releasing shoots, `parade` lowers the bow, `breath` (= walk) holds the breath) |
 | `aimwalk on\|off` | the legs stepping under the aim (graphics/mesh/aimwalk); off: forward and back do nothing while aiming |
 | `animinfo <name>...` | the hero's animations of those names: layer, frames, the nodes they move (when not all), the root's way and speed, the hips' turn at a few frames |
 | `bladepath <name>\|<overlay.MDS>...` | the tip of the hero's weapon at each frame of those animations, with the grip, the root bone (the game keeps its x, z at the actor) and the speed, in the model's frame (+z ahead); the frames of the fight tags; an overlay (`HUMANS_1HST2.MDS`) is put on for the names after it |
@@ -468,9 +591,13 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `view hide static movable morph pfx animated` | hide draw types (debugging only: static and movable objects share draw commands, hiding them hides parts of creatures too) |
 | `overlay on\|off`, `overlay zoom on\|off`, `overlay bright on\|off` | `bright` stretches dark images (forests, interiors) |
 | `overlay trail [off] [keep ms] [line]` | the arrows' ways in gold (with the zones of `showzones`), no legs, no text; turns the overlay on. A way stays `keep` ms (1500) after its arrow stops; `line`: also the straight line the arrow left along (where the bow pointed), dashed white, as far as the arrow has flown: the drop is the gap between them |
-| `rec <name> [novideo]`, `stop` | record a segment (video and metrics, or metrics only) |
+| `rec <name> [novideo]`, `stop [shadow]` | record a segment (video and metrics, or metrics only); `stop shadow` also copies both rolling melee shadow journals into segment files (filter cumulative rows by fight game-time interval) |
 | `shot <name>` | one PNG |
 | `streaming wait [timeout_ms]` | Wait for all desired Near/Far chunks and the publication queue; timeout defaults to 60000 real ms. |
+| `npctier <npc> full\|simplified\|auto` | Override one NPC tier until reset or reload. Hero, training and arena actors stay Full. |
+| `npctier-test <npc> <start waypoint> <end waypoint>` | Verify 20 switches in each direction during movement and turns, unchanged remaining path/destination and every arrival. `npc-tier-transitions` runs the fixture on a fresh NEWWORLD. |
+| `npcspeed <start waypoint>` | Compare Sequence speed with Full and Simplified movement on one authored edge for human/orc/wolf in walk/run/sneak; appended to `npc-tier-transitions`. Removes ambient NPCs for calibration. |
+| `npcday <game minutes> [period 5] [shared]` | Journal every NPC over continuous game time ([NPC day parity](#npc-day-parity)); the scenario waits until the time has passed. Every NPC gets a private script random stream from the last `seed`; `shared` keeps the game's one shared stream. |
 | `ui on\|off` | the interface in the captured frames, as the player sees it: subtitles, the input line, the deal window (off by default: only the world) |
 | `label <text>` | text on the overlay |
 | `ik on\|off`, `ik param <name> <value>`, `ik params` | foot IK and its parameters, without rebuilding; `ik off` on a four-legged creature brings back the old whole-body tilt |
@@ -480,7 +607,7 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `talk <npc\|nearest> <ms>` | the npc and the hero talk to each other that long (no words): they look at each other |
 | `freeze <npc\|nearest> [off]` | the npc leaves what it does and stands still, like a body the AI server attaches |
 | `ani <npc\|nearest\|player> <name>` | it plays that animation, as `play_ani` does (`T_STAND_2_PEE` goes on to its loop `S_PEE`) |
-| `heropose kneel\|none` | the hero kneels as after a surrender (`player_pose`), or gets up |
+| `heropose kneel\|none\|check` | the hero kneels as after a surrender (`player_pose`), or gets up. After `heropose kneel` and `wait 2500`, `check` exercises actual mouse rotation through a movement tick (keeps kneeling and turns 15 degrees), then `ptt_start` (keeps kneeling), then `Forward` (ends kneeling). Success writes `heropose check passed` and the engine writes `[ai] hero pose kneel ends: key Forward` to `game.log`; the bridge must be enabled, no server connection is needed |
 | `place <dist> <angle>`, `orbit <deg> <ms>` | the hero stands around the watched npc (angle from its facing, 0 in front) or goes around it; not where no ground is found (inside a rock: it would fall through the world) |
 | `gazeinfo` | gaze state of the watched npc to `bench.log`: why it looks, at whom |
 | `lean on\|off` | the lean into turns and on slopes |
@@ -495,17 +622,18 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `bowgeom` | the bow and the bow hand of the hero in the arrow's frame (x along it from its slot, y up, z to the side), cm: the bow's box, the grip, the string's middle at rest and drawn by `S_READY` and `S_DRAWN`, the bow hand's bones, the head |
 | `animspeed <anim> <k>` | the hero's animation of that name plays k times as fast from its next start (`Pose::setAnimSpeed`: a layer keeps its speed, the next one starts at 1). The manual aim sets `T_BOWRELOAD` from dexterity (`stats` prints it: `reload x`); this overrides it until dexterity changes. The hero's animation events go to bench.log (`anim event <type> <item> <slot>`, `anim morph <anim> <slot>`): at any tempo each once, in the same order |
 | `sfx <name>...` | the files a sound effect plays (its variants `_A1`..), `(missing)` if the game's data has no such file. The hero's sounds go to bench.log (`sound <name>`) |
-| `stats [npc <npc>] [str <n>] [dex <n>] [bow <n>] [cbow <n>] [hp <n>] [hpmax <n>] [talent auto\|0\|1\|2]` | the hero's (an npc's) strength, dexterity, hit chances (the skill), hit points; prints what the manual aim makes of them (sway, draw, hold, arrow speed). `talent`: the trained archers' animations (`_BOWT1` at 30%, `_BOWT2` at 60% in G2; `auto` as the hit chances say); with it or `npc` also `stats of <npc>: talent, reload ms, hp, point protection` |
+| `stats [npc <npc>] [str <n>] [dex <n>] [1h <n>] [2h <n>] [bow <n>] [cbow <n>] [hp <n>] [hpmax <n>] [talent auto\|0\|1\|2]` | the hero's (an npc's) strength, dexterity, hit chances (the skill), hit points; prints what the manual aim makes of them (sway, draw, hold, arrow speed). Arguments apply left to right. `talent` sets the trained archers' animations (`_BOWT1` at 30%, `_BOWT2` at 60% in G2; `auto` as the hit chances say), and the 1H/2H animation level only when that weapon's hit chance is explicit in the same command; with it or `npc` also `stats of <npc>: melee hit chances and animation levels, archery talent, reload ms, hp, point protection` |
 | `seed <n>` | the random numbers start over: the scripts' (the dice, the release cone), the bench's (`volley` jitter), the hero's sway |
 | `npcequip <npc> <item> [count]` | into the npc's inventory, the first put on |
 | `arc <npc> <count> <dist> <step deg>` | that many of the npc stand that far in front of the hero, a step apart round it, facing it: the crew of `fight all` (a new arc replaces it, `clear` takes the gone out) |
 | `wander [radius cm 3000] [walk\|run]`, `wander stats` | the npcs of `arc` are held (as the AI server holds a body) and walk by the waynet to a random waypoint within the radius of the hero, then to another: a crowd for the speed probe of docs/navigation.md; `stats`: how many walk, how many ways they went |
 | `stuck begin <label> [radius cm 3000]`, `stuck end` | measure native routine walks around the hero's position at `begin`, without controlling NPCs; requires `OPENGOTHIC_STUCK_LOG=<absolute JSONL path>`. Default observation radius is 30 m. `end` writes the observation summary to `<path>.summary.json` and closes ongoing episodes as censored (`observation_end`). |
-| `fight <npc\|all> <target\|player>` | it attacks as the game starts a fight (`ZS_ATTACK`, attack reason to kill: archers keep the bow beyond 9 m) |
-| `waitdown <npc\|player> [ms]` | the scenario waits till it is down: `fight over: <npc> down after <ms>`, else `waitdown: timeout` |
+| `fight <npc\|all> <target\|player> [deed]` | it attacks as the game starts a fight (`ZS_ATTACK`, attack reason to kill: archers keep the bow beyond 9 m); `deed` uses the nonlethal native `npc_act fight{deed:true}` start for a standing human NPC target |
+| `waitdown <npc\|player> [ms] [other npc]` | waits till either participant is down, or times out; writes `waitdown_end` with outcome, elapsed time and HP |
 | `npcaim on [second\|arrow] \| off \| sigma <deg\|off> \| lead on\|off` | npc archers aim by hand (game/archerai, `[GAME] npcManualAim`, on by default: `npcaim off` for the dice): as many hits a second as G2's dice (`second`) or as sure an arrow (`arrow`); an error forced, degrees per axis (0: the bow's own spread only); the lead on a runner. Each release logs `arrow aim: at, true <the point meant>, err <right up> deg, sigma, pv <dice %> p <target %> rho, lead, hold, disturb, settled\|waited, by <npc>` |
 | `archer <npc\|all> at <npc\|player> [dice] \| archer off` | the archers stand where they are and shoot at the target every time they can, by hand (npcaim on) or by the dice: no fight AI, no perception's wait, arrows topped up (the aim's calibration) |
 | `still <npc\|player> [off]` | hit, it neither stumbles nor flinches: a target that keeps its pose (as its zones were dumped) |
+| `dodge [<npc>] back\|left\|right\|forward\|none [before <attacker> <ms>]` | the melee dodge (`[GAME] melee_dodge`, `Npc::meleeDodge`) that way relative to its facing, now, or as the attacker's next blow comes within `<ms>` of its contact (`Pose::nextMeleeContact`, 8 s at most); `bench.log`: `melee dodge <npc>: <way>, armour <class>, <move> <animation> [(no <missing>)], cost <n>, window <a>-<b> ms` or why there is none, and `... hit by <npc> at <ms> ms of <move> <a>-<b> ms: did not pass` for a blow, arrow or spell inside the window. `melee-dodge.bench`: the four ways by the dodge key, then by the jump key (the default binding; with the strafe and the turn key), one under the bandit's blow, medium and heavy armour; the same file with `MELEE_DODGE=0` checks the flag off (`tap jump` jumps: `anims` logs `bs=8`) |
 | `aimat <npc\|nearest> [head\|body\|limb\|leg] [raw]`, `aimat <x> <y> <z>`, `aimat ahead [dist] [height]`, `aimat off` | the manual aim aims at the middle of that zone of the npc (every frame) or at a point, instead of the mouse; the hero faces it. Over it by the drop of the arrow at full draw, as an archer holds over (`raw`: right at it). `limb` is the middle of all the limbs, which lies inside the trunk; `leg`: the limb capsules below the knees. A last word `mouse`: as the player does, the game's camera turns so that the center of the screen falls on it, the hero turned with the camera, and the shot goes from the center of the screen (the game's own aim: what the camera sees, the lean by where the hero looks) |
 | `open [dist cm]` | how far it is open around the hero at head height and at the knees every 15 degrees from the facing: where to put a target |
 | `volley <shots> [hold ms] [draw 0..1] [jitter ms]` | shots by hand in a row: press `action`, draw that far (1: full), hold (up to `jitter` longer at random: the sway is a function of time), release, wait for the next arrow; every arrow is in the log (`arrow shot: ..., by <npc>`, `arrow hit <npc>: <zone>, hp a -> b, draw, flew, at, by <npc>` or `arrow missed: ..., by <npc>`) |
@@ -582,10 +710,162 @@ AI is `npc line <npc>: <text>` in `bench.log`, `npc line <npc> -> <to>: <text>` 
 by its distance to the hero: such a line is never heard), and an `output` event.
 
 Environment of `scripts/bench.sh`: `GOTHIC_DIR`, `SAVE` (default: `save_slot_1.sav` of the main
-checkout), `NO_BUILD=1`, `TIMEOUT` (seconds, default 300), `KEEP=1`, `OPENGOTHIC_TEXTURES` (sharper
+checkout), `WORLD` (a fresh game in that world instead), `GOTHIC_INTRO=1` (the game starts with
+`-nointro` by default, as in e2e: no new-game intro and no script videos; Marvin `playvideo` still
+plays), `NO_BUILD=1`, `TIMEOUT` (seconds, default 300), `KEEP=1`, `OPENGOTHIC_TEXTURES` (sharper
 textures; by default those of `scripts/hd-textures.sh` when they have been made, as the launcher does;
 empty: the game's own), `SOUND` and `MUSIC` (volumes 0..1, default 0; with `TEMPEST_AUDIO_LOOPBACK=48000` a
 segment's sound goes into `<segment>.wav`).
+
+## Native NPC calibration duels
+
+### Как работает сейчас
+
+`npcduel <attacker instance> <defender instance> <seed> [timeout_ms]` creates two fresh
+script NPCs, 3 m apart and 12 m in front of the stationary immortal observer, as in
+`bodyduel`. Only these two copies retain `AiNormal`, the near-hero contact rig and
+character controller (respecting the physics flags), including swing magnetism, at any
+distance from the observer via `NavDemos::fullSimulation` / `forceCharacterVirtual`.
+Constructors keep their attributes, talents, tactics,
+weapons and armour; only immortality is removed and its original value is recorded.
+The attacker starts the same `ZS_ATTACK` / `AR_NONE` / `setNonlethalFight` path as
+`npc_act fight{deed:true}`. The defender responds through native perceptions.
+The command waits for the first `isDown()` or the timeout (default 180000 game ms),
+writes one `kind: npc_duel` row in `events.jsonl`, then removes the copies and their
+dropped items. `bodyduel` retains its separate mortal, normalized reference setup.
+
+Each row contains `seed`, `duration_ms`, `winner`/`loser` instance names or `timeout:true`,
+and `attacker`/`defender` objects. Those retain raw script `DAMAGE[8]`, `PROTECTION[8]`,
+`DAMAGETYPE`, `HITCHANCE` (fist/1H/2H), all 22 talent skills/values, level, STR/DEX,
+HP before/after/max, guild/tactic, melee weapon instance/two-handedness and original
+immortality. `weapon_damage[8]`, `weapon_damage_total` and `weapon_damagetype` are the separate equipped-item
+script fields: consumers can use the same inputs as `story_eval`, without a precombined
+NPC/weapon damage array. `hits` counts this side's positive HP-loss combat callbacks;
+`damage_dealt` sums actual lost HP (including the final clamp to 1), with no frame sampling.
+`hp_one`, `unconscious` (`ZS_UNCONSCIOUS`) and `weapon_dropped` retain the terminal
+body state. Drop detection requires a dynamic world item with the NPC's owner and
+original weapon instance. An unarmed loser has `weapon_dropped:false`.
+
+Each positive HP-loss hit is also stored in `hit_log`: `time_ms` since duel start,
+`attacker`/`victim` instance names, `hp_before`/`hp_after`, `base_damage` from
+`DamageCalculator::damageValue` (after its minimum of 5, before impact multipliers),
+`critical` from the original damage roll, `melee_scale`, `stun_bonus` (1 or 1.5),
+`backstab_mult` (1 or 3) and actual `hp_loss`, including the nonlethal HP clamp.
+No damage formula is repeated in the bench. Each side records `swings` at native
+attack-window start, `blocked` for completed parried/guarded swings and `misses`
+for completed windows without a hit or block (including evades, walls and interrupted
+swings). Counters use the selected hit path: physical outcomes or native legacy
+results (`applied` is a hit), and both paths share the HP-loss hit logger. An active
+window at duel end is counted as a swing, without inventing an outcome. `defender_first_swing_ms` is null until the defender starts its first swing;
+the first HP-loss response is available separately from `hit_log`.
+
+The [15 pairs](../../data/npc/far-fight-pairs.json) cover Lobart's equal peasants,
+peasant/militia, militia/Onar mercenary, unarmed/armed, level disparity and 1H/2H.
+All are ambient humans from save 1's world. The 12 v1 pairs are training, including
+the three already used v1 holdouts. Three new pairs use six instances absent from v1:
+
+| New holdout | Native weapons | Talent tiers |
+|---|---|---|
+| `SLD_818_SOELDNER` / `SLD_827_SOELDNER` | 2H axe / 2H axe | 1 / 1 |
+| `BAU_901_BAUER` / `MIL_323_MILIZ` | 1H axe / 1H sword | 0 / 1 |
+| `SLD_817_SOELDNER` / `MIL_326_MILIZ` | 1H axe / 1H sword | 1 / 1 |
+
+Names, `type=0` (ambient), `guild < 16`, equipment and talent skills were checked
+by executing the base's original `GOTHIC.DAT` constructors through ZenKit;
+`STARTUP_NEWWORLD` inserts all six at `BIGFARM` or `NW_CITY_ENTRANCE_01`. Equal
+peasants retain their different native mace/axe. No talents or equipment are normalized.
+
+```bash
+# Only the smoke suite runs here: 2 pairs × both roles × seeds 17,18 = 8 duels.
+python3 scripts/far_fight_duels.py smoke
+# Prepare the full party without running it: 15 × 2 × 10 = 300 duels, 120 s each.
+python3 scripts/far_fight_duels.py plan --out .bench/far-fight-plan
+# The lead runs this after merging:
+python3 scripts/far_fight_duels.py run .bench/far-fight-plan --out .bench/far-fight-run
+python3 scripts/far_fight_duels.py report .bench/far-fight-run/duels-* --out .bench/far-fight-summary
+```
+
+`plan` budgets each duel's full timeout plus one second, and 60 seconds per chunk;
+by default at most 59 duels (120 s timeout) fit a two-hour batch request. `run` calls
+`BENCH_HOST=ryzen scripts/bench.sh` per chunk, which builds there through `gq quick`
+and launches through `gq batch` (`smoke`: `quick`). It reads the prepared base directly
+from the cache or NAS via `OPENGOTHIC_BASE`. It uses absolute paths, including
+base cache/store below `~/gothic-ai/far-fight/`. Bench's existing output is collected
+back to the supplied output directory. `RYZEN_BENCH_ARCHIVE` gives the game request
+an `--archive` source at `~/gothic-ai/far-fight/<output-name>/<chunk>`; before finishing,
+it copies its result there. `gq` verifies and moves it to
+`/mnt/shared/gothic-ai/far-fight/<output-name>/<chunk>`. Use a fresh output name per run.
+The queue's `--archive` argument is the **local source**, not the NAS destination.
+Full batches are never started by `plan`, `smoke` or the test suite.
+
+`smoke` rejects missing/extra/duplicate duels, incomplete fields, and resolved losers
+without 1 HP and `ZS_UNCONSCIOUS`. It requires the hit log and counters, while the reader still accepts v1 records
+without them. A timeout remains a timeout. `report` writes
+`far-fight.json` and `far-fight.md` and prints the table: n, attacker wins divided by
+all duels (timeouts stay in the denominator), timeout count, median resolved winner
+HP loss, median duration across all duels, and HP-loss hits per full duel second
+pooled by weapon type, own talent tier and opponent tier. The same buckets include
+swings, blocked swings and misses per second. Missing legacy counters are `n/a`,
+with their exposure reported separately. By weapon type, `hit_multipliers` contains
+the full empirical distribution of `hp_loss / base_damage` plus min/median/max,
+stun and backstab fractions; terminal clamping is retained in that ratio. Response
+tables give the median first defender swing and first HP-loss hit since duel start,
+with observed/responding counts (no response is null, not zero). These are empirical
+observations for the separate v2 model task; no coefficient fitting happens here.
+
+The v1 fitting tool [`far_fight_fit.py`](../far_fight_fit.py),
+[weapon table](../../data/npc/far-fight-weapons.json) and
+[rejected calibration report](../../reports/Дальний%20бой%20NPC%20—%20калибровка.md)
+are retained. `gamedata/far_fight.json` stays `uncalibrated`.
+
+### План и журнал
+
+- 2026-11-02: v2 bench keeps only its two copies in full simulation at any observer
+  distance; records native hit factors and swing outcomes; adds three fresh holdouts
+  and a 300-duel default plan. Full calibration is a separate task. The eight v1
+  zero-hit replays on Mac before #751 produced hits in 3/8 duels and five zero-hit timeouts:
+  unarmed attacker seeds 17–20 (281 swings total), 2H attacker seed 18 (29 swings).
+  The attacker retained `AiNormal`. The replay's `run/melee-blade-shadow.jsonl`
+  shows 245/281 unarmed swings using `T_FISTATTACKMOVE`. Across all 281 swings,
+  median starting distance is 233 cm (112–316); the running punch reaches about
+  58 cm. The target moves away only 8 cm per swing (median); 244 swings stop with
+  `no_preview`.
+  Legacy reports `applied` for 68/281, but physical HP-loss hits are zero. The
+  unarmed initiator attacks from too far away while its target has not responded;
+  the physical punch falls short and the magnet usually has no contact plan.
+  This does not establish that the target is leaving on its routine.
+  For 2H seed 18, 29 swings comprise 22 `S_2HATTACK`, four `T_2HATTACKL` and three
+  `T_2HATTACKR`. Median starting distance is 201 cm (195–346), versus median reach
+  125 cm (125–143); target retreat is 21 cm (14–80). All 29 swings have a preview
+  and stop at `predicted`; median forward magnet feed is 11.7 cm. Legacy reports
+  `applied` for 24/29, but there are no physical HP-loss hits; minimum blade/body
+  clearance is 4.9 cm. Unlike the running punch, this magnet engages, yet the
+  actual strike still falls short. The lead accepted the bench with these five
+  empty duels; native reach, magnetism and AI attack choice belong to a separate
+  melee fix. The defender's native behaviour stays unchanged.
+  Before #751, the eight Mac smoke cases yielded 135 HP-loss hits; this is
+  historical data, not validation of the #751 integration.
+- 2026-11-02, after merging #751 (`54d65a79d`): replayed the same eight commands
+  from `.bench/far-fight-v2-zero-hit-replay/duels-000.bench` on Ryzen, with absolute
+  output `.bench/far-fight-v2-zero-hit-replay-ryzen-p751-20261102-141051` under the
+  worktree. All eight records validated: **4/8 duels with hits, 28 HP-loss hits,
+  four zero-hit timeouts and zero deaths**, versus **3/8, 12 hits and five zero-hit
+  timeouts** on Mac before #751. All four 2H duels now have hits: seeds 17/18/19/20
+  have 9/1/6/12 hits respectively; seed 18 no longer times out. The four unarmed
+  initiator duels still have zero hits (70/79/66/72 swings). Host and code revision
+  both differ, so this is a new measurement, not an isolated effect estimate for #751.
+  All 352 shadow windows selected physical hits; their applied damage agrees with
+  the 28 hit-log entries (2067 HP total). Results were archived through `gq`.
+  A separate one-duel check with existing `NPC_CHARACTER_VIRTUAL=0` exercised the
+  fallback: three legacy windows, two HP-loss hits (159 HP); the attacker has two
+  swings, zero misses, and the defender one swing, one miss. This confirms that
+  native `applied` is not counted as a miss and both hit paths use the same logger.
+  The complete saved check then passed (exit 0): 71 server and 58 tool tests,
+  Ruff, Linux and Mac `Gothic2Notr` builds, and CLI smoke on Ryzen. Smoke validated
+  eight unique records with 100 HP-loss hits, one timeout and zero deaths; it keeps
+  timeouts in the data rather than treating them as invalid records.
+- 2026-11-01: added the native nonlethal calibration bench and plan/run/smoke/report
+  tools for user decision Б3 in [Дальний бой NPC](../../reports/Дальний%20бой%20NPC.md).
 
 ## Live P30 capture on Mac
 
@@ -650,6 +930,98 @@ in isolated source copies (`scripts/physics_profile.py`); its output is not a re
 Frame timing sums public physics work across worker threads, so it can exceed elapsed frame time.
 For a hotspot diagnostic, `--method-breakdown` additionally writes per-method inclusive and outer
 work to `OPENGOTHIC_PHYSICS_TRACE_METHODS`. Keep this extra instrumentation out of formal timing runs.
+
+`body-impact.bench` checks body impact damage: knockdown falls from 2/5/10 m
+require actual torso contact speed within 10% of `sqrt(2gh)`. Ragdoll and
+animated-fall HP loss of the same guild are recorded as references, without an
+HP parity threshold; ragdoll damping stays 0.12. It also checks knockdown-ragdoll
+wall impacts at 6/10/14 m/s, a real hero WindFist into a wall through the animated
+capsule path, and unconscious, dead and immortal controls. Ragdolls count only
+pelvis, spine and head contacts with landscape, static objects or movable furniture. Spell
+capsule wall impacts and their existing landing damage share one 300 ms maximum
+speed window per NPC. Damage uses the unchanged guild fall formula; fatal
+impacts retain the attacker or caster, including the hero's kill attribution.
+Two NPC-culprit controls use the same 14 m/s wall impact: a nonlethal pair must
+enter native unconsciousness at 1 HP, drop its weapon, notify a witness of defeat,
+leave no murder or death trace, and recover through `AI_StandUp`; a lethal pair
+must die with murder attribution and a death trace. `body-impact standup` runs
+the unconscious End hook and queues native standup; `body-impact recovered`
+checks the completed handoff. With damage disabled it checks posture recovery.
+
+Run `scripts/bench.sh body-impact <absolute-output-directory>` and repeat with
+`BODY_IMPACT_DAMAGE=0`; the disabled run retains the previous animated landing
+behavior and adds no body impact damage. `[GAME] body_impact_damage` defaults to
+1; Marvin `toggle body_impact_damage` changes it during play. The native contract
+is `gothic-physics-contract`. Acceptance numbers and the ON/OFF duel and Mac
+physics timing comparison belong in the [body impact report](../../reports/physics/2026-11-01-body-impact/README.md).
+
+`body-traces.bench` checks bodies as physical traces (stage 8, step 4b) on a fresh
+`WORLD=NEWWORLD.ZEN` in the Xardas valley. The native fixture `body_traces`
+(`common/game/bodytracesbench.cpp`) spawns and kills, by the hero's hand, a person,
+a wolf and three people the lifetime rule keeps (an `ITM_MISSION` key, `IMMORTAL`,
+`NPCTYPE_MAIN`), and parks a living observer with perceptions off. `view` reads the
+production `npc_view` through the bridge's writer (`TestBench::npcView`): the person
+is a `body` trace with `npc`, `age` and a stable id, the wolf is none; OFF there are
+no body rows. `advance <minutes>` moves the clock alone; `sleep <hours>` sleeps like
+a bed (`World::setDayTime`); `hero near|far-visible|far-hidden` places the hero
+within 30 m, beyond 30 m with an open ray from his eyes to a body sight point, or
+beyond 30 m with none; `check <label>` fails the run on the first unmet rule.
+`save created` writes `session-created.sav`. A complete run ends with the
+`check sleep-far` sample: `scripts/bench.sh` does not fail a game killed by `TIMEOUT`.
+
+```bash
+WORLD=NEWWORLD.ZEN scripts/bench.sh body-traces /abs/out/on
+WORLD=NEWWORLD.ZEN BODY_TRACES=0 scripts/bench.sh body-traces /abs/out/off
+SAVE=/abs/out/on/session-created.sav scripts/bench.sh body-traces-reload /abs/out/reload
+python3 scripts/body_traces_compare.py /abs/out/on /abs/out/reload
+```
+
+`body-traces-legacy-make.bench` uses only generic commands: run it with a build of
+main from before body traces to get `session-legacy.sav` (a dead person and a wolf);
+`SAVE=<that>/session-legacy.sav scripts/bench.sh body-traces-legacy` loads it with
+the current build: old bodies get an id, `age: null`, and a lifetime from the load.
+
+`blood-stains.bench` checks blood stains as records and `blood` traces (stage 8, step 4c)
+on a fresh `WORLD=NEWWORLD.ZEN` in the Xardas valley. The native fixture `blood_stains`
+(`common/game/bloodstainsbench.cpp`) kills a person 7 m ahead of the hero and lays his
+pool with a splash beside it, two splashes 1.2 m apart, one 9 m away, a meatbug's yellow
+stain with a golem's stone chips 1 m from it, and a splash recorded indoors. `check
+<label>` reads `World::physicsTraces` and fails the run on the first unmet rule: the pair
+is one trace named by its older stain, placed at its larger and aged by its fresher; the
+body's blood and the stone chips are no trace; `body gone` removes the body, and its pool
+leaves with it while the splash beside it becomes a trace; `advance <minutes>` moves the
+clock alone: after a game day only the indoor stain is left, after three days none. OFF
+(`BLOOD=0`) there are no stains and no traces. `save created` writes `session-created.sav`;
+`blood-stains-reload.bench` loads it in a fresh process, and
+`scripts/blood_stains_compare.py` checks the same ids, positions, birth times, trace ids
+and an age that continues from the saved clock. Marvin `blood <waypoint> [pool|splash]
+[radius_cm]` lays a stain by hand; `[GAME] blood` defaults to 1, Marvin `toggle blood`
+changes it during play.
+
+```bash
+WORLD=NEWWORLD.ZEN scripts/bench.sh blood-stains /abs/out/on
+WORLD=NEWWORLD.ZEN BLOOD=0 scripts/bench.sh blood-stains /abs/out/off
+SAVE=/abs/out/on/session-created.sav scripts/bench.sh blood-stains-reload /abs/out/reload
+python3 scripts/blood_stains_compare.py /abs/out/on /abs/out/reload
+```
+
+How blood looks: `blood-probe.bench` lays a pool by hand on Onar's field at 06:00 and shoots it at
+noon and at 18:00 (does a decal draw, and how it dries). `blood-look.bench` lays a pool and a splash on
+the field, then a paladin kills a bandit there and on the harbour pier: a clip of each fight, a clip of
+the pool spreading (`cam follow` keeps the dead bandit by pointer; `cam two`/`cam face` look for a
+living npc of that name and lose him), stills 5 min, 1 h, 6 h and 10 h later in daylight. A `shot`
+is written at the end of its frame, so each one waits before the clock moves. `blood-cost.bench` lays
+256 stains (`blood_stains fill 256 125`, a 20 m grid round the hero) and measures 30 s of normal app
+cadence (`blood_stains measure` starts the window); it needs a build with
+`OPENGOTHIC_ENABLE_APP_CADENCE=ON`, and `OPENGOTHIC_GPU_PASSES=1` on a frame-profile build gives the
+"Blood decals" pass alone.
+
+```bash
+WORLD=NEWWORLD.ZEN BENCH_HOST=local scripts/bench.sh blood-look /abs/out/look
+GAME_BIN=OpenGothic/build-profile-on/opengothic/Gothic2Notr BLOOD=1 WORLD=NEWWORLD.ZEN BENCH_HOST=local scripts/bench.sh blood-cost /abs/out/on
+GAME_BIN=OpenGothic/build-profile-on/opengothic/Gothic2Notr BLOOD=0 WORLD=NEWWORLD.ZEN BENCH_HOST=local scripts/bench.sh blood-cost /abs/out/off
+python3 scripts/blood_cost_read.py /abs/out/on -- /abs/out/off
+```
 
 For stage 2, `ragdoll.bench` exercises death, sleeping/wake, controlled unconscious recovery,
 slopes, stairs, a cliff and the human/Wolf/Scavenger/Molerat/Orc models. Run it with
@@ -838,6 +1210,82 @@ clock and draws only the captured frame; `TEMPEST_AUDIO_LOOPBACK=48000` records 
 
 Good spots near the default save (Xardas' tower): `NW_XARDAS_TOWER_VALLEY_05` (27 degree slope in a
 forest), `NW_XARDAS_TOWER_IN1_*` (ramp inside the tower), `NW_XARDAS_STAIRS_01`..`_04`.
+
+## NPC day parity
+
+`npc-day-parity` (world streaming, step 1, item 6) runs one continuous game day from a fresh `NEWWORLD`
+(day 0, 08:00) and journals every NPC every 5 game minutes. No `set time`: it calls
+`resetPositionToTA` and teleports everyone. The hero stands, immortal, on open ground below Xardas'
+tower (the valley's rats and bloodflies attack him all day). Start it once per NPC simulation tier and
+compare two runs:
+
+```sh
+OPENGOTHIC_NPC_SIM_TIER=full BENCH_HOST=dev-ubuntu \
+  scripts/bench.sh npc-day-parity /absolute/out/full-1
+OPENGOTHIC_NPC_SIM_TIER=simplified BENCH_HOST=dev-ubuntu \
+  scripts/bench.sh npc-day-parity /absolute/out/simplified-1
+scripts/npc_day_parity.py /absolute/out/full-1 /absolute/out/simplified-1 --label-a full --label-b simplified \
+  --tolerances scripts/bench/npc-day-parity.tolerances-6c.json --out /absolute/out/report.md --json /absolute/out/report.json
+```
+
+The scenario carries `# @headless`: it defaults to `WORLD=NEWWORLD.ZEN`, `TIMEOUT=3600` and
+`RYZEN_MAX=75m`, with a `batch` request and no window or GPU reservation. `--game-parity` supplies
+the AI bridge and the window's 40 m effect radius around the camera, and disables body traces by
+default. With `BENCH_HOST=auto`, the host order is dev-ubuntu → Ryzen → Mac; pin
+`BENCH_HOST=dev-ubuntu` to keep a comparison there. `DEV_UBUNTU_HOST` changes its SSH alias.
+`BENCH_HEADLESS=0` restores the window for a same-build comparison on Ryzen or Mac;
+`BENCH_HOST=dev-ubuntu` then exits with code 2 because that host has no window.
+
+The [headless measurements](../../reports/compute/2026-11-02-headless-bench/README.md) on Ryzen
+show that a day through `scripts/bench.sh npc-day-parity` took 1553 s (25,9 min) without a window,
+as a `batch` request (`gq`: `4t 6G gpu=0G окно=0`); windowed days took 38–43 min.
+The window and `--game-parity` runner days from the same build and environment passed
+the historical numeric bench tolerances (exit 0): position differences 0 m,
+ZS/TA/HP/inventory matches 100%, and `npc-day-events.csv` byte-identical. Only `queue`/`head`
+differ for Lester (`PC_PSIONIC`) when he approaches the hero to talk: `AI_ProcessInfo` is handled
+by the dialogue menu in the window; the runner has no menu. The current exact-journal control
+also checks those fields, so window/runner comparisons need to report this difference explicitly.
+Compare only runs from the same build,
+base and environment. A day writes about 55 MB.
+With `OPENGOTHIC_NPC_LOGIC_AUDIT=1`, `npc-day-heights.csv` compares sampled Simplified positions with a ground ray; movement itself does not cast these verification rays. The comparer splits position errors into `stationary_both` and `moving_either` from the existing body-state column, and accepts final-HP, matched-death and stationary-p95 guards.
+
+Use `npc-day-parity.tolerances.json` for Full and `OPENGOTHIC_NPC_SIMPLE_MOVE=0` controls against
+the current-main noise floor. It requires identical nonhero sample fields except `tier` and all
+nonhero events, including the final post-sample tick. Active Simplified/auto use
+`npc-day-parity.tolerances-6c.json`: TA ≥99.5%, ZS and standard start coverage ≥99%, stationary
+position p95 ≤1 m and mutual-nearest start shift p95 ≤8 game seconds. Deaths, final HP and NPC
+presence remain strict. At most three NPCs may have different final inventory, and every case
+needs an exact attested script-created/random-item hash pair; unexplained differences fail.
+Moving positions and standard greedy offsets are report-only. The
+[acceptance decision and measurements](../../docs/world-streaming.md#шаг-1-пункт-6в--графовое-движение-и-повороты)
+explain the bounds and remaining combat/body work. `npcday` files:
+
+| File | Contents |
+|---|---|
+| `npc-day.json` | Tier mode, seed, private random streams, period, start time and hero; at the end the sample/event counts, wall time and the NPC tick time per tier |
+| `npc-day.csv` | Per NPC and sample: `t_min` (scheduled, minutes since the start), key (`SYMBOL#ordinal` by start position), alive, HP, routine entry in force (`index hh:mm-hh:mm ZS waypoint`), ZS state and its time, position (cm), nearest waypoint and distance, AI queue size and head, body state, inventory hash and item count, mobsi scheme, tier, policy, hero flag |
+| `npc-day-events.csv` | Polled every world tick: `zs_start`/`zs_end`, `ta` (routine entry change), `death`/`revive`, `insert`/`remove`, with game minutes and position |
+| `npc-day-cost.csv` | Per sample: wall seconds, NPCs within 30/60 m of the hero, world ticks, NPCs per tier, tier transitions, `Npc::tick` milliseconds and NPC-tick counts per tier, plus Simplified combat ticks using the native executor since the previous sample |
+| `npc-day-arrivals.csv` | Audit-only exact terminal arrivals, observed movement start, final goal identity, actor/target position, ZS, queue and executor; it adds no records to the strict samples/events files. |
+
+Every NPC gets a private script random stream (`GameScript::isolateRandom`, seed from `seed`, stream from
+the key), so one NPC's extra `Hlp_Random` or dice roll does not shift every later NPC's numbers; `shared`
+keeps the game's single stream. The journal drops exactly the streams it registered when it finishes or
+stops, so commands after `npcday` use the shared stream again. Do not combine `npcday` with the body arena
+in one scenario: the arena isolates its actors and clears all streams on reset. `std::rand` (sound variants, gestures, parry variant) is not reseeded.
+States that start and end within one world tick are not seen by the event poll.
+
+`scripts/npc_day_parity.py` matches samples by time and key and leaves the hero out, with his events
+(`--min-hero-distance <m>` also leaves out NPCs near him). Completeness gates come first, because the metrics
+only see the samples both runs share: `require_done` (both `end_reason` are `done`), `require_full_length`
+(both reach their requested minutes and end at the same time), `max_only_samples` (samples present in one run
+only) and `max_missing_end` (an NPC at the end of one run and not the other; such an NPC also counts for the
+end-of-run alive and inventory checks). It reports the share of NPC-samples in the same
+ZS state and routine entry, HP and inventory, the position error (p50/p95/max, straight line, metres),
+matched ZS starts and their offset (greedy, same state, `--window` game minutes), deaths, alive and
+inventory differences at the end, the same split by run B's tier and by game hour, and the NPCs that
+diverge most. Tolerances come from `--tolerances` (JSON) or `--min-same-zs` and similar options
+(`--require-done false` turns a gate off); a failed check exits with 1. Twin monsters that spawn at the same point keep their order of the start array.
 
 ## Engine side
 

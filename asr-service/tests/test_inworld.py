@@ -146,6 +146,13 @@ async def test_inworld_config_auth_and_binary_audio(inworld_server) -> None:
     assert messages[-1] == (0, {"endTurn": {}})
 
 
+async def test_inworld_whole_recording_goes_in_tenth_second_frames(inworld_server) -> None:
+    server = inworld_server
+    result = await server.provider().transcribe(tone(0.95), "ru")
+    assert result.text == "Кавалорн."
+    assert [len(frame) for frame in server.audio[0]] == [3200] * 9 + [1600]
+
+
 async def test_inworld_reuses_connection_for_matching_hints(inworld_server) -> None:
     server = inworld_server
     provider = server.provider()
@@ -325,6 +332,69 @@ async def test_inworld_partials_replace_and_include_prior_final_chunks(inworld_s
     await ws.send(transcription("со мной.", final=True))
     result = await finishing
     assert result.text == "Кавалорн. со мной."
+
+
+async def test_inworld_hint_free_replay_keeps_prompted_connection_and_does_not_wait_for_close(
+    inworld_server, monkeypatch
+) -> None:
+    server = inworld_server
+    server.reply = None
+    provider = server.provider()
+    hints = ["Кавалорн", "Лотара"]
+    utterance = Recognizer(provider).utterance("ru", hints=hints)
+    await utterance.begin()
+    await utterance.feed(tone())
+    assert await server.next_config() == 0
+    prompted_ws, prompted_settings = provider._ws, provider._settings
+    close_started, release_close = asyncio.Event(), asyncio.Event()
+
+    from gothic_asr.providers import inworld
+
+    original_connect = inworld.connect
+
+    async def connect_replay(*args, **kwargs):
+        ws = await original_connect(*args, **kwargs)
+        original_close = ws.close
+
+        async def delayed_close(*args, **kwargs):
+            close_started.set()
+            await release_close.wait()
+            await original_close(*args, **kwargs)
+
+        monkeypatch.setattr(ws, "close", delayed_close)
+        return ws
+
+    monkeypatch.setattr(inworld, "connect", connect_replay)
+    finishing = asyncio.create_task(utterance.finish())
+    try:
+        async with asyncio.timeout(1.0):
+            while (await server.next_message())[1] != {"endTurn": {}}:
+                pass
+        await server.connections[0].send(transcription("Кавалорн, Лотара.", final=True))
+        assert await server.next_config() == 1
+        async with asyncio.timeout(1.0):
+            while (await server.next_message())[1] != {"endTurn": {}}:
+                pass
+        await server.connections[1].send(transcription("Ну ты лошара.", final=True))
+        result = await asyncio.wait_for(finishing, 0.25)
+        assert result.text == "Ну ты лошара."
+        await asyncio.wait_for(close_started.wait(), 1.0)
+        assert provider._ws is prompted_ws and provider._settings is prompted_settings
+        assert not server.connections[0].close_code
+        assert [config["transcribeConfig"]["prompts"] for config in server.configs] == [hints, []]
+
+        server.reply = "Идём."
+        following = Recognizer(provider).utterance("ru", hints=hints)
+        await following.begin()
+        await following.feed(tone())
+        assert (await following.finish()).text == "Идём."
+        assert len(server.connections) == 2
+        messages = [server.received.get_nowait() for _ in range(server.received.qsize())]
+        assert (0, {"endTurn": {}}) in messages
+        assert not any(index == 0 and message == {"closeStream": {}} for index, message in messages)
+    finally:
+        release_close.set()
+        await provider.aclose()
 
 
 async def test_inworld_filters_hints_and_limits_them_to_first_100(inworld_server) -> None:

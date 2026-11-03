@@ -46,6 +46,9 @@ class Material final {
     uint64_t                  texAniFPSInv     = 1;
     bool                      isGhost          = false;
     float                     waveMaxAmplitude = 0;
+    float                     turbidity        = 0;
+    float                     turbidityDepth   = 0;
+    float                     emissive         = 0;  // own glow, 0..1 of EmissiveMeshPeak (materials.json)
     float                     envMapping       = 0;
 
     bool operator == (const Material& other) const;
@@ -61,12 +64,14 @@ class Material final {
     bool isSceneInfoRequired()   const { return isSceneInfoRequired(alpha);            }
     bool isShadowmapRequired()   const { return isShadowmapRequired(alpha);            }
     bool isTextureInShadowPass() const { return isTextureInShadowPass(alpha);          }
+    bool isFogRequired()         const { return isFogRequired(alpha);                  }
 
     static bool isTesselated(AlphaFunc alpha);
     static bool isForwardShading(AlphaFunc alpha);
     static bool isSceneInfoRequired(AlphaFunc alpha);
     static bool isShadowmapRequired(AlphaFunc alpha);
     static bool isTextureInShadowPass(AlphaFunc alpha);
+    static bool isFogRequired(AlphaFunc alpha);
 
   private:
     friend struct AssetDigest;

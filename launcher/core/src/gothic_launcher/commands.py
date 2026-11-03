@@ -173,9 +173,13 @@ def find_layout(config: Config) -> Layout:
         game_dir = Path()
     else:
         if sys.platform == "linux" and game_dir == Path.home() / "gothic-ai/game-settings":
+            argv = [sys.executable, str(repo / "scripts/ryzen_game.py"), "--json", f"--assets={game_dir}"]
+            converter = content_converter(game_bin)
+            if converter.is_file() and os.access(converter, os.X_OK):
+                argv.extend(["--converter", str(converter)])
             try:
                 result = subprocess.run(
-                    [sys.executable, str(repo / "scripts/ryzen_game.py"), "--json", f"--assets={game_dir}"],
+                    argv,
                     capture_output=True, text=True, check=True,
                 )
                 game_env = json.loads(result.stdout)
@@ -309,6 +313,7 @@ def services(config: Config, layout: Layout, ports: Ports, cwd: Path) -> list[Pr
     ]  # fmt: skip
     server_args += _opt("--model", s.llm.model) + _opt("--base-url", s.llm.base_url)
     server_args += _opt("--decider-url", s.llm.decider_url) + _opt("--quick-url", s.llm.quick_url)
+    server_args += _opt("--embed-url", s.llm.embed_url)
     server_args += ["--body-policy", s.llm.body_policy] + _opt("--body-url", s.llm.body_url)
     server_args += [] if s.llm.quick else ["--no-quick"]  # on by default, next to the decider
     openai_key = {"OPENAI_API_KEY": keys.openai_api_key} if keys.openai_api_key else {}

@@ -34,11 +34,17 @@ changes the importer, or in a new folder, run under gq once:
   OPENGOTHIC_BASE_CACHE=<folder>/base-cache OPENGOTHIC_BASE_STORE=/mnt/shared/gothic-ai/melee-balance \
     <folder>/build/opengothic/content-convert resolve-base ~/gothic-ai/body-baseline/assets
 MELEE_BALANCE_PYTHON selects a remote Python with torch (default: body/.venv).
+OPENGOTHIC_CONTENT uploads explicit content into this task for each run.
 MELEE_POSTURE_SCALE multiplies the knockdown threshold in every series (sweeps).
 MELEE_DOWN_TACTICS sets GAME melee_down_tactics in every series (0 or 1).
 MELEE_HITSTOP sets GAME melee_hitstop in every series (0 or 1).
 MELEE_PARRY sets GAME melee_parry in every series (0 or 1).
 MELEE_PARRY_AI sets GAME melee_parry_ai in every series (0 or 1).
+MELEE_AI_DODGE sets GAME melee_ai_dodge in every series (0 or 1).
+MELEE_AI_RIPOSTE sets GAME melee_ai_riposte in every series (0 or 1).
+MELEE_AI_CHARGE sets GAME melee_ai_charge in every series (0 or 1).
+MELEE_AI_BARGE sets GAME melee_ai_barge in every series (0 or 1).
+MELEE_STAGGER sets GAME melee_stagger in every series (0 or 1).
 MELEE_STAMINA sets GAME melee_stamina in every series (0 or 1).
 USAGE
 }
@@ -80,7 +86,7 @@ done
 remote_script() {
   local remote_args='' remote_env='' arg key
   for arg in "$@"; do printf -v remote_args '%s %q' "$remote_args" "$arg"; done
-  for key in GQ_BIN GQ_PROFILE MELEE_BALANCE_PYTHON MELEE_POSTURE_SCALE MELEE_DOWN_TACTICS MELEE_HITSTOP MELEE_STAMINA MELEE_PARRY MELEE_PARRY_AI; do
+  for key in GQ_BIN GQ_PROFILE MELEE_BALANCE_PYTHON MELEE_POSTURE_SCALE MELEE_DOWN_TACTICS MELEE_HITSTOP MELEE_STAMINA MELEE_PARRY MELEE_PARRY_AI MELEE_AI_DODGE MELEE_AI_RIPOSTE MELEE_AI_CHARGE MELEE_AI_BARGE MELEE_STAGGER; do
     if [[ -n "${!key:-}" ]]; then printf -v remote_env '%s %q' "$remote_env" "$key=${!key}"; fi
   done
   {
@@ -140,7 +146,27 @@ REMOTE
 }
 
 run_series() {
-  remote_script "$TASK" "$RUN_NAME" "$EPISODES" "$SEED" "$TIMEOUT_MS" "$SERIES" <<'REMOTE'
+  local content="${OPENGOTHIC_CONTENT:-}"
+  if [[ -n "$content" ]]; then
+    content="$(python3 -c 'import os, sys; print(os.path.realpath(os.path.expanduser(sys.argv[1])))' "$content")"
+    [[ -d "$content" ]] || { echo "Missing OPENGOTHIC_CONTENT directory: $content" >&2; exit 2; }
+    local snapshot
+    snapshot="$(ssh -o BatchMode=yes "$HOST" "bash -s -- '$TASK' '$RUN_NAME' '$SERIES'" <<'REMOTE'
+set -euo pipefail
+IFS=, read -r -a series <<<"$3"
+for name in "${series[@]}"; do
+  [[ ! -e "$1/runs/$2/$name" && ! -e "/mnt/shared/$1/runs/$2/$name" ]] || {
+    echo "Series exists: $name; choose a fresh run name" >&2; exit 1;
+  }
+done
+mkdir -p "$1/inputs/$2"
+mktemp -d "$1/inputs/$2/content.XXXXXX"
+REMOTE
+)"
+    rsync -a "$content/" "$HOST:$snapshot/"
+    content="$snapshot"
+  fi
+  remote_script "$TASK" "$RUN_NAME" "$EPISODES" "$SEED" "$TIMEOUT_MS" "$SERIES" "${OPENGOTHIC_CONTENT+x}" "$content" <<'REMOTE'
 set -euo pipefail
 task_root="$HOME/$1"
 run_name="$2"
@@ -167,8 +193,13 @@ for name in "${series[@]}"; do
   [[ "$provider" != p30 ]] || policy_args=(--checkpoint "$HOME/gothic-ai/body/models/working/best.pt" --policy-only)
   mkdir -p "$out"
   scale_env=()
+  if [[ "$7" == x ]]; then
+    content="$8"
+    [[ -z "$content" || "$content" == /* ]] || content="$HOME/$content"
+    scale_env+=("OPENGOTHIC_CONTENT=$content")
+  fi
   if [[ -n "${MELEE_POSTURE_SCALE:-}" ]]; then
-    scale_env=("OPENGOTHIC_MELEE_POSTURE_SCALE=$MELEE_POSTURE_SCALE")
+    scale_env+=("OPENGOTHIC_MELEE_POSTURE_SCALE=$MELEE_POSTURE_SCALE")
     printf '%s\n' "$MELEE_POSTURE_SCALE" > "$out/posture-scale.txt"
   fi
   if [[ -n "${MELEE_DOWN_TACTICS:-}" ]]; then
@@ -186,6 +217,21 @@ for name in "${series[@]}"; do
   fi
   if [[ -n "${MELEE_PARRY_AI:-}" ]]; then
     scale_env+=("MELEE_PARRY_AI=$MELEE_PARRY_AI")
+  fi
+  if [[ -n "${MELEE_AI_DODGE:-}" ]]; then
+    scale_env+=("MELEE_AI_DODGE=$MELEE_AI_DODGE")
+  fi
+  if [[ -n "${MELEE_AI_RIPOSTE:-}" ]]; then
+    scale_env+=("MELEE_AI_RIPOSTE=$MELEE_AI_RIPOSTE")
+  fi
+  if [[ -n "${MELEE_AI_CHARGE:-}" ]]; then
+    scale_env+=("MELEE_AI_CHARGE=$MELEE_AI_CHARGE")
+  fi
+  if [[ -n "${MELEE_AI_BARGE:-}" ]]; then
+    scale_env+=("MELEE_AI_BARGE=$MELEE_AI_BARGE")
+  fi
+  if [[ -n "${MELEE_STAGGER:-}" ]]; then
+    scale_env+=("MELEE_STAGGER=$MELEE_STAGGER")
   fi
   cp "$task_root/provenance/source-commit.txt" "$task_root/provenance/source.patch" \
      "$task_root/provenance/runner.sha256" "$out/"

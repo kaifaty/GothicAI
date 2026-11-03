@@ -2089,6 +2089,31 @@ async def test_delayed_heartbeat_and_event_replies_do_not_accumulate_into_lease_
         assert not rig.policy.commands("end_episode")
 
 
+async def test_frame_hitch_longer_than_heartbeat_timeout_keeps_lease():
+    # World chunks built after a teleport held every reply for 0.6-0.7 s on Ryzen (2026-11-01).
+    async with running() as rig:
+        await rig.active()
+        fight, lease = rig.fight, rig.fight.lease
+        hitch = bodypilot.HEARTBEAT_TIMEOUT + 0.200
+        rig.bridge.response_delays.update(body_heartbeat=deque([hitch]), body_events=deque([hitch]))
+        beats = len(rig.bridge.commands("body_heartbeat"))
+        await eventually(lambda: fight._heartbeat_timeouts == 1, timeout=2.0)
+        await eventually(lambda: len(rig.bridge.commands("body_heartbeat")) >= beats + 4, timeout=2.0)
+        assert fight._reason is None and rig.link.body_leases == {lease.entity_id: lease}
+        assert rig.bridge.lease_expirations == 0
+        assert not rig.bridge.commands("body_release") and not rig.policy.commands("end_episode")
+
+
+async def test_heartbeats_without_success_for_the_lease_timeout_lose_the_lease():
+    async with running() as rig:
+        await rig.active()
+        fight = rig.fight
+        rig.bridge.response_delays["body_heartbeat"] = bodypilot.HEARTBEAT_TIMEOUT + 0.100
+        limit = bodypilot.LEASE_TIMEOUT_MS / 1000
+        await eventually(lambda: fight._reason == "lease_lost", timeout=limit + 1.5)
+        assert fight._heartbeat_timeouts >= limit / bodypilot.HEARTBEAT_TIMEOUT
+
+
 async def test_one_ownership_poll_timeout_keeps_lease_and_recovers_at_regular_interval(caplog):
     caplog.set_level("INFO", logger="gothic_ai.bodypilot")
     async with running() as rig:

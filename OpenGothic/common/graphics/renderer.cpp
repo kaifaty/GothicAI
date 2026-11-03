@@ -149,6 +149,9 @@ void Renderer::setupSettings() {
                             Resources::device().properties().spatialUpscale;
   // CMAA2 runs at internal resolution, so it needs a same-size target: native or the upscaler input
   settings.aaEnabled      = (Gothic::options().aaPreset>0) && (settings.vidResIndex==0 || settings.spatialUpscale);
+  // bloom from the HDR scene before tonemapping; OPENGOTHIC_BLOOM=0 turns it off
+  if(const char* bloom = std::getenv("OPENGOTHIC_BLOOM"))
+    settings.bloomEnabled = std::string_view(bloom)!="0";
 
   // direct lighting
   if(settings.rtsmEnabled)
@@ -182,7 +185,8 @@ void Renderer::setupSettings() {
     }
 
   Log::i("render: ray query = ", int(Shaders::options().doRayQuery), ", meshlets = ", int(Shaders::options().doMeshShading),
-         ", gi = ", int(settings.giMethod), ", aa = ", settings.aaEnabled ? int(Gothic::options().aaPreset) : 0);
+         ", gi = ", int(settings.giMethod), ", aa = ", settings.aaEnabled ? int(Gothic::options().aaPreset) : 0,
+         ", bloom = ", int(settings.bloomEnabled));
 
   if(settings.giMethod!=GiMethod::None) {
     // need a projective shadow, for gi
@@ -369,6 +373,7 @@ void Renderer::prepareUniforms(WorldView& wview) {
   wview.setHiZ(textureCast<const Texture2d&>(hiz.hiZ));
   wview.setGbuffer(textureCast<const Texture2d&>(gbufDiffuse), textureCast<const Texture2d&>(gbufNormal));
   wview.setSceneImages(textureCast<const Texture2d&>(sceneOpaque), textureCast<const Texture2d&>(sceneDepth), zbuffer);
+  wview.setFog(sky.fogLut3D, sky.fogLut3DMs);
   wview.setWindEnabled(settings.zWindEnabled, settings.windPeriod);
   if(auto* world = Gothic::inst().world())
     wview.setClothWind(world->physic()->clothEnabled(),world->physic()->cloth().windScale());
@@ -382,6 +387,9 @@ void Renderer::resetViewport(Tempest::Size res, Tempest::Size fullRes) {
   const uint32_t h = uint32_t(res.h);
 
   sceneLinear = device.attachment(TextureFormat::R11G11B10UF,w,h);
+  for(size_t i=0; i<bloomChain.size(); ++i)
+    bloomChain[i] = settings.bloomEnabled ? device.attachment(TextureFormat::R11G11B10UF,
+                                                              std::max(w>>(i+1),1u), std::max(h>>(i+1),1u)) : Attachment();
 
   if(settings.aaEnabled) {
     cmaa2.workingEdges               = device.image2d(TextureFormat::R8, (w + 1) / 2, h);
@@ -699,6 +707,9 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
 
   wview.visibilityPass(cmd, 1);
   drawGBuffer(cmd, fId, wview);
+  if(world!=nullptr && blood.prepare(fId, *world, wview.sceneGlobals(), camera.listenerPosition().pos))
+    blood.draw(cmd, fId, wview.sceneGlobals(), gbufDiffuse, Shaders::options().doMaterialMaps ? &gbufOrm : nullptr,
+               gbufNormal, zbuffer);
   mainTiming.finish();
 
   drawShadowMap(cmd, fId, wview);
@@ -735,9 +746,26 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}}, {zbuffer, Tempest::Preserve, Tempest::Preserve});
   cmd.setDebugMarker("Sun&Moon");
   drawSunMoon(cmd, wview);
+  // Multiply darkens what lies behind it, mostly a surface it is a decal on: the fog pass of that depth goes over it.
+  cmd.setDebugMarker("Multiply");
+  wview.drawMultiply(cmd, fId);
+  waterTiming.finish();
+
+  // Reflections and fog go under the other translucent surfaces: those don't write depth, and the fog pass
+  // reads the depth of what lies behind them. They take the fog of their own depth.
+  cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}});
+  drawReflections(cmd, wview);
+  if(!camera.isInWater()) {
+    FrameProfile::Scope fogTiming(FrameProfile::Zone::EncodePost);
+    cmd.setDebugMarker("Fog");
+    drawFog(cmd, wview);
+    }
+
+  FrameProfile::Scope translucentTiming(FrameProfile::Zone::EncodeWater);
+  cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}}, {zbuffer, Tempest::Preserve, Tempest::Preserve});
   cmd.setDebugMarker("Translucent");
   wview.drawTranslucent(cmd, fId);
-  waterTiming.finish();
+  translucentTiming.finish();
 
   //drawHashDbg(sceneLinear, cmd, wview);
   drawProbesDbg(cmd, wview);
@@ -751,16 +779,14 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   drawLightsHud(cmd, wview);
 
   cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}});
-  drawReflections(cmd, wview);
   drawGizmo(cmd, wview);
   FrameProfile::Scope postTiming(FrameProfile::Zone::EncodePost);
   if(camera.isInWater()) {
     cmd.setDebugMarker("Underwater");
     drawUnderwater(cmd, wview);
-    } else {
-    cmd.setDebugMarker("Fog");
-    drawFog(cmd, wview);
     }
+
+  drawBloom(cmd);
 
   auto& tonemapTarget = upscale.input.isEmpty() ? result : upscale.input;
   if(settings.aaEnabled) {
@@ -778,6 +804,36 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   //drawHashDbg(result, cmd, wview);
 
   wview.postFrameupdate();
+  }
+
+void Renderer::drawBloom(Encoder<CommandBuffer>& cmd) {
+  if(!settings.bloomEnabled || bloomChain[0].isEmpty())
+    return;
+  cmd.setDebugMarker("Bloom");
+  // down: the scene to half resolution (Karis-weighted), then each level to the next
+  for(size_t i=0; i<bloomChain.size(); ++i) {
+    cmd.setFramebuffer({{bloomChain[i], Tempest::Discard, Tempest::Preserve}});
+    cmd.setBinding(0, i==0 ? sceneLinear : bloomChain[i-1], Sampler::bilinear(ClampMode::ClampToEdge));
+    cmd.setPipeline(i==0 ? shaders.bloomDownKaris : shaders.bloomDown);
+    cmd.draw(nullptr, 0, 3);
+    }
+  // up: each level adds its tent-filtered smaller one, so the half level ends up with all of them
+  for(size_t i=bloomChain.size()-1; i>0; --i) {
+    cmd.setFramebuffer({{bloomChain[i-1], Tempest::Preserve, Tempest::Preserve}});
+    cmd.setBinding(0, bloomChain[i], Sampler::bilinear(ClampMode::ClampToEdge));
+    cmd.setPipeline(shaders.bloomUp);
+    cmd.draw(nullptr, 0, 3);
+    }
+  struct Push {
+    float strength = 0.05f;  // the share of the scene's light a lens scatters into the glow
+    float levels   = 0;
+    } push;
+  push.levels = float(bloomChain.size());
+  cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}});
+  cmd.setBinding(0, bloomChain[0], Sampler::bilinear(ClampMode::ClampToEdge));
+  cmd.setPushData(push);
+  cmd.setPipeline(shaders.bloomMix);
+  cmd.draw(nullptr, 0, 3);
   }
 
 void Renderer::drawTonemapping(Attachment& result, Encoder<CommandBuffer>& cmd, const WorldView& wview) {
@@ -1930,6 +1986,8 @@ void Renderer::drawLights(Encoder<CommandBuffer>& cmd, const WorldView& wview) {
   cmd.setBinding(4, wview.lights().lightsSsbo());
   if(Shaders::options().doMaterialMaps)
     cmd.setBinding(12, gbufOrm, Sampler::nearest());
+  for(size_t i=0; i<LightGroup::MaxCookies; ++i)
+    cmd.setBinding(13+i, wview.lights().cookie(i), Sampler::bilinear()); // u is the azimuth: it wraps
   if(lights.directLightPso==&shaders.lightsVsm) {
     cmd.setBinding(5, vsm.pageTblOmni);
     cmd.setBinding(6, vsm.pageData);

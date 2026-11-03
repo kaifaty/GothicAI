@@ -14,6 +14,8 @@ from .basics import m6_knows as m6_knows
 from .basics import svm_lines as svm_lines
 from .basics import tts_lines as tts_lines
 from .basics import websocket as websocket
+from .blood_found import blood_found as blood_found
+from .body_found import body_found as body_found
 from .cheat import cheat_scenario as cheat_scenario
 from .combat import combat_barks as combat_barks
 from .combat import hero_yield as hero_yield
@@ -61,7 +63,9 @@ from .lies import vanilla_spare as vanilla_spare
 from .lies import witness_check as witness_check
 from .lies import xardas_wrath as xardas_wrath
 from .live_deals import live_deals as live_deals
+from .live_director import live_director as live_director
 from .live_lies import live_lies as live_lies
+from .live_npc import live_npc as live_npc
 from .load import load_rewind as load_rewind
 from .memprobe import memprobe_scenario as memprobe_scenario
 from .neural_load import neural_load_scenario as neural_load_scenario

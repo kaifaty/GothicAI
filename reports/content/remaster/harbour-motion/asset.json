@@ -121,6 +121,48 @@
       "mode": "blind",
       "verdict": "pending",
       "date": "2026-10-31"
+    },
+    {
+      "id": "r4-huts",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "pending",
+      "date": "2026-10-31"
+    },
+    {
+      "id": "r4-huts-night",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "pending",
+      "date": "2026-10-31"
+    },
+    {
+      "id": "r4-huts-north",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "pending",
+      "date": "2026-10-31"
+    },
+    {
+      "id": "r4-huts-north-night",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "pending",
+      "date": "2026-10-31"
+    },
+    {
+      "id": "r4-overhead",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "pending",
+      "date": "2026-10-31"
+    },
+    {
+      "id": "r4-overhead-night",
+      "stage": "ingame",
+      "mode": "blind",
+      "verdict": "pending",
+      "date": "2026-10-31"
     }
   ],
   "gates": [],

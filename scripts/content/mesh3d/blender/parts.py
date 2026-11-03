@@ -180,6 +180,25 @@ class Parts:
         bmesh.ops.triangulate(bm, faces=bm.faces)
         bmesh.ops.recalc_face_normals(bm, faces=[f for f in bm.faces if round(f.verts[0][self.part_layer]) not in self.wound])
         open_edges = sum(1 for e in bm.edges if not e.is_manifold)
+        # A closed part wound inward is culled by the engine and vanishes from outside: the recalculation
+        # turned a fireplace hood with a degenerate top inside out, and it read as a flat slab (city-hearth,
+        # 2026-10-31). Signed volume per closed part; open parts (discs, sheets) cannot be judged.
+        # Edges are matched by position, so a part closed only up to coincident vertices (that hood) counts.
+        volume, edges = {}, {}
+        key = lambda co: (round(co.x, 5), round(co.y, 5), round(co.z, 5))
+        for f in bm.faces:
+            pid = round(f.verts[0][self.part_layer])
+            vs = [v.co for v in f.verts]
+            volume[pid] = volume.get(pid, 0.0) + sum(vs[0].dot(vs[i].cross(vs[i + 1])) for i in range(1, len(vs) - 1)) / 6
+            count = edges.setdefault(pid, {})
+            for a, b in zip(vs, vs[1:] + vs[:1]):
+                ka, kb = key(a), key(b)
+                if ka != kb:
+                    count[min(ka, kb), max(ka, kb)] = count.get((min(ka, kb), max(ka, kb)), 0) + 1
+        closed = {pid: all(n == 2 for n in count.values()) for pid, count in edges.items()}
+        self.inside_out = sorted(pid for pid, v in volume.items() if closed.get(pid) and v < -1e-7)
+        if self.inside_out:
+            print(f"WARNING {name}: {len(self.inside_out)} closed parts inside out: {self.inside_out[:10]}")
         mesh = bpy.data.meshes.new(name)
         bm.to_mesh(mesh)
         bm.free()
@@ -205,9 +224,10 @@ class Parts:
 def finish_nodes(goal, out, lo, hi, nodes, extra=None):
     """Export one GLB node per (name, Parts): a model with several attachments (a chest body and
     its lid) keeps each attachment's node name. Part numbers must not repeat across the nodes."""
-    objects, open_edges, nails, parts = [], 0, 0, 0
+    objects, open_edges, nails, parts, inside_out = [], 0, 0, 0, 0
     for name, P in nodes:
         obj, edges = P.to_object(goal, name)
+        inside_out += len(P.inside_out)
         objects.append(obj)
         open_edges += edges
         nails += P.nails
@@ -221,7 +241,7 @@ def finish_nodes(goal, out, lo, hi, nodes, extra=None):
     corners = np.array([o.matrix_world @ Vector(c) for o in objects for c in o.bound_box])
     blo, bhi = corners.min(axis=0), corners.max(axis=0)
     metrics = {"triangles": sum(len(o.data.polygons) for o in objects), "budget": goal["budget_tris"],
-               "open_edges": open_edges, "open_edges_expected": 3 * nails,
+               "open_edges": open_edges, "open_edges_expected": 3 * nails, "inside_out_parts": inside_out,
                "parts": parts, "has_part_attribute": all(o.data.attributes.get("_part") is not None for o in objects),
                "bbox_delta_min_m": (blo - np.array(lo)).round(4).tolist(),
                "bbox_delta_max_m": (bhi - np.array(hi)).round(4).tolist(),

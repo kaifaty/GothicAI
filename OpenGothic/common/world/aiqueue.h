@@ -46,6 +46,7 @@ class AiQueue {
     AiAction pop();
     AiAction popPhysicsNoiseState();
     int      aiOutputOrderId() const;
+    bool     hasItemUse() const;
     bool     nativeCombatOnly(const Npc* target) const;
 
     void     onWldItemRemoved(const Item& itm);

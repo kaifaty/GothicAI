@@ -165,10 +165,147 @@ def start(q, kind="quick", **kwargs):
     return ident
 
 
-def test_quick_runs_with_batch_even_when_all_batch_threads_are_claimed(queue):
-    batch = start(queue, "batch", threads=28, mem=16 * GIB)
-    quick = start(queue, threads=4, mem=4 * GIB)
+@pytest.mark.parametrize("batch_first", [False, True])
+def test_quick_runs_with_batch_even_when_all_batch_threads_are_claimed(queue, gq, monkeypatch, batch_first):
+    monkeypatch.setattr(gq, "gpu_memory_free", lambda: pytest.fail("Ryzen must not poll GPU memory"))
+    if batch_first:
+        batch = start(queue, "batch", threads=28, mem=16 * GIB, gpu_mem=7 * GIB)
+        quick = start(queue, threads=4, mem=4 * GIB, gpu_mem=3 * GIB)
+    else:
+        quick = start(queue, threads=4, mem=4 * GIB, gpu_mem=3 * GIB)
+        batch = start(queue, "batch", threads=28, mem=16 * GIB, gpu_mem=7 * GIB)
     assert queue.get(batch)["status"] == queue.get(quick)["status"] == "running"
+
+
+@pytest.mark.parametrize("first_kind,second_kind", [("quick", "batch"), ("batch", "quick")])
+def test_dev_ubuntu_shares_six_threads_between_all_active_jobs(
+        gq, host, monkeypatch, first_kind, second_kind):
+    monkeypatch.setenv("GQ_PROFILE", "dev-ubuntu")
+    q = make_queue(gq, host, monkeypatch)
+    first = q.submit(spec(first_kind, threads=4))
+    boundary = q.submit(spec(second_kind, threads=2))
+    waiting = q.submit(spec(second_kind, threads=1))
+    q.tick()
+    assert q.get(first)["status"] == q.get(boundary)["status"] == "starting"
+    assert q.get(waiting)["status"] == "queued"
+    q.finish(first, "success")
+    q.tick()
+    assert q.get(waiting)["status"] == "starting"
+    assert len(calls(host, "systemd-run")) == 3
+
+
+@pytest.mark.parametrize("overrides,message", [
+    ({"threads": 7}, "ресурсы заявки превышают ёмкость хоста"),
+    ({"display": True}, "окна на dev-ubuntu нет: иди на Ryzen"),
+    ({"display_shared": True}, "окна на dev-ubuntu нет: иди на Ryzen"),
+    ({"display_exclusive": True}, "окна на dev-ubuntu нет: иди на Ryzen"),
+    ({"interactive": True}, "окна на dev-ubuntu нет: иди на Ryzen"),
+    ({"kind": "quiet"}, "quiet недоступен: иди на Ryzen"),
+])
+def test_dev_ubuntu_rejects_excess_threads_windows_interactive_and_quiet(
+        gq, host, monkeypatch, overrides, message):
+    monkeypatch.setenv("GQ_PROFILE", "dev-ubuntu")
+    q = make_queue(gq, host, monkeypatch)
+    with pytest.raises(gq.QueueError) as failure:
+        q.submit(spec(**overrides))
+    assert str(failure.value) == message
+    assert q.jobs() == []
+
+
+@pytest.mark.parametrize("active_status", ["starting", "running"])
+@pytest.mark.parametrize("free,expected", [
+    (6 * GIB, "starting"), (6 * GIB - 1, "queued"),
+])
+def test_dev_ubuntu_gpu_admission_reserves_one_gib_and_active_declarations(
+        gq, host, monkeypatch, active_status, free, expected, capsys):
+    monkeypatch.setenv("GQ_PROFILE", "dev-ubuntu")
+    monkeypatch.setattr(gq, "gpu_memory_free", lambda: 9 * GIB)
+    q = make_queue(gq, host, monkeypatch)
+    active = q.submit(spec(threads=1, gpu_mem=2 * GIB))
+    q.tick()
+    if active_status == "running":
+        q.started(active)
+    monkeypatch.setattr(gq, "gpu_memory_free", lambda: free)
+    waiting = q.submit(spec("batch", threads=1, gpu_mem=3 * GIB))
+    q.tick()
+    assert q.get(active)["status"] == active_status
+    job = q.get(waiting)
+    assert job["status"] == expected
+    assert len(calls(host, "systemd-run")) == (2 if expected == "starting" else 1)
+    if expected == "queued":
+        assert job["wait_reason"]
+        gq.status(q)
+        output = capsys.readouterr().out
+        assert job["wait_reason"] in output
+        monkeypatch.setattr(gq, "gpu_memory_free", lambda: 6 * GIB)
+        q.tick()
+        assert q.get(waiting)["status"] == "starting"
+        assert not q.get(waiting).get("wait_reason")
+
+
+def test_dev_ubuntu_gpu_probe_failure_is_visible_while_cpu_is_full(gq, host, monkeypatch, capsys):
+    monkeypatch.setenv("GQ_PROFILE", "dev-ubuntu")
+    monkeypatch.setattr(gq, "gpu_memory_free", lambda: None)
+    q = make_queue(gq, host, monkeypatch)
+    active = q.submit(spec(threads=6))
+    q.tick()
+    q.started(active)
+    waiting = q.submit(spec(threads=1, gpu_mem=2 * GIB))
+    q.tick()
+    job = q.get(waiting)
+    assert job["status"] == "queued"
+    assert "nvidia-smi" in job["wait_reason"]
+    gq.status(q)
+    assert job["wait_reason"] in capsys.readouterr().out
+    assert len(calls(host, "systemd-run")) == 1
+    q.finish(active, "success")
+    q.tick()
+    assert q.get(waiting)["status"] == "queued"
+    assert len(calls(host, "systemd-run")) == 1
+    monkeypatch.setattr(gq, "gpu_memory_free", lambda: 3 * GIB)
+    q.tick()
+    assert q.get(waiting)["status"] == "starting"
+    assert not q.get(waiting).get("wait_reason")
+
+
+def test_dev_ubuntu_gpu_admission_counts_reservations_from_the_same_tick(gq, host, monkeypatch):
+    monkeypatch.setenv("GQ_PROFILE", "dev-ubuntu")
+    monkeypatch.setattr(gq, "gpu_memory_free", lambda: 15 * GIB - 1)
+    q = make_queue(gq, host, monkeypatch)
+    first = q.submit(spec(threads=1, gpu_mem=11 * GIB))
+    second = q.submit(spec(threads=1, gpu_mem=3 * GIB))
+    q.tick()
+    assert q.get(first)["status"] == "starting"
+    assert q.get(second)["status"] == "queued"
+    assert len(calls(host, "systemd-run")) == 1
+
+
+def test_dev_ubuntu_jobs_without_gpu_memory_never_poll_nvidia_smi(gq, host, monkeypatch):
+    monkeypatch.setenv("GQ_PROFILE", "dev-ubuntu")
+    monkeypatch.setattr(gq, "gpu_memory_free", lambda: pytest.fail("CPU jobs must not poll GPU memory"))
+    q = make_queue(gq, host, monkeypatch)
+    ident = q.submit(spec())
+    q.tick()
+    assert q.get(ident)["status"] == "starting"
+    q.tick()
+    assert len(calls(host, "systemd-run")) == 1
+
+
+@pytest.mark.parametrize("result,expected", [
+    (subprocess.CompletedProcess([], 0, "8192\n24576\n", ""), 8 * GIB),
+    (subprocess.CompletedProcess([], 1, "8192\n", "failed"), None),
+    (subprocess.CompletedProcess([], 0, "N/A\n", ""), None),
+    (FileNotFoundError("nvidia-smi"), None),
+])
+def test_gpu_memory_probe_reads_first_card_and_fails_closed(gq, monkeypatch, result, expected):
+    def probe(args, **kwargs):
+        assert args == ["nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits"]
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    monkeypatch.setattr(gq.subprocess, "run", probe)
+    assert gq.gpu_memory_free() == expected
 
 
 def test_interactive_does_not_wait_for_background_memory_or_gpu(queue):
@@ -852,6 +989,7 @@ def test_systemd_launch_sets_affinity_limits_runtime_and_stop_callback(gq, host,
                       for value in arguments if value.startswith("--property="))
     assert properties["CPUAffinity"] == "2-15 18-31"
     assert "AllowedCPUs" not in properties
+    assert "CPUQuota" not in properties
     assert properties["CPUWeight"] == str(weight)
     assert properties["Nice"] == str(nice)
     assert properties["MemoryMax"] == str(3 * GIB)
@@ -861,6 +999,25 @@ def test_systemd_launch_sets_affinity_limits_runtime_and_stop_callback(gq, host,
     assert "_finish" in properties["ExecStopPost"] and ident in properties["ExecStopPost"]
     assert properties["StandardOutput"] == f"append:{q.home}/logs/{ident}.log"
     assert "_execute" in arguments and arguments[-1] == ident
+
+
+@pytest.mark.parametrize("profile", ["ryzen", "dev-ubuntu"])
+@pytest.mark.parametrize("kind,quota", [("quick", None), ("batch", "150%"), ("quick", "500%")])
+def test_profile_cpu_quota_preserves_ryzen_and_caps_dev_ubuntu(gq, host, monkeypatch, profile, kind, quota):
+    monkeypatch.setenv("GQ_PROFILE", profile)
+    q = make_queue(gq, host, monkeypatch)
+    request = spec(kind, threads=2)
+    if quota is not None:
+        request["cpu_quota"] = quota
+    q.submit(request)
+    q.tick()
+    properties = dict(value.removeprefix("--property=").split("=", 1)
+                      for value in calls(host, "systemd-run")[0] if value.startswith("--property="))
+    expected = quota if profile == "ryzen" else "150%" if quota == "150%" else "200%"
+    assert properties.get("CPUQuota") == expected
+    assert properties["CPUAffinity"] == ("2-15 18-31" if profile == "ryzen" else "0-11")
+    assert properties["CPUWeight"] == ("10" if kind == "batch" else "100")
+    assert properties["Nice"] == ("19" if kind == "batch" else "0")
 
 
 def test_cli_interactive_uses_live_cpu_weight_and_exact_six_hour_limit(gq, host, monkeypatch):
@@ -1831,6 +1988,15 @@ def test_status_exposes_owner_class_resources_limit_and_estimate(queue, gq, caps
     assert "Disk /: free 100.0G; minimum 20G" in output
 
 
+def test_dev_ubuntu_status_shows_profile_and_resource_limits(gq, host, monkeypatch, capsys):
+    monkeypatch.setenv("GQ_PROFILE", "dev-ubuntu")
+    q = make_queue(gq, host, monkeypatch)
+    monkeypatch.setattr(q, "disk_space", lambda: {q.local_root: 100 * GIB, Path("/"): 100 * GIB})
+    gq.status(q)
+    assert ("Profile dev-ubuntu: CPUs 0-11; threads 6 total; memory 12G; display 0; "
+            "quiet disabled; GPU memory from nvidia-smi (1G reserve); minimum disk 20G") in capsys.readouterr().out
+
+
 @pytest.mark.parametrize("persisted", [False, True])
 def test_status_marks_legacy_display_as_all_slots(queue, gq, capsys, persisted):
     ident = start(queue, display=True)
@@ -2226,7 +2392,8 @@ def test_profile_selection_uses_environment_then_private_file_otherwise_errors(
         assert q.profile_name == "ryzen" and q.profile == gq.PROFILES["ryzen"]
 
 
-def test_install_copies_executable_and_private_profile_to_remote_home(gq, monkeypatch, tmp_path):
+@pytest.mark.parametrize("profile", ["ryzen", "dev-ubuntu"])
+def test_install_copies_executable_and_private_profile_to_remote_home(gq, monkeypatch, tmp_path, profile):
     wrapper_path = SCRIPT.with_name("gq")
     loader = SourceFileLoader("gq_wrapper_test_module", str(wrapper_path))
     module_spec = importlib.util.spec_from_loader(loader.name, loader)
@@ -2246,12 +2413,12 @@ def test_install_copies_executable_and_private_profile_to_remote_home(gq, monkey
 
     monkeypatch.delenv("GQ_PROFILE", raising=False)
     monkeypatch.setattr(wrapper.subprocess, "call", local_ssh)
-    assert wrapper.install("ryzen") == 0
-    assert len(ssh_calls) == 1 and ssh_calls[0][-2] == "ryzen"
+    assert wrapper.install(profile) == 0
+    assert len(ssh_calls) == 1 and ssh_calls[0][-2] == profile
     installed = remote_home / "gothic-ai" / "bin"
     assert (installed / "gq").read_bytes() == SCRIPT.read_bytes()
     assert os.access(installed / "gq", os.X_OK)
-    assert (installed / "gq.profile").read_text() == "ryzen\n"
+    assert (installed / "gq.profile").read_text() == profile + "\n"
     assert sorted(path.name for path in installed.iterdir()) == ["gq", "gq.profile"]
 
 

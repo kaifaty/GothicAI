@@ -17,7 +17,8 @@ Material::Material(const asset::Material& m, bool enableAlphaTest, bool requireA
   loadFrames(m);
 
   Resources::MaterialMaps maps;
-  if(m.group!=asset::MaterialGroup::WATER && !hasFrameAnimation() &&
+  // Water reads its maps too: our pot water has an albedo and a turbidity of its own.
+  if(!hasFrameAnimation() &&
      m.wave_mode==asset::WaveMode::NONE &&
      (m.texture_anim_map_mode==asset::AnimationMapping::NONE ||
       (m.texture_anim_map_dir.x==0.f && m.texture_anim_map_dir.y==0.f))) {
@@ -56,6 +57,10 @@ Material::Material(const asset::Material& m, bool enableAlphaTest, bool requireA
 
   if(m.wave_mode!=asset::WaveMode::NONE)
     waveMaxAmplitude = m.wave_max_amplitude;
+  if(alpha==Water) {
+    turbidity      = maps.turbidity;
+    turbidityDepth = maps.turbidityDepth;
+    }
 
   if(m.environment_mapping!=0)
     ; // envMapping = m.environment_mapping_strength;
@@ -69,6 +74,7 @@ Material::Material(const asset::Material& m, bool enableAlphaTest, bool requireA
     uvScale = maps.scale;
     antitileCell = maps.antitileCell;
     antitile = maps.antitile;
+    emissive = maps.orm!=nullptr ? maps.emissive : 0.f;
     materialMaps = maps.present;
     }
   }
@@ -86,7 +92,8 @@ Material::Material(const asset::VisualDecal& decal)
   }
 
 Material::Material(const Def::ParticleEffect& src) {
-  tex = Resources::loadTexture(src.vis_name_s,false,false);
+  // content/materials first, as for a mesh: an own particle texture comes with the content
+  tex = Resources::loadMaterialAlbedo(src.vis_name_s);
   loadFrames(src.vis_name_s, src.vis_tex_ani_fps);
 
   //TODO: visTexAniIsLooping
@@ -114,6 +121,9 @@ bool Material::operator ==(const Material& other) const {
          texAniFPSInv==other.texAniFPSInv &&
          isGhost==other.isGhost &&
          waveMaxAmplitude==other.waveMaxAmplitude &&
+         turbidity==other.turbidity &&
+         turbidityDepth==other.turbidityDepth &&
+         emissive==other.emissive &&
          envMapping==other.envMapping;
   }
 
@@ -138,13 +148,19 @@ bool Material::isSceneInfoRequired(AlphaFunc alpha) {
   }
 
 bool Material::isShadowmapRequired(AlphaFunc alpha) {
+  // Water samples the sun's shadow for a turbid surface (pot water).
   return isForwardShading(alpha) &&
-         alpha!=Material::AdditiveLight && alpha!=Material::Multiply && alpha!=Material::Multiply2 &&
-         alpha!=Material::Water;
+         alpha!=Material::AdditiveLight && alpha!=Material::Multiply && alpha!=Material::Multiply2;
   }
 
 bool Material::isTextureInShadowPass(AlphaFunc alpha) {
   return (alpha==Material::AlphaTest);
+  }
+
+bool Material::isFogRequired(AlphaFunc alpha) {
+  // drawn after the fog pass: they take the fog of their own depth.
+  // Multiply stays under the fog pass: blending can't add the haze in front of it.
+  return alpha==Material::Transparent || alpha==Material::AdditiveLight || alpha==Material::Ghost;
   }
 
 bool Material::isTesselated(AlphaFunc alpha) {

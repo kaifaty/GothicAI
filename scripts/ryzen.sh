@@ -5,6 +5,13 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 RYZEN_HOST="${RYZEN_HOST:-ryzen}"
+DEV_UBUNTU=0
+BUILD_MEM=12G
+if [[ "$RYZEN_HOST" == "${DEV_UBUNTU_HOST:-dev-ubuntu}" ]]; then
+  DEV_UBUNTU=1
+  RYZEN_JOBS="${RYZEN_JOBS:-6}"
+  BUILD_MEM=10G
+fi
 LOCK_WAIT="${RYZEN_LOCK_WAIT:-900}"
 [[ "$LOCK_WAIT" =~ ^[0-9]+$ ]] || { echo 'RYZEN_LOCK_WAIT must be seconds' >&2; exit 2; }
 
@@ -195,11 +202,14 @@ root.mkdir(parents=True, exist_ok=True)
 parent = root if kind == 'engine' else root / 'storygraph'
 binary = 'Gothic2Notr' if kind == 'engine' else 'storygraph'
 entry = parent / digest
+require_runner = kind == 'engine' and sys.argv[6:7] == ['1']
 staging = None
 garbage = []
 
 def ready(path, name):
     names = (name, 'content-convert') if name == 'Gothic2Notr' else (name,)
+    if require_runner:
+        names += ('gothic-body-runner',)
     return all((path / item).is_file() and os.access(path / item, os.X_OK) for item in names)
 
 def retire(path):
@@ -294,14 +304,15 @@ build_storygraph() {
 }
 
 engine_ready() {
-  local state="$1" digest="$2" cached
-  if cached="$(cache_artifact get engine "$digest")"; then
+  local state="$1" digest="$2" require_runner="${3:-0}" cached
+  if cached="$(cache_artifact get engine "$digest" '' "$require_runner")"; then
     export RYZEN_GAME_BIN="$cached/Gothic2Notr"
     return
   fi
   [[ -x "$state/build/opengothic/Gothic2Notr" && -x "$state/build/opengothic/content-convert" && -f "$state/build/source.sha256" && -f "$state/build/CMakeCache.txt" ]] && \
      [[ "$(cat "$state/build/source.sha256")" == "$digest" ]] && \
      grep -qx 'OPENGOTHIC_ENABLE_APP_CADENCE:BOOL=ON' "$state/build/CMakeCache.txt" || return 1
+  [[ "$require_runner" != 1 || -x "$state/build/opengothic/gothic-body-runner" ]] || return 1
   export RYZEN_GAME_BIN="$state/build/opengothic/Gothic2Notr"
 }
 
@@ -319,13 +330,10 @@ storygraph_ready() {
 }
 
 dependency_projects() {
+  source "$ROOT/scripts/e2e-services.sh"
   echo server
-  case "$1" in
-    tts|combat_barks|gossip|day|group|interject|programs|errand*|fight_reactions_*) echo tts-service ;;
-  esac
-  case "$1" in
-    m3|m5e) echo asr-service ;;
-  esac
+  if e2e_needs_tts "$1"; then echo tts-service; fi
+  if e2e_needs_asr "$1"; then echo asr-service; fi
 }
 
 check_protocol() {
@@ -347,12 +355,13 @@ PY
 remote_probe() {
   local action="$1" state="$2" run="$3" scenario="$4" digest project
   toolchain
-  local frame_profile=OFF
+  local frame_profile=OFF require_runner=0
   if [[ "$action" == bench && "$(basename "$scenario")" == streaming-flythrough.bench ]]; then frame_profile=ON; fi
+  if [[ "$action" == bench && "${BENCH_HEADLESS:-0}" == 1 ]]; then require_runner=1; fi
   digest="$(source_digest "$frame_profile")"
   printf '%s\n' "$digest" >"$state/inputs/$run/source.sha256"
   if [[ "$action" == e2e ]]; then check_protocol || return 2; fi
-  engine_ready "$state" "$digest" || return 1
+  engine_ready "$state" "$digest" "$require_runner" || return 1
   # A ready worktree build still needs publication in the no-display preparation
   # job. Never copy the runtime directory in this probe or the game request.
   [[ "$RYZEN_GAME_BIN" == "$HOME/gothic-ai/engine-cache/$digest/Gothic2Notr" ]] || return 1
@@ -372,9 +381,10 @@ remote_prepare() {
   toolchain
   digest="$(cat "$state/inputs/$run/source.sha256")"
   if [[ "$action" == e2e ]]; then check_protocol; fi
-  local frame_profile=OFF
+  local frame_profile=OFF require_runner=0
   if [[ "$action" == bench && "$(basename "$scenario")" == streaming-flythrough.bench ]]; then frame_profile=ON; fi
-  build_engine "$state" "$digest" "$frame_profile"
+  if [[ "$action" == bench && "${BENCH_HEADLESS:-0}" == 1 ]]; then require_runner=1; fi
+  build_engine "$state" "$digest" "$frame_profile" "$require_runner"
   if [[ "$action" == e2e ]]; then
     # Probe can stop at the missing engine before scanning the smaller tool tree.
     digest="$(storygraph_digest)"
@@ -388,9 +398,10 @@ remote_prepare() {
 }
 
 require_prepared() {
-  local action="$1" state="$2" run="$3" scenario="$4" digest
+  local action="$1" state="$2" run="$3" scenario="$4" digest require_runner=0
+  if [[ "$action" == bench && "${BENCH_HEADLESS:-0}" == 1 ]]; then require_runner=1; fi
   digest="$(cat "$state/inputs/$run/source.sha256")" || return 1
-  if [[ -z "$digest" ]] || ! engine_ready "$state" "$digest"; then
+  if [[ -z "$digest" ]] || ! engine_ready "$state" "$digest" "$require_runner"; then
     echo 'Ryzen: engine does not match snapshot source.sha256; refusing to build with the display reserved. Run preparation again.' >&2
     return 1
   fi
@@ -414,8 +425,8 @@ game_settings() {
 }
 
 build_engine() {
-  local state="$1" digest="$2" frame_profile="${3:-OFF}" started=$SECONDS
-  if engine_ready "$state" "$digest"; then
+  local state="$1" digest="$2" frame_profile="${3:-OFF}" require_runner="${4:-0}" started=$SECONDS
+  if engine_ready "$state" "$digest" "$require_runner"; then
     if [[ "$RYZEN_GAME_BIN" != "$state/build/opengothic/Gothic2Notr" ]]; then
       echo "Ryzen: engine from cache ${digest:0:12} (0s)"
       return
@@ -433,14 +444,20 @@ build_engine() {
       -DOPENGOTHIC_ENABLE_APP_CADENCE=ON -DOPENGOTHIC_ENABLE_FRAME_PROFILE="$frame_profile" \
       -DCMAKE_CXX_FLAGS="-I$VULKAN_SDK/include" -DCMAKE_EXE_LINKER_FLAGS="-L$VULKAN_SDK/lib" \
       >"$state/build/configure.log" 2>&1 || { local rc=$?; cat "$state/build/configure.log"; return "$rc"; }
-    cmake --build "$state/build" --target Gothic2Notr --parallel "$jobs" \
+    local targets=(Gothic2Notr)
+    if [[ "$require_runner" == 1 ]]; then
+      targets+=(gothic-body-runner)
+    else
+      rm -f "$state/build/opengothic/gothic-body-runner"
+    fi
+    cmake --build "$state/build" --target "${targets[@]}" --parallel "$jobs" \
       >"$state/build/build.log" 2>&1 || { local rc=$?; tail -80 "$state/build/build.log"; return "$rc"; }
     tail -5 "$state/build/build.log"
     printf '%s\n' "$digest" >"$state/build/source.sha256"
     echo "Ryzen: engine configure + build $((SECONDS - started))s"
   fi
   local cached
-  cached="$(cache_artifact publish engine "$digest" "$state/build/opengothic")"
+  cached="$(cache_artifact publish engine "$digest" "$state/build/opengothic" "$require_runner")"
   export RYZEN_GAME_BIN="$cached/Gothic2Notr"
 }
 
@@ -468,21 +485,31 @@ PY
   fi
   toolchain
   game_settings
-  command -v ffmpeg >/dev/null || { echo 'Missing tool: ffmpeg' >&2; return 1; }
-  desktop
+  if [[ "${BENCH_HEADLESS:-0}" != 1 ]]; then
+    command -v ffmpeg >/dev/null || { echo 'Missing tool: ffmpeg' >&2; return 1; }
+    desktop
+  fi
   require_prepared bench "$state" "$run" "$scenario"
   local out="$state/runs/$run"
   mkdir -p "$out"
-  cat >"$out/game.sh" <<'WRAPPER'
+  if [[ "${BENCH_HEADLESS:-0}" == 1 ]]; then
+    export GAME_BIN="$RYZEN_GAME_BIN"
+  else
+    cat >"$out/game.sh" <<'WRAPPER'
 #!/usr/bin/env bash
 exec "$RYZEN_GAME_BIN" "$@" -g2 -window
 WRAPPER
-  chmod +x "$out/game.sh"
-  export GAME_BIN="$out/game.sh"
+    chmod +x "$out/game.sh"
+    export GAME_BIN="$out/game.sh"
+  fi
   echo "Ryzen: prepare/start overhead $((SECONDS - started))s"
   started=$SECONDS
   # bench.sh produces the report here, before the complete output is collected.
   BENCH_HOST=local NO_BUILD=1 RYZEN_BENCH=1 bash "$ROOT/scripts/bench.sh" "$scenario" "$out" && rc=0 || rc=$?
+  if [[ -n "${RYZEN_BENCH_ARCHIVE:-}" ]]; then
+    mkdir -p "$RYZEN_BENCH_ARCHIVE"
+    cp -a "$out/." "$RYZEN_BENCH_ARCHIVE/"
+  fi
   echo "Ryzen: bench $((SECONDS - started))s, exit $rc"
   return "$rc"
 }
@@ -578,16 +605,33 @@ fi
 ACTION="${1:-}"
 case "$ACTION" in setup|e2e|pytest|bench|clean|clean-cache|du) shift ;; *) echo 'Usage: scripts/ryzen.sh setup|e2e|pytest [args...]|bench <scenario> <out>|clean|clean-cache|du' >&2; exit 2 ;; esac
 if [[ "$ACTION" == bench ]]; then
-  BENCH_CLASS="${RYZEN_BENCH_CLASS:-quick}"
-  case "$BENCH_CLASS" in
-    quick|quiet) ;;
-    *) echo 'RYZEN_BENCH_CLASS must be quick or quiet' >&2; exit 2 ;;
-  esac
   [[ $# == 2 ]] || { echo 'Usage: scripts/ryzen.sh bench <scenario> <out>' >&2; exit 2; }
   BENCH_SCENARIO="$1"
   [[ -f "$BENCH_SCENARIO" ]] || BENCH_SCENARIO="$ROOT/scripts/bench/$1.bench"
   [[ -f "$BENCH_SCENARIO" ]] || { echo "No scenario: $1" >&2; exit 2; }
   BENCH_SCENARIO="$(cd "$(dirname "$BENCH_SCENARIO")" && pwd)/$(basename "$BENCH_SCENARIO")"
+  if [[ -z "${BENCH_HEADLESS+x}" ]]; then
+    BENCH_HEADLESS=0
+    if grep -qx '# @headless' "$BENCH_SCENARIO"; then BENCH_HEADLESS=1; fi
+  fi
+  case "$BENCH_HEADLESS" in
+    0|1) export BENCH_HEADLESS ;;
+    *) echo 'BENCH_HEADLESS must be 0 or 1' >&2; exit 2 ;;
+  esac
+  if [[ "$DEV_UBUNTU" == 1 ]]; then
+    [[ "$BENCH_HEADLESS" == 1 ]] || { echo "Ryzen: окна на $RYZEN_HOST нет" >&2; exit 2; }
+    [[ -z "${RYZEN_BENCH_ARCHIVE:-}" ]] || { echo "Ryzen: RYZEN_BENCH_ARCHIVE is not supported on $RYZEN_HOST (no shared store)" >&2; exit 2; }
+  fi
+  if [[ "$BENCH_HEADLESS" == 1 ]]; then
+    [[ "${KEEP:-0}" != 1 ]] || { echo 'bench: KEEP=1 is incompatible with headless lockstep' >&2; exit 2; }
+    BENCH_CLASS="${RYZEN_BENCH_CLASS:-batch}"
+  else
+    BENCH_CLASS="${RYZEN_BENCH_CLASS:-quick}"
+  fi
+  case "$BENCH_CLASS" in
+    quick|quiet|batch) ;;
+    *) echo 'RYZEN_BENCH_CLASS must be quick, quiet or batch' >&2; exit 2 ;;
+  esac
   LOG_DIR="$2"
   if [[ -z "${WORLD:-}" && -z "${SAVE:-}" ]]; then
     COMMON="$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir)"
@@ -605,6 +649,11 @@ remote() {
 }
 
 if [[ "$ACTION" == du ]]; then
+  if [[ "$DEV_UBUNTU" == 1 ]]; then
+    echo "Ryzen: $RYZEN_HOST has no shared store or Ryzen janitor; showing local worktrees"
+    { declare -f disk_usage; echo 'set -euo pipefail; disk_usage'; } | remote bash -s
+    exit
+  fi
   RYZEN_HOST="$RYZEN_HOST" exec "$ROOT/scripts/ryzen-janitor.sh" du
 fi
 
@@ -709,68 +758,221 @@ except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
 PY
 }
 
-if [[ "$ACTION" == setup ]]; then
-  # Run the same preflight without needing a checkout or configuring a build.
-  { declare -f toolchain; echo 'set -euo pipefail; toolchain; echo "Ryzen: toolchain OK"'; } | remote bash -s
+select_mac_base_parts() {
+  local parts
+  base_format='' videos_format=''
+  if [[ "$auto_base" == 1 ]]; then base_format="$(cmake -DBASE_ROOT="$ROOT/OpenGothic" -P "$ROOT/OpenGothic/cmake/BaseFormat.cmake")"; fi
+  if [[ "$auto_videos" == 1 ]]; then videos_format="$(cmake -DVIDEO_ROOT="$ROOT/OpenGothic" -P "$ROOT/OpenGothic/cmake/VideoFormat.cmake")"; fi
   GOTHIC_DIR="${GOTHIC_DIR:-/Volumes/DevSSD/Dev/games/Gothic II}"
-  started=$SECONDS
-  temporary=''
-  trap 'if [[ -n "$temporary" ]]; then remote rm -rf -- "$temporary" || echo "Ryzen: could not remove setup copy $temporary" >&2; fi' EXIT
-  trap 'exit 129' HUP
-  trap 'exit 130' INT
-  trap 'exit 143' TERM
-  # Read only the ready pointer and the two INI files, never identify the installation.
-  parts="$(python3 - "$GOTHIC_DIR" <<'PY'
+  # Select checkout-compatible ready parts without identifying or changing the installation.
+  parts="$(python3 - "$GOTHIC_DIR" "$base_format" "$videos_format" "$auto_base" "$auto_videos" "$ACTION" "$ROOT/scripts" <<'PY'
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import sys
 
+sys.path.insert(0, sys.argv[7])
+from ryzen_game import _installation_identity
+
 game = Path(sys.argv[1]).expanduser().resolve()
-pointer = Path.home() / '.cache/gothic-ai/base/current' / (hashlib.sha256(str(game).encode()).hexdigest() + '.json')
+cache = Path.home() / '.cache/gothic-ai/base'
+pointer = cache / 'current' / (hashlib.sha256(str(game).encode()).hexdigest() + '.json')
+
+def identity(kind, directory):
+    metadata = json.loads((directory / ('base.json' if kind == 'base' else 'videos.json')).read_bytes())
+    return metadata if kind == 'base' else json.loads(metadata['identity'])
+
+action = sys.argv[6]
+
+def import_required(message):
+    if action == 'setup':
+        raise SystemExit(message)
+    reason = message.removeprefix('needs_decision: ').split(';', 1)[0]
+    raise SystemExit(f'Mac: {reason}; Start the game once on the Mac on this version '
+                     'to import the base into ~/.cache/gothic-ai/base, then retry')
+
+def select(kind, expected):
+    part = current.get(kind)
+    if kind == 'videos' and part is None:
+        print('\n')
+        return
+    if (not isinstance(part, dict) or not re.fullmatch('[0-9a-f]{64}', part.get('fingerprint', ''))
+            or not isinstance(part.get('path'), str) or not Path(part['path']).is_absolute()
+            or '\n' in part['path']):
+        raise ValueError(f'invalid {kind} pointer')
+    fingerprint, path = part['fingerprint'], Path(part['path'])
+    pointed = identity(kind, path)
+    actual = pointed['format_sha256']
+    if actual != expected:
+        sources = _installation_identity(pointed, kind)
+        root = cache if kind == 'base' else cache / 'videos'
+        for candidate in sorted(root.glob('*/base.json' if kind == 'base' else '*/videos.json')):
+            if not re.fullmatch('[0-9a-f]{64}', candidate.parent.name):
+                continue
+            try:
+                cached = identity(kind, candidate.parent)
+                if cached['format_sha256'] != expected or _installation_identity(cached, kind) != sources:
+                    continue
+            except (OSError, ValueError, KeyError, TypeError, AttributeError):
+                continue
+            fingerprint, path = candidate.parent.name, candidate.parent
+            if action == 'setup':
+                print(f'Ryzen: Mac pointer has importer format {actual}, using Mac cache part '
+                      f'{fingerprint} of format {expected}', file=sys.stderr)
+            break
+        else:
+            import_required(
+                f'needs_decision: Mac {kind} part {fingerprint} has importer format {actual}, '
+                f'this checkout builds {expected}; build the engine from this checkout and run the game '
+                'or storygraph once on Mac to import into ~/.cache/gothic-ai/base, then retry setup')
+    print(fingerprint)
+    print(path)
+
 try:
-    current = json.loads(pointer.read_bytes())
-    if current.get('version') != 1 or current.get('gothic') != str(game):
+    current = json.loads(pointer.read_bytes()) if '1' in sys.argv[4:6] else {}
+    if '1' in sys.argv[4:6] and (current.get('version') != 1 or current.get('gothic') != str(game)):
         raise ValueError('invalid or foreign game pointer')
-    for kind in ('base', 'videos'):
-        part = current.get(kind)
-        if kind == 'videos' and part is None:
-            print('\n')
-            continue
-        if (not isinstance(part, dict) or not re.fullmatch('[0-9a-f]{64}', part.get('fingerprint', ''))
-                or not isinstance(part.get('path'), str) or not Path(part['path']).is_absolute()
-                or '\n' in part['path']):
-            raise ValueError(f'invalid {kind} pointer')
-        print(part['fingerprint'])
-        print(part['path'])
-except (OSError, ValueError, TypeError, AttributeError) as error:
-    raise SystemExit(f'needs_decision: cannot read ready Mac base pointer {pointer}: {error}')
+except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
+    if action == 'setup':
+        import_required(f'needs_decision: cannot read ready Mac base pointer {pointer}: {error}')
+    current = {}
+
+for kind, expected, enabled in zip(('base', 'videos'), sys.argv[2:4], sys.argv[4:6]):
+    if enabled != '1':
+        name = 'OPENGOTHIC_BASE_FINGERPRINT' if kind == 'base' else 'OPENGOTHIC_VIDEOS_FINGERPRINT'
+        print(os.environ.get(name, ''))
+        print('')
+        continue
+    try:
+        select(kind, expected)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
+        if action == 'setup':
+            import_required(f'needs_decision: cannot read ready Mac base pointer {pointer}: {error}')
+        print('\n')
+    except SystemExit:
+        if action == 'setup':
+            raise
+        print('\n')
 PY
 )"
   base_fingerprint="$(sed -n '1p' <<<"$parts")"
   base_path="$(sed -n '2p' <<<"$parts")"
   videos_fingerprint="$(sed -n '3p' <<<"$parts")"
   videos_path="$(sed -n '4p' <<<"$parts")"
-  [[ -n "$videos_fingerprint" ]] || echo 'Ryzen: videos will be skipped (Mac pointer has no video part)' >&2
+}
+
+host_base_part() {
+  { declare -f verify_base_part
+    cat <<'REMOTE'
+set -euo pipefail
+export -f verify_base_part
+{
+  # Source the helper without running its CLI; use the checkout's format directly.
+  printf "__name__ = 'ryzen_game'\n"
+  printf '%s\n' "$3"
+  cat <<'PY_HOST'
+kind, expected = sys.argv[1:]
+fingerprint = ''
+try:
+    parts = json.loads((Path.home() / 'gothic-ai/game-base.json').read_text())
+    fingerprint = parts[kind]
+    if not isinstance(fingerprint, str) or not re.fullmatch('[0-9a-f]{64}', fingerprint):
+        fingerprint = ''
+        raise ValueError('no host fingerprint')
+    roots = [Path.home() / '.cache/gothic-ai/base']
+    store = Path('/mnt/shared/gothic-ai/base')
+    if store.is_dir():
+        roots.append(store)
+
+    def ready(directory):
+        return subprocess.run(
+            ['bash', '-c', 'verify_base_part "$@"', '--', kind, str(directory), directory.name, 'quick'],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        ).returncode == 0
+
+    selected = _compatible_fingerprint(kind, fingerprint, expected, roots, ready=ready)
+    for root in roots:
+        directory = root / selected if kind == 'base' else root / 'videos' / selected
+        identity = _identity(directory, kind)
+        if identity is not None and identity[0] == expected and ready(directory):
+            print(selected)
+            sys.exit(0)
+except (OSError, ValueError, KeyError, TypeError):
+    pass
+print(fingerprint)
+sys.exit(3)
+PY_HOST
+} | python3 - "$1" "$2"
+REMOTE
+  } | remote bash -s -- "$1" "$2" "$(cat "$ROOT/scripts/ryzen_game.py")"
+}
+
+resolve_host_base_parts() {
+  local kind expected enabled fingerprint selected rc
+  for kind in base videos; do
+    if [[ "$kind" == base ]]; then
+      expected="$base_format" enabled="$auto_base" fingerprint="$base_fingerprint"
+    else
+      expected="$videos_format" enabled="$auto_videos" fingerprint="$videos_fingerprint"
+    fi
+    [[ "$enabled" == 1 && -z "$fingerprint" ]] || continue
+    if selected="$(host_base_part "$kind" "$expected")"; then
+      echo "$RYZEN_HOST: $kind ${selected:0:12} ready (host)"
+    else
+      rc=$?
+      [[ "$rc" == 3 ]] || exit "$rc"
+      if [[ "$kind" == base ]]; then
+        local recovery="Mac: no ready base for importer format $expected; Start the game once on the Mac on this version to import the base into ~/.cache/gothic-ai/base, then retry"
+        [[ "$ACTION" == pytest ]] || { echo "$recovery" >&2; exit 1; }
+        echo "Warning: pytest: $recovery; using host game-base.json" >&2
+        auto_base=0
+      else
+        auto_videos=0
+      fi
+    fi
+    if [[ "$kind" == base ]]; then base_fingerprint="$selected"; else videos_fingerprint="$selected"; fi
+  done
+}
+
+sync_base_parts() {
+  local started=$SECONDS kind fingerprint part relative rc part_started initialize=0
+  # EXIT runs after function locals are gone; retain the copy path for cleanup.
+  temporary=''
+  trap 'if [[ -n "$temporary" ]]; then remote rm -rf -- "$temporary" || echo "Ryzen: could not remove setup copy $temporary" >&2; fi' EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  # Preflight only after both Mac parts are compatible; failures must not copy anything.
+  { declare -f toolchain; echo 'set -euo pipefail; toolchain; echo "Ryzen: toolchain OK"'; } | remote bash -s
+  [[ "$ACTION" != setup || "${DEV_UBUNTU:-0}" != 1 ]] || echo "Ryzen: $RYZEN_HOST has no shared store; using its local base cache"
+  [[ "$ACTION" != setup || -n "$videos_fingerprint" ]] || echo 'Ryzen: videos will be skipped (Mac pointer has no video part)' >&2
   for kind in base videos; do
     if [[ "$kind" == base ]]; then fingerprint="$base_fingerprint"; part="$base_path"; else fingerprint="$videos_fingerprint"; part="$videos_path"; fi
-    [[ -n "$fingerprint" ]] || continue
+    [[ -n "$part" ]] || continue
+    part_started=$SECONDS
     # The shared store is only inspected. The game copies a selected stored part to its cache.
-    if { declare -f verify_base_part; cat <<'REMOTE'
+    if { declare -f verify_base_part
+      printf 'ACTION=%q\n' "$ACTION"
+      if [[ "${DEV_UBUNTU:-0}" == 1 ]]; then echo 'DEV_UBUNTU=1'; fi
+      cat <<'REMOTE'
 set -euo pipefail
 kind="$1" fingerprint="$2"
 relative="$fingerprint"
 [[ "$kind" == base ]] || relative="videos/$fingerprint"
-for root in "$HOME/.cache/gothic-ai/base" /mnt/shared/gothic-ai/base; do
+roots=("$HOME/.cache/gothic-ai/base")
+if [[ "${DEV_UBUNTU:-0}" != 1 ]]; then roots+=(/mnt/shared/gothic-ai/base); fi
+for root in "${roots[@]}"; do
   if [[ -d "$root/$relative" ]] && verify_base_part "$kind" "$root/$relative" "$fingerprint" quick; then
-    echo "Ryzen: $kind ready at $root/$relative"
+    [[ "$ACTION" != setup ]] || echo "Ryzen: $kind ready at $root/$relative"
     exit 0
   fi
 done
 exit 3
 REMOTE
     } | remote bash -s -- "$kind" "$fingerprint"; then
+      [[ "$ACTION" == setup ]] || echo "$RYZEN_HOST: $kind ${fingerprint:0:12} ready"
       continue
     else
       rc=$?
@@ -782,7 +984,7 @@ REMOTE
     [[ "$kind" == base ]] || relative="videos/$fingerprint"
     temporary="$(remote bash -c 'mkdir -p "$HOME/.cache/gothic-ai/base/$1"; mktemp -d "$HOME/.cache/gothic-ai/base/$1/.setup-XXXXXXXX"' -- "$(dirname "$relative")")"
     rsync -a --checksum "$part/" "$RYZEN_HOST:$temporary/"
-    { declare -f verify_base_part; cat <<'REMOTE'
+    { declare -f verify_base_part; printf 'ACTION=%q\n' "$ACTION"; cat <<'REMOTE'
 set -euo pipefail
 kind="$1" fingerprint="$2" temporary="$3" relative="$4"
 verify_base_part "$kind" "$temporary" "$fingerprint" full
@@ -799,16 +1001,52 @@ else
   rm -rf -- "$destination"
   mv -- "$temporary" "$destination"
 fi
-echo "Ryzen: $kind copied and verified at $destination"
+[[ "$ACTION" != setup ]] || echo "Ryzen: $kind copied and verified at $destination"
 REMOTE
     } | remote bash -s -- "$kind" "$fingerprint" "$temporary" "$relative"
     temporary=''
+    [[ "$ACTION" == setup ]] || echo "$RYZEN_HOST: $kind ${fingerprint:0:12} copied in $((SECONDS - part_started))s"
   done
+  if [[ "$ACTION" == setup ]]; then
+    initialize=1
+  elif remote bash -c '[[ -f ~/gothic-ai/game-base.json && -f ~/gothic-ai/game-settings/system/Gothic.ini && -f ~/gothic-ai/game-settings/system/SystemPack.ini ]]'; then
+    initialize=0
+  else
+    rc=$?
+    [[ "$rc" == 1 ]] || exit "$rc"
+    initialize=1
+  fi
   remote mkdir -p gothic-ai/game-settings/system
   rsync -a --checksum "$GOTHIC_DIR/system/Gothic.ini" "$GOTHIC_DIR/system/SystemPack.ini" "$RYZEN_HOST:gothic-ai/game-settings/system/"
-  remote python3 -c 'import json, os, pathlib, sys; path = pathlib.Path.home() / "gothic-ai/game-base.json"; temporary = path.with_suffix(f".json.tmp-{os.getpid()}"); temporary.write_text(json.dumps(dict(zip(("base", "videos"), sys.argv[1:]))) + "\n"); os.replace(temporary, path)' "$base_fingerprint" "$videos_fingerprint"
-  echo "Ryzen: game settings and ready fingerprints synchronized in $((SECONDS - started))s"
+  if [[ "$initialize" == 1 && ( -n "$base_fingerprint" || -n "${OPENGOTHIC_BASE:-}" ) ]]; then
+    remote python3 -c 'import json, os, pathlib, sys
+path = pathlib.Path.home() / "gothic-ai/game-base.json"
+base, videos, explicit = sys.argv[1:]
+if not base and explicit:
+    base = json.loads((pathlib.Path(explicit).expanduser() / "base.json").read_text())["fingerprint"]
+temporary = path.with_suffix(f".json.tmp-{os.getpid()}")
+temporary.write_text(json.dumps({"base": base, "videos": videos}) + "\n")
+os.replace(temporary, path)' "$base_fingerprint" "$videos_fingerprint" "${OPENGOTHIC_BASE:-}"
+  fi
+  [[ "$ACTION" != setup ]] || echo "Ryzen: $RYZEN_HOST game settings and ready fingerprints synchronized in $((SECONDS - started))s"
+  trap - EXIT HUP INT TERM
+}
+
+if [[ "$ACTION" == setup ]]; then
+  auto_base=1 auto_videos=1
+  select_mac_base_parts
+  sync_base_parts
   exit
+fi
+if [[ "$ACTION" == bench || "$ACTION" == e2e || "$ACTION" == pytest ]]; then
+  auto_base=1 auto_videos=1
+  if [[ -n "${OPENGOTHIC_BASE:-}" || -n "${OPENGOTHIC_BASE_FINGERPRINT:-}" ]]; then auto_base=0; fi
+  if [[ -n "${OPENGOTHIC_VIDEOS_FINGERPRINT+x}" ]]; then auto_videos=0; fi
+  select_mac_base_parts
+  resolve_host_base_parts
+  sync_base_parts
+  if [[ "$auto_base" == 1 ]]; then export OPENGOTHIC_BASE_FINGERPRINT="$base_fingerprint"; fi
+  if [[ "$auto_videos" == 1 ]]; then export OPENGOTHIC_VIDEOS_FINGERPRINT="$videos_fingerprint"; fi
 fi
 
 # Validate prepared content before creating a run directory, lock or queue request.
@@ -839,7 +1077,7 @@ finish_run() {
   local found
   # A lost connection or interrupted caller may leave the remote task running.
   if [[ "$RUN_STARTED" == 1 && "$RUN_FINISHED" == 0 ]] || [[ "$RUN_RC" == 255 ]]; then
-    echo "Ryzen: remote task status unknown; keeping artifacts for $RUN on Ryzen" >&2
+    echo "Ryzen: remote task status unknown; keeping artifacts for $RUN on $RYZEN_HOST" >&2
   elif [[ "$ACTION" == pytest ]]; then
     remote rm -rf -- "$STATE/inputs/$RUN" || echo "Ryzen: could not remove $STATE/inputs/$RUN" >&2
   else
@@ -887,7 +1125,7 @@ PY
             echo "Ryzen: could not remove remote artifacts for $RUN" >&2
           fi
         else
-          echo "Ryzen: could not collect all logs; keeping $STATE/runs/$RUN and $STATE/inputs/$RUN on Ryzen" >&2
+          echo "Ryzen: could not collect all logs; keeping $STATE/runs/$RUN and $STATE/inputs/$RUN on $RYZEN_HOST" >&2
         fi
         ;;
       1)
@@ -895,7 +1133,7 @@ PY
         remote rm -rf -- "$STATE/inputs/$RUN" || echo "Ryzen: could not remove $STATE/inputs/$RUN" >&2
         ;;
       *)
-        echo "Ryzen: could not check remote logs; keeping artifacts for $RUN on Ryzen" >&2
+        echo "Ryzen: could not check remote logs; keeping artifacts for $RUN on $RYZEN_HOST" >&2
         ;;
     esac
   fi
@@ -963,6 +1201,7 @@ $(printf 'WORKTREE_LOCK=%q' "$STATE.lock")
 take_lock
 $(if [[ "$ACTION" != clean ]]; then echo auto_clean; fi)
 disk_usage
+$(if [[ "$ACTION" == bench ]]; then printf 'export BENCH_HEADLESS=%q\n' "$BENCH_HEADLESS"; fi)
 $(if [[ -n "${GQ_HOME+set}" ]]; then printf 'export GQ_HOME=%q\n' "$GQ_HOME"; fi)
 $(printf 'exec python3 -u -c %q %q %q' "$(cat "$ROOT/scripts/ryzen-lock.py")" "$STATE" "$REMOTE_HOME/gothic-ai/bin/gq")"
 printf -v bootstrap_command 'bash -c %q' "$bootstrap"
@@ -1132,9 +1371,15 @@ e2e_display_exclusive() {
 game_queue_args() {
   GQ_ARGS=(--class "${BENCH_CLASS:-quick}" --threads 4 --mem 5G --display --max "${RYZEN_MAX:-30m}" --wait-max "$LOCK_WAIT")
   if [[ "$ACTION" == bench ]]; then
-    # Arbitrary benchmark windows can cover neighbours and affect their cadence.
-    # Keep the legacy exclusive display reservation even with a private tunnel.
-    GQ_ARGS+=(--gpu-mem 4G --name "bench $(basename "$BENCH_SCENARIO" .bench)")
+    if [[ "${BENCH_HEADLESS:-0}" == 1 ]]; then
+      GQ_ARGS=(--class "${BENCH_CLASS:-batch}" --threads 4 --mem 6G --max "${RYZEN_MAX:-30m}" --wait-max "$LOCK_WAIT")
+    else
+      # Arbitrary benchmark windows can cover neighbours and affect their cadence.
+      # Keep the legacy exclusive display reservation even with a private tunnel.
+      GQ_ARGS+=(--gpu-mem 4G)
+    fi
+    GQ_ARGS+=(--name "bench $(basename "$BENCH_SCENARIO" .bench)")
+    if [[ -n "${RYZEN_BENCH_ARCHIVE:-}" ]]; then GQ_ARGS+=(--archive "$RYZEN_BENCH_ARCHIVE"); fi
   else
     GQ_ARGS+=(--gpu-mem 2G --name "e2e ${SCENARIO:-m0}")
     # A custom size or position cannot share the default slot layout safely.
@@ -1152,7 +1397,8 @@ run_game() {
   if [[ "$ACTION" == bench ]]; then scenario="$STATE/inputs/$RUN/$(basename "$BENCH_SCENARIO")"; fi
   if preparation_needed "$scenario"; then
     if [[ "$ACTION" == bench ]]; then name="bench $(basename "$BENCH_SCENARIO" .bench)"; else name="e2e ${SCENARIO:-m0}"; fi
-    GQ_ARGS=(--class quick --threads "$JOBS" --mem 12G --max "${RYZEN_MAX:-30m}" --name "build $name")
+    GQ_ARGS=(--class quick --threads "$JOBS" --mem "${BUILD_MEM:-12G}" --max "${RYZEN_MAX:-30m}" --name "build $name")
+    if [[ "${DEV_UBUNTU:-0}" == 1 ]]; then GQ_ARGS+=(--wait-max "$LOCK_WAIT"); fi
     QUEUE_RUN="$RUN-build"
     run_quick env "${ENV_ARGS[@]}" bash "$STATE/source/scripts/ryzen.sh" __remote prepare \
       "$ACTION" "$STATE" "$RUN" "$scenario" && rc=0 || rc=$?
@@ -1196,9 +1442,11 @@ else
 fi
 if [[ "$ACTION" == pytest ]]; then GQ_ARGS+=(--wait-max "$LOCK_WAIT"); fi
 ENV_ARGS=("RYZEN_LOCK_WAIT=$LOCK_WAIT" "RYZEN_JOBS=$JOBS" ${BASE_ENV_ARGS[@]+"${BASE_ENV_ARGS[@]}"})
+if [[ "$DEV_UBUNTU" == 1 ]]; then ENV_ARGS+=(RYZEN_HOST=dev-ubuntu); fi
 sync_content
 if [[ "$ACTION" == bench ]]; then
   [[ -z "$AI_PORT" ]] || ENV_ARGS+=("RYZEN_AI_TUNNEL=1")
+  if [[ -n "${RYZEN_BENCH_ARCHIVE:-}" ]]; then ENV_ARGS+=("RYZEN_BENCH_ARCHIVE=$RYZEN_BENCH_ARCHIVE"); fi
   REMOTE_OUT="$STATE/runs/$RUN"
   bench_path() {
     python3 - "$1" "$LOG_DIR" "$REMOTE_OUT" <<'PY'
@@ -1217,7 +1465,7 @@ PY
   while IFS= read -r name; do
     case "$name" in
       GOTHIC_DIR|OPENGOTHIC_BASE*|OPENGOTHIC_VIDEOS_FINGERPRINT|OPENGOTHIC_TEXTURES|OPENGOTHIC_FRACTURE|OPENGOTHIC_CONVEX_PARTS|OPENGOTHIC_CONTENT) continue ;;
-      OPENGOTHIC_*|GOTHIC_*|TEMPEST_*|WORLD|TIMEOUT|SOUND|MUSIC|MOVABLE_VOBS|ITEM_HULLS|ITEM_DEEPEST_CONTACT|FURNITURE_PARTS|ARROW_STICKING|PHYSICS_NOISE|DESTRUCTION|BUOYANCY|CLOTH|ITEM_WAKE|PLACED_ITEMS|STATIC_COLLISION_SPLIT|CHARACTER_VIRTUAL|NPC_CHARACTER_VIRTUAL|MONSTER_CHARACTER_VIRTUAL|MELEE_BLADE_SHADOW|MELEE_PHYSICS_HITS|MELEE_POSTURE|MELEE_REACTIONS|MELEE_DOWN_TACTICS|MELEE_HITSTOP|MELEE_STAMINA|MELEE_PARRY|MELEE_PARRY_AI)
+      OPENGOTHIC_*|GOTHIC_*|TEMPEST_*|WORLD|TIMEOUT|BENCH_HEADLESS|BENCH_PROGRESS|BENCH_STALL|SOUND|MUSIC|MOVABLE_VOBS|ITEM_HULLS|ITEM_DEEPEST_CONTACT|RAGDOLL_BIRTH_GUARD|FURNITURE_PARTS|ARROW_STICKING|PHYSICS_NOISE|DESTRUCTION|BUOYANCY|CLOTH|ITEM_WAKE|PLACED_ITEMS|BODY_IMPACT_DAMAGE|BODY_TRACES|BLOOD|STATIC_COLLISION_SPLIT|CHARACTER_VIRTUAL|NPC_CHARACTER_VIRTUAL|MONSTER_CHARACTER_VIRTUAL|MELEE_BLADE_SHADOW|MELEE_PHYSICS_HITS|MELEE_POSTURE|MELEE_REACTIONS|MELEE_DOWN_TACTICS|MELEE_HITSTOP|MELEE_STAMINA|MELEE_PARRY|MELEE_PARRY_AI|MELEE_AI_DODGE|MELEE_AI_RIPOSTE|MELEE_AI_CHARGE|MELEE_AI_BARGE|MELEE_STAGGER|MELEE_BEAST_POISE|MELEE_BACKSTAB|MELEE_DODGE|MELEE_BARGE|MELEE_CHARGE|MELEE_RIPOSTE|MELEE_HEAL_INTERRUPT|MELEE_USE_IN_HAND|FOOD_OVER_TIME)
         value="$(bench_path "${!name}")"
         ENV_ARGS+=("$name=$value") ;;
     esac

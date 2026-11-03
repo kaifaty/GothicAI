@@ -4,6 +4,7 @@
 #include <memory>
 #include <thread>
 #include <exception>
+#include <functional>
 #include <utility>
 
 #include <Tempest/Signal>
@@ -67,15 +68,33 @@ class Gothic final {
       bool meleePhysicsHits = true;
       bool meleeReactions = true;
       bool meleePosture = true;
+      bool meleeStagger = true;
+      bool meleeBeastPoise = true;
+      bool meleeBackstab = true;
       bool meleeDownTactics = true;
       bool itemHulls = true;
       bool itemDeepestContact = true;
+      bool ragdollBirthGuard = true;
       bool meleeHitStop = true;
       bool meleeStamina = true;
       bool meleeParry = true;
       bool meleeParryAi = true;
       bool furnitureParts = true;
       bool placedItems = true;
+      bool bodyImpactDamage = true;
+      bool meleeDodge = true;
+      bool meleeBarge = true;
+      bool meleeCharge = true;
+      bool meleeRiposte = true;
+      bool meleeHealInterrupt = true;
+      bool meleeUseInHand = true;
+      bool foodOverTime = true;
+      bool meleeAiDodge = true;
+      bool meleeAiRiposte = true;
+      bool meleeAiCharge = true;
+      bool meleeAiBarge = true;
+      bool bodyTraces = true;
+      bool blood = true;
 
       bool allowsMonsterCharacterVirtual(bool down, bool flying) const {
         return monsterCharacterVirtual && !down && !flying;
@@ -165,6 +184,9 @@ class Gothic final {
     // a scene of its own (the AI bridge's endings): no bars, no focus, no messages over it
     bool         isHudHidden() const { return hudHidden; }
     void         setHudHidden(bool h) { hudHidden = h; }
+    // the game's script ends the game (the finale's exitsession): a taker (ai_bridge's final card,
+    // docs/achievements.md) shows something first and ends the session itself; false: it ends at once
+    std::function<bool(std::string_view kind)> takeGameEnd;
 
     void         toggleDesktop() { desktop = !desktop; }
     bool         isDesktop() { return desktop; }
@@ -183,6 +205,8 @@ class Gothic final {
 
     bool         doMeleeBladeDraw() const { return meleeBladeDraw; }
     void         setMeleeBladeDraw(bool v) { meleeBladeDraw = v; }
+    bool         doMeleeBladeLabels() const { return meleeBladeLabels; }
+    void         setMeleeBladeLabels(bool v) { meleeBladeLabels = v; }
 
     bool         isBenchmarkMode() const;
     bool         isBenchmarkModeCi() const;
@@ -320,6 +344,7 @@ class Gothic final {
     bool                                    vobBox         = false;
     bool                                    vobRays        = false;
     bool                                    meleeBladeDraw = false;
+    bool                                    meleeBladeLabels = true;
     Benchmark                               isBenchmark    = Benchmark::None;
 
     std::string                             wrldDef, plDef, gameDatDef, ouDef;

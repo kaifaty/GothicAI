@@ -821,7 +821,7 @@ void Inventory::moveItem(Npc& owner, Inventory& invNpc, Interactive& mobsi) {
   auto& slot  = invNpc.mdlSlots.back();
 
   auto  vbody  = world.addView(slot.item->handle());
-  mobsi.setSlotItem(std::move(vbody), zsSlot);
+  mobsi.setSlotItem(std::move(vbody), zsSlot, slot.item->handle().material);
 
   mobsi.inventory().mdlSlots.resize(1);
   MdlSlot& sl = mobsi.inventory().mdlSlots.back();
@@ -917,15 +917,15 @@ bool Inventory::use(size_t cls, Npc &owner, uint8_t slotHint, bool force) {
       }
     }
 
-  if(!owner.setAnimItem(itData.scheme_name,-1))
+  const auto& physics = Gothic::physicsFlags();
+  const bool deferred = ((mainflag & ITM_CAT_POTION) && physics.meleeHealInterrupt) ||
+                        ((mainflag & ITM_CAT_FOOD) && physics.foodOverTime);
+  if(!owner.startItemUse(*it,deferred))
     return false;
 
   // owner.stopDlgAnim();
   setCurrentItem(it->clsId());
-  if(itData.on_state[0]!=0){
-    auto& vm = owner.world().script();
-    vm.invokeItem(&owner,uint32_t(itData.on_state[0]));
-    }
+  owner.beginItemUseEffect(*it);
 
   if(deleteLater)
     owner.delItem(cls,1);

@@ -38,6 +38,17 @@ from .common import (
 )
 from .live import LiveCase
 
+SCENARIOS = {
+    "cave": ("GIVEN", {"save": False, "timeout": 240}),
+    "ground": ("GIVEN", {"save": False, "timeout": 240}),
+    "hearing": ("OFF", {"save": False, "timeout": 240}),
+    "knows": ("OFF", {"save": False, "timeout": 240}),
+    "remembers": ("GIVEN", {"save": False, "timeout": 240}),
+    "see": ("OFF", {"save": False, "timeout": 240}),
+    "seen": ("GIVEN", {"save": True, "timeout": 240}),
+    "trace": ("GIVEN", {"save": True, "timeout": 240}),
+}
+
 log = logging.getLogger("gothic_ai.scenarios")
 
 
@@ -55,6 +66,7 @@ async def ground_scenario(
     - sees: it is in Cavalorn's view, with its id;
     - situation: its situation tells it, «На земле: …»;
     - take: given take_item on «бери», it walks up and picks it up;
+    - pickup_time: it reaches the nearby ground item within 10 seconds without circling it;
     - has: the letter is in its inventory and no longer on the ground;
     - follows: it goes with the hero again, and catches up when he is 11 m off."""
     from ..executor import Intent
@@ -120,7 +132,9 @@ async def ground_scenario(
         t0 = time.monotonic()
         talk.hear("Кавалорн, вот твоё письмо, бери.", None, {"via": "scenario"})
         took = await _until(lambda: since(t0, "take_item") or since(t0, "take_item", "failed"), 45)
+        pickup_seconds = time.monotonic() - t0
         check("take", since(t0, "take_item"), [a for t, a, s in calls if t >= t0] if took else "no pick-up")
+        check("pickup_time", since(t0, "take_item") and pickup_seconds <= 10, f"{pickup_seconds:.2f} s")
         snap = await link.snapshot(npc, fresh=True)
         has = any(i.item == item for i in snap.npc.inventory)
         await asyncio.sleep(1.5)  # a pushed view after it
@@ -142,6 +156,7 @@ async def cave_scenario(
     talk: TalkDesk,
     whereabouts: Whereabouts,
     npc: str = "BAU_4300_ADDON_CAVALORN",
+    *, live: LiveCase | None = None,
 ) -> dict[str, str]:
     """The map of places (docs/npc-tools.md М3): Cavalorn goes with the hero to the steps below Xardas's
     tower and is told «зайди в пещеру», no place named. Checks:
@@ -162,13 +177,14 @@ async def cave_scenario(
     def dist() -> float:
         return talk.people[npc].distance / 100 if npc in talk.people else -1.0
 
-    off = model_off(dialogue)
-    off.given(
-        "дано: Кавалорн идёт в пещеру", who=npc, when="зайди в пещеру",
-        calls=[ToolCall("go_to", {"place": "XARDAS_BANDITS"})],
-    )
-    off.silent("дано: Кавалорн молчит (поручение идти передано)", who=npc, when="зайди в пещеру")
-    off.silent("дано: Кавалорн молчит (пришёл в пещеру)", who=npc, when="пришёл первым")
+    off = model_off(dialogue) if live is None else None
+    if off is not None:
+        off.given(
+            "дано: Кавалорн идёт в пещеру", who=npc, when="зайди в пещеру",
+            calls=[ToolCall("go_to", {"place": "XARDAS_BANDITS"})],
+        )
+        off.silent("дано: Кавалорн молчит (поручение идти передано)", who=npc, when="зайди в пещеру")
+        off.silent("дано: Кавалорн молчит (пришёл в пещеру)", who=npc, when="пришёл первым")
     try:
         await link.debug("player_equip", item="ITAR_PAL_H")  # the bandits by the steps may fall on him
     except GameError as err:
@@ -182,7 +198,7 @@ async def cave_scenario(
     await link.debug("player_goto", to=npc, distance=300)
     if not await _until(lambda: 0 <= dist() <= 15, 20):
         return _logged({"roster": f"failed ({npc} is not around the hero: {dist():.1f} m)"})
-    log.info("given: дано: Кавалорн — спутник героя")
+    log.info("fixture: Cavalorn is the hero companion")
     dialogue.open(npc, "Кавалорн").intent = Intent("follow_hero", "PLAYER", "friendly")
     talk.hear("Кавалорн, за мной!", None, {"via": "scenario"})
     following = await _until(
@@ -225,12 +241,34 @@ async def cave_scenario(
     )
 
     # «зайди в пещеру», no place named
+    deadline = time.monotonic() + 120
     talk.hear("Кавалорн, зайди в пещеру.", None, {"via": "scenario"})
 
     def place_of(snap: Snapshot) -> str | None:
         # where it stands: its nearest point (`waypoint` is where it walks to)
         place = book.of(snap.npc.nearest_waypoint) if book is not None else None
         return place.id if place is not None else None
+
+    if live is not None:
+        await live.wait_turn(dialogue, npc, "Кавалорн, зайди в пещеру.", timeout=120)
+        calls = live.calls(npc, "go_to")
+        accepted = any(
+            call.get("outcome") == "accepted"
+            and str(call.get("arguments", {}).get("place", "")).strip().upper() == "XARDAS_BANDITS"
+            for call in calls
+        )
+        inside = await _until_async(
+            lambda: link.snapshot(npc, fresh=True),
+            lambda snap: place_of(snap) == "XARDAS_BANDITS",
+            max(0, deadline - time.monotonic()),
+        ) if accepted else False
+        snap = await link.snapshot(npc, fresh=True)
+        inside = inside or place_of(snap) == "XARDAS_BANDITS"
+        live.finish("success" if accepted and inside else "failure", evidence={
+            "calls": calls, "inside": inside, "place": place_of(snap),
+            "nearest_waypoint": snap.npc.nearest_waypoint,
+        })
+        return _logged(results)
 
     inside = await _until_async(
         lambda: link.snapshot(npc, fresh=True), lambda snap: place_of(snap) == "XARDAS_BANDITS", 120
@@ -254,6 +292,7 @@ async def knows_scenario(
     lore: Lore,
     whereabouts: Whereabouts,
     npc: str = "BAU_4300_ADDON_CAVALORN",
+    *, live: LiveCase | None = None,
 ) -> dict[str, str]:
     """What an npc knows of where people are (docs/npc-tools.md М4): Cavalorn by his fire knows the bandits
     who robbed him sit in the cave below the steps, though the hero has told him nothing. Checks:
@@ -286,6 +325,11 @@ async def knows_scenario(
     check("situation", bool(cave) and cave[0].ru in situation and known in situation, situation)
     answer = whereabouts.where(npc, "пещера")
     check("where", "Ты знаешь:" in answer and bool(cave) and cave[0].ru in answer, answer.split("\n")[-1])
+    if live is not None:
+        text = "Кавалорн, что тут поблизости опасного?"
+        talk.hear(text, npc, {"via": "scenario"})
+        await live.wait_turn(dialogue, npc, text)
+        live.finish("observed", evidence={"question": text, "calls": live.calls(npc)})
     return _logged(results)
 
 

@@ -29,13 +29,17 @@ The converted chunk is Gothic content (a derivative, user's decision 2026-10-24)
 """
 import json
 from pathlib import Path
+import sys
 
 import bmesh
 import bpy
 from mathutils import Vector
 from mathutils.bvhtree import BVHTree
 
-from world_bpy import gothic_name, to_gothic
+from world_bpy import SurfaceLight, added_vertices, gothic_name, keep_own_light, position_key, to_gothic
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import chunk_glb  # noqa: E402
 
 ROOF = 'NW_CITY_ROOF_01'
 END = 'OWN_ROOF_HOLE_WALL'     # shingle ends: the roof's timber darkened (roof_hole_shade.py), as in the holes' sides
@@ -71,9 +75,9 @@ PARAMETERS = {'boxes_cm': {k: list(v) for k, v in BOXES.items()}, 'starter_cm': 
               'verge_over_cm': list(VERGE_OVER), 'verge_lip_cm': VERGE_LIP, 'verge_head_cm': VERGE_HEAD}
 
 
-def in_boxes(co):
+def in_boxes(co, boxes=BOXES):
     g = to_gothic(co)
-    return any(x0 <= g.x <= x1 and z0 <= g.z <= z1 for x0, x1, z0, z1 in BOXES.values())
+    return any(x0 <= g.x <= x1 and z0 <= g.z <= z1 for x0, x1, z0, z1 in boxes.values())
 
 
 class Layout:
@@ -120,31 +124,60 @@ def interp(x, xs, ys):
     return ys[-1]
 
 
-def outline_edges(underlay):
-    """Open edges of the huts' roof panels in the original: (a, b, uv a, uv b, normal, inward point, colour)."""
+def edge_key(a, b):
+    key = lambda co: tuple(round(c, 1) for c in co)
+    return tuple(sorted((key(a), key(b))))
+
+
+def border_joints(ctx):
+    """Edges of the roof's triangles in the eight chunks around this one: a panel the chunk border split ends on one
+    of them, and the roof goes on past it."""
+    x, z = (int(v) for v in ctx.chunk.split('_'))
+    out = set()
+    for dx in (-1, 0, 1):
+        for dz in (-1, 0, 1):
+            path = Path(ctx.base_chunks) / f'{x + dx}_{z + dz}.glb' if ctx.base_chunks else None
+            if (dx, dz) == (0, 0) or path is None or not path.is_file():
+                continue
+            for prim in chunk_glb.read_chunk(path).primitives:
+                if prim.material.get('name') != ROOF:
+                    continue
+                for tri in prim.positions:
+                    pts = [Vector((float(q[0]), -float(q[2]), float(q[1]))) for q in tri]    # glTF -> Blender
+                    out |= {edge_key(pts[i], pts[(i + 1) % 3]) for i in range(3)}
+    return out
+
+
+def outline_edges(underlay, boxes=BOXES, joints=frozenset(), up_only=False):
+    """Open edges of the roof panels in the boxes in the original: (a, b, uv a, uv b, normal, inward point, colour).
+    An edge in `joints` (border_joints) is not open: the roof goes on in the next chunk. `up_only`: an edge of a face
+    looking down (the underside of an eave) is left out."""
     me = underlay.data
     names = [gothic_name(m) for m in me.materials]
     slot = names.index(ROOF)
     uv = me.uv_layers.active.data
     col = me.color_attributes.active_color
-    roof = [p for p in me.polygons if p.material_index == slot and in_boxes(Vector(p.center))]
-    key = lambda co: tuple(round(c, 1) for c in co)
+    roof = [p for p in me.polygons if p.material_index == slot and in_boxes(Vector(p.center), boxes)]
     edges = {}
     for p in roof:
         vs = list(p.vertices)
         for i, lp in enumerate(p.loop_indices):
             j = p.loop_indices[(i + 1) % len(vs)]
             a, b = me.vertices[vs[i]].co, me.vertices[vs[(i + 1) % len(vs)]].co
-            k = tuple(sorted((key(a), key(b))))
-            edges.setdefault(k, []).append((p, lp, j))
+            edges.setdefault(edge_key(a, b), []).append((p, lp, j))
     # every roof panel of the chunk, for the neighbour test
     allroof = [p for p in me.polygons if p.material_index == slot]
     tree = BVHTree.FromPolygons([v.co for v in me.vertices], [list(p.vertices) for p in allroof])
     out = []
     for k, users in edges.items():
-        if len(users) != 1:
+        if len(users) != 1 or k in joints:
             continue
         p, la, lb = users[0]
+        if up_only and p.normal.z <= .2:
+            continue              # the city: a face looking down is the underside of an eave, its edge has no butts
+        grad = gradient(me, p)
+        if grad is None:
+            continue              # a panel with no texture mapping (its UVs on one line): nothing to follow
         a, b = me.vertices[me.loops[la].vertex_index].co.copy(), me.vertices[me.loops[lb].vertex_index].co.copy()
         ua, ub = Vector(uv[la].uv), Vector(uv[lb].uv)
         third = Vector(p.center)
@@ -152,7 +185,7 @@ def outline_edges(underlay):
         if n.z < 0:
             n = -n
         colour = tuple(col.data[la].color) if col is not None and col.domain == 'CORNER' else None
-        out.append((a, b, ua, ub, n, third, colour, tree, gradient(me, p)))
+        out.append((a, b, ua, ub, n, third, colour, tree, grad))
     return out
 
 
@@ -165,12 +198,19 @@ def gradient(me, p):
     e1, e2 = p1 - p0, p2 - p0
     s1, s2 = t1 - t0, t2 - t0
     det = s1.x * s2.y - s1.y * s2.x
+    if abs(det) < 1e-9:
+        return None
     return (e1 * s2.y - e2 * s1.y) / det, (e2 * s1.x - e1 * s2.x) / det
 
 
-def edit(ctx):
+def edit(ctx, boxes=BOXES, joints=False):
+    """The ends of the shingles on every roof panel whose centre is in one of `boxes` (Gothic cm x0, x1, z0, z1):
+    the four hut blocks by default, the whole city from city_roof_edge.py. `joints` (the city): an edge the chunk
+    border made (the roof goes on in the next chunk) and an edge of a face looking down (an eave's underside, the
+    lighthouse's only ROOF_01) are left as they are."""
     layout = Layout(json.loads(SHINGLES.read_text()))
     me = ctx.mesh
+    earlier = {position_key(co) for co in added_vertices(me).values()} if joints else set()
     names = [gothic_name(m) for m in me.materials]
     slot = names.index(ROOF)
     if END in names:
@@ -242,7 +282,7 @@ def edit(ctx):
         return f
 
     counts = {'eave': 0, 'verge': 0, 'ridge': 0, 'skipped': 0, 'shingles': 0}
-    for a, b, ua, ub, n, inside, edge_colour, tree, (grad_u, grad_v) in outline_edges(ctx.underlay):
+    for a, b, ua, ub, n, inside, edge_colour, tree, (grad_u, grad_v) in outline_edges(ctx.underlay, boxes, border_joints(ctx) if joints else frozenset(), up_only=joints):
         colour[0] = edge_colour
         ua, ub = Vector((ua.x, 1.0 - ua.y)), Vector((ub.x, 1.0 - ub.y))     # glTF v from here on
         d = b - a
@@ -407,12 +447,23 @@ def edit(ctx):
     for poly in me.polygons:
         for k in poly.loop_indices:
             poly_of_loop[k] = poly.index
+    shingles = SurfaceLight(ctx.underlay, lambda name: name == ROOF) if joints else None
     normals = []
     for k in range(len(me.loops)):
         old = li[k].value
-        normals.append(old_normals[old] if old >= 0 else Vector(me.polygons[poly_of_loop[k]].normal))
+        poly = me.polygons[poly_of_loop[k]]
+        smooth = None
+        if old < 0 and joints and poly.material_index == slot:
+            # the city: a shingle's top keeps the roof's smooth normal at its place, as the panel it lies on
+            smooth = shingles.normal_at(me.vertices[me.loops[k].vertex_index].co)
+        normals.append(old_normals[old] if old >= 0 else smooth or Vector(poly.normal))
     me.normals_split_custom_set(normals)
     me.attributes.remove(me.attributes['loop_index'])
+    if joints:
+        # the city: the shingles' ends take the light of the roof at their place, not of the walls nearest to them
+        light = {v: shingles.at(co) for v, co in added_vertices(me).items() if position_key(co) not in earlier}
+        keep_own_light(me, {v: c for v, c in light.items() if c is not None})
+        print(f'{len(light)} new vertices lit from the roof surface')
     tris = sum(len(poly.vertices) - 2 for poly in me.polygons)
     print(f'chunk: {len(me.polygons)} faces, {tris} triangles after the roof edge')
 

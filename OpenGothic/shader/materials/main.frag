@@ -11,6 +11,7 @@
 #include "water/gerstner_wave.glsl"
 #include "lighting/shadow_sampling.glsl"
 #include "lighting/tonemapping.glsl"
+#include "lighting/material_brdf.glsl"
 
 #if defined(MAT_VARYINGS)
 layout(location = 0) in flat uint bucketId;
@@ -305,6 +306,10 @@ vec4 diffuseTex() {
 #else
   vec4 tex = texture(sampler2D(textureMain[tId], samplerMain),uv);
 #endif
+#if (MESH_TYPE==T_PFX)
+  if(shInp.flip.z>=0.0)
+    tex = mix(tex, texture(sampler2D(textureMain[tId], samplerMain), shInp.flip.xy), shInp.flip.z);
+#endif
 
 #if !defined(SIMPLE_MAT)
   tex.a *= alphaWeight;
@@ -359,6 +364,17 @@ vec3 antitileOrm(uint tId, AntitileCell cell) {
   const uint texId = 0;
 #endif
   return textureGrad(sampler2D(textureOrm[texId], samplerMain), cell.uv, cell.duvdx, cell.duvdy).rgb;
+  }
+#endif
+
+#if defined(MATERIAL_MAPS) && (MESH_TYPE!=T_PFX)
+// Embers do not flicker like flames: heat creeps over them in patches of about 20-40 cm over seconds, 0.55..1.
+// The clock wraps at 20 pi seconds, where every term here completes whole periods.
+float emberBreath(vec3 pos) {
+  const float t = float(scene.tickCount32 % 62832u)*0.001;
+  const float a = sin(pos.x*0.23 + t*1.1) * sin(pos.z*0.19 - t*0.7);
+  const float b = sin((pos.x - pos.z)*0.11 + pos.y*0.3 + t*1.9);
+  return 0.775 + 0.225*(0.6*a + 0.4*b);
   }
 #endif
 
@@ -430,12 +446,57 @@ void mainGBuffer(vec4 t) {
     if((bucket[bucketId].flags & BK_ORM)!=0)
       outOrm.rgb = textureGrad(sampler2D(textureOrm[tId], samplerMain), uv, duvdx, duvdy).rgb;
     }
+  const float glow = bucket[bucketId].emissive;
+  if(glow>0.0 && !maps.antitile && (bucket[bucketId].flags & BK_ORM)!=0) {
+    // the ORM alpha marks the glowing texels (cracks of a burning log, the ember bed); they breathe slowly. Glowing
+    // charcoal is black under its own light: a lamp must not paint the heat as orange wood (r5), so the albedo goes
+    // dark by the share and the ambient pass adds the glow in the colour of its heat (emberColour, common.glsl)
+    const float mask = textureGrad(sampler2D(textureOrm[tId], samplerMain), uv, duvdx, duvdy).a;
+    const float share = clamp(glow*mask*emberBreath(shInp.pos), 0.0, 1.0);
+    outOrm.a = 1.0 - EmissiveOrmCode*share;
+    outDiffuse.rgb *= 1.0 - share;
+    }
 #endif
 #endif
   // outNormal      = vec4(flatNormal()*0.5 + vec3(0.5), 1.0);
 #if DEBUG_DRAW
   outDiffuse.rgb *= debugColors[debugId%debugColors.length()];
 #endif
+  }
+#endif
+
+#if defined(MAT_FOG)
+// Translucent surfaces don't write depth, so the fog pass, drawn before them, fogs what lies behind.
+// Here they take the fog of their own depth: in-scattered light (rgb) and transmittance (a).
+vec4 fogOwnDepth() {
+  if(scene.fogQuality==0 || scene.underWater!=0)
+    return vec4(0,0,0,1);
+
+  const vec2  uv = gl_FragCoord.xy*scene.screenResInv;
+  const float dZ = linearDepth(gl_FragCoord.z, scene.clipInfo);
+  const float d0 = linearDepth(dFogMin,        scene.clipInfo);
+  const float d1 = linearDepth(dFogMax,        scene.clipInfo);
+  const float d  = (dZ-d0)/(d1-d0);
+
+  vec4 val = textureLod(fogLut, vec3(uv,d), 0);
+  if(scene.fogQuality==2) {
+    // as fog.frag (VOLUMETRIC), without the shadow occlusion of single scattering
+    const vec4 ms = textureLod(fogLutMs, vec3(uv,d), 0);
+    val = vec4(val.rgb*min(d*64.0, 1.0) + ms.rgb, ms.a);
+    }
+  return vec4(val.rgb*scene.GSunIntensity*scene.exposure, val.a);
+  }
+#endif
+
+#if defined(SOFT_PARTICLE)
+// A sprite fades over the last cm before the opaque scene behind it (a flame against a pot, a log, the ground)
+// and next to the camera, so no straight seam shows where its quad cuts through geometry.
+float softParticle() {
+  const float behind = linearDepth(texelFetch(gbufferDepth, ivec2(gl_FragCoord.xy), 0).r, scene.clipInfo);
+  const float own    = linearDepth(gl_FragCoord.z, scene.clipInfo);
+  const float touch  = clamp((behind-own)/SoftParticleDepth, 0.0, 1.0);
+  const float near   = clamp((own-SoftParticleNear.x)/(SoftParticleNear.y-SoftParticleNear.x), 0.0, 1.0);
+  return touch*touch*(3.0-2.0*touch) * near;
   }
 #endif
 
@@ -448,10 +509,19 @@ void mainForward(vec4 t) {
   alpha = (alpha-0.5)*2.0;
 #endif
 
-  color = textureAlbedo(color.rgb);
-  color *= diffuseLight(alpha);
-  color *= scene.exposure;
+  const vec3 albedo = textureAlbedo(color.rgb);
+  color = albedo * diffuseLight(alpha) * scene.exposure;
+#if (MESH_TYPE==T_PFX)
+  // smoke and steam lit by the fires next to them, as light.frag lights a surface
+  color += albedo * shInp.pointLight * max(1.0, scene.exposure) * Fd_Lambert * 0.25;
+#endif
 
+  const vec4 fog = fogOwnDepth();
+  color = color*fog.a + fog.rgb;
+
+#if defined(SOFT_PARTICLE)
+  alpha *= softParticle();
+#endif
   outColor = vec4(color,alpha);
   }
 #endif
@@ -459,7 +529,21 @@ void mainForward(vec4 t) {
 #if defined(EMISSIVE)
 void mainEmissive(vec4 t) {
   vec3 color = textureEmmisive(t.rgb);
-  outColor = vec4(color,t.a);
+#if (MESH_TYPE==T_PFX) && !defined(MULTIPLY)
+  // A flame keeps its own luminance, so it reads brighter than the scene as the exposure rises at dusk and at
+  // night; the factor leaves it as it was under the noon sun (EmissiveSunRatio, common.glsl). The exposure does
+  // not see the fire itself, and the night's is hundreds of times the noon's: the gain stops at EmissiveMaxGain,
+  // as an eye that adapts to the fire it looks at.
+  color *= min(EmissiveSunRatio * scene.GSunIntensity * scene.exposure, EmissiveMaxGain);
+#endif
+#if defined(MAT_FOG)
+  color *= fogOwnDepth().a;
+#endif
+  float alpha = t.a;
+#if defined(SOFT_PARTICLE)
+  alpha *= softParticle();  // additive with SrcAlpha: the alpha weighs the added light
+#endif
+  outColor = vec4(color,alpha);
   }
 #endif
 
@@ -475,7 +559,9 @@ void mainGhost(vec4 t) {
 
   vec4 back = textureLod(sceneColor, (fragCoord*0.5+0.5), 0);
 
-  outColor = vec4(mix(back.rgb * color, back.rgb, vec3(0.6)), t.a);
+  // sceneColor is stashed before the fog pass
+  const vec4 fog = fogOwnDepth();
+  outColor = vec4(mix(back.rgb * color, back.rgb, vec3(0.6))*fog.a + fog.rgb, t.a);
   }
 #endif
 
@@ -551,18 +637,42 @@ vec4 waterShading(vec4 t, const vec3 normal) {
 
 void mainWater(vec4 t) {
   const float waveMaxAmplitude = bucket[bucketId].waveMaxAmplitude;
+  const float turbidity        = bucket[bucketId].turbidity;
+  const float turbidityDepth   = bucket[bucketId].turbidityDepth;
+  // Water in a pot (it has a turbidity) ripples at the pot's scale: the sea's waves, 25 times smaller and slower.
+  const float rippleScale      = turbidity>0.0 ? 25.0 : 1.0;
 
   vec3 lx = dFdx(shInp.pos), ly = dFdy(shInp.pos);
   float minLength = max(length(lx),length(ly));
 
-  Wave wx = wave(shInp.pos, minLength, waveIterationsHigh, waveAmplitude(waveMaxAmplitude));
+  Wave wx = wave(shInp.pos*rippleScale, minLength*rippleScale, waveIterationsHigh, waveAmplitude(waveMaxAmplitude));
 
   if(gl_FrontFacing) {
     // BROKEN: water mesh is two sided
     wx.normal = -wx.normal;
     }
 
-  outColor       = waterShading(t,wx.normal);
+  outColor = waterShading(t,wx.normal);
+  const float shadow = scene.underWater==0 ? calcShadow(vec4(shInp.pos,1), 0, scene, textureSm0, textureSm1) : 0.0;
+  if(turbidity>0.0) {
+    // Water in a pot clouded with ash and fat, or a stew: the material's colour, lit like a surface, over the clear water.
+    // With a depth (cm) the cloud thickens with the liquid it is seen through (Beer-Lambert): a stew is clearer at the wall.
+    float cloud = turbidity;
+    if(turbidityDepth>0.0)
+      cloud *= 1.0 - exp(-underWaterColorDepth(wx.normal).a/turbidityDepth);
+    const vec3  n   = normalize(shInp.normal);
+    const vec3  sun = scene.sunColor * clamp(dot(scene.sunDir,n), 0.0, 1.0) * shadow * Fd_Lambert; // as direct_light.frag
+    const vec3  amb = scene.ambient + (n.y*0.25+0.75) * NightAmbient * Fd_Lambert; // x2 below stands for the sky irradiance
+    outColor.rgb = mix(outColor.rgb, textureAlbedo(t.rgb) * (sun + 2.0*amb) * scene.exposure, cloud);
+    }
+  if(scene.underWater==0) {
+    // Sun glint: the sun reflected by the rippled surface, not in shadow (water_reflection.frag adds only the sky).
+    // A sharp GGX lobe over the sun's irradiance: in life it is the brightest thing on the water.
+    const vec3 view = normalize(scene.camPos - shInp.pos);
+    const vec3 n    = wx.normal.y<0.0 ? -wx.normal : wx.normal;
+    const vec3 spec = materialSpecular(n, view, scene.sunDir, vec3(WaterF0), turbidity>0.0 ? PotWaterRoughness : WaterRoughness);
+    outColor.rgb += spec * scene.sunColor * max(dot(n, scene.sunDir), 0.0) * shadow * scene.exposure;
+    }
   outDiffuse.rgb = t.rgb;
   outDiffuse.a   = encodeHintBits();
   outNormal      = encodeNormal(wx.normal);

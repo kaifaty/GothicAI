@@ -13,6 +13,8 @@
 #include "game/damagecalculator.h"
 #include "game/meleeimpact.h"
 #include "world/objects/npc.h"
+#include "world/bodytraces.h"
+#include "world/bloodstains.h"
 #include "gothic.h"
 
 #include <Tempest/Log>
@@ -987,6 +989,272 @@ namespace {
     require(!steps.empty(),"a fallen ragdoll must emit impact noise");
     }
 
+  void testBodyTraces() {
+    require(Gothic::PhysicsFlags{}.bodyTraces,"body traces must default to ON");
+    require(BodyTraces::LifetimeMinutes==4320,"a body lives three game days");
+    BodyTraces::Body body;
+    body.clockFrom    = 1000;
+    body.now          = 1000+BodyTraces::LifetimeMinutes;
+    body.heroDistance = 3001;
+    require(BodyTraces::removable(body),"an unseen three-day-old body with the hero beyond 30 m must leave");
+    const auto with=[&](auto change) { auto b=body; change(b); return BodyTraces::removable(b); };
+    require(!with([](auto& b){ b.now-=1; }),"a body younger than three game days must stay");
+    require(!with([](auto& b){ b.heroDistance=3000; }),"a body exactly 30 m from the hero must stay");
+    require(!with([](auto& b){ b.heroDistance=1200; }),"a body near the hero must stay");
+    require(!with([](auto& b){ b.heroSees=true; }),"a body the hero sees must stay");
+    {
+    auto seen=body; seen.heroSees=true;
+    require(BodyTraces::removableUnseen(seen),"sight is the last test: rays only for bodies that pass the rest");
+    }
+    require(!with([](auto& b){ b.missionItems=true; }),"a body with a mission item must stay");
+    require(!with([](auto& b){ b.dragon=true; }),"a dragon must stay");
+    require(!with([](auto& b){ b.immortal=true; }),"an IMMORTAL body must stay");
+    require(!with([](auto& b){ b.storyType=true; }),"a body of a main script type must stay");
+    require(!with([](auto& b){ b.enabled=false; }),"body traces OFF must never remove a body");
+    require(!with([](auto& b){ b.dead=false; }),"the living never leave by the body rule");
+    require(!with([](auto& b){ b.player=true; }),"the hero never leaves by the body rule");
+    require(!with([](auto& b){ b.clockFrom=-1; }),"a body without a lifetime start must stay");
+    require(with([](auto& b){ b.now+=100000; b.heroDistance=1e6f; }),"an old far body must leave");
+
+    require(BodyTraces::isTrace(true,true,false,GIL_NONE,GIL_SEPERATOR_HUM),"a dead person is a trace");
+    require(BodyTraces::isTrace(true,true,false,GIL_SEPERATOR_HUM-1,GIL_SEPERATOR_HUM),"every human guild is a trace");
+    require(!BodyTraces::isTrace(true,true,false,GIL_SEPERATOR_HUM,GIL_SEPERATOR_HUM),"a monster's body is not a trace");
+    require(!BodyTraces::isTrace(true,true,false,GIL_DRAGON,GIL_SEPERATOR_HUM),"a dragon's body is not a trace");
+    require(!BodyTraces::isTrace(false,true,false,GIL_NONE,GIL_SEPERATOR_HUM),"body traces OFF: no body trace");
+    require(!BodyTraces::isTrace(true,false,false,GIL_NONE,GIL_SEPERATOR_HUM),"a living person is not a body trace");
+    require(!BodyTraces::isTrace(true,true,true,GIL_NONE,GIL_SEPERATOR_HUM),"the dead hero is not a body trace");
+
+    for(int32_t type:{1,4,7})
+      require(BodyTraces::isStoryType(type,BodyTraces::StoryTypes),"NPCTYPE_MAIN, NPCTYPE_OCMAIN and NPCTYPE_BL_MAIN are story types");
+    for(int32_t type:{0,2,3,5,6})
+      require(!BodyTraces::isStoryType(type,BodyTraces::StoryTypes),"ambient and friend types are not story types");
+
+    // Story types from the scripts: the Gothic II fallback only when no symbol exists at all.
+    {
+    const auto none = BodyTraces::storyTypes({std::nullopt,std::nullopt,std::nullopt});
+    require(none==BodyTraces::StoryTypes,"no NPCTYPE symbol at all: the Gothic II values 1, 4, 7");
+    const auto g1 = BodyTraces::storyTypes({1,std::nullopt,std::nullopt});
+    require(g1==std::array<int32_t,3>{1,-1,-1},"a missing symbol beside a present one must match nothing (-1)");
+    require(BodyTraces::isStoryType(1,g1) && !BodyTraces::isStoryType(4,g1) && !BodyTraces::isStoryType(7,g1),
+            "with only NPCTYPE_MAIN defined, types 4 and 7 are not exceptions");
+    const auto all = BodyTraces::storyTypes({11,14,17});
+    require(all==std::array<int32_t,3>{11,14,17},"the scripts' own values win");
+    }
+
+    // One death stamps the record once: a BodyController defers ZS_Dead, later blows keep it.
+    require(BodyTraces::stampsDeath(true,false,0,false),"the first fatal blow stamps the body record");
+    require(!BodyTraces::stampsDeath(true,false,4,false),"a blow before the deferred ZS_Dead keeps the first record");
+    require(!BodyTraces::stampsDeath(true,true,4,true),"a blow on a corpse keeps its record");
+    require(!BodyTraces::stampsDeath(false,false,0,false),"unconsciousness stamps nothing");
+    require(BodyTraces::stampsDeath(true,false,4,true),"a body that rose again (it reached ZS_Dead) dies anew");
+    }
+
+  void testBloodStains() {
+    using namespace BloodStains;
+    using Tempest::Vec3;
+    require(Gothic::PhysicsFlags{}.blood,"blood must default to ON");
+    require(Limit==256,"a world keeps 256 stains");
+
+    // Lifetime: outdoors one game day, indoors three.
+    Stain out;
+    out.bornAt = 5*MinuteMs;
+    require(!expired(out,out.bornAt+LifetimeOutMs-1),"an outdoor stain lives just under a game day");
+    require(expired(out,out.bornAt+24*60*MinuteMs),"an outdoor stain is gone after 24 game hours");
+    Stain in = out;
+    in.indoor = true;
+    require(!expired(in,in.bornAt+24*60*MinuteMs),"an indoor stain outlives one game day");
+    require(!expired(in,in.bornAt+LifetimeInMs-1),"an indoor stain lives just under three game days");
+    require(expired(in,in.bornAt+3*24*60*MinuteMs),"an indoor stain is gone after three game days");
+
+    // Evidence: people's and beasts' blood, a meatbug's, a zombie's; never a golem's stone chips.
+    for(auto b:{Blood::Red,Blood::Yellow,Blood::Gore}) {
+      Stain s; s.blood = b;
+      require(isEvidence(s),"red, yellow and gore blood are evidence");
+      }
+    {
+    Stain s; s.blood = Blood::Stone;
+    require(!isEvidence(s),"stone chips are not evidence");
+    }
+
+    // Adding: ids never reused or zero, the birth stamped from the clock, nothing with blood off.
+    const auto noBody   = [](uint32_t) { return false; };
+    const auto body7    = [](uint32_t id) { return id==7; };
+    {
+    std::vector<Stain> stains;
+    uint32_t next = 1;
+    require(add(stains,next,Stain{},1000,false,noBody)==0 && stains.empty() && next==1,
+            "blood OFF: addBloodStain adds nothing and returns 0");
+    const auto first = add(stains,next,Stain{},1000,true,noBody);
+    require(first==1 && stains.back().bornAt==1000,"a new stain takes id 1 and the current game time");
+    Stain born; born.bornAt = 400;
+    require(add(stains,next,born,1000,true,noBody)==2 && stains.back().bornAt==400,"a stain born earlier keeps its time");
+    stains.clear();
+    require(add(stains,next,Stain{},2000,true,noBody)==3,"ids are never reused, even after the stains are gone");
+    }
+
+    // Eviction at the limit: the oldest goes; a pool whose body is still in the world goes last.
+    {
+    std::vector<Stain> stains;
+    uint32_t next = 1;
+    Stain pool; pool.kind = Kind::Pool; pool.bodyId = 7; pool.bornAt = 1;
+    const auto poolId = add(stains,next,pool,1,true,body7);
+    for(int64_t i=0;stains.size()<Limit;++i) {
+      Stain s; s.bornAt = 10+i;
+      add(stains,next,s,10+i,true,body7);
+      }
+    require(evictIndex(stains,body7)==1,"the oldest stain but a living body's pool leaves first");
+    Stain extra; extra.bornAt = 100000;
+    add(stains,next,extra,100000,true,body7);
+    require(stains.size()==Limit && stains.front().id==poolId && stains[1].bornAt==11,
+            "a full world drops its oldest splash, not the pool of a body still there");
+    require(evictIndex(stains,noBody)==0,"once the body has left, its pool is the oldest stain and leaves first");
+    std::vector<Stain> pools(3,pool);
+    pools[0].bornAt = 30; pools[1].bornAt = 20; pools[2].bornAt = 25;
+    for(uint32_t i=0;i<3;++i) pools[i].id = i+1;
+    require(evictIndex(pools,body7)==1,"among pools of bodies still there, the oldest leaves");
+    require(evictIndex(std::vector<Stain>{},noBody)==0,"nothing to evict in an empty world");
+    }
+
+    // The minute sweep: past lifetime, or a pool whose body left; blood off clears all.
+    {
+    std::vector<Stain> stains(4);
+    stains[0].id = 1; stains[0].bornAt = 0;                         // outdoor, a day old
+    stains[1].id = 2; stains[1].bornAt = 0; stains[1].indoor = true; // indoor, a day old
+    stains[2].id = 3; stains[2].bornAt = 60*MinuteMs; stains[2].kind = Kind::Pool; stains[2].bodyId = 7;
+    stains[3].id = 4; stains[3].bornAt = 60*MinuteMs; stains[3].kind = Kind::Pool; stains[3].bodyId = 9;
+    auto kept = stains;
+    sweep(kept,LifetimeOutMs,true,body7);
+    require(kept.size()==2 && kept[0].id==2 && kept[1].id==3,
+            "the sweep takes the day-old outdoor stain and the pool of a body that left, keeps the rest");
+    kept = stains;
+    sweep(kept,0,false,body7);
+    require(kept.empty(),"blood OFF leaves no stain in the world");
+    }
+
+    // Grouping into `blood` traces: single linkage within 2 m, evidence only.
+    {
+    std::vector<Stain> stains(7);
+    const auto at = [&](size_t i, Vec3 p, float r, int64_t born) {
+      stains[i].id = uint32_t(i+1); stains[i].pos = p; stains[i].radiusCm = r; stains[i].bornAt = born;
+      };
+    at(0,{0,0,0},10,500);    // chain: 0 - 1 - 2, each link under 2 m, the ends 3.8 m apart
+    at(1,{190,0,0},30,300);
+    at(2,{380,0,0},15,900);
+    at(3,{1000,0,0},20,100); // alone
+    at(4,{1150,0,0},40,50);  // stone chips 1.5 m from it: no evidence, no link
+    stains[4].blood = Blood::Stone;
+    at(5,{3000,0,0},50,700); // a body's pool and a splash beside it
+    stains[5].kind = Kind::Pool; stains[5].bodyId = 7;
+    at(6,{3100,0,0},10,800);
+    const auto groups = evidenceGroups(stains,body7);
+    require(groups.size()==3,"three evidence groups: the chain, the lone splash, the body's blood");
+    require(groups[0].members==std::vector<size_t>{0,1,2},"single linkage joins a chain of stains under 2 m apart");
+    require(groups[0].oldest==1 && groups[0].largest==1 && groups[0].freshest==2,
+            "a group is named by its oldest stain, placed at its largest, aged by its freshest");
+    require(groups[1].members==std::vector<size_t>{3},"stone chips never join or form a trace");
+    require(groups[2].heldByBody,"a group with the pool of a body still there is that body's");
+    const auto traces = traceGroups(stains,true,body7);
+    require(traces.size()==2,"the body's blood gives no second find");
+    require(traceGroups(stains,true,noBody).size()==3,"once the body is gone, its blood is a trace of its own");
+    require(traceGroups(stains,false,noBody).empty(),"blood OFF: no blood traces");
+    std::vector<Stain> far(2);
+    far[0].pos = {0,0,0}; far[1].pos = {200.5f,0,0};
+    require(evidenceGroups(far,noBody).size()==2,"stains farther than 2 m are separate traces");
+    far[1].pos = {200,0,0};
+    require(evidenceGroups(far,noBody).size()==1,"stains exactly 2 m apart are one trace");
+    }
+
+    // Sight points: the centre and four rim points, 5 cm off the surface along its normal.
+    {
+    Stain s;
+    s.pos = {100,50,-20}; s.radiusCm = 30; s.normal = {0,1,0}; s.dir = {1,0,0};
+    const auto p = sightPoints(s);
+    requireNear(p[0].y,55.f,1e-3f,"the centre sight point is 5 cm above the stain");
+    for(size_t i=1;i<p.size();++i) {
+      requireNear((p[i]-p[0]).length(),30.f,1e-3f,"rim sight points lie on the radius");
+      requireNear(p[i].y,55.f,1e-3f,"rim sight points are lifted with the centre");
+      }
+    Stain wall = s;
+    wall.normal = {0,0,-2}; wall.dir = {0,0,1}; // a wall splash whose direction runs into the wall
+    const auto w = sightPoints(wall);
+    requireNear(w[0].z,-25.f,1e-3f,"a wall stain's sight points stand off the wall along its normal");
+    for(size_t i=1;i<w.size();++i)
+      requireNear(w[i].z,-25.f,1e-3f,"a wall stain's rim lies in the wall's plane");
+    }
+    }
+
+  void testBodyImpactDamage() {
+    require(Gothic::PhysicsFlags{}.bodyImpactDamage,"body impact damage must default to ON");
+    require(Npc::canTakeBodyImpact(true,false,false,false),"a living physical body must receive impact damage");
+    require(!Npc::canTakeBodyImpact(false,false,false,false),"body impact OFF must preserve the old damage path");
+    require(!Npc::canTakeBodyImpact(true,true,false,false),"an unconscious body must not receive impact damage");
+    require(!Npc::canTakeBodyImpact(true,false,true,false),"a dead body must not receive impact damage");
+    require(!Npc::canTakeBodyImpact(true,false,false,true),"an IMMORTAL body must not receive impact damage");
+
+    Npc::BodyImpactWindow window;
+    // Native torso contacts and spell capsule wall/landing contacts feed this
+    // same per-NPC window, so later sources must replace rather than add damage.
+    window.add(1000,.6f);
+    window.add(1100,1.f);
+    window.add(1299,.8f);
+    requireNear(window.take(1299),0.f,.000001f,"a body impact window must wait for all three hundred milliseconds");
+    requireNear(window.take(1300),1.f,.000001f,"one body impact window must emit only its maximum normal speed");
+    requireNear(window.take(1300),0.f,.000001f,"a consumed body impact window must not emit twice");
+    window.add(1300,.6f);
+    requireNear(window.take(1600),.6f,.000001f,"a later impact must open an independent body window");
+    window.add(1700,1.4f);
+    window.clear();
+    requireNear(window.take(2000),0.f,.000001f,"disabling body impact damage must discard pending contacts");
+
+    const auto impact=[&](bool limbs,int category,bool enabled=true) {
+      zenkit::ModelHierarchy hierarchy{};
+      const char* torsoNames[]={"BIP01","BIP01 PELVIS","BIP01 SPINE","BIP01 HEAD"};
+      const char* limbNames[]={"BIP01","BIP01 L UPPERARM","BIP01 L FOREARM","BIP01 L HAND"};
+      const float offsets[]={0,95,40,40};
+      for(int i=0;i<4;++i) {
+        zenkit::ModelHierarchyNode node;
+        node.name=limbs ? limbNames[i] : torsoNames[i];
+        node.parent_index=int16_t(i-1);
+        const auto matrix=at(0,offsets[i],0);
+        std::memcpy(&node.transform,&matrix,sizeof(matrix));
+        hierarchy.nodes.push_back(node);
+        }
+      Skeleton skeleton(asset::fromZenKit(hierarchy),nullptr,limbs ? "IMPACT_ARM.MDS" : "IMPACT_TORSO.MDS");
+      HitZones zones;
+      zones.setSkeleton(&skeleton);
+      require(zones.isValid(),"body impact fixture must contain native capsules");
+      CollisionWorld world;
+      world.setBodyImpactEnabled(enabled);
+      auto floor=world.addCollisionBody(new JPH::BoxShape(JPH::Vec3(20,.5f,20)),at(0,-50,0),.7f,category);
+      auto object=at(0,100,0);
+      object.rotateOZ(90.f);
+      std::vector<Tempest::Matrix4x4> pose;
+      for(const auto& bone:skeleton.tr) pose.push_back(object*bone);
+      auto body=world.createRagdoll(skeleton,zones,pose.data(),pose.size(),object,{0,-600,0});
+      require(body!=nullptr && body->partCount()>1,"body impact fixture must create multiple physical parts");
+      require(!body->impactBone(0),"an unphysical root must not count as a torso contact");
+      for(size_t bone=1;bone<4;++bone)
+        require(body->impactBone(bone)==!limbs,"only pelvis, spine and head may supply impact speed");
+      float maximum=0;
+      for(int frame=0;frame<90;++frame) {
+        world.tick(17);
+        maximum=std::max(maximum,body->takeImpactSpeed());
+        requireNear(body->takeImpactSpeed(),0.f,.000001f,"reading a native body's impact speed must consume the contact sample");
+        }
+      return maximum;
+      };
+    const float torso=impact(false,DynamicWorld::C_Landscape);
+    require(torso>.6f && torso<1.5f,"a native torso landing must report incoming normal speed in centimetres per millisecond");
+    requireNear(impact(true,DynamicWorld::C_Landscape),0.f,.000001f,"native arm contacts must never supply body impact damage");
+    require(impact(false,DynamicWorld::C_Object)>.6f,"a native torso must report impacts against static objects");
+    require(impact(false,DynamicWorld::C_MovableVob)>.6f,"a native torso must report impacts against furniture");
+    requireNear(impact(false,DynamicWorld::C_Item),0.f,.000001f,"item contacts must not supply body impact damage");
+    requireNear(impact(false,DynamicWorld::C_Landscape,false),0.f,.000001f,
+                "body impact OFF must suppress real native torso contact samples");
+    std::printf("Body impact damage: 300 ms maximum window; unconscious/dead/IMMORTAL/OFF exclusions; "
+                "native torso %.6f cm/ms, limbs ignored, landscape/object/furniture categories passed\n",double(torso));
+    }
+
   void testOffCenterImpulse() {
     CollisionWorld world;
     auto centered=world.addDynamicBody(new JPH::BoxShape(JPH::Vec3::sReplicate(.5f)),at(0,1000,0),.7f,2.f);
@@ -1450,6 +1718,81 @@ namespace {
               "broken fences must restore even when movable-vobs is disabled");
       loaded.setMovableVobsEnabled(!movable);
       require(loadedFence.isBroken(),"toggling movable-vobs must not resurrect a broken static fence");
+      }
+    for(const bool movable:{false,true}) {
+      // A blade stopped by an intact fence bites into it: the board takes that blow at
+      // the contact, once per swing, and breaks when its health runs out.
+      DynamicWorld world(nullptr,movableFloor());
+      world.setMovableVobsEnabled(movable);
+      auto fence=world.addMovableVob(proto,"NW_NATURE_FENCE_01.MRM",at(100,50,0),.04f,true,"fence",true,zenId);
+      const auto fenceId=world.movableVobSnapshot()[0].id;
+      int actorId=0;
+      auto* actor=reinterpret_cast<Npc*>(&actorId);
+      const auto blow=[&](uint64_t swing,float z) {
+        const uint64_t t=swing*1000;
+        world.updateShadowBlade(actor,swing,{{{-10,30,z},{-10,70,z},{0,0,1},2}},t,double(t),double(t+100));
+        world.flushShadowBlades();
+        world.updateShadowBlade(actor,swing,{{{200,30,z},{200,70,z},{0,0,1},2}},t+100,double(t),double(t+100));
+        world.flushShadowBlades();
+        const auto contacts=world.takeShadowBladeContacts(actor);
+        const auto stop=std::find_if(contacts.begin(),contacts.end(),[](const MeleeBladeContact& c) {
+          return c.world && c.stopsSwing;
+          });
+        require(stop!=contacts.end(),"an intact fence must stop the blow");
+        return *stop;
+        };
+      const auto health=[&]() { return world.movableVobSnapshot()[0].health; };
+      std::vector<uintptr_t> struck;
+      const auto first=blow(1,0);
+      require(first.movableVob==fenceId,"a blow stopped by a fence must carry the struck movable vob");
+      require(world.meleeStoppedMovableVob(first,40,100,FractureRule::Melee::OneHand,nullptr,struck) &&
+              struck.size()==1 && struck[0]==fenceId,
+              "a stopped blow must strike the destructible fence it stopped at");
+      requireNear(health(),30.f,.001f,"a stopped blow must use the hit-frame damage rule");
+      require(!world.meleeStoppedMovableVob(first,40,100,FractureRule::Melee::OneHand,nullptr,struck),
+              "one swing must strike a stopping fence only once");
+      require(world.meleeMovableVobs({0,50,0},{1,0,0},150,40,100,FractureRule::Melee::OneHand,nullptr,&struck)==0,
+              "the hit frame of a swing that already struck a fence must not strike it again");
+      requireNear(health(),30.f,.001f,"a repeated strike in one swing must leave health untouched");
+      MeleeBladeContact wall=first;
+      wall.movableVob=0;
+      std::vector<uintptr_t> none;
+      require(!world.meleeStoppedMovableVob(wall,40,100,FractureRule::Melee::OneHand,nullptr,none) && none.empty(),
+              "a blow stopped by a plain wall must deliver no strike");
+      std::vector<uintptr_t> next;
+      require(world.meleeStoppedMovableVob(blow(2,10),40,100,FractureRule::Melee::OneHand,nullptr,next),
+              "the next swing must strike the fence again");
+      world.tick(17);
+      require(fence.isBroken() && world.fragmentSnapshot().size()==8,
+              "two stopped one-handed blows must break the fence");
+      require(!world.meleeStoppedMovableVob(first,40,100,FractureRule::Melee::OneHand,nullptr,none),
+              "a broken fence must not take stopped blows");
+      // Disabling destruction restores the intact fence, which must still ignore stopped blows.
+      world.setDestructionEnabled(false);
+      require(!fence.isBroken() && !world.meleeStoppedMovableVob(blow(3,0),40,100,FractureRule::Melee::OneHand,nullptr,none) &&
+              none.empty() && world.movableVobSnapshot()[0].health>99.f,
+              "destruction=0 must ignore stopped blows");
+      if(movable) {
+        DynamicWorld plain(nullptr,movableFloor());
+        plain.setMovableVobsEnabled(true);
+        // No fracture table entry for this visual: a large crate that cannot break.
+        auto crate=plain.addMovableVob(proto,"CONTRACT_PLAIN_CRATE.MRM",at(100,50,0),.04f,true,"crate",true,zenId+1);
+        require(!crate.isEmpty() && !plain.movableVobSnapshot()[0].destructible,
+                "the plain crate fixture must be a non-destructible movable vob");
+        plain.updateShadowBlade(actor,1,{{{-10,30,0},{-10,70,0},{0,0,1},2}},0,0,100);
+        plain.flushShadowBlades();
+        plain.updateShadowBlade(actor,1,{{{200,30,0},{200,70,0},{0,0,1},2}},100,0,100);
+        plain.flushShadowBlades();
+        const auto contacts=plain.takeShadowBladeContacts(actor);
+        const auto stop=std::find_if(contacts.begin(),contacts.end(),[](const MeleeBladeContact& c) {
+          return c.world && c.stopsSwing;
+          });
+        require(stop!=contacts.end() && stop->movableVob!=0,"a large movable vob must still stop the blow");
+        std::vector<uintptr_t> plainStruck;
+        require(!plain.meleeStoppedMovableVob(*stop,40,100,FractureRule::Melee::OneHand,nullptr,plainStruck) &&
+                plainStruck.empty(),"a non-destructible movable vob must stop the blow without a strike");
+        }
+      std::printf("Stopped blow fence movable %d: health 100 -> 30 -> broken\n",int(movable));
       }
     for(const bool fence:{false,true}) {
       const auto origin=at(100,50,0);
@@ -4158,6 +4501,7 @@ namespace {
 
   void testItemDeepestContact() {
     require(Gothic::PhysicsFlags{}.itemDeepestContact,"item deepest contact must default to ON");
+    require(Gothic::PhysicsFlags{}.ragdollBirthGuard,"ragdoll birth guard must default to ON");
     // Inflated body-frame hull vertices (metres), poses and original volumes
     // from Claude's thin-blade dumps. No game assets or hull inflation run here.
     const JPH::Vec3 canePoints[] = {
@@ -4563,6 +4907,42 @@ namespace {
 
   void testContracts() {
     {
+      using MeleeImpact::BackstabKind;
+      requireNear(MeleeImpact::backstabAngle(0.f,119.9f),119.9f,.0001f,
+                  "backstab angles must retain the horizontal sector boundary");
+      requireNear(MeleeImpact::backstabAngle(350.f,110.f),120.f,.0001f,
+                  "backstab angles must wrap across zero degrees");
+      require(MeleeImpact::backstabKind(119.9f,1,false,false,false)==BackstabKind::None,
+              "an unaware target at 119.9 degrees must not receive a backstab");
+      require(MeleeImpact::backstabKind(120.f,1,false,false,false)==BackstabKind::Unaware,
+              "an unaware target at 120 degrees must receive a backstab");
+      require(MeleeImpact::backstabKind(180.f,0,false,false,false)==BackstabKind::None,
+              "an unaware backstab must require the sneak talent");
+      require(MeleeImpact::backstabKind(180.f,0,false,true,true)==BackstabKind::Stunned,
+              "a rear hit on a stunned target must qualify without sneak or surprise");
+      require(MeleeImpact::backstabKind(0.f,1,true,false,false)==BackstabKind::Sleeping,
+              "a sleeping target must allow a frontal backstab with the sneak talent");
+      require(MeleeImpact::backstabKind(0.f,0,true,false,false)==BackstabKind::None,
+              "a sleeping backstab must still require the sneak talent");
+      require(MeleeImpact::backstabKind(0.f,0,false,true,true)==BackstabKind::None,
+              "a frontal hit on a stunned target must not qualify as a backstab");
+      require(MeleeImpact::backstabKind(180.f,1,false,false,true)==BackstabKind::None,
+              "combat or a recent hit must prevent an unaware backstab");
+      require(MeleeImpact::backstabRecentHit(10900,1000),
+              "a hit 9.9 seconds ago must keep the target aware of its attacker");
+      require(!MeleeImpact::backstabRecentHit(11000,1000),
+              "a hit exactly 10 seconds ago must no longer keep the target aware");
+      requireNear(MeleeImpact::backstabMultiplier(BackstabKind::Unaware,false,1.f),3.f,.0001f,
+                  "an unaware backstab must triple final melee damage");
+      requireNear(MeleeImpact::backstabMultiplier(BackstabKind::Unaware,true,1.f),1.5f,.0001f,
+                  "a huge beast must receive only a 1.5 backstab multiplier");
+      requireNear(MeleeImpact::backstabMultiplier(BackstabKind::Stunned,false,1.5f),3.f,.0001f,
+                  "a stunned backstab must replace rather than multiply the stun bonus");
+      requireNear(MeleeImpact::backstabMultiplier(BackstabKind::None,false,1.5f),1.5f,.0001f,
+                  "an ordinary hit must retain the existing stun bonus");
+      }
+
+    {
       using MeleeImpact::Weapon;
       const auto fist=MeleeImpact::impulse(Weapon::Fist,{600,800,0},90);
       requireNear(fist.x,9.f,.0001f,"fist impulse must convert world cm/s into N s");
@@ -4764,6 +5144,68 @@ namespace {
     require(!Npc::canAccumulateMeleePosture(true,true,false,false),"a blocked hit must leave posture unchanged");
     require(!Npc::canAccumulateMeleePosture(true,false,true,false),"a knockdown must not accumulate another knockdown");
     require(!Npc::canAccumulateMeleePosture(true,false,false,true),"death or unconsciousness must retain the old path");
+
+    require(MeleeImpact::beastSize(54.9f)==MeleeImpact::BeastSize::Small,
+            "beasts below 55 kg must be small");
+    require(MeleeImpact::beastSize(55.f)==MeleeImpact::BeastSize::Medium &&
+            MeleeImpact::beastSize(299.9f)==MeleeImpact::BeastSize::Medium,
+            "beasts from 55 kg to below 300 kg must be medium");
+    require(MeleeImpact::beastSize(300.f)==MeleeImpact::BeastSize::Huge,
+            "beasts from 300 kg must be huge");
+    require(MeleeImpact::beastCanAccumulatePosture(54.9f) && MeleeImpact::beastCanAccumulatePosture(299.9f) &&
+            !MeleeImpact::beastCanAccumulatePosture(300.f) && !MeleeImpact::beastCanAccumulatePosture(600.f),
+            "small and medium beasts must accumulate posture while huge beasts never do");
+    requireNear(Ragdoll::speciesMass("Shadow"),250.f,.0001f,"the Shadow model must weigh 250 kg");
+    requireNear(Ragdoll::speciesMass("sHaDoW"),250.f,.0001f,"Shadow mass must be case insensitive");
+    requireNear(Ragdoll::speciesMass("Golem"),500.f,.0001f,"the Golem model must weigh 500 kg");
+    requireNear(Ragdoll::speciesMass("gOlEm"),500.f,.0001f,"Golem mass must be case insensitive");
+
+    requireNear(MeleeImpact::beastImpulse(40.f),20.f,.0001f,"a 40 kg beast must strike with 20 N s");
+    requireNear(MeleeImpact::beastImpulse(90.f),45.f,.0001f,"a 90 kg beast must strike with 45 N s");
+    requireNear(MeleeImpact::beastImpulse(250.f),60.f,.0001f,"a 250 kg beast impulse must cap at 60 N s");
+    requireNear(MeleeImpact::beastSkillThresholdScale(0),.96f,.0001f,
+                "beast attacks must use a neutral attacker scale against an unskilled defender");
+    requireNear(MeleeImpact::beastSkillThresholdScale(100),1.44f,.0001f,
+                "beast attacks must retain the skilled defender threshold multiplier");
+    {
+      const auto threshold = MeleeImpact::beastSkillThresholdScale(0);
+      const auto hugeHit = MeleeImpact::postureIncrease(60.f,75.f,threshold);
+      const auto mediumHit = MeleeImpact::postureIncrease(45.f,75.f,threshold);
+      require(hugeHit>=40.f && mediumHit<40.f,
+              "60 N s must cross the heavy posture threshold against 75 kg while 45 N s must not");
+      require(MeleeImpact::heavyHit(MeleeImpact::Weapon::Fist,{0,0,0},hugeHit)==MeleeImpact::HeavyHit::Posture &&
+              MeleeImpact::heavyHit(MeleeImpact::Weapon::Fist,{0,0,0},mediumHit)==MeleeImpact::HeavyHit::None,
+              "unarmed beast hits must qualify as heavy only through their posture increase");
+      }
+
+    require(MeleeImpact::heavyHit(MeleeImpact::Weapon::TwoHand,{0,0,0},0)==MeleeImpact::HeavyHit::TwoHanded,
+            "a two-handed weapon must qualify as a heavy hit");
+    require(MeleeImpact::heavyHit(MeleeImpact::Weapon::OneHand,{80,-60,0},0)==MeleeImpact::HeavyHit::Downward,
+            "a downward velocity fraction of 0.6 must qualify as a heavy hit");
+    require(MeleeImpact::heavyHit(MeleeImpact::Weapon::OneHand,{std::sqrt(10000.f-59.f*59.f),-59,0},0)==MeleeImpact::HeavyHit::None,
+            "a downward velocity fraction of 0.59 must not qualify as a heavy hit");
+    require(MeleeImpact::heavyHit(MeleeImpact::Weapon::OneHand,{0,0,0},40.f)==MeleeImpact::HeavyHit::Posture,
+            "a posture increase of 40 must qualify as a heavy hit");
+    require(MeleeImpact::heavyHit(MeleeImpact::Weapon::OneHand,{0,0,0},39.9f)==MeleeImpact::HeavyHit::None,
+            "a posture increase of 39.9 must not qualify as a heavy hit");
+    require(MeleeImpact::armorClass(39)==MeleeImpact::ArmorClass::Light,
+            "edge protection below 40 must be light armor");
+    require(MeleeImpact::armorClass(40)==MeleeImpact::ArmorClass::Medium &&
+            MeleeImpact::armorClass(79)==MeleeImpact::ArmorClass::Medium,
+            "edge protection from 40 through 79 must be medium armor");
+    require(MeleeImpact::armorClass(80)==MeleeImpact::ArmorClass::Heavy,
+            "edge protection from 80 must be heavy armor");
+    requireNear(MeleeImpact::armorThresholdScale(MeleeImpact::armorClass(0)),1.f,.0001f,
+                "no armor must retain the posture threshold");
+    requireNear(MeleeImpact::armorThresholdScale(MeleeImpact::ArmorClass::Light),1.f,.0001f,
+                "light armor must retain the posture threshold");
+    requireNear(MeleeImpact::armorThresholdScale(MeleeImpact::ArmorClass::Medium),1.15f,.0001f,
+                "medium armor must multiply the posture threshold by 1.15");
+    requireNear(MeleeImpact::armorThresholdScale(MeleeImpact::ArmorClass::Heavy),1.3f,.0001f,
+                "heavy armor must multiply the posture threshold by 1.3");
+    require(MeleeImpact::stunDuration("parried")==1000 && MeleeImpact::stunDuration("guard_break")==1000 &&
+            MeleeImpact::stunDuration("posture")==1500,
+            "parry and guard-break stuns must last 1000 ms and posture stuns 1500 ms");
 
     {
       // Tip heights of T_2HSFINISH and T_1HSFINISH at 30 fps, sampled in the game: the stroke down
@@ -5271,6 +5713,9 @@ int main() {
     testRotatingFragments();
     testPhysicsNoise();
     testRagdollNoise();
+    testBodyImpactDamage();
+    testBodyTraces();
+    testBloodStains();
     testOffCenterImpulse();
     std::puts("Physics contracts passed");
     return EXIT_SUCCESS;

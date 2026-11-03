@@ -21,6 +21,10 @@ secrets/
 data/
 !/data/
 /data/*
+!/data/npc/
+/data/npc/*
+!/data/npc/far-fight-pairs.json
+!/data/npc/far-fight-weapons.json
 !/data/content/
 /data/content/*
 !/data/content/registry.jsonl
@@ -40,6 +44,8 @@ data/
 !/data/content/world/harbour-life-placements.json
 !/data/content/world/harbour-motion-placements.json
 !/data/content/world/NEWWORLD/
+!/data/content/particles.d/
+!/data/content/vobtrees.d/
 !/data/content/remaster/
 !OpenGothic/data/
 

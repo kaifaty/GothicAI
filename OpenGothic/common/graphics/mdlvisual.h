@@ -17,7 +17,9 @@
 class Serialize;
 class ObjVisual;
 class Npc;
+struct NpcLogicalState;
 class Item;
+class WorldView;
 namespace TestBench { bool ragdollBodyDrawable(const Npc& npc); }
 
 class MdlVisual final {
@@ -43,6 +45,9 @@ class MdlVisual final {
     Tempest::Vec2                  headRotation() const;
     void                           setYTranslationEnable(bool e);
     void                           setVisualBody(World& owner, MeshObjects::Mesh&& body);
+    void                           setVisualBody(WorldView& owner, MeshObjects::Mesh&& body);
+    void                           clearVisualBody();
+    size_t                         bodyNodesCount() const;
     void                           setVisualBody(Npc& npc, MeshObjects::Mesh&& h, MeshObjects::Mesh&& body, int32_t version);
     void                           syncAttaches();
     const Skeleton*                visualSkeleton() const;
@@ -64,7 +69,7 @@ class MdlVisual final {
     // the shot leaves from there)
     void                           dropAmmo();
     bool                           hasAmmoShown() const { return !ammunition.view.isEmpty(); }
-    void                           setSlotItem   (MeshObjects::Mesh&& itm,  std::string_view bone);
+    void                           setSlotItem   (MeshObjects::Mesh&& itm,  std::string_view bone, int32_t material = 0);
     void                           setStateItem  (MeshObjects::Mesh&& itm,  std::string_view bone);
     void                           clearSlotItem (std::string_view bone);
     bool                           setFightMode  (asset::MdsFightMode mode);
@@ -84,7 +89,7 @@ class MdlVisual final {
     void                           setFatness  (float f);
     void                           emitBlockEffect(Npc& dst, Npc& src);
 
-    bool                           setToFightMode(const WeaponState ws);
+    bool                           setToFightMode(const WeaponState ws, bool fromAnimation=false);
     void                           updateWeaponSkeleton(const Item *sword, const Item *bow);
 
     void                           setTorch(bool t, World& owner);
@@ -124,8 +129,8 @@ class MdlVisual final {
     bool                           updateFlinch(Npc& npc, uint64_t dt);
     void                           flinch(const Npc& npc, const Flinch::Hit& hit);
     bool                           updateGaze(Npc& npc, uint64_t dt);
-    void                           processLayers  (World& world);
-    bool                           processEvents(World& world, uint64_t &barrier, Animation::EvCount &ev);
+    void                           processLayers  (World& world, NpcLogicalState* logic=nullptr);
+    bool                           processEvents(World& world, uint64_t &barrier, Animation::EvCount &ev, NpcLogicalState* logic=nullptr);
     auto                           mapBone(const size_t boneId) const -> Tempest::Vec3;
     auto                           mapWeaponBone() const -> Tempest::Vec3;
     auto                           mapHeadBone() const -> Tempest::Vec3;
@@ -162,9 +167,12 @@ class MdlVisual final {
 
     bool                           hasAnim(AnimationSolver::Anim a, WeaponState st, WalkBit wlk) const;
     bool                           hasAnim(std::string_view scheme) const;
+    const Animation::Sequence*     movementSequence(WalkBit mode, WeaponState weapon, const Npc& npc) const;
+    const Animation::Sequence*     idleSequence(WalkBit mode, WeaponState weapon, const Npc& npc) const;
 
     const Animation::Sequence*     startAnimAndGet(std::string_view name, uint64_t tickCount, bool forceAnim = false);
-    const Animation::Sequence*     startAnimAndGet(Npc& npc, std::string_view      name, uint8_t comb, BodyState bs);
+    // force: start it even over a layer that cannot be cut now (a melee dodge out of a parade)
+    const Animation::Sequence*     startAnimAndGet(Npc& npc, std::string_view      name, uint8_t comb, BodyState bs, bool force = false);
     const Animation::Sequence*     startAnimAndGet(Npc& npc, AnimationSolver::Anim    a, uint8_t comb, WeaponState st, WalkBit wlk);
 
     bool                           startAnim      (Npc& npc, WeaponState st);
@@ -221,7 +229,10 @@ class MdlVisual final {
       View             view;
       std::string_view bone;
       };
-    using MeshAttach = Attach<MeshObjects::Mesh>;
+    struct MeshAttach : Attach<MeshObjects::Mesh> {
+      const ProtoMesh* deferredProto = nullptr;
+      int32_t deferredMaterial = 0;
+      };
     using PfxAttach  = Attach<Effect>;
 
     struct PfxSlot {
@@ -265,6 +276,7 @@ class MdlVisual final {
     Tempest::Vec3                 textureOwnerPosition;
     bool                          textureOwnerKnown = false, textureOwnerSpatial = false;
     MeshObjects::Mesh              view;
+    bool                           bodyDetached = false;
 
     MeshAttach                     head, sword, bow, shield;
     LipSync                        mouth;
@@ -299,5 +311,6 @@ class MdlVisual final {
     std::vector<Tempest::Matrix4x4> renderedPose;
     std::vector<uint8_t>           renderedMask;
     friend bool TestBench::ragdollBodyDrawable(const Npc& npc);
+    friend struct MeshGltfTest;
   };
 

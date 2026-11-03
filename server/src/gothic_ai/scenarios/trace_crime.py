@@ -31,6 +31,13 @@ from .common import (
     wait_message,
 )
 
+SCENARIOS = {
+    "trace_crime": ("GIVEN", {
+        "save": True, "timeout": 240,
+        "env": {"OPENGOTHIC_FRACTURE": "~/.local/share/gothic-ai/fracture"},
+    }),
+}
+
 if TYPE_CHECKING:
     from ..crimes import Crimes
     from ..dialogue import DialogueManager

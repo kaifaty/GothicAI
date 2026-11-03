@@ -1,4 +1,6 @@
 #include "navdemos.h"
+#include "gothic.h"
+#include "testbench.h"
 #include "navbench.h"
 #include "navkeyteacher.h"
 #include "navmemoryteacher.h"
@@ -2152,12 +2154,13 @@ bool NavDemos::nonhostileTarget(const Npc& npc) {
   return legacy.active && legacy.goalKind=="approach" && legacy.target==&npc;
 }
 bool NavDemos::forceCharacterVirtual(const Npc& npc) {
-  return settings.cv && ((legacy.active && (legacy.npc==&npc || legacy.target==&npc)) || preparingLegacy==&npc ||
+  return (TestBench::npcDuelActor(npc) && Gothic::physicsFlags().npcCharacterVirtual) ||
+         (settings.cv && ((legacy.active && (legacy.npc==&npc || legacy.target==&npc)) || preparingLegacy==&npc ||
                           (population.active && population.members.contains(&npc)) ||
-                          NavTransitions::controls(npc));
+                          NavTransitions::controls(npc)));
 }
 bool NavDemos::fullSimulation(const Npc& npc) {
-  return (legacy.active && legacy.target==&npc) ||
+  return TestBench::npcDuelActor(npc) || (legacy.active && legacy.target==&npc) ||
          (population.active && population.members.contains(&npc)) || forceCharacterVirtual(npc);
 }
 void NavDemos::reset() {legacy=Episode{};population=Population{};settings=Settings{};preparingLegacy=nullptr;}

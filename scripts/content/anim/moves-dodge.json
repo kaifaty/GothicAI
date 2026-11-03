@@ -1,0 +1,32 @@
+{
+  "note": "Dodges of step 6 (reports/Свои анимации для боя.md): the 1H combat stance S_1HRUN at both ends (the jump-back starts there, not in S_1H), four directions. Travel in metres in the character's frame: x = its left, z = forward. Kimodo runs at 30 fps.",
+  "stance": "HUMANS_1HST1-S_1HRUN.MAN",
+  "samples": 8,
+  "seed": 6101,
+  "moves": [
+    {"id": "dash_back", "duration": 1.2, "travel": [0.0, -2.0],
+     "text": "A person in a sword fighting stance quickly dashes backward to dodge an attack, then settles back into the fighting stance."},
+    {"id": "dash_left", "duration": 1.2, "travel": [2.0, 0.0],
+     "text": "A person in a sword fighting stance quickly dashes sideways to their left to dodge an attack, then settles back into the fighting stance."},
+    {"id": "dash_right", "duration": 1.2, "travel": [-2.0, 0.0],
+     "text": "A person in a sword fighting stance quickly dashes sideways to their right to dodge an attack, then settles back into the fighting stance."},
+    {"id": "dash_forward", "duration": 1.2, "travel": [0.0, 2.0],
+     "text": "A person in a sword fighting stance quickly dashes forward past an attack, then settles back into the fighting stance."},
+    {"id": "roll_back", "duration": 1.7, "travel": [0.0, -3.0],
+     "text": "A person in a fighting stance quickly rolls backward over their shoulder on the ground to dodge, then springs back up into the fighting stance."},
+    {"id": "roll_left", "duration": 1.7, "travel": [3.0, 0.0],
+     "text": "A person in a fighting stance dives and rolls on the ground to their left side to dodge, then quickly gets back up into the fighting stance."},
+    {"id": "roll_right", "duration": 1.7, "travel": [-3.0, 0.0],
+     "text": "A person in a fighting stance dives and rolls on the ground to their right side to dodge, then quickly gets back up into the fighting stance."},
+    {"id": "roll_forward", "duration": 1.7, "travel": [0.0, 3.0],
+     "text": "A person in a fighting stance dives forward into a roll over their shoulder on the ground, then quickly gets back up into the fighting stance."},
+    {"id": "heavy_roll_back", "duration": 2.3, "travel": [0.0, -2.2],
+     "text": "A person wearing heavy armor slowly and clumsily rolls backward on the ground, then struggles back up into a fighting stance."},
+    {"id": "heavy_roll_left", "duration": 2.3, "travel": [2.2, 0.0],
+     "text": "A person wearing heavy armor slowly and clumsily rolls to their left side on the ground, then struggles back up into a fighting stance."},
+    {"id": "heavy_roll_right", "duration": 2.3, "travel": [-2.2, 0.0],
+     "text": "A person wearing heavy armor slowly and clumsily rolls to their right side on the ground, then struggles back up into a fighting stance."},
+    {"id": "heavy_roll_forward", "duration": 2.3, "travel": [0.0, 2.2],
+     "text": "A person wearing heavy armor slowly and clumsily rolls forward over their shoulder on the ground, then struggles back up into a fighting stance."}
+  ]
+}

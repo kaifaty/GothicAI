@@ -6,6 +6,7 @@
 
 #include "utils/string_frm.h"
 #include "world/objects/npc.h"
+#include "world/world.h"
 #include "world/objects/item.h"
 #include "world/triggers/abstracttrigger.h"
 #include "graphics/mesh/footik.h"
@@ -118,6 +119,7 @@ Marvin::Marvin() {
     {"ztoggle tnl",                C_Invalid},
     {"ztoggle vobbox",             C_ToggleVobBox},
     {"toggle melee_blade_draw",    C_ToggleMeleeBladeDraw},
+    {"toggle melee_blade_labels",  C_ToggleMeleeBladeLabels},
     {"zvideores %d %d %d",         C_Invalid},
 
     // game
@@ -176,6 +178,7 @@ Marvin::Marvin() {
     {"toggle gestures",            C_ToggleGestures},
     {"toggle blink",               C_ToggleBlink},
     {"toggle manualaim",           C_ToggleManualAim},
+    {"toggle bowstrength",         C_ToggleBowStrength},
     {"toggle npcmanualaim",        C_ToggleNpcManualAim},
     {"toggle flinch",              C_ToggleFlinch},
     {"toggle ragdoll",             C_ToggleRagdoll},
@@ -184,9 +187,15 @@ Marvin::Marvin() {
     {"toggle arrow_physics",      C_ToggleArrowPhysics},
     {"toggle arrow_sticking",     C_ToggleArrowSticking},
     {"toggle spell_physics",      C_ToggleSpellPhysics},
+    {"toggle body_impact_damage", C_ToggleBodyImpactDamage},
+    {"toggle body_traces",        C_ToggleBodyTraces},
+    {"toggle blood",              C_ToggleBlood},
+    // blood <waypoint> [pool|splash] [radius_cm]: a stain on the ground at the point (empty: splash, default size)
+    {"blood %s %s %d",            C_Blood},
     {"toggle movable_vobs",       C_ToggleMovableVobs},
     {"toggle item_hulls",         C_ToggleItemHulls},
     {"toggle item_deepest_contact",C_ToggleItemDeepestContact},
+    {"toggle ragdoll_birth_guard",C_ToggleRagdollBirthGuard},
     {"toggle furniture_parts",    C_ToggleFurnitureParts},
     {"toggle physics_noise",      C_TogglePhysicsNoise},
     {"toggle destruction",        C_ToggleDestruction},
@@ -201,6 +210,20 @@ Marvin::Marvin() {
     {"toggle melee_physics_hits", C_ToggleMeleePhysicsHits},
     {"toggle melee_reactions",    C_ToggleMeleeReactions},
     {"toggle melee_posture",      C_ToggleMeleePosture},
+    {"toggle melee_stagger",      C_ToggleMeleeStagger},
+    {"toggle melee_beast_poise",  C_ToggleMeleeBeastPoise},
+    {"toggle melee_backstab",     C_ToggleMeleeBackstab},
+    {"toggle melee_dodge",        C_ToggleMeleeDodge},
+    {"toggle melee_barge",        C_ToggleMeleeBarge},
+    {"toggle melee_charge",       C_ToggleMeleeCharge},
+    {"toggle melee_riposte",      C_ToggleMeleeRiposte},
+    {"toggle melee_heal_interrupt", C_ToggleMeleeHealInterrupt},
+    {"toggle melee_use_in_hand", C_ToggleMeleeUseInHand},
+    {"toggle food_over_time",     C_ToggleFoodOverTime},
+    {"toggle melee_ai_dodge",     C_ToggleMeleeAiDodge},
+    {"toggle melee_ai_riposte",   C_ToggleMeleeAiRiposte},
+    {"toggle melee_ai_charge",    C_ToggleMeleeAiCharge},
+    {"toggle melee_ai_barge",     C_ToggleMeleeAiBarge},
     {"toggle melee_down_tactics", C_ToggleMeleeDownTactics},
     {"toggle melee_hitstop",      C_ToggleMeleeHitStop},
     {"toggle melee_stamina",      C_ToggleMeleeStamina},
@@ -439,6 +462,10 @@ bool Marvin::exec(std::string_view v) {
       Gothic::inst().setMeleeBladeDraw(!Gothic::inst().doMeleeBladeDraw());
       return true;
       }
+    case C_ToggleMeleeBladeLabels:{
+      Gothic::inst().setMeleeBladeLabels(!Gothic::inst().doMeleeBladeLabels());
+      return true;
+      }
     case C_ToggleTime:{
       Gothic::inst().setClock(!Gothic::inst().doClock());
       return true;
@@ -581,6 +608,9 @@ bool Marvin::exec(std::string_view v) {
     case C_ToggleManualAim:
       Archery::setEnabled(!Archery::isEnabled());
       return true;
+    case C_ToggleBowStrength:
+      Archery::setBowStrengthEnabled(!Archery::isBowStrengthEnabled());
+      return true;
     case C_ToggleNpcManualAim:
       ArcherAi::setEnabled(!ArcherAi::isEnabled());
       return true;
@@ -605,6 +635,45 @@ bool Marvin::exec(std::string_view v) {
     case C_ToggleSpellPhysics:
       Gothic::settingsSetI("GAME","spell_physics",Gothic::settingsGetI("GAME","spell_physics")==0 ? 1 : 0);
       return true;
+    case C_ToggleBodyImpactDamage:
+      Gothic::settingsSetI("GAME","body_impact_damage",Gothic::settingsGetI("GAME","body_impact_damage")==0 ? 1 : 0);
+      return true;
+    case C_ToggleBodyTraces:
+      Gothic::settingsSetI("GAME","body_traces",Gothic::settingsGetI("GAME","body_traces")==0 ? 1 : 0);
+      return true;
+    case C_ToggleBlood: {
+      const bool enabled = Gothic::settingsGetI("GAME","blood")==0;
+      Gothic::settingsSetI("GAME","blood",enabled ? 1 : 0);
+      print(enabled ? "Blood: ON" : "Blood: OFF");
+      return true;
+      }
+    case C_Blood: {
+      World* world = Gothic::inst().world();
+      if(world==nullptr)
+        return false;
+      const auto* point = world->findPoint(ret.argv[0],false);
+      const auto  kind  = ret.argv[1];
+      if(point==nullptr || (!kind.empty() && kind!="pool" && kind!="splash")) {
+        print("blood <waypoint> [pool|splash] [radius_cm]");
+        return false;
+        }
+      const bool pool   = kind=="pool";
+      float      radius = pool ? 40.f : 15.f;
+      if(!ret.argv[2].empty()) {
+        int value = 0;
+        auto err  = std::from_chars(ret.argv[2].data(),ret.argv[2].data()+ret.argv[2].size(),value).ec;
+        if(err!=std::errc() || value<=0) {
+          print("blood: radius_cm must be a positive number");
+          return false;
+          }
+        radius = float(value);
+        }
+      const auto id = world->placeBloodStain(point->position(),pool ? BloodStains::Kind::Pool : BloodStains::Kind::Splash,radius);
+      if(id!=0)
+        print("blood stain "+std::to_string(id)+" at "+point->name); else
+        print("blood: none placed (off, or no ground)");
+      return id!=0;
+      }
     case C_ToggleMovableVobs:
       Gothic::settingsSetI("GAME","movable_vobs",Gothic::settingsGetI("GAME","movable_vobs")==0 ? 1 : 0);
       return true;
@@ -613,6 +682,9 @@ bool Marvin::exec(std::string_view v) {
       return true;
     case C_ToggleItemDeepestContact:
       Gothic::settingsSetI("GAME","item_deepest_contact",Gothic::settingsGetI("GAME","item_deepest_contact")==0 ? 1 : 0);
+      return true;
+    case C_ToggleRagdollBirthGuard:
+      Gothic::settingsSetI("GAME","ragdoll_birth_guard",Gothic::settingsGetI("GAME","ragdoll_birth_guard")==0 ? 1 : 0);
       return true;
     case C_ToggleFurnitureParts:
       Gothic::settingsSetI("GAME","furniture_parts",Gothic::settingsGetI("GAME","furniture_parts")==0 ? 1 : 0);
@@ -684,6 +756,90 @@ bool Marvin::exec(std::string_view v) {
       const bool enabled = !Gothic::physicsFlags().meleePosture;
       Gothic::settingsSetI("GAME","melee_posture",enabled ? 1 : 0);
       print(enabled ? "Melee posture: ON" : "Melee posture: OFF");
+      return true;
+      }
+    case C_ToggleMeleeStagger: {
+      const bool enabled = Gothic::settingsGetI("GAME","melee_stagger")==0;
+      Gothic::settingsSetI("GAME","melee_stagger",enabled ? 1 : 0);
+      print(enabled ? "Melee stagger: ON" : "Melee stagger: OFF");
+      return true;
+      }
+    case C_ToggleMeleeBeastPoise: {
+      const bool enabled = Gothic::settingsGetI("GAME","melee_beast_poise")==0;
+      Gothic::settingsSetI("GAME","melee_beast_poise",enabled ? 1 : 0);
+      print(enabled ? "Melee beast poise: ON" : "Melee beast poise: OFF");
+      return true;
+      }
+    case C_ToggleMeleeBackstab: {
+      const bool enabled = !Gothic::physicsFlags().meleeBackstab;
+      Gothic::settingsSetI("GAME","melee_backstab",enabled ? 1 : 0);
+      print(enabled ? "Melee backstab: ON" : "Melee backstab: OFF");
+      return true;
+      }
+    case C_ToggleMeleeDodge: {
+      const bool enabled = !Gothic::physicsFlags().meleeDodge;
+      Gothic::settingsSetI("GAME","melee_dodge",enabled ? 1 : 0);
+      print(enabled ? "Melee dodge: ON" : "Melee dodge: OFF");
+      return true;
+      }
+    case C_ToggleMeleeBarge: {
+      const bool enabled = Gothic::settingsGetI("GAME","melee_barge")==0;
+      Gothic::settingsSetI("GAME","melee_barge",enabled ? 1 : 0);
+      print(enabled ? "Melee barge: ON" : "Melee barge: OFF");
+      return true;
+      }
+    case C_ToggleMeleeCharge: {
+      const bool enabled = !Gothic::physicsFlags().meleeCharge;
+      Gothic::settingsSetI("GAME","melee_charge",enabled ? 1 : 0);
+      print(enabled ? "Melee charge: ON" : "Melee charge: OFF");
+      return true;
+      }
+    case C_ToggleMeleeRiposte: {
+      const bool enabled = !Gothic::physicsFlags().meleeRiposte;
+      Gothic::settingsSetI("GAME","melee_riposte",enabled ? 1 : 0);
+      print(enabled ? "Melee riposte: ON" : "Melee riposte: OFF");
+      return true;
+      }
+    case C_ToggleMeleeHealInterrupt: {
+      const bool enabled = !Gothic::physicsFlags().meleeHealInterrupt;
+      Gothic::settingsSetI("GAME","melee_heal_interrupt",enabled ? 1 : 0);
+      print(enabled ? "Melee heal interrupt: ON" : "Melee heal interrupt: OFF");
+      return true;
+      }
+    case C_ToggleMeleeUseInHand: {
+      const bool enabled = !Gothic::physicsFlags().meleeUseInHand;
+      Gothic::settingsSetI("GAME","melee_use_in_hand",enabled ? 1 : 0);
+      print(enabled ? "Melee use in hand: ON" : "Melee use in hand: OFF");
+      return true;
+      }
+    case C_ToggleFoodOverTime: {
+      const bool enabled = !Gothic::physicsFlags().foodOverTime;
+      Gothic::settingsSetI("GAME","food_over_time",enabled ? 1 : 0);
+      print(enabled ? "Food over time: ON" : "Food over time: OFF");
+      return true;
+      }
+    case C_ToggleMeleeAiDodge: {
+      const bool enabled = !Gothic::physicsFlags().meleeAiDodge;
+      Gothic::settingsSetI("GAME","melee_ai_dodge",enabled ? 1 : 0);
+      print(enabled ? "Melee AI dodge: ON" : "Melee AI dodge: OFF");
+      return true;
+      }
+    case C_ToggleMeleeAiRiposte: {
+      const bool enabled = !Gothic::physicsFlags().meleeAiRiposte;
+      Gothic::settingsSetI("GAME","melee_ai_riposte",enabled ? 1 : 0);
+      print(enabled ? "Melee AI riposte: ON" : "Melee AI riposte: OFF");
+      return true;
+      }
+    case C_ToggleMeleeAiCharge: {
+      const bool enabled = !Gothic::physicsFlags().meleeAiCharge;
+      Gothic::settingsSetI("GAME","melee_ai_charge",enabled ? 1 : 0);
+      print(enabled ? "Melee AI charge: ON" : "Melee AI charge: OFF");
+      return true;
+      }
+    case C_ToggleMeleeAiBarge: {
+      const bool enabled = !Gothic::physicsFlags().meleeAiBarge;
+      Gothic::settingsSetI("GAME","melee_ai_barge",enabled ? 1 : 0);
+      print(enabled ? "Melee AI barge: ON" : "Melee AI barge: OFF");
       return true;
       }
     case C_ToggleMeleeDownTactics: {

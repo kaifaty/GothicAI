@@ -28,6 +28,10 @@ from .common import (
 from .crime_law import COUNTERS, HERO_POINT, PAYNOW, PETZMASTER, PMSCHULDEN, THEFT_POINT
 from .crimes import ANDRE, CITY_OWNER
 
+SCENARIOS = {
+    "quest_law": ("OFF", {"save": True, "timeout": 600}),
+}
+
 if TYPE_CHECKING:
     from ..crime_law_runtime import CrimeLawRuntime
     from ..crimes import Crimes

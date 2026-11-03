@@ -6,6 +6,7 @@
 #include "frameprofile.h"
 #include "loadprobe.h"
 #include "gothic.h"
+#include "testbench.h"
 #include "world/objects/item.h"
 #include "world/objects/npc.h"
 #include "world/world.h"
@@ -51,6 +52,7 @@
 #include <stdexcept>
 #include <thread>
 #include <tuple>
+#include <unordered_map>
 #ifdef __APPLE__
 #include <sys/types.h>
 #include <sys/sysctl.h>
@@ -416,8 +418,79 @@ struct CollisionWorld::Impl final : JPH::ContactListener, JPH::PhysicsStepListen
     system.SetContactListener(this);
     }
 
+  bool guardRagdollContact(const JPH::Body& a, const JPH::Body& b) {
+    if(birthGuards.empty()) return false;
+    const auto living=[](const JPH::Body& body) {
+      return body.GetObjectLayer()==DynamicWorld::C_LivingBody || body.GetObjectLayer()==DynamicWorld::C_ActiveBody;
+      };
+    const JPH::Body* ragdoll=nullptr;
+    const JPH::Body* rig=nullptr;
+    if(a.GetObjectLayer()==DynamicWorld::C_Ragdoll && living(b)) { ragdoll=&a;rig=&b; }
+    else if(b.GetObjectLayer()==DynamicWorld::C_Ragdoll && living(a)) { ragdoll=&b;rig=&a; }
+    else return false;
+    const auto group=ragdoll->GetCollisionGroup().GetGroupID();
+    const auto found=birthGuards.find(group);
+    if(found==birthGuards.end()) return false;
+    const auto& guard=found->second;
+    const auto livingGroup=rig->GetCollisionGroup().GetGroupID();
+    if(!guard.birth && std::find(guard.livingGroups.begin(),guard.livingGroups.end(),livingGroup)==guard.livingGroups.end())
+      return false;
+    std::lock_guard<std::mutex> lock(birthMutex);
+    birthTouches.emplace_back(group,livingGroup);
+    return true;
+    }
+
+  void finishRagdollBirthStep() {
+    if(birthGuards.empty()) return;
+    // Update has joined its workers. Only this thread changes the guard table;
+    // callbacks append touches under birthMutex, including cached sensor contacts.
+    std::sort(birthTouches.begin(),birthTouches.end());
+    birthTouches.erase(std::unique(birthTouches.begin(),birthTouches.end()),birthTouches.end());
+    for(const auto& touch:birthTouches) {
+      auto& guard=birthGuards.at(touch.first);
+      if(guard.birth) guard.livingGroups.push_back(touch.second);
+      }
+    for(auto it=birthGuards.begin();it!=birthGuards.end();) {
+      auto& guard=it->second;
+      guard.birth=false;
+      // Sleeping parts stop reporting contacts. Retain protection until at
+      // least one part is active and can confirm that the rig has separated.
+      if(!guard.body->isSleeping()) {
+        auto& groups=guard.livingGroups;
+        groups.erase(std::remove_if(groups.begin(),groups.end(),[&](uint32_t group) {
+          return !std::binary_search(birthTouches.begin(),birthTouches.end(),std::make_pair(it->first,group));
+          }),groups.end());
+        }
+      if(guard.livingGroups.empty()) it=birthGuards.erase(it); else ++it;
+      }
+    birthTouches.clear();
+    }
+
   void onContact(const JPH::Body& a, const JPH::Body& b, const JPH::ContactManifold& manifold,
-                 const JPH::ContactSettings& settings, bool persisted) {
+                 JPH::ContactSettings& settings, bool persisted) {
+    if(guardRagdollContact(a,b)) {
+      settings.mIsSensor=true;
+      return;
+      }
+    if(emitBodyImpacts && !a.IsSensor() && !b.IsSensor()) {
+      const auto accepts=[](const JPH::Body& body) {
+        const auto layer=body.GetObjectLayer();
+        return layer==DynamicWorld::C_Landscape || layer==DynamicWorld::C_Object || layer==DynamicWorld::C_MovableVob;
+        };
+      const bool first=a.GetObjectLayer()==DynamicWorld::C_Ragdoll && accepts(b);
+      const bool second=b.GetObjectLayer()==DynamicWorld::C_Ragdoll && accepts(a);
+      if(first || second) {
+        float speed=0;
+        for(uint i=0;i<manifold.mRelativeContactPointsOn1.size();++i) {
+          const auto point=manifold.GetWorldSpaceContactPointOn1(i);
+          speed=std::max(speed,(a.GetPointVelocity(point)-b.GetPointVelocity(point)).Dot(manifold.mWorldSpaceNormal));
+          }
+        if(speed>0.f) {
+          std::lock_guard<std::mutex> guard(impactMutex);
+          bodyImpacts.push_back({first ? a.GetID() : b.GetID(),speed*.1f});
+          }
+        }
+      }
     if(const auto* target=solverTraceTarget.load(std::memory_order_relaxed)) {
       const auto traced=[&](const JPH::Body& body) {
         if(body.GetObjectLayer()!=DynamicWorld::C_Item)return false;
@@ -588,8 +661,20 @@ struct CollisionWorld::Impl final : JPH::ContactListener, JPH::PhysicsStepListen
   JPH::TempAllocatorImpl allocator;
   JPH::JobSystemThreadPool jobs;
   std::mutex impactMutex;
+  struct BirthGuard {
+    Ragdoll* body;
+    bool birth=true;
+    std::vector<uint32_t> livingGroups;
+    };
+  bool birthGuardEnabled=true;
+  std::unordered_map<uint32_t,BirthGuard> birthGuards;
+  std::mutex birthMutex;
+  std::vector<std::pair<uint32_t,uint32_t>> birthTouches;
   std::atomic<const Item*> solverTraceTarget {nullptr};
   std::vector<ItemSolverContact> solverContacts;
+  struct BodyImpact { JPH::BodyID body;float speed; };
+  std::vector<BodyImpact> bodyImpacts;
+  bool emitBodyImpacts=true;
   std::vector<Impact> impacts;
   std::vector<NoiseImpact> noises;
   uint64_t simulationStep = 0;
@@ -2243,7 +2328,7 @@ std::vector<CollisionWorld::RagdollContact> CollisionWorld::ragdollContacts(cons
   }
 
 bool CollisionWorld::hasCollision(const JPH::Shape* shape, const Tempest::Vec3& center,
-                                  Tempest::Vec3& normal, Interactive*& vob) const {
+                                  Tempest::Vec3& normal, Interactive*& vob, const CapsuleContact& contact) const {
   if(shape==nullptr)
     return false;
   JPH::CollideShapeSettings settings;
@@ -2308,6 +2393,11 @@ bool CollisionWorld::hasCollision(const JPH::Shape* shape, const Tempest::Vec3& 
           hasSourceWitnessNormal = true;
           }
         }
+      }
+    if(contact && native.GetObjectLayer()!=DynamicWorld::C_Ragdoll) {
+      const auto point=position+hit.mContactPointOn2;
+      contact(body,{contactNormal.GetX(),contactNormal.GetY(),contactNormal.GetZ()},toCentimeters(point),
+              toCentimeters(native.GetPointVelocity(point)));
       }
     sum += contactNormal;
     ++count;
@@ -2656,6 +2746,9 @@ void CollisionWorld::stepShadowBlades(float fraction, bool bodiesLocked) {
             auto* object=reinterpret_cast<CollisionBody*>(body.GetUserData());
             if(object!=nullptr)
               contact.material=object->mesh!=nullptr ? object->mesh->materialId(Physics::triangleData(*body.GetShape(),hit.mSubShapeID2)) : object->noiseSurface;
+            // A board, crate or fence: the body that may take a stopped blow.
+            if(object!=nullptr && object->ptrType()==DynamicWorld::P_MovableVob)
+              contact.movableVob=reinterpret_cast<uintptr_t>(object->payload());
             }
 
           auto bounds=cast.mShapeWorldBounds;
@@ -3116,6 +3209,9 @@ void CollisionWorld::tick(uint64_t dt) {
           impl->system.Update(seconds,1,&impl->allocator,&impl->jobs);
           finishBuoyancy(seconds);
           for(auto* body:ragdolls) body->finishKinematicStep();
+          impl->finishRagdollBirthStep();
+          if(TestBench::isActive())
+            for(auto* body:ragdolls) body->sampleBirth(seconds);
           impl->meleeSample.solveMs+=std::chrono::duration<float,std::milli>(std::chrono::steady_clock::now()-solveStart).count();
           ++impl->meleeSample.updates;
           sampleMeleeBench();
@@ -3190,6 +3286,9 @@ void CollisionWorld::tick(uint64_t dt) {
       impl->waterSteps=false;
       finishBuoyancy(step);
       for(auto* body:ragdolls) body->finishKinematicStep();
+      impl->finishRagdollBirthStep();
+      if(TestBench::isActive())
+        for(auto* body:ragdolls) body->sampleBirth(step);
       itemWakeQueries=0;itemWakeCreated=0;
       recoverTunneledItems();
       advanced = true;
@@ -3226,6 +3325,12 @@ void CollisionWorld::tick(uint64_t dt) {
     fillRagdoll(result,id);
     return result.ragdoll;
     };
+  for(const auto& impact:impl->bodyImpacts) {
+    auto* rig=rigFor(impact.body);
+    if(rig!=nullptr && rig->impactBone(rig->boneForBodyId(impact.body.GetIndexAndSequenceNumber())))
+      rig->recordImpactSpeed(impact.speed);
+    }
+  impl->bodyImpacts.clear();
   // Resolve identities only after all Jolt workers finish. The native sequence
   // number rejects a removed/reused body; NPC handles are weak and user_ptr is
   // cleared by NPC destruction even while the script retains the instance.
@@ -3458,11 +3563,21 @@ uint32_t CollisionWorld::registerRagdoll(Ragdoll& body) {
   // Zero is the default group of ordinary world bodies.
   if(nextRagdollGroup==0) throw std::runtime_error("Jolt ragdoll collision group capacity exhausted");
   ragdolls.push_back(&body);
-  return nextRagdollGroup++;
+  const auto group=nextRagdollGroup++;
+  if(impl->birthGuardEnabled && !body.isKinematic())
+    impl->birthGuards.emplace(group,Impl::BirthGuard{&body,true,{}});
+  return group;
   }
 
 void CollisionWorld::unregisterRagdoll(Ragdoll& body) {
+  for(auto it=impl->birthGuards.begin();it!=impl->birthGuards.end();++it)
+    if(it->second.body==&body) { impl->birthGuards.erase(it);break; }
   ragdolls.erase(std::remove(ragdolls.begin(),ragdolls.end(),&body),ragdolls.end());
+  }
+
+std::vector<uint32_t> CollisionWorld::ragdollBirthGuardGroups(const Ragdoll& body) const {
+  const auto it=impl->birthGuards.find(uint32_t(body.noiseId()));
+  return it==impl->birthGuards.end() ? std::vector<uint32_t>() : it->second.livingGroups;
   }
 
 size_t CollisionWorld::bodyCount() const { return impl->system.GetNumBodies(); }
@@ -3585,10 +3700,26 @@ bool CollisionWorld::buoyancyEnabled() const { return buoyancy; }
 
 void CollisionWorld::setItemWakeEnabled(bool enabled) { itemWake=enabled; }
 
+void CollisionWorld::setBodyImpactEnabled(bool enabled) {
+  impl->emitBodyImpacts=enabled;
+  if(!enabled) {
+    impl->bodyImpacts.clear();
+    for(auto* rig:ragdolls) rig->takeImpactSpeed();
+    }
+  }
+
 void CollisionWorld::setItemDeepestContactEnabled(bool enabled) {
   auto settings=impl->system.GetPhysicsSettings();
   settings.mDeepestContactLayers=enabled ? 1u<<DynamicWorld::C_Item : 0;
   impl->system.SetPhysicsSettings(settings);
+  }
+
+void CollisionWorld::setRagdollBirthGuardEnabled(bool enabled) {
+  impl->birthGuardEnabled=enabled;
+  if(!enabled) {
+    impl->birthGuards.clear();
+    impl->birthTouches.clear();
+    }
   }
 
 void CollisionWorld::setItemWakeCallback(std::function<size_t(const Tempest::Vec3&,const Tempest::Vec3&,size_t)> callback) {

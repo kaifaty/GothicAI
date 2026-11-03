@@ -189,7 +189,10 @@ class Artist:
 
     async def _generate(self, tmp: Path, emblem: str) -> Path | None:
         """One image_gen call in an empty repository with a read-only sandbox; the picture's path."""
-        git = ["git", "-C", str(tmp)]
+        git = [
+            "git", "-c", "user.name=Gothic AI", "-c", "user.email=gothic-ai@localhost",
+            "-c", "commit.gpgsign=false", "-C", str(tmp),
+        ]
         for cmd in ([*git, "init", "-q"], [*git, "commit", "-q", "--allow-empty", "-m", "init"]):
             proc = await asyncio.create_subprocess_exec(
                 *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL

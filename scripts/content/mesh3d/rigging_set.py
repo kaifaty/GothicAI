@@ -198,7 +198,7 @@ def write_maps(write_dds, root: Path, folder: Path, maps: Path, colour: list[flo
 
 
 def glb_edit(path: Path, out: Path, names: dict[str, str], masked: set[str], lift: float = 0.0) -> list[str]:
-    """Rename GLB materials (zone key -> material key) and set alphaMode MASK on the masked ones."""
+    """Rename GLB materials (zone key -> material key), set alphaMode MASK on the masked ones and BLEND on water."""
     data = path.read_bytes()
     length = struct.unpack_from('<I', data, 12)[0]
     doc = json.loads(data[20:20 + length])
@@ -220,6 +220,8 @@ def glb_edit(path: Path, out: Path, names: dict[str, str], masked: set[str], lif
         rest = rest[:8] + bytes(blob_bin)
     for mat in doc.get('materials', []):
         mat['name'] = names.get(mat['name'], mat['name'])
+        if mat.get('extras', {}).get('group') == 'WATER':  # the loader's one translucent material: engine water
+            mat['alphaMode'] = 'BLEND'
         if mat['name'] in masked:
             mat['alphaMode'] = 'MASK'
             mat['alphaCutoff'] = 0.5

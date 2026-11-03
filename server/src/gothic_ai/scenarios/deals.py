@@ -17,6 +17,15 @@ from ..trust import Trust
 from .common import LOBART, FixedDecider, _logged, _until, model_off, wait_message
 from .live import LiveCase, LiveSuite
 
+SCENARIOS = {
+    "contract": ("GIVEN", {"save": False, "timeout": 240}),
+    "deal": ("GIVEN", {"save": True, "timeout": 240}),
+    "debt": ("GIVEN", {"save": True, "timeout": 240}),
+    "deal_demo": ("GIVEN", {"save": False, "timeout": 240}),
+    "haggle": ("LIVE", None),
+    "xardas_money": ("GIVEN", {"save": False, "timeout": 240}),
+}
+
 log = logging.getLogger("gothic_ai.scenarios")
 
 

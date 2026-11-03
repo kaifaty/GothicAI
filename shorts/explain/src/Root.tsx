@@ -6,7 +6,8 @@ import {fontsReady} from './fonts';
 import {Plan} from './schema';
 import {FPS, FRAME, H, W} from './theme';
 
-// the dice chart demo (use --props '{"brand":false}' without assets; real plans come from the workspace)
+// the dice chart demo (use --props '{"brand":false,"sfx":false}' without assets; real plans come from the workspace).
+// Nothing optional is set here: these defaults sit under every plan's own props
 const demo: Plan = Plan.parse({
   lang: 'ru',
   hook: {text: 'Шаг за 15 м — минус треть шанса', until: 2},

@@ -11,7 +11,10 @@
 # QUALITY_PILOT_TASK=gothic-ai/remaster-ASSET selects ASSET.bench; a set must replace every entry of its own index.
 # QUALITY_PILOT_SCENARIO=FILE.bench overrides the scenario, e.g. the same cameras at another time of day.
 # QUALITY_PILOT_TIMEOUT=SECONDS gives the game longer than 240 s (a long scenario on a busy Ryzen).
+# QUALITY_PILOT_WAIT_MAX=SECONDS waits longer than 900 s for the window in the gq queue (a busy Ryzen).
 # QUALITY_PILOT_INI="SECTION.key=value ..." adds Gothic.ini settings, e.g. INTERNAL.halfResAoFog=0.
+# QUALITY_PILOT_TEXTURES=DIR (on Ryzen) gives the game OPENGOTHIC_TEXTURES, e.g. an own particle texture;
+#   empty by default, so HD textures never leak into a capture.
 # --compose-house CAPTURES OUTPUT writes original / pilot-3b / house-1 boards.
 # --compose-house-2 CAPTURES OUTPUT writes original / house-1 / house-2 boards.
 set -euo pipefail
@@ -28,6 +31,9 @@ SCENARIO="${QUALITY_PILOT_SCENARIO:-$SCENARIO}"
 # Remaster assets share one engine build; each keeps its own scripts, content and runs.
 BUILD_TASK="$TASK"
 [[ "$TASK" != gothic-ai/remaster-* ]] || BUILD_TASK=gothic-ai/remaster-engine
+# QUALITY_PILOT_BUILD_TASK=gothic-ai/TASK/DIR: an engine of its own (e.g. a renderer change against its base)
+BUILD_TASK="${QUALITY_PILOT_BUILD_TASK:-$BUILD_TASK}"
+[[ "$BUILD_TASK" =~ ^gothic-ai/[a-z0-9/-]+$ ]] || { echo "bad build task: $BUILD_TASK" >&2; exit 2; }
 
 if [[ "${1:-}" == --remote-prepare ]]; then
   game_environment="$(python3 "$(dirname "$0")/ryzen_game.py")"
@@ -104,7 +110,7 @@ PYINI
   export ALSOFT_DRIVERS=null TEMPEST_BACKGROUND=1 TEMPEST_WINDOW_SIZE=1280x720
   export TEMPEST_WINDOW_POS=100,100 GOTHIC_AI=0
   export OPENGOTHIC_CONTENT="$task/content/$variant"
-  export OPENGOTHIC_TEXTURES='' OPENGOTHIC_FRACTURE=''
+  export OPENGOTHIC_TEXTURES="${QUALITY_PILOT_TEXTURES:-}" OPENGOTHIC_FRACTURE=''
   export OPENGOTHIC_CENSUS="$out/census.json"
   export OPENGOTHIC_BENCH="$task/scripts/$SCENARIO" OPENGOTHIC_BENCH_OUT="$out"
   game="$GOTHIC_DIR"
@@ -216,7 +222,7 @@ if [[ "${1:-}" == --capture ]]; then
   rc=0
   GQ_OWNER="${TASK##*/}" "$ROOT/scripts/gq" --host "$HOST" run --class quick \
     --threads 4 --mem 5G --gpu-mem 4G --display --display-exclusive \
-    --max 6m --wait-max 900 --name "pilot $variant captures" -- \
+    --max 6m --wait-max "${QUALITY_PILOT_WAIT_MAX:-900}" --name "pilot $variant captures" -- \
     env ${GAME_ENV[@]+"${GAME_ENV[@]}"} QUALITY_PILOT_TASK="$TASK" QUALITY_PILOT_SCENARIO="$SCENARIO" \
     bash "$TASK/scripts/capture-quality-pilot.sh" --remote-capture "$variant" || rc=$?
   rsync -a "$HOST:$TASK/runs/$variant/" "$out/$variant/"

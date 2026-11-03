@@ -109,6 +109,12 @@ class ParticleFx final {
     float         visAlphaEnd          = 0.f;
     bool          visYawAlign          = false;
     bool          visZBias             = false;
+    // own atlas flipbook (particles.d "flipbook"): cols/rows 1..8, 0 frames when off
+    uint8_t       flipCols   = 0;
+    uint8_t       flipRows   = 0;
+    uint8_t       flipFrames = 0;
+    float         flipFps    = 0.f;
+    bool          flipSteady = false;  // ParticleContent::Flipbook::steady
 
     const Tempest::Texture2d* trlTexture = nullptr;
     float         trlFadeSpeed         = 0.f;

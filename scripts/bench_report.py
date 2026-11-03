@@ -1372,6 +1372,18 @@ def report(out):
         with open(host_path) as f:
             lines += [f"Host: {f.read().strip()}", ""]
     summary = {"segments": {}, "events": []}
+    log_path = os.path.join(out, "game.log")
+    if os.path.exists(log_path):
+        with open(log_path, errors="replace") as log:
+            for line in log:
+                if line.startswith("[bench] run mode: "):
+                    summary["run_mode"] = line.removeprefix("[bench] run mode: ").strip()
+                elif line.startswith("[bench] game wall seconds: "):
+                    summary["game_wall_seconds"] = int(line.removeprefix("[bench] game wall seconds: "))
+    if "run_mode" in summary:
+        lines += [f"Run: {summary['run_mode']}", ""]
+    if "game_wall_seconds" in summary:
+        lines += [f"Game wall time: {summary['game_wall_seconds']} s", ""]
     all_events = []
     table = []
 

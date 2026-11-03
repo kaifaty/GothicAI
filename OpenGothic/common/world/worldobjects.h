@@ -12,6 +12,7 @@
 #include "game/perceptionmsg.h"
 #include "game/constants.h"
 #include "objects/vob.h"
+#include "npcsimtier.h"
 
 class Npc;
 class Item;
@@ -55,6 +56,14 @@ class WorldObjects final {
     void           load(Serialize& fout);
     void           save(Serialize& fout);
     void           tick(uint64_t dt, uint64_t dtPlayer);
+    // Assigns every NPC its simulation tier (npcsimtier.h); tick() calls it
+    // first, loading calls it once the hero, camera and residency are ready.
+    void           updateSimTiers();
+    const NpcSimTiers::Stats& simTierStats() const { return simTiers; }
+    void noteGraphFpLoadResolution() { ++simTiers.fpLoadResolutions; }
+    void noteNpcGraphFallback(bool ground) {
+      if(ground) ++simTiers.graphFallbackGround; else ++simTiers.graphFallbackSegment;
+      }
     void           prepareRagdolls();
     void           syncRagdolls();
 
@@ -89,6 +98,9 @@ class WorldObjects final {
 
     uint32_t       npcId(const Npc *ptr) const;
     size_t         npcCount()    const { return npcArr.size(); }
+    // Active and retired (npcInvalid) NPCs: both are kept in a save.
+    template<class F>
+    void           forEachStoredNpc(F&& f) { for(auto& i:npcArr) f(*i); for(auto& i:npcInvalid) f(*i); }
     const Npc&     npc(size_t i) const { return *npcArr[i];    }
     Npc&           npc(size_t i)       { return *npcArr[i];    }
 
@@ -212,6 +224,7 @@ class WorldObjects final {
     std::vector<std::unique_ptr<Npc>>  npcInvalid; // dead or invalid TA
     std::vector<std::unique_ptr<Npc>>  npcRemoved; // removed, but may have a dangling references in game
     std::vector<Npc*>                  npcNear;
+    NpcSimTiers::Stats                 simTiers;
 
     std::vector<AbstractTrigger*>      triggers;
     std::vector<AbstractTrigger*>      triggersTk;

@@ -21,6 +21,7 @@ from .common import (
     LOBART,
     VINO,
     FixedDecider,
+    SharedBodyWatch,
     _logged,
     _save,
     _until,
@@ -30,6 +31,10 @@ from .common import (
     wait_message,
     wait_npc_visibility,
 )
+
+SCENARIOS = {
+    "frame": ("GIVEN", {"save": True, "timeout": 900}),
+}
 
 if TYPE_CHECKING:
     from ..chests import ChestDesk
@@ -213,7 +218,7 @@ async def frame(
             return False
         bodies[culprit].clear()
         bodies[LOBART].clear()
-        await link.body_watch([culprit, LOBART], rate_hz=20)
+        await watch.watch([culprit, LOBART])
         # The passive hero observes off the combat lane. HP and positions stay native after release.
         await link.debug("player_goto", waypoint=RETURN_ROAD)
         before = {npc: await count(npc, str(crime["item"])) for npc in (culprit, LOBART)}
@@ -242,7 +247,7 @@ async def frame(
                      and not any(row["dead"] for row in bodies[culprit]),
                      {"defense": defense, "samples": len(bodies[culprit])}):
             return False
-        await link.body_watch([])
+        await watch.watch([])
         preparing.add(LOBART)
         if label == "frame":
             return check("frame_no_goods", defense[0].get("outcome") == "no_goods"
@@ -257,6 +262,8 @@ async def frame(
     link.raw_body_listeners.append(body)
     link.listeners.append(record)
     will.busy = lambda npc: npc in preparing or original_busy(npc)
+    # The P30 pilot observes Lobart's fight: keep the culprit's rows in the shared subscription.
+    watch = SharedBodyWatch(link, "frame")
     try:
         await link.wait_world()
         if link.session is None:
@@ -587,7 +594,8 @@ async def frame(
         link.send = send  # type: ignore[method-assign]
         try:
             if not link.closed.is_set():
-                await link.body_watch([])
+                await watch.watch([])
         finally:
+            watch.close()
             link.raw_body_listeners.remove(body)
             link.listeners.remove(record)

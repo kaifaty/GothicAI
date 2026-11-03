@@ -208,7 +208,7 @@ def test_compose_and_enable_carry_world_chunks(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match='chunk NEWWORLD/CHUNKS/1_-1.GLB: in both stairs-1 and stairs-2'):
         building_set.compose('two-stairs', ['stairs-1', 'roofs-1', 'stairs-2'])
     (tmp_path / 'content-staging/empty').mkdir()
-    with pytest.raises(ValueError, match='empty: no materials, meshes, world chunks or particle descriptions'):
+    with pytest.raises(ValueError, match='empty: no materials, meshes, world chunks, particle descriptions or vob trees'):
         building_set.compose('none', ['roofs-1', 'empty'])
 
 
@@ -244,6 +244,14 @@ def test_compose_and_enable_carry_a_vob_layer(tmp_path, monkeypatch):
     assert (tmp_path / 'content/particles.d/smoke.json').read_text() == particles.read_text()
     building_set.enable('city-1')
     assert not (tmp_path / 'content/particles.d').exists()
+    sprite = tmp_path / 'content-staging/smoke-1/materials'
+    (sprite / 'own-smoke').mkdir(parents=True)
+    (sprite / 'own-smoke/albedo.dds').write_bytes(b'smoke sprite')
+    (sprite / 'materials.json').write_text(json.dumps({'OWN_SMOKE.TGA': {'albedo': 'own-smoke/albedo.dds'}}))
+    building_set.compose('city-sprite', ['life-1', 'smoke-1'])
+    composed = tmp_path / 'content-staging/city-sprite/materials'
+    assert json.loads((composed / 'materials.json').read_text()) == {'OWN_SMOKE.TGA': {'albedo': 'own-smoke/albedo.dds'}}
+    assert (composed / 'own-smoke/albedo.dds').read_bytes() == b'smoke sprite'
     duplicate = tmp_path / 'content-staging/smoke-2/particles.d/smoke.json'
     duplicate.parent.mkdir(parents=True)
     duplicate.write_text(particles.read_text())
@@ -252,6 +260,28 @@ def test_compose_and_enable_carry_a_vob_layer(tmp_path, monkeypatch):
     duplicate.rename(duplicate.with_name('other.json'))
     with pytest.raises(ValueError, match='particle effect OWN_SMOKE: in both smoke-1 and smoke-2'):
         building_set.compose('duplicate-effect', ['smoke-1', 'smoke-2'])
+
+    tree = tmp_path / 'content-staging/lamps-1/vobtrees.d/FIRETREE_LAMP.json'
+    tree.parent.mkdir(parents=True)
+    tree.write_text('{"format": 1, "add": []}\n')
+    (tree.parent / 'notes.txt').write_text('not a tree')
+    result = building_set.compose('city-lamps', ['life-1', 'lamps-1'])
+    assert result['vobtrees'] == 1 and result['parts'] == {'life-1': 1, 'lamps-1': 1}
+    composed = tmp_path / 'content-staging/city-lamps'
+    assert (composed / 'vobtrees.d/FIRETREE_LAMP.json').read_text() == tree.read_text()
+    assert sorted(p.name for p in (composed / 'vobtrees.d').iterdir()) == ['FIRETREE_LAMP.json']
+    composition = json.loads((composed / 'composition.json').read_text())
+    assert composition['parts']['lamps-1'] == ['vobtrees.d/FIRETREE_LAMP.json']
+    assert list(composition['vobtrees_sha256']) == ['FIRETREE_LAMP.json']
+    building_set.enable('city-lamps')
+    assert (tmp_path / 'content/vobtrees.d/FIRETREE_LAMP.json').read_text() == tree.read_text()
+    building_set.enable('city-1')
+    assert not (tmp_path / 'content/vobtrees.d').exists()
+    duplicate = tmp_path / 'content-staging/lamps-2/vobtrees.d/firetree_lamp.json'
+    duplicate.parent.mkdir(parents=True)
+    duplicate.write_text(tree.read_text())
+    with pytest.raises(ValueError, match='vob tree file FIRETREE_LAMP.JSON: in both lamps-1 and lamps-2'):
+        building_set.compose('duplicate-tree', ['lamps-1', 'lamps-2'])
 
 
 def test_crop_band_drops_grey_margins():

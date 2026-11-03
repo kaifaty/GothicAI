@@ -3,10 +3,14 @@
 
     uv run --no-project --with numpy python scripts/content/harbour_motion.py bench
     uv run --no-project --with numpy python scripts/content/harbour_motion.py layer --set motion-1 --copy-to harbour-motion-1
+    uv run --no-project --with numpy --with pillow python scripts/content/harbour_motion.py texture --base BASE/textures --set motion-1
     uv run --no-project --with numpy --with pillow python scripts/content/harbour_motion.py motion CAPTURES_DIR [--out motion.json]
 
 `bench` writes two scenarios from the asset's cameras.json: scripts/content/harbour-motion.bench at noon and
-harbour-motion-night.bench at midnight (shots `<camera>-night`). Unlike remaster.py's scenario, effects,
+harbour-motion-night.bench at midnight (shots `<camera>-night`); `--together` writes one scenario, noon then
+midnight, for one game run. Each shot waits `--settle` ms after the camera stands: a particle is born only
+within 40 m of the camera (common/graphics/pfx/pfxobjects.h), so a smoke shot waits out a whole particle life
+(`lspPartAvg + lspPartVar` and a second) or it shows an unfinished plume. Unlike remaster.py's scenario, effects,
 skeletal models (the lamp posts) and morph meshes stay visible: smoke, flames and lamps are the subject;
 NPCs are cleared, and the hero stands far beyond the target on the line of sight, out of the subject
 (`"hero": "near"` keeps him by the target, for cloth). A camera with `"motion": true` takes a second shot
@@ -16,7 +20,17 @@ NPCs are cleared, and the hero stands far beyond the target on the line of sight
 data/content/world/harbour-motion-placements.json into the staging set `--set`, each `--copy-to` set and the
 copy in git (data/content/world/NEWWORLD/vobs.d/). Emitters and lights take their positions as written
 (smoke at the mouth of an opening in a roof, a light inside a lantern); a mesh is put on the world mesh
-the way harbour_life.py puts its items.
+the way harbour_life.py puts its items. An emitter's `tilt` leans its up axis that many degrees towards +z,
+the world wind (common/physics/worldwind.h): a PFX that flies in its object's axes (`dirFOR_S` "object",
+as LIGHTSMOKE) drifts with the wind. The placements' `particles` are own PFX (Д2б, `particles.d`, format
+in docs/asset-migration.md): `layer` writes them as particles.d/harbour-smoke.json next to the layer, with
+a copy in git (data/content/particles.d/); a `why` note stays in the placements.
+
+`texture` writes the particle texture of the hut smoke, OWN_HUT_SMOKE.TGA (`visName_S` of OWN_HUT_SMOKE_04/_06),
+into `materials/` of the staging set `--set` and each `--copy-to` set; the engine takes a particle's texture from
+content/materials. It is made from the player's base and is not kept in git: the alpha of FIRESMOKE (static, uneven
+clumps, no plateau, peak 0.867) times a round smooth window, so no sprite edge shows; RGB white, so the colour of
+the smoke is the vertex colour of the PFX alone (reports/content/remaster/harbour-motion/README.md, r5).
 
 `motion` measures each pair `<camera>.png` / `<camera>-b.png`: in every region of the camera (pixel boxes
 in cameras.json, `regions`) the mean absolute difference of luminance and the share of pixels that changed
@@ -39,10 +53,15 @@ CAMERAS = ROOT / 'reports/content/remaster' / ASSET / 'cameras.json'
 PLACEMENTS = ROOT / 'data/content/world/harbour-motion-placements.json'
 LAYER_COPY = ROOT / 'data/content/world/NEWWORLD/vobs.d/harbour-motion.json'
 LAYER_PATH = Path('worlds/NEWWORLD/vobs.d/harbour-motion.json')
+PARTICLES_COPY = ROOT / 'data/content/particles.d/harbour-smoke.json'
+PARTICLES_PATH = Path('particles.d/harbour-smoke.json')
 NIGHT = (0, 0)
 PAIR_MS = 700
+SETTLE_MS = 6000  # after the camera stands, before the shot
 FAR_FACTOR, FAR_MIN_CM, FAR_ABOVE_CM = 3.0, 6000.0, 2000.0  # the hero's spot beyond the target
 CHANGED = 8  # luminance step out of 255 that counts as a changed pixel
+SMOKE_TEXTURE, SMOKE_DDS = 'OWN_HUT_SMOKE.TGA', 'own-hut-smoke/albedo.dds'
+SMOKE_WINDOW = (0.45, 0.78)  # the window is 1 inside this share of the half-side and 0 beyond the second
 
 
 def hero_spot(camera: dict) -> list[float]:
@@ -60,17 +79,30 @@ def hero_spot(camera: dict) -> list[float]:
     return [far[0], max(far[1], eye[1]) + FAR_ABOVE_CM, far[2]]
 
 
-def bench_lines(cameras: list[dict], night: bool) -> list[str]:
-    """Scenario lines for named eye -> target cameras (world cm) with everything drawn, at noon or at midnight.
-
-    `cam world` puts the eye relative to the hero (hero_spot) and `cam look` aims at the point on the line
-    of sight straight above or below him. A camera with `motion` takes a second shot PAIR_MS later."""
+def bench_lines(cameras: list[dict], night: bool, settle: int = SETTLE_MS, clip: int = 0) -> list[str]:
+    """Scenario lines for named eye -> target cameras (world cm) with everything drawn, at noon or at midnight."""
     time = 'set time {} {}'.format(*NIGHT) if night else 'set time 12 0'
     when = 'midnight' if night else 'noon'
     lines = [f'# {ASSET}: a staging set, default game FOV, {when}, NPC cleared, effects and lamps drawn.',
              f'# Generated by harbour_motion.py bench from reports/content/remaster/{ASSET}/cameras.json; world cm.',
              'cheat god', 'clear 1000000', time, 'overlay off', 'view full', 'cam lift off', '']
-    names = set()
+    return lines + camera_lines(cameras, night, settle, clip)
+
+
+def together_lines(day: list[dict], night: list[dict], settle: int = SETTLE_MS, clip: int = 0) -> list[str]:
+    """One scenario: the day cameras at noon, then the night cameras at midnight. The clock turns before the
+    first night camera settles, so the eye adapts to the dark and the night plume grows at night."""
+    return (bench_lines(day, False, settle, clip) + ['# then midnight', 'set time {} {}'.format(*NIGHT), '']
+            + camera_lines(night, True, settle, clip))
+
+
+def camera_lines(cameras: list[dict], night: bool, settle: int, clip: int = 0) -> list[str]:
+    """The shots of the cameras: `cam world` puts the eye relative to the hero (hero_spot) and `cam look` aims
+    at the point on the line of sight straight above or below him. Each shot waits `settle` ms after the
+    camera stands; a camera with `motion` takes a second shot PAIR_MS later. With `clip` ms, a clip of the
+    camera follows its shots: `rec <shot>-clip` (an MP4 at the bench's 30 frames per second)."""
+    time = 'set time {} {}'.format(*NIGHT) if night else 'set time 12 0'
+    lines, names = [], set()
     for camera in cameras:
         name, eye, target = camera['name'], [float(v) for v in camera['eye']], [float(v) for v in camera['target']]
         if not re.fullmatch(r'[a-z0-9]+(-[a-z0-9]+)*', name) or name in names:
@@ -90,9 +122,11 @@ def bench_lines(cameras: list[dict], night: bool) -> list[str]:
                   f'cam look {look:.3f}',
                   'goto pos ' + ' '.join(f'{v:.3f}' for v in hero),
                   f'cam world {distance:.3f} {delta[1]:.3f} {yaw:.6f}',
-                  'wait 34', 'cam hold', 'wait 6000', time, f'shot {shot}']
+                  'wait 34', 'cam hold', f'wait {settle}', time, f'shot {shot}']
         if camera.get('motion'):
             lines += [f'wait {PAIR_MS}', f'shot {shot}-b']
+        if clip:
+            lines += [f'rec {shot}-clip', f'wait {clip}', 'stop']
         lines += ['wait 300', '']
     return lines
 
@@ -105,10 +139,15 @@ def cmd_bench(args) -> int:
         if unknown:
             raise SystemExit(f'unknown cameras: {sorted(unknown)}')
         cameras = [c for c in cameras if c['name'] in only]
-    for night, name in ((False, f'{args.name}.bench'), (True, f'{args.name}-night.bench')):
-        chosen = [c for c in cameras if ('night' if night else 'day') in c.get('times', ('day', 'night'))]
+    day, night = ([c for c in cameras if when in c.get('times', ('day', 'night'))] for when in ('day', 'night'))
+    if args.together:
+        scenarios = [(f'{args.name}.bench', together_lines(day, night, args.settle, args.clip))]
+    else:
+        scenarios = [(f'{args.name}.bench', bench_lines(day, False, args.settle, args.clip)),
+                     (f'{args.name}-night.bench', bench_lines(night, True, args.settle, args.clip))]
+    for name, lines in scenarios:
         target = ROOT / 'scripts/content' / name
-        target.write_text('\n'.join(bench_lines(chosen, night)))
+        target.write_text('\n'.join(lines))
         print(target)
     return 0
 
@@ -119,6 +158,24 @@ def yaw_matrix(entry: dict) -> list[list[float]]:
         return entry['rotation']
     c, s = math.cos(math.radians(entry.get('yaw_deg', 0.0))), math.sin(math.radians(entry.get('yaw_deg', 0.0)))
     return [[c, 0.0, s], [0.0, 1.0, 0.0], [-s, 0.0, c]]
+
+
+def tilt_matrix(degrees: float) -> list[list[float]]:
+    """World-from-local rows of a turn about x: the local up axis (0, 1, 0) leans to (0, cos, sin), towards +z."""
+    c, s = math.cos(math.radians(degrees)), math.sin(math.radians(degrees))
+    return [[1.0, 0.0, 0.0], [0.0, round(c, 6), round(-s, 6)], [0.0, round(s, 6), round(c, 6)]]
+
+
+def particle_document(effects: list[dict]) -> dict:
+    """particles.d file of own PFX: name, base and the C_PARTICLEFX fields to set; notes are left out."""
+    out = []
+    for effect in effects:
+        if not re.fullmatch(r'[A-Z0-9_]+', effect['name']):
+            raise ValueError(f"particle name {effect['name']!r}: expected [A-Z0-9_]+")
+        out.append(dict(name=effect['name'], base=effect['base'], set=dict(effect['set'])))
+    if len({e['name'] for e in out}) != len(out):
+        raise ValueError('duplicate particle names')
+    return dict(format=1, effects=out)
 
 
 def layer_entries(spec: list[dict], ground=None, visuals=None) -> list[dict]:
@@ -144,8 +201,13 @@ def layer_entries(spec: list[dict], ground=None, visuals=None) -> list[dict]:
             position = [parent['position'][i] + sum(rows[i][j] * offset[j] for j in range(3)) for i in range(3)]
         else:
             position = [float(v) for v in item['position']]
-        entry = dict(key=item['key'], kind=item['kind'], position=[round(v, 1) for v in position],
-                     yaw_deg=float(item.get('yaw', 0.0)))
+        entry = dict(key=item['key'], kind=item['kind'], position=[round(v, 1) for v in position])
+        if 'tilt' in item:
+            if item['kind'] != 'emitter' or 'yaw' in item:
+                raise ValueError(f"{item['key']}: tilt is for an emitter without yaw")
+            entry['rotation'] = tilt_matrix(float(item['tilt']))
+        else:
+            entry['yaw_deg'] = float(item.get('yaw', 0.0))
         if item['kind'] == 'mesh':
             entry['visual'] = item['visual']
             entry['collision'] = item.get('collision', 'mesh')
@@ -164,7 +226,8 @@ def layer_entries(spec: list[dict], ground=None, visuals=None) -> list[dict]:
 
 
 def cmd_layer(args) -> int:
-    spec = json.loads(args.placements.read_text())['items']
+    placements = json.loads(args.placements.read_text())
+    spec = placements['items']
     ground = visuals = None
     if any(item['kind'] == 'mesh' and 'position' not in item for item in spec):
         import harbour_life
@@ -173,13 +236,71 @@ def cmd_layer(args) -> int:
     entries = layer_entries(spec, ground, visuals)
     layer = json.dumps(dict(format=1, add=entries), indent=1, ensure_ascii=False) + '\n'
     staging = Path.home() / '.local/share/gothic-ai/content-staging'
-    for path in (staging / args.set / LAYER_PATH, LAYER_COPY, *(staging / name / LAYER_PATH for name in args.copy_to)):
+    sets = [staging / args.set, *(staging / name for name in args.copy_to)]
+    for path in (*(root / LAYER_PATH for root in sets), LAYER_COPY):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(layer)
+    if placements.get('particles'):
+        particles = json.dumps(particle_document(placements['particles']), indent=1, ensure_ascii=False) + '\n'
+        for path in (*(root / PARTICLES_PATH for root in sets), PARTICLES_COPY):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(particles)
     kinds = {}
     for e in entries:
         kinds[e['kind']] = kinds.get(e['kind'], 0) + 1
     print(json.dumps(dict(items=len(entries), kinds=kinds, layer=str(staging / args.set / LAYER_PATH))))
+    return 0
+
+
+def smoke_sprite(alpha):
+    """RGBA of OWN_HUT_SMOKE from the alpha of FIRESMOKE (0..1): times a round smoothstep window, RGB white."""
+    import numpy as np
+    h, w = alpha.shape
+    yy, xx = np.mgrid[0:h, 0:w]
+    r = np.hypot((xx + .5) / w * 2 - 1, (yy + .5) / h * 2 - 1)
+    inner, outer = SMOKE_WINDOW
+    s = np.clip((outer - r) / (outer - inner), 0, 1)
+    return np.dstack([np.ones((h, w, 3)), alpha * s * s * (3 - 2 * s)])
+
+
+def write_soft_dds(path: Path, rgba) -> None:
+    """DXT5 with a box-filtered mip chain and the alpha as it is: a soft particle sprite, not a cutout
+    (test-material.py's write_dds hardens the alpha of a texture with holes)."""
+    import importlib.util
+    import struct
+    spec = importlib.util.spec_from_file_location('material_fixture', Path(__file__).with_name('test-material.py'))
+    dds = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(dds)
+    size = rgba.shape[0]
+    if rgba.shape[1] != size or size & (size - 1):
+        raise ValueError(f'{path}: a square power of two, got {rgba.shape[:2]}')
+    levels = int(math.log2(size)) + 1
+    header = [124, 0xA1007, size, size, (size // 4) ** 2 * 16, 0, levels] + [0] * 11
+    header += [32, 4, int.from_bytes(b'DXT5', 'little'), 0, 0, 0, 0, 0, 0x401008, 0, 0, 0, 0]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open('wb') as out:
+        out.write(b'DDS ' + struct.pack('<31I', *header))
+        for level in range(levels):
+            out.write(dds.bc3(dds.blocks(dds.quantize(rgba))).tobytes())
+            if level + 1 < levels:
+                rgba = dds.downsample(rgba)
+
+
+def cmd_texture(args) -> int:
+    import numpy as np
+    from PIL import Image
+    source = args.base / 'FIRESMOKE.dds'
+    alpha = np.asarray(Image.open(source).convert('RGBA'), float)[..., 3] / 255
+    rgba = smoke_sprite(alpha)
+    staging = Path.home() / '.local/share/gothic-ai/content-staging'
+    for root in (staging / args.set, *(staging / name for name in args.copy_to)):
+        write_soft_dds(root / 'materials' / SMOKE_DDS, rgba)
+        index_path = root / 'materials/materials.json'
+        index = json.loads(index_path.read_text()) if index_path.is_file() else {}
+        index[SMOKE_TEXTURE] = dict(albedo=SMOKE_DDS)
+        index_path.write_text(json.dumps(index, indent=2) + '\n')
+    print(json.dumps(dict(texture=SMOKE_TEXTURE, source=str(source), size=list(alpha.shape),
+                          peak=round(float(rgba[..., 3].max()), 3), mean=round(float(rgba[..., 3].mean()), 4))))
     return 0
 
 
@@ -226,6 +347,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     b = sub.add_parser('bench')
     b.add_argument('--only', help='comma-separated cameras, e.g. the views of a reshoot')
     b.add_argument('--name', default=ASSET, help='scenario name: NAME.bench and NAME-night.bench')
+    b.add_argument('--settle', type=int, default=SETTLE_MS,
+                   help='ms between the camera standing and the shot; smoke: a particle life and a second')
+    b.add_argument('--together', action='store_true', help='one scenario NAME.bench: noon, then midnight')
+    b.add_argument('--clip', type=int, default=0, help='ms of a clip after the shots of each camera (rec <shot>-clip)')
     b.set_defaults(func=cmd_bench)
     a = sub.add_parser('layer')
     a.add_argument('--set', required=True, help='staging set that gets the layer')
@@ -233,6 +358,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     a.add_argument('--copy-to', action='append', default=[], help='another staging set that gets the same layer file')
     a.add_argument('--placements', type=Path, default=PLACEMENTS)
     a.set_defaults(func=cmd_layer)
+    x = sub.add_parser('texture')
+    x.add_argument('--base', type=Path, required=True, help='textures/ of the base: FIRESMOKE.dds')
+    x.add_argument('--set', required=True, help='staging set that gets the texture')
+    x.add_argument('--copy-to', action='append', default=[], help='another staging set that gets it too')
+    x.set_defaults(func=cmd_texture)
     m = sub.add_parser('motion')
     m.add_argument('captures', type=Path)
     m.add_argument('--out', type=Path)

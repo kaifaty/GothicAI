@@ -380,7 +380,7 @@ struct DynamicWorld::NpcBody {
     return (dir * radius).length();
     }
 
-  Npc* toNpc() {
+  Npc* toNpc() const {
     return reinterpret_cast<Npc*>(userPointer);
     }
 
@@ -681,6 +681,9 @@ struct DynamicWorld::NpcBodyList final {
     }
 
   bool hasCollision(const NpcBody& a, const NpcBody& b, Tempest::Vec3& normal, float& colDepth) const {
+    if((a.toNpc()!=nullptr && a.toNpc()->usesSimplifiedMovement()) ||
+       (b.toNpc()!=nullptr && b.toNpc()->usesSimplifiedMovement()))
+      return false;
     const float objMaxRXZ = a.maxRXZ + b.maxRXZ;
     const float objMaxRY  = a.maxRY  + b.maxRY;
 
@@ -1087,6 +1090,15 @@ DynamicWorld::RayCamResult DynamicWorld::cameraRay(const Tempest::Vec3& from, co
 
 DynamicWorld::RayLandResult DynamicWorld::ray(const Tempest::Vec3& from, const Tempest::Vec3& to) const {
   return toResult(world->rayCast(from,to,visualMask,false), to);
+  }
+
+DynamicWorld::RayLandResult DynamicWorld::rayStatic(const Tempest::Vec3& from, const Tempest::Vec3& to) const {
+  constexpr uint32_t staticMask = (1u << C_Landscape) | (1u << C_Object);
+  const auto hit = world->rayCast(from,to,staticMask,false);
+  auto ret = toResult(hit, to);
+  if(hit.hasHit)
+    ret.n = hit.normal;
+  return ret;
   }
 
 DynamicWorld::RayLandResult DynamicWorld::rayClothCamera(const Tempest::Vec3& from,const Tempest::Vec3& to,
@@ -1762,6 +1774,10 @@ void DynamicWorld::setItemDeepestContactEnabled(bool enabled) {
   world->setItemDeepestContactEnabled(enabled);
   }
 
+void DynamicWorld::setRagdollBirthGuardEnabled(bool enabled) {
+  world->setRagdollBirthGuardEnabled(enabled);
+  }
+
 bool DynamicWorld::buoyancyEnabled() const {
   return world->buoyancyEnabled();
   }
@@ -1893,9 +1909,33 @@ std::shared_ptr<const DynamicWorld::MovableVobPose> DynamicWorld::rayMovableVob(
   return static_cast<BodyData*>(hit.body->payload())->pose;
   }
 
+bool DynamicWorld::meleeEligible(const BodyData& obj) const {
+  return obj.body!=nullptr && !obj.pose->broken && !obj.pendingBreak && obj.fractureRule!=nullptr &&
+         obj.movableShape->fracture!=nullptr && (movableVobs->enabled || obj.className=="fence");
+  }
+
+bool DynamicWorld::meleeStrike(BodyData& obj,const Tempest::Vec3& direction,const Tempest::Vec3& point,
+                               float weaponDamage,float strength,FractureRule::Melee kind,Npc* attacker) {
+  const float damage=obj.fractureRule->meleeDamage(kind,weaponDamage,strength);
+  if(!std::isfinite(damage) || damage<=0.f) return false;
+  const float impulse=damage*.02f;
+  // Fences keep a static sensor hull, so their rejected physical impulse
+  // must still record the actor of the real weapon contact.
+  obj.body->setTraceCulprit(attacker);
+  obj.body->addImpulseAtPoint(direction*impulse,point,attacker);
+  obj.health=std::max(0.f,obj.health-damage);
+  if(obj.health>.001f) return true;
+  obj.pendingBreak=true;
+  obj.traceTime=traceTime;
+  obj.traceCulprit=obj.body->traceCulprit();
+  obj.breakImpulse=impulse;
+  obj.breakPoint=point;
+  return true;
+  }
+
 size_t DynamicWorld::meleeMovableVobs(const Tempest::Vec3& origin,const Tempest::Vec3& forward,
                                      float rangeCm,float weaponDamage,float strength,FractureRule::Melee kind,
-                                     Npc* attacker) {
+                                     Npc* attacker,std::vector<uintptr_t>* struck) {
   if(!movableVobs->destructionEnabled || !std::isfinite(rangeCm) || rangeCm<=0.f ||
      !std::isfinite(origin.x) || !std::isfinite(origin.y) || !std::isfinite(origin.z) ||
      !std::isfinite(forward.x) || !std::isfinite(forward.z)) return 0;
@@ -1916,27 +1956,36 @@ size_t DynamicWorld::meleeMovableVobs(const Tempest::Vec3& origin,const Tempest:
     const auto hit=world->rayCast(origin,origin+direction*rangeCm,visualMask,false);
     if(!hit.hasHit || hit.body==nullptr || hit.body->ptrType()!=P_MovableVob) continue;
     auto& obj=*static_cast<BodyData*>(hit.body->payload());
-    if(obj.body==nullptr || obj.pose->broken || obj.pendingBreak || obj.fractureRule==nullptr ||
-       obj.movableShape->fracture==nullptr || (!movableVobs->enabled && obj.className!="fence") ||
-       touched.find(&obj)!=touched.end()) continue;
-    const float damage=obj.fractureRule->meleeDamage(kind,weaponDamage,strength);
-    if(!std::isfinite(damage) || damage<=0.f) continue;
+    const auto id=reinterpret_cast<uintptr_t>(&obj);
+    if(!meleeEligible(obj) || touched.find(&obj)!=touched.end() ||
+       (struck!=nullptr && std::find(struck->begin(),struck->end(),id)!=struck->end())) continue;
+    if(!meleeStrike(obj,direction,hit.point,weaponDamage,strength,kind,attacker)) continue;
     touched.insert(&obj);
+    if(struck!=nullptr) struck->push_back(id);
     ++count;
-    const float impulse=damage*.02f;
-    // Fences keep a static sensor hull, so their rejected physical impulse
-    // must still record the actor of the real weapon contact.
-    obj.body->setTraceCulprit(attacker);
-    obj.body->addImpulseAtPoint(direction*impulse,hit.point,attacker);
-    obj.health=std::max(0.f,obj.health-damage);
-    if(obj.health>.001f) continue;
-    obj.pendingBreak=true;
-    obj.traceTime=traceTime;
-    obj.traceCulprit=obj.body->traceCulprit();
-    obj.breakImpulse=impulse;
-    obj.breakPoint=hit.point;
     }
   return count;
+  }
+
+bool DynamicWorld::meleeStoppedMovableVob(const MeleeBladeContact& contact,float weaponDamage,float strength,
+                                          FractureRule::Melee kind,Npc* attacker,std::vector<uintptr_t>& struck) {
+  if(!movableVobs->destructionEnabled || !contact.world || !contact.stopsSwing || contact.movableVob==0 ||
+     !std::isfinite(contact.point.x) || !std::isfinite(contact.point.y) || !std::isfinite(contact.point.z) ||
+     std::find(struck.begin(),struck.end(),contact.movableVob)!=struck.end()) return false;
+  // The id came from a swept query; it is only trusted while the body still exists.
+  BodyData* found=nullptr;
+  for(auto* obj:movableVobs->bodies)
+    if(reinterpret_cast<uintptr_t>(obj)==contact.movableVob) {found=obj;break;}
+  if(found==nullptr || !meleeEligible(*found)) return false;
+  // The blade's own travel at the contact pushes the board; a contact
+  // without travel pushes into the struck face.
+  auto direction=contact.velocityCmS;
+  if(!(direction.quadLength()>1.e-6f)) direction=contact.normal*-1.f;
+  if(!(direction.quadLength()>1.e-6f)) return false;
+  direction=Tempest::Vec3::normalize(direction);
+  if(!meleeStrike(*found,direction,contact.point,weaponDamage,strength,kind,attacker)) return false;
+  struck.push_back(contact.movableVob);
+  return true;
   }
 
 void DynamicWorld::saveMovableVobs(Serialize& fout) const {
@@ -2818,6 +2867,7 @@ void DynamicWorld::moveBullet(BulletBody &b, const Tempest::Vec3& dir, uint64_t 
 
 void DynamicWorld::tick(uint64_t dt) {
   if(ownerWorld!=nullptr) {
+    world->setBodyImpactEnabled(Gothic::physicsFlags().bodyImpactDamage);
     const float cycle=Gothic::settingsGetF("ENGINE","zWindCycleTime")+
                       Gothic::settingsGetF("ENGINE","zWindCycleTimeVar");
     const uint64_t period=std::isfinite(cycle) && cycle>0.f ? uint64_t(cycle*1000.f) : 0;
@@ -2846,7 +2896,7 @@ void DynamicWorld::tick(uint64_t dt) {
   for(const auto* records:{&npcList->body,&npcList->frozen})
     for(const auto& record:*records)
       if(record.body!=nullptr && record.body->virtualCharacter!=nullptr)
-        if(auto* npc=record.body->toNpc())
+        if(auto* npc=record.body->toNpc(); npc!=nullptr && !npc->usesSimplifiedMovement())
           riders.push_back(npc);
   for(auto* npc:riders)
     npc->finishCharacterVirtualSupport(dt);
@@ -3040,7 +3090,22 @@ bool DynamicWorld::hasCollision(const NpcItem& it, CollisionTest& out) {
   if(npcList->hasCollision(it,out.normal,out.npc,out.npcCol)){
     ret = true;
     }
-  if(it.obj->shape!=nullptr && world->hasCollision(it.obj->shape.GetPtr(),it.obj->centerPosition(),out.normal,out.vob)) {
+  CollisionWorld::CapsuleContact contact;
+  if(out.trackBodyImpact) {
+    contact=[&](CollisionWorld::CollisionBody* body,const Tempest::Vec3& normal,const Tempest::Vec3& point,
+                const Tempest::Vec3& nativeVelocity) {
+      auto velocity=nativeVelocity;
+      if(body!=nullptr && body->ptrType()==P_MovableVob && body->payload()!=nullptr) {
+        const auto* movable=static_cast<const BodyData*>(body->payload());
+        if(movable->body!=nullptr)
+          velocity=movable->body->velocity()+Tempest::Vec3::crossProduct(movable->body->angularVelocity(),
+                                                                       point-movable->body->centerOfMass());
+        }
+      out.bodyImpactSpeed=std::max(out.bodyImpactSpeed,
+          -Tempest::Vec3::dotProduct(out.bodyImpactVelocity-velocity*.001f,normal));
+      };
+    }
+  if(it.obj->shape!=nullptr && world->hasCollision(it.obj->shape.GetPtr(),it.obj->centerPosition(),out.normal,out.vob,contact)) {
     out.landCol = true;
     ret = true;
     }

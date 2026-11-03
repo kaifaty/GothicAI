@@ -21,6 +21,14 @@ struct PhysicsNoise;
 // Inert unless OPENGOTHIC_BENCH is set. Usage: scripts/bench.sh, see scripts/bench/README.md.
 namespace TestBench {
   bool     isActive();
+  // Explicit graph fixtures must fail instead of accepting a native fallback.
+  bool     strictGraphMovement(const Npc& npc);
+  // Only the current npcduel copies retain near-hero simulation and physics at any distance.
+  bool     npcDuelActor(const Npc& npc);
+  void     npcDuelSwingStart(const Npc& npc);
+  void     npcDuelSwingEnd(const Npc& npc, std::string_view outcome);
+  void     npcDuelHit(const Npc& victim, const Npc& by, int32_t hpBefore, int32_t hpAfter,
+                      int32_t baseDamage, bool critical, float meleeScale, float stunBonus, float backstabMult);
   // Reinitialize the harness for a fresh runner generation. The caller owns world teardown/load.
   void     configure(std::string scenario, std::string output, int64_t seedOverride = -1);
   // Body runner --fork-prefix: the template stops its scenario before the first line starting with
@@ -42,6 +50,8 @@ namespace TestBench {
   uint64_t frameDt(uint64_t dt);
   // Move synthetic support fixtures before both NPC and player world steps.
   void     beforeWorldTick(uint64_t dt);
+  // Exact healing strikes run at the advanced clock before the player consumes animation events.
+  void     beforeNpcTick(Npc& npc);
   // Runs the scenario after the world update; true if this frame has to be captured
   bool     tick(uint64_t dt, PlayerControl& player);
   // Called after the frame's residency update; deferred metrics for perf route segments.
@@ -100,6 +110,8 @@ namespace TestBench {
   bool     ragdollLootOpened(const Npc& player, const Npc& target);
   // Benchmark-only inspection of the actual body drawable, excluding head/items.
   bool     ragdollBodyDrawable(const Npc& npc);
+  // First 300 ms of native simulation; inert outside an active bench.
+  void     ragdollBirthPeak(const Npc& npc, const Npc* culprit, const std::string& fields);
 
   // What the AI bridge does, for scenarios that talk (`ptt`, `waitreply`; shorts/): texts in UTF-8.
   // An npc line starts (`ms`: its length as known now; `to`: the npc it is said to, empty for the hero;
@@ -119,6 +131,12 @@ namespace TestBench {
   // Installed only by the opt-in bridge stuck logger; the core engine has no bridge dependency.
   extern std::function<bool(World&,std::string_view,float)> stuckBegin;
   extern std::function<bool(World&)> stuckEnd;
+  // World::sweepBodies leaves bodies alone under a bench (fixtures hold actors by pointer)
+  // unless the scenario asks for the body lifetime: body_traces does.
+  void     allowBodySweep(bool allow);
+  bool     bodySweepAllowed();
+  // set by the bridge: the production npc_view of one npc (a JSON array of one view, or empty)
+  extern std::function<std::string(World&,std::string_view npc)> npcView;
   // set by the main window: opens a game menu by its script name (`diary`: the diary for a look at it)
   extern std::function<void(std::string_view menu)> openMenu;
   }

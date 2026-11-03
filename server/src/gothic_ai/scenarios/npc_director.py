@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
-from dataclasses import replace
+from dataclasses import asdict, replace
 from typing import TYPE_CHECKING, Any
 
 from .. import questbook
@@ -32,6 +32,10 @@ from .common import (
 )
 from .npc_deeds import CHEST, HOUSE, ROAD
 
+SCENARIOS = {
+    "npc_director": ("GIVEN", {"save": True, "timeout": 720}),
+}
+
 if TYPE_CHECKING:
     from ..chests import ChestDesk
     from ..dialogue import DialogueManager
@@ -39,6 +43,7 @@ if TYPE_CHECKING:
     from ..showrunner import Showrunner
     from ..talk import TalkDesk
     from ..witnesses import Witnesses
+    from .live import LiveCase
 
 log = logging.getLogger("gothic_ai.scenarios")
 WORDS = "Помоги найти вора. Спроси Хильду о Вино"
@@ -84,12 +89,14 @@ async def npc_director(
     witnesses: Witnesses,
     log_dir: str,
     slot: int = 7,
+    *,
+    live: LiveCase | None = None,
 ) -> dict[str, str]:
     """Apply declared theft-line decisions and check testimony, reward and save persistence."""
     results: dict[str, str] = {}
     service, rumors = will.npc_crimes, will.rumors
     facts = will.chronicle.facts
-    off = model_off(dialogue)
+    off = model_off(dialogue) if live is None else None
     original_reflexes, original_busy = talk.reflexes, will.busy
     original_cards, original_crime_cards = will.cards, service.cards
     original_gate, original_stage = rumors.gate, rumors.stage
@@ -243,6 +250,22 @@ async def npc_director(
         if not check("deed", any(f.get("crime") == cid for f in occasion_members(occasion)), occasion):
             return _logged(results)
 
+        if live is not None:
+            outcome = await director.decide(occasion)
+            quests = [director.book.all()[qid] for qid in (outcome or {}).get("quests", [])
+                      if qid in director.book.all()]
+            blame = [goal for q in quests for stage in q.stages for goal in stage.goals
+                     if goal.kind == "blame" and goal.crime == cid]
+            live.finish(
+                "no_decision" if (outcome or {}).get("fact") == "line_none" else
+                "success" if (outcome or {}).get("fact") == "line" and blame else "failure",
+                evidence={"crime": crime, "decision": outcome, "quests": [q.id for q in quests],
+                          "blame_goals": [asdict(g) for g in blame],
+                          "rejected": facts("line_rejected") + facts("chain_rejected")},
+            )
+            return _logged(results)
+
+        assert off is not None
         off.given(
             "дано: шоураннер предлагает Лобарту линию поиска вора",
             who=SHOWRUNNER_KEY, when=cid,

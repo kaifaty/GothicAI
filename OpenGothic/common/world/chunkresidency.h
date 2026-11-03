@@ -7,6 +7,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "worldchunksruntime.h"
@@ -36,6 +37,12 @@ class ChunkResidency {
       size_t   landscapePageFreeBytes = 0;
       size_t   landscapePageRetiredBytes = 0;
       size_t   landscapePageCount = 0;
+      size_t   vobNear = 0, vobFar = 0, vobOutside = 0;
+      uint64_t vobCreated = 0, vobReleased = 0, vobDrawInstances = 0;
+      size_t   vobPending = 0, vobNearMissing = 0;
+      double   vobPublicationMs = 0, vobCreateMs = 0;
+      double   vobNearMissingSeconds = 0, vobReadyMs = -1;
+      std::string vobProbeFields() const;
       };
 
     using Clock = std::chrono::steady_clock;
@@ -58,6 +65,7 @@ class ChunkResidency {
     void update(const Tempest::Vec3& hero, const Tempest::Vec3& camera, float zFar);
     State desired(size_t index) const { return states.at(index); }
     State desired(ChunkId id) const;
+    State desired(ChunkId id, State previous) const;
     // Returns size_t(-1) for cells without a landscape entry.
     size_t indexOf(ChunkId id) const;
     uint32_t textureDistance(ChunkId id) const;
@@ -73,6 +81,7 @@ class ChunkResidency {
     void recordPublication(double ms, bool far);
     void recordRelease() { ++counters.released; }
     void setPending(size_t count) { counters.pending=count; }
+    Stats& vobStats() { return counters; }
     void setLandscapePages(size_t used, size_t free, size_t retired, size_t count) {
       counters.landscapePageUsedBytes=used;
       counters.landscapePageFreeBytes=free;
@@ -90,6 +99,8 @@ class ChunkResidency {
     std::map<uint64_t,std::shared_ptr<FocusListener>> focusListeners;
     ChunkId heroCell{}, cameraCell{};
     bool focused = false;
+    Tempest::Vec3 cameraPosition;
+    float farDistance = 0;
     std::deque<Work> work;
     std::deque<std::pair<Clock::time_point,size_t>> recentTransitions;
   };

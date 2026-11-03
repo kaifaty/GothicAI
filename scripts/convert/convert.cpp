@@ -7,6 +7,8 @@
 //       Compare existing chunks and world data with the source .ZEN.
 //   content-convert check-vob-layer <base world dir> <layer.json> [content dir]
 //       Validate the layer schema, base ids, world keys and visual resources without a game.
+//   content-convert check-vob-tree <base root> <tree.json> [content root]
+//       Validate a slot-local add-only bundle using the same vob layer parser.
 //   content-convert check-particles <base root> <content dir>
 //       Validate all particles.d definitions using the game's particle loader.
 //   content-convert zen|verify-zen <gothic dir> <dir>
@@ -49,12 +51,15 @@
 //   content-convert resolve-base|resolve <gothic dir>
 //       Select or import the base through BaseStore; resolve also prepares videos.
 //       Progress goes to stderr and the selected base path goes to stdout.
+//   content-convert formats
+//       Print the compiled base and video importer format hashes as JSON.
 //   content-convert --self-test
 //       Round trips of synthetic meshes, world data and presets; no game files.
 //
 // The output is Gothic content: it never goes into git.
 
 #include "baseimport.h"
+#include "baseformat.h"
 #include "basestoreimport.h"
 #include "videodata.h"
 #include "sha256.h"
@@ -807,6 +812,10 @@ int main(int argc, char** argv) {
       BaseImport::onZenkitLog(level,component,message);
       });
     const std::vector<std::string> args(argv+1,argv+argc);
+    if(args.size()==1 && args[0]=="formats") {
+      std::cout << "{\"base\":\"" << BaseFormatSha256 << "\",\"videos\":\"" << VideoData::formatSha256() << "\"}\n";
+      return 0;
+      }
     if(args.size()==1 && args[0]=="--self-test")
       return selfTest();
     if(args.size()==3 && args[0]=="check-particles") {
@@ -817,8 +826,11 @@ int main(int argc, char** argv) {
       std::cout << args[2] << ": valid (" << result.effects.size() << " particle effects)\n";
       return 0;
       }
-    if((args.size()==3 || args.size()==4) && args[0]=="check-vob-layer") {
-      const auto result=VobLayer::check(args[1],args[2],args.size()==4 ? fs::path(args[3]) : fs::path());
+    if((args.size()==3 || args.size()==4) && (args[0]=="check-vob-layer" || args[0]=="check-vob-tree")) {
+      std::vector<std::shared_ptr<asset::VirtualObject>> tree;
+      const auto content=args.size()==4 ? fs::path(args[3]) : fs::path();
+      const auto result=args[0]=="check-vob-tree" ? VobLayer::readTree(tree,args[1],args[2],content)
+                                                  : VobLayer::check(args[1],args[2],content);
       for(const auto& error:result.errors)
         std::cerr << error << '\n';
       if(!result.errors.empty()) return 1;
@@ -902,6 +914,7 @@ int main(int argc, char** argv) {
       }
     std::cerr << "usage: content-convert world|verify-world <gothic dir> <WORLD.ZEN> <dir> [override]\n"
                  "       content-convert check-vob-layer <base world dir> <layer.json> [content dir]\n"
+                 "       content-convert check-vob-tree <base root> <tree.json> [content root]\n"
                  "       content-convert check-particles <base root> <content dir>\n"
                  "       content-convert textures|verify-textures|meshes|verify-meshes|zen|verify-zen <gothic dir> <dir>\n"
                  "       content-convert models|verify-models <gothic dir> <dir>\n"
@@ -915,6 +928,7 @@ int main(int argc, char** argv) {
                  "       content-convert resolve-base|resolve-videos|resolve <gothic dir>\n"
                  "       content-convert sources|verify-sources <gothic dir> <dir>\n"
                  "       content-convert base <gothic dir> <dir>\n"
+                 "       content-convert formats\n"
                  "       content-convert --self-test\n";
     return 2;
     }

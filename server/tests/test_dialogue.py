@@ -747,6 +747,36 @@ async def test_llm_error_is_reported_to_the_game_and_history_untouched():
     assert fake.said == []
 
 
+def _broken(npc: str) -> str:
+    raise AttributeError("'dict' object has no attribute 'upper'")
+
+
+async def test_a_broken_extension_situation_does_not_silence_the_npc():
+    # 2026-11-01 play: parley.situation raised for every turn of Brago's, the chat showed "думает..." for good
+    fake = FakeGame()
+    llm = FakeBackend("Говори, что надо.", delay=0)
+    async with connected(fake) as link:
+        dialogue = DialogueManager(link, llm, PersonaProvider(None))
+        dialogue.extensions.append(
+            SimpleNamespace(prepare=AsyncMock(), situation=_broken, tools=lambda npc: [], all_tools=())
+        )
+        dialogue.open(XARDAS, "Ксардас")
+        await dialogue.say_as_player(XARDAS, "Привет")
+        await _until(lambda: fake.statuses[-2:] == ["thinking", "idle"])
+        assert fake.said == ["Говори, что надо."]
+
+
+async def test_a_bug_in_a_turn_ends_the_thinking_status_with_an_error():
+    fake = FakeGame()
+    async with connected(fake) as link:
+        dialogue = DialogueManager(link, FakeBackend("Не скажу.", delay=0), PersonaProvider(None))
+        dialogue.open(XARDAS, "Ксардас")
+        dialogue.sight = lambda npc, snap: _broken(npc)
+        await dialogue.say_as_player(XARDAS, "Привет")
+        await _until(lambda: fake.statuses[-2:] == ["thinking", "error"])
+        assert fake.said == [] and dialogue.conversations[XARDAS].history == []
+
+
 class StallingBackend:
     """Goes quiet on its first `stalls` calls (after `said`, if any), then answers. Counts the streams that
     were closed: a stalled one must not be left holding its connection."""

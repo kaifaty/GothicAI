@@ -203,6 +203,8 @@ class CollisionWorld final {
     bool buoyancyEnabled() const;
     void setItemWakeEnabled(bool enabled);
     void setItemDeepestContactEnabled(bool enabled);
+    void setRagdollBirthGuardEnabled(bool enabled);
+    void setBodyImpactEnabled(bool enabled);
     bool itemWakeEnabled() const { return itemWake; }
     void setItemWakeCallback(std::function<size_t(const Tempest::Vec3&,const Tempest::Vec3&,size_t)> callback);
     void wakeItemsInBounds(const Tempest::Vec3& min, const Tempest::Vec3& max);
@@ -231,7 +233,10 @@ class CollisionWorld final {
     void updateAabbs() const {}
     void touchAabbs() const {}
 
-    bool hasCollision(const JPH::Shape* shape, const Tempest::Vec3& center, Tempest::Vec3& normal, Interactive*& vob) const;
+    // Accepted capsule contacts: support, outward normal, world point and support point velocity (cm/s).
+    using CapsuleContact = std::function<void(CollisionBody*,const Tempest::Vec3&,const Tempest::Vec3&,const Tempest::Vec3&)>;
+    bool hasCollision(const JPH::Shape* shape, const Tempest::Vec3& center, Tempest::Vec3& normal, Interactive*& vob,
+                      const CapsuleContact& contact = {}) const;
 
     // Diagnostic: every contact of the body's own shape at its current pose,
     // including separated ones within marginCm. Depth is positive when penetrating.
@@ -349,6 +354,7 @@ class CollisionWorld final {
     friend class ClothContractDriver;
     uint32_t registerRagdoll(Ragdoll& body);
     void unregisterRagdoll(Ragdoll& body);
+    std::vector<uint32_t> ragdollBirthGuardGroups(const Ragdoll& body) const;
     std::unique_ptr<Impl> impl;
     std::vector<CollisionBody*> bodies;
     std::vector<DynamicBody*> rigid;

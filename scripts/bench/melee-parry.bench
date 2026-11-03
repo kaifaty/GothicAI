@@ -1,7 +1,8 @@
-# Parry stun (melee_parry): an attacking bandit with a one-hander, then a two-hander, is stunned as by a parry
-# (`stun`, without timing a real parade) and staggers back for the second it is open; then the hero's own guard is
-# broken; last, the hero parades against the attacking bandit at varied moments, as in a fight. Side shots of
-# both through the stun; the look is judged by Claude from the shots.
+# Melee stuns (melee_parry, melee_stagger): an attacking bandit with a one-hander, then a two-hander, is stunned as
+# by a parry (`stun`, without timing a real parade) and staggers back for the second it is open; then he loses his
+# balance (`stun ... posture`, 1.5 s, heavier); then the hero's own guard is broken; last, the hero parades against
+# the attacking bandit at varied moments, as in a fight. Side shots of both through the stun; the look is judged by
+# Claude from the shots.
 # WORLD=NEWWORLD.ZEN BENCH_HOST=local
 seed 73013
 cheat god
@@ -75,6 +76,30 @@ shot 2h-700
 wait 300
 shot 2h-1000
 wait 1500
+stop
+
+rec stun-posture
+melee-shadow bandit 1h
+pin BDT_1013_BANDIT_L 160 0 0
+wait 300
+pin off
+fight BDT_1013_BANDIT_L player
+wait 1000
+stun BDT_1013_BANDIT_L posture
+shot po-000
+wait 150
+shot po-150
+wait 200
+shot po-350
+wait 250
+shot po-600
+wait 300
+shot po-900
+wait 300
+shot po-1200
+wait 300
+shot po-1500
+wait 1000
 stop
 
 rec guard-break

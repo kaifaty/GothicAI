@@ -68,6 +68,36 @@ void VPoolCache::notifyDestroy(const AbstractGraphicsApi::NoCopy* res) {
     }
   }
 
+void VPoolCache::notifyUpdate(const VDescriptorArray& arr, uint32_t element) {
+  // Cached sets hold a copy of the array, and the frame binds those copies: a slot update
+  // must reach every one of them. They are bound only where the array is bound, so the
+  // caller's guarantee that the GPU is done with the array covers them as well.
+  std::lock_guard<std::mutex> guard(sync);
+
+  std::vector<VkCopyDescriptorSet> cpy;
+  for(auto& d:descriptors) {
+    for(uint32_t mask = d.arrays; mask!=0;) {
+      const int i = std::countr_zero(mask);
+      mask ^= (1u << i);
+      if(d.bindings.data[i]!=&arr)
+        continue;
+      VkCopyDescriptorSet& cx = cpy.emplace_back();
+      cx.sType           = VK_STRUCTURE_TYPE_COPY_DESCRIPTOR_SET;
+      cx.pNext           = nullptr;
+      cx.srcSet          = arr.set();
+      cx.srcBinding      = 0;
+      cx.srcArrayElement = element;
+      cx.dstSet          = d.set;
+      cx.dstBinding      = uint32_t(i);
+      cx.dstArrayElement = element;
+      cx.descriptorCount = 1;
+      }
+    }
+
+  if(!cpy.empty())
+    vkUpdateDescriptorSets(dev.device.impl, 0, nullptr, uint32_t(cpy.size()), cpy.data());
+  }
+
 VkDescriptorPool VPoolCache::allocPool() {
   {
     std::lock_guard<std::mutex> guard(sync);
@@ -226,13 +256,26 @@ VkDescriptorSet VPoolCache::allocDescSet(VkDescriptorPool pool, VkDescriptorSetL
   return desc;
   }
 
+uint32_t VPoolCache::bindlessCapacity(ShaderReflection::Class cls, size_t size) {
+  // The set layout, and with it the pipeline layout of every PSO instance, follows these counts.
+  // Large arrays grow in power-of-two steps from a high floor, so a streamed world adding buckets
+  // keeps one layout instead of recompiling every pipeline whenever the array size changes.
+  // Only the array's own descriptors are copied; the tail stays unwritten (PARTIALLY_BOUND).
+  constexpr size_t LargeArray    = 1024;
+  constexpr size_t LargeCapacity = 8192;
+  if(size<LargeArray)
+    return uint32_t(size);
+  const auto capacity = dev.roundUpDescriptorCount(cls, std::bit_ceil(std::max(size, LargeCapacity)));
+  return uint32_t(std::max<size_t>(size, capacity));
+  }
+
 VPoolCache::Inst VPoolCache::allocBindless(const PushBlock& pb, const LayoutDesc& layout, const Bindings& binding) {
   auto lx = layout;
   for(uint32_t mask = lx.runtime; mask!=0;) {
     const int i = std::countr_zero(mask);
     mask ^= (1u << i);
     auto* a = reinterpret_cast<const VDescriptorArray*>(binding.data[i]);
-    lx.count[i] = uint32_t(a->size());
+    lx.count[i] = bindlessCapacity(lx.bindings[i], a->size());
     }
 
   Inst ret;
@@ -251,6 +294,7 @@ VPoolCache::Inst VPoolCache::allocBindless(const PushBlock& pb, const LayoutDesc
   try {
     desc.dLay     = ret.dLay;
     desc.bindings = binding;
+    desc.arrays   = lx.active & binding.array;
     desc.pool     = allocPool(lx);
     desc.set      = allocDescSet(desc.pool, ret.dLay);
     initDescriptorSet(desc.set, binding, lx);

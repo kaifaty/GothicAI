@@ -4,10 +4,12 @@
 #include "world/objects/vobbundle.h"
 #include "physics/physicmesh.h"
 #include "graphics/mdlvisual.h"
+#include "worldchunksruntime.h"
 
 class Npc;
 class World;
 class ClothVisual;
+class WorldView;
 
 class ObjVisual {
   public:
@@ -20,6 +22,7 @@ class ObjVisual {
     void load(Serialize& fin,  Interactive &mob);
 
     void setVisual(const zenkit::IItem& visual, World& world, bool staticDraw);
+    void setWorldItem(const zenkit::IItem& item, World& world, const Tempest::Matrix4x4& matrix);
     void setVisual(const asset::VirtualObject& visual, World& world, bool staticDraw, bool enablePhysics = true);
     void setObjMatrix(const Tempest::Matrix4x4& obj);
     void setTextureOwner(const Tempest::Vec3& position, bool spatial);
@@ -27,7 +30,7 @@ class ObjVisual {
     void setupFracture(World& world, DynamicWorld::Item& body);
     bool renderPosition(Tempest::Vec3& out) const;
 
-    void setSlotItem(MeshObjects::Mesh&& itm, std::string_view slot);
+    void setSlotItem(MeshObjects::Mesh&& itm, std::string_view slot, int32_t material = 0);
 
     void setInteractive(Interactive* it);
 
@@ -55,12 +58,19 @@ class ObjVisual {
       PhysicMesh       physic;
       MdlVisual        view;
       const ProtoMesh* proto = nullptr;
+      bool staticBody = false;
+      bool published = false;
       };
 
     struct Mesh {
       PhysicMesh        physic;
       MeshObjects::Mesh view;
       const ProtoMesh*  proto = nullptr;
+      asset::AnimationType windMode = asset::AnimationType::NONE;
+      float windStrength = 0;
+      bool published = false;
+      bool worldItem = false;
+      int32_t material = 0;
       };
 
     union {
@@ -75,8 +85,17 @@ class ObjVisual {
     std::shared_ptr<FractureView> fracture;
     std::unique_ptr<ClothVisual> cloth;
     Tempest::Matrix4x4 renderMatrix = Tempest::Matrix4x4::mkIdentity();
+    WorldView* streamView = nullptr;
+    ChunkId streamCell;
 
     void cleanup();
     void setType(Type t);
+    void createView();
+    void releaseView();
+    bool isViewPublished() const;
+    bool isViewMissing() const;
+    size_t viewNodesCount() const;
+    friend class WorldView;
+    friend struct MeshGltfTest;
   };
 

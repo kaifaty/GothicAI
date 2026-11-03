@@ -39,6 +39,14 @@ PROFILES = {
         "quiet": True,
         "min_disk": 20 * GIB,
     },
+    "dev-ubuntu": {
+        "cpus": "0-11",
+        "threads": 6,
+        "mem": 12 * GIB,
+        "display": 0,
+        "quiet": False,
+        "min_disk": 20 * GIB,
+    },
 }
 TERMINAL = {"done", "cancelled", "timeout", "failed"}
 ACTIVE = {"starting", "running"}
@@ -153,6 +161,20 @@ def exclusive_display(job):
 
 def systemctl(*args):
     return subprocess.run(["systemctl", "--user", *args], capture_output=True, text=True)
+
+
+def gpu_memory_free():
+    """Read the first GPU's free bytes; unavailable readings fail admission closed."""
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=5)
+        if result.returncode:
+            return None
+        first = result.stdout.splitlines()[0].strip()
+        return int(first) * 1024**2 if re.fullmatch(r"[0-9]+", first) else None
+    except (OSError, subprocess.TimeoutExpired, IndexError):
+        return None
 
 
 def exec_property(args):
@@ -309,12 +331,15 @@ class Queue:
             raise QueueError("неизвестный класс")
         if spec["class"] == "quiet" and not p["quiet"]:
             raise QueueError("quiet недоступен: иди на Ryzen")
+        if self.profile_name == "dev-ubuntu" and any(spec.get(key) for key in (
+                "display", "display_shared", "display_exclusive", "interactive")):
+            raise QueueError("окна на dev-ubuntu нет: иди на Ryzen")
         for key in ("threads", "mem", "max"):
             if not math.isfinite(spec[key]) or spec[key] <= 0:
                 raise QueueError(f"{key} должен быть положительным")
         if spec["threads"] > p["threads"] or spec["mem"] > p["mem"]:
             raise QueueError("ресурсы заявки превышают ёмкость хоста")
-        if not 0 <= spec["gpu_mem"] <= p["gpu_mem"]:
+        if not 0 <= spec["gpu_mem"] <= p.get("gpu_mem", math.inf):
             raise QueueError("видеопамять заявки превышает ёмкость хоста")
         if spec["class"] == "batch" and spec["max"] > 7200:
             raise QueueError("--max для batch не больше 2h")
@@ -577,12 +602,23 @@ class Queue:
         self.reconcile()
         free = self.disk_free()
         legacy_waiting = self.legacy_waiting()
+        dev_ubuntu = self.profile_name == "dev-ubuntu"
+        # Keep the external query outside queue.lock. Reservations below account
+        # for every active declaration, including jobs admitted by this tick.
+        gpu_free = None
+        if dev_ubuntu and any(j["status"] == "queued" and j["gpu_mem"] > 0 for j in self.jobs()):
+            gpu_free = gpu_memory_free()
         launch = []
         with self.transaction() as state:
             jobs = state["jobs"]
             active = [j for j in jobs if j["status"] in ACTIVE]
             queued = sorted((j for j in jobs if j["status"] == "queued"),
                             key=lambda j: not j.get("interactive", False))
+            if dev_ubuntu:
+                for job in queued:
+                    job.pop("wait_reason", None)
+                    if job["gpu_mem"] > 0 and gpu_free is None:
+                        job["wait_reason"] = "nvidia-smi: free GPU memory unavailable"
             quiet_waiting = legacy_waiting or any(j["class"] == "quiet" for j in queued)
             exclusive_waiting = next((index for index, j in enumerate(queued)
                                       if exclusive_display(j)), None)
@@ -604,6 +640,10 @@ class Queue:
                         batch_blocked = True
                     continue
                 kind = job["class"]
+                if dev_ubuntu and sum(j["threads"] for j in active) + job["threads"] > self.profile["threads"]:
+                    if kind == "batch":
+                        batch_blocked = True
+                    continue
                 if kind == "batch":
                     if job["owner"] in skipped_owners:
                         continue
@@ -629,10 +669,19 @@ class Queue:
                         continue
                 if not interactive and any(
                         sum(j[resource] for j in active) + job[resource] > self.profile[resource]
-                        for resource in ("mem", "gpu_mem")):
+                        for resource in (("mem",) if dev_ubuntu else ("mem", "gpu_mem"))):
                     if kind == "batch":
                         batch_blocked = True
                     continue
+                if dev_ubuntu and job["gpu_mem"] > 0:
+                    required = job["gpu_mem"] + GIB + sum(j["gpu_mem"] for j in active)
+                    if gpu_free is not None and required > gpu_free:
+                        job["wait_reason"] = (f"GPU memory: needs {required/GIB:g}G including 1G reserve "
+                                              f"and active jobs; free {gpu_free/GIB:g}G")
+                    if job.get("wait_reason"):
+                        if kind == "batch":
+                            batch_blocked = True
+                        continue
                 slot = None
                 if job["display"]:
                     # Drain games ahead of the oldest exclusive, then admit no
@@ -704,6 +753,10 @@ class Queue:
             props["NotifyAccess"] = "exec"
         if job.get("cpu_quota") is not None:
             props["CPUQuota"] = job["cpu_quota"]
+        if self.profile_name == "dev-ubuntu":
+            quota = job["threads"] * 100
+            if job.get("cpu_quota") is None or float(job["cpu_quota"].rstrip("%")) > quota:
+                props["CPUQuota"] = f"{quota}%"
         args = ["systemd-run", "--user", "--quiet", "--unit", "gq-" + job["id"]]
         args += [f"--property={k}={v}" for k, v in props.items()]
         args += [f"--setenv={k}={v}" for k, v in env.items() if k not in {
@@ -1042,6 +1095,11 @@ def owner():
 
 
 def status(queue):
+    if queue.profile_name == "dev-ubuntu":
+        p = queue.profile
+        print(f"Profile dev-ubuntu: CPUs {p['cpus']}; threads {p['threads']} total; "
+              f"memory {p['mem']/GIB:g}G; display {p['display']}; quiet disabled; "
+              f"GPU memory from nvidia-smi (1G reserve); minimum disk {p['min_disk']/GIB:g}G")
     print("ID           ВЛАДЕЛЕЦ         КЛАСС  СОСТОЯНИЕ  РЕСУРСЫ                         СТАРТ    ПОТОЛОК ОЦЕНКА")
     for job in queue.jobs():
         if job["status"] in TERMINAL:
@@ -1055,6 +1113,8 @@ def status(queue):
         typical = f" median={estimate['typical']:.0f}s" if estimate["typical"] is not None else ""
         print(f"{job['id']} {job['owner'][:16]:16} {job['class']:6} {job['status']:10} "
               f"{resources:31} {start:8} {job['max']:g}s ≤{estimate['upper']:.0f}s{typical}")
+        if queue.profile_name == "dev-ubuntu" and job["status"] == "queued" and job.get("wait_reason"):
+            print(f"  Waiting: {job['wait_reason']}")
     disks = queue.disk_space()
     for path, free in disks.items():
         print(f"Disk {path}: free {free/GIB:.1f}G; minimum {queue.profile['min_disk']/GIB:g}G")

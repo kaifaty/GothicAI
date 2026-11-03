@@ -97,6 +97,7 @@ KeyCodec::KeyCodec() {
     &keyAction,
     &keySlow,
     &keySMove,
+    &keyDodge,
     &keyWeapon,
     &keySneak,
     &keyLook,
@@ -284,6 +285,8 @@ KeyCodec::ActionMapping KeyCodec::implTr(int32_t code) const {
     return { Walk, *m };
   if(auto m = keySMove.mapping(code))
     return { Jump, *m };
+  if(auto m = keyDodge.mapping(code))
+    return { Dodge, *m };
 
   if(auto m = keyWeapon.mapping(code))
     return { Weapon, *m };
@@ -310,6 +313,15 @@ KeyCodec::ActionMapping KeyCodec::implTr(int32_t code) const {
 
   // TODO: don't use "Primary" as a placeholder here.
   return { Idle, Mapping::Primary };
+  }
+
+bool KeyCodec::dodgeOnJump(Mapping mapping) {
+  const auto dodge = parse(Gothic::settingsGetS("KEYS","keyDodge"));
+  if(dodge.k[0]==0 && dodge.k[1]==0)
+    return true;
+  const auto    jump = parse(Gothic::settingsGetS("KEYS","keySMove"));
+  const int32_t key  = jump.k[mapping==Mapping::Primary ? 0 : 1];
+  return key!=0 && dodge.is(key);
   }
 
 string_frm<64> KeyCodec::keysStr(std::string_view keys) {
@@ -476,6 +488,7 @@ void KeyCodec::setupSettings() {
   keyAction      = setup("keyAction");
   keySlow        = setup("keySlow");
   keySMove       = setup("keySMove");
+  keyDodge       = setup("keyDodge");
   keyWeapon      = setup("keyWeapon");
   keySneak       = setup("keySneak");
   keyLook        = setup("keyLook");

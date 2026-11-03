@@ -3,6 +3,7 @@
 #include "ui/gamemenu.h"
 #include "navbench.h"
 #include "navdemos.h"
+#include "npcdayjournal.h"
 #include "frameprofile.h"
 #include "loadprobe.h"
 
@@ -59,6 +60,7 @@
 #endif
 
 #include "game/gamescript.h"
+#include "game/damagecalculator.h"
 #include "game/herodeed.h"
 #include "game/playercontrol.h"
 #include "game/bodyobservations.h"
@@ -69,6 +71,8 @@
 #include "game/navigationmemorybench.h"
 #include "game/knownroadsbench.h"
 #include "game/npckeysbench.h"
+#include "game/bodytracesbench.h"
+#include "game/bloodstainsbench.h"
 #include "game/serialize.h"
 #include "game/ragdollsave.h"
 #include "game/definitions/sounddefinitions.h"
@@ -108,6 +112,7 @@
 #include "world/movablevobs.h"
 #include "world/world.h"
 #include "world/chunkresidency.h"
+#include "world/npcsimtier.h"
 #include "world/bullet.h"
 #include "world/waypoint.h"
 #include "world/aiqueue.h"
@@ -613,6 +618,62 @@ struct Bench {
   bool        heldNow   = false;
   uint64_t    time      = 0;    // game time since the start, ms
   uint64_t    step      = 0;    // fixed steps made
+  std::chrono::steady_clock::time_point heartbeatStart, heartbeatNext;
+  int64_t     npcDayStart = 0;
+  uint64_t    npcDayMinutes = 0;
+
+  struct NpcTierTest {
+    Npc* npc = nullptr;
+    const WayPoint* ends[2] = {};
+    unsigned legs = 0, turns = 0, phase = 0, switches = 0;
+    unsigned toFull[2] = {}, toSimplified[2] = {};
+    uint64_t deadline = 0, switchedAt = 0;
+    Vec3 before, started, lastPosition;
+    float beforeAngle = 0, lastAngle = 0, maximumJump = 0, maximumHeight = 0;
+    float travelPerMs = 0;
+    const WayPoint* destination = nullptr;
+    std::vector<const WayPoint*> path;
+    NpcSimTier previous = NpcSimTier::Full;
+    bool pending = false;
+  } npcTierTest;
+
+  struct NpcSpeedTest {
+    Npc* npc = nullptr;
+    const WayPoint* start = nullptr;
+    const WayPoint* end = nullptr;
+    Vec3 previous;
+    uint64_t began = 0, previousTick = 0, measuredMs = 0;
+    unsigned leg = 0, samples = 0;
+    float length = 0, distance = 0, expectedDistance = 0;
+    std::string firstAnimation, lastAnimation;
+  } npcSpeedTest;
+
+  struct Healing {
+    std::string label;
+    size_t item = size_t(-1), lastItems = 0;
+    uint64_t start = 0, firstHeal = 0, lastHeal = 0, lastConsume = 0, nextSecond = 0, strikeAt = 0, hotkeyAt = 0;
+    uint64_t paused = 0, savedAt = 0, savedPaused = 0, savedLastHeal = 0, savedNextSecond = 0;
+    size_t portions = 0, savedSamples = 0;
+    int hp = 0, healed = 0, damage = 0, savedHealed = 0, savedDamage = 0;
+    bool sawDrink = false;
+    bool armed = false, sawHand = false, heldWeapon = true, handLayer = false, leftInsert = false, sound = false;
+    bool leftHeld = true, sawLeftItem = false;
+    bool walking = false, baseline = false, walkOnly = true, actionExecuted = false;
+    bool hotkey = false, checkWalk = false;
+    WalkBit expectedWalk = WalkBit::WM_Run;
+    Npc* npc = nullptr;
+    uint64_t queueRunAt = 0;
+    WeaponState weapon = WeaponState::NoWeapon;
+    std::string clip, nativeClip, action, motion;
+    Vec3 previous;
+    float distance = 0, previousYaw = 0, yawTravel = 0;
+    uint64_t observedAt = 0, handStart = 0, handEnd = 0, insertAt = 0, destroyAt = 0, movingMs = 0, strikeDelay = 0;
+    unsigned direction = 0;
+    size_t secondItem = size_t(-1);
+    std::vector<std::pair<uint64_t,int>> samples;
+    std::vector<uint8_t> saved;
+    } healing;
+  float healingWalkSpeed[2] = {};
 
   uint64_t    waitUntil = 0;
   std::chrono::steady_clock::time_point realWaitUntil;
@@ -621,6 +682,27 @@ struct Bench {
 
   std::vector<Hold>             holds;
   std::vector<KeyCodec::Action> taps;
+  uint64_t                    inputTraceUntil = 0;
+  std::string                 inputAnimation;
+
+  // `dodge ... before <attacker> <ms>`: the melee dodge waits for the attacker's next blow to come that near
+  struct DodgeArm {
+    Npc*                  npc      = nullptr;
+    Npc*                  attacker = nullptr;
+    MeleeDodge::Direction dir      = MeleeDodge::Direction::Back;
+    uint64_t              leadMs   = 0;
+    uint64_t              until    = 0;
+    };
+  std::optional<DodgeArm> dodgeArm;
+
+  // Respond to an actual native AI charge, leaving its decision and RNG untouched.
+  struct MeleeAiResponse {
+    Npc* npc = nullptr;
+    Npc* attacker = nullptr;
+    bool parry = false;
+    uint64_t until = 0;
+    };
+  std::optional<MeleeAiResponse> meleeAiResponse;
 
   CamMode     cam       = C_Game;
   float       camDist   = 220;
@@ -657,6 +739,12 @@ struct Bench {
     uint64_t published = 0, released = 0;
     size_t pageUsedBytes = 0, pageFreeBytes = 0, pageRetiredBytes = 0, pageCount = 0;
     Resources::TextureStats textures;
+    size_t vobNear = 0, vobFar = 0, vobOutside = 0, vobPending = 0, vobNearMissing = 0;
+    uint64_t vobCreated = 0, vobReleased = 0;
+    double vobPublicationMs = 0, vobNearMissingSeconds = 0;
+    size_t npcFull = 0, npcSimplified = 0;
+    uint64_t npcTierTransitions = 0;
+    double npcFullTickMs = 0, npcSimplifiedTickMs = 0;
     };
   std::vector<StreamingSample> streamingSamples;
   std::vector<double> streamingWarmupFarMs;
@@ -665,6 +753,9 @@ struct Bench {
   uint64_t streamingNearBefore = 0, streamingFarBefore = 0;
   uint64_t streamingPublishedBefore = 0, streamingReleasedBefore = 0;
   Resources::TextureStats streamingTexturesBefore;
+  uint64_t streamingVobCreatedBefore = 0, streamingVobReleasedBefore = 0;
+  double streamingVobMissingBefore = 0;
+  uint64_t streamingNpcTransitionsBefore = 0;
   std::vector<Vec3> routePoints;
   size_t      routeNext = 0;
   Vec3        routePosition;
@@ -738,6 +829,7 @@ struct Bench {
   uint64_t    volleyJitter = 0;  // ms more to hold, at random up to that (the sway is a function of time)
   uint64_t    volleyHoldNow = 0;
   uint32_t    lcg          = 1;  // the bench's own random numbers (seed)
+  uint32_t    scenarioSeed = 0;  // the last `seed <n>`
   std::vector<Npc*> crew;        // arc: the npcs set out, `all` of fight
   // wander: the crew walks the waynet from waypoint to waypoint near the hero (docs/navigation.md, stage 0)
   std::vector<Npc*>            wanderers;
@@ -1201,6 +1293,32 @@ struct Bench {
   std::string stickingCase;
   uint64_t stickingSampleTick=0;
   Vec3 stickingWorldPoint;
+  struct BodyImpact {
+    Npc* npc=nullptr;
+    Npc* animated=nullptr;
+    Npc* witness=nullptr;
+    Npc* player=nullptr;
+    Npc* culprit=nullptr;
+    Vec3 anchor;
+    std::unique_ptr<PhysicMeshShape> floorShape,wallShape,ledgeShape;
+    DynamicWorld::Item floor,wall,ledge;
+    std::string mode;
+    float value=0,maximumSpeed=0,launchSpeed=0;
+    int hpBefore=0,animatedBefore=0,damage=0,capsuleDamage=0,questGuard=0;
+    uint64_t started=0;
+    size_t impacts=0,deeds=0,murders=0,defeats=0,weapon=size_t(-1);
+    bool ready=false,tracing=false,observing=false,duel=false,sawAir=false,guardSaved=false;
+    struct DuelBody {Npc* npc=nullptr;bool knocked=false;int damage=0;float speed=0;uint64_t since=0;};
+    std::vector<DuelBody> duelBodies;
+    void deed(const HeroDeed& value) {
+      if(npc && value.victim.npc==TestBench::who(npc) && value.kind=="murder")++deeds;
+      }
+    void perception(Npc& observer,Npc& other,Npc* victim,PercType value) {
+      if(&observer!=witness || victim!=npc || &other!=culprit)return;
+      if(value==PERC_ASSESSMURDER)++murders;
+      if(value==PERC_ASSESSDEFEAT)++defeats;
+      }
+    } bodyImpact;
   struct SpellActor {Npc* npc=nullptr;std::string role;};
   std::vector<SpellActor> spellActors;
   std::vector<Item*> spellItems;
@@ -1231,7 +1349,8 @@ struct Bench {
   std::vector<Vec3> seatPreviousParts,seatPreviousItems;
   uint64_t seatSampleTick=0;
   std::string seatPhase;
-  Npc*        downNpc      = nullptr; // waitdown: till it falls
+  Npc*        downNpc      = nullptr; // waitdown: till either participant falls
+  Npc*        downOther    = nullptr;
   uint64_t    downFrom = 0, downEnd = 0;
   Npc*        waitRagdollNpc = nullptr;
   std::string waitRagdollState;
@@ -1278,6 +1397,28 @@ struct Bench {
   Npc*        duelB        = nullptr;
   uint64_t    duelFrom = 0, duelEnd = 0;
   bool        duelWaiting  = false;
+  struct NpcDuel {
+    Npc* actors[2] = {};
+    std::string before[2];
+    size_t weapons[2] = {size_t(-1),size_t(-1)};
+    int hits[2] = {}, damage[2] = {};
+    int swings[2] = {}, blocked[2] = {}, misses[2] = {};
+    int64_t firstResponseMs = -1;
+    std::string hitLog = "[";
+    int loser = -1;
+    uint32_t seed = 0;
+    uint64_t from = 0, end = 0;
+    bool active = false;
+
+    void hit(Npc& victim, Npc& by, int32_t loss, std::string_view) {
+      if(!active || loss<=0) return;
+      for(size_t i=0;i<2;++i)
+        if(actors[i]==&by && actors[1-i]==&victim) {
+          ++hits[i]; damage[i]+=loss;
+          if(loser<0 && victim.isDown())loser=int(1-i);
+          }
+      }
+    } npcDuel;
   std::vector<Npc*> observeActors;
   uint64_t    observeFrom = 0, observeEnd = 0;
   bool        observeActive = false;
@@ -1385,11 +1526,47 @@ struct Bench {
   std::vector<std::shared_ptr<VoiceStem>> voiceStems;
 
   std::chrono::steady_clock::time_point wallStart;
+  struct StunDrift {
+    Npc* target=nullptr;
+    Npc* attacker=nullptr;
+    Vec3 origin,axis;
+    uint64_t start=0;
+    unsigned next=0;
+  } stunDrift;
   std::chrono::steady_clock::time_point recWall;  // when the recording started
   int64_t     lagMs     = 0;      // how far the game fell behind the wall clock (realtime)
   };
 
 Bench bench;
+
+void writeHeartbeat(const World& world) {
+  if(envStr("OPENGOTHIC_BENCH_OUT")==nullptr)
+    return;
+  const auto now = std::chrono::steady_clock::now();
+  if(now<bench.heartbeatNext)
+    return;
+  bench.heartbeatNext = now+std::chrono::seconds(10);
+  const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now-bench.heartbeatStart).count();
+  const auto command = std::min(std::max(bench.pc,size_t(1)),bench.prog.size());
+  char gameTime[80];
+  std::snprintf(gameTime,sizeof(gameTime),"day %lld %02lld:%02lld",(long long)world.time().day(),
+                (long long)world.time().hour(),(long long)world.time().minute());
+  const auto path = outDir+"/heartbeat.json";
+  std::ofstream file(path+".tmp");
+  file << "{\"elapsed_seconds\":" << elapsed << ",\"frame\":" << bench.step
+       << ",\"command_index\":" << command << ",\"command_count\":" << bench.prog.size()
+       << ",\"command\":" << jsonStr(command>0 ? bench.prog[command-1] : "")
+       << ",\"game_time\":" << jsonStr(gameTime);
+  if(NpcDayJournal::running())
+    file << ",\"npcday_elapsed_minutes\":" << double(world.time().toInt()-bench.npcDayStart)/60000.0
+         << ",\"npcday_target_minutes\":" << bench.npcDayMinutes;
+  file << "}\n";
+  file.close();
+  if(file) {
+    std::error_code error;
+    std::filesystem::rename(path+".tmp",path,error);
+    }
+  }
 
 // a line of events.jsonl: what happened when, in the recording's frames (the cut of a short lines up its
 // subtitles and sound by them); `fields` are more json members, without braces
@@ -1756,8 +1933,10 @@ bool keyAction(std::string_view k, KeyCodec::Action& a) {
     {"forward",KeyCodec::Forward}, {"back",KeyCodec::Back},       {"left",KeyCodec::Left},  {"right",KeyCodec::Right},
     {"turnl",  KeyCodec::RotateL}, {"turnr",KeyCodec::RotateR},   {"jump",KeyCodec::Jump},  {"walk", KeyCodec::Walk},
     {"sneak",  KeyCodec::Sneak},   {"weapon",KeyCodec::Weapon},   {"action",KeyCodec::ActionGeneric},
+    {"attack", KeyCodec::ActionGeneric},
     {"melee",  KeyCodec::WeaponMele},{"bow",KeyCodec::WeaponBow}, {"spell",KeyCodec::WeaponMage3},
-    {"parade", KeyCodec::Parade},  {"breath",KeyCodec::Walk},
+    {"parade", KeyCodec::Parade},  {"breath",KeyCodec::Walk},     {"dodge",KeyCodec::Dodge},
+    {"heal", KeyCodec::Heal},      {"potion",KeyCodec::Potion},
     };
   for(auto& i:keys)
     if(i.name==k) {
@@ -1768,10 +1947,22 @@ bool keyAction(std::string_view k, KeyCodec::Action& a) {
   }
 
 void press(PlayerControl& ctrl, KeyCodec::Action a) {
+  if(a==KeyCodec::ActionGeneric || a==KeyCodec::Forward) {
+    bench.inputTraceUntil = bench.time+2000;
+    const auto* world = Gothic::inst().world();
+    say("input press " + std::string(a==KeyCodec::Forward ? "forward" : "attack") + " at " +
+        std::to_string(world ? world->tickCount() : 0) + " ms");
+    }
   ctrl.onKeyPressed(a,KeyEvent::K_NoKey,KeyCodec::Mapping::Primary);
   }
 
 void release(PlayerControl& ctrl, KeyCodec::Action a) {
+  if(a==KeyCodec::ActionGeneric || a==KeyCodec::Forward) {
+    bench.inputTraceUntil = bench.time+2000;
+    const auto* world = Gothic::inst().world();
+    say("input release " + std::string(a==KeyCodec::Forward ? "forward" : "attack") + " at " +
+        std::to_string(world ? world->tickCount() : 0) + " ms");
+    }
   ctrl.onKeyReleased(a,KeyCodec::Mapping::Primary);
   }
 
@@ -1828,6 +2019,8 @@ void writeCharacterMoveFrame(std::FILE* file,const Bench::CharacterMoveFrame& mo
   }
 
 void finish() {
+  if(auto* world=Gothic::inst().world())
+    NpcDayJournal::stop(*world,"bench_end");
   stopBodyLive();
   npcCharacterStopMotionTrace(Gothic::inst().world());
   endAnimationControl();
@@ -1840,7 +2033,7 @@ void finish() {
   stopRecording();
   if(!bench.streamingSamples.empty()) {
     if(auto* file=std::fopen((outDir+"/streaming.csv").c_str(),"w")) {
-      std::fprintf(file,"segment,frame,update_ms,work_ms,near,far,outside,near_transitions,far_transitions,publication_ms,published,released,page_used_bytes,page_free_bytes,page_retired_bytes,page_count,tex_live_bytes,tex_retired_bytes,tex_peak_bytes,tex_live_n,tex_evicted,tex_reloaded,tex_landscape_bytes,tex_landscape_n,tex_static_bytes,tex_static_n,tex_dynamic_bytes,tex_dynamic_n,tex_other_bytes,tex_other_n,tex_full_bytes,tex_tail_bytes,tex_promoted,tex_demoted,tex_promotion_queue,tex_near_tail_n,tex_near_tail_seconds\n");
+      std::fprintf(file,"segment,frame,update_ms,work_ms,near,far,outside,near_transitions,far_transitions,publication_ms,published,released,page_used_bytes,page_free_bytes,page_retired_bytes,page_count,tex_live_bytes,tex_retired_bytes,tex_peak_bytes,tex_live_n,tex_evicted,tex_reloaded,tex_landscape_bytes,tex_landscape_n,tex_static_bytes,tex_static_n,tex_dynamic_bytes,tex_dynamic_n,tex_other_bytes,tex_other_n,tex_full_bytes,tex_tail_bytes,tex_promoted,tex_demoted,tex_promotion_queue,tex_near_tail_n,tex_near_tail_seconds,vob_near,vob_far,vob_outside,vob_created,vob_released,vob_pending,vob_publication_ms,vob_near_missing,vob_near_missing_seconds,npc_full,npc_simplified,npc_tier_transitions,npc_full_tick_ms,npc_simplified_tick_ms\n");
       for(const auto& row:bench.streamingSamples) {
         std::fprintf(file,"%s,%llu,%.9g,%.9g,%zu,%zu,%zu,%llu,%llu,",row.segment.c_str(),
           (unsigned long long)row.frame,row.updateMs,row.workMs,row.near,row.far,row.outside,
@@ -1857,10 +2050,16 @@ void finish() {
         for(size_t i=0;i<textures.categoryBytes.size();++i)
           std::fprintf(file,",%llu,%llu",(unsigned long long)textures.categoryBytes[i],
             (unsigned long long)textures.categoryCount[i]);
-        std::fprintf(file,",%llu,%llu,%llu,%llu,%llu,%llu,%.9g\n",
+        std::fprintf(file,",%llu,%llu,%llu,%llu,%llu,%llu,%.9g",
           (unsigned long long)textures.fullBytes,(unsigned long long)textures.tailBytes,
           (unsigned long long)textures.promoted,(unsigned long long)textures.demoted,
           (unsigned long long)textures.promotionQueue,(unsigned long long)textures.nearTailCount,textures.nearTailSeconds);
+        std::fprintf(file,",%zu,%zu,%zu,%llu,%llu,%zu,%.9g,%zu,%.9g",
+          row.vobNear,row.vobFar,row.vobOutside,(unsigned long long)row.vobCreated,
+          (unsigned long long)row.vobReleased,row.vobPending,row.vobPublicationMs,
+          row.vobNearMissing,row.vobNearMissingSeconds);
+        std::fprintf(file,",%zu,%zu,%llu,%.9g,%.9g\n",row.npcFull,row.npcSimplified,
+          (unsigned long long)row.npcTierTransitions,row.npcFullTickMs,row.npcSimplifiedTickMs);
         }
       std::fclose(file);
       } else event("streaming_error","\"reason\":\"cannot write residency samples\"");
@@ -1920,6 +2119,16 @@ void finish() {
   bench.characterProp.reset();bench.characterPlatform.reset();bench.characterPlatformVisual.reset();
   bench.destructionFixtures.clear();
   bench.furnitureParts.loadBodies.clear();
+  if(bench.npcDuel.active) {
+    Gothic::inst().onCombatHit.ubind(&bench.npcDuel,&Bench::NpcDuel::hit);
+    bench.npcDuel.active=false;
+    }
+  if(bench.bodyImpact.observing) {
+    Gothic::inst().onHeroDeed.ubind(&bench.bodyImpact,&Bench::BodyImpact::deed);
+    Gothic::inst().onObservedPerception.ubind(&bench.bodyImpact,&Bench::BodyImpact::perception);
+    Gothic::inst().onExternalPerception.ubind(&bench.bodyImpact,&Bench::BodyImpact::perception);
+    bench.bodyImpact.observing=false;
+    }
   if(bench.placedItems.watchingTheft) {
     Gothic::inst().onHeroDeed.ubind(&bench.placedItems,&Bench::PlacedItems::deed);
     Gothic::inst().onObservedPerception.ubind(&bench.placedItems,&Bench::PlacedItems::perception);
@@ -2419,7 +2628,7 @@ void writeHeader() {
   std::fprintf(bench.csv,",hp_player,hp_subject");
   std::fprintf(bench.csv,",stamina_player,stamina_subject");
   std::fprintf(bench.csv,",ai_on,ai_want,ai_sigma,ai_errx,ai_erry,ai_lead,ai_pv,ai_ps");
-  std::fprintf(bench.csv,",mr_w,mr_dev,mr_hits");
+  std::fprintf(bench.csv,",mr_w,mr_dev,mr_hits,physics_ms");
   if(ragdollTrace)
     std::fprintf(bench.csv,",ph_ms,ph_bodies,ph_rays,rd_mode,rd_weight,rd_sleep");
   if(bench.questTrace)
@@ -2439,6 +2648,26 @@ std::string ragdollNumber(float value) {
 
 std::string ragdollVector(const Vec3& value) {
   return "["+ragdollNumber(value.x)+","+ragdollNumber(value.y)+","+ragdollNumber(value.z)+"]";
+  }
+
+void stunDriftSample(World& world, uint64_t elapsed, uint64_t requested) {
+  const auto& drift=bench.stunDrift;
+  const auto& target=*drift.target;
+  const auto delta=target.position()-drift.origin;
+  const auto separation=drift.attacker->position()-target.position();
+  event("stun_drift","\"actor\":"+jsonStr(symName(world,&target))+
+    ",\"attacker\":"+jsonStr(symName(world,drift.attacker))+",\"elapsed_ms\":"+std::to_string(elapsed)+
+    ",\"requested_ms\":"+std::to_string(requested)+",\"position_cm\":"+ragdollVector(target.position())+
+    ",\"attacker_position_cm\":"+ragdollVector(drift.attacker->position())+
+    ",\"axis\":"+ragdollVector(drift.axis)+",\"toward_cm\":"+ragdollNumber(Vec3::dotProduct(delta,drift.axis))+
+    ",\"horizontal_cm\":"+ragdollNumber(std::hypot(delta.x,delta.z))+",\"height_cm\":"+ragdollNumber(delta.y)+
+    ",\"separation_cm\":"+ragdollNumber(std::hypot(separation.x,separation.z))+
+    ",\"stunned\":"+(target.isMeleeStunned() ? "true" : "false")+
+    ",\"slide\":"+(target.isSlide() ? "true" : "false")+
+    ",\"in_air\":"+(target.isInAir() ? "true" : "false")+
+    ",\"melee_stun_beat\":"+(target.meleeStunSecondBeat() ? "true" : "false")+
+    ",\"external\":"+(target.isExternalControl() ? "true" : "false")+
+    ",\"animation\":"+jsonStr(target.animNames()));
   }
 
 std::string ragdollMatrix(const Matrix4x4& value) {
@@ -3330,6 +3559,317 @@ void prepareSpellFixture(World& world,Npc& player,std::string_view fixture) {
   bench.cam=C_Hold;lookFrom(target+Vec3(600,280,-300),target);
   event("spell_physics_setup","\"fixture\":"+jsonStr(fixture)+",\"default_enabled\":"+
     std::string(Gothic::settingsGetI("GAME","spell_physics")?"true":"false"));
+  }
+
+void bodyImpactSurface(World& world,const std::vector<Vec3>& vertices,
+                       std::unique_ptr<PhysicMeshShape>& shape,DynamicWorld::Item& body) {
+  body=DynamicWorld::Item();shape.reset();
+  asset::WorldMesh mesh;mesh.materials.resize(1);mesh.materials[0].group=asset::MaterialGroup::STONE;
+  for(const auto& point:vertices)mesh.vertices.push_back({point.x,point.y,point.z});
+  for(uint32_t i=0;i<vertices.size();i+=4) {
+    mesh.polygons.vertex_indices.insert(mesh.polygons.vertex_indices.end(),{i,i+2,i+1,i,i+3,i+2});
+    mesh.polygons.material_indices.insert(mesh.polygons.material_indices.end(),{0,0});
+    }
+  shape.reset(PhysicMeshShape::load(PackedMesh(mesh,PackedMesh::PK_Physic)));
+  auto matrix=Matrix4x4::mkIdentity();matrix.translate(bench.bodyImpact.anchor);
+  body=world.physic()->addStaticObj(shape.get(),matrix,"BENCH_BODY_IMPACT");
+  if(body.isEmpty())arenaAbort("body impact fixture has no native support");
+  }
+
+void bodyImpactClear(World& world,Npc& player) {
+  auto& state=bench.bodyImpact;state.tracing=false;
+  if(state.guardSaved) {Gothic::settingsSetI("GAME","ragdoll_quest_guard",state.questGuard);state.guardSaved=false;}
+  if(state.observing) {
+    Gothic::inst().onHeroDeed.ubind(&state,&Bench::BodyImpact::deed);
+    Gothic::inst().onObservedPerception.ubind(&state,&Bench::BodyImpact::perception);
+    Gothic::inst().onExternalPerception.ubind(&state,&Bench::BodyImpact::perception);
+    state.observing=false;
+    }
+  player.setTarget(nullptr);player.closeWeapon(true);
+  for(auto* npc:{state.npc,state.animated,state.witness,state.culprit==state.player ? nullptr : state.culprit})if(npc) {
+    if(bench.subject==npc)bench.subject=nullptr;
+    std::erase_if(bench.spellActors,[npc](const auto& actor){return actor.npc==npc;});
+    std::erase(bench.crew,npc);
+    world.removeNpc(*npc);
+    }
+  state.npc=state.animated=state.witness=nullptr;
+  state.culprit=nullptr;
+  state.wall=DynamicWorld::Item();state.wallShape.reset();
+  state.ledge=DynamicWorld::Item();state.ledgeShape.reset();
+  bench.spellTrace=false;
+  }
+
+Npc* bodyImpactActor(World& world,std::string_view symbol,const Vec3& position) {
+  auto* npc=world.addNpc(world.script().findSymbolIndex(symbol),position);
+  if(!npc) {arenaAbort("body impact actor insertion failed");return nullptr;}
+  npc->clearAiQueue();npc->clearState(false);npc->setExternalControl(true);npc->clearGoTo();npc->clearSpeed();
+  npc->handle().flags=zenkit::NpcFlag(uint32_t(npc->handle().flags)&~uint32_t(zenkit::NpcFlag::IMMORTAL));
+  npc->handle().attribute[ATR_HITPOINTS]=npc->handle().attribute[ATR_HITPOINTSMAX]=50000;
+  npc->setDirection(Vec3(0,0,-1));npc->updateTransform();
+  return npc;
+  }
+
+void bodyImpactSetup(World& world,Npc& player,std::string_view mode,float value) {
+  auto& state=bench.bodyImpact;bodyImpactClear(world,player);bodyTrace=true;
+  if(!state.ready) {
+    state.anchor=player.position()+Vec3(0,10000,0);
+    bodyImpactSurface(world,{{-2200,0,-1800},{-2200,0,1800},{2200,0,1800},{2200,0,-1800}},state.floorShape,state.floor);
+    state.ready=true;
+    }
+  state.mode=mode;state.value=value;state.player=state.culprit=&player;state.damage=state.capsuleDamage=0;
+  state.impacts=state.deeds=state.murders=state.defeats=0;state.weapon=size_t(-1);
+  // The numeric fall must reach its support rather than the separate quest return.
+  state.questGuard=Gothic::settingsGetI("GAME","ragdoll_quest_guard");state.guardSaved=true;
+  Gothic::settingsSetI("GAME","ragdoll_quest_guard",0);
+  state.maximumSpeed=0;state.launchSpeed=0;state.sawAir=false;
+  const auto origin=state.anchor+Vec3(-500,0,0);
+  player.clearAiQueue();player.stopWalking();player.clearSpeed();player.setPosition(origin-Vec3(0,0,180));
+  player.setDirection(Vec3(0,0,1));player.updateTransform();
+  state.npc=bodyImpactActor(world,"BAU_904_BAUER",origin);if(!state.npc)return;
+  auto& npc=*state.npc;
+  const bool paired=mode=="nonlethal" || mode=="lethal";
+  if(paired) {
+    state.culprit=bodyImpactActor(world,"SLD_826_SOELDNER",origin-Vec3(350,0,0));
+    if(!state.culprit)return;
+    }
+  Gothic::settingsSetI("GAME","ragdoll",1);Gothic::settingsSetI("GAME","spell_physics",1);
+  if(mode=="unconscious" || mode=="dead") {
+    npc.setRagdollDown(mode=="dead");npc.prepareRagdoll();
+    }
+  else {
+    // Exercise the actual posture knockdown, then exclude preparation weapon damage
+    // from the observation. No transient body flag or health state is fabricated.
+    const auto stagger=Gothic::settingsGetI("GAME","melee_stagger");
+    Gothic::settingsSetI("GAME","melee_posture",1);Gothic::settingsSetI("GAME","melee_stagger",0);
+    state.culprit->setToFistMode();
+    MeleeBladeContact contact;contact.npc=&npc;contact.point=npc.collosionCenter();
+    contact.velocityCmS=Vec3(0,0,4000);contact.speedCmS=4000;contact.surfaceAngleDeg=90;
+    for(unsigned i=0;i<12 && !npc.isMeleeKnockedDown();++i)npc.takeDamage(*state.culprit,nullptr,true,1.f,&contact);
+    Gothic::settingsSetI("GAME","melee_stagger",stagger);
+    if(!npc.isMeleeKnockedDown() || !npc.ragdollBody() || npc.isDown()) {
+      arenaAbort("body impact preparation did not create a living posture knockdown");return;
+      }
+    npc.handle().attribute[ATR_HITPOINTS]=50000;
+    }
+  if(!npc.ragdollBody()) {arenaAbort("body impact preparation has no native ragdoll");return;}
+  if(paired) {
+    if(mode=="nonlethal")state.culprit->setNonlethalFight(npc);
+    // Enable NPC deed capture in both controls, so lethal proves that the
+    // nonlethal case's empty murder count is meaningful.
+    state.culprit->setServerDeed("murder",&npc);
+    state.weapon=world.script().findSymbolIndex("ITMW_1H_MACE_L_01");
+    npc.setToFightMode(state.weapon);
+    if(!npc.currentMeleeWeapon() || npc.currentMeleeWeapon()->clsId()!=state.weapon) {
+      arenaAbort("body impact paired victim has no drawn weapon");return;
+      }
+    }
+  if(mode=="fall") {
+    const float h=value*100.f;
+    bodyImpactSurface(world,{{500,h,-160},{500,h,160},{750,h,160},{750,h,-160}},state.ledgeShape,state.ledge);
+    state.animated=bodyImpactActor(world,"BAU_904_BAUER",state.anchor+Vec3(650,h,0));
+    if(!state.animated)return;
+    if(state.animated->guild()!=npc.guild()) {arenaAbort("body impact fall comparators have different guilds");return;}
+    }
+  if(mode=="wall" || mode=="fatal" || paired)
+    bodyImpactSurface(world,{{-1600,0,180},{-1600,1600,180},{1600,1600,180},{1600,0,180}},state.wallShape,state.wall);
+  state.witness=bodyImpactActor(world,"BAU_904_BAUER",state.anchor+Vec3(200,0,-200));
+  Gothic::inst().onHeroDeed.bind(&state,&Bench::BodyImpact::deed);
+  Gothic::inst().onObservedPerception.bind(&state,&Bench::BodyImpact::perception);
+  Gothic::inst().onExternalPerception.bind(&state,&Bench::BodyImpact::perception);state.observing=true;
+  bench.subject=state.npc;
+  event("body_impact_setup","\"case\":"+jsonStr(state.mode)+",\"value\":"+ragdollNumber(value)+
+    ",\"guild\":"+std::to_string(npc.guild())+",\"mass_kg\":"+ragdollNumber(npc.physicsMass())+
+    ",\"falldown_height_cm\":"+std::to_string(world.script().guildVal().falldown_height[npc.guild()])+
+    ",\"falldown_damage_per_m\":"+std::to_string(world.script().guildVal().falldown_damage[npc.guild()])+
+    ",\"prot_fall\":"+std::to_string(npc.protection(PROT_FALL))+",\"quest_guard\":false"+
+    ",\"knockdown\":"+(npc.isMeleeKnockedDown()?"true":"false"));
+  }
+
+void bodyImpactLaunch(World& world,Npc& player) {
+  auto& state=bench.bodyImpact;auto* npc=state.npc;
+  if(!npc || !npc->ragdollBody()) {arenaAbort("body impact launch requires prepared native body");return;}
+  const bool paired=state.mode=="nonlethal" || state.mode=="lethal";
+  const bool wall=state.mode=="wall" || state.mode=="fatal" || paired;
+  npc->setPosition(npc->position()+Vec3(0,wall ? 200.f : state.value*100.f,0));
+  auto saved=npc->ragdollBody()->state();
+  for(auto& part:saved.parts) {
+    part.linearVelocity=part.linearVelocityMeters=part.angularVelocity={};part.sleeping=false;
+    }
+  if(!const_cast<Ragdoll*>(npc->ragdollBody())->restore(saved)) {arenaAbort("body impact launch cannot reset native velocities");return;}
+  if(state.mode=="immortal")npc->handle().flags=zenkit::NpcFlag(uint32_t(npc->handle().flags)|uint32_t(zenkit::NpcFlag::IMMORTAL));
+  if(state.mode=="fatal" || paired)npc->handle().attribute[ATR_HITPOINTS]=20;
+  state.hpBefore=npc->attribute(ATR_HITPOINTS);state.animatedBefore=state.animated ? state.animated->attribute(ATR_HITPOINTS) : 0;
+  state.damage=state.capsuleDamage=0;state.impacts=state.deeds=state.murders=state.defeats=0;
+  state.maximumSpeed=0;state.started=world.tickCount();state.tracing=true;
+  // Ragdoll's existing .12/s damping acts once before the first 120 Hz contact.
+  // Prepare the requested contact speed without changing the native damping.
+  state.launchSpeed=wall ? state.value/(1.f-.12f/120.f) : 0.f;
+  if(wall && !npc->addSpellImpulse(Vec3(0,0,npc->physicsMass()*state.launchSpeed),true,state.culprit)) {
+    arenaAbort("body impact native wall impulse was refused");return;
+    }
+  if(state.animated) {
+    // Sneak steps over the edge without Run's horizontal fall-energy surplus.
+    state.animated->setWalkMode(WalkBit::WM_Sneak);
+    state.animated->setExternalControl(false);
+    state.animated->setDirection(Vec3(1,0,0));state.animated->updateTransform();
+    if(!state.animated->goToPosition(state.anchor+Vec3(1400,state.value*100.f,0))) {
+      arenaAbort("body impact animated comparator could not step off its ledge");return;
+      }
+    }
+  event("body_impact_launch","\"case\":"+jsonStr(state.mode)+",\"value\":"+ragdollNumber(state.value)+
+    ",\"hp_before\":"+std::to_string(state.hpBefore)+",\"normal_speed_m_s\":"+ragdollNumber(wall?state.value:0)+
+    ",\"launch_speed_m_s\":"+ragdollNumber(state.launchSpeed)+
+    ",\"drop_m\":"+ragdollNumber(wall?0:state.value)+",\"feature\":"+(Gothic::physicsFlags().bodyImpactDamage?"true":"false"));
+  }
+
+void bodyImpactWind(World& world,Npc& player) {
+  auto& state=bench.bodyImpact;bodyImpactClear(world,player);
+  prepareSpellFixture(world,player,"wind");
+  for(auto& actor:bench.spellActors)world.removeNpc(*actor.npc);
+  bench.spellActors.clear();bench.crew.clear();
+  if(!state.ready) {arenaAbort("body impact wind requires the body impact floor");return;}
+  state.mode="wind_goblin";state.value=0;state.player=state.culprit=&player;state.damage=state.capsuleDamage=0;
+  state.impacts=state.deeds=state.murders=state.defeats=0;
+  state.maximumSpeed=0;state.launchSpeed=0;state.sawAir=false;bodyTrace=true;
+  bodyImpactSurface(world,{{-1600,0,80},{-1600,1600,80},{1600,1600,80},{1600,0,80}},state.wallShape,state.wall);
+  state.npc=bodyImpactActor(world,"GOBBO_GREEN",state.anchor);if(!state.npc)return;
+  player.setPosition(state.anchor-Vec3(0,0,230));player.setDirection(Vec3(0,0,1));player.updateTransform();
+  bench.spellActors.push_back({state.npc,"body_impact_target"});bench.subject=state.npc;
+  state.hpBefore=state.npc->attribute(ATR_HITPOINTS);state.started=world.tickCount();state.tracing=true;
+  event("body_impact_wind_setup","\"case\":\"wind_goblin\",\"mass_kg\":"+ragdollNumber(state.npc->physicsMass())+
+    ",\"guild\":"+std::to_string(state.npc->guild())+",\"height_scale\":1,\"cast_distance_cm\":230,\"wall_distance_cm\":80");
+  }
+
+void bodyImpactReport(World& world,Npc& player) {
+  auto& state=bench.bodyImpact;const auto* npc=state.npc;
+  if(!npc || !state.tracing) {arenaAbort("body impact report requires a launched case");return;}
+  const bool enabled=Gothic::physicsFlags().bodyImpactDamage;
+  const bool nonlethal=state.mode=="nonlethal",paired=nonlethal || state.mode=="lethal";
+  const bool fall=state.mode=="fall",wind=state.mode=="wind_goblin",fatal=state.mode=="fatal" || state.mode=="lethal";
+  const bool excluded=state.mode=="unconscious" || state.mode=="dead" || state.mode=="immortal";
+  const bool wall=state.mode=="wall" || fatal || nonlethal || wind;
+  const float wallZ=state.anchor.z+(wind ? 80.f : 180.f);
+  float frontZ=npc->navigationPhysicsPosition().z;
+  if(const auto* body=npc->ragdollBody())if(const auto* skeleton=npc->visualSkeleton()) {
+    frontZ=-std::numeric_limits<float>::infinity();
+    for(const auto& part:body->state().parts) {
+      auto name=skeleton->nodes[part.bone].name;
+      for(auto& c:name)c=char(std::toupper(static_cast<unsigned char>(c)));
+      if(name.find("PELVIS")!=std::string::npos || name.find("SPINE")!=std::string::npos || name.find("HEAD")!=std::string::npos)
+        frontZ=std::max(frontZ,part.centerOfMassMeters.z*100.f);
+      }
+    }
+  const bool wallBlocked=wall && frontZ<=wallZ+5.f;
+  const float normalSpeedError=wall && !wind && enabled ? std::abs(state.maximumSpeed-state.value*100.f)/(state.value*100.f)*100.f : 0.f;
+  const float freefallSpeed=fall ? std::sqrt(2.f*DynamicWorld::gravity*state.value*100.f)*1000.f : 0.f;
+  const float freefallError=fall && enabled ? std::abs(state.maximumSpeed-freefallSpeed)/freefallSpeed*100.f : 0.f;
+  const float speed=fall || wind ? state.maximumSpeed*.001f : state.value*.1f;
+  const int formula=DamageCalculator::damageFall(*state.npc,speed).value;
+  const int damage=state.hpBefore-npc->attribute(ATR_HITPOINTS);
+  const int animated=state.animated ? state.animatedBefore-state.animated->attribute(ATR_HITPOINTS) : 0;
+  const int expected=enabled && !excluded ? formula : 0;
+  const float tolerance=fall ? std::max(2.f,float(expected)*.1f) : float(expected)*.1f;
+  const bool attributed=npc->bodyImpactCulprit()==state.culprit;
+  bool weaponDropped=false;
+  if(paired)world.detectItem(npc->position(),1200.f,[&](Item& item) {
+    weaponDropped|=item.clsId()==state.weapon;
+    });
+  bool pass=wind ? (enabled ? state.capsuleDamage>0 && attributed && state.sawAir : state.damage==0 && state.capsuleDamage==0) :
+            float(std::abs(damage-expected))<=tolerance;
+  if(fall)pass&=state.sawAir && (!enabled || freefallError<=10.f);
+  if(excluded || (!enabled && !wind))pass&=damage==0 && state.deeds==0 && state.murders==0;
+  if(fatal && enabled)pass=npc->isDead() && npc->lastHitBy()==state.culprit && attributed && state.deeds>0 && state.murders>0;
+  if(nonlethal && enabled)pass=npc->attribute(ATR_HITPOINTS)==1 && npc->isUnconscious() && !npc->isDead() &&
+      !npc->isMeleeKnockedDown() && npc->ragdollBody()!=nullptr && npc->lastHitBy()==state.culprit &&
+      npc->stateOther()==state.culprit && attributed && state.deeds==0 && state.murders==0 && state.defeats>0 &&
+      npc->bodyTrace().id==0 && weaponDropped && npc->itemCount(state.weapon)==0;
+  if(state.mode=="lethal" && enabled)pass&=npc->bodyTrace().id!=0;
+  if(!fall && !excluded && !wind && enabled)pass&=attributed;
+  if(wall && !wind && enabled)pass&=normalSpeedError<=1.f;
+  if(wall)pass&=wallBlocked;
+  event("body_impact_result","\"case\":"+jsonStr(state.mode)+",\"value\":"+ragdollNumber(state.value)+
+    ",\"feature\":"+(enabled?"true":"false")+",\"elapsed_ms\":"+std::to_string(world.tickCount()-state.started)+
+    ",\"hp_before\":"+std::to_string(state.hpBefore)+",\"hp_after\":"+std::to_string(npc->attribute(ATR_HITPOINTS))+
+    ",\"damage\":"+std::to_string(damage)+",\"body_damage\":"+std::to_string(state.damage)+
+    ",\"capsule_wall_damage\":"+std::to_string(state.capsuleDamage)+
+    ",\"formula_damage\":"+std::to_string(formula)+",\"expected_damage\":"+std::to_string(expected)+
+    ",\"animated_damage\":"+std::to_string(animated)+",\"animated_airborne\":"+(state.sawAir?"true":"false")+
+    ",\"impacts\":"+std::to_string(state.impacts)+",\"maximum_normal_speed_cm_s\":"+ragdollNumber(state.maximumSpeed)+
+    ",\"expected_freefall_speed_cm_s\":"+(fall?ragdollNumber(freefallSpeed):"null")+
+    ",\"freefall_speed_error_percent\":"+(fall && enabled?ragdollNumber(freefallError):"null")+
+    ",\"launch_speed_m_s\":"+ragdollNumber(state.launchSpeed)+
+    ",\"normal_speed_error_percent\":"+(wall && !wind && enabled?ragdollNumber(normalSpeedError):"null")+
+    ",\"wall_z_cm\":"+(wall?ragdollNumber(wallZ):"null")+
+    ",\"front_z_cm\":"+(wall?ragdollNumber(frontZ):"null")+",\"wall_blocked\":"+(wallBlocked?"true":"false")+
+    ",\"root_position_cm\":"+ragdollVector(npc->position())+
+    ",\"culprit_hero\":"+(attributed && state.culprit==&player?"true":"false")+",\"killer_hero\":"+(npc->lastHitBy()==&player?"true":"false")+
+    ",\"deeds\":"+std::to_string(state.deeds)+",\"murder_perceptions\":"+std::to_string(state.murders)+
+    ",\"defeat_perceptions\":"+std::to_string(state.defeats)+",\"culprit_npc\":"+(attributed && state.culprit!=&player?"true":"false")+
+    ",\"last_hit_culprit\":"+(npc->lastHitBy()==state.culprit?"true":"false")+
+    ",\"other_culprit\":"+(npc->stateOther()==state.culprit?"true":"false")+
+    ",\"death_trace_id\":"+std::to_string(npc->bodyTrace().id)+",\"weapon_dropped\":"+(weaponDropped?"true":"false")+
+    ",\"unconscious\":"+(npc->isUnconscious()?"true":"false")+",\"dead\":"+(npc->isDead()?"true":"false")+
+    ",\"immortal\":"+(npc->isImmortal()?"true":"false")+",\"pass\":"+(pass?"true":"false"));
+  state.tracing=false;
+  if(!pass)arenaAbort("body impact acceptance failed");
+  }
+
+void bodyImpactRecovered() {
+  const auto& state=bench.bodyImpact;const auto* npc=state.npc;
+  const bool pass=npc && state.mode=="nonlethal" && !npc->isDown() && !npc->isMeleeKnockedDown() &&
+      !npc->ragdollBody() && !npc->isRagdollBlending() && npc->bodyTrace().id==0;
+  event("body_impact_recovered","\"case\":"+jsonStr(state.mode)+",\"pass\":"+(pass?"true":"false"));
+  if(!pass)arenaAbort("body impact nonlethal recovery failed");
+  }
+
+void bodyImpactDuel(World& world,Npc& player,uint32_t seed,std::string_view weapon) {
+  auto& state=bench.bodyImpact;
+  if(BodyArena::enabled()) {
+    const auto actors=BodyArena::actors();endAnimationControl();BodyArena::disable();BodyObservations::disable();
+    BodyController::reset("body impact duel reset");
+    for(auto* npc:actors)world.removeNpc(*npc);
+    }
+  bodyTrace=true;
+  BodyArena::Config config;config.seed=seed;config.weapon=weapon;
+  BodyArena::configure(config,seed);
+  BodyArena::setSink([](std::string_view row){event("body_impact_arena","\"arena\":"+std::string(row));});
+  setupArena(world,player);
+  BodyObservations::watch(BodyArena::actors());BodyArena::sealInitialState();BodyArena::start("native");
+  state.duelBodies.clear();
+  for(auto* npc:BodyArena::actors())state.duelBodies.push_back({npc});
+  state.duel=true;bench.waitUntil=bench.time+60100;
+  event("body_impact_duel_start","\"seed\":"+std::to_string(seed)+",\"weapon\":"+jsonStr(weapon)+
+    ",\"feature\":"+(Gothic::physicsFlags().bodyImpactDamage?"true":"false"));
+  }
+
+void bodyImpactTick(World& world) {
+  auto& state=bench.bodyImpact;
+  if(state.tracing) {
+    if(state.animated)state.sawAir|=state.animated->isInAir() || state.animated->isFalling();
+    if(state.mode=="wind_goblin" && state.npc)state.sawAir|=state.npc->isInAir();
+    }
+  if(state.duel) {
+    BodyArena::postStep();
+    for(auto& body:state.duelBodies) {
+      const bool knocked=body.npc->isMeleeKnockedDown();
+      if(knocked && !body.knocked) {
+        body.knocked=true;body.damage=0;body.speed=0;body.since=world.tickCount();
+        }
+      if(body.knocked && (!knocked || BodyArena::complete())) {
+        event("body_impact_duel_knockdown","\"seed\":"+std::to_string(BodyArena::seed())+
+          ",\"actor\":"+jsonStr(TestBench::who(body.npc))+",\"since_ms\":"+std::to_string(body.since)+
+          ",\"elapsed_ms\":"+std::to_string(world.tickCount()-body.since)+",\"body_damage\":"+std::to_string(body.damage)+
+          ",\"maximum_normal_speed_cm_s\":"+ragdollNumber(body.speed)+
+          ",\"terminal\":"+(BodyArena::complete()?"true":"false"));
+        body.knocked=false;
+        }
+      }
+    if(BodyArena::complete()) {
+      event("body_impact_duel_result","\"feature\":"+(Gothic::physicsFlags().bodyImpactDamage?std::string("true"):std::string("false"))+
+        ",\"arena\":"+BodyArena::statusJson());
+      state.duel=false;bench.waitUntil=bench.time;endAnimationControl();
+      }
+    }
   }
 
 // Numeric-only Item hull fixtures. Source vertices and native transforms are in centimetres.
@@ -7148,6 +7688,68 @@ void placedItemsDiagnose(World& world,Npc& player,uint32_t zenId,bool control) {
     ",\"trace_complete\":"+(!samples.empty() && maximumGap<=1 && steps>=300?"true":"false"));
 }
 
+bool dodgeDirection(std::string_view name, MeleeDodge::Direction& dir) {
+  if(name=="back" || name=="none")
+    dir = MeleeDodge::Direction::Back;
+  else if(name=="left")
+    dir = MeleeDodge::Direction::Left;
+  else if(name=="right")
+    dir = MeleeDodge::Direction::Right;
+  else if(name=="forward")
+    dir = MeleeDodge::Direction::Forward;
+  else
+    return false;
+  return true;
+  }
+
+// `dodge ... before`: fires as the attacker's next blow comes within leadMs of its contact
+void meleeDodgeFields(World& world) {
+  if(!bench.dodgeArm)
+    return;
+  const auto arm = *bench.dodgeArm;
+  if(world.tickCount()>arm.until) {
+    say("dodge " + symName(world,arm.npc) + ": no blow of " + symName(world,arm.attacker) + " came in time");
+    bench.dodgeArm.reset();
+    return;
+    }
+  const auto contact = arm.attacker->nextMeleeContactMs();
+  if(!contact || *contact>arm.leadMs)
+    return;
+  bench.dodgeArm.reset();
+  const bool ok = arm.npc->meleeDodge(arm.dir);
+  say("dodge " + symName(world,arm.npc) + " " + std::string(MeleeDodge::name(arm.dir)) + " before the blow of " +
+      symName(world,arm.attacker) + ", its contact in " + std::to_string(*contact) + " ms: " +
+      (ok ? "started" : "not started"));
+  }
+
+void meleeAiResponseFields(World& world) {
+  if(!bench.meleeAiResponse)
+    return;
+  const auto arm = *bench.meleeAiResponse;
+  if(world.tickCount()>arm.until) {
+    say("melee AI response: no charged contact of " + symName(world,arm.attacker) + " came in time");
+    bench.meleeAiResponse.reset();
+    return;
+    }
+  if(!arm.attacker->isMeleeChargeReleasing())
+    return;
+  const auto contact = arm.attacker->nextMeleeContactMs();
+  if(!contact || *contact>120)
+    return;
+  bench.meleeAiResponse.reset();
+  if(arm.parry) {
+    arm.npc->setDirection(arm.attacker->position()-arm.npc->position());
+    arm.npc->updateTransform();
+    }
+  const bool started = arm.parry ? arm.npc->blockSword() : arm.npc->meleeDodge(MeleeDodge::Direction::Left);
+  const std::string response = arm.parry ? "parry" : "dodge";
+  say("melee AI response " + response + " before the charged contact of " + symName(world,arm.attacker) +
+      " in " + std::to_string(*contact) + " ms: " + (started ? "started" : "refused"));
+  TestBench::bodyEvent(*arm.npc,arm.attacker,"ai_charge_response",world.tickCount(),
+    "\"response\":"+jsonStr(response)+",\"contact_in_ms\":"+std::to_string(*contact)+
+    ",\"started\":"+(started ? "true" : "false"));
+  }
+
 void placedItemsFields(World& world,Npc& player,PlayerControl& ctrl) {
   auto& state=bench.placedItems;
   if(state.probing) {
@@ -10079,7 +10681,8 @@ void writeRow(Npc& pl) {
         dev = std::max(dev,(shown-anim).length());
         }
       }
-    std::fprintf(bench.csv,",%.3f,%.2f,%u",weight,dev,unsigned(s.meleeReactionProbe().applied));
+    std::fprintf(bench.csv,",%.3f,%.2f,%u,%.6f",weight,dev,unsigned(s.meleeReactionProbe().applied),
+                 double(s.world().physic()->physicsStats().stepMilliseconds));
   }
   if(ragdollTrace)
     writeRagdoll(pl);
@@ -13144,12 +13747,690 @@ void routineReturnTick(World& world,Npc& player,PlayerControl& ctrl) {
     }
   }
 
+// Raw script arrays match story_eval; weapon arrays are retained separately, without combining them.
+template<class T>
+std::string npcDuelArray(const T& values) {
+  std::string out="[";
+  for(const auto value:values) { if(out.size()>1)out+=','; out+=std::to_string(value); }
+  return out+"]";
+  }
+
+std::string npcDuelSnapshot(World& world, Npc& npc) {
+  const auto& h=npc.handle();
+  auto* weapon=npc.currentMeleeWeapon();
+  auto* symbol=weapon ? world.script().findSymbol(weapon->clsId()) : nullptr;
+  std::string skills="[", values="[";
+  for(int i=0;i<TALENT_MAX_G2;++i) {
+    if(i>0) {skills+=',';values+=',';}
+    skills+=std::to_string(npc.talentSkill(Talent(i)));
+    values+=std::to_string(npc.talentValue(Talent(i)));
+    }
+  return "\"instance\":"+jsonStr(symName(world,&npc))+",\"level\":"+std::to_string(h.level)+
+    ",\"hp_before\":"+std::to_string(npc.attribute(ATR_HITPOINTS))+
+    ",\"hp_max\":"+std::to_string(npc.attribute(ATR_HITPOINTSMAX))+
+    ",\"str\":"+std::to_string(npc.attribute(ATR_STRENGTH))+",\"dex\":"+std::to_string(npc.attribute(ATR_DEXTERITY))+
+    ",\"hitchance\":{\"fist\":"+std::to_string(npc.hitChance(TALENT_UNKNOWN))+
+    ",\"1h\":"+std::to_string(npc.hitChance(TALENT_1H))+",\"2h\":"+std::to_string(npc.hitChance(TALENT_2H))+"}"+
+    ",\"talent_skills\":"+skills+"],\"talent_values\":"+values+"]"+
+    ",\"protection\":"+npcDuelArray(h.protection)+",\"damage\":"+npcDuelArray(h.damage)+
+    ",\"damagetype\":"+std::to_string(h.damage_type)+",\"weapon\":"+jsonStr(symbol ? symbol->name() : std::string_view{})+
+    ",\"two_handed\":"+(weapon && weapon->is2H() ? "true" : "false")+
+    ",\"weapon_damage\":"+(weapon ? npcDuelArray(weapon->handle().damage) : "[0,0,0,0,0,0,0,0]")+
+    ",\"weapon_damage_total\":"+std::to_string(weapon ? weapon->handle().damage_total : 0)+
+    ",\"weapon_damagetype\":"+std::to_string(weapon ? weapon->handle().damage_type : 0)+
+    ",\"immortal_before\":"+(npc.isImmortal() ? "true" : "false")+
+    ",\"guild\":"+std::to_string(h.guild)+",\"fight_tactic\":"+std::to_string(h.fight_tactic);
+  }
+
+bool tickNpcDuel(World& world) {
+  auto& duel=bench.npcDuel;
+  if(!duel.active)return false;
+  const uint64_t now=world.tickCount();
+  const bool down[]={duel.actors[0]->isDown(),duel.actors[1]->isDown()};
+  if(!down[0] && !down[1] && now<duel.end)return true;
+  Gothic::inst().onCombatHit.ubind(&duel,&Bench::NpcDuel::hit);
+  duel.active=false;
+  std::string fields="\"seed\":"+std::to_string(duel.seed)+",\"duration_ms\":"+std::to_string(now-duel.from)+
+    ",\"hit_log\":"+duel.hitLog+"],\"defender_first_swing_ms\":"+
+    (duel.firstResponseMs<0 ? "null" : std::to_string(duel.firstResponseMs));
+  if(down[0] || down[1]) {
+    const size_t loser=duel.loser>=0 ? size_t(duel.loser) : (down[0] ? 0 : 1);
+    fields+=",\"winner\":"+jsonStr(symName(world,duel.actors[1-loser]))+
+            ",\"loser\":"+jsonStr(symName(world,duel.actors[loser]));
+    } else fields+=",\"timeout\":true";
+  std::vector<Item*> dropped;
+  for(size_t i=0;i<2;++i) {
+    Npc& npc=*duel.actors[i];
+    bool weaponDropped=false;
+    world.detectItem(npc.position(),3000.f,[&](Item& item) {
+      if(item.handle().owner!=int32_t(npc.instanceSymbol()) || !item.isDynamic())return;
+      if(item.clsId()==duel.weapons[i])weaponDropped=true;
+      dropped.push_back(&item);
+      });
+    fields+=std::string(i==0 ? ",\"attacker\":{" : ",\"defender\":{")+duel.before[i]+
+      ",\"hp_after\":"+std::to_string(npc.attribute(ATR_HITPOINTS))+
+      ",\"hits\":"+std::to_string(duel.hits[i])+",\"damage_dealt\":"+std::to_string(duel.damage[i])+
+      ",\"swings\":"+std::to_string(duel.swings[i])+",\"blocked\":"+std::to_string(duel.blocked[i])+
+      ",\"misses\":"+std::to_string(duel.misses[i])+
+      ",\"hp_one\":"+(npc.attribute(ATR_HITPOINTS)==1 ? "true" : "false")+
+      ",\"unconscious\":"+(stateName(world,npc)=="ZS_UNCONSCIOUS" ? "true" : "false")+
+      ",\"weapon_dropped\":"+(weaponDropped ? "true" : "false")+"}";
+    }
+  event("npc_duel",fields);
+  for(auto* item:dropped)world.removeItem(*item);
+  for(auto*& npc:duel.actors) {world.removeNpc(*npc);npc=nullptr;}
+  return false;
+  }
+
+std::vector<const WayPoint*> npcTierPath(const Npc& npc) {
+  std::vector<const WayPoint*> result;
+  if(const auto* current=npc.currentGoToPoint())result.push_back(current);
+  auto path=npc.navigationPath();
+  while(const auto* point=path.pop())
+    if(result.empty() || result.back()!=point)result.push_back(point);
+  return result;
+  }
+
+bool npcTierTestTick(World& world,Npc& player) {
+  auto& test=bench.npcTierTest;
+  if(!test.npc)return false;
+  auto& npc=*test.npc;
+  const auto now=world.tickCount();
+  const bool turning=test.phase==1;
+  const float moved=(npc.position()-test.lastPosition).length();
+  const float turned=std::abs(std::remainder(npc.rotation()-test.lastAngle,360.f));
+  test.lastPosition=npc.position();test.lastAngle=npc.rotation();
+  if(now>=test.deadline) {
+    test.npc=nullptr;
+    arenaAbort("NPC tier transition test timed out before every action arrived");
+    return true;
+    }
+  if(test.pending) {
+    if(now==test.switchedAt)return true;
+    const auto position=npc.position();
+    const auto delta=position-test.before;
+    const float horizontal=std::sqrt(delta.x*delta.x+delta.z*delta.z);
+    const auto elapsed=now-test.switchedAt;
+    const float travel=std::max(test.travelPerMs*float(elapsed),npc.animMoveSpeed(elapsed).length());
+    const auto path=npcTierPath(npc);
+    const bool suffix=path.size()<=test.path.size() && path.size()+1>=test.path.size() &&
+      std::equal(path.rbegin(),path.rend(),test.path.rbegin());
+    const auto goal=npc.navigationGoal();
+    const bool sameGoal=turning || (goal.active && goal.point==test.destination);
+    const auto* head=npc.aiQueueFront();
+    const bool sameTurn=!turning || (head && head->act==AI_TurnToNpc);
+    const float afterHeight=std::hypot(horizontal,std::max(0.f,std::abs(delta.y)-30.f));
+    const bool pass=npc.simTier()!=test.previous && suffix && sameGoal && sameTurn && afterHeight<=travel+0.1f;
+    test.maximumJump=std::max(test.maximumJump,delta.length());
+    test.maximumHeight=std::max(test.maximumHeight,std::abs(delta.y));
+    if(npc.simTier()==NpcSimTier::Full)++test.toFull[turning?1:0];
+    else ++test.toSimplified[turning?1:0];
+    event("npc_tier_transition","\"npc\":"+jsonStr(symName(world,&npc))+
+      ",\"action\":"+jsonStr(turning?"turn":"edge")+",\"from\":"+jsonStr(NpcSimTiers::name(test.previous))+
+      ",\"to\":"+jsonStr(NpcSimTiers::name(npc.simTier()))+",\"jump_cm\":"+ragdollNumber(delta.length())+
+      ",\"horizontal_cm\":"+ragdollNumber(horizontal)+",\"height_cm\":"+ragdollNumber(std::abs(delta.y))+
+      ",\"tick_travel_cm\":"+ragdollNumber(travel)+",\"after_height_correction_cm\":"+ragdollNumber(afterHeight)+",\"angle_delta_deg\":"+
+      ragdollNumber(std::abs(std::remainder(npc.rotation()-test.beforeAngle,360.f)))+
+      ",\"path_preserved\":"+(suffix?"true":"false")+",\"destination_preserved\":"+(sameGoal?"true":"false")+
+      ",\"pass\":"+(pass?"true":"false"));
+    test.pending=false;
+    if(!pass) {
+      test.npc=nullptr;
+      arenaAbort("NPC tier transition changed the remaining action or exceeded one tick of travel");
+      return true;
+      }
+    ++test.switches;
+    }
+  if(test.switches<2) {
+    const auto* head=npc.aiQueueFront();
+    const auto goal=npc.navigationGoal();
+    const auto* current=npc.currentGoToPoint();
+    const auto fromStart=npc.position()-test.started;
+    const auto toWaypoint=current ? current->groundPos-npc.position() : Vec3();
+    const bool ready=turning ? head && head->act==AI_TurnToNpc && turned>0.5f :
+      current && goal.active && moved>0.1f && std::hypot(fromStart.x,fromStart.z)>50.f &&
+      std::hypot(toWaypoint.x,toWaypoint.z)>200.f;
+    if(!ready)return true;
+    test.before=npc.position();
+    test.beforeAngle=npc.rotation();
+    test.destination=goal.point;
+    test.path=npcTierPath(npc);
+    test.previous=npc.simTier();
+    const auto tick=std::max<uint64_t>(bench.frameMs,1);
+    test.travelPerMs=turning?0.f:std::max(npc.simplifiedMoveSpeed(),npc.animMoveSpeed(tick).length()/float(tick));
+    test.switchedAt=now;
+    test.pending=true;
+    npc.setSimTierOverride(test.previous==NpcSimTier::Full?NpcSimTier::Simplified:NpcSimTier::Full);
+    return true;
+    }
+  if(!npc.isAiQueueEmpty())return true;
+  if(!turning) {
+    const auto* destination=test.ends[(test.legs+1)%2];
+    const bool arrived=(npc.position()-destination->position()).length()<=150.f;
+    event("npc_tier_arrival","\"leg\":"+std::to_string(test.legs)+",\"destination\":"+jsonStr(destination->name)+
+      ",\"distance_cm\":"+ragdollNumber((npc.position()-destination->position()).length())+
+      ",\"pass\":"+(arrived?"true":"false"));
+    if(!arrived) {test.npc=nullptr;arenaAbort("NPC tier transition action finished away from its destination");return true;}
+    ++test.legs;
+    if(test.legs<20) {
+      test.started=npc.position();test.switches=0;
+      npc.aiPush(AiQueue::aiGoToPoint(*test.ends[(test.legs+1)%2]));
+      return true;
+      }
+    test.phase=1;
+    }
+  else ++test.turns;
+  if(test.turns<20) {
+    npc.setDirection(player.position()-npc.position());
+    npc.setDirection(npc.rotation()+170.f);
+    test.beforeAngle=npc.rotation();test.lastAngle=npc.rotation();test.switches=0;
+    npc.aiPush(AiQueue::aiTurnToNpc(&player));
+    return true;
+    }
+  const bool enough=test.toFull[0]>=20 && test.toSimplified[0]>=20 &&
+                    test.toFull[1]>=20 && test.toSimplified[1]>=20 && test.legs==20 && test.turns==20;
+  event("npc_tier_transition_result","\"edge_to_full\":"+std::to_string(test.toFull[0])+
+    ",\"edge_to_simplified\":"+std::to_string(test.toSimplified[0])+
+    ",\"turn_to_full\":"+std::to_string(test.toFull[1])+
+    ",\"turn_to_simplified\":"+std::to_string(test.toSimplified[1])+
+    ",\"arrivals\":"+std::to_string(test.legs)+",\"turns_completed\":"+std::to_string(test.turns)+
+    ",\"max_jump_cm\":"+ragdollNumber(test.maximumJump)+",\"max_height_cm\":"+ragdollNumber(test.maximumHeight)+
+    ",\"pass\":"+(enough?"true":"false"));
+  npc.setSimTierOverride(std::nullopt);
+  test.npc=nullptr;
+  if(!enough)arenaAbort("NPC tier transition test did not observe 20 switches each way during both actions");
+  return false;
+  }
+
+bool npcSpeedPrepare(World& world) {
+  auto& test=bench.npcSpeedTest;
+  static constexpr const char* instances[]={"BAU_904_BAUER","OrcWarrior_Roam","Wolf"};
+  static constexpr WalkBit modes[]={WalkBit::WM_Walk,WalkBit::WM_Run,WalkBit::WM_Sneak};
+  if(test.leg%6==0) {
+    if(test.npc)world.removeNpc(*test.npc);
+    const auto instance=world.script().findSymbolIndex(instances[test.leg/6]);
+    test.npc=instance==size_t(-1) ? nullptr : world.addNpc(instance,test.start->groundPos);
+    if(!test.npc || !test.npc->visualSkeleton() || test.npc->isDown()) {
+      test.npc=nullptr;arenaAbort("NPC speed fixture instance is unavailable");return false;
+      }
+    }
+  auto& npc=*test.npc;
+  npc.setInteraction(nullptr,true);npc.clearAiQueue();npc.clearState(true);npc.clearGoTo();
+  npc.setTarget(nullptr);npc.setExternalControl(true);npc.stopWalking();npc.closeWeapon(true);npc.clearSpeed();
+  npc.setSimTierOverride(test.leg%2==0 ? NpcSimTier::Full : NpcSimTier::Simplified);
+  npc.setPosition(test.start->groundPos);npc.setDirection(test.end->groundPos-test.start->groundPos);
+  npc.attachToPoint(test.start);npc.updateTransform();
+  npc.aiPush(AiQueue::aiSetWalkMode(modes[(test.leg/2)%3]));
+  npc.aiPush(AiQueue::aiGoToPoint(*test.end));
+  test.began=test.previousTick=world.tickCount();test.previous=npc.position();
+  test.measuredMs=0;test.samples=0;test.distance=0;test.expectedDistance=0;
+  test.firstAnimation.clear();test.lastAnimation.clear();
+  return true;
+  }
+
+bool npcSpeedTick(World& world) {
+  auto& test=bench.npcSpeedTest;
+  if(!test.npc)return false;
+  auto& npc=*test.npc;
+  const auto now=world.tickCount();
+  if(now-test.began>600000) {
+    test.npc=nullptr;arenaAbort("NPC speed fixture did not arrive on the authored edge");return true;
+    }
+  const auto edge=test.end->groundPos-test.start->groundPos;
+  const auto offset=npc.position()-test.start->groundPos,previous=test.previous-test.start->groundPos;
+  const auto progress=[&](const Vec3& p) {return (p.x*edge.x+p.z*edge.z)/(test.length*test.length);};
+  if(now>test.previousTick && progress(previous)>=.2f && progress(offset)<=.8f) {
+    const auto expected=test.leg%2==0 ? NpcSimTier::Full : NpcSimTier::Simplified;
+    if(npc.simTier()!=expected || npc.currentGoToPoint()!=test.end) {
+      test.npc=nullptr;arenaAbort("NPC speed fixture left the requested tier or authored edge");return true;
+      }
+    const auto dt=now-test.previousTick;
+    const auto moved=npc.position()-test.previous;
+    test.distance+=(moved.x*edge.x+moved.z*edge.z)/test.length;
+    test.expectedDistance+=npc.simplifiedMoveSpeed()*float(dt);
+    test.measuredMs+=dt;++test.samples;
+    if(test.firstAnimation.empty())test.firstAnimation=npc.animNames();
+    test.lastAnimation=npc.animNames();
+    }
+  test.previous=npc.position();test.previousTick=now;
+  if(!npc.isAiQueueEmpty())return true;
+  static constexpr const char* species[]={"human","orc","wolf"};
+  static constexpr const char* modes[]={"walk","run","sneak"};
+  const bool arrived=(npc.position()-test.end->groundPos).length()<=150.f;
+  const bool pass=arrived && test.samples>=3 && test.distance>0;
+  event("npc_speed_sample","\"species\":"+jsonStr(species[test.leg/6])+
+    ",\"npc\":"+jsonStr(symName(world,&npc))+",\"walk_mode\":"+jsonStr(modes[(test.leg/2)%3])+
+    ",\"tier\":"+jsonStr(NpcSimTiers::name(npc.simTier()))+
+    ",\"from\":"+jsonStr(test.start->name)+",\"to\":"+jsonStr(test.end->name)+
+    ",\"edge_cm\":"+ragdollNumber(test.length)+",\"edge_height_cm\":"+ragdollNumber(edge.y)+
+    ",\"elapsed_ms\":"+std::to_string(now-test.began)+",\"measured_ms\":"+std::to_string(test.measuredMs)+
+    ",\"samples\":"+std::to_string(test.samples)+",\"distance_cm\":"+ragdollNumber(test.distance)+
+    ",\"sequence_speed_m_s\":"+ragdollNumber(test.measuredMs ? test.expectedDistance*10.f/float(test.measuredMs) : 0.f)+
+    ",\"observed_speed_m_s\":"+ragdollNumber(test.measuredMs ? test.distance*10.f/float(test.measuredMs) : 0.f)+
+    ",\"first_animation\":"+jsonStr(test.firstAnimation)+",\"last_animation\":"+jsonStr(test.lastAnimation)+
+    ",\"arrived\":"+(arrived?"true":"false")+",\"pass\":"+(pass?"true":"false"));
+  if(!pass) {test.npc=nullptr;arenaAbort("NPC speed fixture has no valid middle-edge measurement or arrival");return true;}
+  if(++test.leg==18) {
+    world.removeNpc(npc);test.npc=nullptr;
+    event("npc_speed_result","\"rows\":18,\"species\":3,\"walk_modes\":3,\"tiers\":2,\"pass\":true");
+    return false;
+    }
+  npcSpeedPrepare(world);
+  return true;
+  }
+
+void healingObserve(World& world,Npc& player) {
+  auto& test=bench.healing;
+  if(test.label.empty())return;
+  auto& actor=test.npc==nullptr ? player : *test.npc;
+  const auto now=world.tickCount();
+  if(test.npc!=nullptr && !test.queueRunAt && actor.walkMode()==WalkBit::WM_Run)
+    test.queueRunAt=now;
+  const bool hand=actor.isUsingItemInHand();
+  test.sawHand|=hand;
+  if(test.label=="wine")
+    for(const auto& layer:actor.logicalBodyState().layers)
+      if(layer.sequence!=nullptr && layer.sequence->name=="T_POTION_STAND_2_S0")test.nativeClip=layer.sequence->name;
+  if(test.armed) {
+    if(!test.handEnd)test.heldWeapon&=actor.weaponState()==test.weapon;
+    if(hand) {
+      if(!test.handStart)test.handStart=now;
+      for(const auto& layer:actor.logicalBodyState().layers) {
+        if(layer.sequence==nullptr)continue;
+        const auto& seq=*layer.sequence;
+        if(seq.name==test.clip) {
+          test.handLayer|=seq.layer==21;
+          std::vector<Animation::LogicEvent> events;
+          seq.logicEvents(events);
+          for(const auto& e:events) {
+            test.leftInsert|=e.def==asset::MdsEventType::ITEM_INSERT && e.slot[0]=="ZS_LEFTHAND";
+            if(e.def==asset::MdsEventType::ITEM_INSERT && e.slot[0]=="ZS_LEFTHAND")
+              test.insertAt=layer.start+uint64_t(double(e.time)/layer.speed);
+            test.sound|=e.kind==Animation::LogicEvent::Sound;
+            if(e.def==asset::MdsEventType::ITEM_DESTROY)test.destroyAt=layer.start+uint64_t(double(e.time)/layer.speed);
+            }
+          }
+        if(test.walking && seq.layer<21)
+          test.walkOnly&=seq.name.find("RUNL")==std::string::npos && seq.name.find("RUNSTRAFE")==std::string::npos;
+        }
+      // Events are applied during the NPC tick; check complete frames inside the insert/destroy interval.
+      if(test.insertAt && now>test.insertAt+34 && now<test.destroyAt) {
+        const auto* item=actor.inventory().slotItem("ZS_LEFTHAND");
+        const bool held=item!=nullptr && item->clsId()==test.item;
+        test.leftHeld&=held;test.sawLeftItem|=held;
+        }
+      }
+    else if(test.sawHand && !test.handEnd)test.handEnd=now;
+    }
+  if(test.walking && (test.baseline || hand || (test.sawHand && !test.handEnd))) {
+    auto delta=actor.position()-test.previous;delta.y=0;
+    test.distance+=delta.length();
+    test.yawTravel+=std::abs(std::remainder(actor.rotation()-test.previousYaw,360.f));
+    if(test.observedAt)test.movingMs+=now-test.observedAt;
+    }
+  if(test.action=="dodge")test.actionExecuted|=actor.isMeleeDodging();
+  if(test.action=="attack")test.actionExecuted|=actor.isAttackAnim();
+  test.previous=actor.position();test.previousYaw=actor.rotation();test.observedAt=now;
+  const int hp=actor.attribute(ATR_HITPOINTS);
+  if(hp>test.hp) {
+    test.healed+=hp-test.hp;
+    if(!test.firstHeal)test.firstHeal=world.tickCount();
+    test.lastHeal=world.tickCount();
+    }
+  if(hp<test.hp)test.damage+=test.hp-hp;
+  test.hp=hp;
+  const auto count=actor.inventory().itemCount(test.item);
+  if(count<test.lastItems) {
+    test.lastConsume=world.tickCount();test.nextSecond=test.lastConsume;test.paused=0;++test.portions;
+    }
+  test.lastItems=count;
+  test.sawDrink|=actor.hasState(BS_ITEMINTERACT);
+  if(test.strikeDelay && actor.hasState(BS_ITEMINTERACT)) {
+    test.strikeAt=now+test.strikeDelay;test.strikeDelay=0;
+    say("healing native use reached; strike at "+std::to_string(test.strikeAt-test.start)+" ms after request");
+    }
+  if(test.lastConsume && world.tickCount()>=test.nextSecond) {
+    const auto elapsed=world.tickCount()-test.lastConsume-test.paused;
+    test.samples.emplace_back(elapsed,test.healed);
+    say("healing sample "+test.label+": "+std::to_string(elapsed)+
+      " ms after consume, hp "+std::to_string(hp)+", healed "+std::to_string(test.healed)+
+      ", damage "+std::to_string(test.damage)+", items "+std::to_string(count));
+    test.nextSecond+=1000;
+    }
+  }
+
+void healingCommand(const std::vector<std::string>& a,World& world,Npc& player,PlayerControl& ctrl) {
+  auto& test=bench.healing;
+  if((a.size()==4 || a.size()==5) && a[1]=="begin") {
+    exec("disarm",world,player,ctrl);
+    const auto item=world.script().findSymbolIndex(a[3]);
+    if(item==size_t(-1))throw std::runtime_error("healing fixture item is absent");
+    // Start every case with ample room for healing and a real strike safely above one-third HP.
+    player.handle().attribute[ATR_HITPOINTSMAX]=1000;
+    const int hp=a.size()==5 ? std::stoi(a[4]) : 700;
+    player.handle().attribute[ATR_HITPOINTS]=hp;
+    player.handle().flags=zenkit::NpcFlag(uint32_t(player.handle().flags)&~uint32_t(zenkit::NpcFlag::IMMORTAL));
+    const auto count=player.inventory().itemCount(item);
+    if(count)player.delItem(item,uint32_t(count));
+    test={};test.label=a[2];test.item=item;test.hp=hp;test.start=world.tickCount();
+    Gothic::settingsSetI("GAME","usePotionKeys",1);
+    say("healing begin "+test.label+": hp "+std::to_string(hp)+"/1000 at "+std::to_string(test.start)+" ms, interrupt "+
+      std::to_string(Gothic::physicsFlags().meleeHealInterrupt)+", food "+std::to_string(Gothic::physicsFlags().foodOverTime));
+    }
+  else if(a.size()==3 && a[1]=="arm") {
+    exec("melee-shadow weapon "+a[2],world,player,ctrl);
+    test.armed=true;test.weapon=player.weaponState();
+    const auto* item=player.getItem(test.item);
+    // begin removes this fixture item, so obtain its scheme from a temporary inventory instance.
+    if(item==nullptr)player.addItem(test.item,1);
+    const auto& scheme=player.getItem(test.item)->handle().scheme_name;
+    const char* suffix=scheme=="POTIONFAST" ? "DRINK" : scheme=="FOOD" ? "EATAPPLE" :
+                       scheme=="FOODHUGE" ? "EATBREAD" : scheme=="MEAT" ? "EATMEAT" : "";
+    test.clip="T_"+(a[2]=="fist" ? std::string("FIST") : a[2]=="1h" ? std::string("1H") : std::string("2H"))+suffix;
+    player.setWalkMode(WalkBit::WM_Run);
+    }
+  else if(a.size()==3 && a[1]=="use") {
+    test.start=world.tickCount();test.observedAt=test.start;test.previous=player.position();
+    test.lastItems=player.itemCount(test.item);test.heldWeapon=true;
+    if(test.lastItems!=1)throw std::runtime_error("healing in-hand fixture requires exactly one item");
+    if(a[2]=="direct")player.useItem(test.item);
+    else if(a[2]=="ai")player.aiPush(AiQueue::aiUseItem(int32_t(test.item)));
+    else if(a[2]=="hotkey") {test.hotkey=true;exec("release heal",world,player,ctrl);}
+    else throw std::runtime_error("healing use expects direct, ai or hotkey");
+    healingObserve(world,player);
+    }
+  else if(a.size()==2 && a[1]=="exhaust") {
+    if(!player.hasStamina())throw std::runtime_error("healing exhaustion requires melee stamina");
+    for(unsigned i=0;i<16 && !player.isStaminaExhausted();++i) {
+      player.stopAnim("");
+      if(!player.doAttack(Npc::Anim::Attack,BS_HIT))throw std::runtime_error("healing could not exhaust the hero");
+      }
+    player.stopAnim("");player.setAnim(Npc::Anim::Idle);
+    if(player.stamina()!=0.f || !player.isStaminaExhausted())throw std::runtime_error("healing hero is not exhausted");
+    say("healing exhausted: stamina "+std::to_string(player.stamina()));
+    }
+  else if(a.size()==3 && a[1]=="toggle") {
+    test.checkWalk=true;test.expectedWalk=a[2]=="walk" ? WalkBit::WM_Walk : WalkBit::WM_Run;
+    if(a[2]!="walk" && a[2]!="sneak")throw std::runtime_error("healing toggle expects walk or sneak");
+    exec("tap "+a[2],world,player,ctrl);
+    say("healing toggle "+a[2]+": walk mode "+std::to_string(int(player.walkMode())));
+    }
+  else if(a.size()==3 && a[1]=="original") {
+    if(a[2]=="potion")Gothic::settingsSetI("GAME","melee_heal_interrupt",0);
+    else if(a[2]=="food")Gothic::settingsSetI("GAME","food_over_time",0);
+    else throw std::runtime_error("healing original expects potion or food");
+    }
+  else if(a.size()==2 && a[1]=="npc-queue") {
+    if(bench.meleeShadowActors.size()!=3)throw std::runtime_error("healing NPC queue requires the bandit fixture");
+    auto& npc=*bench.meleeShadowActors[2];
+    npc.clearAiQueue();npc.clearState(true);npc.clearGoTo();npc.stopWalking();npc.closeWeapon(true);npc.stopAnim("");
+    npc.setExternalControl(true);
+    const auto sword=world.script().findSymbolIndex("ITMW_1H_COMMON_01");
+    if(sword==size_t(-1))throw std::runtime_error("healing NPC sword is absent");
+    npc.setToFightMode(sword);npc.setWalkMode(WalkBit::WM_Walk);npc.setAnim(Npc::Anim::Idle);
+    npc.handle().attribute[ATR_HITPOINTSMAX]=1000;npc.handle().attribute[ATR_HITPOINTS]=700;
+    const auto count=npc.itemCount(test.item);if(count)npc.delItem(test.item,uint32_t(count));
+    npc.addItem(test.item,1);
+    test.npc=&npc;test.armed=true;test.weapon=npc.weaponState();test.clip="T_1HDRINK";
+    test.start=world.tickCount();test.hp=700;test.lastItems=1;test.heldWeapon=true;
+    npc.aiPush(AiQueue::aiUseItem(int32_t(test.item)));
+    npc.aiPush(AiQueue::aiSetWalkMode(WalkBit::WM_Run));
+    healingObserve(world,player);
+    }
+  else if(a.size()==3 && (a[1]=="baseline" || a[1]=="move")) {
+    if(a[2]!="forward" && a[2]!="side")throw std::runtime_error("healing movement expects forward or side");
+    test.direction=a[2]=="forward" ? 0u : 1u;
+    test.walking=true;test.baseline=a[1]=="baseline";
+    test.distance=0;test.movingMs=0;test.previous=player.position();test.observedAt=world.tickCount();
+    if(test.baseline)player.setWalkMode(WalkBit::WM_Walk);
+    // The in-hand case keeps run selected; the item layer must force the ordinary combat walk.
+    exec("press "+std::string(test.direction==0 ? "forward" : "right"),world,player,ctrl);
+    }
+  else if(a.size()==3 && a[1]=="motion") {
+    if(a[2]!="back" && a[2]!="turn")throw std::runtime_error("healing motion expects back or turn");
+    test.motion=a[2];test.walking=true;
+    test.distance=0;test.yawTravel=0;test.previous=player.position();test.previousYaw=player.rotation();
+    test.observedAt=world.tickCount();
+    }
+  else if(a.size()==2 && a[1]=="baseline-end") {
+    healingObserve(world,player);
+    if(test.movingMs==0 || test.distance<20)throw std::runtime_error("healing walk reference did not move");
+    const float speed=test.distance*1000.f/float(test.movingMs);
+    bench.healingWalkSpeed[test.direction]=speed;
+    say("healing walk reference "+std::to_string(test.direction)+": "+std::to_string(test.distance)+
+        " cm in "+std::to_string(test.movingMs)+" ms, "+std::to_string(speed)+" cm/s");
+    test.walking=false;
+    exec("release all",world,player,ctrl);
+    player.setAnim(Npc::Anim::Idle);
+    }
+  else if(a.size()==2 && a[1]=="second") {
+    test.secondItem=world.script().findSymbolIndex("ITFO_APPLE");
+    if(test.secondItem==size_t(-1))throw std::runtime_error("healing second item is absent");
+    const auto count=player.itemCount(test.secondItem);
+    if(count)player.delItem(test.secondItem,uint32_t(count));
+    player.addItem(test.secondItem,1);
+    player.useItem(test.secondItem);
+    say("healing second item requested at "+std::to_string(world.tickCount()-test.start)+" ms");
+    }
+  else if(a.size()==3 && a[1]=="action") {
+    if(!Gothic::physicsFlags().meleeUseInHand) {
+      say("healing action "+a[2]+": OFF holster control, no input");
+      return;
+      }
+    test.action=a[2];
+    if(a[2]=="dodge")test.actionExecuted=player.meleeDodge(MeleeDodge::Direction::Back);
+    else if(a[2]=="attack")test.actionExecuted=player.doAttack(Npc::Anim::Attack,BS_HIT);
+    else if(a[2]=="parade")test.actionExecuted=player.blockSword();
+    else if(a[2]=="charge")test.actionExecuted=player.beginMeleeCharge();
+    else if(a[2]=="run") {player.setWalkMode(WalkBit::WM_Run);test.actionExecuted=!player.isUsingItemInHand();}
+    else throw std::runtime_error("healing action expects dodge, attack, parade, charge or run");
+    say("healing action "+a[2]+": accepted "+std::to_string(test.actionExecuted)+", anim "+player.animNames());
+    healingObserve(world,player);
+    }
+  else if(a.size()==3 && a[1]=="hit") {
+    test.strikeDelay=uint64_t(std::stoul(a[2]));
+    healingObserve(world,player);
+    }
+  else if(a.size()==3 && a[1]=="strike") {
+    test.strikeAt=world.tickCount()+uint64_t(std::stoul(a[2]));
+    say("healing strike scheduled "+a[2]+" ms after use");
+    }
+  else if(a.size()==2 && a[1]=="busy") {
+    const auto now=world.tickCount();
+    const auto* animation=player.playAnimByName("T_1HATTACKL",BS_STAND,true);
+    if(animation==nullptr || animation->layer!=1 || animation->canInterrupt(now,now,0))
+      throw std::runtime_error("healing busy fixture requires a noninterruptible layer-one transition");
+    }
+  else if(a.size()==2 && a[1]=="retry") {
+    exec("disarm",world,player,ctrl);
+    const auto item=test.item;
+    const auto count=player.inventory().itemCount(item);
+    test.label+="-retry";test.start=world.tickCount();test.firstHeal=test.lastHeal=test.lastConsume=test.nextSecond=0;
+    test.paused=0;test.portions=0;test.samples.clear();
+    test.healed=test.damage=0;test.hp=player.attribute(ATR_HITPOINTS);test.lastItems=count;test.sawDrink=false;
+    if(!count)player.addItem(item,1); // OFF may already have consumed the first potion.
+    player.useItem(item);
+    healingObserve(world,player);
+    }
+  else if(a.size()==2 && a[1]=="arrow") {
+    auto* attacker=findNpc(world,player,"BDT_1013_BANDIT_L");
+    const auto symbol=world.script().findSymbolIndex("ITRW_ARROW");
+    if(!attacker || symbol==size_t(-1))throw std::runtime_error("healing arrow fixture is absent");
+    const auto side=Vec3(-facing(player).z,0,facing(player).x);
+    Vec3 from,to;bool found=false;
+    for(float height:{100.f,120.f,80.f,140.f}) {
+      from=player.position()+Vec3(0,height,0)+side*120.f;to=from-side*240.f;
+      float distance=0;
+      if(player.rayHitZone(from,to,distance)!=HitZones::None) {found=true;break;}
+      }
+    if(!found)throw std::runtime_error("healing arrow has no native bone intersection");
+    Item item(world,symbol,Item::T_Inventory);
+    Bullet arrow(world,item,from);arrow.setOrigin(attacker);arrow.setPrecise(1.f);
+    DamageCalculator::Damage damage;damage[PROT_POINT]=20;arrow.setDamage(damage);
+    constexpr uint64_t dt=100;
+    const auto direction=(to-from)/float(dt)+Vec3(0,.5f*DynamicWorld::gravity*float(dt),0);
+    arrow.setDirection(direction);
+    DynamicWorld::BulletBody step(world.physic(),&arrow);
+    step.setPosition(from);step.setDirection(direction);
+    const int hp=player.attribute(ATR_HITPOINTS);
+    ClothBulletBenchDriver::step(*world.physic(),step,direction,dt);
+    say("healing arrow: hp "+std::to_string(hp)+" -> "+std::to_string(player.attribute(ATR_HITPOINTS))+
+      ", native hit "+std::to_string(arrow.hitZone()!=HitZones::None)+" at "+std::to_string(world.tickCount()-test.start)+" ms");
+    if(player.attribute(ATR_HITPOINTS)>=hp || arrow.hitZone()==HitZones::None)
+      throw std::runtime_error("healing arrow did not deal native projectile damage");
+    healingObserve(world,player);
+    }
+  else if(a.size()==2 && a[1]=="save") {
+    test.saved.clear();test.savedHealed=test.healed;test.savedDamage=test.damage;
+    test.savedAt=world.tickCount();test.savedPaused=test.paused;test.savedLastHeal=test.lastHeal;
+    test.savedNextSecond=test.nextSecond;test.savedSamples=test.samples.size();
+    {MemWriter writer(test.saved);Serialize out(writer);out.setContext(&world);out.setVersion(Serialize::Current);
+    player.save(out,world.npcId(&player),"/npc/");}
+    std::ofstream file(outDir+"/healing-npc.zip",std::ios::binary);
+    file.write(reinterpret_cast<const char*>(test.saved.data()),std::streamsize(test.saved.size()));
+    if(!file)throw std::runtime_error("cannot write healing NPC save");
+    say("healing saved: hp "+std::to_string(player.attribute(ATR_HITPOINTS))+", bytes "+std::to_string(test.saved.size()));
+    }
+  else if(a.size()==2 && a[1]=="load") {
+    if(test.saved.empty())throw std::runtime_error("healing load requires a saved NPC");
+    {MemReader reader(test.saved);Serialize in(reader);in.setContext(&world);in.setVersion(Serialize::Current);
+    player.load(in,world.npcId(&player),"/npc/");player.postValidate();}
+    test.hp=player.attribute(ATR_HITPOINTS);test.healed=test.savedHealed;test.damage=test.savedDamage;
+    test.lastHeal=test.savedLastHeal;test.samples.resize(test.savedSamples);
+    const auto pause=world.tickCount()-test.savedAt;
+    test.paused=test.savedPaused+pause;
+    test.nextSecond=test.savedNextSecond ? test.savedNextSecond+pause : 0;
+    say("healing loaded: hp "+std::to_string(test.hp)+", healed "+std::to_string(test.healed));
+    }
+  else if(a.size()>=3 && a[1]=="check") {
+    healingObserve(world,player);
+    auto& actor=test.npc==nullptr ? player : *test.npc;
+    const bool potion=Gothic::physicsFlags().meleeHealInterrupt;
+    const bool food=Gothic::physicsFlags().foodOverTime;
+    const auto items=actor.inventory().itemCount(test.item);
+    const uint64_t first=test.firstHeal ? test.firstHeal-test.start : 0;
+    const uint64_t last=test.lastHeal ? test.lastHeal-test.start : 0;
+    const auto foodElapsed=test.lastHeal>test.lastConsume+test.paused ? test.lastHeal-test.lastConsume-test.paused : 0;
+    bool pass=false;
+    if(a[2]=="potion" || a[2]=="hotkey") {
+      const auto requested=a[2]=="potion" ? test.start : test.hotkeyAt;
+      pass=test.healed==50 && (potion ? test.firstHeal>requested+1000 && test.sawDrink && test.lastConsume==test.firstHeal :
+                                     test.firstHeal==requested);
+      if(a[2]=="potion")pass&=items==0;
+      if(a[2]=="hotkey") {
+        pass&=items==(potion ? 1u : 0u); // The original script also consumes a potion at full HP.
+        pass&=potion ? actor.weaponState()==WeaponState::NoWeapon ||
+                      (Gothic::physicsFlags().meleeUseInHand && test.sawHand && actor.weaponState()==WeaponState::W1H) :
+                      actor.weaponState()!=WeaponState::NoWeapon;
+        }
+      }
+    else if(a[2]=="hand-potion" || a[2]=="hand-food" || a[2]=="hand-cancel" || a[2]=="hand-hit" || a[2]=="wine" || a[2]=="walk" || a[2]=="refused-action" || a[2]=="npc-queue") {
+      const bool enabled=Gothic::physicsFlags().meleeUseInHand && a[2]!="wine";
+      const bool cancelled=a[2]=="hand-hit" || (a[2]=="hand-cancel" && enabled);
+      if(cancelled)pass=test.healed==0 && items==1 && (a[2]=="hand-hit" ? test.damage>0 : test.actionExecuted);
+      else if(a[2]=="hand-food")pass=a.size()==4 && test.healed==std::stoi(a[3]) && items==0 && foodElapsed>=9900 && foodElapsed<=10100;
+      else if(a[2]=="wine") {
+        bool logged=false;
+        std::ifstream log(outDir+"/bench.log");
+        for(std::string line;std::getline(log,line);)
+          logged|=line.find(": ITFO_WINE holster path: scheme POTION")!=std::string::npos;
+        pass=items==0 && test.lastConsume>test.start+5000 && !test.nativeClip.empty() && logged;
+        say("healing wine fallback: "+test.nativeClip+", scheme POTION logged "+std::to_string(logged));
+        }
+      else pass=test.healed==50 && items==0 && test.firstHeal==test.lastConsume;
+      if(enabled && !test.motion.empty()) {
+        pass&=test.walkOnly && (test.motion=="back" ? test.distance>10 : test.yawTravel>10);
+        say("healing motion "+test.motion+": "+std::to_string(test.distance)+" cm, "+std::to_string(test.yawTravel)+" degrees");
+        }
+      if(a[2]=="refused-action" && enabled)pass&=!test.actionExecuted;
+      if(a[2]=="hand-cancel" && enabled) {
+        const bool empty=actor.inventory().slotItem("ZS_LEFTHAND")==nullptr;
+        pass&=empty;
+        if(test.action=="run")pass&=actor.walkMode()==WalkBit::WM_Run;
+        say("healing cancelled hand: empty "+std::to_string(empty)+", walk mode "+std::to_string(int(actor.walkMode())));
+        }
+      if(test.checkWalk)pass&=actor.walkMode()==test.expectedWalk;
+      if(a[2]=="npc-queue") {
+        pass&=test.queueRunAt!=0 && actor.isAiQueueEmpty();
+        if(enabled)pass&=test.handEnd!=0 && test.queueRunAt>=test.lastConsume && test.queueRunAt>=test.handEnd;
+        say("healing NPC queue: run at "+std::to_string(test.queueRunAt-test.start)+" ms, hand end "+
+            std::to_string(test.handEnd ? test.handEnd-test.start : 0)+" ms");
+        }
+      if(test.secondItem!=size_t(-1))pass&=actor.itemCount(test.secondItem)==1;
+      if(enabled) {
+        pass&=test.sawHand && test.heldWeapon && test.handLayer && test.leftInsert && test.sound && test.sawLeftItem && test.leftHeld;
+        if(!cancelled)pass&=test.destroyAt!=0 && test.lastConsume>=test.destroyAt && test.lastConsume<=test.destroyAt+34;
+        }
+      else pass&=!test.sawHand && (test.hotkey ? actor.weaponState()==WeaponState::NoWeapon && !test.heldWeapon :
+                                               actor.weaponState()==test.weapon && test.heldWeapon);
+      if(a[2]=="walk") {
+        const float speed=test.movingMs==0 ? 0 : test.distance*1000.f/float(test.movingMs);
+        const float reference=bench.healingWalkSpeed[test.direction];
+        if(enabled)pass&=test.walkOnly && test.distance>20 && reference>0 && std::abs(speed/reference-1.f)<=.15f;
+        say("healing walk "+test.label+": "+std::to_string(test.distance)+" cm in "+std::to_string(test.movingMs)+
+            " ms, "+std::to_string(speed)+" cm/s, combat walk "+std::to_string(reference)+
+            " cm/s, ratio "+std::to_string(reference==0 ? 0 : speed/reference)+", walk only "+std::to_string(test.walkOnly));
+        }
+      say("healing hand "+test.label+": clip "+test.clip+", layer21 "+std::to_string(test.handLayer)+
+          ", held weapon "+std::to_string(test.heldWeapon)+", hand duration "+std::to_string(test.handEnd>test.handStart ? test.handEnd-test.handStart : 0)+
+          " ms, destroy "+std::to_string(test.destroyAt>test.start ? test.destroyAt-test.start : 0)+
+          " ms, left insert "+std::to_string(test.leftInsert)+", sound "+std::to_string(test.sound)+
+          ", left item seen "+std::to_string(test.sawLeftItem)+", left item held "+std::to_string(test.leftHeld)+
+          ", action "+test.action+", executed "+std::to_string(test.actionExecuted));
+      test.walking=false;
+      exec("release all",world,player,ctrl);
+      }
+    else if(a[2]=="original-potion" || a[2]=="original-food") {
+      pass=test.healed==(a[2]=="original-potion" ? 50 : 10) && test.firstHeal==test.start && items==0 &&
+           !test.sawHand && test.heldWeapon && actor.weaponState()==test.weapon && !test.actionExecuted;
+      Gothic::settingsSetI("GAME","melee_heal_interrupt",1);
+      Gothic::settingsSetI("GAME","food_over_time",1);
+      }
+    else if(a[2]=="interrupted")pass=potion ? test.healed==0 && items==1 && test.damage>0 : test.healed==50 && test.firstHeal==test.start;
+    else if(a[2]=="refused")pass=test.healed==0 && items==1 && !actor.hasState(BS_ITEMINTERACT);
+    else if(a[2]=="food" && a.size()==4) {
+      const int amount=std::stoi(a[3]);
+      pass=test.healed==amount && items==0;
+      if(food) {
+        pass&=foodElapsed>=9900 && foodElapsed<=10100;
+        for(const auto& [elapsed,healed]:test.samples) {
+          if(elapsed<9900 && healed>=amount)pass=false;
+          if(test.portions==1) {
+            const auto low=elapsed>100 ? elapsed-100 : 0;
+            const auto high=std::min(elapsed+100,uint64_t(10000));
+            pass&=healed>=int(uint64_t(amount)*std::min(low,uint64_t(10000))/10000) &&
+                  healed<=int(uint64_t(amount)*high/10000);
+            }
+          }
+        }
+      else pass&=test.firstHeal==test.start;
+      }
+    say("healing check "+test.label+": healed "+std::to_string(test.healed)+", damage "+std::to_string(test.damage)+
+      ", items "+std::to_string(items)+", first heal "+std::to_string(first)+" ms, consume "+
+      std::to_string(test.lastConsume?test.lastConsume-test.start:0)+" ms, last heal "+std::to_string(last)+
+      " ms, food elapsed "+std::to_string(foodElapsed)+" ms, drink "+std::to_string(test.sawDrink)+
+      ", weapon "+std::to_string(int(actor.weaponState()))+", pass "+std::to_string(pass));
+    event("healing_check","\"case\":"+jsonStr(test.label)+",\"healed\":"+std::to_string(test.healed)+
+      ",\"damage\":"+std::to_string(test.damage)+",\"items\":"+std::to_string(items)+",\"first_heal_ms\":"+
+      std::to_string(first)+",\"last_heal_ms\":"+std::to_string(last)+",\"food_elapsed_ms\":"+std::to_string(foodElapsed)+
+      ",\"consume_ms\":"+std::to_string(test.lastConsume?test.lastConsume-test.start:0)+
+      ",\"pass\":"+(pass?"true":"false"));
+    if(!pass)throw std::runtime_error("healing mechanic check failed: "+test.label);
+    }
+  else throw std::runtime_error("healing expects begin/arm/use/exhaust/toggle/original/npc-queue/baseline/move/motion/baseline-end/second/action/hit/strike/busy/retry/arrow/save/load/check");
+  }
+
 void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
   const auto a = split(line);
   if(a.empty())
     return;
   const std::string& c = a[0];
 
+  if(c=="healing") {
+    try {healingCommand(a,w,pl,ctrl);}
+    catch(const std::exception& error) {arenaAbort(error.what());}
+    return;
+  }
   if(c=="roads") {
     try {
       event("roads_command","\"sample\":"+KnownRoadsBench::command(a,w,outDir));
@@ -13164,6 +14445,24 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       event("memory_command","\"sample\":"+NavigationMemoryBench::command(a,w,pl,ctrl,outDir));
     } catch(const std::exception& error) {
       event("memory_error","\"reason\":"+jsonStr(error.what()));
+      arenaAbort(error.what());
+    }
+    return;
+  }
+  if(c=="body_traces") {
+    try {
+      event("body_traces","\"sample\":"+BodyTracesBench::command(a,w,pl,outDir));
+    } catch(const std::exception& error) {
+      event("body_traces_error","\"reason\":"+jsonStr(error.what()));
+      arenaAbort(error.what());
+    }
+    return;
+  }
+  if(c=="blood_stains") {
+    try {
+      event("blood_stains","\"sample\":"+BloodStainsBench::command(a,w,pl,outDir));
+    } catch(const std::exception& error) {
+      event("blood_stains_error","\"reason\":"+jsonStr(error.what()));
       arenaAbort(error.what());
     }
     return;
@@ -13829,9 +15128,13 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       {"arrow_physics",&Gothic::PhysicsFlags::arrowPhysics},
       {"arrow_sticking",&Gothic::PhysicsFlags::arrowSticking},
       {"spell_physics",&Gothic::PhysicsFlags::spellPhysics},
+      {"body_impact_damage",&Gothic::PhysicsFlags::bodyImpactDamage},
+      {"body_traces",&Gothic::PhysicsFlags::bodyTraces},
+      {"blood",&Gothic::PhysicsFlags::blood},
       {"movable_vobs",&Gothic::PhysicsFlags::movableVobs},
       {"item_hulls",&Gothic::PhysicsFlags::itemHulls},
       {"item_deepest_contact",&Gothic::PhysicsFlags::itemDeepestContact},
+      {"ragdoll_birth_guard",&Gothic::PhysicsFlags::ragdollBirthGuard},
       {"furniture_parts",&Gothic::PhysicsFlags::furnitureParts},
       {"placed_items",&Gothic::PhysicsFlags::placedItems},
       {"cloth",&Gothic::PhysicsFlags::cloth}
@@ -14589,6 +15892,29 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       ",\"cleared_monsters\":"+std::to_string(monsters.size())+",\"clear_radius_cm\":"+ragdollNumber(clearRadius)+
       ",\"cliff_floor_cm\":"+ragdollVector(cliffFloor)+",\"support_margin_cm\":50");
     }
+  else if(c=="body-impact" && a.size()==4 && a[1]=="setup") {
+    if(a[2]!="fall" && a[2]!="wall" && a[2]!="fatal" && a[2]!="nonlethal" && a[2]!="lethal" &&
+       a[2]!="unconscious" && a[2]!="dead" && a[2]!="immortal") {
+      arenaAbort("body impact setup expects fall, wall, fatal, nonlethal, lethal, unconscious, dead or immortal");return;
+      }
+    bodyImpactSetup(w,pl,a[2],num(a,3,0));
+    }
+  else if(c=="body-impact" && a.size()==2 && a[1]=="launch")bodyImpactLaunch(w,pl);
+  else if(c=="body-impact" && a.size()==2 && a[1]=="report")bodyImpactReport(w,pl);
+  else if(c=="body-impact" && a.size()==2 && a[1]=="standup") {
+    if(Gothic::physicsFlags().bodyImpactDamage) {
+      auto* npc=bench.bodyImpact.npc;
+      if(!npc || bench.bodyImpact.mode!="nonlethal" || !npc->isUnconscious()) {
+        arenaAbort("body impact standup requires the nonlethal knockout");return;
+        }
+      npc->clearAiQueue();npc->setExternalControl(false);npc->clearState(false);
+      if(npc->isAiQueueEmpty())npc->aiPush(AiQueue::aiStandup());
+      }
+    }
+  else if(c=="body-impact" && a.size()==2 && a[1]=="recovered")bodyImpactRecovered();
+  else if(c=="body-impact" && a.size()==2 && a[1]=="wind")bodyImpactWind(w,pl);
+  else if(c=="body-impact" && a.size()==2 && a[1]=="clear")bodyImpactClear(w,pl);
+  else if(c=="body-impact" && a.size()==4 && a[1]=="duel")bodyImpactDuel(w,pl,uint32_t(std::stoul(a[2])),a[3]);
   else if(c=="spell" && a.size()==3 && a[1]=="target") {
     auto actor=std::find_if(bench.spellActors.begin(),bench.spellActors.end(),[&](const auto& value) {return value.role==a[2];});
     if(actor==bench.spellActors.end()) {arenaAbort("spell target role missing");return;}
@@ -14861,11 +16187,19 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
         ",\"wall_cm\":"+ragdollVector(wall.v)+",\"wall_normal\":"+ragdollVector(wall.n));
       }
     else if(a.size()==3 && a[1]=="weapon") equip(a[2]);
-    else if(a.size()==3 && a[1]=="bandit") {
-      // melee-shadow bandit 1h|2h: the fixture's bandit takes the stock one- or two-hander in hand
+    else if(a.size()==3 && a[1]=="controls" && (a[2]=="g2" || a[2]=="classic")) {
+      Gothic::settingsSetI("GAME","USEGOTHIC1CONTROLS",a[2]=="classic");
+      say("melee shadow controls " + a[2]);
+      }
+    else if((a.size()==3 || a.size()==4) && a[1]=="bandit") {
+      // melee-shadow bandit 1h|2h|none [npc]: the fixture's bandit takes the stock one- or two-hander in hand, or puts
+      // his away (a clear gap between a blade and his body, no blade of his in between)
       if(bench.meleeShadowActors.size()!=3) {arenaAbort("melee shadow setup is required");return;}
-      if(a[2]!="1h" && a[2]!="2h") {arenaAbort("melee shadow bandit expects 1h or 2h");return;}
-      auto& npc=*bench.meleeShadowActors[2];
+      if(a[2]!="1h" && a[2]!="2h" && a[2]!="none") {arenaAbort("melee shadow bandit expects 1h, 2h or none");return;}
+      auto* actor=a.size()==4 ? findNpc(w,pl,a[3]) : bench.meleeShadowActors[2];
+      if(actor==nullptr) {arenaAbort("melee shadow bandit is absent");return;}
+      auto& npc=*actor;
+      if(a[2]=="none") {npc.closeWeapon(true);return;}
       const auto symbol=w.script().findSymbolIndex(a[2]=="1h"?"ITMW_1H_COMMON_01":"ITMW_2H_BAU_AXE");
       if(symbol==size_t(-1)) {arenaAbort("melee shadow bandit weapon is absent");return;}
       npc.closeWeapon(true);
@@ -14940,7 +16274,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       for(auto* npc:bench.meleeShadowActors) if(w.npcId(npc)!=uint32_t(-1)) w.removeNpc(*npc);
       bench.meleeShadowActors.clear();bench.meleeShadowPlaces.clear();
       }
-    else {arenaAbort("melee shadow expects setup/weapon <1h|2h|fist>, target <0|1|2>, wall, live or clear");return;}
+    else {arenaAbort("melee shadow expects setup/weapon <1h|2h|fist>, controls <g2|classic>, target <0|1|2>, wall, live or clear");return;}
     }
   else if(c=="melee-physics" && a.size()==6 && a[1]=="setup") {
     const auto* enabled=std::getenv("OPENGOTHIC_MELEE_BENCH");
@@ -15628,6 +16962,10 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
         bench.streamingFarBefore=residency->stats().transitionsFar;
         bench.streamingPublishedBefore=residency->stats().published;
         bench.streamingReleasedBefore=residency->stats().released;
+        bench.streamingVobCreatedBefore=residency->stats().vobCreated;
+        bench.streamingVobReleasedBefore=residency->stats().vobReleased;
+        bench.streamingVobMissingBefore=residency->stats().vobNearMissingSeconds;
+        bench.streamingNpcTransitionsBefore=w.npcSimTierStats().toFull+w.npcSimTierStats().toSimplified;
         }
       FrameProfile::setActors(bench.crew);
       event("perf_segment","\"segment\":"+jsonStr(bench.perfSegment)+
@@ -15775,6 +17113,8 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       bench.holds.push_back({k,uint64_t(-1)});
       }
     else if(c=="release") {
+      if((k==KeyCodec::Heal || k==KeyCodec::Potion) && !bench.healing.label.empty() && !bench.healing.hotkeyAt)
+        bench.healing.hotkeyAt=w.tickCount();
       release(ctrl,k);
       bench.holds.erase(std::remove_if(bench.holds.begin(),bench.holds.end(),[k](const Hold& h){ return h.a==k; }),bench.holds.end());
       }
@@ -15784,8 +17124,12 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       }
     else {
       press(ctrl,k);
-      bench.holds.push_back({k,bench.time+uint64_t(num(a,2,1000))});
+      const auto until = bench.time+uint64_t(num(a,2,1000));
+      bench.holds.push_back({k,until});
+      if(k==KeyCodec::ActionGeneric || k==KeyCodec::Forward)
+        bench.inputTraceUntil = until+2000;
       }
+    healingObserve(w,pl);
     }
   else if(c=="cam") {
     const std::string m = a.size()>1 ? a[1] : "";
@@ -15995,6 +17339,15 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     say("rec " + bench.recName + (bench.recVideo ? "" : " (metrics only)") + (bench.audio!=nullptr ? " with sound" : ""));
     }
   else if(c=="stop") {
+    if(a.size()==2 && a[1]=="shadow") {
+      // Preserve each duel before the ordinary 8 MiB shadow journal rotates again.
+      for(const auto* suffix:{".jsonl",".previous.jsonl"}) {
+        const std::string source="melee-blade-shadow"+std::string(suffix);
+        if(std::filesystem::exists(source))
+          std::filesystem::copy_file(source,outDir+"/"+bench.recName+"-"+source,
+                                     std::filesystem::copy_options::overwrite_existing);
+        }
+      }
     stopRecording();
     }
   else if(c=="shot") {
@@ -16204,6 +17557,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     pl.addItem(id,size_t(c=="give" ? num(a,2,1) : 1));
     if(c=="equip")
       pl.useItem(id,Item::NSLOT,true); // whatever the hero's strength
+    healingObserve(w,pl);
     say(c + " " + name);
     }
   else if(c=="disarm") {
@@ -16228,31 +17582,38 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     const bool ok = pl.currentRangedWeapon()!=nullptr && pl.drawWeaponBow();
     say(std::string("draw bow ") + (ok ? "ok" : "failed") + " ws=" + std::to_string(int(pl.weaponState())));
     }
-  else if(c=="put") {
+  else if(c=="put" || c=="put-at") {
     // put <npc|nearest> <dist> <angle> [dy]: the npc stands there from the hero (angle from the hero's
     // facing, 0 in front), on the ground, frozen, facing the hero
-    Npc* n = findNpc(w,pl,a.size()>1 ? a[1] : "nearest");
-    if(n==nullptr || n==&pl) {
+    // put-at <npc|player> <x> <y> <z>: the same ground placement at explicit world coordinates.
+    Npc* n = c=="put-at" && a.size()>1 && a[1]=="player" ? &pl : findNpc(w,pl,a.size()>1 ? a[1] : "nearest");
+    if(n==nullptr || (n==&pl && c!="put-at")) {
       say("put: no npc " + line);
       return;
       }
     const float d   = num(a,2,500);
     const float an  = (pl.rotation()+num(a,3,0))*float(M_PI)/180.f;
     Vec3        pos = pl.position() + Vec3(std::cos(an),0,std::sin(an))*d;
+    if(c=="put-at") {
+      if(a.size()!=5) {arenaAbort("put-at needs npc x y z");return;}
+      pos=Vec3(num(a,2,0),num(a,3,0),num(a,4,0));
+      n->clearSpeed();
+      }
     // the ground there may be far above or below (a slope): the first one from above, by short rays
     // (a long one misses the landscape)
     DynamicWorld::RayLandResult r;
-    for(float y=pos.y+num(a,4,0)+1500; y>pos.y-1500 && !r.hasCol; y-=400)
+    for(float y=pos.y+(c=="put-at" ? 0.f : num(a,4,0))+1500; y>pos.y-1500 && !r.hasCol; y-=400)
       r = w.physic()->ray({pos.x,y,pos.z},{pos.x,y-450,pos.z});
+    if(c=="put-at" && !r.hasCol) {arenaAbort("put-at found no ground");return;}
     if(r.hasCol)
       pos.y = r.v.y;
     n->setInteraction(nullptr,true);
     n->clearAiQueue();
     n->clearState(false);
-    n->setExternalControl(true);
+    if(n!=&pl) n->setExternalControl(true);
     n->setPosition(pos);
     const Vec3 dir = pl.position()-pos;
-    n->setDirection(Vec3(dir.x,0,dir.z));
+    if(n!=&pl) n->setDirection(Vec3(dir.x,0,dir.z));
     n->updateTransform();
     char buf[200];
     std::snprintf(buf,sizeof(buf),"put %s at %.0f %.0f %.0f (%.0f above the hero%s)",symName(w,n).c_str(),pos.x,pos.y,pos.z,
@@ -16301,6 +17662,13 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     if(m=="on" || m=="off")
       Archery::setEnabled(m=="on"); else
       say("unknown manual command: " + line);
+    }
+  else if(c=="bowstrength") {
+    // bowstrength on|off: strength sets a bow's draw speed and limit (game/archery)
+    const std::string m = a.size()>1 ? a[1] : "";
+    if(m=="on" || m=="off")
+      Archery::setBowStrengthEnabled(m=="on"); else
+      say("unknown bowstrength command: " + line);
     }
   else if(c=="sfx") {
     // sfx <name>...: the files a sound effect plays (its variants _A1.. too), whether they load
@@ -16367,10 +17735,9 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     say(pl.bowDump());
     }
   else if(c=="stats") {
-    // stats [npc <npc>] [str <n>] [dex <n>] [bow <n>] [cbow <n>] [hp <n>] [hpmax <n>] [talent auto|0|1|2]:
+    // stats [npc <npc>] [str <n>] [dex <n>] [1h <n>] [2h <n>] [bow <n>] [cbow <n>] [sneak <n>] [hp <n>] [hpmax <n>] [talent auto|0|1|2]:
     // the hero's (an npc's) strength, dexterity, hit chances (the skill of the manual aim), hit points;
-    // talent: the animations of the trained (G2 sets level 1 at 30%, 2 at 60%: _BOWT1, _BOWT2), auto as
-    // the hit chances say
+    // talent: archery animations, plus melee weapons explicitly named in this command; auto follows hit chances
     Npc*   np = &pl;
     size_t i0 = 1;
     if(a.size()>1 && a[1]=="npc") {
@@ -16384,6 +17751,11 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     Npc&   n    = *np;
     auto&  h    = n.handle();
     bool   more = &n!=&pl;
+    bool oneHand = false, twoHand = false;
+    for(size_t i=i0; i+1<a.size(); i+=2) {
+      oneHand |= a[i]=="1h";
+      twoHand |= a[i]=="2h";
+      }
     for(size_t i=i0; i+1<a.size(); i+=2) {
       if(a[i]=="talent") {
         auto level = [&](int32_t chance) {
@@ -16391,6 +17763,10 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
             return chance>=60 ? 2 : (chance>=30 ? 1 : 0);
           return int(num(a,i+1,0));
           };
+        if(oneHand)
+          n.setTalentSkill(TALENT_1H,level(h.hitchance[TALENT_1H]));
+        if(twoHand)
+          n.setTalentSkill(TALENT_2H,level(h.hitchance[TALENT_2H]));
         n.setTalentSkill(TALENT_BOW,     level(h.hitchance[TALENT_BOW]));
         n.setTalentSkill(TALENT_CROSSBOW,level(h.hitchance[TALENT_CROSSBOW]));
         more = true;
@@ -16401,10 +17777,16 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
         h.attribute[ATR_STRENGTH] = v;
       else if(a[i]=="dex")
         h.attribute[ATR_DEXTERITY] = v;
+      else if(a[i]=="1h")
+        h.hitchance[TALENT_1H] = v;
+      else if(a[i]=="2h")
+        h.hitchance[TALENT_2H] = v;
       else if(a[i]=="bow")
         h.hitchance[TALENT_BOW] = v;
       else if(a[i]=="cbow")
         h.hitchance[TALENT_CROSSBOW] = v;
+      else if(a[i]=="sneak")
+        n.setTalentSkill(TALENT_SNEAK,v);
       else if(a[i]=="hp")
         h.attribute[ATR_HITPOINTS] = v;
       else if(a[i]=="hpmax")
@@ -16414,25 +17796,113 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       }
     const auto  wp = n.currentRangedWeapon();
     const auto  st = Archery::stats(n,wp);
-    char buf[440];
+    char buf[520];
     if(more) {
       // whose, the reload as long as the animation is (the trained ones' is shorter), the hit points
       const bool cbow = wp!=nullptr && wp->isCrossbow();
-      std::snprintf(buf,sizeof(buf),"stats of %s: talent bow %d cbow %d, reload %.0f ms, hp %d of %d, point protection %d",
-                    symName(w,&n).c_str(),n.talentSkill(TALENT_BOW),n.talentSkill(TALENT_CROSSBOW),
+      std::snprintf(buf,sizeof(buf),"stats of %s: 1h %d (talent %d), 2h %d (talent %d), talent bow %d cbow %d, reload %.0f ms, hp %d of %d, point protection %d",
+                    symName(w,&n).c_str(),n.hitChance(TALENT_1H),n.talentSkill(TALENT_1H),
+                    n.hitChance(TALENT_2H),n.talentSkill(TALENT_2H),n.talentSkill(TALENT_BOW),n.talentSkill(TALENT_CROSSBOW),
                     double(n.animTime(Archery::reloadAnim(cbow))),n.attribute(ATR_HITPOINTS),n.attribute(ATR_HITPOINTSMAX),
                     n.protection(PROT_POINT));
       say(buf);
       }
     // an npc's: by name (the report takes `stats str` for the hero's)
     const std::string who = &n!=&pl ? " npc " + symName(w,&n) : "";
-    std::snprintf(buf,sizeof(buf),"stats%s str %d dex %d bow %d cbow %d, weapon damage %d: skill %.2f strength %.2f sway %.2f deg settle %.2f s breath %.1f s draw %.2f s hold %.1f s speed %.1f m/s cone %.2f deg reload x%.2f",
+    std::snprintf(buf,sizeof(buf),"stats%s str %d dex %d bow %d cbow %d, weapon damage %d: skill %.2f strength %.2f sway %.2f deg settle %.2f s breath %.1f s draw %.2f s hold %.1f s speed %.1f m/s cone %.2f deg reload x%.2f need %.2f r %.3f f_s %.3f f_b %.3f",
                   who.c_str(),n.attribute(ATR_STRENGTH),n.attribute(ATR_DEXTERITY),n.hitChance(TALENT_BOW),n.hitChance(TALENT_CROSSBOW),
                   wp!=nullptr ? int(wp->handle().damage_total) : -1,
                   double(st.skill),double(st.strength),double(st.sway*180.f/float(M_PI)),double(st.settle),double(st.breath),
                   double(st.drawTime),double(std::min(st.holdLimit,999.f)),double(st.speed*10.f),double(st.cone*180.f/float(M_PI)),
-                  double(st.reload));
+                  double(st.reload),double(st.need),double(st.strength),double(st.steadyDraw),double(st.burstDraw));
     say(buf);
+    }
+  else if(c=="npctier") {
+    // npctier <npc> full|simplified|auto: a runtime-only override of one actor.
+    Npc* npc=a.size()==3?findNpc(w,pl,a[1]):nullptr;
+    if(!npc || (a[2]!="full" && a[2]!="simplified" && a[2]!="auto")) {
+      arenaAbort("npctier expects an existing NPC and full, simplified or auto");
+      return;
+      }
+    npc->setSimTierOverride(a[2]=="auto"?std::nullopt:
+      std::optional<NpcSimTier>(a[2]=="full"?NpcSimTier::Full:NpcSimTier::Simplified));
+    event("npc_tier_override","\"npc\":"+jsonStr(symName(w,npc))+",\"mode\":"+jsonStr(a[2]));
+    }
+  else if(c=="npctier-test") {
+    // npctier-test <npc> <start waypoint> <end waypoint>: 20 walking legs and
+    // 20 turns, each with one switch in either direction while still active.
+    Npc* npc=a.size()==4?findNpc(w,pl,a[1]):nullptr;
+    const auto* start=a.size()==4?w.findPoint(a[2],false):nullptr;
+    const auto* end=a.size()==4?w.findPoint(a[3],false):nullptr;
+    if(!npc || npc==&pl || !start || !end || start==end) {
+      arenaAbort("npctier-test expects an NPC and two distinct existing waypoints");
+      return;
+      }
+    bench.npcTierTest=Bench::NpcTierTest();
+    auto& test=bench.npcTierTest;
+    test.npc=npc;test.ends[0]=start;test.ends[1]=end;
+    test.deadline=w.tickCount()+1800000;
+    npc->setInteraction(nullptr,true);npc->clearAiQueue();npc->clearState(false);
+    npc->setExternalControl(true);npc->stopWalking();npc->closeWeapon(true);
+    npc->setSimTierOverride(NpcSimTier::Full);npc->setWalkMode(WalkBit::WM_Walk);
+    const auto floor=w.physic()->landRay(start->position()+Vec3(0,100,0),300.f);
+    if(!floor.hasCol) {test.npc=nullptr;arenaAbort("npctier-test start waypoint has no ground");return;}
+    npc->setPosition(floor.v);npc->updateTransform();
+    test.started=npc->position();test.lastPosition=npc->position();test.lastAngle=npc->rotation();
+    npc->aiPush(AiQueue::aiGoToPoint(*end));
+    event("npc_tier_transition_start","\"npc\":"+jsonStr(symName(w,npc))+",\"from\":"+jsonStr(start->name)+
+      ",\"to\":"+jsonStr(end->name));
+    }
+  else if(c=="npcspeed") {
+    const auto* start=a.size()==2?w.findPoint(a[1],false):nullptr;
+    const WayPoint* end=nullptr;
+    float length=0;
+    if(start)for(const auto& connection:start->connections()) {
+      const auto edge=connection.point->groundPos-start->groundPos;
+      const float distance=std::hypot(edge.x,edge.z);
+      if(distance>length) {end=connection.point;length=distance;}
+      }
+    if(!start || !end || length<500.f) {
+      arenaAbort("npcspeed expects an authored waypoint with a connected edge at least 5 m long");return;
+      }
+    // This fresh calibration world has no ambient combat, crowding or other
+    // actors using the edge; the player's distant position is retained.
+    for(uint32_t i=w.npcCount();i>0;--i)
+      if(auto* npc=w.npcById(i-1);npc!=&pl)w.removeNpc(*npc);
+    bench.npcSpeedTest=Bench::NpcSpeedTest();
+    auto& test=bench.npcSpeedTest;test.start=start;test.end=end;test.length=length;
+    npcSpeedPrepare(w);
+    }
+  else if(c=="npcday") {
+    // npcday <game minutes> [period minutes 5] [shared]: journal every NPC over continuous game time
+    // (common/npcdayjournal.h) into npc-day*.csv; the scenario waits until the time has passed. Each NPC gets
+    // a private script random stream from the last `seed`, unless `shared`.
+    NpcDayJournal::Options opt;
+    opt.directory = outDir;
+    opt.seed      = bench.scenarioSeed;
+    size_t positional = 0;
+    bool   ok = a.size()>1;
+    for(size_t i=1; i<a.size(); ++i) {
+      if(a[i]=="shared")
+        opt.isolate = false;
+      else if(isNumber(a[i]) && positional==0 && num(a,i,0)>0)
+        opt.minutes = uint64_t(num(a,i,0)), ++positional;
+      else if(isNumber(a[i]) && positional==1 && num(a,i,0)>0)
+        opt.period = uint32_t(num(a,i,0)), ++positional;
+      else
+        ok = false;
+      }
+    std::string error;
+    if(!ok || !NpcDayJournal::start(w,opt,error)) {
+      say("npcday failed: "+(ok ? error : "usage: npcday <game minutes> [period minutes] [shared]"));
+      event("npcday_error","\"reason\":"+jsonStr(ok ? error : "usage"));
+      return;
+      }
+    bench.npcDayStart = w.time().toInt();
+    bench.npcDayMinutes = opt.minutes;
+    say("npcday "+std::to_string(opt.minutes)+" min every "+std::to_string(opt.period)+(opt.isolate ? "" : " shared"));
+    event("npcday_start","\"minutes\":"+std::to_string(opt.minutes)+",\"period\":"+std::to_string(opt.period)+
+          ",\"isolate\":"+(opt.isolate ? "true" : "false")+",\"seed\":"+std::to_string(opt.seed));
     }
   else if(c=="seed") {
     // seed <n>: the random numbers start over: the scripts' (the dice, the release), the bench's, the
@@ -16442,6 +17912,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     const uint32_t s = live!=nullptr && std::string_view(live)=="1" ?
                        uint32_t(std::stoul(a.at(1))) : uint32_t(num(a,1,1));
     w.script().setSeed(s);
+    bench.scenarioSeed = s;
     bench.lcg = s*2654435761u + 1u;
     bench.monsterCharacterSeed=s;
     pl.archer().reseed(s);
@@ -16574,6 +18045,64 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     event(bodyApi ? "body_api_setup" : "body_observe_setup","\"seed\":"+std::to_string(seed)+",\"t_game_ms\":"+
           std::to_string(bench.observeFrom)+",\"duration_ms\":"+std::to_string(duration)+
           ",\"ownership\":\"native\",\"actors\":"+actors+"]");
+    }
+  else if(c=="npcduel") {
+    auto fail=[&](const std::string& reason) {
+      say("npcduel: "+reason);event("npc_duel_error","\"reason\":"+jsonStr(reason));
+      bench.pc=bench.prog.size();
+      };
+    if(a.size()<4 || a.size()>5) {fail("expected attacker defender seed [timeout_ms]");return;}
+    const auto first=w.script().findSymbolIndex(a[1]), second=w.script().findSymbolIndex(a[2]);
+    const auto attack=w.script().findSymbolIndex("ZS_ATTACK");
+    if(first==size_t(-1) || second==size_t(-1) || attack==size_t(-1)) {fail("missing script instance or ZS_ATTACK");return;}
+    const float an=pl.rotation()*float(M_PI)/180.f;
+    const Vec3 forward(std::cos(an),0,std::sin(an)), side(-forward.z,0,forward.x);
+    const Vec3 center=pl.position()+forward*1200.f;
+    Vec3 pos[]={center-side*150.f,center+side*150.f};
+    for(auto& p:pos) {
+      DynamicWorld::RayLandResult ground;
+      for(float y=p.y+1500;y>p.y-1500 && !ground.hasCol;y-=400)
+        ground=w.physic()->ray({p.x,y,p.z},{p.x,y-450,p.z});
+      if(!ground.hasCol) {fail("arena ground not found");return;}
+      p.y=ground.v.y;
+      }
+    auto& duel=bench.npcDuel;
+    duel=Bench::NpcDuel{};
+    duel.seed=uint32_t(std::stoul(a[3]));
+    const uint64_t timeout=a.size()>4 ? std::stoull(a[4]) : 180000;
+    w.script().setSeed(duel.seed);
+    duel.actors[0]=w.addNpc(first,pos[0]);duel.actors[1]=w.addNpc(second,pos[1]);
+    for(size_t i=0;i<2;++i) {
+      auto* npc=duel.actors[i];
+      if(npc==nullptr || npc->isMonster() || npc->handle().guild>=16) {
+        for(auto*& copy:duel.actors)if(copy) {w.removeNpc(*copy);copy=nullptr;}
+        fail("two human NPCs with guild < 16 are required");return;
+        }
+      duel.before[i]=npcDuelSnapshot(w,*npc);
+      if(auto* weapon=npc->currentMeleeWeapon())duel.weapons[i]=weapon->clsId();
+      auto& flags=npc->handle().flags;
+      flags=zenkit::NpcFlag(uint32_t(flags)&~uint32_t(zenkit::NpcFlag::IMMORTAL));
+      npc->setDirection(pos[1-i]-pos[i]);npc->updateTransform();
+      npc->setProcessPolicy(NpcProcessPolicy::AiNormal);
+      }
+    pl.handle().flags=zenkit::NpcFlag(uint32_t(pl.handle().flags)|uint32_t(zenkit::NpcFlag::IMMORTAL));
+    pl.clearAiQueue();pl.clearGoTo();pl.clearSpeed();
+    Npc& npc=*duel.actors[0];Npc& target=*duel.actors[1];
+    // Same nonlethal start as npc_act fight{deed:true}; the defender retains its constructor state.
+    auto& aiv=npc.handle().aivar;
+    aiv[size_t(HeroDeed::constant(npc,"AIV_ATTACKREASON"))]=HeroDeed::constant(npc,"AR_NONE");
+    aiv[size_t(HeroDeed::constant(npc,"AIV_LASTFIGHTAGAINSTPLAYER"))]=HeroDeed::constant(npc,"FIGHT_CANCEL",0);
+    aiv[size_t(HeroDeed::constant(npc,"AIV_LASTFIGHTCOMMENT"))]=0;
+    npc.stopListening();npc.thinkOfAnswer(0);npc.clearAiQueue();
+    if(!npc.startState(ScriptFn(attack),"",gtime::endOfTime(),true)) {
+      for(auto*& copy:duel.actors) {w.removeNpc(*copy);copy=nullptr;}
+      fail("cannot start ZS_ATTACK");return;
+      }
+    npc.setOther(&target);npc.setVictim(nullptr);npc.setTarget(&target);
+    npc.setNonlethalFight(target);npc.setServerDeed("attack",&target);
+    if(npc.weaponState()==WeaponState::NoWeapon)npc.aiPush(AiQueue::aiDrawWeapon());
+    duel.from=w.tickCount();duel.end=duel.from+timeout;duel.active=true;
+    Gothic::inst().onCombatHit.bind(&duel,&Bench::NpcDuel::hit);
     }
   else if(c=="bodyduel") {
     // bodyduel <seed> [timeout ms]: native human melee reference, both participants mortal. The
@@ -16997,6 +18526,16 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     bench.waitUntil = bench.time+bench.probeSoundDuration+34;
     say("bodyprobe "+mode+" verified; sound duration "+std::to_string(bench.probeSoundDuration));
     }
+  else if(c=="knockdown-launch-equip") {
+    auto* npc=findNpc(w,pl,"SLD_826_SOELDNER");
+    const auto weapon=w.script().findSymbolIndex("ITMW_2H_SLD_AXE");
+    if(npc==nullptr || weapon==size_t(-1)) {arenaAbort("knockdown launch actors or weapon missing");return;}
+    npc->setToFightMode(weapon);
+    if(npc->weaponState()!=WeaponState::W2H || npc->currentMeleeWeapon()==nullptr ||
+       npc->currentMeleeWeapon()->clsId()!=weapon) {arenaAbort("knockdown launch requires the exact drawn two-handed axe");return;}
+    event("launch_weapon","\"actor\":"+jsonStr(symName(w,npc))+",\"actor_id\":"+std::to_string(w.npcId(npc))+
+          ",\"weapon\":\"ITMW_2H_SLD_AXE\",\"state\":\"W2H\"");
+    }
   else if(c=="npcequip") {
     // npcequip <npc> <item> [count]: into its inventory, the first one put on (a bow and its arrows)
     Npc* n = findNpc(w,pl,a.size()>1 ? a[1] : "nearest");
@@ -17097,8 +18636,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
         " waypoints within " + std::to_string(int(r)) + " cm");
     }
   else if(c=="fight") {
-    // fight <npc|all> <target|player>: it attacks as the game's fight starts (ZS_ATTACK, to kill: an
-    // archer readies its bow from 9 m); all: the npcs of arc
+    // fight <npc|all> <target|player> [deed]: deed uses npc_act's nonlethal native start.
     std::vector<Npc*> who;
     if(a.size()>1 && a[1]=="all")
       who = bench.crew; else
@@ -17106,35 +18644,75 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       who.push_back(n);
     Npc*         tg     = findNpc(w,pl,a.size()>2 ? a[2] : "player");
     const size_t state  = w.script().findSymbolIndex("ZS_ATTACK");
+    const bool   deed   = a.size()==4 && a[3]=="deed";
     auto         reason = w.script().findSymbol("AIV_ATTACKREASON");
     auto         kill   = w.script().findSymbol("AR_KILL");
     if(tg==nullptr || state==size_t(-1)) {
       say("fight: no target or no ZS_ATTACK " + line);
       return;
       }
+    if(a.size()>3 && !deed)
+      throw std::runtime_error("fight expects actor target [deed]");
+    if(deed && (tg->isPlayer() || tg->isMonster() || tg->isDown()))
+      throw std::runtime_error("fight deed needs a standing human target");
     size_t sent = 0;
     for(auto n:who) {
       if(n==tg || n->isDown())
         continue;
+      if(deed) {
+        auto* none = w.script().findSymbol("AR_NONE");
+        const auto attack = HeroDeed::constant(*n,"AIV_ATTACKREASON");
+        const auto fight = HeroDeed::constant(*n,"AIV_LASTFIGHTAGAINSTPLAYER");
+        const auto comment = HeroDeed::constant(*n,"AIV_LASTFIGHTCOMMENT");
+        const auto valid = [](int32_t i) { return i>=0 && uint32_t(i)<zenkit::INpc::aivar_count; };
+        if(none==nullptr || !none->is_const() || none->type()!=zenkit::DaedalusDataType::INT ||
+           !valid(attack) || !valid(fight) || !valid(comment))
+          throw std::runtime_error("fight deed needs native attack variables and AR_NONE");
+        auto& aiv = n->handle().aivar;
+        aiv[size_t(attack)] = none->get_int(0);
+        aiv[size_t(fight)] = HeroDeed::constant(*n,"FIGHT_CANCEL",0);
+        aiv[size_t(comment)] = 0;
+        n->stopListening();
+        n->thinkOfAnswer(0);
+        n->clearAiQueue();
+        n->setExternalControl(false);
+        if(!n->startState(ScriptFn(state),"",gtime::endOfTime(),true))
+          throw std::runtime_error("fight deed could not start ZS_ATTACK");
+        n->setOther(tg);
+        n->setVictim(nullptr);
+        n->setTarget(tg);
+        n->setNonlethalFight(*tg);
+        n->setServerDeed("attack",tg);
+        if(n->weaponState()==WeaponState::NoWeapon)
+          n->aiPush(AiQueue::aiDrawWeapon());
+        }
+      else {
+        if(reason!=nullptr && kill!=nullptr && size_t(reason->get_int())<std::size(n->handle().aivar))
+          n->handle().aivar[size_t(reason->get_int())] = kill->get_int();
+        n->setExternalControl(false);
+        n->setTarget(tg);
+        n->aiPush(AiQueue::aiStartState(ScriptFn(state),0,tg,nullptr,""));
+        }
       ++sent;
-      if(reason!=nullptr && kill!=nullptr && size_t(reason->get_int())<std::size(n->handle().aivar))
-        n->handle().aivar[size_t(reason->get_int())] = kill->get_int();
-      n->setExternalControl(false);
-      n->setTarget(tg);
-      n->aiPush(AiQueue::aiStartState(ScriptFn(state),0,tg,nullptr,""));
       }
-    say("fight " + std::to_string(sent) + " at " + symName(w,tg));
+    say("fight " + std::to_string(sent) + " at " + symName(w,tg) + (deed ? " deed" : ""));
+    event("fight_start","\"t_game_ms\":"+std::to_string(w.tickCount())+
+          ",\"seed\":"+std::to_string(bench.scenarioSeed)+",\"target\":"+jsonStr(symName(w,tg))+
+          ",\"deed\":"+(deed ? "true" : "false"));
     }
   else dispatched=false;
   if(dispatched) return;
   dispatched=true;
   if(c=="waitdown") {
-    // waitdown <npc|player> [ms]: the scenario waits till it is down (dead, unconscious): `fight over`
+    // waitdown <npc|player> [ms] [other npc]: wait till either participant is down.
     Npc* n = findNpc(w,pl,a.size()>1 ? a[1] : "player");
     if(n==nullptr) {
       say("waitdown: no npc " + line);
       return;
       }
+    bench.downOther = a.size()>3 ? findNpc(w,pl,a[3]) : nullptr;
+    if(a.size()>3 && bench.downOther==nullptr)
+      throw std::runtime_error("waitdown has no second participant");
     bench.downNpc  = n;
     bench.downFrom = bench.time;
     bench.downEnd  = bench.time + uint64_t(num(a,2,120000));
@@ -17158,6 +18736,45 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       ArcherAi::leadOn = a.size()<3 || a[2]!="off";
     say("npcaim " + std::string(ArcherAi::isEnabled() ? "on" : "off") + (ArcherAi::mode==ArcherAi::PerArrow ? " arrow" : " second") +
         " sigma " + std::to_string(ArcherAi::forcedSigma) + " lead " + (ArcherAi::leadOn ? "on" : "off"));
+    }
+  else if(c=="archers") {
+    // One primary ranged weapon per NPC: equipped first, otherwise the strongest in its inventory.
+    uint32_t total = 0, weak = 0, dice = 0;
+    for(uint32_t id=0; id<w.npcCount(); ++id) {
+      auto* n = w.npcById(id);
+      if(n==nullptr || n->isPlayer())
+        continue;
+      const Item* weapon = n->currentRangedWeapon();
+      if(weapon==nullptr)
+        for(auto item=n->inventory().iterator(Inventory::T_Inventory); item.isValid(); ++item) {
+          if((item->mainFlag() & ITM_CAT_FF)==0)
+            continue;
+          if(weapon==nullptr || std::make_pair(item->handle().damage_total,item->handle().value)>
+                                std::make_pair(weapon->handle().damage_total,weapon->handle().value))
+            weapon = &*item;
+          }
+      if(weapon==nullptr)
+        continue;
+      const auto st = Archery::stats(*n,weapon);
+      const bool below = st.bowStrength && st.burstDraw<Archery::MinDraw;
+      const bool burst = st.bowStrength && st.steadyDraw<Archery::MinDraw && !below;
+      const char* mode = below ? "dice (draw below minimum)" : (burst ? "hands burst" : "hands steady");
+      const auto name = n->displayName();
+      const auto symbol = symName(w,n);
+      const auto weaponName = w.script().findSymbol(weapon->clsId())->name();
+      char buf[640];
+      std::snprintf(buf,sizeof(buf),"archers npc %s name %.*s: str %d dex %d weapon %.*s damage %d need %.2f r %.4f f_s %.4f f_b %.4f mode %s",
+                    symbol.c_str(),int(name.size()),name.data(),
+                    n->attribute(ATR_STRENGTH),n->attribute(ATR_DEXTERITY),
+                    int(weaponName.size()),weaponName.data(),
+                    int(weapon->handle().damage_total),double(st.need),double(st.strength),
+                    double(st.steadyDraw),double(st.burstDraw),mode);
+      say(buf);
+      ++total;
+      weak += st.strength<1.f ? 1u : 0u;
+      dice += below ? 1u : 0u;
+      }
+    say("archers summary: total " + std::to_string(total) + " r<1 " + std::to_string(weak) + " dice " + std::to_string(dice));
     }
   else if(c=="archer") {
     // archer <npc|all> at <npc|player> [dice] | archer off: it stands where it is and shoots at the target
@@ -17323,8 +18940,17 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       h.flags = zenkit::NpcFlag(uint32_t(h.flags) |  uint32_t(zenkit::NpcFlag::IMMORTAL));
     say("immortal " + symName(w,n) + " " + (n->isImmortal() ? "on" : "off"));
     }
+  else if(c=="stun-drift") {
+    auto* target=findNpc(w,pl,a.size()>1 ? a[1] : "");
+    auto* attacker=a.size()>2 && a[2]=="player" ? &pl : findNpc(w,pl,a.size()>2 ? a[2] : "");
+    if(target==nullptr || attacker==nullptr || target==attacker) {arenaAbort("stun-drift needs a target and attacker");return;}
+    auto axis=attacker->position()-target->position();axis.y=0;
+    if(axis.length()<1.f) {arenaAbort("stun-drift needs distinct horizontal roots");return;}
+    bench.stunDrift={target,attacker,target->position(),Vec3::normalize(axis),w.tickCount(),1};
+    stunDriftSample(w,0,0);
+    }
   else if(c=="stun") {
-    // stun <npc|nearest|player> [parried|guard_break]: the stun of melee_parry as after a parry, by the hero
+    // stun <npc|nearest|player> [parried|guard_break|posture]: melee stun, by the hero
     // (or, for the hero, by the nearest npc): the look without timing a real parade
     Npc* n = a.size()>1 && a[1]=="player" ? &pl : findNpc(w,pl,a.size()>1 ? a[1] : "nearest");
     Npc* by = n==&pl ? findNpc(w,pl,"nearest") : &pl;
@@ -17334,6 +18960,46 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       }
     n->startMeleeStun(*by,a.size()>2 ? a[2] : "parried");
     say("stun " + symName(w,n) + (n->isMeleeStunned() ? " on" : " refused"));
+    }
+  else if(c=="dodge") {
+    // dodge [<npc>] back|left|right|forward|none [before <attacker> <ms>]: the melee dodge (melee_dodge) that way
+    // relative to its facing, now, or as the attacker's next blow comes within <ms> of its contact (8 s at
+    // most). Its line in the log: the way, the armour, the move and animation or fallback, cost, window. The
+    // hero's own key is `tap dodge` (the way from the movement keys held then)
+    size_t i = 1;
+    Npc*   n = &pl;
+    MeleeDodge::Direction dir = MeleeDodge::Direction::Back;
+    if(a.size()>i && !dodgeDirection(a[i],dir)) {
+      n = findNpc(w,pl,a[i]);
+      ++i;
+      }
+    if(n==nullptr || a.size()<=i || !dodgeDirection(a[i],dir)) {
+      say("dodge: no npc or way " + line);
+      return;
+      }
+    ++i;
+    if(a.size()>i && a[i]=="before") {
+      Npc* by = a.size()>i+1 ? findNpc(w,pl,a[i+1]) : nullptr;
+      if(by==nullptr || by==n) {
+        say("dodge: no attacker " + line);
+        return;
+        }
+      bench.dodgeArm = Bench::DodgeArm{n,by,dir,uint64_t(std::max(0.f,num(a,i+2,120))),w.tickCount()+8000};
+      say("dodge " + symName(w,n) + " " + std::string(MeleeDodge::name(dir)) + " armed: " +
+          std::to_string(bench.dodgeArm->leadMs) + " ms before the blow of " + symName(w,by));
+      return;
+      }
+    const bool ok = n->meleeDodge(dir);
+    say("dodge " + symName(w,n) + " " + std::string(MeleeDodge::name(dir)) + (ok ? ": started" : ": not started"));
+    }
+  else if(c=="melee-ai-response") {
+    // melee-ai-response dodge|parry <attacker>: respond to a real charged release within 45 seconds.
+    auto* attacker = a.size()>2 ? findNpc(w,pl,a[2]) : nullptr;
+    if(a.size()!=3 || (a[1]!="dodge" && a[1]!="parry") || !attacker || attacker==&pl) {
+      arenaAbort("melee AI response expects dodge|parry attacker");return;
+      }
+    bench.meleeAiResponse = Bench::MeleeAiResponse{&pl,attacker,a[1]=="parry",w.tickCount()+45000};
+    say("melee AI response " + a[1] + " armed against " + symName(w,attacker));
     }
   else if(c=="clear") {
     // clear [radius]: the npcs around the hero leave the world (rats, wolves that would join in), not the
@@ -17362,6 +19028,12 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
         bench.pinned = nullptr;
       if(bench.downNpc==n)
         bench.downNpc = nullptr;
+      if(bench.downOther==n)
+        bench.downOther = nullptr;
+      if(bench.dodgeArm && (bench.dodgeArm->npc==n || bench.dodgeArm->attacker==n))
+        bench.dodgeArm.reset();
+      if(bench.meleeAiResponse && (bench.meleeAiResponse->npc==n || bench.meleeAiResponse->attacker==n))
+        bench.meleeAiResponse.reset();
       w.removeNpc(*n);
       }
     say(out);
@@ -17903,13 +19575,14 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     say("faceanim " + nameUtf8(*n) + " " + a[2]);
     }
   else if(c=="ani") {
-    // ani <npc|nearest|player> <anim>: it plays an animation of its model script (T_YES, T_DIALOGGESTURE_03)
+    // ani <npc|nearest|player> <anim> [force]: it plays an animation of its model script (T_YES,
+    // T_DIALOGGESTURE_03); force cuts what plays now, as a hit reaction or a stun's stumble that a stand would wait for
     Npc* n = findNpc(w,pl,a.size()>1 ? a[1] : "nearest");
     if(n==nullptr || a.size()<3) {
       say("ani: no npc or anim " + line);
       return;
       }
-    auto sq = n->playAnimByName(a[2],BS_STAND);
+    auto sq = n->playAnimByName(a[2],BS_STAND,a.size()>3 && a[3]=="force");
     say("ani " + symName(w,n) + " " + a[2] + (sq==nullptr ? " failed" : ""));
     }
   else if(c=="dialog") {
@@ -18188,9 +19861,33 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     say("ani " + symName(w,n) + " " + a[2]);
     }
   else if(c=="heropose") {
-    // heropose kneel|none: the hero kneels as after a surrender (player_pose), or gets up
+    // heropose kneel|none|check: set the surrender pose, or exercise its real input paths.
+    if(a.size()>1 && a[1]=="check") {
+      if(!pl.isPlayerKneeling())
+        throw std::runtime_error("heropose check requires a kneeling hero");
+      const float rotation = pl.rotation();
+      ctrl.onRotateMouse(15.f,5.f);
+      ctrl.tickMove(16);
+      if(!pl.isPlayerKneeling())
+        throw std::runtime_error("heropose: mouse rotation ended kneel");
+      if(std::abs(std::remainder(pl.rotation()-rotation-15.f,360.f))>0.01f)
+        throw std::runtime_error("heropose: mouse rotation did not turn the hero");
+      std::string reply;
+      if(!aiCommand("ai ptt start",reply))
+        throw std::runtime_error("heropose: no AI bridge for ptt_start");
+      const bool speakingKneeling = pl.isPlayerKneeling();
+      aiCommand("ai ptt cancel",reply);
+      if(!speakingKneeling)
+        throw std::runtime_error("heropose: ptt_start ended kneel");
+      press(ctrl,KeyCodec::Forward);
+      release(ctrl,KeyCodec::Forward);
+      if(pl.isPlayerKneeling())
+        throw std::runtime_error("heropose: Forward did not end kneel");
+      say("heropose check passed: mouse and ptt_start preserve kneel; Forward ends kneel");
+      return;
+      }
     const bool kneel = a.size()>1 && a[1]=="kneel";
-    say(std::string("heropose ") + (pl.setPlayerPose(kneel) ? (kneel ? "kneel" : "none") : "refused"));
+    say(std::string("heropose ") + (pl.setPlayerPose(kneel,"testbench none") ? (kneel ? "kneel" : "none") : "refused"));
     }
   else if(c=="place") {
     // place <dist> <angle>: the hero stands that far from the watched npc, at that angle from its facing
@@ -18289,7 +19986,10 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
         pages="landscape_used_bytes="+std::to_string(s.landscapePageUsedBytes)+
               " landscape_free_bytes="+std::to_string(s.landscapePageFreeBytes)+
               " landscape_retired_bytes="+std::to_string(s.landscapePageRetiredBytes);
+        pages+=" "+s.vobProbeFields();
         }
+      pages+=(pages.empty() ? "" : " ")+w.npcSimTierStats().probeFields();
+      pages+=" "+NpcLogicAudit::stats().probeFields();
       LoadProbe::mark(text,-1,pages);
       }
     }
@@ -18321,6 +20021,11 @@ void tickVolley(PlayerControl& ctrl) {
       bench.volleyT     = bench.time;
       break;
     case 1: {
+      if(mp.valid && mp.stage==Archer::Held && mp.draw<Archery::MinDraw) {
+        stop("the draw limit is below the release threshold");
+        break;
+        }
+      // Held means the archer reached its own limit, which can be below the requested draw.
       const bool drawn = mp.valid && (mp.stage==Archer::Held || (mp.stage==Archer::Drawing && mp.draw>=bench.volleyDraw));
       if(drawn) {
         bench.volleyPhase   = 2;
@@ -18422,9 +20127,11 @@ bool waitingForBodyLive() {
   }
 
 void run(World& w, Npc& pl, PlayerControl& ctrl) {
+  if(npcTierTestTick(w,pl))return;
+  if(npcSpeedTick(w))return;
   if(bench.routeActive || bench.placedItems.probing)return;
   if(bench.routinePhase) {routineReturnTick(w,pl,ctrl);if(bench.routinePhase)return;}
-  if(NavBench::running() || NavDemos::running()) return;
+  if(NavBench::running() || NavDemos::running() || NpcDayJournal::running()) return;
   if(bench.spellEquipPending) {
     if(pl.drawSpell(bench.spellEquipPending)) {bench.spellCastingId=bench.spellEquipPending;bench.spellEquipPending=0;}
     else if(w.tickCount()<bench.spellEquipUntil) return;
@@ -18548,7 +20255,7 @@ void run(World& w, Npc& pl, PlayerControl& ctrl) {
       return;
     }
   while(bench.pc<bench.prog.size() || bench.speaking || bench.waitReply || !bench.waitAiKey.empty() || !bench.bodyLiveWait.empty() ||
-        bench.downNpc!=nullptr || bench.waitRagdollNpc!=nullptr || bench.duelWaiting || bench.waitStreaming ||
+        bench.downNpc!=nullptr || bench.waitRagdollNpc!=nullptr || bench.duelWaiting || bench.npcDuel.active || bench.waitStreaming ||
         std::chrono::steady_clock::now()<bench.realWaitUntil) {
     if(bench.speaking) {
       if(bench.time<bench.speakUntil)
@@ -18564,7 +20271,7 @@ void run(World& w, Npc& pl, PlayerControl& ctrl) {
         if(std::chrono::steady_clock::now()<bench.streamingDeadline)
           return;
         bench.waitStreaming=false;
-        arenaAbort("streaming wait timed out before all Near/Far chunks were published");
+        arenaAbort("streaming wait timed out before all Near/Far landscape and vob visuals were published");
         return;
         }
       bench.waitStreaming=false;
@@ -18576,7 +20283,9 @@ void run(World& w, Npc& pl, PlayerControl& ctrl) {
       publications+=']';
       event("streaming_ready","\"world\":"+jsonStr(w.name())+",\"pass\":true,\"far_publication_ms\":"+publications+
         ",\"far_max_per_frame\":"+std::to_string(bench.streamingWarmupFarMaxPerFrame)+
-        ",\"queue_max_ms\":"+std::to_string(bench.streamingWarmupQueueMaxMs));
+        ",\"queue_max_ms\":"+std::to_string(bench.streamingWarmupQueueMaxMs)+
+        ",\"vob_pending\":"+std::to_string(w.chunkResidency() ? w.chunkResidency()->stats().vobPending : 0)+
+        ",\"vob_near_missing\":"+std::to_string(w.chunkResidency() ? w.chunkResidency()->stats().vobNearMissing : 0));
       bench.streamingWarmupFarMs.clear();
       bench.streamingWarmupFarMaxPerFrame=0;
       bench.streamingWarmupQueueMaxMs=0;
@@ -18598,6 +20307,7 @@ void run(World& w, Npc& pl, PlayerControl& ctrl) {
             ",\"reached\":"+(ready ? "true" : "false"));
       bench.waitRagdollNpc=nullptr;
       }
+    if(tickNpcDuel(w))return;
     if(bench.duelWaiting) {
       Npc& first = *bench.duelA;
       Npc& second = *bench.duelB;
@@ -18622,16 +20332,24 @@ void run(World& w, Npc& pl, PlayerControl& ctrl) {
       bench.duelWaiting = false;
       }
     if(bench.downNpc!=nullptr) {
-      if(!bench.downNpc->isDown() && bench.time<bench.downEnd)
+      Npc* down = bench.downNpc->isDown() ? bench.downNpc :
+                  bench.downOther!=nullptr && bench.downOther->isDown() ? bench.downOther : nullptr;
+      if(down==nullptr && bench.time<bench.downEnd)
         return;
+      event("waitdown_end","\"t_game_ms\":"+std::to_string(w.tickCount())+
+            ",\"elapsed_ms\":"+std::to_string(bench.time-bench.downFrom)+
+            ",\"outcome\":"+jsonStr(down!=nullptr ? "knockout" : "timeout")+
+            ",\"down\":"+jsonStr(symName(w,down))+
+            ",\"actor_hp\":"+std::to_string(bench.downNpc->attribute(ATR_HITPOINTS))+
+            ",\"other_hp\":"+(bench.downOther!=nullptr ? std::to_string(bench.downOther->attribute(ATR_HITPOINTS)) : "null"));
       char buf[160];
-      if(bench.downNpc->isDown())
-        std::snprintf(buf,sizeof(buf),"fight over: %s down after %llu",symName(w,bench.downNpc).c_str(),
+      if(down!=nullptr)
+        std::snprintf(buf,sizeof(buf),"fight over: %s down after %llu",symName(w,down).c_str(),
                       (unsigned long long)(bench.time-bench.downFrom)); else
         std::snprintf(buf,sizeof(buf),"waitdown: timeout, %s hp %d",symName(w,bench.downNpc).c_str(),
                       bench.downNpc->attribute(ATR_HITPOINTS));
       TestBench::note(buf);
-      bench.downNpc = nullptr;
+      bench.downNpc = bench.downOther = nullptr;
       }
     if(bench.pc>=bench.prog.size())
       break;
@@ -18650,14 +20368,15 @@ void run(World& w, Npc& pl, PlayerControl& ctrl) {
       }
     const std::string line = bench.prog[bench.pc++];
     exec(line,w,pl,ctrl);
-    if(bench.routeActive || bench.placedItems.probing || bench.waitStreaming || NavBench::running() || NavDemos::running()) return;
+    if(bench.routeActive || bench.placedItems.probing || bench.waitStreaming || NavBench::running() || NavDemos::running() ||
+       NpcDayJournal::running() || bench.npcTierTest.npc || bench.npcSpeedTest.npc) return;
     if(bench.spellWaitFrozen>=0 || bench.spellEquipPending) return;
     if(bench.questWait || bench.questStandingWait || bench.routinePhase) return;
 #ifdef OPENGOTHIC_ENABLE_APP_CADENCE
     if(bench.cadenceWait) return;
 #endif
     }
-  if(bench.time>=bench.waitUntil && std::chrono::steady_clock::now()>=bench.realWaitUntil && !bench.waitArrive && bench.volleyLeft==0 && bench.downNpc==nullptr && bench.waitRagdollNpc==nullptr && !bench.duelWaiting && !bench.waitStreaming && bench.bodyLiveWait.empty())
+  if(bench.time>=bench.waitUntil && std::chrono::steady_clock::now()>=bench.realWaitUntil && !bench.waitArrive && bench.volleyLeft==0 && bench.downNpc==nullptr && bench.waitRagdollNpc==nullptr && !bench.duelWaiting && !bench.npcDuel.active && !bench.waitStreaming && bench.bodyLiveWait.empty())
     finish();
   }
 
@@ -19100,8 +20819,47 @@ void writeVideo(const Pixmap& pm) {
 
 }
 
+bool TestBench::npcDuelActor(const Npc& npc) {
+  return bench.npcDuel.active && (bench.npcDuel.actors[0]==&npc || bench.npcDuel.actors[1]==&npc);
+  }
+
+void TestBench::npcDuelSwingStart(const Npc& npc) {
+  if(!npcDuelActor(npc))return;
+  auto& duel=bench.npcDuel;
+  const size_t i=duel.actors[0]==&npc ? 0 : 1;
+  ++duel.swings[i];
+  if(i==1 && duel.firstResponseMs<0)
+    duel.firstResponseMs=int64_t(npc.world().tickCount()-duel.from);
+  }
+
+void TestBench::npcDuelSwingEnd(const Npc& npc, std::string_view outcome) {
+  if(!npcDuelActor(npc))return;
+  auto& duel=bench.npcDuel;
+  const size_t i=duel.actors[0]==&npc ? 0 : 1;
+  if(outcome=="blocked")++duel.blocked[i];
+  else if(outcome!="hit" && outcome!="applied")++duel.misses[i];
+  }
+
+void TestBench::npcDuelHit(const Npc& victim, const Npc& by, int32_t hpBefore, int32_t hpAfter,
+                           int32_t baseDamage, bool critical, float meleeScale, float stunBonus, float backstabMult) {
+  if(!npcDuelActor(by) || !npcDuelActor(victim) || &by==&victim || hpBefore<=hpAfter)return;
+  auto& duel=bench.npcDuel;
+  auto& log=duel.hitLog;
+  if(log.size()>1)log+=',';
+  log+="{\"time_ms\":"+std::to_string(by.world().tickCount()-duel.from)+
+    ",\"attacker\":"+jsonStr(who(&by))+",\"victim\":"+jsonStr(who(&victim))+
+    ",\"hp_before\":"+std::to_string(hpBefore)+",\"hp_after\":"+std::to_string(hpAfter)+
+    ",\"base_damage\":"+std::to_string(baseDamage)+",\"critical\":"+(critical ? "true" : "false")+
+    ",\"melee_scale\":"+std::to_string(meleeScale)+",\"stun_bonus\":"+std::to_string(stunBonus)+
+    ",\"backstab_mult\":"+std::to_string(backstabMult)+",\"hp_loss\":"+std::to_string(hpBefore-hpAfter)+"}";
+  }
+
 bool TestBench::isActive() {
   return scenarioPath!=nullptr;
+  }
+
+bool TestBench::strictGraphMovement(const Npc& npc) {
+  return isActive() && (bench.npcTierTest.npc==&npc || bench.npcSpeedTest.npc==&npc);
   }
 
 bool TestBench::isPhysicsNoiseDebug() {
@@ -19596,6 +21354,8 @@ void TestBench::configure(std::string scenario, std::string output, int64_t seed
   NavigationMemoryBench::reset();
   NavigationEyeBench::reset();
   NpcKeysBench::reset();
+  BodyTracesBench::reset();
+  BloodStainsBench::reset();
   NavBench::reset();
   NavDemos::reset();
   stopRecording();
@@ -19694,6 +21454,22 @@ void TestBench::bodyEvent(const Npc& actor, const Npc* target, std::string_view 
     return;
   if(phase=="native_choice")
     ++bench.nativeChoices;
+  if(phase=="body_impact" && (bench.bodyImpact.duel || (bench.bodyImpact.tracing && bench.bodyImpact.npc==&actor))) {
+    rapidjson::Document sample;
+    const std::string row="{"+fields+"}";sample.Parse(row.c_str());
+    if(!sample.HasParseError() && sample.IsObject() && sample.HasMember("damage") && sample["damage"].IsInt() &&
+       sample.HasMember("speed_cm_s") && sample["speed_cm_s"].IsNumber()) {
+      if(bench.bodyImpact.tracing && bench.bodyImpact.npc==&actor) {
+        bench.bodyImpact.damage+=sample["damage"].GetInt();++bench.bodyImpact.impacts;
+        if(sample.HasMember("source") && sample["source"].IsString() &&
+           std::string_view(sample["source"].GetString())=="spell_capsule")bench.bodyImpact.capsuleDamage+=sample["damage"].GetInt();
+        bench.bodyImpact.maximumSpeed=std::max(bench.bodyImpact.maximumSpeed,sample["speed_cm_s"].GetFloat());
+        }
+      for(auto& body:bench.bodyImpact.duelBodies)if(body.npc==&actor && body.knocked) {
+        body.damage+=sample["damage"].GetInt();body.speed=std::max(body.speed,sample["speed_cm_s"].GetFloat());
+        }
+      }
+    }
   const auto id = [](const Npc* npc) -> uint64_t {
     if(npc==nullptr)
       return 0;
@@ -19716,6 +21492,9 @@ void TestBench::bodyEvent(const Npc& actor, const Npc* target, std::string_view 
   }
 
 void TestBench::bodyForget(const Npc* npc) {
+  if(bodyTraceAlive && bench.meleeAiResponse &&
+     (bench.meleeAiResponse->npc==npc || bench.meleeAiResponse->attacker==npc)) bench.meleeAiResponse.reset();
+  if(bodyTraceAlive && (bench.stunDrift.target==npc || bench.stunDrift.attacker==npc)) bench.stunDrift={};
   if(bodyTraceAlive) {
     if(bench.monsterCharacterRoute.npc==npc)bench.monsterCharacterRoute.npc=nullptr;
     for(auto& actor:bench.monsterCharacterExtras)if(actor.npc==npc)actor.npc=nullptr;
@@ -19778,6 +21557,12 @@ int TestBench::bodyBlockVariant(const Npc& npc, int fallback) {
             ",\"fixture_matched\":"+(entry==nullptr ? "false" : "true")+
             ",\"source_seq\":"+std::to_string(entry==nullptr ? 0 : entry->sourceSeq)+animationActorFields(side));
   return variant;
+  }
+
+void TestBench::ragdollBirthPeak(const Npc& npc, const Npc* culprit, const std::string& fields) {
+  if(!isActive() || !bench.started || bench.done) return;
+  event("ragdoll_birth_peak","\"actor\":"+jsonStr(who(&npc))+",\"culprit\":"+(culprit ? jsonStr(who(culprit)) : "null")+
+    ",\"guard_enabled\":"+(Gothic::physicsFlags().ragdollBirthGuard ? "true" : "false")+","+fields);
   }
 
 void TestBench::note(const char* text) {
@@ -19855,12 +21640,29 @@ uint64_t TestBench::frameDt(uint64_t dt) {
       bench.lagMs = std::max<int64_t>(bench.lagMs,duration_cast<milliseconds>(now-due).count());
     }
   bench.frameMs = (bench.step*1000)/Fps - ((bench.step-1)*1000)/Fps;
+  const auto healingStep=[&](uint64_t step) {
+    const auto* world=Gothic::inst().world();
+    if(world && bench.healing.strikeAt>world->tickCount())
+      return std::min(step,bench.healing.strikeAt-world->tickCount());
+    return step;
+    };
   if(bench.slow<=1.f)
-    return bench.frameMs;
+    return healingStep(bench.frameMs);
   bench.slowAcc += uint64_t(float(bench.frameMs*1000)/bench.slow);
   const uint64_t dtGame = bench.slowAcc/1000;
   bench.slowAcc -= dtGame*1000;
-  return dtGame;
+  return healingStep(dtGame);
+  }
+
+void TestBench::beforeNpcTick(Npc& npc) {
+  if(scenarioPath==nullptr || bench.done || !bench.healing.strikeAt || !bench.ctrl || !npc.isPlayer())
+    return;
+  auto& world=npc.world();
+  if(world.tickCount()<bench.healing.strikeAt)
+    return;
+  bench.healing.strikeAt=0;
+  exec("strike player BDT_1013_BANDIT_L",world,npc,*bench.ctrl);
+  healingObserve(world,npc);
   }
 
 void TestBench::beforeWorldTick(uint64_t dt) {
@@ -19941,6 +21743,19 @@ std::function<bool()> TestBench::aiBusy;
 std::function<void(std::string_view)> TestBench::openMenu;
 std::function<bool(std::string_view,std::string_view)> TestBench::aiReached;
 std::function<bool(World&,std::string_view,float)> TestBench::stuckBegin;
+std::function<std::string(World&,std::string_view)> TestBench::npcView;
+
+namespace {
+bool benchBodySweep = false;
+}
+
+void TestBench::allowBodySweep(bool allow) {
+  benchBodySweep = allow;
+  }
+
+bool TestBench::bodySweepAllowed() {
+  return benchBodySweep;
+  }
 std::function<bool(World&)> TestBench::stuckEnd;
 
 bool TestBench::voiceStems() {
@@ -20061,6 +21876,7 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
     }
   if(!bench.started) {
     bench.started = true;
+    bench.heartbeatStart = std::chrono::steady_clock::now();
     FootIk::setProbing(true);
     say("start");
     if(std::string_view(scenarioPath).find("placed-items")!=std::string_view::npos)
@@ -20152,6 +21968,7 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
     renderSound(dt);
     return false;
     }
+  writeHeartbeat(*world);
   if(dt==0)
     return false;
   NavBench::tick(*world);
@@ -20162,6 +21979,16 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
   arrowFields(*world);
   stickingFields(*world);
   spellFields(*world);
+  bodyImpactTick(*world);
+  healingObserve(*world,*player);
+  if(auto& drift=bench.stunDrift;drift.target!=nullptr) {
+    const uint64_t elapsed=world->tickCount()-drift.start;
+    const uint64_t requested=drift.next*100;
+    if(elapsed>=requested) {
+      stunDriftSample(*world,elapsed,requested);
+      if(++drift.next==17) drift={};
+      }
+    }
   destructionFields(*world);
   if(bench.destructionSupportTrace && bench.destructionTrace &&
      world->tickCount()-bench.destructionStart>=bench.destructionSupportNext) {
@@ -20198,6 +22025,8 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
     if(!fixture.walker && !fixture.walkArrived)player->setDirection(fixture.walkDirection);
     }
 
+  meleeDodgeFields(*world);
+  meleeAiResponseFields(*world);
   placedItemsFields(*world,*player,ctrl);
   movableFields(*world);
   ownMeshFields(*world,*player);
@@ -20249,6 +22078,14 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
   monsterCharacterFields(*world,dt);
   npcCharacterFields(*world,*player,dt);
   npcCharacterMotionTrace(*world,dt);
+  NpcDayJournal::tick(*world);
+  if(bench.inputTraceUntil!=0 && bench.time<=bench.inputTraceUntil) {
+    const auto animation = player->animNames();
+    if(animation!=bench.inputAnimation) {
+      bench.inputAnimation = animation;
+      say("input animation PC_HERO at " + std::to_string(world->tickCount()) + " ms: " + animation);
+      }
+    }
   bench.time += dt;
   if(aiBusy && aiBusy())
     bench.busyAt = bench.time;
@@ -20379,12 +22216,15 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
        !bench.aimNpc->hitZoneCenter(HitZones::Body,at))
       at = bench.aimNpc->collosionCenter();
     if(bench.aimNpc!=nullptr && !bench.aimRaw) {
-      // as an archer does: over it by how much the arrow drops on the way (at full draw), from the nock
+      // Aim for the release draw throughout drawing, so the changing trajectory does not shake the aim.
       const auto st = Archery::stats(*player,player->currentRangedWeapon());
       Vec3       nock, dir;
       if(!player->arrowRay(nock,dir))
         nock = player->position() + Vec3(0,145,0);
-      at = Archery::launch(nock,at,Archery::speedAt(st,1.f));
+      const auto& ar = player->archer();
+      const float releaseDraw = bench.volleyLeft>0 ? std::min(st.burstDraw,bench.volleyDraw) : st.burstDraw;
+      const float draw = st.bowStrength ? (ar.stage()==Archer::Held ? ar.draw() : releaseDraw) : 1.f;
+      at = Archery::launch(nock,at,Archery::speedAt(st,draw));
       }
     auto cam = Gothic::inst().camera();
     if(!bench.aimMouse) {
@@ -20495,11 +22335,17 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
 void TestBench::sampleStreaming(const World& world) {
   if(scenarioPath==nullptr || bench.done)return;
   const bool measuring=bench.perfSegment.starts_with("streaming-flythrough/");
-  if(!measuring && std::filesystem::path(scenarioPath).filename()!="streaming-flythrough.bench")return;
+  const bool shots=std::filesystem::path(scenarioPath).filename()=="streaming-shots.bench";
+  if(!measuring && !shots && std::filesystem::path(scenarioPath).filename()!="streaming-flythrough.bench")return;
   const auto* residency=world.chunkResidency();
   if(residency==nullptr)return;
   const auto& stats=residency->stats();
-  if(!measuring) {
+  if(shots && !bench.shot.empty())
+    event("streaming_shot","\"shot\":"+jsonStr(bench.shot)+
+      ",\"vob_near\":"+std::to_string(stats.vobNear)+
+      ",\"vob_near_missing\":"+std::to_string(stats.vobNearMissing)+
+      ",\"vob_pending\":"+std::to_string(stats.vobPending));
+  if(!measuring && !shots) {
     bench.streamingWarmupFarMs.insert(bench.streamingWarmupFarMs.end(),stats.farPublicationTimesMs.begin(),stats.farPublicationTimesMs.end());
     bench.streamingWarmupFarMaxPerFrame=std::max(bench.streamingWarmupFarMaxPerFrame,stats.farPublicationTimesMs.size());
     bench.streamingWarmupQueueMaxMs=std::max(bench.streamingWarmupQueueMaxMs,stats.workMs);
@@ -20510,9 +22356,21 @@ void TestBench::sampleStreaming(const World& world) {
     stats.transitionsFar-bench.streamingFarBefore,stats.publicationTimesMs,
     stats.published-bench.streamingPublishedBefore,stats.released-bench.streamingReleasedBefore,
     stats.landscapePageUsedBytes,stats.landscapePageFreeBytes,stats.landscapePageRetiredBytes,stats.landscapePageCount,
-    Resources::textureStats()});
+    Resources::textureStats(),stats.vobNear,stats.vobFar,stats.vobOutside,stats.vobPending,stats.vobNearMissing,
+    stats.vobCreated-bench.streamingVobCreatedBefore,stats.vobReleased-bench.streamingVobReleasedBefore,
+    stats.vobPublicationMs,stats.vobNearMissingSeconds-bench.streamingVobMissingBefore});
+  const auto& tiers=world.npcSimTierStats();
+  auto& sample=bench.streamingSamples.back();
+  sample.npcFull=tiers.full;
+  sample.npcSimplified=tiers.simplified;
+  // Transitions since the previous sample, like near_transitions and far_transitions.
+  sample.npcTierTransitions=tiers.toFull+tiers.toSimplified-bench.streamingNpcTransitionsBefore;
+  bench.streamingNpcTransitionsBefore=tiers.toFull+tiers.toSimplified;
+  sample.npcFullTickMs=tiers.fullTickMs;
+  sample.npcSimplifiedTickMs=tiers.simplifiedTickMs;
   bench.streamingNearBefore=stats.transitionsNear;bench.streamingFarBefore=stats.transitionsFar;
   bench.streamingPublishedBefore=stats.published;bench.streamingReleasedBefore=stats.released;
+  bench.streamingVobCreatedBefore=stats.vobCreated;bench.streamingVobReleasedBefore=stats.vobReleased;
   }
 
 bool TestBench::withUi() {

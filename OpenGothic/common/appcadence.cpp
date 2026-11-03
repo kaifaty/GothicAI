@@ -1,5 +1,6 @@
 #include "appcadence.h"
 #ifdef OPENGOTHIC_ENABLE_APP_CADENCE
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -14,7 +15,7 @@ struct State {
   bool enabled=false,armed=false,complete=false,on=false,flushed=false;
   bool logFps=false;
   uint64_t entry=0,start=0,end=0,overflow=0;
-  uint64_t logStart=0,logFrames=0;
+  uint64_t logStart=0,logFrames=0,logPrevious=0,logLongest=0;
   size_t used=0;
   std::string output;
   std::vector<uint64_t> frames;
@@ -44,14 +45,17 @@ void appFrame() {
       s.logStart=time;
       } else {
       ++s.logFrames;
+      // The longest frame of the window shows held frames that the mean hides.
+      s.logLongest=std::max(s.logLongest,time-s.logPrevious);
       const auto elapsed=time-s.logStart;
       if(elapsed>=10000000000ull) {
-        std::fprintf(stderr,"[app-cadence] mean_fps=%.2f frames=%llu elapsed_s=%.3f\n",
-          double(s.logFrames)*1e9/double(elapsed),(unsigned long long)s.logFrames,double(elapsed)/1e9);
+        std::fprintf(stderr,"[app-cadence] mean_fps=%.2f frames=%llu elapsed_s=%.3f max_ms=%.1f\n",
+          double(s.logFrames)*1e9/double(elapsed),(unsigned long long)s.logFrames,double(elapsed)/1e9,double(s.logLongest)/1e6);
         std::fflush(stderr);
-        s.logStart=time;s.logFrames=0;
+        s.logStart=time;s.logFrames=0;s.logLongest=0;
         }
       }
+    s.logPrevious=time;
     }
   if(!s.armed || s.complete)return;
   if(s.used==Capacity) { ++s.overflow;s.complete=true;return; }

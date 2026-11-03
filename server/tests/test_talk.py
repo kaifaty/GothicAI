@@ -1,5 +1,6 @@
 import asyncio
 from dataclasses import replace
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -11,7 +12,7 @@ from gothic_ai.journal import Journal
 from gothic_ai.llm import FakeBackend, ToolCall
 from gothic_ai.persona import PersonaProvider
 from gothic_ai.protocol import RosterEntry
-from gothic_ai.talk import TalkDesk, addressee, default_posture
+from gothic_ai.talk import TalkDesk, addressee, default_posture, fix_names
 from tests.fake_game import FakeGame, connected
 from tests.fakes import FakeDecider
 from tests.test_crime_react import card
@@ -73,6 +74,49 @@ def test_a_name_as_speech_recognition_heard_it():
     assert addressee("Я хочу вступить в ополчение", None, guards, None) is None
     assert addressee("Купи мне торт", None, guards, None) is None
     assert addressee("Скажи Торусу, что я пришёл", None, guards, None).id == "VLK_TORUS"
+
+    people["BRIAN"] = RosterEntry(**person("BRIAN", "Брайан", 2))
+    assert addressee("Привет, братан", "PC_THIEF", people, None).id == "PC_THIEF"
+
+
+_KNOWN_NAMES = [
+    "Кавалорн", "Ксардас", "Браго", "Лорд Хаген", "Бандит", "Бандит", "Брайан",
+    "Гарад", "Бастер", "Гром", "Лобарт", "Вульф",
+]
+
+
+@pytest.mark.parametrize(("text", "near", "before", "after"), [
+    ("Ковалорн, бей его.", ["Кавалорн"], "Ковалорн", "Кавалорн"),
+    ("Сардас.", ["Ксардас"], "Сардас", "Ксардас"),
+    ("Брага, чё твои шавки тут вякают?", ["Браго"], "Брага", "Браго"),
+    ("я пойду скажу Брага", [], "Брага", "Браго"),
+    ("я к лорду Хагину", [], "Хагину", "Хагену"),
+    ("Кавалором, бей их", ["Кавалорн"], "Кавалором", "Кавалорном"),
+])
+def test_fix_names_preserves_case_endings_and_punctuation(text, near, before, after):
+    assert fix_names(text, near, _KNOWN_NAMES) == (text.replace(before, after), [(before, after)])
+
+
+@pytest.mark.parametrize(("text", "near"), [
+    ("Привет, братан", ["Брайан"]),
+    ("Здарова, бандиты!", ["Бандит", "Бандит"]),
+    ("пойдём в город", ["Гарад"]),
+    ("Да, мастер.", ["Бастер"]),
+    ("Вы кроме как ругаться ничего не можете", ["Гром"]),
+    ("Вольф, привет", ["Вольф"]),
+    ("скажи Лобарту", ["Лобарт"]),
+    ("с Ксардасом", ["Ксардас"]),
+    ("Сардас, ты меня слышишь?", []),
+])
+def test_fix_names_leaves_exact_names_and_ordinary_words(text, near):
+    assert fix_names(text, near, _KNOWN_NAMES) == (text, [])
+
+
+def test_fix_names_skips_repeated_names_and_prefers_the_nearer_name_on_equal_distance():
+    assert fix_names("Тамас, привет", ["Томас"], ["Томас", "Томас"]) == ("Тамас, привет", [])
+    assert fix_names("скажи Хагену", ["Хагин"], ["Хагин", "Хагэн"]) == (
+        "скажи Хагину", [("Хагену", "Хагину")],
+    )
 
 
 def test_words_about_bandits_are_not_to_a_bandit():
@@ -149,6 +193,57 @@ async def _desk(fake: FakeGame, llm, decider: FakeDecider | None = None, journal
     reflexes = Reflexes(decider) if decider is not None else None
     talk = TalkDesk(link, dialogue, reflexes, end_silence_s=0.2)
     return cm, link, dialogue, talk
+
+
+@pytest.mark.parametrize("name_fix", [True, False])
+async def test_fixed_names_reach_every_listener_and_the_original_stays_in_the_journal(name_fix, caplog):
+    original = "Сардас, я к лорду Хагину."
+    expected = "Ксардас, я к лорду Хагену." if name_fix else original
+    fake = FakeGame()
+    llm = FakeBackend("Слушаю.", delay=0)
+    entries = []
+    phrases = []
+    planner = Mock()
+    caplog.set_level("INFO", logger="gothic_ai.talk")
+    async with connected(fake) as link:
+        dialogue = DialogueManager(link, llm, PersonaProvider(None), journal=Journal(entries.append))
+        talk = TalkDesk(
+            link, dialogue, planner=planner, known_names={"HAGEN": "Лорд Хаген"}, name_fix=name_fix,
+        )
+        talk.on_phrase.append(lambda to, text: phrases.append((to.id, text)))
+        await fake.roster(XARDAS_NEAR, person("PC_THIEF", "Диего", 6))
+        await fake.send(type="player_text", text=original, focus="PC_THIEF")
+        await _until(lambda: fake.said == ["Слушаю."])
+
+        assert talk.last[0].id == XARDAS
+        assert talk.last[1] == expected
+        assert fake.transcripts == [expected]
+        assert phrases == [(XARDAS, expected)]
+        assert planner.on_player_text.call_args.args[:2] == (XARDAS, expected)
+        assert dialogue.conversations[XARDAS].history[0].content == expected
+        assert expected in dialogue.conversations["PC_THIEF"].history[0].content
+        assert any(message.role == "user" and message.content == expected for message in llm.calls[0][1])
+
+    player = next(entry for entry in entries if entry["kind"] == "player")
+    assert player["text"] == expected
+    if name_fix:
+        assert player["heard"] == original
+        assert "Хагину" in caplog.text and "Хагену" in caplog.text
+    else:
+        assert "heard" not in player
+
+
+@pytest.mark.parametrize("flags", [[], ["--no-name-fix"]])
+def test_cli_name_fix_is_enabled_unless_disabled(monkeypatch, flags):
+    from gothic_ai import cli
+
+    serve = AsyncMock(return_value=0)
+    monkeypatch.setattr(cli, "serve", serve)
+    monkeypatch.setattr("sys.argv", ["gothic-ai", "serve", "--scenario", "m0", "--llm", "off", *flags])
+    with pytest.raises(SystemExit) as exited:
+        cli.main()
+    assert exited.value.code == 0
+    assert serve.await_args.args[0].no_name_fix == bool(flags)
 
 
 async def test_a_free_npc_standing_about_stops_and_listens():

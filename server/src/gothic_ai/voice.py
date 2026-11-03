@@ -1,7 +1,8 @@
 """Push-to-talk: while the player holds the key (anywhere, protocol v7), the server records the Mac
 microphone and streams it to the ASR service (asr-service/) as it is spoken. Partial text goes to the
 game right away; on release only the recognizer's short tail is left, and the final text is the hero's
-phrase: talk.py decides whom it is said to (the hero's focus at the key is one of the hints).
+phrase: talk.py decides whom it is said to (the hero's focus at the key is one of the hints). Laughter
+alone is said as `(смеётся)`; words spoken with laughter are prefixed with `(смеясь)`.
 
 The game only reports the key (`ptt_start` / `ptt_stop` / `ptt_cancel`); no audio passes through it.
 """
@@ -11,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 import wave
 from collections.abc import Callable, Coroutine
@@ -43,6 +45,21 @@ MIC_DENIED = (
     "микрофон молчит: разрешите доступ к микрофону приложению, в котором запущен сервер "
     "(Системные настройки → Конфиденциальность и безопасность → Микрофон)"
 )
+LAUGH = "(смеётся)"
+LAUGHING_THRESHOLD = 0.9
+_LAUGH_WORD = re.compile(r"[ао]?(?:х[аеиоыэ])+х?|(?:гы)+")
+_VOWEL = re.compile(r"[аеиоыэ]")
+
+
+def laughter(text: str) -> bool:
+    """Only laughter, at least two syllables of it: «Ха-ха-ха», «Ахаха», «Хи-хи», «Гы-гы». ASR writes
+    laughter so; «Ах», «Ха» or laughter with words («Ха-ха, ну ты лошара») are the hero's words."""
+    words = re.findall(r"[^\W\d_]+", text.lower().replace("ё", "е"))
+    return (
+        bool(words)
+        and all(_LAUGH_WORD.fullmatch(word) for word in words)
+        and sum(len(_VOWEL.findall(word)) for word in words) >= 2
+    )
 
 
 class VoiceError(RuntimeError):
@@ -131,6 +148,7 @@ class Recognized:
     text: str
     provider: str
     latency_s: float  # from the end of the recording
+    laughing: float | None = None
 
 
 PartialCallback = Callable[[str], None]
@@ -232,6 +250,7 @@ class AsrSession:
                                 str(msg.get("text", "")).strip(),
                                 str(msg.get("provider", "")),
                                 time.monotonic() - self._ended_at,
+                                msg.get("laughing"),
                             ),
                         )
                         return
@@ -461,14 +480,23 @@ class VoiceInput:
             result.latency_s,
             utt.focus or "-",
         )
-        if not result.text:
+        text = result.text
+        laughs = result.laughing is not None and result.laughing >= LAUGHING_THRESHOLD
+        if laughter(text) or (not text and laughs):
+            text = LAUGH
+        elif laughs:
+            text = f"(смеясь) {text}"
+        if not text:
             await self._status("notice", "Не расслышал. Удерживайте T, пока говорите")
             return
-        self.heard(
-            result.text,
-            utt.focus,
-            {"via": "voice", "asr": result.provider, "latency_s": round(result.latency_s, 2)},
-        )
+        details: dict[str, Any] = {
+            "via": "voice", "asr": result.provider, "latency_s": round(result.latency_s, 2)
+        }
+        if result.laughing is not None:
+            details["laughing"] = round(result.laughing, 2)
+        if text != result.text:
+            details["heard"] = result.text
+        self.heard(text, utt.focus, details)
 
     async def _partial(self, utt: _Utterance, text: str) -> None:
         if not utt.finished:

@@ -19,7 +19,8 @@ Step B2: one word at a time. The conversation has one floor (`Floor`, dialogue.p
   before it have their text ready (not their sound): it answers with their words in mind, and each next
   voice adds a second or two, not four. Its lines are heard after theirs;
 - **three voices to a phrase of the hero's** (`MAX_VOICES`): a fourth says nothing. The round ends with
-  his next phrase, or once nobody has spoken for `ROUND_GAP_S` (a fight's shouts go on);
+  his next phrase, or once nobody has spoken for `ROUND_GAP_S` (a fight's shouts go on). Urgent mercy
+  turns take an extra voice: the round's limit must not take away a chance to surrender;
 - **the hero's voice cuts all**: whoever speaks stops, whoever waits says nothing. Seats asked while he
   speaks wait for his phrase: the one he speaks to comes first.
 
@@ -270,8 +271,10 @@ class GroupTalk:
         )
         if e is None or at is None:
             return  # not in a round of the hero's (a cut turn: he has spoken again)
-        if len([s for s in self.seats if not s.dropped]) >= MAX_VOICES:
-            waiting = [s for s in self.seats[at + 1 :] if not s.dropped and not s.ready]
+        if len([s for s in self.seats if not s.dropped and s.kind != "mercy"]) >= MAX_VOICES:
+            waiting = [
+                s for s in self.seats[at + 1 :] if not s.dropped and not s.ready and s.kind != "mercy"
+            ]
             if not waiting:
                 log.info("%s: no voice left to answer %s", to, speaker)
                 return
@@ -309,26 +312,30 @@ class GroupTalk:
 
     # --- the floor: one voice at a time ---------------------------------------------------------
 
+    def reserve_after(self, npc: str, after: str) -> None:
+        """The hero's phrase is passed to another npc: it answers after the addressee."""
+        at = next((i for i in reversed(range(len(self.seats)))
+                   if (s := self.seats[i]).npc == after.upper()
+                   and s.taken and not s.ready and not s.dropped), None)
+        if at is not None:
+            self.seats.insert(at + 1, Seat(npc.upper(), self.clock(), taken=False, id=next(self._ids)))
+
     async def queue(self, npc: str, kind: str) -> bool:
-        """A turn of the npc's takes its seat. The hero's words to it: the first, reserved by his phrase. Any
-        other of an npc near the hero: the next one, if there is a voice left, once those before it have
-        their text ready. An npc away from the conversation is not on its floor."""
+        """A turn takes its reserved seat, or the next one if there is a voice left. The addressee comes
+        first; a hero turn passed to another npc waits behind it until its text is ready. An npc away
+        from the conversation is not on its floor."""
         npc = npc.upper()
         self._calls.pop(npc, None)
         reserved = next(
             (s for s in self.seats if s.npc == npc and not s.taken and not s.dropped and s.kind == kind), None
         )
-        if kind == "player":
-            seat = reserved
-            if seat is None:  # words to it not through talk.py (the console, a scenario): a round of its own
-                self._new_round()
-                seat = Seat(npc, self.clock(), id=next(self._ids))
-                self.seats.append(seat)
-            seat.taken = True
-            return True
-        if reserved is not None:  # another spoke to it: its seat is right after that one's
+        if reserved is not None:  # a named reply or a hero turn passed on by the addressee
             reserved.taken = True
             return await self._wait_turn(reserved)
+        if kind == "player":  # words to it not through talk.py (the console, a scenario): its own round
+            self._new_round()
+            self.seats.append(Seat(npc, self.clock(), id=next(self._ids)))
+            return True
         if not self._near_hero(npc):
             return True
         # he speaks: his phrase opens the round, and first. Polled, as below: the floor's state is time (who
@@ -337,7 +344,9 @@ class GroupTalk:
             await asyncio.sleep(POLL_S)
         if self._quiet():
             self._new_round()
-        if len([s for s in self.seats if not s.dropped]) >= MAX_VOICES:
+        if kind != "mercy" and len(
+            [s for s in self.seats if not s.dropped and s.kind != "mercy"]
+        ) >= MAX_VOICES:
             log.info("%s: no voice left for it in this round (%s)", npc, ", ".join(s.npc for s in self.seats))
             return False
         seat = Seat(npc, self.clock(), id=next(self._ids), kind=kind)

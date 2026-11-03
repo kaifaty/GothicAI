@@ -1,6 +1,6 @@
 # Боевой API и арбитр тела NPC
 
-Этап 4 [плана GRU](npc-body-control-plan.md). Общий CPU `BodyController` используется headless runner и обычным AI bridge. С v54 сервер по умолчанию запрашивает `policy:"engine"`: примитивы выбирает P30 в движке; внешний provider остаётся запасным режимом. Настоящие NPC, физика, анимационные окна и расчёт урона исполняют их.
+Этап 4 [плана GRU](npc-body-control-plan.md). Общий CPU `BodyController` используется headless runner и обычным AI bridge. По решению пользователя 2026-11-03 P30 по умолчанию выключен до полного переобучения: бои ведёт native `FightAlgo`. Для опытов `--neural-body` включает пилот; с v54 он по умолчанию запрашивает `policy:"engine"`, и примитивы выбирает P30 в движке. Внешний provider остаётся запасным режимом. Настоящие NPC, физика, анимационные окна и расчёт урона исполняют их.
 
 Этап прошёл полный серверный прогон `stage4-v5`: [результаты и границы проверки](../reports/npc-body/2026-10-13-body-api/validation-notes.md), [37 сценариев](../reports/npc-body/2026-10-13-body-api/body-api.md), [машинный отчёт](../reports/npc-body/2026-10-13-body-api/body-api.json).
 
@@ -81,8 +81,9 @@ release в `reason`, чтобы не терять счётчики коротк�
 После сводки интервальные счётчики обнуляются. Отсутствующие поля означают
 `{}`, `{}` и `0`; старые серверы игнорируют дополнение, версия остаётся v54.
 [Полная схема](protocol.md#политика-боя-в-движке-v54).
-Серверный `BodyPilot` по умолчанию использует `--body-policy engine`
-(`GOTHIC_BODY_POLICY`). Он создаётся без `--body-url`, но начинает бой только при
+Серверный `BodyPilot` создаётся только с `--neural-body` и тогда по умолчанию
+использует `--body-policy engine` (`GOTHIC_BODY_POLICY`). Без флага пилота нет,
+в логе — `neural body: policy=off …`. В engine `--body-url` не нужен, но бой начинается только при
 `hello.body_net.loaded:true`. Отсутствие поля равнозначно незагруженной сети:
 заданный `--body-url` / `GOTHIC_BODY_URL` включает запасной сервис, без адреса
 остаётся native AI. Причина из hello логируется один раз на подключение.
@@ -101,8 +102,9 @@ release в `reason`, чтобы не терять счётчики коротк�
 В service те же счётчики действий собираются по ответам политики и `body_action`.
 Лог конца сохраняет формат `neural-body end … decisions=… policy=engine|service`
 без новых полей для действий.
-Лаунчер передаёт `llm.body_policy` серверу, а необязательный путь `llm.body_net`
-игре как `OPENGOTHIC_BODY_NET`.
+Лаунчер передаёт `llm.body_policy` серверу, но эта настройка действует, только когда
+сервер запущен с `--neural-body`. Сам лаунчер флаг не передаёт и запускает игру
+без P30. Необязательный путь `llm.body_net` передаётся игре как `OPENGOTHIC_BODY_NET`.
 
 ### Ожидание безопасной границы (v41)
 
@@ -198,6 +200,8 @@ Pure `FightAlgo` resolver получает числовое/boolean состоя
 При `AiFar`/`AiFar2` и текущей дистанции героя от 30 м release и realtime watchdog возвращают native не позднее следующего тика, очищая боевую позу и её waits; физические реакции сохраняются для native, причина остаётся в `release_reason` события `native_restored`. Стенд проверяет удаление героя на 90 м как наблюдателя и как настоящей цели, а также его возвращение рядом до пересчёта дальнего режима. Его C++ вызов `statusJson(&actor,true)` добавляет к `body_control_status` поля `process_policy` (0 — игрок, 1 — обычный, 2 — дальний от 30 м, 3 — от 60 м), `segment_remaining_ms`, `fai_gate`, `ani_gate`, `ai_gate`, `output_gate`, `interruptible`; обычный wire status сохраняет прежнюю схему. Учебные актёры могут сохранять полное обновление вдали.
 
 Сборка: `cmake --build OpenGothic/build --target gothic-body-watch-test`. Запуск из корня репозитория: `OpenGothic/build/opengothic/gothic-body-watch-test -g "$GOTHIC_DIR" -g2 -devmode --scenario "$PWD/scripts/bench/body-api.bench"`. Нужны игровые assets; сохранение не требуется. На Ryzen сборка и запуск идут через `scripts/gq`.
+
+Блок реакций melee AI требует `OPENGOTHIC_CONTENT=<content-staging/anim-strikes>`. Без клипов `T_1HDASHB`, `T_1HRIPOSTE` или `T_RIPOSTEVICTIM` он пишет `melee AI fixture skipped: needs OPENGOTHIC_CONTENT with anim-strikes` и пропускается; остальные фазы теста выполняются.
 
 ## Запуск на dev-ubuntu
 

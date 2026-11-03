@@ -23,6 +23,13 @@ from .neural_load import _policy_resets
 from .neural_soak_capture import CaptureTracker
 from .neural_soak_metrics import SoakMetrics, release_within_deadline
 
+SCENARIOS = {
+    "neural-soak": ("OFF", {
+        "save": False, "timeout": 900, "exclusive": True,
+        "env": {"GOTHIC_SOAK_SECONDS": "300", "BENCH_CLASS": "quiet"},
+    }),
+}
+
 log = logging.getLogger("gothic_ai.scenarios")
 BANDITS = tuple(f"DIR_NPC_SOAK_BANDIT_{i}" for i in range(1, 5))
 COMPANION = "DIR_NPC_SOAK_COMPANION"

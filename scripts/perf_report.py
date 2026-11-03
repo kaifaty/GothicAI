@@ -254,6 +254,9 @@ def read_streaming(directory):
             grouped.setdefault(parts[1], []).append(sample)
     if set(grouped) != {"run", "fly"} or any(len(rows) < 2 for rows in grouped.values()):
         raise ValueError(f"{path}: both run and fly require complete residency samples")
+    for samples in grouped.values():
+        if "vob_near_missing_seconds" in samples[-1]:
+            samples[-1]["vob_near_missing_seconds_route"] = samples[-1]["vob_near_missing_seconds"]
     warmup = None
     for event in events:
         if event.get("kind") == "streaming_ready":
@@ -290,6 +293,7 @@ def streaming_stats(rows):
     warmup = [value for row in rows for value in row.get("warmup_far_publication_ms", [])]
     pages = [row for row in rows if "page_used_bytes" in row]
     textures = [row for row in rows if "tex_live_bytes" in row]
+    vobs = [row for row in rows if "vob_near" in row]
     return {
         "updates": len(rows),
         "near_transitions": int(sum(row["near_transitions"] for row in rows)),
@@ -314,6 +318,18 @@ def streaming_stats(rows):
         "page_count_end": int(pages[-1]["page_count"]) if pages else None,
         "page_capacity_peak_bytes": int(max(row["page_used_bytes"]+row["page_free_bytes"]+row["page_retired_bytes"]
                                             for row in pages)) if pages else None,
+        "vobs": {
+            "near_end": int(vobs[-1]["vob_near"]),
+            "far_end": int(vobs[-1]["vob_far"]),
+            "outside_end": int(vobs[-1]["vob_outside"]),
+            "created": int(sum(row["vob_created"] for row in vobs)),
+            "released": int(sum(row["vob_released"] for row in vobs)),
+            "pending_peak": int(max(row["vob_pending"] for row in vobs)),
+            "publication_ms": describe([row["vob_publication_ms"] for row in vobs]),
+            "near_missing_peak": int(max(row["vob_near_missing"] for row in vobs)),
+            "near_missing_seconds": sum(row["vob_near_missing_seconds_route"] for row in vobs
+                                        if "vob_near_missing_seconds_route" in row),
+        } if vobs else None,
         "textures": {
             "live_end_bytes": int(textures[-1]["tex_live_bytes"]),
             "retired_end_bytes": int(textures[-1]["tex_retired_bytes"]),
@@ -437,6 +453,19 @@ def summary_table(report):
             lines.append(f"| {view} | {number(data['warmup_far_count'], 0)} | "
                          f"{number(publication['p99'], 6)} / {number(publication['max'], 6)} | "
                          f"{number(data['warmup_far_max_per_frame'], 0)} | {number(data['warmup_queue_max_ms'], 6)} |")
+        if any(stats["streaming"]["vobs"] is not None for stats in streaming["views"].values()):
+            lines.extend(["", "| Pass | Vobs Near / Far / Outside end | Created / released | Queue peak | Publish p99 / max ms per frame | Near missing peak | Near missing vob-seconds |",
+                          "|---|---:|---:|---:|---:|---:|---:|"])
+            for view, stats in streaming["views"].items():
+                vobs = stats["streaming"]["vobs"]
+                if vobs is None:
+                    lines.append(f"| {view} | n/a | n/a | n/a | n/a | n/a | n/a |")
+                    continue
+                publication = vobs["publication_ms"]
+                lines.append(f"| {view} | {vobs['near_end']} / {vobs['far_end']} / {vobs['outside_end']} | "
+                             f"{vobs['created']} / {vobs['released']} | {vobs['pending_peak']} | "
+                             f"{number(publication['p99'], 6)} / {number(publication['max'], 6)} | "
+                             f"{vobs['near_missing_peak']} | {number(vobs['near_missing_seconds'], 9)} |")
         lines.extend(["", "| Pass | Textures end | Texture live / retired end MiB | Texture session peak MiB | Session evicted / reloaded |",
                       "|---|---:|---:|---:|---:|"])
         for view, stats in streaming["views"].items():
@@ -594,6 +623,50 @@ def compare_markdown(report):
     return "\n".join(lines) + "\n"
 
 
+def build_series(off, on, tolerance_ms):
+    runs = {}
+    for side, directories in (("off", off), ("on", on)):
+        runs[side] = []
+        for directory in directories:
+            report = build_report(directory)
+            streaming = report["places"].get("streaming-flythrough")
+            if streaming is None:
+                raise ValueError(f"{directory}: no streaming-flythrough measurement segments")
+            runs[side].append((report["directory"], streaming["views"]))
+    passes = {}
+    for name in ("run", "fly"):
+        data = {side: [{"directory": directory, "p99_ms": views[name]["frame_ms"]["p99"]}
+                       for directory, views in reports] for side, reports in runs.items()}
+        off_p99 = [run["p99_ms"] for run in data["off"]]
+        on_p99 = [run["p99_ms"] for run in data["on"]]
+        off_median, on_median = statistics.median(off_p99), statistics.median(on_p99)
+        spread = max(off_p99) - min(off_p99)
+        tolerance = max(tolerance_ms, spread)
+        change = on_median - off_median
+        passes[name] = {**data, "off_median_p99_ms": off_median, "on_median_p99_ms": on_median,
+                        "delta_ms": change, "off_spread_ms": spread, "tolerance_ms": tolerance,
+                        "verdict": "pass" if change <= tolerance else "fail"}
+    return {"schema_version": 1, "minimum_tolerance_ms": tolerance_ms, "passes": passes}
+
+
+def series_markdown(report):
+    lines = ["# Streaming flythrough series", "",
+             "Delta = median ON p99 - median OFF p99. OFF spread = max OFF p99 - min OFF p99.",
+             f"Pass when delta <= max({number(report['minimum_tolerance_ms'])} ms, OFF spread).", "",
+             "| Pass | OFF median p99 ms | ON median p99 ms | Δ ms | OFF spread ms | Tolerance ms | Verdict |",
+             "|---|---:|---:|---:|---:|---:|---|"]
+    for name, data in report["passes"].items():
+        lines.append(f"| {name} | {number(data['off_median_p99_ms'])} | {number(data['on_median_p99_ms'])} | "
+                     f"{data['delta_ms']:+.3f} | {number(data['off_spread_ms'])} | "
+                     f"{number(data['tolerance_ms'])} | {data['verdict']} |")
+    lines.extend(["", "| Pass | Side | Run directory | p99 ms |", "|---|---|---|---:|"])
+    for name, data in report["passes"].items():
+        for side in ("off", "on"):
+            for run in data[side]:
+                lines.append(f"| {name} | {side.upper()} | `{run['directory']}` | {number(run['p99_ms'])} |")
+    return "\n".join(lines) + "\n"
+
+
 def write_outputs(directory, stem, report, markdown):
     (directory / (stem + ".json")).write_text(json.dumps(report, indent=2, ensure_ascii=False, allow_nan=False) + "\n")
     (directory / (stem + ".md")).write_text(markdown)
@@ -607,9 +680,27 @@ def main(argv=None):
     compare_parser = subcommands.add_parser("compare", help="write compare.md and compare.json in B")
     compare_parser.add_argument("a", type=Path)
     compare_parser.add_argument("b", type=Path)
+    series_parser = subcommands.add_parser("series", help="compare alternating streaming-flythrough OFF/ON runs")
+    series_parser.add_argument("--off", type=Path, nargs="+", required=True)
+    series_parser.add_argument("--on", type=Path, nargs="+", required=True)
+    series_parser.add_argument("--tolerance-ms", type=float, default=1.0)
+    series_parser.add_argument("--out", type=Path)
     args = parser.parse_args(argv)
+    if args.command == "series":
+        if len(args.off) < 2 or len(args.on) < 2:
+            series_parser.error("series requires at least two run directories for each of --off and --on")
+        if not math.isfinite(args.tolerance_ms) or args.tolerance_ms < 0:
+            series_parser.error("--tolerance-ms must be a finite nonnegative number")
     try:
-        if args.command == "run":
+        if args.command == "series":
+            report = build_series(args.off, args.on, args.tolerance_ms)
+            markdown = series_markdown(report)
+            output = args.out if args.out is not None else args.on[-1]
+            output.mkdir(parents=True, exist_ok=True)
+            write_outputs(output, "series", report, markdown)
+            print(markdown, end="")
+            return 0 if all(data["verdict"] == "pass" for data in report["passes"].values()) else 1
+        elif args.command == "run":
             report = build_report(args.directory)
             write_outputs(args.directory, "report", report, report_markdown(report))
             print(summary_table(report))

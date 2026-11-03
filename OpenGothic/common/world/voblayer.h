@@ -22,4 +22,11 @@ Result apply(WorldData::Data& data, const std::filesystem::path& baseWorldDir,
 Result check(const std::filesystem::path& baseWorldDir, const std::filesystem::path& file,
              const std::filesystem::path& contentRoot = {});
 
+// Slot-local bundles accept only add entries, using the same validation as a world layer.
+// Ignores runtime flags and replaces tree only when the whole file is valid.
+Result readTree(std::vector<std::shared_ptr<asset::VirtualObject>>& tree,
+                const std::filesystem::path& baseRoot, const std::filesystem::path& file,
+                const std::filesystem::path& contentRoot = {},
+                const std::map<std::string,std::filesystem::path>* ownMeshes = nullptr);
+
 } // namespace VobLayer

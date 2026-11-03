@@ -11,6 +11,10 @@ from ..llm import ToolCall
 from ..protocol import GameMessage, HeroDeed, Perception
 from .common import _logged, _until, _until_async, model_off
 
+SCENARIOS = {
+    "crime_ally": ("GIVEN", {"save": False, "timeout": 240}),
+}
+
 if TYPE_CHECKING:
     from ..crimes import Crimes
     from ..dialogue import DialogueManager
