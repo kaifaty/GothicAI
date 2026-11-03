@@ -64,6 +64,11 @@ int main() {
   require(kind(ArmorClass::Heavy,Direction::Back,true)==Kind::HeavyRoll,"heavy armour still rolls back");
   require(kind(ArmorClass::Medium,Direction::Forward,true)==Kind::Roll,"medium armour still rolls forward");
   require(kind(ArmorClass::Heavy,Direction::Forward,false)==Kind::HeavyRoll,"melee_barge=0 restores the heavy roll");
+  require(kind(ArmorClass::Heavy,Direction::Forward,bargeAllowed(false,false))==Kind::HeavyRoll,
+          "an NPC without melee_ai_barge cannot barge");
+  require(kind(ArmorClass::Heavy,Direction::Forward,bargeAllowed(false,true))==Kind::Barge,
+          "melee_ai_barge admits the hero's heavy forward barge");
+  require(bargeAllowed(true,false),"the hero does not need melee_ai_barge");
 
   // Animation names, by the weapon prefix of T_%sJUMPB.
   requireName(animationName(Kind::Dash,Stance::OneHand,Direction::Back),"T_1HDASHB","1H dash back");
@@ -218,6 +223,7 @@ int main() {
   MeleeStamina::drain(state,85.f,1000);
   require( staminaAllows(state,Kind::Dash,true,true),"native AI: 15 pays a dash");
   require(!staminaAllows(state,Kind::Roll,true,true),"native AI: 15 is short of a roll");
+  require(!staminaAllows(state,Kind::Barge,true,true),"native AI: 15 is short of the full barge price");
   MeleeStamina::drain(state,charged(Kind::Roll,true),1000);
   require(state.current==0.f && state.exhausted,"a dash dearer than the rest empties the bar");
   require(!staminaAllows(state,Kind::Dash,false,true),"empty bar: the player is refused");

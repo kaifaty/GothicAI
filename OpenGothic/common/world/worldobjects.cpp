@@ -700,6 +700,7 @@ void WorldObjects::removeNpc(Npc& npc) {
   auto ptr = takeNpc(&npc);
   if(ptr==nullptr)
     return;
+  npc.endMeleeAiSpecial();
   BodyObservations::forget(&npc);
   auto& point = owner.deadPoint();
   npc.attachToPoint(nullptr);

@@ -44,6 +44,23 @@ int main() {
     s.*member = true;
     require(!available(s),"a busy, stunned, downed, airborne or wet stance cannot begin charging");
     }
+  auto ai = stance;
+  ai.player = false;
+  require(!available(ai),"an NPC without melee_ai_charge cannot charge");
+  ai.aiEnabled = true;
+  require(available(ai),"melee_ai_charge admits the same complete 1H stance");
+  for(auto member:{&Situation::enabled,&Situation::oneHand,&Situation::windupAnimation,&Situation::holdAnimation,
+                   &Situation::releaseAnimation,&Situation::standing}) {
+    auto s = ai;
+    s.*member = false;
+    require(!available(s),"flagged AI still needs every hero charge prerequisite");
+    }
+  for(auto member:{&Situation::attacking,&Situation::parading,&Situation::stunned,&Situation::knockedDown,
+                   &Situation::inAir,&Situation::inWater}) {
+    auto s = ai;
+    s.*member = true;
+    require(!available(s),"flagged AI has the same busy-state refusals as the hero");
+    }
 
   require(!releaseReady(0,true) && !releaseReady(399,true),"release during windup waits for its end");
   require(releaseReady(400,true),"the earliest release starts after 400 ms of windup");
@@ -68,6 +85,11 @@ int main() {
   const auto ordinaryCost = MeleeStamina::attackCost(40,60);
   requireNear(cost(ordinaryCost,true),1.5f*ordinaryCost,"charging costs 1.5 ordinary attacks");
   requireNear(cost(ordinaryCost,false),0.f,"without melee_stamina the charge is free");
+  MeleeStamina::State stamina;
+  MeleeStamina::reset(stamina,cost(ordinaryCost,true),0);
+  require(MeleeStamina::canAfford(stamina,cost(ordinaryCost,true),true),"AI can afford exactly the full charge price");
+  MeleeStamina::drain(stamina,1.f,0);
+  require(!MeleeStamina::canAfford(stamina,cost(ordinaryCost,true),true),"AI needs the full charge price");
 
   std::puts("melee charge contract passed");
   }
