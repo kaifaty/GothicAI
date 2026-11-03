@@ -50,6 +50,8 @@ namespace TestBench {
   uint64_t frameDt(uint64_t dt);
   // Move synthetic support fixtures before both NPC and player world steps.
   void     beforeWorldTick(uint64_t dt);
+  // Exact healing strikes run at the advanced clock before the player consumes animation events.
+  void     beforeNpcTick(Npc& npc);
   // Runs the scenario after the world update; true if this frame has to be captured
   bool     tick(uint64_t dt, PlayerControl& player);
   // Called after the frame's residency update; deferred metrics for perf route segments.

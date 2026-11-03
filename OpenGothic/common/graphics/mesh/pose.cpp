@@ -1663,7 +1663,7 @@ void Pose::interruptItemUse() {
   for(size_t i=0;i<lay.size();) {
     if(lay[i].bs==BS_ITEMINTERACT) {
       onRemoveLayer(lay[i]);
-      lay.erase(lay.begin()+i);
+      lay.erase(lay.begin()+std::ptrdiff_t(i));
       } else {
       ++i;
       }

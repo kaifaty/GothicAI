@@ -21307,6 +21307,17 @@ uint64_t TestBench::frameDt(uint64_t dt) {
   return healingStep(dtGame);
   }
 
+void TestBench::beforeNpcTick(Npc& npc) {
+  if(scenarioPath==nullptr || bench.done || !bench.healing.strikeAt || !bench.ctrl || !npc.isPlayer())
+    return;
+  auto& world=npc.world();
+  if(world.tickCount()<bench.healing.strikeAt)
+    return;
+  bench.healing.strikeAt=0;
+  exec("strike player BDT_1013_BANDIT_L",world,npc,*bench.ctrl);
+  healingObserve(world,npc);
+  }
+
 void TestBench::beforeWorldTick(uint64_t dt) {
   // Keep the native observer at the fixture's supported point. Nearby enemies
   // retain their ordinary behaviour and cannot push this measurement out of range.
@@ -21623,11 +21634,6 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
   spellFields(*world);
   bodyImpactTick(*world);
   healingObserve(*world,*player);
-  if(bench.healing.strikeAt && world->tickCount()>=bench.healing.strikeAt) {
-    bench.healing.strikeAt=0;
-    exec("strike player BDT_1013_BANDIT_L",*world,*player,ctrl);
-    healingObserve(*world,*player);
-    }
   if(auto& drift=bench.stunDrift;drift.target!=nullptr) {
     const uint64_t elapsed=world->tickCount()-drift.start;
     const uint64_t requested=drift.next*100;

@@ -6846,6 +6846,7 @@ void Npc::tickAnimationTags() {
   }
 
 void Npc::tick(uint64_t dt) {
+  TestBench::beforeNpcTick(*this);
   updateSimpleMovement();
   NpcLogicalState::Tick logicalTick(*this,dt);
   if(!bloodPoolDone && isDead() && owner.tickCount()-bloodDeathTick>=BloodSpawn::SettleMs) {
@@ -8684,7 +8685,7 @@ bool Npc::hasItemUseAnimation() const {
 
 void Npc::beginItemUseEffect(const Item& item) {
   const auto& flags = Gothic::physicsFlags();
-  const auto main = item.handle().main_flag;
+  const auto main = ItmFlags(item.handle().main_flag);
   const auto category = (main & ITM_CAT_POTION) ? Healing::Category::Potion :
                         (main & ITM_CAT_FOOD) ? Healing::Category::Food : Healing::Category::Other;
   const bool enabled = (category==Healing::Category::Potion && flags.meleeHealInterrupt) ||
