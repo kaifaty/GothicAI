@@ -3,6 +3,9 @@
 
 #include "game/serialize.h"
 #include "game/physicssave.h"
+#include "physics/placedcensuscache.h"
+#include "basestore.h"
+#include "resources.h"
 #include "game/herodeed.h"
 #include "game/bodyarena.h"
 #include "physics/physicsnoise.h"
@@ -32,6 +35,7 @@
 #include <Tempest/Application>
 #include <Tempest/Log>
 #include <chrono>
+#include <filesystem>
 #include <optional>
 #include <stdexcept>
 #include <unordered_set>
@@ -254,6 +258,85 @@ void WorldObjects::linkPlacedItem(PlacedItem& source, Item& item) {
     item.setPhysicsDisable();
   }
 
+std::vector<DynamicWorld::PlacedItemCensusEntry> WorldObjects::placedCensusVerdicts(
+    const std::vector<DynamicWorld::PlacedItemCandidate>& candidates) {
+  using Clock=std::chrono::steady_clock;
+  auto& stats=placedCensus;
+  stats={};
+  stats.items=candidates.size();
+  auto& physic=*owner.physic();
+  auto started=Clock::now();
+  const auto elapsed=[&]() {
+    const auto now=Clock::now();
+    const double ms=std::chrono::duration<double,std::milli>(now-started).count();
+    started=now;
+    return ms;
+    };
+  std::vector<DynamicWorld::PlacedItemCensusEntry> verdicts;
+  std::optional<PlacedCensusCache> cache;
+  auto status=PlacedCensusCache::Status::Disabled;
+  if(PlacedCensusCache::enabled()) {
+    std::filesystem::path cacheRoot;
+    try {
+      cacheRoot=BaseStore::cacheRoot();
+      }
+    catch(const std::exception&) {
+      // Without a derived root the census is simply computed live.
+      }
+    const auto inputs=Resources::wayHeightInputs(owner.name());
+    const auto& flags=Gothic::physicsFlags();
+    const uint32_t bits=uint32_t(flags.cloth)|(uint32_t(flags.movableVobs)<<1)|(uint32_t(physic.staticCollisionSplit())<<2)|
+                        (uint32_t(flags.furnitureParts)<<3)|(uint32_t(flags.itemHulls)<<4)|(uint32_t(flags.placedItems)<<5)|
+                        (uint32_t(flags.destruction)<<6);
+    if(!cacheRoot.empty() && !inputs.baseFingerprint.empty()) {
+      cache.emplace(cacheRoot,PlacedCensusCache::Key{inputs.baseFingerprint,
+          std::filesystem::path(owner.name()).stem().string(),inputs.contentFingerprint,bits,
+          physic.placedItemCensusInputs(candidates)});
+      stats.keyMs=elapsed();
+      status=cache->read(candidates.size(),verdicts);
+      stats.readMs=elapsed();
+      }
+    }
+  stats.status=PlacedCensusCache::statusName(status);
+  if(status!=PlacedCensusCache::Status::Hit) {
+    verdicts=physic.placedItemCensus(candidates);
+    stats.censusMs=elapsed();
+    if(cache && !cache->path().empty()) {
+      cache->save(verdicts);
+      stats.writeMs=elapsed();
+      }
+    if(status!=PlacedCensusCache::Status::Disabled)
+      Tempest::Log::i("placed item census cache: miss (",stats.status,"), recomputed ",candidates.size()," items");
+    return verdicts;
+    }
+  Tempest::Log::i("placed item census cache: hit, ",candidates.size()," items");
+  if(PlacedCensusCache::checkMode()) {
+    // Equivalence check: the live census must match the stored one bit for bit.
+    const auto live=physic.placedItemCensus(candidates);
+    stats.checkMs=elapsed();
+    stats.checked=true;
+    size_t differing=0;
+    for(size_t i=0;i<live.size();++i) {
+      const auto fields=PlacedCensusCache::differences(verdicts[i],live[i]);
+      if(fields.empty())
+        continue;
+      ++differing;
+      std::string names;
+      for(const auto field:fields)
+        names+=(names.empty() ? "" : ",")+std::string(field);
+      Tempest::Log::e("placed item census check: index=",i," zen=",placedItems[i].zenId," visual=",placedItems[i].visual,
+                      " fields=",names," cached={",PlacedCensusCache::describe(verdicts[i]),
+                      "} live={",PlacedCensusCache::describe(live[i]),"}");
+      }
+    if(differing>0) {
+      Tempest::Log::e("placed item census check: FAILED, ",differing," of ",live.size()," items differ");
+      std::abort();
+      }
+    Tempest::Log::i("placed item census check: passed, ",live.size()," items identical");
+    }
+  return verdicts;
+  }
+
 void WorldObjects::finalizePlacedItems() {
   LoadProbe::Startup::Scope probe(LoadProbe::Startup::Other,true,"placed-items");
   const auto started=std::chrono::steady_clock::now();
@@ -264,9 +347,9 @@ void WorldObjects::finalizePlacedItems() {
   for(auto& source:placedItems) {
     LoadProbe::Startup::Scope prepareProbe(LoadProbe::Startup::PhysicsPrepare,false,"placed-items");
     source.item->setPhysicsEnable(owner);
-    candidates.push_back({&source.item->physic,source.item->isMission(),source.visual});
+    candidates.push_back({&source.item->physic,source.item->isMission(),source.visual,source.zenId,source.instance});
     }
-  const auto verdicts=owner.physic()->placedItemCensus(candidates);
+  const auto verdicts=placedCensusVerdicts(candidates);
   size_t allowed=0;
   for(size_t i=0;i<placedItems.size();++i) {
     auto& source=placedItems[i];

@@ -284,8 +284,14 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
 
     probeT = LoadProbe::now();
     wobj.finalizePlacedItems();
-    if(LoadProbe::enabled())
-      LoadProbe::mark("placed_items",LoadProbe::msSince(probeT));
+    if(LoadProbe::enabled()) {
+      const auto& census=wobj.placedCensusLoad();
+      LoadProbe::mark("placed_items",LoadProbe::msSince(probeT),
+                      "census="+census.status+" census_items="+std::to_string(census.items)+
+                      " census_key_ms="+std::to_string(census.keyMs)+" census_read_ms="+std::to_string(census.readMs)+
+                      " census_build_ms="+std::to_string(census.censusMs)+" census_write_ms="+std::to_string(census.writeMs)+
+                      " census_check_ms="+std::to_string(census.checkMs));
+      }
 
     probeT = LoadProbe::now();
     wmatrix->buildIndex();

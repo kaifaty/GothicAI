@@ -427,6 +427,8 @@ class DynamicWorld final {
       const Item* body = nullptr;
       bool mission = false;
       std::string_view visual = {};
+      uint32_t zenId = uint32_t(-1);
+      size_t instance = size_t(-1);
       };
     struct PlacedItemCensusEntry {
       std::string disposition;
@@ -444,6 +446,9 @@ class DynamicWorld final {
     // All handles must still have their authored poses. Decisions preserve the
     // input order and are made together, before any candidate body is removed.
     std::vector<PlacedItemCensusEntry> placedItemCensus(const std::vector<PlacedItemCandidate>& candidates) const;
+    // Digest of everything placedItemCensus reads besides the static world:
+    // candidate identity, pose, native shape, and every movable vob body.
+    std::string placedItemCensusInputs(const std::vector<PlacedItemCandidate>& candidates) const;
     Item           addMovableVob(const ProtoMesh& mesh, std::string_view visual, const Tempest::Matrix4x4& matrix,
                                  float massMultiplier, bool blocksWalking, std::string_view className = {},
                                  bool legacyCollision = true, uint32_t zenId = uint32_t(-1));
@@ -675,6 +680,7 @@ class DynamicWorld final {
       double keyMs = 0, readMs = 0, buildMs = 0, writeMs = 0;
       };
     const StaticCollisionLoadStats& staticCollisionLoadStats() const { return collisionLoadStats; }
+    bool staticCollisionSplit() const { return splitStaticTriangles; }
     uint64_t simulationStep() const;
 
     // Called explicitly by the runner; ordinary worlds never build a navmesh.
