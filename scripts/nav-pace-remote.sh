@@ -190,6 +190,10 @@ def drive(name, runner, weights, pace=None, configure=None):
     for path in sorted(output.glob("validation/*/*/seed-*/episode.json")):
         episode = rl.read_json(path)
         actions = np.loadtxt(path.parent / "actions.txt", ndmin=2)
+        # The last row is the terminal key reset after the final decision.
+        if len(actions) != episode["decisions"] + 1:
+            raise ValueError(f"{name}: actions rows differ from decisions + reset: {path.parent}")
+        actions = actions[:-1]
         episodes[episode["family"]] = dict(
             id=episode["id"], success=episode["success"], elapsed_ms=episode["elapsed_ms"],
             decisions=episode["decisions"], forced_pace=episode.get("forced_pace"), pace=episode.get("pace"),
