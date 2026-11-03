@@ -509,6 +509,7 @@ Npc::~Npc(){
   }
 
 void Npc::save(Serialize &fout, size_t id, std::string_view directory) {
+  tickFoodPool();
   fout.setEntry("worlds/",fout.worldName(),directory,id,"/data");
   fout.write(*hnpc);
   fout.write(body,head,vHead,vTeeth,bdColor,vColor,bdFatness);
@@ -584,6 +585,14 @@ void Npc::save(Serialize &fout, size_t id, std::string_view directory) {
     fout.write(BodyTraceMagic,uint16_t(1),bodyTraceRecord.id,uint64_t(bodyTraceRecord.diedAt+1),
                uint64_t(bodyTraceRecord.clockFrom+1),bodyTraceRecord.culprit);
     }
+  if(foodPool.remaining>0) {
+    fout.setEntry("worlds/",fout.worldName(),directory,id,"/food-pool");
+    Healing::save(fout,foodPool);
+    }
+  if(itemUse.item!=0) {
+    fout.setEntry("worlds/",fout.worldName(),directory,id,"/item-use");
+    fout.write(uint32_t(itemUse.item),itemUse.started,itemUse.food);
+    }
   }
 
 void Npc::load(Serialize &fin, size_t id, std::string_view directory) {
@@ -599,6 +608,10 @@ void Npc::load(Serialize &fin, size_t id, std::string_view directory) {
   endMeleeStun("reset");
   meleeParadeOrigin.reset();
   meleeStamina = {};
+  itemUse = {};
+  Healing::clear(foodPool);
+  foodPoolTick = owner.tickCount();
+  collectingFood = false;
   meleeRiposte.reset();
   meleeRiposteHoldUntil = 0;
   meleeFighter = {};
@@ -694,6 +707,15 @@ void Npc::load(Serialize &fin, size_t id, std::string_view directory) {
 
   if(fin.setEntry("worlds/",fin.worldName(),directory,id,"/inventory"))
     invent.load(fin,*this);
+  if(fin.setEntry("worlds/",fin.worldName(),directory,id,"/item-use")) {
+    uint32_t item = 0;
+    fin.read(item,itemUse.started,itemUse.food);
+    itemUse.item = item;
+    }
+  if(fin.setEntry("worlds/",fin.worldName(),directory,id,"/food-pool"))
+    Healing::load(fin,foodPool);
+  if(isDown() || !Gothic::physicsFlags().foodOverTime)
+    Healing::clear(foodPool);
 
   // post-alignment
   updateTransform();
@@ -1368,6 +1390,8 @@ bool Npc::checkHealth(bool onChange, bool allowUnconscious) {
   }
 
 void Npc::onNoHealth(bool death, HitSound sndMask) {
+  interruptItemUse(death ? "death" : "unconscious");
+  Healing::clear(foodPool);
   endMeleeAiSpecial();
   const bool wasDead = isDead();
   meleeChargePhase = ChargePhase::None;
@@ -3650,13 +3674,15 @@ void Npc::setAnimRotate(int rot) {
   visual.setAnimRotate(*this,rot);
   }
 
-bool Npc::setAnimItem(std::string_view scheme, int state) {
+bool Npc::setAnimItem(std::string_view scheme, int state, bool allowMissing) {
   if(scheme.empty())
     return true;
   if(bodyStateMasked()!=BS_STAND) {
     setAnim(Anim::Idle);
     return false;
     }
+  if(allowMissing && !visual.hasAnim(string_frm("T_",scheme,"_STAND_2_S0")))
+    return true;
   if(auto sq = visual.startAnimItem(*this,scheme,state)) {
     implAniWait(uint64_t(sq->totalTime()));
     return true;
@@ -3917,6 +3943,11 @@ void Npc::changeAttribute(Attribute a, int32_t val, bool allowUnconscious) {
   if(a>=ATR_MAX || val==0)
     return;
 
+  if(collectingFood && val>0 && (a==ATR_HITPOINTS || a==ATR_MANA)) {
+    (a==ATR_HITPOINTS ? foodHp : foodMana) += val;
+    return;
+    }
+
   if(val<0 && a==ATR_HITPOINTS) {
     if(isPlayer() && Gothic::inst().isGodMode())
       return;
@@ -3924,6 +3955,8 @@ void Npc::changeAttribute(Attribute a, int32_t val, bool allowUnconscious) {
       return;
     if(isImmortal())
       return;
+    if(attribute(ATR_HITPOINTS)>0)
+      interruptItemUse("hp loss");
     }
 
   hnpc->attribute[a]+=val;
@@ -5937,6 +5970,7 @@ float Npc::meleePostureSkillScale(const Npc& attacker) const {
   }
 
 bool Npc::knockDownMelee(Npc& attacker, const Vec3& impulse, bool barge, std::string_view reason) {
+  interruptItemUse("knockdown");
   setInteraction(nullptr,true);
   attachToPoint(nullptr);
   updateRagdollQuestAnchor();
@@ -6687,6 +6721,10 @@ void Npc::tickTimedEvt(Animation::EvCount& ev) {
         }
       case asset::MdsEventType::ITEM_REMOVE:
       case asset::MdsEventType::ITEM_DESTROY: {
+        if(i.def==asset::MdsEventType::ITEM_DESTROY && itemUse.item!=0) {
+          finishItemUseEffect("destroy");
+          break;
+          }
         invent.clearSlot(*this, "", i.def != asset::MdsEventType::ITEM_REMOVE);
         break;
         }
@@ -6767,6 +6805,8 @@ void Npc::tickRegen(int32_t& v, const int32_t max, const int32_t chg, const uint
 
   int32_t nextV = std::max(0,std::min(v+val1-val0,max));
   if(v!=nextV) {
+    if(&v==&hnpc->attribute[ATR_HITPOINTS] && nextV<v)
+      interruptItemUse("regeneration");
     v = nextV;
     // check health, in case of negative chg
     checkHealth(true,false);
@@ -6777,9 +6817,17 @@ void Npc::tickAnimationTags() {
   if(Gothic::physicsFlags().meleeBladeShadow || Gothic::physicsFlags().meleePhysicsHits || (meleeShadow && meleeShadow->window))
     syncMeleeShadowSwing();
   Animation::EvCount ev;
+  if(itemUse.item!=0 && !hasItemUseAnimation())
+    interruptItemUse("animation interrupted");
   const bool hasEvents = visual.processEvents(owner,lastEventTime,ev,&logicalBody);
   visual.processLayers(owner,&logicalBody);
   visual.setNpcEffect(owner,*this,hnpc->effect,hnpc->flags);
+  if(itemUse.item!=0 && !hasItemUseAnimation()) {
+    tickTimedEvt(ev);
+    ev.timed.clear();
+    if(itemUse.item!=0)
+      finishItemUseEffect("animation end");
+    }
   if(!hasEvents)
     return;
 
@@ -6809,6 +6857,7 @@ void Npc::tickAnimationTags() {
   }
 
 void Npc::tick(uint64_t dt) {
+  TestBench::beforeNpcTick(*this);
   updateSimpleMovement();
   NpcLogicalState::Tick logicalTick(*this,dt);
   if(!bloodPoolDone && isDead() && owner.tickCount()-bloodDeathTick>=BloodSpawn::SettleMs) {
@@ -6816,6 +6865,7 @@ void Npc::tick(uint64_t dt) {
     BloodSpawn::onDead(owner,*this);
     }
   tickBodyImpact();
+  tickFoodPool();
   tickMeleeParry();
   tickMeleeStamina();
   tickMeleeBarge();
@@ -8636,6 +8686,103 @@ void Npc::useItem(size_t item, uint8_t slotHint, bool force) {
   invent.use(item,*this,slotHint,force);
   }
 
+bool Npc::hasItemUseAnimation() const {
+  const auto& pose = visual.pose();
+  for(size_t i=0;i<pose.logicalLayerCount();++i)
+    if(pose.logicalLayer(i).state==BS_ITEMINTERACT)
+      return true;
+  return false;
+  }
+
+void Npc::beginItemUseEffect(const Item& item) {
+  const auto& flags = Gothic::physicsFlags();
+  const auto main = ItmFlags(item.handle().main_flag);
+  const auto category = (main & ITM_CAT_POTION) ? Healing::Category::Potion :
+                        (main & ITM_CAT_FOOD) ? Healing::Category::Food : Healing::Category::Other;
+  const bool enabled = (category==Healing::Category::Potion && flags.meleeHealInterrupt) ||
+                       (category==Healing::Category::Food && flags.foodOverTime);
+  if(!enabled) {
+    if(item.handle().on_state[0]!=0)
+      owner.script().invokeItem(this,uint32_t(item.handle().on_state[0]));
+    return;
+    }
+  const auto moment = Healing::effectMoment(category,flags.meleeHealInterrupt,flags.foodOverTime,
+                                           hasItemUseAnimation());
+  itemUse = {item.clsId(),owner.tickCount(),category==Healing::Category::Food};
+  if(moment==Healing::EffectMoment::Immediate)
+    finishItemUseEffect("immediate");
+  }
+
+void Npc::finishItemUseEffect(const char* moment) {
+  const auto use = itemUse;
+  itemUse = {};
+  invent.setCurrentItem(0);
+  invent.clearSlot(*this,"",false);
+  const auto* item = invent.getItem(use.item);
+  if(item==nullptr) {
+    clearSlotItem("");
+    return;
+    }
+  const auto name = item->handle().name;
+  const auto function = uint32_t(item->handle().on_state[0]);
+  tickFoodPool();
+  const auto hp = attribute(ATR_HITPOINTS), mana = attribute(ATR_MANA);
+  foodHp = foodMana = 0;
+  collectingFood = use.food && Gothic::physicsFlags().foodOverTime;
+  if(function!=0)
+    owner.script().invokeItem(this,function);
+  collectingFood = false;
+  if(use.food && !isDown()) {
+    Healing::add(foodPool,foodHp,foodMana);
+    if(TestBench::isActive()) {
+      TestBench::note(("food pool "+std::string(TestBench::who(this))+": +"+std::to_string(foodHp)+
+                      " hp +"+std::to_string(foodMana)+" mana over "+std::to_string(Healing::FoodDuration)+
+                      " ms, pool "+std::to_string(foodPool.hp)+"/"+std::to_string(foodPool.mana)).c_str());
+      }
+    }
+  if(TestBench::isActive()) {
+    const auto* symbol = owner.script().findSymbol(use.item);
+    TestBench::note(("item use "+std::string(TestBench::who(this))+": "+
+                    (symbol==nullptr ? name : symbol->name())+" effect at "+moment+", +"+
+                    std::to_string(use.food ? foodHp : attribute(ATR_HITPOINTS)-hp)+" hp +"+
+                    std::to_string(use.food ? foodMana : attribute(ATR_MANA)-mana)+" mana at "+
+                    std::to_string(owner.tickCount()-use.started)+" ms").c_str());
+    }
+  delItem(use.item,1);
+  }
+
+void Npc::interruptItemUse(std::string_view cause) {
+  if(itemUse.item==0)
+    return;
+  if(TestBench::isActive()) {
+    const auto* symbol = owner.script().findSymbol(itemUse.item);
+    TestBench::note(("item use "+std::string(TestBench::who(this))+": "+
+                    (symbol==nullptr ? std::to_string(itemUse.item) : symbol->name())+" interrupted by "+
+                    std::string(cause)+" at "+std::to_string(owner.tickCount()-itemUse.started)+" ms, item kept").c_str());
+    }
+  itemUse = {};
+  if(hasItemUseAnimation()) {
+    visual.pose().interruptItemUse();
+    aniWaitTime = 0;
+    }
+  invent.setCurrentItem(0);
+  invent.clearSlot(*this,"",false);
+  }
+
+void Npc::tickFoodPool() {
+  const auto now = owner.tickCount();
+  const auto dt = now>=foodPoolTick ? now-foodPoolTick : 0;
+  foodPoolTick = now;
+  if(!Gothic::physicsFlags().foodOverTime || isDown()) {
+    Healing::clear(foodPool);
+    return;
+    }
+  const auto dose = Healing::advance(foodPool,dt,attribute(ATR_HITPOINTSMAX)-attribute(ATR_HITPOINTS),
+                                               attribute(ATR_MANAMAX)-attribute(ATR_MANA));
+  changeAttribute(ATR_HITPOINTS,dose.hp,false);
+  changeAttribute(ATR_MANA,dose.mana,false);
+  }
+
 void Npc::setCurrentItem(size_t item) {
   invent.setCurrentItem(item);
   }
@@ -8943,6 +9090,7 @@ void Npc::startMeleeStun(Npc& by, std::string_view reason) {
   const bool beast = (reason=="posture" || reason=="barge") && hasMeleeBeastPoise() && MeleeImpact::beastCanAccumulatePosture(physicsMass());
   if(!enabled || (!isHuman() && !beast) || isDown() || meleeKnockdown || (isMeleeStunned() && reason!="barge") || hasMeleeBargeSuperArmor() || isMeleeRiposteHeld() || (isMeleeRiposting() && hasMeleeSuperArmor()))
     return;
+  interruptItemUse("stagger");
   endMeleeStun("timeout");
   meleeStunReason = reason;
   meleeStunUntil = owner.tickCount()+MeleeImpact::stunDuration(reason);

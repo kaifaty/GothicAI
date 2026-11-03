@@ -1659,6 +1659,18 @@ bool Pose::stopItemStateAnim(const AnimationSolver& solver, uint64_t tickCount) 
   return true;
   }
 
+void Pose::interruptItemUse() {
+  for(size_t i=0;i<lay.size();) {
+    if(lay[i].bs==BS_ITEMINTERACT) {
+      onRemoveLayer(lay[i]);
+      lay.erase(lay.begin()+std::ptrdiff_t(i));
+      } else {
+      ++i;
+      }
+    }
+  itemUseSt = itemUseDestSt = -1;
+  }
+
 const Matrix4x4* Pose::transform() const {
   return tr;
   }

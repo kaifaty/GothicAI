@@ -38,6 +38,8 @@
 
 [Ближний бой NPC вдали от героя](../reports/physics/2026-11-02-far-melee/README.md): `MeleeFighter` удерживает бойца и цель на `CharacterVirtual` и контактной обвязке вне кольца героя ещё 3 с после боя; без магнита замах NPC решается прежней проверкой. Контракт `gothic-meleefighter-contract`, стенд [`melee-far.bench`](../scripts/bench/melee-far.bench), начало `fight actor target deed`. [Текущее поведение](physics.md#как-работает-сейчас).
 
+Лечение в бою, часть А (шаг 7 NRFTW): [`healing.*`](../OpenGothic/common/game/healing.h) — момент эффекта, запас еды HP/маны на 10 с и скриптовый выбор зелья горячей клавиши; `[GAME] melee_heal_interrupt` / `food_over_time`, оба по умолчанию 1, Marvin и `MELEE_HEAL_INTERRUPT` / `FOOD_OVER_TIME` в `bench.sh` / `ryzen.sh`. Контракт [`gothic-healing-contract`](../OpenGothic/tests/healing_contract.cpp), численный стенд [`heal-interrupt.bench`](../scripts/bench/heal-interrupt.bench) ON/OFF; [текущее поведение и журнал](physics.md#как-работает-сейчас), [замысел и порядок частей](../reports/Лечение%20в%20бою.md).
+
 ## Части и машины
 
 [Защита рождения рэгдолла и дрейф оглушения](../reports/physics/2026-11-02-knockdown-launch/README.md): `[GAME] ragdoll_birth_guard=1`, нативные контракты, парный стенд [`knockdown-launch`](../scripts/bench/knockdown-launch.bench) (по 60 нокдаунов в ON и OFF: близко 15,8 → 2,3 м/с таза, выше 8 м/с 20 → 0 из 20). Отдельный стенд [`knockdown-drift`](../scripts/bench/knockdown-drift.bench) сравнивает оглушение на ровной точке и склоне дуэли, по 5 проб со срезами каждые 100 мс. [Текущее поведение](physics.md#как-работает-сейчас).

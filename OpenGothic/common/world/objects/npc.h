@@ -17,6 +17,7 @@
 #include "game/meleeai.h"
 #include "game/meleeimpact.h"
 #include "game/meleestamina.h"
+#include "game/healing.h"
 #include "game/meleefighter.h"
 #include "physics/dynamicworld.h"
 #include "physics/ragdoll.h"
@@ -219,7 +220,7 @@ class Npc final {
     auto       setAnimAngGet(Anim a) -> const Animation::Sequence*;
     auto       setAnimAngGet(Anim a, uint8_t comb) -> const Animation::Sequence*;
     void       setAnimRotate(int rot);
-    bool       setAnimItem(std::string_view scheme, int state);
+    bool       setAnimItem(std::string_view scheme, int state, bool allowMissing = false);
     void       stopAnim(std::string_view ani);
     void       startFaceAnim(std::string_view anim, float intensity, uint64_t duration);
     float      faceWeight(std::string_view anim);  // how much of the face anim shows now, 0..1 (test bench)
@@ -671,6 +672,7 @@ class Npc final {
     void      delItem    (size_t id, uint32_t amount);
     void      useItem    (size_t item);
     void      useItem    (size_t item, uint8_t slotHint, bool force);
+    void      beginItemUseEffect(const Item& item);
     void      setCurrentItem(size_t item);
     void      unequipItem(size_t item);
     void      addItem    (size_t id, Interactive& chest, size_t count=1);
@@ -718,6 +720,7 @@ class Npc final {
     bool      isAiBusy() const;
     size_t    aiQueueSize() const { return aiQueue.size(); }
     auto      aiQueueFront() const -> const AiQueue::AiAction* { return aiQueue.front(); }
+    bool      hasQueuedItemUse() const { return aiQueue.hasItemUse(); }
     void      clearAiQueue();
 
     auto      currentWayPoint() const -> const WayPoint* { return currentFp; }
@@ -1088,6 +1091,20 @@ class Npc final {
     bool                          tickMeleePosture(uint64_t dt);
     MeleeImpact::Posture           meleePosture;
     MeleeStamina::State            meleeStamina;
+    struct ItemUse final {
+      size_t item = 0;
+      uint64_t started = 0;
+      bool food = false;
+      };
+    ItemUse                       itemUse;
+    Healing::Pool                 foodPool;
+    uint64_t                      foodPoolTick = 0;
+    bool                          collectingFood = false;
+    int32_t                       foodHp = 0, foodMana = 0;
+    bool                          hasItemUseAnimation() const;
+    void                          finishItemUseEffect(const char* moment);
+    void                          interruptItemUse(std::string_view cause);
+    void                          tickFoodPool();
     struct Riposte final {
       std::weak_ptr<zenkit::INpc> victim;
       Tempest::Vec3 heroStart, from, pair;

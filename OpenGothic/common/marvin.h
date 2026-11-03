@@ -120,6 +120,8 @@ class Marvin {
       C_ToggleMeleeBarge,
       C_ToggleMeleeCharge,
       C_ToggleMeleeRiposte,
+      C_ToggleMeleeHealInterrupt,
+      C_ToggleFoodOverTime,
       C_ToggleMeleeAiDodge,
       C_ToggleMeleeAiRiposte,
       C_ToggleMeleeAiCharge,

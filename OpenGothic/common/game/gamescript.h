@@ -196,6 +196,8 @@ class GameScript final {
     void      fixNpcPosition(Npc& npc, float angle0, float distBias);
 
   private:
+    bool startHotkeyPotion(Npc& pl, bool mana);
+
     template<typename T>
     struct DetermineSignature {
       using signature = void();
