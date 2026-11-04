@@ -3,7 +3,9 @@
 # Run it twice: as it is (VSM, the default) and with OPENGOTHIC_VSM=0 (the two sun cascades, lamps unshadowed):
 #   TEMPEST_WINDOW_SIZE=1280x720 OPENGOTHIC_VSM_STATS=1 BENCH_HOST=ryzen scripts/bench.sh vsm-clips
 #   TEMPEST_WINDOW_SIZE=1280x720 OPENGOTHIC_VSM=0 BENCH_HOST=ryzen scripts/bench.sh vsm-clips
-# Report: reports/render-features/2026-11-03-lamp-shadows/step-2a.md
+# The lamp-face cache (step 2b) is on by default; OPENGOTHIC_VSM_CACHE=0 draws every face every frame, for pairs:
+#   BENCH_HOST=local TEMPEST_WINDOW_SIZE=1920x1080 OPENGOTHIC_VSM=1 OPENGOTHIC_VSM_CACHE=0|1 scripts/bench.sh vsm-clips
+# Report: reports/render-features/2026-11-03-lamp-shadows/step-2a.md, reports/render-features/2026-11-04-vsm-cache/step-2b.md
 seed 73013
 cheat god
 overlay off
@@ -42,6 +44,47 @@ hold forward 3500
 wait 4000
 stop
 shot walk-brazier-end
+wait 500
+
+# 2b. The brazier's fire close (its light flickers): the crates' shadow flickers with it, the camera holds still.
+goto pos -3150 140 -4560
+face 150
+watch player
+cam look 120
+cam world 260 120 60
+wait 6000
+cam hold
+shot brazier-flicker
+rec brazier-flicker
+wait 4000
+stop
+
+# 3a. The lamp-face cache in the house of perf-interior: the camera of interior-3 holds still (faces from the
+#     cache), then the hero walks past the candle and the lanterns under it: his shadow follows, none stays behind.
+set time 22 0
+goto pos 3924 -73 -6663
+watch player
+cam look 110
+cam world 160 170 180
+wait 8000
+cam hold
+shot interior-still-a
+rec interior-still
+wait 3000
+stop
+shot interior-still-b
+face 270
+walkmode walk
+wait 500
+shot walk-candle-start
+rec walk-candle
+hold forward 2000
+wait 2500
+face 90
+hold forward 2000
+wait 2500
+stop
+shot walk-candle-end
 wait 500
 
 # 3. The candle- and torch-lit harbour house of perf-interior: four views, then a slow pan.

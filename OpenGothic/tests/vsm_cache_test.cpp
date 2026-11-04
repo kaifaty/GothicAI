@@ -5,6 +5,7 @@
 #include "graphics/lightsource.h"
 #include "graphics/visualobjects.h"
 
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <iostream>
@@ -21,6 +22,9 @@ struct vec3 {
 inline float dot(const vec3& a, const vec3& b) { return a.x*b.x + a.y*b.y + a.z*b.z; }
 inline float abs(float v) { return v<0 ? -v : v; }
 inline uint  min(uint a, uint b) { return a<b ? a : b; }
+inline float min(float a, float b) { return a<b ? a : b; }
+inline float max(float a, float b) { return a>b ? a : b; }
+inline float clamp(float v, float lo, float hi) { return min(max(v, lo), hi); }
 inline void  atomicOr(uint& dst, uint bits) { dst |= bits; }
 #define INOUT(T) T&
 uint vsmCacheOcc[64] = {};
@@ -230,6 +234,23 @@ void sphereFaces() {
   require(faces(vec3{530, 0, 0}, 50)==0x1, "a caster's edge within the range counts");
   require(faces(vec3{0, 0, 0}, 40)==0x3F, "a caster at the lamp reaches every face");
   require(faces(vec3{-300, 10, -20}, 5)==0x2, "a caster on -x reaches the -x face");
+
+  // its footprint on a 4x4 face: the pages it may cover, and how near it comes along the axis
+  uint x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+  float near = vsmCacheFootprint(vec3{300, 0, 0}, 10, 0, 4, x0, y0, x1, y1);
+  require(near==290.f && x0==1 && x1==2 && y0==1 && y1==2, "a caster on the axis covers the middle pages");
+  near = vsmCacheFootprint(vec3{200, 190, -190}, 5, 0, 4, x0, y0, x1, y1);
+  // face 0 maps (y, z): y 190/200 -> right, z -190/200 -> top
+  require(near==195.f && x0==3 && x1==3 && y0==0 && y1==0, "a caster near the face's corner covers that page");
+  near = vsmCacheFootprint(vec3{0, 190, 300}, 5, 4, 4, x0, y0, x1, y1);
+  require(x0==1 && x1==2 && y0==3 && y1==3, "face 4 maps (x, y)");
+  near = vsmCacheFootprint(vec3{30, 0, 0}, 40, 0, 4, x0, y0, x1, y1);
+  require(near<=0 && x0==0 && y0==0 && x1==3 && y1==3, "a caster round the lamp covers the whole face");
+
+  // the depth of a face back to a distance: 0 is nothing (the range), a nearer occluder a larger depth
+  require(vsmCacheDepthDistance(0, 700)==700.f, "an empty texel is the shadow range away");
+  const float z = 0.0309278f*(700.f/350.f - 1.f); // vsmApplyProjective at half the range
+  require(std::abs(vsmCacheDepthDistance(z, 700)-350.f)<0.01f, "a depth maps back to its distance");
   }
 }
 
