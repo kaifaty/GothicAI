@@ -21,7 +21,10 @@ Kinds:
         spreads a whip over its neighbours;
 - hold  {"bones": ["BIP01 R UPPERARM", ...], "frame": 12, "window": [...]}: the bones keep their own turn of `frame`,
         so a limb stays still against its parent while the body turns: a sword arm rides a roll over the shoulder
-        instead of flipping the blade from one side of the body to the other.
+        instead of flipping the blade from one side of the body to the other;
+- keep  {"bones": ["BIP01 R CLAVICLE"], "window": [...]}: the bones keep the model-space turn they had before this
+        layer, so a fix of a parent leaves the limb below it where it was: both clavicles hang on the neck, and a calm
+        of the neck would swing the sword arm.
 
 The legs and arms are solved by two-bone IK: the knee or elbow stays in its own plane. With `"joint_clear": cm` on
 a step, lift or tuck the plane turns only as far as it takes to keep the knee or elbow that high over the floor.
@@ -156,6 +159,7 @@ def toe_lift(W: np.ndarray, ie: int, it: int, height: float) -> tuple[float, np.
 def apply(skel: ga.Skeleton, anim: ga.Animation, fixes: list, floor: float) -> list[str]:
     clip = Clip(skel, anim)
     log = []
+    first = [clip.world(f) for f in range(anim.frame_count)] if any(fx["kind"] == "keep" for fx in fixes) else None
     for fx in fixes:
         win = window_of(fx)
         frames = [f for f in range(anim.frame_count) if weight(win, f) > 0]
@@ -225,6 +229,12 @@ def apply(skel: ga.Skeleton, anim: ga.Animation, fixes: list, floor: float) -> l
                 for f in frames:
                     q = q0 if q0 @ anim.rotations[f, c] >= 0 else -q0
                     anim.rotations[f, c] = rs.slerp(anim.rotations[f, c], q, weight(win, f))
+        elif kind == "keep":
+            for f in frames:
+                W = clip.world(f)
+                for bone in fx["bones"]:
+                    i = skel.index(bone)
+                    clip.set_world_rot(f, W, bone, slerp_m(W[i][:3, :3], first[f][i][:3, :3], weight(win, f)))
         else:
             raise SystemExit(f"unknown fix kind {kind}")
     return log
