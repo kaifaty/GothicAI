@@ -38,7 +38,8 @@ for tag in "$@"; do
     # This Mac is shared. Skip after a short wait; never disturb other work.
     ready=0
     for attempt in {1..7}; do
-      if ! LC_ALL=C pgrep -fl Gothic2Notr >"$out/game-before.txt" && python3 -c 'import os, sys; sys.exit(os.getloadavg()[0] > 8)'; then
+      # -x: the process name only; -f also matched agent sessions whose prompt mentions the game.
+      if ! LC_ALL=C pgrep -lx Gothic2Notr >"$out/game-before.txt" && python3 -c 'import os, sys; sys.exit(os.getloadavg()[0] > 8)'; then
         ready=1
         break
       fi

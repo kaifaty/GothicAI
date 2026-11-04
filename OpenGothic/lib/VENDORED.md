@@ -69,6 +69,12 @@ Keep these when updating a library from upstream.
   every build, not only without `NDEBUG`; the MSL source is still dumped only in debug builds. The
   unconditional `Log::d(msl)` of every mesh shader is removed (with `-ms 1` it put about 24 000 lines
   into `game.log`).
+- `Tempest/Engine/gapi/metal/mtshadercache.{h,cpp}`, `mtshader.{h,cpp}`, `mtdevice.{h,mm}`, `gapi/pipelinecache.{h,cpp}`,
+  `graphics/device.{h,cpp}` and `Engine/CMakeLists.txt`: on-disk cache of the SPIR-V -> MSL translation
+  (`Device::setShaderCacheDirectory`). The translation itself moved into `translate()` unchanged; the result
+  (MSL, buffer-size flag, final binding table) is cached under a CMake-computed hash of SPIRV-Cross and of the
+  translator sources plus the device-dependent options. Verify mode re-translates on every hit and aborts on any
+  difference.
 - `Tempest/Engine/graphics/renderstate.h`, `gapi/metal/mtpipeline.cpp`, `gapi/vulkan/vpipeline.cpp` and
   `gapi/directx12/dxpipeline.cpp`: `RenderState::setColorWriteMask` sets the written channels per color
   attachment (all by default). Blood decals change the GBuffer albedo without its alpha, which holds the
