@@ -951,8 +951,9 @@
     "Standalone benchmark follows navpolicy-contract flags. The runner inherits Jolt SIMD/FP flags; both are recorded. Compare current and fused timings within the benchmark.",
     "Fused far readout classifies only forward output rows 50..99. Savings include skipping classification of cells discarded by the HD far input.",
     "Timings use quick because quiet did not gain admission within approximately 30 minutes; competing gq jobs and CPU affinity are recorded. Historical external-helper and new inline-helper runs have different queue load and order; their absolute times are not a controlled comparison.",
+    "The main inline-helper run used a noticeably busy core: unchanged update took 245 us versus 146 us in the external-helper run, and p90 reached approximately 1.4 times the median. The 307 us (34.7%) saving is noisy; use 148 us (22.7%) from ed11800d as the conservative estimate.",
     "Generic standalone flags do not enable F16C: GCC implements _Float16 casts with libgcc conversion calls. Packed timings include that conversion cost; no CPU-specific packing optimization is applied.",
-    "N=50 with 8 runners and 16-runner profiles were removed from scope by the user.",
+    "N=50 with 8 runners and 16-runner profiles were removed from scope by the lead session of the nav-sim research.",
     "Replay uses 24 v5 drive trajectories; population uses the HD proxy and historical train pairs. Replay savings are not an end-to-end population speedup measurement.",
     "N=100 x 8 runners was not measured: gq did not admit the 16-thread/10 GiB request within the allowed 3600-second wait; the request was cancelled with exit 75. Full queue status is in population_8_runners.",
     "Saved engine-targets check exited 75 before compilation because of queue availability; the same target was built and self-tested in the admitted one-thread request. The Python checks ran separately and passed 75 tests."
