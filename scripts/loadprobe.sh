@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # OUT=/absolute/path scripts/loadprobe.sh <local|ryzen> <orig|work:world:par|serial|chain>...
+# LOADPROBE_LA1_MAX (default 8): Mac load average allowed at start; raise it only for runs marked noisy.
 set -euo pipefail
+LA1_MAX="${LOADPROBE_LA1_MAX:-8}"
+[[ "$LA1_MAX" =~ ^[0-9]+([.][0-9]+)?$ ]] || { echo 'LOADPROBE_LA1_MAX must be a number' >&2; exit 2; }
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="${OUT:?OUT must be an absolute output directory}"
 [[ "$OUT" == /* ]] || { echo 'OUT must be absolute' >&2; exit 2; }
@@ -39,14 +42,14 @@ for tag in "$@"; do
     ready=0
     for attempt in {1..7}; do
       # -x: the process name only; -f also matched agent sessions whose prompt mentions the game.
-      if ! LC_ALL=C pgrep -lx Gothic2Notr >"$out/game-before.txt" && python3 -c 'import os, sys; sys.exit(os.getloadavg()[0] > 8)'; then
+      if ! LC_ALL=C pgrep -lx Gothic2Notr >"$out/game-before.txt" && python3 -c 'import os, sys; sys.exit(os.getloadavg()[0] > float(sys.argv[1]))' "$LA1_MAX"; then
         ready=1
         break
       fi
       [[ "$attempt" == 7 ]] || sleep 10
     done
     uptime >"$out/host-load.txt"
-    [[ "$ready" == 1 ]] || { echo 'loadprobe: Mac busy (game running or load average above 8); skipped' >&2; exit 75; }
+    [[ "$ready" == 1 ]] || { echo "loadprobe: Mac busy (game running or load average above $LA1_MAX); skipped" >&2; exit 75; }
   fi
   echo "== $tag"
   env "${envs[@]}" "WORLD=$world.ZEN" "$ROOT/scripts/bench.sh" "$scenario" "$out" >"$out.stdout" 2>&1 || {
@@ -61,15 +64,15 @@ for tag in "$@"; do
   grep -q '"kind":"rec_stop"' "$out/events.jsonl" || {
     echo "loadprobe: scenario did not finish in $out/events.jsonl" >&2; exit 1;
   }
-  if [[ "$HOST" == local ]] && ! python3 - "$out/game.log" <<'PYLOAD'
+  if [[ "$HOST" == local ]] && ! python3 - "$out/game.log" "$LA1_MAX" <<'PYLOAD'
 import re
 import sys
 text = open(sys.argv[1]).read()
 loads = re.findall(r'\[loadprobe-host\] load_1=([0-9.]+)', text)
-sys.exit(not loads or float(loads[0]) > 8)
+sys.exit(not loads or float(loads[0]) > float(sys.argv[2]))
 PYLOAD
   then
-    echo 'loadprobe: Mac started above load average 8; discard and repeat' >&2
+    echo "loadprobe: Mac started above load average $LA1_MAX; discard and repeat" >&2
     exit 75
   fi
   echo "$(grep -c '\[loadprobe\]' "$out/game.log") probe lines: $out/game.log"
