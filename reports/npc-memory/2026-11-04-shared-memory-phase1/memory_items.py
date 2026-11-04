@@ -36,12 +36,13 @@
 
 Правила кода, которых нет в уме v3:
 - слот: у мнения (`opinion:hero`), настроения (`mood`) и «о X» (`other:<id>`) новый пункт закрывает старый;
-- «верю» или «сомневаюсь» тем же текстом от другого рассказчика — не новый пункт, а ещё один источник в
-  `also`; от того же — `duplicate`, как в v3;
+- «верю» или «сомневаюсь» тем же текстом о тех же id от другого рассказчика — не новый пункт, а ещё один
+  источник в `also`; от того же — `duplicate`, как в v3; о других id — другой пункт;
+- `~` с новым текстом: основания пункта — строки, указанные в этой правке; прежние — в `log`;
 - «сказал X» связывается с фактом `rumor` от X к этому NPC, если пункт о квесте или деле того слуха;
   исток — первый рассказчик цепочки, поэтому два пересказа одного истока — одно подтверждение;
-- столкновение — два открытых «верю»/«сомневаюсь» без слота об одном id с разным текстом; героя и самого
-  NPC не считаем (о них почти всё). Пару Sol видит в одной свёртке, потом она не поднимается.
+- столкновение — два открытых «верю»/«сомневаюсь» без слота об одном id (и о герое) с разным текстом.
+  Пару Sol видит в одной свёртке, потом она не поднимается.
 
 Читатель, без LLM (выжимка — `Digest(text, ids, tokens)`, `str(d)` — текст):
 - `card(state, tokens=…)` — карточка ядра, ≤ 300 токенов;
@@ -92,7 +93,9 @@ import numpy as np
 
 from gothic_ai import characters, lore, talk
 from gothic_ai.embeddings import EmbedClient, EmbedError
+from gothic_ai.knowledge import roots
 from gothic_ai.places import PlaceBook
+from gothic_ai.sightings import _matches as heard_words
 
 HERE = Path(__file__).resolve().parent
 MIND_V3 = HERE.parent.parent / "npc-agent" / "2026-11-02-sol-mind" / "mind.py"
@@ -446,7 +449,6 @@ def new_state(npc: str) -> dict[str, Any]:
         "history": [],  # closed, with valid_to and closed_by
         "collisions": [],  # pairs the next fold puts to Sol
         "collisions_seen": [],  # pairs Sol has been shown already
-        "truth_seen": [],  # chronicle seqs applied by apply_truth
         "log": [],  # every add, change, confirm and close: {op, id, by, minute, …}
     }
 
@@ -863,7 +865,7 @@ def _add(state: dict[str, Any], patch: Mapping[str, Any], minute: int, names: Na
     slot = _slot(letter, who, name)
     text = patch["text"]
     same = [i for i in open_items(state, letter) if normalized(i["text"]) == normalized(text)
-            and (slot is None or i["slot"] == slot)]
+            and (i["slot"] == slot if slot else set(i["about"]) == set(about))]
     if same:
         item = same[0]
         known = {_teller(s) for s in (item["source"], *item["also"])}
@@ -912,7 +914,7 @@ def _change(state: dict[str, Any], patch: Mapping[str, Any], minute: int, names:
     if item is None:
         raise ValueError("unknown_id")
     letter, tail, values = item["section"], patch["tail"], dict(patch["values"])
-    before = {k: deepcopy(item[k]) for k in ("text", "about", "source", "strength", "importance")}
+    before = {k: deepcopy(item[k]) for k in ("text", "about", "source", "episodes", "strength", "importance")}
     if patch["text"]:
         values["text"] = patch["text"]
     if letter == "ч":
@@ -928,7 +930,11 @@ def _change(state: dict[str, Any], patch: Mapping[str, Any], minute: int, names:
             item[key] = tail[key]
     item["about"] = list(dict.fromkeys(item["about"] + tail.get("about", [])))
     item["about_names"] = list(dict.fromkeys(item["about_names"] + tail.get("about_names", [])))
-    item["episodes"] = list(dict.fromkeys(item["episodes"] + tail.get("episodes", [])))
+    if patch["text"]:  # a new claim stands on the lines cited now; the old ones stay in the log
+        item["episodes"] = list(dict.fromkeys(tail.get("episodes", [])))
+        item["source"] = {**item["source"], "turn": item["episodes"][0] if item["episodes"] else None}
+    else:
+        item["episodes"] = list(dict.fromkeys(item["episodes"] + tail.get("episodes", [])))
     if names is not None and patch["text"]:
         item["about"] += [id_ for id_ in names.find(patch["text"], heard=False) if id_ not in item["about"]]
     if source is not None:
@@ -955,14 +961,13 @@ def _pair(a: str, b: str) -> list[str]:
 
 
 def find_collisions(state: dict[str, Any]) -> list[dict[str, Any]]:
-    """Open beliefs and doubts without a slot that share a game id and say different things. The hero and
-    the npc itself are left out: almost every item is about them, the clash shows through the other ids."""
+    """Open beliefs and doubts without a slot that share a game id and say different things."""
     seen = {tuple(p) for p in state["collisions_seen"]}
     items = [i for i in open_items(state, "вс") if not i["slot"]]
     out = []
     for n, a in enumerate(items):
         for b in items[n + 1:]:
-            shared = (set(a["about"]) & set(b["about"])) - {HERO, state["npc"]}
+            shared = set(a["about"]) & set(b["about"])
             ids = _pair(a["id"], b["id"])
             if shared and normalized(a["text"]) != normalized(b["text"]) and tuple(ids) not in seen:
                 out.append({"ids": ids, "about": sorted(shared)})
@@ -1005,25 +1010,31 @@ def facts_for(entries: Iterable[tuple[int, Mapping]], npc: str) -> list[tuple[in
     return [(seq, f) for seq, f in entries if npc in {str(f.get(k, "")).upper() for k in keys}]
 
 
+def _cited(item: Mapping[str, Any], facts: Mapping[int, Mapping]) -> Mapping[str, Any] | None:
+    ref = item["source"].get("fact")
+    return facts.get(ref) if ref is not None else None
+
+
 def _linked(item: Mapping[str, Any], fact: Mapping[str, Any], facts: Mapping[int, Mapping],
             turn_texts: Mapping[str, str] | None) -> bool:
     """The item is about the claim the fact speaks of: by quest id (in about, or through the fact its
     source cites), by the turn (`turn`/`turns` of the fact, or the turn whose words were caught), or, for
-    a lie in words, by those words in the item itself."""
+    a lie in words, by those words in the item itself. Words match as catch_lie checks them
+    (sightings._matches: most of their roots)."""
     quest = fact.get("quest")
     if quest and quest in item["about"]:
         return True
-    cited = facts.get(item["source"].get("fact")) if item["source"].get("fact") is not None else None
+    cited = _cited(item, facts)
     if quest and cited is not None and cited.get("quest") == quest:
         return True
     turns = set(item["episodes"]) | {item["source"].get("turn")} - {None}
     fact_turns = {fact.get("turn"), *(fact.get("turns") or ())} - {None}
-    said = _stems(str(fact.get("title", ""))) if fact.get("said") else []
+    said = str(fact.get("title", "")) if fact.get("said") else ""
     if said and turn_texts:
-        fact_turns |= {t for t, words in turn_texts.items() if _matched(said, _stems(words)) == len(said)}
+        fact_turns |= {t for t, words in turn_texts.items() if heard_words(said, roots(words))}
     if turns & fact_turns:
         return True
-    return bool(said) and _matched(said, _stems(item["text"])) == len(said)
+    return bool(said) and heard_words(said, roots(item["text"]))
 
 
 def apply_truth(
@@ -1035,11 +1046,12 @@ def apply_truth(
 ) -> list[dict[str, Any]]:
     """Close by the chronicle's truth:
     - `found_out` / `caught`: the npc that learned it loses its items from the hero's word about that
-      claim; everyone the rumor of it reached before the truth (`rumor` chain from that npc, `from` → `to`)
-      loses its items from someone's word about it. `closed_by=truth`;
+      claim; everyone the rumor of it reached (`rumor` chain from that npc, `from` → `to`; the game tells
+      it after the truth, quests._tell) loses its items from someone's word about it, except those that
+      cite the truth's own rumor. `closed_by=truth`;
     - `lie` is written the moment the hero lies, when the npc does not know yet: it only marks the item
       false for the world (`false_by`), the item stays open until `found_out` or `caught`.
-    Each fact is applied to each npc once (`truth_seen`)."""
+    Every call checks all open items, so items folded later are checked too; closed ones stay closed."""
     entries = sorted(entries, key=lambda e: e[0])
     facts = dict(entries)
     closed = []
@@ -1055,21 +1067,20 @@ def apply_truth(
         reach, frontier = {holder}, [holder]
         while frontier:
             teller = frontier.pop()
-            for s, f in entries:
-                if s < seq and f.get("fact") == "rumor" and f.get("from") == teller and _same_news(f, fact):
+            for _, f in entries:
+                if f.get("fact") == "rumor" and f.get("from") == teller and _same_news(f, fact):
                     if (to := str(f.get("to", "")).upper()) not in reach:
                         reach.add(to)
                         frontier.append(to)
         for npc in sorted(reach):
             state = states.get(npc)
-            if state is None or seq in state["truth_seen"]:
+            if state is None:
                 continue
-            state["truth_seen"].append(seq)
             want = "герой" if npc == holder else "сказал"
             for item in open_items(state):
-                cited = item["source"].get("fact")
-                late = cited is not None and cited > seq  # heard the truth itself, after it
-                if item["source"]["kind"] == want and not late and _linked(item, fact, facts, turn_texts):
+                cited = _cited(item, facts)
+                truth = cited is not None and cited.get("kind") in TRUTH  # heard the truth itself
+                if item["source"]["kind"] == want and not truth and _linked(item, fact, facts, turn_texts):
                     _close(state, item, "truth", minute, fact=seq)
                     closed.append({"npc": npc, "id": item["id"], "fact": seq})
             state["collisions"] = find_collisions(state)
@@ -1201,7 +1212,7 @@ def _fit(blocks: list[tuple[float, str, str | None]], tokens: Tokens, limit: int
 _PROMISE = re.compile(r"обещ", re.IGNORECASE)
 
 
-def card(state: Mapping[str, Any], *, tokens: Tokens | None = None, max_tokens: int = CARD_TOKENS) -> Digest:
+def card(state: Mapping[str, Any], *, tokens: Tokens | None = None) -> Digest:
     """The core card for Gemma: opinion, mood, feelings of strength 2+, open promises and threads, the
     strongest beliefs. No numbers; the lowest lines go first when it does not fit."""
     tokens = tokens or Tokens()
@@ -1234,7 +1245,7 @@ def card(state: Mapping[str, Any], *, tokens: Tokens | None = None, max_tokens: 
     if beliefs:
         blocks.append((0, "Верю:", None))
         blocks += [(60 - n, item_line(i), i["id"]) for n, i in enumerate(beliefs)]
-    return _fit(blocks, tokens, max_tokens)
+    return _fit(blocks, tokens, CARD_TOKENS)
 
 
 def _overlap(a: Sequence[str], b: Sequence[str]) -> float:
@@ -1270,12 +1281,10 @@ async def items_for(
     tokens: Tokens | None = None,
     skip: Iterable[str] = (),
     now: int | None = None,
-    max_tokens: int = ITEMS_TOKENS,
-    max_items: int = ITEMS_MAX,
 ) -> Digest:
     """Items for the hero's phrase. Seeds: ids named in it (names.find) and the hero. Step 1: open items
     about a seed; step 2, one hop: items sharing another id with those (not through the hero or the npc
-    itself). If they are fewer than `max_items`, the rest of the open items come last. Ranked by
+    itself). If they are fewer than ITEMS_MAX, the rest of the open items come last. Ranked by
     closeness to the phrase, strength or importance, freshness in game time and how they were reached."""
     tokens = tokens or Tokens()
     skip = set(skip)
@@ -1289,7 +1298,7 @@ async def items_for(
     for item in pool:
         if item["id"] not in reach and hops & set(item["about"]):
             reach[item["id"]] = "hop"
-    if len(reach) < max_items:
+    if len(reach) < ITEMS_MAX:
         for item in pool:
             reach.setdefault(item["id"], "rest")
     candidates = [i for i in pool if i["id"] in reach]
@@ -1308,10 +1317,10 @@ async def items_for(
     heading = "К слову вспоминаю:"
     chosen: list[dict[str, Any]] = []
     for _, item in scored:
-        if len(chosen) >= max_items:
+        if len(chosen) >= ITEMS_MAX:
             break
         text = "\n".join([heading, *(item_line(i, section=True) for i in [*chosen, item])])
-        if tokens.count(text) <= max_tokens:
+        if tokens.count(text) <= ITEMS_TOKENS:
             chosen.append(item)
     if not chosen:
         return Digest("", [], 0)
@@ -1333,7 +1342,7 @@ def episodes_for(state: Mapping[str, Any], items: Iterable[Any], k: int = 2) -> 
 
 
 CAVALORN, XARDAS, BRAGO = "BAU_4300_ADDON_CAVALORN", "NONE_100_XARDAS", "BDT_1014_BANDIT_L"
-VATRAS, LOBART = "VLK_439_VATRAS", "BAU_950_LOBART"
+VATRAS, LOBART, ONAR = "VLK_439_VATRAS", "BAU_950_LOBART", "BAU_900_ONAR"
 
 
 def _mind_v3() -> Any:
@@ -1450,6 +1459,17 @@ def _test_fold_and_slots(check: _Check, names: Names) -> None:
     check("collision kept for Sol", report["collisions"] == [{"ids": ["в1", "с1"], "about": [BRAGO]}],
           report["collisions"])
     check("render shows collision", "в1 и с1" in render_for_sol(state))
+    other = new_state(CAVALORN)
+    report = fold(other, "\n".join([
+        "+ верю герой: он жив [о: Браго]",
+        "+ верю герой: он жив [о: Ксардас]",
+        "+ верю герой: герой никогда не крадёт",
+        "+ сомневаюсь: герой украл письмо",
+    ]), names=names, minute=1440)
+    check("same words, other ids: two items", report["errors"] == 0
+          and [i["about"] for i in open_items(other, "в")][:2] == [[BRAGO], [XARDAS]], report["applied"])
+    check("collision about the hero", {"ids": ["в3", "с1"], "about": [HERO]} in report["collisions"],
+          report["collisions"])
     first_opinion = find_item(state, "м1")
     prepare(state, 3 * 1440)
     report = fold(state, "\n".join([
@@ -1566,13 +1586,15 @@ def _test_lies(check: _Check, names: Names) -> None:
         (12, {"fact": "rumor", "quest": quest, "kind": "claim", "about": CAVALORN, "from": XARDAS,
               "to": VATRAS, "hops": 2, "how": "met"}),
     ]
-    a, b, c, d = (new_state(n) for n in (CAVALORN, XARDAS, VATRAS, LOBART))
+    a, b, c, d, o = (new_state(n) for n in (CAVALORN, XARDAS, VATRAS, LOBART, ONAR))
     fold(a, "+ верю герой: бандиты у башни перебиты [о: Бандиты у башни Ксардаса]", names=names,
          minute=3000, entries=entries)
     fold(b, "+ верю сказал Кавалорн: герой перебил бандитов у башни\n"
             "+ верю сказал Кавалорн: Кавалорн мне друг", names=names, minute=3100, entries=entries)
     fold(c, "+ верю слышал от Ксардаса: бандитов у башни больше нет", names=names, minute=3200,
          entries=entries)
+    fold(o, "+ верю сказал Кавалорн: бандиты у башни Ксардаса перебиты", names=names, minute=3250,
+         entries=entries)  # heard in talk, no rumor fact; the truth's rumor reaches it later
     check("lie 2: B links the rumor", find_item(b, "в1")["source"]["fact"] == 11,
           find_item(b, "в1")["source"])
     entries += [
@@ -1580,24 +1602,40 @@ def _test_lies(check: _Check, names: Names) -> None:
               "title": "Бандиты у башни Ксардаса", "how": "сам видел бандитов живыми"}),
         (14, {"fact": "rumor", "quest": quest, "kind": "caught", "about": CAVALORN, "from": CAVALORN,
               "to": LOBART, "hops": 1, "how": "heard"}),
+        (15, {"fact": "rumor", "quest": quest, "kind": "caught", "about": CAVALORN, "from": CAVALORN,
+              "to": ONAR, "hops": 1, "how": "heard"}),
     ]
     fold(d, "+ верю сказал Кавалорн: герой соврал про бандитов у башни", names=names, minute=3300,
          entries=entries)
-    states = {CAVALORN: a, XARDAS: b, VATRAS: c, LOBART: d}
+    states = {CAVALORN: a, XARDAS: b, VATRAS: c, LOBART: d, ONAR: o}
     closed = apply_truth(states, entries, minute=3400)
-    check("lie 2: A, B and C closed", sorted((x["npc"], x["id"]) for x in closed)
-          == sorted([(CAVALORN, "в1"), (XARDAS, "в1"), (VATRAS, "в1")]), closed)
+    check("lie 2: A, B, C and the truth's listener closed", sorted((x["npc"], x["id"]) for x in closed)
+          == sorted([(CAVALORN, "в1"), (XARDAS, "в1"), (VATRAS, "в1"), (ONAR, "в1")]), closed)
     check("lie 2: the truth's rumor stays", find_item(d, "в1")["closed_by"] is None)
     check("lie 2: other hearsay stays", find_item(b, "в2")["closed_by"] is None
           and find_item(b, "в2")["source"]["fact"] is None, find_item(b, "в2"))
+    fold(a, "+ верю герой: бандиты у башни теперь точно перебиты [о: Бандиты у башни Ксардаса]",
+         names=names, minute=3500, entries=entries)
+    closed = apply_truth(states, entries, minute=3600)
+    check("lie 2: a later fold is checked too", closed == [{"npc": CAVALORN, "id": "в2", "fact": 13}], closed)
 
     # a lie in words, found through the turn whose words were caught
     e = new_state(VATRAS)
-    fold(e, "+ верю герой: Браго убит [стр: 5]", names=names, lines={5: "t5"}, minute=3500)
+    fold(e, "+ верю герой: он сам расправился с ним [стр: 5]", names=names, lines={5: "t5"}, minute=3500)
     said = [(20, {"fact": "caught", "quest": "SAID_VLK_439_VATRAS_3600", "npc": VATRAS, "said": True,
-                  "title": "я сам убил его вчера", "how": "сам видел его живым"})]
-    apply_truth({VATRAS: e}, said, minute=3600, turn_texts={"t5": "Я сам убил его вчера, клянусь"})
+                  "title": "Браго убит", "how": "сам видел его живым"})]
+    apply_truth({VATRAS: e}, said, minute=3600, turn_texts={"t5": "Браго мёртв, я сам видел"})
     check("lie in words: by the turn", find_item(e, "в1")["closed_by"] == "truth")
+    e = new_state(VATRAS)
+    fold(e, "+ верю герой: Браго мёртв [стр: 1]", names=names, lines={1: "t1"}, minute=3700)
+    fold(e, "~ в1 герой: Браго жив [стр: 2]", names=names, lines={2: "t2"}, minute=3800)
+    item = find_item(e, "в1")
+    check("change: new grounds", item["episodes"] == ["t2"] and item["source"]["turn"] == "t2"
+          and e["log"][-1]["before"]["episodes"] == ["t1"], item)
+    said = [(21, {"fact": "caught", "quest": "SAID_VLK_439_VATRAS_3900", "npc": VATRAS, "said": True,
+                  "title": "Я убил Браго вчера", "how": "сам видел его живым"})]
+    apply_truth({VATRAS: e}, said, minute=3900, turn_texts={"t1": "Я убил Браго вчера", "t2": "Браго жив"})
+    check("change: the old lie does not close it", item["closed_by"] is None, item)
 
     # 3. two retellings of one origin are one confirmation
     entries = [
@@ -1683,7 +1721,8 @@ def _test_reader(check: _Check, names: Names) -> None:
 
     words = Tokens("http://gemma.test", transport=httpx.MockTransport(tokenize))
     check("tokenize counts", words.count("три слова тут") == 3 and words.method.endswith("/tokenize"))
-    check("tokenize limit", card(state, tokens=words, max_tokens=40).tokens <= 40)
+    core = card(state, tokens=words)
+    check("tokenize counts the card", core.tokens == len(core.text.split()) <= CARD_TOKENS, core.tokens)
 
     def embedding(request: httpx.Request) -> httpx.Response:
         texts = json.loads(request.content)["texts"]
@@ -1694,11 +1733,11 @@ def _test_reader(check: _Check, names: Names) -> None:
     async def ranked() -> Digest:
         client = EmbedClient("http://frida.test", transport=httpx.MockTransport(embedding))
         try:
-            return await items_for(small, "принёс мясо", names=names, embed=client, max_items=1)
+            return await items_for(small, "принёс мясо", names=names, embed=client)
         finally:
             await client.close()
 
-    check("embed closeness ranks", asyncio.run(ranked()).ids == ["н1"], asyncio.run(ranked()).text)
+    check("embed closeness ranks", asyncio.run(ranked()).ids[0] == "н1", asyncio.run(ranked()).text)
 
 
 def selftest() -> int:
