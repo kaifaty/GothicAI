@@ -5,6 +5,8 @@
 #include "game/gamescript.h"
 #include "navbench.h"
 #include "physics/navmesh.h"
+#include "physics/collisionworld.h"
+#include "physics/dynamicworld.h"
 #include "world/objects/npc.h"
 #include "world/world.h"
 
@@ -12,10 +14,12 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <map>
+#include <limits>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -27,6 +31,33 @@ constexpr float Deg=3.14159265358979323846f/180.f;
 constexpr float Begin=500,End=1500,Radius=15;
 constexpr uint64_t Epoch=1000000000;
 using Counts=std::map<std::string,uint64_t>;
+
+// Write fields individually: neither native endianness nor struct padding is part of the format.
+void unsignedLE(std::ostream& out,uint64_t value,size_t bytes) {
+  for(size_t i=0;i<bytes;++i)out.put(char((value>>(8*i))&255));
+}
+
+void floatLE(std::ostream& out,float value) {
+  static_assert(sizeof(float)==4 && std::numeric_limits<float>::is_iec559);
+  uint32_t bits;
+  std::memcpy(&bits,&value,sizeof(bits));
+  unsignedLE(out,bits,4);
+}
+
+void vectorLE(std::ostream& out,const Vec3& value) {
+  floatLE(out,value.x);floatLE(out,value.y);floatLE(out,value.z);
+}
+
+void writeRays(std::ostream& out,const NavigationEye& eye,uint64_t elapsed,bool farUpdated) {
+  unsignedLE(out,elapsed,8);vectorLE(out,eye.samples().front().origin);
+  unsignedLE(out,farUpdated,1);
+  for(const auto& ray:eye.samples()) {
+    vectorLE(out,ray.direction);floatLE(out,ray.maxRangeCm);floatLE(out,ray.distanceCm);
+    unsignedLE(out,uint8_t(ray.kind),1);floatLE(out,ray.normalY);
+    unsignedLE(out,ray.hit,1);unsignedLE(out,ray.complete,1);
+  }
+  if(!out)throw std::runtime_error("perception-replay ray dump write failed");
+}
 
 struct Request final {
   std::string label;
@@ -271,21 +302,61 @@ void distribution(std::ostream& out,std::vector<double> values) {
   std::sort(values.begin(),values.end());
   out<<"{\"samples\":"<<values.size()<<",\"sum_us\":"<<sum<<",\"mean_us\":"<<(values.empty()?0:sum/double(values.size()))
      <<",\"median_us\":"<<(values.empty()?0:values[values.size()/2])
+     <<",\"p90_us\":"<<(values.empty()?0:values[size_t(std::ceil(double(values.size())*.90))-1])
      <<",\"p95_us\":"<<(values.empty()?0:values[size_t(std::ceil(double(values.size())*.95))-1])<<'}';
 }
 }
 
+void DynamicWorld::dumpNavigationCollision(const std::string& outputDirectory) const {
+  std::ofstream out(std::filesystem::path(outputDirectory)/"static.bin",std::ios::binary);
+  if(!out)throw std::runtime_error("perception-replay cannot open collision dump");
+  out.write("NAVSTAT1",8);unsignedLE(out,0,4);unsignedLE(out,0,4);
+  std::array<uint64_t,4> triangles = {};
+  std::vector<uint8_t> categories;
+  const auto bodyCounts=world->staticTriangles([&](const CollisionWorld::StaticTriangle& triangle) {
+    if(categories.size()==std::numeric_limits<uint32_t>::max())
+      throw std::runtime_error("perception-replay collision dump exceeds uint32 triangles");
+    for(const auto& vertex:triangle.vertices)vectorLE(out,vertex*100.f);
+    categories.push_back(triangle.category);++triangles[triangle.category-1];
+  },true);
+  out.write(reinterpret_cast<const char*>(categories.data()),std::streamsize(categories.size()));
+  out.seekp(8);unsignedLE(out,categories.size(),4);
+  out.close();
+  if(!out)throw std::runtime_error("perception-replay collision dump write failed");
+  std::ofstream stats(std::filesystem::path(outputDirectory)/"static-stats.json");
+  stats<<"{\"world\":"<<std::quoted(std::string(ownerWorld->name()))<<",\"triangles_by_category\":[";
+  for(size_t i=0;i<4;++i) {if(i)stats<<',';stats<<triangles[i];}
+  stats<<"],\"bodies_by_category\":[";
+  for(size_t i=0;i<4;++i) {if(i)stats<<',';stats<<bodyCounts[i];}
+  stats<<"],\"static_bodies\":"<<bodyCounts[0]+bodyCounts[1]+bodyCounts[2]
+       <<",\"kinematic_bodies\":"<<bodyCounts[3]<<"}\n";
+  if(!stats)throw std::runtime_error("perception-replay collision stats write failed");
+}
+
 void NavPerceptionBench::command(const std::vector<std::string>& args,World& world,Npc& player,
                                   const std::string& outputDirectory) {
-  if(args.size()!=4 || (args[3]!="baseline" && args[3]!="gaze" && args[3]!="rows"))
-    throw std::runtime_error("navdemos perception-replay FILE baseline|gaze|rows");
   if(!std::filesystem::path(outputDirectory).is_absolute())throw std::runtime_error("perception-replay output must be absolute");
+  if(args.size()==3 && args[2]=="dump-static") {
+    world.physic()->dumpNavigationCollision(outputDirectory);
+    return;
+  }
+  if((args.size()!=4 && args.size()!=5) || (args[3]!="baseline" && args[3]!="gaze" && args[3]!="rows"))
+    throw std::runtime_error("navdemos perception-replay FILE baseline|gaze|rows [RAYS.bin] | dump-static");
   const auto requests=readRequests(args[2]);
   const auto mode=args[3];
   NavigationEye::Config config;config.layout=250;
   config.floorSampling=mode=="gaze"?NavigationEye::FloorSampling::WalkingGazeDown:
                        mode=="rows"?NavigationEye::FloorSampling::ForwardRows:NavigationEye::FloorSampling::Baseline;
   NavigationEye eye(config);
+  std::ofstream rays;
+  if(args.size()==5) {
+    if(eye.rayCount()!=238)throw std::runtime_error("NAVRAYS1 requires 238 rays (baseline or gaze)");
+    if(!std::filesystem::path(args[4]).is_absolute())throw std::runtime_error("perception-replay ray dump must be absolute");
+    rays.open(args[4],std::ios::binary);
+    if(!rays)throw std::runtime_error("perception-replay cannot open ray dump");
+    rays.write("NAVRAYS1",8);unsignedLE(rays,eye.rayCount(),4);unsignedLE(rays,requests.size(),4);
+    floatLE(rays,config.nearRangeCm);
+  }
   NavigationMemory memory;
   NavigationMemory::View view;
   std::ofstream frames(std::filesystem::path(outputDirectory)/"perception-frames.jsonl");
@@ -306,7 +377,7 @@ void NavPerceptionBench::command(const std::vector<std::string>& args,World& wor
   const auto& guild=world.script().guildVal();
   const float step=float(guild.step_height[npc->guild()]);
   const float slope=std::acos(std::clamp(std::cos(float(guild.slide_angle[npc->guild()])*Deg),0.f,1.f))/Deg;
-  std::vector<double> eyeCosts,memoryCosts,nearCosts,fullCosts;
+  std::vector<double> eyeCosts,memoryCosts,nearCosts,fullCosts,perCastCosts;
   uint64_t casts=0,nearCasts=0,farCasts=0,episodes=0,samples=0;
   std::string previous;
   for(const auto& request:requests) {
@@ -328,6 +399,8 @@ void NavPerceptionBench::command(const std::vector<std::string>& args,World& wor
     if(!update.updated)throw std::runtime_error("perception-replay source poses are faster than the eye");
     eyeCosts.push_back(eyeUs);(update.farUpdated?fullCosts:nearCosts).push_back(eyeUs);
     casts+=update.casts;nearCasts+=update.nearCasts;farCasts+=update.farCasts;
+    perCastCosts.push_back(eyeUs/double(update.casts));
+    if(rays.is_open())writeRays(rays,eye,request.elapsed,update.farUpdated);
     const auto began=Clock::now();
     NavigationMemory::Pose memoryPose;
     memoryPose.position=request.position;memoryPose.forward=forward;memoryPose.gameMs=Epoch+request.elapsed;
@@ -347,6 +420,11 @@ void NavPerceptionBench::command(const std::vector<std::string>& args,World& wor
         <<",\"head_frame\":\"neutral body yaw, fixture head height\",\"eye\":";
   distribution(timing,eyeCosts);timing<<",\"near_only\":";distribution(timing,nearCosts);
   timing<<",\"full\":";distribution(timing,fullCosts);timing<<",\"memory_and_view\":";distribution(timing,memoryCosts);
+  timing<<",\"amortized_per_cast\":";distribution(timing,perCastCosts);
   timing<<"}\n";
   if(!timing)throw std::runtime_error("perception-replay timing write failed");
+  if(rays.is_open()) {
+    rays.close();
+    if(!rays)throw std::runtime_error("perception-replay ray dump close failed");
+  }
 }
