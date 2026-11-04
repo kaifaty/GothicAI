@@ -393,7 +393,7 @@ void Quiver::nearPoints(const Fit& f, const Skeleton& sk, const std::vector<Skin
   // move: the nearest first (the thigh, the boot, the flaps), the far ones dropped past MaxPoints. Not the
   // arms: their capsules push it; a robe's wide sleeves (cloth) do not
   constexpr float  Reach     = 45.f;
-  constexpr size_t MaxLeg    = 160, MaxOther = 160;
+  constexpr size_t MaxLeg    = 80, MaxOther = 80;
   auto inv = sk.tr[f.pelvis]*f.local;
   inv.inverse();
   const auto arm  = armBones(sk);
