@@ -123,11 +123,16 @@ validate() { # OUTPUT MODEL GUIDANCE [extra args]
 }
 
 if [[ "$stage" == smoke ]]; then
-  source "$source/scripts/ryzen-build.sh"
-  cmake -S "$source/OpenGothic" -B "$build_dir" -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
-    "${RYZEN_CMAKE_FLAGS[@]}" -DOPENGOTHIC_JOLT_X86=x86-64-v3 \
-    -DCMAKE_CXX_FLAGS="-I$VULKAN_SDK/include" -DCMAKE_EXE_LINKER_FLAGS="-L$VULKAN_SDK/lib"
-  cmake --build "$build_dir" --target gothic-body-runner Gothic2Notr content-convert gothic-followtrail-contract --parallel 12
+  # One build per engine snapshot: CMake keeps the first source path, later snapshots of the
+  # same OpenGothic content (only scripts changed) reuse the finished binaries.
+  if [[ ! -f "$build_dir/built" ]]; then
+    source "$source/scripts/ryzen-build.sh"
+    cmake -S "$source/OpenGothic" -B "$build_dir" -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+      "${RYZEN_CMAKE_FLAGS[@]}" -DOPENGOTHIC_JOLT_X86=x86-64-v3 \
+      -DCMAKE_CXX_FLAGS="-I$VULKAN_SDK/include" -DCMAKE_EXE_LINKER_FLAGS="-L$VULKAN_SDK/lib"
+    cmake --build "$build_dir" --target gothic-body-runner Gothic2Notr content-convert gothic-followtrail-contract --parallel 12
+    printf '%s\n' "$snapshot" > "$build_dir/built"
+  fi
   "$build_dir/opengothic/gothic-followtrail-contract" | tee "$archive/smoke/contract.txt"
   mkdir -p "$archive/smoke/$engine"
   "$python" -B -I scripts/ryzen_game.py --converter "$build_dir/opengothic/content-convert" > "$archive/smoke/$engine/game.env"
