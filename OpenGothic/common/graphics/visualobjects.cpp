@@ -1011,8 +1011,21 @@ bool VisualObjects::castsVsm(const Object& obj) const {
   return alpha==Material::Solid || alpha==Material::AlphaTest;
   }
 
+// OPENGOTHIC_VSM_CACHE_IGNORE=animated,items,wind,cloth (measurement only, why-slower.md): these casters reset no
+// lamp face, to count how many faces each kind keeps from the cache; the shadows are then wrong
+static bool vsmIgnored(DrawCommands::Type type, bool wind, bool cloth) {
+  static const std::string list = []{ const char* e = std::getenv("OPENGOTHIC_VSM_CACHE_IGNORE"); return std::string(e ? e : ""); }();
+  if(list.empty())
+    return false;
+  const char* kind = (type==DrawCommands::Animated || type==DrawCommands::Morph) ? "animated" :
+                     wind ? "wind" : cloth ? "cloth" : type==DrawCommands::Movable ? "items" : nullptr;
+  return kind!=nullptr && list.find(kind)!=std::string::npos;
+  }
+
 void VisualObjects::vsmChanged(const Object& obj, const Vec4& sphere, bool force) {
   if(!scene.vsmCache || sphere.w<0 || !(force || castsVsm(obj)))
+    return;
+  if(vsmIgnored(obj.type, obj.wind!=asset::AnimationType::NONE, obj.deformCount>0))
     return;
   auto& dst = vsmMoved[obj.vsmMovable ? 1 : 0];
   std::lock_guard<std::mutex> guard(vsmSync);
@@ -1070,6 +1083,8 @@ void VisualObjects::commitVsmChanges(uint8_t fId) {
     auto add = [&](size_t id) {
       auto& obj = objects[id];
       if(!obj.visible || !castsVsm(obj) || obj.clusterId==uint32_t(-1))
+        return;
+      if(vsmIgnored(obj.type, obj.wind!=asset::AnimationType::NONE, obj.deformCount>0))
         return;
       if(clustersMem[obj.clusterId].r<0)
         return;
