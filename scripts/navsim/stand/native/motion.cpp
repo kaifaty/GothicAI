@@ -128,6 +128,7 @@ struct Agent final {
   float yaw = 0;                 // body yaw, degrees: forward (cos, 0, sin), like Npc::rotation()
   uint64_t gameMs = 0;
   std::array<int8_t,4> keys{};   // forward, strafe, turn, walk of the next decision
+  std::array<float,2> speed = {1.f,1.f}; // the NPC's own pace against the table: run, walk
   std::array<int,3> history = {MissingCode,MissingCode,MissingCode};
   int held = 0;                  // age of history[0] at its own decision
   // MoveAlgo state after the last tick: Run (supported), Slide (steep) or InAir.
@@ -422,8 +423,11 @@ struct Motion::Impl final {
     decide(a);
     const float rad = a.yaw*Pi/180.f;
     const float s = std::sin(rad), co = std::cos(rad);
-    // The table's forward/right are in the decision's starting frame (motion_table.targets).
-    const JPH::Vec3 decision(a.tableForward*co-a.tableRight*s,0,a.tableForward*s+a.tableRight*co);
+    // The table's forward/right are in the decision's starting frame (motion_table.targets),
+    // scaled by the NPC's pace: its animations walk and run faster or slower than the table.
+    const float pace = a.speed[size_t(a.keys[3])];
+    const float forward = a.tableForward*pace, right = a.tableRight*pace;
+    const JPH::Vec3 decision(forward*co-right*s,0,forward*s+right*co);
     const bool standing = a.keys[0]==0 && a.keys[1]==0;
     for(int k=0; k<int(ticks); ++k) {
       // TestBench::frameDt: 30 Hz on the game clock, 33/33/34 ms.
@@ -509,10 +513,10 @@ Motion::Motion(const float* vertices, const uint8_t* categories, size_t triangle
   m.capsule = new JPH::CapsuleShape(std::max(m.height*0.5f-m.radius,0.001f),m.radius);
 
   // One shared mesh per solid category, built in parallel; water is not solid.
-  std::vector<uint8_t> solid;
-  for(uint8_t c:{uint8_t(1),uint8_t(2),Kinematic})
-    if(std::find(categories,categories+triangles,c)!=categories+triangles)
-      solid.push_back(c);
+  std::vector<uint8_t> solid = {1,2,Kinematic};
+  solid.erase(std::remove_if(solid.begin(),solid.end(),[&](uint8_t c) {
+    return std::find(categories,categories+triangles,c)==categories+triangles;
+    }),solid.end());
   m.shapes.resize(solid.size());
   std::vector<std::string> errors(solid.size());
   std::vector<std::thread> builders;
@@ -659,6 +663,16 @@ void Motion::setYaw(size_t first, size_t count, const float* yawDeg) {
       throw std::invalid_argument("non-finite yaw");
   for(size_t i=0; i<count; ++i)
     impl->agents[first+i].yaw = yawDeg[i];
+  }
+
+void Motion::setSpeed(size_t first, size_t count, const float* runWalk) {
+  if(!runWalk)
+    throw std::invalid_argument("null speed");
+  for(size_t i=0; i<2*count; ++i)
+    if(!std::isfinite(runWalk[i]) || runWalk[i]<0.f)
+      throw std::invalid_argument("speed must be finite and >= 0");
+  for(size_t i=0; i<count; ++i)
+    impl->agents[first+i].speed = {runWalk[2*i],runWalk[2*i+1]};
   }
 
 void Motion::setKeys(size_t first, size_t count, const int8_t* keys) {

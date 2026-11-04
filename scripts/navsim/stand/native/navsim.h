@@ -136,6 +136,10 @@ int32_t navsim_motion_table(navsim_world* world, int32_t level, int64_t count, c
 int32_t navsim_motion_set_state(navsim_world* world, int32_t first, int32_t count, const float* position,
                                 const float* yaw_deg, const uint64_t* game_ms, const int8_t* history,
                                 const int32_t* held);
+// The NPC's pace against the table, float [count*2]: run, walk (default 1, kept by
+// set_state). Table translations are multiplied by it: NPCs walk and run at their
+// own speeds (their animation sets), the table holds a pooled one.
+int32_t navsim_motion_set_speed(navsim_world* world, int32_t first, int32_t count, const float* run_walk);
 // Overrides the yaw only, keeping the body and its contacts.
 int32_t navsim_motion_set_yaw(navsim_world* world, int32_t first, int32_t count, const float* yaw_deg);
 // Keys of the next decision, int8 [count*4]: forward, strafe, turn in -1/0/+1, walk 0/1.

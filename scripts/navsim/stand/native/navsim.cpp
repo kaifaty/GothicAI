@@ -543,6 +543,15 @@ NAVSIM_API int32_t navsim_motion_set_yaw(navsim_world* world, int32_t first, int
     },-1);
   }
 
+NAVSIM_API int32_t navsim_motion_set_speed(navsim_world* world, int32_t first, int32_t count, const float* run_walk) {
+  return guarded(world,[&]() -> int32_t {
+    if(!world->range(first,count))
+      return -1;
+    motionOf(world).setSpeed(size_t(first),size_t(count),run_walk);
+    return 0;
+    },-1);
+  }
+
 NAVSIM_API int32_t navsim_motion_set_keys(navsim_world* world, int32_t first, int32_t count, const int8_t* keys) {
   return guarded(world,[&]() -> int32_t {
     if(!world->range(first,count))

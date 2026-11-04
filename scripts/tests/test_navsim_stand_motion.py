@@ -147,6 +147,20 @@ def test_history_levels_and_unknown_keys(tmp_path):
         assert hist[1].tolist() == [list(RUN), list(IDLE), list(IDLE)]
 
 
+def test_npc_pace_scales_the_table(tmp_path):
+    w, m = world(tmp_path, agents=2)
+    with w:
+        m.set_speed(np.array([[0.5, 2.0], [1.0, 1.0]], np.float32))
+        place(m, [FREE, FREE + 300])  # the pace belongs to the NPC: placing keeps it
+        drive(m, [RUN, WALK], 5)
+        state = m.read()
+        # Run at half pace, walk at the table's: 10 + 4 * 34.5 cm at 0.5, 5 * 15 cm at 1.
+        np.testing.assert_allclose(state.position[:, 0], [0.5 * (START_CM + 4 * RUN_CM), 5 * 15], atol=0.3)
+        np.testing.assert_allclose(state.table_cm[:, 0], [RUN_CM, 15])  # read() reports the table itself
+        with pytest.raises(RuntimeError, match="speed"):
+            m.set_speed(np.array([[-1.0, 1.0]], np.float32))
+
+
 def test_wall_stops_and_slides(tmp_path):
     w, m = world(tmp_path, agents=2)
     with w:

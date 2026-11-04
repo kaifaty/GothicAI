@@ -102,6 +102,7 @@ def _bind(lib: ctypes.CDLL) -> ctypes.CDLL:
         "navsim_motion_table": (i32, [p, i32, i64, p, p]),
         "navsim_motion_set_state": (i32, [p, i32, i32, p, p, p, p, p]),
         "navsim_motion_set_yaw": (i32, [p, i32, i32, p]),
+        "navsim_motion_set_speed": (i32, [p, i32, i32, p]),
         "navsim_motion_set_keys": (i32, [p, i32, i32, p]),
         "navsim_motion_step": (i32, [p, i32, i32, p, ctypes.POINTER(_Ticks)]),
         "navsim_motion_read": (i32, [p, i32, i32, p, p, p, p, p, p]),
@@ -211,6 +212,14 @@ class Motion:
     def set_yaw(self, yaw, first: int = 0):
         yaw = np.ascontiguousarray(yaw, np.float32)
         self._check(self._lib.navsim_motion_set_yaw(self.world._handle, first, len(yaw), yaw.ctypes.data), "set_yaw")
+
+    def set_speed(self, run_walk, first: int = 0):
+        """The NPCs' pace against the table, [n, 2]: run, walk (1 = the table)."""
+        run_walk = np.ascontiguousarray(run_walk, np.float32)
+        if run_walk.ndim != 2 or run_walk.shape[1] != 2:
+            raise ValueError("speed must be [n, 2]: run, walk")
+        self._check(self._lib.navsim_motion_set_speed(self.world._handle, first, len(run_walk), run_walk.ctypes.data),
+                    "set_speed")
 
     def set_keys(self, keys, first: int = 0):
         keys = np.ascontiguousarray(keys, np.int8)

@@ -48,6 +48,9 @@ class Motion final {
     void setState(size_t first, size_t count, const float* position, const float* yawDeg,
                   const uint64_t* gameMs, const int8_t* history, const int32_t* held);
     void setYaw(size_t first, size_t count, const float* yawDeg);
+    // The NPC's pace against the table, run and walk ([count*2], default 1): table
+    // translations are multiplied by it. It belongs to the NPC and survives setState.
+    void setSpeed(size_t first, size_t count, const float* runWalk);
     void setKeys(size_t first, size_t count, const int8_t* keys);
     // One decision of agents [first, first+count): ticks[i] in 0..3 (null: 3),
     // outputs indexed from first and right-aligned in the three tick slots.

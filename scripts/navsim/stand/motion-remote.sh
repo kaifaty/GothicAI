@@ -7,7 +7,8 @@
 #   motion-remote.sh clean              # remove the build, venv and cache in ~/gothic-ai/nav-sim-stand-motion
 # Each accept or cost run writes ~/gothic-ai/nav-sim-research/stand/motion/<UTC>-<stage>/ on Ryzen;
 # gq --archive moves it to /mnt/shared/gothic-ai/nav-sim-research/stand/motion/ with a sha256 check.
-# MOTION_SUBMIT=1 submits the job and prints its id instead of waiting (then: scripts/gq wait ID).
+# MOTION_SUBMIT=1 submits the job and prints its id instead of waiting (then: scripts/gq wait ID);
+# MOTION_MEM overrides the declared memory.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../../.." && pwd)"
 stage="${1:?Usage: motion-remote.sh selftest|accept [THREADS]|cost [LIST]|summary RAW...|clean}"
@@ -33,11 +34,12 @@ ssh ryzen "rm -rf '$src' && mkdir -p '$src'"
   scripts/navsim/stand scripts/navsim/gpumem \
   scripts/tests/test_navsim_stand_eye.py scripts/tests/test_navsim_stand_motion.py "ryzen:$src/")
 export GQ_OWNER=nav-sim-stand-motion
-threads=4;memory=4G;max_time=30m;raw="";archive=();extra=()
+threads=4;memory=2G;max_time=30m;raw="";archive=();extra=()
 case "$stage" in
   accept) threads="${2:-8}";memory=5G;max_time=1h ;;
   cost) threads=28;memory=4G;max_time=40m;extra=("${2:-1,8,28}") ;;
 esac
+memory="${MOTION_MEM:-$memory}"
 if [[ "$stage" != selftest ]]; then
   raw="$home/gothic-ai/nav-sim-research/stand/motion/$(date -u +%Y%m%dT%H%M%SZ)-$stage"
   archive=(--archive "$raw")

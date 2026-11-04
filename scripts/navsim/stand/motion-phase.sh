@@ -64,11 +64,20 @@ EOF
 cache="$task/cache/test-episodes.pkl"
 static="$rays/static.bin"
 if [[ "$stage" == accept ]]; then
-  status=0
-  "$py" "$stand/motion_accept.py" run "$corpus" "$table" "$static" "$raw" --threads "$threads" \
-    --cache "$cache" 2>&1 | tee "$raw/accept.log" || status=$?
-  # A missed gate is a result, not a failure of the job: accept.json holds it.
-  [[ -f "$raw/accept.json" ]] || exit "${status:-1}"
+  accept=("$py" "$stand/motion_accept.py" run "$corpus" "$table" "$static" "$raw" --threads "$threads" --cache "$cache")
+  # The stand's own table and the NPCs' pace, fitted on the training split.
+  "$py" "$stand/motion_accept.py" fit "$corpus" "$table" "$static" "$raw/table-stand.json" --threads "$threads" \
+    --cache "$task/cache/train-episodes.pkl" 2>&1 | tee "$raw/fit.log"
+  fitted=(--stand-table "$raw/table-stand.json")
+  # A missed gate is a result, not a failure of the job (exit 1): accept-<tag>.json holds it.
+  for variant in "r0-research" "r1-stand-pace --use-stand-table --pace" \
+                 "r1-stand-table --use-stand-table --seconds 10" "r1-research-pace --pace --seconds 10"; do
+    read -r tag flags_ <<< "$variant"
+    status=0
+    # shellcheck disable=SC2086
+    "${accept[@]}" "${fitted[@]}" --tag "$tag" $flags_ 2>&1 | tee "$raw/accept-$tag.log" || status=$?
+    [[ -f "$raw/accept-$tag.json" ]] || exit "${status:-1}"
+  done
 else
   "$py" "$stand/motion_accept.py" cost "$corpus" "$table" "$static" "$raw" --threads "$cost_threads" \
     --cache "$cache" 2>&1 | tee "$raw/cost.log"
