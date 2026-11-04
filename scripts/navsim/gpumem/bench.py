@@ -503,7 +503,9 @@ df -h ~ | tail -1
 nvidia-smi --query-gpu=memory.used,memory.free --format=csv
 export UV_LINK_MODE=hardlink CUDA_HOME=/usr/local/cuda PATH=/usr/local/cuda/bin:$PATH
 if [ ! -x .venv/bin/python ]; then ~/.local/bin/uv venv -q --python 3.12 .venv; fi
-~/.local/bin/uv pip install -q --python .venv/bin/python numpy ninja 'torch=={args.torch}' --index-url https://download.pytorch.org/whl/{args.torch.split('+')[1]} --extra-index-url https://pypi.org/simple
+# Offline: every wheel comes from the uv cache as hard links, nothing is downloaded.
+~/.local/bin/uv pip install -q --offline --python .venv/bin/python numpy ninja 'torch=={args.torch}'
+export PATH=$PWD/.venv/bin:$PATH
 py=.venv/bin/python
 mkdir -p {run}/build
 $py -c "import sys; sys.path.insert(0, 'src/scripts/navsim/gpumem'); import bench; print(bench.build_reference('src', '{run}/build/libnavmemref.so'))" > {run}/reference-build.txt
@@ -611,7 +613,7 @@ def main():
     p.add_argument("--gpu-mem", type=int, default=6, help="GiB declared to gq")
     p.add_argument("--vram-limit-gib", type=float, default=5.5, help="torch allocator cap inside the job")
     p.add_argument("--max-seconds", type=int, default=3600)
-    p.add_argument("--torch", default="2.14.1+cu130")
+    p.add_argument("--torch", default="2.14.1", help="PyPI build (CUDA 13.0) in the uv cache")
     p.add_argument("--skip-parity", action="store_true")
     args = parser.parse_args()
     if getattr(args, "warmup", 3) < 3 or getattr(args, "repeats", 20) < 20:
