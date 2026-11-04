@@ -4,7 +4,7 @@ summary = "What this site and the project's YouTube uploader do with data."
 +++
 ## This site
 
-The site has no accounts, no cookies and no analytics. Its fonts come from Google Fonts. A short on a page
+The site has no accounts, no cookies and no analytics. Its fonts are served by the site itself: it asks no font service. A short on a page
 loads from youtube-nocookie.com only when you click it; from then on
 [Google's privacy policy](https://policies.google.com/privacy) applies.
 

@@ -89,7 +89,7 @@ describe("the generated site", () => {
     expect(html).toContain("Illustrations drawn for the site");
     expect(html).toContain("the frames of the game are real takes");
     for (const name of ["valley", "valley-2", "mage", "miner", "guard", "novice", "hunter", "parchment"]) {
-      expect(existsSync(join(SITE, "static/art", `${name}.webp`))).toBe(true);
+      expect(existsSync(join(out, "static/art", `${name}.webp`)), name).toBe(true);
     }
     for (const img of html.match(/<img [^>]*>/g) ?? []) expect(img, img).toMatch(/ width="\d+" height="\d+"/);
   });
