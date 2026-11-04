@@ -18593,6 +18593,41 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     event("launch_weapon","\"actor\":"+jsonStr(symName(w,npc))+",\"actor_id\":"+std::to_string(w.npcId(npc))+
           ",\"weapon\":\"ITMW_2H_SLD_AXE\",\"state\":\"W2H\"");
     }
+  else if(c=="quiver") {
+    // quiver place <deg behind the right side> <min push> <tilt back> <tilt out> [tilt right] [height] [side] |
+    // quiver place off | quiver still on|off: a probe of other places (research.md of the quiver report),
+    // the hero and the npcs fitted anew; still: held at rest, no swing
+    const std::string m = a.size()>1 ? a[1] : "";
+    if(m=="still") {
+      Quiver::still = a.size()>2 && a[2]=="on";
+      say(std::string("quiver still ") + (Quiver::still ? "on" : "off"));
+      return;
+      }
+    if(m!="place") {
+      say("quiver: place|still " + line);
+      return;
+      }
+    Quiver::Place p;
+    if(a.size()>2 && a[2]!="off") {
+      p.on        = true;
+      p.around    = num(a,2,0);
+      p.minPush   = num(a,3,Quiver::MinOut);
+      p.tiltBack  = num(a,4,Quiver::TiltBack);
+      p.tiltOut   = num(a,5,Quiver::TiltOut);
+      p.tiltRight = num(a,6,0);
+      p.height    = num(a,7,Quiver::MouthHeight);
+      p.side      = num(a,8,0);
+      p.back      = 0;
+      }
+    Quiver::place = p;
+    w.detectNpc(pl.position(),100000.f,[](Npc& n) { n.refitQuiver(); });
+    pl.refitQuiver();
+    const auto q = pl.quiverProbe();
+    char buf[160];
+    std::snprintf(buf,sizeof(buf),"quiver place %s out %.1f mouth %.2f %.2f %.2f",p.on ? "on" : "off",double(q.out),
+                  double(q.mouth.x),double(q.mouth.y),double(q.mouth.z));
+    say(buf);
+    }
   else if(c=="arrows") {
     // arrows <npc|player> <n>: it carries exactly n arrows of its bow; the quiver on its hip shows them by
     // steps (graphics/mesh/quiver)

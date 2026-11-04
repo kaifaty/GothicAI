@@ -3546,6 +3546,11 @@ void Npc::updateQuiver() {
   TestBench::note(buf);
   }
 
+void Npc::refitQuiver() {
+  visual.clearQuiver();
+  updateQuiver();
+  }
+
 void Npc::setQuiverTaken(int n) {
   visual.setQuiverTaken(n);
   updateQuiver();

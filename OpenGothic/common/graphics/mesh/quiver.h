@@ -46,6 +46,17 @@ class Quiver final {
     static constexpr float SimDistance  = 2500.f;// cm from the camera: farther it hangs at rest, not computed
 
     static bool enabled();
+
+    // the test bench's probe (`quiver place`, `quiver still`): another place to look at, the quiver held at rest.
+    // Off: the place and the swing above
+    struct Place {
+      bool  on = false;
+      float around = 0;    // deg the push goes behind the right side
+      float side = 0, back = MouthBack, height = MouthHeight, minPush = MinOut;
+      float tiltBack = TiltBack, tiltOut = TiltOut, tiltRight = 0;
+      };
+    static Place place;
+    static bool  still;
     // how many arrows show for so many carried: 0, 1, 3, 6, 9, 12 (steps 1, 2-4, 5-9, 10-19, 20+)
     static int  visibleArrows(size_t count);
 

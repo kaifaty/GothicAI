@@ -217,6 +217,8 @@ class Npc final {
     void       updateQuiver  ();
     // the reload's hook: n arrows taken out of the quiver and held, shown that many less
     void       setQuiverTaken(int n);
+    // fitted anew (the test bench's quiver place)
+    void       refitQuiver();
     Quiver::Probe quiverProbe() const { return visual.quiverProbe(); }
     float      quiverCostUs() const { return visual.quiverCostUs(); }
     void       setPhysic     (DynamicWorld::NpcItem&& item);

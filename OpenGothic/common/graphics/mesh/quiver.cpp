@@ -52,6 +52,9 @@ std::vector<bool> bonesNamed(const Skeleton& sk, std::initializer_list<std::stri
 
 }
 
+Quiver::Place Quiver::place;
+bool          Quiver::still = false;
+
 bool Quiver::enabled() {
   static const bool on = [](){
     const char* v = std::getenv("OPENGOTHIC_QUIVER");
@@ -102,11 +105,16 @@ Quiver::Fit Quiver::fit(const Skeleton& sk, const std::vector<SkinPoint>& bind) 
   float floor = bind[0].pos.y;
   for(auto& p:bind)
     floor = std::min(floor,p.pos.y);
+  const Place pl     = place.on ? place : Place();
+  const Vec3  side   = right;
+  const float ar     = pl.around*float(M_PI)/180.f;
+  right = right*std::cos(ar) - fwd*std::sin(ar); // the push: to the right side, or behind it (the probe)
   const Vec3 pelvis = translation(sk.tr[f.pelvis]);
-  const Vec3 mouth0 = Vec3(pelvis.x,floor+MouthHeight,pelvis.z) - fwd*MouthBack;
+  const Vec3 mouth0 = Vec3(pelvis.x,floor+pl.height,pelvis.z) - fwd*pl.back + side*pl.side;
 
-  const float tb = std::tan(TiltBack*float(M_PI)/180.f), to = std::tan(TiltOut*float(M_PI)/180.f);
-  const Vec3  down = Vec3::normalize(up*-1.f - fwd*tb + right*to);
+  const float tb = std::tan(pl.tiltBack*float(M_PI)/180.f), to = std::tan(pl.tiltOut*float(M_PI)/180.f);
+  const float tr = std::tan(pl.tiltRight*float(M_PI)/180.f);
+  const Vec3  down = Vec3::normalize(up*-1.f - fwd*tb + right*to + side*tr);
   const Vec3  rp   = right - down*Vec3::dotProduct(right,down);
   const float rl   = rp.length();
   const Vec3  rh   = rp/rl;
@@ -139,7 +147,7 @@ Quiver::Fit Quiver::fit(const Skeleton& sk, const std::vector<SkinPoint>& bind) 
     s = need;
     }
 
-  s = std::max(s,MinOut);
+  s = std::max(s,pl.minPush);
   const Vec3 mouth = mouth0 + right*s;
   const Vec3 y     = down*-1.f;
   const Vec3 z     = Vec3::normalize(fwd - y*Vec3::dotProduct(fwd,y));
@@ -338,6 +346,10 @@ Matrix4x4 Quiver::swingMatrix() const {
 void Quiver::step(const Matrix4x4& pelvis, const std::vector<Obstacle>& obstacles, float dt) {
   if(!st.on || !fitted.valid)
     return;
+  if(still) {
+    rest();
+    return;
+    }
   const auto frame = pelvis*fitted.local;          // the quiver at rest, in the world
   const Vec3 pivot = translation(frame);
   Vec3 restDir = {0,-1,0};
