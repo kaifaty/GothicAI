@@ -33,7 +33,18 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from gothic_ai import chests, deals, orders, perception, sightings, whereabouts, witnesses, wrath
+from gothic_ai import (
+    chests,
+    deals,
+    errands,
+    orders,
+    perception,
+    sightings,
+    vanilla,
+    whereabouts,
+    witnesses,
+    wrath,
+)
 from gothic_ai.dialogue import _FIRST_SENTENCE, MAX_HISTORY, paragraph_end
 from gothic_ai.embeddings import EmbedClient
 from gothic_ai.gamedata import storygraph
@@ -62,6 +73,7 @@ RESEARCH = Path.home() / ".local" / "share" / "gothic-ai" / "research"
 TURNS_DIR = RESEARCH / "2026-11-02-sol-mind"  # turns.jsonl of the 11 conversations of ум v3
 V3_DIR = RESEARCH / "2026-11-02-sol-mind-v3r2"  # ум v3, second round: its closing minds
 SEED = pilot.SEED
+EFFORT = "low"  # Sol's reasoning effort, as ум v3
 TIMEOUT_S = 90
 LEAD_S = 30  # journal lines this long before the first phrase belong to the talk (the event that started it)
 TALK_GAP_S = 300  # as mind.py pick: a pause this long ends a talk
@@ -92,6 +104,11 @@ GAME_TOOLS = {
         chests.CHEST_TOOL,
         wrath.TOOL,
         whereabouts.WHERE_TOOL,
+        vanilla.ACCEPT_TOOL,
+        vanilla.CHECK_TOOL,
+        vanilla.GIVE_TOOL,
+        vanilla.EXPOSE_TOOL,
+        errands.PLAN_TOOL,
     )
 }
 LONG_FACT_KEYS = ("reason", "premise", "occasion", "proposal", "place")
@@ -667,7 +684,6 @@ async def consolidate(
     conv: list[str] | None = None,
     turns: Path = TURNS_DIR,
     sol: LLMBackend | None = None,
-    effort: str = "low",
 ) -> None:
     start(directory, {"turns": str(turns.resolve()), "carry": str(carry.resolve())})  # noqa: ASYNC240
     world = World(turns, carry)
@@ -694,8 +710,10 @@ async def consolidate(
     for name in ("answers.jsonl", "judge_answers.jsonl"):
         _drop(directory / name, lambda r: r.get("ask_after") not in pending)
     _drop(directory / "judge_states.jsonl", lambda r: r.get("conv") not in pending)
+    for c in pending:  # stale until folded again: a failed source must not leave its children usable
+        records.pop(c, None)
     names = world.names()
-    sol = sol if sol is not None else pilot.make_backend("chatgpt", reasoning_effort=effort)
+    sol = sol if sol is not None else pilot.make_backend("chatgpt", reasoning_effort=EFFORT)
     try:
         for group in world.groups:
             c = group[0]["conv"]
@@ -704,6 +722,9 @@ async def consolidate(
             source = world.sources[c]
             if source is not None and (records.get(source) or {}).get("state") is None:
                 print(f"Skip {c}: its carry source has no state", file=sys.stderr)
+                pilot.save_rows(
+                    path, [records[g[0]["conv"]] for g in world.groups if g[0]["conv"] in records]
+                )
                 continue
             state = deepcopy(records[source]["state"]) if source else mi.new_state(group[0]["npc"])
             record = await fold_talk(sol, world.talk(c), state, names)
@@ -792,14 +813,14 @@ def lie_check(state: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def lie(directory: Path, *, sol: LLMBackend | None = None, effort: str = "low") -> None:
+async def lie(directory: Path, *, sol: LLMBackend | None = None) -> None:
     start(directory)
     config = read_json(directory / "config.json", {})
     rows = pilot.rows(Path(config.get("turns", TURNS_DIR)) / "turns.jsonl")
     instructions = next(t["instructions"] for t in rows if t["npc"] == mi.CAVALORN)
     talk = lie_talk(instructions)
     names = mi.build_names()
-    sol = sol if sol is not None else pilot.make_backend("chatgpt", reasoning_effort=effort)
+    sol = sol if sol is not None else pilot.make_backend("chatgpt", reasoning_effort=EFFORT)
     try:
         record = await fold_talk(sol, talk, mi.new_state(mi.CAVALORN), names)
     finally:
@@ -853,7 +874,10 @@ def asked(world: World, conv: str) -> Asked:
     history = world.journal.history(talk.branch, talk.npc, talk.end_seq)
     history.append(Message("developer", f"[Новая встреча с героем, {mi.time_text(minute)}]"))
     situation = later_situation(talk.situation)
-    tools = [GAME_TOOLS[name] for name in talk.tools if name in GAME_TOOLS]
+    unknown = [name for name in talk.tools if name not in GAME_TOOLS]
+    if unknown:
+        raise SystemExit(f"{conv}: no definition of the game's tools {unknown} in GAME_TOOLS")
+    tools = [GAME_TOOLS[name] for name in talk.tools]
     return Asked(talk, minute, history, situation, brief_situation(situation), tools)
 
 
@@ -907,7 +931,6 @@ async def answer(
     sol: LLMBackend | None = None,
     embed: EmbedClient | None | bool = True,
     tokens: Any = None,
-    effort: str = "low",
 ) -> None:
     world = World.of(directory)
     states = {r["conv"]: r for r in pilot.rows(directory / "states.jsonl") if r.get("state") is not None}
@@ -938,7 +961,7 @@ async def answer(
     if quick is None and any(v != "sol" for *_, v in pending):
         quick = pilot.make_quick(pilot.gemma_url(quick_at), max_tokens=300)
     if sol is None and any(v == "sol" for *_, v in pending):
-        sol = pilot.make_backend("chatgpt", reasoning_effort=effort)
+        sol = pilot.make_backend("chatgpt", reasoning_effort=EFFORT)
     if tokens is None:
         tokens = mi.Tokens(gemma_root(quick_at))
     own_embed = embed is True
@@ -970,9 +993,9 @@ async def answer(
             else:
                 memory = None
                 if variant == "items":
-                    memory = await memory_block(
-                        states[conv]["state"], phrase, ctx, names, embed=embed or None, tokens=tokens
-                    )
+                    later = deepcopy(states[conv]["state"])
+                    mi.prepare(later, ctx.minute)  # an hour later: feelings have cooled
+                    memory = await memory_block(later, phrase, ctx, names, embed=embed or None, tokens=tokens)
                     record["memory"] = memory
                 messages = gemma_messages(ctx, phrase, memory["text"] if memory else "")
                 result = await pilot.measure(
@@ -1077,10 +1100,8 @@ def evidence_text(turns: dict[str, dict[str, Any]], ids: list[str]) -> str:
 def parse_state_verdict(raw: str) -> dict[str, Any]:
     verdict = pilot.parse_judge(raw)
     for key in ("false_facts", "stale", "wrong_source", "name_confusion"):
-        value = verdict.get(key, [])
-        if not isinstance(value, list):
-            raise ValueError(f"{key} is not a list")
-        verdict[key] = value
+        if not isinstance(verdict.get(key), list):
+            raise ValueError(f"{key} is missing or not a list")
     return verdict
 
 
@@ -1095,9 +1116,7 @@ def parse_probe_verdict(raw: str) -> dict[str, Any]:
     return {**verdict, "verdict": value, "invented": invented}
 
 
-async def judge(
-    directory: Path, *, v3: Path = V3_DIR, sol: LLMBackend | None = None, effort: str = "low"
-) -> None:
+async def judge(directory: Path, *, v3: Path = V3_DIR, sol: LLMBackend | None = None) -> None:
     world = World.of(directory)
     names = world.names()
     turns = {turn["id"]: turn for turn in world.turns}
@@ -1150,7 +1169,7 @@ async def judge(
         print("Nothing to judge", file=sys.stderr)
         world.close()
         return
-    sol = sol if sol is not None else pilot.make_backend("chatgpt", reasoning_effort=effort)
+    sol = sol if sol is not None else pilot.make_backend("chatgpt", reasoning_effort=EFFORT)
     try:
         for kind, key, text, sections in requests:
             content = "\n\n".join(f"{title}\n{body}" for title, body in sections.items())
@@ -1732,7 +1751,7 @@ def _fixture(root: Path) -> dict[str, Any]:
             "type": "turn",
             "id": "c1",
             "snapshot": snapshot,
-            "tools": ["set_intent", "recall", "propose_deal"],
+            "tools": ["set_intent", "recall", "propose_deal", "give_quest"],
             "steps": [{"calls": []}],
         },
     ]
@@ -1903,7 +1922,8 @@ async def _selftest_run(check: Any, root: Path) -> None:
                 "[Правки]\n+ было 8: герой обокрал меня посреди разговора → не доверяю ему [стр: 5]\n"
                 "+ нить: идти с героем бить бандитов [стр: 6-8; о: Браго]\n"
                 "= мнение: вор, но идёт на бандитов\n"
-                "+ хочу скоро: вернуть своё — обидно [стр: 5]"
+                "+ хочу скоро: вернуть своё — обидно [стр: 5]\n"
+                "+ чувство 2 час: досада к герою: обокрал [стр: 5]"
             ),
             FakeStep(
                 "[Правки]\n+ верю герой: письмо у Кавалорна [стр: 2]\n~ н1: бандиты ждут у башни [стр: 1]"
@@ -2018,7 +2038,7 @@ async def _selftest_run(check: Any, root: Path) -> None:
         "Sol prompt: whole situation, game tools",
         "Твой инвентарь" in spoken[-2].content
         and "13:00" in spoken[-2].content
-        and {t.name for t in asker.sent_tools[-1]} == {"set_intent", "recall", "propose_deal"},
+        and {t.name for t in asker.sent_tools[-1]} == {"set_intent", "recall", "propose_deal", "give_quest"},
         [t.name for t in asker.sent_tools[-1]],
     )
     sol_answer = answers["p1", fx["conv2"], "sol"]
@@ -2033,6 +2053,14 @@ async def _selftest_run(check: Any, root: Path) -> None:
         "items memory recorded",
         items_answer["memory"]["card_ids"] and items_answer["memory"]["tokens"] > 0,
         items_answer.get("memory"),
+    )
+    fresh = answers["p1", fx["conv1"], "items"]["memory"]
+    check(
+        "items memory an hour later: the feeling has cooled",
+        mi.find_item(states[fx["conv1"]]["state"], "ч1")["strength"] == 2
+        and "досада" not in fresh["card"]
+        and "сила 2" not in fresh["items"],
+        fresh,
     )
 
     # judge: states of both systems, answers; the verdicts parsed
@@ -2083,11 +2111,12 @@ async def _selftest_run(check: Any, root: Path) -> None:
             check(f"probe verdict rejects {bad}", False)
         except (ValueError, json.JSONDecodeError):
             check(f"probe verdict rejects {bad}", True)
-    try:
-        parse_state_verdict('{"false_facts": "x"}')
-        check("state verdict rejects", False)
-    except ValueError:
-        check("state verdict rejects", True)
+    for bad in ('{"false_facts": "x"}', "{}", '{"verdict": "wrong"}'):
+        try:
+            parse_state_verdict(bad)
+            check(f"state verdict rejects {bad}", False)
+        except ValueError:
+            check(f"state verdict rejects {bad}", True)
     await judge(out, v3=fx["v3"], sol=judge_backend)
     check("judge resumes", len(judge_backend.calls) == 9, len(judge_backend.calls))
 
@@ -2194,6 +2223,19 @@ async def _selftest_run(check: Any, root: Path) -> None:
         and set(result["tail"]) == {40, 80},
     )
 
+    class Broken(FakeBackend):
+        async def stream(self, **kwargs: Any):
+            raise LLMError("down")
+            yield  # an async generator
+
+    await consolidate(out, carry=fx["db"], turns=fx["turns"], conv=["b1:1010"], sol=Broken())
+    redone = {r["conv"]: r for r in pilot.rows(out / "states.jsonl")}
+    check(
+        "a failed source leaves no stale child",
+        redone[fx["conv1"]]["state"] is None and fx["conv2"] not in redone,
+        {c: (r.get("error"), r.get("state") is None) for c, r in redone.items()},
+    )
+
 
 async def selftest() -> int:
     from tempfile import TemporaryDirectory
@@ -2219,10 +2261,8 @@ def main() -> int:
     command.add_argument("--carry", type=Path, required=True, help="memory.sqlite3 of the recorded games")
     command.add_argument("--conv", action="append", help="a talk (its id or a unique part); repeatable")
     command.add_argument("--turns", type=Path, default=TURNS_DIR)
-    command.add_argument("--effort", default="low")
     command = commands.add_parser("lie")
     command.add_argument("directory", type=Path)
-    command.add_argument("--effort", default="low")
     command = commands.add_parser("answer")
     command.add_argument("directory", type=Path)
     command.add_argument("--probes", type=Path, required=True)
@@ -2230,11 +2270,9 @@ def main() -> int:
     command.add_argument("--slot", type=int, default=0)
     command.add_argument("--quick-at", help="Gemma's /v1 address (else settings.toml)")
     command.add_argument("--embed-at", help="FRIDA's address (else GOTHIC_EMBED_URL or the Gemma host)")
-    command.add_argument("--effort", default="low")
     command = commands.add_parser("judge")
     command.add_argument("directory", type=Path)
     command.add_argument("--v3", type=Path, default=V3_DIR)
-    command.add_argument("--effort", default="low")
     command = commands.add_parser("sheet")
     command.add_argument("directory", type=Path)
     command.add_argument("--seed", type=int, default=SEED)
@@ -2244,10 +2282,6 @@ def main() -> int:
     command.add_argument("directory", type=Path)
     command.add_argument("--quick-at")
     command.add_argument("--slot", type=int, default=0)
-    command.add_argument("--repeats", type=int, default=5)
-    command.add_argument(
-        "--lengths", type=lambda s: tuple(int(x) for x in s.split(",")), default=TAIL_LENGTHS
-    )
     command.add_argument("--conv")
     commands.add_parser("selftest")
     args = vars(parser.parse_args())
