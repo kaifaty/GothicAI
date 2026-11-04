@@ -78,7 +78,7 @@
 - **TAA**, сила 0,75 (в логе `render: taa = 1, sharpness = 0.75, mip bias = -0.5`): `/Users/kaifat/.codex/worktrees/claude-taa-1a/gothic/.bench/taa-clips-20261104-032931/`
 - **CMAA2** (`render: taa = 0`): `/Users/kaifat/.codex/worktrees/claude-taa-1a/gothic/.bench/taa-clips-20261104-031929/`
 
-В обеих папках `taa-market.mp4`, `taa-forest.mp4`, `taa-roofs-turn.mp4`, `taa-flicker.mp4`, `taa-harbour-night.mp4`, листы по 16 кадров — в `sheets/`. Прогон на Ryzen в 1920×1080 ждал очереди `gq`, см. итог PR.
+В обеих папках `taa-market.mp4`, `taa-forest.mp4`, `taa-roofs-turn.mp4`, `taa-flicker.mp4`, `taa-harbour-night.mp4`, листы по 16 кадров — в `sheets/`. Прогон на Ryzen в 1920×1080 (4 ноября) не состоялся. Сборка на коммите `531ad304e` прошла (GCC, 154 с), а игра 902 с ждала окна в очереди `gq` и вышла с кодом 75, «Ryzen занят».
 
 ## Цена
 
