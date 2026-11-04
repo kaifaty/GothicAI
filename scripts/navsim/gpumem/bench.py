@@ -478,7 +478,7 @@ def remote_command(args):
     host = "dev-ubuntu"
     home = ssh(host, 'printf %s "$HOME"').stdout
     task = f"{home}/{REMOTE_TASK}"
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    stamp = run_stamp()
     run = f"{task}/runs/{stamp}"
     src = f"{run}/src"  # per run: a concurrent launch must not replace a running job's code
     print(ssh(host, f"df -h ~ | tail -1; mkdir -p {src} {task}/captures {task}/weights").stdout, flush=True)
@@ -491,14 +491,7 @@ def remote_command(args):
     wanted = [(t["path"], f"{task}/captures/{Path(t['path']).parents[1].name}.bin", t["sha256"]) for t in traces]
     weights = [(f"{WEIGHTS}/policy.navbc", f"{task}/weights/policy.navbc", memory["weights"]["v5"]["sha256"]),
                (f"{WEIGHTS}/last.pt", f"{task}/weights/last.pt", None)]
-    for source, target, digest in wanted + weights:
-        present = ssh(host, f"test -f {target} && sha256sum {target} | cut -d' ' -f1", check=False).stdout.strip()
-        if present and (digest is None or present == digest):
-            continue
-        subprocess.run(["scp", "-q", "-3", f"ryzen:{source}", f"{host}:{target}"], check=True)
-        got = ssh(host, f"sha256sum {target} | cut -d' ' -f1").stdout.strip()
-        if digest and got != digest:
-            raise RuntimeError(f"{target}: sha256 {got} != {digest}")
+    stage(host, wanted + weights)
     capture_list = " ".join(shlex.quote(t) for _, t, _ in wanted)
     agents = ",".join(str(n) for n in args.agents)
     gpu_mem, vram_limit = vram_budget(args)
@@ -527,13 +520,36 @@ nvidia-smi --query-gpu=memory.used,memory.free --format=csv > {run}/vram-after.t
 df -h ~ | tail -1
 """
     job = [str(ROOT / "scripts/gq"), "--host", host, "run", "--class", "quick", "--threads", "4", "--mem", "8G",
-           "--gpu-mem", str(gpu_mem), "--max", str(args.max_seconds), "--wait-max", "1800",
+           "--gpu-mem", f"{gpu_mem}G", "--max", str(args.max_seconds), "--wait-max", "1800",
            "--name", "navsim-gpumem", "--", "bash", "-lc", body]
     code = run_forwarding(job)
     print(f"gq exit {code}; raw results in {host}:{run}", flush=True)
     if code == 0:
         collect(host, run, stamp, args)
     sys.exit(code)
+
+
+def run_stamp():
+    """Unique per launch, also for two launches within one second."""
+    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "_" + os.urandom(3).hex()
+
+
+def stage(host, items):
+    """Copy (NAS source, target, sha256) to the host. A file counts only when its
+    sha256 matches the NAS (taken from there when not recorded); copies land in
+    .part and are renamed after the check, so an interrupted scp is never used."""
+    for source, target, digest in items:
+        if digest is None:
+            digest = subprocess.check_output(["ssh", "ryzen", f"sha256sum {shlex.quote(source)}"], text=True).split()[0]
+        present = ssh(host, f"test -f {target} && sha256sum {target} | cut -d' ' -f1", check=False).stdout.strip()
+        if present == digest:
+            continue
+        partial = f"{target}.part"
+        subprocess.run(["scp", "-q", "-3", f"ryzen:{source}", f"{host}:{partial}"], check=True)
+        got = ssh(host, f"sha256sum {partial} | cut -d' ' -f1").stdout.strip()
+        if got != digest:
+            raise RuntimeError(f"{target}: sha256 {got} != {digest}")
+        ssh(host, f"mv {partial} {target}")
 
 
 def vram_budget(args):
@@ -552,9 +568,12 @@ def run_forwarding(command):
         if child.poll() is None:
             child.send_signal(signum)
 
-    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
-        signal.signal(sig, stop)
-    return child.wait()
+    previous = {sig: signal.signal(sig, stop) for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)}
+    try:
+        return child.wait()
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
 
 
 def collect(host, run, stamp, args):
