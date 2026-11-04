@@ -368,3 +368,5 @@ Omni ([заметка](../../2026-11-ai-3d-pipeline/omni-colour.md)), оковк
 
 Пользователь, 2026-11-04: «Да, Omni» — набор с формами Omni принят вместо `orig-set-14`. Наборы
 `furniture-omni-set-2` и `furniture-omni-set-2-city` лежат в `content-staging`, в рабочий контент пока не включены.
+
+Пользователь, 2026-11-04: «Да, включай». На Mac включён `working-11` — состав `working-10` и `furniture-omni-set-2`.
