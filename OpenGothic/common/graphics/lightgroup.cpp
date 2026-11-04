@@ -3,6 +3,8 @@
 #include "loadprobe.h"
 
 #include <cmath>
+#include <cstdlib>
+#include <string_view>
 
 #include <Tempest/Dir>
 #include <Tempest/Log>
@@ -366,6 +368,14 @@ void LightGroup::nearLights(const Vec3& at, float reach, std::vector<Near>& out)
   }
 
 void LightGroup::tick(uint64_t time) {
+  // OPENGOTHIC_LIGHT_FREEZE=1: the lights' range and colour animation stands at its first frame, for a measurement
+  // of the flicker of shadows (reports/render-features/2026-11-04-lamp-pcss/step-2d.md)
+  static const bool freeze = [] {
+    const char* e = std::getenv("OPENGOTHIC_LIGHT_FREEZE");
+    return e!=nullptr && std::string_view(e)=="1";
+    }();
+  if(freeze)
+    time = 0;
   for(size_t i : animatedLights) {
     auto& light = lightSourceDesc[i];
     light.update(time);

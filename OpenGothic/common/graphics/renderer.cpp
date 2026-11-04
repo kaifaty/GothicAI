@@ -7,6 +7,7 @@
 #include <Tempest/Log>
 #include <Tempest/StorageImage>
 #include <cassert>
+#include <cstdio>
 
 #include "ui/inventorymenu.h"
 #include "ui/videowidget.h"
@@ -103,7 +104,7 @@ Renderer::Renderer() {
   // the receiver's depth without its plane; unset or pcss: the game's filter
   if(const char* mode = std::getenv("OPENGOTHIC_VSM_LAMP")) {
     const std::string_view m = mode;
-    settings.vsmLampMode = m=="hard" ? 1 : (m=="flat" ? 2 : 0);
+    settings.vsmLampMode = m=="hard" ? 1 : (m=="flat" ? 2 : (m=="truth" ? 3 : 0));
     if(settings.vsmLampMode!=0)
       Log::i("vsm: lamp filter study mode = ", m);
     }
@@ -112,6 +113,42 @@ Renderer::Renderer() {
     settings.vsmLampNarrow = std::max(0.f, float(std::atof(narrow)));
     Log::i("vsm: lamp filter study narrow penumbra = ", settings.vsmLampNarrow, " texels");
     }
+  // under TAA the lamp taps turn from frame to frame (reports/render-features/2026-11-04-lamp-pcss/step-2d.md); for
+  // the study: OPENGOTHIC_VSM_LAMP_TAPS=<search 1>,<search 2>,<narrow>,<wide>; OPENGOTHIC_VSM_LAMP_FLOOR=1 the search
+  // stops after its first tap when that one puts a shadow's edge at the penumbra's floor; OPENGOTHIC_VSM_LAMP_CENTRE=1
+  // the narrow penumbra's threshold in texels of the face's centre, not where they are smallest
+  if(const char* taps = std::getenv("OPENGOTHIC_VSM_LAMP_TAPS")) {
+    unsigned t[4] = {};
+    if(std::sscanf(taps, "%u,%u,%u,%u", &t[0], &t[1], &t[2], &t[3])==4 && t[0]>=1 && t[2]>=1 && t[3]>=1) {
+      for(int i=0; i<4; ++i)
+        settings.vsmLampTaps[i] = std::min(t[i], 16u);
+      settings.vsmLampStudy = true;
+      Log::i("vsm: lamp filter study taps under taa = ", t[0], ",", t[1], ",", t[2], ",", t[3]);
+      } else {
+      Log::e("vsm: OPENGOTHIC_VSM_LAMP_TAPS wants <search 1>,<search 2>,<narrow>,<wide>, got ", taps);
+      }
+    }
+  if(const char* e = std::getenv("OPENGOTHIC_VSM_LAMP_FLOOR"); e!=nullptr && std::string_view(e)=="1") {
+    settings.vsmLampFlags |= 1;
+    settings.vsmLampStudy  = true;
+    Log::i("vsm: lamp filter study: the search stops at the penumbra's floor");
+    }
+  if(const char* e = std::getenv("OPENGOTHIC_VSM_LAMP_CENTRE"); e!=nullptr && std::string_view(e)=="1") {
+    settings.vsmLampFlags |= 2;
+    settings.vsmLampStudy  = true;
+    Log::i("vsm: lamp filter study: the narrow penumbra in texels of the face's centre");
+    }
+  // OPENGOTHIC_VSM_LAMP_EXP=still,inner,litall,radial,expect,paths: the experiments of step-2d-why.md (light.frag, probeExp)
+  if(const char* e = std::getenv("OPENGOTHIC_VSM_LAMP_EXP")) {
+    const std::string_view s = e;
+    const char* names[] = {"still", "inner", "litall", "radial", "expect", "paths"};
+    for(uint32_t i=0; i<6; ++i)
+      if(s.find(names[i])!=std::string_view::npos)
+        settings.vsmLampExp |= 1u << i;
+    settings.vsmLampStudy = true;
+    Log::i("vsm: lamp filter study experiments = ", e, " (", settings.vsmLampExp, ")");
+    }
+  settings.vsmLampStudy |= settings.vsmLampMode!=0 || settings.vsmStats || settings.vsmLampNarrow>=0;
 
   sky.sampler = Tempest::Sampler::bilinear();
   sky.sampler.vClamp = ClampMode::ClampToEdge;
@@ -214,7 +251,7 @@ void Renderer::setupSettings() {
     shadow.directLightPso = &shaders.directLight;
 
   // point-lights
-  if(settings.vsmEnabled && (settings.vsmLampMode!=0 || settings.vsmStats || settings.vsmLampNarrow>=0))
+  if(settings.vsmEnabled && settings.vsmLampStudy)
     lights.directLightPso = &shaders.lightsVsmProbe;
   else if(settings.vsmEnabled)
     lights.directLightPso = &shaders.lightsVsm;
@@ -329,6 +366,7 @@ void Renderer::prepareTaa(WorldView& wview, const Camera& camera) {
     taa.valid = false;
     wview.setJitter(nullptr);
     wview.setMipBias(0);
+    wview.setTaaFrame(false, 0);
     return;
     }
   wview.setMipBias(settings.taaMipBias);
@@ -342,6 +380,7 @@ void Renderer::prepareTaa(WorldView& wview, const Camera& camera) {
     taa.valid = false;
   taa.cuts = camera.cuts();
 
+  wview.setTaaFrame(true, taa.frame);
   const Vec2 px = Taa::jitterPx(taa.frame++);
   const auto j  = Taa::jitterMatrix(px, uint32_t(zbuffer.w()), uint32_t(zbuffer.h()));
   if(taa.valid)
@@ -2209,8 +2248,12 @@ void Renderer::drawLights(Encoder<CommandBuffer>& cmd, const WorldView& wview) {
     }
 
   auto& ibo  = Resources::cubeIbo();
-  struct Push { Vec3 originLwc; float vsmLampNear; uint32_t probeMode, probeStamp; float probeNarrow; } push =
-    {scene.originLwc, settings.vsmLampNearCm, settings.vsmLampMode, 0, settings.vsmLampNarrow};
+  struct Push {
+    Vec3 originLwc; float vsmLampNear; uint32_t probeMode, probeStamp; float probeNarrow; uint32_t probeTaps[4], probeFlags;
+    uint32_t probeExp;
+    } push = {scene.originLwc, settings.vsmLampNearCm, settings.vsmLampMode, 0, settings.vsmLampNarrow,
+              {settings.vsmLampTaps[0], settings.vsmLampTaps[1], settings.vsmLampTaps[2], settings.vsmLampTaps[3]},
+              settings.vsmLampFlags, settings.vsmLampExp};
   if(lights.directLightPso==&shaders.lightsVsmProbe) {
     // the study variant: its counters and a stamp per pixel (light.frag, LampProbe); one frame in 5 s counts
     auto& probe = usesSsboInit(vsm.lampProbe, (16 + size_t(zbuffer.w())*size_t(zbuffer.h()))*sizeof(uint32_t));
