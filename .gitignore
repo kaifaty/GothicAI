@@ -19,6 +19,11 @@ secrets/
 *.sqlite
 *.sqlite3
 data/
+!reports/navigation/2026-11-04-nav-sim-research/data/
+reports/navigation/2026-11-04-nav-sim-research/data/*
+!reports/navigation/2026-11-04-nav-sim-research/data/rays/
+reports/navigation/2026-11-04-nav-sim-research/data/rays/*
+!reports/navigation/2026-11-04-nav-sim-research/data/rays/standalone.json
 !/data/
 /data/*
 !/data/npc/
