@@ -287,6 +287,7 @@ class MdlVisual final {
     template<class View>
     void rebindAttaches(Attach<View>& mesh, const Skeleton& to);
     void rebindAttaches(const Skeleton& to);
+    std::vector<Tempest::Vec3> carriedPoints(const MeshAttach& att, std::string_view slot) const;
     void setupGestures();
 
     Tempest::Matrix4x4             pos;

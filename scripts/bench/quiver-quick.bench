@@ -1,0 +1,230 @@
+# Quick check of the quiver (no video): leather, militia and fire-mage armour; the aim, the bow run, three gaits, sneaking. See quiver-mount.bench for the columns
+# the right side toward the back, nearly rigid (its turn halfway between the pelvis and SPINE1, a stiff spring,
+# it gives way to the thigh). The hero and an npc bowman in five armours: standing with the bow, walking (S_WALKL,
+# the militia's and the relaxed gait) and sneaking with the bow on the back, running with the bow (S_BOWRUNL), the
+# aim and the shot; a two-hander on the back with the bow; 0, 1, 5, 20, 50 arrows. From in front on the right,
+# the right side and behind on the right. slowmo 2: a row of metrics.csv is 1/60 s of the game: qv_armor, qv_leg,
+# qv_arm (cm the armour, the legs, an arm go into the quiver), qv_bow, qv_2h (the bow and the two-hander on the
+# back), qv_blade (an arrow out of the wall), qv_swing/back/outward (deg of the give), qv_twist (deg against
+# SPINE1), qv_mx..qv_mz (the mouth in the pelvis bone's frame), qv_us (the step's cost). A clip to 60 fps in real
+# time: ffmpeg -i x.mp4 -vf setpts=0.5*PTS -r 60 x60.mp4. The quiver's body: OPENGOTHIC_CONTENT with ITRW_QUIVER
+# (reports/content/2026-11-quiver)
+cheat god
+set time 12 0
+view clean
+goto NW_XARDAS_TOWER_VALLEY_091   # flat open ground
+face -106                         # a rock behind, open in front
+wait 500
+manual on
+equip ItRw_Bow_L_01
+arrows player 20
+insert Sheep
+wait 300
+pin SHEEP 1200 0 0
+aimat SHEEP body
+cam look 95
+slowmo 2
+tap bow
+wait 1500
+# quick check of the quiver (no video): see quiver-mount.bench
+equip ITAR_Leather_L
+arrows player 20
+wait 400
+press action
+wait 700
+rec q_lea_aim novideo
+wait 700
+release action
+wait 1300
+stop
+arrows player 20
+hold forward 3000
+wait 500
+rec q_lea_bowrun novideo
+wait 2400
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
+tap bow
+wait 1500
+walkmode walk
+hold forward 3400
+wait 700
+rec q_lea_walk novideo
+wait 2600
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
+mds player HUMANS_MILITIA.MDS
+hold forward 3400
+wait 700
+rec q_lea_militia novideo
+wait 2600
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
+mds player HUMANS_MILITIA.MDS off
+mds player HUMANS_RELAXED.MDS
+hold forward 3400
+wait 700
+rec q_lea_relaxed novideo
+wait 2600
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
+mds player HUMANS_RELAXED.MDS off
+walkmode sneak
+hold forward 2600
+wait 700
+rec q_lea_sneak novideo
+wait 1800
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
+walkmode run
+tap bow
+wait 1500
+equip ITAR_MIL_M
+arrows player 20
+wait 400
+press action
+wait 700
+rec q_mil_aim novideo
+wait 700
+release action
+wait 1300
+stop
+arrows player 20
+hold forward 3000
+wait 500
+rec q_mil_bowrun novideo
+wait 2400
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
+tap bow
+wait 1500
+walkmode walk
+hold forward 3400
+wait 700
+rec q_mil_walk novideo
+wait 2600
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
+mds player HUMANS_MILITIA.MDS
+hold forward 3400
+wait 700
+rec q_mil_militia novideo
+wait 2600
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
+mds player HUMANS_MILITIA.MDS off
+mds player HUMANS_RELAXED.MDS
+hold forward 3400
+wait 700
+rec q_mil_relaxed novideo
+wait 2600
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
+mds player HUMANS_RELAXED.MDS off
+walkmode sneak
+hold forward 2600
+wait 700
+rec q_mil_sneak novideo
+wait 1800
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
+walkmode run
+tap bow
+wait 1500
+equip ITAR_KDF_H
+arrows player 20
+wait 400
+press action
+wait 700
+rec q_kdf_aim novideo
+wait 700
+release action
+wait 1300
+stop
+arrows player 20
+hold forward 3000
+wait 500
+rec q_kdf_bowrun novideo
+wait 2400
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
+tap bow
+wait 1500
+walkmode walk
+hold forward 3400
+wait 700
+rec q_kdf_walk novideo
+wait 2600
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
+mds player HUMANS_MILITIA.MDS
+hold forward 3400
+wait 700
+rec q_kdf_militia novideo
+wait 2600
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
+mds player HUMANS_MILITIA.MDS off
+mds player HUMANS_RELAXED.MDS
+hold forward 3400
+wait 700
+rec q_kdf_relaxed novideo
+wait 2600
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
+mds player HUMANS_RELAXED.MDS off
+walkmode sneak
+hold forward 2600
+wait 700
+rec q_kdf_sneak novideo
+wait 1800
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
+walkmode run
+tap bow
+wait 1500

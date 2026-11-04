@@ -262,25 +262,31 @@ void Quiver::rebind(const Skeleton& sk) {
     fitted.pelvis = sk.findNode("BIP01 PELVIS");
   }
 
-Matrix4x4 Quiver::restFrame(const Matrix4x4& pelvis, const Matrix4x4& spine) const {
-  Matrix4x4 frame = pelvis*fitted.local;
+float Quiver::twistOf(const Matrix4x4& pelvis, const Matrix4x4& spine) const {
   if(fitted.spine==size_t(-1))
-    return frame;
-  // the pelvis's and the spine's forward in the world, about the vertical; the quiver turns half the way
-  const Vec3 up = {0,1,0};
+    return 0;
+  // the pelvis's and the spine's forward in the world, about the vertical
   Vec3 fp = turned(pelvis*fitted.pelvisBind,fitted.fwd), fs = turned(spine*fitted.spineBind,fitted.fwd);
   fp.y = 0;
   fs.y = 0;
   if(fp.length()<1e-3f || fs.length()<1e-3f)
-    return frame;
+    return 0;
   fp = Vec3::normalize(fp);
   fs = Vec3::normalize(fs);
-  const float half = 0.5f*std::atan2(Vec3::dotProduct(Vec3::crossProduct(fp,fs),up),Vec3::dotProduct(fp,fs));
-  const Vec3  at   = translation(frame);
+  return std::atan2(Vec3::dotProduct(Vec3::crossProduct(fp,fs),Vec3(0,1,0)),Vec3::dotProduct(fp,fs));
+  }
+
+Matrix4x4 Quiver::restFrame(const Matrix4x4& pelvis, const Matrix4x4& spine) const {
+  (void)spine;
+  Matrix4x4 frame = pelvis*fitted.local;
+  if(yawOffset==0.f)
+    return frame;
+  // turned about the vertical through the ring by half the gait's turn of the pelvis against SPINE1 (step)
+  const Vec3 at = translation(frame);
   Matrix4x4 m;
   m.identity();
   m.translate(at);
-  m.mul(rotation(up,std::sin(half),std::cos(half)));
+  m.mul(rotation(Vec3(0,1,0),std::sin(yawOffset),std::cos(yawOffset)));
   m.translate(at*-1.f);
   m.mul(frame);
   return m;
@@ -320,17 +326,9 @@ Quiver::Probe Quiver::probe(const Matrix4x4& pelvis, const Matrix4x4& spine, con
     p.swing   = std::acos(std::clamp(-a.y,-1.f,1.f))*180.f/float(M_PI);
     p.back    = std::atan2(-a.z,-a.y)*180.f/float(M_PI);
     p.outward = std::atan2( a.x,-a.y)*180.f/float(M_PI);
-    // the rest's turn against SPINE1 about the vertical (half the pelvis's against it)
-    if(fitted.spine!=size_t(-1)) {
-      Vec3 fp = turned(pelvis*fitted.pelvisBind,fitted.fwd), fs = turned(spine*fitted.spineBind,fitted.fwd);
-      fp.y = 0;
-      fs.y = 0;
-      if(fp.length()>1e-3f && fs.length()>1e-3f) {
-        fp = Vec3::normalize(fp);
-        fs = Vec3::normalize(fs);
-        p.twist = 0.5f*std::atan2(Vec3::dotProduct(Vec3::crossProduct(fp,fs),Vec3(0,1,0)),Vec3::dotProduct(fp,fs))*180.f/float(M_PI);
-        }
-      }
+    p.yield   = std::atan2(devTarget.length(),MassAt)*180.f/float(M_PI);
+    // the rest's turn against SPINE1 about the vertical: the pelvis's less the half of the gait's
+    p.twist = (twistOf(pelvis,spine)-yawOffset)*180.f/float(M_PI);
   }
   auto depthOf = [&](Vec3 q) {
     inv.project(q);
@@ -379,39 +377,38 @@ std::vector<size_t> Quiver::nearPoints(const Fit& f, const Skeleton& sk, const s
   std::vector<size_t> ret;
   if(!f.valid || f.pelvis>=sk.tr.size())
     return ret;
-  // the quiver at rest in the bind pose; a point that far from its axis may come to it as the legs and the
-  // flaps move and the quiver swings (SwingMax at the bottom ~ 38 cm aside)
-  constexpr float Reach = 30.f;
+  // the quiver at rest in the bind pose; a point that far from it may come to it as the legs, the flaps and
+  // the sleeves move: the nearest first (the thigh, the boot, the flaps), the far ones dropped past MaxPoints
+  constexpr float  Reach     = 45.f;
+  constexpr size_t MaxPoints = 500;
   auto inv = sk.tr[f.pelvis]*f.local;
   inv.inverse();
-  const auto arm = armBones(sk);
+  std::vector<std::pair<float,size_t>> near;
   for(size_t i=0; i<bind.size(); ++i) {
-    if(bind[i].src==size_t(-1) || (bind[i].bone<arm.size() && arm[bind[i].bone]))
-      continue; // the arms are capsules
+    if(bind[i].src==size_t(-1))
+      continue;
     Vec3 q = bind[i].pos;
     inv.project(q);
     if(q.y>5.f || q.y<-Length-Reach)
       continue;
-    if(std::hypot(q.x,q.z)>radiusAt(-q.y)+Reach)
+    const float gap = std::hypot(q.x,q.z)-radiusAt(-q.y);
+    if(gap>Reach)
       continue;
-    ret.push_back(bind[i].src);
+    near.emplace_back(gap,bind[i].src);
     }
-  // no more than that many: every n-th (the mesh is dense on the flaps)
-  constexpr size_t MaxPoints = 600;
-  if(ret.size()>MaxPoints) {
-    std::vector<size_t> thin;
-    const double stride = double(ret.size())/double(MaxPoints);
-    for(size_t k=0; k<MaxPoints; ++k)
-      thin.push_back(ret[size_t(double(k)*stride)]);
-    ret = std::move(thin);
-    }
+  std::sort(near.begin(),near.end());
+  if(near.size()>MaxPoints)
+    near.resize(MaxPoints);
+  for(auto& n:near)
+    ret.push_back(n.second);
   return ret;
   }
 
 void Quiver::rest() {
-  axis   = {0,-1,0};
-  moving = false;
-  massV  = Vec3();
+  axis      = {0,-1,0};
+  moving    = false;
+  devV      = Vec3();
+  yawOffset = 0;
   }
 
 Matrix4x4 Quiver::swingMatrix() const {
@@ -438,6 +435,13 @@ void Quiver::step(const Matrix4x4& pelvis, const Matrix4x4& spine, const std::ve
   // no time: as it was (a forced pose update)
   if(dt<=0.f)
     return;
+  // the gait's turn of the pelvis against SPINE1: what the slow follower does not catch (a stance's twist,
+  // the bow drawn, is caught: the quiver stays on the pelvis then)
+  twistNow = twistOf(pelvis,spine);
+  if(!moving)
+    twistSlow = twistNow;
+  twistSlow += (twistNow-twistSlow)*(1.f-std::exp(-dt/TwistSlow));
+  yawOffset  = 0.5f*(twistNow-twistSlow);
   const auto frame = restFrame(pelvis,spine);  // the quiver at rest, in the world
   const Vec3 pivot = translation(frame);
   const Vec3 restDir = Vec3::normalize(turned(frame,{0,-1,0}));
@@ -471,7 +475,7 @@ void Quiver::step(const Matrix4x4& pelvis, const Matrix4x4& spine, const std::ve
       if(dist>=need || dist<1e-3f)
         continue;
       target = Vec3::normalize(target + away*((need-dist)/(dist*t)));
-      limit  = std::min(limit,std::cos(std::atan2(YieldMax,t)));
+      limit  = std::min(limit,std::cos(std::min(std::atan2(YieldMax,t),SwingMax*float(M_PI)/180.f)));
       hit    = true;
       }
     if(!hit)
@@ -484,53 +488,55 @@ void Quiver::step(const Matrix4x4& pelvis, const Matrix4x4& spine, const std::ve
       target = restDir*limit + side*std::sqrt(std::max(0.f,1.f-limit*limit));
       }
   }
-  const Vec3 aim = pivot + target*MassAt;
-
-  // a jump (a teleport, a load) or the first step: at the target
-  if(!moving || (pivot-lastPivot).length()>100.f || dt>0.25f) {
-    mass      = aim;
-    massV     = Vec3();
-    lastPivot = pivot;
-    lastRest  = aim;
-    moving    = true;
-    } else {
-    // the spring to the target: how the pelvis speeds up is felt as the target runs away from the mass
-    const float w      = 2.f*float(M_PI)*SwingFreq;
-    const float cosMax = std::cos(SwingMax*float(M_PI)/180.f);
-    const Vec3  aimV   = (aim-lastRest)/dt;
-    const Vec3  pivV   = (pivot-lastPivot)/dt;
-    const int   n      = std::max(1,int(std::ceil(dt*240.f)));
-    const float h      = dt/float(n);
-    for(int i=1; i<=n; ++i) {
-      const float k  = float(i)/float(n);
-      const Vec3  pv = lastPivot + (pivot-lastPivot)*k;
-      const Vec3  ta = lastRest  + (aim-lastRest)*k;
-      const Vec3  acc = (ta-mass)*(w*w) - (massV-aimV)*(2.f*SwingDamp*w);
-      massV += acc*h;
-      mass  += massV*h;
-      Vec3 d = mass-pv;
-      if(d.length()<1e-3f)
-        d = target;
-      d = Vec3::normalize(d);
-      const Vec3  td = Vec3::normalize(ta-pv);
-      const float c  = Vec3::dotProduct(d,td);
-      if(c<cosMax) {
-        const Vec3 side = Vec3::normalize(d - td*c);
-        d = td*cosMax + side*std::sqrt(1.f-cosMax*cosMax);
-        }
-      mass = pv + d*MassAt;
-      massV -= d*Vec3::dotProduct(massV-pivV,d);
-      }
-    lastPivot = pivot;
-    lastRest  = aim;
-    }
-
-  // the axis in the quiver's rest frame
+  // the target across the axis in the rest frame, at the mass
   auto inv = frame;
   inv.inverse();
-  Vec3 o = pivot, b = mass;
-  inv.project(o);
-  inv.project(b);
-  axis = Vec3::normalize(b-o);
-  }
+  Vec3 tl = turned(inv,target);
+  if(tl.y>-0.1f)
+    tl = {0,-1,0};
+  const float maxDev = MassAt*std::tan(SwingMax*float(M_PI)/180.f);
+  Vec3 dTarget = {tl.x/-tl.y*MassAt,0,tl.z/-tl.y*MassAt};
+  if(dTarget.length()>maxDev)
+    dTarget = dTarget*(maxDev/dTarget.length());
 
+  devTarget = dTarget;
+  // a jump (a teleport, a load) or the first step: at the target
+  if(!moving || (pivot-lastPivot).length()>100.f || dt>0.25f) {
+    dev        = dTarget;
+    devV       = Vec3();
+    accel      = Vec3();
+    lastPivot  = pivot;
+    lastPivotV = Vec3();
+    moving     = true;
+    } else {
+    // the ring's speeding up, in the rest frame, smoothed: the mass lags behind it (the spring holds it)
+    const Vec3 v = (pivot-lastPivot)/dt;
+    Vec3 a = turned(inv,(v-lastPivotV)/dt);
+    constexpr float MaxAccel = 3000.f; // cm/s^2: a short frame's second difference is no speeding up
+    if(a.length()>MaxAccel)
+      a = a*(MaxAccel/a.length());
+    lastPivot  = pivot;
+    lastPivotV = v;
+    accel += (a-accel)*(1.f-std::exp(-dt*2.f*float(M_PI)*AccelSmooth));
+    const float w = 2.f*float(M_PI)*SwingFreq;
+    const int   n = std::max(1,int(std::ceil(dt*240.f)));
+    const float h = dt/float(n);
+    for(int i=0; i<n; ++i) {
+      Vec3 acc = (dTarget-dev)*(w*w) - devV*(2.f*SwingDamp*w) - accel;
+      acc.y = 0;
+      devV += acc*h;
+      dev  += devV*h;
+      dev.y = 0;
+      const float l = dev.length();
+      if(l>maxDev) {
+        // no farther than SwingMax from the rest: the speed out of the cone is lost
+        const Vec3 u = dev/l;
+        dev = u*maxDev;
+        const float vo = Vec3::dotProduct(devV,u);
+        if(vo>0)
+          devV -= u*vo;
+        }
+      }
+    }
+  axis = Vec3::normalize(Vec3(dev.x,-MassAt,dev.z));
+  }

@@ -41,8 +41,11 @@ class Quiver final {
     // the give (research.md): a stiff spring, well damped, a few degrees; the centre of the mass that far down
     static constexpr float SwingFreq    = 3.5f;  // Hz
     static constexpr float SwingDamp    = 0.5f;  // of the critical
-    static constexpr float SwingMax     = 3.f;   // deg the spring leaves the target
+    static constexpr float SwingMax     = 3.f;   // deg it leaves the rest at most, the give and the spring together
     static constexpr float YieldMax     = 2.f;   // cm it gives way to the thigh (and the rest) at the contact
+    static constexpr float AccelSmooth  = 8.f;   // Hz: the ring's speeding up smoothed so (the keys' 25 Hz steps)
+    static constexpr float TwistSlow    = 0.6f;  // s: the pelvis's turn against SPINE1 slower than that is a stance,
+                                                 // not a gait: it is not followed
     static constexpr float MassAt       = 30.f;  // cm from the ring
     static constexpr float PushMargin   = 0.5f;  // cm the obstacles keep from the tube
     static constexpr float SimDistance  = 2500.f;// cm from the camera: farther it hangs at rest, not computed
@@ -144,6 +147,7 @@ class Quiver final {
       float         twist = 0;            // deg the rest turns against BIP01 SPINE1 about the vertical
       float         bow = 0, longsword = 0; // cm the bow and the two-hander on the back go into the tube
       float         blade = 0;            // cm an arrow comes out of the tube's wall
+      float         yield = 0;            // deg the target gives way to the obstacles
       };
     // posed: the pelvis and SPINE1 in the world, the points of the armour in the world; legBone: a bone of a leg;
     // bow, longsword: the points of those on the back in the world (empty: not there)
@@ -163,11 +167,15 @@ class Quiver final {
     std::vector<MeshObjects::Mesh>  arrows;
     std::vector<Tempest::Matrix4x4> arrowLocal;
     std::vector<size_t>             nearIds;
-    // the give: the bottom's direction in the quiver's rest frame ((0,-1,0) at rest); the mass in the world,
-    // its speed, and where the ring and the target were the last step
+    // the give: the bottom's direction in the quiver's rest frame ((0,-1,0) at rest); the mass's offset from the
+    // rest across the axis in that frame (cm) and its speed; the ring's last place and speed, its speeding up
+    // (in the rest frame, smoothed)
     Tempest::Vec3                   axis = {0,-1,0};
-    Tempest::Vec3                   mass, massV, lastPivot, lastRest;
+    Tempest::Vec3                   dev, devV, lastPivot, lastPivotV, accel, devTarget;
     bool                            moving = false;
+    // the pelvis's turn against SPINE1 (rad): now, slowly followed; the rest turns by half their difference
+    float                           twistNow = 0, twistSlow = 0, yawOffset = 0;
+    float                           twistOf(const Tempest::Matrix4x4& pelvis, const Tempest::Matrix4x4& spine) const;
 
     Tempest::Matrix4x4              swingMatrix() const;
   };
