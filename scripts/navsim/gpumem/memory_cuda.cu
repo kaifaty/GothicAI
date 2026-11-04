@@ -42,7 +42,7 @@ void check() {
 }
 
 // lanes: 32 runs one warp per agent (and per grid); 1 runs one thread.
-void update(int64_t address, int64_t lanes) {
+void memoryUpdate(int64_t address, int64_t lanes) {
   const auto c = context(address);
   const auto stream = at::cuda::getCurrentCUDAStream();
   const int64_t block = 128;
@@ -57,7 +57,7 @@ void update(int64_t address, int64_t lanes) {
   check();
 }
 
-void read(int64_t address, torch::Tensor agents, torch::Tensor near, torch::Tensor far) {
+void memoryRead(int64_t address, torch::Tensor agents, torch::Tensor near, torch::Tensor far) {
   TORCH_CHECK(agents.is_cuda() && agents.dtype() == torch::kInt32 && agents.is_contiguous(), "agents: cuda int32");
   TORCH_CHECK(near.is_cuda() && near.dtype() == torch::kFloat32 && near.is_contiguous(), "near: cuda float32 CHW");
   TORCH_CHECK(far.is_cuda() && far.dtype() == torch::kFloat32 && far.is_contiguous(), "far: cuda float32 CHW");
@@ -71,7 +71,7 @@ void read(int64_t address, torch::Tensor agents, torch::Tensor near, torch::Tens
   check();
 }
 
-void scatter(int64_t address, int64_t table, torch::Tensor updates) {
+void memoryScatter(int64_t address, int64_t table, torch::Tensor updates) {
   TORCH_CHECK(updates.is_cuda() && updates.dtype() == torch::kInt32 && updates.is_contiguous(), "updates: cuda int32");
   const auto c = context(address);
   TORCH_CHECK(updates.numel() == c.N, "one update per agent");
@@ -83,9 +83,9 @@ void scatter(int64_t address, int64_t table, torch::Tensor updates) {
 }  // namespace
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-  m.def("update", &update);
-  m.def("read", &read);
-  m.def("scatter", &scatter);
+  m.def("update", &memoryUpdate);
+  m.def("read", &memoryRead);
+  m.def("scatter", &memoryScatter);
   m.def("ctx_bytes", [] { return int64_t(sizeof(gm::Ctx)); });
   m.def("table_bytes", [] { return int64_t(sizeof(gm::Table)); });
 }
