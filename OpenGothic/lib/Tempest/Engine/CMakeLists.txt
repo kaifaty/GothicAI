@@ -204,6 +204,30 @@ if(TEMPEST_BUILD_METAL)
   add_definitions(-DTEMPEST_BUILD_METAL)
   add_subdirectory("thirdparty/metal-cpp" EXCLUDE_FROM_ALL)
   target_include_directories(${PROJECT_NAME} PRIVATE "thirdparty/metal-cpp")
+
+  # Version of the SPIR-V -> MSL translator for the on-disk MSL cache (gapi/metal/mtshadercache.*):
+  # a hash of SPIRV-Cross and of the code that sets its options and reads its bindings. Any edit of these
+  # files reconfigures the project and gives the cache a new file name.
+  file(GLOB MSL_TRANSLATOR_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/spirv_cross/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/spirv_cross/*.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/spirv_cross/*.h")
+  list(SORT MSL_TRANSLATOR_SOURCES)
+  list(APPEND MSL_TRANSLATOR_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/gapi/metal/mtshader.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/gapi/shader.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/gapi/shaderreflection.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/gapi/shaderreflection.h")
+  set(MSL_TRANSLATOR_HASHES "")
+  foreach(f ${MSL_TRANSLATOR_SOURCES})
+    file(SHA256 "${f}" h)
+    string(APPEND MSL_TRANSLATOR_HASHES "${h}")
+  endforeach()
+  string(SHA256 MSL_TRANSLATOR_HASH "${MSL_TRANSLATOR_HASHES}")
+  string(SUBSTRING "${MSL_TRANSLATOR_HASH}" 0 16 MSL_TRANSLATOR_HASH)
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${MSL_TRANSLATOR_SOURCES})
+  set_source_files_properties("gapi/metal/mtshader.cpp" PROPERTIES
+    COMPILE_DEFINITIONS "TEMPEST_MSL_TRANSLATOR=\"${MSL_TRANSLATOR_HASH}\"")
 endif()
 
 ### Spirv-cross
