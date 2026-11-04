@@ -5,8 +5,9 @@
 
 namespace {
 thread_local bool preparingVideo = false;
+}
 
-void writeLog(zenkit::LogLevel level, const char*, const char* message) {
+void ZenKitLog::write(zenkit::LogLevel level, const char*, const char* message) {
   if(preparingVideo) return;
   switch(level) {
     case zenkit::LogLevel::ERROR:
@@ -22,10 +23,9 @@ void writeLog(zenkit::LogLevel level, const char*, const char* message) {
       break;
     }
   }
-}
 
 void ZenKitLog::install(Level level) {
-  zenkit::Logger::set(level==Level::Info ? zenkit::LogLevel::INFO : zenkit::LogLevel::WARNING,writeLog);
+  zenkit::Logger::set(level==Level::Info ? zenkit::LogLevel::INFO : zenkit::LogLevel::WARNING,write);
   }
 
 void ZenKitLog::silenceForVideo() {

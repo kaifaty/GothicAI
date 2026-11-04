@@ -4,6 +4,7 @@
 #include "programdata.h"
 #include "outputunits.h"
 #include "resources.h"
+#include "zenkitlog.h"
 #include <zenkit/Archive.hh>
 #include <zenkit/CutsceneLibrary.hh>
 #include <zenkit/Stream.hh>
@@ -948,7 +949,7 @@ int main() {
     const char* args[]={"gothic-base-store-contract","-g",game};
     CommandLine commandLine(3,args);
     zenkit::Logger::set(zenkit::LogLevel::ERROR,[](zenkit::LogLevel level, const char* component, const char* message) {
-      Resources::zenkitLog(level,component,message);
+      ZenKitLog::write(level,component,message);
       BaseImport::onZenkitLog(level,component,message);
       });
     // The real engine log callback must reject a class ZenKit otherwise skips.

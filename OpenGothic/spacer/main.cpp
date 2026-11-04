@@ -3,6 +3,7 @@
 #include <Tempest/Log>
 
 #include <zenkit/Logger.hh>
+#include "zenkitlog.h"
 
 #include <Tempest/VulkanApi>
 
@@ -98,7 +99,7 @@ int main(int argc,const char** argv) {
 
   zenkit::Logger::set(zenkit::LogLevel::INFO, [](auto level, const char* component, const char* message) {
     BaseImport::onZenkitLog(level,component,message);
-    Resources::zenkitLog(level,component,message);
+    ZenKitLog::write(level,component,message);
     });
   Dm_setLogger(DmLogLevel_INFO, [](void* ctx, DmLogLevel lvl, char const* msg) {
     switch (lvl) {
