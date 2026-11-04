@@ -1,6 +1,6 @@
 {
  "status": "measured",
- "method": "Navigation memory on the GPU: parity with the engine and cost per agent.\n\nOne command from the Mac stages everything on dev-ubuntu, runs one gq job and\ncollects the report::\n\n    python3 scripts/navsim/gpumem/bench.py remote --agents 64,256,1024,2048\n\nThe gq VRAM request and the allocator cap follow the largest N (about 1.8 MiB\nper agent with the readout batch), so larger N needs only another list, for\nexample ``--agents 4096,8192`` with the services stopped (``--skip-parity``\nsaves the parity minute). Each run appends to ``runs`` in the report; parity\nis kept from the last run that had it.\n\nCommands inside the job:\n  parity  every readout of every capture through the engine (navsim_memory_ref,\n          ctypes, built from this checkout) and the batched port, bit for bit;\n          the HD net's argmax actions on both inputs, each with its own GRU state\n  scale   per-agent update/readout cost and VRAM for a list of N, one process\n          per N; captures repeat across agents with shifted starts",
+ "method": "Navigation memory on the GPU: parity with the engine and cost per agent.\n\nOne command from the Mac stages everything on a GPU host, runs one gq job and\ncollects the report::\n\n    python3 scripts/navsim/gpumem/bench.py remote --agents 64,256,1024,2048\n\nThe host is dev-ubuntu (RTX 3090) by default; ``--host ryzen`` measures the\nRTX 3080, where the hybrid stand would run next to the CPU part.\n\nThe gq VRAM request and the allocator cap follow the largest N (about 1.8 MiB\nper agent with the readout batch), so larger N needs only another list, for\nexample ``--agents 4096,8192`` with the services stopped (``--skip-parity``\nsaves the parity minute). Each run appends to ``runs`` in the report; parity\nis kept from the last run that had it.\n\nCommands inside the job:\n  parity  every readout of every capture through the engine (navsim_memory_ref,\n          ctypes, built from this checkout) and the batched port, bit for bit;\n          the HD net's argmax actions on both inputs, each with its own GRU state\n  scale   per-agent update/readout cost and VRAM for a list of N, one process\n          per N; captures repeat across agents with shifted starts",
  "implementation": {
   "choice": "CUDA C++ through a PyTorch extension (torch.utils.cpp_extension.load), not Warp",
   "reasons": [
@@ -17,6 +17,7 @@
  },
  "warp": "not used (CUDA C++ extension, see implementation)",
  "parity": {
+  "gpu": "NVIDIA GeForce RTX 3080",
   "records": {
    "total": {
     "label": "drive captures",
@@ -56,7 +57,7 @@
     "min_readout_equal_fraction": 1.0,
     "first_mismatch": null,
     "state_errors": 0,
-    "seconds": 7.232734624994919,
+    "seconds": 8.870153806987219,
     "bitwise_equal_fraction": 1.0,
     "actions": {
      "readouts": 5653,
@@ -72,7 +73,7 @@
    },
    "captures": [
     {
-     "capture": "/home/kaifat/gothic-ai/nav-sim-research/gpumem/captures/approach-02a5cadf948f7065.bin",
+     "capture": "/home/kaifaty/gothic-ai/nav-sim-research/gpumem/captures/approach-02a5cadf948f7065.bin",
      "updates": 900,
      "readouts": 300,
      "values": 27288000,
@@ -116,7 +117,7 @@
      }
     },
     {
-     "capture": "/home/kaifat/gothic-ai/nav-sim-research/gpumem/captures/approach-08cf453931e3afc7.bin",
+     "capture": "/home/kaifaty/gothic-ai/nav-sim-research/gpumem/captures/approach-08cf453931e3afc7.bin",
      "updates": 900,
      "readouts": 300,
      "values": 27288000,
@@ -160,7 +161,7 @@
      }
     },
     {
-     "capture": "/home/kaifat/gothic-ai/nav-sim-research/gpumem/captures/approach-0cc25c54d9314c3d.bin",
+     "capture": "/home/kaifaty/gothic-ai/nav-sim-research/gpumem/captures/approach-0cc25c54d9314c3d.bin",
      "updates": 900,
      "readouts": 300,
      "values": 27288000,
@@ -204,7 +205,7 @@
      }
     },
     {
-     "capture": "/home/kaifat/gothic-ai/nav-sim-research/gpumem/captures/approach-0ce6039d4c2d6b75.bin",
+     "capture": "/home/kaifaty/gothic-ai/nav-sim-research/gpumem/captures/approach-0ce6039d4c2d6b75.bin",
      "updates": 900,
      "readouts": 300,
      "values": 27288000,
@@ -248,7 +249,7 @@
      }
     },
     {
-     "capture": "/home/kaifat/gothic-ai/nav-sim-research/gpumem/captures/approach-0ff7dca5c06442e3.bin",
+     "capture": "/home/kaifaty/gothic-ai/nav-sim-research/gpumem/captures/approach-0ff7dca5c06442e3.bin",
      "updates": 198,
      "readouts": 66,
      "values": 6003360,
@@ -292,7 +293,7 @@
      }
     },
     {
-     "capture": "/home/kaifat/gothic-ai/nav-sim-research/gpumem/captures/approach-11ec9d74d6b3bd69.bin",
+     "capture": "/home/kaifaty/gothic-ai/nav-sim-research/gpumem/captures/approach-11ec9d74d6b3bd69.bin",
      "updates": 182,
      "readouts": 61,
      "values": 5548560,
@@ -336,7 +337,7 @@
      }
     },
     {
-     "capture": "/home/kaifat/gothic-ai/nav-sim-research/gpumem/captures/follow-011aabe15f5d9cd6.bin",
+     "capture": "/home/kaifaty/gothic-ai/nav-sim-research/gpumem/captures/follow-011aabe15f5d9cd6.bin",
      "updates": 900,
      "readouts": 300,
      "values": 27288000,
@@ -380,7 +381,7 @@
      }
     },
     {
-     "capture": "/home/kaifat/gothic-ai/nav-sim-research/gpumem/captures/follow-011fdbc7ef100f95.bin",
+     "capture": "/home/kaifaty/gothic-ai/nav-sim-research/gpumem/captures/follow-011fdbc7ef100f95.bin",
      "updates": 900,
      "readouts": 300,
      "values": 27288000,
@@ -424,7 +425,7 @@
      }
     },
     {
-     "capture": "/home/kaifat/gothic-ai/nav-sim-research/gpumem/captures/follow-04c9a05468751d9e.bin",
+     "capture": "/home/kaifaty/gothic-ai/nav-sim-research/gpumem/captures/follow-04c9a05468751d9e.bin",
      "updates": 900,
      "readouts": 300,
      "values": 27288000,
@@ -468,7 +469,7 @@
      }
     },
     {
-     "capture": "/home/kaifat/gothic-ai/nav-sim-research/gpumem/captures/follow-05959f69a1597da6.bin",
+     "capture": "/home/kaifaty/gothic-ai/nav-sim-research/gpumem/captures/follow-05959f69a1597da6.bin",
      "updates": 900,
      "readouts": 300,
      "values": 27288000,
@@ -512,7 +513,7 @@
      }
     },
     {
-     "capture": "/home/kaifat/gothic-ai/nav-sim-research/gpumem/captures/follow-05fb207a10085368.bin",
+     "capture": "/home/kaifaty/gothic-ai/nav-sim-research/gpumem/captures/follow-05fb207a10085368.bin",
      "updates": 900,
      "readouts": 300,
      "values": 27288000,
@@ -556,7 +557,7 @@
      }
     },
     {
-     "capture": "/home/kaifat/gothic-ai/nav-sim-research/gpumem/captures/follow-0972a72503d0025a.bin",
+     "capture": "/home/kaifaty/gothic-ai/nav-sim-research/gpumem/captures/follow-0972a72503d0025a.bin",
      "updates": 900,
      "readouts": 300,
      "values": 27288000,
@@ -600,7 +601,7 @@
      }
     },
     {
-     "capture": "/home/kaifat/gothic-ai/nav-sim-research/gpumem/captures/object-01cd744bcfa8a579.bin",
+     "capture": "/home/kaifaty/gothic-ai/nav-sim-research/gpumem/captures/object-01cd744bcfa8a579.bin",
      "updates": 386,
      "readouts": 129,
      "values": 11733840,
@@ -644,7 +645,7 @@
      }
     },
     {
-     "capture": "/home/kaifat/gothic-ai/nav-sim-research/gpumem/captures/object-03244f3125b33495.bin",
+     "capture": "/home/kaifaty/gothic-ai/nav-sim-research/gpumem/captures/object-03244f3125b33495.bin",
      "updates": 900,
      "readouts": 300,
      "values": 27288000,
@@ -688,7 +689,7 @@
      }
     },
     {
-     "capture": "/home/kaifat/gothic-ai/nav-sim-research/gpumem/captures/object-0660a66f2682208a.bin",
+     "capture": "/home/kaifaty/gothic-ai/nav-sim-research/gpumem/captures/object-0660a66f2682208a.bin",
      "updates": 353,
      "readouts": 118,
      "values": 10733280,
@@ -732,7 +733,7 @@
      }
     },
     {
-     "capture": "/home/kaifat/gothic-ai/nav-sim-research/gpumem/captures/object-0892042198580a44.bin",
+     "capture": "/home/kaifaty/gothic-ai/nav-sim-research/gpumem/captures/object-0892042198580a44.bin",
      "updates": 154,
      "readouts": 52,
      "values": 4729920,
@@ -776,7 +777,7 @@
      }
     },
     {
-     "capture": "/home/kaifat/gothic-ai/nav-sim-research/gpumem/captures/object-0e5fe6dca43a9dd7.bin",
+     "capture": "/home/kaifaty/gothic-ai/nav-sim-research/gpumem/captures/object-0e5fe6dca43a9dd7.bin",
      "updates": 900,
      "readouts": 300,
      "values": 27288000,
@@ -820,7 +821,7 @@
      }
     },
     {
-     "capture": "/home/kaifat/gothic-ai/nav-sim-research/gpumem/captures/object-0fabb79826c18334.bin",
+     "capture": "/home/kaifaty/gothic-ai/nav-sim-research/gpumem/captures/object-0fabb79826c18334.bin",
      "updates": 900,
      "readouts": 300,
      "values": 27288000,
@@ -864,7 +865,7 @@
      }
     },
     {
-     "capture": "/home/kaifat/gothic-ai/nav-sim-research/gpumem/captures/point-6529b3747b9a4361.bin",
+     "capture": "/home/kaifaty/gothic-ai/nav-sim-research/gpumem/captures/point-6529b3747b9a4361.bin",
      "updates": 686,
      "readouts": 229,
      "values": 20829840,
@@ -908,7 +909,7 @@
      }
     },
     {
-     "capture": "/home/kaifat/gothic-ai/nav-sim-research/gpumem/captures/point-7e35226690f76270.bin",
+     "capture": "/home/kaifaty/gothic-ai/nav-sim-research/gpumem/captures/point-7e35226690f76270.bin",
      "updates": 900,
      "readouts": 300,
      "values": 27288000,
@@ -952,7 +953,7 @@
      }
     },
     {
-     "capture": "/home/kaifat/gothic-ai/nav-sim-research/gpumem/captures/point-92f1060b68f7db80.bin",
+     "capture": "/home/kaifaty/gothic-ai/nav-sim-research/gpumem/captures/point-92f1060b68f7db80.bin",
      "updates": 564,
      "readouts": 188,
      "values": 17100480,
@@ -996,7 +997,7 @@
      }
     },
     {
-     "capture": "/home/kaifat/gothic-ai/nav-sim-research/gpumem/captures/point-9330472d07b2f47a.bin",
+     "capture": "/home/kaifaty/gothic-ai/nav-sim-research/gpumem/captures/point-9330472d07b2f47a.bin",
      "updates": 900,
      "readouts": 300,
      "values": 27288000,
@@ -1040,7 +1041,7 @@
      }
     },
     {
-     "capture": "/home/kaifat/gothic-ai/nav-sim-research/gpumem/captures/point-ae977669805b27e2.bin",
+     "capture": "/home/kaifaty/gothic-ai/nav-sim-research/gpumem/captures/point-ae977669805b27e2.bin",
      "updates": 229,
      "readouts": 77,
      "values": 7003920,
@@ -1084,7 +1085,7 @@
      }
     },
     {
-     "capture": "/home/kaifat/gothic-ai/nav-sim-research/gpumem/captures/point-be2bd196a33cf315.bin",
+     "capture": "/home/kaifaty/gothic-ai/nav-sim-research/gpumem/captures/point-be2bd196a33cf315.bin",
      "updates": 698,
      "readouts": 233,
      "values": 21193680,
@@ -1147,12 +1148,12 @@
      "min_readout_equal_fraction": 1.0,
      "first_mismatch": null,
      "state_errors": 0,
-     "seconds": 0.2822397210402414,
+     "seconds": 0.36284965102095157,
      "bitwise_equal_fraction": 1.0
     },
     "captures": [
      {
-      "capture": "/home/kaifat/gothic-ai/nav-sim-research/gpumem/runs/20261104T184341Z/build/synthetic-1.bin",
+      "capture": "/home/kaifaty/gothic-ai/nav-sim-research/gpumem/runs/20261104T193434Z_beeac3/build/synthetic-1.bin",
       "updates": 240,
       "readouts": 80,
       "values": 7276800,
@@ -1209,12 +1210,12 @@
      "min_readout_equal_fraction": 1.0,
      "first_mismatch": null,
      "state_errors": 0,
-     "seconds": 0.2784070069901645,
+     "seconds": 0.3286110300105065,
      "bitwise_equal_fraction": 1.0
     },
     "captures": [
      {
-      "capture": "/home/kaifat/gothic-ai/nav-sim-research/gpumem/runs/20261104T184341Z/build/synthetic-2.bin",
+      "capture": "/home/kaifaty/gothic-ai/nav-sim-research/gpumem/runs/20261104T193434Z_beeac3/build/synthetic-2.bin",
       "updates": 240,
       "readouts": 80,
       "values": 7276800,
@@ -1260,8 +1261,8 @@
    "device_double_tan": 1.1917535066604614,
    "equal": true
   },
-  "raw": "/mnt/shared/gothic-ai/nav-sim-research/gpumem/20261104T184341Z/parity.json",
-  "raw_sha256": "0e6ac46fbc602e197b75bc4063f65284b2e6a8ad552277d5a6e8ce3f07ac0946"
+  "raw": "/mnt/shared/gothic-ai/nav-sim-research/gpumem/20261104T193434Z_beeac3/parity.json",
+  "raw_sha256": "6d020eafeafd67ab3ca5e145661a767ab1153b55225425dee323b3a20ae79fc2"
  },
  "runs": [
   {
@@ -1996,14 +1997,389 @@
      "resets": 11313
     }
    ]
+  },
+  {
+   "stamp": "20261104T193434Z_beeac3",
+   "raw_dir": "/mnt/shared/gothic-ai/nav-sim-research/gpumem/20261104T193434Z_beeac3",
+   "agents": [
+    64,
+    256,
+    1024,
+    2048,
+    3072,
+    4096
+   ],
+   "gpu": [
+    "NVIDIA GeForce RTX 3080",
+    "615.71.09",
+    "10240"
+   ],
+   "torch": "2.14.1+cu130",
+   "torch_cuda": "13.0",
+   "nvcc": "Cuda compilation tools, release 13.3, V13.3.73",
+   "gcc": "g++ (Ubuntu 15.2.0-16ubuntu1) 15.2.0",
+   "glibc": "ldd (Ubuntu GLIBC 2.43-2ubuntu2.4) 2.43",
+   "cuda_flags": [
+    "-O3",
+    "--fmad=false",
+    "--prec-div=true",
+    "--prec-sqrt=true",
+    "--ftz=false",
+    "-gencode=arch=compute_86,code=sm_86",
+    "-std=c++20",
+    "-lineinfo"
+   ],
+   "free_vram_mib_before": 8522,
+   "free_vram_mib_after": 8507,
+   "used_vram_mib_after": 1420,
+   "gq": {
+    "host": "ryzen",
+    "cls": "quick",
+    "threads": 4,
+    "mem_gib": 8,
+    "gpu_mem_gib": 8
+   },
+   "raw_checksums": {
+    "path": "/mnt/shared/gothic-ai/nav-sim-research/gpumem/20261104T193434Z_beeac3/SHA256SUMS",
+    "sha256": "81ee3cb24c551c64029e7eabadd126ee13248b179a2a8b3490812ddcf8f1e5ff",
+    "files": {
+     "cell-n1024.json": "8d718787925fdf30de8f5d6b39e2c723bcb1f040e43f468b0aa26fbd0a056091",
+     "cell-n2048.json": "a287039c9398c287bf048cd1feb2068fd6c2c06200f3cb8ebdfa19af03a2156e",
+     "cell-n256.json": "bdd913c2a297c6bef4fc8380d911745a8ad55d55fe8f5ec0d4c0a04f83813862",
+     "cell-n3072.json": "9cba621608197ec5809a9b48af82e2df49a21316ea4cf32297fd87ea16c6aa43",
+     "cell-n4096.json": "b8e101e48ae46a91e95ef57514922762ae29a847a7a0eee4edaf967d79b088c8",
+     "cell-n64.json": "82d15ebd9e632cdb33ba980e394f362dcd547435cc29ded5177163df4ad46972",
+     "metadata.json": "870275214a79590ddfc53a3d8349ca42f631a65843e12f8af032353347c4af49",
+     "parity.json": "6d020eafeafd67ab3ca5e145661a767ab1153b55225425dee323b3a20ae79fc2",
+     "reference-build.txt": "169a5b52b4eedd86b644be42ea7d8d9e6944805ac9acef8a03eb36ad5d9d80cb",
+     "scale.json": "7b8cb22cf21316de877bcb40aa652b285c9ffab26faac2edff76d3183e0e9f45",
+     "vram-after.txt": "8b6ee98b6cce124a6a987c664cea2d5ac4dfe63a9c3a40d6942f5b6bda74b997"
+    }
+   },
+   "cells": [
+    {
+     "agents": 64,
+     "warmup": 3,
+     "repeats": 20,
+     "free_vram_mib_before": 8533,
+     "vram_limit_gib": 7.5,
+     "status": "ok",
+     "update_us_per_agent": {
+      "median": 25.911458302289248,
+      "p90": 26.75161148731907,
+      "repeats": 20
+     },
+     "readout_us_per_agent": {
+      "median": 14.602500025648624,
+      "p90": 16.821213346435986,
+      "repeats": 20
+     },
+     "agent_updates_per_second": {
+      "median": 38592.96683202172,
+      "p90": 40156.859990878234,
+      "repeats": 20
+     },
+     "agent_readouts_per_second": {
+      "median": 68481.69625355618,
+      "p90": 72231.27285075768,
+      "repeats": 20
+     },
+     "readouts_per_update": 0.33383152173913044,
+     "memory_us_per_decision": 92.2208692176913,
+     "peak_allocated_bytes": 204259328,
+     "peak_reserved_bytes": 218103808,
+     "process_vram_mib": 462,
+     "free_vram_mib_after": 8062,
+     "bytes_per_agent": {
+      "grids_near": 446473,
+      "grids_far": 1090009,
+      "path_history": 12296,
+      "ray_stamps": 1904,
+      "familiar_window": 40013,
+      "body": 50,
+      "state_total": 1590745,
+      "update_scratch": 3822,
+      "eye_slots_and_pose": 18129,
+      "hd_input_float32": 363840
+     },
+     "eye_table_bytes": 87092768,
+     "readout_batch": 27,
+     "readout_buffer_bytes": 9823680,
+     "state_errors": 0,
+     "resets": 88
+    },
+    {
+     "agents": 256,
+     "warmup": 3,
+     "repeats": 20,
+     "free_vram_mib_before": 8523,
+     "vram_limit_gib": 7.5,
+     "status": "ok",
+     "update_us_per_agent": {
+      "median": 7.748610440952083,
+      "p90": 7.8872875310480595,
+      "repeats": 20
+     },
+     "readout_us_per_agent": {
+      "median": 13.273522641376102,
+      "p90": 13.510937860365377,
+      "repeats": 20
+     },
+     "agent_updates_per_second": {
+      "median": 129055.39746867996,
+      "p90": 131789.49683756745,
+      "repeats": 20
+     },
+     "agent_readouts_per_second": {
+      "median": 75341.4715437191,
+      "p90": 78829.91263332478,
+      "repeats": 20
+     },
+     "readouts_per_update": 0.33380321557971016,
+     "memory_us_per_decision": 36.48663168076989,
+     "peak_allocated_bytes": 539886592,
+     "peak_reserved_bytes": 559939584,
+     "process_vram_mib": 788,
+     "free_vram_mib_after": 7716,
+     "bytes_per_agent": {
+      "grids_near": 446473,
+      "grids_far": 1090009,
+      "path_history": 12296,
+      "ray_stamps": 1904,
+      "familiar_window": 40013,
+      "body": 50,
+      "state_total": 1590745,
+      "update_scratch": 3822,
+      "eye_slots_and_pose": 18129,
+      "hd_input_float32": 363840
+     },
+     "eye_table_bytes": 87092768,
+     "readout_batch": 99,
+     "readout_buffer_bytes": 36020160,
+     "state_errors": 0,
+     "resets": 354
+    },
+    {
+     "agents": 1024,
+     "warmup": 3,
+     "repeats": 20,
+     "free_vram_mib_before": 8507,
+     "vram_limit_gib": 7.5,
+     "status": "ok",
+     "update_us_per_agent": {
+      "median": 2.5192218638646104,
+      "p90": 2.5716849990809956,
+      "repeats": 20
+     },
+     "readout_us_per_agent": {
+      "median": 12.13860588434991,
+      "p90": 12.563672508548086,
+      "repeats": 20
+     },
+     "agent_updates_per_second": {
+      "median": 396948.78573651955,
+      "p90": 414089.0465841289,
+      "repeats": 20
+     },
+     "agent_readouts_per_second": {
+      "median": 82381.83431023401,
+      "p90": 84814.58210061688,
+      "repeats": 20
+     },
+     "readouts_per_update": 0.33380746150362317,
+     "memory_us_per_decision": 19.68553683825031,
+     "peak_allocated_bytes": 1886179328,
+     "peak_reserved_bytes": 1910505472,
+     "process_vram_mib": 2076,
+     "free_vram_mib_after": 6446,
+     "bytes_per_agent": {
+      "grids_near": 446473,
+      "grids_far": 1090009,
+      "path_history": 12296,
+      "ray_stamps": 1904,
+      "familiar_window": 40013,
+      "body": 50,
+      "state_total": 1590745,
+      "update_scratch": 3822,
+      "eye_slots_and_pose": 18129,
+      "hd_input_float32": 363840
+     },
+     "eye_table_bytes": 87092768,
+     "readout_batch": 382,
+     "readout_buffer_bytes": 138986880,
+     "state_errors": 0,
+     "resets": 1414
+    },
+    {
+     "agents": 2048,
+     "warmup": 3,
+     "repeats": 20,
+     "free_vram_mib_before": 8523,
+     "vram_limit_gib": 7.5,
+     "status": "ok",
+     "update_us_per_agent": {
+      "median": 1.9144356794034443,
+      "p90": 1.9657462559795629,
+      "repeats": 20
+     },
+     "readout_us_per_agent": {
+      "median": 12.200923129308443,
+      "p90": 12.496701730484185,
+      "repeats": 20
+     },
+     "agent_updates_per_second": {
+      "median": 522349.12407151936,
+      "p90": 540349.672882135,
+      "repeats": 20
+     },
+     "agent_readouts_per_second": {
+      "median": 81961.39304641675,
+      "p90": 84287.71108728873,
+      "repeats": 20
+     },
+     "readouts_per_update": 0.33381595335144926,
+     "memory_us_per_decision": 17.935926684959007,
+     "peak_allocated_bytes": 3670087168,
+     "peak_reserved_bytes": 3695181824,
+     "process_vram_mib": 3778,
+     "free_vram_mib_after": 4744,
+     "bytes_per_agent": {
+      "grids_near": 446473,
+      "grids_far": 1090009,
+      "path_history": 12296,
+      "ray_stamps": 1904,
+      "familiar_window": 40013,
+      "body": 50,
+      "state_total": 1590745,
+      "update_scratch": 3822,
+      "eye_slots_and_pose": 18129,
+      "hd_input_float32": 363840
+     },
+     "eye_table_bytes": 87092768,
+     "readout_batch": 744,
+     "readout_buffer_bytes": 270696960,
+     "state_errors": 0,
+     "resets": 2827
+    },
+    {
+     "agents": 3072,
+     "warmup": 3,
+     "repeats": 20,
+     "free_vram_mib_before": 8527,
+     "vram_limit_gib": 7.5,
+     "status": "ok",
+     "update_us_per_agent": {
+      "median": 1.6738157952204347,
+      "p90": 1.730368341733184,
+      "repeats": 20
+     },
+     "readout_us_per_agent": {
+      "median": 12.034460343636306,
+      "p90": 12.433309653073529,
+      "repeats": 20
+     },
+     "agent_updates_per_second": {
+      "median": 597443.412742325,
+      "p90": 607479.7586323117,
+      "repeats": 20
+     },
+     "agent_readouts_per_second": {
+      "median": 83095.15636929499,
+      "p90": 84998.00480444562,
+      "repeats": 20
+     },
+     "readouts_per_update": 0.3338201992753623,
+     "memory_us_per_decision": 17.048584111023235,
+     "peak_allocated_bytes": 5459096064,
+     "peak_reserved_bytes": 5479858176,
+     "process_vram_mib": 5480,
+     "free_vram_mib_after": 3022,
+     "bytes_per_agent": {
+      "grids_near": 446473,
+      "grids_far": 1090009,
+      "path_history": 12296,
+      "ray_stamps": 1904,
+      "familiar_window": 40013,
+      "body": 50,
+      "state_total": 1590745,
+      "update_scratch": 3822,
+      "eye_slots_and_pose": 18129,
+      "hd_input_float32": 363840
+     },
+     "eye_table_bytes": 87092768,
+     "readout_batch": 1105,
+     "readout_buffer_bytes": 402043200,
+     "state_errors": 0,
+     "resets": 4240
+    },
+    {
+     "agents": 4096,
+     "warmup": 3,
+     "repeats": 20,
+     "free_vram_mib_before": 8521,
+     "vram_limit_gib": 7.5,
+     "status": "ok",
+     "update_us_per_agent": {
+      "median": 1.5817324281670153,
+      "p90": 1.6277625085785985,
+      "repeats": 20
+     },
+     "readout_us_per_agent": {
+      "median": 12.144011796864596,
+      "p90": 12.498608967966025,
+      "repeats": 20
+     },
+     "agent_updates_per_second": {
+      "median": 632218.22401279,
+      "p90": 641823.2199885237,
+      "repeats": 20
+     },
+     "agent_readouts_per_second": {
+      "median": 82345.17710231896,
+      "p90": 84184.43673614835,
+      "repeats": 20
+     },
+     "readouts_per_update": 0.33382975260416664,
+     "memory_us_per_decision": 16.88215276790779,
+     "peak_allocated_bytes": 7246066688,
+     "peak_reserved_bytes": 7281311744,
+     "process_vram_mib": 7198,
+     "free_vram_mib_after": 1308,
+     "bytes_per_agent": {
+      "grids_near": 446473,
+      "grids_far": 1090009,
+      "path_history": 12296,
+      "ray_stamps": 1904,
+      "familiar_window": 40013,
+      "body": 50,
+      "state_total": 1590745,
+      "update_scratch": 3822,
+      "eye_slots_and_pose": 18129,
+      "hd_input_float32": 363840
+     },
+     "eye_table_bytes": 87092768,
+     "readout_batch": 1465,
+     "readout_buffer_bytes": 533025600,
+     "state_errors": 0,
+     "resets": 5661
+    }
+   ]
   }
  ],
  "headline": {
   "parity": {
-   "readouts": 5653,
-   "bitwise_equal_fraction": 1.0,
-   "differing_values": 0,
-   "action_equal_fraction": 1.0
+   "NVIDIA GeForce RTX 3090": {
+    "readouts": 5653,
+    "bitwise_equal_fraction": 1.0,
+    "differing_values": 0,
+    "action_equal_fraction": 1.0
+   },
+   "NVIDIA GeForce RTX 3080": {
+    "readouts": 5653,
+    "bitwise_equal_fraction": 1.0,
+    "differing_values": 0,
+    "action_equal_fraction": 1.0
+   }
   },
   "state_bytes_per_agent": {
    "grids_near": 446473,
@@ -2019,6 +2395,79 @@
   },
   "scale": [
    {
+    "gpu": "NVIDIA GeForce RTX 3080",
+    "agents": 64,
+    "run": "20261104T193434Z_beeac3",
+    "status": "ok",
+    "update_us_per_agent": 25.911458302289248,
+    "readout_us_per_agent": 14.602500025648624,
+    "memory_us_per_decision": 92.2208692176913,
+    "agent_updates_per_second": 38592.96683202172,
+    "process_vram_mib": 462,
+    "peak_allocated_mib": 194.796875
+   },
+   {
+    "gpu": "NVIDIA GeForce RTX 3080",
+    "agents": 256,
+    "run": "20261104T193434Z_beeac3",
+    "status": "ok",
+    "update_us_per_agent": 7.748610440952083,
+    "readout_us_per_agent": 13.273522641376102,
+    "memory_us_per_decision": 36.48663168076989,
+    "agent_updates_per_second": 129055.39746867996,
+    "process_vram_mib": 788,
+    "peak_allocated_mib": 514.8759765625
+   },
+   {
+    "gpu": "NVIDIA GeForce RTX 3080",
+    "agents": 1024,
+    "run": "20261104T193434Z_beeac3",
+    "status": "ok",
+    "update_us_per_agent": 2.5192218638646104,
+    "readout_us_per_agent": 12.13860588434991,
+    "memory_us_per_decision": 19.68553683825031,
+    "agent_updates_per_second": 396948.78573651955,
+    "process_vram_mib": 2076,
+    "peak_allocated_mib": 1798.80078125
+   },
+   {
+    "gpu": "NVIDIA GeForce RTX 3080",
+    "agents": 2048,
+    "run": "20261104T193434Z_beeac3",
+    "status": "ok",
+    "update_us_per_agent": 1.9144356794034443,
+    "readout_us_per_agent": 12.200923129308443,
+    "memory_us_per_decision": 17.935926684959007,
+    "agent_updates_per_second": 522349.12407151936,
+    "process_vram_mib": 3778,
+    "peak_allocated_mib": 3500.06787109375
+   },
+   {
+    "gpu": "NVIDIA GeForce RTX 3080",
+    "agents": 3072,
+    "run": "20261104T193434Z_beeac3",
+    "status": "ok",
+    "update_us_per_agent": 1.6738157952204347,
+    "readout_us_per_agent": 12.034460343636306,
+    "memory_us_per_decision": 17.048584111023235,
+    "agent_updates_per_second": 597443.412742325,
+    "process_vram_mib": 5480,
+    "peak_allocated_mib": 5206.19970703125
+   },
+   {
+    "gpu": "NVIDIA GeForce RTX 3080",
+    "agents": 4096,
+    "run": "20261104T193434Z_beeac3",
+    "status": "ok",
+    "update_us_per_agent": 1.5817324281670153,
+    "readout_us_per_agent": 12.144011796864596,
+    "memory_us_per_decision": 16.88215276790779,
+    "agent_updates_per_second": 632218.22401279,
+    "process_vram_mib": 7198,
+    "peak_allocated_mib": 6910.3876953125
+   },
+   {
+    "gpu": "NVIDIA GeForce RTX 3090",
     "agents": 64,
     "run": "20261104T184341Z",
     "status": "ok",
@@ -2030,6 +2479,7 @@
     "peak_allocated_mib": 194.796875
    },
    {
+    "gpu": "NVIDIA GeForce RTX 3090",
     "agents": 256,
     "run": "20261104T184341Z",
     "status": "ok",
@@ -2041,6 +2491,7 @@
     "peak_allocated_mib": 514.8759765625
    },
    {
+    "gpu": "NVIDIA GeForce RTX 3090",
     "agents": 1024,
     "run": "20261104T184341Z",
     "status": "ok",
@@ -2052,6 +2503,7 @@
     "peak_allocated_mib": 1798.80078125
    },
    {
+    "gpu": "NVIDIA GeForce RTX 3090",
     "agents": 2048,
     "run": "20261104T184341Z",
     "status": "ok",
@@ -2063,6 +2515,7 @@
     "peak_allocated_mib": 3500.06787109375
    },
    {
+    "gpu": "NVIDIA GeForce RTX 3090",
     "agents": 4096,
     "run": "20261104T185544Z",
     "status": "ok",
@@ -2074,6 +2527,7 @@
     "peak_allocated_mib": 6910.3876953125
    },
    {
+    "gpu": "NVIDIA GeForce RTX 3090",
     "agents": 6144,
     "run": "20261104T185544Z",
     "status": "ok",
@@ -2085,6 +2539,7 @@
     "peak_allocated_mib": 10310.35693359375
    },
    {
+    "gpu": "NVIDIA GeForce RTX 3090",
     "agents": 8192,
     "run": "20261104T185544Z",
     "status": "ok",
@@ -2129,5 +2584,19 @@
     }
    ]
   }
- ]
+ ],
+ "parity_by_gpu": {
+  "NVIDIA GeForce RTX 3090": {
+   "readouts": 5653,
+   "bitwise_equal_fraction": 1.0,
+   "differing_values": 0,
+   "action_equal_fraction": 1.0
+  },
+  "NVIDIA GeForce RTX 3080": {
+   "readouts": 5653,
+   "bitwise_equal_fraction": 1.0,
+   "differing_values": 0,
+   "action_equal_fraction": 1.0
+  }
+ }
 }
