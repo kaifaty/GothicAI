@@ -1,0 +1,889 @@
+{
+ "jump_cm": 650,
+ "revisions": {
+  "before": "d61ca9cbb320fe2dcbe1d6dd8582e2be89fc90ec",
+  "after": "WORKTREE"
+ },
+ "sets": {
+  "point-v5-run": {
+   "root": "/mnt/shared/gothic-ai/nav-pace-v5/results/v5-run/validation/point",
+   "episodes": 60,
+   "totals": {
+    "before": {
+     "decisions": 40279,
+     "jumps": 11,
+     "episodes_with_jump": 5,
+     "initial_skips": 11,
+     "episodes_with_initial_skip": 3,
+     "rebuilds": 3873,
+     "creep_decisions": 98,
+     "max_jump_cm": 7414.538,
+     "recorded_carrot_max_error_cm": null,
+     "jump_ratio": 0.0002730951612502793
+    },
+    "after": {
+     "decisions": 40279,
+     "jumps": 0,
+     "episodes_with_jump": 0,
+     "initial_skips": 0,
+     "episodes_with_initial_skip": 0,
+     "rebuilds": 3873,
+     "creep_decisions": 55,
+     "max_jump_cm": 0.0,
+     "recorded_carrot_max_error_cm": null,
+     "jump_ratio": 0.0
+    }
+   },
+   "same_carrot": {
+    "decisions": 40279,
+    "carrot_within_1cm": 38831,
+    "clean_episodes": 53,
+    "clean_decisions": 28131,
+    "clean_within_1cm": 28131,
+    "clean_differences": []
+   },
+   "episodes_with_events": [
+    {
+     "id": "point-6789b2f9ac08baad/seed-18102027",
+     "success": false,
+     "elapsed_ms": 240000,
+     "jumps": [
+      1234.243,
+      1034.942,
+      1269.349
+     ],
+     "initial_skips": 3,
+     "first_different_decision": 93
+    },
+    {
+     "id": "point-703e252f4418000a/seed-18102027",
+     "success": true,
+     "elapsed_ms": 30300,
+     "jumps": [
+      1059.376
+     ],
+     "initial_skips": 0,
+     "first_different_decision": 204
+    },
+    {
+     "id": "point-7fcd8e0ed6ecba03/seed-18102027",
+     "success": false,
+     "elapsed_ms": 240000,
+     "jumps": [
+      818.192,
+      1244.348,
+      807.783
+     ],
+     "initial_skips": 0,
+     "first_different_decision": 263
+    },
+    {
+     "id": "point-9330472d07b2f47a/seed-18102027",
+     "success": true,
+     "elapsed_ms": 57833,
+     "jumps": [],
+     "initial_skips": 5,
+     "first_different_decision": 94
+    },
+    {
+     "id": "point-965c6345515b4b53/seed-18102027",
+     "success": true,
+     "elapsed_ms": 202367,
+     "jumps": [
+      1791.545,
+      1318.203,
+      1689.695
+     ],
+     "initial_skips": 0,
+     "first_different_decision": 204
+    },
+    {
+     "id": "point-bce9d29bf1a5f806/seed-18102027",
+     "success": false,
+     "elapsed_ms": 240000,
+     "jumps": [],
+     "initial_skips": 3,
+     "first_different_decision": 1660
+    },
+    {
+     "id": "point-f4770074315f062e/seed-18102027",
+     "success": true,
+     "elapsed_ms": 203467,
+     "jumps": [
+      7414.538
+     ],
+     "initial_skips": 0,
+     "first_different_decision": 1603
+    }
+   ]
+  },
+  "point-v5-walk": {
+   "root": "/mnt/shared/gothic-ai/nav-pace-v5/results/v5-walk/validation/point",
+   "episodes": 60,
+   "totals": {
+    "before": {
+     "decisions": 112118,
+     "jumps": 3,
+     "episodes_with_jump": 3,
+     "initial_skips": 0,
+     "episodes_with_initial_skip": 0,
+     "rebuilds": 3270,
+     "creep_decisions": 30,
+     "max_jump_cm": 1061.828,
+     "recorded_carrot_max_error_cm": null,
+     "jump_ratio": 2.6757523323641164e-05
+    },
+    "after": {
+     "decisions": 112118,
+     "jumps": 0,
+     "episodes_with_jump": 0,
+     "initial_skips": 0,
+     "episodes_with_initial_skip": 0,
+     "rebuilds": 3270,
+     "creep_decisions": 27,
+     "max_jump_cm": 0.0,
+     "recorded_carrot_max_error_cm": null,
+     "jump_ratio": 0.0
+    }
+   },
+   "same_carrot": {
+    "decisions": 112118,
+    "carrot_within_1cm": 111960,
+    "clean_episodes": 57,
+    "clean_decisions": 102988,
+    "clean_within_1cm": 102988,
+    "clean_differences": []
+   },
+   "episodes_with_events": [
+    {
+     "id": "point-6789b2f9ac08baad/seed-18102027",
+     "success": false,
+     "elapsed_ms": 735400,
+     "jumps": [
+      980.455
+     ],
+     "initial_skips": 0,
+     "first_different_decision": 602
+    },
+    {
+     "id": "point-703e252f4418000a/seed-18102027",
+     "success": true,
+     "elapsed_ms": 102967,
+     "jumps": [
+      1061.828
+     ],
+     "initial_skips": 0,
+     "first_different_decision": 634
+    },
+    {
+     "id": "point-c5b31dcdb8fa30fa/seed-18102027",
+     "success": true,
+     "elapsed_ms": 74267,
+     "jumps": [
+      898.577
+     ],
+     "initial_skips": 0,
+     "first_different_decision": 91
+    }
+   ]
+  },
+  "point-hd-run": {
+   "root": "/mnt/shared/gothic-ai/nav-pace-v5/results/hd-run/validation/point",
+   "episodes": 60,
+   "totals": {
+    "before": {
+     "decisions": 50286,
+     "jumps": 6,
+     "episodes_with_jump": 6,
+     "initial_skips": 11,
+     "episodes_with_initial_skip": 3,
+     "rebuilds": 2278,
+     "creep_decisions": 36,
+     "max_jump_cm": 11378.144,
+     "recorded_carrot_max_error_cm": null,
+     "jump_ratio": 0.00011931750387781887
+    },
+    "after": {
+     "decisions": 50286,
+     "jumps": 0,
+     "episodes_with_jump": 0,
+     "initial_skips": 0,
+     "episodes_with_initial_skip": 0,
+     "rebuilds": 2278,
+     "creep_decisions": 22,
+     "max_jump_cm": 0.0,
+     "recorded_carrot_max_error_cm": null,
+     "jump_ratio": 0.0
+    }
+   },
+   "same_carrot": {
+    "decisions": 50286,
+    "carrot_within_1cm": 49949,
+    "clean_episodes": 51,
+    "clean_decisions": 36595,
+    "clean_within_1cm": 36594,
+    "clean_differences": [
+     {
+      "id": "point-c5b31dcdb8fa30fa/seed-18102027",
+      "decisions": 1,
+      "first": 37
+     }
+    ]
+   },
+   "episodes_with_events": [
+    {
+     "id": "point-200ffb1aee7e8744/seed-18102027",
+     "success": false,
+     "elapsed_ms": 240000,
+     "jumps": [],
+     "initial_skips": 9,
+     "first_different_decision": 1522
+    },
+    {
+     "id": "point-6789b2f9ac08baad/seed-18102027",
+     "success": true,
+     "elapsed_ms": 154500,
+     "jumps": [
+      863.839
+     ],
+     "initial_skips": 0,
+     "first_different_decision": 198
+    },
+    {
+     "id": "point-703e252f4418000a/seed-18102027",
+     "success": true,
+     "elapsed_ms": 34133,
+     "jumps": [
+      1031.989
+     ],
+     "initial_skips": 0,
+     "first_different_decision": 230
+    },
+    {
+     "id": "point-7fcd8e0ed6ecba03/seed-18102027",
+     "success": false,
+     "elapsed_ms": 240000,
+     "jumps": [
+      683.742
+     ],
+     "initial_skips": 0,
+     "first_different_decision": 427
+    },
+    {
+     "id": "point-820ddfa1ca089f1a/seed-18102027",
+     "success": false,
+     "elapsed_ms": 240000,
+     "jumps": [
+      726.715
+     ],
+     "initial_skips": 0,
+     "first_different_decision": 143
+    },
+    {
+     "id": "point-a5ee330eb833e7bd/seed-18102027",
+     "success": true,
+     "elapsed_ms": 110567,
+     "jumps": [],
+     "initial_skips": 1,
+     "first_different_decision": 581
+    },
+    {
+     "id": "point-bce9d29bf1a5f806/seed-18102027",
+     "success": true,
+     "elapsed_ms": 100167,
+     "jumps": [],
+     "initial_skips": 1,
+     "first_different_decision": 46
+    },
+    {
+     "id": "point-f20f60cbd9bfd249/seed-18102027",
+     "success": false,
+     "elapsed_ms": 240000,
+     "jumps": [
+      793.035
+     ],
+     "initial_skips": 0,
+     "first_different_decision": 727
+    },
+    {
+     "id": "point-f38b626556a8faef/seed-18102027",
+     "success": true,
+     "elapsed_ms": 8700,
+     "jumps": [
+      11378.144
+     ],
+     "initial_skips": 0,
+     "first_different_decision": 35
+    }
+   ]
+  },
+  "point-hd-walk": {
+   "root": "/mnt/shared/gothic-ai/nav-pace-v5/results/hd-walk/validation/point",
+   "episodes": 60,
+   "totals": {
+    "before": {
+     "decisions": 137827,
+     "jumps": 6,
+     "episodes_with_jump": 5,
+     "initial_skips": 2,
+     "episodes_with_initial_skip": 1,
+     "rebuilds": 4762,
+     "creep_decisions": 32,
+     "max_jump_cm": 7477.031,
+     "recorded_carrot_max_error_cm": null,
+     "jump_ratio": 4.353283464052762e-05
+    },
+    "after": {
+     "decisions": 137827,
+     "jumps": 0,
+     "episodes_with_jump": 0,
+     "initial_skips": 0,
+     "episodes_with_initial_skip": 0,
+     "rebuilds": 4763,
+     "creep_decisions": 20,
+     "max_jump_cm": 0.0,
+     "recorded_carrot_max_error_cm": null,
+     "jump_ratio": 0.0
+    }
+   },
+   "same_carrot": {
+    "decisions": 137827,
+    "carrot_within_1cm": 132800,
+    "clean_episodes": 54,
+    "clean_decisions": 106273,
+    "clean_within_1cm": 106273,
+    "clean_differences": []
+   },
+   "episodes_with_events": [
+    {
+     "id": "point-6789b2f9ac08baad/seed-18102027",
+     "success": false,
+     "elapsed_ms": 735400,
+     "jumps": [
+      1178.019
+     ],
+     "initial_skips": 0,
+     "first_different_decision": 163
+    },
+    {
+     "id": "point-703e252f4418000a/seed-18102027",
+     "success": true,
+     "elapsed_ms": 170467,
+     "jumps": [
+      702.267
+     ],
+     "initial_skips": 0,
+     "first_different_decision": 1324
+    },
+    {
+     "id": "point-965c6345515b4b53/seed-18102027",
+     "success": false,
+     "elapsed_ms": 735400,
+     "jumps": [
+      991.742,
+      664.63
+     ],
+     "initial_skips": 0,
+     "first_different_decision": 1349
+    },
+    {
+     "id": "point-bce9d29bf1a5f806/seed-18102027",
+     "success": false,
+     "elapsed_ms": 735400,
+     "jumps": [],
+     "initial_skips": 2,
+     "first_different_decision": 133
+    },
+    {
+     "id": "point-c5b31dcdb8fa30fa/seed-18102027",
+     "success": true,
+     "elapsed_ms": 58100,
+     "jumps": [
+      716.113
+     ],
+     "initial_skips": 0,
+     "first_different_decision": 34
+    },
+    {
+     "id": "point-f4770074315f062e/seed-18102027",
+     "success": true,
+     "elapsed_ms": 719933,
+     "jumps": [
+      7477.031
+     ],
+     "initial_skips": 0,
+     "first_different_decision": 6856
+    }
+   ]
+  },
+  "live-v5": {
+   "root": "/mnt/shared/gothic-ai/nav-pace-v5/live/pace-v5",
+   "episodes": 24,
+   "totals": {
+    "before": {
+     "decisions": 6759,
+     "jumps": 2,
+     "episodes_with_jump": 2,
+     "initial_skips": 17,
+     "episodes_with_initial_skip": 2,
+     "rebuilds": 795,
+     "creep_decisions": 8,
+     "max_jump_cm": 3646.402,
+     "recorded_carrot_max_error_cm": 0.0010578865720123755,
+     "jump_ratio": 0.00029590176061547566
+    },
+    "after": {
+     "decisions": 6759,
+     "jumps": 0,
+     "episodes_with_jump": 0,
+     "initial_skips": 0,
+     "episodes_with_initial_skip": 0,
+     "rebuilds": 795,
+     "creep_decisions": 0,
+     "max_jump_cm": 0.0,
+     "recorded_carrot_max_error_cm": 2490.3538126201465,
+     "jump_ratio": 0.0
+    }
+   },
+   "same_carrot": {
+    "decisions": 6759,
+    "carrot_within_1cm": 6247,
+    "clean_episodes": 20,
+    "clean_decisions": 3608,
+    "clean_within_1cm": 3608,
+    "clean_differences": []
+   },
+   "episodes_with_events": [
+    {
+     "id": "02-routine-return-farm-edge/seed-18102028",
+     "success": true,
+     "elapsed_ms": 95733,
+     "jumps": [],
+     "initial_skips": 16,
+     "first_different_decision": 0
+    },
+    {
+     "id": "05-wall-pocket/seed-18102027",
+     "success": true,
+     "elapsed_ms": 38867,
+     "jumps": [
+      3646.402
+     ],
+     "initial_skips": 0,
+     "first_different_decision": 33
+    },
+    {
+     "id": "05-wall-pocket/seed-18102028",
+     "success": false,
+     "elapsed_ms": 90000,
+     "jumps": [],
+     "initial_skips": 1,
+     "first_different_decision": 28
+    },
+    {
+     "id": "05-wall-pocket/seed-18102029",
+     "success": false,
+     "elapsed_ms": 90000,
+     "jumps": [
+      2634.814
+     ],
+     "initial_skips": 0,
+     "first_different_decision": 545
+    }
+   ]
+  },
+  "live-hd": {
+   "root": "/mnt/shared/gothic-ai/nav-pace-v5/live/HD",
+   "episodes": 24,
+   "totals": {
+    "before": {
+     "decisions": 6166,
+     "jumps": 0,
+     "episodes_with_jump": 0,
+     "initial_skips": 3,
+     "episodes_with_initial_skip": 1,
+     "rebuilds": 860,
+     "creep_decisions": 0,
+     "max_jump_cm": 0.0,
+     "recorded_carrot_max_error_cm": 0.0010377379241826921,
+     "jump_ratio": 0.0
+    },
+    "after": {
+     "decisions": 6166,
+     "jumps": 0,
+     "episodes_with_jump": 0,
+     "initial_skips": 0,
+     "episodes_with_initial_skip": 0,
+     "rebuilds": 860,
+     "creep_decisions": 0,
+     "max_jump_cm": 0.0,
+     "recorded_carrot_max_error_cm": 348.9552058674647,
+     "jump_ratio": 0.0
+    }
+   },
+   "same_carrot": {
+    "decisions": 6166,
+    "carrot_within_1cm": 6163,
+    "clean_episodes": 23,
+    "clean_decisions": 5139,
+    "clean_within_1cm": 5139,
+    "clean_differences": []
+   },
+   "episodes_with_events": [
+    {
+     "id": "02-routine-return-farm-edge/seed-18102028",
+     "success": true,
+     "elapsed_ms": 102567,
+     "jumps": [],
+     "initial_skips": 3,
+     "first_different_decision": 0
+    }
+   ]
+  },
+  "live-teacher": {
+   "root": "/mnt/shared/gothic-ai/nav-pace-v5/live/teacher",
+   "episodes": 10,
+   "totals": {
+    "before": {
+     "decisions": 3797,
+     "jumps": 0,
+     "episodes_with_jump": 0,
+     "initial_skips": 13,
+     "episodes_with_initial_skip": 1,
+     "rebuilds": 273,
+     "creep_decisions": 0,
+     "max_jump_cm": 0.0,
+     "recorded_carrot_max_error_cm": 0.0010960492681368313,
+     "jump_ratio": 0.0
+    },
+    "after": {
+     "decisions": 3797,
+     "jumps": 0,
+     "episodes_with_jump": 0,
+     "initial_skips": 0,
+     "episodes_with_initial_skip": 0,
+     "rebuilds": 273,
+     "creep_decisions": 0,
+     "max_jump_cm": 0.0,
+     "recorded_carrot_max_error_cm": 353.2319480587929,
+     "jump_ratio": 0.0
+    }
+   },
+   "same_carrot": {
+    "decisions": 3797,
+    "carrot_within_1cm": 3784,
+    "clean_episodes": 9,
+    "clean_decisions": 2934,
+    "clean_within_1cm": 2934,
+    "clean_differences": []
+   },
+   "episodes_with_events": [
+    {
+     "id": "02-routine-return-farm-edge-aeef6f5a2cdf",
+     "success": true,
+     "elapsed_ms": 86167,
+     "jumps": [],
+     "initial_skips": 13,
+     "first_different_decision": 0
+    }
+   ]
+  },
+  "run-before": {
+   "root": "/mnt/shared/gothic-ai/nav-roads-carrot/point-before/validation/point",
+   "episodes": 60,
+   "totals": {
+    "before": {
+     "decisions": 42812,
+     "jumps": 11,
+     "episodes_with_jump": 5,
+     "initial_skips": 11,
+     "episodes_with_initial_skip": 3,
+     "rebuilds": 3940,
+     "creep_decisions": 98,
+     "max_jump_cm": 7414.538,
+     "recorded_carrot_max_error_cm": null,
+     "jump_ratio": 0.00025693730729701953
+    },
+    "after": {
+     "decisions": 42812,
+     "jumps": 0,
+     "episodes_with_jump": 0,
+     "initial_skips": 0,
+     "episodes_with_initial_skip": 0,
+     "rebuilds": 3940,
+     "creep_decisions": 55,
+     "max_jump_cm": 0.0,
+     "recorded_carrot_max_error_cm": null,
+     "jump_ratio": 0.0
+    }
+   },
+   "same_carrot": {
+    "decisions": 42812,
+    "carrot_within_1cm": 41364,
+    "clean_episodes": 53,
+    "clean_decisions": 30664,
+    "clean_within_1cm": 30664,
+    "clean_differences": []
+   },
+   "episodes_with_events": [
+    {
+     "id": "point-6789b2f9ac08baad/seed-18102027",
+     "success": false,
+     "elapsed_ms": 240000,
+     "jumps": [
+      1234.243,
+      1034.942,
+      1269.349
+     ],
+     "initial_skips": 3,
+     "first_different_decision": 93
+    },
+    {
+     "id": "point-703e252f4418000a/seed-18102027",
+     "success": true,
+     "elapsed_ms": 30300,
+     "jumps": [
+      1059.376
+     ],
+     "initial_skips": 0,
+     "first_different_decision": 204
+    },
+    {
+     "id": "point-7fcd8e0ed6ecba03/seed-18102027",
+     "success": false,
+     "elapsed_ms": 240000,
+     "jumps": [
+      818.192,
+      1244.348,
+      807.783
+     ],
+     "initial_skips": 0,
+     "first_different_decision": 263
+    },
+    {
+     "id": "point-9330472d07b2f47a/seed-18102027",
+     "success": true,
+     "elapsed_ms": 57833,
+     "jumps": [],
+     "initial_skips": 5,
+     "first_different_decision": 94
+    },
+    {
+     "id": "point-965c6345515b4b53/seed-18102027",
+     "success": true,
+     "elapsed_ms": 202367,
+     "jumps": [
+      1791.545,
+      1318.203,
+      1689.695
+     ],
+     "initial_skips": 0,
+     "first_different_decision": 204
+    },
+    {
+     "id": "point-bce9d29bf1a5f806/seed-18102027",
+     "success": false,
+     "elapsed_ms": 240000,
+     "jumps": [],
+     "initial_skips": 3,
+     "first_different_decision": 1660
+    },
+    {
+     "id": "point-f4770074315f062e/seed-18102027",
+     "success": true,
+     "elapsed_ms": 203467,
+     "jumps": [
+      7414.538
+     ],
+     "initial_skips": 0,
+     "first_different_decision": 1603
+    }
+   ]
+  },
+  "run-after": {
+   "root": "/mnt/shared/gothic-ai/nav-roads-carrot/point-after/validation/point",
+   "episodes": 60,
+   "totals": {
+    "before": {
+     "decisions": 39413,
+     "jumps": 6,
+     "episodes_with_jump": 5,
+     "initial_skips": 5,
+     "episodes_with_initial_skip": 2,
+     "rebuilds": 4117,
+     "creep_decisions": 43,
+     "max_jump_cm": 7414.538,
+     "recorded_carrot_max_error_cm": null,
+     "jump_ratio": 0.00015223403445563646
+    },
+    "after": {
+     "decisions": 39413,
+     "jumps": 0,
+     "episodes_with_jump": 0,
+     "initial_skips": 0,
+     "episodes_with_initial_skip": 0,
+     "rebuilds": 4117,
+     "creep_decisions": 18,
+     "max_jump_cm": 0.0,
+     "recorded_carrot_max_error_cm": null,
+     "jump_ratio": 0.0
+    }
+   },
+   "same_carrot": {
+    "decisions": 39413,
+    "carrot_within_1cm": 38495,
+    "clean_episodes": 53,
+    "clean_decisions": 30664,
+    "clean_within_1cm": 30664,
+    "clean_differences": []
+   },
+   "episodes_with_events": [
+    {
+     "id": "point-6789b2f9ac08baad/seed-18102027",
+     "success": true,
+     "elapsed_ms": 106300,
+     "jumps": [
+      1234.243
+     ],
+     "initial_skips": 0,
+     "first_different_decision": 93
+    },
+    {
+     "id": "point-703e252f4418000a/seed-18102027",
+     "success": true,
+     "elapsed_ms": 30400,
+     "jumps": [
+      1059.376
+     ],
+     "initial_skips": 0,
+     "first_different_decision": 204
+    },
+    {
+     "id": "point-7fcd8e0ed6ecba03/seed-18102027",
+     "success": true,
+     "elapsed_ms": 94567,
+     "jumps": [
+      818.192,
+      784.073
+     ],
+     "initial_skips": 0,
+     "first_different_decision": 263
+    },
+    {
+     "id": "point-9330472d07b2f47a/seed-18102027",
+     "success": true,
+     "elapsed_ms": 70867,
+     "jumps": [],
+     "initial_skips": 4,
+     "first_different_decision": 94
+    },
+    {
+     "id": "point-965c6345515b4b53/seed-18102027",
+     "success": true,
+     "elapsed_ms": 92000,
+     "jumps": [
+      1791.545
+     ],
+     "initial_skips": 0,
+     "first_different_decision": 204
+    },
+    {
+     "id": "point-bce9d29bf1a5f806/seed-18102027",
+     "success": false,
+     "elapsed_ms": 240000,
+     "jumps": [],
+     "initial_skips": 1,
+     "first_different_decision": 1660
+    },
+    {
+     "id": "point-f4770074315f062e/seed-18102027",
+     "success": false,
+     "elapsed_ms": 240000,
+     "jumps": [
+      7414.538
+     ],
+     "initial_skips": 0,
+     "first_different_decision": 1603
+    }
+   ]
+  },
+  "live-after": {
+   "root": "/mnt/shared/gothic-ai/nav-roads-carrot/live",
+   "episodes": 4,
+   "totals": {
+    "before": {
+     "decisions": 2538,
+     "jumps": 3,
+     "episodes_with_jump": 3,
+     "initial_skips": 1,
+     "episodes_with_initial_skip": 1,
+     "rebuilds": 15,
+     "creep_decisions": 18,
+     "max_jump_cm": 3646.402,
+     "recorded_carrot_max_error_cm": 2422.2785543338555,
+     "jump_ratio": 0.001182033096926714
+    },
+    "after": {
+     "decisions": 2538,
+     "jumps": 0,
+     "episodes_with_jump": 0,
+     "initial_skips": 0,
+     "episodes_with_initial_skip": 0,
+     "rebuilds": 15,
+     "creep_decisions": 11,
+     "max_jump_cm": 0.0,
+     "recorded_carrot_max_error_cm": 0.00037844550481919945,
+     "jump_ratio": 0.0
+    }
+   },
+   "same_carrot": {
+    "decisions": 2538,
+    "carrot_within_1cm": 2180,
+    "clean_episodes": 1,
+    "clean_decisions": 489,
+    "clean_within_1cm": 489,
+    "clean_differences": []
+   },
+   "episodes_with_events": [
+    {
+     "id": "pace-v5/05-wall-pocket/seed-18102027",
+     "success": true,
+     "elapsed_ms": 32200,
+     "jumps": [
+      3646.402
+     ],
+     "initial_skips": 0,
+     "first_different_decision": 33
+    },
+    {
+     "id": "pace-v5/05-wall-pocket/seed-18102028",
+     "success": false,
+     "elapsed_ms": 90000,
+     "jumps": [
+      2098.659
+     ],
+     "initial_skips": 1,
+     "first_different_decision": 28
+    },
+    {
+     "id": "pace-v5/05-wall-pocket/seed-18102029",
+     "success": true,
+     "elapsed_ms": 82400,
+     "jumps": [
+      2634.814
+     ],
+     "initial_skips": 0,
+     "first_different_decision": 545
+    },
+    {
+     "id": "teacher/05-wall-pocket-05dcec92b317",
+     "success": true,
+     "elapsed_ms": 48767,
+     "jumps": [],
+     "initial_skips": 0,
+     "first_different_decision": null
+    }
+   ]
+  }
+ }
+}
