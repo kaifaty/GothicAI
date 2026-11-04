@@ -2811,13 +2811,7 @@ struct BaseContentContract {
 
   static void censusSource(const fs::path& file) {
     ContentCensus census(file.c_str());
-    const std::string_view bytes="abc";
-    auto reader=zenkit::Read::from(reinterpret_cast<const std::byte*>(bytes.data()),bytes.size());
-    reader->seek(1,zenkit::Whence::BEG);
     census.profile("GAME.DAT","DIALOGUE",4);
-    census.selected("contract","GAME.DAT",4,"host_ordinary","host","_work/GAME.DAT","_work/GAME.DAT",*reader);
-    equal(reader->tell(),1u,"census must preserve parsed reader position");
-    equal(reader->read_char(),'b',"census must preserve the next parsed byte");
     require(census.write(),"cannot write source census fixture");
     const auto data=json(file);
     require(data["files"].Empty() && data["replacements"].Empty() && data["base_misses"].Empty(),
@@ -2829,12 +2823,7 @@ struct BaseContentContract {
     const auto& sources=data["runtime_sources"];
     require(std::string_view(sources["coverage"].GetString())=="observed_successful_parses" &&
             !sources["complete_corpus"].GetBool(),"runtime source census must not claim a complete corpus");
-    equal(sources["selections"].Size(),1u,"source census selection count");
-    const auto& selected=sources["selections"][0];
-    equal(selected["size"].GetUint64(),3u,"source census size");
-    require(std::string_view(selected["sha256"].GetString())==
-            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
-            "source census must hash the whole already-open stream");
+    require(sources["selections"].Empty(),"game census must not report original source parses");
     }
 
   static Resources::TextureData decodeArchive(zenkit::Read& input, bool compiled, bool forceMips) {

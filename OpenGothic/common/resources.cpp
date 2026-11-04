@@ -1,4 +1,5 @@
 #include "resources.h"
+#include "zenkitlog.h"
 #include "loadprobe.h"
 #include "basestore.h"
 #include "commandline.h"
@@ -89,7 +90,6 @@ struct Resources::VideoBase {
   };
 
 namespace {
-thread_local bool preparingVideo = false;
 thread_local bool loadingTextureTail = false;
 
 std::string modelKey(std::string_view name) {
@@ -234,25 +234,6 @@ Resources::Resources(Tempest::Device &device)
     throw std::runtime_error("unable to configure native music loader");
   }
 
-void Resources::zenkitLog(zenkit::LogLevel lvl, const char* cat, const char* message) {
-  if(preparingVideo) return;
-  switch (lvl) {
-    case zenkit::LogLevel::ERROR:
-      Tempest::Log::e("[zenkit] ", message);
-      break;
-    case zenkit::LogLevel::WARNING:
-      Tempest::Log::e("[zenkit] ", message);
-      break;
-    case zenkit::LogLevel::INFO:
-      Tempest::Log::i("[zenkit] ", message);
-      break;
-    case zenkit::LogLevel::DEBUG:
-    case zenkit::LogLevel::TRACE:
-      Tempest::Log::d("[zenkit] ", message); // unused
-      break;
-    }
-  }
-
 void Resources::loadBase() {
   if(!inst->automaticBase.path.empty()) return;
   try {
@@ -337,7 +318,7 @@ void Resources::startVideoBase() {
   const auto gothic=std::filesystem::path(CommandLine::inst().rootPath());
   const auto mainBase=inst->automaticBase.path;
   inst->videoWorker=std::thread([state,gothic,mainBase] {
-    preparingVideo=true;
+    ZenKitLog::silenceForVideo();
     try {
       auto selection=BaseStore::resolveVideos(gothic,mainBase,[](std::string_view message) {
         // Background selection diagnostics do not use the application's log callback.
