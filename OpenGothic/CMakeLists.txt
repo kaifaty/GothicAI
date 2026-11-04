@@ -344,6 +344,10 @@ if(NOT ANDROID AND NOT IOS)
     common lib/Tempest/Engine/include lib/Tempest/Engine
     lib/Tempest/Engine/thirdparty/zlib ${CMAKE_BINARY_DIR}/lib/Tempest/thirdparty/zlib)
   target_link_libraries(gothic-navpolicy-contract PRIVATE zlibstatic)
+  add_executable(gothic-navsim-memory-bench EXCLUDE_FROM_ALL
+    tests/navsim_memory_bench.cpp common/navpolicy.cpp common/game/navigationmemory.cpp)
+  target_include_directories(gothic-navsim-memory-bench PRIVATE
+    common lib/Tempest/Engine/include lib/Tempest/Engine)
   find_package(Python3 COMPONENTS Interpreter QUIET)
   add_executable(gothic-bodypolicy-contract EXCLUDE_FROM_ALL
     tests/bodypolicy_contract.cpp common/game/bodypolicy.cpp common/nets/smallnet.cpp)

@@ -18,6 +18,12 @@ class KnownRoads final {
     static constexpr float majorRangeCm = 30000.f;
     static constexpr float guidanceLookaheadCm = 600.f;
     static constexpr float guidanceReplanCm = 800.f;
+    // Progress is the closest local minimum of the actor's distance to the
+    // route within this distance along it around the current progress: the 6 m
+    // lookahead plus the largest recorded XZ step of one 100 ms decision
+    // (50.4 cm). A minimum at the window's forward edge does not count. A
+    // rebuilt route projects on its first startOffsetCm plus this window.
+    static constexpr float guidanceWindowCm = 650.f;
 
     struct Node final {
       std::string name;
@@ -75,7 +81,9 @@ class KnownRoads final {
     Path path(const Knowledge& knowledge, const Tempest::Vec3& start,
               const Tempest::Vec3& goal) const;
     // No mesh or hidden geometry. Reset Guidance at an episode boundary.
-    // Progress cannot decrease; only a >8 m deviation rebuilds the route.
+    // Progress cannot decrease and never leaves its window, also not window by
+    // window while the actor stands; only a >8 m deviation from the whole route
+    // rebuilds it.
     // If the 6 m lookahead passes the familiar endpoint, eyes take over:
     // carrot becomes the goal and beyondKnown remains true until reset.
     void updateGuidance(const Knowledge& knowledge, const Tempest::Vec3& position,
