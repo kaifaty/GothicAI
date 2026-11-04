@@ -19,7 +19,7 @@ HERE = Path(__file__).resolve().parent
 NEAR, FAR = (64, 25.0), (100, 200.0)
 OUTPUTS = 64 * 64 + 50 * 100
 CUDA_FLAGS = ["-O3", "--fmad=false", "--prec-div=true", "--prec-sqrt=true", "--ftz=false",
-              "-gencode=arch=compute_86,code=sm_86", "-std=c++17", "-lineinfo"]
+              "-gencode=arch=compute_86,code=sm_86", "-std=c++20", "-lineinfo"]
 HOST_FLAGS = ["-O2", "-std=c++17", "-fPIC", "-shared", "-ffp-contract=off"]
 
 POINTERS = ("posePos poseFwd poseMs poseLimits active rayOrigin rayPoint rayDistance rayNormalY rayKind "
