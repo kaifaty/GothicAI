@@ -114,103 +114,117 @@ const vec2 omniFilter[12] = {
 const float OmniZk        = 0.0309278; // vsmApplyProjective: z = k*(1/fz - 1), k = zNear/(zFar - zNear)
 const float OmniMaxRadius = 24.0;      // texels: the widest search and filter
 
-vec3 lwcAt(ivec2 p, float z) {
-  const vec2 scr = ((vec2(p) + 0.5)/vec2(textureSize(depth,0)))*2.0 - 1.0;
-  const vec4 w   = scene.viewProjectLwcInv*vec4(scr, z, 1.0);
-  return w.xyz/w.w;
+// a cube face's block in the atlas and the receiver in that face's axes
+struct OmniFace {
+  vec2  org;  // the block's first texel in the atlas
+  float sz;   // its size, texels
+  vec3  Pf;   // the receiver, in face axes (z along the face's axis)
+  vec3  nf;   // the receiver plane's normal, in face axes
+  uint  face;
+  };
+
+OmniFace omniFace(const uint face, const uint pageD, const vec3 P, const vec3 n) {
+  OmniFace f;
+  f.org  = vec2(unpackVsmPageId(pageD >> 16u)*VSM_PAGE_SIZE);
+  f.sz   = float((pageD & 0xF)*VSM_PAGE_SIZE);
+  f.Pf   = vsmMapDirToFace(P, face);
+  f.nf   = vsmMapDirToFace(n, face);
+  f.face = face;
+  return f;
   }
 
-// normal of the visible surface from the depth buffer: on each axis the neighbour nearer in depth, so a crease
-// or a silhouette does not tilt it (screen-space derivatives would mix the two surfaces there)
-vec3 depthNormal(ivec2 c, float d) {
-  const ivec2 sz = textureSize(depth, 0) - ivec2(1);
-  const ivec2 r  = min(c + ivec2(1,0), sz), l = max(c - ivec2(1,0), ivec2(0));
-  const ivec2 u  = min(c + ivec2(0,1), sz), b = max(c - ivec2(0,1), ivec2(0));
-  const float dr = texelFetch(depth, r, 0).x, dl = texelFetch(depth, l, 0).x;
-  const float du = texelFetch(depth, u, 0).x, db = texelFetch(depth, b, 0).x;
-  const vec3  p0 = lwcAt(c, d);
-  const vec3  dx = abs(dr-d)<abs(dl-d) ? lwcAt(r, dr) - p0 : p0 - lwcAt(l, dl);
-  const vec3  dy = abs(du-d)<abs(db-d) ? lwcAt(u, du) - p0 : p0 - lwcAt(b, db);
-  const vec3  n  = cross(dx, dy);
-  return dot(n,n)>1e-12 ? normalize(n) : vec3(0);
-  }
-
-float omniGather(const vec3 d, const uint home, const vec3 P, const vec3 n, const float R, const vec2 atlasInv,
-                 inout float blockRatio, inout float blockCount) {
-  uint face  = vsmLightDirToFace(d);
-  uint pageD = pageTblOmni[lightId*6 + face];
-  vec3 Pf    = vsmMapDirToFace(P, face);
-  if(face!=home && ((pageD & 0xF)==0 || Pf.z<=0)) {
-    face  = home;
-    pageD = pageTblOmni[lightId*6 + face];
-    Pf    = vsmMapDirToFace(P, face);
-    }
-
-  const float sz  = float((pageD & 0xF)*VSM_PAGE_SIZE);
-  const vec2  org = vec2(unpackVsmPageId(pageD >> 16u)*VSM_PAGE_SIZE);
-  const vec3  df  = vsmMapDirToFace(d, face);
-  const vec2  t   = clamp(((df.xy/df.z)*0.5 + 0.5)*sz, vec2(1.0), vec2(sz-1.0));
-  const vec4  z4  = textureGather(pageData, (org + t)*atlasInv);
+float omniGatherFace(const vec3 d, const OmniFace f, const float R, const vec2 atlasInv,
+                     inout float blockRatio, inout float blockCount) {
+  const vec3 df = vsmMapDirToFace(d, f.face);
+  const vec2 t  = clamp(((df.xy/df.z)*0.5 + 0.5)*f.sz, vec2(1.0), vec2(f.sz-1.0));
+  const vec4 z4 = textureGather(pageData, (f.org + t)*atlasInv);
 
   // the four texels' rays in face coordinates; gather order: x (i0,j1), y (i1,j1), z (i1,j0), w (i0,j0)
   const vec2 i0  = floor(t - 0.5);
-  const vec2 f   = t - 0.5 - i0;
-  const vec2 x01 = (vec2(i0.x + 0.5, i0.x + 1.5)/sz)*2.0 - 1.0;
-  const vec2 y01 = (vec2(i0.y + 0.5, i0.y + 1.5)/sz)*2.0 - 1.0;
+  const vec2 fr  = t - 0.5 - i0;
+  const vec2 x01 = (vec2(i0.x + 0.5, i0.x + 1.5)/f.sz)*2.0 - 1.0;
+  const vec2 y01 = (vec2(i0.y + 0.5, i0.y + 1.5)/f.sz)*2.0 - 1.0;
   const vec4 X   = vec4(x01.x, x01.y, x01.y, x01.x);
   const vec4 Y   = vec4(y01.y, y01.y, y01.x, y01.x);
 
   // receiver depth along the face's axis on each ray: the plane through P with normal n
-  const vec3 nf  = vsmMapDirToFace(n, face);
-  const float c  = dot(nf, Pf);
-  const vec4 den = nf.x*X + nf.y*Y + vec4(nf.z);
-  const vec4 drc = clamp(c/min(den, vec4(-1e-4)), vec4(0.5*Pf.z), vec4(2.0*Pf.z));
+  const float c   = dot(f.nf, f.Pf);
+  const vec4  den = f.nf.x*X + f.nf.y*Y + vec4(f.nf.z);
+  const vec4  drc = clamp(c/min(den, vec4(-1e-4)), vec4(0.5*f.Pf.z), vec4(2.0*f.Pf.z));
 
   // occluder depth along the axis; 0 is a cleared texel: nothing there
   const vec4 occ  = (OmniZk/(z4 + OmniZk))*R;
   // a third of a texel, plus the 16-bit depth step at that distance (dz = k*R/d^2 per unit of distance)
-  const vec4 bias = 0.3 + (0.6/sz)*drc + (2.0/(65535.0*OmniZk*R))*drc*drc;
+  const vec4 bias = 0.3 + (0.6/f.sz)*drc + (2.0/(65535.0*OmniZk*R))*drc*drc;
   const vec4 blk  = vec4(lessThan(occ, drc - bias)) * vec4(greaterThan(z4, vec4(0)));
 
   blockRatio += dot(blk, occ/drc);
   blockCount += dot(blk, vec4(1));
 
   const vec4 lit = vec4(1) - blk;
-  const vec2 xx  = mix(lit.wz, lit.xy, f.y);
-  return mix(xx.x, xx.y, f.x);
+  const vec2 xx  = mix(lit.wz, lit.xy, fr.y);
+  return mix(xx.x, xx.y, fr.x);
   }
 
-// share of the light that reaches the surface at P (relative to the light) with the plane normal n
-float omniShadow(const vec3 P, const vec3 n, const float R, const float S) {
+// a tap: on the home face, or on the neighbour its direction falls on when that one has pages
+float omniGather(const vec3 d, const OmniFace home, const bool homeOnly, const vec3 P, const vec3 n, const float R,
+                 const vec2 atlasInv, inout float blockRatio, inout float blockCount) {
+  if(!homeOnly) {
+    const uint face = vsmLightDirToFace(d);
+    if(face!=home.face) {
+      const uint pageD = pageTblOmni[lightId*6 + face];
+      if((pageD & 0xF)!=0 && vsmMapDirToFace(P, face).z>0)
+        return omniGatherFace(d, omniFace(face, pageD, P, n), R, atlasInv, blockRatio, blockCount);
+      }
+    }
+  return omniGatherFace(d, home, R, atlasInv, blockRatio, blockCount);
+  }
+
+// share of the light that reaches the surface at P (relative to the light) with the plane normal n;
+// 'faint': the light is too weak here to show a soft edge, one gather decides
+float omniShadow(const vec3 P, const vec3 n, const float R, const float S, const bool faint) {
   const uint home  = vsmLightDirToFace(P);
   const uint pageD = pageTblOmni[lightId*6 + home];
   if((pageD & 0xF)==0)
-    return 1.0; // a face without pages: the light reaches it unshadowed, as with no shadow at all
+    return 1.0; // a face without pages (the pool overflowed): the light reaches it unshadowed
 
-  const vec2  atlasInv = vec2(1.0)/vec2(textureSize(pageData, 0));
-  const float dist  = length(P);
-  const vec3  u     = P/dist;
+  const vec2     atlasInv = vec2(1.0)/vec2(textureSize(pageData, 0));
+  const OmniFace hf       = omniFace(home, pageD, P, n);
+  const float    dist     = length(P);
+  const vec3     u        = P/dist;
+  float ratio = 0, count = 0;
+  if(faint)
+    return omniGatherFace(u, hf, R, atlasInv, ratio, count);
+
   const vec3  a     = abs(u.y)<0.99 ? vec3(0,1,0) : vec3(1,0,0);
   const vec3  T     = normalize(cross(a, u));
   const vec3  B     = cross(u, T);
-  const float texel = 2.0/float((pageD & 0xF)*VSM_PAGE_SIZE); // angle of a texel at the face's centre
+  const float texel = 2.0/hf.sz; // angle of a texel at the face's centre
+  // the whole kernel on the home face: no tap needs the neighbour (a face coordinate moves up to 2x the angle)
+  const vec2  fc       = abs(hf.Pf.xy/hf.Pf.z);
+  const bool  homeOnly = max(fc.x, fc.y) + 2.0*OmniMaxRadius*texel < 1.0 - 2.0/hf.sz;
 
   const float ign = fract(52.9829189*fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
   const float rot = ign*2.0*M_PI;
   const mat2  rm  = mat2(cos(rot), sin(rot), -sin(rot), cos(rot));
 
-  // blockers: within the cone that one at a fifth of the distance could shadow, S/2*(1/0.2 - 1)/d
+  // blockers: within the cone that one at a fifth of the distance could shadow, S/2*(1/0.2 - 1)/d.
+  // Four spread taps first: where they agree (all lit or all blocked, 16 texels) the answer is clear
   const float searchR = clamp(2.0*S/dist, 1.5*texel, OmniMaxRadius*texel);
-  float ratio = 0, count = 0;
   [[unroll]]
-  for(int i=0; i<omniSearch.length(); ++i) {
+  for(int i=1; i<omniSearch.length(); i+=2) {
     const vec2 o = (rm*omniSearch[i])*searchR;
-    omniGather(u + o.x*T + o.y*B, home, P, n, R, atlasInv, ratio, count);
+    omniGather(u + o.x*T + o.y*B, hf, homeOnly, P, n, R, atlasInv, ratio, count);
     }
   if(count==0)
     return 1.0;
-  if(count>=4.0*omniSearch.length())
+  if(count>=2.0*omniSearch.length())
     return 0.0;
+  [[unroll]]
+  for(int i=0; i<omniSearch.length(); i+=2) {
+    const vec2 o = (rm*omniSearch[i])*searchR;
+    omniGather(u + o.x*T + o.y*B, hf, homeOnly, P, n, R, atlasInv, ratio, count);
+    }
 
   // the penumbra's half-width as an angle from the light: S/2*(d2/d1 - 1)/d2
   const float d1d2    = max(ratio/count, 0.02);
@@ -219,7 +233,7 @@ float omniShadow(const vec3 P, const vec3 n, const float R, const float S) {
   [[unroll]]
   for(int i=0; i<omniFilter.length(); ++i) {
     const vec2 o = (rm*omniFilter[i])*filterR;
-    lit += omniGather(u + o.x*T + o.y*B, home, P, n, R, atlasInv, ratio, count);
+    lit += omniGather(u + o.x*T + o.y*B, hf, homeOnly, P, n, R, atlasInv, ratio, count);
     }
   return lit/float(omniFilter.length());
   }
@@ -231,6 +245,10 @@ void main() {
 
   vec4 pos = scene.viewProjectLwcInv*vec4(scr.x,scr.y,z,1.0);
   pos.xyz/=pos.w;
+#if defined(VIRTUAL_SHADOW)
+  // geometric normal of the visible surface, before any discard (derivatives)
+  vec3 geomNormal = cross(dFdx(pos.xyz), dFdy(pos.xyz));
+#endif
   pos.xyz += push.origin;
 
   vec3 ldir = (pos.xyz-cenPosition.xyz);
@@ -256,11 +274,13 @@ void main() {
 #endif
 #if defined(VIRTUAL_SHADOW)
   {
-    // the plane for the shadow's depth test: the geometric one, unless it disagrees much (a thin edge, a normal map)
-    vec3 geomNormal = depthNormal(ivec2(gl_FragCoord.xy), z);
+    // the plane for the shadow's depth test: the geometric one, unless it disagrees much (a silhouette, a normal map)
+    geomNormal = dot(geomNormal,geomNormal)>1e-12 ? normalize(geomNormal) : vec3(0);
     geomNormal *= sign(dot(geomNormal, normal));
     const vec3 planeN = dot(geomNormal, normal)>=0.3 ? geomNormal : normal;
-    light *= omniShadow(pos.xyz - cenPosition.xyz, planeN, cenPosition.w, lights[lightId].sourceSize);
+    // too faint to show a soft edge: under ~1/500 of white before the tonemapper
+    const bool faint  = max(color.r, max(color.g, color.b))*light*max(1.0, scene.exposure)*0.25 < 0.002;
+    light *= omniShadow(pos.xyz - cenPosition.xyz, planeN, cenPosition.w, lights[lightId].sourceSize, faint);
     if(light<=0.0)
       discard;
   }
