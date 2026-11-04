@@ -19,28 +19,37 @@
 - `new_state(npc)`; `prepare(state, minute)` перед свёрткой — время и остывание чувств, возвращает
   `{"elapsed", "cooled"}`; `render_for_sol(state)` — открытые пункты с номерами, время с прошлой свёртки
   и нерешённые столкновения, для промпта свёртки;
-- `fold(state, текст_Sol, names=…, lines={номер строки: id хода}, minute=…, entries=[(seq, факт)…])` —
-  разбор, применение правок, пределы, забывание мелочи, столкновения. Возвращает
+- `fold(state, текст_Sol, names=…, lines={номер строки: id хода}, remarks={номер строки: seq факта},
+  minute=…, entries=[(seq, факт)…])` — разбор, применение правок, пределы, забывание мелочи,
+  столкновения. Стенд нумерует для Sol все строки разговора: реплики (`lines`) и ремарки игры о фактах
+  хроники — слух, показание (`remarks`, seq факта в журнале ветки). Возвращает
   `{"stats": счёт разбора, "applied": [запись на строку], "errors": число отклонённых строк,
   "forgotten": [id], "collisions": [пары]}`. Части по отдельности: `parse_patches`, `apply_patches`,
   `forget`;
-- `apply_truth({npc: state}, entries, minute=…, turn_texts={id хода: текст})` — закрытие по правде
-  хроники (`found_out`, `caught`; `lie` только помечает пункт ложным для мира) и по цепочке `rumor`.
+- `apply_truth({npc: state}, entries, minute=…, hero_turns=[(seq, id хода, текст)…])` — закрытие по
+  правде хроники (`found_out`, `caught`; `lie` только помечает пункт ложным для мира) и по цепочке
+  `rumor`. `hero_turns` — реплики героя с seq в журнале ветки: у реплик и фактов одна нумерация
+  (`memory.events`), по ней видно, какие реплики были до факта.
   Возвращает `[{"npc", "id", "fact"}]` закрытых пунктов;
 - `confirmations(state, item)` — число разных истоков подтверждения пункта.
 
 Порядок на встречу: `prepare` → `render_for_sol` в промпт → вызов Sol → `fold` → `apply_truth` по
 фактам ветки для всех NPC → `card` и `items_for` для Gemma. Счёт разбора (`stats`): `lines` — строк
 правок, `bad` — непонятых, `bad_tails` — строк с битым хвостом (пункт остаётся, плохое поле отброшено),
-`foreign_lines` — номеров строк вне таблицы, `names` и `unknown_names` — имён всего и без id.
+`foreign_lines` — номеров строк вне обеих таблиц, `names` и `unknown_names` — имён всего и без id,
+`unbound_hearsay` — пунктов этой свёртки с источником «сказал» без ссылки на ремарку слуха.
 
 Правила кода, которых нет в уме v3:
 - слот: у мнения (`opinion:hero`), настроения (`mood`) и «о X» (`other:<id>`) новый пункт закрывает старый;
 - «верю» или «сомневаюсь» тем же текстом о тех же id от другого рассказчика — не новый пункт, а ещё один
   источник в `also`; от того же — `duplicate`, как в v3; о других id — другой пункт;
 - `~` с новым текстом: основания пункта — строки, указанные в этой правке; прежние — в `log`;
-- «сказал X» связывается с фактом `rumor` от X к этому NPC, если пункт о квесте или деле того слуха;
-  исток — первый рассказчик цепочки, поэтому два пересказа одного истока — одно подтверждение;
+- «сказал X» связан с фактом `rumor` только ссылкой: среди строк пункта есть строка ремарки этого слуха.
+  Без неё пункт не связан — правда его не закрывает. Исток — первый рассказчик цепочки слуха, поэтому два
+  пересказа одного истока — одно подтверждение;
+- ложь словами (`caught` с `said`): её ход — реплика героя до факта, лучше всех совпавшая со словами
+  по правилу `catch_lie` (`sightings._matches`; больше корней, при равенстве последняя). Пункт «герой»
+  связан, только если этот ход есть в его `episodes` или `source.turn`;
 - столкновение — два открытых «верю»/«сомневаюсь» без слота об одном id (и о герое) с разным текстом.
   Пару Sol видит в одной свёртке, потом она не поднимается.
 
@@ -504,7 +513,8 @@ def prepare(state: dict[str, Any], minute: int) -> dict[str, Any]:
 
 
 def _new_stats() -> dict[str, int]:
-    return {"lines": 0, "bad": 0, "bad_tails": 0, "foreign_lines": 0, "unknown_names": 0, "names": 0}
+    return {"lines": 0, "bad": 0, "bad_tails": 0, "foreign_lines": 0, "unknown_names": 0, "names": 0,
+            "unbound_hearsay": 0}
 
 
 def _split_tail(line: str) -> tuple[str, str | None, bool]:
@@ -547,8 +557,12 @@ def _source(text: str, names: Names | None, stats: dict[str, int]) -> dict[str, 
     raise ValueError("bad_source")
 
 
-def _lines(text: str, lines: Mapping[int, str], stats: dict[str, int]) -> list[str]:
-    out = []
+def _lines(
+    text: str, lines: Mapping[int, str], remarks: Mapping[int, int], stats: dict[str, int]
+) -> tuple[list[str], list[int]]:
+    """Line numbers → (turn ids, seqs of the facts behind remark lines); a number in neither is foreign."""
+    turns: list[str] = []
+    facts: list[int] = []
     for token in re.split(r"[,\s]+", text.strip()):
         if not token:
             continue
@@ -560,14 +574,17 @@ def _lines(text: str, lines: Mapping[int, str], stats: dict[str, int]) -> list[s
             raise ValueError("bad_lines")
         for number in range(first, last + 1):
             if number in lines:
-                out.append(lines[number])
-            else:
+                turns.append(lines[number])
+            if number in remarks:
+                facts.append(int(remarks[number]))
+            if number not in lines and number not in remarks:
                 stats["foreign_lines"] += 1
-    return list(dict.fromkeys(out))
+    return list(dict.fromkeys(turns)), list(dict.fromkeys(facts))
 
 
 def _tail(
-    text: str, names: Names | None, lines: Mapping[int, str], stats: dict[str, int]
+    text: str, names: Names | None, lines: Mapping[int, str], remarks: Mapping[int, int],
+    stats: dict[str, int],
 ) -> tuple[dict, bool]:
     """A tail's fields; a bad field is dropped, the rest stays. Returns (fields, all fields were good)."""
     fields: dict[str, Any] = {}
@@ -593,7 +610,7 @@ def _tail(
                     elif id_ not in about:
                         about.append(id_)
             elif key in ("стр", "строка", "строки"):
-                fields["episodes"] = _lines(value, lines, stats)
+                fields["episodes"], fields["remarks"] = _lines(value, lines, remarks, stats)
             elif key in ("от", "источник"):
                 fields["source"] = _source(value, names, stats)
             elif key in ("сила", "важность"):
@@ -641,11 +658,14 @@ def _params(letter: str, params: str, *, adding: bool, names: Names | None, stat
     raise ValueError("bad_param")
 
 
-def parse_patches(text: str, *, names: Names | None = None, lines: Mapping[int, str] | None = None) -> dict:
+def parse_patches(
+    text: str, *, names: Names | None = None, lines: Mapping[int, str] | None = None,
+    remarks: Mapping[int, int] | None = None,
+) -> dict:
     """Sol's patches → {"patches": [...], "stats": {lines, bad, bad_tails, foreign_lines, unknown_names,
-    names}}. A line the grammar does not know is counted in `bad` and kept with its error; a broken tail
-    loses only its bad fields."""
-    lines = lines or {}
+    names, unbound_hearsay (filled by fold)}}. A line the grammar does not know is counted in `bad` and kept
+    with its error; a broken tail loses only its bad fields."""
+    lines, remarks = lines or {}, remarks or {}
     stats = _new_stats()
     body = text.split("[Правки]", 1)[1] if "[Правки]" in text else text
     patches = []
@@ -659,7 +679,7 @@ def parse_patches(text: str, *, names: Names | None = None, lines: Mapping[int, 
         patches.append(patch)
         line, tail, broken = _split_tail(line)
         if tail is not None:
-            patch["tail"], good = _tail(tail, names, lines, stats)
+            patch["tail"], good = _tail(tail, names, lines, remarks, stats)
             if broken or not good:
                 stats["bad_tails"] += 1
         try:
@@ -718,20 +738,6 @@ def normalized(text: str) -> str:
     return text
 
 
-def _rumor_ref(
-    entries: Sequence[tuple[int, Mapping]], holder: str, who: str, about: Iterable[str]
-) -> int | None:
-    """The latest rumor fact the holder heard from `who` of the quest or deed the item is about; None if
-    the item names none (then it is plain hearsay of the talk, not tied to a chronicle rumor)."""
-    about = set(about)
-    matching = [
-        seq for seq, f in entries
-        if f.get("fact") == "rumor" and f.get("to") == holder and f.get("from") == who
-        and {f.get("quest"), f.get("crime")} & about
-    ]
-    return matching[-1] if matching else None
-
-
 def _origin(entries: Sequence[tuple[int, Mapping]], source: Mapping[str, Any]) -> str:
     """Where a piece of news started: the first teller of its rumor chain, the hero, or the npc itself."""
     kind = source.get("kind")
@@ -762,17 +768,21 @@ def _same_news(a: Mapping[str, Any], b: Mapping[str, Any]) -> bool:
     return bool(a.get("crime")) and a.get("crime") == b.get("crime")
 
 
-def _sourced(src: dict[str, Any] | None, letter: str, episodes: list[str], state: Mapping[str, Any],
-             entries: Sequence[tuple[int, Mapping]], about: list[str]) -> dict[str, Any]:
-    src = dict(src or {"kind": DEFAULT_SOURCE[letter] or "вывел"})
-    src.setdefault("who", None)
-    src.setdefault("name", "")
-    src.setdefault("turn", episodes[0] if episodes else None)
-    if src["kind"] == "сказал" and src.get("who") and "fact" not in src:
-        src["fact"] = _rumor_ref(entries, state["npc"], src["who"], about)
-    src.setdefault("fact", None)
-    src["origin"] = _origin(entries, src)
-    return src
+def _sourced(src: Mapping[str, Any] | None, letter: str, episodes: list[str], remarks: list[int],
+             entries: Sequence[tuple[int, Mapping]]) -> dict[str, Any]:
+    """The source with its links: the first cited turn, and the fact of the first cited remark. Hearsay is
+    bound only to a `rumor` fact whose remark line it cites; without one its `fact` is None (unbound)."""
+    base = src or {"kind": DEFAULT_SOURCE[letter] or "вывел"}
+    out = {"kind": base["kind"], "who": base.get("who"), "name": base.get("name", "")}
+    out["turn"] = episodes[0] if episodes else None
+    if out["kind"] == "сказал":
+        facts = dict(entries)
+        rumors = [seq for seq in remarks if (facts.get(seq) or {}).get("fact") == "rumor"]
+        out["fact"] = rumors[0] if rumors else None
+    else:
+        out["fact"] = remarks[0] if remarks else None
+    out["origin"] = _origin(entries, out)
+    return out
 
 
 def _teller(source: Mapping[str, Any]) -> tuple[Any, ...]:
@@ -860,8 +870,8 @@ def _add(state: dict[str, Any], patch: Mapping[str, Any], minute: int, names: Na
     if names is not None:  # Sol's own text: written, not heard
         about += [id_ for id_ in names.find(patch["text"], heard=False) if id_ not in about]
     about = list(dict.fromkeys(about))
-    episodes = list(tail.get("episodes", []))
-    source = _sourced(values.get("source") or tail.get("source"), letter, episodes, state, entries, about)
+    episodes, remarks = list(tail.get("episodes", [])), list(tail.get("remarks", []))
+    source = _sourced(values.get("source") or tail.get("source"), letter, episodes, remarks, entries)
     slot = _slot(letter, who, name)
     text = patch["text"]
     same = [i for i in open_items(state, letter) if normalized(i["text"]) == normalized(text)
@@ -872,6 +882,7 @@ def _add(state: dict[str, Any], patch: Mapping[str, Any], minute: int, names: Na
         if letter in "вс" and _teller(source) not in known:
             item["also"].append(source)  # told again: confirmations() counts the different origins
             item["episodes"] = list(dict.fromkeys(item["episodes"] + episodes))
+            item["remarks"] = list(dict.fromkeys(item["remarks"] + remarks))
             state["log"].append({"op": "confirm", "id": item["id"], "by": "sol", "minute": minute,
                                  "origin": source["origin"]})
             return item["id"], []
@@ -889,6 +900,7 @@ def _add(state: dict[str, Any], patch: Mapping[str, Any], minute: int, names: Na
         "source": source,
         "also": [],
         "episodes": episodes,
+        "remarks": remarks,  # seqs of the facts behind the remark lines it cites
         "valid_from": minute,
         "valid_to": None,
         "strength": values.get("strength", tail.get("strength", 2)),
@@ -914,7 +926,8 @@ def _change(state: dict[str, Any], patch: Mapping[str, Any], minute: int, names:
     if item is None:
         raise ValueError("unknown_id")
     letter, tail, values = item["section"], patch["tail"], dict(patch["values"])
-    before = {k: deepcopy(item[k]) for k in ("text", "about", "source", "episodes", "strength", "importance")}
+    before = {k: deepcopy(item[k])
+              for k in ("text", "about", "source", "episodes", "remarks", "strength", "importance")}
     if patch["text"]:
         values["text"] = patch["text"]
     if letter == "ч":
@@ -930,15 +943,16 @@ def _change(state: dict[str, Any], patch: Mapping[str, Any], minute: int, names:
             item[key] = tail[key]
     item["about"] = list(dict.fromkeys(item["about"] + tail.get("about", [])))
     item["about_names"] = list(dict.fromkeys(item["about_names"] + tail.get("about_names", [])))
-    if patch["text"]:  # a new claim stands on the lines cited now; the old ones stay in the log
-        item["episodes"] = list(dict.fromkeys(tail.get("episodes", [])))
-        item["source"] = {**item["source"], "turn": item["episodes"][0] if item["episodes"] else None}
-    else:
-        item["episodes"] = list(dict.fromkeys(item["episodes"] + tail.get("episodes", [])))
+    for key in ("episodes", "remarks"):
+        if patch["text"]:  # a new claim stands on the lines cited now; the old ones stay in the log
+            item[key] = list(dict.fromkeys(tail.get(key, [])))
+        else:
+            item[key] = list(dict.fromkeys(item[key] + tail.get(key, [])))
     if names is not None and patch["text"]:
         item["about"] += [id_ for id_ in names.find(patch["text"], heard=False) if id_ not in item["about"]]
-    if source is not None:
-        item["source"] = _sourced(source, letter, item["episodes"], state, entries, item["about"])
+    if source is not None or patch["text"] or tail.get("episodes") or tail.get("remarks"):
+        base = source or item["source"]
+        item["source"] = _sourced(base, letter, item["episodes"], item["remarks"], entries)
     state["log"].append({"op": "change", "id": item["id"], "by": "sol", "minute": minute, "before": before})
     return item["id"], _close_slot(state, item, minute)
 
@@ -980,14 +994,20 @@ def fold(
     *,
     names: Names | None,
     lines: Mapping[int, str] | None = None,
+    remarks: Mapping[int, int] | None = None,
     minute: int,
     entries: Iterable[tuple[int, Mapping]] = (),
 ) -> dict[str, Any]:
     """One Sol fold at the end of a talk: parse, apply, caps, forget trifles, collisions. The collisions
     present before it were shown to Sol (render_for_sol): they are not raised again."""
     shown = [c["ids"] for c in state["collisions"]]
-    parsed = parse_patches(text, names=names, lines=lines)
+    parsed = parse_patches(text, names=names, lines=lines, remarks=remarks)
     applied = apply_patches(state, parsed, minute=minute, names=names, entries=entries)
+    touched = [find_item(state, i) for i in dict.fromkeys(r["id"] for r in applied if r["ok"] and r["id"])]
+    parsed["stats"]["unbound_hearsay"] = sum(
+        1 for item in touched
+        if item and any(s["kind"] == "сказал" and s["fact"] is None for s in (item["source"], *item["also"]))
+    )
     forgotten = forget(state, minute)
     state["collisions_seen"] += [ids for ids in shown if ids not in state["collisions_seen"]]
     state["collisions"] = find_collisions(state)
@@ -1015,26 +1035,31 @@ def _cited(item: Mapping[str, Any], facts: Mapping[int, Mapping]) -> Mapping[str
     return facts.get(ref) if ref is not None else None
 
 
+def lie_turn(seq: int, said: str, hero_turns: Iterable[tuple[int, str, str]]) -> str | None:
+    """The hero's line a lie in words was caught in: of his lines before the fact (by seq), the one that
+    matches the words as catch_lie checks them (sightings._matches) with the most roots; the latest of
+    equals."""
+    words = roots(said)
+    best = max(
+        ((len(words & roots(text)), line_seq, turn) for line_seq, turn, text in hero_turns
+         if line_seq < seq and heard_words(said, roots(text))),
+        default=None,
+    )
+    return best[2] if best else None
+
+
 def _linked(item: Mapping[str, Any], fact: Mapping[str, Any], facts: Mapping[int, Mapping],
-            turn_texts: Mapping[str, str] | None) -> bool:
-    """The item is about the claim the fact speaks of: by quest id (in about, or through the fact its
-    source cites), by the turn (`turn`/`turns` of the fact, or the turn whose words were caught), or, for
-    a lie in words, by those words in the item itself. Words match as catch_lie checks them
-    (sightings._matches: most of their roots)."""
-    quest = fact.get("quest")
-    if quest and quest in item["about"]:
-        return True
+            turn: str | None) -> bool:
+    """The item is about the claim the fact speaks of. Hearsay: only through the rumor fact whose remark
+    it cites. Otherwise: the quest id in about or in the fact it cites, or the lie's turn (`turn`,
+    lie_turn) among its episodes or its source's turn."""
     cited = _cited(item, facts)
-    if quest and cited is not None and cited.get("quest") == quest:
+    if item["source"]["kind"] == "сказал":
+        return cited is not None and cited.get("fact") == "rumor" and _same_news(cited, fact)
+    quest = fact.get("quest")
+    if quest and (quest in item["about"] or (cited is not None and cited.get("quest") == quest)):
         return True
-    turns = set(item["episodes"]) | {item["source"].get("turn")} - {None}
-    fact_turns = {fact.get("turn"), *(fact.get("turns") or ())} - {None}
-    said = str(fact.get("title", "")) if fact.get("said") else ""
-    if said and turn_texts:
-        fact_turns |= {t for t, words in turn_texts.items() if heard_words(said, roots(words))}
-    if turns & fact_turns:
-        return True
-    return bool(said) and heard_words(said, roots(item["text"]))
+    return turn is not None and turn in {*item["episodes"], item["source"].get("turn")}
 
 
 def apply_truth(
@@ -1042,24 +1067,28 @@ def apply_truth(
     entries: Iterable[tuple[int, Mapping]],
     *,
     minute: int,
-    turn_texts: Mapping[str, str] | None = None,
+    hero_turns: Iterable[tuple[int, str, str]] = (),
 ) -> list[dict[str, Any]]:
     """Close by the chronicle's truth:
     - `found_out` / `caught`: the npc that learned it loses its items from the hero's word about that
       claim; everyone the rumor of it reached (`rumor` chain from that npc, `from` → `to`; the game tells
       it after the truth, quests._tell) loses its items from someone's word about it, except those that
-      cite the truth's own rumor. `closed_by=truth`;
+      cite the truth's own rumor. Hearsay is linked only by the remark of its rumor it cites; a lie in
+      words by its turn (lie_turn over `hero_turns`: (seq in the branch log, turn id, text) — the hero's
+      lines and the facts share one seq, memory.events). `closed_by=truth`;
     - `lie` is written the moment the hero lies, when the npc does not know yet: it only marks the item
       false for the world (`false_by`), the item stays open until `found_out` or `caught`.
     Every call checks all open items, so items folded later are checked too; closed ones stay closed."""
     entries = sorted(entries, key=lambda e: e[0])
     facts = dict(entries)
+    hero_turns = list(hero_turns)
     closed = []
     for seq, fact in entries:
         kind = fact.get("fact")
+        turn = lie_turn(seq, str(fact.get("title", "")), hero_turns) if fact.get("said") else None
         if kind == "lie" and (state := states.get(str(fact.get("npc", "")).upper())) is not None:
             for item in open_items(state):
-                if item["source"]["kind"] == "герой" and _linked(item, fact, facts, turn_texts):
+                if item["source"]["kind"] == "герой" and _linked(item, fact, facts, turn):
                     item.setdefault("false_by", seq)
         if kind not in TRUTH:
             continue
@@ -1080,7 +1109,7 @@ def apply_truth(
             for item in open_items(state):
                 cited = _cited(item, facts)
                 truth = cited is not None and cited.get("kind") in TRUTH  # heard the truth itself
-                if item["source"]["kind"] == want and not truth and _linked(item, fact, facts, turn_texts):
+                if item["source"]["kind"] == want and not truth and _linked(item, fact, facts, turn):
                     _close(state, item, "truth", minute, fact=seq)
                     closed.append({"npc": npc, "id": item["id"], "fact": seq})
             state["collisions"] = find_collisions(state)
@@ -1401,12 +1430,12 @@ def _test_parse(check: _Check, names: Names) -> None:
         "+ было 7: он украл моё письмо [стр: двенадцать; о: Кавалорн]",  # bad lines field
         "+ верю видел: у пещеры дым [стр: 99]",  # a foreign line
         "+ о Хренозавр: странный тип [о: Хренозавр]",  # names without ids
-        "+ сомневаюсь сказал Кавалорн: что Браго один [ключ: значение]",  # unknown key
+        "+ сомневаюсь сказал Кавалорн: что Браго один [ключ: значение; стр: 20]",  # unknown key; a remark
         "что-то непонятное",
         "+ верю: без источника",
         "—",
     ])
-    parsed = parse_patches(text, names=names, lines=lines)
+    parsed = parse_patches(text, names=names, lines=lines, remarks={20: 7})
     stats, patches = parsed["stats"], parsed["patches"]
     check("parse counts lines", stats["lines"] == 9, stats)
     check("parse bad lines", stats["bad"] == 2, stats)
@@ -1423,6 +1452,9 @@ def _test_parse(check: _Check, names: Names) -> None:
           patches[2]["tail"].get("about") == [CAVALORN] and patches[2]["error"] is None)
     told = patches[5]["values"]["source"]
     check("source who", told["kind"] == "сказал" and told["who"] == CAVALORN, told)
+    tail = patches[5]["tail"]
+    check("remark line → fact", tail.get("remarks") == [7] and tail["episodes"] == [],
+          patches[5]["tail"])
     state = new_state(CAVALORN)
     applied = apply_patches(state, parsed, minute=1440 + 600, names=names)
     ok = [r["id"] for r in applied if r["ok"] and r["id"]]
@@ -1576,82 +1608,90 @@ def _test_lies(check: _Check, names: Names) -> None:
     check("lie 1: closed out of card", "перебил овец" not in card(lobart).text)
     check("lie 1: applied once", apply_truth({LOBART: lobart}, entries, minute=2300) == [])
 
-    # 2. the hero lied to A, A retold B, B retold C; the truth closes all three, a later rumor of the truth
-    # stays
+    # 2. the hero lied to A, A retold B, B retold C; the truth closes all three. Hearsay is bound to its
+    # rumor only by the remark line it cites: a late fold after the truth's rumor closes the claim's
+    # retelling, keeps the truth's one and the unbound one
     quest = "MIS_ADDON_CAVALORN_BANDITS"
+    rumor = {"fact": "rumor", "quest": quest, "about": CAVALORN, "hops": 1}
     entries = [
         (10, {"fact": "claim", "quest": quest, "npc": CAVALORN, "title": "Бандиты у башни Ксардаса"}),
-        (11, {"fact": "rumor", "quest": quest, "kind": "claim", "about": CAVALORN, "from": CAVALORN,
-              "to": XARDAS, "hops": 1, "how": "met"}),
-        (12, {"fact": "rumor", "quest": quest, "kind": "claim", "about": CAVALORN, "from": XARDAS,
-              "to": VATRAS, "hops": 2, "how": "met"}),
+        (11, {**rumor, "kind": "claim", "from": CAVALORN, "to": XARDAS}),
+        (12, {**rumor, "kind": "claim", "from": XARDAS, "to": VATRAS, "hops": 2}),
+        (13, {**rumor, "kind": "claim", "from": CAVALORN, "to": ONAR}),
     ]
     a, b, c, d, o = (new_state(n) for n in (CAVALORN, XARDAS, VATRAS, LOBART, ONAR))
     fold(a, "+ верю герой: бандиты у башни перебиты [о: Бандиты у башни Ксардаса]", names=names,
          minute=3000, entries=entries)
-    fold(b, "+ верю сказал Кавалорн: герой перебил бандитов у башни\n"
-            "+ верю сказал Кавалорн: Кавалорн мне друг", names=names, minute=3100, entries=entries)
-    fold(c, "+ верю слышал от Ксардаса: бандитов у башни больше нет", names=names, minute=3200,
-         entries=entries)
-    fold(o, "+ верю сказал Кавалорн: бандиты у башни Ксардаса перебиты", names=names, minute=3250,
-         entries=entries)  # heard in talk, no rumor fact; the truth's rumor reaches it later
-    check("lie 2: B links the rumor", find_item(b, "в1")["source"]["fact"] == 11,
-          find_item(b, "в1")["source"])
+    report = fold(b, "+ верю сказал Кавалорн: герой перебил бандитов у башни [стр: 1]\n"
+                     "+ верю сказал Кавалорн: Кавалорн мне друг", names=names, remarks={1: 11}, minute=3100,
+                  entries=entries)
+    fold(c, "+ верю слышал от Ксардаса: бандитов у башни больше нет [стр: 3]", names=names, remarks={3: 12},
+         minute=3200, entries=entries)
+    check("lie 2: B links the rumor by its remark", find_item(b, "в1")["source"]["fact"] == 11
+          and find_item(b, "в2")["source"]["fact"] is None and report["stats"]["unbound_hearsay"] == 1,
+          (find_item(b, "в1")["source"], report["stats"]))
     entries += [
-        (13, {"fact": "caught", "quest": quest, "npc": CAVALORN, "name": "Кавалорн",
+        (14, {"fact": "caught", "quest": quest, "npc": CAVALORN, "name": "Кавалорн",
               "title": "Бандиты у башни Ксардаса", "how": "сам видел бандитов живыми"}),
-        (14, {"fact": "rumor", "quest": quest, "kind": "caught", "about": CAVALORN, "from": CAVALORN,
-              "to": LOBART, "hops": 1, "how": "heard"}),
-        (15, {"fact": "rumor", "quest": quest, "kind": "caught", "about": CAVALORN, "from": CAVALORN,
-              "to": ONAR, "hops": 1, "how": "heard"}),
+        (15, {**rumor, "kind": "caught", "from": CAVALORN, "to": LOBART}),
+        (16, {**rumor, "kind": "caught", "from": CAVALORN, "to": ONAR}),
     ]
-    fold(d, "+ верю сказал Кавалорн: герой соврал про бандитов у башни", names=names, minute=3300,
-         entries=entries)
+    fold(d, "+ верю сказал Кавалорн: герой соврал про бандитов у башни [стр: 1]", names=names,
+         remarks={1: 15}, minute=3300, entries=entries)
+    late = fold(o, "\n".join([
+        "+ верю сказал Кавалорн: бандиты у башни Ксардаса перебиты [стр: 1]",
+        "+ верю сказал Кавалорн: герой соврал про бандитов у башни [стр: 2]",
+        "+ верю сказал Кавалорн: бандиты ушли из пещеры",
+    ]), names=names, remarks={1: 13, 2: 16}, minute=3350, entries=entries)
     states = {CAVALORN: a, XARDAS: b, VATRAS: c, LOBART: d, ONAR: o}
     closed = apply_truth(states, entries, minute=3400)
-    check("lie 2: A, B, C and the truth's listener closed", sorted((x["npc"], x["id"]) for x in closed)
+    check("lie 2: A, B, C and the late retelling closed", sorted((x["npc"], x["id"]) for x in closed)
           == sorted([(CAVALORN, "в1"), (XARDAS, "в1"), (VATRAS, "в1"), (ONAR, "в1")]), closed)
-    check("lie 2: the truth's rumor stays", find_item(d, "в1")["closed_by"] is None)
-    check("lie 2: other hearsay stays", find_item(b, "в2")["closed_by"] is None
-          and find_item(b, "в2")["source"]["fact"] is None, find_item(b, "в2"))
+    check("lie 2: the truth's rumor stays", find_item(d, "в1")["closed_by"] is None
+          and find_item(o, "в2")["closed_by"] is None)
+    check("lie 2: unbound hearsay stays and is counted", find_item(o, "в3")["closed_by"] is None
+          and find_item(b, "в2")["closed_by"] is None and late["stats"]["unbound_hearsay"] == 1,
+          late["stats"])
     fold(a, "+ верю герой: бандиты у башни теперь точно перебиты [о: Бандиты у башни Ксардаса]",
          names=names, minute=3500, entries=entries)
     closed = apply_truth(states, entries, minute=3600)
-    check("lie 2: a later fold is checked too", closed == [{"npc": CAVALORN, "id": "в2", "fact": 13}], closed)
+    check("lie 2: a later fold is checked too", closed == [{"npc": CAVALORN, "id": "в2", "fact": 14}], closed)
 
-    # a lie in words, found through the turn whose words were caught
+    # a lie in words: its turn is the hero's line before the fact that matches the words best
     e = new_state(VATRAS)
     fold(e, "+ верю герой: он сам расправился с ним [стр: 5]", names=names, lines={5: "t5"}, minute=3500)
     said = [(20, {"fact": "caught", "quest": "SAID_VLK_439_VATRAS_3600", "npc": VATRAS, "said": True,
                   "title": "Браго убит", "how": "сам видел его живым"})]
-    apply_truth({VATRAS: e}, said, minute=3600, turn_texts={"t5": "Браго мёртв, я сам видел"})
+    turns = [(4, "t4", "Привет, Ватрас"), (5, "t5", "Браго мёртв, я сам видел"), (30, "t30", "Браго убит")]
+    check("lie turn: best before the fact", lie_turn(20, "Браго убит", turns) == "t5")
+    apply_truth({VATRAS: e}, said, minute=3600, hero_turns=turns)
     check("lie in words: by the turn", find_item(e, "в1")["closed_by"] == "truth")
     e = new_state(VATRAS)
-    fold(e, "+ верю герой: Браго мёртв [стр: 1]", names=names, lines={1: "t1"}, minute=3700)
+    fold(e, "+ верю герой: Браго мёртв [стр: 1]\n+ верю герой: он видел тело [стр: 1]", names=names,
+         lines={1: "t1"}, minute=3700)
     fold(e, "~ в1 герой: Браго жив [стр: 2]", names=names, lines={2: "t2"}, minute=3800)
     item = find_item(e, "в1")
     check("change: new grounds", item["episodes"] == ["t2"] and item["source"]["turn"] == "t2"
           and e["log"][-1]["before"]["episodes"] == ["t1"], item)
     said = [(21, {"fact": "caught", "quest": "SAID_VLK_439_VATRAS_3900", "npc": VATRAS, "said": True,
-                  "title": "Я убил Браго вчера", "how": "сам видел его живым"})]
-    apply_truth({VATRAS: e}, said, minute=3900, turn_texts={"t1": "Я убил Браго вчера", "t2": "Браго жив"})
-    check("change: the old lie does not close it", item["closed_by"] is None, item)
+                  "title": "Браго мёртв", "how": "сам видел его живым"})]
+    apply_truth({VATRAS: e}, said, minute=3900, hero_turns=[(1, "t1", "Браго мёртв"), (2, "t2", "Браго жив")])
+    check("change: the corrected claim stays open", item["closed_by"] is None, item)
+    check("change: the claim on the lie's turn closes", find_item(e, "в2")["closed_by"] == "truth")
 
     # 3. two retellings of one origin are one confirmation
     entries = [
-        (30, {"fact": "rumor", "quest": quest, "kind": "caught", "about": CAVALORN, "from": CAVALORN,
-              "to": XARDAS, "hops": 1}),
-        (31, {"fact": "rumor", "quest": quest, "kind": "caught", "about": CAVALORN, "from": CAVALORN,
-              "to": VATRAS, "hops": 1}),
-        (32, {"fact": "rumor", "quest": quest, "kind": "caught", "about": CAVALORN, "from": XARDAS,
-              "to": LOBART, "hops": 2}),
-        (33, {"fact": "rumor", "quest": quest, "kind": "caught", "about": CAVALORN, "from": VATRAS,
-              "to": LOBART, "hops": 2}),
+        (30, {**rumor, "kind": "caught", "from": CAVALORN, "to": XARDAS}),
+        (31, {**rumor, "kind": "caught", "from": CAVALORN, "to": VATRAS}),
+        (32, {**rumor, "kind": "caught", "from": XARDAS, "to": LOBART, "hops": 2}),
+        (33, {**rumor, "kind": "caught", "from": VATRAS, "to": LOBART, "hops": 2}),
     ]
     f = new_state(LOBART)
     lies = "герой лжёт про бандитов у башни"
-    fold(f, f"+ верю сказал Ксардас: {lies}", names=names, minute=4000, entries=entries)
-    report = fold(f, f"+ верю сказал Ватрас: {lies}", names=names, minute=4100, entries=entries)
+    fold(f, f"+ верю сказал Ксардас: {lies} [стр: 1]", names=names, remarks={1: 32}, minute=4000,
+         entries=entries)
+    report = fold(f, f"+ верю сказал Ватрас: {lies} [стр: 2]", names=names, remarks={2: 33}, minute=4100,
+                  entries=entries)
     item = find_item(f, "в1")
     check("lie 3: retelling merges", report["applied"][0]["id"] == "в1" and len(item["also"]) == 1
           and report["applied"][0]["ok"] and len(f["items"]) == 1, report["applied"])
