@@ -61,9 +61,11 @@ Warm экономит **737 мс** стадии против off (медианы
 ## Эквивалентность
 
 - **Стенд `placed-items-census`** (NEWWORLD, 126 участков по 12 м, ≥300 нативных шагов на каждый) при `OPENGOTHIC_PLACED_CENSUS_CACHE=0` и при тёплом кэше. Побайтно совпали `placed-items-census.jsonl` (2331 строка, `sha256 bbc63a23…`), `placed-items-probe.jsonl` (227 строк, `3da79ec6…`) и `placed-items-digest.jsonl` (`37456d55…`). В digest после переписи 7730 тел Jolt, 4 расставленных Item с телом; после пробы 7824 тела. ID, позы, сон и скорости всех тел совпали, в том числе у тел, созданных после шага. Из 141 события различаются только `classification_ms` и `world_load_ms` (848,0 → 129,5 мс и 2450,7 → 1733,8 мс).
+- **Цикл ID нужен.** Контрольный прогон: тот же стенд на попадании, но в сборке без вызова `cycleBodyIds` (временный worktree, удалён). `placed-items-census.jsonl` совпал, но `bodies_sha256` отличается уже сразу после переписи (`84f485c0…` против `8874c494…`), при том же числе тел 7730. В `placed-items-probe.jsonl` 29 из 227 предметов осели иначе, отличаются 57 полей: ZEN 25565 сдвинулся на 0,644 → 0,673 см, ZEN 25345 — на 1,434 → 1,433 см. Значит, другие `BodyID` меняют порядок решателя Jolt, а с циклом ID всё совпадает.
 - **Сверка на новом старте:** `OPENGOTHIC_PLACED_CENSUS_CHECK=1`, зонд NEWWORLD на тёплом кэше — `hit, 2331 items`, `check: passed, 2331 items identical`, exit 0.
 - **Сверка из сейва** (`session-placed-items.sav`): `hit`, `check: passed, 2331 items identical`, exit 0.
 - **`load_rewind` в режиме сверки** (изолированный кэш, файл удалён перед запуском). Новый старт — `miss (absent), recomputed 2331 items`. Загрузка слота 7 — `hit` и `check: passed, 2331 items identical`. Сценарий — 4 проверки, 0 провалов, exit 0.
+- **`load_rewind` как есть** (`SCENARIO=load_rewind scripts/ryzen.sh e2e`, общий кэш e2e-папки): на новом старте был файл версии 1, поэтому `miss (version), recomputed 2331 items`. Загрузка слота — настоящее попадание без сверки, `hit, 2331 items`, стадия 192,3 мс. 4 проверки, 0 провалов, exit 0.
 - **Стенд `placed-items`** (численный стенд шага 5 этапа 8) красный на `main` по [#851](https://github.com/kaifaty/GothicAI/issues/851). Off и warm ветки оба падают на том же шаге: `ragdoll arena failed: placed Item owned table preparation requires admitted owned and excluded authored Items on one native table`, exit 1. До провала все 14 событий `placed_items_*` совпали между off и warm; различаются только `classification_ms`, `world_load_ms` и размер архива сейва (`bytes` 10 071 943 / 10 072 700, как и в #850). Off ветки сравнён и с прогоном `main` из #850 (`9a72c18c3`): `placed-items-census.jsonl` совпал побайтно, 13 общих событий — с теми же тремя исключениями. Новое событие `placed_items_digest` в обоих прогонах ветки одинаково. Значит, правка не меняет вывод стенда до провала.
 
 ## Mac
@@ -76,4 +78,4 @@ Warm экономит **737 мс** стадии против off (медианы
 
 ## Данные
 
-[census-bodies.csv](census-bodies.csv) — 17 строк серии (prep, off/cold/warm ×5, check-1). Сырые журналы — `/mnt/shared/gothic-ai/census-bodies/raw/`: `series/` (зонд), `bench/` (`census-{off,warm}`, `save-{cold,warm,check}`, `items-{off,warm}`), `e2e-check/`.
+[census-bodies.csv](census-bodies.csv) — 17 строк серии (prep, off/cold/warm ×5, check-1). Сырые журналы — `/mnt/shared/gothic-ai/census-bodies/raw/`: `series/` (зонд), `bench/` (`census-{off,warm}`, `census-warm-noid2` — без цикла ID, `census-warm-noid` — его неудачная попытка на промахе, `save-{cold,warm,check}`, `items-{off,warm}`), `e2e-check/`, `e2e-plain/`.
