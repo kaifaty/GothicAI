@@ -66,11 +66,12 @@ ACTIVE
     publish "$task/main/$main_revision" "$main/tree" OpenGothic scripts
   fi
   case "$stage" in
-    point) resources=(--class batch --threads 16 --cpu-quota 1600% --mem 14G --max 2h) ;;
-    live) resources=(--class batch --threads 12 --cpu-quota 1200% --mem 12G --gpu-mem 4G --display --display-shared --max 2h) ;;
+    # gq peaks of the first round: point 9.66 GiB in 1600 s, live 1.49 GiB in 470 s.
+    point) resources=(--class batch --threads 16 --cpu-quota 1600% --mem 11G --max 2h); seconds=7200 ;;
+    live) resources=(--class quick --threads 12 --cpu-quota 1200% --mem 5G --gpu-mem 4G --display --display-shared --max 59m); seconds=3540 ;;
   esac
   GQ_OWNER="$task_name" "$ROOT/scripts/gq" submit "${resources[@]}" --name "nav roads carrot $stage $snapshot" -- \
-    python3 -X faulthandler -I "$task/source/$snapshot/scripts/nav_job.py" --max-seconds 7200 -- \
+    python3 -X faulthandler -I "$task/source/$snapshot/scripts/nav_job.py" --max-seconds "$seconds" -- \
     env NAV_ROADS_CARROT_ARCHIVE="$archive" \
     bash "$task/source/$snapshot/scripts/nav-roads-carrot-remote.sh" run "$stage" "$snapshot" "$main_revision"
   exit
@@ -239,7 +240,7 @@ for name, filename in (("save", "save.sav"), ("roads", "places.json"), ("familia
     if not Path(inputs[name]).is_file():
         inputs[name] = str(Path("/mnt/shared/gothic-ai/archive/nav-demos-v5-20261030/input") / filename)
 output.mkdir(parents=True, exist_ok=True)
-args = SimpleNamespace(suite=suite, output=output, binary=binary, inputs=inputs, deadline=time.monotonic() + 6600,
+args = SimpleNamespace(suite=suite, output=output, binary=binary, inputs=inputs, deadline=time.monotonic() + 3000,
                        input_sha256={name: live.sha256(inputs[name]) for name in ("save", "roads", "familiar", "links")})
 assert args.input_sha256 == finished["input_sha256"], "Frozen live inputs differ from the baseline"
 model = dict(name="pace-v5", weights=str(weights), sha256=live.sha256(weights), force_place_pace=True,
