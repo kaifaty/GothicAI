@@ -5,6 +5,8 @@
     $R cutout ITEM PICTURE.png          # white background -> RGBA input for run-mesh3d.sh
     # on dev-ubuntu: run-mesh3d.sh (raw.npz), then cumesh_clean.py RAW OUT BUDGET (clean.npz, low.npz); copy all three
     $R models [ITEM ...]                # -> model.glb + maps (blender/gen_prop.py)
+    $R omni [ITEM ...]                  # <item>-h: Hunyuan3D-Omni's shape with <item>-o's colour (--with trimesh
+                                        # --with fast-simplification --with open3d)
     $R pack --set NAME [ITEM ...]       # meshes.json / materials.json for building_set.py compose
 
 The user opened the pilot on 2026-11-02 after the code-built set lost to the original in game
@@ -51,8 +53,14 @@ ORIGINAL_MEANS = {
 }
 for _item, _mean in ORIGINAL_MEANS.items():
     ITEMS[f'{_item}-o'] = (f"OWN_FURN_{_item.upper().replace('-', '_')}_ORIG", 'WOOD', 0.85, _mean)
+# The same items with Hunyuan3D-Omni's shape (the picture and the original's surface points; the user, 2026-11-04:
+# «Omni is better», licence accepted) and the colour accepted on their TRELLIS.2 shape (omni).
+for _item, _mean in ORIGINAL_MEANS.items():
+    ITEMS[f'{_item}-h'] = (f"OWN_FURN_{_item.upper().replace('-', '_')}_OMNI", 'WOOD', 0.85, _mean)
 VARIANT_OF = {'throne-a': 'throne', 'throne-b': 'throne', 'throne-pmv': 'throne', 'throne-pb': 'throne',
-              **{f'{item}-o': item for item in ORIGINAL_MEANS}}  # the target and the visual a variant replaces
+              **{f'{item}-{v}': item for item in ORIGINAL_MEANS for v in 'oh'}}  # the target and the visual a variant replaces
+OMNI = Path.home() / '.local/share/gothic-ai/remaster/hunyuan-pilot/omni-point'
+OMNI_LICENCE = Path.home() / '.local/share/gothic-ai/content-sources/licences/hunyuan3d-omni'
 
 
 def cmd_cutout(args) -> int:
@@ -160,6 +168,114 @@ def cmd_models(args) -> int:
     return 0
 
 
+def about_y(points, degrees: float):
+    import numpy as np
+    a = np.radians(degrees)
+    return points @ np.array([[np.cos(a), 0, np.sin(a)], [0, 1, 0], [-np.sin(a), 0, np.cos(a)]]).T
+
+
+def turn(source, target):
+    """The turn about Y (2 degree steps) that best lays source on target, each turned cloud boxed into the target's
+    box: each generator builds the object in a frame of its own, and a three-legged octagonal stool does not meet
+    itself at quarter turns. No mirror: both shapes come from one picture, and left-right symmetric furniture fits
+    its mirror as well, so the distance could not tell one anyway."""
+    import numpy as np
+    from scipy.spatial import cKDTree
+    tlo, thi = target.min(0), target.max(0)
+    tree = cKDTree(target)
+    best = None
+    for deg in range(0, 360, 2):
+        p = about_y(source, deg)
+        p = (p - p.min(0)) / (p.max(0) - p.min(0)) * (thi - tlo) + tlo
+        score = (tree.query(p)[0].mean() + cKDTree(p).query(target)[0].mean()) / 2 / (thi - tlo).max()
+        if best is None or score < best[0]:
+            best = (score, deg)
+    return best
+
+
+def cmd_omni(args) -> int:
+    """<item>-h from <item>-o: Omni's shape put where TRELLIS.2's raw mesh lay (so gen.json, its turn, cuts and zones
+    hold), each vertex coloured from the accepted TRELLIS.2 skin (reports/content/2026-11-ai-3d-pipeline/omni-colour.md),
+    the game mesh simplified from it to the TRELLIS.2 game mesh's size."""
+    import numpy as np
+    import trimesh
+    import fast_simplification
+    from scipy.spatial import cKDTree
+    import hunyuan_pilot as hp
+    for item in args.items or ORIGINAL_MEANS:
+        src, out = GEN / f'{item}-o', GEN / f'{item}-h'
+        out.mkdir(exist_ok=True)
+        clean, colour = np.load(src / 'clean.npz'), np.load(src / 'high.npz')['color']
+        T = clean['vertices'].astype(np.float64)
+        T = np.stack([T[:, 0], T[:, 2], -T[:, 1]], axis=1)  # TRELLIS +Z up -> Y up, as Omni
+        trellis = trimesh.Trimesh(T, clean['faces'], process=False)
+        omni = trimesh.load(OMNI / f'{item}-o.glb', force='mesh')
+        fit, q = turn(hp.surface(omni, 4000), hp.surface(trellis, 4000))
+        base = about_y(np.asarray(omni.vertices, np.float64), q)
+        lo, hi, tlo, thi = base.min(0), base.max(0), T.min(0), T.max(0)
+        s = (thi - tlo) / (hi - lo)
+        t = tlo - lo * s
+        # ICP, a scale and a shift per axis, over pairs both ways
+        tree_t = cKDTree(T)
+        sample = trimesh.Trimesh(base, omni.faces, process=False)
+        a = hp.surface(sample)
+        b = hp.surface(trellis)
+        for _ in range(10):
+            near_t = T[tree_t.query(a * s + t, workers=-1)[1]]
+            near_o = a[cKDTree(a * s + t).query(b, workers=-1)[1]]
+            p, r = np.vstack([a, near_o]), np.vstack([near_t, b])
+            for k in range(3):
+                s[k], t[k] = np.polyfit(p[:, k], r[:, k], 1)
+        V = base * s + t
+        shaped = trimesh.Trimesh(V, omni.faces, process=False)
+        # The TRELLIS surface along Omni's normal, not its nearest vertex: TRELLIS builds the iron straps as relief a
+        # centimetre proud of the door, Omni builds the door flat, and in TRELLIS's 2M vertex skin even 32 nearest
+        # vertices reach only ~6 mm, so the straps were lost (omni-set-1). A ray each way from every Omni vertex
+        # (open3d's Embree), the nearer hit on a face turned the same way, its colour interpolated over the triangle;
+        # no hit within 3 % of the size -> the nearest vertex.
+        import open3d as o3d
+        normals = np.asarray(shaped.vertex_normals)
+        _, near = tree_t.query(V, workers=-1)
+        if np.median(np.einsum('nc,nc->n', trellis.vertex_normals[near], normals)) < 0:  # Omni's winding is the other way
+            normals = -normals
+        scene = o3d.t.geometry.RaycastingScene()
+        scene.add_triangles(o3d.core.Tensor(T.astype(np.float32)), o3d.core.Tensor(np.asarray(clean['faces'], np.uint32)))
+        size = (thi - tlo).max()
+        best_t = np.full(len(V), np.inf)
+        best_f = np.full(len(V), -1, np.int64)
+        best_uv = np.zeros((len(V), 2))
+        face_normals = np.asarray(trellis.face_normals)
+        for sign in (1, -1):
+            rays = np.hstack([V, sign * normals]).astype(np.float32)
+            hit = scene.cast_rays(o3d.core.Tensor(rays))
+            t, f, uv = hit['t_hit'].numpy(), hit['primitive_ids'].numpy().astype(np.int64), hit['primitive_uvs'].numpy()
+            valid = (f != scene.INVALID_ID) & (t < 0.03 * size)
+            facing = np.zeros(len(V), bool)
+            facing[valid] = np.einsum('nc,nc->n', face_normals[f[valid]], normals[valid]) > 0.3
+            better = valid & facing & (t < best_t)
+            best_t[better], best_f[better], best_uv[better] = t[better], f[better], uv[better]
+        ok = best_f >= 0
+        tri = np.asarray(clean['faces'])[best_f[ok]]
+        u, v = best_uv[ok, 0:1], best_uv[ok, 1:2]
+        vertex_colour = colour[near].astype(np.float64)
+        vertex_colour[ok] = (1 - u - v) * colour[tri[:, 0]] + u * colour[tri[:, 1]] + v * colour[tri[:, 2]]
+        zup = np.stack([V[:, 0], -V[:, 2], V[:, 1]], axis=1).astype(np.float32)
+        faces = np.asarray(omni.faces, np.int32)
+        np.savez(out / 'raw.npz', vertices=zup, faces=faces, color=vertex_colour.astype(colour.dtype))
+        np.savez(out / 'clean.npz', vertices=zup, faces=faces)
+        low = np.load(src / 'low.npz')
+        lv, lf = fast_simplification.simplify(zup, faces, 1 - len(low['faces']) / len(faces))
+        np.savez(out / 'low.npz', vertices=lv.astype(np.float32), faces=lf.astype(np.int32))
+        shutil.copy(src / 'gen.json', out / 'gen.json')
+        for own in src.iterdir():  # the own parts' simulations and textures (bedding, canopy)
+            if own.is_dir() and own.name not in ('build', 's1', 's2') and not own.name.startswith('build-') \
+                    and not (out / own.name).exists():
+                (out / own.name).symlink_to(own)
+        print(item, 'turn', q, 'fit', round(fit, 4), 'scale', s.round(3).tolist(), 'ray hit',
+              round(float(ok.mean()), 3), 'low', len(lf), 'of', len(low['faces']))
+    return 0
+
+
 def flat_to_atlas(maps: Path) -> None:
     """Constant roughness and metallic maps at the atlas size: the packer stacks them with the AO into ORM."""
     from PIL import Image
@@ -231,6 +347,18 @@ def cmd_pack(args) -> int:
         visual = fs.ITEMS[VARIANT_OF.get(item, item)]
         meshes[visual] = {'glb': f'{name}/model.glb'}
         print(f'{item}: {visual} <- {name}')
+    if any(item.endswith('-h') for item in args.items or ITEMS):  # Omni's shapes travel with its licence (decisions.md, 2026-11-04)
+        licence = output / 'licences' / 'hunyuan3d-omni'
+        licence.mkdir(parents=True)
+        for name in ('License.txt', 'Notice.txt'):
+            shutil.copy(OMNI_LICENCE / name, licence / name)
+        (licence / 'README.txt').write_text(
+            'The furniture shapes of this pack were made with Tencent Hunyuan 3D Omni. Tencent Hunyuan 3D Omni is '
+            'licensed under the Tencent Hunyuan 3D Omni Community License Agreement, Copyright © 2025 Tencent. All '
+            'Rights Reserved. The trademark rights of "Tencent Hunyuan" are owned by Tencent or its affiliate.\n'
+            'The licence does not apply in the European Union, the United Kingdom and South Korea: these shapes are '
+            'not licensed for use there (section 5c), and they must not be used to improve any other AI model '
+            '(section 5b). Tencent is not affiliated with this project and does not endorse it.\n')
     (output / 'materials' / 'materials.json').write_text(json.dumps(materials, indent=2) + '\n')
     (output / 'meshes' / 'meshes.json').write_text(json.dumps(meshes, indent=2) + '\n')
     print(f'{args.set}: {len(meshes)} meshes -> {output}')
@@ -242,6 +370,7 @@ def main() -> int:
     sub = parser.add_subparsers(required=True)
     p = sub.add_parser('cutout'); p.add_argument('item'); p.add_argument('picture', type=Path); p.set_defaults(func=cmd_cutout)
     p = sub.add_parser('models'); p.add_argument('items', nargs='*'); p.set_defaults(func=cmd_models)
+    p = sub.add_parser('omni'); p.add_argument('items', nargs='*'); p.set_defaults(func=cmd_omni)
     p = sub.add_parser('pack'); p.add_argument('--set', required=True); p.add_argument('items', nargs='*'); p.set_defaults(func=cmd_pack)
     args = parser.parse_args()
     return args.func(args)

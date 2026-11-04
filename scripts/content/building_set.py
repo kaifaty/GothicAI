@@ -421,6 +421,15 @@ def compose(name: str, parts: list[str]) -> dict:
             take(part, 'particles.d', Path(filename))
         for filename in trees[part]:
             take(part, 'vobtrees.d', Path(filename))
+        licences = staging / part / 'licences'  # third-party terms a part's files travel with (Hunyuan3D-Omni)
+        for source in sorted(licences.rglob('*')) if licences.is_dir() else []:
+            target = output / 'licences' / source.relative_to(licences)
+            if not source.is_file() or target.exists() and target.read_bytes() == source.read_bytes():
+                continue
+            if target.exists():
+                raise ValueError(f'licences/{source.relative_to(licences)}: differs between parts')
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, target)
     (output / 'materials/materials.json').write_text(json.dumps(index, indent=2) + '\n')
     if mesh_index:
         (output / 'meshes/meshes.json').write_text(json.dumps(mesh_index, indent=2) + '\n')

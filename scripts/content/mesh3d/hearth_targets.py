@@ -94,8 +94,9 @@ def glb_parts(path: Path):
     return parts
 
 
-def model_parts(models: Path, visual: str):
-    """[(positions in glTF metres, triangles, texture)] of a mob model in its bind pose."""
+def model_parts(models: Path, visual: str, full: bool = False):
+    """[(positions in glTF metres, triangles, texture)] of a mob model in its bind pose; full adds each part's
+    normals (the same axes) and uv (game_view.py renders it)."""
     source = next(models / f'{visual}{ext}.json' for ext in ('.MDL', '.MDM') if (models / f'{visual}{ext}.json').exists())
     record = json.loads(source.read_text())
     blob = (models / record['buffer']).read_bytes()
@@ -123,6 +124,10 @@ def model_parts(models: Path, visual: str):
             p = positions[wedges['i']].astype(float)
             p = (matrix @ np.c_[p, np.ones(len(p))].T).T[:, :3]
             parts.append((p * np.array([-1, 1, 1]) / 100, tris, sub['mat']['texture']))
+            if full:
+                n = wedges['n'].astype(float) @ matrix[:3, :3].T
+                n /= np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-9)
+                parts[-1] += (n * np.array([-1, 1, 1]), wedges['uv'].astype(float))
     nodes = {name: (world[i][:3, 3] * np.array([-1, 1, 1]) / 100).round(4).tolist()
              for i, name in enumerate(names) if not any(a['name'] == name for a in mesh['attachments'])}
     return parts, nodes
