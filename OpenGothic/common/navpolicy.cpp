@@ -75,6 +75,10 @@ bool uniqueKeys(const Json& value) {
   return true;
   }
 
+// Must equal nav_bc_data.PACE_DESCRIPTION.
+constexpr std::string_view paceDescription =
+  "walk=1, run=0; chosen outside the policy: teacher walk key in training, forced pace on the stand";
+
 size_t parseVectorInputSize(const Json& preprocessing, uint32_t& demoVersion, uint32_t weightVersion) {
   const auto& order = field(preprocessing,"vector_order");
   if(!order.IsArray() || (order.Size()!=3 && order.Size()!=4))
@@ -86,14 +90,22 @@ size_t parseVectorInputSize(const Json& preprocessing, uint32_t& demoVersion, ui
       fail("unsupported NAVDEMO input version");
     demoVersion = version.GetUint();
     }
-  if(weightVersion==4 && demoVersion!=3)
+  if((weightVersion==4 && demoVersion!=3) || (weightVersion==5 && demoVersion!=2))
     fail("unsupported NAVDEMO input version");
   if(demoVersion>=2) {
-    expectStrings(order,{"eye","roads","body"});
-    if(weightVersion>=3)
-      expectStrings(field(preprocessing,"input_fields"),{"body","roads","eye","memory_near","memory_far","feet_height_cm"});
-    else
-      expectStrings(field(preprocessing,"input_fields"),{"body","roads","eye","memory_near","memory_far"});
+    if(weightVersion==5) {
+      expectStrings(order,{"eye","roads","body","pace"});
+      expectStrings(field(preprocessing,"input_fields"),
+        {"body","roads","eye","memory_near","memory_far","feet_height_cm","pace"});
+      expectString(field(preprocessing,"pace"),paceDescription);
+      }
+    else {
+      expectStrings(order,{"eye","roads","body"});
+      if(weightVersion>=3)
+        expectStrings(field(preprocessing,"input_fields"),{"body","roads","eye","memory_near","memory_far","feet_height_cm"});
+      else
+        expectStrings(field(preprocessing,"input_fields"),{"body","roads","eye","memory_near","memory_far"});
+      }
     expectString(field(preprocessing,"roads_schema"),"carrot_v2");
     expectStrings(field(preprocessing,"roads_fields"),{"carrot_direction","carrot_distance_cm",
       "goal_direction","goal_distance_cm","remaining_known_cm","beyond_known"});
@@ -101,6 +113,8 @@ size_t parseVectorInputSize(const Json& preprocessing, uint32_t& demoVersion, ui
   else if(preprocessing.HasMember("roads_schema")) {
     expectString(preprocessing["roads_schema"],"next_v1");
     }
+  if(weightVersion==5)
+    return NavPolicy::paceVectorSize;
   if(order.Size()==3) {
     expectStrings(order,{"eye","roads","body"});
     return NavPolicy::vectorSize;
@@ -110,7 +124,7 @@ size_t parseVectorInputSize(const Json& preprocessing, uint32_t& demoVersion, ui
   }
 
 void validateHdPreprocessing(const Json& preprocessing, uint32_t demoVersion, uint32_t weightVersion) {
-  if(weightVersion==3 && demoVersion!=2)
+  if((weightVersion==3 || weightVersion==5) && demoVersion!=2)
     fail("HD weights require NAVDEMO v2 inputs");
   expectString(field(preprocessing,"input_variant"),weightVersion==4 ? "hd-familiar" : "hd");
   if(weightVersion==4)
@@ -133,7 +147,7 @@ void validateArchitecture(const Json& architecture, size_t& hidden, size_t vecto
   expectString(field(architecture,"name"),"map-cnn-vector-gru");
   expectInt(field(architecture,"version"),1);
   const auto& inputs = field(architecture,"inputs");
-  const size_t channels = version==4 ? 11 : version==3 ? 10 : 9;
+  const size_t channels = version==4 ? 11 : version>=3 ? 10 : 9;
   if(version>=3) {
     expectShape(field(inputs,"near"),{channels,64,64});
     expectShape(field(inputs,"far"),{channels,50,100});
@@ -186,12 +200,17 @@ void validateArchitecture(const Json& architecture, size_t& hidden, size_t vecto
     fail("unsupported GRU hidden size");
   hidden = hiddenSize.GetUint();
   const auto& heads = field(architecture,"heads");
-  const size_t headCount = version>=2 ? NavPolicy::bc3HeadNames.size() : NavPolicy::headNames.size();
+  const auto name = [version](size_t i) {
+    return version==5 ? NavPolicy::paceHeadNames[i] : version>=2 ? NavPolicy::bc3HeadNames[i] : NavPolicy::headNames[i];
+    };
+  const size_t headCount = version==5 ? NavPolicy::paceHeadNames.size() :
+                           version>=2 ? NavPolicy::bc3HeadNames.size() : NavPolicy::headNames.size();
+  const size_t maneuver = version==5 ? 3 : 4;
   if(!heads.IsObject() || heads.MemberCount()!=headCount)
     fail("incorrect policy heads");
   for(size_t i=0; i<headCount; ++i) {
-    const auto& head = field(heads,version>=2 ? NavPolicy::bc3HeadNames[i] : NavPolicy::headNames[i]);
-    const size_t classes = i<3 || (version>=2 && i==4) ? 3 : 2;
+    const auto& head = field(heads,name(i));
+    const size_t classes = i<3 || (version>=2 && i==maneuver) ? 3 : 2;
     expectInt(field(head,"classes"),classes);
     const auto& values = field(head,"values");
     if(!values.IsArray() || values.Size()!=classes)
@@ -340,7 +359,7 @@ NavPolicy::NavPolicy(const std::string& path) {
     fail("invalid or duplicate-key weight JSON header");
   expectString(field(header,"format"),"gothic-nav-bc");
   const auto& version = field(header,"version");
-  if(!version.IsUint() || (version.GetUint()!=1 && version.GetUint()!=2 && version.GetUint()!=3 && version.GetUint()!=4))
+  if(!version.IsUint() || version.GetUint()<1 || version.GetUint()>5)
     fail("unsupported navigation weight version");
   formatVersion = version.GetUint();
   expectString(field(header,"byte_order"),"little");
@@ -447,7 +466,7 @@ NavPolicy::NavPolicy(const std::string& path) {
     layer.bias = take(name+".bias",{out});
     };
   const auto loadMap = [&](MapEncoder& encoder, const char* prefix) {
-    const size_t channels = formatVersion==4 ? 11 : formatVersion==3 ? 10 : 9;
+    const size_t channels = mapChannels();
     encoder.first.inputs = channels*3*3;
     encoder.first.outputs = 8;
     encoder.first.weight = take(std::string(prefix)+".0.weight",{8,channels,3,3});
@@ -489,7 +508,7 @@ void NavPolicy::configureMemory(NavigationMemory& memory, const char* journeyOve
   memory.setFamiliarMap(nullptr,{});
   }
 
-NavPolicy::Features NavPolicy::encode(const NavDemoWriter::Snapshot& observation) const {
+NavPolicy::Features NavPolicy::encode(const NavDemoWriter::Snapshot& observation, std::optional<bool> walk) const {
   if(observation.eye==nullptr || observation.eye->size()!=NavDemoWriter::rayCount || observation.memory==nullptr)
     fail("missing eye or memory observation");
   const auto& near = observation.memory->near;
@@ -547,6 +566,11 @@ NavPolicy::Features NavPolicy::encode(const NavDemoWriter::Snapshot& observation
   vector[cursor++] = observation.body.groundSlopeDeg/90.f;
   vector[cursor++] = observation.body.headYawDeg/180.f;
   vector[cursor++] = observation.body.headPitchDeg/90.f;
+  if(paceInput()) {
+    if(!walk)
+      fail("pace-input weights require an explicit walk/run pace");
+    vector[cursor++] = *walk ? 1.f : 0.f;
+    }
   if(vectorInputSize()==legacyVectorSize) {
     vector[cursor++] = observation.previous.forward;
     vector[cursor++] = observation.previous.strafe;
@@ -661,16 +685,32 @@ NavPolicy::Result NavPolicy::step(const Features& features, State& state) const 
     result.logits[i] = linear(state.hidden.data(),heads[i]);
     action[i] = size_t(std::max_element(result.logits[i].begin(),result.logits[i].end())-result.logits[i].begin());
     }
-  result.keys.forward = float(int(action[0])-1);
-  result.keys.strafe = float(int(action[1])-1);
-  result.keys.turn = float(int(action[2])-1);
-  result.keys.walk = action[3]!=0;
-  result.keys.jump = formatVersion>=2 ? action[4]==1 : action[4]!=0;
-  result.keys.climb = formatVersion>=2 ? action[4]==2 : action[5]!=0;
+  if(paceInput()) {
+    const float pace = features.vector.back();
+    if(pace!=0.f && pace!=1.f)
+      fail("pace input must be walk=1 or run=0");
+    result.keys = keys(action,pace==1.f);
+    }
+  else
+    result.keys = keys(action);
+  return result;
+  }
+
+NpcKeys::KeyState NavPolicy::keys(const std::array<size_t,headCount>& action, std::optional<bool> walk) const {
+  if(paceInput()!=walk.has_value())
+    fail("walk is given exactly for pace-input weights");
+  NpcKeys::KeyState result;
+  result.forward = float(int(action[0])-1);
+  result.strafe = float(int(action[1])-1);
+  result.turn = float(int(action[2])-1);
+  result.walk = paceInput() ? *walk : action[3]!=0;
+  result.jump = formatVersion>=2 ? action[maneuverHead()]==1 : action[4]!=0;
+  result.climb = formatVersion>=2 ? action[maneuverHead()]==2 : action[5]!=0;
   // Head yaw and pitch stay at the KeyState default: straight ahead.
   return result;
   }
 
-NavPolicy::Result NavPolicy::step(const NavDemoWriter::Snapshot& observation, State& state) const {
-  return step(encode(observation),state);
+NavPolicy::Result NavPolicy::step(const NavDemoWriter::Snapshot& observation, State& state,
+                                  std::optional<bool> walk) const {
+  return step(encode(observation,walk),state);
   }

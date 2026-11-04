@@ -18,9 +18,13 @@ Kinds:
         last frames keep the stance they were snapped to;
 - rot   {"bone": "BIP01 L THIGH", "window": [...], "axis": [x, y, z], "deg": 20, "space": "local" | "model"};
 - calm  {"bone": "BIP01 L THIGH", "window": [...], "sigma": 1.5}: the bone's own turn smoothed over frames, which
-        spreads a whip over its neighbours.
+        spreads a whip over its neighbours;
+- hold  {"bones": ["BIP01 R UPPERARM", ...], "frame": 12, "window": [...]}: the bones keep their own turn of `frame`,
+        so a limb stays still against its parent while the body turns: a sword arm rides a roll over the shoulder
+        instead of flipping the blade from one side of the body to the other.
 
-The legs and arms are solved by two-bone IK: the knee or elbow stays in its own plane.
+The legs and arms are solved by two-bone IK: the knee or elbow stays in its own plane. With `"joint_clear": cm` on
+a step, lift or tuck the plane turns only as far as it takes to keep the knee or elbow that high over the floor.
 """
 from __future__ import annotations
 
@@ -104,8 +108,10 @@ class Clip:
             W[j] = W[self.skel.nodes[j].parent] @ L
 
 
-def two_bone(clip: Clip, f: int, W: np.ndarray, limb: str, target: np.ndarray, end_rot: np.ndarray):
-    """The limb's end to `target` with the model-space turn end_rot; the knee or elbow stays in its plane."""
+def two_bone(clip: Clip, f: int, W: np.ndarray, limb: str, target: np.ndarray, end_rot: np.ndarray,
+             above: float | None = None):
+    """The limb's end to `target` with the model-space turn end_rot; the knee or elbow stays in its plane, unless
+    that plane puts it under `above` (the floor): then the plane turns about the hip-to-end line just enough."""
     up, mid, end = LIMBS[limb]
     iu, im, ie = (clip.skel.index(n) for n in (up, mid, end))
     H, K, A = W[iu][:3, 3], W[im][:3, 3], W[ie][:3, 3]
@@ -116,7 +122,16 @@ def two_bone(clip: Clip, f: int, W: np.ndarray, limb: str, target: np.ndarray, e
     pole = (K - H) - ((K - H) @ u) * u
     v = pole / np.linalg.norm(pole) if np.linalg.norm(pole) > 1e-6 else W[im][:3, 1]
     ca = (l1 * l1 + dist * dist - l2 * l2) / (2 * l1 * dist)
-    K2 = H + l1 * (ca * u + np.sqrt(max(0.0, 1 - ca * ca)) * v)
+    sa = np.sqrt(max(0.0, 1 - ca * ca))
+    K2 = H + l1 * (ca * u + sa * v)
+    if above is not None and K2[1] < above:
+        w = np.cross(u, v)
+        for deg in sorted(range(-180, 181, 3), key=abs):
+            ph = np.radians(deg)
+            k = H + l1 * (ca * u + sa * (np.cos(ph) * v + np.sin(ph) * w))
+            if k[1] >= above:
+                K2 = k
+                break
     clip.set_world_rot(f, W, up, between(K - H, K2 - H) @ W[iu][:3, :3])
     clip.set_world_rot(f, W, mid, between(W[ie][:3, 3] - W[im][:3, 3], H + dist * u - W[im][:3, 3]) @ W[im][:3, :3])
     clip.set_world_rot(f, W, end, end_rot)
@@ -145,6 +160,7 @@ def apply(skel: ga.Skeleton, anim: ga.Animation, fixes: list, floor: float) -> l
         win = window_of(fx)
         frames = [f for f in range(anim.frame_count) if weight(win, f) > 0]
         kind = fx["kind"]
+        above = floor + fx["joint_clear"] if "joint_clear" in fx else None  # the knee or elbow stays over the floor
         if kind == "step":
             ie = skel.index(LIMBS[fx["limb"]][2])
             f0, f1 = fx["from"], fx["to"]
@@ -153,14 +169,14 @@ def apply(skel: ga.Skeleton, anim: ga.Animation, fixes: list, floor: float) -> l
                 u = (f - f0) / (f1 - f0)
                 e = u * u * (3 - 2 * u)
                 target = (1 - e) * W0[ie][:3, 3] + e * W1[ie][:3, 3] + fx.get("lift", 8.0) * np.sin(np.pi * u) * UP
-                two_bone(clip, f, clip.world(f), fx["limb"], target, slerp_m(W0[ie][:3, :3], W1[ie][:3, :3], e))
+                two_bone(clip, f, clip.world(f), fx["limb"], target, slerp_m(W0[ie][:3, :3], W1[ie][:3, :3], e), above)
         elif kind in ("lift", "tuck"):
             iu, ie = (skel.index(LIMBS[fx["limb"]][j]) for j in (0, 2))
             for f in frames:
                 W, w = clip.world(f), weight(win, f)
                 H, A = W[iu][:3, 3], W[ie][:3, 3]
                 target = A + fx["cm"] * w * UP if kind == "lift" else H + (1 - (1 - fx["k"]) * w) * (A - H)
-                two_bone(clip, f, W, fx["limb"], target, W[ie][:3, :3].copy())
+                two_bone(clip, f, W, fx["limb"], target, W[ie][:3, :3].copy(), above)
         elif kind == "soles":
             height = floor + fx.get("clear", 3.0)
             step = np.radians(fx.get("step", 12.0))
@@ -202,6 +218,13 @@ def apply(skel: ga.Skeleton, anim: ga.Animation, fixes: list, floor: float) -> l
                 g = np.exp(-0.5 * ((np.arange(len(q)) - f) / fx.get("sigma", 1.5)) ** 2)
                 m = (g[:, None] * q).sum(0)
                 anim.rotations[f, c] = rs.slerp(q[f], m / np.linalg.norm(m), weight(win, f))
+        elif kind == "hold":
+            for bone in fx["bones"]:
+                c = clip.col[skel.index(bone)]
+                q0 = anim.rotations[fx["frame"], c].copy()
+                for f in frames:
+                    q = q0 if q0 @ anim.rotations[f, c] >= 0 else -q0
+                    anim.rotations[f, c] = rs.slerp(anim.rotations[f, c], q, weight(win, f))
         else:
             raise SystemExit(f"unknown fix kind {kind}")
     return log

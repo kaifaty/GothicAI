@@ -26,6 +26,7 @@
       "start": "cm:14926,1739,-15914",
       "goal": "FP_ROAM_FARM1_SHEEP_09",
       "goal_kind": "point",
+      "pace": "run",
       "time": [
         10,
         0
@@ -49,6 +50,7 @@
       "start": "cm:6516.90967,511.533173,-9258.83594",
       "goal": "NW_CITY_ENTRANCE_GUARD_02",
       "goal_kind": "point",
+      "pace": "walk",
       "time": [
         12,
         0
@@ -101,6 +103,7 @@
       "start": "cm:10166.06445,270.079346,4703.9082",
       "goal": "MARKT_02",
       "goal_kind": "follow",
+      "pace": "run",
       "target": "PC_HERO",
       "live_target": "player-walk",
       "scenario_seed": 18102027,
@@ -138,6 +141,7 @@
       "start": "cm:32878.1875,4997.163695,-33336.293",
       "goal": "NW_PASS_08",
       "goal_kind": "object",
+      "pace": "run",
       "time": [
         12,
         0
@@ -193,6 +197,7 @@
       "start": "cm:1500,-186,1200",
       "goal": "FP_PICK_CITY_01",
       "goal_kind": "point",
+      "pace": "run",
       "time": [
         12,
         0
@@ -216,6 +221,7 @@
       "start": "NW_CITY_WAY_TO_SHIP_08",
       "goal": "NW_CITY_WAY_TO_SHIP_FISCHER_06",
       "goal_kind": "point",
+      "pace": "run",
       "time": [
         12,
         0
@@ -239,6 +245,7 @@
       "start": "cm:50217.207,10650.5049,41427.4297",
       "goal": "cm:50160.6875,10587.9795,40771.207",
       "goal_kind": "point",
+      "pace": "run",
       "time": [
         12,
         0
@@ -262,6 +269,7 @@
       "start": "NW_CITY_MERCHANT_PATH_20",
       "goal": "NW_CITY_MERCHANT_PATH_29_B",
       "goal_kind": "point",
+      "pace": "run",
       "time": [
         6,
         59
@@ -288,6 +296,7 @@
       "start": "NW_CITY_UPTOWN_PATH_08",
       "goal": "NW_CITY_REICH02_01",
       "goal_kind": "point",
+      "pace": "run",
       "time": [
         12,
         0
@@ -349,6 +358,7 @@
       "start": "NW_CITY_UPTOWN_PATH_08",
       "goal": "NW_CITY_UPTOWN_PATH_12",
       "goal_kind": "point",
+      "pace": "run",
       "time": [
         12,
         0

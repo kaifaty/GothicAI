@@ -28,7 +28,9 @@ from torch import nn
 from nav_bc_data import (CACHE_VERSION, BC3_CACHE_VERSION, HD_CACHE_VERSION, BC4_CACHE_VERSION, HEADS, CLASSES, BC3_HEADS,
                          BC3_CLASSES, PREPROCESSING, HD_PREPROCESSING, BC4_PREPROCESSING,
                          HD_NEAR_SHAPE, HD_FAR_SHAPE, BC4_NEAR_SHAPE, BC4_FAR_SHAPE,
-                         VECTOR_SIZE, encode_episode, load_cached, training_index, unpack_cached)
+                         PACE_HEADS, PACE_LABEL_COLUMNS, PACE_VECTOR_SIZE, VECTOR_SIZE,
+                         action_change_weight, encode_episode, label_action_changes, load_cached,
+                         pace_episode, pace_preprocessing, training_index, unpack_cached)
 from nav_bc_model import NavPolicy, export_weights
 import nav_demos
 
@@ -388,8 +390,10 @@ def checkpoint_model(path, device):
 
 def train(args):
     source = getattr(args, "source", None)
+    pace = getattr(args, "pace_input", False)
+    if pace and source:
+        raise ValueError("--pace-input requires prepared HD caches, not --source recordings")
     cache, out = Path(source or args.cache), Path(args.output)
-    out.mkdir(parents=True, exist_ok=True)
     if source:
         index = training_index(cache, Path(args.manifest), args.input_variant)
     else:
@@ -397,6 +401,11 @@ def train(args):
         balance_cache = getattr(args, "balance_v4_cache", None)
         index = (aggregate_training_index(cache, extra_caches, balance_cache)
                  if extra_caches or balance_cache else read_index(cache))
+    # Refuse before choosing a trainer: the legacy one would silently learn a walk head.
+    if pace and index["cache_version"] != HD_CACHE_VERSION:
+        raise ValueError(f"--pace-input requires HD caches (cache version {HD_CACHE_VERSION}) without familiar; "
+                         f"got cache version {index['cache_version']}")
+    out.mkdir(parents=True, exist_ok=True)
     if index["cache_version"] in (BC3_CACHE_VERSION, HD_CACHE_VERSION, BC4_CACHE_VERSION):
         return train_bc3(args, index)
     train_eps = [e for e in index["episodes"] if e["split"] == "train"]
@@ -552,6 +561,54 @@ def initialize_bc3_hd(model, path, index):
                       "both CNNs initialized from scratch, including shape-compatible tensors"))
 
 
+def initialize_pace(model, path, index):
+    """Start v5 from HD (converted exactly as nav_pace_convert.py) or another v5 checkpoint."""
+    from nav_pace_convert import pace_tensors
+    path = Path(path)
+    if path.suffix != ".pt":
+        raise ValueError("pace initialization requires a last.pt training checkpoint")
+    source = torch.load(path, map_location="cpu", weights_only=False)
+    config = source["config"]
+    version = config.get("format_version")
+    if (version not in (3, 5) or config.get("auxiliary") is not True or config.get("hidden_size") != model.hidden_size
+            or config.get("vector_size") != (VECTOR_SIZE if version == 3 else PACE_VECTOR_SIZE)):
+        raise ValueError("pace initialization requires an HD or pace-input checkpoint with auxiliary heads")
+    from nav_bc_numpy import NumpyPolicy
+    preprocessing = NumpyPolicy(path.parent / "policy.navbc").header.get("preprocessing", {})
+    if version == 5:
+        preprocessing = {key: value for key, value in preprocessing.items() if key != "pace"}
+        preprocessing.update(input_fields=preprocessing["input_fields"][:-1], vector_order=preprocessing["vector_order"][:-1])
+    if any(preprocessing.get(name) != value for name, value in HD_PREPROCESSING.items()):
+        raise ValueError("pace source preprocessing differs from the HD input layout")
+    if not np.array_equal(preprocessing.get("eye_layout"), index["eye_layout"]):
+        raise ValueError("pace source eye layout differs from the demonstrations")
+    state = {name: value.detach().cpu().numpy() for name, value in source["model"].items()}
+    if version == 3:
+        state = pace_tensors(state)
+    if set(state) != set(model.state_dict()):
+        raise ValueError("pace source tensors differ from the learner")
+    model.load_state_dict({name: torch.from_numpy(values) for name, values in state.items()})
+    return dict(source=str(path), source_format_version=version, transferred=sorted(state),
+                maps="all HD tensors preserved; pace column of vector_encoder.0 zero; walk head dropped"
+                     if version == 3 else "pace-input tensors preserved")
+
+
+def pace_change_weight(cache, entries):
+    """Recount action changes without walk; only prepared NPZ caches carry labels cheaply."""
+    decisions = changes = 0
+    for entry in entries:
+        if entry.get("storage") == "navdemo":
+            raise ValueError("pace-input training requires prepared HD caches")
+        with np.load(cache / entry["file"], allow_pickle=False) as source:
+            labels = source["labels"][:, PACE_LABEL_COLUMNS]
+        if len(labels) != entry["steps"]:
+            raise ValueError(f"cache labels differ from the training index: {entry['file']}")
+        decisions += len(labels)
+        changes += int(label_action_changes(labels).sum())
+    return dict(N=decisions, n_I=changes, weight=action_change_weight(decisions, changes),
+                heads=list(PACE_HEADS), walk_excluded=True)
+
+
 def bc3_targets(episodes, start, length, device):
     """Targets may use annotations; none are passed to the policy encoder."""
     result = {}
@@ -578,11 +635,14 @@ def bc3_targets(episodes, start, length, device):
     return result
 
 
-def bc3_loss(logits, auxiliary, labels, mask, targets, class_weights, change_weight):
+LOSS_HEAD_SCALES = dict(forward=2, strafe=1, turn=2, walk=1, maneuver=1)
+
+
+def bc3_loss(logits, auxiliary, labels, mask, targets, class_weights, change_weight, heads=BC3_HEADS):
     change_weights = torch.where(targets["action_change"] != 0, change_weight, 1.)
     sample_weights = targets.get("sample_weight", torch.ones_like(change_weights))
     terms = {}
-    for column, head in enumerate(BC3_HEADS):
+    for column, head in enumerate(heads):
         valid = mask
         if head == "maneuver" and "maneuver_valid" in targets:
             valid = valid & targets["maneuver_valid"].bool()
@@ -609,7 +669,8 @@ def bc3_loss(logits, auxiliary, labels, mask, targets, class_weights, change_wei
             terms[head] = (errors * sample_weights[valid]).mean()
         else:
             terms[head] = auxiliary[head].sum() * 0
-    action = sum(scale * terms[head] for head, scale in zip(BC3_HEADS, (2, 1, 2, 1, 1))) / 7
+    # The pace-input learner drops the walk term; the other heads keep their BC3 scale.
+    action = sum(LOSS_HEAD_SCALES[head] * terms[head] for head in heads) / 7
     return action + .1 * terms["stuck"] + .1 * terms["next_near"] + .5 * terms["detour"], terms
 
 
@@ -625,12 +686,22 @@ def train_bc3(args, index):
     device = torch.device(args.device)
     familiar = index["cache_version"] == BC4_CACHE_VERSION
     hd = index["cache_version"] in (HD_CACHE_VERSION, BC4_CACHE_VERSION)
-    config = dict(vector_size=index["vector_size"], hidden_size=256,
-                  format_version=4 if familiar else 3 if hd else 2, auxiliary=True)
+    pace = getattr(args, "pace_input", False)
+    if pace and (familiar or not hd):
+        raise ValueError("pace-input training requires HD caches without familiar")
+    heads = PACE_HEADS if pace else BC3_HEADS
+    config = dict(vector_size=PACE_VECTOR_SIZE if pace else index["vector_size"], hidden_size=256,
+                  format_version=5 if pace else 4 if familiar else 3 if hd else 2, auxiliary=True)
     model = NavPolicy(**config).to(device)
+    preprocessing = {**index["preprocessing"], "eye_layout": index["eye_layout"]}
+    if pace:
+        preprocessing = pace_preprocessing(preprocessing)
+        pace_changes = pace_change_weight(cache, index["episodes"])
     initialization = None
     if args.init and not args.resume:
-        if hd:
+        if pace:
+            initialization = initialize_pace(model, args.init, index)
+        elif hd:
             initialization = initialize_bc3_hd(model, args.init, index)
         else:
             initialize_bc3(model, args.init, index)
@@ -643,14 +714,14 @@ def train_bc3(args, index):
         history = state["history"]
         if hd:
             initialization = json.loads((out / "training_config.json").read_text())["initialization"]
-    counts = [np.asarray(index["class_counts"]["train"][head]) for head in BC3_HEADS]
+    counts = [np.asarray(index["class_counts"]["train"][head]) for head in heads]
     weights = []
     for count in counts:
         present = count > 0
         weight = np.ones(len(count), np.float32)
         weight[present] = np.clip(np.sqrt(count.sum() / (present.sum() * count[present])), .5, 3.)
         weights.append(torch.tensor(weight, device=device))
-    change_weight = float(index["action_change_weight"])
+    change_weight = float(pace_changes["weight"] if pace else index["action_change_weight"])
     write_json(out / "training_config.json", dict(vars(args), architecture=model.architecture(),
         class_weights=[weight.cpu().tolist() for weight in weights],
         action_change_weight=change_weight, maneuver_window_weight=5, focal_gamma=2,
@@ -658,6 +729,8 @@ def train_bc3(args, index):
         auxiliary_targets=index["auxiliary"], initialization=initialization,
         family_balance=index.get("family_balance"), training_caches=index.get("training_caches", [str(cache)]),
         max_dagger_fraction=.5, dagger_teacher_control_weight=.5,
+        pace_input=dict(source="teacher walk label on the same decision", action_change=pace_changes,
+                        loss_heads=list(heads)) if pace else None,
         selection="fixed final epoch; closed-loop validation pending"))
     dagger_weights = {}
     with BatchLoader(cache, getattr(args, "loader_workers", 0), getattr(args, "loader_prefetch", 1)) as loader:
@@ -678,6 +751,8 @@ def train_bc3(args, index):
             next_batches = (training_batches(index["episodes"], args.batch, args.seed + epoch + 1)
                             if epoch + 1 < args.epochs else None)
             for entries, group in loader.loaded_batches(epoch_batches, packed=hd, next_batches=next_batches):
+                if pace:
+                    group = [pace_episode(episode) for episode in group]
                 dagger_rows = [entry.get("source_kind") == "dagger" for entry in entries]
                 hidden = None
                 for start in range(0, max(len(ep["labels"]) for ep in group), args.segment):
@@ -688,7 +763,7 @@ def train_bc3(args, index):
                     segment_start = 0 if hd else start
                     # Legacy batching uses six labels; BC3 explicitly supplies its five heads.
                     features, labels, mask = batch_tensors(segment_group, segment_start, args.segment, device,
-                                                          dagger_rows, sample_rng, heads=BC3_HEADS)
+                                                          dagger_rows, sample_rng, heads=heads)
                     if not mask.any():
                         break
                     targets = bc3_targets(segment_group, segment_start, args.segment, device)
@@ -703,7 +778,7 @@ def train_bc3(args, index):
                     optimizer.zero_grad(set_to_none=True)
                     logits, hidden, auxiliary = model(**features, hidden=hidden, return_auxiliary=True)
                     hidden = hidden.detach()
-                    loss, terms = bc3_loss(logits, auxiliary, labels, mask, targets, weights, change_weight)
+                    loss, terms = bc3_loss(logits, auxiliary, labels, mask, targets, weights, change_weight, heads)
                     if not torch.isfinite(loss):
                         raise ValueError("nonfinite BC3 loss")
                     loss.backward()
@@ -732,9 +807,8 @@ def train_bc3(args, index):
             history.append(record)
             torch.save(dict(config=config, model=model.state_dict(), optimizer=optimizer.state_dict(),
                             history=history, navigation_memory_version=index["navigation_memory_version"],
-                            preprocessing={**index["preprocessing"], "eye_layout": index["eye_layout"]}), out / "last.pt")
-            export_weights(model, out / "policy.navbc",
-                           preprocessing={**index["preprocessing"], "eye_layout": index["eye_layout"]})
+                            preprocessing=preprocessing), out / "last.pt")
+            export_weights(model, out / "policy.navbc", preprocessing=preprocessing)
             write_json(out / "history.json", history)
             print(json.dumps(record), flush=True)
 
@@ -773,6 +847,8 @@ def verify(args):
     example = None
     for meta in entries:
         ep = load(cache, meta)
+        if model.format_version == 5:
+            ep = pace_episode(ep)
         th = nh = None
         length = min(len(ep["labels"]), args.steps-n)
         for j in range(length):
@@ -885,10 +961,13 @@ def main():
             p.add_argument("--lr", type=float, default=3e-4)
             p.add_argument("--seed", type=int, default=17)
             p.add_argument("--resume", action="store_true")
-            p.add_argument("--init", help="compatible .navbc for BC3; BC3/HD last.pt for HD; HD last.pt for BC4")
+            p.add_argument("--init", help="compatible .navbc for BC3; BC3/HD last.pt for HD; HD last.pt for BC4; "
+                                          "HD or v5 last.pt for --pace-input")
             p.add_argument("--aggregate-cache", action="append", default=[],
                            help="additional prepared HD train cache; repeat for frozen corpora/DAgger rounds")
             p.add_argument("--balance-v4-cache", help="prepared v4 train cache supplying object/follow decision-share floors")
+            p.add_argument("--pace-input", action="store_true",
+                           help="train .navbc v5 on HD caches: teacher walk becomes an input, no walk head")
         if command == "verify":
             p.add_argument("--steps", type=int, default=1000)
             p.add_argument("--iterations", type=int, default=1000)

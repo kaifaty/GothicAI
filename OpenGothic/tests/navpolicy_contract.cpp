@@ -18,6 +18,7 @@
 #include <iostream>
 #include <iterator>
 #include <limits>
+#include <optional>
 #include <random>
 #include <sstream>
 #include <stdexcept>
@@ -281,6 +282,8 @@ struct Observation final {
 void replayActions(const std::string& weights,const std::string& samples,
                    const std::string& metadata,const std::string& output) {
   const NavPolicy policy(weights);
+  // Replay reproduces learner-chosen keys; a pace-input policy does not choose its pace.
+  require(!policy.paceInput(),"replay does not support pace-input weights (.navbc v5)");
   std::ifstream episodeFile(metadata);
   require(bool(episodeFile),"cannot open replay episode metadata");
   const std::string text{std::istreambuf_iterator<char>(episodeFile),std::istreambuf_iterator<char>()};
@@ -356,11 +359,10 @@ void replayActions(const std::string& weights,const std::string& samples,
         cumulative+=probabilities[j];if(draw<cumulative) {indices[i]=j;break;}
         }
       }
-    const bool jump=policy.weightVersion()>=2 ? indices[4]==1 : indices[4]!=0;
-    const bool climb=policy.weightVersion()>=2 ? indices[4]==2 : indices[5]!=0;
-    out<<"{\"time_ms\":"<<previousMs<<",\"learner_keys\":{\"forward\":"<<int(indices[0])-1
-       <<",\"strafe\":"<<int(indices[1])-1<<",\"turn\":"<<int(indices[2])-1
-       <<",\"walk\":"<<(indices[3]!=0)<<",\"jump\":"<<jump<<",\"climb\":"<<climb<<"}}\n";
+    const auto keys=policy.keys(indices);
+    out<<"{\"time_ms\":"<<previousMs<<",\"learner_keys\":{\"forward\":"<<int(keys.forward)
+       <<",\"strafe\":"<<int(keys.strafe)<<",\"turn\":"<<int(keys.turn)
+       <<",\"walk\":"<<keys.walk<<",\"jump\":"<<keys.jump<<",\"climb\":"<<keys.climb<<"}}\n";
     }
   require(gzgetc(stream.file)==-1 && gzeof(stream.file),"trailing or damaged replay NAVDEMO payload");
   out.close();require(bool(out),"cannot finish replay action output");
@@ -405,8 +407,11 @@ struct Fixture final {
       steps=number("steps");hidden=number("hidden_size");
       if(header.HasMember("navdemo_version")) demoVersion=uint32_t(number("navdemo_version"));
       if(header.HasMember("weight_version")) weightVersion=uint32_t(number("weight_version"));
-      require(weightVersion>=1 && weightVersion<=4,"unsupported fixture weight version");
-      if(weightVersion>=2) {
+      require(weightVersion>=1 && weightVersion<=5,"unsupported fixture weight version");
+      if(weightVersion==5) {
+        heads={"forward","strafe","turn","maneuver"};classes={3,3,3,3};
+        }
+      else if(weightVersion>=2) {
         heads={"forward","strafe","turn","walk","maneuver"};classes={3,3,3,2,3};
         }
       else {
@@ -417,7 +422,8 @@ struct Fixture final {
       require(steps>0 && steps<=100000 && hidden>0 && hidden<=4096,"fixture dimensions out of bounds");
       const auto vectorSize=number("vector_size");
       require(number("record_bytes")==NavDemoWriter::recordBytesForVersion(demoVersion) &&
-              (vectorSize==NavPolicy::vectorSize || vectorSize==NavPolicy::legacyVectorSize),
+              (weightVersion==5 ? vectorSize==NavPolicy::paceVectorSize :
+               vectorSize==NavPolicy::vectorSize || vectorSize==NavPolicy::legacyVectorSize),
               "fixture input dimensions differ from NAVDEMO");
       if(weightVersion>=3) {
         expected.near.resize(weightVersion==4 ? NavPolicy::bc4NearSize : NavPolicy::hdNearSize);
@@ -535,7 +541,9 @@ void parity(const std::string& weights,const std::string& path) {
   double featureError=0,logitError=0,hiddenError=0;
   while(fixture.next()) {
     observation.decode(fixture.raw,fixture.layout,fixture.demoVersion);
-    const auto actual=policy.encode(observation.snapshot);
+    // Training's pace input is the record's teacher walk key on the same decision.
+    const auto pace=policy.paceInput() ? std::optional<bool>(observation.snapshot.keys.walk) : std::nullopt;
+    const auto actual=policy.encode(observation.snapshot,pace);
     const double localFeature=std::max({difference(actual.near,fixture.expected.near),
         difference(actual.far,fixture.expected.far),difference(actual.vector,fixture.expected.vector)});
     featureError=std::max(featureError,localFeature);
@@ -560,10 +568,12 @@ void parity(const std::string& weights,const std::string& path) {
     for(size_t h=0;h<fixture.heads.size();++h)
       localLogit=std::max(localLogit,difference(result.logits[h],fixture.logits[h]));
     if(policy.weightVersion()>=2) {
-      const auto& maneuver=result.logits[4];
+      const auto& maneuver=result.logits[policy.maneuverHead()];
       const auto action=size_t(std::max_element(maneuver.begin(),maneuver.end())-maneuver.begin());
       require(result.keys.jump==(action==1) && result.keys.climb==(action==2),"maneuver key decode mismatch");
       }
+    if(pace)
+      require(result.keys.walk==*pace,"pace input does not set the walk key");
     logitError=std::max(logitError,localLogit);
     const double localHidden=difference(state.hidden,fixture.hiddenState);
     hiddenError=std::max(hiddenError,localHidden);
@@ -606,11 +616,11 @@ void parity(const std::string& weights,const std::string& path) {
         observation.snapshot.roads.remainingKnownCm=std::numeric_limits<float>::quiet_NaN();
         observation.snapshot.roads.beyondKnown=!observation.snapshot.roads.beyondKnown;
         }
-      const auto other=policy.encode(observation.snapshot);
+      const auto other=policy.encode(observation.snapshot,pace);
       require(difference(actual.near,other.near)==0 && difference(actual.far,other.far)==0 &&
               difference(actual.vector,other.vector)==0,"privileged annotation leaked into features");
       NavPolicy::State fresh;
-      const auto reset=policy.step(observation.snapshot,fresh);
+      const auto reset=policy.step(observation.snapshot,fresh,pace);
       for(size_t h=0;h<fixture.heads.size();++h)
         require(difference(result.logits[h],reset.logits[h])==0,"NPC state is shared across evaluations");
       }
@@ -638,9 +648,12 @@ void benchmark(const std::string& weights,const std::string& path,size_t npcs,si
   std::vector<NavPolicy::Features> features;
   std::vector<std::vector<uint8_t>> records;
   Observation observation;
+  const auto pace=[&]() {
+    return policy.paceInput() ? std::optional<bool>(observation.snapshot.keys.walk) : std::nullopt;
+    };
   for(size_t i=0;i<16 && fixture.next();++i) {
     observation.decode(fixture.raw,fixture.layout,fixture.demoVersion);
-    features.push_back(policy.encode(observation.snapshot));
+    features.push_back(policy.encode(observation.snapshot,pace()));
     records.push_back(fixture.raw);
     }
   require(!features.empty(),"empty benchmark fixture");
@@ -672,7 +685,7 @@ void benchmark(const std::string& weights,const std::string& path,size_t npcs,si
   for(size_t i=0;i<decisions;++i) {
     observation.decode(records[i%records.size()],fixture.layout,fixture.demoVersion);
     const auto before=Clock::now();
-    const auto encoded=policy.encode(observation.snapshot);
+    const auto encoded=policy.encode(observation.snapshot,pace());
     const auto after=Clock::now();
     encodeUs.push_back(micros(before,after));
     checksum+=encoded.vector[i%encoded.vector.size()];
@@ -680,7 +693,7 @@ void benchmark(const std::string& weights,const std::string& path,size_t npcs,si
   for(size_t i=0;i<decisions;++i) {
     observation.decode(records[i%records.size()],fixture.layout,fixture.demoVersion);
     const auto before=Clock::now();
-    const auto result=policy.step(observation.snapshot,states[i%npcs]);
+    const auto result=policy.step(observation.snapshot,states[i%npcs],pace());
     const auto after=Clock::now();
     policyUs.push_back(micros(before,after));
     checksum+=result.logits[0][0];

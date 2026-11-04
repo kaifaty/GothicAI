@@ -476,10 +476,22 @@ def qualify(args):
     print(json.dumps(summary))
 
 
+def weight_format_version(path):
+    with Path(path).open("rb") as stream:
+        line = stream.readline(4 * 1024 * 1024)
+    if not line.endswith(b"\n"):
+        raise ValueError("Weight file has no bounded JSON header line")
+    return json.loads(line).get("version")
+
+
 def configure_forced_pace(args):
+    """Pace is a key override for old weights and an input for .navbc v5; follow always runs."""
     args.force_pace = getattr(args, "force_pace", None) or os.environ.get("OPENGOTHIC_NAV_FORCE_PACE") or None
     if args.force_pace not in (None, "walk", "run"):
         raise ValueError("OPENGOTHIC_NAV_FORCE_PACE must be walk or run")
+    weights = getattr(args, "weights", None)
+    if args.force_pace is None and weights is not None and Path(weights).is_file() and weight_format_version(weights) == 5:
+        raise ValueError("Pace-input weights (.navbc v5) need --force-pace walk|run; the stand never picks a pace by default")
     if args.force_pace is not None:
         if args.action_mode != "sample" or getattr(args, "dagger_scenarios", None) is not None:
             raise ValueError("Forced pace requires sampled evaluation drive")
@@ -2068,7 +2080,9 @@ def main():
     parser.add_argument("--families", help="Comma-separated validation families; default all five")
     parser.add_argument("--object-probes", type=Path, help="Frozen object Detour probes for validation summary")
     parser.add_argument("--action-seeds", help="Fixed sampling seeds; default 18102027,18102028,18102029")
-    parser.add_argument("--force-pace", choices=("walk", "run"), help="Override only the policy walk/run choice; default off")
+    parser.add_argument("--force-pace", choices=("walk", "run"),
+                        help="Set walk/run: the key for older weights, input and key for .navbc v5 (required there); "
+                             "follow always runs; default off")
     parser.add_argument("--jump-links", type=Path, help="Frozen jump links, used only for the jump family")
     parser.add_argument("--safety-fixtures", type=Path, help="Existing physically qualified nav-perception-safety fixtures")
     parser.add_argument("--fence-control", action="store_true", help="Include the existing Maleth fence control")

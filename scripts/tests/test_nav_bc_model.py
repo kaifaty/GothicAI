@@ -248,6 +248,54 @@ class NavPolicyReferenceTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unsupported policy map shapes"):
             NumpyPolicy(self.path)
 
+    def test_pace_conversion_keeps_hd_distributions_and_matches_torch(self) -> None:
+        from nav_bc_data import PACE_VECTOR_SIZE
+        from nav_bc_model import PACE_HEAD_SIZES
+        from nav_bc_train import initialize_pace
+        from nav_demos import RAY_COUNT
+        from nav_pace_convert import convert
+
+        source = Path(self.directory.name) / "hd"
+        source.mkdir()
+        config = dict(vector_size=VECTOR_SIZE, hidden_size=16, format_version=3, auxiliary=True)
+        hd = NavPolicy(**config)
+        with torch.no_grad():
+            hd.head_walk.bias.fill_(3.)  # A dropped head must not leak into the others.
+        eye_layout = np.tile([0., 0., 10_000.], (RAY_COUNT, 1)).tolist()
+        temperatures = dict(forward=.7, strafe=1.1, turn=.9, walk=1.3, maneuver=1.2)
+        export_weights(hd, source / "policy.navbc", {**HD_PREPROCESSING, "navigation_memory_version": 4,
+                       "eye_layout": eye_layout}, temperatures)
+        torch.save(dict(config=config, model=hd.state_dict()), source / "last.pt")
+        result = convert(source, Path(self.directory.name) / "pace", steps=12)
+        self.assertLess(result["equivalence"]["max_probability_error"], 1e-6)
+        self.assertEqual(set(result["equivalence"]["max_errors"]), set(PACE_HEAD_SIZES))
+        policy = NumpyPolicy(Path(result["output"]) / "policy.navbc")
+        self.assertEqual((policy.format_version, policy.vector_size), (5, PACE_VECTOR_SIZE))
+        self.assertEqual(policy.temperatures, {name: temperatures[name] for name in PACE_HEAD_SIZES})
+        self.assertEqual(policy.header["preprocessing"]["navigation_memory_version"], 4)
+        self.assertFalse(policy.weights["vector_encoder.0.weight"][:, -1].any())
+        state = torch.load(Path(result["output"]) / "last.pt", weights_only=False)
+        model = NavPolicy(**state["config"]).eval()
+        model.load_state_dict(state["model"])
+        self.assertTrue(any(name.startswith("aux_") for name in state["model"]))
+        rng = np.random.default_rng(31)
+        near = rng.normal(size=(1, 4, *model.near_shape)).astype(np.float32)
+        far = rng.normal(size=(1, 4, *model.far_shape)).astype(np.float32)
+        vector = rng.normal(size=(1, 4, PACE_VECTOR_SIZE)).astype(np.float32)
+        vector[..., -1] = [1, 0, 1, 1]
+        with torch.inference_mode():
+            logits, _ = model(*(torch.from_numpy(a) for a in (near, far, vector)))
+        carried = None
+        for step in range(4):
+            actual, carried = policy.step(near[0, step], far[0, step], vector[0, step], carried)
+            for head in PACE_HEAD_SIZES:
+                np.testing.assert_allclose(actual[head], logits[head][0, step].numpy(), atol=1e-5)
+        # Training initialization from HD performs the very same conversion.
+        learner = NavPolicy(PACE_VECTOR_SIZE, hidden_size=16, format_version=5, auxiliary=True)
+        initialize_pace(learner, source / "last.pt", {"eye_layout": eye_layout})
+        for name, value in learner.state_dict().items():
+            self.assertTrue(torch.equal(value, state["model"][name]), name)
+
     def test_export_rejects_invalid_head_temperatures(self) -> None:
         for temperatures in ({"turn": 1.}, dict.fromkeys(HEAD_SIZES, 0.),
                              dict.fromkeys(HEAD_SIZES, float("nan"))):

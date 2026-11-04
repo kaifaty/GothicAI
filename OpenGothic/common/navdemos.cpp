@@ -27,6 +27,7 @@
 #include <iomanip>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <random>
 #include <stdexcept>
 #include <sstream>
@@ -174,6 +175,22 @@ uint32_t demoVersion(const Episode& ep) {
     return input==2 && ep.memory.representationVersion()==4 ? 3 : input;
   }
   return ep.teacherVersion>=2 ? (ep.memory.representationVersion()==4 ? 3 : 2) : ep.teacherVersion;
+}
+// Stand pace from OPENGOTHIC_NAV_FORCE_PACE=walk|run (true = walk). A companion
+// (follow) always runs. Unset or empty leaves the pace to a policy walk head.
+std::optional<bool> forcedWalk(const Episode& ep) {
+  const auto* pace=std::getenv("OPENGOTHIC_NAV_FORCE_PACE");
+  if(!pace || !*pace)return std::nullopt;
+  const std::string_view value=pace;
+  if(value!="walk" && value!="run")throw std::runtime_error("navdemos: OPENGOTHIC_NAV_FORCE_PACE must be walk or run");
+  if(ep.goalKind=="follow")return false;
+  return value=="walk";
+}
+void requirePace(const NavPolicy& policy) {
+  const auto* pace=std::getenv("OPENGOTHIC_NAV_FORCE_PACE");
+  if(policy.paceInput() && (!pace || !*pace))
+    throw std::runtime_error("navdemos: pace-input weights (.navbc v5) need OPENGOTHIC_NAV_FORCE_PACE=walk|run "
+                             "(nav_rl.py drive --force-pace); the stand never picks a pace by default");
 }
 
 struct Pair {std::string from,to;};
@@ -489,7 +506,10 @@ void finish(Episode& ep,World& world) {
        <<",\"dart_episode\":"<<ep.dartEpisode<<",\"dart_decisions\":"<<ep.dartDecisions
        <<",\"maneuver_masked_decisions\":"<<ep.maneuverMaskedDecisions
        <<",\"action_mode\":"<<std::quoted(ep.sampled?"sample":"argmax")
-       <<",\"teacher_control_decisions\":"<<ep.teacherControlDecisions
+       <<",\"pace_input\":"<<ep.policy->paceInput()<<",\"pace\":";
+    if(const auto walk=forcedWalk(ep))out<<std::quoted(*walk?"walk":"run");
+    else out<<"null";
+    out<<",\"teacher_control_decisions\":"<<ep.teacherControlDecisions
        <<",\"policy_population\":"<<ep.policyStates.size()
        <<",\"policy_warmup_decisions\":"<<std::min(ep.decisions,PolicyWarmupDecisions)
        <<",\"policy_measured_calls\":"<<ep.policyUs.size()
@@ -1301,7 +1321,7 @@ NavPolicy::Features policyFeatures(Episode& ep,const NavDemoWriter::Snapshot& sa
   auto fields=nonfiniteFields(sample,false);
   if(!fields.empty())throw observationError(ep,sample,"nav policy: non-finite observation",std::move(fields));
   try {
-    return ep.policy->encode(sample);
+    return ep.policy->encode(sample,ep.policy->paceInput()?forcedWalk(ep):std::nullopt);
   }
   catch(const std::runtime_error& error) {
     const std::string message=error.what();
@@ -1358,17 +1378,10 @@ NpcKeys::KeyState select(Episode& ep,NavPolicy::Result result) {
     }
     ep.selectedIndices[i]=index;ep.selectedLogProb[i]=double(head[index])/temperature-maximum-std::log(total);
   }
-  NpcKeys::KeyState keys;
-  keys.forward=float(int(ep.selectedIndices[0])-1);keys.strafe=float(int(ep.selectedIndices[1])-1);
-  keys.turn=float(int(ep.selectedIndices[2])-1);keys.walk=ep.selectedIndices[3]!=0;
-  keys.jump=ep.policy->weightVersion()>=2?ep.selectedIndices[4]==1:ep.selectedIndices[4]!=0;
-  keys.climb=ep.policy->weightVersion()>=2?ep.selectedIndices[4]==2:ep.selectedIndices[5]!=0;
-  if(const auto* pace=std::getenv("OPENGOTHIC_NAV_FORCE_PACE")) {
-    const std::string_view forcedPace=pace;
-    if(forcedPace=="walk")keys.walk=true;
-    else if(forcedPace=="run")keys.walk=false;
-    else if(!forcedPace.empty())throw std::runtime_error("navdemos: OPENGOTHIC_NAV_FORCE_PACE must be walk or run");
-  }
+  // Pace-input weights read the forced pace; older weights only get the key overridden.
+  const auto walk=forcedWalk(ep);
+  auto keys=ep.policy->keys(ep.selectedIndices,ep.policy->paceInput()?walk:std::nullopt);
+  if(walk)keys.walk=*walk;
   return keys;
 }
 std::array<float,2> movementDirection(const NpcKeys::KeyState& keys) {
@@ -1927,6 +1940,7 @@ void beginPopulation(const std::vector<std::string>& a,World& w,Npc& player,cons
   pop.home=original->position();pop.pairs=readPairs(a[3]);pop.limit=std::stoull(a[4]);
   pop.policy=std::make_shared<NavPolicy>(a[5]);
   if(pop.policy->navDemoVersion()!=2)throw std::runtime_error("navdemos population requires a NAVDEMO v2 policy");
+  if(pop.policy->paceInput())throw std::runtime_error("navdemos population does not support pace-input weights (.navbc v5)");
   const auto count=std::stoull(a[6]);pop.seed=std::stoull(a[7]);
   if(a[8]!="sample" && a[8]!="argmax")throw std::runtime_error("navdemos population action mode must be sample or argmax");
   pop.sampled=a[8]=="sample";pop.targetEpisodes=std::stoull(a[9]);
@@ -2502,6 +2516,7 @@ void NavDemos::command(const std::vector<std::string>& args,World& w,Npc& player
     const auto population=speed?std::stoul(a[7]):1;
     if(population==0 || population>1000)throw std::runtime_error("navdemos invalid policy population");
     ep.policy=std::make_unique<NavPolicy>(a[current?5:6]);
+    requirePace(*ep.policy);
     ep.teacherVersion=settings.driveTeacher?settings.driveTeacher:(ep.policy->navDemoVersion()>=2?3:1);
     ep.policy->configureMemory(ep.memory,std::getenv("OPENGOTHIC_NAV_JOURNEY_MEMORY"));
     if(ep.memory.journeyMemoryEnabled() && ep.policy->navDemoVersion()>=2)

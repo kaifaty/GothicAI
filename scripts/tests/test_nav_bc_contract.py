@@ -218,3 +218,29 @@ def test_hd_fixture_uses_physical_feet_and_preserves_full_raw_record(recording_v
     moved = contract.fixture_features(translated, layout, recording_version, input_variant)
     for name in features:
         np.testing.assert_array_equal(features[name], moved[name])
+
+
+def test_pace_input_weights_read_teacher_walk_as_final_vector_value(tmp_path):
+    weights = tmp_path / "fixture.navbc"
+    contract.synthetic_weights(weights, format_version=5)
+    policy = contract.NumpyPolicy(weights)
+    header = policy.header
+    assert policy.pace_input and policy.head_names == ("forward", "strafe", "turn", "maneuver")
+    assert header["preprocessing"]["vector_order"] == ["eye", "roads", "body", "pace"]
+    assert header["preprocessing"]["input_fields"][-1] == "pace"
+    assert header["architecture"]["inputs"]["vector"] == [2167]
+    assert contract.weight_input_version(header, 2167) == 2 and contract.weight_input_variant(header) == "hd"
+    with pytest.raises(ValueError, match="vector_size=2167"):
+        contract.weight_input_version(header, 2166)
+    layout, samples = contract.synthetic_records(2)
+    records = np.concatenate(list(samples))
+    records["keys"]["walk"] = [1, 0]
+    plain = contract.fixture_features(records, layout, 2, "hd")
+    paced = contract.fixture_features(records, layout, 2, "hd", pace=True)
+    np.testing.assert_array_equal(paced["vector"][:, :-1], plain["vector"])
+    np.testing.assert_array_equal(paced["vector"][:, -1], [1, 0])
+    logits, _ = policy.step(paced["near"][0], paced["far"][0], paced["vector"][0])
+    for walk in (True, False):
+        assert policy.sample(logits, np.random.default_rng(3), walk=walk)["walk"] is walk
+    with pytest.raises(ValueError, match="walk is required"):
+        policy.sample(logits, np.random.default_rng(3))

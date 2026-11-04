@@ -23,6 +23,11 @@ if [[ "$round" == dagger4-r1 ]]; then
   [[ "$stage" == auto || "$stage" == baseline ]] || { echo 'DAgger4 R1 supports only its frozen baseline continuation' >&2; exit 2; }
   exec bash "$ROOT/scripts/nav-dagger4-remote.sh" live-r1 "$weights"
 fi
+if [[ "$round" == pace-v5 ]]; then
+  [[ "$stage" == auto || "$stage" == baseline ]] || { echo 'Pace V5 supports only its frozen live comparison' >&2; exit 2; }
+  export NAV_PACE_WEIGHTS="$weights"
+  exec bash "$ROOT/scripts/nav-pace-remote.sh" live-v5
+fi
 case "$stage" in auto|prepare|qualify|requalify|extend|teacher|smoke|baseline|report|clean) ;; *) echo "Unknown stage: $stage" >&2; exit 2 ;; esac
 [[ -f "$suite" ]] || { echo "Missing suite: $suite" >&2; exit 2; }
 suite="$(cd "$(dirname "$suite")" && pwd)/$(basename "$suite")"
@@ -234,6 +239,8 @@ export PATH="$HOME/.local/bin:$VULKAN_SDK/bin:$PATH"
 export UV_CACHE_DIR="$task/uv-cache"
 export PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 export OPENGOTHIC_BODY_TRACE=0
+# nav_live.py sets the frozen place pace per game for pace-input (.navbc v5) weights only.
+unset OPENGOTHIC_NAV_FORCE_PACE
 # Explicitly choose a ready shared base read-only; all caches/stores are task-owned.
 export OPENGOTHIC_BASE_CACHE="$task/base-cache"
 export OPENGOTHIC_BASE_STORE="/mnt/shared/gothic-ai/nav-live/base-store"

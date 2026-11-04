@@ -518,3 +518,32 @@ def test_complete_takes_the_nodes_a_stance_does_not_write_from_the_layer_below()
     assert full.node_indices == [0, 1, 2]
     assert np.allclose(full.rotations[0, :2], ref.rotations[0]) and np.allclose(full.positions[0, :2], ref.positions[0])
     assert np.allclose(full.rotations[0, 2], below.rotations[0, 2]) and np.allclose(full.positions[0, 2], below.positions[0, 2])
+
+
+def test_fix_layer_joint_clear_keeps_the_knee_over_the_floor():
+    import fix_layer
+    skel, anim = leg_clip(6, root_y=25.0)  # lying: the hip 20 cm up, the leg forward, the knee bent towards the floor
+    t, k = skel.index("BIP01 L FOOT"), skel.index("BIP01 L CALF")
+    anim.rotations[:, 1] = [np.cos(-0.7), np.sin(-0.7), 0, 0]
+    anim.rotations[:, 2] = [np.cos(-0.15), np.sin(-0.15), 0, 0]
+    plain = ga.Animation("T", "", 1, 25.0, 6, list(anim.node_indices), anim.positions.copy(), anim.rotations.copy())
+    fix = {"kind": "tuck", "limb": "L leg", "window": [0, 1, 4, 5], "k": 0.4}
+    fix_layer.apply(skel, plain, [fix], floor=0.0)
+    fix_layer.apply(skel, anim, [dict(fix, joint_clear=5)], floor=0.0)
+    knee = lambda a, f: ga.world_pose(skel, a, f)[k][1, 3]  # noqa: E731
+    foot = lambda a, f: ga.world_pose(skel, a, f)[t][:3, 3]  # noqa: E731
+    assert min(knee(plain, f) for f in range(6)) < 0  # without the guard the knee goes into the floor
+    assert all(knee(anim, f) >= 5 - 0.05 for f in (1, 2, 3, 4))
+    assert all(np.allclose(foot(anim, f), foot(plain, f), atol=0.1) for f in range(6))  # the foot lands where asked
+
+
+def test_fix_layer_hold_keeps_a_bone_still_against_its_parent_while_the_body_turns():
+    import fix_layer
+    skel, anim = leg_clip(8)
+    turn = lambda deg: [np.cos(np.radians(deg) / 2), 0, np.sin(np.radians(deg) / 2), 0]  # noqa: E731
+    anim.rotations[:, 2] = [turn(20 * f) for f in range(8)]  # the calf spins against the thigh, 20° a frame
+    orig = anim.rotations.copy()
+    fix_layer.apply(skel, anim, [{"kind": "hold", "bones": ["BIP01 L CALF"], "frame": 2, "window": [1, 2, 5, 6]}], floor=0.0)
+    assert all(abs(anim.rotations[f, 2] @ orig[2, 2]) > 1 - 1e-9 for f in (2, 3, 4, 5))  # still at frame 2's turn
+    assert np.array_equal(anim.rotations[[0, 1, 6, 7]], orig[[0, 1, 6, 7]])  # outside the window, as it was
+    assert np.array_equal(anim.rotations[:, [0, 1, 3, 4]], orig[:, [0, 1, 3, 4]])  # only the held bone changes

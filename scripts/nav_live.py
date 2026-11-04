@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 MAX_BYTES = 5_000_000_000
 MIN_FREE = 20 * 1024**3
 ACTION_SEEDS = [18102027, 18102028, 18102029]
+PACES = ('walk', 'run')
 
 
 def read_json(path):
@@ -61,6 +62,10 @@ def suite_cases(suite):
                 raise ValueError('Each live case needs its fixed seed or three distinct seeds')
             if case.get('goal_kind', 'point') not in ('point', 'object', 'follow', 'approach'):
                 raise ValueError('Unsupported live goal kind')
+            # Pace for pace-input weights: a companion always runs.
+            if 'pace' in case and (case['pace'] not in PACES
+                                   or (case.get('goal_kind') == 'follow' and case['pace'] != 'run')):
+                raise ValueError(f"Invalid place pace: {case['id']}")
             if case.get('teacher_qualification_required') is False and case['number'] != 3:
                 raise ValueError('Only the fixed follow comparison may use an unqualified teacher reference')
             for field in ('id', 'npc', 'start', 'goal'):
@@ -90,11 +95,97 @@ def models(weights, suite):
         name = re.sub(r'[^A-Za-z0-9_.-]', '-', name)
         if any(model['name'] == name for model in result):
             raise ValueError(f'Duplicate model name: {name}')
-        result.append(dict(name=name, weights=str(path), sha256=sha256(path), order=index))
+        result.append(dict(name=name, weights=str(path), sha256=sha256(path), order=index, **pace_input(path)))
     bc4 = Path(suite.get('bc4_weights', '/mnt/shared/gothic-ai/nav-bc4/bc4/policy.navbc'))
     if not bc4.is_file():
         raise ValueError(f'Missing familiar-channel control: {bc4}')
-    return result, dict(name='bc4', weights=str(bc4), sha256=sha256(bc4))
+    return result, dict(name='bc4', weights=str(bc4), sha256=sha256(bc4), **pace_input(bc4))
+
+
+def pace_input(path):
+    """Mark .navbc v5, which reads walk/run as an input; older model entries stay unchanged."""
+    with Path(path).open('rb') as stream:
+        line = stream.readline(4 * 1024 * 1024)
+    return dict(pace_input=True) if line.endswith(b'\n') and json.loads(line).get('version') == 5 else {}
+
+
+def episode_pace(case, model):
+    """The frozen place pace for v5 and its explicitly matched HD comparison."""
+    if model is None or not (model.get('pace_input') or model.get('force_place_pace')):
+        return None
+    if case.get('pace') not in PACES:
+        raise ValueError(f"Place {case['id']} has no frozen pace for pace-input weights")
+    return case['pace']
+
+
+def pace_v5_round(args):
+    """Record the frozen eleven places afresh for v5 and HD on the same binary."""
+    from copy import deepcopy
+
+    original = read_json(args.suite)
+    completion = args.suite.parent / 'complete.json'
+    if not completion.is_file():
+        completion = Path('/mnt/shared/gothic-ai/nav-live/baseline/complete.json')
+    finished = read_json(completion)
+    if sha256(args.suite) != finished['suite_sha256'] or not finished.get('qualified_subset_complete'):
+        raise ValueError('The frozen live suite differs from its completed baseline')
+    selected = eligible_cases(original, suite_cases(original))
+    if len(selected) != 11 or sum(len(case['seeds']) for case in selected) != 27:
+        raise ValueError('Pace V5 requires the frozen eleven places and 27 policy seeds')
+    paths = [Path(item) for item in args.weights.split(',')]
+    if len(paths) != 2 or not pace_input(paths[0]) or pace_input(paths[1]):
+        raise ValueError('Pace V5 requires the v5 policy followed by HD')
+    if sha256(paths[1]) != finished['weights'][0]:
+        raise ValueError('The HD policy differs from the frozen live baseline')
+    if not os.environ.get('OPENGOTHIC_BASE_FINGERPRINT'):
+        raise ValueError('Pace V5 requires the current base fingerprint')
+    policies = [dict(name=name, weights=str(path), sha256=sha256(path), force_place_pace=True,
+                     **pace_input(path)) for name, path in zip(('pace-v5', 'HD'), paths)]
+    place_paces = {case['id']: case['pace'] for case in suite_cases(read_json(ROOT / 'scripts/nav-live/scenarios.json'))}
+    cases = []
+    for previous in selected:
+        case = deepcopy(previous)
+        case.pop('evaluation_binary', None)
+        case.pop('teacher_reference', None)
+        case['pace'] = place_paces[case['id']]
+        cases.append(case)
+    binary_sha256 = sha256(args.binary)
+    base_fingerprint = os.environ['OPENGOTHIC_BASE_FINGERPRINT']
+    args.inputs = dict(original['inputs'], cache=str(args.runtime / 'navmesh-cache'))
+    for name, filename in (('save', 'save.sav'), ('roads', 'places.json'),
+                           ('familiar', 'familiar.bin'), ('links', 'accepted-links.txt')):
+        path = Path(args.inputs[name])
+        if not path.is_file():
+            path = Path('/mnt/shared/gothic-ai/archive/nav-demos-v5-20261030/input') / filename
+            args.inputs[name] = str(path)
+        if not path.is_file():
+            raise ValueError(f'Missing frozen live input: {path}')
+    args.input_sha256 = {name: sha256(args.inputs[name]) for name in ('save', 'roads', 'familiar', 'links')}
+    if args.input_sha256 != finished['input_sha256']:
+        raise ValueError('The frozen live inputs differ from the completed baseline')
+    check_space(args.output)
+    for case in cases:
+        reference = teacher_directory(args, case)
+        run_episode(args, case, None, case['seeds'][0], reference)
+        for model in policies:
+            for seed in case['seeds']:
+                run_episode(args, case, model, seed, run_directory(args.output, case, model, seed), reference)
+    rows = []
+    for case, model, seed in runs(cases, policies, None):
+        if not completed_run(args, case, model, seed):
+            raise ValueError(f'Pace V5 live recording is incomplete: {case["id"]}/{model["name"]}/{seed}')
+        directory = run_directory(args.output, case, model, seed)
+        value = read_json(directory / 'summary.json')
+        if (value.get('base_fingerprint') != base_fingerprint or value.get('forced_pace') != case['pace']
+                or value.get('pace') != case['pace']):
+            raise ValueError(f'Pace V5 live summary has different base or pace: {directory}')
+        rows.append({**value, 'place': case['id'], 'model': model['name'], 'seed': seed,
+                     'output': str(directory)})
+    write_json(args.output / 'live-summary.json', dict(complete=True, places=11, completed=len(rows), expected=54,
+               binary_sha256=binary_sha256, base_fingerprint=base_fingerprint, rows=rows))
+    print(json.dumps(dict(event='pace_v5_live_complete', places=11, completed=len(rows), expected=54,
+                          output=str(args.output))), flush=True)
+    return 0
 
 
 def check_space(output):
@@ -226,8 +317,12 @@ def case_binary(args, case):
 
 def actual_inputs(args, case, model, seed, recorded=True):
     _, digest = case_binary(args, case)
-    return dict(case=behavioral_case(case), model_sha256=model['sha256'] if model else None, seed=seed,
-                binary_sha256=digest, input_sha256=args.input_sha256, recorded=recorded)
+    result = dict(case=behavioral_case(case), model_sha256=model['sha256'] if model else None, seed=seed,
+                  binary_sha256=digest, input_sha256=args.input_sha256, recorded=recorded)
+    pace = episode_pace(case, model)
+    if pace is not None:
+        result['pace'] = pace
+    return result
 
 
 def teacher_directory(args, case):
@@ -285,8 +380,13 @@ def run_episode(args, case, model, seed, directory, teacher=None, recorded=True)
             OPENGOTHIC_BENCH_ENCODER='-c:v libx264 -preset veryfast -crf 30 -maxrate 800k -bufsize 1600k -vf fps=15',
             OMP_NUM_THREADS='1', OPENBLAS_NUM_THREADS='1',
             TIMEOUT=str(min(600, int(remaining) - 20)))
-        for key in ('OPENGOTHIC_NAV_JOURNEY_MEMORY', 'OPENGOTHIC_NAV_FAMILIAR_MAP', 'OPENGOTHIC_BENCH_REALTIME'):
+        for key in ('OPENGOTHIC_NAV_JOURNEY_MEMORY', 'OPENGOTHIC_NAV_FAMILIAR_MAP', 'OPENGOTHIC_BENCH_REALTIME',
+                    'OPENGOTHIC_NAV_FORCE_PACE'):
             environment.pop(key, None)
+        # gq does not forward the submitter's environment: the job sets the place pace itself.
+        pace = episode_pace(case, model)
+        if pace is not None:
+            environment['OPENGOTHIC_NAV_FORCE_PACE'] = pace
         with (directory / 'launcher.log').open('w') as log:
             result = subprocess.run(['bash', str(ROOT / 'scripts/bench.sh'), str(scenario), str(directory)],
                                     env=environment, stdout=log, stderr=subprocess.STDOUT,
@@ -299,6 +399,8 @@ def run_episode(args, case, model, seed, directory, teacher=None, recorded=True)
             raise ValueError(f'Incomplete game run: {directory}; see launcher.log and game.log')
         episode = read_json(directory / 'episode.json')
         episode['base_fingerprint'] = environment.get('OPENGOTHIC_BASE_FINGERPRINT') or None
+        if pace is not None:
+            episode['forced_pace'] = pace
         write_json(directory / 'episode.json', episode)
         # The save is input, not a per-seed output. Keep only the small bench ini.
         saved = directory / 'run/save_slot_1.sav'
@@ -657,7 +759,7 @@ def completed_round(runtime, output, weights):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('stage', choices=('teacher', 'smoke', 'baseline', 'report'))
+    parser.add_argument('stage', choices=('teacher', 'smoke', 'baseline', 'report', 'pace-v5'))
     parser.add_argument('--suite', type=Path, required=True)
     parser.add_argument('--runtime', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
@@ -671,6 +773,8 @@ def main(argv=None):
         args.suite = args.output / 'qualified-suite.json'
     args.binary = args.runtime / 'build/opengothic/Gothic2Notr'
     args.deadline = phase_deadline()
+    if args.stage == 'pace-v5':
+        return pace_v5_round(args)
     suite = read_json(args.suite)
     if suite.get('evaluation_binary'):
         evaluation = suite['evaluation_binary']
