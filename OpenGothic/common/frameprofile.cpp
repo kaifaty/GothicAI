@@ -24,14 +24,16 @@ const char* names[Zones]={"tick","finish_step","camera","observations","bench","
   "bodynet","cloth","water","destruction","ai_bridge","sound","vob_sound_load",
   "texture_update","texture_demand_elapsed_sum","bindless_rebuild","bindless_patch",
   "npc_full_tick","npc_simplified_tick","npc_logic_shadow",
-  "encode_shadows","encode_main","encode_water","encode_post","encode_ui"};
+  "encode_shadows","encode_main","encode_water","encode_post","encode_ui",
+  "vsm_changes","vsm_instance_elapsed_sum","vsm_encode"};
 const char* amountNames[Amounts]={"palette_calls","palette_bytes","identical_calls","identical_bytes",
   "patch_calls","patch_bytes","patch_blocks","grow_bytes","upload_execution_bytes","draw_calls","dispatch_calls",
   "bindless_texture_slots","bindless_buffer_slots","bindless_patched_slots",
   "npc_full","npc_simplified","npc_tier_transitions",
   "npc_logic_samples","npc_logic_body_mismatch","npc_logic_weapon_mismatch",
   "npc_logic_early","npc_logic_late","npc_logic_events","npc_logic_event_mismatch",
-  "npc_logic_wait_early","npc_logic_wait_late","npc_logic_reanchored","npc_logic_body_samples","npc_logic_weapon_samples"};
+  "npc_logic_wait_early","npc_logic_wait_late","npc_logic_reanchored","npc_logic_body_samples","npc_logic_weapon_samples",
+  "vsm_spheres","vsm_spheres_static","vsm_spheres_moved","vsm_instance_calls"};
 uint64_t ns() {
   return uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
   }

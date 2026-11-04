@@ -443,7 +443,10 @@ void Renderer::prepareUniforms(WorldView& wview) {
       }
   wview.setShadowMaps(sh);
   wview.setVirtualShadowMap(settings.vsmEnabled, vsm.pageData, vsm.pageTbl, vsm.pageHiZ, vsm.pageList);
-  wview.setVsmCache(settings.vsmEnabled && settings.vsmCache);
+  // OPENGOTHIC_VSM_CACHE_GATHER=0 (measurement only, why-slower.md): the cache runs on the GPU without the
+  // casters' changes, so the cost of gathering them shows apart; the shadows are then wrong
+  static const bool gather = []{ const char* e = std::getenv("OPENGOTHIC_VSM_CACHE_GATHER"); return e==nullptr || std::string_view(e)!="0"; }();
+  wview.setVsmCache(settings.vsmEnabled && settings.vsmCache && gather);
 
   wview.setHiZ(textureCast<const Texture2d&>(hiz.hiZ));
   wview.setGbuffer(textureCast<const Texture2d&>(gbufDiffuse), textureCast<const Texture2d&>(gbufNormal));
@@ -1426,6 +1429,7 @@ void Renderer::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView&
   if(!settings.vsmEnabled)
     return;
   FrameProfile::Scope timing(FrameProfile::Zone::EncodeShadows);
+  FrameProfile::Scope vsmTiming(FrameProfile::Zone::VsmEncode);
 
   static bool omniLights = true;
   const bool directLight  = !settings.rtsmEnabled;

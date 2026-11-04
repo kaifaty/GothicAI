@@ -473,6 +473,8 @@ void VisualObjects::updateInstance(size_t id, Matrix4x4* pos) {
   auto cId  = obj.clusterId;
   auto npos = Vec3(obj.pos[3][0], obj.pos[3][1], obj.pos[3][2]);
   if(pos==nullptr && !isVsmDynamic(obj) && scene.vsmCache) {
+    FrameProfile::Scope vsmTiming(FrameProfile::Zone::VsmInstance);
+    FrameProfile::add(FrameProfile::Amount::VsmInstanceCalls, 1);
     // a caster moved, turned or changed its shape: the lamp faces that saw it before and those that see it now.
     // A drift below VsmMoveTolerance from where the faces last saw it (a physics body at rest jitters by
     // hundredths of a millimetre) is less than a texel of a face: it is gathered until it is more
@@ -1041,6 +1043,7 @@ void VisualObjects::vsmChangedClusters(const Object& obj, bool force) {
   }
 
 void VisualObjects::commitVsmChanges(uint8_t fId) {
+  FrameProfile::Scope timing(FrameProfile::Zone::VsmChanges);
   vsmLast.serial++;
   if(vsmLast.epoch==0)
     vsmLast.epoch = ++vsmEpochs;
@@ -1107,6 +1110,9 @@ void VisualObjects::commitVsmChanges(uint8_t fId) {
     buf = device.ssbo(BufferHeap::Upload, Tempest::Uninitialized, std::max<size_t>(size, 4096*sizeof(Vec4)));
     }
   buf.update(vsmUpload.data(), 0, size);
+  FrameProfile::add(FrameProfile::Amount::VsmSpheres,       vsmUpload.size());
+  FrameProfile::add(FrameProfile::Amount::VsmSpheresStatic, vsmLast.staticCount);
+  FrameProfile::add(FrameProfile::Amount::VsmSpheresMoved,  vsmLast.moved);
   vsmLast.spheres = &buf;
   vsmLast.count   = uint32_t(vsmUpload.size());
   }
