@@ -613,9 +613,18 @@ void MdlVisual::setQuiver(const Quiver::State& st, MeshObjects::Mesh&& body, std
     clearQuiver();
     return;
     }
-  std::vector<Quiver::SkinPoint> bind;
-  quiverPoints(true,bind);
-  auto fit = Quiver::fit(*skeleton,bind);
+  // the fit is the armour's and the skeleton's: a new count of arrows keeps it
+  Quiver::Fit fit = quiv.fit();
+  if(!fit.valid || quiv.state().body!=st.body || quiv.state().skeleton!=st.skeleton) {
+    std::vector<Quiver::SkinPoint> bind, moving, frame;
+    quiverPoints(true,bind);
+    for(const auto& bones:Quiver::motionFrames(*skeleton)) {
+      quiverPoints(bones.data(),bones.size(),frame);
+      Quiver::toBind(*skeleton,bones,frame);
+      moving.insert(moving.end(),frame.begin(),frame.end());
+      }
+    fit = Quiver::fit(*skeleton,bind,moving);
+    }
   quiv.set(st,fit,std::move(body),std::move(arrows),std::move(arrowLocal));
   if(textureOwnerKnown)
     quiv.setTextureOwner(textureOwnerPosition,textureOwnerSpatial);
@@ -634,6 +643,13 @@ void MdlVisual::quiverPoints(bool bind, std::vector<Quiver::SkinPoint>& out) con
   std::vector<Matrix4x4> bones(n);
   for(size_t i=0; i<n; ++i)
     bones[i] = bind ? skeleton->tr[i] : renderedBone(i);
+  quiverPoints(bones.data(),n,out);
+  }
+
+void MdlVisual::quiverPoints(const Matrix4x4* bones, size_t n, std::vector<Quiver::SkinPoint>& out) const {
+  out.clear();
+  if(skeleton==nullptr)
+    return;
   const ProtoMesh* pm = view.protoMesh();
   if(pm==nullptr)
     return;

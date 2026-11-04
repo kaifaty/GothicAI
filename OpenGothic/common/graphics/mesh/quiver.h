@@ -62,7 +62,14 @@ class Quiver final {
       Tempest::Matrix4x4 local;
       float              out = 0;
       };
-    static Fit fit(const Skeleton& sk, const std::vector<SkinPoint>& bind);
+    // moving: the same points in the frames of the walks, runs and the aim (motionFrames), carried into the
+    // bind pose by the pelvis: the legs and the flaps swing back and out of the pelvis as they go
+    static Fit fit(const Skeleton& sk, const std::vector<SkinPoint>& bind, const std::vector<SkinPoint>& moving);
+
+    // the bones (model space) of the frames the fit looks at: of each of the moves the bowman has, evenly
+    static std::vector<std::vector<Tempest::Matrix4x4>> motionFrames(const Skeleton& sk);
+    // points of a frame into the bind pose: that frame's pelvis put where the bind pose has it
+    static void toBind(const Skeleton& sk, const std::vector<Tempest::Matrix4x4>& frame, std::vector<SkinPoint>& pts);
 
     // the arrows' matrices in the quiver's frame for that arrow mesh (its tip at -X, as a shot flies)
     static std::vector<Tempest::Matrix4x4> arrowLayout(const Tempest::Vec3* arrowBox, int count);
@@ -73,6 +80,7 @@ class Quiver final {
     const State& state() const { return st; }
     bool         isShown() const { return st.on; }
     size_t       bone() const { return fitted.pelvis; }
+    const Fit&   fit() const { return fitted; }
     void         rebind(const Skeleton& sk);
     void         sync(const Tempest::Matrix4x4& pelvis);
     void         setTextureOwner(const Tempest::Vec3& position, bool spatial);

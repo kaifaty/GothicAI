@@ -83,6 +83,8 @@ class MdlVisual final {
     const ProtoMesh*               bodyProto() const { return view.protoMesh(); }
     // the armour (or the body) and its rigid parts: in the bind pose (model space) or as drawn (world)
     void                           quiverPoints(bool bind, std::vector<Quiver::SkinPoint>& out) const;
+    void                           quiverPoints(const Tempest::Matrix4x4* bones, size_t n,
+                                                std::vector<Quiver::SkinPoint>& out) const;
     Quiver::Probe                  quiverProbe() const;
     bool                           setFightMode  (asset::MdsFightMode mode);
     void                           dropWeapon    (Npc& owner);
