@@ -1,11 +1,13 @@
-# The quiver on the right hip (graphics/mesh/quiver, docs/manual-aim.md): the hero and an npc bowman in five
-# armours (the bandit's thing on the hip, the militia's flaps, the fire mage's robe, the paladin's plate, light
-# leather): the bow drawn standing (S_BOWRUN), aiming, aiming crouched, running with the bow (S_BOWRUNL),
-# walking and sneaking with the bow put away; a two-hander on the back with the bow; 0, 1, 5, 20, 50 arrows.
-# From in front on the right and from the right side. slowmo 2: a row of metrics.csv is 1/60 s of the game
-# (qv_armor, qv_leg: cm the armour and the legs go into the quiver; qv_arrows; qv_mx..qv_mz: the mouth in the
-# pelvis bone's frame); a clip to 60 fps in real time: ffmpeg -i x.mp4 -vf setpts=0.5*PTS -r 60 x60.mp4.
-# The quiver's body: OPENGOTHIC_CONTENT with ITRW_QUIVER (scripts/content/mesh3d/quiver_stub.py)
+# The quiver on the right hip (graphics/mesh/quiver, docs/manual-aim.md): it hangs from a ring on the pelvis and
+# swings; the right leg, arm and the armour's flaps push it aside. The hero and an npc bowman in five armours
+# (the bandit's thing on the hip, the militia's flaps, the fire mage's robe, the paladin's plate, light leather):
+# walking and running with the bow put away, running with the bow (S_BOWRUNL), a sudden stop, turning on the
+# spot, the aim and the shot; standing with the bow, aiming crouched, sneaking; a two-hander on the back with
+# the bow; 0, 1, 5, 20, 50 arrows. From in front on the right and from the right side. slowmo 2: a row of
+# metrics.csv is 1/60 s of the game (qv_armor, qv_leg, qv_arm: cm the armour, the legs, an arm go into the
+# quiver; qv_swing/back/outward: deg from the rest; qv_mx..qv_mz: the mouth in the pelvis bone's frame; qv_us:
+# the step's cost); a clip to 60 fps in real time: ffmpeg -i x.mp4 -vf setpts=0.5*PTS -r 60 x60.mp4.
+# The quiver's body: OPENGOTHIC_CONTENT with ITRW_QUIVER (reports/content/2026-11-quiver)
 cheat god
 set time 12 0
 view clean
@@ -15,11 +17,14 @@ wait 500
 manual on
 equip ItRw_Bow_L_01
 arrows player 20
+insert Sheep
+wait 300
+pin SHEEP 1200 0 0
+aimat SHEEP body
 cam look 95
 slowmo 2
 tap bow
 wait 1500
-
 
 # --- the hero in ITAR_BDT_H
 equip ITAR_BDT_H
@@ -36,15 +41,33 @@ rec hero_bdt_stand_side
 wait 1000
 stop
 cam follow 210 105 -45
+wait 200
 press action
-wait 900
-rec hero_bdt_aim_fr
-wait 1000
+wait 700
+rec hero_bdt_aimshot_fr
+wait 700
+release action
+wait 1300
 stop
+arrows player 20
+cam follow 210 105 -90
+wait 200
+press action
+wait 700
+rec hero_bdt_aimshot_side
+wait 700
+release action
+wait 1300
+stop
+arrows player 20
+cam follow 210 105 -45
+wait 200
+press action
+wait 600
 tap sneak
 wait 900
 rec hero_bdt_crouch_fr
-wait 1000
+wait 900
 stop
 tap sneak
 wait 600
@@ -52,15 +75,13 @@ release action
 wait 1200
 arrows player 20
 cam follow 210 105 -90
+wait 200
 press action
-wait 900
-rec hero_bdt_aim_side
-wait 1000
-stop
+wait 600
 tap sneak
 wait 900
 rec hero_bdt_crouch_side
-wait 1000
+wait 900
 stop
 tap sneak
 wait 600
@@ -68,6 +89,7 @@ release action
 wait 1200
 arrows player 20
 cam follow 210 105 -45
+wait 200
 hold forward 2000
 wait 500
 rec hero_bdt_bowrun_fr
@@ -78,6 +100,7 @@ goto NW_XARDAS_TOWER_VALLEY_091
 face -106
 wait 400
 cam follow 210 105 -90
+wait 200
 hold forward 2000
 wait 500
 rec hero_bdt_bowrun_side
@@ -89,8 +112,73 @@ face -106
 wait 400
 tap bow
 wait 1500
+cam follow 210 105 -45
+wait 200
+hold forward 2000
+wait 500
+rec hero_bdt_run_fr
+wait 1200
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
+cam follow 210 105 -90
+wait 200
+hold forward 2000
+wait 500
+rec hero_bdt_run_side
+wait 1200
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
+cam follow 210 105 -45
+wait 200
+hold forward 1400
+wait 700
+rec hero_bdt_stop_fr
+wait 1800
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
+cam follow 210 105 -90
+wait 200
+hold forward 1400
+wait 700
+rec hero_bdt_stop_side
+wait 1800
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
+cam follow 210 105 -45
+wait 200
+rec hero_bdt_turn_fr
+hold turnl 1400
+wait 1600
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
+cam follow 210 105 -90
+wait 200
+rec hero_bdt_turn_side
+hold turnl 1400
+wait 1600
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
 walkmode walk
 cam follow 210 105 -45
+wait 200
 hold forward 2200
 wait 700
 rec hero_bdt_walk_fr
@@ -101,6 +189,7 @@ goto NW_XARDAS_TOWER_VALLEY_091
 face -106
 wait 400
 cam follow 210 105 -90
+wait 200
 hold forward 2200
 wait 700
 rec hero_bdt_walk_side
@@ -112,6 +201,7 @@ face -106
 wait 400
 walkmode sneak
 cam follow 210 105 -45
+wait 200
 hold forward 2200
 wait 700
 rec hero_bdt_sneak_fr
@@ -122,6 +212,7 @@ goto NW_XARDAS_TOWER_VALLEY_091
 face -106
 wait 400
 cam follow 210 105 -90
+wait 200
 hold forward 2200
 wait 700
 rec hero_bdt_sneak_side
@@ -150,15 +241,33 @@ rec hero_mil_stand_side
 wait 1000
 stop
 cam follow 210 105 -45
+wait 200
 press action
-wait 900
-rec hero_mil_aim_fr
-wait 1000
+wait 700
+rec hero_mil_aimshot_fr
+wait 700
+release action
+wait 1300
 stop
+arrows player 20
+cam follow 210 105 -90
+wait 200
+press action
+wait 700
+rec hero_mil_aimshot_side
+wait 700
+release action
+wait 1300
+stop
+arrows player 20
+cam follow 210 105 -45
+wait 200
+press action
+wait 600
 tap sneak
 wait 900
 rec hero_mil_crouch_fr
-wait 1000
+wait 900
 stop
 tap sneak
 wait 600
@@ -166,15 +275,13 @@ release action
 wait 1200
 arrows player 20
 cam follow 210 105 -90
+wait 200
 press action
-wait 900
-rec hero_mil_aim_side
-wait 1000
-stop
+wait 600
 tap sneak
 wait 900
 rec hero_mil_crouch_side
-wait 1000
+wait 900
 stop
 tap sneak
 wait 600
@@ -182,6 +289,7 @@ release action
 wait 1200
 arrows player 20
 cam follow 210 105 -45
+wait 200
 hold forward 2000
 wait 500
 rec hero_mil_bowrun_fr
@@ -192,6 +300,7 @@ goto NW_XARDAS_TOWER_VALLEY_091
 face -106
 wait 400
 cam follow 210 105 -90
+wait 200
 hold forward 2000
 wait 500
 rec hero_mil_bowrun_side
@@ -203,8 +312,73 @@ face -106
 wait 400
 tap bow
 wait 1500
+cam follow 210 105 -45
+wait 200
+hold forward 2000
+wait 500
+rec hero_mil_run_fr
+wait 1200
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
+cam follow 210 105 -90
+wait 200
+hold forward 2000
+wait 500
+rec hero_mil_run_side
+wait 1200
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
+cam follow 210 105 -45
+wait 200
+hold forward 1400
+wait 700
+rec hero_mil_stop_fr
+wait 1800
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
+cam follow 210 105 -90
+wait 200
+hold forward 1400
+wait 700
+rec hero_mil_stop_side
+wait 1800
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
+cam follow 210 105 -45
+wait 200
+rec hero_mil_turn_fr
+hold turnl 1400
+wait 1600
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
+cam follow 210 105 -90
+wait 200
+rec hero_mil_turn_side
+hold turnl 1400
+wait 1600
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
 walkmode walk
 cam follow 210 105 -45
+wait 200
 hold forward 2200
 wait 700
 rec hero_mil_walk_fr
@@ -215,6 +389,7 @@ goto NW_XARDAS_TOWER_VALLEY_091
 face -106
 wait 400
 cam follow 210 105 -90
+wait 200
 hold forward 2200
 wait 700
 rec hero_mil_walk_side
@@ -226,6 +401,7 @@ face -106
 wait 400
 walkmode sneak
 cam follow 210 105 -45
+wait 200
 hold forward 2200
 wait 700
 rec hero_mil_sneak_fr
@@ -236,6 +412,7 @@ goto NW_XARDAS_TOWER_VALLEY_091
 face -106
 wait 400
 cam follow 210 105 -90
+wait 200
 hold forward 2200
 wait 700
 rec hero_mil_sneak_side
@@ -264,15 +441,33 @@ rec hero_kdf_stand_side
 wait 1000
 stop
 cam follow 210 105 -45
+wait 200
 press action
-wait 900
-rec hero_kdf_aim_fr
-wait 1000
+wait 700
+rec hero_kdf_aimshot_fr
+wait 700
+release action
+wait 1300
 stop
+arrows player 20
+cam follow 210 105 -90
+wait 200
+press action
+wait 700
+rec hero_kdf_aimshot_side
+wait 700
+release action
+wait 1300
+stop
+arrows player 20
+cam follow 210 105 -45
+wait 200
+press action
+wait 600
 tap sneak
 wait 900
 rec hero_kdf_crouch_fr
-wait 1000
+wait 900
 stop
 tap sneak
 wait 600
@@ -280,15 +475,13 @@ release action
 wait 1200
 arrows player 20
 cam follow 210 105 -90
+wait 200
 press action
-wait 900
-rec hero_kdf_aim_side
-wait 1000
-stop
+wait 600
 tap sneak
 wait 900
 rec hero_kdf_crouch_side
-wait 1000
+wait 900
 stop
 tap sneak
 wait 600
@@ -296,6 +489,7 @@ release action
 wait 1200
 arrows player 20
 cam follow 210 105 -45
+wait 200
 hold forward 2000
 wait 500
 rec hero_kdf_bowrun_fr
@@ -306,6 +500,7 @@ goto NW_XARDAS_TOWER_VALLEY_091
 face -106
 wait 400
 cam follow 210 105 -90
+wait 200
 hold forward 2000
 wait 500
 rec hero_kdf_bowrun_side
@@ -317,8 +512,73 @@ face -106
 wait 400
 tap bow
 wait 1500
+cam follow 210 105 -45
+wait 200
+hold forward 2000
+wait 500
+rec hero_kdf_run_fr
+wait 1200
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
+cam follow 210 105 -90
+wait 200
+hold forward 2000
+wait 500
+rec hero_kdf_run_side
+wait 1200
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
+cam follow 210 105 -45
+wait 200
+hold forward 1400
+wait 700
+rec hero_kdf_stop_fr
+wait 1800
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
+cam follow 210 105 -90
+wait 200
+hold forward 1400
+wait 700
+rec hero_kdf_stop_side
+wait 1800
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
+cam follow 210 105 -45
+wait 200
+rec hero_kdf_turn_fr
+hold turnl 1400
+wait 1600
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
+cam follow 210 105 -90
+wait 200
+rec hero_kdf_turn_side
+hold turnl 1400
+wait 1600
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
 walkmode walk
 cam follow 210 105 -45
+wait 200
 hold forward 2200
 wait 700
 rec hero_kdf_walk_fr
@@ -329,6 +589,7 @@ goto NW_XARDAS_TOWER_VALLEY_091
 face -106
 wait 400
 cam follow 210 105 -90
+wait 200
 hold forward 2200
 wait 700
 rec hero_kdf_walk_side
@@ -340,6 +601,7 @@ face -106
 wait 400
 walkmode sneak
 cam follow 210 105 -45
+wait 200
 hold forward 2200
 wait 700
 rec hero_kdf_sneak_fr
@@ -350,6 +612,7 @@ goto NW_XARDAS_TOWER_VALLEY_091
 face -106
 wait 400
 cam follow 210 105 -90
+wait 200
 hold forward 2200
 wait 700
 rec hero_kdf_sneak_side
@@ -378,15 +641,33 @@ rec hero_pal_stand_side
 wait 1000
 stop
 cam follow 210 105 -45
+wait 200
 press action
-wait 900
-rec hero_pal_aim_fr
-wait 1000
+wait 700
+rec hero_pal_aimshot_fr
+wait 700
+release action
+wait 1300
 stop
+arrows player 20
+cam follow 210 105 -90
+wait 200
+press action
+wait 700
+rec hero_pal_aimshot_side
+wait 700
+release action
+wait 1300
+stop
+arrows player 20
+cam follow 210 105 -45
+wait 200
+press action
+wait 600
 tap sneak
 wait 900
 rec hero_pal_crouch_fr
-wait 1000
+wait 900
 stop
 tap sneak
 wait 600
@@ -394,15 +675,13 @@ release action
 wait 1200
 arrows player 20
 cam follow 210 105 -90
+wait 200
 press action
-wait 900
-rec hero_pal_aim_side
-wait 1000
-stop
+wait 600
 tap sneak
 wait 900
 rec hero_pal_crouch_side
-wait 1000
+wait 900
 stop
 tap sneak
 wait 600
@@ -410,6 +689,7 @@ release action
 wait 1200
 arrows player 20
 cam follow 210 105 -45
+wait 200
 hold forward 2000
 wait 500
 rec hero_pal_bowrun_fr
@@ -420,6 +700,7 @@ goto NW_XARDAS_TOWER_VALLEY_091
 face -106
 wait 400
 cam follow 210 105 -90
+wait 200
 hold forward 2000
 wait 500
 rec hero_pal_bowrun_side
@@ -431,8 +712,73 @@ face -106
 wait 400
 tap bow
 wait 1500
+cam follow 210 105 -45
+wait 200
+hold forward 2000
+wait 500
+rec hero_pal_run_fr
+wait 1200
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
+cam follow 210 105 -90
+wait 200
+hold forward 2000
+wait 500
+rec hero_pal_run_side
+wait 1200
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
+cam follow 210 105 -45
+wait 200
+hold forward 1400
+wait 700
+rec hero_pal_stop_fr
+wait 1800
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
+cam follow 210 105 -90
+wait 200
+hold forward 1400
+wait 700
+rec hero_pal_stop_side
+wait 1800
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
+cam follow 210 105 -45
+wait 200
+rec hero_pal_turn_fr
+hold turnl 1400
+wait 1600
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
+cam follow 210 105 -90
+wait 200
+rec hero_pal_turn_side
+hold turnl 1400
+wait 1600
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
 walkmode walk
 cam follow 210 105 -45
+wait 200
 hold forward 2200
 wait 700
 rec hero_pal_walk_fr
@@ -443,6 +789,7 @@ goto NW_XARDAS_TOWER_VALLEY_091
 face -106
 wait 400
 cam follow 210 105 -90
+wait 200
 hold forward 2200
 wait 700
 rec hero_pal_walk_side
@@ -454,6 +801,7 @@ face -106
 wait 400
 walkmode sneak
 cam follow 210 105 -45
+wait 200
 hold forward 2200
 wait 700
 rec hero_pal_sneak_fr
@@ -464,6 +812,7 @@ goto NW_XARDAS_TOWER_VALLEY_091
 face -106
 wait 400
 cam follow 210 105 -90
+wait 200
 hold forward 2200
 wait 700
 rec hero_pal_sneak_side
@@ -492,15 +841,33 @@ rec hero_lea_stand_side
 wait 1000
 stop
 cam follow 210 105 -45
+wait 200
 press action
-wait 900
-rec hero_lea_aim_fr
-wait 1000
+wait 700
+rec hero_lea_aimshot_fr
+wait 700
+release action
+wait 1300
 stop
+arrows player 20
+cam follow 210 105 -90
+wait 200
+press action
+wait 700
+rec hero_lea_aimshot_side
+wait 700
+release action
+wait 1300
+stop
+arrows player 20
+cam follow 210 105 -45
+wait 200
+press action
+wait 600
 tap sneak
 wait 900
 rec hero_lea_crouch_fr
-wait 1000
+wait 900
 stop
 tap sneak
 wait 600
@@ -508,15 +875,13 @@ release action
 wait 1200
 arrows player 20
 cam follow 210 105 -90
+wait 200
 press action
-wait 900
-rec hero_lea_aim_side
-wait 1000
-stop
+wait 600
 tap sneak
 wait 900
 rec hero_lea_crouch_side
-wait 1000
+wait 900
 stop
 tap sneak
 wait 600
@@ -524,6 +889,7 @@ release action
 wait 1200
 arrows player 20
 cam follow 210 105 -45
+wait 200
 hold forward 2000
 wait 500
 rec hero_lea_bowrun_fr
@@ -534,6 +900,7 @@ goto NW_XARDAS_TOWER_VALLEY_091
 face -106
 wait 400
 cam follow 210 105 -90
+wait 200
 hold forward 2000
 wait 500
 rec hero_lea_bowrun_side
@@ -545,8 +912,73 @@ face -106
 wait 400
 tap bow
 wait 1500
+cam follow 210 105 -45
+wait 200
+hold forward 2000
+wait 500
+rec hero_lea_run_fr
+wait 1200
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
+cam follow 210 105 -90
+wait 200
+hold forward 2000
+wait 500
+rec hero_lea_run_side
+wait 1200
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
+cam follow 210 105 -45
+wait 200
+hold forward 1400
+wait 700
+rec hero_lea_stop_fr
+wait 1800
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
+cam follow 210 105 -90
+wait 200
+hold forward 1400
+wait 700
+rec hero_lea_stop_side
+wait 1800
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
+cam follow 210 105 -45
+wait 200
+rec hero_lea_turn_fr
+hold turnl 1400
+wait 1600
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
+cam follow 210 105 -90
+wait 200
+rec hero_lea_turn_side
+hold turnl 1400
+wait 1600
+stop
+release all
+goto NW_XARDAS_TOWER_VALLEY_091
+face -106
+wait 400
 walkmode walk
 cam follow 210 105 -45
+wait 200
 hold forward 2200
 wait 700
 rec hero_lea_walk_fr
@@ -557,6 +989,7 @@ goto NW_XARDAS_TOWER_VALLEY_091
 face -106
 wait 400
 cam follow 210 105 -90
+wait 200
 hold forward 2200
 wait 700
 rec hero_lea_walk_side
@@ -568,6 +1001,7 @@ face -106
 wait 400
 walkmode sneak
 cam follow 210 105 -45
+wait 200
 hold forward 2200
 wait 700
 rec hero_lea_sneak_fr
@@ -578,6 +1012,7 @@ goto NW_XARDAS_TOWER_VALLEY_091
 face -106
 wait 400
 cam follow 210 105 -90
+wait 200
 hold forward 2200
 wait 700
 rec hero_lea_sneak_side
@@ -609,6 +1044,7 @@ tap bow
 wait 1500
 walkmode walk
 cam follow 210 105 -45
+wait 200
 hold forward 2200
 wait 700
 rec hero_2h_walk_fr
@@ -619,6 +1055,7 @@ goto NW_XARDAS_TOWER_VALLEY_091
 face -106
 wait 400
 cam follow 210 105 -90
+wait 200
 hold forward 2200
 wait 700
 rec hero_2h_walk_side
@@ -669,7 +1106,8 @@ rec hero_arrows50_fr
 wait 600
 stop
 
-# --- an npc bowman, the same poses: it stands frozen in front of the hero, plays them on the spot
+# --- an npc bowman, the same: it stands in front of the hero (pinned), plays the moves on the spot; the aim and
+# the shot by hand at the sheep
 arrows player 20
 insert BAU_904_BAUER
 wait 300
@@ -683,20 +1121,21 @@ wait 500
 # --- the npc in ITAR_BDT_H
 npcequip BAU_904_BAUER ITAR_BDT_H
 arrows BAU_904_BAUER 20
-archer BAU_904_BAUER at player
-wait 2500
+archer BAU_904_BAUER at SHEEP
+wait 2000
 cam follow 210 105 -45
 wait 200
-rec npc_bdt_aim_fr
-wait 1000
+rec npc_bdt_aimshot_fr
+wait 2500
 stop
 cam follow 210 105 -90
 wait 200
-rec npc_bdt_aim_side
-wait 1000
+rec npc_bdt_aimshot_side
+wait 2500
 stop
 archer off
 freeze BAU_904_BAUER
+arrows BAU_904_BAUER 20
 ani BAU_904_BAUER S_BOWRUN force
 wait 600
 cam follow 210 105 -45
@@ -719,6 +1158,18 @@ stop
 cam follow 210 105 -90
 wait 200
 rec npc_bdt_bowrun_side
+wait 1000
+stop
+ani BAU_904_BAUER S_RUNL force
+wait 600
+cam follow 210 105 -45
+wait 200
+rec npc_bdt_run_fr
+wait 1000
+stop
+cam follow 210 105 -90
+wait 200
+rec npc_bdt_run_side
 wait 1000
 stop
 ani BAU_904_BAUER S_WALKL force
@@ -745,25 +1196,56 @@ wait 200
 rec npc_bdt_sneak_side
 wait 1000
 stop
+cam follow 210 105 -45
+wait 200
+ani BAU_904_BAUER S_RUNL force
+wait 800
+rec npc_bdt_stop_fr
+wait 500
+ani BAU_904_BAUER S_RUN force
+wait 1300
+stop
+cam follow 210 105 -90
+wait 200
+ani BAU_904_BAUER S_RUNL force
+wait 800
+rec npc_bdt_stop_side
+wait 500
+ani BAU_904_BAUER S_RUN force
+wait 1300
+stop
+cam follow 210 105 -45
+wait 200
+rec npc_bdt_turn_fr
+ani BAU_904_BAUER T_RUNTURNL force
+wait 1500
+stop
+cam follow 210 105 -90
+wait 200
+rec npc_bdt_turn_side
+ani BAU_904_BAUER T_RUNTURNL force
+wait 1500
+stop
 freeze BAU_904_BAUER off
 
 # --- the npc in ITAR_MIL_M
 npcequip BAU_904_BAUER ITAR_MIL_M
 arrows BAU_904_BAUER 20
-archer BAU_904_BAUER at player
-wait 2500
+archer BAU_904_BAUER at SHEEP
+wait 2000
 cam follow 210 105 -45
 wait 200
-rec npc_mil_aim_fr
-wait 1000
+rec npc_mil_aimshot_fr
+wait 2500
 stop
 cam follow 210 105 -90
 wait 200
-rec npc_mil_aim_side
-wait 1000
+rec npc_mil_aimshot_side
+wait 2500
 stop
 archer off
 freeze BAU_904_BAUER
+arrows BAU_904_BAUER 20
 ani BAU_904_BAUER S_BOWRUN force
 wait 600
 cam follow 210 105 -45
@@ -786,6 +1268,18 @@ stop
 cam follow 210 105 -90
 wait 200
 rec npc_mil_bowrun_side
+wait 1000
+stop
+ani BAU_904_BAUER S_RUNL force
+wait 600
+cam follow 210 105 -45
+wait 200
+rec npc_mil_run_fr
+wait 1000
+stop
+cam follow 210 105 -90
+wait 200
+rec npc_mil_run_side
 wait 1000
 stop
 ani BAU_904_BAUER S_WALKL force
@@ -812,25 +1306,56 @@ wait 200
 rec npc_mil_sneak_side
 wait 1000
 stop
+cam follow 210 105 -45
+wait 200
+ani BAU_904_BAUER S_RUNL force
+wait 800
+rec npc_mil_stop_fr
+wait 500
+ani BAU_904_BAUER S_RUN force
+wait 1300
+stop
+cam follow 210 105 -90
+wait 200
+ani BAU_904_BAUER S_RUNL force
+wait 800
+rec npc_mil_stop_side
+wait 500
+ani BAU_904_BAUER S_RUN force
+wait 1300
+stop
+cam follow 210 105 -45
+wait 200
+rec npc_mil_turn_fr
+ani BAU_904_BAUER T_RUNTURNL force
+wait 1500
+stop
+cam follow 210 105 -90
+wait 200
+rec npc_mil_turn_side
+ani BAU_904_BAUER T_RUNTURNL force
+wait 1500
+stop
 freeze BAU_904_BAUER off
 
 # --- the npc in ITAR_KDF_H
 npcequip BAU_904_BAUER ITAR_KDF_H
 arrows BAU_904_BAUER 20
-archer BAU_904_BAUER at player
-wait 2500
+archer BAU_904_BAUER at SHEEP
+wait 2000
 cam follow 210 105 -45
 wait 200
-rec npc_kdf_aim_fr
-wait 1000
+rec npc_kdf_aimshot_fr
+wait 2500
 stop
 cam follow 210 105 -90
 wait 200
-rec npc_kdf_aim_side
-wait 1000
+rec npc_kdf_aimshot_side
+wait 2500
 stop
 archer off
 freeze BAU_904_BAUER
+arrows BAU_904_BAUER 20
 ani BAU_904_BAUER S_BOWRUN force
 wait 600
 cam follow 210 105 -45
@@ -853,6 +1378,18 @@ stop
 cam follow 210 105 -90
 wait 200
 rec npc_kdf_bowrun_side
+wait 1000
+stop
+ani BAU_904_BAUER S_RUNL force
+wait 600
+cam follow 210 105 -45
+wait 200
+rec npc_kdf_run_fr
+wait 1000
+stop
+cam follow 210 105 -90
+wait 200
+rec npc_kdf_run_side
 wait 1000
 stop
 ani BAU_904_BAUER S_WALKL force
@@ -879,25 +1416,56 @@ wait 200
 rec npc_kdf_sneak_side
 wait 1000
 stop
+cam follow 210 105 -45
+wait 200
+ani BAU_904_BAUER S_RUNL force
+wait 800
+rec npc_kdf_stop_fr
+wait 500
+ani BAU_904_BAUER S_RUN force
+wait 1300
+stop
+cam follow 210 105 -90
+wait 200
+ani BAU_904_BAUER S_RUNL force
+wait 800
+rec npc_kdf_stop_side
+wait 500
+ani BAU_904_BAUER S_RUN force
+wait 1300
+stop
+cam follow 210 105 -45
+wait 200
+rec npc_kdf_turn_fr
+ani BAU_904_BAUER T_RUNTURNL force
+wait 1500
+stop
+cam follow 210 105 -90
+wait 200
+rec npc_kdf_turn_side
+ani BAU_904_BAUER T_RUNTURNL force
+wait 1500
+stop
 freeze BAU_904_BAUER off
 
 # --- the npc in ITAR_PAL_H
 npcequip BAU_904_BAUER ITAR_PAL_H
 arrows BAU_904_BAUER 20
-archer BAU_904_BAUER at player
-wait 2500
+archer BAU_904_BAUER at SHEEP
+wait 2000
 cam follow 210 105 -45
 wait 200
-rec npc_pal_aim_fr
-wait 1000
+rec npc_pal_aimshot_fr
+wait 2500
 stop
 cam follow 210 105 -90
 wait 200
-rec npc_pal_aim_side
-wait 1000
+rec npc_pal_aimshot_side
+wait 2500
 stop
 archer off
 freeze BAU_904_BAUER
+arrows BAU_904_BAUER 20
 ani BAU_904_BAUER S_BOWRUN force
 wait 600
 cam follow 210 105 -45
@@ -920,6 +1488,18 @@ stop
 cam follow 210 105 -90
 wait 200
 rec npc_pal_bowrun_side
+wait 1000
+stop
+ani BAU_904_BAUER S_RUNL force
+wait 600
+cam follow 210 105 -45
+wait 200
+rec npc_pal_run_fr
+wait 1000
+stop
+cam follow 210 105 -90
+wait 200
+rec npc_pal_run_side
 wait 1000
 stop
 ani BAU_904_BAUER S_WALKL force
@@ -946,25 +1526,56 @@ wait 200
 rec npc_pal_sneak_side
 wait 1000
 stop
+cam follow 210 105 -45
+wait 200
+ani BAU_904_BAUER S_RUNL force
+wait 800
+rec npc_pal_stop_fr
+wait 500
+ani BAU_904_BAUER S_RUN force
+wait 1300
+stop
+cam follow 210 105 -90
+wait 200
+ani BAU_904_BAUER S_RUNL force
+wait 800
+rec npc_pal_stop_side
+wait 500
+ani BAU_904_BAUER S_RUN force
+wait 1300
+stop
+cam follow 210 105 -45
+wait 200
+rec npc_pal_turn_fr
+ani BAU_904_BAUER T_RUNTURNL force
+wait 1500
+stop
+cam follow 210 105 -90
+wait 200
+rec npc_pal_turn_side
+ani BAU_904_BAUER T_RUNTURNL force
+wait 1500
+stop
 freeze BAU_904_BAUER off
 
 # --- the npc in ITAR_Leather_L
 npcequip BAU_904_BAUER ITAR_Leather_L
 arrows BAU_904_BAUER 20
-archer BAU_904_BAUER at player
-wait 2500
+archer BAU_904_BAUER at SHEEP
+wait 2000
 cam follow 210 105 -45
 wait 200
-rec npc_lea_aim_fr
-wait 1000
+rec npc_lea_aimshot_fr
+wait 2500
 stop
 cam follow 210 105 -90
 wait 200
-rec npc_lea_aim_side
-wait 1000
+rec npc_lea_aimshot_side
+wait 2500
 stop
 archer off
 freeze BAU_904_BAUER
+arrows BAU_904_BAUER 20
 ani BAU_904_BAUER S_BOWRUN force
 wait 600
 cam follow 210 105 -45
@@ -987,6 +1598,18 @@ stop
 cam follow 210 105 -90
 wait 200
 rec npc_lea_bowrun_side
+wait 1000
+stop
+ani BAU_904_BAUER S_RUNL force
+wait 600
+cam follow 210 105 -45
+wait 200
+rec npc_lea_run_fr
+wait 1000
+stop
+cam follow 210 105 -90
+wait 200
+rec npc_lea_run_side
 wait 1000
 stop
 ani BAU_904_BAUER S_WALKL force
@@ -1012,6 +1635,36 @@ cam follow 210 105 -90
 wait 200
 rec npc_lea_sneak_side
 wait 1000
+stop
+cam follow 210 105 -45
+wait 200
+ani BAU_904_BAUER S_RUNL force
+wait 800
+rec npc_lea_stop_fr
+wait 500
+ani BAU_904_BAUER S_RUN force
+wait 1300
+stop
+cam follow 210 105 -90
+wait 200
+ani BAU_904_BAUER S_RUNL force
+wait 800
+rec npc_lea_stop_side
+wait 500
+ani BAU_904_BAUER S_RUN force
+wait 1300
+stop
+cam follow 210 105 -45
+wait 200
+rec npc_lea_turn_fr
+ani BAU_904_BAUER T_RUNTURNL force
+wait 1500
+stop
+cam follow 210 105 -90
+wait 200
+rec npc_lea_turn_side
+ani BAU_904_BAUER T_RUNTURNL force
+wait 1500
 stop
 freeze BAU_904_BAUER off
 
@@ -1051,6 +1704,4 @@ wait 200
 rec npc_arrows50_fr
 wait 600
 stop
-
-# --- OPENGOTHIC_QUIVER=0 shows none: the same scene without it is a run of this bench with that variable
 watch player

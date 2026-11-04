@@ -12354,6 +12354,7 @@ void Npc::updateAnimation(uint64_t dt, bool force) {
   updateMeleeBenchBlade();
   if(living && living->reactionWeight()>0.f && living->getPose(arrowPhysicalPose))
     syncAtt |= visual.setPhysicalPose(arrowPhysicalPose,living->reactionBones(),living->reactionWeight());
+  syncAtt |= visual.updateQuiver(*this,dt);
   if(syncAtt)
     visual.syncAttaches();
   }

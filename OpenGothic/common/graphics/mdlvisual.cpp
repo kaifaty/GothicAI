@@ -10,6 +10,8 @@
 #include "graphics/worldview.h"
 #include "objvisual.h"
 #include "gothic.h"
+
+#include <chrono>
 #include "graphics/mesh/animmath.h"
 #include "graphics/mesh/ikmath.h"
 #include "frameprofile.h"
@@ -613,19 +615,17 @@ void MdlVisual::setQuiver(const Quiver::State& st, MeshObjects::Mesh&& body, std
     clearQuiver();
     return;
     }
-  // the fit is the armour's and the skeleton's: a new count of arrows keeps it
+  // the fit is the armour's and the skeleton's: a new count of arrows keeps it (and the swing)
   Quiver::Fit fit = quiv.fit();
+  std::vector<size_t> near = quiv.near();
   if(!fit.valid || quiv.state().body!=st.body || quiv.state().skeleton!=st.skeleton) {
-    std::vector<Quiver::SkinPoint> bind, moving, frame;
+    std::vector<Quiver::SkinPoint> bind;
     quiverPoints(true,bind);
-    for(const auto& bones:Quiver::motionFrames(*skeleton)) {
-      quiverPoints(bones.data(),bones.size(),frame);
-      Quiver::toBind(*skeleton,bones,frame);
-      moving.insert(moving.end(),frame.begin(),frame.end());
-      }
-    fit = Quiver::fit(*skeleton,bind,moving);
+    fit  = Quiver::fit(*skeleton,bind);
+    near = Quiver::nearPoints(fit,*skeleton,bind);
     }
   quiv.set(st,fit,std::move(body),std::move(arrows),std::move(arrowLocal));
+  quiv.setNear(std::move(near));
   if(textureOwnerKnown)
     quiv.setTextureOwner(textureOwnerPosition,textureOwnerSpatial);
   syncAttaches();
@@ -662,6 +662,7 @@ void MdlVisual::quiverPoints(const Matrix4x4* bones, size_t n, std::vector<Quive
       Vec3 part(v.pos[r][0],v.pos[r][1],v.pos[r][2]);
       bones[v.boneId[r]].project(part);
       p.pos  += part*v.weights[r];
+      p.src   = size_t(&v-pm->skinVertexData().data());
       weight += v.weights[r];
       if(v.weights[r]>best) {
         best   = v.weights[r];
@@ -685,6 +686,63 @@ void MdlVisual::quiverPoints(const Matrix4x4* bones, size_t n, std::vector<Quive
       out.push_back({pt,bone});
       }
     }
+  }
+
+bool MdlVisual::updateQuiver(const Npc& npc, uint64_t dt) {
+  if(!quiv.isShown() || skeleton==nullptr || quiv.bone()>=skInst->boneCount())
+    return false;
+  // far or not drawn: at rest, not computed
+  const auto* cam = Gothic::inst().camera();
+  const Vec3  at  = npc.position();
+  if(view.isEmpty() || (cam!=nullptr && (cam->originLwc()-at).length()>Quiver::SimDistance)) {
+    quiv.rest();
+    return false;
+    }
+  const auto   t0   = std::chrono::steady_clock::now();
+  const auto&  sk   = *skeleton;
+  const size_t n    = std::min(sk.tr.size(),skInst->boneCount());
+  // the right leg and arm: the hit zones' capsules, fitted to the worn armour
+  static thread_local std::vector<HitZones::Posed>     caps;
+  static thread_local std::vector<Quiver::Obstacle>    obs;
+  static thread_local std::vector<Matrix4x4>           bones;
+  obs.clear();
+  bones.resize(n);
+  for(size_t i=0; i<n; ++i)
+    bones[i] = renderedBone(i);
+  hitZones.posed(bones.data(),n,1.f,caps);
+  for(auto& c:caps) {
+    if(c.bone>=sk.nodes.size())
+      continue;
+    const std::string_view name = sk.nodes[c.bone].name;
+    if(name=="BIP01 R THIGH" || name=="BIP01 R CALF" || name=="BIP01 R FOREARM" || name=="BIP01 R HAND")
+      obs.push_back({c.a,c.b,c.r});
+    }
+  // the armour's flaps and the legs' skin near the quiver: its points
+  if(const ProtoMesh* pm = view.protoMesh()) {
+    const auto& sv = pm->skinVertexData();
+    for(size_t id:quiv.near()) {
+      if(id>=sv.size())
+        continue;
+      const auto& v = sv[id];
+      Vec3  p;
+      float weight = 0;
+      for(size_t r=0; r<4; ++r) {
+        if(!(v.weights[r]>0.f) || v.boneId[r]>=n)
+          continue;
+        Vec3 part(v.pos[r][0],v.pos[r][1],v.pos[r][2]);
+        bones[v.boneId[r]].project(part);
+        p      += part*v.weights[r];
+        weight += v.weights[r];
+        }
+      if(weight>0.f) {
+        p = p/weight;
+        obs.push_back({p,p,0.f});
+        }
+      }
+    }
+  quiv.step(bones[quiv.bone()],obs,float(dt)*0.001f);
+  quiverStepUs = float(std::chrono::duration<double,std::micro>(std::chrono::steady_clock::now()-t0).count());
+  return true;
   }
 
 Quiver::Probe MdlVisual::quiverProbe() const {
