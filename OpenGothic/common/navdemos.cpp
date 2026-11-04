@@ -13,6 +13,7 @@
 #include "physics/charactervirtualdiagnostics.h"
 #include "game/followtrail.h"
 #include "game/knownroadsbench.h"
+#include "game/navigationpassage.h"
 #include "game/navperceptionbench.h"
 #include "game/navperceptionsafety.h"
 #include "world/world.h"
@@ -143,6 +144,10 @@ struct Episode {
   std::deque<DaggerMotionSample> daggerMotion;
   std::mt19937_64 mixingRng,actionRng,dartRng;
   KnownRoads::Guidance guidance;
+  // Point goals: road progress per decision, and how often memory let progress
+  // take a later stretch or moved the start of a rebuilt route (roads-guidance.txt).
+  std::ofstream roadsGuidance;
+  uint64_t roadsCatchUps=0,roadsRebuilds=0,roadsStartsMoved=0,roadsStartFallbacks=0;
   uint64_t began=0,limit=240000,next=0,decisions=0,frames=0,cvFrames=0;
   uint64_t progressAt=0;
   float best=std::numeric_limits<float>::max();
@@ -292,6 +297,18 @@ std::ofstream file(Episode& ep,const char* name) {
   std::ofstream out(std::filesystem::path(ep.output)/name);
   if(!out)throw std::runtime_error(std::string("navdemos cannot write ")+name);
   out<<std::setprecision(9)<<std::boolalpha;return out;
+}
+// The walker's own memory decides where familiar-road progress may cut a loop
+// of the road and where a rebuilt route may start (game/navigationpassage.h).
+KnownRoads::PassageCheck memoryPassage(const NavigationMemory::View& view) {
+  return [&view](const Vec3& from,const Vec3& to) {
+    switch(NavigationPassage::check(view,from,to,FollowTrail::corridorCm,FollowTrail::footprintCm)) {
+      case NavigationPassage::Verdict::Free: return KnownRoads::Passage::Free;
+      case NavigationPassage::Verdict::Closed: return KnownRoads::Passage::Closed;
+      case NavigationPassage::Verdict::Unknown: break;
+    }
+    return KnownRoads::Passage::Unknown;
+  };
 }
 void trajectory(Episode& ep,uint64_t elapsed) {
   if(!ep.record)return;
@@ -453,6 +470,7 @@ void finish(Episode& ep,World& world) {
   }
   if(!ep.replay) {NpcKeys::KeyState end;end.walk=true;action(ep,elapsed,end);if(ep.writer)ep.writer->finish();}
   ep.trajectory.close();ep.actions.close();ep.knownPaths.close();ep.teacherPaths.close();ep.transitionFrames.close();ep.samples.close();ep.targetTrajectory.close();ep.perceptionSafetyFrames.close();ep.perceptionWaterObservations.close();
+  ep.roadsGuidance.close();
   if(ep.live) ep.live->finish();
   if(ep.live || (ep.goalKind=="follow" && ep.target))ep.npc->setCharacterVirtualDiagnosticsEnabled(false);
   auto out=file(ep,"episode.json");
@@ -466,6 +484,8 @@ void finish(Episode& ep,World& world) {
      <<",\"navigation_memory_version\":"<<ep.memory.representationVersion()
      <<",\"journey_memory\":"<<ep.memory.journeyMemoryEnabled()
      <<",\"familiar_map\":"<<ep.memory.familiarMapEnabled()
+     <<",\"roads_rebuilds\":"<<ep.roadsRebuilds<<",\"roads_catch_ups\":"<<ep.roadsCatchUps
+     <<",\"roads_starts_moved\":"<<ep.roadsStartsMoved<<",\"roads_start_fallbacks\":"<<ep.roadsStartFallbacks
      <<",\"memory_update_us\":"<<(ep.memoryUpdates?ep.memoryUpdateUs/double(ep.memoryUpdates):0.)
      <<",\"memory_view_us\":"<<(ep.memoryViews?ep.memoryViewUs/double(ep.memoryViews):0.)
      <<",\"memory_updates\":"<<ep.memoryUpdates<<",\"memory_views\":"<<ep.memoryViews
@@ -1378,7 +1398,8 @@ void bootstrap(Episode& ep,World& w) {
   // action or GRU step. Road progress is refreshed on a private guidance copy.
   observe(ep,w);
   auto guidance=ep.guidance;
-  KnownRoadsBench::readGuidance(w,*ep.npc,NpcKeys::physicalPosition(*ep.npc),ep.goal,guidance);
+  ep.memory.view(ep.view);
+  KnownRoadsBench::readGuidance(w,*ep.npc,NpcKeys::physicalPosition(*ep.npc),ep.goal,guidance,memoryPassage(ep.view));
   const auto sample=snapshot(ep,w,&guidance);
   const auto features=policyFeatures(ep,sample);
   std::vector<NonfiniteObservation::Field> fields;
@@ -1641,8 +1662,28 @@ bool followVisible(const Episode& ep,World& w) {
   const auto hit=physics->navigationRay(eye,body,ep.npc);
   return !hit.hasCol || (hit.kind==DynamicWorld::NavigationHit::Npc && (hit.point-body).length()<=80.f);
 }
+void traceRoads(Episode& ep,uint64_t elapsed) {
+  const auto& g=ep.guidance;
+  ep.roadsRebuilds+=g.rebuilt;ep.roadsCatchUps+=g.caughtUp;
+  ep.roadsStartsMoved+=g.rebuilt && g.route.startSkipped>0;ep.roadsStartFallbacks+=g.rebuilt && g.route.startFallback;
+  if(!ep.roadsGuidance.is_open())return;
+  auto& out=ep.roadsGuidance;
+  out<<"d "<<elapsed<<' '<<g.progressCm<<' '<<int(g.rebuilt)<<' '<<int(g.caughtUp)<<' '<<int(g.beyondKnown)<<' '
+     <<g.route.startSkipped<<' '<<int(g.route.startFallback)<<' '<<g.carrot.x<<' '<<g.carrot.y<<' '<<g.carrot.z<<' '
+     <<g.remainingKnownCm<<'\n';
+  if(g.rebuilt) {
+    out<<"p "<<g.polyline.size();
+    for(const auto& point:g.polyline)out<<' '<<point.x<<' '<<point.y<<' '<<point.z;
+    out<<'\n';
+  }
+  if(!out)throw std::runtime_error("navdemos roads guidance write failed");
+}
 void guidanceFor(Episode& ep,World& w,const Vec3& position) {
-  if(ep.goalKind=="point")KnownRoadsBench::readGuidance(w,*ep.npc,position,ep.goal,ep.guidance);
+  if(ep.goalKind=="point") {
+    ep.memory.view(ep.view);
+    KnownRoadsBench::readGuidance(w,*ep.npc,position,ep.goal,ep.guidance,memoryPassage(ep.view));
+    traceRoads(ep,w.tickCount()-ep.began);
+  }
   else {
     ep.guidance={};ep.guidance.carrot=ep.goal;ep.guidance.beyondKnown=true;
     if(ep.goalKind=="follow") {
@@ -2775,6 +2816,7 @@ void NavDemos::command(const std::vector<std::string>& args,World& w,Npc& player
   }
   ep.minHeroDistanceCm=ep.maxHeroDistanceCm=(npc->position()-player.position()).length();
   ep.trajectory=file(ep,"trajectory.txt");
+  if(!replay && ep.goalKind=="point" && ep.teacherVersion>=2)ep.roadsGuidance=file(ep,"roads-guidance.txt");
   if(replay) {
     std::ifstream input(a[5]);RecordedKeys row;int walk=0,jump=0,climb=0;
     while(input>>row.time>>row.keys.forward>>row.keys.strafe>>row.keys.turn>>walk>>jump>>climb>>row.keys.headYaw>>row.keys.headPitch) {

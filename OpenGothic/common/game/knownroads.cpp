@@ -118,6 +118,25 @@ Vec3 pointAt(const std::vector<Vec3>& line, double distance) {
     }
   return line.back();
   }
+
+// The actor has cut a loop of the road: the closest point of the whole route
+// lies later than the window's projection and closer to the actor. Progress
+// takes it only through a straight passage the caller's memory has seen free;
+// a stretch behind a seen wall or out of sight stays outside the window.
+bool catchUp(const std::vector<Vec3>& line, const Vec3& position, double& progressCm,
+             const KnownRoads::PassageCheck& passage) {
+  if(!passage || line.size()<2)
+    return false;
+  const auto whole = project(line,position);
+  const double current = double((pointAt(line,progressCm)-position).length());
+  // One centimetre keeps rounding of the same point from counting as a later stretch.
+  if(whole.alongCm<=progressCm+1. || whole.distanceCm+1.>=current)
+    return false;
+  if(passage(position,whole.point)!=KnownRoads::Passage::Free)
+    return false;
+  progressCm = whole.alongCm;
+  return true;
+  }
 }
 
 KnownRoads::KnownRoads(std::vector<Node> nodes, std::vector<Edge> edges)
@@ -304,19 +323,41 @@ bool KnownRoads::add(Knowledge& knowledge, const std::vector<size_t>& destinatio
   return end!=invalid;
   }
 
-KnownRoads::Path KnownRoads::path(const Knowledge& knowledge, const Vec3& start, const Vec3& goal) const {
+KnownRoads::Path KnownRoads::path(const Knowledge& knowledge, const Vec3& start, const Vec3& goal,
+                                  const PassageCheck& passage) const {
   validate(knowledge);
   Path result;
   size_t begin = invalid;
   double closestStart = std::numeric_limits<double>::infinity();
+  std::vector<std::pair<double,size_t>> candidates;
   for(size_t i=0; i<graphNodes.size(); ++i) {
     if(!knowledge.nodes[i])
       continue;
     const double distance = double((graphNodes[i].position-start).quadLength());
+    if(passage)
+      candidates.push_back({distance,i});
     if(distance<closestStart) {
       closestStart = distance;
       begin = i;
       }
+    }
+  if(passage && begin!=invalid) {
+    // The closest node memory does not close off; ties keep the lower ID, as above.
+    const size_t count = std::min(candidates.size(),startCandidates);
+    std::partial_sort(candidates.begin(),candidates.begin()+std::ptrdiff_t(count),candidates.end());
+    result.startFallback = true;
+    for(size_t k=0; k<count; ++k) {
+      if(passage(start,graphNodes[candidates[k].second].position)==Passage::Closed) {
+        ++result.startSkipped;
+        continue;
+        }
+      begin = candidates[k].second;
+      closestStart = candidates[k].first;
+      result.startFallback = false;
+      break;
+      }
+    if(result.startFallback)
+      result.startSkipped = 0;
     }
   if(begin==invalid) {
     const auto offset = goal-start;
@@ -359,33 +400,39 @@ KnownRoads::Path KnownRoads::path(const Knowledge& knowledge, const Vec3& start,
   }
 
 void KnownRoads::updateGuidance(const Knowledge& knowledge, const Vec3& position,
-                               const Vec3& goal, Guidance& guidance) const {
+                               const Vec3& goal, Guidance& guidance, const PassageCheck& passage) const {
   validate(knowledge);
   guidance.rebuilt = false;
+  guidance.caughtUp = false;
   bool rebuild = !guidance.initialized || (goal-guidance.goal).quadLength()>.0001f;
   if(!rebuild && !guidance.polyline.empty()) {
     // Deviation is measured from the whole familiar route, as before.
     rebuild = !guidance.beyondKnown && project(guidance.polyline,position).distanceCm>guidanceReplanCm;
     // Pure-pursuit window: progress moves continuously along the route and
     // cannot skip to a later stretch that merely passes nearby.
-    if(!rebuild)
+    if(!rebuild) {
       guidance.progressCm = windowProgress(guidance.polyline,position,guidance.progressCm-guidanceWindowCm,
                                            guidance.progressCm+guidanceWindowCm,guidance.progressCm);
+      if(!guidance.beyondKnown)
+        guidance.caughtUp = catchUp(guidance.polyline,position,guidance.progressCm,passage);
+      }
     }
   if(rebuild) {
     guidance = Guidance{};
     guidance.initialized = guidance.rebuilt = true;
     guidance.goal = goal;
-    guidance.route = path(knowledge,position,goal);
+    guidance.route = path(knowledge,position,goal,passage);
     for(const auto node:guidance.route.nodes)
       guidance.polyline.push_back(graphNodes[node].position);
     for(size_t i=0; i+1<guidance.polyline.size(); ++i)
       guidance.knownLengthCm += double((guidance.polyline[i+1]-guidance.polyline[i]).length());
     // The actor stands at startOffsetCm from the first node: its projection
     // can be at most that far along the route, plus one window.
-    if(!guidance.polyline.empty())
+    if(!guidance.polyline.empty()) {
       guidance.progressCm = windowProgress(guidance.polyline,position,0,
                                            guidance.route.startOffsetCm+guidanceWindowCm,0);
+      guidance.caughtUp = catchUp(guidance.polyline,position,guidance.progressCm,passage);
+      }
     }
   guidance.remainingKnownCm = std::max(0.,guidance.knownLengthCm-guidance.progressCm);
   // The terminal handoff is permanent for this episode: the subsequent

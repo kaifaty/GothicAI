@@ -1,20 +1,28 @@
 #!/usr/bin/env bash
-# Familiar-road carrot window on Ryzen; each stage is one gq job under nav_job.py.
-#   bash scripts/nav-roads-carrot-remote.sh point  # runners of origin/main and of this tree: v5, run,
-#                                                  # the 60 point routes of validation v5, seed 18102027
-#   bash scripts/nav-roads-carrot-remote.sh live   # game of this tree: v5 on 05-wall-pocket, 3 seeds,
-#                                                  # place pace, after a fresh teacher reference
-#   bash scripts/nav-roads-carrot-remote.sh clean  # remove ~/gothic-ai/nav-roads-carrot; refuses while
-#                                                  # a queued or running job of this owner uses it
-# Jobs use immutable snapshots in ~/gothic-ai/nav-roads-carrot/{source,main}/<hash>.
-# Results: /mnt/shared/gothic-ai/nav-roads-carrot/point-{before,after}-<runner sha256[:12]>/ and
-# live-<game sha256[:12]>/: resume continues only episodes of the same binary. Weights are only read.
+# Familiar-road carrot on Ryzen; each stage is one gq job under nav_job.py.
+#   bash scripts/nav-roads-carrot-remote.sh point    # runners of origin/main and of this tree: v5, run,
+#                                                    # the 60 point routes of validation v5, seed 18102027
+#   bash scripts/nav-roads-carrot-remote.sh teacher  # the same runners and routes driven by the memory teacher
+#   bash scripts/nav-roads-carrot-remote.sh live     # game of this tree: v5 on 05-wall-pocket, 3 seeds,
+#                                                    # place pace, after a fresh teacher reference
+#   bash scripts/nav-roads-carrot-remote.sh liveset  # game of this tree: the eleven places of pace-v5,
+#                                                    # v5 on every seed and the teacher reference
+#   bash scripts/nav-roads-carrot-remote.sh replay   # scripts/nav_roads_carrot.py on the shared recordings
+#                                                    # (arguments in NAV_ROADS_REPLAY_ARGS, a shell word list)
+#   bash scripts/nav-roads-carrot-remote.sh clean    # remove ~/gothic-ai/<task>; refuses while a queued or
+#                                                    # running job of this owner uses it
+# NAV_ROADS_TASK names the task (default nav-roads-carrot): ~/gothic-ai/<task>/ and /mnt/shared/gothic-ai/<task>/.
+# Jobs use immutable snapshots in ~/gothic-ai/<task>/{source,main}/<hash>.
+# Results: /mnt/shared/gothic-ai/<task>/{point,teacher}-{before,after}-<runner sha256[:12]>/,
+# live-<game sha256[:12]>/ and liveset-<game sha256[:12]>/: resume continues only episodes of the same
+# binary. Weights are only read.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-usage='Usage: bash scripts/nav-roads-carrot-remote.sh point|live|clean'
+usage='Usage: bash scripts/nav-roads-carrot-remote.sh point|teacher|live|liveset|replay|clean'
 stage="${1:-}"
-task_name=nav-roads-carrot
-archive="${NAV_ROADS_CARROT_ARCHIVE:-/mnt/shared/gothic-ai/nav-roads-carrot}"
+task_name="${NAV_ROADS_TASK:-nav-roads-carrot}"
+[[ "$task_name" =~ ^nav-roads-[a-z0-9-]+$ ]] || { echo 'NAV_ROADS_TASK must be nav-roads-<name>' >&2; exit 2; }
+archive="${NAV_ROADS_CARROT_ARCHIVE:-/mnt/shared/gothic-ai/$task_name}"
 weights=/mnt/shared/gothic-ai/nav-pace-v5/run/policy.navbc
 weights_sha256=b70d3185c320af0e3c519adc9fd471d5f5df4abf3844bde7cbb39d96ccd351dc
 v5_input=/mnt/shared/gothic-ai/nav-demos-v5/input
@@ -22,7 +30,7 @@ v5_validation=/mnt/shared/gothic-ai/nav-demos-v5/manifest.json
 seed=18102027
 
 if [[ "$stage" != run ]]; then
-  [[ $# == 1 && "$stage" =~ ^(point|live|clean)$ ]] || { echo "$usage" >&2; exit 2; }
+  [[ $# == 1 && "$stage" =~ ^(point|teacher|live|liveset|replay|clean)$ ]] || { echo "$usage" >&2; exit 2; }
   task="$(ssh -o BatchMode=yes -o ConnectTimeout=10 ryzen 'printf "%s/gothic-ai" "$HOME"')/$task_name"
   if [[ "$stage" == clean ]]; then
     # gq keeps every job in its state file; a job that is not finished still needs the runtime.
@@ -59,7 +67,7 @@ ACTIVE
   main_revision="$(git -C "$ROOT" rev-parse --short=12 origin/main)"
   ssh ryzen "mkdir -p '$task/source' '$task/main' '$archive/logs'"
   publish "$task/source/$snapshot" "$ROOT" OpenGothic scripts AGENTS.md
-  if [[ "$stage" == point ]] && ! ssh ryzen "test -d '$task/main/$main_revision'"; then
+  if [[ "$stage" =~ ^(point|teacher)$ ]] && ! ssh ryzen "test -d '$task/main/$main_revision'"; then
     main="$(mktemp -d)"
     git -C "$ROOT" worktree add -q --detach "$main/tree" "$main_revision"
     trap 'git -C "$ROOT" worktree remove --force "$main/tree"; rm -rf "$main"' EXIT
@@ -67,12 +75,14 @@ ACTIVE
   fi
   case "$stage" in
     # gq peaks of the first round: point 9.66 GiB in 1600 s, live 1.49 GiB in 470 s.
-    point) resources=(--class batch --threads 16 --cpu-quota 1600% --mem 11G --max 2h); seconds=7200 ;;
+    point|teacher) resources=(--class batch --threads 16 --cpu-quota 1600% --mem 11G --max 2h); seconds=7200 ;;
     live) resources=(--class quick --threads 12 --cpu-quota 1200% --mem 5G --gpu-mem 4G --display --display-shared --max 59m); seconds=3540 ;;
+    liveset) resources=(--class batch --threads 12 --cpu-quota 1200% --mem 8G --gpu-mem 4G --display --display-shared --max 2h); seconds=7200 ;;
+    replay) resources=(--class quick --threads 4 --cpu-quota 400% --mem 6G --max 59m); seconds=3540 ;;
   esac
-  GQ_OWNER="$task_name" "$ROOT/scripts/gq" submit "${resources[@]}" --name "nav roads carrot $stage $snapshot" -- \
+  GQ_OWNER="$task_name" "$ROOT/scripts/gq" submit "${resources[@]}" --name "nav roads $stage $snapshot" -- \
     python3 -X faulthandler -I "$task/source/$snapshot/scripts/nav_job.py" --max-seconds "$seconds" -- \
-    env NAV_ROADS_CARROT_ARCHIVE="$archive" \
+    env NAV_ROADS_TASK="$task_name" NAV_ROADS_CARROT_ARCHIVE="$archive" NAV_ROADS_REPLAY_ARGS="${NAV_ROADS_REPLAY_ARGS:-}" \
     bash "$task/source/$snapshot/scripts/nav-roads-carrot-remote.sh" run "$stage" "$snapshot" "$main_revision"
   exit
 fi
@@ -85,7 +95,7 @@ stop() { echo "nav-roads-carrot $stage: $*" >&2; exit 1; }
 [[ -d "$source/scripts" ]] || stop "missing source snapshot $source"
 mkdir -p "$archive/logs" "$task/tmp/$stage" "$task/input"
 exec > >(tee -a "$archive/logs/$stage.log") 2>&1
-trap 'printf "nav_roads_carrot_%s_exit=%s snapshot=%s main=%s\n" "$stage" "$?" "$snapshot" "$main_revision"' EXIT
+trap 'printf "%s_%s_exit=%s snapshot=%s main=%s\n" "${task_name//-/_}" "$stage" "$?" "$snapshot" "$main_revision"' EXIT
 export TMPDIR="$task/tmp/$stage" UV_CACHE_DIR="$task/uv-cache" CCACHE_DIR="$task/ccache"
 export VULKAN_SDK="$HOME/gothic-ai/body-baseline/toolchain/vulkan-1.4.341.0"
 export PATH="$HOME/.local/bin:$VULKAN_SDK/bin:$PATH"
@@ -99,6 +109,12 @@ python3 -c 'import pathlib,shutil; assert shutil.disk_usage(pathlib.Path.home())
 python="$task/venv/bin/python"
 if [[ ! -x "$python" ]]; then uv venv --python 3.12 "$task/venv"; fi
 uv pip install --python "$python" numpy pillow matplotlib
+if [[ "$stage" == replay ]]; then
+  # Light and offline: no game, world or policy; the navmesh is the oracle of the measurement.
+  eval "replay_args=($NAV_ROADS_REPLAY_ARGS)"
+  "$python" -X faulthandler -B -I scripts/nav_roads_carrot.py "${replay_args[@]}"
+  exit
+fi
 build() { # SOURCE BUILD TARGET...
   source "$source/scripts/ryzen-build.sh"
   cmake -S "$1" -B "$2" -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
@@ -117,7 +133,7 @@ game_environment() { # CONVERTER: the base of this engine format from the shared
   export OPENGOTHIC_BASE_CACHE="$task/base-cache" OPENGOTHIC_BASE_STORE="$task/base-store"
 }
 
-if [[ "$stage" == point ]]; then
+if [[ "$stage" == point || "$stage" == teacher ]]; then
   [[ -d "$task/main/$main_revision/OpenGothic" ]] || stop "missing main snapshot $task/main/$main_revision"
   for worker in {0..11}; do
     mkdir -p "$task/navmesh/ordinary/$worker"
@@ -133,12 +149,76 @@ if [[ "$stage" == point ]]; then
     fingerprints+=("$OPENGOTHIC_BASE_FINGERPRINT")
     # nav_rl --resume trusts finished episodes; a folder per runner keeps builds apart.
     runner_sha256="$(sha256sum "$task/build/$revision/opengothic/gothic-body-runner" | cut -d' ' -f1)"
-    output="$archive/point-$revision-${runner_sha256:0:12}"
+    output="$archive/$stage-$revision-${runner_sha256:0:12}"
     mkdir -p "$output"
     if [[ -f "$output/runner.sha256" ]]; then
       [[ "$(cat "$output/runner.sha256")" == "$runner_sha256" ]] || stop "$output belongs to another runner"
     else
       printf '%s\n' "$runner_sha256" > "$output/runner.sha256"
+    fi
+    if [[ "$stage" == teacher ]]; then
+      "$python" -X faulthandler -B -I - "$task" "$output" "$v5_validation" "$v5_input" \
+        "$task/build/$revision/opengothic/gothic-body-runner" <<'TEACHER'
+# The memory teacher (navdemos start-v3) on the 60 point routes of validation v5: its own pace,
+# the same frozen world seeds, CV physics, 240 s. Nothing is recorded as a demonstration.
+from concurrent.futures import ThreadPoolExecutor
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+import statistics
+import sys
+import time
+from types import SimpleNamespace
+sys.path.insert(0, str(Path.cwd() / "scripts"))
+import nav_rl as rl
+task, output, manifest, inputs, runner = map(Path, sys.argv[1:])
+values = rl.validation_scenarios(manifest, ["point"])
+assert len(values) == 60, len(values)
+started = time.monotonic()
+def collect(index, workers):
+    worker = SimpleNamespace(runner=runner, assets=Path(os.environ["GOTHIC_DIR"]), save=inputs / "save.sav",
+                             links=inputs / "accepted-links.txt", roads=inputs / "places.json", ini=None,
+                             cache=task / "navmesh" / "ordinary" / str(index), physics="cv", npc="BAU_954_MALETH",
+                             output=output / "workers" / str(index), seed=18102026, watchdog_seconds=1800,
+                             weights="teacher", lean=True, familiar_map=None, stranger=False, limit_ms=240000)
+    process = rl.new_runner(worker, "teacher")
+    try:
+        for value in values[index::workers]:
+            directory = output / "validation" / "point" / value["id"]
+            if (directory / "episode.json").is_file():
+                continue
+            if directory.exists():
+                shutil.rmtree(directory)
+            worker.seed = value["seed"]
+            commands = rl.policy_commands(worker, value, 0)
+            drive = [i for i, command in enumerate(commands) if command.startswith("navdemos drive ")]
+            assert len(drive) == 1, commands
+            commands[drive[0]] = f"navdemos start-v3 {worker.npc} {value['start']} {value['goal']} {value.get('limit_ms', 240000)}"
+            rl.scenario(worker, process, f"teacher-{value['id']}", commands, directory)
+            rl.clean_lean_diagnostics(directory)
+            episode = rl.read_json(directory / "episode.json")
+            assert episode.get("teacher_version") == 3 and not episode.get("drive"), directory
+            print(json.dumps(dict(id=value["id"], success=episode["success"], elapsed_ms=episode["elapsed_ms"])), flush=True)
+    finally:
+        process.close()
+    shutil.rmtree(worker.output, ignore_errors=True)
+workers = 12
+with ThreadPoolExecutor(max_workers=workers) as pool:
+    for future in [pool.submit(collect, index, workers) for index in range(workers)]:
+        future.result()
+episodes = {value["id"]: rl.read_json(output / "validation" / "point" / value["id"] / "episode.json") for value in values}
+arrived = sum(bool(ep["success"]) for ep in episodes.values())
+summary = dict(model="teacher", episodes=len(episodes), arrived=arrived, arrived_fraction=arrived / len(episodes),
+               median_elapsed_s=statistics.median(ep["elapsed_ms"] for ep in episodes.values()) / 1000,
+               seconds=time.monotonic() - started, base_fingerprint=os.environ["OPENGOTHIC_BASE_FINGERPRINT"],
+               runner_sha256=hashlib.sha256(runner.read_bytes()).hexdigest(),
+               episodes_by_id={key: dict(success=ep["success"], elapsed_ms=ep["elapsed_ms"]) for key, ep in episodes.items()})
+rl.write_json(output / "summary.json", summary)
+print(json.dumps({key: value for key, value in summary.items() if key != "episodes_by_id"}), flush=True)
+TEACHER
+      continue
     fi
     "$python" -X faulthandler -B -I - "$task" "$output" "$weights" "$v5_validation" \
       "$v5_input" "$seed" "$task/build/$revision/opengothic/gothic-body-runner" <<'POINT'
@@ -186,7 +266,7 @@ POINT
   exit
 fi
 
-# live
+# live and liveset
 build "$source/OpenGothic" "$task/build/live" Gothic2Notr content-convert
 game_environment "$task/build/live/opengothic/content-convert"
 export XDG_RUNTIME_DIR="/run/user/$(id -u)"
@@ -213,6 +293,61 @@ mkdir -p "$task/navmesh-cache"
 cp -n /mnt/shared/gothic-ai/archive/nav-dagger3-20261030/hd-measure-cache/ordinary/*.navmesh "$task/navmesh-cache/"
 # nav_live refuses a run folder of other inputs; a folder per game binary keeps rounds apart.
 game_sha256="$(sha256sum "$task/build/live/opengothic/Gothic2Notr" | cut -d' ' -f1)"
+if [[ "$stage" == liveset ]]; then
+  "$python" -X faulthandler -B - "$task" "$archive/liveset-${game_sha256:0:12}" "$task/build/live/opengothic/Gothic2Notr" "$weights" <<'LIVESET'
+# The eleven frozen places of the pace-v5 live round: a fresh teacher reference per place, then v5
+# on every seed at the place pace. The same suite, inputs and seeds; HD is not driven again.
+from copy import deepcopy
+import json
+import os
+from pathlib import Path
+import sys
+import time
+from types import SimpleNamespace
+sys.path.insert(0, str(Path.cwd() / "scripts"))
+import nav_live as live
+task, output, binary, weights = map(Path, sys.argv[1:])
+finished = live.read_json(Path("/mnt/shared/gothic-ai/nav-live/baseline/complete.json"))
+suite = Path(finished["suite_path"])
+original = live.read_json(suite)
+assert live.sha256(suite) == finished["suite_sha256"]
+selected = live.eligible_cases(original, live.suite_cases(original))
+assert len(selected) == 11 and sum(len(case["seeds"]) for case in selected) == 27
+paces = {case["id"]: case["pace"] for case in live.suite_cases(live.read_json(Path.cwd() / "scripts/nav-live/scenarios.json"))}
+inputs = dict(original["inputs"], cache=str(task / "navmesh-cache"))
+for name, filename in (("save", "save.sav"), ("roads", "places.json"), ("familiar", "familiar.bin"),
+                       ("links", "accepted-links.txt")):
+    if not Path(inputs[name]).is_file():
+        inputs[name] = str(Path("/mnt/shared/gothic-ai/archive/nav-demos-v5-20261030/input") / filename)
+output.mkdir(parents=True, exist_ok=True)
+args = SimpleNamespace(suite=suite, output=output, binary=binary, inputs=inputs, deadline=time.monotonic() + 6600,
+                       input_sha256={name: live.sha256(inputs[name]) for name in ("save", "roads", "familiar", "links")})
+assert args.input_sha256 == finished["input_sha256"], "Frozen live inputs differ from the baseline"
+model = dict(name="pace-v5", weights=str(weights), sha256=live.sha256(weights), force_place_pace=True,
+             **live.pace_input(weights))
+rows = []
+for previous in selected:
+    case = deepcopy(previous)
+    case.pop("evaluation_binary", None)
+    case.pop("teacher_reference", None)
+    case["pace"] = paces[case["id"]]
+    reference = live.teacher_directory(args, case)
+    teacher = live.run_episode(args, case, None, case["seeds"][0], reference)
+    rows.append(dict(place=case["id"], model="teacher", seed=case["seeds"][0], success=teacher.get("success"),
+                     elapsed_ms=teacher.get("elapsed_ms"), output=str(reference)))
+    for seed in case["seeds"]:
+        directory = live.run_directory(output, case, model, seed)
+        live.run_episode(args, case, model, seed, directory, reference)
+        value = live.read_json(directory / "summary.json")
+        rows.append({**value, "place": case["id"], "model": "pace-v5", "seed": seed, "output": str(directory)})
+        print(json.dumps(dict(place=case["id"], seed=seed, success=value.get("success"),
+                              elapsed_seconds=value.get("elapsed_seconds"))), flush=True)
+live.write_json(output / "live-summary.json", dict(places=11, binary_sha256=live.sha256(binary),
+    base_fingerprint=os.environ["OPENGOTHIC_BASE_FINGERPRINT"], weights_sha256=model["sha256"], rows=rows))
+LIVESET
+  rm -rf "$task/build"
+  exit
+fi
 "$python" -X faulthandler -B - "$task" "$archive/live-${game_sha256:0:12}" "$task/build/live/opengothic/Gothic2Notr" "$weights" <<'LIVE'
 # The frozen 05-wall-pocket of the pace-v5 round: same suite, inputs, place pace and seeds.
 from copy import deepcopy

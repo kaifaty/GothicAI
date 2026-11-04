@@ -682,10 +682,11 @@ KnownRoads::Path KnownRoadsBench::readPath(World& world,const Npc& npc,const Vec
 }
 
 void KnownRoadsBench::readGuidance(World& world,const Npc& npc,const Vec3& position,
-                                 const Vec3& goal,KnownRoads::Guidance& guidance) {
+                                 const Vec3& goal,KnownRoads::Guidance& guidance,
+                                 const KnownRoads::PassageCheck& passage) {
   requireGraph();
   for(const auto& actor:state.actors) if(actor.npc==&npc && live(actor,world)) {
-    state.graph->updateGuidance(actor.knowledge,position,goal,guidance);
+    state.graph->updateGuidance(actor.knowledge,position,goal,guidance,passage);
     return;
     }
   throw std::runtime_error("nav demos requires roads on for the walking actor");
