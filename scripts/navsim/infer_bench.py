@@ -6,7 +6,7 @@ One command from this checkout (uv setup, execution and download included)::
     python3 scripts/navsim/infer_bench.py --remote --gq-class quick
 
 Use quiet when admission is expected within 30 minutes. The launcher submits
-through scripts/gq with --threads 8 --mem 10G --gpu-mem 6G; uv creates
+through scripts/gq with --threads 8 --mem 6G --gpu-mem 6G; uv creates
 ~/gothic-ai/nav-sim-research/inference/.venv. Raw samples go through gq --archive
 to /mnt/shared/gothic-ai/nav-sim-research/inference/<run>/, and only results.json
 is downloaded into the research data/inference directory. Remove .venv after
@@ -91,14 +91,16 @@ def launch_remote(args):
 df -h ~
 test $(df --output=avail -B1 ~ | tail -1) -ge {20 * GIB}
 cd {shlex.quote(task)}
-$HOME/.local/bin/uv venv --python 3.12 .venv
+if [ ! -x .venv/bin/python ]; then $HOME/.local/bin/uv venv --python 3.12 .venv; fi
 $HOME/.local/bin/uv pip install --python .venv/bin/python numpy 'torch==2.9.1+cu128' --index-url https://download.pytorch.org/whl/cu128
 exec .venv/bin/python scripts/navsim/infer_bench.py --output {shlex.quote(output + '/results.json')} --gq-class {args.gq_class} --threads {args.threads}
 """
-    subprocess.run([str(ROOT / "scripts/gq"), "run", "--class", args.gq_class,
-                    "--threads", str(args.threads), "--mem", "10G", "--gpu-mem", "6G",
-                    "--max", "3600", "--name", "navsim-inference", "--archive", output,
-                    "--", "bash", "-lc", body], check=True)
+    job = command(str(ROOT / "scripts/gq"), "submit", "--class", args.gq_class,
+                  "--threads", str(args.threads), "--mem", "6G", "--gpu-mem", "6G",
+                  "--max", "3600", "--name", "navsim-inference", "--archive", output,
+                  "--", "bash", "-lc", body)
+    print(f"gq submitted {job}; reconnect with scripts/gq wait {job}", flush=True)
+    subprocess.run([str(ROOT / "scripts/gq"), "wait", job], check=True)
     (ROOT / REPORT).parent.mkdir(parents=True, exist_ok=True)
     subprocess.run(["scp", f"ryzen:{archive}/results.json", str(ROOT / REPORT)], check=True)
 
