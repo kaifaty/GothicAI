@@ -26,6 +26,10 @@ layout(push_constant, std140) uniform Pbo {
 #if defined(VIRTUAL_SHADOW)
   float vsmLampNear; // cm: nothing this close to the light shadows it ([INTERNAL] vsmLampNearCm)
 #endif
+#if defined(VSM_LAMP_PROBE)
+  uint  probeMode;  // OPENGOTHIC_VSM_LAMP: 0 the PCSS, 1 'hard' (one gather), 2 'flat' (no receiver plane)
+  uint  probeStamp; // not 0: count this frame (OPENGOTHIC_VSM_STATS), the stamp marks a pixel already lit
+#endif
   } push;
 layout(binding = 0, std140) uniform UboScene {
   SceneDesc scene;
@@ -41,6 +45,12 @@ layout(binding = 12) uniform texture2D gbufOrm;
 layout(binding  = 4, std430) readonly buffer SsboLighting { LightSource lights[]; };
 layout(binding  = 5, std430) readonly buffer Omni  { uint pageTblOmni[]; };
 layout(binding  = 6)         uniform sampler2D pageData;
+#endif
+#if defined(VSM_LAMP_PROBE)
+// counters of the lamp filter for one frame (Renderer::logVsmStats, LampProbe in renderer.cpp), then a stamp per
+// pixel to count the pixels lit by any lamp
+layout(binding  = 7, std430) buffer LampProbe { uint probe[16]; uint probePixel[]; };
+uint probeTaps = 0, probeSlow = 0, probeNeighbour = 0, probeEarly = 0, probeBin = 0;
 #endif
 
 layout(location = 0) in vec4      cenPosition;
@@ -153,7 +163,14 @@ float omniGatherFace(const vec3 d, const OmniFace f, const float R, const vec2 a
   // receiver depth along the face's axis on each ray: the plane through P with normal n
   const float c   = dot(f.nf, f.Pf);
   const vec4  den = f.nf.x*X + f.nf.y*Y + vec4(f.nf.z);
+#if defined(VSM_LAMP_PROBE)
+  // 'flat': every texel against the receiver's own depth, without the plane along the rays
+  const vec4  drc = push.probeMode==2 ? vec4(f.Pf.z)
+                                      : clamp(c/min(den, vec4(-1e-4)), vec4(0.5*f.Pf.z), vec4(2.0*f.Pf.z));
+  ++probeTaps;
+#else
   const vec4  drc = clamp(c/min(den, vec4(-1e-4)), vec4(0.5*f.Pf.z), vec4(2.0*f.Pf.z));
+#endif
 
   // occluder depth along the axis; 0 is a cleared texel: nothing there
   const vec4 occ  = (OmniZk/(z4 + OmniZk))*R;
@@ -176,9 +193,16 @@ float omniGatherFace(const vec3 d, const OmniFace f, const float R, const vec2 a
 float omniGather(const vec3 d, const OmniFace home, const bool homeOnly, const vec3 P, const vec3 n, const float R,
                  const vec2 atlasInv, inout float blockRatio, inout float blockCount) {
   if(!homeOnly) {
+#if defined(VSM_LAMP_PROBE)
+    ++probeSlow;
+#endif
     const uint face = vsmLightDirToFace(d);
     if(face!=home.face) {
       const uint pageD = pageTblOmni[lightId*6 + face];
+#if defined(VSM_LAMP_PROBE)
+      if((pageD & 0xF)!=0 && vsmMapDirToFace(P, face).z>0)
+        ++probeNeighbour;
+#endif
       if((pageD & 0xF)!=0 && vsmMapDirToFace(P, face).z>0)
         return omniGatherFace(d, omniFace(face, pageD, P, n), R, atlasInv, blockRatio, blockCount);
       }
@@ -199,8 +223,13 @@ float omniShadow(const vec3 P, const vec3 n, const float R, const float S, const
   const float    dist     = length(P);
   const vec3     u        = P/dist;
   float ratio = 0, count = 0;
+#if defined(VSM_LAMP_PROBE)
+  if(faint || push.probeMode==1)
+    return omniGatherFace(u, hf, R, atlasInv, ratio, count);
+#else
   if(faint)
     return omniGatherFace(u, hf, R, atlasInv, ratio, count);
+#endif
 
   const vec3  a     = abs(u.y)<0.99 ? vec3(0,1,0) : vec3(1,0,0);
   const vec3  T     = normalize(cross(a, u));
@@ -222,6 +251,10 @@ float omniShadow(const vec3 P, const vec3 n, const float R, const float S, const
     const vec2 o = (rm*omniSearch[i])*searchR;
     omniGather(u + o.x*T + o.y*B, hf, homeOnly, P, n, R, atlasInv, ratio, count);
     }
+#if defined(VSM_LAMP_PROBE)
+  probeEarly = count==0 ? 1u : (count>=2.0*omniSearch.length() ? 2u : 0u);
+  probeBin   = searchR<=1.5*texel ? 16u : 0u;
+#endif
   if(count==0)
     return 1.0;
   if(count>=2.0*omniSearch.length())
@@ -235,6 +268,14 @@ float omniShadow(const vec3 P, const vec3 n, const float R, const float S, const
   // the penumbra's half-width as an angle from the light: S/2*(d2/d1 - 1)/d2
   const float d1d2    = max(ratio/count, 0.02);
   const float filterR = clamp(0.5*S/dist*(1.0/d1d2 - 1.0), texel, OmniMaxRadius*texel);
+#if defined(VSM_LAMP_PROBE)
+  {
+    // the penumbra's half-width in texels: at the floor (1), up to 1.5, 2, 3, 6, wider
+    const float w = filterR/texel;
+    probeBin |= w<=1.001 ? 0u : (w<=1.5 ? 1u : (w<=2.0 ? 2u : (w<=3.0 ? 3u : (w<=6.0 ? 4u : 5u))));
+    probeBin |= 8u; // reached the filter
+  }
+#endif
   float lit = 0;
   [[unroll]]
   for(int i=0; i<omniFilter.length(); ++i) {
@@ -287,6 +328,32 @@ void main() {
     // too faint to show a soft edge: under ~1/500 of white before the tonemapper
     const bool faint  = max(color.r, max(color.g, color.b))*light*max(1.0, scene.exposure)*0.25 < 0.002;
     light *= omniShadow(pos.xyz - cenPosition.xyz, planeN, cenPosition.w, lights[lightId].sourceSize, faint);
+#if defined(VSM_LAMP_PROBE)
+    if(push.probeStamp!=0) {
+      // 0 lamp-pixel pairs at the filter, 1 pixels lit by any lamp, 2 pairs past 'faint', 3 out after the first
+      // 4 taps (lit), 4 out blocked, 5 gathers past 'faint', 6 taps checking the neighbour face, 7 taps read from it,
+      // 8..13 pairs at the filter by the penumbra's half-width (1, 1.5, 2, 3, 6, more texels), 14 the search at its
+      // floor of 1.5 texels
+      const uint px = uint(gl_FragCoord.y)*uint(textureSize(depth,0).x) + uint(gl_FragCoord.x);
+      atomicAdd(probe[0], 1u);
+      if(atomicExchange(probePixel[px], push.probeStamp)!=push.probeStamp)
+        atomicAdd(probe[1], 1u);
+      if(!faint) {
+        atomicAdd(probe[2], 1u);
+        if(probeEarly==1u)
+          atomicAdd(probe[3], 1u);
+        if(probeEarly==2u)
+          atomicAdd(probe[4], 1u);
+        atomicAdd(probe[5], probeTaps);
+        atomicAdd(probe[6], probeSlow);
+        atomicAdd(probe[7], probeNeighbour);
+        if((probeBin & 8u)!=0)
+          atomicAdd(probe[8 + (probeBin & 7u)], 1u);
+        if((probeBin & 16u)!=0)
+          atomicAdd(probe[14], 1u);
+        }
+      }
+#endif
     if(light<=0.0)
       discard;
   }

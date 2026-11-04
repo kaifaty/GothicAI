@@ -98,6 +98,15 @@ Renderer::Renderer() {
   settings.swrtEnabled      = Shaders::options().doSoftwareRT;
   if(const char* stats = std::getenv("OPENGOTHIC_VSM_STATS"))
     settings.vsmStats = std::string_view(stats)=="1";
+  // OPENGOTHIC_VSM_LAMP=hard|flat: the lamp shadow filter for a study of its cost
+  // (reports/render-features/2026-11-04-lamp-pcss/step-2c.md): one gather at the centre, or the same taps against
+  // the receiver's depth without its plane; unset or pcss: the game's filter
+  if(const char* mode = std::getenv("OPENGOTHIC_VSM_LAMP")) {
+    const std::string_view m = mode;
+    settings.vsmLampMode = m=="hard" ? 1 : (m=="flat" ? 2 : 0);
+    if(settings.vsmLampMode!=0)
+      Log::i("vsm: lamp filter study mode = ", m);
+    }
 
   sky.sampler = Tempest::Sampler::bilinear();
   sky.sampler.vClamp = ClampMode::ClampToEdge;
@@ -200,7 +209,9 @@ void Renderer::setupSettings() {
     shadow.directLightPso = &shaders.directLight;
 
   // point-lights
-  if(settings.vsmEnabled)
+  if(settings.vsmEnabled && (settings.vsmLampMode!=0 || settings.vsmStats))
+    lights.directLightPso = &shaders.lightsVsmProbe;
+  else if(settings.vsmEnabled)
     lights.directLightPso = &shaders.lightsVsm;
   else if(Shaders::options().doRayQuery)
     lights.directLightPso = &shaders.lightsRq;
@@ -1584,6 +1595,28 @@ void Renderer::logVsmStats(const WorldView& wview) {
          (h.meshletCount>DrawCommands::VsmMaxMeshlets ? " OVERFLOW" : ""),
          ", lights = ", visibleLights, "/", uint32_t(wview.lights().size()),
          ", tile lights max = ", h.omniTileLightsMax, ", tiles over limit = ", h.omniTileOverflow);
+
+  // the lamp filter's counters of one frame (light_vsm_probe), then the next frame is counted
+  if(lights.directLightPso!=&Shaders::inst().lightsVsmProbe || vsm.lampProbe.isEmpty())
+    return;
+  uint32_t p[16] = {};
+  if(vsm.lampCounted) {
+    device.readBytes(vsm.lampProbe, p, sizeof(p));
+    const auto share = [](uint32_t a, uint32_t b) { return b==0 ? 0.0 : double(a)/double(b); };
+    const uint32_t filtered = p[8]+p[9]+p[10]+p[11]+p[12]+p[13];
+    Log::i("vsm lamp stats: pairs = ", p[0], ", pixels = ", p[1], ", lamps per pixel = ", share(p[0], p[1]),
+           ", past faint = ", p[2], ", out after 4 taps = ", share(p[3]+p[4], p[2]),
+           " (lit ", share(p[3], p[2]), ", blocked ", share(p[4], p[2]), ")",
+           ", taps per pixel = ", share(p[5], p[2]),
+           ", neighbour checks = ", share(p[6], p[5]), ", neighbour taps = ", share(p[7], p[5]));
+    Log::i("vsm lamp filter: filtered = ", filtered, ", penumbra texels <=1 ", share(p[8], filtered),
+           " <=1.5 ", share(p[9], filtered), " <=2 ", share(p[10], filtered), " <=3 ", share(p[11], filtered),
+           " <=6 ", share(p[12], filtered), " >6 ", share(p[13], filtered),
+           ", search at floor = ", share(p[14], p[3]+p[4]+filtered));
+    }
+  std::memset(p, 0, sizeof(p));
+  vsm.lampProbe.update(p, 0, sizeof(p));
+  vsm.lampArmed = true;
   }
 
 void Renderer::drawRtsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& wview) {
@@ -2157,7 +2190,7 @@ void Renderer::drawLights(Encoder<CommandBuffer>& cmd, const WorldView& wview) {
     cmd.setBinding(12, gbufOrm, Sampler::nearest());
   for(size_t i=0; i<LightGroup::MaxCookies; ++i)
     cmd.setBinding(13+i, wview.lights().cookie(i), Sampler::bilinear()); // u is the azimuth: it wraps
-  if(lights.directLightPso==&shaders.lightsVsm) {
+  if(lights.directLightPso==&shaders.lightsVsm || lights.directLightPso==&shaders.lightsVsmProbe) {
     cmd.setBinding(5, vsm.pageTblOmni);
     cmd.setBinding(6, vsm.pageData, Sampler::nearest(ClampMode::ClampToEdge)); // textureGather inside a face block
     }
@@ -2171,9 +2204,22 @@ void Renderer::drawLights(Encoder<CommandBuffer>& cmd, const WorldView& wview) {
     }
 
   auto& ibo  = Resources::cubeIbo();
-  struct Push { Vec3 originLwc; float vsmLampNear; } push = {scene.originLwc, settings.vsmLampNearCm};
-  if(lights.directLightPso==&shaders.lightsVsm)
-    cmd.setPushData(&push, sizeof(push)); else
+  struct Push { Vec3 originLwc; float vsmLampNear; uint32_t probeMode, probeStamp; } push =
+    {scene.originLwc, settings.vsmLampNearCm, settings.vsmLampMode, 0};
+  if(lights.directLightPso==&shaders.lightsVsmProbe) {
+    // the study variant: its counters and a stamp per pixel (light.frag, LampProbe); one frame in 5 s counts
+    auto& probe = usesSsboInit(vsm.lampProbe, (16 + size_t(zbuffer.w())*size_t(zbuffer.h()))*sizeof(uint32_t));
+    cmd.setBinding(7, probe);
+    if(vsm.lampArmed) {
+      push.probeStamp = ++vsm.lampStamp==0 ? ++vsm.lampStamp : vsm.lampStamp;
+      vsm.lampArmed   = false;
+      vsm.lampCounted = true;
+      }
+    }
+  if(lights.directLightPso==&shaders.lightsVsmProbe)
+    cmd.setPushData(&push, sizeof(push));
+  else if(lights.directLightPso==&shaders.lightsVsm)
+    cmd.setPushData(&push, offsetof(Push, probeMode)); else
     cmd.setPushData(&push.originLwc, sizeof(push.originLwc));
   cmd.setPipeline(*lights.directLightPso);
   cmd.draw(nullptr,ibo, 0,ibo.size(), 0,wview.lights().size());

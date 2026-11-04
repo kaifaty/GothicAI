@@ -167,6 +167,7 @@ class Renderer final {
 
       float          vsmMipBias         = 0.25; //TODO: set to lower, eventually
       bool           vsmStats           = false; // OPENGOTHIC_VSM_STATS=1: VSM counters to the log every 5 s
+      uint32_t       vsmLampMode        = 0;     // OPENGOTHIC_VSM_LAMP: 0 pcss, 1 hard, 2 flat (lamp filter study)
       float          vsmLampNearCm      = 30;    // [INTERNAL] vsmLampNearCm: a lamp's fixture this close casts no shadow
       } settings;
 
@@ -309,6 +310,10 @@ class Renderer final {
       Tempest::StorageImage     vsmDbg;
 
       uint64_t                  statsTime = 0; // last OPENGOTHIC_VSM_STATS line, ms
+      Tempest::StorageBuffer    lampProbe;     // light_vsm_probe: one frame's lamp filter counters, a stamp per pixel
+      uint32_t                  lampStamp  = 0; // the counted frame's stamp
+      bool                      lampArmed  = false; // the next drawLights counts
+      bool                      lampCounted = false; // lampProbe holds a counted frame
       } vsm;
 
     struct {
