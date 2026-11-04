@@ -113,7 +113,8 @@ void wallDetour() {
       require(distance(trail.points().back().position,object)>1,"an unseen position never enters the trail");
       }
     const auto result = trail.guide(follower,object,floor.view(follower,heading));
-    require(result.source!=Source::Line && result.source!=Source::Unseen,"a visible trail needs no straight fallback here");
+    require(result.source!=Source::Line && result.source!=Source::Unseen && result.source!=Source::Heading &&
+            result.source!=Source::LastSeen,"a visible trail needs no straight fallback here");
     require(!floor.crosses(follower,result.carrot),"the carrot never crosses the wall");
     if(result.source!=Source::Hold)
       require(distance(result.carrot,object)>=FollowTrail::standoffCm-.5,"the carrot keeps the standoff");
@@ -219,18 +220,73 @@ void lostAtTrailEnd() {
   trail.observe(hidden,false);
   const auto far = trail.guide(Vec3(100,0,0),hidden,dark.view(Vec3(100,0,0),East));
   require(far.source==Source::Trail && distance(far.carrot,Vec3(500,0,0))<1,"the last seen point while it is ahead");
-  trail.observe(hidden,false);
-  const auto at = trail.guide(Vec3(480,0,0),hidden,dark.view(Vec3(480,0,0),East));
-  require(at.source==Source::Unseen && trail.lost(),"at the last seen point the straight carrot takes over");
-  trail.observe(hidden,false);
-  const auto latched = trail.guide(Vec3(480,0,150),hidden,dark.view(Vec3(480,0,150),East));
+  // Nothing seen between: the companion goes toward the object it hears.
+  FollowTrail open = trail;
+  open.observe(hidden,false);
+  const auto at = open.guide(Vec3(480,0,0),hidden,dark.view(Vec3(480,0,0),East));
+  require(at.source==Source::Unseen && open.lost(),"at the last seen point the object is followed by hearing");
+  open.observe(hidden,false);
+  const auto latched = open.guide(Vec3(480,0,150),hidden,dark.view(Vec3(480,0,150),East));
   require(latched.source==Source::Unseen,"the loss holds until the object is seen again");
-  trail.observe(Vec3(500,0,1400),true);
-  require(!trail.lost(),"seeing the object again resumes the trail");
+  open.observe(Vec3(500,0,1400),true);
+  require(!open.lost(),"seeing the object again resumes the trail");
+
+  // A seen wall between the last seen point and the hidden object (review F1/F7):
+  // never through it; where the object was last seen heading instead.
+  Floor wall;wall.walls.push_back({400,600,100,120});
+  for(const bool seenFloor:{true,false}) {
+    wall.seen = true;
+    auto view = wall.view(Vec3(480,0,0),East);
+    if(!seenFloor)
+      for(auto& cell:view.near.cells)
+        if(cell.wall==0) cell = {};
+    FollowTrail blocked = trail;
+    blocked.observe(hidden,false);
+    const auto result = blocked.guide(Vec3(480,0,0),hidden,view);
+    require(blocked.lost() && result.source==Source::Heading,"a closed straight carrot gives way to the last heading");
+    require(!wall.crosses(Vec3(480,0,0),result.carrot),"a lost carrot never crosses the seen wall");
+    require(distance(result.carrot,Vec3(1100,0,0))<1,"the heading continues 6 m from the last seen point");
+    }
+  // The heading is closed too: the last seen point.
+  Floor boxed;boxed.walls.push_back({400,600,100,120});boxed.walls.push_back({700,720,-300,300});
+  FollowTrail cornered = trail;
+  cornered.observe(hidden,false);
+  const auto last = cornered.guide(Vec3(480,0,0),hidden,boxed.view(Vec3(480,0,0),East));
+  require(last.source==Source::LastSeen && distance(last.carrot,Vec3(500,0,0))<1,"both closed: the last seen point");
+  // Never seen, behind a seen wall: toward the object only up to the wall.
   FollowTrail never;
   never.observe(hidden,false);
   require(never.points().empty() && never.guide(Vec3(),hidden,dark.view(Vec3(),East)).source==Source::Unseen,
-          "an object never seen leaves only the straight carrot");
+          "an object never seen is followed by hearing");
+  Floor front;front.walls.push_back({-200,200,600,620});
+  const auto stopped = never.guide(Vec3(),hidden,front.view(Vec3(),East));
+  require(stopped.source==Source::Unseen && !front.crosses(Vec3(),stopped.carrot),
+          "hearing never leads through a seen wall");
+  }
+
+// The trail loops back past the object (review F2 and F8): no trail or cut
+// carrot may come nearer than 2.5 m to it.
+void trailLoops() {
+  Floor dark;dark.seen=false;
+  const auto loop = [&](const std::vector<Vec3>& path, const Vec3& follower, const char* message) {
+    FollowTrail trail;
+    Vec3 object = path[0];
+    size_t leg = 1;
+    trail.observe(object,true);
+    while(leg<path.size()) {moveAlong(path,leg,object,25.f);trail.observe(object,true);}
+    const auto result = trail.guide(follower,object,dark.view(follower,East));
+    require(result.source==Source::Trail || result.source==Source::Cut || result.source==Source::Line,message);
+    require(distance(result.carrot,object)>=FollowTrail::standoffCm-.5,message);
+    return result;
+    };
+  const auto f2 = loop({{100,0,0},{1100,0,0},{1100,0,600},{500,0,600},{500,0,0}},Vec3(0,0,0),
+                       "F2: the loop past the object keeps the 2.5 m standoff");
+  require(f2.source==Source::Trail && distance(f2.carrot,Vec3(250,0,0))<1 && f2.loopLimited,
+          "F2: the carrot stops where the trail first enters the standoff circle");
+  const auto f8 = loop({{0,0,0},{1000,0,0},{1000,0,1000},{700,0,1000},{700,0,150}},Vec3(100,0,0),
+                       "F8: the loop past the object keeps the 2.5 m standoff");
+  require(f8.source==Source::Trail && distance(f8.carrot,Vec3(500,0,0))<1 && f8.loopLimited,
+          "F8: the carrot stops where the trail first enters the standoff circle");
   }
 
 // The object walks toward the follower: no trail point ahead is 2.5 m from it.
@@ -318,6 +374,7 @@ int main() {
   hiddenLeader();
   straightCut();
   lostAtTrailEnd();
+  trailLoops();
   comingToward();
   footprintsDoNotTrap();
   cornerPullback();

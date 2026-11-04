@@ -77,7 +77,8 @@ struct Episode {
   std::array<uint64_t,size_t(FollowTrail::Source::Count)> followSources={};
   FollowTrail::Source followSource=FollowTrail::Source::Count;
   bool followVisibleNow=false;
-  uint64_t followVisibleDecisions=0;
+  uint64_t followVisibleDecisions=0,followLoopLimitedDecisions=0,followLoopLineDecisions=0;
+  uint64_t followCutShortDecisions=0,followGuardedDecisions=0;
   // Rising edges of native CV blocked/steep contact since the previous decision.
   bool followContact=false,followContactPrevious=false;
   uint64_t followContactEntries=0,followContactDecisions=0;
@@ -509,7 +510,11 @@ void finish(Episode& ep,World& world) {
     out<<",\"follow_guidance\":"<<std::quoted(ep.followLine?"line":"trail")<<",\"follow_run\":"<<std::quoted(ep.followRun?"on":"off")
        <<",\"follow_visible_decisions\":"<<ep.followVisibleDecisions
        <<",\"follow_contact_entries\":"<<ep.followContactEntries
-       <<",\"follow_contact_decisions\":"<<ep.followContactDecisions<<",\"follow_carrot_sources\":{";
+       <<",\"follow_contact_decisions\":"<<ep.followContactDecisions
+       <<",\"follow_loop_limited_decisions\":"<<ep.followLoopLimitedDecisions
+       <<",\"follow_loop_line_decisions\":"<<ep.followLoopLineDecisions
+       <<",\"follow_unseen_cut_short_decisions\":"<<ep.followCutShortDecisions
+       <<",\"follow_guarded_decisions\":"<<ep.followGuardedDecisions<<",\"follow_carrot_sources\":{";
     for(size_t i=0;i<ep.followSources.size();++i) {
       if(i)out<<',';
       out<<std::quoted(FollowTrail::name(FollowTrail::Source(i)))<<':'<<ep.followSources[i];
@@ -1657,7 +1662,9 @@ void guidanceFor(Episode& ep,World& w,const Vec3& position) {
         ep.followTrail.observe(ep.goal,visible);
         const auto result=ep.followTrail.guide(position,ep.goal,ep.view);
         ep.guidance.carrot=result.carrot;
-        ++ep.followSources[size_t(result.source)];
+        ++ep.followSources[size_t(result.source)];ep.followLoopLimitedDecisions+=result.loopLimited;
+        ep.followLoopLineDecisions+=result.loopLine;ep.followCutShortDecisions+=result.cutShort;
+        ep.followGuardedDecisions+=result.guarded;
         ep.followSource=result.source;
       }
       ep.guidance.beyondKnown=false;

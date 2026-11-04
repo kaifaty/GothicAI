@@ -10,7 +10,8 @@
 #   NAV_FOLLOW_IDS=id,id [NAV_FOLLOW_PACE=run|own] bash scripts/nav-follow-remote.sh diagnose-teacher-trail
 #                                                              # full traces of chosen routes; the pace overrides
 #                                                              # the default (run for trail, own for line)
-#   bash scripts/nav-follow-remote.sh clean                    # remove ~/gothic-ai/nav-follow-trail on Ryzen
+#   bash scripts/nav-follow-remote.sh clean                    # remove ~/gothic-ai/nav-follow-trail on Ryzen;
+#                                                              # refuses while a job of this owner is not finished
 # Jobs run from immutable snapshots in ~/gothic-ai/nav-follow-trail/source/<hash>; the engine is built
 # once per OpenGothic snapshot. Results: /mnt/shared/gothic-ai/nav-follow-trail/. v5 weights are only read.
 set -euo pipefail
@@ -29,6 +30,21 @@ if [[ "$stage" != run ]]; then
   [[ $# == 1 && "$stage" =~ ^(smoke|(validation|diagnose)-(teacher|v5)-(trail|line)|live-(trail|line)|report|clean)$ ]] || { echo "$usage" >&2; exit 2; }
   task="$(ssh -o BatchMode=yes -o ConnectTimeout=10 ryzen 'printf "%s/gothic-ai" "$HOME"')/$task_name"
   if [[ "$stage" == clean ]]; then
+    # gq keeps every job in its state file; a job that is not finished still needs the runtime:
+    # its snapshot, build, venv and navmesh copies all live in this folder.
+    ssh ryzen "python3 - '$task' '$task_name'" <<'ACTIVE'
+import json
+from pathlib import Path
+import sys
+task, owner = sys.argv[1:]
+jobs = json.loads((Path.home() / "gothic-ai/queue/state.json").read_text())["jobs"]
+jobs = jobs.values() if isinstance(jobs, dict) else jobs
+active = [job["id"] for job in jobs if job.get("owner") == owner
+          and job.get("status") not in {"done", "cancelled", "timeout", "failed"}
+          and any(task in str(part) for part in job.get("command", []))]
+if active:
+    sys.exit(f"Refusing to clean {task}: gq jobs {' '.join(active)} are queued, starting or running")
+ACTIVE
     ssh ryzen "rm -rf '$task'; df -h ~ | tail -1"
     exit
   fi
@@ -82,7 +98,7 @@ source="$task/source/$snapshot"
 build_dir="$task/build/$engine"
 stop() { echo "nav-follow $stage: $*" >&2; exit 1; }
 [[ -d "$source/scripts" ]] || stop "missing source snapshot $source"
-mkdir -p "$archive/$stage" "$archive/logs" "$task/tmp/$stage" "$task/input"
+mkdir -p "$archive/logs" "$task/tmp/$stage" "$task/locks"
 exec > >(tee -a "$archive/logs/$stage.log") 2>&1
 trap 'printf "nav_follow_%s_exit=%s snapshot=%s engine=%s\n" "$stage" "$?" "$snapshot" "$engine"' EXIT
 export TMPDIR="$task/tmp/$stage" UV_CACHE_DIR="$task/uv-cache" CCACHE_DIR="$task/ccache"
@@ -102,15 +118,16 @@ game_environment() { # The base resolved by smoke for this engine, read-only; ca
   # shellcheck disable=SC1090
   source "$archive/smoke/$engine/game.env"
   export GOTHIC_DIR OPENGOTHIC_BASE_FINGERPRINT OPENGOTHIC_VIDEOS_FINGERPRINT
-  # One link per stage: replacing a link shared with a running job is not atomic
+  # The base folder named by its fingerprint never changes, so jobs point at it
+  # directly. No shared link: replacing one under a running job is not atomic
   # (2026-11-04: a concurrent ln -sfn removed the base under a running validation).
-  local base link="$task/input/$stage/base"
-  mkdir -p "$task/input/$stage"
+  local base
+  OPENGOTHIC_BASE=
   for base in "/mnt/shared/gothic-ai/base/$OPENGOTHIC_BASE_FINGERPRINT" "$HOME/.cache/gothic-ai/base/$OPENGOTHIC_BASE_FINGERPRINT"; do
-    if [[ -d "$base" ]]; then ln -sfn "$base" "$link"; break; fi
+    if [[ -d "$base" ]]; then OPENGOTHIC_BASE="$base"; break; fi
   done
-  [[ -e "$link" ]] || stop "no ready base $OPENGOTHIC_BASE_FINGERPRINT"
-  export OPENGOTHIC_BASE="$link" OPENGOTHIC_BASE_CACHE="$task/base-cache" OPENGOTHIC_BASE_STORE="$task/base-store"
+  [[ -n "$OPENGOTHIC_BASE" ]] || stop "no ready base $OPENGOTHIC_BASE_FINGERPRINT"
+  export OPENGOTHIC_BASE OPENGOTHIC_BASE_CACHE="$task/base-cache" OPENGOTHIC_BASE_STORE="$task/base-store"
 }
 navmesh() { # WORKERS: the archived ordinary navmesh, one copy per worker
   local worker
@@ -120,8 +137,13 @@ navmesh() { # WORKERS: the archived ordinary navmesh, one copy per worker
   done
 }
 validate() { # OUTPUT MODEL GUIDANCE [extra args]
-  local output="$1" model="$2" guidance="$3"
+  local output="$1" model="$2" guidance="$3" lock
   shift 3
+  # One writer per result folder: a second job with the same output resumes it later instead.
+  # The lock lives on the local disk (flock on the CIFS share is not reliable).
+  lock="$task/locks/$(printf '%s' "$output" | sha256sum | cut -c1-16).lock"
+  exec {lock_fd}>"$lock"
+  flock -n "$lock_fd" || stop "another job is writing $output"
   mkdir -p "$archive/validation/setup-rejections"
   cp -n "$rejections_source"/*.json "$archive/validation/setup-rejections/"
   "$python" -X faulthandler -B -I scripts/nav_follow_trail.py validation --model "$model" --guidance "$guidance" \
@@ -141,9 +163,11 @@ if [[ "$stage" == smoke ]]; then
     cmake --build "$build_dir" --target gothic-body-runner Gothic2Notr content-convert gothic-followtrail-contract --parallel 4
     printf '%s\n' "$snapshot" > "$build_dir/built"
   fi
-  "$build_dir/opengothic/gothic-followtrail-contract" | tee "$archive/smoke/contract.txt"
   mkdir -p "$archive/smoke/$engine"
-  "$python" -B -I scripts/ryzen_game.py --converter "$build_dir/opengothic/content-convert" > "$archive/smoke/$engine/game.env"
+  "$build_dir/opengothic/gothic-followtrail-contract" | tee "$archive/smoke/$engine/contract.txt"
+  # Publish game.env whole: other stages of this engine may read it while smoke repeats.
+  "$python" -B -I scripts/ryzen_game.py --converter "$build_dir/opengothic/content-convert" > "$archive/smoke/$engine/game.env.$$"
+  mv -f "$archive/smoke/$engine/game.env.$$" "$archive/smoke/$engine/game.env"
   game_environment
   navmesh 2
   # Two short episodes: the stand writes the follow fields and the trail carrot is in use.
@@ -189,8 +213,9 @@ if [[ "$stage" == diagnose-* ]]; then
   navmesh 2
   target="$weights"; [[ "$model" == v5 ]] || target=teacher
   pace=(); [[ -z "${NAV_FOLLOW_PACE:-}" ]] || pace=(--teacher-pace "$NAV_FOLLOW_PACE")
-  output="$archive/diagnose/$model-$guidance${NAV_FOLLOW_PACE:+-$NAV_FOLLOW_PACE}-$snapshot"
-  rm -rf "$output"
+  # One folder per set of routes; a repeated run of the same set resumes it, nothing is deleted.
+  routes="$(printf '%s' "$NAV_FOLLOW_IDS" | sha256sum | cut -c1-10)"
+  output="$archive/diagnose/$model-$guidance${NAV_FOLLOW_PACE:+-$NAV_FOLLOW_PACE}-$snapshot-$routes"
   validate "$output" "$target" "$guidance" --parallel 2 --ids "$NAV_FOLLOW_IDS" --keep-traces "${pace[@]}"
   exit
 fi

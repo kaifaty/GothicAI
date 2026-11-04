@@ -31,6 +31,7 @@ import os
 from pathlib import Path
 import shutil
 import sys
+import threading
 import time
 from types import SimpleNamespace
 
@@ -42,7 +43,9 @@ FAMILY = "follow_below_gate"
 LIVE_PLACE = "03-follow-hero"
 QUALIFICATION = .8
 RUN = dict(run="on", own="off")  # teacher pace -> navdemos follow-run
-SOURCES = ("hold", "direct", "cut", "trail", "line", "unseen")
+# Decisions changed by the review fixes (loop standoff, unseen carrot) and the 2.5 m guard.
+FIX_COUNTERS = ("loop_limited_decisions", "loop_line_decisions", "unseen_cut_short_decisions", "guarded_decisions")
+SOURCES = ("hold", "direct", "cut", "trail", "line", "unseen", "heading", "last_seen")
 
 
 def read_json(path):
@@ -52,7 +55,7 @@ def read_json(path):
 def write_json(path, value):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary = path.with_suffix(f"{path.suffix}.{os.getpid()}.{threading.get_ident()}.tmp")
     temporary.write_text(json.dumps(value, indent=2, ensure_ascii=False) + "\n")
     temporary.replace(path)
 
@@ -85,6 +88,7 @@ def episode_follow(directory):
                 far=episode["follow_far_ms"] / observed if observed else None,
                 contacts=episode["follow_contact_entries"], contact_decisions=episode["follow_contact_decisions"],
                 visible_decisions=episode["follow_visible_decisions"], sources=episode["follow_carrot_sources"],
+                **{key: episode.get(f"follow_{key}") for key in FIX_COUNTERS},
                 guidance=episode["follow_guidance"], teacher_run=episode.get("follow_run"),
                 walk_decisions=walk, action_rows=decisions,
                 travel_cm=episode.get("travel_cm"), pace=episode.get("pace"),
@@ -108,7 +112,9 @@ def group(rows):
                 contacts_per_minute=60000 * sum(row["contacts"] for row in rows) / elapsed if elapsed else None,
                 visible=sum(row["visible_decisions"] for row in rows) / decisions if decisions else None,
                 walk_decisions=sum(row["walk_decisions"] for row in rows), decisions=decisions,
-                sources={name: value / decisions if decisions else None for name, value in sources.items()})
+                sources={name: value / decisions if decisions else None for name, value in sources.items()},
+                source_decisions=sources,
+                **{key: sum(row.get(key) or 0 for row in rows) for key in FIX_COUNTERS})
 
 
 def paired(before, after, key):
@@ -280,7 +286,7 @@ def report(args):
     root = args.root
     result = dict(validation={}, live={}, paired={})
     for name in ("teacher-line", "teacher-trail-attempt1", "teacher-trail",
-                 "v5-line", "v5-trail-attempt1", "v5-trail"):
+                 "v5-line-premerge", "v5-trail-attempt1", "v5-trail-attempt2", "v5-line", "v5-trail"):
         path = root / "validation" / name / "summary.json"
         if path.is_file():
             result["validation"][name] = read_json(path)

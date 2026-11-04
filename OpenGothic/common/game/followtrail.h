@@ -35,7 +35,10 @@ class FollowTrail final {
               // memory has seen a static hazard before it
       Line,   // no trail point ahead is standoffCm from the object (it comes toward
               // the follower, or has not yet gone that far): the straight carrot
-      Unseen, // never seen, or lost at the last seen point: the straight carrot
+      Unseen,   // never seen, or lost at the last seen point: the straight carrot toward
+                // the object (the companion hears it), cut short before a seen static hazard
+      Heading,  // lost, the straight carrot is closed: where the object was last seen heading
+      LastSeen, // lost, both closed: the last seen point
       Count
       };
     static const char* name(Source source);
@@ -47,6 +50,12 @@ class FollowTrail final {
     struct Result final {
       Tempest::Vec3 carrot = {};
       Source source = Source::Line;
+      // Diagnosis of the review fixes, never used to steer:
+      // the forward standoff differs from the first rule's newest one (a loop of
+      // the trail passes the object earlier); loopLine: that turned a trail or cut
+      // carrot into the straight one; cutShort: an unseen straight carrot was
+      // cut short before a seen static hazard; guarded: the 2.5 m guard fired.
+      bool loopLimited = false, loopLine = false, cutShort = false, guarded = false;
       };
 
     void reset();
@@ -78,6 +87,12 @@ class FollowTrail final {
     void advance(const Tempest::Vec3& follower);
     Tempest::Vec3 at(double arcCm) const;
     double standoffArc(const Tempest::Vec3& object) const;
+    double lastStandoffArc(const Tempest::Vec3& object) const;
+    Result unseen(const Tempest::Vec3& follower, const Tempest::Vec3& object, const Tempest::Vec3& direct,
+                  const NavigationMemory::View& memory) const;
+    static Result checked(Result result, const Tempest::Vec3& object, const Tempest::Vec3& direct);
+    static Tempest::Vec3 clearAlong(const NavigationMemory::View& memory, const Tempest::Vec3& from,
+                                    const Tempest::Vec3& to);
     static bool passage(const NavigationMemory::View& memory, const Tempest::Vec3& from,
                         const Tempest::Vec3& to, bool seen);
 
