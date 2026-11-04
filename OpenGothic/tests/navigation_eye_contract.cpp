@@ -11,13 +11,16 @@
 #include <zenkit/ModelHierarchy.hh>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <iterator>
 #include <memory>
 #include <set>
 #include <stdexcept>
+#include <vector>
 
 namespace {
 using Tempest::Vec3;
@@ -209,6 +212,100 @@ void floorSamplingModes() {
   near(gaze.gazePitchDeg(),0.f,"stopping restores the applied head pose");
   }
 
+// The eye core behind a substituted RayCaster: an independent triangle soup with
+// the stand's rule (closest hit, back faces invisible) must give the same 476
+// memory slots as the engine path on one pose sequence.
+class TriangleRays final : public NavigationEye::RayCaster {
+  public:
+    explicit TriangleRays(const asset::WorldMesh& mesh) {
+      const auto& index = mesh.polygons.vertex_indices;
+      for(size_t i=0; i+2<index.size(); i+=3) {
+        const auto vertex = [&](size_t k) { const auto& v = mesh.vertices[index[i+k]]; return Vec3(v.x,v.y,v.z); };
+        triangles.push_back({vertex(0),vertex(1),vertex(2)});
+        }
+      }
+
+    NavigationEye::RayHit cast(const Vec3& from, const Vec3& to, const Npc*) const override {
+      const Vec3 d = to-from;
+      NavigationEye::RayHit result;
+      float best = 1.f;
+      for(const auto& t:triangles) {
+        const Vec3 e1 = t[1]-t[0], e2 = t[2]-t[0];
+        const Vec3 p = Vec3::crossProduct(d,e2);
+        const float det = Vec3::dotProduct(e1,p); // > 0: the face looks at the ray
+        if(det<=1.e-12f)
+          continue;
+        const Vec3 s = from-t[0];
+        const float u = Vec3::dotProduct(s,p)/det;
+        const Vec3 q = Vec3::crossProduct(s,e1);
+        const float v = Vec3::dotProduct(d,q)/det;
+        const float at = Vec3::dotProduct(e2,q)/det;
+        if(u<0.f || v<0.f || u+v>1.f || at<0.f || at>best)
+          continue;
+        best = at;
+        result.hit = true;
+        result.point = from+d*at;
+        result.normalY = Vec3::normalize(Vec3::crossProduct(e1,e2)).y;
+        result.kind = NavigationEye::HitKind::World;
+        }
+      return result;
+      }
+
+  private:
+    std::vector<std::array<Vec3,3>> triangles;
+  };
+
+void substitutedCasterMatchesWorldPath() {
+  // Floor and a tall wide wall at x=1500, both windings like wall(): no edge in reach.
+  asset::WorldMesh mesh;
+  mesh.vertices = {{-20000,0,-20000},{-20000,0,20000},{20000,0,20000},{20000,0,-20000},
+                   {1500,0,-20000},{1500,20000,-20000},{1500,20000,20000},{1500,0,20000}};
+  mesh.materials.resize(1);
+  mesh.materials[0].group = asset::MaterialGroup::STONE;
+  mesh.polygons.vertex_indices = {0,1,2,0,2,3,2,1,0,3,2,0, 4,5,6,4,6,7,6,5,4,7,6,4};
+  mesh.polygons.material_indices = {0,0,0,0,0,0,0,0};
+  DynamicWorld world(nullptr,mesh);
+  const TriangleRays triangles(mesh);
+  NavigationEye::Config cfg;
+  cfg.layout = 250; // the stand's 238 rays, walking gaze on
+  NavigationEye engine(cfg), core(cfg);
+  NavigationEye::Pose pose;
+  size_t updates = 0, farUpdates = 0, hits = 0;
+  // Walk toward the wall, turn, stand, then rewind time: near/far cadence, gaze
+  // and the far cache all take part. 50 ms steps also exercise skipped ticks.
+  const uint64_t times[] = {0,50,100,200,250,300,400,500,600,700,800,900,1000,1100,1300,1500,1550,1600,2000,700,800};
+  for(size_t step=0; step<std::size(times); ++step) {
+    const float yaw = step<8 ? 0.f : float(step-7)*.21f;
+    const float x = std::min(float(step),12.f)*37.f;
+    pose.position = Vec3(x,0,float(step)*3.f);
+    pose.origin = pose.position+Vec3(0,180,0);
+    pose.forward = Vec3(std::cos(yaw),0,std::sin(yaw));
+    pose.right = Vec3(-pose.forward.z,0,pose.forward.x);
+    const auto a = engine.update(pose,world,nullptr,times[step]);
+    const auto b = core.update(pose,triangles,nullptr,times[step]);
+    require(a.updated==b.updated && a.farUpdated==b.farUpdated && a.nearCasts==b.nearCasts && a.farCasts==b.farCasts,
+            "substituted caster keeps the near/far schedule");
+    near(core.gazePitchDeg(),engine.gazePitchDeg(),"substituted caster keeps the walking gaze");
+    updates += a.updated;
+    farUpdates += a.farUpdated;
+    const auto& expected = engine.memorySamples();
+    const auto& actual = core.memorySamples();
+    require(expected.size()==476 && actual.size()==476,"layout 250 exposes 476 memory slots");
+    for(size_t i=0; i<expected.size(); ++i) {
+      const auto& e = expected[i];
+      const auto& r = actual[i];
+      require(e.hit==r.hit && e.kind==r.kind && e.complete==r.complete,"slot hit, kind and completeness");
+      require(e.sampledAtMs==r.sampledAtMs && e.nearSampledAtMs==r.nearSampledAtMs,"slot timestamps");
+      require(e.origin==r.origin && e.direction==r.direction && e.maxRangeCm==r.maxRangeCm,"slot geometry is the core's own");
+      require(std::abs(e.distanceCm-r.distanceCm)<.05f && (e.point-r.point).length()<.05f,"slot hit distance and point");
+      require(std::abs(e.normalY-r.normalY)<1.e-4f,"slot normal");
+      hits += i<238 && e.hit;
+      }
+    }
+  require(updates==18 && farUpdates==6 && hits>1000,"fixture exercises cadence, rewind and hits");
+  std::printf("navigation eye caster: %zu updates, %zu with far, %zu fresh hits equal\n",updates,farUpdates,hits);
+  }
+
 void staticAndMovingVobs() {
   const auto mesh = wall(100);
   const std::unique_ptr<PhysicMeshShape> shape(PhysicMeshShape::load(PackedMesh(mesh,PackedMesh::PK_Physic)));
@@ -335,6 +432,7 @@ int main() {
   rangesAndWater();
   freshNearAndCachedFar();
   floorSamplingModes();
+  substitutedCasterMatchesWorldPath();
   staticAndMovingVobs();
   livingRigQuerySemantics();
   std::puts("navigation eye contracts passed");

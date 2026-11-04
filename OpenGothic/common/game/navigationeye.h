@@ -11,6 +11,10 @@ class DynamicWorld;
 
 // Opt-in navigation sensor. It neither drives NPCs nor publishes bridge observations.
 // Coordinates and ranges are centimetres; yaw/pitch are degrees relative to the posed head.
+// The core (layout, near/far cadence, far cache, walking gaze) depends only on Tempest
+// math and RayCaster: the game casts through DynamicWorld::navigationRay
+// (navigationeyeworld.cpp), the nav-sim stand through Embree on the static dump
+// (scripts/navsim/stand/native). Keep navigationeye.cpp free of engine headers.
 class NavigationEye final {
   public:
     enum class HitKind : uint8_t { None, World, StaticVob, MovableVob, Npc, Water };
@@ -53,10 +57,28 @@ class NavigationEye final {
       bool updated = false, farUpdated = false;
       };
 
+    // Closest visible (front-face) hit on one segment.
+    struct RayHit final {
+      bool hit = false;
+      Tempest::Vec3 point = {};
+      float normalY = 0; // Y of the unit surface normal; 0 when the normal is degenerate
+      HitKind kind = HitKind::None;
+      };
+
+    class RayCaster {
+      public:
+        virtual ~RayCaster() = default;
+        // Segment from->to in world centimetres. `except` is the observer's own body
+        // (may be null); casters without NPC bodies ignore it.
+        virtual RayHit cast(const Tempest::Vec3& from, const Tempest::Vec3& to, const Npc* except) const = 0;
+      };
+
     NavigationEye();
     explicit NavigationEye(const Config& config);
+    // Engine adapters (navigationeyeworld.cpp): DynamicWorld::navigationRay as the caster.
     Update update(const Npc& npc, uint64_t gameMs);
     Update update(const Pose& pose, const DynamicWorld& physics, const Npc* except, uint64_t gameMs);
+    Update update(const Pose& pose, const RayCaster& caster, const Npc* except, uint64_t gameMs);
     void reset();
     const Config& config() const { return cfg; }
     const std::vector<Ray>& samples() const { return rays; }
