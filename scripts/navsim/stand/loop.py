@@ -608,8 +608,8 @@ nvidia-smi --query-gpu=memory.used,memory.free --format=csv > {run}/vram-after.t
 df -h ~ | tail -1
 """
     job = [str(ROOT / "scripts/gq"), "--host", host, "run", "--class", args.gq_class, "--threads",
-           str(DELAY_THREADS + 2), "--mem", "10G", "--gpu-mem", f"{args.gpu_mem}G", "--max", str(args.max_seconds),
-           "--wait-max", "1800", "--name", "navsim-stand-loop", "--", "bash", "-lc", body]
+           str(DELAY_THREADS + 2), "--mem", f"{args.mem}G", "--gpu-mem", f"{args.gpu_mem}G",
+           "--max", str(args.max_seconds), "--wait-max", "1800", "--name", "navsim-stand-loop", "--", "bash", "-lc", body]
     code = bench.run_forwarding(job)
     print(f"gq exit {code}; raw results in {host}:{run}", flush=True)
     if code == 0:
@@ -637,7 +637,7 @@ def summarise(local, nas, args):
     run = dict(stamp=local.name.rsplit("-", 1)[-1], raw_dir=nas, gpu=metadata["gpu"], torch=metadata["torch"],
                torch_cuda=metadata["torch_cuda"], free_vram_mib_before=metadata["free_vram_mib"],
                vram_after=(local / "vram-after.txt").read_text().strip().splitlines()[-1],
-               gq=dict(host=args.host, cls=args.gq_class, threads=DELAY_THREADS + 2, mem_gib=10,
+               gq=dict(host=args.host, cls=args.gq_class, threads=DELAY_THREADS + 2, mem_gib=args.mem,
                        gpu_mem_gib=args.gpu_mem),
                raw_checksums=dict(path=f"{nas}/SHA256SUMS", sha256=bench.sha256(local / "SHA256SUMS")))
     if (local / "parity.json").exists():
@@ -656,14 +656,23 @@ def summarise(local, nas, args):
 
 
 def headline(report):
+    """Latest cell per (precision, N) over the runs; a run's note says how its code differed."""
+    cells = {}
+    for run in report["runs"]:
+        for c in run["cells"]:
+            cells[(c["precision"], c["agents"])] = (run, c)
     rows = []
-    for c in report["runs"][-1]["cells"]:
-        row = dict(agents=c["agents"], precision=c["precision"], status=c["status"])
+    for (precision, n), (run, c) in sorted(cells.items()):
+        row = dict(agents=n, precision=precision, run=run["stamp"], status=c["status"])
+        if run.get("note"):
+            row["note"] = run["note"]
         if c["status"] == "ok":
             row.update(gpu_us_per_decision=c["gpu_us_per_decision"]["median"],
                        gpu_parts_us_per_decision=c["gpu_parts_us_per_decision"],
                        loop_replay_decisions_per_second=c["loop_replay"]["decisions_per_second"]["median"],
                        loop_delay_decisions_per_second=c["loop_delay"]["decisions_per_second"]["median"],
+                       replay_ms_per_half_step=c["replay_fill_ms_per_half_step"],
+                       delay_ms_per_half_step=c["loop_delay"]["cpu_side_ms_per_half_step"],
                        peak_reserved_gib=c["peak_reserved_bytes"] / 2 ** 30, process_vram_mib=c["process_vram_mib"])
         rows.append(row)
     parity = report.get("parity", {})
@@ -708,6 +717,7 @@ def main():
     p.add_argument("--repeats", type=int, default=20)
     p.add_argument("--fill-workers", type=int, default=8)
     p.add_argument("--gpu-mem", type=int, default=9, help="GiB declared to gq; the allocator gets 0.5 less")
+    p.add_argument("--mem", type=int, default=6, help="GiB of RAM declared to gq")
     p.add_argument("--max-seconds", type=int, default=3600)
     p.add_argument("--torch", default="2.14.1")
     p.add_argument("--skip-parity", action="store_true")
