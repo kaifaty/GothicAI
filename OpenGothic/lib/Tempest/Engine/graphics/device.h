@@ -50,6 +50,9 @@ class Device {
     // the device is created; empty (the default) keeps it off. savePipelineCache() writes it now,
     // the device also writes it when it is destroyed.
     static void           setPipelineCacheDirectory(const std::filesystem::path& dir);
+    // On-disk cache of the SPIR-V -> MSL translation (Metal only; other backends ignore it). Same rules as above;
+    // verify translates every cached shader again and stops the process on any difference.
+    static void           setShaderCacheDirectory(const std::filesystem::path& dir, bool verify = false);
     void                  savePipelineCache();
 
     [[nodiscard]]

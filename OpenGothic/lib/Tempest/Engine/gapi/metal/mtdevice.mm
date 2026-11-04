@@ -1,6 +1,7 @@
 #if defined(TEMPEST_BUILD_METAL)
 
 #include "mtdevice.h"
+#include "mtshader.h"
 #include "thirdparty/spirv_cross/spirv_msl.hpp"
 
 #include <Tempest/Log>
@@ -127,6 +128,7 @@ MtDevice::MtDevice(std::string_view name, bool validation)
     identity += "\nmsl=" + std::to_string(uint32_t(prop.mslVersion));
     psoCache.init(*impl,identity);
   }
+  mslCache.init(MtShader::cacheIdentity(*this));
   if(tempestLoadProbeEnabled()) {
     std::lock_guard<std::mutex> guard(probeDeviceSync);
     probeDevice = impl.get();
@@ -144,6 +146,7 @@ MtDevice::~MtDevice() {
 
 void MtDevice::savePipelineCache() {
   psoCache.saveAsync();
+  mslCache.saveAsync();
   }
 
 void MtDevice::onSubmit() {

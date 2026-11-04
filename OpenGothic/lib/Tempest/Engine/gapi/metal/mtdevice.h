@@ -13,6 +13,7 @@
 #include "gapi/shaderreflection.h"
 #include "gapi/metal/mtsync.h"
 #include "gapi/metal/mtpipelinecache.h"
+#include "gapi/metal/mtshadercache.h"
 #include "gapi/metal/mtsamplercache.h"
 #include "nsptr.h"
 
@@ -317,6 +318,7 @@ class MtDevice : public AbstractGraphicsApi::Device {
     Props                      prop;
     MtSamplerCache             samplers;
     MtPipelineCache            psoCache;
+    MtShaderCache              mslCache;
     bool                       validation = false;
     bool                       syncBufferUploads = false;
     bool                       syncTextureUploads = false;
