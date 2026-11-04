@@ -36,7 +36,8 @@ class FollowTrail final {
       Line,   // no trail point ahead is standoffCm from the object (it comes toward
               // the follower, or has not yet gone that far): the straight carrot
       Unseen,   // never seen, or lost at the last seen point: the straight carrot toward
-                // the object (the companion hears it), cut short before a seen static hazard
+                // the object (the companion hears it); never seen and closed by a seen
+                // static hazard: turned aside up to 90 degrees, else stopped before it
       Heading,  // lost, the straight carrot is closed: where the object was last seen heading
       LastSeen, // lost, both closed: the last seen point
       Count
@@ -53,9 +54,10 @@ class FollowTrail final {
       // Diagnosis of the review fixes, never used to steer:
       // the forward standoff differs from the first rule's newest one (a loop of
       // the trail passes the object earlier); loopLine: that turned a trail or cut
-      // carrot into the straight one; cutShort: an unseen straight carrot was
-      // cut short before a seen static hazard; guarded: the 2.5 m guard fired.
-      bool loopLimited = false, loopLine = false, cutShort = false, guarded = false;
+      // carrot into the straight one; detour: the straight carrot toward an object
+      // never seen was closed by a seen static hazard, so the carrot turned aside
+      // or stopped before it; guarded: the 2.5 m guard fired.
+      bool loopLimited = false, loopLine = false, detour = false, guarded = false;
       };
 
     void reset();

@@ -44,7 +44,7 @@ LIVE_PLACE = "03-follow-hero"
 QUALIFICATION = .8
 RUN = dict(run="on", own="off")  # teacher pace -> navdemos follow-run
 # Decisions changed by the review fixes (loop standoff, unseen carrot) and the 2.5 m guard.
-FIX_COUNTERS = ("loop_limited_decisions", "loop_line_decisions", "unseen_cut_short_decisions", "guarded_decisions")
+FIX_COUNTERS = ("loop_limited_decisions", "loop_line_decisions", "unseen_detour_decisions", "guarded_decisions")
 SOURCES = ("hold", "direct", "cut", "trail", "line", "unseen", "heading", "last_seen")
 
 

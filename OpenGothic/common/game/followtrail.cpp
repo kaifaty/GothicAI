@@ -6,6 +6,7 @@
 using Tempest::Vec3;
 
 namespace {
+constexpr float Pi = 3.14159265358979323846f;
 // Channels are compared as the learner and the memory teacher see them: uint8.
 uint8_t byte(float value) { return uint8_t(std::lround(std::clamp(value,0.f,1.f)*255.f)); }
 bool staticHazard(const NavigationMemory::Cell& c) {
@@ -164,7 +165,25 @@ FollowTrail::Result FollowTrail::unseen(const Vec3& follower, const Vec3& object
     return result;
     }
   if(trail.empty()) {
-    result.carrot=clearAlong(memory,follower,direct);result.source=Source::Unseen;result.cutShort=true;
+    // Never seen: head for the sound around the seen hazard. Turn the direction
+    // toward the object by 15-degree steps to either side, up to 90 degrees, and
+    // take the first open one; only if all are closed, stop before the hazard.
+    result.source=Source::Unseen;result.detour=true;
+    auto toward=direct-follower;toward.y=0;
+    const float reach=std::min(lookaheadCm,toward.length());
+    if(reach>footprintCm) {
+      const float base=std::atan2(toward.z,toward.x);
+      for(int step=1;step<=6;++step)
+        for(const float side:{1.f,-1.f}) {
+          const float angle=base+side*float(step)*Pi/12.f;
+          const auto point=follower+Vec3(std::cos(angle),0,std::sin(angle))*reach;
+          if((point-object).length()>=standoffCm && nearClear(memory,follower,point)) {
+            result.carrot=point;
+            return result;
+            }
+          }
+      }
+    result.carrot=clearAlong(memory,follower,direct);
     return result;
     }
   // Lost at the last seen point: where the object was last seen heading.

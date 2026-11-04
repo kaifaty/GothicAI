@@ -78,7 +78,7 @@ struct Episode {
   FollowTrail::Source followSource=FollowTrail::Source::Count;
   bool followVisibleNow=false;
   uint64_t followVisibleDecisions=0,followLoopLimitedDecisions=0,followLoopLineDecisions=0;
-  uint64_t followCutShortDecisions=0,followGuardedDecisions=0;
+  uint64_t followDetourDecisions=0,followGuardedDecisions=0;
   // Rising edges of native CV blocked/steep contact since the previous decision.
   bool followContact=false,followContactPrevious=false;
   uint64_t followContactEntries=0,followContactDecisions=0;
@@ -513,7 +513,7 @@ void finish(Episode& ep,World& world) {
        <<",\"follow_contact_decisions\":"<<ep.followContactDecisions
        <<",\"follow_loop_limited_decisions\":"<<ep.followLoopLimitedDecisions
        <<",\"follow_loop_line_decisions\":"<<ep.followLoopLineDecisions
-       <<",\"follow_unseen_cut_short_decisions\":"<<ep.followCutShortDecisions
+       <<",\"follow_unseen_detour_decisions\":"<<ep.followDetourDecisions
        <<",\"follow_guarded_decisions\":"<<ep.followGuardedDecisions<<",\"follow_carrot_sources\":{";
     for(size_t i=0;i<ep.followSources.size();++i) {
       if(i)out<<',';
@@ -1663,7 +1663,7 @@ void guidanceFor(Episode& ep,World& w,const Vec3& position) {
         const auto result=ep.followTrail.guide(position,ep.goal,ep.view);
         ep.guidance.carrot=result.carrot;
         ++ep.followSources[size_t(result.source)];ep.followLoopLimitedDecisions+=result.loopLimited;
-        ep.followLoopLineDecisions+=result.loopLine;ep.followCutShortDecisions+=result.cutShort;
+        ep.followLoopLineDecisions+=result.loopLine;ep.followDetourDecisions+=result.detour;
         ep.followGuardedDecisions+=result.guarded;
         ep.followSource=result.source;
       }

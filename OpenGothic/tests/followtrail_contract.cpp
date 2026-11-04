@@ -259,9 +259,16 @@ void lostAtTrailEnd() {
   require(never.points().empty() && never.guide(Vec3(),hidden,dark.view(Vec3(),East)).source==Source::Unseen,
           "an object never seen is followed by hearing");
   Floor front;front.walls.push_back({-200,200,600,620});
-  const auto stopped = never.guide(Vec3(),hidden,front.view(Vec3(),East));
-  require(stopped.source==Source::Unseen && !front.crosses(Vec3(),stopped.carrot),
+  const auto around = never.guide(Vec3(),hidden,front.view(Vec3(),East));
+  require(around.source==Source::Unseen && around.detour && !front.crosses(Vec3(),around.carrot),
           "hearing never leads through a seen wall");
+  require(distance(around.carrot,Vec3())>=FollowTrail::pullbackMinCm && around.carrot.x>200,
+          "hearing turns aside past the end of the seen wall");
+  // A seen wall across the whole near map: the carrot stays on the near side.
+  Floor shut;shut.walls.push_back({-800,800,300,320});
+  const auto stopped = never.guide(Vec3(),hidden,shut.view(Vec3(),East));
+  require(stopped.source==Source::Unseen && stopped.detour && !shut.crosses(Vec3(),stopped.carrot) &&
+          stopped.carrot.z<300,"a long seen wall: the carrot stays on the near side");
   }
 
 // The trail loops back past the object (review F2 and F8): no trail or cut
