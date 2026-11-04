@@ -590,14 +590,14 @@ void Aim::apply(Matrix4x4* tr, size_t numBones, const Vec3& origin, const Vec3& 
     }
   }
 
-void Aim::finish(const Matrix4x4* tr, size_t numBones, const Vec3& origin, const Vec3& facing) {
+void Aim::finish(const Matrix4x4* tr, size_t numBones, const Vec3& origin, const Vec3& facing, const Vec3& seen) {
   const size_t s = arrowSlot!=size_t(-1) ? arrowSlot : slot;
   if(!valid || head>=numBones || s>=numBones)
     return;
   // BowDraw may slide the nock along the arrow. Bring the final points back through exactly
   // the shared transform, so every prospective angle starts from that same animated pose.
   baseHead = pointAt(position(tr[head]),origin,facing,poseLeanDirection,poseLean,false,true);
-  baseSlot = pointAt(position(tr[s]),origin,facing,poseLeanDirection,poseLean,true,true);
+  baseSlot = pointAt(position(tr[s])-seen,origin,facing,poseLeanDirection,poseLean,true,true);
   }
 
 void Aim::probe(Probe& p) const {

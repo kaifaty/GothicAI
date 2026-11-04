@@ -1163,6 +1163,8 @@ bool MdlVisual::updateAim(Npc& npc, uint64_t dt) {
                                         npc.manualAimShake().z/std::max(bd.span,1.f) : 0.f));
   bd.arrow  = !ammunition.view.isEmpty() && ammunition.bone=="ZS_RIGHTHAND";
   bd.cant   = npc.aimCant();
+  bd.kick   = ar.releaseKick();
+  bd.settle = ar.releaseSettle();
   if(auto p = bow.view.protoMesh()) {
     bool high = false, straight = false;
     for(auto& m:p->morph) {
@@ -1201,7 +1203,8 @@ bool MdlVisual::updateAim(Npc& npc, uint64_t dt) {
     bow.view.startMMAnim(BowHeld,0,0);
     bow.view.startMMAnim(BowDraw::StringDrawn,0,0);
     if(pose.bowDrawIk().loosed()) {
-      bow.view.startMMAnim(held>0.5f ? BowDraw::StringLoose : BowLoose,1,uint64_t(-1));
+      // as hard as the shot: a heavy bow drawn fully rings, a light one drawn short less
+      bow.view.startMMAnim(held>0.5f ? BowDraw::StringLoose : BowLoose,BowDraw::looseIntensity(ar.releaseKick()),uint64_t(-1));
       looseAt = npc.world().tickCount();
       }
     stringByHand = false;
@@ -1333,7 +1336,9 @@ bool MdlVisual::arrowRay(Vec3& p, Vec3& d) const {
   if(id==size_t(-1) || id>=skInst->boneCount())
     return false;
   const auto& m = skInst->bone(id);
-  p = Vec3(m.at(3,0),m.at(3,1),m.at(3,2));
+  // where the arrow is for the aim: the follow through after the shot moves the hand only to be seen
+  // (graphics/mesh/bowdraw), the aim goes on from where the hand would be without it
+  p = Vec3(m.at(3,0),m.at(3,1),m.at(3,2)) - skInst->bowDrawIk().seenOnly();
   d = Vec3::normalize(Vec3(-m.at(0,0),-m.at(0,1),-m.at(0,2)));
   return true;
   }

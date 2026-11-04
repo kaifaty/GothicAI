@@ -69,5 +69,13 @@ namespace Archery {
   // the arrow's speed and damage at a part of the full draw
   float speedAt(const Stats& s, float draw);
   float damageAt(float draw);
+  // The release as it is seen (graphics/mesh/bowdraw): how hard the bow kicks, 0..1, by the energy it
+  // stored (~ draw weight times the draw squared): f^2*D/KickWeight, not less than KickMin so a weak shot
+  // shows too. The archer's strength (r) does not make the kick, it settles it: the bow's shake dies out
+  // in 0.1 s times releaseSettle(r)
+  static constexpr float KickWeight = 70.f;   // the draw weight of the heavy bows of G2 (150 damage)
+  static constexpr float KickMin    = 0.15f;
+  float releaseKick(float draw, float drawWeight);
+  float releaseSettle(float r);
   float zoneDamage(HitZones::Zone z);
   }

@@ -252,6 +252,15 @@ float Archery::speedAt(const Stats& s, float draw) {
   return s.speed*lerp(SlowSpeed,1.f,draw);
   }
 
+float Archery::releaseKick(float draw, float drawWeight) {
+  const float f = std::clamp(draw,0.f,1.f);
+  return std::clamp(f*f*std::max(drawWeight,0.f)/KickWeight,KickMin,1.f);
+  }
+
+float Archery::releaseSettle(float r) {
+  return std::clamp(1.f/std::sqrt(std::max(r,1e-3f)),0.7f,1.3f);
+  }
+
 float Archery::damageAt(float draw) {
   return std::clamp(draw,0.f,1.f);
   }

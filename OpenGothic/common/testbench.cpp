@@ -2622,7 +2622,7 @@ void writeHeader() {
   std::fprintf(bench.csv,",an_pop,an_bone,an_speed,an_layers,bl_on,bl_active,bl_started,bl_angle,bl_time");
   std::fprintf(bench.csv,",a_on,a_w,a_yaw,a_pitch,a_animyaw,a_animpitch,a_turn,a_bend,a_err,a_steady,a_lean,a_side,ik_crouch,m_crouch,m_peek,m_cant,m_walk,aw_w,aw_speed,aw_twist,aw_chest,aw_drop");
   std::fprintf(bench.csv,",m_stage,m_draw,m_hold,m_fatigue,m_breath,m_holding,m_short,m_disturb,m_amp,m_sway_yaw,m_sway_pitch,m_off,m_spread,m_cross");
-  std::fprintf(bench.csv,",bd_w,bd_draw,bd_span,bd_travel,bd_miss,bd_follow,bd_fit,bd_offset,bd_angle,hd_hand,hd_fore,hd_arrow,bd_hold,bd_nock,rh_x,rh_y,rh_z,bd_held,bd_overgrip,bd_atmiddle,bd_nockgap,bd_square,bd_cant,bd_bowmove,bd_bowmiss");
+  std::fprintf(bench.csv,",bd_w,bd_draw,bd_span,bd_travel,bd_miss,bd_follow,bd_fit,bd_offset,bd_angle,hd_hand,hd_fore,hd_arrow,bd_hold,bd_nock,rh_x,rh_y,rh_z,bd_held,bd_overgrip,bd_atmiddle,bd_nockgap,bd_square,bd_cant,bd_bowmove,bd_bowmiss,bd_back,bd_kick,bd_turn");
   std::fprintf(bench.csv,",lip_valid,lip_on,lip_t,lip_level,lip_mouth,lip_open,lip_f0,lip_f1,lip_alpha,lip_int,lip_picks");
   std::fprintf(bench.csv,",ge_on,ge_talk,ge_id,ge_mood,ge_starts,ge_cuts,ge_stops,ge_nods,ge_pitch,ge_yaw,ge_roll");
   std::fprintf(bench.csv,",ge_listen,ge_think,ge_lnods,ge_aside");
@@ -10642,6 +10642,8 @@ void writeRow(Npc& pl) {
   std::fprintf(bench.csv,",%.1f,%.1f,%.1f,%d,%.2f",bd.head,bd.fore,bd.arrow,int(bd.holding),bd.nock);
   std::fprintf(bench.csv,",%.2f,%.2f,%.2f",bd.handAt.x,bd.handAt.y,bd.handAt.z);
   std::fprintf(bench.csv,",%.2f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%.1f",bd.aligned,bd.overGrip,bd.atMiddle,bd.nockGap,bd.square,bd.cant,bd.bowMove,bd.bowMiss);
+  // the release: the drawing hand off where it let go, the bow hand thrown back, the bow turned in it
+  std::fprintf(bench.csv,",%.2f,%.2f,%.2f",bd.back,bd.kick,bd.turn);
   // lips of the watched one
   const auto& lp = LipSync::subjectProbe;
   std::fprintf(bench.csv,",%d,%d,%llu,%.3f,%.3f,%.3f,%u,%u,%.2f,%.3f,%u",
@@ -17741,6 +17743,14 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       BowDraw::setEnabled(m=="on"); else
       say("unknown bowdraw command: " + line);
     }
+  else if(c=="bowrelease") {
+    // bowrelease on|off: the release as an archer's (the hand to the ear, the bow kicks, turns and rings in
+    // the hand); off: as before (graphics/mesh/bowdraw)
+    const std::string m = a.size()>1 ? a[1] : "";
+    if(m=="on" || m=="off")
+      BowDraw::setReleaseEnabled(m=="on"); else
+      say("unknown bowrelease command: " + line);
+    }
   else if(c=="showzones") {
     // showzones <npc symbol>|player|off: the overlay draws the npc's hit zones (capsules on its bones: the head
     // red, the trunk yellow, the limbs blue)
@@ -18909,7 +18919,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
   else if(c=="volley") {
     // volley <shots> [hold ms] [draw 0..1] [jitter ms]: shots by hand in a row (manual on): the string drawn
     // that far (1: full), held (up to jitter longer, at random), let go; the scenario goes on after the last
-    // one is reloaded
+    // one is reloaded. Held only at the archer's own limit: short of it the string goes as it is reached
     bench.volleyLeft  = int(num(a,1,5));
     bench.volleyHold  = uint64_t(num(a,2,300));
     bench.volleyDraw  = num(a,3,1);
@@ -20069,8 +20079,10 @@ void tickVolley(PlayerControl& ctrl) {
       if(drawn) {
         bench.volleyPhase   = 2;
         bench.volleyT       = bench.time;
-        bench.volleyHoldNow = bench.volleyHold;
-        if(bench.volleyJitter>0) {
+        // held at its limit it waits; drawn as far as asked short of it, it goes at once: the button held
+        // draws on (the hero has no partial hold)
+        bench.volleyHoldNow = mp.stage==Archer::Held ? bench.volleyHold : 0;
+        if(bench.volleyJitter>0 && mp.stage==Archer::Held) {
           bench.lcg = bench.lcg*1664525u + 1013904223u;
           bench.volleyHoldNow += (bench.lcg>>8)%(bench.volleyJitter+1);
           }

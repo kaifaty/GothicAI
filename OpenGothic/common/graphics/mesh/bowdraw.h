@@ -59,6 +59,8 @@ class BowDraw final {
       bool               grabKnown = false; // the hand and the elbow as they take the arrow (the reload at
       Tempest::Matrix4x4 grabHand;          // GrabAt), relative to the chest: Pose fills them in
       Tempest::Matrix4x4 grabElbow;
+      float    kick   = 0;     // the last shot: how hard the bow kicked, 0..1 (Archery::releaseKick)...
+      float    settle = 1;     // ...and how slowly its shake dies out (Archery::releaseSettle)
       uint64_t dt     = 0;
       };
 
@@ -70,7 +72,11 @@ class BowDraw final {
       float span   = 0;  // cm: from the nock at full draw to the string at rest
       float travel = 0;  // cm the hand goes forward from the animation now (not further than the arm reaches)
       float miss   = 0;  // cm between the hand and where it has to go (the arm does not reach)
-      float follow = 0;  // cm back past the face after the shot
+      float follow = 0;  // cm back past the face after the shot (as it is asked)
+      float back   = 0;  // cm the follow through moves the drawing hand from where the pose has it (after the
+                         // shot: back to the ear, out from the head; the reload's way to the quiver not counted)
+      float kick   = 0;  // cm the bow hand is thrown back toward the archer
+      float turn   = 0;  // degrees the bow turns in the hand from the aim's pose, the top limb forward
       float fit    = -1; // cm from the string drawn by its morph to the arrow's line (drawn by the animation)
       float offset = -1; // cm from the string's middle at rest to that line
       float angle  = -1; // degrees between the way the string goes and the arrow
@@ -93,6 +99,11 @@ class BowDraw final {
 
     static bool    isEnabled();
     static void    setEnabled(bool e);
+    // the release as an archer's (OPENGOTHIC_BOWRELEASE, on by default): the hand flies back to the ear, the
+    // bow kicks and turns in the hand, shakes, the string as hard as the shot; off: the hand 4 cm back and
+    // to the face again
+    static bool    isReleaseEnabled();
+    static void    setReleaseEnabled(bool e);
 
     void           setSkeleton(const Skeleton* sk);
     bool           isValid() const { return valid; }
@@ -106,6 +117,10 @@ class BowDraw final {
     float          aligned() const { return align; }
     // The string held by hand has just been let go: a shot
     bool           loosed() const { return followT<FollowTime; }
+    // How far the drawing hand is now off where the follow through of before (OPENGOTHIC_BOWRELEASE=0: 4 cm
+    // back and to the face again) would have it: moved only to be seen. The aim takes the arrow from where
+    // it would be without it, so the release changes the look, not the shots (world, cm)
+    Tempest::Vec3  seenOnly() const { return seen; }
 
     // Moves the smoothed state toward the input; true if the pose has to be rebuilt
     bool           update(const Input& in);
@@ -116,6 +131,8 @@ class BowDraw final {
     void           probe(Probe& p) const;
 
     static constexpr float FollowTime = 0.3f; // seconds the hand follows through after the shot
+    // the string let go as hard as the shot was (the morph of the release: S_LOOSE): 0.4..1 by the kick
+    static float   looseIntensity(float kick);
 
     static Probe   playerProbe;   // filled every frame for the hero
 
@@ -134,6 +151,15 @@ class BowDraw final {
                                  const Tempest::Vec3& axis, float lean);
     // the drawing hand turned round the arrow's line (through at) as the bow is canted: the fingers on the
     // string
+    // the bow turned in the hand about the grip after the shot (the top limb forward, the shake)
+    // cm back the hand was taken after the shot before the release as an archer's (4 cm, there and back)
+    float               followBefore() const;
+    // the follow through's move (off) of the drawing hand from base kept out of the head
+    Tempest::Vec3       clearHead(const Tempest::Matrix4x4* tr, size_t numBones, const Tempest::Vec3& base,
+                                  const Tempest::Vec3& off) const;
+    void                turnBow(Tempest::Matrix4x4* tr, const Tempest::Vec3& up, const Tempest::Vec3& axis);
+    // the drawing hand after the shot: back along the arrow toward the ear, a little out from the head
+    Tempest::Vec3       releaseOffset(const Tempest::Matrix4x4* tr, size_t numBones, const Tempest::Vec3& axis) const;
     void                cantHand(Tempest::Matrix4x4* tr, const Tempest::Vec3& at, const Tempest::Vec3& axis, float lean);
     // the string's middle at rest and the way it goes to the full draw as shown (world)
     void                stringNow(const Tempest::Matrix4x4* tr, Tempest::Vec3& rest, Tempest::Vec3& pull) const;
@@ -170,6 +196,15 @@ class BowDraw final {
     float               followT  = 1;  // seconds since the shot (the follow through)
     float               follow   = 0;  // cm the hand is back past the face now
     float               shotAt   = 0;  // cm the hand was forward of the face as the string went (a short draw)
+    float               kickK    = 0;  // the last shot's kick, 0..1, and its shake's settling
+    float               settleK  = 1;
+    float               relBack  = 0;  // cm: the drawing hand back along the arrow, out from the head...
+    float               relOut   = 0;
+    float               relFade  = 1;  // ...that much of it (the hand on to the quiver, the shot long over)
+    float               bowKick  = 0;  // cm the bow hand is thrown back
+    float               bowTurn  = 0;  // degrees the bow turns in the hand
+    Tempest::Vec3       seen     = {}; // seenOnly()
+    float               relShown = 0;  // cm the follow through moves the drawing hand now (over the reload's way)
 
     // the upper body held in the reload: the bones from the spine up, relative to the body's facing at the
     // pelvis (bodyRoot): the reload turns the hips, the upper body holds the aim

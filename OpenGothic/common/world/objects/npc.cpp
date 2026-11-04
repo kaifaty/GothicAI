@@ -10755,8 +10755,12 @@ bool Npc::tickManualAim(const Tempest::Vec3& at, Archer::Input in, const Archery
   in.loaded = isBowLoaded();
   bool shot = false;
   if(arch.tick(in,st)) {
-    shot = releaseArrow(arch.draw(),st);
+    const float f = arch.draw();
+    shot = releaseArrow(f,st);
     arch.onShot(shot);
+    // how hard the bow kicks as it is seen (graphics/mesh/bowdraw): drawn this far, this heavy
+    if(shot)
+      arch.setRelease(st.crossbow ? 0.f : Archery::releaseKick(f,st.need),Archery::releaseSettle(st.strength));
     }
   setManualAim(true,at,arch.sway(),arch.tremor(),arch.shake());
   return shot;
