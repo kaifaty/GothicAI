@@ -84,7 +84,8 @@ def episode_follow(directory):
                 far=episode["follow_far_ms"] / observed if observed else None,
                 contacts=episode["follow_contact_entries"], contact_decisions=episode["follow_contact_decisions"],
                 visible_decisions=episode["follow_visible_decisions"], sources=episode["follow_carrot_sources"],
-                guidance=episode["follow_guidance"], walk_decisions=walk, action_rows=decisions,
+                guidance=episode["follow_guidance"], teacher_run=episode.get("follow_run"),
+                walk_decisions=walk, action_rows=decisions,
                 travel_cm=episode.get("travel_cm"), pace=episode.get("pace"),
                 base_fingerprint=episode.get("base_fingerprint"))
 
@@ -137,7 +138,8 @@ def validation_commands(args, value, teacher):
         route = ",".join(value["route"])
         commands[moving[0]] = (f"navdemos moving-v3 3 {args.npc} {value['start']} {value['target']} {route} "
                                f"follow {value.get('limit_ms', 240000)} {value['seed']}")
-    commands.insert(moving[0], f"navdemos follow-guidance {args.guidance}")
+    commands[moving[0]:moving[0]] = [f"navdemos follow-guidance {args.guidance}",
+                                      f"navdemos follow-run {'on' if args.teacher_pace == 'run' else 'off'}"]
     return commands
 
 
@@ -165,6 +167,7 @@ def validation(args):
     args.output.mkdir(parents=True, exist_ok=True)
     identity = dict(model="teacher" if teacher else str(args.model),
                     model_sha256=None if teacher else sha256(args.model), guidance=args.guidance,
+                    teacher_pace=args.teacher_pace,
                     runner_sha256=sha256(args.runner), manifest=str(args.manifest), action_seed=ACTION_SEED,
                     base_fingerprint=os.environ.get("OPENGOTHIC_BASE_FINGERPRINT"))
     if (args.output / "identity.json").is_file() and read_json(args.output / "identity.json") != identity:
@@ -232,7 +235,8 @@ def live(args):
     case.pop("evaluation_binary", None)
     case.pop("teacher_reference", None)
     case["pace"] = "run"
-    case["prepare_commands"] = [*case.get("prepare_commands", []), f"navdemos follow-guidance {args.guidance}"]
+    case["prepare_commands"] = [*case.get("prepare_commands", []), f"navdemos follow-guidance {args.guidance}",
+                                f"navdemos follow-run {'on' if args.teacher_pace == 'run' else 'off'}"]
     inputs = dict(original["inputs"], cache=str(args.runtime / "live-navmesh"))
     for name in ("save", "roads", "familiar", "links"):
         if not Path(inputs[name]).is_file():
@@ -261,7 +265,7 @@ def live(args):
             row = dict(episode_follow(directory), id=f"seed-{seed}", model=name, seed=seed,
                        obstacle_contacts=summary["obstacle_contacts"],
                        whole_band=summary["follow_band_fraction"], video=str(directory / "source.mp4"))
-            if row["guidance"] != args.guidance or row["walk_decisions"] and (name == "v5" or args.guidance == "trail"):
+            if row["guidance"] != args.guidance or row["walk_decisions"] and (name == "v5" or args.teacher_pace == "run"):
                 raise ValueError(f"Live follow guidance or pace differs: {directory}")
             rows.append(row)
     write_json(output / f"{args.guidance}-summary.json",
@@ -301,6 +305,8 @@ def main(argv=None):
     parser.add_argument("command", choices=("validation", "live", "report"))
     parser.add_argument("--model", help="teacher or a .navbc weight file (validation)")
     parser.add_argument("--guidance", choices=("trail", "line"))
+    parser.add_argument("--teacher-pace", choices=("run", "own"),
+                        help="Follow teacher: always run, or its previous own pace; default run for trail, own for line")
     parser.add_argument("--npc", default="BAU_954_MALETH")
     parser.add_argument("--limit-ms", type=int, help="Override the route horizon (smoke only)")
     parser.add_argument("--first", type=int, help="Only the first N frozen routes (smoke only)")
@@ -315,6 +321,8 @@ def main(argv=None):
                  "suite", "binary", "runtime", "weights", "root"):
         parser.add_argument("--" + name, type=Path)
     args = parser.parse_args(argv)
+    if args.teacher_pace is None:
+        args.teacher_pace = "run" if args.guidance == "trail" else "own"
     for key, value in vars(args).items():
         if isinstance(value, Path):
             setattr(args, key, value.expanduser().resolve())

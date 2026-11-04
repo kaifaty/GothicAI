@@ -6,7 +6,9 @@
 #   bash scripts/nav-follow-remote.sh validation-{teacher,v5}-{trail,line}  # line = the previous straight carrot
 #   bash scripts/nav-follow-remote.sh live-trail|live-line     # 03-follow-hero, teacher and v5, three seeds, video
 #   bash scripts/nav-follow-remote.sh report                   # tables from all finished stages
-#   NAV_FOLLOW_IDS=id,id bash scripts/nav-follow-remote.sh diagnose-teacher-trail  # full traces of chosen routes
+#   NAV_FOLLOW_IDS=id,id [NAV_FOLLOW_PACE=run|own] bash scripts/nav-follow-remote.sh diagnose-teacher-trail
+#                                                              # full traces of chosen routes; the pace overrides
+#                                                              # the default (run for trail, own for line)
 #   bash scripts/nav-follow-remote.sh clean                    # remove ~/gothic-ai/nav-follow-trail on Ryzen
 # Jobs run from immutable snapshots in ~/gothic-ai/nav-follow-trail/source/<hash>; the engine is built
 # once per OpenGothic snapshot. Results: /mnt/shared/gothic-ai/nav-follow-trail/. v5 weights are only read.
@@ -68,7 +70,7 @@ HASH
   esac
   GQ_OWNER="$task_name" "$ROOT/scripts/gq" submit "${resources[@]}" --name "nav follow $stage $snapshot" -- \
     python3 -X faulthandler -I "$task/source/$snapshot/scripts/nav_job.py" --max-seconds 7200 -- \
-    env NAV_FOLLOW_ARCHIVE="$archive" "NAV_FOLLOW_IDS=${NAV_FOLLOW_IDS:-}" bash "$task/source/$snapshot/scripts/nav-follow-remote.sh" run "$stage" "$snapshot" "$engine"
+    env NAV_FOLLOW_ARCHIVE="$archive" "NAV_FOLLOW_IDS=${NAV_FOLLOW_IDS:-}" "NAV_FOLLOW_PACE=${NAV_FOLLOW_PACE:-}" bash "$task/source/$snapshot/scripts/nav-follow-remote.sh" run "$stage" "$snapshot" "$engine"
   exit
 fi
 
@@ -180,9 +182,10 @@ if [[ "$stage" == diagnose-* ]]; then
   game_environment
   navmesh 2
   target="$weights"; [[ "$model" == v5 ]] || target=teacher
-  output="$archive/diagnose/$model-$guidance-$snapshot"
+  pace=(); [[ -z "${NAV_FOLLOW_PACE:-}" ]] || pace=(--teacher-pace "$NAV_FOLLOW_PACE")
+  output="$archive/diagnose/$model-$guidance${NAV_FOLLOW_PACE:+-$NAV_FOLLOW_PACE}-$snapshot"
   rm -rf "$output"
-  validate "$output" "$target" "$guidance" --parallel 2 --ids "$NAV_FOLLOW_IDS" --keep-traces
+  validate "$output" "$target" "$guidance" --parallel 2 --ids "$NAV_FOLLOW_IDS" --keep-traces "${pace[@]}"
   exit
 fi
 
