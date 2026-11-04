@@ -33,6 +33,7 @@ wait 1
 shot interior-1-f6
 wait 1
 shot interior-1-f7
+wait 1
 cam world 160 170 90
 wait 300
 cam hold
@@ -52,6 +53,7 @@ wait 1
 shot interior-2-f6
 wait 1
 shot interior-2-f7
+wait 1
 cam world 160 170 180
 wait 300
 cam hold
@@ -71,6 +73,7 @@ wait 1
 shot interior-3-f6
 wait 1
 shot interior-3-f7
+wait 1
 cam world 160 170 270
 wait 300
 cam hold
@@ -90,6 +93,7 @@ wait 1
 shot interior-4-f6
 wait 1
 shot interior-4-f7
+wait 1
 
 # the perf-harbour-night views
 set time 0 0
@@ -115,6 +119,7 @@ wait 1
 shot harbour-night-1-f6
 wait 1
 shot harbour-night-1-f7
+wait 1
 cam world 850 300 90
 wait 300
 cam hold
@@ -134,6 +139,7 @@ wait 1
 shot harbour-night-2-f6
 wait 1
 shot harbour-night-2-f7
+wait 1
 cam world 850 300 180
 wait 300
 cam hold
@@ -153,6 +159,7 @@ wait 1
 shot harbour-night-3-f6
 wait 1
 shot harbour-night-3-f7
+wait 1
 cam world 850 300 270
 wait 300
 cam hold
@@ -172,4 +179,5 @@ wait 1
 shot harbour-night-4-f6
 wait 1
 shot harbour-night-4-f7
+wait 1
 wait 500
