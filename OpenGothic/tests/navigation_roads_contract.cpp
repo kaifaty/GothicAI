@@ -258,7 +258,7 @@ void guidanceHairpin() {
                     {{0,1,2000,true},{1,2,1000,true},{2,3,4000,true}});
   const Roads::Knowledge knowledge{{1,1,1,1},{1,1,1},false};
   const Vec3 goal{-2500,0,1000};
-  require(Roads::guidanceWindowCm==650.f,"window is the 6 m lookahead plus one decision at run");
+  require(Roads::guidanceWindowCm==650.f,"window is the 6 m lookahead plus the largest 100 ms step");
 
   Roads::Guidance start;
   roads.updateGuidance(knowledge,{300,0,700},goal,start);

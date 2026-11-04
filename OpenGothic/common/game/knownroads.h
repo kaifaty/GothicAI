@@ -19,8 +19,8 @@ class KnownRoads final {
     static constexpr float guidanceLookaheadCm = 600.f;
     static constexpr float guidanceReplanCm = 800.f;
     // Progress is projected only within this distance along the route around
-    // the current progress: the 6 m lookahead plus one 100 ms decision at the
-    // fastest recorded run (50.4 cm). A rebuilt route projects on its first
+    // the current progress: the 6 m lookahead plus the largest recorded XZ step
+    // of one 100 ms decision (50.4 cm). A rebuilt route projects on its first
     // startOffsetCm plus this window.
     static constexpr float guidanceWindowCm = 650.f;
 
