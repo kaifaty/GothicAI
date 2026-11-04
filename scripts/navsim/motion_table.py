@@ -9,6 +9,10 @@ On Ryzen, after copying scripts/nav_demos.py and this file into the task source:
       --corpus /mnt/shared/gothic-ai/nav-demos-v5 \
       --output /home/kaifaty/gothic-ai/nav-sim-research/motion/output/results.json
 
+For the repository-sized table, append:
+    --table-levels -1 0 1 \
+    --full-table /mnt/shared/gothic-ai/nav-sim-research/motion/final/table-full.json
+
 Only numpy is required. The default reads all episodes, including failed teachers.
 No game, model, physics simulation or corpus writes are involved. Safety-frame
 logs supply actual support and water depth, which NAVDEMO normals cannot prove.
@@ -381,6 +385,23 @@ def compact_tables(tables):
             for level, table in enumerate(tables)}
 
 
+def export_table(table, levels=(-1, 0, 1, 2, 3), full_path=None):
+    keep = {str(level) for level in levels}
+    exported = dict(table)
+    if full_path is not None:
+        raw = (json.dumps(table, ensure_ascii=False, separators=(",", ":"), allow_nan=False) + "\n").encode()
+        full_path.parent.mkdir(parents=True, exist_ok=True)
+        full_path.write_bytes(raw)
+        exported["full"] = {"path": str(full_path), "sha256": hashlib.sha256(raw).hexdigest(),
+                            "levels": {level: len(rows) for level, rows in table["levels"].items()
+                                       if level not in keep}}
+    if keep != set(table["levels"]):
+        exported["levels"] = {level: [[key, count, *[round(value, 3) for value in values]]
+                                      for key, count, *values in rows]
+                              for level, rows in table["levels"].items() if level in keep}
+    return exported
+
+
 def time_summary(values, warmup):
     return {"median": float(np.median(values)), "p90": float(np.quantile(values, .9)),
             "repeats": len(values), "warmup": warmup}
@@ -394,10 +415,16 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--corpus", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--table-levels", type=int, nargs="+", choices=range(-1, 4),
+                        default=(-1, 0, 1, 2, 3), help="Levels to retain; subsets use three decimal places")
+    parser.add_argument("--full-table", type=Path, help="Write the complete six-decimal table separately")
     args = parser.parse_args()
     corpus, output = args.corpus.resolve(), args.output.resolve()
     if output.is_relative_to(corpus):
         parser.error("Output must be outside the read-only corpus")
+    full_table = args.full_table.resolve() if args.full_table is not None else None
+    if full_table is not None and (full_table.is_relative_to(corpus) or full_table == output):
+        parser.error("Full table must be outside the corpus and separate from the result")
     # gq limits its pool to worker CPUs, but does not pin an individual thread.
     cpu = min(os.sched_getaffinity(0))
     os.sched_setaffinity(0, {cpu})
@@ -485,6 +512,7 @@ def main():
                       "fit_evaluate_seconds": time_summary(times, 1),
                       "timing_note": "Single pinned CPU, BLAS/OMP threads=1 supplied by launcher; loading is one uncontrolled-cache pass, in-memory fit/evaluation has one warmup and three repeats."}})
     result["execution"]["elapsed_before_write_seconds"] = time_summary([time.perf_counter() - started], 0)
+    result["table"] = export_table(result["table"], args.table_levels, full_table)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(result, ensure_ascii=False, separators=(",", ":"), allow_nan=False) + "\n")
     print(f"Saved {output}: {len(episodes)} episodes, {result['corpus']['steps']} steps, {output.stat().st_size} bytes", flush=True)

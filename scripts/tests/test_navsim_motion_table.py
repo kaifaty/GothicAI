@@ -2,6 +2,7 @@
 
 from dataclasses import replace
 import gzip
+import hashlib
 import json
 from pathlib import Path
 import sys
@@ -100,3 +101,18 @@ def test_free_filter_and_rollout_reject_obstacles_water_and_missing_keys(tmp_pat
     missing[:] = -1
     predicted, used = motion.lookup(missing, tables, 3)
     assert np.isnan(predicted).all() and used.tolist() == [-2]
+
+
+def test_table_export_keeps_full_precision_in_sidecar(tmp_path):
+    row = [101, 7, 1.234567, -2.345678, .000499, -8.765432]
+    table = {"columns": ["key", "count", "forward", "right", "up", "yaw"],
+             "levels": {str(level): [row] for level in range(-1, 4)}}
+    assert motion.export_table(table) == table
+    full_path = tmp_path / "table-full.json"
+    exported = motion.export_table(table, (-1, 0, 1), full_path)
+    assert json.loads(full_path.read_bytes()) == table
+    assert exported["levels"] == {str(level): [[101, 7, 1.235, -2.346, 0., -8.765]]
+                                  for level in (-1, 0, 1)}
+    assert exported["full"] == {"path": str(full_path),
+                                "sha256": hashlib.sha256(full_path.read_bytes()).hexdigest(),
+                                "levels": {"2": 1, "3": 1}}
