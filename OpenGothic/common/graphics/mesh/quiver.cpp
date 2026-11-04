@@ -348,14 +348,17 @@ void Quiver::step(const Matrix4x4& pelvis, const std::vector<Obstacle>& obstacle
     restDir = Vec3::normalize(b-o);
   }
   const Vec3 restAt = pivot + restDir*MassAt;
+  // no time: as it was (a forced pose update)
+  if(dt<=0.f)
+    return;
   // a jump (a teleport, a load) or the first step: from the rest
-  if(!moving || (pivot-lastPivot).length()>100.f || dt<=0.f || dt>0.25f) {
+  if(!moving || (pivot-lastPivot).length()>100.f || dt>0.25f) {
     mass      = restAt;
     massV     = Vec3();
     lastPivot = pivot;
     lastRest  = restAt;
     axis      = {0,-1,0};
-    moving    = dt>0.f && dt<=0.25f;
+    moving    = dt<=0.25f;
     return;
     }
 
@@ -440,6 +443,14 @@ void Quiver::step(const Matrix4x4& pelvis, const std::vector<Obstacle>& obstacle
     if(!hit)
       break;
     }
+  {
+    // no farther than the swing's limit, also pushed
+    const float c = Vec3::dotProduct(a,restDir);
+    if(c<cosMax) {
+      const Vec3 side = Vec3::normalize(a - restDir*c);
+      a = restDir*cosMax + side*std::sqrt(1.f-cosMax*cosMax);
+      }
+  }
   if((a-before).length()>1e-5f) {
     const Vec3 moved = pivot + a*MassAt;
     const Vec3 n     = Vec3::normalize(moved-mass);
@@ -452,8 +463,7 @@ void Quiver::step(const Matrix4x4& pelvis, const std::vector<Obstacle>& obstacle
   // the axis in the quiver's rest frame
   auto inv = frame;
   inv.inverse();
-  Vec3 o = {0,0,0}, b = a;
-  b = pivot + a;
+  Vec3 o = pivot, b = pivot + a;
   inv.project(o);
   inv.project(b);
   axis      = Vec3::normalize(b-o);
