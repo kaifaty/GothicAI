@@ -81,6 +81,41 @@ Capture load(const std::string& path) {
   return result;
   }
 
+// Eight byte planes (probabilities 0..6, validity 7) and two IEEE binary16
+// height planes. All buffers, including precedence scratch, are reused.
+struct FloatPlanes {
+  std::vector<float> values;
+  void reset(size_t area) { values.resize(10*area);std::fill(values.begin(),values.end(),0.f); }
+  void clear(size_t index,size_t area) { for(size_t c=0;c<10;++c)values[c*area+index]=0.f; }
+  void probability(size_t c,size_t index,size_t area,float value) {
+    auto& destination=values[c*area+index];
+    destination=std::max(destination,float(std::lround(value*255.f))/255.f);
+    }
+  void height(size_t index,size_t area,float value) {
+    values[7*area+index]=value;values[8*area+index]=value;values[9*area+index]=1.f;
+    }
+  };
+static_assert(sizeof(_Float16)==2 && __FLT16_MANT_DIG__==11 && __FLT16_MAX_EXP__==16);
+struct PackedPlanes {
+  std::vector<uint8_t> bytes;
+  std::vector<_Float16> heights;
+  void reset(size_t area) {
+    bytes.resize(8*area);heights.resize(2*area);
+    std::fill(bytes.begin(),bytes.end(),uint8_t(0));std::fill(heights.begin(),heights.end(),_Float16(0));
+    }
+  void clear(size_t index,size_t area) {
+    for(size_t c=0;c<8;++c)bytes[c*area+index]=0;
+    heights[index]=heights[area+index]=_Float16(0);
+    }
+  void probability(size_t c,size_t index,size_t area,float value) {
+    auto& destination=bytes[c*area+index];
+    destination=std::max(destination,uint8_t(std::lround(value*255.f)));
+    }
+  void height(size_t index,size_t area,float value) {
+    heights[index]=heights[area+index]=_Float16(value);bytes[7*area+index]=255;
+    }
+  };
+
 void nativeMemory(const NavigationMemory::Layer& layer, size_t firstRow, size_t rows,
                   float reference, bool familiar, float* output) {
   const size_t columns = layer.size, area = rows*columns;
@@ -306,11 +341,10 @@ static std::array<float,9> familiarCell(const Memory& memory,const FamiliarTile&
     // Quantization is monotone: max(Q(a),Q(b)) == Q(max(a,b)). Keep raw
     // confidence and familiar provenance in scratch for the .35 precedence
     // test, while splats write quantized values straight into network CHW.
-    static void fused(const Memory& memory,bool far,std::vector<float>& output,std::vector<float>& provenance) {
+    template<class Planes> static void fused(const Memory& memory,bool far,Planes& output,std::vector<float>& provenance) {
       const auto& grid=far ? memory.farGrid : memory.nearGrid;
       const size_t firstRow=far ? 50 : 0, rows=far ? 50 : 64, area=rows*grid.size;
-      output.resize(10*area);provenance.resize(2*area);
-      std::fill(output.begin(),output.end(),0.f);
+      output.reset(area);provenance.resize(2*area);
       std::fill(provenance.begin(),provenance.end(),0.f);
       const auto& body=memory.body;
       const Vec3 right(-body.forward.z,0,body.forward.x);
@@ -335,20 +369,17 @@ static std::array<float,9> familiarCell(const Memory& memory,const FamiliarTile&
           if(rawConfidence>0.f && provenance[index]!=sample[7]) {
             if(provenance[index]==0.f && rawConfidence>=Constants::familiarConfidence)continue;
             if(sample[7]==0.f && sample[0]>=Constants::familiarConfidence) {
-              for(size_t c=0;c<10;++c)output[c*area+index]=0.f;
+              output.clear(index,area);
               provenance[index]=0.f;
               rawConfidence=0.f;
               }
             }
-          for(size_t c=0;c<7;++c) {
-            const float quantized=float(std::lround(sample[c]*255.f))/255.f;
-            output[c*area+index]=std::max(output[c*area+index],quantized);
-            }
+          for(size_t c=0;c<7;++c)output.probability(c,index,area,sample[c]);
           rawConfidence=std::max(rawConfidence,sample[0]);
           provenance[index]=std::max(provenance[index],sample[7]);
           if(std::isfinite(sample[8])) {
             const float height=std::clamp((sample[8]-body.position.y)/200.f,-10.f,10.f);
-            output[7*area+index]=height;output[8*area+index]=height;output[9*area+index]=1.f;
+            output.height(index,area,height);
             }
           }
       }
@@ -363,6 +394,24 @@ void requireEqual(const std::vector<float>& actual,const std::vector<float>& exp
       throw std::runtime_error(context+": bit mismatch at "+std::to_string(i)+": "+std::to_string(actual[i])+" vs "+std::to_string(expected[i]));
   }
 
+void requirePackedEqual(const PackedPlanes& actual,const std::vector<float>& expected,const std::string& context) {
+  const size_t area=expected.size()/10;
+  require(actual.bytes.size()==8*area && actual.heights.size()==2*area,context+": size differs");
+  for(size_t c=0;c<10;++c)for(size_t i=0;i<area;++i) {
+    const float value=expected[c*area+i];
+    if(c==7 || c==8) {
+      const _Float16 half=_Float16(value);
+      if(std::memcmp(&actual.heights[(c-7)*area+i],&half,sizeof(half))!=0)
+        fail(context+": fp16 bit mismatch at "+std::to_string(c*area+i));
+      }
+    else {
+      const size_t plane=c==9 ? 7 : c;
+      if(actual.bytes[plane*area+i]!=std::lround(value*255.f))
+        fail(context+": uint8 mismatch at "+std::to_string(c*area+i));
+      }
+    }
+  }
+
 void selfTest() {
   Memory memory;
   Memory::FamiliarMap atlas;
@@ -375,7 +424,8 @@ void selfTest() {
   atlas.finish();
   memory.setFamiliarMap(&atlas,Memory::FamiliarMask((atlas.tiles.size()+63)/64,~uint64_t(0)));
   Memory::View view;
-  std::vector<float> actual,expected,provenance;
+  FloatPlanes actual;PackedPlanes packed;
+  std::vector<float> expected,provenance;
   for(unsigned step=0;step<96;++step) {
     Memory::Pose pose;
     const float yaw=float(step)*.137f;
@@ -401,14 +451,16 @@ void selfTest() {
       expected.resize(far ? NavPolicy::hdFarSize : NavPolicy::hdNearSize);
       nativeMemory(far ? view.far : view.near,far ? 50 : 0,far ? 50 : 64,pose.position.y,false,expected.data());
       NavMemoryCostTrace::fused(memory,far,actual,provenance);
-      requireEqual(actual,expected,"synthetic step "+std::to_string(step));
+      requireEqual(actual.values,expected,"synthetic step "+std::to_string(step));
+      NavMemoryCostTrace::fused(memory,far,packed,provenance);
+      requirePackedEqual(packed,expected,"synthetic packed step "+std::to_string(step));
       }
     }
-  std::cout<<"{\"self_test\":\"passed\",\"decisions\":96,\"float32_bitwise_equal\":true}\n";
+  std::cout<<"{\"self_test\":\"passed\",\"decisions\":96,\"float32_bitwise_equal\":true,\"uint8_fp16_bitwise_equal\":true}\n";
   }
 
-enum Part { Update,ViewNear,ViewFar,EncodeNear,EncodeFar,EncodeVector,EncodeFull,Policy,FusedNear,FusedFar,PartCount };
-constexpr std::array<const char*,PartCount> names={"update","view_near","view_far","encode_near","encode_far","encode_vector","encode_full","policy_scalar_cpp","fused_float32_near","fused_float32_far"};
+enum Part { Update,ViewNear,ViewFar,EncodeNear,EncodeFar,EncodeVector,EncodeFull,Policy,FusedNear,FusedFar,PackedNear,PackedFar,VectorFp16,PartCount };
+constexpr std::array<const char*,PartCount> names={"update","view_near","view_far","encode_near","encode_far","encode_vector","encode_full","policy_scalar_cpp","fused_float32_near","fused_float32_far","fused_uint8_fp16_near","fused_uint8_fp16_far","vector_float32_to_fp16"};
 struct Timing {
   std::array<double,PartCount> us={};
   uint64_t updates=0,decisions=0;
@@ -433,7 +485,11 @@ Timing replay(const Capture& capture,const NavPolicy& policy,unsigned round) {
   NavPolicy::Features features;
   features.near.resize(policy.nearInputSize());features.far.resize(policy.farInputSize());
   features.vector.resize(policy.vectorInputSize());
-  std::vector<float> fusedNear(policy.nearInputSize()),fusedFar(policy.farInputSize()),provenanceNear(2*64*64),provenanceFar(2*50*100);
+  FloatPlanes fusedNear,fusedFar;
+  PackedPlanes packedNear,packedFar;
+  std::vector<float> provenanceNear(2*64*64),provenanceFar(2*50*100);
+  std::vector<_Float16> packedVector(policy.vectorInputSize());
+  fusedNear.reset(64*64);fusedFar.reset(50*100);packedNear.reset(64*64);packedFar.reset(50*100);
   NavPolicy::State state;
   Timing result;
   for(const auto& event:capture.events) {
@@ -455,8 +511,19 @@ Timing replay(const Capture& capture,const NavPolicy& policy,unsigned round) {
         timePart(result,FusedNear,[&] { NavMemoryCostTrace::fused(memory,false,fusedNear,provenanceNear); });
         timePart(result,FusedFar,[&] { NavMemoryCostTrace::fused(memory,true,fusedFar,provenanceFar); });
         };
-      // AB/BA alternation across repeats counters the warm-cache ordering bias.
-      if(round%2==0) { current();fused(); } else { fused();current(); }
+      const auto packed=[&] {
+        timePart(result,PackedNear,[&] { NavMemoryCostTrace::fused(memory,false,packedNear,provenanceNear); });
+        timePart(result,PackedFar,[&] { NavMemoryCostTrace::fused(memory,true,packedFar,provenanceFar); });
+        };
+      // Six repeats exercise all permutations of the three paths.
+      switch(round%6) {
+        case 0:current();fused();packed();break;
+        case 1:current();packed();fused();break;
+        case 2:fused();current();packed();break;
+        case 3:fused();packed();current();break;
+        case 4:packed();current();fused();break;
+        case 5:packed();fused();current();break;
+        }
       NavDemoWriter::Snapshot observation;
       // memorySamples is 2*N: the current eye followed by cached far rays.
       require(rays.size()==2*eye.size(),"capture does not have the current + cached eye layout");
@@ -466,14 +533,22 @@ Timing replay(const Capture& capture,const NavPolicy& policy,unsigned round) {
       // Memory traces contain eye + pose, but no roads/body. Those vector
       // fields retain Snapshot defaults; they are not inferred from the world.
       timePart(result,EncodeVector,[&] { encodeVector(policy,observation,features.vector); });
+      timePart(result,VectorFp16,[&] {
+        for(size_t i=0;i<features.vector.size();++i)packedVector[i]=_Float16(features.vector[i]);
+        });
       std::optional<NavPolicy::Features> reference;
       timePart(result,EncodeFull,[&] { reference.emplace(policy.encode(observation,false)); });
       requireEqual(features.near,reference->near,"split near encode");requireEqual(features.far,reference->far,"split far encode");
       requireEqual(features.vector,reference->vector,"split vector encode");
-      requireEqual(fusedNear,reference->near,"fused near");requireEqual(fusedFar,reference->far,"fused far");
+      for(size_t i=0;i<packedVector.size();++i) {
+        const _Float16 half=_Float16(reference->vector[i]);
+        require(std::memcmp(&packedVector[i],&half,sizeof(half))==0,"packed vector bit mismatch");
+        }
+      requireEqual(fusedNear.values,reference->near,"fused near");requireEqual(fusedFar.values,reference->far,"fused far");
+      requirePackedEqual(packedNear,reference->near,"packed near");requirePackedEqual(packedFar,reference->far,"packed far");
       NavPolicy::Result action;
       timePart(result,Policy,[&] { action=policy.step(*reference,state); });
-      result.checksum+=action.logits[0][0]+fusedNear[0]+fusedFar[0];
+      result.checksum+=action.logits[0][0]+fusedNear.values[0]+fusedFar.values[0]+float(packedVector[0]);
       ++result.decisions;
       }
     }
@@ -539,17 +614,26 @@ int main(int argc,char** argv) {
       if(part)std::cout<<',';
       std::cout<<std::quoted(names[part])<<':';jsonDistribution(values);
       }
-    std::vector<double> current,fused,saved,percent;
+    std::vector<double> current,fused,saved,percent,packed,packedSaved,packedPercent;
     for(const auto& t:totals) {
       const double before=(t.us[ViewNear]+t.us[ViewFar]+t.us[EncodeNear]+t.us[EncodeFar])/double(t.decisions);
       const double after=(t.us[FusedNear]+t.us[FusedFar])/double(t.decisions);
       current.push_back(before);fused.push_back(after);saved.push_back(before-after);percent.push_back(100.*(before-after)/before);
+      const double packedAfter=(t.us[PackedNear]+t.us[PackedFar])/double(t.decisions);
+      packed.push_back(packedAfter);packedSaved.push_back(before-packedAfter);packedPercent.push_back(100.*(before-packedAfter)/before);
       }
     std::cout<<"},\"memory_view_and_map_encode_us\":";jsonDistribution(current);
     std::cout<<",\"fused_float32_us\":";jsonDistribution(fused);
     std::cout<<",\"saved_us\":";jsonDistribution(saved);
     std::cout<<",\"saved_percent\":";jsonDistribution(percent);
-    std::cout<<",\"float32_bitwise_equal\":true,\"checked_decisions_per_pass\":"<<totals[0].decisions<<"}\n";
+    std::cout<<",\"fused_uint8_fp16_us\":";jsonDistribution(packed);
+    std::cout<<",\"packed_saved_us\":";jsonDistribution(packedSaved);
+    std::cout<<",\"packed_saved_percent\":";jsonDistribution(packedPercent);
+    const size_t area=64*64+50*100;
+    std::cout<<",\"bytes_per_agent\":{\"float32_maps\":"<<40*area<<",\"uint8_fp16_maps\":"<<12*area
+             <<",\"float32_maps_and_vector\":"<<40*area+4*policy.vectorInputSize()
+             <<",\"uint8_fp16_maps_and_fp16_vector\":"<<12*area+2*policy.vectorInputSize()<<'}';
+    std::cout<<",\"float32_bitwise_equal\":true,\"uint8_fp16_bitwise_equal\":true,\"checked_decisions_per_pass\":"<<totals[0].decisions<<"}\n";
     return 0;
     }
   catch(const std::exception& error) { std::cerr<<error.what()<<'\n';return 1; }
