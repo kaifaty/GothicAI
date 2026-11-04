@@ -340,16 +340,6 @@ void Renderer::onWorldChanged() {
   resetSkyFog();
   }
 
-void Renderer::setGizmo(bool enable, Tempest::Vec3 center, int mode) {
-  gizmo.enable = enable;
-  gizmo.center = center;
-  gizmo.mode   = mode;
-  }
-
-void Renderer::setLightsHud(const Tempest::Texture2d* tex) {
-  hud.light = tex;
-  }
-
 void Renderer::updateCamera(const WorldView& wview, const Camera& camera) {
   proj        = camera.projective();
   viewProj    = camera.viewProj();
@@ -929,10 +919,8 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   drawRtsmDbg(cmd, wview);
   drawRayQueryDbg(cmd, wview);
   //
-  drawLightsHud(cmd, wview);
 
   cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}});
-  drawGizmo(cmd, wview);
   FrameProfile::Scope postTiming(FrameProfile::Zone::EncodePost);
   if(camera.isInWater()) {
     cmd.setDebugMarker("Underwater");
@@ -1243,50 +1231,6 @@ void Renderer::drawSunMoon(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const 
   cmd.setPushData(push);
   cmd.setPipeline(shaders.sun);
   cmd.draw(nullptr, 0, 6);
-  }
-
-void Renderer::drawGizmo(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview) {
-  if(!gizmo.enable)
-    return;
-
-  auto  cen = gizmo.center;
-  float w   = 1;
-  auto  vp  = wview.sceneGlobals().viewProject();
-  vp.project(cen.x, cen.y, cen.z, w);
-
-  struct Push {
-    Tempest::Vec3 center;
-    uint32_t      axisBits;
-  } push = {};
-  push.center   = gizmo.center;
-  push.axisBits = 0x7;
-
-  cmd.setDebugMarker("Hud-Gizmo");
-  cmd.setBinding(0, wview.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
-  cmd.setBinding(1, zbuffer);
-  cmd.setPipeline(shaders.gizmo);
-  if(gizmo.mode==0) {
-    push.axisBits = 0xF;
-    cmd.setPushData(push);
-    cmd.draw(nullptr, 0, 36, 0, 4);
-    }
-  else if(gizmo.mode==1) {
-    push.axisBits = 0x70;
-    cmd.setPushData(push);
-    cmd.draw(nullptr, 0, 36, 4, 3);
-    }
-  }
-
-void Renderer::drawLightsHud(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview) {
-  if(hud.light==nullptr)
-    return;
-  auto& ssbo = wview.lights().lightsSsbo();
-  cmd.setDebugMarker("Hud-Lights");
-  cmd.setBinding(0, wview.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
-  cmd.setBinding(1, ssbo);
-  cmd.setBinding(2, *hud.light);
-  cmd.setPipeline(shaders.lightImposter);
-  cmd.draw(nullptr, 0, 6, 0, wview.lights().size());
   }
 
 void Renderer::drawSwRT(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview) {

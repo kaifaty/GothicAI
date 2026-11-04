@@ -90,7 +90,6 @@ class Shaders {
     Tempest::RenderPipeline  taaResolve, taaSharpen;
 
     // HUD
-    Tempest::RenderPipeline  gizmo, lightImposter;
 
     // HiZ
     Tempest::ComputePipeline hiZPot, hiZMip;
