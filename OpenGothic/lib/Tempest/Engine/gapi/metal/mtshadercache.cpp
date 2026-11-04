@@ -80,8 +80,12 @@ MtShaderCache::Key MtShaderCache::key(const void* spirv, size_t size) {
 
 void MtShaderCache::init(const std::string& id) {
   const auto dir = PipelineCacheFile::shaderDirectory();
-  if(dir.empty())
+  if(dir.empty() || id.empty()) {
+    // An empty identity means the translator version is unknown (no TEMPEST_MSL_TRANSLATOR at build time).
+    if(!dir.empty())
+      Log::i("msl cache: off (translator version unknown in this build)");
     return;
+    }
   identity  = id;
   verifyAll = PipelineCacheFile::shaderVerify();
   file      = dir/("msl-"+PipelineCacheFile::hex(PipelineCacheFile::hash(id.data(),id.size()))+".bin");
