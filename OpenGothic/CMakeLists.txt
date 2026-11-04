@@ -348,6 +348,11 @@ if(NOT ANDROID AND NOT IOS)
     tests/navsim_memory_bench.cpp common/navpolicy.cpp common/game/navigationmemory.cpp)
   target_include_directories(gothic-navsim-memory-bench PRIVATE
     common lib/Tempest/Engine/include lib/Tempest/Engine)
+  # Engine reference for scripts/navsim/gpumem (loaded through ctypes).
+  add_library(gothic-navsim-memory-ref MODULE EXCLUDE_FROM_ALL
+    tests/navsim_memory_ref.cpp common/navpolicy.cpp common/game/navigationmemory.cpp)
+  target_include_directories(gothic-navsim-memory-ref PRIVATE
+    common lib/Tempest/Engine/include lib/Tempest/Engine)
   find_package(Python3 COMPONENTS Interpreter QUIET)
   add_executable(gothic-bodypolicy-contract EXCLUDE_FROM_ALL
     tests/bodypolicy_contract.cpp common/game/bodypolicy.cpp common/nets/smallnet.cpp)
