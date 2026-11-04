@@ -75,18 +75,22 @@ inline void characters(JoltScene& scene,const Input& in,const std::filesystem::p
         float angle=float((i*2654435761u)%100000)*float(2*JPH::JPH_PI/100000);
         velocities.emplace_back(std::cos(angle)*speed,0,std::sin(angle)*speed);
       }
-      std::barrier ready(int(threads)+1),done(int(threads)+1);std::vector<std::thread> workers;std::vector<double> costs(threads),checksums(threads);
+      std::barrier warm(int(threads)+1),ready(int(threads)+1),done(int(threads)+1);
+      std::vector<std::thread> workers;std::vector<double> checksums(threads);
       for(size_t t=0;t<threads;++t)workers.emplace_back([&,t] {
         pin(allowed[t]);JPH::TempAllocatorImpl alloc(16*1024*1024);
         for(int frame=0;frame<30;++frame)for(size_t i=t;i<count;i+=threads)moveCharacter(*chars[i],alloc,velocities[i],step,radius,slope);
-        ready.arrive_and_wait();auto start=Clock::now();
+        warm.arrive_and_wait();ready.arrive_and_wait();
         for(int frame=0;frame<90;++frame)for(size_t i=t;i<count;i+=threads)moveCharacter(*chars[i],alloc,velocities[i],step,radius,slope);
-        costs[t]=us(start);for(size_t i=t;i<count;i+=threads)checksums[t]+=chars[i]->GetPosition().GetY();done.arrive_and_wait();
+        for(size_t i=t;i<count;i+=threads)checksums[t]+=chars[i]->GetPosition().GetY();
+        done.arrive_and_wait();
       });
-      ready.arrive_and_wait();auto start=Clock::now();done.arrive_and_wait();double wall=us(start);
-      for(auto& w:workers)w.join();double checksum=0,total=0;for(size_t t=0;t<threads;++t) {checksum+=checksums[t];total+=costs[t];}
+      warm.arrive_and_wait();
+      auto start=Clock::now();ready.arrive_and_wait();done.arrive_and_wait();double wall=us(start);
+      for(auto& w:workers)w.join();
+      double checksum=0;for(size_t t=0;t<threads;++t)checksum+=checksums[t];
       std::cout<<"{\"type\":\"character\",\"count\":"<<count<<",\"threads\":"<<threads<<",\"repeat\":"<<repeat
-               <<",\"wall_us_per_character\":"<<wall/(90*count)<<",\"cpu_us_per_character\":"<<total/(90*count)
+               <<",\"wall_us_per_character\":"<<wall/(90*count)
                <<",\"character_updates_per_second\":"<<90*count*1.e6/wall<<",\"checksum\":"<<checksum<<"}\n"<<std::flush;
     }
   }

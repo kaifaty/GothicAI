@@ -68,11 +68,17 @@ def summarize(inputs, raw, job_class):
     rows = [json.loads(line) for line in (raw / "cpu.jsonl").read_text().splitlines()]
     def stats(values):
         return {"median": float(np.median(values)), "p90": float(np.percentile(values, 90)), "repeats": len(values)}
-    result = {"status": "measured", "raw_root": str(raw), "metadata": next(r for r in rows if r["type"] == "metadata"),
+    result = {"status": "needs_decision", "raw_root": str(raw), "metadata": next(r for r in rows if r["type"] == "metadata"),
+              "category_to_kind": {"1": "World", "2": "StaticVob", "3": "Water", "4": "StaticVob"},
+              "open_items": [
+                  "Numerical attribution of replay/runner eye gap needs the original body boundaries/insertion layout, absent from NAVSTAT1.",
+                  "Twenty static mismatch examples are recorded, but exact engine source-face/edge causes cannot all be isolated without source metadata."
+              ],
               "hardware": {"cpu": (raw / "cpu.txt").read_text(), "gpu_driver": (raw / "gpu.txt").read_text()},
               "measurement": {"class": job_class, "gq_status": (raw / "gq-status-run.txt").read_text(),
                               "loadavg_at_start": (raw / "load-run.txt").read_text(), "started_utc": (raw / "start-run.txt").read_text().strip(),
                               "repeats": 3, "warmup": "One full CPU replay per backend; one full replay per thread count; 30 CV frames; 5 GPU launches",
+                              "cast_definition": "Amortized eye time / actual near+far casts; includes packet staging, normal lookup and result conversion; excludes head pose, direction generation and engine source-plane refinement",
                               "flags": "-O3 -DNDEBUG -march=x86-64-v3 -ffp-contract=off; Jolt SIMD defaults, LTO/profiler/debug renderer disabled",
                               "input_sha256": (raw / "input.sha256").read_text(),
                               "embree_release": "https://github.com/RenderKit/embree/releases/tag/v4.4.0",
@@ -162,6 +168,8 @@ def summarize(inputs, raw, job_class):
     runner = next(p for p in memory["population"] if p["N"] == 50 and p["runners"] == 1 and p["weight"] == "hd")
     result["engine_comparison"] = {"replay_us_per_update": engine["eye_us_per_update"], "replay_us_per_cast": engine["eye_us_per_cast"],
         "runner_n50_hd_us_per_decision": runner["profile_us"]["eye"],
+        "replay_to_runner_median_ratio": engine["eye_us_per_update"]["eye"]["median_us"] / runner["profile_us"]["eye"]["median"],
+        "jolt_added_to_optimized_median_ratio": result["single_thread"]["jolt-added"]["eye_us"]["median"]["median"] / result["single_thread"]["jolt-optimized"]["eye_us"]["median"]["median"],
         "interpretation": "The measured runner cost is authoritative for that N=50 HD workload; replay is a different unstepped world. PhysicsSystem::Update rebuilds dirty broadphase trees through BroadPhaseQuadTree::UpdatePrepare even without OptimizeBroadPhase. Replay also times navigationEyePose and source-face refinements. Their separate numerical contributions cannot be isolated from NAVSTAT1's four-category mesh layout; no causal speedup is claimed.",
         "code": ["OpenGothic/common/game/navperceptionbench.cpp:390", "OpenGothic/common/game/navigationeye.cpp:146", "OpenGothic/common/navdemos.cpp:1051", "OpenGothic/lib/JoltPhysics/Jolt/Physics/PhysicsSystem.cpp:180", "OpenGothic/lib/JoltPhysics/Jolt/Physics/Collision/BroadPhase/BroadPhaseQuadTree.cpp:106"]}
     result["character_input"] = json.loads((raw / "character-input.json").read_text())
@@ -169,8 +177,8 @@ def summarize(inputs, raw, job_class):
     for count in (1, 100, 1000):
         for threads in sorted({r["threads"] for r in rows if r["type"] == "character"}):
             group = [r for r in rows if r["type"] == "character" and r["count"] == count and r["threads"] == threads]
-            result["character"].append({"count": count, "threads": threads, "hz": 30, "warmup_frames": 30, "measured_frames": 90,
-                                        **{key: stats([r[key] for r in group]) for key in ("wall_us_per_character", "cpu_us_per_character", "character_updates_per_second")}})
+            result["character"].append({"count": count, "threads": threads, "active_workers": min(count, threads), "hz": 30, "warmup_frames": 30, "measured_frames": 90,
+                                        **{key: stats([r[key] for r in group]) for key in ("wall_us_per_character", "character_updates_per_second")}})
     write(raw / "standalone.json", result)
 
 

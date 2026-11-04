@@ -59,12 +59,12 @@ def replay(mesh: wp.uint64, origins: wp.array(dtype=wp.vec3), dirs: wp.array(dty
 
 
 def main(inputs, raw):
+    wp.config.kernel_cache_dir = str(raw / "warp-cache")
     wp.init()
     if not wp.is_cuda_available():
         raise RuntimeError("Warp has no available CUDA device")
     wp.set_device("cuda:0")
     device = wp.get_device()
-    wp.config.kernel_cache_dir = str(raw / "warp-cache")
     static = read_static(inputs / "static.bin")
     rays = read_rays(inputs / "rays.bin")
     vertices = wp.array(np.asarray(static.vertices_cm).reshape(-1, 3), dtype=wp.vec3)
