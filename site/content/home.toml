@@ -33,6 +33,10 @@ headline = "Gothic II, where the people hear you, answer and remember"
 lede = "The original game on the OpenGothic engine, with a language model behind its characters. You hold a key and speak; the one you face hears you, answers in a voice of its own, acts on what you said and remembers it in your save."
 read_devlog = "Read the devlog"
 see_code = "See the code"
+people_label = "The people of the colony"
+people_title = "Each answers in a voice of their own"
+people = ["Miner", "Guard", "Novice", "Hunter"]  # portraits in static/art/, in this order (build.py PEOPLE)
+art_note = "Illustrations drawn for the site, not frames from the game: the game itself is in the shorts."
 features_title = "What works now"
 features = [
   { title = "Talk with your voice", text = "Hold T and speak, no chat window. The server works out whom you are talking to." },
@@ -54,7 +58,7 @@ how_steps = [
 devlog_title = "Devlog"
 devlog_lede = "What changed in the game, how it works and the numbers behind it."
 status = "Not playable yet: it runs from source on macOS, and the Windows build has not been tried on a real PC. It needs your own copy of the Russian Gothic II Gold (with Night of the Raven)."
-credit = "Gothic II: Night of the Raven belongs to Piranha Bytes and THQ Nordic; the engine is [OpenGothic](https://github.com/Try/OpenGothic) by Try. Gothic AI is a fan project, not affiliated with them."
+credit = "Gothic II: Night of the Raven belongs to Piranha Bytes and THQ Nordic; the engine is [OpenGothic](https://github.com/Try/OpenGothic) by Try. Gothic AI is a fan project, not affiliated with them. The illustrations are drawn for this site; the frames of the game are real takes."
 
 [ru]
 description = "Gothic II, где NPC слышат голос игрока, отвечают своими голосами, действуют и помнят. Открытый эксперимент на движке OpenGothic."
@@ -76,6 +80,10 @@ headline = "Gothic II, где жители слышат тебя, отвечаю
 lede = "Оригинальная игра на движке OpenGothic, а за персонажами — языковая модель. Зажимаешь клавишу и говоришь: тот, к кому ты обращаешься, слышит, отвечает своим голосом, делает то, о чём договорились, и помнит это в твоём сохранении."
 read_devlog = "Читать дневник"
 see_code = "Код проекта"
+people_label = "Люди колонии"
+people_title = "Каждый отвечает своим голосом"
+people = ["Рудокоп", "Стражник", "Послушник", "Охотник"]
+art_note = "Иллюстрации нарисованы для сайта, это не кадры из игры: сама игра — в шортсах."
 features_title = "Что уже работает"
 features = [
   { title = "Разговор голосом", text = "Зажимаешь T и говоришь, без окна чата. Сервер сам понимает, к кому ты обращаешься." },
@@ -97,4 +105,4 @@ how_steps = [
 devlog_title = "Дневник"
 devlog_lede = "Что изменилось в игре, как это устроено и какие за этим числа."
 status = "Поиграть пока нельзя: проект запускается из исходников на macOS, а сборку для Windows ещё не проверяли на настоящем компьютере. Нужна своя копия русской Gothic II Gold (с «Ночью Ворона»)."
-credit = "Gothic II: Ночь Ворона принадлежит Piranha Bytes и THQ Nordic; движок — [OpenGothic](https://github.com/Try/OpenGothic) от Try. Gothic AI — фанатский проект и с ними не связан."
+credit = "Gothic II: Ночь Ворона принадлежит Piranha Bytes и THQ Nordic; движок — [OpenGothic](https://github.com/Try/OpenGothic) от Try. Gothic AI — фанатский проект и с ними не связан. Иллюстрации нарисованы для сайта, кадры из игры — настоящие дубли."

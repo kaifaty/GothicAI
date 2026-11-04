@@ -2,6 +2,7 @@
 // it), a YouTube video loads only when it is asked for. Things marked data-reveal rise into place once as
 // they come into view; the claim on the home page lights up word by word as it is scrolled through.
 (function () {
+  window.gothicSite = true;  // the page's inline script shows everything if this never runs
   var ru = document.documentElement.lang === "ru";
   var still = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 

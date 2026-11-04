@@ -25,6 +25,12 @@ MONTHS = {
     "ru": "января февраля марта апреля мая июня июля августа сентября октября ноября декабря".split(),
 }
 ROMAN = "I II III IV V VI VII VIII IX X XI XII".split()
+PEOPLE = [
+    "miner",
+    "guard",
+    "novice",
+    "hunter",
+]  # static/art/<name>.webp, in the order of `people` in home.toml
 UI = {
     "en": {
         "devlog": "Devlog", "source": "Source", "other": "Русский", "other_lang": "ru", "home": "Gothic AI",
@@ -194,7 +200,10 @@ class Builder:
 <meta property="og:image" content="{escape(self.absolute(image))}">
 <meta name="twitter:card" content="summary_large_image">
 {feed} href="{self.url(lang, "feed.xml")}">
-<script>document.documentElement.classList.add("js")</script>
+<script>
+document.documentElement.classList.add("js");  // hidden until they rise into view, unless site.js never runs
+setTimeout(function () {{ if (!window.gothicSite) document.documentElement.classList.remove("js"); }}, 2500);
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="{FONTS}">
@@ -247,6 +256,31 @@ class Builder:
             )
         return f'<div class="short">{glow}{img}</div>' if img else ""
 
+    def art(self, name: str) -> str:
+        """An illustration from static/art/ (ours, drawn for the site, not a frame of the game), or ""."""
+        found = self.site.root / "static" / "art" / f"{name}.webp"
+        return f"{self.base}static/art/{name}.webp" if found.is_file() else ""
+
+    def people(self, h: dict) -> str:
+        """The people of the colony: a row of portraits with their names, marked as illustrations."""
+        figures = []
+        for i, name in enumerate(h.get("people", [])):
+            src = self.art(PEOPLE[i % len(PEOPLE)])
+            if src:
+                figures.append(
+                    f'<figure data-reveal><img src="{src}" alt="" width="768" height="1024" loading="lazy" '
+                    f'decoding="async"><figcaption>{escape(name)}</figcaption></figure>'
+                )
+        if not figures:
+            return ""
+        note = f'<p class="art-note">{escape(h["art_note"])}</p>' if h.get("art_note") else ""
+        return f"""
+<section class="people">
+  {self.head(escape(h.get("people_label", "")), escape(h.get("people_title", "")))}
+  <div class="people-row">{"".join(figures)}</div>
+  {note}
+</section>"""
+
     def head(self, eyebrow: str, title: str, level: int = 2, more: str = "") -> str:
         """A section's heading: a small label over the title, and a link on the right."""
         label = f'<p class="eyebrow">{eyebrow}</p>' if eyebrow else ""
@@ -281,14 +315,29 @@ class Builder:
         if self.site.settings.get("repo"):
             repo = escape(self.site.settings["repo"])
             actions.append(f'<a class="arrow" href="{repo}">{escape(h["see_code"])}</a>')
+        valley, mage = self.art("valley"), self.art("mage")
+        # the first screen is the valley under the Barrier; the old mage looks on beside the claim
+        backdrop = (
+            f'<div class="backdrop" aria-hidden="true"><img src="{valley}" alt="" width="1672" height="941" '
+            f'fetchpriority="high"></div>'
+            if valley
+            else ""
+        )
+        portrait = (
+            f'<img class="portrait" src="{mage}" alt="" width="768" height="1024" loading="lazy">'
+            if mage
+            else ""
+        )
         claim = (
-            f'<section class="claim"><p class="claim-text" data-words>{escape(h["claim"])}</p></section>'
+            f'<section class="claim"><div class="claim-in">'
+            f'<p class="claim-text" data-words>{escape(h["claim"])}</p>{portrait}</div></section>'
             if h.get("claim")
             else ""
         )
         all_posts = f'<a class="arrow" href="{self.url(lang, "posts/")}">{ui["all_posts"]}</a>'
         body = f"""
 <section class="hero">
+  {backdrop}
   <div class="hero-in">
     <div class="pitch">
       <p class="eyebrow">{escape(h.get("eyebrow", ""))}</p>
@@ -297,12 +346,12 @@ class Builder:
       <p class="actions">{"".join(actions)}</p>
       <p class="status">{escape(h.get("status", ""))}</p>
     </div>
-    {player}
   </div>
 </section>
 <section class="scene">
   <div class="scene-in">
     <div class="scene-head">
+      {player}
       <p class="eyebrow">{escape(h.get("dialogue_label", ""))}</p>
       <p class="note">{escape(h.get("dialogue_note", ""))}</p>
     </div>
@@ -312,14 +361,17 @@ class Builder:
   </div>
 </section>
 {claim}
+{self.people(h)}
 <section class="works">
   {self.head("", escape(h["features_title"]))}
   <ol class="features">{features}</ol>
 </section>
 <section class="how">
-  {self.head("", escape(h["how_title"]))}
-  <p class="how-text">{escape(h["how_text"])}</p>
-  <ol class="flow" data-reveal>{"".join(steps)}</ol>
+  <div class="diary">
+    {self.head("", escape(h["how_title"]))}
+    <p class="how-text">{escape(h["how_text"])}</p>
+    <ol class="flow" data-reveal>{"".join(steps)}</ol>
+  </div>
 </section>
 <section class="log">
   {self.head("", escape(h["devlog_title"]), more=all_posts)}

@@ -143,10 +143,8 @@ main > section { padding: var(--section) max(var(--gutter), calc((100% - var(--w
 
 /* --- the hero: the headline and the real take ---------------------------------------------------- */
 .hero { position: relative; display: grid; align-items: center; min-height: 100dvh; padding-top: 7rem; }
-.hero-in { width: 100%; display: grid; gap: 3rem; grid-template-columns: minmax(0, 1fr); }
-@media (min-width: 60rem) {
-  .hero-in { grid-template-columns: minmax(0, 1fr) auto; gap: 4rem; align-items: center; }
-}
+.hero-in { width: 100%; }
+.pitch { max-width: 44rem; }
 .pitch h1 {
   font: 600 var(--t48) var(--display); letter-spacing: -0.01em; max-width: 42rem; padding-bottom: 0.1em;
   background: linear-gradient(90deg, var(--parchment) 35%, #d6b06c); -webkit-background-clip: text; background-clip: text; color: transparent;
@@ -162,7 +160,6 @@ main > section { padding: var(--section) max(var(--gutter), calc((100% - var(--w
 
 /* the short: a vertical frame with its own light spilling around it */
 .short { position: relative; width: 100%; max-width: 20rem; justify-self: center; isolation: isolate; }
-.hero .short { max-width: min(24rem, calc((100dvh - 10rem) * 0.5625)); min-width: 15rem; }
 .post-short .short .glow { opacity: 0.4; }
 .short .glow {
   position: absolute; inset: -20%; z-index: -1; width: 140%; height: 140%; object-fit: cover;
@@ -195,12 +192,66 @@ main > section { padding: var(--section) max(var(--gutter), calc((100% - var(--w
 .short .toggle:hover { border-color: var(--gold); }
 .short .toggle:active { transform: scale(0.98); }
 
+/* --- illustrations: ours, drawn for the site (static/art/), never passed off as the game -------------
+   Their dark backgrounds melt into the page: masks and scrims, not frames. */
+.hero { isolation: isolate; }
+.backdrop { position: absolute; inset: 0; z-index: -1; overflow: hidden; }
+.backdrop img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: 70% 50%; }
+/* darkness only where the words are: the dome stays visible across the sky, the camp keeps its fires */
+.backdrop::after {
+  content: ""; position: absolute; inset: 0;
+  background:
+    radial-gradient(ellipse 55% 60% at 22% 56%, rgba(20, 17, 13, 0.9) 0%, rgba(20, 17, 13, 0.72) 45%, rgba(20, 17, 13, 0) 100%),
+    linear-gradient(180deg, rgba(20, 17, 13, 0.35) 0%, transparent 18%, transparent 62%, var(--night) 100%);
+}
+/* on a phone the valley is a picture of its own at the top, and the headline starts where it sinks into the night */
+@media (max-width: 59.99rem) {
+  .hero { align-items: start; padding-top: max(17rem, 44vh); }
+  .backdrop img { height: 62vh; min-height: 22rem; object-position: 70% 50%; }
+  .backdrop::after { background: linear-gradient(180deg, rgba(20, 17, 13, 0.5) 0%, rgba(20, 17, 13, 0.05) 16%, rgba(20, 17, 13, 0.3) 40%, var(--night) max(22rem, 62vh)); }
+}
+/* the same valley at the top of the inner pages and under the footer: the page opens and closes in it */
+.devlog, .post, .lost { position: relative; isolation: isolate; }
+.devlog::before, .post::before, .lost::before {
+  content: ""; position: absolute; top: 0; left: 50%; width: 100vw; height: 34rem; z-index: -1; transform: translateX(-50%);
+  background: url("art/valley-2.webp") 65% 45% / cover; opacity: 0.3;
+  -webkit-mask-image: linear-gradient(180deg, #000 25%, transparent); mask-image: linear-gradient(180deg, #000 25%, transparent);
+}
+.foot { position: relative; isolation: isolate; overflow: hidden; }
+.foot::before {
+  content: ""; position: absolute; inset: 0; z-index: -1; background: url("art/valley-2.webp") 60% 38% / cover; opacity: 0.24;
+  -webkit-mask-image: linear-gradient(180deg, transparent, #000 75%); mask-image: linear-gradient(180deg, transparent, #000 75%);
+}
+
+/* a painting fades into the night on every side: two soft bands, kept where both are opaque */
+.portrait, .people img {
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent), linear-gradient(180deg, transparent, #000 12%, #000 62%, transparent);
+  -webkit-mask-composite: source-in;
+  mask-image: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent), linear-gradient(180deg, transparent, #000 12%, #000 62%, transparent);
+  mask-composite: intersect;
+}
+.portrait { display: block; width: 100%; max-width: 24rem; height: auto; aspect-ratio: 3 / 4; object-fit: cover; }
+@media (max-width: 63.99rem) { .portrait { max-width: 20rem; justify-self: end; } }
+
+/* the people of the colony: four portraits, every other one a step lower */
+.people-row { display: grid; gap: 2rem 1.5rem; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (min-width: 64rem) { .people-row { grid-template-columns: repeat(4, minmax(0, 1fr)); } .people figure:nth-child(even) { margin-top: 4rem; } }
+.people figure { margin: 0; }
+.people img {
+  display: block; width: 100%; height: auto; aspect-ratio: 3 / 4; object-fit: cover; filter: saturate(0.9) brightness(0.9);
+  transition: filter var(--fade) var(--ease), transform var(--move) var(--ease);
+}
+.people figure:hover img { filter: none; transform: translateY(-4px); }
+.people figcaption { position: relative; margin-top: -3rem; text-align: center; font: 600 var(--t24) var(--display); color: var(--parchment); }
+@media (min-width: 48rem) { .people figcaption { font: 600 var(--t30) var(--display); } }
+.art-note { margin-top: 2.5rem; font: 400 var(--t12) var(--mono); letter-spacing: 0.04em; color: var(--ash); }
+
 /* --- the scene: the conversation as a play's script ------------------------------------------------ */
 .scene-in { display: grid; gap: 2rem; grid-template-columns: minmax(0, 1fr); }
-@media (min-width: 64rem) {
-  .scene-in { grid-template-columns: 18rem minmax(0, 1fr); gap: 4rem; }
-  .scene-head { position: sticky; top: 7rem; align-self: start; }
-}
+@media (min-width: 64rem) { .scene-in { grid-template-columns: 18rem minmax(0, 1fr); gap: 4rem; } }
+/* the take and its transcript side by side; the take stays in view while the lines go by, if it fits */
+@media (min-width: 64rem) and (min-height: 50rem) { .scene-head { position: sticky; top: 6rem; align-self: start; } }
+.scene-head .short { margin: 0 auto 2rem; }
 .note { font: 400 var(--t14) var(--text); color: var(--ash); max-width: 24rem; }
 .dialogue { max-width: 52rem; }
 .line { display: grid; gap: 0.25rem; margin: 0 0 2rem; }
@@ -215,6 +266,8 @@ main > section { padding: var(--section) max(var(--gutter), calc((100% - var(--w
 
 /* --- the claim: one sentence that lights up word by word ------------------------------------------ */
 .claim { padding-top: calc(var(--section) * 1.5); }
+.claim-in { display: grid; gap: 3rem; align-items: center; }
+@media (min-width: 64rem) { .claim-in { grid-template-columns: minmax(0, 1fr) 24rem; gap: 4rem; } }
 .claim-text { max-width: 56rem; font: 600 var(--t36) var(--display); color: var(--parchment); letter-spacing: -0.01em; text-wrap: balance; }
 @media (min-width: 48rem) { .claim-text { font: 600 var(--t60) var(--display); } }
 .claim-text .w { color: rgba(239, 229, 208, 0.22); transition: color var(--move) var(--ease); }
@@ -236,6 +289,24 @@ main > section { padding: var(--section) max(var(--gutter), calc((100% - var(--w
 .features h3 { font: 600 var(--t24) var(--display); margin-bottom: 0.5rem; }
 @media (min-width: 48rem) { .features h3 { font: 600 var(--t30) var(--display); } }
 .features p { font: 400 var(--t16) var(--text); color: var(--ash); max-width: 26rem; }
+
+/* --- how: a page of the hero's diary, torn out, the steps drawn as a track in ink and wax --------------- */
+.diary {
+  --ink-dark: #2b2116; --ink-soft: #4d3d2a;
+  position: relative; padding: 5rem 1.5rem 4.5rem; color: var(--ink-dark);
+  background: #c9ad80 url("art/parchment.webp") center / cover;
+  box-shadow: inset 0 0 6rem rgba(70, 38, 10, 0.55);
+  -webkit-mask: url("art/torn-top.svg") top / 40rem 1.75rem repeat-x, linear-gradient(#000 0 0) center / 100% calc(100% - 3.375rem) no-repeat, url("art/torn-bottom.svg") bottom / 40rem 1.75rem repeat-x;
+  mask: url("art/torn-top.svg") top / 40rem 1.75rem repeat-x, linear-gradient(#000 0 0) center / 100% calc(100% - 3.375rem) no-repeat, url("art/torn-bottom.svg") bottom / 40rem 1.75rem repeat-x;
+}
+@media (min-width: 48rem) { .diary { padding: 6rem 4rem 5.5rem; } }
+.diary h2, .diary h3 { color: var(--ink-dark); }
+.diary .how-text, .diary .flow p { color: var(--ink-soft); }
+.diary .step-n { color: var(--wax); }
+.diary .flow::before { background: rgba(60, 35, 15, 0.45); }
+.diary .flow li::before { border-color: var(--wax); background: #d9c49c; }
+.diary .flow.is-in li::before { background: var(--wax); box-shadow: 0 0 0 4px rgba(156, 33, 33, 0.16); }
+.diary ::selection { background: rgba(156, 33, 33, 0.25); color: var(--ink-dark); }
 
 /* --- how: a real sequence, drawn as a track the spark runs along ---------------------------------- */
 .how-text { font: 400 var(--t18) var(--text); color: var(--ash); max-width: 38rem; margin-top: -1.5rem; margin-bottom: 3rem; }
@@ -389,17 +460,18 @@ main > section { padding: var(--section) max(var(--gutter), calc((100% - var(--w
 .js [data-reveal] { opacity: 0; transform: translateY(2rem); transition: opacity 700ms var(--ease), transform 700ms var(--ease); transition-delay: calc(var(--i, 0) * 80ms); }
 .js [data-reveal].is-in { opacity: 1; transform: none; }
 .js .flow[data-reveal] { transform: none; opacity: 1; }
-.js .hero .pitch > *, .js .hero .short { animation: rise 900ms var(--ease) both; }
+.js .hero .pitch > * { animation: rise 900ms var(--ease) both; }
 .js .hero .pitch > :nth-child(2) { animation-delay: 80ms; }
 .js .hero .pitch > :nth-child(3) { animation-delay: 160ms; }
 .js .hero .pitch > :nth-child(4) { animation-delay: 240ms; }
 .js .hero .pitch > :nth-child(5) { animation-delay: 320ms; }
-.js .hero .short { animation-delay: 200ms; }
+.js .backdrop img { animation: dawn 1600ms var(--ease) both; }
+@keyframes dawn { from { opacity: 0; transform: scale(1.04); } to { opacity: 1; transform: none; } }
 @keyframes rise { from { opacity: 0; transform: translateY(2rem); } to { opacity: 1; transform: none; } }
 
 @media (prefers-reduced-motion: reduce) {
   .js [data-reveal] { transform: none; transition: opacity var(--fade) var(--ease); }
-  .js .hero .pitch > *, .js .hero .short { animation-name: fade; }
+  .js .hero .pitch > *, .js .backdrop img { animation-name: fade; }
   .flow::before { transition: none; }
   .card, .card:active, .button:hover, .pic img, .card:hover .pic img { transform: none; }
 }

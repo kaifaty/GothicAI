@@ -66,6 +66,15 @@ def test_the_home_page_carries_the_claim_the_steps_and_the_credit(built):
     assert 'content="https://kaifaty.github.io/GothicAI/media/blade-hits/cover.jpg"' in post
 
 
+def test_the_illustrations_are_on_the_home_page_and_named_as_such(built):
+    html = (built / "index.html").read_text()
+    assert 'src="/GothicAI/static/art/valley.webp"' in html  # the first screen
+    assert html.count("<figure data-reveal>") == 4 and "<figcaption>Miner</figcaption>" in html
+    assert "Illustrations drawn for the site" in html and "the frames of the game are real takes" in html
+    for name in ("valley", "valley-2", "mage", "miner", "guard", "novice", "hunter", "parchment"):
+        assert (built / "static/art" / f"{name}.webp").is_file()
+
+
 def test_a_post_needs_its_front_matter(tmp_path):
     post = tmp_path / "2026-10-13-oops"
     post.mkdir()
