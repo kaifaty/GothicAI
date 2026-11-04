@@ -94,6 +94,9 @@ source="$task/source/$snapshot"
 stop() { echo "nav-roads-carrot $stage: $*" >&2; exit 1; }
 [[ -d "$source/scripts" ]] || stop "missing source snapshot $source"
 mkdir -p "$archive/logs" "$task/tmp/$stage" "$task/input"
+# Stages may run at once: each keeps its own builds and navmesh copies and removes only those.
+builds="$task/build-$stage"
+export NAV_ROADS_NAVMESH="$task/navmesh-$stage"
 exec > >(tee -a "$archive/logs/$stage.log") 2>&1
 trap 'printf "%s_%s_exit=%s snapshot=%s main=%s\n" "${task_name//-/_}" "$stage" "$?" "$snapshot" "$main_revision"' EXIT
 export TMPDIR="$task/tmp/$stage" UV_CACHE_DIR="$task/uv-cache" CCACHE_DIR="$task/ccache"
@@ -136,19 +139,19 @@ game_environment() { # CONVERTER: the base of this engine format from the shared
 if [[ "$stage" == point || "$stage" == teacher ]]; then
   [[ -d "$task/main/$main_revision/OpenGothic" ]] || stop "missing main snapshot $task/main/$main_revision"
   for worker in {0..11}; do
-    mkdir -p "$task/navmesh/ordinary/$worker"
+    mkdir -p "$NAV_ROADS_NAVMESH/ordinary/$worker"
     cp -n /mnt/shared/gothic-ai/archive/nav-dagger3-20261030/hd-measure-cache/ordinary/*.navmesh \
-      "$task/navmesh/ordinary/$worker/"
+      "$NAV_ROADS_NAVMESH/ordinary/$worker/"
   done
   fingerprints=()
   for revision in before after; do
     tree="$source/OpenGothic"
     if [[ "$revision" == before ]]; then tree="$task/main/$main_revision/OpenGothic"; fi
-    build "$tree" "$task/build/$revision" gothic-body-runner content-convert
-    game_environment "$task/build/$revision/opengothic/content-convert"
+    build "$tree" "$builds/$revision" gothic-body-runner content-convert
+    game_environment "$builds/$revision/opengothic/content-convert"
     fingerprints+=("$OPENGOTHIC_BASE_FINGERPRINT")
     # nav_rl --resume trusts finished episodes; a folder per runner keeps builds apart.
-    runner_sha256="$(sha256sum "$task/build/$revision/opengothic/gothic-body-runner" | cut -d' ' -f1)"
+    runner_sha256="$(sha256sum "$builds/$revision/opengothic/gothic-body-runner" | cut -d' ' -f1)"
     output="$archive/$stage-$revision-${runner_sha256:0:12}"
     mkdir -p "$output"
     if [[ -f "$output/runner.sha256" ]]; then
@@ -158,7 +161,7 @@ if [[ "$stage" == point || "$stage" == teacher ]]; then
     fi
     if [[ "$stage" == teacher ]]; then
       "$python" -X faulthandler -B -I - "$task" "$output" "$v5_validation" "$v5_input" \
-        "$task/build/$revision/opengothic/gothic-body-runner" <<'TEACHER'
+        "$builds/$revision/opengothic/gothic-body-runner" <<'TEACHER'
 # The memory teacher (navdemos start-v3) on the 60 point routes of validation v5: its own pace,
 # the same frozen world seeds, CV physics, 240 s. Nothing is recorded as a demonstration.
 from concurrent.futures import ThreadPoolExecutor
@@ -180,7 +183,7 @@ started = time.monotonic()
 def collect(index, workers):
     worker = SimpleNamespace(runner=runner, assets=Path(os.environ["GOTHIC_DIR"]), save=inputs / "save.sav",
                              links=inputs / "accepted-links.txt", roads=inputs / "places.json", ini=None,
-                             cache=task / "navmesh" / "ordinary" / str(index), physics="cv", npc="BAU_954_MALETH",
+                             cache=Path(os.environ["NAV_ROADS_NAVMESH"]) / "ordinary" / str(index), physics="cv", npc="BAU_954_MALETH",
                              output=output / "workers" / str(index), seed=18102026, watchdog_seconds=1800,
                              weights="teacher", lean=True, familiar_map=None, stranger=False, limit_ms=240000)
     process = rl.new_runner(worker, "teacher")
@@ -221,7 +224,7 @@ TEACHER
       continue
     fi
     "$python" -X faulthandler -B -I - "$task" "$output" "$weights" "$v5_validation" \
-      "$v5_input" "$seed" "$task/build/$revision/opengothic/gothic-body-runner" <<'POINT'
+      "$v5_input" "$seed" "$builds/$revision/opengothic/gothic-body-runner" <<'POINT'
 from collections import Counter
 import hashlib
 import json
@@ -236,7 +239,7 @@ task, output, weights, manifest, inputs = map(Path, sys.argv[1:6])
 seed, runner = sys.argv[6], Path(sys.argv[7])
 argv = ["nav_rl.py", "drive", "--runner", runner, "--assets", os.environ["GOTHIC_DIR"],
         "--save", inputs / "save.sav", "--links", inputs / "accepted-links.txt", "--roads", inputs / "places.json",
-        "--weights", weights, "--output", output, "--cache", task / "navmesh", "--physics", "cv",
+        "--weights", weights, "--output", output, "--cache", Path(os.environ["NAV_ROADS_NAVMESH"]), "--physics", "cv",
         "--parallel", 12, "--action-mode", "sample", "--action-seeds", seed, "--force-pace", "run",
         "--lean", "--resume", "--limit-ms", 240000, "--watchdog-seconds", 1800,
         "--manifest", manifest, "--families", "point"]
@@ -262,13 +265,13 @@ print(json.dumps({key: value for key, value in summary.items() if key != "episod
 POINT
   done
   [[ "${fingerprints[0]}" == "${fingerprints[1]}" ]] || stop "main and branch need different bases: ${fingerprints[*]}"
-  rm -rf "$task/build" "$task/navmesh"
+  rm -rf "$builds" "$NAV_ROADS_NAVMESH"
   exit
 fi
 
 # live and liveset
-build "$source/OpenGothic" "$task/build/live" Gothic2Notr content-convert
-game_environment "$task/build/live/opengothic/content-convert"
+build "$source/OpenGothic" "$builds" Gothic2Notr content-convert
+game_environment "$builds/opengothic/content-convert"
 export XDG_RUNTIME_DIR="/run/user/$(id -u)"
 export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
 desktop_found=0
@@ -289,12 +292,12 @@ export VK_DRIVER_FILES=/usr/share/vulkan/icd.d/nvidia_icd.json VK_ICD_FILENAMES=
 export ALSOFT_DRIVERS=null TEMPEST_BACKGROUND=1 RYZEN_BENCH=1
 slot="${GQ_DISPLAY_SLOT:-0}"
 export TEMPEST_WINDOW_POS="$((100+(10#$slot % 2)*700)),$((100+(10#$slot / 2)*460))"
-mkdir -p "$task/navmesh-cache"
-cp -n /mnt/shared/gothic-ai/archive/nav-dagger3-20261030/hd-measure-cache/ordinary/*.navmesh "$task/navmesh-cache/"
+mkdir -p "$NAV_ROADS_NAVMESH"
+cp -n /mnt/shared/gothic-ai/archive/nav-dagger3-20261030/hd-measure-cache/ordinary/*.navmesh "$NAV_ROADS_NAVMESH/"
 # nav_live refuses a run folder of other inputs; a folder per game binary keeps rounds apart.
-game_sha256="$(sha256sum "$task/build/live/opengothic/Gothic2Notr" | cut -d' ' -f1)"
+game_sha256="$(sha256sum "$builds/opengothic/Gothic2Notr" | cut -d' ' -f1)"
 if [[ "$stage" == liveset ]]; then
-  "$python" -X faulthandler -B - "$task" "$archive/liveset-${game_sha256:0:12}" "$task/build/live/opengothic/Gothic2Notr" "$weights" <<'LIVESET'
+  "$python" -X faulthandler -B - "$task" "$archive/liveset-${game_sha256:0:12}" "$builds/opengothic/Gothic2Notr" "$weights" <<'LIVESET'
 # The eleven frozen places of the pace-v5 live round: a fresh teacher reference per place, then v5
 # on every seed at the place pace. The same suite, inputs and seeds; HD is not driven again.
 from copy import deepcopy
@@ -314,7 +317,7 @@ assert live.sha256(suite) == finished["suite_sha256"]
 selected = live.eligible_cases(original, live.suite_cases(original))
 assert len(selected) == 11 and sum(len(case["seeds"]) for case in selected) == 27
 paces = {case["id"]: case["pace"] for case in live.suite_cases(live.read_json(Path.cwd() / "scripts/nav-live/scenarios.json"))}
-inputs = dict(original["inputs"], cache=str(task / "navmesh-cache"))
+inputs = dict(original["inputs"], cache=os.environ["NAV_ROADS_NAVMESH"])
 for name, filename in (("save", "save.sav"), ("roads", "places.json"), ("familiar", "familiar.bin"),
                        ("links", "accepted-links.txt")):
     if not Path(inputs[name]).is_file():
@@ -345,10 +348,10 @@ for previous in selected:
 live.write_json(output / "live-summary.json", dict(places=11, binary_sha256=live.sha256(binary),
     base_fingerprint=os.environ["OPENGOTHIC_BASE_FINGERPRINT"], weights_sha256=model["sha256"], rows=rows))
 LIVESET
-  rm -rf "$task/build"
+  rm -rf "$builds"
   exit
 fi
-"$python" -X faulthandler -B - "$task" "$archive/live-${game_sha256:0:12}" "$task/build/live/opengothic/Gothic2Notr" "$weights" <<'LIVE'
+"$python" -X faulthandler -B - "$task" "$archive/live-${game_sha256:0:12}" "$builds/opengothic/Gothic2Notr" "$weights" <<'LIVE'
 # The frozen 05-wall-pocket of the pace-v5 round: same suite, inputs, place pace and seeds.
 from copy import deepcopy
 import json
@@ -369,7 +372,7 @@ case.pop("evaluation_binary", None)
 case.pop("teacher_reference", None)
 case["pace"] = next(row for row in live.suite_cases(live.read_json(Path.cwd() / "scripts/nav-live/scenarios.json"))
                     if row["id"] == case["id"])["pace"]
-inputs = dict(original["inputs"], cache=str(task / "navmesh-cache"))
+inputs = dict(original["inputs"], cache=os.environ["NAV_ROADS_NAVMESH"])
 for name, filename in (("save", "save.sav"), ("roads", "places.json"), ("familiar", "familiar.bin"),
                        ("links", "accepted-links.txt")):
     if not Path(inputs[name]).is_file():
@@ -394,4 +397,4 @@ for seed in case["seeds"]:
 live.write_json(output / "live-summary.json", dict(place=case["id"], pace=case["pace"], binary_sha256=live.sha256(binary),
     base_fingerprint=os.environ["OPENGOTHIC_BASE_FINGERPRINT"], weights_sha256=model["sha256"], rows=rows))
 LIVE
-rm -rf "$task/build"
+rm -rf "$builds"
