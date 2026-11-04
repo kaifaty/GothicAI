@@ -31,15 +31,16 @@ bool SimulationStep::finishStep(uint64_t dt, PlayerControl& player,
     updateCamera();
   else
     observerCamera(dt);
-  // Animation LOD: the camera has moved; NPCs it now sees must not show a stale pose.
-  if(auto* world = Gothic::inst().world())
-    world->catchUpAnimation();
   BodyController::postStep();
   BodyTrajectory::postStep();
   { FrameProfile::Scope timing(FrameProfile::Zone::Observations); BodyObservations::sampleAll(); }
   const bool capture = TestBench::tick(dt,player);
   if(dt>0)
     BodyReplay::postStep();
+  // Animation LOD: the game and bench cameras have moved for this frame; NPCs they
+  // now see get their pose before anything is drawn or captured.
+  if(auto* world = Gothic::inst().world())
+    world->catchUpAnimation();
   return capture;
   }
 
