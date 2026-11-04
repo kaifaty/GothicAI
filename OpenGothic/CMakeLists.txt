@@ -664,6 +664,16 @@ if(NOT ANDROID AND NOT IOS)
   add_custom_target(check-navigation-roads
     COMMAND $<TARGET_FILE:gothic-navigation-roads-contract>
     DEPENDS gothic-navigation-roads-contract USES_TERMINAL)
+  add_executable(gothic-followtrail-contract EXCLUDE_FROM_ALL
+    tests/followtrail_contract.cpp common/game/followtrail.cpp)
+  target_include_directories(gothic-followtrail-contract PRIVATE
+    common lib/Tempest/Engine/include lib/Tempest/Engine)
+  if(NOT MSVC)
+    target_compile_options(gothic-followtrail-contract PRIVATE -Wall -Wconversion -Werror)
+  endif()
+  add_custom_target(check-followtrail
+    COMMAND $<TARGET_FILE:gothic-followtrail-contract>
+    DEPENDS gothic-followtrail-contract USES_TERMINAL)
 endif()
 
 target_sources(Spacer PRIVATE ${SPACER_SOURCES} spacer/main.cpp)
