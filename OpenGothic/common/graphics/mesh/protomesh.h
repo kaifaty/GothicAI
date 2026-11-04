@@ -105,6 +105,8 @@ class ProtoMesh {
     bool                           minSkinnedVertex(const Tempest::Matrix4x4* worldBones, size_t count,
                                                      const Tempest::Matrix4x4& object, float fatness,
                                                      Tempest::Vec3& point) const;
+    // the exact indexed body skin (each vertex by up to four bones, in their frames): the quiver fits to it
+    const std::vector<Resources::VertexA>& skinVertexData() const { return skinVertices; }
 
   private:
     std::vector<Vertex>            skinVertices;

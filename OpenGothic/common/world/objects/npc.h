@@ -212,6 +212,12 @@ class Npc final {
     void       setStateItem  (MeshObjects::Mesh&& itm, std::string_view slot);
     void       setAmmoItem   (MeshObjects::Mesh&& itm, std::string_view slot);
     void       clearSlotItem (std::string_view slot);
+    // the quiver on the right hip while a bow (not a crossbow) is equipped, with the carried arrows in it
+    // by steps (graphics/mesh/quiver); cheap when nothing changed: called every tick and on the view's update
+    void       updateQuiver  ();
+    // the reload's hook: n arrows taken out of the quiver and held, shown that many less
+    void       setQuiverTaken(int n);
+    Quiver::Probe quiverProbe() const { return visual.quiverProbe(); }
     void       setPhysic     (DynamicWorld::NpcItem&& item);
     void       setFatness    (float f);
     void       setScale      (float x,float y,float z);

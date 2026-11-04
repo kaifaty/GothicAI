@@ -10,6 +10,7 @@
 #include "graphics/mesh/lipsync.h"
 #include "graphics/mesh/talkgestures.h"
 #include "graphics/mesh/eyeblink.h"
+#include "graphics/mesh/quiver.h"
 #include "game/constants.h"
 #include "meshobjects.h"
 #include "effect.h"
@@ -72,6 +73,17 @@ class MdlVisual final {
     void                           setSlotItem   (MeshObjects::Mesh&& itm,  std::string_view bone, int32_t material = 0);
     void                           setStateItem  (MeshObjects::Mesh&& itm,  std::string_view bone);
     void                           clearSlotItem (std::string_view bone);
+    // the quiver on the right hip (graphics/mesh/quiver): Npc::updateQuiver decides what it shows
+    const Quiver&                  quiver() const { return quiv; }
+    void                           setQuiver(const Quiver::State& st, MeshObjects::Mesh&& body,
+                                             std::vector<MeshObjects::Mesh>&& arrows,
+                                             std::vector<Tempest::Matrix4x4>&& arrowLocal);
+    void                           clearQuiver();
+    void                           setQuiverTaken(int n) { quiv.setTaken(n); }
+    const ProtoMesh*               bodyProto() const { return view.protoMesh(); }
+    // the armour (or the body) and its rigid parts: in the bind pose (model space) or as drawn (world)
+    void                           quiverPoints(bool bind, std::vector<Quiver::SkinPoint>& out) const;
+    Quiver::Probe                  quiverProbe() const;
     bool                           setFightMode  (asset::MdsFightMode mode);
     void                           dropWeapon    (Npc& owner);
     void                           dropShield    (Npc& owner);
@@ -289,6 +301,7 @@ class MdlVisual final {
     std::vector<MeshAttach>        item;
     std::vector<MeshAttach>        attach;
     std::vector<ArrowPin>          stuckArrows;
+    Quiver                         quiv;
 
     std::vector<PfxSlot>           effects;
     std::string_view               muted;

@@ -394,6 +394,7 @@ void MdlVisual::clearVisualBody() {
       slot.deferredProto=proto;
     slot.view={};
     }
+  quiv.clear();
   bodyDetached=true;
   }
 
@@ -604,6 +605,78 @@ void MdlVisual::clearSlotItem(std::string_view bone) {
       return;
       }
     }
+  }
+
+void MdlVisual::setQuiver(const Quiver::State& st, MeshObjects::Mesh&& body, std::vector<MeshObjects::Mesh>&& arrows,
+                          std::vector<Tempest::Matrix4x4>&& arrowLocal) {
+  if(!st.on || skeleton==nullptr) {
+    clearQuiver();
+    return;
+    }
+  std::vector<Quiver::SkinPoint> bind;
+  quiverPoints(true,bind);
+  auto fit = Quiver::fit(*skeleton,bind);
+  quiv.set(st,fit,std::move(body),std::move(arrows),std::move(arrowLocal));
+  if(textureOwnerKnown)
+    quiv.setTextureOwner(textureOwnerPosition,textureOwnerSpatial);
+  syncAttaches();
+  }
+
+void MdlVisual::clearQuiver() {
+  quiv.clear();
+  }
+
+void MdlVisual::quiverPoints(bool bind, std::vector<Quiver::SkinPoint>& out) const {
+  out.clear();
+  if(skeleton==nullptr)
+    return;
+  const size_t n = bind ? skeleton->tr.size() : std::min(skeleton->tr.size(),skInst->boneCount());
+  std::vector<Matrix4x4> bones(n);
+  for(size_t i=0; i<n; ++i)
+    bones[i] = bind ? skeleton->tr[i] : renderedBone(i);
+  const ProtoMesh* pm = view.protoMesh();
+  if(pm==nullptr)
+    return;
+  for(const auto& v:pm->skinVertexData()) {
+    Quiver::SkinPoint p;
+    float weight = 0, best = 0;
+    for(size_t r=0; r<4; ++r) {
+      if(!(v.weights[r]>0.f) || v.boneId[r]>=n)
+        continue;
+      Vec3 part(v.pos[r][0],v.pos[r][1],v.pos[r][2]);
+      bones[v.boneId[r]].project(part);
+      p.pos  += part*v.weights[r];
+      weight += v.weights[r];
+      if(v.weights[r]>best) {
+        best   = v.weights[r];
+        p.bone = v.boneId[r];
+        }
+      }
+    if(weight>0.f) {
+      p.pos = p.pos/weight;
+      out.push_back(p);
+      }
+    }
+  // the armour's rigid parts without a node of their own hang on the bone of their name
+  for(size_t i=0; i<pm->attach.size() && i<pm->attachPoints.size(); ++i) {
+    if(pm->attach[i].hasNode)
+      continue;
+    const size_t bone = skeleton->findNode(pm->attach[i].name);
+    if(bone>=n)
+      continue;
+    for(auto pt:pm->attachPoints[i]) {
+      bones[bone].project(pt);
+      out.push_back({pt,bone});
+      }
+    }
+  }
+
+Quiver::Probe MdlVisual::quiverProbe() const {
+  if(!quiv.isShown() || skeleton==nullptr || quiv.bone()>=skInst->boneCount())
+    return {};
+  std::vector<Quiver::SkinPoint> posed;
+  quiverPoints(false,posed);
+  return quiv.probe(renderedBone(quiv.bone()),posed,Quiver::legBones(*skeleton));
   }
 
 bool MdlVisual::setFightMode(asset::MdsFightMode mode) {
@@ -823,6 +896,7 @@ void MdlVisual::setTextureOwner(const Vec3& position, bool spatial) {
     slot.view.setTextureOwner(position,spatial);
   for(auto& pin:stuckArrows)
     pin.view.setTextureOwner(position,spatial);
+  quiv.setTextureOwner(position,spatial);
   if(torch.view)
     torch.view->setTextureOwner(position,spatial);
   }
@@ -1935,6 +2009,7 @@ void MdlVisual::rebindAttaches(const Skeleton& to) {
     i.view.bindAttaches(*skInst,to);
   pfx.view.bindAttaches(*skInst,to);
   hnpcVisual.view.bindAttaches(*skInst,to);
+  quiv.rebind(to);
   }
 
 template<class View>
@@ -1954,6 +2029,8 @@ void MdlVisual::syncAttaches() {
     syncAttaches(i);
   for(auto& pin:stuckArrows)
     pin.view.setObjMatrix(renderedBone(pin.bone)*pin.local);
+  if(quiv.isShown() && quiv.bone()<skInst->boneCount())
+    quiv.sync(renderedBone(quiv.bone()));
   for(auto& i:effects) {
     i.view.setObjMatrix(pos);
     // i.view.setTarget(targetPos);
