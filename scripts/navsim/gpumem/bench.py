@@ -544,7 +544,7 @@ def stage(host, items):
         present = ssh(host, f"test -f {target} && sha256sum {target} | cut -d' ' -f1", check=False).stdout.strip()
         if present == digest:
             continue
-        partial = f"{target}.part"
+        partial = f"{target}.{os.urandom(4).hex()}.part"  # unique: launches may stage at once
         subprocess.run(["scp", "-q", "-3", f"ryzen:{source}", f"{host}:{partial}"], check=True)
         got = ssh(host, f"sha256sum {partial} | cut -d' ' -f1").stdout.strip()
         if got != digest:
