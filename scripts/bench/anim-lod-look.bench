@@ -26,7 +26,7 @@ turn 180
 wait 3000
 stop
 turn 180
-cam follow 300 250 180
+cam follow 350 170 180
 wait 3000
 streaming wait
 rec cut
