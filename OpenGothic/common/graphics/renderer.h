@@ -174,6 +174,7 @@ class Renderer final {
       uint32_t       vsmLampTaps[4]     = {2, 2, 4, 6};
       uint32_t       vsmLampFlags       = 0;     // 1 OPENGOTHIC_VSM_LAMP_FLOOR, 2 OPENGOTHIC_VSM_LAMP_CENTRE (under TAA)
       uint32_t       vsmLampExp         = 0;     // OPENGOTHIC_VSM_LAMP_EXP: experiments (light.frag, probeExp)
+      bool           vsmLampTaa         = false; // OPENGOTHIC_VSM_LAMP_TAA=1: the frame-turned lamp taps under TAA (study)
       bool           vsmLampStudy       = false; // any OPENGOTHIC_VSM_LAMP*: the study shader light_vsm_probe
       float          vsmLampNearCm      = 30;    // [INTERNAL] vsmLampNearCm: a lamp's fixture this close casts no shadow
       } settings;
