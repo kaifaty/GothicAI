@@ -3,8 +3,10 @@
 blender -b --factory-startup -P quiver.py -- quiver.json OUT_DIR   (run from the repository root)
 Design: reports/content/2026-11-quiver (variant 1, "hunter's tube", the user's choice 2026-11-04). A stiff
 tube of boiled leather over two hazel hoops, a rolled rim, a stitched leather cap on the bottom, a back seam
-and a patch; a band under the mouth with a tab up to a small iron ring; a second strap from a third of the
-length up to the belt behind the hip. No arrows: the engine draws them (quiver.h, branch claude/quiver-mount).
+and a sewn-on patch; a thick band under the mouth with an iron ring on a short tab, a hanger from the ring
+up to the belt's height and under the belt; a stitched keeper with a loop at a third of the length and a strap
+up to the belt behind the hip. Thickness as the concept's (0.17 of the length, the user 2026-11-04): a thin tube
+read as a pole. No arrows: the engine draws them (quiver.h, branch claude/quiver-mount).
 A dark cavity "cavity" metres deep under the mouth, so nothing light shows between the arrows.
 
 Frame (as the engine's Quiver): glTF metres, the centre of the mouth at the origin, the quiver along -Y,
@@ -20,7 +22,9 @@ ends go under the belt and into the armour. Close armour hides them; a quiver pu
 still hangs on its straps instead of in the air.
 
 config: {"goal": {...}, "seed": n, "length": m, "mouth_r": m, "bottom_r": m, "wall": m, "cavity": m,
-         "sides": n, "hoops": [depth, ...], "tilt_back": deg, "tilt_out": deg, "reach": m, ...}
+         "sides": n, "hoops": [depth, ...], "rim": m, "cap_height": m, "patch": [angle, y], "band": [y, width],
+         "ring_angle": rad, "belt_back": m, "tilt_strap": [angle, y], "tilt_back_reach": m,
+         "tilt_back": deg, "tilt_out": deg, "reach": m}  (angle 0 is the body side, +pi/2 forward)
 """
 import math
 import sys
@@ -185,54 +189,70 @@ def torus(centre, axis, major, minor, material, seg=14, tube_seg=6):
 
 
 # --- the tube: inner floor of the cavity, the inner wall up, the rolled rim, the outer wall down -----------
-rim = cfg.get("rim", 0.007)
-ys = set(np.round(np.linspace(-0.026, -L + 0.004, cfg.get("rings", 14)), 4))
+rim = cfg.get("rim", 0.009)
+ys = set(np.round(np.linspace(-0.03, -L + 0.004, cfg.get("rings", 14)), 4))
 for depth in cfg.get("hoops", []):  # rings on and beside each hoop, so its bulge is not lost between rings
     ys |= {-depth - 0.014, -depth, -depth + 0.014}
 outer = [(radius(y), y) for y in sorted(ys, reverse=True)]
 profile = ([(0.0, -CAVITY), (radius(-CAVITY) - WALL, -CAVITY)]
            + [(radius(y) - WALL, y) for y in np.linspace(-CAVITY * 0.66, -CAVITY * 0.33, 2)]
-           + [(R0 - WALL, -0.012), (R0 - WALL + 0.001, 0.0), (R0 + rim * 0.35, 0.005), (R0 + rim, -0.004),
-              (R0 + rim * 0.75, -0.016), (radius(-0.022) + 0.0005, -0.022)]
+           + [(R0 - WALL, -0.014), (R0 - WALL + 0.001, 0.0), (R0 + rim * 0.3, 0.006), (R0 + rim, -0.004),
+              (R0 + rim * 0.8, -0.017), (radius(-0.025) + 0.0005, -0.025)]
            + outer + [(0.0, -L + 0.004)])
 # segments: floor and inner wall are the cavity (dark), the rest leather
 inner_segments = 5  # floor, three wall segments, the wall's top under the rim
 lathe(profile, mats=[INNER] * inner_segments + [LEATHER] * (len(profile) - 1 - inner_segments))
 
-# the bottom cap: a stitched leather cup over the end, its open top tucked into the tube
-cap_h, cr = cfg.get("cap_height", 0.045), radius(-L) + 0.003
-lathe([(0.0, -L), (cr - 0.004, -L), (cr, -L + 0.004), (cr + 0.0005, -L + cap_h - 0.004),
-       (cr - 0.001, -L + cap_h), (radius(-L + cap_h) - 0.003, -L + cap_h), (0.0, -L + cap_h)])
+# the bottom cap: a stitched leather cup over the end, its top edge turned out as a welt over the tube
+cap_h, cr = cfg.get("cap_height", 0.05), radius(-L) + 0.004
+lathe([(0.0, -L), (cr - 0.005, -L), (cr, -L + 0.005), (cr + 0.001, -L + cap_h - 0.008),
+       (cr + 0.004, -L + cap_h - 0.004), (cr + 0.001, -L + cap_h), (radius(-L + cap_h) - 0.003, -L + cap_h),
+       (0.0, -L + cap_h)])
 
-# --- the back seam (towards the body) and a patch on the outer side ------------------------------------------
+# --- the seam towards the body and a sewn-on patch on the outer back -------------------------------------
 seam_t = cfg.get("seam_angle", 0.0)
 for y0, y1 in ((-0.03, -0.33), (-0.33, -L + cap_h)):
-    a, b = surface(seam_t, y0, 0.0015), surface(seam_t, y1, 0.0015)
-    strap(a, b, g2b(math.cos(seam_t), 0, math.sin(seam_t)), 0.007, 0.003, LEATHER)
-pt, py = cfg.get("patch", [math.pi * 0.92, -0.30])
-sector(pt - 0.85, pt + 0.65, py - 0.09, py, 0.0018, LEATHER)
+    a, b = surface(seam_t, y0, 0.002), surface(seam_t, y1, 0.002)
+    strap(a, b, g2b(math.cos(seam_t), 0, math.sin(seam_t)), 0.009, 0.004, LEATHER)
+pt, py = cfg.get("patch", [-2.7, -0.30])
+sector(pt - 0.55, pt + 0.5, py - 0.1, py, 0.003, LEATHER)
 
-# --- the hanger: a band under the mouth, a tab up to the ring, a strap from the ring under the belt -----------
-by, bw = cfg.get("band", [-0.06, 0.04])
-lathe([(radius(by) - 0.001, by + bw / 2), (radius(by) + 0.0035, by + bw / 2), (radius(by - bw / 2) + 0.0035, by - bw / 2),
-       (radius(by - bw / 2) - 0.001, by - bw / 2)], loop=True, mats=[STRAP] * 4)
+
+def tangent(t):
+    return g2b(-math.sin(t), 0, math.cos(t))
+
+
+def radial(t):
+    return g2b(math.cos(t), 0, math.sin(t))
+
+
+# --- the hanger: a thick band under the mouth, an iron ring on its back on a short tab, a strap to the belt ---
+by, bw = cfg.get("band", [-0.065, 0.05])
+proud = 0.006
+lathe([(radius(by + bw / 2) - 0.001, by + bw / 2), (radius(by + bw / 2) + proud, by + bw / 2 - 0.002),
+       (radius(by - bw / 2) + proud, by - bw / 2 + 0.002), (radius(by - bw / 2) - 0.001, by - bw / 2)],
+      loop=True, mats=[STRAP] * 4)
 reach = cfg["reach"]
-ring_c = g2b(R0 + 0.011, 0.022, 0.0)
-ring_r, ring_w = 0.014, 0.0035
-tab_from = g2b(radius(by) + 0.006, by - bw / 2 + 0.004, 0.0)
-tab_to = ring_c - UP * (ring_r - 0.002)
-strap(tab_from, tab_to, g2b(1, 0, 0), 0.026, 0.004, STRAP)
-torus(ring_c, BACK, ring_r, ring_w, IRON)  # the ring stands in the plane of the tab and the belt strap
-# the strap round the belt: from the ring towards the body, level in the world, a little lower as it doubles
-belt_from = ring_c + LEFT * (ring_r * 0.6)
-strap(belt_from, belt_from + LEFT * reach - UP * 0.004, -BACK, 0.03, 0.005, STRAP)  # face out, like the belt
+rt = cfg.get("ring_angle", -1.35)
+ring_r, ring_w = 0.017, 0.0042
+tab_from = surface(rt, by, proud - 0.002)
+ring_c = surface(rt, by, proud + 0.012 + ring_r)
+strap(tab_from, ring_c - radial(rt) * (ring_r - 0.003), tangent(rt), 0.022, 0.005, STRAP)
+torus(ring_c, tangent(rt), ring_r, ring_w, IRON)  # the ring stands in the plane of the tab and the axis
+# the hanger to the belt: from the ring straight up to the belt's height (the mouth's), then under the belt
+# towards the body; the upright part shows beside the tube, as on the concept
+belt_up = ring_c + UP * (-ring_c.dot(UP) + 0.004)
+strap(ring_c, belt_up, radial(rt), 0.03, 0.005, STRAP)
+belt_to = LEFT * (R0 + reach) + BACK * cfg.get("belt_back", 0.0)
+strap(belt_up - (belt_to - belt_up).normalized() * 0.01, belt_to, radial(rt), 0.03, 0.005, STRAP)
 
-# --- the tilt strap: from a stitched tab at a third of the length up to the belt behind the hip --------------
-tt, ty = cfg.get("tilt_strap", [0.9, -0.23])
-sector(tt - 0.32, tt + 0.32, ty - 0.035, ty + 0.01, 0.003, STRAP, cols=2)
-t_from = surface(tt, ty + 0.005, 0.004)
-t_to = Vector((0, 0, 0)) + LEFT * (R0 + reach) + BACK * cfg.get("tilt_back_reach", 0.07) - UP * 0.012
-strap(t_from, t_to, -LEFT, 0.026, 0.004, STRAP)
+# --- the tilt strap: a stitched keeper with a loop at a third of the length, a strap up behind the hip ------
+tt, ty = cfg.get("tilt_strap", [-1.0, -0.23])
+sector(tt - 0.45, tt + 0.45, ty - 0.05, ty, 0.005, STRAP, cols=3)
+loop_c = surface(tt, ty + 0.012, 0.011)
+torus(loop_c, tangent(tt), 0.012, 0.0045, STRAP, seg=10, tube_seg=4)
+t_to = LEFT * (R0 + reach) + BACK * cfg.get("tilt_back_reach", 0.07) - UP * 0.012
+strap(loop_c + (t_to - loop_c).normalized() * 0.006, t_to, -LEFT, 0.03, 0.005, STRAP)
 
 metrics = P.finish(goal, out, lo, hi, extra={
     "mouth_gltf_m": [0.0, 0.0, 0.0], "axis_gltf": [0.0, -1.0, 0.0], "body_side_gltf": [1.0, 0.0, 0.0],
