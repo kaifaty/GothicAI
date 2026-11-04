@@ -39,7 +39,13 @@ py="$task/.venv/bin/python"
 [[ "$stage" != selftest ]] || exit 0
 
 rm -rf "$raw";mkdir -p "$raw"
-if [[ -d "$nas" ]]; then rsync -a --exclude=eye.json --exclude=SHA256SUMS "$nas/" "$raw/"; fi
+if [[ -d "$nas" ]]; then
+  rsync -a --exclude=eye.json --exclude=SHA256SUMS "$nas/" "$raw/"
+  # Reuse only a whole publication: the archive must match its own SHA256SUMS, file for file.
+  [[ -f "$nas/SHA256SUMS" ]] || { echo "$nas has no SHA256SUMS: an interrupted publication" >&2; exit 1; }
+  (cd "$raw" && sha256sum -c --quiet "$nas/SHA256SUMS")
+  diff <(cd "$raw" && ls | sort) <(awk '{print $2}' "$nas/SHA256SUMS" | sort)
+fi
 "$py" - "$input" <<'EOF'
 import hashlib, json, sys
 from pathlib import Path

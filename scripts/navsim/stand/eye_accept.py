@@ -32,7 +32,7 @@ from stand import eye  # noqa: E402
 EPOCH = 1_000_000_000  # perception-replay's game time origin (navperceptionbench.cpp)
 STATIC_KINDS = ("world", "static_vob", "water")
 THRESHOLD = 0.999
-BOUNDARY_CM = 0.1  # a hit this close to the near end is not attributable to near or far
+BOUNDARY_CM = 1.0  # within the distance tolerance of the near end a hit is not attributable to near or far
 
 
 def read_poses(path: Path):
@@ -135,7 +135,7 @@ def expected_cache(updates, starts, lengths, near_end: float):
     return dict(valid=valid, ambiguous=ambiguous, time=time, hit=np.where(valid, source["hit"], 0),
                 kind=np.where(valid, source["kind"], 0), distance=np.where(valid, source["distance_cm"], 0),
                 normal_y=np.where(valid, source["normal_y"], 0), far_casts=int(cast.sum()),
-                boundary=int(boundary.sum()), events=event)
+                boundary=int(boundary.sum()), events=event, casts=cast)
 
 
 def cache_attribution(updates, starts, lengths, cache, engine_cast, clean):
@@ -159,7 +159,7 @@ def cache_attribution(updates, starts, lengths, cache, engine_cast, clean):
             state = np.where(decisive[u], ~agreed[u], state)
             last = np.where(decisive[u], u, last)
             tainted[u], event[u] = state, last
-    return tainted, event
+    return tainted, event, stand_cast
 
 
 def agreement(ref_hit, ref_distance, ref_kind, ref_normal, hit, distance, kind, normal):
@@ -195,7 +195,6 @@ def parity(inputs: Path, raw: Path, threads: int, reuse: bool = False):
                          "normal_y_lt_0_01_fraction": frac(flat), "mismatches": int(n - strict[sel].sum())}
     static = np.isin(ref["kind"], [KINDS.index(k) for k in STATIC_KINDS])
     gate = {name: by_kind[name]["all_fraction"] for name in STATIC_KINDS}
-    passed = all(v is not None and v >= THRESHOLD for v in gate.values())
 
     expected = expected_cache(updates, starts, lengths, rays.near_range_cm)
     compared = ~expected["ambiguous"]
@@ -204,7 +203,10 @@ def parity(inputs: Path, raw: Path, threads: int, reuse: bool = False):
                         cache["hit"], cache["distance"], cache["kind"], cache["normal_y"])[-1]
     valid_compared = compared & expected["valid"]
     ray_clean = strict & (fresh["complete"] == ref["complete"])
-    tainted, event = cache_attribution(updates, starts, lengths, cache, expected["events"], ray_clean)
+    tainted, event, stand_cast = cache_attribution(updates, starts, lengths, cache, expected["events"], ray_clean)
+    # On a ray that met all criteria both sides must decide the far cast alike; otherwise a cache
+    # defect would hide among the slots that inherit a ray difference.
+    unexplained = ray_clean & ((expected["casts"] & ~stand_cast) | (stand_cast & ~expected["events"]))
     clean_slots, inherited = compared & ~tainted, compared & tainted
     event_kind = ref["kind"][np.maximum(event, 0), np.arange(eye.RAYS)]
     stand_far = int(schedule["casts"].sum()) - int(schedule["updated"].sum()) * eye.RAYS
@@ -230,17 +232,27 @@ def parity(inputs: Path, raw: Path, threads: int, reuse: bool = False):
         "cache_schedule_equal_fraction_after_agreed_cast": float(slot_schedule[clean_slots].mean()),
         "cache_content_equal_fraction_after_agreed_cast": float(
             (content & slot_schedule)[clean_slots & expected["valid"]].mean()),
+        "cache_casts_unexplained": int(unexplained.sum()),
         "cache_slots_after_ray_difference": int(inherited.sum()),
         "cache_slots_after_ray_difference_by_engine_kind": {
             name: int((inherited & (event_kind == k)).sum()) for k, name in enumerate(KINDS)},
         "definition": ("Engine cache from rays.bin: per episode and ray, the last far-updated record whose near "
-                       "segment missed (no hit, or hit beyond the near end). Hits within 0.1 cm of the near end "
+                       "segment missed (no hit, or hit beyond the near end). Hits within 1 cm of the near end "
                        "cannot be attributed and their cache slots are excluded until the ray's next far cast. "
                        "Schedule = same timestamp and validity; content = the four ray criteria. A slot is "
                        "'after an agreed cast' when at the ray's latest far update where either side cast, both "
                        "cast and the fresh ray met all four criteria; otherwise it inherits that ray's difference "
                        "(by_engine_kind: the engine's kind for the ray at that update)."),
     }
+    sc = schedule_summary
+    schedule_gate = {
+        "far_updated_equal": sc["far_updated_equal_fraction"] == 1.0 and sc["updated_all"],
+        "complete_differs_only_with_hit": sc["complete_mismatches_with_equal_hit"] == 0,
+        "far_casts_follow_rays": sc["cache_casts_unexplained"] == 0,
+        "cache_slot_for_slot_after_agreed_cast": (sc["cache_schedule_equal_fraction_after_agreed_cast"] == 1.0
+                                                  and sc["cache_content_equal_fraction_after_agreed_cast"] == 1.0),
+    }
+    passed = all(v is not None and v >= THRESHOLD for v in gate.values()) and all(schedule_gate.values())
     examples = []
     for name in STATIC_KINDS + ("none", "movable_vob"):
         bad = np.argwhere(~strict & (ref["kind"] == KINDS.index(name)))
@@ -254,6 +266,7 @@ def parity(inputs: Path, raw: Path, threads: int, reuse: bool = False):
                              "stand": {"hit": bool(p["hit"]), "distance_cm": float(p["distance"]),
                                        "kind": KINDS[int(p["kind"])], "normal_y": float(p["normal_y"])}})
     result = {"passed": passed, "threshold": THRESHOLD, "gate_kinds": list(STATIC_KINDS), "gate": gate,
+              "schedule_gate": schedule_gate,
               "static_rays": int(static.sum()), "static_all_fraction": float(strict[static].mean()),
               "all_rays": int(strict.size), "all_fraction": float(strict.mean()), "by_engine_kind": by_kind,
               "schedule_and_cache": schedule_summary, "replay": run, "mismatch_examples": examples}
@@ -352,7 +365,7 @@ def summary(inputs: Path, raw: Path, out: Path, raw_root: str):
     result = {
         "status": "passed" if parity_result["passed"] else "failed",
         "acceptance_2": {key: parity_result[key] for key in
-                         ("passed", "threshold", "gate_kinds", "gate", "static_rays", "static_all_fraction",
+                         ("passed", "threshold", "gate_kinds", "gate", "schedule_gate", "static_rays", "static_all_fraction",
                           "all_rays", "all_fraction", "by_engine_kind", "schedule_and_cache", "replay")},
         "cost": {"agents": sorted({c["agents"] for c in costs}), "steps_per_repeat": sorted({c["steps"] for c in costs}),
                  "warmup_steps": sorted({c["warmup_steps"] for c in costs}),
@@ -408,13 +421,15 @@ def main():
     if args.command == "parity":
         args.raw.mkdir(parents=True, exist_ok=True)
         result = parity(args.input, args.raw, args.threads, args.reuse)
-        print(json.dumps({k: result[k] for k in ("passed", "gate", "static_all_fraction")}))
+        print(json.dumps({k: result[k] for k in ("passed", "gate", "schedule_gate", "static_all_fraction")}))
+        raise SystemExit(0 if result["passed"] else 1)
     elif args.command == "cost":
         args.raw.mkdir(parents=True, exist_ok=True)
         cost(args.input, args.raw, [int(t) for t in args.threads.split(",")], args.agents, args.steps, args.repeats)
     else:
         result = summary(args.input, args.raw, args.out, args.raw_root or str(args.raw))
         print(json.dumps({"gate": result["acceptance_2"]["gate"], "cost": result["cost"]["eye_update"]}))
+        raise SystemExit(0 if result["status"] == "passed" else 1)
 
 
 if __name__ == "__main__":

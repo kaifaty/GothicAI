@@ -11,6 +11,14 @@ root="$(cd "$(dirname "$0")/../../.." && pwd)"
 stage="${1:?Usage: stand-remote.sh selftest|run|cost THREADS|clean}"
 case "$stage" in selftest|run|cost|clean) ;; *) echo "Unknown stage: $stage" >&2; exit 2;; esac
 task="$(ssh -o ConnectTimeout=10 ryzen 'printf "%s/gothic-ai/nav-sim-stand" "$HOME"')"
+# One invocation at a time for the whole cycle: source, build, venv and raw on Ryzen and the NAS folder are shared.
+lock="$task/.lock"
+if ! ssh ryzen "mkdir -p '$task' && mkdir '$lock'"; then
+  echo "stand-remote.sh already runs (lock $lock on Ryzen). A stale lock: ssh ryzen rmdir '$lock'" >&2
+  exit 75
+fi
+release() { ssh ryzen "rmdir '$lock'" >/dev/null 2>&1 || true; }
+trap release EXIT
 if [[ "$stage" == clean ]]; then ssh ryzen "rm -rf '$task'"; exit 0; fi
 src="$task/source"
 ssh ryzen "rm -rf '$src' && mkdir -p '$src'"

@@ -1,6 +1,7 @@
 """nav-sim stand eye (scripts/navsim/stand/eye.py) on a synthetic box, without game data."""
 from pathlib import Path
 import struct
+import subprocess
 import sys
 
 import numpy as np
@@ -9,7 +10,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "navsim" / "gpumem"))
-from navsim.stand import eye  # noqa: E402
+from navsim.stand import eye, eye_accept  # noqa: E402
 import gpumem  # noqa: E402
 
 pytestmark = pytest.mark.skipif(
@@ -101,3 +102,43 @@ def test_pool_threads_do_not_change_slots(tmp_path):
             slots.append(out)
     for name in ("distance", "point", "kind", "hit", "time", "complete", "direction"):
         np.testing.assert_array_equal(getattr(slots[0], name), getattr(slots[1], name), name)
+
+
+def reference(root):
+    """rays.bin and poses.txt of two walks in the box, written by the stand itself."""
+    root.mkdir()
+    box(root / "static.bin")
+    rows = [(f"ep{e}", 300 + 100 * u, 20 * u + 50 * e, 3 * u, -40 + 25 * e + 4 * u) for e in range(2) for u in range(12)]
+    (root / "poses.txt").write_text("".join(f"{l} {ms} {x} 0 {z} {yaw} 0 0 0\n" for l, ms, x, z, yaw in rows))
+    payload = bytearray(b"NAVRAYS1" + struct.pack("<IIf", eye.RAYS, len(rows), 1000))
+    out = eye.Slots.empty(1)
+    with eye.EyeWorld(root / "static.bin", agents=1) as world:
+        for i, (label, ms, x, z, yaw) in enumerate(rows):
+            if i and label != rows[i - 1][0]:
+                world.reset()
+            world.set_poses_yaw([[x, 180, z]], [[x, 0, z]], [yaw], [EPOCH + ms])
+            far = world.update(out).far_updated[0]
+            payload += struct.pack("<Q3fB", ms, x, 180, z, far)
+            for r in range(eye.RAYS):
+                payload += struct.pack("<5fBfBB", *out.direction[0, r], 10000, out.distance[0, r], out.kind[0, r],
+                                       out.normal_y[0, r], out.hit[0, r], out.complete[0, r])
+    (root / "rays.bin").write_bytes(payload)
+    return root
+
+
+def test_acceptance_gate_holds_schedule_and_cache(tmp_path):
+    inputs, raw = reference(tmp_path / "in"), tmp_path / "raw"
+    raw.mkdir()
+    assert eye_accept.parity(inputs, raw, threads=1)["passed"]
+    schedule = np.load(raw / "stand-schedule.npy")
+    schedule["far_updated"][3] ^= 1
+    np.save(raw / "stand-schedule.npy", schedule)
+    assert not eye_accept.parity(inputs, raw, threads=1, reuse=True)["schedule_gate"]["far_updated_equal"]
+    schedule["far_updated"][3] ^= 1
+    np.save(raw / "stand-schedule.npy", schedule)
+    cache = np.load(raw / "stand-cache.npy")
+    cache["time"][2, 5] += 100  # one slot between far casts, fresh rays untouched
+    np.save(raw / "stand-cache.npy", cache)
+    run = subprocess.run([sys.executable, eye_accept.__file__, "parity", str(inputs), str(raw), "--reuse"],
+                         capture_output=True, text=True)
+    assert run.returncode == 1 and '"cache_slot_for_slot_after_agreed_cast": false' in run.stdout
