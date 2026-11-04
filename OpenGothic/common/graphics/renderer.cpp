@@ -113,10 +113,14 @@ Renderer::Renderer() {
     settings.vsmLampNarrow = std::max(0.f, float(std::atof(narrow)));
     Log::i("vsm: lamp filter study narrow penumbra = ", settings.vsmLampNarrow, " texels");
     }
-  // under TAA the lamp taps turn from frame to frame (reports/render-features/2026-11-04-lamp-pcss/step-2d.md); for
-  // the study: OPENGOTHIC_VSM_LAMP_TAPS=<search 1>,<search 2>,<narrow>,<wide>; OPENGOTHIC_VSM_LAMP_FLOOR=1 the search
-  // stops after its first tap when that one puts a shadow's edge at the penumbra's floor; OPENGOTHIC_VSM_LAMP_CENTRE=1
-  // the narrow penumbra's threshold in texels of the face's centre, not where they are smallest
+  // OPENGOTHIC_VSM_LAMP_TAA=1: under TAA the lamp taps turn from frame to frame, fewer of them. Only for the study: the
+  // pattern lets light into contact shadows and its grain outlives TAA (reports/render-features/2026-11-04-lamp-pcss/
+  // step-2d-why.md). The switches below imply it: OPENGOTHIC_VSM_LAMP_TAPS=<search 1>,<search 2>,<narrow>,<wide>;
+  // OPENGOTHIC_VSM_LAMP_FLOOR=1 the search stops after its first tap when that one puts a shadow's edge at the
+  // penumbra's floor; OPENGOTHIC_VSM_LAMP_CENTRE=1 the narrow penumbra's threshold in texels of the face's centre, not
+  // where they are smallest
+  if(const char* e = std::getenv("OPENGOTHIC_VSM_LAMP_TAA"); e!=nullptr && std::string_view(e)=="1")
+    settings.vsmLampTaa = true;
   if(const char* taps = std::getenv("OPENGOTHIC_VSM_LAMP_TAPS")) {
     unsigned t[4] = {};
     if(std::sscanf(taps, "%u,%u,%u,%u", &t[0], &t[1], &t[2], &t[3])==4 && t[0]>=1 && t[2]>=1 && t[3]>=1) {
@@ -148,6 +152,9 @@ Renderer::Renderer() {
     settings.vsmLampStudy = true;
     Log::i("vsm: lamp filter study experiments = ", e, " (", settings.vsmLampExp, ")");
     }
+  settings.vsmLampTaa   |= settings.vsmLampStudy;
+  if(settings.vsmLampTaa)
+    Log::i("vsm: lamp filter study: taps turned per frame under taa");
   settings.vsmLampStudy |= settings.vsmLampMode!=0 || settings.vsmStats || settings.vsmLampNarrow>=0;
 
   sky.sampler = Tempest::Sampler::bilinear();
@@ -380,7 +387,7 @@ void Renderer::prepareTaa(WorldView& wview, const Camera& camera) {
     taa.valid = false;
   taa.cuts = camera.cuts();
 
-  wview.setTaaFrame(true, taa.frame);
+  wview.setTaaFrame(settings.vsmLampTaa, taa.frame);
   const Vec2 px = Taa::jitterPx(taa.frame++);
   const auto j  = Taa::jitterMatrix(px, uint32_t(zbuffer.w()), uint32_t(zbuffer.h()));
   if(taa.valid)
