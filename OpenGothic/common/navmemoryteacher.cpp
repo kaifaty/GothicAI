@@ -30,6 +30,10 @@ constexpr size_t TrackPoints = 100;
 // refuses its direction (a point RefusedCm along it) for RefusedTtl decisions.
 constexpr float StuckSpeed = 18.f, RefusedCm = 30.f;
 constexpr uint32_t PushTicks = 3, RefusedTtl = 50;
+// An exit cell the body reached without finding a start there is not chosen again
+// for FailedTtl decisions (within FailedCm of it).
+constexpr float ReachedCm = 20.f, FailedCm = 25.f;
+constexpr uint32_t FailedTtl = 100;
 
 float length(Point p) { return std::hypot(p.rightCm,p.forwardCm); }
 float distance(Point a,Point b) { return length({a.rightCm-b.rightCm,a.forwardCm-b.forwardCm}); }
@@ -273,8 +277,10 @@ float squareDistance(Point p,int index) {
 // are passable even where memory holds a static hazard (a person who may since
 // stand on the track is not). Other cells are passable when they hold no raw
 // hazard: the 15-cm margin is planning comfort, the capsule is 8.2 cm.
-// The exit ends at the nearest cell whose whole square is clear with the full
-// margin, so the next decision finds a start there. Live water keeps its stop.
+// The exit ends at a cell whose whole square is clear with the full margin, so
+// the next decision finds a start there: the one with the least exit cost plus
+// straight distance to the teacher's target (as A* would rank it), so that the
+// exit is chosen alike from neighbouring places. Live water keeps its stop.
 class BodyExit final {
   public:
     BodyExit(const Input& input,const Grid& planner,const std::vector<Point>& ownTrack,const std::vector<Point>& pushed)
@@ -307,8 +313,9 @@ class BodyExit final {
         }
       return true;
       }
-    // Origin first, then near cell centres up to the exit cell; empty if none within ExitCm.
-    std::vector<Point> path() const {
+    // Origin first, then near cell centres up to the exit cell; empty if none within
+    // ExitCm. Exit cells within FailedCm of `failed` are not chosen.
+    std::vector<Point> path(Point target,const std::vector<Point>& failed) const {
       std::vector<float> best(NearCount,Infinity),along(NearCount,Infinity);
       std::vector<int> parent(NearCount,-1);
       std::vector<uint8_t> closed(NearCount);
@@ -328,16 +335,18 @@ class BodyExit final {
       const auto goal=[&](int i) {
         return grid.available(i) && grid.clear(center(i),FootprintCm+NearCell*.5f);
         };
+      int chosen=-1;
+      float chosenScore=Infinity;
       while(!queue.empty()) {
         const int i=queue.top().index;queue.pop();
         if(closed[size_t(i)]) continue;
         closed[size_t(i)]=1;
         if(goal(i)) {
-          std::vector<Point> result;
-          for(int j=i;j>=0;j=parent[size_t(j)]) result.push_back(center(j));
-          result.push_back({});
-          std::reverse(result.begin(),result.end());
-          return result;
+          // An exit cell ends its branch; beyond it the planner takes over.
+          const bool refused=std::any_of(failed.begin(),failed.end(),[&](Point f) {return distance(f,center(i))<FailedCm;});
+          const float score=best[size_t(i)]+distance(center(i),target);
+          if(!refused && score<chosenScore) {chosenScore=score;chosen=i;}
+          continue;
           }
         const int x=i%NearSize,z=i/NearSize;
         for(int dz=-1;dz<=1;++dz)for(int dx=-1;dx<=1;++dx) {
@@ -355,7 +364,12 @@ class BodyExit final {
           queue.push({score,j});
           }
         }
-      return {};
+      if(chosen<0) return {};
+      std::vector<Point> result;
+      for(int j=chosen;j>=0;j=parent[size_t(j)]) result.push_back(center(j));
+      result.push_back({});
+      std::reverse(result.begin(),result.end());
+      return result;
       }
   private:
     enum : uint8_t { None, Track, Footprint };
@@ -383,12 +397,13 @@ class BodyExit final {
 // a turn would move every remembered cell of the body frame). Returns false
 // when there is no exit; then the teacher keeps its previous behaviour.
 bool bodyExitKeys(const Input& in,const Grid& grid,const std::vector<Point>& track,const std::vector<Point>& pushed,
-                  NpcKeys::KeyState& out,float& exitCm) {
+                  Point target,const std::vector<Point>& failed,NpcKeys::KeyState& out,float& exitCm,Point& exitCell) {
   exitCm=0;
   const BodyExit exit(in,grid,track,pushed);
   if(exit.waterNear()) return false;
-  const auto path=exit.path();
+  const auto path=exit.path(target,failed);
   if(path.size()<2) return false;
+  exitCell=path.back();
   for(size_t i=1;i<path.size();++i) exitCm+=distance(path[i-1],path[i]);
   Point aim=path.back();
   for(size_t i=1;i<path.size();++i)
@@ -570,12 +585,13 @@ void NavMemoryTeacher::reset() {
   route.clear();routeLength=0;stuckTicks=0;recoveryTicks=0;recoveryAttempts=0;
   recoverySide=1;complete=false;observedGoal=false;previousGoal={};movingTicks=0;runningTargetTicks=0;
   latestPlanStatus=PlanStatus{};branch=Branch::NoAim;track.clear();refused.clear();pushTicks=0;
+  failedExits.clear();exitPending=false;exitCell={};
   }
 
 void NavMemoryTeacher::updateTrack(const Input& in) {
   // Off the ground the feet testify nothing about the cells below.
   if(in.body.flags[0] || in.body.flags[1] || in.body.flags[3] || in.body.flags[4]) {
-    track.clear();refused.clear();
+    track.clear();refused.clear();failedExits.clear();exitPending=false;
     return;
     }
   // The same motion model as the observed goal below: the previous turn key
@@ -586,10 +602,13 @@ void NavMemoryTeacher::updateTrack(const Input& in) {
     return Point{p.rightCm*c-p.forwardCm*s-in.body.velocityCmS[0]*.1f,p.rightCm*s+p.forwardCm*c-in.body.velocityCmS[2]*.1f};
     };
   for(auto& p:track) p=carry(p);
-  for(auto& r:refused) {r.point=carry(r.point);--r.ttl;}
-  refused.erase(std::remove_if(refused.begin(),refused.end(),[](const Refusal& r) {
-    return r.ttl==0 || length(r.point)>ExitCm;
-    }),refused.end());
+  exitCell=carry(exitCell);
+  for(auto* list:{&refused,&failedExits}) {
+    for(auto& r:*list) {r.point=carry(r.point);--r.ttl;}
+    list->erase(std::remove_if(list->begin(),list->end(),[](const Refusal& r) {
+      return r.ttl==0 || length(r.point)>ExitCm;
+      }),list->end());
+    }
   // Standing still does not push older footprints out of the track.
   if(!track.empty() && length(track.back())<2.f) track.back()={};
   else track.push_back({});
@@ -663,14 +682,22 @@ NpcKeys::KeyState NavMemoryTeacher::decide(const Input& in) {
     }
 
   Grid grid(in);
-  std::vector<Point> pushed;
+  std::vector<Point> pushed,failed;
   for(const auto& r:refused) pushed.push_back(r.point);
+  if(bodyExitEnabled && exitPending && length(exitCell)<ReachedCm && !latestPlanStatus.startFound) {
+    // The body reached its exit cell and still finds no start there.
+    failedExits.push_back({exitCell,FailedTtl});
+    exitPending=false;
+    }
+  if(latestPlanStatus.startFound) exitPending=false;
+  for(const auto& r:failedExits) failed.push_back(r.point);
   const auto exitBody=[&](NpcKeys::KeyState& keys) {
     // No start cell, or no clear escape step: leave along what the body testifies.
     latestPlanStatus.bodyExit=true;
     auto exit=out;
     exit.walk=true;
-    if(!bodyExitKeys(in,grid,track,pushed,exit,latestPlanStatus.bodyExitCm)) return false;
+    if(!bodyExitKeys(in,grid,track,pushed,target,failed,exit,latestPlanStatus.bodyExitCm,exitCell)) return false;
+    exitPending=true;
     stuckTicks=0;recoveryTicks=0;branch=Branch::BodyExit;keys=exit;
     return true;
     };

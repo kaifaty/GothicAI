@@ -129,6 +129,11 @@ class NavMemoryTeacher final {
     struct Refusal final { Point point; uint32_t ttl = 0; };
     std::vector<Refusal> refused;
     uint32_t pushTicks = 0;
+    // The exit cell of the last body exit, carried like the track; exit cells the
+    // body reached without finding a start, forgotten after their `ttl`.
+    Point exitCell;
+    bool exitPending = false;
+    std::vector<Refusal> failedExits;
     float routeLength = 0;
     uint32_t stuckTicks = 0, recoveryTicks = 0, recoveryAttempts = 0;
     float recoverySide = 1;
