@@ -46,13 +46,14 @@ from gothic_ai import (
     wrath,
 )
 from gothic_ai.dialogue import _FIRST_SENTENCE, MAX_HISTORY, paragraph_end
-from gothic_ai.embeddings import EmbedClient
+from gothic_ai.embeddings import EmbedClient, EmbedError
 from gothic_ai.gamedata import storygraph
-from gothic_ai.llm import Done, LLMBackend, LLMError, Message, TextDelta, Tool, ToolCall
+from gothic_ai.llm import Done, LLMBackend, LLMError, Message, TextDelta, Tool, ToolCall, ToolResult
 from gothic_ai.llm.base import QUICK_SLOT
-from gothic_ai.memory import LOAD_LIMIT
+from gothic_ai.memory import LOAD_LIMIT, MemoryStore
+from gothic_ai.npc_tools import RECALL, light
 from gothic_ai.npc_tools import TOOLS as NPC_TOOLS
-from gothic_ai.npc_tools import light
+from gothic_ai.turn import MAX_STEPS, ToolOutcome, go_on, tool_choice
 
 
 def _load(name: str, path: Path) -> Any:
@@ -150,12 +151,12 @@ class Journal:
     def close(self) -> None:
         self.db.close()
 
-    def window(self, branch: str, npc: str, start: float, end: float) -> list[tuple[int, str, str]]:
-        """The npc's messages written in [start, end): (seq, role, content)."""
+    def window(self, branch: str, npc: str, start: float, end: float) -> list[tuple[int, str, str, float]]:
+        """The npc's messages written in [start, end): (seq, role, content, created)."""
         return [
-            (int(s), r, c)
-            for s, r, c in self.db.execute(
-                "SELECT seq, role, content FROM events WHERE branch=? AND npc=? AND kind='message' "
+            (int(s), r, c, float(t))
+            for s, r, c, t in self.db.execute(
+                "SELECT seq, role, content, created FROM events WHERE branch=? AND npc=? AND kind='message' "
                 "AND created>=? AND created<? ORDER BY seq",
                 (branch, npc, start, end),
             )
@@ -181,10 +182,11 @@ class Journal:
                 out.append((int(seq), fact))
         return out
 
-    def history(self, branch: str, npc: str, upto: int) -> list[Message]:
+    def history(self, branch: str, npc: str, upto: int) -> tuple[list[Message], int]:
         """What the server puts before a turn at this seq (memory.load, Conversation.history): the latest
         summary and the messages after it. The game folds more than MAX_HISTORY of them into a new summary
-        with an LLM; offline only the summaries it wrote are there, so the newest MAX_HISTORY are kept."""
+        with an LLM; offline only the summaries it wrote are there, so the newest MAX_HISTORY are kept.
+        Also the seq recall searches up to, as dialogue._recall: min(the summary's end, first message - 1)."""
         row = self.db.execute(
             "SELECT content, covers FROM events WHERE branch=? AND npc=? AND kind='summary' AND seq<=? "
             "ORDER BY seq DESC LIMIT 1",
@@ -192,17 +194,19 @@ class Journal:
         ).fetchone()
         summary, covers = (row[0], int(row[1] or 0)) if row else ("", 0)
         rows = self.db.execute(
-            "SELECT role, content FROM events WHERE branch=? AND npc=? AND kind='message' "
+            "SELECT seq, role, content FROM events WHERE branch=? AND npc=? AND kind='message' "
             "AND seq>? AND seq<=? ORDER BY seq DESC LIMIT ?",
             (branch, npc, covers, upto, LOAD_LIMIT),
         ).fetchall()
-        messages = [Message(role, content) for role, content in reversed(rows)][-MAX_HISTORY:]
+        kept = list(reversed(rows))[-MAX_HISTORY:]
+        messages = [Message(role, content) for _, role, content in kept]
         head = (
             [Message("developer", f"[Что ты помнишь о прежних встречах с героем: {summary}]")]
             if summary
             else []
         )
-        return head + messages
+        first = int(kept[0][0]) if kept else covers + 1
+        return head + messages, min(covers, first - 1)
 
 
 @dataclass
@@ -255,13 +259,40 @@ def fact_text(fact: dict[str, Any]) -> str:
     return text if len(text) <= 300 else text[:299] + "…"
 
 
+def _anchors(events: list[tuple[int, str, str, float]], own: list[dict[str, Any]]) -> dict[int, list[dict]]:
+    """Where the calls of the npc's own turns (an event, a chest, an interjection: no phrase of the hero)
+    go: after the journal line that turn said (written at its end), else after the last line written by
+    its end; -1 is before all lines."""
+    out: dict[int, list[dict]] = {}
+    for turn in sorted(own, key=lambda r: r["t"]):
+        end = turn["t"] + (turn.get("total_s") or 0)
+        said = " ".join(pilot.spoken(turn.get("text") or "").split())
+        spoken = [
+            i
+            for i, (_, role, content, created) in enumerate(events)
+            if role == "assistant"
+            and said
+            and " ".join(content.split()) == said
+            and turn["t"] <= created <= end + 5
+        ]
+        before = [i for i, event in enumerate(events) if event[3] <= end + 1]
+        at = spoken[0] if spoken else (before[-1] if before else -1)
+        out.setdefault(at, []).append({**turn, "said_at": at if spoken else None})
+    return out
+
+
 def number_talk(
-    events: list[tuple[int, str, str]], turns: list[dict[str, Any]], calls: dict[str, list[dict[str, Any]]]
+    events: list[tuple[int, str, str, float]],
+    turns: list[dict[str, Any]],
+    calls: dict[str, list[dict[str, Any]]],
+    own: list[dict[str, Any]] = (),
 ) -> tuple[list[Line], list[tuple[int, str, str]], int]:
     """The talk's journal as numbered lines. The hero's phrase, the answer after it and the turn's calls map
     to the turn; remarks and other lines before a phrase to that turn (they are in its history), those
-    after the last phrase to the last turn. Returns the lines, the hero's lines (seq, turn id, text) and how
-    many turns the journal lacked (they are added at the end from the turn records)."""
+    after the last phrase to the last turn. The npc's own turns (`own`: id, t, total_s, text, calls) add
+    their calls after their line, both mapped to their id. Returns the lines, the hero's lines (seq, turn
+    id, text) and how many turns the journal lacked (they are added at the end from the turn records)."""
+    anchors = _anchors(events, list(own))
     lines: list[Line] = []
     hero: list[tuple[int, str, str]] = []
     pending: list[Line] = []
@@ -279,7 +310,15 @@ def number_talk(
                 add(call_line(call), current["id"])
         waiting = False
 
-    for seq, role, content in events:
+    def own_calls(index: int) -> None:
+        for turn in anchors.get(index, []):
+            if turn["said_at"] is not None and pending and pending[-1] is lines[-1]:
+                pending.pop().turn = turn["id"]  # its own line
+            for call in turn["calls"]:
+                add(call_line(call), turn["id"])
+
+    own_calls(-1)
+    for index, (seq, role, content, _) in enumerate(events):
         if role == "user" and nxt < len(turns) and content.strip() == turns[nxt]["phrase"].strip():
             close_turn()
             current, nxt, waiting = turns[nxt], nxt + 1, True
@@ -297,6 +336,7 @@ def number_talk(
                 pilot.spoken(content) if role == "assistant" else content
             )
             pending.append(add(text, None))
+        own_calls(index)
     close_turn()
     missing = turns[nxt:]
     for turn in missing:
@@ -323,12 +363,67 @@ def shift_time(situation: str, minutes: int) -> str:
     return re.sub(r"(?m)^Время: день (\d+), (\d{2}):(\d{2})(, [^.\n]+)?\.", moved, situation, count=1)
 
 
-def later_situation(situation: str, minutes: int = 60) -> str:
-    """The last turn's situation at a new meeting: the clock moved, the moment's notes gone."""
-    kept = [
-        line for line in situation.splitlines() if not line.startswith(("Только что:", "Твоё тело сейчас:"))
-    ]
-    return shift_time("\n".join(kept), minutes)
+CALM_HERO = "Герой подошёл к тебе и заговорил, он в 2 м."
+CALM_BODY = "Сейчас ты стоишь на месте."
+# the lines render_situation writes before the extensions' blocks (npc_tools.py, perception.py)
+CORE = (
+    "Время:",
+    "Герой",
+    "Героя",
+    "Твой инвентарь:",
+    "Видишь:",
+    "Больше никого не видишь",
+    "На земле:",
+    "Следы:",
+    "Рядом:",
+    "Сейчас ты ",
+    "Твоё намерение:",
+    "Цели для намерения",
+)
+GONE = ("Видишь:", "На земле:", "Рядом:")  # who and what is around now
+MOMENT = ("Твоё тело сейчас:", "Только что:", "Ты дерёшься с героем.")  # the body, the moment, a fight
+
+
+def calm_situation(situation: str, minutes: int = 60) -> str:
+    """The last turn's situation at a calm new meeting an hour later. What lasts stays: the place, the
+    inventory, the intent, every extension's block. The clock moves on. What changes by the moment goes:
+    the hero's line becomes CALM_HERO; who and what is seen around is dropped (the targets of intents keep
+    the hero and the points); what the body does, the fight and the moment's notes become CALM_BODY."""
+    lines = situation.splitlines()
+    out, core, hero = [], True, False
+
+    def add_hero() -> None:  # after the time and the place
+        out.insert(min(len(out), 3 if len(out) > 2 and out[2].startswith("Ты ") else 2), CALM_HERO)
+
+    for n, line in enumerate(lines):
+        if line.startswith(MOMENT):
+            continue
+        place = n > 0 and lines[n - 1].startswith("Время:") and line.startswith("Ты ")
+        if core and not place and n > 0 and not line.startswith(CORE):
+            core = False  # the extensions' blocks
+            if not hero:
+                add_hero()
+                hero = True
+        if core:
+            if line.startswith(GONE):
+                continue
+            if place and (where := re.match(r"Ты [^.]*\.", line)):
+                line = where[0]  # where it is; not what it does or holds
+            elif line.startswith(("Герой", "Героя")):
+                line, hero = CALM_HERO, True
+            elif line.startswith("Сейчас ты "):
+                line = CALM_BODY
+            elif line.startswith("Цели для намерения"):
+                kept = [
+                    m[0]
+                    for m in re.finditer(r"\S+ \(([^)]*)\)", line.split(":", 1)[1])
+                    if m[1] == "герой" or m[1].startswith("точка")
+                ]
+                line = "Цели для намерения (target): " + ", ".join(kept) + "."
+        out.append(line)
+    if not hero:
+        add_hero()
+    return shift_time("\n".join(out), minutes)
 
 
 def brief_situation(situation: str) -> str:
@@ -419,7 +514,24 @@ class World:
         events = self.journal.window(first["branch"], first["npc"], first["t"] - LEAD_S, end)
         end_seq = self.journal.end_seq(first["branch"], end)
         entries = self.journal.facts(first["branch"], end_seq)
-        lines, hero, unmatched = number_talk(events, group, {t["id"]: self.calls(t) for t in group})
+        ids = {t["id"] for t in group}
+        self.record(first)
+        own = [
+            {
+                "id": r["id"],
+                "t": r["t"],
+                "total_s": r.get("total_s"),
+                "calls": calls,
+                "text": " ".join(step.get("text", "") for step in r.get("steps", [])).strip(),
+            }
+            for r in self._traces[first["trace"]].values()
+            if r.get("npc") == first["npc"]
+            and r.get("branch") == first["branch"]
+            and r["id"] not in ids
+            and first["t"] - LEAD_S <= r["t"] < end
+            and (calls := [c for step in r.get("steps", []) for c in step.get("calls", [])])
+        ]
+        lines, hero, unmatched = number_talk(events, group, {t["id"]: self.calls(t) for t in group}, own)
         for seq, fact in mi.facts_for(entries, first["npc"]):
             lines.append(Line(len(lines) + 1, "Хроника: " + fact_text(fact), fact=seq))
         talk = Talk(
@@ -483,8 +595,11 @@ async def sol_stream(
     *,
     tools: list[Tool] | None = None,
     cache_key: str | None = None,
+    choice: str | None = None,
+    items: list[Any] | None = None,
 ) -> dict[str, Any]:
-    """One Sol request: text, the calls it made (not run), usage and times."""
+    """One Sol request: text, the calls it made (not run), usage and times; `items` gets the response's
+    items (text and calls) for a next step."""
     result: dict[str, Any] = {
         "text": "",
         "calls": [],
@@ -503,6 +618,7 @@ async def sol_stream(
                     messages=messages,
                     tools=list(tools or []),
                     cache_key=cache_key,
+                    tool_choice=choice,
                 )
             ) as events,
         ):
@@ -516,6 +632,8 @@ async def sol_stream(
                 elif isinstance(event, Done):
                     result["text"] = event.text
                     result["usage"] = asdict(event.usage) if event.usage is not None else None
+                    if items is not None:
+                        items.extend(event.items)
     except TimeoutError:
         result["error"] = f"Timeout after {TIMEOUT_S} s"
     except Exception as error:  # provider errors may carry private endpoints: only the type is kept
@@ -616,6 +734,41 @@ def fold_messages(talk: Talk, state: dict[str, Any], text: str) -> list[Message]
     return messages
 
 
+TELLER = re.compile(r"(?:сказала?|слышала?|говорила?)\s+(?:(?:от|со слов)\s+)?(.+)", re.IGNORECASE)
+
+
+def mentions(text: str, names: Any) -> list[dict[str, Any]]:
+    """The names Sol wrote in a fold — «о:» of a tail, a teller («сказал X» after верю or сомневаюсь or in
+    «от:»), the person of «+ о X» or of «~ д1 X» — each with its id. Proper: its first word past the
+    prepositions has a capital letter (people, places, quests); «бандиты», «пещера» are common words."""
+    found = []
+    for raw in text.split("[Правки]", 1)[-1].splitlines():
+        line, tail, _ = mi._split_tail(raw.strip())
+        for part in (tail or "").split(";"):
+            key, _, value = part.partition(":")
+            key = key.strip().casefold()
+            if key in ("о", "об", "про"):
+                found += value.split(",")
+            elif key in ("от", "источник") and (told := TELLER.fullmatch(value.strip())):
+                found.append(told[1])
+        head = re.match(r"\+\s*(верю|сомневаюсь|о)\s+([^:]+?)\s*:", line) or re.match(
+            r"~\s*([всд])\d+\s+([^:]+?)\s*:", line
+        )
+        if head and head[1] in ("о", "д"):
+            found.append(head[2])
+        elif head and (told := TELLER.fullmatch(head[2])):
+            found.append(told[1])
+    out = []
+    for name in (n.strip().strip("«»\"'").strip() for n in found):
+        if not name:
+            continue
+        words = name.split()
+        while len(words) > 1 and words[0].casefold() in mi._PREPOSITIONS:
+            words.pop(0)
+        out.append({"name": name, "id": names.resolve(name), "proper": words[0][:1].isupper()})
+    return out
+
+
 async def fold_talk(
     sol: LLMBackend, talk: Talk, state: dict[str, Any], names: Any, *, entries: list | None = None
 ) -> dict[str, Any]:
@@ -664,6 +817,7 @@ async def fold_talk(
         "fold": report,
         "truth": truth,
         "state": deepcopy(state),
+        "mentions": mentions(result["text"], names),
         "names": {
             "n": report["stats"]["names"],
             "without_id": report["stats"]["unknown_names"],
@@ -772,7 +926,7 @@ LIE_SITUATION = "\n".join(
 def lie_talk(instructions: str) -> Talk:
     turns, events = [], []
     for n, (role, text) in enumerate(LIE_TALK, start=1):
-        events.append((n, role, text))
+        events.append((n, role, text, float(n)))
         if role == "user":
             turns.append({"id": f"lie-{n}", "phrase": text, "sol": ""})
     lines, hero, _ = number_talk(events, turns, {})
@@ -794,8 +948,8 @@ def lie_talk(instructions: str) -> Talk:
 
 
 def lie_check(state: dict[str, Any]) -> dict[str, Any]:
-    """The hero's claim lies as «герой»: every belief or doubt about it from him (`ok`). `not_seen`: at least
-    none lies as seen — a doubt without a source gets the code's default «вывел»."""
+    """`ok`: the hero's claim lies in a belief or a doubt with the source «герой». `not_seen`: none of them
+    lies as seen."""
     items = [
         {"id": i["id"], "section": i["section"], "text": i["text"], "source": i["source"]["kind"]}
         for i in state["items"]
@@ -809,7 +963,7 @@ def lie_check(state: dict[str, Any]) -> dict[str, Any]:
         "seen_claims": seen,
         "sources": dict(Counter(i["source"] for i in claims)),
         "not_seen": bool(claims) and not seen,
-        "ok": bool(claims) and all(i["source"] == "герой" for i in claims),
+        "ok": any(i["source"] == "герой" for i in claims),
     }
 
 
@@ -865,20 +1019,21 @@ class Asked:
     history: list[Message]
     situation: str  # whole, for Sol
     brief: str  # for Gemma
+    before: int = 0  # recall searches the branch's messages up to this seq: older than the prompt's
     tools: list[Tool] = field(default_factory=list)
 
 
 def asked(world: World, conv: str) -> Asked:
     talk = world.talk(conv)
     minute = talk.minute + 60
-    history = world.journal.history(talk.branch, talk.npc, talk.end_seq)
+    history, before = world.journal.history(talk.branch, talk.npc, talk.end_seq)
     history.append(Message("developer", f"[Новая встреча с героем, {mi.time_text(minute)}]"))
-    situation = later_situation(talk.situation)
+    situation = calm_situation(talk.situation)
     unknown = [name for name in talk.tools if name not in GAME_TOOLS]
     if unknown:
         raise SystemExit(f"{conv}: no definition of the game's tools {unknown} in GAME_TOOLS")
     tools = [GAME_TOOLS[name] for name in talk.tools]
-    return Asked(talk, minute, history, situation, brief_situation(situation), tools)
+    return Asked(talk, minute, history, situation, brief_situation(situation), before, tools)
 
 
 async def memory_block(
@@ -917,6 +1072,102 @@ def gemma_messages(ctx: Asked, phrase: str, memory: str = "") -> list[Message]:
 
 def sol_messages(ctx: Asked, phrase: str) -> list[Message]:
     return [*ctx.history, Message("developer", ctx.situation), Message("user", phrase)]
+
+
+def journal_copy(directory: Path, carry: Path) -> Path:
+    """recall reads the journal through MemoryStore, which adds its table of vectors: a copy in the run's
+    folder, never the recorded journal."""
+    path = directory / "memory.sqlite3"
+    if not path.exists():
+        with (
+            closing(sqlite3.connect(carry.resolve().as_uri() + "?mode=ro", uri=True)) as source,
+            closing(sqlite3.connect(path)) as target,
+        ):
+            source.backup(target)
+    return path
+
+
+async def recall(store: MemoryStore, ctx: Asked, query: str) -> tuple[str, str]:
+    """recall as dialogue._recall runs it: the branch's messages older than the prompt's, by meaning (FRIDA),
+    by words if that fails. The extensions' recall (knowledge, lore, sightings, witnesses) reads the live
+    game and is not run. Returns the text and how it searched."""
+    branch, npc = ctx.talk.branch, ctx.talk.npc
+    how = "lexical"
+    if store.embeddings is not None:
+        try:
+            found, how = await store.semantic_search(branch, npc, query, ctx.before), "semantic"
+        except EmbedError:
+            found = store.search(branch, npc, query, ctx.before)
+    else:
+        found = store.search(branch, npc, query, ctx.before)
+    if not found:
+        return "Ничего такого не вспоминается.", how
+    speaker = {"user": "Герой", "assistant": "Ты", "developer": ""}
+    lines = [
+        f"[{r.game_time or '?'}] {speaker[r.role] + ': ' if speaker.get(r.role) else ''}{r.content}"
+        for r in found
+    ]
+    return "Ты вспоминаешь:\n" + "\n".join(lines), how
+
+
+async def sol_answer(sol: LLMBackend, ctx: Asked, phrase: str, store: MemoryStore) -> dict[str, Any]:
+    """Sol's turn as in the game (dialogue, turn.py): up to MAX_STEPS requests, the last without tools; it
+    goes on as turn.go_on says. recall is run (once a turn, as in the game); the other calls are recorded
+    and told «Принято.», not run."""
+    request = sol_messages(ctx, phrase)
+    steps, calls, said, recalled = [], [], [], False
+    for step in range(MAX_STEPS):
+        items: list[Any] = []
+        result = await sol_stream(
+            sol,
+            ctx.talk.instructions,
+            request,
+            tools=ctx.tools,
+            cache_key=f"probe-{ctx.talk.npc}",
+            choice=tool_choice(step),
+            items=items,
+        )
+        steps.append({k: result[k] for k in ("first_token_s", "total_s", "usage", "error")})
+        if result["error"] is not None:
+            break
+        if result["text"].strip():
+            said.append(result["text"].strip())
+        made = [item for item in items if isinstance(item, ToolCall)]
+        outcomes = []
+        for call in made:
+            record: dict[str, Any] = {
+                "name": call.name,
+                "arguments": call.arguments,
+                "step": step,
+                "run": False,
+            }
+            if call.name != RECALL:
+                outcome = ToolOutcome("Принято.", "accepted")
+            elif recalled:
+                outcome = ToolOutcome("Больше ничего не вспоминается.", "ignored")
+            else:
+                recalled = True
+                text, how = await recall(store, ctx, str(call.arguments.get("query", "")))
+                outcome = ToolOutcome(text, "read")
+                record.update(run=True, result=text, search=how)
+            outcomes.append(outcome)
+            calls.append(record)
+        if step == MAX_STEPS - 1 or not go_on(outcomes, bool(said)):
+            break
+        results = [ToolResult(c.call_id, o.output) for c, o in zip(made, outcomes, strict=True)]
+        request = [*request, *items, *results]
+    first = steps[0]
+    return {
+        "text": " ".join(said),
+        "calls": calls,
+        "steps": steps,
+        "attempts": len(steps),
+        "error": next((s["error"] for s in steps if s["error"] is not None), None),
+        "first_token_s": first["first_token_s"],
+        "total_s": sum(s["total_s"] for s in steps),
+        "usage": first["usage"],
+        "prompt_tokens": (first["usage"] or {}).get("input_tokens"),
+    }
 
 
 async def answer(
@@ -967,6 +1218,7 @@ async def answer(
     own_embed = embed is True
     if embed is True:
         embed = EmbedClient(embed_url(embed_at, quick_at))
+    store = MemoryStore(journal_copy(directory, world.carry), embeddings=embed or None)
     try:
         for probe, conv, variant in pending:
             ctx = asked(world, conv)
@@ -981,15 +1233,7 @@ async def answer(
             }
             if variant == "sol":
                 messages = sol_messages(ctx, phrase)
-                result = await sol_call(
-                    sol,
-                    ctx.talk.instructions,
-                    messages,
-                    attempts=1,
-                    tools=ctx.tools,
-                    cache_key=f"probe-{ctx.talk.npc}",
-                )
-                result["prompt_tokens"] = (result["usage"] or {}).get("input_tokens")
+                result = await sol_answer(sol, ctx, phrase, store)
             else:
                 memory = None
                 if variant == "items":
@@ -1030,6 +1274,7 @@ async def answer(
             await embed.close()
         if isinstance(tokens, mi.Tokens):
             tokens.close()
+        store.close()
         world.close()
 
 
@@ -1344,13 +1589,21 @@ def summary(directory: Path, *, emit: bool = True) -> dict[str, Any]:
         s: sum(len(verdict(judged_states[c, s]).get("stale", [])) for c in both) for s in ("items", "v3")
     }
 
-    names_n = sum((r.get("names") or {}).get("n", 0) for r in ok_states)
-    without = sum((r.get("names") or {}).get("without_id", 0) for r in ok_states)
+    if any("mentions" not in r for r in ok_states):  # a run before mentions were written
+        world = World.of(directory)
+        table = world.names()
+        world.close()
+        for r in ok_states:
+            r.setdefault("mentions", mentions(r["text"], table))
+    mentioned = [m for r in ok_states for m in r["mentions"]]
+    proper = [m for m in mentioned if m["proper"]]
+    with_id = sum(m["id"] is not None for m in proper)
     ids = {
-        "names": names_n,
-        "without_id": without,
-        "with_id_fraction": pilot.fraction(names_n - without, names_n),
-        "unresolved": sorted({n for r in ok_states for n in (r.get("names") or {}).get("unresolved", [])}),
+        "proper": len(proper),
+        "proper_with_id": with_id,
+        "with_id_fraction": pilot.fraction(with_id, len(proper)),
+        "proper_without_id": sorted({m["name"] for m in proper if m["id"] is None}),
+        "common": sorted({m["name"] for m in mentioned if not m["proper"]}),
     }
 
     def tally(chosen: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1509,7 +1762,10 @@ def summary(directory: Path, *, emit: bool = True) -> dict[str, Any]:
             f"4. stale at the same points: items {stale_pair['items']} vs v3 {stale_pair['v3']} "
             f"({len(both)} points)"
         )
-        print(f"5. names with id: {ids['with_id_fraction']} of {names_n}")
+        print(
+            f"5. proper names with id: {with_id} of {len(proper)}; without id {ids['proper_without_id']}; "
+            f"common, not counted: {ids['common']}"
+        )
         for variant in VARIANTS:
             p = probes[variant]
             print(f"6. {variant}: " + ", ".join(f"{v} {p[v]}" for v in VERDICTS) + f" of {p['judged']}")
@@ -1669,6 +1925,40 @@ _SITUATION = "\n".join(
         "Только что: гоблин убежал.",
     ]
 )
+_FIGHT = "\n".join(
+    [
+        "[Обстановка — видна только тебе, герою её не пересказывай]",
+        "Время: день 1, 11:43, день.",
+        "Ты в пещере бандитов, под крышей. Ты дерёшься. Твоё оружие наготове.",
+        "Герой в 13 м: гильдия: без гильдии; мёртв; в крови; без доспеха.",
+        "Твой инвентарь: Стрела (ITRW_ARROW) ×10.",
+        "Видишь: незнакомец (id BDT_1014_BANDIT_L; 1 м, справа от героя), враг тебе, дерётся, оружие наголо.",
+        "На земле: Тяжелый сук (ITMW_NH_BAU_MACE; 3 м, перед героем).",
+        "Сейчас ты идёшь за героем.",
+        "Твоё намерение: цель — драться (BDT_1014_BANDIT_L); отношение к герою — дружеское.",
+        "Цели для намерения (target): PLAYER (герой), BDT_1014_BANDIT_L (Браго, 1 м), "
+        "NW_XARDAS_BANDITS_01 (точка, 2 м).",
+        "Что ты знаешь (сейчас глава 1; что будет дальше, ты не знаешь):",
+        "- про бандитов у башни",
+        "Ты дерёшься с героем. Прекратить драку — set_intent с целью none.",
+        "Твоё тело сейчас: ты бьёшь бандита — это уже происходит, не противоречь этому.",
+        "Только что: бандит ударил героя.",
+    ]
+)
+_CALM = "\n".join(
+    [
+        "[Обстановка — видна только тебе, герою её не пересказывай]",
+        "Время: день 1, 12:43, день.",
+        "Ты в пещере бандитов, под крышей.",
+        "Герой подошёл к тебе и заговорил, он в 2 м.",
+        "Твой инвентарь: Стрела (ITRW_ARROW) ×10.",
+        "Сейчас ты стоишь на месте.",
+        "Твоё намерение: цель — драться (BDT_1014_BANDIT_L); отношение к герою — дружеское.",
+        "Цели для намерения (target): PLAYER (герой), NW_XARDAS_BANDITS_01 (точка, 2 м).",
+        "Что ты знаешь (сейчас глава 1; что будет дальше, ты не знаешь):",
+        "- про бандитов у башни",
+    ]
+)
 _STATE_JSON = (
     '{"false_facts": [], "stale": ["н1 закрыта"], "wrong_source": [], "name_confusion": [], "note": ""}'
 )
@@ -1677,7 +1967,8 @@ _PROBE_JSON = '```json\n{"verdict": "Correct", "invented": [], "why": "помн�
 
 def _fixture(root: Path) -> dict[str, Any]:
     """Two talks of Cavalorn: one in branch b1, one in b2 loaded from a save of b1 after it; their trace,
-    turns, journal and a closing mind of ум v3; branch b3 holds a long journal with a summary."""
+    turns, journal and a closing mind of ум v3. In b1 the npc speaks and acts once on its own after the
+    last phrase (x1); b2 has a summary, so recall searches its older messages; b3 holds a long journal."""
     from gothic_ai.memory import MemoryStore
 
     cav = mi.CAVALORN
@@ -1696,10 +1987,15 @@ def _fixture(root: Path) -> dict[str, Any]:
         (7, "*", "fact", None, json.dumps(fact, ensure_ascii=False), None, 1053.0),
         (8, cav, "message", "developer", "[Герой ушёл, разговор закончился]", None, 1060.0),
     ]
+    own = [
+        (9, cav, "message", "developer", "[Событие: герой убегает]", None, 1062.0),
+        (10, cav, "message", "assistant", "Стой,  вор!", None, 1062.0),
+    ]
     talk2 = [
         (9, cav, "message", "developer", "[Новая встреча с героем, день 1, 12:00]", None, 2095.0),
         (10, cav, "message", "user", "Отдай письмо", None, 2100.0),
         (11, cav, "message", "assistant", "Какое письмо?", None, 2101.0),
+        (12, cav, "summary", None, "Герой обокрал Кавалорна у костра.", 3, 2102.0),
     ]
     long = [
         (n, cav, "message", "user" if n % 2 else "assistant", f"реплика {n}", None, 3000.0 + n)
@@ -1711,7 +2007,8 @@ def _fixture(root: Path) -> dict[str, Any]:
             "INSERT INTO branches VALUES (?,?,?,?)",
             [("b1", None, 0, 1000.0), ("b2", "b1", 8, 2000.0), ("b3", None, 0, 3000.0)],
         )
-        rows = [("b1", *e) for e in talk1] + [("b2", *e) for e in talk1 + talk2] + [("b3", *e) for e in long]
+        rows = [("b1", *e) for e in talk1 + own] + [("b2", *e) for e in talk1 + talk2]
+        rows += [("b3", *e) for e in long]
         conn.executemany(
             "INSERT INTO events (branch, seq, npc, kind, role, content, covers, game_time, created) "
             "VALUES (?,?,?,?,?,?,?,NULL,?)",
@@ -1745,6 +2042,23 @@ def _fixture(root: Path) -> dict[str, Any]:
             "tools": ["set_intent", "propose_deal"],
             "steps": [
                 {"calls": [{"name": "propose_deal", "arguments": {"npc_gives": []}, "result": "Предложено"}]}
+            ],
+        },
+        {
+            "type": "turn",
+            "id": "x1",
+            "npc": cav,
+            "branch": "b1",
+            "t": 1058.0,
+            "total_s": 4.0,
+            "trigger": {"kind": "incident"},
+            "steps": [
+                {
+                    "text": "[angry] Стой, вор!",
+                    "calls": [
+                        {"name": "set_intent", "arguments": {"goal": "fight"}, "result": "Принято: драться"}
+                    ],
+                }
             ],
         },
         {
@@ -1859,21 +2173,57 @@ async def _selftest_run(check: Any, root: Path) -> None:
         and texts[3].startswith("Вызов: set_intent")
         and texts[7].startswith("Вызов: propose_deal")
         and texts[8] == "[Герой ушёл, разговор закончился]"
-        and texts[9].startswith("Хроника: "),
+        and texts[9:11] == ["[Событие: герой убегает]", "Ты: Стой,  вор!"]
+        and texts[11] == 'Вызов: set_intent {"goal": "fight"} → Принято: драться'
+        and texts[12].startswith("Хроника: "),
         texts,
     )
     check(
-        "lines → turns",
-        talk.line_map == {1: "a1", 2: "a1", 3: "a1", 4: "a1", 5: "a2", 6: "a2", 7: "a2", 8: "a2", 9: "a2"},
+        "lines → turns, the npc's own turn too",
+        talk.line_map
+        == {
+            1: "a1",
+            2: "a1",
+            3: "a1",
+            4: "a1",
+            5: "a2",
+            6: "a2",
+            7: "a2",
+            8: "a2",
+            9: "a2",
+            10: "a2",
+            11: "x1",
+            12: "x1",
+        },
         talk.line_map,
     )
-    check("chronicle → fact seq", talk.remark_map == {10: 7}, talk.remark_map)
+    check("chronicle → fact seq", talk.remark_map == {13: 7}, talk.remark_map)
+    timed = number_talk(
+        [(1, "user", "Эй", 3.0), (2, "developer", "[Событие]", 5.0)],
+        [{"id": "t1", "phrase": "Эй", "sol": ""}],
+        {},
+        [
+            {
+                "id": "y1",
+                "t": 4.0,
+                "total_s": 2.0,
+                "text": "",
+                "calls": [{"name": "set_intent", "arguments": {}}],
+            }
+        ],
+    )[0]
+    check(
+        "an own turn without words: its calls by time",
+        [(x.text, x.turn) for x in timed]
+        == [("Герой: Эй", "t1"), ("[Событие]", "t1"), ("Вызов: set_intent {}", "y1")],
+        timed,
+    )
     check(
         "hero turns by seq",
         talk.hero_turns == [(2, "a1", "Привет, Кавалорн"), (5, "a2", "Пойдём бить бандитов")],
         talk.hero_turns,
     )
-    check("talk minute", talk.minute == 1440 + 630 and talk.end_seq == 8, (talk.minute, talk.end_seq))
+    check("talk minute", talk.minute == 1440 + 630 and talk.end_seq == 10, (talk.minute, talk.end_seq))
     second = world.talk(fx["conv2"])
     check(
         "second talk: own lines and inherited fact",
@@ -1882,10 +2232,11 @@ async def _selftest_run(check: Any, root: Path) -> None:
         and second.remark_map == {4: 7},
         [line.text for line in second.lines],
     )
-    history = world.journal.history("b3", mi.CAVALORN, 51)
+    history, before = world.journal.history("b3", mi.CAVALORN, 51)
     check(
         "history: summary and at most 40",
         len(history) == 41
+        and before == 3
         and history[0].content.startswith("[Что ты помнишь о прежних встречах с героем: Герой обокрал")
         and history[-1].content == "реплика 51"
         and history[1].content == "реплика 12",
@@ -1893,10 +2244,10 @@ async def _selftest_run(check: Any, root: Path) -> None:
     )
     check(
         "history at an earlier seq",
-        [m.content for m in world.journal.history("b2", mi.CAVALORN, 8)][-1]
+        [m.content for m in world.journal.history("b2", mi.CAVALORN, 8)[0]][-1]
         == "[Герой ушёл, разговор закончился]",
     )
-    later = later_situation(talk.situation)
+    later = calm_situation(talk.situation)
     brief = brief_situation(later)
     check(
         "an hour later",
@@ -1911,8 +2262,43 @@ async def _selftest_run(check: Any, root: Path) -> None:
         and brief.endswith("отношение к герою — ровное."),
         brief,
     )
+    calm = calm_situation(_FIGHT)
+    check("a calm meeting after a fight", calm == _CALM, calm)
+    check(
+        "a calm meeting, brief",
+        brief_situation(calm) == "\n".join(_CALM.splitlines()[:4] + _CALM.splitlines()[5:7]),
+        brief_situation(calm),
+    )
+    unseen = calm_situation(
+        "[Обстановка]\nВремя: день 1, 08:06, утро.\nТы в башне, под крышей. Ты занят: Стенд.\n"
+        "Твой инвентарь: пусто.\nТвоё намерение: цель — ничего.\nЧто ты знаешь:\n- всё"
+    )
+    check(
+        "a calm meeting without the hero's line",
+        unseen.splitlines()[2:4] == ["Ты в башне, под крышей.", CALM_HERO] and "Сейчас ты" not in unseen,
+        unseen,
+    )
     names = world.names()
     check("names: inventory items", names.resolve("письмо Ватраса") == "ITWR_TEST_LETTER")
+    found = mentions(
+        "[Правки]\n+ верю сказал Ватрас: Браго мёртв [о: Браго, бандиты; стр: 1]\n+ о Ксардас: маг\n"
+        "+ нить: идти в пещеру [о: пещера у башни; от: сказал Браго]",
+        names,
+    )
+    check(
+        "mentions: proper names and common words",
+        [(m["name"], m["proper"]) for m in found]
+        == [
+            ("Браго", True),
+            ("бандиты", False),
+            ("Ватрас", True),
+            ("Ксардас", True),
+            ("пещера у башни", False),
+            ("Браго", True),
+        ]
+        and [m["id"] for m in found if m["proper"]] == [mi.BRAGO, mi.VATRAS, mi.XARDAS, mi.BRAGO],
+        found,
+    )
     world.close()
 
     # consolidate: one Sol call per talk, the carry, the prompt
@@ -1943,7 +2329,8 @@ async def _selftest_run(check: Any, root: Path) -> None:
         and not tools
         and messages[-1].content == prompt("consolidate.md")
         and "8. Вызов: propose_deal" in body
-        and "10. Хроника:" in body
+        and "12. Вызов: set_intent" in body
+        and "13. Хроника:" in body
         and "[Твоя память до этого разговора]\nПока пусто." in body,
         body[:300],
     )
@@ -1963,7 +2350,10 @@ async def _selftest_run(check: Any, root: Path) -> None:
     )
     check(
         "states keep usage and time",
-        "usage" in first and first["total_s"] is not None and first["names"]["n"] >= 1,
+        "usage" in first
+        and first["total_s"] is not None
+        and {"name": "Браго", "id": mi.BRAGO, "proper": True} in first["mentions"],
+        first.get("mentions"),
     )
     await consolidate(out, carry=fx["db"], turns=fx["turns"], sol=sol)
     check("consolidate resumes", len(sol.calls) == 2)
@@ -1982,6 +2372,9 @@ async def _selftest_run(check: Any, root: Path) -> None:
     seen = mi.new_state(mi.CAVALORN)
     mi.fold(seen, "+ верю видел: бандиты у моста перебиты", names=None, minute=1)
     check("lie: seen fails", not lie_check(seen)["ok"] and not lie_check(seen)["not_seen"])
+    told = mi.new_state(mi.CAVALORN)
+    mi.fold(told, "+ сомневаюсь герой: один перебил троих бандитов у моста [стр: 4]", names=None, minute=1)
+    check("lie: a doubt from the hero passes", lie_check(told)["ok"], lie_check(told))
     doubt = mi.new_state(mi.CAVALORN)
     mi.fold(doubt, "+ сомневаюсь: герой говорит, что перебил бандитов у моста", names=None, minute=1)
     check(
@@ -2033,20 +2426,31 @@ async def _selftest_run(check: Any, root: Path) -> None:
         [m.content[:40] for m in gemma],
     )
     check("Gemma warmed without the phrase", quick.prewarms[-1][1] == gemma[:-1])
-    spoken = asker.calls[-1][1]
+    # after the first talk recall is not offered (a2's tools): one step; after the second two steps
+    spoken = asker.calls[1][1]
     check(
-        "Sol prompt: whole situation, game tools",
+        "Sol prompt: calm whole situation, game tools",
         "Твой инвентарь" in spoken[-2].content
         and "13:00" in spoken[-2].content
-        and {t.name for t in asker.sent_tools[-1]} == {"set_intent", "recall", "propose_deal", "give_quest"},
-        [t.name for t in asker.sent_tools[-1]],
+        and CALM_HERO in spoken[-2].content
+        and "Только что" not in spoken[-2].content
+        and {t.name for t in asker.sent_tools[1]} == {"set_intent", "recall", "propose_deal", "give_quest"},
+        [t.name for t in asker.sent_tools[1]],
     )
-    sol_answer = answers["p1", fx["conv2"], "sol"]
+    sol_turn = answers["p1", fx["conv2"], "sol"]
+    recalled = next((m for m in asker.calls[2][1] if isinstance(m, ToolResult)), None)
     check(
-        "Sol calls recorded",
-        sol_answer["calls"] == [{"name": "recall", "arguments": {"query": "кража"}}]
-        and not sol_answer["handoff"],
-        sol_answer,
+        "recall runs once, the turn goes on as in the game",
+        len(asker.calls) == 3
+        and sol_turn["attempts"] == 2
+        and [(c["name"], c["run"]) for c in sol_turn["calls"]] == [("recall", True), ("recall", False)]
+        and sol_turn["calls"][0]["search"] == "lexical"
+        and recalled is not None
+        and "Герой: Привет, Кавалорн" in recalled.output
+        and sol_turn["text"] == "[angry] Обокрал ты меня. [angry] Обокрал ты меня."
+        and answers["p1", fx["conv1"], "sol"]["calls"] == []
+        and answers["p1", fx["conv1"], "sol"]["attempts"] == 1,
+        (sol_turn, recalled),
     )
     items_answer = answers["p1", fx["conv2"], "items"]
     check(
@@ -2204,7 +2608,11 @@ async def _selftest_run(check: Any, root: Path) -> None:
         len(result["transitions"]) == 1 and result["transitions"][0]["topics"]["кража"],
         result["transitions"],
     )
-    check("summary ids", result["ids"]["names"] >= 1 and result["ids"]["with_id_fraction"] is not None)
+    check(
+        "summary ids: proper names only",
+        result["ids"]["proper"] >= 1 and result["ids"]["with_id_fraction"] == 1.0,
+        result["ids"],
+    )
     check(
         "summary lies",
         result["acceptance"]["8_lies"]["fold_source_ok"] is True
@@ -2213,7 +2621,7 @@ async def _selftest_run(check: Any, root: Path) -> None:
     )
     check(
         "summary Sol calls",
-        result["sol_calls"] == {"consolidate": 2, "lie": 1, "answers": 2, "judge": 9, "total": 14},
+        result["sol_calls"] == {"consolidate": 2, "lie": 1, "answers": 3, "judge": 9, "total": 15},
         result["sol_calls"],
     )
     check(
