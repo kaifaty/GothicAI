@@ -91,6 +91,7 @@ class SceneGlobals final {
     const Tempest::StorageImage*      vsmPageHiZ    = nullptr;
     const Tempest::StorageBuffer*     vsmPageList   = nullptr;
     bool                              vsmEnabled    = false;
+    bool                              vsmCache      = false; // the lamp-face cache: VisualObjects gathers changes
     Tempest::StorageImage             vsmDbg;
 
     struct UboGlobal final {

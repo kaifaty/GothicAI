@@ -443,6 +443,7 @@ void Renderer::prepareUniforms(WorldView& wview) {
       }
   wview.setShadowMaps(sh);
   wview.setVirtualShadowMap(settings.vsmEnabled, vsm.pageData, vsm.pageTbl, vsm.pageHiZ, vsm.pageList);
+  wview.setVsmCache(settings.vsmEnabled && settings.vsmCache);
 
   wview.setHiZ(textureCast<const Texture2d&>(hiz.hiZ));
   wview.setGbuffer(textureCast<const Texture2d&>(gbufDiffuse), textureCast<const Texture2d&>(gbufNormal));

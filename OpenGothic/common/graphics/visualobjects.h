@@ -96,7 +96,7 @@ class VisualObjects final {
     // The VSM lamp-face cache (Renderer::drawVsm): spheres (centre, radius) where shadow casters changed since the
     // last frame — a caster's place before and after it moved or turned, one added or removed, shown or hidden;
     // and every frame the animated, morphed, deformed and wind-blown ones, now and a frame ago. Static casters
-    // (Landscape, Static draws) first, then the movable ones. Built by prepareGlobals while VSM is on
+    // (Landscape, Static draws) first, then the movable ones. Built by prepareGlobals while VSM and its lamp-face cache are on (SceneGlobals::vsmCache)
     struct VsmChanges {
       const Tempest::StorageBuffer* spheres  = nullptr;
       uint32_t                      count    = 0;

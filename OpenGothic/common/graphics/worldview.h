@@ -60,6 +60,7 @@ class WorldView {
                              const Tempest::StorageImage& pageHiZ,
                              const Tempest::StorageBuffer& pageList);
     void setHiZ(const Tempest::Texture2d& hiZ);
+    void setVsmCache(bool enabled) { sGlobal.vsmCache = enabled; }
     void setSceneImages(const Tempest::Texture2d& clr, const Tempest::Texture2d& depthAux, const Tempest::ZBuffer& depthNative);
     // TAA: the sub-pixel shift of the main projection for the next preFrameUpdate (nullptr: none)
     void setJitter(const Tempest::Matrix4x4* jitter) { sGlobal.setJitter(jitter); }

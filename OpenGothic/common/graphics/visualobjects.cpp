@@ -472,7 +472,7 @@ void VisualObjects::updateInstance(size_t id, Matrix4x4* pos) {
 
   auto cId  = obj.clusterId;
   auto npos = Vec3(obj.pos[3][0], obj.pos[3][1], obj.pos[3][2]);
-  if(pos==nullptr && !isVsmDynamic(obj) && scene.vsmEnabled) {
+  if(pos==nullptr && !isVsmDynamic(obj) && scene.vsmCache) {
     // a caster moved, turned or changed its shape: the lamp faces that saw it before and those that see it now.
     // A drift below VsmMoveTolerance from where the faces last saw it (a physics body at rest jitters by
     // hundredths of a millimetre) is less than a texel of a face: it is gathered until it is more
@@ -1010,7 +1010,7 @@ bool VisualObjects::castsVsm(const Object& obj) const {
   }
 
 void VisualObjects::vsmChanged(const Object& obj, const Vec4& sphere, bool force) {
-  if(!scene.vsmEnabled || sphere.w<0 || !(force || castsVsm(obj)))
+  if(!scene.vsmCache || sphere.w<0 || !(force || castsVsm(obj)))
     return;
   auto& dst = vsmMoved[obj.vsmMovable ? 1 : 0];
   std::lock_guard<std::mutex> guard(vsmSync);
@@ -1019,7 +1019,7 @@ void VisualObjects::vsmChanged(const Object& obj, const Vec4& sphere, bool force
   }
 
 void VisualObjects::vsmChangedClusters(const Object& obj, bool force) {
-  if(!scene.vsmEnabled || obj.isEmpty() || obj.clusterId==uint32_t(-1))
+  if(!scene.vsmCache || obj.isEmpty() || obj.clusterId==uint32_t(-1))
     return;
   const uint32_t first = obj.clusterId;
   const uint32_t count = obj.type==DrawCommands::Landscape ? obj.iboLen/PackedMesh::MaxInd : 1u;
@@ -1055,7 +1055,7 @@ void VisualObjects::commitVsmChanges(uint8_t fId) {
     std::swap(moved[0], vsmMoved[0]);
     std::swap(moved[1], vsmMoved[1]);
     vsmLast.moved = uint32_t(moved[0].size() + moved[1].size());
-    if(!scene.vsmEnabled) {
+    if(!scene.vsmCache) {
       vsmDynamicPrev[0].clear();
       vsmDynamicPrev[1].clear();
       return;
