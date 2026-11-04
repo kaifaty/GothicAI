@@ -23,10 +23,8 @@ if(OPENGOTHIC_ENABLE_APP_CADENCE)
 endif()
 if(ANDROID)
   add_library(Gothic2Notr SHARED)
-  add_library(Spacer SHARED)
 else()
   add_executable(Gothic2Notr)
-  add_executable(Spacer)
 endif()
 
 if(MSVC)
@@ -98,7 +96,6 @@ endif()
 if(NOT OPENGOTHIC_ENABLE_APP_CADENCE)
   list(REMOVE_ITEM OPENGOTHIC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/common/appcadence.cpp")
 endif()
-file(GLOB_RECURSE SPACER_SOURCES "spacer/*.h" "spacer/*.cpp")
 
 target_sources(${PROJECT_NAME} PRIVATE ${OPENGOTHIC_SOURCES} ${ObjCSOURCES})
 
@@ -121,9 +118,6 @@ target_include_directories(${PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/
 # shaders
 add_subdirectory(shader)
 target_link_libraries(${PROJECT_NAME} GothicShaders)
-
-# editor icons and such
-add_subdirectory(spacer/assets)
 
 include_directories("common")
 
@@ -676,10 +670,6 @@ if(NOT ANDROID AND NOT IOS)
     DEPENDS gothic-followtrail-contract USES_TERMINAL)
 endif()
 
-target_sources(Spacer PRIVATE ${SPACER_SOURCES} spacer/main.cpp)
-target_include_directories(Spacer PRIVATE "spacer")
-target_link_libraries(Spacer PRIVATE OpenGothic SpacerAssets gothic-base-import gothic-video-import)
-
 if(ANDROID)
   add_android_apk(OpenGothic-apk
     PACKAGE_NAME org.opengothic.app
@@ -688,6 +678,6 @@ if(ANDROID)
 endif()
 
 # installation
-install(TARGETS Gothic2Notr Spacer DESTINATION bin)
+install(TARGETS Gothic2Notr DESTINATION bin)
 
 include(cmake/ZenKitGuard.cmake)
