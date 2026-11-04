@@ -74,10 +74,7 @@ std::vector<bool> bonesNamed(const Skeleton& sk, std::initializer_list<std::stri
 }
 
 Quiver::Place Quiver::place;
-bool          Quiver::wideGive = [](){
-  const char* v = std::getenv("OPENGOTHIC_QUIVER_GIVE");
-  return v!=nullptr && (std::string_view(v)=="B" || std::string_view(v)=="b");
-  }();
+
 bool          Quiver::still = false;
 
 bool Quiver::enabled() {
@@ -439,7 +436,7 @@ void Quiver::rest() {
   axis      = {0,-1,0};
   moving    = false;
   devV      = Vec3();
-  devHeld   = Vec3();
+  devTarget = Vec3();
   yawOffset = 0;
   }
 
@@ -476,64 +473,87 @@ void Quiver::step(const Matrix4x4& pelvis, const Matrix4x4& spine, const std::ve
   yawOffset  = 0.5f*(twistNow-twistSlow);
   const auto frame = restFrame(pelvis,spine);  // the quiver at rest, in the world
   const Vec3 pivot = translation(frame);
-  const Vec3 restDir = Vec3::normalize(turned(frame,{0,-1,0}));
 
-  // the target: the rest, turned away from what is in the tube; each contact allows so much (the leg more)
-  Vec3  target = restDir;
-  float allow  = 0; // rad it may turn: the most any contact allows
-  for(int pass=0; pass<2; ++pass) {
-    bool hit = false;
-    for(auto& o:obstacles) {
-      // the closest points of the axis (pivot + target*t, t 0..Length) and the obstacle's segment
-      const Vec3  e  = o.b-o.a;
-      const float ee = Vec3::dotProduct(e,e);
-      float u = 0;
-      if(ee>1e-6f) {
-        const Vec3  r0  = pivot-o.a;
-        const float ae  = Vec3::dotProduct(target,e);
-        const float er  = Vec3::dotProduct(e,r0);
-        const float den = ee - ae*ae;
-        const float t0  = den>1e-6f ? std::clamp((ae*er - ee*Vec3::dotProduct(target,r0))/den,0.f,Length) : 0.f;
-        u = std::clamp((t0*ae + er)/ee,0.f,1.f);
-        }
-      const Vec3  onObs = o.a + e*u;
-      const float t     = std::clamp(Vec3::dotProduct(onObs-pivot,target),0.f,Length);
-      if(t<4.f)
-        continue; // at the ring: it cannot turn away there
-      Vec3 away = (pivot + target*t) - onObs;
-      away -= target*Vec3::dotProduct(away,target);
-      const float dist = away.length();
-      const float need = radiusAt(t) + o.r + PushMargin;
-      if(dist>=need || dist<1e-3f)
-        continue;
-      target = Vec3::normalize(target + away*((need-dist)/(dist*t)));
-      float cm  = o.kind==Leg ? LegYieldMax   : YieldMax;
-      float deg = o.kind==Leg ? LegYieldAngle : YieldAngle;
-      if(wideGive && o.kind!=Carried) {
-        cm  = WideYieldMax;
-        deg = WideYieldAngle;
-        }
-      allow  = std::max(allow,std::min(std::atan2(cm,t),deg*float(M_PI)/180.f));
-      hit    = true;
-      }
-    if(!hit)
-      break;
-    }
-  // the target across the axis in the rest frame, at MassAt down it, no farther than allowed
+  // the give: one turn round the ring (two axes, up to GiveAngle) that leaves the least of the deepest of all
+  // that is in the tube - the leg, the forearm and hand, the flaps, the bow and a two-hander on the back
   auto inv = frame;
   inv.inverse();
-  Vec3 tl = turned(inv,target);
-  if(tl.y>-0.1f)
-    tl = {0,-1,0};
-  Vec3 dTarget = {tl.x/-tl.y*MassAt,0,tl.z/-tl.y*MassAt};
-  const float maxDev = MassAt*std::tan(allow);
-  if(dTarget.length()>maxDev)
-    dTarget = dTarget*(maxDev/std::max(dTarget.length(),1e-6f));
-  // held: a new or a greater give at once, a smaller one lets go slowly (the leg comes back each step)
-  if(!moving || dTarget.length()>=devHeld.length())
-    devHeld = dTarget; else
-    devHeld = dTarget + (devHeld-dTarget)*std::exp(-dt/GiveRelease);
-  dTarget   = devHeld;
+  const float reachOut = Length*std::tan(GiveAngle*float(M_PI)/180.f) + 2.f;
+  static thread_local std::vector<Tempest::Vec4> near; // in the rest frame: the centre, the radius
+  near.clear();
+  auto take = [&](Vec3 p, float r) {
+    inv.project(p);
+    if(p.y>r || p.y<-Length-reachOut-r)
+      return;
+    if(std::hypot(p.x,p.z)-r>MouthRadius+reachOut)
+      return;
+    near.emplace_back(p.x,p.y,p.z,r);
+    };
+  for(auto& o:obstacles) {
+    const float len = (o.b-o.a).length();
+    const int   n   = len<1e-3f ? 1 : std::clamp(int(std::ceil(len/std::max(o.r,3.f))),2,12);
+    for(int i=0; i<n; ++i)
+      take(n==1 ? o.a : o.a+(o.b-o.a)*(float(i)/float(n-1)),o.r);
+    }
+  // the deepest any of them goes into the tube for the axis u (the rest frame, the bottom's direction)
+  auto deepest = [&](const Vec3& u) {
+    float worst = 0;
+    for(auto& q:near) {
+      const Vec3  p = {q.x,q.y,q.z};
+      const float t = Vec3::dotProduct(p,u);
+      if(t<0.f)
+        continue; // over the mouth
+      const float tc   = std::min(t,Length);
+      const float dist = (p-u*tc).length();
+      worst = std::max(worst,radiusAt(tc)+q.w-dist);
+      }
+    return worst;
+    };
+  auto axisOf = [](float deg, float dir) {
+    const float a = deg*float(M_PI)/180.f;
+    return Vec3(std::sin(a)*std::cos(dir),-std::cos(a),std::sin(a)*std::sin(dir));
+    };
+  // from coarse to fine; the last answer seeds it, and a small price on the turn and on the change keeps it
+  // from jumping between equal answers
+  const Vec3 last = Vec3::normalize(Vec3(devTarget.x,-MassAt,devTarget.z));
+  auto score = [&](const Vec3& u) {
+    const float turn   = std::acos(std::clamp(-u.y,-1.f,1.f))*180.f/float(M_PI);
+    const float change = std::acos(std::clamp(Vec3::dotProduct(u,last),-1.f,1.f))*180.f/float(M_PI);
+    return deepest(u) + 0.02f*turn + 0.02f*change;
+    };
+  Vec3  best  = {0,-1,0};
+  float bestS = 1e9f;
+  auto  probe = [&](const Vec3& u) {
+    const float s = score(u);
+    if(s<bestS) {
+      bestS = s;
+      best  = u;
+      }
+    };
+  probe({0,-1,0});
+  if(!near.empty()) {
+    probe(last);
+    for(float deg:{GiveAngle*0.5f,GiveAngle})
+      for(int k=0; k<8; ++k)
+        probe(axisOf(deg,float(k)*float(M_PI)/4.f));
+    // refine on a grid of the offset across the axis round the best
+    float step = GiveAngle*0.25f;
+    for(int level=0; level<3; ++level, step*=0.5f) {
+      const Vec3 c = best;
+      const float cx = std::atan2(c.x,-c.y)*180.f/float(M_PI), cz = std::atan2(c.z,-c.y)*180.f/float(M_PI);
+      for(int i=-1; i<=1; ++i)
+        for(int j=-1; j<=1; ++j) {
+          if(i==0 && j==0)
+            continue;
+          const float ax = (cx+float(i)*step)*float(M_PI)/180.f, az = (cz+float(j)*step)*float(M_PI)/180.f;
+          Vec3 u = Vec3::normalize(Vec3(std::tan(ax),-1.f,std::tan(az)));
+          if(std::acos(std::clamp(-u.y,-1.f,1.f))*180.f/float(M_PI)>GiveAngle)
+            continue;
+          probe(u);
+          }
+      }
+    }
+  Vec3 dTarget = {best.x/-best.y*MassAt,0,best.z/-best.y*MassAt};
   devTarget = dTarget;
 
   // a jump (a teleport, a load) or the first step: at the target

@@ -18611,13 +18611,6 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     // quiver place off | quiver still on|off: a probe of other places (research.md of the quiver report),
     // the hero and the npcs fitted anew; still: held at rest, no swing
     const std::string m = a.size()>1 ? a[1] : "";
-    if(m=="give") {
-      // quiver give a|b: the give to choose by the clips (temporary): a - the leg 5 cm / 6 deg, the rest
-      // 2 cm / 3 deg; b - the leg, the arm and the flaps 10 cm / 12 deg
-      Quiver::wideGive = a.size()>2 && (a[2]=="b" || a[2]=="B");
-      say(std::string("quiver give ") + (Quiver::wideGive ? "b" : "a"));
-      return;
-      }
     if(m=="still") {
       Quiver::still = a.size()>2 && a[2]=="on";
       say(std::string("quiver still ") + (Quiver::still ? "on" : "off"));

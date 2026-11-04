@@ -24,7 +24,9 @@ still hangs on its straps instead of in the air.
 config: {"goal": {...}, "seed": n, "length": m, "mouth_r": m, "bottom_r": m, "wall": m, "cavity": m,
          "sides": n, "hoops": [depth, ...], "rim": m, "cap_height": m, "patch": [angle, y], "band": [y, width],
          "ring_angle": rad, "belt_back": m, "tilt_strap": [angle, y], "tilt_back_reach": m,
-         "tilt_back": deg, "tilt_out": deg, "reach": m}  (angle 0 is the body side, +pi/2 forward)
+         "tilt_back": deg, "tilt_out": deg, "around": deg, "reach": m}  (angle 0 is the body side, +pi/2 forward;
+         "around": the engine's place, deg from the right side toward the back: the straps and the parts turn
+         with it so the hanger goes from the mouth to the belt there)
 """
 import math
 import sys
@@ -55,12 +57,17 @@ def g2b(x, y, z):
 
 
 def world_axes():
-    """The world's up, the wearer's left (towards the body) and back in this frame, in Blender axes.
-    The engine's Quiver::fit with its bind pose axes: right +X, up +Y, forward +Z (Gothic, left-handed);
-    the frame's y = -down, z = forward made normal to y, x = y x z; glTF mirrors x."""
+    """The world's up, the way to the wearer's body and back along the belt in this frame, in Blender axes, and
+    the angle of the body side in the frame (the parts' angles count from it).
+    The engine's Quiver::fit with its bind pose axes: right +X, up +Y, forward +Z (Gothic, left-handed); the ring
+    is pushed "around" degrees from the right side toward the back; the frame's y = -down, z = forward made
+    normal to y, x = y x z; glTF mirrors x."""
     tb, to = math.tan(math.radians(cfg["tilt_back"])), math.tan(math.radians(cfg["tilt_out"]))
+    ar = math.radians(cfg.get("around", 0.0))
     up, right, fwd = np.array([0, 1.0, 0]), np.array([1.0, 0, 0]), np.array([0, 0, 1.0])
-    down = -up - fwd * tb + right * to
+    push = right * math.cos(ar) - fwd * math.sin(ar)       # out from the body
+    along = -right * math.sin(ar) - fwd * math.cos(ar)     # along the belt toward the back
+    down = -up - fwd * tb + push * to
     down /= np.linalg.norm(down)
     y = -down
     z = fwd - y * fwd.dot(y)
@@ -71,10 +78,12 @@ def world_axes():
     def to_blender(v):
         e = frame @ v  # components along the frame's x, y, z
         return g2b(-e[0], e[1], e[2])
-    return to_blender(up), to_blender(-right), to_blender(-fwd)
+    e = frame @ (-push)
+    body = math.atan2(e[2], -e[0])  # the angle of the body side: 0 at the right side, turned with "around"
+    return to_blender(up), to_blender(-push), to_blender(along), body
 
 
-UP, LEFT, BACK = world_axes()
+UP, LEFT, BACK, BODY = world_axes()
 
 
 def radius(y):
@@ -210,11 +219,12 @@ lathe([(0.0, -L), (cr - 0.005, -L), (cr, -L + 0.005), (cr + 0.001, -L + cap_h - 
        (0.0, -L + cap_h)])
 
 # --- the seam towards the body and a sewn-on patch on the outer back -------------------------------------
-seam_t = cfg.get("seam_angle", 0.0)
+seam_t = cfg.get("seam_angle", 0.0) + BODY
 for y0, y1 in ((-0.03, -0.33), (-0.33, -L + cap_h)):
     a, b = surface(seam_t, y0, 0.002), surface(seam_t, y1, 0.002)
     strap(a, b, g2b(math.cos(seam_t), 0, math.sin(seam_t)), 0.009, 0.004, LEATHER)
 pt, py = cfg.get("patch", [-2.7, -0.30])
+pt += BODY
 sector(pt - 0.55, pt + 0.5, py - 0.1, py, 0.003, LEATHER)
 
 
@@ -233,7 +243,7 @@ lathe([(radius(by + bw / 2) - 0.001, by + bw / 2), (radius(by + bw / 2) + proud,
        (radius(by - bw / 2) + proud, by - bw / 2 + 0.002), (radius(by - bw / 2) - 0.001, by - bw / 2)],
       loop=True, mats=[STRAP] * 4)
 reach = cfg["reach"]
-rt = cfg.get("ring_angle", -1.35)
+rt = cfg.get("ring_angle", -1.35) + BODY
 ring_r, ring_w = 0.017, 0.0042
 tab_from = surface(rt, by, proud - 0.002)
 ring_c = surface(rt, by, proud + 0.012 + ring_r)
@@ -248,6 +258,7 @@ strap(belt_up - (belt_to - belt_up).normalized() * 0.01, belt_to, radial(rt), 0.
 
 # --- the tilt strap: a stitched keeper with a loop at a third of the length, a strap up behind the hip ------
 tt, ty = cfg.get("tilt_strap", [-1.0, -0.23])
+tt += BODY
 sector(tt - 0.45, tt + 0.45, ty - 0.05, ty, 0.005, STRAP, cols=3)
 loop_c = surface(tt, ty + 0.012, 0.011)
 torus(loop_c, tangent(tt), 0.012, 0.0045, STRAP, seg=10, tube_seg=4)
