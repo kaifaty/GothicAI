@@ -20,10 +20,11 @@
 //   "d progress_cm rebuilt beyond carrot_x carrot_y carrot_z remaining_known_cm
 //    caught_up start_skipped start_fallback" (the last three are 0 for a revision
 //   without a passage check), after each rebuild "polyline K x y z ...", and per
-//   segment "s V": 1 the segment hits the navmesh boundary, 0 it does not,
-//   -1 its start is off the navmesh.
+//   segment "s V": 1 the segment hits the navmesh boundary and the walkable way
+//   around is more than 1 m longer, 0 it does not, -1 its start is off the navmesh.
 #include "game/knownroads.h"
 
+#include <algorithm>
 #include <array>
 #include <cfloat>
 #include <cmath>
@@ -85,34 +86,59 @@ class Oracle final {
           if(tile->polys[j].getType()==DT_POLYTYPE_GROUND)
             mesh->setPolyFlags(mesh->getPolyRefBase(tile)|dtPolyRef(j),tile->polys[j].flags|2);
         }
-      if(dtStatusFailed(query->init(mesh.get(),4096))) throw std::runtime_error("cannot initialize Detour query");
+      if(dtStatusFailed(query->init(mesh.get(),65535))) throw std::runtime_error("cannot initialize Detour query");
       filter.setIncludeFlags(2);
       }
 
     // 1: the straight segment hits the walkable boundary (wall, ledge, drop)
-    // before its last 50 cm; 0: it does not; -1: its start is off the navmesh.
+    // before its last 50 cm and the walkable path around is more than 1 m
+    // longer, or there is none; 0: it does not; -1: its start is off the
+    // navmesh. The detour keeps a ray that grazes a polygon vertex from
+    // counting as a wall.
     int crosses(const Tempest::Vec3& a, const Tempest::Vec3& b) const {
       const float start[] = {a.x*.01f,a.y*.01f,a.z*.01f}, end[] = {b.x*.01f,b.y*.01f,b.z*.01f};
       const float extents[] = {.5f,2.f,.5f};
-      float snapped[3]{};
-      dtPolyRef reference = 0;
+      float snapped[3]{}, target[3]{};
+      dtPolyRef reference = 0, goal = 0;
       if(dtStatusFailed(query->findNearestPoly(start,extents,&filter,&reference,snapped)) || !reference)
         return -1;
       float t = 0, normal[3]{};
-      std::array<dtPolyRef,256> path{};
+      std::array<dtPolyRef,256> ray{};
       int count = 0;
-      if(dtStatusFailed(query->raycast(reference,snapped,end,&filter,&t,normal,path.data(),&count,int(path.size()))))
+      if(dtStatusFailed(query->raycast(reference,snapped,end,&filter,&t,normal,ray.data(),&count,int(ray.size()))))
         return -1;
       if(t==FLT_MAX)
         return 0;
       const float length = std::hypot(end[0]-snapped[0],end[2]-snapped[2]);
-      return length*(1.f-t)>.5f ? 1 : 0;
+      if(length*(1.f-t)<=.5f)
+        return 0;
+      if(dtStatusFailed(query->findNearestPoly(end,extents,&filter,&goal,target)) || !goal)
+        return 1;
+      corridor.resize(8192);
+      const auto found = query->findPath(reference,goal,snapped,target,&filter,corridor.data(),&count,int(corridor.size()));
+      if(dtStatusFailed(found) || dtStatusDetail(found,DT_PARTIAL_RESULT) || count==0 || corridor[size_t(count-1)]!=goal)
+        return 1;
+      corners.resize(3*1024);
+      flags.resize(1024);
+      int cornerCount = 0;
+      if(dtStatusFailed(query->findStraightPath(snapped,target,corridor.data(),count,corners.data(),flags.data(),
+                                                nullptr,&cornerCount,int(flags.size()))) || cornerCount==0)
+        return 1;
+      double walked = 0;
+      for(int i=1; i<cornerCount; ++i) {
+        const float* p = &corners[size_t(i)*3];
+        walked += std::hypot(double(p[0]-p[-3]),double(p[2]-p[-1]));
+        }
+      return walked>double(std::hypot(target[0]-snapped[0],target[2]-snapped[2]))+1. ? 1 : 0;
       }
 
   private:
     std::unique_ptr<dtNavMesh,decltype(&dtFreeNavMesh)> mesh{dtAllocNavMesh(),dtFreeNavMesh};
     std::unique_ptr<dtNavMeshQuery,decltype(&dtFreeNavMeshQuery)> query{dtAllocNavMeshQuery(),dtFreeNavMeshQuery};
     dtQueryFilter filter;
+    mutable std::vector<dtPolyRef> corridor;
+    mutable std::vector<float> corners;
+    mutable std::vector<unsigned char> flags;
   };
 #else
 class Oracle final {

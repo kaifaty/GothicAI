@@ -34,7 +34,9 @@ memory (roads-guidance.txt of the closed-loop runs).
 With --navmesh (the stand's OGNAV001 cache), the oracle of the measurement:
 whether the straight segment from the actor to its progress point, and to the
 first node of a rebuilt route, leaves the walkable surface (a wall, a ledge, a
-drop). An advance is a jump, a catch-up beyond the window or an initial skip.
+drop) where the walkable way around is more than 1 m longer. An advance is a
+jump, a catch-up beyond the window or an initial skip; a start event is a
+rebuild whose first node differs from the previous rebuild's.
 
   python3 scripts/nav_roads_carrot.py --graph roads-graph.json --jump-cm 650 \\
       --navmesh newworld.navmesh --revision before=origin/main --revision after=WORKTREE \\
@@ -314,7 +316,16 @@ def oracle_metrics(result, positions, threshold, answers_by_query):
     advances |= {s["decision"] for s in initial_skips(result, positions, threshold, caught=True)}
     through = sorted(index for index in advances if wall.get(("progress", index)) == 1)
     starts = [index for index, d in enumerate(result["decisions"]) if d["rebuilt"] and ("start", index) in wall]
+    # A new start: the first rebuild, or one whose first node differs from the previous rebuild's.
+    events, previous = [], None
+    for index in starts:
+        first = tuple(result["polylines"][index][0]) if result["polylines"][index] else None
+        if first != previous:
+            events.append(index)
+        previous = first
     return dict(advances=len(advances), advances_through_wall=len(through), advances_through_wall_at=through,
+                start_events=len(events), start_events_through_wall=sum(wall[("start", i)] == 1 for i in events),
+                start_events_through_wall_at=[i for i in events if wall[("start", i)] == 1],
                 progress_behind_wall=sum(1 for (kind, _), answer in wall.items() if kind == "progress" and answer == 1),
                 progress_off_mesh=sum(1 for (kind, _), answer in wall.items() if kind == "progress" and answer < 0),
                 starts=len(starts), starts_through_wall=sum(wall[("start", i)] == 1 for i in starts),
@@ -333,7 +344,8 @@ def summarize(episodes, replays, threshold, oracle=None):
     if oracle is not None:
         for total in totals.values():
             total.update(advances=0, advances_through_wall=0, progress_behind_wall=0, progress_off_mesh=0,
-                         starts=0, starts_through_wall=0, starts_off_mesh=0)
+                         starts=0, starts_through_wall=0, starts_off_mesh=0, start_events=0,
+                         start_events_through_wall=0)
         answers = {}
         for name in names:
             queries = [(index, query) for index, ep in enumerate(episodes)
