@@ -477,8 +477,8 @@ void Quiver::step(const Matrix4x4& pelvis, const Matrix4x4& spine, const std::ve
   const auto frame = restFrame(pelvis,spine);  // the quiver at rest, in the world
   const Vec3 pivot = translation(frame);
 
-  // the give: one turn round the ring (two axes, up to GiveAngle) that leaves the least of the deepest of all
-  // that is in the tube - the leg, the forearm and hand, the flaps, the bow and a two-hander on the back
+  // the give: one turn round the ring (two axes, up to GiveAngle) that leaves the least sum of the squares
+  // of how deep goes what is in the tube - the leg, the forearm and hand, the flaps, the bow and a two-hander on the back
   auto inv = frame;
   inv.inverse();
   const float reachOut = Length*std::tan(GiveAngle*float(M_PI)/180.f) + 2.f;

@@ -16,7 +16,7 @@ class ProtoMesh;
 // only the ring is pushed out, by the worn armour's mesh standing. Rigid, no spring (the pelvis's speeding up of
 // the G2 keys is noise): its turn about the vertical follows half the gait's turn of the pelvis against
 // BIP01 SPINE1, and it gives way to what is in it by one turn round the ring (two axes, up to GiveAngle) that
-// leaves the least of the deepest of all - the right leg, forearm and hand (capsules), the armour's flaps and
+// leaves the least sum of the squares of how deep they go - the right leg, forearm and hand (capsules), the armour's flaps and
 // legs (its points), the bow and a two-hander on the back - followed critically damped, no overshoot. The wide
 // sleeves of robes (cloth) do not push it. The arrows in it are the mesh of the arrow the owner carries, set by
 // its shaft, their tips meeting at the axis at the bottom; how many show goes by steps of their count. The body
