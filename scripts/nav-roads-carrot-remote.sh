@@ -177,7 +177,7 @@ from types import SimpleNamespace
 sys.path.insert(0, str(Path.cwd() / "scripts"))
 import nav_rl as rl
 task, output, manifest, inputs, runner = map(Path, sys.argv[1:])
-values = rl.validation_scenarios(manifest, ["point"])
+values = rl.validation_scenarios(manifest, "point")
 assert len(values) == 60, len(values)
 started = time.monotonic()
 def collect(index, workers):
