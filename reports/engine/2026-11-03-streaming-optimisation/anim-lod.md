@@ -17,14 +17,14 @@
 
 | Читатель | Где | Как закрыт |
 |---|---|---|
-| Теневые тела и клинки ближнего боя, контакты | `Npc::updateMeleeShadow`, `updateMeleeBenchBlade`, `resolveMeleeContacts`, `hitZonesPosed` | Каждый кадр: NPC с оружием в руках, их `target()` и все в 4 м от вооружённого (`pinAnimationLodTargets`) |
+| Теневые тела и клинки ближнего боя, контакты | `Npc::updateMeleeShadow`, `updateMeleeBenchBlade`, `resolveMeleeContacts`, `hitZonesPosed` | Каждый кадр: дерущиеся — оружие в руках и цель, анимация атаки или открытое окно клинка; их `target()` и все в 4 м от дерущегося (`pinAnimationLodTargets`). Одно оружие в руках не держит: монстры и в покое в режиме `Fist`, по переписи облёта это закрепляло 54 % невидимых NPC |
 | Живое кинематическое тело (стрелы, реакции) | `living->moveKinematic`, `closestBone` в `queueArrowPhysics` | Каждый кадр, пока у NPC есть `living` (оно есть только в 20–22 м от героя и у бойцов); перед `queueArrowPhysics` — догон |
 | Рэгдолл | `createRagdoll`, `syncRagdoll` | Каждый кадр при `ragdoll`; создание и так делает `updateAnimation(0,true)` |
 | Mobsi | `Interactive::canSeeNpc` (голова), позиции слотов | Каждый кадр, пока `interactive()!=nullptr`; голова при выборе mobsi — догон через `Npc::mapHeadBone` |
 | Восприятие и зрение | `canSenseNpc`/`canSeeNpc`/`canRayHitPoint`/`canSeeItem`/`canSeeSource`/`canSeeNpcOverEdge`, `viewDirection` (кость BIP01); скриптовые `Npc_CanSee*`; `World::findFreePoint` и др. | Восприятия обрабатываются только у `npcNear` (30 м от героя): там политика `AiNormal`, каждый кадр. Дальше — догон перед чтением: голова через `mapHeadBone`, направление через догон в `canRayHitPoint`/`canSeeItem` |
 | Удар и реакция, кровь, оглушение | `hitReaction`, `queueMeleeReaction`, `setBloodHit`, `bloodWound`, `meleeStunLook` | Догон в начале функции |
 | Выпадение предмета и факела из руки | `dropItem`, `dropTorch` (`pose().bone(ZS_*HAND)`) | Догон в начале функции |
-| Заклинания и снаряды из кости | `World::shootSpell`/`World::shootBullet` (`mapBone`, `mapWeaponBone`) | Заклинатель с оружием (`Mage`) — каждый кадр; кости — через синхронизирующие геттеры |
+| Заклинания и снаряды из кости | `World::shootSpell`/`World::shootBullet` (`mapBone`, `mapWeaponBone`) | Стреляющий и колдующий держит цель — каждый кадр; кости — через синхронизирующие геттеры |
 | Диалог: камера, звук реплики, губы | `cameraBone`, `addDlgSound(mapHeadBone)`, мост ИИ (`npcobserver`, `aibridge`) | Собеседник героя — в 30 м (`AiNormal`); голова и камера-кость — догон через геттеры |
 | Навигационный глаз, учебные NPC, стенды | `navigationEyePose`, `NavDemos`, `BodyObservations`, `BodyArena`, пробы `Pose/Gaze/Lean/Flinch/Aim/TalkGestures/EyeBlink/LipSync::probeNpc` | Каждый кадр (явный список); `navigationEyePose` — догон |
 | Камера героя | `cameraBone`, `MainWindow::tickCamera` | Герой всегда каждый кадр |

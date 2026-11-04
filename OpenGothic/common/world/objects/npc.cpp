@@ -12139,8 +12139,12 @@ void Npc::syncDeferredAnimation() const {
 
 bool Npc::animationLodPinned() const {
   // Melee shadow bodies and blades, living hit bodies, ragdolls and mobsi read
-  // this NPC's bones every frame from world logic.
-  return animLodTargeted || isPlayer() || weaponState()!=WeaponState::NoWeapon ||
+  // this NPC's bones every frame from world logic. A drawn weapon alone does not
+  // pin: monsters keep Fist mode at rest. A fighter has a target, swings, or has
+  // an open shadow-blade window.
+  const bool fighting = weaponState()!=WeaponState::NoWeapon &&
+                        (currentTarget!=nullptr || isAttackAnim() || (meleeShadow && meleeShadow->window));
+  return animLodTargeted || isPlayer() || fighting ||
          ragdoll!=nullptr || living!=nullptr || currentInteract!=nullptr || spellFrozen();
   }
 
