@@ -1,14 +1,4 @@
 # Quick check of the quiver (no video): leather, militia and fire-mage armour; the aim, the bow run, three gaits, sneaking. See quiver-mount.bench for the columns
-# the right side toward the back, nearly rigid (its turn halfway between the pelvis and SPINE1, a stiff spring,
-# it gives way to the thigh). The hero and an npc bowman in five armours: standing with the bow, walking (S_WALKL,
-# the militia's and the relaxed gait) and sneaking with the bow on the back, running with the bow (S_BOWRUNL), the
-# aim and the shot; a two-hander on the back with the bow; 0, 1, 5, 20, 50 arrows. From in front on the right,
-# the right side and behind on the right. slowmo 2: a row of metrics.csv is 1/60 s of the game: qv_armor, qv_leg,
-# qv_arm (cm the armour, the legs, an arm go into the quiver), qv_bow, qv_2h (the bow and the two-hander on the
-# back), qv_blade (an arrow out of the wall), qv_swing/back/outward (deg of the give), qv_twist (deg against
-# SPINE1), qv_mx..qv_mz (the mouth in the pelvis bone's frame), qv_us (the step's cost). A clip to 60 fps in real
-# time: ffmpeg -i x.mp4 -vf setpts=0.5*PTS -r 60 x60.mp4. The quiver's body: OPENGOTHIC_CONTENT with ITRW_QUIVER
-# (reports/content/2026-11-quiver)
 cheat god
 set time 12 0
 view clean
