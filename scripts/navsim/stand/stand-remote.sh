@@ -32,7 +32,7 @@ if [[ "$stage" != selftest ]]; then
   threads=8;memory=6G;max_time=1h
   [[ "$stage" != cost ]] || threads="${2:?cost THREADS}"
   # A quiet machine for the cost when nobody else is queued; otherwise quick, with the snapshot kept.
-  if ! "$root/scripts/gq" status | rg -q 'running|queued'; then job_class=quiet; fi
+  if ! "$root/scripts/gq" status | grep -Eq 'running|queued'; then job_class=quiet; fi
 fi
 "${queue[@]}" --class "$job_class" --threads "$threads" \
   --mem "$memory" --max "$max_time" --name "navsim stand $stage" \
