@@ -1,0 +1,107 @@
+# Clips of the quiver for the user to judge (research.md, give-ab.md): Onar's field, open and level, 16:00 with
+# the sun from in front on the side; the camera 2 m away on the right in front follows the bowman: the whole
+# figure, the quiver large. The hero in light leather walking and running with the bow, in the paladin's plate
+# with the militia's gait; an npc bowman in the bandit's armour walking; close looks at the ring and the straps
+# from behind on the right (the hero turned, so the sun is on his back).
+# slowmo 2: 5.6 s of the game each; to 60 fps in real time: ffmpeg -vf setpts=0.5*PTS -r 60
+cheat god
+set time 16 0
+view clean
+overlay off
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 90
+wait 500
+manual on
+equip ItRw_Bow_L_01
+equip ITAR_Leather_L
+arrows player 20
+cam look 95
+slowmo 2
+wait 600
+cam follow 200 115 -60
+wait 400
+rec probe_frame
+wait 300
+stop
+
+# the hero in light leather, walking with the bow on the back
+walkmode walk
+hold forward 7400
+wait 1200
+rec clip1_lea_walk
+wait 5600
+stop
+release all
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 90
+wait 400
+
+# running with the bow drawn
+walkmode run
+tap bow
+wait 1500
+hold forward 7000
+wait 800
+rec clip2_lea_bowrun
+wait 5600
+stop
+release all
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 90
+wait 400
+tap bow
+wait 1500
+
+# the paladin's plate, the militia's gait
+equip ITAR_PAL_H
+mds player HUMANS_MILITIA.MDS
+walkmode walk
+wait 400
+hold forward 7400
+wait 1200
+rec clip3_pal_militia
+wait 5600
+stop
+release all
+mds player HUMANS_MILITIA.MDS off
+equip ITAR_Leather_L
+walkmode run
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 90
+wait 400
+
+# close looks at the ring and the straps, the same light
+face 0
+cam follow 90 115 -125
+cam look 100
+wait 600
+rec closeup_backright
+wait 300
+stop
+cam follow 90 115 -160
+wait 600
+rec closeup_back
+wait 300
+stop
+cam look 95
+face 90
+
+# an npc bowman in the bandit's armour, walking on the spot
+insert BAU_904_BAUER
+wait 300
+immortal BAU_904_BAUER on
+npcequip BAU_904_BAUER ItRw_Bow_L_01
+npcequip BAU_904_BAUER ITAR_BDT_H
+arrows BAU_904_BAUER 20
+pin BAU_904_BAUER 500 0 0
+watch BAU_904_BAUER
+freeze BAU_904_BAUER
+ani BAU_904_BAUER S_WALKL force
+wait 800
+cam follow 200 115 -130
+wait 400
+rec clip4_npc_bdt_walk
+wait 5600
+stop
+freeze BAU_904_BAUER off
+watch player

@@ -786,9 +786,13 @@ Quiver::Probe MdlVisual::quiverProbe() const {
     return {};
   std::vector<Quiver::SkinPoint> posed;
   quiverPoints(false,posed);
+  std::vector<bool> leftSide(skeleton->nodes.size(),false);
+  for(size_t i=0; i<skeleton->nodes.size(); ++i)
+    leftSide[i] = skeleton->nodes[i].name.find(" L ")!=std::string::npos;
   const size_t spine = quiv.spineBone()<skInst->boneCount() ? quiv.spineBone() : quiv.bone();
   return quiv.probe(renderedBone(quiv.bone()),renderedBone(spine),posed,Quiver::legBones(*skeleton),
-                    Quiver::armBones(*skeleton),carriedPoints(bow,"ZS_BOW"),carriedPoints(sword,"ZS_LONGSWORD"));
+                    Quiver::armBones(*skeleton),carriedPoints(bow,"ZS_BOW"),carriedPoints(sword,"ZS_LONGSWORD"),
+                    leftSide);
   }
 
 bool MdlVisual::setFightMode(asset::MdsFightMode mode) {

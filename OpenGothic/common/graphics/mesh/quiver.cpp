@@ -311,7 +311,8 @@ void Quiver::setTextureOwner(const Vec3& position, bool spatial) {
 
 Quiver::Probe Quiver::probe(const Matrix4x4& pelvis, const Matrix4x4& spine, const std::vector<SkinPoint>& posed,
                             const std::vector<bool>& legBone, const std::vector<bool>& armBone,
-                            const std::vector<Vec3>& bowPts, const std::vector<Vec3>& longPts) const {
+                            const std::vector<Vec3>& bowPts, const std::vector<Vec3>& longPts,
+                            const std::vector<bool>& leftBone) const {
   Probe p;
   p.on = st.on && fitted.valid;
   if(!p.on)
@@ -343,6 +344,8 @@ Quiver::Probe Quiver::probe(const Matrix4x4& pelvis, const Matrix4x4& spine, con
       continue;
     if(pt.bone<armBone.size() && armBone[pt.bone])
       p.arm = std::max(p.arm,depth); else
+    if(pt.bone<legBone.size() && legBone[pt.bone] && pt.bone<leftBone.size() && leftBone[pt.bone])
+      p.legLeft = std::max(p.legLeft,depth);
     if(pt.bone<legBone.size() && legBone[pt.bone]) {
       if(depth>p.leg) {
         Vec3 q = pt.pos;
@@ -495,64 +498,75 @@ void Quiver::step(const Matrix4x4& pelvis, const Matrix4x4& spine, const std::ve
     for(int i=0; i<n; ++i)
       take(n==1 ? o.a : o.a+(o.b-o.a)*(float(i)/float(n-1)),o.r);
     }
-  // the deepest any of them goes into the tube for the axis u (the rest frame, the bottom's direction)
-  auto deepest = [&](const Vec3& u) {
-    float worst = 0;
+  // how much of them is in the tube for the axis u (the rest frame, the bottom's direction): the sum of the
+  // squares of how deep each goes, so each contact down the tube goes out as far as the turn allows
+  auto inside = [&](const Vec3& u) {
+    float sum = 0;
     for(auto& q:near) {
       const Vec3  p = {q.x,q.y,q.z};
       const float t = Vec3::dotProduct(p,u);
       if(t<0.f)
         continue; // over the mouth
       const float tc   = std::min(t,Length);
-      const float dist = (p-u*tc).length();
-      worst = std::max(worst,radiusAt(tc)+q.w-dist);
+      const float d    = radiusAt(tc)+q.w-(p-u*tc).length();
+      // a contact at the ring cannot be turned away (research.md: 17-25 deg for 2-3 cm): it does not count, or
+      // it would hold the quiver turned to the limit and slow it to the contacts down the tube
+      const float w    = std::clamp((tc-RingContact)/RingContact,0.f,1.f);
+      if(d>0.f)
+        sum += w*d*d;
       }
-    return worst;
+    return sum;
     };
-  auto axisOf = [](float deg, float dir) {
-    const float a = deg*float(M_PI)/180.f;
-    return Vec3(std::sin(a)*std::cos(dir),-std::cos(a),std::sin(a)*std::sin(dir));
-    };
-  // from coarse to fine; the last answer seeds it, and a small price on the turn and on the change keeps it
-  // from jumping between equal answers
-  const Vec3 last = Vec3::normalize(Vec3(devTarget.x,-MassAt,devTarget.z));
-  auto score = [&](const Vec3& u) {
-    const float turn   = std::acos(std::clamp(-u.y,-1.f,1.f))*180.f/float(M_PI);
-    const float change = std::acos(std::clamp(Vec3::dotProduct(u,last),-1.f,1.f))*180.f/float(M_PI);
-    return deepest(u) + 0.02f*turn + 0.02f*change;
-    };
-  Vec3  best  = {0,-1,0};
-  float bestS = 1e9f;
-  auto  probe = [&](const Vec3& u) {
-    const float s = score(u);
-    if(s<bestS) {
-      bestS = s;
-      best  = u;
+  // the axis by its tangents across (x, z); no farther than GiveAngle
+  const float maxTan = std::tan(GiveAngle*float(M_PI)/180.f);
+  auto clampTan = [&](float& x, float& z) {
+    const float l = std::hypot(x,z);
+    if(l>maxTan) {
+      x *= maxTan/l;
+      z *= maxTan/l;
       }
     };
-  probe({0,-1,0});
-  if(!near.empty()) {
-    probe(last);
-    for(float deg:{GiveAngle*0.5f,GiveAngle})
-      for(int k=0; k<8; ++k)
-        probe(axisOf(deg,float(k)*float(M_PI)/4.f));
-    // refine on a grid of the offset across the axis round the best
-    float step = GiveAngle*0.25f;
-    for(int level=0; level<3; ++level, step*=0.5f) {
-      const Vec3 c = best;
-      const float cx = std::atan2(c.x,-c.y)*180.f/float(M_PI), cz = std::atan2(c.z,-c.y)*180.f/float(M_PI);
-      for(int i=-1; i<=1; ++i)
-        for(int j=-1; j<=1; ++j) {
-          if(i==0 && j==0)
-            continue;
-          const float ax = (cx+float(i)*step)*float(M_PI)/180.f, az = (cz+float(j)*step)*float(M_PI)/180.f;
-          Vec3 u = Vec3::normalize(Vec3(std::tan(ax),-1.f,std::tan(az)));
-          if(std::acos(std::clamp(-u.y,-1.f,1.f))*180.f/float(M_PI)>GiveAngle)
-            continue;
-          probe(u);
-          }
+  const float lastX = devTarget.x/MassAt, lastZ = devTarget.z/MassAt;
+  // a small price on the turn and on the change keeps it from wandering between equal answers
+  auto score = [&](float x, float z) {
+    const Vec3 u = Vec3::normalize(Vec3(x,-1.f,z));
+    return inside(u) + 2.f*std::hypot(x,z) + 2.f*std::hypot(x-lastX,z-lastZ);
+    };
+  float bx = 0, bz = 0;
+  // nothing in the tube at rest (most frames): the rest, no search
+  if(!near.empty() && inside(Vec3(0,-1,0))>0.f) {
+    // from the last answer or the rest, whichever is better, down the gradient with a step that halves when it
+    // does not help
+    float s0 = score(0,0), sl = score(lastX,lastZ);
+    float x = 0, z = 0, sc = s0;
+    if(sl<s0) {
+      x  = lastX;
+      z  = lastZ;
+      sc = sl;
       }
+    float step = maxTan*0.5f;
+    constexpr float h = 0.004f;
+    for(int it=0; it<6 && step>maxTan*0.02f; ++it) {
+      const float gx = (score(x+h,z)-sc)/h, gz = (score(x,z+h)-sc)/h;
+      const float gl = std::hypot(gx,gz);
+      if(gl<1e-6f)
+        break;
+      float nx = x - gx/gl*step, nz = z - gz/gl*step;
+      clampTan(nx,nz);
+      const float sn = score(nx,nz);
+      if(sn<sc) {
+        x  = nx;
+        z  = nz;
+        sc = sn;
+        step *= 1.2f;
+        } else {
+        step *= 0.5f;
+        }
+      }
+    bx = x;
+    bz = z;
     }
+  const Vec3 best = Vec3::normalize(Vec3(bx,-1.f,bz));
   Vec3 dTarget = {best.x/-best.y*MassAt,0,best.z/-best.y*MassAt};
   devTarget = dTarget;
 

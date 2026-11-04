@@ -41,6 +41,7 @@ class Quiver final {
 
     // the give (research.md): no spring; one turn round the ring that leaves the least of what is in it
     static constexpr float GiveAngle    = 12.f;  // deg at most
+    static constexpr float RingContact  = 7.f;   // cm down the axis: nearer the ring a contact counts less, none at 7
     static constexpr float GiveTime     = 0.15f; // s: the follower is 90% there
     static constexpr float GiveStep     = 1.f;   // deg in 1/60 s at most
     static constexpr float TwistSlow    = 0.6f;  // s: the pelvis's turn against SPINE1 slower than that is a stance,
@@ -153,12 +154,14 @@ class Quiver final {
       float         blade = 0;            // cm an arrow comes out of the tube's wall
       float         yield = 0;            // deg the target gives way to the obstacles
       float         legAt = 0;            // cm down the axis where the leg goes in the deepest
+      float         legLeft = 0;          // cm the left leg goes in
       };
     // posed: the pelvis and SPINE1 in the world, the points of the armour in the world; legBone: a bone of a leg;
     // bow, longsword: the points of those on the back in the world (empty: not there)
     Probe probe(const Tempest::Matrix4x4& pelvis, const Tempest::Matrix4x4& spine, const std::vector<SkinPoint>& posed,
                 const std::vector<bool>& legBone, const std::vector<bool>& armBone,
-                const std::vector<Tempest::Vec3>& bow, const std::vector<Tempest::Vec3>& longsword) const;
+                const std::vector<Tempest::Vec3>& bow, const std::vector<Tempest::Vec3>& longsword,
+                const std::vector<bool>& leftBone = {}) const;
 
     // which bones are a leg's (THIGH, CALF, FOOT, TOE) and an arm's or the head's (left out of the fit)
     static std::vector<bool> legBones(const Skeleton& sk);
