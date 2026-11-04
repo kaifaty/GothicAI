@@ -298,7 +298,36 @@ def report(args):
     write_json(root / "report.json", {**result, "validation": {name: {key: value for key, value in summary.items()
                                                                       if key != "episodes"}
                                                                for name, summary in result["validation"].items()}})
-    print(json.dumps(result["paired"], indent=2))
+    print(markdown(result))
+
+
+def markdown(result):
+    """Report tables: pooled shares after first contact, contacts, carrot sources."""
+    percent = lambda value: "—" if value is None else f"{100 * value:.1f}%".replace(".", ",")
+    header = ("| Конфигурация | Эпизодов | Со сближением | ≥80% в полосе | Полоса 2–5 м | Дальше 5 м | Ближе 2 м "
+              "| Контакты | Контактов в минуту | Виден |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|")
+    def row(name, value):
+        return (f"| {name} | {value['episodes']} | {value['contacted']} | {value['qualified']} | {percent(value['band'])} "
+                f"| {percent(value['far'])} | {percent(value['near'])} | {value['contacts']} "
+                f"| {value['contacts_per_minute']:.2f} | {percent(value['visible'])} |")
+    lines = ["Validation follow:", header]
+    lines += [row(name, summary["all"]) for name, summary in result["validation"].items()]
+    for guidance, models in result["live"].items():
+        lines += ["", f"03-follow-hero, {guidance}:", header]
+        lines += [row(model, value) for model, value in models.items()]
+        lines += ["", "| Модель | Seed | Полоса 2–5 м | Дальше 5 м | Контакты | Полоса за весь горизонт |", "|---|---:|---:|---:|---:|---:|"]
+        for model, value in models.items():
+            lines += [f"| {model} | {seed['seed']} | {percent(seed['band'])} | {percent(seed['far'])} | {seed['contacts']} "
+                      f"| {percent(seed['whole_band'])} |" for seed in value["seeds"]]
+    lines += ["", "Источники морковки (доля решений):", "| Конфигурация | " + " | ".join(SOURCES) + " |",
+              "|---|" + "---:|" * len(SOURCES)]
+    for name, summary in result["validation"].items():
+        lines.append(f"| {name} | " + " | ".join(percent(summary["all"]["sources"][source]) for source in SOURCES) + " |")
+    lines += ["", "Парные разности след − прямая по маршрутам (среднее ± SE):"]
+    for model, metrics in result["paired"].items():
+        lines.append(f"- {model}: " + "; ".join(f"{key} {value['delta']:+.4f} ± {value['se']:.4f} (n={value['n']})"
+                                                 for key, value in metrics.items() if value["n"]))
+    return "\n".join(lines)
 
 
 def main(argv=None):
