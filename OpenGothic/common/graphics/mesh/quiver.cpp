@@ -31,6 +31,27 @@ Matrix4x4 basis(const Vec3& x, const Vec3& y, const Vec3& z, const Vec3& at) {
   return m;
   }
 
+// a rotation by the angle (its sine, cosine) about the unit axis u
+Matrix4x4 rotation(const Vec3& u, float s, float c) {
+  Matrix4x4 m;
+  m.identity();
+  const float t = 1.f-c;
+  const float r[3][3] = {
+    {c+u.x*u.x*t,     u.x*u.y*t-u.z*s, u.x*u.z*t+u.y*s},
+    {u.y*u.x*t+u.z*s, c+u.y*u.y*t,     u.y*u.z*t-u.x*s},
+    {u.z*u.x*t-u.y*s, u.z*u.y*t+u.x*s, c+u.z*u.z*t    },
+    };
+  for(int row=0; row<3; ++row)
+    for(int col=0; col<3; ++col)
+      m.set(col,row,r[row][col]);
+  return m;
+  }
+
+Vec3 turned(const Matrix4x4& m, const Vec3& v) {
+  return {m.at(0,0)*v.x+m.at(1,0)*v.y+m.at(2,0)*v.z, m.at(0,1)*v.x+m.at(1,1)*v.y+m.at(2,1)*v.z,
+          m.at(0,2)*v.x+m.at(1,2)*v.y+m.at(2,2)*v.z};
+  }
+
 float radiusAt(float depth) {
   const float k = std::clamp(depth/Quiver::Length,0.f,1.f);
   return Quiver::MouthRadius + (Quiver::BottomRadius-Quiver::MouthRadius)*k;
@@ -156,30 +177,57 @@ Quiver::Fit Quiver::fit(const Skeleton& sk, const std::vector<SkinPoint>& bind) 
   inv.inverse();
   f.local = inv*basis(x,y,z,mouth);
   f.out   = s;
+  f.fwd   = fwd;
+  f.spine = sk.findNode("BIP01 SPINE1");
+  f.pelvisBind = inv;
+  if(f.spine!=size_t(-1)) {
+    f.spineBind = sk.tr[f.spine];
+    f.spineBind.inverse();
+    }
   f.valid = true;
   return f;
   }
 
-std::vector<Matrix4x4> Quiver::arrowLayout(const Vec3* box, int count) {
+std::vector<Matrix4x4> Quiver::arrowLayout(const ProtoMesh* arrow, int count) {
   std::vector<Matrix4x4> ret;
-  if(box==nullptr || count<=0)
+  if(arrow==nullptr || count<=0)
     return ret;
-  const float len  = box[1].x-box[0].x;
-  const float cy   = (box[0].y+box[1].y)*0.5f, cz = (box[0].z+box[1].z)*0.5f;
+  const Vec3* box = arrow->bbox();
+  const float len = box[1].x-box[0].x;
+  // the shaft runs through the middle of the head (the fifth of the arrow at the tip): the bounds are off it
+  // by the fletching
+  float cy = (box[0].y+box[1].y)*0.5f, cz = (box[0].z+box[1].z)*0.5f;
+  {
+    Vec3 lo = {0,1e9f,1e9f}, hi = {0,-1e9f,-1e9f};
+    bool any = false;
+    for(auto& p:arrow->points)
+      if(p.x<box[0].x+len*0.2f) {
+        lo.y = std::min(lo.y,p.y); lo.z = std::min(lo.z,p.z);
+        hi.y = std::max(hi.y,p.y); hi.z = std::max(hi.z,p.z);
+        any  = true;
+        }
+    if(any) {
+      cy = (lo.y+hi.y)*0.5f;
+      cz = (lo.z+hi.z)*0.5f;
+      }
+  }
   // the arrows stand on the bottom; a long one shows no more than FletchingMax
   const float base = std::clamp(len-(Length-1.f),0.f,FletchingMax);
   const float rin  = MouthRadius-Wall-Shaft;
   for(int i=0; i<count; ++i) {
-    // a sunflower: spread evenly over the mouth, a lone one leans aside
+    // the nocks: a sunflower over the mouth, a lone one aside; the tips: on the axis at the bottom, so the
+    // heads (wider than the bottom leaves to an arrow off the axis) stay in the tube
     const float r     = count==1 ? rin*0.6f : rin*std::sqrt((float(i)+0.5f)/float(count));
     const float an    = float(i)*2.39996f;
     const float lift  = std::fmod(float(i)*0.37f,1.f)*2.f;   // 0..2 cm: not all fletchings level
     const float above = std::min(base+lift,FletchingMax);
-    Matrix4x4 m;
-    m.identity();
-    m.translate(r*std::cos(an),above,r*std::sin(an));
-    m.rotateOY(float(i)*67.f);                                // each turned its own way round its shaft
-    m.mul(basis({0,1,0},{-1,0,0},{0,0,1},{0,0,0}));          // the arrow's +X (the nock) up
+    const Vec3  nock  = {r*std::cos(an),above,r*std::sin(an)};
+    const Vec3  tip   = {0,above-len,0};
+    const Vec3  ax    = Vec3::normalize(nock-tip);            // the arrow's +X: from the tip to the nock
+    // the head's flat across the radius (along the circle), so it reaches out the least
+    Vec3 flat = {-std::sin(an),0,std::cos(an)};
+    flat = Vec3::normalize(flat - ax*Vec3::dotProduct(flat,ax));
+    Matrix4x4 m = basis(ax,Vec3::crossProduct(flat,ax),flat,nock);
     m.translate(-box[1].x,-cy,-cz);
     ret.push_back(m);
     }
@@ -188,12 +236,15 @@ std::vector<Matrix4x4> Quiver::arrowLayout(const Vec3* box, int count) {
 
 void Quiver::set(const State& s, const Fit& f, MeshObjects::Mesh&& b, std::vector<MeshObjects::Mesh>&& a,
                  std::vector<Matrix4x4>&& al) {
+  // a new count of arrows keeps the give: no jump; a new fit (the armour, the skeleton) starts at rest
+  const bool same = fitted.valid && f.valid && st.body==s.body && st.skeleton==s.skeleton;
   st         = s;
   fitted     = f;
   body       = std::move(b);
   arrows     = std::move(a);
   arrowLocal = std::move(al);
-  rest();
+  if(!same)
+    rest();
   }
 
 void Quiver::clear() {
@@ -211,10 +262,34 @@ void Quiver::rebind(const Skeleton& sk) {
     fitted.pelvis = sk.findNode("BIP01 PELVIS");
   }
 
-void Quiver::sync(const Matrix4x4& pelvis) {
+Matrix4x4 Quiver::restFrame(const Matrix4x4& pelvis, const Matrix4x4& spine) const {
+  Matrix4x4 frame = pelvis*fitted.local;
+  if(fitted.spine==size_t(-1))
+    return frame;
+  // the pelvis's and the spine's forward in the world, about the vertical; the quiver turns half the way
+  const Vec3 up = {0,1,0};
+  Vec3 fp = turned(pelvis*fitted.pelvisBind,fitted.fwd), fs = turned(spine*fitted.spineBind,fitted.fwd);
+  fp.y = 0;
+  fs.y = 0;
+  if(fp.length()<1e-3f || fs.length()<1e-3f)
+    return frame;
+  fp = Vec3::normalize(fp);
+  fs = Vec3::normalize(fs);
+  const float half = 0.5f*std::atan2(Vec3::dotProduct(Vec3::crossProduct(fp,fs),up),Vec3::dotProduct(fp,fs));
+  const Vec3  at   = translation(frame);
+  Matrix4x4 m;
+  m.identity();
+  m.translate(at);
+  m.mul(rotation(up,std::sin(half),std::cos(half)));
+  m.translate(at*-1.f);
+  m.mul(frame);
+  return m;
+  }
+
+void Quiver::sync(const Matrix4x4& pelvis, const Matrix4x4& spine) {
   if(!st.on || !fitted.valid)
     return;
-  const auto at = pelvis*fitted.local*swingMatrix();
+  const auto at = restFrame(pelvis,spine)*swingMatrix();
   if(!body.isEmpty())
     body.setObjMatrix(at);
   for(size_t i=0; i<arrows.size() && i<arrowLocal.size(); ++i)
@@ -227,8 +302,9 @@ void Quiver::setTextureOwner(const Vec3& position, bool spatial) {
     a.setTextureOwner(position,spatial);
   }
 
-Quiver::Probe Quiver::probe(const Matrix4x4& pelvis, const std::vector<SkinPoint>& posed,
-                            const std::vector<bool>& legBone, const std::vector<bool>& armBone) const {
+Quiver::Probe Quiver::probe(const Matrix4x4& pelvis, const Matrix4x4& spine, const std::vector<SkinPoint>& posed,
+                            const std::vector<bool>& legBone, const std::vector<bool>& armBone,
+                            const std::vector<Vec3>& bowPts, const std::vector<Vec3>& longPts) const {
   Probe p;
   p.on = st.on && fitted.valid;
   if(!p.on)
@@ -236,20 +312,34 @@ Quiver::Probe Quiver::probe(const Matrix4x4& pelvis, const std::vector<SkinPoint
   p.arrows = int(arrows.size());
   p.mouth  = translation(fitted.local);
   p.out    = fitted.out;
-  auto inv = pelvis*fitted.local*swingMatrix();
+  const auto rest = restFrame(pelvis,spine);
+  auto inv = rest*swingMatrix();
   inv.inverse();
   {
     const Vec3 a = Vec3::normalize(axis);
     p.swing   = std::acos(std::clamp(-a.y,-1.f,1.f))*180.f/float(M_PI);
     p.back    = std::atan2(-a.z,-a.y)*180.f/float(M_PI);
     p.outward = std::atan2( a.x,-a.y)*180.f/float(M_PI);
+    // the rest's turn against SPINE1 about the vertical (half the pelvis's against it)
+    if(fitted.spine!=size_t(-1)) {
+      Vec3 fp = turned(pelvis*fitted.pelvisBind,fitted.fwd), fs = turned(spine*fitted.spineBind,fitted.fwd);
+      fp.y = 0;
+      fs.y = 0;
+      if(fp.length()>1e-3f && fs.length()>1e-3f) {
+        fp = Vec3::normalize(fp);
+        fs = Vec3::normalize(fs);
+        p.twist = 0.5f*std::atan2(Vec3::dotProduct(Vec3::crossProduct(fp,fs),Vec3(0,1,0)),Vec3::dotProduct(fp,fs))*180.f/float(M_PI);
+        }
+      }
   }
-  for(auto& pt:posed) {
-    Vec3 q = pt.pos;
+  auto depthOf = [&](Vec3 q) {
     inv.project(q);
     if(q.y>0 || q.y<-Length)
-      continue;
-    const float depth = radiusAt(-q.y) - std::hypot(q.x,q.z);
+      return 0.f;
+    return std::max(0.f,radiusAt(-q.y) - std::hypot(q.x,q.z));
+    };
+  for(auto& pt:posed) {
+    const float depth = depthOf(pt.pos);
     if(depth<=0)
       continue;
     if(pt.bone<armBone.size() && armBone[pt.bone])
@@ -258,15 +348,17 @@ Quiver::Probe Quiver::probe(const Matrix4x4& pelvis, const std::vector<SkinPoint
       p.leg = std::max(p.leg,depth); else
       p.armor = std::max(p.armor,depth);
     }
-  // the arrows' span along the quiver: the nock's end and the tip of each
+  for(auto& v:bowPts)
+    p.bow = std::max(p.bow,depthOf(v));
+  for(auto& v:longPts)
+    p.longsword = std::max(p.longsword,depthOf(v));
+  // the arrows: the span along the quiver (the nock's end and the tip of each), how far out of the wall
   bool first = true;
   for(size_t i=0; i<arrows.size() && i<arrowLocal.size(); ++i) {
     const auto* pm = arrows[i].protoMesh();
     if(pm==nullptr)
       continue;
-    const Vec3* box = pm->bbox();
-    for(float x:{box[0].x,box[1].x}) {
-      Vec3 v = {x,(box[0].y+box[1].y)*0.5f,(box[0].z+box[1].z)*0.5f};
+    for(auto v:pm->points) {
       arrowLocal[i].project(v);
       if(first) {
         p.top    = v.y;
@@ -275,6 +367,8 @@ Quiver::Probe Quiver::probe(const Matrix4x4& pelvis, const std::vector<SkinPoint
         }
       p.top    = std::max(p.top,v.y);
       p.bottom = std::min(p.bottom,v.y);
+      if(v.y<0 && v.y>-Length)
+        p.blade = std::max(p.blade,std::hypot(v.x,v.z) - radiusAt(-v.y));
       }
     }
   p.bottom += Length;
@@ -322,163 +416,121 @@ void Quiver::rest() {
 
 Matrix4x4 Quiver::swingMatrix() const {
   // the rotation that takes the rest's bottom (0,-1,0) to the axis: about their common normal
-  Matrix4x4 m;
-  m.identity();
   const Vec3  from = {0,-1,0};
   const Vec3  to   = Vec3::normalize(axis);
   const Vec3  k    = Vec3::crossProduct(from,to);
-  const float s    = k.length(), c = Vec3::dotProduct(from,to);
-  if(s<1e-6f)
+  const float s    = k.length();
+  if(s<1e-6f) {
+    Matrix4x4 m;
+    m.identity();
     return m;
-  const Vec3  u = k/s;
-  const float t = 1.f-c;
-  const float r[3][3] = {
-    {c+u.x*u.x*t,     u.x*u.y*t-u.z*s, u.x*u.z*t+u.y*s},
-    {u.y*u.x*t+u.z*s, c+u.y*u.y*t,     u.y*u.z*t-u.x*s},
-    {u.z*u.x*t-u.y*s, u.z*u.y*t+u.x*s, c+u.z*u.z*t    },
-    };
-  for(int row=0; row<3; ++row)
-    for(int col=0; col<3; ++col)
-      m.set(col,row,r[row][col]);
-  return m;
+    }
+  return rotation(k/s,s,Vec3::dotProduct(from,to));
   }
 
-void Quiver::step(const Matrix4x4& pelvis, const std::vector<Obstacle>& obstacles, float dt) {
+void Quiver::step(const Matrix4x4& pelvis, const Matrix4x4& spine, const std::vector<Obstacle>& obstacles, float dt) {
   if(!st.on || !fitted.valid)
     return;
   if(still) {
     rest();
     return;
     }
-  const auto frame = pelvis*fitted.local;          // the quiver at rest, in the world
-  const Vec3 pivot = translation(frame);
-  Vec3 restDir = {0,-1,0};
-  {
-    Vec3 o = {0,0,0}, b = {0,-1,0};
-    frame.project(o);
-    frame.project(b);
-    restDir = Vec3::normalize(b-o);
-  }
-  const Vec3 restAt = pivot + restDir*MassAt;
   // no time: as it was (a forced pose update)
   if(dt<=0.f)
     return;
-  // a jump (a teleport, a load) or the first step: from the rest
-  if(!moving || (pivot-lastPivot).length()>100.f || dt>0.25f) {
-    mass      = restAt;
-    massV     = Vec3();
-    lastPivot = pivot;
-    lastRest  = restAt;
-    axis      = {0,-1,0};
-    moving    = dt<=0.25f;
-    return;
-    }
+  const auto frame = restFrame(pelvis,spine);  // the quiver at rest, in the world
+  const Vec3 pivot = translation(frame);
+  const Vec3 restDir = Vec3::normalize(turned(frame,{0,-1,0}));
 
-  const float w     = 2.f*float(M_PI)*SwingFreq;
-  const float cosMax= std::cos(SwingMax*float(M_PI)/180.f);
-  const Vec3  restV = (restAt-lastRest)/dt;
-  const Vec3  pivV  = (pivot-lastPivot)/dt;
-  const int   n     = std::max(1,int(std::ceil(dt*120.f)));
-  const float h     = dt/float(n);
-  for(int i=1; i<=n; ++i) {
-    const float k   = float(i)/float(n);
-    const Vec3  pv  = lastPivot + (pivot-lastPivot)*k;
-    const Vec3  ra  = lastRest  + (restAt-lastRest)*k;
-    // the strap's spring to the rest and the leather's damping; the pelvis's speeding up is felt as the
-    // rest point runs away from the mass
-    const Vec3  acc = (ra-mass)*(w*w) - (massV-restV)*(2.f*SwingDamp*w);
-    massV += acc*h;
-    mass  += massV*h;
-    // on the sphere round the ring
-    Vec3 d = mass-pv;
-    float len = d.length();
-    if(len<1e-3f) {
-      d   = restDir;
-      len = 1;
-      }
-    d = d/len;
-    const Vec3 rd = Vec3::normalize(ra-pv);
-    const float c = Vec3::dotProduct(d,rd);
-    if(c<cosMax) {
-      const Vec3 side = Vec3::normalize(d - rd*c);
-      d = rd*cosMax + side*std::sqrt(1.f-cosMax*cosMax);
-      }
-    mass = pv + d*MassAt;
-    const Vec3 rel = massV-pivV;
-    massV -= d*Vec3::dotProduct(rel,d);
-    }
-
-  // the legs, the arm and the flaps push it round the ring: each obstacle within the tube moves the axis
-  // away at its depth along it
-  Vec3 a = Vec3::normalize(mass-pivot);
-  const Vec3 before = a;
+  // the target: the rest, turned away from what is in the tube by up to YieldMax at the contact
+  Vec3  target = restDir;
+  float limit  = 1.f; // the cosine of the most it may turn
   for(int pass=0; pass<3; ++pass) {
     bool hit = false;
     for(auto& o:obstacles) {
-      // the closest points of the axis (pivot + a*t, t 0..Length) and the obstacle's segment
+      // the closest points of the axis (pivot + target*t, t 0..Length) and the obstacle's segment
       const Vec3  e  = o.b-o.a;
-      const Vec3  r0 = pivot-o.a;
       const float ee = Vec3::dotProduct(e,e);
-      const float ae = Vec3::dotProduct(a,e);
-      const float ar = Vec3::dotProduct(a,r0);
-      const float er = Vec3::dotProduct(e,r0);
-      float t = 0, u = 0;
-      if(ee<1e-6f) {
-        t = std::clamp(-ar,0.f,Length);
-        } else {
+      float u = 0;
+      if(ee>1e-6f) {
+        const Vec3  r0  = pivot-o.a;
+        const float ae  = Vec3::dotProduct(target,e);
+        const float er  = Vec3::dotProduct(e,r0);
         const float den = ee - ae*ae;
-        t = den>1e-6f ? std::clamp((ae*er - ee*ar)/den,0.f,Length) : 0.f;
-        u = std::clamp((t*ae + er)/ee,0.f,1.f);
-        t = std::clamp(Vec3::dotProduct(o.a+e*u-pivot,a),0.f,Length);
+        const float t0  = den>1e-6f ? std::clamp((ae*er - ee*Vec3::dotProduct(target,r0))/den,0.f,Length) : 0.f;
+        u = std::clamp((t0*ae + er)/ee,0.f,1.f);
         }
-      if(t<2.f)
+      const Vec3  onObs = o.a + e*u;
+      const float t     = std::clamp(Vec3::dotProduct(onObs-pivot,target),0.f,Length);
+      if(t<4.f)
         continue; // at the ring: it cannot turn away there
-      const Vec3  onAxis = pivot + a*t;
-      const Vec3  onObs  = o.a + e*u;
-      Vec3        away   = onAxis-onObs;
-      away -= a*Vec3::dotProduct(away,a);
-      float dist = away.length();
+      Vec3 away = (pivot + target*t) - onObs;
+      away -= target*Vec3::dotProduct(away,target);
+      const float dist = away.length();
       const float need = radiusAt(t) + o.r + PushMargin;
-      if(dist>=need)
+      if(dist>=need || dist<1e-3f)
         continue;
-      if(dist<1e-3f) {
-        // on the axis: away from the body, outward
-        Vec3 out = {frame.at(0,0),frame.at(0,1),frame.at(0,2)};
-        away = Vec3::normalize(out - a*Vec3::dotProduct(out,a));
-        dist = 0;
-        } else {
-        away = away/dist;
-        }
-      a   = Vec3::normalize(a + away*((need-dist)/t));
-      hit = true;
+      target = Vec3::normalize(target + away*((need-dist)/(dist*t)));
+      limit  = std::min(limit,std::cos(std::atan2(YieldMax,t)));
+      hit    = true;
       }
     if(!hit)
       break;
     }
   {
-    // no farther than the swing's limit, also pushed
-    const float c = Vec3::dotProduct(a,restDir);
-    if(c<cosMax) {
-      const Vec3 side = Vec3::normalize(a - restDir*c);
-      a = restDir*cosMax + side*std::sqrt(1.f-cosMax*cosMax);
+    const float c = Vec3::dotProduct(target,restDir);
+    if(c<limit) {
+      const Vec3 side = Vec3::normalize(target - restDir*c);
+      target = restDir*limit + side*std::sqrt(std::max(0.f,1.f-limit*limit));
       }
   }
-  if((a-before).length()>1e-5f) {
-    const Vec3 moved = pivot + a*MassAt;
-    const Vec3 n     = Vec3::normalize(moved-mass);
-    const float vn   = Vec3::dotProduct(massV-pivV,n);
-    if(vn<0.f)
-      massV -= n*vn; // it does not keep running into the leg
-    mass = moved;
+  const Vec3 aim = pivot + target*MassAt;
+
+  // a jump (a teleport, a load) or the first step: at the target
+  if(!moving || (pivot-lastPivot).length()>100.f || dt>0.25f) {
+    mass      = aim;
+    massV     = Vec3();
+    lastPivot = pivot;
+    lastRest  = aim;
+    moving    = true;
+    } else {
+    // the spring to the target: how the pelvis speeds up is felt as the target runs away from the mass
+    const float w      = 2.f*float(M_PI)*SwingFreq;
+    const float cosMax = std::cos(SwingMax*float(M_PI)/180.f);
+    const Vec3  aimV   = (aim-lastRest)/dt;
+    const Vec3  pivV   = (pivot-lastPivot)/dt;
+    const int   n      = std::max(1,int(std::ceil(dt*240.f)));
+    const float h      = dt/float(n);
+    for(int i=1; i<=n; ++i) {
+      const float k  = float(i)/float(n);
+      const Vec3  pv = lastPivot + (pivot-lastPivot)*k;
+      const Vec3  ta = lastRest  + (aim-lastRest)*k;
+      const Vec3  acc = (ta-mass)*(w*w) - (massV-aimV)*(2.f*SwingDamp*w);
+      massV += acc*h;
+      mass  += massV*h;
+      Vec3 d = mass-pv;
+      if(d.length()<1e-3f)
+        d = target;
+      d = Vec3::normalize(d);
+      const Vec3  td = Vec3::normalize(ta-pv);
+      const float c  = Vec3::dotProduct(d,td);
+      if(c<cosMax) {
+        const Vec3 side = Vec3::normalize(d - td*c);
+        d = td*cosMax + side*std::sqrt(1.f-cosMax*cosMax);
+        }
+      mass = pv + d*MassAt;
+      massV -= d*Vec3::dotProduct(massV-pivV,d);
+      }
+    lastPivot = pivot;
+    lastRest  = aim;
     }
 
   // the axis in the quiver's rest frame
   auto inv = frame;
   inv.inverse();
-  Vec3 o = pivot, b = pivot + a;
+  Vec3 o = pivot, b = mass;
   inv.project(o);
   inv.project(b);
-  axis      = Vec3::normalize(b-o);
-  lastPivot = pivot;
-  lastRest  = restAt;
+  axis = Vec3::normalize(b-o);
   }
+

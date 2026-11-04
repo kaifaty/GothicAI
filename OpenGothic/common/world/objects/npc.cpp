@@ -3532,7 +3532,7 @@ void Npc::updateQuiver() {
         arrows.push_back(std::move(view));
         }
       if(!arrows.empty())
-        local = Quiver::arrowLayout(arrows[0].protoMesh()!=nullptr ? arrows[0].protoMesh()->bbox() : nullptr,
+        local = Quiver::arrowLayout(arrows[0].protoMesh(),
                                     int(arrows.size()));
       if(local.size()!=arrows.size())
         arrows.clear();

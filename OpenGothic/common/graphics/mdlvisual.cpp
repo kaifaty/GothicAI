@@ -740,7 +740,8 @@ bool MdlVisual::updateQuiver(const Npc& npc, uint64_t dt) {
         }
       }
     }
-  quiv.step(bones[quiv.bone()],obs,float(dt)*0.001f);
+  const size_t spine = quiv.spineBone()<n ? quiv.spineBone() : quiv.bone();
+  quiv.step(bones[quiv.bone()],bones[spine],obs,float(dt)*0.001f);
   quiverStepUs = float(std::chrono::duration<double,std::micro>(std::chrono::steady_clock::now()-t0).count());
   return true;
   }
@@ -750,7 +751,33 @@ Quiver::Probe MdlVisual::quiverProbe() const {
     return {};
   std::vector<Quiver::SkinPoint> posed;
   quiverPoints(false,posed);
-  return quiv.probe(renderedBone(quiv.bone()),posed,Quiver::legBones(*skeleton),Quiver::armBones(*skeleton));
+  // the bow and a two-hander on the back: their points (a bow, a morph mesh, by its bounds: a bent stave)
+  auto carried = [&](const MeshAttach& att, std::string_view slot) {
+    std::vector<Vec3> ret;
+    const ProtoMesh* pm = att.view.protoMesh();
+    if(pm==nullptr || att.bone!=slot || att.boneId>=skInst->boneCount())
+      return ret;
+    const auto& m = renderedBone(att.boneId);
+    if(!pm->points.empty()) {
+      for(auto p:pm->points) {
+        m.project(p);
+        ret.push_back(p);
+        }
+      return ret;
+      }
+    const Vec3* b    = pm->bbox();
+    const float half = std::max(std::abs(b[0].x),std::abs(b[1].x));
+    for(int i=0; i<=40; ++i) {
+      const float x = -half + 2.f*half*float(i)/40.f;
+      Vec3 p = {x,0,b[1].z-(b[1].z-b[0].z)*(x/half)*(x/half)};
+      m.project(p);
+      ret.push_back(p);
+      }
+    return ret;
+    };
+  const size_t spine = quiv.spineBone()<skInst->boneCount() ? quiv.spineBone() : quiv.bone();
+  return quiv.probe(renderedBone(quiv.bone()),renderedBone(spine),posed,Quiver::legBones(*skeleton),
+                    Quiver::armBones(*skeleton),carried(bow,"ZS_BOW"),carried(sword,"ZS_LONGSWORD"));
   }
 
 bool MdlVisual::setFightMode(asset::MdsFightMode mode) {
@@ -2104,7 +2131,8 @@ void MdlVisual::syncAttaches() {
   for(auto& pin:stuckArrows)
     pin.view.setObjMatrix(renderedBone(pin.bone)*pin.local);
   if(quiv.isShown() && quiv.bone()<skInst->boneCount())
-    quiv.sync(renderedBone(quiv.bone()));
+    quiv.sync(renderedBone(quiv.bone()),
+              renderedBone(quiv.spineBone()<skInst->boneCount() ? quiv.spineBone() : quiv.bone()));
   for(auto& i:effects) {
     i.view.setObjMatrix(pos);
     // i.view.setTarget(targetPos);
