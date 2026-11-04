@@ -772,7 +772,8 @@ def lie_talk(instructions: str) -> Talk:
 
 
 def lie_check(state: dict[str, Any]) -> dict[str, Any]:
-    """The hero's claim lies as «герой»: a belief or doubt about it from him, none as seen."""
+    """The hero's claim lies as «герой»: every belief or doubt about it from him (`ok`). `not_seen`: at least
+    none lies as seen — a doubt without a source gets the code's default «вывел»."""
     items = [
         {"id": i["id"], "section": i["section"], "text": i["text"], "source": i["source"]["kind"]}
         for i in state["items"]
@@ -784,7 +785,9 @@ def lie_check(state: dict[str, Any]) -> dict[str, Any]:
         "items": items,
         "claim_items": claims,
         "seen_claims": seen,
-        "ok": bool(claims) and all(i["source"] == "герой" for i in claims) and not seen,
+        "sources": dict(Counter(i["source"] for i in claims)),
+        "not_seen": bool(claims) and not seen,
+        "ok": bool(claims) and all(i["source"] == "герой" for i in claims),
     }
 
 
@@ -1435,6 +1438,8 @@ def summary(directory: Path, *, emit: bool = True) -> dict[str, Any]:
         "8_lies": {
             "scenarios": f"{lies['passed']} passed, {len(lies['failed'])} failed",
             "fold_source_ok": ((lie_record or {}).get("check") or {}).get("ok"),
+            "fold_not_seen": ((lie_record or {}).get("check") or {}).get("not_seen"),
+            "fold_sources": ((lie_record or {}).get("check") or {}).get("sources"),
         },
     }
     result = {
@@ -1940,7 +1945,16 @@ async def _selftest_run(check: Any, root: Path) -> None:
     )
     seen = mi.new_state(mi.CAVALORN)
     mi.fold(seen, "+ верю видел: бандиты у моста перебиты", names=None, minute=1)
-    check("lie: seen fails", not lie_check(seen)["ok"])
+    check("lie: seen fails", not lie_check(seen)["ok"] and not lie_check(seen)["not_seen"])
+    doubt = mi.new_state(mi.CAVALORN)
+    mi.fold(doubt, "+ сомневаюсь: герой говорит, что перебил бандитов у моста", names=None, minute=1)
+    check(
+        "lie: a doubt without a source",
+        lie_check(doubt)["not_seen"]
+        and not lie_check(doubt)["ok"]
+        and lie_check(doubt)["sources"] == {"вывел": 1},
+        lie_check(doubt),
+    )
 
     # answers: the schedule, three variants, the memory only for items
     plan, skipped = schedule(json.loads(fx["probes"].read_text()), set(states), None)
