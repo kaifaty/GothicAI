@@ -1,6 +1,8 @@
 /* Gothic AI. A letter written by candlelight: the channel's night, its gold and the wax seal's red, with the
    real frames of the game as the only pictures. The hero's lines are gold and the npc's parchment, as in
-   the shorts' subtitles. Every value comes from the tokens below; the rules are in README.md ("Design"). */
+   the shorts' subtitles. Every value comes from the tokens below; the rules are in README.md ("Design").
+   Inlined into every page when the site is built. The valley behind the inner pages and the footer is
+   `--valley-2`, set per screen width by components/SitePage.vue; the other pictures are bundled. */
 :root {
   --night: #14110d;     /* the page */
   --night-1: #1c1813;   /* raised: code, empty frames */
@@ -214,14 +216,16 @@ main > section { padding: var(--section) max(var(--gutter), calc((100% - var(--w
 .devlog, .post, .lost { position: relative; isolation: isolate; }
 .devlog::before, .post::before, .lost::before {
   content: ""; position: absolute; top: 0; left: 50%; width: 100vw; height: 34rem; z-index: -1; transform: translateX(-50%);
-  background: url("art/valley-2.webp") 65% 45% / cover; opacity: 0.3;
+  background: var(--valley-2) 65% 45% / cover; opacity: 0.3;
   -webkit-mask-image: linear-gradient(180deg, #000 25%, transparent); mask-image: linear-gradient(180deg, #000 25%, transparent);
 }
 .foot { position: relative; isolation: isolate; overflow: hidden; }
 .foot::before {
-  content: ""; position: absolute; inset: 0; z-index: -1; background: url("art/valley-2.webp") 60% 38% / cover; opacity: 0.24;
+  content: ""; position: absolute; inset: 0; z-index: -1; background: var(--valley-2) 60% 38% / cover; opacity: 0.24;
   -webkit-mask-image: linear-gradient(180deg, transparent, #000 75%); mask-image: linear-gradient(180deg, transparent, #000 75%);
 }
+/* below the first screen a painted background loads one screen before it shows (site.js marks it is-near) */
+.js .foot:not(.is-near)::before, .js .diary:not(.is-near) { background-image: none; }
 
 /* a painting fades into the night on every side: two soft bands, kept where both are opaque */
 .portrait, .people img {
@@ -294,10 +298,10 @@ main > section { padding: var(--section) max(var(--gutter), calc((100% - var(--w
 .diary {
   --ink-dark: #2b2116; --ink-soft: #4d3d2a;
   position: relative; padding: 5rem 1.5rem 4.5rem; color: var(--ink-dark);
-  background: #c9ad80 url("art/parchment.webp") center / cover;
+  background: #c9ad80 url("../../static/art/parchment.webp") center / cover;
   box-shadow: inset 0 0 6rem rgba(70, 38, 10, 0.55);
-  -webkit-mask: url("art/torn-top.svg") top / 40rem 1.75rem repeat-x, linear-gradient(#000 0 0) center / 100% calc(100% - 3.375rem) no-repeat, url("art/torn-bottom.svg") bottom / 40rem 1.75rem repeat-x;
-  mask: url("art/torn-top.svg") top / 40rem 1.75rem repeat-x, linear-gradient(#000 0 0) center / 100% calc(100% - 3.375rem) no-repeat, url("art/torn-bottom.svg") bottom / 40rem 1.75rem repeat-x;
+  -webkit-mask: url("../../static/art/torn-top.svg") top / 40rem 1.75rem repeat-x, linear-gradient(#000 0 0) center / 100% calc(100% - 3.375rem) no-repeat, url("../../static/art/torn-bottom.svg") bottom / 40rem 1.75rem repeat-x;
+  mask: url("../../static/art/torn-top.svg") top / 40rem 1.75rem repeat-x, linear-gradient(#000 0 0) center / 100% calc(100% - 3.375rem) no-repeat, url("../../static/art/torn-bottom.svg") bottom / 40rem 1.75rem repeat-x;
 }
 @media (min-width: 48rem) { .diary { padding: 6rem 4rem 5.5rem; } }
 .diary h2, .diary h3 { color: var(--ink-dark); }
