@@ -1,6 +1,9 @@
 #version 460
 #extension GL_ARB_separate_shader_objects : enable
 #extension GL_GOOGLE_include_directive : enable
+#if defined(VIRTUAL_SHADOW)
+#extension GL_EXT_control_flow_attributes : enable
+#endif
 
 #define LWC 1
 
@@ -13,11 +16,17 @@
 #if defined(MATERIAL_MAPS)
 #include "lighting/material_brdf.glsl"
 #endif
+#if defined(VIRTUAL_SHADOW)
+#include "virtual_shadow/vsm_sun_shadow.glsl"
+#endif
 
 layout(location = 0) out vec4 outColor;
 
 layout(push_constant, std430) uniform UboPush {
   vec3  originLwc;
+#if defined(VIRTUAL_SHADOW)
+  float vsmMipBias;
+#endif
   } push;
 
 layout(binding = 0, std140) uniform UboScene {
@@ -35,6 +44,14 @@ layout(binding = 12) uniform sampler2D gbufOrm;
 layout(binding = 4) uniform sampler2D textureSm0;
 layout(binding = 5) uniform sampler2D textureSm1;
 #endif
+
+#if defined(VIRTUAL_SHADOW)
+layout(binding = 4) uniform utexture3D pageTbl;
+layout(binding = 6) uniform texture2D  pageData;
+#endif
+
+// geometric normal of the visible surface (LWC), from the depth buffer; vec3(0) where it cannot be told
+vec3 geomNormal = vec3(0);
 
 bool planetOcclusion(float viewPos, vec3 sunDir) {
   const float y = RPlanet + max(viewPos*0.1, 0);
@@ -65,6 +82,45 @@ float calcShadow(vec3 pos, const vec3 normal) {
   }
 #else
 float calcShadow(vec3 pos, const vec3 normal) { return 1.0; }
+#endif
+
+#if defined(VIRTUAL_SHADOW)
+vec3 vsmShadowPos(vec4 wpos, vec4 offset) {
+  vec4 shPos = scene.viewVirtualShadowLwc * wpos + offset;
+  shPos.xyz /= shPos.w;
+  return shPos.xyz;
+  }
+
+vec3 lwcAt(ivec2 p, float z) {
+  const vec4 w = worldPosLwc(vec2(p) + 0.5, z);
+  return w.xyz/w.w;
+  }
+
+// normal of the visible surface from the depth buffer: on each axis the neighbour nearer in depth, so a crease
+// or a silhouette does not tilt it (screen-space derivatives would mix the two surfaces there)
+vec3 depthNormal(ivec2 c, float d) {
+  const ivec2 sz = textureSize(depth, 0) - ivec2(1);
+  const ivec2 r  = min(c + ivec2(1,0), sz), l = max(c - ivec2(1,0), ivec2(0));
+  const ivec2 u  = min(c + ivec2(0,1), sz), b = max(c - ivec2(0,1), ivec2(0));
+  const float dr = texelFetch(depth, r, 0).r, dl = texelFetch(depth, l, 0).r;
+  const float du = texelFetch(depth, u, 0).r, db = texelFetch(depth, b, 0).r;
+  const vec3  p0 = lwcAt(c, d);
+  const vec3  dx = abs(dr-d)<abs(dl-d) ? lwcAt(r, dr) - p0 : p0 - lwcAt(l, dl);
+  const vec3  dy = abs(du-d)<abs(db-d) ? lwcAt(u, du) - p0 : p0 - lwcAt(b, db);
+  const vec3  n  = cross(dx, dy);
+  return dot(n,n)>1e-12 ? normalize(n) : vec3(0);
+  }
+
+// the sun's virtual shadow map (virtual_shadow/vsm_sun_shadow.glsl) at this pixel; the normal offset is the
+// mark pass's, so the same page is found
+float sunShadowVsm(const float depth, const vec3 normal) {
+  const vec4 wpos   = worldPosLwc(gl_FragCoord.xy, depth) + vec4(normal*0.002, 0);
+  const vec3 shPos0 = vsmShadowPos(wpos, vec4(0));
+  const vec2 shPos1 = vsmShadowPos(wpos, scene.vsmDdx).xy;
+  const vec2 shPos2 = vsmShadowPos(wpos, scene.vsmDdy).xy;
+  const vec3 planeN = (geomNormal!=vec3(0)) ? geomNormal : normal;
+  return vsmSunShadow(shPos0, shPos1, shPos2, scene.viewVirtualShadowLwc, planeN, push.vsmMipBias, pageTbl, pageData);
+  }
 #endif
 
 #if defined(RAY_QUERY)
@@ -113,7 +169,11 @@ float shadowFactor(const float depth, const vec3 normal, bool isFlat) {
   if(planetOcclusion(wpos.y, scene.sunDir))
     return 0;
 
+#if defined(VIRTUAL_SHADOW)
+  light *= sunShadowVsm(depth, normal);
+#else
   light *= calcShadow(wpos, normal);
+#endif
 
 #if defined(RAY_QUERY)
     if(light>0.001) {
@@ -134,6 +194,13 @@ void main(void) {
 
   const vec4  diff   = texelFetch(gbufDiffuse, fragCoord, 0);
   const vec3  normal = normalFetch(gbufNormal, fragCoord);
+#if defined(VIRTUAL_SHADOW)
+  // face the geometric normal like the shading one; a disagreeing one is a thin edge or a deep normal map
+  geomNormal = depthNormal(fragCoord, d);
+  geomNormal *= sign(dot(geomNormal, normal));
+  if(dot(geomNormal, normal)<0.3)
+    geomNormal = vec3(0);
+#endif
 
   const bool  isFlat = isGBufFlat(diff.a);
   const float light  = shadowFactor(d, normal, isFlat);

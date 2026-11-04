@@ -84,6 +84,8 @@ class LightGroup final {
       float         range  = 0;
       Tempest::Vec3 color;
       float         cookie = 0; // scene.glsl LightSource
+      float         sourceSize = 6;  // cm, VobLayer::DefaultLightSourceCm
+      float         padding[3] = {};
       };
 
     struct VsmSsbo {

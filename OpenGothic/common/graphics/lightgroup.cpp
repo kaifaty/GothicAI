@@ -1,4 +1,5 @@
 #include "lightgroup.h"
+#include "world/voblayer.h"
 #include "loadprobe.h"
 
 #include <cmath>
@@ -179,6 +180,11 @@ LightGroup::Light LightGroup::add(const asset::LightPreset& vob) {
 LightGroup::Light LightGroup::add(const asset::VLight& vob) {
   auto l = add(static_cast<const asset::LightPreset&>(vob));
   l.setPosition(Vec3(vob.position.x,vob.position.y,vob.position.z));
+  if(const float sourceCm = VobLayer::lightSourceCm(vob); sourceCm!=VobLayer::DefaultLightSourceCm) {
+    std::lock_guard<std::mutex> guard(sync);
+    lightSourceData[l.id].sourceSize = sourceCm;
+    markAsDurtyNoSync(l.id);
+    }
   if(!vob.cookie.empty()) {
     std::lock_guard<std::mutex> guard(sync);
     if(const uint32_t slot = cookieSlot(vob.cookie)) {
@@ -370,6 +376,7 @@ void LightGroup::tick(uint64_t time) {
     ssbo.color  = light.currentColor();
     ssbo.range  = light.isEnabled() ? clampRange(light.currentRange()) : 0;
     ssbo.cookie = dst.cookie;
+    ssbo.sourceSize = dst.sourceSize;
 
     if(std::memcmp(&dst, &ssbo, sizeof(ssbo))==0)
       continue;
@@ -453,3 +460,5 @@ void LightGroup::prepareGlobals(Tempest::Encoder<Tempest::CommandBuffer>& cmd, u
   cmd.setPipeline(Shaders::inst().patch);
   cmd.dispatch(patchBlock.size());
   }
+
+static_assert(VobLayer::DefaultLightSourceCm==6.f, "LightGroup::LightSsbo::sourceSize defaults to it");

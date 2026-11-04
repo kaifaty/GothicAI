@@ -12,6 +12,12 @@ class DrawClusters;
 
 class DrawCommands {
   public:
+    // Meshlet-page pairs the VSM visibility pass may emit a frame: VSM_MAX_MESHLETS in vsm_common.glsl
+    static constexpr uint32_t VsmMaxMeshlets = 512*1024;
+    // the sun's virtual shadow map for a forward-lit draw, or the 1x1x1 table that sends it to the cascades
+    static void bindSunVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals& scene,
+                           uint32_t tblSlot, uint32_t atlasSlot);
+
     enum Type : uint8_t {
       Landscape,
       Static,
@@ -97,6 +103,8 @@ class DrawCommands {
       L_Orm        = 16,
       L_FogLut     = 17,
       L_FogLutMs   = 18,
+      L_VsmPageTbl = 19,
+      L_VsmPageAtlas = 20,
       L_VsmPages   = L_Shadow0,
       L_Lights     = L_Shadow1,
       };

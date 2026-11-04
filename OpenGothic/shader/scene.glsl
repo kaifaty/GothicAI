@@ -49,6 +49,10 @@ struct LightSource {
   float range;
   vec3  color;
   float cookie; // 0: none; else the light mask's slot (integer part) and the light's yaw in turns (fraction)
+  float sourceSize; // cm: the flame's size, which sets the soft edge of its shadow (VSM, light.frag)
+  float padding0;
+  float padding1;
+  float padding2;
   };
 
 struct MorphDesc {

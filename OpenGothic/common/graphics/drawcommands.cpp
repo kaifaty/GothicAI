@@ -65,6 +65,18 @@ DrawCommands::DrawCommands(VisualObjects& owner, DrawBuckets& buckets, DrawClust
 DrawCommands::~DrawCommands() {
   }
 
+void DrawCommands::bindSunVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const SceneGlobals& scene,
+                              uint32_t tblSlot, uint32_t atlasSlot) {
+  // the forward pass's sun shadow (materials/main.frag sunShadow): VSM when its pages are there, else the cascades
+  if(scene.vsmEnabled && scene.vsmPageTbl!=nullptr && !scene.vsmPageTbl->isEmpty() && scene.vsmPageData!=nullptr) {
+    cmd.setBinding(tblSlot,   *scene.vsmPageTbl);
+    cmd.setBinding(atlasSlot, *scene.vsmPageData);
+    } else {
+    cmd.setBinding(tblSlot,   Resources::fallbackPageTable());
+    cmd.setBinding(atlasSlot, Resources::fallbackBlack());
+    }
+  }
+
 bool DrawCommands::isViewEnabled(SceneGlobals::VisCamera viewport) const {
   if(viewport==SceneGlobals::V_Vsm && !(vsmSupported && scene.vsmEnabled))
     return false;
@@ -130,6 +142,7 @@ void DrawCommands::setBindings(Tempest::Encoder<CommandBuffer>& cmd, const DrawC
   if(v==SceneGlobals::V_Main && cx.isShadowmapRequired()) {
     cmd.setBinding(L_Shadow0, *scene.shadowMap[0], Resources::shadowSampler());
     cmd.setBinding(L_Shadow1, *scene.shadowMap[1], Resources::shadowSampler());
+    bindSunVsm(cmd, scene, L_VsmPageTbl, L_VsmPageAtlas);
     }
 
   if(cx.type==Morph && cx.isBindless()) {
@@ -331,8 +344,7 @@ void DrawCommands::visibilityVsm(Encoder<CommandBuffer>& cmd) {
   auto& shaders = Shaders::inst();
 
   auto& view = views[SceneGlobals::V_Vsm];
-  const size_t vsmMax = 1024*1024*4*4; // arbitrary: ~1k clusters per page
-  const size_t visClustersSz = vsmMax*sizeof(uint32_t)*4;
+  const size_t visClustersSz = size_t(VsmMaxMeshlets)*sizeof(uint32_t)*4;
 
   usesSsbo(view.vsmClusters, visClustersSz);
   usesSsbo(view.visClusters, visClustersSz);
@@ -367,7 +379,7 @@ void DrawCommands::visibilityVsm(Encoder<CommandBuffer>& cmd) {
   cmd.setBinding(3, view.indirectCmd);
   cmd.setBinding(4, *scene.vsmPageList);
   cmd.setPipeline(shaders.vsmPackDraw1);
-  cmd.dispatch(8096); // TODO: indirect
+  cmd.dispatch((VsmMaxMeshlets+127)/128); // vsm_pack_draws.comp: 128 threads; TODO: indirect
   // cmd.dispatchIndirect(vsmIndirectCmd, 0);
   }
 

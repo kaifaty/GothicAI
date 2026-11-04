@@ -61,16 +61,18 @@
    "kind": "light",
    "attach": "brazier-1",
    "offset": [
-    4,
-    383,
-    4
+    -3,
+    349,
+    6
    ],
    "range": 500,
    "color": [
     194,
     125,
     56
-   ]
+   ],
+   "source_cm": 50,
+   "why": "in the middle of the flame, 25 cm over the fire's emitter and straight above it: 59 cm higher, the basket shadowed the light under VSM; the flame of a brazier is about half a metre (source_cm)"
   },
   {
    "key": "brazier-2",
@@ -110,16 +112,18 @@
    "kind": "light",
    "attach": "brazier-2",
    "offset": [
-    4,
-    383,
-    4
+    -3,
+    349,
+    6
    ],
    "range": 500,
    "color": [
     194,
     125,
     56
-   ]
+   ],
+   "source_cm": 50,
+   "why": "in the middle of the flame, 25 cm over the fire's emitter and straight above it: 59 cm higher, the basket shadowed the light under VSM; the flame of a brazier is about half a metre (source_cm)"
   }
  ],
  "particles": [

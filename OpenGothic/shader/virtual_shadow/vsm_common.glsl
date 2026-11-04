@@ -15,6 +15,10 @@ const int VSM_FOG_MIP       = 5;
 const int VSM_PAGE_PER_ROW  = 8192/VSM_PAGE_SIZE;
 const int VSM_MAX_PAGES     = VSM_PAGE_PER_ROW * VSM_PAGE_PER_ROW; // 1024;
 const int VSM_CLIPMAP_SIZE  = VSM_PAGE_SIZE * VSM_PAGE_TBL_SIZE;
+// Meshlet-page pairs the visibility pass may emit a frame (peak 18.6k at 1280x720 on Ryzen, 2026-11-04);
+// the cluster buffers are sized to it
+// (Renderer/DrawCommands: VsmMaxMeshlets). Past it, clusters drop out of the shadow.
+const uint VSM_MAX_MESHLETS = 512u*1024u;
 // const int VSM_CUBE_TBL_SIZE = 2;
 
 struct VsmHeader {
@@ -25,6 +29,11 @@ struct VsmHeader {
   uint  pagePerMip[VSM_PAGE_MIPS];
   ivec4 pageBbox[VSM_PAGE_MIPS];
   uint  pageOmniCount;
+  // statistics for OPENGOTHIC_VSM_STATS (Renderer::vsmStats), filled every frame
+  uint  pageListCount;     // entries listed for the allocator: sun pages and light faces
+  uint  pagePlaced;        // entries the allocator placed in the pool
+  uint  omniTileOverflow;  // 16x16 screen tiles with more shadowed lights than a tile holds
+  uint  omniTileLightsMax; // most shadowed lights in one tile
   };
 
 uint packVsmPageInfo(ivec3 at, ivec2 size) {

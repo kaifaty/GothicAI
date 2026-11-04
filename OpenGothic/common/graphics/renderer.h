@@ -86,6 +86,7 @@ class Renderer final {
     void drawHiZ          (Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& view);
     void buildHiZ         (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawVsm          (Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& view);
+    void logVsmStats      (const WorldView& view);
     void drawRtsm         (Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& view);
     void drawRtsmOmni     (Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& view);
     void drawSwr          (Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& view);
@@ -165,6 +166,8 @@ class Renderer final {
       float          vidResIndex        = 0;
 
       float          vsmMipBias         = 0.25; //TODO: set to lower, eventually
+      bool           vsmStats           = false; // OPENGOTHIC_VSM_STATS=1: VSM counters to the log every 5 s
+      float          vsmLampNearCm      = 30;    // [INTERNAL] vsmLampNearCm: a lamp's fixture this close casts no shadow
       } settings;
 
     Frustrum                  frustrum[SceneGlobals::V_Count];
@@ -304,6 +307,8 @@ class Renderer final {
 
       Tempest::StorageImage     fogDbg;
       Tempest::StorageImage     vsmDbg;
+
+      uint64_t                  statsTime = 0; // last OPENGOTHIC_VSM_STATS line, ms
       } vsm;
 
     struct {

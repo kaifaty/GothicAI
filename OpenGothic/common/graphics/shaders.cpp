@@ -378,7 +378,7 @@ void Shaders::compileShaders() noexcept {
     vsmFogTrace        = computeShader("vsm_fog_trace.comp.sprv");
     vsmFog             = fogShader("fog_epipolar");
 
-    vsmDirectLight     = postEffect("direct_light_vsm", RenderState::ZTestMode::NoEqual);
+    vsmDirectLight     = postEffect(string_frm("direct_light_vsm", materialMaps), RenderState::ZTestMode::NoEqual);
     vsmDbg             = postEffect("vsm_dbg", RenderState::ZTestMode::Always);
     vsmRendering       = computeShader("vsm_rendering.comp.sprv");
     }

@@ -71,7 +71,12 @@ class CommandLine {
     bool                isMeshSh     = true;
 #endif
     bool                isBindlessSh = true;
+#if defined(__APPLE__)
+    // virtual shadow maps: off on Metal (M1 Pro: +6.5..21 ms GPU at 2560x1440 without the static cache), -vsm 1 enables
     bool                isVsm        = false;
+#else
+    bool                isVsm        = true;  // virtual shadow maps: sun and lamp shadows, where the GPU can (Shaders::isVsmSupported)
+#endif
     bool                isRtSm       = false;
     GiMethod            isGi         = GiMethod::None;
     bool                isGiSet      = false;  // -gi given: else Gothic picks by the device

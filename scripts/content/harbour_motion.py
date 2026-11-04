@@ -182,7 +182,9 @@ def layer_entries(spec: list[dict], ground=None, visuals=None) -> list[dict]:
     """Layer entries in the order of the placements: emitters and lights as written, meshes on the ground.
 
     An item with `attach` (the key of an earlier entry) and `offset` (cm in that entry's own axes) stands
-    at that point of it: the fire, smoke and light of a brazier at the height of its basket."""
+    at that point of it: the fire and smoke of a brazier at the height of its basket, its light in the middle of
+    the flame, about 25 cm over the fire's emitter and straight above it. A light's `source_cm` is the size of
+    its flame (the softness of its VSM shadow, docs/asset-migration.md): about 50 for a brazier."""
     entries = []
     # a mesh with its own position (a model such as the lamp post has no box to set it on the ground)
     meshes = [item for item in spec if item['kind'] == 'mesh' and 'position' not in item]
@@ -216,6 +218,8 @@ def layer_entries(spec: list[dict], ground=None, visuals=None) -> list[dict]:
         elif item['kind'] == 'light':
             entry['range'] = float(item['range'])
             entry['color'] = [int(v) for v in item['color']]
+            if 'source_cm' in item:
+                entry['source_cm'] = float(item['source_cm'])
         else:
             raise ValueError(f"{item['key']}: kind {item['kind']!r}")
         entries.append(entry)
