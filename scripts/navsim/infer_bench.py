@@ -8,8 +8,9 @@ One command from this checkout (uv setup, execution and download included)::
 Use quiet when admission is expected within 30 minutes. The launcher submits
 through scripts/gq with --threads 8 --mem 6G --gpu-mem 6G; uv creates
 ~/gothic-ai/nav-sim-research/inference/.venv. Raw samples go through gq --archive
-to /mnt/shared/gothic-ai/nav-sim-research/inference/<run>/, and only results.json
-is downloaded into the research data/inference directory. Remove .venv after
+to /mnt/shared/gothic-ai/nav-sim-research/inference/<run>/ with the full report.
+Only a compact results.json with the NAS path and SHA-256 is saved in the
+research data/inference directory. Remove .venv after
 the final run. No model is executed on the launching Mac.
 
 Method / preflight research:
@@ -42,6 +43,7 @@ Each cell runs in a fresh process to release graph pools and isolate CUDA OOM.
 from __future__ import annotations
 
 import argparse
+import copy
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -67,6 +69,32 @@ def command(*args):
 def write_json(path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, indent=2, allow_nan=False) + "\n")
+
+
+def compact_report(report, raw_results_path, raw_results_sha256):
+    """Keep measurement values intact; retain verbose diagnostics only on NAS."""
+    result = copy.deepcopy(report)
+    for cell in result["cells"]:
+        snapshots = [cell["machine_before"], cell["machine_after"]]
+        if cell["kind"] == "metadata":
+            meta = cell["metadata"]
+            build = meta["torch_build"]
+            meta["torch_build"] = dict(
+                torch=meta["torch"], cuda=meta["cuda"], cudnn=meta["cudnn"],
+                cpu_capability=next(line.split(":", 1)[1].strip()
+                                    for line in build.splitlines() if "CPU capability usage:" in line),
+                cpu_flags=build.split("CXX_FLAGS=", 1)[1].split(", LAPACK_INFO=", 1)[0].strip())
+            snapshots.append(meta["snapshot"])
+        for snapshot in snapshots:
+            rows = (line.split() for line in snapshot.pop("gq_status").splitlines())
+            snapshot["running_jobs"] = [row[0] for row in rows if len(row) > 3 and row[3] == "running"]
+    if "execution_history" in result:
+        fields = ("gq_job_id", "outcome", "client_exit_code", "gq_exit_code",
+                  "runtime_seconds", "raw_results_path")
+        result["execution_history"] = [{k: entry[k] for k in fields if k in entry}
+                                       for entry in result["execution_history"]]
+    result.update(raw_results_path=raw_results_path, raw_results_sha256=raw_results_sha256)
+    return result
 
 
 def load_snapshot():
@@ -101,8 +129,9 @@ exec .venv/bin/python scripts/navsim/infer_bench.py --output {shlex.quote(output
                   "--", "bash", "-lc", body)
     print(f"gq submitted {job}; reconnect with scripts/gq wait {job}", flush=True)
     subprocess.run([str(ROOT / "scripts/gq"), "wait", job], check=True)
-    (ROOT / REPORT).parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["scp", f"ryzen:{archive}/results.json", str(ROOT / REPORT)], check=True)
+    raw_path = f"{archive}/results.json"
+    raw = subprocess.check_output(["ssh", "ryzen", f"cat {shlex.quote(raw_path)}"])
+    write_json(ROOT / REPORT, compact_report(json.loads(raw), raw_path, hashlib.sha256(raw).hexdigest()))
 
 
 def setup_torch(args, cell):
