@@ -251,6 +251,8 @@ def summarize(directory: Path, metadata: dict, decisions: list[dict], teacher_di
     summary = {
         "schema": 1, "success": bool(episode["success"]), "elapsed_seconds": elapsed_ms / 1000,
         "base_fingerprint": episode.get("base_fingerprint"),
+        # Requested place pace and the pace the runner applied (follow always runs).
+        "forced_pace": episode.get("forced_pace"), "pace": episode.get("pace"),
         "path_length_m": travelled / 100, "teacher_path_length_m": None if teacher_length is None else teacher_length / 100,
         "path_to_teacher_ratio": travelled / teacher_length if teacher_length else None,
         "standing_seconds": float(dt[standing].sum()), "circling_seconds": float(dt[circling].sum()),

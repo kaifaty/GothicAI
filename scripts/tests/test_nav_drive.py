@@ -391,9 +391,12 @@ def test_live_trace_fixture_renders_and_keeps_metrics_factual(tmp_path, monkeypa
     assert live.summarize(root, metadata, decisions)["base_fingerprint"] is None
     episode = json.loads((root / "episode.json").read_text())
     episode["base_fingerprint"] = "a" * 64
+    episode.update(forced_pace="walk", pace="run")  # Request and applied pace (follow runs) stay distinct.
     (root / "episode.json").write_text(json.dumps(episode))
     report = live.render_run(root)
     assert report["base_fingerprint"] == "a" * 64
+    assert (report["forced_pace"], report["pace"]) == ("walk", "run")
+    assert json.loads((root / "summary.json").read_text())["pace"] == "run"
     assert report["decision_count"] == 12 and report["observation_frames"] == 3
     assert report["standing_seconds"] == pytest.approx(.2)
     assert report["circling_seconds"] == pytest.approx(.2)
@@ -1104,3 +1107,79 @@ def test_live_extension_checks_budget_and_compares_follow_with_a_safe_counter(tm
     result = live.read_json(extension / 'result.json')
     assert result['validation_candidates'] == 121 and result['visible_goals'] == 79
     assert result['static_candidates'] == 1 and result['selected_static'] == validation[0]['id']
+
+
+def test_live_game_gets_frozen_place_pace_only_for_pace_input_weights(tmp_path, monkeypatch):
+    import subprocess
+    import time
+
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1]))
+    import nav_live as live
+
+    suite = Path(__file__).resolve().parents[1] / "nav-live/scenarios.json"
+    cases = {case["id"]: case for case in live.suite_cases(live.read_json(suite))}
+    expected = {case_id: "walk" if case_id.startswith("02-routine-return") else "run" for case_id in cases}
+    assert cases["03-follow-hero"]["pace"] == "run" and sum(pace == "walk" for pace in expected.values()) == 3
+    weights = {}
+    for version in (3, 5):
+        weights[version] = tmp_path / f"v{version}.navbc"
+        weights[version].write_bytes(json.dumps({"version": version}).encode() + b"\n")
+    models = {version: dict(name=f"v{version}", weights=str(path), sha256=str(version), order=0, **live.pace_input(path))
+              for version, path in weights.items()}
+    assert models[5]["pace_input"] is True and "pace_input" not in models[3]
+    args = SimpleNamespace(output=tmp_path, suite=suite, binary=tmp_path / "game", input_sha256={},
+                           inputs=dict(save="save", roads="roads", familiar="familiar", links="links", cache="cache"),
+                           deadline=time.monotonic() + 300)
+    args.binary.write_text("fixture binary")
+    monkeypatch.setenv("OPENGOTHIC_NAV_FORCE_PACE", "walk")  # The submitter's value never reaches the game.
+    monkeypatch.setattr(live, "check_space", lambda unused: 0)
+    seen = {}
+
+    def run(command, env, **kwargs):
+        directory = Path(command[-1])
+        seen[directory] = env.get("OPENGOTHIC_NAV_FORCE_PACE")
+        live.write_json(directory / "episode.json", dict(success=True, elapsed_ms=100, decisions=1))
+        for name in ("actions.txt", "trajectory.txt"):
+            (directory / name).write_text("0\n")
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(live.subprocess, "run", run)
+    for case_id in ("03-follow-hero", "02-routine-return-forest-tree", "05-wall-pocket"):
+        for version, model in models.items():
+            directory = tmp_path / f"v{version}" / case_id
+            episode = live.run_episode(args, cases[case_id], model, 7, directory, recorded=False)
+            pace = expected[case_id] if version == 5 else None
+            assert seen[directory] == pace and episode.get("forced_pace") == pace
+            assert live.actual_inputs(args, cases[case_id], model, 7, False).get("pace") == pace
+    with pytest.raises(ValueError, match="no frozen pace"):
+        live.episode_pace({k: v for k, v in cases["05-wall-pocket"].items() if k != "pace"}, models[5])
+    with pytest.raises(ValueError, match="Invalid place pace"):
+        live.suite_cases({**live.read_json(suite), "scenarios": [
+            dict(scenario, pace="walk") if scenario["goal_kind"] == "follow" else scenario
+            for scenario in live.read_json(suite)["scenarios"]]})
+
+
+@pytest.mark.parametrize("stage", ["drive", "live"])
+def test_pace_launcher_stops_each_missing_precondition_explicitly(tmp_path, stage):
+    import os
+    import subprocess
+
+    script = Path(__file__).resolve().parents[1] / "nav-pace-remote.sh"
+    (tmp_path / "gothic-ai/nav-pace-input/source/snapshot/scripts").mkdir(parents=True)
+    archive = tmp_path / "archive"
+    environment = dict(os.environ, HOME=str(tmp_path), NAV_PACE_ARCHIVE=str(archive))
+
+    def run():
+        result = subprocess.run(["bash", str(script), "run", stage, "snapshot", "revision"], env=environment,
+                                capture_output=True, text=True, timeout=30)
+        return result.returncode, result.stdout + result.stderr
+
+    for missing, create in (("run the smoke stage first", archive / "smoke/passed"),
+                            ("no converted weights", archive / "pace-from-hd/policy.navbc")):
+        code, output = run()
+        assert code == 1 and f"nav-pace {stage}: " in output and missing in output
+        create.parent.mkdir(parents=True, exist_ok=True)
+        create.write_text("fixture\n")
+    if stage == "drive":
+        code, output = run()
+        assert code == 1 and "missing main snapshot" in output
