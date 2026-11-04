@@ -43,7 +43,8 @@
 - слот: у мнения (`opinion:hero`), настроения (`mood`) и «о X» (`other:<id>`) новый пункт закрывает старый;
 - «верю» или «сомневаюсь» тем же текстом о тех же id от другого рассказчика — не новый пункт, а ещё один
   источник в `also`; от того же — `duplicate`, как в v3; о других id — другой пункт;
-- `~` с новым текстом: `о:`, строки и подтверждения пункта — указанные в этой правке, прежние — в `log`;
+- `~`: поля, которые правка задаёт (`о:`, `стр:`, `от:`, сила, важность), заменяют прежние, остальные
+  остаются; новый текст сбрасывает только подтверждения `also`. Прежние значения — в `log`;
 - «сказал X» связан с фактом `rumor` только ссылкой: среди строк пункта есть строка ремарки этого слуха.
   Без неё пункт не связан — правда его не закрывает. Исток — первый рассказчик цепочки слуха, поэтому два
   пересказа одного истока — одно подтверждение;
@@ -942,16 +943,20 @@ def _change(state: dict[str, Any], patch: Mapping[str, Any], minute: int, names:
     for key in ("strength", "importance"):
         if key in tail:
             item[key] = tail[key]
-    if patch["text"]:  # a new claim: the ids, lines and confirmations given now; the old ones stay in the log
+    # what the patch gives replaces what was, the rest stays; the old values go to the log
+    if "about" in tail:
         person = item["slot"].removeprefix("other:") if letter == "д" else ""  # a view keeps its person
-        item["about"] = [person] if person and not person.startswith("name:") else []
-        item["about_names"] = [item["name"]] if person.startswith("name:") else []
-        item.update(episodes=[], remarks=[], also=[])
-    for key in ("about", "about_names", "episodes", "remarks"):
-        item[key] = list(dict.fromkeys(item[key] + tail.get(key, [])))
-    if names is not None and patch["text"]:
-        item["about"] += [id_ for id_ in names.find(patch["text"], heard=False) if id_ not in item["about"]]
-    if source is not None or patch["text"] or tail.get("episodes") or tail.get("remarks"):
+        ids = [person] if person and not person.startswith("name:") else []
+        item["about"] = list(dict.fromkeys(ids + tail["about"]))
+        item["about_names"] = list(dict.fromkeys(([item["name"]] if person.startswith("name:") else [])
+                                                 + tail["about_names"]))
+    if "episodes" in tail:
+        item["episodes"], item["remarks"] = list(tail["episodes"]), list(tail["remarks"])
+    if patch["text"]:
+        item["also"] = []  # the confirmations were of the old text
+        if names is not None:
+            item["about"] += [i for i in names.find(patch["text"], heard=False) if i not in item["about"]]
+    if source is not None or "episodes" in tail:
         base = source or item["source"]
         item["source"] = _sourced(base, letter, item["episodes"], item["remarks"], entries)
     state["log"].append({"op": "change", "id": item["id"], "by": "sol", "minute": minute, "before": before})
@@ -1319,7 +1324,7 @@ async def items_for(
     tokens = tokens or Tokens()
     skip = set(skip)
     seeds = set(names.find(phrase, near)) | {HERO}
-    pool = [i for i in state["items"] if i["section"] not in SLOTS and i["id"] not in skip]
+    pool = [i for i in state["items"] if i["section"] not in SLOTS]  # skip leaves the output, not the links
     reach = {}
     for item in pool:
         if seeds & set(item["about"]):
@@ -1328,7 +1333,7 @@ async def items_for(
     for item in pool:
         if item["id"] not in reach and hops & set(item["about"]):
             reach[item["id"]] = "hop"
-    candidates = [i for i in pool if i["id"] in reach]
+    candidates = [i for i in pool if i["id"] in reach and i["id"] not in skip]
     if not candidates:
         return Digest("", [], 0)
     close, _ = await closeness(phrase, [i["text"] for i in candidates], embed)
@@ -1613,6 +1618,11 @@ def _test_lies(check: _Check, names: Names) -> None:
     apply_truth({LOBART: other}, entries, minute=2400)
     check("change: new ids replace the old", "Q1" not in changed["about"]
           and "MIS_ADDON_CAVALORN_BANDITS" in changed["about"] and changed["closed_by"] is None, changed)
+    fold(other, "+ верю герой: он перебил овец у ручья [о: овцы на поле]", names=names, minute=2060)
+    fold(other, "~ в2 герой: перебил всех овец до одной", names=names, minute=2070)
+    same = find_item(other, "в2")
+    apply_truth({LOBART: other}, entries, minute=2400)
+    check("change: same quest, same truth", "Q1" in same["about"] and same["closed_by"] == "truth", same)
 
     # 2. the hero lied to A, A retold B, B retold C; the truth closes all three. Hearsay is bound to its
     # rumor only by the remark line it cites: a late fold after the truth's rumor closes the claim's
@@ -1801,6 +1811,17 @@ def _test_reader(check: _Check, names: Names) -> None:
     fold(lone, "+ верю видел: Кавалорн сидит у башни", names=names, minute=100)
     found = asyncio.run(items_for(lone, "Ксардас?", names=names))
     check("items only through about", found.ids == [], (found.ids, find_item(lone, "в1")["about"]))
+    kept = new_state(CAVALORN)
+    fold(kept, "+ верю видел: Браго ранен [о: Браго]", names=names, minute=100)
+    fold(kept, "~ в1 видел: он уже поправился", names=names, minute=200)
+    found = asyncio.run(items_for(kept, "Как там Браго?", names=names))
+    check("change keeps unspecified ids", find_item(kept, "в1")["about"] == [BRAGO] and found.ids == ["в1"],
+          (find_item(kept, "в1")["about"], found.ids))
+    linked = new_state(CAVALORN)
+    fold(linked, "+ верю видел: Браго ушёл к Ксардасу [о: Браго, Ксардас]\n+ было 6: Ксардас прислал письмо",
+         names=names, minute=100)
+    found = asyncio.run(items_for(linked, "Как там Браго?", names=names, skip=["в1"]))
+    check("skip leaves links", found.ids == ["б1"], found.ids)
 
 
 def selftest() -> int:
