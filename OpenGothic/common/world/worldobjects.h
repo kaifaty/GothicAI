@@ -195,6 +195,8 @@ class WorldObjects final {
     void           pinAnimationLodTargets();
     bool           mustUpdateAnimation(const Npc& npc, const AnimationLod::View& view) const;
     uint32_t       animationLodFrame = 0;
+    uint64_t       animationLodDeferred = 0;
+    std::vector<Tempest::Vec3> fighters;
     friend struct WorldDataContract;
     void           saveItemPhysics(Serialize& fout) const;
     void           loadItemPhysics(Serialize& fin);

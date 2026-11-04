@@ -896,18 +896,29 @@ bool WorldObjects::makeAnimationLodView(AnimationLod::View& view) const {
   }
 
 void WorldObjects::pinAnimationLodTargets() {
-  for(auto& npc:npcArr)
-    npc->setAnimationLodTargeted(false);
   // A blade's victims and bystanders: their melee shadow bodies are queried
-  // against every swing, and hit reactions read their bones.
+  // against every swing, and hit reactions read their bones. Only NPCs with a
+  // drawn weapon and a target swing; there are few of them.
   constexpr float BladeReach = 400.f;
+  fighters.clear();
   for(auto& npc:npcArr) {
+    npc->setAnimationLodTargeted(false);
     if(npc->weaponState()==WeaponState::NoWeapon || npc->isDead())
       continue;
-    if(auto* t = npc->target())
+    if(auto* t = npc->target()) {
       t->setAnimationLodTargeted(true);
+      fighters.push_back(npc->position());
+      }
+    }
+  if(fighters.empty())
+    return;
+  for(auto& npc:npcArr) {
     const auto at = npc->position();
-    detectNpc(at.x,at.y,at.z,BladeReach,[](Npc& n){ n.setAnimationLodTargeted(true); });
+    for(const auto& f:fighters)
+      if((at-f).quadLength()<BladeReach*BladeReach) {
+        npc->setAnimationLodTargeted(true);
+        break;
+        }
     }
   }
 
@@ -969,7 +980,8 @@ void WorldObjects::updateAnimation(uint64_t dt) {
       }
     });
   AnimationLod::endPass();
-  FrameProfile::add(FrameProfile::Amount::NpcAnimDeferred,deferred.load(std::memory_order_relaxed));
+  animationLodDeferred = deferred.load(std::memory_order_relaxed);
+  FrameProfile::add(FrameProfile::Amount::NpcAnimDeferred,animationLodDeferred);
   // Retiring a shadow window can also run damage scripts here. Scripts may
   // append or remove NPCs, so retain neither vector iterators nor references.
   for(size_t i=0;i<npcArr.size();) {
@@ -1029,7 +1041,9 @@ void WorldObjects::updateAnimation(uint64_t dt) {
 void WorldObjects::catchUpAnimation() {
   // Runs after the camera has moved for this frame and before anything is
   // drawn: an NPC the turn has brought into view gets its pose now.
-  if(!AnimationLod::config().enabled)
+  FrameProfile::add(FrameProfile::Amount::NpcAnimSyncOnRead,AnimationLod::takeSyncs());
+  // Nobody deferred in this frame's pass: every NPC consumed its pending time.
+  if(!AnimationLod::config().enabled || animationLodDeferred==0)
     return;
   AnimationLod::View view;
   if(!makeAnimationLodView(view))
@@ -1046,7 +1060,6 @@ void WorldObjects::catchUpAnimation() {
     });
   AnimationLod::endPass();
   FrameProfile::add(FrameProfile::Amount::NpcAnimCatchUp,caught.load(std::memory_order_relaxed));
-  FrameProfile::add(FrameProfile::Amount::NpcAnimSyncOnRead,AnimationLod::takeSyncs());
   }
 
 void WorldObjects::syncDeferredAnimation() {
