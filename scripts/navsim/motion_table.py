@@ -78,7 +78,6 @@ def key_ids(keys):
 class Episode:
     identifier: str
     family: str
-    source_split: str
     pose: np.ndarray
     keys: np.ndarray
     ids: np.ndarray
@@ -158,12 +157,13 @@ def load_episode(directory, root):
     swimming |= any_frame(lambda f: f["swimming"])
     jump = any_frame(lambda f: f["native_jump"]) | (actions[:n, 5] != 0)
     climb = any_frame(lambda f: f["native_climb"]) | (actions[:n, 6] != 0)
+    climb |= (flags[:n, 3] | np.r_[flags[1:, 3], flags[-1, 3]][:n]).astype(bool)
     # Weapon state is absent in this corpus. Never infer it from measured yaw.
     weapon = "unknown"
     if "weapon_state" in metadata:
         weapon = "unarmed" if metadata["weapon_state"] in (0, "NoWeapon") else "armed"
     relative = directory.relative_to(root)
-    return Episode(str(relative), relative.parts[0], relative.parts[1], trajectory[:n + 1, 1:],
+    return Episode(str(relative), relative.parts[0], trajectory[:n + 1, 1:],
                    actions[:n, 1:5], key_ids(actions[:n, 1:5]), targets(trajectory[:n + 1, 1:]),
                    slope, supported, unsafe, wet, deep, swimming, around(jump), around(climb),
                    weapon, len(durations) - n)
@@ -270,7 +270,7 @@ def rollout(episode, predicted, free, steps):
     valid = free & np.isfinite(predicted).all(axis=1)
     n = len(valid)
     if n < steps:
-        return np.empty((0, 4))
+        return np.empty((0, 5))
     prefix = np.r_[0, np.cumsum(~valid)]
     start = np.flatnonzero(prefix[steps:] == prefix[:-steps])
     end = start + steps
@@ -285,9 +285,10 @@ def rollout(episode, predicted, free, steps):
     world = np.column_stack((delta[:, 0] * np.cos(angle) - delta[:, 2] * np.sin(angle),
                              delta[:, 1], delta[:, 0] * np.sin(angle) + delta[:, 2] * np.cos(angle)))
     error = world - (episode.pose[end, :3] - episode.pose[start, :3])
+    travel = np.r_[0, np.cumsum(np.linalg.norm(episode.target[:, :2], axis=1))]
     return np.column_stack((np.linalg.norm(error, axis=1), np.linalg.norm(error[:, [0, 2]], axis=1),
                             np.abs(error[:, 1]), np.abs(wrap(yaw[end] - yaw[start] -
-                            (episode.pose[end, 3] - episode.pose[start, 3])))))
+                            (episode.pose[end, 3] - episode.pose[start, 3]))), travel[end] - travel[start]))
 
 
 def evaluate(train, test, tables, reference):
@@ -308,7 +309,7 @@ def evaluate(train, test, tables, reference):
     histories = {}
     breakdown = {}
     for history in range(4):
-        errors, used, rollouts = [], [], {seconds: [] for seconds in (1, 3, 10)}
+        errors, moving_errors, used, rollouts = [], [], [], {seconds: [] for seconds in (1, 3, 10)}
         per_family = {}
         bucket_errors = {name: [] for name in classified[test[0].identifier]}
         for e in test:
@@ -316,6 +317,7 @@ def evaluate(train, test, tables, reference):
             free = classified[e.identifier]["free"]
             error = step_errors(predicted, e.target)
             errors.append(error[free])
+            moving_errors.append(error[free & (np.linalg.norm(e.target[:, :2], axis=1) >= 1)])
             used.append(level[free])
             per_family.setdefault(e.family, []).append(error[free])
             for seconds in rollouts:
@@ -324,13 +326,22 @@ def evaluate(train, test, tables, reference):
                 for name, mask in classified[e.identifier].items():
                     bucket_errors[name].append(error[mask])
         levels = np.concatenate(used)
+        replay_summary = {}
+        for seconds, values in rollouts.items():
+            windows = np.concatenate(values)
+            moving = windows[:, 4] >= 1
+            replay_summary[str(seconds)] = {
+                **error_summary(windows[:, :4]), "windows": len(windows),
+                "episodes_with_windows": sum(len(x) > 0 for x in values),
+                "recorded_horizontal_travel_cm": quantiles(windows[:, 4]),
+                "stationary_windows": int((~moving).sum()),
+                "nonstationary": error_summary(windows[moving, :4])}
         histories[str(history)] = {
             "one_step_free": error_summary(np.concatenate(errors)),
+            "one_step_free_nonstationary": error_summary(np.concatenate(moving_errors)),
             "by_family": {f: error_summary(np.concatenate(v)) for f, v in per_family.items()},
             "lookup_levels_free": {str(level): int((levels == level).sum()) for level in range(-2, history + 1)},
-            "rollout_free": {str(seconds): {
-                **error_summary(np.concatenate(v)), "windows": sum(map(len, v)),
-                "episodes_with_windows": sum(len(x) > 0 for x in v)} for seconds, v in rollouts.items()}}
+            "rollout_free": replay_summary}
         if history == 3:
             for name, values in bucket_errors.items():
                 count = sum(int(classified[e.identifier][name].sum()) for e in all_episodes)
@@ -353,6 +364,9 @@ def evaluate(train, test, tables, reference):
                 free_dyaw = np.concatenate(free_values) if free_values else np.empty(0)
                 turns.append({"weapon": weapon, "pace": "walk" if walk else "run", "turn": turn,
                               "steps": len(dyaw), "signed_yaw_deg": quantiles(dyaw),
+                              "absolute_yaw_deg": quantiles(np.abs(dyaw)),
+                              "near_9deg_steps": int((np.abs(np.abs(dyaw) - 9) < .01).sum()),
+                              "near_18deg_steps": int((np.abs(np.abs(dyaw) - 18) < .01).sum()),
                               "free_steps": len(free_dyaw), "free_signed_yaw_deg": quantiles(free_dyaw),
                               "abs_error_vs_unarmed_9deg": quantiles(np.abs(wrap(dyaw + turn * 9))),
                               "abs_error_vs_armed_18deg": quantiles(np.abs(wrap(dyaw + turn * 18)))})
@@ -380,7 +394,6 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--corpus", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--seed", type=int, default=SEED)
     args = parser.parse_args()
     corpus, output = args.corpus.resolve(), args.output.resolve()
     if output.is_relative_to(corpus):
@@ -406,7 +419,7 @@ def main():
         if (index + 1) % 25 == 0:
             print(f"Loaded {index + 1}/{len(directories)} episodes ({time.perf_counter() - started:.1f}s)", flush=True)
     load_seconds = time.perf_counter() - started
-    train, test = split_episodes(episodes, args.seed)
+    train, test = split_episodes(episodes, SEED)
     # One full warmup, then three measured fits/evaluations on the extracted data.
     times = []
     for repeat in range(4):
@@ -417,14 +430,20 @@ def main():
         if repeat:
             times.append(elapsed)
         print(f"Fit/evaluate {repeat}/3: {elapsed:.2f}s", flush=True)
+    metrics_path = root / "collection-metrics.json"
+    metrics_bytes = metrics_path.read_bytes()
+    metrics = json.loads(metrics_bytes)
     result.update({
         "schema_version": 1, "dt_ms": 100,
         "corpus": {"name": manifest["dataset"], "manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
-                   "collection_metrics": json.loads((root / "collection-metrics.json").read_text()),
+                   "collection_metrics": {"path": str(metrics_path),
+                                          "sha256": hashlib.sha256(metrics_bytes).hexdigest(),
+                                          **{k: metrics[k] for k in ("complete", "corpus_version", "demo_version",
+                                              "navigation_memory_version", "by_family", "dataset_bytes")}},
                    "episodes": len(episodes), "steps": sum(len(e.keys) for e in episodes),
                    "partial_steps_excluded": sum(e.partial_steps for e in episodes),
                    "recordings": str(root), "selection": "all recorded teachers, including failures"},
-        "split": {"seed": args.seed, "test_fraction": .2, "algorithm": "random.Random shuffle within sorted families and episode identifiers; round(0.2*n) test per family",
+        "split": {"seed": SEED, "test_fraction": .2, "algorithm": "random.Random shuffle within sorted families and episode identifiers; round(0.2*n) test per family",
                   "train_episode_ids": sorted(e.identifier for e in train),
                   "test_episode_ids": sorted(e.identifier for e in test),
                   "scope": "episode holdout; routes/NPCs may overlap; original source split is retained in identifiers"},
@@ -432,13 +451,14 @@ def main():
             "target_columns": ["forward_cm", "right_cm", "up_cm", "yaw_delta_deg"],
             "frame": "yaw=0 points world +X, right=+Z, up=+Y; rotate displacement by interval-start yaw; yaw errors wrap to [-180,180)",
             "fit": "componentwise median on free training intervals; no validation targets enter any table",
-            "support": "supported at every available safety frame in the closed interval; flags at both NAVDEMO endpoints and physical flags within interval",
-            "free": "supported, no body/physical exceptional flags, max endpoint slope <10deg, water depth <=10cm, outside +/-500ms jump/climb neighborhood, known block reference and no probable block",
+            "support": "supported at every available safety frame in the closed interval; body flags at available NAVDEMO endpoints and physical flags within interval; final full interval has only its start NAVDEMO sample",
+            "free": "supported, no body/physical exceptional flags, max available endpoint slope <10deg, water depth <=10cm, outside +/-500ms jump/climb neighborhood, known block reference and no probable block",
             "block_reference": "training terrain-candidate horizontal displacement p75 per current-key+age; fallback current-key p75",
             "probable_block": "movement key held, reference >=2cm/100ms, actual horizontal displacement <50% reference; slow animation transitions can also trigger this proxy",
             "mask_caveat": "same frozen reference/mask for histories 0..3; uses observed displacement to condition evaluation, so free-only accuracy is optimistic and is not a deployable collision detector",
-            "buckets": "overlap; max endpoint slope; water depth>10cm, deep depth+1cm>=native threshold; jump/climb actions or native physical flags dilated +/-500ms",
+            "buckets": "overlap; max available endpoint slope; water depth>10cm, deep depth+1cm>=native threshold; jump/climb actions or native physical flags (also NAVDEMO climbing) dilated +/-500ms",
             "rollout": "all overlapping 1/3/10s windows with every step free and predicted; true initial position/yaw, actual pre-window key history; rotate next displacement by predicted yaw, no teacher pose correction",
+            "nonstationary": "additional summaries require recorded horizontal path >=1cm per step/window; stationary windows remain in the primary summaries",
             "history_selection": "report all 0..3; history 3 fixed in advance for failure buckets, no test-based tuning",
             "limits": ["Tables reproduce observed root-motion-plus-physics displacement, not isolated animation root motion.",
                        "This measures neither Jolt CharacterVirtual nor the accuracy after replacing physics.",

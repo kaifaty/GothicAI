@@ -70,7 +70,8 @@ def test_exact_known_history_table_and_rollouts(version, tmp_path):
     for horizon in (10, 30, 100):
         error = motion.rollout(test, predicted, free, horizon)
         assert len(error) == len(known) - horizon + 1
-        np.testing.assert_allclose(error, 0, atol=1e-7)
+        np.testing.assert_allclose(error[:, :4], 0, atol=1e-7)
+        assert (error[:, 4] > 1).all()
     result = motion.evaluate([train], [test], tables, reference)
     assert result["history_comparison"]["3"]["one_step_free"]["position_cm"]["p99"] < 1e-8
     assert result["history_comparison"]["0"]["one_step_free"]["position_cm"]["p90"] > .1
