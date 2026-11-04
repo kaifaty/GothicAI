@@ -279,7 +279,7 @@ class Supervisor:
                     if p.health is None or r is None or r.process.returncode is not None:
                         continue  # a restart reports by itself
                     try:
-                        resp = await http.get(p.health)
+                        resp = await _get(http, p.health)
                         health = resp.json() if resp.status_code == 200 else {"ok": False}
                     except (httpx.HTTPError, ValueError):
                         health = {"ok": False}
@@ -341,7 +341,7 @@ async def wait_ready(process: asyncio.subprocess.Process, health: str) -> dict[s
                 if exited.done():
                     raise NotReady(f"exited with code {exited.result()} before it was ready")
                 with contextlib.suppress(httpx.HTTPError, ValueError):
-                    resp = await http.get(health)
+                    resp = await _get(http, health)
                     if resp.status_code == 200:
                         return resp.json()
                 if time.monotonic() > deadline:
@@ -349,6 +349,23 @@ async def wait_ready(process: asyncio.subprocess.Process, health: str) -> dict[s
                 await asyncio.wait({exited}, timeout=0.2)
     finally:
         exited.cancel()
+
+
+async def _get(http: httpx.AsyncClient, url: str) -> httpx.Response:
+    """`http.get` that never loses its caller's cancel. anyio, under httpx, can swallow a `Task.cancel()`
+    that arrives while it connects: its connect_tcp task group takes the cancel for its own, and the request
+    goes on as if nothing happened. The status poll then kept polling after the session's end, and `run()`
+    waited for it forever without stopping the services (#840). Here the request runs in a task of its own,
+    so the cancel reaches the caller whatever the request does with it; the request is waited for (within
+    the client's timeout), so the client is not closed under it."""
+    request = asyncio.create_task(http.get(url))
+    try:
+        return await asyncio.shield(request)
+    except asyncio.CancelledError:
+        request.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await request
+        raise
 
 
 @contextlib.asynccontextmanager
