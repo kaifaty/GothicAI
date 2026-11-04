@@ -346,6 +346,7 @@
 | Съёмка P30 в живой игре на Mac | `scripts/body_live_capture.py live-takeover\|live-group\|live-passive --output DIR`: обычные `GameServer` + `BodyPilot`, существующий `body_url`, MP4 1920×1080/30 FPS + WAV 48 кГц; `scripts/body_live_film.py labels` — решения, HP и треки головы со сверкой `neural-body end`; [команды и ограничения](../scripts/bench/README.md#live-p30-capture-on-mac), [описание](npc-body-control-plan.md), [три дубля и PNG проверки](../reports/npc-body/2026-10-19-live-film/README.md) |
 | Сборка игры | `scripts/build-engine.sh` → `OpenGothic/build/opengothic/Gothic2Notr` |
 | Контрактные тесты движка | цели `gothic-*-contract` в `OpenGothic/CMakeLists.txt`, исходники в `OpenGothic/tests/` |
+| Кэш граней ламп в VSM | `gothic-vsm-cache-test` в `OpenGothic/tests/vsm_cache_test.cpp`: логика `shader/virtual_shadow/vsm_cache.glsl`, собранная как C++, допуск дрожи и постоянный радиус тени, без GPU и данных игры; [шаг 2б](../reports/render-features/2026-11-04-vsm-cache/step-2b.md) |
 | Подмена своих материалов и статичных мешей | цели `gothic-material-texture-test` и `gothic-mesh-gltf-test`, исходники в `OpenGothic/tests/`; фикстуры DDS/GLB/JSON создаются во временных каталогах; генератор бочки — `scripts/meshes/test_make_test_barrel.py` |
 | Подписка тела под lease и с заявкой на захват | `gothic-body-watch-test` в `OpenGothic/tests/body_watch_test.cpp`, настоящие NPC без окна; правила — [`npc-body-api.md`](npc-body-api.md) |
 
