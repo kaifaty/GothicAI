@@ -6,7 +6,8 @@
 <dir>/<variant>/<view>.png and -f1 .. -f6; <dir>/main, <dir>/hard and <dir>/truth must be there. The mask is where
 main differs from 'hard' by more than 2 levels (largest channel, 8 bit). Per view and variant, inside the mask: the
 distance to the truth and to main (mean, and the share above 8 levels), and the flicker, the mean difference of
-consecutive frames over 6 pairs. With --crop: per interior view, a 192x192 window where main and d6 differ most,
+consecutive frames over 6 pairs. A variant passes a view when its distance to the truth is at most main's plus main's
+flicker (the noise of a still camera), and its flicker at most main's +10 %. With --crop: per interior view, a 192x192 window where main and d6 differ most,
 main | d6 | <best> | truth, twice the size.
 """
 import sys
@@ -24,9 +25,9 @@ def load(path: Path) -> np.ndarray:
     return np.asarray(Image.open(path).convert('RGB'), dtype=np.int16)
 
 
-def dist(a: np.ndarray, b: np.ndarray, mask: np.ndarray) -> str:
+def dist(a: np.ndarray, b: np.ndarray, mask: np.ndarray) -> tuple[float, str]:
     d = np.abs(a - b).max(axis=2)[mask]
-    return f'{d.mean():.2f} ({(d > 8).mean() * 100:.1f} %)'
+    return float(d.mean()), f'{d.mean():.2f} ({(d > 8).mean() * 100:.1f} %)'
 
 
 def flicker(run: Path, view: str, mask: np.ndarray) -> float:
@@ -49,19 +50,22 @@ def main() -> None:
         crop = (Path(args[i + 1]), args[i + 2])
         args = args[:i]
     root, variants = Path(args[0]), args[1:]
-    print('| View | mask, % | variant | to truth (>8) | to main (>8) | flicker | flicker vs main |')
-    print('|---|---:|---|---:|---:|---:|---:|')
+    print('| View | mask, % | variant | to truth (>8) | to main (>8) | flicker | flicker vs main | passes |')
+    print('|---|---:|---|---:|---:|---:|---:|---|')
     for view in VIEWS:
         m, h, t = (load(root / r / f'{view}.png') for r in ('main', 'hard', 'truth'))
         mask = np.abs(m - h).max(axis=2) > 2
         if not mask.any():
             continue
         base = flicker(root / 'main', view, mask)
+        mainTruth, _ = dist(m, t, mask)
         for v in ['main'] + variants:
             a = load(root / v / f'{view}.png')
             f = flicker(root / v, view, mask)
-            print(f'| {view} | {mask.mean() * 100:.1f} | {v} | {dist(a, t, mask)} | {dist(a, m, mask)} | {f:.2f} | '
-                  f'{f / base * 100 - 100:+.0f} % |')
+            dt, st = dist(a, t, mask)
+            ok = dt <= mainTruth + base and f <= 1.1 * base
+            print(f'| {view} | {mask.mean() * 100:.1f} | {v} | {st} | {dist(a, m, mask)[1]} | {f:.2f} | '
+                  f'{f / base * 100 - 100:+.0f} % | {"yes" if ok else "**no**"} |')
         if crop and view.startswith('interior') and view != 'interior-1':
             d6 = load(root / 'd6' / f'{view}.png')
             best = load(root / crop[1] / f'{view}.png')
