@@ -422,7 +422,7 @@ value = json.loads((root / 'complete.json').read_text())
 print(value['suite_path'])
 LIVE_SUITE
 )"
-    "$python" -X faulthandler -B -I scripts/nav_live.py pace-v5 --suite "$suite" \
+    "$python" -X faulthandler -B scripts/nav_live.py pace-v5 --suite "$suite" \
       --runtime "$task" --output "$archive/live" --weights "$NAV_PACE_WEIGHTS,$hd/policy.navbc"
     exit
   fi
