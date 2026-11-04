@@ -176,6 +176,8 @@ void forwardGuidance() {
   close(guidance.remainingKnownCm,3500,"known remainder excludes already passed prefix");
   require(guidance.route.nodes==std::vector<size_t>({0,1,2}),"guidance preserves original familiar node IDs");
 
+  // Real decisions move at most 0.5 m; walking passes every 6.5 m window.
+  roads.updateGuidance(knowledge,{800,0,0},goal,guidance);
   roads.updateGuidance(knowledge,{1200,0,0},goal,guidance);
   require(!guidance.rebuilt,"following a route does not rebuild it");
   close(guidance.progressCm,1200,"projection advances along fixed route");
@@ -184,6 +186,10 @@ void forwardGuidance() {
   close(guidance.progressCm,1200,"backward movement cannot decrease projection progress");
   close(guidance.carrot.x,1800,"backward movement cannot move carrot backwards");
 
+  for(const float x:{1800.f,2400.f,3000.f}) {
+    roads.updateGuidance(knowledge,{x,0,0},goal,guidance);
+    require(!guidance.beyondKnown,"familiar road remains ahead");
+    }
   roads.updateGuidance(knowledge,{3500,0,0},goal,guidance);
   require(guidance.beyondKnown && !guidance.rebuilt,"lookahead passing familiar endpoint hands off to eyes");
   close(guidance.carrot.x,goal.x,"carrot after final familiar node is actual goal");
@@ -244,6 +250,59 @@ void guidanceDeviationAndHeight() {
   require(!unknown.rebuilt && unknown.beyondKnown,"empty familiar path remains a stable goal handoff");
   std::puts("guidance deviation: >8 m rebuild from current pose; off-road carrot stays six metres ahead on road; stacked roads and empty graph handled");
   }
+
+void guidanceHairpin() {
+  // A U-shaped road: 20 m east, 10 m north, 40 m west. Near the start the far
+  // leg is closer (3 m) than the first leg (7 m), but it is 47 m ahead in route.
+  const Roads roads({{"a",{0,0,0}},{"b",{2000,0,0}},{"c",{2000,0,1000}},{"e",{-2000,0,1000}}},
+                    {{0,1,2000,true},{1,2,1000,true},{2,3,4000,true}});
+  const Roads::Knowledge knowledge{{1,1,1,1},{1,1,1},false};
+  const Vec3 goal{-2500,0,1000};
+  require(Roads::guidanceWindowCm==650.f,"window is the 6 m lookahead plus one decision at run");
+
+  Roads::Guidance start;
+  roads.updateGuidance(knowledge,{300,0,700},goal,start);
+  require(start.rebuilt && start.route.nodes==std::vector<size_t>({0,1,2,3}),"route starts at the closest node");
+  close(start.progressCm,300,"initial projection stays on the first leg, not on the closer far leg");
+  close(start.carrot.x,900,"initial carrot is six metres along the first leg");
+  close(start.carrot.z,0,"initial carrot is not behind the hairpin");
+
+  Roads::Guidance guidance;
+  roads.updateGuidance(knowledge,{0,0,100},goal,guidance);
+  close(guidance.progressCm,0,"start on the first node");
+  roads.updateGuidance(knowledge,{300,0,700},goal,guidance);
+  require(!guidance.rebuilt,"three metres from the far leg is not a deviation");
+  close(guidance.progressCm,300,"progress does not jump 47 m to the far leg");
+  close(guidance.carrot.x,900,"carrot stays on the first leg");
+  close(guidance.carrot.z,0,"carrot does not move behind the hairpin");
+  roads.updateGuidance(knowledge,{300,0,100},goal,guidance);
+  close(guidance.progressCm,300,"returning to the road keeps progress");
+
+  // Ordinary following: the same projection and carrot as on the whole route.
+  const std::vector<std::pair<Vec3,double>> walk = {
+    {{800,0,50},800}, {{1400,0,-30},1400}, {{1950,0,0},1950}, {{2050,0,300},2300},
+    {{1980,0,700},2700}, {{1700,0,1000},3300}, {{1200,0,950},3800}, {{600,0,1050},4400}};
+  for(const auto& [position,progress]:walk) {
+    roads.updateGuidance(knowledge,position,goal,guidance);
+    require(!guidance.rebuilt,"following the hairpin keeps the route");
+    close(guidance.progressCm,progress,"progress follows the route through the turn");
+    }
+  close(guidance.carrot.x,0,"carrot six metres ahead on the far leg");
+  close(guidance.carrot.z,1000,"carrot on the far leg after the turn");
+
+  // A legitimate shortcut is caught up one window per decision.
+  Roads::Guidance shortcut;
+  roads.updateGuidance(knowledge,{300,0,0},goal,shortcut);
+  roads.updateGuidance(knowledge,{2000,0,500},goal,shortcut);
+  require(!shortcut.rebuilt,"standing on the route is not a deviation");
+  close(shortcut.progressCm,950,"progress grows by at most the window");
+  roads.updateGuidance(knowledge,{2000,0,500},goal,shortcut);
+  close(shortcut.progressCm,1600,"second window");
+  roads.updateGuidance(knowledge,{2000,0,500},goal,shortcut);
+  roads.updateGuidance(knowledge,{2000,0,500},goal,shortcut);
+  close(shortcut.progressCm,2500,"projection reached within the window");
+  std::puts("guidance hairpin: far leg 3 m away does not take progress; following the turn matches the whole-route projection; shortcut caught up 6.5 m per decision");
+  }
 }
 
 int main() {
@@ -253,5 +312,6 @@ int main() {
   roadClassificationSeam();
   forwardGuidance();
   guidanceDeviationAndHeight();
+  guidanceHairpin();
   std::puts("navigation roads contracts passed");
   }
