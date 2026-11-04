@@ -5,6 +5,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -12,6 +13,7 @@
 #include <vector>
 
 #include "physics/dynamicworld.h"
+#include "physics/physics.h"
 #include "utils/keycodec.h"
 
 class Npc;
@@ -62,6 +64,29 @@ struct PlacedItems {
   bool hasFrame=false;
 };
 
+struct ItemHulls {
+  struct ItemHullDrop {
+    Item* item=nullptr;
+    std::string label,symbol;
+    std::vector<Tempest::Vec3> vertices;
+    JPH::ShapeRefC shape;
+    Tempest::Vec3 axis,sleepPosition;
+    Tempest::Matrix4x4 sleepTransform=Tempest::Matrix4x4::mkIdentity();
+    float mass=0,maxJitter=0,extraPaddingCm=0;
+    uint64_t sleepAt=uint64_t(-1);
+    bool belowWorld=false;
+    };
+  std::vector<ItemHullDrop> itemHullDrops;
+  std::unique_ptr<PhysicMeshShape> itemHullSupportShape;
+  DynamicWorld::Item itemHullSupportBody;
+  JPH::ShapeRefC itemHullSupportQuery;
+  Tempest::Vec3 itemHullAnchor,itemHullHero,itemHullNormal{0,1,0};
+  std::string itemHullSurface;
+  uint64_t itemHullStart=0,itemHullSample=uint64_t(-1);
+  std::vector<float> itemHullCosts;
+  bool itemHullTracing=false,itemHullLoad=false;
+};
+
 extern std::string outDir;
 
 void event(std::string_view kind, const std::string& fields = {});
@@ -73,6 +98,12 @@ void arenaAbort(std::string_view reason);
 Tempest::Vec3 movablePosition(const Tempest::Matrix4x4& matrix);
 std::optional<DynamicWorld::MovableVobSnapshot> furnitureBody(World& world,uint32_t zenId);
 void release(PlayerControl& ctrl, KeyCodec::Action a);
+
+void itemHullCensus(World& world);
+void itemHullClear(ItemHulls& state,World& world);
+void itemHullSetup(ItemHulls& state,World& world,Npc& player,std::string_view surface);
+void itemHullSample(ItemHulls& state,World& world);
+void itemHullReport(ItemHulls& state,World& world);
 
 void placedItemsCensus(World& world);
 void placedItemsProbe(PlacedItems& state,World& world,Npc& player);
