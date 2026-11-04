@@ -9,7 +9,7 @@ source_root="$(cd "$stand/../../.." && pwd)"
 task="$(cd "$source_root/.." && pwd)"
 stage="${1:?selftest|run|cost}";threads="${2:?threads}";job_class="${3:?class}"
 input=/mnt/shared/gothic-ai/nav-sim-research/rays
-nas=/mnt/shared/gothic-ai/nav-sim-research/stand
+nas=/mnt/shared/gothic-ai/nav-sim-research/stand/eye  # stand/ also holds the S3 loop runs
 raw="$task/raw"
 export PATH="$HOME/.local/bin:$PATH"
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
@@ -64,7 +64,8 @@ out.write_text(json.dumps({
     "embree": "4.4.0 release archive, sha256 cb3d4402...3c57",
     "eye_core": "OpenGothic/common/game/navigationeye.cpp compiled into the library as is"}, indent=1) + "\n")
 EOF
-if [[ "$stage" == run ]]; then "$py" "$stand/eye_accept.py" parity "$input" "$raw" --threads "$threads"; fi
+if [[ "$stage" == run ]]; then "$py" "$stand/eye_accept.py" parity "$input" "$raw" --threads "$threads"
+else "$py" "$stand/eye_accept.py" parity "$input" "$raw" --reuse; fi  # the current analysis of the stored replay
 "$py" "$stand/eye_accept.py" cost "$input" "$raw" --threads "$list" --agents 2048 | tee "$raw/cost-${list//,/_}.log"
 "$py" "$stand/eye_accept.py" summary "$input" "$raw" "$task/eye.json" --raw-root "$nas"
 mkdir -p "$nas"

@@ -135,7 +135,31 @@ def expected_cache(updates, starts, lengths, near_end: float):
     return dict(valid=valid, ambiguous=ambiguous, time=time, hit=np.where(valid, source["hit"], 0),
                 kind=np.where(valid, source["kind"], 0), distance=np.where(valid, source["distance_cm"], 0),
                 normal_y=np.where(valid, source["normal_y"], 0), far_casts=int(cast.sum()),
-                boundary=int(boundary.sum()))
+                boundary=int(boundary.sum()), events=event)
+
+
+def cache_attribution(updates, starts, lengths, cache, engine_cast, clean):
+    """Which cache slots were last written at a far update where both sides cast and agreed.
+
+    A slot holds the ray's last far cast. Where either side cast at the latest decisive far
+    update and the ray itself differed there (or only one side cast), the slot inherits that
+    ray-level difference; elsewhere it must be equal slot for slot.
+    """
+    now = (EPOCH + updates["elapsed_ms"])[:, None]
+    far = updates["far_updated"].astype(bool)[:, None]
+    stand_cast = far & (cache["time"] == now) & (cache["distance"] > 0)
+    decisive = engine_cast | stand_cast
+    agreed = engine_cast & stand_cast & clean
+    tainted = np.zeros(cache.shape, bool)
+    event = np.full(cache.shape, -1, np.int64)
+    for start, length in zip(starts, lengths):
+        state = np.zeros(cache.shape[1], bool)
+        last = np.full(cache.shape[1], -1, np.int64)
+        for u in range(start, start + length):
+            state = np.where(decisive[u], ~agreed[u], state)
+            last = np.where(decisive[u], u, last)
+            tainted[u], event[u] = state, last
+    return tainted, event
 
 
 def agreement(ref_hit, ref_distance, ref_kind, ref_normal, hit, distance, kind, normal):
@@ -146,8 +170,11 @@ def agreement(ref_hit, ref_distance, ref_kind, ref_normal, hit, distance, kind, 
     return same_hit, close, same_kind, flat, same_hit & close & same_kind & flat
 
 
-def parity(inputs: Path, raw: Path, threads: int):
-    run = replay(inputs, raw, threads)
+def parity(inputs: Path, raw: Path, threads: int, reuse: bool = False):
+    if reuse:  # analyse the stand outputs already in RAW again
+        run = json.loads((raw / "parity.json").read_text())["replay"]
+    else:
+        run = replay(inputs, raw, threads)
     rays = read_rays(inputs / "rays.bin")
     updates, ref = rays.updates, rays.updates["rays"]
     labels, *_ = read_poses(inputs / "poses.txt")
@@ -176,6 +203,10 @@ def parity(inputs: Path, raw: Path, threads: int):
     content = agreement(expected["hit"], expected["distance"], expected["kind"], expected["normal_y"],
                         cache["hit"], cache["distance"], cache["kind"], cache["normal_y"])[-1]
     valid_compared = compared & expected["valid"]
+    ray_clean = strict & (fresh["complete"] == ref["complete"])
+    tainted, event = cache_attribution(updates, starts, lengths, cache, expected["events"], ray_clean)
+    clean_slots, inherited = compared & ~tainted, compared & tainted
+    event_kind = ref["kind"][np.maximum(event, 0), np.arange(eye.RAYS)]
     stand_far = int(schedule["casts"].sum()) - int(schedule["updated"].sum()) * eye.RAYS
     schedule_summary = {
         "updates": len(updates), "far_updated_equal_fraction": float(
@@ -191,10 +222,24 @@ def parity(inputs: Path, raw: Path, threads: int):
         "cache_schedule_mismatches": int((~slot_schedule & compared).sum()),
         "cache_valid_slots": int(valid_compared.sum()),
         "cache_content_equal_fraction": float((content & slot_schedule)[valid_compared].mean()),
+        "complete_mismatches_with_equal_hit": int(((fresh["complete"] != ref["complete"]) & same_hit).sum()),
+        "complete_mismatches_by_engine_kind": {
+            name: int(((fresh["complete"] != ref["complete"]) & (ref["kind"] == k)).sum())
+            for k, name in enumerate(KINDS)},
+        "cache_slots_after_agreed_cast": int(clean_slots.sum()),
+        "cache_schedule_equal_fraction_after_agreed_cast": float(slot_schedule[clean_slots].mean()),
+        "cache_content_equal_fraction_after_agreed_cast": float(
+            (content & slot_schedule)[clean_slots & expected["valid"]].mean()),
+        "cache_slots_after_ray_difference": int(inherited.sum()),
+        "cache_slots_after_ray_difference_by_engine_kind": {
+            name: int((inherited & (event_kind == k)).sum()) for k, name in enumerate(KINDS)},
         "definition": ("Engine cache from rays.bin: per episode and ray, the last far-updated record whose near "
                        "segment missed (no hit, or hit beyond the near end). Hits within 0.1 cm of the near end "
                        "cannot be attributed and their cache slots are excluded until the ray's next far cast. "
-                       "Schedule = same timestamp and validity; content = the four ray criteria."),
+                       "Schedule = same timestamp and validity; content = the four ray criteria. A slot is "
+                       "'after an agreed cast' when at the ray's latest far update where either side cast, both "
+                       "cast and the fresh ray met all four criteria; otherwise it inherits that ray's difference "
+                       "(by_engine_kind: the engine's kind for the ray at that update)."),
     }
     examples = []
     for name in STATIC_KINDS + ("none", "movable_vob"):
@@ -338,6 +383,7 @@ def main():
     p.add_argument("input", type=Path)
     p.add_argument("raw", type=Path)
     p.add_argument("--threads", type=int, default=8)
+    p.add_argument("--reuse", action="store_true", help="analyse stand-*.npy already in RAW")
     c = sub.add_parser("cost")
     c.add_argument("input", type=Path)
     c.add_argument("raw", type=Path)
@@ -353,7 +399,7 @@ def main():
     args = parser.parse_args()
     if args.command == "parity":
         args.raw.mkdir(parents=True, exist_ok=True)
-        result = parity(args.input, args.raw, args.threads)
+        result = parity(args.input, args.raw, args.threads, args.reuse)
         print(json.dumps({k: result[k] for k in ("passed", "gate", "static_all_fraction")}))
     elif args.command == "cost":
         args.raw.mkdir(parents=True, exist_ok=True)

@@ -4,7 +4,7 @@
 #   stand-remote.sh run       # plus acceptance 2 on the engine's rays.bin and the cost on 1 and 8 threads
 #   stand-remote.sh cost 28   # the cost on 28 threads (its own job: the whole free part of Ryzen)
 #   stand-remote.sh clean     # remove ~/gothic-ai/nav-sim-stand on Ryzen
-# Results accumulate in /mnt/shared/gothic-ai/nav-sim-research/stand/ (sha256-checked); run and cost
+# Results accumulate in /mnt/shared/gothic-ai/nav-sim-research/stand/eye/ (sha256-checked); run and cost
 # refresh eye.json -> reports/navigation/2026-11-04-nav-sim-research/data/stand/.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../../.." && pwd)"
@@ -40,5 +40,5 @@ fi
 if [[ "$stage" != selftest ]]; then
   out="$root/reports/navigation/2026-11-04-nav-sim-research/data/stand"
   mkdir -p "$out"
-  rsync -a "ryzen:/mnt/shared/gothic-ai/nav-sim-research/stand/eye.json" "$out/eye.json"
+  rsync -a "ryzen:/mnt/shared/gothic-ai/nav-sim-research/stand/eye/eye.json" "$out/eye.json"
 fi

@@ -40,10 +40,10 @@
 ### Контракты движка, которые стенд повторяет
 
 Сняты разведкой кода 4 ноября; ссылки — на код движка.
-- **Глаз.** 238 лучей: 17 по курсу × 14 по наклону ([navdemos.cpp:154](../OpenGothic/common/navdemos.cpp#L154), [navigationeye.cpp:87](../OpenGothic/common/game/navigationeye.cpp#L87)).
-  - Каждые 100 мс обновляются все лучи на отрезке до 10 м. Лучи, которые там ничего не задели, раз в 500 мс продолжаются дальше. Памяти отдаётся 476 слотов: текущие лучи плюс кэш последних полных дальних ([navigationeye.cpp:163](../OpenGothic/common/game/navigationeye.cpp#L163)).
-  - Поза глаза — кость головы. Если NPC движется, добавляется наклон −27° ([navigationeye.cpp:168](../OpenGothic/common/game/navigationeye.cpp#L168)).
-  - Луч берёт ближайшее попадание без обратных граней ([navigationeye.cpp:31](../OpenGothic/common/game/navigationeye.cpp#L31)).
+- **Глаз.** 238 лучей: 17 по курсу × 14 по наклону ([navdemos.cpp:154](../OpenGothic/common/navdemos.cpp#L154), [navigationeye.cpp:37](../OpenGothic/common/game/navigationeye.cpp#L37)).
+  - Каждые 100 мс обновляются все лучи на отрезке до 10 м. Лучи, которые там ничего не задели, раз в 500 мс продолжаются дальше. Памяти отдаётся 476 слотов: текущие лучи плюс кэш последних полных дальних ([navigationeye.cpp:99](../OpenGothic/common/game/navigationeye.cpp#L99)).
+  - Поза глаза — кость головы. Если NPC движется, добавляется наклон −27° ([navigationeye.cpp:104](../OpenGothic/common/game/navigationeye.cpp#L104)).
+  - Луч берёт ближайшее попадание без обратных граней ([navigationeyeworld.cpp:58](../OpenGothic/common/game/navigationeyeworld.cpp#L58)).
 - **Вход сети.** Вектор 2 166 значений: глаз 238×9, дороги 10, тело 14. У v5 к ним добавляется темп ([navpolicy.cpp:538](../OpenGothic/common/navpolicy.cpp#L538)). Карты near и far идут отдельно, их пишет память.
 - **Действия и движение.**
   - **Головы действий:** forward, strafe и turn принимают −1/0/+1; maneuver — нет, прыжок или лазание ([navpolicy.cpp:699](../OpenGothic/common/navpolicy.cpp#L699)).
