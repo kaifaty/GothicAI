@@ -462,3 +462,59 @@ def test_hit_events_are_the_ones_gothics_own_strikes_carry():
     limb, opt, end = finish_set.hit_events([7, 30])
     assert (limb["type"], limb["slot"]) == (16, "ZS_RIGHTHAND")
     assert (opt["type"], opt["frames"], end["type"], end["frames"]) == (20, [7], 21, [30])
+
+
+def leg_clip(frames: int, root_y: float = 108.0):
+    """Root → thigh → calf → foot → toe, a 90 cm leg with the knee a little bent, the toe node 15 cm ahead."""
+    names = ["BIP01", "BIP01 L THIGH", "BIP01 L CALF", "BIP01 L FOOT", "BIP01 L TOE0"]
+    rests = [np.eye(4) for _ in names]
+    for i, off in ((1, [0, -5.0, 0]), (2, [0, -45.0, 0]), (3, [0, -45.0, 0]), (4, [0, -8.0, 15.0])):
+        rests[i][:3, 3] = off
+    skel = ga.Skeleton([ga.Node(n, i - 1, r) for i, (n, r) in enumerate(zip(names, rests))], np.zeros(3))
+    pos = np.array([[r[:3, 3] for r in rests]] * frames, dtype=float)
+    pos[:, 0] = [0, root_y, 0]
+    bend = np.array([np.cos(0.15), np.sin(0.15), 0, 0])
+    rot = np.tile(np.array([1.0, 0, 0, 0]), (frames, 5, 1))
+    rot[:, 1], rot[:, 2] = bend, bend * np.array([1, -1, 1, 1])
+    return skel, ga.Animation("T", "", 1, 25.0, frames, [0, 1, 2, 3, 4], pos, rot)
+
+
+def test_fix_layer_step_lifts_a_sliding_foot_and_leaves_the_other_frames():
+    import fix_layer
+    skel, anim = leg_clip(10)
+    anim.positions[:, 0, 2] = np.clip(np.arange(10) - 3, 0, 3) * 10.0  # frames 3-6: the body and the foot slide 30 cm
+    orig = ga.Animation(anim.name, "", 1, 25.0, 10, list(anim.node_indices), anim.positions.copy(), anim.rotations.copy())
+    j = skel.index("BIP01 L FOOT")
+    before = np.array([ga.world_pose(skel, anim, f)[j][:3, 3] for f in range(10)])
+    fix_layer.apply(skel, anim, [{"kind": "step", "limb": "L leg", "from": 3, "to": 6, "lift": 8}], floor=0.0)
+    after = np.array([ga.world_pose(skel, anim, f)[j][:3, 3] for f in range(10)])
+    keep = [0, 1, 2, 3, 6, 7, 8, 9]
+    assert np.array_equal(anim.rotations[keep], orig.rotations[keep]) and np.array_equal(anim.positions, orig.positions)
+    assert np.all(after[[4, 5], 1] - before[[4, 5], 1] > 5)  # in the air in the middle
+    assert np.allclose(after[[4, 5], 0], 0, atol=0.5) and before[3, 2] < after[4, 2] < after[5, 2] < before[6, 2]
+
+
+def test_fix_layer_soles_lift_a_toe_out_of_the_floor_and_keep_the_ends():
+    import fix_layer
+    skel, anim = leg_clip(10)
+    down = np.array([np.cos(np.radians(20)), np.sin(np.radians(20)), 0, 0])  # 40° toe down
+    anim.rotations[3:7, 3] = down
+    orig_rot = anim.rotations.copy()
+    t = skel.index("BIP01 L TOE0")
+    toe = lambda f: ga.world_pose(skel, anim, f)[t][1, 3]  # noqa: E731
+    assert min(toe(f) for f in range(3, 7)) < 0
+    fix_layer.apply(skel, anim, [{"kind": "soles", "window": [0, 0, 9, 9], "limbs": ["L leg"], "clear": 3}], floor=0.0)
+    assert all(toe(f) > 3 - 0.05 for f in range(10))
+    assert np.array_equal(anim.rotations[[0, 9]], orig_rot[[0, 9]])  # the ends stay on the stance
+    assert np.array_equal(anim.rotations[:, [0, 1, 2, 4]], orig_rot[:, [0, 1, 2, 4]])  # only the foot turns
+
+
+def test_complete_takes_the_nodes_a_stance_does_not_write_from_the_layer_below():
+    import finish
+    rng = np.random.default_rng(5)
+    ref = ga.Animation("S", "", 1, 25.0, 1, [0, 1], rng.normal(size=(1, 2, 3)), random_quats(rng, (1, 2)))
+    below = ga.Animation("B", "", 1, 25.0, 1, [0, 1, 2], rng.normal(size=(1, 3, 3)), random_quats(rng, (1, 3)))
+    full = finish.complete(ref, below)
+    assert full.node_indices == [0, 1, 2]
+    assert np.allclose(full.rotations[0, :2], ref.rotations[0]) and np.allclose(full.positions[0, :2], ref.positions[0])
+    assert np.allclose(full.rotations[0, 2], below.rotations[0, 2]) and np.allclose(full.positions[0, 2], below.positions[0, 2])
