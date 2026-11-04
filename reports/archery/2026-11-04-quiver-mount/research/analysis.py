@@ -335,7 +335,9 @@ def main() -> int:
         return body.right * math.cos(math.radians(deg)) - body.fwd * math.sin(math.radians(deg))
     places = {
         "now": {"min_push": MIN_OUT},
+        "now_upright": {"back": 0.0, "push": around(0), "tilt_back": 5.0, "tilt_out": 3.0, "min_push": 22.0},
         "behind30": {"back": 0.0, "push": around(30), "tilt_back": 15.0, "tilt_out": 6.0, "min_push": 20.0},
+        "behind30_upright": {"back": 0.0, "push": around(30), "tilt_back": 5.0, "tilt_out": 3.0, "min_push": 20.0},
         "behind60": {"back": 0.0, "push": around(60), "tilt_back": 12.0, "tilt_out": 8.0, "min_push": 17.0},
         "lumbar": {"back": 0.0, "side": 6.0, "height": 108.0, "push": around(90), "tilt_back": 8.0, "tilt_out": 0.0,
                    "tilt_right": -55.0, "min_push": 16.0},
