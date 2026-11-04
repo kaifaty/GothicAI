@@ -107,6 +107,11 @@ Renderer::Renderer() {
     if(settings.vsmLampMode!=0)
       Log::i("vsm: lamp filter study mode = ", m);
     }
+  // OPENGOTHIC_VSM_LAMP_NARROW=<texels>: the widest penumbra filtered by four taps (light.frag, OmniNarrow); 0 always twelve
+  if(const char* narrow = std::getenv("OPENGOTHIC_VSM_LAMP_NARROW")) {
+    settings.vsmLampNarrow = std::max(0.f, float(std::atof(narrow)));
+    Log::i("vsm: lamp filter study narrow penumbra = ", settings.vsmLampNarrow, " texels");
+    }
 
   sky.sampler = Tempest::Sampler::bilinear();
   sky.sampler.vClamp = ClampMode::ClampToEdge;
@@ -209,7 +214,7 @@ void Renderer::setupSettings() {
     shadow.directLightPso = &shaders.directLight;
 
   // point-lights
-  if(settings.vsmEnabled && (settings.vsmLampMode!=0 || settings.vsmStats))
+  if(settings.vsmEnabled && (settings.vsmLampMode!=0 || settings.vsmStats || settings.vsmLampNarrow>=0))
     lights.directLightPso = &shaders.lightsVsmProbe;
   else if(settings.vsmEnabled)
     lights.directLightPso = &shaders.lightsVsm;
@@ -1612,7 +1617,7 @@ void Renderer::logVsmStats(const WorldView& wview) {
     Log::i("vsm lamp filter: filtered = ", filtered, ", penumbra texels <=1 ", share(p[8], filtered),
            " <=1.5 ", share(p[9], filtered), " <=2 ", share(p[10], filtered), " <=3 ", share(p[11], filtered),
            " <=6 ", share(p[12], filtered), " >6 ", share(p[13], filtered),
-           ", search at floor = ", share(p[14], p[3]+p[4]+filtered));
+           ", search at floor = ", share(p[14], p[3]+p[4]+filtered), ", four-tap filter = ", share(p[15], filtered));
     }
   std::memset(p, 0, sizeof(p));
   vsm.lampProbe.update(p, 0, sizeof(p));
@@ -2204,8 +2209,8 @@ void Renderer::drawLights(Encoder<CommandBuffer>& cmd, const WorldView& wview) {
     }
 
   auto& ibo  = Resources::cubeIbo();
-  struct Push { Vec3 originLwc; float vsmLampNear; uint32_t probeMode, probeStamp; } push =
-    {scene.originLwc, settings.vsmLampNearCm, settings.vsmLampMode, 0};
+  struct Push { Vec3 originLwc; float vsmLampNear; uint32_t probeMode, probeStamp; float probeNarrow; } push =
+    {scene.originLwc, settings.vsmLampNearCm, settings.vsmLampMode, 0, settings.vsmLampNarrow};
   if(lights.directLightPso==&shaders.lightsVsmProbe) {
     // the study variant: its counters and a stamp per pixel (light.frag, LampProbe); one frame in 5 s counts
     auto& probe = usesSsboInit(vsm.lampProbe, (16 + size_t(zbuffer.w())*size_t(zbuffer.h()))*sizeof(uint32_t));

@@ -29,6 +29,7 @@ layout(push_constant, std140) uniform Pbo {
 #if defined(VSM_LAMP_PROBE)
   uint  probeMode;  // OPENGOTHIC_VSM_LAMP: 0 the PCSS, 1 'hard' (one gather), 2 'flat' (no receiver plane)
   uint  probeStamp; // not 0: count this frame (OPENGOTHIC_VSM_STATS), the stamp marks a pixel already lit
+  float probeNarrow; // OPENGOTHIC_VSM_LAMP_NARROW: OmniNarrow instead, texels; 0 always twelve taps; <0 the default
 #endif
   } push;
 layout(binding = 0, std140) uniform UboScene {
@@ -124,8 +125,13 @@ const vec2 omniFilter[12] = {
   vec2(-0.6030,-0.1067), vec2(0.5712,-0.3634), vec2(-0.1911,0.7107), vec2(-0.3644,-0.7016),
   vec2(0.7906,0.2887), vec2(-0.8224,0.3395), vec2(0.3965,-0.8472), vec2(0.2930,0.9341)
   };
+// a narrow penumbra: four taps on a square at the twelve's mean radius (their second moment, r^2/2)
+const vec2 omniNarrow[4] = { vec2(0.7071,0.0), vec2(0.0,0.7071), vec2(-0.7071,0.0), vec2(0.0,-0.7071) };
 const float OmniZk        = 0.0309278; // vsmApplyProjective: z = k*(1/fz - 1), k = zNear/(zFar - zNear)
 const float OmniMaxRadius = 24.0;      // texels: the widest search and filter
+// texels: a penumbra up to this half-width is filtered by four taps, not twelve; the gathers' bilinear weights
+// smooth it, and the two filters differ less than TAA's noise (reports/render-features/2026-11-04-lamp-pcss/step-2c.md)
+const float OmniNarrow    = 1.5;
 
 // a cube face's block in the atlas and the receiver in that face's axes
 struct OmniFace {
@@ -235,9 +241,11 @@ float omniShadow(const vec3 P, const vec3 n, const float R, const float S, const
   const vec3  T     = normalize(cross(a, u));
   const vec3  B     = cross(u, T);
   const float texel = 2.0/hf.sz; // angle of a texel at the face's centre
-  // the whole kernel on the home face: no tap needs the neighbour (a face coordinate moves up to 2x the angle)
-  const vec2  fc       = abs(hf.Pf.xy/hf.Pf.z);
-  const bool  homeOnly = max(fc.x, fc.y) + 2.0*OmniMaxRadius*texel < 1.0 - 2.0/hf.sz;
+  // the whole kernel on the home face, so no tap needs the neighbour: by the search's and the filter's own radius.
+  // A turn by a small angle moves a face coordinate x by up to sqrt(1+x^2)*sqrt(1+x^2+y^2) times it, 2.45 at a corner
+  const vec2  fc     = abs(hf.Pf.xy/hf.Pf.z);
+  const float fcMax  = max(fc.x, fc.y);
+  const float fcEdge = 1.0 - 2.0/hf.sz;
 
   const float ign = fract(52.9829189*fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
   const float rot = ign*2.0*M_PI;
@@ -245,11 +253,12 @@ float omniShadow(const vec3 P, const vec3 n, const float R, const float S, const
 
   // blockers: within the cone that one at a fifth of the distance could shadow, S/2*(1/0.2 - 1)/d.
   // Four spread taps first: where they agree (all lit or all blocked, 16 texels) the answer is clear
-  const float searchR = clamp(2.0*S/dist, 1.5*texel, OmniMaxRadius*texel);
+  const float searchR    = clamp(2.0*S/dist, 1.5*texel, OmniMaxRadius*texel);
+  const bool  searchHome = fcMax + 2.5*searchR < fcEdge;
   [[unroll]]
   for(int i=1; i<omniSearch.length(); i+=2) {
     const vec2 o = (rm*omniSearch[i])*searchR;
-    omniGather(u + o.x*T + o.y*B, hf, homeOnly, P, n, R, atlasInv, ratio, count);
+    omniGather(u + o.x*T + o.y*B, hf, searchHome, P, n, R, atlasInv, ratio, count);
     }
 #if defined(VSM_LAMP_PROBE)
   probeEarly = count==0 ? 1u : (count>=2.0*omniSearch.length() ? 2u : 0u);
@@ -262,7 +271,7 @@ float omniShadow(const vec3 P, const vec3 n, const float R, const float S, const
   [[unroll]]
   for(int i=0; i<omniSearch.length(); i+=2) {
     const vec2 o = (rm*omniSearch[i])*searchR;
-    omniGather(u + o.x*T + o.y*B, hf, homeOnly, P, n, R, atlasInv, ratio, count);
+    omniGather(u + o.x*T + o.y*B, hf, searchHome, P, n, R, atlasInv, ratio, count);
     }
 
   // the penumbra's half-width as an angle from the light: S/2*(d2/d1 - 1)/d2
@@ -276,11 +285,30 @@ float omniShadow(const vec3 P, const vec3 n, const float R, const float S, const
     probeBin |= 8u; // reached the filter
   }
 #endif
+  const bool filterHome = fcMax + 2.5*filterR < fcEdge;
+
+  // a narrow penumbra, in texels where they are smallest (a face's texel spans 1/(1+x^2) of the centre's angle)
+#if defined(VSM_LAMP_PROBE)
+  const float narrowT = push.probeNarrow>=0.0 ? push.probeNarrow : OmniNarrow;
+#else
+  const float narrowT = OmniNarrow;
+#endif
   float lit = 0;
+  if(filterR <= narrowT*texel/(1.0 + fcMax*fcMax)) {
+#if defined(VSM_LAMP_PROBE)
+    probeBin |= 32u;
+#endif
+    [[unroll]]
+    for(int i=0; i<omniNarrow.length(); ++i) {
+      const vec2 o = (rm*omniNarrow[i])*filterR;
+      lit += omniGather(u + o.x*T + o.y*B, hf, filterHome, P, n, R, atlasInv, ratio, count);
+      }
+    return lit/float(omniNarrow.length());
+    }
   [[unroll]]
   for(int i=0; i<omniFilter.length(); ++i) {
     const vec2 o = (rm*omniFilter[i])*filterR;
-    lit += omniGather(u + o.x*T + o.y*B, hf, homeOnly, P, n, R, atlasInv, ratio, count);
+    lit += omniGather(u + o.x*T + o.y*B, hf, filterHome, P, n, R, atlasInv, ratio, count);
     }
   return lit/float(omniFilter.length());
   }
@@ -332,8 +360,8 @@ void main() {
     if(push.probeStamp!=0) {
       // 0 lamp-pixel pairs at the filter, 1 pixels lit by any lamp, 2 pairs past 'faint', 3 out after the first
       // 4 taps (lit), 4 out blocked, 5 gathers past 'faint', 6 taps checking the neighbour face, 7 taps read from it,
-      // 8..13 pairs at the filter by the penumbra's half-width (1, 1.5, 2, 3, 6, more texels), 14 the search at its
-      // floor of 1.5 texels
+      // 8..13 pairs at the filter by the penumbra's half-width (1, 1.5, 2, 3, 6, more texels at the face's centre),
+      // 14 the search at its floor of 1.5 texels, 15 pairs filtered by four taps
       const uint px = uint(gl_FragCoord.y)*uint(textureSize(depth,0).x) + uint(gl_FragCoord.x);
       atomicAdd(probe[0], 1u);
       if(atomicExchange(probePixel[px], push.probeStamp)!=push.probeStamp)
@@ -351,6 +379,8 @@ void main() {
           atomicAdd(probe[8 + (probeBin & 7u)], 1u);
         if((probeBin & 16u)!=0)
           atomicAdd(probe[14], 1u);
+        if((probeBin & 32u)!=0)
+          atomicAdd(probe[15], 1u);
         }
       }
 #endif

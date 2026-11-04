@@ -168,6 +168,7 @@ class Renderer final {
       float          vsmMipBias         = 0.25; //TODO: set to lower, eventually
       bool           vsmStats           = false; // OPENGOTHIC_VSM_STATS=1: VSM counters to the log every 5 s
       uint32_t       vsmLampMode        = 0;     // OPENGOTHIC_VSM_LAMP: 0 pcss, 1 hard, 2 flat (lamp filter study)
+      float          vsmLampNarrow      = -1;    // OPENGOTHIC_VSM_LAMP_NARROW: four-tap penumbra, texels; <0 the shader's
       float          vsmLampNearCm      = 30;    // [INTERNAL] vsmLampNearCm: a lamp's fixture this close casts no shadow
       } settings;
 
