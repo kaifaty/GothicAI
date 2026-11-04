@@ -95,16 +95,22 @@ class VisualObjects final {
 
     // The VSM lamp-face cache (Renderer::drawVsm): spheres (centre, radius) where shadow casters changed since the
     // last frame — a caster's place before and after it moved or turned, one added or removed, shown or hidden;
-    // and every frame the animated, morphed, deformed and wind-blown ones, now and a frame ago. Built by
-    // prepareGlobals while VSM is on
+    // and every frame the animated, morphed, deformed and wind-blown ones, now and a frame ago. Static casters
+    // (Landscape, Static draws) first, then the movable ones. Built by prepareGlobals while VSM is on
     struct VsmChanges {
       const Tempest::StorageBuffer* spheres  = nullptr;
       uint32_t                      count    = 0;
+      uint32_t                      staticCount = 0;  // the first ones: static casters (Landscape, Static draws)
       uint64_t                      serial   = 0;     // prepareGlobals calls so far: a gap is a frame nobody read
       uint64_t                      epoch    = 0;     // this VisualObjects (another world: another epoch)
       bool                          overflow = false; // more than the list holds: the cache starts empty
+      uint32_t                      moved    = 0;     // of count: casters that moved, came or went (the rest: dynamic)
       };
     VsmChanges vsmChanges() const;
+    // a caster's move the cache ignores, cm: a part of a texel of a lamp face (a 4x4 face at 2 m: 0.8 cm a texel)
+    static constexpr float VsmMoveTolerance = 0.25f;
+    // the farthest a point within r of the object's origin went from matrix a to b
+    static float vsmDisplacement(const Tempest::Matrix4x4& a, const Tempest::Matrix4x4& b, float r);
 
     void preFrameUpdate ();
     void prepareGlobals (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
@@ -118,7 +124,7 @@ class VisualObjects final {
     void drawWater      (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawGBuffer    (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawShadow     (Tempest::Encoder<Tempest::CommandBuffer>& cmd, int layer);
-    void drawVsm        (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
+    void drawVsm        (Tempest::Encoder<Tempest::CommandBuffer>& cmd, DrawCommands::VsmDraw draw = DrawCommands::VsmAll);
     void drawHiZ        (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
 
     bool updateRtScene(RtScene& out);
@@ -176,7 +182,9 @@ class VisualObjects final {
       bool                textureWorldOwner = false;
       // VSM lamp-face cache: the caster as the cache last saw it (updateInstance)
       bool                vsmPlaced     = false;
-      uint64_t            vsmHash       = 0;
+      bool                vsmMovable    = false; // its command's class: DrawCommands::commandId
+      uint64_t            vsmHash       = 0;  // all of the instance but the matrix, and the radius
+      Tempest::Matrix4x4  vsmPos;
       Tempest::Vec4       vsmSphere;
       uint32_t            textureDistance = Resources::TextureAlwaysFull;
       Tempest::Vec3       texturePosition;
@@ -201,10 +209,13 @@ class VisualObjects final {
     float    morphWeight(size_t i, std::string_view animName);
     auto     morphSlot  (Object& obj) -> MorphAnim&;
     void     setAsGhost(size_t i, bool g);
+    void     setVsmMovable(size_t i, bool movable);
 
     bool     isVsmDynamic(const Object& obj) const;
-    void     vsmChanged(const Tempest::Vec4& sphere);
-    void     vsmChangedClusters(uint32_t first, uint32_t count);
+    bool     castsVsm(const Object& obj) const;
+    Tempest::Vec4 vsmSphere(const Object& obj, const Tempest::Matrix4x4& m) const;
+    void     vsmChanged(const Object& obj, const Tempest::Vec4& sphere, bool force = false);
+    void     vsmChangedClusters(const Object& obj, bool force = false);
     void     commitVsmChanges(uint8_t fId);
 
     void     notifyTlas(const Material& m, RtScene::Category cat);
@@ -229,9 +240,9 @@ class VisualObjects final {
     // VSM lamp-face cache (vsmChanges)
     static constexpr size_t    VsmMaxChanges = 256*1024;
     std::mutex                 vsmSync;
-    std::vector<Tempest::Vec4> vsmMoved;          // since the last prepareGlobals, under vsmSync
+    std::vector<Tempest::Vec4> vsmMoved[2];       // static, movable casters since the last prepareGlobals (vsmSync)
     std::unordered_set<size_t> objectsDynamic;    // Animated, Morph and deformed objects, under vsmSync
-    std::vector<Tempest::Vec4> vsmDynamicPrev;    // the dynamic ones as last frame saw them
+    std::vector<Tempest::Vec4> vsmDynamicPrev[2]; // the ones changing every frame as last frame saw them
     std::vector<Tempest::Vec4> vsmUpload;
     Tempest::StorageBuffer     vsmSpheres[Resources::MaxFramesInFlight];
     VsmChanges                 vsmLast;

@@ -5,6 +5,8 @@
 
 #include "virtual_shadow/vsm_common.glsl"
 #include "virtual_shadow/vsm_cache_common.glsl"
+#define VSM_CACHE_NO_PLACEMENT
+#include "virtual_shadow/vsm_cache.glsl"
 #include "scene.glsl"
 
 // Lamp-face cache, step 1 of 3: a lamp that moved or changed its shadow range draws all its faces again; the
@@ -17,28 +19,37 @@ layout(push_constant, std430) uniform Push {
   };
 layout(binding = 0, std430) readonly buffer Lbo { LightSource   lights[]; };
 layout(binding = 1, std430) buffer Cache        { VsmCacheLight cache[];  };
-layout(binding = 2, std430) buffer List         { uint count; uint id[]; } cached;
+layout(binding = 2, std430) buffer List         { uint count; uint moved; uint id[]; } cached;
 
 void main() {
   const uint id = gl_GlobalInvocationID.x;
   if(id>=lightsTotal)
     return;
 
+  // prev: where the lamp's faces were drawn. A lamp that drifts less than VSM_CACHE_LAMP_TOLERANCE from there (a
+  // hanging lantern at rest jitters by thousandths of a millimetre) keeps its faces
   const vec4 cur  = vec4(lights[id].pos, lights[id].shadowRange);
   const vec4 prev = cache[id].prev;
-  cache[id].prev  = cur;
 
   if(reset!=0) {
     for(uint i=0; i<6; ++i)
       cache[id].face[i] = 0;
-    cache[id].dirty = 0;
+    cache[id].dirty  = 0;
+    cache[id].moving = 0;
+    cache[id].prev   = cur;
     return;
     }
 
-  const bool moved = (prev!=cur);
-  cache[id].dirty = moved ? 0x3Fu : 0u;
+  const bool moved = distance(prev.xyz, cur.xyz)>VSM_CACHE_LAMP_TOLERANCE || prev.w!=cur.w;
   if(moved)
+    cache[id].prev = cur;
+  cache[id].dirty  = moved ? 0x3Fu : 0u;
+  cache[id].moving = 0;
+  if(moved) {
+    if(prev.w>0 || cur.w>0)
+      atomicAdd(cached.moved, 1);
     return;
+    }
 
   bool any = false;
   for(uint i=0; i<6; ++i)

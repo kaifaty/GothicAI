@@ -40,12 +40,16 @@ struct VsmHeader {
   uint  omniDrawnFaces;
   uint  omniDrawnPages;
   uint  omniDroppedFaces;
+  uint  omniComposedFaces; // the static part from the cache, the movable casters drawn on top
+  uint  omniComposedPages;
   };
 
 // Atlas regions the frame clears before VSM-rendering under the lamp-face cache: the sun's pages and the lamp faces
 // drawn again (the rest of the atlas keeps the cached faces). An indirect draw: a quad an entry, entry =
-// first page | size in pages << 16 (vsm_clear_pages.vert)
-const uint VSM_CLEAR_MAX = 8192u;
+// first page | size in pages << 16 | VSM_CLEAR_COPY (vsm_clear_pages.vert): a composed lamp face takes its static
+// part back from the store instead of depth 0
+const uint VSM_CLEAR_MAX  = 8192u;
+const uint VSM_CLEAR_COPY = 0x80000000u;
 struct VsmClearCmd {
   uint vertexCount;
   uint instanceCount;
@@ -77,8 +81,15 @@ uint packVsmPageInfo(uint lightId, uint face, ivec2 at, ivec2 size) {
   // 1 : 15 : 4 : 4 : 4 : 4
   // uint idx = lightId*6 + face; // 5k omni lights
   // return 0x1 | ((idx & 0x7FFF) << 1) | ((at.x & 0xF) << 16) | ((at.y & 0xF) << 20) | ((size.x & 0xF) << 24) | ((size.y & 0xF) << 28);
-  uint idx = lightId*6 + face; // 1398k omni lights
-  return 0x1 | ((idx & 0x7FFFFF) << 1) | ((size.x & 0xF) << 24) | ((size.y & 0xF) << 28);
+  uint idx = lightId*6 + face; // 699k omni lights
+  return 0x1 | ((idx & 0x3FFFFF) << 1) | ((size.x & 0xF) << 24) | ((size.y & 0xF) << 28);
+  }
+
+// a lamp face of the lamp-face cache that draws only its movable casters this frame (over its stored static part)
+const uint VSM_OMNI_MOVABLE_ONLY = 0x800000u;
+
+bool vsmPageIsMovableOnly(uint p) {
+  return (p & 0x1)==0x1 && (p & VSM_OMNI_MOVABLE_ONLY)!=0;
   }
 
 bool vsmPageIsOmni(uint p) {
@@ -86,7 +97,7 @@ bool vsmPageIsOmni(uint p) {
   }
 
 uvec2 unpackLightId(uint p) {
-  uint i = uint(p >> 1) & 0x7FFFFF;
+  uint i = uint(p >> 1) & 0x3FFFFF;
   return uvec2(i/6, i%6);
   }
 

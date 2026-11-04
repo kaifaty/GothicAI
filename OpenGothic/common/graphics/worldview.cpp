@@ -699,8 +699,8 @@ void WorldView::drawShadow(Tempest::Encoder<CommandBuffer>& cmd, uint8_t fId, ui
   pfxGroup.drawShadow(cmd,fId,layer);
   }
 
-void WorldView::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
-  visuals.drawVsm(cmd);
+void WorldView::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, DrawCommands::VsmDraw draw) {
+  visuals.drawVsm(cmd, draw);
   }
 
 void WorldView::drawGBuffer(Tempest::Encoder<CommandBuffer>& cmd, uint8_t fId) {

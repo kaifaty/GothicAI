@@ -10,7 +10,7 @@ layout(local_size_x = 64) in;
 
 layout(binding = 0, std430) buffer Omni { uint pageTblOmni[]; };
 layout(binding = 1, std430) buffer VId  { uint visLightCount; uvec4 visLights[]; };
-layout(binding = 2, std430) buffer List { uint count; uint id[]; } cached; // vsm_cache_lights.comp
+layout(binding = 2, std430) buffer List { uint count; uint moved; uint id[]; } cached; // vsm_cache_lights.comp
 
 void main() {
   if(gl_GlobalInvocationID.x<pageTblOmni.length()) {
@@ -19,5 +19,6 @@ void main() {
   if(gl_GlobalInvocationID.x==0) {
     visLightCount = 0;
     cached.count  = 0;
+    cached.moved  = 0;
     }
   }

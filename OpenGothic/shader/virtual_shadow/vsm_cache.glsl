@@ -17,23 +17,31 @@ const uint VSM_CACHE_CELLS         = 128u;  // 16 cells a row, 8 rows of cells
 const uint VSM_CACHE_PAGES         = VSM_CACHE_CELLS*16u;
 // an unrequested face keeps its place (not shown, not drawn) this many frames, for a camera that turns back
 const uint VSM_CACHE_IDLE_FRAMES   = 60u;
+// a lamp nearer than this (cm) to where its faces were drawn keeps them: a part of a texel
+const float VSM_CACHE_LAMP_TOLERANCE = 0.25f;
 // a face shrinks only once its smaller request has lasted this many frames: no flicker of the size at a boundary
 const uint VSM_CACHE_SHRINK_FRAMES = 30u;
 
-// What a face does in a frame
-const uint VSM_CACHE_DROP  = 0u; // no place: not requested for long, or changed while not requested
-const uint VSM_CACHE_IDLE  = 1u; // keeps its place, not requested this frame
-const uint VSM_CACHE_HIT   = 2u; // requested and unchanged: read from the cache, not drawn
-const uint VSM_CACHE_DRAW  = 3u; // requested, keeps its place, drawn again
-const uint VSM_CACHE_ALLOC = 4u; // requested, needs a new place (new, or its size changed), drawn
+// A face is kept twice: its static casters alone (Landscape and Static draws) in the store
+// (Renderer::vsm.lampStore), and the face the light reads — the store plus the movable casters (Movable, Animated,
+// Morph draws) — in the atlas. What a face does in a frame:
+const uint VSM_CACHE_DROP    = 0u; // no place: not requested for long, or its static casters changed meanwhile
+const uint VSM_CACHE_IDLE    = 1u; // keeps its place, not requested this frame
+const uint VSM_CACHE_HIT     = 2u; // requested and unchanged: read from the cache, not drawn
+const uint VSM_CACHE_DRAW    = 3u; // a static caster changed: drawn again whole, its static part stored again
+const uint VSM_CACHE_ALLOC   = 4u; // needs a new place (new, or its size changed): drawn whole, stored
+const uint VSM_CACHE_COMPOSE = 5u; // a movable caster in it now or a frame ago: the store copied back, the
+                                   // movable casters drawn on top
 
-// A face's entry: valid 31 | shrink frames 21..27 | idle frames 14..20 | size code 11..13 | slot 0..10.
+// A face's entry: valid 31 | stale 28 (movable casters changed while it was idle) | shrink frames 21..27 |
+// idle frames 14..20 | size code 11..13 | slot 0..10.
 // The slot is a page of the lamp region: cell*16 + the page's Morton index in the cell; a block starts at a slot
 // aligned to its page count. Size code 0: none, 1: 1x1, 2: 2x2, 3: 4x4 pages.
 uint vsmCacheSlot  (uint e) { return e & 0x7FFu; }
 uint vsmCacheIdle  (uint e) { return (e >> 14u) & 0x7Fu; }
 uint vsmCacheShrink(uint e) { return (e >> 21u) & 0x7Fu; }
 bool vsmCacheValid (uint e) { return (e >> 31u)!=0u; }
+bool vsmCacheStale (uint e) { return ((e >> 28u) & 1u)!=0u; }
 
 uint vsmCacheSize(uint e) {
   const uint code = (e >> 11u) & 0x7u;
@@ -47,9 +55,9 @@ uint vsmCachePack(uint slot, uint size, uint idle, uint shrink, bool valid) {
   }
 
 // e: the face's entry from the last frame; req: pages a side the frame asks for (0: none, 1, 2, 4);
-// dirty: something that casts into the face moved, or the lamp moved. The new entry goes to next
-// (for VSM_CACHE_ALLOC: not valid yet, with the size to place)
-uint vsmCacheDecide(uint e, uint req, bool dirty, INOUT(uint) next) {
+// dirty: a static caster changed in the face, or the lamp moved; moving: a movable caster is in the face now or
+// was a frame ago. The new entry goes to next (for VSM_CACHE_ALLOC: not valid yet, with the size to place)
+uint vsmCacheDecide(uint e, uint req, bool dirty, bool moving, INOUT(uint) next) {
   if(!vsmCacheValid(e)) {
     next = req==0u ? 0u : vsmCachePack(0u, req, 0u, 0u, false);
     return req==0u ? VSM_CACHE_DROP : VSM_CACHE_ALLOC;
@@ -62,6 +70,8 @@ uint vsmCacheDecide(uint e, uint req, bool dirty, INOUT(uint) next) {
       return VSM_CACHE_DROP;
       }
     next = vsmCachePack(vsmCacheSlot(e), size, idle, 0u, true);
+    if(moving || vsmCacheStale(e))
+      next |= (1u << 28u);
     return VSM_CACHE_IDLE;
     }
 
@@ -83,7 +93,11 @@ uint vsmCacheDecide(uint e, uint req, bool dirty, INOUT(uint) next) {
     return VSM_CACHE_ALLOC;
     }
   next = vsmCachePack(vsmCacheSlot(e), size, 0u, shrink, true);
-  return dirty ? VSM_CACHE_DRAW : VSM_CACHE_HIT;
+  if(dirty)
+    return VSM_CACHE_DRAW;
+  if(moving || vsmCacheStale(e))
+    return VSM_CACHE_COMPOSE;
+  return VSM_CACHE_HIT;
   }
 
 // The atlas page (VSM_PAGE_PER_ROW = 64 a row) of a block's first page
@@ -111,6 +125,45 @@ bool vsmCacheSphereTouchesFace(vec3 dvec, float r, float range, uint face) {
   const float c    = axis==2u ? dvec.y : dvec.z;
   const float w    = r*1.41421356237f;
   return abs(b)-a <= w && abs(c)-a <= w;
+  }
+
+// A sphere's footprint on the face: the pages (of size x size) it may cover, x0 y0 x1 y1 inclusive, and its nearest
+// depth along the face's axis (returned; <= 0: it reaches the lamp, the whole face). The box round the sphere in
+// face axes projects within the extremes of its corners
+float vsmCacheFootprint(vec3 dvec, float r, uint face, uint size, INOUT(uint) x0, INOUT(uint) y0, INOUT(uint) x1,
+                        INOUT(uint) y1) {
+  const uint  axis = face/2u;
+  const float s    = (face%2u)==0u ? 1.0f : -1.0f;
+  const float a    = s*(axis==0u ? dvec.x : (axis==1u ? dvec.y : dvec.z));
+  const float b    = axis==0u ? dvec.y : dvec.x;
+  const float c    = axis==2u ? dvec.y : dvec.z;
+  x0 = 0u;
+  y0 = 0u;
+  x1 = size-1u;
+  y1 = size-1u;
+  const float near = a - r;
+  if(near<=0.0f)
+    return near;
+  const float far = a + r;
+  // the face's own axes (vsmMapDirToFace): b and c map to the face's x and y for faces 0, 1 (y z) and 4 (x y);
+  // swapped for 1 (z y), 2 (z x) and 5 (y x)
+  const bool  swap = (face==1u || face==2u || face==5u);
+  const float fx   = swap ? c : b;
+  const float fy   = swap ? b : c;
+  const float ux0  = min((fx-r)/near, (fx-r)/far), ux1 = max((fx+r)/near, (fx+r)/far);
+  const float uy0  = min((fy-r)/near, (fy-r)/far), uy1 = max((fy+r)/near, (fy+r)/far);
+  const float n    = float(size);
+  x0 = uint(clamp((ux0*0.5f+0.5f)*n, 0.0f, n-1.0f));
+  x1 = uint(clamp((ux1*0.5f+0.5f)*n, 0.0f, n-1.0f));
+  y0 = uint(clamp((uy0*0.5f+0.5f)*n, 0.0f, n-1.0f));
+  y1 = uint(clamp((uy1*0.5f+0.5f)*n, 0.0f, n-1.0f));
+  return near;
+  }
+
+// The axis distance of a depth value of a lamp face (vsmApplyProjective; 0: nothing there, the shadow range)
+float vsmCacheDepthDistance(float z, float range) {
+  const float zk = 0.0309278f; // zNear/(zFar - zNear), as light.frag's OmniZk
+  return (zk/(z + zk))*range;
   }
 
 #if !defined(VSM_CACHE_NO_PLACEMENT)

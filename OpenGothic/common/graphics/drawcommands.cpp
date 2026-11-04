@@ -57,6 +57,8 @@ DrawCommands::DrawCommands(VisualObjects& owner, DrawBuckets& buckets, DrawClust
   if(vsmSupported) {
     Tempest::DispatchIndirectCommand cmd = {2000,1,1};
     vsmIndirectCmd = Resources::device().ssbo(&cmd, sizeof(cmd));
+    const uint32_t none = 0;
+    vsmCmdFlags    = Resources::device().ssbo(&none, sizeof(none));
     }
   // vsmSwrImage = Resources::device().image2d(TextureFormat::R16,  4096, 4096);
   // vsmSwrImage = Resources::device().image2d(TextureFormat::R32U, 4096, 4096);
@@ -171,7 +173,7 @@ void DrawCommands::setBindings(Tempest::Encoder<CommandBuffer>& cmd, const DrawC
     }
   }
 
-uint16_t DrawCommands::commandId(const Material& m, Type type, uint32_t bucketId) {
+uint16_t DrawCommands::commandId(const Material& m, Type type, uint32_t bucketId, bool vsmMovable) {
   const bool bindlessSys = Shaders::options().doBindless;
   const bool bindless    = bindlessSys && (!m.hasFrameAnimation() || type==Landscape);
 
@@ -187,6 +189,8 @@ uint16_t DrawCommands::commandId(const Material& m, Type type, uint32_t bucketId
       continue;
     if(!bindless && cmd[i].bucketId!=bucketId)
       continue;
+    if(cmd[i].vsmMovable!=vsmMovable)
+      continue;
     return uint16_t(i);
     }
 
@@ -199,6 +203,7 @@ uint16_t DrawCommands::commandId(const Material& m, Type type, uint32_t bucketId
   cx.pHiZ        = pHiZ;
   cx.bucketId    = bindless ? 0xFFFFFFFF : bucketId;
   cx.type        = type;
+  cx.vsmMovable  = vsmMovable;
   cx.alpha       = m.alpha;
   cmd.push_back(std::move(cx));
   cmdDurtyBit = true;
@@ -225,6 +230,18 @@ void DrawCommands::commit(Encoder<CommandBuffer>& enc) {
   if(!cmdDurtyBit && !cmdChg)
     return;
   cmdDurtyBit = false;
+
+  if(vsmSupported) {
+    std::vector<uint32_t> flags((cmd.size()+31)/32 + 1, 0);
+    for(size_t i=0; i<cmd.size(); ++i)
+      if(cmd[i].vsmMovable)
+        flags[i/32] |= (1u << (i%32));
+    if(flags!=vsmCmdFlagsCpu || vsmCmdFlags.isEmpty()) {
+      Resources::recycle(std::move(vsmCmdFlags));
+      vsmCmdFlags    = Resources::device().ssbo(flags.data(), flags.size()*sizeof(flags[0]));
+      vsmCmdFlagsCpu = std::move(flags);
+      }
+    }
 
   ord.resize(cmd.size());
   for(size_t i=0; i<cmd.size(); ++i)
@@ -362,6 +379,7 @@ void DrawCommands::visibilityVsm(Encoder<CommandBuffer>& cmd) {
   cmd.setBinding(T_HiZ,      *scene.vsmPageHiZ);
   cmd.setBinding(T_VsmPages, *scene.vsmPageList);
   cmd.setBinding(9,          scene.vsmDbg);
+  cmd.setBinding(10,         vsmCmdFlags);
   cmd.setPushData(&push, sizeof(push));
   cmd.setPipeline(shaders.vsmVisibilityPass);
   cmd.dispatchThreads(push.meshletCount, size_t(scene.vsmPageTbl->d() + 1));
@@ -385,7 +403,7 @@ void DrawCommands::visibilityVsm(Encoder<CommandBuffer>& cmd) {
 
 uint32_t DrawCommands::hiddenTypes = 0;
 
-void DrawCommands::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
+void DrawCommands::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, VsmDraw draw) {
   // return;
   struct Push { uint32_t commandId; } push = {};
 
@@ -401,6 +419,8 @@ void DrawCommands::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
     if(cx.pVsm==nullptr)
       continue;
     if((hiddenTypes>>cx.type) & 1u)
+      continue;
+    if(draw!=VsmAll && (draw==VsmMovable)!=cx.vsmMovable)
       continue;
 
     auto id  = size_t(std::distance(this->cmd.data(), &cx));

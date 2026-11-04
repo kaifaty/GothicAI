@@ -434,6 +434,7 @@ add_shader(vsm_postprocess_omni.comp virtual_shadow/vsm_postprocess_omni.comp)
 add_shader(vsm_cache_lights.comp     virtual_shadow/vsm_cache_lights.comp)
 add_shader(vsm_cache_invalidate.comp virtual_shadow/vsm_cache_invalidate.comp)
 add_shader(vsm_cache_alloc.comp      virtual_shadow/vsm_cache_alloc.comp)
+add_shader(vsm_cache_store.comp      virtual_shadow/vsm_cache_store.comp)
 add_shader(vsm_clear_pages.vert      virtual_shadow/vsm_clear_pages.vert)
 add_shader(vsm_clear_pages.frag      virtual_shadow/vsm_clear_pages.frag)
 # virtual shadows: fog

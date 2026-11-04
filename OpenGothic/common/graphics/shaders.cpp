@@ -376,8 +376,9 @@ void Shaders::compileShaders() noexcept {
     vsmCacheLights     = computeShader("vsm_cache_lights.comp.sprv");
     vsmCacheInvalidate = computeShader("vsm_cache_invalidate.comp.sprv");
     vsmCacheAlloc      = computeShader("vsm_cache_alloc.comp.sprv");
+    vsmCacheStore      = computeShader("vsm_cache_store.comp.sprv");
     {
-      // atlas regions back to depth 0 before they are drawn again (vsm_clear_pages.vert)
+      // atlas regions back to depth 0, or to a lamp face's stored static part, before they are drawn (vsm_clear_pages)
       RenderState state;
       state.setCullFaceMode (RenderState::CullMode::NoCull);
       state.setZTestMode    (RenderState::ZTestMode::Always);

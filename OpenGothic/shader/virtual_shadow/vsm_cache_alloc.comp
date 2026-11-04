@@ -13,10 +13,11 @@ shared uint vsmCacheOcc[64]; // VSM_CACHE_CELLS/2: a bit a page of the lamp regi
 #include "virtual_shadow/vsm_cache.glsl"
 
 // Lamp-face cache, step 3 of 3, one workgroup: each face the frame asks for (pageTblOmni, sizes from
-// vsm_mark_omni_pages.comp) keeps its place and is read from the cache, keeps its place and is drawn again, or gets
-// a new place in the lamp region of the atlas (vsm_cache.glsl). The faces drawn this frame go into the page list
-// (for VSM-visibility and VSM-rendering) and the clear list; pageTblOmni ends as the light pass reads it:
-// first page << 16 | pages a side, 0 for a face without shadow
+// vsm_mark_omni_pages.comp) is read from the cache, composed (the stored static part and the movable casters on
+// top), drawn again whole in its place, or gets a new place in the lamp region of the atlas (vsm_cache.glsl). The
+// faces drawn this frame go into the page list (for VSM-visibility and VSM-rendering) and the clear list; those
+// drawn whole into the store list. pageTblOmni ends as the light pass reads it: first page << 16 | pages a side,
+// 0 for a face without shadow
 layout(push_constant, std430) uniform Push {
   uint lightsTotal;
   };
@@ -24,6 +25,7 @@ layout(binding = 0, std430) buffer Cache { VsmCacheLight cache[]; };
 layout(binding = 1, std430) buffer Omni  { uint pageTblOmni[]; };
 layout(binding = 2, std430) buffer Pages { VsmHeader header; uint pageList[]; } vsm;
 layout(binding = 3, std430) buffer Clr   { VsmClearCmd clearCmd; uint clearList[]; };
+layout(binding = 4, std430) buffer Str   { VsmStoreCmd storeCmd; uint storeList[]; };
 
 const uint MaxAlloc = 1024;
 shared uint allocCount;
@@ -33,17 +35,25 @@ uint tblEntry(uint e) {
   return (vsmCachePageId(vsmCacheSlot(e)) << 16u) | vsmCacheSize(e);
   }
 
-void drawFace(uint i, uint e) {
+// whole: all casters drawn (and the static part stored afterwards); else the movable ones over the stored part
+void drawFace(uint i, uint e, bool whole) {
   const uint size   = vsmCacheSize(e);
   const uint pageId = vsmCachePageId(vsmCacheSlot(e));
   pageTblOmni[i] = (pageId << 16u) | size;
-  vsm.pageList[pageId] = packVsmPageInfo(i/6, i%6, ivec2(0), ivec2(size));
+  vsm.pageList[pageId] = packVsmPageInfo(i/6, i%6, ivec2(0), ivec2(size)) | (whole ? 0u : VSM_OMNI_MOVABLE_ONLY);
   atomicMax(vsm.header.pageCount, pageId+1);
-  atomicAdd(vsm.header.omniDrawnFaces, 1);
-  atomicAdd(vsm.header.omniDrawnPages, size*size);
+  if(whole) {
+    atomicAdd(vsm.header.omniDrawnFaces, 1);
+    atomicAdd(vsm.header.omniDrawnPages, size*size);
+    const uint s = atomicAdd(storeCmd.groupsX, 1);
+    storeList[s] = pageId | (size << 16u);
+    } else {
+    atomicAdd(vsm.header.omniComposedFaces, 1);
+    atomicAdd(vsm.header.omniComposedPages, size*size);
+    }
   const uint k = atomicAdd(clearCmd.instanceCount, 1);
   if(k<VSM_CLEAR_MAX)
-    clearList[k] = pageId | (size << 16u);
+    clearList[k] = pageId | (size << 16u) | (whole ? 0u : VSM_CLEAR_COPY);
   }
 
 void dropFace(uint i) {
@@ -63,16 +73,17 @@ void main() {
   barrier();
 
   for(uint i=lane; i<total; i+=NumThreads) {
-    const uint id    = i/6;
-    const uint f     = i%6;
-    const uint e     = cache[id].face[f];
-    const uint req   = pageTblOmni[i];
-    const bool dirty = ((cache[id].dirty >> f) & 1u)!=0;
+    const uint id     = i/6;
+    const uint f      = i%6;
+    const uint e      = cache[id].face[f];
+    const uint req    = pageTblOmni[i];
+    const bool dirty  = ((cache[id].dirty  >> f) & 1u)!=0;
+    const bool moving = ((cache[id].moving >> f) & 1u)!=0;
     if(e==0 && req==0)
       continue;
 
     uint next = 0;
-    const uint action = vsmCacheDecide(e, req, dirty, next);
+    const uint action = vsmCacheDecide(e, req, dirty, moving, next);
     cache[id].face[f] = next;
     switch(action) {
       case VSM_CACHE_DROP:
@@ -85,7 +96,10 @@ void main() {
         atomicAdd(vsm.header.omniCachedPages, vsmCacheSize(next)*vsmCacheSize(next));
         break;
       case VSM_CACHE_DRAW:
-        drawFace(i, next);
+        drawFace(i, next, true);
+        break;
+      case VSM_CACHE_COMPOSE:
+        drawFace(i, next, false);
         break;
       case VSM_CACHE_ALLOC: {
         pageTblOmni[i] = 0;
@@ -96,7 +110,7 @@ void main() {
         break;
         }
       }
-    if(action==VSM_CACHE_IDLE || action==VSM_CACHE_HIT || action==VSM_CACHE_DRAW)
+    if(action==VSM_CACHE_IDLE || action==VSM_CACHE_HIT || action==VSM_CACHE_DRAW || action==VSM_CACHE_COMPOSE)
       vsmCacheMark(vsmCacheSlot(next), vsmCacheSize(next));
     }
   barrier();
@@ -127,6 +141,6 @@ void main() {
     const uint i = allocList[k];
     const uint e = cache[i/6].face[i%6];
     if(vsmCacheValid(e))
-      drawFace(i, e);
+      drawFace(i, e, true);
     }
   }

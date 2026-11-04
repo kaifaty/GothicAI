@@ -311,6 +311,9 @@ class Renderer final {
       Tempest::StorageBuffer    cache;
       Tempest::StorageBuffer    cacheList;
       Tempest::StorageBuffer    clearList;
+      Tempest::StorageBuffer    storeList;
+      Tempest::StorageImage     lampStore;   // the lamp faces' static casters: the atlas's lamp rows (R16)
+      Tempest::StorageBuffer    lampMinZ;    // a lamp-row page: its farthest static occluder (vsm_cache_store.comp)
       uint64_t                  cacheSerial = 0; // VisualObjects::VsmChanges the cache last read
       uint64_t                  cacheEpoch  = 0;
 

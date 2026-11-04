@@ -81,7 +81,7 @@ class WorldView {
 
     void drawHiZ        (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawShadow     (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t frameId, uint8_t layer);
-    void drawVsm        (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
+    void drawVsm        (Tempest::Encoder<Tempest::CommandBuffer>& cmd, DrawCommands::VsmDraw draw = DrawCommands::VsmAll);
     void drawGBuffer    (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t frameId);
     void drawWater      (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawMultiply   (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t frameId);

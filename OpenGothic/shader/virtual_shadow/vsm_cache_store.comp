@@ -1,0 +1,59 @@
+#version 450
+
+#extension GL_GOOGLE_include_directive    : enable
+#extension GL_ARB_separate_shader_objects : enable
+#extension GL_EXT_samplerless_texture_functions : enable
+
+#include "virtual_shadow/vsm_common.glsl"
+#include "virtual_shadow/vsm_cache_common.glsl"
+#define VSM_CACHE_NO_PLACEMENT
+#include "virtual_shadow/vsm_cache.glsl"
+
+// Lamp-face cache: the faces drawn whole this frame, after their static casters (VSM-rendering, static draws) and
+// before the movable ones, go to the store (the lamp rows of the atlas, from row VSM_CACHE_FIRST_ROW): a workgroup
+// a face. A composed face copies it back (vsm_clear_pages.frag). Each of its pages also keeps its farthest static
+// occluder (the least depth): a caster wholly behind it changes nothing there (vsm_cache_invalidate.comp)
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(binding = 0)         uniform texture2D pageData;
+layout(binding = 1, r16)    uniform writeonly image2D store;
+layout(binding = 2, std430) readonly buffer Str { VsmStoreCmd storeCmd; uint storeList[]; };
+layout(binding = 3, std430) buffer MinZ { uint pageMinZ[]; }; // a lamp-region page: floatBitsToUint(least depth)
+
+shared uint minZ[16];
+
+void main() {
+  const uint  e    = storeList[gl_WorkGroupID.x];
+  const uint  page = e & 0xFFFFu;
+  const int   size = int(e >> 16u);
+  const ivec2 at   = unpackVsmPageId(page)*VSM_PAGE_SIZE;
+  const int   side = size*VSM_PAGE_SIZE;
+  const ivec2 org  = ivec2(0, int(VSM_CACHE_FIRST_ROW)*VSM_PAGE_SIZE);
+  const uint  lane = gl_LocalInvocationIndex;
+
+  if(lane<16)
+    minZ[lane] = floatBitsToUint(1.0);
+  barrier();
+
+  float local[16];
+  for(int i=0; i<16; ++i)
+    local[i] = 1.0;
+  for(int y=int(gl_LocalInvocationID.y); y<side; y+=16)
+    for(int x=int(gl_LocalInvocationID.x); x<side; x+=16) {
+      const ivec2 p = at + ivec2(x,y);
+      const float z = texelFetch(pageData, p, 0).x;
+      imageStore(store, p-org, vec4(z));
+      const int k = (y/VSM_PAGE_SIZE)*4 + (x/VSM_PAGE_SIZE);
+      local[k] = min(local[k], z);
+      }
+  for(int i=0; i<16; ++i)
+    if(local[i]<1.0)
+      atomicMin(minZ[i], floatBitsToUint(local[i]));
+  barrier();
+
+  if(lane<uint(size*size)) {
+    const uint px = lane%uint(size), py = lane/uint(size);
+    const uint pg = page + px + py*uint(VSM_PAGE_PER_ROW) - VSM_CACHE_FIRST_ROW*uint(VSM_PAGE_PER_ROW);
+    pageMinZ[pg] = minZ[py*4 + px];
+    }
+  }

@@ -5,6 +5,7 @@
 #extension GL_EXT_samplerless_texture_functions : enable
 
 #include "virtual_shadow/vsm_common.glsl"
+#include "virtual_shadow/vsm_cache_common.glsl"
 #include "scene.glsl"
 
 layout(local_size_x = 8, local_size_y = 8) in;
@@ -16,6 +17,7 @@ layout(binding = 0, std430) buffer CB0 {
 layout(binding = 1, r32ui) uniform uimage3D pageTbl;
 layout(binding = 2, r32ui) uniform uimage3D pageTblDepth;
 layout(binding = 3, std430) buffer Clr { VsmClearCmd clearCmd; uint clearList[]; };
+layout(binding = 4, std430) buffer Str { VsmStoreCmd storeCmd; uint storeList[]; };
 
 void main() {
   const ivec3 at   = ivec3(gl_GlobalInvocationID);
@@ -41,6 +43,11 @@ void main() {
     header.omniDrawnFaces    = 0;
     header.omniDrawnPages    = 0;
     header.omniDroppedFaces  = 0;
+    header.omniComposedFaces = 0;
+    header.omniComposedPages = 0;
+    storeCmd.groupsX = 0;
+    storeCmd.groupsY = 1;
+    storeCmd.groupsZ = 1;
     clearCmd.vertexCount   = 6;
     clearCmd.instanceCount = 0;
     clearCmd.firstVertex   = 0;

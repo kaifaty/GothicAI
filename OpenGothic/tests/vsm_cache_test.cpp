@@ -3,6 +3,7 @@
 // flickering light (LightGroup::shadowRange). CPU only: no device, no game data.
 #include "graphics/lightgroup.h"
 #include "graphics/lightsource.h"
+#include "graphics/visualobjects.h"
 
 #include <cstdint>
 #include <cstdio>
@@ -66,8 +67,8 @@ void shadowRangeIsConstant() {
 // a face from the first frame on: placed once, then read from the cache, drawn only when dirty
 void faceLife() {
   uint next = 0;
-  require(vsmCacheDecide(0, 0, false, next)==VSM_CACHE_DROP && next==0, "no face, no request: nothing");
-  require(vsmCacheDecide(0, 2, false, next)==VSM_CACHE_ALLOC && vsmCacheSize(next)==2 && !vsmCacheValid(next),
+  require(vsmCacheDecide(0, 0, false, false, next)==VSM_CACHE_DROP && next==0, "no face, no request: nothing");
+  require(vsmCacheDecide(0, 2, false, false, next)==VSM_CACHE_ALLOC && vsmCacheSize(next)==2 && !vsmCacheValid(next),
           "a new face asks for a place of its size");
 
   const uint placed = vsmCachePack(37*16+4, 2, 0, 0, true);
@@ -75,44 +76,81 @@ void faceLife() {
 
   uint e = placed;
   for(int frame=0; frame<100; ++frame) {
-    require(vsmCacheDecide(e, 2, false, next)==VSM_CACHE_HIT, "an unchanged face stays cached");
+    require(vsmCacheDecide(e, 2, false, false, next)==VSM_CACHE_HIT, "an unchanged face stays cached");
     require(vsmCacheSlot(next)==vsmCacheSlot(placed) && vsmCacheSize(next)==2, "a cached face keeps its place");
     e = next;
     }
-  require(vsmCacheDecide(e, 2, true, next)==VSM_CACHE_DRAW && vsmCacheSlot(next)==vsmCacheSlot(placed),
+  require(vsmCacheDecide(e, 2, true, false, next)==VSM_CACHE_DRAW && vsmCacheSlot(next)==vsmCacheSlot(placed),
           "a dirty face is drawn again in its place");
 
   // out of the frame: kept a while (not shown), dropped when dirty or after the idle frames
   e = placed;
   for(uint frame=1; frame<VSM_CACHE_IDLE_FRAMES; ++frame) {
-    require(vsmCacheDecide(e, 0, false, next)==VSM_CACHE_IDLE, "an unrequested face keeps its place a while");
+    require(vsmCacheDecide(e, 0, false, false, next)==VSM_CACHE_IDLE, "an unrequested face keeps its place a while");
     e = next;
     }
-  require(vsmCacheDecide(e, 0, false, next)==VSM_CACHE_DROP && next==0, "an unrequested face goes in the end");
-  require(vsmCacheDecide(placed, 0, true, next)==VSM_CACHE_DROP, "an unrequested face that changed goes at once");
+  require(vsmCacheDecide(e, 0, false, false, next)==VSM_CACHE_DROP && next==0, "an unrequested face goes in the end");
+  require(vsmCacheDecide(placed, 0, true, false, next)==VSM_CACHE_DROP, "an unrequested face that changed goes at once");
 
   // back in the frame after a few idle frames: still cached
   e = placed;
   for(int frame=0; frame<5; ++frame) {
-    vsmCacheDecide(e, 0, false, next);
+    vsmCacheDecide(e, 0, false, false, next);
     e = next;
     }
-  require(vsmCacheDecide(e, 2, false, next)==VSM_CACHE_HIT, "a face back in the frame is read from the cache");
+  require(vsmCacheDecide(e, 2, false, false, next)==VSM_CACHE_HIT, "a face back in the frame is read from the cache");
+  }
+
+// a movable caster (a man by the candle) over the stored static part: composed while he is there and a frame
+// after, then read from the cache; a static change draws the face whole
+void composedFace() {
+  uint next = 0;
+  const uint e = vsmCachePack(5*16, 4, 0, 0, true);
+  require(vsmCacheDecide(e, 4, false, true, next)==VSM_CACHE_COMPOSE && vsmCacheSlot(next)==5*16,
+          "a movable caster in a face composes it in its place");
+  require(vsmCacheDecide(e, 4, true, true, next)==VSM_CACHE_DRAW, "a static change draws the face whole");
+  require(vsmCacheDecide(next, 4, false, false, next)==VSM_CACHE_HIT, "with the caster gone the face is cached");
+
+  // he moved while the face was out of the frame: back in the frame it is composed once
+  uint idle = 0;
+  require(vsmCacheDecide(e, 0, false, true, idle)==VSM_CACHE_IDLE && vsmCacheStale(idle),
+          "a movable change while idle marks the face stale");
+  require(vsmCacheDecide(idle, 0, false, false, idle)==VSM_CACHE_IDLE && vsmCacheStale(idle), "stale stays stale");
+  require(vsmCacheDecide(idle, 4, false, false, next)==VSM_CACHE_COMPOSE && !vsmCacheStale(next),
+          "a stale face is composed when it is back");
+  require(vsmCacheDecide(next, 4, false, false, next)==VSM_CACHE_HIT, "then cached");
+  }
+
+// a physics body at rest jitters: below the tolerance its faces stay; a turn counts by its radius
+void casterTolerance() {
+  using Tempest::Matrix4x4;
+  Matrix4x4 a = Matrix4x4::mkIdentity();
+  a.translate(100, 20, -30);
+  Matrix4x4 b = a;
+  b.translate(0.001f, 0, 0.002f);
+  require(VisualObjects::vsmDisplacement(a, b, 50)<VisualObjects::VsmMoveTolerance, "a jitter is ignored");
+  Matrix4x4 c = a;
+  c.translate(1, 0, 0);
+  require(VisualObjects::vsmDisplacement(a, c, 50)>=0.99f, "a move counts");
+  Matrix4x4 d = a;
+  d.rotateOY(1.f); // a degree: a door's edge at 1 m moves 1.7 cm
+  require(VisualObjects::vsmDisplacement(a, d, 100)>1.7f, "a turn counts at the radius");
+  require(VisualObjects::vsmDisplacement(a, d, 5)<0.25f+0.1f, "a small thing turning a little stays");
   }
 
 // the size: grows at once, shrinks only when the smaller request lasts; no flicker at a boundary
 void sizeHysteresis() {
   uint next = 0;
   const uint face2 = vsmCachePack(16, 2, 0, 0, true);
-  require(vsmCacheDecide(face2, 4, false, next)==VSM_CACHE_ALLOC && vsmCacheSize(next)==4, "a face grows at once");
+  require(vsmCacheDecide(face2, 4, false, false, next)==VSM_CACHE_ALLOC && vsmCacheSize(next)==4, "a face grows at once");
 
   uint e = vsmCachePack(0, 4, 0, 0, true);
   for(uint frame=1; frame<VSM_CACHE_SHRINK_FRAMES; ++frame) {
-    require(vsmCacheDecide(e, 2, false, next)==VSM_CACHE_HIT && vsmCacheSize(next)==4,
+    require(vsmCacheDecide(e, 2, false, false, next)==VSM_CACHE_HIT && vsmCacheSize(next)==4,
             "a smaller request keeps the size for a while");
     e = next;
     }
-  require(vsmCacheDecide(e, 2, false, next)==VSM_CACHE_ALLOC && vsmCacheSize(next)==2,
+  require(vsmCacheDecide(e, 2, false, false, next)==VSM_CACHE_ALLOC && vsmCacheSize(next)==2,
           "a smaller request that lasts shrinks the face");
 
   // a request flickering between 2 and 4 at the boundary: one redraw for the growth, then none
@@ -120,7 +158,7 @@ void sizeHysteresis() {
   int allocs = 0;
   for(int frame=0; frame<200; ++frame) {
     const uint req    = frame%2==0 ? 4 : 2;
-    const uint action = vsmCacheDecide(e, req, false, next);
+    const uint action = vsmCacheDecide(e, req, false, false, next);
     if(action==VSM_CACHE_ALLOC) {
       ++allocs;
       next = vsmCachePack(0, vsmCacheSize(next), 0, 0, true);
@@ -199,6 +237,8 @@ int main() {
   try {
     shadowRangeIsConstant();
     faceLife();
+    composedFace();
+    casterTolerance();
     sizeHysteresis();
     slotsAndBlocks();
     sphereFaces();

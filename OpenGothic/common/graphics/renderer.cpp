@@ -1454,6 +1454,7 @@ void Renderer::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView&
   // something in it changed (vsm_cache.glsl); the sun is drawn every frame in the atlas rows above the lamps
   const bool lampCache = settings.vsmCache && omniLights && lightsTotal>0;
   auto& clearList = usesSsbo(vsm.clearList, shaders.vsmClear.sizeofBuffer(3, VsmClearMax));
+  auto& storeList = usesSsbo(vsm.storeList, shaders.vsmClear.sizeofBuffer(4, VsmClearMax));
   auto& cacheList = usesSsbo(vsm.cacheList, shaders.vsmClearOmni.sizeofBuffer(2, std::max<size_t>(lightsTotal, 1)));
   bool  cacheReset = false;
   const auto changes = wview.vsmChanges();
@@ -1465,6 +1466,11 @@ void Renderer::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView&
       Resources::recycle(std::move(vsm.cache));
       vsm.cache = Resources::device().ssbo(nullptr, size);
       }
+    // the static part of each lamp face: the atlas's lamp rows (vsm_cache.glsl: VSM_CACHE_FIRST_ROW = 32 of 64)
+    if(vsm.lampStore.isEmpty())
+      vsm.lampStore = Resources::device().image2d(TextureFormat::R16, 8192, 4096, false);
+    if(vsm.lampMinZ.isEmpty())
+      vsm.lampMinZ = Resources::device().ssbo(nullptr, 64*32*sizeof(uint32_t));
     // casters' changes nobody read (a frame without VSM), another world or too many changes: start empty
     cacheReset = changes.epoch!=vsm.cacheEpoch || changes.serial!=vsm.cacheSerial+1 || changes.overflow;
     vsm.cacheEpoch  = changes.epoch;
@@ -1479,6 +1485,7 @@ void Renderer::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView&
   cmd.setBinding(1, pageTbl);
   cmd.setBinding(2, pageHiZ);
   cmd.setBinding(3, clearList);
+  cmd.setBinding(4, storeList);
   cmd.setPipeline(shaders.vsmClear);
   cmd.dispatchThreads(size_t(pageTbl.w()), size_t(pageTbl.h()), size_t(pageTbl.d()));
 
@@ -1595,7 +1602,9 @@ void Renderer::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView&
       cmd.setBinding(1, vsm.cache);
       cmd.setBinding(2, cacheList);
       cmd.setBinding(3, *changes.spheres);
-      cmd.setPushData(&changes.count, sizeof(changes.count));
+      cmd.setBinding(4, vsm.lampMinZ);
+      struct Push { uint32_t count; uint32_t staticCount; } push = {changes.count, changes.staticCount};
+      cmd.setPushData(push);
       cmd.setPipeline(shaders.vsmCacheInvalidate);
       cmd.dispatchThreads(changes.count);
       }
@@ -1604,6 +1613,7 @@ void Renderer::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView&
     cmd.setBinding(1, pageTblOmni);
     cmd.setBinding(2, pageList);
     cmd.setBinding(3, clearList);
+    cmd.setBinding(4, storeList);
     cmd.setPushData(&lightsTotal, sizeof(lightsTotal));
     cmd.setPipeline(shaders.vsmCacheAlloc);
     cmd.dispatch(1);
@@ -1614,14 +1624,31 @@ void Renderer::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView&
 
   cmd.setDebugMarker("VSM-rendering");
   if(lampCache) {
-    // cached lamp faces stay: only the sun's pages and the faces drawn again go back to depth 0
+    // cached lamp faces stay. The sun's pages and the faces drawn whole go back to depth 0, a composed face to its
+    // stored static part; the static casters are drawn, the faces drawn whole store their static part, then the
+    // movable casters go on top
     cmd.setFramebuffer({}, {pageData, Tempest::Preserve, Tempest::Preserve});
     cmd.setBinding(0, clearList);
+    cmd.setBinding(1, textureCast<const Texture2d&>(vsm.lampStore));
     cmd.setPipeline(shaders.vsmClearPages);
     cmd.drawIndirect(clearList, 0);
-    } else {
-    cmd.setFramebuffer({}, {pageData, 0.f, Tempest::Preserve});
+    wview.drawVsm(cmd, DrawCommands::VsmStatic);
+
+    cmd.setFramebuffer({});
+    cmd.setDebugMarker("VSM-cache-store");
+    cmd.setBinding(0, pageData, Sampler::nearest(ClampMode::ClampToEdge));
+    cmd.setBinding(1, vsm.lampStore);
+    cmd.setBinding(2, storeList);
+    cmd.setBinding(3, vsm.lampMinZ);
+    cmd.setPipeline(shaders.vsmCacheStore);
+    cmd.dispatchIndirect(storeList, 0);
+
+    cmd.setDebugMarker("VSM-rendering-movable");
+    cmd.setFramebuffer({}, {pageData, Tempest::Preserve, Tempest::Preserve});
+    wview.drawVsm(cmd, DrawCommands::VsmMovable);
+    return;
     }
+  cmd.setFramebuffer({}, {pageData, 0.f, Tempest::Preserve});
   wview.drawVsm(cmd);
   }
 
@@ -1641,6 +1668,7 @@ void Renderer::logVsmStats(const WorldView& wview) {
     int32_t  pageBbox[16][4];
     uint32_t pageOmniCount, pageListCount, pagePlaced, omniTileOverflow, omniTileLightsMax;
     uint32_t omniCachedFaces, omniCachedPages, omniDrawnFaces, omniDrawnPages, omniDroppedFaces;
+    uint32_t omniComposedFaces, omniComposedPages;
     } h = {};
   uint32_t visibleLights = 0;
   auto& device = Resources::device();
@@ -1657,13 +1685,22 @@ void Renderer::logVsmStats(const WorldView& wview) {
          (h.meshletCount>DrawCommands::VsmMaxMeshlets ? " OVERFLOW" : ""),
          ", lights = ", visibleLights, "/", uint32_t(wview.lights().size()),
          ", tile lights max = ", h.omniTileLightsMax, ", tiles over limit = ", h.omniTileOverflow);
-  if(settings.vsmCache) {
-    // the lamp-face cache: faces and pages read from the cache / drawn again this frame, faces without a place
-    const uint32_t pages = h.omniCachedPages + h.omniDrawnPages;
-    Log::i("vsm cache: faces cached = ", h.omniCachedFaces, ", drawn = ", h.omniDrawnFaces,
-           ", pages cached = ", h.omniCachedPages, ", drawn = ", h.omniDrawnPages,
-           ", cached share = ", pages>0 ? (100*h.omniCachedPages)/pages : 0, "%",
-           ", no place = ", h.omniDroppedFaces);
+  if(settings.vsmCache && !vsm.cacheList.isEmpty()) {
+    struct { uint32_t count, moved; } list = {};
+    device.readBytes(vsm.cacheList, &list, sizeof(list));
+    const auto changes = wview.vsmChanges();
+    // the lamp-face cache, the frame before: faces and pages read from the cache, composed (the static part from the
+    // cache, the movable casters drawn on top), drawn whole; faces without a place; lamps with cached faces and
+    // lamps that moved; this frame's caster spheres (static of them, and those that moved rather than animate)
+    const uint32_t pages = h.omniCachedPages + h.omniComposedPages + h.omniDrawnPages;
+    Log::i("vsm cache: faces cached = ", h.omniCachedFaces, ", composed = ", h.omniComposedFaces,
+           ", drawn = ", h.omniDrawnFaces,
+           "; pages cached = ", h.omniCachedPages, ", composed = ", h.omniComposedPages, ", drawn = ", h.omniDrawnPages,
+           "; static from cache = ", pages>0 ? (100*(h.omniCachedPages+h.omniComposedPages))/pages : 0, "%",
+           ", whole from cache = ", pages>0 ? (100*h.omniCachedPages)/pages : 0, "%",
+           "; no place = ", h.omniDroppedFaces,
+           "; lamps cached = ", list.count, ", moved = ", list.moved,
+           "; caster spheres = ", changes.count, " (static ", changes.staticCount, ", moved ", changes.moved, ")");
     }
   }
 

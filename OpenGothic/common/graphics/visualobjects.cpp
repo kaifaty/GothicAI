@@ -7,6 +7,7 @@
 #include <atomic>
 
 #include "graphics/mesh/submesh/animmesh.h"
+#include "graphics/mesh/submesh/staticmesh.h"
 #include "gothic.h"
 #include "frameprofile.h"
 #include "loadprobe.h"
@@ -184,6 +185,7 @@ void VisualObjects::Item::setWind(asset::AnimationType m, float intensity) {
     owner->objectsWind.erase(id);
   if(m!=asset::AnimationType::NONE)
     owner->objectsWind.insert(id);
+  owner->setVsmMovable(id, m!=asset::AnimationType::NONE || obj.deformCount>0);
   }
 
 void VisualObjects::Item::setVisible(bool visible) {
@@ -195,7 +197,7 @@ void VisualObjects::Item::setVisible(bool visible) {
   obj.visible = visible;
   const auto meshlets = obj.iboLen/PackedMesh::MaxInd;
   const auto count = obj.type==DrawCommands::Landscape ? meshlets : 1u;
-  owner->vsmChangedClusters(obj.clusterId, count);
+  owner->vsmChangedClusters(obj);
   for(uint32_t i=0;i<count;++i)
     owner->clustersMem[obj.clusterId+i].meshletCount = visible ? (obj.type==DrawCommands::Landscape ? 1u : meshlets) : 0u;
   owner->clustersMem.markClusters(obj.clusterId,count);
@@ -217,6 +219,7 @@ void VisualObjects::Item::setDeformation(const std::vector<Tempest::Vec4>& verti
       return;
     obj.objDeform = InstanceStorage::Id();
     obj.deformCount = 0;
+    owner->setVsmMovable(id, obj.wind!=asset::AnimationType::NONE);
     if(auto mesh=obj.bucketId->staticMesh) {
       owner->clustersMem[obj.clusterId].r = mesh->bbox.rConservative+obj.bucketId->mat.waveMaxAmplitude;
       owner->clustersMem.markClusters(obj.clusterId);
@@ -248,6 +251,7 @@ void VisualObjects::Item::setDeformation(const std::vector<Tempest::Vec4>& verti
     }
   if(changed || obj.deformCount!=count) {
     obj.deformCount = count;
+    owner->setVsmMovable(id, true);
     owner->updateInstance(id);
     }
   }
@@ -469,19 +473,23 @@ void VisualObjects::updateInstance(size_t id, Matrix4x4* pos) {
   auto cId  = obj.clusterId;
   auto npos = Vec3(obj.pos[3][0], obj.pos[3][1], obj.pos[3][2]);
   if(pos==nullptr && !isVsmDynamic(obj) && scene.vsmEnabled) {
-    // a caster moved, turned or changed its shape: the lamp faces that saw it before and those that see it now
+    // a caster moved, turned or changed its shape: the lamp faces that saw it before and those that see it now.
+    // A drift below VsmMoveTolerance from where the faces last saw it (a physics body at rest jitters by
+    // hundredths of a millimetre) is less than a texel of a face: it is gathered until it is more
+    const float r      = clustersMem[cId].r;
+    const Vec4  sphere = vsmSphere(obj, obj.pos);
     uint64_t h = 14695981039346656037ull;
-    h = vsmHashBytes(h, &obj.pos, sizeof(obj.pos));
-    h = vsmHashBytes(h, &d, sizeof(d));
-    const Vec4 sphere = Vec4(npos.x, npos.y, npos.z, clustersMem[cId].r);
-    if(!obj.vsmPlaced || obj.vsmHash!=h) {
+    h = vsmHashBytes(h, &d.fatness, sizeof(d)-sizeof(d.pos));
+    h = vsmHashBytes(h, &r, sizeof(r));
+    if(!obj.vsmPlaced || obj.vsmHash!=h || vsmDisplacement(obj.vsmPos, obj.pos, std::max(r, sphere.w))>VsmMoveTolerance) {
       if(obj.vsmPlaced)
-        vsmChanged(obj.vsmSphere);
-      vsmChanged(sphere);
+        vsmChanged(obj, obj.vsmSphere);
+      obj.vsmSphere = sphere;
+      obj.vsmPos    = obj.pos;
+      obj.vsmHash   = h;
+      obj.vsmPlaced = true;
+      vsmChanged(obj, obj.vsmSphere);
       }
-    obj.vsmPlaced = true;
-    obj.vsmHash   = h;
-    obj.vsmSphere = sphere;
     }
   if(clustersMem[cId].pos != npos) {
     clustersMem[cId].pos = npos;
@@ -536,7 +544,8 @@ VisualObjects::Item VisualObjects::get(const StaticMesh& mesh, const Material& m
   obj.iboOff    = uint32_t(iboOff);
   obj.iboLen    = uint32_t(iboLen);
   obj.bucketId  = bucketsMem.alloc(mat, mesh);
-  obj.cmdId     = drawCmd.commandId(mat, obj.type, obj.bucketId.toInt());
+  obj.vsmMovable = DrawCommands::isVsmMovable(obj.type);
+  obj.cmdId     = drawCmd.commandId(mat, obj.type, obj.bucketId.toInt(), obj.vsmMovable);
   obj.clusterId = clusterId(*obj.bucketId, iboOff/PackedMesh::MaxInd, iboLen/PackedMesh::MaxInd, obj.bucketId.toInt(), obj.cmdId);
   obj.alpha     = mat.alpha;
   obj.timeShift = -scene.tickCount;
@@ -588,7 +597,8 @@ VisualObjects::Item VisualObjects::get(const AnimMesh& mesh, const Material& mat
   obj.iboOff    = uint32_t(iboOff);
   obj.iboLen    = uint32_t(iboLen);
   obj.bucketId  = bucketsMem.alloc(mat, mesh);
-  obj.cmdId     = drawCmd.commandId(mat, obj.type, obj.bucketId.toInt());
+  obj.vsmMovable = DrawCommands::isVsmMovable(obj.type);
+  obj.cmdId     = drawCmd.commandId(mat, obj.type, obj.bucketId.toInt(), obj.vsmMovable);
   obj.clusterId = clusterId(*obj.bucketId, iboOff/PackedMesh::MaxInd, iboLen/PackedMesh::MaxInd, obj.bucketId.toInt(), obj.cmdId);
   obj.alpha     = mat.alpha;
   obj.timeShift = -scene.tickCount;
@@ -627,14 +637,14 @@ VisualObjects::Item VisualObjects::get(const StaticMesh& mesh, const Material& m
   obj.iboOff    = uint32_t(iboOff);
   obj.iboLen    = uint32_t(iboLen);
   obj.bucketId  = bucketsMem.alloc(mat, mesh);
-  obj.cmdId     = drawCmd.commandId(mat, type, obj.bucketId.toInt());
+  obj.cmdId     = drawCmd.commandId(mat, type, obj.bucketId.toInt(), false);
   obj.clusterId = clusterId(cluster, mesh.firstMeshlet()+iboOff/PackedMesh::MaxInd, iboLen/PackedMesh::MaxInd, obj.bucketId.toInt(), obj.cmdId);
   obj.alpha     = mat.alpha;
   obj.timeShift = -scene.tickCount;
 
   if(obj.isEmpty())
     return Item(); // null command
-  vsmChangedClusters(obj.clusterId, uint32_t(iboLen/PackedMesh::MaxInd));
+  vsmChangedClusters(obj);
   obj.textureCategory=Resources::TextureCategory::Landscape;
   obj.textureChunkedLandscape=texturePosition!=nullptr;
   if(texturePosition)
@@ -673,7 +683,7 @@ void VisualObjects::free(size_t id) {
   const uint32_t numCluster = (obj.type==DrawCommands::Landscape ? meshletCount : 1);
 
   if(obj.visible && !obj.isEmpty())
-    vsmChangedClusters(obj.clusterId, numCluster);
+    vsmChangedClusters(obj);
   {
     std::lock_guard<std::mutex> guard(vsmSync);
     objectsDynamic.erase(id);
@@ -890,6 +900,32 @@ void VisualObjects::setMMShape(size_t i, std::string_view animName, uint32_t fra
   objectsMorph.insert(i);
   }
 
+void VisualObjects::setVsmMovable(size_t id, bool movable) {
+  // a wind-blown or deformed object changes every frame: in the VSM lamp-face cache it is drawn over a face's
+  // stored static part, as a movable one, rather than drawing the whole face again; it gets a command of its class
+  auto& obj = objects[id];
+  movable = movable || DrawCommands::isVsmMovable(obj.type);
+  if(obj.isEmpty() || obj.vsmMovable==movable || obj.cmdId==uint16_t(-1))
+    return;
+  auto& cx  = drawCmd[obj.cmdId];
+  auto  mat = obj.bucketId->mat;
+  const auto type = cx.type;
+
+  vsmChangedClusters(obj, true); // leaves its class
+  const uint32_t meshletCount = (obj.iboLen/PackedMesh::MaxInd);
+  drawCmd.addClusters(obj.cmdId, -meshletCount);
+  obj.vsmMovable = movable;
+  obj.cmdId      = drawCmd.commandId(mat, type, obj.bucketId.toInt(), obj.vsmMovable);
+  drawCmd.addClusters(obj.cmdId, +meshletCount);
+  vsmChangedClusters(obj, true); // enters the other
+
+  const uint32_t numCluster = (obj.type==DrawCommands::Landscape ? meshletCount : 1);
+  for(size_t i=0; i<numCluster; ++i) {
+    clustersMem[obj.clusterId + i].commandId = obj.cmdId;
+    clustersMem.markClusters(obj.clusterId + i);
+    }
+  }
+
 void VisualObjects::setAsGhost(size_t id, bool g) {
   auto& obj= objects[id];
   if(obj.isGhost==g)
@@ -904,13 +940,13 @@ void VisualObjects::setAsGhost(size_t id, bool g) {
 
   mat.alpha   = g ? Material::Ghost : obj.alpha;
   obj.isGhost = g;
-  vsmChangedClusters(obj.clusterId, obj.type==DrawCommands::Landscape ? meshletCount : 1u);
+  vsmChangedClusters(obj, true); // it casts before or after
 
   if(bx.staticMesh!=nullptr)
     obj.bucketId = bucketsMem.alloc(mat, *bx.staticMesh); else
     obj.bucketId = bucketsMem.alloc(mat, *bx.animMesh);
 
-  obj.cmdId = drawCmd.commandId(mat, cx.type, obj.bucketId.toInt());
+  obj.cmdId = drawCmd.commandId(mat, cx.type, obj.bucketId.toInt(), obj.vsmMovable);
   drawCmd.addClusters(obj.cmdId, +meshletCount);
 
   const uint32_t numCluster = (obj.type==DrawCommands::Landscape ? meshletCount : 1);
@@ -929,25 +965,68 @@ void VisualObjects::prepareGlobals(Encoder<CommandBuffer>& enc, uint8_t fId) {
   commitVsmChanges(fId);
   }
 
+float VisualObjects::vsmDisplacement(const Matrix4x4& a, const Matrix4x4& b, float r) {
+  // how far a point within r of the origin may have gone: the translation, plus the change of the rest of the
+  // matrix (its Frobenius norm bounds the change of any vector) times r
+  float rot = 0;
+  for(int c=0; c<3; ++c)
+    for(int i=0; i<3; ++i) {
+      const float v = a.at(c,i)-b.at(c,i);
+      rot += v*v;
+      }
+  const Vec3 t = Vec3(a.at(3,0)-b.at(3,0), a.at(3,1)-b.at(3,1), a.at(3,2)-b.at(3,2));
+  return t.length() + std::sqrt(rot)*std::max(r, 0.f);
+  }
+
 bool VisualObjects::isVsmDynamic(const Object& obj) const {
   return obj.type==DrawCommands::Animated || obj.type==DrawCommands::Morph ||
          obj.wind!=asset::AnimationType::NONE || obj.deformCount>0;
   }
 
-void VisualObjects::vsmChanged(const Vec4& sphere) {
-  if(!scene.vsmEnabled || sphere.w<0)
-    return;
-  std::lock_guard<std::mutex> guard(vsmSync);
-  if(vsmMoved.size()<=VsmMaxChanges)
-    vsmMoved.push_back(sphere);
+Vec4 VisualObjects::vsmSphere(const Object& obj, const Matrix4x4& m) const {
+  // a static mesh: round its box (a tree's origin is at its foot: the cluster's sphere round the origin is half as
+  // wide again); an animated one: the cluster's sphere
+  auto& c  = const_cast<DrawClusters&>(clustersMem)[obj.clusterId];
+  auto& bk = const_cast<Object&>(obj).bucketId;
+  if(bk->staticMesh==nullptr)
+    return Vec4(c.pos.x, c.pos.y, c.pos.z, c.r);
+  auto& bb  = bk->staticMesh->bbox.bbox;
+  Vec3  cen = (bb[0]+bb[1])*0.5f;
+  float w   = 1;
+  m.project(cen.x, cen.y, cen.z, w);
+  float scale = 0;
+  for(int i=0; i<3; ++i)
+    scale = std::max(scale, Vec3(m.at(i,0), m.at(i,1), m.at(i,2)).length());
+  const float r = (bb[1]-bb[0]).length()*0.5f*scale + bk->mat.waveMaxAmplitude;
+  return Vec4(cen.x, cen.y, cen.z, r);
   }
 
-void VisualObjects::vsmChangedClusters(uint32_t first, uint32_t count) {
-  if(!scene.vsmEnabled || count==0 || first==uint32_t(-1))
+bool VisualObjects::castsVsm(const Object& obj) const {
+  // as DrawCommands::drawVsm draws: solid and alpha-tested materials (a ghost, water, glass cast nothing)
+  if(obj.isEmpty())
+    return false;
+  const auto alpha = const_cast<Object&>(obj).bucketId->mat.alpha;
+  return alpha==Material::Solid || alpha==Material::AlphaTest;
+  }
+
+void VisualObjects::vsmChanged(const Object& obj, const Vec4& sphere, bool force) {
+  if(!scene.vsmEnabled || sphere.w<0 || !(force || castsVsm(obj)))
+    return;
+  auto& dst = vsmMoved[obj.vsmMovable ? 1 : 0];
+  std::lock_guard<std::mutex> guard(vsmSync);
+  if(dst.size()<=VsmMaxChanges)
+    dst.push_back(sphere);
+  }
+
+void VisualObjects::vsmChangedClusters(const Object& obj, bool force) {
+  if(!scene.vsmEnabled || obj.isEmpty() || obj.clusterId==uint32_t(-1))
+    return;
+  const uint32_t first = obj.clusterId;
+  const uint32_t count = obj.type==DrawCommands::Landscape ? obj.iboLen/PackedMesh::MaxInd : 1u;
+  if(count==0)
     return;
   if(count==1) {
-    auto& c = clustersMem[first];
-    vsmChanged(Vec4(c.pos.x, c.pos.y, c.pos.z, c.r));
+    vsmChanged(obj, vsmSphere(obj, obj.pos), force);
     return;
     }
   // a landscape piece: one sphere round its meshlets
@@ -958,45 +1037,60 @@ void VisualObjects::vsmChangedClusters(uint32_t first, uint32_t count) {
     hi = Vec3(std::max(hi.x, c.pos.x+c.r), std::max(hi.y, c.pos.y+c.r), std::max(hi.z, c.pos.z+c.r));
     }
   const Vec3 cen = (lo+hi)*0.5f;
-  vsmChanged(Vec4(cen.x, cen.y, cen.z, (hi-lo).length()*0.5f));
+  vsmChanged(obj, Vec4(cen.x, cen.y, cen.z, (hi-lo).length()*0.5f), force);
   }
 
 void VisualObjects::commitVsmChanges(uint8_t fId) {
   vsmLast.serial++;
   if(vsmLast.epoch==0)
     vsmLast.epoch = ++vsmEpochs;
-  vsmLast.count    = 0;
-  vsmLast.spheres  = nullptr;
-  vsmLast.overflow = false;
+  vsmLast.count       = 0;
+  vsmLast.staticCount = 0;
+  vsmLast.spheres     = nullptr;
+  vsmLast.overflow    = false;
 
-  vsmUpload.clear();
+  std::vector<Vec4> moved[2];
   {
     std::lock_guard<std::mutex> guard(vsmSync);
-    std::swap(vsmUpload, vsmMoved);
+    std::swap(moved[0], vsmMoved[0]);
+    std::swap(moved[1], vsmMoved[1]);
+    vsmLast.moved = uint32_t(moved[0].size() + moved[1].size());
     if(!scene.vsmEnabled) {
-      vsmUpload.clear();
-      vsmDynamicPrev.clear();
+      vsmDynamicPrev[0].clear();
+      vsmDynamicPrev[1].clear();
       return;
       }
 
-    // the dynamic casters where they were last frame (whatever they drew there) and where they are now
-    vsmUpload.insert(vsmUpload.end(), vsmDynamicPrev.begin(), vsmDynamicPrev.end());
-    vsmDynamicPrev.clear();
-    auto add = [this](size_t id) {
+    // the casters that change every frame where they were last frame (whatever they drew there) and where they
+    // are now: the animated and morphed ones are movable; the wind-blown and deformed ones by their draw
+    std::vector<Vec4> now[2];
+    auto add = [&](size_t id) {
       auto& obj = objects[id];
-      if(obj.isEmpty() || !obj.visible || obj.clusterId==uint32_t(-1))
+      if(!obj.visible || !castsVsm(obj) || obj.clusterId==uint32_t(-1))
         return;
-      auto& c = clustersMem[obj.clusterId];
-      if(c.r<0)
+      if(clustersMem[obj.clusterId].r<0)
         return;
-      vsmDynamicPrev.push_back(Vec4(c.pos.x, c.pos.y, c.pos.z, c.r));
+      // a wind-blown tree sways by a part of its size round where it stands
+      Vec4 sphere = vsmSphere(obj, obj.pos);
+      if(obj.wind!=asset::AnimationType::NONE)
+        sphere.w *= 1.1f;
+      now[obj.vsmMovable ? 1 : 0].push_back(sphere);
       };
     for(auto id:objectsDynamic)
       add(id);
     for(auto id:objectsWind)
       add(id);
+
+    vsmUpload.clear();
+    for(int k=0; k<2; ++k) {
+      vsmUpload.insert(vsmUpload.end(), moved[k].begin(), moved[k].end());
+      vsmUpload.insert(vsmUpload.end(), vsmDynamicPrev[k].begin(), vsmDynamicPrev[k].end());
+      vsmUpload.insert(vsmUpload.end(), now[k].begin(), now[k].end());
+      if(k==0)
+        vsmLast.staticCount = uint32_t(vsmUpload.size());
+      vsmDynamicPrev[k] = std::move(now[k]);
+      }
   }
-  vsmUpload.insert(vsmUpload.end(), vsmDynamicPrev.begin(), vsmDynamicPrev.end());
 
   if(vsmUpload.size()>VsmMaxChanges) {
     vsmLast.overflow = true;
@@ -1122,8 +1216,8 @@ void VisualObjects::drawShadow(Tempest::Encoder<Tempest::CommandBuffer>& cmd, in
   drawCmd.drawCommon(cmd, view, Material::AlphaTest);
   }
 
-void VisualObjects::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
-  drawCmd.drawVsm(cmd);
+void VisualObjects::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, DrawCommands::VsmDraw draw) {
+  drawCmd.drawVsm(cmd, draw);
   }
 
 void VisualObjects::drawHiZ(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {

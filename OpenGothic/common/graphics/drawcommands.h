@@ -28,12 +28,22 @@ class DrawCommands {
       };
     static uint32_t hiddenTypes; // debug (test bench): a bit per Type that is not drawn
 
+    // VSM-rendering under the lamp-face cache in two passes (Renderer::drawVsm): the static casters, whose part of
+    // a lamp face is stored, then the movable ones drawn over it
+    enum VsmDraw : uint8_t {
+      VsmAll,
+      VsmStatic,  // Landscape, Static
+      VsmMovable, // Movable, Animated, Morph
+      };
+    static bool isVsmMovable(Type t) { return t==Movable || t==Animated || t==Morph; }
+
     struct DrawCmd {
       const Tempest::RenderPipeline* pMain        = nullptr;
       const Tempest::RenderPipeline* pShadow      = nullptr;
       const Tempest::RenderPipeline* pVsm         = nullptr;
       const Tempest::RenderPipeline* pHiZ         = nullptr;
       Type                           type         = Type::Landscape;
+      bool                           vsmMovable   = false; // drawn over a lamp face's stored part (VsmMovable)
 
       Material::AlphaFunc            alpha        = Material::Solid;
       uint32_t                       firstPayload = 0;
@@ -57,7 +67,9 @@ class DrawCommands {
     size_t   maxMeshlets() const { return maxPayload; }
 
     void     commit(Tempest::Encoder<Tempest::CommandBuffer>& cmd);
-    uint16_t commandId(const Material& m, Type type, uint32_t bucketId);
+    // vsmMovable: the objects of the command move in the VSM lamp-face cache's sense (isVsmMovable, or wind-blown
+    // and deformed ones): they never share a command with static ones
+    uint16_t commandId(const Material& m, Type type, uint32_t bucketId, bool vsmMovable);
     void     addClusters(uint16_t cmdId, uint32_t meshletCount);
 
     void     visibilityPass(Tempest::Encoder<Tempest::CommandBuffer>& cmd, int pass);
@@ -66,7 +78,7 @@ class DrawCommands {
     void     drawHiZ(Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void     drawCommon(Tempest::Encoder<Tempest::CommandBuffer>& cmd, SceneGlobals::VisCamera viewId, Material::AlphaFunc func);
 
-    void     drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd);
+    void     drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, VsmDraw draw = VsmAll);
 
   private:
     enum TaskLinkpackage : uint8_t {
@@ -140,4 +152,6 @@ class DrawCommands {
 
     const bool               vsmSupported;
     Tempest::StorageBuffer   vsmIndirectCmd;
+    Tempest::StorageBuffer   vsmCmdFlags;     // a bit a command: isVsmMovable (vsm_visibility_pass.comp)
+    std::vector<uint32_t>    vsmCmdFlagsCpu;
   };

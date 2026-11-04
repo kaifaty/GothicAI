@@ -133,7 +133,7 @@ class Shaders {
     Tempest::ComputePipeline vsmTrimPages, vsmSortPages, vsmListPages, vsmClumpPages, vsmAllocPages, vsmAlloc2Pages, vsmMergePages;
     Tempest::ComputePipeline vsmPackDraw0, vsmPackDraw1;
     // the lamp-face cache ([INTERNAL] vsmCache): Renderer::drawVsm
-    Tempest::ComputePipeline vsmCacheLights, vsmCacheInvalidate, vsmCacheAlloc;
+    Tempest::ComputePipeline vsmCacheLights, vsmCacheInvalidate, vsmCacheAlloc, vsmCacheStore;
     Tempest::RenderPipeline  vsmClearPages;
     Tempest::ComputePipeline vsmFogPages, vsmFogShadow, vsmFogTrace;
     Tempest::RenderPipeline  vsmFog;

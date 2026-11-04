@@ -10,18 +10,43 @@
 #include "scene.glsl"
 
 // Lamp-face cache, step 2 of 3: spheres where shadow casters changed since the last frame
-// (VisualObjects::vsmChanges: an object's place before and after a move, an object added or removed, shown or
-// hidden, and every frame the animated, morphed, deformed and wind-blown ones, now and a frame ago) mark the
-// cached faces they reach to be drawn again
+// (VisualObjects::vsmChanges) mark the cached faces they reach. The first staticCount are static casters (an
+// object's place before and after a move, one added or removed; the wind-blown and deformed ones every frame):
+// the face is drawn again whole (dirty). The rest are movable casters (Movable, Animated, Morph draws: now and a
+// frame ago, and a Movable's move): the face takes its static part from the store and draws them on top (moving)
 layout(local_size_x = 64) in;
 
 layout(push_constant, std430) uniform Push {
   uint sphereCount;
+  uint staticCount;
   };
 layout(binding = 0, std430) readonly buffer Lbo { LightSource   lights[];  };
 layout(binding = 1, std430) buffer Cache        { VsmCacheLight cache[];   };
-layout(binding = 2, std430) readonly buffer List { uint count; uint id[]; } cached;
+layout(binding = 2, std430) readonly buffer List { uint count; uint moved; uint id[]; } cached;
 layout(binding = 3, std430) readonly buffer Sph { vec4          spheres[]; };
+layout(binding = 4, std430) readonly buffer MinZ { uint         pageMinZ[]; }; // vsm_cache_store.comp
+
+// a sphere in the face's frustum that is not wholly behind the face's farthest static occluder in the pages it
+// covers (as the face was last stored: a wall in front of a tree swaying outside keeps the candle's face)
+bool touches(const vec3 dvec, const float r, const float range, const uint face, const uint e) {
+  if(!vsmCacheSphereTouchesFace(dvec, r, range, face))
+    return false;
+  const uint size = vsmCacheSize(e);
+  uint x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+  const float near = vsmCacheFootprint(dvec, r, face, size, x0, y0, x1, y1);
+  if(near<=0)
+    return true;
+  const uint first = vsmCachePageId(vsmCacheSlot(e)) - VSM_CACHE_FIRST_ROW*uint(VSM_PAGE_PER_ROW);
+  for(uint y=y0; y<=y1; ++y)
+    for(uint x=x0; x<=x1; ++x) {
+      const float far    = vsmCacheDepthDistance(uintBitsToFloat(pageMinZ[first + x + y*uint(VSM_PAGE_PER_ROW)]), range);
+      // the 16-bit depth step at that distance, and 2 cm
+      const float margin = 2.0 + 4.0*far*far/(65535.0*0.0309278*range);
+      if(near < far + margin)
+        return true;
+      }
+  return false;
+  }
 
 void main() {
   const uint i = gl_GlobalInvocationID.x;
@@ -42,10 +67,13 @@ void main() {
       continue;
     uint hit = 0;
     for(uint f=0; f<6; ++f) {
-      if((cache[id].face[f]>>31u)!=0 && vsmCacheSphereTouchesFace(dvec, s.w, range, f))
+      const uint e = cache[id].face[f];
+      if(vsmCacheValid(e) && touches(dvec, s.w, range, f, e))
         hit |= (1u << f);
       }
-    if(hit!=0)
+    if(hit!=0 && i<staticCount)
       atomicOr(cache[id].dirty, hit);
+    else if(hit!=0)
+      atomicOr(cache[id].moving, hit);
     }
   }

@@ -28,6 +28,8 @@ layout(binding = 7, r32ui)  uniform uimage3D pageTblDepth;
 layout(binding = 8, std430) buffer Pages        { VsmHeader   header; uint  pageList[]; } vsm;
 
 layout(binding = 9, r32ui)  uniform uimage2D dbg;
+// a bit a draw command: 1 for the movable casters (Movable, Animated, Morph: DrawCommands::vsmCmdFlags)
+layout(binding = 10, std430) readonly buffer Cmf { uint cmdMovable[]; };
 
 shared uint pageListSize;
 shared uint pageList[VSM_MAX_PAGES];
@@ -315,11 +317,15 @@ void runClusterOmni(const uint clusterId) {
   const Cluster cluster = clusters[clusterId];
   if(cluster.sphere.w<=0.f)
     return; // disabled or deleted
+  const uint cmdId   = cluster.bucketId_commandId & 0xFFFF;
+  const bool movable = ((cmdMovable[cmdId/32] >> (cmdId%32)) & 1u)!=0;
 
   for(uint ix=0; ix<pageListSize; ++ix) {
     const uint  i    = pageList[ix];
     const uint  data = vsm.pageList[i];
 
+    if(!movable && vsmPageIsMovableOnly(data))
+      continue; // a composed lamp face: its static part comes from the store
     const uvec2       page = unpackLightId(data);
     const LightSource lx   = lights[page.x];
     const uint        face = page.y;
