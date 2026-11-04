@@ -735,15 +735,30 @@ def fold_messages(talk: Talk, state: dict[str, Any], text: str) -> list[Message]
 
 
 TELLER = re.compile(r"(?:сказала?|слышала?|говорила?)\s+(?:(?:от|со слов)\s+)?(.+)", re.IGNORECASE)
+CAPITALS = re.compile(r"[А-ЯЁ][а-яё-]*(?:\s+[А-ЯЁ][а-яё-]*)*")
+
+
+def _in_text(text: str) -> list[str]:
+    """Proper names in a patch's own text: words with a capital letter that do not open a sentence. A
+    sentence's first word may be any word, so it is left out whether it is a name or not."""
+    out = []
+    for match in CAPITALS.finditer(text):
+        before = text[: match.start()]
+        if before[-1:].isalpha() or not before.rstrip() or before.rstrip()[-1] in ".!?…→":
+            continue
+        out.append(match[0])
+    return out
 
 
 def mentions(text: str, names: Any) -> list[dict[str, Any]]:
     """The names Sol wrote in a fold — «о:» of a tail, a teller («сказал X» after верю or сомневаюсь or in
     «от:»), the person of «+ о X» or of «~ д1 X» — each with its id. Proper: its first word past the
-    prepositions has a capital letter (people, places, quests); «бандиты», «пещера» are common words."""
-    found = []
+    prepositions has a capital letter (people, places, quests); «бандиты», «пещера» are common words. Also
+    the proper names in a patch's own text (_in_text) not named in its fields: «к Хоринису»."""
+    found, texts = [], []
     for raw in text.split("[Правки]", 1)[-1].splitlines():
         line, tail, _ = mi._split_tail(raw.strip())
+        fields = len(found)
         for part in (tail or "").split(";"):
             key, _, value = part.partition(":")
             key = key.strip().casefold()
@@ -758,6 +773,14 @@ def mentions(text: str, names: Any) -> list[dict[str, Any]]:
             found.append(head[2])
         elif head and (told := TELLER.fullmatch(head[2])):
             found.append(told[1])
+        if re.match(r"[+=~]", line) and ":" in line:
+            named = {names.resolve(n.strip().strip("«»\"'")) for n in found[fields:]} - {None}
+            for word in _in_text(line.split(":", 1)[1]):
+                # «Запечатанное послание»: a name of an item goes on in small letters
+                rest = line.split(":", 1)[1].split(word, 1)[1].split()
+                id_ = names.resolve(word) or (names.resolve(f"{word} {rest[0]}") if rest else None)
+                if id_ is None or id_ not in named:
+                    texts.append({"name": word, "id": id_, "proper": True})
     out = []
     for name in (n.strip().strip("«»\"'").strip() for n in found):
         if not name:
@@ -766,7 +789,7 @@ def mentions(text: str, names: Any) -> list[dict[str, Any]]:
         while len(words) > 1 and words[0].casefold() in mi._PREPOSITIONS:
             words.pop(0)
         out.append({"name": name, "id": names.resolve(name), "proper": words[0][:1].isupper()})
-    return out
+    return out + texts
 
 
 async def fold_talk(
@@ -1644,12 +1667,12 @@ def summary(directory: Path, *, emit: bool = True) -> dict[str, Any]:
         s: sum(len(verdict(judged_states[c, s]).get("stale", [])) for c in both) for s in ("items", "v3")
     }
 
-    if any("mentions" not in r for r in ok_states):  # a run before mentions were written
+    if ok_states:  # counted again from Sol's text: a run may have stored them by an older rule
         world = World.of(directory)
         table = world.names()
         world.close()
         for r in ok_states:
-            r.setdefault("mentions", mentions(r["text"], table))
+            r["mentions"] = mentions(r["text"], table)
     mentioned = [m for r in ok_states for m in r["mentions"]]
     proper = [m for m in mentioned if m["proper"]]
     with_id = sum(m["id"] is not None for m in proper)
@@ -2362,6 +2385,17 @@ async def _selftest_run(check: Any, root: Path) -> None:
             ("Браго", True),
         ]
         and [m["id"] for m in found if m["proper"]] == [mi.BRAGO, mi.VATRAS, mi.XARDAS, mi.BRAGO],
+        found,
+    )
+    found = mentions(
+        "[Правки]\n~ н1: отнести Письмо Ватраса по дороге к Хоринису, отдать Ватрасу [о: Ватрас]\n"
+        "+ было 7: Браго напал на меня. Я отбился → Кавалорн доволен",
+        names,
+    )
+    check(
+        "mentions: proper names in the text, not opening a sentence, not named twice",
+        [(m["name"], m["id"]) for m in found]
+        == [("Ватрас", mi.VATRAS), ("Письмо Ватраса", "ITWR_TEST_LETTER"), ("Хоринису", None)],
         found,
     )
     world.close()
