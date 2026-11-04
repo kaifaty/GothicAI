@@ -43,7 +43,7 @@
 - слот: у мнения (`opinion:hero`), настроения (`mood`) и «о X» (`other:<id>`) новый пункт закрывает старый;
 - «верю» или «сомневаюсь» тем же текстом о тех же id от другого рассказчика — не новый пункт, а ещё один
   источник в `also`; от того же — `duplicate`, как в v3; о других id — другой пункт;
-- `~` с новым текстом: основания пункта — строки, указанные в этой правке; прежние — в `log`;
+- `~` с новым текстом: `о:`, строки и подтверждения пункта — указанные в этой правке, прежние — в `log`;
 - «сказал X» связан с фактом `rumor` только ссылкой: среди строк пункта есть строка ремарки этого слуха.
   Без неё пункт не связан — правда его не закрывает. Исток — первый рассказчик цепочки слуха, поэтому два
   пересказа одного истока — одно подтверждение;
@@ -139,13 +139,14 @@ CLOSED_BY = ("sol", "slot", "truth", "cap", "cool", "forget")
 CARD_TOKENS = 300
 ITEMS_TOKENS = 150
 ITEMS_MAX = 5
+EMBED_BATCH = 256  # texts per EmbedClient.embed request (its limit)
 # Gemma's tokenizer on Russian gives about 3,5–4 знака на токен; 3,0 counts with a margin until the bench
 # measures /tokenize on the real service
 CHARS_PER_TOKEN = 3.0
 FRESH_HALF_LIFE = 3 * 1440  # game minutes: an item this old weighs half as fresh
 # ranking of items_for: closeness to the phrase, strength or importance, freshness, how it was reached
 W_CLOSE, W_WEIGHT, W_FRESH = 0.45, 0.25, 0.15
-REACH_BONUS = {"seed": 0.15, "hop": 0.075, "rest": 0.0}
+REACH_BONUS = {"seed": 0.15, "hop": 0.075}
 CARD_FEELINGS, CARD_THREADS, CARD_BELIEFS = 4, 4, 3
 
 CHANGE = r"~\s*([бчжвсднмр]\d+)(?=\s|:|$)(.*)"
@@ -926,8 +927,8 @@ def _change(state: dict[str, Any], patch: Mapping[str, Any], minute: int, names:
     if item is None:
         raise ValueError("unknown_id")
     letter, tail, values = item["section"], patch["tail"], dict(patch["values"])
-    before = {k: deepcopy(item[k])
-              for k in ("text", "about", "source", "episodes", "remarks", "strength", "importance")}
+    before = {k: deepcopy(item[k]) for k in ("text", "about", "about_names", "source", "also", "episodes",
+                                             "remarks", "strength", "importance")}
     if patch["text"]:
         values["text"] = patch["text"]
     if letter == "ч":
@@ -941,13 +942,13 @@ def _change(state: dict[str, Any], patch: Mapping[str, Any], minute: int, names:
     for key in ("strength", "importance"):
         if key in tail:
             item[key] = tail[key]
-    item["about"] = list(dict.fromkeys(item["about"] + tail.get("about", [])))
-    item["about_names"] = list(dict.fromkeys(item["about_names"] + tail.get("about_names", [])))
-    for key in ("episodes", "remarks"):
-        if patch["text"]:  # a new claim stands on the lines cited now; the old ones stay in the log
-            item[key] = list(dict.fromkeys(tail.get(key, [])))
-        else:
-            item[key] = list(dict.fromkeys(item[key] + tail.get(key, [])))
+    if patch["text"]:  # a new claim: the ids, lines and confirmations given now; the old ones stay in the log
+        person = item["slot"].removeprefix("other:") if letter == "д" else ""  # a view keeps its person
+        item["about"] = [person] if person and not person.startswith("name:") else []
+        item["about_names"] = [item["name"]] if person.startswith("name:") else []
+        item.update(episodes=[], remarks=[], also=[])
+    for key in ("about", "about_names", "episodes", "remarks"):
+        item[key] = list(dict.fromkeys(item[key] + tail.get(key, [])))
     if names is not None and patch["text"]:
         item["about"] += [id_ for id_ in names.find(patch["text"], heard=False) if id_ not in item["about"]]
     if source is not None or patch["text"] or tail.get("episodes") or tail.get("remarks"):
@@ -1289,11 +1290,11 @@ async def closeness(phrase: str, texts: list[str], embed: EmbedClient | None) ->
     if embed is not None and texts:
         try:
             query = (await embed.embed([phrase], "query"))[0]
-            docs = await embed.embed(texts[:256], "document")
+            docs = np.concatenate([await embed.embed(texts[n:n + EMBED_BATCH], "document")
+                                   for n in range(0, len(texts), EMBED_BATCH)])
             q = query / (np.linalg.norm(query) or 1.0)
             d = docs / np.maximum(np.linalg.norm(docs, axis=1, keepdims=True), 1e-9)
-            scores = [float(x) for x in d @ q] + [0.0] * (len(texts) - len(docs))
-            return scores, "embed"
+            return [float(x) for x in d @ q], "embed"
         except EmbedError:
             pass
     words = _stems(phrase)
@@ -1313,8 +1314,8 @@ async def items_for(
 ) -> Digest:
     """Items for the hero's phrase. Seeds: ids named in it (names.find) and the hero. Step 1: open items
     about a seed; step 2, one hop: items sharing another id with those (not through the hero or the npc
-    itself). If they are fewer than ITEMS_MAX, the rest of the open items come last. Ranked by
-    closeness to the phrase, strength or importance, freshness in game time and how they were reached."""
+    itself). Ranked by closeness to the phrase, strength or importance, freshness in game time and how
+    they were reached."""
     tokens = tokens or Tokens()
     skip = set(skip)
     seeds = set(names.find(phrase, near)) | {HERO}
@@ -1327,9 +1328,6 @@ async def items_for(
     for item in pool:
         if item["id"] not in reach and hops & set(item["about"]):
             reach[item["id"]] = "hop"
-    if len(reach) < ITEMS_MAX:
-        for item in pool:
-            reach.setdefault(item["id"], "rest")
     candidates = [i for i in pool if i["id"] in reach]
     if not candidates:
         return Digest("", [], 0)
@@ -1607,6 +1605,14 @@ def _test_lies(check: _Check, names: Names) -> None:
     check("lie 1: event stays", find_item(lobart, "б1")["closed_by"] is None)
     check("lie 1: closed out of card", "перебил овец" not in card(lobart).text)
     check("lie 1: applied once", apply_truth({LOBART: lobart}, entries, minute=2300) == [])
+    other = new_state(LOBART)
+    fold(other, "+ верю герой: он перебил овец [о: овцы на поле]", names=names, minute=2000)
+    fold(other, "~ в1 герой: бандиты у башни перебиты [о: Бандиты у башни Ксардаса]", names=names,
+         minute=2050)
+    changed = find_item(other, "в1")
+    apply_truth({LOBART: other}, entries, minute=2400)
+    check("change: new ids replace the old", "Q1" not in changed["about"]
+          and "MIS_ADDON_CAVALORN_BANDITS" in changed["about"] and changed["closed_by"] is None, changed)
 
     # 2. the hero lied to A, A retold B, B retold C; the truth closes all three. Hearsay is bound to its
     # rumor only by the remark line it cites: a late fold after the truth's rumor closes the claim's
@@ -1698,6 +1704,9 @@ def _test_lies(check: _Check, names: Names) -> None:
     check("lie 3: one origin, one confirmation", confirmations(f, item) == 1, item)
     fold(f, f"+ верю видел: {lies}", names=names, minute=4200, entries=entries)
     check("lie 3: own eyes is another", confirmations(f, item) == 2, item["also"])
+    fold(f, "~ в1 видел: герой не лжёт про бандитов [стр: 3]", names=names, lines={3: "t3"}, minute=4300)
+    check("change: the old confirmations go to the log", item["also"] == [] and confirmations(f, item) == 1
+          and len(f["log"][-1]["before"]["also"]) == 2, item)
 
 
 def _big_state(names: Names) -> dict[str, Any]:
@@ -1778,6 +1787,20 @@ def _test_reader(check: _Check, names: Names) -> None:
             await client.close()
 
     check("embed closeness ranks", asyncio.run(ranked()).ids[0] == "н1", asyncio.run(ranked()).text)
+
+    async def many() -> list[float]:
+        client = EmbedClient("http://frida.test", transport=httpx.MockTransport(embedding))
+        try:
+            return (await closeness("мясо", ["письмо"] * EMBED_BATCH + ["мясо"], client))[0]
+        finally:
+            await client.close()
+
+    scores = asyncio.run(many())
+    check("embed past one batch", len(scores) == EMBED_BATCH + 1 and scores[-1] > 0.99, scores[-3:])
+    lone = new_state(CAVALORN)
+    fold(lone, "+ верю видел: Кавалорн сидит у башни", names=names, minute=100)
+    found = asyncio.run(items_for(lone, "Ксардас?", names=names))
+    check("items only through about", found.ids == [], (found.ids, find_item(lone, "в1")["about"]))
 
 
 def selftest() -> int:
