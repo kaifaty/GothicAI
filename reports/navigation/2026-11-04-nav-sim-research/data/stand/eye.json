@@ -13,6 +13,12 @@
    "static_vob": 0.9996913823915712,
    "water": 1.0
   },
+  "schedule_gate": {
+   "far_updated_equal": true,
+   "complete_differs_only_with_hit": true,
+   "far_casts_follow_rays": true,
+   "cache_slot_for_slot_after_agreed_cast": true
+  },
   "static_rays": 4345494,
   "static_all_fraction": 0.9999498330914736,
   "all_rays": 5712000,
@@ -79,16 +85,16 @@
    "updated_all": true,
    "near_casts": 5712000,
    "far_casts": 286034,
-   "engine_far_casts_inferred": 285213,
-   "near_boundary_hits": 34,
+   "engine_far_casts_inferred": 285105,
+   "near_boundary_hits": 243,
    "complete_equal_fraction": 0.9994397759103641,
    "complete_mismatches": 3200,
-   "cache_slots_compared": 5711145,
-   "cache_slots_excluded_boundary": 855,
-   "cache_schedule_equal_fraction": 0.9979399927685254,
-   "cache_schedule_mismatches": 11765,
-   "cache_valid_slots": 2557485,
-   "cache_content_equal_fraction": 0.992944240142171,
+   "cache_slots_compared": 5699310,
+   "cache_slots_excluded_boundary": 12690,
+   "cache_schedule_equal_fraction": 0.9979620340006071,
+   "cache_schedule_mismatches": 11615,
+   "cache_valid_slots": 2546690,
+   "cache_content_equal_fraction": 0.9929810852518367,
    "complete_mismatches_with_equal_hit": 0,
    "complete_mismatches_by_engine_kind": {
     "none": 0,
@@ -98,19 +104,20 @@
     "npc": 0,
     "water": 0
    },
-   "cache_slots_after_agreed_cast": 5688915,
+   "cache_slots_after_agreed_cast": 5677250,
    "cache_schedule_equal_fraction_after_agreed_cast": 1.0,
    "cache_content_equal_fraction_after_agreed_cast": 1.0,
-   "cache_slots_after_ray_difference": 22230,
+   "cache_casts_unexplained": 0,
+   "cache_slots_after_ray_difference": 22060,
    "cache_slots_after_ray_difference_by_engine_kind": {
     "none": 0,
     "world": 155,
     "static_vob": 5,
-    "movable_vob": 22070,
+    "movable_vob": 21900,
     "npc": 0,
     "water": 0
    },
-   "definition": "Engine cache from rays.bin: per episode and ray, the last far-updated record whose near segment missed (no hit, or hit beyond the near end). Hits within 0.1 cm of the near end cannot be attributed and their cache slots are excluded until the ray's next far cast. Schedule = same timestamp and validity; content = the four ray criteria. A slot is 'after an agreed cast' when at the ray's latest far update where either side cast, both cast and the fresh ray met all four criteria; otherwise it inherits that ray's difference (by_engine_kind: the engine's kind for the ray at that update)."
+   "definition": "Engine cache from rays.bin: per episode and ray, the last far-updated record whose near segment missed (no hit, or hit beyond the near end). Hits within 1 cm of the near end cannot be attributed and their cache slots are excluded until the ray's next far cast. Schedule = same timestamp and validity; content = the four ray criteria. A slot is 'after an agreed cast' when at the ray's latest far update where either side cast, both cast and the fresh ray met all four criteria; otherwise it inherits that ray's difference (by_engine_kind: the engine's kind for the ray at that update)."
   },
   "replay": {
    "agents": 48,
@@ -749,8 +756,8 @@
    "sha256": "b597950e8bb9e0a856fa1f7727d9e96c816d428b327c436f4cc82af646abd5e9"
   },
   "parity.json": {
-   "bytes": 11964,
-   "sha256": "8b0dfce34ef769483c2daa4bf40dc7e0149ff69c56c5c3f0c229c694d504c707"
+   "bytes": 12174,
+   "sha256": "9aba5c3c0a2b883ab63abe3ed50100b6f8e7062563762e9d2da4319513c951ee"
   },
   "stand-cache.npy": {
    "bytes": 79968192,
