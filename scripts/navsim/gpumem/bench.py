@@ -576,8 +576,34 @@ def summarise(local, nas, digests, args):
     scale = json.loads((local / "scale.json").read_text())
     run["cells"] = [{k: v for k, v in c.items() if not k.endswith("_per_repeat")} for c in scale["cells"]]
     report.setdefault("runs", []).append(run)
+    report["headline"] = headline(report)
     write_json(REPORT, report)
     print(f"wrote {REPORT}", flush=True)
+
+
+def headline(report):
+    """Latest numbers per N and variant, for reading without the cell detail."""
+    cells = {}
+    for run in report["runs"]:
+        for c in run["cells"]:
+            cells[(c["agents"], c["lanes"], c.get("variant", "exact"))] = (run["stamp"], c)
+    rows = []
+    for (n, lanes, variant), (stamp, c) in sorted(cells.items()):
+        row = dict(agents=n, lanes=lanes, variant=variant, run=stamp, status=c.get("status"))
+        if c.get("status") == "ok":
+            row.update(update_us_per_agent=c["update_us_per_agent"]["median"],
+                       readout_us_per_agent=c["readout_us_per_agent"]["median"],
+                       memory_us_per_decision=c["memory_us_per_decision"],
+                       agent_updates_per_second=c["agent_updates_per_second"]["median"],
+                       process_vram_mib=c["process_vram_mib"], peak_allocated_mib=c["peak_allocated_bytes"] / 2 ** 20)
+        else:
+            row.update(free_vram_mib_before=c.get("free_vram_mib_before"), error=c.get("error"))
+        rows.append(row)
+    parity = report.get("parity", {}).get("records", {}).get("total", {})
+    return dict(parity=dict(readouts=parity.get("readouts"), bitwise_equal_fraction=parity.get("bitwise_equal_fraction"),
+                            differing_values=parity.get("differing_values"),
+                            action_equal_fraction=parity.get("actions", {}).get("equal_fraction")),
+                state_bytes_per_agent=report["runs"][-1]["cells"][0].get("bytes_per_agent"), scale=rows)
 
 
 IMPLEMENTATION = dict(
