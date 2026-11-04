@@ -55,6 +55,17 @@ def test_the_home_page_shows_the_conversation_and_the_short(built):
     assert "wrath-ru.mp4" in ru and "Ксардас" in ru
 
 
+def test_the_home_page_carries_the_claim_the_steps_and_the_credit(built):
+    html = (built / "index.html").read_text()
+    assert "data-words>Nobody wrote Xardas" in html
+    assert html.count('class="step-n"') == 5 and "<h3>Recognition</h3>" in html
+    assert 'href="https://github.com/Try/OpenGothic">OpenGothic</a>' in html  # the footer's credit
+    assert 'content="https://kaifaty.github.io/GothicAI/static/brand/og.jpg"' in html
+    post = (built / "posts/blade-hits/index.html").read_text()
+    assert 'aria-current="page"' in post and 'class="older"' in post  # the bar marks the devlog
+    assert 'content="https://kaifaty.github.io/GothicAI/media/blade-hits/cover.jpg"' in post
+
+
 def test_a_post_needs_its_front_matter(tmp_path):
     post = tmp_path / "2026-10-13-oops"
     post.mkdir()

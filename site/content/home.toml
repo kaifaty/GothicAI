@@ -25,8 +25,10 @@ dialogue = [
   { hero = true, name = "Hero", text = "You know, I bet your mother was all talk too." },
   { name = "Xardas", text = "You do not speak of my mother. This conversation is over. You will serve me in silence." },
 ]
-dialogue_note = "Nobody wrote Xardas' lines, and nobody decided when he would snap: his language model did. The hero speaks with a synthetic voice, Xardas hears it through speech recognition. The answers are unedited; only the pauses while the model thinks are cut. Then the game raises the hero as a skeleton."
+dialogue_note = "The hero speaks with a synthetic voice, Xardas hears it through speech recognition. The answers are unedited; only the pauses while the model thinks are cut. Then the game raises the hero as a skeleton."
+claim = "Nobody wrote Xardas' lines, and nobody decided when he would snap: his language model did."
 video_alt = "The hero insults Xardas; Xardas kills him and raises him as a skeleton"
+eyebrow = "An open-source experiment on the OpenGothic engine"
 headline = "Gothic II, where the people hear you, answer and remember"
 lede = "The original game on the OpenGothic engine, with a language model behind its characters. You hold a key and speak; the one you face hears you, answers in a voice of its own, acts on what you said and remembers it in your save."
 read_devlog = "Read the devlog"
@@ -43,14 +45,16 @@ features = [
 how_title = "How a conversation goes"
 how_text = "The game stays the original: a thin bridge inside the engine talks to an AI server running beside it."
 how_steps = [
-  "You hold the talk key and speak.",
-  "Speech recognition turns your voice into text while you speak.",
-  "The server picks whom you addressed and gives that character its persona, its memory of you and what it sees.",
-  "The language model answers and may act: give, follow, draw a weapon.",
-  "Text-to-speech voices the answer, and the character speaks it in the game.",
+  { label = "You speak", text = "You hold the talk key and speak." },
+  { label = "Recognition", text = "Speech recognition turns your voice into text while you speak." },
+  { label = "The server", text = "The server picks whom you addressed and gives that character its persona, its memory of you and what it sees." },
+  { label = "The model", text = "The language model answers and may act: give, follow, draw a weapon." },
+  { label = "The voice", text = "Text-to-speech voices the answer, and the character speaks it in the game." },
 ]
 devlog_title = "Devlog"
+devlog_lede = "What changed in the game, how it works and the numbers behind it."
 status = "Not playable yet: it runs from source on macOS and needs your own copy of Gothic II: Night of the Raven."
+credit = "Gothic II: Night of the Raven belongs to Piranha Bytes and THQ Nordic; the engine is [OpenGothic](https://github.com/Try/OpenGothic) by Try. Gothic AI is a fan project, not affiliated with them."
 
 [ru]
 description = "Gothic II, где NPC слышат голос игрока, отвечают своими голосами, действуют и помнят. Открытый эксперимент на движке OpenGothic."
@@ -64,8 +68,10 @@ dialogue = [
   { hero = true, name = "Герой", text = "Знаешь, твоя мамаша, небось, тоже только болтать умела." },
   { name = "Ксардас", text = "О моей матери ты говорить не смеешь. Этот разговор окончен. Ты послужишь мне молча." },
 ]
-dialogue_note = "Реплики Ксардаса никто не писал, и когда он сорвётся, тоже никто не решал: это решила его языковая модель. Герой говорит синтезированным голосом, Ксардас слышит его через распознавание речи. Ответы не правились, вырезаны только паузы, пока модель думает. Дальше игра поднимает героя скелетом."
+dialogue_note = "Герой говорит синтезированным голосом, Ксардас слышит его через распознавание речи. Ответы не правились, вырезаны только паузы, пока модель думает. Дальше игра поднимает героя скелетом."
+claim = "Реплики Ксардаса никто не писал, и когда он сорвётся, тоже никто не решал: это решила его языковая модель."
 video_alt = "Герой хамит Ксардасу, Ксардас убивает его и поднимает скелетом"
+eyebrow = "Открытый эксперимент на движке OpenGothic"
 headline = "Gothic II, где жители слышат тебя, отвечают и помнят"
 lede = "Оригинальная игра на движке OpenGothic, а за персонажами — языковая модель. Зажимаешь клавишу и говоришь: тот, к кому ты обращаешься, слышит, отвечает своим голосом, делает то, о чём договорились, и помнит это в твоём сохранении."
 read_devlog = "Читать дневник"
@@ -82,11 +88,13 @@ features = [
 how_title = "Как идёт разговор"
 how_text = "Игра остаётся оригинальной: тонкий мост внутри движка общается с ИИ-сервером, который работает рядом."
 how_steps = [
-  "Ты зажимаешь клавишу разговора и говоришь.",
-  "Распознавание речи превращает голос в текст прямо во время фразы.",
-  "Сервер выбирает, к кому ты обратился, и даёт этому персонажу его характер, память о тебе и то, что он видит.",
-  "Языковая модель отвечает и может действовать: отдать, пойти следом, достать оружие.",
-  "Синтез речи озвучивает ответ, и персонаж произносит его в игре.",
+  { label = "Ты говоришь", text = "Ты зажимаешь клавишу разговора и говоришь." },
+  { label = "Распознавание", text = "Распознавание речи превращает голос в текст прямо во время фразы." },
+  { label = "Сервер", text = "Сервер выбирает, к кому ты обратился, и даёт этому персонажу его характер, память о тебе и то, что он видит." },
+  { label = "Модель", text = "Языковая модель отвечает и может действовать: отдать, пойти следом, достать оружие." },
+  { label = "Голос", text = "Синтез речи озвучивает ответ, и персонаж произносит его в игре." },
 ]
 devlog_title = "Дневник"
+devlog_lede = "Что изменилось в игре, как это устроено и какие за этим числа."
 status = "Поиграть пока нельзя: проект запускается из исходников на macOS, и нужна своя копия Gothic II: Ночь Ворона."
+credit = "Gothic II: Ночь Ворона принадлежит Piranha Bytes и THQ Nordic; движок — [OpenGothic](https://github.com/Try/OpenGothic) от Try. Gothic AI — фанатский проект и с ними не связан."
