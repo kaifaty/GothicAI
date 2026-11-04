@@ -87,7 +87,7 @@ SWA_WINDOW = 512  # Gemma's sliding window: llama.cpp rolls its cache back about
 MEMORY_HEAD = "[Твоя память — что ты помнишь сам, герою её не пересказывай]"
 LIE_PHRASES = ("бандит", "мост")
 TOPICS = {  # item 2 of the acceptance: what Cavalorn must remember across meetings
-    "кража": re.compile(r"кра[лдж]|укра|обокр|вор|стащ", re.IGNORECASE),
+    "кража": re.compile(r"\b(?:кра[лдж]|укра|обокр|вор|стащ)", re.IGNORECASE),  # not «говорил»
     "бандиты": re.compile(r"бандит|браго|разбойн", re.IGNORECASE),
     "письмо": re.compile(r"письм|послани", re.IGNORECASE),
     "злость": re.compile(r"\bзл[оаияуе]|злост|гнев|обид|ярост", re.IGNORECASE),
@@ -2602,6 +2602,11 @@ async def _selftest_run(check: Any, root: Path) -> None:
         result["probes"]["items"]["correct"] == 2
         and result["probes"]["sol"]["judged"] == 2
         and result["probes"]["bare"]["by_kind"]["feeling"]["correct"] == 2,
+    )
+    check(
+        "topics: words, not parts of words",
+        TOPICS["кража"].search("о ком он говорил") is None
+        and TOPICS["кража"].search("герой обокрал меня, вор"),
     )
     check(
         "summary transitions",
