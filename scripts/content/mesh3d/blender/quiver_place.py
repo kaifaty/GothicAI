@@ -3,7 +3,7 @@
 blender -b --factory-startup -P quiver_place.py -- config.json
 config: {"glb": baked model.glb, "maps_dir": the bake's maps/, "out_dir": str, "size": 768,
          "tilt_back": deg, "tilt_out": deg, "hip": [half width, half depth], "clearance": m, "mouth_r": m,
-         "mouth_back": m, "belt_z": m, "outs": [m, ...], "views": [{"name", "azimuth", "elevation"}]}
+         "mouth_back": m, "belt_z": m, "outs": [m, ...], "stand_in": true, "views": [{"name", "azimuth", "elevation"}]}
 Checks the model, not the game: the quiver's frame from quiver.py (mouth at the origin, along -Y, +X to the
 body) is turned so that its axis leans back and out as Quiver::fit does, and its mouth sits "clearance" plus
 "out" beside an elliptic hip at the belt. The straps must reach the belt at every push-out. Writes
@@ -115,10 +115,12 @@ def scene_for(out):
     # the stand-in: hips, the right thigh, a belt (wearer faces -Y in Blender, right is -X)
     ha, hb = cfg["hip"]
     cloth = material("cloth", (0.09, 0.075, 0.06))
-    ellipse_tube("hip", ha, hb, 0.80, 1.25, cloth)
-    ellipse_tube("thigh", 0.085, 0.085, 0.45, 0.85, cloth, centre=(-0.095, 0.0))
-    ellipse_tube("belt", ha + 0.006, hb + 0.006, cfg["belt_z"] - 0.022, cfg["belt_z"] + 0.022,
-                 material("belt", (0.05, 0.035, 0.022)))
+    stand_in = cfg.get("stand_in", True)  # false: the quiver alone, to set beside the concept
+    if stand_in:
+        ellipse_tube("hip", ha, hb, 0.80, 1.25, cloth)
+        ellipse_tube("thigh", 0.085, 0.085, 0.45, 0.85, cloth, centre=(-0.095, 0.0))
+        ellipse_tube("belt", ha + 0.006, hb + 0.006, cfg["belt_z"] - 0.022, cfg["belt_z"] + 0.022,
+                     material("belt", (0.05, 0.035, 0.022)))
     # the quiver
     before = set(bpy.data.objects)
     bpy.ops.import_scene.gltf(filepath=cfg["glb"])

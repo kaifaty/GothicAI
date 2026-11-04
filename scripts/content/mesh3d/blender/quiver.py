@@ -10,6 +10,8 @@ A dark cavity "cavity" metres deep under the mouth, so nothing light shows betwe
 Frame (as the engine's Quiver): glTF metres, the centre of the mouth at the origin, the quiver along -Y,
 +Z the wearer's forward, +X towards the wearer's body (glTF is right-handed and the loader mirrors X, so
 the wearer's right, outward, is -X). Blender axes: glTF (x, y, z) = Blender (x, z, -y).
+That holds for a skeleton with its right at +X and face at +Z, as HUMANS.MDH (ZS_SWORD on the left hip at x -17.5);
+Quiver::fit flips its right for a mirrored skeleton, and there +X would point out. Bowmen are humans: no other case.
 
 The engine tilts this frame on BIP01 PELVIS (bottom back "tilt_back", out "tilt_out") and pushes it outward
 under the armour until the nearest armour point is 2 cm from the tube. So the belt side cannot be modelled to
