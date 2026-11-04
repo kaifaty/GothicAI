@@ -217,24 +217,24 @@ if [[ "$stage" == diagnose ]]; then
 fi
 
 if [[ "$stage" == replay ]]; then
-  # The frozen v5 teacher recordings (2026-10-22): every one with a decision without a start
-  # cell, plus 40 others. --body-exit off must replay them exactly; on differs only from there.
+  # The frozen v5 memory-teacher recordings (2026-10-22): every one with a decision without a
+  # start cell, plus 40 others. --body-exit off must replay them exactly; on differs from there.
   "$python" -B -I - "$build_dir/opengothic/gothic-navmemoryteacher-contract" "$archive/replay.json" <<'REPLAY'
 import json, random, subprocess, sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 contract, output = sys.argv[1:]
-recordings = sorted(Path("/mnt/shared/gothic-ai/nav-demos-v5/recordings").glob("*/*/*/samples.bin.gz"))
-def stalls(path):
-    episode = json.loads((path.parent / "episode.json").read_text())
-    return episode.get("start_not_found_decisions") or 0
-counts = {str(path): stalls(path) for path in recordings}
+# Only the memory teacher's recordings: jump is recorded by teacher v2.
+episodes = {path: json.loads((path.parent / "episode.json").read_text())
+            for path in sorted(Path("/mnt/shared/gothic-ai/nav-demos-v5/recordings").glob("*/*/*/samples.bin.gz"))}
+recordings = [path for path, episode in episodes.items() if episode.get("teacher_version") == 3]
+counts = {str(path): episodes[path].get("start_not_found_decisions") or 0 for path in recordings}
 stalled = [path for path in recordings if counts[str(path)] > 0]
 others = random.Random(18102027).sample([path for path in recordings if counts[str(path)] == 0], 40)
 def replay(path, mode):
     result = subprocess.run([contract, "--body-exit", mode, str(path)], capture_output=True, text=True)
     value = json.loads(result.stdout.splitlines()[-1]) if result.stdout.strip() else {}
-    return dict(path=str(path), family=path.parts[-3], mode=mode, start_not_found=counts[str(path)],
+    return dict(path=str(path), family=path.parts[-4], mode=mode, start_not_found=counts[str(path)],
                 exit=result.returncode, decisions=value.get("decisions"), mismatches=value.get("mismatches"))
 with ThreadPoolExecutor(8) as pool:
     rows = list(pool.map(lambda job: replay(*job), [(path, mode) for path in stalled + others for mode in ("off", "on")]))
