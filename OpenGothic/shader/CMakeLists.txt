@@ -408,6 +408,7 @@ add_shader(cmaa2_deferred_color_apply_2x2.frag     antialiasing/cmaa2/deferred_c
 
 # temporal AA by the camera (docs/graphics-plan.md, step 1a)
 add_shader(taa_resolve.frag                        antialiasing/taa_resolve.frag)
+add_shader(taa_sharpen.frag                        antialiasing/taa_sharpen.frag)
 
 # virtual shadows
 add_shader(vsm_dbg.frag              virtual_shadow/vsm_direct_light.frag -DDEBUG)

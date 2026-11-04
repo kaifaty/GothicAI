@@ -95,10 +95,6 @@ Gothic::Gothic() {
   iniFile    .reset(new IniFile(u"Gothic.ini"));
   // 75 % where MetalFX upscales it (as sharp as full resolution, +15-20 FPS on an M1 Pro), full resolution elsewhere
   const int vidResDefault = (Resources::hasGraphicsDevice() && Resources::device().properties().spatialUpscale) ? 1 : 0;
-  // temporal AA on by default; [INTERNAL] taa=0 turns it off (with -taa 0 and OPENGOTHIC_TAA, Renderer::setupSettings)
-  if(!iniFile->has("INTERNAL", "taa")) {
-    iniFile->set("INTERNAL", "taa", 1);
-    }
   if(!iniFile->has("INTERNAL", "vidResIndex")) {
     iniFile->set("INTERNAL", "vidResIndex", vidResDefault);
     }
@@ -186,6 +182,9 @@ Gothic::Gothic() {
   defaults->set("INTERNAL",     "vidResIndex", vidResDefault);
   defaults->set("INTERNAL",     "halfResAoFog", 1); // SSAO and fog shadows at half resolution
   defaults->set("INTERNAL",     "spatialUpscale", 1); // MetalFX for reduced resolution, where supported
+  // temporal AA by the camera (Renderer::setupSettings: also -taa 0 and OPENGOTHIC_TAA) and its sharpening, 0..1
+  defaults->set("INTERNAL",     "taa", 1);
+  defaults->set("INTERNAL",     "taaSharpness", 0.75f);
 
   defaults->set("VIDEO", "zVidBrightness", 0.5f);
   defaults->set("VIDEO", "zVidContrast",   0.5f);

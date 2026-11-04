@@ -21,6 +21,7 @@
 #      BENCH_HEADLESS 1: runner in lockstep, 0: window; default: scenario's # @headless marker
 #      RUNNER_BIN    headless executable (default: gothic-body-runner beside GAME_BIN)
 #      TEMPEST_WINDOW_SIZE client frame size (default: 800x600)
+#      BENCH_VID_RES  [INTERNAL] vidResIndex of the run (default: 2 on macOS, 0 on Linux)
 #      SAVE          save to start from (default: save_slot_1.sav in the main checkout)
 #      WORLD         start a fresh game in this world instead (NEWWORLD.ZEN, OLDWORLD.ZEN, ADDONWORLD.ZEN, DRAGONISLAND.ZEN)
 #      GOTHIC_INTRO=1 play the new game's intro and the scripts' videos (default: -nointro, none)
@@ -293,6 +294,8 @@ mkdir -p "$RUN"
 # macOS captures half of its Retina backing size; X11 client sizes are already pixels.
 VID_RES_INDEX=2
 if [[ "$(uname -s)" == Linux ]]; then VID_RES_INDEX=0; fi
+# BENCH_VID_RES=0 on a Mac: full resolution, a 960x540 window gives 1920x1080 frames (TAA clips)
+VID_RES_INDEX="${BENCH_VID_RES:-$VID_RES_INDEX}"
 cat >"$RUN/Gothic.ini" <<EOF
 [INTERNAL]
 vidResIndex=$VID_RES_INDEX

@@ -220,9 +220,9 @@ vec4 antitileDiffuse(inout MaterialSampling maps, uint tId) {
 #else
   const uint texId = 0;
 #endif
-  vec4 a = textureGrad(sampler2D(textureMain[texId], samplerMain), maps.a.uv, maps.a.duvdx, maps.a.duvdy);
-  vec4 b = textureGrad(sampler2D(textureMain[texId], samplerMain), maps.b.uv, maps.b.duvdx, maps.b.duvdy);
-  vec4 c = textureGrad(sampler2D(textureMain[texId], samplerMain), maps.c.uv, maps.c.duvdx, maps.c.duvdy);
+  vec4 a = textureGrad(sampler2D(textureMain[texId], samplerMain), maps.a.uv, maps.a.duvdx*scene.mipGradScale, maps.a.duvdy*scene.mipGradScale);
+  vec4 b = textureGrad(sampler2D(textureMain[texId], samplerMain), maps.b.uv, maps.b.duvdx*scene.mipGradScale, maps.b.duvdy*scene.mipGradScale);
+  vec4 c = textureGrad(sampler2D(textureMain[texId], samplerMain), maps.c.uv, maps.c.duvdx*scene.mipGradScale, maps.c.duvdy*scene.mipGradScale);
   const vec3 luminance = vec3(0.299, 0.587, 0.114);
   vec3 brightness = vec3(dot(a.rgb,luminance), dot(b.rgb,luminance), dot(c.rgb,luminance));
   // The exponent limits ghosting, while luminance breaks up straight seams.
@@ -302,13 +302,13 @@ vec4 diffuseTex() {
     tex = antitileDiffuse(maps, tId);
   else
     // The material flag is uniform within the primitive (flat bucketId).
-    tex = texture(sampler2D(textureMain[tId], samplerMain),uv);
+    tex = texture(sampler2D(textureMain[tId], samplerMain),uv,scene.mipBias);
 #else
-  vec4 tex = texture(sampler2D(textureMain[tId], samplerMain),uv);
+  vec4 tex = texture(sampler2D(textureMain[tId], samplerMain),uv,scene.mipBias);
 #endif
 #if (MESH_TYPE==T_PFX)
   if(shInp.flip.z>=0.0)
-    tex = mix(tex, texture(sampler2D(textureMain[tId], samplerMain), shInp.flip.xy), shInp.flip.z);
+    tex = mix(tex, texture(sampler2D(textureMain[tId], samplerMain), shInp.flip.xy, scene.mipBias), shInp.flip.z);
 #endif
 
 #if !defined(SIMPLE_MAT)
@@ -348,7 +348,7 @@ vec2 antitileSlope(uint tId, AntitileCell cell) {
 #else
   const uint texId = 0;
 #endif
-  vec4 nm = textureGrad(sampler2D(textureNormal[texId], samplerMain), cell.uv, cell.duvdx, cell.duvdy);
+  vec4 nm = textureGrad(sampler2D(textureNormal[texId], samplerMain), cell.uv, cell.duvdx*scene.mipGradScale, cell.duvdy*scene.mipGradScale);
   vec2 xy = nm.ag * 2.0 - 1.0;
   float z = sqrt(max(0.0, 1.0 - dot(xy,xy)));
   // q = R * uv: the height gradient (and normal XY) returns with R^T.
@@ -363,7 +363,7 @@ vec3 antitileOrm(uint tId, AntitileCell cell) {
 #else
   const uint texId = 0;
 #endif
-  return textureGrad(sampler2D(textureOrm[texId], samplerMain), cell.uv, cell.duvdx, cell.duvdy).rgb;
+  return textureGrad(sampler2D(textureOrm[texId], samplerMain), cell.uv, cell.duvdx*scene.mipGradScale, cell.duvdy*scene.mipGradScale).rgb;
   }
 #endif
 
@@ -440,18 +440,18 @@ void mainGBuffer(vec4 t) {
       outOrm.rgb = orm;
     } else {
     if((bucket[bucketId].flags & BK_NORMAL)!=0) {
-      vec4 nm = textureGrad(sampler2D(textureNormal[tId], samplerMain), uv, duvdx, duvdy);
+      vec4 nm = textureGrad(sampler2D(textureNormal[tId], samplerMain), uv, duvdx*scene.mipGradScale, duvdy*scene.mipGradScale);
       outNormal = encodeNormal(mappedNormal(shInp.normal, dpdx, dpdy, duvdx, duvdy, nm));
       }
     if((bucket[bucketId].flags & BK_ORM)!=0)
-      outOrm.rgb = textureGrad(sampler2D(textureOrm[tId], samplerMain), uv, duvdx, duvdy).rgb;
+      outOrm.rgb = textureGrad(sampler2D(textureOrm[tId], samplerMain), uv, duvdx*scene.mipGradScale, duvdy*scene.mipGradScale).rgb;
     }
   const float glow = bucket[bucketId].emissive;
   if(glow>0.0 && !maps.antitile && (bucket[bucketId].flags & BK_ORM)!=0) {
     // the ORM alpha marks the glowing texels (cracks of a burning log, the ember bed); they breathe slowly. Glowing
     // charcoal is black under its own light: a lamp must not paint the heat as orange wood (r5), so the albedo goes
     // dark by the share and the ambient pass adds the glow in the colour of its heat (emberColour, common.glsl)
-    const float mask = textureGrad(sampler2D(textureOrm[tId], samplerMain), uv, duvdx, duvdy).a;
+    const float mask = textureGrad(sampler2D(textureOrm[tId], samplerMain), uv, duvdx*scene.mipGradScale, duvdy*scene.mipGradScale).a;
     const float share = clamp(glow*mask*emberBreath(shInp.pos), 0.0, 1.0);
     outOrm.a = 1.0 - EmissiveOrmCode*share;
     outDiffuse.rgb *= 1.0 - share;

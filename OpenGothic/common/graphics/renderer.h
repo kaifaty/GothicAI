@@ -100,6 +100,7 @@ class Renderer final {
     void drawBloom        (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawCMAA2        (Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
     void drawTaa          (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
+    void drawTaaSharpen   (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawUpscale      (Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawReflections  (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
     void drawUnderwater   (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
@@ -150,6 +151,8 @@ class Renderer final {
       GiMethod       giMethod           = GiMethod::None;
       bool           aaEnabled          = false;
       bool           taaEnabled         = false;
+      float          taaSharpness       = 0.75f; // RCAS after the resolve, 0..1
+      float          taaMipBias         = -0.5f; // material textures of the main view with TAA
       bool           bloomEnabled       = true;
 
       float          zVidBrightness     = 0.5;
@@ -236,6 +239,7 @@ class Renderer final {
       uint32_t                  cuts      = 0;     // Camera::cuts() of the last frame
       bool                      active    = false; // this frame is jittered and resolved
       bool                      valid     = false; // the history holds a frame of this view
+      bool                      shot      = false; // screenshoot(): an image of the internal size
       Taa::View                 prev;
       Tempest::Matrix4x4        reproject;
       } taa;

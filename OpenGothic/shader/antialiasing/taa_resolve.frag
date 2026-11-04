@@ -18,8 +18,7 @@ layout(binding = 0) uniform sampler2D current; // linear HDR, pre-exposed
 layout(binding = 1) uniform sampler2D depth;
 layout(binding = 2) uniform sampler2D history; // bilinear
 
-layout(location = 0) out vec4 outHistory;
-layout(location = 1) out vec4 outScene;
+layout(location = 0) out vec4 outHistory; // the sharpening pass makes the scene from it (taa_sharpen.frag)
 
 const float VarianceGamma = 1.0;
 
@@ -82,7 +81,6 @@ void main() {
 
   if(push.reset!=0) {
     outHistory = vec4(cur, 1);
-    outScene   = vec4(cur, 1);
     return;
     }
 
@@ -121,7 +119,6 @@ void main() {
   // the history from beyond the screen: this frame only
   if(any(lessThan(histUv, vec2(0))) || any(greaterThan(histUv, vec2(1)))) {
     outHistory = vec4(cur, 1);
-    outScene   = vec4(cur, 1);
     return;
     }
 
@@ -143,5 +140,4 @@ void main() {
   const vec3  res   = (cur*wCur + hist*wHist)/(wCur + wHist);
 
   outHistory = vec4(res, 1);
-  outScene   = vec4(res, 1);
   }

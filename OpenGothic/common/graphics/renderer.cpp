@@ -154,10 +154,20 @@ void Renderer::setupSettings() {
     if(const char* e = std::getenv("OPENGOTHIC_TAA"))
       taa = std::string_view(e)!="0";
     settings.taaEnabled = taa && Resources::device().properties().hasAttachFormat(TextureFormat::RGBA16F);
+    // the sharpening after the resolve (RCAS) and the mip bias of the main view's material textures:
+    // the history averages the jittered samples, which softens; OPENGOTHIC_TAA_SHARPNESS, OPENGOTHIC_TAA_MIP_BIAS
+    // (test benches) override
+    settings.taaSharpness = Gothic::settingsGetF("INTERNAL","taaSharpness");
+    if(const char* e = std::getenv("OPENGOTHIC_TAA_SHARPNESS"))
+      settings.taaSharpness = std::strtof(e, nullptr);
+    settings.taaSharpness = std::clamp(settings.taaSharpness, 0.f, 1.f);
+    settings.taaMipBias   = -0.5f;
+    if(const char* e = std::getenv("OPENGOTHIC_TAA_MIP_BIAS"))
+      settings.taaMipBias = std::clamp(std::strtof(e, nullptr), -2.f, 0.f);
     static int logged = -1;
     if(logged!=int(settings.taaEnabled)) {
       logged = int(settings.taaEnabled);
-      Log::i("render: taa = ", logged);
+      Log::i("render: taa = ", logged, ", sharpness = ", settings.taaSharpness, ", mip bias = ", settings.taaMipBias);
       }
   }
   // CMAA2 runs at internal resolution, so it needs a same-size target: native or the upscaler input
@@ -291,8 +301,10 @@ void Renderer::prepareTaa(WorldView& wview, const Camera& camera) {
   if(!taa.active) {
     taa.valid = false;
     wview.setJitter(nullptr);
+    wview.setMipBias(0);
     return;
     }
+  wview.setMipBias(settings.taaMipBias);
 
   // without jitter, as the camera gives it; the shadows (Camera::viewShadow*) are made from it too
   Taa::View cur;
@@ -706,7 +718,12 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
 
   shaders.waitCompiler();
 
-  const auto res = internalResolution(result.size());
+  auto res = internalResolution(result.size());
+  // With TAA a screenshot (bench `shot`, every frame of `rec`) is drawn at the internal resolution it is the size of:
+  // otherwise its smaller internal size would rebuild the viewport, and the history with it, at every capture
+  const bool shotNative = taa.shot && settings.taaEnabled && result.size()==zbuffer.size();
+  if(shotNative)
+    res = zbuffer.size();
   // a switch between TAA and CMAA2 (settings) needs their buffers
   const bool aaReady  = !settings.aaEnabled  || !cmaa2.workingEdges.isEmpty();
   const bool taaReady = !settings.taaEnabled || !taa.output.isEmpty();
@@ -853,7 +870,7 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
     drawTaa(cmd);
   drawBloom(cmd);
 
-  auto& tonemapTarget = upscale.input.isEmpty() ? result : upscale.input;
+  auto& tonemapTarget = (upscale.input.isEmpty() || shotNative) ? result : upscale.input;
   if(settings.aaEnabled) {
     cmd.setDebugMarker("CMAA2 & Tonemapping");
     drawCMAA2(tonemapTarget, cmd, wview);
@@ -861,7 +878,7 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
     cmd.setDebugMarker("Tonemapping");
     drawTonemapping(tonemapTarget, cmd, wview);
     }
-  if(!upscale.input.isEmpty())
+  if(!upscale.input.isEmpty() && !shotNative)
     drawUpscale(result, cmd);
   postTiming.finish();
 
@@ -1008,18 +1025,35 @@ void Renderer::drawTaa(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
   auto& next = taa.history[taa.cur];
   auto& prev = taa.history[taa.cur^1];
   cmd.setDebugMarker("TAA");
-  cmd.setFramebuffer({{next, Tempest::Discard, Tempest::Preserve}, {taa.output, Tempest::Discard, Tempest::Preserve}});
+  cmd.setFramebuffer({{next, Tempest::Discard, Tempest::Preserve}});
   cmd.setBinding(0, sceneLinear, Sampler::nearest(ClampMode::ClampToEdge));
   cmd.setBinding(1, zbuffer,     Sampler::nearest(ClampMode::ClampToEdge));
   cmd.setBinding(2, prev,        Sampler::bilinear(ClampMode::ClampToEdge));
   cmd.setPushData(push);
   cmd.setPipeline(shaders.taaResolve);
   cmd.draw(nullptr, 0, 3);
+  taa.valid = true;
+
+  // the history stays unsharpened: sharpening fed back would build up from frame to frame
+  drawTaaSharpen(cmd);
 
   // bloom and tonemapping go on from the resolved frame
   std::swap(sceneLinear, taa.output);
-  taa.cur  ^= 1;
-  taa.valid = true;
+  taa.cur ^= 1;
+  }
+
+void Renderer::drawTaaSharpen(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
+  // RCAS of AMD FidelityFX FSR 1 (MIT) on the resolved frame into `output` (shader/antialiasing/taa_sharpen.frag)
+  struct Push {
+    float sharpness = 0;
+    } push;
+  push.sharpness = settings.taaSharpness;
+  cmd.setDebugMarker("TAA-sharpen");
+  cmd.setFramebuffer({{taa.output, Tempest::Discard, Tempest::Preserve}});
+  cmd.setBinding(0, taa.history[taa.cur], Sampler::nearest(ClampMode::ClampToEdge));
+  cmd.setPushData(push);
+  cmd.setPipeline(shaders.taaSharpen);
+  cmd.draw(nullptr, 0, 3);
   }
 
 void Renderer::drawUpscale(Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
@@ -2965,7 +2999,9 @@ Tempest::Attachment Renderer::screenshoot(uint8_t frameId) {
   CommandBuffer cmd;
   {
   auto enc = cmd.startEncoding(device);
+  taa.shot = true;
   draw(img,enc,frameId,*wview,*camera);
+  taa.shot = false;
   }
 
   auto sync = device.submit(cmd);

@@ -173,6 +173,11 @@ void SceneGlobals::setWorld(const WorldView &wview) {
   uboGlobalCpu.plPosY  = std::clamp(uboGlobalCpu.plPosY, 0.f, 1000.f);
   }
 
+void SceneGlobals::setMipBias(float bias) {
+  uboGlobalCpu.mipBias      = bias;
+  uboGlobalCpu.mipGradScale = std::exp2(bias);
+  }
+
 void SceneGlobals::setUnderWater(bool w) {
   uboGlobalCpu.underWater = w ? 1 : 0;
   }
@@ -195,6 +200,10 @@ void SceneGlobals::commitUbo(uint8_t fId) {
       ubo.viewProject = uboGlobalCpu.viewShadow[i-V_Shadow0];
     if(i==V_Vsm)
       ubo.viewProject = uboGlobalCpu.viewVirtualShadow;
+    if(isShadowView(VisCamera(i))) {
+      ubo.mipBias      = 0;
+      ubo.mipGradScale = 1;
+      }
     std::memcpy(ubo.frustrum, frustrum[i].f, sizeof(ubo.frustrum));
     }
 
