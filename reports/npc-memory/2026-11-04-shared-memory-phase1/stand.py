@@ -1116,8 +1116,10 @@ async def sol_answer(sol: LLMBackend, ctx: Asked, phrase: str, store: MemoryStor
     and told «Принято.», not run."""
     request = sol_messages(ctx, phrase)
     steps, calls, said, recalled = [], [], [], False
+    started, first_token = time.monotonic(), None
     for step in range(MAX_STEPS):
         items: list[Any] = []
+        offset = time.monotonic() - started
         result = await sol_stream(
             sol,
             ctx.talk.instructions,
@@ -1128,6 +1130,8 @@ async def sol_answer(sol: LLMBackend, ctx: Asked, phrase: str, store: MemoryStor
             items=items,
         )
         steps.append({k: result[k] for k in ("first_token_s", "total_s", "usage", "error")})
+        if first_token is None and result["first_token_s"] is not None:  # the turn's first words, any step
+            first_token = offset + result["first_token_s"]
         if result["error"] is not None:
             break
         if result["text"].strip():
@@ -1163,7 +1167,7 @@ async def sol_answer(sol: LLMBackend, ctx: Asked, phrase: str, store: MemoryStor
         "steps": steps,
         "attempts": len(steps),
         "error": next((s["error"] for s in steps if s["error"] is not None), None),
-        "first_token_s": first["first_token_s"],
+        "first_token_s": first_token,
         "total_s": sum(s["total_s"] for s in steps),
         "usage": first["usage"],
         "prompt_tokens": (first["usage"] or {}).get("input_tokens"),
@@ -1326,6 +1330,37 @@ def state_sections(talk: Talk, before: str, after: str) -> dict[str, str]:
     }
 
 
+RECORD_CHARS = 60_000  # the branch record of a probe's judge; the longest chain of the 11 talks is ~52 000
+NOT_TO_KNOW = ("unknown", "branch")  # kinds of probes where the right answer does not confirm the event
+
+
+def branch_record(world: World, conv: str, keep: set[str], limit: int = RECORD_CHARS) -> tuple[str, dict]:
+    """All of this npc's talks along the save chain the memory is carried by, up to the end of `conv`: each
+    with the fold's numbered lines (phrases, answers, calls, remarks, chronicle facts). Over `limit` the
+    oldest talks go first, but not those in `keep` (the evidence's and `conv`)."""
+    chain: list[str] = []
+    at: str | None = conv
+    while at is not None:
+        chain.insert(0, at)
+        at = world.sources[at]
+
+    def part(n: int, c: str) -> str:
+        talk = world.talk(c)
+        start = mi.minute_of(talk.turns[0]["situation"]) or talk.minute
+        lines = [talk.text(), talk.text(chronicle=True)]
+        head = f"Разговор {n} из {len(chain)}, {mi.time_text(start)} — {mi.time_text(talk.minute)}:"
+        return "\n".join([head, *(x for x in lines if x)])
+
+    parts = {c: part(n, c) for n, c in enumerate(chain, start=1)}
+    shown = list(chain)
+    while sum(len(parts[c]) for c in shown) > limit and (old := [c for c in shown if c not in keep]):
+        shown.remove(old[0])
+    cut = len(chain) - len(shown)
+    note = [f"[Раньше в этой ветке было ещё разговоров: {cut}; они не показаны]"] if cut else []
+    text = "\n\n".join(note + [parts[c] for c in shown])
+    return text, {"talks": len(chain), "shown": len(shown), "cut": cut, "chars": len(text)}
+
+
 def answer_text(record: dict[str, Any]) -> str:
     text = record["text"].strip()
     calls = "; ".join(
@@ -1361,7 +1396,16 @@ def parse_probe_verdict(raw: str) -> dict[str, Any]:
     return {**verdict, "verdict": value, "invented": invented}
 
 
-async def judge(directory: Path, *, v3: Path = V3_DIR, sol: LLMBackend | None = None) -> None:
+async def judge(
+    directory: Path,
+    *,
+    v3: Path = V3_DIR,
+    redo: str | None = None,
+    sol: LLMBackend | None = None,
+    record_chars: int = RECORD_CHARS,
+) -> None:
+    """Judge the states and the answers not judged yet. `redo="answers"`: judge all answers again, from an
+    empty judge_answers.jsonl; the states and their judgments are not touched."""
     world = World.of(directory)
     names = world.names()
     turns = {turn["id"]: turn for turn in world.turns}
@@ -1371,10 +1415,12 @@ async def judge(directory: Path, *, v3: Path = V3_DIR, sol: LLMBackend | None = 
     if schedule_file:
         probes = {p["id"]: p for p in load_probes(Path(schedule_file["probes"]))[0]}
     states_path, answers_path = directory / "judge_states.jsonl", directory / "judge_answers.jsonl"
+    if redo == "answers":
+        pilot.save_rows(answers_path, [])
     judged_states = {(r["conv"], r["system"]): r for r in pilot.rows(states_path)}
     judged_answers = {(r["probe"], r["ask_after"], r["variant"]): r for r in pilot.rows(answers_path)}
-    requests: list[tuple[str, tuple, str, dict[str, str]]] = []
-    for record in pilot.rows(directory / "states.jsonl"):
+    requests: list[tuple[str, tuple, str, dict[str, str], dict | None]] = []
+    for record in pilot.rows(directory / "states.jsonl") if redo != "answers" else []:
         if record.get("state") is None:
             continue
         conv, talk = record["conv"], world.talk(record["conv"])
@@ -1382,7 +1428,7 @@ async def judge(directory: Path, *, v3: Path = V3_DIR, sol: LLMBackend | None = 
             sections = state_sections(
                 talk, judge_view(record["state_before"], names), judge_view(record["state"], names)
             )
-            requests.append(("state", (conv, "items"), prompt("judge_items.md"), sections))
+            requests.append(("state", (conv, "items"), prompt("judge_items.md"), sections, None))
         end, first = minds.get(conv + "#end"), minds.get(talk.turns[0]["id"])
         if (
             end is not None
@@ -1391,7 +1437,7 @@ async def judge(directory: Path, *, v3: Path = V3_DIR, sol: LLMBackend | None = 
             and ((judged_states.get((conv, "v3")) or {}).get("error", "missing") is not None)
         ):
             sections = state_sections(talk, first["previous_mind"], end["mind"])
-            requests.append(("state", (conv, "v3"), prompt("judge_items.md"), sections))
+            requests.append(("state", (conv, "v3"), prompt("judge_items.md"), sections, None))
     for record in pilot.rows(directory / "answers.jsonl"):
         key = (record["probe"], record["ask_after"], record["variant"])
         if record.get("error") is not None or (judged_answers.get(key) or {}).get("error", "missing") is None:
@@ -1400,26 +1446,37 @@ async def judge(directory: Path, *, v3: Path = V3_DIR, sol: LLMBackend | None = 
         if probe is None:
             continue
         ctx = asked(world, record["ask_after"])
+        evidence = {turns[i]["conv"] for i in probe.get("evidence") or [] if i in turns}
+        history, meta = branch_record(
+            world, record["ask_after"], evidence | {record["ask_after"]}, record_chars
+        )
         sections = {
             "Описание персонажа": ctx.talk.instructions,
+            "Запись ветки: что было с этим NPC в этой линии сохранений до встречи, по разговорам": history,
             "Обстановка, в которой NPC отвечал": ctx.situation,
             "Вид вопроса": probe["kind"],
             "Фраза героя": probe["phrase"],
-            "Ожидаемый ответ": probe["expect"],
-            "Опора в записи": evidence_text(turns, probe.get("evidence") or []),
+            "Ожидаемый ответ (подсказка)": probe["expect"],
+            "Опора (подсказка: реплики из записи, на которых держится ожидаемый ответ)": evidence_text(
+                turns, probe.get("evidence") or []
+            ),
             "Ответ NPC": answer_text(record),
         }
-        requests.append(("answer", key, prompt("judge_probe.md"), sections))
+        requests.append(("answer", key, prompt("judge_probe.md"), sections, meta))
     if not requests:
         print("Nothing to judge", file=sys.stderr)
         world.close()
         return
     sol = sol if sol is not None else pilot.make_backend("chatgpt", reasoning_effort=EFFORT)
     try:
-        for kind, key, text, sections in requests:
+        for kind, key, text, sections, meta in requests:
             content = "\n\n".join(f"{title}\n{body}" for title, body in sections.items())
-            result = await sol_stream(sol, text, [Message("user", content)])
+            # a probe's judge starts with the persona and the record of its talk: one cache per talk
+            cache = f"judge-{key[1]}" if kind == "answer" else None
+            result = await sol_stream(sol, text, [Message("user", content)], cache_key=cache)
             result.update(raw=result.pop("text"), result=None)
+            if meta is not None:
+                result["record"] = meta
             if result["error"] is None:
                 try:
                     parse = parse_state_verdict if kind == "state" else parse_probe_verdict
@@ -1604,6 +1661,11 @@ def summary(directory: Path, *, emit: bool = True) -> dict[str, Any]:
         "common": sorted({m["name"] for m in mentioned if not m["proper"]}),
     }
 
+    plan = read_json(directory / "schedule.json")
+    kinds = {p["id"]: p["kind"] for p in load_probes(Path(plan["probes"]))[0]} if plan else {}
+    for a in answers:  # the probes file is the truth: the lead relabels probes after the answers
+        a["kind"] = kinds.get(a["probe"], a["kind"])
+
     def tally(chosen: list[dict[str, Any]]) -> dict[str, Any]:
         verdicts = [
             verdict(judged_answers.get((a["probe"], a["ask_after"], a["variant"]))).get("verdict")
@@ -1638,6 +1700,9 @@ def summary(directory: Path, *, emit: bool = True) -> dict[str, Any]:
                 kind: tally([a for a in chosen if a["kind"] == kind])
                 for kind in sorted({a["kind"] for a in answers})
             },
+            # what the npc must not know (unknown) or never had in this line of saves (branch): one group,
+            # right is not to confirm it
+            "not_to_know": tally([a for a in chosen if a["kind"] in NOT_TO_KNOW]),
             "by_npc": {
                 pilot.NAMES.get(npc, npc): tally([a for a in chosen if a["npc"] == npc])
                 for npc in sorted({a["npc"] for a in answers})
@@ -1767,6 +1832,8 @@ def summary(directory: Path, *, emit: bool = True) -> dict[str, Any]:
         for variant in VARIANTS:
             p = probes[variant]
             print(f"6. {variant}: " + ", ".join(f"{v} {p[v]}" for v in VERDICTS) + f" of {p['judged']}")
+            q = p["not_to_know"]
+            print(f"   not to know (unknown, branch): correct {q['correct']} of {q['judged']}")
         for length, t in tail.items():
             print(
                 f"7. tail {length}: first sentence {t['first_sentence_s']['median']} s, prompt_n "
@@ -2499,12 +2566,32 @@ async def _selftest_run(check: Any, root: Path) -> None:
     )
     probe_request = next(m[0].content for i, m in judge_backend.calls if "Ответ NPC" in m[0].content)
     check(
-        "probe judge: expect and evidence",
-        "Ожидаемый ответ\nЗол: герой его обокрал." in probe_request
-        and "Опора в записи\nГерой: Привет, Кавалорн\nNPC: Здорово." in probe_request
+        "probe judge: expect and evidence as hints",
+        "Ожидаемый ответ (подсказка)\nЗол: герой его обокрал." in probe_request
+        and "\nГерой: Привет, Кавалорн\nNPC: Здорово.\n\nОтвет NPC" in probe_request
         and "Обстановка, в которой NPC отвечал\n[Обстановка" in probe_request
         and "Время: день 1, 11:30, день." in probe_request,
         probe_request[-300:],
+    )
+    later_request = next(
+        m[0].content
+        for i, m in judge_backend.calls
+        if "Ответ NPC" in m[0].content and "13:00" in m[0].content
+    )
+    check(
+        "probe judge after the second talk: the branch record from the first",
+        "Разговор 1 из 2, день 1, 10:00 — день 1, 10:30:\n1. [Событие: гоблин напал на тебя]" in later_request
+        and "12. Вызов: set_intent" in later_request
+        and "13. Хроника:" in later_request
+        and "Разговор 2 из 2" in later_request
+        and "3. Ты: Какое письмо?" in later_request,
+        later_request[:1500],
+    )
+    meta = {(r["ask_after"], r["variant"]): r.get("record") for r in pilot.rows(out / "judge_answers.jsonl")}
+    check(
+        "probe judge: the record's size kept",
+        meta[fx["conv2"], "sol"]["talks"] == 2 and meta[fx["conv2"], "sol"]["cut"] == 0,
+        meta,
     )
     check("probe verdict parse", parse_probe_verdict('{"verdict": "abstain"}')["verdict"] == "abstain")
     for bad in ('{"verdict": "maybe"}', "not json", '{"verdict": "wrong", "invented": "x"}'):
@@ -2521,6 +2608,82 @@ async def _selftest_run(check: Any, root: Path) -> None:
             check(f"state verdict rejects {bad}", True)
     await judge(out, v3=fx["v3"], sol=judge_backend)
     check("judge resumes", len(judge_backend.calls) == 9, len(judge_backend.calls))
+    states_before = (out / "judge_states.jsonl").read_text()
+    await judge(out, v3=fx["v3"], sol=judge_backend, redo="answers")
+    check(
+        "judge --redo answers: the answers only",
+        len(judge_backend.calls) == 15
+        and (out / "judge_states.jsonl").read_text() == states_before
+        and len(pilot.rows(out / "judge_answers.jsonl")) == 6,
+        len(judge_backend.calls),
+    )
+
+    # the branch record along a long chain; over the limit the oldest go, not those kept
+    class Chain:
+        sources = {"c1": None, "c2": "c1", "c3": "c2", "c4": "c3"}
+
+        def talk(self, conv: str) -> Talk:
+            n = int(conv[1])
+            return Talk(
+                conv=conv,
+                npc=mi.CAVALORN,
+                name="Кавалорн",
+                branch="b",
+                instructions="",
+                turns=[{"id": f"t{n}", "situation": f"Время: день {n}, 10:00, утро."}],
+                situation="",
+                minute=n * 1440 + 660,
+                end_seq=0,
+                entries=[],
+                hero_turns=[],
+                tools=[],
+                lines=[Line(1, f"Герой: разговор {n}", f"t{n}"), Line(2, "Хроника: {}", fact=n)],
+            )
+
+    whole, info = branch_record(Chain(), "c4", {"c4"})
+    check(
+        "branch record: the chain in order",
+        info == {"talks": 4, "shown": 4, "cut": 0, "chars": len(whole)}
+        and [x for x in whole.split("\n") if x.startswith("Разговор")]
+        == [f"Разговор {n} из 4, день {n}, 10:00 — день {n}, 11:00:" for n in range(1, 5)]
+        and "1. Герой: разговор 3\n2. Хроника: {}" in whole,
+        whole,
+    )
+    short, info = branch_record(Chain(), "c4", {"c2", "c4"}, limit=len(whole) // 2)
+    check(
+        "branch record: the oldest cut, the kept stay",
+        info["cut"] == 2
+        and info["shown"] == 2
+        and short.startswith("[Раньше в этой ветке было ещё разговоров: 2")
+        and "разговор 2" in short
+        and "разговор 4" in short
+        and "разговор 1" not in short
+        and "разговор 3" not in short,
+        short,
+    )
+
+    # Sol's first words after a step with recall alone: the turn's time to them
+    world = World(fx["turns"], fx["db"])
+    store = MemoryStore(journal_copy(out, fx["db"]))  # the run's copy, not the fixture's journal
+    late = FakeBackend(
+        script=[
+            FakeStep("", [ToolCall("recall", {"query": "письмо"}, "r1")]),
+            FakeStep("[angry] Помню я твоё письмо."),
+        ],
+        delay=0.01,
+    )
+    turn = await sol_answer(late, asked(world, fx["conv2"]), "Помнишь письмо?", store)
+    store.close()
+    world.close()
+    check(
+        "first_token_s after recall",
+        turn["steps"][0]["first_token_s"] is None
+        and turn["first_token_s"] is not None
+        and turn["first_token_s"] >= turn["steps"][0]["total_s"]
+        and turn["attempts"] == 2
+        and turn["text"] == "[angry] Помню я твоё письмо.",
+        turn,
+    )
 
     # sheet: a fixed shuffle, the key apart
     entries = sheet(out, seed=7)
@@ -2589,7 +2752,10 @@ async def _selftest_run(check: Any, root: Path) -> None:
         rows[0]["timings"],
     )
 
-    # summary: the numbers of the acceptance table
+    # summary: the numbers of the acceptance table; the lead relabels p1 after the answers
+    relabelled = json.loads(fx["probes"].read_text())
+    relabelled[0]["kind"] = "branch"
+    write_json(fx["probes"], relabelled)
     result = summary(out, emit=False)
     check(
         "summary cost",
@@ -2603,7 +2769,10 @@ async def _selftest_run(check: Any, root: Path) -> None:
         "summary probes",
         result["probes"]["items"]["correct"] == 2
         and result["probes"]["sol"]["judged"] == 2
-        and result["probes"]["bare"]["by_kind"]["feeling"]["correct"] == 2,
+        and result["probes"]["bare"]["by_kind"]["branch"]["correct"] == 2
+        and "feeling" not in result["probes"]["bare"]["by_kind"]
+        and result["probes"]["bare"]["not_to_know"]["judged"] == 2,
+        result["probes"]["bare"]["by_kind"],
     )
     check(
         "topics: words, not parts of words",
@@ -2688,6 +2857,7 @@ def main() -> int:
     command = commands.add_parser("judge")
     command.add_argument("directory", type=Path)
     command.add_argument("--v3", type=Path, default=V3_DIR)
+    command.add_argument("--redo", choices=["answers"], help="judge all answers again; states stay")
     command = commands.add_parser("sheet")
     command.add_argument("directory", type=Path)
     command.add_argument("--seed", type=int, default=SEED)
