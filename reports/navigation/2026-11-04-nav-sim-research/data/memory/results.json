@@ -1,5 +1,5 @@
 {
-  "status": "needs_decision",
+  "status": "done",
   "raw_root": "/mnt/shared/gothic-ai/nav-sim-research/memory",
   "population_model_note": "HD format 3 is the requested proxy for v5: same HD maps and CNN/GRU, no pace input and one extra walk head.",
   "weights": {
@@ -706,6 +706,292 @@
     "vector_context": "captured eye and feet height; roads/body Snapshot defaults; forced run",
     "us_per_decision": {
       "update": {
+        "median": 245.3160378,
+        "p90": 250.4751742,
+        "repeats": 6
+      },
+      "view_near": {
+        "median": 299.3308004,
+        "p90": 351.8792777,
+        "repeats": 6
+      },
+      "view_far": {
+        "median": 306.2220001,
+        "p90": 416.7303463,
+        "repeats": 6
+      },
+      "encode_near": {
+        "median": 140.3155866,
+        "p90": 140.7518888,
+        "repeats": 6
+      },
+      "encode_far": {
+        "median": 148.6071889,
+        "p90": 148.8131167,
+        "repeats": 6
+      },
+      "encode_vector": {
+        "median": 4.508377145,
+        "p90": 4.922939855,
+        "repeats": 6
+      },
+      "encode_full": {
+        "median": 337.2723399,
+        "p90": 339.1325897,
+        "repeats": 6
+      },
+      "policy_scalar_cpp": {
+        "median": 1521.813868,
+        "p90": 1528.455629,
+        "repeats": 6
+      },
+      "fused_float32_near": {
+        "median": 370.4837208,
+        "p90": 421.4915762,
+        "repeats": 6
+      },
+      "fused_float32_far": {
+        "median": 231.6126018,
+        "p90": 334.2487961,
+        "repeats": 6
+      },
+      "fused_uint8_fp16_near": {
+        "median": 381.4880768,
+        "p90": 433.1012836,
+        "repeats": 6
+      },
+      "fused_uint8_fp16_far": {
+        "median": 238.9281962,
+        "p90": 346.4059441,
+        "repeats": 6
+      },
+      "vector_float32_to_fp16": {
+        "median": 14.6872504,
+        "p90": 14.92075181,
+        "repeats": 6
+      }
+    },
+    "memory_view_and_map_encode_us": {
+      "median": 893.4172713,
+      "p90": 1057.451108,
+      "repeats": 6
+    },
+    "fused_float32_us": {
+      "median": 602.0709434,
+      "p90": 755.7403724,
+      "repeats": 6
+    },
+    "saved_us": {
+      "median": 307.4141623,
+      "p90": 462.9250318,
+      "repeats": 6
+    },
+    "saved_percent": {
+      "median": 34.65388257,
+      "p90": 43.7792151,
+      "repeats": 6
+    },
+    "fused_uint8_fp16_us": {
+      "median": 620.416273,
+      "p90": 779.5072277,
+      "repeats": 6
+    },
+    "packed_saved_us": {
+      "median": 289.7143284,
+      "p90": 443.643842,
+      "repeats": 6
+    },
+    "packed_saved_percent": {
+      "median": 32.73571295,
+      "p90": 41.95216455,
+      "repeats": 6
+    },
+    "bytes_per_agent": {
+      "float32_maps": 363840,
+      "uint8_fp16_maps": 109152,
+      "float32_maps_and_vector": 372508,
+      "uint8_fp16_maps_and_fp16_vector": 113486
+    },
+    "float32_bitwise_equal": true,
+    "uint8_fp16_bitwise_equal": true,
+    "checked_decisions_per_pass": 5653,
+    "label": "helpers copied inline in the benchmark translation unit",
+    "source_commit": "61c44245",
+    "source_sha256": "c7235126bacdd439367f54fa623e457e9a429deb426b83ae628ef15e2790f02c",
+    "raw": "/mnt/shared/gothic-ai/nav-sim-research/memory/raw/bench.json",
+    "raw_sha256": "70cd6377a1f885184e40459bf23afee6892a0501588b13779fb9c68f5ad9a15f",
+    "gq_class": "quick",
+    "gq_threads": 1,
+    "gq_memory_gib": 3,
+    "cpu_affinity": "14",
+    "gq_status": "ID           ВЛАДЕЛЕЦ         КЛАСС  СОСТОЯНИЕ  РЕСУРСЫ                         СТАРТ    ПОТОЛОК ОЦЕНКА\n66cba5e2d9a2 nav-follow-trail batch  running    8t 7G gpu=0G окно=0 слот=—      17:00:17 7200s ≤0s\n3f2db28cff7a nav-follow-trail batch  running    8t 7G gpu=0G окно=0 слот=—      17:14:00 7200s ≤7200s\n5e8eb4008779 ryzen-play-autou quick  queued     12t 12G gpu=0G окно=0 слот=—    —        1800s ≤14401s median=1s\nd952a9b8d10a claude-navsim-ra quick  queued     12t 13G gpu=0G окно=0 слот=—    —        3600s ≤16200s\n96555c6ccaeb nav-follow-trail batch  queued     8t 7G gpu=0G окно=0 слот=—      —        7200s ≤19800s\n64d050a75d7f nav-follow-trail batch  queued     6t 10G gpu=3G окно=1 слот=—     —        3600s ≤27000s\n346b2bc6e137 nav-follow-trail batch  queued     6t 10G gpu=3G окно=1 слот=—     —        3600s ≤30600s\n98a83f3c9707 claude-navsim-me quick  queued     16t 10G gpu=0G окно=0 слот=—    —        2700s ≤34200s\nfd909def45b7 claude-navsim-me quick  running    1t 3G gpu=0G окно=0 слот=—      17:32:39 1200s ≤36900s\nDisk /home/kaifaty/gothic-ai: free 122.2G; minimum 20G\nDisk /: free 122.2G; minimum 20G\n",
+    "gq_status_raw": "/mnt/shared/gothic-ai/nav-sim-research/memory/raw/replay-gq.txt",
+    "distribution_scope": "Median and p90 across six repeat-level means per readout, weighted by readout count across all 24 traces; one full warmup pass per trace.",
+    "order": "All six permutations of current, fused float32, fused uint8+fp16 across six measured repetitions.",
+    "savings_scope": "view near+far plus preallocated map encode; update is unchanged. Full allocating NavPolicy::encode is also timed.",
+    "view_timing_scope": "Direct engine read calls for near/far; View pose/path metadata copied outside timers.",
+    "packed_layout": "CHW: probability channels 0..6 and validity are uint8=lround(float32*255); relative heights 7,8 are IEEE binary16 casts of identical float32 heights. Vector is fp16.",
+    "bytes_per_agent_scope": "Network input payload only; excludes world memory grids, temporary scratch, weights and recurrent state.",
+    "equality_checked_readouts": 39571,
+    "equality_reference": "Real NavPolicy::encode(memory.view()), every channel of both maps at every readout, including warmup. float32 memcmp; uint8 equals lround(reference*255); fp16 bitwise equals (_Float16)reference. Mismatch exits 1.",
+    "including_update": {
+      "float32": {
+        "current_us": {
+          "median": 1138.84670215,
+          "p90": 1302.7135008999999,
+          "repeats": 6
+        },
+        "fused_us": {
+          "median": 850.14492615,
+          "p90": 1002.8963016,
+          "repeats": 6
+        },
+        "saved_us": {
+          "median": 307.4141623000001,
+          "p90": 462.92503184999987,
+          "repeats": 6
+        },
+        "saved_percent": {
+          "median": 27.09482556931908,
+          "p90": 35.53760488148427,
+          "repeats": 6
+        }
+      },
+      "uint8_fp16": {
+        "current_us": {
+          "median": 1138.84670215,
+          "p90": 1302.7135008999999,
+          "repeats": 6
+        },
+        "fused_us": {
+          "median": 865.75350845,
+          "p90": 1027.03429325,
+          "repeats": 6
+        },
+        "saved_us": {
+          "median": 289.7143285,
+          "p90": 443.6438420499999,
+          "repeats": 6
+        },
+        "saved_percent": {
+          "median": 25.589273549201437,
+          "p90": 34.05306227777866,
+          "repeats": 6
+        }
+      }
+    },
+    "including_full_encode_allocations": {
+      "float32": {
+        "current_us": {
+          "median": 1187.08231555,
+          "p90": 1351.788286,
+          "repeats": 6
+        },
+        "fused_us": {
+          "median": 854.6799242925,
+          "p90": 1007.4050354579999,
+          "repeats": 6
+        },
+        "saved_us": {
+          "median": 349.07254666649993,
+          "p90": 507.320687196,
+          "repeats": 6
+        },
+        "saved_percent": {
+          "median": 29.566004829883518,
+          "p90": 37.53380236687538,
+          "repeats": 6
+        }
+      },
+      "uint8_fp16": {
+        "current_us": {
+          "median": 1187.08231555,
+          "p90": 1351.788286,
+          "repeats": 6
+        },
+        "fused_us": {
+          "median": 884.812651917,
+          "p90": 1046.2123212884999,
+          "repeats": 6
+        },
+        "saved_us": {
+          "median": 317.729867302,
+          "p90": 473.42590134100004,
+          "repeats": 6
+        },
+        "saved_percent": {
+          "median": 26.938143677743604,
+          "p90": 35.017476931302255,
+          "repeats": 6
+        }
+      }
+    },
+    "maps_and_vector_us": {
+      "float32": {
+        "median": 606.6059415425,
+        "p90": 760.2491062080001,
+        "repeats": 6
+      },
+      "uint8_fp16": {
+        "median": 639.72031173,
+        "p90": 798.6852556885001,
+        "repeats": 6
+      }
+    },
+    "self_test": {
+      "self_test": "passed",
+      "decisions": 96,
+      "float32_bitwise_equal": true,
+      "uint8_fp16_bitwise_equal": true
+    }
+  },
+  "limitations": [
+    "Memory traces record actor memory pose, not the separate physical feet position used by the stand Snapshot; replay uses the captured pose Y as encode height reference.",
+    "Replay vector uses the first 238 current eye rays; roads/body are Snapshot defaults because memory-cost.bin does not contain them. Scalar step is timed on these reconstructed inputs.",
+    "Standalone benchmark follows navpolicy-contract flags. The runner inherits Jolt SIMD/FP flags; both are recorded. Compare current and fused timings within the benchmark.",
+    "Fused far readout classifies only forward output rows 50..99. Savings include skipping classification of cells discarded by the HD far input.",
+    "Timings use quick because quiet did not gain admission within approximately 30 minutes; competing gq jobs and CPU affinity are recorded. Historical external-helper and new inline-helper runs have different queue load and order; their absolute times are not a controlled comparison.",
+    "Generic standalone flags do not enable F16C: GCC implements _Float16 casts with libgcc conversion calls. Packed timings include that conversion cost; no CPU-specific packing optimization is applied.",
+    "N=50 with 8 runners and 16-runner profiles were removed from scope by the user.",
+    "Replay uses 24 v5 drive trajectories; population uses the HD proxy and historical train pairs. Replay savings are not an end-to-end population speedup measurement.",
+    "N=100 x 8 runners was not measured: gq did not admit the 16-thread/10 GiB request within the allowed 3600-second wait; the request was cancelled with exit 75. Full queue status is in population_8_runners.",
+    "Saved engine-targets check exited 75 before compilation because of queue availability; the same target was built and self-tested in the admitted one-thread request. The Python checks ran separately and passed 75 tests."
+  ],
+  "trace_count": 24,
+  "benchmark_source_commit": "61c44245",
+  "quiet_admission": {
+    "id": "469270647c7b",
+    "status": "cancelled",
+    "wait_seconds": 1851.8227472305298,
+    "requested_threads": 24,
+    "requested_mem_bytes": 21474836480
+  },
+  "population_8_runners": {
+    "measured": false,
+    "job": "98a83f3c9707",
+    "N": 100,
+    "runners": 8,
+    "requested_threads": 16,
+    "requested_mem_gib": 10,
+    "wait_limit_seconds": 3600,
+    "waited_seconds": 3601.0010282993317,
+    "submitted_utc": "2026-11-04T14:31:13.587685+00:00",
+    "start_utc": null,
+    "job_status": "cancelled",
+    "job_exit_code": 143,
+    "launcher_exit_code": 75,
+    "reason": "The 16-thread/10 GiB request did not gain admission within 3600 seconds; gq --wait-max cancelled it before build or measurement.",
+    "gq_status": "ID           ВЛАДЕЛЕЦ         КЛАСС  СОСТОЯНИЕ  РЕСУРСЫ                         СТАРТ    ПОТОЛОК ОЦЕНКА\n64d050a75d7f nav-follow-trail batch  running    6t 10G gpu=3G окно=1 слот=0     18:27:24 3600s ≤0s\n346b2bc6e137 nav-follow-trail batch  running    6t 10G gpu=3G окно=1 слот=1     18:29:03 3600s ≤3600s\n20f17ea794ef ryzen-play-autou quick  queued     12t 12G gpu=0G окно=0 слот=—    —        1800s ≤7201s median=1s\nDisk /home/kaifaty/gothic-ai: free 122.6G; minimum 20G\nDisk /: free 122.6G; minimum 20G\n",
+    "gq_status_raw": "/mnt/shared/gothic-ai/nav-sim-research/memory/raw/population8-final-gq.txt"
+  },
+  "trace_bytes": 199414735,
+  "helpers_external_calls": {
+    "weights": "/mnt/shared/gothic-ai/nav-pace-v5/run/policy.navbc",
+    "warmup_passes_per_capture": 1,
+    "repetitions": 6,
+    "vector_context": "captured eye and feet height; roads/body Snapshot defaults; forced run",
+    "us_per_decision": {
+      "update": {
         "median": 145.770211,
         "p90": 146.9325594,
         "repeats": 6
@@ -778,7 +1064,7 @@
     },
     "float32_bitwise_equal": true,
     "checked_decisions_per_pass": 5653,
-    "raw": "/mnt/shared/gothic-ai/nav-sim-research/memory/raw/bench.json",
+    "raw": "/mnt/shared/gothic-ai/nav-sim-research/memory/raw/external-helpers-bench.json",
     "gq_class": "quick",
     "gq_threads": 1,
     "cpu_affinity": "14",
@@ -832,44 +1118,45 @@
     "equality_checked_readouts": 39571,
     "view_timing_scope": "Direct engine read calls for near/far; View pose/path metadata copied outside timers.",
     "source_commit": "ed11800d",
-    "provisional": true,
-    "pending_change": "The current source copies grid/confidence/limit helpers into the benchmark translation unit to allow normal inlining. It has not been built or remeasured; these timings belong to ed11800d with external helper calls."
+    "label": "helpers external calls",
+    "raw_sha256": "e82dc66f7e5b9493b6bc903c2a60edad64f5996e61fe79e9e61d06269050898a",
+    "gq_status_raw": "/mnt/shared/gothic-ai/nav-sim-research/memory/raw/external-helpers-replay-gq.txt"
   },
-  "limitations": [
-    "Memory traces record actor memory pose, not the separate physical feet position used by the stand Snapshot; replay uses the captured pose Y as encode height reference.",
-    "Replay vector uses the first 238 current eye rays; roads/body are Snapshot defaults because memory-cost.bin does not contain them. Scalar step is timed on these reconstructed inputs.",
-    "Standalone benchmark follows navpolicy-contract flags. The runner inherits Jolt SIMD/FP flags; both are recorded. Compare current and fused timings within the benchmark.",
-    "uint8 layout is awaiting clarification: probability/validity channels fit uint8, but signed relative height channels [-10,10] do not.",
-    "Fused far readout classifies only forward output rows 50..99. Savings include skipping classification of cells discarded by the HD far input."
-  ],
-  "trace_count": 24,
-  "benchmark_source_commit": "ed11800d",
-  "population_16_runners": {
-    "measured": false,
-    "reason": "The 24-thread quiet job was not admitted within approximately 30 minutes; quick measurements received fewer than 24 threads."
+  "checks": {
+    "saved_engine_targets": {
+      "outcome": "unavailable",
+      "exit_code": 75,
+      "target_executions": 0,
+      "reason": "Final attempt: gq estimated admission in 9000 seconds, beyond the 1800-second check budget; cancelled before compilation. Earlier attempt estimated 38100 seconds and also exited 75 without executing a target.",
+      "attempts": 2,
+      "job": "a2dcc50c8934",
+      "command": "MAC_BUILD=0 bash ~/.codex/checks/gothic/engine-targets.sh . gothic-navsim-memory-bench && python3 scripts/check.py run",
+      "raw": "/mnt/shared/gothic-ai/nav-sim-research/memory/raw/final-saved-check.log"
+    },
+    "selected_python": {
+      "exit_code": 0,
+      "passed": 75,
+      "groups": [
+        44,
+        31
+      ],
+      "command": "python3 scripts/check.py run",
+      "raw": "/mnt/shared/gothic-ai/nav-sim-research/memory/raw/final-python-check.log"
+    },
+    "benchmark_build": {
+      "exit_code": 0,
+      "raw": "/mnt/shared/gothic-ai/nav-sim-research/memory/raw/inline-build.log"
+    },
+    "self_test": {
+      "self_test": "passed",
+      "decisions": 96,
+      "float32_bitwise_equal": true,
+      "uint8_fp16_bitwise_equal": true
+    }
   },
-  "quiet_admission": {
-    "id": "469270647c7b",
-    "status": "cancelled",
-    "wait_seconds": 1851.8227472305298,
-    "requested_threads": 24,
-    "requested_mem_bytes": 21474836480
-  },
-  "population_8_runners": {
-    "measured": false,
-    "reason": "No gq admission before stopping for the required uint8 height-layout decision.",
-    "requested_threads": 16,
-    "requested_mem_gib": 10
-  },
-  "uint8": {
-    "status": "needs_decision",
-    "question": "Keep probability/validity planes in uint8 and signed height planes in float32? Height channels range from -10 to 10 and do not fit uint8."
-  },
-  "remaining": [
-    "N=50 and N=100 profiles with 8 runners, three repeats each.",
-    "Build and replay the current helper-inline float32 benchmark on all 24 traces.",
-    "Implement, compare and time the agreed uint8/height representation.",
-    "Run the complete saved engine-targets.sh plus check.py command after final changes."
-  ],
-  "trace_bytes": 199414735
+  "raw_checksums": {
+    "path": "/mnt/shared/gothic-ai/nav-sim-research/memory/raw/all-raw.sha256",
+    "sha256": "3d83abf8dbcf40312a082527cf54addd90b3e8c3b47451d2f9f78a36e09e3a60",
+    "entries": 1239
+  }
 }
