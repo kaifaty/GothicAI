@@ -3,6 +3,8 @@
 #   bash scripts/nav-roads-carrot-remote.sh point    # runners of origin/main and of this tree: v5, run,
 #                                                    # the 60 point routes of validation v5, seed 18102027
 #   bash scripts/nav-roads-carrot-remote.sh teacher  # the same runners and routes driven by the memory teacher
+#   bash scripts/nav-roads-carrot-remote.sh repeat   # the main runner alone on the point routes again, into
+#                                                    # repeat-before-<sha>/: the spread of two identical runs
 #   bash scripts/nav-roads-carrot-remote.sh live     # game of this tree: v5 on 05-wall-pocket, 3 seeds,
 #                                                    # place pace, after a fresh teacher reference
 #   bash scripts/nav-roads-carrot-remote.sh liveset  # game of this tree: the eleven places of pace-v5,
@@ -12,13 +14,14 @@
 #   bash scripts/nav-roads-carrot-remote.sh clean    # remove ~/gothic-ai/<task>; refuses while a queued or
 #                                                    # running job of this owner uses it
 # NAV_ROADS_TASK names the task (default nav-roads-carrot): ~/gothic-ai/<task>/ and /mnt/shared/gothic-ai/<task>/.
+# NAV_ROADS_MAIN_REVISION pins the main commit (default origin/main), so later stages compare with the same main.
 # Jobs use immutable snapshots in ~/gothic-ai/<task>/{source,main}/<hash>.
-# Results: /mnt/shared/gothic-ai/<task>/{point,teacher}-{before,after}-<runner sha256[:12]>/,
+# Results: /mnt/shared/gothic-ai/<task>/{point,teacher}-{before,after}-<runner sha256[:12]>/, repeat-before-<sha>/,
 # live-<game sha256[:12]>/ and liveset-<game sha256[:12]>/: resume continues only episodes of the same
 # binary. Weights are only read.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-usage='Usage: bash scripts/nav-roads-carrot-remote.sh point|teacher|live|liveset|replay|clean'
+usage='Usage: bash scripts/nav-roads-carrot-remote.sh point|teacher|repeat|live|liveset|replay|clean'
 stage="${1:-}"
 task_name="${NAV_ROADS_TASK:-nav-roads-carrot}"
 [[ "$task_name" =~ ^nav-roads-[a-z0-9-]+$ ]] || { echo 'NAV_ROADS_TASK must be nav-roads-<name>' >&2; exit 2; }
@@ -30,7 +33,7 @@ v5_validation=/mnt/shared/gothic-ai/nav-demos-v5/manifest.json
 seed=18102027
 
 if [[ "$stage" != run ]]; then
-  [[ $# == 1 && "$stage" =~ ^(point|teacher|live|liveset|replay|clean)$ ]] || { echo "$usage" >&2; exit 2; }
+  [[ $# == 1 && "$stage" =~ ^(point|teacher|repeat|live|liveset|replay|clean)$ ]] || { echo "$usage" >&2; exit 2; }
   task="$(ssh -o BatchMode=yes -o ConnectTimeout=10 ryzen 'printf "%s/gothic-ai" "$HOME"')/$task_name"
   if [[ "$stage" == clean ]]; then
     # gq keeps every job in its state file; a job that is not finished still needs the runtime.
@@ -64,10 +67,10 @@ ACTIVE
   [[ -z "$(git -C "$ROOT" status --porcelain -- OpenGothic scripts)" ]] || {
     echo 'Commit OpenGothic/ and scripts/ first: the snapshot is named by HEAD' >&2; exit 2; }
   git -C "$ROOT" fetch -q origin main
-  main_revision="$(git -C "$ROOT" rev-parse --short=12 origin/main)"
+  main_revision="$(git -C "$ROOT" rev-parse --short=12 "${NAV_ROADS_MAIN_REVISION:-origin/main}")"
   ssh ryzen "mkdir -p '$task/source' '$task/main' '$archive/logs'"
   publish "$task/source/$snapshot" "$ROOT" OpenGothic scripts AGENTS.md
-  if [[ "$stage" =~ ^(point|teacher)$ ]] && ! ssh ryzen "test -d '$task/main/$main_revision'"; then
+  if [[ "$stage" =~ ^(point|teacher|repeat)$ ]] && ! ssh ryzen "test -d '$task/main/$main_revision'"; then
     main="$(mktemp -d)"
     git -C "$ROOT" worktree add -q --detach "$main/tree" "$main_revision"
     trap 'git -C "$ROOT" worktree remove --force "$main/tree"; rm -rf "$main"' EXIT
@@ -75,7 +78,7 @@ ACTIVE
   fi
   case "$stage" in
     # gq peaks of the first round: point 9.66 GiB in 1600 s, live 1.49 GiB in 470 s.
-    point|teacher) resources=(--class batch --threads 16 --cpu-quota 1600% --mem 11G --max 2h); seconds=7200 ;;
+    point|teacher|repeat) resources=(--class batch --threads 16 --cpu-quota 1600% --mem 11G --max 2h); seconds=7200 ;;
     live) resources=(--class quick --threads 12 --cpu-quota 1200% --mem 5G --gpu-mem 4G --display --display-shared --max 59m); seconds=3540 ;;
     liveset) resources=(--class batch --threads 12 --cpu-quota 1200% --mem 8G --gpu-mem 4G --display --display-shared --max 2h); seconds=7200 ;;
     replay) resources=(--class quick --threads 4 --cpu-quota 400% --mem 6G --max 59m); seconds=3540 ;;
@@ -136,7 +139,7 @@ game_environment() { # CONVERTER: the base of this engine format from the shared
   export OPENGOTHIC_BASE_CACHE="$task/base-cache" OPENGOTHIC_BASE_STORE="$task/base-store"
 }
 
-if [[ "$stage" == point || "$stage" == teacher ]]; then
+if [[ "$stage" == point || "$stage" == teacher || "$stage" == repeat ]]; then
   [[ -d "$task/main/$main_revision/OpenGothic" ]] || stop "missing main snapshot $task/main/$main_revision"
   for worker in {0..11}; do
     mkdir -p "$NAV_ROADS_NAVMESH/ordinary/$worker"
@@ -144,7 +147,9 @@ if [[ "$stage" == point || "$stage" == teacher ]]; then
       "$NAV_ROADS_NAVMESH/ordinary/$worker/"
   done
   fingerprints=()
-  for revision in before after; do
+  revisions=(before after)
+  if [[ "$stage" == repeat ]]; then revisions=(before); fi
+  for revision in "${revisions[@]}"; do
     tree="$source/OpenGothic"
     if [[ "$revision" == before ]]; then tree="$task/main/$main_revision/OpenGothic"; fi
     build "$tree" "$builds/$revision" gothic-body-runner content-convert
@@ -264,7 +269,7 @@ rl.write_json(output / "summary.json", summary)
 print(json.dumps({key: value for key, value in summary.items() if key != "episodes_by_id"}), flush=True)
 POINT
   done
-  [[ "${fingerprints[0]}" == "${fingerprints[1]}" ]] || stop "main and branch need different bases: ${fingerprints[*]}"
+  [[ "${fingerprints[0]}" == "${fingerprints[-1]}" ]] || stop "main and branch need different bases: ${fingerprints[*]}"
   rm -rf "$builds" "$NAV_ROADS_NAVMESH"
   exit
 fi
