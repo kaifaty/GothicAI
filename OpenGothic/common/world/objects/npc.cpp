@@ -3507,6 +3507,59 @@ void Npc::updateArmor() {
     }
   }
 
+void Npc::updateQuiver() {
+  Quiver::State st;
+  const Item*   bow = invent.currentRangedWeapon();
+  st.on = Quiver::enabled() && bow!=nullptr && (bow->mainFlag() & ITM_CAT_FF) && !bow->isCrossbow() &&
+          visual.bodyProto()!=nullptr && visual.visualSkeleton()!=nullptr;
+  if(st.on) {
+    st.ammo     = size_t(bow->handle().munition);
+    const auto n= Quiver::visibleArrows(invent.itemCount(st.ammo)) - visual.quiver().taken();
+    st.visible  = std::max(n,0);
+    st.body     = visual.bodyProto();
+    st.skeleton = visual.visualSkeleton();
+    }
+  if(st==visual.quiver().state())
+    return;
+  if(!st.on) {
+    visual.clearQuiver();
+    return;
+    }
+  std::vector<MeshObjects::Mesh>  arrows;
+  std::vector<Tempest::Matrix4x4> local;
+  if(st.visible>0)
+    if(Item* ammo = invent.itemOfClass(st.ammo)) {
+      for(int i=0; i<st.visible; ++i) {
+        auto view = owner.addView(ammo->handle());
+        if(view.isEmpty())
+          break;
+        arrows.push_back(std::move(view));
+        }
+      if(!arrows.empty())
+        local = Quiver::arrowLayout(arrows[0].protoMesh(),
+                                    int(arrows.size()));
+      if(local.size()!=arrows.size())
+        arrows.clear();
+      }
+  visual.setQuiver(st,owner.addView(Quiver::Visual),std::move(arrows),std::move(local));
+  const auto q   = visual.quiverProbe();
+  const auto who = TestBench::who(this);
+  char buf[200];
+  std::snprintf(buf,sizeof(buf),"quiver npc %.*s arrows %d out %.1f mouth %.2f %.2f %.2f",int(who.size()),who.data(),
+                q.arrows,double(q.out),double(q.mouth.x),double(q.mouth.y),double(q.mouth.z));
+  TestBench::note(buf);
+  }
+
+void Npc::refitQuiver() {
+  visual.clearQuiver();
+  updateQuiver();
+  }
+
+void Npc::setQuiverTaken(int n) {
+  visual.setQuiverTaken(n);
+  updateQuiver();
+  }
+
 void Npc::setSword(MeshObjects::Mesh&& s) {
   visual.setSword(std::move(s));
   updateWeaponSkeleton();
@@ -6868,6 +6921,7 @@ void Npc::tickAnimationTags() {
 
 void Npc::tick(uint64_t dt) {
   TestBench::beforeNpcTick(*this);
+  updateQuiver();
   updateSimpleMovement();
   NpcLogicalState::Tick logicalTick(*this,dt);
   if(!bloodPoolDone && isDead() && owner.tickCount()-bloodDeathTick>=BloodSpawn::SettleMs) {
@@ -12343,6 +12397,7 @@ void Npc::updateAnimation(uint64_t dt, bool force) {
   updateMeleeBenchBlade();
   if(living && living->reactionWeight()>0.f && living->getPose(arrowPhysicalPose))
     syncAtt |= visual.setPhysicalPose(arrowPhysicalPose,living->reactionBones(),living->reactionWeight());
+  syncAtt |= visual.updateQuiver(*this,dt);
   if(syncAtt)
     visual.syncAttaches();
   }

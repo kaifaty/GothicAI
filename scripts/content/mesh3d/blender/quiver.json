@@ -61,10 +61,11 @@
   -1.75,
   -0.23
  ],
- "tilt_back": 22.5,
- "tilt_out": 7.5,
+ "tilt_back": 20.0,
+ "tilt_out": 8.0,
  "reach": 0.13,
  "tilt_back_reach": 0.11,
  "ring_angle": 1.2,
- "belt_back": -0.02
+ "belt_back": -0.02,
+ "around": 50.0
 }

@@ -2624,6 +2624,9 @@ void writeHeader() {
   std::fprintf(bench.csv,",stamina_player,stamina_subject");
   std::fprintf(bench.csv,",ai_on,ai_want,ai_sigma,ai_errx,ai_erry,ai_lead,ai_pv,ai_ps");
   std::fprintf(bench.csv,",mr_w,mr_dev,mr_hits,physics_ms");
+  // the watched one's quiver (graphics/mesh/quiver): cm the armour and the legs go into it, the arrows shown,
+  // the mouth in the pelvis bone's frame, how far out it was pushed, the arrows over the mouth and the bottom
+  std::fprintf(bench.csv,",qv_on,qv_arrows,qv_armor,qv_leg,qv_arm,qv_mx,qv_my,qv_mz,qv_out,qv_top,qv_bottom,qv_swing,qv_back,qv_outward,qv_us,qv_twist,qv_bow,qv_2h,qv_blade,qv_yield,qv_legt,qv_legl");
   if(ragdollTrace)
     std::fprintf(bench.csv,",ph_ms,ph_bodies,ph_rays,rd_mode,rd_weight,rd_sleep");
   if(bench.questTrace)
@@ -10033,6 +10036,14 @@ void writeRow(Npc& pl) {
       }
     std::fprintf(bench.csv,",%.3f,%.2f,%u,%.6f",weight,dev,unsigned(s.meleeReactionProbe().applied),
                  double(s.world().physic()->physicsStats().stepMilliseconds));
+  }
+  {
+    const auto q = subjectOf(pl).quiverProbe();
+    std::fprintf(bench.csv,",%d,%d,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.1f",int(q.on),q.arrows,q.armor,q.leg,
+                 q.arm,q.mouth.x,q.mouth.y,q.mouth.z,q.out,q.top,q.bottom,q.swing,q.back,q.outward,
+                 double(subjectOf(pl).quiverCostUs()));
+    std::fprintf(bench.csv,",%.2f,%.2f,%.2f,%.2f,%.2f,%.1f",q.twist,q.bow,q.longsword,q.blade,q.yield,q.legAt);
+    std::fprintf(bench.csv,",%.2f",q.legLeft);
   }
   if(ragdollTrace)
     writeRagdoll(pl);
@@ -17934,6 +17945,74 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
        npc->currentMeleeWeapon()->clsId()!=weapon) {arenaAbort("knockdown launch requires the exact drawn two-handed axe");return;}
     event("launch_weapon","\"actor\":"+jsonStr(symName(w,npc))+",\"actor_id\":"+std::to_string(w.npcId(npc))+
           ",\"weapon\":\"ITMW_2H_SLD_AXE\",\"state\":\"W2H\"");
+    }
+  else if(c=="mds") {
+    // mds <npc|player> <OVERLAY.MDS> [off]: an overlay of the model script on it or off (a gait: HUMANS_MILITIA.MDS)
+    Npc* n = findNpc(w,pl,a.size()>1 ? a[1] : "player");
+    if(n==nullptr || a.size()<3) {
+      say("mds: no npc or overlay " + line);
+      return;
+      }
+    if(a.size()>3 && a[3]=="off")
+      n->delOverlay(a[2]); else
+      n->addOverlay(a[2],0);
+    say("mds " + symName(w,n) + " " + a[2] + (a.size()>3 ? " " + a[3] : ""));
+    }
+  else if(c=="quiver") {
+    // quiver place <deg behind the right side> <min push> <tilt back> <tilt out> [tilt right] [height] [side] |
+    // quiver place off | quiver still on|off: a probe of other places (research.md of the quiver report),
+    // the hero and the npcs fitted anew; still: held at rest, no swing
+    const std::string m = a.size()>1 ? a[1] : "";
+    if(m=="still") {
+      Quiver::still = a.size()>2 && a[2]=="on";
+      say(std::string("quiver still ") + (Quiver::still ? "on" : "off"));
+      return;
+      }
+    if(m!="place") {
+      say("quiver: place|still " + line);
+      return;
+      }
+    Quiver::Place p;
+    if(a.size()>2 && a[2]!="off") {
+      p.on        = true;
+      p.around    = num(a,2,0);
+      p.minPush   = num(a,3,Quiver::MinOut);
+      p.tiltBack  = num(a,4,Quiver::TiltBack);
+      p.tiltOut   = num(a,5,Quiver::TiltOut);
+      p.tiltRight = num(a,6,0);
+      p.height    = num(a,7,Quiver::MouthHeight);
+      p.side      = num(a,8,0);
+      p.back      = 0;
+      }
+    Quiver::place = p;
+    w.detectNpc(pl.position(),100000.f,[](Npc& n) { n.refitQuiver(); });
+    pl.refitQuiver();
+    const auto q = pl.quiverProbe();
+    char buf[160];
+    std::snprintf(buf,sizeof(buf),"quiver place %s out %.1f mouth %.2f %.2f %.2f",p.on ? "on" : "off",double(q.out),
+                  double(q.mouth.x),double(q.mouth.y),double(q.mouth.z));
+    say(buf);
+    }
+  else if(c=="arrows") {
+    // arrows <npc|player> <n>: it carries exactly n arrows of its bow; the quiver on its hip shows them by
+    // steps (graphics/mesh/quiver)
+    Npc*        n   = findNpc(w,pl,a.size()>1 ? a[1] : "player");
+    const Item* bow = n!=nullptr ? n->currentRangedWeapon() : nullptr;
+    if(bow==nullptr || bow->handle().munition<=0) {
+      say("arrows: no bow " + line);
+      return;
+      }
+    const size_t cls  = size_t(bow->handle().munition);
+    const size_t have = n->inventory().itemCount(cls);
+    const size_t want = size_t(std::max(0.f,num(a,2,0)));
+    if(want>have)
+      n->addItem(cls,want-have); else
+    if(want<have)
+      n->delItem(cls,uint32_t(have-want));
+    n->updateQuiver();
+    const auto q = n->quiverProbe();
+    say("arrows " + symName(w,n) + " " + std::to_string(n->inventory().itemCount(cls)) + " shown " +
+        std::to_string(q.arrows) + (q.on ? "" : " (no quiver)"));
     }
   else if(c=="npcequip") {
     // npcequip <npc> <item> [count]: into its inventory, the first one put on (a bow and its arrows)

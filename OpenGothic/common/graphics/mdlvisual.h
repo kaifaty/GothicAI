@@ -10,6 +10,7 @@
 #include "graphics/mesh/lipsync.h"
 #include "graphics/mesh/talkgestures.h"
 #include "graphics/mesh/eyeblink.h"
+#include "graphics/mesh/quiver.h"
 #include "game/constants.h"
 #include "meshobjects.h"
 #include "effect.h"
@@ -72,6 +73,22 @@ class MdlVisual final {
     void                           setSlotItem   (MeshObjects::Mesh&& itm,  std::string_view bone, int32_t material = 0);
     void                           setStateItem  (MeshObjects::Mesh&& itm,  std::string_view bone);
     void                           clearSlotItem (std::string_view bone);
+    // the quiver on the right hip (graphics/mesh/quiver): Npc::updateQuiver decides what it shows
+    const Quiver&                  quiver() const { return quiv; }
+    void                           setQuiver(const Quiver::State& st, MeshObjects::Mesh&& body,
+                                             std::vector<MeshObjects::Mesh>&& arrows,
+                                             std::vector<Tempest::Matrix4x4>&& arrowLocal);
+    void                           clearQuiver();
+    void                           setQuiverTaken(int n) { quiv.setTaken(n); }
+    const ProtoMesh*               bodyProto() const { return view.protoMesh(); }
+    // the armour (or the body) and its rigid parts: in the bind pose (model space) or as drawn (world)
+    void                           quiverPoints(bool bind, std::vector<Quiver::SkinPoint>& out) const;
+    void                           quiverPoints(const Tempest::Matrix4x4* bones, size_t n,
+                                                std::vector<Quiver::SkinPoint>& out) const;
+    Quiver::Probe                  quiverProbe() const;
+    // the quiver's swing on by dt (ms): true if the attachments need a sync
+    bool                           updateQuiver(const Npc& npc, uint64_t dt);
+    float                          quiverCostUs() const { return quiverStepUs; } // the last step, µs
     bool                           setFightMode  (asset::MdsFightMode mode);
     void                           dropWeapon    (Npc& owner);
     void                           dropShield    (Npc& owner);
@@ -270,6 +287,7 @@ class MdlVisual final {
     template<class View>
     void rebindAttaches(Attach<View>& mesh, const Skeleton& to);
     void rebindAttaches(const Skeleton& to);
+    std::vector<Tempest::Vec3> carriedPoints(const MeshAttach& att, std::string_view slot) const;
     void setupGestures();
 
     Tempest::Matrix4x4             pos;
@@ -289,6 +307,8 @@ class MdlVisual final {
     std::vector<MeshAttach>        item;
     std::vector<MeshAttach>        attach;
     std::vector<ArrowPin>          stuckArrows;
+    Quiver                         quiv;
+    float                          quiverStepUs = 0;
 
     std::vector<PfxSlot>           effects;
     std::string_view               muted;
