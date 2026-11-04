@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import json
 import os
 import re
@@ -9,6 +10,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
+import httpx
 import pytest
 
 from gothic_launcher import supervisor as sv
@@ -288,6 +290,41 @@ async def test_health_changes_are_reported(tmp_path, session):
     assert status.data == {"ok": True, "providers": [{"name": "inworld", "ok": False}]}
     sup.stop()
     await run
+
+
+@pytest.mark.parametrize("check", ["ready", "status"])
+async def test_the_session_ends_when_the_http_client_loses_the_cancel(tmp_path, session, monkeypatch, check):
+    """anyio under httpx can swallow a cancel that arrives while it connects, and finish the request (#840).
+    A health check that lost the end of the session went on polling: a status poll for ever, a readiness
+    check until the service came up, and the services were not stopped meanwhile. Here the first check of
+    the kind connects until it is cancelled and then loses the cancel."""
+    port = Ports.free().tts
+    rec = Recorder()
+    connecting = asyncio.Event()
+    real_get = httpx.AsyncClient.get
+
+    async def get(self, url, **kwargs):
+        if not connecting.is_set() and (check == "ready" or rec.count("tts", "ready")):
+            connecting.set()
+            with contextlib.suppress(asyncio.CancelledError):
+                await asyncio.Event().wait()  # a connect that only the cancel ends
+        return await real_get(self, url, **kwargs)
+
+    monkeypatch.setattr(httpx.AsyncClient, "get", get)
+    extra = ("--ready-after", "30") if check == "ready" else ()
+    sup = Supervisor([service("tts", port, tmp_path, *extra)], None, tmp_path / "logs", rec, session=session)
+    run = asyncio.create_task(sup.run())
+    pidfile = tmp_path / "tts.pid"
+    async with asyncio.timeout(10):
+        await connecting.wait()
+        while not (pidfile.exists() and pidfile.read_text()):  # the service runs, ready or not
+            await asyncio.sleep(0.05)
+
+    sup.stop()
+
+    assert await asyncio.wait_for(run, 10) == 0
+    assert await gone(pids(pidfile)[0])
+    assert session.path.read_text() == ""
 
 
 def test_a_second_launcher_is_refused(tmp_path):
