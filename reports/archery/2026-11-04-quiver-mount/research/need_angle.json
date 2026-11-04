@@ -1,0 +1,262 @@
+{
+ "ARMOR_LEATHER_L S_WALKL": {
+  "top": {
+   "need_deg": 0,
+   "rest_cm": 0.0,
+   "depth_cm": 0.0
+  },
+  "bottom": {
+   "need_deg": 0,
+   "rest_cm": 0.0,
+   "depth_cm": 0.0
+  }
+ },
+ "ARMOR_LEATHER_L HUMANS_MILITIA-S_WALKL": {
+  "top": {
+   "need_deg": 21,
+   "rest_cm": 3.4,
+   "depth_cm": 7.4,
+   "t": 0.3
+  },
+  "bottom": {
+   "need_deg": 4,
+   "rest_cm": 2.8,
+   "depth_cm": 36.3,
+   "t": 0.3
+  }
+ },
+ "ARMOR_LEATHER_L HUMANS_RELAXED-S_WALKL": {
+  "top": {
+   "need_deg": 0,
+   "rest_cm": 0.0,
+   "depth_cm": 0.0
+  },
+  "bottom": {
+   "need_deg": 1,
+   "rest_cm": 1.0,
+   "depth_cm": 66.1,
+   "t": 0.47
+  }
+ },
+ "ARMOR_LEATHER_L S_RUNL": {
+  "top": {
+   "need_deg": 0,
+   "rest_cm": 0.0,
+   "depth_cm": 0.0
+  },
+  "bottom": {
+   "need_deg": 8,
+   "rest_cm": 4.6,
+   "depth_cm": 42.5,
+   "t": 0.17
+  }
+ },
+ "ARMOR_MIL_M S_WALKL": {
+  "top": {
+   "need_deg": 17,
+   "rest_cm": 2.4,
+   "depth_cm": 1.0,
+   "t": 0.47
+  },
+  "bottom": {
+   "need_deg": 3,
+   "rest_cm": 4.1,
+   "depth_cm": 63.5,
+   "t": 0.1
+  }
+ },
+ "ARMOR_MIL_M HUMANS_MILITIA-S_WALKL": {
+  "top": {
+   "need_deg": 25,
+   "rest_cm": 1.9,
+   "depth_cm": 1.7,
+   "t": 1.0
+  },
+  "bottom": {
+   "need_deg": 7,
+   "rest_cm": 4.7,
+   "depth_cm": 32.9,
+   "t": 0.33
+  }
+ },
+ "ARMOR_MIL_M HUMANS_RELAXED-S_WALKL": {
+  "top": {
+   "need_deg": 0,
+   "rest_cm": 0.0,
+   "depth_cm": 0.0
+  },
+  "bottom": {
+   "need_deg": 2,
+   "rest_cm": 2.7,
+   "depth_cm": 62.1,
+   "t": 0.63
+  }
+ },
+ "ARMOR_MIL_M S_RUNL": {
+  "top": {
+   "need_deg": 24,
+   "rest_cm": 1.5,
+   "depth_cm": 1.9,
+   "t": 0.37
+  },
+  "bottom": {
+   "need_deg": 7,
+   "rest_cm": 3.4,
+   "depth_cm": 23.5,
+   "t": 0.07
+  }
+ },
+ "ARMOR_BDT_H S_WALKL": {
+  "top": {
+   "need_deg": 0,
+   "rest_cm": 0.0,
+   "depth_cm": 0.0
+  },
+  "bottom": {
+   "need_deg": 0,
+   "rest_cm": 0.0,
+   "depth_cm": 0.0
+  }
+ },
+ "ARMOR_BDT_H HUMANS_MILITIA-S_WALKL": {
+  "top": {
+   "need_deg": 0,
+   "rest_cm": 0.0,
+   "depth_cm": 0.0
+  },
+  "bottom": {
+   "need_deg": 0,
+   "rest_cm": 0.0,
+   "depth_cm": 0.0
+  }
+ },
+ "ARMOR_BDT_H HUMANS_RELAXED-S_WALKL": {
+  "top": {
+   "need_deg": 0,
+   "rest_cm": 0.0,
+   "depth_cm": 0.0
+  },
+  "bottom": {
+   "need_deg": 0,
+   "rest_cm": 0.0,
+   "depth_cm": 0.0
+  }
+ },
+ "ARMOR_BDT_H S_RUNL": {
+  "top": {
+   "need_deg": 0,
+   "rest_cm": 0.0,
+   "depth_cm": 0.0
+  },
+  "bottom": {
+   "need_deg": 0,
+   "rest_cm": 0.0,
+   "depth_cm": 0.0
+  }
+ },
+ "ARMOR_PAL_H S_WALKL": {
+  "top": {
+   "need_deg": 0,
+   "rest_cm": 0.0,
+   "depth_cm": 0.0
+  },
+  "bottom": {
+   "need_deg": 0,
+   "rest_cm": 0.0,
+   "depth_cm": 0.0
+  }
+ },
+ "ARMOR_PAL_H HUMANS_MILITIA-S_WALKL": {
+  "top": {
+   "need_deg": 23,
+   "rest_cm": 3.7,
+   "depth_cm": 0.8,
+   "t": 1.0
+  },
+  "bottom": {
+   "need_deg": 8,
+   "rest_cm": 2.8,
+   "depth_cm": 45.5,
+   "t": 0.23
+  }
+ },
+ "ARMOR_PAL_H HUMANS_RELAXED-S_WALKL": {
+  "top": {
+   "need_deg": 0,
+   "rest_cm": 0.0,
+   "depth_cm": 0.0
+  },
+  "bottom": {
+   "need_deg": 4,
+   "rest_cm": 3.2,
+   "depth_cm": 42.2,
+   "t": 0.63
+  }
+ },
+ "ARMOR_PAL_H S_RUNL": {
+  "top": {
+   "need_deg": 17,
+   "rest_cm": 3.5,
+   "depth_cm": 0.7,
+   "t": 0.37
+  },
+  "bottom": {
+   "need_deg": 8,
+   "rest_cm": 2.9,
+   "depth_cm": 41.7,
+   "t": 0.17
+  }
+ },
+ "ARMOR_KDF_H S_WALKL": {
+  "top": {
+   "need_deg": 0,
+   "rest_cm": 0.0,
+   "depth_cm": 0.0
+  },
+  "bottom": {
+   "need_deg": 0,
+   "rest_cm": 0.0,
+   "depth_cm": 0.0
+  }
+ },
+ "ARMOR_KDF_H HUMANS_MILITIA-S_WALKL": {
+  "top": {
+   "need_deg": 0,
+   "rest_cm": 0.0,
+   "depth_cm": 0.0
+  },
+  "bottom": {
+   "need_deg": 2,
+   "rest_cm": 2.2,
+   "depth_cm": 59.1,
+   "t": 0.47
+  }
+ },
+ "ARMOR_KDF_H HUMANS_RELAXED-S_WALKL": {
+  "top": {
+   "need_deg": 0,
+   "rest_cm": 0.0,
+   "depth_cm": 0.0
+  },
+  "bottom": {
+   "need_deg": 3,
+   "rest_cm": 3.7,
+   "depth_cm": 60.9,
+   "t": 0.77
+  }
+ },
+ "ARMOR_KDF_H S_RUNL": {
+  "top": {
+   "need_deg": 2,
+   "rest_cm": 1.4,
+   "depth_cm": 18.4,
+   "t": 0.1
+  },
+  "bottom": {
+   "need_deg": 8,
+   "rest_cm": 3.7,
+   "depth_cm": 21.8,
+   "t": 0.07
+  }
+ }
+}
