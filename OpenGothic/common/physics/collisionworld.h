@@ -304,8 +304,9 @@ class CollisionWorld final {
     // active bodies by BodyID, so later bodies must receive the same IDs.
     void cycleBodyIds(size_t count);
     // SHA-256 over every native body: ID (index and sequence), motion type,
-    // layer, sensor, activity, shape type and local bounds; pose, bounds and
-    // velocities too, except for animated (kinematic) bodies.
+    // layer, sensor, activity and full shape geometry (SaveWithChildren, shared
+    // shapes once); pose, bounds and velocities too, except for animated
+    // (kinematic) bodies.
     struct BodyDigest { std::string digest; size_t bodies = 0, active = 0; };
     BodyDigest bodyDigest() const;
     std::unique_ptr<Ragdoll> createRagdoll(const Skeleton& skeleton, const HitZones& zones,

@@ -40,6 +40,8 @@
 #include "graphics/worldview.h"
 #include "navdemos.h"
 
+#include "sha256.h"
+
 #include <Tempest/Painter>
 #include <Tempest/Application>
 #include <Tempest/Log>
@@ -408,6 +410,24 @@ void WorldObjects::finalizePlacedItems() {
   placedValidationMs=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started).count();
   Tempest::Log::i("placed item geometry: ",placedItems.size()," candidates, ",allowed,
                  " allowed, ",placedValidationMs," ms");
+  }
+
+WorldObjects::PhysicsDigest WorldObjects::physicsDigest() const {
+  PhysicsDigest result;
+  result.native=owner.physic()->bodyDigest();
+  Sha256 items;
+  for(size_t i=0;i<itemArr.size();++i) {
+    const auto& item=*itemArr[i];
+    if(!item.isDynamic())
+      continue;
+    ++result.itemBodies;
+    const uint32_t head[5]={uint32_t(i),uint32_t(item.clsId()),item.placedItemZenId(),item.physicsBodyId(),
+                            uint32_t(item.physicsSleeping())};
+    items.update(head,sizeof(head));
+    items.update(item.transform().data(),16*sizeof(float));
+    }
+  result.items=items.finish();
+  return result;
   }
 
 void WorldObjects::tickPlacedItems() {

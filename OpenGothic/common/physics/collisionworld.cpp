@@ -22,6 +22,7 @@
 #include <Jolt/Core/UnorderedSet.h>
 #include <Jolt/Geometry/GJKClosestPoint.h>
 #include <Jolt/Geometry/Plane.h>
+#include <Jolt/Core/StreamOut.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/Physics/PhysicsStepListener.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
@@ -1923,8 +1924,23 @@ void CollisionWorld::cycleBodyIds(size_t count) {
     interface.DestroyBody(id);
   }
 
+namespace {
+// Streams Jolt shape state into a digest, like placedItemCensusInputs does.
+class ShapeDigest final : public JPH::StreamOut {
+  public:
+    explicit ShapeDigest(Sha256& digest):digest(digest) {}
+    void WriteBytes(const void* data, size_t size) override { digest.update(data,size); }
+    bool IsFailed() const override { return false; }
+  private:
+    Sha256& digest;
+  };
+}
+
 CollisionWorld::BodyDigest CollisionWorld::bodyDigest() const {
   Sha256 digest;
+  ShapeDigest stream(digest);
+  JPH::Shape::ShapeToIDMap shapes;
+  JPH::Shape::MaterialToIDMap materials;
   const auto u32=[&](uint32_t value) { digest.update(&value,sizeof(value)); };
   const auto vec=[&](JPH::Vec3Arg value) {
     const float xyz[3] = {value.GetX(),value.GetY(),value.GetZ()};
@@ -1945,13 +1961,9 @@ CollisionWorld::BodyDigest CollisionWorld::bodyDigest() const {
     u32(uint32_t(body.GetMotionType()));
     u32(uint32_t(body.GetObjectLayer()));
     u32(uint32_t(body.IsSensor())|(uint32_t(body.IsActive())<<1));
-    const auto* shape = body.GetShape();
-    u32(uint32_t(shape->GetType()));
-    u32(uint32_t(shape->GetSubType()));
-    const auto local = shape->GetLocalBounds();
-    vec(local.mMin);
-    vec(local.mMax);
-    vec(shape->GetCenterOfMass());
+    // Geometry, not just type and bounds: shared shapes are written once,
+    // later references write only their ID.
+    body.GetShape()->SaveWithChildren(stream,shapes,materials);
     if(body.GetMotionType()==JPH::EMotionType::Kinematic)
       continue;
     vec(JPH::Vec3(body.GetPosition()));

@@ -229,6 +229,7 @@ class DynamicWorld final {
         void setInteractive(Interactive* it);
         void setPayloadPtr(void* ptr);
         bool isEmpty() const { return obj==nullptr; }
+        uint32_t nativeId() const; // Jolt index and sequence; 0xFFFFFFFF without a body
         float mass() const; // kilograms; zero for empty/static/kinematic handles
         Tempest::Matrix4x4 matrix() const;
         Tempest::Vec3 position() const;
@@ -685,7 +686,9 @@ class DynamicWorld final {
       };
     PhysicsStats physicsStats() const;
     // Native body digest for equivalence checks: see CollisionWorld::bodyDigest.
-    struct BodyDigest { std::string digest; size_t bodies = 0, active = 0; };
+    // `owners` hashes each movable vob (ZEN-ID, visual, broken) with the IDs
+    // of its body and query bodies.
+    struct BodyDigest { std::string digest, owners; size_t bodies = 0, active = 0, movables = 0; };
     BodyDigest bodyDigest() const;
     struct StaticCollisionStats {
       size_t shapeBytes = 0, triangles = 0;

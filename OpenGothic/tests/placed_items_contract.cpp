@@ -168,6 +168,11 @@ void censusCache() {
   require(cache.read(live.size(),stored)==Status::Hit && stored.size()==live.size(),"saved census must hit");
   for(size_t i=0;i<live.size();++i)
     require(PlacedCensusCache::differences(stored[i],live[i]).empty(),"cached census must equal the live census bit for bit");
+  auto lowerKey = key;
+  lowerKey.world = "contract";
+  require(PlacedCensusCache(root,lowerKey).path()==cache.path() &&
+          PlacedCensusCache(root,lowerKey).read(live.size(),stored)==Status::Hit,
+          "a save's lower-case world name must use the fresh start's census file");
   require(cache.read(live.size()+1,stored)==Status::Corrupt,"a different candidate count must not reuse the census");
 
   // Moving one item must change the digest and miss the stored census.
@@ -214,7 +219,7 @@ void censusCache() {
   require(!fs::exists(cache.path()),"the disabled census cache must not write");
   unsetenv("OPENGOTHIC_PLACED_CENSUS_CACHE");
   require(furniture.mass()>0,"census cache fixture must retain its movable vob");
-  std::puts("Placed census cache: body-free key; hit equals live; transform, instance, mesh, material, version, count and damage miss; disabled bypass");
+  std::puts("Placed census cache: body-free key; hit equals live; world name case-insensitive; transform, instance, mesh, material, version, count and damage miss; disabled bypass");
   }
 
 void rootedAndStack() {

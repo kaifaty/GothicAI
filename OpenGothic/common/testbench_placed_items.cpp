@@ -19,7 +19,6 @@
 #include "gothic.h"
 #include "graphics/mesh/protomesh.h"
 #include "resources.h"
-#include "sha256.h"
 #include "world/bullet.h"
 #include "world/objects/item.h"
 #include "world/objects/npc.h"
@@ -79,26 +78,15 @@ std::string placedItemRow(World& world,const WorldObjects::PlacedItem& row) {
 
 }
 
-// Body-level equivalence of the census cache paths: every native body and
-// every placed Item that owns one. Lines are compared byte for byte.
+// Body-level equivalence of the census cache paths (WorldObjects::physicsDigest).
+// Lines are compared byte for byte between runs.
 static void placedItemsDigest(World& world,std::string_view phase) {
-  const auto native=world.physic()->bodyDigest();
-  Sha256 items;
-  size_t owned=0;
-  const auto& all=world.placedItemCensus();
-  for(size_t i=0;i<all.size();++i) {
-    const auto* item=all[i].item;
-    if(item==nullptr || !item->isDynamic())
-      continue;
-    ++owned;
-    const uint32_t head[3]={uint32_t(i),all[i].zenId,uint32_t(item->physicsSleeping())};
-    items.update(head,sizeof(head));
-    items.update(item->transform().data(),16*sizeof(float));
-  }
+  const auto digest=world.physicsDigest();
   const std::string row="\"phase\":"+jsonStr(phase)+",\"world\":"+jsonStr(world.name())+
-    ",\"bodies\":"+std::to_string(native.bodies)+",\"active\":"+std::to_string(native.active)+
-    ",\"bodies_sha256\":"+jsonStr(native.digest)+",\"item_bodies\":"+std::to_string(owned)+
-    ",\"items_sha256\":"+jsonStr(items.finish());
+    ",\"bodies\":"+std::to_string(digest.native.bodies)+",\"active\":"+std::to_string(digest.native.active)+
+    ",\"bodies_sha256\":"+jsonStr(digest.native.digest)+",\"movables\":"+std::to_string(digest.native.movables)+
+    ",\"owners_sha256\":"+jsonStr(digest.native.owners)+",\"item_bodies\":"+std::to_string(digest.itemBodies)+
+    ",\"items_sha256\":"+jsonStr(digest.items);
   std::ofstream(outDir+"/placed-items-digest.jsonl",std::ios::app)<<'{'+row+"}\n";
   event("placed_items_digest",row);
 }

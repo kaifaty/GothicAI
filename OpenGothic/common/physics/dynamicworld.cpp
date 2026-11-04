@@ -3025,7 +3025,21 @@ DynamicWorld::PhysicsStats DynamicWorld::physicsStats() const {
 
 DynamicWorld::BodyDigest DynamicWorld::bodyDigest() const {
   auto native=world->bodyDigest();
-  return {std::move(native.digest),native.bodies,native.active};
+  Sha256 owners;
+  const auto u32=[&](uint32_t value) { owners.update(&value,sizeof(value)); };
+  size_t movables=0;
+  if(movableVobs!=nullptr)
+    for(const auto* vob:movableVobs->bodies) {
+      ++movables;
+      u32(vob->pose->zenId);
+      u32(uint32_t(vob->visual.size()));
+      owners.update(vob->visual.data(),vob->visual.size());
+      u32(uint32_t(vob->pose->broken));
+      u32(vob->body!=nullptr ? vob->body->nativeId() : uint32_t(-1));
+      for(const auto& query:vob->query)
+        u32(query->nativeId());
+      }
+  return {std::move(native.digest),owners.finish(),native.bodies,native.active,movables};
   }
 
 DynamicWorld::StaticCollisionStats DynamicWorld::staticCollisionStats() const {
@@ -3639,6 +3653,10 @@ bool DynamicWorld::NpcItem::hasCollision() const {
     return false;
   CollisionTest info;
   return owner->hasCollision(*this,info);
+  }
+
+uint32_t DynamicWorld::Item::nativeId() const {
+  return obj!=nullptr && obj->body!=nullptr ? obj->body->nativeId() : uint32_t(-1);
   }
 
 DynamicWorld::Item::~Item() {
