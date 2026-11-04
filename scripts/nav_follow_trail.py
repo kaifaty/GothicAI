@@ -215,7 +215,7 @@ def validation(args):
         raise ValueError(f"Incomplete follow validation: {len(rows)} episodes of {len(values)}")
     write_json(args.output / "summary.json", dict(identity, seconds=time.monotonic() - started, rejected=rejected,
                                                     all=group(rows), episodes=rows))
-    print(json.dumps(dict(event="follow_validation_complete", episodes=len(rows), **group(rows))), flush=True)
+    print(json.dumps(dict(event="follow_validation_complete", **group(rows))), flush=True)
 
 
 def live(args):
