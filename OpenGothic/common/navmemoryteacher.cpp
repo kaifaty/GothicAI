@@ -378,7 +378,7 @@ void NavMemoryTeacher::reset() {
 
 NpcKeys::KeyState NavMemoryTeacher::decide(const Input& in) {
   NpcKeys::KeyState out;
-  out.walk=true;careful=false;
+  out.walk=true;
   const auto& direction=in.roads.beyondKnown ? in.roads.goalDirection : in.roads.carrotDirection;
   const float targetDistance=in.roads.beyondKnown ? in.roads.goalDistanceCm : in.roads.carrotDistanceCm;
   const Point target={direction[0]*targetDistance,direction[2]*targetDistance};
@@ -423,7 +423,7 @@ NpcKeys::KeyState NavMemoryTeacher::decide(const Input& in) {
     // Exit the raw occupied start before distant steering or recovery. Digital
     // strafe overrides forward in NpcKeys, so select one physically clear axis
     // and hold the body yaw fixed throughout this initial step.
-    stuckTicks=0;recoveryTicks=0;out.walk=true;careful=true;
+    stuckTicks=0;recoveryTicks=0;out.walk=true;
     if(!latestPlanStatus.startFound) return out;
     const Point exit=latestPlanStatus.escapeTarget;
     const bool sidewaysFirst=std::abs(exit.rightCm)>std::abs(exit.forwardCm);
@@ -497,7 +497,7 @@ NpcKeys::KeyState NavMemoryTeacher::decide(const Input& in) {
       if(backing) out.forward=-1;
       else out.strafe=recoverySide;
       }
-    out.walk=true;careful=true;
+    out.walk=true;
     --recoveryTicks;
     return out;
     }

@@ -41,7 +41,7 @@ ACTION_SEED = 18102027
 FAMILY = "follow_below_gate"
 LIVE_PLACE = "03-follow-hero"
 QUALIFICATION = .8
-RUN = dict(run="on", own="off", moves="moves")  # teacher pace -> navdemos follow-run
+RUN = dict(run="on", own="off")  # teacher pace -> navdemos follow-run
 SOURCES = ("hold", "direct", "cut", "trail", "line", "unseen")
 
 
@@ -279,7 +279,7 @@ def live(args):
 def report(args):
     root = args.root
     result = dict(validation={}, live={}, paired={})
-    for name in ("teacher-line", "teacher-trail-attempt1", "teacher-trail", "teacher-trail-moves",
+    for name in ("teacher-line", "teacher-trail-attempt1", "teacher-trail",
                  "v5-line", "v5-trail-attempt1", "v5-trail"):
         path = root / "validation" / name / "summary.json"
         if path.is_file():
@@ -336,9 +336,8 @@ def main(argv=None):
     parser.add_argument("command", choices=("validation", "live", "report"))
     parser.add_argument("--model", help="teacher or a .navbc weight file (validation)")
     parser.add_argument("--guidance", choices=("trail", "line"))
-    parser.add_argument("--teacher-pace", choices=("run", "own", "moves"),
-                        help="Follow teacher: always run, its previous own pace, or run except its careful escape "
-                             "steps (diagnosis); default run for trail, own for line")
+    parser.add_argument("--teacher-pace", choices=("run", "own"),
+                        help="Follow teacher: always run, or its previous own pace; default run for trail, own for line")
     parser.add_argument("--npc", default="BAU_954_MALETH")
     parser.add_argument("--limit-ms", type=int, help="Override the route horizon (smoke only)")
     parser.add_argument("--first", type=int, help="Only the first N frozen routes (smoke only)")

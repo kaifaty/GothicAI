@@ -4,7 +4,7 @@
 #                                                              # contract; resolve the base; two short episodes
 #   bash scripts/nav-follow-remote.sh validation-teacher-trail # the follow teacher on the frozen validation
 #   bash scripts/nav-follow-remote.sh validation-{teacher,v5}-{trail,line}  # line = the previous straight carrot
-#                                                              # and teacher pace; NAV_FOLLOW_PACE=run|own|moves overrides
+#                                                              # and teacher pace; NAV_FOLLOW_PACE=run|own overrides
 #   bash scripts/nav-follow-remote.sh live-trail|live-line     # 03-follow-hero, teacher and v5, three seeds, video
 #   bash scripts/nav-follow-remote.sh report                   # tables from all finished stages
 #   NAV_FOLLOW_IDS=id,id [NAV_FOLLOW_PACE=run|own] bash scripts/nav-follow-remote.sh diagnose-teacher-trail
@@ -176,7 +176,7 @@ if [[ "$stage" == validation-* ]]; then
   game_environment
   navmesh 8
   target="$weights"; [[ "$model" == v5 ]] || target=teacher
-  # NAV_FOLLOW_PACE=moves: the teacher runs except its careful escape steps (diagnosis).
+  # NAV_FOLLOW_PACE=run|own overrides the teacher pace of the stage.
   pace=(); [[ -z "${NAV_FOLLOW_PACE:-}" ]] || pace=(--teacher-pace "$NAV_FOLLOW_PACE")
   validate "$archive/validation/$model-$guidance${NAV_FOLLOW_PACE:+-$NAV_FOLLOW_PACE}" "$target" "$guidance" --parallel 8 "${pace[@]}"
   exit

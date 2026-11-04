@@ -73,7 +73,7 @@ struct Episode {
   uint64_t followFarMs=0,followNearMs=0;
   // Follow carrot: the leader's trail (default) or the straight line ("line").
   FollowTrail followTrail;
-  bool followLine=false,followRun=true,followRunCareful=false;
+  bool followLine=false,followRun=true;
   std::array<uint64_t,size_t(FollowTrail::Source::Count)> followSources={};
   FollowTrail::Source followSource=FollowTrail::Source::Count;
   bool followVisibleNow=false;
@@ -229,7 +229,7 @@ struct Settings {
   bool oracle=false,recordDemos=true;
   bool perceptionMonitor=false;
   bool dagger=false;
-  bool followLine=false,followRun=true,followRunCareful=false;
+  bool followLine=false,followRun=true;
   uint32_t driveTeacher=0;
   bool live=false,liveTargetPlayer=false,liveGuidePlayer=false,liveTargetWalkOnly=false;
   NavigationEye::FloorSampling floorSampling=NavigationEye::FloorSampling::WalkingGazeDown;
@@ -506,7 +506,7 @@ void finish(Episode& ep,World& world) {
        <<",\"follow_fraction\":"<<(ep.followMs?double(ep.inBandMs)/double(ep.followMs):0)
        <<",\"follow_far_ms\":"<<ep.followFarMs<<",\"follow_near_ms\":"<<ep.followNearMs;
   if(ep.teacherVersion>=2 && ep.goalKind=="follow" && ep.target) {
-    out<<",\"follow_guidance\":"<<std::quoted(ep.followLine?"line":"trail")<<",\"follow_run\":"<<std::quoted(!ep.followRun?"off":ep.followRunCareful?"moves":"on")
+    out<<",\"follow_guidance\":"<<std::quoted(ep.followLine?"line":"trail")<<",\"follow_run\":"<<std::quoted(ep.followRun?"on":"off")
        <<",\"follow_visible_decisions\":"<<ep.followVisibleDecisions
        <<",\"follow_contact_entries\":"<<ep.followContactEntries
        <<",\"follow_contact_decisions\":"<<ep.followContactDecisions<<",\"follow_carrot_sources\":{";
@@ -1713,9 +1713,7 @@ void decideMemory(Episode& ep,World& w,uint64_t elapsed) {
   }
   sample.keys=ep.memoryTeacher.decide(input);++ep.replans;
   // The game sets the pace: a companion always runs after its object.
-  // Diagnosis "moves": the teacher keeps walking its own careful escape steps.
-  if(ep.goalKind=="follow" && ep.followRun && !(ep.followRunCareful && ep.memoryTeacher.lastStepCareful()))
-    sample.keys.walk=false;
+  if(ep.goalKind=="follow" && ep.followRun)sample.keys.walk=false;
   ep.maneuverMasked=false;
   if(ep.dagger) {
     sample.keys.jump=false;sample.keys.climb=false;
@@ -2502,9 +2500,8 @@ void NavDemos::command(const std::vector<std::string>& args,World& w,Npc& player
   }
   if(a.size()>=2 && a[1]=="follow-run") {
     if(running())throw std::runtime_error("navdemos cannot change the follow teacher pace during an episode");
-    if(a.size()!=3 || (a[2]!="on" && a[2]!="off" && a[2]!="moves"))
-      throw std::runtime_error("navdemos follow-run on|off|moves");
-    settings.followRun=a[2]!="off";settings.followRunCareful=a[2]=="moves";
+    if(a.size()!=3 || (a[2]!="on" && a[2]!="off"))throw std::runtime_error("navdemos follow-run on|off");
+    settings.followRun=a[2]=="on";
     return;
   }
   if(a.size()>=2 && (a[1]=="drive-teacher" || a[1]=="dagger")) {
@@ -2608,7 +2605,7 @@ void NavDemos::command(const std::vector<std::string>& args,World& w,Npc& player
   if((ep.oracle || !settings.recordDemos) && std::filesystem::exists(std::filesystem::path(output)/"samples.bin.gz")) {
     throw std::runtime_error("navdemos evaluation output already contains demonstration samples");
   }
-  ep.goalKind=goalKind;ep.scenarioSeed=scenarioSeed;ep.followLine=settings.followLine;ep.followRun=settings.followRun;ep.followRunCareful=settings.followRunCareful;
+  ep.goalKind=goalKind;ep.scenarioSeed=scenarioSeed;ep.followLine=settings.followLine;ep.followRun=settings.followRun;
   ep.liveTargetPlayer=moving && settings.liveTargetPlayer;
   ep.liveTargetWalkOnly=ep.liveTargetPlayer && settings.liveTargetWalkOnly;
   ep.goal=goalPosition;ep.replay=replay;ep.drive=learner;
