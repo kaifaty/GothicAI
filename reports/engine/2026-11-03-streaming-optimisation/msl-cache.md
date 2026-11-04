@@ -94,7 +94,7 @@ Apple M1 Pro, Metal, `RelWithDebInfo`. `scripts/loadprobe.sh local orig:NEWWORLD
 ## Проверки
 
 - Сборка Mac `Gothic2Notr` (`scripts/build-engine.sh`, 3 задания): полная, затем инкрементальная после строк зонда; без ошибок и новых предупреждений.
-- Сборка Linux на Ryzen через `gq` (`quick`, 12 потоков): копия дерева, configure + build Gothic2Notr за 157 с, без ошибок; define `TEMPEST_MSL_TRANSLATOR` в `build.ninja` отсутствует (кэш на Vulkan не попадает).
+- Сборка Linux на Ryzen через `gq` (`quick`, 12 потоков), копия дерева: первая версия — configure + build Gothic2Notr за 157 с; финальный код (со строками зонда в `shaders.cpp`) — 37 с с ccache. Без ошибок; define `TEMPEST_MSL_TRANSLATOR` в `build.ninja` отсутствует (кэш на Vulkan не попадает).
 - `python3 scripts/check.py run` — 86 passed, 124 subtests (выбран `scripts/tests/test_ryzen.py` по ссылке на `game/main.cpp`).
 
 ## Открытые вопросы
