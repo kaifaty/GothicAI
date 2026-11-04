@@ -47,7 +47,7 @@ if [[ "$stage" != run ]]; then
     main="$(mktemp -d)"
     git -C "$ROOT" worktree add -q --detach "$main/tree" "$main_revision"
     trap 'git -C "$ROOT" worktree remove --force "$main/tree"; rm -rf "$main"' EXIT
-    publish "$task/main/$main_revision" "$main/tree" OpenGothic
+    publish "$task/main/$main_revision" "$main/tree" OpenGothic scripts
   fi
   case "$stage" in
     point) resources=(--class batch --threads 16 --cpu-quota 1600% --mem 14G --max 2h) ;;
