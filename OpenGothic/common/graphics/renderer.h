@@ -173,6 +173,7 @@ class Renderer final {
       // and of a wide penumbra; the defaults are the shader's OmniTaa* (OPENGOTHIC_VSM_LAMP_TAPS)
       uint32_t       vsmLampTaps[4]     = {2, 2, 4, 6};
       uint32_t       vsmLampFlags       = 0;     // 1 OPENGOTHIC_VSM_LAMP_FLOOR, 2 OPENGOTHIC_VSM_LAMP_CENTRE (under TAA)
+      uint32_t       vsmLampExp         = 0;     // OPENGOTHIC_VSM_LAMP_EXP: experiments (light.frag, probeExp)
       bool           vsmLampStudy       = false; // any OPENGOTHIC_VSM_LAMP*: the study shader light_vsm_probe
       float          vsmLampNearCm      = 30;    // [INTERNAL] vsmLampNearCm: a lamp's fixture this close casts no shadow
       } settings;

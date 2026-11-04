@@ -104,7 +104,7 @@ Renderer::Renderer() {
   // the receiver's depth without its plane; unset or pcss: the game's filter
   if(const char* mode = std::getenv("OPENGOTHIC_VSM_LAMP")) {
     const std::string_view m = mode;
-    settings.vsmLampMode = m=="hard" ? 1 : (m=="flat" ? 2 : 0);
+    settings.vsmLampMode = m=="hard" ? 1 : (m=="flat" ? 2 : (m=="truth" ? 3 : 0));
     if(settings.vsmLampMode!=0)
       Log::i("vsm: lamp filter study mode = ", m);
     }
@@ -137,6 +137,16 @@ Renderer::Renderer() {
     settings.vsmLampFlags |= 2;
     settings.vsmLampStudy  = true;
     Log::i("vsm: lamp filter study: the narrow penumbra in texels of the face's centre");
+    }
+  // OPENGOTHIC_VSM_LAMP_EXP=still,inner,litall,radial,expect,paths: the experiments of step-2d-why.md (light.frag, probeExp)
+  if(const char* e = std::getenv("OPENGOTHIC_VSM_LAMP_EXP")) {
+    const std::string_view s = e;
+    const char* names[] = {"still", "inner", "litall", "radial", "expect", "paths"};
+    for(uint32_t i=0; i<6; ++i)
+      if(s.find(names[i])!=std::string_view::npos)
+        settings.vsmLampExp |= 1u << i;
+    settings.vsmLampStudy = true;
+    Log::i("vsm: lamp filter study experiments = ", e, " (", settings.vsmLampExp, ")");
     }
   settings.vsmLampStudy |= settings.vsmLampMode!=0 || settings.vsmStats || settings.vsmLampNarrow>=0;
 
@@ -2240,9 +2250,10 @@ void Renderer::drawLights(Encoder<CommandBuffer>& cmd, const WorldView& wview) {
   auto& ibo  = Resources::cubeIbo();
   struct Push {
     Vec3 originLwc; float vsmLampNear; uint32_t probeMode, probeStamp; float probeNarrow; uint32_t probeTaps[4], probeFlags;
+    uint32_t probeExp;
     } push = {scene.originLwc, settings.vsmLampNearCm, settings.vsmLampMode, 0, settings.vsmLampNarrow,
               {settings.vsmLampTaps[0], settings.vsmLampTaps[1], settings.vsmLampTaps[2], settings.vsmLampTaps[3]},
-              settings.vsmLampFlags};
+              settings.vsmLampFlags, settings.vsmLampExp};
   if(lights.directLightPso==&shaders.lightsVsmProbe) {
     // the study variant: its counters and a stamp per pixel (light.frag, LampProbe); one frame in 5 s counts
     auto& probe = usesSsboInit(vsm.lampProbe, (16 + size_t(zbuffer.w())*size_t(zbuffer.h()))*sizeof(uint32_t));
