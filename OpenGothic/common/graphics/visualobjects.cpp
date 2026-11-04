@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cassert>
 #include <atomic>
+#include <thread>
 
 #include "graphics/mesh/submesh/animmesh.h"
 #include "graphics/mesh/submesh/staticmesh.h"
@@ -478,15 +479,15 @@ void VisualObjects::updateInstance(size_t id, Matrix4x4* pos) {
     // a caster moved, turned or changed its shape: the lamp faces that saw it before and those that see it now.
     // A drift below VsmMoveTolerance from where the faces last saw it (a physics body at rest jitters by
     // hundredths of a millimetre) is less than a texel of a face: it is gathered until it is more
-    const float r      = clustersMem[cId].r;
-    const Vec4  sphere = vsmSphere(obj, obj.pos);
+    // the cluster's radius round the origin bounds the box's sphere: the sphere is built only for a change
+    const float r = clustersMem[cId].r;
     uint64_t h = 14695981039346656037ull;
     h = vsmHashBytes(h, &d.fatness, sizeof(d)-sizeof(d.pos));
     h = vsmHashBytes(h, &r, sizeof(r));
-    if(!obj.vsmPlaced || obj.vsmHash!=h || vsmDisplacement(obj.vsmPos, obj.pos, std::max(r, sphere.w))>VsmMoveTolerance) {
+    if(!obj.vsmPlaced || obj.vsmHash!=h || vsmDisplacement(obj.vsmPos, obj.pos, r)>VsmMoveTolerance) {
       if(obj.vsmPlaced)
         vsmChanged(obj, obj.vsmSphere);
-      obj.vsmSphere = sphere;
+      obj.vsmSphere = vsmSphere(obj, obj.pos);
       obj.vsmPos    = obj.pos;
       obj.vsmHash   = h;
       obj.vsmPlaced = true;
@@ -1027,10 +1028,13 @@ void VisualObjects::vsmChanged(const Object& obj, const Vec4& sphere, bool force
     return;
   if(vsmIgnored(obj.type, obj.wind!=asset::AnimationType::NONE, obj.deformCount>0))
     return;
-  auto& dst = vsmMoved[obj.vsmMovable ? 1 : 0];
-  std::lock_guard<std::mutex> guard(vsmSync);
-  if(dst.size()<=VsmMaxChanges)
-    dst.push_back(sphere);
+  auto&          dst   = vsmMoved[obj.vsmMovable ? 1 : 0];
+  const uint64_t state = dst.state.fetch_add(1);
+  const uint32_t buf   = uint32_t(state >> 32) & 1u;
+  const uint32_t at    = uint32_t(state);
+  if(at<VsmMovedMax)
+    dst.data[buf][at] = sphere;
+  dst.written[buf].fetch_add(1, std::memory_order_release);
   }
 
 void VisualObjects::vsmChangedClusters(const Object& obj, bool force) {
@@ -1065,11 +1069,27 @@ void VisualObjects::commitVsmChanges(uint8_t fId) {
   vsmLast.spheres     = nullptr;
   vsmLast.overflow    = false;
 
+  // take the buffer in use from each list, give writers the other one, wait for the entries already reserved
   std::vector<Vec4> moved[2];
+  for(int k=0; k<2; ++k) {
+    auto& src = vsmMoved[k];
+    if(src.data[0]==nullptr) {
+      src.data[0].reset(new Vec4[VsmMovedMax]);
+      src.data[1].reset(new Vec4[VsmMovedMax]);
+      }
+    const uint64_t epoch = src.state.load() >> 32;
+    const uint64_t old   = src.state.exchange((epoch+1) << 32);
+    const uint32_t buf   = uint32_t(old >> 32) & 1u;
+    const uint32_t n     = uint32_t(old);
+    while(src.written[buf].load(std::memory_order_acquire)<n)
+      std::this_thread::yield();
+    src.written[buf].store(0);
+    if(n>VsmMovedMax)
+      vsmLast.overflow = true;
+    moved[k].assign(src.data[buf].get(), src.data[buf].get()+std::min(n, VsmMovedMax));
+    }
   {
     std::lock_guard<std::mutex> guard(vsmSync);
-    std::swap(moved[0], vsmMoved[0]);
-    std::swap(moved[1], vsmMoved[1]);
     vsmLast.moved = uint32_t(moved[0].size() + moved[1].size());
     if(!scene.vsmCache) {
       vsmDynamicPrev[0].clear();
@@ -1088,8 +1108,14 @@ void VisualObjects::commitVsmChanges(uint8_t fId) {
         return;
       if(clustersMem[obj.clusterId].r<0)
         return;
-      // a wind-blown tree sways by a part of its size round where it stands
-      Vec4 sphere = vsmSphere(obj, obj.pos);
+      // a wind-blown tree sways by a part of its size round where it stands; a caster that did not move keeps
+      // its sphere from the last frame
+      if(!obj.vsmPlaced || obj.vsmPos!=obj.pos) {
+        obj.vsmSphere = vsmSphere(obj, obj.pos);
+        obj.vsmPos    = obj.pos;
+        obj.vsmPlaced = true;
+        }
+      Vec4 sphere = obj.vsmSphere;
       if(obj.wind!=asset::AnimationType::NONE)
         sphere.w *= 1.1f;
       now[obj.vsmMovable ? 1 : 0].push_back(sphere);

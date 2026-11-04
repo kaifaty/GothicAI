@@ -241,7 +241,16 @@ class VisualObjects final {
     // VSM lamp-face cache (vsmChanges)
     static constexpr size_t    VsmMaxChanges = 256*1024;
     std::mutex                 vsmSync;
-    std::vector<Tempest::Vec4> vsmMoved[2];       // static, movable casters since the last prepareGlobals (vsmSync)
+    // static, movable casters since the last prepareGlobals: appended by animation workers without a lock. The
+    // state packs the buffer in use (high half) and the entries reserved in it (low half); commitVsmChanges swaps
+    // buffers and waits until the reserved entries are written
+    static constexpr uint32_t  VsmMovedMax = 64*1024;
+    struct VsmMoved {
+      std::unique_ptr<Tempest::Vec4[]> data[2];
+      std::atomic<uint64_t>            state{0};
+      std::atomic<uint32_t>            written[2] = {};
+      };
+    VsmMoved                   vsmMoved[2];
     std::unordered_set<size_t> objectsDynamic;    // Animated, Morph and deformed objects, under vsmSync
     std::vector<Tempest::Vec4> vsmDynamicPrev[2]; // the ones changing every frame as last frame saw them
     std::vector<Tempest::Vec4> vsmUpload;
