@@ -224,6 +224,7 @@ if [[ "$stage" == compare-* ]]; then
   "$python" -X faulthandler -B -I - "$task" "$archive" "$output" "$weights" "$pace" "$part" \
     "$v5_validation" "$v5_input" <<'COMPARE'
 from collections import Counter
+import hashlib
 import json
 import math
 import os
@@ -263,9 +264,62 @@ for ep in selected:
     assert ep["action_counts"]["walk"] == (ep["decisions"] if pace == "walk" else 0)
 summary = rl.validation_summary(episodes, lean=True)
 rl.write_json(output / "metrics.json", summary)
+runner_digest = hashlib.sha256((task / "build/opengothic/gothic-body-runner").read_bytes()).hexdigest()
 rl.write_json(output / f"{part}-summary.json", dict(episodes=len(selected), seconds=time.monotonic()-started,
               base_fingerprint=os.environ["OPENGOTHIC_BASE_FINGERPRINT"], limit_ms=limit,
-              binary_sha256=__import__("hashlib").sha256((task / "build/opengothic/gothic-body-runner").read_bytes()).hexdigest()))
+              binary_sha256=runner_digest))
+
+# The last completed part produces the full comparison and the live gate.
+names = ("v5-run", "v5-walk", "hd-run", "hd-walk", "v5-follow-run", "hd-follow-run")
+files = {name: archive / "results" / name / "metrics.json" for name in names}
+if not all(path.is_file() for path in files.values()):
+    raise SystemExit(0)
+measured = {name: rl.read_json(path) for name, path in files.items()}
+complete_counts = Counter(approach=101, object=179, point=60, detour=121)
+if any(Counter(ep["family"] for ep in value["episodes"]) !=
+       (Counter(follow_below_gate=102) if "follow" in name else complete_counts)
+       for name, value in measured.items()):
+    raise SystemExit(0)
+episodes = [ep for value in measured.values() for ep in value["episodes"]]
+assert len(episodes) == 2048
+assert {ep["action_seed"] for ep in episodes} == {18102027}
+assert {ep["base_fingerprint"] for ep in episodes} == {os.environ["OPENGOTHIC_BASE_FINGERPRINT"]}
+for name in names:
+    for component in (("follow",) if "follow" in name else ("main", "detour")):
+        assert rl.read_json(archive / "results" / name / f"{component}-summary.json")["binary_sha256"] == runner_digest
+cohort = lambda values: {(ep["family"], ep["id"], ep["action_seed"]) for ep in values}
+assert all(cohort(measured[name]["episodes"]) == cohort(measured["hd-run"]["episodes"])
+           for name in names[:4])
+from nav_dagger4_round import paired_report_difference
+paired, failures = [], []
+for pair_pace, family in [(pace, family) for pace in ("run", "walk")
+                          for family in complete_counts] + [("run", "follow_below_gate")]:
+    suffix = "follow-run" if family == "follow_below_gate" else pair_pace
+    left, right = [[ep for ep in measured[f"{model}-{suffix}"]["episodes"] if ep["family"] == family]
+                   for model in ("v5", "hd")]
+    for metric in ("arrival", "elapsed_s", "turn_only", "idle"):
+        values = (left, right)
+        if metric == "turn_only":
+            values = [[{**ep, "action_counts": {**ep["action_counts"], "idle": ep["action_counts"]["turn_only"]}}
+                       for ep in group] for group in values]
+        result = paired_report_difference(*values, "idle" if metric == "turn_only" else metric)
+        assert result["se"] is not None
+        delta, se = result["delta"], result["se"]
+        number_se = delta / se if se else (0 if delta == 0 else "inf" if delta > 0 else "-inf")
+        row = dict(pace=pair_pace, family=family, metric=metric, number_se=number_se, **result)
+        paired.append(row)
+        if metric == "arrival" and delta < -2 * se:
+            failures.append(row)
+rows = [dict(configuration=name, family=family, **value)
+        for name, value in measured.items() for family, value in value["by_family"].items()]
+rl.write_json(archive / "comparison.json", dict(complete=True, episodes=2048, criteria=9,
+    gate_passed=not failures, gate_failures=failures, paired=paired, rows=rows,
+    base_fingerprint=os.environ["OPENGOTHIC_BASE_FINGERPRINT"], runner_sha256=runner_digest,
+    weights_sha256={name: hashlib.sha256(path.read_bytes()).hexdigest() for name, path in
+                   (("v5", archive / "run/policy.navbc"),
+                    ("HD", Path("/mnt/shared/gothic-ai/archive/nav-dagger3-20261030/hd-run/policy.navbc")))}))
+print(json.dumps(dict(event="pace_v5_comparison_complete", episodes=2048, criteria=9,
+                      gate_passed=not failures)), flush=True)
 COMPARE
   exit
 fi
@@ -322,9 +376,12 @@ fi
 if [[ "$stage" == live || "$stage" == live-v5 ]]; then
   if [[ "$stage" == live-v5 ]]; then
     [[ -f "$archive/comparison.json" ]] || stop 'missing complete comparison and gate'
-    "$python" -B -I - "$archive/comparison.json" <<'GATE'
-import json, sys
-assert json.load(open(sys.argv[1]))["gate_passed"] is True, "Pace V5 comparison gate did not pass"
+    "$python" -B -I - "$archive/comparison.json" "$NAV_PACE_WEIGHTS" <<'GATE'
+import hashlib, json, sys
+from pathlib import Path
+comparison = json.loads(Path(sys.argv[1]).read_text())
+assert comparison["gate_passed"] is True, "Pace V5 comparison gate did not pass"
+assert hashlib.sha256(Path(sys.argv[2]).read_bytes()).hexdigest() == comparison["weights_sha256"]["v5"], "Live weights differ from the compared policy"
 GATE
   else
     build "$source/OpenGothic" "$build_dir" Gothic2Notr
