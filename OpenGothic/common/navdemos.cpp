@@ -75,6 +75,8 @@ struct Episode {
   FollowTrail followTrail;
   bool followLine=false;
   std::array<uint64_t,size_t(FollowTrail::Source::Count)> followSources={};
+  FollowTrail::Source followSource=FollowTrail::Source::Count;
+  bool followVisibleNow=false;
   uint64_t followVisibleDecisions=0;
   // Rising edges of native CV blocked/steep contact since the previous decision.
   bool followContact=false,followContactPrevious=false;
@@ -1643,7 +1645,7 @@ void guidanceFor(Episode& ep,World& w,const Vec3& position) {
       // remains the final goal, while steering ends at least 2.5 m before it.
       // The frozen memory planner receives this carrot like a road endpoint.
       const bool visible=followVisible(ep,w);
-      ep.followVisibleDecisions+=visible;
+      ep.followVisibleDecisions+=visible;ep.followVisibleNow=visible;
       if(ep.followLine) {
         const auto delta=ep.goal-position;
         const float distance=delta.length();
@@ -1656,6 +1658,7 @@ void guidanceFor(Episode& ep,World& w,const Vec3& position) {
         const auto result=ep.followTrail.guide(position,ep.goal,ep.view);
         ep.guidance.carrot=result.carrot;
         ++ep.followSources[size_t(result.source)];
+        ep.followSource=result.source;
       }
       ep.guidance.beyondKnown=false;
     }
@@ -1727,7 +1730,27 @@ void decideMemory(Episode& ep,World& w,uint64_t elapsed) {
   out<<"{\"elapsed_ms\":"<<elapsed<<",\"position_cm\":";vector(out,position);
   out<<",\"yaw_deg\":"<<ep.npc->rotation()<<",\"goal_cm\":";vector(out,ep.goal);
   out<<",\"carrot_cm\":";vector(out,ep.guidance.carrot);
-  out<<",\"beyond_known\":"<<ep.guidance.beyondKnown<<",\"local_plan_cm\":[";
+  out<<",\"beyond_known\":"<<ep.guidance.beyondKnown;
+  if(ep.goalKind=="follow") {
+    // Diagnosis only: the trail state and what the planner sees under the body.
+    const auto& status=ep.memoryTeacher.lastPlanStatus();
+    out<<",\"follow_source\":"<<std::quoted(ep.followSource==FollowTrail::Source::Count?"none":FollowTrail::name(ep.followSource))
+       <<",\"follow_visible\":"<<ep.followVisibleNow<<",\"trail_points\":"<<ep.followTrail.points().size()
+       <<",\"trail_lost\":"<<ep.followTrail.lost()<<",\"start_found\":"<<status.startFound
+       <<",\"escape_required\":"<<status.escapeRequired<<",\"overlap_danger_cells\":"<<status.overlapDangerCells
+       <<",\"origin_channels\":[";
+    // Byte maximum per channel over the four near cells that meet at the body origin.
+    const auto& near=sample.memory->near;
+    std::array<unsigned,8> bytes={};
+    for(size_t z=near.size/2-1;z<=near.size/2;++z)for(size_t x=near.size/2-1;x<=near.size/2;++x) {
+      const auto& c=near.cells[z*near.size+x];
+      const float values[]={c.confidence,c.free,c.wall,c.ledge,c.drop,c.water,c.movable,c.familiar};
+      for(size_t k=0;k<8;++k)bytes[k]=std::max(bytes[k],unsigned(std::lround(values[k]*255.f)));
+    }
+    for(size_t k=0;k<8;++k)out<<(k?",":"")<<bytes[k];
+    out<<']';
+  }
+  out<<",\"local_plan_cm\":[";
   for(size_t i=0;i<points.size();++i) {if(i)out<<',';out<<'['<<points[i].rightCm<<','<<points[i].forwardCm<<']';}
   out<<"]}\n";
   if(!out)throw std::runtime_error("navdemos memory teacher path write failed");
