@@ -11,6 +11,7 @@
 #include "navliveprobes.h"
 #include "navtransitions.h"
 #include "physics/charactervirtualdiagnostics.h"
+#include "game/followtrail.h"
 #include "game/knownroadsbench.h"
 #include "game/navperceptionbench.h"
 #include "game/navperceptionsafety.h"
@@ -68,6 +69,16 @@ struct Episode {
   std::vector<const WayPoint*> targetRoute;
   size_t targetLeg=0;
   uint64_t targetResume=0,scenarioSeed=0,firstContactMs=0,followMs=0,inBandMs=0;
+  // After first contact: time beyond the band (>5 m) and inside it (<2 m).
+  uint64_t followFarMs=0,followNearMs=0;
+  // Follow carrot: the leader's trail (default) or the straight line ("line").
+  FollowTrail followTrail;
+  bool followLine=false;
+  std::array<uint64_t,size_t(FollowTrail::Source::Count)> followSources={};
+  uint64_t followVisibleDecisions=0;
+  // Rising edges of native CV blocked/steep contact since the previous decision.
+  bool followContact=false,followContactPrevious=false;
+  uint64_t followContactEntries=0,followContactDecisions=0;
   bool contacted=false,targetQueued=false;
   bool liveTargetPlayer=false,liveTargetWasExternal=false;
   bool liveTargetWalkOnly=false;
@@ -216,6 +227,7 @@ struct Settings {
   bool oracle=false,recordDemos=true;
   bool perceptionMonitor=false;
   bool dagger=false;
+  bool followLine=false;
   uint32_t driveTeacher=0;
   bool live=false,liveTargetPlayer=false,liveGuidePlayer=false,liveTargetWalkOnly=false;
   NavigationEye::FloorSampling floorSampling=NavigationEye::FloorSampling::WalkingGazeDown;
@@ -438,7 +450,8 @@ void finish(Episode& ep,World& world) {
   }
   if(!ep.replay) {NpcKeys::KeyState end;end.walk=true;action(ep,elapsed,end);if(ep.writer)ep.writer->finish();}
   ep.trajectory.close();ep.actions.close();ep.knownPaths.close();ep.teacherPaths.close();ep.transitionFrames.close();ep.samples.close();ep.targetTrajectory.close();ep.perceptionSafetyFrames.close();ep.perceptionWaterObservations.close();
-  if(ep.live) {ep.live->finish();ep.npc->setCharacterVirtualDiagnosticsEnabled(false);}
+  if(ep.live) ep.live->finish();
+  if(ep.live || (ep.goalKind=="follow" && ep.target))ep.npc->setCharacterVirtualDiagnosticsEnabled(false);
   auto out=file(ep,"episode.json");
   const double seconds=std::chrono::duration<double>(std::chrono::steady_clock::now()-ep.wallStart).count();
   out<<"{\"success\":"<<ep.success<<",\"replay\":"<<ep.replay<<",\"drive\":"<<ep.drive<<",\"start\":"<<std::quoted(ep.from)
@@ -488,7 +501,19 @@ void finish(Episode& ep,World& world) {
        <<",\"blocked_spans\":"<<ep.blockedSpans<<",\"blocked_ms\":"<<ep.blockedMs
        <<",\"max_blocked_ms\":"<<ep.maxBlockedMs<<",\"first_contact_ms\":"<<(ep.contacted?int64_t(ep.firstContactMs):-1)
        <<",\"follow_ms\":"<<ep.followMs<<",\"in_band_ms\":"<<ep.inBandMs
-       <<",\"follow_fraction\":"<<(ep.followMs?double(ep.inBandMs)/double(ep.followMs):0);
+       <<",\"follow_fraction\":"<<(ep.followMs?double(ep.inBandMs)/double(ep.followMs):0)
+       <<",\"follow_far_ms\":"<<ep.followFarMs<<",\"follow_near_ms\":"<<ep.followNearMs;
+  if(ep.teacherVersion>=2 && ep.goalKind=="follow" && ep.target) {
+    out<<",\"follow_guidance\":"<<std::quoted(ep.followLine?"line":"trail")
+       <<",\"follow_visible_decisions\":"<<ep.followVisibleDecisions
+       <<",\"follow_contact_entries\":"<<ep.followContactEntries
+       <<",\"follow_contact_decisions\":"<<ep.followContactDecisions<<",\"follow_carrot_sources\":{";
+    for(size_t i=0;i<ep.followSources.size();++i) {
+      if(i)out<<',';
+      out<<std::quoted(FollowTrail::name(FollowTrail::Source(i)))<<':'<<ep.followSources[i];
+    }
+    out<<'}';
+  }
   if(ep.target)
     out<<",\"target_immortal\":"<<ep.target->isImmortal()
        <<",\"target_attitude\":"<<int(ep.target->attitude())
@@ -1599,17 +1624,39 @@ NpcKeys::KeyState executePolicy(Episode& ep,const NavDemoWriter::Snapshot& sampl
   if(ep.live)ep.live->observation(sample,&features,sample.gameMs-ep.began,ep.decisions);
   return executed;
 }
+// The follower's sight of the object it follows: one ray from its eyes to the
+// object's torso. Hitting the object's own rig near the torso counts as seen.
+bool followVisible(const Episode& ep,World& w) {
+  const auto* physics=w.physic();
+  if(physics==nullptr || ep.target==nullptr)return false;
+  const auto eye=ep.npc->navigationEyePose().origin;
+  const auto body=ep.goal+Vec3(0,100,0);
+  const auto hit=physics->navigationRay(eye,body,ep.npc);
+  return !hit.hasCol || (hit.kind==DynamicWorld::NavigationHit::Npc && (hit.point-body).length()<=80.f);
+}
 void guidanceFor(Episode& ep,World& w,const Vec3& position) {
   if(ep.goalKind=="point")KnownRoadsBench::readGuidance(w,*ep.npc,position,ep.goal,ep.guidance);
   else {
     ep.guidance={};ep.guidance.carrot=ep.goal;ep.guidance.beyondKnown=true;
     if(ep.goalKind=="follow") {
       // Intent is visible in the existing learner fields: the physical target
-      // remains the final goal, while steering ends 2.5 m before it. The frozen
-      // memory planner receives this carrot just like any local road endpoint.
-      const auto delta=ep.goal-position;
-      const float distance=delta.length();
-      ep.guidance.carrot=position+delta*(distance>250.f?(distance-250.f)/distance:0.f);
+      // remains the final goal, while steering ends at least 2.5 m before it.
+      // The frozen memory planner receives this carrot like a road endpoint.
+      const bool visible=followVisible(ep,w);
+      ep.followVisibleDecisions+=visible;
+      if(ep.followLine) {
+        const auto delta=ep.goal-position;
+        const float distance=delta.length();
+        ep.guidance.carrot=position+delta*(distance>250.f?(distance-250.f)/distance:0.f);
+      } else {
+        // The carrot runs along where the follower has seen the object; only
+        // its own near memory may permit a straight cut (game/followtrail.h).
+        ep.memory.view(ep.view);
+        ep.followTrail.observe(ep.goal,visible);
+        const auto result=ep.followTrail.guide(position,ep.goal,ep.view);
+        ep.guidance.carrot=result.carrot;
+        ++ep.followSources[size_t(result.source)];
+      }
       ep.guidance.beyondKnown=false;
     }
   }
@@ -1662,6 +1709,8 @@ void decideMemory(Episode& ep,World& w,uint64_t elapsed) {
     oracleMemory(input,raster);
   }
   sample.keys=ep.memoryTeacher.decide(input);++ep.replans;
+  // The game sets the pace: a companion always runs after its object.
+  if(ep.goalKind=="follow" && !ep.followLine)sample.keys.walk=false;
   ep.maneuverMasked=false;
   if(ep.dagger) {
     sample.keys.jump=false;sample.keys.climb=false;
@@ -1701,6 +1750,11 @@ void decideMemory(Episode& ep,World& w,uint64_t elapsed) {
 void decide(Episode& ep,World& w) {
   auto& n=*ep.npc;const auto elapsed=w.tickCount()-ep.began;
   trajectory(ep,elapsed);
+  if(ep.goalKind=="follow") {
+    ep.followContactDecisions+=ep.followContact;
+    ep.followContactEntries+=ep.followContact && !ep.followContactPrevious;
+    ep.followContactPrevious=ep.followContact;ep.followContact=false;
+  }
   if(ep.replay) {
     if(ep.replayIndex>=ep.replayActions.size())throw std::runtime_error("navdemos missing replay action");
     const auto& a=ep.replayActions[ep.replayIndex++];
@@ -1789,6 +1843,7 @@ void decide(Episode& ep,World& w) {
         }
       }
     }
+    if(ep.goalKind=="follow" && !ep.followLine)d.keys.walk=false;
     traceV2Plan(ep,position,d,direct,elapsed);
   } else {
     const auto present=NavKeyTeacher::decide(body,ep.path,meters(ep.goal));
@@ -2094,7 +2149,17 @@ void tickEpisode(Episode& ep,World& w,uint64_t dt,bool truncate=false) {
     ep.goal=NpcKeys::physicalPosition(target);
     const float distance=(p-ep.goal).length();
     if(!ep.contacted && distance<=500.f) {ep.contacted=true;ep.firstContactMs=elapsed;}
-    else if(ep.contacted) {ep.followMs+=dt;if(distance>=200.f && distance<=500.f)ep.inBandMs+=dt;}
+    else if(ep.contacted) {
+      ep.followMs+=dt;
+      if(distance>=200.f && distance<=500.f)ep.inBandMs+=dt;
+      else if(distance>500.f)ep.followFarMs+=dt;
+      else ep.followNearMs+=dt;
+    }
+    if(ep.goalKind=="follow") {
+      CharacterVirtualDiagnostics diagnostics;
+      if(n.characterVirtualDiagnostics(diagnostics))
+        ep.followContact=ep.followContact || diagnostics.npcMove.blocked || diagnostics.npcMove.steepContact;
+    }
   }
   traceTransitionFrame(ep,w,elapsed);
   const bool teacherSupported=ep.drive || ep.teacherVersion!=2 || !ep.record || NavTransitions::supported(w,n);
@@ -2404,6 +2469,12 @@ void NavDemos::command(const std::vector<std::string>& args,World& w,Npc& player
     }
     return;
   }
+  if(a.size()>=2 && a[1]=="follow-guidance") {
+    if(running())throw std::runtime_error("navdemos cannot change follow guidance during an episode");
+    if(a.size()!=3 || (a[2]!="trail" && a[2]!="line"))throw std::runtime_error("navdemos follow-guidance trail|line");
+    settings.followLine=a[2]=="line";
+    return;
+  }
   if(a.size()>=2 && (a[1]=="drive-teacher" || a[1]=="dagger")) {
     if(running())throw std::runtime_error("navdemos cannot change drive settings during an episode");
     if(a[1]=="drive-teacher" && a.size()==3 && (a[2]=="auto" || a[2]=="2" || a[2]=="3"))
@@ -2505,7 +2576,7 @@ void NavDemos::command(const std::vector<std::string>& args,World& w,Npc& player
   if((ep.oracle || !settings.recordDemos) && std::filesystem::exists(std::filesystem::path(output)/"samples.bin.gz")) {
     throw std::runtime_error("navdemos evaluation output already contains demonstration samples");
   }
-  ep.goalKind=goalKind;ep.scenarioSeed=scenarioSeed;
+  ep.goalKind=goalKind;ep.scenarioSeed=scenarioSeed;ep.followLine=settings.followLine;
   ep.liveTargetPlayer=moving && settings.liveTargetPlayer;
   ep.liveTargetWalkOnly=ep.liveTargetPlayer && settings.liveTargetWalkOnly;
   ep.goal=goalPosition;ep.replay=replay;ep.drive=learner;
@@ -2588,6 +2659,7 @@ void NavDemos::command(const std::vector<std::string>& args,World& w,Npc& player
     target.setWalkMode(WalkBit::WM_Walk);
     if(!ep.liveTargetPlayer) {target.aiPush(AiQueue::aiGoToPoint(*ep.targetRoute[1]));ep.targetQueued=true;}
     ep.goal=NpcKeys::physicalPosition(target);
+    if(goalKind=="follow")npc->setCharacterVirtualDiagnosticsEnabled(true);
   }
   if(!replay && !learner && a.size()>6) {
     const auto path=NavBench::navigationMesh(w).findPath(meters(fromPosition),meters(ep.goal));
@@ -2621,7 +2693,7 @@ void NavDemos::command(const std::vector<std::string>& args,World& w,Npc& player
       auto out=file(ep,"episode.json");
       out<<"{\"success\":false,\"setup_rejected\":true,\"failure\":\"live_setup_no_safe_observer_position\","
             "\"elapsed_ms\":0,\"decisions\":0,\"diagnostics\":\"live-guide-start.json\"}\n";
-      npc->setExternalControl(npcWasExternal);npc->clearSpeed();
+      npc->setExternalControl(npcWasExternal);npc->clearSpeed();npc->setCharacterVirtualDiagnosticsEnabled(false);
       if(ep.target) {
         if(ep.liveTargetPlayer) {ep.target->setExternalControl(ep.liveTargetWasExternal);ep.target->clearSpeed();}
         else w.removeNpc(*ep.target);
