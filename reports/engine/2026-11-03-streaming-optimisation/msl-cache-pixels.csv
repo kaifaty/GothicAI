@@ -44,3 +44,6 @@ perf-forest,off3,warm3,328271,68.39,96
 perf-forest,warm1,warm2,215148,44.82,90
 perf-forest,warm1,warm3,221450,46.14,103
 perf-forest,warm2,warm3,137137,28.57,103
+perf-market,offq1,warmq1,344177,71.70,60
+perf-harbour,offq1,warmq1,288349,60.07,78
+perf-forest,offq1,warmq1,243378,50.70,131
