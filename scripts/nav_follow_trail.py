@@ -41,6 +41,7 @@ ACTION_SEED = 18102027
 FAMILY = "follow_below_gate"
 LIVE_PLACE = "03-follow-hero"
 QUALIFICATION = .8
+RUN = dict(run="on", own="off", moves="moves")  # teacher pace -> navdemos follow-run
 SOURCES = ("hold", "direct", "cut", "trail", "line", "unseen")
 
 
@@ -139,7 +140,7 @@ def validation_commands(args, value, teacher):
         commands[moving[0]] = (f"navdemos moving-v3 3 {args.npc} {value['start']} {value['target']} {route} "
                                f"follow {value.get('limit_ms', 240000)} {value['seed']}")
     commands[moving[0]:moving[0]] = [f"navdemos follow-guidance {args.guidance}",
-                                      f"navdemos follow-run {'on' if args.teacher_pace == 'run' else 'off'}"]
+                                      f"navdemos follow-run {RUN[args.teacher_pace]}"]
     return commands
 
 
@@ -236,7 +237,7 @@ def live(args):
     case.pop("teacher_reference", None)
     case["pace"] = "run"
     case["prepare_commands"] = [*case.get("prepare_commands", []), f"navdemos follow-guidance {args.guidance}",
-                                f"navdemos follow-run {'on' if args.teacher_pace == 'run' else 'off'}"]
+                                f"navdemos follow-run {RUN[args.teacher_pace]}"]
     inputs = dict(original["inputs"], cache=str(args.runtime / "live-navmesh"))
     for name in ("save", "roads", "familiar", "links"):
         if not Path(inputs[name]).is_file():
@@ -305,8 +306,9 @@ def main(argv=None):
     parser.add_argument("command", choices=("validation", "live", "report"))
     parser.add_argument("--model", help="teacher or a .navbc weight file (validation)")
     parser.add_argument("--guidance", choices=("trail", "line"))
-    parser.add_argument("--teacher-pace", choices=("run", "own"),
-                        help="Follow teacher: always run, or its previous own pace; default run for trail, own for line")
+    parser.add_argument("--teacher-pace", choices=("run", "own", "moves"),
+                        help="Follow teacher: always run, its previous own pace, or run except its careful escape "
+                             "steps (diagnosis); default run for trail, own for line")
     parser.add_argument("--npc", default="BAU_954_MALETH")
     parser.add_argument("--limit-ms", type=int, help="Override the route horizon (smoke only)")
     parser.add_argument("--first", type=int, help="Only the first N frozen routes (smoke only)")

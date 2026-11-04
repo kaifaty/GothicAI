@@ -70,6 +70,9 @@ class NavMemoryTeacher final {
       uint32_t overlapDangerCells = 0;
       };
     const PlanStatus& lastPlanStatus() const { return latestPlanStatus; }
+    // The latest decision was a careful step: leaving an occupied start or a
+    // stuck recovery. The teacher walks these steps itself.
+    bool lastStepCareful() const { return careful; }
 
     void reset();
     // Call exactly once per 100-ms decision, reset at every episode boundary.
@@ -89,7 +92,7 @@ class NavMemoryTeacher final {
     float routeLength = 0;
     uint32_t stuckTicks = 0, recoveryTicks = 0, recoveryAttempts = 0;
     float recoverySide = 1;
-    bool complete = false;
+    bool complete = false, careful = false;
     bool observedGoal = false;
     Point previousGoal;
     uint32_t movingTicks = 0, runningTargetTicks = 0;
