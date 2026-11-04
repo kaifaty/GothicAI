@@ -43,6 +43,71 @@ Projection project(const std::vector<Vec3>& line, const Vec3& position) {
   return result;
   }
 
+struct Sample final {
+  double alongCm = 0;
+  double distanceCm = 0;
+  };
+
+// Distance from the actor to the route over [fromCm, toCm] of its length,
+// sampled at segment ends and feet: between two samples it is monotone.
+std::vector<Sample> samples(const std::vector<Vec3>& line, const Vec3& position,
+                            double fromCm, double toCm) {
+  std::vector<Sample> result;
+  const auto add = [&](double along, const Vec3& point) {
+    if(result.empty() || along>result.back().alongCm)
+      result.push_back({along,std::sqrt(double((point-position).quadLength()))});
+    };
+  if(line.size()==1) {
+    add(0,line.front());
+    return result;
+    }
+  double along = 0;
+  for(size_t i=0; i+1<line.size() && along<=toCm; ++i) {
+    const auto edge = line[i+1]-line[i];
+    const double squared = double(edge.quadLength());
+    const double length = std::sqrt(squared);
+    const double from = std::max(along,fromCm), to = std::min(along+length,toCm);
+    const auto at = [&](double distance) {
+      return length>0 ? line[i]+edge*float(std::clamp((distance-along)/length,0.,1.)) : line[i];
+      };
+    if(from<=to) {
+      add(from,at(from));
+      if(squared>0) {
+        const auto delta = position-line[i];
+        const double foot = along+(double(delta.x)*edge.x+double(delta.y)*edge.y+double(delta.z)*edge.z)/squared*length;
+        if(foot>from && foot<to)
+          add(foot,at(foot));
+        }
+      add(to,at(to));
+      }
+    along += length;
+    }
+  return result;
+  }
+
+// Progress on the route: the closest local minimum of the distance within
+// [fromCm, toCm], never below floorCm. A minimum pinned at the forward edge is
+// a later stretch beyond the window and does not count: progress cannot creep
+// there window by window, even while the actor stands still.
+double windowProgress(const std::vector<Vec3>& line, const Vec3& position,
+                      double fromCm, double toCm, double floorCm) {
+  double length = 0;
+  for(size_t i=0; i+1<line.size(); ++i)
+    length += std::sqrt(double((line[i+1]-line[i]).quadLength()));
+  const auto sampled = samples(line,position,fromCm,toCm);
+  const Sample* best = nullptr;
+  for(size_t k=0; k<sampled.size(); ++k) {
+    const auto& sample = sampled[k];
+    const bool left = k==0 || sample.distanceCm<=sampled[k-1].distanceCm;
+    const bool right = k+1<sampled.size() ? sample.distanceCm<=sampled[k+1].distanceCm
+                                          : sample.alongCm>=length-.01;
+    // Strict comparison preserves the earliest minimum at crossings.
+    if(left && right && (best==nullptr || sample.distanceCm<best->distanceCm))
+      best = &sample;
+    }
+  return best==nullptr ? floorCm : std::max(floorCm,best->alongCm);
+  }
+
 Vec3 pointAt(const std::vector<Vec3>& line, double distance) {
   for(size_t i=0; i+1<line.size(); ++i) {
     const auto edge = line[i+1]-line[i];
@@ -299,10 +364,13 @@ void KnownRoads::updateGuidance(const Knowledge& knowledge, const Vec3& position
   guidance.rebuilt = false;
   bool rebuild = !guidance.initialized || (goal-guidance.goal).quadLength()>.0001f;
   if(!rebuild && !guidance.polyline.empty()) {
-    const auto projection = project(guidance.polyline,position);
-    rebuild = !guidance.beyondKnown && projection.distanceCm>guidanceReplanCm;
+    // Deviation is measured from the whole familiar route, as before.
+    rebuild = !guidance.beyondKnown && project(guidance.polyline,position).distanceCm>guidanceReplanCm;
+    // Pure-pursuit window: progress moves continuously along the route and
+    // cannot skip to a later stretch that merely passes nearby.
     if(!rebuild)
-      guidance.progressCm = std::max(guidance.progressCm,projection.alongCm);
+      guidance.progressCm = windowProgress(guidance.polyline,position,guidance.progressCm-guidanceWindowCm,
+                                           guidance.progressCm+guidanceWindowCm,guidance.progressCm);
     }
   if(rebuild) {
     guidance = Guidance{};
@@ -313,8 +381,11 @@ void KnownRoads::updateGuidance(const Knowledge& knowledge, const Vec3& position
       guidance.polyline.push_back(graphNodes[node].position);
     for(size_t i=0; i+1<guidance.polyline.size(); ++i)
       guidance.knownLengthCm += double((guidance.polyline[i+1]-guidance.polyline[i]).length());
+    // The actor stands at startOffsetCm from the first node: its projection
+    // can be at most that far along the route, plus one window.
     if(!guidance.polyline.empty())
-      guidance.progressCm = project(guidance.polyline,position).alongCm;
+      guidance.progressCm = windowProgress(guidance.polyline,position,0,
+                                           guidance.route.startOffsetCm+guidanceWindowCm,0);
     }
   guidance.remainingKnownCm = std::max(0.,guidance.knownLengthCm-guidance.progressCm);
   // The terminal handoff is permanent for this episode: the subsequent

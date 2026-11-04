@@ -547,3 +547,17 @@ def test_fix_layer_hold_keeps_a_bone_still_against_its_parent_while_the_body_tur
     assert all(abs(anim.rotations[f, 2] @ orig[2, 2]) > 1 - 1e-9 for f in (2, 3, 4, 5))  # still at frame 2's turn
     assert np.array_equal(anim.rotations[[0, 1, 6, 7]], orig[[0, 1, 6, 7]])  # outside the window, as it was
     assert np.array_equal(anim.rotations[:, [0, 1, 3, 4]], orig[:, [0, 1, 3, 4]])  # only the held bone changes
+
+
+def test_fix_layer_keep_leaves_a_child_where_it_was_when_its_parent_is_fixed():
+    import fix_layer
+    skel, anim = leg_clip(8)
+    t, c = skel.index("BIP01 L THIGH"), skel.index("BIP01 L CALF")
+    before = [ga.world_pose(skel, anim, f) for f in range(8)]
+    orig = anim.rotations.copy()
+    fix_layer.apply(skel, anim, [{"kind": "rot", "bone": "BIP01 L THIGH", "window": [1, 2, 5, 6], "axis": [1, 0, 0], "deg": 30},
+                                 {"kind": "keep", "bones": ["BIP01 L CALF"], "window": [1, 2, 5, 6]}], floor=0.0)
+    after = [ga.world_pose(skel, anim, f) for f in range(8)]
+    assert all(not np.allclose(after[f][t][:3, :3], before[f][t][:3, :3]) for f in (2, 3, 4, 5))  # the thigh turned
+    assert all(np.allclose(after[f][c][:3, :3], before[f][c][:3, :3], atol=1e-6) for f in range(8))  # the calf did not
+    assert np.array_equal(anim.rotations[[0, 7]], orig[[0, 7]])  # outside the window, as it was
