@@ -21,9 +21,6 @@ OUTPUTS = 64 * 64 + 50 * 100
 CUDA_FLAGS = ["-O3", "--fmad=false", "--prec-div=true", "--prec-sqrt=true", "--ftz=false",
               "-gencode=arch=compute_86,code=sm_86", "-std=c++20", "-lineinfo"]
 HOST_FLAGS = ["-O2", "-std=c++17", "-fPIC", "-shared", "-ffp-contract=off"]
-# "exact" is the port. "float-confidence" only measures the price of the
-# engine's double-precision confidence; it is not bitwise.
-VARIANTS = {"exact": [], "float-confidence": ["-DGM_FLOAT_CONFIDENCE"]}
 
 POINTERS = ("posePos poseFwd poseMs poseLimits active rayOrigin rayPoint rayDistance rayNormalY rayKind "
             "rayHit rayTime bodyPos bodyFwd bodyMs bodyLimits pathCm posed journey stamps histT histP "
@@ -81,18 +78,16 @@ def bytes_of(entries, per=1):
 class Backend:
     """Raw byte buffers with stable addresses on one device."""
 
-    def __init__(self, kind: str, build: Path, variant: str = "exact"):
-        self.kind, self.variant = kind, variant
-        if variant not in VARIANTS:
-            raise ValueError(variant)
-        self.build = Path(build) / variant
+    def __init__(self, kind: str, build: Path):
+        self.kind = kind
+        self.build = Path(build)
         self.build.mkdir(parents=True, exist_ok=True)
         if kind == "cuda":
             import torch
             from torch.utils.cpp_extension import load
             self.torch = torch
-            self.ext = load(name=f"navsim_gpumem_{variant.replace('-', '_')}", sources=[str(HERE / "memory_cuda.cu")],
-                            extra_include_paths=[str(HERE)], extra_cuda_cflags=CUDA_FLAGS + VARIANTS[variant],
+            self.ext = load(name="navsim_gpumem", sources=[str(HERE / "memory_cuda.cu")],
+                            extra_include_paths=[str(HERE)], extra_cuda_cflags=CUDA_FLAGS,
                             extra_cflags=["-O2"], build_directory=str(self.build), verbose=False)
             self.ctx_bytes, self.table_bytes = self.ext.ctx_bytes(), self.ext.table_bytes()
         elif kind == "host":
@@ -100,7 +95,7 @@ class Backend:
             source = HERE / "memory_host.cpp"
             if not library.exists() or library.stat().st_mtime < max(source.stat().st_mtime,
                                                                      (HERE / "memory_kernels.h").stat().st_mtime):
-                subprocess.run(["c++", *HOST_FLAGS, *VARIANTS[variant], str(source), "-o", str(library)], check=True)
+                subprocess.run(["c++", *HOST_FLAGS, str(source), "-o", str(library)], check=True)
             self.lib = ctypes.CDLL(str(library))
             for name in ("gm_ctx_bytes", "gm_table_bytes"):
                 getattr(self.lib, name).restype = ctypes.c_int64
@@ -200,9 +195,9 @@ class Memory:
         result["hd_input_float32"] = 4 * 10 * OUTPUTS
         return result
 
-    def update(self, lanes=32):
+    def update(self):
         if self.backend.kind == "cuda":
-            self.backend.ext.update(self.address, lanes)
+            self.backend.ext.update(self.address)
         else:
             self.backend.lib.gm_update(self.address)
 

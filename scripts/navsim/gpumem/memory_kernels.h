@@ -656,21 +656,11 @@ GM_HD Body body(const Ctx& c, int64_t a) {
 }
 
 GM_HD float confidence(const Body& b, uint32_t t, float path, bool movable) {
-#if defined(GM_FLOAT_CONFIDENCE)
-  // Measurement variant only: what the readout costs without FP64 (GA102
-  // runs it at 1/64 of FP32). Not bitwise; the bench reports its parity.
-  const float age = float(b.ms - t) * .001f;
-  const float distance = smax(0.f, float(b.path) - path);
-  const float tau = movable ? 5.f : b.journey ? 300.f : 30.f;
-  const float lambda = b.journey ? 30000.f : 3000.f;
-  return expf(-age / tau - distance / lambda);
-#else
   const double age = double(b.ms - t) * .001;
   const double distance = dmax(0., b.path - double(path));
   const double tau = movable ? 5. : b.journey ? 300. : 30.;
   const double lambda = b.journey ? 30000. : 3000.;
   return float(exp(-age / tau - distance / lambda));
-#endif
 }
 
 GM_HD Sample classify(const GridView& v, const Body& b, int x, int z) {

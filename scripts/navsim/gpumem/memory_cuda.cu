@@ -41,19 +41,13 @@ void check() {
   TORCH_CHECK(error == cudaSuccess, "memory kernel launch failed: ", cudaGetErrorString(error));
 }
 
-// lanes: 32 runs one warp per agent (and per grid); 1 runs one thread.
-void memoryUpdate(int64_t address, int64_t lanes) {
+// One warp per agent, then one warp per agent and grid.
+void memoryUpdate(int64_t address) {
   const auto c = context(address);
   const auto stream = at::cuda::getCurrentCUDAStream();
   const int64_t block = 128;
-  if (lanes == 32) {
-    prepareKernel<32><<<blocks(c.N * 32, block), block, 0, stream>>>(c);
-    ingestKernel<32><<<blocks(2 * c.N * 32, block), block, 0, stream>>>(c);
-  } else {
-    TORCH_CHECK(lanes == 1, "lanes must be 1 or 32");
-    prepareKernel<1><<<blocks(c.N, block), block, 0, stream>>>(c);
-    ingestKernel<1><<<blocks(2 * c.N, block), block, 0, stream>>>(c);
-  }
+  prepareKernel<Warp><<<blocks(c.N * Warp, block), block, 0, stream>>>(c);
+  ingestKernel<Warp><<<blocks(2 * c.N * Warp, block), block, 0, stream>>>(c);
   check();
 }
 

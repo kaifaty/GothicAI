@@ -6,14 +6,11 @@ collects the report::
 
     python3 scripts/navsim/gpumem/bench.py remote --agents 64,256,1024,2048
 
-Larger N needs more VRAM than the shared GPU leaves (about 1.73 MB per agent
-with the readout batch). With the services stopped, the scale part alone::
-
-    python3 scripts/navsim/gpumem/bench.py remote --agents 4096,8192 --skip-parity \
-        --thread-per-agent "" --float-confidence "" --gpu-mem 20 --vram-limit-gib 19
-
-Each run appends to ``runs`` in the report; parity is kept from the last run
-that had it.
+The gq VRAM request and the allocator cap follow the largest N (about 1.8 MiB
+per agent with the readout batch), so larger N needs only another list, for
+example ``--agents 4096,8192`` with the services stopped (``--skip-parity``
+saves the parity minute). Each run appends to ``runs`` in the report; parity
+is kept from the last run that had it.
 
 Commands inside the job:
   parity  every readout of every capture through the engine (navsim_memory_ref,
@@ -34,6 +31,7 @@ import os
 from pathlib import Path
 import re
 import shlex
+import signal
 import subprocess
 import sys
 import time
@@ -218,7 +216,7 @@ class Comparison:
         return values
 
 
-def run_parity(backend, records, library, weights, journey=None, lanes=32, policy=None, label=""):
+def run_parity(backend, records, library, weights, journey=None, policy=None, label=""):
     references = [Reference(library, c.path, weights, journey) for c in records]
     N, R = len(records), records[0].slots
     if any(c.slots != R for c in records):
@@ -241,7 +239,7 @@ def run_parity(backend, records, library, weights, journey=None, lanes=32, polic
     for step in range(max(c.updates for c in records)):
         updates = np.array([table.first[a] + step if step < records[a].updates else -1 for a in range(N)], np.int32)
         memory.scatter(table, device_ints(backend, updates))
-        memory.update(lanes)
+        memory.update()
         readers = [a for a in range(N) if updates[a] >= 0 and table.views_after[updates[a]] > 0]
         if not readers:
             continue
@@ -295,7 +293,7 @@ def run_parity(backend, records, library, weights, journey=None, lanes=32, polic
         if policy is not None:
             item["actions"] = act
         out.append(item)
-    total = dict(label=label, captures=len(records), lanes=lanes, journey=[r.journey for r in references],
+    total = dict(label=label, captures=len(records), journey=[r.journey for r in references],
                  readouts=sum(p.readouts for p in per), updates=int(sum(c.updates for c in records)),
                  values=sum(p.values for p in per), differing_values=sum(p.differing for p in per),
                  unequal_readouts=sum(p.unequal_readouts for p in per),
@@ -312,7 +310,7 @@ def run_parity(backend, records, library, weights, journey=None, lanes=32, polic
 
 
 def parity_command(args):
-    backend = gpumem.Backend(args.backend, args.build, args.variant)
+    backend = gpumem.Backend(args.backend, args.build)
     records = [captures.read(p) for p in args.captures]
     policy = None
     if args.policy:
@@ -322,14 +320,14 @@ def parity_command(args):
         torch.backends.cudnn.benchmark = False
         torch.backends.cudnn.deterministic = True
         policy = Policy(torch, args.policy)
-    report = dict(variant=args.variant, records=run_parity(backend, records, args.reference, args.weights, lanes=args.lanes,
-                                     policy=policy, label="drive captures"))
+    report = dict(records=run_parity(backend, records, args.reference, args.weights, policy=policy,
+                                     label="drive captures"))
     synthetic = []
     for seed, journey in ((1, "0"), (2, "1")):
         path = Path(args.build) / f"synthetic-{seed}.bin"
         captures.write(path, captures.synthetic(seed))
         result = run_parity(backend, [captures.read(path)], args.reference, args.weights, journey=journey,
-                            lanes=args.lanes, label=f"synthetic seed {seed} journey {journey}")
+                            label=f"synthetic seed {seed} journey {journey}")
         synthetic.append(dict(sha256=sha256(path), **result))
     report["synthetic"] = synthetic
     slope = np.float32(np.float32(np.float32(49.999996) * np.float32(math.pi)) / np.float32(180))
@@ -362,11 +360,11 @@ def cell_command(args):
     if args.vram_limit_gib:
         torch.cuda.set_per_process_memory_fraction(min(1.0, args.vram_limit_gib * 2 ** 30 / total_vram))
     free_before = int(nvidia("memory.free")[0])
-    result = dict(agents=args.agents, lanes=args.lanes, variant=args.variant, steps_per_repeat=STEPS_PER_REPEAT,
+    result = dict(agents=args.agents, steps_per_repeat=STEPS_PER_REPEAT,
                   warmup=args.warmup, repeats=args.repeats, free_vram_mib_before=free_before,
                   vram_limit_gib=args.vram_limit_gib, status="ok")
     try:
-        backend = gpumem.Backend("cuda", args.build, args.variant)
+        backend = gpumem.Backend("cuda", args.build)
         torch.cuda.reset_peak_memory_stats()
         records = [captures.read(p) for p in args.captures]
         N, R = args.agents, records[0].slots
@@ -399,7 +397,7 @@ def cell_command(args):
                 s = repeat * STEPS_PER_REPEAT + i
                 memory.scatter(table, updates_gpu[s])
                 events[i][0].record()
-                memory.update(args.lanes)
+                memory.update()
                 events[i][1].record()
                 memory.read(readers_gpu[s, : len(readers[s])], near, far)
                 events[i][2].record()
@@ -438,23 +436,21 @@ def cell_command(args):
 
 def scale_command(args):
     cells = []
-    plan = ([(n, 32, "exact") for n in args.agents] + [(n, 1, "exact") for n in args.thread_per_agent]
-            + [(n, 32, "float-confidence") for n in args.float_confidence])
-    for n, lanes, variant in plan:
-        output = Path(args.output).with_name(f"cell-n{n}-l{lanes}-{variant}.json")
-        command = [sys.executable, str(Path(__file__).resolve()), "cell", "--agents", str(n), "--lanes", str(lanes),
-                   "--variant", variant,
+    for n in args.agents:
+        output = Path(args.output).with_name(f"cell-n{n}.json")
+        output.unlink(missing_ok=True)  # only this process's result counts
+        command = [sys.executable, str(Path(__file__).resolve()), "cell", "--agents", str(n),
                    "--build", str(args.build), "--output", str(output), "--warmup", str(args.warmup),
                    "--repeats", str(args.repeats), "--vram-limit-gib", str(args.vram_limit_gib), "--captures",
                    *args.captures]
-        print(f"[scale] N={n} lanes={lanes} {variant}", flush=True)
+        print(f"[scale] N={n}", flush=True)
         run = subprocess.run(command)
-        cell = json.loads(output.read_text()) if output.exists() else dict(agents=n, lanes=lanes, variant=variant,
-                                                                         status="crashed", exit_code=run.returncode)
+        cell = (json.loads(output.read_text()) if run.returncode == 0 and output.exists()
+                else dict(agents=n, status="crashed", exit_code=run.returncode))
         cells.append(cell)
         print(f"  {cell.get('status')} update {cell.get('update_us_per_agent')} read {cell.get('readout_us_per_agent')}",
               flush=True)
-        if cell.get("status") != "ok" and lanes == 32 and variant == "exact":
+        if cell.get("status") != "ok":
             break  # larger N cannot fit either
     write_json(args.output, dict(cells=cells))
 
@@ -484,12 +480,13 @@ def remote_command(args):
     task = f"{home}/{REMOTE_TASK}"
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     run = f"{task}/runs/{stamp}"
-    print(ssh(host, f"df -h ~ | tail -1; mkdir -p {task}/src {task}/captures {task}/weights {run}").stdout, flush=True)
+    src = f"{run}/src"  # per run: a concurrent launch must not replace a running job's code
+    print(ssh(host, f"df -h ~ | tail -1; mkdir -p {src} {task}/captures {task}/weights").stdout, flush=True)
     archive = Path("/tmp") / f"navsim-gpumem-src-{stamp}.tar"
     subprocess.run(["tar", "-cf", str(archive), "-C", str(ROOT), *STAGED, "OpenGothic/lib/rapidjson/include"], check=True)
-    subprocess.run(["scp", "-q", str(archive), f"{host}:{task}/src.tar"], check=True)
+    subprocess.run(["scp", "-q", str(archive), f"{host}:{run}/src.tar"], check=True)
     archive.unlink()
-    ssh(host, f"rm -rf {task}/src && mkdir -p {task}/src && tar -xf {task}/src.tar -C {task}/src && rm {task}/src.tar")
+    ssh(host, f"tar -xf {run}/src.tar -C {src} && rm {run}/src.tar")
     # Captures and weights come from Ryzen's NAS through the Mac; SHA-256 is checked on arrival.
     wanted = [(t["path"], f"{task}/captures/{Path(t['path']).parents[1].name}.bin", t["sha256"]) for t in traces]
     weights = [(f"{WEIGHTS}/policy.navbc", f"{task}/weights/policy.navbc", memory["weights"]["v5"]["sha256"]),
@@ -504,13 +501,12 @@ def remote_command(args):
             raise RuntimeError(f"{target}: sha256 {got} != {digest}")
     capture_list = " ".join(shlex.quote(t) for _, t, _ in wanted)
     agents = ",".join(str(n) for n in args.agents)
-    single = ",".join(str(n) for n in args.thread_per_agent)
-    fast = ",".join(str(n) for n in args.float_confidence)
-    parity = "" if args.skip_parity else "".join(f"""
-$py src/scripts/navsim/gpumem/bench.py parity --backend cuda --variant {variant} --build {run}/build \\
+    gpu_mem, vram_limit = vram_budget(args)
+    parity = "" if args.skip_parity else f"""
+$py {src}/scripts/navsim/gpumem/bench.py parity --backend cuda --build {run}/build \\
   --reference {run}/build/libnavmemref.so --weights weights/policy.navbc --policy weights/last.pt \\
-  --output {run}/parity{suffix}.json --captures {capture_list}
-""" for variant, suffix in (("exact", ""), ("float-confidence", "-float-confidence")) if variant == "exact" or fast)
+  --output {run}/parity.json --captures {capture_list}
+"""
     body = f"""set -eu
 cd {task}
 df -h ~ | tail -1
@@ -522,29 +518,49 @@ if [ ! -x .venv/bin/python ]; then ~/.local/bin/uv venv -q --python 3.12 .venv; 
 export PATH=$PWD/.venv/bin:$PATH
 py=.venv/bin/python
 mkdir -p {run}/build
-$py -c "import sys; sys.path.insert(0, 'src/scripts/navsim/gpumem'); import bench; print(bench.build_reference('src', '{run}/build/libnavmemref.so'))" > {run}/reference-build.txt
-$py src/scripts/navsim/gpumem/bench.py metadata --output {run}/metadata.json
+$py -c "import sys; sys.path.insert(0, '{src}/scripts/navsim/gpumem'); import bench; print(bench.build_reference('{src}', '{run}/build/libnavmemref.so'))" > {run}/reference-build.txt
+$py {src}/scripts/navsim/gpumem/bench.py metadata --output {run}/metadata.json
 {parity}
-$py src/scripts/navsim/gpumem/bench.py scale --build {run}/build --agents {agents} --thread-per-agent "{single}" \\
-  --float-confidence "{fast}" \\
-  --warmup {args.warmup} --repeats {args.repeats} --vram-limit-gib {args.vram_limit_gib} --output {run}/scale.json --captures {capture_list}
+$py {src}/scripts/navsim/gpumem/bench.py scale --build {run}/build --agents {agents} \\
+  --warmup {args.warmup} --repeats {args.repeats} --vram-limit-gib {vram_limit} --output {run}/scale.json --captures {capture_list}
 nvidia-smi --query-gpu=memory.used,memory.free --format=csv > {run}/vram-after.txt
 df -h ~ | tail -1
 """
     job = [str(ROOT / "scripts/gq"), "--host", host, "run", "--class", "quick", "--threads", "4", "--mem", "8G",
-           "--gpu-mem", str(args.gpu_mem), "--max", str(args.max_seconds), "--wait-max", "1800",
+           "--gpu-mem", str(gpu_mem), "--max", str(args.max_seconds), "--wait-max", "1800",
            "--name", "navsim-gpumem", "--", "bash", "-lc", body]
-    code = subprocess.run(job).returncode
+    code = run_forwarding(job)
     print(f"gq exit {code}; raw results in {host}:{run}", flush=True)
     if code == 0:
         collect(host, run, stamp, args)
     sys.exit(code)
 
 
+def vram_budget(args):
+    """gq GiB and allocator cap for the largest N. Measured on N=64..2048:
+    about 400 MiB plus 1.67 MiB per agent; 512 MiB + 1.8 MiB leaves a margin."""
+    need = (512 + 1.8 * max(args.agents)) / 1024
+    gpu_mem = args.gpu_mem or max(6, math.ceil(need + .5))
+    return gpu_mem, args.vram_limit_gib or gpu_mem - .5
+
+
+def run_forwarding(command):
+    """Like scripts/gq: a stopped launcher stops gq, which cancels the remote job."""
+    child = subprocess.Popen(command)
+
+    def stop(signum, _frame):
+        if child.poll() is None:
+            child.send_signal(signum)
+
+    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, stop)
+    return child.wait()
+
+
 def collect(host, run, stamp, args):
     local = Path("/tmp") / f"navsim-gpumem-{stamp}"
     local.mkdir(parents=True, exist_ok=True)
-    ssh(host, f"rm -rf {run}/build")
+    ssh(host, f"rm -rf {run}/build {run}/src")
     subprocess.run(["scp", "-q", "-r", f"{host}:{run}/.", str(local)], check=True)
     digests = {p.name: sha256(p) for p in sorted(local.iterdir()) if p.is_file()}
     (local / "SHA256SUMS").write_text("".join(f"{d}  {n}\n" for n, d in digests.items()))
@@ -566,13 +582,12 @@ def summarise(local, nas, digests, args):
                torch=metadata["torch"], torch_cuda=metadata["torch_cuda"], nvcc=metadata["nvcc"][-2],
                gcc=metadata["gcc"], glibc=metadata["glibc"], cuda_flags=metadata["cuda_flags"],
                free_vram_mib_before=metadata["free_vram_mib"], free_vram_mib_after=free, used_vram_mib_after=used,
-               gq=dict(host="dev-ubuntu", cls="quick", threads=4, mem_gib=8, gpu_mem_gib=args.gpu_mem),
+               gq=dict(host="dev-ubuntu", cls="quick", threads=4, mem_gib=8, gpu_mem_gib=vram_budget(args)[0]),
                raw_checksums=dict(path=f"{nas}/SHA256SUMS", sha256=sha256(local / "SHA256SUMS"), files=digests))
-    for name, key in (("parity.json", "parity"), ("parity-float-confidence.json", "parity_float_confidence")):
-        if (local / name).exists():
-            parity = json.loads((local / name).read_text())
-            report[key] = dict(variant=parity["variant"], records=parity["records"], synthetic=parity["synthetic"],
-                               slope_tan=parity["slope_tan"], raw=f"{nas}/{name}", raw_sha256=digests[name])
+    if (local / "parity.json").exists():
+        parity = json.loads((local / "parity.json").read_text())
+        report["parity"] = dict(records=parity["records"], synthetic=parity["synthetic"], slope_tan=parity["slope_tan"],
+                                raw=f"{nas}/parity.json", raw_sha256=digests["parity.json"])
     scale = json.loads((local / "scale.json").read_text())
     run["cells"] = [{k: v for k, v in c.items() if not k.endswith("_per_repeat")} for c in scale["cells"]]
     report.setdefault("runs", []).append(run)
@@ -582,14 +597,14 @@ def summarise(local, nas, digests, args):
 
 
 def headline(report):
-    """Latest numbers per N and variant, for reading without the cell detail."""
+    """Latest numbers per N, for reading without the cell detail."""
     cells = {}
     for run in report["runs"]:
         for c in run["cells"]:
-            cells[(c["agents"], c["lanes"], c.get("variant", "exact"))] = (run["stamp"], c)
+            cells[c["agents"]] = (run["stamp"], c)
     rows = []
-    for (n, lanes, variant), (stamp, c) in sorted(cells.items()):
-        row = dict(agents=n, lanes=lanes, variant=variant, run=stamp, status=c.get("status"))
+    for n, (stamp, c) in sorted(cells.items()):
+        row = dict(agents=n, run=stamp, status=c.get("status"))
         if c.get("status") == "ok":
             row.update(update_us_per_agent=c["update_us_per_agent"]["median"],
                        readout_us_per_agent=c["readout_us_per_agent"]["median"],
@@ -634,8 +649,6 @@ def main():
     p.add_argument("--reference", type=Path, required=True)
     p.add_argument("--weights", type=Path, required=True, help="policy.navbc for NavPolicy::encode")
     p.add_argument("--policy", type=Path, help="last.pt: compare HD net actions on CUDA")
-    p.add_argument("--lanes", type=int, default=32)
-    p.add_argument("--variant", choices=tuple(gpumem.VARIANTS), default="exact")
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--captures", nargs="+", required=True)
     for name in ("scale", "cell"):
@@ -647,23 +660,14 @@ def main():
         p.add_argument("--vram-limit-gib", type=float, default=0)
         p.add_argument("--output", type=Path, required=True)
         p.add_argument("--captures", nargs="+", required=True)
-        if name == "scale":
-            p.add_argument("--thread-per-agent", type=agents, default=[])
-            p.add_argument("--float-confidence", type=agents, default=[])
-        else:
-            p.add_argument("--lanes", type=int, default=32)
-            p.add_argument("--variant", choices=tuple(gpumem.VARIANTS), default="exact")
     p = sub.add_parser("metadata")
     p.add_argument("--output", type=Path, required=True)
     p = sub.add_parser("remote")
     p.add_argument("--agents", type=agents, default=[64, 256, 1024, 2048])
-    p.add_argument("--thread-per-agent", type=agents, default=[1024], help="one thread per agent, for contrast")
-    p.add_argument("--float-confidence", type=agents, default=[1024, 2048],
-                   help="also time the non-bitwise float-confidence variant at these N")
     p.add_argument("--warmup", type=int, default=3)
     p.add_argument("--repeats", type=int, default=20)
-    p.add_argument("--gpu-mem", type=int, default=6, help="GiB declared to gq")
-    p.add_argument("--vram-limit-gib", type=float, default=5.5, help="torch allocator cap inside the job")
+    p.add_argument("--gpu-mem", type=int, default=0, help="GiB declared to gq; default follows the largest N")
+    p.add_argument("--vram-limit-gib", type=float, default=0, help="torch allocator cap; default gq GiB - 0.5")
     p.add_argument("--max-seconds", type=int, default=3600)
     p.add_argument("--torch", default="2.14.1", help="PyPI build (CUDA 13.0) in the uv cache")
     p.add_argument("--skip-parity", action="store_true")
