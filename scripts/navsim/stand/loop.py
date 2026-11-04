@@ -141,6 +141,7 @@ class Half:
         self.actions_np = self.actions_host.numpy()
         self.stream = torch.cuda.Stream()
         self.done = torch.cuda.Event()
+        self.computed = torch.cuda.Event()
         self.marks = [torch.cuda.Event(enable_timing=True) for _ in range(5)]
         self.graph = None
         if graph:
@@ -190,18 +191,24 @@ class Half:
         torch.cuda.synchronize()
         self.hidden.zero_()
 
-    def launch(self, batch, timed=False):
+    def launch(self, batch, timed=False, after=None):
+        """Copy in, compute, copy out on this half's stream. ``after``: the other
+        half's compute event; computing in turn keeps the halves from sharing the
+        GPU and finishing together, so one half's CPU step hides behind the other."""
         torch, m = self.torch, self.marks
         with torch.cuda.stream(self.stream):
             if timed:
                 m[0].record()
             self.staging.copy_(batch.tensor, non_blocking=True)
+            if after is not None:
+                self.stream.wait_event(after)
             if timed:
                 m[1].record()
             if self.graph is not None:
                 self.graph.replay()
             else:
                 self.compute(m[2] if timed else None)
+            self.computed.record()
             if timed:
                 m[3].record()
             self.actions_host.copy_(self.actions, non_blocking=True)
@@ -227,16 +234,18 @@ class Loop:
         self.agents = sum(h.n for h in halves)
 
     def start(self):
+        after = None
         for h in self.halves:
-            h.launch(h.side.reset())
+            h.launch(h.side.reset(), after=after)
+            after = h.computed
 
     def advance(self, steps, on_actions=None):
         for _ in range(steps):
-            for h in self.halves:
+            for index, h in enumerate(self.halves):
                 h.done.synchronize()
                 if on_actions is not None:
                     on_actions(h)
-                h.launch(h.side.step(h.actions_np))
+                h.launch(h.side.step(h.actions_np), after=self.halves[index - 1].computed)
 
     def drain(self, on_actions=None):
         for h in self.halves:
