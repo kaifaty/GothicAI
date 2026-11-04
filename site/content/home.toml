@@ -36,10 +36,10 @@ see_code = "See the code"
 features_title = "What works now"
 features = [
   { title = "Talk with your voice", text = "Hold T and speak, no chat window. The server works out whom you are talking to." },
-  { title = "Voices of their own", text = "Every character gets a voice designed from a description, never cloned from the actors. It starts speaking while the answer is still being written." },
+  { title = "Voices of their own", text = "The 36 plot characters speak in the voices of the Russian dub, cloned from their lines in your own copy of the game; everyone else gets a voice designed from their character. Speech starts while the answer is still being written." },
   { title = "Deeds, not only words", text = "Characters follow you, hand over items, draw weapons, fight or run away." },
   { title = "Memory", text = "They remember your conversations within a save, and bystanders hear what you tell someone else: a lie in front of witnesses is known." },
-  { title = "Two minds", text = "A small model fine-tuned on Gothic scenes moves the body, keeps the daily routine and answers threats in a fraction of a second; the large model talks and sets intentions." },
+  { title = "Two minds", text = "A small fast model settles reactions, the daily routine and who joins a conversation in a fraction of a second; the large model talks and decides what to do." },
   { title = "Feet on the ground", text = "People and beasts stand on slopes and stairs with every foot instead of hovering over them." },
 ]
 how_title = "How a conversation goes"
@@ -53,7 +53,7 @@ how_steps = [
 ]
 devlog_title = "Devlog"
 devlog_lede = "What changed in the game, how it works and the numbers behind it."
-status = "Not playable yet: it runs from source on macOS and needs your own copy of Gothic II: Night of the Raven."
+status = "Not playable yet: it runs from source on macOS, and the Windows build has not been tried on a real PC. It needs your own copy of the Russian Gothic II Gold (with Night of the Raven)."
 credit = "Gothic II: Night of the Raven belongs to Piranha Bytes and THQ Nordic; the engine is [OpenGothic](https://github.com/Try/OpenGothic) by Try. Gothic AI is a fan project, not affiliated with them."
 
 [ru]
@@ -79,10 +79,10 @@ see_code = "Код проекта"
 features_title = "Что уже работает"
 features = [
   { title = "Разговор голосом", text = "Зажимаешь T и говоришь, без окна чата. Сервер сам понимает, к кому ты обращаешься." },
-  { title = "Свои голоса", text = "У каждого персонажа голос, созданный по описанию, а не склонированный у актёров. Он начинает звучать, пока ответ ещё пишется." },
+  { title = "Свои голоса", text = "36 сюжетных персонажей говорят голосом своей русской озвучки: он клонируется по их репликам из вашей копии игры. Остальным голос создаётся по описанию характера. Речь начинает звучать, пока ответ ещё пишется." },
   { title = "Дела, а не только слова", text = "Персонажи идут за тобой, отдают вещи, достают оружие, дерутся или убегают." },
   { title = "Память", text = "Разговоры запоминаются в рамках сохранения, а свидетели слышат, что ты сказал другому: соврал при всех — об этом знают." },
-  { title = "Два ума", text = "Небольшая модель, дообученная на сценах из Готики, за доли секунды ведёт тело, распорядок дня и реакцию на угрозы; большая модель разговаривает и задаёт намерения." },
+  { title = "Два ума", text = "Небольшая быстрая модель за доли секунды решает реакции, распорядок и кто вмешается в разговор; большая модель разговаривает и решает, что делать." },
   { title = "Ноги на земле", text = "Люди и звери стоят на склонах и ступенях всеми ногами, а не висят над ними." },
 ]
 how_title = "Как идёт разговор"
@@ -96,5 +96,5 @@ how_steps = [
 ]
 devlog_title = "Дневник"
 devlog_lede = "Что изменилось в игре, как это устроено и какие за этим числа."
-status = "Поиграть пока нельзя: проект запускается из исходников на macOS, и нужна своя копия Gothic II: Ночь Ворона."
+status = "Поиграть пока нельзя: проект запускается из исходников на macOS, а сборку для Windows ещё не проверяли на настоящем компьютере. Нужна своя копия русской Gothic II Gold (с «Ночью Ворона»)."
 credit = "Gothic II: Ночь Ворона принадлежит Piranha Bytes и THQ Nordic; движок — [OpenGothic](https://github.com/Try/OpenGothic) от Try. Gothic AI — фанатский проект и с ними не связан."
