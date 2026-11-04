@@ -1,0 +1,9 @@
+{
+ "output": "~/.local/share/gothic-ai/content-staging/quiver/tiles",
+ "tiles": {
+  "own_prop_leather": {"copy": "~/.local/share/gothic-ai/content-staging/market-set/tiles/own_prop_leather"},
+  "own_prop_strap": {"copy": "~/.local/share/gothic-ai/content-staging/market-set/tiles/own_prop_leather"},
+  "own_prop_quiver_inner": {"copy": "~/.local/share/gothic-ai/content-staging/market-set/tiles/own_prop_leather"},
+  "own_prop_iron_band": {"copy": "~/.local/share/gothic-ai/content-staging/market-set/tiles/own_prop_iron_band"}
+ }
+}
