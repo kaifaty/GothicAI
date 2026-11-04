@@ -231,6 +231,7 @@ class Npc final {
     void       refitQuiver();
     Quiver::Probe quiverProbe() const { return visual.quiverProbe(); }
     float      quiverCostUs() const { return visual.quiverCostUs(); }
+    std::vector<Tempest::Vec3> quiverSurface(int rings, int around) const { return visual.quiverSurface(rings,around); }
     void       setPhysic     (DynamicWorld::NpcItem&& item);
     void       setFatness    (float f);
     void       setScale      (float x,float y,float z);

@@ -114,6 +114,10 @@ class Quiver final {
                       const std::vector<Obstacle>& obstacles, float dt);
     // the quiver at rest in the world: on the pelvis, turned about the vertical halfway to SPINE1
     Tempest::Matrix4x4 restFrame(const Tempest::Matrix4x4& pelvis, const Tempest::Matrix4x4& spine) const;
+    // the bench's ground probe: points of the tube's outer side in the world as it hangs now, `rings` rings from
+    // the mouth (the first) to the bottom, `around` points each; nothing when not shown
+    std::vector<Tempest::Vec3> surface(const Tempest::Matrix4x4& pelvis, const Tempest::Matrix4x4& spine,
+                                       int rings, int around) const;
     size_t       spineBone() const { return fitted.spine; }
     // at rest, the swing forgotten (far, unseen, after a jump)
     void         rest();

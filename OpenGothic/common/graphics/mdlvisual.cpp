@@ -795,6 +795,13 @@ Quiver::Probe MdlVisual::quiverProbe() const {
                     leftSide);
   }
 
+std::vector<Tempest::Vec3> MdlVisual::quiverSurface(int rings, int around) const {
+  if(!quiv.isShown() || skeleton==nullptr || quiv.bone()>=skInst->boneCount())
+    return {};
+  const size_t spine = quiv.spineBone()<skInst->boneCount() ? quiv.spineBone() : quiv.bone();
+  return quiv.surface(renderedBone(quiv.bone()),renderedBone(spine),rings,around);
+  }
+
 bool MdlVisual::setFightMode(asset::MdsFightMode mode) {
   WeaponState f = WeaponState::NoWeapon;
 

@@ -303,6 +303,25 @@ void Quiver::sync(const Matrix4x4& pelvis, const Matrix4x4& spine) {
     arrows[i].setObjMatrix(at*arrowLocal[i]);
   }
 
+std::vector<Vec3> Quiver::surface(const Matrix4x4& pelvis, const Matrix4x4& spine, int rings, int around) const {
+  std::vector<Vec3> ret;
+  if(!st.on || !fitted.valid || rings<2 || around<1)
+    return ret;
+  const auto at = restFrame(pelvis,spine)*swingMatrix();
+  ret.reserve(size_t(rings*around));
+  for(int i=0; i<rings; ++i) {
+    const float t = Length*float(i)/float(rings-1);
+    const float r = radiusAt(t);
+    for(int j=0; j<around; ++j) {
+      const float a = 2.f*float(M_PI)*float(j)/float(around);
+      Vec3 v = {r*std::cos(a),-t,r*std::sin(a)};
+      at.project(v);
+      ret.push_back(v);
+      }
+    }
+  return ret;
+  }
+
 void Quiver::setTextureOwner(const Vec3& position, bool spatial) {
   body.setTextureOwner(position,spatial);
   for(auto& a:arrows)

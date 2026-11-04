@@ -2626,7 +2626,7 @@ void writeHeader() {
   std::fprintf(bench.csv,",mr_w,mr_dev,mr_hits,physics_ms");
   // the watched one's quiver (graphics/mesh/quiver): cm the armour and the legs go into it, the arrows shown,
   // the mouth in the pelvis bone's frame, how far out it was pushed, the arrows over the mouth and the bottom
-  std::fprintf(bench.csv,",qv_on,qv_arrows,qv_armor,qv_leg,qv_arm,qv_mx,qv_my,qv_mz,qv_out,qv_top,qv_bottom,qv_swing,qv_back,qv_outward,qv_us,qv_twist,qv_bow,qv_2h,qv_blade,qv_yield,qv_legt,qv_legl");
+  std::fprintf(bench.csv,",qv_on,qv_arrows,qv_armor,qv_leg,qv_arm,qv_mx,qv_my,qv_mz,qv_out,qv_top,qv_bottom,qv_swing,qv_back,qv_outward,qv_us,qv_twist,qv_bow,qv_2h,qv_blade,qv_yield,qv_legt,qv_legl,qv_gnd,qv_gndm");
   if(ragdollTrace)
     std::fprintf(bench.csv,",ph_ms,ph_bodies,ph_rays,rd_mode,rd_weight,rd_sleep");
   if(bench.questTrace)
@@ -10044,6 +10044,23 @@ void writeRow(Npc& pl) {
                  double(subjectOf(pl).quiverCostUs()));
     std::fprintf(bench.csv,",%.2f,%.2f,%.2f,%.2f,%.2f,%.1f",q.twist,q.bow,q.longsword,q.blade,q.yield,q.legAt);
     std::fprintf(bench.csv,",%.2f",q.legLeft);
+    // cm the tube and its mouth go under the world (its collision, a ray down over each point of the outer side)
+    float gnd = 0, gndMouth = 0;
+    if(q.on) {
+      constexpr int Rings = 9, Around = 12;
+      const auto pts = subjectOf(pl).quiverSurface(Rings,Around);
+      auto* phys = Gothic::inst().world()->physic();
+      for(size_t i=0; i<pts.size(); ++i) {
+        const auto& v = pts[i];
+        const auto  r = phys->rayStatic({v.x,v.y+150.f,v.z},{v.x,v.y,v.z});
+        if(!r.hasCol || r.v.y<=v.y)
+          continue;
+        gnd = std::max(gnd,r.v.y-v.y);
+        if(i<size_t(Around))
+          gndMouth = std::max(gndMouth,r.v.y-v.y);
+        }
+      }
+    std::fprintf(bench.csv,",%.2f,%.2f",gnd,gndMouth);
   }
   if(ragdollTrace)
     writeRagdoll(pl);

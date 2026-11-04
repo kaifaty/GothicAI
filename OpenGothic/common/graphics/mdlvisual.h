@@ -89,6 +89,7 @@ class MdlVisual final {
     // the quiver's swing on by dt (ms): true if the attachments need a sync
     bool                           updateQuiver(const Npc& npc, uint64_t dt);
     float                          quiverCostUs() const { return quiverStepUs; } // the last step, µs
+    std::vector<Tempest::Vec3>     quiverSurface(int rings, int around) const; // the bench's ground probe
     bool                           setFightMode  (asset::MdsFightMode mode);
     void                           dropWeapon    (Npc& owner);
     void                           dropShield    (Npc& owner);
