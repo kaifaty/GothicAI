@@ -64,6 +64,7 @@ class WorldView {
     // TAA: the sub-pixel shift of the main projection for the next preFrameUpdate (nullptr: none)
     void setJitter(const Tempest::Matrix4x4* jitter) { sGlobal.setJitter(jitter); }
     void setMipBias(float bias) { sGlobal.setMipBias(bias); }
+    void setTaaFrame(bool active, uint32_t frame) { sGlobal.setTaaFrame(active, frame); }
     void setWindEnabled(bool enabled, uint64_t period);
     void setFog(const Tempest::StorageImage& lut, const Tempest::StorageImage& lutMs);
     void setClothWind(bool enabled, float scale);
