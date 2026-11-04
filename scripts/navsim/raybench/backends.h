@@ -50,6 +50,21 @@ struct JoltScene {
     }
     buildUs=us(start);
   }
+  // Each worker owns its body locks and broadphase; immutable mesh BVHs are shared.
+  explicit JoltScene(const JoltScene& source) {
+    physics.Init(16,0,1024,1024,layers,broad,pair);
+    for(auto id:source.ids) {
+      JPH::BodyLockRead lock(source.physics.GetBodyLockInterfaceNoLock(),id);
+      const auto& original=lock.GetBody();require(original.IsStatic(),"Only static scene copies are supported");
+      JPH::BodyCreationSettings body(original.GetShape(),original.GetPosition(),original.GetRotation(),
+                                    JPH::EMotionType::Static,original.GetObjectLayer());
+      body.mUserData=original.GetUserData();
+      auto copy=physics.GetBodyInterface().CreateAndAddBody(body,JPH::EActivation::DontActivate);
+      require(!copy.IsInvalid(),"Jolt body copy failed");ids.push_back(copy);
+      require(physics.GetBodyInterfaceNoLock().GetShape(copy).GetPtr()==original.GetShape(),"Static mesh was not shared");
+    }
+    physics.OptimizeBroadPhase();
+  }
   ~JoltScene() {for(auto id:ids) {physics.GetBodyInterface().RemoveBody(id);physics.GetBodyInterface().DestroyBody(id);}}
   void cast(const Vec* o,const Vec* d,size_t count,Hit* out,int,bool cull) const {
     JPH::RayCastSettings settings;settings.mTriangleEdgeTolerance=1.e-4f;

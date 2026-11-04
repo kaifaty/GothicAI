@@ -2,6 +2,7 @@
 #include "backends.h"
 #include <barrier>
 #include <thread>
+#include <malloc.h>
 
 struct SolidLayers final : JPH::ObjectLayerFilter {
   bool ShouldCollide(JPH::ObjectLayer layer) const override {return layer!=3;}
@@ -36,7 +37,7 @@ inline void moveCharacter(JPH::CharacterVirtual& c,JPH::TempAllocator& alloc,
     }
   }
 }
-inline void characters(JoltScene& scene,const Input& in,const std::filesystem::path& out,const std::vector<int>& allowed) {
+inline void characters(JoltScene& scene,const Input& in,const std::filesystem::path& out,const std::vector<int>& allowed,bool scaling=false) {
   float radius,height,step,slope,speed,eyeHeight;
   std::ifstream params(out/"character.txt");params>>radius>>height>>step>>slope>>speed>>eyeHeight;require(bool(params),"Invalid character parameters");
   radius*=.01f;height*=.01f;step*=.01f;speed*=.01f;slope*=float(JPH::JPH_PI)/180;
@@ -59,9 +60,20 @@ inline void characters(JoltScene& scene,const Input& in,const std::filesystem::p
   std::cout<<"{\"type\":\"character_setup\",\"positions\":"<<feet.size()<<",\"radius_cm\":"<<radius*100<<",\"height_cm\":"<<height*100
            <<",\"step_cm\":"<<step*100<<",\"slope_degrees\":"<<slope*180/JPH::JPH_PI<<",\"speed_cm_s\":"<<speed*100<<",\"eye_height_cm\":"<<eyeHeight
            <<",\"floor_offset_cm\":";distribution(std::cout,floorOffsets);std::cout<<"}\n";
-  for(size_t count:{size_t(1),size_t(100),size_t(1000)})for(size_t threads:{size_t(1),allowed.size()}) {
-    if(allowed.size()==1&&threads!=1)continue;
+  auto counts=scaling?std::vector<size_t>{1000}:std::vector<size_t>{1,100,1000};
+  auto threadCounts=scaling?std::vector<size_t>{1,4,8,16,allowed.size()}:std::vector<size_t>{1,allowed.size()};
+  std::sort(threadCounts.begin(),threadCounts.end());threadCounts.erase(std::unique(threadCounts.begin(),threadCounts.end()),threadCounts.end());
+  const auto layouts=scaling?std::vector<std::string>{"shared","private","shared-zero-mass"}:std::vector<std::string>{"private"};
+  for(size_t count:counts)for(size_t threads:threadCounts)if(threads<=allowed.size())for(const auto& layout:layouts) {
+    if(layout=="shared-zero-mass"&&threads!=1&&threads!=allowed.size())continue;
     for(int repeat=0;repeat<Repeats;++repeat) {
+      std::vector<std::unique_ptr<JoltScene>> copies;
+      copies.reserve(layout=="private"?threads:0);
+      const auto before=mallinfo2();
+      if(layout=="private")for(size_t t=0;t<threads;++t)copies.push_back(std::make_unique<JoltScene>(scene));
+      const auto after=mallinfo2();
+      const int64_t copyBytes=int64_t(after.uordblks+after.hblkhd)-int64_t(before.uordblks+before.hblkhd);
+      require(copyBytes>=0,"Invalid scene allocation measurement");
       std::vector<JPH::Ref<JPH::CharacterVirtual>> chars;std::vector<JPH::Vec3> velocities;
       // Construct IDs/settings on one thread; each character is then private to one worker.
       for(size_t i=0;i<count;++i) {
@@ -70,7 +82,10 @@ inline void characters(JoltScene& scene,const Input& in,const std::filesystem::p
         settings.mShapeOffset=JPH::Vec3(0,height*.5f,0);settings.mSupportingVolume=JPH::Plane(JPH::Vec3::sAxisY(),-radius);
         settings.mCharacterPadding=.01f;settings.mPredictiveContactDistance=.05f;settings.mCollisionTolerance=.001f;
         settings.mEnhancedInternalEdgeRemoval=true;settings.mMaxSlopeAngle=slope;
-        chars.emplace_back(new JPH::CharacterVirtual(&settings,JPH::RVec3(meters(feet[i])),JPH::Quat::sIdentity(),&scene.physics));
+        // Diagnostic control: no-op static-ground impulses still take write locks.
+        if(layout=="shared-zero-mass")settings.mMass=0;
+        auto* system=layout=="private"?&copies[i%threads]->physics:&scene.physics;
+        chars.emplace_back(new JPH::CharacterVirtual(&settings,JPH::RVec3(meters(feet[i])),JPH::Quat::sIdentity(),system));
         // Fixed pseudorandom course per independent agent, identical between repeats.
         float angle=float((i*2654435761u)%100000)*float(2*JPH::JPH_PI/100000);
         velocities.emplace_back(std::cos(angle)*speed,0,std::sin(angle)*speed);
@@ -86,12 +101,15 @@ inline void characters(JoltScene& scene,const Input& in,const std::filesystem::p
         done.arrive_and_wait();
       });
       warm.arrive_and_wait();
+      const auto load=loadAverage();
       auto start=Clock::now();ready.arrive_and_wait();done.arrive_and_wait();double wall=us(start);
       for(auto& w:workers)w.join();
       double checksum=0;for(size_t t=0;t<threads;++t)checksum+=checksums[t];
-      std::cout<<"{\"type\":\"character\",\"count\":"<<count<<",\"threads\":"<<threads<<",\"repeat\":"<<repeat
+      std::cout<<"{\"type\":\"character\",\"count\":"<<count<<",\"threads\":"<<threads<<",\"layout\":"<<std::quoted(layout)<<",\"repeat\":"<<repeat
                <<",\"wall_us_per_character\":"<<wall/(90*count)
-               <<",\"character_updates_per_second\":"<<90*count*1.e6/wall<<",\"checksum\":"<<checksum<<"}\n"<<std::flush;
+               <<",\"character_updates_per_second\":"<<90*count*1.e6/wall<<",\"checksum\":"<<checksum<<",\"physics_copies\":"<<copies.size()
+               <<",\"allocated_bytes_per_copy\":"<<(copies.empty()?0:double(copyBytes)/copies.size());
+      loadJson(load);std::cout<<"}\n"<<std::flush;
     }
   }
 }

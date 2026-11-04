@@ -49,6 +49,34 @@ template<class Scene> void checkBox(const Scene& scene,int width) {
   for(auto hit:hits)require(hit.flags==0&&hit.distance==50,"Incomplete near miss failed");
 }
 
+template<class Scene> void throughput(const Scene& scene,const Input& in,const std::string& name,
+                                     int width,bool cull,const std::vector<int>& allowed) {
+  std::vector<size_t> counts={1,4,8,16,allowed.size()};std::sort(counts.begin(),counts.end());counts.erase(std::unique(counts.begin(),counts.end()),counts.end());
+  for(size_t count:counts)if(count<=allowed.size()) {
+    for(int repeat=-1;repeat<Repeats;++repeat) {
+      std::barrier ready(int(count)+1),done(int(count)+1);
+      std::vector<std::thread> workers;std::vector<uint64_t> casts(count);std::vector<double> checksum(count);
+      for(size_t t=0;t<count;++t)workers.emplace_back([&,t] {
+        pin(allowed[t]);std::array<Hit,RayCount> local;
+        ready.arrive_and_wait();
+        for(size_t i=t;i<in.updates.size();i+=count) {
+          casts[t]+=eye(scene,in.updates[i],in.nearRange,local.data(),width,cull);
+          checksum[t]+=local[i%RayCount].distance;
+        }
+        done.arrive_and_wait();
+      });
+      const auto load=loadAverage();
+      auto start=Clock::now();ready.arrive_and_wait();done.arrive_and_wait();double seconds=us(start)*1.e-6;
+      for(auto& worker:workers)worker.join();
+      if(repeat<0)continue;
+      uint64_t n=0;double sum=0;for(size_t t=0;t<count;++t) {n+=casts[t];sum+=checksum[t];}
+      std::cout<<"{\"type\":\"throughput\",\"backend\":"<<std::quoted(name)<<",\"threads\":"<<count<<",\"repeat\":"<<repeat
+               <<",\"updates_per_second\":"<<in.updates.size()/seconds<<",\"casts_per_second\":"<<n/seconds
+               <<",\"eye_rays_per_second\":"<<in.updates.size()*RayCount/seconds<<",\"seconds\":"<<seconds<<",\"checksum\":"<<sum;loadJson(load);std::cout<<"}\n"<<std::flush;
+    }
+  }
+}
+
 template<class Scene> void benchmark(const Scene& scene,const Input& in,const std::filesystem::path& output,
                                     const std::string& name,int width,bool cull,const std::vector<int>& allowed) {
   std::array<Hit,RayCount> hits;
@@ -73,29 +101,7 @@ template<class Scene> void benchmark(const Scene& scene,const Input& in,const st
     std::cout<<",\"cast_us\":";distribution(std::cout,perCast);std::cout<<",\"near_only_cast_us\":";distribution(std::cout,nearPerCast);
     std::cout<<",\"full_cast_us\":";distribution(std::cout,fullPerCast);std::cout<<"}\n"<<std::flush;
   }
-  std::vector<size_t> counts={1,4,8,16,allowed.size()};std::sort(counts.begin(),counts.end());counts.erase(std::unique(counts.begin(),counts.end()),counts.end());
-  for(size_t count:counts)if(count<=allowed.size()) {
-    for(int repeat=-1;repeat<Repeats;++repeat) {
-      std::barrier ready(int(count)+1),done(int(count)+1);
-      std::vector<std::thread> workers;std::vector<uint64_t> casts(count);std::vector<double> checksum(count);
-      for(size_t t=0;t<count;++t)workers.emplace_back([&,t] {
-        pin(allowed[t]);std::array<Hit,RayCount> local;
-        ready.arrive_and_wait();
-        for(size_t i=t;i<in.updates.size();i+=count) {
-          casts[t]+=eye(scene,in.updates[i],in.nearRange,local.data(),width,cull);
-          checksum[t]+=local[i%RayCount].distance;
-        }
-        done.arrive_and_wait();
-      });
-      auto start=Clock::now();ready.arrive_and_wait();done.arrive_and_wait();double seconds=us(start)*1.e-6;
-      for(auto& worker:workers)worker.join();
-      if(repeat<0)continue;
-      uint64_t n=0;double sum=0;for(size_t t=0;t<count;++t) {n+=casts[t];sum+=checksum[t];}
-      std::cout<<"{\"type\":\"throughput\",\"backend\":"<<std::quoted(name)<<",\"threads\":"<<count<<",\"repeat\":"<<repeat
-               <<",\"updates_per_second\":"<<in.updates.size()/seconds<<",\"casts_per_second\":"<<n/seconds
-               <<",\"eye_rays_per_second\":"<<in.updates.size()*RayCount/seconds<<",\"seconds\":"<<seconds<<",\"checksum\":"<<sum<<"}\n"<<std::flush;
-    }
-  }
+  throughput(scene,in,name,width,cull,allowed);
 }
 
 int main(int argc,char** argv) {
@@ -106,14 +112,22 @@ int main(int argc,char** argv) {
       auto in=box();JoltScene jolt(in);EmbreeScene embree(in);
       checkBox(jolt,1);jolt.physics.OptimizeBroadPhase();checkBox(jolt,1);
       for(int width:{1,4,8,16})checkBox(embree,width);
+      JoltScene copy(jolt);checkBox(copy,1);
       std::cout<<"{\"selftest\":\"passed\",\"backends\":2,\"embree_widths\":[1,4,8,16],\"distance_tolerance_cm\":0.001,\"backfaces\":\"rejected\"}\n";
     } else {
-      require(argc==4,"Usage: raybench selftest | INPUT_ROOT OUTPUT_ROOT THREADS");
-      auto allowed=cpus();size_t threads=std::stoul(argv[3]);require(threads>0&&threads<=allowed.size(),"Requested CPUs unavailable");allowed.resize(threads);
-      auto in=load(argv[1]);std::filesystem::path out=argv[2];require(out.is_absolute(),"Output must be absolute");std::filesystem::create_directories(out);
+      const bool scaling=argc==5&&std::string(argv[1])=="scaling";
+      require(argc==4||scaling,"Usage: raybench selftest | [scaling] INPUT_ROOT OUTPUT_ROOT THREADS");
+      const int first=scaling?2:1;
+      auto allowed=cpus();size_t threads=std::stoul(argv[first+2]);require(threads>0&&threads<=allowed.size(),"Requested CPUs unavailable");allowed.resize(threads);
+      auto in=load(argv[first]);std::filesystem::path out=argv[first+1];require(out.is_absolute(),"Output must be absolute");std::filesystem::create_directories(out);
       std::cout<<"{\"type\":\"metadata\",\"triangles\":"<<in.triangles.size()<<",\"updates\":"<<in.updates.size()
                <<",\"jolt\":\"5.6.0\",\"embree\":\""<<RTC_VERSION_STRING<<"\",\"compiler\":"<<std::quoted(__VERSION__)<<",\"cpus\":[";
       for(size_t i=0;i<allowed.size();++i) {if(i)std::cout<<',';std::cout<<allowed[i];}std::cout<<"]}\n";
+      if(scaling) {
+        JoltScene jolt(in);jolt.physics.OptimizeBroadPhase();
+        characters(jolt,in,out,allowed,true);
+        EmbreeScene embree(in);throughput(embree,in,"embree1-cull",1,true,allowed);
+      } else {
       {
         std::unique_ptr<JoltScene> holder;
         for(int repeat=0;repeat<Repeats;++repeat) {
@@ -139,6 +153,7 @@ int main(int argc,char** argv) {
         }
         auto& embree=*holder;
         for(bool cull:{true,false})for(int width:{1,4,8,16})benchmark(embree,in,out,"embree"+std::to_string(width)+(cull?"-cull":"-two-sided"),width,cull,allowed);
+      }
       }
     }
     JPH::UnregisterTypes();delete JPH::Factory::sInstance;JPH::Factory::sInstance=nullptr;return 0;

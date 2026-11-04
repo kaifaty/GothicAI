@@ -61,6 +61,13 @@ inline std::vector<int> cpus() {
   std::vector<int> out;for(int i=0;i<CPU_SETSIZE;++i)if(CPU_ISSET(i,&set))out.push_back(i);return out;
 }
 inline void pin(int cpu) {cpu_set_t set;CPU_ZERO(&set);CPU_SET(cpu,&set);require(sched_setaffinity(0,sizeof set,&set)==0,"Cannot pin worker");}
+inline std::array<double,3> loadAverage() {
+  std::array<double,3> load{};std::ifstream f("/proc/loadavg");
+  f>>load[0]>>load[1]>>load[2];require(bool(f),"Cannot read load average");return load;
+}
+inline void loadJson(const std::array<double,3>& load) {
+  std::cout<<",\"load_average\":["<<load[0]<<','<<load[1]<<','<<load[2]<<']';
+}
 inline double quantile(std::vector<double> v,double p) {require(!v.empty(),"Empty distribution");std::sort(v.begin(),v.end());return v[size_t(std::ceil(p*v.size()))-1];}
 inline void distribution(std::ostream& f,const std::vector<double>& v) {
   f<<"{\"median\":"<<quantile(v,.5)<<",\"p90\":"<<quantile(v,.9)<<",\"samples\":"<<v.size()<<'}';

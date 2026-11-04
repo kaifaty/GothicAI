@@ -32,13 +32,18 @@ export LD_LIBRARY_PATH="$embree/lib:${LD_LIBRARY_PATH:-}"
 cmake -S "$source_dir" -B "$task/build" -G Ninja -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_PREFIX_PATH="$embree" -DCMAKE_CXX_FLAGS_RELEASE='-O3 -DNDEBUG -march=x86-64-v3 -ffp-contract=off'
 cmake --build "$task/build" --target raybench --parallel 3
-cp "$task/build/compile_commands.json" "$raw/compile_commands.json"
+cp "$task/build/compile_commands.json" "$raw/compile_commands-$stage.json"
 "$task/build/raybench" selftest | tee "$raw/selftest.json"
 if [[ "$stage" == selftest ]]; then exit 0; fi
 sha256sum "$input/static.bin" "$input/rays.bin" "$input/poses.txt" > "$raw/input.sha256"
 uv venv "$task/.venv"
 uv pip install --python "$task/.venv/bin/python" numpy
 "$task/.venv/bin/python" "$source_dir/report.py" prepare "$input" "$raw"
+if [[ "$stage" == scaling ]]; then
+  "$task/build/raybench" scaling "$input" "$raw" "$threads" > "$raw/scaling.jsonl"
+  "$task/.venv/bin/python" "$source_dir/report.py" scaling "$raw" "$job_class"
+  exit 0
+fi
 "$task/build/raybench" "$input" "$raw" "$threads" > "$raw/cpu.jsonl"
 # Warp installation/runtime failure is an allowed skip, with the exact log retained.
 if uv pip install --python "$task/.venv/bin/python" warp-lang > "$raw/warp-install.log" 2>&1; then

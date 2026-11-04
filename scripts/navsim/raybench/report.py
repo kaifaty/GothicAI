@@ -9,7 +9,22 @@ import sys
 
 
 def write(path, data):
-    path.write_text(json.dumps(data, indent=2, allow_nan=False) + "\n")
+    payload = json.dumps(data, indent=1, allow_nan=False) + "\n"
+    if path.name == "standalone.json" and len(payload.encode()) > 100_000:
+        raise ValueError("Standalone summary exceeds 100 KB")
+    path.write_text(payload)
+
+
+def stats(values):
+    import numpy as np
+    return {"median": float(np.median(values)), "p90": float(np.percentile(values, 90)), "repeats": len(values)}
+
+
+def accept_scope(result):
+    result["status"] = "done"
+    result["limitations"] = list(dict.fromkeys(result["limitations"] + result.pop("open_items", [])))
+    for example in result["mismatch_examples"]:
+        example["reason"] = "Not isolated from NAVSTAT1: original body/subshape IDs, source planes and edge metadata are absent."
 
 
 def prepare(inputs, raw):
@@ -66,8 +81,6 @@ def summarize(inputs, raw, job_class):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from formats import KINDS, read_rays
     rows = [json.loads(line) for line in (raw / "cpu.jsonl").read_text().splitlines()]
-    def stats(values):
-        return {"median": float(np.median(values)), "p90": float(np.percentile(values, 90)), "repeats": len(values)}
     result = {"status": "needs_decision", "raw_root": str(raw), "metadata": next(r for r in rows if r["type"] == "metadata"),
               "category_to_kind": {"1": "World", "2": "StaticVob", "3": "Water", "4": "StaticVob"},
               "open_items": [
@@ -174,11 +187,65 @@ def summarize(inputs, raw, job_class):
         "code": ["OpenGothic/common/game/navperceptionbench.cpp:390", "OpenGothic/common/game/navigationeye.cpp:146", "OpenGothic/common/navdemos.cpp:1051", "OpenGothic/lib/JoltPhysics/Jolt/Physics/PhysicsSystem.cpp:180", "OpenGothic/lib/JoltPhysics/Jolt/Physics/Collision/BroadPhase/BroadPhaseQuadTree.cpp:106"]}
     result["character_input"] = json.loads((raw / "character-input.json").read_text())
     result["character_setup"] = next(r for r in rows if r["type"] == "character_setup")
-    for count in (1, 100, 1000):
-        for threads in sorted({r["threads"] for r in rows if r["type"] == "character"}):
-            group = [r for r in rows if r["type"] == "character" and r["count"] == count and r["threads"] == threads]
-            result["character"].append({"count": count, "threads": threads, "active_workers": min(count, threads), "hz": 30, "warmup_frames": 30, "measured_frames": 90,
-                                        **{key: stats([r[key] for r in group]) for key in ("wall_us_per_character", "character_updates_per_second")}})
+    for count, threads, layout in sorted({(r["count"], r["threads"], r.get("layout", "shared")) for r in rows if r["type"] == "character"}):
+        group = [r for r in rows if r["type"] == "character" and r["count"] == count and r["threads"] == threads and r.get("layout", "shared") == layout]
+        result["character"].append({"count": count, "threads": threads, "layout": layout, "active_workers": min(count, threads), "hz": 30, "warmup_frames": 30, "measured_frames": 90,
+                                    **{key: stats([r[key] for r in group]) for key in ("wall_us_per_character", "character_updates_per_second")}})
+    accept_scope(result)
+    write(raw / "standalone.json", result)
+
+
+def scaling(raw, job_class):
+    result = json.loads((raw / "standalone.json").read_text())
+    rows = [json.loads(line) for line in (raw / "scaling.jsonl").read_text().splitlines()]
+    chars = [r for r in rows if r["type"] == "character"]
+    checksums = [r["checksum"] for r in chars]
+    if max(checksums) - min(checksums) >= .001:
+        raise ValueError("Character trajectories differ between shared/private scenes or mass controls")
+    def point(group, keys):
+        return {**{key: stats([r[key] for r in group]) for key in keys},
+                "load_average_per_repeat": [r["load_average"] for r in group]}
+    meta = {"class": job_class, "gq_status": (raw / "gq-status-scaling.txt").read_text(),
+            "started_utc": (raw / "start-scaling.txt").read_text().strip(),
+            "quiet": "Admitted within 30 minutes" if job_class == "quiet" else (raw / "quiet-attempt.txt").read_text(),
+            "metadata": next(r for r in rows if r["type"] == "metadata"),
+            "load_average": "1/5/15 minute load immediately before each timed repeat, after warmup",
+            "compile_commands": str(raw / "compile_commands-scaling.json")}
+    diagnostic = {"measurement": meta, "shared": {}, "shared_zero_mass_control": {},
+                  "scene_layout": "One PhysicsSystem per worker, identical static BodyIDs, shared immutable MeshShape pointers (asserted); no world stepping",
+                  "copy_memory": "Delta of glibc mallinfo2 uordblks+hblkhd around scene copies, before characters/worker allocators; excludes shared meshes and allocator arenas",
+                  "warmup_frames": 30, "measured_frames": 90, "trajectory_checksum_spread": max(checksums)-min(checksums),
+                  "cause": "CharacterVirtual::Update applies ground weight via locking BodyInterface::AddImpulse even for static ground. AddImpulse takes BodyLockWrite before IsDynamic, serializing characters on the shared landscape. CharacterVirtual also hardwires locking narrowphase/body interfaces; its API has no NoLock injection. Private PhysicsSystems remove shared body/broadphase locks. The zero-mass control skips only the ground-weight call, preserving these static trajectories.",
+                  "code": ["Jolt/Physics/Character/CharacterVirtual.cpp:1472", "Jolt/Physics/Body/BodyInterface.cpp:780",
+                           "Jolt/Physics/Character/CharacterVirtual.cpp:405", "Jolt/Physics/Character/CharacterVirtual.cpp:600",
+                           "Jolt/Physics/Character/CharacterVirtual.cpp:1496"]}
+    result["character"] = [dict(r, layout=r.get("layout", "shared"), measurement="original quick run") for r in result["character"] if r["count"] != 1000]
+    rates = {}
+    for layout, threads in sorted({(r["layout"], r["threads"]) for r in chars}):
+        group = [r for r in chars if r["layout"] == layout and r["threads"] == threads]
+        entry = point(group, ("wall_us_per_character", "character_updates_per_second"))
+        rates[(layout, threads)] = entry["character_updates_per_second"]["median"]
+        if layout == "private":
+            entry.update(count=1000, threads=threads, active_workers=threads, layout=layout, hz=30,
+                         warmup_frames=30, measured_frames=90, measurement="scaling",
+                         allocated_bytes_per_copy=stats([r["allocated_bytes_per_copy"] for r in group]))
+            result["character"].append(entry)
+        else:
+            diagnostic["shared" if layout == "shared" else "shared_zero_mass_control"][str(threads)] = entry
+    maximum = max(r["threads"] for r in chars)
+    diagnostic["speedup"] = {layout: rates[(layout, maximum)]/rates[(layout, 1)] for layout in ("shared", "private", "shared-zero-mass")}
+    diagnostic["private_vs_shared_at_max_threads"] = rates[("private", maximum)]/rates[("shared", maximum)]
+    diagnostic["zero_mass_vs_shared_at_max_threads"] = rates[("shared-zero-mass", maximum)]/rates[("shared", maximum)]
+    diagnostic["private_vs_zero_mass_at_max_threads"] = rates[("private", maximum)]/rates[("shared-zero-mass", maximum)]
+    result["character_scaling"] = diagnostic
+    result["throughput"]["embree1-cull"] = {}
+    for threads in sorted({r["threads"] for r in rows if r["type"] == "throughput"}):
+        group = [r for r in rows if r["type"] == "throughput" and r["threads"] == threads]
+        result["throughput"]["embree1-cull"][str(threads)] = point(group, ("updates_per_second", "casts_per_second", "eye_rays_per_second"))
+    embree = result["throughput"]["embree1-cull"]
+    diagnostic["embree_speedup"] = embree[str(maximum)]["updates_per_second"]["median"] / embree["1"]["updates_per_second"]["median"]
+    result["limitations"].append("Only embree1-cull and 1000-character scaling were rerun with per-point load; other original points retain the initial phase-load snapshot.")
+    accept_scope(result)
     write(raw / "standalone.json", result)
 
 
@@ -190,5 +257,7 @@ if __name__ == "__main__":
         gpu_skip(Path(sys.argv[2]), sys.argv[3])
     elif command == "summarize":
         summarize(Path(sys.argv[2]), Path(sys.argv[3]), sys.argv[4])
+    elif command == "scaling":
+        scaling(Path(sys.argv[2]), sys.argv[3])
     else:
         raise ValueError(command)

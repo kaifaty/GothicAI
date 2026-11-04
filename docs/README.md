@@ -1,6 +1,6 @@
 # Карта проекта
 
-[Отдельный стенд лучей nav-sim](navigation.md#как-работает-сейчас): [`raybench-remote.sh`](../scripts/navsim/raybench-remote.sh) сравнивает Jolt, Embree 4 и CUDA Warp на NAVSTAT1/NAVRAYS1 и измеряет CharacterVirtual; сборка и запуск через gq, коробка — `selftest`, числа — [`standalone.json`](../reports/navigation/2026-11-04-nav-sim-research/data/rays/standalone.json).
+[Отдельный стенд лучей nav-sim](navigation.md#как-работает-сейчас): [`raybench-remote.sh`](../scripts/navsim/raybench-remote.sh) сравнивает Jolt, Embree 4 и CUDA Warp на NAVSTAT1/NAVRAYS1 и измеряет CharacterVirtual; сборка и запуск через gq, коробка — `selftest`, повтор масштабирования Embree/CharacterVirtual с миром на поток — `scaling`, числа — [`standalone.json`](../reports/navigation/2026-11-04-nav-sim-research/data/rays/standalone.json).
 
 [Точность таблиц движения nav-sim](../reports/navigation/2026-11-04-nav-sim-research/data/motion/results.json): [`motion_table.py`](../scripts/navsim/motion_table.py) читает записи учителя без запуска игры, сравнивает 0–3 решения истории клавиш, шаги 100 мс и разомкнутые окна 1/3/10 с; отдельно считает уклоны, упор, воду, прыжки, лазание и поворот на месте. Физику Jolt этот замер не проверяет.
 
