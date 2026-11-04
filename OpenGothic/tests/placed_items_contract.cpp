@@ -138,18 +138,22 @@ void censusCache() {
   DynamicWorld world(nullptr,floor());
   auto furniture = world.addMovableVob(proto,visual,at(300,10),.25f,false,"utensil",true,903);
   world.finalizeMovableVobs();
-  std::vector<DynamicWorld::Item> bodies;
-  bodies.reserve(3);
-  for(const auto& origin:{at(0,11),at(300,31),at(600,40)}) {
-    bodies.push_back(world.addDynamicObj(origin,bounds,asset::MaterialGroup::WOOD,&proto,visual,true));
-    bodies.back().restorePhysics(origin,true);
-    }
+  const std::array<Tempest::Matrix4x4,3> origins = {{at(0,11),at(300,31),at(600,40)}};
   std::vector<DynamicWorld::PlacedItemCandidate> candidates;
-  for(size_t i=0;i<bodies.size();++i)
-    candidates.push_back({&bodies[i],false,visual,uint32_t(100+i),i});
+  for(size_t i=0;i<origins.size();++i)
+    candidates.push_back({nullptr,false,visual,uint32_t(100+i),i,&proto,origins[i],uint32_t(MAT_WOOD)});
+  // The key is taken before any census body exists: a hit must not need one.
   const auto inputs = world.placedItemCensusInputs(candidates);
   require(inputs.size()==64 && inputs==world.placedItemCensusInputs(candidates),
           "census inputs must be a stable digest of the same world");
+  std::vector<DynamicWorld::Item> bodies;
+  bodies.reserve(origins.size());
+  for(size_t i=0;i<origins.size();++i) {
+    bodies.push_back(world.addDynamicObj(origins[i],bounds,asset::MaterialGroup::WOOD,&proto,visual,true));
+    bodies.back().restorePhysics(origins[i],true);
+    candidates[i].body = &bodies[i];
+    }
+  require(world.placedItemCensusInputs(candidates)==inputs,"census inputs must not depend on the census bodies");
   const auto live = world.placedItemCensus(candidates);
 
   const fs::path root = fs::current_path()/("placed-census-contract-"+
@@ -167,17 +171,24 @@ void censusCache() {
   require(cache.read(live.size()+1,stored)==Status::Corrupt,"a different candidate count must not reuse the census");
 
   // Moving one item must change the digest and miss the stored census.
-  auto moved = at(0,12);
-  bodies[0].restorePhysics(moved,true);
   auto movedKey = key;
-  movedKey.inputs = world.placedItemCensusInputs(candidates);
+  auto moved = candidates;
+  moved[0].transform = at(0,12);
+  movedKey.inputs = world.placedItemCensusInputs(moved);
   require(movedKey.inputs!=inputs,"a changed item transform must change the census inputs");
   require(PlacedCensusCache(root,movedKey).read(live.size(),stored)==Status::Inputs,"a changed transform must miss");
-  bodies[0].restorePhysics(at(0,11),true);
-  require(world.placedItemCensusInputs(candidates)==inputs,"restoring the pose must restore the digest");
   auto identity = candidates;
   identity[1].instance = 77;
   require(world.placedItemCensusInputs(identity)!=inputs,"a changed item instance must change the census inputs");
+  // A different mesh under the same visual name changes the hull source.
+  ProtoMesh taller(PackedMesh(box({20,30,20}),PackedMesh::PK_Visual),visual);
+  auto mesh = candidates;
+  for(auto& candidate:mesh)
+    candidate.proto = &taller;
+  require(world.placedItemCensusInputs(mesh)!=inputs,"a changed item mesh must change the census inputs");
+  auto material = candidates;
+  material[2].material = uint32_t(MAT_METAL);
+  require(world.placedItemCensusInputs(material)!=inputs,"a changed item material must change the census inputs");
 
   auto versionKey = key;
   ++versionKey.version;
@@ -203,7 +214,7 @@ void censusCache() {
   require(!fs::exists(cache.path()),"the disabled census cache must not write");
   unsetenv("OPENGOTHIC_PLACED_CENSUS_CACHE");
   require(furniture.mass()>0,"census cache fixture must retain its movable vob");
-  std::puts("Placed census cache: hit equals live; transform, instance, version, count and damage miss; disabled bypass");
+  std::puts("Placed census cache: body-free key; hit equals live; transform, instance, mesh, material, version, count and damage miss; disabled bypass");
   }
 
 void rootedAndStack() {

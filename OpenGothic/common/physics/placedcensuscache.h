@@ -15,8 +15,11 @@
 // applied. One file per world therefore serves fresh starts and saves alike.
 class PlacedCensusCache final {
   public:
-    // Bump whenever placedItemCensus, its thresholds or its inputs change.
-    static constexpr uint32_t RulesVersion = 1;
+    // Bump whenever placedItemCensus, its thresholds or its inputs change, and
+    // whenever an item census body is built differently from the same inputs:
+    // DynamicWorld::itemHullShape, addDynamicObj or CollisionWorld::addBody.
+    // The key hashes those inputs, not the bodies (2: body-free key).
+    static constexpr uint32_t RulesVersion = 2;
     using Entry = DynamicWorld::PlacedItemCensusEntry;
 
     // OPENGOTHIC_PLACED_CENSUS_CACHE=0 disables the cache entirely.

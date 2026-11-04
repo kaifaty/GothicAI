@@ -47,6 +47,8 @@ class Item : public Vob {
     void    setAsEquipped(bool e);
 
     virtual void setPhysicsEnable(World& w);
+    // Mesh that setPhysicsEnable(World&) builds the body from; loads it once.
+    const ProtoMesh* physicsProto();
     void    setPhysicsDisable();
     bool    wakePhysics();
     bool    activatePhysics();

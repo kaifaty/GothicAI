@@ -1238,6 +1238,8 @@ DynamicWorld::Item DynamicWorld::addDynamicObj(const Tempest::Matrix4x4& pos, co
   return Item(this,obj.release());
   }
 
+// The placed-item census key hashes this function's inputs, not its hull:
+// any change to the hull it builds bumps PlacedCensusCache::RulesVersion.
 const DynamicWorld::ItemHull& DynamicWorld::itemHullShape(const ProtoMesh& proto, std::string_view visual) {
   std::string key(visual);
   std::transform(key.begin(),key.end(),key.begin(),[](unsigned char c) { return char(std::toupper(c)); });
@@ -1557,15 +1559,40 @@ std::string DynamicWorld::placedItemCensusInputs(const std::vector<PlacedItemCan
     // Shared hulls are written once; later references write only their ID.
     body->shape()->SaveWithChildren(out,shapes,materials);
     };
-  out.text("candidates");
+  // Candidates are hashed by what their body is built from, not by the body:
+  // a cache hit must not create bodies or item hulls. Body construction is
+  // deterministic in these inputs; changes to it bump RulesVersion.
+  out.text("candidates-v2");
   out.u64(candidates.size());
+  std::unordered_map<std::string,uint32_t> hullSources;
+  std::vector<Tempest::Vec3> vertices;
   for(const auto& candidate:candidates) {
     out.u32(candidate.mission ? 1 : 0);
     out.u32(candidate.zenId);
     out.u64(uint64_t(candidate.instance));
     out.text(candidate.visual);
-    const auto* handle=candidate.body;
-    body(handle!=nullptr && handle->obj!=nullptr ? handle->obj->body.get() : nullptr);
+    const auto* proto=candidate.proto;
+    if(proto==nullptr) {
+      out.u32(0);
+      continue;
+      }
+    out.u32(1);
+    out.matrix(candidate.transform);
+    out.u32(candidate.material);
+    out.raw(&proto->bboxMesh[0],sizeof(proto->bboxMesh[0]));
+    out.raw(&proto->bboxMesh[1],sizeof(proto->bboxMesh[1]));
+    // itemHullShape keeps one hull per upper-case visual, built from the first
+    // proto it sees. Hash that proto's source vertices once per visual.
+    std::string key(candidate.visual);
+    std::transform(key.begin(),key.end(),key.begin(),[](unsigned char c) { return char(std::toupper(c)); });
+    const auto [source,inserted]=hullSources.try_emplace(std::move(key),uint32_t(hullSources.size()));
+    out.u32(source->second);
+    if(!inserted)
+      continue;
+    vertices.clear();
+    proto->appendItemVertices(vertices);
+    out.u64(vertices.size());
+    out.raw(vertices.data(),vertices.size()*sizeof(Tempest::Vec3));
     }
   // Furniture and other movable vobs are supports and penetration targets.
   // Offline convex parts are outside the base fingerprint: hash their shapes.

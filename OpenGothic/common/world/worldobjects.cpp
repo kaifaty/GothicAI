@@ -269,7 +269,7 @@ void WorldObjects::linkPlacedItem(PlacedItem& source, Item& item) {
   }
 
 std::vector<DynamicWorld::PlacedItemCensusEntry> WorldObjects::placedCensusVerdicts(
-    const std::vector<DynamicWorld::PlacedItemCandidate>& candidates) {
+    const std::vector<DynamicWorld::PlacedItemCandidate>& candidates, bool& bodies) {
   using Clock=std::chrono::steady_clock;
   auto& stats=placedCensus;
   stats={};
@@ -281,6 +281,17 @@ std::vector<DynamicWorld::PlacedItemCensusEntry> WorldObjects::placedCensusVerdi
     const double ms=std::chrono::duration<double,std::milli>(now-started).count();
     started=now;
     return ms;
+    };
+  // Build all authored shapes before querying any of them. The same Item path
+  // selects item_hulls and applies scale for both the census and live bodies.
+  bodies=false;
+  const auto createBodies=[&]() {
+    for(auto& source:placedItems) {
+      LoadProbe::Startup::Scope prepareProbe(LoadProbe::Startup::PhysicsPrepare,false,"placed-items");
+      source.item->setPhysicsEnable(owner);
+      }
+    bodies=true;
+    elapsed(); // body preparation is reported by the load probe, not as census time
     };
   std::vector<DynamicWorld::PlacedItemCensusEntry> verdicts;
   std::optional<PlacedCensusCache> cache;
@@ -309,6 +320,7 @@ std::vector<DynamicWorld::PlacedItemCensusEntry> WorldObjects::placedCensusVerdi
     }
   stats.status=PlacedCensusCache::statusName(status);
   if(status!=PlacedCensusCache::Status::Hit) {
+    createBodies();
     verdicts=physic.placedItemCensus(candidates);
     stats.censusMs=elapsed();
     if(cache && !cache->path().empty()) {
@@ -322,6 +334,7 @@ std::vector<DynamicWorld::PlacedItemCensusEntry> WorldObjects::placedCensusVerdi
   Tempest::Log::i("placed item census cache: hit, ",candidates.size()," items");
   if(PlacedCensusCache::checkMode()) {
     // Equivalence check: the live census must match the stored one bit for bit.
+    createBodies();
     const auto live=physic.placedItemCensus(candidates);
     stats.checkMs=elapsed();
     stats.checked=true;
@@ -351,24 +364,38 @@ void WorldObjects::finalizePlacedItems() {
   const auto started=std::chrono::steady_clock::now();
   std::vector<DynamicWorld::PlacedItemCandidate> candidates;
   candidates.reserve(placedItems.size());
-  // Build all authored shapes before querying any of them. The same Item path
-  // selects item_hulls and applies scale for both the census and live bodies.
+  // Candidates carry the inputs of their bodies; the bodies themselves are
+  // created only if the census runs live (see placedCensusVerdicts).
   for(auto& source:placedItems) {
     LoadProbe::Startup::Scope prepareProbe(LoadProbe::Startup::PhysicsPrepare,false,"placed-items");
-    source.item->setPhysicsEnable(owner);
-    candidates.push_back({&source.item->physic,source.item->isMission(),source.visual,source.zenId,source.instance});
+    auto& item=*source.item;
+    candidates.push_back({&item.physic,item.isMission(),source.visual,source.zenId,source.instance,
+                          item.physicsProto(),item.transform(),uint32_t(item.handle().material)});
     }
-  const auto verdicts=placedCensusVerdicts(candidates);
+  bool bodies=false;
+  const auto verdicts=placedCensusVerdicts(candidates,bodies);
   size_t allowed=0;
   for(size_t i=0;i<placedItems.size();++i) {
     auto& source=placedItems[i];
     source.validation=verdicts[i];
     source.item->placedAllowed=source.validation.enabled;
     allowed+=source.validation.enabled;
-    {
-    LoadProbe::Startup::Scope removeProbe(LoadProbe::Startup::PhysicsRemove,false,"placed-items");
-    source.item->setPhysicsDisable();
+    if(bodies) {
+      LoadProbe::Startup::Scope removeProbe(LoadProbe::Startup::PhysicsRemove,false,"placed-items");
+      source.item->setPhysicsDisable();
+      }
     }
+  if(!bodies) {
+    // Cache hit: no temporary body ever existed. Admitted items get their
+    // bodies near the hero later; build their hulls now, as the live path
+    // does, so that proximity creation never builds a hull in a frame.
+    if(Gothic::physicsFlags().itemHulls)
+      for(size_t i=0;i<placedItems.size();++i)
+        if(placedItems[i].validation.enabled && candidates[i].proto!=nullptr) {
+          LoadProbe::Startup::Scope prepareProbe(LoadProbe::Startup::PhysicsPrepare,false,"placed-items");
+          owner.physic()->itemHullShape(*candidates[i].proto,placedItems[i].visual);
+          }
+    owner.invalidateVobIndex();
     }
   placedValidationMs=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started).count();
   Tempest::Log::i("placed item geometry: ",placedItems.size()," candidates, ",allowed,

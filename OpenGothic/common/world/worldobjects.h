@@ -79,8 +79,10 @@ class WorldObjects final {
       DynamicWorld::PlacedItemCensusEntry validation;
       };
     void           finalizePlacedItems();
+    // Creates the temporary census bodies only when the live census runs
+    // (cache miss, disabled cache or check mode); reports that in `bodies`.
     std::vector<DynamicWorld::PlacedItemCensusEntry> placedCensusVerdicts(
-        const std::vector<DynamicWorld::PlacedItemCandidate>& candidates);
+        const std::vector<DynamicWorld::PlacedItemCandidate>& candidates, bool& bodies);
     const std::vector<PlacedItem>& placedItemCensus() const { return placedItems; }
     double         placedItemValidationMilliseconds() const { return placedValidationMs; }
     struct PlacedCensusLoad {
