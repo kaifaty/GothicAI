@@ -124,6 +124,11 @@ class NavMemoryTeacher final {
     // Where the feet have stood, newest last, in the current body frame:
     // dead-reckoned from the observed velocity and the previous turn key.
     std::vector<Point> track;
+    // Where an escape step pushed without moving the body: 30 cm along the step,
+    // carried like the track, forgotten after `ttl` decisions.
+    struct Refusal final { Point point; uint32_t ttl = 0; };
+    std::vector<Refusal> refused;
+    uint32_t pushTicks = 0;
     float routeLength = 0;
     uint32_t stuckTicks = 0, recoveryTicks = 0, recoveryAttempts = 0;
     float recoverySide = 1;

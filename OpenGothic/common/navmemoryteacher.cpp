@@ -26,6 +26,10 @@ constexpr float WaterMarginCm = 75.f;
 // longest exit, and NpcKeys' unarmed turn (90 deg/s) per 100-ms decision.
 constexpr float FootprintCm = 15.f, TrackCm = 300.f, ExitCm = 300.f, TurnDegrees = 9.f;
 constexpr size_t TrackPoints = 100;
+// An escape step that leaves the body below the stuck speed for PushTicks decisions
+// refuses its direction (a point RefusedCm along it) for RefusedTtl decisions.
+constexpr float StuckSpeed = 18.f, RefusedCm = 30.f;
+constexpr uint32_t PushTicks = 3, RefusedTtl = 50;
 
 float length(Point p) { return std::hypot(p.rightCm,p.forwardCm); }
 float distance(Point a,Point b) { return length({a.rightCm-b.rightCm,a.forwardCm-b.forwardCm}); }
@@ -243,6 +247,14 @@ class Grid final {
     std::vector<float> costs;
   };
 
+// The body pushed this way without moving (a point RefusedCm along the step).
+bool refusedStep(const std::vector<Point>& pushed,Point step) {
+  const float extent=length(step);
+  if(extent<=0) return false;
+  const Point probe={step.rightCm*RefusedCm/extent,step.forwardCm*RefusedCm/extent};
+  return std::any_of(pushed.begin(),pushed.end(),[&](Point p) {return distance(p,probe)<10.f;});
+  }
+
 int nearIndex(Point p) {
   const int x=int(std::floor(p.rightCm/NearCell+float(NearSize)*.5f));
   const int z=int(std::floor(p.forwardCm/NearCell+float(NearSize)*.5f));
@@ -265,9 +277,15 @@ float squareDistance(Point p,int index) {
 // margin, so the next decision finds a start there. Live water keeps its stop.
 class BodyExit final {
   public:
-    BodyExit(const Input& input,const Grid& planner,const std::vector<Point>& ownTrack):in(input),grid(planner) {
+    BodyExit(const Input& input,const Grid& planner,const std::vector<Point>& ownTrack,const std::vector<Point>& pushed)
+      :in(input),grid(planner) {
       testify({},{},Footprint);
       for(size_t i=1;i<ownTrack.size();++i) testify(ownTrack[i-1],ownTrack[i],Track);
+      // Where the body pushed without moving, it testifies the opposite.
+      for(const auto& p:pushed) {
+        const int i=nearIndex(p);
+        if(i>=0) refused[size_t(i)]=1;
+        }
       }
     bool waterNear() const {
       for(int i=0;i<NearCount;++i)
@@ -275,7 +293,7 @@ class BodyExit final {
       return false;
       }
     bool passable(int i) const {
-      if(i<0) return false;
+      if(i<0 || refused[size_t(i)]) return false;
       const auto& c=cell(in,i);
       if(liveWater(c)) return false;
       if(!dangerous(c) || testified[size_t(i)]==Footprint) return true;
@@ -358,16 +376,16 @@ class BodyExit final {
       }
     const Input& in;
     const Grid& grid;
-    std::array<uint8_t,NearCount> testified = {};
+    std::array<uint8_t,NearCount> testified = {}, refused = {};
   };
 
 // One step along the body exit without turning (NpcKeys executes one axis;
 // a turn would move every remembered cell of the body frame). Returns false
 // when there is no exit; then the teacher keeps its previous behaviour.
-bool bodyExitKeys(const Input& in,const Grid& grid,const std::vector<Point>& track,NpcKeys::KeyState& out,
-                  float& exitCm) {
+bool bodyExitKeys(const Input& in,const Grid& grid,const std::vector<Point>& track,const std::vector<Point>& pushed,
+                  NpcKeys::KeyState& out,float& exitCm) {
   exitCm=0;
-  const BodyExit exit(in,grid,track);
+  const BodyExit exit(in,grid,track,pushed);
   if(exit.waterNear()) return false;
   const auto path=exit.path();
   if(path.size()<2) return false;
@@ -382,7 +400,7 @@ bool bodyExitKeys(const Input& in,const Grid& grid,const std::vector<Point>& tra
     if(component==0) continue;
     const float extent=std::clamp(std::abs(component),25.f,60.f);
     const Point step=sideways ? Point{sign(component)*extent,0} : Point{0,sign(component)*extent};
-    if(!exit.passable({},step)) continue;
+    if(!exit.passable({},step) || refusedStep(pushed,step)) continue;
     if(sideways) out.strafe=sign(component);
     else out.forward=sign(component);
     return true;
@@ -551,21 +569,27 @@ const char* NavMemoryTeacher::name(Branch branch) {
 void NavMemoryTeacher::reset() {
   route.clear();routeLength=0;stuckTicks=0;recoveryTicks=0;recoveryAttempts=0;
   recoverySide=1;complete=false;observedGoal=false;previousGoal={};movingTicks=0;runningTargetTicks=0;
-  latestPlanStatus=PlanStatus{};branch=Branch::NoAim;track.clear();
+  latestPlanStatus=PlanStatus{};branch=Branch::NoAim;track.clear();refused.clear();pushTicks=0;
   }
 
 void NavMemoryTeacher::updateTrack(const Input& in) {
   // Off the ground the feet testify nothing about the cells below.
   if(in.body.flags[0] || in.body.flags[1] || in.body.flags[3] || in.body.flags[4]) {
-    track.clear();
+    track.clear();refused.clear();
     return;
     }
   // The same motion model as the observed goal below: the previous turn key
   // and the observed velocity carry the old frame into the current one.
   const float angle=-in.previous.turn*TurnDegrees*Pi/180.f;
   const float c=std::cos(angle),s=std::sin(angle);
-  for(auto& p:track)
-    p={p.rightCm*c-p.forwardCm*s-in.body.velocityCmS[0]*.1f,p.rightCm*s+p.forwardCm*c-in.body.velocityCmS[2]*.1f};
+  const auto carry=[&](Point p) {
+    return Point{p.rightCm*c-p.forwardCm*s-in.body.velocityCmS[0]*.1f,p.rightCm*s+p.forwardCm*c-in.body.velocityCmS[2]*.1f};
+    };
+  for(auto& p:track) p=carry(p);
+  for(auto& r:refused) {r.point=carry(r.point);--r.ttl;}
+  refused.erase(std::remove_if(refused.begin(),refused.end(),[](const Refusal& r) {
+    return r.ttl==0 || length(r.point)>ExitCm;
+    }),refused.end());
   // Standing still does not push older footprints out of the track.
   if(!track.empty() && length(track.back())<2.f) track.back()={};
   else track.push_back({});
@@ -590,6 +614,19 @@ NpcKeys::KeyState NavMemoryTeacher::decide(const Input& in) {
   // Rebuild from the full quantized observation on EVERY 100-ms decision.
   ::plan(in,target,route,routeLength,complete,DiagnosticsOptions{},nullptr,&latestPlanStatus);
   updateTrack(in);
+  const float speed=std::hypot(in.body.velocityCmS[0],in.body.velocityCmS[2]);
+  if(bodyExitEnabled) {
+    // The body testifies where an escape step pushed without moving it (its
+    // previous decision: no turn, so the step is in the current frame too).
+    const bool pushed=(branch==Branch::Escape || branch==Branch::BodyExit) &&
+                      (in.previous.forward!=0 || in.previous.strafe!=0) && speed<StuckSpeed;
+    pushTicks=pushed ? pushTicks+1 : 0;
+    if(pushTicks>=PushTicks) {
+      refused.push_back({in.previous.strafe!=0 ? Point{sign(in.previous.strafe)*RefusedCm,0}
+                                               : Point{0,sign(in.previous.forward)*RefusedCm},RefusedTtl});
+      pushTicks=0;
+      }
+    }
 
   const Point goal={in.roads.goalDirection[0]*in.roads.goalDistanceCm,
                     in.roads.goalDirection[2]*in.roads.goalDistanceCm};
@@ -626,16 +663,18 @@ NpcKeys::KeyState NavMemoryTeacher::decide(const Input& in) {
     }
 
   Grid grid(in);
-  if(bodyExitEnabled && !latestPlanStatus.startFound) {
-    // No start cell: leave along what the body testifies before anything else.
+  std::vector<Point> pushed;
+  for(const auto& r:refused) pushed.push_back(r.point);
+  const auto exitBody=[&](NpcKeys::KeyState& keys) {
+    // No start cell, or no clear escape step: leave along what the body testifies.
     latestPlanStatus.bodyExit=true;
     auto exit=out;
     exit.walk=true;
-    if(bodyExitKeys(in,grid,track,exit,latestPlanStatus.bodyExitCm)) {
-      stuckTicks=0;recoveryTicks=0;branch=Branch::BodyExit;
-      return exit;
-      }
-    }
+    if(!bodyExitKeys(in,grid,track,pushed,exit,latestPlanStatus.bodyExitCm)) return false;
+    stuckTicks=0;recoveryTicks=0;branch=Branch::BodyExit;keys=exit;
+    return true;
+    };
+  if(bodyExitEnabled && !latestPlanStatus.startFound && exitBody(out)) return out;
   if(latestPlanStatus.escapeRequired) {
     // Exit the raw occupied start before distant steering or recovery. Digital
     // strafe overrides forward in NpcKeys, so select one physically clear axis
@@ -654,12 +693,14 @@ NpcKeys::KeyState NavMemoryTeacher::decide(const Input& in) {
       for(float extent=30;extent<=100;extent+=10) {
         const Point step=sideways ? Point{sign(component)*extent,0} : Point{0,sign(component)*extent};
         if(!grid.clear(step) || !grid.segment({},step,true)) continue;
+        if(bodyExitEnabled && refusedStep(pushed,step)) break;
         if(sideways) out.strafe=sign(component);
         else out.forward=sign(component);
         branch=Branch::Escape;
         return out;
         }
       }
+    if(bodyExitEnabled && exitBody(out)) return out;
     branch=Branch::EscapeBlocked;
     return out;
     }
@@ -699,7 +740,6 @@ NpcKeys::KeyState NavMemoryTeacher::decide(const Input& in) {
   const float error=std::atan2(aim.rightCm,aim.forwardCm)*180.f/Pi;
   if(length(aim)>1 && std::abs(error)>10) out.turn=-sign(error);
 
-  const float speed=std::hypot(in.body.velocityCmS[0],in.body.velocityCmS[2]);
   const bool commanded=in.previous.forward!=0 || in.previous.strafe!=0;
   if(commanded && speed<18) ++stuckTicks;
   else stuckTicks=0;

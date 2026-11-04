@@ -427,6 +427,20 @@ void selfTest() {
     require(bodyExit ? keys.strafe>0 && keys.forward==0 && keys.turn==0 : keys.forward==0 && keys.strafe==0,
             "the body exit did not take the one-cell gap, or the old teacher moved");
     noNativeAction(keys);++tests;
+    if(!bodyExit) continue;
+    // The gap is shut by something memory does not hold: the step pushes without
+    // moving the body. After three such decisions the body testifies that way
+    // closed, and with no other exit the teacher stands rather than push on.
+    input.previous=keys;
+    for(unsigned tick=0;tick<2;++tick) {
+      keys=teacher.decide(input);
+      require(keys.strafe>0,"the body exit gave up the gap before three pushes");
+      input.previous=keys;
+      }
+    keys=teacher.decide(input);
+    require(teacher.lastBranch()==NavMemoryTeacher::Branch::StartNotFound && keys.forward==0 && keys.strafe==0,
+            "a refused exit step was pushed again");
+    noNativeAction(keys);++tests;
     }
   teacher.setBodyExit(true);
 
