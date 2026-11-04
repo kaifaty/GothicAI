@@ -159,6 +159,21 @@ def test_compose_brings_a_props_meshes_and_shared_atlas(tmp_path, monkeypatch):
         building_set.compose('two-barrels', ['barrel-1', 'roofs-1', 'barrel-2'])
 
 
+def test_compose_carries_a_parts_licences_once(tmp_path, monkeypatch):
+    monkeypatch.setenv('GOTHIC_AI_DATA', str(tmp_path))
+    for name, prefix in (('chairs-1', 'CHAIR'), ('beds-1', 'BED')):
+        staged(tmp_path, name, {f'{prefix}.TGA': name})
+        terms = tmp_path / 'content-staging' / name / 'licences/omni'
+        terms.mkdir(parents=True)
+        (terms / 'License.txt').write_text('terms')
+    staged(tmp_path, 'roofs-1', {'ROOF_01.TGA': 'roofs-1-roof-01'})
+    building_set.compose('city-1', ['roofs-1', 'chairs-1', 'beds-1'])
+    assert (tmp_path / 'content-staging/city-1/licences/omni/License.txt').read_text() == 'terms'
+    (tmp_path / 'content-staging/beds-1/licences/omni/License.txt').write_text('other terms')
+    with pytest.raises(ValueError, match='licences/omni/License.txt: differs between parts'):
+        building_set.compose('city-2', ['chairs-1', 'beds-1'])
+
+
 def test_enable_replaces_only_materials_and_meshes(tmp_path, monkeypatch):
     monkeypatch.setenv('GOTHIC_AI_DATA', str(tmp_path))
     staged(tmp_path, 'roofs-1', {'ROOF_01.TGA': 'roofs-1-roof-01'})
