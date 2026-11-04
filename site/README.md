@@ -38,6 +38,42 @@ that loads the video from youtube-nocookie.com only when it is clicked.
 manifest, and `lockup.svg` (the seal and the lettering) in the bar. They are exported from the brand kit
 outside the repository (`~/.local/share/gothic-ai/brand/logo/letter/kit/`): change them there and copy.
 
+## Design
+
+A letter written by candlelight in the colony, after the channel's brand: the night, its gold and the seal's
+red; the valley under the Barrier, its people and the hero's diary as illustrations; real frames of the game as
+the proof. The method follows elayadesign's
+[redesign](https://github.com/elayadesign/redesign-skill) and
+[landing page](https://github.com/elayadesign/ai-design-skills) skills (one type and spacing scale, every
+state, restrained motion, a sentence that lights up word by word); their own values (Geist, grey surfaces)
+are a product look the brand avoids, so ours replace them. Every value is a token at the top of
+`static/style.css`; a new one goes there first.
+
+- **Colour.** Page `--night` #14110D, raised `--night-1`, lines in translucent gold. Text `--parchment`
+  (headings, the npc's lines), `--ink` (running text), `--ash` (secondary). One accent, `--gold` #E2B868
+  (the channel's gold): the hero's lines, actions, labels. `--wax` #9C2121 only next to the seal.
+  Backgrounds stay flat; depth comes from film grain, the illustrations and the take's own frame, blurred,
+  behind it.
+- **Illustrations** (`static/art/`) are ours, drawn with `image_gen` for the site: the valley under the
+  Barrier (`valley` on the first screen, `valley-2` at the top of inner pages and under the footer), the old
+  mage beside the claim, four people of the colony (`miner`, `guard`, `novice`, `hunter`, named in
+  `home.toml` `people`), the parchment of the diary page. Prompts, full-size sources and the choice are in
+  `reports/site/2026-11-gothic-look/`. They are never passed off as the game: the people row and the footer
+  say they are illustrations, and every frame of the game is a real take. WebP, about 30 to 110 KB each; their
+  edges melt into the night with masks, and the diary page's torn edges are masks too (`art/torn-*.svg`).
+- **Type.** Cormorant Garamond (headings and the conversation, from 20 px up), Spectral (text), JetBrains
+  Mono (labels, dates, step numbers: the machine's voice). Sizes are steps of the scale in `--t12`…`--t72`;
+  weights 400 to 600, no italics outside a post's own emphasis. Headings `text-wrap: balance`, text `pretty`.
+- **Space and shape.** Spacing 4, 8, 12, 16, 24, 32, 40, 48, 64, 80, 96, 128 px; sections 64 px apart on a
+  phone, 96 px from 48 rem. Radius 4 (badges, code), 8 (buttons), 12 (cards, pictures), 16 (the bar, a short).
+  The column is 75 rem; running text 42 rem.
+- **Motion.** One curve, `--ease` (0.22, 1, 0.36, 1): 500 ms for movement, 300 ms for colour. Sections rise
+  32 px and fade in once as they come into view (`data-reveal`, an `IntersectionObserver` in `site.js`);
+  only `transform` and `opacity` move. With reduced motion everything only fades, the loop does not play and
+  the claim shows at once.
+- **Checks.** A page is looked at 390 px and 1440 px wide, in both languages: no sideways scroll, the
+  primary action on the first screen, every link with hover, press and focus states.
+
 ## Publishing
 
 Once: Settings → Pages → Source: GitHub Actions. Then a push to `main` that touches `site/` publishes it.

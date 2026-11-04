@@ -2,6 +2,9 @@
 
 ## Как работает сейчас
 
+Bench families are extracted into `common/testbench_<family>.cpp`, with shared state types and helpers in `testbench_internal.h`.
+The dispatcher, tick and reset remain in `testbench.cpp` for now.
+
 Runs a scenario through the windowed game or the headless runner and records metrics and a report.
 Windowed scenarios can also capture video with a debug overlay and point at suspicious frames.
 

@@ -109,6 +109,8 @@ class Inventory final {
     Item*  currentSpell(uint8_t s) { return numslot[s]; }
     const Item*  currentSpell(uint8_t s) const { return numslot[s]; }
     Item*  findByFlags(ItmFlags f, uint32_t num) const;
+    // the carried item of that class (the arrows of a bow: the quiver shows their mesh); nullptr if none
+    Item*  itemOfClass(size_t cls) { return findByClass(cls); }
 
     uint8_t currentSpellSlot() const;
     bool    hasStateItem() const;

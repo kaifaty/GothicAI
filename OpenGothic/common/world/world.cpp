@@ -407,6 +407,8 @@ void World::load(Serialize &fin) {
   }
 
 void World::save(Serialize &fout) {
+  // The pose is saved with its solved bones: no NPC may still owe frames to the animation LOD.
+  wobj.syncDeferredAnimation();
   fout.setContext(this);
   fout.setEntry("worlds/",wname,"/world");
 
@@ -1068,6 +1070,10 @@ LightGroup::Light World::addLight(std::string_view preset) {
 
 void World::updateAnimation(uint64_t dt) {
   wobj.updateAnimation(dt);
+  }
+
+void World::catchUpAnimation() {
+  wobj.catchUpAnimation();
   }
 
 void World::resetPositionToTA() {

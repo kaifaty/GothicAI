@@ -483,6 +483,7 @@ void Inventory::updateView(Npc& owner) {
     auto  vitm   = world.addView(stateSlot.item->handle());
     owner.setStateItem(std::move(vitm),stateSlot.slot);
     }
+  owner.updateQuiver();
   }
 
 void Inventory::updateArmorView(Npc& owner) {

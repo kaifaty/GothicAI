@@ -1,4 +1,5 @@
 #include "npc.h"
+#include "world/animationlod.h"
 #include "world/bodytraces.h"
 #include "world/bloodspawn.h"
 #include "graphics/mesh/protomesh.h"
@@ -3110,6 +3111,7 @@ void Npc::addCorpseArrowImpulse(const Bullet& bullet) {
   }
 
 void Npc::queueArrowPhysics(const Bullet& bullet) {
+  syncDeferredAnimation();
   if(bullet.isSpell() || !Gothic::physicsFlags().arrowPhysics)
     return;
   const auto direction = bullet.direction(); // cm/ms, as used by the projectile integrator
@@ -3210,6 +3212,7 @@ Vec3 Npc::characterVisualPosition() const {
   }
 
 Vec3 Npc::cameraBone(bool isFirstPerson) const {
+  syncDeferredAnimation();
   const size_t head = visual.pose().findNode("BIP01 HEAD");
 
   Vec3 r = {};
@@ -3413,6 +3416,7 @@ bool Npc::isUsingTorch() const {
   }
 
 void Npc::dropTorch(bool burnout) {
+  syncDeferredAnimation();
   auto sk = visual.visualSkeleton();
   if(sk==nullptr)
     return;
@@ -3501,6 +3505,59 @@ void Npc::updateArmor() {
       visual.setArmor(*this,std::move(vbody));
       }
     }
+  }
+
+void Npc::updateQuiver() {
+  Quiver::State st;
+  const Item*   bow = invent.currentRangedWeapon();
+  st.on = Quiver::enabled() && bow!=nullptr && (bow->mainFlag() & ITM_CAT_FF) && !bow->isCrossbow() &&
+          visual.bodyProto()!=nullptr && visual.visualSkeleton()!=nullptr;
+  if(st.on) {
+    st.ammo     = size_t(bow->handle().munition);
+    const auto n= Quiver::visibleArrows(invent.itemCount(st.ammo)) - visual.quiver().taken();
+    st.visible  = std::max(n,0);
+    st.body     = visual.bodyProto();
+    st.skeleton = visual.visualSkeleton();
+    }
+  if(st==visual.quiver().state())
+    return;
+  if(!st.on) {
+    visual.clearQuiver();
+    return;
+    }
+  std::vector<MeshObjects::Mesh>  arrows;
+  std::vector<Tempest::Matrix4x4> local;
+  if(st.visible>0)
+    if(Item* ammo = invent.itemOfClass(st.ammo)) {
+      for(int i=0; i<st.visible; ++i) {
+        auto view = owner.addView(ammo->handle());
+        if(view.isEmpty())
+          break;
+        arrows.push_back(std::move(view));
+        }
+      if(!arrows.empty())
+        local = Quiver::arrowLayout(arrows[0].protoMesh(),
+                                    int(arrows.size()));
+      if(local.size()!=arrows.size())
+        arrows.clear();
+      }
+  visual.setQuiver(st,owner.addView(Quiver::Visual),std::move(arrows),std::move(local));
+  const auto q   = visual.quiverProbe();
+  const auto who = TestBench::who(this);
+  char buf[200];
+  std::snprintf(buf,sizeof(buf),"quiver npc %.*s arrows %d out %.1f mouth %.2f %.2f %.2f",int(who.size()),who.data(),
+                q.arrows,double(q.out),double(q.mouth.x),double(q.mouth.y),double(q.mouth.z));
+  TestBench::note(buf);
+  }
+
+void Npc::refitQuiver() {
+  visual.clearQuiver();
+  updateQuiver();
+  }
+
+void Npc::setQuiverTaken(int n) {
+  visual.setQuiverTaken(n);
+  updateQuiver();
   }
 
 void Npc::setSword(MeshObjects::Mesh&& s) {
@@ -6502,6 +6559,7 @@ void Npc::hitReaction(const Npc& other, const Bullet* b, int32_t damage, bool st
   }
 
 bool Npc::queueMeleeReaction(const Npc& other, const Vec3& at, const MeleeBladeContact* contact) {
+  syncDeferredAnimation();
   // the blow pushes the struck chain on the living rig like an arrow does, its motors bring it back
   if(!Gothic::physicsFlags().meleeReactions || !living || !isHuman())
     return false;
@@ -6863,6 +6921,7 @@ void Npc::tickAnimationTags() {
 
 void Npc::tick(uint64_t dt) {
   TestBench::beforeNpcTick(*this);
+  updateQuiver();
   updateSimpleMovement();
   NpcLogicalState::Tick logicalTick(*this,dt);
   if(!bloodPoolDone && isDead() && owner.tickCount()-bloodDeathTick>=BloodSpawn::SettleMs) {
@@ -8462,6 +8521,7 @@ void Npc::buyItem(size_t id, Npc &from, size_t count) {
   }
 
 void Npc::dropItem(size_t id, size_t count) {
+  syncDeferredAnimation();
   if(id==size_t(-1))
     return;
   size_t cnt = invent.itemCount(id);
@@ -8511,14 +8571,17 @@ Item* Npc::currentShield() {
   }
 
 Vec3 Npc::mapWeaponBone() const {
+  syncDeferredAnimation();
   return visual.mapWeaponBone();
   }
 
 Vec3 Npc::mapHeadBone() const {
+  syncDeferredAnimation();
   return visual.mapHeadBone();
   }
 
 Npc::EyePose Npc::navigationEyePose() const {
+  syncDeferredAnimation();
   EyePose result;
   const auto& model = visual.transform();
   result.origin = Vec3(model.at(3,0),model.at(3,1)+180.f,model.at(3,2));
@@ -8574,6 +8637,7 @@ Npc::EyePose Npc::navigationEyePose() const {
   }
 
 void Npc::setBloodHit(int64_t gameMs, const Vec3& wound) {
+  syncDeferredAnimation();
   bloodHit  = gameMs;
   bloodBone = size_t(-1);
   auto sk = visual.visualSkeleton();
@@ -8590,6 +8654,7 @@ void Npc::setBloodHit(int64_t gameMs, const Vec3& wound) {
   }
 
 Vec3 Npc::bloodWound() const {
+  syncDeferredAnimation();
   auto sk = visual.visualSkeleton();
   if(sk==nullptr || bloodBone>=sk->nodes.size())
     return centerPosition();
@@ -8597,6 +8662,7 @@ Vec3 Npc::bloodWound() const {
   }
 
 Vec3 Npc::mapBone(std::string_view bone) const {
+  syncDeferredAnimation();
   if(auto sk = visual.visualSkeleton()) {
     size_t id = sk->findNode(bone);
     if(id!=size_t(-1))
@@ -9206,6 +9272,7 @@ static float beastStumbleSpeed(const Animation::Sequence& seq, float targetMs) {
   }
 
 void Npc::meleeStunLook(const Npc& by) {
+  syncDeferredAnimation();
   Vec3 away = position()-by.position();
   away.y = 0;
   away = away.length()>1e-3f ? Vec3::normalize(away) : Vec3(-std::cos(rotationRad()),0,-std::sin(rotationRad()));
@@ -11839,7 +11906,7 @@ bool Npc::canSeeNpc(const Npc &oth, bool freeLos) const {
     return false;
   if(oth.visual.visualSkeleton()->BIP01_HEAD==size_t(-1))
     return false;
-  auto head = oth.visual.mapHeadBone();
+  auto head = oth.mapHeadBone();
   if(canRayHitPoint(head,freeLos))
     return true;
   return false;
@@ -11934,7 +12001,7 @@ bool Npc::canSeeNpcOverEdge(const Npc& oth) const {
   const auto ws = weaponState();
   if(!Aim::isEnabled() || (ws!=WeaponState::Bow && ws!=WeaponState::CBow && ws!=WeaponState::Mage))
     return false;
-  const Vec3  head = visual.mapHeadBone();
+  const Vec3  head = mapHeadBone();
   const Vec3  tg   = oth.physic.center();
   const Vec3  d    = tg - head;
   const float h    = std::sqrt(d.x*d.x+d.z*d.z);
@@ -11949,11 +12016,11 @@ bool Npc::canSeeNpcOverEdge(const Npc& oth) const {
   const Vec3  eye = head + dir*(reach*k) - Vec3(0,drop*k,0);
   if(owner.physic()->ray(head,eye).hasCol)
     return false; // no room to lean
-  return canRayHitPoint(eye,tg,180.f) || canRayHitPoint(eye,oth.visual.mapHeadBone(),180.f);
+  return canRayHitPoint(eye,tg,180.f) || canRayHitPoint(eye,oth.mapHeadBone(),180.f);
   }
 
 bool Npc::canSeeSource() const {
-  const auto head = visual.mapHeadBone();
+  const auto head = mapHeadBone();
   const bool ret  = owner.sound()->canSeeSource(head);
   if(ret)
     return ret;
@@ -11972,7 +12039,7 @@ bool Npc::canRayHitPoint(const Tempest::Vec3 pos, float angOverride, float extRa
   if(qDistTo(pos)>range*range)
     return false;
   // npc eyesight height by default
-  return canRayHitPoint(visual.mapHeadBone(), pos, angOverride, extRange);
+  return canRayHitPoint(mapHeadBone(), pos, angOverride, extRange);
   }
 
 bool Npc::canRayHitPoint(const Tempest::Vec3 self, const Tempest::Vec3 pos, float angOverride, float extRange) const {
@@ -11989,6 +12056,7 @@ bool Npc::canRayHitPoint(const Tempest::Vec3 self, const Tempest::Vec3 pos, floa
 
   float dx  = self.x-pos.x, dz=self.z-pos.z;
   float dir = angleDir(dx,dz);
+  syncDeferredAnimation();
   float da  = float(M_PI)*(visual.viewDirection()-dir)/180.f;
   auto  ca  = angOverride > 0 ? std::cos(angOverride*M_PI/180.0) : ref;
   if(double(std::cos(da))<=ca) {
@@ -12030,7 +12098,7 @@ bool Npc::canSeeItem(const Item& it, bool freeLos) const {
   static const double ref = std::cos(100*M_PI/180.0); // spec requires +-100 view angle range
 
   const auto  itMid = it.midPosition();
-  const auto  cen   = visual.mapHeadBone();
+  const auto  cen   = mapHeadBone();
   const auto  dir   = itMid - cen;
   const float range = float(hnpc->senses_range);
 
@@ -12040,6 +12108,7 @@ bool Npc::canSeeItem(const Item& it, bool freeLos) const {
   if(!freeLos) {
     float dx  = dir.x, dz = dir.z;
     float dir = angleDir(dx,dz);
+    syncDeferredAnimation();
     float da  = float(M_PI)*(visual.viewDirection()-dir)/180.f;
     if(double(std::cos(da))>ref)
       return false;
@@ -12116,6 +12185,25 @@ Matrix4x4 Npc::mkPositionMatrix() const {
 
 void Npc::updateTransform() {
   updateAnimation(0, true);
+  }
+
+void Npc::syncDeferredAnimation() const {
+  if(animLodPendingDt==0 || !AnimationLod::canSyncOnRead())
+    return;
+  AnimationLod::noteSync();
+  // An Npc is never created const: the solved pose is a cache of the world clock.
+  const_cast<Npc*>(this)->updateAnimation(0);
+  }
+
+bool Npc::animationLodPinned() const {
+  // Melee shadow bodies and blades, living hit bodies, ragdolls and mobsi read
+  // this NPC's bones every frame from world logic. A drawn weapon alone does not
+  // pin: monsters keep Fist mode at rest. A fighter has a target, swings, or has
+  // an open shadow-blade window.
+  const bool fighting = weaponState()!=WeaponState::NoWeapon &&
+                        (currentTarget!=nullptr || isAttackAnim() || (meleeShadow && meleeShadow->window));
+  return animLodTargeted || isPlayer() || fighting ||
+         ragdoll!=nullptr || living!=nullptr || currentInteract!=nullptr || spellFrozen();
   }
 
 void Npc::resetCharacterVisualHeight() {
@@ -12234,6 +12322,10 @@ void Npc::updateCharacterVisualHeight() {
 
 void Npc::updateAnimation(uint64_t dt, bool force) {
   FrameProfile::Scope timing(FrameProfile::Zone::ActorAnimationCpu,FrameProfile::watchedActor(this));
+  // Frames the animation LOD skipped: the pose follows the world clock, the
+  // smoothing filters and effects get the whole interval at once.
+  dt += animLodPendingDt;
+  animLodPendingDt = 0;
   if(lieVisualYOffset!=0) {
     auto matrix=visual.transform();
     matrix.set(3,1,matrix.at(3,1)-lieVisualYOffset);
@@ -12305,6 +12397,7 @@ void Npc::updateAnimation(uint64_t dt, bool force) {
   updateMeleeBenchBlade();
   if(living && living->reactionWeight()>0.f && living->getPose(arrowPhysicalPose))
     syncAtt |= visual.setPhysicalPose(arrowPhysicalPose,living->reactionBones(),living->reactionWeight());
+  syncAtt |= visual.updateQuiver(*this,dt);
   if(syncAtt)
     visual.syncAttaches();
   }
