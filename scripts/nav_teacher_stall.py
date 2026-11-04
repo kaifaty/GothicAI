@@ -18,6 +18,13 @@ at the last seen point: both are the behaviour of main before this change, on th
 same runner. The teacher's pace off follow is forced with `navdemos teacher-pace`;
 walk routes get the horizon x3.064158265, as in the pace-v5 comparison.
 
+`--same-as DIR` (with `--exit off`) copies a route from the finished `--exit on`
+run in DIR when that episode never reached the code the switch changes: no
+decision without a start cell and none of the escape, escape_blocked or body_exit
+rules (refusals follow only those). The stand is deterministic, so the episode
+without the exit is the same; the first `--verify-same` such routes (5) are run
+anyway and must match.
+
 Every number comes from the stand's episode.json: success and elapsed time, the
 teacher's decisions without a start cell, its rules over all decisions and those
 standing (no forward or strafe key) far from the goal (follow: beyond 5 m,
@@ -138,9 +145,29 @@ def episode_row(directory, value):
     return row
 
 
+UNTOUCHED = ("escape", "escape_blocked", "body_exit")
+SAME_FIELDS = ("success", "failure", "elapsed_ms", "decisions", "start_not_found", "branches", "far_idle",
+               "far_decisions")
+
+
+def untouched(row):
+    """The --exit on episode never reached the code that --exit off changes."""
+    return row["start_not_found"] == 0 and all(row["branches"][name] == 0 for name in UNTOUCHED)
+
+
 def validation(args):
     import nav_rl as rl
     teacher = args.model == "teacher"
+    same = {}
+    if args.same_as is not None:
+        if not teacher or args.exit != "off":
+            raise ValueError("--same-as copies teacher routes into an --exit off run")
+        reference = read_json(args.same_as / "summary.json")
+        if reference["exit"] != "on" or any(reference[key] != getattr(args, key)
+                                            for key in ("families", "lost", "pace", "limit_ms")):
+            raise ValueError("--same-as must be the --exit on run of the same routes")
+        same = {row["id"]: row for row in reference["episodes"] if untouched(row)}
+    verify = set(sorted(same)[:args.verify_same])
     if not teacher:
         args.model = Path(args.model).resolve()
         if not args.model.is_file():
@@ -163,6 +190,7 @@ def validation(args):
                     exit=args.exit, lost=args.lost, pace=args.pace, limit_ms=args.limit_ms,
                     runner_sha256=follow.sha256(args.runner), manifest=str(args.manifest),
                     detour=str(args.detour) if args.detour else None, action_seed=ACTION_SEED,
+                    same_as=str(args.same_as) if args.same_as else None,
                     base_fingerprint=os.environ.get("OPENGOTHIC_BASE_FINGERPRINT"))
     if (args.output / "identity.json").is_file() and read_json(args.output / "identity.json") != identity:
         raise ValueError(f"Refusing different inputs at {args.output}")
@@ -182,6 +210,9 @@ def validation(args):
                     continue
                 if directory.exists():
                     shutil.rmtree(directory)
+                if value["id"] in same and value["id"] not in verify:
+                    follow.write_json(directory / "row.json", dict(same[value["id"]], body_exit="off", copied=True))
+                    continue
                 worker.seed = value["seed"]
                 try:
                     rl.scenario(worker, runner, f"stall-{value['id']}", commands(args, value, teacher), directory)
@@ -203,6 +234,11 @@ def validation(args):
                     raise ValueError(f"Episode teacher pace differs: {directory}")
                 if value["goal_kind"] == "follow" and row["follow_lost"] != args.lost.replace("-", "_"):
                     raise ValueError(f"Episode lost rule differs: {directory}")
+                if value["id"] in verify:
+                    reference = same[value["id"]]
+                    if any(row[key] != reference[key] for key in SAME_FIELDS):
+                        raise ValueError(f"An untouched route differs without the body exit: {value['id']}")
+                    row["verified_same"] = True
                 follow.write_json(directory / "row.json", row)
                 print(json.dumps(dict(id=value["id"], success=row["success"], elapsed_ms=row["elapsed_ms"],
                                       start_not_found=row["start_not_found"])), flush=True)
@@ -382,11 +418,12 @@ def main(argv=None):
     parser.add_argument("--keep-traces", action="store_true", help="Keep teacher paths and frames (diagnosis)")
     parser.add_argument("--trace", action="store_true", help="Dump memory and navmesh truth at stalls (diagnosis)")
     parser.add_argument("--parallel", type=int, default=12)
+    parser.add_argument("--verify-same", type=int, default=5)
     parser.add_argument("--physics", default="cv")
     parser.add_argument("--watchdog-seconds", type=float, default=1800)
     parser.add_argument("--ini", type=Path)
     for name in ("output", "runner", "assets", "save", "links", "roads", "cache", "manifest", "rejections",
-                 "detour", "root"):
+                 "detour", "same-as", "root"):
         parser.add_argument("--" + name, type=Path)
     args = parser.parse_args(argv)
     for key, value in vars(args).items():

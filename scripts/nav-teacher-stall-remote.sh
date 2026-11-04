@@ -8,7 +8,8 @@
 #   bash scripts/nav-teacher-stall-remote.sh follow-teacher-off-last-seen # ... as on main (both switches back)
 #   bash scripts/nav-teacher-stall-remote.sh follow-v5-{aside,last-seen}  # v5, the lost rule now / as on main
 #   bash scripts/nav-teacher-stall-remote.sh static-teacher-{run,walk}-{on,off}-{point,object,approach,detour}
-#                                                         # the teacher with / without the body exit, forced pace
+#                                                         # the teacher with / without the body exit, forced pace;
+#                                                         # off after on: routes on never touched are copied
 #   bash scripts/nav-teacher-stall-remote.sh replay       # the v5 teacher recordings replayed with --body-exit off/on
 #   bash scripts/nav-teacher-stall-remote.sh live         # 03-follow-hero, teacher and v5, three seeds, video
 #   bash scripts/nav-teacher-stall-remote.sh report       # tables from all finished stages
@@ -266,8 +267,14 @@ if [[ "$stage" == static-* ]]; then
   IFS=- read -r _ _ pace body_exit part <<< "$stage"
   game_environment
   navmesh 12
+  # Without the exit, routes the exit never touched are copied from the finished run with it.
+  same=()
+  if [[ "$body_exit" == off ]]; then
+    [[ -f "$archive/validation/teacher-$pace-on-$part/summary.json" ]] || stop "run static-teacher-$pace-on-$part first"
+    same=(--same-as "$archive/validation/teacher-$pace-on-$part")
+  fi
   validate "$archive/validation/teacher-$pace-$body_exit-$part" teacher --families "$part" --pace "$pace" \
-    --exit "$body_exit" --parallel 12
+    --exit "$body_exit" --parallel 12 "${same[@]}"
   exit
 fi
 
