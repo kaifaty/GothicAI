@@ -59,7 +59,7 @@ HASH
     ssh ryzen "mv -T '$incoming' '$task/source/$snapshot' 2>/dev/null || rm -rf '$incoming'"
   fi
   case "$stage" in
-    smoke) resources=(--class quick --threads 4 --cpu-quota 400% --mem 5G --max 30m) ;;
+    smoke) resources=(--class quick --threads 4 --cpu-quota 400% --mem 6G --max 40m) ;;
     validation-*) resources=(--class batch --threads 12 --cpu-quota 1200% --mem 14G --max 2h) ;;
     live-*) resources=(--class batch --threads 6 --cpu-quota 600% --mem 10G --gpu-mem 3G --display --display-shared --max 1h) ;;
     report) resources=(--class quick --threads 1 --cpu-quota 100% --mem 2G --max 10m) ;;
@@ -130,7 +130,7 @@ if [[ "$stage" == smoke ]]; then
     cmake -S "$source/OpenGothic" -B "$build_dir" -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
       "${RYZEN_CMAKE_FLAGS[@]}" -DOPENGOTHIC_JOLT_X86=x86-64-v3 \
       -DCMAKE_CXX_FLAGS="-I$VULKAN_SDK/include" -DCMAKE_EXE_LINKER_FLAGS="-L$VULKAN_SDK/lib"
-    cmake --build "$build_dir" --target gothic-body-runner Gothic2Notr content-convert gothic-followtrail-contract --parallel 12
+    cmake --build "$build_dir" --target gothic-body-runner Gothic2Notr content-convert gothic-followtrail-contract --parallel 4
     printf '%s\n' "$snapshot" > "$build_dir/built"
   fi
   "$build_dir/opengothic/gothic-followtrail-contract" | tee "$archive/smoke/contract.txt"

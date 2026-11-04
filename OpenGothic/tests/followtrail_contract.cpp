@@ -110,7 +110,7 @@ void wallDetour() {
       require(distance(trail.points().back().position,object)>1,"an unseen position never enters the trail");
       }
     const auto result = trail.guide(follower,object,floor.view(follower,heading));
-    require(result.source!=Source::Line,"a visible trail needs no straight fallback here");
+    require(result.source!=Source::Line && result.source!=Source::Unseen,"a visible trail needs no straight fallback here");
     require(!floor.crosses(follower,result.carrot),"the carrot never crosses the wall");
     if(result.source!=Source::Hold)
       require(distance(result.carrot,object)>=FollowTrail::standoffCm-.5,"the carrot keeps the standoff");
@@ -218,16 +218,28 @@ void lostAtTrailEnd() {
   require(far.source==Source::Trail && distance(far.carrot,Vec3(500,0,0))<1,"the last seen point while it is ahead");
   trail.observe(hidden,false);
   const auto at = trail.guide(Vec3(480,0,0),hidden,dark.view(Vec3(480,0,0),East));
-  require(at.source==Source::Line && trail.lost(),"at the last seen point the straight carrot takes over");
+  require(at.source==Source::Unseen && trail.lost(),"at the last seen point the straight carrot takes over");
   trail.observe(hidden,false);
   const auto latched = trail.guide(Vec3(480,0,150),hidden,dark.view(Vec3(480,0,150),East));
-  require(latched.source==Source::Line,"the loss holds until the object is seen again");
+  require(latched.source==Source::Unseen,"the loss holds until the object is seen again");
   trail.observe(Vec3(500,0,1400),true);
   require(!trail.lost(),"seeing the object again resumes the trail");
   FollowTrail never;
   never.observe(hidden,false);
-  require(never.points().empty() && never.guide(Vec3(),hidden,dark.view(Vec3(),East)).source==Source::Line,
+  require(never.points().empty() && never.guide(Vec3(),hidden,dark.view(Vec3(),East)).source==Source::Unseen,
           "an object never seen leaves only the straight carrot");
+  }
+
+// The object walks toward the follower: no trail point ahead is 2.5 m from it.
+void comingToward() {
+  Floor dark;dark.seen=false;
+  FollowTrail trail;
+  for(float x=1000; x>=600; x-=25)
+    trail.observe(Vec3(x,0,0),true);
+  const Vec3 follower(0,0,0), object(600,0,0);
+  const auto result = trail.guide(follower,object,dark.view(follower,East));
+  require(result.source==Source::Line && distance(result.carrot,Vec3(350,0,0))<.5,
+          "an object coming toward the follower leaves the straight carrot");
   }
 
 void shortMemoryAndSpacing() {
@@ -268,6 +280,7 @@ int main() {
   hiddenLeader();
   straightCut();
   lostAtTrailEnd();
+  comingToward();
   shortMemoryAndSpacing();
   passageChecks();
   std::puts("followtrail contract: ok");

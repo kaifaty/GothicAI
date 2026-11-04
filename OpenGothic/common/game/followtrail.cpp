@@ -27,6 +27,7 @@ const char* FollowTrail::name(Source source) {
     case Source::Cut: return "cut";
     case Source::Trail: return "trail";
     case Source::Line: return "line";
+    case Source::Unseen: return "unseen";
     case Source::Count: break;
     }
   return "invalid";
@@ -124,7 +125,11 @@ FollowTrail::Result FollowTrail::guide(const Vec3& follower, const Vec3& object,
   // more; the straight carrot remains until the object is seen again.
   if(!trail.empty() && !visibleNow && (follower-trail.back().position).length()<=reachedCm)
     lostAtEnd=true;
-  const double standoff=trail.empty() || lostAtEnd ? -1 : standoffArc(object);
+  if(trail.empty() || lostAtEnd) {
+    result.carrot=direct;result.source=Source::Unseen;
+    return result;
+    }
+  const double standoff=standoffArc(object);
   if(standoff<=progress) {
     result.carrot=direct;result.source=Source::Line;
     return result;

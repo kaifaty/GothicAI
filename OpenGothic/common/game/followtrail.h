@@ -31,7 +31,9 @@ class FollowTrail final {
       Cut,    // a trail point beyond the lookahead; near memory sees the passage free
       Trail,  // the trail point at the lookahead (capped by the standoff), pulled
               // back along the trail where near memory has seen a hazard before it
-      Line,   // no usable trail (never seen, lost at its end): the straight carrot
+      Line,   // no trail point ahead is standoffCm from the object (it comes toward
+              // the follower, or has not yet gone that far): the straight carrot
+      Unseen, // never seen, or lost at the last seen point: the straight carrot
       Count
       };
     static const char* name(Source source);

@@ -41,7 +41,7 @@ ACTION_SEED = 18102027
 FAMILY = "follow_below_gate"
 LIVE_PLACE = "03-follow-hero"
 QUALIFICATION = .8
-SOURCES = ("hold", "direct", "cut", "trail", "line")
+SOURCES = ("hold", "direct", "cut", "trail", "line", "unseen")
 
 
 def read_json(path):
