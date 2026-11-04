@@ -373,19 +373,24 @@ Quiver::Probe Quiver::probe(const Matrix4x4& pelvis, const Matrix4x4& spine, con
   return p;
   }
 
-std::vector<size_t> Quiver::nearPoints(const Fit& f, const Skeleton& sk, const std::vector<SkinPoint>& bind) {
-  std::vector<size_t> ret;
+void Quiver::nearPoints(const Fit& f, const Skeleton& sk, const std::vector<SkinPoint>& bind,
+                        std::vector<size_t>& ids, std::vector<uint8_t>& leg) {
+  ids.clear();
+  leg.clear();
   if(!f.valid || f.pelvis>=sk.tr.size())
-    return ret;
-  // the quiver at rest in the bind pose; a point that far from it may come to it as the legs, the flaps and
-  // the sleeves move: the nearest first (the thigh, the boot, the flaps), the far ones dropped past MaxPoints
+    return;
+  // the quiver at rest in the bind pose; a point that far from it may come to it as the legs and the flaps
+  // move: the nearest first (the thigh, the boot, the flaps), the far ones dropped past MaxPoints. Not the
+  // arms: their capsules push it; a robe's wide sleeves (cloth) do not
   constexpr float  Reach     = 45.f;
-  constexpr size_t MaxPoints = 500;
+  constexpr size_t MaxLeg    = 160, MaxOther = 160;
   auto inv = sk.tr[f.pelvis]*f.local;
   inv.inverse();
-  std::vector<std::pair<float,size_t>> near;
+  const auto arm  = armBones(sk);
+  const auto legs = legBones(sk);
+  std::vector<std::pair<float,size_t>> near, nearLeg;
   for(size_t i=0; i<bind.size(); ++i) {
-    if(bind[i].src==size_t(-1))
+    if(bind[i].src==size_t(-1) || (bind[i].bone<arm.size() && arm[bind[i].bone]))
       continue;
     Vec3 q = bind[i].pos;
     inv.project(q);
@@ -394,20 +399,34 @@ std::vector<size_t> Quiver::nearPoints(const Fit& f, const Skeleton& sk, const s
     const float gap = std::hypot(q.x,q.z)-radiusAt(-q.y);
     if(gap>Reach)
       continue;
-    near.emplace_back(gap,bind[i].src);
+    if(bind[i].bone<legs.size() && legs[bind[i].bone])
+      nearLeg.emplace_back(gap,i); else
+      near.emplace_back(gap,i);
     }
-  std::sort(near.begin(),near.end());
-  if(near.size()>MaxPoints)
-    near.resize(MaxPoints);
-  for(auto& n:near)
-    ret.push_back(n.second);
-  return ret;
+  // the nearest of each, so many: the leg's own share (the flaps must not crowd it out)
+  for(auto* list:{&nearLeg,&near}) {
+    std::sort(list->begin(),list->end());
+    const size_t most = list==&nearLeg ? MaxLeg : MaxOther;
+    if(list->size()>most) {
+      // every n-th of the nearest 3x as many: the whole near part, thinned
+      std::vector<std::pair<float,size_t>> thin;
+      const size_t pool = std::min(list->size(),most*3);
+      for(size_t k=0; k<most; ++k)
+        thin.push_back((*list)[k*pool/most]);
+      *list = std::move(thin);
+      }
+    for(auto& n:*list) {
+      ids.push_back(bind[n.second].src);
+      leg.push_back(list==&nearLeg ? 1 : 0);
+      }
+    }
   }
 
 void Quiver::rest() {
   axis      = {0,-1,0};
   moving    = false;
   devV      = Vec3();
+  devHeld   = Vec3();
   yawOffset = 0;
   }
 
@@ -446,10 +465,10 @@ void Quiver::step(const Matrix4x4& pelvis, const Matrix4x4& spine, const std::ve
   const Vec3 pivot = translation(frame);
   const Vec3 restDir = Vec3::normalize(turned(frame,{0,-1,0}));
 
-  // the target: the rest, turned away from what is in the tube by up to YieldMax at the contact
+  // the target: the rest, turned away from what is in the tube; each contact allows so much (the leg more)
   Vec3  target = restDir;
-  float limit  = 1.f; // the cosine of the most it may turn
-  for(int pass=0; pass<3; ++pass) {
+  float allow  = 0; // rad it may turn: the most any contact allows
+  for(int pass=0; pass<2; ++pass) {
     bool hit = false;
     for(auto& o:obstacles) {
       // the closest points of the axis (pivot + target*t, t 0..Length) and the obstacle's segment
@@ -475,67 +494,56 @@ void Quiver::step(const Matrix4x4& pelvis, const Matrix4x4& spine, const std::ve
       if(dist>=need || dist<1e-3f)
         continue;
       target = Vec3::normalize(target + away*((need-dist)/(dist*t)));
-      limit  = std::min(limit,std::cos(std::min(std::atan2(YieldMax,t),SwingMax*float(M_PI)/180.f)));
+      const float cm  = o.leg ? LegYieldMax   : YieldMax;
+      const float deg = o.leg ? LegYieldAngle : YieldAngle;
+      allow  = std::max(allow,std::min(std::atan2(cm,t),deg*float(M_PI)/180.f));
       hit    = true;
       }
     if(!hit)
       break;
     }
-  {
-    const float c = Vec3::dotProduct(target,restDir);
-    if(c<limit) {
-      const Vec3 side = Vec3::normalize(target - restDir*c);
-      target = restDir*limit + side*std::sqrt(std::max(0.f,1.f-limit*limit));
-      }
-  }
-  // the target across the axis in the rest frame, at the mass
+  // the target across the axis in the rest frame, at MassAt down it, no farther than allowed
   auto inv = frame;
   inv.inverse();
   Vec3 tl = turned(inv,target);
   if(tl.y>-0.1f)
     tl = {0,-1,0};
-  const float maxDev = MassAt*std::tan(SwingMax*float(M_PI)/180.f);
   Vec3 dTarget = {tl.x/-tl.y*MassAt,0,tl.z/-tl.y*MassAt};
+  const float maxDev = MassAt*std::tan(allow);
   if(dTarget.length()>maxDev)
-    dTarget = dTarget*(maxDev/dTarget.length());
-
+    dTarget = dTarget*(maxDev/std::max(dTarget.length(),1e-6f));
+  // held: a new or a greater give at once, a smaller one lets go slowly (the leg comes back each step)
+  if(!moving || dTarget.length()>=devHeld.length())
+    devHeld = dTarget; else
+    devHeld = dTarget + (devHeld-dTarget)*std::exp(-dt/GiveRelease);
+  dTarget   = devHeld;
   devTarget = dTarget;
+
   // a jump (a teleport, a load) or the first step: at the target
   if(!moving || (pivot-lastPivot).length()>100.f || dt>0.25f) {
-    dev        = dTarget;
-    devV       = Vec3();
-    accel      = Vec3();
-    lastPivot  = pivot;
-    lastPivotV = Vec3();
-    moving     = true;
+    dev       = dTarget;
+    devV      = Vec3();
+    lastPivot = pivot;
+    moving    = true;
     } else {
-    // the ring's speeding up, in the rest frame, smoothed: the mass lags behind it (the spring holds it)
-    const Vec3 v = (pivot-lastPivot)/dt;
-    Vec3 a = turned(inv,(v-lastPivotV)/dt);
-    constexpr float MaxAccel = 3000.f; // cm/s^2: a short frame's second difference is no speeding up
-    if(a.length()>MaxAccel)
-      a = a*(MaxAccel/a.length());
-    lastPivot  = pivot;
-    lastPivotV = v;
-    accel += (a-accel)*(1.f-std::exp(-dt*2.f*float(M_PI)*AccelSmooth));
-    const float w = 2.f*float(M_PI)*SwingFreq;
-    const int   n = std::max(1,int(std::ceil(dt*240.f)));
-    const float h = dt/float(n);
+    // critically damped to the target, no overshoot (90% in GiveTime), no faster than GiveStep in 1/60 s
+    lastPivot = pivot;
+    const Vec3  from = dev;
+    const float w    = 3.89f/GiveTime;
+    const int   n    = std::max(1,int(std::ceil(dt*240.f)));
+    const float h    = dt/float(n);
     for(int i=0; i<n; ++i) {
-      Vec3 acc = (dTarget-dev)*(w*w) - devV*(2.f*SwingDamp*w) - accel;
+      Vec3 acc = (dTarget-dev)*(w*w) - devV*(2.f*w);
       acc.y = 0;
       devV += acc*h;
       dev  += devV*h;
       dev.y = 0;
-      const float l = dev.length();
-      if(l>maxDev) {
-        // no farther than SwingMax from the rest: the speed out of the cone is lost
-        const Vec3 u = dev/l;
-        dev = u*maxDev;
-        const float vo = Vec3::dotProduct(devV,u);
-        if(vo>0)
-          devV -= u*vo;
-        }
+      }
+    const Vec3  moved = dev-from;
+    const float most  = MassAt*std::tan(GiveStep*float(M_PI)/180.f)*dt*60.f;
+    if(moved.length()>most) {
+      dev  = from + moved*(most/moved.length());
+      devV = (dev-from)/dt;
       }
     }
   axis = Vec3::normalize(Vec3(dev.x,-MassAt,dev.z));

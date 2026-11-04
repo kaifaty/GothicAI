@@ -617,15 +617,16 @@ void MdlVisual::setQuiver(const Quiver::State& st, MeshObjects::Mesh&& body, std
     }
   // the fit is the armour's and the skeleton's: a new count of arrows keeps it (and the swing)
   Quiver::Fit fit = quiv.fit();
-  std::vector<size_t> near = quiv.near();
+  std::vector<size_t>  near    = quiv.near();
+  std::vector<uint8_t> nearLeg = quiv.nearLeg();
   if(!fit.valid || quiv.state().body!=st.body || quiv.state().skeleton!=st.skeleton) {
     std::vector<Quiver::SkinPoint> bind;
     quiverPoints(true,bind);
-    fit  = Quiver::fit(*skeleton,bind);
-    near = Quiver::nearPoints(fit,*skeleton,bind);
+    fit = Quiver::fit(*skeleton,bind);
+    Quiver::nearPoints(fit,*skeleton,bind,near,nearLeg);
     }
   quiv.set(st,fit,std::move(body),std::move(arrows),std::move(arrowLocal));
-  quiv.setNear(std::move(near));
+  quiv.setNear(std::move(near),std::move(nearLeg));
   if(textureOwnerKnown)
     quiv.setTextureOwner(textureOwnerPosition,textureOwnerSpatial);
   syncAttaches();
@@ -714,13 +715,16 @@ bool MdlVisual::updateQuiver(const Npc& npc, uint64_t dt) {
     if(c.bone>=sk.nodes.size())
       continue;
     const std::string_view name = sk.nodes[c.bone].name;
-    if(name=="BIP01 R THIGH" || name=="BIP01 R CALF" || name=="BIP01 R FOREARM" || name=="BIP01 R HAND")
-      obs.push_back({c.a,c.b,c.r});
+    const bool leg = name=="BIP01 R THIGH" || name=="BIP01 R CALF";
+    if(leg || name=="BIP01 R FOREARM" || name=="BIP01 R HAND")
+      obs.push_back({c.a,c.b,c.r,leg});
     }
   // the armour's flaps and the legs' skin near the quiver: its points
   if(const ProtoMesh* pm = view.protoMesh()) {
-    const auto& sv = pm->skinVertexData();
-    for(size_t id:quiv.near()) {
+    const auto& sv   = pm->skinVertexData();
+    const auto& legs = quiv.nearLeg();
+    for(size_t k=0; k<quiv.near().size(); ++k) {
+      const size_t id = quiv.near()[k];
       if(id>=sv.size())
         continue;
       const auto& v = sv[id];
@@ -736,7 +740,7 @@ bool MdlVisual::updateQuiver(const Npc& npc, uint64_t dt) {
         }
       if(weight>0.f) {
         p = p/weight;
-        obs.push_back({p,p,0.f});
+        obs.push_back({p,p,0.f,k<legs.size() && legs[k]!=0});
         }
       }
     }
@@ -759,7 +763,7 @@ std::vector<Vec3> MdlVisual::carriedPoints(const MeshAttach& att, std::string_vi
     return ret;
   const auto& m = renderedBone(att.boneId);
   if(!pm->points.empty()) {
-    for(size_t i=0; i<pm->points.size(); i+=4) {
+    for(size_t i=0; i<pm->points.size(); i+=8) {
       auto p = pm->points[i];
       m.project(p);
       ret.push_back(p);
@@ -768,8 +772,8 @@ std::vector<Vec3> MdlVisual::carriedPoints(const MeshAttach& att, std::string_vi
     }
   const Vec3* b    = pm->bbox();
   const float half = std::max(std::abs(b[0].x),std::abs(b[1].x));
-  for(int i=0; i<=40; ++i) {
-    const float x = -half + 2.f*half*float(i)/40.f;
+  for(int i=0; i<=20; ++i) {
+    const float x = -half + 2.f*half*float(i)/20.f;
     Vec3 p = {x,0,b[1].z-(b[1].z-b[0].z)*(x/half)*(x/half)};
     m.project(p);
     ret.push_back(p);

@@ -12,15 +12,16 @@ class Skeleton;
 class ProtoMesh;
 
 // The quiver behind the right hip of a bowman (reports/archery/2026-11-04-quiver-mount, research.md): it hangs from a
-// ring at the mouth, rigid on BIP01 PELVIS, 60 deg from the right side toward the back, the bottom back and out;
-// only the ring is pushed out, by the worn armour's mesh standing. Nearly rigid: its turn about the vertical is
-// halfway between the pelvis and BIP01 SPINE1 (the pelvis turns against the shoulders in a walk), a stiff damped
-// spring answers how the pelvis speeds up (a few degrees at most), and the right thigh, calf, forearm, hand
-// (capsules) and the armour's flaps (its points) make it give way by a turn of up to YieldMax at the contact,
-// through the same spring. The arrows in it are the mesh of the arrow the owner carries, set by its shaft,
-// their tips meeting at the axis at the bottom; how many show goes by steps of their count. The body is the
-// own-content mesh ITRW_QUIVER (content/meshes/meshes.json): its frame has the mouth's centre at the origin and
-// the quiver standing along -Y. OPENGOTHIC_QUIVER=0: none.
+// ring at the mouth, rigid on BIP01 PELVIS, 50 deg from the right side toward the back, the bottom back and out;
+// only the ring is pushed out, by the worn armour's mesh standing. Rigid, no spring (the pelvis's speeding up of
+// the G2 keys is noise): its turn about the vertical follows half the gait's turn of the pelvis against
+// BIP01 SPINE1, and it gives way to what is in it - the right thigh and calf up to LegYieldMax at the contact,
+// the right forearm and hand (capsules), the armour's flaps (its points), the bow and a two-hander on the back up
+// to YieldMax - through a critically damped follower, no overshoot. The wide sleeves of robes (cloth) do not push
+// it. The arrows in it are the mesh of the arrow the owner carries, set by its shaft, their tips meeting at the
+// axis at the bottom; how many show goes by steps of their count. The body is the own-content mesh ITRW_QUIVER
+// (content/meshes/meshes.json): its frame has the mouth's centre at the origin and the quiver standing along -Y.
+// OPENGOTHIC_QUIVER=0: none.
 class Quiver final {
   public:
     static constexpr const char* Visual = "ITRW_QUIVER.3DS";
@@ -28,22 +29,24 @@ class Quiver final {
     static constexpr float Length       = 67.f;  // cm, mouth to bottom (the model, reports/content/2026-11-quiver)
     static constexpr float MouthRadius  = 5.75f; // cm, outer: the mouth 11.5 cm across
     static constexpr float BottomRadius = 4.75f;
-    static constexpr float Around       = 60.f;  // deg from the right side toward the back (research.md, sweep.json)
-    static constexpr float MinOut       = 20.f;  // cm the mouth's centre is out of the body's axis at least
+    static constexpr float Around       = 50.f;  // deg from the right side toward the back (research/sweep_armour.json)
+    static constexpr float MinOut       = 20.5f; // cm the mouth's centre is out of the body's axis at least
     static constexpr float MouthHeight  = 105.f; // cm above the soles in the bind pose
     static constexpr float MouthBack    = 0.f;   // cm behind the body's axis before the push
     static constexpr float TiltBack     = 20.f;  // deg: the bottom back from the vertical
-    static constexpr float TiltOut      = 10.f;  // deg: the bottom out, away from the body
+    static constexpr float TiltOut      = 8.f;   // deg: the bottom out, away from the body
     static constexpr float Clearance    = 2.f;   // cm from the armour or the body to the quiver's side
     static constexpr float Fletching    = 27.f;  // cm of an arrow above the mouth (the fletching and the nock)
     static constexpr float FletchingMax = 30.f;
 
-    // the give (research.md): a stiff spring, well damped, a few degrees; the centre of the mass that far down
-    static constexpr float SwingFreq    = 3.5f;  // Hz
-    static constexpr float SwingDamp    = 0.5f;  // of the critical
-    static constexpr float SwingMax     = 3.f;   // deg it leaves the rest at most, the give and the spring together
-    static constexpr float YieldMax     = 2.f;   // cm it gives way to the thigh (and the rest) at the contact
-    static constexpr float AccelSmooth  = 8.f;   // Hz: the ring's speeding up smoothed so (the keys' 25 Hz steps)
+    // the give (research.md): no spring; it turns away from what is in it, followed critically damped
+    static constexpr float YieldMax     = 2.f;   // cm at the contact: the arm, the flaps, the bow, the two-hander
+    static constexpr float YieldAngle   = 3.f;   // deg at most for those
+    static constexpr float LegYieldMax  = 5.f;   // cm at the contact: the right thigh and calf push it away
+    static constexpr float LegYieldAngle= 6.f;   // deg at most for the leg
+    static constexpr float GiveTime     = 0.15f; // s: the follower is 90% there
+    static constexpr float GiveRelease  = 0.5f;  // s: a give the leg asked for lets go so slowly (the gait comes back)
+    static constexpr float GiveStep     = 1.f;   // deg in 1/60 s at most
     static constexpr float TwistSlow    = 0.6f;  // s: the pelvis's turn against SPINE1 slower than that is a stance,
                                                  // not a gait: it is not followed
     static constexpr float MassAt       = 30.f;  // cm from the ring
@@ -98,12 +101,15 @@ class Quiver final {
     static Fit fit(const Skeleton& sk, const std::vector<SkinPoint>& bind);
     // which of the armour's points can reach the quiver as it swings (the flaps, the legs): by their place
     // in the bind pose round the quiver at rest
-    static std::vector<size_t> nearPoints(const Fit& f, const Skeleton& sk, const std::vector<SkinPoint>& bind);
+    // (not the arms: the capsules; a robe's sleeves do not push it); leg: the point follows the right leg
+    static void nearPoints(const Fit& f, const Skeleton& sk, const std::vector<SkinPoint>& bind,
+                           std::vector<size_t>& ids, std::vector<uint8_t>& leg);
 
     // what pushes it: a capsule a-b of radius r (a point: a==b, r 0), in the world
     struct Obstacle {
       Tempest::Vec3 a, b;
-      float         r = 0;
+      float         r   = 0;
+      bool          leg = false; // the right thigh or calf: it gives way farther
       };
     // the give on by dt seconds: the pelvis and BIP01 SPINE1 in the world now; obstacles in the world
     void         step(const Tempest::Matrix4x4& pelvis, const Tempest::Matrix4x4& spine,
@@ -113,8 +119,9 @@ class Quiver final {
     size_t       spineBone() const { return fitted.spine; }
     // at rest, the swing forgotten (far, unseen, after a jump)
     void         rest();
-    const std::vector<size_t>& near() const { return nearIds; }
-    void         setNear(std::vector<size_t>&& ids) { nearIds = std::move(ids); }
+    const std::vector<size_t>&  near() const { return nearIds; }
+    const std::vector<uint8_t>& nearLeg() const { return nearLegs; }
+    void         setNear(std::vector<size_t>&& ids, std::vector<uint8_t>&& leg) { nearIds = std::move(ids); nearLegs = std::move(leg); }
 
     // the arrows' matrices in the quiver's frame for that arrow mesh (its tip at -X, as a shot flies): by the
     // shaft (the middle of the head), the nocks spread over the mouth, the tips meeting at the axis at the bottom
@@ -167,11 +174,12 @@ class Quiver final {
     std::vector<MeshObjects::Mesh>  arrows;
     std::vector<Tempest::Matrix4x4> arrowLocal;
     std::vector<size_t>             nearIds;
+    std::vector<uint8_t>            nearLegs;
     // the give: the bottom's direction in the quiver's rest frame ((0,-1,0) at rest); the mass's offset from the
     // rest across the axis in that frame (cm) and its speed; the ring's last place and speed, its speeding up
     // (in the rest frame, smoothed)
     Tempest::Vec3                   axis = {0,-1,0};
-    Tempest::Vec3                   dev, devV, lastPivot, lastPivotV, accel, devTarget;
+    Tempest::Vec3                   dev, devV, lastPivot, devTarget, devHeld;
     bool                            moving = false;
     // the pelvis's turn against SPINE1 (rad): now, slowly followed; the rest turns by half their difference
     float                           twistNow = 0, twistSlow = 0, yawOffset = 0;
