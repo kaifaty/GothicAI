@@ -1238,6 +1238,10 @@ DynamicWorld::Item DynamicWorld::addDynamicObj(const Tempest::Matrix4x4& pos, co
   return Item(this,obj.release());
   }
 
+void DynamicWorld::cycleBodyIds(size_t count) {
+  world->cycleBodyIds(count);
+  }
+
 // The placed-item census key hashes this function's inputs, not its hull:
 // any change to the hull it builds bumps PlacedCensusCache::RulesVersion.
 const DynamicWorld::ItemHull& DynamicWorld::itemHullShape(const ProtoMesh& proto, std::string_view visual) {
@@ -3017,6 +3021,11 @@ std::unique_ptr<Ragdoll> DynamicWorld::createKinematicBody(const Skeleton& skele
 
 DynamicWorld::PhysicsStats DynamicWorld::physicsStats() const {
   return {world->stepMilliseconds(),world->bodyCount(),world->rayCount()};
+  }
+
+DynamicWorld::BodyDigest DynamicWorld::bodyDigest() const {
+  auto native=world->bodyDigest();
+  return {std::move(native.digest),native.bodies,native.active};
   }
 
 DynamicWorld::StaticCollisionStats DynamicWorld::staticCollisionStats() const {

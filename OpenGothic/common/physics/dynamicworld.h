@@ -425,6 +425,9 @@ class DynamicWorld final {
       float extraPaddingCm = 0.f; // collision padding beyond the base centimetre
       };
     const ItemHull& itemHullShape(const ProtoMesh& proto, std::string_view visual);
+    // A placed-item census cache hit creates no census bodies; this keeps the
+    // body IDs of everything created later identical to the live census path.
+    void            cycleBodyIds(size_t count);
     struct PlacedItemCandidate {
       const Item* body = nullptr; // read by placedItemCensus; may be empty for placedItemCensusInputs
       bool mission = false;
@@ -681,6 +684,9 @@ class DynamicWorld final {
       uint64_t rays = 0;
       };
     PhysicsStats physicsStats() const;
+    // Native body digest for equivalence checks: see CollisionWorld::bodyDigest.
+    struct BodyDigest { std::string digest; size_t bodies = 0, active = 0; };
+    BodyDigest bodyDigest() const;
     struct StaticCollisionStats {
       size_t shapeBytes = 0, triangles = 0;
       };

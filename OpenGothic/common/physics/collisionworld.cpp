@@ -10,6 +10,7 @@
 #include "world/objects/item.h"
 #include "world/objects/npc.h"
 #include "world/world.h"
+#include "sha256.h"
 #include <Tempest/Log>
 
 #include <cstdlib>
@@ -1900,6 +1901,71 @@ std::unique_ptr<CollisionWorld::DynamicBody> CollisionWorld::addDynamicBody(JPH:
   auto result = std::unique_ptr<DynamicBody>(new DynamicBody(*this,std::move(shape),mass,category));
   addBody(*result,matrix,friction,false,false,mass,startSleeping);
   rigid.push_back(result.get());
+  return result;
+  }
+
+void CollisionWorld::cycleBodyIds(size_t count) {
+  if(count==0)
+    return;
+  auto& interface = impl->system.GetBodyInterface();
+  const JPH::ShapeRefC shape = new JPH::SphereShape(.01f);
+  const JPH::BodyCreationSettings settings(shape.GetPtr(),JPH::RVec3::sZero(),JPH::Quat::sIdentity(),
+                                           JPH::EMotionType::Static,JPH::ObjectLayer(DynamicWorld::C_Item));
+  std::vector<JPH::BodyID> ids;
+  ids.reserve(count);
+  for(size_t i=0;i<count;++i) {
+    auto* native = interface.CreateBody(settings);
+    if(native==nullptr)
+      throw std::runtime_error("Jolt body capacity exhausted");
+    ids.push_back(native->GetID());
+    }
+  for(const auto& id:ids)
+    interface.DestroyBody(id);
+  }
+
+CollisionWorld::BodyDigest CollisionWorld::bodyDigest() const {
+  Sha256 digest;
+  const auto u32=[&](uint32_t value) { digest.update(&value,sizeof(value)); };
+  const auto vec=[&](JPH::Vec3Arg value) {
+    const float xyz[3] = {value.GetX(),value.GetY(),value.GetZ()};
+    digest.update(xyz,sizeof(xyz));
+    };
+  JPH::BodyIDVector ids;
+  impl->system.GetBodies(ids);
+  BodyDigest result;
+  const auto& locks = impl->system.GetBodyLockInterfaceNoLock();
+  for(const auto& id:ids) {
+    JPH::BodyLockRead lock(locks,id);
+    if(!lock.Succeeded())
+      continue;
+    const auto& body = lock.GetBody();
+    ++result.bodies;
+    result.active += body.IsActive() ? 1 : 0;
+    u32(id.GetIndexAndSequenceNumber());
+    u32(uint32_t(body.GetMotionType()));
+    u32(uint32_t(body.GetObjectLayer()));
+    u32(uint32_t(body.IsSensor())|(uint32_t(body.IsActive())<<1));
+    const auto* shape = body.GetShape();
+    u32(uint32_t(shape->GetType()));
+    u32(uint32_t(shape->GetSubType()));
+    const auto local = shape->GetLocalBounds();
+    vec(local.mMin);
+    vec(local.mMax);
+    vec(shape->GetCenterOfMass());
+    if(body.GetMotionType()==JPH::EMotionType::Kinematic)
+      continue;
+    vec(JPH::Vec3(body.GetPosition()));
+    const auto rotation = body.GetRotation();
+    const float quat[4] = {rotation.GetX(),rotation.GetY(),rotation.GetZ(),rotation.GetW()};
+    digest.update(quat,sizeof(quat));
+    vec(body.GetWorldSpaceBounds().mMin);
+    vec(body.GetWorldSpaceBounds().mMax);
+    if(body.GetMotionType()==JPH::EMotionType::Dynamic) {
+      vec(body.GetLinearVelocity());
+      vec(body.GetAngularVelocity());
+      }
+    }
+  result.digest = digest.finish();
   return result;
   }
 

@@ -19,6 +19,7 @@
 #include "gothic.h"
 #include "graphics/mesh/protomesh.h"
 #include "resources.h"
+#include "sha256.h"
 #include "world/bullet.h"
 #include "world/objects/item.h"
 #include "world/objects/npc.h"
@@ -78,6 +79,30 @@ std::string placedItemRow(World& world,const WorldObjects::PlacedItem& row) {
 
 }
 
+// Body-level equivalence of the census cache paths: every native body and
+// every placed Item that owns one. Lines are compared byte for byte.
+static void placedItemsDigest(World& world,std::string_view phase) {
+  const auto native=world.physic()->bodyDigest();
+  Sha256 items;
+  size_t owned=0;
+  const auto& all=world.placedItemCensus();
+  for(size_t i=0;i<all.size();++i) {
+    const auto* item=all[i].item;
+    if(item==nullptr || !item->isDynamic())
+      continue;
+    ++owned;
+    const uint32_t head[3]={uint32_t(i),all[i].zenId,uint32_t(item->physicsSleeping())};
+    items.update(head,sizeof(head));
+    items.update(item->transform().data(),16*sizeof(float));
+  }
+  const std::string row="\"phase\":"+jsonStr(phase)+",\"world\":"+jsonStr(world.name())+
+    ",\"bodies\":"+std::to_string(native.bodies)+",\"active\":"+std::to_string(native.active)+
+    ",\"bodies_sha256\":"+jsonStr(native.digest)+",\"item_bodies\":"+std::to_string(owned)+
+    ",\"items_sha256\":"+jsonStr(items.finish());
+  std::ofstream(outDir+"/placed-items-digest.jsonl",std::ios::app)<<'{'+row+"}\n";
+  event("placed_items_digest",row);
+}
+
 void placedItemsCensus(World& world) {
   std::ofstream file(outDir+"/placed-items-census.jsonl");
   if(!file) {arenaAbort("cannot write placed Item census");return;}
@@ -100,6 +125,7 @@ void placedItemsCensus(World& world) {
     ",\"gaps_1_2\":"+std::to_string(gaps[1])+",\"gaps_2_4\":"+std::to_string(gaps[2])+
     ",\"densest_center_cm\":"+ragdollVector(center)+",\"densest_total_within_20m\":"+std::to_string(total)+
     ",\"densest_eligible_within_20m\":"+std::to_string(count));
+  placedItemsDigest(world,"census");
 }
 
 namespace {
@@ -336,6 +362,7 @@ void placedItemsFields(PlacedItems& state,World& world,Npc& player,PlayerControl
     if(++state.batch<state.batches.size())placedItemsNextBatch(state,world,player);
     else {
       state.probing=false;
+      placedItemsDigest(world,"probe");
       event("placed_items_probe_summary","\"world\":"+jsonStr(world.name())+",\"total\":"+
         std::to_string(state.probed)+",\"under_5cm\":"+std::to_string(state.under5)+",\"max_shift_cm\":"+
         ragdollNumber(state.maximumShift)+",\"batches\":"+std::to_string(state.batches.size()));

@@ -43,6 +43,7 @@
 #include <Tempest/Painter>
 #include <Tempest/Application>
 #include <Tempest/Log>
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <filesystem>
@@ -386,9 +387,16 @@ void WorldObjects::finalizePlacedItems() {
       }
     }
   if(!bodies) {
-    // Cache hit: no temporary body ever existed. Admitted items get their
-    // bodies near the hero later; build their hulls now, as the live path
-    // does, so that proximity creation never builds a hull in a frame.
+    // Cache hit: no temporary body ever existed. Jolt still hands out the
+    // body IDs the live path would leave behind (one per candidate with a
+    // mesh), so later bodies and their contact order stay the same.
+    // Admitted items get their bodies near the hero later; build their hulls
+    // now, as the live path does, so proximity creation never builds one in a frame.
+    {
+    LoadProbe::Startup::Scope removeProbe(LoadProbe::Startup::PhysicsRemove,false,"placed-items");
+    owner.physic()->cycleBodyIds(size_t(std::count_if(candidates.begin(),candidates.end(),
+                                 [](const DynamicWorld::PlacedItemCandidate& c) { return c.proto!=nullptr; })));
+    }
     if(Gothic::physicsFlags().itemHulls)
       for(size_t i=0;i<placedItems.size();++i)
         if(placedItems[i].validation.enabled && candidates[i].proto!=nullptr) {
