@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Navigation memory on the GPU: parity with the engine and cost per agent.
 
-One command from the Mac stages everything on dev-ubuntu, runs one gq job and
+One command from the Mac stages everything on a GPU host, runs one gq job and
 collects the report::
 
     python3 scripts/navsim/gpumem/bench.py remote --agents 64,256,1024,2048
+
+The host is dev-ubuntu (RTX 3090) by default; ``--host ryzen`` measures the
+RTX 3080, where the hybrid stand would run next to the CPU part.
 
 The gq VRAM request and the allocator cap follow the largest N (about 1.8 MiB
 per agent with the readout batch), so larger N needs only another list, for
@@ -475,7 +478,7 @@ def ssh(host, script, check=True):
 def remote_command(args):
     memory = json.loads(MEMORY_REPORT.read_text())
     traces = memory["traces"]
-    host = "dev-ubuntu"
+    host = args.host
     home = ssh(host, 'printf %s "$HOME"').stdout
     task = f"{home}/{REMOTE_TASK}"
     stamp = run_stamp()
@@ -506,8 +509,9 @@ df -h ~ | tail -1
 nvidia-smi --query-gpu=memory.used,memory.free --format=csv
 export UV_LINK_MODE=hardlink CUDA_HOME=/usr/local/cuda PATH=/usr/local/cuda/bin:$PATH
 if [ ! -x .venv/bin/python ]; then ~/.local/bin/uv venv -q --python 3.12 .venv; fi
-# Offline: every wheel comes from the uv cache as hard links, nothing is downloaded.
-~/.local/bin/uv pip install -q --offline --python .venv/bin/python numpy ninja 'torch=={args.torch}'
+# Offline first: wheels from the uv cache as hard links; a host without them downloads once.
+~/.local/bin/uv pip install -q --offline --python .venv/bin/python numpy ninja 'torch=={args.torch}' || \
+  ~/.local/bin/uv pip install -q --python .venv/bin/python numpy ninja 'torch=={args.torch}'
 export PATH=$PWD/.venv/bin:$PATH
 py=.venv/bin/python
 mkdir -p {run}/build
@@ -519,7 +523,7 @@ $py {src}/scripts/navsim/gpumem/bench.py scale --build {run}/build --agents {age
 nvidia-smi --query-gpu=memory.used,memory.free --format=csv > {run}/vram-after.txt
 df -h ~ | tail -1
 """
-    job = [str(ROOT / "scripts/gq"), "--host", host, "run", "--class", "quick", "--threads", "4", "--mem", "8G",
+    job = [str(ROOT / "scripts/gq"), "--host", host, "run", "--class", args.gq_class, "--threads", "4", "--mem", "8G",
            "--gpu-mem", f"{gpu_mem}G", "--max", str(args.max_seconds), "--wait-max", "1800",
            "--name", "navsim-gpumem", "--", "bash", "-lc", body]
     code = run_forwarding(job)
@@ -545,7 +549,10 @@ def stage(host, items):
         if present == digest:
             continue
         partial = f"{target}.{os.urandom(4).hex()}.part"  # unique: launches may stage at once
-        subprocess.run(["scp", "-q", "-3", f"ryzen:{source}", f"{host}:{partial}"], check=True)
+        if host == "ryzen":  # the NAS is mounted there
+            ssh(host, f"cp {shlex.quote(source)} {partial}")
+        else:
+            subprocess.run(["scp", "-q", "-3", f"ryzen:{source}", f"{host}:{partial}"], check=True)
         got = ssh(host, f"sha256sum {partial} | cut -d' ' -f1").stdout.strip()
         if got != digest:
             raise RuntimeError(f"{target}: sha256 {got} != {digest}")
@@ -601,12 +608,20 @@ def summarise(local, nas, digests, args):
                torch=metadata["torch"], torch_cuda=metadata["torch_cuda"], nvcc=metadata["nvcc"][-2],
                gcc=metadata["gcc"], glibc=metadata["glibc"], cuda_flags=metadata["cuda_flags"],
                free_vram_mib_before=metadata["free_vram_mib"], free_vram_mib_after=free, used_vram_mib_after=used,
-               gq=dict(host="dev-ubuntu", cls="quick", threads=4, mem_gib=8, gpu_mem_gib=vram_budget(args)[0]),
+               gq=dict(host=args.host, cls=args.gq_class, threads=4, mem_gib=8, gpu_mem_gib=vram_budget(args)[0]),
                raw_checksums=dict(path=f"{nas}/SHA256SUMS", sha256=sha256(local / "SHA256SUMS"), files=digests))
     if (local / "parity.json").exists():
+        previous = report.get("parity")
+        if previous and "gpu" not in previous and report.get("runs"):
+            previous["gpu"] = report["runs"][-1]["gpu"][0]  # older reports had one GPU only
+        by_gpu = report.setdefault("parity_by_gpu", {})
+        if previous:
+            by_gpu.setdefault(previous["gpu"], parity_summary(previous))
         parity = json.loads((local / "parity.json").read_text())
-        report["parity"] = dict(records=parity["records"], synthetic=parity["synthetic"], slope_tan=parity["slope_tan"],
-                                raw=f"{nas}/parity.json", raw_sha256=digests["parity.json"])
+        report["parity"] = dict(gpu=metadata["gpu"][0], records=parity["records"], synthetic=parity["synthetic"],
+                                slope_tan=parity["slope_tan"], raw=f"{nas}/parity.json",
+                                raw_sha256=digests["parity.json"])
+        by_gpu[metadata["gpu"][0]] = parity_summary(report["parity"])
     scale = json.loads((local / "scale.json").read_text())
     run["cells"] = [{k: v for k, v in c.items() if not k.endswith("_per_repeat")} for c in scale["cells"]]
     report.setdefault("runs", []).append(run)
@@ -615,15 +630,22 @@ def summarise(local, nas, digests, args):
     print(f"wrote {REPORT}", flush=True)
 
 
+def parity_summary(parity):
+    total = parity.get("records", {}).get("total", {})
+    return dict(readouts=total.get("readouts"), bitwise_equal_fraction=total.get("bitwise_equal_fraction"),
+                differing_values=total.get("differing_values"),
+                action_equal_fraction=total.get("actions", {}).get("equal_fraction"))
+
+
 def headline(report):
-    """Latest numbers per N, for reading without the cell detail."""
+    """Latest numbers per GPU and N, for reading without the cell detail."""
     cells = {}
     for run in report["runs"]:
         for c in run["cells"]:
-            cells[c["agents"]] = (run["stamp"], c)
+            cells[(run["gpu"][0], c["agents"])] = (run["stamp"], c)
     rows = []
-    for n, (stamp, c) in sorted(cells.items()):
-        row = dict(agents=n, run=stamp, status=c.get("status"))
+    for (gpu, n), (stamp, c) in sorted(cells.items()):
+        row = dict(gpu=gpu, agents=n, run=stamp, status=c.get("status"))
         if c.get("status") == "ok":
             row.update(update_us_per_agent=c["update_us_per_agent"]["median"],
                        readout_us_per_agent=c["readout_us_per_agent"]["median"],
@@ -633,11 +655,8 @@ def headline(report):
         else:
             row.update(free_vram_mib_before=c.get("free_vram_mib_before"), error=c.get("error"))
         rows.append(row)
-    parity = report.get("parity", {}).get("records", {}).get("total", {})
-    return dict(parity=dict(readouts=parity.get("readouts"), bitwise_equal_fraction=parity.get("bitwise_equal_fraction"),
-                            differing_values=parity.get("differing_values"),
-                            action_equal_fraction=parity.get("actions", {}).get("equal_fraction")),
-                state_bytes_per_agent=report["runs"][-1]["cells"][0].get("bytes_per_agent"), scale=rows)
+    parity = report.get("parity_by_gpu") or {report["runs"][-1]["gpu"][0]: parity_summary(report.get("parity", {}))}
+    return dict(parity=parity, state_bytes_per_agent=report["runs"][-1]["cells"][0].get("bytes_per_agent"), scale=rows)
 
 
 IMPLEMENTATION = dict(
@@ -682,6 +701,9 @@ def main():
     p = sub.add_parser("metadata")
     p.add_argument("--output", type=Path, required=True)
     p = sub.add_parser("remote")
+    p.add_argument("--host", choices=("dev-ubuntu", "ryzen"), default="dev-ubuntu",
+                   help="dev-ubuntu: RTX 3090; ryzen: RTX 3080")
+    p.add_argument("--gq-class", choices=("quick", "quiet"), default="quick")
     p.add_argument("--agents", type=agents, default=[64, 256, 1024, 2048])
     p.add_argument("--warmup", type=int, default=3)
     p.add_argument("--repeats", type=int, default=20)
