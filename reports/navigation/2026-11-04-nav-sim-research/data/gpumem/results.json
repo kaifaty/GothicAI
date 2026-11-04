@@ -1789,6 +1789,213 @@
      "resets": 2827
     }
    ]
+  },
+  {
+   "stamp": "20261104T185544Z",
+   "raw_dir": "/mnt/shared/gothic-ai/nav-sim-research/gpumem/20261104T185544Z",
+   "agents": [
+    4096,
+    6144,
+    8192
+   ],
+   "gpu": [
+    "NVIDIA GeForce RTX 3090",
+    "610.57.04",
+    "24576"
+   ],
+   "torch": "2.14.1+cu130",
+   "torch_cuda": "13.0",
+   "nvcc": "Cuda compilation tools, release 13.3, V13.3.73",
+   "gcc": "g++ (Ubuntu 15.2.0-16ubuntu1) 15.2.0",
+   "glibc": "ldd (Ubuntu GLIBC 2.43-2ubuntu2.4) 2.43",
+   "cuda_flags": [
+    "-O3",
+    "--fmad=false",
+    "--prec-div=true",
+    "--prec-sqrt=true",
+    "--ftz=false",
+    "-gencode=arch=compute_86,code=sm_86",
+    "-std=c++20",
+    "-lineinfo"
+   ],
+   "free_vram_mib_before": 24120,
+   "free_vram_mib_after": 24123,
+   "used_vram_mib_after": 1,
+   "gq": {
+    "host": "dev-ubuntu",
+    "cls": "quick",
+    "threads": 4,
+    "mem_gib": 8,
+    "gpu_mem_gib": 16
+   },
+   "raw_checksums": {
+    "path": "/mnt/shared/gothic-ai/nav-sim-research/gpumem/20261104T185544Z/SHA256SUMS",
+    "sha256": "9c663a23754e5af11057964058c79b28b061ec1da365cdb034c98dd383bf7007",
+    "files": {
+     "cell-n4096.json": "1183277bee79f633fe47268784c436db5e6190b8561e198a4e9084539c81ef32",
+     "cell-n6144.json": "16cd66cf11487286efd3ee9b3285560ea12bd93a7af77504f2f27fd9b0b9fcca",
+     "cell-n8192.json": "e712bf2a2b42f6d9e1a25f6a9612eb3f66cd4bfa8e164ecc29cd1c9645a5cfec",
+     "metadata.json": "2903979a7c2f8c366043f8fb7d8b43c74ecf7b35a7a4b5b2a84db16658317a73",
+     "reference-build.txt": "486edd8ff80291cfc9ca2f4550e551b727c1bb98beaf99438ea110e2e90df56b",
+     "scale.json": "9d8b1fc5d86f6d1afef797e732eb361859781ea3daf69220562ee43704fa7139",
+     "vram-after.txt": "f22fec69d94faa27e8aae19b24af7e671eac123057617d60d38ff1d713b0805f"
+    }
+   },
+   "cells": [
+    {
+     "agents": 4096,
+     "warmup": 3,
+     "repeats": 20,
+     "free_vram_mib_before": 24120,
+     "vram_limit_gib": 15.5,
+     "status": "ok",
+     "update_us_per_agent": {
+      "median": 1.2189501314423978,
+      "p90": 1.2229209183715284,
+      "repeats": 20
+     },
+     "readout_us_per_agent": {
+      "median": 8.905790699281635,
+      "p90": 8.983065505786177,
+      "repeats": 20
+     },
+     "agent_updates_per_second": {
+      "median": 820378.272345963,
+      "p90": 824406.7033627596,
+      "repeats": 20
+     },
+     "agent_readouts_per_second": {
+      "median": 112286.5250084277,
+      "p90": 115920.73892662043,
+      "repeats": 20
+     },
+     "readouts_per_update": 0.33382975260416664,
+     "memory_us_per_decision": 12.557203199016937,
+     "peak_allocated_bytes": 7246066688,
+     "peak_reserved_bytes": 7281311744,
+     "process_vram_mib": 7244,
+     "free_vram_mib_after": 16871,
+     "bytes_per_agent": {
+      "grids_near": 446473,
+      "grids_far": 1090009,
+      "path_history": 12296,
+      "ray_stamps": 1904,
+      "familiar_window": 40013,
+      "body": 50,
+      "state_total": 1590745,
+      "update_scratch": 3822,
+      "eye_slots_and_pose": 18129,
+      "hd_input_float32": 363840
+     },
+     "eye_table_bytes": 87092768,
+     "readout_batch": 1465,
+     "readout_buffer_bytes": 533025600,
+     "state_errors": 0,
+     "resets": 5661
+    },
+    {
+     "agents": 6144,
+     "warmup": 3,
+     "repeats": 20,
+     "free_vram_mib_before": 24120,
+     "vram_limit_gib": 15.5,
+     "status": "ok",
+     "update_us_per_agent": {
+      "median": 1.13992925422887,
+      "p90": 1.1426034518000154,
+      "repeats": 20
+     },
+     "readout_us_per_agent": {
+      "median": 8.953935041416463,
+      "p90": 9.037011751021097,
+      "repeats": 20
+     },
+     "agent_updates_per_second": {
+      "median": 877247.4485051095,
+      "p90": 879955.1384824782,
+      "repeats": 20
+     },
+     "agent_readouts_per_second": {
+      "median": 111682.79640409558,
+      "p90": 115344.55535104609,
+      "repeats": 20
+     },
+     "readouts_per_update": 0.3338395418176328,
+     "memory_us_per_decision": 12.368537302198323,
+     "peak_allocated_bytes": 10811192832,
+     "peak_reserved_bytes": 10846470144,
+     "process_vram_mib": 10644,
+     "free_vram_mib_after": 13471,
+     "bytes_per_agent": {
+      "grids_near": 446473,
+      "grids_far": 1090009,
+      "path_history": 12296,
+      "ray_stamps": 1904,
+      "familiar_window": 40013,
+      "body": 50,
+      "state_total": 1590745,
+      "update_scratch": 3822,
+      "eye_slots_and_pose": 18129,
+      "hd_input_float32": 363840
+     },
+     "eye_table_bytes": 87092768,
+     "readout_batch": 2162,
+     "readout_buffer_bytes": 786622080,
+     "state_errors": 0,
+     "resets": 8481
+    },
+    {
+     "agents": 8192,
+     "warmup": 3,
+     "repeats": 20,
+     "free_vram_mib_before": 24120,
+     "vram_limit_gib": 15.5,
+     "status": "ok",
+     "update_us_per_agent": {
+      "median": 1.0896792383088418,
+      "p90": 1.0935175461539377,
+      "repeats": 20
+     },
+     "readout_us_per_agent": {
+      "median": 8.949720642893864,
+      "p90": 9.031986180357823,
+      "repeats": 20
+     },
+     "agent_updates_per_second": {
+      "median": 917701.2912116062,
+      "p90": 920396.3173507266,
+      "repeats": 20
+     },
+     "agent_readouts_per_second": {
+      "median": 111735.38226326156,
+      "p90": 115406.42577461508,
+      "repeats": 20
+     },
+     "readouts_per_update": 0.33383842136548914,
+     "memory_us_per_decision": 12.213812396778152,
+     "peak_allocated_bytes": 14359927296,
+     "peak_reserved_bytes": 14399045632,
+     "process_vram_mib": 14032,
+     "free_vram_mib_after": 10083,
+     "bytes_per_agent": {
+      "grids_near": 446473,
+      "grids_far": 1090009,
+      "path_history": 12296,
+      "ray_stamps": 1904,
+      "familiar_window": 40013,
+      "body": 50,
+      "state_total": 1590745,
+      "update_scratch": 3822,
+      "eye_slots_and_pose": 18129,
+      "hd_input_float32": 363840
+     },
+     "eye_table_bytes": 87092768,
+     "readout_batch": 2828,
+     "readout_buffer_bytes": 1028939520,
+     "state_errors": 0,
+     "resets": 11313
+    }
+   ]
   }
  ],
  "headline": {
@@ -1854,6 +2061,39 @@
     "agent_updates_per_second": 648976.1026825331,
     "process_vram_mib": 3824,
     "peak_allocated_mib": 3500.06787109375
+   },
+   {
+    "agents": 4096,
+    "run": "20261104T185544Z",
+    "status": "ok",
+    "update_us_per_agent": 1.2189501314423978,
+    "readout_us_per_agent": 8.905790699281635,
+    "memory_us_per_decision": 12.557203199016937,
+    "agent_updates_per_second": 820378.272345963,
+    "process_vram_mib": 7244,
+    "peak_allocated_mib": 6910.3876953125
+   },
+   {
+    "agents": 6144,
+    "run": "20261104T185544Z",
+    "status": "ok",
+    "update_us_per_agent": 1.13992925422887,
+    "readout_us_per_agent": 8.953935041416463,
+    "memory_us_per_decision": 12.368537302198323,
+    "agent_updates_per_second": 877247.4485051095,
+    "process_vram_mib": 10644,
+    "peak_allocated_mib": 10310.35693359375
+   },
+   {
+    "agents": 8192,
+    "run": "20261104T185544Z",
+    "status": "ok",
+    "update_us_per_agent": 1.0896792383088418,
+    "readout_us_per_agent": 8.949720642893864,
+    "memory_us_per_decision": 12.213812396778152,
+    "agent_updates_per_second": 917701.2912116062,
+    "process_vram_mib": 14032,
+    "peak_allocated_mib": 13694.69384765625
    }
   ]
  },
