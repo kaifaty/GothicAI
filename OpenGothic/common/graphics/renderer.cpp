@@ -136,12 +136,12 @@ void Renderer::setupSettings() {
       }
   }
 
-  // VSM lamps: blockers nearer than this to the light (its own basket or frame) cast no shadow; 0 or unset: 80 cm.
-  // The harbour braziers of the vob layer hang their light about 60 cm over the fire: 25 and 60 cm left the basket's
-  // shadow on the wall below (vsm-clips walk-brazier-end); a candle's shadows of the hero and the furniture stay at 80
+  // VSM lamps: blockers nearer than this to the light (its own basket, lantern frame or candle holder) cast no
+  // shadow; 0 or unset: 30 cm. With the light in its flame a brazier's basket is within it; a man by a torch or a
+  // candle on a table still casts a shadow (80 cm took that away)
   settings.vsmLampNearCm      = Gothic::settingsGetF("INTERNAL","vsmLampNearCm");
   if(settings.vsmLampNearCm<=0)
-    settings.vsmLampNearCm = 80;
+    settings.vsmLampNearCm = 30;
   settings.zVidBrightness     = Gothic::settingsGetF("VIDEO","zVidBrightness");
   settings.zVidContrast       = Gothic::settingsGetF("VIDEO","zVidContrast");
   settings.zVidGamma          = Gothic::settingsGetF("VIDEO","zVidGamma");

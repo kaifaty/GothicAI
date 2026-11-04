@@ -118,8 +118,10 @@ def test_emitters_and_lights_keep_their_positions():
         {'key': 'smoke', 'kind': 'emitter', 'pfx': 'LIGHTSMOKE', 'position': [1, 2.04, 3]},
         {'key': 'lamp', 'kind': 'light', 'position': [4, 5, 6], 'range': 600, 'color': [255, 150, 80]},
         {'key': 'post', 'kind': 'mesh', 'visual': 'FIREPLACE_NW_LAMP_01.ASC', 'position': [7, 8, 9], 'yaw': 30},
+        {'key': 'fire', 'kind': 'light', 'position': [1, 1, 1], 'range': 500, 'color': [194, 125, 56], 'source_cm': 50},
     ])
-    smoke, lamp, post = entries
+    smoke, lamp, post, fire = entries
+    assert 'source_cm' not in lamp and fire['source_cm'] == 50.0
     assert smoke == {'key': 'smoke', 'kind': 'emitter', 'position': [1.0, 2.0, 3.0], 'yaw_deg': 0.0, 'pfx': 'LIGHTSMOKE'}
     assert lamp['range'] == 600.0 and lamp['color'] == [255, 150, 80] and 'pfx' not in lamp
     assert post['visual'] == 'FIREPLACE_NW_LAMP_01.ASC' and post['collision'] == 'mesh' and post['yaw_deg'] == 30.0
