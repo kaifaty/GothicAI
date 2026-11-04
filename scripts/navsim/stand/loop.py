@@ -143,6 +143,8 @@ class Half:
         self.done = torch.cuda.Event()
         self.computed = torch.cuda.Event()
         self.marks = [torch.cuda.Event(enable_timing=True) for _ in range(5)]
+        # Buffers were zeroed and uploaded on the current stream; the half's stream must see them.
+        self.stream.wait_stream(torch.cuda.current_stream())
         self.graph = None
         if graph:
             self.capture()
@@ -447,6 +449,12 @@ def parity_command(args):
                                                        loop=fp32[s, a].tolist())
     bench.write_json(args.output, report)
     print(json.dumps({k: report[k] for k in ("fp32", "fp16_graph")}), flush=True)
+    maps = report["fp32"]["readout_maps"]
+    broken = (report["fp32"]["vs_engine_first_pass"]["equal_fraction"] != 1.0
+              or maps["bitwise_equal"] != maps["compared"]
+              or report["fp32"]["state_errors"] or report["fp16_graph"]["state_errors"])
+    if broken:
+        sys.exit("parity failed: fp32 actions or readouts differ from the engine, or memory state errors")
 
 
 # ---- speed ----
