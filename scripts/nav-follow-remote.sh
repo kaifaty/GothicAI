@@ -102,12 +102,15 @@ game_environment() { # The base resolved by smoke for this engine, read-only; ca
   # shellcheck disable=SC1090
   source "$archive/smoke/$engine/game.env"
   export GOTHIC_DIR OPENGOTHIC_BASE_FINGERPRINT OPENGOTHIC_VIDEOS_FINGERPRINT
-  local base
+  # One link per stage: replacing a link shared with a running job is not atomic
+  # (2026-11-04: a concurrent ln -sfn removed the base under a running validation).
+  local base link="$task/input/$stage/base"
+  mkdir -p "$task/input/$stage"
   for base in "/mnt/shared/gothic-ai/base/$OPENGOTHIC_BASE_FINGERPRINT" "$HOME/.cache/gothic-ai/base/$OPENGOTHIC_BASE_FINGERPRINT"; do
-    if [[ -d "$base" ]]; then ln -sfn "$base" "$task/input/base"; break; fi
+    if [[ -d "$base" ]]; then ln -sfn "$base" "$link"; break; fi
   done
-  [[ -e "$task/input/base" ]] || stop "no ready base $OPENGOTHIC_BASE_FINGERPRINT"
-  export OPENGOTHIC_BASE="$task/input/base" OPENGOTHIC_BASE_CACHE="$task/base-cache" OPENGOTHIC_BASE_STORE="$task/base-store"
+  [[ -e "$link" ]] || stop "no ready base $OPENGOTHIC_BASE_FINGERPRINT"
+  export OPENGOTHIC_BASE="$link" OPENGOTHIC_BASE_CACHE="$task/base-cache" OPENGOTHIC_BASE_STORE="$task/base-store"
 }
 navmesh() { # WORKERS: the archived ordinary navmesh, one copy per worker
   local worker
