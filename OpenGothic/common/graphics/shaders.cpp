@@ -8,6 +8,7 @@
 #include "gothic.h"
 #include "commandline.h"
 #include "resources.h"
+#include "loadprobe.h"
 
 #include "shader.h"
 #include "utils/string_frm.h"
@@ -34,6 +35,8 @@ Shaders::Shaders() {
     time = Application::tickCount() - time;
     if(time>1000)
       Log::i("Shader compilation took: ",time/1000," seconds");
+    if(LoadProbe::enabled())
+      Log::i("[loadprobe-shaders] compile_ms=",time);
     });
   }
 
@@ -43,6 +46,14 @@ Shaders::~Shaders() {
   }
 
 void Shaders::waitCompiler() {
+  // Load probe: how long a caller (the world load) actually waited for the background compilation.
+  if(LoadProbe::enabled() && deferredCompilation.valid() &&
+     deferredCompilation.wait_for(std::chrono::seconds(0))!=std::future_status::ready) {
+    const auto start = Application::tickCount();
+    deferredCompilation.wait();
+    Log::i("[loadprobe-shaders] wait_ms=",Application::tickCount()-start);
+    return;
+    }
   deferredCompilation.wait();
   }
 
