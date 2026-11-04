@@ -6,6 +6,7 @@
 #include "game/meleeimpact.h"
 
 #include <functional>
+#include <array>
 #include <atomic>
 #include <memory>
 #include <vector>
@@ -313,10 +314,13 @@ class CollisionWorld final {
     struct StaticTriangle {
       Tempest::Vec3 vertices[3]; // world metres, including the native shape's scale
       bool water = false;
+      uint8_t category = 0; // 1 landscape, 2 static object, 3 water, 4 kinematic object
       };
     // Bench-only snapshot of static collision geometry, never render meshes.
     // Water is exported separately from solid surfaces for depth filtering.
-    void staticTriangles(const std::function<void(const StaticTriangle&)>& output) const;
+    // Returns body counts in category order. Kinematic objects are dump-only.
+    std::array<size_t,4> staticTriangles(const std::function<void(const StaticTriangle&)>& output,
+                                       bool includeKinematic = false) const;
 
     // Masks use 1u << DynamicWorld::Category. Normals keep the mesh's winding.
     QueryResult rayCast(const Tempest::Vec3& from, const Tempest::Vec3& to, uint32_t mask,

@@ -1914,10 +1914,11 @@ void CollisionWorld::removeBody(CollisionBody& body) {
   rigid.erase(std::remove(rigid.begin(),rigid.end(),&body),rigid.end());
   }
 
-void CollisionWorld::staticTriangles(const std::function<void(const StaticTriangle&)>& output) const {
+std::array<size_t,4> CollisionWorld::staticTriangles(const std::function<void(const StaticTriangle&)>& output,
+                                                    bool includeKinematic) const {
   struct TriangleCollector final : JPH::TransformedShapeCollector {
-    TriangleCollector(const std::function<void(const StaticTriangle&)>& output, bool water)
-      :output(output),water(water) {
+    TriangleCollector(const std::function<void(const StaticTriangle&)>& output, uint8_t category)
+      :output(output),category(category) {
       }
 
     void AddHit(const JPH::TransformedShape& leaf) override {
@@ -1934,7 +1935,8 @@ void CollisionWorld::staticTriangles(const std::function<void(const StaticTriang
           break;
         for(int triangle=0;triangle<count;++triangle) {
           StaticTriangle result;
-          result.water = water;
+          result.water = category==3;
+          result.category = category;
           for(int i=0;i<3;++i) {
             const auto& v = vertices[triangle*3+i];
             result.vertices[i] = Tempest::Vec3(v.x,v.y,v.z);
@@ -1945,24 +1947,34 @@ void CollisionWorld::staticTriangles(const std::function<void(const StaticTriang
       }
 
     const std::function<void(const StaticTriangle&)>& output;
-    bool water;
+    uint8_t category;
     };
 
+  std::array<size_t,4> bodyCounts = {};
   for(const auto* object:bodies) {
     if(object->categoryId!=DynamicWorld::C_Landscape &&
        object->categoryId!=DynamicWorld::C_Object &&
        object->categoryId!=DynamicWorld::C_Water)
       continue;
     JPH::TransformedShape shape;
+    uint8_t category = object->categoryId==DynamicWorld::C_Landscape ? 1 :
+                       object->categoryId==DynamicWorld::C_Water ? 3 : 2;
     {
       JPH::BodyLockRead lock(impl->system.GetBodyLockInterface(),object->id);
-      if(!lock.Succeeded() || !lock.GetBody().IsStatic())
-        continue; // no living bodies, dynamic props or animated/kinematic vobs
+      if(!lock.Succeeded())
+        continue;
+      if(!lock.GetBody().IsStatic()) {
+        if(!includeKinematic || object->categoryId!=DynamicWorld::C_Object || !lock.GetBody().IsKinematic())
+          continue; // no living bodies or dynamic props; kinematic objects only on request
+        category = 4;
+        }
       shape = lock.GetBody().GetTransformedShape();
     }
-    TriangleCollector collector(output,object->categoryId==DynamicWorld::C_Water);
+    ++bodyCounts[category-1];
+    TriangleCollector collector(output,category);
     shape.CollectTransformedShapes(shape.GetWorldSpaceBounds(),collector);
     }
+  return bodyCounts;
   }
 
 void CollisionWorld::fillMaterial(QueryResult& result, const JPH::Shape& shape, JPH::SubShapeID subShape) const {

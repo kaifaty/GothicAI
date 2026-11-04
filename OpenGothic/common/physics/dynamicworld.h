@@ -687,6 +687,8 @@ class DynamicWorld final {
 
     // Called explicitly by the runner; ordinary worlds never build a navmesh.
     NavMesh::Geometry navigationGeometry() const;
+    // Runner-only collision snapshot; implemented with the perception bench.
+    void dumpNavigationCollision(const std::string& outputDirectory) const;
 
     void           deleteObj(BulletBody* obj);
 
