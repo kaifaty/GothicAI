@@ -92,14 +92,15 @@ class Quiver final {
     struct Probe {
       bool          on = false;
       int           arrows = 0;
-      float         armor = 0, leg = 0;   // cm the armour (the body but its legs) and the legs go into the tube
+      float         armor = 0, leg = 0;   // cm the armour (the body but its legs and arms) and the legs go into the tube
+      float         arm = 0;              // cm an arm or the head goes in (a hand swinging by the hip): not fitted
       Tempest::Vec3 mouth;                // the mouth's centre in the pelvis bone's frame
       float         out = 0;
       float         top = 0, bottom = 0;  // cm the highest arrow point over the mouth, the lowest one over the bottom
       };
     // posed: the pelvis bone in the world, the points of the armour in the world; legBone: a bone of a leg
     Probe probe(const Tempest::Matrix4x4& pelvis, const std::vector<SkinPoint>& posed,
-                const std::vector<bool>& legBone) const;
+                const std::vector<bool>& legBone, const std::vector<bool>& armBone) const;
 
     // which bones are a leg's (THIGH, CALF, FOOT, TOE) and an arm's or the head's (left out of the fit)
     static std::vector<bool> legBones(const Skeleton& sk);

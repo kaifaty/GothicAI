@@ -277,7 +277,7 @@ void Quiver::setTextureOwner(const Vec3& position, bool spatial) {
   }
 
 Quiver::Probe Quiver::probe(const Matrix4x4& pelvis, const std::vector<SkinPoint>& posed,
-                            const std::vector<bool>& legBone) const {
+                            const std::vector<bool>& legBone, const std::vector<bool>& armBone) const {
   Probe p;
   p.on = st.on && fitted.valid;
   if(!p.on)
@@ -295,6 +295,8 @@ Quiver::Probe Quiver::probe(const Matrix4x4& pelvis, const std::vector<SkinPoint
     const float depth = radiusAt(-q.y) - std::hypot(q.x,q.z);
     if(depth<=0)
       continue;
+    if(pt.bone<armBone.size() && armBone[pt.bone])
+      p.arm = std::max(p.arm,depth); else
     if(pt.bone<legBone.size() && legBone[pt.bone])
       p.leg = std::max(p.leg,depth); else
       p.armor = std::max(p.armor,depth);

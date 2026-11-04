@@ -692,7 +692,7 @@ Quiver::Probe MdlVisual::quiverProbe() const {
     return {};
   std::vector<Quiver::SkinPoint> posed;
   quiverPoints(false,posed);
-  return quiv.probe(renderedBone(quiv.bone()),posed,Quiver::legBones(*skeleton));
+  return quiv.probe(renderedBone(quiv.bone()),posed,Quiver::legBones(*skeleton),Quiver::armBones(*skeleton));
   }
 
 bool MdlVisual::setFightMode(asset::MdsFightMode mode) {
