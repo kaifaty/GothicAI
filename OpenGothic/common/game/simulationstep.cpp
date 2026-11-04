@@ -10,6 +10,7 @@
 #include "camera.h"
 #include "testbench.h"
 #include "world/objects/npc.h"
+#include "world/world.h"
 
 void SimulationStep::worldPlayerStep(uint64_t dt, PlayerControl& player,
                                       const std::function<void()>& afterFocus) {
@@ -36,6 +37,10 @@ bool SimulationStep::finishStep(uint64_t dt, PlayerControl& player,
   const bool capture = TestBench::tick(dt,player);
   if(dt>0)
     BodyReplay::postStep();
+  // Animation LOD: the game and bench cameras have moved for this frame; NPCs they
+  // now see get their pose before anything is drawn or captured.
+  if(auto* world = Gothic::inst().world())
+    world->catchUpAnimation();
   return capture;
   }
 
