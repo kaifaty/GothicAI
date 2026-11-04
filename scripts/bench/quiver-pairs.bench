@@ -1,0 +1,102 @@
+# The quiver's give, to choose by the clips (temporary, till the choice): run it twice, OPENGOTHIC_QUIVER_GIVE unset
+# (A: the leg 5 cm / 6 deg, the rest 2 cm / 3 deg) and =B (the leg, the arm and the flaps 10 cm / 12 deg), the same
+# scenes and times: the hero in light leather walking, from behind on the right; running with the bow, from the
+# right side; in the paladin's plate with the militia's gait, from behind on the right; an npc bowman in the
+# bandit's armour walking, from in front on the right; a close look at the ring and the straps. slowmo 2: 5.6 s of
+# the game in each; to 60 fps in real time: ffmpeg -vf setpts=0.5*PTS -r 60
+cheat god
+set time 12 0
+view clean
+overlay off
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02   # Onar's field, open and in the sun (hero-balance)
+turn 210
+wait 500
+manual on
+equip ItRw_Bow_L_01
+equip ITAR_Leather_L
+arrows player 20
+cam look 95
+slowmo 2
+wait 600
+
+# 1: the hero in light leather, walking, from behind on the right
+tap bow
+wait 1500
+tap bow
+wait 1500
+walkmode walk
+cam follow 230 110 -135
+hold forward 7200
+wait 1000
+rec pair1_lea_walk_back
+wait 5600
+stop
+release all
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+turn 210
+wait 400
+
+# 2: running with the bow drawn, from the right side
+walkmode run
+tap bow
+wait 1500
+cam follow 230 105 -90
+hold forward 7000
+wait 800
+rec pair2_lea_bowrun_side
+wait 5600
+stop
+release all
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+turn 210
+wait 400
+
+# 3: the paladin's plate, the militia's gait, from behind on the right
+tap bow
+wait 1500
+equip ITAR_PAL_H
+mds player HUMANS_MILITIA.MDS
+walkmode walk
+wait 400
+cam follow 230 110 -135
+hold forward 7200
+wait 1000
+rec pair3_pal_militia_back
+wait 5600
+stop
+release all
+mds player HUMANS_MILITIA.MDS off
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+turn 210
+wait 400
+
+# 4: an npc bowman in the bandit's armour, walking on the spot, from in front on the right
+equip ITAR_Leather_L
+walkmode run
+insert BAU_904_BAUER
+wait 300
+immortal BAU_904_BAUER on
+npcequip BAU_904_BAUER ItRw_Bow_L_01
+npcequip BAU_904_BAUER ITAR_BDT_H
+arrows BAU_904_BAUER 20
+pin BAU_904_BAUER 700 0 0
+watch BAU_904_BAUER
+freeze BAU_904_BAUER
+ani BAU_904_BAUER S_WALKL force
+wait 800
+cam follow 230 105 -45
+wait 300
+rec pair4_npc_bdt_walk_fr
+wait 5600
+stop
+freeze BAU_904_BAUER off
+
+# a close look at the ring and the straps (the place 50 deg)
+watch player
+arrows player 12
+cam follow 85 100 -125
+cam look 100
+wait 600
+rec closeup_ring
+wait 600
+stop

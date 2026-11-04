@@ -74,6 +74,10 @@ std::vector<bool> bonesNamed(const Skeleton& sk, std::initializer_list<std::stri
 }
 
 Quiver::Place Quiver::place;
+bool          Quiver::wideGive = [](){
+  const char* v = std::getenv("OPENGOTHIC_QUIVER_GIVE");
+  return v!=nullptr && (std::string_view(v)=="B" || std::string_view(v)=="b");
+  }();
 bool          Quiver::still = false;
 
 bool Quiver::enabled() {
@@ -342,8 +346,14 @@ Quiver::Probe Quiver::probe(const Matrix4x4& pelvis, const Matrix4x4& spine, con
       continue;
     if(pt.bone<armBone.size() && armBone[pt.bone])
       p.arm = std::max(p.arm,depth); else
-    if(pt.bone<legBone.size() && legBone[pt.bone])
-      p.leg = std::max(p.leg,depth); else
+    if(pt.bone<legBone.size() && legBone[pt.bone]) {
+      if(depth>p.leg) {
+        Vec3 q = pt.pos;
+        inv.project(q);
+        p.legAt = -q.y;
+        }
+      p.leg = std::max(p.leg,depth);
+      } else
       p.armor = std::max(p.armor,depth);
     }
   for(auto& v:bowPts)
@@ -389,28 +399,31 @@ void Quiver::nearPoints(const Fit& f, const Skeleton& sk, const std::vector<Skin
   const auto arm  = armBones(sk);
   const auto legs = legBones(sk);
   std::vector<std::pair<float,size_t>> near, nearLeg;
+  // the right leg whole (the foot kicks up behind to the bottom in a run): its side of the body
   for(size_t i=0; i<bind.size(); ++i) {
     if(bind[i].src==size_t(-1) || (bind[i].bone<arm.size() && arm[bind[i].bone]))
       continue;
     Vec3 q = bind[i].pos;
     inv.project(q);
-    if(q.y>5.f || q.y<-Length-Reach)
+    const float gap = std::hypot(q.x,q.z)-radiusAt(std::clamp(-q.y,0.f,Length));
+    const bool  isLeg = bind[i].bone<legs.size() && legs[bind[i].bone] &&
+                        sk.nodes[bind[i].bone].name.find(" R ")!=std::string::npos;
+    if(isLeg) {
+      nearLeg.emplace_back(gap,i);
       continue;
-    const float gap = std::hypot(q.x,q.z)-radiusAt(-q.y);
-    if(gap>Reach)
+      }
+    if(q.y>5.f || q.y<-Length-Reach || gap>Reach)
       continue;
-    if(bind[i].bone<legs.size() && legs[bind[i].bone])
-      nearLeg.emplace_back(gap,i); else
-      near.emplace_back(gap,i);
+    near.emplace_back(gap,i);
     }
   // the nearest of each, so many: the leg's own share (the flaps must not crowd it out)
   for(auto* list:{&nearLeg,&near}) {
     std::sort(list->begin(),list->end());
     const size_t most = list==&nearLeg ? MaxLeg : MaxOther;
     if(list->size()>most) {
-      // every n-th of the nearest 3x as many: the whole near part, thinned
+      // every n-th: of the whole right leg, of the nearest 3x as many of the rest
       std::vector<std::pair<float,size_t>> thin;
-      const size_t pool = std::min(list->size(),most*3);
+      const size_t pool = list==&nearLeg ? list->size() : std::min(list->size(),most*3);
       for(size_t k=0; k<most; ++k)
         thin.push_back((*list)[k*pool/most]);
       *list = std::move(thin);
@@ -494,8 +507,12 @@ void Quiver::step(const Matrix4x4& pelvis, const Matrix4x4& spine, const std::ve
       if(dist>=need || dist<1e-3f)
         continue;
       target = Vec3::normalize(target + away*((need-dist)/(dist*t)));
-      const float cm  = o.leg ? LegYieldMax   : YieldMax;
-      const float deg = o.leg ? LegYieldAngle : YieldAngle;
+      float cm  = o.kind==Leg ? LegYieldMax   : YieldMax;
+      float deg = o.kind==Leg ? LegYieldAngle : YieldAngle;
+      if(wideGive && o.kind!=Carried) {
+        cm  = WideYieldMax;
+        deg = WideYieldAngle;
+        }
       allow  = std::max(allow,std::min(std::atan2(cm,t),deg*float(M_PI)/180.f));
       hit    = true;
       }

@@ -44,6 +44,11 @@ class Quiver final {
     static constexpr float YieldAngle   = 3.f;   // deg at most for those
     static constexpr float LegYieldMax  = 5.f;   // cm at the contact: the right thigh and calf push it away
     static constexpr float LegYieldAngle= 6.f;   // deg at most for the leg
+    // a wider give, to choose by the clips (temporary: OPENGOTHIC_QUIVER_GIVE=B or the bench's `quiver give b`):
+    // the leg, the forearm and hand and the flaps up to WideYieldMax / WideYieldAngle
+    static constexpr float WideYieldMax   = 10.f;
+    static constexpr float WideYieldAngle = 12.f;
+    static bool            wideGive;
     static constexpr float GiveTime     = 0.15f; // s: the follower is 90% there
     static constexpr float GiveRelease  = 0.5f;  // s: a give the leg asked for lets go so slowly (the gait comes back)
     static constexpr float GiveStep     = 1.f;   // deg in 1/60 s at most
@@ -106,10 +111,11 @@ class Quiver final {
                            std::vector<size_t>& ids, std::vector<uint8_t>& leg);
 
     // what pushes it: a capsule a-b of radius r (a point: a==b, r 0), in the world
+    enum Push : uint8_t { Carried, Leg, Arm, Flap };
     struct Obstacle {
       Tempest::Vec3 a, b;
-      float         r   = 0;
-      bool          leg = false; // the right thigh or calf: it gives way farther
+      float         r    = 0;
+      Push          kind = Carried; // the leg gives way farther; the bow and a two-hander on the back: Carried
       };
     // the give on by dt seconds: the pelvis and BIP01 SPINE1 in the world now; obstacles in the world
     void         step(const Tempest::Matrix4x4& pelvis, const Tempest::Matrix4x4& spine,
@@ -155,6 +161,7 @@ class Quiver final {
       float         bow = 0, longsword = 0; // cm the bow and the two-hander on the back go into the tube
       float         blade = 0;            // cm an arrow comes out of the tube's wall
       float         yield = 0;            // deg the target gives way to the obstacles
+      float         legAt = 0;            // cm down the axis where the leg goes in the deepest
       };
     // posed: the pelvis and SPINE1 in the world, the points of the armour in the world; legBone: a bone of a leg;
     // bow, longsword: the points of those on the back in the world (empty: not there)

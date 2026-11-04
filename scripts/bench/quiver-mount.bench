@@ -12,6 +12,7 @@
 cheat god
 set time 12 0
 view clean
+overlay off
 goto NW_XARDAS_TOWER_VALLEY_091   # flat open ground
 face -106                         # a rock behind, open in front
 wait 500

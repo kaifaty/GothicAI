@@ -715,9 +715,9 @@ bool MdlVisual::updateQuiver(const Npc& npc, uint64_t dt) {
     if(c.bone>=sk.nodes.size())
       continue;
     const std::string_view name = sk.nodes[c.bone].name;
-    const bool leg = name=="BIP01 R THIGH" || name=="BIP01 R CALF";
+    const bool leg = name=="BIP01 R THIGH" || name=="BIP01 R CALF" || name=="BIP01 R FOOT";
     if(leg || name=="BIP01 R FOREARM" || name=="BIP01 R HAND")
-      obs.push_back({c.a,c.b,c.r,leg});
+      obs.push_back({c.a,c.b,c.r,leg ? Quiver::Leg : Quiver::Arm});
     }
   // the armour's flaps and the legs' skin near the quiver: its points
   if(const ProtoMesh* pm = view.protoMesh()) {
@@ -740,14 +740,14 @@ bool MdlVisual::updateQuiver(const Npc& npc, uint64_t dt) {
         }
       if(weight>0.f) {
         p = p/weight;
-        obs.push_back({p,p,0.f,k<legs.size() && legs[k]!=0});
+        obs.push_back({p,p,0.f,k<legs.size() && legs[k]!=0 ? Quiver::Leg : Quiver::Flap});
         }
       }
     }
   // the bow and a two-hander on the back
   for(auto* att:{&bow,&sword})
     for(auto& p:carriedPoints(*att,att==&bow ? "ZS_BOW" : "ZS_LONGSWORD"))
-      obs.push_back({p,p,0.f});
+      obs.push_back({p,p,0.f,Quiver::Carried});
   const size_t spine = quiv.spineBone()<n ? quiv.spineBone() : quiv.bone();
   quiv.step(bones[quiv.bone()],bones[spine],obs,float(dt)*0.001f);
   quiverStepUs = float(std::chrono::duration<double,std::micro>(std::chrono::steady_clock::now()-t0).count());
