@@ -195,11 +195,22 @@ class Memory:
         result["hd_input_float32"] = 4 * 10 * OUTPUTS
         return result
 
-    def update(self):
+    def context(self, **pointers):
+        """A copy of the context with some pointers replaced, for example the
+        pose of one tick in a buffer the caller owns. Keep it alive while used."""
+        ctx = Ctx.from_buffer_copy(self.ctx)
+        for name, address in pointers.items():
+            if name not in POINTERS:
+                raise KeyError(name)
+            setattr(ctx, name, address)
+        return ctx
+
+    def update(self, context=None):
+        address = self.address if context is None else ctypes.addressof(context)
         if self.backend.kind == "cuda":
-            self.backend.ext.update(self.address)
+            self.backend.ext.update(address)
         else:
-            self.backend.lib.gm_update(self.address)
+            self.backend.lib.gm_update(address)
 
     def read(self, agents, near, far):
         """Write readouts of ``agents`` (int32) to CHW float32 near/far batches."""
