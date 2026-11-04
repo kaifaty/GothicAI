@@ -9,6 +9,7 @@
 #   bash scripts/nav-teacher-stall-remote.sh follow-v5-{aside,last-seen}  # v5, the lost rule now / as on main
 #   bash scripts/nav-teacher-stall-remote.sh static-teacher-{run,walk}-{on,off}-{point,object,approach,detour}
 #                                                         # the teacher with / without the body exit, forced pace
+#   bash scripts/nav-teacher-stall-remote.sh replay       # the v5 teacher recordings replayed with --body-exit off/on
 #   bash scripts/nav-teacher-stall-remote.sh live         # 03-follow-hero, teacher and v5, three seeds, video
 #   bash scripts/nav-teacher-stall-remote.sh report       # tables from all finished stages
 #   bash scripts/nav-teacher-stall-remote.sh clean        # remove ~/gothic-ai/nav-teacher-stall on Ryzen;
@@ -18,7 +19,7 @@
 # follow-lost last-seen. Results: /mnt/shared/gothic-ai/nav-teacher-stall/. v5 weights are only read.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-usage='Usage: bash scripts/nav-teacher-stall-remote.sh smoke|diagnose|follow-teacher-{on-aside,off-last-seen}|follow-v5-{aside,last-seen}|static-teacher-{run,walk}-{on,off}-{point,object,approach,detour}|live|report|clean'
+usage='Usage: bash scripts/nav-teacher-stall-remote.sh smoke|diagnose|replay|follow-teacher-{on-aside,off-last-seen}|follow-v5-{aside,last-seen}|static-teacher-{run,walk}-{on,off}-{point,object,approach,detour}|live|report|clean'
 stage="${1:-}"
 archive="${NAV_STALL_ARCHIVE:-/mnt/shared/gothic-ai/nav-teacher-stall}"
 task_name=nav-teacher-stall
@@ -28,7 +29,7 @@ manifest=/mnt/shared/gothic-ai/nav-demos-v5/manifest.json
 detour=/mnt/shared/gothic-ai/archive/nav-bc4-20261030/input/detour-val.jsonl
 navmesh_source=/mnt/shared/gothic-ai/archive/nav-dagger3-20261030/hd-measure-cache/ordinary
 rejections_source=/mnt/shared/gothic-ai/archive/nav-dagger3-20261030/hd-validation/setup-rejections
-stages='smoke|diagnose|follow-teacher-(on-aside|off-last-seen)|follow-v5-(aside|last-seen)|static-teacher-(run|walk)-(on|off)-(point|object|approach|detour)|live|report|clean'
+stages='smoke|diagnose|replay|follow-teacher-(on-aside|off-last-seen)|follow-v5-(aside|last-seen)|static-teacher-(run|walk)-(on|off)-(point|object|approach|detour)|live|report|clean'
 
 if [[ "$stage" != run ]]; then
   [[ $# == 1 && "$stage" =~ ^($stages)$ ]] || { echo "$usage" >&2; exit 2; }
@@ -84,6 +85,7 @@ HASH
   case "$stage" in
     smoke) resources=(--class quick --threads 12 --cpu-quota 1200% --mem 10G --max 1h) ;;
     diagnose) resources=(--class quick --threads 6 --cpu-quota 600% --mem 6G --max 1h) ;;
+    replay) resources=(--class quick --threads 8 --cpu-quota 800% --mem 4G --max 1h) ;;
     follow-*|static-*) resources=(--class batch --threads 12 --cpu-quota 1200% --mem 10G --max 2h) ;;
     live) resources=(--class batch --threads 6 --cpu-quota 600% --mem 10G --gpu-mem 3G --display --display-shared --max 1h) ;;
     report) resources=(--class quick --threads 1 --cpu-quota 100% --mem 2G --max 10m) ;;
@@ -211,6 +213,41 @@ if [[ "$stage" == diagnose ]]; then
   validate "$output" teacher --families follow_below_gate --exit "$NAV_STALL_EXIT" --ids "$NAV_STALL_IDS" \
     --parallel 6 --keep-traces --trace
   "$python" -B -I scripts/nav_teacher_stall.py stalls --root "$output"
+  exit
+fi
+
+if [[ "$stage" == replay ]]; then
+  # The frozen v5 teacher recordings (2026-10-22): every one with a decision without a start
+  # cell, plus 40 others. --body-exit off must replay them exactly; on differs only from there.
+  "$python" -B -I - "$build_dir/opengothic/gothic-navmemoryteacher-contract" "$archive/replay.json" <<'REPLAY'
+import json, random, subprocess, sys
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+contract, output = sys.argv[1:]
+recordings = sorted(Path("/mnt/shared/gothic-ai/nav-demos-v5/recordings").glob("*/*/*/samples.bin.gz"))
+def stalls(path):
+    episode = json.loads((path.parent / "episode.json").read_text())
+    return episode.get("start_not_found_decisions") or 0
+counts = {str(path): stalls(path) for path in recordings}
+stalled = [path for path in recordings if counts[str(path)] > 0]
+others = random.Random(18102027).sample([path for path in recordings if counts[str(path)] == 0], 40)
+def replay(path, mode):
+    result = subprocess.run([contract, "--body-exit", mode, str(path)], capture_output=True, text=True)
+    value = json.loads(result.stdout.splitlines()[-1]) if result.stdout.strip() else {}
+    return dict(path=str(path), family=path.parts[-3], mode=mode, start_not_found=counts[str(path)],
+                exit=result.returncode, decisions=value.get("decisions"), mismatches=value.get("mismatches"))
+with ThreadPoolExecutor(8) as pool:
+    rows = list(pool.map(lambda job: replay(*job), [(path, mode) for path in stalled + others for mode in ("off", "on")]))
+summary = {mode: dict(recordings=sum(row["mode"] == mode for row in rows),
+                      decisions=sum(row["decisions"] or 0 for row in rows if row["mode"] == mode),
+                      mismatches=sum(row["mismatches"] or 0 for row in rows if row["mode"] == mode),
+                      recordings_with_mismatch=sum(bool(row["mismatches"]) for row in rows if row["mode"] == mode),
+                      stalled_recordings=sum(row["start_not_found"] > 0 for row in rows if row["mode"] == mode))
+           for mode in ("off", "on")}
+Path(output).write_text(json.dumps(dict(summary=summary, rows=rows), indent=1) + "\n")
+print(json.dumps(summary, indent=1))
+assert summary["off"]["mismatches"] == 0, "the teacher with --body-exit off differs from its recordings"
+REPLAY
   exit
 fi
 
