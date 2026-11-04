@@ -8,15 +8,16 @@ using Tempest::Vec3;
 namespace {
 // Channels are compared as the learner and the memory teacher see them: uint8.
 uint8_t byte(float value) { return uint8_t(std::lround(std::clamp(value,0.f,1.f)*255.f)); }
-bool liveHazard(const NavigationMemory::Cell& c) {
-  // Movable evidence is always live; static hazards of a familiar tile are a
-  // prior, not something the follower has seen, exactly as in the memory teacher.
-  if(byte(c.movable)!=0) return true;
+bool staticHazard(const NavigationMemory::Cell& c) {
+  // Only what the follower has seen itself; a familiar tile is a prior, exactly
+  // as in the memory teacher. Movable evidence (people, the followed object's own
+  // footprints along its trail) does not decide where the carrot goes: the
+  // planner keeps its own hard veto for it.
   if(byte(c.familiar)!=0) return false;
   return byte(c.wall)!=0 || byte(c.ledge)!=0 || byte(c.drop)!=0 || byte(c.water)!=0;
   }
 bool seenFree(const NavigationMemory::Cell& c) {
-  return byte(c.familiar)==0 && byte(c.confidence)!=0 && byte(c.free)!=0 && !liveHazard(c);
+  return byte(c.familiar)==0 && byte(c.confidence)!=0 && byte(c.free)!=0 && !staticHazard(c);
   }
 }
 
@@ -155,7 +156,9 @@ FollowTrail::Result FollowTrail::guide(const Vec3& follower, const Vec3& object,
     }
   // The lookahead point on the trail. Where the near memory has already seen a
   // hazard between the follower and it, step back along the trail toward the
-  // follower; the nearest trail point ahead remains if every one is blocked.
+  // follower, but never nearer than pullbackMinCm: a carrot at the follower's feet
+  // would hold it while the object walks away. If every point that far is
+  // blocked, the nearest of them remains and the planner routes around.
   result.source=Source::Trail;
   result.carrot=at(ahead);
   if(nearClear(memory,follower,result.carrot))
@@ -163,7 +166,7 @@ FollowTrail::Result FollowTrail::guide(const Vec3& follower, const Vec3& object,
   for(size_t i=trail.size();i-->0;) {
     if(trail[i].arcCm>=ahead)
       continue;
-    if(trail[i].arcCm<=progress)
+    if(trail[i].arcCm<=progress || (trail[i].position-follower).length()<pullbackMinCm)
       break;
     result.carrot=trail[i].position;
     if(nearClear(memory,follower,result.carrot))
@@ -225,7 +228,7 @@ bool FollowTrail::passage(const NavigationMemory::View& memory, const Vec3& from
         const float dx=std::max(0.f,std::abs(r-cr)-cell*.5f),dz=std::max(0.f,std::abs(f-cf)-cell*.5f);
         if(dx*dx+dz*dz>corridorCm*corridorCm)
           continue;
-        if(liveHazard(c))
+        if(staticHazard(c))
           return false;
         free=free || seenFree(c);
         }

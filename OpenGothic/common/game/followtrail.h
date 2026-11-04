@@ -21,7 +21,8 @@ class FollowTrail final {
     static constexpr float memoryCm = 4000.f;   // short memory: trail length kept behind its newest point
     static constexpr float standoffCm = 250.f;  // the carrot never comes closer to the object
     static constexpr float lookaheadCm = 600.f; // along the trail, from the follower's projection
-    static constexpr float corridorCm = 20.f;   // no live hazard this close to a free passage
+    static constexpr float corridorCm = 20.f;   // no static hazard this close to a passage
+    static constexpr float pullbackMinCm = 100.f; // a pulled-back trail carrot stays this far away
     static constexpr float footprintCm = 25.f;  // the follower's own footprint is not checked
     static constexpr float reachedCm = 50.f;    // the follower stands at the last seen point
 
@@ -30,7 +31,8 @@ class FollowTrail final {
       Direct, // the straight carrot before the object; near memory sees the passage free
       Cut,    // a trail point beyond the lookahead; near memory sees the passage free
       Trail,  // the trail point at the lookahead (capped by the standoff), pulled
-              // back along the trail where near memory has seen a hazard before it
+              // back along the trail (not nearer than pullbackMinCm) where near
+              // memory has seen a static hazard before it
       Line,   // no trail point ahead is standoffCm from the object (it comes toward
               // the follower, or has not yet gone that far): the straight carrot
       Unseen, // never seen, or lost at the last seen point: the straight carrot
@@ -56,12 +58,14 @@ class FollowTrail final {
                  const NavigationMemory::View& memory);
 
     // True when every sample of the segment touches near-memory ground seen
-    // free (live evidence) and no live hazard lies within corridorCm of it.
+    // free (live evidence) and no static hazard (wall, ledge, drop, water the
+    // follower has seen) lies within corridorCm of it. Movable evidence does not
+    // block: it is people and the followed object's own recent footprints.
     // Points outside the near map are not seen. The first footprintCm from
     // `from` (the follower's own footprint) is skipped by both checks.
     static bool nearFree(const NavigationMemory::View& memory, const Tempest::Vec3& from,
                          const Tempest::Vec3& to);
-    // True when the near memory has seen no live hazard within corridorCm of
+    // True when the near memory has seen no static hazard within corridorCm of
     // the segment. Unknown cells and points outside the near map do not block.
     static bool nearClear(const NavigationMemory::View& memory, const Tempest::Vec3& from,
                           const Tempest::Vec3& to);

@@ -24,6 +24,7 @@ void require(bool condition, const char* message) {
 struct Rect final { float x0, x1, z0, z1; };
 struct Floor final {
   std::vector<Rect> walls;
+  std::vector<Rect> movable;    // people or the object's own recent footprints
   bool seen = true;             // false: the follower has seen nothing yet
   bool checkerHoles = false;    // splat holes left by the body-frame rotation
   bool inside(const Vec3& p, float margin = 0) const {
@@ -56,6 +57,8 @@ struct Floor final {
         if(!seen)
           continue;
         if(inside(world,12.5f)) {cell.confidence=1;cell.wall=1;continue;}
+        for(const auto& m:movable)
+          if(world.x>=m.x0 && world.x<=m.x1 && world.z>=m.z0 && world.z<=m.z1) cell.movable=1;
         if(checkerHoles && (x+z)%2==0)
           continue;
         cell.confidence = 1;cell.free = 1;
@@ -242,6 +245,41 @@ void comingToward() {
           "an object coming toward the follower leaves the straight carrot");
   }
 
+// The object's own footprints along its trail are movable evidence. They must
+// not pull the trail carrot back to the follower's feet (the planner would hold).
+void footprintsDoNotTrap() {
+  FollowTrail trail;
+  for(float x=0; x<=1500; x+=25)
+    trail.observe(Vec3(x,0,0),true);
+  Floor marked;marked.movable.push_back({-100,1600,-40,40});
+  const Vec3 follower(-50,0,0), object(1500,0,0);
+  const auto result = trail.guide(follower,object,marked.view(follower,East));
+  require(result.source==Source::Cut && distance(result.carrot,follower)>FollowTrail::lookaheadCm,
+          "movable footprints neither block the cut nor trap the carrot");
+  }
+
+// A seen wall at a corner of the trail pulls the carrot back along the trail,
+// to a point the follower can head for, never to its feet.
+void cornerPullback() {
+  FollowTrail trail;
+  const std::vector<Vec3> path = {{0,0,0},{100,0,0},{100,0,300},{700,0,300}};
+  Vec3 object = path[0];
+  size_t leg = 1;
+  trail.observe(object,true);
+  while(leg<path.size()) {moveAlong(path,leg,object,20.f);trail.observe(object,true);}
+  Floor floor;floor.seen=false;floor.walls.push_back({150,700,50,250});
+  Floor walls = floor;
+  walls.seen = true;
+  // Only the wall is known: every other cell is unseen, so neither direct nor cut.
+  auto view = walls.view(Vec3(),East);
+  for(auto& cell:view.near.cells)
+    if(cell.wall==0) cell = {};
+  const auto result = trail.guide(Vec3(),object,view);
+  require(result.source==Source::Trail,"unseen ground with a seen wall: the trail carrot");
+  require(!walls.crosses(Vec3(),result.carrot),"the pulled-back carrot does not cross the seen wall");
+  require(distance(result.carrot,Vec3())>=FollowTrail::pullbackMinCm,"the pulled-back carrot stays at least 1 m ahead");
+  }
+
 void shortMemoryAndSpacing() {
   FollowTrail trail;
   trail.observe(Vec3(0,0,0),true);
@@ -281,6 +319,8 @@ int main() {
   straightCut();
   lostAtTrailEnd();
   comingToward();
+  footprintsDoNotTrap();
+  cornerPullback();
   shortMemoryAndSpacing();
   passageChecks();
   std::puts("followtrail contract: ok");

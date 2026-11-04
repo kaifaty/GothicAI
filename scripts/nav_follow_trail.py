@@ -279,11 +279,12 @@ def live(args):
 def report(args):
     root = args.root
     result = dict(validation={}, live={}, paired={})
-    for name in ("teacher-line", "teacher-trail", "teacher-trail-moves", "v5-line", "v5-trail"):
+    for name in ("teacher-line", "teacher-trail-attempt1", "teacher-trail", "teacher-trail-moves",
+                 "v5-line", "v5-trail-attempt1", "v5-trail"):
         path = root / "validation" / name / "summary.json"
         if path.is_file():
             result["validation"][name] = read_json(path)
-    for guidance in ("line", "trail"):
+    for guidance in ("line", "trail-attempt1", "trail"):
         path = root / "live" / f"{guidance}-summary.json"
         if path.is_file():
             value = read_json(path)
