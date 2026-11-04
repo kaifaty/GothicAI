@@ -1,0 +1,78 @@
+# TAA by the camera (docs/graphics-plan.md, step 1a): the same four clips with OPENGOTHIC_TAA=0 (CMAA2) and =1,
+# judged side by side as clips, not stills (reports/render-features/2026-11-03-taa).
+# 1920x1080, as the player sees it:
+#   OPENGOTHIC_TAA=0 TEMPEST_WINDOW_SIZE=1920x1080 BENCH_HOST=ryzen scripts/bench.sh scripts/bench/taa-clips.bench
+#   OPENGOTHIC_TAA=1 TEMPEST_WINDOW_SIZE=1920x1080 BENCH_HOST=ryzen scripts/bench.sh scripts/bench/taa-clips.bench
+# measure: reports/render-features/2026-11-03-taa/metrics.py <CMAA2 out> <TAA out>
+seed 73013
+cheat god
+set time 12 0
+overlay off
+ui off
+view full
+cam lift off
+# 1. The market at noon: the hero walks, the camera follows, passers-by around (their trails until step 1b)
+goto NW_CITY_MERCHANT_TRADE_04
+watch player
+walkmode walk
+cam look 120
+cam follow 380 170 160
+wait 10000
+walkto NW_CITY_MERCHANT_PATH_09
+wait 500
+rec taa-market
+wait 7000
+stop
+# 2. The forest road: leaves in the wind, the camera holds still
+cam cut
+goto NW_FOREST_PATH_16
+watch player
+cam look 150
+cam world 500 230 0
+wait 10000
+cam hold
+rec taa-forest
+wait 7000
+stop
+# 3. A slow turn of the camera on the spot by the market roofs: it stands, the hero walks off and it turns after him
+cam cut
+goto NW_CITY_MERCHANT_TRADE_04
+watch player
+walkmode walk
+cam look 350
+cam world 700 280 270
+wait 10000
+cam fixed
+walkto NW_CITY_MERCHANT_SHOP01_FRONT_03
+wait 500
+rec taa-roofs-turn
+wait 7000
+stop
+# 4. Flicker: the camera stands at noon on the way from the city to the farms, a tree in the wind, a fence and
+# tall grass against the sky
+cam cut
+set time 12 0
+goto NW_FARM1_PATH_CITY_13
+watch player
+cam look 300
+cam world 600 200 180
+wait 10000
+cam hold
+wait 1000
+rec taa-flicker
+wait 7000
+stop
+# 5. The harbour at midnight: the fishers' corner from 7 m, two of their three burning braziers, a net rack
+# (fire and smoke are translucent, without a mask until step 1c); the shot of harbour-motion-night.bench
+cam cut
+set time 0 0
+cam look -2033.524
+goto pos -3202.329 1917.000 -3435.690
+cam world 5999.906 -2000.000 -155.224859
+wait 34
+cam hold
+wait 8000
+set time 0 0
+rec taa-harbour-night
+wait 7000
+stop

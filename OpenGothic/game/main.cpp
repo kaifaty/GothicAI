@@ -26,8 +26,12 @@
 #include "commandline.h"
 #include "resources.h"
 #include "aibridge.h"
+#include "basestore.h"
 
 #include <dmusic.h>
+
+#include <cstdlib>
+#include <string_view>
 
 std::string_view selectDevice(const Tempest::AbstractGraphicsApi& api) {
   auto d = api.devices();
@@ -68,6 +72,20 @@ std::unique_ptr<Tempest::AbstractGraphicsApi> mkApi(const CommandLine& g) {
 #else
   return std::make_unique<Tempest::VulkanApi>(flg);
 #endif
+  }
+
+// On by default; OPENGOTHIC_PIPELINE_CACHE=0 turns the on-disk pipeline cache off.
+// It sits next to the other derived caches, but is keyed by GPU and driver, not by the game base.
+static void setupPipelineCache() {
+  const char* env = std::getenv("OPENGOTHIC_PIPELINE_CACHE");
+  if(env!=nullptr && std::string_view(env)=="0")
+    return;
+  try {
+    Tempest::Device::setPipelineCacheDirectory(BaseStore::cacheRoot()/"derived"/"pipelines");
+    }
+  catch(const std::exception& e) {
+    Tempest::Log::i("pipeline cache: no cache directory (",e.what(),")");
+    }
   }
 
 int main(int argc,const char** argv) {
@@ -123,6 +141,7 @@ int main(int argc,const char** argv) {
   const auto           gpuName = selectDevice(*api);
   CrashLog::setGpu(gpuName);
 
+  setupPipelineCache();
   Tempest::Device      device{*api,gpuName};
   CrashLog::setGpu(device.properties().name);
 

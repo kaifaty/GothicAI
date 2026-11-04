@@ -512,6 +512,8 @@ namespace Tempest {
       struct Device:NoCopy {
         virtual ~Device()=default;
         virtual void        waitIdle() = 0;
+        // Writes the on-disk pipeline cache now (no-op when the backend has none or it is off).
+        virtual void        savePipelineCache() {}
         };
       struct Fence:NoCopy {
         virtual ~Fence()=default;

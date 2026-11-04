@@ -59,9 +59,26 @@ bool SceneGlobals::isShadowView(VisCamera v) {
   return false;
   }
 
-void SceneGlobals::setViewProject(const Tempest::Matrix4x4& v, const Tempest::Matrix4x4& p,
+void SceneGlobals::setJitter(const Tempest::Matrix4x4* j) {
+  jitterEnabled = (j!=nullptr);
+  if(j!=nullptr)
+    jitter = *j;
+  }
+
+Tempest::Matrix4x4 SceneGlobals::jittered(const Tempest::Matrix4x4& p) const {
+  if(!jitterEnabled)
+    return p;
+  auto m = jitter;
+  m.mul(p);
+  return m;
+  }
+
+void SceneGlobals::setViewProject(const Tempest::Matrix4x4& v, const Tempest::Matrix4x4& pSrc,
                                   float zNear, float zFar,
                                   const Tempest::Matrix4x4* sh) {
+  // everything that rasterizes or restores a position from the depth sees the jittered projection;
+  // the particles' orientation below keeps the unjittered one
+  const auto p = jittered(pSrc);
   view = v;
   proj = p;
 
@@ -100,15 +117,17 @@ void SceneGlobals::setViewProject(const Tempest::Matrix4x4& v, const Tempest::Ma
   if(shadowMap[0]==nullptr || shadowMap[0]->size()==Tempest::Size(1))
     uboGlobalCpu.closeupShadowSlice = Tempest::Vec2(-65000);
 
-  uboGlobalCpu.pfxLeft  = Tempest::Vec3::normalize({vp.at(0,0), vp.at(1,0), vp.at(2,0)});
-  uboGlobalCpu.pfxTop   = Tempest::Vec3::normalize({vp.at(0,1), vp.at(1,1), vp.at(2,1)});
-  uboGlobalCpu.pfxDepth = Tempest::Vec3::normalize({vp.at(0,2), vp.at(1,2), vp.at(2,2)});
+  auto pfx = pSrc;
+  pfx.mul(v);
+  uboGlobalCpu.pfxLeft  = Tempest::Vec3::normalize({pfx.at(0,0), pfx.at(1,0), pfx.at(2,0)});
+  uboGlobalCpu.pfxTop   = Tempest::Vec3::normalize({pfx.at(0,1), pfx.at(1,1), pfx.at(2,1)});
+  uboGlobalCpu.pfxDepth = Tempest::Vec3::normalize({pfx.at(0,2), pfx.at(1,2), pfx.at(2,2)});
   }
 
 void SceneGlobals::setViewLwc(const Tempest::Matrix4x4& view, const Tempest::Matrix4x4& proj, const Tempest::Matrix4x4* sh) {
   viewLwc = view;
 
-  auto m = proj;
+  auto m = jittered(proj);
   m.mul(viewLwc);
   m.inverse();
   uboGlobalCpu.viewProjectLwcInv = m;
@@ -154,6 +173,11 @@ void SceneGlobals::setWorld(const WorldView &wview) {
   uboGlobalCpu.plPosY  = std::clamp(uboGlobalCpu.plPosY, 0.f, 1000.f);
   }
 
+void SceneGlobals::setMipBias(float bias) {
+  uboGlobalCpu.mipBias      = bias;
+  uboGlobalCpu.mipGradScale = std::exp2(bias);
+  }
+
 void SceneGlobals::setUnderWater(bool w) {
   uboGlobalCpu.underWater = w ? 1 : 0;
   }
@@ -176,6 +200,10 @@ void SceneGlobals::commitUbo(uint8_t fId) {
       ubo.viewProject = uboGlobalCpu.viewShadow[i-V_Shadow0];
     if(i==V_Vsm)
       ubo.viewProject = uboGlobalCpu.viewVirtualShadow;
+    if(isShadowView(VisCamera(i))) {
+      ubo.mipBias      = 0;
+      ubo.mipGradScale = 1;
+      }
     std::memcpy(ubo.frustrum, frustrum[i].f, sizeof(ubo.frustrum));
     }
 

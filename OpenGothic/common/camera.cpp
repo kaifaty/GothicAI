@@ -87,6 +87,7 @@ void Camera::reset() {
 
 void Camera::reset(const Npc* pl) {
   const auto& def = cameraDef();
+  markCut();
 
   userRange    = (def.best_range - def.min_range)/(def.max_range - def.min_range);
   state.range  = userRange*(def.max_range-def.min_range)+def.min_range;
@@ -202,6 +203,8 @@ void Camera::setMode(const Camera::Mode m) {
     };
 
   const bool reset = !(isRegular(camMod) && isRegular(m));
+  if(reset)
+    markCut();
   if(camMod==Mode::Cutscene) {
     state.spin   = angles;
     state.target = origin;

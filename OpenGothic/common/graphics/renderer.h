@@ -11,6 +11,7 @@
 #include "worldview.h"
 #include "shaders.h"
 #include "blooddecals.h"
+#include "taa.h"
 
 class Camera;
 class InventoryMenu;
@@ -48,6 +49,7 @@ class Renderer final {
     Tempest::Size effectResolution() const;
 
     void updateCamera(const WorldView& wview, const Camera &camera);
+    void prepareTaa(WorldView& wview, const Camera& camera);
     bool requiresRtScene() const;
     bool requiresLightsTree() const;
 
@@ -98,6 +100,8 @@ class Renderer final {
     void drawTonemapping  (Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
     void drawBloom        (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawCMAA2        (Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
+    void drawTaa          (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
+    void drawTaaSharpen   (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawUpscale      (Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawReflections  (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
     void drawUnderwater   (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
@@ -147,6 +151,9 @@ class Renderer final {
 
       GiMethod       giMethod           = GiMethod::None;
       bool           aaEnabled          = false;
+      bool           taaEnabled         = false;
+      float          taaSharpness       = 0.75f; // RCAS after the resolve, 0..1
+      float          taaMipBias         = -0.5f; // material textures of the main view with TAA
       bool           bloomEnabled       = true;
 
       float          zVidBrightness     = 0.5;
@@ -224,6 +231,21 @@ class Renderer final {
       Tempest::StorageBuffer    controlBuffer;
       Tempest::StorageBuffer    indirectBuffer;
       } cmaa2;
+
+    // temporal AA by the camera (docs/graphics-plan.md, step 1a): two histories in turn, the resolved frame goes
+    // into `output`, which then takes the place of sceneLinear
+    struct {
+      Tempest::Attachment       history[2];
+      Tempest::Attachment       output;
+      uint8_t                   cur       = 0;     // history[cur] is written this frame, the other one read
+      uint32_t                  frame     = 0;     // the jitter phase
+      uint32_t                  cuts      = 0;     // Camera::cuts() of the last frame
+      bool                      active    = false; // this frame is jittered and resolved
+      bool                      valid     = false; // the history holds a frame of this view
+      bool                      shot      = false; // screenshoot(): an image of the internal size
+      Taa::View                 prev;
+      Tempest::Matrix4x4        reproject;
+      } taa;
 
     struct Upscale {
       Tempest::Attachment       input;  // tonemapped frame at internal resolution

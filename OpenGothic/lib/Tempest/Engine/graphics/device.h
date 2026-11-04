@@ -21,6 +21,7 @@
 
 #include "videobuffer.h"
 
+#include <filesystem>
 #include <vector>
 
 namespace Tempest {
@@ -44,6 +45,12 @@ class Device {
     virtual ~Device();
 
     void                  waitIdle();
+
+    // On-disk pipeline cache (Vulkan VkPipelineCache, Metal binary archive). Set the directory before
+    // the device is created; empty (the default) keeps it off. savePipelineCache() writes it now,
+    // the device also writes it when it is destroyed.
+    static void           setPipelineCacheDirectory(const std::filesystem::path& dir);
+    void                  savePipelineCache();
 
     [[nodiscard]]
     Fence                 submit(const CommandBuffer& cmd);

@@ -400,7 +400,7 @@ inline void end() {
 inline std::chrono::steady_clock::time_point loadFinished;
 inline bool firstFramePending=false, pipelinesPending=false;
 inline void pipelines(std::string_view stage) {
-  constexpr const char* names[]={"library","graphics","compute"};
+  constexpr const char* names[]={"library","graphics","compute","convert"};
   for(size_t i=0;i<TempestLoadProbe::Count;++i) {
     const auto& c=TempestLoadProbe::pipelines[i];
     char line[256];

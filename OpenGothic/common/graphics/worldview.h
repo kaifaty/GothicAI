@@ -61,6 +61,9 @@ class WorldView {
                              const Tempest::StorageBuffer& pageList);
     void setHiZ(const Tempest::Texture2d& hiZ);
     void setSceneImages(const Tempest::Texture2d& clr, const Tempest::Texture2d& depthAux, const Tempest::ZBuffer& depthNative);
+    // TAA: the sub-pixel shift of the main projection for the next preFrameUpdate (nullptr: none)
+    void setJitter(const Tempest::Matrix4x4* jitter) { sGlobal.setJitter(jitter); }
+    void setMipBias(float bias) { sGlobal.setMipBias(bias); }
     void setWindEnabled(bool enabled, uint64_t period);
     void setFog(const Tempest::StorageImage& lut, const Tempest::StorageImage& lutMs);
     void setClothWind(bool enabled, float scale);

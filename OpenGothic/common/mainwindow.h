@@ -186,4 +186,7 @@ class MainWindow : public Tempest::Window {
     Fps           fps;
     BenchmarkData benchmark;
     uint64_t      maxFpsInv = 0;
+    // One early pipeline-cache write after the first seconds of play, so a crash still leaves a cache.
+    uint64_t      pipelineCacheSaveAt = 0;
+    bool          pipelineCacheSaved  = false;
   };
