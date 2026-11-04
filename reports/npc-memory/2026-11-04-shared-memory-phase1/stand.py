@@ -70,6 +70,7 @@ VARIANTS = ("bare", "items", "sol")
 VERDICTS = ("correct", "partial", "wrong", "abstain", "invented")
 TAIL_LENGTHS = (150, 300, 450, 600, 900)
 TAIL_PHRASE = "Кавалорн, ты меня помнишь?"
+SWA_WINDOW = 512  # Gemma's sliding window: llama.cpp rolls its cache back about this far (docs/npc-agent.md)
 MEMORY_HEAD = "[Твоя память — что ты помнишь сам, герою её не пересказывай]"
 LIE_PHRASES = ("бандит", "мост")
 TOPICS = {  # item 2 of the acceptance: what Cavalorn must remember across meetings
@@ -1134,9 +1135,10 @@ async def judge(
         probe = probes.get(record["probe"])
         if probe is None:
             continue
-        talk = world.talk(record["ask_after"])
+        ctx = asked(world, record["ask_after"])
         sections = {
-            "Описание персонажа": talk.instructions,
+            "Описание персонажа": ctx.talk.instructions,
+            "Обстановка, в которой NPC отвечал": ctx.situation,
             "Вид вопроса": probe["kind"],
             "Фраза героя": probe["phrase"],
             "Ожидаемый ответ": probe["expect"],
@@ -1376,6 +1378,14 @@ def summary(directory: Path, *, emit: bool = True) -> dict[str, Any]:
                 (a.get("memory") or {}).get("tokens") for a in chosen
             )
 
+    def reread(row: dict[str, Any]) -> int | None:
+        """Tokens of the warmed history read again: Gemma's sliding window rolls the cache back to a
+        checkpoint before the changed card; more than the window means the history is read again, not just
+        its end."""
+        cache_n = (row.get("timings") or {}).get("cache_n")
+        warmed = row.get("history_n") or max((r.get("timings") or {}).get("cache_n") or 0 for r in tail_rows)
+        return max(0, warmed - cache_n) if cache_n is not None and warmed else None
+
     tail = {}
     for length in sorted({r["length"] for r in tail_rows}):
         group = [r for r in tail_rows if r["length"] == length and r.get("error") is None]
@@ -1387,7 +1397,8 @@ def summary(directory: Path, *, emit: bool = True) -> dict[str, Any]:
             "prompt_n": distribution((r["timings"] or {}).get("prompt_n") for r in group),
             "cache_n": distribution((r["timings"] or {}).get("cache_n") for r in group),
             "prompt_ms": distribution((r["timings"] or {}).get("prompt_ms") for r in group),
-            "reread": sum(bool(r.get("reread")) for r in group),
+            "reread_tokens": distribution(reread(r) for r in group),
+            "reread_over_window": sum((reread(r) or 0) > SWA_WINDOW for r in group),
         }
     tail_ok = [r for r in tail_rows if r.get("error") is None]
 
@@ -1431,7 +1442,11 @@ def summary(directory: Path, *, emit: bool = True) -> dict[str, Any]:
         "7_tail": {
             "first_sentence_median_s": first_sentence,
             "fast": first_sentence <= 0.8 if first_sentence is not None else None,
-            "reread": sum(bool(r.get("reread")) for r in tail_ok),
+            "history_tokens": max(
+                ((r.get("timings") or {}).get("cache_n") or 0 for r in tail_ok), default=None
+            ),
+            "reread_tokens_max": max((reread(r) or 0 for r in tail_ok), default=None),
+            "reread_over_window": sum((reread(r) or 0) > SWA_WINDOW for r in tail_ok),
         }
         if tail_ok
         else None,
@@ -1482,7 +1497,8 @@ def summary(directory: Path, *, emit: bool = True) -> dict[str, Any]:
         for length, t in tail.items():
             print(
                 f"7. tail {length}: first sentence {t['first_sentence_s']['median']} s, prompt_n "
-                f"{t['prompt_n']['median']}, cache_n {t['cache_n']['median']}, reread {t['reread']}"
+                f"{t['prompt_n']['median']}, cache_n {t['cache_n']['median']}, "
+                f"history read again {t['reread_tokens']['median']} tokens"
             )
         print(f"8. lies: {acceptance['8_lies']}")
         print(f"Sol calls: {sol_calls}")
@@ -1553,7 +1569,7 @@ async def tail(
     per_token = len(sample) / max(tokens.count(sample), 1)
     situation = Message("developer", ctx.brief + "\n\n" + prompt("speak_probe.md"))
     after = tokens.count(situation.content) + tokens.count(TAIL_PHRASE)
-    rng, rows = random.Random(seed), []
+    rng, rows, history_n = random.Random(seed), [], None
     try:
         token = QUICK_SLOT.set(slot)
         started = time.monotonic()
@@ -1577,6 +1593,8 @@ async def tail(
                 result = await gemma_stream(quick, ctx.talk.instructions, messages, slot)
                 tail_tokens = tokens.count(memory)
                 prompt_n = (result["timings"] or {}).get("prompt_n")
+                if history_n is None:  # the first request after the warm reuses all of the warmed history
+                    history_n = (result["timings"] or {}).get("cache_n")
                 rows.append(
                     {
                         "conv": chosen,
@@ -1584,10 +1602,8 @@ async def tail(
                         "repeat": repeat,
                         "tail_tokens": tail_tokens,
                         "after_tokens": after,
+                        "history_n": history_n,
                         **result,
-                        # more new tokens than the tail and what follows it (+ the chat template):
-                        # the history was read again
-                        "reread": prompt_n is not None and prompt_n > tail_tokens + after + 64,
                     }
                 )
                 pilot.save_rows(directory / "tail.jsonl", rows)
@@ -2055,7 +2071,9 @@ async def _selftest_run(check: Any, root: Path) -> None:
     check(
         "probe judge: expect and evidence",
         "Ожидаемый ответ\nЗол: герой его обокрал." in probe_request
-        and "Опора в записи\nГерой: Привет, Кавалорн\nNPC: Здорово." in probe_request,
+        and "Опора в записи\nГерой: Привет, Кавалорн\nNPC: Здорово." in probe_request
+        and "Обстановка, в которой NPC отвечал\n[Обстановка" in probe_request
+        and "Время: день 1, 11:30, день." in probe_request,
         probe_request[-300:],
     )
     check("probe verdict parse", parse_probe_verdict('{"verdict": "abstain"}')["verdict"] == "abstain")
@@ -2132,7 +2150,7 @@ async def _selftest_run(check: Any, root: Path) -> None:
     )
     check(
         "tail timings",
-        rows[0]["timings"]["cache_n"] == 900 and rows[0]["reread"] is False,
+        rows[0]["timings"]["cache_n"] == 900 and rows[0]["history_n"] == 900,
         rows[0]["timings"],
     )
 
@@ -2169,7 +2187,12 @@ async def _selftest_run(check: Any, root: Path) -> None:
         result["sol_calls"] == {"consolidate": 2, "lie": 1, "answers": 2, "judge": 9, "total": 14},
         result["sol_calls"],
     )
-    check("summary tail", result["acceptance"]["7_tail"]["reread"] == 0 and set(result["tail"]) == {40, 80})
+    check(
+        "summary tail",
+        result["acceptance"]["7_tail"]["reread_over_window"] == 0
+        and result["tail"][40]["reread_tokens"]["median"] == 0
+        and set(result["tail"]) == {40, 80},
+    )
 
 
 async def selftest() -> int:
