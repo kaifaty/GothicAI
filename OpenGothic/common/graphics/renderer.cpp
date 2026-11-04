@@ -136,6 +136,12 @@ void Renderer::setupSettings() {
       }
   }
 
+  // VSM lamps: blockers nearer than this to the light (its own basket or frame) cast no shadow; 0 or unset: 80 cm.
+  // The harbour braziers of the vob layer hang their light about 60 cm over the fire: 25 and 60 cm left the basket's
+  // shadow on the wall below (vsm-clips walk-brazier-end); a candle's shadows of the hero and the furniture stay at 80
+  settings.vsmLampNearCm      = Gothic::settingsGetF("INTERNAL","vsmLampNearCm");
+  if(settings.vsmLampNearCm<=0)
+    settings.vsmLampNearCm = 80;
   settings.zVidBrightness     = Gothic::settingsGetF("VIDEO","zVidBrightness");
   settings.zVidContrast       = Gothic::settingsGetF("VIDEO","zVidContrast");
   settings.zVidGamma          = Gothic::settingsGetF("VIDEO","zVidGamma");
@@ -2038,9 +2044,11 @@ void Renderer::drawLights(Encoder<CommandBuffer>& cmd, const WorldView& wview) {
     cmd.setBinding(11,scene.rtScene.rtDesc);
     }
 
-  auto  originLwc = scene.originLwc;
-  auto& ibo       = Resources::cubeIbo();
-  cmd.setPushData(&originLwc, sizeof(originLwc));
+  auto& ibo  = Resources::cubeIbo();
+  struct Push { Vec3 originLwc; float vsmLampNear; } push = {scene.originLwc, settings.vsmLampNearCm};
+  if(lights.directLightPso==&shaders.lightsVsm)
+    cmd.setPushData(&push, sizeof(push)); else
+    cmd.setPushData(&push.originLwc, sizeof(push.originLwc));
   cmd.setPipeline(*lights.directLightPso);
   cmd.draw(nullptr,ibo, 0,ibo.size(), 0,wview.lights().size());
   }

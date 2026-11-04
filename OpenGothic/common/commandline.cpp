@@ -139,7 +139,7 @@ CommandLine::CommandLine(int argc, const char** argv) {
         isBindlessSh = boolArg(argv[i]);
       }
     else if(arg=="-vsm") {
-      // virtual shadow maps for the sun and the lamps, on by default; -vsm 0 brings back the two cascades
+      // virtual shadow maps for the sun and the lamps: on by default, off on Metal (commandline.h); -vsm 0|1
       ++i;
       if(i<argc)
         isVsm = boolArg(argv[i]);

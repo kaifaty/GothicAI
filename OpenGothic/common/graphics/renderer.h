@@ -160,6 +160,7 @@ class Renderer final {
 
       float          vsmMipBias         = 0.25; //TODO: set to lower, eventually
       bool           vsmStats           = false; // OPENGOTHIC_VSM_STATS=1: VSM counters to the log every 5 s
+      float          vsmLampNearCm      = 80;    // [INTERNAL] vsmLampNearCm: a lamp's fixture this close casts no shadow
       } settings;
 
     Frustrum                  frustrum[SceneGlobals::V_Count];
