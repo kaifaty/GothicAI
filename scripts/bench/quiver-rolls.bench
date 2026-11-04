@@ -1,0 +1,150 @@
+# The quiver behind the right hip in the hero's melee dodges (reports/archery/2026-11-05-quiver-rolls): a one-hander
+# in hand at 1H talent 1 (HUMANS_1HST1), the bow and the quiver worn. Medium armour (ITAR_MIL_M): the roll four ways;
+# heavy (ITAR_PAL_H): the slow roll four ways (forward with melee_barge off) and the shoulder barge forward; light
+# (ITAR_Leather_L): the dash forward and right, to compare. One dodge a clip, 0.5 s before and after. Onar's field,
+# open and level, 16:00; the hero faces 210, so the sun is in front on the right of the camera 2 m behind him on the
+# right; nothing in the way of the dodges.
+# slowmo 4: a row of metrics.csv is 1/120 s of the game; a clip at 30 fps is the game 4x slower. The report's
+# script (rolls.py) makes the real-time 60 fps clip (setpts=0.25*PTS -r 60) and the 2x slower one (setpts=0.5*PTS -r 60).
+# Columns: qv_legt/qv_leg/qv_legl (the legs), qv_arm, qv_armor, qv_swing, qv_yield, and qv_gnd, qv_gndm: cm the
+# tube and its mouth go under the world's collision. Each dodge writes its `melee dodge PC_HERO: ...` line.
+# WORLD=NEWWORLD.ZEN BENCH_HOST=local OPENGOTHIC_CONTENT=<models of anim-strikes + meshes, materials of quiver>
+seed 73013
+cheat god
+set time 16 0
+release all
+view clean
+overlay off
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 210
+wait 500
+clear 3000
+watch player
+equip ItRw_Bow_L_01
+equip ITAR_MIL_M
+arrows player 20
+melee-shadow weapon 1h
+stats 1h 45 talent 1
+animinfo T_1HROLLB T_1HROLLL T_1HROLLR T_1HROLLF T_1HROLLHEAVYB T_1HROLLHEAVYL T_1HROLLHEAVYR T_1HROLLHEAVYF T_1HBARGE T_1HDASHF T_1HDASHR
+cam look 95
+cam follow 200 115 -135
+slowmo 4
+wait 2000
+rec probe_frame
+wait 200
+stop
+
+# --- medium: the roll
+rec mil_roll_back
+wait 500
+dodge player back
+wait 1520
+stop
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 210
+melee-shadow weapon 1h
+stats 1h 45 talent 1
+wait 2000
+rec mil_roll_left
+wait 500
+dodge player left
+wait 1520
+stop
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 210
+melee-shadow weapon 1h
+stats 1h 45 talent 1
+wait 2000
+rec mil_roll_right
+wait 500
+dodge player right
+wait 1520
+stop
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 210
+melee-shadow weapon 1h
+stats 1h 45 talent 1
+wait 2000
+rec mil_roll_forward
+wait 500
+dodge player forward
+wait 1520
+stop
+
+# --- heavy: the slow roll, forward with the barge off
+equip ITAR_PAL_H
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 210
+melee-shadow weapon 1h
+stats 1h 45 talent 1
+wait 2000
+rec pal_heavyroll_back
+wait 500
+dodge player back
+wait 1880
+stop
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 210
+melee-shadow weapon 1h
+stats 1h 45 talent 1
+wait 2000
+rec pal_heavyroll_left
+wait 500
+dodge player left
+wait 1880
+stop
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 210
+melee-shadow weapon 1h
+stats 1h 45 talent 1
+wait 2000
+rec pal_heavyroll_right
+wait 500
+dodge player right
+wait 1880
+stop
+toggle melee_barge
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 210
+melee-shadow weapon 1h
+stats 1h 45 talent 1
+wait 2000
+rec pal_heavyroll_forward
+wait 500
+dodge player forward
+wait 1880
+stop
+toggle melee_barge
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 210
+melee-shadow weapon 1h
+stats 1h 45 talent 1
+wait 2000
+rec pal_barge_forward
+wait 500
+dodge player forward
+wait 1640
+stop
+
+# --- light: the dash, to compare
+equip ITAR_Leather_L
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 210
+melee-shadow weapon 1h
+stats 1h 45 talent 1
+wait 2000
+rec lea_dash_forward
+wait 500
+dodge player forward
+wait 1200
+stop
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 210
+melee-shadow weapon 1h
+stats 1h 45 talent 1
+wait 2000
+rec lea_dash_right
+wait 500
+dodge player right
+wait 1200
+stop

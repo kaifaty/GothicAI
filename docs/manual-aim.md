@@ -32,7 +32,7 @@
 - **Тело.** Модель `ITRW_QUIVER` ([замысел и модель](../reports/content/2026-11-quiver/README.md)) из `content/meshes/meshes.json`. Без файла видны только стрелы.
 - **Выключить:** `OPENGOTHIC_QUIVER=0`.
 
-Стенды: [quiver-mount](../scripts/bench/quiver-mount.bench), [quiver-quick](../scripts/bench/quiver-quick.bench), клипы [quiver-clips](../scripts/bench/quiver-clips.bench). [Отчёт](../reports/archery/2026-11-04-quiver-mount/README.md), [разбор места и движения](../reports/archery/2026-11-04-quiver-mount/research.md).
+Стенды: [quiver-mount](../scripts/bench/quiver-mount.bench), [quiver-quick](../scripts/bench/quiver-quick.bench), клипы [quiver-clips](../scripts/bench/quiver-clips.bench), уклонения героя [quiver-rolls](../scripts/bench/quiver-rolls.bench) ([проба](../reports/archery/2026-11-05-quiver-rolls/README.md): колонки `qv_gnd`, `qv_gndm` — насколько труба и устье ушли под коллизию мира, см). [Отчёт](../reports/archery/2026-11-04-quiver-mount/README.md), [разбор места и движения](../reports/archery/2026-11-04-quiver-mount/research.md).
 
 Модули: [колчан](../OpenGothic/common/graphics/mesh/quiver.cpp), [параметры выстрела](../OpenGothic/common/game/archery.cpp), [управление героя](../OpenGothic/common/game/playercontrol.cpp), [камера](../OpenGothic/common/game/aimcamera.h), [лучники NPC](../OpenGothic/common/game/archerai.cpp); поза — [aim](../OpenGothic/common/graphics/mesh/aim.cpp), [bowdraw](../OpenGothic/common/graphics/mesh/bowdraw.cpp), [aimwalk](../OpenGothic/common/graphics/mesh/aimwalk.cpp); [зоны попадания](../OpenGothic/common/graphics/mesh/hitzones.cpp).
 
