@@ -1,5 +1,7 @@
 # Карта проекта
 
+[Отдельный стенд лучей nav-sim](navigation.md#как-работает-сейчас): [`raybench-remote.sh`](../scripts/navsim/raybench-remote.sh) сравнивает Jolt, Embree 4 и CUDA Warp на NAVSTAT1/NAVRAYS1 и измеряет CharacterVirtual; сборка и запуск через gq, коробка — `selftest`, повтор масштабирования Embree/CharacterVirtual с миром на поток — `scaling`, числа — [`standalone.json`](../reports/navigation/2026-11-04-nav-sim-research/data/rays/standalone.json).
+
 [Точность таблиц движения nav-sim](../reports/navigation/2026-11-04-nav-sim-research/data/motion/results.json): [`motion_table.py`](../scripts/navsim/motion_table.py) читает записи учителя без запуска игры, сравнивает 0–3 решения истории клавиш, шаги 100 мс и разомкнутые окна 1/3/10 с; отдельно считает уклоны, упор, воду, прыжки, лазание и поворот на месте. Физику Jolt этот замер не проверяет.
 
 [Первая обученная навигационная v5 с входом темпа](../reports/navigation/2026-11-04-pace-v5/README.md): 20 эпох от HD на его корпусе и по его рецепту; паритет Torch/NumPy/C++ на 1000 шагах. Свежие v5/HD × run/walk и follow — 2048/2048 эпизодов, гейт 9/9; живой набор с одинаковым темпом мест — 54/54 записи. [`nav-pace-remote.sh`](../scripts/nav-pace-remote.sh) подаёт обучение, паритет и сравнение на Ryzen; [`nav-live.sh --round pace-v5`](../scripts/nav-live.sh) записывает обе модели заново после гейта. Веса и записи сохранены на NAS, собственные сборки и кэши удалены. [Правила стенда](navigation.md#как-работает-сейчас).
