@@ -6,12 +6,13 @@
 #   bash scripts/nav-follow-remote.sh validation-{teacher,v5}-{trail,line}  # line = the previous straight carrot
 #   bash scripts/nav-follow-remote.sh live-trail|live-line     # 03-follow-hero, teacher and v5, three seeds, video
 #   bash scripts/nav-follow-remote.sh report                   # tables from all finished stages
+#   NAV_FOLLOW_IDS=id,id bash scripts/nav-follow-remote.sh diagnose-teacher-trail  # full traces of chosen routes
 #   bash scripts/nav-follow-remote.sh clean                    # remove ~/gothic-ai/nav-follow-trail on Ryzen
 # Jobs run from immutable snapshots in ~/gothic-ai/nav-follow-trail/source/<hash>; the engine is built
 # once per OpenGothic snapshot. Results: /mnt/shared/gothic-ai/nav-follow-trail/. v5 weights are only read.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-usage='Usage: bash scripts/nav-follow-remote.sh smoke|validation-{teacher,v5}-{trail,line}|live-{trail,line}|report|clean'
+usage='Usage: bash scripts/nav-follow-remote.sh smoke|validation-{teacher,v5}-{trail,line}|diagnose-{teacher,v5}-{trail,line}|live-{trail,line}|report|clean'
 stage="${1:-}"
 archive="${NAV_FOLLOW_ARCHIVE:-/mnt/shared/gothic-ai/nav-follow-trail}"
 task_name=nav-follow-trail
@@ -22,7 +23,7 @@ navmesh_source=/mnt/shared/gothic-ai/archive/nav-dagger3-20261030/hd-measure-cac
 rejections_source=/mnt/shared/gothic-ai/archive/nav-dagger3-20261030/hd-validation/setup-rejections
 
 if [[ "$stage" != run ]]; then
-  [[ $# == 1 && "$stage" =~ ^(smoke|validation-(teacher|v5)-(trail|line)|live-(trail|line)|report|clean)$ ]] || { echo "$usage" >&2; exit 2; }
+  [[ $# == 1 && "$stage" =~ ^(smoke|(validation|diagnose)-(teacher|v5)-(trail|line)|live-(trail|line)|report|clean)$ ]] || { echo "$usage" >&2; exit 2; }
   task="$(ssh -o BatchMode=yes -o ConnectTimeout=10 ryzen 'printf "%s/gothic-ai" "$HOME"')/$task_name"
   if [[ "$stage" == clean ]]; then
     ssh ryzen "rm -rf '$task'; df -h ~ | tail -1"
@@ -63,10 +64,11 @@ HASH
     validation-*) resources=(--class batch --threads 8 --cpu-quota 800% --mem 7G --max 2h) ;;
     live-*) resources=(--class batch --threads 6 --cpu-quota 600% --mem 10G --gpu-mem 3G --display --display-shared --max 1h) ;;
     report) resources=(--class quick --threads 1 --cpu-quota 100% --mem 2G --max 10m) ;;
+    diagnose-*) resources=(--class quick --threads 2 --cpu-quota 200% --mem 3G --max 30m) ;;
   esac
   GQ_OWNER="$task_name" "$ROOT/scripts/gq" submit "${resources[@]}" --name "nav follow $stage $snapshot" -- \
     python3 -X faulthandler -I "$task/source/$snapshot/scripts/nav_job.py" --max-seconds 7200 -- \
-    env NAV_FOLLOW_ARCHIVE="$archive" bash "$task/source/$snapshot/scripts/nav-follow-remote.sh" run "$stage" "$snapshot" "$engine"
+    env NAV_FOLLOW_ARCHIVE="$archive" "NAV_FOLLOW_IDS=${NAV_FOLLOW_IDS:-}" bash "$task/source/$snapshot/scripts/nav-follow-remote.sh" run "$stage" "$snapshot" "$engine"
   exit
 fi
 
@@ -169,6 +171,18 @@ if [[ "$stage" == validation-* ]]; then
   navmesh 8
   target="$weights"; [[ "$model" == v5 ]] || target=teacher
   validate "$archive/validation/$model-$guidance" "$target" "$guidance" --parallel 8
+  exit
+fi
+
+if [[ "$stage" == diagnose-* ]]; then
+  IFS=- read -r _ model guidance <<< "$stage"
+  [[ -n "${NAV_FOLLOW_IDS:-}" ]] || stop "NAV_FOLLOW_IDS names the routes to trace"
+  game_environment
+  navmesh 2
+  target="$weights"; [[ "$model" == v5 ]] || target=teacher
+  output="$archive/diagnose/$model-$guidance-$snapshot"
+  rm -rf "$output"
+  validate "$output" "$target" "$guidance" --parallel 2 --ids "$NAV_FOLLOW_IDS" --keep-traces
   exit
 fi
 

@@ -155,6 +155,11 @@ def validation(args):
     values = rl.validation_scenarios(args.manifest, FAMILY)
     if args.first is not None:
         values = values[:args.first]
+    if args.ids:
+        wanted = args.ids.split(",")
+        values = [value for value in values if value["id"] in wanted]
+        if len(values) != len(wanted):
+            raise ValueError("--ids names routes outside the frozen follow validation")
     workers = min(args.parallel, len(values))
     started = time.monotonic()
     args.output.mkdir(parents=True, exist_ok=True)
@@ -195,7 +200,8 @@ def validation(args):
                 episode = read_json(directory / "episode.json")
                 episode.update(id=value["id"], base_fingerprint=os.environ.get("OPENGOTHIC_BASE_FINGERPRINT"))
                 write_json(directory / "episode.json", episode)
-                rl.clean_lean_diagnostics(directory)
+                if not args.keep_traces:
+                    rl.clean_lean_diagnostics(directory)
                 row = dict(episode_follow(directory), id=value["id"])
                 if row["guidance"] != args.guidance or (row["walk_decisions"] and not teacher) or episode.get("record"):
                     raise ValueError(f"Episode guidance, pace or recording differs: {directory}")
@@ -298,6 +304,8 @@ def main(argv=None):
     parser.add_argument("--npc", default="BAU_954_MALETH")
     parser.add_argument("--limit-ms", type=int, help="Override the route horizon (smoke only)")
     parser.add_argument("--first", type=int, help="Only the first N frozen routes (smoke only)")
+    parser.add_argument("--ids", help="Only these frozen route IDs (diagnosis)")
+    parser.add_argument("--keep-traces", action="store_true", help="Keep teacher paths and frames (diagnosis)")
     parser.add_argument("--parallel", type=int, default=12)
     parser.add_argument("--physics", default="cv")
     parser.add_argument("--watchdog-seconds", type=float, default=1800)
