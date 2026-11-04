@@ -1,7 +1,10 @@
-// nav-sim stand library, task S1: static world in Embree and the engine's eye core.
-// The front-face rule and the BVH settings are the ones that matched the engine on
-// 99.97-99.996% of the rays in scripts/navsim/raybench (research §3.2).
+// nav-sim stand library: static world in Embree and the engine's eye core (task S1),
+// ground motion on Jolt (task S2, motion.cpp). The front-face rule and the BVH settings
+// are the ones that matched the engine on 99.97-99.996% of the rays in
+// scripts/navsim/raybench (research §3.2).
 #include "navsim.h"
+#include "motion.h"
+#include "pool.h"
 
 #include "game/navigationeye.h"
 
@@ -10,28 +13,21 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
-#include <condition_variable>
 #include <cstring>
 #include <exception>
 #include <fstream>
-#include <functional>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <string>
-#include <thread>
 #include <vector>
-
-#if defined(__linux__)
-#include <pthread.h>
-#include <sched.h>
-#endif
 
 #define NAVSIM_API extern "C" __attribute__((visibility("default")))
 
 namespace {
 using Tempest::Vec3;
 using Kind = NavigationEye::HitKind;
+using navsim::Pool;
 
 constexpr int32_t Rays = 238, Slots = 2*Rays;
 constexpr uint64_t MaxGameMs = 0xFFFFFFFEull; // gpumem stores sampled time + 1 in 32 bits
@@ -100,6 +96,14 @@ void frontFaces(const RTCFilterFunctionNArguments* a) {
     if(dot>=0.f)
       a->valid[i] = 0;
     }
+  }
+
+// The landRay of the fall guard: front faces of landscape and objects, never water.
+void solidFrontFaces(const RTCFilterFunctionNArguments* a) {
+  frontFaces(a);
+  for(unsigned i=0; i<a->N; ++i)
+    if(a->valid[i] && RTCHitN_geomID(a->hit,a->N,i)==3)
+      a->valid[i] = 0;
   }
 
 class EmbreeWorld final : public NavigationEye::RayCaster {
@@ -174,91 +178,28 @@ class EmbreeWorld final : public NavigationEye::RayCaster {
       return result;
       }
 
+    // DynamicWorld::landRay(from, depth).hasCol for DynamicWorld::NpcItem::hasFloorBelow.
+    bool floorBelow(float x, float y, float z, float depth) const {
+      RTCRayHit rh{};
+      rh.ray.org_x = x; rh.ray.org_y = y; rh.ray.org_z = z;
+      rh.ray.dir_y = -depth;
+      rh.ray.tnear = 0.f;
+      rh.ray.tfar = 1.f;
+      rh.ray.mask = ~0u;
+      rh.hit.geomID = RTC_INVALID_GEOMETRY_ID;
+      rh.hit.instID[0] = RTC_INVALID_GEOMETRY_ID;
+      RTCIntersectArguments args;
+      rtcInitIntersectArguments(&args);
+      args.filter = solidFrontFaces;
+      rtcIntersect1(scene,&rh,&args);
+      return rh.hit.geomID!=RTC_INVALID_GEOMETRY_ID;
+      }
+
     int64_t triangles = 0;
 
   private:
     RTCDevice device = nullptr;
     RTCScene scene = nullptr;
-  };
-
-// Fixed workers that split [0, items) in chunks; the caller blocks until done.
-class Pool final {
-  public:
-    Pool(int32_t threads, const int32_t* cpus) {
-      for(int32_t i=0; i<threads; ++i)
-        workers.emplace_back([this,cpu=cpus!=nullptr ? cpus[i] : -1] { loop(cpu); });
-      }
-
-    ~Pool() {
-      {
-        std::lock_guard<std::mutex> lock(mutex);
-        stop = true;
-      }
-      wake.notify_all();
-      for(auto& w:workers)
-        w.join();
-      }
-
-    size_t size() const { return workers.size(); }
-
-    void run(size_t items, const std::function<void(size_t,size_t)>& work) {
-      if(items==0)
-        return;
-      std::unique_lock<std::mutex> lock(mutex);
-      job = &work;
-      total = items;
-      chunk = std::max<size_t>(1,items/(workers.size()*8));
-      next.store(0);
-      pending = workers.size();
-      ++generation;
-      wake.notify_all();
-      finished.wait(lock,[this] { return pending==0; });
-      job = nullptr;
-      }
-
-  private:
-    void loop(int cpu) {
-#if defined(__linux__)
-      if(cpu>=0) {
-        cpu_set_t set;
-        CPU_ZERO(&set);
-        CPU_SET(cpu,&set);
-        pthread_setaffinity_np(pthread_self(),sizeof(set),&set);
-        }
-#else
-      (void)cpu;
-#endif
-      uint64_t seen = 0;
-      for(;;) {
-        const std::function<void(size_t,size_t)>* work = nullptr;
-        {
-          std::unique_lock<std::mutex> lock(mutex);
-          wake.wait(lock,[&] { return stop || generation!=seen; });
-          if(stop)
-            return;
-          seen = generation;
-          work = job;
-        }
-        for(;;) {
-          const size_t begin = next.fetch_add(chunk);
-          if(begin>=total)
-            break;
-          (*work)(begin,std::min(total,begin+chunk));
-          }
-        std::lock_guard<std::mutex> lock(mutex);
-        if(--pending==0)
-          finished.notify_one();
-        }
-      }
-
-    std::vector<std::thread> workers;
-    std::mutex mutex;
-    std::condition_variable wake, finished;
-    const std::function<void(size_t,size_t)>* job = nullptr;
-    std::atomic<size_t> next{0};
-    size_t total = 0, chunk = 1, pending = 0;
-    uint64_t generation = 0;
-    bool stop = false;
   };
 
 struct Agent final {
@@ -298,9 +239,12 @@ Vec3 vec(const float* v, int32_t i) {
 }
 
 struct navsim_world {
+  std::string staticBin;
   std::unique_ptr<EmbreeWorld> rays;
   std::vector<Agent> agents;
   std::unique_ptr<Pool> pool;
+  // After rays: its fall guard probes them, so it goes first.
+  std::unique_ptr<navsim::Motion> motion;
   std::string error;
 
   bool range(int32_t first, int32_t count) {
@@ -348,6 +292,7 @@ NAVSIM_API navsim_world* navsim_world_create(const char* static_bin, int32_t age
       throw std::invalid_argument("agents must be >= 0 and threads >= 1");
     const auto mesh = readStatic(static_bin);
     auto world = std::make_unique<navsim_world>();
+    world->staticBin = static_bin;
     world->rays = std::make_unique<EmbreeWorld>(mesh,threads);
     world->agents.resize(size_t(agents));
     world->pool = std::make_unique<Pool>(threads,nullptr);
@@ -496,6 +441,135 @@ NAVSIM_API int32_t navsim_eye_read(const navsim_world* world, int32_t first, int
       throw std::invalid_argument("null slots");
     for(int32_t i=0; i<count; ++i)
       writeSlots(world->agents[size_t(first+i)].eye,size_t(i),*out);
+    return 0;
+    },-1);
+  }
+
+namespace {
+navsim::Motion& motionOf(navsim_world* world) {
+  if(world->motion==nullptr)
+    throw std::logic_error("motion is not initialised: navsim_motion_init");
+  return *world->motion;
+  }
+
+navsim::MotionTicks ticksOf(const navsim_ticks* out) {
+  navsim::MotionTicks ticks;
+  if(out!=nullptr) {
+    ticks.position = out->position;
+    ticks.forward = out->forward;
+    ticks.limits = out->limits;
+    ticks.ms = out->ms;
+    ticks.flags = out->flags;
+    ticks.yaw = out->yaw;
+    }
+  return ticks;
+  }
+}
+
+NAVSIM_API void navsim_motion_default_params(navsim_motion_params* out) {
+  if(out==nullptr)
+    return;
+  // research data/rays/standalone.json character_input: HUMANS collision bbox
+  // [-17.20, -71.21, -8.46]..[17.19, 53.97, 7.89] cm and the guild values.
+  out->radius_cm = 8.171930074691772f;
+  out->height_cm = 125.1815299987793f;
+  out->step_cm = 60.f;
+  out->slide_angle_deg = 50.f;
+  out->body_cm = 180.f;   // NavigationMemory::Constants::bodyHeightCm: navdemos leaves it
+  out->turn_deg_s = 90.f; // npckeys.cpp: without a weapon
+  out->mass_kg = 70.f;
+  }
+
+NAVSIM_API int32_t navsim_motion_init(navsim_world* world, const navsim_motion_params* params, int32_t shards) {
+  return guarded(world,[&]() -> int32_t {
+    if(world->motion!=nullptr)
+      throw std::logic_error("motion is already initialised");
+    if(shards<1)
+      throw std::invalid_argument("shards must be >= 1");
+    navsim_motion_params p;
+    navsim_motion_default_params(&p);
+    if(params!=nullptr)
+      p = *params;
+    navsim::MotionParams m;
+    m.radiusCm = p.radius_cm;
+    m.heightCm = p.height_cm;
+    m.stepCm = p.step_cm;
+    m.slideAngleDeg = p.slide_angle_deg;
+    m.bodyCm = p.body_cm;
+    m.turnDegS = p.turn_deg_s;
+    m.massKg = p.mass_kg;
+    const auto mesh = readStatic(world->staticBin.c_str());
+    const EmbreeWorld* rays = world->rays.get();
+    navsim::FloorProbe floor = [rays](float x, float y, float z, float depth) { return rays->floorBelow(x,y,z,depth); };
+    world->motion = std::make_unique<navsim::Motion>(mesh.vertices.data(),mesh.categories.data(),mesh.categories.size(),
+                                                     world->agents.size(),size_t(shards),m,std::move(floor),*world->pool);
+    return 0;
+    },-1);
+  }
+
+NAVSIM_API int32_t navsim_motion_shards(const navsim_world* world) {
+  if(world==nullptr || world->motion==nullptr)
+    return -1;
+  return int32_t(world->motion->shards());
+  }
+
+NAVSIM_API int32_t navsim_motion_table(navsim_world* world, int32_t level, int64_t count, const int64_t* keys,
+                                       const float* forward_right) {
+  return guarded(world,[&]() -> int32_t {
+    if(count<0)
+      throw std::invalid_argument("count must be >= 0");
+    motionOf(world).setTable(level,size_t(count),keys,forward_right);
+    return 0;
+    },-1);
+  }
+
+NAVSIM_API int32_t navsim_motion_set_state(navsim_world* world, int32_t first, int32_t count, const float* position,
+                                           const float* yaw_deg, const uint64_t* game_ms, const int8_t* history,
+                                           const int32_t* held) {
+  return guarded(world,[&]() -> int32_t {
+    if(!world->range(first,count))
+      return -1;
+    motionOf(world).setState(size_t(first),size_t(count),position,yaw_deg,game_ms,history,held);
+    return 0;
+    },-1);
+  }
+
+NAVSIM_API int32_t navsim_motion_set_yaw(navsim_world* world, int32_t first, int32_t count, const float* yaw_deg) {
+  return guarded(world,[&]() -> int32_t {
+    if(!world->range(first,count))
+      return -1;
+    motionOf(world).setYaw(size_t(first),size_t(count),yaw_deg);
+    return 0;
+    },-1);
+  }
+
+NAVSIM_API int32_t navsim_motion_set_keys(navsim_world* world, int32_t first, int32_t count, const int8_t* keys) {
+  return guarded(world,[&]() -> int32_t {
+    if(!world->range(first,count))
+      return -1;
+    motionOf(world).setKeys(size_t(first),size_t(count),keys);
+    return 0;
+    },-1);
+  }
+
+NAVSIM_API int32_t navsim_motion_step(navsim_world* world, int32_t first, int32_t count, const uint8_t* ticks,
+                                      const navsim_ticks* out) {
+  return guarded(world,[&]() -> int32_t {
+    if(!world->range(first,count))
+      return -1;
+    motionOf(world).step(*world->pool,size_t(first),size_t(count),ticks,ticksOf(out));
+    return 0;
+    },-1);
+  }
+
+NAVSIM_API int32_t navsim_motion_read(const navsim_world* world, int32_t first, int32_t count, float* position,
+                                      float* yaw_deg, uint64_t* game_ms, uint8_t* flags, float* table_cm,
+                                      int8_t* level) {
+  auto* mutableWorld = const_cast<navsim_world*>(world);
+  return guarded(mutableWorld,[&]() -> int32_t {
+    if(!mutableWorld->range(first,count))
+      return -1;
+    motionOf(mutableWorld).read(size_t(first),size_t(count),position,yaw_deg,game_ms,flags,table_cm,level);
     return 0;
     },-1);
   }
