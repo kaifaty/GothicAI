@@ -53,8 +53,8 @@
   по правилу `catch_lie` (`sightings._matches`; больше корней, при равенстве последняя). Пункт «герой»
   связан, только если этот ход есть в его `episodes` или `source.turn`;
 - столкновение — два открытых «верю»/«сомневаюсь» без слота об одном id (и о герое) с разным текстом.
-  Пару Sol видит в одной свёртке, потом она не поднимается, пока тексты обоих пунктов те же: `~`, которая
-  меняет текст, поднимает её снова.
+  Пару Sol видит в одной свёртке, потом она не поднимается, пока тексты обоих пунктов те же, что он видел
+  последними: `~`, которая меняет текст (и возвращает прежний), поднимает её снова.
 
 Читатель, без LLM (выжимка — `Digest(text, ids, tokens)`, `str(d)` — текст):
 - `card(state, tokens=…)` — карточка ядра, ≤ 300 токенов;
@@ -461,7 +461,7 @@ def new_state(npc: str) -> dict[str, Any]:
         "items": [],  # open, in the order they came
         "history": [],  # closed, with valid_to and closed_by
         "collisions": [],  # pairs the next fold puts to Sol
-        "collisions_seen": [],  # pairs Sol has been shown already: {ids, texts as they were then}
+        "collisions_seen": [],  # pairs Sol has been shown already: {ids, the texts it saw last}
         "log": [],  # every add, change, confirm and close: {op, id, by, minute, …}
     }
 
@@ -1026,7 +1026,8 @@ def fold(
         if item and any(s["kind"] == "сказал" and s["fact"] is None for s in (item["source"], *item["also"]))
     )
     forgotten = forget(state, minute)
-    state["collisions_seen"] += [pair for pair in shown if pair not in state["collisions_seen"]]
+    again = [pair["ids"] for pair in shown]  # a pair keeps only the texts Sol saw last
+    state["collisions_seen"] = [p for p in state["collisions_seen"] if p["ids"] not in again] + shown
     state["collisions"] = find_collisions(state)
     state["folded"] = minute
     return {
@@ -1542,6 +1543,9 @@ def _test_fold_and_slots(check: _Check, names: Names) -> None:
           {"ids": ["в1", "с1"], "about": [BRAGO]} in report["collisions"], report["collisions"])
     report = fold(state, "~ в1 [стр: 5]", names=names, lines={5: "t5"}, minute=3 * 1440 + 120)
     check("changed collision shown once", report["collisions"] == [], report["collisions"])
+    report = fold(state, "~ с1: Браго жив, его видели у пещеры", names=names, minute=3 * 1440 + 180)
+    check("collision back after the old text returns",
+          {"ids": ["в1", "с1"], "about": [BRAGO]} in report["collisions"], report["collisions"])
     json.dumps(state, ensure_ascii=False)  # the carry is plain JSON
 
 

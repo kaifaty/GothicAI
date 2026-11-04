@@ -1446,9 +1446,7 @@ def shown(record: dict[str, Any]) -> str:
         text = "[передал Sol] " + pilot.spoken(record.get("stall") or "")
     else:
         text = pilot.spoken(record["text"])
-    if record.get("calls"):
-        text += " (вызовы: " + ", ".join(c["name"] for c in record["calls"]) + ")"
-    return text.strip() or "(молчит)"
+    return text.strip() or "(молчит)"  # no calls: only Sol has tools, they would give it away
 
 
 def sheet(directory: Path, seed: int = SEED) -> list[dict[str, Any]]:
@@ -2549,7 +2547,11 @@ async def _selftest_run(check: Any, root: Path) -> None:
         for e in sheet(out, seed=seed)
     }
     check("sheet shuffles", len(orders_seen) > 1, orders_seen)
-    check("sheet hides variants", all(set(a) == {"label", "text"} for e in entries for a in e["answers"]))
+    check(
+        "sheet hides variants: no keys, no calls",
+        all(set(a) == {"label", "text"} for e in entries for a in e["answers"])
+        and not any("recall" in a["text"] for e in entries for a in e["answers"]),
+    )
 
     # tail: one warm, a changed card each time, timings kept
     class Quick(FakeBackend):
