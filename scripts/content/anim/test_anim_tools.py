@@ -535,3 +535,15 @@ def test_fix_layer_joint_clear_keeps_the_knee_over_the_floor():
     assert min(knee(plain, f) for f in range(6)) < 0  # without the guard the knee goes into the floor
     assert all(knee(anim, f) >= 5 - 0.05 for f in (1, 2, 3, 4))
     assert all(np.allclose(foot(anim, f), foot(plain, f), atol=0.1) for f in range(6))  # the foot lands where asked
+
+
+def test_fix_layer_hold_keeps_a_bone_still_against_its_parent_while_the_body_turns():
+    import fix_layer
+    skel, anim = leg_clip(8)
+    turn = lambda deg: [np.cos(np.radians(deg) / 2), 0, np.sin(np.radians(deg) / 2), 0]  # noqa: E731
+    anim.rotations[:, 2] = [turn(20 * f) for f in range(8)]  # the calf spins against the thigh, 20° a frame
+    orig = anim.rotations.copy()
+    fix_layer.apply(skel, anim, [{"kind": "hold", "bones": ["BIP01 L CALF"], "frame": 2, "window": [1, 2, 5, 6]}], floor=0.0)
+    assert all(abs(anim.rotations[f, 2] @ orig[2, 2]) > 1 - 1e-9 for f in (2, 3, 4, 5))  # still at frame 2's turn
+    assert np.array_equal(anim.rotations[[0, 1, 6, 7]], orig[[0, 1, 6, 7]])  # outside the window, as it was
+    assert np.array_equal(anim.rotations[:, [0, 1, 3, 4]], orig[:, [0, 1, 3, 4]])  # only the held bone changes

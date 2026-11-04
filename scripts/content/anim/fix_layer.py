@@ -18,7 +18,10 @@ Kinds:
         last frames keep the stance they were snapped to;
 - rot   {"bone": "BIP01 L THIGH", "window": [...], "axis": [x, y, z], "deg": 20, "space": "local" | "model"};
 - calm  {"bone": "BIP01 L THIGH", "window": [...], "sigma": 1.5}: the bone's own turn smoothed over frames, which
-        spreads a whip over its neighbours.
+        spreads a whip over its neighbours;
+- hold  {"bones": ["BIP01 R UPPERARM", ...], "frame": 12, "window": [...]}: the bones keep their own turn of `frame`,
+        so a limb stays still against its parent while the body turns: a sword arm rides a roll over the shoulder
+        instead of flipping the blade from one side of the body to the other.
 
 The legs and arms are solved by two-bone IK: the knee or elbow stays in its own plane. With `"joint_clear": cm` on
 a step, lift or tuck the plane turns only as far as it takes to keep the knee or elbow that high over the floor.
@@ -215,6 +218,13 @@ def apply(skel: ga.Skeleton, anim: ga.Animation, fixes: list, floor: float) -> l
                 g = np.exp(-0.5 * ((np.arange(len(q)) - f) / fx.get("sigma", 1.5)) ** 2)
                 m = (g[:, None] * q).sum(0)
                 anim.rotations[f, c] = rs.slerp(q[f], m / np.linalg.norm(m), weight(win, f))
+        elif kind == "hold":
+            for bone in fx["bones"]:
+                c = clip.col[skel.index(bone)]
+                q0 = anim.rotations[fx["frame"], c].copy()
+                for f in frames:
+                    q = q0 if q0 @ anim.rotations[f, c] >= 0 else -q0
+                    anim.rotations[f, c] = rs.slerp(anim.rotations[f, c], q, weight(win, f))
         else:
             raise SystemExit(f"unknown fix kind {kind}")
     return log
