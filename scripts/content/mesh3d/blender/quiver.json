@@ -1,0 +1,33 @@
+{
+ "id": "ITRW_QUIVER",
+ "goal": {
+  "id": "ITRW_QUIVER",
+  "budget_tris": 2500,
+  "bbox_min": [-0.055, -0.68, -0.13],
+  "bbox_max": [0.20, 0.04, 0.06],
+  "zones": [
+   {"key": "OWN_PROP_LEATHER", "group": "UNDEF", "role": "tube, rim, bottom cap, seam, patch"},
+   {"key": "OWN_PROP_STRAP", "group": "UNDEF", "role": "band, tab, belt strap, tilt strap"},
+   {"key": "OWN_PROP_IRON_BAND", "group": "METAL", "role": "ring"},
+   {"key": "OWN_PROP_QUIVER_INNER", "group": "UNDEF", "role": "dark cavity under the mouth"}
+  ]
+ },
+ "seed": 3,
+ "length": 0.68,
+ "mouth_r": 0.0475,
+ "bottom_r": 0.04,
+ "wall": 0.004,
+ "cavity": 0.3,
+ "sides": 24,
+ "rim": 0.007,
+ "hoops": [0.34],
+ "cap_height": 0.045,
+ "seam_angle": 0.0,
+ "patch": [2.9, -0.30],
+ "band": [-0.06, 0.04],
+ "tilt_strap": [0.9, -0.23],
+ "tilt_back": 22.5,
+ "tilt_out": 7.5,
+ "reach": 0.13,
+ "tilt_back_reach": 0.07
+}
