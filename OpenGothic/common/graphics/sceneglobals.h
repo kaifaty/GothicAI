@@ -32,9 +32,14 @@ class SceneGlobals final {
                         const Tempest::Matrix4x4 *sh);
     void setViewLwc(const Tempest::Matrix4x4& view, const Tempest::Matrix4x4& proj, const Tempest::Matrix4x4 *sh);
     void setViewVsm(const Tempest::Matrix4x4& view, const Tempest::Matrix4x4& viewLwc);
+    // TAA: the sub-pixel shift J of the main projection (J*proj), taken by the next setViewProject/setViewLwc;
+    // nullptr leaves the projection as it is
+    void setJitter(const Tempest::Matrix4x4* jitter);
     void setSky(const Sky& s);
     void setWorld(const WorldView& wview);
     void setUnderWater(bool w);
+    // TAA: the bias of the material textures' mip level in the main view; shadows keep 0
+    void setMipBias(float bias);
 
     void setTime(uint64_t time);
     void commitUbo(uint8_t fId);
@@ -125,6 +130,9 @@ class SceneGlobals final {
 
       float                           probeGridBias = 3;
       uint32_t                        fogQuality = 0;
+      float                           mipBias      = 0; // TAA: the main view only (commitUbo), 0 in shadows
+      float                           mipGradScale = 1; // exp2(mipBias)
+      float                           mipPad[2]    = {};
       };
 
     Tempest::UniformBuffer<UboGlobal> uboGlobalPf[Resources::MaxFramesInFlight][V_Count];
@@ -141,5 +149,9 @@ class SceneGlobals final {
 
   private:
     UboGlobal                         uboGlobalCpu;
+    Tempest::Matrix4x4                jitter;
+    bool                              jitterEnabled = false;
+
+    Tempest::Matrix4x4                jittered(const Tempest::Matrix4x4& proj) const;
   };
 

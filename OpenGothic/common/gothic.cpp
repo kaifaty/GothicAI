@@ -87,6 +87,7 @@ Gothic::Gothic() {
     }
 
   opts.aaPreset = CommandLine::inst().aaPreset();
+  opts.taa      = CommandLine::inst().doTaa();
 
   wrldDef = CommandLine::inst().wrldDef;
 
@@ -181,6 +182,9 @@ Gothic::Gothic() {
   defaults->set("INTERNAL",     "vidResIndex", vidResDefault);
   defaults->set("INTERNAL",     "halfResAoFog", 1); // SSAO and fog shadows at half resolution
   defaults->set("INTERNAL",     "spatialUpscale", 1); // MetalFX for reduced resolution, where supported
+  // temporal AA by the camera (Renderer::setupSettings: also -taa 0 and OPENGOTHIC_TAA) and its sharpening, 0..1
+  defaults->set("INTERNAL",     "taa", 1);
+  defaults->set("INTERNAL",     "taaSharpness", 0.75f);
 
   defaults->set("VIDEO", "zVidBrightness", 0.5f);
   defaults->set("VIDEO", "zVidContrast",   0.5f);

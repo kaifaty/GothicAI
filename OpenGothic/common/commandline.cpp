@@ -103,6 +103,11 @@ CommandLine::CommandLine(int argc, const char** argv) {
       if(i<argc)
         isRQuery = boolArg(argv[i]);
       }
+    else if(arg=="-taa") {
+      ++i;
+      if(i<argc)
+        isTaa = boolArg(argv[i]);
+      }
     else if(arg=="-aa") {
       ++i;
       if(i<argc) {

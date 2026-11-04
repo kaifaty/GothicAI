@@ -406,6 +406,10 @@ add_shader(cmaa2_process_candidates.comp           antialiasing/cmaa2/process_ca
 add_shader(cmaa2_deferred_color_apply_2x2.vert     antialiasing/cmaa2/deferred_color_apply_2x2.vert)
 add_shader(cmaa2_deferred_color_apply_2x2.frag     antialiasing/cmaa2/deferred_color_apply_2x2.frag)
 
+# temporal AA by the camera (docs/graphics-plan.md, step 1a)
+add_shader(taa_resolve.frag                        antialiasing/taa_resolve.frag)
+add_shader(taa_sharpen.frag                        antialiasing/taa_sharpen.frag)
+
 # virtual shadows
 add_shader(vsm_dbg.frag              virtual_shadow/vsm_direct_light.frag -DDEBUG)
 add_shader(vsm_mark_pages.comp       virtual_shadow/vsm_mark_pages.comp)

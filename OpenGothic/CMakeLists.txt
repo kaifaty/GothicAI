@@ -323,6 +323,10 @@ if(UNIX AND NOT IOS AND NOT ANDROID)
   target_link_libraries(gothic-material-texture-test PRIVATE OpenGothic AiBridge)
   target_include_directories(gothic-material-texture-test SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
   target_compile_options(gothic-material-texture-test PRIVATE -Wall -Wconversion -Werror)
+  # TAA by the camera (graphics/taa): jitter, reprojection of the history, the camera jump rule; CPU only.
+  add_executable(gothic-taa-test EXCLUDE_FROM_ALL tests/taa_test.cpp)
+  target_link_libraries(gothic-taa-test PRIVATE OpenGothic AiBridge)
+  target_compile_options(gothic-taa-test PRIVATE -Wall -Wconversion -Werror)
   # Indexed GLB replacement and fallback, generated assets only; no game or window.
   add_executable(gothic-mesh-gltf-test EXCLUDE_FROM_ALL tests/mesh_gltf_test.cpp)
   target_link_libraries(gothic-mesh-gltf-test PRIVATE OpenGothic AiBridge gothic-base-import)
