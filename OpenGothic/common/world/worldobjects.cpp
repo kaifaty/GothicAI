@@ -29,11 +29,21 @@
 #include "camera.h"
 #include "game/gamesession.h"
 #include "graphics/dynamic/frustrum.h"
+#include "graphics/mesh/pose.h"
+#include "graphics/mesh/gaze.h"
+#include "graphics/mesh/lean.h"
+#include "graphics/mesh/flinch.h"
+#include "graphics/mesh/aim.h"
+#include "graphics/mesh/talkgestures.h"
+#include "graphics/mesh/eyeblink.h"
+#include "graphics/mesh/lipsync.h"
+#include "graphics/worldview.h"
 #include "navdemos.h"
 
 #include <Tempest/Painter>
 #include <Tempest/Application>
 #include <Tempest/Log>
+#include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <optional>
@@ -866,6 +876,49 @@ void WorldObjects::syncRagdolls() {
     npc->syncRagdoll();
   }
 
+static bool animationProbed(const Npc& npc) {
+  // Test-bench probes sample this NPC's solved pose every frame.
+  const void* p = &npc;
+  return p==Pose::probeNpc || p==Gaze::probeNpc || p==Lean::probeNpc || p==Flinch::probeNpc ||
+         p==Aim::probeNpc || p==TalkGestures::probeNpc || p==EyeBlink::probeNpc || p==LipSync::probeNpc;
+  }
+
+bool WorldObjects::makeAnimationLodView(AnimationLod::View& view) const {
+  const auto& camera = owner.gameSession().camera();
+  const Tempest::Vec3* sun = nullptr;
+  Tempest::Vec3 sunDir;
+  if(auto* wview = owner.view()) {
+    sunDir = wview->mainLight().dir();
+    sun    = &sunDir;
+    }
+  view.make(camera.viewProj(),camera.originLwc(),sun);
+  return true;
+  }
+
+void WorldObjects::pinAnimationLodTargets() {
+  for(auto& npc:npcArr)
+    npc->setAnimationLodTargeted(false);
+  // A blade's victims and bystanders: their melee shadow bodies are queried
+  // against every swing, and hit reactions read their bones.
+  constexpr float BladeReach = 400.f;
+  for(auto& npc:npcArr) {
+    if(npc->weaponState()==WeaponState::NoWeapon || npc->isDead())
+      continue;
+    if(auto* t = npc->target())
+      t->setAnimationLodTargeted(true);
+    const auto at = npc->position();
+    detectNpc(at.x,at.y,at.z,BladeReach,[](Npc& n){ n.setAnimationLodTargeted(true); });
+    }
+  }
+
+bool WorldObjects::mustUpdateAnimation(const Npc& npc, const AnimationLod::View& view) const {
+  // NpcProcessPolicy::AiNormal is the hero's 30 m ring: perceptions, living
+  // bodies, dialogs and native combat around the hero read the pose there.
+  return npc.processPolicy()!=NpcProcessPolicy::AiFar && npc.processPolicy()!=NpcProcessPolicy::AiFar2 ? true :
+         npc.animationLodPinned() || view.nearCamera(npc) || BodyObservations::watched(npc) ||
+         BodyArena::isActor(npc) || NavDemos::fullSimulation(npc) || animationProbed(npc);
+  }
+
 void WorldObjects::updateAnimation(uint64_t dt) {
   FrameProfile::Scope timing(FrameProfile::Zone::ParallelAnimation);
   static bool doAnim=true;
@@ -882,19 +935,31 @@ void WorldObjects::updateAnimation(uint64_t dt) {
   const bool frozen = BodyArena::frozenWorld();
   const auto pl     = owner.player();
   bool animationProbe=FrameProfile::enabled();
-  std::optional<Frustrum> frustum;
-  if(animationProbe) frustum.emplace().make(owner.gameSession().camera().viewProj(),1,1);
-  Workers::parallelTasks(npcArr,[dt,frozen,pl,animationProbe,&frustum](std::unique_ptr<Npc>& i){
+  const auto& lodCfg = AnimationLod::config();
+  AnimationLod::View view;
+  const bool hasView = (lodCfg.enabled || animationProbe) && makeAnimationLodView(view);
+  const bool lod     = lodCfg.enabled && hasView && !frozen;
+  const uint32_t rate  = lodCfg.rate;
+  const uint32_t frame = animationLodFrame++;
+  if(lod)
+    pinAnimationLodTargets();
+  std::atomic<uint64_t> deferred{0};
+  AnimationLod::beginPass();
+  Workers::parallelTasks(npcArr,[&](std::unique_ptr<Npc>& i){
     if(skipFar && i->processPolicy()==NpcProcessPolicy::AiFar2 && !BodyObservations::watched(*i))
       return;
     if(frozen && i.get()!=pl && !BodyArena::isActor(*i))
       return;
+    if(lod && i.get()!=pl && (frame+AnimationLod::phase(*i))%rate!=0 &&
+       !view.visible(*i) && !mustUpdateAnimation(*i,view)) {
+      // Outside the frustum and its shadow: the next update applies this dt.
+      i->deferAnimation(dt);
+      deferred.fetch_add(1,std::memory_order_relaxed);
+      return;
+      }
     if(animationProbe) {
       // Conservative body sphere in world coordinates; no occlusion test.
-      const auto bounds=i->bounds();
-      auto center=(bounds.bbox[0]+bounds.bbox[1])*0.5f;
-      i->transform().project(center);
-      const bool visible=frustum->testPoint(center,bounds.rConservative);
+      const bool visible=view.probeVisible(*i);
       const auto started=std::chrono::steady_clock::now();
       i->updateAnimation(dt);
       const auto ns=std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now()-started).count();
@@ -903,6 +968,8 @@ void WorldObjects::updateAnimation(uint64_t dt) {
       i->updateAnimation(dt);
       }
     });
+  AnimationLod::endPass();
+  FrameProfile::add(FrameProfile::Amount::NpcAnimDeferred,deferred.load(std::memory_order_relaxed));
   // Retiring a shadow window can also run damage scripts here. Scripts may
   // append or remove NPCs, so retain neither vector iterators nor references.
   for(size_t i=0;i<npcArr.size();) {
@@ -930,10 +997,13 @@ void WorldObjects::updateAnimation(uint64_t dt) {
     else if(const auto at=npcId(npc); at!=uint32_t(-1))
       i=size_t(at)+1;
     }
-  if(!frozen)
+  if(!frozen) {
+    AnimationLod::beginPass();
     interactiveObj.parallelFor([dt](Interactive& i){
       i.updateAnimation(dt);
       });
+    AnimationLod::endPass();
+    }
   // Audit the previous prediction after the body has advanced, then consume
   // this tick's mutation inputs on the main thread (including worker speed changes).
   const auto& logic = NpcLogicAudit::stats();
@@ -954,6 +1024,35 @@ void WorldObjects::updateAnimation(uint64_t dt) {
   FrameProfile::add(FrameProfile::Amount::NpcLogicReanchored,logic.reanchoredCount()-logicBefore[9]);
   FrameProfile::add(FrameProfile::Amount::NpcLogicBodySamples,logic.bodySamples-logicBefore[10]);
   FrameProfile::add(FrameProfile::Amount::NpcLogicWeaponSamples,logic.weaponSamples-logicBefore[11]);
+  }
+
+void WorldObjects::catchUpAnimation() {
+  // Runs after the camera has moved for this frame and before anything is
+  // drawn: an NPC the turn has brought into view gets its pose now.
+  if(!AnimationLod::config().enabled)
+    return;
+  AnimationLod::View view;
+  if(!makeAnimationLodView(view))
+    return;
+  std::atomic<uint64_t> caught{0};
+  AnimationLod::beginPass();
+  Workers::parallelTasks(npcArr,[&](std::unique_ptr<Npc>& i){
+    if(!i->hasDeferredAnimation())
+      return;
+    if(!view.visible(*i) && !view.nearCamera(*i))
+      return;
+    i->updateAnimation(0);
+    caught.fetch_add(1,std::memory_order_relaxed);
+    });
+  AnimationLod::endPass();
+  FrameProfile::add(FrameProfile::Amount::NpcAnimCatchUp,caught.load(std::memory_order_relaxed));
+  FrameProfile::add(FrameProfile::Amount::NpcAnimSyncOnRead,AnimationLod::takeSyncs());
+  }
+
+void WorldObjects::syncDeferredAnimation() {
+  for(auto& npc:npcArr)
+    if(npc->hasDeferredAnimation())
+      npc->updateAnimation(0);
   }
 
 bool WorldObjects::isTargeted(Npc& dst) {

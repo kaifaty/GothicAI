@@ -184,6 +184,16 @@ class Npc final {
 
     void       updateAnimation(uint64_t dt, bool force = false);
     void       updateTransform();
+    // Animation LOD (world/animationlod.h): an NPC outside the frustum keeps the
+    // skipped frames' dt here; the next updateAnimation of any caller applies it.
+    void       deferAnimation(uint64_t dt) { animLodPendingDt += dt; }
+    bool       hasDeferredAnimation() const { return animLodPendingDt>0; }
+    // Logic is about to read this NPC's bones: apply the deferred frames now.
+    // Main thread only, outside the parallel pass; a no-op otherwise.
+    void       syncDeferredAnimation() const;
+    // Whose pose the world logic reads every frame: never deferred.
+    bool       animationLodPinned() const;
+    void       setAnimationLodTargeted(bool t) { animLodTargeted = t; }
 
     std::string_view displayName() const;
     auto       displayPosition() const -> Tempest::Vec3;
@@ -1020,6 +1030,8 @@ class Npc final {
     float                          characterVisualYOffset = 0;
     // Transient placement of an animated lying mesh; never changes the walking root.
     float                          lieVisualYOffset = 0;
+    uint64_t                       animLodPendingDt = 0;
+    bool                           animLodTargeted = false;
     Tempest::Vec3                  characterVisualSamplePosition;
     Tempest::Vec3                  characterVisualSampleNormal;
     uint64_t                       characterVisualSampleTick = 0;

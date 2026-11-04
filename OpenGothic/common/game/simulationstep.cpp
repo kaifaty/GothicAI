@@ -10,6 +10,7 @@
 #include "camera.h"
 #include "testbench.h"
 #include "world/objects/npc.h"
+#include "world/world.h"
 
 void SimulationStep::worldPlayerStep(uint64_t dt, PlayerControl& player,
                                       const std::function<void()>& afterFocus) {
@@ -30,6 +31,9 @@ bool SimulationStep::finishStep(uint64_t dt, PlayerControl& player,
     updateCamera();
   else
     observerCamera(dt);
+  // Animation LOD: the camera has moved; NPCs it now sees must not show a stale pose.
+  if(auto* world = Gothic::inst().world())
+    world->catchUpAnimation();
   BodyController::postStep();
   BodyTrajectory::postStep();
   { FrameProfile::Scope timing(FrameProfile::Zone::Observations); BodyObservations::sampleAll(); }

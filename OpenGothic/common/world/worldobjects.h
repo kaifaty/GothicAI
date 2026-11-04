@@ -13,6 +13,7 @@
 #include "game/constants.h"
 #include "objects/vob.h"
 #include "npcsimtier.h"
+#include "animationlod.h"
 
 class Npc;
 class Item;
@@ -98,6 +99,10 @@ class WorldObjects final {
     void           removeNpc(Npc& npc);
 
     void           updateAnimation(uint64_t dt);
+    // Animation LOD: deferred NPCs the camera now sees get their pose (after the
+    // camera tick, before drawing); before a save every deferred NPC does.
+    void           catchUpAnimation();
+    void           syncDeferredAnimation();
 
     bool           isTargeted(Npc& npc);
     Npc*           findHero();
@@ -186,6 +191,10 @@ class WorldObjects final {
 
   private:
     friend class World;
+    bool           makeAnimationLodView(AnimationLod::View& view) const;
+    void           pinAnimationLodTargets();
+    bool           mustUpdateAnimation(const Npc& npc, const AnimationLod::View& view) const;
+    uint32_t       animationLodFrame = 0;
     friend struct WorldDataContract;
     void           saveItemPhysics(Serialize& fout) const;
     void           loadItemPhysics(Serialize& fin);
