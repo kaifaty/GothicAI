@@ -373,6 +373,21 @@ void Shaders::compileShaders() noexcept {
     vsmMergePages      = computeShader("vsm_merge_pages.comp.sprv");
     vsmPackDraw0       = computeShader("vsm_pack_draws0.comp.sprv");
     vsmPackDraw1       = computeShader("vsm_pack_draws1.comp.sprv");
+    vsmCacheLights     = computeShader("vsm_cache_lights.comp.sprv");
+    vsmCacheInvalidate = computeShader("vsm_cache_invalidate.comp.sprv");
+    vsmCacheAlloc      = computeShader("vsm_cache_alloc.comp.sprv");
+    {
+      // atlas regions back to depth 0 before they are drawn again (vsm_clear_pages.vert)
+      RenderState state;
+      state.setCullFaceMode (RenderState::CullMode::NoCull);
+      state.setZTestMode    (RenderState::ZTestMode::Always);
+      state.setZWriteEnabled(true);
+      auto sh = GothicShader::get("vsm_clear_pages.vert.sprv");
+      auto vs = device.shader(sh.data,sh.len);
+      sh      = GothicShader::get("vsm_clear_pages.frag.sprv");
+      auto fs = device.shader(sh.data,sh.len);
+      vsmClearPages = device.pipeline(Triangles, state, vs, fs);
+    }
     vsmFogPages        = computeShader("vsm_fog_mark_pages.comp.sprv");
     vsmFogShadow       = computeShader("vsm_fog_shadow.comp.sprv");
     vsmFogTrace        = computeShader("vsm_fog_trace.comp.sprv");

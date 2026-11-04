@@ -1,0 +1,51 @@
+#version 450
+
+#extension GL_GOOGLE_include_directive    : enable
+#extension GL_ARB_separate_shader_objects : enable
+
+#include "virtual_shadow/vsm_common.glsl"
+#include "virtual_shadow/vsm_cache_common.glsl"
+#include "scene.glsl"
+
+// Lamp-face cache, step 1 of 3: a lamp that moved or changed its shadow range draws all its faces again; the
+// lamps with faces in the cache are listed for vsm_cache_invalidate.comp. reset: empty the cache
+layout(local_size_x = 64) in;
+
+layout(push_constant, std430) uniform Push {
+  uint lightsTotal;
+  uint reset;
+  };
+layout(binding = 0, std430) readonly buffer Lbo { LightSource   lights[]; };
+layout(binding = 1, std430) buffer Cache        { VsmCacheLight cache[];  };
+layout(binding = 2, std430) buffer List         { uint count; uint id[]; } cached;
+
+void main() {
+  const uint id = gl_GlobalInvocationID.x;
+  if(id>=lightsTotal)
+    return;
+
+  const vec4 cur  = vec4(lights[id].pos, lights[id].shadowRange);
+  const vec4 prev = cache[id].prev;
+  cache[id].prev  = cur;
+
+  if(reset!=0) {
+    for(uint i=0; i<6; ++i)
+      cache[id].face[i] = 0;
+    cache[id].dirty = 0;
+    return;
+    }
+
+  const bool moved = (prev!=cur);
+  cache[id].dirty = moved ? 0x3Fu : 0u;
+  if(moved)
+    return;
+
+  bool any = false;
+  for(uint i=0; i<6; ++i)
+    any = any || (cache[id].face[i]>>31u)!=0;
+  if(!any)
+    return;
+
+  const uint at = atomicAdd(cached.count, 1);
+  cached.id[at] = id;
+  }

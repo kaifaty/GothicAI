@@ -5,6 +5,8 @@
 #extension GL_EXT_samplerless_texture_functions : enable
 
 #include "virtual_shadow/vsm_common.glsl"
+#define VSM_CACHE_NO_PLACEMENT // VSM_CACHE_FIRST_ROW only
+#include "virtual_shadow/vsm_cache.glsl"
 #include "scene.glsl"
 #include "common.glsl"
 
@@ -16,6 +18,11 @@ layout(binding = 2, std430) buffer Omni  { uint pageTblOmni[]; };
 layout(binding = 3, std430) coherent buffer PTmp  { uint size; uint  pageList[]; } vsmTmp;
 
 layout(binding = 4, r32ui)  uniform uimage2D dbg;
+layout(binding = 5, std430) buffer Clr { VsmClearCmd clearCmd; uint clearList[]; };
+
+// 1: the lamp-face cache is on (vsm_cache_alloc.comp places the faces): the sun's pages stay in the atlas rows
+// above VSM_CACHE_FIRST_ROW and each is listed for the clear before rendering
+layout(push_constant, std430) uniform Push { uint lampCache; };
 
 const uint NumThreads = gl_WorkGroupSize.x*gl_WorkGroupSize.y*gl_WorkGroupSize.z;
 
@@ -35,6 +42,12 @@ void storePage(ivec2 pId, ivec3 at, ivec2 tile, ivec2 size) {
   atomicMax(vsm.header.pageCount, pageId+1);
   if(size.x>0)
     atomicAdd(vsm.header.pagePlaced, 1);
+
+  if(lampCache!=0) {
+    const uint k = atomicAdd(clearCmd.instanceCount, 1);
+    if(k<VSM_CLEAR_MAX)
+      clearList[k] = pageId | (1u << 16u);
+    }
 
   at += ivec3(tile,0);
   const uint prime = imageLoad(pageTbl, at).r & 0x1;
@@ -83,7 +96,8 @@ ivec2 findRowCol(in uint page, const uvec2 size) {
   // const uint col    = (page%perRow)*size.x;
   // return ivec2(col,row);
 
-  for(uint i=0; i<VSM_PAGE_PER_ROW; i+=size.y) {
+  const uint rows = lampCache!=0 ? VSM_CACHE_FIRST_ROW : uint(VSM_PAGE_PER_ROW);
+  for(uint i=0; i+size.y<=rows; i+=size.y) {
     uint space = (VSM_PAGE_PER_ROW-ladder[i])/size.x;
     if(page<space)
       return ivec2(ladder[i] + page*size.x, i);

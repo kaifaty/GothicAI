@@ -111,7 +111,8 @@ void processLightTiles(const vec3 pos, const vec3 pos1, const vec3 pos2, const v
     const LightSource lx             = lights[id];
     const vec3        ldir           = (pos - lx.pos);
     const float       distanceSquare = dot(ldir,ldir);
-    const float       rangeSquare    = lx.range*lx.range;
+    // the widest range (as the face's depth): a flickering flame asks for the same faces every frame
+    const float       rangeSquare    = lx.shadowRange*lx.shadowRange;
     if(rangeSquare < distanceSquare)
       continue;
     if(dot(normal, ldir) >= 0)

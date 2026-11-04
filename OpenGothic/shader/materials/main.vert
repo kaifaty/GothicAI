@@ -121,7 +121,8 @@ vec4 processVertexVsm(out Varyings var, const Vertex vert, const uint bucketId, 
   if(vsmPageIsOmni(data)) {
     const uvec2       page = unpackLightId(data);
     const LightSource lx   = lights[page.x];
-    const vec3        pos  = vsmMapDirToFace((wpos - lx.pos)/lx.range, page.y);
+    // the face's depth by the lamp's widest range, not the flickering one: a still face stays the same
+    const vec3        pos  = vsmMapDirToFace((wpos - lx.pos)/lx.shadowRange, page.y);
 
     pos4 = vsmApplyProjective(pos);
     } else {

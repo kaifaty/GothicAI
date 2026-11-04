@@ -168,6 +168,7 @@ class Renderer final {
       float          vsmMipBias         = 0.25; //TODO: set to lower, eventually
       bool           vsmStats           = false; // OPENGOTHIC_VSM_STATS=1: VSM counters to the log every 5 s
       float          vsmLampNearCm      = 30;    // [INTERNAL] vsmLampNearCm: a lamp's fixture this close casts no shadow
+      bool           vsmCache           = true;  // [INTERNAL] vsmCache, OPENGOTHIC_VSM_CACHE: lamp faces kept between frames
       } settings;
 
     Frustrum                  frustrum[SceneGlobals::V_Count];
@@ -304,6 +305,14 @@ class Renderer final {
       Tempest::StorageBuffer    pageListTmp;
       Tempest::StorageBuffer    pageTblOmni;
       Tempest::StorageBuffer    visibleLights;
+
+      // the lamp-face cache (vsm_cache_*.comp): lamps' faces from frame to frame, the lamps with cached faces this
+      // frame, the atlas regions to clear before drawing
+      Tempest::StorageBuffer    cache;
+      Tempest::StorageBuffer    cacheList;
+      Tempest::StorageBuffer    clearList;
+      uint64_t                  cacheSerial = 0; // VisualObjects::VsmChanges the cache last read
+      uint64_t                  cacheEpoch  = 0;
 
       Tempest::StorageImage     fogDbg;
       Tempest::StorageImage     vsmDbg;

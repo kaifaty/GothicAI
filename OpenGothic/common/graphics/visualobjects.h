@@ -93,6 +93,19 @@ class VisualObjects final {
     const DrawCommands& drawCommands() const { return drawCmd; }
     const DrawBuckets&  drawBuckets()  const { return bucketsMem; };
 
+    // The VSM lamp-face cache (Renderer::drawVsm): spheres (centre, radius) where shadow casters changed since the
+    // last frame — a caster's place before and after it moved or turned, one added or removed, shown or hidden;
+    // and every frame the animated, morphed, deformed and wind-blown ones, now and a frame ago. Built by
+    // prepareGlobals while VSM is on
+    struct VsmChanges {
+      const Tempest::StorageBuffer* spheres  = nullptr;
+      uint32_t                      count    = 0;
+      uint64_t                      serial   = 0;     // prepareGlobals calls so far: a gap is a frame nobody read
+      uint64_t                      epoch    = 0;     // this VisualObjects (another world: another epoch)
+      bool                          overflow = false; // more than the list holds: the cache starts empty
+      };
+    VsmChanges vsmChanges() const;
+
     void preFrameUpdate ();
     void prepareGlobals (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
     void postFrameupdate();
@@ -161,6 +174,10 @@ class VisualObjects final {
       bool                textureChunkRegistered = false;
       bool                textureChunkedLandscape = false;
       bool                textureWorldOwner = false;
+      // VSM lamp-face cache: the caster as the cache last saw it (updateInstance)
+      bool                vsmPlaced     = false;
+      uint64_t            vsmHash       = 0;
+      Tempest::Vec4       vsmSphere;
       uint32_t            textureDistance = Resources::TextureAlwaysFull;
       Tempest::Vec3       texturePosition;
       std::pair<int32_t,int32_t> textureChunk;
@@ -185,6 +202,11 @@ class VisualObjects final {
     auto     morphSlot  (Object& obj) -> MorphAnim&;
     void     setAsGhost(size_t i, bool g);
 
+    bool     isVsmDynamic(const Object& obj) const;
+    void     vsmChanged(const Tempest::Vec4& sphere);
+    void     vsmChangedClusters(uint32_t first, uint32_t count);
+    void     commitVsmChanges(uint8_t fId);
+
     void     notifyTlas(const Material& m, RtScene::Category cat);
     void     updateInstance(size_t id, Tempest::Matrix4x4* pos = nullptr);
     void     updateRtAs(size_t id);
@@ -203,6 +225,16 @@ class VisualObjects final {
     std::unordered_set<size_t> objectsWind;
     std::unordered_set<size_t> objectsMorph;
     std::unordered_set<size_t> objectsFree;
+
+    // VSM lamp-face cache (vsmChanges)
+    static constexpr size_t    VsmMaxChanges = 256*1024;
+    std::mutex                 vsmSync;
+    std::vector<Tempest::Vec4> vsmMoved;          // since the last prepareGlobals, under vsmSync
+    std::unordered_set<size_t> objectsDynamic;    // Animated, Morph and deformed objects, under vsmSync
+    std::vector<Tempest::Vec4> vsmDynamicPrev;    // the dynamic ones as last frame saw them
+    std::vector<Tempest::Vec4> vsmUpload;
+    Tempest::StorageBuffer     vsmSpheres[Resources::MaxFramesInFlight];
+    VsmChanges                 vsmLast;
     mutable std::recursive_mutex textureSync;
     ChunkResidency*            textureResidency = nullptr;
     uint64_t                   textureSubscription = 0;

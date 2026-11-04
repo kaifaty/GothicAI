@@ -326,7 +326,7 @@ void runClusterOmni(const uint clusterId) {
     // const ivec2       sz   = unpackVsmPageSize(data);
 
     const vec3  dvec = cluster.sphere.xyz - lx.pos;
-    const float r    = cluster.sphere.w   + lx.range;
+    const float r    = cluster.sphere.w   + lx.shadowRange;
 
     if(dot(dvec,dvec) > r*r)
       continue;

@@ -286,7 +286,8 @@ void main() {
     const vec3 planeN = dot(geomNormal, normal)>=0.3 ? geomNormal : normal;
     // too faint to show a soft edge: under ~1/500 of white before the tonemapper
     const bool faint  = max(color.r, max(color.g, color.b))*light*max(1.0, scene.exposure)*0.25 < 0.002;
-    light *= omniShadow(pos.xyz - cenPosition.xyz, planeN, cenPosition.w, lights[lightId].sourceSize, faint);
+    // the faces' depth is by the lamp's widest range (LightSource.shadowRange); the light itself by the current one
+    light *= omniShadow(pos.xyz - cenPosition.xyz, planeN, lights[lightId].shadowRange, lights[lightId].sourceSize, faint);
     if(light<=0.0)
       discard;
   }

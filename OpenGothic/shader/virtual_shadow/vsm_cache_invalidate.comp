@@ -1,0 +1,51 @@
+#version 450
+
+#extension GL_GOOGLE_include_directive    : enable
+#extension GL_ARB_separate_shader_objects : enable
+
+#include "virtual_shadow/vsm_common.glsl"
+#include "virtual_shadow/vsm_cache_common.glsl"
+#define VSM_CACHE_NO_PLACEMENT
+#include "virtual_shadow/vsm_cache.glsl"
+#include "scene.glsl"
+
+// Lamp-face cache, step 2 of 3: spheres where shadow casters changed since the last frame
+// (VisualObjects::vsmChanges: an object's place before and after a move, an object added or removed, shown or
+// hidden, and every frame the animated, morphed, deformed and wind-blown ones, now and a frame ago) mark the
+// cached faces they reach to be drawn again
+layout(local_size_x = 64) in;
+
+layout(push_constant, std430) uniform Push {
+  uint sphereCount;
+  };
+layout(binding = 0, std430) readonly buffer Lbo { LightSource   lights[];  };
+layout(binding = 1, std430) buffer Cache        { VsmCacheLight cache[];   };
+layout(binding = 2, std430) readonly buffer List { uint count; uint id[]; } cached;
+layout(binding = 3, std430) readonly buffer Sph { vec4          spheres[]; };
+
+void main() {
+  const uint i = gl_GlobalInvocationID.x;
+  if(i>=sphereCount)
+    return;
+
+  const vec4 s = spheres[i];
+  if(s.w<0)
+    return;
+
+  const uint count = cached.count;
+  for(uint k=0; k<count; ++k) {
+    const uint  id    = cached.id[k];
+    const vec3  dvec  = s.xyz - lights[id].pos;
+    const float range = lights[id].shadowRange;
+    const float rr    = s.w + range;
+    if(dot(dvec,dvec) > rr*rr)
+      continue;
+    uint hit = 0;
+    for(uint f=0; f<6; ++f) {
+      if((cache[id].face[f]>>31u)!=0 && vsmCacheSphereTouchesFace(dvec, s.w, range, f))
+        hit |= (1u << f);
+      }
+    if(hit!=0)
+      atomicOr(cache[id].dirty, hit);
+    }
+  }

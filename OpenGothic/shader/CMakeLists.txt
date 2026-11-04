@@ -430,6 +430,12 @@ add_shader(vsm_visibility_pass.comp  virtual_shadow/vsm_visibility_pass.comp -DV
 add_shader(vsm_cull_lights.comp      virtual_shadow/vsm_cull_lights.comp)
 add_shader(vsm_mark_omni_pages.comp  virtual_shadow/vsm_mark_omni_pages.comp)
 add_shader(vsm_postprocess_omni.comp virtual_shadow/vsm_postprocess_omni.comp)
+# virtual shadows: the lamp-face cache ([INTERNAL] vsmCache)
+add_shader(vsm_cache_lights.comp     virtual_shadow/vsm_cache_lights.comp)
+add_shader(vsm_cache_invalidate.comp virtual_shadow/vsm_cache_invalidate.comp)
+add_shader(vsm_cache_alloc.comp      virtual_shadow/vsm_cache_alloc.comp)
+add_shader(vsm_clear_pages.vert      virtual_shadow/vsm_clear_pages.vert)
+add_shader(vsm_clear_pages.frag      virtual_shadow/vsm_clear_pages.frag)
 # virtual shadows: fog
 add_shader(vsm_fog_shadow.comp       virtual_shadow/vsm_fog_shadow.comp)
 add_shader(vsm_fog_mark_pages.comp   virtual_shadow/vsm_fog_shadow.comp -DPAGES)

@@ -15,6 +15,7 @@ layout(binding = 0, std430) buffer CB0 {
   };
 layout(binding = 1, r32ui) uniform uimage3D pageTbl;
 layout(binding = 2, r32ui) uniform uimage3D pageTblDepth;
+layout(binding = 3, std430) buffer Clr { VsmClearCmd clearCmd; uint clearList[]; };
 
 void main() {
   const ivec3 at   = ivec3(gl_GlobalInvocationID);
@@ -35,6 +36,15 @@ void main() {
     header.pagePlaced        = 0;
     header.omniTileOverflow  = 0;
     header.omniTileLightsMax = 0;
+    header.omniCachedFaces   = 0;
+    header.omniCachedPages   = 0;
+    header.omniDrawnFaces    = 0;
+    header.omniDrawnPages    = 0;
+    header.omniDroppedFaces  = 0;
+    clearCmd.vertexCount   = 6;
+    clearCmd.instanceCount = 0;
+    clearCmd.firstVertex   = 0;
+    clearCmd.firstInstance = 0;
     }
 
   if(gl_LocalInvocationIndex<16) {

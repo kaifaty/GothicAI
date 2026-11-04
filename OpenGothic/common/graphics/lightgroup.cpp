@@ -66,7 +66,8 @@ void LightGroup::Light::setEnabled(bool e) {
   data.setEnabled(e);
 
   auto& ssbo = owner->lightSourceData[id];
-  ssbo.range = 0;
+  ssbo.range       = 0;
+  ssbo.shadowRange = 0;
   owner->markAsDurty(id);
   }
 
@@ -77,7 +78,8 @@ void LightGroup::Light::setRange(float r) {
   data.setRange(r);
 
   auto& ssbo = owner->lightSourceData[id];
-  ssbo.range = data.isEnabled() ? clampRange(r) : 0;
+  ssbo.range       = data.isEnabled() ? clampRange(r) : 0;
+  ssbo.shadowRange = shadowRange(data);
   owner->markAsDurty(id);
   }
 
@@ -168,6 +170,7 @@ LightGroup::Light LightGroup::add(const asset::LightPreset& vob) {
   auto& ssbo = lightSourceData[lx.id];
   ssbo.pos   = l.position();
   ssbo.range = l.isEnabled() ? clampRange(l.range()) : 0;
+  ssbo.shadowRange = shadowRange(l);
   ssbo.color = l.color();
 
   auto& data = lightSourceDesc[lx.id];
@@ -365,6 +368,10 @@ void LightGroup::nearLights(const Vec3& at, float reach, std::vector<Near>& out)
     }
   }
 
+float LightGroup::shadowRange(const LightSource& light) {
+  return light.isEnabled() ? clampRange(light.range()) : 0;
+  }
+
 void LightGroup::tick(uint64_t time) {
   for(size_t i : animatedLights) {
     auto& light = lightSourceDesc[i];
@@ -377,6 +384,7 @@ void LightGroup::tick(uint64_t time) {
     ssbo.range  = light.isEnabled() ? clampRange(light.currentRange()) : 0;
     ssbo.cookie = dst.cookie;
     ssbo.sourceSize = dst.sourceSize;
+    ssbo.shadowRange = shadowRange(light);
 
     if(std::memcmp(&dst, &ssbo, sizeof(ssbo))==0)
       continue;

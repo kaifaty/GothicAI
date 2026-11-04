@@ -1,0 +1,132 @@
+#version 450
+
+#extension GL_GOOGLE_include_directive    : enable
+#extension GL_ARB_separate_shader_objects : enable
+
+#include "virtual_shadow/vsm_common.glsl"
+#include "virtual_shadow/vsm_cache_common.glsl"
+
+const uint NumThreads = 1024;
+layout(local_size_x = NumThreads) in;
+
+shared uint vsmCacheOcc[64]; // VSM_CACHE_CELLS/2: a bit a page of the lamp region
+#include "virtual_shadow/vsm_cache.glsl"
+
+// Lamp-face cache, step 3 of 3, one workgroup: each face the frame asks for (pageTblOmni, sizes from
+// vsm_mark_omni_pages.comp) keeps its place and is read from the cache, keeps its place and is drawn again, or gets
+// a new place in the lamp region of the atlas (vsm_cache.glsl). The faces drawn this frame go into the page list
+// (for VSM-visibility and VSM-rendering) and the clear list; pageTblOmni ends as the light pass reads it:
+// first page << 16 | pages a side, 0 for a face without shadow
+layout(push_constant, std430) uniform Push {
+  uint lightsTotal;
+  };
+layout(binding = 0, std430) buffer Cache { VsmCacheLight cache[]; };
+layout(binding = 1, std430) buffer Omni  { uint pageTblOmni[]; };
+layout(binding = 2, std430) buffer Pages { VsmHeader header; uint pageList[]; } vsm;
+layout(binding = 3, std430) buffer Clr   { VsmClearCmd clearCmd; uint clearList[]; };
+
+const uint MaxAlloc = 1024;
+shared uint allocCount;
+shared uint allocList[MaxAlloc];
+
+uint tblEntry(uint e) {
+  return (vsmCachePageId(vsmCacheSlot(e)) << 16u) | vsmCacheSize(e);
+  }
+
+void drawFace(uint i, uint e) {
+  const uint size   = vsmCacheSize(e);
+  const uint pageId = vsmCachePageId(vsmCacheSlot(e));
+  pageTblOmni[i] = (pageId << 16u) | size;
+  vsm.pageList[pageId] = packVsmPageInfo(i/6, i%6, ivec2(0), ivec2(size));
+  atomicMax(vsm.header.pageCount, pageId+1);
+  atomicAdd(vsm.header.omniDrawnFaces, 1);
+  atomicAdd(vsm.header.omniDrawnPages, size*size);
+  const uint k = atomicAdd(clearCmd.instanceCount, 1);
+  if(k<VSM_CLEAR_MAX)
+    clearList[k] = pageId | (size << 16u);
+  }
+
+void dropFace(uint i) {
+  cache[i/6].face[i%6] = 0;
+  pageTblOmni[i]       = 0;
+  atomicAdd(vsm.header.omniDroppedFaces, 1);
+  }
+
+void main() {
+  const uint lane  = gl_LocalInvocationIndex;
+  const uint total = lightsTotal*6;
+
+  if(lane<vsmCacheOcc.length())
+    vsmCacheOcc[lane] = 0;
+  if(lane==0)
+    allocCount = 0;
+  barrier();
+
+  for(uint i=lane; i<total; i+=NumThreads) {
+    const uint id    = i/6;
+    const uint f     = i%6;
+    const uint e     = cache[id].face[f];
+    const uint req   = pageTblOmni[i];
+    const bool dirty = ((cache[id].dirty >> f) & 1u)!=0;
+    if(e==0 && req==0)
+      continue;
+
+    uint next = 0;
+    const uint action = vsmCacheDecide(e, req, dirty, next);
+    cache[id].face[f] = next;
+    switch(action) {
+      case VSM_CACHE_DROP:
+      case VSM_CACHE_IDLE:
+        pageTblOmni[i] = 0;
+        break;
+      case VSM_CACHE_HIT:
+        pageTblOmni[i] = tblEntry(next);
+        atomicAdd(vsm.header.omniCachedFaces, 1);
+        atomicAdd(vsm.header.omniCachedPages, vsmCacheSize(next)*vsmCacheSize(next));
+        break;
+      case VSM_CACHE_DRAW:
+        drawFace(i, next);
+        break;
+      case VSM_CACHE_ALLOC: {
+        pageTblOmni[i] = 0;
+        const uint k = atomicAdd(allocCount, 1);
+        if(k<MaxAlloc)
+          allocList[k] = i; else
+          dropFace(i);
+        break;
+        }
+      }
+    if(action==VSM_CACHE_IDLE || action==VSM_CACHE_HIT || action==VSM_CACHE_DRAW)
+      vsmCacheMark(vsmCacheSlot(next), vsmCacheSize(next));
+    }
+  barrier();
+
+  // new places, one thread: the largest faces first
+  const uint count = min(allocCount, MaxAlloc);
+  if(lane==0) {
+    for(uint size=4; size>0; size/=2) {
+      for(uint k=0; k<count; ++k) {
+        const uint i = allocList[k];
+        const uint e = cache[i/6].face[i%6];
+        if(vsmCacheSize(e)!=size)
+          continue;
+        const int slot = vsmCacheFind(size);
+        if(slot<0) {
+          dropFace(i);
+          continue;
+          }
+        vsmCacheMark(uint(slot), size);
+        cache[i/6].face[i%6] = vsmCachePack(uint(slot), size, 0u, 0u, true);
+        }
+      }
+    }
+  barrier();
+  memoryBarrierBuffer();
+
+  for(uint k=lane; k<count; k+=NumThreads) {
+    const uint i = allocList[k];
+    const uint e = cache[i/6].face[i%6];
+    if(vsmCacheValid(e))
+      drawFace(i, e);
+    }
+  }

@@ -34,6 +34,23 @@ struct VsmHeader {
   uint  pagePlaced;        // entries the allocator placed in the pool
   uint  omniTileOverflow;  // 16x16 screen tiles with more shadowed lights than a tile holds
   uint  omniTileLightsMax; // most shadowed lights in one tile
+  // the lamp-face cache (vsm_cache_alloc.comp): faces and pages read from the cache, drawn again, without a place
+  uint  omniCachedFaces;
+  uint  omniCachedPages;
+  uint  omniDrawnFaces;
+  uint  omniDrawnPages;
+  uint  omniDroppedFaces;
+  };
+
+// Atlas regions the frame clears before VSM-rendering under the lamp-face cache: the sun's pages and the lamp faces
+// drawn again (the rest of the atlas keeps the cached faces). An indirect draw: a quad an entry, entry =
+// first page | size in pages << 16 (vsm_clear_pages.vert)
+const uint VSM_CLEAR_MAX = 8192u;
+struct VsmClearCmd {
+  uint vertexCount;
+  uint instanceCount;
+  uint firstVertex;
+  uint firstInstance;
   };
 
 uint packVsmPageInfo(ivec3 at, ivec2 size) {

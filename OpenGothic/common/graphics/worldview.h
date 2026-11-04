@@ -107,6 +107,7 @@ class WorldView {
     const DrawCommands& drawCommands() const;
     const DrawBuckets&  drawBuckets() const;
     auto                instanceSsbo() const -> const Tempest::StorageBuffer&;
+    auto                vsmChanges() const -> VisualObjects::VsmChanges { return visuals.vsmChanges(); }
 
   private:
     std::pair<Tempest::Vec3, Tempest::Vec3> aabb;

@@ -221,7 +221,12 @@ void Renderer::setupSettings() {
   Log::i("render: ray query = ", int(Shaders::options().doRayQuery), ", meshlets = ", int(Shaders::options().doMeshShading),
          ", gi = ", int(settings.giMethod), ", aa = ", settings.aaEnabled ? int(Gothic::options().aaPreset) : 0,
          ", bloom = ", int(settings.bloomEnabled));
-  Log::i("render: vsm = ", int(settings.vsmEnabled), ", rtsm = ", int(settings.rtsmEnabled));
+  // the VSM lamp-face cache: on unless [INTERNAL] vsmCache=0; OPENGOTHIC_VSM_CACHE=0|1 wins (stands and comparisons)
+  settings.vsmCache = Gothic::settingsGetI("INTERNAL","vsmCache")!=0;
+  if(const char* cache = std::getenv("OPENGOTHIC_VSM_CACHE"); cache!=nullptr && cache[0]!='\0')
+    settings.vsmCache = std::string_view(cache)!="0";
+  Log::i("render: vsm = ", int(settings.vsmEnabled), ", vsmCache = ", int(settings.vsmCache),
+         ", rtsm = ", int(settings.rtsmEnabled));
 
   if(settings.giMethod!=GiMethod::None) {
     // need a projective shadow, for gi
@@ -1413,6 +1418,9 @@ void Renderer::buildHiZ(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
     }
   }
 
+// the atlas regions a frame may clear under the lamp-face cache: VSM_CLEAR_MAX in vsm_common.glsl
+static constexpr size_t VsmClearMax = 8192;
+
 void Renderer::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& wview) {
   if(!settings.vsmEnabled)
     return;
@@ -1442,6 +1450,27 @@ void Renderer::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView&
   auto& pageTblOmni   = usesSsbo(vsm.pageTblOmni,   shaders.vsmClearOmni.sizeofBuffer(0, numOmniPages));
   auto& visibleLights = usesSsbo(vsm.visibleLights, shaders.vsmClearOmni.sizeofBuffer(1, lightsTotal ));
 
+  // the lamp-face cache ([INTERNAL] vsmCache): a lamp face keeps its place in the atlas and is drawn only when
+  // something in it changed (vsm_cache.glsl); the sun is drawn every frame in the atlas rows above the lamps
+  const bool lampCache = settings.vsmCache && omniLights && lightsTotal>0;
+  auto& clearList = usesSsbo(vsm.clearList, shaders.vsmClear.sizeofBuffer(3, VsmClearMax));
+  auto& cacheList = usesSsbo(vsm.cacheList, shaders.vsmClearOmni.sizeofBuffer(2, std::max<size_t>(lightsTotal, 1)));
+  bool  cacheReset = false;
+  const auto changes = wview.vsmChanges();
+  if(lampCache) {
+    // a zeroed cache is empty; it grows by whole steps so that a few new lamps do not empty it
+    const size_t lights = (size_t(lightsTotal) + 1023) & ~size_t(1023);
+    const size_t size   = shaders.vsmCacheLights.sizeofBuffer(1, lights);
+    if(vsm.cache.byteSize()<size) {
+      Resources::recycle(std::move(vsm.cache));
+      vsm.cache = Resources::device().ssbo(nullptr, size);
+      }
+    // casters' changes nobody read (a frame without VSM), another world or too many changes: start empty
+    cacheReset = changes.epoch!=vsm.cacheEpoch || changes.serial!=vsm.cacheSerial+1 || changes.overflow;
+    vsm.cacheEpoch  = changes.epoch;
+    vsm.cacheSerial = changes.serial;
+    }
+
   wview.setVirtualShadowMap(true, pageData, pageTbl, pageHiZ, pageList);
 
   cmd.setFramebuffer({});
@@ -1449,12 +1478,14 @@ void Renderer::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView&
   cmd.setBinding(0, pageList);
   cmd.setBinding(1, pageTbl);
   cmd.setBinding(2, pageHiZ);
+  cmd.setBinding(3, clearList);
   cmd.setPipeline(shaders.vsmClear);
   cmd.dispatchThreads(size_t(pageTbl.w()), size_t(pageTbl.h()), size_t(pageTbl.d()));
 
   if(omniLights) {
     cmd.setBinding(0, pageTblOmni);
     cmd.setBinding(1, visibleLights);
+    cmd.setBinding(2, cacheList);
     cmd.setPipeline(shaders.vsmClearOmni);
     cmd.dispatchThreads(numOmniPages);
 
@@ -1532,12 +1563,16 @@ void Renderer::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView&
   cmd.setBinding(2, pageTblOmni);
   cmd.setBinding(3, pageListTmp);
   cmd.setBinding(4, scene.vsmDbg);
-  // list
+  cmd.setBinding(5, clearList);
+  // list: under the lamp cache the lamp faces are not listed, vsm_cache_alloc.comp places them
+  const uint32_t lampCachePush = lampCache ? 1 : 0;
+  cmd.setPushData(&lampCachePush, sizeof(lampCachePush));
   cmd.setPipeline(shaders.vsmListPages);
   if(omniLights)
     cmd.dispatch(size_t(pageTbl.d() + 1)); else
     cmd.dispatch(size_t(pageTbl.d()));
 
+  cmd.setPushData(&lampCachePush, sizeof(lampCachePush));
   cmd.setPipeline(shaders.vsmAllocPages);
   cmd.dispatch(1);
 
@@ -1545,11 +1580,48 @@ void Renderer::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView&
   cmd.setPipeline(shaders.vsmMergePages);
   cmd.dispatch(1);
 
+  if(lampCache) {
+    cmd.setDebugMarker("VSM-cache");
+    struct Push { uint32_t lightsTotal; uint32_t reset; } push = {lightsTotal, cacheReset ? 1u : 0u};
+    cmd.setBinding(0, lightsSsbo);
+    cmd.setBinding(1, vsm.cache);
+    cmd.setBinding(2, cacheList);
+    cmd.setPushData(push);
+    cmd.setPipeline(shaders.vsmCacheLights);
+    cmd.dispatchThreads(lightsTotal);
+
+    if(!cacheReset && changes.count>0 && changes.spheres!=nullptr) {
+      cmd.setBinding(0, lightsSsbo);
+      cmd.setBinding(1, vsm.cache);
+      cmd.setBinding(2, cacheList);
+      cmd.setBinding(3, *changes.spheres);
+      cmd.setPushData(&changes.count, sizeof(changes.count));
+      cmd.setPipeline(shaders.vsmCacheInvalidate);
+      cmd.dispatchThreads(changes.count);
+      }
+
+    cmd.setBinding(0, vsm.cache);
+    cmd.setBinding(1, pageTblOmni);
+    cmd.setBinding(2, pageList);
+    cmd.setBinding(3, clearList);
+    cmd.setPushData(&lightsTotal, sizeof(lightsTotal));
+    cmd.setPipeline(shaders.vsmCacheAlloc);
+    cmd.dispatch(1);
+    }
+
   cmd.setDebugMarker("VSM-visibility");
   wview.visibilityVsm(cmd);
 
   cmd.setDebugMarker("VSM-rendering");
-  cmd.setFramebuffer({}, {pageData, 0.f, Tempest::Preserve});
+  if(lampCache) {
+    // cached lamp faces stay: only the sun's pages and the faces drawn again go back to depth 0
+    cmd.setFramebuffer({}, {pageData, Tempest::Preserve, Tempest::Preserve});
+    cmd.setBinding(0, clearList);
+    cmd.setPipeline(shaders.vsmClearPages);
+    cmd.drawIndirect(clearList, 0);
+    } else {
+    cmd.setFramebuffer({}, {pageData, 0.f, Tempest::Preserve});
+    }
   wview.drawVsm(cmd);
   }
 
@@ -1568,6 +1640,7 @@ void Renderer::logVsmStats(const WorldView& wview) {
     uint32_t pagePerMip[16];
     int32_t  pageBbox[16][4];
     uint32_t pageOmniCount, pageListCount, pagePlaced, omniTileOverflow, omniTileLightsMax;
+    uint32_t omniCachedFaces, omniCachedPages, omniDrawnFaces, omniDrawnPages, omniDroppedFaces;
     } h = {};
   uint32_t visibleLights = 0;
   auto& device = Resources::device();
@@ -1584,6 +1657,14 @@ void Renderer::logVsmStats(const WorldView& wview) {
          (h.meshletCount>DrawCommands::VsmMaxMeshlets ? " OVERFLOW" : ""),
          ", lights = ", visibleLights, "/", uint32_t(wview.lights().size()),
          ", tile lights max = ", h.omniTileLightsMax, ", tiles over limit = ", h.omniTileOverflow);
+  if(settings.vsmCache) {
+    // the lamp-face cache: faces and pages read from the cache / drawn again this frame, faces without a place
+    const uint32_t pages = h.omniCachedPages + h.omniDrawnPages;
+    Log::i("vsm cache: faces cached = ", h.omniCachedFaces, ", drawn = ", h.omniDrawnFaces,
+           ", pages cached = ", h.omniCachedPages, ", drawn = ", h.omniDrawnPages,
+           ", cached share = ", pages>0 ? (100*h.omniCachedPages)/pages : 0, "%",
+           ", no place = ", h.omniDroppedFaces);
+    }
   }
 
 void Renderer::drawRtsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& wview) {

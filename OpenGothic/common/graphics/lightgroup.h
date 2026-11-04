@@ -70,6 +70,11 @@ class LightGroup final {
     // lights whose sphere comes within reach of at (smoke and steam take their light, pfxbucket.cpp)
     void   nearLights(const Tempest::Vec3& at, float reach, std::vector<Near>& out) const;
 
+    // The range a light's VSM faces are drawn and read with: its widest, the largest of a flickering flame's
+    // range animation. The light itself takes the current range; a constant depth lets a still face stay in the
+    // VSM cache (Renderer::drawVsm) while the flame flickers
+    static float shadowRange(const LightSource& light);
+
   private:
     using Vertex = Resources::VertexL;
 
@@ -85,7 +90,8 @@ class LightGroup final {
       Tempest::Vec3 color;
       float         cookie = 0; // scene.glsl LightSource
       float         sourceSize = 6;  // cm, VobLayer::DefaultLightSourceCm
-      float         padding[3] = {};
+      float         shadowRange = 0; // the widest range: the depth of the light's VSM faces (shadowRange)
+      float         padding[2] = {};
       };
 
     struct VsmSsbo {

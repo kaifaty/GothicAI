@@ -17,6 +17,9 @@ layout(binding = 3, std430) buffer PTmp  { uint size; uint  pageList[]; } vsmTmp
 
 layout(binding = 4, r32ui)  uniform uimage2D dbg;
 
+// 1: the lamp-face cache places the lamp faces (vsm_cache_alloc.comp): they are not listed here
+layout(push_constant, std430) uniform Push { uint lampCache; };
+
 const uint NumThreads = gl_WorkGroupSize.x*gl_WorkGroupSize.y*gl_WorkGroupSize.z;
 
 shared uint pageListPrefix;
@@ -66,7 +69,7 @@ void listPages(uint mip) {
 void listOmni() {
   const uint lane = gl_LocalInvocationIndex;
 
-  const uint NumSteps = (pageTblOmni.length()+NumThreads-1)/NumThreads;
+  const uint NumSteps = lampCache!=0 ? 0 : (pageTblOmni.length()+NumThreads-1)/NumThreads;
   for(uint id=0; id<NumSteps; ++id) {
     const uint i      = id*NumThreads + lane;
     const uint prefix = pageListPrefix + pageOmni;

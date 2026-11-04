@@ -50,7 +50,7 @@ struct LightSource {
   vec3  color;
   float cookie; // 0: none; else the light mask's slot (integer part) and the light's yaw in turns (fraction)
   float sourceSize; // cm: the flame's size, which sets the soft edge of its shadow (VSM, light.frag)
-  float padding0;
+  float shadowRange; // the range at its widest (a flickering flame's largest): the depth of its VSM faces
   float padding1;
   float padding2;
   };

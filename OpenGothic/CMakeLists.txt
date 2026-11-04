@@ -327,6 +327,11 @@ if(UNIX AND NOT IOS AND NOT ANDROID)
   add_executable(gothic-taa-test EXCLUDE_FROM_ALL tests/taa_test.cpp)
   target_link_libraries(gothic-taa-test PRIVATE OpenGothic AiBridge)
   target_compile_options(gothic-taa-test PRIVATE -Wall -Wconversion -Werror)
+  # VSM lamp-face cache: place, size hysteresis, reset spheres (shader/virtual_shadow/vsm_cache.glsl as C++) and the
+  # constant shadow range; no device or game data.
+  add_executable(gothic-vsm-cache-test EXCLUDE_FROM_ALL tests/vsm_cache_test.cpp)
+  target_link_libraries(gothic-vsm-cache-test PRIVATE OpenGothic AiBridge)
+  target_compile_options(gothic-vsm-cache-test PRIVATE -Wall -Wconversion -Werror)
   # Indexed GLB replacement and fallback, generated assets only; no game or window.
   add_executable(gothic-mesh-gltf-test EXCLUDE_FROM_ALL tests/mesh_gltf_test.cpp)
   target_link_libraries(gothic-mesh-gltf-test PRIVATE OpenGothic AiBridge gothic-base-import)

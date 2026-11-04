@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cassert>
+#include <atomic>
 
 #include "graphics/mesh/submesh/animmesh.h"
 #include "gothic.h"
@@ -25,6 +26,17 @@ static RtScene::Category toRtCategory(DrawCommands::Type t) {
     }
   return RtScene::None;
   }
+
+static uint64_t vsmHashBytes(uint64_t h, const void* data, size_t size) {
+  auto* b = reinterpret_cast<const uint8_t*>(data);
+  for(size_t i=0; i<size; ++i) {
+    h ^= b[i];
+    h *= 1099511628211ull;
+    }
+  return h;
+  }
+
+static std::atomic<uint64_t> vsmEpochs{0};
 
 
 struct VisualObjects::InstanceDesc {
@@ -183,6 +195,7 @@ void VisualObjects::Item::setVisible(bool visible) {
   obj.visible = visible;
   const auto meshlets = obj.iboLen/PackedMesh::MaxInd;
   const auto count = obj.type==DrawCommands::Landscape ? meshlets : 1u;
+  owner->vsmChangedClusters(obj.clusterId, count);
   for(uint32_t i=0;i<count;++i)
     owner->clustersMem[obj.clusterId+i].meshletCount = visible ? (obj.type==DrawCommands::Landscape ? 1u : meshlets) : 0u;
   owner->clustersMem.markClusters(obj.clusterId,count);
@@ -211,6 +224,11 @@ void VisualObjects::Item::setDeformation(const std::vector<Tempest::Vec4>& verti
     owner->updateInstance(id);
     return;
     }
+  {
+    // a cloth's shape changes every frame: the VSM lamp cache draws the faces round it again (isVsmDynamic)
+    std::lock_guard<std::mutex> guard(owner->vsmSync);
+    owner->objectsDynamic.insert(id);
+  }
   const auto size = vertices.size()*sizeof(Tempest::Vec4);
   const bool changed = owner->instanceMem.realloc(obj.objDeform,size);
   obj.objDeform.set(vertices.data(),0,size);
@@ -450,6 +468,21 @@ void VisualObjects::updateInstance(size_t id, Matrix4x4* pos) {
 
   auto cId  = obj.clusterId;
   auto npos = Vec3(obj.pos[3][0], obj.pos[3][1], obj.pos[3][2]);
+  if(pos==nullptr && !isVsmDynamic(obj) && scene.vsmEnabled) {
+    // a caster moved, turned or changed its shape: the lamp faces that saw it before and those that see it now
+    uint64_t h = 14695981039346656037ull;
+    h = vsmHashBytes(h, &obj.pos, sizeof(obj.pos));
+    h = vsmHashBytes(h, &d, sizeof(d));
+    const Vec4 sphere = Vec4(npos.x, npos.y, npos.z, clustersMem[cId].r);
+    if(!obj.vsmPlaced || obj.vsmHash!=h) {
+      if(obj.vsmPlaced)
+        vsmChanged(obj.vsmSphere);
+      vsmChanged(sphere);
+      }
+    obj.vsmPlaced = true;
+    obj.vsmHash   = h;
+    obj.vsmSphere = sphere;
+    }
   if(clustersMem[cId].pos != npos) {
     clustersMem[cId].pos = npos;
     clustersMem.markClusters(cId);
@@ -517,6 +550,10 @@ VisualObjects::Item VisualObjects::get(const StaticMesh& mesh, const Material& m
   clustersMem[obj.clusterId].instanceId = obj.objInstance.offsetId<InstanceDesc>();
 
   if(type==DrawCommands::Morph) {
+    {
+      std::lock_guard<std::mutex> guard(vsmSync);
+      objectsDynamic.insert(id);
+    }
     obj.objMorphAnim = instanceMem.alloc(sizeof(MorphDesc)*Resources::MAX_MORPH_LAYERS);
     obj.animPtr      = obj.objMorphAnim.offsetId<MorphDesc>();
     const MorphData d = {};
@@ -561,6 +598,10 @@ VisualObjects::Item VisualObjects::get(const AnimMesh& mesh, const Material& mat
   { FrameProfile::Scope timing(FrameProfile::Zone::TextureDemand); updateTextureDemand(id); }
   obj.animPtr     = anim.offsetId<Matrix4x4>();
   obj.objInstance = instanceMem.alloc(sizeof(InstanceDesc));
+  {
+    std::lock_guard<std::mutex> guard(vsmSync);
+    objectsDynamic.insert(id);
+  }
   clustersMem[obj.clusterId].instanceId = obj.objInstance.offsetId<InstanceDesc>();
 
   updateInstance(id);
@@ -593,6 +634,7 @@ VisualObjects::Item VisualObjects::get(const StaticMesh& mesh, const Material& m
 
   if(obj.isEmpty())
     return Item(); // null command
+  vsmChangedClusters(obj.clusterId, uint32_t(iboLen/PackedMesh::MaxInd));
   obj.textureCategory=Resources::TextureCategory::Landscape;
   obj.textureChunkedLandscape=texturePosition!=nullptr;
   if(texturePosition)
@@ -630,6 +672,12 @@ void VisualObjects::free(size_t id) {
   const uint32_t meshletCount = (obj.iboLen/PackedMesh::MaxInd);
   const uint32_t numCluster = (obj.type==DrawCommands::Landscape ? meshletCount : 1);
 
+  if(obj.visible && !obj.isEmpty())
+    vsmChangedClusters(obj.clusterId, numCluster);
+  {
+    std::lock_guard<std::mutex> guard(vsmSync);
+    objectsDynamic.erase(id);
+  }
   drawCmd.addClusters(obj.cmdId, -meshletCount);
   clustersMem.free(obj.clusterId, numCluster);
   updateRtAs(id);
@@ -856,6 +904,7 @@ void VisualObjects::setAsGhost(size_t id, bool g) {
 
   mat.alpha   = g ? Material::Ghost : obj.alpha;
   obj.isGhost = g;
+  vsmChangedClusters(obj.clusterId, obj.type==DrawCommands::Landscape ? meshletCount : 1u);
 
   if(bx.staticMesh!=nullptr)
     obj.bucketId = bucketsMem.alloc(mat, *bx.staticMesh); else
@@ -877,6 +926,99 @@ void VisualObjects::prepareGlobals(Encoder<CommandBuffer>& enc, uint8_t fId) {
   clustersMem.commit(enc, fId);
   drawCmd.commit(enc);
   bucketsMem.commit(enc, fId);
+  commitVsmChanges(fId);
+  }
+
+bool VisualObjects::isVsmDynamic(const Object& obj) const {
+  return obj.type==DrawCommands::Animated || obj.type==DrawCommands::Morph ||
+         obj.wind!=asset::AnimationType::NONE || obj.deformCount>0;
+  }
+
+void VisualObjects::vsmChanged(const Vec4& sphere) {
+  if(!scene.vsmEnabled || sphere.w<0)
+    return;
+  std::lock_guard<std::mutex> guard(vsmSync);
+  if(vsmMoved.size()<=VsmMaxChanges)
+    vsmMoved.push_back(sphere);
+  }
+
+void VisualObjects::vsmChangedClusters(uint32_t first, uint32_t count) {
+  if(!scene.vsmEnabled || count==0 || first==uint32_t(-1))
+    return;
+  if(count==1) {
+    auto& c = clustersMem[first];
+    vsmChanged(Vec4(c.pos.x, c.pos.y, c.pos.z, c.r));
+    return;
+    }
+  // a landscape piece: one sphere round its meshlets
+  Vec3 lo = clustersMem[first].pos, hi = lo;
+  for(uint32_t i=0; i<count; ++i) {
+    auto& c = clustersMem[first+i];
+    lo = Vec3(std::min(lo.x, c.pos.x-c.r), std::min(lo.y, c.pos.y-c.r), std::min(lo.z, c.pos.z-c.r));
+    hi = Vec3(std::max(hi.x, c.pos.x+c.r), std::max(hi.y, c.pos.y+c.r), std::max(hi.z, c.pos.z+c.r));
+    }
+  const Vec3 cen = (lo+hi)*0.5f;
+  vsmChanged(Vec4(cen.x, cen.y, cen.z, (hi-lo).length()*0.5f));
+  }
+
+void VisualObjects::commitVsmChanges(uint8_t fId) {
+  vsmLast.serial++;
+  if(vsmLast.epoch==0)
+    vsmLast.epoch = ++vsmEpochs;
+  vsmLast.count    = 0;
+  vsmLast.spheres  = nullptr;
+  vsmLast.overflow = false;
+
+  vsmUpload.clear();
+  {
+    std::lock_guard<std::mutex> guard(vsmSync);
+    std::swap(vsmUpload, vsmMoved);
+    if(!scene.vsmEnabled) {
+      vsmUpload.clear();
+      vsmDynamicPrev.clear();
+      return;
+      }
+
+    // the dynamic casters where they were last frame (whatever they drew there) and where they are now
+    vsmUpload.insert(vsmUpload.end(), vsmDynamicPrev.begin(), vsmDynamicPrev.end());
+    vsmDynamicPrev.clear();
+    auto add = [this](size_t id) {
+      auto& obj = objects[id];
+      if(obj.isEmpty() || !obj.visible || obj.clusterId==uint32_t(-1))
+        return;
+      auto& c = clustersMem[obj.clusterId];
+      if(c.r<0)
+        return;
+      vsmDynamicPrev.push_back(Vec4(c.pos.x, c.pos.y, c.pos.z, c.r));
+      };
+    for(auto id:objectsDynamic)
+      add(id);
+    for(auto id:objectsWind)
+      add(id);
+  }
+  vsmUpload.insert(vsmUpload.end(), vsmDynamicPrev.begin(), vsmDynamicPrev.end());
+
+  if(vsmUpload.size()>VsmMaxChanges) {
+    vsmLast.overflow = true;
+    return;
+    }
+  if(vsmUpload.empty())
+    return;
+
+  auto& device = Resources::device();
+  auto& buf    = vsmSpheres[fId];
+  const size_t size = vsmUpload.size()*sizeof(Vec4);
+  if(buf.byteSize()<size) {
+    Resources::recycle(std::move(buf));
+    buf = device.ssbo(BufferHeap::Upload, Tempest::Uninitialized, std::max<size_t>(size, 4096*sizeof(Vec4)));
+    }
+  buf.update(vsmUpload.data(), 0, size);
+  vsmLast.spheres = &buf;
+  vsmLast.count   = uint32_t(vsmUpload.size());
+  }
+
+VisualObjects::VsmChanges VisualObjects::vsmChanges() const {
+  return vsmLast;
   }
 
 void VisualObjects::preFrameUpdate() {
