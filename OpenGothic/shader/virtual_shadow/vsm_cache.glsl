@@ -17,8 +17,9 @@ const uint VSM_CACHE_CELLS         = 128u;  // 16 cells a row, 8 rows of cells
 const uint VSM_CACHE_PAGES         = VSM_CACHE_CELLS*16u;
 // an unrequested face keeps its place (not shown, not drawn) this many frames, for a camera that turns back
 const uint VSM_CACHE_IDLE_FRAMES   = 60u;
-// a lamp nearer than this (cm) to where its faces were drawn keeps them: a part of a texel
-const float VSM_CACHE_LAMP_TOLERANCE = 0.25f;
+// a lamp nearer than this (cm) to where its faces were drawn keeps them: a hanging lantern at rest drifts by
+// thousandths of a millimetre a frame; at 0.25 cm the shadow edges were dotted against a frame without the cache
+const float VSM_CACHE_LAMP_TOLERANCE = 0.02f;
 // a face shrinks only once its smaller request has lasted this many frames: no flicker of the size at a boundary
 const uint VSM_CACHE_SHRINK_FRAMES = 30u;
 

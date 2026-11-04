@@ -107,8 +107,9 @@ class VisualObjects final {
       uint32_t                      moved    = 0;     // of count: casters that moved, came or went (the rest: dynamic)
       };
     VsmChanges vsmChanges() const;
-    // a caster's move the cache ignores, cm: a part of a texel of a lamp face (a 4x4 face at 2 m: 0.8 cm a texel)
-    static constexpr float VsmMoveTolerance = 0.25f;
+    // a caster's move the cache gathers before it counts, cm: a twentieth of a texel of a lamp face at 2 m (0.8 cm);
+    // at 0.25 cm the stale place showed as dotted shadow edges against a frame without the cache
+    static constexpr float VsmMoveTolerance = 0.05f;
     // the farthest a point within r of the object's origin went from matrix a to b
     static float vsmDisplacement(const Tempest::Matrix4x4& a, const Tempest::Matrix4x4& b, float r);
 

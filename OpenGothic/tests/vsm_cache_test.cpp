@@ -139,7 +139,7 @@ void casterTolerance() {
   Matrix4x4 d = a;
   d.rotateOY(1.f); // a degree: a door's edge at 1 m moves 1.7 cm
   require(VisualObjects::vsmDisplacement(a, d, 100)>1.7f, "a turn counts at the radius");
-  require(VisualObjects::vsmDisplacement(a, d, 5)<0.25f+0.1f, "a small thing turning a little stays");
+  require(VisualObjects::vsmDisplacement(a, d, 1)<VisualObjects::VsmMoveTolerance, "a small thing turning a little stays");
   }
 
 // the size: grows at once, shrinks only when the smaller request lasts; no flicker at a boundary
