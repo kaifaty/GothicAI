@@ -324,7 +324,7 @@ bool KnownRoads::add(Knowledge& knowledge, const std::vector<size_t>& destinatio
   }
 
 KnownRoads::Path KnownRoads::path(const Knowledge& knowledge, const Vec3& start, const Vec3& goal,
-                                  const PassageCheck& passage) const {
+                                  const PassageCheck& passage, size_t departure) const {
   validate(knowledge);
   Path result;
   size_t begin = invalid;
@@ -356,8 +356,16 @@ KnownRoads::Path KnownRoads::path(const Knowledge& knowledge, const Vec3& start,
       result.startFallback = false;
       break;
       }
-    if(result.startFallback)
+    if(result.startFallback) {
       result.startSkipped = 0;
+      // Every candidate is behind a seen hazard: go back to where the walker
+      // left its previous route; it has walked from there itself.
+      if(departure<graphNodes.size() && knowledge.nodes[departure]) {
+        begin = departure;
+        closestStart = double((graphNodes[departure].position-start).quadLength());
+        result.startDeparture = true;
+        }
+      }
     }
   if(begin==invalid) {
     const auto offset = goal-start;
@@ -418,10 +426,24 @@ void KnownRoads::updateGuidance(const Knowledge& knowledge, const Vec3& position
       }
     }
   if(rebuild) {
+    // The last node of the previous route that progress has passed, for the
+    // same goal: where the walker left that route.
+    size_t departure = invalid;
+    if(guidance.initialized && (goal-guidance.goal).quadLength()<=.0001f && !guidance.route.nodes.empty()) {
+      size_t at = 0;
+      double along = 0;
+      for(size_t i=0; i+1<guidance.polyline.size(); ++i) {
+        along += double((guidance.polyline[i+1]-guidance.polyline[i]).length());
+        if(along>guidance.progressCm)
+          break;
+        at = i+1;
+        }
+      departure = guidance.route.nodes[std::min(at,guidance.route.nodes.size()-1)];
+      }
     guidance = Guidance{};
     guidance.initialized = guidance.rebuilt = true;
     guidance.goal = goal;
-    guidance.route = path(knowledge,position,goal,passage);
+    guidance.route = path(knowledge,position,goal,passage,departure);
     for(const auto node:guidance.route.nodes)
       guidance.polyline.push_back(graphNodes[node].position);
     for(size_t i=0; i+1<guidance.polyline.size(); ++i)

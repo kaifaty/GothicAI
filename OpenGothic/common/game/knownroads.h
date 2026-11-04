@@ -26,7 +26,8 @@ class KnownRoads final {
     // rebuilt route projects on its first startOffsetCm plus this window.
     static constexpr float guidanceWindowCm = 650.f;
     // Closest familiar nodes tried for the start of a rebuilt route; if memory
-    // closes all of them, the closest one is taken as before.
+    // closes all of them, the route starts where the walker left its previous
+    // route, and the first route at the closest node, as before.
     static constexpr size_t startCandidates = 32;
 
     // The caller's verdict on a straight passage, from the walker's own memory:
@@ -58,10 +59,12 @@ class KnownRoads final {
       // another familiar component. Never consults unknown nodes or edges.
       bool goalInKnown = false;
       // Diagnosis of the start: closer familiar nodes skipped because memory
-      // closed the passage to them; fallback, every candidate was closed and
-      // the closest node was taken.
+      // closed the passage to them; fallback, every candidate was closed;
+      // departure, then the route starts at the departure node, otherwise at
+      // the closest node.
       uint32_t startSkipped = 0;
       bool startFallback = false;
+      bool startDeparture = false;
       };
     // One episode's coarse familiar route. The polyline contains only graph
     // nodes: lookahead is measured on the road from the actor's projection,
@@ -97,9 +100,12 @@ class KnownRoads final {
     // Start at the closest known node, then approach the goal as closely as the
     // reachable familiar component permits. Search never crosses unknown edges.
     // With a passage check, the start is the closest known node that memory
-    // does not close off from `start` (of the startCandidates closest).
+    // does not close off from `start` (of the startCandidates closest); if
+    // memory closes them all, the known `departure` node (where the walker
+    // left its previous route), else the closest node.
     Path path(const Knowledge& knowledge, const Tempest::Vec3& start,
-              const Tempest::Vec3& goal, const PassageCheck& passage = {}) const;
+              const Tempest::Vec3& goal, const PassageCheck& passage = {},
+              size_t departure = invalid) const;
     // No mesh or hidden geometry. Reset Guidance at an episode boundary.
     // Progress cannot decrease and never leaves its window, also not window by
     // window while the actor stands; only a >8 m deviation from the whole route

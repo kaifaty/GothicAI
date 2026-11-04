@@ -163,7 +163,7 @@ def parse_guidance(lines, current):
             progress, rebuilt, beyond, cx, cy, cz, remaining, caught, skipped, fallback = values
             current["decisions"].append(dict(progress=float(progress), rebuilt=rebuilt == "1", beyond=beyond == "1",
                                              carrot=(float(cx), float(cy), float(cz)), remaining=float(remaining),
-                                             caught=caught == "1", skipped=int(skipped), fallback=fallback == "1"))
+                                             caught=caught == "1", skipped=int(skipped), fallback=int(fallback)))
         elif parts[0] in ("polyline", "p"):
             values = list(map(float, parts[2:]))
             current["polylines"][len(current["decisions"]) - 1] = [values[i:i + 3] for i in range(0, len(values), 3)]
@@ -338,7 +338,7 @@ def summarize(episodes, replays, threshold, oracle=None):
     per_episode = []
     totals = {name: dict(decisions=0, jumps=0, episodes_with_jump=0, initial_skips=0, episodes_with_initial_skip=0,
                          catch_ups=0, catch_ups_beyond_window=0, episodes_with_catch_up=0, starts_moved=0,
-                         start_fallbacks=0, rebuilds=0, creep_decisions=0, lag_decisions=0, max_jump_cm=0.,
+                         start_fallbacks=0, start_departures=0, rebuilds=0, creep_decisions=0, lag_decisions=0, max_jump_cm=0.,
                          recorded_carrot_max_error_cm=None)
               for name in names}
     if oracle is not None:
@@ -370,6 +370,7 @@ def summarize(episodes, replays, threshold, oracle=None):
                              catch_ups_beyond_window=caught + initial_skips(result, ep["positions"], threshold, True),
                              starts_moved=[i for i, d in enumerate(decisions) if d["rebuilt"] and d.get("skipped")],
                              start_fallbacks=[i for i, d in enumerate(decisions) if d["rebuilt"] and d.get("fallback")],
+                             start_departures=[i for i, d in enumerate(decisions) if d["rebuilt"] and d.get("fallback") == 2],
                              rebuilds=sum(d["rebuilt"] for d in decisions),
                              creep_decisions=creep(decisions, ep["positions"], threshold),
                              lag_decisions=lag(result, ep["positions"], threshold))
@@ -384,6 +385,7 @@ def summarize(episodes, replays, threshold, oracle=None):
             total["episodes_with_catch_up"] += bool(row[name]["catch_ups"])
             total["starts_moved"] += len(row[name]["starts_moved"])
             total["start_fallbacks"] += len(row[name]["start_fallbacks"])
+            total["start_departures"] += len(row[name]["start_departures"])
             total["decisions"] += len(result["decisions"])
             total["jumps"] += len(row[name]["jumps"])
             total["episodes_with_jump"] += bool(row[name]["jumps"])

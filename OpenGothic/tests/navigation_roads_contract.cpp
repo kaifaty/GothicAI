@@ -408,8 +408,16 @@ void guidanceMemory() {
   // Every candidate behind seen walls: the closest node, as before.
   Memory closed;closed.x0=-9000;closed.z0=-100;closed.x1=9000;closed.z1=-100;closed.elsewhere=Roads::Passage::Unknown;
   const auto fallback = line.path(all,actor,end,std::cref(closed));
-  require(fallback.nodes.front()==1 && fallback.startFallback,"if memory closes every node the closest one starts");
-  std::puts("guidance memory: a loop cut seen free catches up; a stretch behind a seen wall or unseen does not; a rebuilt route skips nodes behind a seen wall");
+  require(fallback.nodes.front()==1 && fallback.startFallback && !fallback.startDeparture,
+          "if memory closes every node the first route starts at the closest one");
+  // A later rebuild with every node closed goes back to where the walker left its route.
+  Roads::Guidance back;
+  line.updateGuidance(all,{100,0,0},end,back,std::cref(open));
+  require(back.rebuilt && back.route.nodes.front()==0,"the first route starts at the gate");
+  line.updateGuidance(all,{1000,0,-900},end,back,std::cref(closed));
+  require(back.rebuilt && back.route.startFallback && back.route.startDeparture && back.route.nodes.front()==0,
+          "with every node behind a seen wall the rebuilt route starts where the walker left the previous one");
+  std::puts("guidance memory: a loop cut seen free catches up; a stretch behind a seen wall or unseen does not; a rebuilt route skips nodes behind a seen wall, and with all of them closed starts where the walker left its route");
   }
 }
 

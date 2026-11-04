@@ -19,7 +19,8 @@
 // Output: per episode "episode ID known_nodes known_edges", per decision
 //   "d progress_cm rebuilt beyond carrot_x carrot_y carrot_z remaining_known_cm
 //    caught_up start_skipped start_fallback" (the last three are 0 for a revision
-//   without a passage check), after each rebuild "polyline K x y z ...", and per
+//   without a passage check; start_fallback 1 is the closest node, 2 the node
+//   where the walker left its previous route), after each rebuild "polyline K x y z ...", and per
 //   segment "s V": 1 the segment hits the navmesh boundary and the walkable way
 //   around is more than 1 m longer, 0 it does not, -1 its start is off the navmesh.
 #include "game/knownroads.h"
@@ -150,7 +151,7 @@ class Oracle final {
 
 template<class Roads> concept PassageApi = requires { typename Roads::PassageCheck; };
 
-struct Diagnosis final { int caughtUp = 0, startSkipped = 0, startFallback = 0; };
+struct Diagnosis final { int caughtUp = 0, startSkipped = 0, startFallback = 0; }; // fallback 2: departure
 
 // One decision of either revision: the newer one takes the oracle as memory.
 template<class Roads>
@@ -168,6 +169,8 @@ Diagnosis update(const Roads& roads, const typename Roads::Knowledge& knowledge,
     result.caughtUp = guidance.caughtUp;
     result.startSkipped = int(guidance.route.startSkipped);
     result.startFallback = guidance.route.startFallback;
+    if constexpr (requires { guidance.route.startDeparture; })
+      result.startFallback += guidance.route.startDeparture;
     }
   else {
     if(memory!=nullptr)

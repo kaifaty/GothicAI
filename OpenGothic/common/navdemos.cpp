@@ -147,7 +147,7 @@ struct Episode {
   // Point goals: road progress per decision, and how often memory let progress
   // take a later stretch or moved the start of a rebuilt route (roads-guidance.txt).
   std::ofstream roadsGuidance;
-  uint64_t roadsCatchUps=0,roadsRebuilds=0,roadsStartsMoved=0,roadsStartFallbacks=0;
+  uint64_t roadsCatchUps=0,roadsRebuilds=0,roadsStartsMoved=0,roadsStartFallbacks=0,roadsStartDepartures=0;
   uint64_t began=0,limit=240000,next=0,decisions=0,frames=0,cvFrames=0;
   uint64_t progressAt=0;
   float best=std::numeric_limits<float>::max();
@@ -486,6 +486,7 @@ void finish(Episode& ep,World& world) {
      <<",\"familiar_map\":"<<ep.memory.familiarMapEnabled()
      <<",\"roads_rebuilds\":"<<ep.roadsRebuilds<<",\"roads_catch_ups\":"<<ep.roadsCatchUps
      <<",\"roads_starts_moved\":"<<ep.roadsStartsMoved<<",\"roads_start_fallbacks\":"<<ep.roadsStartFallbacks
+     <<",\"roads_start_departures\":"<<ep.roadsStartDepartures
      <<",\"memory_update_us\":"<<(ep.memoryUpdates?ep.memoryUpdateUs/double(ep.memoryUpdates):0.)
      <<",\"memory_view_us\":"<<(ep.memoryViews?ep.memoryViewUs/double(ep.memoryViews):0.)
      <<",\"memory_updates\":"<<ep.memoryUpdates<<",\"memory_views\":"<<ep.memoryViews
@@ -1666,10 +1667,11 @@ void traceRoads(Episode& ep,uint64_t elapsed) {
   const auto& g=ep.guidance;
   ep.roadsRebuilds+=g.rebuilt;ep.roadsCatchUps+=g.caughtUp;
   ep.roadsStartsMoved+=g.rebuilt && g.route.startSkipped>0;ep.roadsStartFallbacks+=g.rebuilt && g.route.startFallback;
+  ep.roadsStartDepartures+=g.rebuilt && g.route.startDeparture;
   if(!ep.roadsGuidance.is_open())return;
   auto& out=ep.roadsGuidance;
   out<<"d "<<elapsed<<' '<<g.progressCm<<' '<<int(g.rebuilt)<<' '<<int(g.caughtUp)<<' '<<int(g.beyondKnown)<<' '
-     <<g.route.startSkipped<<' '<<int(g.route.startFallback)<<' '<<g.carrot.x<<' '<<g.carrot.y<<' '<<g.carrot.z<<' '
+     <<g.route.startSkipped<<' '<<int(g.route.startFallback)+int(g.route.startDeparture)<<' '<<g.carrot.x<<' '<<g.carrot.y<<' '<<g.carrot.z<<' '
      <<g.remainingKnownCm<<'\n';
   if(g.rebuilt) {
     out<<"p "<<g.polyline.size();
