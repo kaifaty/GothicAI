@@ -14,15 +14,12 @@
     },
     {
       "name": "site",
-      "runtimeExecutable": "uv",
+      "runtimeExecutable": "bun",
       "runtimeArgs": [
         "run",
-        "--project",
+        "--cwd",
         "site",
-        "gothic-site",
-        "serve",
-        "--port",
-        "47860"
+        "dev"
       ],
       "port": 47860
     },

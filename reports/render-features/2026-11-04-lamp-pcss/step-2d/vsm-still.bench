@@ -1,0 +1,183 @@
+# Lamp shadows under TAA (step 2d): still frames of the vsm-clips views, each after 1.5 s of a still camera (TAA has
+# converged), then 8 consecutive frames (<view>, <view>-f1 .. -f7) for the flicker of the penumbra.
+#   TEMPEST_WINDOW_SIZE=1920x1080 OPENGOTHIC_VSM=1 BENCH_HOST=local scripts/bench.sh <this file>
+# Report: reports/render-features/2026-11-04-lamp-pcss/step-2d.md
+seed 73013
+cheat god
+overlay off
+ui off
+view full
+cam lift off
+
+# the candle- and torch-lit harbour house of perf-interior
+set time 22 0
+goto pos 3924 -73 -6663
+watch player
+cam look 110
+cam world 160 170 0
+wait 10000
+cam hold
+wait 1500
+shot interior-1
+wait 1
+shot interior-1-f1
+wait 1
+shot interior-1-f2
+wait 1
+shot interior-1-f3
+wait 1
+shot interior-1-f4
+wait 1
+shot interior-1-f5
+wait 1
+shot interior-1-f6
+wait 1
+shot interior-1-f7
+wait 1
+cam world 160 170 90
+wait 300
+cam hold
+wait 1500
+shot interior-2
+wait 1
+shot interior-2-f1
+wait 1
+shot interior-2-f2
+wait 1
+shot interior-2-f3
+wait 1
+shot interior-2-f4
+wait 1
+shot interior-2-f5
+wait 1
+shot interior-2-f6
+wait 1
+shot interior-2-f7
+wait 1
+cam world 160 170 180
+wait 300
+cam hold
+wait 1500
+shot interior-3
+wait 1
+shot interior-3-f1
+wait 1
+shot interior-3-f2
+wait 1
+shot interior-3-f3
+wait 1
+shot interior-3-f4
+wait 1
+shot interior-3-f5
+wait 1
+shot interior-3-f6
+wait 1
+shot interior-3-f7
+wait 1
+cam world 160 170 270
+wait 300
+cam hold
+wait 1500
+shot interior-4
+wait 1
+shot interior-4-f1
+wait 1
+shot interior-4-f2
+wait 1
+shot interior-4-f3
+wait 1
+shot interior-4-f4
+wait 1
+shot interior-4-f5
+wait 1
+shot interior-4-f6
+wait 1
+shot interior-4-f7
+wait 1
+
+# the perf-harbour-night views
+set time 0 0
+goto pos 5391 320 -5822
+watch player
+cam look 120
+cam world 850 300 0
+wait 10000
+cam hold
+wait 1500
+shot harbour-night-1
+wait 1
+shot harbour-night-1-f1
+wait 1
+shot harbour-night-1-f2
+wait 1
+shot harbour-night-1-f3
+wait 1
+shot harbour-night-1-f4
+wait 1
+shot harbour-night-1-f5
+wait 1
+shot harbour-night-1-f6
+wait 1
+shot harbour-night-1-f7
+wait 1
+cam world 850 300 90
+wait 300
+cam hold
+wait 1500
+shot harbour-night-2
+wait 1
+shot harbour-night-2-f1
+wait 1
+shot harbour-night-2-f2
+wait 1
+shot harbour-night-2-f3
+wait 1
+shot harbour-night-2-f4
+wait 1
+shot harbour-night-2-f5
+wait 1
+shot harbour-night-2-f6
+wait 1
+shot harbour-night-2-f7
+wait 1
+cam world 850 300 180
+wait 300
+cam hold
+wait 1500
+shot harbour-night-3
+wait 1
+shot harbour-night-3-f1
+wait 1
+shot harbour-night-3-f2
+wait 1
+shot harbour-night-3-f3
+wait 1
+shot harbour-night-3-f4
+wait 1
+shot harbour-night-3-f5
+wait 1
+shot harbour-night-3-f6
+wait 1
+shot harbour-night-3-f7
+wait 1
+cam world 850 300 270
+wait 300
+cam hold
+wait 1500
+shot harbour-night-4
+wait 1
+shot harbour-night-4-f1
+wait 1
+shot harbour-night-4-f2
+wait 1
+shot harbour-night-4-f3
+wait 1
+shot harbour-night-4-f4
+wait 1
+shot harbour-night-4-f5
+wait 1
+shot harbour-night-4-f6
+wait 1
+shot harbour-night-4-f7
+wait 1
+wait 500

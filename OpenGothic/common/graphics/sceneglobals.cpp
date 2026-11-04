@@ -178,6 +178,11 @@ void SceneGlobals::setMipBias(float bias) {
   uboGlobalCpu.mipGradScale = std::exp2(bias);
   }
 
+void SceneGlobals::setTaaFrame(bool active, uint32_t frame) {
+  uboGlobalCpu.taaActive = active ? 1 : 0;
+  uboGlobalCpu.taaFrame  = active ? frame : 0;
+  }
+
 void SceneGlobals::setUnderWater(bool w) {
   uboGlobalCpu.underWater = w ? 1 : 0;
   }

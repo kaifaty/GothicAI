@@ -1,4 +1,5 @@
-# The project site (site/): built on every pull request that touches it, published to GitHub Pages from main.
+# The project site (site/, Nuxt generating static pages on bun): built on every pull request that touches it,
+# published to GitHub Pages from main.
 name: Site
 
 on:
@@ -23,14 +24,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.3.0  # setup-uv publishes no floating major tags
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.10
+      - name: Install
+        working-directory: site
+        run: bun install --frozen-lockfile
       - name: Test
-        run: uv run --project site pytest -q site/tests
+        working-directory: site
+        run: bun run test
       - name: Build
-        run: uv run --project site gothic-site build --out site/_build
+        working-directory: site
+        env:
+          NUXT_APP_BASE_URL: /GothicAI/
+        run: bun run generate
       - uses: actions/upload-pages-artifact@v5
         with:
-          path: site/_build
+          path: site/.output/public
 
   deploy:
     if: github.repository == 'kaifaty/GothicAI' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'

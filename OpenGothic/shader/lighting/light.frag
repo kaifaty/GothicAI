@@ -27,9 +27,16 @@ layout(push_constant, std140) uniform Pbo {
   float vsmLampNear; // cm: nothing this close to the light shadows it ([INTERNAL] vsmLampNearCm)
 #endif
 #if defined(VSM_LAMP_PROBE)
-  uint  probeMode;  // OPENGOTHIC_VSM_LAMP: 0 the PCSS, 1 'hard' (one gather), 2 'flat' (no receiver plane)
+  uint  probeMode;  // OPENGOTHIC_VSM_LAMP: 0 the PCSS, 1 'hard' (one gather), 2 'flat' (no receiver plane), 3 truth
   uint  probeStamp; // not 0: count this frame (OPENGOTHIC_VSM_STATS), the stamp marks a pixel already lit
   float probeNarrow; // OPENGOTHIC_VSM_LAMP_NARROW: OmniNarrow instead, texels; 0 always twelve taps; <0 the default
+  // under TAA, OPENGOTHIC_VSM_LAMP_TAPS: OmniTaaSearch1, OmniTaaSearch2, OmniTaaNarrow, OmniTaaWide instead
+  uint  probeSearch1, probeSearch2, probeNarrowTaps, probeWideTaps;
+  uint  probeFlags; // 1 OPENGOTHIC_VSM_LAMP_FLOOR, 2 OPENGOTHIC_VSM_LAMP_CENTRE
+  // OPENGOTHIC_VSM_LAMP_EXP (step-2d-why.md): 1 still, the pattern of main under TAA too; 2 inner, the first search
+  // takes the inner taps; 4 litall, 'all lit' only after the whole search; 8 radial, the taps' radii move per frame;
+  // 16 expect, the mean of 16 frames' patterns in one frame; 32 paths, the exit path as a colour instead of light
+  uint  probeExp;
 #endif
   } push;
 layout(binding = 0, std140) uniform UboScene {
@@ -115,7 +122,8 @@ bool isShadow(vec3 rayOrigin, vec3 direction, float R) {
 // the face's edge reads the neighbour face and the cube's seams do not show; a neighbour without pages falls back
 // to the home face, clamped inside its block. Every gathered texel is compared with the receiver plane along that
 // texel's own ray, so wide kernels do not shadow a sloped surface by itself. The tap pattern turns per pixel
-// (interleaved gradient noise) and stays still from frame to frame.
+// (interleaved gradient noise) and stays still from frame to frame without TAA. Under TAA the noise moves by
+// 5.588238 pixels a frame and fewer taps are taken; TAA gathers the frames (omniShadowTaa).
 const vec2 omniSearch[8] = {
   vec2(0.2500,0.0000), vec2(-0.3193,0.2925), vec2(0.0489,-0.5569), vec2(0.4024,0.5249),
   vec2(-0.7385,-0.1306), vec2(0.6996,-0.4450), vec2(-0.2340,0.8705), vec2(-0.4463,-0.8593)
@@ -132,6 +140,14 @@ const float OmniMaxRadius = 24.0;      // texels: the widest search and filter
 // texels: a penumbra up to this half-width is filtered by four taps, not twelve; the gathers' bilinear weights
 // smooth it, and the two filters differ less than TAA's noise (reports/render-features/2026-11-04-lamp-pcss/step-2c.md)
 const float OmniNarrow    = 1.5;
+// under TAA (reports/render-features/2026-11-04-lamp-pcss/step-2d.md): taps of the first and the second blocker
+// search, of a narrow and of a wide penumbra, on Vogel discs turned by the frame's noise
+const int   OmniTaaSearch1 = 2;
+const int   OmniTaaSearch2 = 2;
+const int   OmniTaaNarrow  = 4;
+const int   OmniTaaWide    = 6;
+const bool  OmniTaaFloor   = false; // the search stops after its first tap when that puts an edge at the floor
+const bool  OmniTaaCentre  = false; // the narrow penumbra's threshold in texels of the face's centre
 
 // a cube face's block in the atlas and the receiver in that face's axes
 struct OmniFace {
@@ -216,6 +232,117 @@ float omniGather(const vec3 d, const OmniFace home, const bool homeOnly, const v
   return omniGatherFace(d, home, R, atlasInv, blockRatio, blockCount);
   }
 
+// tap i of n on a Vogel disc of radius 1: the same second moment (r^2/2) as the twelve, spread evenly for any n
+vec2 omniVogel(const int i, const int n) {
+  const float a = float(i)*2.39996323;
+  return sqrt((float(i) + 0.5)/float(n))*vec2(cos(a), sin(a));
+  }
+
+// the same with the radius's place inside its ring: xi 0.5 is omniVogel, a noise in [0,1) spreads it over the ring
+vec2 omniVogelR(const int i, const int n, const float xi) {
+  const float a = float(i)*2.39996323;
+  return sqrt((float(i) + xi)/float(n))*vec2(cos(a), sin(a));
+  }
+
+// omniShadow under TAA: the same search and penumbra with fewer taps, turned by a noise that moves every frame, so
+// that TAA's history averages a different set of taps in each pixel
+float omniShadowTaa(const vec3 P, const vec3 n, const float R, const float S, const OmniFace hf, const float dist,
+                    const vec3 u, const vec3 T, const vec3 B, const float texel, const float fcMax, const float fcEdge,
+                    const vec2 atlasInv, const uint frame) {
+#if defined(VSM_LAMP_PROBE)
+  const bool inner  = (push.probeExp & 2u)!=0u;
+  const bool litAll = (push.probeExp & 4u)!=0u;
+  const bool radial = (push.probeExp & 8u)!=0u;
+  const int  nS1    = int(push.probeSearch1);
+  const int  nS2    = int(push.probeSearch2);
+  const int  nN     = int(push.probeNarrowTaps);
+  const int  nW     = int(push.probeWideTaps);
+  const bool floorX = (push.probeFlags & 1u)!=0u;
+  const bool centre = (push.probeFlags & 2u)!=0u;
+#else
+  const bool inner  = false;
+  const bool litAll = false;
+  const bool radial = false;
+  const int  nS1    = OmniTaaSearch1;
+  const int  nS2    = OmniTaaSearch2;
+  const int  nN     = OmniTaaNarrow;
+  const int  nW     = OmniTaaWide;
+  const bool floorX = OmniTaaFloor;
+  const bool centre = OmniTaaCentre;
+#endif
+  const vec2  px  = gl_FragCoord.xy + 5.588238*float(frame & 63u);
+  const float ign = fract(52.9829189*fract(dot(px, vec2(0.06711056, 0.00583715))));
+  // the study's radial shift: a second noise, its own every frame
+  const float xi  = radial ? fract(52.9829189*fract(dot(px, vec2(0.00583715, 0.06711056)))) : 0.5;
+  const float rot = ign*2.0*M_PI;
+  const mat2  rm  = mat2(cos(rot), sin(rot), -sin(rot), cos(rot));
+  float ratio = 0, count = 0;
+
+  // the search: one Vogel disc of nS1 + nS2 taps, its outer nS1 first; where they agree the answer is clear
+  const int   nS         = nS1 + nS2;
+  const float searchR    = clamp(2.0*S/dist, 1.5*texel, OmniMaxRadius*texel);
+  const bool  searchHome = fcMax + 2.5*searchR < fcEdge;
+  bool atFloor = false;
+  for(int i=0; i<nS1; ++i) {
+    const vec2 o = (rm*omniVogelR(inner ? i : nS - 1 - i, nS, xi))*searchR;
+    omniGather(u + o.x*T + o.y*B, hf, searchHome, P, n, R, atlasInv, ratio, count);
+    // an edge (some of the four texels blocked) whose blockers put the penumbra at the floor: no more search
+    if(i==0 && floorX && count>0 && count<4.0 && 0.5*S/dist*(1.0/max(ratio/count, 0.02) - 1.0) <= texel) {
+      atFloor = true;
+      break;
+      }
+    }
+#if defined(VSM_LAMP_PROBE)
+  probeEarly = count==0 ? 1u : (count>=4.0*float(nS1) ? 2u : 0u);
+  probeBin   = searchR<=1.5*texel ? 16u : 0u;
+#endif
+  if(!atFloor) {
+    if(count==0 && !litAll)
+      return 1.0;
+    if(count>=4.0*float(nS1))
+      return 0.0;
+    for(int i=nS1; i<nS; ++i) {
+      const vec2 o = (rm*omniVogelR(inner ? i : nS - 1 - i, nS, xi))*searchR;
+      omniGather(u + o.x*T + o.y*B, hf, searchHome, P, n, R, atlasInv, ratio, count);
+      }
+    if(count==0)
+      return 1.0;
+    }
+
+  const float d1d2    = max(ratio/count, 0.02);
+  const float filterR = clamp(0.5*S/dist*(1.0/d1d2 - 1.0), texel, OmniMaxRadius*texel);
+#if defined(VSM_LAMP_PROBE)
+  {
+    const float w = filterR/texel;
+    probeBin |= w<=1.001 ? 0u : (w<=1.5 ? 1u : (w<=2.0 ? 2u : (w<=3.0 ? 3u : (w<=6.0 ? 4u : 5u))));
+    probeBin |= 8u;
+  }
+  const float narrowT = push.probeNarrow>=0.0 ? push.probeNarrow : OmniNarrow;
+#else
+  const float narrowT = OmniNarrow;
+#endif
+  const bool  filterHome = fcMax + 2.5*filterR < fcEdge;
+  const bool  narrow     = filterR <= narrowT*texel/(centre ? 1.0 : 1.0 + fcMax*fcMax);
+#if defined(VSM_LAMP_PROBE)
+  if(narrow)
+    probeBin |= 32u;
+#endif
+  // two loops, so that the game's shader has each disc as constants
+  float lit = 0;
+  if(narrow) {
+    for(int i=0; i<nN; ++i) {
+      const vec2 o = (rm*omniVogelR(i, nN, xi))*filterR;
+      lit += omniGather(u + o.x*T + o.y*B, hf, filterHome, P, n, R, atlasInv, ratio, count);
+      }
+    return lit/float(nN);
+    }
+  for(int i=0; i<nW; ++i) {
+    const vec2 o = (rm*omniVogelR(i, nW, xi))*filterR;
+    lit += omniGather(u + o.x*T + o.y*B, hf, filterHome, P, n, R, atlasInv, ratio, count);
+    }
+  return lit/float(nW);
+  }
+
 // share of the light that reaches the surface at P (relative to the light) with the plane normal n;
 // 'faint': the light is too weak here to show a soft edge, one gather decides
 float omniShadow(const vec3 P, const vec3 n, const float R, const float S, const bool faint) {
@@ -246,6 +373,44 @@ float omniShadow(const vec3 P, const vec3 n, const float R, const float S, const
   const vec2  fc     = abs(hf.Pf.xy/hf.Pf.z);
   const float fcMax  = max(fc.x, fc.y);
   const float fcEdge = 1.0 - 2.0/hf.sz;
+
+#if defined(VSM_LAMP_PROBE)
+  if(push.probeMode==3u) {
+    // truth: no early exits, 32 search and 64 filter taps, the still pattern
+    const float ig0 = fract(52.9829189*fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+    const float r0  = ig0*2.0*M_PI;
+    const mat2  rm0 = mat2(cos(r0), sin(r0), -sin(r0), cos(r0));
+    const float sR  = clamp(2.0*S/dist, 1.5*texel, OmniMaxRadius*texel);
+    const bool  sH  = fcMax + 2.5*sR < fcEdge;
+    for(int i=0; i<32; ++i) {
+      const vec2 o = (rm0*omniVogel(i, 32))*sR;
+      omniGather(u + o.x*T + o.y*B, hf, sH, P, n, R, atlasInv, ratio, count);
+      }
+    if(count==0)
+      return 1.0;
+    const float fR = clamp(0.5*S/dist*(1.0/max(ratio/count, 0.02) - 1.0), texel, OmniMaxRadius*texel);
+    const bool  fH = fcMax + 2.5*fR < fcEdge;
+    float lt = 0;
+    for(int i=0; i<64; ++i) {
+      const vec2 o = (rm0*omniVogel(i, 64))*fR;
+      lt += omniGather(u + o.x*T + o.y*B, hf, fH, P, n, R, atlasInv, ratio, count);
+      }
+    return lt/64.0;
+    }
+  if(scene.taaActive!=0u && (push.probeExp & 1u)==0u) {
+    if((push.probeExp & 16u)!=0u) {
+      // the expectation: 16 frames' patterns at once
+      float e = 0;
+      for(uint k=0u; k<16u; ++k)
+        e += omniShadowTaa(P, n, R, S, hf, dist, u, T, B, texel, fcMax, fcEdge, atlasInv, scene.taaFrame + k);
+      return e/16.0;
+      }
+    return omniShadowTaa(P, n, R, S, hf, dist, u, T, B, texel, fcMax, fcEdge, atlasInv, scene.taaFrame);
+    }
+#else
+  if(scene.taaActive!=0u)
+    return omniShadowTaa(P, n, R, S, hf, dist, u, T, B, texel, fcMax, fcEdge, atlasInv, scene.taaFrame);
+#endif
 
   const float ign = fract(52.9829189*fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
   const float rot = ign*2.0*M_PI;
@@ -383,9 +548,12 @@ void main() {
           atomicAdd(probe[15], 1u);
         }
       }
-#endif
+    if(light<=0.0 && (push.probeExp & 32u)==0u)
+      discard;
+#else
     if(light<=0.0)
       discard;
+#endif
   }
 #else
   const float NormalBias = 2.0;
@@ -411,5 +579,19 @@ void main() {
     }
 #endif
 
+#if defined(VSM_LAMP_PROBE)
+  if((push.probeExp & 32u)!=0u) {
+    // the exit path: green lit after the first search, red blocked after it, blue a narrow filter, yellow a wide one,
+    // grey faint
+    vec3 c = vec3(0.15);
+    if(probeEarly==1u)
+      c = vec3(0,1,0); else
+    if(probeEarly==2u)
+      c = vec3(1,0,0); else
+    if((probeBin & 8u)!=0u)
+      c = (probeBin & 32u)!=0u ? vec3(0,0.3,1) : vec3(1,0.8,0);
+    ret = c*0.5*max(1.0, scene.exposure);
+    }
+#endif
   outColor = vec4(ret, 0.0);
   }
