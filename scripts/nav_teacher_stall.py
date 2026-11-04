@@ -399,7 +399,79 @@ def report(args):
                           for model in ("teacher", "v5")}
         result["live"]["teacher"].update(far_idle([row for row in value["rows"] if row["model"] == "teacher"]))
     follow.write_json(root / "report.json", result)
-    print(json.dumps(result, indent=2, ensure_ascii=False))
+    print(markdown(result))
+
+
+def markdown(result):
+    """The report tables: Russian decimal commas, shares in percent."""
+    def number(value, digits=1, percent=False):
+        if value is None:
+            return "—"
+        return f"{100 * value if percent else value:.{digits}f}".replace(".", ",")
+    lines = ["Follow validation (после первого сближения):",
+             "| Конфигурация | Эпизодов | Со сближением | ≥80% | Полоса 2–5 м | Дальше 5 м | Ближе 2 м | Контакты "
+             "| Застряли (>200 snf) | Решений snf | Источники aside / last_seen |",
+             "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"]
+    for name, value in result["follow"].items():
+        sources = value["source_decisions"]
+        # Under a policy the teacher only labels: its start cells say nothing about the body.
+        teacher = "teacher" in name
+        stuck = value["episodes_stuck"] if teacher else "—"
+        stalls = value["start_not_found"] if teacher else "—"
+        lines.append(f"| {name} | {value['episodes']} | {value['contacted']} | {value['qualified']} "
+                     f"| {number(value['band'], percent=True)}% | {number(value['far'], percent=True)}% "
+                     f"| {number(value['near'], percent=True)}% | {value['contacts']} | {stuck} "
+                     f"| {stalls} | {sources.get('aside', 0)} / {sources.get('last_seen', 0)} |")
+    lines += ["", "Парные разности по маршрутам (после − до, среднее ± SE, n):"]
+    for name, metrics in result["paired_follow"].items():
+        lines.append(f"- {name}: " + "; ".join(
+            f"{key} {number(value['delta'] * (1 if key == 'contacts' else 100), 2)} ± "
+            f"{number(value['se'] * (1 if key == 'contacts' else 100), 2)} ({value['n']})"
+            for key, value in metrics.items() if value["n"]))
+    lines += ["", "Стоит вдали от цели (решения без шага / решения дальше 5 м для follow и 2 м для остальных), по причинам:",
+              "| Конфигурация | Семейство | Решений вдали | Стоит | start_not_found | опасность | осторожная | поворот | другое "
+              "| Застряли |", "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|"]
+    def idle_row(name, family, value):
+        far = value["far_decisions"] or 0
+        share = lambda count: f"{count} ({number(count / far if far else None, percent=True)}%)"
+        reasons = value["reasons"]
+        return (f"| {name} | {family} | {far} | {share(value['idle'])} | {share(reasons['start_not_found'])} "
+                f"| {share(reasons['danger'])} | {share(reasons['cautious'])} | {share(reasons['turn'])} "
+                f"| {share(reasons['other'])} | {value['episodes_stuck']} |")
+    for name, value in result["follow"].items():
+        if "teacher" in name:
+            lines.append(idle_row(name, "follow", value))
+    for name, value in result["static"].items():
+        for family, group in value["families"].items():
+            lines.append(idle_row(name, family, group))
+    lines += ["", "Остальные семейства, учитель с выходом (on) против без него (off):",
+              "| Темп / семейство | n | Приезды off → on | Медиана, с, off → on | Δ приездов, п.п. ± SE | Δ медианы, с ± SE "
+              "| Не хуже | Маршрутов застряло off → on | Маршрутов со snf до | Получили / потеряли приезд |",
+              "|---|---:|---:|---:|---:|---:|---|---:|---:|---:|"]
+    for key, value in result["paired_static"].items():
+        pace, family = key.split("/")
+        before = result["static"][f"teacher-{pace}-off-{family}"]["families"][family]
+        after = result["static"][f"teacher-{pace}-on-{family}"]["families"][family]
+        lines.append(f"| {key} | {value['n']} | {before['arrived']} → {after['arrived']} "
+                     f"| {number(before['median_s'])} → {number(after['median_s'])} "
+                     f"| {number(100 * value['arrived_delta'], 2)} ± {number(100 * value['arrived_se'], 2)} "
+                     f"| {number(value['median_delta_s'], 2)} ± {number(value['median_se_s'], 2)} "
+                     f"| {'да' if value['arrived_ok'] and value['median_ok'] else 'нет'} "
+                     f"| {value['routes_stuck_before']} → {value['routes_stuck_after']} "
+                     f"| {value['routes_with_start_not_found_before']} | {value['gained']} / {value['lost']} |")
+    if "live" in result:
+        lines += ["", "03-follow-hero:", "| Модель | Полоса 2–5 м | Дальше 5 м | Ближе 2 м | Контакты | Решений snf |",
+                  "|---|---:|---:|---:|---:|---:|"]
+        for model, value in result["live"].items():
+            lines.append(f"| {model} | {number(value['band'], percent=True)}% | {number(value['far'], percent=True)}% "
+                         f"| {number(value['near'], percent=True)}% | {value['contacts']} "
+                         f"| {value.get('start_not_found', '—')} |")
+            for seed in value["seeds"]:
+                lines.append(f"| {model} seed {seed['seed']} | {number(seed['band'], percent=True)}% "
+                             f"| {number(seed['far'], percent=True)}% "
+                             f"| {number(seed['near_ms'] / seed['follow_ms'] if seed['follow_ms'] else None, percent=True)}% "
+                             f"| {seed['contacts']} | {seed.get('start_not_found', '—')} |")
+    return "\n".join(lines)
 
 
 def main(argv=None):
