@@ -2,12 +2,14 @@
 """Replay familiar-road guidance on recorded trajectories with two KnownRoads revisions.
 
 Offline and light: no game, world or policy. Each episode directory needs
-roads-events.jsonl (routine nodes, spawn, stranger), episode.json (goal kind and
-target) and trajectory.txt (the physical position of every decision). Follow,
+roads-events.jsonl (routine nodes, spawn, stranger), episode.json (goal kind,
+target and decision count) and trajectory.txt (the physical position of every
+decision; its extra final pose from navdemos finish() is not a decision). Follow,
 object and approach goals bypass the roads and are skipped. The road graph is the
 stand's roads-graph.json. scripts/nav_roads_carrot.cpp is compiled with
-OpenGothic/common/game/knownroads.{h,cpp} of each revision (a git revision or
-WORKTREE); every revision replays the same positions.
+OpenGothic/common/game/knownroads.{h,cpp} of each revision (a git revision,
+WORKTREE, or a directory holding knownroads.h and knownroads.cpp); every
+revision replays the same positions.
 
 A progress jump is one decision without a rebuild where road progress grows by
 more than --jump-cm. An initial skip is a rebuild whose projection lies farther
@@ -15,7 +17,9 @@ along the new route than the actor stands from its first node plus --jump-cm.
 Live recordings also hold the carrot the game used; the replay of the recorded
 revision must reproduce it. The first revision is the reference: the carrots of
 the second are compared with it, separately on episodes where the reference had
-neither a jump nor an initial skip.
+neither a jump nor an initial skip. Creep is one second of progress growth beyond
+the actor's own XZ travel plus --jump-cm; lag is a decision where the actor is
+within 3 m of the route at a point more than --jump-cm ahead of progress.
 
   python3 scripts/nav_roads_carrot.py --graph roads-graph.json --jump-cm 650 \\
       --revision before=origin/main --revision after=WORKTREE \\
@@ -70,17 +74,24 @@ def episode(directory):
     if len(enabled) != 1:
         return None
     enabled = enabled[0]
-    positions = [tuple(map(float, line.split()[1:4])) for line in trajectory.read_text().splitlines() if line.strip()]
-    if not positions:
+    rows = [tuple(map(float, line.split()[1:4])) for line in trajectory.read_text().splitlines() if line.strip()]
+    decisions = meta.get("decisions")
+    if not isinstance(decisions, int) or decisions <= 0:
         return None
+    # One row per decision, then at most the final pose written by finish().
+    if len(rows) not in (decisions, decisions + 1):
+        raise ValueError(f"{directory}: {len(rows)} trajectory rows for {decisions} decisions")
+    positions = rows[:decisions]
     result = dict(directory=str(directory), stranger=bool(enabled["stranger"]),
                   routine=[r["node"] for r in enabled["routines"] if r["node"] is not None],
                   spawn=enabled["spawn_cm"], goal=meta["target_position"], positions=positions,
                   known=(enabled["known_nodes"], enabled["known_edges"]), success=bool(meta.get("success")),
                   elapsed_ms=meta.get("elapsed_ms"))
-    decisions = directory / "live-decisions.jsonl"
-    if decisions.is_file():
-        result["recorded_carrot"] = [row["carrot_cm"] for row in read_jsonl(decisions)]
+    recorded = directory / "live-decisions.jsonl"
+    if recorded.is_file():
+        result["recorded_carrot"] = [row["carrot_cm"] for row in read_jsonl(recorded)]
+        if len(result["recorded_carrot"]) != decisions:
+            raise ValueError(f"{directory}: {len(result['recorded_carrot'])} live decisions for {decisions}")
     return result
 
 
@@ -97,12 +108,14 @@ def collect(root):
 
 def compile_replay(revision, scratch):
     """Build the replay against knownroads.{h,cpp} of one git revision or the worktree."""
-    include = scratch / revision.replace("/", "_")
+    include = scratch / revision.strip("/").replace("/", "_")
     (include / "game").mkdir(parents=True)
     for name in SOURCES:
         target = include / "game" / Path(name).name
         if revision == "WORKTREE":
             target.write_bytes((ROOT / name).read_bytes())
+        elif Path(revision).is_dir():
+            target.write_bytes((Path(revision) / Path(name).name).read_bytes())
         else:
             target.write_bytes(subprocess.run(["git", "-C", str(ROOT), "show", f"{revision}:{name}"],
                                               check=True, capture_output=True).stdout)
@@ -175,11 +188,41 @@ def creep(decisions, positions, threshold, span=10):
     return count
 
 
+def project(line, position):
+    """Distance from position to the whole polyline and the arc length of the closest point."""
+    best, along = None, 0.
+    for a, b in zip(line, line[1:]):
+        edge = [b[k] - a[k] for k in range(3)]
+        squared = sum(value * value for value in edge)
+        length = math.sqrt(squared)
+        t = min(max(sum((position[k] - a[k]) * edge[k] for k in range(3)) / squared, 0.), 1.) if squared else 0.
+        distance = math.dist([a[k] + edge[k] * t for k in range(3)], position)
+        if best is None or distance < best[0]:
+            best = (distance, along + t * length)
+        along += length
+    return best
+
+
+def lag(result, positions, threshold, near_cm=300.):
+    """Decisions where the actor is near a later stretch that progress has not taken."""
+    count, line = 0, None
+    for index, decision in enumerate(result["decisions"]):
+        if decision["rebuilt"]:
+            line = result["polylines"][index]
+            continue
+        if line is None or len(line) < 2 or decision["beyond"]:
+            continue
+        distance, along = project(line, positions[index])
+        count += distance <= near_cm and along - decision["progress"] > threshold + EPSILON_CM
+    return count
+
+
 def summarize(episodes, replays, threshold):
     names = list(replays)
     per_episode = []
     totals = {name: dict(decisions=0, jumps=0, episodes_with_jump=0, initial_skips=0, episodes_with_initial_skip=0,
-                         rebuilds=0, creep_decisions=0, max_jump_cm=0., recorded_carrot_max_error_cm=None)
+                         rebuilds=0, creep_decisions=0, lag_decisions=0, max_jump_cm=0.,
+                         recorded_carrot_max_error_cm=None)
               for name in names}
     same = dict(decisions=0, carrot_within_1cm=0, clean_episodes=0, clean_decisions=0, clean_within_1cm=0,
                 clean_differences=[])
@@ -192,7 +235,8 @@ def summarize(episodes, replays, threshold):
             row[name] = dict(jumps=jumps(result["decisions"], threshold),
                              initial_skips=initial_skips(result, ep["positions"], threshold),
                              rebuilds=sum(d["rebuilt"] for d in result["decisions"]),
-                             creep_decisions=creep(result["decisions"], ep["positions"], threshold))
+                             creep_decisions=creep(result["decisions"], ep["positions"], threshold),
+                             lag_decisions=lag(result, ep["positions"], threshold))
             total = totals[name]
             total["decisions"] += len(result["decisions"])
             total["jumps"] += len(row[name]["jumps"])
@@ -201,14 +245,16 @@ def summarize(episodes, replays, threshold):
             total["episodes_with_initial_skip"] += bool(row[name]["initial_skips"])
             total["rebuilds"] += row[name]["rebuilds"]
             total["creep_decisions"] += row[name]["creep_decisions"]
+            total["lag_decisions"] += row[name]["lag_decisions"]
             total["max_jump_cm"] = max(total["max_jump_cm"], max((j["step_cm"] for j in row[name]["jumps"]), default=0.))
             if "recorded_carrot" in ep:
-                error = max(math.dist(a["carrot"], b) for a, b in zip(result["decisions"], ep["recorded_carrot"]))
+                error = max(math.dist(a["carrot"], b)
+                            for a, b in zip(result["decisions"], ep["recorded_carrot"], strict=True))
                 row[name]["recorded_carrot_max_error_cm"] = error
                 total["recorded_carrot_max_error_cm"] = max(total["recorded_carrot_max_error_cm"] or 0., error)
         if len(names) == 2:
             first, second = (replays[name][index]["decisions"] for name in names)
-            close = [math.dist(a["carrot"], b["carrot"]) <= 1. for a, b in zip(first, second)]
+            close = [math.dist(a["carrot"], b["carrot"]) <= 1. for a, b in zip(first, second, strict=True)]
             row["carrot_within_1cm"] = sum(close)
             row["first_different_decision"] = close.index(False) if not all(close) else None
             same["decisions"] += len(close)
@@ -238,7 +284,7 @@ def main(argv=None):
     revisions = dict(item.split("=", 1) for item in args.revision)
     sets = dict(item.split("=", 1) for item in args.set)
     report = dict(graph=dict(nodes=len(data["nodes"]), edges=len(data["edges"])), jump_cm=args.jump_cm,
-                  revisions={name: revision if revision == "WORKTREE" else subprocess.run(
+                  revisions={name: revision if revision == "WORKTREE" or Path(revision).is_dir() else subprocess.run(
                       ["git", "-C", str(ROOT), "rev-parse", revision], check=True, capture_output=True,
                       text=True).stdout.strip() for name, revision in revisions.items()}, sets={})
     with tempfile.TemporaryDirectory() as scratch:

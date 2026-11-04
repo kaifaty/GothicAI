@@ -290,18 +290,34 @@ void guidanceHairpin() {
   close(guidance.carrot.x,0,"carrot six metres ahead on the far leg");
   close(guidance.carrot.z,1000,"carrot on the far leg after the turn");
 
-  // A legitimate shortcut is caught up one window per decision.
-  Roads::Guidance shortcut;
-  roads.updateGuidance(knowledge,{300,0,0},goal,shortcut);
-  roads.updateGuidance(knowledge,{2000,0,500},goal,shortcut);
-  require(!shortcut.rebuilt,"standing on the route is not a deviation");
-  close(shortcut.progressCm,950,"progress grows by at most the window");
-  roads.updateGuidance(knowledge,{2000,0,500},goal,shortcut);
-  close(shortcut.progressCm,1600,"second window");
-  roads.updateGuidance(knowledge,{2000,0,500},goal,shortcut);
-  roads.updateGuidance(knowledge,{2000,0,500},goal,shortcut);
-  close(shortcut.progressCm,2500,"projection reached within the window");
-  std::puts("guidance hairpin: far leg 3 m away does not take progress; following the turn matches the whole-route projection; shortcut caught up 6.5 m per decision");
+  // A later stretch beyond the window does not take progress, even when the
+  // actor stands on it: only the >8 m deviation rebuilds the route.
+  Roads::Guidance ahead;
+  roads.updateGuidance(knowledge,{300,0,0},goal,ahead);
+  for(int i=0; i<5; ++i) {
+    roads.updateGuidance(knowledge,{2000,0,500},goal,ahead);
+    require(!ahead.rebuilt,"standing on the route is not a deviation");
+    close(ahead.progressCm,300,"a stretch 17 m ahead stays outside the window");
+    }
+
+  // A tight hairpin, 6 m wide: the turn enters the window. An actor that stands
+  // between the legs, 5 m from the first and 1 m from the far one, keeps its
+  // progress instead of creeping one window per decision onto the far leg.
+  const Roads tight({{"a",{0,0,0}},{"b",{1000,0,0}},{"c",{1000,0,600}},{"e",{-2000,0,600}}},
+                    {{0,1,1000,true},{1,2,600,true},{2,3,3000,true}});
+  Roads::Guidance stand;
+  tight.updateGuidance(knowledge,{0,0,50},{-2500,0,600},stand);
+  require(stand.rebuilt && stand.route.nodes==std::vector<size_t>({0,1,2,3}),"tight route starts at its first node");
+  tight.updateGuidance(knowledge,{300,0,100},{-2500,0,600},stand);
+  tight.updateGuidance(knowledge,{700,0,100},{-2500,0,600},stand);
+  for(int i=0; i<10; ++i) {
+    tight.updateGuidance(knowledge,{700,0,500},{-2500,0,600},stand);
+    require(!stand.rebuilt,"one metre from the far leg is not a deviation");
+    close(stand.progressCm,700,"standing actor keeps progress on the first leg");
+    }
+  close(stand.carrot.x,1000,"carrot six metres ahead on the turn");
+  close(stand.carrot.z,300,"carrot does not move onto the far leg");
+  std::puts("guidance hairpin: far leg 3 m away does not take progress; following the turn matches the whole-route projection; standing actor never creeps onto the far leg");
   }
 }
 

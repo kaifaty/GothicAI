@@ -4,9 +4,11 @@
 #                                                  # the 60 point routes of validation v5, seed 18102027
 #   bash scripts/nav-roads-carrot-remote.sh live   # game of this tree: v5 on 05-wall-pocket, 3 seeds,
 #                                                  # place pace, after a fresh teacher reference
-#   bash scripts/nav-roads-carrot-remote.sh clean  # remove ~/gothic-ai/nav-roads-carrot
+#   bash scripts/nav-roads-carrot-remote.sh clean  # remove ~/gothic-ai/nav-roads-carrot; refuses while
+#                                                  # a queued or running job of this owner uses it
 # Jobs use immutable snapshots in ~/gothic-ai/nav-roads-carrot/{source,main}/<hash>.
-# Results: /mnt/shared/gothic-ai/nav-roads-carrot/. Weights are only read.
+# Results: /mnt/shared/gothic-ai/nav-roads-carrot/point-{before,after}-<runner sha256[:12]>/ and
+# live-<game sha256[:12]>/: resume continues only episodes of the same binary. Weights are only read.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 usage='Usage: bash scripts/nav-roads-carrot-remote.sh point|live|clean'
@@ -23,6 +25,20 @@ if [[ "$stage" != run ]]; then
   [[ $# == 1 && "$stage" =~ ^(point|live|clean)$ ]] || { echo "$usage" >&2; exit 2; }
   task="$(ssh -o BatchMode=yes -o ConnectTimeout=10 ryzen 'printf "%s/gothic-ai" "$HOME"')/$task_name"
   if [[ "$stage" == clean ]]; then
+    # gq keeps every job in its state file; a job that is not finished still needs the runtime.
+    ssh ryzen "python3 - '$task' '$task_name'" <<'ACTIVE'
+import json
+from pathlib import Path
+import sys
+task, owner = sys.argv[1:]
+jobs = json.loads((Path.home() / "gothic-ai/queue/state.json").read_text())["jobs"]
+jobs = jobs.values() if isinstance(jobs, dict) else jobs
+active = [job["id"] for job in jobs if job.get("owner") == owner
+          and job.get("status") not in {"done", "cancelled", "timeout", "failed"}
+          and any(task in str(part) for part in job.get("command", []))]
+if active:
+    sys.exit(f"Refusing to clean {task}: gq jobs {' '.join(active)} are queued or running")
+ACTIVE
     ssh ryzen "rm -rf '$task'; df -h ~ | tail -1"
     exit
   fi
@@ -114,7 +130,16 @@ if [[ "$stage" == point ]]; then
     build "$tree" "$task/build/$revision" gothic-body-runner content-convert
     game_environment "$task/build/$revision/opengothic/content-convert"
     fingerprints+=("$OPENGOTHIC_BASE_FINGERPRINT")
-    "$python" -X faulthandler -B -I - "$task" "$archive/point-$revision" "$weights" "$v5_validation" \
+    # nav_rl --resume trusts finished episodes; a folder per runner keeps builds apart.
+    runner_sha256="$(sha256sum "$task/build/$revision/opengothic/gothic-body-runner" | cut -d' ' -f1)"
+    output="$archive/point-$revision-${runner_sha256:0:12}"
+    mkdir -p "$output"
+    if [[ -f "$output/runner.sha256" ]]; then
+      [[ "$(cat "$output/runner.sha256")" == "$runner_sha256" ]] || stop "$output belongs to another runner"
+    else
+      printf '%s\n' "$runner_sha256" > "$output/runner.sha256"
+    fi
+    "$python" -X faulthandler -B -I - "$task" "$output" "$weights" "$v5_validation" \
       "$v5_input" "$seed" "$task/build/$revision/opengothic/gothic-body-runner" <<'POINT'
 from collections import Counter
 import hashlib
@@ -185,7 +210,9 @@ slot="${GQ_DISPLAY_SLOT:-0}"
 export TEMPEST_WINDOW_POS="$((100+(10#$slot % 2)*700)),$((100+(10#$slot / 2)*460))"
 mkdir -p "$task/navmesh-cache"
 cp -n /mnt/shared/gothic-ai/archive/nav-dagger3-20261030/hd-measure-cache/ordinary/*.navmesh "$task/navmesh-cache/"
-"$python" -X faulthandler -B - "$task" "$archive/live" "$task/build/live/opengothic/Gothic2Notr" "$weights" <<'LIVE'
+# nav_live refuses a run folder of other inputs; a folder per game binary keeps rounds apart.
+game_sha256="$(sha256sum "$task/build/live/opengothic/Gothic2Notr" | cut -d' ' -f1)"
+"$python" -X faulthandler -B - "$task" "$archive/live-${game_sha256:0:12}" "$task/build/live/opengothic/Gothic2Notr" "$weights" <<'LIVE'
 # The frozen 05-wall-pocket of the pace-v5 round: same suite, inputs, place pace and seeds.
 from copy import deepcopy
 import json
