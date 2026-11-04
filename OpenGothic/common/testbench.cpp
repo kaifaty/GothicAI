@@ -2626,7 +2626,7 @@ void writeHeader() {
   std::fprintf(bench.csv,",mr_w,mr_dev,mr_hits,physics_ms");
   // the watched one's quiver (graphics/mesh/quiver): cm the armour and the legs go into it, the arrows shown,
   // the mouth in the pelvis bone's frame, how far out it was pushed, the arrows over the mouth and the bottom
-  std::fprintf(bench.csv,",qv_on,qv_arrows,qv_armor,qv_leg,qv_arm,qv_mx,qv_my,qv_mz,qv_out,qv_top,qv_bottom,qv_swing,qv_back,qv_outward,qv_us,qv_twist,qv_bow,qv_2h,qv_blade,qv_yield,qv_legt,qv_legl,qv_gnd,qv_gndm");
+  std::fprintf(bench.csv,",qv_on,qv_arrows,qv_armor,qv_leg,qv_arm,qv_mx,qv_my,qv_mz,qv_out,qv_top,qv_bottom,qv_swing,qv_back,qv_outward,qv_us,qv_twist,qv_bow,qv_2h,qv_blade,qv_yield,qv_legt,qv_legl,qv_gnd,qv_gndm,qv_gmode,qv_gon,qv_gndt,qv_need,qv_needb,qv_needo,qv_needbody");
   if(ragdollTrace)
     std::fprintf(bench.csv,",ph_ms,ph_bodies,ph_rays,rd_mode,rd_weight,rd_sleep");
   if(bench.questTrace)
@@ -10045,7 +10045,8 @@ void writeRow(Npc& pl) {
     std::fprintf(bench.csv,",%.2f,%.2f,%.2f,%.2f,%.2f,%.1f",q.twist,q.bow,q.longsword,q.blade,q.yield,q.legAt);
     std::fprintf(bench.csv,",%.2f",q.legLeft);
     // cm the tube and its mouth go under the world (its collision, a ray down over each point of the outer side)
-    float gnd = 0, gndMouth = 0;
+    float gnd = 0, gndMouth = 0, gndTube = 0;
+    Quiver::measureGround = true;
     if(q.on) {
       constexpr int Rings = 9, Around = 12;
       const auto pts = subjectOf(pl).quiverSurface(Rings,Around);
@@ -10056,11 +10057,14 @@ void writeRow(Npc& pl) {
         if(!r.hasCol || r.v.y<=v.y)
           continue;
         gnd = std::max(gnd,r.v.y-v.y);
+        if(i>=size_t(2*Around))
+          gndTube = std::max(gndTube,r.v.y-v.y); // from the third ring, 16.75 cm down, on
         if(i<size_t(Around))
           gndMouth = std::max(gndMouth,r.v.y-v.y);
         }
       }
-    std::fprintf(bench.csv,",%.2f,%.2f",gnd,gndMouth);
+    std::fprintf(bench.csv,",%.2f,%.2f,%d,%d",gnd,gndMouth,q.ground,int(q.groundOn));
+    std::fprintf(bench.csv,",%.2f,%.1f,%.1f,%.1f,%.2f",gndTube,q.needAngle,q.needBack,q.needOut,q.needBody);
   }
   if(ragdollTrace)
     writeRagdoll(pl);

@@ -6,8 +6,10 @@
 # right; nothing in the way of the dodges.
 # slowmo 4: a row of metrics.csv is 1/120 s of the game; a clip at 30 fps is the game 4x slower. The report's
 # script (rolls.py) makes the real-time 60 fps clip (setpts=0.25*PTS -r 60) and the 2x slower one (setpts=0.5*PTS -r 60).
-# Columns: qv_legt/qv_leg/qv_legl (the legs), qv_arm, qv_armor, qv_swing, qv_yield, and qv_gnd, qv_gndm: cm the
-# tube and its mouth go under the world's collision. Each dodge writes its `melee dodge PC_HERO: ...` line.
+# Last, npc bowmen on the ground: sitting down, knocked down, dead. Columns: qv_legt/qv_leg/qv_legl (the legs),
+# qv_arm, qv_armor (the flaps and the trunk), qv_swing, qv_yield, qv_gnd, qv_gndm (cm the tube and its mouth go under
+# the world's collision), qv_gmode (1: the ground pushes it, 2: back from it), qv_gon (the ground looked for).
+# Each dodge writes its `melee dodge PC_HERO: ...` line.
 # WORLD=NEWWORLD.ZEN BENCH_HOST=local OPENGOTHIC_CONTENT=<models of anim-strikes + meshes, materials of quiver>
 seed 73013
 cheat god
@@ -147,4 +149,64 @@ rec lea_dash_right
 wait 500
 dodge player right
 wait 1200
+stop
+
+# --- the quiver on the ground, no thresholds: npc bowmen in ITAR_MIL_M 3 m in front of the hero, facing 210 as he
+# did; sitting down on the ground (as by a campfire), knocked down and lying (ragdoll ko), dead and lying. The hero
+# puts his sword away first, or they draw theirs. They stay frozen (`put`): unfrozen, their scripts' AI_UnequipWeapons
+# takes the bow off as they go down, and the quiver with it, as in the game
+tap weapon
+wait 1500
+face 30
+wait 300
+insert BAU_904_BAUER
+wait 300
+npcequip BAU_904_BAUER ItRw_Bow_L_01
+npcequip BAU_904_BAUER ITAR_MIL_M
+arrows BAU_904_BAUER 20
+put BAU_904_BAUER 300 0
+watch BAU_904_BAUER
+cam follow 200 115 -135
+wait 1500
+rec npc_sit_ground
+wait 500
+ani BAU_904_BAUER T_STAND_2_SIT force
+wait 3500
+stop
+put BAU_904_BAUER 2500 90
+watch player
+wait 300
+
+insert BDT_1013_BANDIT_L
+wait 300
+immortal BDT_1013_BANDIT_L on
+npcequip BDT_1013_BANDIT_L ItRw_Bow_L_01
+npcequip BDT_1013_BANDIT_L ITAR_MIL_M
+arrows BDT_1013_BANDIT_L 20
+put BDT_1013_BANDIT_L 300 0
+watch BDT_1013_BANDIT_L
+cam follow 200 115 -135
+wait 1500
+rec npc_down_ko
+wait 500
+down BDT_1013_BANDIT_L ko
+wait 4000
+stop
+ragdoll remove BDT_1013_BANDIT_L
+watch player
+wait 300
+
+insert BDT_1000_BANDIT_L
+wait 300
+npcequip BDT_1000_BANDIT_L ItRw_Bow_L_01
+npcequip BDT_1000_BANDIT_L ITAR_MIL_M
+arrows BDT_1000_BANDIT_L 20
+put BDT_1000_BANDIT_L 300 0
+watch BDT_1000_BANDIT_L
+cam follow 200 115 -135
+wait 1500
+rec npc_dead
+wait 500
+down BDT_1000_BANDIT_L dead
+wait 4000
 stop

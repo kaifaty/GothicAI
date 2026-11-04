@@ -289,6 +289,15 @@ class MdlVisual final {
     void rebindAttaches(Attach<View>& mesh, const Skeleton& to);
     void rebindAttaches(const Skeleton& to);
     std::vector<Tempest::Vec3> carriedPoints(const MeshAttach& att, std::string_view slot) const;
+    // the ground under the quiver: the plane the rays found round the pelvis (where they were cast from)
+    struct QuiverGround {
+      bool           valid = false;
+      Tempest::Vec3  at, bottom; // the pelvis and the tube's bottom where the rays were cast
+      Quiver::Ground plane;
+      };
+    QuiverGround               quiverGround;
+    void                       lookForGround(const Npc& npc, const Tempest::Vec3& hip, const Tempest::Vec3& mid,
+                                             const Tempest::Vec3& bottom);
     void setupGestures();
 
     Tempest::Matrix4x4             pos;

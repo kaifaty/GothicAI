@@ -619,14 +619,18 @@ void MdlVisual::setQuiver(const Quiver::State& st, MeshObjects::Mesh&& body, std
   Quiver::Fit fit = quiv.fit();
   std::vector<size_t>  near    = quiv.near();
   std::vector<uint8_t> nearLeg = quiv.nearLeg();
+  std::vector<size_t>  wide    = quiv.wide();
   if(!fit.valid || quiv.state().body!=st.body || quiv.state().skeleton!=st.skeleton) {
     std::vector<Quiver::SkinPoint> bind;
     quiverPoints(true,bind);
     fit = Quiver::fit(*skeleton,bind);
     Quiver::nearPoints(fit,*skeleton,bind,near,nearLeg);
+    Quiver::widePoints(fit,*skeleton,bind,near,wide);
+    quiverGround = QuiverGround();
     }
   quiv.set(st,fit,std::move(body),std::move(arrows),std::move(arrowLocal));
   quiv.setNear(std::move(near),std::move(nearLeg));
+  quiv.setWide(std::move(wide));
   if(textureOwnerKnown)
     quiv.setTextureOwner(textureOwnerPosition,textureOwnerSpatial);
   syncAttaches();
@@ -702,6 +706,32 @@ bool MdlVisual::updateQuiver(const Npc& npc, uint64_t dt) {
   const auto   t0   = std::chrono::steady_clock::now();
   const auto&  sk   = *skeleton;
   const size_t n    = std::min(sk.tr.size(),skInst->boneCount());
+  const size_t spineBone = quiv.spineBone()<n ? quiv.spineBone() : quiv.bone();
+  const auto&  pelvisNow = renderedBone(quiv.bone());
+  // the ground: looked for only when the tube comes near it (the pelvis low: a roll, down, sitting, dead); standing
+  // and walking it never does. Rays down the world's collision round the ring, again when the ring has moved
+  Quiver::Ground ground;
+  {
+    Vec3 mid, bottom;
+    const float lowest = quiv.lowest(pelvisNow,renderedBone(spineBone),&mid,&bottom);
+    const Vec3  hip    = {pelvisNow.at(3,0),pelvisNow.at(3,1),pelvisNow.at(3,2)};
+    float       floorY = at.y;
+    const bool  cached = quiverGround.valid &&
+                         std::hypot(hip.x-quiverGround.at.x,hip.z-quiverGround.at.z)<100.f;
+    if(cached && quiverGround.plane.on)
+      floorY = std::max(floorY,quiverGround.plane.at.y);
+    if(lowest<floorY+Quiver::GroundNear) {
+      if(!cached || std::hypot(hip.x-quiverGround.at.x,hip.z-quiverGround.at.z)>Quiver::GroundResample ||
+         std::abs(hip.y-quiverGround.at.y)>Quiver::GroundResample ||
+         std::hypot(bottom.x-quiverGround.bottom.x,bottom.z-quiverGround.bottom.z)>Quiver::GroundResample)
+        lookForGround(npc,hip,mid,bottom);
+      ground = quiverGround.plane;
+      }
+  }
+  if(ground.on && quiv.restsOnGround(pelvisNow)) {
+    quiverStepUs = float(std::chrono::duration<double,std::micro>(std::chrono::steady_clock::now()-t0).count());
+    return false;
+    }
   // the right leg and arm: the hit zones' capsules, fitted to the worn armour
   static thread_local std::vector<HitZones::Posed>     caps;
   static thread_local std::vector<Quiver::Obstacle>    obs;
@@ -719,12 +749,14 @@ bool MdlVisual::updateQuiver(const Npc& npc, uint64_t dt) {
     if(leg || name=="BIP01 R FOREARM" || name=="BIP01 R HAND")
       obs.push_back({c.a,c.b,c.r,leg ? Quiver::Leg : Quiver::Arm});
     }
-  // the armour's flaps and the legs' skin near the quiver: its points
+  // the armour's flaps and the legs' skin near the quiver: its points; with the ground near, the far ones too
   if(const ProtoMesh* pm = view.protoMesh()) {
     const auto& sv   = pm->skinVertexData();
     const auto& legs = quiv.nearLeg();
-    for(size_t k=0; k<quiv.near().size(); ++k) {
-      const size_t id = quiv.near()[k];
+    const size_t nNear = quiv.near().size();
+    const size_t nAll  = nNear + (ground.on ? quiv.wide().size() : 0);
+    for(size_t k=0; k<nAll; ++k) {
+      const size_t id = k<nNear ? quiv.near()[k] : quiv.wide()[k-nNear];
       if(id>=sv.size())
         continue;
       const auto& v = sv[id];
@@ -740,7 +772,7 @@ bool MdlVisual::updateQuiver(const Npc& npc, uint64_t dt) {
         }
       if(weight>0.f) {
         p = p/weight;
-        obs.push_back({p,p,0.f,k<legs.size() && legs[k]!=0 ? Quiver::Leg : Quiver::Flap});
+        obs.push_back({p,p,0.f,k>=nNear ? Quiver::Body : (k<legs.size() && legs[k]!=0 ? Quiver::Leg : Quiver::Flap)});
         }
       }
     }
@@ -748,10 +780,70 @@ bool MdlVisual::updateQuiver(const Npc& npc, uint64_t dt) {
   for(auto* att:{&bow,&sword})
     for(auto& p:carriedPoints(*att,att==&bow ? "ZS_BOW" : "ZS_LONGSWORD"))
       obs.push_back({p,p,0.f,Quiver::Carried});
-  const size_t spine = quiv.spineBone()<n ? quiv.spineBone() : quiv.bone();
-  quiv.step(bones[quiv.bone()],bones[spine],obs,float(dt)*0.001f);
+  const size_t spine = spineBone;
+  quiv.step(bones[quiv.bone()],bones[spine],obs,float(dt)*0.001f,ground);
   quiverStepUs = float(std::chrono::duration<double,std::micro>(std::chrono::steady_clock::now()-t0).count());
   return true;
+  }
+
+void MdlVisual::lookForGround(const Npc& npc, const Vec3& hip, const Vec3& mid, const Vec3& bottom) {
+  // rays down round the pelvis (three, 30 cm off) and under the tube (its middle and bottom now): a plane fitted
+  // to where they hit, raised to the highest of them so no hit is over it; fewer than three: level at the highest
+  quiverGround        = QuiverGround();
+  quiverGround.valid  = true;
+  quiverGround.at     = hip;
+  quiverGround.bottom = bottom;
+  const auto* phys = npc.world().physic();
+  if(phys==nullptr)
+    return;
+  Vec3 hit[5];
+  int  hits = 0;
+  Vec3 from[5];
+  for(int i=0; i<3; ++i) {
+    const float a = float(i)*2.f*float(M_PI)/3.f;
+    from[i] = {hip.x+30.f*std::cos(a),hip.y,hip.z+30.f*std::sin(a)};
+    }
+  from[3] = mid;
+  from[4] = bottom;
+  for(auto& p:from) {
+    const float top = std::max(p.y,hip.y);
+    const auto  r   = phys->rayStatic(Vec3(p.x,top+60.f,p.z),Vec3(p.x,top-150.f,p.z));
+    if(r.hasCol)
+      hit[hits++] = r.v;
+    }
+  if(hits==0)
+    return;
+  auto& g = quiverGround.plane;
+  g.on = true;
+  g.n  = {0,1,0};
+  g.at = hit[0];
+  for(int i=1; i<hits; ++i)
+    if(hit[i].y>g.at.y)
+      g.at = hit[i];
+  if(hits<3)
+    return;
+  // y = a x + b z + c by least squares about the mean
+  Vec3 mean;
+  for(int i=0; i<hits; ++i)
+    mean += hit[i];
+  mean = mean/float(hits);
+  double sxx=0, sxz=0, szz=0, sxy=0, szy=0;
+  for(int i=0; i<hits; ++i) {
+    const double x = hit[i].x-mean.x, z = hit[i].z-mean.z, y = hit[i].y-mean.y;
+    sxx += x*x; sxz += x*z; szz += z*z; sxy += x*y; szy += z*y;
+    }
+  const double det = sxx*szz-sxz*sxz;
+  if(std::abs(det)<1e-3)
+    return;
+  const float a = float((sxy*szz-szy*sxz)/det), b = float((szy*sxx-sxy*sxz)/det);
+  const Vec3  n = Vec3::normalize(Vec3(-a,1.f,-b));
+  if(n.y<0.5f)
+    return;
+  float up = 0;
+  for(int i=0; i<hits; ++i)
+    up = std::max(up,Vec3::dotProduct(hit[i]-mean,n));
+  g.n  = n;
+  g.at = mean + n*up;
   }
 
 std::vector<Vec3> MdlVisual::carriedPoints(const MeshAttach& att, std::string_view slot) const {
