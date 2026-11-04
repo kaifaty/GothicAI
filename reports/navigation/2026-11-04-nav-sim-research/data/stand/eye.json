@@ -89,7 +89,28 @@
    "cache_schedule_mismatches": 11765,
    "cache_valid_slots": 2557485,
    "cache_content_equal_fraction": 0.992944240142171,
-   "definition": "Engine cache from rays.bin: per episode and ray, the last far-updated record whose near segment missed (no hit, or hit beyond the near end). Hits within 0.1 cm of the near end cannot be attributed and their cache slots are excluded until the ray's next far cast. Schedule = same timestamp and validity; content = the four ray criteria."
+   "complete_mismatches_with_equal_hit": 0,
+   "complete_mismatches_by_engine_kind": {
+    "none": 0,
+    "world": 12,
+    "static_vob": 1,
+    "movable_vob": 3187,
+    "npc": 0,
+    "water": 0
+   },
+   "cache_slots_after_agreed_cast": 5688915,
+   "cache_schedule_equal_fraction_after_agreed_cast": 1.0,
+   "cache_content_equal_fraction_after_agreed_cast": 1.0,
+   "cache_slots_after_ray_difference": 22230,
+   "cache_slots_after_ray_difference_by_engine_kind": {
+    "none": 0,
+    "world": 155,
+    "static_vob": 5,
+    "movable_vob": 22070,
+    "npc": 0,
+    "water": 0
+   },
+   "definition": "Engine cache from rays.bin: per episode and ray, the last far-updated record whose near segment missed (no hit, or hit beyond the near end). Hits within 0.1 cm of the near end cannot be attributed and their cache slots are excluded until the ray's next far cast. Schedule = same timestamp and validity; content = the four ray criteria. A slot is 'after an agreed cast' when at the ray's latest far update where either side cast, both cast and the fresh ray met all four criteria; otherwise it inherits that ray's difference (by_engine_kind: the engine's kind for the ray at that update)."
   },
   "replay": {
    "agents": 48,
@@ -110,7 +131,8 @@
    10
   ],
   "bvh_build_s": [
-   0.9662071099737659
+   0.9662071099737659,
+   1.0451222260016948
   ],
   "reference_us_per_update": {
    "raybench_embree_single_thread_median": 43,
@@ -167,6 +189,31 @@
       11.65576171875
      ]
     ]
+   },
+   "28": {
+    "thread_us_per_update": 225.55829796601756,
+    "wall_us_per_update": 8.055653498786342,
+    "updates_per_second": 124136.42172551976,
+    "step_ms_median": 16.5383875137195,
+    "casts_per_update": 249.8329296875,
+    "repeats": 3,
+    "load_average_per_repeat": [
+     [
+      26.5224609375,
+      18.84375,
+      14.14306640625
+     ],
+     [
+      26.5224609375,
+      18.84375,
+      14.14306640625
+     ],
+     [
+      26.16015625,
+      18.896484375,
+      14.185546875
+     ]
+    ]
    }
   },
   "eye_update_and_slot_write": {
@@ -217,6 +264,31 @@
       15.18408203125,
       13.30322265625,
       11.65576171875
+     ]
+    ]
+   },
+   "28": {
+    "thread_us_per_update": 279.5888008813563,
+    "wall_us_per_update": 9.985314317191296,
+    "updates_per_second": 100147.07281455748,
+    "step_ms_median": 20.38371202070266,
+    "casts_per_update": 249.8329296875,
+    "repeats": 3,
+    "load_average_per_repeat": [
+     [
+      26.5224609375,
+      18.84375,
+      14.14306640625
+     ],
+     [
+      26.5224609375,
+      18.84375,
+      14.14306640625
+     ],
+     [
+      26.16015625,
+      18.896484375,
+      14.185546875
      ]
     ]
    }
@@ -660,13 +732,25 @@
    "bytes": 5094,
    "sha256": "fc37a9d87b58e1ecfac398b9c6c4d4c5d4faff0deb030b133a9a0b7f2bf7ccd0"
   },
+  "cost-28.json": {
+   "bytes": 3225,
+   "sha256": "c45d9ab875dfb1a23bad19ed1cffd9b73d3230d8163c6fefbe753940afcbccbf"
+  },
+  "cost-28.log": {
+   "bytes": 2521,
+   "sha256": "686a17c79cce355e517c7a0440a7fd28c24b594bf358c6d0b0c9d669c5c27ce0"
+  },
+  "meta-cost-28.json": {
+   "bytes": 2330,
+   "sha256": "f35bd629595d6596461a2cccd5ddb998837ba73cece27dc901e572fc36e347f8"
+  },
   "meta-run-1_8.json": {
    "bytes": 2480,
    "sha256": "b597950e8bb9e0a856fa1f7727d9e96c816d428b327c436f4cc82af646abd5e9"
   },
   "parity.json": {
-   "bytes": 11154,
-   "sha256": "4054666ef3b07acf4afe325cfb2f317193c410d2eb276c4359c3b997c67ae47a"
+   "bytes": 11964,
+   "sha256": "8b0dfce34ef769483c2daa4bf40dc7e0149ff69c56c5c3f0c229c694d504c707"
   },
   "stand-cache.npy": {
    "bytes": 79968192,
@@ -682,6 +766,18 @@
   }
  },
  "measurements": {
+  "meta-cost-28": {
+   "class": "quick",
+   "started_utc": "2026-11-04T21:18:11Z",
+   "gq_status": "ID           \u0412\u041b\u0410\u0414\u0415\u041b\u0415\u0426         \u041a\u041b\u0410\u0421\u0421  \u0421\u041e\u0421\u0422\u041e\u042f\u041d\u0418\u0415  \u0420\u0415\u0421\u0423\u0420\u0421\u042b                         \u0421\u0422\u0410\u0420\u0422    \u041f\u041e\u0422\u041e\u041b\u041e\u041a \u041e\u0426\u0415\u041d\u041a\u0410\n8ed403661a0b nav-teacher-stal quick  running    6t 6G gpu=0G \u043e\u043a\u043d\u043e=0 \u0441\u043b\u043e\u0442=\u2014      00:13:01 3600s \u2264790s median=790s\nb6c166860b07 ryzen-play-autou quick  queued     12t 12G gpu=0G \u043e\u043a\u043d\u043e=0 \u0441\u043b\u043e\u0442=\u2014    \u2014        1800s \u22643601s median=1s\n6691533f0b73 census-noid      quick  queued     12t 12G gpu=0G \u043e\u043a\u043d\u043e=0 \u0441\u043b\u043e\u0442=\u2014    \u2014        1800s \u22645593s median=193s\ne488fb9652e4 nav-roads-memory batch  queued     16t 11G gpu=0G \u043e\u043a\u043d\u043e=0 \u0441\u043b\u043e\u0442=\u2014    \u2014        7200s \u22647200s\n8a0f473f985b nav-roads-memory quick  running    12t 5G gpu=4G \u043e\u043a\u043d\u043e=1 \u0441\u043b\u043e\u0442=1     00:14:30 3540s \u226414400s\ne408e79b4830 nav-roads-memory batch  queued     16t 11G gpu=0G \u043e\u043a\u043d\u043e=0 \u0441\u043b\u043e\u0442=\u2014    \u2014        7200s \u226417940s\ncc1ba8bf3d64 nav-roads-memory batch  queued     12t 8G gpu=4G \u043e\u043a\u043d\u043e=1 \u0441\u043b\u043e\u0442=\u2014     \u2014        7200s \u226425140s\n880f8f4cad18 claude-navsim-s3 quick  queued     26t 6G gpu=8G \u043e\u043a\u043d\u043e=0 \u0441\u043b\u043e\u0442=\u2014     \u2014        2400s \u226432627s median=287s\n272a2b1116cf nav-sim-stand    quick  running    28t 6G gpu=0G \u043e\u043a\u043d\u043e=0 \u0441\u043b\u043e\u0442=\u2014     00:18:04 3600s \u226434740s\nDisk /home/kaifaty/gothic-ai: free 127.1G; minimum 20G\nDisk /: free 127.1G; minimum 20G\n",
+   "loadavg_at_start": "26.39 17.95 13.70 16/4570 2828724",
+   "cpu": "AMD Ryzen 9 3950X 16-Core Processor",
+   "compiler": "c++ (Ubuntu 15.2.0-16ubuntu1) 15.2.0",
+   "flags": "-O3 -DNDEBUG -march=x86-64-v3 -ffp-contract=off",
+   "embree": "4.4.0 release archive, sha256 cb3d4402...3c57",
+   "eye_core": "OpenGothic/common/game/navigationeye.cpp compiled into the library as is",
+   "other_running_job_threads": 18
+  },
   "meta-run-1_8": {
    "class": "quick",
    "started_utc": "2026-11-04T21:13:06Z",
@@ -691,11 +787,8 @@
    "compiler": "c++ (Ubuntu 15.2.0-16ubuntu1) 15.2.0",
    "flags": "-O3 -DNDEBUG -march=x86-64-v3 -ffp-contract=off",
    "embree": "4.4.0 release archive, sha256 cb3d4402...3c57",
-   "eye_core": "OpenGothic/common/game/navigationeye.cpp compiled into the library as is"
+   "eye_core": "OpenGothic/common/game/navigationeye.cpp compiled into the library as is",
+   "other_running_job_threads": 12
   }
- },
- "host": {
-  "machine": "x86_64",
-  "python": "3.12.13"
  }
 }

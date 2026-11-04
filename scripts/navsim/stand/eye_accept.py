@@ -18,7 +18,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import platform
+import re
 import sys
 import time
 
@@ -316,6 +316,15 @@ def cost(inputs: Path, raw: Path, threads_list, agents: int, steps: int, repeats
     return result
 
 
+def measurement(path: Path) -> dict:
+    """Job metadata plus the threads other running gq jobs held at its start."""
+    meta = json.loads(path.read_text())
+    others = [re.search(r"\s(\d+)t\s", line) for line in meta.get("gq_status", "").splitlines()
+              if " running " in line and line.split()[1] != "nav-sim-stand"]
+    meta["other_running_job_threads"] = sum(int(m.group(1)) for m in others if m)
+    return meta
+
+
 def summary(inputs: Path, raw: Path, out: Path, raw_root: str):
     parity_result = json.loads((raw / "parity.json").read_text())
     costs = [json.loads(path.read_text()) for path in sorted(raw.glob("cost-*.json"))]
@@ -365,8 +374,7 @@ def summary(inputs: Path, raw: Path, out: Path, raw_root: str):
                            "dump pose, so movable_vob rays are reported apart from the gate",
             "criteria": "same hit, |distance| < 1 cm, same kind, |normalY| < 0.01, against rays.bin"},
         "raw_root": raw_root, "files": files,
-        "measurements": {path.stem: json.loads(path.read_text()) for path in sorted(raw.glob("meta-*.json"))},
-        "host": {"machine": platform.machine(), "python": platform.python_version()},
+        "measurements": {path.stem: measurement(path) for path in sorted(raw.glob("meta-*.json"))},
     }
     payload = json.dumps(result, indent=1, allow_nan=False) + "\n"
     if len(payload.encode()) > 100_000:
