@@ -128,7 +128,7 @@ MTL::RenderPipelineState& MtPipeline::inst(const MtFboLayout& lay, size_t stride
 
     NS::Error* error = nullptr;
     TempestLoadProbe::PipelineScope pipelineProbe(TempestLoadProbe::Graphics);
-    ix.pso = NsPtr<MTL::RenderPipelineState>(device.impl->newRenderPipelineState(pdesc.get(),&error));
+    ix.pso = NsPtr<MTL::RenderPipelineState>(device.psoCache.render(*device.impl,*pdesc,&error));
     pipelineProbe.stop();
     mtAssert(ix.pso.get(),error);
     }
@@ -235,7 +235,7 @@ MtCompPipeline::MtCompPipeline(MtDevice &device, const MtShader &sh)
 
   NS::Error* error = nullptr;
   TempestLoadProbe::PipelineScope pipelineProbe(TempestLoadProbe::Compute);
-  impl = NsPtr<MTL::ComputePipelineState>(device.impl->newComputePipelineState(desc.get(), MTL::PipelineOptionNone, nullptr, &error));
+  impl = NsPtr<MTL::ComputePipelineState>(device.psoCache.compute(*device.impl, *desc, &error));
   pipelineProbe.stop();
   if(error!=nullptr) {
     const char* e = error->localizedDescription()->utf8String();

@@ -12,6 +12,7 @@
 #include "../utility/compiller_hints.h"
 #include "gapi/shaderreflection.h"
 #include "gapi/metal/mtsync.h"
+#include "gapi/metal/mtpipelinecache.h"
 #include "gapi/metal/mtsamplercache.h"
 #include "nsptr.h"
 
@@ -288,6 +289,7 @@ class MtDevice : public AbstractGraphicsApi::Device {
     void     onSubmit();
     void     onFinish();
     void     waitIdle() override;
+    void     savePipelineCache() override;
     void     uploadBuffer(MTL::Buffer& target, const void* data, size_t off, size_t size, bool wait);
     std::unique_lock<std::mutex> lockUpload(size_t bytes);
     void     submitUpload(MTL::CommandBuffer& cmd, size_t bytes);
@@ -314,6 +316,7 @@ class MtDevice : public AbstractGraphicsApi::Device {
 
     Props                      prop;
     MtSamplerCache             samplers;
+    MtPipelineCache            psoCache;
     bool                       validation = false;
     bool                       syncBufferUploads = false;
     bool                       syncTextureUploads = false;

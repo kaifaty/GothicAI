@@ -36,6 +36,7 @@ MtShader::MtShader(MtDevice& dev, const void* source, size_t srcSize)
   optGLSL.vertex.flip_vert_y = true;
 
   std::string msl;
+  TempestLoadProbe::PipelineScope convertProbe(TempestLoadProbe::Convert);
   try {
     spirv_cross::CompilerMSL comp(reinterpret_cast<const uint32_t*>(source),srcSize/4);
     optMSL.msl_version = spvVersion(dev.prop.mslVersion);
@@ -120,6 +121,7 @@ MtShader::MtShader(MtDevice& dev, const void* source, size_t srcSize)
     throw std::system_error(Tempest::GraphicsErrc::InvalidShaderModule);
     }
 
+  convertProbe.stop();
   //Log::d(msl);
 
   auto       opt = NsPtr<MTL::CompileOptions>::init();

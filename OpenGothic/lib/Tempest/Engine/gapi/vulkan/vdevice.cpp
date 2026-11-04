@@ -91,6 +91,7 @@ VDevice::VDevice(VkInstance instance, const bool hasDeviceFeatures2, VkPhysicalD
 
   createLogicalDevice(pdev);
   vkGetPhysicalDeviceMemoryProperties(pdev, &memoryProperties);
+  pipelineCache.init(device.impl, pdev);
 
   physicalDevice = pdev;
   allocator.setDevice(*this);
@@ -1106,6 +1107,10 @@ VkResult VDevice::waitFence(VFence& t, uint64_t timeout) {
       return VK_NOT_READY;
     timeout -= (now-start);
     }
+  }
+
+void VDevice::savePipelineCache() {
+  pipelineCache.save(true);
   }
 
 void VDevice::waitIdle() {

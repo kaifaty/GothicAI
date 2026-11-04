@@ -1,5 +1,6 @@
 #include "device.h"
 #include "utility/smallarray.h"
+#include "gapi/pipelinecache.h"
 
 #include <Tempest/Fence>
 #include <Tempest/UniformBuffer>
@@ -111,6 +112,14 @@ Device::Device(AbstractGraphicsApi& api, DeviceType type)
   }
 
 Device::~Device() {
+  }
+
+void Device::setPipelineCacheDirectory(const std::filesystem::path& dir) {
+  Detail::PipelineCacheFile::setDirectory(dir);
+  }
+
+void Device::savePipelineCache() {
+  impl.dev->savePipelineCache();
   }
 
 void Device::waitIdle() {
