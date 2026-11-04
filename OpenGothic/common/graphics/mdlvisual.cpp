@@ -12,6 +12,7 @@
 #include "gothic.h"
 
 #include <chrono>
+#include <ctime>
 #include "graphics/mesh/animmath.h"
 #include "graphics/mesh/ikmath.h"
 #include "frameprofile.h"
@@ -693,6 +694,13 @@ void MdlVisual::quiverPoints(const Matrix4x4* bones, size_t n, std::vector<Quive
     }
   }
 
+// the calling thread's CPU time, µs: the quiver's own share of a step, apart from the thread being put aside
+static double threadCpuUs() {
+  timespec ts = {};
+  clock_gettime(CLOCK_THREAD_CPUTIME_ID,&ts);
+  return double(ts.tv_sec)*1e6 + double(ts.tv_nsec)*1e-3;
+  }
+
 bool MdlVisual::updateQuiver(const Npc& npc, uint64_t dt) {
   if(!quiv.isShown() || skeleton==nullptr || quiv.bone()>=skInst->boneCount())
     return false;
@@ -704,12 +712,16 @@ bool MdlVisual::updateQuiver(const Npc& npc, uint64_t dt) {
     return false;
     }
   const auto   t0   = std::chrono::steady_clock::now();
+  const double cpu0 = threadCpuUs();
+  quiverRays  = 0;
+  quiverRayUs = 0;
   const auto&  sk   = *skeleton;
   const size_t n    = std::min(sk.tr.size(),skInst->boneCount());
   const size_t spineBone = quiv.spineBone()<n ? quiv.spineBone() : quiv.bone();
   const auto&  pelvisNow = renderedBone(quiv.bone());
-  // the ground: looked for only when the tube comes near it (the pelvis low: a roll, down, sitting, dead); standing
-  // and walking it never does. Rays down the world's collision round the ring, again when the ring has moved
+  // the ground: looked for only when the tube comes near it (the pelvis low: a roll, sneaking, sitting); standing,
+  // walking and running it never does. Near: closer than GroundNear, till farther than GroundFar again. Rays down the
+  // world's collision round the pelvis and under the tube, again when they have moved
   Quiver::Ground ground;
   {
     Vec3 mid, bottom;
@@ -720,16 +732,23 @@ bool MdlVisual::updateQuiver(const Npc& npc, uint64_t dt) {
                          std::hypot(hip.x-quiverGround.at.x,hip.z-quiverGround.at.z)<100.f;
     if(cached && quiverGround.plane.on)
       floorY = std::max(floorY,quiverGround.plane.at.y);
-    if(lowest<floorY+Quiver::GroundNear) {
+    quiverClear = lowest-floorY;
+    quiverNear  = quiverClear<(quiverNear ? Quiver::GroundFar : Quiver::GroundNear);
+    if(quiverNear) {
       if(!cached || std::hypot(hip.x-quiverGround.at.x,hip.z-quiverGround.at.z)>Quiver::GroundResample ||
          std::abs(hip.y-quiverGround.at.y)>Quiver::GroundResample ||
          std::hypot(bottom.x-quiverGround.bottom.x,bottom.z-quiverGround.bottom.z)>Quiver::GroundResample)
+        {
+        const auto r0 = std::chrono::steady_clock::now();
         lookForGround(npc,hip,mid,bottom);
+        quiverRayUs = float(std::chrono::duration<double,std::micro>(std::chrono::steady_clock::now()-r0).count());
+        }
       ground = quiverGround.plane;
       }
   }
   if(ground.on && quiv.restsOnGround(pelvisNow)) {
     quiverStepUs = float(std::chrono::duration<double,std::micro>(std::chrono::steady_clock::now()-t0).count());
+    quiverCpuUs  = float(threadCpuUs()-cpu0);
     return false;
     }
   // the right leg and arm: the hit zones' capsules, fitted to the worn armour
@@ -783,6 +802,7 @@ bool MdlVisual::updateQuiver(const Npc& npc, uint64_t dt) {
   const size_t spine = spineBone;
   quiv.step(bones[quiv.bone()],bones[spine],obs,float(dt)*0.001f,ground);
   quiverStepUs = float(std::chrono::duration<double,std::micro>(std::chrono::steady_clock::now()-t0).count());
+  quiverCpuUs  = float(threadCpuUs()-cpu0);
   return true;
   }
 
@@ -806,6 +826,7 @@ void MdlVisual::lookForGround(const Npc& npc, const Vec3& hip, const Vec3& mid, 
   from[3] = mid;
   from[4] = bottom;
   for(auto& p:from) {
+    ++quiverRays;
     const float top = std::max(p.y,hip.y);
     const auto  r   = phys->rayStatic(Vec3(p.x,top+60.f,p.z),Vec3(p.x,top-150.f,p.z));
     if(r.hasCol)
@@ -878,13 +899,16 @@ Quiver::Probe MdlVisual::quiverProbe() const {
     return {};
   std::vector<Quiver::SkinPoint> posed;
   quiverPoints(false,posed);
-  std::vector<bool> leftSide(skeleton->nodes.size(),false);
-  for(size_t i=0; i<skeleton->nodes.size(); ++i)
-    leftSide[i] = skeleton->nodes[i].name.find(" L ")!=std::string::npos;
+  std::vector<bool> leftSide(skeleton->nodes.size(),false), trunk(skeleton->nodes.size(),false);
+  for(size_t i=0; i<skeleton->nodes.size(); ++i) {
+    const auto& name = skeleton->nodes[i].name;
+    leftSide[i] = name.find(" L ")!=std::string::npos;
+    trunk[i]    = name=="BIP01" || name.find("PELVIS")!=std::string::npos || name.find("SPINE")!=std::string::npos;
+    }
   const size_t spine = quiv.spineBone()<skInst->boneCount() ? quiv.spineBone() : quiv.bone();
   return quiv.probe(renderedBone(quiv.bone()),renderedBone(spine),posed,Quiver::legBones(*skeleton),
                     Quiver::armBones(*skeleton),carriedPoints(bow,"ZS_BOW"),carriedPoints(sword,"ZS_LONGSWORD"),
-                    leftSide);
+                    leftSide,trunk);
   }
 
 std::vector<Tempest::Vec3> MdlVisual::quiverSurface(int rings, int around) const {

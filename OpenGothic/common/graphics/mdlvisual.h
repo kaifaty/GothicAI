@@ -89,6 +89,12 @@ class MdlVisual final {
     // the quiver's swing on by dt (ms): true if the attachments need a sync
     bool                           updateQuiver(const Npc& npc, uint64_t dt);
     float                          quiverCostUs() const { return quiverStepUs; } // the last step, µs
+    // the last step's: its CPU time on the thread (µs), the rays cast and their time (µs), how high the tube's lowest
+    // point is over the ground (cm)
+    float                          quiverCpu() const { return quiverCpuUs; }
+    int                            quiverRayCount() const { return quiverRays; }
+    float                          quiverRayCost() const { return quiverRayUs; }
+    float                          quiverClearance() const { return quiverClear; }
     std::vector<Tempest::Vec3>     quiverSurface(int rings, int around) const; // the bench's ground probe
     bool                           setFightMode  (asset::MdsFightMode mode);
     void                           dropWeapon    (Npc& owner);
@@ -319,6 +325,9 @@ class MdlVisual final {
     std::vector<ArrowPin>          stuckArrows;
     Quiver                         quiv;
     float                          quiverStepUs = 0;
+    float                          quiverCpuUs = 0, quiverRayUs = 0, quiverClear = 0;
+    int                            quiverRays = 0;
+    bool                           quiverNear = false;
 
     std::vector<PfxSlot>           effects;
     std::string_view               muted;

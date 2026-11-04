@@ -6,7 +6,8 @@
 # right; nothing in the way of the dodges.
 # slowmo 4: a row of metrics.csv is 1/120 s of the game; a clip at 30 fps is the game 4x slower. The report's
 # script (rolls.py) makes the real-time 60 fps clip (setpts=0.25*PTS -r 60) and the 2x slower one (setpts=0.5*PTS -r 60).
-# Last, npc bowmen on the ground: sitting down, knocked down, dead. Columns: qv_legt/qv_leg/qv_legl (the legs),
+# Last, the quiver on the ground: sneaking (light leather, the fire mage's robe), an npc bowman sitting down on the
+# ground, the hero knocked down. Columns: qv_legt/qv_leg/qv_legl (the legs),
 # qv_arm, qv_armor (the flaps and the trunk), qv_swing, qv_yield, qv_gnd, qv_gndm (cm the tube and its mouth go under
 # the world's collision), qv_gmode (1: the ground pushes it, 2: back from it), qv_gon (the ground looked for).
 # Each dodge writes its `melee dodge PC_HERO: ...` line.
@@ -151,12 +152,41 @@ dodge player right
 wait 1200
 stop
 
-# --- the quiver on the ground, no thresholds: npc bowmen in ITAR_MIL_M 3 m in front of the hero, facing 210 as he
-# did; sitting down on the ground (as by a campfire), knocked down and lying (ragdoll ko), dead and lying. The hero
-# puts his sword away first, or they draw theirs. They stay frozen (`put`): unfrozen, their scripts' AI_UnequipWeapons
-# takes the bow off as they go down, and the quiver with it, as in the game
+# --- the quiver on the ground, no thresholds. Sneaking with the bow on the back: light leather and the fire
+# mage's robe (ITAR_KDF_H); the hero puts his sword away first
 tap weapon
 wait 1500
+equip ITAR_Leather_L
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 210
+wait 1500
+walkmode sneak
+rec lea_sneak
+wait 500
+hold forward 3000
+wait 3000
+release all
+wait 500
+stop
+walkmode run
+equip ITAR_KDF_H
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 210
+wait 1500
+walkmode sneak
+rec kdf_sneak
+wait 500
+hold forward 3000
+wait 3000
+release all
+wait 500
+stop
+walkmode run
+
+# An npc bowman in ITAR_MIL_M sits down on the ground (as by a campfire), 3 m in front of the hero, facing 210 as
+# he did; frozen (`put`), not to draw his weapon at the hero
+equip ITAR_Leather_L
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
 face 30
 wait 300
 insert BAU_904_BAUER
@@ -177,36 +207,20 @@ put BAU_904_BAUER 2500 90
 watch player
 wait 300
 
-insert BDT_1013_BANDIT_L
-wait 300
-immortal BDT_1013_BANDIT_L on
-npcequip BDT_1013_BANDIT_L ItRw_Bow_L_01
-npcequip BDT_1013_BANDIT_L ITAR_MIL_M
-arrows BDT_1013_BANDIT_L 20
-put BDT_1013_BANDIT_L 300 0
-watch BDT_1013_BANDIT_L
-cam follow 200 115 -135
-wait 1500
-rec npc_down_ko
+# The hero knocked down for real, the bow on his back, nothing frozen: a mercenary's two-hander on him stunned by
+# posture (as knockdown-launch), from the blow till he is up again. Whether the bow (and the quiver) stays on
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 210
 wait 500
-down BDT_1013_BANDIT_L ko
-wait 4000
-stop
-ragdoll remove BDT_1013_BANDIT_L
+arc SLD_826_SOELDNER 1 150 0
+freeze SLD_826_SOELDNER
+knockdown-launch-equip
 watch player
-wait 300
-
-insert BDT_1000_BANDIT_L
-wait 300
-npcequip BDT_1000_BANDIT_L ItRw_Bow_L_01
-npcequip BDT_1000_BANDIT_L ITAR_MIL_M
-arrows BDT_1000_BANDIT_L 20
-put BDT_1000_BANDIT_L 300 0
-watch BDT_1000_BANDIT_L
 cam follow 200 115 -135
 wait 1500
-rec npc_dead
+rec hero_knockdown
 wait 500
-down BDT_1000_BANDIT_L dead
-wait 4000
+stun player posture
+strike player SLD_826_SOELDNER
+wait 6000
 stop

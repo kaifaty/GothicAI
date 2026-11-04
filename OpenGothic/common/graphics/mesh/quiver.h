@@ -48,11 +48,14 @@ class Quiver final {
                                                  // not a gait: it is not followed
     // the ground (reports/archery/2026-11-05-quiver-rolls): pressed by it, as in a roll, the quiver lies down along
     // the body farther than the give, and comes back critically damped once free
-    static constexpr float GroundAngle  = 70.f;  // deg at most from the rest while the ground pushes it
-    static constexpr float GroundStep   = 10.f;  // deg in 1/60 s at most while the ground pushes or it comes back
-    static constexpr float GroundPush   = 0.05f; // s: the follower is 90% there while the ground pushes
+    static constexpr float GroundAngle  = 90.f;  // deg at most from the rest while the ground pushes it (it lies on it)
+    static constexpr float GroundStep   = 20.f;  // deg in 1/60 s at most while the ground pushes or it comes back
+    static constexpr float GroundWeight = 4.f;   // the ground's depth squared against the give's contacts (1)
+    static constexpr float GroundBody   = 0.05f; // the body's and the armour's while the ground pushes it
+    static constexpr float GroundClear  = 2.f;   // cm the tube must be clear of the ground before it stops pushing
     static constexpr float GroundReturn = 0.25f; // s: 90% of the way back after it
-    static constexpr float GroundNear   = 25.f;  // cm: the tube's lowest point nearer the ground than that looks for it
+    static constexpr float GroundNear   = 10.f;  // cm: the tube's lowest point nearer the ground than that looks for it,
+    static constexpr float GroundFar    = 16.f;  // till it is farther than that again
     static constexpr float GroundResample = 10.f;// cm the ring moves across before the ground is looked for again
     static constexpr float GroundAhead  = 0.05f; // s: the pelvis's motion is carried on so far to meet the ground
     static constexpr float MassAt       = 30.f;  // cm from the ring
@@ -187,8 +190,11 @@ class Quiver final {
       float         bow = 0, longsword = 0; // cm the bow and the two-hander on the back go into the tube
       float         blade = 0;            // cm an arrow comes out of the tube's wall
       float         yield = 0;            // deg the target gives way to the obstacles
+      Tempest::Vec3 axis = {0,-1,0};      // the bottom's way in the rest frame
       float         legAt = 0;            // cm down the axis where the leg goes in the deepest
       float         legLeft = 0;          // cm the left leg goes in
+      float         trunk = 0;            // cm the points of the pelvis and the spine (the trunk, the buttock, the
+                                          // armour's belt and what hangs on the pelvis) go in
       int           ground = 0;           // 0: the give; 1: the ground pushes it; 2: it comes back from the ground
       bool          groundOn = false;     // the ground was looked for (the tube near it)
       // measureGround: the least turn from the rest (deg, to 120) that leaves the tube from 14 cm down no deeper
@@ -201,7 +207,7 @@ class Quiver final {
     Probe probe(const Tempest::Matrix4x4& pelvis, const Tempest::Matrix4x4& spine, const std::vector<SkinPoint>& posed,
                 const std::vector<bool>& legBone, const std::vector<bool>& armBone,
                 const std::vector<Tempest::Vec3>& bow, const std::vector<Tempest::Vec3>& longsword,
-                const std::vector<bool>& leftBone = {}) const;
+                const std::vector<bool>& leftBone = {}, const std::vector<bool>& trunkBone = {}) const;
 
     // which bones are a leg's (THIGH, CALF, FOOT, TOE) and an arm's or the head's (left out of the fit)
     static std::vector<bool> legBones(const Skeleton& sk);
@@ -231,6 +237,8 @@ class Quiver final {
       std::vector<Tempest::Vec4> body;
       };
     Measured                        measured;
+    // the ground's turn by its angle across (radians toward that way, angleOf) and its speed, its target
+    Tempest::Vec3                   gw, gwV, groundTarget;
     Tempest::Matrix4x4              lastInv;            // the last step's rest frame, inverted (GroundAhead)
     bool                            lastInvOn = false;           // measureGround: the last step's ground and body points
     bool                            groundSeen = false;

@@ -57,6 +57,22 @@ float radiusAt(float depth) {
   return Quiver::MouthRadius + (Quiver::BottomRadius-Quiver::MouthRadius)*k;
   }
 
+// the axis (the rest frame, the bottom's way) for a turn by its angle across: (x, z) radians toward that way
+Vec3 axisOfAngle(const Vec3& a) {
+  const float l = std::hypot(a.x,a.z);
+  if(l<1e-6f)
+    return {0,-1,0};
+  return {std::sin(l)*a.x/l,-std::cos(l),std::sin(l)*a.z/l};
+  }
+
+Vec3 angleOf(const Vec3& u) {
+  const float s = std::hypot(u.x,u.z);
+  if(s<1e-6f)
+    return {};
+  const float l = std::atan2(s,-u.y);
+  return {u.x/s*l,0,u.z/s*l};
+  }
+
 bool nameHas(std::string_view name, std::initializer_list<std::string_view> parts) {
   for(auto p:parts)
     if(name.find(p)!=std::string_view::npos)
@@ -332,7 +348,7 @@ void Quiver::setTextureOwner(const Vec3& position, bool spatial) {
 Quiver::Probe Quiver::probe(const Matrix4x4& pelvis, const Matrix4x4& spine, const std::vector<SkinPoint>& posed,
                             const std::vector<bool>& legBone, const std::vector<bool>& armBone,
                             const std::vector<Vec3>& bowPts, const std::vector<Vec3>& longPts,
-                            const std::vector<bool>& leftBone) const {
+                            const std::vector<bool>& leftBone, const std::vector<bool>& trunkBone) const {
   Probe p;
   p.on = st.on && fitted.valid;
   if(!p.on)
@@ -345,10 +361,12 @@ Quiver::Probe Quiver::probe(const Matrix4x4& pelvis, const Matrix4x4& spine, con
   inv.inverse();
   {
     const Vec3 a = Vec3::normalize(axis);
+    p.axis    = a;
     p.swing   = std::acos(std::clamp(-a.y,-1.f,1.f))*180.f/float(M_PI);
     p.back    = std::atan2(-a.z,-a.y)*180.f/float(M_PI);
     p.outward = std::atan2( a.x,-a.y)*180.f/float(M_PI);
-    p.yield   = std::atan2(devTarget.length(),MassAt)*180.f/float(M_PI);
+    p.yield   = groundMode==0 ? std::atan2(devTarget.length(),MassAt)*180.f/float(M_PI)
+                                  : std::hypot(groundTarget.x,groundTarget.z)*180.f/float(M_PI);
     // the rest's turn against SPINE1 about the vertical: the pelvis's less the half of the gait's
     p.twist = (twistOf(pelvis,spine)-yawOffset)*180.f/float(M_PI);
     p.ground   = groundMode;
@@ -407,6 +425,8 @@ Quiver::Probe Quiver::probe(const Matrix4x4& pelvis, const Matrix4x4& spine, con
     const float depth = depthOf(pt.pos);
     if(depth<=0)
       continue;
+    if(pt.bone<trunkBone.size() && trunkBone[pt.bone])
+      p.trunk = std::max(p.trunk,depth);
     if(pt.bone<armBone.size() && armBone[pt.bone])
       p.arm = std::max(p.arm,depth); else
     if(pt.bone<legBone.size() && legBone[pt.bone] && pt.bone<leftBone.size() && leftBone[pt.bone])
@@ -548,6 +568,7 @@ void Quiver::rest() {
   yawOffset = 0;
   groundMode = 0;
   lastInvOn  = false;
+  gw = gwV = groundTarget = Vec3();
   }
 
 Matrix4x4 Quiver::swingMatrix() const {
@@ -662,8 +683,8 @@ void Quiver::step(const Matrix4x4& pelvis, const Matrix4x4& spine, const std::ve
     }
   lastInv   = inv;
   lastInvOn = ground.on;
-  constexpr float GroundWeight = 4.f;
-  auto underground = [&](const Vec3& u) {
+  // lift: the plane raised so much (the hysteresis of the push)
+  auto underground = [&](const Vec3& u, float lift) {
     if(!ground.on)
       return 0.f;
     const float cu   = Vec3::dotProduct(gn,u), ca = Vec3::dotProduct(gnAhead,u);
@@ -671,16 +692,16 @@ void Quiver::step(const Matrix4x4& pelvis, const Matrix4x4& spine, const std::ve
     float sum = 0;
     for(int k=0; k<8; ++k) {
       const float t = RingContact + (Length-RingContact)*float(k)/7.f;
-      const float d = std::max(gd - cu*t + radiusAt(t)*side, gdAhead - ca*t + radiusAt(t)*sa);
+      const float d = std::max(gd - cu*t + radiusAt(t)*side, gdAhead - ca*t + radiusAt(t)*sa) + lift;
       const float w = std::clamp((t-RingContact)/RingContact,0.f,1.f);
       if(d>0.f)
         sum += w*d*d;
       }
     return sum;
     };
-  auto inside = [&](const Vec3& u) { return insideOf(near,u) + GroundWeight*underground(u); };
-  // the axis by its tangents across (x, z); no farther than GiveAngle (GroundAngle while the ground pushes)
-  float maxTan = std::tan(GiveAngle*float(M_PI)/180.f);
+  auto inside = [&](const Vec3& u) { return insideOf(near,u) + GroundWeight*underground(u,0.f); };
+  // the give's axis by its tangents across (x, z); no farther than GiveAngle
+  const float maxTan = std::tan(GiveAngle*float(M_PI)/180.f);
   auto clampTan = [&](float& x, float& z) {
     const float l = std::hypot(x,z);
     if(l>maxTan) {
@@ -689,21 +710,28 @@ void Quiver::step(const Matrix4x4& pelvis, const Matrix4x4& spine, const std::ve
       }
     };
   float lastX = devTarget.x/MassAt, lastZ = devTarget.z/MassAt;
-  const float wideX = lastX, wideZ = lastZ;
   clampTan(lastX,lastZ);
   // a small price on the turn and on the change keeps it from wandering between equal answers
-  bool wide = false;
   auto score = [&](float x, float z) {
     const Vec3 u = Vec3::normalize(Vec3(x,-1.f,z));
-    const float in = wide ? insideOf(nearWide,u) + GroundWeight*underground(u) : inside(u);
-    return in + 2.f*std::hypot(x,z) + 2.f*std::hypot(x-lastX,z-lastZ);
+    return inside(u) + 2.f*std::hypot(x,z) + 2.f*std::hypot(x-lastX,z-lastZ);
     };
   // from the last answer or the rest, whichever is better, down the gradient with a step that halves when it
   // does not help
-  auto descend = [&](float& x, float& z, float& sc, int iters, float first, float least) {
-    float step = maxTan*first;
+  float bx = 0, bz = 0;
+  const bool groundAtRest = underground(Vec3(0,-1,0),0.f)>0.f;
+  // nothing in the tube at rest (most frames): the rest, no search
+  if(inside(Vec3(0,-1,0))>0.f) {
+    float s0 = score(0,0), sl = score(lastX,lastZ);
+    float x = 0, z = 0, sc = s0;
+    if(sl<s0) {
+      x  = lastX;
+      z  = lastZ;
+      sc = sl;
+      }
+    float step = maxTan*0.5f;
     constexpr float h = 0.004f;
-    for(int it=0; it<iters && step>maxTan*least; ++it) {
+    for(int it=0; it<6 && step>maxTan*0.02f; ++it) {
       const float gx = (score(x+h,z)-sc)/h, gz = (score(x,z+h)-sc)/h;
       const float gl = std::hypot(gx,gz);
       if(gl<1e-6f)
@@ -720,36 +748,6 @@ void Quiver::step(const Matrix4x4& pelvis, const Matrix4x4& spine, const std::ve
         step *= 0.5f;
         }
       }
-    };
-  float bx = 0, bz = 0;
-  const bool groundAtRest = underground(Vec3(0,-1,0))>0.f;
-  // nothing in the tube at rest (most frames): the rest, no search
-  if(inside(Vec3(0,-1,0))>0.f) {
-    float s0 = score(0,0), sl = score(lastX,lastZ);
-    float x = 0, z = 0, sc = s0;
-    if(sl<s0) {
-      x  = lastX;
-      z  = lastZ;
-      sc = sl;
-      }
-    descend(x,z,sc,6,0.5f,0.02f);
-    bx = x;
-    bz = z;
-    }
-  // the ground still in the tube at GiveAngle: the wide turn, the armour's far points too
-  if(ground.on && underground(Vec3::normalize(Vec3(bx,-1.f,bz)))>0.04f) {
-    wide   = true;
-    maxTan = std::tan(GroundAngle*float(M_PI)/180.f);
-    lastX  = wideX;
-    lastZ  = wideZ;
-    clampTan(lastX,lastZ);
-    float x = bx, z = bz, sc = score(x,z);
-    if(const float sl = score(lastX,lastZ); sl<sc) {
-      x  = lastX;
-      z  = lastZ;
-      sc = sl;
-      }
-    descend(x,z,sc,16,0.25f,0.005f);
     bx = x;
     bz = z;
     }
@@ -757,31 +755,100 @@ void Quiver::step(const Matrix4x4& pelvis, const Matrix4x4& spine, const std::ve
   Vec3 dTarget = {best.x/-best.y*MassAt,0,best.z/-best.y*MassAt};
   devTarget = dTarget;
 
-  // the ground pushes it (1) or it comes back from the ground (2) faster and farther than the give (0)
+  // the ground still in the tube at GiveAngle: the wide turn, to GroundAngle, by the turn's own angle across
+  // (x, z: radians toward that way). The ground outweighs the body far: the quiver goes rather where the body
+  // lies on the ground, out of sight, than stands in the open ground
+  const float lift  = groundMode==1 ? GroundClear : 0.f; // pushed: stays so till the tube is that clear
+  const float wideA = GroundAngle*float(M_PI)/180.f;
+  Vec3 gTarget = angleOf(best);
+  bool wide    = false;
+  if(ground.on && underground(best,lift)>0.04f) {
+    wide = true;
+    const Vec3 last = groundMode!=0 ? groundTarget : gTarget;
+    // a change of the answer costs as the ground 4 cm deep would per 0.1 rad: it does not hop between ways out
+    constexpr float GroundKeep = 640.f;
+    auto score2 = [&](float x, float z) {
+      const Vec3 u = axisOfAngle(Vec3(x,0,z));
+      return GroundBody*insideOf(nearWide,u) + GroundWeight*underground(u,0.f) +
+             2.f*std::hypot(x,z) + GroundKeep*std::hypot(x-last.x,z-last.z);
+      };
+    auto clampA = [&](float& x, float& z) {
+      const float l = std::hypot(x,z);
+      if(l>wideA) {
+        x *= wideA/l;
+        z *= wideA/l;
+        }
+      };
+    float x = gTarget.x, z = gTarget.z, sc = score2(x,z);
+    auto seed = [&](float sx, float sz) {
+      clampA(sx,sz);
+      if(const float sn = score2(sx,sz); sn<sc) {
+        x  = sx;
+        z  = sz;
+        sc = sn;
+        }
+      };
+    seed(last.x,last.z);
+    // the way out may be on the other side of the body from where it is (a roll turns the ground round it):
+    // a coarse ring of starts, 8 ways at a third, two thirds and the whole of GroundAngle
+    for(int k=0; k<8; ++k) {
+      const float ph = float(k)*float(M_PI)/4.f;
+      for(int m=1; m<=3; ++m)
+        seed(std::cos(ph)*wideA*float(m)/3.f,std::sin(ph)*wideA*float(m)/3.f);
+      }
+    float step = wideA*0.25f;
+    constexpr float h = 0.004f;
+    for(int it=0; it<16 && step>wideA*0.005f; ++it) {
+      const float gx = (score2(x+h,z)-sc)/h, gz = (score2(x,z+h)-sc)/h;
+      const float gl = std::hypot(gx,gz);
+      if(gl<1e-6f)
+        break;
+      float nx = x - gx/gl*step, nz = z - gz/gl*step;
+      clampA(nx,nz);
+      const float sn = score2(nx,nz);
+      if(sn<sc) {
+        x  = nx;
+        z  = nz;
+        sc = sn;
+        step *= 1.2f;
+        } else {
+        step *= 0.5f;
+        }
+      }
+    gTarget = Vec3(x,0,z);
+    }
+  groundTarget = gTarget;
+
+  // the ground pushes it (1) or it comes back from the ground (2), faster and farther than the give (0)
   const Vec3  now      = Vec3::normalize(axis);
   const float nowAngle = std::acos(std::clamp(-now.y,-1.f,1.f))*180.f/float(M_PI);
-  const bool  pushed   = ground.on && (wide || groundAtRest || underground(now)>0.f);
+  const bool  pushed   = ground.on && (wide || underground(Vec3(0,-1,0),lift)>0.f || underground(now,lift)>0.f);
+  (void)groundAtRest;
   const int   mode     = pushed ? 1 : (nowAngle>GiveAngle+0.05f ? 2 : 0);
 
   // a jump (a teleport, a load) or the first step: at the target
   if(!moving || (pivot-lastPivot).length()>100.f || dt>0.25f) {
     dev       = dTarget;
     devV      = Vec3();
+    gw        = gTarget;
+    gwV       = Vec3();
     lastPivot = pivot;
     moving    = true;
-    } else {
-    // critically damped to the target, no overshoot (90% in GiveTime), no faster than GiveStep in 1/60 s
+    axis      = mode==0 ? Vec3::normalize(Vec3(dev.x,-MassAt,dev.z)) : axisOfAngle(gw);
+    } else if(mode==0) {
     lastPivot = pivot;
+    if(groundMode!=0) {
+      // back within the give: its follower takes over from where the ground left it
+      const Vec3 u = Vec3::normalize(axis);
+      dev  = Vec3(u.x/-u.y*MassAt,0,u.z/-u.y*MassAt);
+      devV = gwV*MassAt;
+      }
+    // critically damped to the target, no overshoot (90% in GiveTime), no faster than GiveStep in 1/60 s
     const Vec3  from = dev;
-    const float w    = 3.89f/(mode==0 ? GiveTime : GroundReturn);
+    const float w    = 3.89f/GiveTime;
     const int   n    = std::max(1,int(std::ceil(dt*240.f)));
     const float h    = dt/float(n);
-    if(mode==1) {
-      // the ground pushes it: straight to the target, no slower than GroundStep allows
-      dev  = dTarget;
-      devV = Vec3();
-      }
-    for(int i=0; i<n && mode!=1; ++i) {
+    for(int i=0; i<n; ++i) {
       Vec3 acc = (dTarget-dev)*(w*w) - devV*(2.f*w);
       acc.y = 0;
       devV += acc*h;
@@ -789,35 +856,58 @@ void Quiver::step(const Matrix4x4& pelvis, const Matrix4x4& spine, const std::ve
       dev.y = 0;
       }
     const Vec3  moved = dev-from;
-    if(mode==0) {
-      const float most  = MassAt*std::tan(GiveStep*float(M_PI)/180.f)*dt*60.f;
-      if(moved.length()>most) {
-        dev  = from + moved*(most/moved.length());
-        devV = (dev-from)/dt;
-        }
+    const float most  = MassAt*std::tan(GiveStep*float(M_PI)/180.f)*dt*60.f;
+    if(moved.length()>most) {
+      dev  = from + moved*(most/moved.length());
+      devV = (dev-from)/dt;
+      }
+    axis = Vec3::normalize(Vec3(dev.x,-MassAt,dev.z));
+    } else {
+    lastPivot = pivot;
+    if(groundMode==0) {
+      // from the give: the same axis, its speed
+      gw  = angleOf(Vec3::normalize(axis));
+      gwV = devV/MassAt;
+      }
+    const Vec3 from = gw;
+    if(mode==1) {
+      // the ground pushes it: straight to the target
+      gw  = gTarget;
+      gwV = Vec3();
       } else {
-      // GroundStep in 1/60 s as the angle the axis turns
-      auto axisOf = [](const Vec3& d) { return Vec3::normalize(Vec3(d.x,-MassAt,d.z)); };
-      const float most  = GroundStep*dt*60.f*float(M_PI)/180.f;
-      const Vec3  a0    = axisOf(from);
-      auto turn = [&](float f) {
-        return std::acos(std::clamp(Vec3::dotProduct(a0,axisOf(from+moved*f)),-1.f,1.f));
-        };
-      if(turn(1.f)>most) {
-        float lo = 0, hi = 1;
-        for(int i=0; i<12; ++i) {
-          const float mid = 0.5f*(lo+hi);
-          if(turn(mid)>most)
-            hi = mid; else
-            lo = mid;
-          }
-        dev  = from + moved*lo;
-        devV = (dev-from)/dt;
+      // back: critically damped, no overshoot, 90% in GroundReturn
+      const float w = 3.89f/GroundReturn;
+      const int   n = std::max(1,int(std::ceil(dt*240.f)));
+      const float h = dt/float(n);
+      for(int i=0; i<n; ++i) {
+        Vec3 acc = (gTarget-gw)*(w*w) - gwV*(2.f*w);
+        acc.y = 0;
+        gwV += acc*h;
+        gw  += gwV*h;
+        gw.y = 0;
         }
       }
+    // no faster than GroundStep in 1/60 s, as the angle the axis turns
+    const Vec3  moved = gw-from;
+    const float most  = GroundStep*dt*60.f*float(M_PI)/180.f;
+    const Vec3  a0    = axisOfAngle(from);
+    auto turn = [&](float f) {
+      return std::acos(std::clamp(Vec3::dotProduct(a0,axisOfAngle(from+moved*f)),-1.f,1.f));
+      };
+    if(turn(1.f)>most) {
+      float lo = 0, hi = 1;
+      for(int i=0; i<12; ++i) {
+        const float mid = 0.5f*(lo+hi);
+        if(turn(mid)>most)
+          hi = mid; else
+          lo = mid;
+        }
+      gw  = from + moved*lo;
+      gwV = mode==1 ? Vec3() : (gw-from)/dt;
+      }
+    axis = axisOfAngle(gw);
     }
   groundMode = mode;
-  axis = Vec3::normalize(Vec3(dev.x,-MassAt,dev.z));
 
   if(measureGround) {
     measured.on    = ground.on;
@@ -843,7 +933,7 @@ float Quiver::lowest(const Matrix4x4& pelvis, const Matrix4x4& spine, Vec3* midO
   }
 
 bool Quiver::restsOnGround(const Matrix4x4& pelvis) const {
-  if(groundMode!=1 || !moving || devV.length()>0.01f || (dev-devTarget).length()>0.01f)
+  if(groundMode!=1 || !moving || (gw-groundTarget).length()>1e-4f)
     return false;
   for(int c=0; c<4; ++c)
     for(int r=0; r<4; ++r)
