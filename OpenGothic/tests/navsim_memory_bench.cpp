@@ -10,9 +10,7 @@
 #include <cstring>
 #include <iomanip>
 #include <iostream>
-#include <numeric>
 #include <string>
-#include <type_traits>
 #include <utility>
 
 namespace {
@@ -180,16 +178,44 @@ class NavMemoryCostTrace final {
     static void read(const Memory& memory,bool far,Memory::Layer& layer) {
       memory.read(far ? memory.farGrid : memory.nearGrid,layer);
       }
+    // Keep these copies in the same translation unit as classification, like
+    // the engine. Calling private engine helpers here would prevent inlining.
+    static const Memory::WorldCell& at(const Grid& grid,int x,int z) {
+      return grid.cells[ringCoordinate(z,grid.size)*grid.size+ringCoordinate(x,grid.size)];
+      }
+    static bool contains(const Grid& grid,int x,int z) {
+      return x>=grid.minX && z>=grid.minZ && x<grid.minX+int(grid.size) && z<grid.minZ+int(grid.size);
+      }
+static float confidence(const Memory& memory,const Memory::Evidence& evidence,bool movable) {
+  const double age = double(memory.body.gameMs-evidence.gameMs)*.001;
+  const double distance = std::max(0.,memory.pathCm-double(evidence.pathCm));
+  const double tau = movable ? Constants::movableTauSeconds : memory.journeyMemory ? Constants::staticTauSeconds : 30.f;
+  const double lambda = memory.journeyMemory ? Constants::distanceLambdaCm : 3000.f;
+  return float(std::exp(-age/tau-distance/lambda));
+  }
+
+static ClassificationLimits classificationLimits(const Memory& memory) {
+  ClassificationLimits result;
+  result.step = std::isfinite(memory.body.stepHeightCm) && memory.body.stepHeightCm>0.f ?
+                     memory.body.stepHeightCm : Constants::stepCm;
+  const float slopeDegrees = std::isfinite(memory.body.maxSlopeDegrees) ?
+                             std::clamp(memory.body.maxSlopeDegrees,0.f,89.f) : Constants::maxSlopeDegrees;
+  result.slope = std::tan(slopeDegrees*3.14159265358979323846f/180.f);
+  result.bodyHeight = std::isfinite(memory.body.bodyHeightCm) && memory.body.bodyHeightCm>0.f ?
+                           memory.body.bodyHeightCm : Constants::bodyHeightCm;
+  return result;
+  }
+
 static std::array<float,9> classify(const Memory& memory,const Grid& grid,int x,int z,const ClassificationLimits& limits) {
   std::array<float,9> output={};
   output[8]=std::numeric_limits<float>::quiet_NaN();
-  const auto& input = grid.at(x,z);
+  const auto& input = at(grid,x,z);
   if(input.known==0)
     return output;
   std::array<float,ChannelCount> c = {};
   for(size_t channel=0; channel<ChannelCount; ++channel)
     if((input.known&(1u<<channel))!=0) {
-      c[channel] = memory.confidence(input.evidence[channel],channel==Movable);
+      c[channel] = confidence(memory,input.evidence[channel],channel==Movable);
       output[0] = std::max(output[0],c[channel]);
       }
   output[1] = std::max(output[1],c[Free]);
@@ -202,9 +228,9 @@ static std::array<float,9> classify(const Memory& memory,const Grid& grid,int x,
     float nearest = std::numeric_limits<float>::infinity();
     for(int nz=z-1; nz<=z+1; ++nz)
       for(int nx=x-1; nx<=x+1; ++nx) {
-        if(!grid.contains(nx,nz))
+        if(!contains(grid,nx,nz))
           continue;
-        const auto& neighbour = grid.at(nx,nz);
+        const auto& neighbour = at(grid,nx,nz);
         if((neighbour.known&(1u<<Ground))==0)
           continue;
         const auto& ground = neighbour.evidence[Ground];
@@ -229,9 +255,9 @@ static std::array<float,9> classify(const Memory& memory,const Grid& grid,int x,
     // exceeding both the body's step and its maximum walking slope.
     for(int nz=z-1; nz<=z+1; ++nz)
       for(int nx=x-1; nx<=x+1; ++nx) {
-        if((nx==x && nz==z) || !grid.contains(nx,nz))
+        if((nx==x && nz==z) || !contains(grid,nx,nz))
           continue;
-        const auto& neighbour = grid.at(nx,nz);
+        const auto& neighbour = at(grid,nx,nz);
         if((neighbour.known&(1u<<Ground))==0)
           continue;
         const auto& other = neighbour.evidence[Ground];
@@ -240,7 +266,7 @@ static std::array<float,9> classify(const Memory& memory,const Grid& grid,int x,
         const float distance = std::sqrt(dx*dx+dz*dz);
         if(std::abs(difference)<=limits.step || std::abs(difference)<=distance*limits.slope)
           continue;
-        const float certainty = std::min(c[Ground],memory.confidence(other,false));
+        const float certainty = std::min(c[Ground],confidence(memory,other,false));
         if(difference>0.f)
           output[3] = std::max(output[3],certainty);
         else
@@ -288,12 +314,12 @@ static std::array<float,9> familiarCell(const Memory& memory,const FamiliarTile&
       std::fill(provenance.begin(),provenance.end(),0.f);
       const auto& body=memory.body;
       const Vec3 right(-body.forward.z,0,body.forward.x);
-      const auto limits=memory.classificationLimits();
+      const auto limits=classificationLimits(memory);
       const bool hasFamiliar=far && !memory.familiarWindow.empty();
       for(int z=grid.minZ;z<grid.minZ+int(grid.size);++z)
         for(int x=grid.minX;x<grid.minX+int(grid.size);++x) {
           const auto* familiar=hasFamiliar ? memory.familiarWindow[ringCoordinate(z,grid.size)*grid.size+ringCoordinate(x,grid.size)] : nullptr;
-          if(grid.at(x,z).known==0 && !familiar)continue;
+          if(at(grid,x,z).known==0 && !familiar)continue;
           const float dx=(float(x)+.5f)*grid.cellCm-body.position.x;
           const float dz=(float(z)+.5f)*grid.cellCm-body.position.z;
           const int vx=cellCoordinate(dx*right.x+dz*right.z+float(grid.size/2)*grid.cellCm,grid.cellCm);
