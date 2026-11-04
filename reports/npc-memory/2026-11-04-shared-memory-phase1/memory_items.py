@@ -45,14 +45,16 @@
   источник в `also`; от того же — `duplicate`, как в v3; о других id — другой пункт;
 - `~`: поля, которые правка задаёт (`о:`, `стр:`, `от:`, сила, важность), заменяют прежние, остальные
   остаются; новый текст сбрасывает только подтверждения `also`. Прежние значения — в `log`;
-- «сказал X» связан с фактом `rumor` только ссылкой: среди строк пункта есть строка ремарки этого слуха.
-  Без неё пункт не связан — правда его не закрывает. Исток — первый рассказчик цепочки слуха, поэтому два
-  пересказа одного истока — одно подтверждение;
+- «сказал X» связан с фактом `rumor` только ссылкой: среди строк пункта или одного из его подтверждений
+  (`also`) есть строка ремарки этого слуха. Без неё пункт не связан — правда его не закрывает; ссылка хоть
+  одного источника на слух-правду оставляет пункт открытым. Исток — первый рассказчик цепочки слуха,
+  поэтому два пересказа одного истока — одно подтверждение;
 - ложь словами (`caught` с `said`): её ход — реплика героя до факта, лучше всех совпавшая со словами
   по правилу `catch_lie` (`sightings._matches`; больше корней, при равенстве последняя). Пункт «герой»
   связан, только если этот ход есть в его `episodes` или `source.turn`;
 - столкновение — два открытых «верю»/«сомневаюсь» без слота об одном id (и о герое) с разным текстом.
-  Пару Sol видит в одной свёртке, потом она не поднимается.
+  Пару Sol видит в одной свёртке, потом она не поднимается, пока тексты обоих пунктов те же, что он видел
+  последними: `~`, которая меняет текст (и возвращает прежний), поднимает её снова.
 
 Читатель, без LLM (выжимка — `Digest(text, ids, tokens)`, `str(d)` — текст):
 - `card(state, tokens=…)` — карточка ядра, ≤ 300 токенов;
@@ -459,7 +461,7 @@ def new_state(npc: str) -> dict[str, Any]:
         "items": [],  # open, in the order they came
         "history": [],  # closed, with valid_to and closed_by
         "collisions": [],  # pairs the next fold puts to Sol
-        "collisions_seen": [],  # pairs Sol has been shown already
+        "collisions_seen": [],  # pairs Sol has been shown already: {ids, the texts it saw last}
         "log": [],  # every add, change, confirm and close: {op, id, by, minute, …}
     }
 
@@ -980,16 +982,24 @@ def _pair(a: str, b: str) -> list[str]:
     return sorted((a, b), key=lambda i: (i[0], int(i[1:])))
 
 
+def _shown(state: Mapping[str, Any], ids: Sequence[str]) -> dict[str, list[str]]:
+    """A pair as Sol saw it: its ids with the texts of both items at that time."""
+    texts = [normalized(item["text"]) if (item := find_item(state, i)) else "" for i in ids]
+    return {"ids": list(ids), "texts": texts}
+
+
 def find_collisions(state: dict[str, Any]) -> list[dict[str, Any]]:
-    """Open beliefs and doubts without a slot that share a game id and say different things."""
-    seen = {tuple(p) for p in state["collisions_seen"]}
+    """Open beliefs and doubts without a slot that share a game id and say different things. A pair Sol
+    has seen is not raised again while both texts are the same; a `~` that changes one raises it again."""
+    seen = {(tuple(p["ids"]), tuple(p["texts"])) for p in state["collisions_seen"]}
     items = [i for i in open_items(state, "вс") if not i["slot"]]
     out = []
     for n, a in enumerate(items):
         for b in items[n + 1:]:
             shared = set(a["about"]) & set(b["about"])
             ids = _pair(a["id"], b["id"])
-            if shared and normalized(a["text"]) != normalized(b["text"]) and tuple(ids) not in seen:
+            key = (tuple(ids), tuple(normalized({a["id"]: a, b["id"]: b}[i]["text"]) for i in ids))
+            if shared and key[1][0] != key[1][1] and key not in seen:
                 out.append({"ids": ids, "about": sorted(shared)})
     return out
 
@@ -1005,8 +1015,9 @@ def fold(
     entries: Iterable[tuple[int, Mapping]] = (),
 ) -> dict[str, Any]:
     """One Sol fold at the end of a talk: parse, apply, caps, forget trifles, collisions. The collisions
-    present before it were shown to Sol (render_for_sol): they are not raised again."""
-    shown = [c["ids"] for c in state["collisions"]]
+    present before it were shown to Sol (render_for_sol): they are not raised again while the texts Sol
+    saw stay."""
+    shown = [_shown(state, c["ids"]) for c in state["collisions"]]
     parsed = parse_patches(text, names=names, lines=lines, remarks=remarks)
     applied = apply_patches(state, parsed, minute=minute, names=names, entries=entries)
     touched = [find_item(state, i) for i in dict.fromkeys(r["id"] for r in applied if r["ok"] and r["id"])]
@@ -1015,7 +1026,8 @@ def fold(
         if item and any(s["kind"] == "сказал" and s["fact"] is None for s in (item["source"], *item["also"]))
     )
     forgotten = forget(state, minute)
-    state["collisions_seen"] += [ids for ids in shown if ids not in state["collisions_seen"]]
+    again = [pair["ids"] for pair in shown]  # a pair keeps only the texts Sol saw last
+    state["collisions_seen"] = [p for p in state["collisions_seen"] if p["ids"] not in again] + shown
     state["collisions"] = find_collisions(state)
     state["folded"] = minute
     return {
@@ -1036,9 +1048,10 @@ def facts_for(entries: Iterable[tuple[int, Mapping]], npc: str) -> list[tuple[in
     return [(seq, f) for seq, f in entries if npc in {str(f.get(k, "")).upper() for k in keys}]
 
 
-def _cited(item: Mapping[str, Any], facts: Mapping[int, Mapping]) -> Mapping[str, Any] | None:
-    ref = item["source"].get("fact")
-    return facts.get(ref) if ref is not None else None
+def _cited(item: Mapping[str, Any], facts: Mapping[int, Mapping]) -> list[Mapping[str, Any]]:
+    """The facts the item's remark links point to: its source's and every confirmation's in `also`."""
+    refs = dict.fromkeys(s.get("fact") for s in (item["source"], *item["also"]))
+    return [facts[ref] for ref in refs if ref is not None and ref in facts]
 
 
 def lie_turn(seq: int, said: str, hero_turns: Iterable[tuple[int, str, str]]) -> str | None:
@@ -1056,14 +1069,14 @@ def lie_turn(seq: int, said: str, hero_turns: Iterable[tuple[int, str, str]]) ->
 
 def _linked(item: Mapping[str, Any], fact: Mapping[str, Any], facts: Mapping[int, Mapping],
             turn: str | None) -> bool:
-    """The item is about the claim the fact speaks of. Hearsay: only through the rumor fact whose remark
-    it cites. Otherwise: the quest id in about or in the fact it cites, or the lie's turn (`turn`,
-    lie_turn) among its episodes or its source's turn."""
+    """The item is about the claim the fact speaks of. Hearsay: only through a rumor fact whose remark its
+    source or one of its confirmations cites. Otherwise: the quest id in about or in a fact it cites, or
+    the lie's turn (`turn`, lie_turn) among its episodes or its source's turn."""
     cited = _cited(item, facts)
     if item["source"]["kind"] == "сказал":
-        return cited is not None and cited.get("fact") == "rumor" and _same_news(cited, fact)
+        return any(c.get("fact") == "rumor" and _same_news(c, fact) for c in cited)
     quest = fact.get("quest")
-    if quest and (quest in item["about"] or (cited is not None and cited.get("quest") == quest)):
+    if quest and (quest in item["about"] or any(c.get("quest") == quest for c in cited)):
         return True
     return turn is not None and turn in {*item["episodes"], item["source"].get("turn")}
 
@@ -1078,10 +1091,11 @@ def apply_truth(
     """Close by the chronicle's truth:
     - `found_out` / `caught`: the npc that learned it loses its items from the hero's word about that
       claim; everyone the rumor of it reached (`rumor` chain from that npc, `from` → `to`; the game tells
-      it after the truth, quests._tell) loses its items from someone's word about it, except those that
-      cite the truth's own rumor. Hearsay is linked only by the remark of its rumor it cites; a lie in
-      words by its turn (lie_turn over `hero_turns`: (seq in the branch log, turn id, text) — the hero's
-      lines and the facts share one seq, memory.events). `closed_by=truth`;
+      it after the truth, quests._tell) loses its items from someone's word about it, except those whose
+      source or confirmation cites the truth's own rumor. Hearsay is linked only by a remark of its rumor
+      that its source or a confirmation in `also` cites; a lie in words by its turn (lie_turn over
+      `hero_turns`: (seq in the branch log, turn id, text) — the hero's lines and the facts share one seq,
+      memory.events). `closed_by=truth`;
     - `lie` is written the moment the hero lies, when the npc does not know yet: it only marks the item
       false for the world (`false_by`), the item stays open until `found_out` or `caught`.
     Every call checks all open items, so items folded later are checked too; closed ones stay closed."""
@@ -1113,8 +1127,8 @@ def apply_truth(
                 continue
             want = "герой" if npc == holder else "сказал"
             for item in open_items(state):
-                cited = _cited(item, facts)
-                truth = cited is not None and cited.get("kind") in TRUTH  # heard the truth itself
+                # heard the truth itself: one link to the truth's rumor keeps it
+                truth = any(c.get("kind") in TRUTH for c in _cited(item, facts))
                 if item["source"]["kind"] == want and not truth and _linked(item, fact, facts, turn):
                     _close(state, item, "truth", minute, fact=seq)
                     closed.append({"npc": npc, "id": item["id"], "fact": seq})
@@ -1524,6 +1538,14 @@ def _test_fold_and_slots(check: _Check, names: Names) -> None:
     check("change adds episode", find_item(state, "в1")["episodes"] == ["t5"])
     check("ids run through meetings", state["counters"]["м"] == 2)
     check("closed not in card", "наглый" not in card(state).text and "помог с бандитами" in card(state).text)
+    report = fold(state, "~ с1: Браго жив, его вчера видели у пещеры", names=names, minute=3 * 1440 + 60)
+    check("collision back after a changed text",
+          {"ids": ["в1", "с1"], "about": [BRAGO]} in report["collisions"], report["collisions"])
+    report = fold(state, "~ в1 [стр: 5]", names=names, lines={5: "t5"}, minute=3 * 1440 + 120)
+    check("changed collision shown once", report["collisions"] == [], report["collisions"])
+    report = fold(state, "~ с1: Браго жив, его видели у пещеры", names=names, minute=3 * 1440 + 180)
+    check("collision back after the old text returns",
+          {"ids": ["в1", "с1"], "about": [BRAGO]} in report["collisions"], report["collisions"])
     json.dumps(state, ensure_ascii=False)  # the carry is plain JSON
 
 
@@ -1672,6 +1694,31 @@ def _test_lies(check: _Check, names: Names) -> None:
          names=names, minute=3500, entries=entries)
     closed = apply_truth(states, entries, minute=3600)
     check("lie 2: a later fold is checked too", closed == [{"npc": CAVALORN, "id": "в2", "fact": 14}], closed)
+
+    # a confirmation's link counts as the source's: the order of the retellings does not matter, and one
+    # link to the truth's rumor keeps the item
+    claim = "герой перебил бандитов у башни"
+    entries = [
+        (40, {"fact": "claim", "quest": quest, "npc": CAVALORN, "title": "Бандиты у башни Ксардаса"}),
+        (41, {**rumor, "kind": "claim", "from": CAVALORN, "to": XARDAS}),
+        (42, {"fact": "rumor", "quest": "Q1", "about": LOBART, "hops": 1, "kind": "claim", "from": LOBART,
+              "to": XARDAS}),
+        (43, {"fact": "caught", "quest": quest, "npc": CAVALORN, "name": "Кавалорн",
+              "title": "Бандиты у башни Ксардаса", "how": "сам видел бандитов живыми"}),
+        (44, {**rumor, "kind": "caught", "from": CAVALORN, "to": XARDAS}),
+    ]
+    for label, tellers in (("other rumor first", ((42, "Лобарт"), (41, "Кавалорн"))),
+                           ("claim rumor first", ((41, "Кавалорн"), (42, "Лобарт"))),
+                           ("truth rumor too", ((41, "Кавалорн"), (44, "Кавалорн")))):
+        x = new_state(XARDAS)
+        for line, (seq, who) in enumerate(tellers, start=1):
+            fold(x, f"+ верю сказал {who}: {claim} [стр: {line}]", names=names, remarks={line: seq},
+                 minute=4500 + line, entries=entries)
+        item = find_item(x, "в1")
+        apply_truth({XARDAS: x}, entries, minute=4600)
+        keep = label == "truth rumor too"
+        check(f"also links: {label}", len(item["also"]) == 1 and len(x["items"] + x["history"]) == 1
+              and (item["closed_by"] is None) == keep, (item["closed_by"], item["also"]))
 
     # a lie in words: its turn is the hero's line before the fact that matches the words best
     e = new_state(VATRAS)
