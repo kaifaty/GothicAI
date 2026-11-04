@@ -110,12 +110,82 @@ def pace_input(path):
 
 
 def episode_pace(case, model):
-    """The frozen place pace for pace-input weights; None leaves older weights as they were."""
-    if model is None or not model.get('pace_input'):
+    """The frozen place pace for v5 and its explicitly matched HD comparison."""
+    if model is None or not (model.get('pace_input') or model.get('force_place_pace')):
         return None
     if case.get('pace') not in PACES:
         raise ValueError(f"Place {case['id']} has no frozen pace for pace-input weights")
     return case['pace']
+
+
+def pace_v5_round(args):
+    """Record the frozen eleven places afresh for v5 and HD on the same binary."""
+    from copy import deepcopy
+
+    original = read_json(args.suite)
+    completion = args.suite.parent / 'complete.json'
+    if not completion.is_file():
+        completion = Path('/mnt/shared/gothic-ai/nav-live/baseline/complete.json')
+    finished = read_json(completion)
+    if sha256(args.suite) != finished['suite_sha256'] or not finished.get('qualified_subset_complete'):
+        raise ValueError('The frozen live suite differs from its completed baseline')
+    selected = eligible_cases(original, suite_cases(original))
+    if len(selected) != 11 or sum(len(case['seeds']) for case in selected) != 27:
+        raise ValueError('Pace V5 requires the frozen eleven places and 27 policy seeds')
+    paths = [Path(item) for item in args.weights.split(',')]
+    if len(paths) != 2 or not pace_input(paths[0]) or pace_input(paths[1]):
+        raise ValueError('Pace V5 requires the v5 policy followed by HD')
+    if sha256(paths[1]) != finished['weights'][0]:
+        raise ValueError('The HD policy differs from the frozen live baseline')
+    if not os.environ.get('OPENGOTHIC_BASE_FINGERPRINT'):
+        raise ValueError('Pace V5 requires the current base fingerprint')
+    policies = [dict(name=name, weights=str(path), sha256=sha256(path), force_place_pace=True,
+                     **pace_input(path)) for name, path in zip(('pace-v5', 'HD'), paths)]
+    place_paces = {case['id']: case['pace'] for case in suite_cases(read_json(ROOT / 'scripts/nav-live/scenarios.json'))}
+    cases = []
+    for previous in selected:
+        case = deepcopy(previous)
+        case.pop('evaluation_binary', None)
+        case.pop('teacher_reference', None)
+        case['pace'] = place_paces[case['id']]
+        cases.append(case)
+    binary_sha256 = sha256(args.binary)
+    base_fingerprint = os.environ['OPENGOTHIC_BASE_FINGERPRINT']
+    args.inputs = dict(original['inputs'], cache=str(args.runtime / 'navmesh-cache'))
+    for name, filename in (('save', 'save.sav'), ('roads', 'places.json'),
+                           ('familiar', 'familiar.bin'), ('links', 'accepted-links.txt')):
+        path = Path(args.inputs[name])
+        if not path.is_file():
+            path = Path('/mnt/shared/gothic-ai/archive/nav-demos-v5-20261030/input') / filename
+            args.inputs[name] = str(path)
+        if not path.is_file():
+            raise ValueError(f'Missing frozen live input: {path}')
+    args.input_sha256 = {name: sha256(args.inputs[name]) for name in ('save', 'roads', 'familiar', 'links')}
+    if args.input_sha256 != finished['input_sha256']:
+        raise ValueError('The frozen live inputs differ from the completed baseline')
+    check_space(args.output)
+    for case in cases:
+        reference = teacher_directory(args, case)
+        run_episode(args, case, None, case['seeds'][0], reference)
+        for model in policies:
+            for seed in case['seeds']:
+                run_episode(args, case, model, seed, run_directory(args.output, case, model, seed), reference)
+    rows = []
+    for case, model, seed in runs(cases, policies, None):
+        if not completed_run(args, case, model, seed):
+            raise ValueError(f'Pace V5 live recording is incomplete: {case["id"]}/{model["name"]}/{seed}')
+        directory = run_directory(args.output, case, model, seed)
+        value = read_json(directory / 'summary.json')
+        if (value.get('base_fingerprint') != base_fingerprint or value.get('forced_pace') != case['pace']
+                or value.get('pace') != case['pace']):
+            raise ValueError(f'Pace V5 live summary has different base or pace: {directory}')
+        rows.append({**value, 'place': case['id'], 'model': model['name'], 'seed': seed,
+                     'output': str(directory)})
+    write_json(args.output / 'live-summary.json', dict(complete=True, places=11, completed=len(rows), expected=54,
+               binary_sha256=binary_sha256, base_fingerprint=base_fingerprint, rows=rows))
+    print(json.dumps(dict(event='pace_v5_live_complete', places=11, completed=len(rows), expected=54,
+                          output=str(args.output))), flush=True)
+    return 0
 
 
 def check_space(output):
@@ -689,7 +759,7 @@ def completed_round(runtime, output, weights):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('stage', choices=('teacher', 'smoke', 'baseline', 'report'))
+    parser.add_argument('stage', choices=('teacher', 'smoke', 'baseline', 'report', 'pace-v5'))
     parser.add_argument('--suite', type=Path, required=True)
     parser.add_argument('--runtime', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
@@ -703,6 +773,8 @@ def main(argv=None):
         args.suite = args.output / 'qualified-suite.json'
     args.binary = args.runtime / 'build/opengothic/Gothic2Notr'
     args.deadline = phase_deadline()
+    if args.stage == 'pace-v5':
+        return pace_v5_round(args)
     suite = read_json(args.suite)
     if suite.get('evaluation_binary'):
         evaluation = suite['evaluation_binary']

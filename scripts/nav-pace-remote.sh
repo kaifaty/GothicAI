@@ -6,14 +6,23 @@
 #                                            # v1/v2/v3 without the flag on the main and branch runners
 #   bash scripts/nav-pace-remote.sh live     # after smoke: v5 in the windowed game on three live places
 #   bash scripts/nav-pace-remote.sh teacher  # teacher walk share by family, obstacles and goal distance
-# Every job runs from its own immutable source snapshot ~/gothic-ai/nav-pace-input/source/<hash>; a later
-# launch never rewrites the sources of a queued or running job. HD and older weights are only read.
-# Results: /mnt/shared/gothic-ai/nav-pace-input/. Remove the work folder with: bash scripts/nav-pace-remote.sh clean
+#   bash scripts/nav-pace-remote.sh train-1 # prepare the HD corpus, convert HD, time the first epoch
+#   bash scripts/nav-pace-remote.sh train-{5,10,15,20} # resume to the named epoch, one bounded job each
+#   bash scripts/nav-pace-remote.sh parity  # final trained weights, Torch/NumPy/C++
+# Jobs use immutable snapshots in ~/gothic-ai/{nav-pace-input,nav-pace-v5}/source/<hash>.
+# A later launch never rewrites queued/running sources. HD and older weights are only read.
+# Check results: /mnt/shared/gothic-ai/nav-pace-input/; trained v5: /mnt/shared/gothic-ai/nav-pace-v5/.
+# Remove the respective work folders with clean or clean-v5.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-usage='Usage: bash scripts/nav-pace-remote.sh smoke | drive | live | teacher | clean'
+usage='Usage: bash scripts/nav-pace-remote.sh smoke|drive|live|teacher|train-{1,5,10,15,20}|parity|compare-{hd,v5}-{run,walk}-{main,detour,follow}|live-v5|clean-v5|clean'
 stage="${1:-}"
 archive="${NAV_PACE_ARCHIVE:-/mnt/shared/gothic-ai/nav-pace-input}"  # tests point it at a temporary folder
+task_name=nav-pace-input
+if [[ "$stage" =~ ^(train-|parity$|compare-|live-v5$|clean-v5$) || "${2:-}" =~ ^(train-|parity$|compare-|live-v5$) ]]; then
+  task_name=nav-pace-v5
+  archive="${NAV_PACE_ARCHIVE:-/mnt/shared/gothic-ai/nav-pace-v5}"
+fi
 hd=/mnt/shared/gothic-ai/archive/nav-dagger3-20261030/hd-run
 v4=/mnt/shared/gothic-ai/archive/nav-demos-v4-20261029
 v5=/mnt/shared/gothic-ai/nav-lean-data/corpus-v5
@@ -25,9 +34,9 @@ seed=18102027
 v5_compact=reports/navigation/2026-10-22-demos-v5/manifest.json
 
 if [[ "$stage" != run ]]; then
-  [[ $# == 1 && "$stage" =~ ^(smoke|drive|live|teacher|clean)$ ]] || { echo "$usage" >&2; exit 2; }
-  task="$(ssh -o BatchMode=yes -o ConnectTimeout=10 ryzen 'printf "%s/gothic-ai/nav-pace-input" "$HOME"')"
-  if [[ "$stage" == clean ]]; then
+  [[ $# == 1 && "$stage" =~ ^(smoke|drive|live|teacher|clean|clean-v5|train-(1|5|10|15|20)|parity|compare-(hd|v5)-(run|walk)-(main|detour|follow)|live-v5)$ ]] || { echo "$usage" >&2; exit 2; }
+  task="$(ssh -o BatchMode=yes -o ConnectTimeout=10 ryzen 'printf "%s/gothic-ai" "$HOME"')/$task_name"
+  if [[ "$stage" == clean || "$stage" == clean-v5 ]]; then
     ssh ryzen "rm -rf '$task'; df -h ~ | tail -1"
     exit
   fi
@@ -82,16 +91,22 @@ HASH
     drive) resources=(--class batch --threads 12 --cpu-quota 1200% --mem 14G --max 2h) ;;
     live) resources=(--class quick --threads 12 --cpu-quota 1200% --mem 10G --gpu-mem 3G --display --display-shared --max 59m) ;;
     teacher) resources=(--class batch --threads 12 --cpu-quota 1200% --mem 16G --max 2h) ;;
+    train-1) resources=(--class batch --threads 12 --cpu-quota 1200% --mem 14G --gpu-mem 4G --max 2h) ;;
+    train-*) resources=(--class batch --threads 6 --cpu-quota 600% --mem 8G --gpu-mem 4G --max 2h) ;;
+    parity) resources=(--class quick --threads 6 --cpu-quota 600% --mem 8G --gpu-mem 2G --max 30m) ;;
+    compare-*) resources=(--class batch --threads 24 --cpu-quota 2400% --mem 14G --max 2h) ;;
+    live-v5) resources=(--class batch --threads 12 --cpu-quota 1200% --mem 12G --gpu-mem 4G --display --display-shared --max 2h) ;;
   esac
-  GQ_OWNER=nav-pace-input "$ROOT/scripts/gq" submit "${resources[@]}" --name "nav pace input $stage $snapshot" -- \
+  GQ_OWNER="$task_name" "$ROOT/scripts/gq" submit "${resources[@]}" --name "nav pace $stage $snapshot" -- \
     python3 -X faulthandler -I "$task/source/$snapshot/scripts/nav_job.py" --max-seconds 7200 -- \
+    env NAV_PACE_ARCHIVE="$archive" "NAV_PACE_WEIGHTS=${NAV_PACE_WEIGHTS:-$archive/run/policy.navbc}" \
     bash "$task/source/$snapshot/scripts/nav-pace-remote.sh" run "$stage" "$snapshot" "$main_revision"
   exit
 fi
 
 # Ryzen job body: everything below reads only this job's snapshot.
 stage="${2:?stage}"; snapshot="${3:?snapshot}"; main_revision="${4:?main revision}"
-task="$HOME/gothic-ai/nav-pace-input"
+task="$HOME/gothic-ai/$task_name"
 source="$task/source/$snapshot"
 stop() { echo "nav-pace $stage: $*" >&2; exit 1; }
 [[ -d "$source/scripts" ]] || stop "missing source snapshot $source"
@@ -99,6 +114,7 @@ mkdir -p "$archive/$stage" "$archive/logs" "$task/tmp/$stage" "$task/input"
 exec > >(tee -a "$archive/logs/$stage.log") 2>&1
 trap 'printf "nav_pace_%s_exit=%s snapshot=%s\n" "$stage" "$?" "$snapshot"' EXIT
 export TMPDIR="$task/tmp/$stage" UV_CACHE_DIR="$HOME/.cache/uv"
+if [[ "$task_name" == nav-pace-v5 ]]; then export UV_CACHE_DIR="$task/uv-cache" CCACHE_DIR="$task/ccache"; fi
 export VULKAN_SDK="$HOME/gothic-ai/body-baseline/toolchain/vulkan-1.4.341.0"
 export PATH="$HOME/.local/bin:$VULKAN_SDK/bin:$PATH"
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
@@ -116,7 +132,8 @@ fi
 df -h "$HOME" /mnt/shared
 python3 -c 'import pathlib,shutil; assert shutil.disk_usage(pathlib.Path.home()).free >= 26*1024**3, "Less than 26 GiB free"'
 python="$task/venv-$stage/bin/python"
-if [[ ! -x "$python" ]]; then uv venv --python 3.12 "$task/venv-$stage"; fi
+if [[ "$task_name" == nav-pace-v5 ]]; then python="$task/venv/bin/python"; fi
+if [[ ! -x "$python" ]]; then uv venv --python 3.12 "$(dirname "$(dirname "$python")")"; fi
 uv pip install --python "$python" numpy pytest pillow matplotlib
 build() { # SOURCE BUILD TARGET...
   source "$source/scripts/ryzen-build.sh"
@@ -133,6 +150,179 @@ game_environment() { # Read-only shared base and videos of this engine format; c
   export OPENGOTHIC_BASE_FINGERPRINT="$base_fingerprint" OPENGOTHIC_VIDEOS_FINGERPRINT="$videos_fingerprint"
   export OPENGOTHIC_BASE_CACHE="$task/base-cache" OPENGOTHIC_BASE_STORE="$task/base-store"
 }
+
+if [[ "$stage" == train-* ]]; then
+  epochs="${stage#train-}"
+  uv pip install --python "$python" 'torch==2.9.1+cu128' --index-url https://download.pytorch.org/whl/cu128
+  if [[ "$epochs" == 1 ]]; then
+    [[ ! -f "$archive/run/last.pt" ]] || stop 'training already started; resume with train-5'
+    build "$source/OpenGothic" "$task/build" gothic-body-runner gothic-navpolicy-contract Gothic2Notr content-convert
+    eval "$("$python" scripts/ryzen_game.py --converter "$task/build/opengothic/content-convert")"
+    [[ "$OPENGOTHIC_BASE_FINGERPRINT" == "$base_fingerprint" ]] || stop 'prepared base differs from the pinned current-engine base'
+    game_environment
+    "$task/build/opengothic/gothic-navpolicy-contract" --live-format
+    "$python" -B -I scripts/nav_pace_convert.py --source "$hd" --output "$archive/pace-from-hd" --steps 256
+    "$python" -X faulthandler -B -I - "$task/cache" "$v4" <<'PREPARE_HD'
+import json
+from pathlib import Path
+import sys
+sys.path.insert(0, str(Path.cwd() / "scripts"))
+from nav_bc_data import prepare_manifest
+cache, corpus = map(Path, sys.argv[1:])
+index = prepare_manifest(corpus, cache, corpus / "manifest.json", input_variant="hd")
+if len(index["episodes"]) != 602 or sum(ep["steps"] for ep in index["episodes"]) != 405626:
+    raise ValueError("Training population differs from HD: expected 602 episodes / 405626 decisions")
+print(json.dumps(dict(event="hd_training_population", episodes=602, decisions=405626)), flush=True)
+PREPARE_HD
+  fi
+  [[ -f "$task/cache/index.json" ]] || stop 'missing prepared HD cache; run train-1 first'
+  resume=()
+  if [[ "$epochs" != 1 ]]; then
+    [[ -f "$archive/run/last.pt" ]] || stop 'missing trained checkpoint; run train-1 first'
+    resume=(--resume)
+  fi
+  "$python" -X faulthandler -B -I scripts/nav_bc_train.py train --cache "$task/cache" \
+    --pace-input --init "$archive/pace-from-hd/last.pt" --epochs "$epochs" --output "$archive/run" \
+    --batch 8 --segment 64 --lr .0003 --seed 17 --threads 6 --device cuda "${resume[@]}"
+  exit
+fi
+
+if [[ "$stage" == parity ]]; then
+  [[ -f "$archive/run/last.pt" ]] || stop 'missing trained checkpoint'
+  "$python" -B -I - "$archive/run/history.json" <<'FINAL_EPOCH'
+import json, sys
+assert [row["epoch"] for row in json.load(open(sys.argv[1]))] == list(range(1, 21)), "Expected 20 completed epochs"
+FINAL_EPOCH
+  "$python" -B -I scripts/check_nav_policy.py --weights "$archive/run/policy.navbc" --source "$v4" \
+    --output "$task/parity" --steps 1000 --torch | tee "$archive/parity/python.json"
+  "$task/build/opengothic/gothic-navpolicy-contract" "$archive/run/policy.navbc" "$task/parity/parity.bin.gz" \
+    | tee "$archive/parity/cpp.json"
+  "$task/build/opengothic/gothic-navpolicy-contract" --memory "$archive/run/policy.navbc" | tee "$archive/parity/memory.json"
+  rm -rf "$task/parity" "$task/cache"
+  exit
+fi
+
+if [[ "$stage" == compare-* ]]; then
+  IFS=- read -r _ model pace part <<< "$stage"
+  [[ "$part" != follow || "$pace" == run ]] || stop 'follow is measured once per model, always run'
+  game_environment
+  weights="$hd/policy.navbc"
+  if [[ "$model" == v5 ]]; then
+    [[ -f "$archive/parity/cpp.json" ]] || stop 'final C++ parity must pass before v5 comparison'
+    weights="$archive/run/policy.navbc"
+  fi
+  output="$archive/results/$model-$pace"
+  if [[ "$part" == follow ]]; then output="$archive/results/$model-follow-run"; fi
+  mkdir -p "$archive/results/setup-rejections"
+  cp -n /mnt/shared/gothic-ai/archive/nav-dagger3-20261030/hd-validation/setup-rejections/*.json \
+    "$archive/results/setup-rejections/"
+  for worker in {0..15}; do
+    mkdir -p "$task/navmesh/ordinary/$worker"
+    cp -n /mnt/shared/gothic-ai/archive/nav-dagger3-20261030/hd-measure-cache/ordinary/*.navmesh \
+      "$task/navmesh/ordinary/$worker/"
+  done
+  "$python" -X faulthandler -B -I - "$task" "$archive" "$output" "$weights" "$pace" "$part" \
+    "$v5_validation" "$v5_input" <<'COMPARE'
+from collections import Counter
+import hashlib
+import json
+import math
+import os
+from pathlib import Path
+import sys
+import time
+sys.path.insert(0, str(Path.cwd() / "scripts"))
+import nav_rl as rl
+task, archive, output, weights = map(Path, sys.argv[1:5])
+pace, part = sys.argv[5:7]
+manifest, inputs = map(Path, sys.argv[7:9])
+limit = math.ceil(240000 * 3.064158265) if pace == "walk" else 240000
+original = rl.validation_commands
+rl.validation_commands = lambda args, value, seed: original(args, dict(value, limit_ms=limit), seed)
+argv = ["nav_rl.py", "drive", "--runner", task / "build/opengothic/gothic-body-runner",
+        "--assets", os.environ["GOTHIC_DIR"], "--save", inputs / "save.sav",
+        "--links", inputs / "accepted-links.txt", "--roads", inputs / "places.json",
+        "--weights", weights, "--output", output, "--cache", task / "navmesh", "--physics", "cv",
+        "--parallel", 16, "--action-mode", "sample", "--action-seeds", 18102027,
+        "--force-pace", pace, "--lean", "--resume", "--limit-ms", limit, "--watchdog-seconds", 1800]
+if part == "detour":
+    argv += ["--detour-scenarios", "/mnt/shared/gothic-ai/archive/nav-bc4-20261030/input/detour-val.jsonl"]
+else:
+    argv += ["--manifest", manifest, "--families", "follow_below_gate" if part == "follow" else "approach,object,point"]
+sys.argv = list(map(str, argv))
+started = time.monotonic()
+rl.main()
+episodes = [rl.read_json(path) for path in sorted(output.glob("validation/*/*/seed-*/drive-metrics.json"))]
+expected = (Counter(detour=121) if part == "detour" else Counter(follow_below_gate=102) if part == "follow"
+            else Counter(approach=101, object=179, point=60))
+selected = [ep for ep in episodes if ep["family"] in expected]
+assert Counter(ep["family"] for ep in selected) == expected, Counter(ep["family"] for ep in selected)
+assert {ep["action_seed"] for ep in selected} == {18102027}
+assert {ep["forced_pace"] for ep in selected} == {pace}
+assert {ep["base_fingerprint"] for ep in selected} == {os.environ["OPENGOTHIC_BASE_FINGERPRINT"]}
+for ep in selected:
+    assert ep["action_counts"]["walk"] == (ep["decisions"] if pace == "walk" else 0)
+summary = rl.validation_summary(episodes, lean=True)
+rl.write_json(output / "metrics.json", summary)
+runner_digest = hashlib.sha256((task / "build/opengothic/gothic-body-runner").read_bytes()).hexdigest()
+rl.write_json(output / f"{part}-summary.json", dict(episodes=len(selected), seconds=time.monotonic()-started,
+              base_fingerprint=os.environ["OPENGOTHIC_BASE_FINGERPRINT"], limit_ms=limit,
+              binary_sha256=runner_digest))
+
+# The last completed part produces the full comparison and the live gate.
+names = ("v5-run", "v5-walk", "hd-run", "hd-walk", "v5-follow-run", "hd-follow-run")
+files = {name: archive / "results" / name / "metrics.json" for name in names}
+if not all(path.is_file() for path in files.values()):
+    raise SystemExit(0)
+measured = {name: rl.read_json(path) for name, path in files.items()}
+complete_counts = Counter(approach=101, object=179, point=60, detour=121)
+if any(Counter(ep["family"] for ep in value["episodes"]) !=
+       (Counter(follow_below_gate=102) if "follow" in name else complete_counts)
+       for name, value in measured.items()):
+    raise SystemExit(0)
+episodes = [ep for value in measured.values() for ep in value["episodes"]]
+assert len(episodes) == 2048
+assert {ep["action_seed"] for ep in episodes} == {18102027}
+assert {ep["base_fingerprint"] for ep in episodes} == {os.environ["OPENGOTHIC_BASE_FINGERPRINT"]}
+for name in names:
+    for component in (("follow",) if "follow" in name else ("main", "detour")):
+        assert rl.read_json(archive / "results" / name / f"{component}-summary.json")["binary_sha256"] == runner_digest
+cohort = lambda values: {(ep["family"], ep["id"], ep["action_seed"]) for ep in values}
+assert all(cohort(measured[name]["episodes"]) == cohort(measured["hd-run"]["episodes"])
+           for name in names[:4])
+from nav_dagger4_round import paired_report_difference
+paired, failures = [], []
+for pair_pace, family in [(pace, family) for pace in ("run", "walk")
+                          for family in complete_counts] + [("run", "follow_below_gate")]:
+    suffix = "follow-run" if family == "follow_below_gate" else pair_pace
+    left, right = [[ep for ep in measured[f"{model}-{suffix}"]["episodes"] if ep["family"] == family]
+                   for model in ("v5", "hd")]
+    for metric in ("arrival", "elapsed_s", "turn_only", "idle"):
+        values = (left, right)
+        if metric == "turn_only":
+            values = [[{**ep, "action_counts": {**ep["action_counts"], "idle": ep["action_counts"]["turn_only"]}}
+                       for ep in group] for group in values]
+        result = paired_report_difference(*values, "idle" if metric == "turn_only" else metric)
+        assert result["se"] is not None
+        delta, se = result["delta"], result["se"]
+        number_se = delta / se if se else (0 if delta == 0 else "inf" if delta > 0 else "-inf")
+        row = dict(pace=pair_pace, family=family, metric=metric, number_se=number_se, **result)
+        paired.append(row)
+        if metric == "arrival" and delta < -2 * se:
+            failures.append(row)
+rows = [dict(configuration=name, family=family, **value)
+        for name, value in measured.items() for family, value in value["by_family"].items()]
+rl.write_json(archive / "comparison.json", dict(complete=True, episodes=2048, criteria=9,
+    gate_passed=not failures, gate_failures=failures, paired=paired, rows=rows,
+    base_fingerprint=os.environ["OPENGOTHIC_BASE_FINGERPRINT"], runner_sha256=runner_digest,
+    weights_sha256={name: hashlib.sha256(path.read_bytes()).hexdigest() for name, path in
+                   (("v5", archive / "run/policy.navbc"),
+                    ("HD", Path("/mnt/shared/gothic-ai/archive/nav-dagger3-20261030/hd-run/policy.navbc")))}))
+print(json.dumps(dict(event="pace_v5_comparison_complete", episodes=2048, criteria=9,
+                      gate_passed=not failures)), flush=True)
+COMPARE
+  exit
+fi
 
 if [[ "$stage" == teacher ]]; then
   "$python" -X faulthandler -B -I scripts/nav_pace_teacher.py --output "$archive/teacher/teacher-pace.json" \
@@ -183,8 +373,19 @@ PREPARE
   exit
 fi
 
-if [[ "$stage" == live ]]; then
-  build "$source/OpenGothic" "$build_dir" Gothic2Notr
+if [[ "$stage" == live || "$stage" == live-v5 ]]; then
+  if [[ "$stage" == live-v5 ]]; then
+    [[ -f "$archive/comparison.json" ]] || stop 'missing complete comparison and gate'
+    "$python" -B -I - "$archive/comparison.json" "$NAV_PACE_WEIGHTS" <<'GATE'
+import hashlib, json, sys
+from pathlib import Path
+comparison = json.loads(Path(sys.argv[1]).read_text())
+assert comparison["gate_passed"] is True, "Pace V5 comparison gate did not pass"
+assert hashlib.sha256(Path(sys.argv[2]).read_bytes()).hexdigest() == comparison["weights_sha256"]["v5"], "Live weights differ from the compared policy"
+GATE
+  else
+    build "$source/OpenGothic" "$build_dir" Gothic2Notr
+  fi
   game_environment
   # Windowed game on the admitted gq display slot, as in scripts/nav-live.sh.
   export XDG_RUNTIME_DIR="/run/user/$(id -u)"
@@ -207,8 +408,24 @@ if [[ "$stage" == live ]]; then
   export ALSOFT_DRIVERS=null TEMPEST_BACKGROUND=1 RYZEN_BENCH=1
   slot="${GQ_DISPLAY_SLOT:-0}"
   export TEMPEST_WINDOW_POS="$((100+(10#$slot % 2)*700)),$((100+(10#$slot / 2)*460))"
-  mkdir -p "$task/live-navmesh"
-  cp -n /mnt/shared/gothic-ai/archive/nav-dagger3-20261030/hd-measure-cache/ordinary/*.navmesh "$task/live-navmesh/"
+  live_cache="$task/live-navmesh"
+  if [[ "$stage" == live-v5 ]]; then live_cache="$task/navmesh-cache"; fi
+  mkdir -p "$live_cache"
+  cp -n /mnt/shared/gothic-ai/archive/nav-dagger3-20261030/hd-measure-cache/ordinary/*.navmesh "$live_cache/"
+  if [[ "$stage" == live-v5 ]]; then
+    export NAVLIVE_DEADLINE="$(( $(date +%s) + 6900 ))"
+    suite="$("$python" -B -I - <<'LIVE_SUITE'
+import json
+from pathlib import Path
+root = Path('/mnt/shared/gothic-ai/nav-live/baseline')
+value = json.loads((root / 'complete.json').read_text())
+print(value['suite_path'])
+LIVE_SUITE
+)"
+    "$python" -X faulthandler -B scripts/nav_live.py pace-v5 --suite "$suite" \
+      --runtime "$task" --output "$archive/live" --weights "$NAV_PACE_WEIGHTS,$hd/policy.navbc"
+    exit
+  fi
   "$python" -X faulthandler -B -I - "$task" "$archive" "$build_dir/opengothic/Gothic2Notr" <<'LIVE'
 import json
 from pathlib import Path
