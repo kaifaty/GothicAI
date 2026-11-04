@@ -60,7 +60,7 @@ HASH
   fi
   case "$stage" in
     smoke) resources=(--class quick --threads 4 --cpu-quota 400% --mem 6G --max 40m) ;;
-    validation-*) resources=(--class batch --threads 12 --cpu-quota 1200% --mem 14G --max 2h) ;;
+    validation-*) resources=(--class batch --threads 8 --cpu-quota 800% --mem 7G --max 2h) ;;
     live-*) resources=(--class batch --threads 6 --cpu-quota 600% --mem 10G --gpu-mem 3G --display --display-shared --max 1h) ;;
     report) resources=(--class quick --threads 1 --cpu-quota 100% --mem 2G --max 10m) ;;
   esac
@@ -166,9 +166,9 @@ fi
 if [[ "$stage" == validation-* ]]; then
   IFS=- read -r _ model guidance <<< "$stage"
   game_environment
-  navmesh 12
+  navmesh 8
   target="$weights"; [[ "$model" == v5 ]] || target=teacher
-  validate "$archive/validation/$model-$guidance" "$target" "$guidance" --parallel 12
+  validate "$archive/validation/$model-$guidance" "$target" "$guidance" --parallel 8
   exit
 fi
 
