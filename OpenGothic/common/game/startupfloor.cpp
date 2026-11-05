@@ -32,6 +32,9 @@ constexpr const char* noneExternals[] = {
   "hlp_random", "hlp_isvalidnpc", "hlp_isvaliditem", "hlp_isitem", "hlp_getnpc", "hlp_getinstanceid",
   "wld_getday", "wld_setguildattitude", "wld_getguildattitude", "wld_exchangeguildattitudes", "wld_istime",
   "wld_israining", "wld_assignroomtoguild",
+  // mob routines are applied after the NPCs (WorldObjects::resetPositionToTA); world items are C_Item bodies,
+  // which neither the fix's ray nor its capsule query hits
+  "wld_setmobroutine", "wld_insertitem",
   "npc_isinstate", "npc_isinroutine", "npc_wasinstate", "npc_isdead", "npc_knowsinfo",
   "npc_settalentskill", "npc_gettalentskill", "npc_settalentvalue", "npc_gettalentvalue",
   "npc_setrefusetalk", "npc_refusetalk", "npc_hasitems", "npc_hasspell", "npc_getinvitem", "npc_getinvitembyslot",
@@ -55,6 +58,7 @@ constexpr const char* argsExternals[] = {
   "mdl_setvisual", "mdl_setvisualbody", "mdl_setmodelfatness", "mdl_applyoverlaymds", "mdl_applyoverlaymdstimed",
   "mdl_removeoverlaymds", "mdl_setmodelscale", "mdl_startfaceani", "mdl_applyrandomani",
   "mdl_applyrandomanifreq", "mdl_applyrandomfaceani",
+  "npc_settofightmode", "npc_settofistmode",
   "equipitem", "npc_removeinvitem", "npc_removeinvitems", "npc_clearinventory", "npc_exchangeroutine",
   "npc_getdisttowp", "npc_getdisttonpc", "npc_getnearestwp", "npc_getnextwp", "npc_isonfp", "npc_getheighttonpc",
   "npc_getdisttoitem", "npc_getheighttoitem", "npc_getdisttoplayer", "npc_canseenpc", "npc_canseenpcfreelos",
