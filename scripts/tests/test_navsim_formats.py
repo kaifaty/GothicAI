@@ -123,3 +123,73 @@ def test_population_reward_comparison_matches_order_and_all_path_fields(tmp_path
     assert not changed["deterministic"] and changed["differing_samples"] == 1
     assert changed["examples"][0]["episode"] == 1
     assert changed["examples"][0]["fields"] == ["path_valid", "rewards"]
+
+
+def test_package_launcher_isolates_duplicate_jobs_and_refuses_published_revision(tmp_path):
+    import json
+    import os
+    import shutil
+    import subprocess
+
+    project = tmp_path / "project"
+    launcher = project / "scripts/navsim/package-remote.sh"
+    launcher.parent.mkdir(parents=True)
+    shutil.copyfile(Path(__file__).resolve().parents[1] / "navsim/package-remote.sh", launcher)
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    stub = tools / "stub"
+    stub.write_text("""#!/usr/bin/env python3
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+name, args = Path(sys.argv[0]).name, sys.argv[1:]
+if name == 'git':
+    if 'rev-parse' in args:
+        print(('1' if args[-1] == 'HEAD' else '2') * 40)
+    elif 'status' not in args:
+        sys.exit('Unexpected git operation: ' + str(args))
+elif name == 'ssh':
+    environment = dict(os.environ, HOME=os.environ['MOCK_REMOTE_HOME'])
+    command = args[-1].replace('/mnt/shared', os.environ['MOCK_NAS'])
+    sys.exit(subprocess.run(['bash', '-c', command], env=environment).returncode)
+elif name == 'gq':
+    fd = os.open(os.environ['MOCK_GQ_LOG'], os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    os.write(fd, (json.dumps(args) + '\\n').encode())
+    os.close(fd)
+else:
+    sys.exit('Unexpected tool: ' + name)
+""")
+    stub.chmod(0o755)
+    for name in ("git", "ssh", "rsync"):
+        (tools / name).symlink_to(stub)
+    (project / "scripts/gq").symlink_to(stub)
+    remote = tmp_path / "remote"
+    task = remote / "gothic-ai/nav-sim-stand-package"
+    revision, baseline = "1" * 40, "2" * 40
+    for path in (task / "source" / revision, task / "main" / baseline):
+        path.mkdir(parents=True)
+    submissions = tmp_path / "submissions.jsonl"
+    nas = tmp_path / "nas"
+    environment = dict(os.environ, PATH=f"{tools}{os.pathsep}{os.environ['PATH']}",
+                       MOCK_REMOTE_HOME=str(remote), MOCK_NAS=str(nas), MOCK_GQ_LOG=str(submissions))
+    processes = [subprocess.Popen(["bash", str(launcher)], env=environment, stdout=subprocess.PIPE,
+                                  stderr=subprocess.PIPE, text=True) for _ in range(2)]
+    for process in processes:
+        stdout, stderr = process.communicate(timeout=10)
+        assert process.returncode == 0, stdout + stderr
+    jobs = [json.loads(line) for line in submissions.read_text().splitlines()]
+    assert len(jobs) == 2
+    archives = [job[job.index("--archive") + 1] for job in jobs]
+    assert archives[0] != archives[1]
+    for job, archive in zip(jobs, archives):
+        assert job[-5:] == ["run", str(task), revision, baseline, archive]
+        assert Path(archive).parent == task and Path(archive).name.startswith(f"raw-{revision}-")
+    for kind in ("package", "determinism", "reference"):
+        published = nas / "gothic-ai/nav-sim-research/stand" / kind / revision
+        published.mkdir(parents=True)
+        rejected = subprocess.run(["bash", str(launcher)], env=environment, capture_output=True, text=True, timeout=10)
+        assert rejected.returncode != 0, f"Existing {kind}/{revision} was submitted"
+        assert len(submissions.read_text().splitlines()) == 2
+        published.rmdir()

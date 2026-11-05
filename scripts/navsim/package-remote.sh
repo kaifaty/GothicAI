@@ -10,6 +10,15 @@ if [[ "${1:-}" != run ]]; then
   [[ -z "$(git -C "$root" status --porcelain -- OpenGothic scripts)" ]] || {
     echo 'Commit OpenGothic/ and scripts/ before submitting revisioned runs' >&2; exit 2; }
   task="$(ssh -o BatchMode=yes -o ConnectTimeout=10 ryzen 'printf "%s/gothic-ai/nav-sim-stand-package" "$HOME"')"
+  ssh ryzen "for target in '/mnt/shared/gothic-ai/nav-sim-research/stand/package/$revision' \
+    '/mnt/shared/gothic-ai/nav-sim-research/stand/determinism/$revision' \
+    '/mnt/shared/gothic-ai/nav-sim-research/stand/reference/$revision'; do
+    if [ -e \"\$target\" ] || [ -L \"\$target\" ]; then
+      printf 'S4a destination already exists: %s\n' \"\$target\" >&2; exit 2
+    fi
+  done"
+  attempt="$(python3 -c 'import uuid; print(uuid.uuid4().hex)')"
+  raw="$task/raw-$revision-$attempt"
   source="$task/source/$revision"
   before="$task/main/$baseline"
   if ! ssh ryzen "test -d '$source'"; then
@@ -28,19 +37,26 @@ if [[ "${1:-}" != run ]]; then
   fi
   GQ_OWNER=nav-sim-stand-package "$root/scripts/gq" submit \
     --class batch --threads 4 --cpu-quota 400% --mem 6G --max 2h \
-    --archive "$task/raw-$revision" --name "navsim S4a ${revision:0:12}" -- \
+    --archive "$raw" --name "navsim S4a ${revision:0:12}" -- \
     python3 -X faulthandler -I "$source/scripts/nav_job.py" --max-seconds 7200 -- \
-    bash "$source/scripts/navsim/package-remote.sh" run "$task" "$revision" "$baseline"
+    bash "$source/scripts/navsim/package-remote.sh" run "$task" "$revision" "$baseline" "$raw"
   exit
 fi
 
-[[ $# == 4 ]] || { echo 'Internal run requires task, revision and baseline' >&2; exit 2; }
-task="$2"; revision="$3"; baseline="$4"
-source="$task/source/$revision"; raw="$task/raw-$revision"
+[[ $# == 5 ]] || { echo 'Internal run requires task, revision, baseline and raw output' >&2; exit 2; }
+task="$2"; revision="$3"; baseline="$4"; raw="$5"
+source="$task/source/$revision"
 build="$task/build-$revision"; python="$task/venv-$revision/bin/python"
 mkdir -p "$task/locks"
 exec {job_lock}>"$task/locks/$revision.lock"
 flock -n "$job_lock" || { echo 'This revision already has an active S4a job' >&2; exit 75; }
+for target in "/mnt/shared/gothic-ai/nav-sim-research/stand/package/$revision" \
+  "/mnt/shared/gothic-ai/nav-sim-research/stand/determinism/$revision" \
+  "/mnt/shared/gothic-ai/nav-sim-research/stand/reference/$revision"; do
+  if [[ -e "$target" || -L "$target" ]]; then
+    printf 'S4a destination already exists: %s\n' "$target" >&2; exit 2
+  fi
+done
 [[ ! -e "$raw" ]] || { echo "S4a output already exists: $raw" >&2; exit 2; }
 trap 'rm -rf "$build" "$task/venv-$revision"' EXIT
 export TMPDIR="$task/tmp/$revision" UV_CACHE_DIR="$task/uv-cache" CCACHE_DIR="$task/ccache"
@@ -130,7 +146,7 @@ game_environment "$build/after"
 OPENGOTHIC_NAV_PASSAGE_TRACE=1 "$python" -B -I scripts/navsim/population_runs.py reference "${common[@]}" \
   --runner "$build/after/opengothic/gothic-body-runner" --weights "$weights" \
   --output "$raw/reference" --revision "$revision"
-for item in "package:package/$revision" "determinism:determinism/$revision" "reference:reference"; do
+for item in "package:package/$revision" "determinism:determinism/$revision" "reference:reference/$revision"; do
   "$python" -B -I scripts/nas_archive.py move "$raw/${item%%:*}" \
     --destination-relative "nav-sim-research/stand/${item#*:}" --attempt-id "$revision"
 done
