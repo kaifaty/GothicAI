@@ -11,6 +11,8 @@
 #                                                         # the teacher with / without the body exit, forced pace;
 #                                                         # off after on: routes on never touched are copied
 #   bash scripts/nav-teacher-stall-remote.sh replay       # the v5 teacher recordings replayed with --body-exit off/on
+#   NAV_STALL_IDS=id,id bash scripts/nav-teacher-stall-remote.sh repeat-v5  # these follow routes of v5 (aside) again:
+#                                                         # run-to-run spread of the policy on one runner
 #   bash scripts/nav-teacher-stall-remote.sh live         # 03-follow-hero, teacher and v5, three seeds, video
 #   bash scripts/nav-teacher-stall-remote.sh report       # tables from all finished stages
 #   bash scripts/nav-teacher-stall-remote.sh clean        # remove ~/gothic-ai/nav-teacher-stall on Ryzen;
@@ -20,7 +22,7 @@
 # follow-lost last-seen. Results: /mnt/shared/gothic-ai/nav-teacher-stall/. v5 weights are only read.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-usage='Usage: bash scripts/nav-teacher-stall-remote.sh smoke|diagnose|replay|follow-teacher-{on-aside,off-last-seen}|follow-v5-{aside,last-seen}|static-teacher-{run,walk}-{on,off}-{point,object,approach,detour}|live|report|clean'
+usage='Usage: bash scripts/nav-teacher-stall-remote.sh smoke|diagnose|replay|repeat-v5|follow-teacher-{on-aside,off-last-seen}|follow-v5-{aside,last-seen}|static-teacher-{run,walk}-{on,off}-{point,object,approach,detour}|live|report|clean'
 stage="${1:-}"
 archive="${NAV_STALL_ARCHIVE:-/mnt/shared/gothic-ai/nav-teacher-stall}"
 task_name=nav-teacher-stall
@@ -30,7 +32,7 @@ manifest=/mnt/shared/gothic-ai/nav-demos-v5/manifest.json
 detour=/mnt/shared/gothic-ai/archive/nav-bc4-20261030/input/detour-val.jsonl
 navmesh_source=/mnt/shared/gothic-ai/archive/nav-dagger3-20261030/hd-measure-cache/ordinary
 rejections_source=/mnt/shared/gothic-ai/archive/nav-dagger3-20261030/hd-validation/setup-rejections
-stages='smoke|diagnose|replay|follow-teacher-(on-aside|off-last-seen)|follow-v5-(aside|last-seen)|static-teacher-(run|walk)-(on|off)-(point|object|approach|detour)|live|report|clean'
+stages='smoke|diagnose|replay|repeat-v5|follow-teacher-(on-aside|off-last-seen)|follow-v5-(aside|last-seen)|static-teacher-(run|walk)-(on|off)-(point|object|approach|detour)|live|report|clean'
 
 if [[ "$stage" != run ]]; then
   [[ $# == 1 && "$stage" =~ ^($stages)$ ]] || { echo "$usage" >&2; exit 2; }
@@ -87,6 +89,7 @@ HASH
     smoke) resources=(--class quick --threads 12 --cpu-quota 1200% --mem 10G --max 1h) ;;
     diagnose) resources=(--class quick --threads 6 --cpu-quota 600% --mem 6G --max 1h) ;;
     replay) resources=(--class quick --threads 8 --cpu-quota 800% --mem 4G --max 1h) ;;
+    repeat-v5) resources=(--class batch --threads 8 --cpu-quota 800% --mem 8G --max 1h) ;;
     follow-*|static-*) resources=(--class batch --threads 12 --cpu-quota 1200% --mem 10G --max 2h) ;;
     live) resources=(--class batch --threads 6 --cpu-quota 600% --mem 10G --gpu-mem 3G --display --display-shared --max 1h) ;;
     report) resources=(--class quick --threads 1 --cpu-quota 100% --mem 2G --max 10m) ;;
@@ -249,6 +252,15 @@ Path(output).write_text(json.dumps(dict(summary=summary, rows=rows), indent=1) +
 print(json.dumps(summary, indent=1))
 assert summary["off"]["mismatches"] == 0, "the teacher with --body-exit off differs from its recordings"
 REPLAY
+  exit
+fi
+
+if [[ "$stage" == repeat-v5 ]]; then
+  [[ -n "${NAV_STALL_IDS:-}" ]] || stop "NAV_STALL_IDS names the follow routes to repeat"
+  game_environment
+  navmesh 8
+  routes="$(printf '%s' "$NAV_STALL_IDS" | sha256sum | cut -c1-10)"
+  validate "$archive/repeat/v5-aside-$snapshot-$routes" "$weights" --pace run --lost aside --ids "$NAV_STALL_IDS" --parallel 8
   exit
 fi
 
