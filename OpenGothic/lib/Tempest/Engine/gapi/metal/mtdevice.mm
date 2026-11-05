@@ -7,6 +7,7 @@
 #include <Tempest/Log>
 #include <Foundation/NSProcessInfo.h>
 #include <objc/runtime.h>
+#include <chrono>
 #include <cstdlib>
 // #include <Metal/MTLPixelFormat.h>
 
@@ -345,10 +346,18 @@ MTLFX::TemporalScaler& MtDevice::temporalScaler(MTL::Texture& color, MTL::Textur
   desc->setOutputTextureFormat(dst.pixelFormat());
   // input is linear HDR, already multiplied by the exposure: preExposure 1, no exposure texture
   desc->setAutoExposureEnabled(false);
+  // the final upscaler from the first frame: without it MetalFX starts with a slower one and compiles the fast one
+  // in the background, and a frame time measured then is not the scaler's
+  desc->setRequiresSynchronousInitialization(true);
 
+  // On macOS 27 the scaler is a network: its first creation compiles it for the Neural Engine, which takes a while
+  const auto started = std::chrono::steady_clock::now();
   auto scaler = NsPtr<MTLFX::TemporalScaler>(desc->newTemporalScaler(impl.get()));
   if(scaler==nullptr)
     throw std::system_error(Tempest::GraphicsErrc::UnsupportedExtension);
+  const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-started).count();
+  Log::i("metalfx: temporal scaler ", color.width(), "x", color.height(), " -> ", dst.width(), "x", dst.height(),
+         " made in ", int64_t(ms), " ms");
   if((color .usage() & scaler->colorTextureUsage()) !=scaler->colorTextureUsage()  ||
      (depth .usage() & scaler->depthTextureUsage()) !=scaler->depthTextureUsage()  ||
      (motion.usage() & scaler->motionTextureUsage())!=scaler->motionTextureUsage() ||

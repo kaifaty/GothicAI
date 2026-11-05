@@ -147,7 +147,8 @@ void MtCommandBuffer::submitGpuProfile() {
           }
         if(valid) {
           data.gpuNs=last-first;
-          spanBegin[passes.size()]=first;
+          // a render pass starts its vertices early, before what it reads is done: its fragments start the use
+          spanBegin[passes.size()]=pass.samples==4 ? timestamps[pass.first+2].timestamp : first;
           spanEnd  [passes.size()]=last;
           }
         }
@@ -156,6 +157,7 @@ void MtCommandBuffer::submitGpuProfile() {
       passes.emplace_back(std::move(data));
       }
     // a library's encoders (MetalFX): from the end of the last timed row before them to the start of the next one
+    // (of its fragments, for a render pass)
     for(size_t i=0;i<passes.size();++i) {
       if(!profile->passes[i].external)
         continue;
