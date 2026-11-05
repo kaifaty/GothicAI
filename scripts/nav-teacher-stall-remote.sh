@@ -86,7 +86,7 @@ HASH
     ssh ryzen "mv -T '$incoming' '$task/source/$snapshot' 2>/dev/null || rm -rf '$incoming'"
   fi
   case "$stage" in
-    smoke) resources=(--class quick --threads 12 --cpu-quota 1200% --mem 10G --max 1h) ;;
+    smoke) resources=(--class quick --threads 12 --cpu-quota 1200% --mem 8G --max 1h) ;;
     diagnose) resources=(--class quick --threads 6 --cpu-quota 600% --mem 6G --max 1h) ;;
     replay) resources=(--class quick --threads 8 --cpu-quota 800% --mem 4G --max 1h) ;;
     repeat-v5) resources=(--class batch --threads 8 --cpu-quota 800% --mem 8G --max 1h) ;;
