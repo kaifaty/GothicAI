@@ -96,6 +96,8 @@ endif()
 if(NOT OPENGOTHIC_ENABLE_APP_CADENCE)
   list(REMOVE_ITEM OPENGOTHIC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/common/appcadence.cpp")
 endif()
+# The society stand's core is its own library (society-core below), not part of the engine yet.
+list(FILTER OPENGOTHIC_SOURCES EXCLUDE REGEX "/common/society/")
 
 target_sources(${PROJECT_NAME} PRIVATE ${OPENGOTHIC_SOURCES} ${ObjCSOURCES})
 
@@ -302,8 +304,17 @@ target_link_libraries(Gothic2Notr PRIVATE AiBridge)
 
 # Uses the shared engine/CPU simulation without constructing a window or graphics/audio device.
 if(UNIX AND NOT IOS AND NOT ANDROID)
-  add_executable(gothic-body-runner game/bodyrunner.cpp)
+  add_executable(gothic-body-runner game/bodyrunner.cpp game/societyexport.cpp)
   target_link_libraries(gothic-body-runner PRIVATE OpenGothic AiBridge)
+  # --society-export names the engine's commit: refreshed on every build of the runner, the header is
+  # rewritten only when the commit changes ("unknown" in a copy without .git).
+  add_custom_target(gothic-engine-commit
+    COMMAND ${CMAKE_COMMAND} -DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}
+            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/engine-commit/enginecommit.h
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/EngineCommit.cmake
+    BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/engine-commit/enginecommit.h)
+  add_dependencies(gothic-body-runner gothic-engine-commit)
+  target_include_directories(gothic-body-runner PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/engine-commit)
   # Pure production resolver/command gates: no assets, simulation or rendering device.
   add_executable(gothic-body-resolver-test tests/body_resolver_test.cpp)
   target_link_libraries(gothic-body-resolver-test PRIVATE OpenGothic AiBridge)
@@ -328,6 +339,25 @@ if(UNIX AND NOT IOS AND NOT ANDROID)
   target_compile_definitions(gothic-mesh-gltf-test PRIVATE
     GOTHIC_TEST_BARREL_SCRIPT="${PROJECT_SOURCE_DIR}/../scripts/meshes/make_test_barrel.py")
   target_compile_options(gothic-mesh-gltf-test PRIVATE -Wall -Wconversion -Werror)
+endif()
+
+# The society stand's core (common/society/README.md): the standard library and rapidjson only. Its include path
+# is set alone, without the engine's directories, so an engine header does not compile there.
+if(NOT ANDROID AND NOT IOS)
+  file(GLOB SOCIETY_CORE_SOURCES common/society/*.cpp)
+  add_library(society-core STATIC ${SOCIETY_CORE_SOURCES})
+  set_property(TARGET society-core PROPERTY INCLUDE_DIRECTORIES "")
+  target_include_directories(society-core SYSTEM PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/lib/rapidjson/include)
+  target_include_directories(society-core INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/common)
+  if(NOT MSVC)
+    target_compile_options(society-core PRIVATE -Wall -Wconversion -Werror)
+  endif()
+  # Plays N days of an export by the routine: the journal, the 5-minute marks and the time.
+  add_executable(gothic-society-day game/societyday.cpp)
+  target_link_libraries(gothic-society-day PRIVATE society-core)
+  if(NOT MSVC)
+    target_compile_options(gothic-society-day PRIVATE -Wall -Wconversion -Werror)
+  endif()
 endif()
 
 # Asset-free contracts; run explicitly with their check-* targets.
@@ -490,6 +520,29 @@ if(NOT ANDROID AND NOT IOS)
   target_link_libraries(gothic-physics-contract PRIVATE OpenGothic AiBridge gothic-base-import)
   add_executable(gothic-placed-items-contract EXCLUDE_FROM_ALL tests/placed_items_contract.cpp)
   target_link_libraries(gothic-placed-items-contract PRIVATE OpenGothic AiBridge gothic-base-import)
+  # The society stand's world (docs/society-sim.md): runs gothic-body-runner --society-export twice on the
+  # game's data (GOTHIC_DIR) and checks it against evals/npc-decisions/day_people.json and places.json.
+  # Only where the runner exists (UNIX, see above).
+  if(TARGET gothic-body-runner)
+    add_executable(gothic-society-export-contract EXCLUDE_FROM_ALL tests/society_export_contract.cpp)
+    add_dependencies(gothic-society-export-contract gothic-body-runner)
+    target_include_directories(gothic-society-export-contract SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
+    target_compile_definitions(gothic-society-export-contract PRIVATE
+      SOCIETY_RUNNER="$<TARGET_FILE:gothic-body-runner>"
+      SOCIETY_REPO="${CMAKE_CURRENT_SOURCE_DIR}/..")
+    target_compile_options(gothic-society-export-contract PRIVATE -Wall -Wconversion -Werror)
+  endif()
+  # The society stand's core over that export (docs/society-sim.md, «Интерфейсы → 2»): loads it, plays a day by
+  # the routine and checks the 5-minute marks, the journal's repeat and snapshot, the speed and gothic-society-day.
+  if(TARGET gothic-body-runner)
+    add_executable(gothic-society-core-contract EXCLUDE_FROM_ALL tests/society_core_contract.cpp)
+    add_dependencies(gothic-society-core-contract gothic-body-runner gothic-society-day)
+    target_link_libraries(gothic-society-core-contract PRIVATE society-core)
+    target_compile_definitions(gothic-society-core-contract PRIVATE
+      SOCIETY_RUNNER="$<TARGET_FILE:gothic-body-runner>"
+      SOCIETY_DAY="$<TARGET_FILE:gothic-society-day>")
+    target_compile_options(gothic-society-core-contract PRIVATE -Wall -Wconversion -Werror)
+  endif()
   add_executable(gothic-bodyimpact-contract EXCLUDE_FROM_ALL tests/bodyimpact_contract.cpp)
   target_include_directories(gothic-bodyimpact-contract PRIVATE common)
   if(NOT MSVC)

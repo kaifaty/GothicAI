@@ -102,6 +102,7 @@ class ReplaySide:
     def __init__(self, replay: Replay, agents, shift=True, pinned=False, workers=1):
         self.replay = replay
         ids = np.asarray(agents, np.int64)
+        self.ids = ids
         self.agents = len(ids)
         C = len(replay.records)
         self.record = ids % C
@@ -113,7 +114,12 @@ class ReplaySide:
         self.cursor = self.start.copy()
         self.decision = replay.first_decision[self.record] + self.cursor
         self.batch = StepBatch(self.agents, pinned=pinned)
+        self.finished = contract.FinishBatch(self.agents, pinned=pinned)
+        self.pending = False
+        self.sequence = 0
+        self.last_verdicts = np.zeros(0, np.uint8)
         self.seconds = 0.0
+        self.phase_seconds = dict(a=0., b=0.)
         self.steps = 0
         # numpy's take releases the GIL: agent ranges fill in parallel.
         self.pool = ThreadPoolExecutor(workers) if workers > 1 else None
@@ -121,14 +127,26 @@ class ReplaySide:
         self.ranges = [slice(a, b) for a, b in zip(bounds[:-1], bounds[1:]) if b > a]
 
     def reset(self) -> StepBatch:
+        started = time.perf_counter()
+        if self.pending:
+            raise RuntimeError("finish the current decision before resetting")
+        self.sequence = 0
         self.cursor = self.start.copy()
-        return self._fill(np.ones(self.agents, bool), np.zeros(self.agents, bool))
+        batch = self._fill(np.ones(self.agents, bool), np.zeros(self.agents, bool))
+        self.phase_seconds["a"] += time.perf_counter() - started
+        return batch
 
     def step(self, actions=None) -> StepBatch:
+        started = time.perf_counter()
+        if self.pending:
+            raise RuntimeError("finish the current decision before stepping")
+        self.sequence += 1
         self.cursor += 1
         wrap = self.cursor >= self.replay.count[self.record]
         self.cursor[wrap] = 0
-        return self._fill(wrap, wrap)
+        batch = self._fill(wrap, wrap)
+        self.phase_seconds["a"] += time.perf_counter() - started
+        return batch
 
     def _fill(self, first, truncated) -> StepBatch:
         started = time.perf_counter()
@@ -143,6 +161,24 @@ class ReplaySide:
         b.reward[:] = 0
         b.terminated[:] = 0
         b.truncated[:] = truncated
+        # Speculate all rebuild candidates together: 32 starts, projection and
+        # catch-up. Exactly one in 50 decisions rebuilds for each global agent.
+        phase = self.ids + self.sequence
+        counts = np.where(phase % 50 == 0, 34, phase % 2).astype(np.int64)
+        q = b.queries
+        q.count = int(counts.sum())
+        owners = np.repeat(np.arange(self.agents, dtype=np.int32), counts)
+        q.agents[:q.count] = owners
+        ordinal = np.arange(q.count) - np.repeat(np.cumsum(counts) - counts, counts)
+        segments = q.segments[:q.count]
+        segments[:, :3] = b.pose_pos[owners, -1]
+        segments[:, 3:6] = segments[:, :3]
+        angle = (ordinal + phase[owners] % 17) * np.float32(0.61803398875)
+        distance = 100 + (ordinal % 8) * 200
+        segments[:, 3] += np.cos(angle) * distance
+        segments[:, 5] += np.sin(angle) * distance
+        segments[:, 6:] = (20, 25)  # FollowTrail::corridorCm / footprintCm, used by KnownRoads
+        self.pending = True
         self.seconds += time.perf_counter() - started
         self.steps += 1
         return b
@@ -152,7 +188,27 @@ class ReplaySide:
         for name, table in r.table.items():
             np.take(table, g, axis=0, out=getattr(b, name)[rows])
         np.take(r.ticks, g, out=b.ticks[rows])
-        np.take(r.vectors, g if r.vector_row is None else g % r.vector_row, axis=0, out=b.vector[rows])
+
+    def finish(self, verdicts):
+        started = time.perf_counter()
+        verdicts = np.asarray(verdicts)
+        if not self.pending or verdicts.dtype != np.uint8 or verdicts.shape != (self.batch.queries.count,):
+            raise ValueError("finish needs one uint8 verdict per current query")
+        if np.any(verdicts > 2):
+            raise ValueError("unknown passage verdict")
+        # Replay is deliberately open loop: consume and retain the actual
+        # replies, while preserving the captured engine vector for net parity.
+        self.last_verdicts = verdicts.copy()
+        r, g = self.replay, self.decision
+        np.take(r.vectors, g if r.vector_row is None else g % r.vector_row,
+                axis=0, out=self.finished.vector)
+        self.finished.teacher[:] = 0
+        self.finished.teacher_valid[:] = 0  # captures do not contain teacher labels
+        self.pending = False
+        elapsed = time.perf_counter() - started
+        self.seconds += elapsed
+        self.phase_seconds["b"] += elapsed
+        return self.finished
 
     def close(self):
         if self.pool is not None:

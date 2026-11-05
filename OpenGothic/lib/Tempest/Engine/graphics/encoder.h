@@ -120,6 +120,10 @@ class Encoder<Tempest::CommandBuffer> {
     void generateMipmaps(Attachment& tex);
     // Spatial upscale of a tonemapped image into dst; requires Device::properties().spatialUpscale.
     void upscale(const Attachment& src, StorageImage& dst);
+    // Temporal upscale (MetalFX Temporal) of a jittered linear frame into dst, which keeps no history of its own:
+    // the backend holds it until the sizes or formats change. Requires Device::properties().temporalUpscale.
+    void upscaleTemporal(const Attachment& color, const ZBuffer& depth, const Attachment& motion, StorageImage& dst,
+                         const TemporalUpscaleDesc& desc);
 
   private:
     explicit Encoder(CommandBuffer* ow);

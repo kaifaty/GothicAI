@@ -2525,8 +2525,16 @@ void updateCamera(World& w, Npc& pl) {
     }
   Vec3 tgt = pl.position() + Vec3(0,bench.camLook,0);
   Vec3 org = bench.camPos;
-  if(bench.cam==C_Follow || bench.cam==C_World)
+  if(bench.cam==C_Follow || bench.cam==C_World) {
     org = camOrigin(w,pl,bench.camAngle);
+    // a body down sinks its position under the ground (85 cm for the hero knocked down): look at the ground over it
+    const Vec3  at = pl.position();
+    const float g  = groundY(w,at.x,at.z,at.y+100.f);
+    if(!std::isnan(g) && g>at.y) {
+      tgt.y += g-at.y;
+      org.y  = std::max(org.y,g+bench.camHeight);
+      }
+    }
   if(bench.cam==C_Face) {
     // the mouth (a bit above the head bone), seen from the front or at an angle
     const Vec3  f    = facing(pl);
@@ -2604,7 +2612,7 @@ void writeHeader() {
   std::fprintf(bench.csv,",mr_w,mr_dev,mr_hits,physics_ms");
   // the watched one's quiver (graphics/mesh/quiver): cm the armour and the legs go into it, the arrows shown,
   // the mouth in the pelvis bone's frame, how far out it was pushed, the arrows over the mouth and the bottom
-  std::fprintf(bench.csv,",qv_on,qv_arrows,qv_armor,qv_leg,qv_arm,qv_mx,qv_my,qv_mz,qv_out,qv_top,qv_bottom,qv_swing,qv_back,qv_outward,qv_us,qv_twist,qv_bow,qv_2h,qv_blade,qv_yield,qv_legt,qv_legl");
+  std::fprintf(bench.csv,",qv_on,qv_arrows,qv_armor,qv_leg,qv_arm,qv_mx,qv_my,qv_mz,qv_out,qv_top,qv_bottom,qv_swing,qv_back,qv_outward,qv_us,qv_twist,qv_bow,qv_2h,qv_blade,qv_yield,qv_legt,qv_legl,qv_gnd,qv_gndm,qv_gmode,qv_gon,qv_botup,qv_gndt,qv_need,qv_needb,qv_needo,qv_needbody,qv_trunk,qv_clear,qv_rays,qv_rayus,qv_cpu,qv_ax,qv_ay,qv_az");
   if(ragdollTrace)
     std::fprintf(bench.csv,",ph_ms,ph_bodies,ph_rays,rd_mode,rd_weight,rd_sleep");
   if(bench.questTrace)
@@ -9630,6 +9638,46 @@ void writeRow(Npc& pl) {
                  double(subjectOf(pl).quiverCostUs()));
     std::fprintf(bench.csv,",%.2f,%.2f,%.2f,%.2f,%.2f,%.1f",q.twist,q.bow,q.longsword,q.blade,q.yield,q.legAt);
     std::fprintf(bench.csv,",%.2f",q.legLeft);
+    // cm the tube and its mouth go under the world (its collision, a ray down over each point of the outer side)
+    float gnd = 0, gndMouth = 0, gndTube = 0;
+    Quiver::measureGround = true;
+    if(q.on) {
+      constexpr int Rings = 9, Around = 12;
+      const auto pts = subjectOf(pl).quiverSurface(Rings,Around);
+      auto* phys = Gothic::inst().world()->physic();
+      for(size_t i=0; i<pts.size(); ++i) {
+        const auto& v = pts[i];
+        const auto  r = phys->rayStatic({v.x,v.y+150.f,v.z},{v.x,v.y,v.z});
+        if(!r.hasCol || r.v.y<=v.y)
+          continue;
+        gnd = std::max(gnd,r.v.y-v.y);
+        if(i>=size_t(2*Around))
+          gndTube = std::max(gndTube,r.v.y-v.y); // from the third ring, 16.75 cm down, on
+        if(i<size_t(Around))
+          gndMouth = std::max(gndMouth,r.v.y-v.y);
+        }
+      }
+    // cm the bottom's centre is over the ground under it (NAN: no ground under it)
+    float botUp = NAN;
+    if(q.on) {
+      const auto pts = subjectOf(pl).quiverSurface(9,12);
+      if(pts.size()==size_t(9*12)) {
+        Vec3 c;
+        for(size_t i=8*12; i<pts.size(); ++i)
+          c += pts[i];
+        c = c/12.f;
+        const auto r = Gothic::inst().world()->physic()->rayStatic({c.x,c.y+150.f,c.z},{c.x,c.y-300.f,c.z});
+        if(r.hasCol)
+          botUp = c.y-r.v.y;
+        }
+      }
+    std::fprintf(bench.csv,",%.2f,%.2f,%d,%d",gnd,gndMouth,q.ground,int(q.groundOn));
+    std::fprintf(bench.csv,",%.2f",botUp);
+    std::fprintf(bench.csv,",%.2f,%.1f,%.1f,%.1f,%.2f",gndTube,q.needAngle,q.needBack,q.needOut,q.needBody);
+    const Npc& qs = subjectOf(pl);
+    std::fprintf(bench.csv,",%.2f,%.1f,%d,%.1f,%.1f",q.trunk,double(qs.quiverClearance()),qs.quiverRays(),
+                 double(qs.quiverRayUs()),double(qs.quiverCpuUs()));
+    std::fprintf(bench.csv,",%.5f,%.5f,%.5f",q.axis.x,q.axis.y,q.axis.z);
   }
   if(ragdollTrace)
     writeRagdoll(pl);
