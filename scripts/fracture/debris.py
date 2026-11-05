@@ -110,33 +110,32 @@ def volume(V, F):
 
 def earclip(points):
     """Triangles of a simple counter-clockwise 2D polygon; collinear runs end as zero-area triangles."""
+    points = np.asarray(points, dtype=np.float64)
     index = list(range(len(points)))
     scale = max(np.ptp(points, axis=0).max(), 1e-9)
     eps = 1e-12 * scale * scale
     triangles = []
 
     def cross(a, b, c):
-        return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+        return (b[..., 0] - a[..., 0]) * (c[..., 1] - a[..., 1]) - (b[..., 1] - a[..., 1]) * (c[..., 0] - a[..., 0])
 
     while len(index) > 3:
+        ring = np.asarray(index)
+        a_all, b_all, c_all = points[np.roll(ring, 1)], points[ring], points[np.roll(ring, -1)]
+        areas = cross(a_all, b_all, c_all)
         best = None
-        for k in range(len(index)):
-            a, b, c = index[k - 1], index[k], index[(k + 1) % len(index)]
-            area = cross(points[a], points[b], points[c])
-            if area <= eps:
-                continue
-            if any(cross(points[a], points[b], points[j]) >= -eps and cross(points[b], points[c], points[j]) >= -eps
-                   and cross(points[c], points[a], points[j]) >= -eps
-                   for j in index if j not in (a, b, c) and not (np.array_equal(points[j], points[a]) or
-                                                                 np.array_equal(points[j], points[c]))):
-                continue
-            best = k
-            break
+        for k in np.flatnonzero(areas > eps):
+            a, b, c = a_all[k], b_all[k], c_all[k]
+            mask = np.ones(len(ring), dtype=bool)
+            mask[[k - 1, k, (k + 1) % len(ring)]] = False
+            rest = b_all[mask]
+            rest = rest[~(np.all(rest == a, axis=1) | np.all(rest == c, axis=1))]
+            if not np.any((cross(a, b, rest) >= -eps) & (cross(b, c, rest) >= -eps) & (cross(c, a, rest) >= -eps)):
+                best = int(k)
+                break
         if best is None:   # only collinear vertices left as candidates: clip the flattest
-            areas = [abs(cross(points[index[k - 1]], points[index[k]], points[index[(k + 1) % len(index)]]))
-                     for k in range(len(index))]
-            best = int(np.argmin(areas))
-            if areas[best] > eps:
+            best = int(np.argmin(np.abs(areas)))
+            if abs(areas[best]) > eps:
                 return None
         k = best
         triangles.append((index[k - 1], index[k], index[(k + 1) % len(index)]))
@@ -258,27 +257,36 @@ def near(a, b):
     return bool(np.all(a.lower - SHRINK <= b.upper + SHRINK) and np.all(b.lower - SHRINK <= a.upper + SHRINK))
 
 
-def candidates(cell, other=None):
-    """Cut planes: across each principal axis, between consecutive vertices and at the octiles; the planes
-    of the detail's own faces that run on into it (beside a notch or a tooth); and the faces of the hull
-    of another piece it overlaps, whose outer side keeps clear of that hull."""
-    centred = cell.V - cell.V.mean(0)
-    _, _, axes = np.linalg.svd(centred, full_matrices=False)
+def middles(cell):
+    """Planes across each principal axis, longest first, through the middle of the extent (between vertices).
+    The middle of a chord halves an arc radially: a bent stave or a hoop falls into arcs, not wedges."""
+    _, _, axes = np.linalg.svd(cell.V - cell.V.mean(0), full_matrices=False)
     planes = []
     for axis in axes:
-        axis = axis * (1 if axis[np.argmax(np.abs(axis))] > 0 else -1)
         values = np.unique(np.round(cell.V @ axis, 4))
-        middles = (values[1:] + values[:-1]) / 2 if other is None else np.array([])
-        if len(middles) > 32:
-            middles = middles[np.linspace(0, len(middles) - 1, 32).round().astype(int)]
-        low, high = values[0], values[-1]
-        octiles = low + (high - low) * np.arange(1, 8) / 8
-        for offset in np.unique(np.r_[middles, octiles]):
+        if len(values) > 1:
+            gap = int(np.clip(np.searchsorted(values, (values[0] + values[-1]) / 2), 1, len(values) - 1))
+            planes.append((axis, float(values[gap - 1] + values[gap]) / 2))
+    return planes
+
+
+def candidates(cell, other):
+    """Cut planes against another piece's hull: across each principal axis at the octiles (between vertices),
+    the planes of the detail's own faces that run on into it (beside a notch or a tooth), and the faces of
+    that hull, whose outer side keeps clear of it."""
+    _, _, axes = np.linalg.svd(cell.V - cell.V.mean(0), full_matrices=False)
+    planes = []
+    for axis in axes:
+        values = np.unique(np.round(cell.V @ axis, 4))
+        if len(values) < 2:
+            continue
+        gaps = np.clip(np.searchsorted(values, values[0] + np.ptp(values) * np.arange(1, 8) / 8), 1, len(values) - 1)
+        for offset in np.unique((values[gaps - 1] + values[gaps]) / 2):
             planes.append((axis, float(offset)))
     a, b, c = (cell.V[cell.F[:, k]] for k in range(3))
     normals = np.cross(b - a, c - a)
     lengths = np.linalg.norm(normals, axis=1)
-    seen = set()
+    seen, faces = set(), []
     for normal, length, point in zip(normals, lengths, a):
         if length < 1e-9:
             continue
@@ -290,8 +298,11 @@ def candidates(cell, other=None):
         seen.add(key)
         side = cell.V @ normal - offset
         if side.max() > 0.05 and side.min() < -0.05:     # the face's plane runs on through the detail
-            planes.append((normal, offset))
-    for plane in () if other is None else other.planes:
+            faces.append((normal, offset))
+    if len(faces) > 24:   # a smooth curved detail has many: an even sample of them
+        faces = [faces[i] for i in np.linspace(0, len(faces) - 1, 24).round().astype(int)]
+    planes.extend(faces)
+    for plane in other.planes:
         normal = plane[:3] / np.linalg.norm(plane[:3])
         offset = -plane[3] / np.linalg.norm(plane[:3]) + 1e-4
         side = cell.V @ normal - offset
@@ -300,10 +311,11 @@ def candidates(cell, other=None):
     return planes
 
 
-def split(cell, score, other=None):
-    """The two children of the cut with the lowest score(children) that leaves no sliver, or None."""
+def split(cell, planes, score=None):
+    """The children of the plane with the lowest score(children) that leaves no sliver; without a score the
+    first such plane. None when no plane serves."""
     scored = []
-    for axis, offset in candidates(cell, other):
+    for axis, offset in planes:
         parts = cut_mesh(cell.V, cell.F, axis, offset)
         if parts is None:
             continue
@@ -312,7 +324,7 @@ def split(cell, score, other=None):
         except QhullError:
             continue
         if min(c.volume for c in children) > 1e-6 * cell.volume:
-            scored.append((score(children), len(scored), children))
+            scored.append((score(children) if score else 0, len(scored), children))
     scored.sort(key=lambda item: item[:2])
     for key, _, children in scored:
         # a hull must keep a core after shrinking
@@ -338,20 +350,19 @@ def hulls(pieces, names):
     """Cells per piece: detail cuts to <= EXCESS, then cuts until no two pieces overlap by > OVERLAP."""
     cells = []
     for index, closed in enumerate(pieces):
-        for V, F in closed:
-            work = [Cell(index, V, F)]
-            while work:
-                cell = work.pop()
-                if cell.excess <= EXCESS:
-                    cells.append(cell)
-                    continue
-                best = split(cell, lambda children: sum(c.hull_volume for c in children))
-                if best is None:
-                    raise ValueError(f'{names[index]}: a detail cannot be cut below {EXCESS:.0%} hull excess')
-                work.extend(best[1][::-1])
-        count = sum(c.piece == index for c in cells)
-        if count > MAX_HULLS:
-            raise ValueError(f'{names[index]}: {count} hulls exceed {MAX_HULLS}')
+        work = [Cell(index, V, F) for V, F in closed][::-1]
+        while work:
+            cell = work.pop()
+            if cell.excess <= EXCESS:
+                cells.append(cell)
+                continue
+            if sum(c.piece == index for c in cells) + len(work) + 2 > MAX_HULLS:
+                raise ValueError(f'{names[index]}: more than {MAX_HULLS} hulls to keep each within '
+                                 f'{EXCESS:.0%} of its part of the detail')
+            best = split(cell, middles(cell))
+            if best is None:
+                raise ValueError(f'{names[index]}: a detail cannot be cut below {EXCESS:.0%} hull excess')
+            work.extend(best[1][::-1])
 
     depths = {}
 
@@ -384,8 +395,8 @@ def hulls(pieces, names):
                 continue
             target = cells[other]
             before = badness(cells[mine], target)
-            best = split(cells[mine], lambda children, t=target: (
-                sum(badness(c, t) for c in children), sum(c.hull_volume for c in children)), target)
+            best = split(cells[mine], candidates(cells[mine], target), lambda children, t=target: (
+                sum(badness(c, t) for c in children), sum(c.hull_volume for c in children)))
             if best is not None and best[0][0] < before * (1 - 1e-3):
                 options.append(((best[0][0] / before, best[0][1]), mine, best[1]))
         if not options:

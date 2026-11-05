@@ -30,7 +30,6 @@ from pathlib import Path
 import struct
 
 import numpy as np
-from PIL import Image
 
 DARK = 0.004            # mean linear luminance of an island below which it reads as a black patch
 SPLIT_WANDER = 0.0015   # m, sideways wander of a split along the grain
@@ -38,6 +37,7 @@ SPLIT_RUNOUT = 0.012    # m, the most a split drifts across the board from end t
 SPLIT_SLANT = 0.002     # m, offset of the split between the two faces of the board
 TOOTH = (0.02, 0.04)    # m, peak-to-valley of the torn edge
 SPLINTER = (0.05, 0.08) # m, length of the splinter beyond the torn edge
+BREAK_SLANT = (0.0015, 0.003)  # m, the tension face torn further: at most 1% stretch of the end's uv on a facet
 NAIL_CLEAR = 0.015      # m, a split or a break keeps this far from a nail head
 
 
@@ -213,7 +213,7 @@ class Board:
     def front_strip(self, axis, coords, centre):
         """A dark edge (axis 1) or end (axis 0) shown on a strip of the front of the same size: its (l, n) or
         (w, n) laid on the front around l = centre or w = centre, thickness along the other coordinate."""
-        t = self.size[2] / self.size[1 - axis]          # thickness in units of the strip's direction
+        t = self.size[2] / self.size[axis]              # thickness in units of the front's coordinate it lies on
         centre = float(np.clip(centre, -1 + t, 1 - t))
         a, n = coords[:, 0], coords[:, 1]
         if axis == 1:                                    # an edge: (l, n) -> front (l, centre + n t)
@@ -395,7 +395,7 @@ def broken(name, board, rng, nails_lw):
     l_top[k] = (l_top[k - 1] + l_top[k + 1]) / 2 + rng.uniform(*SPLINTER) / half_l   # ... runs out far
     if rng.uniform() < 0.5:                                        # it may belong to either half
         l_top = 2 * at - l_top
-    slant = rng.choice([-1, 1]) * rng.uniform(0.004, 0.01) / half_l
+    slant = rng.choice([-1, 1]) * rng.uniform(*BREAK_SLANT) / half_l
     top, bottom = np.c_[l_top, w], np.c_[l_top + slant, w]
     m = len(w)
     first = Piece(f'{name}-half-1', board,
@@ -415,6 +415,7 @@ def build(glb: Path, albedo: Path, out: Path, seed: int) -> dict:
     if groups.count('WOOD') != 1 or groups.count('METAL') != 1:
         raise ValueError(f'{glb}: expected one WOOD and one METAL primitive')
     wood, iron = primitives[groups.index('WOOD')], primitives[groups.index('METAL')]
+    from PIL import Image   # only here: the board geometry is tested without pillow (scripts/fracture)
     image = np.asarray(Image.open(albedo).convert('RGB'), dtype=np.float64) / 255
     lum = (image ** 2.2) @ np.array([.2126, .7152, .0722])
     size = np.array(lum.shape[::-1])
