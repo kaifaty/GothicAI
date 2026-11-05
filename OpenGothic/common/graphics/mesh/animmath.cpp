@@ -6,8 +6,8 @@ static float mix(float x,float y,float a){
   return x+(y-x)*a;
   }
 
-zenkit::Quat slerp(const zenkit::Quat& x, const zenkit::Quat& y, float a) {
-  zenkit::Quat z = y;
+asset::Quat slerp(const asset::Quat& x, const asset::Quat& y, float a) {
+  asset::Quat z = y;
 
   float cosTheta = x.x*y.x +x.y*y.y + x.z*y.z + x.w*y.w;
   // If cosTheta < 0, the interpolation will take the long way around the sphere.
@@ -23,7 +23,7 @@ zenkit::Quat slerp(const zenkit::Quat& x, const zenkit::Quat& y, float a) {
   // Perform a linear interpolation when cosTheta is close to 1 to avoid side effect of sin(angle) becoming a zero denominator
   if(cosTheta > 1.f - std::numeric_limits<float>::epsilon()) {
     // Linear interpolation
-    return zenkit::Quat(mix(x.w, z.w, a),
+    return asset::Quat(mix(x.w, z.w, a),
                         mix(x.x, z.x, a),
                         mix(x.y, z.y, a),
                         mix(x.z, z.z, a));
@@ -34,7 +34,7 @@ zenkit::Quat slerp(const zenkit::Quat& x, const zenkit::Quat& y, float a) {
   float kx  = std::sin((1.f - a) * angle);
   float kz  = std::sin(a * angle);
   float div = std::sin(angle);
-  return zenkit::Quat((x.w*kx + z.w*kz)/div,
+  return asset::Quat((x.w*kx + z.w*kz)/div,
                       (x.x*kx + z.x*kz)/div,
                       (x.y*kx + z.y*kz)/div,
                       (x.z*kx + z.z*kz)/div);

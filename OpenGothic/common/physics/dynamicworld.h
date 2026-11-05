@@ -373,7 +373,7 @@ class DynamicWorld final {
     struct BBoxBody final {
       public:
         BBoxBody() = default;
-        BBoxBody(DynamicWorld* wrld, BBoxCallback* cb, const zenkit::AxisAlignedBoundingBox& bbox);
+        BBoxBody(DynamicWorld* wrld, BBoxCallback* cb, const asset::Aabb& bbox);
         BBoxBody(DynamicWorld* wrld, BBoxCallback* cb, const Tempest::Vec3& pos, float R);
         BBoxBody(BBoxBody&& other);
         ~BBoxBody();
@@ -674,7 +674,7 @@ class DynamicWorld final {
                                                const Tempest::Matrix4x4& objectMatrix);
 
     BulletBody*    bulletObj(BulletCallback* cb);
-    BBoxBody       bboxObj(BBoxCallback* cb, const zenkit::AxisAlignedBoundingBox& bbox);
+    BBoxBody       bboxObj(BBoxCallback* cb, const asset::Aabb& bbox);
     BBoxBody       bboxObj(BBoxCallback* cb, const Tempest::Vec3& pos, float R);
 
     void           tick(uint64_t dt);

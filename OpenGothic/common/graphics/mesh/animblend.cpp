@@ -16,7 +16,7 @@ using namespace Tempest;
 
 namespace {
 
-using Quat = zenkit::Quat;
+using Quat = asset::Quat;
 
 constexpr uint64_t MaxGap   = 250;     // ms between two frames: longer, and the velocity is not known
 constexpr float    MaxSpeed = 3000.f;  // cm/s of a bone in its parent
@@ -34,12 +34,12 @@ bool enabled = []() {
 
 AnimBlend::Params prm;
 
-Vec3 vec(const zenkit::Vec3& v) {
+Vec3 vec(const asset::Vec3& v) {
   return Vec3(v.x,v.y,v.z);
   }
 
-zenkit::Vec3 vec(const Vec3& v) {
-  return zenkit::Vec3(v.x,v.y,v.z);
+asset::Vec3 vec(const Vec3& v) {
+  return asset::Vec3(v.x,v.y,v.z);
   }
 
 float dot(const Vec3& a, const Vec3& b) {

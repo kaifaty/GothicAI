@@ -46,7 +46,7 @@ void LightSource::setColor(const std::vector<uint32_t>& arr, float fps, bool smo
   colorAniListFpsInv = arr.size()>0 ? uint64_t(1000.0/fps) : 0;
   }
 
-void LightSource::setColor(const std::vector<zenkit::Color>& arr, float fps, bool smooth) {
+void LightSource::setColor(const std::vector<asset::Color>& arr, float fps, bool smooth) {
   colorSmooth = smooth;
   if(arr.size()==1) {
     setColor({static_cast<float>(arr[0].r)/255.f, static_cast<float>(arr[0].g)/255.f, static_cast<float>(arr[0].b)/255.f});

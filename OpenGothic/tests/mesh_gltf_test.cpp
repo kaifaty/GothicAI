@@ -854,7 +854,7 @@ void modelGpuGeometry(const Fixture& fixture, Tempest::Device& device, std::stri
     device.readBytes(attachment.vbo,vertices.data(),vertices.size()*sizeof(vertices[0]));
     device.readBytes(attachment.ibo,indices.data(),indices.size()*sizeof(indices[0]));
     const auto& global = expected.tr[node];
-    const auto sourceNormal = multi ? (node==0 ? zenkit::Vec3{0,0,1} : zenkit::Vec3{-1,0,0}) :
+    const auto sourceNormal = multi ? (node==0 ? asset::Vec3{0,0,1} : asset::Vec3{-1,0,0}) :
                                      source.sub_meshes[0].wedges[0].normal;
     const auto points = modelGlbPoints(multi,node);
     Tempest::Vec3 localNormal {

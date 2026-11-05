@@ -250,8 +250,8 @@ struct Transform {
       reject("singular node transform");
     }
 
-  zenkit::Vec3 position(const float* value) const {
-    zenkit::Vec3 result;
+  asset::Vec3 position(const float* value) const {
+    asset::Vec3 result;
     for(unsigned axis=0; axis<3; ++axis) {
       const double v = double(matrix[axis])*value[0] + double(matrix[axis+4])*value[1] +
                        double(matrix[axis+8])*value[2] + matrix[axis+12];
@@ -262,7 +262,7 @@ struct Transform {
     return result;
     }
 
-  zenkit::Vec3 normal(const float* value) const {
+  asset::Vec3 normal(const float* value) const {
     double transformed[3];
     for(unsigned axis=0; axis<3; ++axis)
       transformed[axis] = (cofactor[axis*3]*value[0] + cofactor[axis*3+1]*value[1] +
