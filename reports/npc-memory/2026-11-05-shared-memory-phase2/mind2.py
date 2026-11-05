@@ -557,9 +557,6 @@ async def answer(
     *,
     probes: Path,
     source: Path,
-    per_conv: int | None = None,
-    slot: int = SLOT,
-    quick_at: str | None = None,
     quick: LLMBackend | None = None,
 ) -> None:
     world = stand.World.of(directory)
@@ -569,12 +566,11 @@ async def answer(
         if r.get("error") is None and r.get("note", "").strip()
     }
     listed, where = stand.load_probes(probes)
-    plan, skipped = stand.schedule(listed, set(notes), per_conv)
+    plan, skipped = stand.schedule(listed, set(notes))
     stand.write_json(
         directory / "schedule.json",
         {
             "probes": where,
-            "per_conv": per_conv,
             "from": str(source),
             "asked": [[p["id"], c] for p, c in plan],
             "skipped": skipped,
@@ -620,14 +616,14 @@ async def answer(
         return
     own = quick is None
     if quick is None:
-        quick = pilot.make_quick(pilot.gemma_url(quick_at), max_tokens=300)
+        quick = pilot.make_quick(pilot.gemma_url(None), max_tokens=300)
     try:
         for probe, c in pending:
             ctx = stand.asked(world, c)
             note = notes[c]["note"]
             messages = note_messages(ctx, probe["phrase"], note)
             result = await pilot.measure(
-                quick, ctx.talk.instructions, messages, prefix=messages[:-1], slot=slot
+                quick, ctx.talk.instructions, messages, prefix=messages[:-1], slot=SLOT
             )
             timings = result.get("timings") or {}
             result["prompt_tokens"] = (timings.get("prompt_n") or 0) + (timings.get("cache_n") or 0) or None
@@ -808,14 +804,14 @@ async def judge(
 # --- blind sheet ------------------------------------------------------------------------------------
 
 
-def sheet(directory: Path, seed: int = stand.SEED) -> list[dict[str, Any]]:
+def sheet(directory: Path) -> list[dict[str, Any]]:
     """As phase 1's sheet: three answers to a probe, A–C in a shuffled order; the key is a separate file."""
     plan = stand.read_json(directory / "schedule.json")
     if plan is None:
         raise SystemExit(f"{directory}: no schedule.json — run answer first")
     probes = {p["id"]: p for p in stand.load_probes(Path(plan["probes"]))[0]}
     answers = {_answer_key(r): r for r in pilot.rows(directory / "answers.jsonl")}
-    rng, entries, key = random.Random(seed), [], {}
+    rng, entries, key = random.Random(stand.SEED), [], {}
     for probe_id, conv in plan["asked"]:
         trio = {v: answers.get((probe_id, conv, v)) for v in SHEET}
         if any(a is None or a.get("error") is not None for a in trio.values()):
@@ -839,7 +835,7 @@ def sheet(directory: Path, seed: int = stand.SEED) -> list[dict[str, Any]]:
         )
         key[name] = dict(zip("ABC", order, strict=True))
     stand.write_json(directory / "sheet.json", entries)
-    stand.write_json(directory / "sheet_key.json", {"seed": seed, "key": key})
+    stand.write_json(directory / "sheet_key.json", {"seed": stand.SEED, "key": key})
     return entries
 
 
@@ -1439,9 +1435,6 @@ def main() -> int:
     command.add_argument("directory", type=Path)
     command.add_argument("--probes", type=Path, required=True)
     command.add_argument("--from", dest="source", type=Path, required=True, help="the phase 1 run")
-    command.add_argument("--per-conv", type=int, help="at most this many probes asked after one talk")
-    command.add_argument("--slot", type=int, default=SLOT)
-    command.add_argument("--quick-at", help="Gemma's /v1 address (else settings.toml)")
     command = commands.add_parser("judge")
     command.add_argument("directory", type=Path)
     command.add_argument("--v3", type=Path, default=V3_DIR)
@@ -1450,7 +1443,6 @@ def main() -> int:
     )
     command = commands.add_parser("sheet")
     command.add_argument("directory", type=Path)
-    command.add_argument("--seed", type=int, default=stand.SEED)
     command = commands.add_parser("summary")
     command.add_argument("directory", type=Path)
     command.add_argument("--v3", type=Path, default=V3_DIR)
