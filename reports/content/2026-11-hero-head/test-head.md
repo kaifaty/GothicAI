@@ -64,6 +64,10 @@ BLENDER_USER_RESOURCES=~/.local/share/gothic-ai/mpfb/blender \
 TEMPEST_WINDOW_SIZE=1920x1080 BENCH_HOST=ryzen scripts/bench.sh scripts/bench/hero-head.bench <каталог>
 ```
 
+Клипы оригинала сняты 2026-11-05 на Ryzen и лежат вне git, в `~/.local/share/gothic-ai/remaster/hero-head/baseline-1/`: `quiet`, `friendly`, `angry`, `hostile`, `frightened`, `hurt`, `speak`, `behind`.
+
+![Оригинал: покой, злость, испуг (верхний ряд, кадр через секунду); реплика в диалоге, бег со спины](baseline-original.jpg)
+
 ## Губы героя, когда говорит игрок
 
 Сверено по коду: **губы героя не двигаются.**
