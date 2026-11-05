@@ -491,13 +491,14 @@ if(NOT ANDROID AND NOT IOS)
   target_link_libraries(gothic-placed-items-contract PRIVATE OpenGothic AiBridge gothic-base-import)
   # The society stand's world (docs/society-sim.md): runs gothic-body-runner --society-export twice on the
   # game's data (GOTHIC_DIR) and checks it against evals/npc-decisions/day_people.json and places.json.
-  add_executable(gothic-society-export-contract EXCLUDE_FROM_ALL tests/society_export_contract.cpp)
-  add_dependencies(gothic-society-export-contract gothic-body-runner)
-  target_include_directories(gothic-society-export-contract SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
-  target_compile_definitions(gothic-society-export-contract PRIVATE
-    SOCIETY_RUNNER="$<TARGET_FILE:gothic-body-runner>"
-    SOCIETY_REPO="${CMAKE_CURRENT_SOURCE_DIR}/..")
-  if(NOT MSVC)
+  # Only where the runner exists (UNIX, see above).
+  if(TARGET gothic-body-runner)
+    add_executable(gothic-society-export-contract EXCLUDE_FROM_ALL tests/society_export_contract.cpp)
+    add_dependencies(gothic-society-export-contract gothic-body-runner)
+    target_include_directories(gothic-society-export-contract SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
+    target_compile_definitions(gothic-society-export-contract PRIVATE
+      SOCIETY_RUNNER="$<TARGET_FILE:gothic-body-runner>"
+      SOCIETY_REPO="${CMAKE_CURRENT_SOURCE_DIR}/..")
     target_compile_options(gothic-society-export-contract PRIVATE -Wall -Wconversion -Werror)
   endif()
   add_executable(gothic-bodyimpact-contract EXCLUDE_FROM_ALL tests/bodyimpact_contract.cpp)
