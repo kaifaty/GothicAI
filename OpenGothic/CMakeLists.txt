@@ -659,7 +659,7 @@ if(NOT ANDROID AND NOT IOS)
     COMMAND $<TARGET_FILE:gothic-navigation-roads-contract>
     DEPENDS gothic-navigation-roads-contract USES_TERMINAL)
   add_executable(gothic-followtrail-contract EXCLUDE_FROM_ALL
-    tests/followtrail_contract.cpp common/game/followtrail.cpp)
+    tests/followtrail_contract.cpp common/game/followtrail.cpp common/game/navigationpassage.cpp)
   target_include_directories(gothic-followtrail-contract PRIVATE
     common lib/Tempest/Engine/include lib/Tempest/Engine)
   if(NOT MSVC)
