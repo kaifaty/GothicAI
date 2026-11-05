@@ -29,6 +29,7 @@ data/
 !/data/society/
 /data/society/*
 !/data/society/config.json
+!/data/society/protected.json
 !/data/content/
 /data/content/*
 !/data/content/registry.jsonl
