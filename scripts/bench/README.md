@@ -42,6 +42,9 @@ overrides the dev-ubuntu SSH alias (default `dev-ubuntu`); dispatch uses
 execution (`auto` falls back, an explicit remote host exits with code 2).
 `NO_BUILD=1` only skips a local build; remote hosts always check the engine source hash.
 
+A line `# @timeout <seconds>` in the scenario sets how long its game may take (default 300 s); an explicit
+`TIMEOUT` wins.
+
 A line `# @headless` in the scenario selects `gothic-body-runner --game-parity --mode lockstep`,
 without a window, GPU or sound. `BENCH_HEADLESS=1` selects this path for any scenario;
 `BENCH_HEADLESS=0` selects the window even for a marked scenario. `KEEP=1` with the headless path

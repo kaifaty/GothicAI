@@ -27,7 +27,8 @@ constexpr float LineAwayMs[2] = {600,1500}; // its line starts: it looks away so
 constexpr float EndOfLine  = 800.f;  // ms: the last of its line it looks at the other one's eyes
 constexpr float ForwardCm  = 500.f;  // with nothing to look at the point is this far...
 constexpr float ForwardOff = 15.f;   // ...and when the head turns it this far in the socket, it is forward again
-constexpr float Behind     = 100.f;  // degrees from the face's forward: a target further back is not looked at
+constexpr float Behind     = 160.f;  // degrees from the face's forward: a target further back is not looked at (short
+                                     // of it the eyes wait at their limit toward it while the head turns)
 
 struct Fixations final {
   float eye, mouth;  // the chance of a look at its eyes, at its mouth; the rest: away
