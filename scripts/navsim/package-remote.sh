@@ -27,9 +27,9 @@ if [[ "${1:-}" != run ]]; then
     ssh ryzen "mv -T '$incoming' '$before' 2>/dev/null || { test -d '$before' && rm -rf '$incoming'; }"
   fi
   GQ_OWNER=nav-sim-stand-package "$root/scripts/gq" submit \
-    --class batch --threads 4 --cpu-quota 400% --mem 6G --max 3h \
+    --class batch --threads 4 --cpu-quota 400% --mem 6G --max 2h \
     --archive "$task/raw-$revision" --name "navsim S4a ${revision:0:12}" -- \
-    python3 -X faulthandler -I "$source/scripts/nav_job.py" --max-seconds 10800 -- \
+    python3 -X faulthandler -I "$source/scripts/nav_job.py" --max-seconds 7200 -- \
     bash "$source/scripts/navsim/package-remote.sh" run "$task" "$revision" "$baseline"
   exit
 fi
