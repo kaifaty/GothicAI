@@ -210,15 +210,15 @@ def check(root: Path, config: dict, base: str, *, today: date | None = None) -> 
             after = len(blobs[path].splitlines())
             measure = "строк"
             title = "Техдолг: горячий файл растёт"
-            message = (f"Горячий файл вырос на {after - before} строк ({before} → {after}). "
+            message = (f"Строк в горячем файле: {before} → {after} (+{after - before}). "
                        "Новый код — в новые файлы; рост, уже влитый в main, не считается.")
         else:
             before = item["metrics"]["bytes"]
             after = now_section_bytes(blobs[path]) or 0
             measure = "байт раздела"
             title = "Техдолг: раздел «Как работает сейчас» растёт"
-            message = (f"Раздел «Как работает сейчас» вырос на {after - before} байт ({before} → {after}) "
-                       f"и уже выше порога {config['doc-now']['open_score']} байт. "
+            message = (f"Байт в разделе «Как работает сейчас»: {before} → {after} (+{after - before}); "
+                       f"порог открытия — {config['doc-now']['open_score']}. "
                        "Подробности — в отдельный документ или в «План и журнал».")
         if after <= before:
             continue

@@ -476,7 +476,7 @@ def test_check_hotspot_annotation_exit_and_summary(ratchet_repository, config, m
     check = debt.check
     monkeypatch.setattr(debt, "check", lambda root, cfg, base: check(root, cfg, base, today=today))
     assert debt.main(["check", "--base", "main"]) == exit_code
-    message = ("Горячий файл вырос на 2 строк (20 → 22). Новый код — в новые файлы; "
+    message = ("Строк в горячем файле: 20 → 22 (+2). Новый код — в новые файлы; "
                "рост, уже влитый в main, не считается.")
     if level == "warning":
         message += " Пока это предупреждение; с 2026-11-19 такой рост не пройдёт проверку."
@@ -557,8 +557,8 @@ def test_check_document_section_growth(ratchet_repository, config, monkeypatch, 
         after = before + len("ещё\n".encode())
         assert output == (
             f"::warning file={path},title=Техдолг%3A раздел «Как работает сейчас» растёт::"
-            f"Раздел «Как работает сейчас» вырос на {after - before} байт ({before} → {after}) "
-            f"и уже выше порога {config['doc-now']['open_score']} байт. "
+            f"Байт в разделе «Как работает сейчас»: {before} → {after} (+{after - before}); "
+            f"порог открытия — {config['doc-now']['open_score']}. "
             "Подробности — в отдельный документ или в «План и журнал». "
             "Пока это предупреждение; с 2026-11-19 такой рост не пройдёт проверку.\n")
         assert f"| {path} | байт раздела | {before} | {after} | +{after - before} |" in summary.read_text()
