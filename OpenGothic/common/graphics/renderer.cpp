@@ -208,7 +208,7 @@ void Renderer::setupSettings() {
     const char* env = std::getenv("OPENGOTHIC_VSM_LAMP_SOFT");
     settings.vsmLampSoft = env!=nullptr ? std::string_view(env)!="0" : Gothic::settingsGetI("INTERNAL","vsmLampSoft")!=0;
     static int logged = -1;
-    if(logged!=int(settings.vsmLampSoft)) {
+    if(settings.vsmEnabled && logged!=int(settings.vsmLampSoft)) {
       logged = int(settings.vsmLampSoft);
       Log::i("vsm: lamp shadows = ", settings.vsmLampSoft ? "soft (pcss)" : "hard (one gather)",
              env!=nullptr ? " by OPENGOTHIC_VSM_LAMP_SOFT" : " by [INTERNAL] vsmLampSoft");
