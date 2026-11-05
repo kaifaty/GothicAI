@@ -67,6 +67,9 @@ class MtCommandBuffer : public AbstractGraphicsApi::CommandBuffer {
     void copy          (AbstractGraphicsApi::Buffer& dst, size_t offset,
                         AbstractGraphicsApi::Texture& src, uint32_t width, uint32_t height, uint32_t mip) override;
     void upscale       (AbstractGraphicsApi::Texture& src, AbstractGraphicsApi::Texture& dst) override;
+    void upscaleTemporal(AbstractGraphicsApi::Texture& color, AbstractGraphicsApi::Texture& depth,
+                         AbstractGraphicsApi::Texture& motion, AbstractGraphicsApi::Texture& dst,
+                         const TemporalUpscaleDesc& desc) override;
 
   private:
     enum EncType:uint8_t {

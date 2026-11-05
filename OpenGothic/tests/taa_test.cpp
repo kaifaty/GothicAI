@@ -180,9 +180,42 @@ void cameraJump() {
   }
 }
 
+// the temporal upscale (graphics plan 1г): Apple's phase count and mip bias, and the longer sequence stays in a pixel
+void upscaleSequence() {
+  require(Taa::upscalePhases(1728, 959, 3456, 1918)==32, "2x upscale is not 32 phases");
+  require(Taa::upscalePhases(2315, 1285, 3456, 1918)==18, "1.5x upscale is not 18 phases");
+  require(Taa::upscalePhases(2592, 1438, 3456, 1918)==15, "1.33x upscale is not 15 phases");
+  require(Taa::upscalePhases(3456, 1918, 3456, 1918)==Taa::Phases, "no upscale is not TAA's phases");
+  require(std::abs(Taa::upscaleMipBias(1728, 3456) + 2.f)<1e-6f, "2x mip bias is not -2");
+  require(std::abs(Taa::upscaleMipBias(3456, 3456) + 1.f)<1e-6f, "1x mip bias is not -1");
+  for(uint32_t phases : {18u, 32u}) {
+    float sx = 0, sy = 0;
+    for(uint32_t i=0; i<phases; ++i) {
+      const Vec2 j = Taa::jitterPx(i, phases);
+      require(std::abs(j.x)<=0.5f && std::abs(j.y)<=0.5f, "upscale jitter beyond half a pixel");
+      for(uint32_t k=0; k<i; ++k) {
+        const Vec2 o = Taa::jitterPx(k, phases);
+        require(o.x!=j.x || o.y!=j.y, "upscale jitter phase repeats");
+        }
+      const Vec2 again = Taa::jitterPx(i+phases, phases);
+      require(again.x==j.x && again.y==j.y, "upscale jitter does not repeat after its phases");
+      sx += j.x;
+      sy += j.y;
+      }
+    // Halton from index 1 is not centred: -0.036/-0.033 px at 18 phases, -0.015/-0.019 at 32; the scaler knows each one
+    require(std::abs(sx/float(phases))<0.06f && std::abs(sy/float(phases))<0.06f, "upscale jitter mean is not about zero");
+    }
+  // TAA's sequence is the first 8 of them
+  for(uint32_t i=0; i<Taa::Phases; ++i) {
+    const Vec2 a = Taa::jitterPx(i), b = Taa::jitterPx(i, 32);
+    require(a.x==b.x && a.y==b.y, "TAA jitter changed");
+    }
+  }
+
 int main() {
   try {
     jitterSequence();
+    upscaleSequence();
     staticCamera();
     movingCamera();
     cameraJump();

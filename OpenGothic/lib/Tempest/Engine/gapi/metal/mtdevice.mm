@@ -7,6 +7,7 @@
 #include <Tempest/Log>
 #include <Foundation/NSProcessInfo.h>
 #include <objc/runtime.h>
+#include <chrono>
 #include <cstdlib>
 // #include <Metal/MTLPixelFormat.h>
 
@@ -321,6 +322,55 @@ MTLFX::SpatialScaler& MtDevice::spatialScaler(MTL::Texture& src, MTL::Texture& d
   return *scalers.back();
   }
 
+MTLFX::TemporalScaler& MtDevice::temporalScaler(MTL::Texture& color, MTL::Texture& depth, MTL::Texture& motion,
+                                                MTL::Texture& dst) {
+  std::lock_guard<std::mutex> guard(scalerSync);
+  // the scaler keeps the history: a new one only for new sizes or formats
+  for(auto& s:temporalScalers) {
+    if(s->inputWidth()==color.width() && s->inputHeight()==color.height() &&
+       s->outputWidth()==dst.width() && s->outputHeight()==dst.height() &&
+       s->colorTextureFormat()==color.pixelFormat() && s->depthTextureFormat()==depth.pixelFormat() &&
+       s->motionTextureFormat()==motion.pixelFormat() && s->outputTextureFormat()==dst.pixelFormat())
+      return *s;
+    }
+
+  auto pool = NsPtr<NS::AutoreleasePool>::init();
+  auto desc = NsPtr<MTLFX::TemporalScalerDescriptor>::init();
+  desc->setInputWidth  (color.width());
+  desc->setInputHeight (color.height());
+  desc->setOutputWidth (dst.width());
+  desc->setOutputHeight(dst.height());
+  desc->setColorTextureFormat (color.pixelFormat());
+  desc->setDepthTextureFormat (depth.pixelFormat());
+  desc->setMotionTextureFormat(motion.pixelFormat());
+  desc->setOutputTextureFormat(dst.pixelFormat());
+  // input is linear HDR, already multiplied by the exposure: preExposure 1, no exposure texture
+  desc->setAutoExposureEnabled(false);
+  // the final upscaler from the first frame: without it MetalFX starts with a slower one and compiles the fast one
+  // in the background, and a frame time measured then is not the scaler's
+  desc->setRequiresSynchronousInitialization(true);
+
+  // On macOS 27 the scaler is a network: its first creation compiles it for the Neural Engine, which takes a while
+  const auto started = std::chrono::steady_clock::now();
+  auto scaler = NsPtr<MTLFX::TemporalScaler>(desc->newTemporalScaler(impl.get()));
+  if(scaler==nullptr)
+    throw std::system_error(Tempest::GraphicsErrc::UnsupportedExtension);
+  const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-started).count();
+  Log::i("metalfx: temporal scaler ", color.width(), "x", color.height(), " -> ", dst.width(), "x", dst.height(),
+         " made in ", int64_t(ms), " ms");
+  if((color .usage() & scaler->colorTextureUsage()) !=scaler->colorTextureUsage()  ||
+     (depth .usage() & scaler->depthTextureUsage()) !=scaler->depthTextureUsage()  ||
+     (motion.usage() & scaler->motionTextureUsage())!=scaler->motionTextureUsage() ||
+     (dst   .usage() & scaler->outputTextureUsage())!=scaler->outputTextureUsage())
+    throw std::system_error(Tempest::GraphicsErrc::InvalidTexture);
+
+  // as with the spatial scalers: frames in flight may still use the older ones
+  if(temporalScalers.size()>=2)
+    temporalScalers.erase(temporalScalers.begin());
+  temporalScalers.emplace_back(std::move(scaler));
+  return *temporalScalers.back();
+  }
+
 void MtDevice::deductProps(AbstractGraphicsApi::Props& prop, MTL::Device& dev) {
   int32_t majorVersion = 0, minorVersion = 0;
   if([[NSProcessInfo processInfo] respondsToSelector:@selector(operatingSystemVersion)]) {
@@ -339,13 +389,13 @@ void MtDevice::deductProps(AbstractGraphicsApi::Props& prop, MTL::Device& dev) {
                                       TextureFormat::R16,  TextureFormat::RG16,  TextureFormat::RGBA16,
                                       TextureFormat::R32F, TextureFormat::RG32F, TextureFormat::RGBA32F,
                                       TextureFormat::R32U, TextureFormat::RG32U, TextureFormat::RGBA32U,
-                                      TextureFormat::R11G11B10UF, TextureFormat::RGBA16F,
+                                      TextureFormat::R11G11B10UF, TextureFormat::RGBA16F, TextureFormat::RG16F,
                                      };
 
   static const TextureFormat att[] = {TextureFormat::R8,   TextureFormat::RG8,   TextureFormat::RGBA8,
                                       TextureFormat::R16,  TextureFormat::RG16,  TextureFormat::RGBA16,
                                       TextureFormat::R32F, TextureFormat::RG32F, TextureFormat::RGBA32F,
-                                      TextureFormat::R11G11B10UF, TextureFormat::RGBA16F,
+                                      TextureFormat::R11G11B10UF, TextureFormat::RGBA16F, TextureFormat::RG16F,
                                      };
 
   static const TextureFormat sso[] = {TextureFormat::R8,   TextureFormat::RG8,   TextureFormat::RGBA8,
@@ -486,7 +536,8 @@ void MtDevice::deductProps(AbstractGraphicsApi::Props& prop, MTL::Device& dev) {
   prop.anisotropy    = true;
   prop.maxAnisotropy = 16;
 
-  prop.spatialUpscale = MTLFX::SpatialScalerDescriptor::supportsDevice(&dev);
+  prop.spatialUpscale  = MTLFX::SpatialScalerDescriptor::supportsDevice(&dev);
+  prop.temporalUpscale = MTLFX::TemporalScalerDescriptor::supportsDevice(&dev);
 
 #ifdef __IOS__
   if(dev.supportsFeatureSet(MTL::FeatureSet_iOS_GPUFamily3_v2))
