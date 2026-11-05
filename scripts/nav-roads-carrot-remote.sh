@@ -14,7 +14,8 @@
 #   bash scripts/nav-roads-carrot-remote.sh clean    # remove ~/gothic-ai/<task>; refuses while a queued or
 #                                                    # running job of this owner uses it
 # NAV_ROADS_TASK names the task (default nav-roads-carrot): ~/gothic-ai/<task>/ and /mnt/shared/gothic-ai/<task>/.
-# NAV_ROADS_MAIN_REVISION pins the main commit (default origin/main), so later stages compare with the same main.
+# NAV_ROADS_MAIN_REVISION pins the "before" commit (default origin/main), so later stages compare with the same one.
+# NAV_ROADS_CLOSED_TRACE=N writes roads-closed.jsonl (diagnosis: memory cells that closed passages, N lines/episode).
 # Jobs use immutable snapshots in ~/gothic-ai/<task>/{source,main}/<hash>.
 # Results: /mnt/shared/gothic-ai/<task>/{point,teacher}-{before,after}-<runner sha256[:12]>/, repeat-before-<sha>/,
 # live-<game sha256[:12]>/ and liveset-<game sha256[:12]>/: resume continues only episodes of the same
@@ -86,6 +87,7 @@ ACTIVE
   GQ_OWNER="$task_name" "$ROOT/scripts/gq" submit "${resources[@]}" --name "nav roads $stage $snapshot" -- \
     python3 -X faulthandler -I "$task/source/$snapshot/scripts/nav_job.py" --max-seconds "$seconds" -- \
     env NAV_ROADS_TASK="$task_name" NAV_ROADS_CARROT_ARCHIVE="$archive" NAV_ROADS_REPLAY_ARGS="${NAV_ROADS_REPLAY_ARGS:-}" \
+    OPENGOTHIC_NAV_ROADS_CLOSED_TRACE="${NAV_ROADS_CLOSED_TRACE:-}" \
     bash "$task/source/$snapshot/scripts/nav-roads-carrot-remote.sh" run "$stage" "$snapshot" "$main_revision"
   exit
 fi
@@ -96,11 +98,15 @@ task="$HOME/gothic-ai/$task_name"
 source="$task/source/$snapshot"
 stop() { echo "nav-roads-carrot $stage: $*" >&2; exit 1; }
 [[ -d "$source/scripts" ]] || stop "missing source snapshot $source"
-mkdir -p "$archive/logs" "$task/tmp/$stage" "$task/input"
+mkdir -p "$archive/logs" "$task/tmp/$stage" "$task/locks"
 # Stages may run at once: each keeps its own builds and navmesh copies and removes only those.
 builds="$task/build-$stage"
 export NAV_ROADS_NAVMESH="$task/navmesh-$stage"
 exec > >(tee -a "$archive/logs/$stage.log") 2>&1
+# One job per stage from build to cleanup: a second one would share its build folder.
+# The lock lives on the local disk (flock on the CIFS share is not reliable).
+exec {stage_lock}>"$task/locks/$stage.lock"
+flock -n "$stage_lock" || stop "another $stage job of $task_name holds $task/locks/$stage.lock"
 trap 'printf "%s_%s_exit=%s snapshot=%s main=%s\n" "${task_name//-/_}" "$stage" "$?" "$snapshot" "$main_revision"' EXIT
 export TMPDIR="$task/tmp/$stage" UV_CACHE_DIR="$task/uv-cache" CCACHE_DIR="$task/ccache"
 export VULKAN_SDK="$HOME/gothic-ai/body-baseline/toolchain/vulkan-1.4.341.0"
@@ -113,8 +119,11 @@ df -h "$HOME" /mnt/shared
 python3 -c 'import pathlib,shutil; assert shutil.disk_usage(pathlib.Path.home()).free >= 26*1024**3, "Less than 26 GiB free"'
 [[ "$(sha256sum "$weights" | cut -d' ' -f1)" == "$weights_sha256" ]] || stop "v5 weights differ from $weights_sha256"
 python="$task/venv/bin/python"
-if [[ ! -x "$python" ]]; then uv venv --python 3.12 "$task/venv"; fi
-uv pip install --python "$python" numpy pillow matplotlib
+( # The task venv is shared by the stages: one creates and fills it at a time.
+  flock 8
+  if [[ ! -x "$python" ]]; then uv venv --python 3.12 "$task/venv"; fi
+  uv pip install --python "$python" numpy pillow matplotlib
+) 8>"$task/locks/venv.lock"
 if [[ "$stage" == replay ]]; then
   # Light and offline: no game, world or policy; the navmesh is the oracle of the measurement.
   eval "replay_args=($NAV_ROADS_REPLAY_ARGS)"
@@ -134,8 +143,8 @@ game_environment() { # CONVERTER: the base of this engine format from the shared
   eval "$("$python" scripts/ryzen_game.py --converter "$1")"
   selected="$OPENGOTHIC_BASE_FINGERPRINT"
   [[ -d "/mnt/shared/gothic-ai/base/$selected" ]] || stop "no shared base $selected for this engine format"
-  ln -sfn "/mnt/shared/gothic-ai/base/$selected" "$task/input/base"
-  export OPENGOTHIC_BASE="$task/input/base" OPENGOTHIC_BASE_FINGERPRINT="$selected"
+  # The immutable shared base itself: a link in the task would be shared by stages running at once.
+  export OPENGOTHIC_BASE="/mnt/shared/gothic-ai/base/$selected" OPENGOTHIC_BASE_FINGERPRINT="$selected"
   export OPENGOTHIC_BASE_CACHE="$task/base-cache" OPENGOTHIC_BASE_STORE="$task/base-store"
 }
 
@@ -185,6 +194,13 @@ task, output, manifest, inputs, runner = map(Path, sys.argv[1:])
 values = rl.validation_scenarios(manifest, "point")
 assert len(values) == 60, len(values)
 started = time.monotonic()
+def finished(directory):
+    """A resumed episode counts only if its episode.json reads as JSON and holds the outcome."""
+    try:
+        episode = json.loads((directory / "episode.json").read_text())
+    except (OSError, ValueError):
+        return False
+    return isinstance(episode, dict) and isinstance(episode.get("success"), bool) and "elapsed_ms" in episode
 def collect(index, workers):
     worker = SimpleNamespace(runner=runner, assets=Path(os.environ["GOTHIC_DIR"]), save=inputs / "save.sav",
                              links=inputs / "accepted-links.txt", roads=inputs / "places.json", ini=None,
@@ -195,7 +211,7 @@ def collect(index, workers):
     try:
         for value in values[index::workers]:
             directory = output / "validation" / "point" / value["id"]
-            if (directory / "episode.json").is_file():
+            if finished(directory):
                 continue
             if directory.exists():
                 shutil.rmtree(directory)
@@ -250,6 +266,18 @@ argv = ["nav_rl.py", "drive", "--runner", runner, "--assets", os.environ["GOTHIC
         "--manifest", manifest, "--families", "point"]
 sys.argv = list(map(str, argv))
 started = time.monotonic()
+# nav_rl --resume trusts every episode.json; one that does not read as JSON or lacks
+# the outcome is from an interrupted episode, which is driven again.
+import shutil
+for path in output.glob("validation/point/*/seed-*/episode.json"):
+    try:
+        episode = json.loads(path.read_text())
+        complete = isinstance(episode, dict) and isinstance(episode.get("success"), bool) and "elapsed_ms" in episode
+    except (OSError, ValueError):
+        complete = False
+    if not complete:
+        print(json.dumps(dict(redo=str(path.parent))), flush=True)
+        shutil.rmtree(path.parent)
 rl.main()
 episodes = [rl.read_json(path) for path in sorted(output.glob("validation/point/*/seed-*/drive-metrics.json"))]
 assert Counter(ep["family"] for ep in episodes) == Counter(point=60), Counter(ep["family"] for ep in episodes)
