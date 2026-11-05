@@ -39,9 +39,9 @@ constexpr int    WarmDays    = 20;
 constexpr int    PrintLimit  = 20;
 constexpr uint64_t Seed      = 1;
 constexpr unsigned long ToolDays = 7;
-// People without a single routine entry, as in day_people.json. There is no entry in force for them: the engine runs
-// their start_aistate, which the export v1 does not carry. They are outside the marks' criterion and listed, not
-// counted as passing it; another number fails (the exception is out of date).
+// People without a single routine entry, as in day_people.json; another number fails. In v1 there is no entry in
+// force for them, so their own criterion is checked: they stay at start_waypoint all day, not on the way, without a
+// state (the engine runs their start_aistate, which the export v1 does not carry yet).
 constexpr size_t PeopleWithoutRoutine = 45;
 
 int failures = 0;
@@ -186,7 +186,7 @@ void checkTravelTime() {
 // --- A day with marks ------------------------------------------------------------------------------------
 
 struct MarkStats {
-  size_t marks = 0, rows = 0, moving = 0, atPoint = 0, substitute = 0, nullPoint = 0, noRoutine = 0, violations = 0;
+  size_t marks = 0, rows = 0, moving = 0, atPoint = 0, substitute = 0, nullPoint = 0, stayRows = 0, violations = 0;
   std::set<uint32_t> substitutePeople, noRoutinePeople;
   };
 
@@ -195,9 +195,10 @@ void violation(const Society::World& w, MarkStats& st, Time t, uint32_t npc, con
     std::printf("  %s %s: %s\n",clock(w,t).c_str(),w.npcs.key[npc].c_str(),what.c_str());
   }
 
-// Every person with a routine: on the way, or at the point of the entry in force doing its state. An entry with `waypoint: null`
-// is done where the NPC stands; until its first walk an NPC may stand at start_waypoint instead of the entry's
-// point (the engine's placement, Npc::resetPositionToTA, takes the next point when that one is taken).
+// Every person with a routine: on the way, or at the point of the entry in force doing its state. An entry with
+// `waypoint: null` is done where the NPC stands; until its first walk an NPC may stand at start_waypoint instead of the
+// entry's point (the engine's placement, Npc::resetPositionToTA, takes the next point when that one is taken).
+// Every person without a routine: at start_waypoint, not on the way, without an entry and without a state change.
 void checkMark(const Society::World& w, const Society::Sim& sim, MarkStats& st) {
   const auto& s = sim.s;
   const Time  t = s.now;
@@ -206,8 +207,11 @@ void checkMark(const Society::World& w, const Society::Sim& sim, MarkStats& st) 
     if(!w.npcs.person[i])
       continue;
     if(w.entryCount(i)==0) {
-      ++st.noRoutine;
+      ++st.stayRows;
       st.noRoutinePeople.insert(i);
+      if(s.entry[i]!=Society::NoEntry || (s.flags[i] & Society::Moving)!=0 || s.place[i]!=w.npcs.startPoint[i] ||
+         s.state[i]!=Society::NoState || s.stateStart[i]!=w.startTime())
+        violation(w,st,t,i,"has no routine but left start_waypoint "+pointName(w,w.npcs.startPoint[i])+" or changed state");
       continue;
       }
     ++st.rows;
@@ -273,21 +277,13 @@ Day dayWithMarks(const Society::World& w) {
     Society::advance(sim,batch,t);
     take();
     }
-  std::printf("day by the routine: %zu marks x %zu people with a routine = %zu rows: on the way %zu, at the entry's point "
-              "%zu, at the start placement instead of it %zu (%zu people), entry with waypoint null %zu; violations %zu\n",
-              st.marks,w.people-st.noRoutinePeople.size(),st.rows,st.moving,st.atPoint,st.substitute,
-              st.substitutePeople.size(),st.nullPoint,st.violations);
-  {
-    std::string list;
-    for(auto i:st.noRoutinePeople)
-      list += (list.empty() ? "" : " ")+w.npcs.key[i];
-    std::printf("outside the criterion: %zu people without a routine in the export (%zu rows): no entry in force, the "
-                "engine runs their start_aistate, which v1 does not carry; the core keeps them at start_waypoint without "
-                "a state: %s\n",st.noRoutinePeople.size(),st.noRoutine,list.c_str());
-  }
+  std::printf("day by the routine, %zu marks: %zu people checked: %zu by routine, %zu stay at start; by routine %zu rows "
+              "(on the way %zu, at the entry's point %zu, at the start placement instead of it %zu (%zu people), entry with "
+              "waypoint null %zu), stay at start %zu rows; violations %zu\n",st.marks,w.people,
+              w.people-st.noRoutinePeople.size(),st.noRoutinePeople.size(),st.rows,st.moving,st.atPoint,st.substitute,
+              st.substitutePeople.size(),st.nullPoint,st.stayRows,st.violations);
   if(st.noRoutinePeople.size()!=PeopleWithoutRoutine)
-    fail(std::to_string(st.noRoutinePeople.size())+" people have no routine, expected "+std::to_string(PeopleWithoutRoutine)+
-         " (the exception is out of date)");
+    fail(std::to_string(st.noRoutinePeople.size())+" people have no routine, expected "+std::to_string(PeopleWithoutRoutine));
   if(!st.substitutePeople.empty()) {
     std::string list;
     size_t n = 0;
@@ -298,7 +294,7 @@ Day dayWithMarks(const Society::World& w) {
     std::printf("  start placement instead of the entry's point, e.g. %s\n",list.c_str());
     }
   if(st.violations>0)
-    fail(std::to_string(st.violations)+" person-marks are neither on the way nor at their entry's point and state");
+    fail(std::to_string(st.violations)+" person-marks break their criterion (by routine or stay at start)");
   if(st.moving==0 || st.atPoint==0)
     fail("a day by the routine must have people on the way and at their points");
 
