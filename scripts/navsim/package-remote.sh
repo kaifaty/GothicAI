@@ -18,7 +18,7 @@ if [[ "${1:-}" != run ]]; then
     --exclude=__pycache__ --exclude=.pytest_cache --exclude=.venv --exclude=.git \
     OpenGothic scripts "ryzen:$source/")
   GQ_OWNER=nav-sim-stand-package "$root/scripts/gq" run --wait-max 1800 \
-    --class quick --threads 12 --cpu-quota 1200% --mem 10G --max 1h \
+    --class quick --threads 4 --cpu-quota 400% --mem 6G --max 1h \
     --archive "$task/raw-$revision" --name "navsim package ${revision:0:12}" -- \
     python3 -X faulthandler -I "$source/scripts/nav_job.py" --max-seconds 3600 -- \
     bash "$source/scripts/navsim/package-remote.sh" run "$task" "$revision"
@@ -44,7 +44,7 @@ source scripts/ryzen-build.sh
 cmake -S OpenGothic -B "$build" -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo \
   -DCMAKE_POLICY_VERSION_MINIMUM=3.5 "${RYZEN_CMAKE_FLAGS[@]}" -DOPENGOTHIC_JOLT_X86=x86-64-v3 \
   -DCMAKE_CXX_FLAGS="-I$VULKAN_SDK/include" -DCMAKE_EXE_LINKER_FLAGS="-L$VULKAN_SDK/lib"
-cmake --build "$build" --target gothic-body-runner content-convert --parallel 12
+cmake --build "$build" --target gothic-body-runner content-convert --parallel 4
 python="$task/venv/bin/python"
 if [[ ! -x "$python" ]]; then uv venv --python 3.12 "$task/venv"; fi
 uv pip install --python "$python" numpy
