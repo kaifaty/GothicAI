@@ -20,7 +20,6 @@ from unittest.mock import patch
 
 from gothic_ai.dialogue import (
     REACTION_S,
-    SOUND_SAID,
     first_words,
     first_words_outcome,
     is_pure_sound,
@@ -61,8 +60,21 @@ def voice_messages(ctx: Any, phrase: str, gist: str, said: str) -> tuple[list, l
     head = [*ctx.history, Message("developer", ctx.brief)]
     tail = prompt("voice.md").format(gist=gist)
     if said:
-        tail += SOUND_SAID.format(said)
+        tail += prompt("voice_said.md").format(said=said)
     return [*head, Message("user", phrase), Message("developer", tail)], head
+
+
+def without_said(text: str, said: str) -> str:
+    """The voice as it would sound: a repeat of the first words at its start is cut, as the game would
+    cut it before TTS. The mood tag stays."""
+    match = re.match(r"\s*(\[[^\]]*\])?\s*", text)
+    tag, body = (match.group(1) or ""), text[match.end() :]
+    said_words = WORDS.findall(said.lower())
+    body_words = list(WORDS.finditer(body))
+    if not said_words or [m.group().lower() for m in body_words[: len(said_words)]] != said_words:
+        return text
+    rest = body[body_words[len(said_words) - 1].end() :].lstrip(' .,!?…—-–:;»"')
+    return f"{tag} {rest}".strip() if tag else rest
 
 
 def filter_first(result: dict, previous: list[dict]) -> dict:
@@ -202,11 +214,14 @@ async def pipeline(
     voice["first_sentence"] = first_words(voice["text"])[0]
     if voice["first_sentence_s"] is None and voice["text"].strip() and not voice["error"]:
         voice["first_sentence_s"] = voice["total_s"]
+    voice["said_cut"] = without_said(voice["text"], first["said"])
+    if not pilot.spoken(voice["said_cut"]).strip() and not voice["error"]:  # nothing left: the gist itself
+        voice["said_cut"], voice["fallback"] = gist["text"].strip(), "gist"
     record["voice"] = voice
     record["error"] = voice["error"] or ("Empty voice" if not voice["text"].strip() else None)
     if voice["first_sentence_s"] is not None:
         record["voice_after_phrase_s"] = gist["total_s"] + voice["first_sentence_s"]
-    record["text"] = " ".join(s for s in (first["said"], pilot.spoken(voice["text"])) if s)
+    record["text"] = " ".join(s for s in (first["said"], pilot.spoken(voice["said_cut"])) if s)
     return record
 
 
@@ -331,7 +346,7 @@ def voice_sections(record: dict) -> str:
         "Суть": record["gist"]["text"],
         "Вызовы инструментов": json.dumps(record["calls"], ensure_ascii=False),
         "Первые слова": record["first_words"]["said"] or "(ничего)",
-        "Ответ голоса": record["voice"]["text"],
+        "Ответ голоса": record["voice"].get("said_cut", record["voice"]["text"]),
     }
     return "\n\n".join(f"{title}\n{body}" for title, body in sections.items())
 
@@ -576,9 +591,18 @@ async def selftest() -> int:
     assert messages == [
         *head,
         Message("user", phrase),
-        Message("developer", prompt("voice.md").format(gist="gist {1}") + SOUND_SAID.format("Wait.")),
+        Message(
+            "developer",
+            prompt("voice.md").format(gist="gist {1}") + prompt("voice_said.md").format(said="Wait."),
+        ),
     ]
-    assert SOUND_SAID.format("") not in voice_messages(ctx, phrase, "gist", "")[0][-1].content
+    assert "Ты уже сказал" not in voice_messages(ctx, phrase, "gist", "")[0][-1].content
+    assert (
+        without_said("[angry] Да я уже в деле! Сейчас прижму.", "Да я уже в деле!")
+        == "[angry] Сейчас прижму."
+    )
+    assert without_said("[angry] Сейчас прижму.", "Да я уже в деле!") == "[angry] Сейчас прижму."
+    assert without_said("Хм... Дай-ка вспомнить. Они в пещере.", "Хм... Дай-ка вспомнить.") == "Они в пещере."
     valid = dict(
         lost=[],
         changed=[],
