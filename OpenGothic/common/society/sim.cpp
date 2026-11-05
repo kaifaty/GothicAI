@@ -312,11 +312,17 @@ void segment(Sim& sim, uint32_t npc) {
   scheduleNeed(sim,npc);
   }
 
-// An event of the journal. Those that can change what a person does (its state, standing or on the way) end its
-// needs' segment: thresholds passed until now come first, a new segment starts after the event.
+// The events that can change what a person does (its state, standing or on the way): the ends of its needs' segments.
+bool changesRate(EventKind kind) {
+  return kind==EventKind::ActivityStarted || kind==EventKind::TravelStarted || kind==EventKind::Arrived ||
+         kind==EventKind::Teleported;
+  }
+
+// An event of the journal. One that can change what a person does ends its needs' segment: thresholds passed until
+// now come first, a new segment starts after the event.
 void emit(Sim& sim, EventKind kind, uint32_t npc, uint8_t reason, uint32_t a, uint32_t b, Time c = 0) {
   auto& s = sim.s;
-  const bool needs = hasNeeds(sim,npc);
+  const bool needs = changesRate(kind) && hasNeeds(sim,npc);
   if(needs)
     crossings(sim,npc);
   record(s,kind,npc,reason,a,b,c);
@@ -344,8 +350,11 @@ void setState(Sim& sim, uint32_t npc, uint16_t state, ActivityReason reason, uin
   s.stateStart[npc] = s.now;
   if(state!=NoState)
     emit(sim,EventKind::ActivityStarted,npc,uint8_t(reason),state,at);
-  else if(hasNeeds(sim,npc))
+  else if(hasNeeds(sim,npc)) {
+    // No state and so no event: only a person without a routine and without a start_aistate (none in Khorinis).
+    crossings(sim,npc);
     segment(sim,npc);
+    }
   }
 
 bool near(const World& w, uint32_t a, uint32_t b) {

@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
 """Where the routine does not close the needs: the society stand's people by their routine only, with needs.
 
-    python3 scripts/society_needs_report.py --world WORLD --config CONFIG --tool GOTHIC_SOCIETY_DAY --out DIR
-        [--work WORK] [--seed S] [--days 1,7]
+    python3 scripts/society_needs_report.py --world WORLD --config CONFIG --tool GOTHIC_SOCIETY_DAY
+        --out DIR [--work WORK] [--seed S] [--days 1,7]
 
-Runs `gothic-society-day --config` on the export WORLD for each length in --days (a day and a week by default) and
-reads its journal v3 (docs/society-sim.md, «Журнал и отметки»): the need_threshold events give every person's time
-low and critical exactly, activity_started what it was doing meanwhile. For each need it counts the people who went
-low and critical at least once, the hours in critical (median over all people, median over those who went critical,
-the most), who is worst by guild and by the state they spend the day in, and which states their critical hours
-fall in. Only people (`person` in the export) have needs.
+Runs `gothic-society-day --config` on the export WORLD for each length in --days (a day and a week by
+default) and reads its journal v3 (docs/society-sim.md, «Журнал и отметки»): the need_threshold events give
+every person's time low and critical exactly, activity_started what it was doing meanwhile. For each need it
+counts the people who went low and critical at least once and the hours in critical (median over all people,
+median over those who went critical, the most); apart for the people who do a state that fills the need in
+the run and those who do none; the same for the run's last day (a week's last day is past the start, where
+every level is 1); who is worst by guild and by the state they spend the day in; which states their critical
+hours fall in. Only people (`person` in the export) have needs.
 
-Writes DIR/needs.json (every number, both runs) and DIR/needs.md (the tables); the conclusions go into DIR/README.md
-by hand. WORK keeps the runs (a temporary folder by default).
+Writes DIR/needs.json (every number, both runs) and DIR/needs.md (the tables); the conclusions go into
+DIR/README.md by hand. WORK keeps the runs (a temporary folder by default).
 """
 
 from __future__ import annotations
@@ -113,13 +115,17 @@ def analyse(journal: dict, world: dict, config: dict, days: int) -> dict:
     npcs = world["npcs"]
     people = [i for i, npc in enumerate(npcs) if npc["person"]]
     person = set(people)
-    # a sweep over each person's events: between two of its events it does one state and each need is in one zone
+    # a sweep over each person's events: between two of them it does one state and each need is in one zone
     current = {i: None for i in people}
     since = {i: start for i in people}
     zone = {i: [0] * len(needs) for i in people}
     went = {i: [[False, False] for _ in needs] for i in people}
     low_s = {i: [0] * len(needs) for i in people}
     crit_s = {i: [0] * len(needs) for i in people}
+    # the run's last day: critical seconds and whether it went critical then
+    last_from = end - DAY
+    last_s = {i: [0] * len(needs) for i in people}
+    last_went = {i: [False] * len(needs) for i in people}
     state_s = {i: Counter() for i in people}
     crit_by_state = [Counter() for _ in needs]
 
@@ -129,12 +135,15 @@ def analyse(journal: dict, world: dict, config: dict, days: int) -> dict:
             return
         s = current[i]
         state_s[i][s] += dt
+        last = max(0, t - max(since[i], last_from))
         for k, z in enumerate(zone[i]):
             if z >= LOW:
                 low_s[i][k] += dt
             if z >= CRITICAL:
                 crit_s[i][k] += dt
                 crit_by_state[k][s] += dt
+                last_s[i][k] += last
+                last_went[i][k] = last_went[i][k] or last > 0
         since[i] = t
 
     for t, npc, kind, reason, _entry, a, b, _c in journal["records"]:
@@ -161,29 +170,27 @@ def analyse(journal: dict, world: dict, config: dict, days: int) -> dict:
 
     main_state = {i: day_state(i) for i in people}
     hours = 3600.0
-    # which states of the config fill each need, and who has one in its day (routine, follow-on, start_aistate)
+    # which states of the config fill each need, and who does one of them in the run (the journal's states,
+    # not the routine's list: a monster dispatcher's window that never holds the hour is never done)
     fill_states = [set() for _ in needs]
     for row in config["states"]:
         for need_id in row["fill_hours"]:
             fill_states[needs.index(need_id)].add(row["state"])
-    has_fill = [set() for _ in needs]
-    for i in people:
-        npc = npcs[i]
-        own = {e["state"] for e in npc["routine"]}
-        if "ZS_GOTOBED" in own:
-            own.add("ZS_SLEEP")
-        if npc.get("start_aistate"):
-            own.add(npc["start_aistate"])
-        for window in npc.get("mm_schedule") or []:
-            own.add(window[0])
-        for k in range(len(needs)):
-            if own & fill_states[k]:
-                has_fill[k].add(i)
+    has_fill = [{i for i in people if fill_states[k] & set(state_s[i])} for k in range(len(needs))]
 
     by_need = []
     for k, need_id in enumerate(needs):
         crit = [crit_s[i][k] / hours for i in people]
         went_crit = [crit_s[i][k] / hours for i in people if went[i][k][1]]
+        split = {}
+        for name, members in (("with_fill", has_fill[k]), ("without_fill", set(people) - has_fill[k])):
+            split[name] = {
+                "people": len(members),
+                "went_critical": sum(went[i][k][1] for i in members),
+                "critical_hours_median": round(median([crit_s[i][k] / hours for i in members]), 2),
+                "last_day_critical": sum(last_went[i][k] for i in members),
+                "last_day_critical_hours_median": round(median([last_s[i][k] / hours for i in members]), 2),
+            }
         worst = sorted(people, key=lambda i: (-crit_s[i][k], npcs[i]["key"]))[:WORST]
         total = sum(crit_by_state[k].values())
         top = crit_by_state[k].most_common(5)
@@ -201,8 +208,15 @@ def analyse(journal: dict, world: dict, config: dict, days: int) -> dict:
                 "critical_hours_median_of_critical": round(median(went_crit), 2),
                 "critical_hours_max": round(max(crit) if crit else 0.0, 2),
                 "critical_person_hours": round(sum(crit), 1),
+                "last_day_critical": sum(last_went[i][k] for i in people),
+                "last_day_critical_hours_median": round(median([last_s[i][k] / hours for i in people]), 2),
+                "by_fill": split,
                 "critical_by_state": [
-                    {"state": s or "-", "hours": round(v / hours, 1), "share": round(v / total, 3) if total else 0.0}
+                    {
+                        "state": s or "-",
+                        "hours": round(v / hours, 1),
+                        "share": round(v / total, 3) if total else 0.0,
+                    }
                     for s, v in top
                 ],
                 "worst": [
@@ -233,9 +247,7 @@ def analyse(journal: dict, world: dict, config: dict, days: int) -> dict:
                         for k in range(len(needs))
                     },
                     "critical_hours_per_day": {
-                        needs[k]: round(
-                            statistics.mean(crit_s[i][k] / hours for i in group_people) / days, 2
-                        )
+                        needs[k]: round(statistics.mean(crit_s[i][k] / hours for i in group_people) / days, 2)
                         for k in range(len(needs))
                     },
                 }
@@ -277,7 +289,7 @@ def markdown(report: dict, config: dict) -> str:
         people = run["people"]
         out += ["", f"## {title}, {people} человек", ""]
         out.append(
-            "| Нужда | В распорядке есть чем утолить | Дошли до «низко» | Дошли до «критично» "
+            "| Нужда | Делают утоляющее состояние | Дошли до «низко» | Дошли до «критично» "
             "| Часов в «критично»: медиана всех | медиана дошедших | максимум |"
         )
         out.append("|---|---|---|---|---|---|---|")
@@ -287,6 +299,25 @@ def markdown(report: dict, config: dict) -> str:
                 f"| {fmt(n['critical_hours_median'])} | {fmt(n['critical_hours_median_of_critical'])} "
                 f"| {fmt(n['critical_hours_max'])} |"
             )
+        out += [
+            "",
+            "Делает ли человек за прогон хоть одно состояние, которое утоляет нужду: "
+            "дошли до «критично» / людей, медиана часов в «критично»"
+            + (f"; то же за последние, {days}-е сутки." if days > 1 else "."),
+            "",
+            "| Нужда | Есть чем утолить | Нечем утолить |",
+            "|---|---|---|",
+        ]
+        for n in run["needs"]:
+            cells = []
+            for key in ("with_fill", "without_fill"):
+                b = n["by_fill"][key]
+                cell = f"{b['went_critical']}/{b['people']}, {fmt(b['critical_hours_median'])} ч"
+                if days > 1:
+                    last = fmt(b["last_day_critical_hours_median"])
+                    cell += f"; последние сутки {b['last_day_critical']}/{b['people']}, {last} ч"
+                cells.append(cell)
+            out.append(f"| {n['name']} | {cells[0]} | {cells[1]} |")
         out += ["", "В каких состояниях проходят часы в «критично» (доля человеко-часов):", ""]
         for n in run["needs"]:
             if not n["critical_by_state"]:
@@ -305,11 +336,19 @@ def markdown(report: dict, config: dict) -> str:
             out.append(f"- {n['name']}: {parts}")
         for title2, key, limit in (
             ("По гильдиям", "by_guild", None),
-            ("По занятию дня (состояние, где человек проводит больше всего времени без сна)", "by_day_state", TOP_STATES),
+            (
+                "По занятию дня (состояние, где человек проводит больше всего времени без сна)",
+                "by_day_state",
+                TOP_STATES,
+            ),
         ):
             rows = run[key][:limit] if limit else run[key]
             ids = [n["need"] for n in run["needs"]]
-            out += ["", f"{title2}: часов в «критично» в сутки на человека, в скобках — доля дошедших до него.", ""]
+            out += [
+                "",
+                f"{title2}: часов в «критично» в сутки на человека, в скобках — доля дошедших до него.",
+                "",
+            ]
             out.append("| | Людей | " + " | ".join(names[i] for i in ids) + " |")
             out.append("|---|---" + "|---" * len(ids) + "|")
             for r in rows:
@@ -323,7 +362,9 @@ def markdown(report: dict, config: dict) -> str:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--world", required=True, type=Path, help="society-world export")
-    ap.add_argument("--config", required=True, type=Path, help="config file with needs (data/society/config.json)")
+    ap.add_argument(
+        "--config", required=True, type=Path, help="config file with needs (data/society/config.json)"
+    )
     ap.add_argument("--tool", required=True, type=Path, help="gothic-society-day")
     ap.add_argument("--out", required=True, type=Path, help="report folder: needs.json and needs.md")
     ap.add_argument("--work", type=Path, help="folder for the runs (a temporary one by default)")

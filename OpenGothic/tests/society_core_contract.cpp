@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cinttypes>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -676,7 +677,7 @@ void checkNeedRules(const fs::path& root) {
   const auto w = Society::parseWorld(RulesWorld,config("0"));
   const auto hm = [](int day, int h, int m, int sec = 0) { return Time(day)*Society::DaySeconds+Time(h)*3600+Time(m)*60+sec; };
   const auto clock = [](Time t) {
-    char buf[32];
+    char buf[64];
     std::snprintf(buf,sizeof(buf),"day %lld %02lld:%02lld:%02lld",(long long)(t/Society::DaySeconds),
                   (long long)(t%Society::DaySeconds/3600),(long long)(t%3600/60),(long long)(t%60));
     return std::string(buf);
