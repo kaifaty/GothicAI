@@ -51,7 +51,8 @@ class Quiver final {
     static constexpr float GroundAngle  = 90.f;  // deg at most from the rest while the ground pushes it (it lies on it)
     static constexpr float GroundStep   = 20.f;  // deg in 1/60 s at most while the ground pushes or it comes back
     static constexpr float GroundWeight = 4.f;   // the ground's depth squared against the give's contacts (1)
-    static constexpr float GroundBody   = 0.05f; // the body's and the armour's while the ground pushes it
+    static constexpr float GroundBody   = 0.1f;  // the body's and the armour's while the ground pushes it
+    static constexpr float GroundGravity= 0.2f;  // per cm the tube's middle stands over the ground: its weight
     static constexpr float GroundClear  = 2.f;   // cm the tube must be clear of the ground before it stops pushing
     static constexpr float GroundReturn = 0.25f; // s: 90% of the way back after it
     static constexpr float GroundNear   = 10.f;  // cm: the tube's lowest point nearer the ground than that looks for it,

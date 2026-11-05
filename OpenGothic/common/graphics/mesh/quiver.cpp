@@ -756,8 +756,8 @@ void Quiver::step(const Matrix4x4& pelvis, const Matrix4x4& spine, const std::ve
   devTarget = dTarget;
 
   // the ground still in the tube at GiveAngle: the wide turn, to GroundAngle, by the turn's own angle across
-  // (x, z: radians toward that way). The ground outweighs the body far: the quiver goes rather where the body
-  // lies on the ground, out of sight, than stands in the open ground
+  // (x, z: radians toward that way). The ground outweighs the body far (GroundWeight against GroundBody): the quiver
+  // goes rather where the body lies on the ground, out of sight, than stands in the open ground
   const float lift  = groundMode==1 ? GroundClear : 0.f; // pushed: stays so till the tube is that clear
   const float wideA = GroundAngle*float(M_PI)/180.f;
   Vec3 gTarget = angleOf(best);
@@ -765,12 +765,13 @@ void Quiver::step(const Matrix4x4& pelvis, const Matrix4x4& spine, const std::ve
   if(ground.on && underground(best,lift)>0.04f) {
     wide = true;
     const Vec3 last = groundMode!=0 ? groundTarget : gTarget;
-    // a change of the answer costs as the ground 4 cm deep would per 0.1 rad: it does not hop between ways out
-    constexpr float GroundKeep = 640.f;
+    // its weight: the height of the tube's middle over the ground (its potential energy), so the quiver the ground
+    // pushes falls and lies on it rather than standing up; the body's points keep it from lying across the body
     auto score2 = [&](float x, float z) {
-      const Vec3 u = axisOfAngle(Vec3(x,0,z));
-      return GroundBody*insideOf(nearWide,u) + GroundWeight*underground(u,0.f) +
-             2.f*std::hypot(x,z) + GroundKeep*std::hypot(x-last.x,z-last.z);
+      const Vec3  u      = axisOfAngle(Vec3(x,0,z));
+      const float height = Vec3::dotProduct(gn,u)*(Length*0.5f) - gd;
+      return GroundBody*insideOf(nearWide,u) + GroundWeight*underground(u,0.f) + GroundGravity*height +
+             0.2f*std::hypot(x,z) + 2.f*std::hypot(x-last.x,z-last.z);
       };
     auto clampA = [&](float& x, float& z) {
       const float l = std::hypot(x,z);
