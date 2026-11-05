@@ -679,3 +679,5 @@ endif()
 
 # installation
 install(TARGETS Gothic2Notr DESTINATION bin)
+
+include(cmake/ZenKitGuard.cmake)

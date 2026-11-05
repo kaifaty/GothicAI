@@ -2,7 +2,7 @@
 #include <Tempest/Application>
 #include <Tempest/Log>
 
-#include <zenkit/Logger.hh>
+#include "zenkitlog.h"
 
 #include <Tempest/VulkanApi>
 
@@ -123,7 +123,7 @@ int main(int argc,const char** argv) {
     }
   CrashLog::setup();
 
-  zenkit::Logger::set(zenkit::LogLevel::INFO, Resources::zenkitLog);
+  ZenKitLog::install(ZenKitLog::Level::Info);
   Dm_setLogger(DmLogLevel_INFO, [](void* ctx, DmLogLevel lvl, char const* msg) {
     switch (lvl) {
       case DmLogLevel_FATAL:
