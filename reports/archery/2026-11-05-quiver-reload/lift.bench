@@ -1,0 +1,157 @@
+# the quiver's lift only: the fletching in the aim (off|on, steps 0-2, stills) and the reloads (steps 0 and 2)
+cheat god
+set time 16 0
+view clean
+overlay off
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 90
+wait 500
+manual on
+equip ItRw_Bow_L_01
+equip ITAR_Leather_L
+arrows player 40
+insert BAU_904_BAUER
+wait 300
+immortal BAU_904_BAUER on
+pin BAU_904_BAUER 1200 0 0
+aimat BAU_904_BAUER body
+tap bow
+cam look 110
+wait 1500
+
+stats str 30 dex 10 bow 10 talent 0
+quiver lift off
+press action
+wait 900
+rec fl_t0_off novideo
+wait 600
+cam follow 110 105 -90
+wait 100
+shot t0_off_side
+wait 100
+cam follow 110 105 -45
+wait 100
+shot t0_off_fr
+wait 100
+cam follow 110 105 -160
+wait 100
+shot t0_off_back
+wait 100
+stop
+quiver lift on
+wait 600
+rec fl_t0_on novideo
+wait 600
+cam follow 110 105 -90
+wait 100
+shot t0_on_side
+wait 100
+cam follow 110 105 -45
+wait 100
+shot t0_on_fr
+wait 100
+cam follow 110 105 -160
+wait 100
+shot t0_on_back
+wait 100
+stop
+release action
+wait 1200
+
+stats str 60 dex 60 bow 40 talent 1
+quiver lift off
+press action
+wait 900
+rec fl_t1_off novideo
+wait 600
+cam follow 110 105 -90
+wait 100
+shot t1_off_side
+wait 100
+cam follow 110 105 -160
+wait 100
+shot t1_off_back
+wait 100
+stop
+quiver lift on
+wait 600
+rec fl_t1_on novideo
+wait 600
+cam follow 110 105 -90
+wait 100
+shot t1_on_side
+wait 100
+cam follow 110 105 -160
+wait 100
+shot t1_on_back
+wait 100
+stop
+release action
+wait 1200
+
+stats str 120 dex 150 bow 100 talent 2
+quiver lift off
+press action
+wait 900
+rec fl_t2_off novideo
+wait 600
+cam follow 110 105 -90
+wait 100
+shot t2_off_side
+wait 100
+cam follow 110 105 -45
+wait 100
+shot t2_off_fr
+wait 100
+cam follow 110 105 -160
+wait 100
+shot t2_off_back
+wait 100
+stop
+quiver lift on
+wait 600
+rec fl_t2_on novideo
+wait 600
+cam follow 110 105 -90
+wait 100
+shot t2_on_side
+wait 100
+cam follow 110 105 -45
+wait 100
+shot t2_on_fr
+wait 100
+cam follow 110 105 -160
+wait 100
+shot t2_on_back
+wait 100
+stop
+release action
+wait 1200
+
+# the reloads: slow (talent 0, dex 10), quick (talent 2, dex 150)
+slowmo 4
+stats str 30 dex 10 bow 10 talent 0
+volley 1 300
+cam follow 280 125 -80
+rec slow_A
+volley 3 300
+wait 300
+stop
+cam follow 280 125 -140
+rec slow_B
+volley 3 300
+wait 300
+stop
+stats str 120 dex 150 bow 100 talent 2
+volley 1 300
+cam follow 280 125 -80
+rec fast_A
+volley 3 300
+wait 300
+stop
+cam follow 280 125 -140
+rec fast_B
+volley 3 300
+wait 300
+stop
+slowmo 1
