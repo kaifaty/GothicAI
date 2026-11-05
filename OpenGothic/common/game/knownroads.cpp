@@ -453,6 +453,13 @@ void KnownRoads::updateGuidance(const Knowledge& knowledge, const Vec3& position
     if(!guidance.polyline.empty()) {
       guidance.progressCm = windowProgress(guidance.polyline,position,0,
                                            guidance.route.startOffsetCm+guidanceWindowCm,0);
+      // The start node is on this side of every seen hazard, but the actor's
+      // projection need not be: a stretch behind a seen wall is not progress.
+      if(passage && guidance.progressCm>0 &&
+         passage(position,pointAt(guidance.polyline,guidance.progressCm))==Passage::Closed) {
+        guidance.progressCm = 0;
+        guidance.projectionRejected = true;
+        }
       guidance.caughtUp = catchUp(guidance.polyline,position,guidance.progressCm,passage);
       }
     }

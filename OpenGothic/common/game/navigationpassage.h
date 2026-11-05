@@ -37,4 +37,16 @@ namespace NavigationPassage {
   // sample outside both maps is unseen.
   Verdict check(const NavigationMemory::View& memory, const Tempest::Vec3& from, const Tempest::Vec3& to,
                 float corridorCm, float footprintCm);
+
+  // Diagnosis only: the cell that made scan() Closed.
+  struct Closing final {
+    bool far = false;           // a far-map cell (2 m), else a near-map cell
+    float alongCm = 0;          // the sample's distance from `from`
+    float cellCm = 0;
+    Tempest::Vec3 center = {};  // the cell's centre in world XZ (y of the pose)
+    NavigationMemory::Cell cell;
+    };
+  // check() that also reports the closing cell; closing may be null.
+  Verdict scan(const NavigationMemory::View& memory, const Tempest::Vec3& from, const Tempest::Vec3& to,
+               float corridorCm, float footprintCm, Closing* closing);
 }

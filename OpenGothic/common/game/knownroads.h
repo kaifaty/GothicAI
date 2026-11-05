@@ -33,6 +33,10 @@ class KnownRoads final {
     // The caller's verdict on a straight passage, from the walker's own memory:
     // Free, seen free all along; Closed, a seen static hazard crosses it;
     // Unknown otherwise. KnownRoads itself has no geometry.
+    // The asymmetry is deliberate: a catch-up skips a stretch of road and needs
+    // positive evidence (Free); a start or an initial projection is refused only
+    // on evidence of a hazard (Closed), since unseen ground is no wall and early
+    // in an episode memory is almost empty.
     enum class Passage : uint8_t { Unknown, Free, Closed };
     using PassageCheck = std::function<Passage(const Tempest::Vec3& from, const Tempest::Vec3& to)>;
 
@@ -82,6 +86,9 @@ class KnownRoads final {
       // Diagnosis of this update: progress took a later stretch beyond its
       // window through a passage memory has seen free.
       bool caughtUp = false;
+      // Diagnosis of a rebuild: memory closed the passage to the initial
+      // projection, so progress stays at the start node.
+      bool projectionRejected = false;
       };
 
     KnownRoads(std::vector<Node> nodes, std::vector<Edge> edges);
@@ -109,7 +116,9 @@ class KnownRoads final {
     // No mesh or hidden geometry. Reset Guidance at an episode boundary.
     // Progress cannot decrease and never leaves its window, also not window by
     // window while the actor stands; only a >8 m deviation from the whole route
-    // rebuilds it. With a passage check, progress may take the closest point of
+    // rebuilds it. After a rebuild, the initial projection is kept only if memory
+    // does not close the passage to it; otherwise progress stays at the start
+    // node. With a passage check, progress may take the closest point of
     // the whole route when it lies later than the window's projection, is
     // closer to the actor and memory has seen the straight passage to it free:
     // the actor has cut a loop of the road. Without a check the rules are the

@@ -339,6 +339,18 @@ struct Memory final {
     }
   };
 
+Vec3 pointAt(const Roads::Guidance& guidance) {
+  double rest = guidance.progressCm;
+  for(size_t i=0; i+1<guidance.polyline.size(); ++i) {
+    const auto edge = guidance.polyline[i+1]-guidance.polyline[i];
+    const double length = double(edge.length());
+    if(length>0 && rest<length)
+      return guidance.polyline[i]+edge*float(rest/length);
+    rest -= length;
+    }
+  return guidance.polyline.back();
+  }
+
 void guidanceMemory() {
   // The U-shaped road of guidanceHairpin: 20 m east, 10 m north, 40 m west.
   const Roads roads({{"a",{0,0,0}},{"b",{2000,0,0}},{"c",{2000,0,1000}},{"e",{-2000,0,1000}}},
@@ -395,7 +407,7 @@ void guidanceMemory() {
                    {{0,1,1000,true},{1,2,4000,true}});
   const Roads::Knowledge all{{1,1,1},{1,1},false};
   const Vec3 actor{1000,0,-500}, end{5000,0,0};
-  Memory pocket;pocket.x0=500;pocket.z0=-200;pocket.x1=1500;pocket.z1=-200;pocket.elsewhere=Roads::Passage::Unknown;
+  Memory pocket;pocket.x0=800;pocket.z0=-200;pocket.x1=1500;pocket.z1=-200;pocket.elsewhere=Roads::Passage::Unknown;
   const auto before = line.path(all,actor,end);
   require(before.nodes.front()==1,"without memory the route starts at the closest node");
   const auto around = line.path(all,actor,end,std::cref(pocket));
@@ -405,6 +417,16 @@ void guidanceMemory() {
   Roads::Guidance rebuilt;
   line.updateGuidance(all,actor,end,rebuilt,std::cref(pocket));
   require(rebuilt.rebuilt && rebuilt.route.nodes.front()==0,"guidance starts the rebuilt route on this side of the wall");
+  // The actor's projection on the new route, side (10, 0) m, is behind the same
+  // wall: progress stays at the start node, and neither it nor the carrot is
+  // behind a seen wall.
+  require(rebuilt.projectionRejected,"the initial projection behind a seen wall is rejected");
+  close(rebuilt.progressCm,0,"progress stays at the start node");
+  require(pocket(actor,pointAt(rebuilt))!=Roads::Passage::Closed,"the progress point is not behind a seen wall");
+  require(pocket(actor,rebuilt.carrot)!=Roads::Passage::Closed,"the carrot is not behind a seen wall");
+  Roads::Guidance blind;
+  line.updateGuidance(all,actor,end,blind,[](const Vec3&,const Vec3&) {return Roads::Passage::Unknown;});
+  require(!blind.projectionRejected && blind.route.nodes.front()==1,"without a seen wall the projection stands");
   // Every candidate behind seen walls: the closest node, as before.
   Memory closed;closed.x0=-9000;closed.z0=-100;closed.x1=9000;closed.z1=-100;closed.elsewhere=Roads::Passage::Unknown;
   const auto fallback = line.path(all,actor,end,std::cref(closed));

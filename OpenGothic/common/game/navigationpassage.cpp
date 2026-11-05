@@ -33,12 +33,16 @@ struct Frame final {
     const auto d=p-origin;
     return {d.x*right.x+d.z*right.z,d.x*forward.x+d.z*forward.z};
     }
+  // The world XZ centre of body-frame cell (x, z), given in cells from the map centre.
+  Vec3 world(float x, float z, float cellCm) const {
+    return origin+right*(x*cellCm)+forward*(z*cellCm);
+    }
   };
 
 // Static hazard and seen free ground within corridorCm of the body-frame point
 // (r, f) on the near map. Rotation splats world cells into the body frame, so
 // one cell under the line may be empty: the corridor collects its neighbours.
-struct NearSample final { bool hazard = false, free = false; };
+struct NearSample final { bool hazard = false, free = false; int x = 0, z = 0; };
 NearSample nearSample(const NavigationMemory::Layer& near, float r, float f, float corridorCm) {
   const int size=int(near.size);
   const float cell=near.cellCm;
@@ -55,7 +59,7 @@ NearSample nearSample(const NavigationMemory::Layer& near, float r, float f, flo
       if(dx*dx+dz*dz>corridorCm*corridorCm)
         continue;
       if(NavigationPassage::staticHazard(c)) {
-        result.hazard=true;
+        result.hazard=true;result.x=x;result.z=z;
         return result;
         }
       result.free=result.free || NavigationPassage::seenFree(c);
@@ -111,6 +115,12 @@ bool NavigationPassage::near(const NavigationMemory::View& memory, const Vec3& f
 
 NavigationPassage::Verdict NavigationPassage::check(const NavigationMemory::View& memory, const Vec3& from,
                                                     const Vec3& to, float corridorCm, float footprintCm) {
+  return scan(memory,from,to,corridorCm,footprintCm,nullptr);
+  }
+
+NavigationPassage::Verdict NavigationPassage::scan(const NavigationMemory::View& memory, const Vec3& from,
+                                                   const Vec3& to, float corridorCm, float footprintCm,
+                                                   Closing* closing) {
   const Frame frame(memory.pose);
   const bool hasNear=usable(memory.near),hasFar=usable(memory.far);
   if(!frame.valid || (!hasNear && !hasFar))
@@ -132,8 +142,16 @@ NavigationPassage::Verdict NavigationPassage::check(const NavigationMemory::View
     if(along>=footprintCm) {
       if(std::abs(r)<=nearHalf && std::abs(f)<=nearHalf) {
         const auto sample=nearSample(memory.near,r,f,corridorCm);
-        if(sample.hazard)
+        if(sample.hazard) {
+          if(closing!=nullptr) {
+            const float half=float(memory.near.size)*.5f,cell=memory.near.cellCm;
+            closing->far=false;closing->alongCm=along;
+            closing->cell=memory.near.cells[size_t(sample.z)*memory.near.size+size_t(sample.x)];
+            closing->center=frame.world(float(sample.x)+.5f-half,float(sample.z)+.5f-half,cell);
+            closing->cellCm=cell;
+            }
           return Verdict::Closed;
+          }
         free=free && sample.free;
         step=nearStep;
         }
@@ -143,8 +161,15 @@ NavigationPassage::Verdict NavigationPassage::check(const NavigationMemory::View
         const auto z=size_t(std::floor(f/memory.far.cellCm+float(size)*.5f));
         if(x<size && z<size) {
           const auto& c=memory.far.cells[z*size+x];
-          if(staticHazard(c) && byte(c.free)==0)
+          if(staticHazard(c) && byte(c.free)==0) {
+            if(closing!=nullptr) {
+              const float half=float(size)*.5f,cell=memory.far.cellCm;
+              closing->far=true;closing->alongCm=along;closing->cell=c;
+              closing->center=frame.world(float(x)+.5f-half,float(z)+.5f-half,cell);
+              closing->cellCm=cell;
+              }
             return Verdict::Closed;
+            }
           free=free && seenFree(c);
           }
         else
