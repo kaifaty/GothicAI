@@ -138,11 +138,19 @@ def test_replay_requests_and_phase_order(tmp_path):
 
 
 def test_loop_resumes_finish_without_repeating_memory():
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    operations = []
+
     class Event:
         def query(self):
             return True
 
         def synchronize(self):
+            pass
+
+        def record(self):
             pass
 
     class Side:
@@ -170,25 +178,44 @@ def test_loop_resumes_finish_without_repeating_memory():
             return self.queries if self.round == 1 else contract.FinishBatch(1)
 
     class Half:
-        def __init__(self):
+        launch = loop.Half.launch
+        mark = loop.Half.mark
+
+        def __init__(self, index):
+            self.index = index
             self.side, self.n = Side(), 1
-            self.done = self.computed = Event()
+            self.done, self.computed = Event(), Event()
             self.actions_np = np.zeros((1, 4), np.uint8)
             self.verdicts_np = np.zeros(1, np.uint8)
-            self.updates = 0
+            self.updates = self.reads = 0
+            self.torch = SimpleNamespace(cuda=SimpleNamespace(stream=lambda _: nullcontext()))
+            self.stream = SimpleNamespace(wait_event=lambda event: None)
+            self.staging = SimpleNamespace(copy_=lambda *args, **kwargs: None)
+            self.graph = self.read_graph = None
+            self.trace = None
 
-        def launch(self, batch, after=None):
+        def measured(self, name, function):
+            function()
+
+        def memory_part(self):
             self.updates += 1
-            self.launch_queries(batch.queries)
+            operations.append(("update", self.index, self.side.decision))
+
+        def read_part(self):
+            self.reads += 1
+            operations.append(("read", self.index, self.side.decision))
 
         def launch_queries(self, queries, after=None):
             self.query_count = queries.count
             self.verdicts_np[:] = 1 + self.side.decision % 2
+            operations.append(("verdict_ready", self.index, self.side.decision))
+            self.done.record()
 
         def launch_policy(self, batch, after=None):
             assert self.side.round == 2
+            operations.append(("policy", self.index, self.side.decision))
 
-    halves = [Half(), Half()]
+    halves = [Half(0), Half(1)]
     stand = loop.Loop(halves)
     seen = []
     stand.start()
@@ -196,12 +223,24 @@ def test_loop_resumes_finish_without_repeating_memory():
     stand.drain(lambda h: seen.append(h.side.decision))
     stand.close()
     assert sorted(seen) == [0, 0, 1, 1, 2, 2, 3, 3]
+    assert [index for name, index, _ in operations if name == "update"] == [0, 1] * 4
+    active = None
+    for name, index, _ in operations:
+        if name == "update":
+            assert active is None
+            active = index
+        elif name == "policy":
+            assert active == index
+            active = None  # The other half gets the GPU only after this policy is queued.
     for h in halves:
-        assert h.updates == 4  # two query rounds, one memory update per decision
+        assert h.updates == h.reads == 4  # Two query rounds, one update and read per decision.
         assert len(h.side.replies) == 8
         for decision, round_index, verdicts in h.side.replies:
             assert round_index in (0, 1)
             assert verdicts.tolist() == [1 + decision % 2]
+        for decision in range(4):
+            events = [name for name, index, d in operations if index == h.index and d == decision]
+            assert events.index("verdict_ready") < events.index("read") < events.index("policy")
 
 
 def test_check_rejects_broken_batches():

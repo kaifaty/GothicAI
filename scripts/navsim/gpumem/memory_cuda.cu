@@ -81,7 +81,9 @@ void memoryPassage(int64_t address, torch::Tensor agents, torch::Tensor segments
   const int64_t count = agents.numel();
   TORCH_CHECK(segments.numel() == count * 8 && verdicts.numel() == count, "one segment and verdict per query");
   if (count == 0) return;
-  const int64_t block = 128;
+  // A half has only ~1,200 queries at N=2,048. One warp per block
+  // spreads independent serial scans across SMs instead of launching ~10 blocks.
+  const int64_t block = Warp;
   passageKernel<<<blocks(count, block), block, 0, at::cuda::getCurrentCUDAStream()>>>(
       context(address), agents.data_ptr<int32_t>(), segments.data_ptr<float>(), count, verdicts.data_ptr<uint8_t>());
   check();

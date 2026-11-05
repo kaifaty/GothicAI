@@ -483,6 +483,7 @@ def metadata_command(args):
                 gcc=subprocess.check_output(["g++", "--version"], text=True).splitlines()[0],
                 glibc=subprocess.check_output(["ldd", "--version"], text=True).splitlines()[0],
                 cuda_flags=gpumem.CUDA_FLAGS, compute_capability=list(torch.cuda.get_device_capability(0)),
+                multiprocessors=torch.cuda.get_device_properties(0).multi_processor_count,
                 free_vram_mib=int(nvidia("memory.free")[0]), utc=datetime.now(timezone.utc).isoformat())
     write_json(args.output, info)
 

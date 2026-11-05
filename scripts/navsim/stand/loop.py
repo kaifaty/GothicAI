@@ -7,8 +7,8 @@ can request another round against that same memory, or return the encoded
 roads/vector and teacher labels. Only then does the GPU run the policy.
 The two halves overlap CPU A/B futures with GPU stages on separate streams.
 
-Modes: fp32 eager for parity, fp16 with separate memory and policy CUDA
-Graphs for speed. Copies and passage rounds stay outside the graphs.
+Modes: fp32 eager for parity, fp16 with update, readout and policy CUDA
+Graphs for speed. Verdicts return before readout so CPU B overlaps it.
 
 One command from the Mac stages everything on Ryzen and submits one gq job
 without waiting. The job writes the compact report alongside raw data on NAS::
@@ -155,9 +155,13 @@ class Half:
         self.computed = torch.cuda.Event()
         self.spans = []
         self.timed = False
+        self.trace = None
+        self.trace_sequence = 0
+        self.trace_round = 0
         # Buffers were zeroed and uploaded on the current stream; the half's stream must see them.
         self.stream.wait_stream(torch.cuda.current_stream())
         self.graph = None
+        self.read_graph = None
         self.policy_graph = None
         if graph:
             self.capture()
@@ -181,8 +185,10 @@ class Half:
         for name, slot in contract.RAY_SLOTS.items():  # the eye refreshes at the last tick
             self.memory.buffers[slot][0].copy_(self.bytes(self.fields[name]))
         self.memory.update(self.contexts[last])
-        self.memory.read(self.readers, self.near, self.far)
         return first
+
+    def read_part(self):
+        self.memory.read(self.readers, self.near, self.far)
 
     def policy_part(self):
         self.actions.copy_(policy_step(self.torch, self.model, self.near, self.far, self.vector, self.hidden,
@@ -195,12 +201,15 @@ class Half:
         with torch.cuda.stream(warm):
             for _ in range(3):
                 self.memory_part()
+                self.read_part()
                 self.policy_part()
         torch.cuda.current_stream().wait_stream(warm)
         torch.cuda.synchronize()
-        self.graph, self.policy_graph = torch.cuda.CUDAGraph(), torch.cuda.CUDAGraph()
+        self.graph, self.read_graph, self.policy_graph = (torch.cuda.CUDAGraph() for _ in range(3))
         with torch.cuda.graph(self.graph, stream=self.stream):
             self.memory_part()
+        with torch.cuda.graph(self.read_graph, stream=self.stream):
+            self.read_part()
         with torch.cuda.graph(self.policy_graph, stream=self.stream):
             self.policy_part()
         torch.cuda.synchronize()
@@ -216,19 +225,37 @@ class Half:
         end.record()
         self.spans.append((name, start, end))
 
+    def mark(self, name):
+        if self.trace is not None:
+            event = self.torch.cuda.Event(enable_timing=True)
+            event.record()
+            self.trace[-1]["events"].append((name, self.trace_round, event))
+
     def launch(self, batch, timed=False, after=None):
-        """Phase A: copy, update/read memory once, then check this decision's queries."""
+        """Update, answer passage, then read maps while the CPU finishes B."""
         self.timed, self.spans = timed, []
+        self.trace_round = 0
+        if self.trace is not None:
+            self.trace.append(dict(sequence=self.trace_sequence, events=[]))
+            self.trace_sequence += 1
         with self.torch.cuda.stream(self.stream):
             self.measured("copy_in", lambda: self.staging.copy_(batch.tensor, non_blocking=True))
             if after is not None:
                 self.stream.wait_event(after)
+            self.mark("memory_start")
             self.measured("memory", self.graph.replay if self.graph is not None else self.memory_part)
+            self.mark("memory_end")
         self.launch_queries(batch.queries)
+        with self.torch.cuda.stream(self.stream):
+            self.mark("read_start")
+            self.measured("read", self.read_graph.replay if self.read_graph is not None else self.read_part)
+            self.mark("read_end")
+            self.computed.record()
 
     def launch_queries(self, queries, after=None):
-        """Another round against unchanged memory; never repeats ticks or resets."""
+        """Another round against unchanged memory; never repeats ticks or readout."""
         self.query_count = queries.count
+        self.trace_round += 1
         with self.torch.cuda.stream(self.stream):
             def upload():
                 for name in ("agents", "segments"):
@@ -241,27 +268,39 @@ class Half:
             if after is not None:
                 self.stream.wait_event(after)
             q = queries.count
+            self.mark("passage_start")
             self.measured("passage", lambda: self.memory.passage(self.query_view["agents"][:q],
                                                                 self.query_view["segments"][:q], self.verdicts[:q]))
+            self.mark("passage_end")
             self.computed.record()
-            self.measured("copy_out", lambda: self.verdicts_host[:q].copy_(self.verdicts[:q], non_blocking=True))
+            self.mark("verdict_copy_start")
+            self.measured("verdict_copy", lambda: self.verdicts_host[:q].copy_(self.verdicts[:q], non_blocking=True))
+            self.mark("verdict_ready")
             self.done.record()
 
     def launch_policy(self, batch, after=None):
         with self.torch.cuda.stream(self.stream):
-            self.measured("copy_in", lambda: self.finish_staging.copy_(batch.tensor, non_blocking=True))
+            self.mark("vector_copy_start")
+            self.measured("vector_copy", lambda: self.finish_staging.copy_(batch.tensor, non_blocking=True))
+            self.mark("vector_copy_end")
             if after is not None:
                 self.stream.wait_event(after)
+            self.mark("net_start")
             self.measured("net", self.policy_graph.replay if self.policy_graph is not None else self.policy_part)
+            self.mark("net_end")
             self.computed.record()
             self.measured("copy_out", lambda: self.actions_host.copy_(self.actions, non_blocking=True))
+            self.mark("actions_ready")
             self.done.record()
 
     def timing(self):
-        result = dict(copy_in=0., memory=0., passage=0., net=0., copy_out=0.)
+        result = dict(copy_in=0., memory=0., read=0., passage=0., net=0., copy_out=0.,
+                      vector_copy=0., verdict_copy=0.)
         for name, start, end in self.spans:
             result[name] += start.elapsed_time(end)
-        result["compute"] = result["memory"] + result["passage"] + result["net"]
+        result["copy_in"] += result["vector_copy"]
+        result["copy_out"] += result["verdict_copy"]
+        result["compute"] = result["memory"] + result["read"] + result["passage"] + result["net"]
         result["total"] = result["copy_in"] + result["compute"] + result["copy_out"]
         return result
 
@@ -269,8 +308,8 @@ class Half:
 class Loop:
     """A/B CPU futures and GPU stages of two halves overlap independently.
 
-    A half never has two CPU calls in flight. GPU stages wait for the previous
-    half's compute event, while host work remains free to advance the other.
+    A half owns the GPU turn through its final policy enqueue. CPU A of the
+    other half remains in flight, and CPU B overlaps its own map readout.
     """
 
     def __init__(self, halves):
@@ -278,6 +317,8 @@ class Loop:
         self.agents = sum(h.n for h in halves)
         self.pool = ThreadPoolExecutor(len(halves))
         self.tail = None
+        self.owner = None
+        self.turn = 0
         self.state = ["idle"] * len(halves)
         self.future = [None] * len(halves)
         self.rounds = [0] * len(halves)
@@ -288,6 +329,7 @@ class Loop:
 
     def start(self):
         self.drain()
+        self.owner, self.turn = None, 0
         for i, h in enumerate(self.halves):
             self.future[i] = self.pool.submit(h.side.reset)
             self.state[i] = "cpu_a"
@@ -299,8 +341,11 @@ class Loop:
             for i, h in enumerate(self.halves):
                 state = self.state[i]
                 if state.startswith("cpu_") and self.future[i].done():
+                    if state == "cpu_a" and (self.owner is not None or i != self.turn):
+                        continue
                     result = self.future[i].result()
                     if state == "cpu_a":
+                        self.owner = i
                         self.rounds[i] = 0
                         h.launch(result, after=self.tail)
                         self.state[i] = "gpu_passage"
@@ -312,6 +357,8 @@ class Loop:
                     else:
                         h.launch_policy(result, after=self.tail)
                         self.state[i] = "gpu_actions"
+                        self.owner = None
+                        self.turn = (i + 1) % len(self.halves)
                     self.tail = h.computed
                     progress = True
                 elif state == "gpu_passage" and h.done.query():
@@ -335,7 +382,7 @@ class Loop:
                 gpu = [h for h, s in zip(self.halves, self.state)
                        if s == "gpu_passage" or (s == "gpu_actions" and self.completed[self.halves.index(h)]
                                                 < targets[self.halves.index(h)])]
-                pending = [f for f, s in zip(self.future, self.state) if s.startswith("cpu_")]
+                pending = [f for f, s in zip(self.future, self.state) if s.startswith("cpu_") and not f.done()]
                 if gpu and pending:
                     # A finished CPU half may upload its inputs while the
                     # other half still computes; do not block on that GPU.
@@ -388,25 +435,36 @@ class DelaySide:
         self.inner, self.spin, self.pool, self.threads = inner, spin, pool, threads
         self.agents, self.us = inner.agents, us
         self.seconds = 0.0
+        self.phase_seconds = dict(a=0., b=0.)
+        self.delay_seconds = dict(a=0., b=0.)
 
     def reset(self):
-        return self.inner.reset()
+        started = time.perf_counter()
+        batch = self.inner.reset()
+        self.phase_seconds["a"] += time.perf_counter() - started
+        return batch
 
-    def delay(self, us):
+    def delay(self, us, phase):
         started = time.perf_counter()
         each = self.agents * us * 1e-6 / self.threads
         list(self.pool.map(self.spin, [each] * self.threads))
-        self.seconds += time.perf_counter() - started
+        elapsed = time.perf_counter() - started
+        self.seconds += elapsed
+        self.delay_seconds[phase] += elapsed
 
     def step(self, actions):
+        started = time.perf_counter()
         batch = self.inner.step(actions)
-        self.delay(self.us * .9)
+        self.delay(self.us * .9, "a")
+        self.phase_seconds["a"] += time.perf_counter() - started
         return batch
 
     def finish(self, verdicts):
+        started = time.perf_counter()
         result = self.inner.finish(verdicts)
         if not isinstance(result, contract.PassageQueries):
-            self.delay(self.us * .1)
+            self.delay(self.us * .1, "b")
+        self.phase_seconds["b"] += time.perf_counter() - started
         return result
 
 
@@ -589,6 +647,57 @@ def parity_command(args):
 
 
 # ---- speed ----
+def trace_loop(torch, loop):
+    """Four delayed steps, outside measured repeats, on one CUDA clock."""
+    loop.start()
+    loop.advance(3)
+    for h in loop.halves:
+        h.done.synchronize()  # Keep gpu_actions state: advance consumes these actions.
+    origin = torch.cuda.Event(enable_timing=True)
+    origin.record()
+    for h in loop.halves:
+        h.stream.wait_event(origin)
+        h.trace, h.trace_sequence = [], 0
+    loop.advance(4)
+    loop.drain()
+    rows, intervals = [], []
+    for half, h in enumerate(loop.halves):
+        for record in h.trace:
+            events = [dict(name=name, round=round_index, ms=origin.elapsed_time(event))
+                      for name, round_index, event in record["events"]]
+            row = dict(half=half, agents=h.n, sequence=record["sequence"], events=events)
+            starts, points = {}, {}
+            for event in events:
+                name, round_index, ms = event["name"], event["round"], event["ms"]
+                points[name] = ms
+                for part in ("memory", "passage", "read", "net"):
+                    key = (part, round_index)
+                    if name == part + "_start":
+                        starts[key] = ms
+                    elif name == part + "_end":
+                        intervals.append(dict(half=half, sequence=record["sequence"], part=part,
+                                              start_ms=starts[key], end_ms=ms))
+            row["read_to_vector_copy_ms"] = max(0., points["vector_copy_start"] - points["read_end"])
+            rows.append(row)
+        h.trace = None
+    intervals.sort(key=lambda item: item["start_ms"])
+    gaps = []
+    previous = intervals[0]
+    end = previous["end_ms"]
+    for interval in intervals[1:]:
+        gaps.append(dict(after_half=previous["half"], after_part=previous["part"],
+                         before_half=interval["half"], before_part=interval["part"],
+                         ms=max(0., interval["start_ms"] - end)))
+        end = max(end, interval["end_ms"])
+        previous = interval
+    return dict(steps=4, cpu_delay_us=dict(a=180., b=20.), records=rows, compute_spans=intervals,
+                compute_gaps=gaps, compute_gap_ms=sum(item["ms"] for item in gaps),
+                read_to_vector_copy_gap_ms=sum(item["read_to_vector_copy_ms"] for item in rows),
+                interpretation="CUDA event milliseconds from a common origin; compute gaps include copies "
+                               "and host/CPU waits, not only GPU idle. Read-to-vector gaps include B and "
+                               "dispatch or extra query rounds, not a pure CPU-B duration.")
+
+
 def cell_command(args):
     import torch
     torch.backends.cuda.matmul.allow_tf32 = False
@@ -628,15 +737,19 @@ def cell_command(args):
 
         def pipelined(label):
             loop.start()
-            for h in loop.halves:
-                h.side.seconds = 0.0
             rates, stamp = [], None
             for repeat in range(total):
                 if repeat == args.warmup:
                     stamp = time.perf_counter()
                     loop.query_rounds = loop.query_count = loop.max_rounds = 0
                     for h in loop.halves:
-                        h.side.seconds = 0.0
+                        side = h.side
+                        side.seconds = 0.0
+                        side.phase_seconds = dict(a=0., b=0.)
+                        if isinstance(side, DelaySide):
+                            side.delay_seconds = dict(a=0., b=0.)
+                            side.inner.seconds = 0.0
+                            side.inner.phase_seconds = dict(a=0., b=0.)
                 loop.advance(STEPS_PER_REPEAT)
                 if repeat >= args.warmup:
                     now = time.perf_counter()
@@ -644,8 +757,17 @@ def cell_command(args):
                     stamp = now
             loop.drain()
             cpu = sum(h.side.seconds for h in loop.halves)
+            scale = 1000 / (2 * args.repeats * STEPS_PER_REPEAT)
+            full = {phase: sum(h.side.phase_seconds[phase] for h in loop.halves) * scale
+                    for phase in ("a", "b")}
+            prepare = {phase: sum((h.side.inner if isinstance(h.side, DelaySide) else h.side)
+                                  .phase_seconds[phase] for h in loop.halves) * scale for phase in ("a", "b")}
+            delay = {phase: sum(h.side.delay_seconds[phase] if isinstance(h.side, DelaySide) else 0.
+                                for h in loop.halves) * scale for phase in ("a", "b")}
             result[label] = dict(decisions_per_second=stats(rates), per_repeat=rates,
-                                 cpu_side_ms_per_half_step=cpu * 1000 / (2 * args.repeats * STEPS_PER_REPEAT),
+                                 cpu_side_ms_per_half_step=cpu * scale,
+                                 cpu_phase_ms_per_half_step=full, cpu_prepare_ms_per_half_step=prepare,
+                                 cpu_delay_ms_per_half_step=delay,
                                  passage=dict(queries=loop.query_count, half_rounds=loop.query_rounds,
                                               max_rounds_observed=loop.max_rounds,
                                               queries_per_decision=loop.query_count / (args.repeats * STEPS_PER_REPEAT * N)))
@@ -664,6 +786,7 @@ def cell_command(args):
         result["loop_delay"].update(us_per_decision=DELAY_US, phase_a_us=180., phase_b_us=20., threads=DELAY_THREADS)
         result["passage"] = dict(queries=loop.query_count, half_rounds=loop.query_rounds, max_rounds=4,
                                  rebuild_fraction=.02, rebuild_queries=34)
+        result["gpu_timeline"] = trace_loop(torch, loop)
         pool.shutdown()
         for h, side in zip(loop.halves, replay_sides):
             h.side = side

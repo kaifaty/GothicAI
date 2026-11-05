@@ -119,6 +119,7 @@ class ReplaySide:
         self.sequence = 0
         self.last_verdicts = np.zeros(0, np.uint8)
         self.seconds = 0.0
+        self.phase_seconds = dict(a=0., b=0.)
         self.steps = 0
         # numpy's take releases the GIL: agent ranges fill in parallel.
         self.pool = ThreadPoolExecutor(workers) if workers > 1 else None
@@ -126,20 +127,26 @@ class ReplaySide:
         self.ranges = [slice(a, b) for a, b in zip(bounds[:-1], bounds[1:]) if b > a]
 
     def reset(self) -> StepBatch:
+        started = time.perf_counter()
         if self.pending:
             raise RuntimeError("finish the current decision before resetting")
         self.sequence = 0
         self.cursor = self.start.copy()
-        return self._fill(np.ones(self.agents, bool), np.zeros(self.agents, bool))
+        batch = self._fill(np.ones(self.agents, bool), np.zeros(self.agents, bool))
+        self.phase_seconds["a"] += time.perf_counter() - started
+        return batch
 
     def step(self, actions=None) -> StepBatch:
+        started = time.perf_counter()
         if self.pending:
             raise RuntimeError("finish the current decision before stepping")
         self.sequence += 1
         self.cursor += 1
         wrap = self.cursor >= self.replay.count[self.record]
         self.cursor[wrap] = 0
-        return self._fill(wrap, wrap)
+        batch = self._fill(wrap, wrap)
+        self.phase_seconds["a"] += time.perf_counter() - started
+        return batch
 
     def _fill(self, first, truncated) -> StepBatch:
         started = time.perf_counter()
@@ -198,7 +205,9 @@ class ReplaySide:
         self.finished.teacher[:] = 0
         self.finished.teacher_valid[:] = 0  # captures do not contain teacher labels
         self.pending = False
-        self.seconds += time.perf_counter() - started
+        elapsed = time.perf_counter() - started
+        self.seconds += elapsed
+        self.phase_seconds["b"] += elapsed
         return self.finished
 
     def close(self):
