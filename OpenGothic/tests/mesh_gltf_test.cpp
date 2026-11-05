@@ -2586,7 +2586,7 @@ void heroHeadGameCases(const std::string& game, const std::string& base) {
     for(const auto* name:{"R_EYESBLINK","S_ANGRY","VISEME","T_HURT"}) {
       visual.startFaceAnim(*hero,name,1,100);
       visual.startMMAnim(*hero,name,"BIP01 HEAD");
-      require(visual.faceWeight(name)==0,"original face names must silently leave the new head unchanged");
+      require(visual.faceWeight(*hero,name)==0,"without a face profile original face names must leave the new head unchanged");
       }
     MeshGltfTest::head(*hero).setMMShape("VISEME",0,1,.5f,1);
     visual.updateBlink(*hero,16);
