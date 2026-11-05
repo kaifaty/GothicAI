@@ -1,0 +1,1416 @@
+{
+ "world": "/tmp/society-teacher/world.json",
+ "world_hash": "1ae01e72617490c1",
+ "config_hash": "4bf4e8a4e35941e5",
+ "seed": 0,
+ "thresholds": {
+  "critical_median_h": 1.0,
+  "critical_max_h": 4.0,
+  "out_of_mask": 0,
+  "over_capacity": 0,
+  "protected_same": 1.0,
+  "anchor_by_routine": 0.95,
+  "changes_p95": 3,
+  "day_seconds": 0.5
+ },
+ "people": {
+  "deciders": 261,
+  "on_post_all_day": 44,
+  "protected": 21
+ },
+ "runs": {
+  "routine-1": {
+   "days": 1,
+   "policy": "routine",
+   "events": 14705,
+   "decisions": 0,
+   "rows": 0,
+   "day_ms": [
+    3.35
+   ],
+   "critical": {
+    "food": {
+     "median_h": 9.81,
+     "p90_h": 11.805,
+     "max_h": 12.167,
+     "person_days_over_4h": 210,
+     "person_days": 261,
+     "worst": 879
+    },
+    "sleep": {
+     "median_h": 4.021,
+     "p90_h": 7.724,
+     "max_h": 8.322,
+     "person_days_over_4h": 131,
+     "person_days": 261,
+     "worst": 101
+    },
+    "toilet": {
+     "median_h": 16.788,
+     "p90_h": 17.552,
+     "max_h": 17.724,
+     "person_days_over_4h": 260,
+     "person_days": 261,
+     "worst": 34
+    },
+    "social": {
+     "median_h": 0.0,
+     "p90_h": 4.86,
+     "max_h": 9.359,
+     "person_days_over_4h": 37,
+     "person_days": 261,
+     "worst": 825
+    },
+    "work": {
+     "median_h": 11.421,
+     "p90_h": 14.073,
+     "max_h": 14.598,
+     "person_days_over_4h": 138,
+     "person_days": 261,
+     "worst": 761
+    },
+    "faith": {
+     "median_h": 0.0,
+     "p90_h": 0.0,
+     "max_h": 0.0,
+     "person_days_over_4h": 0,
+     "person_days": 261,
+     "worst": 3
+    },
+    "leisure": {
+     "median_h": 0.0,
+     "p90_h": 3.376,
+     "max_h": 5.173,
+     "person_days_over_4h": 19,
+     "person_days": 261,
+     "worst": 57
+    }
+   },
+   "critical_on_post_all_day": {
+    "food": {
+     "median_h": 10.557,
+     "p90_h": 11.795,
+     "max_h": 12.034,
+     "person_days_over_4h": 44,
+     "person_days": 44,
+     "worst": 45
+    },
+    "sleep": {
+     "median_h": 6.151,
+     "p90_h": 8.089,
+     "max_h": 8.332,
+     "person_days_over_4h": 37,
+     "person_days": 44,
+     "worst": 839
+    },
+    "toilet": {
+     "median_h": 17.078,
+     "p90_h": 17.642,
+     "max_h": 17.737,
+     "person_days_over_4h": 44,
+     "person_days": 44,
+     "worst": 603
+    },
+    "social": {
+     "median_h": 3.178,
+     "p90_h": 5.042,
+     "max_h": 9.009,
+     "person_days_over_4h": 14,
+     "person_days": 44,
+     "worst": 557
+    },
+    "work": {
+     "median_h": 0.0,
+     "p90_h": 0.0,
+     "max_h": 0.072,
+     "person_days_over_4h": 0,
+     "person_days": 44,
+     "worst": 611
+    },
+    "faith": {
+     "median_h": 0.0,
+     "p90_h": 0.0,
+     "max_h": 0.0,
+     "person_days_over_4h": 0,
+     "person_days": 44,
+     "worst": 769
+    },
+    "leisure": {
+     "median_h": 2.209,
+     "p90_h": 4.243,
+     "max_h": 4.686,
+     "person_days_over_4h": 8,
+     "person_days": 44,
+     "worst": 610
+    }
+   },
+   "anchor": {
+    "anchor_h": 2504.0,
+    "by_routine": 1.0,
+    "posts_h": 270.4,
+    "without_posts_by_routine": 1.0,
+    "people_under_2_free_h": 44,
+    "by_routine_under_2_free_h": 1.0,
+    "by_routine_2_free_h_or_more": 1.0
+   },
+   "changes": {
+    "p95": 1,
+    "p99": 2,
+    "max": 6,
+    "mean": 0.165
+   }
+  },
+  "routine-7": {
+   "days": 7,
+   "policy": "routine",
+   "events": 78299,
+   "decisions": 0,
+   "rows": 0,
+   "day_ms": [
+    3.19,
+    2.08,
+    2.12,
+    2.0,
+    2.0,
+    1.94,
+    1.98
+   ],
+   "critical": {
+    "food": {
+     "median_h": 24.0,
+     "p90_h": 24.0,
+     "max_h": 24.0,
+     "person_days_over_4h": 1518,
+     "person_days": 1827,
+     "worst": 4
+    },
+    "sleep": {
+     "median_h": 24.0,
+     "p90_h": 24.0,
+     "max_h": 24.0,
+     "person_days_over_4h": 1235,
+     "person_days": 1827,
+     "worst": 3
+    },
+    "toilet": {
+     "median_h": 24.0,
+     "p90_h": 24.0,
+     "max_h": 24.0,
+     "person_days_over_4h": 1820,
+     "person_days": 1827,
+     "worst": 3
+    },
+    "social": {
+     "median_h": 1.05,
+     "p90_h": 24.0,
+     "max_h": 24.0,
+     "person_days_over_4h": 880,
+     "person_days": 1827,
+     "worst": 3
+    },
+    "work": {
+     "median_h": 12.494,
+     "p90_h": 24.0,
+     "max_h": 24.0,
+     "person_days_over_4h": 1020,
+     "person_days": 1827,
+     "worst": 3
+    },
+    "faith": {
+     "median_h": 0.0,
+     "p90_h": 24.0,
+     "max_h": 24.0,
+     "person_days_over_4h": 664,
+     "person_days": 1827,
+     "worst": 3
+    },
+    "leisure": {
+     "median_h": 13.155,
+     "p90_h": 24.0,
+     "max_h": 24.0,
+     "person_days_over_4h": 934,
+     "person_days": 1827,
+     "worst": 3
+    }
+   },
+   "critical_on_post_all_day": {
+    "food": {
+     "median_h": 24.0,
+     "p90_h": 24.0,
+     "max_h": 24.0,
+     "person_days_over_4h": 308,
+     "person_days": 308,
+     "worst": 769
+    },
+    "sleep": {
+     "median_h": 24.0,
+     "p90_h": 24.0,
+     "max_h": 24.0,
+     "person_days_over_4h": 301,
+     "person_days": 308,
+     "worst": 769
+    },
+    "toilet": {
+     "median_h": 24.0,
+     "p90_h": 24.0,
+     "max_h": 24.0,
+     "person_days_over_4h": 308,
+     "person_days": 308,
+     "worst": 769
+    },
+    "social": {
+     "median_h": 24.0,
+     "p90_h": 24.0,
+     "max_h": 24.0,
+     "person_days_over_4h": 278,
+     "person_days": 308,
+     "worst": 769
+    },
+    "work": {
+     "median_h": 0.0,
+     "p90_h": 0.0,
+     "max_h": 0.072,
+     "person_days_over_4h": 0,
+     "person_days": 308,
+     "worst": 611
+    },
+    "faith": {
+     "median_h": 24.0,
+     "p90_h": 24.0,
+     "max_h": 24.0,
+     "person_days_over_4h": 184,
+     "person_days": 308,
+     "worst": 395
+    },
+    "leisure": {
+     "median_h": 24.0,
+     "p90_h": 24.0,
+     "max_h": 24.0,
+     "person_days_over_4h": 272,
+     "person_days": 308,
+     "worst": 769
+    }
+   },
+   "anchor": {
+    "anchor_h": 17528.0,
+    "by_routine": 1.0,
+    "posts_h": 1892.9,
+    "without_posts_by_routine": 1.0,
+    "people_under_2_free_h": 44,
+    "by_routine_under_2_free_h": 1.0,
+    "by_routine_2_free_h_or_more": 1.0
+   },
+   "changes": {
+    "p95": 1,
+    "p99": 2,
+    "max": 6,
+    "mean": 0.182
+   }
+  },
+  "teacher-1": {
+   "days": 1,
+   "policy": "teacher",
+   "events": 30882,
+   "decisions": 3414,
+   "rows": 3075,
+   "day_ms": [
+    85.51
+   ],
+   "critical": {
+    "food": {
+     "median_h": 0.0,
+     "p90_h": 4.196,
+     "max_h": 12.094,
+     "person_days_over_4h": 27,
+     "person_days": 261,
+     "worst": 559
+    },
+    "sleep": {
+     "median_h": 0.0,
+     "p90_h": 0.09,
+     "max_h": 8.148,
+     "person_days_over_4h": 7,
+     "person_days": 261,
+     "worst": 15
+    },
+    "toilet": {
+     "median_h": 0.0,
+     "p90_h": 0.643,
+     "max_h": 8.707,
+     "person_days_over_4h": 15,
+     "person_days": 261,
+     "worst": 817
+    },
+    "social": {
+     "median_h": 0.0,
+     "p90_h": 0.0,
+     "max_h": 4.221,
+     "person_days_over_4h": 1,
+     "person_days": 261,
+     "worst": 74
+    },
+    "work": {
+     "median_h": 0.0,
+     "p90_h": 0.0,
+     "max_h": 10.354,
+     "person_days_over_4h": 6,
+     "person_days": 261,
+     "worst": 74
+    },
+    "faith": {
+     "median_h": 0.0,
+     "p90_h": 0.0,
+     "max_h": 0.0,
+     "person_days_over_4h": 0,
+     "person_days": 261,
+     "worst": 3
+    },
+    "leisure": {
+     "median_h": 0.0,
+     "p90_h": 0.0,
+     "max_h": 2.191,
+     "person_days_over_4h": 0,
+     "person_days": 261,
+     "worst": 508
+    }
+   },
+   "critical_on_post_all_day": {
+    "food": {
+     "median_h": 10.557,
+     "p90_h": 11.795,
+     "max_h": 12.034,
+     "person_days_over_4h": 44,
+     "person_days": 44,
+     "worst": 45
+    },
+    "sleep": {
+     "median_h": 6.151,
+     "p90_h": 8.089,
+     "max_h": 8.332,
+     "person_days_over_4h": 37,
+     "person_days": 44,
+     "worst": 839
+    },
+    "toilet": {
+     "median_h": 17.078,
+     "p90_h": 17.642,
+     "max_h": 17.737,
+     "person_days_over_4h": 44,
+     "person_days": 44,
+     "worst": 603
+    },
+    "social": {
+     "median_h": 3.178,
+     "p90_h": 5.042,
+     "max_h": 9.009,
+     "person_days_over_4h": 14,
+     "person_days": 44,
+     "worst": 557
+    },
+    "work": {
+     "median_h": 0.0,
+     "p90_h": 0.0,
+     "max_h": 0.072,
+     "person_days_over_4h": 0,
+     "person_days": 44,
+     "worst": 611
+    },
+    "faith": {
+     "median_h": 0.0,
+     "p90_h": 0.0,
+     "max_h": 0.0,
+     "person_days_over_4h": 0,
+     "person_days": 44,
+     "worst": 769
+    },
+    "leisure": {
+     "median_h": 2.209,
+     "p90_h": 4.243,
+     "max_h": 4.686,
+     "person_days_over_4h": 8,
+     "person_days": 44,
+     "worst": 610
+    }
+   },
+   "anchor": {
+    "anchor_h": 2504.0,
+    "by_routine": 0.95276,
+    "posts_h": 270.4,
+    "without_posts_by_routine": 0.94706,
+    "people_under_2_free_h": 44,
+    "by_routine_under_2_free_h": 0.9212,
+    "by_routine_2_free_h_or_more": 0.97554
+   },
+   "changes": {
+    "p95": 2,
+    "p99": 3,
+    "max": 8,
+    "mean": 0.585
+   },
+   "choices": {
+    "choices": {
+     "routine": 1091,
+     "pee": 39,
+     "stove": 451,
+     "sleep_ground": 141,
+     "pee_outdoors": 1026,
+     "yard": 16,
+     "herb": 3,
+     "throne": 24,
+     "barbecue": 26,
+     "bed": 251,
+     "smalltalk": 92,
+     "grindstone": 4,
+     "cauldron": 48,
+     "field": 14,
+     "saw": 9,
+     "anvil": 5,
+     "cooling": 2,
+     "pan": 17,
+     "forge": 6,
+     "alchemy": 2,
+     "campfire": 34,
+     "bench": 34,
+     "chair": 41,
+     "repair": 3,
+     "waterpipe": 20,
+     "seat": 1,
+     "bookstand": 14
+    },
+    "out_of_mask": 0,
+    "out_of_mask_by_rule": {},
+    "out_of_mask_examples": [],
+    "over_capacity": 0,
+    "over_capacity_examples": [],
+    "most_holders": 4,
+    "failed": {
+     "taken": 21,
+     "interrupted": 3
+    },
+    "finished": {
+     "setpoint": 1559,
+     "anchor": 56,
+     "max time": 297,
+     "switched": 160
+    }
+   },
+   "protected": {
+    "rows": 6069,
+    "same": 6069,
+    "share": 1.0,
+    "rows_match": true,
+    "npcs": 21
+   }
+  },
+  "teacher-7": {
+   "days": 7,
+   "policy": "teacher",
+   "events": 263529,
+   "decisions": 33782,
+   "rows": 29951,
+   "day_ms": [
+    75.4,
+    79.44,
+    75.58,
+    75.5,
+    82.45,
+    82.55,
+    79.4
+   ],
+   "critical": {
+    "food": {
+     "median_h": 0.0,
+     "p90_h": 12.214,
+     "max_h": 24.0,
+     "person_days_over_4h": 307,
+     "person_days": 1827,
+     "worst": 550
+    },
+    "sleep": {
+     "median_h": 0.0,
+     "p90_h": 4.864,
+     "max_h": 24.0,
+     "person_days_over_4h": 193,
+     "person_days": 1827,
+     "worst": 15
+    },
+    "toilet": {
+     "median_h": 0.001,
+     "p90_h": 1.884,
+     "max_h": 17.475,
+     "person_days_over_4h": 125,
+     "person_days": 1827,
+     "worst": 29
+    },
+    "social": {
+     "median_h": 0.0,
+     "p90_h": 1.241,
+     "max_h": 24.0,
+     "person_days_over_4h": 115,
+     "person_days": 1827,
+     "worst": 3
+    },
+    "work": {
+     "median_h": 0.0,
+     "p90_h": 0.0,
+     "max_h": 24.0,
+     "person_days_over_4h": 58,
+     "person_days": 1827,
+     "worst": 3
+    },
+    "faith": {
+     "median_h": 0.0,
+     "p90_h": 0.84,
+     "max_h": 24.0,
+     "person_days_over_4h": 139,
+     "person_days": 1827,
+     "worst": 6
+    },
+    "leisure": {
+     "median_h": 0.0,
+     "p90_h": 0.926,
+     "max_h": 24.0,
+     "person_days_over_4h": 107,
+     "person_days": 1827,
+     "worst": 60
+    }
+   },
+   "critical_on_post_all_day": {
+    "food": {
+     "median_h": 24.0,
+     "p90_h": 24.0,
+     "max_h": 24.0,
+     "person_days_over_4h": 308,
+     "person_days": 308,
+     "worst": 769
+    },
+    "sleep": {
+     "median_h": 24.0,
+     "p90_h": 24.0,
+     "max_h": 24.0,
+     "person_days_over_4h": 301,
+     "person_days": 308,
+     "worst": 769
+    },
+    "toilet": {
+     "median_h": 24.0,
+     "p90_h": 24.0,
+     "max_h": 24.0,
+     "person_days_over_4h": 308,
+     "person_days": 308,
+     "worst": 769
+    },
+    "social": {
+     "median_h": 24.0,
+     "p90_h": 24.0,
+     "max_h": 24.0,
+     "person_days_over_4h": 278,
+     "person_days": 308,
+     "worst": 769
+    },
+    "work": {
+     "median_h": 0.0,
+     "p90_h": 0.0,
+     "max_h": 0.072,
+     "person_days_over_4h": 0,
+     "person_days": 308,
+     "worst": 611
+    },
+    "faith": {
+     "median_h": 24.0,
+     "p90_h": 24.0,
+     "max_h": 24.0,
+     "person_days_over_4h": 184,
+     "person_days": 308,
+     "worst": 395
+    },
+    "leisure": {
+     "median_h": 24.0,
+     "p90_h": 24.0,
+     "max_h": 24.0,
+     "person_days_over_4h": 272,
+     "person_days": 308,
+     "worst": 769
+    }
+   },
+   "anchor": {
+    "anchor_h": 17528.0,
+    "by_routine": 0.83939,
+    "posts_h": 1892.9,
+    "without_posts_by_routine": 0.82001,
+    "people_under_2_free_h": 44,
+    "by_routine_under_2_free_h": 0.73644,
+    "by_routine_2_free_h_or_more": 0.91373
+   },
+   "changes": {
+    "p95": 3,
+    "p99": 4,
+    "max": 30,
+    "mean": 0.799
+   },
+   "choices": {
+    "choices": {
+     "routine": 9303,
+     "pee": 267,
+     "stove": 4125,
+     "sleep_ground": 1171,
+     "pee_outdoors": 10030,
+     "yard": 120,
+     "herb": 25,
+     "throne": 168,
+     "barbecue": 291,
+     "bed": 2444,
+     "smalltalk": 1485,
+     "grindstone": 36,
+     "cauldron": 476,
+     "field": 143,
+     "saw": 59,
+     "anvil": 35,
+     "cooling": 35,
+     "pan": 107,
+     "forge": 28,
+     "alchemy": 19,
+     "campfire": 710,
+     "bench": 677,
+     "chair": 990,
+     "repair": 20,
+     "waterpipe": 216,
+     "seat": 59,
+     "bookstand": 296,
+     "shrine": 447
+    },
+    "out_of_mask": 0,
+    "out_of_mask_by_rule": {},
+    "out_of_mask_examples": [],
+    "over_capacity": 0,
+    "over_capacity_examples": [],
+    "most_holders": 4,
+    "failed": {
+     "taken": 110,
+     "interrupted": 44
+    },
+    "finished": {
+     "setpoint": 15139,
+     "anchor": 899,
+     "max time": 3427,
+     "switched": 3057
+    }
+   },
+   "protected": {
+    "rows": 42357,
+    "same": 42357,
+    "share": 1.0,
+    "rows_match": true,
+    "npcs": 21
+   }
+  },
+  "random-7": {
+   "days": 7,
+   "policy": "random",
+   "events": 371723,
+   "decisions": 48980,
+   "rows": 46531,
+   "day_ms": [
+    172.25,
+    154.38,
+    142.8,
+    139.39,
+    137.11,
+    137.17,
+    135.12
+   ],
+   "critical": {
+    "food": {
+     "median_h": 5.945,
+     "p90_h": 17.999,
+     "max_h": 24.0,
+     "person_days_over_4h": 1070,
+     "person_days": 1827,
+     "worst": 8
+    },
+    "sleep": {
+     "median_h": 3.947,
+     "p90_h": 18.71,
+     "max_h": 24.0,
+     "person_days_over_4h": 907,
+     "person_days": 1827,
+     "worst": 7
+    },
+    "toilet": {
+     "median_h": 10.699,
+     "p90_h": 21.667,
+     "max_h": 24.0,
+     "person_days_over_4h": 1549,
+     "person_days": 1827,
+     "worst": 3
+    },
+    "social": {
+     "median_h": 0.0,
+     "p90_h": 9.37,
+     "max_h": 24.0,
+     "person_days_over_4h": 385,
+     "person_days": 1827,
+     "worst": 10
+    },
+    "work": {
+     "median_h": 0.0,
+     "p90_h": 0.0,
+     "max_h": 24.0,
+     "person_days_over_4h": 59,
+     "person_days": 1827,
+     "worst": 63
+    },
+    "faith": {
+     "median_h": 0.0,
+     "p90_h": 2.788,
+     "max_h": 24.0,
+     "person_days_over_4h": 162,
+     "person_days": 1827,
+     "worst": 8
+    },
+    "leisure": {
+     "median_h": 0.0,
+     "p90_h": 6.173,
+     "max_h": 24.0,
+     "person_days_over_4h": 262,
+     "person_days": 1827,
+     "worst": 15
+    }
+   },
+   "critical_on_post_all_day": {
+    "food": {
+     "median_h": 24.0,
+     "p90_h": 24.0,
+     "max_h": 24.0,
+     "person_days_over_4h": 308,
+     "person_days": 308,
+     "worst": 769
+    },
+    "sleep": {
+     "median_h": 24.0,
+     "p90_h": 24.0,
+     "max_h": 24.0,
+     "person_days_over_4h": 301,
+     "person_days": 308,
+     "worst": 769
+    },
+    "toilet": {
+     "median_h": 24.0,
+     "p90_h": 24.0,
+     "max_h": 24.0,
+     "person_days_over_4h": 308,
+     "person_days": 308,
+     "worst": 769
+    },
+    "social": {
+     "median_h": 24.0,
+     "p90_h": 24.0,
+     "max_h": 24.0,
+     "person_days_over_4h": 278,
+     "person_days": 308,
+     "worst": 769
+    },
+    "work": {
+     "median_h": 0.0,
+     "p90_h": 0.0,
+     "max_h": 0.072,
+     "person_days_over_4h": 0,
+     "person_days": 308,
+     "worst": 611
+    },
+    "faith": {
+     "median_h": 24.0,
+     "p90_h": 24.0,
+     "max_h": 24.0,
+     "person_days_over_4h": 184,
+     "person_days": 308,
+     "worst": 395
+    },
+    "leisure": {
+     "median_h": 24.0,
+     "p90_h": 24.0,
+     "max_h": 24.0,
+     "person_days_over_4h": 272,
+     "person_days": 308,
+     "worst": 769
+    }
+   },
+   "anchor": {
+    "anchor_h": 17528.0,
+    "by_routine": 0.6451,
+    "posts_h": 1892.9,
+    "without_posts_by_routine": 0.60222,
+    "people_under_2_free_h": 44,
+    "by_routine_under_2_free_h": 0.54125,
+    "by_routine_2_free_h_or_more": 0.7201
+   },
+   "changes": {
+    "p95": 3,
+    "p99": 4,
+    "max": 9,
+    "mean": 1.127
+   },
+   "choices": {
+    "choices": {
+     "bookstand": 1056,
+     "bed": 3383,
+     "saw": 1085,
+     "stand": 3754,
+     "forge": 616,
+     "smalltalk": 4413,
+     "campfire": 2095,
+     "pee_outdoors": 2292,
+     "shrine": 1458,
+     "chair": 3026,
+     "field": 1839,
+     "sleep_ground": 713,
+     "seat": 583,
+     "bench": 2637,
+     "pan": 1150,
+     "pee": 1219,
+     "waterpipe": 727,
+     "grindstone": 645,
+     "throne": 1401,
+     "anvil": 609,
+     "yard": 811,
+     "repair": 734,
+     "routine": 6019,
+     "cauldron": 944,
+     "barbecue": 417,
+     "stove": 3043,
+     "herb": 806,
+     "cooling": 761,
+     "alchemy": 672,
+     "ore": 72
+    },
+    "out_of_mask": 0,
+    "out_of_mask_by_rule": {},
+    "out_of_mask_examples": [],
+    "over_capacity": 0,
+    "over_capacity_examples": [],
+    "most_holders": 4,
+    "failed": {
+     "taken": 112,
+     "interrupted": 185
+    },
+    "finished": {
+     "setpoint": 25411,
+     "max time": 5870,
+     "anchor": 421,
+     "switched": 10394
+    }
+   }
+  }
+ },
+ "sensitivity": {
+  "food": {
+   "base_h": 719.9,
+   "zero_h": 873.9,
+   "change": 0.214,
+   "grows": true
+  },
+  "sleep": {
+   "base_h": 1607.0,
+   "zero_h": 2702.2,
+   "change": 0.681,
+   "grows": true
+  },
+  "toilet": {
+   "base_h": 45.4,
+   "zero_h": 52.4,
+   "change": 0.155,
+   "grows": true
+  },
+  "social": {
+   "base_h": 966.4,
+   "zero_h": 1165.5,
+   "change": 0.206,
+   "grows": true
+  },
+  "work": {
+   "base_h": 1982.4,
+   "zero_h": 2291.4,
+   "change": 0.156,
+   "grows": true
+  },
+  "faith": {
+   "base_h": 41.8,
+   "zero_h": 153.1,
+   "change": 2.659,
+   "grows": true
+  },
+  "leisure": {
+   "base_h": 905.8,
+   "zero_h": 1380.2,
+   "change": 0.524,
+   "grows": true
+  }
+ },
+ "posts_release": {
+  "guards": 64,
+  "critical_guards_routine_posts": {
+   "food": {
+    "median_h": 24.0,
+    "p90_h": 24.0,
+    "max_h": 24.0,
+    "person_days_over_4h": 401,
+    "person_days": 448,
+    "worst": 769
+   },
+   "sleep": {
+    "median_h": 24.0,
+    "p90_h": 24.0,
+    "max_h": 24.0,
+    "person_days_over_4h": 371,
+    "person_days": 448,
+    "worst": 769
+   },
+   "toilet": {
+    "median_h": 24.0,
+    "p90_h": 24.0,
+    "max_h": 24.0,
+    "person_days_over_4h": 418,
+    "person_days": 448,
+    "worst": 769
+   },
+   "social": {
+    "median_h": 24.0,
+    "p90_h": 24.0,
+    "max_h": 24.0,
+    "person_days_over_4h": 344,
+    "person_days": 448,
+    "worst": 769
+   },
+   "work": {
+    "median_h": 0.0,
+    "p90_h": 0.0,
+    "max_h": 0.072,
+    "person_days_over_4h": 0,
+    "person_days": 448,
+    "worst": 611
+   },
+   "faith": {
+    "median_h": 2.969,
+    "p90_h": 24.0,
+    "max_h": 24.0,
+    "person_days_over_4h": 221,
+    "person_days": 448,
+    "worst": 10
+   },
+   "leisure": {
+    "median_h": 24.0,
+    "p90_h": 24.0,
+    "max_h": 24.0,
+    "person_days_over_4h": 337,
+    "person_days": 448,
+    "worst": 769
+   }
+  },
+  "critical_guards_released": {
+   "food": {
+    "median_h": 1.629,
+    "p90_h": 13.824,
+    "max_h": 24.0,
+    "person_days_over_4h": 113,
+    "person_days": 448,
+    "worst": 395
+   },
+   "sleep": {
+    "median_h": 1.16,
+    "p90_h": 14.463,
+    "max_h": 24.0,
+    "person_days_over_4h": 155,
+    "person_days": 448,
+    "worst": 493
+   },
+   "toilet": {
+    "median_h": 0.203,
+    "p90_h": 1.838,
+    "max_h": 4.903,
+    "person_days_over_4h": 9,
+    "person_days": 448,
+    "worst": 407
+   },
+   "social": {
+    "median_h": 0.397,
+    "p90_h": 3.398,
+    "max_h": 10.651,
+    "person_days_over_4h": 34,
+    "person_days": 448,
+    "worst": 43
+   },
+   "work": {
+    "median_h": 0.0,
+    "p90_h": 0.0,
+    "max_h": 11.279,
+    "person_days_over_4h": 4,
+    "person_days": 448,
+    "worst": 623
+   },
+   "faith": {
+    "median_h": 0.0,
+    "p90_h": 24.0,
+    "max_h": 24.0,
+    "person_days_over_4h": 120,
+    "person_days": 448,
+    "worst": 10
+   },
+   "leisure": {
+    "median_h": 0.452,
+    "p90_h": 3.197,
+    "max_h": 24.0,
+    "person_days_over_4h": 35,
+    "person_days": 448,
+    "worst": 407
+   }
+  },
+  "anchor_deciders_released": {
+   "anchor_h": 24920.0,
+   "by_routine": 0.72641,
+   "posts_h": 9284.9,
+   "without_posts_by_routine": 0.82645,
+   "people_under_2_free_h": 88,
+   "by_routine_under_2_free_h": 0.61419,
+   "by_routine_2_free_h_or_more": 0.88893
+  }
+ },
+ "traits": {
+  "people_with_talk_off_middle": 86,
+  "agree": 75,
+  "agree_share": 0.872,
+  "pairs": 460,
+  "pairs_agree_share": 0.952,
+  "examples": [
+   [
+    "BAU_900_ONAR#0",
+    2,
+    7.47,
+    9.61
+   ],
+   [
+    "BAU_902_GUNNAR#0",
+    5,
+    1.5,
+    0.38
+   ],
+   [
+    "BAU_907_WASILI#0",
+    4,
+    7.5,
+    5.5
+   ],
+   [
+    "BAU_908_HODGES#0",
+    2,
+    9.21,
+    10.11
+   ],
+   [
+    "BAU_910_MARIA#0",
+    4,
+    11.14,
+    10.58
+   ],
+   [
+    "BAU_912_PEPE#0",
+    4,
+    10.81,
+    15.1
+   ],
+   [
+    "BAU_913_THEKLA#0",
+    4,
+    8.59,
+    8.31
+   ],
+   [
+    "BAU_932_BALTHASAR#0",
+    4,
+    18.52,
+    16.23
+   ],
+   [
+    "BAU_936_ROSI#0",
+    5,
+    19.98,
+    14.74
+   ],
+   [
+    "BAU_940_AKIL#0",
+    4,
+    1.0,
+    2.0
+   ],
+   [
+    "BAU_941_KATI#0",
+    4,
+    14.35,
+    14.46
+   ],
+   [
+    "BAU_944_EHNIM#0",
+    4,
+    0.0,
+    0.17
+   ]
+  ]
+ },
+ "checks": [
+  {
+   "what": "teacher-1: critical food, median h",
+   "value": 0.0,
+   "ok": true
+  },
+  {
+   "what": "teacher-1: critical food, max h",
+   "value": 12.094,
+   "ok": false
+  },
+  {
+   "what": "teacher-1: critical sleep, median h",
+   "value": 0.0,
+   "ok": true
+  },
+  {
+   "what": "teacher-1: critical sleep, max h",
+   "value": 8.148,
+   "ok": false
+  },
+  {
+   "what": "teacher-1: critical toilet, median h",
+   "value": 0.0,
+   "ok": true
+  },
+  {
+   "what": "teacher-1: critical toilet, max h",
+   "value": 8.707,
+   "ok": false
+  },
+  {
+   "what": "teacher-1: critical social, median h",
+   "value": 0.0,
+   "ok": true
+  },
+  {
+   "what": "teacher-1: critical social, max h",
+   "value": 4.221,
+   "ok": false
+  },
+  {
+   "what": "teacher-1: critical work, median h",
+   "value": 0.0,
+   "ok": true
+  },
+  {
+   "what": "teacher-1: critical work, max h",
+   "value": 10.354,
+   "ok": false
+  },
+  {
+   "what": "teacher-1: critical faith, median h",
+   "value": 0.0,
+   "ok": true
+  },
+  {
+   "what": "teacher-1: critical faith, max h",
+   "value": 0.0,
+   "ok": true
+  },
+  {
+   "what": "teacher-1: critical leisure, median h",
+   "value": 0.0,
+   "ok": true
+  },
+  {
+   "what": "teacher-1: critical leisure, max h",
+   "value": 2.191,
+   "ok": true
+  },
+  {
+   "what": "teacher-1: out of mask",
+   "value": 0,
+   "ok": true
+  },
+  {
+   "what": "teacher-1: over capacity",
+   "value": 0,
+   "ok": true
+  },
+  {
+   "what": "teacher-1: protected marks same",
+   "value": 1.0,
+   "ok": true
+  },
+  {
+   "what": "teacher-1: anchor time by routine",
+   "value": 0.95276,
+   "ok": true
+  },
+  {
+   "what": "teacher-1: changes an hour, p95",
+   "value": 2,
+   "ok": true
+  },
+  {
+   "what": "teacher-1: a day, s",
+   "value": 0.0855,
+   "ok": true
+  },
+  {
+   "what": "teacher-7: critical food, median h",
+   "value": 0.0,
+   "ok": true
+  },
+  {
+   "what": "teacher-7: critical food, max h",
+   "value": 24.0,
+   "ok": false
+  },
+  {
+   "what": "teacher-7: critical sleep, median h",
+   "value": 0.0,
+   "ok": true
+  },
+  {
+   "what": "teacher-7: critical sleep, max h",
+   "value": 24.0,
+   "ok": false
+  },
+  {
+   "what": "teacher-7: critical toilet, median h",
+   "value": 0.001,
+   "ok": true
+  },
+  {
+   "what": "teacher-7: critical toilet, max h",
+   "value": 17.475,
+   "ok": false
+  },
+  {
+   "what": "teacher-7: critical social, median h",
+   "value": 0.0,
+   "ok": true
+  },
+  {
+   "what": "teacher-7: critical social, max h",
+   "value": 24.0,
+   "ok": false
+  },
+  {
+   "what": "teacher-7: critical work, median h",
+   "value": 0.0,
+   "ok": true
+  },
+  {
+   "what": "teacher-7: critical work, max h",
+   "value": 24.0,
+   "ok": false
+  },
+  {
+   "what": "teacher-7: critical faith, median h",
+   "value": 0.0,
+   "ok": true
+  },
+  {
+   "what": "teacher-7: critical faith, max h",
+   "value": 24.0,
+   "ok": false
+  },
+  {
+   "what": "teacher-7: critical leisure, median h",
+   "value": 0.0,
+   "ok": true
+  },
+  {
+   "what": "teacher-7: critical leisure, max h",
+   "value": 24.0,
+   "ok": false
+  },
+  {
+   "what": "teacher-7: out of mask",
+   "value": 0,
+   "ok": true
+  },
+  {
+   "what": "teacher-7: over capacity",
+   "value": 0,
+   "ok": true
+  },
+  {
+   "what": "teacher-7: protected marks same",
+   "value": 1.0,
+   "ok": true
+  },
+  {
+   "what": "teacher-7: anchor time by routine",
+   "value": 0.83939,
+   "ok": false
+  },
+  {
+   "what": "teacher-7: changes an hour, p95",
+   "value": 3,
+   "ok": true
+  },
+  {
+   "what": "teacher-7: a day, s",
+   "value": 0.0825,
+   "ok": true
+  },
+  {
+   "what": "random-7: out of mask",
+   "value": 0,
+   "ok": true
+  },
+  {
+   "what": "random-7: over capacity",
+   "value": 0,
+   "ok": true
+  },
+  {
+   "what": "sensitivity: food grows",
+   "value": 0.214,
+   "ok": true
+  },
+  {
+   "what": "sensitivity: sleep grows",
+   "value": 0.681,
+   "ok": true
+  },
+  {
+   "what": "sensitivity: toilet grows",
+   "value": 0.155,
+   "ok": true
+  },
+  {
+   "what": "sensitivity: social grows",
+   "value": 0.206,
+   "ok": true
+  },
+  {
+   "what": "sensitivity: work grows",
+   "value": 0.156,
+   "ok": true
+  },
+  {
+   "what": "sensitivity: faith grows",
+   "value": 2.659,
+   "ok": true
+  },
+  {
+   "what": "sensitivity: leisure grows",
+   "value": 0.524,
+   "ok": true
+  },
+  {
+   "what": "traits: talk moves chosen social time its way",
+   "value": 0.872,
+   "ok": true
+  },
+  {
+   "what": "traits: same-guild pairs differ the same way",
+   "value": 0.952,
+   "ok": true
+  }
+ ],
+ "passed": false
+}
