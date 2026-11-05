@@ -12,6 +12,7 @@ import captures  # noqa: E402
 import contract  # noqa: E402
 import cpu_replay  # noqa: E402
 import gpumem  # noqa: E402
+import loop  # noqa: E402
 
 
 def drive_like(path, decisions=7, seed=3):
@@ -62,9 +63,11 @@ def test_layout_matches_gpumem_slots():
         assert fields[name].dtype == dtype and fields[name].nbytes == dtype.itemsize * count
     batch = contract.StepBatch(n)
     assert batch.ray_origin.shape == (n, contract.SLOTS, 3) and batch.pose_ms.shape == (n, contract.TICKS)
-    assert batch.vector.shape == (n, contract.VECTOR) and batch.reward.shape == (n, len(contract.REWARDS))
-    batch.vector[2, 7] = 1.5
-    view = batch.raw[fields["vector"].offset:fields["vector"].offset + fields["vector"].nbytes].view(np.float32)
+    finished = contract.FinishBatch(n)
+    assert finished.vector.shape == (n, contract.VECTOR) and batch.reward.shape == (n, len(contract.REWARDS))
+    finished.vector[2, 7] = 1.5
+    f = finished.fields["vector"]
+    view = finished.raw[f.offset:f.offset + f.nbytes].view(np.float32)
     assert view[2 * contract.VECTOR + 7] == 1.5
 
 
@@ -76,6 +79,7 @@ def test_replay_follows_the_capture(tmp_path):
     batch = side.reset()
     batch.check()
     assert batch.first.tolist() == [1, 1] and batch.ticks.tolist() == [1, 1]
+    side.finish(np.zeros(batch.queries.count, np.uint8))
     capture = records[0]
     for d in range(1, 7):
         batch = side.step(np.zeros((2, contract.HEADS), np.uint8))
@@ -89,7 +93,11 @@ def test_replay_follows_the_capture(tmp_path):
         assert batch.ticks[0] == 3 and batch.first[0] == 0
         # The second capture has four decisions: it wraps at step 4 and reports truncated.
         assert batch.truncated[1] == batch.first[1] == (d % 4 == 0)
-    np.testing.assert_array_equal(batch.vector[0], replay.vectors[side.decision[0] % cpu_replay.POOL])
+        verdicts = np.arange(batch.queries.count, dtype=np.uint8) % 3
+        finished = side.finish(verdicts)
+        np.testing.assert_array_equal(side.last_verdicts, verdicts)
+    np.testing.assert_array_equal(finished.vector[0], replay.vectors[side.decision[0] % cpu_replay.POOL])
+    assert not finished.teacher_valid.any()
 
 
 def test_shifted_starts_and_parallel_fill_agree(tmp_path):
@@ -103,7 +111,136 @@ def test_shifted_starts_and_parallel_fill_agree(tmp_path):
         b = many.reset() if step == 0 else many.step(None)
         a.check()
         np.testing.assert_array_equal(a.raw, b.raw)
+        assert a.queries.count == b.queries.count
+        np.testing.assert_array_equal(a.queries.raw, b.queries.raw)
+        verdicts = np.zeros(a.queries.count, np.uint8)
+        np.testing.assert_array_equal(one.finish(verdicts).raw, many.finish(verdicts).raw)
     many.close()
+
+
+def test_replay_requests_and_phase_order(tmp_path):
+    replay = cpu_replay.Replay([drive_like(tmp_path / "a.bin")])
+    empty = cpu_replay.ReplaySide(replay, [2], shift=False)
+    assert empty.reset().queries.count == 0
+    assert isinstance(empty.finish(np.zeros(0, np.uint8)), contract.FinishBatch)
+    side = cpu_replay.ReplaySide(replay, range(50), shift=False)
+    for step in range(3):
+        batch = side.reset() if step == 0 else side.step(None)
+        counts = np.bincount(batch.queries.agents[:batch.queries.count], minlength=50)
+        assert (counts == 34).sum() == 1  # 2%, all rebuild candidates in one round
+        assert np.all((counts == 0) | (counts == 1) | (counts == 34))
+        with pytest.raises(RuntimeError, match="finish"):
+            side.step(None)
+        with pytest.raises(ValueError, match="per current query"):
+            side.finish(np.zeros(batch.queries.count + 1, np.uint8))
+        side.finish(np.full(batch.queries.count, 2, np.uint8))
+        assert (side.last_verdicts == 2).all()
+
+
+def test_loop_resumes_finish_without_repeating_memory():
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    operations = []
+
+    class Event:
+        def query(self):
+            return True
+
+        def synchronize(self):
+            pass
+
+        def record(self):
+            pass
+
+    class Side:
+        def __init__(self):
+            self.agents = 1
+            self.decision = -1
+            self.replies = []
+            self.queries = contract.PassageQueries(1)
+            self.queries.count = 1
+
+        def reset(self):
+            self.decision = -1
+            return self.step(None)
+
+        def step(self, actions):
+            self.decision += 1
+            self.round = 0
+            b = contract.StepBatch(1)
+            b.queries = self.queries
+            return b
+
+        def finish(self, verdicts):
+            self.replies.append((self.decision, self.round, verdicts.copy()))
+            self.round += 1
+            return self.queries if self.round == 1 else contract.FinishBatch(1)
+
+    class Half:
+        launch = loop.Half.launch
+        mark = loop.Half.mark
+
+        def __init__(self, index):
+            self.index = index
+            self.side, self.n = Side(), 1
+            self.done, self.computed = Event(), Event()
+            self.actions_np = np.zeros((1, 4), np.uint8)
+            self.verdicts_np = np.zeros(1, np.uint8)
+            self.updates = self.reads = 0
+            self.torch = SimpleNamespace(cuda=SimpleNamespace(stream=lambda _: nullcontext()))
+            self.stream = SimpleNamespace(wait_event=lambda event: None)
+            self.staging = SimpleNamespace(copy_=lambda *args, **kwargs: None)
+            self.graph = self.read_graph = None
+            self.trace = None
+
+        def measured(self, name, function):
+            function()
+
+        def memory_part(self):
+            self.updates += 1
+            operations.append(("update", self.index, self.side.decision))
+
+        def read_part(self):
+            self.reads += 1
+            operations.append(("read", self.index, self.side.decision))
+
+        def launch_queries(self, queries, after=None):
+            self.query_count = queries.count
+            self.verdicts_np[:] = 1 + self.side.decision % 2
+            operations.append(("verdict_ready", self.index, self.side.decision))
+            self.done.record()
+
+        def launch_policy(self, batch, after=None):
+            assert self.side.round == 2
+            operations.append(("policy", self.index, self.side.decision))
+
+    halves = [Half(0), Half(1)]
+    stand = loop.Loop(halves)
+    seen = []
+    stand.start()
+    stand.advance(3, lambda h: seen.append(h.side.decision))
+    stand.drain(lambda h: seen.append(h.side.decision))
+    stand.close()
+    assert sorted(seen) == [0, 0, 1, 1, 2, 2, 3, 3]
+    assert [index for name, index, _ in operations if name == "update"] == [0, 1] * 4
+    active = None
+    for name, index, _ in operations:
+        if name == "update":
+            assert active is None
+            active = index
+        elif name == "policy":
+            assert active == index
+            active = None  # The other half gets the GPU only after this policy is queued.
+    for h in halves:
+        assert h.updates == h.reads == 4  # Two query rounds, one update and read per decision.
+        assert len(h.side.replies) == 8
+        for decision, round_index, verdicts in h.side.replies:
+            assert round_index in (0, 1)
+            assert verdicts.tolist() == [1 + decision % 2]
+        for decision in range(4):
+            events = [name for name, index, d in operations if index == h.index and d == decision]
+            assert events.index("verdict_ready") < events.index("read") < events.index("policy")
 
 
 def test_check_rejects_broken_batches():
@@ -120,3 +257,41 @@ def test_check_rejects_broken_batches():
     batch.pose_ms[0] = (30, 20, 40)
     with pytest.raises(ValueError, match="time goes back"):
         batch.check()
+
+
+def test_remote_submits_own_run_and_preserves_venv(tmp_path, monkeypatch):
+    import json
+    from types import SimpleNamespace
+
+    memory = tmp_path / "memory.json"
+    memory.write_text(json.dumps({"traces": [], "weights": {"v5": {"sha256": "test"}}}))
+    monkeypatch.setattr(loop.bench, "MEMORY_REPORT", memory)
+    stamp = "submit-" + tmp_path.name
+    monkeypatch.setattr(loop.bench, "run_stamp", lambda: stamp)
+    monkeypatch.setattr(loop.bench, "ssh", lambda host, script: SimpleNamespace(
+        stdout="/home/test" if script.startswith("printf") else ""))
+    monkeypatch.setattr(loop.bench, "stage", lambda *args: None)
+    commands = []
+
+    def run(command, **kwargs):
+        commands.append(command)
+        if command[0] == "tar":
+            Path(command[2]).touch()
+        return SimpleNamespace(stdout="passage-job\n", returncode=0)
+
+    monkeypatch.setattr(loop.subprocess, "run", run)
+    args = SimpleNamespace(host="ryzen", agents=[2048, 3072], skip_parity=False,
+                           precisions="fp16", torch="2.14.1", warmup=3, repeats=20,
+                           fill_workers=8, gpu_mem=8, mem=6, max_seconds=3600, gq_class="quiet")
+    assert loop.remote_command(args) == "passage-job"
+    command = commands[-1]
+    assert command[3] == "submit" and "--wait-max" not in command
+    run_path = f"/home/test/gothic-ai/nav-sim-stand-passage/runs/{stamp}"
+    assert command[command.index("--archive") + 1] == run_path
+    body = command[-1]
+    assert f"{run_path}/raw/passage.json" in body
+    assert "--destination-relative nav-sim-research/stand/passage/" + stamp in body
+    assert "--attempt-id " + stamp in body
+    assert "/home/test/gothic-ai/nav-sim-research/" not in body
+    assert ".venv" not in body.split("trap finish EXIT")[0]
+    assert "scripts/nas_archive.py" in loop.STAGED

@@ -96,6 +96,8 @@ endif()
 if(NOT OPENGOTHIC_ENABLE_APP_CADENCE)
   list(REMOVE_ITEM OPENGOTHIC_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/common/appcadence.cpp")
 endif()
+# The society stand's core is its own library (society-core below), not part of the engine yet.
+list(FILTER OPENGOTHIC_SOURCES EXCLUDE REGEX "/common/society/")
 
 target_sources(${PROJECT_NAME} PRIVATE ${OPENGOTHIC_SOURCES} ${ObjCSOURCES})
 
@@ -341,6 +343,25 @@ if(UNIX AND NOT IOS AND NOT ANDROID)
   target_compile_options(gothic-mesh-gltf-test PRIVATE -Wall -Wconversion -Werror)
 endif()
 
+# The society stand's core (common/society/README.md): the standard library and rapidjson only. Its include path
+# is set alone, without the engine's directories, so an engine header does not compile there.
+if(NOT ANDROID AND NOT IOS)
+  file(GLOB SOCIETY_CORE_SOURCES common/society/*.cpp)
+  add_library(society-core STATIC ${SOCIETY_CORE_SOURCES})
+  set_property(TARGET society-core PROPERTY INCLUDE_DIRECTORIES "")
+  target_include_directories(society-core SYSTEM PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/lib/rapidjson/include)
+  target_include_directories(society-core INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/common)
+  if(NOT MSVC)
+    target_compile_options(society-core PRIVATE -Wall -Wconversion -Werror)
+  endif()
+  # Plays N days of an export by the routine: the journal, the 5-minute marks and the time.
+  add_executable(gothic-society-day game/societyday.cpp)
+  target_link_libraries(gothic-society-day PRIVATE society-core)
+  if(NOT MSVC)
+    target_compile_options(gothic-society-day PRIVATE -Wall -Wconversion -Werror)
+  endif()
+endif()
+
 # Asset-free contracts; run explicitly with their check-* targets.
 if(NOT ANDROID AND NOT IOS)
   add_executable(gothic-navpolicy-contract EXCLUDE_FROM_ALL
@@ -502,6 +523,17 @@ if(NOT ANDROID AND NOT IOS)
       SOCIETY_RUNNER="$<TARGET_FILE:gothic-body-runner>"
       SOCIETY_REPO="${CMAKE_CURRENT_SOURCE_DIR}/..")
     target_compile_options(gothic-society-export-contract PRIVATE -Wall -Wconversion -Werror)
+  endif()
+  # The society stand's core over that export (docs/society-sim.md, «Интерфейсы → 2»): loads it, plays a day by
+  # the routine and checks the 5-minute marks, the journal's repeat and snapshot, the speed and gothic-society-day.
+  if(TARGET gothic-body-runner)
+    add_executable(gothic-society-core-contract EXCLUDE_FROM_ALL tests/society_core_contract.cpp)
+    add_dependencies(gothic-society-core-contract gothic-body-runner gothic-society-day)
+    target_link_libraries(gothic-society-core-contract PRIVATE society-core)
+    target_compile_definitions(gothic-society-core-contract PRIVATE
+      SOCIETY_RUNNER="$<TARGET_FILE:gothic-body-runner>"
+      SOCIETY_DAY="$<TARGET_FILE:gothic-society-day>")
+    target_compile_options(gothic-society-core-contract PRIVATE -Wall -Wconversion -Werror)
   endif()
   add_executable(gothic-bodyimpact-contract EXCLUDE_FROM_ALL tests/bodyimpact_contract.cpp)
   target_include_directories(gothic-bodyimpact-contract PRIVATE common)

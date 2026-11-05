@@ -12384,6 +12384,8 @@ void Npc::updateAnimation(uint64_t dt, bool force) {
     return;
     }
   if(ragdoll) {
+    // the quiver of a body down or dead lies on the ground too (graphics/mesh/quiver)
+    syncAtt |= visual.updateQuiver(*this,dt);
     if(syncAtt || force)
       visual.syncAttaches();
     return;

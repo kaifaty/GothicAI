@@ -61,12 +61,14 @@
 | `qv_yield` | цель уступки, ° |
 | `qv_twist` | поворот колчана против `SPINE1` вокруг вертикали, ° |
 | `qv_us` | цена шага колчана, мкс |
+| `qv_gnd`, `qv_gndm` | труба и устье под миром, см: луч вниз по коллизии мира над точками внешней стенки ([уклонения](../2026-11-05-quiver-rolls/README.md)) |
 
 Стенды:
 - [`quiver-quick`](../../../scripts/bench/quiver-quick.bench) — без видео, пять броней;
 - [`quiver-mount`](../../../scripts/bench/quiver-mount.bench) — полный, с клипами;
 - [`quiver-clips`](../../../scripts/bench/quiver-clips.bench) — клипы для пользователя;
 - [`quiver-places`](../../../scripts/bench/quiver-places.bench) — пробник места `quiver place/still`, только для исследования.
+- [`quiver-rolls`](../../../scripts/bench/quiver-rolls.bench) — уклонения героя с колчаном ([проба](../2026-11-05-quiver-rolls/README.md)).
 
 Команды стенда: `arrows <npc> <n>`, `mds <npc> <ОВЕРЛЕЙ.MDS> [off]`, `quiver place …`, `quiver still on|off`.
 

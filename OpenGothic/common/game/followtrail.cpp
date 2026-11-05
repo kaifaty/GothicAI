@@ -19,6 +19,7 @@ const char* FollowTrail::name(Source source) {
     case Source::Line: return "line";
     case Source::Unseen: return "unseen";
     case Source::Heading: return "heading";
+    case Source::Aside: return "aside";
     case Source::LastSeen: return "last_seen";
     case Source::Count: break;
     }
@@ -152,26 +153,30 @@ FollowTrail::Result FollowTrail::unseen(const Vec3& follower, const Vec3& object
     result.carrot=direct;result.source=Source::Unseen;
     return result;
     }
-  if(trail.empty()) {
-    // Never seen: head for the sound around the seen hazard. Turn the direction
-    // toward the object by 15-degree steps to either side, up to 90 degrees, and
-    // take the first open one; only if all are closed, stop before the hazard.
-    result.source=Source::Unseen;result.detour=true;
+  // Around the seen hazard by hearing: turn the direction toward the object by
+  // 15-degree steps to either side, up to 90 degrees, and take the first open one.
+  const auto aside=[&](Vec3& carrot) {
     auto toward=direct-follower;toward.y=0;
     const float reach=std::min(lookaheadCm,toward.length());
-    if(reach>footprintCm) {
-      const float base=std::atan2(toward.z,toward.x);
-      for(int step=1;step<=6;++step)
-        for(const float side:{1.f,-1.f}) {
-          const float angle=base+side*float(step)*Pi/12.f;
-          const auto point=follower+Vec3(std::cos(angle),0,std::sin(angle))*reach;
-          if((point-object).length()>=standoffCm && nearClear(memory,follower,point)) {
-            result.carrot=point;
-            return result;
-            }
+    if(reach<=footprintCm)
+      return false;
+    const float base=std::atan2(toward.z,toward.x);
+    for(int step=1;step<=6;++step)
+      for(const float side:{1.f,-1.f}) {
+        const float angle=base+side*float(step)*Pi/12.f;
+        const auto point=follower+Vec3(std::cos(angle),0,std::sin(angle))*reach;
+        if((point-object).length()>=standoffCm && nearClear(memory,follower,point)) {
+          carrot=point;
+          return true;
           }
-      }
-    result.carrot=clearAlong(memory,follower,direct);
+        }
+    return false;
+    };
+  if(trail.empty()) {
+    // Never seen: around the hazard; only if all is closed, stop before it.
+    result.source=Source::Unseen;result.detour=true;
+    if(!aside(result.carrot))
+      result.carrot=clearAlong(memory,follower,direct);
     return result;
     }
   // Lost at the last seen point: where the object was last seen heading.
@@ -186,6 +191,12 @@ FollowTrail::Result FollowTrail::unseen(const Vec3& follower, const Vec3& object
         return result;
         }
       }
+    }
+  // Then around the hazard by hearing, as for an object never seen; the follower
+  // stands at the last seen point only if every direction is closed.
+  if(lostAside && aside(result.carrot)) {
+    result.source=Source::Aside;
+    return result;
     }
   result.carrot=trail.back().position;result.source=Source::LastSeen;
   return result;
