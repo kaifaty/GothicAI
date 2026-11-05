@@ -472,6 +472,10 @@ void GameScript::loadDialogOU() {
   }
 
 void GameScript::initializeInstanceNpc(const std::shared_ptr<zenkit::INpc>& npc, size_t instance) {
+  LoadProbe::Startup::Detail::Scope detail("npc_init",[&]{
+    const auto* symbol=vm.find_symbol_by_index(uint32_t(instance));
+    return symbol!=nullptr ? symbol->name() : std::to_string(instance);
+    });
   LoadProbe::Startup::Scope startupProbe(LoadProbe::Startup::Script);
   auto sym = vm.find_symbol_by_index(uint32_t(instance));
 
@@ -494,6 +498,7 @@ void GameScript::initializeInstanceNpc(const std::shared_ptr<zenkit::INpc>& npc,
     auto* daily_routine = vm.find_symbol_by_index(uint32_t(npc->daily_routine));
 
     if(daily_routine != nullptr) {
+      LoadProbe::Startup::Detail::Scope routine("daily_routine",[&]{return daily_routine->name();});
       vm.call_function(daily_routine);
       }
     }
@@ -746,6 +751,7 @@ void GameScript::saveSym(Serialize &fout, zenkit::DaedalusSymbol& i) {
   }
 
 void GameScript::fixNpcPosition(Npc& npc, float angle0, float distBias) {
+  LoadProbe::Startup::Detail::Scope detail("fix_position");
   auto& dyn  = *world().physic();
   auto  pos0 = npc.position();
 
@@ -764,6 +770,7 @@ void GameScript::fixNpcPosition(Npc& npc, float angle0, float distBias) {
       auto  p = pos0+Vec3(std::cos(a)*d, 0, std::sin(a)*d);
 
       auto ray = dyn.ray(p+Vec3(0,100,0), p+Vec3(0,-1000,0));
+      detail.work();
       if(!ray.hasCol)
         continue;
       p.y = ray.v.y;
@@ -1239,6 +1246,7 @@ void GameScript::invokePickLock(Npc& npc, int bSuccess, int bBrokenOpen) {
   }
 
 void GameScript::invokeRefreshAtInsert(Npc& npc) {
+  LoadProbe::Startup::Detail::Scope detail("refresh_at_insert");
   if(B_RefreshAtInsert==nullptr || owner.version().game!=2)
     return;
   ScopeVar self(*vm.global_self(), npc.handlePtr());
@@ -2025,6 +2033,7 @@ bool GameScript::wld_israining() {
   }
 
 void GameScript::mdl_setvisual(std::shared_ptr<zenkit::INpc> npcRef, std::string_view visual) {
+  LoadProbe::Startup::Detail::Scope detail("mdl_setvisual",[&]{return std::string(visual);});
   auto npc = findNpc(npcRef);
   if(npc==nullptr)
     return;
@@ -2032,6 +2041,7 @@ void GameScript::mdl_setvisual(std::shared_ptr<zenkit::INpc> npcRef, std::string
   }
 
 void GameScript::mdl_setvisualbody(std::shared_ptr<zenkit::INpc> npcRef, std::string_view body, int bodyTexNr, int bodyTexColor, std::string_view head, int headTexNr, int teethTexNr, int armor) {
+  LoadProbe::Startup::Detail::Scope detail("mdl_setvisualbody",[&]{return std::string(string_frm(body,":",bodyTexNr,":",bodyTexColor,":",head,":",headTexNr,":",teethTexNr,":",armor));});
   auto npc = findNpc(npcRef);
   if(npc==nullptr)
     return;
@@ -2051,6 +2061,7 @@ void GameScript::mdl_setmodelfatness(std::shared_ptr<zenkit::INpc> npcRef, float
   }
 
 void GameScript::mdl_applyoverlaymds(std::shared_ptr<zenkit::INpc> npcRef, std::string_view overlayname) {
+  LoadProbe::Startup::Detail::Scope detail("mdl_applyoverlaymds",[&]{return std::string(overlayname);});
   auto npc = findNpc(npcRef);
   if(npc!=nullptr) {
     auto skelet = Resources::loadSkeleton(overlayname);
@@ -2126,6 +2137,7 @@ void GameScript::mdl_applyrandomfaceani(std::shared_ptr<zenkit::INpc> npcRef, st
   }
 
 void GameScript::wld_insertnpc(int npcInstance, std::string_view spawnpoint) {
+  LoadProbe::Startup::Detail::Scope detail("wld_insertnpc",[&]{return std::string(spawnpoint);});
   if(npcInstance<=0)
     return;
 
@@ -3410,6 +3422,7 @@ int GameScript::mob_hasitems(std::string_view tag, int item) {
   }
 
 void GameScript::ta_min(std::shared_ptr<zenkit::INpc> npcRef, int start_h, int start_m, int stop_h, int stop_m, int action, std::string_view waypoint) {
+  LoadProbe::Startup::Detail::Scope detail("ta_min",[&]{return std::string(waypoint);});
   auto npc = findNpc(npcRef);
   if(npc!=nullptr)
     npc->addRoutine(gtime(start_h,start_m),gtime(stop_h,stop_m),uint32_t(action),waypoint);
@@ -3433,6 +3446,10 @@ void GameScript::log_addentry(std::string_view topicName, std::string_view entry
   }
 
 void GameScript::equipitem(std::shared_ptr<zenkit::INpc> npcRef, int cls) {
+  LoadProbe::Startup::Detail::Scope detail("equipitem",[&]{
+    const auto* symbol=vm.find_symbol_by_index(uint32_t(cls));
+    return symbol!=nullptr ? symbol->name() : std::to_string(cls);
+    });
   auto self = findNpc(npcRef);
   if(self!=nullptr) {
     if(self->itemCount(uint32_t(cls))==0)
@@ -3442,6 +3459,10 @@ void GameScript::equipitem(std::shared_ptr<zenkit::INpc> npcRef, int cls) {
   }
 
 void GameScript::createinvitem(std::shared_ptr<zenkit::INpc> npcRef, int itemInstance) {
+  LoadProbe::Startup::Detail::Scope detail("createinvitem",[&]{
+    const auto* symbol=vm.find_symbol_by_index(uint32_t(itemInstance));
+    return symbol!=nullptr ? symbol->name() : std::to_string(itemInstance);
+    });
   auto self = findNpc(npcRef);
   if(self!=nullptr) {
     Item* itm = self->addItem(uint32_t(itemInstance),1);
@@ -3450,6 +3471,10 @@ void GameScript::createinvitem(std::shared_ptr<zenkit::INpc> npcRef, int itemIns
   }
 
 void GameScript::createinvitems(std::shared_ptr<zenkit::INpc> npcRef, int itemInstance, int amount) {
+  LoadProbe::Startup::Detail::Scope detail("createinvitems",[&]{
+    const auto* symbol=vm.find_symbol_by_index(uint32_t(itemInstance));
+    return (symbol!=nullptr ? symbol->name() : std::to_string(itemInstance))+":"+std::to_string(amount);
+    });
   auto self = findNpc(npcRef);
   if(self!=nullptr && amount>0) {
     Item* itm = self->addItem(uint32_t(itemInstance),size_t(amount));

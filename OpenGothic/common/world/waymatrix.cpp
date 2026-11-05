@@ -1,4 +1,5 @@
 #include "waymatrix.h"
+#include "loadprobe.h"
 #include "wayheights.h"
 #include "basestore.h"
 
@@ -190,6 +191,7 @@ const WayPoint* WayMatrix::findWayPoint(std::string_view name) const {
   }
 
 const WayPoint* WayMatrix::findPoint(std::string_view name, bool inexact) const {
+  LoadProbe::Startup::Detail::Scope detail("find_point",[&]{return std::string(name);});
   if(name.empty())
     return nullptr;
   for(size_t i=0; i<startPoints.size(); ++i) {

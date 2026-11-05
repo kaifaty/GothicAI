@@ -595,26 +595,37 @@ void GameSession::initPerceptions() {
 
 void GameSession::initScripts(bool firstTime) {
   LoadProbe::Startup::Scope probe(LoadProbe::Startup::Script,true);
+  LoadProbe::Startup::Detail::Scope script("script_phase");
   auto wname = wrld->name();
   auto dot   = wname.rfind('.');
   auto name  = (dot==std::string::npos ? wname : wname.substr(0,dot));
 
   if(firstTime) {
-    if(vm->hasSymbolName("startup_global"))
+    if(vm->hasSymbolName("startup_global")) {
+      LoadProbe::Startup::Detail::Scope call("script_function",[]{return std::string("STARTUP_GLOBAL");});
       vm->getVm().call_function("startup_global");
+      }
 
     string_frm startup("startup_", name);
-    if(vm->hasSymbolName(startup))
+    if(vm->hasSymbolName(startup)) {
+      LoadProbe::Startup::Detail::Scope call("script_function",[&]{return std::string(std::string_view(startup));});
       vm->getVm().call_function(startup);
+      }
     }
 
-  if(vm->hasSymbolName("init_global"))
+  if(vm->hasSymbolName("init_global")) {
+    LoadProbe::Startup::Detail::Scope call("script_function",[]{return std::string("INIT_GLOBAL");});
     vm->getVm().call_function("init_global");
+    }
 
   string_frm init("init_",name);
-  if(vm->hasSymbolName(init))
+  if(vm->hasSymbolName(init)) {
+    LoadProbe::Startup::Detail::Scope call("script_function",[&]{return std::string(std::string_view(init));});
     vm->getVm().call_function(init);
+    }
 
+  script.stop();
   LoadProbe::Startup::Scope placementProbe(LoadProbe::Startup::NpcPlacement);
+  LoadProbe::Startup::Detail::Scope placement("placement_phase");
   wrld->resetPositionToTA();
   }

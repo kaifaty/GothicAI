@@ -13,6 +13,7 @@
 #include <mutex>
 #include <unordered_set>
 #include <type_traits>
+#include <vector>
 
 #include <Tempest/Log>
 #include <Tempest/Pixmap>
@@ -289,6 +290,90 @@ inline thread_local std::array<Counter,Count> counters;
 inline thread_local bool active=false;
 inline thread_local const char* group="startup";
 inline thread_local uint64_t samplingNs=0,samplingCount=0;
+
+// Buffered STARTUP call records. No clocks, keys, allocations or output when
+// the load probe is off; output happens after the existing STARTUP clocks stop.
+namespace Detail {
+struct Record {
+  const char* name=nullptr;
+  std::string key;
+  size_t parent=size_t(-1);
+  uint64_t ns=0, childNs=0, scriptNs=0, excludedNs=0, work=0, startedNs=0, tid=0;
+  float x=0,y=0,z=0;
+  bool positioned=false,hero=false;
+  };
+inline thread_local std::vector<Record> records;
+inline thread_local size_t top=size_t(-1);
+class Scope {
+  public:
+    template<class Key> Scope(const char* name,Key key) {
+      if(!enabled() || !active || std::strcmp(group,"startup")!=0) return;
+      index=records.size();
+      records.push_back({name,key(),top});
+#if defined(__linux__)
+      if(std::strcmp(name,"script_phase")==0 || std::strcmp(name,"placement_phase")==0)
+        records[index].tid=uint64_t(::gettid());
+#endif
+      top=index;
+      scriptBefore=counters[Script].ns;
+      excludedBefore=excluded();
+      started=std::chrono::steady_clock::now();
+      }
+    explicit Scope(const char* name):Scope(name,[]{return std::string{};}) {}
+    ~Scope() { stop(); }
+    Scope(const Scope&)=delete;
+    Scope& operator=(const Scope&)=delete;
+    void stop() {
+      if(index==size_t(-1)) return;
+      auto& row=records[index];
+      row.startedNs=uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(started.time_since_epoch()).count());
+      row.ns=uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                       std::chrono::steady_clock::now()-started).count());
+      row.scriptNs=counters[Script].ns-scriptBefore;
+      row.excludedNs=excluded()-excludedBefore;
+      top=row.parent;
+      if(top!=size_t(-1)) records[top].childNs+=row.ns;
+      index=size_t(-1);
+      }
+    void position(float x,float y,float z,bool hero) {
+      if(index==size_t(-1)) return;
+      auto& row=records[index];
+      row.x=x; row.y=y; row.z=z; row.hero=hero; row.positioned=true;
+      }
+    void work() { if(index!=size_t(-1)) ++records[index].work; }
+  private:
+    size_t index=size_t(-1);
+    uint64_t scriptBefore=0,excludedBefore=0;
+    std::chrono::steady_clock::time_point started;
+    static uint64_t excluded() {
+      uint64_t ns=0;
+      for(size_t i=Npc;i<=Item;++i) ns+=counters[i].ns;
+      return ns;
+      }
+  };
+inline void flush() {
+  for(size_t i=0;i<records.size();++i) {
+    const auto& r=records[i];
+    char line[512];
+    std::snprintf(line,sizeof(line),"[loadprobe-startup-call] id=%zu parent=%lld name=%s ns=%llu self_ns=%llu script_ns=%llu excluded_ns=%llu work=%llu",
+                  i,r.parent==size_t(-1) ? -1LL : (long long)r.parent,r.name,
+                  (unsigned long long)r.ns,(unsigned long long)(r.ns-r.childNs),
+                  (unsigned long long)r.scriptNs,(unsigned long long)r.excludedNs,(unsigned long long)r.work);
+    Tempest::Log::i(line);
+    if(std::strcmp(r.name,"script_phase")==0 || std::strcmp(r.name,"placement_phase")==0) {
+      std::snprintf(line,sizeof(line),"[loadprobe-startup-clock] id=%zu start_ns=%llu tid=%llu",i,
+                    (unsigned long long)r.startedNs,(unsigned long long)r.tid);
+      Tempest::Log::i(line);
+      }
+    if(!r.key.empty()) Tempest::Log::i("[loadprobe-startup-key] id=",i," key=",r.key);
+    if(r.positioned) {
+      std::snprintf(line,sizeof(line),"[loadprobe-startup-position] id=%zu hero=%u x=%.3f y=%.3f z=%.3f",i,unsigned(r.hero),r.x,r.y,r.z);
+      Tempest::Log::i(line);
+      }
+    }
+  records.clear();
+  }
+}
 class Scope {
   public:
     explicit Scope(Kind kind,bool start=false,const char* onlyGroup=nullptr):kind(kind) {
@@ -297,6 +382,10 @@ class Scope {
         counters={};
         group=onlyGroup ? onlyGroup : "startup";
         samplingNs=samplingCount=0;
+        if(std::strcmp(group,"startup")==0) {
+          Detail::records.clear();
+          Detail::top=size_t(-1);
+          }
         active=true;
         root=true;
         }
@@ -350,6 +439,7 @@ class Scope {
         Tempest::Log::i("[loadprobe-overhead] ",std::strcmp(group,"startup")==0 ? "startup" : "placed_items",
                        "_memory_ns=",samplingNs," ",std::strcmp(group,"startup")==0 ? "startup" : "placed_items",
                        "_memory_samples=",samplingCount);
+        if(std::strcmp(group,"startup")==0) Detail::flush();
         }
       }
     static void bytes(Kind kind,uint64_t value) {
