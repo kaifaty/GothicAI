@@ -2,8 +2,8 @@
 
 #include <limits>
 
-zenkit::AxisAlignedBoundingBox phoenix_compat::get_total_aabb(const asset::SoftSkinMesh& msh) {
-  zenkit::AxisAlignedBoundingBox bbox = {{std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max()},
+asset::Aabb phoenix_compat::get_total_aabb(const asset::SoftSkinMesh& msh) {
+  asset::Aabb bbox = {{std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max()},
                                          {std::numeric_limits<float>::min(), std::numeric_limits<float>::min(), std::numeric_limits<float>::min()}};
 
   {

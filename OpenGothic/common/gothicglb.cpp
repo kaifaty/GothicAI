@@ -87,7 +87,7 @@ std::string jsonFloat(float v) {
   return buf;
   }
 
-std::string jsonVec2(const zenkit::Vec2& v) {
+std::string jsonVec2(const asset::Vec2& v) {
   return "[" + jsonFloat(v.x) + "," + jsonFloat(v.y) + "]";
   }
 
@@ -154,7 +154,7 @@ std::string jsonToString(const Json& v, const char* name) {
   return utf8ToBytes(std::string_view(v.GetString(),v.GetStringLength()));
   }
 
-zenkit::Vec2 jsonToVec2(const Json& v, const char* name) {
+asset::Vec2 jsonToVec2(const Json& v, const char* name) {
   if(!v.IsArray() || v.Size()!=2)
     reject(std::string(name) + " must be [x,y]");
   return {jsonToFloat(v[0],name),jsonToFloat(v[1],name)};
@@ -199,7 +199,7 @@ asset::Material materialFromJson(const Json& g) {
   }
 
 bool sameMaterial(const asset::Material& a, const asset::Material& b) {
-  auto eq2 = [](const zenkit::Vec2& x, const zenkit::Vec2& y) {
+  auto eq2 = [](const asset::Vec2& x, const asset::Vec2& y) {
     return bits(x.x)==bits(y.x) && bits(x.y)==bits(y.y);
     };
   return a.name==b.name && a.group==b.group &&

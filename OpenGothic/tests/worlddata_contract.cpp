@@ -138,7 +138,7 @@ struct WorldDataContract {
     const auto nz=size_t(std::ceil(double(bounds.max.z-bounds.min.z)/400.));
     size_t samples=0,indoor=0;
     for(size_t x=0;x<=nx;++x) for(size_t z=0;z<=nz;++z) for(unsigned h=0;h<3;++h) {
-      const zenkit::Vec3 p{bounds.min.x+(bounds.max.x-bounds.min.x)*float(double(x)/double(std::max(size_t(1),nx))),
+      const asset::Vec3 p{bounds.min.x+(bounds.max.x-bounds.min.x)*float(double(x)/double(std::max(size_t(1),nx))),
                            bounds.min.y+(bounds.max.y-bounds.min.y)*float(h+1)/4.f,
                            bounds.min.z+(bounds.max.z-bounds.min.z)*float(double(z)/double(std::max(size_t(1),nz)))};
       const bool expected=WorldData::isIndoor(original.bsp.mode,original.rooms,p);

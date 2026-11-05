@@ -129,7 +129,7 @@ class PackedMesh {
 
       void    flush(std::vector<Vertex>& vertices, std::vector<VertexA>& verticesA,
                     std::vector<uint32_t>& indices, std::vector<uint8_t>& indices8,
-                    std::vector<uint32_t>* verticesId, const std::vector<zenkit::Vec3>& vbo,
+                    std::vector<uint32_t>* verticesId, const std::vector<asset::Vec3>& vbo,
                     const std::vector<asset::MeshWedge>& wedgeList,
                     const std::vector<SkeletalData>* skeletal);
       bool    validate() const;
@@ -138,7 +138,7 @@ class PackedMesh {
       void    clear();
       void    updateBounds(const asset::WorldMesh& mesh);
       void    updateBounds(const asset::StaticMesh& mesh);
-      void    updateBounds(const std::vector<zenkit::Vec3>& vbo);
+      void    updateBounds(const std::vector<asset::Vec3>& vbo);
       bool    canMerge(const Meshlet& other) const;
       bool    hasIntersection(const Meshlet& other) const;
       float   qDistance(const Meshlet& other) const;

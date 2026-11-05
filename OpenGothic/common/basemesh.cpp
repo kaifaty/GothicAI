@@ -19,17 +19,17 @@ constexpr const char* meshFormat = "gothic-mesh";
 constexpr int         formatVersion = 1;
 constexpr float       baseScale = 0.01f;
 
-std::string vec3Json(const zenkit::Vec3& v) {
+std::string vec3Json(const asset::Vec3& v) {
   return "[" + jsonFloat(v.x) + "," + jsonFloat(v.y) + "," + jsonFloat(v.z) + "]";
   }
 
-zenkit::Vec3 jsonToVec3(const Json& v, const char* name) {
+asset::Vec3 jsonToVec3(const Json& v, const char* name) {
   if(!v.IsArray() || v.Size()!=3)
     fail(std::string(name) + " must be [x,y,z]");
   return {jsonToFloat(v[0],name),jsonToFloat(v[1],name),jsonToFloat(v[2],name)};
   }
 
-bool sameVec3(const zenkit::Vec3& a, const zenkit::Vec3& b) {
+bool sameVec3(const asset::Vec3& a, const asset::Vec3& b) {
   return bits(a.x)==bits(b.x) && bits(a.y)==bits(b.y) && bits(a.z)==bits(b.z);
   }
 

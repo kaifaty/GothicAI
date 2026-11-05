@@ -646,7 +646,7 @@ static void straightenString(asset::MorphMesh& zmm) {
   const int back = 3-along-across;
   if(along==across)
     return;
-  auto comp = [](const zenkit::Vec3& v, int i) { return i==0 ? v.x : (i==1 ? v.y : v.z); };
+  auto comp = [](const asset::Vec3& v, int i) { return i==0 ? v.x : (i==1 ? v.y : v.z); };
 
   // the string's middle: the vertices drawn the farthest
   const size_t per  = ready->vertices.size();
@@ -2039,7 +2039,7 @@ bool Resources::replaceModelMesh(asset::ModelMesh& model, std::unique_ptr<Skelet
           throw std::runtime_error("non-finite local attachment position");
         }
       // Inverse-transpose of the model-to-local transform is bind^T.
-      auto normal = [&bind](zenkit::Vec3& n) {
+      auto normal = [&bind](asset::Vec3& n) {
         const double x = double(bind[0][0])*n.x + double(bind[0][1])*n.y + double(bind[0][2])*n.z;
         const double y = double(bind[1][0])*n.x + double(bind[1][1])*n.y + double(bind[1][2])*n.z;
         const double z = double(bind[2][0])*n.x + double(bind[2][1])*n.y + double(bind[2][2])*n.z;

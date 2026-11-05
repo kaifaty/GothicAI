@@ -6,9 +6,9 @@
 #include <string_view>
 #include <utility>
 #include <vector>
-#include <zenkit/Logger.hh>
+#include <cstdint>
 
-namespace zenkit { class Vfs; }
+namespace zenkit { class Vfs; enum class LogLevel : std::uint8_t; }
 
 namespace BaseImport {
 using Files = std::vector<std::pair<std::string,uintmax_t>>;

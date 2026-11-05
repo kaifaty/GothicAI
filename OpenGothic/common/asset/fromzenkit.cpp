@@ -5,9 +5,126 @@
 #include <zenkit/world/BspTree.hh>
 #include <zenkit/ModelMesh.hh>
 #include <algorithm>
+#include <cstddef>
+#include <type_traits>
 #include <set>
 
 namespace asset {
+
+static_assert(std::is_standard_layout_v<Vec2> && std::is_standard_layout_v<zenkit::Vec2>);
+static_assert(std::is_trivially_copyable_v<Vec2>);
+static_assert(sizeof(Vec2)==sizeof(zenkit::Vec2));
+static_assert(alignof(Vec2)==alignof(zenkit::Vec2));
+static_assert(offsetof(Vec2,x)==offsetof(zenkit::Vec2,x));
+static_assert(offsetof(Vec2,y)==offsetof(zenkit::Vec2,y));
+
+static_assert(std::is_standard_layout_v<Vec3> && std::is_standard_layout_v<zenkit::Vec3>);
+static_assert(std::is_trivially_copyable_v<Vec3>);
+static_assert(sizeof(Vec3)==sizeof(zenkit::Vec3));
+static_assert(alignof(Vec3)==alignof(zenkit::Vec3));
+static_assert(offsetof(Vec3,x)==offsetof(zenkit::Vec3,x));
+static_assert(offsetof(Vec3,y)==offsetof(zenkit::Vec3,y));
+static_assert(offsetof(Vec3,z)==offsetof(zenkit::Vec3,z));
+
+static_assert(std::is_standard_layout_v<Vec4> && std::is_standard_layout_v<zenkit::Vec4>);
+static_assert(std::is_trivially_copyable_v<Vec4>);
+static_assert(sizeof(Vec4)==sizeof(zenkit::Vec4));
+static_assert(alignof(Vec4)==alignof(zenkit::Vec4));
+static_assert(offsetof(Vec4,x)==offsetof(zenkit::Vec4,x));
+static_assert(offsetof(Vec4,y)==offsetof(zenkit::Vec4,y));
+static_assert(offsetof(Vec4,z)==offsetof(zenkit::Vec4,z));
+static_assert(offsetof(Vec4,w)==offsetof(zenkit::Vec4,w));
+
+static_assert(std::is_standard_layout_v<Quat> && std::is_standard_layout_v<zenkit::Quat>);
+static_assert(std::is_trivially_copyable_v<Quat>);
+static_assert(sizeof(Quat)==sizeof(zenkit::Quat));
+static_assert(alignof(Quat)==alignof(zenkit::Quat));
+static_assert(offsetof(Quat,w)==offsetof(zenkit::Quat,w));
+static_assert(offsetof(Quat,x)==offsetof(zenkit::Quat,x));
+static_assert(offsetof(Quat,y)==offsetof(zenkit::Quat,y));
+static_assert(offsetof(Quat,z)==offsetof(zenkit::Quat,z));
+
+static_assert(std::is_standard_layout_v<Mat3> && std::is_standard_layout_v<zenkit::Mat3>);
+static_assert(std::is_trivially_copyable_v<Mat3>);
+static_assert(sizeof(Mat3)==sizeof(zenkit::Mat3));
+static_assert(alignof(Mat3)==alignof(zenkit::Mat3));
+static_assert(offsetof(Mat3,columns)==offsetof(zenkit::Mat3,columns));
+
+static_assert(std::is_standard_layout_v<Mat4> && std::is_standard_layout_v<zenkit::Mat4>);
+static_assert(std::is_trivially_copyable_v<Mat4>);
+static_assert(sizeof(Mat4)==sizeof(zenkit::Mat4));
+static_assert(alignof(Mat4)==alignof(zenkit::Mat4));
+static_assert(offsetof(Mat4,columns)==offsetof(zenkit::Mat4,columns));
+
+static_assert(std::is_standard_layout_v<Color> && std::is_standard_layout_v<zenkit::Color>);
+static_assert(std::is_trivially_copyable_v<Color>);
+static_assert(sizeof(Color)==sizeof(zenkit::Color));
+static_assert(alignof(Color)==alignof(zenkit::Color));
+static_assert(offsetof(Color,r)==offsetof(zenkit::Color,r));
+static_assert(offsetof(Color,g)==offsetof(zenkit::Color,g));
+static_assert(offsetof(Color,b)==offsetof(zenkit::Color,b));
+static_assert(offsetof(Color,a)==offsetof(zenkit::Color,a));
+
+static_assert(std::is_standard_layout_v<Aabb> && std::is_standard_layout_v<zenkit::AxisAlignedBoundingBox>);
+static_assert(std::is_trivially_copyable_v<Aabb>);
+static_assert(sizeof(Aabb)==sizeof(zenkit::AxisAlignedBoundingBox));
+static_assert(alignof(Aabb)==alignof(zenkit::AxisAlignedBoundingBox));
+static_assert(offsetof(Aabb,min)==offsetof(zenkit::AxisAlignedBoundingBox,min));
+static_assert(offsetof(Aabb,max)==offsetof(zenkit::AxisAlignedBoundingBox,max));
+
+static_assert(std::is_standard_layout_v<Obb> && std::is_standard_layout_v<zenkit::OrientedBoundingBox>);
+static_assert(sizeof(Obb)==sizeof(zenkit::OrientedBoundingBox));
+static_assert(alignof(Obb)==alignof(zenkit::OrientedBoundingBox));
+static_assert(offsetof(Obb,center)==offsetof(zenkit::OrientedBoundingBox,center));
+static_assert(offsetof(Obb,axes)==offsetof(zenkit::OrientedBoundingBox,axes));
+static_assert(offsetof(Obb,half_width)==offsetof(zenkit::OrientedBoundingBox,half_width));
+static_assert(offsetof(Obb,children)==offsetof(zenkit::OrientedBoundingBox,children));
+
+Vec2 fromZenKit(const zenkit::Vec2& s) {
+  return {s.x,s.y};
+  }
+
+Vec3 fromZenKit(const zenkit::Vec3& s) {
+  return {s.x,s.y,s.z};
+  }
+
+Vec4 fromZenKit(const zenkit::Vec4& s) {
+  return {s.x,s.y,s.z,s.w};
+  }
+
+Quat fromZenKit(const zenkit::Quat& s) {
+  return {s.w,s.x,s.y,s.z};
+  }
+
+Mat3 fromZenKit(const zenkit::Mat3& s) {
+  Mat3 m;
+  for(unsigned i=0;i<3;++i) m.columns[i]=fromZenKit(s.columns[i]);
+  return m;
+  }
+
+Mat4 fromZenKit(const zenkit::Mat4& s) {
+  Mat4 m;
+  for(unsigned i=0;i<4;++i) m.columns[i]=fromZenKit(s.columns[i]);
+  return m;
+  }
+
+Color fromZenKit(const zenkit::Color& s) {
+  return {s.r,s.g,s.b,s.a};
+  }
+
+Aabb fromZenKit(const zenkit::AxisAlignedBoundingBox& s) {
+  return {fromZenKit(s.min),fromZenKit(s.max)};
+  }
+
+Obb fromZenKit(const zenkit::OrientedBoundingBox& s) {
+  Obb b;
+  b.center=fromZenKit(s.center);
+  for(unsigned i=0;i<3;++i) b.axes[i]=fromZenKit(s.axes[i]);
+  b.half_width=fromZenKit(s.half_width);
+  b.children.reserve(s.children.size());
+  for(const auto& child:s.children) b.children.push_back(fromZenKit(child));
+  return b;
+  }
 
 static_assert(int(AlphaFunction::DEFAULT)==int(zenkit::AlphaFunction::DEFAULT));
 static_assert(int(AlphaFunction::NONE)==int(zenkit::AlphaFunction::NONE));
@@ -43,13 +160,13 @@ Material fromZenKit(const zenkit::Material& s) {
   Material m;
   m.name = s.name;
   m.group = static_cast<MaterialGroup>(s.group);
-  m.color = s.color;
+  m.color = fromZenKit(s.color);
   m.smooth_angle = s.smooth_angle;
   m.texture = s.texture;
-  m.texture_scale = s.texture_scale;
+  m.texture_scale = fromZenKit(s.texture_scale);
   m.texture_anim_fps = s.texture_anim_fps;
   m.texture_anim_map_mode = static_cast<AnimationMapping>(s.texture_anim_map_mode);
-  m.texture_anim_map_dir = s.texture_anim_map_dir;
+  m.texture_anim_map_dir = fromZenKit(s.texture_anim_map_dir);
   m.disable_collision = s.disable_collision;
   m.disable_lightmap = s.disable_lightmap;
   m.dont_collapse = s.dont_collapse;
@@ -64,17 +181,19 @@ Material fromZenKit(const zenkit::Material& s) {
   m.wave_grid_size = s.wave_grid_size;
   m.ignore_sun = s.ignore_sun;
   m.alpha_func = static_cast<AlphaFunction>(s.alpha_func);
-  m.default_mapping = s.default_mapping;
+  m.default_mapping = fromZenKit(s.default_mapping);
   return m;
   }
 
 WorldMesh fromZenKit(const zenkit::Mesh& s) {
   WorldMesh m;
-  m.name=s.name; m.bbox=s.bbox; m.vertices=s.vertices;
+  m.name=s.name; m.bbox=fromZenKit(s.bbox);
+  m.vertices.reserve(s.vertices.size());
+  for(const auto& v:s.vertices) m.vertices.push_back(fromZenKit(v));
   m.materials.reserve(s.materials.size());
   for(const auto& material:s.materials) m.materials.push_back(fromZenKit(material));
   m.features.reserve(s.features.size());
-  for(const auto& f:s.features) m.features.push_back({f.texture,f.light,f.normal});
+  for(const auto& f:s.features) m.features.push_back({fromZenKit(f.texture),f.light,fromZenKit(f.normal)});
   m.polygons.material_indices=s.polygons.material_indices;
   m.polygons.lightmap_indices=s.polygons.lightmap_indices;
   m.polygons.feature_indices=s.polygons.feature_indices;
@@ -89,8 +208,12 @@ WorldMesh fromZenKit(const zenkit::Mesh& s) {
 
 StaticMesh fromZenKit(const zenkit::MultiResolutionMesh& s) {
   StaticMesh m;
-  m.positions=s.positions; m.normals=s.normals; m.alpha_test=s.alpha_test;
-  m.bbox=s.bbox; m.obbox=s.obbox;
+  m.positions.reserve(s.positions.size());
+  for(const auto& v:s.positions) m.positions.push_back(fromZenKit(v));
+  m.normals.reserve(s.normals.size());
+  for(const auto& v:s.normals) m.normals.push_back(fromZenKit(v));
+  m.alpha_test=s.alpha_test;
+  m.bbox=fromZenKit(s.bbox); m.obbox=fromZenKit(s.obbox);
   m.materials.reserve(s.materials.size());
   for(const auto& material:s.materials) m.materials.push_back(fromZenKit(material));
   m.sub_meshes.resize(s.sub_meshes.size());
@@ -101,18 +224,20 @@ StaticMesh fromZenKit(const zenkit::MultiResolutionMesh& s) {
     sub.triangles.reserve(src.triangles.size());
     for(const auto& t:src.triangles) sub.triangles.push_back({{t.wedges[0],t.wedges[1],t.wedges[2]}});
     sub.wedges.reserve(src.wedges.size());
-    for(const auto& w:src.wedges) sub.wedges.push_back({w.normal,w.texture,w.index});
+    for(const auto& w:src.wedges) sub.wedges.push_back({fromZenKit(w.normal),fromZenKit(w.texture),w.index});
     }
   return m;
   }
 
 SoftSkinMesh fromZenKit(const zenkit::SoftSkinMesh& s) {
   SoftSkinMesh m;
-  m.mesh=fromZenKit(s.mesh); m.bboxes=s.bboxes;
+  m.mesh=fromZenKit(s.mesh);
+  m.bboxes.reserve(s.bboxes.size());
+  for(const auto& b:s.bboxes) m.bboxes.push_back(fromZenKit(b));
   m.weights.resize(s.weights.size());
   for(size_t i=0;i<s.weights.size();++i) {
     m.weights[i].reserve(s.weights[i].size());
-    for(const auto& w:s.weights[i]) m.weights[i].push_back({w.weight,w.position,w.node_index});
+    for(const auto& w:s.weights[i]) m.weights[i].push_back({w.weight,fromZenKit(w.position),w.node_index});
     }
   return m;
   }
@@ -179,8 +304,8 @@ Font fromZenKit(const zenkit::Font& s) {
   f.glyphs.resize(s.glyphs.size());
   for(size_t i=0; i<s.glyphs.size(); ++i) {
     f.glyphs[i].width = s.glyphs[i].width;
-    f.glyphs[i].uv[0] = s.glyphs[i].uv[0];
-    f.glyphs[i].uv[1] = s.glyphs[i].uv[1];
+    f.glyphs[i].uv[0] = fromZenKit(s.glyphs[i].uv[0]);
+    f.glyphs[i].uv[1] = fromZenKit(s.glyphs[i].uv[1]);
     }
   return f;
   }

@@ -25,8 +25,8 @@ struct ChunkTable {
   struct Entry {
     ChunkId      id;
     std::string  file; // relative to the world directory, even with an override
-    zenkit::Vec3 min {};
-    zenkit::Vec3 max {};
+    asset::Vec3 min {};
+    asset::Vec3 max {};
     uint32_t     triangleCount = 0;
     };
 
