@@ -4,6 +4,7 @@
 #include "resources.h"
 #include "game/gamescript.h"
 #include "game/gamesession.h"
+#include "physics/dynamicworld.h"
 #include "world/objects/interactive.h"
 #include "world/objects/npc.h"
 #include "world/waypoint.h"
@@ -18,6 +19,7 @@
 #include <cstdio>
 #include <cstring>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <tuple>
 #include <unordered_map>
@@ -79,6 +81,48 @@ std::string symbolName(World& world, size_t symbol) {
     return "-";
   auto* sym = world.script().findSymbol(symbol);
   return sym!=nullptr ? std::string(sym->name()) : std::to_string(symbol);
+  }
+
+// HeroDeed::resolveOwner: accept only C_NPC symbols, including owners outside this world.
+std::string resolveOwner(World& world, std::string_view name) {
+  auto* s = world.script().findSymbol(name);
+  if(s==nullptr)
+    return {};
+  auto* cls = s;
+  for(size_t i=0; i<16 && cls!=nullptr && cls->type()!=zenkit::DaedalusDataType::CLASS; ++i)
+    cls = world.script().findSymbol(size_t(cls->parent()));
+  if(cls==nullptr || cls->name()!="C_NPC")
+    return {};
+  if(auto* npc = world.findNpcByInstance(s->index()))
+    return npc->isPlayer() ? "PLAYER" : symbolName(world,npc->instanceSymbol());
+  return std::string(s->name());
+  }
+
+// As HeroDeed::resolveRoomOwner: the longest actual C_NPC name after the colon.
+std::string resolveRoomOwner(World& world, std::string_view room) {
+  const auto colon = room.find(':');
+  if(colon==std::string_view::npos)
+    return resolveOwner(world,room);
+  const auto name = room.substr(colon+1);
+  for(size_t end=name.size(); end!=std::string_view::npos;) {
+    auto owner = resolveOwner(world,name.substr(0,end));
+    if(!owner.empty())
+      return owner;
+    if(end==0)
+      break;
+    end = name.rfind('_',end-1);
+    }
+  return {};
+  }
+
+std::string roomAt(World& world, const Tempest::Vec3& pos) {
+  // HeroDeed's ownership-position query: native ground first, BSP sector as fallback. Only S:/P:
+  // materials name rooms; an ordinary outdoor ground material must not become a room in the export.
+  const auto ground = world.physic()->landRay(pos+Tempest::Vec3(0,50,0),500);
+  const std::string_view sector = ground.hasCol && ground.sector!=nullptr ? ground.sector : "";
+  if(sector.starts_with("S:") || sector.starts_with("P:"))
+    return std::string(sector);
+  return std::string(world.roomAt(pos));
   }
 
 int minuteOfDay(const gtime& t) {
@@ -149,7 +193,14 @@ Result build(World& world) {
     return *id;
     };
 
-  Records waypoints, edges, objects, npcs;
+  Records waypoints, edges, objects, npcs, rooms;
+  std::set<std::string> roomNames;
+  const auto writeRoom = [&](Writer& w, const Tempest::Vec3& at) {
+    const auto room = roomAt(world,at);
+    optionalText(w,room);
+    if(!room.empty())
+      roomNames.insert(room);
+    };
   size_t freepoints = 0;
   for(size_t i=0; i<points.size(); ++i) {
     const auto& p  = *points[i];
@@ -159,6 +210,7 @@ Result build(World& world) {
     w.Key("id");            w.Uint(uint32_t(i));
     w.Key("name");          text(w,p.name);
     w.Key("pos");           position(w,p.position());
+    w.Key("room");          writeRoom(w,p.position());
     w.Key("freepoint");     w.Bool(fp);
     w.Key("near_waypoint"); optionalId(w,fp ? std::optional<uint32_t>(nearestGraph(p.position())) : std::nullopt);
     w.EndObject();
@@ -201,6 +253,7 @@ Result build(World& world) {
     w.Key("scheme");      text(w,m.schemeName());
     w.Key("focus");       text(w,m.focusName());
     w.Key("pos");         position(w,mobs[i].pos);
+    w.Key("room");        writeRoom(w,mobs[i].pos);
     w.Key("waypoint");    w.Uint(nearestGraph(mobs[i].pos));
     w.Key("owner_npc");   optionalText(w,ownerNpc);
     w.Key("owner_guild"); optionalText(w,ownerGuild);
@@ -209,6 +262,21 @@ Result build(World& world) {
     objects.add(b);
     containers += m.isContainer() ? 1 : 0;
     owned      += !ownerNpc.empty() || !ownerGuild.empty() ? 1 : 0;
+    }
+
+  for(const auto& room:roomNames) {
+    Buffer b; Writer w(b);
+    w.StartObject();
+    w.Key("name");        text(w,room);
+    w.Key("owner_npc");   optionalText(w,resolveRoomOwner(world,room));
+    // A room assigned to a guild, not the guild of its private NPC owner.
+    const auto guild = world.guildOfRoom(room);
+    w.Key("owner_guild");
+    if(guild>GIL_NONE)
+      w.Int(guild); else
+      w.Null();
+    w.EndObject();
+    rooms.add(b);
     }
 
   // NPCs ordered and keyed as the npc-day journal keys them (NpcDayJournal::start): the instance symbol,
@@ -328,7 +396,7 @@ Result build(World& world) {
   Buffer head; Writer w(head);
   w.StartObject();
   w.Key("format");           ascii(w,"society-world");
-  w.Key("version");          w.Int(2);
+  w.Key("version");          w.Int(3);
   w.Key("world");            text(w,world.name());
   w.Key("data_fingerprint"); ascii(w,fingerprint);
   w.Key("engine_commit");    ascii(w,OPENGOTHIC_ENGINE_COMMIT);
@@ -359,6 +427,7 @@ Result build(World& world) {
   list("waypoints",waypoints,false);
   list("edges",edges,false);
   list("objects",objects,false);
+  list("rooms",rooms,false);
   list("npcs",npcs,true);
 
   std::string nearest;

@@ -85,7 +85,7 @@ void readHeader(World& w, const Value& doc) {
   need(doc.IsObject(),"the file is not a JSON object");
   need(str(doc,"format")=="society-world","format must be society-world");
   const auto& version = member(doc,"version");
-  need(version.IsInt() && (version.GetInt()==1 || version.GetInt()==2),"only versions 1 and 2 are supported");
+  need(version.IsInt() && version.GetInt()>=1 && version.GetInt()<=3,"only versions 1, 2 and 3 are supported");
   w.version = version.GetInt();
   w.worldName       = str(doc,"world");
   w.dataFingerprint = str(doc,"data_fingerprint");
@@ -104,15 +104,40 @@ void readHeader(World& w, const Value& doc) {
   need(w.clockRate>0 && w.walkCmPerS>0 && w.runCmPerS>0,"clock and movement speeds must be above 0");
   }
 
+void readRooms(World& w, const Value& doc) {
+  if(w.version<3)
+    return;
+  const auto& list = array(doc,"rooms");
+  auto& r = w.rooms;
+  for(const auto& v:list.GetArray()) {
+    auto name = str(v,"name");
+    need(!name.empty() && (r.name.empty() || r.name.back()<name),"room names must be nonempty, sorted and unique");
+    r.name.push_back(name);
+    r.ownerNpc.push_back(optionalStr(v,"owner_npc"));
+    const auto& guild = member(v,"owner_guild");
+    need(guild.IsNull() || (guild.IsInt() && guild.GetInt()>0),"room owner_guild must be a positive integer or null");
+    r.ownerGuild.push_back(guild.IsNull() ? -1 : guild.GetInt());
+    }
+  }
+
+std::string roomOf(const World& w, const Value& v) {
+  if(w.version<3)
+    return {};
+  auto name = optionalStr(v,"room");
+  need(name.empty() || std::binary_search(w.rooms.name.begin(),w.rooms.name.end(),name),"unknown room "+name);
+  return name;
+  }
+
 void readPoints(World& w, const Value& doc) {
   const auto& list = array(doc,"waypoints");
   auto& p = w.points;
   const size_t n = list.Size();
-  p.name.resize(n); p.pos.resize(n); p.free.resize(n); p.graph.resize(n); p.graphCm.resize(n); p.component.resize(n);
+  p.name.resize(n); p.room.resize(n); p.pos.resize(n); p.free.resize(n); p.graph.resize(n); p.graphCm.resize(n); p.component.resize(n);
   for(rapidjson::SizeType i=0; i<list.Size(); ++i) {
     const auto& v = list[i];
     need(uint(v,"id")==i,"waypoint ids must be 0..n-1 in order");
     p.name[i] = str(v,"name");
+    p.room[i] = roomOf(w,v);
     p.pos[i]  = position(v,"pos");
     p.free[i] = flag(v,"freepoint") ? 1 : 0;
     }
@@ -197,6 +222,7 @@ void readObjects(World& w, const Value& doc) {
     o.vob.push_back(str(v,"vob"));
     o.scheme.push_back(str(v,"scheme"));
     o.focus.push_back(str(v,"focus"));
+    o.room.push_back(roomOf(w,v));
     o.pos.push_back(position(v,"pos"));
     const auto wp = uint(v,"waypoint");
     need(wp<w.points.size() && !w.points.free[wp],"object "+std::to_string(i)+" has no waynet point");
@@ -436,6 +462,7 @@ World parseWorld(std::string_view json) {
   w.exportHash  = fnv1a64(json);
   w.exportBytes = json.size();
   readHeader(w,doc);
+  readRooms(w,doc);
   readPoints(w,doc);
   readEdges(w,doc);
   readObjects(w,doc);
