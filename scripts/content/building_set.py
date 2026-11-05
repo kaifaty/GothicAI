@@ -29,22 +29,25 @@ with a staging set as base, it is that set with only these entries replaced.
 
 `compose SET PART...` joins the sets of several assets into one staging set for the game:
 each texture belongs to exactly one part, so a shared texture lives in its own asset. Meshes of a
-part (a prop's GLB), particle descriptions (`particles.d/*.json`) and vob trees
-(`vobtrees.d/*.json`) come along.
+part (a prop's GLB with its `.convex-parts` and `.fracture` caches), particle descriptions
+(`particles.d/*.json`) and vob trees (`vobtrees.d/*.json`) come along.
 
 `enable SET` copies a staging set into the working content `~/.local/share/gothic-ai/content`, which
-the game reads by default; only on the user's word (gate `enable`).
+the game reads by default; only on the user's word (gate `enable`). A movable table or cupboard GLB
+(`movable-vobs.csv`) needs its fresh `.convex-parts` first (`scripts/convex-parts.sh content <set>`).
 """
 from __future__ import annotations
 
 import argparse
 from copy import deepcopy
 from datetime import datetime, timezone
+import fnmatch
 from io import BytesIO
 import json
 from pathlib import Path
 import shutil
 import sys
+import zlib
 
 import numpy as np
 from PIL import Image, ImageDraw
@@ -61,6 +64,10 @@ import remaster
 from seam_fix import seamless
 
 LUMINANCE = np.array([.2126, .7152, .0722])
+# Caches the engine reads beside an own GLB, checked by the GLB's size and CRC32 (docs/physics.md).
+SIDECARS = ('.convex-parts', '.fracture')
+# DynamicWorld loads offline convex parts only for these movable classes.
+COMPOUND_CLASSES = ('table', 'cupboard')
 MODES = ('target', 'group', 'match')
 
 
@@ -414,6 +421,10 @@ def compose(name: str, parts: list[str]) -> dict:
             index[texture] = entry
         for visual, entry in meshes[part].items():
             take(part, 'meshes', Path(entry['glb']))
+            for suffix in SIDECARS:
+                sidecar = Path(entry['glb']).with_suffix(suffix)
+                if (staging / part / 'meshes' / sidecar).is_file():
+                    take(part, 'meshes', sidecar)
             mesh_index[visual] = entry
         for chunk in chunks[part]:
             take(part, 'worlds', chunk)
@@ -460,13 +471,38 @@ def compose(name: str, parts: list[str]) -> dict:
     return result
 
 
+def stale_convex_parts(content: Path) -> list[str]:
+    """Visuals of a content folder whose GLB is a movable table or cupboard without a fresh adjacent
+    `.convex-parts`: the engine would give them one hull instead of the compound."""
+    index = content / 'meshes/meshes.json'
+    if not index.is_file():
+        return []
+    rules = [line.split(',')[:2] for line in (remaster.ROOT / 'OpenGothic/data/movable-vobs.csv').read_text().splitlines()
+             if line and not line.startswith('#')]
+    stale = []
+    for visual, entry in sorted(json.loads(index.read_text()).items()):
+        key = Path(visual).stem.upper()
+        if next((cls for pattern, cls in rules if fnmatch.fnmatchcase(key, pattern)), None) not in COMPOUND_CLASSES:
+            continue
+        glb = content / 'meshes' / entry['glb']
+        source, cache = glb.read_bytes(), glb.with_suffix('.convex-parts')
+        header = cache.read_text().splitlines()[:2] if cache.is_file() else []
+        if header != ['GOTHIC_CONVEX_PARTS 1', f'source {len(source)} {zlib.crc32(source):08x}']:
+            stale.append(key)
+    return stale
+
+
 def enable(name: str) -> dict:
     """Make the staging set `name` the game's working content: `<data>/content`, which the engine reads
     when OPENGOTHIC_CONTENT is unset. Its `materials/`, `meshes/`, `worlds/`, `particles.d/` and `vobtrees.d/` are replaced; other folders
-    there stay; `enabled.json` records the set. Enabling is the user's decision (gate `enable`)."""
+    there stay; `enabled.json` records the set. Enabling is the user's decision (gate `enable`). A set whose
+    tables or cupboards lack a fresh `.convex-parts` is refused: the collision step cannot be skipped."""
     staging = remaster.data_root() / 'content-staging' / name
     if not (staging / 'materials/materials.json').is_file():
         raise ValueError(f'{staging}: no materials/materials.json')
+    if stale := stale_convex_parts(staging):
+        raise ValueError(f'{name}: no fresh .convex-parts for {", ".join(stale)}; '
+                         f'run scripts/convex-parts.sh content {staging}')
     live = remaster.data_root() / 'content'
     incoming = live / '.enable'
     shutil.rmtree(incoming, ignore_errors=True)
