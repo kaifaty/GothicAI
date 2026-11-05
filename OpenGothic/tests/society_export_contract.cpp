@@ -1,9 +1,9 @@
-// The society stand's world (docs/society-sim.md, «Интерфейсы → 1. Выгрузка мира»): runs
+// The society stand's world (docs/society-sim.md, «Интерфейсы → 1. Выгрузка мира», format v2): runs
 // `gothic-body-runner --world NEWWORLD.ZEN --society-export` twice on the game's data (GOTHIC_DIR, as the other
 // world contracts) and checks the file: every NPC of the world, the people and their routines entry by entry
 // against evals/npc-decisions/day_people.json, every routine and start point resolved, the point names against
-// server/src/gothic_ai/gamedata/places.json, symmetric edges, a scheme and a waynet point for every object, and
-// the same bytes from both runs.
+// server/src/gothic_ai/gamedata/places.json, symmetric edges, a scheme and a waynet point for every object, the v2
+// fields (start_aistate, own walk speed, mm_schedule) and the same bytes from both runs.
 #include <rapidjson/document.h>
 
 #include <algorithm>
@@ -336,8 +336,70 @@ std::string personRecord(const std::string& name, uint32_t guild, const Value& r
   return ret;
   }
 
+// v2: start_aistate (the state the engine runs without a routine), the NPC's own walk speed and, for the monster
+// dispatcher, its hours. Every NPC without a routine but the hero must have a start_aistate; every person a walk
+// speed; mm_schedule exactly for ZS_MM_ALLSCHEDULER, with the six ZS_MM_RTN_* windows of its hours.
+struct V2 {
+  std::map<std::string,size_t> noRoutineStates;
+  size_t aistates = 0, schedules = 0, peopleWalk = 0;
+  std::vector<double> walk;
+
+  void print(size_t persons) const {
+    std::string text;
+    for(const auto& [s,n]:noRoutineStates)
+      text += (text.empty() ? "" : ", ")+s+" "+std::to_string(n);
+    std::printf("v2: start_aistate %zu, mm_schedule %zu; NPCs without a routine by start_aistate: %s\n",aistates,
+                schedules,text.c_str());
+    auto v = walk;
+    std::sort(v.begin(),v.end());
+    if(!v.empty())
+      std::printf("v2: own walk speed of %zu of %zu people, %.1f..%.1f cm/s, median %.1f\n",peopleWalk,persons,v.front(),
+                  v.back(),v[v.size()/2]);
+    if(peopleWalk!=persons)
+      fail(std::to_string(persons-peopleWalk)+" people have no walk speed of their own");
+    }
+  };
+
+void checkV2(const Value& n, const std::string& key, bool hasRoutine, V2& v2) {
+  const auto& aistate  = member(n,"start_aistate");
+  const auto& schedule = member(n,"mm_schedule");
+  const double walk    = real(n,"walk_cm_per_s");
+  need(aistate.IsNull() || (aistate.IsString() && aistate.GetStringLength()>0),"start_aistate is null or a name");
+  if(walk<0)
+    fail("npc "+key+": walk_cm_per_s is negative");
+  if(n["person"].GetBool() && walk>0) {
+    ++v2.peopleWalk;
+    v2.walk.push_back(walk);
+    }
+  const std::string state = aistate.IsString() ? aistate.GetString() : "";
+  v2.aistates += state.empty() ? 0 : 1;
+  if(!hasRoutine) {
+    ++v2.noRoutineStates[state.empty() ? "null" : state];
+    if(state.empty() && key!="PC_HERO#0")
+      fail("npc "+key+" has neither a routine nor a start_aistate");
+    }
+  if((state=="ZS_MM_ALLSCHEDULER")!=schedule.IsArray()) {
+    fail("npc "+key+": mm_schedule must be given exactly for start_aistate ZS_MM_ALLSCHEDULER");
+    return;
+    }
+  if(!schedule.IsArray())
+    return;
+  ++v2.schedules;
+  static const char* names[] = {"ZS_MM_RTN_SLEEP","ZS_MM_RTN_REST","ZS_MM_RTN_ROAM","ZS_MM_RTN_EATGROUND",
+                                "ZS_MM_RTN_WUSEL","ZS_MM_RTN_ORCSIT"};
+  bool ok = schedule.Size()==std::size(names);
+  for(rapidjson::SizeType j=0; ok && j<schedule.Size(); ++j) {
+    const auto& x = schedule[j];
+    ok = x.IsArray() && x.Size()==3 && x[0].IsString() && std::string(x[0].GetString())==names[j] && x[1].IsInt() &&
+         x[2].IsInt() && x[1].GetInt()>=-1 && x[1].GetInt()<24 && x[2].GetInt()>=-1 && x[2].GetInt()<24;
+    }
+  if(!ok)
+    fail("npc "+key+": mm_schedule must be the six [ZS_MM_RTN_*, start hour, end hour] windows in the scheduler's order");
+  }
+
 std::set<std::string> checkNpcs(const Value& doc, const std::vector<Waypoint>& points, const fs::path& dayPeoplePath) {
   const auto& list = array(doc,"npcs");
+  V2 v2;
   std::printf("npcs: %u\n",list.Size());
   if(list.Size()!=WorldNpcs)
     fail("the world must have all "+std::to_string(WorldNpcs)+" NPCs, the export has "+std::to_string(list.Size()));
@@ -386,7 +448,9 @@ std::set<std::string> checkNpcs(const Value& doc, const std::vector<Waypoint>& p
       ++persons;
       people[id].push_back(personRecord(str(n,"name"),uint(n,"guild"),routine));
       }
+    checkV2(n,key,routine.Size()>0,v2);
     }
+  v2.print(persons);
   std::printf("people: %zu; routine entries of all NPCs: %zu; with waypoint null (no such point in the world): %zu\n",
               persons,entries,unresolved.size());
   for(const auto& u:unresolved)
@@ -449,7 +513,7 @@ std::set<std::string> checkNpcs(const Value& doc, const std::vector<Waypoint>& p
   }
 
 void checkHeader(const Value& doc) {
-  need(str(doc,"format")=="society-world" && integer(doc,"version")==1,"format must be society-world version 1");
+  need(str(doc,"format")=="society-world" && integer(doc,"version")==2,"format must be society-world version 2");
   if(str(doc,"world")!="NEWWORLD.ZEN")
     fail("world must be NEWWORLD.ZEN");
   const auto fingerprint = str(doc,"data_fingerprint");

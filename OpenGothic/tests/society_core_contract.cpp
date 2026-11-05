@@ -1,9 +1,11 @@
 // The society stand's core (docs/society-sim.md, «Интерфейсы → 2. Ядро на C++») on the game's data: gets the
-// `society-world` v1 export from `gothic-body-runner --society-export` (GOTHIC_DIR, as the export's contract),
+// `society-world` v2 export from `gothic-body-runner --society-export` (GOTHIC_DIR, as the export's contract),
 // loads it and checks:
+// - the engine's rules the core repeats (stateEndAt, startStateAt, the routine timeline) on a small world of its own;
 // - the load: the counts the runner printed for the file (and the 1053 NPCs of Khorinis);
-// - a day by the routine only: every person at every 5-minute mark is on the way, or at the point of the routine
-//   entry in force doing its state;
+// - a day by the routine only: every person at every 5-minute mark does the state of the entry the engine's rule
+//   gives (the entry in force when the previous state ended), on the way to its point or at it; a person without a
+//   routine stays at start_waypoint doing its start_aistate;
 // - repeat: two runs with one seed give the same journal bytes;
 // - a snapshot in the middle of the day and a restore give the same tail of the journal;
 // - speed: a day of the whole world on one thread, fails above 1 s (the document's target is 0.1 s);
@@ -39,9 +41,9 @@ constexpr int    WarmDays    = 20;
 constexpr int    PrintLimit  = 20;
 constexpr uint64_t Seed      = 1;
 constexpr unsigned long ToolDays = 7;
-// People without a single routine entry, as in day_people.json; another number fails. In v1 there is no entry in
-// force for them, so their own criterion is checked: they stay at start_waypoint all day, not on the way, without a
-// state (the engine runs their start_aistate, which the export v1 does not carry yet).
+// People without a single routine entry, as in day_people.json; another number fails. Their own criterion is
+// checked: they stay at start_waypoint all day, not on the way, doing their start_aistate as the core resolves it
+// (22 bandits ZS_BANDIT, 23 orcs ZS_MM_ALLSCHEDULER with their mm_schedule); each must have one.
 constexpr size_t PeopleWithoutRoutine = 45;
 
 int failures = 0;
@@ -164,6 +166,20 @@ void checkLoad(const Society::World& w, const Counts& c, double seconds) {
     fail("the world must have all "+std::to_string(WorldNpcs)+" NPCs, the export has "+std::to_string(w.npcs.size()));
   if(w.startMinute!=480 || w.startDay!=0)
     fail("the export must start at day 0, 08:00");
+  size_t aistates = 0, schedules = 0;
+  double slow = 1e9, fast = 0;
+  for(uint32_t i=0; i<w.npcs.size(); ++i) {
+    aistates  += w.npcs.startState[i]!=Society::NoState ? 1 : 0;
+    schedules += w.npcs.scheduleBegin[i+1]>w.npcs.scheduleBegin[i] ? 1 : 0;
+    if(w.npcs.person[i]) {
+      slow = std::min(slow,w.npcs.walkCmPerS[i]);
+      fast = std::max(fast,w.npcs.walkCmPerS[i]);
+      }
+    }
+  std::printf("export v%d: %zu NPCs with start_aistate, %zu with mm_schedule (%zu windows); people walk %.1f..%.1f cm/s\n",
+              w.version,aistates,schedules,w.schedules.size(),slow,fast);
+  if(w.version!=2 || aistates==0 || schedules==0 || !(slow<fast))
+    fail("the export must be v2 with start_aistate, mm_schedule and the people's own walk speeds");
   }
 
 // --- Travel time -----------------------------------------------------------------------------------------
@@ -183,11 +199,100 @@ void checkTravelTime() {
               sizeof(cases)/sizeof(cases[0]));
   }
 
+// --- The engine's rules on a small world ------------------------------------------------------------------
+
+// Two points and four NPCs: a routine without gaps, one with a gap (the entry that ended last is in force, and its
+// state runs until the same time tomorrow), one over midnight, and a monster schedule.
+constexpr const char* RulesWorld = R"({"format":"society-world","version":2,"world":"RULES.ZEN","data_fingerprint":"x",
+"engine_commit":"x","start":{"day":0,"minute":480},"clock":{"game_seconds_per_real_second":14.5},
+"movement":{"walk_cm_per_s":100.0,"run_cm_per_s":300.0,"source":"test"},
+"waypoints":[{"id":0,"name":"A","pos":[0,0,0],"freepoint":false,"near_waypoint":null},
+{"id":1,"name":"B","pos":[10000,0,0],"freepoint":false,"near_waypoint":null}],
+"edges":[[0,1,10000],[1,0,10000]],"objects":[],
+"npcs":[
+{"id":"DAY","key":"DAY#0","name":"d","guild":1,"person":true,"start_waypoint":1,"start_aistate":null,"walk_cm_per_s":50.0,"mm_schedule":null,
+ "routine":[{"start":480,"end":1200,"state":"ZS_WORK","waypoint":1,"waypoint_name":"B"},{"start":1200,"end":480,"state":"ZS_GOTOBED","waypoint":0,"waypoint_name":"A"}]},
+{"id":"GAP","key":"GAP#0","name":"g","guild":1,"person":true,"start_waypoint":0,"start_aistate":null,"walk_cm_per_s":0.0,"mm_schedule":null,
+ "routine":[{"start":420,"end":960,"state":"ZS_WORK","waypoint":0,"waypoint_name":"A"},{"start":967,"end":420,"state":"ZS_TALK","waypoint":1,"waypoint_name":"B"}]},
+{"id":"ORC","key":"ORC#0","name":"o","guild":60,"person":true,"start_waypoint":1,"start_aistate":"ZS_MM_ALLSCHEDULER","walk_cm_per_s":0.0,
+ "mm_schedule":[["ZS_MM_RTN_SLEEP",22,6],["ZS_MM_RTN_REST",0,0],["ZS_MM_RTN_ROAM",0,0],["ZS_MM_RTN_EATGROUND",6,22]],"routine":[]},
+{"id":"BDT","key":"BDT#0","name":"b","guild":1,"person":true,"start_waypoint":1,"start_aistate":"ZS_BANDIT","walk_cm_per_s":0.0,"mm_schedule":null,"routine":[]}
+]})";
+
+void checkRules() {
+  const auto w = Society::parseWorld(RulesWorld);
+  const auto hm = [](int day, int h, int m) { return Time(day)*Society::DaySeconds+Time(h)*3600+Time(m)*60; };
+  const auto name = [&](uint16_t s) { return s==Society::NoState ? std::string("-") : w.stateNames[s]; };
+  const auto expect = [&](const std::string& what, const std::string& got, const std::string& want) {
+    if(got!=want)
+      fail("rules: "+what+" is "+got+", expected "+want);
+    };
+  const auto clock = [](Time t) {
+    char buf[32];
+    std::snprintf(buf,sizeof(buf),"day %lld %02lld:%02lld",(long long)(t/Society::DaySeconds),
+                  (long long)(t%Society::DaySeconds/3600),(long long)(t%3600/60));
+    return std::string(buf);
+    };
+  // Npc::endTime: a routine without gaps ends its state at the entry's end, over midnight too.
+  expect("DAY's work started at 08:00 ends",clock(Society::stateEndAt(w,0,0,hm(0,8,0))),clock(hm(0,20,0)));
+  expect("DAY's bed started at 20:00 ends",clock(Society::stateEndAt(w,0,1,hm(0,20,0))),clock(hm(1,8,0)));
+  expect("DAY's bed started at 02:00 ends",clock(Society::stateEndAt(w,0,1,hm(1,2,0))),clock(hm(1,8,0)));
+  // A gap (16:00-16:07): the entry that ended last is in force and its state runs until 16:00 tomorrow.
+  const auto gapEntry = Society::routineAt(w,1,hm(0,16,3));
+  expect("GAP's entry in the gap",std::to_string(gapEntry),"0");
+  expect("GAP's work restarted at 16:00:20 ends",clock(Society::stateEndAt(w,1,0,hm(0,16,0)+20)),clock(hm(1,16,0)));
+  expect("GAP's entry at 16:07",std::to_string(Society::routineAt(w,1,hm(0,16,7))),"1");
+  // The NPC's own walk speed, the world's median for 0.
+  expect("DAY's walk",std::to_string(int(w.npcs.walkCmPerS[0])),"50");
+  expect("GAP's walk (none of its own)",std::to_string(int(w.npcs.walkCmPerS[1])),"100");
+  // start_aistate: the monster dispatcher picks by its hours (Wld_IsTime), a plain state stays.
+  expect("ORC at 08:00",name(Society::startStateAt(w,2,hm(0,8,0))),"ZS_MM_RTN_EATGROUND");
+  expect("ORC at 23:00",name(Society::startStateAt(w,2,hm(0,23,0))),"ZS_MM_RTN_SLEEP");
+  expect("ORC at 06:00",name(Society::startStateAt(w,2,hm(1,6,0))),"ZS_MM_RTN_EATGROUND");
+  expect("BDT",name(Society::startStateAt(w,3,hm(0,8,0))),"ZS_BANDIT");
+  const auto gotobed = std::lower_bound(w.stateNames.begin(),w.stateNames.end(),std::string("ZS_GOTOBED"));
+  expect("ZS_GOTOBED's follow-on",name(w.followState[size_t(gotobed-w.stateNames.begin())]),"ZS_SLEEP");
+
+  // A day of that world: DAY works at B from the start; at 20:00 its state ends, after StartDelay it goes to bed at
+  // A, 100 m at its own 50 cm/s (2900 game s), and once there it sleeps.
+  Society::SimConfig config;
+  auto sim = Society::makeSim(w,config);
+  Society::DecisionBatch batch;
+  const auto at = [&](uint32_t i) {
+    return name(sim.s.state[i])+((sim.s.flags[i] & Society::Moving)!=0 ? " moving" : " at "+w.points.name[sim.s.place[i]]);
+    };
+  Society::advance(sim,batch,hm(0,8,1));
+  expect("DAY at 08:01",at(0),"ZS_WORK at B");
+  Society::advance(sim,batch,hm(0,20,0)+Society::StartDelay-1);
+  expect("DAY just before its state's end and the delay",at(0),"ZS_WORK at B");
+  Society::advance(sim,batch,hm(0,20,1));
+  expect("DAY at 20:01",at(0),"ZS_GOTOBED moving");
+  expect("DAY's walk to bed, game s after 20:00",std::to_string(sim.s.arrive[0]-hm(0,20,0)),
+         std::to_string(Society::StartDelay+2900));
+  Society::advance(sim,batch,hm(0,21,0));
+  expect("DAY at 21:00",at(0),"ZS_SLEEP at A");
+  // GAP: its work restarted in the gap at 16:00; on the next day at 16:30 the entry in force is the talk at B, but it
+  // keeps working at A, as the engine's VLK_430 keeps cooking.
+  Society::advance(sim,batch,hm(1,16,30));
+  expect("GAP on day 1 at 16:30",at(1)+" entry "+std::to_string(sim.s.entry[1]),"ZS_WORK at A entry 1");
+  expect("ORC on day 1 at 16:30",at(2),"ZS_MM_RTN_EATGROUND at B");
+  expect("BDT on day 1 at 16:30",at(3),"ZS_BANDIT at B");
+  // The same start_aistate starts anew every StartStateSeconds+StartDelay from 08:00: last at 16:02:40.
+  expect("BDT's state began",clock(sim.s.stateStart[3])+std::to_string(sim.s.stateStart[3]%60),
+         clock(hm(1,16,2))+"40");
+  Society::advance(sim,batch,hm(2,0,30));
+  expect("ORC on day 2 at 00:30 (picked anew every four hours from 08:00)",at(2),"ZS_MM_RTN_SLEEP at B");
+  std::printf("rules: Npc::endTime with a gap and over midnight, own walk speed, start_aistate and the monster schedule, "
+              "ZS_GOTOBED -> ZS_SLEEP, the start delay %lld s: checked on a world of 4 NPCs\n",(long long)Society::StartDelay);
+  }
+
 // --- A day with marks ------------------------------------------------------------------------------------
 
 struct MarkStats {
-  size_t marks = 0, rows = 0, moving = 0, atPoint = 0, substitute = 0, nullPoint = 0, stayRows = 0, violations = 0;
-  std::set<uint32_t> substitutePeople, noRoutinePeople;
+  size_t marks = 0, rows = 0, moving = 0, atPoint = 0, nearPoint = 0, substitute = 0, nullPoint = 0, followOn = 0;
+  size_t otherEntry = 0, stayRows = 0, violations = 0;
+  std::set<uint32_t> substitutePeople, noRoutinePeople, otherEntryPeople;
+  std::map<std::string,size_t> startStates;
   };
 
 void violation(const Society::World& w, MarkStats& st, Time t, uint32_t npc, const std::string& what) {
@@ -195,10 +300,32 @@ void violation(const Society::World& w, MarkStats& st, Time t, uint32_t npc, con
     std::printf("  %s %s: %s\n",clock(w,t).c_str(),w.npcs.key[npc].c_str(),what.c_str());
   }
 
-// Every person with a routine: on the way, or at the point of the entry in force doing its state. An entry with
-// `waypoint: null` is done where the NPC stands; until its first walk an NPC may stand at start_waypoint instead of the
-// entry's point (the engine's placement, Npc::resetPositionToTA, takes the next point when that one is taken).
-// Every person without a routine: at start_waypoint, not on the way, without an entry and without a state change.
+// The engine's rule replayed on its own: a state runs until stateEndAt of its entry, then after StartDelay the entry
+// in force (routineAt) starts its state; without a routine start_aistate starts again every StartStateSeconds.
+// Returns the entry whose state is done at `t` and when that state began.
+std::pair<uint16_t,Time> stateEntryAt(const Society::World& w, uint32_t npc, Time t) {
+  Time     begin = w.startTime();
+  uint16_t entry = Society::routineAt(w,npc,begin);
+  for(;;) {
+    const Time next = Society::stateEndAt(w,npc,entry,begin)+Society::StartDelay;
+    if(next>t)
+      return {entry,begin};
+    begin = next;
+    entry = Society::routineAt(w,npc,begin);
+    }
+  }
+
+Time startStateBegin(const Society::World& w, Time t) {
+  const Time period = Society::StartStateSeconds+Society::StartDelay;
+  return w.startTime()+(t-w.startTime())/period*period;
+  }
+
+// Every person with a routine: the entry in force is the timeline's (Npc::currentRoutine); the state is that of the
+// entry the engine's rule gives (stateEntryAt) or its follow-on (ZS_GOTOBED -> ZS_SLEEP) standing; it is on the way,
+// or at that entry's point (within NearPointCm counts: no walk), or does an entry with `waypoint: null` where it
+// stands; until its first walk it may stand at start_waypoint instead (the engine's placement, Npc::resetPositionToTA,
+// takes the next point when that one is taken).
+// Every person without a routine: at start_waypoint, not on the way, doing startStateAt of its last start.
 void checkMark(const Society::World& w, const Society::Sim& sim, MarkStats& st) {
   const auto& s = sim.s;
   const Time  t = s.now;
@@ -209,9 +336,16 @@ void checkMark(const Society::World& w, const Society::Sim& sim, MarkStats& st) 
     if(w.entryCount(i)==0) {
       ++st.stayRows;
       st.noRoutinePeople.insert(i);
+      const auto want = Society::startStateAt(w,i,startStateBegin(w,t));
+      if(want==Society::NoState)
+        violation(w,st,t,i,"has neither a routine nor a start_aistate");
+      else if(t==w.startTime())
+        ++st.startStates[w.stateNames[want]];
       if(s.entry[i]!=Society::NoEntry || (s.flags[i] & Society::Moving)!=0 || s.place[i]!=w.npcs.startPoint[i] ||
-         s.state[i]!=Society::NoState || s.stateStart[i]!=w.startTime())
-        violation(w,st,t,i,"has no routine but left start_waypoint "+pointName(w,w.npcs.startPoint[i])+" or changed state");
+         s.state[i]!=want)
+        violation(w,st,t,i,"has no routine but left start_waypoint "+pointName(w,w.npcs.startPoint[i])+" or does "+
+                  (s.state[i]==Society::NoState ? std::string("nothing") : w.stateNames[s.state[i]])+" instead of "+
+                  (want==Society::NoState ? std::string("nothing") : w.stateNames[want]));
       continue;
       }
     ++st.rows;
@@ -222,22 +356,44 @@ void checkMark(const Society::World& w, const Society::Sim& sim, MarkStats& st) 
       continue;
       }
     if(s.entry[i]!=e) {
-      violation(w,st,t,i,"does entry "+std::to_string(s.entry[i])+", the entry in force is "+std::to_string(e));
+      violation(w,st,t,i,"has entry "+std::to_string(s.entry[i])+" in force, the timeline's is "+std::to_string(e));
       continue;
       }
-    if((s.flags[i] & Society::Moving)!=0) {
+    const auto [k,began] = stateEntryAt(w,i,t);
+    if(s.stateEntry[i]!=k) {
+      violation(w,st,t,i,"does the state of entry "+std::to_string(s.stateEntry[i])+", the engine's rule gives "+
+                std::to_string(k)+" (begun "+clock(w,began)+")");
+      continue;
+      }
+    // Past the entry's start delay the state is another entry's only in a gap of the routine: its state runs on.
+    if(k!=e && Society::stateEndAt(w,i,k,began)>t) {
+      ++st.otherEntry;
+      st.otherEntryPeople.insert(i);
+      }
+    const auto idx    = w.entryIndex(i,k);
+    const auto state  = w.routines.state[idx];
+    const auto follow = w.followState[state];
+    const bool moving = (s.flags[i] & Society::Moving)!=0;
+    if(s.state[i]!=state && !(s.state[i]==follow && follow!=Society::NoState && !moving)) {
+      violation(w,st,t,i,std::string(moving ? "on the way" : "at "+pointName(w,s.place[i]))+" does "+
+                (s.state[i]==Society::NoState ? std::string("nothing") : w.stateNames[s.state[i]])+
+                ", the entry's state is "+w.stateNames[state]);
+      continue;
+      }
+    st.followOn += s.state[i]==follow ? 1 : 0;
+    if(moving) {
       ++st.moving;
       continue;
       }
-    const auto k = w.entryIndex(i,e);
-    const auto point = w.routines.point[k];
-    if(s.state[i]!=w.routines.state[k])
-      violation(w,st,t,i,"at "+pointName(w,s.place[i])+" does "+(s.state[i]==Society::NoState ? std::string("nothing") :
-                w.stateNames[s.state[i]])+", the entry's state is "+w.stateNames[w.routines.state[k]]);
-    else if(point==Society::NoPoint)
+    const auto point = w.routines.point[idx];
+    if(point==Society::NoPoint)
       ++st.nullPoint;
     else if(s.place[i]==point)
       ++st.atPoint;
+    else if(std::hypot(double(w.points.pos[point][0])-w.points.pos[s.place[i]][0],
+                       double(w.points.pos[point][1])-w.points.pos[s.place[i]][1],
+                       double(w.points.pos[point][2])-w.points.pos[s.place[i]][2])<=double(Society::NearPointCm))
+      ++st.nearPoint;
     else if((s.flags[i] & Society::AtStart)!=0 && s.place[i]==w.npcs.startPoint[i]) {
       ++st.substitute;
       st.substitutePeople.insert(i);
@@ -278,12 +434,24 @@ Day dayWithMarks(const Society::World& w) {
     take();
     }
   std::printf("day by the routine, %zu marks: %zu people checked: %zu by routine, %zu stay at start; by routine %zu rows "
-              "(on the way %zu, at the entry's point %zu, at the start placement instead of it %zu (%zu people), entry with "
-              "waypoint null %zu), stay at start %zu rows; violations %zu\n",st.marks,w.people,
-              w.people-st.noRoutinePeople.size(),st.noRoutinePeople.size(),st.rows,st.moving,st.atPoint,st.substitute,
-              st.substitutePeople.size(),st.nullPoint,st.stayRows,st.violations);
+              "(on the way %zu, at the entry's point %zu, within %lld cm of it %zu, at the start placement instead of it "
+              "%zu (%zu people), entry with waypoint null %zu; doing the follow-on state %zu; doing the state of an entry "
+              "that is no longer in force and has not ended %zu (%zu people: a gap in the routine)), stay at start %zu rows; "
+              "violations %zu\n",st.marks,w.people,w.people-st.noRoutinePeople.size(),st.noRoutinePeople.size(),st.rows,
+              st.moving,st.atPoint,(long long)Society::NearPointCm,st.nearPoint,st.substitute,st.substitutePeople.size(),
+              st.nullPoint,st.followOn,st.otherEntry,st.otherEntryPeople.size(),st.stayRows,st.violations);
+  std::string kept;
+  for(auto i:st.otherEntryPeople)
+    kept += (kept.empty() ? "" : ", ")+w.npcs.key[i];
+  std::printf("  kept by a gap in the routine: %s\n",kept.c_str());
+  std::string starts;
+  for(const auto& [name,n]:st.startStates)
+    starts += (starts.empty() ? "" : ", ")+name+" "+std::to_string(n);
+  std::printf("  people without a routine at the start: %s\n",starts.c_str());
   if(st.noRoutinePeople.size()!=PeopleWithoutRoutine)
     fail(std::to_string(st.noRoutinePeople.size())+" people have no routine, expected "+std::to_string(PeopleWithoutRoutine));
+  if(st.followOn==0 || st.otherEntry==0)
+    fail("a day by the routine must have people asleep (ZS_GOTOBED -> ZS_SLEEP) and people kept by a gap in their routine");
   if(!st.substitutePeople.empty()) {
     std::string list;
     size_t n = 0;
@@ -486,6 +654,7 @@ int main() {
     fs::create_directories(root);
 
     checkTravelTime();
+    checkRules();
     const auto exportPath = root/"world.json";
     const auto counts = exportWorld(gothic,exportPath,root/"export.log");
     const auto from = Clock::now();
