@@ -116,6 +116,7 @@ struct Episode {
   bool oracle=false;
   bool perceptionMonitor=false;
   bool population=false,record=true,sampled=false,pending=false,fell=false;
+  std::optional<bool> populationWalk;
   bool trainingValid=true,accounted=false;
   std::string nonfiniteStage;
   std::unique_ptr<NonfiniteObservation> nonfinite;
@@ -202,9 +203,10 @@ uint32_t demoVersion(const Episode& ep) {
   }
   return ep.teacherVersion>=2 ? (ep.memory.representationVersion()==4 ? 3 : 2) : ep.teacherVersion;
 }
-// Stand pace from OPENGOTHIC_NAV_FORCE_PACE=walk|run (true = walk). A companion
-// (follow) always runs. Unset or empty leaves the pace to a policy walk head.
+// Population v5 carries an explicit episode pace. Other drives use
+// OPENGOTHIC_NAV_FORCE_PACE=walk|run (true = walk); companions always run.
 std::optional<bool> forcedWalk(const Episode& ep) {
+  if(ep.populationWalk)return ep.populationWalk;
   const auto* pace=std::getenv("OPENGOTHIC_NAV_FORCE_PACE");
   if(!pace || !*pace)return std::nullopt;
   const std::string_view value=pace;
@@ -219,9 +221,10 @@ void requirePace(const NavPolicy& policy) {
                              "(nav_rl.py drive --force-pace); the stand never picks a pace by default");
 }
 
-struct Pair {std::string from,to;};
+struct Pair {std::string from,to;std::optional<bool> walk;};
 struct Population {
   bool active=false,record=true,sampled=false,near=false;
+  std::optional<bool> walk;
   size_t instance=0,targetEpisodes=0,started=0,completed=0,initialDecisions=0;
   size_t invalidObservationEpisodes=0;
   uint64_t seed=0,limit=0,began=0,runMs=0,decisions=0;
@@ -2019,8 +2022,13 @@ std::vector<Pair> readPairs(const std::string& path) {
   std::vector<Pair> result;std::string line;
   while(std::getline(in,line)) {
     if(line.empty() || line[0]=='#')continue;
-    std::istringstream row(line);Pair pair;std::string extra;
-    if(!(row>>pair.from>>pair.to) || row>>extra)throw std::runtime_error("navdemos pairs require FROM TO per line");
+    std::istringstream row(line);Pair pair;std::string pace,extra;
+    if(!(row>>pair.from>>pair.to))throw std::runtime_error("navdemos pairs require FROM TO [walk|run] per line");
+    if(row>>pace) {
+      if((pace!="walk" && pace!="run") || row>>extra)
+        throw std::runtime_error("navdemos pairs require FROM TO [walk|run] per line");
+      pair.walk=pace=="walk";
+    }
     result.push_back(std::move(pair));
   }
   if(result.empty())throw std::runtime_error("navdemos empty pairs");
@@ -2060,6 +2068,7 @@ void startPopulationEpisode(World& w,Npc& player,size_t slot,Npc* original=nullp
   ep.output=(std::filesystem::path(pop.output)/"episodes"/std::to_string(ep.sequence)).string();
   std::filesystem::create_directories(ep.output);
   ep.policy=pop.policy;ep.policyStates.resize(1);ep.teacherVersion=2;ep.limit=pop.limit;
+  if(ep.policy->paceInput())ep.populationWalk=pop.walk.value_or(pair.walk.value_or(false));
   const auto* from=w.findPoint(ep.from,false);const auto* to=w.findPoint(ep.to,false);
   if(!from || !to)throw std::runtime_error("navdemos population missing waypoint");
   ep.goal=to->groundPos;
@@ -2086,11 +2095,12 @@ void startPopulationEpisode(World& w,Npc& player,size_t slot,Npc* original=nullp
   if(ep.record) {
     ep.trajectory=file(ep,"trajectory.txt");ep.actions=file(ep,"actions.txt");
     ep.knownPaths=file(ep,"known-paths.jsonl");ep.samples=file(ep,"samples.jsonl");
-    ep.roadsGuidance=file(ep,"roads-guidance.txt");
     ep.writer=std::make_unique<NavDemoWriter>((std::filesystem::path(ep.output)/"samples.bin.gz").string(),demoVersion(ep));
   }
-  if(const char* trace=std::getenv("OPENGOTHIC_NAV_PASSAGE_TRACE");trace && *trace)
+  if(const char* trace=std::getenv("OPENGOTHIC_NAV_PASSAGE_TRACE");trace && *trace) {
+    ep.roadsGuidance=file(ep,"roads-guidance.txt");
     ep.roadsPassages=file(ep,"roads-passages.jsonl");
+  }
   ep.initialState=initialState(ep);
   observe(ep,w);
   try {decide(ep,w);ep.next=ep.began+100;}
@@ -2124,8 +2134,10 @@ void populationSummary(World& w) {
   pop.episodes.close();pop.active=false;pop.members.clear();
 }
 void beginPopulation(const std::vector<std::string>& a,World& w,Npc& player,const std::string& output) {
-  if(a.size()<11 || a.size()>13)
-    throw std::runtime_error("navdemos population NPC PAIRS LIMIT_MS WEIGHTS N SEED sample|argmax EPISODES RECORD [near|far [RUN_MS]]");
+  const bool hasPace=a.size()>11 && (a.back()=="walk" || a.back()=="run");
+  const auto arguments=a.size()-size_t(hasPace);
+  if(arguments<11 || arguments>13)
+    throw std::runtime_error("navdemos population NPC PAIRS LIMIT_MS WEIGHTS N SEED sample|argmax EPISODES RECORD [near|far [RUN_MS]] [walk|run]");
   if(legacy.active || population.active)throw std::runtime_error("navdemos already active");
   population=Population{};auto& pop=population;pop.output=output;
   pop.instance=w.script().findSymbolIndex(a[2]);auto* original=w.findNpcByInstance(pop.instance);
@@ -2133,14 +2145,14 @@ void beginPopulation(const std::vector<std::string>& a,World& w,Npc& player,cons
   pop.home=original->position();pop.pairs=readPairs(a[3]);pop.limit=std::stoull(a[4]);
   pop.policy=std::make_shared<NavPolicy>(a[5]);
   if(pop.policy->navDemoVersion()!=2)throw std::runtime_error("navdemos population requires a NAVDEMO v2 policy");
-  if(pop.policy->paceInput())throw std::runtime_error("navdemos population does not support pace-input weights (.navbc v5)");
+  if(hasPace)pop.walk=a.back()=="walk";
   const auto count=std::stoull(a[6]);pop.seed=std::stoull(a[7]);
   if(a[8]!="sample" && a[8]!="argmax")throw std::runtime_error("navdemos population action mode must be sample or argmax");
   pop.sampled=a[8]=="sample";pop.targetEpisodes=std::stoull(a[9]);
   if(a[10]!="0" && a[10]!="1")throw std::runtime_error("navdemos population RECORD must be 0 or 1");
   pop.record=a[10]=="1";
-  if(a.size()>11 && a[11]!="near" && a[11]!="far")throw std::runtime_error("navdemos population hero mode must be near or far");
-  pop.near=a.size()>11 && a[11]=="near";pop.runMs=a.size()>12?std::stoull(a[12]):0;
+  if(arguments>11 && a[11]!="near" && a[11]!="far")throw std::runtime_error("navdemos population hero mode must be near or far");
+  pop.near=arguments>11 && a[11]=="near";pop.runMs=arguments>12?std::stoull(a[12]):0;
   if(!count || count>1000 || pop.targetEpisodes<count || !pop.limit || (pop.near && count!=1))
     throw std::runtime_error("navdemos invalid population/episode count, limit, or near mode");
   if(settings.killArmed && settings.killSlot>=count)throw std::runtime_error("navdemos kill slot outside population");

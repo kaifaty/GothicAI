@@ -94,3 +94,32 @@ def test_episode_package_preserves_engine_values_and_verifies_files(tmp_path):
     (tmp_path / "train.jsonl").write_text("{}\n", encoding="utf-8")
     with pytest.raises(ValueError, match="Package size/SHA-256 mismatch: train.jsonl"):
         read_package(tmp_path)
+
+
+def test_population_reward_comparison_matches_order_and_all_path_fields(tmp_path):
+    import json
+    from navsim.population_runs import comparison
+
+    roots = [tmp_path / name for name in ("first", "second")]
+    sample = dict(time_ms=100, next_time_ms=200, elapsed_ms=0, action_indices=[1, 0],
+                  rewards=dict(progress_cm=50, blocked=0, time_ms=100), path_before_cm=500,
+                  path_after_cm=450, path_valid=True, terminated=False, truncated=False)
+    # Sequence one reuses slot zero: episode identity is not the population slot.
+    for root in roots:
+        for sequence in range(2):
+            directory = root / "episodes" / str(sequence)
+            directory.mkdir(parents=True)
+            metadata = dict(start=f"FROM{sequence}", goal="TO", population_index=0,
+                            pair_index=sequence, episode_index=sequence)
+            (directory / "episode.json").write_text(json.dumps(metadata))
+            (directory / "samples.jsonl").write_text(json.dumps(dict(sample, logits=[sequence])) + "\n")
+            (directory / "trajectory.txt").write_text("0 10 20 30 40\n100 50 60 70 80\n")
+    other = roots[1] / "episodes/1/samples.jsonl"
+    other.write_text(json.dumps(dict(sample, logits=[999])) + "\n")
+    equal = comparison(*roots)
+    assert equal["deterministic"] and equal["compared_samples"] == 2
+    other.write_text(json.dumps(dict(sample, path_valid=False, rewards=dict(sample["rewards"], blocked=1))) + "\n")
+    changed = comparison(*roots)
+    assert not changed["deterministic"] and changed["differing_samples"] == 1
+    assert changed["examples"][0]["episode"] == 1
+    assert changed["examples"][0]["fields"] == ["path_valid", "rewards"]
