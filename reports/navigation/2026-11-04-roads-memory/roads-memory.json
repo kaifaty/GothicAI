@@ -1460,6 +1460,962 @@
      "elapsed_ms": 235167
     }
    }
+  },
+  "main_repeat": {
+   "arrived": 52,
+   "median_elapsed_s": 23.5165,
+   "median_arrived_elapsed_s": 22.2,
+   "runner_sha256": "69d27bbe04813adb0f534625c383f7ed1e9771e6f3c5bb631f7aab09133e3e5a"
+  },
+  "main_repeat_differing": {
+   "point-0fd3f112b0f5feb0": {
+    "main": {
+     "success": true,
+     "elapsed_ms": 22200
+    },
+    "repeat": {
+     "success": true,
+     "elapsed_ms": 22833
+    }
+   },
+   "point-2c34c69fbcead52d": {
+    "main": {
+     "success": true,
+     "elapsed_ms": 28733
+    },
+    "repeat": {
+     "success": true,
+     "elapsed_ms": 39900
+    }
+   },
+   "point-2ceb61fedd853e39": {
+    "main": {
+     "success": false,
+     "elapsed_ms": 240000
+    },
+    "repeat": {
+     "success": true,
+     "elapsed_ms": 30267
+    }
+   },
+   "point-44d107ab66596872": {
+    "main": {
+     "success": true,
+     "elapsed_ms": 17933
+    },
+    "repeat": {
+     "success": true,
+     "elapsed_ms": 19200
+    }
+   },
+   "point-53fcacbd52257c6e": {
+    "main": {
+     "success": true,
+     "elapsed_ms": 20033
+    },
+    "repeat": {
+     "success": true,
+     "elapsed_ms": 22900
+    }
+   },
+   "point-5f1d196b6fc5cb8f": {
+    "main": {
+     "success": true,
+     "elapsed_ms": 52200
+    },
+    "repeat": {
+     "success": true,
+     "elapsed_ms": 27800
+    }
+   },
+   "point-6094a45e3c72e6df": {
+    "main": {
+     "success": true,
+     "elapsed_ms": 50767
+    },
+    "repeat": {
+     "success": true,
+     "elapsed_ms": 20900
+    }
+   },
+   "point-77bac6e6bfef83cb": {
+    "main": {
+     "success": true,
+     "elapsed_ms": 95567
+    },
+    "repeat": {
+     "success": true,
+     "elapsed_ms": 189700
+    }
+   },
+   "point-7e35226690f76270": {
+    "main": {
+     "success": true,
+     "elapsed_ms": 135800
+    },
+    "repeat": {
+     "success": false,
+     "elapsed_ms": 240000
+    }
+   },
+   "point-820ddfa1ca089f1a": {
+    "main": {
+     "success": true,
+     "elapsed_ms": 29700
+    },
+    "repeat": {
+     "success": true,
+     "elapsed_ms": 36233
+    }
+   },
+   "point-ae977669805b27e2": {
+    "main": {
+     "success": true,
+     "elapsed_ms": 27700
+    },
+    "repeat": {
+     "success": true,
+     "elapsed_ms": 7633
+    }
+   },
+   "point-ca319fd7f34b79d4": {
+    "main": {
+     "success": false,
+     "elapsed_ms": 240000
+    },
+    "repeat": {
+     "success": true,
+     "elapsed_ms": 79833
+    }
+   },
+   "point-d2915db8e0242db1": {
+    "main": {
+     "success": false,
+     "elapsed_ms": 240000
+    },
+    "repeat": {
+     "success": true,
+     "elapsed_ms": 178000
+    }
+   }
   }
+ },
+ "teacher_memory": {
+  "revisions": {
+   "before": "063bded3a884e903af0941142110800fe0f028ba"
+  },
+  "recorded": "game",
+  "sets": {
+   "teacher-memory": {
+    "episodes": 60,
+    "totals": {
+     "before": {
+      "decisions": 53481,
+      "jumps": 0,
+      "initial_skips": 0,
+      "catch_ups": 0,
+      "catch_ups_beyond_window": 0,
+      "starts_moved": 0,
+      "start_fallbacks": 0,
+      "start_departures": 0,
+      "rebuilds": 6359,
+      "creep_decisions": 0,
+      "lag_decisions": 0,
+      "advances": 0,
+      "advances_through_wall": 0,
+      "progress_behind_wall": 10235,
+      "start_events": 141,
+      "start_events_through_wall": 95,
+      "recorded_carrot_max_error_cm": null
+     },
+     "game": {
+      "decisions": 53481,
+      "jumps": 0,
+      "initial_skips": 0,
+      "catch_ups": 0,
+      "catch_ups_beyond_window": 0,
+      "starts_moved": 4428,
+      "start_fallbacks": 3050,
+      "start_departures": 3046,
+      "rebuilds": 7868,
+      "creep_decisions": 0,
+      "lag_decisions": 0,
+      "advances": 0,
+      "advances_through_wall": 0,
+      "progress_behind_wall": 10193,
+      "start_events": 761,
+      "start_events_through_wall": 681,
+      "recorded_carrot_max_error_cm": null
+     }
+    },
+    "same_carrot": {
+     "game": {
+      "decisions": 53481,
+      "carrot_within_1cm": 45562,
+      "clean_episodes": 60,
+      "clean_decisions": 53481,
+      "clean_within_1cm": 45562,
+      "clean_differences": 10,
+      "differs_before_memory": 0
+     }
+    }
+   }
+  }
+ },
+ "closed_loop_teacher": {
+  "main": {
+   "arrived": 51,
+   "median_elapsed_s": 59.2335,
+   "runner_sha256": "f0222dc2b949babc7a57986533daccf0b8d06d815f7bcbb43962a61f57e49008"
+  },
+  "branch": {
+   "arrived": 51,
+   "median_elapsed_s": 55.6835,
+   "runner_sha256": "f2e70d326177aae96b175a4ff72094dda804342f696abf3f21e08f62799ce745"
+  },
+  "paired_success": {
+   "delta": 0.0,
+   "se": 0.0
+  },
+  "paired_elapsed_s": {
+   "delta": -1.7788833333333331,
+   "se": 3.0100726415481107
+  },
+  "differing": {
+   "point-c6de8dde80e43a66": {
+    "main": {
+     "success": true,
+     "elapsed_ms": 11233
+    },
+    "branch": {
+     "success": true,
+     "elapsed_ms": 23767
+    }
+   },
+   "point-200ffb1aee7e8744": {
+    "main": {
+     "success": true,
+     "elapsed_ms": 103367
+    },
+    "branch": {
+     "success": true,
+     "elapsed_ms": 104267
+    }
+   },
+   "point-f20f60cbd9bfd249": {
+    "main": {
+     "success": true,
+     "elapsed_ms": 27167
+    },
+    "branch": {
+     "success": true,
+     "elapsed_ms": 26567
+    }
+   },
+   "point-703e252f4418000a": {
+    "main": {
+     "success": true,
+     "elapsed_ms": 91967
+    },
+    "branch": {
+     "success": true,
+     "elapsed_ms": 34700
+    }
+   },
+   "point-608b674909f2950a": {
+    "main": {
+     "success": true,
+     "elapsed_ms": 193700
+    },
+    "branch": {
+     "success": true,
+     "elapsed_ms": 51900
+    }
+   },
+   "point-2241bf42214cbd26": {
+    "main": {
+     "success": true,
+     "elapsed_ms": 16067
+    },
+    "branch": {
+     "success": true,
+     "elapsed_ms": 16100
+    }
+   },
+   "point-9330472d07b2f47a": {
+    "main": {
+     "success": true,
+     "elapsed_ms": 50300
+    },
+    "branch": {
+     "success": true,
+     "elapsed_ms": 142767
+    }
+   },
+   "point-6094a45e3c72e6df": {
+    "main": {
+     "success": true,
+     "elapsed_ms": 30367
+    },
+    "branch": {
+     "success": true,
+     "elapsed_ms": 17367
+    }
+   }
+  }
+ },
+ "liveset_memory": {
+  "revisions": {
+   "before": "063bded3a884e903af0941142110800fe0f028ba"
+  },
+  "recorded": "game",
+  "sets": {
+   "liveset": {
+    "episodes": 34,
+    "totals": {
+     "before": {
+      "decisions": 9328,
+      "jumps": 0,
+      "initial_skips": 0,
+      "catch_ups": 0,
+      "catch_ups_beyond_window": 0,
+      "starts_moved": 0,
+      "start_fallbacks": 0,
+      "start_departures": 0,
+      "rebuilds": 1135,
+      "creep_decisions": 0,
+      "lag_decisions": 0,
+      "advances": 0,
+      "advances_through_wall": 0,
+      "progress_behind_wall": 1004,
+      "start_events": 51,
+      "start_events_through_wall": 14,
+      "recorded_carrot_max_error_cm": 3480.8673035025677
+     },
+     "game": {
+      "decisions": 9328,
+      "jumps": 0,
+      "initial_skips": 0,
+      "catch_ups": 28,
+      "catch_ups_beyond_window": 28,
+      "starts_moved": 59,
+      "start_fallbacks": 2,
+      "start_departures": 2,
+      "rebuilds": 1044,
+      "creep_decisions": 0,
+      "lag_decisions": 59,
+      "advances": 28,
+      "advances_through_wall": 0,
+      "progress_behind_wall": 834,
+      "start_events": 52,
+      "start_events_through_wall": 14,
+      "recorded_carrot_max_error_cm": 0.0
+     }
+    },
+    "same_carrot": {
+     "game": {
+      "decisions": 9328,
+      "carrot_within_1cm": 8850,
+      "clean_episodes": 34,
+      "clean_decisions": 9328,
+      "clean_within_1cm": 8850,
+      "clean_differences": 10,
+      "differs_before_memory": 0
+     }
+    }
+   }
+  }
+ },
+ "closed_loop_liveset": {
+  "binary_sha256": "99a352a5fdb1115dff5b235c302371b7de3d21dd7860f00addb464e6710780ba",
+  "branch": [
+   {
+    "place": "01-maleth-fence",
+    "model": "teacher",
+    "seed": 18102027,
+    "success": true,
+    "elapsed_seconds": null,
+    "path_to_teacher_ratio": null,
+    "obstacle_contacts": null
+   },
+   {
+    "place": "01-maleth-fence",
+    "model": "pace-v5",
+    "seed": 18102027,
+    "success": true,
+    "elapsed_seconds": 6.733,
+    "path_to_teacher_ratio": 0.984840415006602,
+    "obstacle_contacts": 0
+   },
+   {
+    "place": "01-maleth-fence",
+    "model": "pace-v5",
+    "seed": 18102028,
+    "success": true,
+    "elapsed_seconds": 7.0,
+    "path_to_teacher_ratio": 1.0434212540159586,
+    "obstacle_contacts": 0
+   },
+   {
+    "place": "01-maleth-fence",
+    "model": "pace-v5",
+    "seed": 18102029,
+    "success": true,
+    "elapsed_seconds": 9.8,
+    "path_to_teacher_ratio": 1.2434850094371679,
+    "obstacle_contacts": 3
+   },
+   {
+    "place": "02-routine-return-forest-tree",
+    "model": "teacher",
+    "seed": 18102027,
+    "success": true,
+    "elapsed_seconds": null,
+    "path_to_teacher_ratio": null,
+    "obstacle_contacts": null
+   },
+   {
+    "place": "02-routine-return-forest-tree",
+    "model": "pace-v5",
+    "seed": 18102027,
+    "success": true,
+    "elapsed_seconds": 24.167,
+    "path_to_teacher_ratio": 0.9350814776246207,
+    "obstacle_contacts": 2
+   },
+   {
+    "place": "02-routine-return-farm-edge",
+    "model": "teacher",
+    "seed": 18102028,
+    "success": true,
+    "elapsed_seconds": null,
+    "path_to_teacher_ratio": null,
+    "obstacle_contacts": null
+   },
+   {
+    "place": "02-routine-return-farm-edge",
+    "model": "pace-v5",
+    "seed": 18102028,
+    "success": true,
+    "elapsed_seconds": 103.2,
+    "path_to_teacher_ratio": 1.0910549494597825,
+    "obstacle_contacts": 3
+   },
+   {
+    "place": "02-routine-return-forest-pine",
+    "model": "teacher",
+    "seed": 18102029,
+    "success": true,
+    "elapsed_seconds": null,
+    "path_to_teacher_ratio": null,
+    "obstacle_contacts": null
+   },
+   {
+    "place": "02-routine-return-forest-pine",
+    "model": "pace-v5",
+    "seed": 18102029,
+    "success": true,
+    "elapsed_seconds": 67.667,
+    "path_to_teacher_ratio": 1.8642686644942539,
+    "obstacle_contacts": 0
+   },
+   {
+    "place": "03-follow-hero",
+    "model": "teacher",
+    "seed": 18102027,
+    "success": false,
+    "elapsed_seconds": null,
+    "path_to_teacher_ratio": null,
+    "obstacle_contacts": null
+   },
+   {
+    "place": "03-follow-hero",
+    "model": "pace-v5",
+    "seed": 18102027,
+    "success": false,
+    "elapsed_seconds": 180.0,
+    "path_to_teacher_ratio": 4.331980272819816,
+    "obstacle_contacts": 23
+   },
+   {
+    "place": "03-follow-hero",
+    "model": "pace-v5",
+    "seed": 18102028,
+    "success": false,
+    "elapsed_seconds": 180.0,
+    "path_to_teacher_ratio": 4.279842120844444,
+    "obstacle_contacts": 33
+   },
+   {
+    "place": "03-follow-hero",
+    "model": "pace-v5",
+    "seed": 18102029,
+    "success": false,
+    "elapsed_seconds": 180.0,
+    "path_to_teacher_ratio": 5.088743412784198,
+    "obstacle_contacts": 29
+   },
+   {
+    "place": "05-wall-pocket",
+    "model": "teacher",
+    "seed": 18102027,
+    "success": true,
+    "elapsed_seconds": null,
+    "path_to_teacher_ratio": null,
+    "obstacle_contacts": null
+   },
+   {
+    "place": "05-wall-pocket",
+    "model": "pace-v5",
+    "seed": 18102027,
+    "success": true,
+    "elapsed_seconds": 26.167,
+    "path_to_teacher_ratio": 1.2354409434985423,
+    "obstacle_contacts": 8
+   },
+   {
+    "place": "05-wall-pocket",
+    "model": "pace-v5",
+    "seed": 18102028,
+    "success": true,
+    "elapsed_seconds": 35.967,
+    "path_to_teacher_ratio": 1.435368304647791,
+    "obstacle_contacts": 12
+   },
+   {
+    "place": "05-wall-pocket",
+    "model": "pace-v5",
+    "seed": 18102029,
+    "success": true,
+    "elapsed_seconds": 36.767,
+    "path_to_teacher_ratio": 1.595645289924314,
+    "obstacle_contacts": 13
+   },
+   {
+    "place": "06-harbour-water",
+    "model": "teacher",
+    "seed": 18102027,
+    "success": true,
+    "elapsed_seconds": null,
+    "path_to_teacher_ratio": null,
+    "obstacle_contacts": null
+   },
+   {
+    "place": "06-harbour-water",
+    "model": "pace-v5",
+    "seed": 18102027,
+    "success": true,
+    "elapsed_seconds": 23.8,
+    "path_to_teacher_ratio": 1.713487480511432,
+    "obstacle_contacts": 1
+   },
+   {
+    "place": "06-harbour-water",
+    "model": "pace-v5",
+    "seed": 18102028,
+    "success": true,
+    "elapsed_seconds": 21.033,
+    "path_to_teacher_ratio": 1.485029569222342,
+    "obstacle_contacts": 5
+   },
+   {
+    "place": "06-harbour-water",
+    "model": "pace-v5",
+    "seed": 18102029,
+    "success": true,
+    "elapsed_seconds": 28.033,
+    "path_to_teacher_ratio": 1.7568499892233376,
+    "obstacle_contacts": 2
+   },
+   {
+    "place": "07-cliff-trail",
+    "model": "teacher",
+    "seed": 18102027,
+    "success": true,
+    "elapsed_seconds": null,
+    "path_to_teacher_ratio": null,
+    "obstacle_contacts": null
+   },
+   {
+    "place": "07-cliff-trail",
+    "model": "pace-v5",
+    "seed": 18102027,
+    "success": true,
+    "elapsed_seconds": 2.767,
+    "path_to_teacher_ratio": 0.7134727881633667,
+    "obstacle_contacts": 1
+   },
+   {
+    "place": "07-cliff-trail",
+    "model": "pace-v5",
+    "seed": 18102028,
+    "success": true,
+    "elapsed_seconds": 3.167,
+    "path_to_teacher_ratio": 0.8405250777152617,
+    "obstacle_contacts": 0
+   },
+   {
+    "place": "07-cliff-trail",
+    "model": "pace-v5",
+    "seed": 18102029,
+    "success": true,
+    "elapsed_seconds": 2.267,
+    "path_to_teacher_ratio": 0.797257286709449,
+    "obstacle_contacts": 1
+   },
+   {
+    "place": "08-market-crowd",
+    "model": "teacher",
+    "seed": 18102027,
+    "success": true,
+    "elapsed_seconds": null,
+    "path_to_teacher_ratio": null,
+    "obstacle_contacts": null
+   },
+   {
+    "place": "08-market-crowd",
+    "model": "pace-v5",
+    "seed": 18102027,
+    "success": true,
+    "elapsed_seconds": 33.033,
+    "path_to_teacher_ratio": 1.0953887792938755,
+    "obstacle_contacts": 1
+   },
+   {
+    "place": "08-market-crowd",
+    "model": "pace-v5",
+    "seed": 18102028,
+    "success": true,
+    "elapsed_seconds": 32.2,
+    "path_to_teacher_ratio": 1.0609457724303153,
+    "obstacle_contacts": 1
+   },
+   {
+    "place": "08-market-crowd",
+    "model": "pace-v5",
+    "seed": 18102029,
+    "success": true,
+    "elapsed_seconds": 32.267,
+    "path_to_teacher_ratio": 1.0565190978746426,
+    "obstacle_contacts": 2
+   },
+   {
+    "place": "09-door-stairs-door",
+    "model": "teacher",
+    "seed": 18102027,
+    "success": true,
+    "elapsed_seconds": null,
+    "path_to_teacher_ratio": null,
+    "obstacle_contacts": null
+   },
+   {
+    "place": "09-door-stairs-door",
+    "model": "pace-v5",
+    "seed": 18102027,
+    "success": true,
+    "elapsed_seconds": 1.633,
+    "path_to_teacher_ratio": 0.9992807413951742,
+    "obstacle_contacts": 0
+   },
+   {
+    "place": "09-door-stairs-door",
+    "model": "pace-v5",
+    "seed": 18102028,
+    "success": true,
+    "elapsed_seconds": 2.3,
+    "path_to_teacher_ratio": 1.0938936306286533,
+    "obstacle_contacts": 0
+   },
+   {
+    "place": "09-door-stairs-door",
+    "model": "pace-v5",
+    "seed": 18102029,
+    "success": true,
+    "elapsed_seconds": 1.633,
+    "path_to_teacher_ratio": 0.9979187276057243,
+    "obstacle_contacts": 0
+   },
+   {
+    "place": "10-local-stranger",
+    "model": "teacher",
+    "seed": 18102027,
+    "success": true,
+    "elapsed_seconds": null,
+    "path_to_teacher_ratio": null,
+    "obstacle_contacts": null
+   },
+   {
+    "place": "10-local-stranger",
+    "model": "pace-v5",
+    "seed": 18102027,
+    "success": true,
+    "elapsed_seconds": 18.167,
+    "path_to_teacher_ratio": 1.1565912723804896,
+    "obstacle_contacts": 0
+   },
+   {
+    "place": "10-local-stranger",
+    "model": "pace-v5",
+    "seed": 18102028,
+    "success": true,
+    "elapsed_seconds": 18.667,
+    "path_to_teacher_ratio": 1.1916420423766623,
+    "obstacle_contacts": 0
+   },
+   {
+    "place": "10-local-stranger",
+    "model": "pace-v5",
+    "seed": 18102029,
+    "success": true,
+    "elapsed_seconds": 18.833,
+    "path_to_teacher_ratio": 1.2076968106112638,
+    "obstacle_contacts": 2
+   }
+  ],
+  "pace_v5": [
+   {
+    "place": "01-maleth-fence",
+    "model": "pace-v5",
+    "seed": 18102027,
+    "success": true,
+    "elapsed_seconds": 6.733,
+    "path_to_teacher_ratio": 0.984840415006602,
+    "obstacle_contacts": 0
+   },
+   {
+    "place": "01-maleth-fence",
+    "model": "pace-v5",
+    "seed": 18102028,
+    "success": true,
+    "elapsed_seconds": 7.0,
+    "path_to_teacher_ratio": 1.0434212540159586,
+    "obstacle_contacts": 0
+   },
+   {
+    "place": "01-maleth-fence",
+    "model": "pace-v5",
+    "seed": 18102029,
+    "success": true,
+    "elapsed_seconds": 9.8,
+    "path_to_teacher_ratio": 1.2434850094371679,
+    "obstacle_contacts": 3
+   },
+   {
+    "place": "02-routine-return-forest-tree",
+    "model": "pace-v5",
+    "seed": 18102027,
+    "success": true,
+    "elapsed_seconds": 27.4,
+    "path_to_teacher_ratio": 1.0269652429877376,
+    "obstacle_contacts": 2
+   },
+   {
+    "place": "02-routine-return-farm-edge",
+    "model": "pace-v5",
+    "seed": 18102028,
+    "success": true,
+    "elapsed_seconds": 95.733,
+    "path_to_teacher_ratio": 0.9824813663336698,
+    "obstacle_contacts": 5
+   },
+   {
+    "place": "02-routine-return-forest-pine",
+    "model": "pace-v5",
+    "seed": 18102029,
+    "success": true,
+    "elapsed_seconds": 67.667,
+    "path_to_teacher_ratio": 1.8485524505346453,
+    "obstacle_contacts": 0
+   },
+   {
+    "place": "03-follow-hero",
+    "model": "pace-v5",
+    "seed": 18102027,
+    "success": false,
+    "elapsed_seconds": 180.0,
+    "path_to_teacher_ratio": 0.829139494795592,
+    "obstacle_contacts": 63
+   },
+   {
+    "place": "03-follow-hero",
+    "model": "pace-v5",
+    "seed": 18102028,
+    "success": false,
+    "elapsed_seconds": 180.0,
+    "path_to_teacher_ratio": 1.237192256061423,
+    "obstacle_contacts": 23
+   },
+   {
+    "place": "03-follow-hero",
+    "model": "pace-v5",
+    "seed": 18102029,
+    "success": false,
+    "elapsed_seconds": 180.0,
+    "path_to_teacher_ratio": 1.6108046412205073,
+    "obstacle_contacts": 19
+   },
+   {
+    "place": "05-wall-pocket",
+    "model": "pace-v5",
+    "seed": 18102027,
+    "success": true,
+    "elapsed_seconds": 38.867,
+    "path_to_teacher_ratio": 1.7394477769235213,
+    "obstacle_contacts": 11
+   },
+   {
+    "place": "05-wall-pocket",
+    "model": "pace-v5",
+    "seed": 18102028,
+    "success": false,
+    "elapsed_seconds": 90.0,
+    "path_to_teacher_ratio": 1.0222869584146617,
+    "obstacle_contacts": 20
+   },
+   {
+    "place": "05-wall-pocket",
+    "model": "pace-v5",
+    "seed": 18102029,
+    "success": false,
+    "elapsed_seconds": 90.0,
+    "path_to_teacher_ratio": 4.022842602213238,
+    "obstacle_contacts": 46
+   },
+   {
+    "place": "06-harbour-water",
+    "model": "pace-v5",
+    "seed": 18102027,
+    "success": true,
+    "elapsed_seconds": 23.8,
+    "path_to_teacher_ratio": 1.713487480511432,
+    "obstacle_contacts": 1
+   },
+   {
+    "place": "06-harbour-water",
+    "model": "pace-v5",
+    "seed": 18102028,
+    "success": true,
+    "elapsed_seconds": 21.033,
+    "path_to_teacher_ratio": 1.485029569222342,
+    "obstacle_contacts": 5
+   },
+   {
+    "place": "06-harbour-water",
+    "model": "pace-v5",
+    "seed": 18102029,
+    "success": true,
+    "elapsed_seconds": 28.033,
+    "path_to_teacher_ratio": 1.7568499892233376,
+    "obstacle_contacts": 2
+   },
+   {
+    "place": "07-cliff-trail",
+    "model": "pace-v5",
+    "seed": 18102027,
+    "success": true,
+    "elapsed_seconds": 2.767,
+    "path_to_teacher_ratio": 0.7134727881633667,
+    "obstacle_contacts": 1
+   },
+   {
+    "place": "07-cliff-trail",
+    "model": "pace-v5",
+    "seed": 18102028,
+    "success": true,
+    "elapsed_seconds": 3.167,
+    "path_to_teacher_ratio": 0.8405250777152617,
+    "obstacle_contacts": 0
+   },
+   {
+    "place": "07-cliff-trail",
+    "model": "pace-v5",
+    "seed": 18102029,
+    "success": true,
+    "elapsed_seconds": 1.967,
+    "path_to_teacher_ratio": 0.8046640631481256,
+    "obstacle_contacts": 0
+   },
+   {
+    "place": "08-market-crowd",
+    "model": "pace-v5",
+    "seed": 18102027,
+    "success": true,
+    "elapsed_seconds": 33.033,
+    "path_to_teacher_ratio": 1.0953887792938755,
+    "obstacle_contacts": 1
+   },
+   {
+    "place": "08-market-crowd",
+    "model": "pace-v5",
+    "seed": 18102028,
+    "success": true,
+    "elapsed_seconds": 32.2,
+    "path_to_teacher_ratio": 1.0609457724303153,
+    "obstacle_contacts": 1
+   },
+   {
+    "place": "08-market-crowd",
+    "model": "pace-v5",
+    "seed": 18102029,
+    "success": true,
+    "elapsed_seconds": 32.267,
+    "path_to_teacher_ratio": 1.0565190978746426,
+    "obstacle_contacts": 2
+   },
+   {
+    "place": "09-door-stairs-door",
+    "model": "pace-v5",
+    "seed": 18102027,
+    "success": true,
+    "elapsed_seconds": 1.633,
+    "path_to_teacher_ratio": 0.9992807413951742,
+    "obstacle_contacts": 0
+   },
+   {
+    "place": "09-door-stairs-door",
+    "model": "pace-v5",
+    "seed": 18102028,
+    "success": true,
+    "elapsed_seconds": 2.3,
+    "path_to_teacher_ratio": 1.0938936306286533,
+    "obstacle_contacts": 0
+   },
+   {
+    "place": "09-door-stairs-door",
+    "model": "pace-v5",
+    "seed": 18102029,
+    "success": true,
+    "elapsed_seconds": 1.633,
+    "path_to_teacher_ratio": 0.9979187276057243,
+    "obstacle_contacts": 0
+   },
+   {
+    "place": "10-local-stranger",
+    "model": "pace-v5",
+    "seed": 18102027,
+    "success": true,
+    "elapsed_seconds": 18.167,
+    "path_to_teacher_ratio": 1.1565912723804896,
+    "obstacle_contacts": 0
+   },
+   {
+    "place": "10-local-stranger",
+    "model": "pace-v5",
+    "seed": 18102028,
+    "success": true,
+    "elapsed_seconds": 18.667,
+    "path_to_teacher_ratio": 1.1916420423766623,
+    "obstacle_contacts": 0
+   },
+   {
+    "place": "10-local-stranger",
+    "model": "pace-v5",
+    "seed": 18102029,
+    "success": true,
+    "elapsed_seconds": 18.833,
+    "path_to_teacher_ratio": 1.2076968106112638,
+    "obstacle_contacts": 2
+   }
+  ]
  }
 }
