@@ -82,6 +82,7 @@ extern bool benchTexturesFrozen;
 #include "graphics/mesh/lipsync.h"
 #include "graphics/mesh/talkgestures.h"
 #include "graphics/mesh/eyeblink.h"
+#include "graphics/mesh/facerig.h"
 #include "graphics/mesh/lean.h"
 #include "graphics/mesh/pose.h"
 #include "graphics/mesh/animblend.h"
@@ -2584,6 +2585,7 @@ void writeHeader() {
   std::fprintf(bench.csv,",bk_on,bk_w,bk_n,bk_pause,bk_shift,bk_double");
   for(auto& f:FaceColumns)
     std::fprintf(bench.csv,",%s",f.column);
+  std::fprintf(bench.csv,",rig_on,rig_anims,rig_targets,rig_us,rig_n,rig_up_us");
   std::fprintf(bench.csv,",f_on,f_bend,f_yaw,f_twist,f_head,f_hits,f_str,f_ht");
   std::fprintf(bench.csv,",hp_player,hp_subject");
   std::fprintf(bench.csv,",stamina_player,stamina_subject");
@@ -9040,6 +9042,10 @@ void writeRow(Npc& pl) {
   Npc& s = subjectOf(pl);
   for(auto& f:FaceColumns)
     std::fprintf(bench.csv,",%.3f",s.faceWeight(f.anim));
+  // the own head's face (FaceRig): active anims, targets with a weight, the last blend and upload, blends so far
+  const auto& fr = FaceRig::subjectProbe;
+  std::fprintf(bench.csv,",%d,%u,%u,%.1f,%u,%.1f",int(fr.valid),fr.anims,fr.targets,double(fr.blendUs),fr.blends,
+               double(fr.uploadUs));
   // flinch of the watched one (or the hero)
   const auto& fl = bench.subject!=nullptr ? Flinch::subjectProbe : Flinch::playerProbe;
   std::fprintf(bench.csv,",%d,%.2f,%.1f,%.2f,%.2f,%u,%.2f,%.2f",int(fl.active),fl.bend,fl.bendYaw,fl.twist,fl.head,
@@ -18238,6 +18244,8 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     TalkGestures::subjectProbe = TalkGestures::Probe();
     EyeBlink::probeNpc         = n;
     EyeBlink::subjectProbe     = EyeBlink::Probe();
+    FaceRig::probeNpc          = n;
+    FaceRig::subjectProbe      = FaceRig::Probe();
     Lean::probeNpc = bench.subject;
     Pose::probeNpc = bench.subject;
     bench.anim1.clear();
@@ -19338,6 +19346,12 @@ void drawOverlay(Pixmap& pm) {
   if(bk.valid && EyeBlink::probeNpc!=nullptr) {
     std::snprintf(buf,sizeof(buf),"BLINK%s N%u P%u S%u D%u",bk.enabled ? "" : " OFF",bk.blinks,bk.pauses,bk.shifts,bk.doubles);
     cv.text(x,y,buf,2,{200,200,255,255});
+    y += 16;
+    }
+  const auto& fr = FaceRig::subjectProbe;
+  if(fr.valid && FaceRig::probeNpc!=nullptr) {
+    std::snprintf(buf,sizeof(buf),"FACE T%u %.0fus %s",fr.targets,double(fr.blendUs),fr.shown.empty() ? "-" : fr.shown.c_str());
+    cv.text(x,y,buf,2,{255,170,200,255});
     y += 16;
     }
   const auto& ge = TalkGestures::subjectProbe;
