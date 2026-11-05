@@ -42,25 +42,65 @@ def segments(pose, flags, rng, count):
     for i in range(2, count, 12):
         local[i] = ((-2000, -9000), (2000, -1000))  # far behind the policy's crop
         labels[i] = "far_only"
-    for i in range(3, count, 12):
+    for row, i in enumerate(range(3, count, 12)):
         edge = np.float32(rng.integers(-30, 30) * 25)
-        edge = np.nextafter(edge, np.float32(rng.choice([-np.inf, np.inf]))) if i % 2 else edge
+        edge = np.nextafter(edge, np.float32(rng.choice([-np.inf, np.inf]))) if row % 2 else edge
         local[i] = ((edge, -700), (edge, 700))
         corridor[i] = 0
         labels[i] = "cell_edge"
+    # Near hazards close even with free evidence; far hazards close only when
+    # the coarse cell has no free evidence (bit 32 from the engine view).
+    near_flags, far_flags = flags[:4096], flags[4096:]
+    far_z, far_x = np.divmod(np.arange(10000), 100)
+    far_centers = np.stack(((far_x + .5 - 50) * 200, (far_z + .5 - 50) * 200), 1)
+    outside_near = np.max(np.abs(far_centers), axis=1) >= 900
+    far_free = np.flatnonzero(outside_near & ((far_flags & 16) != 0)) + 4096
+    far_closed = np.flatnonzero(outside_near & ((far_flags & 15) != 0) & ((far_flags & 32) == 0)) + 4096
+    near_free = np.flatnonzero(near_flags & 16)
+    near_closed = np.flatnonzero(near_flags & 15)
+
+    def place(rows, choices, *, zero=False, edge=False):
+        if not len(rows) or not len(choices):
+            return 0
+        selected = rng.choice(choices, len(rows))
+        for i, index in zip(rows, selected):
+            size, pitch, offset = (64, 25, 0) if index < 4096 else (100, 200, 4096)
+            z, x = divmod(int(index) - offset, size)
+            center = np.array([(x + .5 - size * .5) * pitch, (z + .5 - size * .5) * pitch], np.float32)
+            if edge:
+                # Parallel to an observed near-cell edge, with a 0.001 cm
+                # inward offset; untouched rows retain exact/nextafter edges.
+                center[0] -= pitch * .5 - .001
+                delta = np.array((0, pitch * .1), np.float32)
+            else:
+                delta = np.array((0 if zero else pitch * .1, 0), np.float32)
+            local[i] = (center - delta, center + delta)
+            corridor[i], footprint[i] = 0, 0
+        return len(rows)
+
+    # Keep an unknown far-only case too, and exercise both verdict branches
+    # using nonzero segments entirely inside real observed far cells.
+    far_rows = np.arange(2, count, 12)
+    place(far_rows[::3], far_free)
+    place(far_rows[1::3], far_closed)
+    zero_rows = np.arange(0, count, 12)
+    place(zero_rows[::3], near_free, zero=True)
+    place(zero_rows[1::3], near_closed, zero=True)
+    edge_rows = np.arange(3, count, 12)
+    place(edge_rows[::3], near_free, edge=True)
+    place(edge_rows[1::3], near_closed, edge=True)
+
     targeted = Counter()
     for kind, bit in (("wall", 1), ("ledge", 2), ("drop", 4), ("water", 8)):
-        choices = np.flatnonzero(flags & bit)
-        if not len(choices):
-            continue
-        for i in range(4 + bit.bit_length() - 1, count, 12):
-            index = int(rng.choice(choices))
-            size, pitch, offset = (64, 25, 0) if index < 4096 else (100, 200, 4096)
-            z, x = divmod(index - offset, size)
-            center = np.array([(x + .5 - size * .5) * pitch, (z + .5 - size * .5) * pitch], np.float32)
-            local[i] = (center - (pitch, 0), center + (pitch, 0))
-            corridor[i], footprint[i], labels[i] = 15, 0, kind
-            targeted[kind] += 1
+        # A drop label must name an actual closing height discontinuity, not
+        # a far cell whose simultaneous free evidence makes it Unknown.
+        choices = np.concatenate((np.flatnonzero(near_flags & bit),
+                                  np.flatnonzero(outside_near & ((far_flags & bit) != 0)
+                                                 & ((far_flags & 32) == 0)) + 4096))
+        rows = np.arange(4 + bit.bit_length() - 1, count, 12)
+        if place(rows, choices):
+            labels[rows] = kind
+            targeted[kind] += len(rows)
     # Frame() renormalises the stored forward, so generate in that frame too.
     forward = pose[[3, 5]].copy()
     norm = np.float32(np.sqrt(np.float32((forward * forward).sum())))
@@ -140,9 +180,13 @@ def run_parity(backend, records, reference, weights, *, per_view=192):
             raise RuntimeError("passage reference has extra readouts")
         ref.close()
     errors = memory.get("errors")
+    required = {name: ("free", "closed") for name in CATEGORIES[:5]}
+    required.update({name: ("closed",) for name in CATEGORIES[5:]})
+    missing = [f"{name}.{verdict}" for name, verdicts in required.items()
+               for verdict in verdicts if category[name][verdict] == 0]
     return dict(backend=backend.kind, captures=len(records), views=int(views.sum()),
                 segments_per_view=per_view, **totals, equal_fraction=totals["equal"] / max(1, totals["compared"]),
-                first_mismatch=first, categories=category, targeted_live_hazard_segments=targeted,
+                first_mismatch=first, categories=category, missing_coverage=missing, targeted_live_hazard_segments=targeted,
                 state_errors=int(np.bitwise_or.reduce(errors)), seconds=time.perf_counter() - started)
 
 
@@ -161,7 +205,12 @@ def main():
                         args.reference, args.weights, per_view=args.segments_per_view)
     bench.write_json(args.output, result)
     print(f"passage: {result['equal']}/{result['compared']} equal, {result['state_errors']} state errors", flush=True)
-    if result["equal"] != result["compared"] or result["state_errors"] or result["compared"] < args.min_segments:
+    for name, counts in result["categories"].items():
+        print(f"  {name}: free={counts['free']} closed={counts['closed']} unknown={counts['unknown']}", flush=True)
+    if result["missing_coverage"]:
+        print("missing coverage: " + ", ".join(result["missing_coverage"]), flush=True)
+    if (result["equal"] != result["compared"] or result["state_errors"]
+            or result["compared"] < args.min_segments or result["missing_coverage"]):
         raise SystemExit(1)
 
 

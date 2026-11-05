@@ -31,6 +31,7 @@ void navref_passage_view(void* handle, float* pose, uint8_t* flags) {
         if(nonzero(c.drop)) value|=4;
         if(nonzero(c.water)) value|=8;
         if(NavigationPassage::seenFree(c)) value|=16;
+        if(nonzero(c.free)) value|=32;
         }
       flags[offset++]=value;
       }

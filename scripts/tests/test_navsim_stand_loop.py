@@ -218,3 +218,41 @@ def test_check_rejects_broken_batches():
     batch.pose_ms[0] = (30, 20, 40)
     with pytest.raises(ValueError, match="time goes back"):
         batch.check()
+
+
+def test_remote_submits_own_run_and_preserves_venv(tmp_path, monkeypatch):
+    import json
+    from types import SimpleNamespace
+
+    memory = tmp_path / "memory.json"
+    memory.write_text(json.dumps({"traces": [], "weights": {"v5": {"sha256": "test"}}}))
+    monkeypatch.setattr(loop.bench, "MEMORY_REPORT", memory)
+    stamp = "submit-" + tmp_path.name
+    monkeypatch.setattr(loop.bench, "run_stamp", lambda: stamp)
+    monkeypatch.setattr(loop.bench, "ssh", lambda host, script: SimpleNamespace(
+        stdout="/home/test" if script.startswith("printf") else ""))
+    monkeypatch.setattr(loop.bench, "stage", lambda *args: None)
+    commands = []
+
+    def run(command, **kwargs):
+        commands.append(command)
+        if command[0] == "tar":
+            Path(command[2]).touch()
+        return SimpleNamespace(stdout="passage-job\n", returncode=0)
+
+    monkeypatch.setattr(loop.subprocess, "run", run)
+    args = SimpleNamespace(host="ryzen", agents=[2048, 3072], skip_parity=False,
+                           precisions="fp16", torch="2.14.1", warmup=3, repeats=20,
+                           fill_workers=8, gpu_mem=8, mem=6, max_seconds=3600, gq_class="quiet")
+    assert loop.remote_command(args) == "passage-job"
+    command = commands[-1]
+    assert command[3] == "submit" and "--wait-max" not in command
+    run_path = f"/home/test/gothic-ai/nav-sim-stand-passage/runs/{stamp}"
+    assert command[command.index("--archive") + 1] == run_path
+    body = command[-1]
+    assert f"{run_path}/raw/passage.json" in body
+    assert "--destination-relative nav-sim-research/stand/passage/" + stamp in body
+    assert "--attempt-id " + stamp in body
+    assert "/home/test/gothic-ai/nav-sim-research/" not in body
+    assert ".venv" not in body.split("trap finish EXIT")[0]
+    assert "scripts/nas_archive.py" in loop.STAGED

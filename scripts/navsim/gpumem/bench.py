@@ -54,7 +54,9 @@ WEIGHTS = "/mnt/shared/gothic-ai/nav-pace-v5/run"
 REMOTE_TASK = "gothic-ai/nav-sim-research/gpumem"
 HISTORY = 1024
 STEPS_PER_REPEAT = 30
-REFERENCE_FLAGS = ["-O2", "-DNDEBUG", "-std=gnu++20", "-fPIC", "-shared"]
+# Match HOST_FLAGS and CUDA --fmad=false on ARM as well as x86: Clang can
+# otherwise contract the engine's cell-boundary arithmetic into FMA.
+REFERENCE_FLAGS = ["-O2", "-DNDEBUG", "-std=gnu++20", "-fPIC", "-shared", "-ffp-contract=off"]
 REFERENCE_SOURCES = ["tests/navsim_memory_ref.cpp", "common/navpolicy.cpp", "common/game/navigationmemory.cpp",
                      "common/game/navigationpassage.cpp"]
 STAGED = (["scripts/navsim/gpumem/" + n for n in ("bench.py", "gpumem.py", "captures.py", "memory_kernels.h",
@@ -158,7 +160,7 @@ class Reference:
 
 
 def build_reference(source_root, output):
-    """Same flags as gothic-navsim-memory-bench (no -march, no FP contraction on x86-64)."""
+    """Compile the engine with the same non-contracting arithmetic as both ports."""
     root = Path(source_root) / "OpenGothic"
     command = ["g++", *REFERENCE_FLAGS, f"-I{root}/common", f"-I{root}/lib/Tempest/Engine/include",
                f"-I{root}/lib/Tempest/Engine", f"-I{root}/lib/rapidjson/include",

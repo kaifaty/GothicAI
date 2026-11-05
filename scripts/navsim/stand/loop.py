@@ -10,8 +10,8 @@ The two halves overlap CPU A/B futures with GPU stages on separate streams.
 Modes: fp32 eager for parity, fp16 with separate memory and policy CUDA
 Graphs for speed. Copies and passage rounds stay outside the graphs.
 
-One command from the Mac stages everything on Ryzen, runs one gq job and writes
-the compact report::
+One command from the Mac stages everything on Ryzen and submits one gq job
+without waiting. The job writes the compact report alongside raw data on NAS::
 
     python3 scripts/navsim/stand/loop.py remote
 
@@ -56,7 +56,8 @@ REMOTE_TASK = "gothic-ai/nav-sim-stand-passage"
 HISTORY = 1024
 STEPS_PER_REPEAT = 30
 DELAY_US, DELAY_THREADS = 200.0, 24
-STAGED = bench.STAGED + ["scripts/navsim/stand/" + n for n in ("loop.py", "contract.py", "cpu_replay.py")]
+STAGED = (bench.STAGED + ["scripts/nas_archive.py"]
+          + ["scripts/navsim/stand/" + n for n in ("loop.py", "contract.py", "cpu_replay.py")])
 SPIN_C = r"""
 #include <time.h>
 void navsim_spin(double seconds) {
@@ -716,7 +717,7 @@ def remote_command(args):
     stamp = bench.run_stamp()
     run = f"{task}/runs/{stamp}"
     src = f"{run}/src"
-    raw = f"{home}/gothic-ai/nav-sim-research/stand/passage/{stamp}"
+    raw = f"{run}/raw"
     print(bench.ssh(host, f"df -h ~ | tail -1; mkdir -p {src} {task}/captures {task}/weights").stdout, flush=True)
     archive = Path("/tmp") / f"navsim-stand-src-{stamp}.tar"
     subprocess.run(["tar", "-cf", str(archive), "-C", str(ROOT), *STAGED, "OpenGothic/lib/rapidjson/include"],
@@ -738,9 +739,18 @@ $py {src}/scripts/navsim/gpumem/passage.py --backend cuda --build {run}/build \\
 $py {script} parity --build {run}/build --reference {run}/build/libnavmemref.so \\
   --weights {task}/weights/policy.navbc --policy {task}/weights/last.pt --output {raw}/parity.json --captures {capture_list}
 """
+    destination = f"nav-sim-research/stand/passage/{stamp}"
     body = f"""set -eu
 cd {task}
-trap 'rm -rf {run}/build {run}/src {task}/.venv' EXIT
+finish() {{
+  result=$?
+  trap - EXIT
+  python3 {src}/scripts/nas_archive.py move {raw} \\
+    --destination-relative {destination} --attempt-id {stamp} || result=1
+  rm -rf {run}/build {run}/src
+  exit "$result"
+}}
+trap finish EXIT
 mkdir -p {raw}
 df -h ~ | tail -1
 nvidia-smi --query-gpu=memory.used,memory.free --format=csv
@@ -759,34 +769,36 @@ $py {script} speed --build {run}/build --policy {task}/weights/last.pt --agents 
   --warmup {args.warmup} --repeats {args.repeats} --fill-workers {args.fill_workers} \\
   --vram-limit-gib {args.gpu_mem - .5} --output {raw}/speed.json --captures {capture_list}
 nvidia-smi --query-gpu=memory.used,memory.free --format=csv > {raw}/vram-after.txt
+(cd {raw} && sha256sum -- *.json *.txt > SHA256SUMS)
+$py - <<'SUMMARY'
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+sys.path.insert(0, '{src}/scripts/navsim/stand')
+import loop
+args = SimpleNamespace(host={host!r}, gq_class={args.gq_class!r}, mem={args.mem}, gpu_mem={args.gpu_mem})
+loop.summarise(Path('{raw}'), '{NAS}/{stamp}', args, output=Path('{raw}/passage.json'), stamp='{stamp}')
+SUMMARY
 df -h ~ | tail -1
 """
-    job = [str(ROOT / "scripts/gq"), "--host", host, "run", "--class", args.gq_class, "--threads",
+    # The explicit archive publishes raw data to the research NAS path. gq's
+    # archive owns the run directory as a fallback if that publication fails;
+    # successful publication and cleanup leave that directory empty.
+    job = [str(ROOT / "scripts/gq"), "--host", host, "submit", "--class", args.gq_class, "--threads",
            str(DELAY_THREADS + 2), "--mem", f"{args.mem}G", "--gpu-mem", f"{args.gpu_mem}G",
-           "--max", str(args.max_seconds), "--wait-max", "1800", "--name", "navsim-stand-passage", "--archive", raw, "--", "bash", "-lc", body]
-    code = bench.run_forwarding(job)
-    print(f"gq exit {code}; raw results in {host}:{run}", flush=True)
-    if code == 0:
-        collect(host, run, stamp, args)
-    sys.exit(code)
+           "--max", str(args.max_seconds), "--name", "navsim-stand-passage", "--archive", run,
+           "--", "bash", "-lc", body]
+    submitted = subprocess.run(job, check=True, text=True, capture_output=True)
+    job_id = submitted.stdout.strip()
+    print(f"gq submitted {job_id}; local raw {raw}; NAS {NAS}/{stamp}/passage.json", flush=True)
+    return job_id
 
 
-def collect(host, run, stamp, args):
-    nas = f"{NAS}/{stamp}"
-    # gq --archive has moved and verified the raw directory before returning.
-    bench.ssh(host, f"cd {nas} && sha256sum -- * > {run}/SHA256SUMS && cp {run}/SHA256SUMS {nas}/")
-    local = Path("/tmp") / f"navsim-stand-{stamp}"
-    local.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["scp", "-q", "-r", f"{host}:{nas}/.", str(local)], check=True)
-    subprocess.run(["scp", "-q", f"{host}:{run}/SHA256SUMS", str(local / "SHA256SUMS")], check=True)
-    summarise(local, nas, args)
-
-
-def summarise(local, nas, args):
+def summarise(local, nas, args, *, output=REPORT, stamp=None):
     metadata = json.loads((local / "metadata.json").read_text())
-    report = json.loads(REPORT.read_text()) if REPORT.exists() else {}
+    report = json.loads(output.read_text()) if output.exists() else {}
     report.update(status="measured", method=__doc__.strip(), contract="scripts/navsim/stand/contract.py")
-    run = dict(stamp=local.name.rsplit("-", 1)[-1], raw_dir=nas, gpu=metadata["gpu"], torch=metadata["torch"],
+    run = dict(stamp=stamp or local.name.rsplit("-", 1)[-1], raw_dir=nas, gpu=metadata["gpu"], torch=metadata["torch"],
                torch_cuda=metadata["torch_cuda"], free_vram_mib_before=metadata["free_vram_mib"],
                vram_after=(local / "vram-after.txt").read_text().strip().splitlines()[-1],
                gq=dict(host=args.host, cls=args.gq_class, threads=DELAY_THREADS + 2, mem_gib=args.mem,
@@ -806,8 +818,8 @@ def summarise(local, nas, args):
                        if k.startswith("loop_")} for c in speed["cells"]]
     report.setdefault("runs", []).append(run)
     report["headline"] = headline(report)
-    bench.write_json(REPORT, report)
-    print(f"wrote {REPORT}", flush=True)
+    bench.write_json(output, report)
+    print(f"wrote {output}", flush=True)
 
 
 def headline(report):
