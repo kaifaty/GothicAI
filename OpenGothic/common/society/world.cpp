@@ -16,7 +16,7 @@ namespace {
 using Value = rapidjson::Value;
 
 [[noreturn]] void bad(const std::string& what) {
-  throw std::runtime_error("society-world v1: "+what);
+  throw std::runtime_error("society-world: "+what);
   }
 
 void need(bool condition, const std::string& what) {
@@ -85,7 +85,8 @@ void readHeader(World& w, const Value& doc) {
   need(doc.IsObject(),"the file is not a JSON object");
   need(str(doc,"format")=="society-world","format must be society-world");
   const auto& version = member(doc,"version");
-  need(version.IsInt() && version.GetInt()==1,"only version 1 is supported");
+  need(version.IsInt() && (version.GetInt()==1 || version.GetInt()==2),"only versions 1 and 2 are supported");
+  w.version = version.GetInt();
   w.worldName       = str(doc,"world");
   w.dataFingerprint = str(doc,"data_fingerprint");
   w.engineCommit    = str(doc,"engine_commit");
@@ -212,8 +213,14 @@ void readNpcs(World& w, const Value& doc) {
   const auto& list = array(doc,"npcs");
   auto& n = w.npcs;
   auto& r = w.routines;
+  auto& m = w.schedules;
+  // Every state name the NPCs use, in reading order; `stateOf` keeps where each one goes: a routine entry,
+  // a start_aistate, a schedule window.
   std::vector<std::string> states;
+  enum Slot : uint8_t { Entry, Start, Window };
+  std::vector<std::pair<Slot,size_t>> stateOf;
   n.routineBegin.push_back(0);
+  n.scheduleBegin.push_back(0);
   for(rapidjson::SizeType i=0; i<list.Size(); ++i) {
     const auto& v = list[i];
     n.id.push_back(str(v,"id"));
@@ -224,6 +231,34 @@ void readNpcs(World& w, const Value& doc) {
     const auto start = uint(v,"start_waypoint");
     need(start<w.points.size(),"npc "+n.key.back()+": start_waypoint is not a point");
     n.startPoint.push_back(start);
+    // v2: the state the engine starts without a routine, the NPC's own walk speed and the monster schedule.
+    n.startState.push_back(NoState);
+    n.walkCmPerS.push_back(w.walkCmPerS);
+    if(w.version>=2) {
+      const auto aistate = optionalStr(v,"start_aistate");
+      if(!aistate.empty()) {
+        states.push_back(aistate);
+        stateOf.emplace_back(Start,i);
+        }
+      const double walk = real(v,"walk_cm_per_s");
+      need(walk>=0,"npc "+n.key.back()+": walk_cm_per_s must not be negative");
+      if(walk>0)
+        n.walkCmPerS.back() = walk;
+      const auto& schedule = member(v,"mm_schedule");
+      need(schedule.IsNull() || schedule.IsArray(),"npc "+n.key.back()+": mm_schedule must be an array or null");
+      if(schedule.IsArray())
+        for(rapidjson::SizeType j=0; j<schedule.Size(); ++j) {
+          const auto& x = schedule[j];
+          need(x.IsArray() && x.Size()==3 && x[0].IsString() && x[1].IsInt() && x[2].IsInt(),
+               "npc "+n.key.back()+": an mm_schedule window is [state, start hour, end hour]");
+          states.emplace_back(x[0].GetString(),x[0].GetStringLength());
+          stateOf.emplace_back(Window,m.size());
+          m.state.push_back(0);
+          m.start.push_back(int16_t(x[1].GetInt()));
+          m.end.push_back(int16_t(x[2].GetInt()));
+          }
+      }
+    n.scheduleBegin.push_back(uint32_t(m.size()));
     const auto& routine = array(v,"routine");
     need(routine.Size()<NoEntry,"npc "+n.key.back()+": too many routine entries");
     for(rapidjson::SizeType j=0; j<routine.Size(); ++j) {
@@ -233,6 +268,7 @@ void readNpcs(World& w, const Value& doc) {
       r.start.push_back(uint16_t(s));
       r.end.push_back(uint16_t(t));
       states.push_back(str(e,"state"));
+      stateOf.emplace_back(Entry,r.state.size());
       r.state.push_back(0);
       const auto& wp = member(e,"waypoint");
       need(wp.IsNull() || (wp.IsUint() && wp.GetUint()<w.points.size()),"npc "+n.key.back()+": routine point is not a point");
@@ -246,13 +282,34 @@ void readNpcs(World& w, const Value& doc) {
       w.peopleEntries += routine.Size();
       }
     }
-  // State names sorted: the index is stable for the same set of states.
+  // State names sorted, with the follow-on states of the rules (ZS_GOTOBED -> ZS_SLEEP): the index is stable for
+  // the same set of states.
   w.stateNames = states;
+  for(const auto& f:FollowStates)
+    if(std::find(states.begin(),states.end(),f.from)!=states.end())
+      w.stateNames.emplace_back(f.to);
   std::sort(w.stateNames.begin(),w.stateNames.end());
   w.stateNames.erase(std::unique(w.stateNames.begin(),w.stateNames.end()),w.stateNames.end());
   need(w.stateNames.size()<NoState,"too many states");
-  for(size_t k=0; k<states.size(); ++k)
-    r.state[k] = uint16_t(std::lower_bound(w.stateNames.begin(),w.stateNames.end(),states[k])-w.stateNames.begin());
+  const auto index = [&](std::string_view name) {
+    return uint16_t(std::lower_bound(w.stateNames.begin(),w.stateNames.end(),name)-w.stateNames.begin());
+    };
+  for(size_t k=0; k<states.size(); ++k) {
+    const auto [slot,at] = stateOf[k];
+    const auto id = index(states[k]);
+    if(slot==Entry)
+      r.state[at] = id;
+    else if(slot==Start)
+      n.startState[at] = id;
+    else
+      m.state[at] = id;
+    }
+  w.followState.assign(w.stateNames.size(),NoState);
+  for(const auto& f:FollowStates)
+    if(std::binary_search(w.stateNames.begin(),w.stateNames.end(),std::string_view(f.from)))
+      w.followState[index(f.from)] = index(f.to);
+  const auto scheduler = std::find(w.stateNames.begin(),w.stateNames.end(),MmScheduler);
+  w.schedulerState = scheduler==w.stateNames.end() ? NoState : uint16_t(scheduler-w.stateNames.begin());
   }
 
 // The entry in force at each minute of the day, compressed to the minutes where it changes (cyclically).
@@ -337,6 +394,38 @@ uint16_t entryAt(const World& w, uint32_t npc, Time t, Time* nextChange) {
   if(nextChange!=nullptr)
     *nextChange = it==m+last ? base+DaySeconds+Time(m[first])*60 : base+Time(*it)*60;
   return w.npcs.timelineEntry[k];
+  }
+
+Time stateEndAt(const World& w, uint32_t npc, uint16_t entry, Time t) {
+  const Time tod = ((t%DaySeconds)+DaySeconds)%DaySeconds;
+  const Time day = t-tod;
+  const auto k   = w.entryIndex(npc,entry);
+  const Time s   = Time(w.routines.start[k])*60, e = Time(w.routines.end[k])*60;
+  if(e<s)
+    return tod<e ? day+e : day+DaySeconds+e;
+  if(s<e)
+    return (e<60*60 || e<tod) ? day+DaySeconds+e : day+e;
+  if(e==0)
+    return day+DaySeconds;
+  return t;
+  }
+
+uint16_t startStateAt(const World& w, uint32_t npc, Time t) {
+  const auto start = w.npcs.startState[npc];
+  if(start==NoState || start!=w.schedulerState)
+    return start;
+  // Wld_IsTime(start,0,end,0) on the hour and minute of the day: [start, end), over midnight when end < start, never
+  // when they are equal.
+  const Time tod = ((t%DaySeconds)+DaySeconds)%DaySeconds;
+  const auto& m  = w.schedules;
+  for(uint32_t k=w.npcs.scheduleBegin[npc]; k<w.npcs.scheduleBegin[npc+1]; ++k) {
+    if(m.start[k]==-1)
+      return m.state[k];
+    const Time b = Time(m.start[k])*3600, e = Time(m.end[k])*3600;
+    if((b<=e && b<=tod && tod<e) || (e<b && (tod<e || b<=tod)))
+      return m.state[k];
+    }
+  return start;
   }
 
 World parseWorld(std::string_view json) {
