@@ -513,14 +513,15 @@ Motion::Motion(const float* vertices, const uint8_t* categories, size_t triangle
   m.capsule = new JPH::CapsuleShape(std::max(m.height*0.5f-m.radius,0.001f),m.radius);
 
   // One shared mesh per solid category, built in parallel; water is not solid.
-  std::vector<uint8_t> solid = {1,2,Kinematic};
-  solid.erase(std::remove_if(solid.begin(),solid.end(),[&](uint8_t c) {
-    return std::find(categories,categories+triangles,c)==categories+triangles;
-    }),solid.end());
-  m.shapes.resize(solid.size());
-  std::vector<std::string> errors(solid.size());
+  std::array<uint8_t,3> solid = {};
+  size_t solidCount = 0;
+  for(uint8_t c:{uint8_t(1),uint8_t(2),Kinematic})
+    if(std::find(categories,categories+triangles,c)!=categories+triangles)
+      solid[solidCount++] = c;
+  m.shapes.resize(solidCount);
+  std::vector<std::string> errors(solidCount);
   std::vector<std::thread> builders;
-  for(size_t s=0; s<solid.size(); ++s)
+  for(size_t s=0; s<solidCount; ++s)
     builders.emplace_back([&,s] {
       try {
         JPH::TriangleList list;

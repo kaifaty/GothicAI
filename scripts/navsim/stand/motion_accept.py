@@ -62,6 +62,7 @@ THRESHOLDS = {"free_step_p90_cm": 5.0, "window_10s_moving_p90_cm": 100.0, "block
               "turn_deg_per_s": 90.0}
 TABLE_REFERENCE = {"free_step_p90_cm": 4.8, "window_10s_moving_free_p90_cm": 210.3, "blocked_step_p90_cm": 33.6}
 WINDOW_SECONDS = (1, 3, 10)
+FINAL_TAG = "r1-stand-pace"  # the stand's translation: its own table and the NPC's pace (motion-phase.sh)
 STEADY_AGE = 5          # decisions with the same keys before a step counts towards the pace
 PACE_MIN_STEPS = 30     # steady steps an NPC needs for its pace in one gait
 Light = namedtuple("Light", "identifier family")
@@ -655,7 +656,7 @@ def summary(raws, out: Path, final: str | None = None):
                                "step_ms_p90": round(pick("step_ms_p90"), 3),
                                "repeats": len(group), "decisions_per_repeat": group[0]["decisions"],
                                "load_average_at_repeats": [r["load_average"] for r in group]}
-    final = final or sorted(rounds)[-1]
+    final = final or (FINAL_TAG if FINAL_TAG in rounds else sorted(rounds)[-1])
     for m in meta:
         m["gq_status"] = m.get("gq_status", "").splitlines()[:12]
     result = {"schema": 1, "task": "S2 ground motion: acceptance 1 (research §5) and cost",
@@ -699,7 +700,7 @@ def main():
     r = sub.add_parser("run", parents=[common])
     r.add_argument("raw", type=Path)
     r.add_argument("--threads", type=int, default=8)
-    r.add_argument("--agents", type=int, default=4096)
+    r.add_argument("--agents", type=int, default=2048)
     r.add_argument("--cache", type=Path)
     r.add_argument("--seconds", type=int, nargs="+", default=list(WINDOW_SECONDS))
     r.add_argument("--stand-table", type=Path, help="table-stand.json of fit")
@@ -709,7 +710,7 @@ def main():
     f = sub.add_parser("fit", parents=[common])
     f.add_argument("out", type=Path)
     f.add_argument("--threads", type=int, default=8)
-    f.add_argument("--agents", type=int, default=4096)
+    f.add_argument("--agents", type=int, default=2048)
     f.add_argument("--cache", type=Path)
     c = sub.add_parser("cost", parents=[common])
     c.add_argument("raw", type=Path)
@@ -717,7 +718,7 @@ def main():
     c.add_argument("--agents", type=int, default=2048)
     c.add_argument("--warmup", type=int, default=10)
     c.add_argument("--steps", type=int, default=30)
-    c.add_argument("--repeats", type=int, default=3)
+    c.add_argument("--repeats", type=int, default=20)
     c.add_argument("--cache", type=Path)
     s = sub.add_parser("summary")
     s.add_argument("out", type=Path)
