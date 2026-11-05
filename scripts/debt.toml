@@ -1,5 +1,9 @@
 exclude = ["OpenGothic/lib", "reports", "research_notes"]
 
+[ratchet]
+# Warn before this UTC date; fail on growth from this date onward.
+enforce_from = 2026-11-19
+
 [hotspot]
 priority = 1
 extensions = [".py", ".cpp", ".h", ".hpp", ".c", ".cc", ".cxx"]
