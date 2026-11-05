@@ -83,36 +83,113 @@ std::string symbolName(World& world, size_t symbol) {
   return sym!=nullptr ? std::string(sym->name()) : std::to_string(symbol);
   }
 
-// HeroDeed::resolveOwner: accept only C_NPC symbols, including owners outside this world.
-std::string resolveOwner(World& world, std::string_view name) {
-  auto* s = world.script().findSymbol(name);
+bool npcSymbol(World& world, zenkit::DaedalusSymbol* s) {
   if(s==nullptr)
-    return {};
+    return false;
   auto* cls = s;
   for(size_t i=0; i<16 && cls!=nullptr && cls->type()!=zenkit::DaedalusDataType::CLASS; ++i)
     cls = world.script().findSymbol(size_t(cls->parent()));
-  if(cls==nullptr || cls->name()!="C_NPC")
-    return {};
-  if(auto* npc = world.findNpcByInstance(s->index()))
-    return npc->isPlayer() ? "PLAYER" : symbolName(world,npc->instanceSymbol());
-  return std::string(s->name());
+  return cls!=nullptr && cls->name()=="C_NPC";
   }
 
-// As HeroDeed::resolveRoomOwner: the longest actual C_NPC name after the colon.
-std::string resolveRoomOwner(World& world, std::string_view room) {
+std::vector<std::string> npcInstances(World& world) {
+  std::vector<std::string> ret;
+  for(const auto& s:world.script().getVm().symbols())
+    if(s.type()==zenkit::DaedalusDataType::INSTANCE && s.is_const() &&
+       npcSymbol(world,world.script().findSymbol(s.index())))
+      ret.push_back(s.name());
+  std::sort(ret.begin(),ret.end());
+  return ret;
+  }
+
+struct RoomOwner {
+  std::string npc, name, ambiguous;
+  };
+
+RoomOwner resolveOwner(World& world, std::string_view name, const std::vector<std::string>& instances) {
+  auto* s = world.script().findSymbol(name);
+  if(s!=nullptr && s->type()==zenkit::DaedalusDataType::INSTANCE && npcSymbol(world,s)) {
+    // The alias's handle carries the actual C_NPC instance, rather than the variable's symbol index.
+    if(s->is_instance_of<zenkit::INpc>()) {
+      const auto id = symbolName(world,s->get_instance()->symbol_index());
+      if(std::binary_search(instances.begin(),instances.end(),id))
+        return {id,std::string(name),{}};
+      }
+    if(s->is_const())
+      return {s->name(),std::string(name),{}};
+    }
+  RoomOwner ret;
+  for(const auto& id:instances) {
+    // A short name omits the prefix and numeric character id (VLK_409_ZURIS).
+    // An archetype such as GIANT_BUG does not have the short name BUG.
+    const std::string_view full = id;
+    const auto first = full.find('_');
+    const auto second = first==std::string_view::npos ? first : full.find('_',first+1);
+    if(first==0 || second==std::string_view::npos || second==first+1)
+      continue;
+    const auto serial = full.substr(first+1,second-first-1);
+    if(!std::all_of(serial.begin(),serial.end(),[](char c) { return '0'<=c && c<='9'; }) || full.substr(second+1)!=name)
+      continue;
+    if(ret.npc.empty())
+      ret.npc = id;
+    else {
+      if(ret.ambiguous.empty())
+        ret.ambiguous = ret.npc;
+      ret.ambiguous += ", "+id;
+      }
+    }
+  if(!ret.npc.empty())
+    ret.name = name;
+  if(!ret.ambiguous.empty())
+    ret.npc.clear();
+  return ret;
+  }
+
+// As HeroDeed, prefer the longest owner name after ':'; canonicalize aliases and unique short names for the stand.
+RoomOwner resolveRoomOwner(World& world, std::string_view room, const std::vector<std::string>& instances) {
   const auto colon = room.find(':');
-  if(colon==std::string_view::npos)
-    return resolveOwner(world,room);
-  const auto name = room.substr(colon+1);
+  const auto name = colon==std::string_view::npos ? room : room.substr(colon+1);
   for(size_t end=name.size(); end!=std::string_view::npos;) {
-    auto owner = resolveOwner(world,name.substr(0,end));
-    if(!owner.empty())
+    auto owner = resolveOwner(world,name.substr(0,end),instances);
+    if(!owner.npc.empty() || !owner.ambiguous.empty())
       return owner;
     if(end==0)
       break;
     end = name.rfind('_',end-1);
     }
-  return {};
+  return {{},std::string(name.substr(0,name.find('_'))),{}};
+  }
+
+struct RoomGuild {
+  int32_t id = -1;
+  std::string name, unresolved;
+  };
+
+RoomGuild resolveRoomGuild(World& world, std::string_view room, bool npcOwner) {
+  const auto colon = room.find(':');
+  // guildOfRoom expects portal syntax even when roomAt returned a bare BSP sector name.
+  const auto native = colon==std::string_view::npos ? "S:"+std::string(room)+"_" : std::string(room);
+  const auto assigned = world.guildOfRoom(native);
+  // PAL_200_HAGEN names a private NPC, not the guild GIL_PAL.
+  if(npcOwner)
+    return {assigned,{},{}};
+  const auto name = colon==std::string_view::npos ? room : room.substr(colon+1);
+  auto* max = world.script().findSymbol("GIL_MAX");
+  for(size_t end=name.size(); end!=std::string_view::npos;) {
+    const auto part = name.substr(0,end);
+    const auto key = part.starts_with("GIL_") ? std::string(part) : "GIL_"+std::string(part);
+    auto* sym = world.script().findSymbol(key);
+    if(sym!=nullptr && sym->type()==zenkit::DaedalusDataType::INT && sym->is_const() &&
+       sym->get_int()>=0 && max!=nullptr && sym->get_int()<max->get_int())
+      return {sym->get_int(),key,{}};
+    if(end==0)
+      break;
+    end = name.rfind('_',end-1);
+    }
+  if(name.starts_with("GIL_"))
+    return {-1,{},std::string(name)};
+  // Otherwise this is a native room assignment (Wld_AssignRoomToGuild), already a numeric script guild.
+  return {assigned,{},{}};
   }
 
 std::string roomAt(World& world, const Tempest::Vec3& pos) {
@@ -264,16 +341,28 @@ Result build(World& world) {
     owned      += !ownerNpc.empty() || !ownerGuild.empty() ? 1 : 0;
     }
 
+  const auto instances = npcInstances(world);
   for(const auto& room:roomNames) {
+    const auto owner = resolveRoomOwner(world,room,instances);
+    const auto guild = resolveRoomGuild(world,room,!owner.npc.empty() || !owner.ambiguous.empty());
+    if(!owner.npc.empty())
+      std::fprintf(stderr,"society room npc: %s -> %s\n",room.c_str(),owner.npc.c_str());
+    else if(!owner.ambiguous.empty())
+      std::fprintf(stderr,"society room npc ambiguous: %s -> %s -> %s\n",room.c_str(),owner.name.c_str(),owner.ambiguous.c_str());
+    else if(guild.name.empty())
+      std::fprintf(stderr,"society room npc missing: %s -> %s\n",room.c_str(),owner.name.c_str());
+    if(!guild.name.empty())
+      std::fprintf(stderr,"society room guild: %s -> %s -> %d\n",room.c_str(),guild.name.c_str(),int(guild.id));
+    if(!guild.unresolved.empty())
+      std::fprintf(stderr,"society room guild unresolved: %s -> %s\n",room.c_str(),guild.unresolved.c_str());
     Buffer b; Writer w(b);
     w.StartObject();
     w.Key("name");        text(w,room);
-    w.Key("owner_npc");   optionalText(w,resolveRoomOwner(world,room));
+    w.Key("owner_npc");   optionalText(w,owner.npc);
     // A room assigned to a guild, not the guild of its private NPC owner.
-    const auto guild = world.guildOfRoom(room);
     w.Key("owner_guild");
-    if(guild>GIL_NONE)
-      w.Int(guild); else
+    if(guild.id>GIL_NONE)
+      w.Int(guild.id); else
       w.Null();
     w.EndObject();
     rooms.add(b);

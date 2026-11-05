@@ -20,6 +20,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 #include <unistd.h>
 
@@ -190,11 +191,9 @@ std::vector<Waypoint> checkWaypoints(const Value& doc) {
 struct Room { std::string owner; int32_t guild = -1; };
 using Rooms = std::map<std::string,Room>;
 
-Rooms checkRooms(const Value& doc, const std::vector<Waypoint>& points, const std::set<std::string>& npcIds) {
+Rooms checkRooms(const Value& doc, const std::vector<Waypoint>& points) {
   Rooms ret;
   std::string previous;
-  std::set<std::string> unresolved;
-  size_t owned = 0;
   for(const auto& r:array(doc,"rooms").GetArray()) {
     const auto name = str(r,"name");
     need(!name.empty() && (ret.empty() || previous<name),"rooms must have nonempty names in sorted order without repeats");
@@ -205,27 +204,50 @@ Rooms checkRooms(const Value& doc, const std::vector<Waypoint>& points, const st
     need(guild.IsNull() || (guild.IsInt() && guild.GetInt()>0),"room owner_guild must be null or a positive guild id");
     if(guild.IsInt())
       room.guild = guild.GetInt();
-    owned += !room.owner.empty() || room.guild>=0 ? 1 : 0;
     ret.emplace(name,room);
-    // Owner names may be full instances or the scripts' short C_NPC names (FELLAN, ANDRE...).
-    // A known NPC name in the room must not silently become owner_npc null.
-    const auto colon = name.find(':');
-    const auto tail = colon==std::string::npos ? name : name.substr(colon+1);
-    for(const auto& npc:npcIds) {
-      const auto end = npc.rfind('_');
-      const auto shortName = end==std::string::npos ? npc : npc.substr(end+1);
-      if((tail==npc || tail.starts_with(npc+"_") || tail==shortName || tail.starts_with(shortName+"_")) && room.owner.empty())
-        unresolved.insert(name+" -> "+npc);
-      }
     }
   for(const auto& p:points)
     if(!p.room.empty() && !ret.count(p.room))
       fail("waypoint "+p.name+" names missing room "+p.room);
-  std::printf("rooms: %zu, with an owner: %zu\n",ret.size(),owned);
-  std::printf("rooms with an unresolved named owner: %zu\n",unresolved.size());
-  for(const auto& name:unresolved)
-    fail("room "+name+" has owner_npc null");
   return ret;
+  }
+
+void checkRoomOwners(const fs::path& log, const Rooms& rooms) {
+  constexpr std::string_view mapping = "society room npc: ";
+  constexpr std::string_view missing = "society room npc missing: ";
+  constexpr std::string_view ambiguous = "society room npc ambiguous: ";
+  constexpr std::string_view guildError = "society room guild unresolved: ";
+  std::set<std::string> mappings;
+  std::vector<std::string> errors;
+  size_t absent = 0, conflicts = 0, guildErrors = 0;
+  for(const auto& line:lines(read(log))) {
+    if(!line.starts_with("society room "))
+      continue;
+    std::printf("%s\n",line.c_str());
+    if(line.starts_with(mapping))
+      mappings.insert(line.substr(mapping.size()));
+    else if(line.starts_with(missing))
+      ++absent;
+    else if(line.starts_with(ambiguous)) {
+      ++conflicts;
+      errors.push_back(line);
+      }
+    else if(line.starts_with(guildError)) {
+      ++guildErrors;
+      errors.push_back(line);
+      }
+    }
+  size_t owned = 0;
+  for(const auto& [name,room]:rooms) {
+    owned += !room.owner.empty() || room.guild>=0 ? 1 : 0;
+    if(!room.owner.empty() && !mappings.count(name+" -> "+room.owner))
+      fail("room "+name+" has no canonical NPC mapping in the export log");
+    }
+  std::printf("rooms: %zu, with an owner: %zu\n",rooms.size(),owned);
+  std::printf("room NPC mappings: %zu; missing: %zu; ambiguous: %zu; unresolved guilds: %zu\n",
+              mappings.size(),absent,conflicts,guildErrors);
+  for(const auto& error:errors)
+    fail(error);
   }
 
 void checkPlaces(const std::vector<Waypoint>& points, const fs::path& placesPath) {
@@ -665,9 +687,11 @@ int main() {
     checkPlaces(points,repo/"server/src/gothic_ai/gamedata/places.json");
     checkEdges(doc,points);
     const auto ids = checkNpcs(doc,points,repo/"evals/npc-decisions/day_people.json");
-    const auto rooms = checkRooms(doc,points,ids);
+    const auto rooms = checkRooms(doc,points);
+    checkRoomOwners(root/"a.log",rooms);
     checkObjects(doc,points,ids,rooms);
     checkSleepRooms(doc,points,rooms);
+    std::fflush(stdout);
     if(failures>0) {
       std::fprintf(stderr,"FAIL: society export contract: %d checks failed\n",failures);
       return EXIT_FAILURE;
