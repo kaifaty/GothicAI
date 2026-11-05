@@ -719,7 +719,6 @@ void Quiver::step(const Matrix4x4& pelvis, const Matrix4x4& spine, const std::ve
   // from the last answer or the rest, whichever is better, down the gradient with a step that halves when it
   // does not help
   float bx = 0, bz = 0;
-  const bool groundAtRest = underground(Vec3(0,-1,0),0.f)>0.f;
   // nothing in the tube at rest (most frames): the rest, no search
   if(inside(Vec3(0,-1,0))>0.f) {
     float s0 = score(0,0), sl = score(lastX,lastZ);
@@ -824,7 +823,6 @@ void Quiver::step(const Matrix4x4& pelvis, const Matrix4x4& spine, const std::ve
   const Vec3  now      = Vec3::normalize(axis);
   const float nowAngle = std::acos(std::clamp(-now.y,-1.f,1.f))*180.f/float(M_PI);
   const bool  pushed   = ground.on && (wide || underground(Vec3(0,-1,0),lift)>0.f || underground(now,lift)>0.f);
-  (void)groundAtRest;
   const int   mode     = pushed ? 1 : (nowAngle>GiveAngle+0.05f ? 2 : 0);
 
   // a jump (a teleport, a load) or the first step: at the target
