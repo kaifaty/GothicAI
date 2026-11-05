@@ -36,6 +36,16 @@ struct VsmHeader {
   uint  omniTileLightsMax; // most shadowed lights in one tile
   };
 
+// Lamps that cast a VSM shadow when their number is limited ([INTERNAL] vsmLampShadows, vsm_select_lamps.comp),
+// one per light: 'weight' the shadow's share 0..1 (light.frag: mix of lit and shadowed), 'held' seconds since the
+// lamp took its shadow, 'selected' 1 while it holds it, 'stamp' the frame that last updated it
+struct VsmLampShadow {
+  float weight;
+  float held;
+  uint  selected;
+  uint  stamp;
+  };
+
 uint packVsmPageInfo(ivec3 at, ivec2 size) {
   // 1 : 8 : 8 : 7 : 4 : 4
   return ((at.x & 0xFF) << 1) | ((at.y & 0xFF) << 9) | ((at.z & 0x7F) << 17) | ((size.x & 0xF) << 24) | ((size.y & 0xF) << 28);

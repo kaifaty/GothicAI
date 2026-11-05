@@ -449,6 +449,7 @@ add_shader(vsm_pack_draws1.comp      virtual_shadow/vsm_pack_draws.comp   -DPASS
 add_shader(vsm_visibility_pass.comp  virtual_shadow/vsm_visibility_pass.comp -DVIRTUAL_SHADOW)
 # virtual shadows: omni lights
 add_shader(vsm_cull_lights.comp      virtual_shadow/vsm_cull_lights.comp)
+add_shader(vsm_select_lamps.comp     virtual_shadow/vsm_select_lamps.comp)
 add_shader(vsm_mark_omni_pages.comp  virtual_shadow/vsm_mark_omni_pages.comp)
 add_shader(vsm_postprocess_omni.comp virtual_shadow/vsm_postprocess_omni.comp)
 # virtual shadows: fog

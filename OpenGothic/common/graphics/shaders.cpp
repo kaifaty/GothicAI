@@ -361,6 +361,7 @@ void Shaders::compileShaders() noexcept {
     vsmClear           = computeShader("vsm_clear.comp.sprv");
     vsmClearOmni       = computeShader("vsm_clear_omni.comp.sprv");
     vsmCullLights      = computeShader("vsm_cull_lights.comp.sprv");
+    vsmSelectLamps     = computeShader("vsm_select_lamps.comp.sprv");
     vsmMarkPages       = computeShader("vsm_mark_pages.comp.sprv");
     vsmMarkOmniPages   = computeShader("vsm_mark_omni_pages.comp.sprv");
     vsmPostprocessOmni = computeShader("vsm_postprocess_omni.comp.sprv");

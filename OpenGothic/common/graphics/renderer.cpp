@@ -11,6 +11,7 @@
 #include <Tempest/Painter>
 #include <Tempest/StorageImage>
 #include <cassert>
+#include <cstddef>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -221,6 +222,21 @@ void Renderer::setupSettings() {
       logged = int(settings.vsmLampSoft);
       Log::i("vsm: lamp shadows = ", settings.vsmLampSoft ? "soft (pcss)" : "hard (one gather)",
              env!=nullptr ? " by OPENGOTHIC_VSM_LAMP_SOFT" : " by [INTERNAL] vsmLampSoft");
+      }
+  }
+  // VSM lamps: only the N most important lamps near the camera cast a shadow, the others light as with -vsm 0
+  // (vsm_select_lamps.comp); 0: every lamp. On Metal the nearest few by default: the lamps' page drawing is VSM's
+  // night cost on an M1 Pro (reports/render-features/2026-11-05-vsm-mac-hard/README.md, "Тени ближних ламп").
+  // OPENGOTHIC_VSM_LAMP_SHADOWS=<N> (test benches) wins over the ini
+  {
+    const char* env = std::getenv("OPENGOTHIC_VSM_LAMP_SHADOWS");
+    const int   n   = env!=nullptr ? std::atoi(env) : ::Settings::getI("INTERNAL","vsmLampShadows");
+    settings.vsmLampShadows = uint32_t(std::clamp(n, 0, 1024));
+    static int logged = -1;
+    if(settings.vsmEnabled && logged!=int(settings.vsmLampShadows)) {
+      logged = int(settings.vsmLampShadows);
+      Log::i("vsm: lamps with a shadow = ", settings.vsmLampShadows==0 ? std::string("all") : std::to_string(logged),
+             env!=nullptr ? " by OPENGOTHIC_VSM_LAMP_SHADOWS" : " by [INTERNAL] vsmLampShadows");
       }
   }
   settings.zVidBrightness     = ::Settings::getF("VIDEO","zVidBrightness");
@@ -1182,6 +1198,7 @@ void Renderer::drawLights(Encoder<CommandBuffer>& cmd, const WorldView& wview) {
      lights.directLightPso==&shaders.lightsVsmProbe) {
     cmd.setBinding(5, vsm.pageTblOmni);
     cmd.setBinding(6, vsm.pageData, Sampler::nearest(ClampMode::ClampToEdge)); // textureGather inside a face block
+    cmd.setBinding(8, vsm.lampShadow);
     }
   if(lights.directLightPso==&shaders.lightsRq) {
     cmd.setBinding(6, scene.rtScene.tlas);
@@ -1194,9 +1211,9 @@ void Renderer::drawLights(Encoder<CommandBuffer>& cmd, const WorldView& wview) {
 
   auto& ibo  = Resources::cubeIbo();
   struct Push {
-    Vec3 originLwc; uint32_t probeMode, probeStamp; float probeNarrow; uint32_t probeTaps[4], probeFlags;
+    Vec3 originLwc; uint32_t lampLimit, probeMode, probeStamp; float probeNarrow; uint32_t probeTaps[4], probeFlags;
     uint32_t probeExp;
-    } push = {scene.originLwc, settings.vsmLampMode, 0, settings.vsmLampNarrow,
+    } push = {scene.originLwc, settings.vsmLampShadows, settings.vsmLampMode, 0, settings.vsmLampNarrow,
               {settings.vsmLampTaps[0], settings.vsmLampTaps[1], settings.vsmLampTaps[2], settings.vsmLampTaps[3]},
               settings.vsmLampFlags, settings.vsmLampExp};
   if(lights.directLightPso==&shaders.lightsVsmProbe) {
@@ -1211,6 +1228,8 @@ void Renderer::drawLights(Encoder<CommandBuffer>& cmd, const WorldView& wview) {
     }
   if(lights.directLightPso==&shaders.lightsVsmProbe)
     cmd.setPushData(&push, sizeof(push)); else
+  if(lights.directLightPso==&shaders.lightsVsm || lights.directLightPso==&shaders.lightsVsmHard)
+    cmd.setPushData(&push, offsetof(Push, probeMode)); else
     cmd.setPushData(&push.originLwc, sizeof(push.originLwc));
   cmd.setPipeline(*lights.directLightPso);
   cmd.draw(nullptr,ibo, 0,ibo.size(), 0,wview.lights().size());

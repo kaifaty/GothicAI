@@ -200,6 +200,9 @@ class Renderer final {
       // [INTERNAL] vsmLampSides, OPENGOTHIC_VSM_LAMP_SIDES wins: the sides a lamp's cube face keeps (1 the far side,
       // 2 both sides of the world mesh, 3 of objects too, the default; main.vert, meshShader)
       uint32_t       vsmLampSides       = 3;
+      // [INTERNAL] vsmLampShadows (Metal: the nearest few, elsewhere 0), OPENGOTHIC_VSM_LAMP_SHADOWS wins: how many
+      // lamps cast a VSM shadow, the most important near the camera (vsm_select_lamps.comp); 0 every lamp
+      uint32_t       vsmLampShadows     = 0;
       } settings;
 
     Frustrum                  frustrum[SceneGlobals::V_Count];
@@ -381,6 +384,9 @@ class Renderer final {
       Tempest::StorageBuffer    pageListTmp;
       Tempest::StorageBuffer    pageTblOmni;
       Tempest::StorageBuffer    visibleLights;
+      Tempest::StorageBuffer    lampShadow;    // VsmLampShadow per light: kept from frame to frame, grows only
+      uint32_t                  selectStamp = 0; // vsm_select_lamps: the frame's stamp
+      uint64_t                  selectTime  = 0; // ms of the previous selection, for its time step
 
       Tempest::StorageImage     vsmDbg;
 

@@ -24,6 +24,9 @@ layout(location = 0) out vec4 outColor;
 
 layout(push_constant, std140) uniform Pbo {
   vec3  origin; //lwc
+#if defined(VIRTUAL_SHADOW)
+  uint  lampLimit;  // [INTERNAL] vsmLampShadows: 0 every lamp casts a shadow; else lampShadow[] holds its share
+#endif
 #if defined(VSM_LAMP_PROBE)
   uint  probeMode;  // OPENGOTHIC_VSM_LAMP: 0 the PCSS, 1 'hard' (one gather), 2 'flat' (no receiver plane), 3 truth
   uint  probeStamp; // not 0: count this frame (OPENGOTHIC_VSM_STATS), the stamp marks a pixel already lit
@@ -51,6 +54,8 @@ layout(binding = 12) uniform texture2D gbufOrm;
 layout(binding  = 4, std430) readonly buffer SsboLighting { LightSource lights[]; };
 layout(binding  = 5, std430) readonly buffer Omni  { uint pageTblOmni[]; };
 layout(binding  = 6)         uniform sampler2D pageData;
+// the shadows of the nearest lamps (vsm_select_lamps.comp): a lamp's shadow share, 0 lights as with -vsm 0
+layout(binding  = 8, std430) readonly buffer LampSel { VsmLampShadow lampShadow[]; };
 #endif
 #if defined(VSM_LAMP_PROBE)
 // counters of the lamp filter for one frame (Renderer::logVsmStats, LampProbe in renderer.cpp), then a stamp per
@@ -565,7 +570,14 @@ void main() {
       planeN = normal;
     // too faint to show a soft edge: under ~1/500 of white before the tonemapper
     const bool  faint  = max(color.r, max(color.g, color.b))*light*max(1.0, scene.exposure)*0.25 < 0.002;
-    const float shadow = omniShadow(pos.xyz - cenPosition.xyz, planeN, cenPosition.w, lights[lightId].sourceSize, faint);
+    // only the nearest lamps cast a shadow ([INTERNAL] vsmLampShadows): one that takes or loses it grows or fades it
+    // smoothly, one without lights as with -vsm 0 and reads no pages; 0 every lamp, as before
+    const float lampW  = push.lampLimit==0u ? 1.0 : smoothstep(0.0, 1.0, lampShadow[lightId].weight);
+    float       shadow = 1.0;
+    if(lampW>0.0)
+      shadow = omniShadow(pos.xyz - cenPosition.xyz, planeN, cenPosition.w, lights[lightId].sourceSize, faint);
+    if(lampW<1.0)
+      shadow = mix(1.0, shadow, lampW);
     if((scene.vsmStudy & VSM_STUDY_CLASS)!=0u) {
       // bench `vsm study 4`: by the facet's own cosine to the lamp (red turned away, yellow under OmniFacetMinCos,
       // blue-grey the rest) and by the shadow's answer (dark shadowed, bright lit)

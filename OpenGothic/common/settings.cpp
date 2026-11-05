@@ -169,6 +169,13 @@ void Settings::load(std::u16string_view systemIni, std::u16string_view userIni) 
 #else
   defaults->set("INTERNAL",     "vsmLampSoft", 1);
 #endif
+  // VSM: how many lamps cast a shadow, the most important near the camera; 0 every lamp (Renderer::setupSettings).
+  // On Metal the nearest few: the lamps' page drawing is VSM's night cost on an M1 Pro
+#if defined(__APPLE__)
+  defaults->set("INTERNAL",     "vsmLampShadows", 3);
+#else
+  defaults->set("INTERNAL",     "vsmLampShadows", 0);
+#endif
 
   defaults->set("VIDEO", "zVidBrightness", 0.5f);
   defaults->set("VIDEO", "zVidContrast",   0.5f);

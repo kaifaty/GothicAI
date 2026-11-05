@@ -1,0 +1,123 @@
+#version 450
+
+#extension GL_GOOGLE_include_directive    : enable
+#extension GL_ARB_separate_shader_objects : enable
+
+#include "virtual_shadow/vsm_common.glsl"
+#include "scene.glsl"
+#include "common.glsl"
+
+// Shadows of the nearest lamps ([INTERNAL] vsmLampShadows = N > 0, Renderer::drawVsm): of the lamps that
+// vsm_cull_lights found in view, the N that matter most near the camera cast a shadow, the rest light as with -vsm 0.
+// - Importance: brightness and range against the distance to the camera (as lightImportance, vsm_mark_omni_pages).
+// - No blinking at the threshold: a lamp that has a shadow wins against others only HYSTERESIS times less important,
+//   and a lamp keeps its shadow at least HOLD seconds.
+// - The shadow of an incoming and an outgoing lamp grows and fades over FADE seconds (VsmLampShadow.weight).
+// - The visible list keeps only lamps with a shadow (weight > 0): the others get no pages marked or drawn.
+// One workgroup: the visible lamps first, then every other lamp (out of view: holding or fading).
+
+layout(local_size_x = 256) in;
+
+const uint  NumThreads = gl_WorkGroupSize.x;
+const uint  MaxVisible = 1024;
+const float HOLD       = 1.0;
+const float FADE       = 0.4;
+const float HYSTERESIS = 1.4;
+
+layout(push_constant, std140) uniform Push {
+  uint  lightsTotal;
+  uint  limit;
+  float dt;
+  uint  stamp;
+  };
+layout(binding = 0, std140) uniform UboScene    { SceneDesc     scene;      };
+layout(binding = 1, std430) readonly buffer Lbo { LightSource   lights[];   };
+layout(binding = 2, std430) buffer VId          { uint visLightCount; uvec4 visLights[]; };
+layout(binding = 3, std430) buffer Lamp         { VsmLampShadow lamp[];     };
+
+shared uvec4 visible[MaxVisible];
+shared float score[MaxVisible];
+shared uint  heldMask[MaxVisible];
+shared uint  keepMask[MaxVisible];
+shared uint  heldCount;
+shared uint  keptCount;
+
+float lightImportance(uint i) {
+  const LightSource lx   = lights[i];
+  const float       lum  = max(lx.color.r, max(lx.color.g, lx.color.b));
+  const float       dist = max(distance(lx.pos, scene.camPos), 0.25*lx.range);
+  return lum * lx.range / max(dist, 1.0);
+  }
+
+VsmLampShadow advance(VsmLampShadow st, bool sel) {
+  st.held     = sel ? (st.selected!=0 ? st.held + dt : 0.0) : 0.0;
+  st.weight   = sel ? min(1.0, st.weight + dt/FADE) : max(0.0, st.weight - dt/FADE);
+  st.selected = sel ? 1 : 0;
+  st.stamp    = stamp;
+  return st;
+  }
+
+void main() {
+  const uint laneId = gl_LocalInvocationIndex;
+  const uint count  = min(visLightCount, MaxVisible);
+  if(laneId==0) {
+    heldCount = 0;
+    keptCount = 0;
+    }
+  barrier();
+
+  for(uint i=laneId; i<count; i+=NumThreads) {
+    const uvec4         v    = visLights[i];
+    const VsmLampShadow st   = lamp[v.x];
+    const bool          held = st.selected!=0 && st.held<HOLD;
+    visible [i] = v;
+    score   [i] = lightImportance(v.x) * (st.selected!=0 ? HYSTERESIS : 1.0);
+    heldMask[i] = held ? 1 : 0;
+    if(held)
+      atomicAdd(heldCount, 1);
+    }
+  barrier();
+
+  // the free places go to the most important lamps that do not hold theirs
+  const uint free = limit>heldCount ? limit-heldCount : 0;
+  for(uint i=laneId; i<count; i+=NumThreads) {
+    bool sel = heldMask[i]!=0;
+    if(!sel && free>0 && score[i]>0.0) {
+      const float self = score[i];
+      uint rank = 0;
+      for(uint j=0; j<count && rank<free; ++j) {
+        if(heldMask[j]!=0)
+          continue;
+        const float other = score[j];
+        if(other>self || (other==self && j<i))
+          rank++;
+        }
+      sel = rank<free;
+      }
+    const VsmLampShadow st = advance(lamp[visible[i].x], sel);
+    lamp[visible[i].x] = st;
+    keepMask[i] = st.weight>0.0 ? 1 : 0;
+    }
+  memoryBarrierBuffer();
+  barrier();
+
+  // the visible list without the lamps that cast no shadow
+  for(uint i=laneId; i<count; i+=NumThreads) {
+    if(keepMask[i]==0)
+      continue;
+    const uint ix = atomicAdd(keptCount, 1);
+    visLights[ix] = visible[i];
+    }
+  barrier();
+  if(laneId==0)
+    visLightCount = keptCount;
+
+  // lamps out of view: one that holds its shadow keeps it, the others fade
+  for(uint id=laneId; id<lightsTotal; id+=NumThreads) {
+    VsmLampShadow st = lamp[id];
+    if(st.stamp==stamp || (st.selected==0 && st.weight<=0.0))
+      continue;
+    const bool sel = st.selected!=0 && st.held<HOLD && lights[id].range>0.0;
+    lamp[id] = advance(st, sel);
+    }
+  }

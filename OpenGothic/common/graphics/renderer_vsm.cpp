@@ -2,10 +2,12 @@
 
 #include <Tempest/Application>
 #include <Tempest/Log>
+#include <algorithm>
 #include <cstring>
 
 #include "graphics/drawcommands.h"
 #include "frameprofile.h"
+#include "resources.h"
 
 using namespace Tempest;
 
@@ -56,6 +58,11 @@ void Renderer::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView&
   const size_t   numOmniPages = lightsTotal*6;
   auto& pageTblOmni   = usesSsbo(vsm.pageTblOmni,   shaders.vsmClearOmni.sizeofBuffer(0, numOmniPages));
   auto& visibleLights = usesSsbo(vsm.visibleLights, shaders.vsmClearOmni.sizeofBuffer(1, lightsTotal ));
+  // the nearest lamps' shadows keep their state from frame to frame: the buffer grows only, new lamps start unshadowed
+  if(vsm.lampShadow.byteSize()<std::max<size_t>(lightsTotal, 1)*sizeof(uint32_t[4])) {
+    Resources::recycle(std::move(vsm.lampShadow));
+    vsm.lampShadow = Resources::device().ssbo(nullptr, (size_t(lightsTotal) + 256)*sizeof(uint32_t[4]));
+    }
 
   wview.setVirtualShadowMap(true, pageData, pageTbl, pageHiZ, pageList);
 
@@ -83,6 +90,26 @@ void Renderer::drawVsm(Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView&
     cmd.setPushData(push);
     cmd.setPipeline(shaders.vsmCullLights);
     cmd.dispatchThreads(wview.lights().size());
+
+    if(settings.vsmLampShadows>0) {
+      // only the nearest lamps keep their place in the visible list: the others get no pages
+      const uint64_t now = Application::tickCount();
+      const float    dt  = vsm.selectTime==0 ? 0.f : std::min(float(now-vsm.selectTime)*0.001f, 0.25f);
+      vsm.selectTime  = now;
+      vsm.selectStamp = vsm.selectStamp+1==0 ? 1 : vsm.selectStamp+1;
+      struct Push { uint32_t lightsTotal; uint32_t limit; float dt; uint32_t stamp; } push = {};
+      push.lightsTotal = lightsTotal;
+      push.limit       = settings.vsmLampShadows;
+      push.dt          = dt;
+      push.stamp       = vsm.selectStamp;
+      cmd.setBinding(0, sceneUbo);
+      cmd.setBinding(1, lightsSsbo);
+      cmd.setBinding(2, visibleLights);
+      cmd.setBinding(3, vsm.lampShadow);
+      cmd.setPushData(push);
+      cmd.setPipeline(shaders.vsmSelectLamps);
+      cmd.dispatch(1);
+      }
     }
 
   cmd.setBinding(0, sceneUbo);
