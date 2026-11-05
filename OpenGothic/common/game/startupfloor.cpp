@@ -17,8 +17,19 @@
 
 namespace {
 
-// GameScript::fixNpcPosition: insert-time distBias 150 plus the 800 cm search; the final placement's 100 is smaller.
-constexpr float FixReach = 150.f + 800.f;
+// GameScript::fixNpcPosition tests points up to distBias + 800 cm away: 150 at insertion, 100 in the final placement.
+constexpr float FixReach   = 150.f + 800.f;
+constexpr float PlaceReach = 100.f + 800.f;
+
+// Experiment, not exact: OPENGOTHIC_STARTUP_FLOOR_DEFER=loose skips the final placement's barriers, so an NPC placed
+// earlier may see a pending neighbour at its insert position instead of its fixed one.
+bool loosePlacement() {
+  static const bool value = [] {
+    const char* env = std::getenv("OPENGOTHIC_STARTUP_FLOOR_DEFER");
+    return env!=nullptr && std::strcmp(env,"loose")==0;
+    }();
+  return value;
+  }
 
 float distXZ(const Tempest::Vec3& a, const Tempest::Vec3& b) {
   const float dx = a.x-b.x, dz = a.z-b.z;
@@ -53,8 +64,9 @@ constexpr const char* noneExternals[] = {
   };
 
 // Externals that read or change only the NPCs they are given: visual and body (collision size), equipment,
-// routine exchange, distances, points, sight and rooms by position.
+// routine exchange, distances, points, sight and rooms by position, attributes (a death disables the body).
 constexpr const char* argsExternals[] = {
+  "npc_changeattribute",
   "mdl_setvisual", "mdl_setvisualbody", "mdl_setmodelfatness", "mdl_applyoverlaymds", "mdl_applyoverlaymdstimed",
   "mdl_removeoverlaymds", "mdl_setmodelscale", "mdl_startfaceani", "mdl_applyrandomani",
   "mdl_applyrandomanifreq", "mdl_applyrandomfaceani",
@@ -166,12 +178,16 @@ void StartupFloor::external(size_t id, Npc* const* args, size_t count) {
       materialise(*pending.front().npc,R_External);
     return;
     }
+  // An argument's own pending fix runs first, then those of newer NPCs that saw its body: the call may change it.
   for(size_t i=0; i<count; ++i) {
     Npc* npc = args[i];
-    if(npc==nullptr || !npc->startupFloorPending())
+    if(npc==nullptr)
       continue;
-    ++st.materialised;
-    materialise(*npc,R_External);
+    const size_t before = pending.size();
+    if(npc->startupFloorPending())
+      materialise(*npc,R_External);
+    materialiseNewerNear(npc->position(),FixReach+2.f*radius(),npc->creationSeq(),R_Neighbour);
+    st.materialised += before-pending.size();
     }
   }
 
@@ -181,12 +197,20 @@ void StartupFloor::beforeResetMove(Npc& npc, const Tempest::Vec3& dest) {
   placed(npc);
   if(pending.empty())
     return;
+  if(loosePlacement()) {
+    if(npc.startupFloorPending()) {
+      pending.erase(pending.begin()+ptrdiff_t(find(npc)));
+      npc.setStartupFloorPending(false);
+      ++cleared;
+      }
+    return;
+    }
   const float r = radius();
   // Pending NPCs that see npc in their own fix need it where it is now; npc's own fix needs them in place.
   const bool          self   = npc.startupFloorPending();
   const Tempest::Vec3 from   = self ? pending[find(npc)].anchor : npc.position();
   const float         reachF = (self ? FixReach : 0.f) + FixReach + 2.f*r;
-  const float         reachT = 2.f*FixReach + 2.f*r;
+  const float         reachT = PlaceReach + FixReach + 2.f*r;
   const uint32_t      seq    = npc.creationSeq();
   for(size_t i=0; i<pending.size();) {
     auto& e = pending[i];
@@ -260,6 +284,18 @@ void StartupFloor::materialiseNear(const Tempest::Vec3& at, float reach, uint32_
   for(size_t i=0; i<pending.size();) {
     auto& e = pending[i];
     if(e.seq>=olderThan || distXZ(e.anchor,at)>reach) {
+      ++i;
+      continue;
+      }
+    materialise(*e.npc,r);
+    i = 0;
+    }
+  }
+
+void StartupFloor::materialiseNewerNear(const Tempest::Vec3& at, float reach, uint32_t newerThan, Reason r) {
+  for(size_t i=0; i<pending.size();) {
+    auto& e = pending[i];
+    if(e.seq<=newerThan || distXZ(e.anchor,at)>reach) {
       ++i;
       continue;
       }

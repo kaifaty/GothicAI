@@ -35,7 +35,7 @@ class StartupFloor final {
 
     enum class Access : uint8_t {
       None, // reads/changes no position, body, floor, point or collision
-      Args, // reads/changes only its NPC arguments
+      Args, // reads/changes only its NPC arguments (newer NPCs near them saw them in their fix)
       All,  // anything else, also unknown externals
       };
     static Access classify(std::string_view external);
@@ -83,6 +83,7 @@ class StartupFloor final {
 
     void   materialise(Npc& npc, Reason r);
     void   materialiseNear(const Tempest::Vec3& at, float reach, uint32_t olderThan, Reason r);
+    void   materialiseNewerNear(const Tempest::Vec3& at, float reach, uint32_t newerThan, Reason r);
     size_t find(const Npc& npc) const;
     float  radius() const;
     void   report() const;
