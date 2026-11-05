@@ -178,10 +178,10 @@ uv run python $S summary $D
 
   а также вызовы Sol этого прогона по командам. Пункт 6 считает один открывающий ход на разговор. В пилоте открывающий ход и ход ума перед первой фразой идут оба, хотя стоят в одной точке.
 
-**Проверка «озвучить готовое»** — [`voice_ready.py`](voice_ready.py). Она берёт расписание, историю и сохранённую память под вопрос из полного прогона фазы 1. Каждый вариант пишется в свою папку `<вариант>-2026-11-05/` рядом с малым прогоном. Ответ записан как `note`, поэтому его судит `mind2.judge` с записью ветки. Разметка, был ли нужный факт в памяти Gemma, лежит вне git, в `items_labels.jsonl` папки `fair_items-2026-11-05/`.
+**Проверка «озвучить готовое»** — [`voice_ready.py`](voice_ready.py). Варианты `gist` и `gist_stall` (суть от Sol, раздумье Gemma) описаны в [замере сути](../../npc-agent/2026-11-05-sol-gist/README.md). Она берёт расписание, историю и сохранённую память под вопрос из полного прогона фазы 1. Каждый вариант пишется в свою папку `<вариант>-2026-11-05/` рядом с малым прогоном. Ответ записан как `note`, поэтому его судит `mind2.judge` с записью ветки. Разметка, был ли нужный факт в памяти Gemma, лежит вне git, в `items_labels.jsonl` папки `fair_items-2026-11-05/`.
 
 ```sh
 S=../reports/npc-memory/2026-11-05-shared-memory-phase2/voice_ready.py
-uv run python $S answer say_sol      # oracle | solthought | say_oracle | say_sol | fair_bare | fair_items
+uv run python $S answer say_sol      # oracle | solthought | say_oracle | say_sol | fair_bare | fair_items | gist | gist_stall
 uv run python $S judge say_sol
 ```
