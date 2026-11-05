@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <string>
 #include <string_view>
 #include <mutex>
@@ -310,14 +311,19 @@ class Scope {
       if(!enabled() || !active || std::strcmp(group,"startup")!=0) return;
       index=records.size();
       records.push_back({name,key(),top});
-#if defined(__linux__)
-      if(std::strcmp(name,"script_phase")==0 || std::strcmp(name,"placement_phase")==0)
-        records[index].tid=uint64_t(::gettid());
-#endif
       top=index;
       scriptBefore=counters[Script].ns;
       excludedBefore=excluded();
       started=std::chrono::steady_clock::now();
+#if defined(__linux__)
+      // gprofng timestamps use the raw monotonic clock, not steady_clock.
+      if(std::strcmp(name,"script_phase")==0 || std::strcmp(name,"placement_phase")==0) {
+        timespec raw{};
+        ::clock_gettime(CLOCK_MONOTONIC_RAW,&raw);
+        records[index].startedNs=uint64_t(raw.tv_sec)*1000000000+uint64_t(raw.tv_nsec);
+        records[index].tid=uint64_t(::gettid());
+        }
+#endif
       }
     explicit Scope(const char* name):Scope(name,[]{return std::string{};}) {}
     ~Scope() { stop(); }
@@ -326,7 +332,8 @@ class Scope {
     void stop() {
       if(index==size_t(-1)) return;
       auto& row=records[index];
-      row.startedNs=uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(started.time_since_epoch()).count());
+      if(row.startedNs==0)
+        row.startedNs=uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(started.time_since_epoch()).count());
       row.ns=uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
                        std::chrono::steady_clock::now()-started).count());
       row.scriptNs=counters[Script].ns-scriptBefore;
