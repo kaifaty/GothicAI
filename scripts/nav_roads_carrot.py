@@ -420,7 +420,8 @@ def summarize(episodes, replays, threshold, oracle=None, diagnosed=()):
                              starts_moved=[i for i, d in enumerate(decisions) if d["rebuilt"] and d.get("skipped")],
                              start_fallbacks=[i for i, d in enumerate(decisions) if d["rebuilt"] and d.get("fallback")],
                              start_departures=[i for i, d in enumerate(decisions) if d["rebuilt"] and d.get("fallback") == 2],
-                             projections_rejected=[i for i, d in enumerate(decisions) if d.get("rejected")],
+                             # The flag of games before the reset fix stayed set until the next rebuild.
+                             projections_rejected=[i for i, d in enumerate(decisions) if d["rebuilt"] and d.get("rejected")],
                              rebuilds=sum(d["rebuilt"] for d in decisions),
                              creep_decisions=creep(decisions, ep["positions"], threshold),
                              lag_decisions=lag(result, ep["positions"], threshold))

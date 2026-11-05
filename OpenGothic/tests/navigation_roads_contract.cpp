@@ -424,6 +424,8 @@ void guidanceMemory() {
   close(rebuilt.progressCm,0,"progress stays at the start node");
   require(pocket(actor,pointAt(rebuilt))!=Roads::Passage::Closed,"the progress point is not behind a seen wall");
   require(pocket(actor,rebuilt.carrot)!=Roads::Passage::Closed,"the carrot is not behind a seen wall");
+  line.updateGuidance(all,actor,end,rebuilt,std::cref(pocket));
+  require(!rebuilt.rebuilt && !rebuilt.projectionRejected,"the rejection is a diagnosis of the rebuild decision only");
   Roads::Guidance blind;
   line.updateGuidance(all,actor,end,blind,[](const Vec3&,const Vec3&) {return Roads::Passage::Unknown;});
   require(!blind.projectionRejected && blind.route.nodes.front()==1,"without a seen wall the projection stands");

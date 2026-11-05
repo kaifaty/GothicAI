@@ -412,6 +412,7 @@ void KnownRoads::updateGuidance(const Knowledge& knowledge, const Vec3& position
   validate(knowledge);
   guidance.rebuilt = false;
   guidance.caughtUp = false;
+  guidance.projectionRejected = false;
   bool rebuild = !guidance.initialized || (goal-guidance.goal).quadLength()>.0001f;
   if(!rebuild && !guidance.polyline.empty()) {
     // Deviation is measured from the whole familiar route, as before.
