@@ -26,6 +26,10 @@ data/
 /data/npc/*
 !/data/npc/far-fight-pairs.json
 !/data/npc/far-fight-weapons.json
+!/data/society/
+/data/society/*
+!/data/society/config.json
+!/data/society/protected.json
 !/data/content/
 /data/content/*
 !/data/content/registry.jsonl

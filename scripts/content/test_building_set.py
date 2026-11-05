@@ -1,4 +1,5 @@
 import json
+import zlib
 
 import numpy as np
 import pytest
@@ -131,15 +132,22 @@ def test_compose_joins_parts_and_rejects_shared_texture(tmp_path, monkeypatch):
 
 
 def staged_prop(root, name, prefix='OWN'):
-    """A prop like the barrel: two materials on one atlas and a GLB."""
+    """A prop like the barrel: two materials on one atlas and a GLB with its fresh pieces."""
     staged(root, name, {f'{prefix}_WOOD.TGA': name})
     folder = root / 'content-staging' / name
     index = json.loads((folder / 'materials/materials.json').read_text())
     index[f'{prefix}_IRON.TGA'] = dict(index[f'{prefix}_WOOD.TGA'])
     (folder / 'materials/materials.json').write_text(json.dumps(index))
     (folder / 'meshes' / name).mkdir(parents=True)
-    (folder / 'meshes' / name / 'model.glb').write_bytes(b'glb ' + name.encode())
+    glb = b'glb ' + name.encode()
+    (folder / 'meshes' / name / 'model.glb').write_bytes(glb)
+    (folder / 'meshes' / name / 'model.fracture').write_text(fracture(glb))
     (folder / 'meshes/meshes.json').write_text(json.dumps({'NW_HARBOUR_BARREL_01': {'glb': f'{name}/model.glb'}}))
+
+
+def fracture(glb):
+    """The head of a version 2 `.fracture` cut from these GLB bytes (scripts/fracture.sh content)."""
+    return f'GOTHIC_FRACTURE 2\nsource {len(glb)} {zlib.crc32(glb):08x}\npieces 12\n'
 
 
 def test_compose_brings_a_props_meshes_and_shared_atlas(tmp_path, monkeypatch):
@@ -152,7 +160,8 @@ def test_compose_brings_a_props_meshes_and_shared_atlas(tmp_path, monkeypatch):
     assert json.loads((out / 'meshes/meshes.json').read_text()) == {'NW_HARBOUR_BARREL_01': {'glb': 'barrel-1/model.glb'}}
     assert (out / 'meshes/barrel-1/model.glb').read_bytes() == b'glb barrel-1'
     composition = json.loads((out / 'composition.json').read_text())
-    assert list(composition['glb_sha256']) == ['barrel-1/model.glb']
+    assert list(composition['glb_sha256']) == ['barrel-1/model.glb', 'barrel-1/model.fracture']
+    assert (out / 'meshes/barrel-1/model.fracture').read_text() == fracture(b'glb barrel-1')
     assert composition['parts']['barrel-1'] == ['OWN_IRON.TGA', 'OWN_WOOD.TGA', 'NW_HARBOUR_BARREL_01']
     staged_prop(tmp_path, 'barrel-2', prefix='OTHER')
     with pytest.raises(ValueError, match='visual NW_HARBOUR_BARREL_01: in both barrel-1 and barrel-2'):
@@ -194,6 +203,70 @@ def test_enable_replaces_only_materials_and_meshes(tmp_path, monkeypatch):
     assert not (live / 'meshes').exists() and (live / 'materials/roofs-1-roof-01/albedo.dds').is_file()
     with pytest.raises(ValueError, match='no materials'):
         building_set.enable('missing')
+
+
+def test_enable_needs_fresh_convex_parts_for_tables_and_cupboards(tmp_path, monkeypatch):
+    monkeypatch.setenv('GOTHIC_AI_DATA', str(tmp_path))
+    staged(tmp_path, 'roofs-1', {'ROOF_01.TGA': 'roofs-1-roof-01'})
+    staged_prop(tmp_path, 'table-1')
+    part = tmp_path / 'content-staging/table-1/meshes'
+    (part / 'meshes.json').write_text(json.dumps({'NW_CITY_TABLE_NORMAL_01': {'glb': 'table-1/model.glb'},
+                                                  'CHAIR_NW_NORMAL_01': {'glb': 'table-1/model.glb'}}))
+    building_set.compose('city-1', ['roofs-1', 'table-1'])
+    with pytest.raises(ValueError, match=r'city-1: no fresh \.convex-parts for NW_CITY_TABLE_NORMAL_01; '
+                                         r'run scripts/convex-parts.sh content .*/content-staging/city-1'):
+        building_set.enable('city-1')
+    assert not (tmp_path / 'content').exists()
+    glb = (part / 'table-1/model.glb').read_bytes()
+    (part / 'table-1/model.convex-parts').write_text(f'GOTHIC_CONVEX_PARTS 1\nsource {len(glb)} {zlib.crc32(glb):08x}\n')
+    (part / 'table-1/model.fracture').write_text('fracture')
+    building_set.compose('city-2', ['roofs-1', 'table-1'])   # the caches travel with their GLB
+    out = tmp_path / 'content-staging/city-2/meshes/table-1'
+    assert (out / 'model.fracture').read_text() == 'fracture'
+    building_set.enable('city-2')
+    assert (tmp_path / 'content/meshes/table-1/model.convex-parts').read_bytes() == (out / 'model.convex-parts').read_bytes()
+    (out / 'model.convex-parts').write_text('GOTHIC_CONVEX_PARTS 1\nsource 3 00000000\n')
+    with pytest.raises(ValueError, match='no fresh .convex-parts for NW_CITY_TABLE_NORMAL_01'):
+        building_set.enable('city-2')
+
+
+def test_enable_needs_fresh_fracture_for_destructibles(tmp_path, monkeypatch):
+    monkeypatch.setenv('GOTHIC_AI_DATA', str(tmp_path))
+    staged(tmp_path, 'roofs-1', {'ROOF_01.TGA': 'roofs-1-roof-01'})
+    staged_prop(tmp_path, 'crate-1')
+    part = tmp_path / 'content-staging/crate-1/meshes'
+    (part / 'meshes.json').write_text(json.dumps({'NW_HARBOUR_CRATE_01': {'glb': 'crate-1/model.glb'},
+                                                  'NW_HARBOUR_CRATEPILE_01': {'glb': 'crate-1/model.glb'}}))
+    (part / 'crate-1/model.fracture').unlink()
+    building_set.compose('city-1', ['roofs-1', 'crate-1'])
+    with pytest.raises(ValueError, match=r'city-1: no fresh \.fracture for NW_HARBOUR_CRATE_01; '
+                                         r'run scripts/fracture.sh content .*/content-staging/city-1$'):
+        building_set.enable('city-1')
+    assert not (tmp_path / 'content').exists()
+    out = tmp_path / 'content-staging/city-1/meshes/crate-1'
+    (out / 'model.fracture').write_text(fracture(b'glb crate-2'))       # cut from other bytes of the same size
+    with pytest.raises(ValueError, match='no fresh .fracture for NW_HARBOUR_CRATE_01'):
+        building_set.enable('city-1')
+    (out / 'model.fracture').write_text(fracture(b'glb crate-1').replace('FRACTURE 2', 'FRACTURE 1'))  # the originals' version
+    with pytest.raises(ValueError, match='no fresh .fracture for NW_HARBOUR_CRATE_01'):
+        building_set.enable('city-1')
+    (out / 'model.fracture').write_text(fracture(b'glb crate-1'))
+    building_set.enable('city-1')
+    assert (tmp_path / 'content/meshes/crate-1/model.fracture').read_text() == fracture(b'glb crate-1')
+
+
+def test_enable_names_every_missing_cache(tmp_path, monkeypatch):
+    monkeypatch.setenv('GOTHIC_AI_DATA', str(tmp_path))
+    staged(tmp_path, 'roofs-1', {'ROOF_01.TGA': 'roofs-1-roof-01'})
+    staged_prop(tmp_path, 'harbour-1')
+    part = tmp_path / 'content-staging/harbour-1/meshes'
+    (part / 'harbour-1/model.fracture').unlink()
+    (part / 'meshes.json').write_text(json.dumps({'NW_HARBOUR_BARREL_01': {'glb': 'harbour-1/model.glb'},
+                                                  'NW_CITY_TABLE_NORMAL_01': {'glb': 'harbour-1/model.glb'}}))
+    building_set.compose('city-1', ['roofs-1', 'harbour-1'])
+    with pytest.raises(ValueError, match=r'no fresh \.convex-parts for NW_CITY_TABLE_NORMAL_01; run scripts/convex-parts.sh '
+                                         r'content \S+; no fresh \.fracture for NW_HARBOUR_BARREL_01; run scripts/fracture.sh'):
+        building_set.enable('city-1')
 
 
 def staged_chunk(root, name, chunk='1_-1'):

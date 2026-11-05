@@ -59,7 +59,7 @@ GROUPS = tuple(Group(p, p, ("uv", "run", "--locked", "--with", "pytest-timeout",
         'matplotlib websockets --editable ../body-service ../launcher/core && '
         'exec uv run --no-project --python .venv/bin/python --with pytest-timeout '
         'pytest -q -rs --timeout=120 --timeout-method=signal '
-        '--ignore=content --ignore=meshes --ignore=fracture "$@"', "pytest",
+        '--ignore=content --ignore=meshes --ignore=fracture --ignore=convex-parts "$@"', "pytest",
     ), dependencies=("scripts",)),
     Group("content", "scripts/content", (
         "uv", "run", "--no-project", "--with", "pytest-timeout", "--with", "pytest", "--with", "numpy",
@@ -70,6 +70,10 @@ GROUPS = tuple(Group(p, p, ("uv", "run", "--locked", "--with", "pytest-timeout",
         "uv", "run", "--no-project", "--with", "pytest-timeout", "--with", "pytest", *PYTEST,
     )),
     Group("fracture", "scripts/fracture", (
+        "uv", "run", "--no-project", "--with", "pytest-timeout", "--with", "pytest",
+        "--with", "numpy", "--with", "scipy", *PYTEST,
+    )),
+    Group("convex-parts", "scripts/convex-parts", (
         "uv", "run", "--no-project", "--with", "pytest-timeout", "--with", "pytest",
         "--with", "numpy", "--with", "scipy", *PYTEST,
     )),

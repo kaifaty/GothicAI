@@ -3771,7 +3771,7 @@ void Npc::startFaceAnim(std::string_view anim, float intensity, uint64_t duratio
   }
 
 float Npc::faceWeight(std::string_view anim) {
-  return visual.faceWeight(anim);
+  return visual.faceWeight(*this,anim);
   }
 
 void Npc::startSpeech(const Tempest::Sound& voice) {
@@ -6993,6 +6993,7 @@ void Npc::tick(uint64_t dt) {
   visual.updateMouth(*this,dt);
   visual.updateGestures(*this,dt);
   visual.updateBlink(*this,dt);
+  visual.updateFace(*this);
 
   if(!visual.pose().hasAnim())
     setAnim(AnimationSolver::Idle);

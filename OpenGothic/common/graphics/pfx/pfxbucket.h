@@ -7,6 +7,7 @@
 #include <unordered_set>
 
 #include "graphics/pfx/pfxobjects.h"
+#include "graphics/pfx/pfxmotion.h"
 #include "resources.h"
 
 class ParticleFx;
@@ -43,6 +44,8 @@ class PfxBucket {
 
       uint64_t      waitforNext = 0;
       std::unique_ptr<PfxEmitter> next;
+
+      PfxMotion::Flicker flicker;  // a layer emitter's flame signal (vobs.d "flicker"): the particles' brightness
       };
 
     struct PfxState {
@@ -104,6 +107,7 @@ class PfxBucket {
       size_t        count     = 0;
 
       Tempest::Vec3 pos       = {};
+      float         flicker   = 1.f;  // the emitter's brightness this frame (ImplEmitter::flicker)
       };
 
     struct Trail final {

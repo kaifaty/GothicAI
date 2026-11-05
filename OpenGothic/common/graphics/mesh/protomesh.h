@@ -16,6 +16,7 @@
 class PackedMesh;
 class PhysicMeshShape;
 struct GltfHeadMesh;
+struct FaceProfile;
 
 class ProtoMesh {
   public:
@@ -99,6 +100,8 @@ class ProtoMesh {
     // Independent of the original MMB animations. Logical vertices plus the
     // meshlet map are retained for CPU face deformation and eye rotation.
     std::unique_ptr<GltfHeadMesh>   head;
+    // characters.json "face": the old face anim names as weights of the head's shapes (graphics/mesh/facerig)
+    std::unique_ptr<FaceProfile>    face;
 
     size_t                         skinedNodesCount() const;
     size_t                         findNode(std::string_view name,size_t def=size_t(-1)) const;

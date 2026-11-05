@@ -21,6 +21,9 @@ namespace KnownRoadsBench {
   // Stand episodes only: attaches the offline eye atlas through this actor's
   // road/place knowledge. A stranger never receives a familiar mask.
   void attachFamiliar(World& world, const Npc& npc, NavigationMemory& memory);
+  // Build population knowledge at each saved actor's home, before any teleport.
+  void writePackage(World& world, const std::string& places,
+                    const std::vector<std::string>& selectors, const std::string& directory);
   void reset();
   void tick(World* world);
   std::string command(const std::vector<std::string>& args, World& world,

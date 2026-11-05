@@ -580,6 +580,26 @@ void parity(const std::string& weights,const std::string& path) {
     require(localLogit<=1e-4,"logits differ at step "+std::to_string(fixture.readSteps)+": "+std::to_string(localLogit));
     require(localHidden<=1e-4,"hidden state differs at step "+std::to_string(fixture.readSteps)+": "+std::to_string(localHidden));
     if(fixture.readSteps==1) {
+      if(policy.paceInput()) {
+        // Population chooses pace per episode, independently of the teacher's label.
+        const bool selectedWalk=!*pace;
+        const auto selected=policy.encode(observation.snapshot,selectedWalk);
+        require(selected.vector.back()==float(selectedWalk) &&
+                difference(selected.near,actual.near)==0 && difference(selected.far,actual.far)==0 &&
+                std::equal(selected.vector.begin(),selected.vector.end()-1,actual.vector.begin()),
+                "episode pace must change only the explicit pace input");
+        NavPolicy::State selectedState;
+        require(policy.step(selected,selectedState).keys.walk==selectedWalk,
+                "episode pace must set the executed walk key");
+        std::array<size_t,NavPolicy::headCount> sampled={};
+        require(policy.keys(sampled,selectedWalk).walk==selectedWalk,
+                "sampled actions must retain the episode pace");
+      }
+      else {
+        const auto& walk=result.logits[3];
+        require(result.keys.walk==(std::max_element(walk.begin(),walk.end())!=walk.begin()),
+                "weights without a pace input must retain their walk head");
+      }
       // HD uses physical feet Y only as the local height origin. All policies
       // ignore absolute X/Z, yaw and the record's teacher annotations.
       const float feetY=observation.snapshot.position[1];

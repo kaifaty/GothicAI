@@ -383,6 +383,47 @@ def analyze(rows):
 ARCHER_STAGE = {0: "lowered", 1: "raising", 2: "nocked", 3: "drawing", 4: "held", 5: "reloading"}
 
 
+def faces(segs):
+    """the watched one's face per segment: the face anims as shown (face_*, the largest in the segment) and, for an
+    own head with a face profile, its FaceRig: anims and targets at most, the blend and the upload of the deformation"""
+    rows_all = [r for rows in segs.values() for r in rows]
+    if not rows_all or FACES[0] not in rows_all[0]:
+        return [], {}
+    rig = "rig_on" in rows_all[0] and any(r["rig_on"] > 0 for r in rows_all)
+    if not rig and not any(r[c] > 0 for r in rows_all for c in FACES):
+        return [], {}
+    out = ["## Faces", "",
+           "Face anims of the watched one as shown, the largest in a segment (0..1)." +
+           (" FaceRig of its own head: active anims and targets with a weight at most, the blend of the deformation "
+            "(median / max µs, blends) and its upload to the head (median µs)." if rig else ""), ""]
+    cols = list(FACES) + (["rig anims", "rig targets", "blend µs p50 / max (n)", "upload µs p50"] if rig else [])
+    out.append("| segment | " + " | ".join(cols) + " |")
+    out.append("|" + "---|" * (len(cols) + 1))
+    blend_all = []
+    for seg, rows in segs.items():
+        if not rows:
+            continue
+        cells = [f"{max(r[c] for r in rows):.2f}" for c in FACES]
+        if rig:
+            blended = [(b["rig_us"], b["rig_up_us"]) for a, b in zip(rows, rows[1:]) if b["rig_n"] > a["rig_n"]]
+            blend_all += [u for u, _ in blended]
+            us = sorted(u for u, _ in blended)
+            up = sorted(u for _, u in blended)
+            cells += [f"{max(r['rig_anims'] for r in rows):.0f}", f"{max(r['rig_targets'] for r in rows):.0f}",
+                      "-" if not us else f"{us[len(us) // 2]:.0f} / {us[-1]:.0f} ({len(us)})",
+                      "-" if not up else f"{up[len(up) // 2]:.0f}"]
+        out.append(f"| {seg} | " + " | ".join(cells) + " |")
+    out.append("")
+    numbers = {}
+    if blend_all:
+        blend_all.sort()
+        numbers = {"face_blend_us_p50": blend_all[len(blend_all) // 2], "face_blend_us_max": blend_all[-1],
+                   "face_blends": len(blend_all)}
+        out += [f"FaceRig blend: median {numbers['face_blend_us_p50']:.0f} µs, max {numbers['face_blend_us_max']:.0f} µs "
+                f"over {len(blend_all)} blends.", ""]
+    return out, numbers
+
+
 def arrows(out):
     """the arrows of the manual aim per segment, from bench.log: [(zone or 'miss', draw, flew cm)]. An arrow
     counts for the segment it was shot in: a far miss may come down when the next one runs (they come
@@ -1439,6 +1480,9 @@ def report(out):
     lines.append("")
     lines.append(f"Overview sheets (16 frames each): {os.path.join(out, 'sheets', '<segment>.png')}")
     lines.append("")
+    more, numbers = faces(segs)
+    lines += more
+    summary.update(numbers)
     lines += manual_aim(out, segs)
     lines += hit_zones(out)
     more, numbers = combat_report([combat(out)])

@@ -1,10 +1,12 @@
-// gothic-society-day: plays N days of a `society-world` v1 export by the routine on the society stand's core
+// gothic-society-day: plays N days of a `society-world` export (v1 or v2) by the routine on the society stand's core
 // (docs/society-sim.md) and writes its journal and 5-minute marks.
 //
-//   gothic-society-day --world <export.json> --out <dir> [--days N] [--seed S]
+//   gothic-society-day --world <export.json> --out <dir> [--days N] [--seed S] [--config <config.json>]
 //
 // <dir>/society-day.journal — the binary journal (common/society/journal.h);
 // <dir>/society-marks.csv   — a row per NPC every 5 game minutes from the start.
+// With --config (data/society/config.json) people have needs: journal v3 with need_threshold, marks with a level
+// column per need. Without it, or with `"needs": []`, the run is the routine-only one byte for byte.
 // Prints the load, each day's events and simulation time (advance only, without writing) and the totals.
 #include "society/journal.h"
 #include "society/society.h"
@@ -27,7 +29,7 @@ double since(Clock::time_point from) {
   }
 
 int usage() {
-  std::fprintf(stderr,"usage: gothic-society-day --world <export.json> --out <dir> [--days N] [--seed S]\n");
+  std::fprintf(stderr,"usage: gothic-society-day --world <export.json> --out <dir> [--days N] [--seed S] [--config <config.json>]\n");
   return 2;
   }
 
@@ -41,7 +43,7 @@ void write(std::ofstream& out, std::string& bytes) {
 }
 
 int main(int argc, char** argv) {
-  std::filesystem::path world, outDir;
+  std::filesystem::path world, outDir, configPath;
   unsigned long days = 1;
   unsigned long long seed = 0;
   for(int i=1; i<argc; ++i) {
@@ -54,6 +56,8 @@ int main(int argc, char** argv) {
       days = std::strtoul(argv[++i],nullptr,10);
     else if(std::strcmp(argv[i],"--seed")==0 && hasValue)
       seed = std::strtoull(argv[++i],nullptr,10);
+    else if(std::strcmp(argv[i],"--config")==0 && hasValue)
+      configPath = argv[++i];
     else
       return usage();
     }
@@ -62,11 +66,24 @@ int main(int argc, char** argv) {
 
   try {
     auto from = Clock::now();
-    const auto w = Society::loadWorld(world);
+    const auto w = Society::loadWorld(world,configPath);
     std::printf("world %s: %zu bytes, hash %016llx; npcs %zu (people %zu), routine entries %zu, points %zu, "
                 "edges %zu, objects %zu; loaded in %.1f ms\n",world.string().c_str(),w.exportBytes,
                 (unsigned long long)w.exportHash,w.npcs.size(),w.people,w.routines.size(),w.points.size(),
                 w.edgeTo.size(),w.objects.size(),since(from)*1000.0);
+    if(w.config.loaded) {
+      size_t carded = 0, kinds = 0, freepoints = 0;
+      for(uint32_t i=0; i<w.npcs.size(); ++i)
+        carded += w.npcs.person[i] && w.npcCard[i] ? 1 : 0;
+      for(auto k:w.objectKind)
+        kinds += k!=Society::NoKind ? 1 : 0;
+      for(auto k:w.pointKind)
+        freepoints += k!=Society::NoKind ? 1 : 0;
+      std::printf("config %s: %zu bytes, hash %016llx; needs %zu, states %zu, object kinds %zu (objects %zu, freepoints "
+                  "%zu), cards %zu (people with one %zu)\n",configPath.string().c_str(),w.config.bytes,
+                  (unsigned long long)w.config.hash,w.config.needs.size(),w.config.states.size(),
+                  w.config.objectKinds.size(),kinds,freepoints,w.config.cards,carded);
+      }
 
     std::filesystem::create_directories(outDir);
     const auto journalPath = outDir/"society-day.journal";
@@ -80,7 +97,7 @@ int main(int argc, char** argv) {
     auto sim = Society::makeSim(w,config);
     Society::DecisionBatch batch;
     std::string jbytes = Society::Journal::header(w,seed);
-    std::string mbytes = Society::Marks::header();
+    std::string mbytes = Society::Marks::header(w);
     Society::Journal::append(jbytes,Society::drainEvents(sim));
     Society::Marks::append(mbytes,sim);
 

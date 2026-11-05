@@ -10,6 +10,7 @@
 #include "graphics/mesh/lipsync.h"
 #include "graphics/mesh/talkgestures.h"
 #include "graphics/mesh/eyeblink.h"
+#include "graphics/mesh/facerig.h"
 #include "graphics/mesh/quiver.h"
 #include "game/constants.h"
 #include "meshobjects.h"
@@ -206,7 +207,8 @@ class MdlVisual final {
     bool                           startAnimDialog(Npc& npc);
     void                           startMMAnim    (Npc& npc, std::string_view anim, std::string_view node);
     void                           startFaceAnim  (Npc& npc, std::string_view anim, float intensity, uint64_t duration);
-    float                          faceWeight     (std::string_view anim) { return head.view.morphWeight(anim); }
+    // how much of the face anim shows now, 0..1: the own head's FaceRig or the morphs of the original head
+    float                          faceWeight     (const Npc& npc, std::string_view anim) const;
     const GltfHeadMesh*            headMesh() const;
     void                           stopDlgAnim    (Npc& npc);
     // a voiced line: the mouth follows the voice instead of the talk loop
@@ -217,6 +219,8 @@ class MdlVisual final {
     void                           setTalkMood    (std::string_view mood) { gestures.setMood(TalkGestures::moodOf(mood)); }
     void                           updateGestures (Npc& npc, uint64_t dt);
     void                           updateBlink    (Npc& npc, uint64_t dt);
+    // the own head's face (FaceRig): its weights to the deformation of the head, near only
+    void                           updateFace     (Npc& npc);
     // the other one speaks to it, it thinks of an answer (TalkGestures)
     void                           listen         (uint64_t until) { gestures.listen(until); }
     void                           stopListening  (uint64_t now)   { gestures.stopListening(now); }
@@ -321,6 +325,8 @@ class MdlVisual final {
     uint32_t                       gestureSyl = 0;        // syllables of the voice seen so far
     EyeBlink                       blink;
     uint32_t                       blinkShift = 0;        // gaze shifts seen so far
+    FaceRig                        face;                  // the own head's face anims (a profile), else none
+    float                          faceUploadUs = 0;      // the last setDeformation of the face, µs (test bench)
     MeshAttach                     ammunition, stateItm;
     std::vector<MeshAttach>        item;
     std::vector<MeshAttach>        attach;

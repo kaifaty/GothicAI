@@ -102,6 +102,9 @@ void Shaders::compileShaders() noexcept {
   visibilityPassSh    = computeShader("visibility_pass.comp.sprv");
   visibilityPassHiZ   = computeShader("visibility_pass_hiz.comp.sprv");
   visibilityPassHiZCr = computeShader("visibility_pass_hiz_cr.comp.sprv");
+  visibilityPassShOrd    = computeShader("visibility_pass_ordered.comp.sprv");
+  visibilityPassHiZOrd   = computeShader("visibility_pass_hiz_ordered.comp.sprv");
+  visibilityPassHiZCrOrd = computeShader("visibility_pass_hiz_cr_ordered.comp.sprv");
 
   ssao                = computeShader("ssao.comp.sprv");
   ssaoBlur            = computeShader("ssao_blur.comp.sprv");
@@ -198,6 +201,9 @@ void Shaders::compileShaders() noexcept {
     sh      = GothicShader::get(string_frm("light_vsm", materialMaps, ".frag.sprv"));
     fsLight = device.shader(sh.data,sh.len);
     lightsVsm = device.pipeline(Triangles, state, vsLight, fsLight);
+    sh      = GothicShader::get(string_frm("light_vsm_hard", materialMaps, ".frag.sprv"));
+    fsLight = device.shader(sh.data,sh.len);
+    lightsVsmHard = device.pipeline(Triangles, state, vsLight, fsLight);
     sh      = GothicShader::get(string_frm("light_vsm_probe", materialMaps, ".frag.sprv"));
     fsLight = device.shader(sh.data,sh.len);
     lightsVsmProbe = device.pipeline(Triangles, state, vsLight, fsLight);

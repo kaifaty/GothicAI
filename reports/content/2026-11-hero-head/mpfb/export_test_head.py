@@ -128,8 +128,20 @@ make_part(proxy['eyelashes01'], 'lashes', lambda i: True, FACE)
 make_part(proxy['teeth_base'], 'teeth', lambda i: True, FACE)
 make_part(proxy['tongue01'], 'tongue', lambda i: True, FACE)
 eyes = proxy['high-poly']; ex = world(eyes, coords_mesh(eyes))[:, 0]
-make_part(eyes, 'eye_L', lambda i: ex[i] > 0, [])
-make_part(eyes, 'eye_R', lambda i: ex[i] < 0, [])
+# The eye of MPFB is a ball and a cornea shell over it, plus four stray quads. The shell and the quads map to the
+# transparent part of the texture (black with alpha 0): drawn opaque, they hid the iris behind black.
+# The ball alone is kept; the cornea comes back as a shader (plan step 7). The two eyes' UVs are mirrored,
+# so the test is the texture's alpha under each vertex, not a UV range.
+eye_img = bpy.data.images.load(os.path.join(DATA, 'eyes/materials/grey_eye.png'))
+ew, eh = eye_img.size
+eye_alpha = np.array(eye_img.pixels[:]).reshape(eh, ew, 4)[..., 3]
+eye_clear = np.zeros(len(eyes.data.vertices), bool)
+for l, d in zip(eyes.data.loops, eyes.data.uv_layers.active.data):
+    u, v = d.uv
+    if eye_alpha[min(eh-1, max(0, int(v*eh))), min(ew-1, max(0, int(u*ew)))] < 0.5:
+        eye_clear[l.vertex_index] = True
+make_part(eyes, 'eye_L', lambda i: ex[i] > 0 and not eye_clear[i], [])
+make_part(eyes, 'eye_R', lambda i: ex[i] < 0 and not eye_clear[i], [])
 
 MAT = {'face': 'SKIN', 'brows': 'BROWS', 'lashes': 'LASHES', 'teeth': 'TEETH', 'tongue': 'TONGUE', 'eye_L': 'EYE', 'eye_R': 'EYE'}
 TEX = {'SKIN': 'skins/middleage_caucasian_male/middleage_lightskinned_male_diffuse.png',
@@ -173,7 +185,11 @@ out = struct.pack('<III', 0x46546C67, 2, 12+8+len(txt)+len(rest)) + struct.pack(
 open(glb, 'wb').write(out)
 print('GLB', glb, len(out), 'bytes; targets per mesh', {k: len(v) for k, v in names.items()})
 
-json.dump({'PC_HERO': {'head': 'hero/test-head.glb'}}, open(os.path.join(ROOT, 'characters', 'characters.json'), 'w'), indent=2)
+# the face profile: the old face animation names as weights of these shapes (authored by hand, next to this script)
+shutil.copyfile(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'test-head.face.json'),
+                os.path.join(ROOT, 'characters', 'hero', 'test-head.face.json'))
+json.dump({'PC_HERO': {'head': 'hero/test-head.glb', 'face': 'hero/test-head.face.json'}},
+          open(os.path.join(ROOT, 'characters', 'characters.json'), 'w'), indent=2)
 
 # albedo maps: MPFB PNGs packed as the game's own (DXT1/DXT5 with mips)
 png = os.path.join(ROOT, 'materials', 'test-head-png'); dds = os.path.join(ROOT, 'materials', 'test-head')

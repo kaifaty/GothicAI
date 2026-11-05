@@ -8,6 +8,7 @@
 #include "graphics/pfx/particlefx.h"
 
 #include "world/world.h"
+#include "world/voblayer.h"
 #include "utils/fileext.h"
 #include "gothic.h"
 
@@ -58,6 +59,8 @@ PfxEmitter::PfxEmitter(World& world, const asset::VirtualObject& vob) {
     std::lock_guard<std::recursive_mutex> guard(owner.sync);
     bucket = &owner.getBucket(*decl);
     id     = bucket->allocEmitter();
+    if(const auto* flicker = VobLayer::flicker(vob))
+      bucket->get(id).flicker = *flicker;
     }
   else if(auto decal = dynamic_cast<const asset::VisualDecal*>(vob.visual.get())) {
     Material mat(*decal);
