@@ -28,6 +28,7 @@
 #include "utils/fileutil.h"
 
 #include <zenkit/Vfs.hh>
+#include <zenkit/DaedalusVm.hh>
 #include "daedalus/vm.h"
 #include <zenkit/CutsceneLibrary.hh>
 #include <zenkit/Font.hh>
@@ -1153,6 +1154,8 @@ struct BaseContentContract {
     // this complete record check in addition to the independent public checks.
     const auto difference=ProgramData::compare(source.export_program(),record);
     require(difference.empty(),name+": "+difference);
+    const auto factoryDifference=ProgramData::compare(record,loaded.export_program());
+    require(factoryDifference.empty(),name+" factory: "+factoryDifference);
     for(uint32_t address=0;address<source.size();) {
       const auto a=source.instruction_at(address);
       const auto b=loaded.instruction_at(address);
@@ -1251,14 +1254,15 @@ struct BaseContentContract {
       programSymbols(original,record,native,field);
       const auto count=original.symbols().size();
       const auto* first=count==0 ? nullptr : native.find_symbol_by_index(0);
-      daedalus::DaedalusVm sourceVm(daedalus::DaedalusScript::from_program(original.export_program())),nativeVm(std::move(native));
+      zenkit::DaedalusVm sourceVm(std::move(original));
+      daedalus::DaedalusVm nativeVm(std::move(native));
       equal(sourceVm.symbols().size(),count+1,field+" source VM temporary symbol");
       equal(nativeVm.symbols().size(),count+1,field+" native VM temporary symbol");
       require(first==nullptr || first==nativeVm.find_symbol_by_index(0),field+": VM setup must preserve source symbol addresses");
       auto* a=sourceVm.find_symbol_by_index(uint32_t(count));
       auto* b=nativeVm.find_symbol_by_index(uint32_t(count));
       require(a!=nullptr && b!=nullptr && a->index()==count && b->index()==count &&
-              a->name()==b->name() && a->type()==b->type() && a->count()==b->count() &&
+              a->name()==b->name() && uint8_t(a->type())==uint8_t(b->type()) && a->count()==b->count() &&
               a->get_string()==b->get_string(),field+": VM temporary strings must retain defined behavior");
       ++parsed; symbols+=count; code+=record.bytecode.size();
       }

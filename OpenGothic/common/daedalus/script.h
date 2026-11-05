@@ -776,6 +776,9 @@ namespace daedalus {
 		DaedalusScript(DaedalusScript&& move) = default;
 
 
+		/// \brief Exports owned program records without parsing DAT.
+		[[nodiscard]] zenkit::DaedalusProgramRecord export_program() const;
+
 		/// \brief Constructs an unbound script from owned program records without parsing DAT.
 		[[nodiscard]] static DaedalusScript from_program(zenkit::DaedalusProgramRecord program);
 
