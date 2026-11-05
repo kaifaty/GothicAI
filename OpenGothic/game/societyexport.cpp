@@ -92,6 +92,28 @@ double median(std::vector<double> v) {
   return v[v.size()/2];
   }
 
+// The monster schedule (G2 scripts): ZS_MM_AllScheduler starts the first of these states whose aivar hours hold the
+// time of day (Wld_IsTime(start,0,end,0)) or whose start is OnlyRoutine (-1). The export names the state and carries
+// the two aivar values; the order is the order of the scheduler's checks.
+struct MmWindow { const char* state; const char* start; const char* end; };
+constexpr MmWindow MmSchedule[] = {
+  {"ZS_MM_RTN_SLEEP",     "AIV_MM_SLEEPSTART",     "AIV_MM_SLEEPEND"},
+  {"ZS_MM_RTN_REST",      "AIV_MM_RESTSTART",      "AIV_MM_RESTEND"},
+  {"ZS_MM_RTN_ROAM",      "AIV_MM_ROAMSTART",      "AIV_MM_ROAMEND"},
+  {"ZS_MM_RTN_EATGROUND", "AIV_MM_EATGROUNDSTART", "AIV_MM_EATGROUNDEND"},
+  {"ZS_MM_RTN_WUSEL",     "AIV_MM_WUSELSTART",     "AIV_MM_WUSELEND"},
+  {"ZS_MM_RTN_ORCSIT",    "AIV_MM_ORCSITSTART",    "AIV_MM_ORCSITEND"},
+  };
+constexpr const char* MmScheduler = "ZS_MM_ALLSCHEDULER";
+
+// The aivar index a script constant names; the export fails when the scripts have no such constant.
+size_t aivarIndex(World& world, const char* name) {
+  auto* sym = world.script().findSymbol(name);
+  if(sym==nullptr || sym->get_int()<0 || size_t(sym->get_int())>=zenkit::INpc::aivar_count)
+    throw std::runtime_error(std::string("society export: the scripts have no aivar constant ")+name);
+  return size_t(sym->get_int());
+  }
+
 struct Records {
   std::string out;
   size_t      count = 0;
@@ -202,7 +224,9 @@ Result build(World& world) {
     return std::tie(a.symbol,a.x,a.z,a.y,a.index)<std::tie(b.symbol,b.x,b.z,b.y,b.index);
     });
   std::vector<double> walk, run;
-  size_t people = 0, entries = 0, unresolved = 0;
+  size_t people = 0, entries = 0, unresolved = 0, aistates = 0, schedules = 0;
+  std::vector<std::pair<size_t,size_t>> mmAivars;
+  const auto scheduler = world.script().findSymbolIndex(MmScheduler);
   std::vector<std::string> startNearest;
   uint32_t ordinal = 0;
   for(size_t i=0; i<all.size(); ++i) {
@@ -226,6 +250,37 @@ Result build(World& world) {
     w.Key("guild");          w.Uint(npc.guild());
     w.Key("person");         w.Bool(person);
     w.Key("start_waypoint"); w.Uint(*start);
+    // The state Npc::tickRoutine starts when the NPC has no routine entry (zenkit::INpc::start_aistate), or null.
+    const auto aistate = npc.handle().start_aistate;
+    w.Key("start_aistate");
+    if(aistate!=0)
+      ascii(w,symbolName(world,size_t(aistate))); else
+      w.Null();
+    // This NPC's own walk speed, as movement.walk_cm_per_s is the median of; 0 without a walk animation.
+    const float walkSpeed = npc.simplifiedMoveSpeed(WalkBit::WM_Walk);
+    w.Key("walk_cm_per_s");  number(w,walkSpeed>0.f ? double(walkSpeed)*1000.0 : 0.0);
+    aistates += aistate!=0 ? 1 : 0;
+    // The hours of ZS_MM_AllScheduler for an NPC that starts with it: [state, start aivar, end aivar] in the order
+    // of its checks (MmSchedule); null for any other NPC.
+    w.Key("mm_schedule");
+    if(aistate!=0 && size_t(aistate)==scheduler) {
+      if(mmAivars.empty())
+        for(const auto& m:MmSchedule)
+          mmAivars.emplace_back(aivarIndex(world,m.start),aivarIndex(world,m.end));
+      const auto& aiv = npc.handle().aivar;
+      w.StartArray();
+      for(size_t k=0; k<mmAivars.size(); ++k) {
+        w.StartArray();
+        ascii(w,MmSchedule[k].state);
+        w.Int(aiv[mmAivars[k].first]);
+        w.Int(aiv[mmAivars[k].second]);
+        w.EndArray();
+        }
+      w.EndArray();
+      ++schedules;
+      } else {
+      w.Null();
+      }
     w.Key("routine");
     w.StartArray();
     npc.forEachRoutine([&](const Npc::RoutineInfo& r) {
@@ -273,7 +328,7 @@ Result build(World& world) {
   Buffer head; Writer w(head);
   w.StartObject();
   w.Key("format");           ascii(w,"society-world");
-  w.Key("version");          w.Int(1);
+  w.Key("version");          w.Int(2);
   w.Key("world");            text(w,world.name());
   w.Key("data_fingerprint"); ascii(w,fingerprint);
   w.Key("engine_commit");    ascii(w,OPENGOTHIC_ENGINE_COMMIT);
@@ -312,10 +367,11 @@ Result build(World& world) {
   char summary[512];
   std::snprintf(summary,sizeof(summary),
                 "waypoints=%zu (freepoints %zu) edges=%zu objects=%zu (containers %zu, owned %zu) npcs=%zu "
-                "(people %zu, routine entries %zu, unresolved points %zu, start by nearest point %zu) "
+                "(people %zu, routine entries %zu, unresolved points %zu, start by nearest point %zu, start_aistate %zu, "
+                "mm_schedule %zu) "
                 "walk=%.1f run=%.1f cm/s",
                 waypoints.count,freepoints,edges.count,objects.count,containers,owned,npcs.count,people,entries,
-                unresolved,startNearest.size(),median(walk),median(run));
+                unresolved,startNearest.size(),aistates,schedules,median(walk),median(run));
   ret.summary = std::string(summary)+(nearest.empty() ? "" : "; start by nearest point: "+nearest);
   return ret;
   }

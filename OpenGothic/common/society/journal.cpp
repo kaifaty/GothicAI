@@ -79,10 +79,10 @@ void append(std::string& out, std::span<const Event> events) {
 namespace Marks {
 
 std::string header() {
-  return "t_min,key,routine,state,moving,point,to,arrive_min\n";
+  return "t_min,key,routine,state,moving,point,to,arrive_min,x,y,z\n";
   }
 
-void append(std::string& out, const Sim& sim) {
+void append(std::string& out, Sim& sim) {
   const auto& w = *sim.world;
   const auto& s = sim.s;
   const Time  start = w.startTime();
@@ -113,14 +113,19 @@ void append(std::string& out, const Sim& sim) {
     out += moving ? ",1," : ",0,";
     clean(out,w.points.name[s.place[i]]);
     out += ',';
+    std::array<float,3> at = w.points.pos[s.place[i]];
     if(moving) {
       clean(out,w.points.name[s.dest[i]]);
       out += ',';
       minutes(out,s.arrive[i]-start);
+      const Time span = s.arrive[i]-s.depart[i];
+      at = sim.paths.along(s.place[i],s.dest[i],span>0 ? double(s.now-s.depart[i])/double(span) : 1.0);
       } else {
       out += "-,-";
       }
-    out += '\n';
+    char pos[96];
+    const int pn = std::snprintf(pos,sizeof(pos),",%.1f,%.1f,%.1f\n",double(at[0]),double(at[1]),double(at[2]));
+    out.append(pos,size_t(pn));
     }
   }
 

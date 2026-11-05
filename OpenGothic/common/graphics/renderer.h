@@ -23,6 +23,8 @@ class Renderer final {
     ~Renderer();
 
     void onWorldChanged();
+    // Bench `deterministic on`: the next frame starts the TAA history over at jitter phase 0
+    void resetTemporal();
 
     void draw(Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId,
               Tempest::VectorImage::Mesh& uiLayer, Tempest::VectorImage::Mesh& numOverlay,
@@ -181,6 +183,9 @@ class Renderer final {
       bool           vsmLampTaa         = false; // OPENGOTHIC_VSM_LAMP_TAA=1: the frame-turned lamp taps under TAA (study)
       bool           vsmLampStudy       = false; // any OPENGOTHIC_VSM_LAMP*: the study shader light_vsm_probe
       float          vsmLampNearCm      = 30;    // [INTERNAL] vsmLampNearCm: a lamp's fixture this close casts no shadow
+      // [INTERNAL] vsmLampSoft (0 on Metal, 1 elsewhere), OPENGOTHIC_VSM_LAMP_SOFT=0|1 wins: the lamps' PCSS;
+      // false: one gather per lamp and pixel (light_vsm_hard)
+      bool           vsmLampSoft        = true;
       } settings;
 
     Frustrum                  frustrum[SceneGlobals::V_Count];

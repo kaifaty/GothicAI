@@ -49,6 +49,7 @@
 
 #include "graphics/mesh/submesh/pfxemittermesh.h"
 #include "graphics/mesh/submesh/packedmesh.h"
+#include "graphics/mesh/facerig.h"
 #include "graphics/mesh/skeleton.h"
 #include "graphics/mesh/protomesh.h"
 #include "graphics/mesh/animation.h"
@@ -92,15 +93,19 @@ struct Resources::VideoBase {
 namespace {
 thread_local bool loadingTextureTail = false;
 
-bool contentGlbPath(const std::string& path) {
+bool contentPath(const std::string& path, const char* ext) {
   const std::filesystem::path relative(path);
   if(path.empty() || path.find('\0')!=std::string::npos || relative.is_absolute() ||
-     relative.has_root_name() || !FileExt::hasExt(path,"GLB"))
+     relative.has_root_name() || !FileExt::hasExt(path,ext))
     return false;
   for(const auto& part:relative)
     if(part=="..")
       return false;
   return true;
+  }
+
+bool contentGlbPath(const std::string& path) {
+  return contentPath(path,"GLB");
   }
 
 std::string modelKey(std::string_view name) {
@@ -1179,9 +1184,18 @@ void Resources::indexCharacterHeads() {
       Log::e("characters: invalid head path for \"",key,"\": expected a relative .glb path without '..'");
       continue;
       }
+    // the face profile: without a valid one the head shows no face anims
+    std::filesystem::path face;
+    if(entry.value.HasMember("face")) {
+      const auto& f=entry.value["face"];
+      const std::string facePath=f.IsString() ? std::string(f.GetString(),f.GetStringLength()) : std::string();
+      if(!f.IsString() || !contentPath(facePath,"JSON"))
+        Log::e("characters: invalid face path for \"",key,"\": expected a relative .json path without '..'"); else
+        face=(root/facePath).lexically_normal();
+      }
     for(auto& c:key)
       c=char(std::toupper(uint8_t(c)));
-    characterHeads[std::move(key)]={(root/path).lexically_normal(),nullptr,false};
+    characterHeads[std::move(key)]={(root/path).lexically_normal(),std::move(face),nullptr,false};
     }
   }
 
@@ -1209,6 +1223,20 @@ const ProtoMesh* Resources::loadCharacterHead(std::string_view instance) {
       auto mesh=std::make_unique<ProtoMesh>(std::move(packed),entry.file.generic_string());
       Log::i("characters: loaded head for ",key,": ",head->parts.size()," parts, ",
              head->mesh.positions.size()," vertices, ",head->targets.size()," targets");
+      if(!entry.face.empty()) {
+        try {
+          std::ifstream file(entry.face,std::ios::binary);
+          if(!file)
+            throw std::runtime_error("unable to open the file");
+          const std::string text{std::istreambuf_iterator<char>(file),std::istreambuf_iterator<char>()};
+          mesh->face=FaceProfile::parse(text,*head);
+          Log::i("characters: face profile for ",key,": ",mesh->face->anims.size()," anims");
+          }
+        catch(const std::exception& error) {
+          Log::e("characters: invalid face profile for ",key," in \"",entry.face.string(),"\": ",error.what(),
+                 "; the head shows no face anims");
+          }
+        }
       mesh->head=std::move(head);
       entry.mesh=std::move(mesh);
       }
@@ -1755,10 +1783,19 @@ std::vector<const Texture2d*> Resources::textureChanges(uint64_t since) {
   return changed;
   }
 
+// Bench `deterministic on` (common/testbench.cpp, reports/engine/2026-11-03-streaming-optimisation/deterministic-shots.md).
+// The Full/Tail demotion runs on a wall-clock delay and on memory pressure: with `benchTexturesSettle` texturesReady()
+// also waits until no demotion is pending and no reload is in flight; while `benchTexturesFrozen` updateTextures()
+// changes nothing, so the levels of a shot depend on what is seen, not on how long the loading took.
+bool benchTexturesSettle = false;
+bool benchTexturesFrozen = false;
+
 bool Resources::texturesReady() {
   if(inst==nullptr || inst->dev==nullptr)
     return true;
   std::lock_guard<std::recursive_mutex> guard(inst->sync);
+  if(benchTexturesSettle && (!inst->textureDemotions.empty() || !inst->textureDemotionLru.empty() || inst->textureReload))
+    return false;
   return inst->textureMissing.empty() && inst->texturePromotions.empty();
   }
 
@@ -1876,7 +1913,7 @@ void Resources::publishTexture() {
 
 void Resources::updateTextures(ChunkResidency* residency) {
   FrameProfile::Scope timing(FrameProfile::Zone::TextureUpdate);
-  if(inst==nullptr || inst->dev==nullptr)
+  if(inst==nullptr || inst->dev==nullptr || benchTexturesFrozen)
     return;
   std::lock_guard<std::recursive_mutex> guard(inst->sync);
   auto& resources=*inst;

@@ -101,7 +101,7 @@ Renderer::Renderer() {
     settings.vsmStats = std::string_view(stats)=="1";
   // OPENGOTHIC_VSM_LAMP=hard|flat: the lamp shadow filter for a study of its cost
   // (reports/render-features/2026-11-04-lamp-pcss/step-2c.md): one gather at the centre, or the same taps against
-  // the receiver's depth without its plane; unset or pcss: the game's filter
+  // the receiver's depth without its plane; unset or pcss: the PCSS ([INTERNAL] vsmLampSoft does not change the study)
   if(const char* mode = std::getenv("OPENGOTHIC_VSM_LAMP")) {
     const std::string_view m = mode;
     settings.vsmLampMode = m=="hard" ? 1 : (m=="flat" ? 2 : (m=="truth" ? 3 : 0));
@@ -200,6 +200,20 @@ void Renderer::setupSettings() {
   settings.vsmLampNearCm      = Gothic::settingsGetF("INTERNAL","vsmLampNearCm");
   if(settings.vsmLampNearCm<=0)
     settings.vsmLampNearCm = 30;
+  // VSM lamps: the soft PCSS, or hard shadows in one gather (light.frag, VSM_LAMP_HARD). On Metal hard by default:
+  // the PCSS costs ~11 ms GPU indoors on an M1 Pro (reports/render-features/2026-11-05-vsm-mac-hard/README.md).
+  // OPENGOTHIC_VSM_LAMP_SOFT=0|1 (test benches) wins over the ini; the study switches (OPENGOTHIC_VSM_LAMP*,
+  // OPENGOTHIC_VSM_STATS, read in the constructor) take the study shader and its PCSS whatever this says
+  {
+    const char* env = std::getenv("OPENGOTHIC_VSM_LAMP_SOFT");
+    settings.vsmLampSoft = env!=nullptr ? std::string_view(env)!="0" : Gothic::settingsGetI("INTERNAL","vsmLampSoft")!=0;
+    static int logged = -1;
+    if(settings.vsmEnabled && logged!=int(settings.vsmLampSoft)) {
+      logged = int(settings.vsmLampSoft);
+      Log::i("vsm: lamp shadows = ", settings.vsmLampSoft ? "soft (pcss)" : "hard (one gather)",
+             env!=nullptr ? " by OPENGOTHIC_VSM_LAMP_SOFT" : " by [INTERNAL] vsmLampSoft");
+      }
+  }
   settings.zVidBrightness     = Gothic::settingsGetF("VIDEO","zVidBrightness");
   settings.zVidContrast       = Gothic::settingsGetF("VIDEO","zVidContrast");
   settings.zVidGamma          = Gothic::settingsGetF("VIDEO","zVidGamma");
@@ -285,6 +299,8 @@ void Renderer::setupSettings() {
   // point-lights
   if(settings.vsmEnabled && settings.vsmLampStudy)
     lights.directLightPso = &shaders.lightsVsmProbe;
+  else if(settings.vsmEnabled && !settings.vsmLampSoft)
+    lights.directLightPso = &shaders.lightsVsmHard;
   else if(settings.vsmEnabled)
     lights.directLightPso = &shaders.lightsVsm;
   else if(Shaders::options().doRayQuery)
@@ -363,6 +379,12 @@ void Renderer::onWorldChanged() {
   sky.lutIsInitialized = false;
   taa.valid            = false;
   resetSkyFog();
+  }
+
+void Renderer::resetTemporal() {
+  taa.valid = false;
+  taa.frame = 0;
+  taa.cur   = 0;
   }
 
 void Renderer::updateCamera(const WorldView& wview, const Camera& camera) {
@@ -2322,7 +2344,8 @@ void Renderer::drawLights(Encoder<CommandBuffer>& cmd, const WorldView& wview) {
     cmd.setBinding(12, gbufOrm, Sampler::nearest());
   for(size_t i=0; i<LightGroup::MaxCookies; ++i)
     cmd.setBinding(13+i, wview.lights().cookie(i), Sampler::bilinear()); // u is the azimuth: it wraps
-  if(lights.directLightPso==&shaders.lightsVsm || lights.directLightPso==&shaders.lightsVsmProbe) {
+  if(lights.directLightPso==&shaders.lightsVsm || lights.directLightPso==&shaders.lightsVsmHard ||
+     lights.directLightPso==&shaders.lightsVsmProbe) {
     cmd.setBinding(5, vsm.pageTblOmni);
     cmd.setBinding(6, vsm.pageData, Sampler::nearest(ClampMode::ClampToEdge)); // textureGather inside a face block
     }
@@ -2354,7 +2377,7 @@ void Renderer::drawLights(Encoder<CommandBuffer>& cmd, const WorldView& wview) {
     }
   if(lights.directLightPso==&shaders.lightsVsmProbe)
     cmd.setPushData(&push, sizeof(push));
-  else if(lights.directLightPso==&shaders.lightsVsm)
+  else if(lights.directLightPso==&shaders.lightsVsm || lights.directLightPso==&shaders.lightsVsmHard)
     cmd.setPushData(&push, offsetof(Push, probeMode)); else
     cmd.setPushData(&push.originLwc, sizeof(push.originLwc));
   cmd.setPipeline(*lights.directLightPso);

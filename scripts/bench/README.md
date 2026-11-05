@@ -152,8 +152,24 @@ range, it captures the first frame back in the market without waiting for Far pu
 Use `OPENGOTHIC_VOB_STREAMING=0` and `=1` to compare static vob residency. Claude compares
 the resulting frames on Mac.
 
+`streaming-shots` runs with `deterministic on`: the world stands still while `streaming wait`
+waits, then the TAA history starts over and 16 fixed steps run with visibility in cluster order
+before `shot`; texture levels settle and stand still until the shot. Two runs of one binary then
+give byte-identical `perf-market`, `perf-harbour`, `perf-forest` and `perf-island` PNGs at any
+load in most pairs, TAA on; a single point can still land in a second state (forest ≤ 68 px,
+island ≤ 0.8 %, max 3 levels; Ryzen 1–9 px; issue #946). `perf-market-teleport` is shot
+without a streaming wait by design and still depends on loading (two states, 5 pixels). Accept a
+render change off ↔ on as two consecutive runs on one host and binary, toggled by the feature's own
+variable: `uv run --no-project --with pillow --with numpy python
+reports/engine/2026-11-03-streaming-optimisation/shots_diff.py off=<dir> on=<dir>` must report 0
+changed pixels at the four waited points. If a point differs, run off and on once more: the change
+is accepted when every one of the four points gives 0 in at least one off ↔ on pair. [Report](../../reports/engine/2026-11-03-streaming-optimisation/deterministic-shots.md).
+
 ## План и журнал
 
+- 2026-11-05: `deterministic on` for `streaming-shots`: frozen world during `streaming wait`, TAA reset,
+  16 fixed steps, ordered visibility and settled texture levels before `shot`; byte-identical pairs
+  at four points on Mac in most pairs, rare single-point residue in #946.
 - 2026-11-02: route headless `auto` benches through dev-ubuntu → Ryzen → Mac; keep windowed
   routing unchanged. Reuse `ryzen.sh` with dev-ubuntu build limits and setup/cleanup without NAS.
 - 2026-11-02: remove stale runners from window-only rebuilds before caching; keep `RUNNER_BIN` local.
@@ -600,6 +616,7 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `rec <name> [novideo]`, `stop [shadow]` | record a segment (video and metrics, or metrics only); `stop shadow` also copies both rolling melee shadow journals into segment files (filter cumulative rows by fight game-time interval) |
 | `shot <name>` | one PNG |
 | `streaming wait [timeout_ms]` | Wait for all desired Near/Far chunks and the publication queue; timeout defaults to 60000 real ms. |
+| `deterministic on\|off` | Bench-only deterministic frame (off by default): every frame is a step (no skip under 5 ms); while `streaming wait` waits the world takes no step; when it is ready the renderer drops the TAA history and jitter phase, then 16 fixed steps run before the next command, and visibility appends clusters in order (one GPU invocation, `visibility_pass*_ordered`) until the next `shot`. Readiness also waits for empty texture demotion queues and no reload in flight; texture residency then stands still until the shot. `streaming-shots` uses it. |
 | `npctier <npc> full\|simplified\|auto` | Override one NPC tier until reset or reload. Hero, training and arena actors stay Full. |
 | `npctier-test <npc> <start waypoint> <end waypoint>` | Verify 20 switches in each direction during movement and turns, unchanged remaining path/destination and every arrival. `npc-tier-transitions` runs the fixture on a fresh NEWWORLD. |
 | `npcspeed <start waypoint>` | Compare Sequence speed with Full and Simplified movement on one authored edge for human/orc/wolf in walk/run/sneak; appended to `npc-tier-transitions`. Removes ambient NPCs for calibration. |
@@ -1273,6 +1290,9 @@ explain the bounds and remaining combat/body work. `npcday` files:
 | `npc-day-events.csv` | Polled every world tick: `zs_start`/`zs_end`, `ta` (routine entry change), `death`/`revive`, `insert`/`remove`, with game minutes and position |
 | `npc-day-cost.csv` | Per sample: wall seconds, NPCs within 30/60 m of the hero, world ticks, NPCs per tier, tier transitions, `Npc::tick` milliseconds and NPC-tick counts per tier, plus Simplified combat ticks using the native executor since the previous sample |
 | `npc-day-arrivals.csv` | Audit-only exact terminal arrivals, observed movement start, final goal identity, actor/target position, ZS, queue and executor; it adds no records to the strict samples/events files. |
+
+The society stand's core is checked against the same journal: `scripts/society_parity.py` compares its marks
+with `npc-day.csv` and the `ta` events of `npc-day-events.csv` (people only; [how](../../docs/society-sim.md#проверка-самого-стенда)).
 
 Every NPC gets a private script random stream (`GameScript::isolateRandom`, seed from `seed`, stream from
 the key), so one NPC's extra `Hlp_Random` or dice roll does not shift every later NPC's numbers; `shared`

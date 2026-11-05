@@ -332,6 +332,10 @@ if(UNIX AND NOT IOS AND NOT ANDROID)
   add_executable(gothic-taa-test EXCLUDE_FROM_ALL tests/taa_test.cpp)
   target_link_libraries(gothic-taa-test PRIVATE OpenGothic AiBridge)
   target_compile_options(gothic-taa-test PRIVATE -Wall -Wconversion -Werror)
+  # The own head's face (graphics/mesh/facerig): a synthetic head and profile; CPU only, no device or game data.
+  add_executable(gothic-facerig-test EXCLUDE_FROM_ALL tests/facerig_test.cpp)
+  target_link_libraries(gothic-facerig-test PRIVATE OpenGothic AiBridge)
+  target_compile_options(gothic-facerig-test PRIVATE -Wall -Wconversion -Werror)
   # Indexed GLB replacement and fallback, generated assets only; no game or window.
   add_executable(gothic-mesh-gltf-test EXCLUDE_FROM_ALL tests/mesh_gltf_test.cpp)
   target_link_libraries(gothic-mesh-gltf-test PRIVATE OpenGothic AiBridge gothic-base-import)
@@ -442,6 +446,16 @@ if(NOT ANDROID AND NOT IOS)
         ${CMAKE_CURRENT_BINARY_DIR}/navpolicy-fixture/parity.bin.gz
       DEPENDS gothic-navpolicy-contract USES_TERMINAL)
   endif()
+  add_executable(gothic-navreward-contract EXCLUDE_FROM_ALL
+    tests/navreward_contract.cpp common/navreward.cpp)
+  target_include_directories(gothic-navreward-contract PRIVATE
+    common lib/Tempest/Engine/include lib/Tempest/Engine)
+  if(NOT MSVC)
+    target_compile_options(gothic-navreward-contract PRIVATE -Wall -Wconversion -Werror)
+  endif()
+  add_custom_target(check-navreward
+    COMMAND $<TARGET_FILE:gothic-navreward-contract>
+    DEPENDS gothic-navreward-contract USES_TERMINAL)
   add_executable(gothic-navkeyteacher-contract EXCLUDE_FROM_ALL
     tests/navkeyteacher_contract.cpp common/navkeyteacher.cpp)
   target_include_directories(gothic-navkeyteacher-contract PRIVATE

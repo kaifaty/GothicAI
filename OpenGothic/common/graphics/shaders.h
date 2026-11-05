@@ -47,6 +47,7 @@ class Shaders {
     static bool isGi2Supported();
 
     Tempest::RenderPipeline  lights, lightsRq, lightsVsm;
+    Tempest::RenderPipeline  lightsVsmHard;  // [INTERNAL] vsmLampSoft=0: lamp shadows in one gather, no PCSS
     Tempest::RenderPipeline  lightsVsmProbe; // OPENGOTHIC_VSM_LAMP and OPENGOTHIC_VSM_STATS: lamp filter study
     Tempest::RenderPipeline  directLight,  directLightSh, directLightRq;
     Tempest::RenderPipeline  ambientLight, ambientLightSsao, ambientLightSurf;
@@ -99,6 +100,7 @@ class Shaders {
     // Cluster
     Tempest::ComputePipeline clusterInit, clusterPatch;
     Tempest::ComputePipeline visibilityPassSh, visibilityPassHiZ, visibilityPassHiZCr;
+    Tempest::ComputePipeline visibilityPassShOrd, visibilityPassHiZOrd, visibilityPassHiZCrOrd;
 
     // RT/RQ
     Tempest::RenderPipeline  rtDbg;
