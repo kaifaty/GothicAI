@@ -711,8 +711,9 @@ bool MdlVisual::updateQuiver(const Npc& npc, uint64_t dt) {
     quiv.rest();
     return false;
     }
-  const auto   t0   = std::chrono::steady_clock::now();
+  // the thread's CPU time is read outside the wall time it is set against (its own call is not the quiver's)
   const double cpu0 = threadCpuUs();
+  const auto   t0   = std::chrono::steady_clock::now();
   quiverRays  = 0;
   quiverRayUs = 0;
   const auto&  sk   = *skeleton;
