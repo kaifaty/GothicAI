@@ -390,6 +390,9 @@ struck standing and while aiming a bow, where the game has no stumble; a wolf: t
 Lip sync: `lips` (Xardas says a voiced line of the game, the camera at his face; then the same line
 with the old talk loop), `lips-dialog` (the hero talks to Xardas through the dialog window and picks
 the first choice: the lines of both are played the way the game plays them).
+The hero's head: `hero-head` (his face close up - still, the moods of the AI lines, a voiced dialog line - and
+running from behind in the market; the clips of the original and of the new head, side by side,
+[step 0](../../reports/content/2026-11-hero-head/test-head.md)).
 Faces: `faces` (the face animations of a head one after another, then two of them while Xardas speaks),
 `face-fade` (faces fade in and out, one gives way to the next, three a moment apart, the lips over a
 fading face), `mood-ai` (given lines of an AI server with moods: start `gothic-ai serve --scenario m1 --llm off
