@@ -414,6 +414,10 @@ class DynamicWorld final {
     float          soundOclusion(const Tempest::Vec3& from, const Tempest::Vec3& to) const;
 
     NpcItem        addGhostObj  (const Skeleton* src);
+    // Fresh-start floor replay (game/startupfloor.h): NPC bodies created after this sequence number do not collide.
+    // 0: all bodies collide.
+    void           setNpcReplaySeq(uint32_t seq);
+    float          npcMaxRadiusXZ() const;
     Item           addStaticObj (const PhysicMeshShape *src, const Tempest::Matrix4x4& m, std::string_view label = {});
     Item           addMovableObj(const PhysicMeshShape *src, const Tempest::Matrix4x4& m, std::string_view label = {});
     Item           addDynamicObj(const Tempest::Matrix4x4& pos, const Bounds& bbox, asset::MaterialGroup mat);
@@ -729,10 +733,6 @@ class DynamicWorld final {
     RayWaterResult implWaterRay(const Tempest::Vec3& from, const Tempest::Vec3& to, float stepHeight,
                                  uint32_t solidMask = 0) const;
     bool           hasCollision(const NpcItem &it, CollisionTest& out);
-    // Fresh-start floor replay (game/startupfloor.h): NPC bodies created after this sequence number do not collide.
-    // 0: all bodies collide.
-    void           setNpcReplaySeq(uint32_t seq);
-    float          npcMaxRadiusXZ() const;
     void           prepareMovableVobShape(BodyData& body);
     void           rebuildMovableVob(BodyData& body);
     bool           meleeEligible(const BodyData& body) const;
