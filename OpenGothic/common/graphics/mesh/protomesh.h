@@ -15,6 +15,7 @@
 
 class PackedMesh;
 class PhysicMeshShape;
+struct GltfHeadMesh;
 
 class ProtoMesh {
   public:
@@ -95,6 +96,9 @@ class ProtoMesh {
                                                           // bone of their name (a golem's stones)
 
     std::string                    scheme, fname;
+    // Independent of the original MMB animations. Logical vertices plus the
+    // meshlet map are retained for CPU face deformation and eye rotation.
+    std::unique_ptr<GltfHeadMesh>   head;
 
     size_t                         skinedNodesCount() const;
     size_t                         findNode(std::string_view name,size_t def=size_t(-1)) const;

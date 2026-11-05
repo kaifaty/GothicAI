@@ -21,6 +21,7 @@ class Npc;
 struct NpcLogicalState;
 class Item;
 class WorldView;
+struct GltfHeadMesh;
 namespace TestBench { bool ragdollBodyDrawable(const Npc& npc); }
 
 class MdlVisual final {
@@ -206,6 +207,7 @@ class MdlVisual final {
     void                           startMMAnim    (Npc& npc, std::string_view anim, std::string_view node);
     void                           startFaceAnim  (Npc& npc, std::string_view anim, float intensity, uint64_t duration);
     float                          faceWeight     (std::string_view anim) { return head.view.morphWeight(anim); }
+    const GltfHeadMesh*            headMesh() const;
     void                           stopDlgAnim    (Npc& npc);
     // a voiced line: the mouth follows the voice instead of the talk loop
     void                           startSpeech    (Npc& npc, std::shared_ptr<LipSync::Track> voice);

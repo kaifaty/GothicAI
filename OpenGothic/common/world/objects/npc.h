@@ -943,6 +943,7 @@ class Npc final {
     void      traceCombatSnapshot();
     struct BodyMovementTrace;
     friend struct NpcLogicalState;
+    friend struct MeshGltfTest;
     friend class NpcLogicalStateContract;
     void      traceCombatGate(std::string_view reason);
     void      traceCombatAttempt(Anim requested, bool accepted, const std::string& before, std::string_view hook);
