@@ -1,10 +1,10 @@
 {
  "status": "measured",
- "method": "GPU half of nav-sim: current-decision memory, passage and the v5 net (S3/S4b).\n\nPhase A returns ticks, eye, rewards, episode flags and passage queries. The\nGPU updates memory once and returns passage verdicts to phase B. finish()\ncan request another round against that same memory, or return the encoded\nroads/vector and teacher labels. Only then does the GPU run the policy.\nThe two halves overlap CPU A/B futures with GPU stages on separate streams.\n\nModes: fp32 eager for parity, fp16 with separate memory and policy CUDA\nGraphs for speed. Copies and passage rounds stay outside the graphs.\n\nOne command from the Mac stages everything on Ryzen and submits one gq job\nwithout waiting. The job writes the compact report alongside raw data on NAS::\n\n    python3 scripts/navsim/stand/loop.py remote\n\nCommands inside the job:\n  parity  24 drive captures, one agent each from its first decision, through\n          the loop in fp32 and the engine (navsim_memory_ref + the same net,\n          each with its own GRU state): actions on every readout, readout bits\n          by hash; then fp16 + graph against fp32\n  speed   per N, in its own process: GPU part per decision (halves one by one),\n          decisions/s of the pipelined loop with the replay, and with an\n          artificial CPU cost of 180 us in A and 20 us in B on 24 threads",
+ "method": "GPU half of nav-sim: current-decision memory, passage and the v5 net (S3/S4b).\n\nPhase A returns ticks, eye, rewards, episode flags and passage queries. The\nGPU updates memory once and returns passage verdicts to phase B. finish()\ncan request another round against that same memory, or return the encoded\nroads/vector and teacher labels. Only then does the GPU run the policy.\nThe two halves overlap CPU A/B futures with GPU stages on separate streams.\n\nModes: fp32 eager for parity, fp16 with update, readout and policy CUDA\nGraphs for speed. Verdicts return before readout so CPU B overlaps it.\n\nOne command from the Mac stages everything on Ryzen and submits one gq job\nwithout waiting. The job writes the compact report alongside raw data on NAS::\n\n    python3 scripts/navsim/stand/loop.py remote\n\nCommands inside the job:\n  parity  24 drive captures, one agent each from its first decision, through\n          the loop in fp32 and the engine (navsim_memory_ref + the same net,\n          each with its own GRU state): actions on every readout, readout bits\n          by hash; then fp16 + graph against fp32\n  speed   per N, in its own process: GPU part per decision (halves one by one),\n          decisions/s of the pipelined loop with the replay, and with an\n          artificial CPU cost of 180 us in A and 20 us in B on 24 threads",
  "contract": "scripts/navsim/stand/contract.py",
  "parity": {
   "gpu": "NVIDIA GeForce RTX 3080",
-  "raw": "/mnt/shared/gothic-ai/nav-sim-research/stand/passage/20261105T045840Z_0a78bc/parity.json",
+  "raw": "/mnt/shared/gothic-ai/nav-sim-research/stand/passage/20261105T054544Z_5b6795/parity.json",
   "agents": 24,
   "steps": 300,
   "journey": [
@@ -39,9 +39,9 @@
    "turn",
    "maneuver"
   ],
-  "engine_seconds": 11.703895444050431,
+  "engine_seconds": 11.453372073941864,
   "fp32": {
-   "seconds": 4.567865676945075,
+   "seconds": 4.234981991932727,
    "state_errors": 0,
    "passage": {
     "queries": 8496,
@@ -79,7 +79,7 @@
    }
   },
   "fp16_graph": {
-   "seconds": 2.686053009936586,
+   "seconds": 2.6056361170485616,
    "state_errors": 0,
    "passage": {
     "queries": 8496,
@@ -125,7 +125,7 @@
   "captures": 24
  },
  "passage_parity": {
-  "raw": "/mnt/shared/gothic-ai/nav-sim-research/stand/passage/20261105T045840Z_0a78bc/passage-parity.json",
+  "raw": "/mnt/shared/gothic-ai/nav-sim-research/stand/passage/20261105T054544Z_5b6795/passage-parity.json",
   "backend": "cuda",
   "captures": 24,
   "views": 5653,
@@ -207,12 +207,12 @@
    "water": 48
   },
   "state_errors": 0,
-  "seconds": 28.162237951997668
+  "seconds": 27.72566845093388
  },
  "runs": [
   {
-   "stamp": "20261105T045840Z_0a78bc",
-   "raw_dir": "/mnt/shared/gothic-ai/nav-sim-research/stand/passage/20261105T045840Z_0a78bc",
+   "stamp": "20261105T054544Z_5b6795",
+   "raw_dir": "/mnt/shared/gothic-ai/nav-sim-research/stand/passage/20261105T054544Z_5b6795",
    "gpu": [
     "NVIDIA GeForce RTX 3080",
     "615.71.09",
@@ -220,8 +220,8 @@
    ],
    "torch": "2.14.1+cu130",
    "torch_cuda": "13.0",
-   "free_vram_mib_before": 8469,
-   "vram_after": "1430 MiB, 8498 MiB",
+   "free_vram_mib_before": 8478,
+   "vram_after": "1449 MiB, 8478 MiB",
    "gq": {
     "host": "ryzen",
     "cls": "quiet",
@@ -230,8 +230,8 @@
     "gpu_mem_gib": 8
    },
    "raw_checksums": {
-    "path": "/mnt/shared/gothic-ai/nav-sim-research/stand/passage/20261105T045840Z_0a78bc/SHA256SUMS",
-    "sha256": "01ce093ef9b3275dec2cedcb03a184b64ec9bedd05033782a2c2eec2869306e5"
+    "path": "/mnt/shared/gothic-ai/nav-sim-research/stand/passage/20261105T054544Z_5b6795/SHA256SUMS",
+    "sha256": "8152dbb7dd02d992fb10b10580f08e90e05a0458dee41d53868412f327e9ff87"
    },
    "cells": [
     {
@@ -241,33 +241,48 @@
      "warmup": 3,
      "repeats": 20,
      "fill_workers": 8,
-     "free_vram_mib_before": 8505,
+     "free_vram_mib_before": 8490,
      "vram_limit_gib": 7.5,
      "status": "ok",
      "setup_peak_allocated_bytes": 4270779904,
      "gpu_us_per_decision": {
-      "median": 33.7323091655378,
-      "p90": 33.83841334013861,
-      "min": 33.596936549205715,
+      "median": 32.4272200394508,
+      "p90": 32.51782550098369,
+      "min": 32.171430792959654,
       "repeats": 20
      },
      "gpu_parts_us_per_decision": {
-      "copy_in": 2.1647992193190175,
-      "memory": 17.648947425186634,
-      "passage": 10.64690131849299,
-      "net": 3.2595364590330673,
-      "copy_out": 0.014695312523826942,
-      "compute": 31.55331776555007,
-      "total": 33.7323091655378
+      "copy_in": 2.1209815126515723,
+      "memory": 5.212909627395372,
+      "read": 12.348262515539925,
+      "passage": 9.55129973978425,
+      "net": 3.1993239594157785,
+      "copy_out": 0.014972656274873469,
+      "vector_copy": 0.6714468778227456,
+      "verdict_copy": 0.0072656249661425445,
+      "compute": 30.29203592450358,
+      "total": 32.4272200394508
      },
      "loop_replay": {
       "decisions_per_second": {
-       "median": 27231.692992253156,
-       "p90": 27411.733362747033,
-       "min": 26940.610687678447,
+       "median": 31512.72765354214,
+       "p90": 31633.46938705649,
+       "min": 31193.46044248048,
        "repeats": 20
       },
-      "cpu_side_ms_per_half_step": 7.055767568332764,
+      "cpu_side_ms_per_half_step": 5.955472986194461,
+      "cpu_phase_ms_per_half_step": {
+       "a": 3.137058573192917,
+       "b": 2.8579902287068157
+      },
+      "cpu_prepare_ms_per_half_step": {
+       "a": 3.137058573192917,
+       "b": 2.8579902287068157
+      },
+      "cpu_delay_ms_per_half_step": {
+       "a": 0.0,
+       "b": 0.0
+      },
       "passage": {
        "queries": 1449984,
        "half_rounds": 1200,
@@ -275,15 +290,27 @@
        "queries_per_decision": 1.18
       }
      },
-     "replay_fill_ms_per_half_step": 7.055767568332764,
+     "replay_fill_ms_per_half_step": 5.955472986194461,
      "loop_delay": {
       "decisions_per_second": {
-       "median": 23217.117251598174,
-       "p90": 23455.873598863353,
-       "min": 22926.39868006838,
+       "median": 30815.2100232142,
+       "p90": 30908.497707932722,
+       "min": 30531.540251394636,
        "repeats": 20
       },
-      "cpu_side_ms_per_half_step": 16.312701165152248,
+      "cpu_side_ms_per_half_step": 16.004253027106948,
+      "cpu_phase_ms_per_half_step": {
+       "a": 14.31340858708912,
+       "b": 7.806311124295462
+      },
+      "cpu_prepare_ms_per_half_step": {
+       "a": 3.2375224038454085,
+       "b": 2.867118392993386
+      },
+      "cpu_delay_ms_per_half_step": {
+       "a": 11.071806690403417,
+       "b": 4.9324463367035305
+      },
       "passage": {
        "queries": 1449984,
        "half_rounds": 1200,
@@ -302,10 +329,1051 @@
       "rebuild_fraction": 0.02,
       "rebuild_queries": 34
      },
+     "gpu_timeline": {
+      "steps": 4,
+      "cpu_delay_us": {
+       "a": 180.0,
+       "b": 20.0
+      },
+      "records": [
+       {
+        "half": 0,
+        "agents": 1024,
+        "sequence": 0,
+        "events": [
+         {
+          "name": "memory_start",
+          "round": 0,
+          "ms": 23.232959747314453
+         },
+         {
+          "name": "memory_end",
+          "round": 0,
+          "ms": 29.093887329101562
+         },
+         {
+          "name": "passage_start",
+          "round": 1,
+          "ms": 29.110559463500977
+         },
+         {
+          "name": "passage_end",
+          "round": 1,
+          "ms": 39.24070358276367
+         },
+         {
+          "name": "verdict_copy_start",
+          "round": 1,
+          "ms": 39.24275207519531
+         },
+         {
+          "name": "verdict_ready",
+          "round": 1,
+          "ms": 39.25174331665039
+         },
+         {
+          "name": "read_start",
+          "round": 1,
+          "ms": 39.25347137451172
+         },
+         {
+          "name": "read_end",
+          "round": 1,
+          "ms": 50.04185485839844
+         },
+         {
+          "name": "vector_copy_start",
+          "round": 1,
+          "ms": 50.04390335083008
+         },
+         {
+          "name": "vector_copy_end",
+          "round": 1,
+          "ms": 50.731040954589844
+         },
+         {
+          "name": "net_start",
+          "round": 1,
+          "ms": 50.7325439453125
+         },
+         {
+          "name": "net_end",
+          "round": 1,
+          "ms": 54.07743835449219
+         },
+         {
+          "name": "actions_ready",
+          "round": 1,
+          "ms": 54.085472106933594
+         }
+        ],
+        "read_to_vector_copy_ms": 0.002048492431640625
+       },
+       {
+        "half": 0,
+        "agents": 1024,
+        "sequence": 1,
+        "events": [
+         {
+          "name": "memory_start",
+          "round": 0,
+          "ms": 84.52928161621094
+         },
+         {
+          "name": "memory_end",
+          "round": 0,
+          "ms": 89.7105941772461
+         },
+         {
+          "name": "passage_start",
+          "round": 1,
+          "ms": 89.7227554321289
+         },
+         {
+          "name": "passage_end",
+          "round": 1,
+          "ms": 99.16620635986328
+         },
+         {
+          "name": "verdict_copy_start",
+          "round": 1,
+          "ms": 99.16722869873047
+         },
+         {
+          "name": "verdict_ready",
+          "round": 1,
+          "ms": 99.17314910888672
+         },
+         {
+          "name": "read_start",
+          "round": 1,
+          "ms": 99.17491149902344
+         },
+         {
+          "name": "read_end",
+          "round": 1,
+          "ms": 109.12358093261719
+         },
+         {
+          "name": "vector_copy_start",
+          "round": 1,
+          "ms": 112.50176239013672
+         },
+         {
+          "name": "vector_copy_end",
+          "round": 1,
+          "ms": 113.18460845947266
+         },
+         {
+          "name": "net_start",
+          "round": 1,
+          "ms": 113.18637084960938
+         },
+         {
+          "name": "net_end",
+          "round": 1,
+          "ms": 116.21683502197266
+         },
+         {
+          "name": "actions_ready",
+          "round": 1,
+          "ms": 116.22489929199219
+         }
+        ],
+        "read_to_vector_copy_ms": 3.3781814575195312
+       },
+       {
+        "half": 0,
+        "agents": 1024,
+        "sequence": 2,
+        "events": [
+         {
+          "name": "memory_start",
+          "round": 0,
+          "ms": 145.80316162109375
+         },
+         {
+          "name": "memory_end",
+          "round": 0,
+          "ms": 150.92530822753906
+         },
+         {
+          "name": "passage_start",
+          "round": 1,
+          "ms": 150.93849182128906
+         },
+         {
+          "name": "passage_end",
+          "round": 1,
+          "ms": 159.39584350585938
+         },
+         {
+          "name": "verdict_copy_start",
+          "round": 1,
+          "ms": 159.39788818359375
+         },
+         {
+          "name": "verdict_ready",
+          "round": 1,
+          "ms": 159.4049530029297
+         },
+         {
+          "name": "read_start",
+          "round": 1,
+          "ms": 159.4066925048828
+         },
+         {
+          "name": "read_end",
+          "round": 1,
+          "ms": 170.2942657470703
+         },
+         {
+          "name": "vector_copy_start",
+          "round": 1,
+          "ms": 172.76824951171875
+         },
+         {
+          "name": "vector_copy_end",
+          "round": 1,
+          "ms": 173.45248413085938
+         },
+         {
+          "name": "net_start",
+          "round": 1,
+          "ms": 173.45433044433594
+         },
+         {
+          "name": "net_end",
+          "round": 1,
+          "ms": 176.79052734375
+         },
+         {
+          "name": "actions_ready",
+          "round": 1,
+          "ms": 176.8040313720703
+         }
+        ],
+        "read_to_vector_copy_ms": 2.4739837646484375
+       },
+       {
+        "half": 0,
+        "agents": 1024,
+        "sequence": 3,
+        "events": [
+         {
+          "name": "memory_start",
+          "round": 0,
+          "ms": 207.2560272216797
+         },
+         {
+          "name": "memory_end",
+          "round": 0,
+          "ms": 212.88140869140625
+         },
+         {
+          "name": "passage_start",
+          "round": 1,
+          "ms": 212.896728515625
+         },
+         {
+          "name": "passage_end",
+          "round": 1,
+          "ms": 222.47731018066406
+         },
+         {
+          "name": "verdict_copy_start",
+          "round": 1,
+          "ms": 222.47833251953125
+         },
+         {
+          "name": "verdict_ready",
+          "round": 1,
+          "ms": 222.48985290527344
+         },
+         {
+          "name": "read_start",
+          "round": 1,
+          "ms": 222.4916534423828
+         },
+         {
+          "name": "read_end",
+          "round": 1,
+          "ms": 233.01849365234375
+         },
+         {
+          "name": "vector_copy_start",
+          "round": 1,
+          "ms": 235.60105895996094
+         },
+         {
+          "name": "vector_copy_end",
+          "round": 1,
+          "ms": 236.28524780273438
+         },
+         {
+          "name": "net_start",
+          "round": 1,
+          "ms": 236.2869415283203
+         },
+         {
+          "name": "net_end",
+          "round": 1,
+          "ms": 239.58937072753906
+         },
+         {
+          "name": "actions_ready",
+          "round": 1,
+          "ms": 239.5957489013672
+         }
+        ],
+        "read_to_vector_copy_ms": 2.5825653076171875
+       },
+       {
+        "half": 1,
+        "agents": 1024,
+        "sequence": 0,
+        "events": [
+         {
+          "name": "memory_start",
+          "round": 0,
+          "ms": 54.0865592956543
+         },
+         {
+          "name": "memory_end",
+          "round": 0,
+          "ms": 59.44627380371094
+         },
+         {
+          "name": "passage_start",
+          "round": 1,
+          "ms": 59.45964813232422
+         },
+         {
+          "name": "passage_end",
+          "round": 1,
+          "ms": 69.67705535888672
+         },
+         {
+          "name": "verdict_copy_start",
+          "round": 1,
+          "ms": 69.6780776977539
+         },
+         {
+          "name": "verdict_ready",
+          "round": 1,
+          "ms": 69.68380737304688
+         },
+         {
+          "name": "read_start",
+          "round": 1,
+          "ms": 69.68553924560547
+         },
+         {
+          "name": "read_end",
+          "round": 1,
+          "ms": 80.37478637695312
+         },
+         {
+          "name": "vector_copy_start",
+          "round": 1,
+          "ms": 80.37580871582031
+         },
+         {
+          "name": "vector_copy_end",
+          "round": 1,
+          "ms": 81.07382202148438
+         },
+         {
+          "name": "net_start",
+          "round": 1,
+          "ms": 81.08316802978516
+         },
+         {
+          "name": "net_end",
+          "round": 1,
+          "ms": 84.52301025390625
+         },
+         {
+          "name": "actions_ready",
+          "round": 1,
+          "ms": 84.53075408935547
+         }
+        ],
+        "read_to_vector_copy_ms": 0.0010223388671875
+       },
+       {
+        "half": 1,
+        "agents": 1024,
+        "sequence": 1,
+        "events": [
+         {
+          "name": "memory_start",
+          "round": 0,
+          "ms": 116.22557067871094
+         },
+         {
+          "name": "memory_end",
+          "round": 0,
+          "ms": 121.46892547607422
+         },
+         {
+          "name": "passage_start",
+          "round": 1,
+          "ms": 121.48281860351562
+         },
+         {
+          "name": "passage_end",
+          "round": 1,
+          "ms": 131.3607635498047
+         },
+         {
+          "name": "verdict_copy_start",
+          "round": 1,
+          "ms": 131.36282348632812
+         },
+         {
+          "name": "verdict_ready",
+          "round": 1,
+          "ms": 131.3675537109375
+         },
+         {
+          "name": "read_start",
+          "round": 1,
+          "ms": 131.36924743652344
+         },
+         {
+          "name": "read_end",
+          "round": 1,
+          "ms": 142.02777099609375
+         },
+         {
+          "name": "vector_copy_start",
+          "round": 1,
+          "ms": 142.02879333496094
+         },
+         {
+          "name": "vector_copy_end",
+          "round": 1,
+          "ms": 142.72320556640625
+         },
+         {
+          "name": "net_start",
+          "round": 1,
+          "ms": 142.72470092773438
+         },
+         {
+          "name": "net_end",
+          "round": 1,
+          "ms": 145.79916381835938
+         },
+         {
+          "name": "actions_ready",
+          "round": 1,
+          "ms": 145.804931640625
+         }
+        ],
+        "read_to_vector_copy_ms": 0.0010223388671875
+       },
+       {
+        "half": 1,
+        "agents": 1024,
+        "sequence": 2,
+        "events": [
+         {
+          "name": "memory_start",
+          "round": 0,
+          "ms": 178.07315063476562
+         },
+         {
+          "name": "memory_end",
+          "round": 0,
+          "ms": 182.98675537109375
+         },
+         {
+          "name": "passage_start",
+          "round": 1,
+          "ms": 182.99586486816406
+         },
+         {
+          "name": "passage_end",
+          "round": 1,
+          "ms": 192.6666259765625
+         },
+         {
+          "name": "verdict_copy_start",
+          "round": 1,
+          "ms": 192.6676483154297
+         },
+         {
+          "name": "verdict_ready",
+          "round": 1,
+          "ms": 192.67919921875
+         },
+         {
+          "name": "read_start",
+          "round": 1,
+          "ms": 192.6813507080078
+         },
+         {
+          "name": "read_end",
+          "round": 1,
+          "ms": 203.49746704101562
+         },
+         {
+          "name": "vector_copy_start",
+          "round": 1,
+          "ms": 203.4984893798828
+         },
+         {
+          "name": "vector_copy_end",
+          "round": 1,
+          "ms": 204.18914794921875
+         },
+         {
+          "name": "net_start",
+          "round": 1,
+          "ms": 204.19100952148438
+         },
+         {
+          "name": "net_end",
+          "round": 1,
+          "ms": 207.25350952148438
+         },
+         {
+          "name": "actions_ready",
+          "round": 1,
+          "ms": 207.259033203125
+         }
+        ],
+        "read_to_vector_copy_ms": 0.0010223388671875
+       },
+       {
+        "half": 1,
+        "agents": 1024,
+        "sequence": 3,
+        "events": [
+         {
+          "name": "memory_start",
+          "round": 0,
+          "ms": 241.3344268798828
+         },
+         {
+          "name": "memory_end",
+          "round": 0,
+          "ms": 246.91917419433594
+         },
+         {
+          "name": "passage_start",
+          "round": 1,
+          "ms": 246.93161010742188
+         },
+         {
+          "name": "passage_end",
+          "round": 1,
+          "ms": 255.815673828125
+         },
+         {
+          "name": "verdict_copy_start",
+          "round": 1,
+          "ms": 255.81773376464844
+         },
+         {
+          "name": "verdict_ready",
+          "round": 1,
+          "ms": 255.82870483398438
+         },
+         {
+          "name": "read_start",
+          "round": 1,
+          "ms": 255.83056640625
+         },
+         {
+          "name": "read_end",
+          "round": 1,
+          "ms": 266.4908752441406
+         },
+         {
+          "name": "vector_copy_start",
+          "round": 1,
+          "ms": 266.4919128417969
+         },
+         {
+          "name": "vector_copy_end",
+          "round": 1,
+          "ms": 267.1837158203125
+         },
+         {
+          "name": "net_start",
+          "round": 1,
+          "ms": 267.18695068359375
+         },
+         {
+          "name": "net_end",
+          "round": 1,
+          "ms": 270.5408020019531
+         },
+         {
+          "name": "actions_ready",
+          "round": 1,
+          "ms": 270.54693603515625
+         }
+        ],
+        "read_to_vector_copy_ms": 0.00103759765625
+       }
+      ],
+      "compute_spans": [
+       {
+        "half": 0,
+        "sequence": 0,
+        "part": "memory",
+        "start_ms": 23.232959747314453,
+        "end_ms": 29.093887329101562
+       },
+       {
+        "half": 0,
+        "sequence": 0,
+        "part": "passage",
+        "start_ms": 29.110559463500977,
+        "end_ms": 39.24070358276367
+       },
+       {
+        "half": 0,
+        "sequence": 0,
+        "part": "read",
+        "start_ms": 39.25347137451172,
+        "end_ms": 50.04185485839844
+       },
+       {
+        "half": 0,
+        "sequence": 0,
+        "part": "net",
+        "start_ms": 50.7325439453125,
+        "end_ms": 54.07743835449219
+       },
+       {
+        "half": 1,
+        "sequence": 0,
+        "part": "memory",
+        "start_ms": 54.0865592956543,
+        "end_ms": 59.44627380371094
+       },
+       {
+        "half": 1,
+        "sequence": 0,
+        "part": "passage",
+        "start_ms": 59.45964813232422,
+        "end_ms": 69.67705535888672
+       },
+       {
+        "half": 1,
+        "sequence": 0,
+        "part": "read",
+        "start_ms": 69.68553924560547,
+        "end_ms": 80.37478637695312
+       },
+       {
+        "half": 1,
+        "sequence": 0,
+        "part": "net",
+        "start_ms": 81.08316802978516,
+        "end_ms": 84.52301025390625
+       },
+       {
+        "half": 0,
+        "sequence": 1,
+        "part": "memory",
+        "start_ms": 84.52928161621094,
+        "end_ms": 89.7105941772461
+       },
+       {
+        "half": 0,
+        "sequence": 1,
+        "part": "passage",
+        "start_ms": 89.7227554321289,
+        "end_ms": 99.16620635986328
+       },
+       {
+        "half": 0,
+        "sequence": 1,
+        "part": "read",
+        "start_ms": 99.17491149902344,
+        "end_ms": 109.12358093261719
+       },
+       {
+        "half": 0,
+        "sequence": 1,
+        "part": "net",
+        "start_ms": 113.18637084960938,
+        "end_ms": 116.21683502197266
+       },
+       {
+        "half": 1,
+        "sequence": 1,
+        "part": "memory",
+        "start_ms": 116.22557067871094,
+        "end_ms": 121.46892547607422
+       },
+       {
+        "half": 1,
+        "sequence": 1,
+        "part": "passage",
+        "start_ms": 121.48281860351562,
+        "end_ms": 131.3607635498047
+       },
+       {
+        "half": 1,
+        "sequence": 1,
+        "part": "read",
+        "start_ms": 131.36924743652344,
+        "end_ms": 142.02777099609375
+       },
+       {
+        "half": 1,
+        "sequence": 1,
+        "part": "net",
+        "start_ms": 142.72470092773438,
+        "end_ms": 145.79916381835938
+       },
+       {
+        "half": 0,
+        "sequence": 2,
+        "part": "memory",
+        "start_ms": 145.80316162109375,
+        "end_ms": 150.92530822753906
+       },
+       {
+        "half": 0,
+        "sequence": 2,
+        "part": "passage",
+        "start_ms": 150.93849182128906,
+        "end_ms": 159.39584350585938
+       },
+       {
+        "half": 0,
+        "sequence": 2,
+        "part": "read",
+        "start_ms": 159.4066925048828,
+        "end_ms": 170.2942657470703
+       },
+       {
+        "half": 0,
+        "sequence": 2,
+        "part": "net",
+        "start_ms": 173.45433044433594,
+        "end_ms": 176.79052734375
+       },
+       {
+        "half": 1,
+        "sequence": 2,
+        "part": "memory",
+        "start_ms": 178.07315063476562,
+        "end_ms": 182.98675537109375
+       },
+       {
+        "half": 1,
+        "sequence": 2,
+        "part": "passage",
+        "start_ms": 182.99586486816406,
+        "end_ms": 192.6666259765625
+       },
+       {
+        "half": 1,
+        "sequence": 2,
+        "part": "read",
+        "start_ms": 192.6813507080078,
+        "end_ms": 203.49746704101562
+       },
+       {
+        "half": 1,
+        "sequence": 2,
+        "part": "net",
+        "start_ms": 204.19100952148438,
+        "end_ms": 207.25350952148438
+       },
+       {
+        "half": 0,
+        "sequence": 3,
+        "part": "memory",
+        "start_ms": 207.2560272216797,
+        "end_ms": 212.88140869140625
+       },
+       {
+        "half": 0,
+        "sequence": 3,
+        "part": "passage",
+        "start_ms": 212.896728515625,
+        "end_ms": 222.47731018066406
+       },
+       {
+        "half": 0,
+        "sequence": 3,
+        "part": "read",
+        "start_ms": 222.4916534423828,
+        "end_ms": 233.01849365234375
+       },
+       {
+        "half": 0,
+        "sequence": 3,
+        "part": "net",
+        "start_ms": 236.2869415283203,
+        "end_ms": 239.58937072753906
+       },
+       {
+        "half": 1,
+        "sequence": 3,
+        "part": "memory",
+        "start_ms": 241.3344268798828,
+        "end_ms": 246.91917419433594
+       },
+       {
+        "half": 1,
+        "sequence": 3,
+        "part": "passage",
+        "start_ms": 246.93161010742188,
+        "end_ms": 255.815673828125
+       },
+       {
+        "half": 1,
+        "sequence": 3,
+        "part": "read",
+        "start_ms": 255.83056640625,
+        "end_ms": 266.4908752441406
+       },
+       {
+        "half": 1,
+        "sequence": 3,
+        "part": "net",
+        "start_ms": 267.18695068359375,
+        "end_ms": 270.5408020019531
+       }
+      ],
+      "compute_gaps": [
+       {
+        "after_half": 0,
+        "after_part": "memory",
+        "before_half": 0,
+        "before_part": "passage",
+        "ms": 0.016672134399414062
+       },
+       {
+        "after_half": 0,
+        "after_part": "passage",
+        "before_half": 0,
+        "before_part": "read",
+        "ms": 0.012767791748046875
+       },
+       {
+        "after_half": 0,
+        "after_part": "read",
+        "before_half": 0,
+        "before_part": "net",
+        "ms": 0.6906890869140625
+       },
+       {
+        "after_half": 0,
+        "after_part": "net",
+        "before_half": 1,
+        "before_part": "memory",
+        "ms": 0.009120941162109375
+       },
+       {
+        "after_half": 1,
+        "after_part": "memory",
+        "before_half": 1,
+        "before_part": "passage",
+        "ms": 0.01337432861328125
+       },
+       {
+        "after_half": 1,
+        "after_part": "passage",
+        "before_half": 1,
+        "before_part": "read",
+        "ms": 0.00848388671875
+       },
+       {
+        "after_half": 1,
+        "after_part": "read",
+        "before_half": 1,
+        "before_part": "net",
+        "ms": 0.7083816528320312
+       },
+       {
+        "after_half": 1,
+        "after_part": "net",
+        "before_half": 0,
+        "before_part": "memory",
+        "ms": 0.0062713623046875
+       },
+       {
+        "after_half": 0,
+        "after_part": "memory",
+        "before_half": 0,
+        "before_part": "passage",
+        "ms": 0.0121612548828125
+       },
+       {
+        "after_half": 0,
+        "after_part": "passage",
+        "before_half": 0,
+        "before_part": "read",
+        "ms": 0.00870513916015625
+       },
+       {
+        "after_half": 0,
+        "after_part": "read",
+        "before_half": 0,
+        "before_part": "net",
+        "ms": 4.0627899169921875
+       },
+       {
+        "after_half": 0,
+        "after_part": "net",
+        "before_half": 1,
+        "before_part": "memory",
+        "ms": 0.00873565673828125
+       },
+       {
+        "after_half": 1,
+        "after_part": "memory",
+        "before_half": 1,
+        "before_part": "passage",
+        "ms": 0.01389312744140625
+       },
+       {
+        "after_half": 1,
+        "after_part": "passage",
+        "before_half": 1,
+        "before_part": "read",
+        "ms": 0.00848388671875
+       },
+       {
+        "after_half": 1,
+        "after_part": "read",
+        "before_half": 1,
+        "before_part": "net",
+        "ms": 0.696929931640625
+       },
+       {
+        "after_half": 1,
+        "after_part": "net",
+        "before_half": 0,
+        "before_part": "memory",
+        "ms": 0.003997802734375
+       },
+       {
+        "after_half": 0,
+        "after_part": "memory",
+        "before_half": 0,
+        "before_part": "passage",
+        "ms": 0.01318359375
+       },
+       {
+        "after_half": 0,
+        "after_part": "passage",
+        "before_half": 0,
+        "before_part": "read",
+        "ms": 0.0108489990234375
+       },
+       {
+        "after_half": 0,
+        "after_part": "read",
+        "before_half": 0,
+        "before_part": "net",
+        "ms": 3.160064697265625
+       },
+       {
+        "after_half": 0,
+        "after_part": "net",
+        "before_half": 1,
+        "before_part": "memory",
+        "ms": 1.282623291015625
+       },
+       {
+        "after_half": 1,
+        "after_part": "memory",
+        "before_half": 1,
+        "before_part": "passage",
+        "ms": 0.0091094970703125
+       },
+       {
+        "after_half": 1,
+        "after_part": "passage",
+        "before_half": 1,
+        "before_part": "read",
+        "ms": 0.0147247314453125
+       },
+       {
+        "after_half": 1,
+        "after_part": "read",
+        "before_half": 1,
+        "before_part": "net",
+        "ms": 0.69354248046875
+       },
+       {
+        "after_half": 1,
+        "after_part": "net",
+        "before_half": 0,
+        "before_part": "memory",
+        "ms": 0.0025177001953125
+       },
+       {
+        "after_half": 0,
+        "after_part": "memory",
+        "before_half": 0,
+        "before_part": "passage",
+        "ms": 0.01531982421875
+       },
+       {
+        "after_half": 0,
+        "after_part": "passage",
+        "before_half": 0,
+        "before_part": "read",
+        "ms": 0.01434326171875
+       },
+       {
+        "after_half": 0,
+        "after_part": "read",
+        "before_half": 0,
+        "before_part": "net",
+        "ms": 3.2684478759765625
+       },
+       {
+        "after_half": 0,
+        "after_part": "net",
+        "before_half": 1,
+        "before_part": "memory",
+        "ms": 1.74505615234375
+       },
+       {
+        "after_half": 1,
+        "after_part": "memory",
+        "before_half": 1,
+        "before_part": "passage",
+        "ms": 0.0124359130859375
+       },
+       {
+        "after_half": 1,
+        "after_part": "passage",
+        "before_half": 1,
+        "before_part": "read",
+        "ms": 0.014892578125
+       },
+       {
+        "after_half": 1,
+        "after_part": "read",
+        "before_half": 1,
+        "before_part": "net",
+        "ms": 0.696075439453125
+       }
+      ],
+      "compute_gap_ms": 17.234643936157227,
+      "read_to_vector_copy_gap_ms": 8.44088363647461,
+      "interpretation": "CUDA event milliseconds from a common origin; compute gaps include copies and host/CPU waits, not only GPU idle. Read-to-vector gaps include B and dispatch or extra query rounds, not a pure CPU-B duration."
+     },
      "peak_allocated_bytes": 4270779904,
      "peak_reserved_bytes": 4586471424,
      "process_vram_mib": 4666,
-     "free_vram_mib_after": 3826,
+     "free_vram_mib_after": 3807,
      "state_errors": 0,
      "step_batch_bytes_per_agent": 18244.0,
      "replay_table_bytes": 103458572
@@ -317,33 +1385,48 @@
      "warmup": 3,
      "repeats": 20,
      "fill_workers": 8,
-     "free_vram_mib_before": 8493,
+     "free_vram_mib_before": 8478,
      "vram_limit_gib": 7.5,
      "status": "ok",
      "setup_peak_allocated_bytes": 6376698880,
      "gpu_us_per_decision": {
-      "median": 30.160115594714576,
-      "p90": 30.217518424310835,
-      "min": 29.97390380561329,
+      "median": 29.582607460445665,
+      "p90": 30.142789468820865,
+      "min": 29.19298616941685,
       "repeats": 20
      },
      "gpu_parts_us_per_decision": {
-      "copy_in": 2.1316826450402004,
-      "memory": 17.48187117692497,
-      "passage": 7.28651439357135,
-      "net": 3.2539881843452654,
-      "copy_out": 0.009477777780375618,
-      "compute": 28.018698761136168,
-      "total": 30.160115594714576
+      "copy_in": 2.105139591013641,
+      "memory": 4.9376854284976925,
+      "read": 12.64392046464814,
+      "passage": 6.64550798634688,
+      "net": 3.241615269022683,
+      "copy_out": 0.009941493059765587,
+      "vector_copy": 0.6684279502628164,
+      "verdict_copy": 0.004919965259533556,
+      "compute": 27.46902950780673,
+      "total": 29.582607460445665
      },
      "loop_replay": {
       "decisions_per_second": {
-       "median": 30600.59185787043,
-       "p90": 30758.32378913857,
-       "min": 30333.195379168326,
+       "median": 35098.0561775285,
+       "p90": 35307.76709800293,
+       "min": 34961.97295916395,
        "repeats": 20
       },
-      "cpu_side_ms_per_half_step": 9.567160656733904,
+      "cpu_side_ms_per_half_step": 8.123039851391999,
+      "cpu_phase_ms_per_half_step": {
+       "a": 4.268041677520766,
+       "b": 3.900444516038988
+      },
+      "cpu_prepare_ms_per_half_step": {
+       "a": 4.268041677520766,
+       "b": 3.900444516038988
+      },
+      "cpu_delay_ms_per_half_step": {
+       "a": 0.0,
+       "b": 0.0
+      },
       "passage": {
        "queries": 2174976,
        "half_rounds": 1200,
@@ -351,15 +1434,27 @@
        "queries_per_decision": 1.18
       }
      },
-     "replay_fill_ms_per_half_step": 9.567160656733904,
+     "replay_fill_ms_per_half_step": 8.123039851391999,
      "loop_delay": {
       "decisions_per_second": {
-       "median": 25598.980153289835,
-       "p90": 26089.135059860833,
-       "min": 25305.898482523382,
+       "median": 34648.61621565475,
+       "p90": 34726.05210940265,
+       "min": 34528.19983498692,
        "repeats": 20
       },
-      "cpu_side_ms_per_half_step": 23.552366982427582,
+      "cpu_side_ms_per_half_step": 22.978452079211518,
+      "cpu_phase_ms_per_half_step": {
+       "a": 19.761588608865473,
+       "b": 11.352881014172453
+      },
+      "cpu_prepare_ms_per_half_step": {
+       "a": 4.242441857253047,
+       "b": 3.8825663886382245
+      },
+      "cpu_delay_ms_per_half_step": {
+       "a": 15.514706108078826,
+       "b": 7.463745971132691
+      },
       "passage": {
        "queries": 2174976,
        "half_rounds": 1200,
@@ -378,10 +1473,1051 @@
       "rebuild_fraction": 0.02,
       "rebuild_queries": 34
      },
+     "gpu_timeline": {
+      "steps": 4,
+      "cpu_delay_us": {
+       "a": 180.0,
+       "b": 20.0
+      },
+      "records": [
+       {
+        "half": 0,
+        "agents": 1536,
+        "sequence": 0,
+        "events": [
+         {
+          "name": "memory_start",
+          "round": 0,
+          "ms": 39.295040130615234
+         },
+         {
+          "name": "memory_end",
+          "round": 0,
+          "ms": 46.79564666748047
+         },
+         {
+          "name": "passage_start",
+          "round": 1,
+          "ms": 46.812286376953125
+         },
+         {
+          "name": "passage_end",
+          "round": 1,
+          "ms": 57.18105697631836
+         },
+         {
+          "name": "verdict_copy_start",
+          "round": 1,
+          "ms": 57.18207931518555
+         },
+         {
+          "name": "verdict_ready",
+          "round": 1,
+          "ms": 57.1926383972168
+         },
+         {
+          "name": "read_start",
+          "round": 1,
+          "ms": 57.194366455078125
+         },
+         {
+          "name": "read_end",
+          "round": 1,
+          "ms": 73.09709167480469
+         },
+         {
+          "name": "vector_copy_start",
+          "round": 1,
+          "ms": 73.09913635253906
+         },
+         {
+          "name": "vector_copy_end",
+          "round": 1,
+          "ms": 74.13484954833984
+         },
+         {
+          "name": "net_start",
+          "round": 1,
+          "ms": 74.1363525390625
+         },
+         {
+          "name": "net_end",
+          "round": 1,
+          "ms": 79.31686401367188
+         },
+         {
+          "name": "actions_ready",
+          "round": 1,
+          "ms": 79.32038116455078
+         }
+        ],
+        "read_to_vector_copy_ms": 0.002044677734375
+       },
+       {
+        "half": 0,
+        "agents": 1536,
+        "sequence": 1,
+        "events": [
+         {
+          "name": "memory_start",
+          "round": 0,
+          "ms": 118.28988647460938
+         },
+         {
+          "name": "memory_end",
+          "round": 0,
+          "ms": 126.1638412475586
+         },
+         {
+          "name": "passage_start",
+          "round": 1,
+          "ms": 126.18268585205078
+         },
+         {
+          "name": "passage_end",
+          "round": 1,
+          "ms": 135.385986328125
+         },
+         {
+          "name": "verdict_copy_start",
+          "round": 1,
+          "ms": 135.3870086669922
+         },
+         {
+          "name": "verdict_ready",
+          "round": 1,
+          "ms": 135.39907836914062
+         },
+         {
+          "name": "read_start",
+          "round": 1,
+          "ms": 135.40089416503906
+         },
+         {
+          "name": "read_end",
+          "round": 1,
+          "ms": 151.19244384765625
+         },
+         {
+          "name": "vector_copy_start",
+          "round": 1,
+          "ms": 154.6393280029297
+         },
+         {
+          "name": "vector_copy_end",
+          "round": 1,
+          "ms": 155.66006469726562
+         },
+         {
+          "name": "net_start",
+          "round": 1,
+          "ms": 155.6617889404297
+         },
+         {
+          "name": "net_end",
+          "round": 1,
+          "ms": 160.60812377929688
+         },
+         {
+          "name": "actions_ready",
+          "round": 1,
+          "ms": 160.6189727783203
+         }
+        ],
+        "read_to_vector_copy_ms": 3.4468841552734375
+       },
+       {
+        "half": 0,
+        "agents": 1536,
+        "sequence": 2,
+        "events": [
+         {
+          "name": "memory_start",
+          "round": 0,
+          "ms": 200.67408752441406
+         },
+         {
+          "name": "memory_end",
+          "round": 0,
+          "ms": 208.56101989746094
+         },
+         {
+          "name": "passage_start",
+          "round": 1,
+          "ms": 208.5746612548828
+         },
+         {
+          "name": "passage_end",
+          "round": 1,
+          "ms": 219.412353515625
+         },
+         {
+          "name": "verdict_copy_start",
+          "round": 1,
+          "ms": 219.41439819335938
+         },
+         {
+          "name": "verdict_ready",
+          "round": 1,
+          "ms": 219.42608642578125
+         },
+         {
+          "name": "read_start",
+          "round": 1,
+          "ms": 219.4278106689453
+         },
+         {
+          "name": "read_end",
+          "round": 1,
+          "ms": 236.887939453125
+         },
+         {
+          "name": "vector_copy_start",
+          "round": 1,
+          "ms": 239.4122314453125
+         },
+         {
+          "name": "vector_copy_end",
+          "round": 1,
+          "ms": 240.43959045410156
+         },
+         {
+          "name": "net_start",
+          "round": 1,
+          "ms": 240.44131469726562
+         },
+         {
+          "name": "net_end",
+          "round": 1,
+          "ms": 245.5478973388672
+         },
+         {
+          "name": "actions_ready",
+          "round": 1,
+          "ms": 245.55142211914062
+         }
+        ],
+        "read_to_vector_copy_ms": 2.5242919921875
+       },
+       {
+        "half": 0,
+        "agents": 1536,
+        "sequence": 3,
+        "events": [
+         {
+          "name": "memory_start",
+          "round": 0,
+          "ms": 284.9298095703125
+         },
+         {
+          "name": "memory_end",
+          "round": 0,
+          "ms": 292.65087890625
+         },
+         {
+          "name": "passage_start",
+          "round": 1,
+          "ms": 292.66595458984375
+         },
+         {
+          "name": "passage_end",
+          "round": 1,
+          "ms": 302.3880920410156
+         },
+         {
+          "name": "verdict_copy_start",
+          "round": 1,
+          "ms": 302.39013671875
+         },
+         {
+          "name": "verdict_ready",
+          "round": 1,
+          "ms": 302.4009704589844
+         },
+         {
+          "name": "read_start",
+          "round": 1,
+          "ms": 302.4027404785156
+         },
+         {
+          "name": "read_end",
+          "round": 1,
+          "ms": 318.0942077636719
+         },
+         {
+          "name": "vector_copy_start",
+          "round": 1,
+          "ms": 321.3105773925781
+         },
+         {
+          "name": "vector_copy_end",
+          "round": 1,
+          "ms": 322.3421325683594
+         },
+         {
+          "name": "net_start",
+          "round": 1,
+          "ms": 322.3438720703125
+         },
+         {
+          "name": "net_end",
+          "round": 1,
+          "ms": 327.16583251953125
+         },
+         {
+          "name": "actions_ready",
+          "round": 1,
+          "ms": 327.17083740234375
+         }
+        ],
+        "read_to_vector_copy_ms": 3.21636962890625
+       },
+       {
+        "half": 1,
+        "agents": 1536,
+        "sequence": 0,
+        "events": [
+         {
+          "name": "memory_start",
+          "round": 0,
+          "ms": 79.32598114013672
+         },
+         {
+          "name": "memory_end",
+          "round": 0,
+          "ms": 86.81766510009766
+         },
+         {
+          "name": "passage_start",
+          "round": 1,
+          "ms": 86.83360290527344
+         },
+         {
+          "name": "passage_end",
+          "round": 1,
+          "ms": 96.79654693603516
+         },
+         {
+          "name": "verdict_copy_start",
+          "round": 1,
+          "ms": 96.79859161376953
+         },
+         {
+          "name": "verdict_ready",
+          "round": 1,
+          "ms": 96.80655670166016
+         },
+         {
+          "name": "read_start",
+          "round": 1,
+          "ms": 96.80828857421875
+         },
+         {
+          "name": "read_end",
+          "round": 1,
+          "ms": 112.42483520507812
+         },
+         {
+          "name": "vector_copy_start",
+          "round": 1,
+          "ms": 112.42585754394531
+         },
+         {
+          "name": "vector_copy_end",
+          "round": 1,
+          "ms": 113.45894622802734
+         },
+         {
+          "name": "net_start",
+          "round": 1,
+          "ms": 113.46044921875
+         },
+         {
+          "name": "net_end",
+          "round": 1,
+          "ms": 118.28006744384766
+         },
+         {
+          "name": "actions_ready",
+          "round": 1,
+          "ms": 118.28614044189453
+         }
+        ],
+        "read_to_vector_copy_ms": 0.0010223388671875
+       },
+       {
+        "half": 1,
+        "agents": 1536,
+        "sequence": 1,
+        "events": [
+         {
+          "name": "memory_start",
+          "round": 0,
+          "ms": 162.64413452148438
+         },
+         {
+          "name": "memory_end",
+          "round": 0,
+          "ms": 169.7032928466797
+         },
+         {
+          "name": "passage_start",
+          "round": 1,
+          "ms": 169.71958923339844
+         },
+         {
+          "name": "passage_end",
+          "round": 1,
+          "ms": 178.84249877929688
+         },
+         {
+          "name": "verdict_copy_start",
+          "round": 1,
+          "ms": 178.84454345703125
+         },
+         {
+          "name": "verdict_ready",
+          "round": 1,
+          "ms": 178.85311889648438
+         },
+         {
+          "name": "read_start",
+          "round": 1,
+          "ms": 178.85484313964844
+         },
+         {
+          "name": "read_end",
+          "round": 1,
+          "ms": 194.85069274902344
+         },
+         {
+          "name": "vector_copy_start",
+          "round": 1,
+          "ms": 194.85171508789062
+         },
+         {
+          "name": "vector_copy_end",
+          "round": 1,
+          "ms": 195.88748168945312
+         },
+         {
+          "name": "net_start",
+          "round": 1,
+          "ms": 195.8889923095703
+         },
+         {
+          "name": "net_end",
+          "round": 1,
+          "ms": 200.66905212402344
+         },
+         {
+          "name": "actions_ready",
+          "round": 1,
+          "ms": 200.67666625976562
+         }
+        ],
+        "read_to_vector_copy_ms": 0.0010223388671875
+       },
+       {
+        "half": 1,
+        "agents": 1536,
+        "sequence": 2,
+        "events": [
+         {
+          "name": "memory_start",
+          "round": 0,
+          "ms": 245.556640625
+         },
+         {
+          "name": "memory_end",
+          "round": 0,
+          "ms": 253.15724182128906
+         },
+         {
+          "name": "passage_start",
+          "round": 1,
+          "ms": 253.17459106445312
+         },
+         {
+          "name": "passage_end",
+          "round": 1,
+          "ms": 262.9415588378906
+         },
+         {
+          "name": "verdict_copy_start",
+          "round": 1,
+          "ms": 262.943603515625
+         },
+         {
+          "name": "verdict_ready",
+          "round": 1,
+          "ms": 262.9542541503906
+         },
+         {
+          "name": "read_start",
+          "round": 1,
+          "ms": 262.9559631347656
+         },
+         {
+          "name": "read_end",
+          "round": 1,
+          "ms": 278.7961730957031
+         },
+         {
+          "name": "vector_copy_start",
+          "round": 1,
+          "ms": 278.79718017578125
+         },
+         {
+          "name": "vector_copy_end",
+          "round": 1,
+          "ms": 279.8298034667969
+         },
+         {
+          "name": "net_start",
+          "round": 1,
+          "ms": 279.8313293457031
+         },
+         {
+          "name": "net_end",
+          "round": 1,
+          "ms": 284.9268493652344
+         },
+         {
+          "name": "actions_ready",
+          "round": 1,
+          "ms": 284.93292236328125
+         }
+        ],
+        "read_to_vector_copy_ms": 0.001007080078125
+       },
+       {
+        "half": 1,
+        "agents": 1536,
+        "sequence": 3,
+        "events": [
+         {
+          "name": "memory_start",
+          "round": 0,
+          "ms": 327.17559814453125
+         },
+         {
+          "name": "memory_end",
+          "round": 0,
+          "ms": 334.1822814941406
+         },
+         {
+          "name": "passage_start",
+          "round": 1,
+          "ms": 334.1991271972656
+         },
+         {
+          "name": "passage_end",
+          "round": 1,
+          "ms": 342.60980224609375
+         },
+         {
+          "name": "verdict_copy_start",
+          "round": 1,
+          "ms": 342.6118469238281
+         },
+         {
+          "name": "verdict_ready",
+          "round": 1,
+          "ms": 342.6187744140625
+         },
+         {
+          "name": "read_start",
+          "round": 1,
+          "ms": 342.6206359863281
+         },
+         {
+          "name": "read_end",
+          "round": 1,
+          "ms": 358.90673828125
+         },
+         {
+          "name": "vector_copy_start",
+          "round": 1,
+          "ms": 358.9088134765625
+         },
+         {
+          "name": "vector_copy_end",
+          "round": 1,
+          "ms": 359.9346618652344
+         },
+         {
+          "name": "net_start",
+          "round": 1,
+          "ms": 359.9363708496094
+         },
+         {
+          "name": "net_end",
+          "round": 1,
+          "ms": 364.96063232421875
+         },
+         {
+          "name": "actions_ready",
+          "round": 1,
+          "ms": 364.97125244140625
+         }
+        ],
+        "read_to_vector_copy_ms": 0.0020751953125
+       }
+      ],
+      "compute_spans": [
+       {
+        "half": 0,
+        "sequence": 0,
+        "part": "memory",
+        "start_ms": 39.295040130615234,
+        "end_ms": 46.79564666748047
+       },
+       {
+        "half": 0,
+        "sequence": 0,
+        "part": "passage",
+        "start_ms": 46.812286376953125,
+        "end_ms": 57.18105697631836
+       },
+       {
+        "half": 0,
+        "sequence": 0,
+        "part": "read",
+        "start_ms": 57.194366455078125,
+        "end_ms": 73.09709167480469
+       },
+       {
+        "half": 0,
+        "sequence": 0,
+        "part": "net",
+        "start_ms": 74.1363525390625,
+        "end_ms": 79.31686401367188
+       },
+       {
+        "half": 1,
+        "sequence": 0,
+        "part": "memory",
+        "start_ms": 79.32598114013672,
+        "end_ms": 86.81766510009766
+       },
+       {
+        "half": 1,
+        "sequence": 0,
+        "part": "passage",
+        "start_ms": 86.83360290527344,
+        "end_ms": 96.79654693603516
+       },
+       {
+        "half": 1,
+        "sequence": 0,
+        "part": "read",
+        "start_ms": 96.80828857421875,
+        "end_ms": 112.42483520507812
+       },
+       {
+        "half": 1,
+        "sequence": 0,
+        "part": "net",
+        "start_ms": 113.46044921875,
+        "end_ms": 118.28006744384766
+       },
+       {
+        "half": 0,
+        "sequence": 1,
+        "part": "memory",
+        "start_ms": 118.28988647460938,
+        "end_ms": 126.1638412475586
+       },
+       {
+        "half": 0,
+        "sequence": 1,
+        "part": "passage",
+        "start_ms": 126.18268585205078,
+        "end_ms": 135.385986328125
+       },
+       {
+        "half": 0,
+        "sequence": 1,
+        "part": "read",
+        "start_ms": 135.40089416503906,
+        "end_ms": 151.19244384765625
+       },
+       {
+        "half": 0,
+        "sequence": 1,
+        "part": "net",
+        "start_ms": 155.6617889404297,
+        "end_ms": 160.60812377929688
+       },
+       {
+        "half": 1,
+        "sequence": 1,
+        "part": "memory",
+        "start_ms": 162.64413452148438,
+        "end_ms": 169.7032928466797
+       },
+       {
+        "half": 1,
+        "sequence": 1,
+        "part": "passage",
+        "start_ms": 169.71958923339844,
+        "end_ms": 178.84249877929688
+       },
+       {
+        "half": 1,
+        "sequence": 1,
+        "part": "read",
+        "start_ms": 178.85484313964844,
+        "end_ms": 194.85069274902344
+       },
+       {
+        "half": 1,
+        "sequence": 1,
+        "part": "net",
+        "start_ms": 195.8889923095703,
+        "end_ms": 200.66905212402344
+       },
+       {
+        "half": 0,
+        "sequence": 2,
+        "part": "memory",
+        "start_ms": 200.67408752441406,
+        "end_ms": 208.56101989746094
+       },
+       {
+        "half": 0,
+        "sequence": 2,
+        "part": "passage",
+        "start_ms": 208.5746612548828,
+        "end_ms": 219.412353515625
+       },
+       {
+        "half": 0,
+        "sequence": 2,
+        "part": "read",
+        "start_ms": 219.4278106689453,
+        "end_ms": 236.887939453125
+       },
+       {
+        "half": 0,
+        "sequence": 2,
+        "part": "net",
+        "start_ms": 240.44131469726562,
+        "end_ms": 245.5478973388672
+       },
+       {
+        "half": 1,
+        "sequence": 2,
+        "part": "memory",
+        "start_ms": 245.556640625,
+        "end_ms": 253.15724182128906
+       },
+       {
+        "half": 1,
+        "sequence": 2,
+        "part": "passage",
+        "start_ms": 253.17459106445312,
+        "end_ms": 262.9415588378906
+       },
+       {
+        "half": 1,
+        "sequence": 2,
+        "part": "read",
+        "start_ms": 262.9559631347656,
+        "end_ms": 278.7961730957031
+       },
+       {
+        "half": 1,
+        "sequence": 2,
+        "part": "net",
+        "start_ms": 279.8313293457031,
+        "end_ms": 284.9268493652344
+       },
+       {
+        "half": 0,
+        "sequence": 3,
+        "part": "memory",
+        "start_ms": 284.9298095703125,
+        "end_ms": 292.65087890625
+       },
+       {
+        "half": 0,
+        "sequence": 3,
+        "part": "passage",
+        "start_ms": 292.66595458984375,
+        "end_ms": 302.3880920410156
+       },
+       {
+        "half": 0,
+        "sequence": 3,
+        "part": "read",
+        "start_ms": 302.4027404785156,
+        "end_ms": 318.0942077636719
+       },
+       {
+        "half": 0,
+        "sequence": 3,
+        "part": "net",
+        "start_ms": 322.3438720703125,
+        "end_ms": 327.16583251953125
+       },
+       {
+        "half": 1,
+        "sequence": 3,
+        "part": "memory",
+        "start_ms": 327.17559814453125,
+        "end_ms": 334.1822814941406
+       },
+       {
+        "half": 1,
+        "sequence": 3,
+        "part": "passage",
+        "start_ms": 334.1991271972656,
+        "end_ms": 342.60980224609375
+       },
+       {
+        "half": 1,
+        "sequence": 3,
+        "part": "read",
+        "start_ms": 342.6206359863281,
+        "end_ms": 358.90673828125
+       },
+       {
+        "half": 1,
+        "sequence": 3,
+        "part": "net",
+        "start_ms": 359.9363708496094,
+        "end_ms": 364.96063232421875
+       }
+      ],
+      "compute_gaps": [
+       {
+        "after_half": 0,
+        "after_part": "memory",
+        "before_half": 0,
+        "before_part": "passage",
+        "ms": 0.01663970947265625
+       },
+       {
+        "after_half": 0,
+        "after_part": "passage",
+        "before_half": 0,
+        "before_part": "read",
+        "ms": 0.013309478759765625
+       },
+       {
+        "after_half": 0,
+        "after_part": "read",
+        "before_half": 0,
+        "before_part": "net",
+        "ms": 1.0392608642578125
+       },
+       {
+        "after_half": 0,
+        "after_part": "net",
+        "before_half": 1,
+        "before_part": "memory",
+        "ms": 0.00911712646484375
+       },
+       {
+        "after_half": 1,
+        "after_part": "memory",
+        "before_half": 1,
+        "before_part": "passage",
+        "ms": 0.01593780517578125
+       },
+       {
+        "after_half": 1,
+        "after_part": "passage",
+        "before_half": 1,
+        "before_part": "read",
+        "ms": 0.01174163818359375
+       },
+       {
+        "after_half": 1,
+        "after_part": "read",
+        "before_half": 1,
+        "before_part": "net",
+        "ms": 1.035614013671875
+       },
+       {
+        "after_half": 1,
+        "after_part": "net",
+        "before_half": 0,
+        "before_part": "memory",
+        "ms": 0.00981903076171875
+       },
+       {
+        "after_half": 0,
+        "after_part": "memory",
+        "before_half": 0,
+        "before_part": "passage",
+        "ms": 0.0188446044921875
+       },
+       {
+        "after_half": 0,
+        "after_part": "passage",
+        "before_half": 0,
+        "before_part": "read",
+        "ms": 0.0149078369140625
+       },
+       {
+        "after_half": 0,
+        "after_part": "read",
+        "before_half": 0,
+        "before_part": "net",
+        "ms": 4.4693450927734375
+       },
+       {
+        "after_half": 0,
+        "after_part": "net",
+        "before_half": 1,
+        "before_part": "memory",
+        "ms": 2.0360107421875
+       },
+       {
+        "after_half": 1,
+        "after_part": "memory",
+        "before_half": 1,
+        "before_part": "passage",
+        "ms": 0.01629638671875
+       },
+       {
+        "after_half": 1,
+        "after_part": "passage",
+        "before_half": 1,
+        "before_part": "read",
+        "ms": 0.0123443603515625
+       },
+       {
+        "after_half": 1,
+        "after_part": "read",
+        "before_half": 1,
+        "before_part": "net",
+        "ms": 1.038299560546875
+       },
+       {
+        "after_half": 1,
+        "after_part": "net",
+        "before_half": 0,
+        "before_part": "memory",
+        "ms": 0.005035400390625
+       },
+       {
+        "after_half": 0,
+        "after_part": "memory",
+        "before_half": 0,
+        "before_part": "passage",
+        "ms": 0.013641357421875
+       },
+       {
+        "after_half": 0,
+        "after_part": "passage",
+        "before_half": 0,
+        "before_part": "read",
+        "ms": 0.0154571533203125
+       },
+       {
+        "after_half": 0,
+        "after_part": "read",
+        "before_half": 0,
+        "before_part": "net",
+        "ms": 3.553375244140625
+       },
+       {
+        "after_half": 0,
+        "after_part": "net",
+        "before_half": 1,
+        "before_part": "memory",
+        "ms": 0.0087432861328125
+       },
+       {
+        "after_half": 1,
+        "after_part": "memory",
+        "before_half": 1,
+        "before_part": "passage",
+        "ms": 0.0173492431640625
+       },
+       {
+        "after_half": 1,
+        "after_part": "passage",
+        "before_half": 1,
+        "before_part": "read",
+        "ms": 0.014404296875
+       },
+       {
+        "after_half": 1,
+        "after_part": "read",
+        "before_half": 1,
+        "before_part": "net",
+        "ms": 1.03515625
+       },
+       {
+        "after_half": 1,
+        "after_part": "net",
+        "before_half": 0,
+        "before_part": "memory",
+        "ms": 0.002960205078125
+       },
+       {
+        "after_half": 0,
+        "after_part": "memory",
+        "before_half": 0,
+        "before_part": "passage",
+        "ms": 0.01507568359375
+       },
+       {
+        "after_half": 0,
+        "after_part": "passage",
+        "before_half": 0,
+        "before_part": "read",
+        "ms": 0.0146484375
+       },
+       {
+        "after_half": 0,
+        "after_part": "read",
+        "before_half": 0,
+        "before_part": "net",
+        "ms": 4.249664306640625
+       },
+       {
+        "after_half": 0,
+        "after_part": "net",
+        "before_half": 1,
+        "before_part": "memory",
+        "ms": 0.009765625
+       },
+       {
+        "after_half": 1,
+        "after_part": "memory",
+        "before_half": 1,
+        "before_part": "passage",
+        "ms": 0.016845703125
+       },
+       {
+        "after_half": 1,
+        "after_part": "passage",
+        "before_half": 1,
+        "before_part": "read",
+        "ms": 0.010833740234375
+       },
+       {
+        "after_half": 1,
+        "after_part": "read",
+        "before_half": 1,
+        "before_part": "net",
+        "ms": 1.029632568359375
+       }
+      ],
+      "compute_gap_ms": 19.770076751708984,
+      "read_to_vector_copy_gap_ms": 9.194717407226562,
+      "interpretation": "CUDA event milliseconds from a common origin; compute gaps include copies and host/CPU waits, not only GPU idle. Read-to-vector gaps include B and dispatch or extra query rounds, not a pure CPU-B duration."
+     },
      "peak_allocated_bytes": 6376698880,
      "peak_reserved_bytes": 6866075648,
      "process_vram_mib": 6840,
-     "free_vram_mib_after": 1651,
+     "free_vram_mib_after": 1633,
      "state_errors": 0,
      "step_batch_bytes_per_agent": 18244.0,
      "replay_table_bytes": 103458572
@@ -407,44 +2543,50 @@
    {
     "agents": 2048,
     "precision": "fp16",
-    "run": "20261105T045840Z_0a78bc",
+    "run": "20261105T054544Z_5b6795",
     "status": "ok",
-    "gpu_us_per_decision": 33.7323091655378,
+    "gpu_us_per_decision": 32.4272200394508,
     "gpu_parts_us_per_decision": {
-     "copy_in": 2.1647992193190175,
-     "memory": 17.648947425186634,
-     "passage": 10.64690131849299,
-     "net": 3.2595364590330673,
-     "copy_out": 0.014695312523826942,
-     "compute": 31.55331776555007,
-     "total": 33.7323091655378
+     "copy_in": 2.1209815126515723,
+     "memory": 5.212909627395372,
+     "read": 12.348262515539925,
+     "passage": 9.55129973978425,
+     "net": 3.1993239594157785,
+     "copy_out": 0.014972656274873469,
+     "vector_copy": 0.6714468778227456,
+     "verdict_copy": 0.0072656249661425445,
+     "compute": 30.29203592450358,
+     "total": 32.4272200394508
     },
-    "loop_replay_decisions_per_second": 27231.692992253156,
-    "loop_delay_decisions_per_second": 23217.117251598174,
-    "replay_ms_per_half_step": 7.055767568332764,
-    "delay_ms_per_half_step": 16.312701165152248,
+    "loop_replay_decisions_per_second": 31512.72765354214,
+    "loop_delay_decisions_per_second": 30815.2100232142,
+    "replay_ms_per_half_step": 5.955472986194461,
+    "delay_ms_per_half_step": 16.004253027106948,
     "peak_reserved_gib": 4.271484375,
     "process_vram_mib": 4666
    },
    {
     "agents": 3072,
     "precision": "fp16",
-    "run": "20261105T045840Z_0a78bc",
+    "run": "20261105T054544Z_5b6795",
     "status": "ok",
-    "gpu_us_per_decision": 30.160115594714576,
+    "gpu_us_per_decision": 29.582607460445665,
     "gpu_parts_us_per_decision": {
-     "copy_in": 2.1316826450402004,
-     "memory": 17.48187117692497,
-     "passage": 7.28651439357135,
-     "net": 3.2539881843452654,
-     "copy_out": 0.009477777780375618,
-     "compute": 28.018698761136168,
-     "total": 30.160115594714576
+     "copy_in": 2.105139591013641,
+     "memory": 4.9376854284976925,
+     "read": 12.64392046464814,
+     "passage": 6.64550798634688,
+     "net": 3.241615269022683,
+     "copy_out": 0.009941493059765587,
+     "vector_copy": 0.6684279502628164,
+     "verdict_copy": 0.004919965259533556,
+     "compute": 27.46902950780673,
+     "total": 29.582607460445665
     },
-    "loop_replay_decisions_per_second": 30600.59185787043,
-    "loop_delay_decisions_per_second": 25598.980153289835,
-    "replay_ms_per_half_step": 9.567160656733904,
-    "delay_ms_per_half_step": 23.552366982427582,
+    "loop_replay_decisions_per_second": 35098.0561775285,
+    "loop_delay_decisions_per_second": 34648.61621565475,
+    "replay_ms_per_half_step": 8.123039851391999,
+    "delay_ms_per_half_step": 22.978452079211518,
     "peak_reserved_gib": 6.39453125,
     "process_vram_mib": 6840
    }
