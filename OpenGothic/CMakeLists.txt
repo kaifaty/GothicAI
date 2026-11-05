@@ -302,8 +302,17 @@ target_link_libraries(Gothic2Notr PRIVATE AiBridge)
 
 # Uses the shared engine/CPU simulation without constructing a window or graphics/audio device.
 if(UNIX AND NOT IOS AND NOT ANDROID)
-  add_executable(gothic-body-runner game/bodyrunner.cpp)
+  add_executable(gothic-body-runner game/bodyrunner.cpp game/societyexport.cpp)
   target_link_libraries(gothic-body-runner PRIVATE OpenGothic AiBridge)
+  # --society-export names the engine's commit: refreshed on every build of the runner, the header is
+  # rewritten only when the commit changes ("unknown" in a copy without .git).
+  add_custom_target(gothic-engine-commit
+    COMMAND ${CMAKE_COMMAND} -DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}
+            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/engine-commit/enginecommit.h
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/EngineCommit.cmake
+    BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/engine-commit/enginecommit.h)
+  add_dependencies(gothic-body-runner gothic-engine-commit)
+  target_include_directories(gothic-body-runner PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/engine-commit)
   # Pure production resolver/command gates: no assets, simulation or rendering device.
   add_executable(gothic-body-resolver-test tests/body_resolver_test.cpp)
   target_link_libraries(gothic-body-resolver-test PRIVATE OpenGothic AiBridge)
@@ -480,6 +489,17 @@ if(NOT ANDROID AND NOT IOS)
   target_link_libraries(gothic-physics-contract PRIVATE OpenGothic AiBridge gothic-base-import)
   add_executable(gothic-placed-items-contract EXCLUDE_FROM_ALL tests/placed_items_contract.cpp)
   target_link_libraries(gothic-placed-items-contract PRIVATE OpenGothic AiBridge gothic-base-import)
+  # The society stand's world (docs/society-sim.md): runs gothic-body-runner --society-export twice on the
+  # game's data (GOTHIC_DIR) and checks it against evals/npc-decisions/day_people.json and places.json.
+  add_executable(gothic-society-export-contract EXCLUDE_FROM_ALL tests/society_export_contract.cpp)
+  add_dependencies(gothic-society-export-contract gothic-body-runner)
+  target_include_directories(gothic-society-export-contract SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
+  target_compile_definitions(gothic-society-export-contract PRIVATE
+    SOCIETY_RUNNER="$<TARGET_FILE:gothic-body-runner>"
+    SOCIETY_REPO="${CMAKE_CURRENT_SOURCE_DIR}/..")
+  if(NOT MSVC)
+    target_compile_options(gothic-society-export-contract PRIVATE -Wall -Wconversion -Werror)
+  endif()
   add_executable(gothic-bodyimpact-contract EXCLUDE_FROM_ALL tests/bodyimpact_contract.cpp)
   target_include_directories(gothic-bodyimpact-contract PRIVATE common)
   if(NOT MSVC)

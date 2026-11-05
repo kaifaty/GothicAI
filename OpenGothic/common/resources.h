@@ -107,6 +107,8 @@ class Resources final {
     static bool                      isHeadless() { return inst!=nullptr && inst->dev==nullptr; }
     static const char*               renderer();
     static void                      loadBase();
+    // The fingerprint of the selected game base (the one OPENGOTHIC_BASE_FINGERPRINT selects), empty before loadBase.
+    static std::string               selectedBaseFingerprint();
 
     static const Tempest::Sampler&   shadowSampler();
 
