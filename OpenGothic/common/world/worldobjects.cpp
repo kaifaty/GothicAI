@@ -1755,7 +1755,10 @@ void WorldObjects::resetPositionToTA() {
 
   for(size_t i=0;i<npcArr.size();) {
     auto& n = *npcArr[i];
-    LoadProbe::Startup::Detail::Scope detail("placement_npc",[&]{return owner.script().findSymbol(n.instanceSymbol())->name();});
+    LoadProbe::Startup::Detail::Scope detail("placement_npc",[&]{
+      const auto* symbol=owner.script().findSymbol(n.instanceSymbol());
+      return symbol!=nullptr ? symbol->name() : std::to_string(n.instanceSymbol());
+      });
     if(keepBodies && n.isDead() && !n.isPlayer()) {
       ++i;
       continue;
