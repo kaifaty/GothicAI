@@ -185,6 +185,13 @@ Gothic::Gothic() {
   // temporal AA by the camera (Renderer::setupSettings: also -taa 0 and OPENGOTHIC_TAA) and its sharpening, 0..1
   defaults->set("INTERNAL",     "taa", 1);
   defaults->set("INTERNAL",     "taaSharpness", 0.75f);
+  // VSM lamp shadows: the soft PCSS, or 0 hard in one gather (Renderer::setupSettings); hard on Metal, where the PCSS
+  // costs ~11 ms GPU indoors on an M1 Pro
+#if defined(__APPLE__)
+  defaults->set("INTERNAL",     "vsmLampSoft", 0);
+#else
+  defaults->set("INTERNAL",     "vsmLampSoft", 1);
+#endif
 
   defaults->set("VIDEO", "zVidBrightness", 0.5f);
   defaults->set("VIDEO", "zVidContrast",   0.5f);

@@ -198,6 +198,9 @@ void Shaders::compileShaders() noexcept {
     sh      = GothicShader::get(string_frm("light_vsm", materialMaps, ".frag.sprv"));
     fsLight = device.shader(sh.data,sh.len);
     lightsVsm = device.pipeline(Triangles, state, vsLight, fsLight);
+    sh      = GothicShader::get(string_frm("light_vsm_hard", materialMaps, ".frag.sprv"));
+    fsLight = device.shader(sh.data,sh.len);
+    lightsVsmHard = device.pipeline(Triangles, state, vsLight, fsLight);
     sh      = GothicShader::get(string_frm("light_vsm_probe", materialMaps, ".frag.sprv"));
     fsLight = device.shader(sh.data,sh.len);
     lightsVsmProbe = device.pipeline(Triangles, state, vsLight, fsLight);
