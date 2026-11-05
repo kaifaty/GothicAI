@@ -621,17 +621,20 @@ void MdlVisual::setQuiver(const Quiver::State& st, MeshObjects::Mesh&& body, std
   std::vector<size_t>  near    = quiv.near();
   std::vector<uint8_t> nearLeg = quiv.nearLeg();
   std::vector<size_t>  wide    = quiv.wide();
+  std::vector<size_t>  above   = quiv.above();
   if(!fit.valid || quiv.state().body!=st.body || quiv.state().skeleton!=st.skeleton) {
     std::vector<Quiver::SkinPoint> bind;
     quiverPoints(true,bind);
     fit = Quiver::fit(*skeleton,bind);
     Quiver::nearPoints(fit,*skeleton,bind,near,nearLeg);
     Quiver::widePoints(fit,*skeleton,bind,near,wide);
+    Quiver::abovePoints(fit,*skeleton,bind,above);
     quiverGround = QuiverGround();
     }
   quiv.set(st,fit,std::move(body),std::move(arrows),std::move(arrowLocal));
   quiv.setNear(std::move(near),std::move(nearLeg));
   quiv.setWide(std::move(wide));
+  quiv.setAbove(std::move(above));
   if(textureOwnerKnown)
     quiv.setTextureOwner(textureOwnerPosition,textureOwnerSpatial);
   syncAttaches();
@@ -804,8 +807,74 @@ bool MdlVisual::updateQuiver(const Npc& npc, uint64_t dt) {
   for(auto* att:{&bow,&sword})
     for(auto& p:carriedPoints(*att,att==&bow ? "ZS_BOW" : "ZS_LONGSWORD"))
       obs.push_back({p,p,0.f,Quiver::Carried});
+  // the lift (reports/archery/2026-11-05-quiver-reload): the bow aimed or the reload, the trunk (the armour's points
+  // over the mouth with their normals, the bind's turned by their bone) and the head (as BowDraw's: BIP01 HEAD to
+  // ZS_HELMET, 10 cm) push the arrows over the mouth; the reload's arrow drawn out takes the tube with it
+  Quiver::Lift lift;
+  {
+    const auto bs = npc.bodyStateMasked() & BS_MAX;
+    lift.aim = npc.weaponState()==WeaponState::Bow && (bs==BS_AIMNEAR || bs==BS_AIMFAR || bs==(BS_HIT & BS_MAX));
+    lift.out = lift.aim ? pose().bowDrawIk().drawOut() : -1.f;
+    }
+  if(lift.aim) {
+    if(const ProtoMesh* pm = view.protoMesh()) {
+      const auto& sv = pm->skinVertexData();
+      for(auto id:quiv.above()) {
+        if(id>=sv.size())
+          continue;
+        const auto& v = sv[id];
+        Vec3  p;
+        float weight = 0, most = 0;
+        size_t b = size_t(-1);
+        for(size_t r=0; r<4; ++r) {
+          if(!(v.weights[r]>0.f) || v.boneId[r]>=n)
+            continue;
+          Vec3 part(v.pos[r][0],v.pos[r][1],v.pos[r][2]);
+          bones[v.boneId[r]].project(part);
+          p      += part*v.weights[r];
+          weight += v.weights[r];
+          if(v.weights[r]>most) {
+            most = v.weights[r];
+            b    = v.boneId[r];
+            }
+          }
+        if(!(weight>0.f) || b>=sk.tr.size())
+          continue;
+        // the normal of the bind pose turned as its bone is: the bone now against the bone bound
+        Matrix4x4 turn = sk.tr[b];
+        turn.inverse();
+        turn = bones[b]*turn;
+        Vec3 nv(v.norm[0],v.norm[1],v.norm[2]), o(0,0,0);
+        turn.project(nv);
+        turn.project(o);
+        Quiver::Obstacle t;
+        t.a = t.b = p/weight;
+        t.kind = Quiver::Trunk;
+        t.n = Vec3::normalize(nv-o);
+        obs.push_back(t);
+        }
+      }
+    // the bench's: the drawing hand, the middle of its forearm and the arrow in it
+    const size_t hn = sk.findNode("BIP01 R HAND"), fn = sk.findNode("BIP01 R FOREARM"), sn = sk.findNode("ZS_RIGHTHAND");
+    if(hn<n && fn<n) {
+      auto at = [&](size_t i) { return Vec3(bones[i].at(3,0),bones[i].at(3,1),bones[i].at(3,2)); };
+      lift.hand   = true;
+      lift.handAt = at(hn);
+      lift.foreAt = (at(fn)+at(hn))*0.5f;
+      if(sn<n && pose().bowDrawIk().arrowInHand()) {
+        const Vec3 ax = Vec3::normalize(Vec3(-bones[sn].at(0,0),-bones[sn].at(0,1),-bones[sn].at(0,2)));
+        lift.arrow = true;
+        lift.nock  = at(sn)-ax*23.f;
+        lift.tip   = at(sn)+ax*71.f;
+        }
+      }
+    const size_t hd = sk.findNode("BIP01 HEAD"), cr = sk.findNode("ZS_HELMET");
+    if(hd<n && cr<n)
+      obs.push_back({Vec3(bones[hd].at(3,0),bones[hd].at(3,1),bones[hd].at(3,2)),
+                     Vec3(bones[cr].at(3,0),bones[cr].at(3,1),bones[cr].at(3,2)),10.f,Quiver::Head});
+    }
   const size_t spine = spineBone;
-  quiv.step(bones[quiv.bone()],bones[spine],obs,float(dt)*0.001f,ground);
+  quiv.step(bones[quiv.bone()],bones[spine],obs,float(dt)*0.001f,ground,lift);
   quiverStepUs = float(std::chrono::duration<double,std::micro>(std::chrono::steady_clock::now()-t0).count());
   quiverCpuUs  = float(threadCpuUs(cpuOn)-cpu0);
   return true;

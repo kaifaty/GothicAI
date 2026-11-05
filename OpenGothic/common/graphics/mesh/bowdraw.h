@@ -158,6 +158,11 @@ class BowDraw final {
     // back and to the face again) would have it: moved only to be seen. The aim takes the arrow from where
     // it would be without it, so the release changes the look, not the shots (world, cm)
     Tempest::Vec3  seenOnly() const { return seen; }
+    // the reload's arrow drawn out of the quiver: cm from where it stood (its tip TipDepth under the mouth), while its tip
+    // is in the tube; -1: none (the quiver's lift follows it)
+    float          drawOut() const { return drawn; }
+    bool           arrowInHand() const { return inHand; }
+    static constexpr float TipDepth = 66.f;
 
     // Moves the smoothed state toward the input; true if the pose has to be rebuilt
     bool           update(const Input& in);
@@ -276,6 +281,9 @@ class BowDraw final {
     bool                            ownHeld = false; // ownRel taken this frame
     float                           qFollow = 0;
     Probe                           rq;              // measureReload
+    float                           drawn = -1;
+    bool                            leadFrozen = false; // the arrow's tip out of the tube: the lead to the quiver
+    Tempest::Matrix4x4              lead;               // the quiver as it was then (it comes back without the hand)
 
     // from the last pose
     float               span   = 0;

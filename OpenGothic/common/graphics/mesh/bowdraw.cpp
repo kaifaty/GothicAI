@@ -73,6 +73,10 @@ bool quiverReload = []() {
 
 // the trunk for the reload's bench: an upright elliptic cylinder round the spine from the pelvis to the chest's
 // top (cm, half its width and depth, the naked body; reports/archery/2026-11-05-quiver-reload)
+// the arrow's mesh (ITRW_ARROW, 94 cm): its nock and tip from the slot it sits in (the reload's bench; the follow
+// through keeps G2's NockBack, TipAhead)
+constexpr float ArrowNock = 23.f;
+constexpr float ArrowTip  = 71.f;
 constexpr float TrunkWide = 15.f;
 constexpr float TrunkDeep = 11.f;
 constexpr float TrunkTop  = 15.f; // cm up the spine over BIP01 SPINE2 (the shoulders are over it: not counted)
@@ -872,10 +876,17 @@ void BowDraw::ownReload(Matrix4x4* tr, size_t numBones, const Vec3& nock, const 
     }
   // the quiver as it hangs (the give, the gait's turn, the armour's push) against the one the clip reaches
   qFollow = p<OwnOut ? smooth((p-OwnLeave)/(OwnGrab-OwnLeave)) : 1.f-smooth((p-OwnOut)/(OwnShelf-OwnOut));
+  // the arrow's tip out of the tube (past K3): the quiver goes back alone, the hand keeps the lead it had
+  if(p<OwnTake || (rq.own && rq.tipIn>0.f))
+    leadFrozen = false;
+  else if(p>=OwnOut-0.1f && rq.own && rq.tipIn<=0.f && !leadFrozen && quiverKnown) {
+    leadFrozen = true;
+    lead       = quiverNow;
+    }
   if(quiverKnown && qFollow>0.f) {
     Matrix4x4 clip = nk*blend(none,turnFull,wArm)*quiverOfNeck;
     clip.inverse();
-    const Matrix4x4 lead = tr[pelvis]*quiverNow*clip;
+    const Matrix4x4 lead = tr[pelvis]*(leadFrozen ? this->lead : quiverNow)*clip;
     const Matrix4x4 led  = blend(compose(turn,at),lead*compose(turn,at),qFollow);
     at   = position(led);
     turn = rotationOf(led);
@@ -895,6 +906,7 @@ void BowDraw::ownReload(Matrix4x4* tr, size_t numBones, const Vec3& nock, const 
 
 void BowDraw::measureReload(const Matrix4x4* tr, size_t numBones) {
   rq = Probe();
+  drawn = -1;
   rq.own    = holding && own && ownHeld;
   rq.reload = holding ? reloadP : -1.f;
   rq.led    = rq.own ? qFollow : 0.f;
@@ -911,8 +923,8 @@ void BowDraw::measureReload(const Matrix4x4* tr, size_t numBones) {
   rq.foreAt     = in(position(tr[fore]));
   const Vec3 ax = arrowAxis(tr[slot]);
   const Vec3 sl = position(tr[slot]);
-  rq.arrowNock  = in(sl-ax*NockBack);
-  rq.arrowTip   = in(sl+ax*TipAhead);
+  rq.arrowNock  = in(sl-ax*ArrowNock);
+  rq.arrowTip   = in(sl+ax*ArrowTip);
   if(hasString && bowHand<numBones) {
     Vec3 rest, pull;
     stringNow(tr,rest,pull);
@@ -962,7 +974,7 @@ void BowDraw::measureReload(const Matrix4x4* tr, size_t numBones) {
   rq.tubeHand = tube(hw);
   rq.tubeFore = along(fw,hw,tube);
   if(inHand) {
-    const Vec3 tip = sl+ax*TipAhead, nk = sl-ax*NockBack;
+    const Vec3 tip = sl+ax*ArrowTip, nk = sl-ax*ArrowNock;
     rq.tipIn = dot(tip-mouth,down);
     if(rq.tipIn>0.f) {
       // the arrow's points under the mouth: how far off the axis
@@ -975,5 +987,7 @@ void BowDraw::measureReload(const Matrix4x4* tr, size_t numBones) {
         }
       rq.offAxis = off;
       }
+    if(rq.own && rq.tipIn>0.f && reloadP>=OwnTake-0.02f && reloadP<OwnShelf)
+      drawn = std::max(0.f,TipDepth-rq.tipIn);
     }
   }

@@ -3,7 +3,7 @@
     python3 scripts/content/anim/reload_quiver.py <base>/models <reload.json> <out dir> [content dir]
 
 Plan, keys and acceptance: reports/archery/2026-11-05-quiver-reload/README.md (the idea:
-reports/archery/2026-11-04-reload-from-quiver). Each clip is the talent step's aim (`S_BOWSHOOT`, held still) with
+reports/archery/2026-11-04-reload-from-quiver). Each clip is the talent step's aim (`C_BOW_5` of `S_BOWAIM`, held still) with
 the right arm (clavicle to finger, the arrow's slot ZS_RIGHTHAND) and the head of our own: the hand goes from the
 ear after the shot to the quiver behind the right hip, takes an arrow by its fletching, draws it out straight along
 the quiver's axis, lays it on the bow hand, slides back to the nock and takes the string. The engine plays it as
@@ -80,11 +80,12 @@ def seg_dist(p, a, b) -> float:
 
 
 class Stance:
-    """The talent step's aim (S_BOWSHOOT): world transforms, local ones, the quiver at rest on its pelvis."""
+    """The talent step's aim (C_BOW_5): world transforms, local ones, the quiver at rest on its pelvis."""
 
     def __init__(self, models: Path, level: str, spec: dict):
         skel0 = ga.read_skeleton(models / "HUMANS.MDH.json")
-        self.anim = ga.read_animation(models / f"{level}-S_BOWSHOOT.MAN.json")
+        # the aim the game holds: S_BOWAIM straight ahead (C_BOW_5), drawn
+        self.anim = ga.read_animation(models / f"{level}-C_BOW_5.MAN.json")
         self.skel = rs.with_offsets(skel0, self.anim)
         self.gi = {n.name: i for i, n in enumerate(self.skel.nodes)}
         self.world = ga.world_pose(self.skel, self.anim, 0)
@@ -93,7 +94,11 @@ class Stance:
             self.local[self.skel.nodes[node].name] = ga.sample_matrix(self.anim.positions[0, col], self.anim.rotations[0, col])
         self.chest = self.W("BIP01 SPINE2")
         self.chest_inv = np.linalg.inv(self.chest)
-        self.quiver = self.W("BIP01 PELVIS") @ quiver_local(skel0, models, spec["quiver"])
+        # the quiver as the arrow is drawn out of it: turned round the ring onto the line (Quiver::ReloadTurnX, Z)
+        q = spec["quiver"]
+        turn = np.eye(4)
+        turn[:3, :3] = swing_of(axis_of_angle(q.get("turn", [0.0, 0.0])))
+        self.quiver = self.W("BIP01 PELVIS") @ quiver_local(skel0, models, q) @ turn
         self.span = float(spec["span"])
         arrow = spec["arrow"]
         self.nock_back, self.tip_ahead = float(arrow["nock_back"]), float(arrow["tip_ahead"])
@@ -123,6 +128,25 @@ class Stance:
         local = self.local["BIP01 HEAD"].copy()
         local[:3, :3] = local[:3, :3] @ rot_y(pitch)
         return self.W("BIP01 NECK") @ local
+
+
+def axis_of_angle(a) -> np.ndarray:
+    """Quiver's axisOfAngle: the bottom's way in the rest frame for a turn by its angle across (x, z radians)."""
+    x, z = float(a[0]), float(a[1])
+    ln = np.hypot(x, z)
+    if ln < 1e-9:
+        return np.array([0.0, -1.0, 0.0])
+    return np.array([np.sin(ln) * x / ln, -np.cos(ln), np.sin(ln) * z / ln])
+
+
+def swing_of(axis) -> np.ndarray:
+    """The rotation taking the rest's bottom (0, -1, 0) to the axis about their common normal (Quiver's swingOf)."""
+    f, t = np.array([0.0, -1.0, 0.0]), unit(axis)
+    k = np.cross(f, t)
+    s = np.linalg.norm(k)
+    if s < 1e-9:
+        return np.eye(3)
+    return axis_rot(k / s, np.degrees(np.arctan2(s, np.dot(f, t))))
 
 
 def quiver_local(skel0: ga.Skeleton, models: Path, q: dict) -> np.ndarray:
@@ -166,6 +190,10 @@ def key_grip(st: Stance, key: dict) -> tuple[np.ndarray, np.ndarray]:
         d = st.aim_dir
         nock = st.aim_nock + d * (st.span + h.get("ahead", 0.0)) + np.asarray(h.get("offset", [0, 0, 0]), float)
         return nock + d * key["grip"], unit(d + np.asarray(h.get("tilt", [0, 0, 0]), float))
+    if kind == "arrow":
+        # the arrow measured in the game (chest frame): its nock and way; the nock `ahead` cm along it
+        d = unit(h["dir"])
+        return np.asarray(h["nock"], float) + d * (h.get("ahead", 0.0) + key.get("grip", 3.0)), d
     if kind == "point":
         return np.asarray(h["chest"], float), unit(h["dir"])
     raise ValueError(kind)
@@ -265,6 +293,31 @@ def build(st: Stance, lv: dict, spec: dict, name: str) -> tuple[ga.Animation, di
             tang[i] = ax * np.dot(cr, ax) * k["along"]
         else:
             tang[i] = cr * k.get("tension", 1.0)
+    # the hand's roll round the arrow at each key: the least twist of the wrist, near the key before's turn
+    hold0 = st.slot_aim.copy()
+    rolls = []
+    prev = None
+    for i, k in enumerate(keys):
+        if "roll" in k:
+            rolls.append(float(k["roll"]))
+            prev = grip_frame(st, pts[i], dirs[i], rolls[-1], ref_y)[:3, :3]
+            continue
+        best = None
+        for roll in range(-180, 180, 10):
+            fr = grip_frame(st, pts[i], dirs[i], float(roll), ref_y)
+            hold = hold0.copy()
+            g = k.get("grip", 3.0)
+            hold[:3, 3] = hold[:3, 3] + (hold[:3, :3] @ np.array([-1.0, 0, 0])) * (3.0 - g)
+            slot = fr.copy()
+            slot[:3, 3] = pts[i] + dirs[i] * (st.nock_back - g)
+            _, r, _ = arm.solve(st.chest @ (slot @ np.linalg.inv(hold)), st.chest[:3, :3] @ unit(k["elbow"]))
+            turn = 0.0 if prev is None else float(np.degrees(np.linalg.norm(rs.axis_angle(fr[:3, :3] @ prev.T))))
+            cost = r["twist"] + 0.3 * turn + 20.0 * max(r["miss"], 0.0)
+            if best is None or cost < best[0]:
+                best = (cost, float(roll), fr[:3, :3])
+        rolls.append(best[1])
+        prev = best[2]
+        k["roll"] = best[1]
     t = np.arange(frames) / fps
     p_of = t / total
     hk = np.array(lv["head"], float)
@@ -421,7 +474,7 @@ def main():
         report.update(checks(st, full, lv, spec))
         dst = out / level / f"{level}-{NAME}.MAN.json"
         dst.parent.mkdir(parents=True, exist_ok=True)
-        ga.write_animation(dst, full, source=f"reload_quiver over {level}-S_BOWSHOOT")
+        ga.write_animation(dst, full, source=f"reload_quiver over {level}-C_BOW_5")
         print(level, NAME, json.dumps(report))
         if content:
             g2 = next(a for a in json.loads((models / f"{level}.MSB.json").read_text())["data"]["animations"]
