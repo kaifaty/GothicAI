@@ -533,14 +533,17 @@ if(NOT ANDROID AND NOT IOS)
     target_compile_options(gothic-society-export-contract PRIVATE -Wall -Wconversion -Werror)
   endif()
   # The society stand's core over that export (docs/society-sim.md, «Интерфейсы → 2»): loads it, plays a day by
-  # the routine and checks the 5-minute marks, the journal's repeat and snapshot, the speed and gothic-society-day.
+  # the routine and checks the 5-minute marks, the journal's repeat and snapshot, the speed and gothic-society-day;
+  # then the same with the needs of data/society/config.json.
   if(TARGET gothic-body-runner)
     add_executable(gothic-society-core-contract EXCLUDE_FROM_ALL tests/society_core_contract.cpp)
     add_dependencies(gothic-society-core-contract gothic-body-runner gothic-society-day)
     target_link_libraries(gothic-society-core-contract PRIVATE society-core)
+    get_filename_component(SOCIETY_CONFIG_FILE "${CMAKE_CURRENT_SOURCE_DIR}/../data/society/config.json" ABSOLUTE)
     target_compile_definitions(gothic-society-core-contract PRIVATE
       SOCIETY_RUNNER="$<TARGET_FILE:gothic-body-runner>"
-      SOCIETY_DAY="$<TARGET_FILE:gothic-society-day>")
+      SOCIETY_DAY="$<TARGET_FILE:gothic-society-day>"
+      SOCIETY_CONFIG="${SOCIETY_CONFIG_FILE}")
     target_compile_options(gothic-society-core-contract PRIVATE -Wall -Wconversion -Werror)
   endif()
   add_executable(gothic-bodyimpact-contract EXCLUDE_FROM_ALL tests/bodyimpact_contract.cpp)

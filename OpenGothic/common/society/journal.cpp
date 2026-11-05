@@ -44,8 +44,9 @@ void minutes(std::string& out, Time seconds) {
 namespace Journal {
 
 std::string header(const World& w, uint64_t seed) {
+  const size_t needs = needCount(w);
   std::string out(Magic,sizeof(Magic));
-  put(out,Version);
+  put(out,needs>0 ? NeedsVersion : Version);
   put(out,RecordBytes);
   put(out,w.exportHash);
   put(out,seed);
@@ -56,6 +57,14 @@ std::string header(const World& w, uint64_t seed) {
   for(const auto& name:w.stateNames) {
     put(out,uint16_t(name.size()));
     out += name;
+    }
+  if(needs==0)
+    return out;
+  put(out,w.config.hash);
+  put(out,uint32_t(needs));
+  for(const auto& id:w.config.needs.id) {
+    put(out,uint16_t(id.size()));
+    out += id;
     }
   return out;
   }
@@ -78,14 +87,18 @@ void append(std::string& out, std::span<const Event> events) {
 
 namespace Marks {
 
-std::string header() {
-  return "t_min,key,routine,state,moving,point,to,arrive_min,x,y,z\n";
+std::string header(const World& w) {
+  std::string out = "t_min,key,routine,state,moving,point,to,arrive_min,x,y,z";
+  for(const auto& id:w.config.needs.id)
+    out += ",need_"+id;
+  return out+"\n";
   }
 
 void append(std::string& out, Sim& sim) {
   const auto& w = *sim.world;
   const auto& s = sim.s;
   const Time  start = w.startTime();
+  const size_t needs = s.needSince.empty() ? 0 : needCount(w);
   char t[32];
   const int tn = std::snprintf(t,sizeof(t),"%lld,",(long long)((s.now-start)/60));
   for(uint32_t i=0; i<w.npcs.size(); ++i) {
@@ -124,8 +137,18 @@ void append(std::string& out, Sim& sim) {
       out += "-,-";
       }
     char pos[96];
-    const int pn = std::snprintf(pos,sizeof(pos),",%.1f,%.1f,%.1f\n",double(at[0]),double(at[1]),double(at[2]));
+    const int pn = std::snprintf(pos,sizeof(pos),",%.1f,%.1f,%.1f",double(at[0]),double(at[1]),double(at[2]));
     out.append(pos,size_t(pn));
+    for(size_t k=0; k<needs; ++k) {
+      if(!w.npcs.person[i]) {
+        out += ",-";
+        continue;
+        }
+      char level[32];
+      const int ln = std::snprintf(level,sizeof(level),",%.4f",needLevel(sim,i,k));
+      out.append(level,size_t(ln));
+      }
+    out += '\n';
     }
   }
 
