@@ -1,7 +1,7 @@
 #pragma once
 
 // The society stand's core (docs/society-sim.md, «Интерфейсы → 2. Ядро на C++»): a world of events over the
-// engine's `society-world` export (v1 or v2). It plays every NPC by its routine only, with the engine's rules
+// engine's `society-world` export (v1, v2 or v3). It plays every NPC by its routine only, with the engine's rules
 // measured against the npc-day-parity journal (scripts/society_parity.py): no needs, objects or decisions yet.
 // Folder rule (README.md here): the standard library and rapidjson only, nothing from the engine.
 
@@ -52,12 +52,12 @@ inline constexpr FollowState FollowStates[] = {{"ZS_GOTOBED","ZS_SLEEP"}};
 // The monster dispatcher: its state is the first window of the NPC's `mm_schedule` that holds the hour.
 inline constexpr const char* MmScheduler = "ZS_MM_ALLSCHEDULER";
 
-// The world that does not change during a run: everything of the export (v1 or v2), read once. Capacities are fixed.
+// The world that does not change during a run: everything of the export (v1, v2 or v3), read once. Capacities are fixed.
 // Every list keeps the export's order and ids: point = `waypoints[].id`, NPC = index in `npcs[]`, object =
 // `objects[].id`, routine entry = index in the NPC's `routine[]`.
 struct World {
   // Header.
-  int         version = 0;                   // of the export: 1 or 2
+  int         version = 0;                   // of the export: 1, 2 or 3
   std::string worldName, dataFingerprint, engineCommit, movementSource;
   int64_t     startDay = 0;
   int32_t     startMinute = 0;
@@ -68,6 +68,7 @@ struct World {
 
   struct Points {
     std::vector<std::string>          name;
+    std::vector<std::string>          room;      // v3 room name; "" for null or a v1/v2 export
     std::vector<std::array<float,3>>  pos;
     std::vector<uint8_t>              free;      // a freepoint (FP_*), not on the waynet
     std::vector<uint32_t>             graph;     // the waynet point: itself, or near_waypoint of a freepoint
@@ -83,12 +84,21 @@ struct World {
 
   struct Objects {
     std::vector<std::string>          vob, scheme, focus, ownerNpc, ownerGuild; // owners: "" for null
+    std::vector<std::string>          room; // v3 room name; "" for null or a v1/v2 export
     std::vector<std::array<float,3>>  pos;
     std::vector<uint32_t>             waypoint;
     std::vector<uint8_t>              container;
     size_t size() const { return vob.size(); }
     } objects;
   size_t containers = 0, ownedObjects = 0;
+
+  // v3: distinct room names used by points and objects, sorted; empty in v1/v2. Guild ownership is the room's
+  // explicit assignment, not the private owner's guild. No ownership is "" / -1.
+  struct Rooms {
+    std::vector<std::string> name, ownerNpc;
+    std::vector<int32_t>     ownerGuild;
+    size_t size() const { return name.size(); }
+    } rooms;
 
   struct Npcs {
     std::vector<std::string> id, key, name;
@@ -136,7 +146,7 @@ struct World {
   uint32_t entryIndex(uint32_t npc, uint16_t entry) const { return npcs.routineBegin[npc]+entry; }
   };
 
-// Reads the export (format "society-world", version 1 or 2); throws std::runtime_error with the reason.
+// Reads the export (format "society-world", version 1, 2 or 3); throws std::runtime_error with the reason.
 World loadWorld(const std::filesystem::path& exportPath);
 World parseWorld(std::string_view json);
 

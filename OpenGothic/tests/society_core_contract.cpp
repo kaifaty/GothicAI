@@ -178,8 +178,8 @@ void checkLoad(const Society::World& w, const Counts& c, double seconds) {
     }
   std::printf("export v%d: %zu NPCs with start_aistate, %zu with mm_schedule (%zu windows); people walk %.1f..%.1f cm/s\n",
               w.version,aistates,schedules,w.schedules.size(),slow,fast);
-  if(w.version!=2 || aistates==0 || schedules==0 || !(slow<fast))
-    fail("the export must be v2 with start_aistate, mm_schedule and the people's own walk speeds");
+  if(w.version!=3 || aistates==0 || schedules==0 || !(slow<fast))
+    fail("the export must be v3 with start_aistate, mm_schedule and the people's own walk speeds");
   }
 
 // --- Travel time -----------------------------------------------------------------------------------------
