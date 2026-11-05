@@ -34,6 +34,8 @@ constexpr uint32_t PushTicks = 3, RefusedTtl = 50;
 // for FailedTtl decisions (within FailedCm of it).
 constexpr float ReachedCm = 20.f, FailedCm = 25.f;
 constexpr uint32_t FailedTtl = 100;
+// Movable evidence at or above this byte was seen within ~3.5 s (exp(-t/5 s)).
+constexpr uint8_t FreshMovable = 128;
 
 float length(Point p) { return std::hypot(p.rightCm,p.forwardCm); }
 float distance(Point a,Point b) { return length({a.rightCm-b.rightCm,a.forwardCm-b.forwardCm}); }
@@ -274,13 +276,17 @@ float squareDistance(Point p,int index) {
 // The body testifies. No start cell means the memory holds a hazard on every
 // short way out of where the feet stand; the body stands there all the same.
 // The cells its footprint covers now, and covered along its own recent track,
-// are passable even where memory holds a static hazard (a person who may since
-// stand on the track is not). Other cells are passable when they hold no raw
-// hazard: the 15-cm margin is planning comfort, the capsule is 8.2 cm.
+// are passable even where memory holds a static hazard. Other cells are passable
+// when they hold no raw static hazard: the 15-cm margin is planning comfort, the
+// capsule is 8.2 cm. Movable evidence fades in 5 s: a cell seen with someone
+// in it in the last ~3.5 s (byte >= 128) is closed everywhere but under the
+// feet; an older one is a footprint since left, passable like a hazard.
 // The exit ends at a cell whose whole square is clear with the full margin, so
 // the next decision finds a start there: the one with the least exit cost plus
 // straight distance to the teacher's target (as A* would rank it), so that the
-// exit is chosen alike from neighbouring places. Live water keeps its stop.
+// exit is chosen alike from neighbouring places; once chosen, it is kept while
+// still reachable, so a step that lands short does not swap it. Live water
+// keeps its stop.
 class BodyExit final {
   public:
     BodyExit(const Input& input,const Grid& planner,const std::vector<Point>& ownTrack,const std::vector<Point>& pushed)
@@ -303,7 +309,8 @@ class BodyExit final {
       const auto& c=cell(in,i);
       if(liveWater(c)) return false;
       if(!dangerous(c) || testified[size_t(i)]==Footprint) return true;
-      return testified[size_t(i)]==Track && c.channels[6]==0;
+      if(c.channels[6]>=FreshMovable) return false;
+      return testified[size_t(i)]==Track || c.familiar!=0 || !familiarDanger(c);
       }
     bool passable(Point a,Point b) const {
       const int steps=std::max(1,int(std::ceil(distance(a,b)/(NearCell*.5f))));
@@ -314,8 +321,9 @@ class BodyExit final {
       return true;
       }
     // Origin first, then near cell centres up to the exit cell; empty if none within
-    // ExitCm. Exit cells within FailedCm of `failed` are not chosen.
-    std::vector<Point> path(Point target,const std::vector<Point>& failed) const {
+    // ExitCm. Exit cells within FailedCm of `failed` are not chosen; the reachable
+    // exit cell nearest to `keep` (within FailedCm) is kept.
+    std::vector<Point> path(Point target,const std::vector<Point>& failed,const Point* keep) const {
       std::vector<float> best(NearCount,Infinity),along(NearCount,Infinity);
       std::vector<int> parent(NearCount,-1);
       std::vector<uint8_t> closed(NearCount);
@@ -335,8 +343,8 @@ class BodyExit final {
       const auto goal=[&](int i) {
         return grid.available(i) && grid.clear(center(i),FootprintCm+NearCell*.5f);
         };
-      int chosen=-1;
-      float chosenScore=Infinity;
+      int chosen=-1,kept=-1;
+      float chosenScore=Infinity,keptDistance=FailedCm;
       while(!queue.empty()) {
         const int i=queue.top().index;queue.pop();
         if(closed[size_t(i)]) continue;
@@ -346,6 +354,9 @@ class BodyExit final {
           const bool refused=std::any_of(failed.begin(),failed.end(),[&](Point f) {return distance(f,center(i))<FailedCm;});
           const float score=best[size_t(i)]+distance(center(i),target);
           if(!refused && score<chosenScore) {chosenScore=score;chosen=i;}
+          if(!refused && keep!=nullptr && distance(*keep,center(i))<keptDistance) {
+            keptDistance=distance(*keep,center(i));kept=i;
+            }
           continue;
           }
         const int x=i%NearSize,z=i/NearSize;
@@ -364,6 +375,7 @@ class BodyExit final {
           queue.push({score,j});
           }
         }
+      if(kept>=0) chosen=kept;
       if(chosen<0) return {};
       std::vector<Point> result;
       for(int j=chosen;j>=0;j=parent[size_t(j)]) result.push_back(center(j));
@@ -397,11 +409,12 @@ class BodyExit final {
 // a turn would move every remembered cell of the body frame). Returns false
 // when there is no exit; then the teacher keeps its previous behaviour.
 bool bodyExitKeys(const Input& in,const Grid& grid,const std::vector<Point>& track,const std::vector<Point>& pushed,
-                  Point target,const std::vector<Point>& failed,NpcKeys::KeyState& out,float& exitCm,Point& exitCell) {
+                  Point target,const std::vector<Point>& failed,const Point* keep,NpcKeys::KeyState& out,
+                  float& exitCm,Point& exitCell) {
   exitCm=0;
   const BodyExit exit(in,grid,track,pushed);
   if(exit.waterNear()) return false;
-  const auto path=exit.path(target,failed);
+  const auto path=exit.path(target,failed,keep);
   if(path.size()<2) return false;
   exitCell=path.back();
   for(size_t i=1;i<path.size();++i) exitCm+=distance(path[i-1],path[i]);
@@ -696,7 +709,12 @@ NpcKeys::KeyState NavMemoryTeacher::decide(const Input& in) {
     latestPlanStatus.bodyExit=true;
     auto exit=out;
     exit.walk=true;
-    if(!bodyExitKeys(in,grid,track,pushed,target,failed,exit,latestPlanStatus.bodyExitCm,exitCell)) return false;
+    const Point kept=exitCell;
+    if(!bodyExitKeys(in,grid,track,pushed,target,failed,exitPending ? &kept : nullptr,exit,
+                     latestPlanStatus.bodyExitCm,exitCell)) {
+      exitPending=false;
+      return false;
+      }
     exitPending=true;
     stuckTicks=0;recoveryTicks=0;branch=Branch::BodyExit;keys=exit;
     return true;
