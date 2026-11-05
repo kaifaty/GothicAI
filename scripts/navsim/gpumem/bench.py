@@ -55,13 +55,15 @@ REMOTE_TASK = "gothic-ai/nav-sim-research/gpumem"
 HISTORY = 1024
 STEPS_PER_REPEAT = 30
 REFERENCE_FLAGS = ["-O2", "-DNDEBUG", "-std=gnu++20", "-fPIC", "-shared"]
-REFERENCE_SOURCES = ["tests/navsim_memory_ref.cpp", "common/navpolicy.cpp", "common/game/navigationmemory.cpp"]
+REFERENCE_SOURCES = ["tests/navsim_memory_ref.cpp", "common/navpolicy.cpp", "common/game/navigationmemory.cpp",
+                     "common/game/navigationpassage.cpp"]
 STAGED = (["scripts/navsim/gpumem/" + n for n in ("bench.py", "gpumem.py", "captures.py", "memory_kernels.h",
-                                                  "memory_cuda.cu", "memory_host.cpp")]
+                                                  "memory_cuda.cu", "memory_host.cpp", "passage_kernels.h",
+                                                  "passage_ref.cpp", "passage.py")]
           + ["scripts/nav_bc_model.py"]
           + ["OpenGothic/" + n for n in REFERENCE_SOURCES[1:] + ["tests/navsim_memory_ref.cpp"]]
           + ["OpenGothic/common/" + n for n in ("navpolicy.h", "navdemowriter.h", "navmemorycosttrace.h",
-                                                "game/navigationeye.h", "game/navigationmemory.h",
+                                                "game/navigationeye.h", "game/navigationmemory.h", "game/navigationpassage.h",
                                                 "game/npckeys.h")]
           + ["OpenGothic/lib/Tempest/Engine/include/Tempest/Vec", "OpenGothic/lib/Tempest/Engine/utility/utility.h"])
 
@@ -115,6 +117,8 @@ class Reference:
             lib.navref_next.argtypes = [ctypes.c_void_p] * 4 + [ctypes.POINTER(ctypes.c_uint64)]
             lib.navref_tanf.restype = ctypes.c_float
             lib.navref_tanf.argtypes = [ctypes.c_float]
+            lib.navref_passage.argtypes = [ctypes.c_void_p] * 2 + [ctypes.c_int64, ctypes.c_void_p]
+            lib.navref_passage_view.argtypes = [ctypes.c_void_p] * 3
             Reference.library = lib
         lib = Reference.library
         self.handle = lib.navref_open(str(capture).encode(), str(weights).encode(),
@@ -138,6 +142,17 @@ class Reference:
             raise RuntimeError(Reference.library.navref_error().decode())
         return result == 1
 
+    def passage(self, segments):
+        segments = np.ascontiguousarray(segments, np.float32)
+        verdicts = np.empty(len(segments), np.uint8)
+        Reference.library.navref_passage(self.handle, segments.ctypes.data, len(segments), verdicts.ctypes.data)
+        return verdicts
+
+    def passage_view(self):
+        pose, flags = np.empty(6, np.float32), np.empty(64 * 64 + 100 * 100, np.uint8)
+        Reference.library.navref_passage_view(self.handle, pose.ctypes.data, flags.ctypes.data)
+        return pose, flags
+
     def close(self):
         Reference.library.navref_close(self.handle)
 
@@ -147,7 +162,7 @@ def build_reference(source_root, output):
     root = Path(source_root) / "OpenGothic"
     command = ["g++", *REFERENCE_FLAGS, f"-I{root}/common", f"-I{root}/lib/Tempest/Engine/include",
                f"-I{root}/lib/Tempest/Engine", f"-I{root}/lib/rapidjson/include",
-               *[str(root / s) for s in REFERENCE_SOURCES], "-o", str(output)]
+               str(HERE / "passage_ref.cpp"), *[str(root / s) for s in REFERENCE_SOURCES[1:]], "-o", str(output)]
     subprocess.run(command, check=True)
     return " ".join(command)
 
