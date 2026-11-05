@@ -667,6 +667,30 @@ std::string bench(World& world,size_t wanted,const std::string& destination,size
 
 void KnownRoadsBench::reset() { state=State{}; }
 
+void KnownRoadsBench::writePackage(World& world,const std::string& places,
+                                 const std::vector<std::string>& selectors,const std::string& directory) {
+  auto previous=std::move(state);state=State{};
+  try {
+    tick(&world);state.directory=directory;
+    load(world,places);
+    std::ofstream out(std::filesystem::path(directory)/"actors.jsonl");
+    if(!out)throw std::runtime_error("cannot open roads package actors");
+    for(const auto& selector:selectors) {
+      enable(world,selector,false,{});
+      const auto& actor=tracked(world,selector);
+      out<<"{\"instance\":"<<quote(symbol(world,*actor.npc))<<",\"home_cm\":"<<vector(actor.spawn)
+         <<",\"stranger\":"<<(actor.knowledge.stranger?"true":"false")
+         <<",\"known_node_ids\":"<<maskJson(actor.knowledge.nodes)
+         <<",\"known_edge_ids\":"<<maskJson(actor.knowledge.edges)<<"}\n";
+    }
+    out.close();
+    if(!out)throw std::runtime_error("cannot write roads package actors");
+  } catch(...) {
+    state=std::move(previous);throw;
+  }
+  state=std::move(previous);
+}
+
 KnownRoads::Path KnownRoadsBench::readPath(World& world,const Npc& npc,const Vec3& goal,Vec3& next) {
   requireGraph();
   for(const auto& actor:state.actors) if(actor.npc==&npc && live(actor,world)) {

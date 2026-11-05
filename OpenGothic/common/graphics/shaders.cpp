@@ -102,6 +102,9 @@ void Shaders::compileShaders() noexcept {
   visibilityPassSh    = computeShader("visibility_pass.comp.sprv");
   visibilityPassHiZ   = computeShader("visibility_pass_hiz.comp.sprv");
   visibilityPassHiZCr = computeShader("visibility_pass_hiz_cr.comp.sprv");
+  visibilityPassShOrd    = computeShader("visibility_pass_ordered.comp.sprv");
+  visibilityPassHiZOrd   = computeShader("visibility_pass_hiz_ordered.comp.sprv");
+  visibilityPassHiZCrOrd = computeShader("visibility_pass_hiz_cr_ordered.comp.sprv");
 
   ssao                = computeShader("ssao.comp.sprv");
   ssaoBlur            = computeShader("ssao_blur.comp.sprv");

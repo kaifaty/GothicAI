@@ -1,6 +1,9 @@
 # Fixed performance viewpoints for Claude's comparison on Mac.
 # Run with OPENGOTHIC_VOB_STREAMING=0 and =1; wait for Far and texture publication.
+# Deterministic: the world stands still while `streaming wait` waits, then takes 16 fixed steps
+# from a fresh TAA history; two runs of one binary give byte-identical PNGs (scripts/bench/README.md).
 seed 73013
+deterministic on
 cheat god
 world-check NEWWORLD.ZEN
 set time 12 0

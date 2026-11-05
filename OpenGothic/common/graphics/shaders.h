@@ -100,6 +100,7 @@ class Shaders {
     // Cluster
     Tempest::ComputePipeline clusterInit, clusterPatch;
     Tempest::ComputePipeline visibilityPassSh, visibilityPassHiZ, visibilityPassHiZCr;
+    Tempest::ComputePipeline visibilityPassShOrd, visibilityPassHiZOrd, visibilityPassHiZCrOrd;
 
     // RT/RQ
     Tempest::RenderPipeline  rtDbg;
