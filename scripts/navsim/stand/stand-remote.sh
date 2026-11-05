@@ -22,10 +22,12 @@ trap release EXIT
 if [[ "$stage" == clean ]]; then ssh ryzen "rm -rf '$task'"; exit 0; fi
 src="$task/source"
 ssh ryzen "rm -rf '$src' && mkdir -p '$src'"
-# Only what the library and its checks read: the eye core, Tempest math, the stand, formats, gpumem layout.
+# Only what the library and its checks read: the eye core, Tempest math, Jolt (the library's motion, S2),
+# the stand, formats, gpumem layout.
 (cd "$root" && rsync -aR --exclude=__pycache__ --exclude=build \
   OpenGothic/common/game/navigationeye.h OpenGothic/common/game/navigationeye.cpp \
   OpenGothic/lib/Tempest/Engine/include/Tempest/Vec OpenGothic/lib/Tempest/Engine/utility/utility.h \
+  OpenGothic/lib/JoltPhysics \
   scripts/navsim/formats.py scripts/navsim/stand scripts/navsim/gpumem \
   scripts/tests/test_navsim_stand_eye.py "ryzen:$src/")
 export GQ_OWNER=nav-sim-stand
