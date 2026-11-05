@@ -1007,12 +1007,17 @@ void checkNeeds(const Society::World& w, const Day& day) {
     fail("needs: a day by the routine must cross thresholds");
   }
 
-// An empty config ("needs": []) on the game's data: the journal and the marks of the routine-only run byte for byte.
+// The config file with only its needs emptied ("needs": []) on the game's data: the journal and the marks of the
+// routine-only run byte for byte, though its states, object kinds and traits still name the needs.
 void checkEmptyNeeds(const fs::path& exportPath, const fs::path& root, const Day& plain) {
   const auto config = root/"empty-config.json";
   {
+    std::string text = read(SOCIETY_CONFIG);
+    const auto from = text.find("\"needs\":"), to = text.find("\"states\":");
+    need(from!=std::string::npos && to!=std::string::npos && from<to,"the config must list needs before states");
+    text.replace(from,to-from,"\"needs\": [],\n  ");
     std::ofstream out(config,std::ios::binary);
-    out << EmptyConfig;
+    out << text;
   }
   const auto w = Society::loadWorld(exportPath,config);
   Society::SimConfig sc;

@@ -624,10 +624,13 @@ void readConfig(World& w, std::string_view json, const std::filesystem::path& di
   need(version.IsInt() && version.GetInt()==1,"only version 1 is supported");
   c.version = version.GetInt();
   readNeeds(c,doc);
-  readStates(c,doc);
-  readObjectKinds(c,doc);
   std::unordered_map<std::string,std::vector<uint8_t>> cards;
-  readTraits(c,doc,dir,cards);
+  // "needs": [] turns the needs off: the sections that refer to them are not read.
+  if(c.needs.size()>0) {
+    readStates(c,doc);
+    readObjectKinds(c,doc);
+    readTraits(c,doc,dir,cards);
+    }
   applyConfig(w,cards);
   }
 
