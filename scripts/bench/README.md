@@ -319,6 +319,14 @@ Run through `BENCH_HOST=ryzen scripts/bench.sh own-mesh-fracture <absolute outpu
 [the report](../../reports/content/2026-10-own-meshes-fracture/README.md) records
 source identity, piece volume, native hits and original resource opens.
 
+`own-content-fracture` breaks the barrel and then the crate of a content set the same way,
+with before/after screenshots and a checkpoint of the pieces each. Run it with
+`WORLD=NEWWORLD.ZEN MOVABLE_VOBS=1 DESTRUCTION=1 GOTHIC_AI=0 OPENGOTHIC_TEXTURES=`,
+`OPENGOTHIC_CONTENT=<a copy of the working content>` and, for the originals,
+`OPENGOTHIC_CONTENT= OPENGOTHIC_FRACTURE=~/.local/share/gothic-ai/fracture`. Each
+`destruction2_melee_complete` event gives hits and pieces, `destruction_checkpoint` the
+`max_displacement_cm` of every piece: how far the prop fell apart.
+
 Corpse water: `water-bodies` records a real harbour WindFist throw, a dead wolf and a
 sinking skeleton, then saves `session-water-bodies.sav` and tries normal corpse loot
 from dry ground and while swimming. `water-bodies-shallow` observes a corpse on the

@@ -34,7 +34,8 @@ part (a prop's GLB with its `.convex-parts` and `.fracture` caches), particle de
 
 `enable SET` copies a staging set into the working content `~/.local/share/gothic-ai/content`, which
 the game reads by default; only on the user's word (gate `enable`). A movable table or cupboard GLB
-(`movable-vobs.csv`) needs its fresh `.convex-parts` first (`scripts/convex-parts.sh content <set>`).
+(`movable-vobs.csv`) needs its fresh `.convex-parts` first (`scripts/convex-parts.sh content <set>`),
+a destructible one (`destructible-vobs.csv`) its fresh `.fracture` (`scripts/fracture.sh content <set>`).
 """
 from __future__ import annotations
 
@@ -64,10 +65,15 @@ import remaster
 from seam_fix import seamless
 
 LUMINANCE = np.array([.2126, .7152, .0722])
-# Caches the engine reads beside an own GLB, checked by the GLB's size and CRC32 (docs/physics.md).
-SIDECARS = ('.convex-parts', '.fracture')
-# DynamicWorld loads offline convex parts only for these movable classes.
-COMPOUND_CLASSES = ('table', 'cupboard')
+# Caches the engine reads beside an own GLB, checked by the GLB's size and CRC32 (docs/physics.md):
+# suffix → header, the table of OpenGothic/data and its classes that need the cache, the command that cuts it.
+# DynamicWorld loads offline convex parts only for tables and cupboards; FractureMesh breaks a destructible
+# only with its pieces, and scripts/fracture.sh content cuts these four classes.
+CACHES = {
+    '.convex-parts': ('GOTHIC_CONVEX_PARTS 1', 'movable-vobs.csv', ('table', 'cupboard'), 'scripts/convex-parts.sh content'),
+    '.fracture': ('GOTHIC_FRACTURE 2', 'destructible-vobs.csv', ('crate', 'barrel', 'pot', 'fence'), 'scripts/fracture.sh content'),
+}
+SIDECARS = tuple(CACHES)
 MODES = ('target', 'group', 'match')
 
 
@@ -471,24 +477,30 @@ def compose(name: str, parts: list[str]) -> dict:
     return result
 
 
-def stale_convex_parts(content: Path) -> list[str]:
-    """Visuals of a content folder whose GLB is a movable table or cupboard without a fresh adjacent
-    `.convex-parts`: the engine would give them one hull instead of the compound."""
+def stale_caches(content: Path) -> dict[str, list[str]]:
+    """Visuals of a content folder by cache suffix whose GLB lacks a fresh adjacent cache it needs: without
+    `.convex-parts` a table or cupboard gets one hull instead of the compound, without `.fracture` a
+    destructible never breaks."""
     index = content / 'meshes/meshes.json'
     if not index.is_file():
-        return []
-    rules = [line.split(',')[:2] for line in (remaster.ROOT / 'OpenGothic/data/movable-vobs.csv').read_text().splitlines()
-             if line and not line.startswith('#')]
-    stale = []
-    for visual, entry in sorted(json.loads(index.read_text()).items()):
-        key = Path(visual).stem.upper()
-        if next((cls for pattern, cls in rules if fnmatch.fnmatchcase(key, pattern)), None) not in COMPOUND_CLASSES:
-            continue
-        glb = content / 'meshes' / entry['glb']
-        source, cache = glb.read_bytes(), glb.with_suffix('.convex-parts')
-        header = cache.read_text().splitlines()[:2] if cache.is_file() else []
-        if header != ['GOTHIC_CONVEX_PARTS 1', f'source {len(source)} {zlib.crc32(source):08x}']:
-            stale.append(key)
+        return {}
+    entries = sorted(json.loads(index.read_text()).items())
+    stale = {}
+    for suffix, (tag, table, classes, _) in CACHES.items():
+        rules = [line.split(',')[:2] for line in (remaster.ROOT / 'OpenGothic/data' / table).read_text().splitlines()
+                 if line and not line.startswith('#')]
+        for visual, entry in entries:
+            key = Path(visual).stem.upper()
+            if next((cls for pattern, cls in rules if fnmatch.fnmatchcase(key, pattern.upper())), None) not in classes:
+                continue
+            glb = content / 'meshes' / entry['glb']
+            source, cache = glb.read_bytes(), glb.with_suffix(suffix)
+            header = []
+            if cache.is_file():
+                with cache.open('rb') as stream:  # a .fracture runs to megabytes; only its first two lines matter
+                    header = [stream.readline().decode('ascii', 'replace').rstrip('\n') for _ in range(2)]
+            if header != [tag, f'source {len(source)} {zlib.crc32(source):08x}']:
+                stale.setdefault(suffix, []).append(key)
     return stale
 
 
@@ -496,13 +508,14 @@ def enable(name: str) -> dict:
     """Make the staging set `name` the game's working content: `<data>/content`, which the engine reads
     when OPENGOTHIC_CONTENT is unset. Its `materials/`, `meshes/`, `worlds/`, `particles.d/` and `vobtrees.d/` are replaced; other folders
     there stay; `enabled.json` records the set. Enabling is the user's decision (gate `enable`). A set whose
-    tables or cupboards lack a fresh `.convex-parts` is refused: the collision step cannot be skipped."""
+    tables or cupboards lack a fresh `.convex-parts`, or whose destructibles lack a fresh `.fracture`, is
+    refused: the collision and fracture steps cannot be skipped."""
     staging = remaster.data_root() / 'content-staging' / name
     if not (staging / 'materials/materials.json').is_file():
         raise ValueError(f'{staging}: no materials/materials.json')
-    if stale := stale_convex_parts(staging):
-        raise ValueError(f'{name}: no fresh .convex-parts for {", ".join(stale)}; '
-                         f'run scripts/convex-parts.sh content {staging}')
+    if stale := stale_caches(staging):
+        raise ValueError(f'{name}: ' + '; '.join(f'no fresh {suffix} for {", ".join(keys)}; run {CACHES[suffix][3]} {staging}'
+                                                 for suffix, keys in stale.items()))
     live = remaster.data_root() / 'content'
     incoming = live / '.enable'
     shutil.rmtree(incoming, ignore_errors=True)
