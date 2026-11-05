@@ -25,4 +25,13 @@ jobs:
       - name: Check debt growth
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: python3 scripts/debt.py check --base "$BASE_SHA"
+        run: |
+          # Measure the PR tree with the base's ratchet: a branch older than the ratchet has no `check`.
+          tool=$(mktemp -d)
+          if git show "$BASE_SHA:scripts/debt.py" > "$tool/debt.py" 2> /dev/null \
+              && git show "$BASE_SHA:scripts/debt.toml" > "$tool/debt.toml" 2> /dev/null \
+              && python3 "$tool/debt.py" check --help > /dev/null 2>&1; then
+            python3 "$tool/debt.py" check --base "$BASE_SHA"
+          else
+            echo "::warning title=Храповик техдолга::На базе PR в scripts/debt.py нет команды check; храповик пропущен."
+          fi
