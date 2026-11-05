@@ -35,6 +35,17 @@ const std::map<std::string,std::string> KnownMissingPoints = {
   {"NW_MONASTERY_SNACTUM_02","Garwig's (NOV_608_GARWIG) night entry: a typo of NW_MONASTERY_SANCTUM_02 in the scripts"},
   };
 
+// People whose routine in day_people.json is not the fresh world's. The dump is a SCENARIO=places game after the
+// start's dialog; the export, like the npc-day-parity journal it is compared with, is the world at day 0, 08:00.
+struct KnownDifference { const char* exportRoutine; const char* dayPeopleRoutine; const char* why; };
+const std::map<std::string,KnownDifference> KnownRoutineDifferences = {
+  {"NONE_100_XARDAS",{"480-1380 ZS_STAND_ARMSCROSSED NW_XARDAS_START; 1380-480 ZS_STAND_ARMSCROSSED NW_XARDAS_START;",
+                      "480-1380 ZS_READ_BOOKSTAND NW_XARDAS_TOWER_IN1_28; 1380-480 ZS_READ_BOOKSTAND NW_XARDAS_TOWER_IN1_28;",
+                      "Xardas starts with Rtn_PreStart_100; his first talk's exit (DIA_Xardas_FirstEXIT) calls "
+                      "Npc_ExchangeRoutine(self,\"START\"), the bookstand in the tower. The dump was taken after it, "
+                      "the npc-day-parity journal keeps PreStart all day"}},
+  };
+
 int failures = 0;
 
 void fail(const std::string& what) {
@@ -318,16 +329,21 @@ void checkObjects(const Value& doc, const std::vector<Waypoint>& points, const s
     }
   }
 
-// The record of a person as day_people.json has it: name, guild, routine entries (start, end, state, point name).
-std::string personRecord(const std::string& name, uint32_t guild, const Value& routine) {
-  std::string ret = name+" | guild "+std::to_string(guild)+" |";
+// Routine entries as text: start, end, state, point name.
+std::string routineRecord(const Value& routine) {
+  std::string ret;
   for(rapidjson::SizeType i=0; i<routine.Size(); ++i) {
     const auto& r = routine[i];
     // The export names the point in waypoint_name; day_people.json in waypoint.
-    ret += " "+std::to_string(integer(r,"start"))+"-"+std::to_string(integer(r,"end"))+" "+str(r,"state")+" "+
+    ret += (i==0 ? "" : " ")+std::to_string(integer(r,"start"))+"-"+std::to_string(integer(r,"end"))+" "+str(r,"state")+" "+
            str(r,r.HasMember("waypoint_name") ? "waypoint_name" : "waypoint")+";";
     }
   return ret;
+  }
+
+// The record of a person as day_people.json has it: name, guild, routine entries.
+std::string personRecord(const std::string& name, uint32_t guild, const Value& routine) {
+  return name+" | guild "+std::to_string(guild)+" | "+routineRecord(routine);
   }
 
 std::set<std::string> checkNpcs(const Value& doc, const std::vector<Waypoint>& points, const fs::path& dayPeoplePath) {
@@ -413,6 +429,15 @@ std::set<std::string> checkNpcs(const Value& doc, const std::vector<Waypoint>& p
     std::sort(b.begin(),b.end());
     if(a==b)
       continue;
+    if(auto known = KnownRoutineDifferences.find(s); known!=KnownRoutineDifferences.end() && a.size()==1 && b.size()==1) {
+      const auto tail = [](const std::string& r) { return r.substr(r.rfind(" | ")+3); };
+      const auto head = [](const std::string& r) { return r.substr(0,r.rfind(" | ")); };
+      if(head(a[0])==head(b[0]) && tail(a[0])==known->second.exportRoutine && tail(b[0])==known->second.dayPeopleRoutine) {
+        std::printf("  %s: known difference, the export has %s day_people.json has %s %s\n",s.c_str(),
+                    known->second.exportRoutine,known->second.dayPeopleRoutine,known->second.why);
+        continue;
+        }
+      }
     ++differences;
     std::printf("  %s:\n",s.c_str());
     for(const auto& r:b)
@@ -425,7 +450,7 @@ std::set<std::string> checkNpcs(const Value& doc, const std::vector<Waypoint>& p
   if(differences>0)
     fail(std::to_string(differences)+" people differ from day_people.json (listed above)");
   else
-    std::printf("people and routines match day_people.json record by record\n");
+    std::printf("people and routines match day_people.json record by record, but for the known differences above\n");
   return ids;
   }
 

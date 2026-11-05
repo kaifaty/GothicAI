@@ -202,7 +202,8 @@ Result build(World& world) {
     return std::tie(a.symbol,a.x,a.z,a.y,a.index)<std::tie(b.symbol,b.x,b.z,b.y,b.index);
     });
   std::vector<double> walk, run;
-  size_t people = 0, entries = 0, unresolved = 0, startNearest = 0;
+  size_t people = 0, entries = 0, unresolved = 0;
+  std::vector<std::string> startNearest;
   uint32_t ordinal = 0;
   for(size_t i=0; i<all.size(); ++i) {
     auto& npc = *all[i].npc;
@@ -212,14 +213,15 @@ Result build(World& world) {
     // Where the routine placement put it (Npc::resetPositionToTA: its routine point, or the next free one
     // when that is taken); the hero and anything without such a point: the nearest waynet point.
     auto start = idOf(npc.currentWayPoint());
+    const auto key = all[i].symbol+"#"+std::to_string(ordinal);
     if(!start) {
       start = nearestGraph(npc.position());
-      ++startNearest;
+      startNearest.push_back(key);
       }
     Buffer b; Writer w(b);
     w.StartObject();
     w.Key("id");             ascii(w,all[i].symbol);
-    w.Key("key");            ascii(w,all[i].symbol+"#"+std::to_string(ordinal));
+    w.Key("key");            ascii(w,key);
     w.Key("name");           text(w,npc.displayName());
     w.Key("guild");          w.Uint(npc.guild());
     w.Key("person");         w.Bool(person);
@@ -301,14 +303,17 @@ Result build(World& world) {
   list("objects",objects,false);
   list("npcs",npcs,true);
 
+  std::string nearest;
+  for(const auto& k:startNearest)
+    nearest += (nearest.empty() ? "" : " ")+k;
   char summary[512];
   std::snprintf(summary,sizeof(summary),
                 "waypoints=%zu (freepoints %zu) edges=%zu objects=%zu (containers %zu, owned %zu) npcs=%zu "
                 "(people %zu, routine entries %zu, unresolved points %zu, start by nearest point %zu) "
                 "walk=%.1f run=%.1f cm/s",
                 waypoints.count,freepoints,edges.count,objects.count,containers,owned,npcs.count,people,entries,
-                unresolved,startNearest,median(walk),median(run));
-  ret.summary = summary;
+                unresolved,startNearest.size(),median(walk),median(run));
+  ret.summary = std::string(summary)+(nearest.empty() ? "" : "; start by nearest point: "+nearest);
   return ret;
   }
 
