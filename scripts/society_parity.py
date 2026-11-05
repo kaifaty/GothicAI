@@ -19,8 +19,8 @@ point; when it never does, the window stays open for the whole episode. The repo
 - the same two shares inside the windows;
 - travel time on transitions: for an episode whose window closes, the time from the entry's start until the
   NPC comes within 10 m of the point, for the engine and the core alike from their 5-minute positions (the
-  first mark inside 10 m and the one before it, the crossing interpolated linearly); the error is core minus
-  engine;
+  first mark inside 10 m and the one before it, the crossing interpolated linearly; the core's place at the
+  entry's start between the marks around it); the error is core minus engine;
 - the worst NPCs and states with the reason; for information, the state of the NPCs that are not people.
 
 With --check the exit code is 1 when a threshold (THRESHOLDS) fails.
@@ -232,8 +232,13 @@ def compare(world_path, core_dir, engine_dir):
                 open_windows[key][e.state] += len(e.marks)
                 continue
             # Travel time: from the entry's start until within 10 m, both from their 5-minute positions.
-            before = [t for t in times if t <= e.begin]
-            core_start = crows.get(before[-1])[3] if before and crows.get(before[-1]) else None
+            # The core's place at the entry's start: between the marks around it, as it may be on the way.
+            before = [t for t in times if t <= e.begin and t in crows]
+            after = [t for t in times if t > e.begin and t in crows]
+            core_start = crows[before[-1]][3] if before else None
+            if before and after and core_start is not None and crows[after[0]][3] is not None:
+                f = (e.begin - before[-1]) / (after[0] - before[-1])
+                core_start = tuple(a + (b - a) * f for a, b in zip(core_start, crows[after[0]][3], strict=True))
             engine_samples = [(e.begin, e.origin)] + [(t, erows[t][2]) for t in e.marks]
             t_engine = crossing(engine_samples, target)
             later = [t for t in times if t > e.begin]

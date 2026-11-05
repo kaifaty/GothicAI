@@ -9,7 +9,7 @@
 | person-marks of the day missing in a run | 0 | <= 0 | pass |
 | same ZS_* outside the windows | 99.76% | >= 95.00% | pass |
 | within 10 m outside the windows, without self-moving states | 99.77% | >= 90.00% | pass |
-| travel time error on transitions, median |core − engine|, game min | 0.38 | <= 2.00 | pass |
+| travel time error on transitions, median |core − engine|, game min | 0.39 | <= 2.00 | pass |
 
 | Marks | Count | Same ZS_* | Within 10 m (count) |
 |---|---|---|---|
@@ -23,7 +23,7 @@
 | self-moving `ZS_RAKE_FP`, outside | 1500 | 99.93% | 100.00% — not in the place check: rakes from free point to free point (AI_GotoNextFP) |
 | self-moving `ZS_SWEEP_FP`, outside | 190 | 100.00% | 100.00% — not in the place check: sweeps from free point to free point (AI_GotoNextFP) |
 
-Travel time on transitions: 531 (the core never came within 10 m: 0); |core − engine| median 0.38 min, p90 2.17 min; signed median -0.25 min; engine's median travel 7.05 min.
+Travel time on transitions: 531 (the core never came within 10 m: 0); |core − engine| median 0.39 min, p90 2.17 min; signed median -0.26 min; engine's median travel 7.05 min.
 
 ## NPCs that differ most (outside the windows)
 
@@ -136,8 +136,8 @@ Not people (monsters, without the hero and the dead or the moment of a state cha
 | SLD_816_FESTER#0 | 540.0 | ZS_PRACTICE_SWORD | NW_BIGFARM_ALLEE_04 | 22.73 | 7.79 |
 | SLD_816_FESTER#0 | 660.0 | ZS_PRACTICE_SWORD | NW_BIGFARM_ALLEE_04 | 22.5 | 7.79 |
 | SLD_816_FESTER#0 | 1380.0 | ZS_PRACTICE_SWORD | NW_BIGFARM_ALLEE_04 | 21.91 | 7.79 |
+| MIL_330_MILIZ#0 | 780.99 | ZS_SMALLTALK | NW_CITY_KASERN_BARRACK02_02 | 16.41 | 2.51 |
 | PAL_216_CEDRIC#0 | 660.0 | ZS_GOTOBED | NW_CITY_LEOMAR_BED_03 | 22.21 | 8.56 |
-| MIL_330_MILIZ#0 | 780.99 | ZS_SMALLTALK | NW_CITY_KASERN_BARRACK02_02 | 16.41 | 2.81 |
 | PAL_209_PALADIN#0 | 662.0 | ZS_SMALLTALK | NW_CITY_UPTOWN_HUT_03_01_B | 18.17 | 6.13 |
 | SLD_816_FESTER#0 | 120.0 | ZS_PRACTICE_SWORD | NW_BIGFARM_ALLEE_02 | 19.71 | 7.79 |
 | SLD_816_FESTER#0 | 240.0 | ZS_PRACTICE_SWORD | NW_BIGFARM_ALLEE_02 | 19.55 | 7.79 |

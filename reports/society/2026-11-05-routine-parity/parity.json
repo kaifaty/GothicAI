@@ -82,9 +82,9 @@
  "travel": {
   "transitions": 531,
   "core_missing": 0,
-  "median_abs_min": 0.379999999999999,
+  "median_abs_min": 0.3900000000000001,
   "p90_abs_min": 2.17,
-  "median_signed_min": -0.25,
+  "median_signed_min": -0.26,
   "engine_median_min": 7.05
  },
  "open_windows": {
@@ -1114,20 +1114,20 @@
    "core_min": 7.79
   },
   {
+   "key": "MIL_330_MILIZ#0",
+   "begin": 780.99,
+   "state": "ZS_SMALLTALK",
+   "point": "NW_CITY_KASERN_BARRACK02_02",
+   "engine_min": 16.41,
+   "core_min": 2.51
+  },
+  {
    "key": "PAL_216_CEDRIC#0",
    "begin": 660.0,
    "state": "ZS_GOTOBED",
    "point": "NW_CITY_LEOMAR_BED_03",
    "engine_min": 22.21,
    "core_min": 8.56
-  },
-  {
-   "key": "MIL_330_MILIZ#0",
-   "begin": 780.99,
-   "state": "ZS_SMALLTALK",
-   "point": "NW_CITY_KASERN_BARRACK02_02",
-   "engine_min": 16.41,
-   "core_min": 2.81
   },
   {
    "key": "PAL_209_PALADIN#0",
@@ -1209,7 +1209,7 @@
    "state": "ZS_SIT_CHAIR",
    "point": "NW_BIGFARM_STABLE_06",
    "engine_min": 0.0,
-   "core_min": 0.0
+   "core_min": 9.07
   },
   {
    "key": "BAU_903_BODO#0",
@@ -1825,7 +1825,7 @@
    "state": "ZS_GOTOBED",
    "point": "NW_CITY_BARRACK01_BED_RUGA",
    "engine_min": 1.69,
-   "core_min": 1.12
+   "core_min": 0.0
   },
   {
    "key": "MIL_315_KASERNENWACHE#0",
@@ -2521,7 +2521,7 @@
    "state": "ZS_SMALLTALK",
    "point": "NW_CITY_KASERN_BARRACK02_02",
    "engine_min": 16.41,
-   "core_min": 2.81
+   "core_min": 2.51
   },
   {
    "key": "MIL_330_MILIZ#0",
@@ -2873,7 +2873,7 @@
    "state": "ZS_STAND_GUARDING",
    "point": "SHIP_DECK_15",
    "engine_min": 6.91,
-   "core_min": 0.0
+   "core_min": 6.92
   },
   {
    "key": "PAL_226_SCHIFFSWACHE#0",
@@ -4049,7 +4049,7 @@
    "state": "ZS_SMALLTALK",
    "point": "NW_CITY_UPTOWN_PATH_08",
    "engine_min": 0.35,
-   "core_min": 0.25
+   "core_min": 0.0
   },
   {
    "key": "VLK_405_FERNANDO#0",
@@ -4433,7 +4433,7 @@
    "state": "ZS_COOK_STOVE",
    "point": "NW_CITY_HABOUR_POOR_AREA_HUT_04_BED_01",
    "engine_min": 2.18,
-   "core_min": 1.96
+   "core_min": 0.48
   },
   {
    "key": "VLK_438_ALRIK#0",
@@ -4633,7 +4633,7 @@
    "state": "ZS_SMALLTALK",
    "point": "NW_CITY_MERCHANT_SHOP01_FRONT_03",
    "engine_min": 2.26,
-   "core_min": 2.11
+   "core_min": 1.48
   },
   {
    "key": "VLK_451_BUERGER#0",
@@ -4649,7 +4649,7 @@
    "state": "ZS_SMALLTALK",
    "point": "NW_CITY_MERCHANT_SHOP01_FRONT_03",
    "engine_min": 2.25,
-   "core_min": 2.11
+   "core_min": 1.47
   },
   {
    "key": "VLK_451_BUERGER#0",
@@ -5464,7 +5464,7 @@
    "pass": true
   },
   "travel_median_abs_min": {
-   "value": 0.379999999999999,
+   "value": 0.3900000000000001,
    "limit": 2.0,
    "op": "<=",
    "pass": true

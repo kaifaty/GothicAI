@@ -54,3 +54,10 @@ def test_cut_core_fails_coverage_and_travel(tmp_path):
     assert r["missing_marks"] == 1 and not r["checks"]["missing_marks"]["pass"]
     assert r["travel"]["core_missing"] == 1 and r["travel"]["median_abs_min"] is None
     assert not r["checks"]["travel_median_abs_min"]["pass"]
+
+
+def test_core_start_between_marks(tmp_path):
+    # At 08:00 the core stands near B, by 08:05 it is back at A: at the entry's start (08:04:59.94) it is near A,
+    # so its walk to B is not taken as already done.
+    r = write(tmp_path, [(0, "ZS_STAND", 9500), *CORE[1:]])
+    assert r["travel"]["transitions"] == 1 and r["travel"]["median_abs_min"] < 0.01
