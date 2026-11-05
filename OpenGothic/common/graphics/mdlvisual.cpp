@@ -1067,7 +1067,7 @@ void MdlVisual::stopEffect(int32_t slot) {
     }
   }
 
-void MdlVisual::setNpcEffect(World& owner, Npc& npc, std::string_view s, zenkit::NpcFlag flags) {
+void MdlVisual::setNpcEffect(World& owner, Npc& npc, std::string_view s, daedalus::NpcFlag flags) {
   if(hnpcVisualName!=s) {
     hnpcVisualName = s;
     auto vfx = Gothic::inst().loadVisualFx(s);
@@ -1083,7 +1083,7 @@ void MdlVisual::setNpcEffect(World& owner, Npc& npc, std::string_view s, zenkit:
     hnpcVisual.view.setMesh(&view);
     }
 
-  const bool nextGhost = (flags & zenkit::NpcFlag::GHOST);
+  const bool nextGhost = (flags & daedalus::NpcFlag::GHOST);
   if(hnpcFlagGhost!=nextGhost) {
     hnpcFlagGhost=nextGhost;
     view.setAsGhost(hnpcFlagGhost);
@@ -1207,7 +1207,7 @@ void MdlVisual::setTorch(bool t, World& owner) {
   if(torchId==size_t(-1))
     return;
 
-  auto hitem = std::make_shared<zenkit::IItem>();
+  auto hitem = std::make_shared<daedalus::IItem>();
   owner.script().initializeInstanceItem(hitem, torchId);
   const auto* residency=owner.chunkResidency();
   Resources::TextureLoadScope textureLoadScope(textureOwnerKnown && textureOwnerSpatial && residency &&

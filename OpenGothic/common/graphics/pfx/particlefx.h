@@ -2,7 +2,7 @@
 
 #include <Tempest/RenderState>
 
-#include <zenkit/addon/daedalus.hh>
+#include "daedalus/classes.h"
 #include "game/definitions/definitiontypes.h"
 
 #include <Tempest/Texture2d>

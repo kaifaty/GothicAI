@@ -10,7 +10,7 @@
 #include <Tempest/Signal>
 #include <Tempest/Dir>
 
-#include <zenkit/DaedalusVm.hh>
+#include "daedalus/vm.h"
 
 #include "game/chronicle.h"
 #include "game/gamesession.h"
@@ -287,11 +287,11 @@ class Gothic final {
     // story graph: which dialogs an npc offers. Called while the dialog menu is built and by Npc_CheckInfo,
     // with self and other set as for the conditions.
     // a script dialog whose condition was checked: `visible` comes in as the script's answer
-    std::function<void(const zenkit::IInfo&,bool&)>                     dialogFilterFn;
+    std::function<void(const daedalus::IInfo&,bool&)>                     dialogFilterFn;
     // a choice of a script dialog (Info_AddChoice) about to be shown: false hides it
-    std::function<bool(const zenkit::IInfo&,int32_t)>                   dialogChoiceFilterFn;
+    std::function<bool(const daedalus::IInfo&,int32_t)>                   dialogChoiceFilterFn;
     // dialogs made at runtime that the npc offers now; `important` ones start on their own
-    std::function<void(const zenkit::INpc&,bool,std::vector<GameScript::DlgChoice>&)> dialogExtraFn;
+    std::function<void(const daedalus::INpc&,bool,std::vector<GameScript::DlgChoice>&)> dialogExtraFn;
     // one of those was chosen: play it
     std::function<void(const GameScript::DlgChoice&,Npc&,Npc&)>         dialogExtraExecFn;
     // the choices one of those offers now, after its lines (as Info_AddChoice's after a script dialog)
@@ -300,17 +300,17 @@ class Gothic final {
     Tempest::Signal<void(const GameScript::DlgChoice&,Npc&,Npc&)>       onDialogChosen;
     // a dialog's script function (its condition, its information or a choice) is about to run, self and other
     // set: true if the story graph ran it in place of the VM, a condition's answer in `result`
-    std::function<bool(zenkit::DaedalusSymbol&,int32_t&)>               dialogScriptFn;
+    std::function<bool(daedalus::DaedalusSymbol&,int32_t&)>               dialogScriptFn;
 
     std::string_view                      messageFromSvm(std::string_view id, int voice) const;
     std::string_view                      messageByName (std::string_view id) const;
     uint32_t                              messageTime   (std::string_view id) const;
 
     static std::u16string                 nestedPath(const std::initializer_list<const char16_t*> &name, Tempest::Dir::FileType type);
-    std::unique_ptr<zenkit::DaedalusVm>   createPhoenixVm(std::string_view datFile, const ScriptLang lang = ScriptLang::NONE);
-    zenkit::DaedalusScript                loadScript(std::string_view datFile, const ScriptLang lang);
-    void                                  setupCommonScriptClasses(zenkit::DaedalusScript &sc);
-    void                                  setupVmCommonApi(zenkit::DaedalusVm &vm);
+    std::unique_ptr<daedalus::DaedalusVm>   createPhoenixVm(std::string_view datFile, const ScriptLang lang = ScriptLang::NONE);
+    daedalus::DaedalusScript                loadScript(std::string_view datFile, const ScriptLang lang);
+    void                                  setupCommonScriptClasses(daedalus::DaedalusScript &sc);
+    void                                  setupVmCommonApi(daedalus::DaedalusVm &vm);
 
     static const FightAi&                 fai();
     static const SoundDefinitions&        sfx();

@@ -8,7 +8,7 @@
 #include "game/serialize.h"
 
 using namespace Tempest;
-using zenkit::DaedalusDataType;
+using daedalus::DaedalusDataType;
 
 static constexpr uint8_t SaveFormat = 1;
 
@@ -19,7 +19,7 @@ static std::string upper(std::string_view s) {
   return r;
   }
 
-OwnSymbols::OwnSymbols(zenkit::DaedalusVm& vm)
+OwnSymbols::OwnSymbols(daedalus::DaedalusVm& vm)
   :vm(vm) {
   }
 
@@ -31,7 +31,7 @@ const OwnSymbols::Entry* OwnSymbols::find(std::string_view name) const {
   return nullptr;
   }
 
-zenkit::DaedalusSymbol* OwnSymbols::likeOf(uint32_t index) {
+daedalus::DaedalusSymbol* OwnSymbols::likeOf(uint32_t index) {
   for(auto& e:list)
     if(e.index==index)
       return e.kind==Kind::Npc ? vm.find_symbol_by_name(e.like) : nullptr;
@@ -46,20 +46,20 @@ std::string OwnSymbols::whyNot(const std::string& name) const {
   return {};
   }
 
-zenkit::DaedalusSymbol* OwnSymbols::addInt(std::string_view name, std::string& why) {
+daedalus::DaedalusSymbol* OwnSymbols::addInt(std::string_view name, std::string& why) {
   return add(Entry{Kind::Int,upper(name),{},0},why);
   }
 
-zenkit::DaedalusSymbol* OwnSymbols::addNpc(std::string_view name, std::string_view like, std::string& why) {
+daedalus::DaedalusSymbol* OwnSymbols::addNpc(std::string_view name, std::string_view like, std::string& why) {
   return add(Entry{Kind::Npc,upper(name),upper(like),0},why);
   }
 
-zenkit::DaedalusSymbol* OwnSymbols::add(const Entry& e, std::string& why) {
+daedalus::DaedalusSymbol* OwnSymbols::add(const Entry& e, std::string& why) {
   why = whyNot(e.name);
   if(!why.empty())
     return nullptr;
 
-  zenkit::DaedalusSymbol* s = nullptr;
+  daedalus::DaedalusSymbol* s = nullptr;
   if(e.kind==Kind::Int) {
     s = vm.add_int_symbol(e.name);
     }

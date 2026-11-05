@@ -16,7 +16,7 @@ if(NOT CMAKE_SCRIPT_MODE_FILE)
   # Use the actual translation units, not the headers globbed into IDE project views.
   set(guard_sources)
   set(guard_includes)
-  foreach(target OpenGothic gothic-base-runtime gothic-video-runtime AiBridge StoryGraph Gothic2Notr gothic-body-runner)
+  foreach(target OpenGothic gothic-base-runtime gothic-video-runtime gothic-daedalus AiBridge StoryGraph Gothic2Notr gothic-body-runner)
     if(NOT TARGET ${target})
       continue()
     endif()

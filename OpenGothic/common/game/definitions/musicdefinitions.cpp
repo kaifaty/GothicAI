@@ -9,7 +9,7 @@ using namespace Tempest;
 MusicDefinitions::MusicDefinitions() {
   vm = Gothic::inst().createPhoenixVm("Music.dat");
 
-  vm->enumerate_instances_by_class_name("C_MusicTheme", [this](zenkit::DaedalusSymbol& s) {
+  vm->enumerate_instances_by_class_name("C_MusicTheme", [this](daedalus::DaedalusSymbol& s) {
     themes.push_back(vm->init_instance<Def::MusicTheme>(&s));
     });
   }

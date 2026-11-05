@@ -6,8 +6,8 @@
 #include "textcodec.h"
 #include "vocab.h"
 
-#include <zenkit/DaedalusVm.hh>
-#include <zenkit/addon/daedalus.hh>
+#include "daedalus/vm.h"
+#include "daedalus/classes.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -20,7 +20,7 @@
 using namespace storygraph;
 
 namespace storygraph {
-  int scanDialogs(zenkit::DaedalusVm& vm, const Bytecode& code, const char* tsvPath, size_t top);
+  int scanDialogs(daedalus::DaedalusVm& vm, const Bytecode& code, const char* tsvPath, size_t top);
   }
 
 static bool subsetOf(const std::set<std::string>& a, const std::set<std::string>& b,
@@ -50,11 +50,11 @@ static void printTop(const char* title, const std::map<std::string,size_t>& m, s
     std::printf("  %6zu  %s\n", v[i].first, ident(v[i].second).c_str());
   }
 
-int storygraph::scanDialogs(zenkit::DaedalusVm& vm, const Bytecode& code, const char* tsvPath, size_t top) {
-  const zenkit::DaedalusScript& dat = vm;
-  std::vector<std::shared_ptr<zenkit::IInfo>> infos;
-  vm.enumerate_instances_by_class_name("C_INFO", [&](zenkit::DaedalusSymbol& sym){
-    infos.push_back(vm.init_instance<zenkit::IInfo>(&sym));
+int storygraph::scanDialogs(daedalus::DaedalusVm& vm, const Bytecode& code, const char* tsvPath, size_t top) {
+  const daedalus::DaedalusScript& dat = vm;
+  std::vector<std::shared_ptr<daedalus::IInfo>> infos;
+  vm.enumerate_instances_by_class_name("C_INFO", [&](daedalus::DaedalusSymbol& sym){
+    infos.push_back(vm.init_instance<daedalus::IInfo>(&sym));
     });
 
   FILE* tsv = tsvPath ? std::fopen(tsvPath,"w") : nullptr;

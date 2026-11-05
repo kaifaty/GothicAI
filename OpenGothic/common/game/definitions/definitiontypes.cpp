@@ -23,7 +23,7 @@ static_assert(FightAi::move_count==6 && EffectBase::user_string_count==5);
 static_assert(std::is_same_v<decltype(FightAi::move_count),const uint32_t> &&
               std::is_same_v<decltype(EffectBase::user_string_count),const uint8_t>);
 
-void Camera::register_(zenkit::DaedalusScript& s) {
+void Camera::register_(daedalus::DaedalusScript& s) {
   s.register_member("CCAMSYS.BESTRANGE", &Camera::best_range);
   s.register_member("CCAMSYS.MINRANGE", &Camera::min_range);
   s.register_member("CCAMSYS.MAXRANGE", &Camera::max_range);
@@ -49,7 +49,7 @@ void Camera::register_(zenkit::DaedalusScript& s) {
   s.register_member("CCAMSYS.COLLISION", &Camera::collision);
   }
 
-void SoundEffect::register_(zenkit::DaedalusScript& s) {
+void SoundEffect::register_(daedalus::DaedalusScript& s) {
   s.register_member("C_SFX.FILE", &SoundEffect::file);
   s.register_member("C_SFX.PITCHOFF", &SoundEffect::pitch_off);
   s.register_member("C_SFX.PITCHVAR", &SoundEffect::pitch_var);
@@ -61,7 +61,7 @@ void SoundEffect::register_(zenkit::DaedalusScript& s) {
   s.register_member("C_SFX.PFXNAME", &SoundEffect::pfx_name);
   }
 
-void MusicTheme::register_(zenkit::DaedalusScript& s) {
+void MusicTheme::register_(daedalus::DaedalusScript& s) {
   s.register_member("C_MUSICTHEME.FILE", &MusicTheme::file);
   s.register_member("C_MUSICTHEME.VOL", &MusicTheme::vol);
   s.register_member("C_MUSICTHEME.LOOP", &MusicTheme::loop);
@@ -71,7 +71,7 @@ void MusicTheme::register_(zenkit::DaedalusScript& s) {
   s.register_member("C_MUSICTHEME.TRANSSUBTYPE", &MusicTheme::transsubtype);
   }
 
-void ParticleEffect::register_(zenkit::DaedalusScript& s) {
+void ParticleEffect::register_(daedalus::DaedalusScript& s) {
   s.register_member("C_PARTICLEFX.PPSVALUE", &ParticleEffect::pps_value);
   s.register_member("C_PARTICLEFX.PPSSCALEKEYS_S", &ParticleEffect::pps_scale_keys_s);
   s.register_member("C_PARTICLEFX.PPSISLOOPING", &ParticleEffect::pps_is_looping);
@@ -135,7 +135,7 @@ void ParticleEffect::register_(zenkit::DaedalusScript& s) {
     }
   }
 
-void EffectBase::register_(zenkit::DaedalusScript& s) {
+void EffectBase::register_(daedalus::DaedalusScript& s) {
   s.register_member("CFX_BASE.VISNAME_S", &EffectBase::vis_name_s);
   s.register_member("CFX_BASE.VISSIZE_S", &EffectBase::vis_size_s);
   s.register_member("CFX_BASE.VISALPHA", &EffectBase::vis_alpha);
@@ -187,7 +187,7 @@ void EffectBase::register_(zenkit::DaedalusScript& s) {
     s.register_member("CFX_BASE.EMFXCOLLDYNPERC_S", &EffectBase::em_fx_coll_dyn_perc_s);
   }
 
-void ParticleEffectEmitKey::register_(zenkit::DaedalusScript& s) {
+void ParticleEffectEmitKey::register_(daedalus::DaedalusScript& s) {
   s.register_member("C_PARTICLEFXEMITKEY.VISNAME_S", &ParticleEffectEmitKey::vis_name_s);
   s.register_member("C_PARTICLEFXEMITKEY.VISSIZESCALE", &ParticleEffectEmitKey::vis_size_scale);
   s.register_member("C_PARTICLEFXEMITKEY.SCALEDURATION", &ParticleEffectEmitKey::scale_duration);

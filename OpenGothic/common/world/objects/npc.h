@@ -35,7 +35,7 @@
 #include <string>
 #include <vector>
 
-#include <zenkit/addon/daedalus.hh>
+#include "daedalus/classes.h"
 
 class Interactive;
 class WayPoint;
@@ -687,8 +687,8 @@ class Npc final {
 
     auto      dialogChoices(Npc &player, const std::vector<uint32_t> &except, bool includeImp) -> std::vector<GameScript::DlgChoice>;
 
-    zenkit::INpc&                        handle() { return *hnpc; }
-    const std::shared_ptr<zenkit::INpc>& handlePtr() const { return hnpc; }
+    daedalus::INpc&                        handle() { return *hnpc; }
+    const std::shared_ptr<daedalus::INpc>& handlePtr() const { return hnpc; }
 
     auto      inventory() const -> const Inventory& { return invent; }
     size_t    itemCount  (size_t id) const;
@@ -1022,7 +1022,7 @@ class Npc final {
     std::array<uint64_t,2>          visibilityDiagnosticTime={};
     std::array<std::string,2>       visibilityDiagnosticKey;
     // main props
-    std::shared_ptr<zenkit::INpc>  hnpc={};
+    std::shared_ptr<daedalus::INpc>  hnpc={};
     float                          x=0.f;
     float                          y=0.f;
     float                          z=0.f;
@@ -1097,15 +1097,15 @@ class Npc final {
       size_t bone;
       Tempest::Vec3 point, impulseNs;
       float strength;
-      std::weak_ptr<zenkit::INpc> culprit;
+      std::weak_ptr<daedalus::INpc> culprit;
       bool melee = false;
       float stiffness = 1.f;
       };
     std::vector<ArrowImpact>       arrowImpacts;
     Tempest::Vec3                  pendingSpellImpulse = {};
-    std::weak_ptr<zenkit::INpc>     spellImpulseCulprit;
+    std::weak_ptr<daedalus::INpc>     spellImpulseCulprit;
     BodyImpactWindow              bodyImpactWindow;
-    std::weak_ptr<zenkit::INpc>     bodyImpactLaunchCulprit,bodyImpactPendingCulprit;
+    std::weak_ptr<daedalus::INpc>     bodyImpactLaunchCulprit,bodyImpactPendingCulprit;
     const char*                   bodyImpactSource = "ragdoll";
     bool                          bodyImpactSpellFlight = false;
     void                          applyBodyImpact();
@@ -1141,7 +1141,7 @@ class Npc final {
     void                          interruptItemUse(std::string_view cause);
     void                          tickFoodPool();
     struct Riposte final {
-      std::weak_ptr<zenkit::INpc> victim;
+      std::weak_ptr<daedalus::INpc> victim;
       Tempest::Vec3 heroStart, from, pair;
       uint64_t start = 0, bladeAt = 0, hitEnd = 0;
       bool blade = false, handover = false, applying = false, blocked = false;
@@ -1200,7 +1200,7 @@ class Npc final {
     uint64_t                      meleeStunUntil = 0;
     uint64_t                      meleeStunSerial = 0;
     struct MeleeAiRiposteRoll final {
-      std::weak_ptr<zenkit::INpc> victim;
+      std::weak_ptr<daedalus::INpc> victim;
       uint64_t stun = 0;
       };
     std::vector<MeleeAiRiposteRoll> meleeAiRiposteRolls;
@@ -1214,13 +1214,13 @@ class Npc final {
     std::optional<MeleeAiDodgeTiming> meleeAiDodgeTiming;
     MeleeAi::DodgeStreak            meleeAiDodgeStreak;
     MeleeAi::SpecialSlot           meleeAiSpecialSlot; // held by an attacker of this NPC
-    std::weak_ptr<zenkit::INpc>    meleeAiSpecialTarget;
+    std::weak_ptr<daedalus::INpc>    meleeAiSpecialTarget;
     MeleeAi::Special               meleeAiSpecial = MeleeAi::Special::None;
     std::optional<uint64_t>        meleeAiSpecialEnded;
     uint64_t                      meleeAiChargeHold = 0;
     float                         meleeAiChargeYaw = 0.f, meleeAiChargeTurn = 0.f;
     struct MeleeAiBargeMemory final {
-      std::weak_ptr<zenkit::INpc> target;
+      std::weak_ptr<daedalus::INpc> target;
       std::optional<uint64_t> guarded, guardedRoll, paradeRoll;
       const Animation::Sequence* paradeSequence = nullptr;
       };

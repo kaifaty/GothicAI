@@ -4,8 +4,8 @@
 
 #include "asset/material.h"
 #include "asset/worldtypes.h"
-#include <zenkit/DaedalusScript.hh>
-#include <zenkit/addon/daedalus.hh>
+#include "daedalus/script.h"
+#include "daedalus/classes.h"
 #include "game/definitions/definitiontypes.h"
 
 class Material final {

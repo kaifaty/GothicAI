@@ -5,15 +5,15 @@
 #include "model.h"
 #include "snapshot.h"
 
-#include <zenkit/DaedalusVm.hh>
-#include <zenkit/addon/daedalus.hh>
+#include "daedalus/vm.h"
+#include "daedalus/classes.h"
 
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
 
 using namespace storygraph;
-using zenkit::DaedalusDataType;
+using daedalus::DaedalusDataType;
 
 // ---- Ledger
 
@@ -25,14 +25,14 @@ int32_t Ledger::has(const std::vector<Value>& npcAndItem) {
   return std::max(0, (base.type==Value::Int ? base.i : 0) + (it==items.end() ? 0 : it->second));
   }
 
-Value Ledger::call(const zenkit::DaedalusSymbol& fn, const std::vector<Value>& args) {
+Value Ledger::call(const daedalus::DaedalusSymbol& fn, const std::vector<Value>& args) {
   auto& n = fn.name();
   const bool create = (n=="CREATEINVITEMS" || n=="CREATEINVITEM");
   const bool remove = (n=="NPC_REMOVEINVITEMS" || n=="NPC_REMOVEINVITEM");
   if((create || remove) && args.size()>=2 && args[0].type==Value::Inst && args[0].inst!=nullptr &&
      args[1].type==Value::Int) {
     int32_t amount = args.size()>=3 && args[2].type==Value::Int ? args[2].i : 1;
-    auto    key    = std::make_pair(static_cast<const zenkit::DaedalusInstance*>(args[0].inst.get()), args[1].i);
+    auto    key    = std::make_pair(static_cast<const daedalus::DaedalusInstance*>(args[0].inst.get()), args[1].i);
     if(create) {
       items[key] += amount;
       } else {
@@ -54,7 +54,7 @@ class ExecCheck::Recorder final : public Externals {
     explicit Recorder(Externals& next) : next(next) {}
 
     // calls made inside another one are the world's own (it builds an npc the first time it is asked for)
-    Value call(const zenkit::DaedalusSymbol& fn, const std::vector<Value>& args) override {
+    Value call(const daedalus::DaedalusSymbol& fn, const std::vector<Value>& args) override {
       depth++;
       auto r = next.call(fn, args);
       depth--;
@@ -72,10 +72,10 @@ class ExecCheck::Recorder final : public Externals {
   };
 
 struct ExecCheck::State final {
-  explicit State(zenkit::DaedalusVm& vm) : globals(vm) {}
+  explicit State(daedalus::DaedalusVm& vm) : globals(vm) {}
   Snapshot                                                                     globals;
-  std::vector<std::pair<std::shared_ptr<zenkit::DaedalusInstance>,std::vector<Value>>> insts;
-  std::map<std::pair<const zenkit::DaedalusInstance*,int32_t>,int32_t>        items;
+  std::vector<std::pair<std::shared_ptr<daedalus::DaedalusInstance>,std::vector<Value>>> insts;
+  std::map<std::pair<const daedalus::DaedalusInstance*,int32_t>,int32_t>        items;
   };
 
 namespace {
@@ -94,7 +94,7 @@ bool same(const Value& a, const Value& b) {
 
 }
 
-ExecCheck::ExecCheck(zenkit::DaedalusVm& vm, Externals& world)
+ExecCheck::ExecCheck(daedalus::DaedalusVm& vm, Externals& world)
   :vm(vm), book(std::make_unique<Ledger>(world, vm.find_symbol_by_name("NPC_HASITEMS"))),
    recorder(std::make_unique<Recorder>(*book)), code(std::make_unique<Bytecode>(vm)),
    interp(std::make_unique<Interpreter>(vm, *recorder)),
@@ -144,11 +144,11 @@ const std::set<std::string>& ExecCheck::reach(uint32_t fnSymbol) {
   return reaches[fnSymbol] = std::move(r);
   }
 
-std::vector<std::shared_ptr<zenkit::DaedalusInstance>> ExecCheck::watched(uint32_t fnSymbol,
-                                                                         const std::shared_ptr<zenkit::INpc>& self,
-                                                                         const std::shared_ptr<zenkit::INpc>& hero) {
-  std::vector<std::shared_ptr<zenkit::DaedalusInstance>> r;
-  auto add = [&r](std::shared_ptr<zenkit::DaedalusInstance> i) {
+std::vector<std::shared_ptr<daedalus::DaedalusInstance>> ExecCheck::watched(uint32_t fnSymbol,
+                                                                         const std::shared_ptr<daedalus::INpc>& self,
+                                                                         const std::shared_ptr<daedalus::INpc>& hero) {
+  std::vector<std::shared_ptr<daedalus::DaedalusInstance>> r;
+  auto add = [&r](std::shared_ptr<daedalus::DaedalusInstance> i) {
     if(i!=nullptr && std::find(r.begin(), r.end(), i)==r.end())
       r.push_back(std::move(i));
     };
@@ -166,11 +166,11 @@ std::vector<std::shared_ptr<zenkit::DaedalusInstance>> ExecCheck::watched(uint32
   return r;
   }
 
-const std::vector<zenkit::DaedalusSymbol*>& ExecCheck::membersOf(const zenkit::DaedalusInstance& inst) {
+const std::vector<daedalus::DaedalusSymbol*>& ExecCheck::membersOf(const daedalus::DaedalusInstance& inst) {
   auto* cls = vm.find_symbol_by_index(inst.symbol_index());
   for(int i=0; i<8 && cls!=nullptr && cls->type()!=DaedalusDataType::CLASS; ++i)
     cls = vm.find_symbol_by_index(cls->parent());
-  static const std::vector<zenkit::DaedalusSymbol*> none;
+  static const std::vector<daedalus::DaedalusSymbol*> none;
   if(cls==nullptr)
     return none;
   auto it = members.find(cls->index());
@@ -189,7 +189,7 @@ const std::vector<zenkit::DaedalusSymbol*>& ExecCheck::membersOf(const zenkit::D
   return m;
   }
 
-void ExecCheck::take(State& s, const std::vector<std::shared_ptr<zenkit::DaedalusInstance>>& insts) {
+void ExecCheck::take(State& s, const std::vector<std::shared_ptr<daedalus::DaedalusInstance>>& insts) {
   s.globals.take();
   s.insts.clear();
   for(auto& inst : insts) {
@@ -236,8 +236,8 @@ std::string ExecCheck::text(const Call& c) const {
   return r;
   }
 
-ExecCheck::Result ExecCheck::run(uint32_t fnSymbol, const std::shared_ptr<zenkit::INpc>& self,
-                                 const std::shared_ptr<zenkit::INpc>& hero) {
+ExecCheck::Result ExecCheck::run(uint32_t fnSymbol, const std::shared_ptr<daedalus::INpc>& self,
+                                 const std::shared_ptr<daedalus::INpc>& hero) {
   Result r;
   auto*  fn = vm.find_symbol_by_index(fnSymbol);
   auto&  p  = program(fnSymbol);
@@ -392,7 +392,7 @@ void ExecTotals::print(const char* what, bool verbose) const {
     std::printf("   ... %zu more (--verbose)\n", diffs.size()-20);
   }
 
-std::vector<uint32_t> storygraph::nodeFunctions(zenkit::DaedalusVm& vm, const Node& n) {
+std::vector<uint32_t> storygraph::nodeFunctions(daedalus::DaedalusVm& vm, const Node& n) {
   std::vector<uint32_t> r;
   auto* sym = vm.find_symbol_by_name(n.id);
   if(sym==nullptr)
@@ -404,7 +404,7 @@ std::vector<uint32_t> storygraph::nodeFunctions(zenkit::DaedalusVm& vm, const No
     }
   if(sym->type()!=DaedalusDataType::INSTANCE)
     return r;
-  auto info = vm.init_instance<zenkit::IInfo>(sym);
+  auto info = vm.init_instance<daedalus::IInfo>(sym);
   if(info->condition!=0)
     r.push_back(uint32_t(info->condition));
   if(info->information!=0)

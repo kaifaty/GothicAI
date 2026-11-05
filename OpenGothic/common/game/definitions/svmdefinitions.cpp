@@ -1,7 +1,7 @@
 #include "svmdefinitions.h"
 #include "utils/string_frm.h"
 
-SvmDefinitions::SvmDefinitions(zenkit::DaedalusVm& vm):vm(vm) {
+SvmDefinitions::SvmDefinitions(daedalus::DaedalusVm& vm):vm(vm) {
   }
 
 SvmDefinitions::~SvmDefinitions() {

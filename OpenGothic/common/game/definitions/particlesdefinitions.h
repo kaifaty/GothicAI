@@ -1,7 +1,7 @@
 #pragma once
 
-#include <zenkit/DaedalusVm.hh>
-#include <zenkit/addon/daedalus.hh>
+#include "daedalus/vm.h"
+#include "daedalus/classes.h"
 #include "game/definitions/definitiontypes.h"
 #include "particlecontent.h"
 
@@ -42,7 +42,7 @@ class ParticlesDefinitions final {
 
   private:
     std::recursive_mutex                sync;
-    std::unique_ptr<zenkit::DaedalusVm> vm;
+    std::unique_ptr<daedalus::DaedalusVm> vm;
     ParticleContent::Result            content;
 
     std::unordered_map<std::string,          std::unique_ptr<ParticleFx>> pfx;

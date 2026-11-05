@@ -14,9 +14,9 @@
 #include "snapshot.h"
 #include "textcodec.h"
 
-#include <zenkit/DaedalusVm.hh>
+#include "daedalus/vm.h"
 #include <zenkit/Logger.hh>
-#include <zenkit/addon/daedalus.hh>
+#include "daedalus/classes.h"
 #include <zenkit/vobs/Misc.hh>
 
 #include <algorithm>
@@ -27,7 +27,7 @@
 
 using namespace storygraph;
 namespace fs = std::filesystem;
-using zenkit::DaedalusDataType;
+using daedalus::DaedalusDataType;
 
 namespace {
 
@@ -136,11 +136,11 @@ bool checkSave(const char* datPath, const Model& m, const fs::path& dir, const c
   // stays invalid for the engine (Hlp_IsValidNpc is false, like for an npc that was never inserted)
   struct Check final {
     const Node*                   node;
-    zenkit::DaedalusSymbol*       condition;
-    std::shared_ptr<zenkit::INpc> self;
+    daedalus::DaedalusSymbol*       condition;
+    std::shared_ptr<daedalus::INpc> self;
     };
   std::vector<Check> checks;
-  std::map<uint32_t, std::shared_ptr<zenkit::INpc>> absentNpcs;
+  std::map<uint32_t, std::shared_ptr<daedalus::INpc>> absentNpcs;
   size_t dialogs = 0, notLifted = 0, absent = 0;
   for(auto& n : m.nodes) {
     if(n.choice)
@@ -149,7 +149,7 @@ bool checkSave(const char* datPath, const Model& m, const fs::path& dir, const c
     auto* infoSym = vm->find_symbol_by_name(n.id);
     if(infoSym==nullptr)
       continue;
-    auto info = vm->init_instance<zenkit::IInfo>(infoSym);
+    auto info = vm->init_instance<daedalus::IInfo>(infoSym);
     if(info->condition==0)
       continue;  // always offered, nothing to compare
     if(!n.notLifted.empty()) {
@@ -158,14 +158,14 @@ bool checkSave(const char* datPath, const Model& m, const fs::path& dir, const c
       }
     auto  npcSym = uint32_t(info->npc);
     auto* npc    = world.npc(npcSym);
-    std::shared_ptr<zenkit::INpc> self = npc ? npc->script : nullptr;
+    std::shared_ptr<daedalus::INpc> self = npc ? npc->script : nullptr;
     if(self==nullptr) {
       absent++;
       if(!absentNpcs.count(npcSym)) {
         auto* s = vm->find_symbol_by_index(npcSym);
         if(s!=nullptr && s->type()==DaedalusDataType::INSTANCE) {
           try {
-            absentNpcs[npcSym] = vm->init_instance<zenkit::INpc>(s);
+            absentNpcs[npcSym] = vm->init_instance<daedalus::INpc>(s);
             }
           catch(const std::exception&) {
             }
@@ -179,7 +179,7 @@ bool checkSave(const char* datPath, const Model& m, const fs::path& dir, const c
 
   if(xc!=nullptr) {
     // the functions of every dialog and choice, with its npc as self, against the save's state
-    xc->npcOf = [&world](uint32_t s) -> std::shared_ptr<zenkit::DaedalusInstance> {
+    xc->npcOf = [&world](uint32_t s) -> std::shared_ptr<daedalus::DaedalusInstance> {
       auto* n = world.npc(s);
       return n ? n->script : nullptr;
       };
@@ -191,11 +191,11 @@ bool checkSave(const char* datPath, const Model& m, const fs::path& dir, const c
       if(npcSym==nullptr)
         continue;
       auto* npc = world.npc(npcSym->index());
-      std::shared_ptr<zenkit::INpc> self = npc ? npc->script : nullptr;
+      std::shared_ptr<daedalus::INpc> self = npc ? npc->script : nullptr;
       if(self==nullptr) {
         if(!absentNpcs.count(npcSym->index())) {
           try {
-            absentNpcs[npcSym->index()] = vm->init_instance<zenkit::INpc>(npcSym);
+            absentNpcs[npcSym->index()] = vm->init_instance<daedalus::INpc>(npcSym);
             }
           catch(const std::exception&) {
             absentNpcs[npcSym->index()] = nullptr;
@@ -229,11 +229,11 @@ bool checkSave(const char* datPath, const Model& m, const fs::path& dir, const c
       if(npcSym==nullptr)
         continue;
       auto* npc = world.npc(npcSym->index());
-      std::shared_ptr<zenkit::INpc> self = npc ? npc->script : nullptr;
+      std::shared_ptr<daedalus::INpc> self = npc ? npc->script : nullptr;
       if(self==nullptr) {
         if(!absentNpcs.count(npcSym->index())) {
           try {
-            absentNpcs[npcSym->index()] = vm->init_instance<zenkit::INpc>(npcSym);
+            absentNpcs[npcSym->index()] = vm->init_instance<daedalus::INpc>(npcSym);
             }
           catch(const std::exception&) {
             absentNpcs[npcSym->index()] = nullptr;
@@ -342,7 +342,7 @@ bool checkSave(const char* datPath, const Model& m, const fs::path& dir, const c
 
 namespace storygraph {
 
-std::unique_ptr<zenkit::DaedalusVm> loadVm(const char* datPath) {
+std::unique_ptr<daedalus::DaedalusVm> loadVm(const char* datPath) {
   const fs::path file(datPath);
   const auto index = ProgramData::readIndex(file.parent_path());
   const auto expected = index.programs.find(file.stem().string());
@@ -350,10 +350,10 @@ std::unique_ptr<zenkit::DaedalusVm> loadVm(const char* datPath) {
   auto program = ProgramData::readProgram(file,&actual);
   if(expected==index.programs.end() || actual!=expected->second)
     throw std::runtime_error("program record identity differs from its index");
-  auto script = zenkit::DaedalusScript::from_program(std::move(program));
-  zenkit::register_all_script_classes(script);
-  return std::make_unique<zenkit::DaedalusVm>(std::move(script),
-                                              zenkit::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS);
+  auto script = daedalus::DaedalusScript::from_program(std::move(program));
+  daedalus::register_all_script_classes(script);
+  return std::make_unique<daedalus::DaedalusVm>(std::move(script),
+                                              daedalus::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS);
   }
 
 int checkSaves(const char* datPath, const Model& m, const std::vector<std::string>& saves, const char* traceNode,

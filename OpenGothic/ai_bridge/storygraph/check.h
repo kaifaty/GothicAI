@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-namespace zenkit {
+namespace daedalus {
   class DaedalusVm;
   }
 
@@ -19,7 +19,7 @@ struct Model;
 struct Node;
 
 // a VM over GOTHIC.DAT with the script classes registered; nullptr if the file can't be read
-std::unique_ptr<zenkit::DaedalusVm> loadVm(const char* datPath);
+std::unique_ptr<daedalus::DaedalusVm> loadVm(const char* datPath);
 
 // on original saves (check.cpp); with `traceNode`, both computations of that dialog are printed. With
 // `effects`, what the dialogs and choices do is checked instead of when they are offered (effects.h); with

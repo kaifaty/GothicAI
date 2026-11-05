@@ -124,6 +124,7 @@ int main(int argc,const char** argv) {
   CrashLog::setup();
 
   ZenKitLog::install(ZenKitLog::Level::Info);
+  daedalus::set_log_level(daedalus::LogLevel::INFO);
   Dm_setLogger(DmLogLevel_INFO, [](void* ctx, DmLogLevel lvl, char const* msg) {
     switch (lvl) {
       case DmLogLevel_FATAL:

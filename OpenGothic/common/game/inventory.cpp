@@ -1050,7 +1050,7 @@ Item *Inventory::bestRangedWeapon(Npc &owner) {
 void Inventory::applyWeaponStats(Npc& owner, const Item &weapon, int sgn) {
   auto& hnpc = owner.handle();
   //hnpc.damagetype = sgn>0 ? weapon.handle()->damageType : (1 << GEngineClasses::DAM_INDEX_BLUNT);
-  for(size_t i=0; i<zenkit::DamageType::NUM; ++i){
+  for(size_t i=0; i<daedalus::DamageType::NUM; ++i){
     hnpc.damage[i] += sgn*weapon.handle().damage[i];
     if(weapon.handle().damage_type & (1<<i)) {
       hnpc.damage[i] += sgn*weapon.handle().damage_total;
@@ -1058,7 +1058,7 @@ void Inventory::applyWeaponStats(Npc& owner, const Item &weapon, int sgn) {
     }
 
   // assert inconsistent plus/minus
-  for(size_t i=0; i<zenkit::DamageType::NUM; ++i) {
+  for(size_t i=0; i<daedalus::DamageType::NUM; ++i) {
     assert(hnpc.damage[i]>=0);
     }
   }

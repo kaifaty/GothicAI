@@ -297,9 +297,9 @@ float FightAlgo::prefferedGDistance(const Npc& npc, const Npc& tg, GameScript &o
 float FightAlgo::attackFinishDistance(GameScript &owner) const {
   float NPC_ATTACK_FINISH_DISTANCE = 180;
   if(auto var = owner.findSymbol("NPC_ATTACK_FINISH_DISTANCE")) {
-    if(var->type()==zenkit::DaedalusDataType::INT)
+    if(var->type()==daedalus::DaedalusDataType::INT)
       NPC_ATTACK_FINISH_DISTANCE = float(var->get_int());
-    else if(var->type()==zenkit::DaedalusDataType::FLOAT)
+    else if(var->type()==daedalus::DaedalusDataType::FLOAT)
       NPC_ATTACK_FINISH_DISTANCE = var->get_float();
     }
   return NPC_ATTACK_FINISH_DISTANCE;
