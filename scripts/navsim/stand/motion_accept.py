@@ -58,7 +58,8 @@ from stand import eye, motion  # noqa: E402
 EPOCH = 1_000_000_033
 TABLE_SHA256 = "174b661c91291eeba5d91c7dfafae6413a3e8bb9aa0923408e936128b87f05c8"  # research §3.5
 HISTORY = 3
-THRESHOLDS = {"free_step_p90_cm": 5.0, "window_10s_moving_p90_cm": 100.0, "blocked_step_p90_cm": 17.0,
+# The blocked gate is relative (research §5): half the research table's p90 on the same steps.
+THRESHOLDS = {"free_step_p90_cm": 5.0, "window_10s_moving_p90_cm": 100.0, "blocked_step_fraction_of_table": 0.5,
               "turn_deg_per_s": 90.0}
 TABLE_REFERENCE = {"free_step_p90_cm": 4.8, "window_10s_moving_free_p90_cm": 210.3, "blocked_step_p90_cm": 33.6}
 WINDOW_SECONDS = (1, 3, 10)
@@ -436,18 +437,7 @@ def run(corpus_path: Path, table_path: Path, static_bin: Path, raw: Path, thread
     world.close()
 
     p90 = lambda b: buckets[b]["stand"]["position_cm"]["p90"]  # noqa: E731
-    w90 = lambda name: windows[name]["10"]["moving"]["position_cm"]["p90"] if "10" in windows[name] else None  # noqa: E731
-    gate = lambda value, threshold: {"value": value, "threshold": threshold,  # noqa: E731
-                                     "passed": value is not None and value <= threshold}
-    turn_rate = turns["stand_deg_per_s_median"]
-    result["gates"] = {
-        "free_step_p90_cm": gate(p90("free"), THRESHOLDS["free_step_p90_cm"]),
-        "window_10s_moving_free_p90_cm": gate(w90("free"), THRESHOLDS["window_10s_moving_p90_cm"]),
-        "window_10s_moving_ground_p90_cm": gate(w90("ground"), THRESHOLDS["window_10s_moving_p90_cm"]),
-        "blocked_ground_step_p90_cm": gate(p90("probable_blocked_ground"), THRESHOLDS["blocked_step_p90_cm"]),
-        "turn_in_place_deg_per_s": {"value": turn_rate, "threshold": THRESHOLDS["turn_deg_per_s"],
-                                    "passed": turn_rate is not None and abs(turn_rate - THRESHOLDS["turn_deg_per_s"]) < 0.01},
-    }
+    result["gates"] = gates_of(buckets, windows, turns)
     result["info"] = {"blocked_all_step_p90_cm": p90("probable_blocked"),
                       "research_table_blocked_ground_p90_cm": buckets["probable_blocked_ground"]["research_table"]["position_cm"]["p90"]}
     result["table_reference"] = TABLE_REFERENCE
@@ -456,6 +446,27 @@ def run(corpus_path: Path, table_path: Path, static_bin: Path, raw: Path, thread
     (raw / f"accept-{tag}.json").write_text(json.dumps(result, indent=1) + "\n")
     print(json.dumps({"tag": tag, "gates": result["gates"]}, indent=1), flush=True)
     return result
+
+
+def gates_of(buckets: dict, windows: dict, turns: dict) -> dict:
+    """Acceptance 1 gates from the one-step buckets, the windows and the turn of one run."""
+    p90 = lambda b: buckets[b]["stand"]["position_cm"]["p90"]  # noqa: E731
+    w90 = lambda name: windows[name]["10"]["moving"]["position_cm"]["p90"] if "10" in windows[name] else None  # noqa: E731
+    gate = lambda value, threshold: {"value": value, "threshold": threshold,  # noqa: E731
+                                     "passed": value is not None and threshold is not None and value <= threshold}
+    table = buckets["probable_blocked_ground"]["research_table"]["position_cm"]["p90"]
+    blocked = gate(p90("probable_blocked_ground"),
+                   None if table is None else round(THRESHOLDS["blocked_step_fraction_of_table"] * table, 4))
+    blocked |= {"rule": "half the research table's p90 on the same ground blocked steps", "table_p90_cm": table}
+    turn_rate = turns["stand_deg_per_s_median"]
+    return {
+        "free_step_p90_cm": gate(p90("free"), THRESHOLDS["free_step_p90_cm"]),
+        "window_10s_moving_free_p90_cm": gate(w90("free"), THRESHOLDS["window_10s_moving_p90_cm"]),
+        "window_10s_moving_ground_p90_cm": gate(w90("ground"), THRESHOLDS["window_10s_moving_p90_cm"]),
+        "blocked_ground_step_p90_cm": blocked,
+        "turn_in_place_deg_per_s": {"value": turn_rate, "threshold": THRESHOLDS["turn_deg_per_s"],
+                                    "passed": turn_rate is not None and abs(turn_rate - THRESHOLDS["turn_deg_per_s"]) < 0.01},
+    }
 
 
 # ------------------------------------------------------------------- fit ----
@@ -615,7 +626,8 @@ def _compact_one(a: dict) -> dict:
                 e["course_oracle_moving_position_cm"] = w["course_oracle_moving"]["position_cm"]
                 e["course_share_of_p90"] = w["course_share_of_p90"]
             windows[set_name][s] = e
-    return {"tag": a["tag"], "translation": a["translation"], "gates": a["gates"], "info": a["info"],
+    gates = gates_of(o["buckets"], a["windows"], o["turn_in_place"])  # the current rule, also for older runs
+    return {"tag": a["tag"], "translation": a["translation"], "gates": gates, "info": a["info"],
             "one_step": {"library_level_equals_motion_table": o["library_level_equals_motion_table"],
                          "library_translation_equals_motion_table": o["library_translation_equals_motion_table"],
                          "buckets": buckets, "blocked_ground_split": {k: {"steps": v["steps"], "age0_fraction": v["age0_fraction"],

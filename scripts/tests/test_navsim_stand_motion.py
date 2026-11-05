@@ -12,7 +12,7 @@ sys.path.insert(0, str(ROOT / "navsim"))
 from navsim.stand import eye, motion  # noqa: E402
 import motion_table  # noqa: E402
 
-pytestmark = pytest.mark.skipif(
+needs_library = pytest.mark.skipif(
     eye.library_path() is None,
     reason="navsim stand library not built (scripts/navsim/stand/native, or NAVSIM_STAND_LIB)")
 
@@ -95,6 +95,7 @@ def drive(m, keys, decisions):
     return out
 
 
+@needs_library
 def test_floor_run_ticks_and_turn(tmp_path):
     w, m = world(tmp_path, agents=3)
     with w:
@@ -127,6 +128,7 @@ def test_floor_run_ticks_and_turn(tmp_path):
         assert m.read().game_ms.tolist() == [EPOCH + 33, EPOCH + 100, EPOCH]
 
 
+@needs_library
 def test_history_levels_and_unknown_keys(tmp_path):
     w, m = world(tmp_path, agents=3)
     with w:
@@ -147,6 +149,7 @@ def test_history_levels_and_unknown_keys(tmp_path):
         assert hist[1].tolist() == [list(RUN), list(IDLE), list(IDLE)]
 
 
+@needs_library
 def test_npc_pace_scales_the_table(tmp_path):
     w, m = world(tmp_path, agents=2)
     with w:
@@ -161,6 +164,7 @@ def test_npc_pace_scales_the_table(tmp_path):
             m.set_speed(np.array([[-1.0, 1.0]], np.float32))
 
 
+@needs_library
 def test_wall_stops_and_slides(tmp_path):
     w, m = world(tmp_path, agents=2)
     with w:
@@ -176,6 +180,7 @@ def test_wall_stops_and_slides(tmp_path):
         assert not np.any(out.flags[1] & motion.BLOCKED)
 
 
+@needs_library
 def test_steps_and_slopes(tmp_path):
     w, m = world(tmp_path, agents=4)
     with w:
@@ -195,6 +200,7 @@ def test_steps_and_slopes(tmp_path):
         np.testing.assert_allclose(walkable[1], (walkable[0] - 300) * np.tan(np.radians(30)), atol=2)
 
 
+@needs_library
 def test_threads_and_shards_do_not_change_motion(tmp_path):
     lanes = [FREE, WALL, LOW, HIGH, STEEP, RAMP, FREE + 300]
     keys = np.array([RUN, (1, 0, -1, 0), RUN, (1, 1, 0, 0), RUN, (1, 0, 1, 0), LEFT], np.int8)
@@ -211,6 +217,7 @@ def test_threads_and_shards_do_not_change_motion(tmp_path):
         np.testing.assert_array_equal(a, b)
 
 
+@needs_library
 def test_bad_input_is_rejected(tmp_path):
     w, m = world(tmp_path, agents=1)
     with w:
@@ -220,3 +227,40 @@ def test_bad_input_is_rejected(tmp_path):
             m.set_keys(np.array([RUN, RUN], np.int8))
         with pytest.raises(RuntimeError, match="ticks"):
             m.step(ticks=[4])
+        # Output buffers are checked in Python before the library writes through them.
+        place(m, [FREE])
+        short = motion.Ticks.empty(1)
+        short.position = np.zeros((1, 1, 3), np.float32)
+        with pytest.raises(ValueError, match="ticks.position must have shape"):
+            m.step(out=short)
+        typed = motion.Ticks.empty(1)
+        typed.flags = np.zeros((1, 3), np.float32)
+        with pytest.raises(ValueError, match="ticks.flags must be uint8"):
+            m.step(out=typed)
+        assert m.read().game_ms.tolist() == [EPOCH]  # nothing was stepped
+
+
+def test_tick_buffers_are_checked_without_the_library():
+    """The library writes 36 bytes of position per agent: a short or mistyped buffer must never reach it."""
+    good = motion.Ticks.empty(2)
+    good.check(2)
+    with pytest.raises(ValueError, match="shape"):
+        good.check(3)
+    short = motion.Ticks.empty(1)
+    short.position = np.zeros((1, 1, 3), np.float32)
+    with pytest.raises(ValueError, match="ticks.position must have shape"):
+        short.check(1)
+    typed = motion.Ticks.empty(1)
+    typed.ms = np.zeros((1, 3), np.int64)
+    with pytest.raises(ValueError, match="ticks.ms must be uint32"):
+        typed.check(1)
+    strided = motion.Ticks.empty(2)
+    strided.yaw = np.zeros((2, 6), np.float32)[:, ::2]
+    with pytest.raises(ValueError, match="C-contiguous"):
+        strided.check(2)
+    frozen = motion.Ticks.empty(1)
+    frozen.flags.setflags(write=False)
+    with pytest.raises(ValueError, match="writeable"):
+        frozen.check(1)
+    with pytest.raises(ValueError, match="numpy array"):
+        motion.Ticks(*([[0.0]] * 6)).check(1)

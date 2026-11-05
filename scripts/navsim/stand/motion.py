@@ -54,7 +54,10 @@ class _Ticks(ctypes.Structure):
 
 @dataclass
 class Ticks:
-    """Tick outputs of several agents, right-aligned: [agents, 3(, 3)]."""
+    """Tick outputs of several agents, right-aligned: [agents, 3(, 3)].
+
+    The library writes through raw pointers, so ``check`` verifies every array's
+    dtype, exact shape, C order and writeability before a call."""
     position: np.ndarray
     forward: np.ndarray
     limits: np.ndarray
@@ -72,14 +75,34 @@ class Ticks:
     def agents(self) -> int:
         return len(self.ms)
 
-    def _struct(self) -> _Ticks:
+    def check(self, agents: int):
+        """Raises ValueError unless every field is a writeable C-ordered array for ``agents`` agents."""
+        for name, (dtype, tail) in TICK_FIELDS.items():
+            _output(getattr(self, name), dtype, (agents, *tail), f"ticks.{name}")
+
+    def _struct(self, agents: int) -> _Ticks:
+        self.check(agents)
         out = _Ticks()
         for name, _ in _Ticks._fields_:
-            array = getattr(self, name)
-            if not array.flags.c_contiguous:
-                raise ValueError(f"ticks.{name} must be C-contiguous")
-            setattr(out, name, array.ctypes.data)
+            setattr(out, name, getattr(self, name).ctypes.data)
         return out
+
+
+TICK_FIELDS = {"position": (np.float32, (TICKS, 3)), "forward": (np.float32, (TICKS, 3)),
+               "limits": (np.float32, (TICKS, 3)), "ms": (np.uint32, (TICKS,)), "flags": (np.uint8, (TICKS,)),
+               "yaw": (np.float32, (TICKS,))}
+
+
+def _output(array, dtype, shape, name: str):
+    """An array the library writes into: exactly this dtype and shape, C-contiguous, writeable."""
+    if not isinstance(array, np.ndarray):
+        raise ValueError(f"{name} must be a numpy array")
+    if array.dtype != np.dtype(dtype):
+        raise ValueError(f"{name} must be {np.dtype(dtype)}, got {array.dtype}")
+    if array.shape != tuple(shape):
+        raise ValueError(f"{name} must have shape {tuple(shape)}, got {array.shape}")
+    if not array.flags.c_contiguous or not array.flags.writeable:
+        raise ValueError(f"{name} must be C-contiguous and writeable")
 
 
 class State(NamedTuple):
@@ -194,6 +217,8 @@ class Motion:
     def set_table(self, levels: dict[int, tuple[np.ndarray, np.ndarray]]):
         for level, (keys, values) in levels.items():
             keys = np.ascontiguousarray(keys, np.int64)
+            if keys.ndim != 1:
+                raise ValueError("table keys must be [n]")
             values = _array(values, np.float32, (len(keys), 2))
             self._check(self._lib.navsim_motion_table(self.world._handle, int(level), len(keys), keys.ctypes.data,
                                                       values.ctypes.data), "table")
@@ -211,6 +236,8 @@ class Motion:
 
     def set_yaw(self, yaw, first: int = 0):
         yaw = np.ascontiguousarray(yaw, np.float32)
+        if yaw.ndim != 1:
+            raise ValueError("yaw must be [n]")
         self._check(self._lib.navsim_motion_set_yaw(self.world._handle, first, len(yaw), yaw.ctypes.data), "set_yaw")
 
     def set_speed(self, run_walk, first: int = 0):
@@ -232,12 +259,11 @@ class Motion:
         """One decision of agents [first, first+count); ``out`` holds count agents."""
         count = self.agents - first if count is None else count
         out = Ticks.empty(count) if out is None else out
-        if out.agents != count:
-            raise ValueError("out must hold count agents")
+        struct = out._struct(count)  # before the call: the library trusts these buffers
         ticks = None if ticks is None else _array(ticks, np.uint8, (count,))
         self._check(self._lib.navsim_motion_step(self.world._handle, first, count,
                                                  None if ticks is None else ticks.ctypes.data,
-                                                 ctypes.byref(out._struct())), "step")
+                                                 ctypes.byref(struct)), "step")
         return out
 
     def read(self, first: int = 0, count: int | None = None) -> State:
