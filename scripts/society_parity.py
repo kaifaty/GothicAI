@@ -4,7 +4,7 @@
     scripts/society_parity.py --world society-world.json --core CORE_DIR --engine ENGINE_DIR
                               [--out report.md] [--json report.json] [--check]
 
-CORE_DIR holds `society-marks.csv` of `gothic-society-day` on the export WORLD; ENGINE_DIR holds
+CORE_DIR holds `society-marks.csv` and `society-day.journal` of `gothic-society-day` on the export WORLD; ENGINE_DIR holds
 `npc-day.csv`, `npc-day-events.csv` and `npc-day.json` of the `npc-day-parity` bench on the same world
 (`day-headless-full`). Marks are matched by NPC key and minute since the start; only people count
 (`person` in the export, not the hero).
@@ -19,8 +19,9 @@ point; when it never does, the window stays open for the whole episode. The repo
 - the same two shares inside the windows;
 - travel time on transitions: for an episode whose window closes, the time from the entry's start until the
   NPC comes within 10 m of the point, for the engine and the core alike from their 5-minute positions (the
-  first mark inside 10 m and the one before it, the crossing interpolated linearly; the core's place at the
-  entry's start between the marks around it); the error is core minus engine;
+  first mark inside 10 m and the one before it, the crossing interpolated linearly). The place at the entry's
+  start is the engine's from its `ta` event and the core's from its journal: the point it stands at, or on the
+  way linearly by time between the walk's start and end points. The error is core minus engine;
 - the worst NPCs and states with the reason; for information, the state of the NPCs that are not people.
 
 With --check the exit code is 1 when a threshold (THRESHOLDS) fails.
@@ -34,6 +35,7 @@ import collections
 import csv
 import json
 import math
+import struct
 import sys
 from pathlib import Path
 
@@ -130,6 +132,53 @@ def load_core(directory, names):
     return rows
 
 
+# The core's journal (common/society/journal.h): its header and the 24-byte records.
+JOURNAL_HEADER = struct.Struct("<8sIIQQqIII")
+JOURNAL_RECORD = struct.Struct("<IIBBHIII")
+NO_POINT = 0xFFFFFFFF
+TRAVEL_STARTED, ARRIVED, ACTIVITY_STARTED, TELEPORTED = 2, 3, 4, 5
+
+
+def load_journal(directory, world):
+    """The core's start time and, by NPC key, its events that place it: (time s, kind, a, b, c)."""
+    path = Path(directory) / "society-day.journal"
+    data = path.read_bytes()
+    magic, version, size, _, _, start, npcs, points, states = JOURNAL_HEADER.unpack_from(data)
+    if magic != b"GSOCJRNL" or version not in (1, 2) or size != JOURNAL_RECORD.size:
+        raise SystemExit(f"{path}: not a society journal v1/v2")
+    if npcs != len(world["npcs"]) or points != len(world["waypoints"]):
+        raise SystemExit(f"{path}: the journal is of another world ({npcs} NPCs, {points} points)")
+    at = JOURNAL_HEADER.size
+    for _ in range(states):
+        at += 2 + struct.unpack_from("<H", data, at)[0]
+    if (len(data) - at) % JOURNAL_RECORD.size:
+        raise SystemExit(f"{path}: a cut record")
+    keys = [n["key"] for n in world["npcs"]]
+    events = collections.defaultdict(list)
+    for t, npc, kind, _, _, a, b, c in JOURNAL_RECORD.iter_unpack(data[at:]):
+        if kind in (TRAVEL_STARTED, ARRIVED, ACTIVITY_STARTED, TELEPORTED):
+            events[keys[npc]].append((t, kind, a, b, c))
+    return start, events
+
+
+def core_place(events, t, points):
+    """Where the core's NPC is at game second t by its journal: the point it stands at after its last arrival,
+    teleport or activity start with a point; on the way, linearly by time between the walk's two points."""
+    place, walk = None, None
+    for time, kind, a, b, c in events:
+        if time > t:
+            break
+        if kind == TRAVEL_STARTED:
+            walk = (time, c, points[a], points[b])
+        elif kind == ARRIVED or kind == TELEPORTED or (kind == ACTIVITY_STARTED and b != NO_POINT):
+            place, walk = points[a if kind == ARRIVED else b], None
+    if walk is None:
+        return place
+    t0, t1, p0, p1 = walk
+    f = min(1.0, (t - t0) / (t1 - t0)) if t1 > t0 else 1.0
+    return tuple(x + (y - x) * f for x, y in zip(p0, p1, strict=True))
+
+
 def entry_index(ta):
     return None if ta in ("-", "") else int(ta.split()[0])
 
@@ -190,6 +239,7 @@ def compare(world_path, core_dir, engine_dir):
     world, points, names, people = load_world(world_path)
     engine_rows, engine_changes, engine_header = load_engine(engine_dir)
     core_rows = load_core(core_dir, names)
+    core_start_s, core_events = load_journal(core_dir, world)
     # Every mark of the requested day, so that a cut journal or CSV counts as missing marks, not as a shorter day.
     if "minutes" not in engine_header or "period_min" not in engine_header:
         raise SystemExit(f"{engine_dir}: npc-day.json has no minutes and period_min")
@@ -232,13 +282,8 @@ def compare(world_path, core_dir, engine_dir):
                 open_windows[key][e.state] += len(e.marks)
                 continue
             # Travel time: from the entry's start until within 10 m, both from their 5-minute positions.
-            # The core's place at the entry's start: between the marks around it, as it may be on the way.
-            before = [t for t in times if t <= e.begin and t in crows]
-            after = [t for t in times if t > e.begin and t in crows]
-            core_start = crows[before[-1]][3] if before else None
-            if before and after and core_start is not None and crows[after[0]][3] is not None:
-                f = (e.begin - before[-1]) / (after[0] - before[-1])
-                core_start = tuple(a + (b - a) * f for a, b in zip(core_start, crows[after[0]][3], strict=True))
+            # The core's place at the entry's start, from its journal: it may stand or be on the way.
+            core_start = core_place(core_events.get(key, []), core_start_s + e.begin * 60, points)
             engine_samples = [(e.begin, e.origin)] + [(t, erows[t][2]) for t in e.marks]
             t_engine = crossing(engine_samples, target)
             later = [t for t in times if t > e.begin]
