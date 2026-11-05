@@ -1766,7 +1766,9 @@ bool Resources::texturesReady() {
   if(inst==nullptr || inst->dev==nullptr)
     return true;
   std::lock_guard<std::recursive_mutex> guard(inst->sync);
-  if(benchTexturesSettle && (!inst->textureDemotions.empty() || !inst->textureDemotionLru.empty() || inst->textureReload))
+  // the LRU demotes only above textureTarget (updateTextures): below it a non-empty LRU stays as it is
+  const bool lruPending = !inst->textureDemotionLru.empty() && Texture2d::liveBytes()>inst->textureTarget;
+  if(benchTexturesSettle && (!inst->textureDemotions.empty() || lruPending || inst->textureReload))
     return false;
   return inst->textureMissing.empty() && inst->texturePromotions.empty();
   }
