@@ -68,7 +68,7 @@ class Quiver final {
     // trunk and the head, the legs and the flaps in the tube counting less. It reaches the line in the first LiftRamp cm
     // of the draw, holds it while the tip is in the tube and comes back as from the ground (GroundReturn). Farther
     // than the give (GiveAngle) only while that lasts
-    static constexpr float LiftAngle    = 35.f;  // deg at most
+    static constexpr float LiftAngle    = 45.f;  // deg at most
     static constexpr float LiftRamp     = 9.f;   // cm of the draw
     static constexpr float ReloadLine   = 95.f;  // cm of the drawn arrow's line over the mouth (the arrow, 94 cm)
     static constexpr float FletchRadius = 5.f;   // cm: the arrows' nocks spread over the mouth (and their shafts)
@@ -287,7 +287,16 @@ class Quiver final {
     bool                            drawing  = false;
     Tempest::Vec3                   liftTarget, drawFrom;
     float                           fletchNow = 0, lineNow = 0, outNow = -1;
-    float                           trunkHandNow = 99, trunkForeNow = 99, trunkArrowNow = 99;
+    // the lift's search (quiver.cpp, Quiver::step): the aim's target and the draw's line, kept while the trunk's
+    // reference points stay (the rest frame); their way across (rad); how long the aim lasts after it is gone (s)
+    Tempest::Vec3                   liftRef[3], lineTarget;
+    bool                            liftValid = false, lineValid = false;
+    float                           liftPhi = 0, linePhi = 0, liftHold = 0;
+    // the bench's: the trunk's points (the rest frame), the hand and the arrow (the world) of the last step, measured
+    // in probe so the step's cost does not count them
+    std::vector<Obstacle>           trunkSeen;
+    Lift                            liftSeen;
+    Tempest::Matrix4x4              seenInv;
     struct Measured {
       bool                       on = false;
       Tempest::Vec3              n;

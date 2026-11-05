@@ -81,24 +81,61 @@ float segSeg(const Vec3& a0, const Vec3& a1, const Vec3& b0, const Vec3& b1) {
   return best;
   }
 
-// cm the point q is out of the trunk (< 0: in it) by its nearest point p and the normal there; TrunkNear: far
+// cm the point q is out of the trunk (< 0: in it) by its three nearest points and the normals there: the most out of
+// them (one point's plane, far and grazing, would put q deep in where it is not); TrunkNear: far
 float trunkGap(const std::vector<Quiver::Obstacle>& pts, const Vec3& q) {
-  float best = Quiver::TrunkNear*Quiver::TrunkNear;
-  const Quiver::Obstacle* at = nullptr;
+  float d2[3] = {Quiver::TrunkNear*Quiver::TrunkNear,Quiver::TrunkNear*Quiver::TrunkNear,Quiver::TrunkNear*Quiver::TrunkNear};
+  const Quiver::Obstacle* at[3] = {};
   for(auto& o:pts) {
     const Vec3 d = q-o.a;
     if(std::abs(d.y)>Quiver::TrunkNear)
       continue;
     const float l = Vec3::dotProduct(d,d);
-    if(l<best) {
-      best = l;
-      at   = &o;
+    if(l>=d2[2])
+      continue;
+    int k = 2;
+    while(k>0 && l<d2[k-1]) {
+      d2[k] = d2[k-1];
+      at[k] = at[k-1];
+      --k;
       }
+    d2[k] = l;
+    at[k] = &o;
     }
-  if(at==nullptr)
+  if(at[0]==nullptr)
     return Quiver::TrunkNear;
-  return std::min(Vec3::dotProduct(q-at->a,at->n),Quiver::TrunkNear);
+  // out of a point's plane, no nearer than that point less the points' spacing (its plane, far aside and grazing,
+  // would bring the surface nearer than it is)
+  constexpr float Spacing = 2.5f;
+  float gap = -1e9f;
+  for(int i=0; i<3; ++i)
+    if(at[i]!=nullptr) {
+      const float g = Vec3::dotProduct(q-at[i]->a,at[i]->n);
+      gap = std::max(gap,g<0.f ? g : std::max(g,std::sqrt(d2[i])-Spacing));
+      }
+  return std::min(gap,Quiver::TrunkNear);
   }
+
+// the lift's search (Quiver::step): the fletching no deeper than FletchOk cm in the trunk, the drawn arrow's line
+// clear of it by LineRadius - LineOk cm; by halves of the turn, LiftWays ways round the first time, the last one and
+// LiftNear (rad) each side after; again when the target is LiftSlack cm too deep or LiftLess deg lower clears; the aim
+// held LiftHold s; no faster than
+// LiftStep deg in 1/60 s
+constexpr float FletchOk   = 0.75f;
+constexpr float LineOk     = 1.f;
+constexpr int   LiftHalves = 6;
+constexpr int   LiftWays   = 8;
+constexpr float LiftNear   = 0.2f;
+constexpr float LiftHold   = 0.15f;
+constexpr float LiftStep   = 6.f;
+constexpr float LiftBracket = 4.f;  // deg
+constexpr float LiftSlack   = 0.5f; // cm
+constexpr float LiftLess    = 3.f;  // deg
+constexpr float LiftLower   = 0.4f; // s
+constexpr float LiftWayGain = 2.f;  // deg
+constexpr float LiftBackNear = 1.f;  // deg
+constexpr float LiftBackMost = 0.5f; // s
+constexpr float LiftFollow  = 0.1f; // s: 90% of the way to the aim's target
 
 Matrix4x4 swingOf(const Vec3& axis) {
   const Vec3  from = {0,-1,0};
@@ -539,9 +576,21 @@ Quiver::Probe Quiver::probe(const Matrix4x4& pelvis, const Matrix4x4& spine, con
   p.line   = lineNow;
   p.drawOut = outNow;
   p.lift   = groundMode==3 ? std::hypot(liftTarget.x,liftTarget.z)*180.f/float(M_PI) : 0.f;
-  p.trunkHand  = trunkHandNow;
-  p.trunkFore  = trunkForeNow;
-  p.trunkArrow = trunkArrowNow;
+  // the drawing hand, its forearm and the arrow against the trunk's points of the last step (the bench's)
+  if(liftSeen.hand && !trunkSeen.empty()) {
+    auto gapOf = [&](Vec3 w) { seenInv.project(w); return trunkGap(trunkSeen,w); };
+    auto along = [&](const Vec3& w0, const Vec3& w1, float step) {
+      const int n = std::clamp(int((w1-w0).length()/step),1,40);
+      float g = 99.f;
+      for(int i=0; i<=n; ++i)
+        g = std::min(g,gapOf(w0+(w1-w0)*(float(i)/float(n))));
+      return g;
+      };
+    p.trunkHand = gapOf(liftSeen.handAt);
+    p.trunkFore = along(liftSeen.foreAt,liftSeen.handAt,2.f);
+    if(liftSeen.arrow)
+      p.trunkArrow = along(liftSeen.nock,liftSeen.tip,3.f);
+    }
   return p;
   }
 
@@ -740,10 +789,14 @@ void Quiver::step(const Matrix4x4& pelvis, const Matrix4x4& spine, const std::ve
       nearWide.emplace_back(p.x,p.y,p.z,r);
     };
   // the lift's: the trunk's points with their normals and the head's capsule over the mouth (the rest frame)
-  static thread_local std::vector<Obstacle> above, trunkPts, trunkAll;
+  static thread_local std::vector<Obstacle> above, trunkPts;
+  static thread_local std::vector<Vec3>     trunkRaw; // all of them, in the armour's order: the lift's reference
   above.clear();
   trunkPts.clear();
-  trunkAll.clear();
+  trunkRaw.clear();
+  trunkSeen.clear();
+  liftSeen = lf;
+  seenInv  = inv;
   const float coneOut = std::tan((LiftAngle+15.f)*float(M_PI)/180.f);
   for(auto& o:obstacles) {
     if(o.kind==Trunk) {
@@ -752,12 +805,13 @@ void Quiver::step(const Matrix4x4& pelvis, const Matrix4x4& spine, const std::ve
       q.n = Vec3::normalize(Vec3(Vec3::dotProduct(o.n,Vec3(inv.at(0,0),inv.at(1,0),inv.at(2,0))),
                                  Vec3::dotProduct(o.n,Vec3(inv.at(0,1),inv.at(1,1),inv.at(2,1))),
                                  Vec3::dotProduct(o.n,Vec3(inv.at(0,2),inv.at(1,2),inv.at(2,2)))));
+      trunkRaw.push_back(q.a);
       // within the reach of the lines the lift may take (and the bench's hand far from them: not needed)
       if(q.a.y>-TrunkNear && q.a.length()<ReloadLine+TrunkNear &&
          std::hypot(q.a.x,q.a.z)<std::max(q.a.y,0.f)*coneOut+TrunkNear+MouthRadius)
         trunkPts.push_back(q);
-      if(lf.hand)
-        trunkAll.push_back(q);
+      if(measureGround && lf.hand)
+        trunkSeen.push_back(q);
       continue;
       }
     if(o.kind==Head) {
@@ -773,22 +827,6 @@ void Quiver::step(const Matrix4x4& pelvis, const Matrix4x4& spine, const std::ve
     const int   n   = len<1e-3f ? 1 : std::clamp(int(std::ceil(len/std::max(o.r,3.f))),2,12);
     for(int i=0; i<n; ++i)
       take(n==1 ? o.a : o.a+(o.b-o.a)*(float(i)/float(n-1)),o.r,o.kind==Body);
-    }
-  // the bench's: the drawing hand, its forearm and the arrow against the trunk's points
-  trunkHandNow = trunkForeNow = trunkArrowNow = 99.f;
-  if(lf.hand && !trunkAll.empty()) {
-    auto gapOf = [&](Vec3 w) { inv.project(w); return trunkGap(trunkAll,w); };
-    auto along = [&](const Vec3& w0, const Vec3& w1, float step) {
-      const int n = std::clamp(int((w1-w0).length()/step),1,40);
-      float g = 99.f;
-      for(int i=0; i<=n; ++i)
-        g = std::min(g,gapOf(w0+(w1-w0)*(float(i)/float(n))));
-      return g;
-      };
-    trunkHandNow = gapOf(lf.handAt);
-    trunkForeNow = along(lf.foreAt,lf.handAt,2.f);
-    if(lf.arrow)
-      trunkArrowNow = along(lf.nock,lf.tip,3.f);
     }
   // how much of them is in the tube for the axis u (the rest frame, the bottom's direction): the sum of the
   // squares of how deep each goes, so each contact down the tube goes out as far as the turn allows
@@ -909,108 +947,195 @@ void Quiver::step(const Matrix4x4& pelvis, const Matrix4x4& spine, const std::ve
   devTarget = dTarget;
 
   // the lift: how deep the trunk and the head go into the line over the mouth for the axis u (the bottom's way): the
-  // fletching (len cm, the nocks' spread) or the drawn arrow's line; the sum of the squares, the head's 4 times. The
-  // bench's qv_fletch, qv_line are the deepest
-  auto aboveIn = [&](const Vec3& u, float len, float r, float* deepest) {
+  // fletching (len cm, the nocks' spread) or the drawn arrow's line; the deepest, cm. The bench's qv_fletch, qv_line
+  auto deepestIn = [&](const std::vector<Obstacle>& pts, const Vec3& u, float len, float r) {
     // from RingContact up: what touches at the ring the turn cannot take away (as the give's)
     const Vec3 a = u*-RingContact, b = u*-len;
-    float sum = 0, most = 0;
-    for(auto& o:above) {
-      const float d = o.r + r - segSeg(a,b,o.a,o.b);
-      if(d<=0.f)
-        continue;
-      most = std::max(most,d);
-      sum += 4.f*d*d;
+    float most = 0;
+    for(auto& o:above)
+      most = std::max(most,o.r + r - segSeg(a,b,o.a,o.b));
+    if(!pts.empty()) {
+      const int n = std::clamp(int((len-RingContact)/(len>Fletching+1.f ? 5.f : 3.f)),2,32);
+      for(int i=0; i<=n; ++i)
+        most = std::max(most,r - trunkGap(pts,a+(b-a)*(float(i)/float(n))));
       }
-    // the trunk: each point of the line by the armour's nearest point and its normal; the deepest and the mean
-    if(!trunkPts.empty()) {
-      const int n = std::clamp(int((len-RingContact)/3.f),2,32);
-      float tMost = 0, tSum = 0;
-      for(int i=0; i<=n; ++i) {
-        const Vec3 q = a+(b-a)*(float(i)/float(n));
-        const float d = r - trunkGap(trunkPts,q);
-        if(d<=0.f)
-          continue;
-        tMost = std::max(tMost,d);
-        tSum += d*d;
-        }
-      most = std::max(most,tMost);
-      sum += tMost*tMost + tSum/float(n+1);
-      }
-    if(deepest!=nullptr)
-      *deepest = most;
-    return sum;
+    return most;
     };
+  auto deepest = [&](const Vec3& u, float len, float r) { return deepestIn(trunkPts,u,len,r); };
+  // the trunk's points that can matter for the turns toward phi: the axes lie in the plane of the rest axis and that
+  // way, and a point farther than TrunkNear from them is never the nearest (trunkGap)
+  static thread_local std::vector<Obstacle> slab;
+  auto slabOf = [&](float phi) -> const std::vector<Obstacle>& {
+    const Vec3 nrm = {-std::sin(phi),0,std::cos(phi)};
+    slab.clear();
+    for(auto& o:trunkPts)
+      if(std::abs(Vec3::dotProduct(o.a,nrm))<=TrunkNear)
+        slab.push_back(o);
+    return slab;
+    };
+  // the least turn toward phi (rad round the axis, the rest frame) that leaves the line no deeper than ok: by halves
+  // of [0, LiftAngle]; the turn (rad) and how deep it is there
+  const float liftMost = LiftAngle*float(M_PI)/180.f;
+  auto leastTurn = [&](float phi, float len, float r, float ok, float* deep, float near) {
+    const auto& pts = slabOf(phi);
+    auto at = [&](float m) { return deepestIn(pts,axisOfAngle(Vec3(std::cos(phi)*m,0,std::sin(phi)*m)),len,r); };
+    if(near>=0.f) {
+      // from the last answer: a bracket of LiftBracket each side of it, by halves (the pose moved a little)
+      const float br = LiftBracket*float(M_PI)/180.f;
+      float lo = std::max(0.f,near-br), hi = std::min(liftMost,near+br);
+      float dLo = lo>0.f ? at(lo) : at(0), dHi = at(hi);
+      if(dLo<=ok) {
+        if(lo<=0.f) {
+          *deep = dLo;
+          return 0.f;
+          }
+        near = -1; // went down farther than the bracket: the whole way
+        } else if(dHi>ok && hi<liftMost) {
+        near = -1; // up farther
+        } else {
+        for(int i=0; i<LiftHalves-1; ++i) {
+          const float mid = 0.5f*(lo+hi), d = at(mid);
+          if(d>ok)
+            lo = mid; else {
+            hi  = mid;
+            dHi = d;
+            }
+          }
+        *deep = dHi;
+        return hi;
+        }
+      }
+    float d0 = at(0);
+    if(d0<=ok) {
+      *deep = d0;
+      return 0.f;
+      }
+    float dHi = at(liftMost);
+    if(dHi>ok) {
+      *deep = dHi;
+      return liftMost;
+      }
+    float lo = 0, hi = liftMost;
+    for(int i=0; i<LiftHalves; ++i) {
+      const float mid = 0.5f*(lo+hi), d = at(mid);
+      if(d>ok)
+        lo = mid; else {
+        hi  = mid;
+        dHi = d;
+        }
+      }
+    *deep = dHi;
+    return hi;
+    };
+  // the way round the axis that needs the least turn: the last one and its neighbours (a ring of them the first time)
+  // (near: the last turn this way, < 0: none; side: which neighbour to try besides it: 1, -1, 0 both, 2 none)
+  auto searchWay = [&](float& phi, bool first, float len, float r, float ok, float near, int side) {
+    float bestM = 1e9f, bestD = 1e9f, bestPhi = phi;
+    // a neighbour way takes over only LiftWayGain lower: on the way between two ways the tube may go through the trunk
+    const float gain = first ? 1e-4f : LiftWayGain*float(M_PI)/180.f;
+    auto tryWay = [&](float f) {
+      float d = 0;
+      const float m = leastTurn(f,len,r,ok,&d,f==phi ? near : -1.f);
+      if(m<bestM-(bestM<1e8f ? gain : 0.f) || (m>=liftMost-1e-4f && bestM>=liftMost-1e-4f && d<bestD)) {
+        bestM   = m;
+        bestD   = d;
+        bestPhi = f;
+        }
+      };
+    if(first) {
+      // coarse: how deep at half and the whole of LiftAngle each way
+      float least = 1e9f;
+      const float f0 = phi;
+      for(int k=0; k<LiftWays; ++k) {
+        const float f = f0+float(k)*2.f*float(M_PI)/float(LiftWays);
+        const auto& pts = slabOf(f);
+        auto at = [&](float m) { return deepestIn(pts,axisOfAngle(Vec3(std::cos(f)*m,0,std::sin(f)*m)),len,r); };
+        const float d = at(liftMost*0.5f)+at(liftMost);
+        if(d<least) {
+          least = d;
+          phi   = f;
+          }
+        }
+      }
+    if(first)
+      near = -1;
+    tryWay(phi);
+    if(side==0 || side==1)
+      tryWay(phi+LiftNear);
+    if(side==0 || side==-1)
+      tryWay(phi-LiftNear);
+    phi = bestPhi;
+    return Vec3(std::cos(phi)*bestM,0,std::sin(phi)*bestM);
+    };
+  // the aim: the bow up (S_BOWAIM, S_BOWSHOOT, the reload), held LiftHold s over a gap between them
+  liftHold = lf.aim ? LiftHold : std::max(0.f,liftHold-dt);
   const bool trunkOn = !above.empty() || !trunkPts.empty();
-  const bool drawn = lf.out>=0.f && trunkOn;
+  // (over the gap the trunk is not passed: the last search holds)
+  const bool aimNow  = liftOn && ((lf.aim && trunkOn) || (liftHold>0.f && liftValid));
+  const bool drawn   = aimNow && lf.out>=0.f;
   outNow = drawn ? lf.out : -1.f;
   fletchNow = lineNow = 0;
   bool lifting = false;
-  if(trunkOn) {
-    aboveIn(Vec3::normalize(axis),Fletching,FletchRadius,&fletchNow);
-    if(drawn)
-      aboveIn(Vec3::normalize(axis),ReloadLine,LineRadius,&lineNow);
-    const float len = drawn ? ReloadLine : Fletching, rad = drawn ? LineRadius : FletchRadius;
-    float restDeep = 0;
-    aboveIn(best,len,rad,&restDeep);
-    // the fletching: pushed from 1.5 cm in, held while it would be more than 0.5 cm in at rest
-    lifting = liftOn && (drawn || (lf.aim && restDeep>1.5f) || (groundMode==3 && lf.aim && restDeep>0.5f));
-    if(lifting) {
-      // the least turn: by its angle across, to LiftAngle, from the last answer, the reload's line and a ring of starts
-      const float most = LiftAngle*float(M_PI)/180.f;
-      const Vec3  last = groundMode==3 ? liftTarget : angleOf(best);
-      auto clampA = [&](float& x, float& z) {
-        const float l = std::hypot(x,z);
-        if(l>most) {
-          x *= most/l;
-          z *= most/l;
-          }
-        };
-      auto score3 = [&](float x, float z) {
-        const Vec3 u = axisOfAngle(Vec3(x,0,z));
-        return aboveIn(u,len,rad,nullptr) + LiftLegs*insideOf(near,u) + 2.f*std::hypot(x,z) +
-               2.f*std::hypot(x-last.x,z-last.z);
-        };
-      float x = last.x, z = last.z, sc = score3(x,z);
-      auto seed = [&](float sx, float sz) {
-        clampA(sx,sz);
-        if(const float sn = score3(sx,sz); sn<sc) {
-          x  = sx;
-          z  = sz;
-          sc = sn;
-          }
-        };
-      seed(0,0);
-      seed(ReloadTurnX,ReloadTurnZ);
-      seed(ReloadTurnX*0.5f,ReloadTurnZ*0.5f);
-      for(int k=0; k<8; ++k) {
-        const float ph = float(k)*float(M_PI)/4.f;
-        for(int m=1; m<=3; ++m)
-          seed(std::cos(ph)*most*float(m)/3.f,std::sin(ph)*most*float(m)/3.f);
+  if(aimNow) {
+    lifting = true;
+    // the last target against the trunk as posed now: deeper than FletchOk + LiftSlack, or clear LiftLess deg lower:
+    // search again
+    bool moved = !liftValid && !trunkPts.empty();
+    if(liftValid && !trunkPts.empty()) {
+      const float m   = std::hypot(liftTarget.x,liftTarget.z);
+      const float phi = liftPhi;
+      auto at = [&](float k) { return deepest(axisOfAngle(Vec3(std::cos(phi)*k,0,std::sin(phi)*k)),Fletching,FletchRadius); };
+      // (lower: only when it has stayed clear LiftLower s; liftRef[0].x keeps how long, s)
+      float& clearFor = liftRef[0].x;
+      if(at(m)>FletchOk+LiftSlack) {
+        moved    = true;
+        clearFor = 0;
+        } else if(m>0.f && at(std::max(0.f,m-LiftLess*float(M_PI)/180.f))<=FletchOk-LiftSlack) {
+        clearFor += dt;
+        moved = clearFor>=LiftLower;
+        if(moved)
+          clearFor = 0;
+        } else {
+        clearFor = 0;
         }
-      float step = most*0.15f;
-      constexpr float h = 0.004f;
-      for(int it=0; it<16 && step>most*0.005f; ++it) {
-        const float gx = (score3(x+h,z)-sc)/h, gz = (score3(x,z+h)-sc)/h;
-        const float gl = std::hypot(gx,gz);
-        if(gl<1e-6f)
-          break;
-        float nx = x - gx/gl*step, nz = z - gz/gl*step;
-        clampA(nx,nz);
-        const float sn = score3(nx,nz);
-        if(sn<sc) {
-          x  = nx;
-          z  = nz;
-          sc = sn;
-          step *= 1.2f;
-          } else {
-          step *= 0.5f;
-          }
-        }
-      liftTarget = Vec3(x,0,z);
       }
+    if(moved) {
+      // the fletching: the least turn that leaves it no deeper than FletchOk; the draw's line next frame
+      const bool first = !liftValid;
+      if(first)
+        liftPhi = std::atan2(ReloadTurnZ,ReloadTurnX);
+      // after the first, one neighbour way a time, by turns
+      static thread_local int side = 1;
+      side = -side;
+      const float last = first ? -1.f : std::hypot(liftTarget.x,liftTarget.z);
+      liftTarget = searchWay(liftPhi,first,Fletching,FletchRadius,FletchOk,last,first ? 0 : side);
+      liftValid = true;
+      }
+    // the drawn arrow's line: clear of the trunk and the head by LineRadius - LineOk; once a draw, from the aim's way
+    if(drawn && !lineValid && !trunkPts.empty()) {
+      linePhi    = liftPhi;
+      lineTarget = searchWay(linePhi,false,ReloadLine,LineRadius,LineOk,std::hypot(liftTarget.x,liftTarget.z),0);
+      lineValid  = true;
+      } else if(drawn && !trunkPts.empty() && deepest(axisOfAngle(lineTarget),ReloadLine,LineRadius)>LineOk+LiftSlack) {
+      // the clip moves the head and the shoulder meanwhile: from the last line, one neighbour way a time
+      static thread_local int lineSide = 1;
+      lineSide   = -lineSide;
+      lineTarget = searchWay(linePhi,false,ReloadLine,LineRadius,LineOk,std::hypot(lineTarget.x,lineTarget.z),lineSide);
+      }
+    if(!drawn)
+      lineValid = false;
+    if(measureGround) {
+      fletchNow = deepest(Vec3::normalize(axis),Fletching,FletchRadius);
+      if(drawn)
+        lineNow = deepest(Vec3::normalize(axis),ReloadLine,LineRadius);
+      }
+    } else {
+    liftValid = lineValid = false;
+    liftRef[0].x = 0;
+    if(measureGround && trunkOn)
+      fletchNow = deepest(Vec3::normalize(axis),Fletching,FletchRadius);
     }
-  if(!lifting)
+  if(!lifting || !drawn)
     drawing = false;
 
   // the ground still in the tube at GiveAngle: the wide turn, to GroundAngle, by the turn's own angle across
@@ -1082,10 +1207,22 @@ void Quiver::step(const Matrix4x4& pelvis, const Matrix4x4& spine, const std::ve
   const Vec3  now      = Vec3::normalize(axis);
   const float nowAngle = std::acos(std::clamp(-now.y,-1.f,1.f))*180.f/float(M_PI);
   const bool  pushed   = ground.on && (wide || underground(Vec3(0,-1,0),lift)>0.f || underground(now,lift)>0.f);
-  if(groundMode==3 && !lifting)
+  if(groundMode==3 && !lifting) {
     liftBack = true;
-  if(liftBack && (lifting || pushed || (gw-gTarget).length()<0.2f*float(M_PI)/180.f))
+    liftRef[1].x = 0; // how long it has been coming back, s
+    }
+  if(liftBack)
+    liftRef[1].x += dt;
+  // back within LiftBackNear deg of the give's target, or after LiftBackMost s (walking, the target moves on)
+  if(liftBack && !lifting && !pushed &&
+     ((gw-gTarget).length()<LiftBackNear*float(M_PI)/180.f || liftRef[1].x>=LiftBackMost)) {
+    // back: where the give has it, no speed left (nothing of the aim carried on)
+    gw  = gTarget;
+    gwV = Vec3();
     liftBack = false;
+    } else if(liftBack && (lifting || pushed)) {
+    liftBack = false;
+    }
   const int   mode     = pushed ? 1 : (lifting ? 3 : (liftBack || nowAngle>GiveAngle+0.05f ? 2 : 0));
 
   // a jump (a teleport, a load) or the first step: at the target
@@ -1143,12 +1280,12 @@ void Quiver::step(const Matrix4x4& pelvis, const Matrix4x4& spine, const std::ve
         drawFrom = gw;
         }
       const float k = std::clamp(lf.out/LiftRamp,0.f,1.f);
-      gw  = drawFrom + (liftTarget-drawFrom)*(k*k*(3.f-2.f*k));
+      gw  = drawFrom + (lineTarget-drawFrom)*(k*k*(3.f-2.f*k));
       gwV = (gw-from)/dt;
       } else {
       const Vec3 target = mode==3 ? liftTarget : gTarget;
-      // back: critically damped, no overshoot, 90% in GroundReturn
-      const float w = 3.89f/GroundReturn;
+      // back: critically damped, no overshoot, 90% in GroundReturn; after the chest in the aim, in LiftFollow
+      const float w = 3.89f/(mode==3 ? LiftFollow : GroundReturn);
       const int   n = std::max(1,int(std::ceil(dt*240.f)));
       const float h = dt/float(n);
       for(int i=0; i<n; ++i) {
@@ -1161,7 +1298,7 @@ void Quiver::step(const Matrix4x4& pelvis, const Matrix4x4& spine, const std::ve
       }
     // no faster than GroundStep in 1/60 s, as the angle the axis turns
     const Vec3  moved = gw-from;
-    const float most  = GroundStep*dt*60.f*float(M_PI)/180.f;
+    const float most  = (mode==1 ? GroundStep : std::min(GroundStep,LiftStep))*dt*60.f*float(M_PI)/180.f;
     const Vec3  a0    = axisOfAngle(from);
     auto turn = [&](float f) {
       return std::acos(std::clamp(Vec3::dotProduct(a0,axisOfAngle(from+moved*f)),-1.f,1.f));

@@ -813,12 +813,24 @@ bool MdlVisual::updateQuiver(const Npc& npc, uint64_t dt) {
   Quiver::Lift lift;
   {
     const auto bs = npc.bodyStateMasked() & BS_MAX;
-    lift.aim = npc.weaponState()==WeaponState::Bow && (bs==BS_AIMNEAR || bs==BS_AIMFAR || bs==(BS_HIT & BS_MAX));
+    // the stance of the aim only: the bow coming up, up and the reload, standing (not stepping with it drawn, not the
+    // run, the walk, the sneak with the bow)
+    const auto& ps = pose();
+    lift.aim = npc.weaponState()==WeaponState::Bow && (bs==BS_AIMNEAR || bs==BS_AIMFAR || bs==(BS_HIT & BS_MAX)) &&
+               npc.aimWalk()<0.05f &&
+               (ps.isInAnim("S_BOWAIM") || ps.isInAnim("S_BOWSHOOT") || ps.isInAnim("T_BOWRELOAD") ||
+                ps.isInAnim("T_BOWWALK_2_BOWAIM") || ps.isInAnim("T_BOWRUN_2_BOWAIM") ||
+                ps.isInAnim("T_BOWAIM_2_BOWSHOOT"));
     lift.out = lift.aim ? pose().bowDrawIk().drawOut() : -1.f;
     }
   if(lift.aim) {
     if(const ProtoMesh* pm = view.protoMesh()) {
       const auto& sv = pm->skinVertexData();
+      // the bones' turns from the bind pose, once a bone
+      static thread_local std::vector<Matrix4x4> turns;
+      static thread_local std::vector<uint8_t>   turnSet;
+      turns.resize(sk.tr.size());
+      turnSet.assign(sk.tr.size(),0);
       for(auto id:quiv.above()) {
         if(id>=sv.size())
           continue;
@@ -841,9 +853,13 @@ bool MdlVisual::updateQuiver(const Npc& npc, uint64_t dt) {
         if(!(weight>0.f) || b>=sk.tr.size())
           continue;
         // the normal of the bind pose turned as its bone is: the bone now against the bone bound
-        Matrix4x4 turn = sk.tr[b];
-        turn.inverse();
-        turn = bones[b]*turn;
+        if(!turnSet[b]) {
+          Matrix4x4 inv = sk.tr[b];
+          inv.inverse();
+          turns[b]   = bones[b]*inv;
+          turnSet[b] = 1;
+          }
+        const Matrix4x4& turn = turns[b];
         Vec3 nv(v.norm[0],v.norm[1],v.norm[2]), o(0,0,0);
         turn.project(nv);
         turn.project(o);
