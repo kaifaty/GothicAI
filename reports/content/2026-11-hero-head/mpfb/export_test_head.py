@@ -173,7 +173,11 @@ out = struct.pack('<III', 0x46546C67, 2, 12+8+len(txt)+len(rest)) + struct.pack(
 open(glb, 'wb').write(out)
 print('GLB', glb, len(out), 'bytes; targets per mesh', {k: len(v) for k, v in names.items()})
 
-json.dump({'PC_HERO': {'head': 'hero/test-head.glb'}}, open(os.path.join(ROOT, 'characters', 'characters.json'), 'w'), indent=2)
+# the face profile: the old face animation names as weights of these shapes (authored by hand, next to this script)
+shutil.copyfile(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'test-head.face.json'),
+                os.path.join(ROOT, 'characters', 'hero', 'test-head.face.json'))
+json.dump({'PC_HERO': {'head': 'hero/test-head.glb', 'face': 'hero/test-head.face.json'}},
+          open(os.path.join(ROOT, 'characters', 'characters.json'), 'w'), indent=2)
 
 # albedo maps: MPFB PNGs packed as the game's own (DXT1/DXT5 with mips)
 png = os.path.join(ROOT, 'materials', 'test-head-png'); dds = os.path.join(ROOT, 'materials', 'test-head')

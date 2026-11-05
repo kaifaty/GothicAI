@@ -25,7 +25,8 @@ BLENDER_USER_RESOURCES=~/.local/share/gothic-ai/mpfb/blender \
   | `eye_L`, `eye_R` | по 532 | по 1 020 | 0 |
 
   Формы на лице — 15 форм рта Meta и 52 формы ARKit. Каждая форма хранит сдвиги позиций и нормалей, имена записаны в `mesh.extras.targetNames`.
-- `characters/characters.json` — `{"PC_HERO": {"head": "hero/test-head.glb"}}` в формате задачи шагов 1–2.
+- `characters/characters.json` — `{"PC_HERO": {"head": "hero/test-head.glb", "face": "hero/test-head.face.json"}}`.
+- `characters/hero/test-head.face.json` — профиль лица, копия [`mpfb/test-head.face.json`](mpfb/test-head.face.json). В нём старые имена анимаций (`S_*`, `R_EYESBLINK`, `T_*`, `VISEME`) переведены в веса форм ARKit и визем. Время взято у морфов `HUM_HEAD_PONY.MMB`: слой, вход и выход, время кадра. Стороны лица немного различаются. Вид каждой анимации проверяет `render_test_head.py` с профилем третьим аргументом.
 - `materials/materials.json` и `materials/test-head/*.dds` — альбедо MPFB (CC0), упакованное `scripts/hd/texpack.cpp`. Материалы `OWN_TEST_HEAD_SKIN`, `EYE`, `BROWS`, `LASHES` (альфа-тест), `TEETH`, `TONGUE`.
 
 Каталог `content-tests/` отдельный: голова не попадает в рабочий контент игры, пока её не подключат явно через `OPENGOTHIC_CONTENT`.
@@ -46,6 +47,8 @@ BLENDER_USER_RESOURCES=~/.local/share/gothic-ai/mpfb/blender \
 Проверка — [`mpfb/render_test_head.py`](mpfb/render_test_head.py): загружает сам GLB обратно и ставит формы на всех частях сразу.
 
 ![Сверху слева направо: нейтральное лицо, jawOpen, моргание, улыбка; снизу: брови вверх, viseme_U, взгляд вверх, «недоверие»](test-head-shapes.jpg)
+
+![Профиль. Сверху: S_NEUTRAL, S_FRIENDLY, S_ANGRY, S_HOSTILE, S_FRIGHTENED, T_HURT; снизу: T_EAT, VISEME 0, 5, 10, 15, S_EYESCLOSED](test-head-profile.jpg)
 
 Чего у тестовой головы нет:
 - **Глаза не поворачиваются.** `eyeLookUp` поднимает только веки, яблоки повернёт шаг 5.
