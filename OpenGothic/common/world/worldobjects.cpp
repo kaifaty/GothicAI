@@ -1760,6 +1760,7 @@ void WorldObjects::resetPositionToTA() {
       return symbol!=nullptr ? symbol->name() : std::to_string(n.instanceSymbol());
       });
     if(keepBodies && n.isDead() && !n.isPlayer()) {
+      owner.script().startupFloor().beforeKeep(n);
       ++i;
       continue;
       }
@@ -1778,6 +1779,7 @@ void WorldObjects::resetPositionToTA() {
 
       auto& point = owner.deadPoint();
       auto& npc   = *npcInvalid.back();
+      owner.script().startupFloor().beforeResetMove(npc,point.position());
       npc.suspendRagdoll();
       npc.attachToPoint(nullptr);
       npc.setPosition(point.position());

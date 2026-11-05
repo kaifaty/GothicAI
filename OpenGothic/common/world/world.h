@@ -72,6 +72,8 @@ class World final {
     uint32_t             npcId(const Npc* ptr) const;
     Npc*                 npcById(uint32_t id);
     uint32_t             npcCount() const;
+    // Load probe: one line per NPC after a fresh start's placement (game/startupfloor.h).
+    void                 logStartupFloorDigest();
     Npc*                 npcForRagdoll(const Ragdoll* body);
     bool                 stickArrow(MeshObjects::Mesh&& arrow, const Tempest::Matrix4x4& worldMatrix,
                                     std::string_view visual = {},

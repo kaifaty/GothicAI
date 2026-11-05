@@ -789,6 +789,18 @@ void GameScript::fixNpcPosition(Npc& npc, float angle0, float distBias) {
   // npc.setPosition(pos0);
   }
 
+// Not findNpc: a script may pass a stale instance, which the external itself rejects.
+void GameScript::floorArg(Npc** args, size_t& count, const std::shared_ptr<zenkit::INpc>& v) {
+  if(v!=nullptr && v->user_ptr!=nullptr)
+    args[count++] = reinterpret_cast<Npc*>(v->user_ptr);
+  }
+
+void GameScript::floorArg(Npc** args, size_t& count, const std::shared_ptr<zenkit::DaedalusInstance>& v) {
+  auto h = dynamic_cast<zenkit::INpc*>(v.get());
+  if(h!=nullptr && h->user_ptr!=nullptr)
+    args[count++] = reinterpret_cast<Npc*>(h->user_ptr);
+  }
+
 const World &GameScript::world() const {
   return *owner.world();
   }
@@ -2142,7 +2154,11 @@ void GameScript::wld_insertnpc(int npcInstance, std::string_view spawnpoint) {
     return;
 
   auto npc = world().addNpc(size_t(npcInstance),spawnpoint);
-  if(npc!=nullptr)
+  if(npc==nullptr)
+    return;
+  if(floorDefer.active())
+    floorDefer.inserted(*npc); // fresh world start: the final placement fixes it (game/startupfloor.h)
+  else
     fixNpcPosition(*npc,0,150);
   }
 
