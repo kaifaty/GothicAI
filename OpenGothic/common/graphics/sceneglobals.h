@@ -40,6 +40,7 @@ class SceneGlobals final {
     void setUnderWater(bool w);
     // TAA: the bias of the material textures' mip level in the main view; shadows keep 0
     void setMipBias(float bias);
+    void setTaaFrame(bool active, uint32_t frame);
 
     void setTime(uint64_t time);
     void commitUbo(uint8_t fId);
@@ -132,7 +133,8 @@ class SceneGlobals final {
       uint32_t                        fogQuality = 0;
       float                           mipBias      = 0; // TAA: the main view only (commitUbo), 0 in shadows
       float                           mipGradScale = 1; // exp2(mipBias)
-      float                           mipPad[2]    = {};
+      uint32_t                        taaFrame     = 0; // TAA: the frame number (Renderer::prepareTaa), 0 without TAA
+      uint32_t                        taaActive    = 0;
       };
 
     Tempest::UniformBuffer<UboGlobal> uboGlobalPf[Resources::MaxFramesInFlight][V_Count];

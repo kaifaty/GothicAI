@@ -4,6 +4,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstring>
 #include <fstream>
 #include <mutex>
 #include <random>
@@ -30,6 +31,55 @@ void PipelineCacheFile::setDirectory(const fs::path& dir) {
 fs::path PipelineCacheFile::directory() {
   std::lock_guard<std::mutex> guard(directorySync());
   return directoryValue();
+  }
+
+static fs::path& shaderDirectoryValue() {
+  static fs::path dir;
+  return dir;
+  }
+
+static bool& shaderVerifyValue() {
+  static bool v = false;
+  return v;
+  }
+
+void PipelineCacheFile::setShaderDirectory(const fs::path& dir, bool verify) {
+  std::lock_guard<std::mutex> guard(directorySync());
+  shaderDirectoryValue() = dir;
+  shaderVerifyValue()    = verify;
+  }
+
+fs::path PipelineCacheFile::shaderDirectory() {
+  std::lock_guard<std::mutex> guard(directorySync());
+  return shaderDirectoryValue();
+  }
+
+bool PipelineCacheFile::shaderVerify() {
+  std::lock_guard<std::mutex> guard(directorySync());
+  return shaderVerifyValue();
+  }
+
+uint64_t PipelineCacheFile::hashWords(const void* data, size_t size, uint64_t seed) {
+  // Not cryptographic: a key and a corruption check. Eight bytes per step, so a few MB cost about a millisecond.
+  auto*    p = reinterpret_cast<const uint8_t*>(data);
+  uint64_t h = seed ^ (uint64_t(size)*0x9e3779b97f4a7c15ull);
+  size_t   i = 0;
+  for(; i+8<=size; i+=8) {
+    uint64_t w;
+    std::memcpy(&w,p+i,8);
+    h ^= w;
+    h *= 0xbf58476d1ce4e5b9ull;
+    h ^= h>>31;
+    }
+  uint64_t tail = 0;
+  for(size_t r=0; i+r<size; ++r)
+    tail |= uint64_t(p[i+r])<<(8*r);
+  h ^= tail;
+  h *= 0x94d049bb133111ebull;
+  h ^= h>>29;
+  h *= 0xbf58476d1ce4e5b9ull;
+  h ^= h>>32;
+  return h;
   }
 
 uint64_t PipelineCacheFile::hash(const void* data, size_t size, uint64_t seed) {

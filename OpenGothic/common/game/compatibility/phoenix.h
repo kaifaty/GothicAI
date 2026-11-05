@@ -31,7 +31,7 @@ namespace phoenix_compat {
     std::vector<SubMesh>        subMeshes;
   };
   
-  zenkit::AxisAlignedBoundingBox get_total_aabb(const asset::SoftSkinMesh&);
+  asset::Aabb get_total_aabb(const asset::SoftSkinMesh&);
   
   PackedSkeletalMesh pack_softskin_mesh(const asset::SoftSkinMesh&);
 }

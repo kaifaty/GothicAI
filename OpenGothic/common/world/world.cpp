@@ -9,6 +9,8 @@
 
 #include <Tempest/Log>
 #include <cstdio>
+#include <cstdlib>
+#include <string_view>
 #include <Tempest/Painter>
 
 #include "graphics/mesh/submesh/packedmesh.h"
@@ -404,6 +406,15 @@ void World::load(Serialize &fin) {
   wdynamic->loadMovableVobs(fin);
   loadStuckArrows(fin);
   loadBloodStains(fin);
+  if(const char* env=std::getenv("OPENGOTHIC_PLACED_CENSUS_DIGEST"); env!=nullptr && std::string_view(env)=="1") {
+    // Same moment for every run: the save is restored, no tick has run.
+    // Two lines: Tempest truncates a log line at 255 bytes.
+    const auto digest=physicsDigest();
+    Tempest::Log::i("physics digest: phase=restore bodies=",digest.native.bodies," active=",digest.native.active,
+                    " bodies_sha256=",digest.native.digest);
+    Tempest::Log::i("physics digest: phase=restore movables=",digest.native.movables," owners_sha256=",digest.native.owners,
+                    " item_bodies=",digest.itemBodies," items_sha256=",digest.items);
+    }
   }
 
 void World::save(Serialize &fout) {

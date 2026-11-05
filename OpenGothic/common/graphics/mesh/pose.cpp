@@ -66,8 +66,8 @@ asset::AnimationSample physicalSample(const Matrix4x4& local) {
   // their rotation transposed. Use the existing post-pass conversion, then undo that convention.
   const auto q = IkMath::toQuat(IkMath::transpose(polarRotation(local)));
   const float length=std::sqrt(q.w*q.w+q.x*q.x+q.y*q.y+q.z*q.z);
-  out.position = zenkit::Vec3(p.x,p.y,p.z);
-  out.rotation = zenkit::Quat(q.w/length,q.x/length,q.y/length,q.z/length);
+  out.position = asset::Vec3(p.x,p.y,p.z);
+  out.rotation = asset::Quat(q.w/length,q.x/length,q.y/length,q.z/length);
   return out;
   }
 

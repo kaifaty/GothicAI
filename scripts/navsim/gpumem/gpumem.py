@@ -94,7 +94,8 @@ class Backend:
             library = self.build / "libgpumemhost.so"
             source = HERE / "memory_host.cpp"
             if not library.exists() or library.stat().st_mtime < max(source.stat().st_mtime,
-                                                                     (HERE / "memory_kernels.h").stat().st_mtime):
+                                                                     (HERE / "memory_kernels.h").stat().st_mtime,
+                                                                     (HERE / "passage_kernels.h").stat().st_mtime):
                 subprocess.run(["c++", *HOST_FLAGS, str(source), "-o", str(library)], check=True)
             self.lib = ctypes.CDLL(str(library))
             for name in ("gm_ctx_bytes", "gm_table_bytes"):
@@ -102,6 +103,7 @@ class Backend:
             self.lib.gm_update.argtypes = [ctypes.c_void_p]
             self.lib.gm_read.argtypes = [ctypes.c_void_p] * 2 + [ctypes.c_int64] + [ctypes.c_void_p] * 2
             self.lib.gm_scatter.argtypes = [ctypes.c_void_p] * 3
+            self.lib.gm_passage.argtypes = [ctypes.c_void_p] * 3 + [ctypes.c_int64, ctypes.c_void_p]
             self.ctx_bytes, self.table_bytes = self.lib.gm_ctx_bytes(), self.lib.gm_table_bytes()
         else:
             raise ValueError(kind)
@@ -195,11 +197,22 @@ class Memory:
         result["hd_input_float32"] = 4 * 10 * OUTPUTS
         return result
 
-    def update(self):
+    def context(self, **pointers):
+        """A copy of the context with some pointers replaced, for example the
+        pose of one tick in a buffer the caller owns. Keep it alive while used."""
+        ctx = Ctx.from_buffer_copy(self.ctx)
+        for name, address in pointers.items():
+            if name not in POINTERS:
+                raise KeyError(name)
+            setattr(ctx, name, address)
+        return ctx
+
+    def update(self, context=None):
+        address = self.address if context is None else ctypes.addressof(context)
         if self.backend.kind == "cuda":
-            self.backend.ext.update(self.address)
+            self.backend.ext.update(address)
         else:
-            self.backend.lib.gm_update(self.address)
+            self.backend.lib.gm_update(address)
 
     def read(self, agents, near, far):
         """Write readouts of ``agents`` (int32) to CHW float32 near/far batches."""
@@ -207,6 +220,25 @@ class Memory:
             self.backend.ext.read(self.address, agents, near, far)
         else:
             self.backend.lib.gm_read(self.address, agents.ctypes.data, len(agents), near.ctypes.data, far.ctypes.data)
+
+    def passage(self, agents, segments, verdicts):
+        """Check world segments against memory after the current decision's updates.
+
+        Resident contiguous arrays: int32 [Q] agents, float32 [Q,8] segments
+        (from.xyz, to.xyz, corridorCm, footprintCm), uint8 [Q] verdicts.
+        Verdict values match NavigationPassage: Unknown=0, Free=1, Closed=2.
+        """
+        if self.backend.kind == "cuda":
+            self.backend.ext.passage(self.address, agents, segments, verdicts)
+        else:
+            if agents.dtype != np.int32 or segments.dtype != np.float32 or verdicts.dtype != np.uint8:
+                raise ValueError("passage requires int32 agents, float32 segments and uint8 verdicts")
+            if segments.shape != (len(agents), 8) or verdicts.shape != (len(agents),):
+                raise ValueError("one segment and verdict per query")
+            if not all(v.flags.c_contiguous for v in (agents, segments, verdicts)):
+                raise ValueError("passage arrays must be contiguous")
+            self.backend.lib.gm_passage(self.address, agents.ctypes.data, segments.ctypes.data,
+                                        len(agents), verdicts.ctypes.data)
 
     def scatter(self, table: "EyeTable", updates):
         if self.backend.kind == "cuda":

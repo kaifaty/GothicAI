@@ -16,8 +16,16 @@ namespace PipelineCacheFile {
   void                  setDirectory(const std::filesystem::path& dir);
   std::filesystem::path directory();
 
+  // SPIR-V -> MSL translation cache (Metal). Its own directory and switch; verify translates live on every
+  // hit and stops the process on any difference.
+  void                  setShaderDirectory(const std::filesystem::path& dir, bool verify);
+  std::filesystem::path shaderDirectory();
+  bool                  shaderVerify();
+
   uint64_t              hash(const void* data, size_t size, uint64_t seed = 0xcbf29ce484222325ull);
   std::string           hex(uint64_t v);
+  // Word-at-a-time hash for large blobs (cache keys and payload checks); stable across builds and platforms.
+  uint64_t              hashWords(const void* data, size_t size, uint64_t seed);
 
   // Whole file, or false when it is missing or larger than the limit.
   bool                  read(const std::filesystem::path& file, std::vector<uint8_t>& out, size_t maxSize);

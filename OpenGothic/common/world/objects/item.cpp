@@ -237,10 +237,14 @@ void Item::setAsEquipped(bool e) {
     itSlot=NSLOT;
   }
 
-void Item::setPhysicsEnable(World& world) {
+const ProtoMesh* Item::physicsProto() {
   if(proto==nullptr && !FileExt::hasExt(hitem->visual,"ZEN"))
     proto=Resources::loadMesh(hitem->visual);
-  setPhysicsEnable(proto);
+  return proto;
+  }
+
+void Item::setPhysicsEnable(World& world) {
+  setPhysicsEnable(physicsProto());
   world.invalidateVobIndex();
   }
 

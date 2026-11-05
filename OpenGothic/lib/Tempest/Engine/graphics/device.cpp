@@ -118,6 +118,10 @@ void Device::setPipelineCacheDirectory(const std::filesystem::path& dir) {
   Detail::PipelineCacheFile::setDirectory(dir);
   }
 
+void Device::setShaderCacheDirectory(const std::filesystem::path& dir, bool verify) {
+  Detail::PipelineCacheFile::setShaderDirectory(dir,verify);
+  }
+
 void Device::savePipelineCache() {
   impl.dev->savePipelineCache();
   }

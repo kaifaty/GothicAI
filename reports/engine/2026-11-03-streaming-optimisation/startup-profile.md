@@ -1,0 +1,229 @@
+# STARTUP и расстановка NPC: профиль — 2026-11-05
+
+Главная статья — **проверка позиции через физику, дважды за загрузку**: `fixNpcPosition` занимает **564,8 мс / 60,2 % script** при вставке NPC и ещё **567,3 мс / 91,2 % npc_placement** после скриптов. Следом — применение тела модели: **287,6 мс / 30,7 % script**, без загрузчиков ресурсов. Инвентарь, имена WP и интерпретатор не объясняют оставшиеся секунды. Оптимизаций в этой работе нет.
+
+Из 1053 оставшихся NPC **711 (67,5 %) находятся вне кольца удержания Full** вокруг героя; на их расстановку приходится **408,1 мс / 65,6 % placement**. Это возможность для отдельного изменения Simplified, а не доказательство, что их уже безопасно не расставлять. Цель Mac ≤4 с этим измерением **не проверена**.
+
+## Способ измерения и ограничения
+
+Исходная точка — [«STARTUP по частям»](baseline.md#startup-по-частям): 931,79 мс script и 628,97 мс placement. Измерен текущий код после кэшей census/pipelines, NEWWORLD, оригинальный контент, база `032e902aee6fef6ccc54fd01fdc4f018e0a2cb80ed470cdae2e79d5ee150b14b`. Ryzen 3950X, RTX 3080, Linux/Vulkan, GCC `RelWithDebInfo`, `-O2 -g1 -DNDEBUG`, окно 800×600. Производные кэши изолированы в папке задачи; зачётные запуски тёплые, кэш ОС не сбрасывался.
+
+Исследовательский вопрос: отделить стоимость VM от вызываемого ею движка и определить, какую часть финального сброса действительно тратят NPC. Приёмка — sampling обеих фаз, распределения по NPC и повторяющимся ключам, проверка сборок и `load_rewind` с выключенным зондом. [GNU gprofng](https://sourceware.org/binutils/docs/gprofng.html) выбран как пользовательский PC/stack sampler. `perf` установлен, но `perf stat -e task-clock true` отклонён при `perf_event_paranoid=4`; настройки и привилегии не менялись ([ограничения perf](https://www.kernel.org/doc/html/latest/admin-guide/perf-security.html)).
+
+Три разных величины не смешиваются:
+
+- **Стенное время scopes:** медиана [min–max] трёх запусков, `gq quiet`, без sampler. «Script charge» вычитает те же категории NPC/model/skeleton/animation/texture/item, что исходный зонд. Вложенные строки нельзя складывать с родителями.
+- **Sampling CPU:** `gprofng collect app -p 1 -F off`, три окончательных запуска через `gq quick`, 4 потока. Одновременно шла чужая batch-задача на 16 потоках; LA1 19,17–21,00. Таблицы ниже — среднее CPU на загрузку и доля samples внутри выбранной фазы, **с загрузчиками ресурсов**. Это не дополнительные миллисекунды к категории script и не стенное время на тихой машине.
+- **Повторы ключа:** одинаковые аргументы вызова, а не доказательство одинакового состояния или допустимости копирования NPC.
+
+Границы фаз и Linux TID записывает зонд. На Linux clock-запись использует `CLOCK_MONOTONIC_RAW`, как timestamps collector; длительности scopes остаются на `steady_clock`. Анализ переводит границы относительно `<event kind="run">` и OS TID в номер LWP gprofng. Шов двух часов отличается на десятки микросекунд, меньше интервала sampling 1 мс. Выбрано **5085 ticks script и 2241 placement**. Используются только профили `sampling-accepted`; подготовительные профили с другими границами/бинарником в flame-таблицы не входят.
+
+`-O2` и unwinder иногда оставляют фрагменты стека без верхних родителей. Поэтому sampled inclusive — время **видимых** потомков, нижняя граница при обрыве; self привязан к текущему PC. Ноль self означает отсутствие samples, не доказанную нулевую стоимость. Например, видимый inclusive `WorldObjects::resetPositionToTA` — 58,6 % samples placement, хотя временной фильтр целиком охватывает этот метод. Полные интервалы даёт зонд. Имена части libc-функций отсутствуют; им не приписана произвольно «работа со строками». Collector пишет предупреждение `1000 -> 0` при закрытии эксперимента; в обоих интервалах есть samples, ошибок collector нет.
+
+### Контроль накладных расходов
+
+| Без sampler, n=3 на условие | Script, мс | Placement, мс | LA1 |
+|---|---:|---:|---:|
+| Исходная сборка, старый зонд | 911,734 [896,621–915,701] | 610,044 [607,231–617,582] | 5,01–5,85 |
+| Детальные scopes | 937,632 [927,656–954,072] | 621,851 [618,085–626,931] | 6,06–7,10 |
+
+Разность медиан — +25,898 мс / 2,84 % script и +11,807 мс / 1,94 % placement. Это оценка влияния диагностической сборки, включая шум и размещение кода, не изолированный замер одного таймера. В исходной сборке sampler добавляет по медианам ещё 38,760 мс / 4,25 % script и 31,246 мс / 5,12 % placement. Окончательные sampling-запуски нагружены сильнее, поэтому их миллисекунды отдельно от quiet-чисел.
+
+Записи вызовов буферизуются и печатаются после остановки STARTUP clocks. Внешняя метка `scripts_startup` включает печать; её время и общий load инструментированной сборки не используются для оценки ускорения. Без `OPENGOTHIC_LOADPROBE=1` новые scopes не читают часы, не строят ключи, не меняют TLS-счётчики, не выделяют память и не печатают; остаётся быстрый отказ по существующему флагу. В `load_rewind` выключенный зонд дал 0 строк `[loadprobe...]`.
+
+## Script: куда уходят 0,94 с
+
+| Вызов / группа | Count | Inclusive wall, мс | Script charge, мс | Доля script |
+|---|---:|---:|---:|---:|
+| Вся фаза скриптов, без последующей расстановки | 1 | 1404,188 | 937,630 | 100 % |
+| `Wld_InsertNpc` (включает следующие дочерние операции) | 1054 | 1395,887 | 934,049 | 99,6 % |
+| `fixNpcPosition` после вставки | 1054 | 564,773 | 564,773 | 60,2 % |
+| VM init NPC + его daily routine (включает Mdl/inventory) | 1054 | 739,832 | 368,987 | 39,4 % |
+| `Mdl_SetVisualBody` | 1054 | 466,269 | 287,591 | 30,7 % |
+| `Mdl_SetVisual` | 1056 | 211,156 | 47,201 | 5,0 % |
+| `Mdl_ApplyOverlayMds` | 468 | 9,184 | 0,410 | 0,04 % |
+| `CreateInvItems` / `CreateInvItem` | 1665 / 7 | 7,910 / 0,025 | 3,250 / 0,003 | 0,35 % суммарно |
+| `EquipItem` | 395 | 8,172 | 3,294 | 0,35 % |
+| Daily-routine script, включая `TA_Min` | 327 | 5,015 | 5,015 | 0,53 % |
+| `TA_Min`, внутри daily routine | 1775 | 2,405 | 2,405 | 0,26 % |
+| `WayMatrix::findPoint`, внутри других строк | 2632 | 1,260 | 1,260 | 0,13 % |
+| `B_RefreshAtInsert` | 1052 | 2,448 | 2,448 | 0,26 % |
+
+`STARTUP_NEWWORLD` занимает 1402,366 мс inclusive / 935,809 мс script charge; `INIT_NEWWORLD` — 1,863 мс, `STARTUP_GLOBAL` — 0,002 мс, `INIT_GLOBAL` — 0,001 мс. Daily routine вызывается у 327 NPC: 327 разных `RTN_*`, не одна тяжёлая общая routine. Главная повторяющаяся работа — вставка/физика и применение внешнего вида, а не глобальные INIT.
+
+В [цепочке `Wld_InsertNpc`](../../../OpenGothic/common/game/gamescript.cpp) после `world.addNpc` идёт `fixNpcPosition(..., 0, 150)`. После всех скриптов [`Npc::resetPositionToTA`](../../../OpenGothic/common/world/objects/npc.cpp) снова ставит NPC в TA/WP и вызывает `fixNpcPosition(..., 0, 100)`. Это **два прохода**, но не доказанные одинаковые запросы: исходная spawn-точка, конечная routine, смещение 150/100 см и занятость мира могут различаться. Например, `NW_CITY_ENTRANCE_01` используется при вставке 172 раз.
+
+### Flame summary script
+
+CPU на загрузку = агрегат трёх профилей / 3; знаменатель долей — **1695,0 мс CPU / 5085 samples**, включая resource loaders. Таблица объединяет верх inclusive и self; inclusive родительских строк перекрывается.
+
+| Native frame | Inclusive, мс / % | Self, мс / % |
+|---|---:|---:|
+| `DaedalusVm::unsafe_call` | 1286,7 / 75,91 | 0,3 / 0,02 |
+| `DaedalusVm::exec` | 1285,3 / 75,83 | 10,7 / 0,63 |
+| `GameScript::wld_insertnpc` | 473,0 / 27,91 | 0,7 / 0,04 |
+| `GameScript::mdl_setvisualbody` | 451,3 / 26,63 | 0,3 / 0,02 |
+| `GameScript::fixNpcPosition` | 397,3 / 23,44 | 0 / 0 |
+| `JPH::QuadTree::CastRay` | 384,7 / 22,69 | 224,3 / 13,24 |
+| `HitZones::fit` | 315,3 / 18,60 | 124,0 / 7,32 |
+| `JPH::QuadTree::CollideAABox` | 252,3 / 14,89 | 100,7 / 5,94 |
+| `ModelData::readAnimation` | 211,7 / 12,49 | 44,3 / 2,62 |
+| `JPH::MeshShape::CastRay` (основной clone) | 72,3 / 4,27 | 67,7 / 3,99 |
+| libc `@0x196ff0` | 55,3 / 3,26 | 55,3 / 3,26 |
+| libc `@0xac7c4` | 55,3 / 3,26 | 55,3 / 3,26 |
+| libc `@0xb1bdb` | 98,7 / 5,82 | 50,3 / 2,97 |
+| `segmentDist` | 45,7 / 2,69 | 45,7 / 2,69 |
+| `free` | 44,0 / 2,60 | 44,0 / 2,60 |
+
+Большой inclusive VM — её внешние вызовы. Self `exec` — 10,7 мс; сумма self всех именованных `zenkit::*`, включая decode/read helpers, — 37,3 мс / 2,20 % sampled CPU фазы. `pop_string` — 1,3 мс inclusive, `toupper` — 1,7 мс, `std::string::_M_mutate` — 7,0 мс inclusive / 4,3 self. Это не полная перепись всех строковых операций, особенно внутри нерасшифрованной libc, но оснований объявлять строки или dispatch VM главным hotspot нет.
+
+У применения модели есть конкретный повтор внутри одного external: [`Npc::setVisualBody`](../../../OpenGothic/common/world/objects/npc.cpp) создаёт body view, вызывает `MdlVisual::setVisualBody`, затем `updateArmor`, который снова ставит body/armor. Оба пути идут через [`MdlVisual::implSetBody`](../../../OpenGothic/common/graphics/mdlvisual.cpp), установку skeleton/pose и `fitHitZones`. [`HitZones::fit`](../../../OpenGothic/common/graphics/mesh/hitzones.cpp) пересчитывает геометрию по точкам меша/костям; этот CPU-результат не становится общим только от наличия resource cache.
+
+### Что повторяется
+
+Counts/unique совпали во всех трёх quiet-повторах. Ключ `Mdl_SetVisualBody` содержит body, skin/color, head, head/teeth variants и armor; `CreateInvItems` — класс и количество.
+
+| Запрос | Вызовов / уникальных ключей | Примеры точных повторов |
+|---|---:|---|
+| NPC instance init | 1054 / 406 | повторные monster instances; это не одинаковые полный NPC state и RNG |
+| `Mdl_SetVisual` | 1056 / 24 | `HUMANS.MDS` 351; `Gobbo.mds` 91; `Wolf.mds` 86; `Giant_Bug.mds` 76; отдельно `HumanS.mds` 25 |
+| `Mdl_SetVisualBody` | 1054 / 354 | `Giant_Bug_Body:0:0::0:0:-1` 76; `Blo_Body:0:0::0:0:-1` 60; `Giant_Rat_Body:0:0::0:0:-1` 57; `Wol_Body:0:0::0:0:-1` 53 |
+| `CreateInvItems` | 1665 / 158 | `ITFOMUTTONRAW:1` 325; `ITFO_APPLE:1` 86; `ITPL_PLANEBERRY:1` 72; `ITFO_BEER:1` и `ITFO_CHEESE:1` по 63 |
+| `EquipItem` | 395 / 37 | `ITMW_1H_BAU_MACE` 54; `ITMW_1H_BAU_AXE` 36; `ITMW_1H_MIL_SWORD` и `ITMW_1H_VLK_DAGGER` по 33 |
+| `TA_Min`, только имя точки | 1775 / 555 | `SHIP_DECK_29` 69; `SHIP_DECK_03` 50; `NW_CITY_SMITH_ANVIL` 45; время/action этим ключом не сравнивались |
+| `Wld_InsertNpc`, только spawn name | 1054 / 516 | `NW_CITY_ENTRANCE_01` 172; `BIGFARM` 67; `NW_MONASTERY_ENTRY_01` 25 |
+
+Одинаковый запрос модели — кандидат на общий неизменяемый результат геометрии. Одинаковый item-класс не разрешает клонировать результаты VM: owner/SELF, callbacks, RNG, globals и изменения скрипта могут отличаться. При цене inventory около 3 мс такой риск не окупает большой механизм шаблонов NPC.
+
+## Placement: что делает сброс
+
+Сначала `WorldObjects` возвращает/убирает invalid NPC и отсоединяет точки. Затем каждый NPC проверяет смерть/mission items, очищает slot/interaction/AI queue/state/animation, получает текущий TA, при занятой точке ищет следующую, задаёт позицию/поворот, вызывает `fixNpcPosition`, прикрепляется к точке, auto-equip и `B_RefreshAtInsert`; снаружи синхронизируется logical body. После NPC обновляются routines и интерактивные объекты.
+
+| Часть placement | Count | Wall, мс | Доля 621,851 мс |
+|---|---:|---:|---:|
+| Вся фаза | 1 | 621,850 | 100 % |
+| Цикл NPC (включает все следующие дочерние строки) | 1055 | 621,010 | 99,9 % |
+| `fixNpcPosition` | 1049 | 567,274 [564,337–571,458] | 91,2 % |
+| Auto-equip | 1049 | 39,802 [39,221–40,427] | 6,4 % |
+| Следующая незанятая точка | 275 | 5,062 [4,822–5,121] | 0,81 % |
+| Текущий TA, включая поиск WP | 1051 | 0,766 [0,741–0,780] | 0,12 % |
+| `B_RefreshAtInsert` | 1049 | 1,936 | 0,31 % |
+| Logical-body sync | 1050 | 0,416 | 0,07 % |
+| Routines/интерактивные объекты после NPC | 1 | 0,254 [0,249–0,317] | 0,04 % |
+
+1055 посещений цикла — герой + 1054 вставки; 2 NPC уходят в invalid, остаются 1053. У трёх оставшихся мёртвых срабатывает `keepBodies`, они не переставляются. Получается 1050 успешных reset/sync, из них один герой без `fixNpcPosition`; физических reset — 1049. Это объясняет различные counts, а не потерю NPC в замере.
+
+`fixNpcPosition` сначала делает `hasCollision`; если свободно — луч +100/−200 см и допуск пола 10 см. При неуспехе перебирает радиусы 0…800 см с шагом 20 и углы через 30°, делает луч +100/−1000 см, `setPosition`, снова `hasCollision` и при успехе `updateTransform`. Raycast идёт в Jolt, не берёт готовый waypoint height как окончательный ответ.
+
+Это **не массовые сотни итераций на NPC**: во всех трёх quiet-запусках 953 trial rays при вставке и 957 при финальной расстановке. В первом quiet-повторе у placement 138 вызовов без trial loop, 894 с одним trial, 17 с несколькими; максимум 22, p50=1. При вставке — 135 / 896 / 23 соответственно, максимум 9. Счётчик trial не включает отдельный луч fast path. Время уходит главным образом на сами повторяемые physics queries, а не на длинный спиральный поиск.
+
+### Flame summary placement
+
+Знаменатель — **747,0 мс CPU на загрузку / 2241 samples**. Условия и ограничения inclusive те же, что у script.
+
+| Native frame | Inclusive, мс / % | Self, мс / % |
+|---|---:|---:|
+| `WorldObjects::resetPositionToTA` | 437,7 / 58,59 | 0,3 / 0,04 |
+| `GameScript::fixNpcPosition` | 417,3 / 55,87 | 0 / 0 |
+| `JPH::QuadTree::CastRay` | 357,0 / 47,79 | 219,0 / 29,32 |
+| `JPH::QuadTree::CollideAABox` | 241,7 / 32,35 | 95,0 / 12,72 |
+| `CollideShape::MyCollector::AddHit` | 141,0 / 18,88 | 44,0 / 5,89 |
+| `CastRay::MyCollector::AddHit` | 118,3 / 15,84 | 24,0 / 3,21 |
+| `JPH::MeshShape::CastRay` (основной clone) | 59,7 / 7,99 | 55,7 / 7,45 |
+| `HitZones::fit` | 47,3 / 6,34 | 18,7 / 2,50 |
+| `Npc::usesSimplifiedMovement` | 31,7 / 4,24 | 30,7 / 4,11 |
+| `__popcountdi2` | 26,3 / 3,53 | 26,3 / 3,53 |
+| `JPH::MeshShape::sCollideConvexVsMesh` | 46,0 / 6,16 | 22,0 / 2,95 |
+
+### Какие поиски линейны
+
+- [`WayMatrix::findPoint`](../../../OpenGothic/common/world/waymatrix.cpp): короткий обратный проход start points, затем `lower_bound` по отсортированным именам. Только inexact fallback сканирует все точки. `addRoutine` и `currentTaPoint` без routine запрашивают exact; это не 1053 полных сканирования waynet по имени. В placement — 724 вызова / 0,392 мс.
+- `currentRoutine`: линейно по небольшому массиву routines **этого NPC**, при необходимости второй проход; уже содержит указатель на WP. Вся группа current TA — 0,766 мс.
+- `findNextPoint`: линейно по `indexPoints`, ищет ближайшую незанятую точку; 275 вызовов / 5,062 мс. Locks меняются в порядке вставок, поэтому простой кэш ответа по имени неверен.
+- [`NpcBodyList::hasCollision`](../../../OpenGothic/common/physics/dynamicworld.cpp): frozen-массив ограничен диапазоном X через binary search, а `body` проходится целиком; у пары сначала проверяется `usesSimplifiedMovement`. Это повторный линейный проход по телам, **реально присутствующий в профиле**, в отличие от предполагаемого линейного WP name lookup.
+- `Inventory::findByClass`, выбор лучшего оружия: линейные проходы по инвентарю. Начальный `EquipItem` дешёв, а auto-equip после TA стоит 39,8 мс и повторно обновляет представление/зоны попадания.
+- Лучи/shape queries используют дерево Jolt, не линейный обход всех треугольников. Возможный выигрыш — меньше запросов/более узкий набор кандидатов или повторное использование неизменяемой части ответа, а не «добавить первый индекс физики».
+
+## Распределение по NPC и расстоянию
+
+Медианы статистик трёх quiet-запусков. В первой строке — собственная категория script, включая движок из externals, но без resource loaders; во второй — весь вклад `Wld_InsertNpc` в ту же категорию. Они вложены, не складываются. В финальной строке отброшены 2 удаляемых NPC, но оставлены 3 почти бесплатных `keepBodies` и герой.
+
+| На один NPC / вызов | n на запуск | Сумма, мс | p50, мс | p95, мс | p99, мс | Максимум среди всех трёх запусков, мс |
+|---|---:|---:|---:|---:|---:|---:|
+| VM instance init + daily routine, script own | 1054 | 368,917 | 0,387 | 0,585 | 0,701 | 1,383 |
+| `Wld_InsertNpc`, script charge | 1054 | 934,049 | 0,792 | 1,640 | 2,271 | 2,918 |
+| Placement оставшихся NPC | 1053 | 620,951 | 0,486 | 1,209 | 1,897 | 2,909 |
+
+Инициализация относится к 406 script instances, вызываемым 1054 раза. Это преимущественно повторяемая работа на NPC, не один секундный outlier. Тяжёлые resource misses исключены только в соответствии с определением исходной категории script: например, первый `Mdl_*` может быть значительно дороже inclusive.
+
+Позиции измерены **после** reset/sync для 1050 переставленных NPC. Три `keepBodies` уже не тратят время на точную расстановку; их расстояния не записаны. Counts ниже одинаковы в трёх запусках; время — медиана. Near — геометрия относительно клетки героя 64 м, без приписывания заранее фактического tier или camera ring.
+
+| Группа | NPC / доля всех 1053 | Placement этих NPC, мс / доля всей фазы |
+|---|---:|---:|
+| В пределах Near entry, Chebyshev radius ≤2 | 151 / 14,3 % | 80,576 / 13,0 % |
+| В пределах Full/Near exit, radius ≤3 | 339 / 32,2 % | 212,822 / 34,2 % |
+| Вне Near entry, radius >2 | 899 / 85,4 % | 540,375 / 86,9 % |
+| Вне Full/Near exit, radius >3 | 711 / 67,5 % | 408,129 [405,624–410,739] / 65,6 % |
+
+Радиальное расстояние: ≤128 м — 67 NPC; 128…256 — 262; 256…512 — 605; >512 — 116. Максимальное 3D-расстояние до героя **743,146 м**, ни одного переставленного NPC дальше 1000 м. [`Camera::zFar`](../../../OpenGothic/common/camera.cpp) равен 100000 см. **Вывод (inference):** при обычной камере у героя большинство/все этих NPC уже в Far; ожидание входа именно в Far не даст ожидаемой экономии. Реальная возможность — Near/Simplified, с prewarm до Near. Число 711 — геометрическая верхняя граница консервативных кандидатов, не доказанный список разрешённых отсрочек: нужны исключения tier, native combat, scripts/read barriers и возможность немедленной материализации перед save.
+
+## Ранжирование возможных исправлений — только inference
+
+Все числа ниже — **инженерные оценки/inference на Ryzen**, не измеренный эффект реализации и не перенос на Mac. Накладывающиеся варианты нельзя складывать.
+
+| Приоритет | Возможный следующий шаг | Оценка экономии и основание (inference) | Риски / условие принятия |
+|---|---|---|---|
+| 1 | Уменьшить повторные ground/overlap queries в обоих `fixNpcPosition`: проверяемый floor hint/cache статической части, сохранение необходимой динамической проверки; переиспользовать результат только при доказанно одинаковом входе | **340–620 мс**, если убрать 30–55 % от измеренных 1132 мс двух проходов. Это сценарий, не известный hit rate; верхний бюджет — оба fix, не вся VM | Spawn и TA часто различаются; offset 150/100 см; NPC/двери/movable vobs меняют препятствия. Нужны ключ/инвалидация и прежний порядок/результат, особенно если startup немедленно читает позицию |
+| 2 | Отложить физически точную placement для далёкого Simplified, сохранив логический TA/состояние; материализовать по read/tier/save barrier | **250–370 мс** для radius >3; измеренный потолок всех затрат этих 711 NPC — **408 мс**. Альтернатива для fresh Near radius >2: **350–490 мс**, потолок 540 мс. Пересекается с п. 1 | Нельзя откладывать сами inventory/TA/refresh, видимые скриптам; нельзя сохранять приблизительную позицию как точную. Far=1000 м сам по себе не полезный триггер. Требуются дневной паритет и проверка первого входа в Near |
+| 3 | Кэш неизменяемого результата `HitZones::fit` по skeleton/body/head/attachments и параметрам fit; объединить две установки body внутри одного `Mdl_SetVisualBody` | **80–180 мс** из 288 мс script charge применения тела, при устранении 30–60 % этой работы. Повторяется 1054 body tuples при 354 ключах; не каждый tuple даёт одинаковую геометрию | Armor/head/skeleton и настройки fit входят в инвалидацию. Нельзя делить mutable pose/владельца или незаметно менять collision/hit zones. Выигрыш кэша и coalescing пересекается |
+| 4 | Индекс/локальный набор кандидатов для unsorted `NpcBodyList::body`, вычисление неизменного tier-предиката вне прохода пар | **20–60 мс** суммарно двух фаз; sampled placement показывает 46,7 мс inclusive vector collision scan и 30,7 мс self `usesSimplifiedMovement` под иной нагрузкой | Уже внутри п. 1. Сохранить порядок и набор контактов, normals/depth и исключения Simplified; перестановка кандидатов может менять конечную позицию |
+| 5 | Не повторять auto-equip, если inventory revision, условия использования и выбранное оружие доказанно не изменились; объединить обновление представления | **15–30 мс** из 39,8 мс placement auto-equip | `B_RefreshAtInsert`, callbacks, условия экипировки, оружие/инвентарь после загрузки и save должны оставаться прежними; не путать с дешёвым начальным `EquipItem` |
+| 6 | Индекс nearest unlocked points / маленькие улучшения TA/name lookup | **1–4 мс**; measured budgets 5,1 мс next-point, 0,8 мс current TA, 1,3 мс script named lookup | Locks/alias/case и порядок tie-break. Exact name index уже есть; общий новый name cache ради секунд не обоснован |
+| 7 | Item prototype cache или улучшение VM dispatch/строк | Inventory: **0–3 мс** из ~3,3 мс script charge. VM/строки: **0–20 мс**, низкая уверенность; self `exec` не главный бюджет | Полный снимок NPC/результата скрипта опасен из-за SELF/globals/RNG/callbacks и saves; libc не полностью символизирована. Не начинать с клонирования NPC или новой VM |
+| 8 | Параллелить только чистые вычисления геометрии/fit, оставив VM и публикацию последовательными | **50–120 мс**, если распараллеливается существенная часть п. 3; после хорошего кэша выгода меньше. Для параллельного STARTUP целиком **0 мс зачтённой экономии** | Единственная VM имеет общие PC/stack/SELF/instance/globals; вставки NPC, RNG и physics/point locks зависят от порядка. Свободно распараллелить 1053 instance init нельзя |
+
+Первый кандидат для точного сохранения поведения — физические запросы; для отдельного изменения допуска — deferred placement. Оптимистичный неперекрывающийся сценарий п. 1 + 3 + 5 даёт примерно **0,44–0,83 с Ryzen (inference)**. Достижимость **Mac ≤4 с** требует свежего Mac warm load после кэшей и замера выбранной реализации; коэффициент Ryzen→Mac здесь не вводится.
+
+### Сохранения, немедленные чтения и 6c
+
+В этой работе форматы/содержимое saves, скрипты, порядок и результаты загрузки не менялись. Будущая отсрочка должна сохранить старые saves и корректно материализовать pending state до нового save, world switch, явного teleport/query и перехода в tier, которому нужна точная физика. `Npc_GetDistToNpc`, ближайший WP/FP, detection/availability, чтения equipped/inventory сразу после startup — причины не удалять работу без read barrier. Это перечень рисков, не утверждение, что все такие startup-чтения уже переписаны и проверены.
+
+Минимальный будущий gate — [допуски 6c](../../../scripts/bench/npc-day-parity.tolerances-6c.json) и [строгий контроль](../../../scripts/bench/npc-day-parity.tolerances.json): TA ≥99,5 %, ZS ≥99 %, stationary-both position p95 ≤1 м, raw/scheduled ZS starts ≥99 %, mutual-nearest start shift p95 ≤8 игровых секунд, смерти/HP/missing идентичны. До 3 отличающихся inventory NPC допустимы **только с доказанной разрешённой script random/iteration причиной**, не как бюджет на произвольные ошибки. Full и выключенный Simplified-switch сохраняют строгий идентичный gameplay journal. Здесь сутки не запускались: диагностические scopes не меняют механику; требуемая проверка — `load_rewind` с probe off.
+
+## Проверки
+
+- `python3 scripts/check.py run`: exit 0, **0 выбранных Python-тестов** для C++/документов; новые тесты не добавлялись.
+- Mac: `CMAKE_BUILD_PARALLEL_LEVEL=2 scripts/build-engine.sh`, финальные scopes/clock — exit 0. Игрового Mac-бенча не было; тяжёлые игровые измерения шли только на Ryzen.
+- Linux: `Gothic2Notr`/storygraph через `gq`, финальная пересборка с raw-clock scopes — exit 0, подготовка 293 с; завершающий target build — exit 0. Дополнительных системных пакетов/изменений настроек нет.
+- `SCENARIO=load_rewind scripts/ryzen.sh e2e`, финальный код, probe off: **4 checks, 0 failed, exit 0, 48 с**, **0 loadprobe lines**. Предыдущий проход до уточнения Linux clock также 4/0, 48 с; регрессия не запускалась.
+- Перечитан diff: только зонд и его точки измерения, этот отчёт, ссылки в baseline/карте; оптимизаций и изменений load order нет.
+
+## Сырые данные на NAS
+
+Пути — текст, не ссылки на общедоступное хранилище. `gq --archive` переносил результаты со сверкой. Профили `.er` содержат архивы соответствующих бинарников; исходники оригинальных игровых данных в git не добавлены.
+
+```text
+/mnt/shared/gothic-ai/startup-profile/reference/plain-{1,2,3}/game.log
+/mnt/shared/gothic-ai/startup-profile/reference/sample-{1,2,3}/profile.er
+/mnt/shared/gothic-ai/startup-profile/detailed/plain-{1,2,3}/game.log
+/mnt/shared/gothic-ai/startup-profile/sampling-accepted/sample-{1,2,3}/profile.er
+/mnt/shared/gothic-ai/startup-profile/sampling-accepted/sample-{1,2,3}/game.log
+/mnt/shared/gothic-ai/startup-profile/flames-accepted/script-functions.txt
+/mnt/shared/gothic-ai/startup-profile/flames-accepted/script-calltree.txt
+/mnt/shared/gothic-ai/startup-profile/flames-accepted/placement-functions.txt
+/mnt/shared/gothic-ai/startup-profile/flames-accepted/placement-calltree.txt
+/mnt/shared/gothic-ai/startup-profile/flames-accepted/{script,placement}-filter.txt
+/mnt/shared/gothic-ai/startup-profile/flames-accepted/analyze-profiles.py
+/mnt/shared/gothic-ai/startup-profile/report-data/quiet-summary.json
+/mnt/shared/gothic-ai/startup-profile/report-data/summarize-startup.py
+/mnt/shared/gothic-ai/startup-profile/checks/
+```
+
+Объёмы архивированных наборов: reference **1 407 658 806 байт**, detailed **1 456 486 311 байт**, окончательный sampling **1 416 456 193 байт**. Вне зачётных таблиц оставлены подготовительные профили; окончательные flame summaries лежат **только в `flames-accepted/`**.
+
+## Открытые вопросы следующего шага
+
+1. У какой доли initial/TA fix совпадут не только NPC/WP, но входная позиция, shape и collision generation? Сейчас измерены два дорогих прохода, а не доказанный процент переиспользуемых ответов.
+2. Какие startup-чтения потребуют точной материализации далёкого NPC, и достаточна ли уже существующая logical-body/read-barrier обвязка для нового вида отсрочки?
+3. Какой минимальный неизменяемый ключ `HitZones::fit` сохраняет результат при смене body/head/armor/skeleton? Повторные Mdl tuples — свидетельство возможности, не готовая спецификация кэша.
+4. Каков текущий warm load на Mac после census/pipeline/MSL-кэшей и какой из предложенных вариантов действительно нужен для ≤4 с? Этот PR не измеряет Mac runtime и не обещает достижение цели.

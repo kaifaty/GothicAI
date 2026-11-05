@@ -298,6 +298,17 @@ class CollisionWorld final {
                                                    int category, bool movable = false, bool sensor = false, const PhysicVbo* mesh = nullptr);
     std::unique_ptr<DynamicBody> addDynamicBody(JPH::ShapeRefC shape, const Tempest::Matrix4x4& matrix, float friction, float mass,
                                                int category = 6, bool startSleeping = false);
+    // Leaves Jolt's body ID allocation (free list order, sequence numbers) as
+    // `count` bodies created and then destroyed in creation order would. The
+    // placeholder bodies never enter the broadphase. Jolt orders contacts and
+    // active bodies by BodyID, so later bodies must receive the same IDs.
+    void cycleBodyIds(size_t count);
+    // SHA-256 over every native body: ID (index and sequence), motion type,
+    // layer, sensor, activity and full shape geometry (SaveWithChildren, shared
+    // shapes once); pose, bounds and velocities too, except for animated
+    // (kinematic) bodies.
+    struct BodyDigest { std::string digest; size_t bodies = 0, active = 0; };
+    BodyDigest bodyDigest() const;
     std::unique_ptr<Ragdoll> createRagdoll(const Skeleton& skeleton, const HitZones& zones,
                                          const Tempest::Matrix4x4* worldPose, size_t numBones,
                                          const Tempest::Matrix4x4& objectMatrix,

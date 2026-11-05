@@ -1,4 +1,5 @@
 #include "followtrail.h"
+#include "navigationpassage.h"
 
 #include <algorithm>
 #include <cmath>
@@ -7,19 +8,6 @@ using Tempest::Vec3;
 
 namespace {
 constexpr float Pi = 3.14159265358979323846f;
-// Channels are compared as the learner and the memory teacher see them: uint8.
-uint8_t byte(float value) { return uint8_t(std::lround(std::clamp(value,0.f,1.f)*255.f)); }
-bool staticHazard(const NavigationMemory::Cell& c) {
-  // Only what the follower has seen itself; a familiar tile is a prior, exactly
-  // as in the memory teacher. Movable evidence (people, the followed object's own
-  // footprints along its trail) does not decide where the carrot goes: the
-  // planner keeps its own hard veto for it.
-  if(byte(c.familiar)!=0) return false;
-  return byte(c.wall)!=0 || byte(c.ledge)!=0 || byte(c.drop)!=0 || byte(c.water)!=0;
-  }
-bool seenFree(const NavigationMemory::Cell& c) {
-  return byte(c.familiar)==0 && byte(c.confidence)!=0 && byte(c.free)!=0 && !staticHazard(c);
-  }
 }
 
 const char* FollowTrail::name(Source source) {
@@ -299,56 +287,6 @@ bool FollowTrail::nearClear(const NavigationMemory::View& memory, const Vec3& fr
   }
 
 bool FollowTrail::passage(const NavigationMemory::View& memory, const Vec3& from, const Vec3& to, bool seen) {
-  const auto& near=memory.near;
-  if(near.size==0 || !(near.cellCm>0) || near.cells.size()!=near.size*near.size)
-    return !seen;
-  Vec3 forward=memory.pose.forward;forward.y=0;
-  const float norm=forward.length();
-  if(!(norm>1e-3f))
-    return !seen;
-  forward*=1.f/norm;
-  const Vec3 right(-forward.z,0,forward.x);
-  const auto local=[&](const Vec3& p) {
-    const auto d=p-memory.pose.position;
-    return std::array<float,2>{d.x*right.x+d.z*right.z,d.x*forward.x+d.z*forward.z};
-    };
-  const auto a=local(from),b=local(to);
-  const float length=std::hypot(b[0]-a[0],b[1]-a[1]);
-  const int size=int(near.size);
-  const float cell=near.cellCm,half=cell*float(size)*.5f;
-  const int steps=std::max(1,int(std::ceil(length/(cell*.5f))));
-  for(int k=0;k<=steps;++k) {
-    const float t=float(k)/float(steps);
-    if(length*t<footprintCm)
-      continue;
-    const float r=a[0]+(b[0]-a[0])*t,f=a[1]+(b[1]-a[1])*t;
-    // Outside the near map nothing is seen: neither free ground nor a hazard.
-    if(std::abs(r)>half-corridorCm || std::abs(f)>half-corridorCm) {
-      if(seen)
-        return false;
-      continue;
-      }
-    // Rotation splats world cells into the body frame, so one cell under the
-    // line may be empty. A free passage needs seen free ground at every sample;
-    // any passage fails on a live hazard anywhere within the corridor.
-    const int x0=std::max(0,int(std::floor((r-corridorCm)/cell+float(size)*.5f)));
-    const int x1=std::min(size-1,int(std::floor((r+corridorCm)/cell+float(size)*.5f)));
-    const int z0=std::max(0,int(std::floor((f-corridorCm)/cell+float(size)*.5f)));
-    const int z1=std::min(size-1,int(std::floor((f+corridorCm)/cell+float(size)*.5f)));
-    bool free=!seen;
-    for(int z=z0;z<=z1;++z)
-      for(int x=x0;x<=x1;++x) {
-        const auto& c=near.cells[size_t(z)*near.size+size_t(x)];
-        const float cr=(float(x)+.5f-float(size)*.5f)*cell,cf=(float(z)+.5f-float(size)*.5f)*cell;
-        const float dx=std::max(0.f,std::abs(r-cr)-cell*.5f),dz=std::max(0.f,std::abs(f-cf)-cell*.5f);
-        if(dx*dx+dz*dz>corridorCm*corridorCm)
-          continue;
-        if(staticHazard(c))
-          return false;
-        free=free || seenFree(c);
-        }
-    if(!free)
-      return false;
-    }
-  return true;
+  // The near-map check is shared with familiar-road guidance (game/navigationpassage.h).
+  return NavigationPassage::near(memory,from,to,seen,corridorCm,footprintCm);
   }

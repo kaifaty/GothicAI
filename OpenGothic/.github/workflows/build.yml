@@ -57,7 +57,7 @@ jobs:
         run: cmake -B build -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
 
       - name: Build
-        run: cmake --build build --target Gothic2Notr Spacer -j $(nproc)
+        run: cmake --build build --target Gothic2Notr -j $(nproc)
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
@@ -187,7 +187,7 @@ jobs:
         run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
 
       - name: Build
-        run: cmake --build build --target Gothic2Notr Spacer
+        run: cmake --build build --target Gothic2Notr
 
       - name: Copy runtime DLLs
         run: |
@@ -226,7 +226,7 @@ jobs:
         run: cmake -B build -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
 
       - name: Build
-        run: cmake --build build --target Gothic2Notr Spacer -j $(sysctl -n hw.ncpu)
+        run: cmake --build build --target Gothic2Notr -j $(sysctl -n hw.ncpu)
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
@@ -257,7 +257,7 @@ jobs:
         run: cmake -B build -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
 
       - name: Build
-        run: cmake --build build --target Gothic2Notr Spacer -j $(sysctl -n hw.ncpu)
+        run: cmake --build build --target Gothic2Notr -j $(sysctl -n hw.ncpu)
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6

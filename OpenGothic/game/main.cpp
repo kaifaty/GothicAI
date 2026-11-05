@@ -2,7 +2,7 @@
 #include <Tempest/Application>
 #include <Tempest/Log>
 
-#include <zenkit/Logger.hh>
+#include "zenkitlog.h"
 
 #include <Tempest/VulkanApi>
 
@@ -74,14 +74,22 @@ std::unique_ptr<Tempest::AbstractGraphicsApi> mkApi(const CommandLine& g) {
 #endif
   }
 
+static bool envIs(const char* name, std::string_view value) {
+  const char* env = std::getenv(name);
+  return env!=nullptr && std::string_view(env)==value;
+  }
+
 // On by default; OPENGOTHIC_PIPELINE_CACHE=0 turns the on-disk pipeline cache off.
 // It sits next to the other derived caches, but is keyed by GPU and driver, not by the game base.
+// OPENGOTHIC_MSL_CACHE=0 turns off the SPIR-V -> MSL translation cache (Metal) on its own;
+// OPENGOTHIC_MSL_CACHE_CHECK=1 translates every cached shader again and aborts on any difference.
 static void setupPipelineCache() {
-  const char* env = std::getenv("OPENGOTHIC_PIPELINE_CACHE");
-  if(env!=nullptr && std::string_view(env)=="0")
-    return;
   try {
-    Tempest::Device::setPipelineCacheDirectory(BaseStore::cacheRoot()/"derived"/"pipelines");
+    const auto derived = BaseStore::cacheRoot()/"derived";
+    if(!envIs("OPENGOTHIC_PIPELINE_CACHE","0"))
+      Tempest::Device::setPipelineCacheDirectory(derived/"pipelines");
+    if(!envIs("OPENGOTHIC_MSL_CACHE","0"))
+      Tempest::Device::setShaderCacheDirectory(derived/"msl",envIs("OPENGOTHIC_MSL_CACHE_CHECK","1"));
     }
   catch(const std::exception& e) {
     Tempest::Log::i("pipeline cache: no cache directory (",e.what(),")");
@@ -115,7 +123,7 @@ int main(int argc,const char** argv) {
     }
   CrashLog::setup();
 
-  zenkit::Logger::set(zenkit::LogLevel::INFO, Resources::zenkitLog);
+  ZenKitLog::install(ZenKitLog::Level::Info);
   Dm_setLogger(DmLogLevel_INFO, [](void* ctx, DmLogLevel lvl, char const* msg) {
     switch (lvl) {
       case DmLogLevel_FATAL:

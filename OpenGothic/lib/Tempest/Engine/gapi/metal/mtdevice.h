@@ -13,6 +13,7 @@
 #include "gapi/shaderreflection.h"
 #include "gapi/metal/mtsync.h"
 #include "gapi/metal/mtpipelinecache.h"
+#include "gapi/metal/mtshadercache.h"
 #include "gapi/metal/mtsamplercache.h"
 #include "nsptr.h"
 
@@ -98,6 +99,8 @@ inline MTL::PixelFormat nativeFormat(TextureFormat frm) {
       return MTL::PixelFormatRG11B10Float;
     case RGBA16F:
       return MTL::PixelFormatRGBA16Float;
+    case RG16F:
+      return MTL::PixelFormatRG16Float;
     }
   return MTL::PixelFormatInvalid;
   }
@@ -303,6 +306,8 @@ class MtDevice : public AbstractGraphicsApi::Device {
     static void handleError(NS::Error* err);
 
     MTLFX::SpatialScaler&      spatialScaler(MTL::Texture& src, MTL::Texture& dst);
+    MTLFX::TemporalScaler&     temporalScaler(MTL::Texture& color, MTL::Texture& depth, MTL::Texture& motion,
+                                              MTL::Texture& dst);
 
     NsPtr<MTL::Device>         impl;
     NsPtr<MTL::CommandQueue>   queue;
@@ -317,12 +322,14 @@ class MtDevice : public AbstractGraphicsApi::Device {
     Props                      prop;
     MtSamplerCache             samplers;
     MtPipelineCache            psoCache;
+    MtShaderCache              mslCache;
     bool                       validation = false;
     bool                       syncBufferUploads = false;
     bool                       syncTextureUploads = false;
 
     std::mutex                 scalerSync;
     std::vector<NsPtr<MTLFX::SpatialScaler>> scalers;
+    std::vector<NsPtr<MTLFX::TemporalScaler>> temporalScalers;
 
     static void deductProps(AbstractGraphicsApi::Props& prop, MTL::Device& dev);
 

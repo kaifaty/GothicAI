@@ -8,6 +8,7 @@
 #include "gothic.h"
 #include "commandline.h"
 #include "resources.h"
+#include "loadprobe.h"
 
 #include "shader.h"
 #include "utils/string_frm.h"
@@ -34,6 +35,8 @@ Shaders::Shaders() {
     time = Application::tickCount() - time;
     if(time>1000)
       Log::i("Shader compilation took: ",time/1000," seconds");
+    if(LoadProbe::enabled())
+      Log::i("[loadprobe-shaders] compile_ms=",time);
     });
   }
 
@@ -43,6 +46,14 @@ Shaders::~Shaders() {
   }
 
 void Shaders::waitCompiler() {
+  // Load probe: how long a caller (the world load) actually waited for the background compilation.
+  if(LoadProbe::enabled() && deferredCompilation.valid() &&
+     deferredCompilation.wait_for(std::chrono::seconds(0))!=std::future_status::ready) {
+    const auto start = Application::tickCount();
+    deferredCompilation.wait();
+    Log::i("[loadprobe-shaders] wait_ms=",Application::tickCount()-start);
+    return;
+    }
   deferredCompilation.wait();
   }
 
@@ -222,35 +233,14 @@ void Shaders::compileShaders() noexcept {
   cmaa2ProcessCandidates = computeShader("cmaa2_process_candidates.comp.sprv");
   taaResolve             = postEffect("triangle", "taa_resolve", RenderState::ZTestMode::Always);
   taaSharpen             = postEffect("triangle", "taa_sharpen", RenderState::ZTestMode::Always);
+  motionCamera           = postEffect("triangle",    "motion_camera",     RenderState::ZTestMode::Always);
+  tonemappingBloom       = postEffect("triangle_uv", "tonemapping_bloom", RenderState::ZTestMode::Always);
   {
     auto sh = GothicShader::get("cmaa2_deferred_color_apply_2x2.vert.sprv");
     auto vs = device.shader(sh.data,sh.len);
     sh = GothicShader::get("cmaa2_deferred_color_apply_2x2.frag.sprv");
     auto fs = device.shader(sh.data,sh.len);
     cmaa2DeferredColorApply2x2 = device.pipeline(Tempest::Points,RenderState(),vs,fs);
-  }
-
-  {
-    RenderState state;
-    auto sh = GothicShader::get("gizmo.vert.sprv");
-    auto vs = device.shader(sh.data,sh.len);
-    sh = GothicShader::get("gizmo.frag.sprv");
-    auto fs = device.shader(sh.data,sh.len);
-    gizmo = device.pipeline(Triangles,state,vs,fs);
-  }
-  {
-    RenderState state;
-    state.setZTestMode    (RenderState::ZTestMode::Less);
-    state.setZWriteEnabled(true);
-    state.setBlendSource  (RenderState::BlendMode::SrcAlpha);
-    state.setBlendDest    (RenderState::BlendMode::OneMinusSrcAlpha);
-    state.setCullFaceMode (RenderState::CullMode::Front);
-
-    auto sh = GothicShader::get("light_imposter.vert.sprv");
-    auto vs = device.shader(sh.data,sh.len);
-    sh = GothicShader::get("light_imposter.frag.sprv");
-    auto fs = device.shader(sh.data,sh.len);
-    lightImposter = device.pipeline(Triangles,state,vs,fs);
   }
 
   hiZPot  = computeShader("hiz_pot.comp.sprv");

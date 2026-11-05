@@ -229,6 +229,7 @@ class DynamicWorld final {
         void setInteractive(Interactive* it);
         void setPayloadPtr(void* ptr);
         bool isEmpty() const { return obj==nullptr; }
+        uint32_t nativeId() const; // Jolt index and sequence; 0xFFFFFFFF without a body
         float mass() const; // kilograms; zero for empty/static/kinematic handles
         Tempest::Matrix4x4 matrix() const;
         Tempest::Vec3 position() const;
@@ -372,7 +373,7 @@ class DynamicWorld final {
     struct BBoxBody final {
       public:
         BBoxBody() = default;
-        BBoxBody(DynamicWorld* wrld, BBoxCallback* cb, const zenkit::AxisAlignedBoundingBox& bbox);
+        BBoxBody(DynamicWorld* wrld, BBoxCallback* cb, const asset::Aabb& bbox);
         BBoxBody(DynamicWorld* wrld, BBoxCallback* cb, const Tempest::Vec3& pos, float R);
         BBoxBody(BBoxBody&& other);
         ~BBoxBody();
@@ -425,12 +426,20 @@ class DynamicWorld final {
       float extraPaddingCm = 0.f; // collision padding beyond the base centimetre
       };
     const ItemHull& itemHullShape(const ProtoMesh& proto, std::string_view visual);
+    // A placed-item census cache hit creates no census bodies; this keeps the
+    // body IDs of everything created later identical to the live census path.
+    void            cycleBodyIds(size_t count);
     struct PlacedItemCandidate {
-      const Item* body = nullptr;
+      const Item* body = nullptr; // read by placedItemCensus; may be empty for placedItemCensusInputs
       bool mission = false;
       std::string_view visual = {};
       uint32_t zenId = uint32_t(-1);
       size_t instance = size_t(-1);
+      // Inputs of addDynamicObj: the census key hashes these instead of a body,
+      // so a cache hit needs neither the temporary body nor its item hull.
+      const ProtoMesh* proto = nullptr;
+      Tempest::Matrix4x4 transform = Tempest::Matrix4x4::mkIdentity();
+      uint32_t material = 0; // script ItemMaterial; selects density and friction
       };
     struct PlacedItemCensusEntry {
       std::string disposition;
@@ -449,7 +458,10 @@ class DynamicWorld final {
     // input order and are made together, before any candidate body is removed.
     std::vector<PlacedItemCensusEntry> placedItemCensus(const std::vector<PlacedItemCandidate>& candidates) const;
     // Digest of everything placedItemCensus reads besides the static world:
-    // candidate identity, pose, native shape, and every movable vob body.
+    // candidate identity, the inputs its body is built from (pose, material,
+    // mesh bounds and hull source vertices), and every movable vob body. It
+    // reads no candidate body: the hull and body construction code is covered
+    // by PlacedCensusCache::RulesVersion instead.
     std::string placedItemCensusInputs(const std::vector<PlacedItemCandidate>& candidates) const;
     Item           addMovableVob(const ProtoMesh& mesh, std::string_view visual, const Tempest::Matrix4x4& matrix,
                                  float massMultiplier, bool blocksWalking, std::string_view className = {},
@@ -662,7 +674,7 @@ class DynamicWorld final {
                                                const Tempest::Matrix4x4& objectMatrix);
 
     BulletBody*    bulletObj(BulletCallback* cb);
-    BBoxBody       bboxObj(BBoxCallback* cb, const zenkit::AxisAlignedBoundingBox& bbox);
+    BBoxBody       bboxObj(BBoxCallback* cb, const asset::Aabb& bbox);
     BBoxBody       bboxObj(BBoxCallback* cb, const Tempest::Vec3& pos, float R);
 
     void           tick(uint64_t dt);
@@ -673,6 +685,11 @@ class DynamicWorld final {
       uint64_t rays = 0;
       };
     PhysicsStats physicsStats() const;
+    // Native body digest for equivalence checks: see CollisionWorld::bodyDigest.
+    // `owners` hashes each movable vob (ZEN-ID, visual, broken) with the IDs
+    // of its body and query bodies.
+    struct BodyDigest { std::string digest, owners; size_t bodies = 0, active = 0, movables = 0; };
+    BodyDigest bodyDigest() const;
     struct StaticCollisionStats {
       size_t shapeBytes = 0, triangles = 0;
       };

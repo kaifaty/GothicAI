@@ -1,6 +1,6 @@
 #pragma once
 
-#include <zenkit/Misc.hh>
+#include "math.h"
 
 #include <cstdint>
 #include <string>
@@ -8,10 +8,10 @@
 
 namespace asset {
 
-// One FNT glyph, as zenkit::FontGlyph: advance width and the two atlas UV corners.
+// One FNT glyph, with the original FNT layout: advance width and the two atlas UV corners.
 struct FontGlyph {
   uint8_t      width = 0;
-  zenkit::Vec2 uv[2] {};
+  Vec2 uv[2] {};
   };
 
 // An FNT font. Glyphs keep the original order: a text byte indexes them directly.

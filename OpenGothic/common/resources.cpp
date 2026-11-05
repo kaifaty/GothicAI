@@ -1,4 +1,5 @@
 #include "resources.h"
+#include "zenkitlog.h"
 #include "loadprobe.h"
 #include "basestore.h"
 #include "commandline.h"
@@ -89,7 +90,6 @@ struct Resources::VideoBase {
   };
 
 namespace {
-thread_local bool preparingVideo = false;
 thread_local bool loadingTextureTail = false;
 
 std::string modelKey(std::string_view name) {
@@ -234,25 +234,6 @@ Resources::Resources(Tempest::Device &device)
     throw std::runtime_error("unable to configure native music loader");
   }
 
-void Resources::zenkitLog(zenkit::LogLevel lvl, const char* cat, const char* message) {
-  if(preparingVideo) return;
-  switch (lvl) {
-    case zenkit::LogLevel::ERROR:
-      Tempest::Log::e("[zenkit] ", message);
-      break;
-    case zenkit::LogLevel::WARNING:
-      Tempest::Log::e("[zenkit] ", message);
-      break;
-    case zenkit::LogLevel::INFO:
-      Tempest::Log::i("[zenkit] ", message);
-      break;
-    case zenkit::LogLevel::DEBUG:
-    case zenkit::LogLevel::TRACE:
-      Tempest::Log::d("[zenkit] ", message); // unused
-      break;
-    }
-  }
-
 void Resources::loadBase() {
   if(!inst->automaticBase.path.empty()) return;
   try {
@@ -337,7 +318,7 @@ void Resources::startVideoBase() {
   const auto gothic=std::filesystem::path(CommandLine::inst().rootPath());
   const auto mainBase=inst->automaticBase.path;
   inst->videoWorker=std::thread([state,gothic,mainBase] {
-    preparingVideo=true;
+    ZenKitLog::silenceForVideo();
     try {
       auto selection=BaseStore::resolveVideos(gothic,mainBase,[](std::string_view message) {
         // Background selection diagnostics do not use the application's log callback.
@@ -665,7 +646,7 @@ static void straightenString(asset::MorphMesh& zmm) {
   const int back = 3-along-across;
   if(along==across)
     return;
-  auto comp = [](const zenkit::Vec3& v, int i) { return i==0 ? v.x : (i==1 ? v.y : v.z); };
+  auto comp = [](const asset::Vec3& v, int i) { return i==0 ? v.x : (i==1 ? v.y : v.z); };
 
   // the string's middle: the vertices drawn the farthest
   const size_t per  = ready->vertices.size();
@@ -1033,6 +1014,10 @@ std::filesystem::path Resources::contentDir() {
 std::filesystem::path Resources::worldOverrideDir(std::string_view world) {
   const auto root=contentDir();
   return root.empty() ? std::filesystem::path{} : worldContentDir(root,world);
+  }
+
+std::string Resources::selectedBaseFingerprint() {
+  return inst!=nullptr ? inst->baseFingerprint : std::string();
   }
 
 Resources::WayHeightInputs Resources::wayHeightInputs(std::string_view world) {
@@ -2058,7 +2043,7 @@ bool Resources::replaceModelMesh(asset::ModelMesh& model, std::unique_ptr<Skelet
           throw std::runtime_error("non-finite local attachment position");
         }
       // Inverse-transpose of the model-to-local transform is bind^T.
-      auto normal = [&bind](zenkit::Vec3& n) {
+      auto normal = [&bind](asset::Vec3& n) {
         const double x = double(bind[0][0])*n.x + double(bind[0][1])*n.y + double(bind[0][2])*n.z;
         const double y = double(bind[1][0])*n.x + double(bind[1][1])*n.y + double(bind[1][2])*n.z;
         const double z = double(bind[2][0])*n.x + double(bind[2][1])*n.y + double(bind[2][2])*n.z;

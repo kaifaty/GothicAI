@@ -21,8 +21,6 @@
 namespace VobLayer {
 namespace fs=std::filesystem;
 using namespace asset;
-using zenkit::Vec3;
-using zenkit::Mat3;
 using Json=rapidjson::Value;
 using gothicglb::jsonString;
 namespace {

@@ -3,7 +3,7 @@
 #pragma once
 
 #include "material.h"
-#include <zenkit/Boxes.hh>
+#include "math.h"
 #include <array>
 #include <memory>
 #include <optional>
@@ -158,8 +158,8 @@ struct VisualMorphMesh final : Visual {
 
 struct VisualDecal final : Visual {
   ObjectType get_object_type() const override { return ObjectType::zCDecal; }
-  zenkit::Vec2 dimension {};
-  zenkit::Vec2 offset {};
+  Vec2 dimension {};
+  Vec2 offset {};
   bool two_sided {};
   AlphaFunction alpha_func {};
   float texture_anim_fps {};
@@ -168,11 +168,11 @@ struct VisualDecal final : Visual {
 };
 
 struct RigidBody {
-  zenkit::Vec3 vel;
+  Vec3 vel;
   std::uint8_t mode;
   bool gravity_enabled;
   float gravity_scale;
-  zenkit::Vec3 slide_direction;
+  Vec3 slide_direction;
 };
 
 struct EventManager final : Object {
@@ -182,7 +182,7 @@ struct EventManager final : Object {
   std::weak_ptr<CutsceneContext> cutscene;
 };
 
-struct MoverKeyframe { zenkit::Vec3 position; zenkit::Quat rotation; };
+struct MoverKeyframe { Vec3 position; Quat rotation; };
 
 struct VirtualObject;
 
@@ -269,9 +269,9 @@ struct VirtualObject : Object {
   ~VirtualObject() override = default;
   VirtualObjectType type = VirtualObjectType::UNKNOWN;
   uint32_t id = 0;
-  zenkit::AxisAlignedBoundingBox bbox = zenkit::AxisAlignedBoundingBox::zero();
-  zenkit::Vec3 position = zenkit::Vec3 {0};
-  zenkit::Mat3 rotation = zenkit::Mat3::identity();
+  Aabb bbox = Aabb::zero();
+  Vec3 position = Vec3 {0};
+  Mat3 rotation = Mat3::identity();
   bool show_visual = false;
   SpriteAlignment sprite_camera_facing_mode = SpriteAlignment::NONE;
   bool cd_static = true;
@@ -356,7 +356,7 @@ struct VCameraTrajectoryFrame : VirtualObject {
   float continuity;
   float time_scale;
   bool time_fixed;
-  zenkit::Mat4 original_pose;
+  Mat4 original_pose;
   };
 
 struct VCutsceneCamera : VirtualObject {
@@ -402,7 +402,7 @@ struct LightPreset {
   std::string preset {};
   LightType light_type {LightType::SPOT};
   float range {};
-  zenkit::Color color {};
+  Color color {};
   float cone_angle {0};
   bool is_static {false};
   LightQuality quality {LightQuality::MEDIUM};
@@ -411,7 +411,7 @@ struct LightPreset {
   std::vector<float> range_animation_scale {};
   float range_animation_fps {0};
   bool range_animation_smooth {true};
-  std::vector<zenkit::Color> color_animation_list {};
+  std::vector<Color> color_animation_list {};
   float color_animation_fps {0};
   bool color_animation_smooth {true};
   bool can_move {true};
@@ -516,7 +516,7 @@ struct VEarthquake : VirtualObject {
   ObjectType get_object_type() const override { return ObjectType::zCEarthquake; }
   float radius;
   float duration;
-  zenkit::Vec3 amplitude;
+  Vec3 amplitude;
 };
 
 struct VNpc : VirtualObject {
@@ -570,7 +570,7 @@ struct VNpc : VirtualObject {
     std::string victim_name;
   };
   std::string npc_instance;
-  zenkit::Vec3 model_scale;
+  Vec3 model_scale;
   float model_fatness;
   std::vector<std::string> overlays;
   int flags;
@@ -618,7 +618,7 @@ struct VNpc : VirtualObject {
   bool weaponmode_routine;
   bool start_new_routine;
   int ai_state_driven;
-  zenkit::Vec3 ai_state_pos;
+  Vec3 ai_state_pos;
   std::string current_routine;
   bool respawn;
   int respawn_time;
@@ -818,7 +818,7 @@ struct VMover : VTrigger {
   std::string sfx_lock {};
   std::string sfx_unlock {};
   std::string sfx_use_locked {};
-  zenkit::Vec3 s_act_key_pos_delta;
+  Vec3 s_act_key_pos_delta;
   float s_act_keyframe_f;
   int s_act_keyframe;
   int s_next_keyframe;
@@ -898,7 +898,7 @@ struct VZoneFog : VirtualObject {
   ObjectType get_object_type() const override { return ObjectType::zCZoneZFog; }
   float range_center {0};
   float inner_range_percentage {0};
-  zenkit::Color color {};
+  Color color {};
   bool fade_out_sky {false};
   bool override_color {false};
 };
@@ -912,8 +912,8 @@ struct WayPoint : Object {
   std::string name;
   std::int32_t water_depth;
   bool under_water;
-  zenkit::Vec3 position;
-  zenkit::Vec3 direction;
+  Vec3 position;
+  Vec3 direction;
   bool free_point {false};
 };
 
@@ -986,8 +986,8 @@ struct CutsceneContext final : Cutscene {
 enum class BspTreeType : uint32_t { INDOOR=0, OUTDOOR=1 };
 
 struct BspNode {
-zenkit::Vec4 plane;
-zenkit::AxisAlignedBoundingBox bbox;
+Vec4 plane;
+Aabb bbox;
 int32_t front_index = -1;
 int32_t back_index = -1;
 int32_t parent_index = -1;

@@ -7,6 +7,7 @@
 #include <Tempest/Log>
 #include <Tempest/StorageImage>
 #include <cassert>
+#include <cstdio>
 
 #include "ui/inventorymenu.h"
 #include "ui/videowidget.h"
@@ -103,7 +104,7 @@ Renderer::Renderer() {
   // the receiver's depth without its plane; unset or pcss: the game's filter
   if(const char* mode = std::getenv("OPENGOTHIC_VSM_LAMP")) {
     const std::string_view m = mode;
-    settings.vsmLampMode = m=="hard" ? 1 : (m=="flat" ? 2 : 0);
+    settings.vsmLampMode = m=="hard" ? 1 : (m=="flat" ? 2 : (m=="truth" ? 3 : 0));
     if(settings.vsmLampMode!=0)
       Log::i("vsm: lamp filter study mode = ", m);
     }
@@ -112,6 +113,49 @@ Renderer::Renderer() {
     settings.vsmLampNarrow = std::max(0.f, float(std::atof(narrow)));
     Log::i("vsm: lamp filter study narrow penumbra = ", settings.vsmLampNarrow, " texels");
     }
+  // OPENGOTHIC_VSM_LAMP_TAA=1: under TAA the lamp taps turn from frame to frame, fewer of them. Only for the study: the
+  // pattern lets light into contact shadows and its grain outlives TAA (reports/render-features/2026-11-04-lamp-pcss/
+  // step-2d-why.md). The switches below imply it: OPENGOTHIC_VSM_LAMP_TAPS=<search 1>,<search 2>,<narrow>,<wide>;
+  // OPENGOTHIC_VSM_LAMP_FLOOR=1 the search stops after its first tap when that one puts a shadow's edge at the
+  // penumbra's floor; OPENGOTHIC_VSM_LAMP_CENTRE=1 the narrow penumbra's threshold in texels of the face's centre, not
+  // where they are smallest
+  if(const char* e = std::getenv("OPENGOTHIC_VSM_LAMP_TAA"); e!=nullptr && std::string_view(e)=="1")
+    settings.vsmLampTaa = true;
+  if(const char* taps = std::getenv("OPENGOTHIC_VSM_LAMP_TAPS")) {
+    unsigned t[4] = {};
+    if(std::sscanf(taps, "%u,%u,%u,%u", &t[0], &t[1], &t[2], &t[3])==4 && t[0]>=1 && t[2]>=1 && t[3]>=1) {
+      for(int i=0; i<4; ++i)
+        settings.vsmLampTaps[i] = std::min(t[i], 16u);
+      settings.vsmLampStudy = true;
+      Log::i("vsm: lamp filter study taps under taa = ", t[0], ",", t[1], ",", t[2], ",", t[3]);
+      } else {
+      Log::e("vsm: OPENGOTHIC_VSM_LAMP_TAPS wants <search 1>,<search 2>,<narrow>,<wide>, got ", taps);
+      }
+    }
+  if(const char* e = std::getenv("OPENGOTHIC_VSM_LAMP_FLOOR"); e!=nullptr && std::string_view(e)=="1") {
+    settings.vsmLampFlags |= 1;
+    settings.vsmLampStudy  = true;
+    Log::i("vsm: lamp filter study: the search stops at the penumbra's floor");
+    }
+  if(const char* e = std::getenv("OPENGOTHIC_VSM_LAMP_CENTRE"); e!=nullptr && std::string_view(e)=="1") {
+    settings.vsmLampFlags |= 2;
+    settings.vsmLampStudy  = true;
+    Log::i("vsm: lamp filter study: the narrow penumbra in texels of the face's centre");
+    }
+  // OPENGOTHIC_VSM_LAMP_EXP=still,inner,litall,radial,expect,paths: the experiments of step-2d-why.md (light.frag, probeExp)
+  if(const char* e = std::getenv("OPENGOTHIC_VSM_LAMP_EXP")) {
+    const std::string_view s = e;
+    const char* names[] = {"still", "inner", "litall", "radial", "expect", "paths"};
+    for(uint32_t i=0; i<6; ++i)
+      if(s.find(names[i])!=std::string_view::npos)
+        settings.vsmLampExp |= 1u << i;
+    settings.vsmLampStudy = true;
+    Log::i("vsm: lamp filter study experiments = ", e, " (", settings.vsmLampExp, ")");
+    }
+  settings.vsmLampTaa   |= settings.vsmLampStudy;
+  if(settings.vsmLampTaa)
+    Log::i("vsm: lamp filter study: taps turned per frame under taa");
+  settings.vsmLampStudy |= settings.vsmLampMode!=0 || settings.vsmStats || settings.vsmLampNarrow>=0;
 
   sky.sampler = Tempest::Sampler::bilinear();
   sky.sampler.vClamp = ClampMode::ClampToEdge;
@@ -194,9 +238,34 @@ void Renderer::setupSettings() {
       Log::i("render: taa = ", logged, ", sharpness = ", settings.taaSharpness, ", mip bias = ", settings.taaMipBias);
       }
   }
+  // A study of the temporal upscale (graphics plan 1g, reports/render-features/2026-11-05-upscale), test benches only:
+  // OPENGOTHIC_RENDER_SCALE=0.5..1 draws the scene at that share of the frame over vidResIndex;
+  // OPENGOTHIC_UPSCALE=temporal puts MetalFX Temporal in place of the TAA resolve when the scene is drawn smaller than
+  // the frame (Metal, with TAA); OPENGOTHIC_UPSCALE_MIP_BIAS overrides its mip bias, log2(in/out) - 1
+  {
+    settings.renderScale = 0;
+    if(const char* e = std::getenv("OPENGOTHIC_RENDER_SCALE"))
+      settings.renderScale = std::clamp(std::strtof(e, nullptr), 0.5f, 1.f);
+    settings.temporalUpscale = false;
+    if(const char* e = std::getenv("OPENGOTHIC_UPSCALE"); e!=nullptr && std::string_view(e)=="temporal")
+      settings.temporalUpscale = settings.taaEnabled && Resources::device().properties().temporalUpscale;
+    settings.upscaleMipBiasSet = false;
+    if(const char* e = std::getenv("OPENGOTHIC_UPSCALE_MIP_BIAS")) {
+      settings.upscaleMipBiasSet = true;
+      settings.upscaleMipBias    = std::clamp(std::strtof(e, nullptr), -3.f, 0.f);
+      }
+    static bool logged = false;
+    if(!logged && (settings.renderScale>0 || std::getenv("OPENGOTHIC_UPSCALE")!=nullptr)) {
+      logged = true;
+      Log::i("render: upscale = ", settings.temporalUpscale ? "temporal" : "off", ", render scale = ",
+             settings.renderScale, settings.upscaleMipBiasSet ? ", mip bias set = " : "",
+             settings.upscaleMipBiasSet ? std::to_string(settings.upscaleMipBias) : std::string());
+      }
+  }
   // CMAA2 runs at internal resolution, so it needs a same-size target: native or the upscaler input
+  const bool nativeRes    = settings.vidResIndex==0 && (settings.renderScale==0 || settings.renderScale==1);
   settings.aaEnabled      = !settings.taaEnabled && (Gothic::options().aaPreset>0) &&
-                            (settings.vidResIndex==0 || settings.spatialUpscale);
+                            (nativeRes || settings.spatialUpscale);
   // bloom from the HDR scene before tonemapping; OPENGOTHIC_BLOOM=0 turns it off
   if(const char* bloom = std::getenv("OPENGOTHIC_BLOOM"))
     settings.bloomEnabled = std::string_view(bloom)!="0";
@@ -214,7 +283,7 @@ void Renderer::setupSettings() {
     shadow.directLightPso = &shaders.directLight;
 
   // point-lights
-  if(settings.vsmEnabled && (settings.vsmLampMode!=0 || settings.vsmStats || settings.vsmLampNarrow>=0))
+  if(settings.vsmEnabled && settings.vsmLampStudy)
     lights.directLightPso = &shaders.lightsVsmProbe;
   else if(settings.vsmEnabled)
     lights.directLightPso = &shaders.lightsVsm;
@@ -296,16 +365,6 @@ void Renderer::onWorldChanged() {
   resetSkyFog();
   }
 
-void Renderer::setGizmo(bool enable, Tempest::Vec3 center, int mode) {
-  gizmo.enable = enable;
-  gizmo.center = center;
-  gizmo.mode   = mode;
-  }
-
-void Renderer::setLightsHud(const Tempest::Texture2d* tex) {
-  hud.light = tex;
-  }
-
 void Renderer::updateCamera(const WorldView& wview, const Camera& camera) {
   proj        = camera.projective();
   viewProj    = camera.viewProj();
@@ -324,14 +383,17 @@ void Renderer::updateCamera(const WorldView& wview, const Camera& camera) {
 
 void Renderer::prepareTaa(WorldView& wview, const Camera& camera) {
   // the path tracer accumulates its own frames, with a camera that stands still
-  taa.active = settings.taaEnabled && !settings.pathTraceEnabled && !taa.output.isEmpty();
+  // the temporal upscale (graphics plan 1g) takes the jitter and the history of the TAA in its own way
+  temporal.active = settings.taaEnabled && !settings.pathTraceEnabled && !temporal.output.isEmpty();
+  taa.active      = settings.taaEnabled && !settings.pathTraceEnabled && (!taa.output.isEmpty() || temporal.active);
   if(!taa.active) {
     taa.valid = false;
     wview.setJitter(nullptr);
     wview.setMipBias(0);
+    wview.setTaaFrame(false, 0);
     return;
     }
-  wview.setMipBias(settings.taaMipBias);
+  wview.setMipBias(temporal.active ? temporal.mipBias : settings.taaMipBias);
 
   // without jitter, as the camera gives it; the shadows (Camera::viewShadow*) are made from it too
   Taa::View cur;
@@ -342,8 +404,10 @@ void Renderer::prepareTaa(WorldView& wview, const Camera& camera) {
     taa.valid = false;
   taa.cuts = camera.cuts();
 
-  const Vec2 px = Taa::jitterPx(taa.frame++);
+  wview.setTaaFrame(settings.vsmLampTaa, taa.frame);
+  const Vec2 px = temporal.active ? Taa::jitterPx(taa.frame++, temporal.phases) : Taa::jitterPx(taa.frame++);
   const auto j  = Taa::jitterMatrix(px, uint32_t(zbuffer.w()), uint32_t(zbuffer.h()));
+  taa.jitter    = px;
   if(taa.valid)
     taa.reproject = Taa::reprojection(cur, taa.prev, j);
   taa.prev = cur;
@@ -471,13 +535,31 @@ void Renderer::resetViewport(Tempest::Size res, Tempest::Size fullRes) {
   const uint32_t w = uint32_t(res.w);
   const uint32_t h = uint32_t(res.h);
 
+  // the temporal upscale (graphics plan 1g): MetalFX makes the frame of the swapchain's size from the jittered one,
+  // and bloom and tonemapping go on in that size
+  const bool     temporalOn = useTemporalUpscale(res, fullRes);
+  const uint32_t bw         = temporalOn ? uint32_t(fullRes.w) : w;
+  const uint32_t bh         = temporalOn ? uint32_t(fullRes.h) : h;
+
   sceneLinear = device.attachment(TextureFormat::R11G11B10UF,w,h);
   for(size_t i=0; i<bloomChain.size(); ++i)
     bloomChain[i] = settings.bloomEnabled ? device.attachment(TextureFormat::R11G11B10UF,
-                                                              std::max(w>>(i+1),1u), std::max(h>>(i+1),1u)) : Attachment();
+                                                              std::max(bw>>(i+1),1u), std::max(bh>>(i+1),1u)) : Attachment();
+
+  if(temporalOn) {
+    temporal.motion  = device.attachment(TextureFormat::RG16F, w, h);
+    temporal.output  = device.image2d(TextureFormat::R11G11B10UF, bw, bh);
+    temporal.phases  = Taa::upscalePhases(w, h, bw, bh);
+    temporal.mipBias = settings.upscaleMipBiasSet ? settings.upscaleMipBias : Taa::upscaleMipBias(w, bw);
+    Log::i("render: temporal upscale ", w, "x", h, " -> ", bw, "x", bh, ", phases = ", temporal.phases,
+           ", mip bias = ", temporal.mipBias);
+    } else {
+    temporal.motion  = Attachment();
+    temporal.output  = StorageImage();
+    }
 
   // TAA: the frame resolved with the history is written into `output`, which then swaps with sceneLinear
-  if(settings.taaEnabled) {
+  if(settings.taaEnabled && !temporalOn) {
     taa.output     = device.attachment(TextureFormat::R11G11B10UF,w,h);
     taa.history[0] = device.attachment(TextureFormat::RGBA16F,w,h);
     taa.history[1] = device.attachment(TextureFormat::RGBA16F,w,h);
@@ -498,7 +580,7 @@ void Renderer::resetViewport(Tempest::Size res, Tempest::Size fullRes) {
     cmaa2.indirectBuffer             = device.ssbo(nullptr, sizeof(DispatchIndirectCommand) + sizeof(DrawIndirectCommand));
     }
 
-  if(settings.spatialUpscale && res!=fullRes) {
+  if(settings.spatialUpscale && res!=fullRes && !temporalOn) {
     upscale.input  = device.attachment(TextureFormat::RGBA8, w, h);
     upscale.output = device.image2d(TextureFormat::RGBA8, uint32_t(fullRes.w), uint32_t(fullRes.h));
     } else {
@@ -751,9 +833,11 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   const bool shotNative = taa.shot && settings.taaEnabled && result.size()==zbuffer.size();
   if(shotNative)
     res = zbuffer.size();
-  // a switch between TAA and CMAA2 (settings) needs their buffers
+  // a switch between TAA and CMAA2 (settings) needs their buffers; the temporal upscale its own, of the frame's size
   const bool aaReady  = !settings.aaEnabled  || !cmaa2.workingEdges.isEmpty();
-  const bool taaReady = !settings.taaEnabled || !taa.output.isEmpty();
+  const bool taaReady = !settings.taaEnabled ||
+                        (useTemporalUpscale(res, result.size()) ? temporal.output.size()==result.size()
+                                                                : !taa.output.isEmpty());
   if(res!=zbuffer.size() || !aaReady || !taaReady) {
     resetViewport(res, result.size());
     }
@@ -883,14 +967,23 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   drawRtsmDbg(cmd, wview);
   drawRayQueryDbg(cmd, wview);
   //
-  drawLightsHud(cmd, wview);
 
   cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}});
-  drawGizmo(cmd, wview);
   FrameProfile::Scope postTiming(FrameProfile::Zone::EncodePost);
   if(camera.isInWater()) {
     cmd.setDebugMarker("Underwater");
     drawUnderwater(cmd, wview);
+    }
+
+  if(temporal.active) {
+    // the frame of the swapchain's size from here on: bloom and tonemapping read temporal.output
+    drawTemporalUpscale(cmd);
+    drawBloom(cmd);
+    cmd.setDebugMarker("Tonemapping");
+    drawTonemappingTemporal(result, cmd, wview);
+    postTiming.finish();
+    wview.postFrameupdate();
+    return;
     }
 
   if(taa.active)
@@ -922,7 +1015,9 @@ void Renderer::drawBloom(Encoder<CommandBuffer>& cmd) {
   // down: the scene to half resolution (Karis-weighted), then each level to the next
   for(size_t i=0; i<bloomChain.size(); ++i) {
     cmd.setFramebuffer({{bloomChain[i], Tempest::Discard, Tempest::Preserve}});
-    cmd.setBinding(0, i==0 ? sceneLinear : bloomChain[i-1], Sampler::bilinear(ClampMode::ClampToEdge));
+    if(i==0 && temporal.active)
+      cmd.setBinding(0, temporal.output, Sampler::bilinear(ClampMode::ClampToEdge)); else
+      cmd.setBinding(0, i==0 ? sceneLinear : bloomChain[i-1], Sampler::bilinear(ClampMode::ClampToEdge));
     cmd.setPipeline(i==0 ? shaders.bloomDownKaris : shaders.bloomDown);
     cmd.draw(nullptr, 0, 3);
     }
@@ -933,6 +1028,8 @@ void Renderer::drawBloom(Encoder<CommandBuffer>& cmd) {
     cmd.setPipeline(shaders.bloomUp);
     cmd.draw(nullptr, 0, 3);
     }
+  if(temporal.active)
+    return; // the tonemapping mixes it in (drawTonemappingTemporal)
   struct Push {
     float strength = 0.05f;  // the share of the scene's light a lens scatters into the glow
     float levels   = 0;
@@ -1083,6 +1180,80 @@ void Renderer::drawTaaSharpen(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
   cmd.draw(nullptr, 0, 3);
   }
 
+bool Renderer::useTemporalUpscale(Tempest::Size res, Tempest::Size fullRes) const {
+  return settings.temporalUpscale && settings.taaEnabled && res.w<fullRes.w && res.h<fullRes.h;
+  }
+
+void Renderer::drawTemporalUpscale(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
+  // In linear HDR after the translucent and underwater passes, where the TAA resolve would be (graphics plan 1g).
+  // The camera's motion of each pixel first: from its depth to where it was a frame ago (motion_camera.frag)
+  struct Push {
+    Matrix4x4 reproject;
+    } push;
+  push.reproject = taa.valid ? taa.reproject : Matrix4x4::mkIdentity();
+  cmd.setDebugMarker("Upscale-motion");
+  cmd.setFramebuffer({{temporal.motion, Tempest::Discard, Tempest::Preserve}});
+  cmd.setBinding(0, zbuffer, Sampler::nearest(ClampMode::ClampToEdge));
+  cmd.setPushData(push);
+  cmd.setPipeline(shaders.motionCamera);
+  cmd.draw(nullptr, 0, 3);
+
+  // Apple's conventions: the jitter is the pixel's centre minus where it was sampled, in input pixels: the picture
+  // moved by +jitter (Taa::jitterMatrix), so the centre shows the point at centre - jitter. The vectors are in the
+  // input's texture coordinates, the scale makes pixels of them. The depth is not reversed: the sky is 1.
+  // OPENGOTHIC_UPSCALE_JITTER_SIGN=<x>,<y> (a study of the convention): multipliers of the jitter given to MetalFX
+  static const Vec2 sign = [] {
+    Vec2 s(1, 1);
+    if(const char* e = std::getenv("OPENGOTHIC_UPSCALE_JITTER_SIGN"))
+      if(std::sscanf(e, "%f,%f", &s.x, &s.y)==2)
+        Log::i("render: temporal upscale jitter sign = ", s.x, ",", s.y);
+    return s;
+    }();
+  TemporalUpscaleDesc desc;
+  desc.jitterX       = taa.jitter.x*sign.x;
+  desc.jitterY       = taa.jitter.y*sign.y;
+  desc.motionScaleX  = float(temporal.motion.w());
+  desc.motionScaleY  = float(temporal.motion.h());
+  desc.inputW        = uint32_t(sceneLinear.w());
+  desc.inputH        = uint32_t(sceneLinear.h());
+  desc.reset         = !taa.valid;
+  desc.depthReversed = false;
+  cmd.setFramebuffer({});
+  cmd.setDebugMarker("Upscale-temporal");
+  cmd.upscaleTemporal(sceneLinear, zbuffer, temporal.motion, temporal.output, desc);
+  taa.valid = true;
+  }
+
+void Renderer::drawTonemappingTemporal(Attachment& result, Encoder<CommandBuffer>& cmd, const WorldView& wview) {
+  // drawTonemapping at the output resolution, from the upscaled frame; the bloom goes in here (tonemapping.frag BLOOM)
+  struct Push {
+    float brightness    = 0;
+    float contrast      = 1;
+    float gamma         = 1.f/2.2f;
+    float mul           = 1;
+    float bloomStrength = 0.05f; // as drawBloom's mix
+    float bloomLevels   = 1;
+    } p;
+  p.brightness = (settings.zVidBrightness - 0.5f)*0.1f;
+  p.contrast   = std::max(1.5f - settings.zVidContrast, 0.01f);
+  p.gamma      = p.gamma/std::max(2.0f*settings.zVidGamma,  0.01f);
+
+  const bool bloom = settings.bloomEnabled && !bloomChain[0].isEmpty();
+  cmd.setFramebuffer({ {result, Tempest::Discard, Tempest::Preserve} });
+  cmd.setBinding(0, wview.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
+  cmd.setBinding(1, temporal.output, Sampler::nearest(ClampMode::ClampToEdge));
+  if(bloom) {
+    p.bloomLevels = float(bloomChain.size());
+    cmd.setBinding(2, bloomChain[0], Sampler::bilinear(ClampMode::ClampToEdge));
+    cmd.setPushData(p);
+    cmd.setPipeline(shaders.tonemappingBloom);
+    } else {
+    cmd.setPushData(&p, 4*sizeof(float));
+    cmd.setPipeline(shaders.tonemapping);
+    }
+  cmd.draw(nullptr, 0, 3);
+  }
+
 void Renderer::drawUpscale(Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
   cmd.setFramebuffer({});
   cmd.setDebugMarker("Upscale");
@@ -1197,50 +1368,6 @@ void Renderer::drawSunMoon(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const 
   cmd.setPushData(push);
   cmd.setPipeline(shaders.sun);
   cmd.draw(nullptr, 0, 6);
-  }
-
-void Renderer::drawGizmo(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview) {
-  if(!gizmo.enable)
-    return;
-
-  auto  cen = gizmo.center;
-  float w   = 1;
-  auto  vp  = wview.sceneGlobals().viewProject();
-  vp.project(cen.x, cen.y, cen.z, w);
-
-  struct Push {
-    Tempest::Vec3 center;
-    uint32_t      axisBits;
-  } push = {};
-  push.center   = gizmo.center;
-  push.axisBits = 0x7;
-
-  cmd.setDebugMarker("Hud-Gizmo");
-  cmd.setBinding(0, wview.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
-  cmd.setBinding(1, zbuffer);
-  cmd.setPipeline(shaders.gizmo);
-  if(gizmo.mode==0) {
-    push.axisBits = 0xF;
-    cmd.setPushData(push);
-    cmd.draw(nullptr, 0, 36, 0, 4);
-    }
-  else if(gizmo.mode==1) {
-    push.axisBits = 0x70;
-    cmd.setPushData(push);
-    cmd.draw(nullptr, 0, 36, 4, 3);
-    }
-  }
-
-void Renderer::drawLightsHud(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview) {
-  if(hud.light==nullptr)
-    return;
-  auto& ssbo = wview.lights().lightsSsbo();
-  cmd.setDebugMarker("Hud-Lights");
-  cmd.setBinding(0, wview.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
-  cmd.setBinding(1, ssbo);
-  cmd.setBinding(2, *hud.light);
-  cmd.setPipeline(shaders.lightImposter);
-  cmd.draw(nullptr, 0, 6, 0, wview.lights().size());
   }
 
 void Renderer::drawSwRT(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview) {
@@ -2209,8 +2336,12 @@ void Renderer::drawLights(Encoder<CommandBuffer>& cmd, const WorldView& wview) {
     }
 
   auto& ibo  = Resources::cubeIbo();
-  struct Push { Vec3 originLwc; float vsmLampNear; uint32_t probeMode, probeStamp; float probeNarrow; } push =
-    {scene.originLwc, settings.vsmLampNearCm, settings.vsmLampMode, 0, settings.vsmLampNarrow};
+  struct Push {
+    Vec3 originLwc; float vsmLampNear; uint32_t probeMode, probeStamp; float probeNarrow; uint32_t probeTaps[4], probeFlags;
+    uint32_t probeExp;
+    } push = {scene.originLwc, settings.vsmLampNearCm, settings.vsmLampMode, 0, settings.vsmLampNarrow,
+              {settings.vsmLampTaps[0], settings.vsmLampTaps[1], settings.vsmLampTaps[2], settings.vsmLampTaps[3]},
+              settings.vsmLampFlags, settings.vsmLampExp};
   if(lights.directLightPso==&shaders.lightsVsmProbe) {
     // the study variant: its counters and a stamp per pixel (light.frag, LampProbe); one frame in 5 s counts
     auto& probe = usesSsboInit(vsm.lampProbe, (16 + size_t(zbuffer.w())*size_t(zbuffer.h()))*sizeof(uint32_t));
@@ -3085,6 +3216,11 @@ Tempest::Attachment Renderer::screenshoot(uint8_t frameId) {
 
   uint32_t w    = uint32_t(zbuffer.w());
   uint32_t h    = uint32_t(zbuffer.h());
+  if(!temporal.output.isEmpty()) {
+    // the temporal upscale makes the frame of the swapchain's size; a smaller one would start it over
+    w = uint32_t(temporal.output.w());
+    h = uint32_t(temporal.output.h());
+    }
   auto     img  = device.attachment(Tempest::TextureFormat::RGBA8,w,h);
 
   auto wview  = Gothic::inst().worldView();
@@ -3133,6 +3269,8 @@ Tempest::Attachment Renderer::screenshoot(uint8_t frameId) {
   }
 
 float Renderer::internalResolutionScale() const {
+  if(settings.renderScale>0)
+    return settings.renderScale;
   if(settings.vidResIndex==0)
     return 1;
   if(settings.vidResIndex==1)
@@ -3147,6 +3285,8 @@ Size Renderer::effectResolution() const {
   }
 
 Size Renderer::internalResolution(Tempest::Size src) const {
+  if(settings.renderScale>0)
+    return Size(std::max(1, int(float(src.w)*settings.renderScale)), std::max(1, int(float(src.h)*settings.renderScale)));
   if(settings.vidResIndex==0)
      return src;
   if(settings.vidResIndex==1)

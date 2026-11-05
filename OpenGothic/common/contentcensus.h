@@ -9,7 +9,6 @@
 #include <utility>
 #include <vector>
 
-namespace zenkit { class Read; }
 namespace ProgramData { struct Source; }
 namespace OutputUnits { struct Source; }
 namespace AudioData { struct Sound; }
@@ -24,9 +23,6 @@ class ContentCensus final {
     void replaced(std::string_view name, std::string_view replacement) noexcept;
     void missing(std::string_view name, std::string_view reason) noexcept;
     void profile(std::string_view game, std::string_view outputUnits, int language) noexcept;
-    void selected(std::string_view consumer, std::string_view request, int language,
-                  std::string_view branch, std::string_view location, std::string_view path,
-                  std::string_view source, zenkit::Read& read) noexcept;
     void program(std::string_view consumer, std::string_view request, int language,
                  std::string_view branch, std::string_view record, std::string_view sha256,
                  const ProgramData::Source& source) noexcept;
@@ -45,15 +41,9 @@ class ContentCensus final {
     std::map<Key, uint64_t> files;
     std::map<Key, uint64_t> replacements;
     std::map<Key, uint64_t> misses;
-    struct Selection {
-      std::string consumer, request, branch, location, path, source, sha256;
-      int language = -1;
-      uint64_t size = 0;
-      };
     std::string game, outputUnitsPrefix;
     int language = -1;
     bool hasProfile = false;
-    std::vector<Selection> selections;
     struct ProgramSelection {
       std::string consumer, request, branch, record, sha256;
       std::string sourceOrigin, sourcePath, sourceArchive, sourceSha256;

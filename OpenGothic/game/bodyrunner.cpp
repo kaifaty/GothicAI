@@ -1,6 +1,6 @@
 #include <Tempest/File>
 #include <Tempest/Log>
-#include <zenkit/Logger.hh>
+#include "zenkitlog.h"
 #include <rapidjson/document.h>
 #include <rapidjson/stringbuffer.h>
 #include <rapidjson/writer.h>
@@ -18,6 +18,7 @@
 #include "game/bodyarena.h"
 #include "game/bodyarenageometry.h"
 #include "game/bodytrajectory.h"
+#include "societyexport.h"
 #include "testbench.h"
 #include "stucklogger.h"
 #include "world/objects/npc.h"
@@ -53,7 +54,7 @@ using Json = rapidjson::Document;
 using Allocator = rapidjson::Document::AllocatorType;
 
 struct Options {
-  std::string save, world, scenario, output = ".body-runner", mode = "lockstep";
+  std::string save, world, scenario, output = ".body-runner", mode = "lockstep", societyExport;
   bool stdio = false, compactReplies = false, schedulingDiagnostics = false, serialWorkers = false, forkReset = false;
   bool forkPrefix = false, gameParity = false;
 };
@@ -79,6 +80,14 @@ Options options(int argc, const char** argv) {
     else if(arg=="--fork-reset") result.forkReset = true;
     else if(arg=="--fork-prefix") result.forkPrefix = true;
     else if(arg=="--game-parity") result.gameParity = true;
+    else if(arg=="--society-export") result.societyExport = value();
+  }
+  if(!result.societyExport.empty()) {
+    // The world of the society stand: a fresh game in --world, written once, no scenario.
+    if(result.world.empty() || !result.save.empty())
+      throw std::runtime_error("--society-export requires --world and no --save");
+    result.societyExport = std::filesystem::absolute(result.societyExport).string();
+    return result;
   }
   if(result.save.empty()==result.world.empty() || result.scenario.empty())
     throw std::runtime_error("--scenario and one of --save or --world are required");
@@ -1432,7 +1441,39 @@ int serveForks(Runner& runner, std::FILE* protocol, std::string& line, int& fork
   _exit(0);
 }
 
+// --society-export: a fresh game in --world, after its startup scripts (day 0, 08:00), written as the society
+// stand's world (game/societyexport.h). No step of the world runs.
+int societyExport(Gothic& gothic, const Options& opts, std::FILE* protocol, Clock::time_point processStart) {
+  const auto seconds = [](Clock::time_point a, Clock::time_point b) { return std::chrono::duration<double>(b-a).count(); };
+  const auto loadStart = Clock::now();
+  gothic.setGame(std::make_unique<GameSession>(opts.world));
+  if(gothic.world()==nullptr)
+    throw std::runtime_error("--society-export: the world did not load");
+  const auto loaded = Clock::now();
+  const auto result = SocietyExport::build(*gothic.world());
+  {
+    std::ofstream file(opts.societyExport,std::ios::binary | std::ios::trunc);
+    file.write(result.json.data(),std::streamsize(result.json.size()));
+    if(!file.flush())
+      throw std::runtime_error("--society-export: cannot write " + opts.societyExport);
+  }
+  const auto written = Clock::now();
+  std::fprintf(stderr,"society export: %s: %s; %zu bytes; world %.1f s, export %.1f s, total %.1f s since start\n",
+               opts.societyExport.c_str(),result.summary.c_str(),result.json.size(),seconds(loadStart,loaded),
+               seconds(loaded,written),seconds(processStart,written));
+  std::fflush(stderr);
+  Json response(rapidjson::kObjectType);
+  response.AddMember("schema_version",1,response.GetAllocator());
+  response.AddMember("ok",true,response.GetAllocator());
+  string(response,"society_export",opts.societyExport);
+  response.AddMember("seconds",seconds(processStart,written),response.GetAllocator());
+  send(protocol,response);
+  gothic.clearGame().reset();
+  return 0;
+}
+
 int main(int argc, const char** argv) {
+  const auto processStart = Clock::now();
   // Reserve protocol stdout before redirecting all engine/library logging (including C stdio).
   std::FILE* protocol = fdopen(dup(STDOUT_FILENO),"w");
   dup2(STDERR_FILENO,STDOUT_FILENO);
@@ -1448,15 +1489,18 @@ int main(int argc, const char** argv) {
     // No background copy of the base to the store: --fork-reset needs a single thread, and the
     // copy would serialize every parallel runner on the store's lock.
     BaseStore::setPublication(false);
-    std::filesystem::create_directories(opts.output);
+    if(opts.societyExport.empty())
+      std::filesystem::create_directories(opts.output);
     CommandLine commandLine(argc,argv);
-    zenkit::Logger::set(zenkit::LogLevel::WARNING,Resources::zenkitLog);
+    ZenKitLog::install(ZenKitLog::Level::Warning);
     Resources resources;
     Gothic gothic;
     auto stuckLogger = StuckLogger::fromEnvironment();
     gothic.isNpcInDialogFn = [](const Npc*) { return false; };
     gothic.setupGlobalScripts();
     GameMusic music;
+    if(!opts.societyExport.empty())
+      return societyExport(gothic,opts,protocol,processStart);
     // --game-parity: the game's AI bridge, as main.cpp creates it. Without a server it still changes the
     // simulation (beasts' perception, -nointro dialogs, dialogs as story programs); GOTHIC_AI=0 disables it.
     std::optional<AiBridge> aiBridge;

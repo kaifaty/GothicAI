@@ -9,19 +9,19 @@
 // Coordinates are Gothic centimetres. See docs/asset-migration.md.
 namespace WorldData {
 
-struct Triangle { std::array<zenkit::Vec3,3> point; };
+struct Triangle { std::array<asset::Vec3,3> point; };
 struct Room {
-  zenkit::Vec3 min, max;
+  asset::Vec3 min, max;
   std::vector<Triangle> triangles;
   };
 
 // One volume per BSP sector, including empty rooms, in source order.
-bool isIndoor(asset::BspTreeType mode, const std::vector<Room>& rooms, const zenkit::Vec3& point);
+bool isIndoor(asset::BspTreeType mode, const std::vector<Room>& rooms, const asset::Vec3& point);
 
 struct Data {
   WorldChunkSource source;
   std::string name;
-  zenkit::AxisAlignedBoundingBox bbox = zenkit::AxisAlignedBoundingBox::zero();
+  asset::Aabb bbox = asset::Aabb::zero();
   std::vector<std::shared_ptr<asset::VirtualObject>> vobs;
   std::shared_ptr<asset::WayNet> waynet;
   // Raw mesh polygon references are omitted, as specified for bsp.bin.

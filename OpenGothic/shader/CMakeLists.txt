@@ -114,13 +114,6 @@ function(add_frag_shader OUTPUT)
   set(OPENGOTHIC_SHADERS_SPRV ${OPENGOTHIC_SHADERS_SPRV} PARENT_SCOPE)
 endfunction(add_frag_shader)
 
-# editor hud
-add_shader(gizmo.vert hud/gizmo.vert)
-add_shader(gizmo.frag hud/gizmo.frag)
-
-add_shader(light_imposter.vert hud/light_imposter.vert)
-add_shader(light_imposter.frag hud/light_imposter.frag)
-
 # cluster culling
 add_shader(cluster_init.comp            materials/cluster_init.comp)
 add_shader(cluster_patch.comp           materials/cluster_patch.comp)
@@ -289,6 +282,9 @@ add_shader(bloom_down.frag           bloom/bloom_down.frag)
 add_shader(bloom_up.frag             bloom/bloom_up.frag)
 add_shader(bloom_mix.frag            bloom/bloom_mix.frag)
 add_shader(tonemapping_up.frag       lighting/tonemapping.frag -DUPSCALE)
+# temporal upscale (graphics plan 1г): camera motion vectors, tonemapping with the bloom at the output resolution
+add_shader(motion_camera.frag        upscale/motion_camera.frag)
+add_shader(tonemapping_bloom.frag    lighting/tonemapping.frag -DBLOOM)
 
 add_shader(water_reflection.mesh     water/water_reflection.mesh)
 add_shader(water_reflection.frag     water/water_reflection.frag)

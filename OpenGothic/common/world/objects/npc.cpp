@@ -1,4 +1,5 @@
 #include "npc.h"
+#include "loadprobe.h"
 #include "world/animationlod.h"
 #include "world/bodytraces.h"
 #include "world/bloodspawn.h"
@@ -1029,6 +1030,7 @@ float Npc::angleDir(float x, float z) {
   }
 
 bool Npc::resetPositionToTA() {
+  LoadProbe::Startup::Detail::Scope reset("reset_npc");
   endMeleeAiSpecial();
   const bool g2       = owner.version().game==2;
   const bool isDragon = (g2 && guild()==GIL_DRAGON);
@@ -1056,11 +1058,14 @@ bool Npc::resetPositionToTA() {
   if(isPlayer())
     return true;
 
+  LoadProbe::Startup::Detail::Scope routine("current_ta");
   auto at = currentTaPoint();
+  routine.stop();
   if(at==nullptr)
     return false;
 
   if(at->isLocked() && !isDead) {
+    LoadProbe::Startup::Detail::Scope next("next_point");
     auto p = owner.findNextPoint(*at);
     if(p!=nullptr)
       at = p;
@@ -1071,6 +1076,7 @@ bool Npc::resetPositionToTA() {
 
   if(!isDead) {
     attachToPoint(at);
+    LoadProbe::Startup::Detail::Scope equip("auto_equip");
     invent.autoEquipWeapons(*this);
     }
 
@@ -1309,7 +1315,11 @@ bool Npc::nativeBodyAction() const {
   }
 
 float Npc::simplifiedMoveSpeed() const {
-  const auto* sequence = visual.movementSequence(walkMode(),weaponState(),*this);
+  return simplifiedMoveSpeed(walkMode());
+  }
+
+float Npc::simplifiedMoveSpeed(WalkBit mode) const {
+  const auto* sequence = visual.movementSequence(mode,weaponState(),*this);
   if(sequence==nullptr || sequence->totalTime()<=0.f)
     return 0.f;
   const auto duration = uint64_t(sequence->totalTime());
@@ -8157,7 +8167,7 @@ bool Npc::transformInto(size_t instance) {
 
 void Npc::forEachRoutine(const std::function<void(const RoutineInfo&)>& f) const {
   for(auto& r:routines)
-    f(RoutineInfo{r.start,r.end,r.callback,r.wayPointName()});
+    f(RoutineInfo{r.start,r.end,r.callback,r.wayPointName(),r.point});
   }
 
 int Npc::currentRoutineIndex() const {
@@ -12374,6 +12384,8 @@ void Npc::updateAnimation(uint64_t dt, bool force) {
     return;
     }
   if(ragdoll) {
+    // the quiver of a body down or dead lies on the ground too (graphics/mesh/quiver)
+    syncAtt |= visual.updateQuiver(*this,dt);
     if(syncAtt || force)
       visual.syncAttaches();
     return;

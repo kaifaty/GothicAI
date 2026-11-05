@@ -34,7 +34,7 @@ static Vec3 angleMod(Vec3 a) {
   return a;
   }*/
 
-static zenkit::Quat fromAngles(Vec3 angles) {
+static asset::Quat fromAngles(Vec3 angles) {
   float roll  = float(angles.x*M_PI)/180.f;
   float yaw   = float(angles.y*M_PI)/180.f;
   float pitch = 0.f;
@@ -46,7 +46,7 @@ static zenkit::Quat fromAngles(Vec3 angles) {
   float cy = std::cos(yaw   * 0.5f);
   float sy = std::sin(yaw   * 0.5f);
 
-  zenkit::Quat q;
+  asset::Quat q;
   q.w = cr * cp * cy + sr * sp * sy;
   q.x = sr * cp * cy - cr * sp * sy;
   q.y = cr * sp * cy + sr * cp * sy;
@@ -55,7 +55,7 @@ static zenkit::Quat fromAngles(Vec3 angles) {
   return q;
   }
 
-static Vec3 toAngles(zenkit::Quat q) {
+static Vec3 toAngles(asset::Quat q) {
   float roll, pitch, yaw;
 
   // roll (x-axis rotation)
@@ -772,13 +772,13 @@ Tempest::Vec3 Camera::followRot(Vec3 spin, Tempest::Vec3 dest, float dtF, float 
     return dest;
 
 #if 1
-  const zenkit::Quat sx = fromAngles(spin);
-  const zenkit::Quat dx = fromAngles(dest);
+  const asset::Quat sx = fromAngles(spin);
+  const asset::Quat dx = fromAngles(dest);
 
-  const zenkit::Quat s  = slerp(sx, dx, std::min(1.f, dtF*velo));
+  const asset::Quat s  = slerp(sx, dx, std::min(1.f, dtF*velo));
   return toAngles(s);
 #else
-  const zenkit::Quat d = fromAngles(dest);
+  const asset::Quat d = fromAngles(dest);
   return toAngles(d);
 #endif
   }

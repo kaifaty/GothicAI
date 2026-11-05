@@ -23,8 +23,6 @@ class Renderer final {
     ~Renderer();
 
     void onWorldChanged();
-    void setGizmo(bool enable, Tempest::Vec3 center, int mode);
-    void setLightsHud(const Tempest::Texture2d* tex);
 
     void draw(Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId,
               Tempest::VectorImage::Mesh& uiLayer, Tempest::VectorImage::Mesh& numOverlay,
@@ -103,13 +101,14 @@ class Renderer final {
     void drawTaa          (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawTaaSharpen   (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawUpscale      (Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd);
+    void drawTemporalUpscale(Tempest::Encoder<Tempest::CommandBuffer>& cmd);
+    void drawTonemappingTemporal(Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
+    bool useTemporalUpscale(Tempest::Size res, Tempest::Size fullRes) const;
     void drawReflections  (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
     void drawUnderwater   (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
     void drawFog          (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
     void drawSunMoon      (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
     void drawSunMoon      (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview, bool isSun);
-    void drawGizmo        (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
-    void drawLightsHud    (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
 
     void drawSwRT         (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
     void drawPathtrace    (Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& wview, uint8_t fId);
@@ -154,6 +153,11 @@ class Renderer final {
       bool           taaEnabled         = false;
       float          taaSharpness       = 0.75f; // RCAS after the resolve, 0..1
       float          taaMipBias         = -0.5f; // material textures of the main view with TAA
+      // a study of the temporal upscale (graphics plan 1g): MetalFX Temporal in place of the TAA resolve
+      bool           temporalUpscale    = false; // OPENGOTHIC_UPSCALE=temporal, on Metal
+      float          renderScale        = 0;     // OPENGOTHIC_RENDER_SCALE=0.5..1 over vidResIndex; 0 unset
+      bool           upscaleMipBiasSet  = false; // OPENGOTHIC_UPSCALE_MIP_BIAS over log2(in/out) - 1
+      float          upscaleMipBias     = 0;
       bool           bloomEnabled       = true;
 
       float          zVidBrightness     = 0.5;
@@ -169,6 +173,13 @@ class Renderer final {
       bool           vsmStats           = false; // OPENGOTHIC_VSM_STATS=1: VSM counters to the log every 5 s
       uint32_t       vsmLampMode        = 0;     // OPENGOTHIC_VSM_LAMP: 0 pcss, 1 hard, 2 flat (lamp filter study)
       float          vsmLampNarrow      = -1;    // OPENGOTHIC_VSM_LAMP_NARROW: four-tap penumbra, texels; <0 the shader's
+      // under TAA (light.frag, the frame-turned pattern): taps of the first and second blocker search, of a narrow
+      // and of a wide penumbra; the defaults are the shader's OmniTaa* (OPENGOTHIC_VSM_LAMP_TAPS)
+      uint32_t       vsmLampTaps[4]     = {2, 2, 4, 6};
+      uint32_t       vsmLampFlags       = 0;     // 1 OPENGOTHIC_VSM_LAMP_FLOOR, 2 OPENGOTHIC_VSM_LAMP_CENTRE (under TAA)
+      uint32_t       vsmLampExp         = 0;     // OPENGOTHIC_VSM_LAMP_EXP: experiments (light.frag, probeExp)
+      bool           vsmLampTaa         = false; // OPENGOTHIC_VSM_LAMP_TAA=1: the frame-turned lamp taps under TAA (study)
+      bool           vsmLampStudy       = false; // any OPENGOTHIC_VSM_LAMP*: the study shader light_vsm_probe
       float          vsmLampNearCm      = 30;    // [INTERNAL] vsmLampNearCm: a lamp's fixture this close casts no shadow
       } settings;
 
@@ -247,7 +258,18 @@ class Renderer final {
       bool                      shot      = false; // screenshoot(): an image of the internal size
       Taa::View                 prev;
       Tempest::Matrix4x4        reproject;
+      Tempest::Vec2             jitter;              // this frame's offset, pixels of the internal resolution
       } taa;
+
+    // the temporal upscale (graphics plan 1g, OPENGOTHIC_UPSCALE=temporal): MetalFX Temporal takes the place of the
+    // TAA resolve and keeps the history itself; bloom and tonemapping go on at the swapchain's resolution
+    struct {
+      Tempest::Attachment       motion;              // RG16F: to where the point was a frame ago, input texture coordinates
+      Tempest::StorageImage     output;              // linear HDR of the swapchain's size: bloom and tonemapping read it
+      uint32_t                  phases    = Taa::Phases;
+      float                     mipBias   = 0;
+      bool                      active    = false;   // this frame is resolved by MetalFX
+      } temporal;
 
     struct Upscale {
       Tempest::Attachment       input;  // tonemapped frame at internal resolution
@@ -343,16 +365,6 @@ class Renderer final {
     struct {
       Tempest::StorageImage     outputImage;
       } swrt;
-
-    struct {
-      Tempest::Vec3 center = {};
-      bool          enable = false;
-      int           mode   = 0;
-      } gizmo;
-
-    struct {
-      const Tempest::Texture2d* light = nullptr;
-      } hud;
 
     Tempest::TextureFormat    shadowFormat  = Tempest::TextureFormat::Depth16;
     Tempest::TextureFormat    zBufferFormat = Tempest::TextureFormat::Depth16;

@@ -79,8 +79,10 @@ class WorldObjects final {
       DynamicWorld::PlacedItemCensusEntry validation;
       };
     void           finalizePlacedItems();
+    // Creates the temporary census bodies only when the live census runs
+    // (cache miss, disabled cache or check mode); reports that in `bodies`.
     std::vector<DynamicWorld::PlacedItemCensusEntry> placedCensusVerdicts(
-        const std::vector<DynamicWorld::PlacedItemCandidate>& candidates);
+        const std::vector<DynamicWorld::PlacedItemCandidate>& candidates, bool& bodies);
     const std::vector<PlacedItem>& placedItemCensus() const { return placedItems; }
     double         placedItemValidationMilliseconds() const { return placedValidationMs; }
     struct PlacedCensusLoad {
@@ -90,6 +92,15 @@ class WorldObjects final {
       double keyMs = 0, readMs = 0, censusMs = 0, writeMs = 0, checkMs = 0;
       };
     const PlacedCensusLoad& placedCensusLoad() const { return placedCensus; }
+    // Body-level equivalence of the census cache paths: every native body,
+    // the owners of movable vob bodies, and every world Item with a body
+    // (index, instance, ZEN-ID, body ID, sleep, matrix).
+    struct PhysicsDigest {
+      DynamicWorld::BodyDigest native;
+      size_t itemBodies = 0;
+      std::string items;
+      };
+    PhysicsDigest  physicsDigest() const;
     size_t         placedItemsCreatedThisFrame() const { return placedCreatedThisFrame; }
 
     Npc*           addNpc(size_t itemInstance, std::string_view     at);

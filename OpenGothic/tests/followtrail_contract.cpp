@@ -1,4 +1,5 @@
 #include "game/followtrail.h"
+#include "game/navigationpassage.h"
 
 #include <algorithm>
 #include <array>
@@ -390,6 +391,33 @@ void passageChecks() {
   // The body frame: right is (-forward.z, 0, forward.x).
   const auto north = wall.view(Vec3(),Vec3(0,0,1));
   require(!FollowTrail::nearClear(north,Vec3(),Vec3(500,0,45)),"the rotated memory still holds the wall");
+
+  // Road guidance reads the same near map, then the far map (2 m cells) beyond it.
+  using Verdict = NavigationPassage::Verdict;
+  const auto check = [](const NavigationMemory::View& memory, const Vec3& to) {
+    return NavigationPassage::check(memory,Vec3(),to,FollowTrail::corridorCm,FollowTrail::footprintCm);
+    };
+  require(check(view,Vec3(500,0,0))==Verdict::Free,"seen free near ground is free for the roads");
+  require(check(side,Vec3(500,0,0))==Verdict::Closed,"a seen wall closes the road passage");
+  require(check(dark.view(Vec3(),East),Vec3(300,0,0))==Verdict::Unknown,"unseen ground is unknown");
+  require(check(view,Vec3(2000,0,0))==Verdict::Unknown,"without a far map nothing beyond the near map is seen");
+  // Far map in the body frame of an east-facing walker: forward is +x, right is +z.
+  auto far = view;
+  far.far.size = 100;
+  far.far.cellCm = 200;
+  far.far.cells.resize(100*100);
+  const auto farCell = [&](float x, float z) -> NavigationMemory::Cell& {
+    return far.far.cells[size_t(std::floor(x/200.f+50.f))*100+size_t(std::floor(z/200.f+50.f))];
+    };
+  for(auto& cell:far.far.cells) {cell.confidence=1;cell.free=1;}
+  require(check(far,Vec3(2000,0,0))==Verdict::Free,"seen free far ground extends a free passage");
+  farCell(1300,0) = {};
+  farCell(1300,0).confidence = 1;farCell(1300,0).wall = 1;
+  require(check(far,Vec3(2000,0,0))==Verdict::Closed,"a far wall cell without free ground closes the passage");
+  require(check(far,Vec3(2000,0,700))==Verdict::Free,"a far wall cell beside the passage does not");
+  farCell(1300,0).free = 1;
+  require(check(far,Vec3(2000,0,0))==Verdict::Unknown,"a far cell with both a wall and free ground is not decisive");
+  require(check(far,Vec3(25000,0,0))==Verdict::Unknown,"beyond the far map nothing is seen");
   }
 }
 

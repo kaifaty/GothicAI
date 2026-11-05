@@ -128,6 +128,7 @@ namespace Tempest {
     DXT5,
     R11G11B10UF,
     RGBA16F,
+    RG16F,
     Last
     };
 
@@ -159,6 +160,7 @@ namespace Tempest {
       case DXT5:        return "DXT5";
       case R11G11B10UF: return "R11G11B10UF";
       case RGBA16F:     return "RGBA16F";
+      case RG16F:       return "RG16F";
       case Last:
         break;
       }
@@ -333,6 +335,18 @@ namespace Tempest {
     uint32_t firstInstance = 0;
     };
 
+  // One frame of a temporal upscale (Encoder::upscaleTemporal, MetalFX Temporal); offsets are in input pixels
+  struct TemporalUpscaleDesc {
+    float    jitterX       = 0;     // the camera's jitter this frame: pixel centre minus the sample point, -0.5..0.5
+    float    jitterY       = 0;
+    float    motionScaleX  = 1;     // motion texture units to input pixels
+    float    motionScaleY  = 1;
+    uint32_t inputW        = 0;     // the rendered part of the input; 0 is the whole texture
+    uint32_t inputH        = 0;
+    bool     reset         = false; // the history is not of this view: a cut, a jump, the first frame
+    bool     depthReversed = false; // far is 0
+    };
+
   enum class AccessOp : uint8_t {
     Discard,
     Preserve,
@@ -475,6 +489,7 @@ namespace Tempest {
 
           bool     memoryModel       = false;
           bool     spatialUpscale    = false;
+          bool     temporalUpscale   = false;
 
           bool     hasSamplerFormat(TextureFormat f) const;
           bool     hasAttachFormat (TextureFormat f) const;
@@ -594,6 +609,8 @@ namespace Tempest {
         virtual void generateMipmap(Texture& image, uint32_t texWidth, uint32_t texHeight, uint32_t mipLevels) = 0;
         virtual void copy(Buffer& dest, size_t offset, Texture& src, uint32_t width, uint32_t height, uint32_t mip) = 0;
         virtual void upscale(Texture& src, Texture& dst);
+        virtual void upscaleTemporal(Texture& color, Texture& depth, Texture& motion, Texture& dst,
+                                     const TemporalUpscaleDesc& desc);
 
         virtual bool isRecording() const = 0;
         virtual void begin(Detail::SyncHint hint);

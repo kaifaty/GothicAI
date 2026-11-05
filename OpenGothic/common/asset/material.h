@@ -1,6 +1,6 @@
 #pragma once
 
-#include <zenkit/Misc.hh>
+#include "math.h"
 #include <cstdint>
 #include <string>
 
@@ -16,13 +16,13 @@ enum class AnimationMapping { NONE=0, LINEAR=1 };
 struct Material {
   std::string name;
   MaterialGroup group = MaterialGroup::UNDEFINED;
-  zenkit::Color color {0,0,0,0};
+  Color color {0,0,0,0};
   float smooth_angle = 0;
   std::string texture;
-  zenkit::Vec2 texture_scale {};
+  Vec2 texture_scale {};
   float texture_anim_fps = 0;
   AnimationMapping texture_anim_map_mode = AnimationMapping::NONE;
-  zenkit::Vec2 texture_anim_map_dir {};
+  Vec2 texture_anim_map_dir {};
   bool disable_collision = false;
   bool disable_lightmap = false;
   bool dont_collapse = false;
@@ -37,7 +37,7 @@ struct Material {
   float wave_grid_size = 0;
   bool ignore_sun = false;
   AlphaFunction alpha_func = AlphaFunction::NONE;
-  zenkit::Vec2 default_mapping {};
+  Vec2 default_mapping {};
   };
 
 }

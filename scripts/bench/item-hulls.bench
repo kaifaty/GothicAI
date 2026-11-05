@@ -4,6 +4,7 @@
 # Compare sleep_ms ON <= OFF on flat/table; slope/stairs allow sleep or escaped_edge.
 # Final pivots outside the support footprint count as escaped_edge, not passed_through.
 # Flat/slope/table/load use 1 m cells; giant_quad checks the original two-triangle support.
+# Stairs: one mid-tread line, a 170 cm lane per item, the hero at the top; no item lies downhill of another.
 seed 73013
 cheat god
 set time 12 0
