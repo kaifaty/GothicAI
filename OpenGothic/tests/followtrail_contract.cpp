@@ -248,12 +248,29 @@ void lostAtTrailEnd() {
     require(!wall.crosses(Vec3(480,0,0),result.carrot),"a lost carrot never crosses the seen wall");
     require(distance(result.carrot,Vec3(1100,0,0))<1,"the heading continues 6 m from the last seen point");
     }
-  // The heading is closed too: the last seen point.
+  // The heading is closed too: around the wall by hearing, as for an object
+  // never seen (the direction toward it turned aside up to 90 degrees).
   Floor boxed;boxed.walls.push_back({400,600,100,120});boxed.walls.push_back({700,720,-300,300});
   FollowTrail cornered = trail;
   cornered.observe(hidden,false);
-  const auto last = cornered.guide(Vec3(480,0,0),hidden,boxed.view(Vec3(480,0,0),East));
-  require(last.source==Source::LastSeen && distance(last.carrot,Vec3(500,0,0))<1,"both closed: the last seen point");
+  const auto aside = cornered.guide(Vec3(480,0,0),hidden,boxed.view(Vec3(480,0,0),East));
+  require(aside.source==Source::Aside && !boxed.crosses(Vec3(480,0,0),aside.carrot) &&
+          distance(aside.carrot,Vec3(480,0,0))>=FollowTrail::pullbackMinCm && aside.carrot.x<400 &&
+          distance(aside.carrot,hidden)>=FollowTrail::standoffCm,
+          "both closed: the lost follower turns aside past the end of the seen wall");
+  // The switch restores the stand at the last seen point.
+  FollowTrail standing = trail;
+  standing.setLostAside(false);
+  standing.observe(hidden,false);
+  const auto stood = standing.guide(Vec3(480,0,0),hidden,boxed.view(Vec3(480,0,0),East));
+  require(stood.source==Source::LastSeen && distance(stood.carrot,Vec3(500,0,0))<1,
+          "lost aside off: the last seen point");
+  // Closed within 90 degrees on both sides as well: only now the last seen point.
+  boxed.walls.push_back({200,220,-300,300});
+  FollowTrail walled = trail;
+  walled.observe(hidden,false);
+  const auto last = walled.guide(Vec3(480,0,0),hidden,boxed.view(Vec3(480,0,0),East));
+  require(last.source==Source::LastSeen && distance(last.carrot,Vec3(500,0,0))<1,"all closed: the last seen point");
   // Never seen, behind a seen wall: toward the object only up to the wall.
   FollowTrail never;
   never.observe(hidden,false);
