@@ -47,6 +47,8 @@ class Item : public Vob {
     void    setAsEquipped(bool e);
 
     virtual void setPhysicsEnable(World& w);
+    // Mesh that setPhysicsEnable(World&) builds the body from; loads it once.
+    const ProtoMesh* physicsProto();
     void    setPhysicsDisable();
     bool    wakePhysics();
     bool    activatePhysics();
@@ -56,6 +58,7 @@ class Item : public Vob {
     float   physicsMass() const { return physic.mass(); }
     Tempest::Vec3 physicsVelocity() const { return physic.velocity(); } // cm/s
     bool    physicsSleeping() const { return physic.isSleeping(); }
+    uint32_t physicsBodyId() const { return physic.nativeId(); }
     bool    physicsTouchedByNpc() const { return physic.touchedByNpc(); }
     bool    addSpellImpulse(const Tempest::Vec3& impulseNs, Npc* culprit = nullptr);
 

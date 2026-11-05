@@ -1238,6 +1238,12 @@ DynamicWorld::Item DynamicWorld::addDynamicObj(const Tempest::Matrix4x4& pos, co
   return Item(this,obj.release());
   }
 
+void DynamicWorld::cycleBodyIds(size_t count) {
+  world->cycleBodyIds(count);
+  }
+
+// The placed-item census key hashes this function's inputs, not its hull:
+// any change to the hull it builds bumps PlacedCensusCache::RulesVersion.
 const DynamicWorld::ItemHull& DynamicWorld::itemHullShape(const ProtoMesh& proto, std::string_view visual) {
   std::string key(visual);
   std::transform(key.begin(),key.end(),key.begin(),[](unsigned char c) { return char(std::toupper(c)); });
@@ -1557,15 +1563,40 @@ std::string DynamicWorld::placedItemCensusInputs(const std::vector<PlacedItemCan
     // Shared hulls are written once; later references write only their ID.
     body->shape()->SaveWithChildren(out,shapes,materials);
     };
-  out.text("candidates");
+  // Candidates are hashed by what their body is built from, not by the body:
+  // a cache hit must not create bodies or item hulls. Body construction is
+  // deterministic in these inputs; changes to it bump RulesVersion.
+  out.text("candidates-v2");
   out.u64(candidates.size());
+  std::unordered_map<std::string,uint32_t> hullSources;
+  std::vector<Tempest::Vec3> vertices;
   for(const auto& candidate:candidates) {
     out.u32(candidate.mission ? 1 : 0);
     out.u32(candidate.zenId);
     out.u64(uint64_t(candidate.instance));
     out.text(candidate.visual);
-    const auto* handle=candidate.body;
-    body(handle!=nullptr && handle->obj!=nullptr ? handle->obj->body.get() : nullptr);
+    const auto* proto=candidate.proto;
+    if(proto==nullptr) {
+      out.u32(0);
+      continue;
+      }
+    out.u32(1);
+    out.matrix(candidate.transform);
+    out.u32(candidate.material);
+    out.raw(&proto->bboxMesh[0],sizeof(proto->bboxMesh[0]));
+    out.raw(&proto->bboxMesh[1],sizeof(proto->bboxMesh[1]));
+    // itemHullShape keeps one hull per upper-case visual, built from the first
+    // proto it sees. Hash that proto's source vertices once per visual.
+    std::string key(candidate.visual);
+    std::transform(key.begin(),key.end(),key.begin(),[](unsigned char c) { return char(std::toupper(c)); });
+    const auto [source,inserted]=hullSources.try_emplace(std::move(key),uint32_t(hullSources.size()));
+    out.u32(source->second);
+    if(!inserted)
+      continue;
+    vertices.clear();
+    proto->appendItemVertices(vertices);
+    out.u64(vertices.size());
+    out.raw(vertices.data(),vertices.size()*sizeof(Tempest::Vec3));
     }
   // Furniture and other movable vobs are supports and penetration targets.
   // Offline convex parts are outside the base fingerprint: hash their shapes.
@@ -2992,6 +3023,25 @@ DynamicWorld::PhysicsStats DynamicWorld::physicsStats() const {
   return {world->stepMilliseconds(),world->bodyCount(),world->rayCount()};
   }
 
+DynamicWorld::BodyDigest DynamicWorld::bodyDigest() const {
+  auto native=world->bodyDigest();
+  Sha256 owners;
+  const auto u32=[&](uint32_t value) { owners.update(&value,sizeof(value)); };
+  size_t movables=0;
+  if(movableVobs!=nullptr)
+    for(const auto* vob:movableVobs->bodies) {
+      ++movables;
+      u32(vob->pose->zenId);
+      u32(uint32_t(vob->visual.size()));
+      owners.update(vob->visual.data(),vob->visual.size());
+      u32(uint32_t(vob->pose->broken));
+      u32(vob->body!=nullptr ? vob->body->nativeId() : uint32_t(-1));
+      for(const auto& query:vob->query)
+        u32(query->nativeId());
+      }
+  return {std::move(native.digest),owners.finish(),native.bodies,native.active,movables};
+  }
+
 DynamicWorld::StaticCollisionStats DynamicWorld::staticCollisionStats() const {
   const auto stats=world->staticCollisionStats();
   return {stats.mSizeBytes,stats.mNumTriangles};
@@ -3603,6 +3653,10 @@ bool DynamicWorld::NpcItem::hasCollision() const {
     return false;
   CollisionTest info;
   return owner->hasCollision(*this,info);
+  }
+
+uint32_t DynamicWorld::Item::nativeId() const {
+  return obj!=nullptr && obj->body!=nullptr ? obj->body->nativeId() : uint32_t(-1);
   }
 
 DynamicWorld::Item::~Item() {

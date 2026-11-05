@@ -78,6 +78,19 @@ std::string placedItemRow(World& world,const WorldObjects::PlacedItem& row) {
 
 }
 
+// Body-level equivalence of the census cache paths (WorldObjects::physicsDigest).
+// Lines are compared byte for byte between runs.
+static void placedItemsDigest(World& world,std::string_view phase) {
+  const auto digest=world.physicsDigest();
+  const std::string row="\"phase\":"+jsonStr(phase)+",\"world\":"+jsonStr(world.name())+
+    ",\"bodies\":"+std::to_string(digest.native.bodies)+",\"active\":"+std::to_string(digest.native.active)+
+    ",\"bodies_sha256\":"+jsonStr(digest.native.digest)+",\"movables\":"+std::to_string(digest.native.movables)+
+    ",\"owners_sha256\":"+jsonStr(digest.native.owners)+",\"item_bodies\":"+std::to_string(digest.itemBodies)+
+    ",\"items_sha256\":"+jsonStr(digest.items);
+  std::ofstream(outDir+"/placed-items-digest.jsonl",std::ios::app)<<'{'+row+"}\n";
+  event("placed_items_digest",row);
+}
+
 void placedItemsCensus(World& world) {
   std::ofstream file(outDir+"/placed-items-census.jsonl");
   if(!file) {arenaAbort("cannot write placed Item census");return;}
@@ -100,6 +113,7 @@ void placedItemsCensus(World& world) {
     ",\"gaps_1_2\":"+std::to_string(gaps[1])+",\"gaps_2_4\":"+std::to_string(gaps[2])+
     ",\"densest_center_cm\":"+ragdollVector(center)+",\"densest_total_within_20m\":"+std::to_string(total)+
     ",\"densest_eligible_within_20m\":"+std::to_string(count));
+  placedItemsDigest(world,"census");
 }
 
 namespace {
@@ -336,6 +350,7 @@ void placedItemsFields(PlacedItems& state,World& world,Npc& player,PlayerControl
     if(++state.batch<state.batches.size())placedItemsNextBatch(state,world,player);
     else {
       state.probing=false;
+      placedItemsDigest(world,"probe");
       event("placed_items_probe_summary","\"world\":"+jsonStr(world.name())+",\"total\":"+
         std::to_string(state.probed)+",\"under_5cm\":"+std::to_string(state.under5)+",\"max_shift_cm\":"+
         ragdollNumber(state.maximumShift)+",\"batches\":"+std::to_string(state.batches.size()));

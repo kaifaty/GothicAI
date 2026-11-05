@@ -52,6 +52,7 @@ class World final {
     std::string_view     name() const { return wname; }
     double               loadMilliseconds() const { return worldLoadMs; }
     const std::vector<WorldObjects::PlacedItem>& placedItemCensus() const { return wobj.placedItemCensus(); }
+    WorldObjects::PhysicsDigest physicsDigest() const { return wobj.physicsDigest(); }
     double               placedItemValidationMilliseconds() const { return wobj.placedItemValidationMilliseconds(); }
     size_t               placedItemsCreatedThisFrame() const { return wobj.placedItemsCreatedThisFrame(); }
     const ChunkTable&    chunkTable() const { return chunks; }

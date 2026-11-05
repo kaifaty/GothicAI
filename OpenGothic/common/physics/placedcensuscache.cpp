@@ -6,6 +6,8 @@
 #include <Jolt/Jolt.h>
 #include <Tempest/Log>
 
+#include <algorithm>
+#include <cctype>
 #include <bit>
 #include <chrono>
 #include <cmath>
@@ -151,12 +153,16 @@ std::string_view PlacedCensusCache::statusName(Status status) {
   return "unknown";
   }
 
-PlacedCensusCache::PlacedCensusCache(const fs::path& cacheRoot, const Key& key):version(key.version) {
-  if(!enabled() || cacheRoot.empty() || key.base.empty() || key.content.empty() || key.inputs.empty())
+PlacedCensusCache::PlacedCensusCache(const fs::path& cacheRoot, const Key& source):version(source.version) {
+  if(!enabled() || cacheRoot.empty() || source.base.empty() || source.content.empty() || source.inputs.empty())
     return;
-  if(key.base.find_first_not_of("0123456789abcdef")!=std::string::npos ||
-     key.world.empty() || key.world.find_first_of("/\\")!=std::string::npos || key.world=="..")
+  if(source.base.find_first_not_of("0123456789abcdef")!=std::string::npos ||
+     source.world.empty() || source.world.find_first_of("/\\")!=std::string::npos || source.world=="..")
     return;
+  // A save names its world "newworld.zen", a fresh start "NEWWORLD.ZEN": one
+  // file per world, also on case-sensitive file systems.
+  Key key=source;
+  std::transform(key.world.begin(),key.world.end(),key.world.begin(),[](unsigned char c) { return char(std::toupper(c)); });
   // Jolt queries decide every float; keep differing Jolt builds apart as well.
   const std::string bytes=key.base+"\n"+key.world+"\n"+key.content+"\n"+key.inputs+"\n"+
       std::to_string(key.flags)+"\n"+std::to_string(key.version)+"\n"+std::to_string(JoltVersion)+"\n"+
