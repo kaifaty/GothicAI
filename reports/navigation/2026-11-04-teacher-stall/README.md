@@ -304,4 +304,4 @@ Validation v5: point 60, object 179, approach 101 (одна постановка
 - **Сборки:** Mac — `Gothic2Notr`, `gothic-body-runner`, оба контракта (RelWithDebInfo); Ryzen — те же цели и `content-convert` в smoke каждой версии движка.
 - **Python:** `python3 scripts/check.py plan` — для диффа не выбрано ни одного теста.
 - **Все прогоны** — заявки gq под `scripts/nav_job.py` ([`nav-teacher-stall-remote.sh`](../../../scripts/nav-teacher-stall-remote.sh)). Результаты — `/mnt/shared/gothic-ai/nav-teacher-stall/` (645 МБ): `validation/`, `diagnose/`, `repeat/`, `live/`, `replay.json`, `report.json`. Таблицы — `nav_teacher_stall.py report`.
-- **Уборка:** папка задачи на Ryzen (`~/gothic-ai/nav-teacher-stall`: снимки, сборки, venv, кэши) удалена `nav-teacher-stall-remote.sh clean`.
+- **Уборка:** папка задачи на Ryzen (`~/gothic-ai/nav-teacher-stall`: снимки, сборки, venv, кэши) удалена `nav-teacher-stall-remote.sh clean`; после этого на `/` свободно 142 ГБ.
