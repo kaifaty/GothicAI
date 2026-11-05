@@ -137,6 +137,13 @@ class Npc final {
     void       stopDlgAnim();
     void       clearSpeed();
     bool       resetPositionToTA();
+    // Construction order of this process's NPCs (game/startupfloor.h hides newer bodies while replaying a fix).
+    uint32_t   creationSeq() const { return creationSeqValue; }
+    // The insert-time floor fix of a fresh world start is still pending (game/startupfloor.h). Runtime only.
+    bool       startupFloorPending() const { return startupFloorPendingValue; }
+    void       setStartupFloorPending(bool p) { startupFloorPendingValue = p; }
+    // Final position, rotation, point and body transform as text; the load probe compares runs with it.
+    std::string startupFloorDigest() const;
     // Stand-only reuse after death or an airborne/climbing episode timeout.
     void       resetNavigationEpisode();
 
@@ -1318,6 +1325,8 @@ class Npc final {
     uint64_t                       aiOutputBarrier=0;
     NpcProcessPolicy               aiPolicy=NpcProcessPolicy::AiNormal;
     NpcSimTier                     simTierValue=NpcSimTier::Full; // transient, not serialized
+    uint32_t                       creationSeqValue=0;            // transient, not serialized
+    bool                           startupFloorPendingValue=false; // transient, not serialized
     bool                           simTierAssigned=false;
     bool                           loadedFpReferences=false;
     Tempest::Vec3                  loadedFpPosition;

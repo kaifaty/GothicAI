@@ -676,6 +676,8 @@ struct DynamicWorld::NpcBodyList final {
     bool ret=false;
     for(;l!=r;++l){
       auto& v = (*l);
+      if(replaySeq!=0 && v.body!=nullptr && v.body->toNpc()!=nullptr && v.body->toNpc()->creationSeq()>replaySeq)
+        continue;
       if(v.body!=nullptr && v.body->enable && hasCollision(n,*v.body,normal,colDepth)) {
         npc = v.body->toNpc();
         ret = true;
@@ -768,6 +770,7 @@ struct DynamicWorld::NpcBodyList final {
 
   uint64_t              tick   = 0;
   float                 maxRXZ = 0;
+  uint32_t              replaySeq = 0;
   float                 maxRY  = 0;
   };
 
@@ -3204,6 +3207,14 @@ float DynamicWorld::rayBox(const Tempest::Vec3& orig, const Tempest::Vec3& dir, 
 
 std::string_view DynamicWorld::validateSectorName(std::string_view name) const {
   return landMesh->validateSectorName(name);
+  }
+
+void DynamicWorld::setNpcReplaySeq(uint32_t seq) {
+  npcList->replaySeq = seq;
+  }
+
+float DynamicWorld::npcMaxRadiusXZ() const {
+  return npcList->maxRXZ;
   }
 
 bool DynamicWorld::hasCollision(const NpcItem& it, CollisionTest& out) {

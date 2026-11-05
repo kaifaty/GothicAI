@@ -7,8 +7,11 @@
 
 #include <Tempest/Matrix4x4>
 #include <Tempest/Log>
+#include <atomic>
 #include <cctype>
+#include <cstdio>
 #include <cstdlib>
+#include <cstring>
 
 #include "graphics/mesh/skeleton.h"
 #include "graphics/visualfx.h"
@@ -475,6 +478,8 @@ struct Npc::TransformBack {
 
 Npc::Npc(World &owner, size_t instance, std::string_view waypoint, NpcProcessPolicy aiPolicy)
   :owner(owner),aiPolicy(aiPolicy),mvAlgo(*this) {
+  static std::atomic<uint32_t> creationCounter{0};
+  creationSeqValue = ++creationCounter;
   outputPipe     = owner.script().openAiOuput();
 
   hnpc           = std::make_shared<zenkit::INpc>();
@@ -497,6 +502,8 @@ Npc::Npc(World &owner, size_t instance, std::string_view waypoint, NpcProcessPol
   }
 
 Npc::~Npc(){
+  if(startupFloorPendingValue)
+    owner.script().startupFloor().forget(*this);
   endMeleeAiSpecial();
   clearMeleeShadow();
   if(std::getenv("OPENGOTHIC_MELEE_BENCH")!=nullptr && owner.physic()!=nullptr)
@@ -1070,6 +1077,7 @@ bool Npc::resetPositionToTA() {
     if(p!=nullptr)
       at = p;
     }
+  owner.script().startupFloor().beforeResetMove(*this,at->position());
   setPosition (at->position() );
   setDirection(at->direction());
   owner.script().fixNpcPosition(*this,0,100);
@@ -1082,6 +1090,36 @@ bool Npc::resetPositionToTA() {
 
   owner.script().invokeRefreshAtInsert(*this);
   return true;
+  }
+
+std::string Npc::startupFloorDigest() const {
+  // Exact bits, so off/on runs compare byte for byte.
+  std::string ret;
+  auto bits = [&ret](float v) {
+    uint32_t u = 0;
+    std::memcpy(&u,&v,sizeof(u));
+    char buf[12];
+    std::snprintf(buf,sizeof(buf),"%08x",unsigned(u));
+    ret += buf;
+    ret += ' ';
+    };
+  bits(x); bits(y); bits(z);
+  bits(angle); bits(angleY);
+  ret += "wp=";
+  ret += currentFp!=nullptr ? currentFp->name : std::string("-");
+  ret += " ta=";
+  ret += hnpc->wp;
+  ret += " body=";
+  if(physic.hasBody()) {
+    const auto p = physic.position();
+    bits(p.x); bits(p.y); bits(p.z);
+    }
+  ret += "mat=";
+  const auto m = visual.transform();
+  for(int i=0;i<4;++i)
+    for(int j=0;j<4;++j)
+      bits(m.at(i,j));
+  return ret;
   }
 
 void Npc::stopDlgAnim() {

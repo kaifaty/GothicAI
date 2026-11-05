@@ -148,6 +148,7 @@ class DynamicWorld final {
 
         void  setPosition(const Tempest::Vec3& pos);
         const Tempest::Vec3& position() const;
+        bool  hasBody() const { return obj!=nullptr; }
 
         void  setRotation(float a);
 
@@ -728,6 +729,10 @@ class DynamicWorld final {
     RayWaterResult implWaterRay(const Tempest::Vec3& from, const Tempest::Vec3& to, float stepHeight,
                                  uint32_t solidMask = 0) const;
     bool           hasCollision(const NpcItem &it, CollisionTest& out);
+    // Fresh-start floor replay (game/startupfloor.h): NPC bodies created after this sequence number do not collide.
+    // 0: all bodies collide.
+    void           setNpcReplaySeq(uint32_t seq);
+    float          npcMaxRadiusXZ() const;
     void           prepareMovableVobShape(BodyData& body);
     void           rebuildMovableVob(BodyData& body);
     bool           meleeEligible(const BodyData& body) const;
