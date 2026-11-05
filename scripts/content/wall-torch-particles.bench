@@ -1,0 +1,29 @@
+# Wall torch particles (curl, drag, stretch, minPixels and the flame's flicker): the "Red Lantern" torch
+# (NW_CITY_HABOUR_PUFF_ENTRANCE, flame at 405 121 -3085) at night from 2 m, a shot and a 6 s clip.
+# Run it twice with the same content: as it is (the original FIRE_MEDIUM) and with the demo layer of
+# reports/content/remaster/wall-torch/particles/content (OWN_TORCH_SPARKS_DEMO and a lamp with flicker_from),
+# OPENGOTHIC_FLICKER_LOG=1 logs both signals each frame. reports/content/remaster/wall-torch/README.md, "Сделано".
+seed 73013
+cheat god
+overlay off
+ui off
+view full
+view hide animated morph
+cam lift off
+
+set time 0 0
+goto pos 265 -129 -3091
+cam look 250
+cam world 60 229 180
+wait 34
+cam hold
+wait 8000
+set time 0 0
+wait 300
+shot torch-2m
+wait 700
+shot torch-2m-b
+rec torch-2m-clip
+wait 6000
+stop
+wait 300

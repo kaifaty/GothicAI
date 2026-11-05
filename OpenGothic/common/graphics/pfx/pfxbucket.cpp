@@ -159,6 +159,7 @@ size_t PfxBucket::allocBlock() {
     if(!block[i].allocated) {
       block[i].allocated = true;
       block[i].timeTotal = 0;
+      block[i].flicker   = 1.f;
       return i;
       }
     }
