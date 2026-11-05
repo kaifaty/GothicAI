@@ -233,6 +233,8 @@ void VisualObjects::Item::setDeformation(const Tempest::Vec4* vertices, size_t p
     to   = std::clamp<size_t>(changedEnd,  first,size_t(first)+count)-first;
     if(from>=to)
       return;
+    // from a 64-byte block of InstanceStorage (two vertices): an unaligned write goes byte by byte
+    from -= from % 2;
     }
   const bool changed = owner->instanceMem.realloc(obj.objDeform,size);
   if(changed)
