@@ -497,7 +497,7 @@ def markdown(r):
         "missing_marks": "person-marks of the day missing in a run",
         "state_outside": "same ZS_* outside the windows",
         "place_outside": "within 10 m outside the windows, without self-moving states",
-        "travel_median_abs_min": "travel time error on transitions, median |core − engine|, game min",
+        "travel_median_abs_min": "travel time error on transitions, median \\|core − engine\\|, game min",
     }
     for name, c in r["checks"].items():
         if name == "missing_marks":

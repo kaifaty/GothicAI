@@ -2,6 +2,7 @@
 
 import csv
 import json
+import re
 import struct
 import sys
 from pathlib import Path
@@ -81,6 +82,15 @@ def travel(r):
 def test_full_day_passes(tmp_path):
     r = run(tmp_path, core=CORE, **DAY)
     assert r["pass"] and r["missing_marks"] == 0 and r["travel"]["median_abs_min"] == 0
+    # Every row of every Markdown table has as many cells as its header (a bare | in a cell would add one).
+    tables, table = [], []
+    for line in society_parity.markdown(r).splitlines() + [""]:
+        if line.startswith("|"):
+            table.append(len(re.split(r"(?<!\\)\|", line)) - 2)
+        elif table:
+            tables.append(table)
+            table = []
+    assert tables and all(len(set(t)) == 1 for t in tables), tables
 
 
 def test_cut_core_fails_coverage_and_travel(tmp_path):
