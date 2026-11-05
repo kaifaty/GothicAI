@@ -4,6 +4,7 @@
 #include "core.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <stdexcept>
@@ -68,10 +69,10 @@ const std::vector<Nearby::Item>& Nearby::at(uint32_t g) {
       // A freepoint is its near_waypoint and the straight segment to it, as Paths::length sums it.
       const int64_t cm = dist[u]+(targetIsPoint(t) ? w.points.graphCm[targetId(t)] : 0);
       if(cm<=reach)
-        list.push_back({int32_t(cm),t});
+        list.push_back({int32_t(cm),t,w.targetKind[k]});
       }
   std::sort(list.begin(),list.end(),[](const Item& a, const Item& b) {
-    return a.cm!=b.cm ? a.cm<b.cm : a.target<b.target;
+    return a.cm!=b.cm ? a.cm<b.cm : a.target!=b.target ? a.target<b.target : a.kind<b.kind;
     });
   return list;
   }
@@ -125,23 +126,97 @@ bool fillsCritical(const Sim& sim, uint32_t npc, uint16_t state) {
   return false;
   }
 
+// The routine holds the NPC in this entry: an anchor entry or a guard's post.
+bool anchorEntry(const Sim& sim, uint32_t npc, uint16_t e) {
+  const auto& w = *sim.world;
+  const auto state = entryState(sim,npc,e);
+  if(state==NoState)
+    return false;
+  if(w.statePost[state])
+    return true;
+  const auto row = w.stateRow[state];
+  return row!=NoState && w.config.states.kind[row]==uint8_t(StateKind::Anchor);
+  }
+
+// The next run of anchor entries after the free entry in force, within a day: where each of its entries begins and
+// its state, and where the run ends.
+struct AnchorRun {
+  Time begin = -1, end = -1;
+  std::array<std::pair<Time,uint16_t>,8> piece = {};
+  size_t pieces = 0;
+  };
+
+bool nextAnchorRun(const Sim& sim, uint32_t npc, AnchorRun& run) {
+  const auto& w = *sim.world;
+  const Time now = sim.s.now;
+  Time next = 0;
+  auto e = entryAt(w,npc,now,&next);
+  if(e==NoEntry || anchorEntry(sim,npc,e))
+    return false;
+  while(next!=Never && (run.pieces>0 || next-now<=DaySeconds)) {
+    const Time t = next;
+    e = entryAt(w,npc,t,&next);
+    if(!anchorEntry(sim,npc,e)) {
+      if(run.pieces>0) {
+        run.end = t;
+        return true;
+        }
+      continue;
+      }
+    if(run.pieces==run.piece.size()) {
+      run.end = t;
+      return true;
+      }
+    if(run.pieces==0)
+      run.begin = t;
+    run.piece[run.pieces++] = {t,entryState(sim,npc,e)};
+    }
+  return false;
+  }
+
+// The lowest level need k reaches by the end of that run: its free entry's state until the run, then each anchor
+// entry's state as it is done at its point (into bed is asleep).
+double forecastLow(const Sim& sim, uint32_t npc, size_t k, const AnchorRun& run) {
+  const auto& w = *sim.world;
+  const auto& s = sim.s;
+  const size_t i = size_t(npc)*needCount(w)+k;
+  const double decay = s.needDecay[i];
+  double level = needLevel(sim,npc,k);
+  level = needLevelAt(level,needRate(w,k,decay,entryState(sim,npc,s.entry[npc]),false),s.now,run.begin);
+  double low = level;
+  for(size_t j=0; j<run.pieces; ++j) {
+    auto state = run.piece[j].second;
+    if(state!=NoState && w.followState[state]!=NoState)
+      state = w.followState[state];
+    const Time from = run.piece[j].first, to = j+1<run.pieces ? run.piece[j+1].first : run.end;
+    level = needLevelAt(level,needRate(w,k,decay,state,false),from,to);
+    low   = std::min(low,level);
+    }
+  return low;
+  }
+
+// The needs of a decider in a free entry that would be critical in its next anchor run: by how much the forecast low
+// is under the level now (0 for the others). Returns the run's start, -1 when none would be.
+Time forecast(const Sim& sim, uint32_t npc, std::span<double> under) {
+  const auto& w = *sim.world;
+  const size_t n = needCount(w);
+  std::fill(under.begin(),under.end(),0.0);
+  AnchorRun run;
+  if(sim.s.entry[npc]==NoEntry || !nextAnchorRun(sim,npc,run))
+    return -1;
+  bool any = false;
+  for(size_t k=0; k<n; ++k) {
+    const double low = forecastLow(sim,npc,k,run);
+    if(low<=w.config.needs.critical[k]) {
+      under[k] = low-needLevel(sim,npc,k);
+      any = true;
+      }
+    }
+  return any ? run.begin : -1;
+  }
+
 uint16_t& holders(State& s, OptionType type, uint32_t object, uint32_t point) {
   return type==OptionType::Object ? s.objectUse[object] : s.pointUse[point];
-  }
-
-Access access(const World& w, uint32_t npc, uint32_t ownerNpc, int32_t ownerGuild) {
-  if(ownerNpc==NoNpc && ownerGuild==-1)
-    return Access::Public;
-  if(ownerNpc==npc)
-    return Access::Own;
-  if(ownerGuild>=0 && uint32_t(ownerGuild)==w.npcs.guild[npc])
-    return Access::Guild;
-  return Access::Other;
-  }
-
-bool guildMay(const World& w, uint32_t npc, uint16_t kind) {
-  const auto& g = w.config.objectKinds.guilds[kind];
-  return g.empty() || std::binary_search(g.begin(),g.end(),w.npcs.guild[npc]);
   }
 
 void scheduleActivity(Sim& sim, uint32_t npc) {
@@ -346,35 +421,31 @@ void buildRow(Sim& sim, uint32_t npc, DecisionBatch& b) {
     // walk is never shorter than the straight line, so only short walks can be that near).
     if(cm>reach)
       break;
+    const auto kind = it.kind;
     const auto travel = [&]() { return cm<=NearPointCm && near(w,point,origin) ? Time(0) : travelSeconds(cm,speed,w.clockRate); };
-    if(!targetIsPoint(it.target)) {
-      const auto kind = w.objectKind[id];
+    const auto type = targetIsPoint(it.target) ? OptionType::Point : OptionType::Object;
+    const auto object = targetIsPoint(it.target) ? NoObject : id;
+    if(KindAt(w.config.objectKinds.at[kind])==KindAt::Listed) {
       if(room(kind)) {
-        consider(OptionType::Object,kind,id,point,access(w,npc,w.objectOwnerNpc[id],w.objectOwnerGuild[id]),travel());
+        consider(type,kind,object,point,targetAccess(w,npc,it.target,kind),travel());
         ++perKind[kind];
         }
       continue;
       }
-    if(const auto kind = w.pointKind[id]; kind!=NoKind) {
-      if(room(kind)) {
-        consider(OptionType::Point,kind,NoObject,id,access(w,npc,w.pointOwnerNpc[id],w.pointOwnerGuild[id]),travel());
-        ++perKind[kind];
-        }
+    // Outdoors, own rooms, places: the nearest allowed one of each such kind this NPC may use.
+    if(seen[kind])
+      continue;
+    if(!guildMay(w,npc,kind)) {
+      seen[kind] = 1;
       continue;
       }
-    // An outdoor point: the nearest allowed one for each outdoor kind this NPC may use.
-    for(uint16_t k=0; k<w.config.objectKinds.size(); ++k) {
-      if(!w.config.objectKinds.outdoors[k] || seen[k])
-        continue;
-      if(!guildMay(w,npc,k)) {
-        seen[k] = 1;
-        continue;
-        }
-      consider(OptionType::Point,k,NoObject,id,access(w,npc,w.pointOwnerNpc[id],w.pointOwnerGuild[id]),travel());
-      if(cands.back().ok)
-        seen[k] = 1; else
-        cands.pop_back();
-      }
+    const auto acc = targetAccess(w,npc,it.target,kind);
+    if(acc==Access::Other)
+      continue;
+    consider(type,kind,object,point,acc,travel());
+    if(cands.back().ok)
+      seen[kind] = 1; else
+      cands.pop_back();
     }
   size_t count = 1;
   const auto add = [&](const Cand& c) {
@@ -384,15 +455,30 @@ void buildRow(Sim& sim, uint32_t npc, DecisionBatch& b) {
       ++count;
       }
     };
+  // The leaders of the kinds that fill a need in want (low, critical, or forecast critical in the next anchor run)
+  // go first: with more kinds than slots a far bed must not lose its place to a near chair.
+  const size_t n = needCount(w);
+  thread_local std::vector<double> under;
+  under.resize(n);
+  if(h==Hold::Free)
+    forecast(sim,npc,under); else
+    std::fill(under.begin(),under.end(),0.0);
+  const auto wanted = [&](uint16_t state) {
+    for(size_t k=0; k<n; ++k)
+      if((s.needZone[size_t(npc)*n+k]>0 || under[k]<0) && fills(w,state,k))
+        return true;
+    return false;
+    };
   thread_local std::vector<uint8_t> lead, taken;
   lead.assign(w.config.objectKinds.size(),0);
   taken.assign(cands.size(),0);
-  for(size_t i=0; i<cands.size(); ++i)
-    if(cands[i].ok && !lead[cands[i].o.kind]) {
-      lead[cands[i].o.kind] = 1;
-      taken[i] = 1;
-      add(cands[i]);
-      }
+  for(int pass=0; pass<2; ++pass)
+    for(size_t i=0; i<cands.size(); ++i)
+      if(cands[i].ok && !lead[cands[i].o.kind] && (pass==1 || wanted(cands[i].o.state))) {
+        lead[cands[i].o.kind] = 1;
+        taken[i] = 1;
+        add(cands[i]);
+        }
   for(size_t i=0; i<cands.size(); ++i)
     if(cands[i].ok && !taken[i])
       add(cands[i]);
@@ -422,6 +508,7 @@ void sizeDecisions(Sim& sim) {
   s.actEnd.resize(n);
   s.actFull.resize(n);
   s.actSeq.resize(n);
+  s.forecastFor.resize(n);
   s.objectUse.resize(w.objects.size());
   s.pointUse.resize(w.points.size());
   s.asked.reserve(n);
@@ -442,6 +529,7 @@ void resetDecisions(Sim& sim) {
   std::fill(s.actEnd.begin(),s.actEnd.end(),Never);
   std::fill(s.actFull.begin(),s.actFull.end(),0);
   std::fill(s.actSeq.begin(),s.actSeq.end(),0);
+  std::fill(s.forecastFor.begin(),s.forecastFor.end(),-1);
   std::fill(s.objectUse.begin(),s.objectUse.end(),0);
   std::fill(s.pointUse.begin(),s.pointUse.end(),0);
   s.asked.clear();
@@ -523,6 +611,20 @@ void onDown(Sim& sim, uint32_t npc, uint8_t zone) {
     ask(sim,npc,CauseAnchorCritical);
   }
 
+void onSegment(Sim& sim, uint32_t npc) {
+  auto& s = sim.s;
+  if(modeOf(s,npc)!=Mode::Routine || (s.flags[npc] & PendingStart) || s.want[npc]!=0 || s.entry[npc]==NoEntry ||
+     hold(sim,npc)!=Hold::Free)
+    return;
+  thread_local std::vector<double> under;
+  under.resize(needCount(*sim.world));
+  const Time run = forecast(sim,npc,under);
+  if(run<0 || s.forecastFor[npc]==run)
+    return;
+  s.forecastFor[npc] = run;
+  ask(sim,npc,CauseForecast);
+  }
+
 void arrivedChosen(Sim& sim, uint32_t npc) {
   auto& s = sim.s;
   s.bodySeq[npc]  = 0;
@@ -582,6 +684,13 @@ size_t buildBatch(Sim& sim, DecisionBatch& out) {
     b.npc.push_back(npc);
     b.cause.push_back(cause);
     buildRow(sim,npc,b);
+    // A decision in a free entry already sees the forecast of the next anchor run: no second ask for it.
+    if(hold(sim,npc)==Hold::Free) {
+      thread_local std::vector<double> under;
+      under.resize(needCount(*sim.world));
+      if(const Time run = forecast(sim,npc,under); run>=0)
+        s.forecastFor[npc] = run;
+      }
     const size_t row = b.npc.size()-1, K = b.stride;
     uint32_t allowed = 0;
     for(size_t j=0; j<b.count[row]; ++j)
@@ -690,7 +799,7 @@ void teacherScores(const Sim& sim, const DecisionBatch& b, std::span<float> scor
   const size_t K = b.stride, n = needCount(w);
   if(scores.size()<b.size()*K)
     throw std::invalid_argument("society core: the teacher's scores need [rows × K] slots");
-  thread_local std::vector<double> now, h, decay;
+  thread_local std::vector<double> now, h, decay, under, seen;
   for(size_t r=0; r<b.size(); ++r) {
     const uint32_t npc = b.npc[r];
     now.resize(n);
@@ -699,38 +808,58 @@ void teacherScores(const Sim& sim, const DecisionBatch& b, std::span<float> scor
       now[k]   = needLevel(sim,npc,k);
       decay[k] = s.needDecay[size_t(npc)*n+k];
       }
-    const double d0 = drive(w,now);
+    // Foresight: in a free entry, a need that would be critical in the next anchor run counts at its forecast low,
+    // so what fills it now is worth what it saves there.
+    const auto held = Society::detail::hold(sim,npc);
+    under.resize(n);
+    if(held==Society::detail::Hold::Free)
+      Society::detail::forecast(sim,npc,under); else
+      std::fill(under.begin(),under.end(),0.0);
+    const auto ahead = [&](std::vector<double>& x) {
+      for(size_t k=0; k<n; ++k)
+        x[k] = std::clamp(x[k]+under[k],0.0,1.0);
+      return drive(w,x);
+      };
     const auto mode = Mode(s.mode[npc]);
-    const bool anchored = Society::detail::hold(sim,npc)==Society::detail::Hold::Anchor;
+    const bool anchored = held==Society::detail::Hold::Anchor;
     // The routine's state as it is done at its point: into bed is asleep there (FollowStates).
-    uint16_t routineState = b.menu[r*K].state;
+    const auto& r0 = b.menu[r*K];
+    uint16_t routineState = r0.state;
     if(routineState!=NoState && w.followState[routineState]!=NoState)
       routineState = w.followState[routineState];
+    // The drive after `span` seconds of the routine: its walk, then its state.
+    const auto routineOver = [&](Time span) {
+      seen = now;
+      const Time walkT = std::min(r0.travel,span);
+      run(w,decay,NoState,true,walkT,seen);
+      run(w,decay,routineState,false,span-walkT,seen);
+      return ahead(seen);
+      };
+    const double base = routineOver(d.horizon);
     for(size_t j=0; j<K; ++j) {
       auto& out = scores[r*K+j];
       out = -std::numeric_limits<float>::infinity();
       if(j>=b.count[r] || !b.mask[r*K+j])
         continue;
       const auto& o = b.menu[r*K+j];
-      h = now;
-      const Time walkT = std::min(o.travel,d.horizon);
-      run(w,decay,NoState,true,walkT,h);
-      Time left = d.horizon-walkT;
-      bool current = false;
       if(o.type==OptionType::Routine) {
-        run(w,decay,routineState,false,left,h);
-        current = mode!=Mode::Chosen;
-        } else {
-        bool full = false;
-        const Time dur = std::min(Society::detail::duration(sim,npc,o.kind,o.state,h,anchored,full),left);
-        run(w,decay,o.state,false,dur,h);
-        run(w,decay,routineState,false,left-dur,h);
-        current = mode==Mode::Chosen && OptionType(s.actType[npc])==o.type && s.actKind[npc]==o.kind &&
-                  s.actPoint[npc]==o.point && s.actObject[npc]==o.object;
+        out = float(mode!=Mode::Chosen ? d.inertia : 0.0);
+        continue;
         }
-      double score = d0-drive(w,h);
-      if(o.type!=OptionType::Routine)
-        score -= d.travelCost*double(o.travel);
+      // The walk, the activity, then the routine, over the window — at least the walk and an hour of the activity, so
+      // a far place gets its due — against the routine over the same window.
+      h = now;
+      run(w,decay,NoState,true,o.travel,h);
+      bool full = false;
+      const Time dur  = Society::detail::duration(sim,npc,o.kind,o.state,h,anchored,full);
+      const Time span = std::max(d.horizon,o.travel+std::min(dur,d.horizon));
+      const Time act  = std::min(dur,span-o.travel);
+      run(w,decay,o.state,false,act,h);
+      run(w,decay,routineState,false,span-o.travel-act,h);
+      const bool current = mode==Mode::Chosen && OptionType(s.actType[npc])==o.type && s.actKind[npc]==o.kind &&
+                           s.actPoint[npc]==o.point && s.actObject[npc]==o.object;
+      double score = (span==d.horizon ? base : routineOver(span))-ahead(h);
+      score -= d.travelCost*double(o.travel);
       if(current)
         score += d.inertia;
       out = float(score);

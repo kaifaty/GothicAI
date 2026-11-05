@@ -112,6 +112,27 @@ def read_journal(path: Path) -> dict:
     }
 
 
+def read_unmet(path: Path, rules: "Rules", needs: list[str]) -> list[dict]:
+    """The needs not in use (society-needs-unmet.csv of gothic-society-day): nothing fills them within the travel
+    limit of the NPC's routine; the nearest way and its walk."""
+    keys = {n["key"]: i for i, n in enumerate(rules.npcs)}
+    out = []
+    lines = path.read_text().splitlines()[1:] if path.exists() else []
+    for line in lines:
+        key, need, kind, place, minutes = line.split(",")
+        out.append({
+            "npc": keys[key],
+            "key": key,
+            "guild": rules.npcs[keys[key]]["guild"],
+            "need": need,
+            "k": needs.index(need),
+            "kind": None if kind == "-" else kind,
+            "place": None if place == "-" else place,
+            "travel_min": None if minutes == "-" else float(minutes),
+        })
+    return out
+
+
 def run_tool(tool: Path, world: Path, config: Path, out: Path, days: int, seed: int, policy: str) -> dict:
     out.mkdir(parents=True, exist_ok=True)
     cmd = [str(tool), "--world", str(world), "--config", str(config), "--out", str(out)]
@@ -224,8 +245,10 @@ def by_npc(records: list) -> dict[int, list]:
     return out
 
 
-def critical_hours(journal: dict, people: set[int], days: int) -> dict:
-    """Seconds in critical by person, day and need, from need_threshold."""
+def critical_hours(journal: dict, people: set[int], days: int, unused: set | None = None) -> dict:
+    """Seconds in critical by person, day and need, from need_threshold; the needs not in use (`unused`: (npc, need
+    index)) are not counted."""
+    unused = unused or set()
     needs = journal["needs"]
     start = journal["start"]
     zone = {i: [0] * len(needs) for i in people}
@@ -257,8 +280,9 @@ def critical_hours(journal: dict, people: set[int], days: int) -> dict:
                 spend(i, k, since[i][k], end)
     per_need = {}
     for k, need in enumerate(needs):
-        values = sorted(out[i][d][k] / HOUR for i in people for d in range(days))
-        worst = max(people, key=lambda i: max(out[i][d][k] for d in range(days))) if people else None
+        using = [i for i in people if (i, k) not in unused]
+        values = sorted(out[i][d][k] / HOUR for i in using for d in range(days))
+        worst = max(using, key=lambda i: max(out[i][d][k] for d in range(days))) if using else None
         per_need[need] = {
             "median_h": round(statistics.median(values), 3) if values else 0.0,
             "p90_h": round(values[int(len(values) * 0.9)] if values else 0.0, 3),
@@ -580,7 +604,7 @@ def main() -> int:
     def variant(name: str, change) -> Path:
         """The config with one change, its relative paths made absolute."""
         c = json.loads(config_path.read_text())
-        for section, key in (("traits", "cards"), ("decisions", "protected")):
+        for section, key in (("traits", "cards"), ("decisions", "protected"), ("decisions", "places")):
             if c[section].get(key):
                 p = Path(c[section][key])
                 c[section][key] = str(p if p.is_absolute() else (config_path.parent / p).resolve())
@@ -613,6 +637,13 @@ def main() -> int:
         "runs": {},
     }
     needs = teacher1["journal"]["needs"]
+    unmet = read_unmet(teacher1["dir"] / "society-needs-unmet.csv", rules, needs)
+    unused = {(u["npc"], u["k"]) for u in unmet}
+    report["unmet"] = [{k: v for k, v in u.items() if k not in ("npc", "k")} for u in unmet]
+    report["people"]["with_needs"] = sum(
+        1 for n in rules.npcs if n["person"] and n["guild"] not in set(rules.dec["no_needs_guilds"])
+    )
+    report["people"]["deciders_with_a_need_not_in_use"] = len({u["npc"] for u in unmet if u["npc"] in people})
     for name, r, days in (
         ("routine-1", routine1, 1),
         ("routine-7", routine7, 7),
@@ -628,8 +659,8 @@ def main() -> int:
             "decisions": r["decisions"],
             "rows": r["rows"],
             "day_ms": r["day_ms"],
-            "critical": critical_hours(j, people, days),
-            "critical_on_post_all_day": critical_hours(j, rules.on_post_all_day, days),
+            "critical": critical_hours(j, people, days, unused),
+            "critical_on_post_all_day": critical_hours(j, rules.on_post_all_day, days, unused),
             "anchor": anchor_time(j, rules, people, days),
             "changes": changes(j, people, days),
         }
@@ -670,8 +701,8 @@ def main() -> int:
     guards = rules.on_post_all_day | {i for i in rules.decider if any(rules.post(r["state"]) for r in rules.npcs[i]["routine"])}
     report["posts_release"] = {
         "guards": len(guards),
-        "critical_guards_routine_posts": critical_hours(teacher7["journal"], guards, 7),
-        "critical_guards_released": critical_hours(released["journal"], guards, 7),
+        "critical_guards_routine_posts": critical_hours(teacher7["journal"], guards, 7, unused),
+        "critical_guards_released": critical_hours(released["journal"], guards, 7, unused),
         "anchor_deciders_released": anchor_time(released["journal"], rules_released, rules_released.decider, 7),
     }
 
@@ -721,6 +752,23 @@ def main() -> int:
     for name, r in report["runs"].items():
         cells = [f"{c['median_h']} / {c['p90_h']} / {c['max_h']}" for c in r["critical"].values()]
         md.append(f"| {name} | " + " | ".join(cells) + " |")
+    pr = report["posts_release"]
+    for label, key in (("стражи, посты держат", "critical_guards_routine_posts"), ("стражи, посты отпускают", "critical_guards_released")):
+        cells = [f"{c['median_h']} / {c['p90_h']} / {c['max_h']}" for c in pr[key].values()]
+        md.append(f"| {label} (7 суток, {pr['guards']} чел.) | " + " | ".join(cells) + " |")
+    md += ["", "## Якорное время по распорядку (порог ≥ 95% по всем решающим)", "",
+           "| Прогон | все | < 2 свободных ч | ≥ 2 свободных ч |", "|---|---|---|---|"]
+    rows = [(name, r["anchor"]) for name, r in report["runs"].items() if r["policy"] != "routine"]
+    rows.append(("teacher-7, посты отпускают (для решения пользователя)", pr["anchor_deciders_released"]))
+    for name, a in rows:
+        md.append(f"| {name} | {a['by_routine']:.1%} | {a['by_routine_under_2_free_h']:.1%} "
+                  f"({a['people_under_2_free_h']} чел.) | {a['by_routine_2_free_h_or_more']:.1%} |")
+    md += ["", f"## Нечем утолить: {len(unmet)} нужд без способа в пределах пути от точек распорядка", "",
+           "Пробелы контента: такая нужда не убывает и в ограды не входит.", "",
+           "| NPC | гильдия | нужда | ближайший способ | место | пути, мин |", "|---|---|---|---|---|---|"]
+    for u in unmet:
+        md.append(f"| {u['key']} | {u['guild']} | {u['need']} | {u['kind'] or '—'} | {u['place'] or '—'} | "
+                  f"{u['travel_min'] if u['travel_min'] is not None else '—'} |")
     (args.out / "day-report.md").write_text("\n".join(md) + "\n")
     print(f"{sum(c['ok'] for c in checks)} of {len(checks)} checks pass; {args.out}/day-report.json", file=sys.stderr)
     return 0 if report["passed"] or not args.check else 1

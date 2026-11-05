@@ -11,7 +11,8 @@ counts the people who went low and critical at least once and the hours in criti
 median over those who went critical, the most); apart for the people who do a state that fills the need in
 the run and those who do none; the same for the run's last day (a week's last day is past the start, where
 every level is 1); who is worst by guild and by the state they spend the day in; which states their critical
-hours fall in. Only people (`person` in the export) have needs.
+hours fall in. Only people (`person` in the export) have needs, and not those of the config's
+decisions.no_needs_guilds (orcs).
 
 Writes DIR/needs.json (every number, both runs) and DIR/needs.md (the tables); the conclusions go into
 DIR/README.md by hand. WORK keeps the runs (a temporary folder by default).
@@ -113,7 +114,9 @@ def analyse(journal: dict, world: dict, config: dict, days: int) -> dict:
     start = journal["start"]
     end = start + days * DAY
     npcs = world["npcs"]
-    people = [i for i, npc in enumerate(npcs) if npc["person"]]
+    # people have needs, but for the guilds of decisions.no_needs_guilds (orcs): those have none
+    no_needs = set(config.get("decisions", {}).get("no_needs_guilds", []))
+    people = [i for i, npc in enumerate(npcs) if npc["person"] and npc["guild"] not in no_needs]
     person = set(people)
     # a sweep over each person's events: between two of them it does one state and each need is in one zone
     current = {i: None for i in people}

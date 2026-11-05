@@ -828,17 +828,50 @@ void checkConfig(const Society::World& w) {
     for(uint32_t k=w.npcs.scheduleBegin[i]; k<w.npcs.scheduleBegin[i+1]; ++k)
       use(w.schedules.state[k]);
     }
+  // Places of each kind: mobsi and points (the targets of the menu with decisions, else the kinds of mobsi and
+  // freepoints).
   std::map<std::string,size_t> objects, points;
-  for(auto k:w.objectKind)
-    if(k!=Society::NoKind)
-      ++objects[c.objectKinds.id[k]];
-  for(auto k:w.pointKind)
-    if(k!=Society::NoKind)
-      ++points[c.objectKinds.id[k]];
+  if(!w.targets.empty()) {
+    for(size_t t=0; t<w.targets.size(); ++t)
+      ++(Society::targetIsPoint(w.targets[t]) ? points : objects)[c.objectKinds.id[w.targetKind[t]]];
+    } else {
+    for(auto k:w.objectKind)
+      if(k!=Society::NoKind)
+        ++objects[c.objectKinds.id[k]];
+    for(auto k:w.pointKind)
+      if(k!=Society::NoKind)
+        ++points[c.objectKinds.id[k]];
+    }
   std::string kinds;
   for(size_t k=0; k<c.objectKinds.size(); ++k) {
     const auto& id = c.objectKinds.id[k];
     kinds += (kinds.empty() ? "" : ", ")+id+" "+std::to_string(objects[id])+"+"+std::to_string(points[id]);
+    }
+  if(c.decisions.loaded) {
+    // Orcs (no_needs_guilds) have no needs; the needs not in use are listed with their nearest way. The monastery —
+    // the fire mages (4) and the novices (5) — eats in its own rooms.
+    size_t needers = 0, noNeeds = 0, monastery = 0, monasteryHungry = 0;
+    const size_t n = Society::needCount(w);
+    const auto food = size_t(std::find(c.needs.id.begin(),c.needs.id.end(),"food")-c.needs.id.begin());
+    for(uint32_t i=0; i<w.npcs.size(); ++i) {
+      needers += w.npcNeeds[i];
+      noNeeds += w.npcs.person[i] && !w.npcNeeds[i] ? 1 : 0;
+      if(w.npcNeeds[i] && (w.npcs.guild[i]==4 || w.npcs.guild[i]==5)) {
+        ++monastery;
+        monasteryHungry += food<n && !w.needActive[size_t(i)*n+food] ? 1 : 0;
+        }
+      }
+    std::map<std::string,size_t> unmet;
+    for(const auto& u:w.unmet)
+      ++unmet[c.needs.id[u.need]];
+    std::string list;
+    for(const auto& [need,count]:unmet)
+      list += (list.empty() ? "" : ", ")+need+" "+std::to_string(count);
+    std::printf("people with needs %zu, people without them (no_needs_guilds) %zu; needs not in use: %zu (%s); the "
+                "monastery's %zu people without food in reach: %zu\n",needers,noNeeds,w.unmet.size(),list.c_str(),
+                monastery,monasteryHungry);
+    if(noNeeds==0 || monastery==0 || monasteryHungry>0)
+      fail("the config must leave orcs without needs and give the monastery food in its own rooms");
     }
   std::printf("config %s: %zu needs, %zu states, %zu object kinds (objects+freepoints: %s); cards %zu, people with one %zu "
               "of %zu\n",SOCIETY_CONFIG,c.needs.size(),c.states.size(),c.objectKinds.size(),kinds.c_str(),c.cards,carded,
@@ -899,10 +932,13 @@ void checkNeeds(const Society::World& w, const Day& day) {
   std::vector<uint8_t>  zone(npcs*n,0);
   std::vector<uint16_t> state(npcs,Society::NoState);
   std::vector<uint8_t>  moving(npcs,0);
+  // Needs are people's, but not of no_needs_guilds (orcs); a need not in use (needActive) stays at 1 and is "-".
+  const auto has   = [&](uint32_t i) { return w.npcNeeds[i]!=0; };
+  const auto inUse = [&](uint32_t i, size_t k) { return w.needActive.empty() || w.needActive[size_t(i)*n+k]!=0; };
   for(uint32_t i=0; i<npcs; ++i)
     for(size_t k=0; k<n; ++k)
-      seg[i*n+k] = {w.config.needs.start[k],0,w.startTime()};
-  size_t wrong = 0, missing = 0, outside = 0, levels = 0, rateEvents = 0, thresholds = 0;
+      seg[i*n+k] = {inUse(i,k) ? w.config.needs.start[k] : 1.0,0,w.startTime()};
+  size_t wrong = 0, missing = 0, outside = 0, levels = 0, rateEvents = 0, thresholds = 0, stray = 0, unused = 0;
   const auto report = [&](size_t& counter, const std::string& what) {
     if(++counter<=size_t(PrintLimit))
       std::printf("  %s\n",what.c_str());
@@ -923,8 +959,11 @@ void checkNeeds(const Society::World& w, const Day& day) {
     for(size_t e=from; e<day.eventsAtMark[m]; ++e) {
       const auto& ev = day.events[e];
       const uint32_t i = ev.npc;
-      if(!w.npcs.person[i])
+      if(!has(i) || (ev.kind==Society::EventKind::NeedThreshold && !inUse(i,ev.a))) {
+        if(ev.kind==Society::EventKind::NeedThreshold)
+          report(stray,clock(w,ev.time)+" "+w.npcs.key[i]+": need_threshold of a need it has not");
         continue;
+        }
       if(ev.kind==Society::EventKind::NeedThreshold) {
         ++thresholds;
         const size_t k = ev.a, x = i*n+k;
@@ -971,17 +1010,23 @@ void checkNeeds(const Society::World& w, const Day& day) {
     const Time t = w.startTime()+Time(m)*Society::Marks::Period;
     for(uint32_t i=0; i<npcs; ++i) {
       std::getline(marks,row);
-      if(!w.npcs.person[i])
-        continue;
       size_t at = row.size();
       std::vector<double> got(n);
+      std::vector<uint8_t> dash(n);
       for(size_t k=n; k-- > 0;) {
         const size_t comma = row.rfind(',',at-1);
-        got[k] = std::strtod(row.c_str()+comma+1,nullptr);
+        dash[k] = row.compare(comma+1,at-comma-1,"-")==0 ? 1 : 0;
+        got[k]  = std::strtod(row.c_str()+comma+1,nullptr);
         at = comma;
         }
       for(size_t k=0; k<n; ++k) {
         const size_t x = i*n+k;
+        if(!has(i) || !inUse(i,k)) {
+          unused += has(i) ? 1 : 0;
+          if(!dash[k])
+            report(stray,clock(w,t)+" "+w.npcs.key[i]+" "+w.config.needs.id[k]+": a level in the marks of a need it has not");
+          continue;
+          }
         const auto& g = seg[x];
         const double l = Society::needLevelAt(g.level,g.rate,g.since,t);
         ++levels;
@@ -1003,9 +1048,15 @@ void checkNeeds(const Society::World& w, const Day& day) {
   for(size_t k=0; k<n; ++k)
     people += (people.empty() ? "" : "; ")+w.config.needs.id[k]+" "+std::to_string(wentLow[k].size())+"/"+
               std::to_string(wentCritical[k].size());
+  size_t needers = 0;
+  for(uint32_t i=0; i<npcs; ++i)
+    needers += has(i) ? 1 : 0;
   std::printf("needs recomputed from the journal: %zu need_threshold events (%s), %zu rate events, %zu mark levels; "
-              "people low/critical in the day of %zu: %s; misplaced %zu, missing %zu, out of 0..1 %zu\n",thresholds,
-              kinds.c_str(),rateEvents,levels,w.people,people.c_str(),wrong,missing,outside);
+              "people low/critical in the day of %zu with needs (%zu people): %s; misplaced %zu, missing %zu, out of 0..1 %zu; "
+              "needs not in use %zu (%zu mark cells \"-\"), stray levels or crossings of needs not had %zu\n",thresholds,
+              kinds.c_str(),rateEvents,levels,needers,w.people,people.c_str(),wrong,missing,outside,w.unmet.size(),unused,stray);
+  if(stray>0)
+    fail("needs: "+std::to_string(stray)+" crossings or mark levels of needs an NPC does not have (no_needs_guilds, not in use)");
   if(wrong>0 || missing>0 || outside>0)
     fail("needs: "+std::to_string(wrong)+" misplaced crossings or levels, "+std::to_string(missing)+" missing crossings, "+
          std::to_string(outside)+" levels out of 0..1");

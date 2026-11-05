@@ -22,6 +22,15 @@ uint16_t entryState(const Sim& sim, uint32_t npc, uint16_t e);
 inline bool deciding(const Sim& sim) { return !sim.s.mode.empty(); }
 inline bool moving(const State& s, uint32_t npc) { return (s.flags[npc] & Moving)!=0; }
 
+// reach.cpp: what the decisions section gives a world at load.
+void   applyReach(World& w, const std::unordered_map<std::string,std::string>& placeOf);
+bool   fills(const World& w, uint16_t state, size_t need);        // the state raises the need
+bool   guildMay(const World& w, uint32_t npc, uint16_t kind);     // the kind's guilds let the NPC use it
+Access access(const World& w, uint32_t npc, uint32_t ownerNpc, int32_t ownerGuild);
+// Who an option's place is to the NPC by its kind's rule: outdoors and places are public, own rooms only own or
+// the guild's; Access::Other is closed.
+Access targetAccess(const World& w, uint32_t npc, uint32_t target, uint16_t kind);
+
 // decide.cpp
 void   sizeDecisions(Sim& sim);
 void   resetDecisions(Sim& sim);
@@ -29,6 +38,8 @@ void   resetDecisions(Sim& sim);
 void   startDecisions(Sim& sim, uint32_t npc);
 // The state's end of a decider has passed: the routine's next entry begins under the rules of decisions.
 void   beginEntry(Sim& sim, uint32_t npc);
+// A decider's needs began a segment: in a free entry a need forecast to be critical in the next anchor entry asks.
+void   onSegment(Sim& sim, uint32_t npc);
 // A need of a decider fell to `zone` (1 low, 2 critical).
 void   onDown(Sim& sim, uint32_t npc, uint8_t zone);
 // A decider stands at its chosen activity's place: the activity begins.

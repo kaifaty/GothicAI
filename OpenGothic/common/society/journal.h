@@ -35,7 +35,8 @@
 // moving 1: on the way from `point` to `to`, arriving at arrive_min; moving 0: at `point`, `to` and arrive_min "-";
 // x, y, z — the position in cm: the point's, or on the way the place along the walk's points by the time gone.
 // With needs (journal v3) every row goes on with a column per need, `need_<id>`: a person's level at the mark with
-// four decimals, "-" for an NPC that is not a person. With decisions (journal v4) two columns more, `source,target`:
+// four decimals, "-" for an NPC without needs (not a person, or of decisions.no_needs_guilds) and for a need not in
+// use (World::needActive). With decisions (journal v4) two columns more, `source,target`:
 // `routine` or `need` (a chosen activity), and the chosen activity's `kind:place` (the mobsi's vob or #id, the
 // point's name), "-" for the routine.
 

@@ -149,7 +149,7 @@ void append(std::string& out, Sim& sim) {
     const int pn = std::snprintf(pos,sizeof(pos),",%.1f,%.1f,%.1f",double(at[0]),double(at[1]),double(at[2]));
     out.append(pos,size_t(pn));
     for(size_t k=0; k<needs; ++k) {
-      if(!w.npcs.person[i]) {
+      if(!w.npcNeeds[i] || (!w.needActive.empty() && !w.needActive[size_t(i)*needs+k])) {
         out += ",-";
         continue;
         }

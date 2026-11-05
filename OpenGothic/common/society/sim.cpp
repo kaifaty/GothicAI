@@ -255,7 +255,7 @@ void record(State& s, EventKind kind, uint32_t npc, uint8_t reason, uint32_t a, 
   }
 
 bool hasNeeds(const Sim& sim, uint32_t npc) {
-  return !sim.s.needSince.empty() && sim.world->npcs.person[npc]!=0;
+  return !sim.s.needSince.empty() && sim.world->npcNeeds[npc]!=0;
   }
 
 // The zone of each need at `now` on the current segment; every threshold passed since the journal last said is
@@ -313,6 +313,8 @@ void segment(Sim& sim, uint32_t npc) {
     }
   s.needSince[npc] = s.now;
   scheduleNeed(sim,npc);
+  if(deciding(sim) && decides(w,npc))
+    onSegment(sim,npc);
   }
 
 // The events that can change what a person does (its state, standing or on the way): the ends of its needs' segments.
@@ -432,7 +434,8 @@ void resetNeeds(Sim& sim, uint64_t seed) {
       const double spread = 2.0*u-1.0;
       const double noise  = w.config.noise*spread;
       s.needDecay[i] = w.npcDecay[i]*(1.0+noise);
-      s.needLevel[i] = w.config.needs.start[k];
+      // A need not in use stays at 1 (it never falls), whatever the start.
+      s.needLevel[i] = w.needActive.empty() || w.needActive[i] ? w.config.needs.start[k] : 1.0;
       s.needRate[i]  = 0;
       s.needZone[i]  = 0;
       }

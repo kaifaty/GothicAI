@@ -26,6 +26,7 @@ using Time = int64_t;
 constexpr Time DaySeconds = 24*60*60;
 
 constexpr uint32_t NoPoint = 0xFFFFFFFFu;
+constexpr uint16_t NoKind  = 0xFFFFu;
 constexpr uint16_t NoEntry = 0xFFFFu;
 constexpr uint16_t NoState = 0xFFFFu;
 constexpr uint32_t NoObject = 0xFFFFFFFFu;
@@ -63,6 +64,9 @@ inline constexpr const char* MmScheduler = "ZS_MM_ALLSCHEDULER";
 // ZS_* state does to them, the kinds of objects (loaded and checked only: С3's next step uses them) and the traits.
 // Every rate is per game second here; the file gives hours. Lists keep the file's order: need = index in needs[].
 enum class StateKind : uint8_t { Free = 0, Anchor = 1 };
+// Where a kind of object is done besides its schemes and freepoints: at any waynet point outside rooms, at any point of
+// a room the NPC or its guild owns, at the points of places of places.json (a tavern: anyone may eat there).
+enum class KindAt : uint8_t { Listed = 0, Outdoors = 1, OwnRooms = 2, Places = 3 };
 
 struct Config {
   bool        loaded  = false;               // a file was given
@@ -92,14 +96,15 @@ struct Config {
     } states;
 
   // Kinds of objects: a mobsi scheme (exact) or a freepoint name prefix (the longest wins) -> kind; the state the
-  // engine does there, the rise of the needs (as in States), how many at once and for how long. An `outdoors` kind
-  // is done at any waynet point outside rooms (`room: null`); `guilds`, when not empty, are the only guilds that
-  // may use the kind (sleeping on the ground).
+  // engine does there, the rise of the needs (as in States), how many at once and for how long. `at` (KindAt) places
+  // it elsewhere too; `guilds`, when not empty, are the only guilds that may use the kind (sleeping on the ground).
+  // A freepoint may belong to several kinds, a mobsi scheme to one.
   struct ObjectKinds {
     std::vector<std::string> id, state;
     std::vector<double>      fill;
     std::vector<uint32_t>    capacity, minutes;
-    std::vector<uint8_t>     outdoors;
+    std::vector<uint8_t>     at;                      // KindAt
+    std::vector<std::vector<std::string>> places;     // place ids for KindAt::Places
     std::vector<std::vector<uint32_t>> guilds;
     std::vector<std::string> scheme, prefix;          // sorted
     std::vector<uint16_t>    schemeKind, prefixKind;
@@ -115,8 +120,9 @@ struct Config {
     int64_t     minDwell = 10*60;            // game seconds a chosen activity lasts at least
     bool        postsRelease = false;        // a critical need takes a guard off its post
     std::vector<std::string> postStates;     // ZS_* names; a trailing * is a prefix
-    std::vector<uint32_t>    noNeedsGuilds;  // guilds that do not decide
+    std::vector<uint32_t>    noNeedsGuilds;  // guilds without needs (and so without decisions)
     std::string protectedPath;               // data/society/protected.json, from the config's folder
+    std::string placesPath;                  // the server's places.json, for kinds at places (taverns)
     std::unordered_map<std::string,uint32_t> guildNames; // a mobsi's owner_guild (GIL_*) -> the export's guild id
     // The teacher: drive D = (Σ weight·|1 − h|^n)^(1/m), its fall over `horizon` seconds, minus `travelCost` per
     // game second of walking; `inertia` for the activity in hand; softmax with `temperature` among the `top` best.
@@ -234,7 +240,8 @@ struct World {
   std::vector<uint8_t>     npcCard;          // by NPC: 1 when characters.json has its card
   std::vector<uint8_t>     npcScale;         // [npc × scales]: the card's values, `middle` without a card
   std::vector<double>      npcDecay;         // [npc × needs]: decay per game second by traits and guild, before the
-                                             // seed's noise; 0 for an NPC that is not a person (needs are people's)
+                                             // seed's noise; 0 for an NPC without needs and for a need not in use
+  std::vector<uint8_t>     npcNeeds;         // by NPC: has needs: a person, not of decisions.no_needs_guilds
   std::vector<uint16_t>    objectKind;       // by object: its kind (config.objectKinds) or NoKind
   std::vector<uint16_t>    pointKind;        // by point: a freepoint's kind by its prefix, or NoKind
 
@@ -249,9 +256,26 @@ struct World {
   std::vector<uint32_t>    pointOwnerNpc;    // by point: the same from its room
   std::vector<int32_t>     pointOwnerGuild;
   std::vector<uint8_t>     pointOutdoors;    // by point: a waynet point outside rooms
-  // The places of options by waynet point, CSR: kinded objects at that point (objects[].waypoint), kinded freepoints
-  // whose near_waypoint it is, and the point itself when outdoors. Encoded by targetObject/targetPoint.
+  // The places of options by waynet point, CSR, each with its kind: kinded objects at that point (objects[].waypoint);
+  // kinded freepoints whose near_waypoint it is; the point itself when outdoors; points of owned rooms and of places
+  // whose waynet point it is. Encoded by TargetPoint.
   std::vector<uint32_t>    targetBegin, targets;
+  std::vector<uint16_t>    targetKind;
+  // Needs in use: [npc × needs] 1 when a way to fill the need (its routine's own states, or an option it may use) is
+  // within the travel limit of a point of its routine (start_waypoint without one); a need without a way neither
+  // falls nor counts. A need of zero decay (faith of guild weight 0) is in use and never falls. Empty without
+  // decisions: every need is in use.
+  std::vector<uint8_t>     needActive;
+  // The needs not in use with the nearest way beyond the limit: content gaps, not a lower threshold.
+  struct Unmet {
+    uint32_t npc = 0;
+    uint16_t need = 0;
+    uint16_t kind = NoKind;        // the nearest way's kind, NoKind for none in the waynet component
+    uint32_t point = 0xFFFFFFFFu;  // its place
+    uint32_t object = 0xFFFFFFFFu; // its mobsi, or none
+    int64_t  travel = -1;          // game seconds of walking from the nearest point of the routine
+    };
+  std::vector<Unmet>       unmet;
   double                   deciderWalk = 0;  // the fastest decider's walk, cm/s: the reach of the menu
   size_t                   protectedListed = 0, protectedFound = 0;
 
@@ -259,8 +283,6 @@ struct World {
   uint32_t entryCount(uint32_t npc) const { return npcs.routineBegin[npc+1]-npcs.routineBegin[npc]; }
   uint32_t entryIndex(uint32_t npc, uint16_t entry) const { return npcs.routineBegin[npc]+entry; }
   };
-
-constexpr uint16_t NoKind = 0xFFFFu;
 
 // Reads the export (format "society-world", version 1, 2 or 3) and, when a path is given, the config file; throws
 // std::runtime_error with the reason. Without a config, or with `"needs": []`, the run is the routine-only one byte
@@ -368,6 +390,7 @@ enum Cause : uint8_t {
   CauseNeedCritical   = 8,  // a need fell to critical in a free entry or a chosen activity
   CauseAnchorCritical = 16, // a need is critical in an anchor entry (it fell there, or the entry begins so)
   CauseFinished       = 32, // the chosen activity is over
+  CauseForecast       = 64, // in a free entry a need would be critical during the next anchor entry
   };
 
 enum class Chooser : uint8_t {
@@ -522,6 +545,7 @@ struct State {
   std::vector<uint64_t> actSeq;     // the sequence number + 1 of its activity event in force, 0 for none
   std::vector<uint16_t> objectUse;  // by object: holders, reservations included
   std::vector<uint16_t> pointUse;   // by point: the same
+  std::vector<Time>     forecastFor; // the start of the anchor entry a forecast decision was asked for, -1 none
   std::vector<uint32_t> asked;      // NPCs with `want`, in the order asked
   DecisionBatch         batch;      // the rows handed out and not answered yet
   uint64_t              decisions = 0;
@@ -539,7 +563,7 @@ struct Snapshot {
 class Nearby {
   public:
     explicit Nearby(const World& world);
-    struct Item { int32_t cm; uint32_t target; };
+    struct Item { int32_t cm; uint32_t target; uint16_t kind; };
     const std::vector<Item>& at(uint32_t waynetPoint);
     size_t built() const { return builtCount; }
 

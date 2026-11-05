@@ -99,15 +99,38 @@ int main(int argc, char** argv) {
           deciders        += Society::decides(w,i) ? 1 : 0;
           protectedPeople += w.npcs.person[i] && w.npcProtected[i] ? 1 : 0;
           }
-        std::printf("decisions: K %u, travel limit %lld min, protected %zu of %zu listed (people %zu), deciders %zu\n",
-                    w.config.decisions.menu,(long long)(w.config.decisions.travelLimit/60),w.protectedFound,
-                    w.protectedListed,protectedPeople,deciders);
+        size_t needers = 0;
+        for(uint32_t i=0; i<w.npcs.size(); ++i)
+          needers += w.npcNeeds[i];
+        std::printf("decisions: K %u, travel limit %lld min, protected %zu of %zu listed (people %zu), deciders %zu; people "
+                    "with needs %zu, needs not in use %zu (%s)\n",w.config.decisions.menu,
+                    (long long)(w.config.decisions.travelLimit/60),w.protectedFound,w.protectedListed,protectedPeople,
+                    deciders,needers,w.unmet.size(),"society-needs-unmet.csv");
         }
       }
     if(decide && !w.config.decisions.loaded)
       throw std::runtime_error("--policy "+policy+" needs a --config with needs and its decisions section");
 
     std::filesystem::create_directories(outDir);
+    if(w.config.decisions.loaded) {
+      // The needs not in use: nothing fills them within the travel limit of the routine (World::unmet).
+      std::ofstream unmet(outDir/"society-needs-unmet.csv",std::ios::binary);
+      unmet << "key,need,kind,place,travel_min\n";
+      for(const auto& u:w.unmet) {
+        unmet << w.npcs.key[u.npc] << ',' << w.config.needs.id[u.need] << ',';
+        if(u.kind==Society::NoKind) {
+          unmet << "-,-,-\n";
+          continue;
+          }
+        const auto& place = u.object!=Society::NoObject && !w.objects.vob[u.object].empty() ? w.objects.vob[u.object]
+                                                                                            : w.points.name[u.point];
+        char minutes[32];
+        std::snprintf(minutes,sizeof(minutes),"%.1f",double(u.travel)/60.0);
+        unmet << w.config.objectKinds.id[u.kind] << ',' << place << ',' << minutes << '\n';
+        }
+      if(!unmet)
+        throw std::runtime_error("cannot write society-needs-unmet.csv");
+      }
     const auto journalPath = outDir/"society-day.journal";
     const auto marksPath   = outDir/"society-marks.csv";
     std::ofstream journal(journalPath,std::ios::binary), marksFile(marksPath,std::ios::binary);
