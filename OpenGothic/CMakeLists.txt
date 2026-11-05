@@ -84,7 +84,7 @@ endif()
 
 # sources
 file(GLOB_RECURSE OPENGOTHIC_SOURCES "common/*.h" "common/*.cpp")
-foreach(source daedalus/vm daedalus/script daedalus/classes baseidentity basestoreimport sha256 baseimport basesources worldchunks worldchunksruntime worlddata modeldata fontdata programdata outputunits audiodata basemesh gothicglb gltfmesh asset/fromzenkit asset/worldfromzenkit asset/modelfromzenkit
+foreach(source zenkitlog daedalus/vm daedalus/script daedalus/classes baseidentity basestoreimport sha256 baseimport basesources worldchunks worldchunksruntime worlddata modeldata fontdata programdata outputunits audiodata basemesh gothicglb gltfmesh asset/fromzenkit asset/worldfromzenkit asset/modelfromzenkit asset/programfromzenkit
                utils/fileutil dmusic/sourcefile dmusic/riff dmusic/segment dmusic/track dmusic/style dmusic/band
                dmusic/reference dmusic/info dmusic/pattern musicdata dmusic/dlscollection dmusic/wave dmusic/soundfont
                dmusic/hydra dmusic/directmusicimport dmusic/dlsruntime dmusic/styleruntime dmusic/waveruntime
@@ -147,7 +147,6 @@ set(ZK_ENABLE_ASAN             OFF CACHE INTERNAL "")
 set(ZK_ENABLE_DEPRECATION      OFF CACHE INTERNAL "")
 
 add_subdirectory(lib/ZenKit)
-target_link_libraries(${PROJECT_NAME} zenkit)
 
 # dmusic
 set(DM_BUILD_STATIC            ON  CACHE INTERNAL "")
@@ -668,7 +667,7 @@ if(NOT ANDROID AND NOT IOS)
     add_executable(gothic-video-contract EXCLUDE_FROM_ALL tests/video_contract.cpp)
     target_link_libraries(gothic-video-contract PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import)
     target_compile_options(gothic-video-contract PRIVATE -Wall -Wconversion -Werror)
-    add_executable(gothic-base-store-contract EXCLUDE_FROM_ALL tests/basestore_contract.cpp)
+    add_executable(gothic-base-store-contract EXCLUDE_FROM_ALL tests/basestore_contract.cpp common/zenkitlog.cpp)
     target_link_libraries(gothic-base-store-contract PRIVATE OpenGothic AiBridge gothic-base-import gothic-video-import)
     target_include_directories(gothic-base-store-contract SYSTEM BEFORE PRIVATE ${PROJECT_SOURCE_DIR}/lib/rapidjson/include)
     target_compile_options(gothic-base-store-contract PRIVATE -Wall -Wconversion -Werror)
