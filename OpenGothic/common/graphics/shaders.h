@@ -47,6 +47,7 @@ class Shaders {
     static bool isGi2Supported();
 
     Tempest::RenderPipeline  lights, lightsRq, lightsVsm;
+    Tempest::RenderPipeline  lightsVsmHard;  // [INTERNAL] vsmLampSoft=0: lamp shadows in one gather, no PCSS
     Tempest::RenderPipeline  lightsVsmProbe; // OPENGOTHIC_VSM_LAMP and OPENGOTHIC_VSM_STATS: lamp filter study
     Tempest::RenderPipeline  directLight,  directLightSh, directLightRq;
     Tempest::RenderPipeline  ambientLight, ambientLightSsao, ambientLightSurf;
@@ -88,6 +89,8 @@ class Shaders {
     Tempest::ComputePipeline cmaa2ProcessCandidates;
     Tempest::RenderPipeline  cmaa2DeferredColorApply2x2;
     Tempest::RenderPipeline  taaResolve, taaSharpen;
+    // temporal upscale (MetalFX Temporal): camera motion vectors, tonemapping with the bloom in it
+    Tempest::RenderPipeline  motionCamera, tonemappingBloom;
 
     // HUD
 

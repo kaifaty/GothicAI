@@ -89,6 +89,11 @@ void AbstractGraphicsApi::CommandBuffer::upscale(Texture& /*src*/, Texture& /*ds
   throw std::system_error(Tempest::GraphicsErrc::UnsupportedExtension);
   }
 
+void AbstractGraphicsApi::CommandBuffer::upscaleTemporal(Texture& /*color*/, Texture& /*depth*/, Texture& /*motion*/,
+                                                         Texture& /*dst*/, const TemporalUpscaleDesc& /*desc*/) {
+  throw std::system_error(Tempest::GraphicsErrc::UnsupportedExtension);
+  }
+
 void AbstractGraphicsApi::CommandBuffer::dispatchMesh(size_t x, size_t y, size_t z) {
   throw std::system_error(Tempest::GraphicsErrc::UnsupportedExtension);
   }

@@ -1,4 +1,5 @@
 #include "followtrail.h"
+#include "navigationpassage.h"
 
 #include <algorithm>
 #include <cmath>
@@ -7,19 +8,6 @@ using Tempest::Vec3;
 
 namespace {
 constexpr float Pi = 3.14159265358979323846f;
-// Channels are compared as the learner and the memory teacher see them: uint8.
-uint8_t byte(float value) { return uint8_t(std::lround(std::clamp(value,0.f,1.f)*255.f)); }
-bool staticHazard(const NavigationMemory::Cell& c) {
-  // Only what the follower has seen itself; a familiar tile is a prior, exactly
-  // as in the memory teacher. Movable evidence (people, the followed object's own
-  // footprints along its trail) does not decide where the carrot goes: the
-  // planner keeps its own hard veto for it.
-  if(byte(c.familiar)!=0) return false;
-  return byte(c.wall)!=0 || byte(c.ledge)!=0 || byte(c.drop)!=0 || byte(c.water)!=0;
-  }
-bool seenFree(const NavigationMemory::Cell& c) {
-  return byte(c.familiar)==0 && byte(c.confidence)!=0 && byte(c.free)!=0 && !staticHazard(c);
-  }
 }
 
 const char* FollowTrail::name(Source source) {
@@ -31,6 +19,7 @@ const char* FollowTrail::name(Source source) {
     case Source::Line: return "line";
     case Source::Unseen: return "unseen";
     case Source::Heading: return "heading";
+    case Source::Aside: return "aside";
     case Source::LastSeen: return "last_seen";
     case Source::Count: break;
     }
@@ -164,26 +153,30 @@ FollowTrail::Result FollowTrail::unseen(const Vec3& follower, const Vec3& object
     result.carrot=direct;result.source=Source::Unseen;
     return result;
     }
-  if(trail.empty()) {
-    // Never seen: head for the sound around the seen hazard. Turn the direction
-    // toward the object by 15-degree steps to either side, up to 90 degrees, and
-    // take the first open one; only if all are closed, stop before the hazard.
-    result.source=Source::Unseen;result.detour=true;
+  // Around the seen hazard by hearing: turn the direction toward the object by
+  // 15-degree steps to either side, up to 90 degrees, and take the first open one.
+  const auto aside=[&](Vec3& carrot) {
     auto toward=direct-follower;toward.y=0;
     const float reach=std::min(lookaheadCm,toward.length());
-    if(reach>footprintCm) {
-      const float base=std::atan2(toward.z,toward.x);
-      for(int step=1;step<=6;++step)
-        for(const float side:{1.f,-1.f}) {
-          const float angle=base+side*float(step)*Pi/12.f;
-          const auto point=follower+Vec3(std::cos(angle),0,std::sin(angle))*reach;
-          if((point-object).length()>=standoffCm && nearClear(memory,follower,point)) {
-            result.carrot=point;
-            return result;
-            }
+    if(reach<=footprintCm)
+      return false;
+    const float base=std::atan2(toward.z,toward.x);
+    for(int step=1;step<=6;++step)
+      for(const float side:{1.f,-1.f}) {
+        const float angle=base+side*float(step)*Pi/12.f;
+        const auto point=follower+Vec3(std::cos(angle),0,std::sin(angle))*reach;
+        if((point-object).length()>=standoffCm && nearClear(memory,follower,point)) {
+          carrot=point;
+          return true;
           }
-      }
-    result.carrot=clearAlong(memory,follower,direct);
+        }
+    return false;
+    };
+  if(trail.empty()) {
+    // Never seen: around the hazard; only if all is closed, stop before it.
+    result.source=Source::Unseen;result.detour=true;
+    if(!aside(result.carrot))
+      result.carrot=clearAlong(memory,follower,direct);
     return result;
     }
   // Lost at the last seen point: where the object was last seen heading.
@@ -198,6 +191,12 @@ FollowTrail::Result FollowTrail::unseen(const Vec3& follower, const Vec3& object
         return result;
         }
       }
+    }
+  // Then around the hazard by hearing, as for an object never seen; the follower
+  // stands at the last seen point only if every direction is closed.
+  if(lostAside && aside(result.carrot)) {
+    result.source=Source::Aside;
+    return result;
     }
   result.carrot=trail.back().position;result.source=Source::LastSeen;
   return result;
@@ -288,56 +287,6 @@ bool FollowTrail::nearClear(const NavigationMemory::View& memory, const Vec3& fr
   }
 
 bool FollowTrail::passage(const NavigationMemory::View& memory, const Vec3& from, const Vec3& to, bool seen) {
-  const auto& near=memory.near;
-  if(near.size==0 || !(near.cellCm>0) || near.cells.size()!=near.size*near.size)
-    return !seen;
-  Vec3 forward=memory.pose.forward;forward.y=0;
-  const float norm=forward.length();
-  if(!(norm>1e-3f))
-    return !seen;
-  forward*=1.f/norm;
-  const Vec3 right(-forward.z,0,forward.x);
-  const auto local=[&](const Vec3& p) {
-    const auto d=p-memory.pose.position;
-    return std::array<float,2>{d.x*right.x+d.z*right.z,d.x*forward.x+d.z*forward.z};
-    };
-  const auto a=local(from),b=local(to);
-  const float length=std::hypot(b[0]-a[0],b[1]-a[1]);
-  const int size=int(near.size);
-  const float cell=near.cellCm,half=cell*float(size)*.5f;
-  const int steps=std::max(1,int(std::ceil(length/(cell*.5f))));
-  for(int k=0;k<=steps;++k) {
-    const float t=float(k)/float(steps);
-    if(length*t<footprintCm)
-      continue;
-    const float r=a[0]+(b[0]-a[0])*t,f=a[1]+(b[1]-a[1])*t;
-    // Outside the near map nothing is seen: neither free ground nor a hazard.
-    if(std::abs(r)>half-corridorCm || std::abs(f)>half-corridorCm) {
-      if(seen)
-        return false;
-      continue;
-      }
-    // Rotation splats world cells into the body frame, so one cell under the
-    // line may be empty. A free passage needs seen free ground at every sample;
-    // any passage fails on a live hazard anywhere within the corridor.
-    const int x0=std::max(0,int(std::floor((r-corridorCm)/cell+float(size)*.5f)));
-    const int x1=std::min(size-1,int(std::floor((r+corridorCm)/cell+float(size)*.5f)));
-    const int z0=std::max(0,int(std::floor((f-corridorCm)/cell+float(size)*.5f)));
-    const int z1=std::min(size-1,int(std::floor((f+corridorCm)/cell+float(size)*.5f)));
-    bool free=!seen;
-    for(int z=z0;z<=z1;++z)
-      for(int x=x0;x<=x1;++x) {
-        const auto& c=near.cells[size_t(z)*near.size+size_t(x)];
-        const float cr=(float(x)+.5f-float(size)*.5f)*cell,cf=(float(z)+.5f-float(size)*.5f)*cell;
-        const float dx=std::max(0.f,std::abs(r-cr)-cell*.5f),dz=std::max(0.f,std::abs(f-cf)-cell*.5f);
-        if(dx*dx+dz*dz>corridorCm*corridorCm)
-          continue;
-        if(staticHazard(c))
-          return false;
-        free=free || seenFree(c);
-        }
-    if(!free)
-      return false;
-    }
-  return true;
+  // The near-map check is shared with familiar-road guidance (game/navigationpassage.h).
+  return NavigationPassage::near(memory,from,to,seen,corridorCm,footprintCm);
   }

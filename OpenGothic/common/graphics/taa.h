@@ -14,8 +14,13 @@ namespace Taa {
 
   // radical inverse of `index` in `base` (Halton), in [0,1)
   float              halton(uint32_t index, uint32_t base);
-  // the sub-pixel offset of frame `frame`: Halton (2, 3) of 8 phases, pixels of the internal resolution, within ±0.5
-  Tempest::Vec2      jitterPx(uint32_t frame);
+  // the sub-pixel offset of frame `frame`: Halton (2, 3) of `phases` phases (8 for TAA), pixels of the internal
+  // resolution, within ±0.5
+  Tempest::Vec2      jitterPx(uint32_t frame, uint32_t phases = Phases);
+  // a temporal upscale from `in` to `out` pixels (graphics plan 1г): Apple's ⌈8·(out/in)²⌉ phases, by the area
+  uint32_t           upscalePhases(uint32_t inW, uint32_t inH, uint32_t outW, uint32_t outH);
+  // and its mip bias of the scene's textures: log2(in/out) − 1, by the width
+  float              upscaleMipBias(uint32_t inW, uint32_t outW);
   // the clip-space translation that moves the picture by `px` pixels of a w×h target: J of J*proj
   Tempest::Matrix4x4 jitterMatrix(const Tempest::Vec2& px, uint32_t w, uint32_t h);
 

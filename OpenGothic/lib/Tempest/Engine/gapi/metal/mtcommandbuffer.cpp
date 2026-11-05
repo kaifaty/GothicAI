@@ -41,6 +41,7 @@ struct MtCommandBuffer::GpuProfile {
   struct Pass {
     FrameProfile::GpuPass data;
     size_t first=0, samples=0;
+    bool external=false; // encoded by a library (MetalFX): no samples, the gap between the neighbouring rows
     std::string lastLabel;
     };
   NsPtr<MTL::CounterSampleBuffer> buffer;
@@ -77,6 +78,12 @@ struct MtCommandBuffer::GpuProfile {
       }
     passes.emplace_back(std::move(pass));
     return passes.size()-1;
+    }
+
+  void external(const char* type, std::string_view label) {
+    const size_t id=begin(type,0);
+    passes[id].external=true;
+    this->label(id,label);
     }
 
   void label(size_t index, std::string_view label) {
@@ -117,6 +124,7 @@ void MtCommandBuffer::submitGpuProfile() {
     const auto count=resolved!=nullptr ? resolved->length()/sizeof(MTL::CounterResultTimestamp) : 0;
     std::vector<FrameProfile::GpuPass> passes;
     passes.reserve(profile->passes.size());
+    std::vector<uint64_t> spanBegin(profile->passes.size(),0), spanEnd(profile->passes.size(),0);
     for(const auto& pass:profile->passes) {
       auto data=pass.data;
       if(data.labels.empty()) data.labels="unlabelled";
@@ -137,11 +145,31 @@ void MtCommandBuffer::submitGpuProfile() {
             else data.fragmentNs=end-begin;
             }
           }
-        if(valid) data.gpuNs=last-first;
+        if(valid) {
+          data.gpuNs=last-first;
+          // a render pass starts its vertices early, before what it reads is done: its fragments start the use
+          spanBegin[passes.size()]=pass.samples==4 ? timestamps[pass.first+2].timestamp : first;
+          spanEnd  [passes.size()]=last;
+          }
         }
       data.valid=valid;
       if(!valid) data.gpuNs=data.vertexNs=data.fragmentNs=0;
       passes.emplace_back(std::move(data));
+      }
+    // a library's encoders (MetalFX): from the end of the last timed row before them to the start of the next one
+    // (of its fragments, for a render pass)
+    for(size_t i=0;i<passes.size();++i) {
+      if(!profile->passes[i].external)
+        continue;
+      size_t prev=i, next=i+1;
+      while(prev>0 && !(passes[prev-1].valid && !profile->passes[prev-1].external))
+        --prev;
+      while(next<passes.size() && !(passes[next].valid && !profile->passes[next].external))
+        ++next;
+      if(prev==0 || next>=passes.size() || spanBegin[next]<spanEnd[prev-1])
+        continue;
+      passes[i].gpuNs=spanBegin[next]-spanEnd[prev-1];
+      passes[i].valid=true;
       }
     FrameProfile::gpuPassesCompleted(record,std::move(passes));
     });
@@ -1009,6 +1037,38 @@ void MtCommandBuffer::upscale(AbstractGraphicsApi::Texture& src, AbstractGraphic
   scaler.setInputContentHeight(s.impl->height());
   scaler.setColorTexture (s.impl.get());
   scaler.setOutputTexture(d.impl.get());
+  scaler.encodeToCommandBuffer(impl.get());
+  }
+
+void MtCommandBuffer::upscaleTemporal(AbstractGraphicsApi::Texture& color, AbstractGraphicsApi::Texture& depth,
+                                      AbstractGraphicsApi::Texture& motion, AbstractGraphicsApi::Texture& dst,
+                                      const TemporalUpscaleDesc& desc) {
+  T_SKIP_PASS();
+  // MetalFX encodes its own passes: no encoder may be open on the command buffer
+  setEncoder(E_None,nullptr);
+
+  auto& c      = reinterpret_cast<MtTexture&>(color);
+  auto& z      = reinterpret_cast<MtTexture&>(depth);
+  auto& m      = reinterpret_cast<MtTexture&>(motion);
+  auto& d      = reinterpret_cast<MtTexture&>(dst);
+  auto& scaler = device.temporalScaler(*c.impl, *z.impl, *m.impl, *d.impl);
+  scaler.setInputContentWidth (desc.inputW>0 ? desc.inputW : c.impl->width());
+  scaler.setInputContentHeight(desc.inputH>0 ? desc.inputH : c.impl->height());
+  scaler.setColorTexture (c.impl.get());
+  scaler.setDepthTexture (z.impl.get());
+  scaler.setMotionTexture(m.impl.get());
+  scaler.setOutputTexture(d.impl.get());
+  scaler.setJitterOffsetX(desc.jitterX);
+  scaler.setJitterOffsetY(desc.jitterY);
+  scaler.setMotionVectorScaleX(desc.motionScaleX);
+  scaler.setMotionVectorScaleY(desc.motionScaleY);
+  scaler.setReset(desc.reset);
+  scaler.setDepthReversed(desc.depthReversed);
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+  // its encoders take no sample buffers: a row of its own, timed by the gap between its neighbours
+  if(gpuProfile)
+    gpuProfile->external("metalfx",activeLabel);
+#endif
   scaler.encodeToCommandBuffer(impl.get());
   }
 

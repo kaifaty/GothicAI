@@ -1,5 +1,6 @@
 #include "commandline.h"
 #include "gothic.h"
+#include "gamemusic.h"
 #include "game/constants.h"
 #include "graphics/pfx/particlefx.h"
 #include "graphics/visualfx.h"
@@ -25,9 +26,16 @@
 #include "dmusic/patternlist.h"
 #include "dmusic.h"
 #include "utils/gthfont.h"
+#include "game/gamesession.h"
+#include "game/serialize.h"
+#include "world/world.h"
+#include "world/objects/npc.h"
+#include "world/objects/item.h"
 
 #include <Tempest/Device>
 #include <Tempest/Log>
+#include <Tempest/MemReader>
+#include <Tempest/MemWriter>
 #include <Tempest/VulkanApi>
 #include <zenkit/Stream.hh>
 #include <zenkit/Font.hh>
@@ -65,6 +73,13 @@
 #include <unistd.h>
 
 struct MeshGltfTest {
+  static MdlVisual& visual(Npc& npc) { return npc.visual; }
+  static MeshObjects::Mesh& head(Npc& npc) { return npc.visual.head.view; }
+  static size_t headBone(const Npc& npc) { return npc.visual.head.boneId; }
+  static void refreshBody(Npc& npc) {
+    npc.setVisualBody(npc.vHead,npc.vTeeth,npc.vColor,npc.bdColor,npc.body,npc.head);
+    npc.updateTransform();
+    }
   static void attach(ObjVisual& visual, WorldView& view, const ProtoMesh* proto, const Tempest::Vec3& position,
                      bool worldItem = false, int32_t material = 0) {
     visual.setType(ObjVisual::M_Mesh);
@@ -358,6 +373,76 @@ void originalFile(const std::filesystem::path& path) {
     throw std::runtime_error("invalid original MRM fixture roundtrip");
   }
 
+// Two rigid parts sharing a material and two target names. Only vertex 1
+// moves in smile; normalOnly changes vertex 2's normal without moving it.
+void headGlbFile(const std::filesystem::path& path, bool sparse = false, std::string_view invalid = {}) {
+  std::vector<uint8_t> binary;
+  std::vector<std::pair<size_t,size_t>> views;
+  const auto floats=[&](std::initializer_list<float> values) {
+    const auto start=binary.size();
+    for(float v:values) real(binary,v);
+    views.emplace_back(start,binary.size()-start);
+    };
+  floats({0,0,0, .1f,0,0, 0,.1f,0});
+  floats({0,0,1, 0,0,1, 0,0,1});
+  floats({0,0, 1,0, 0,1});
+  if(sparse) {
+    floats({.01f,.02f,.03f});
+    floats({.1f,.2f,0});
+    floats({0,0,0});
+    floats({.3f,0,0});
+    }
+  else {
+    floats({0,0,0, .01f,.02f,.03f, 0,0,0});
+    floats({0,0,0, .1f,.2f,0, 0,0,0});
+    floats({0,0,0, 0,0,0, 0,0,0});
+    floats({0,0,0, 0,0,0, .3f,0,0});
+    }
+  const auto start=binary.size();
+  binary.insert(binary.end(),{1,2,0,0});
+  views.emplace_back(start,2);
+  std::string json=R"({"asset":{"version":"2.0"},"scene":0,"scenes":[{"nodes":[0,1]}],"nodes":[{"name":")";
+  json+=invalid=="node" ? "tail" : "face";
+  json+=R"(","mesh":0},{"name":"beard","mesh":0,"translation":[0,0.01,0]}],"buffers":[{"byteLength":)"+
+        std::to_string(binary.size())+"}],\"bufferViews\":[";
+  for(size_t i=0; i<views.size(); ++i) {
+    if(i!=0) json+=',';
+    json+="{\"buffer\":0,\"byteOffset\":"+std::to_string(views[i].first)+
+          ",\"byteLength\":"+std::to_string(views[i].second)+"}";
+    }
+  json+="],\"accessors\":[";
+  for(size_t i=0; i<7; ++i) {
+    if(i!=0) json+=',';
+    json+=R"({"componentType":5126,"count":3,"type":")"+std::string(i==2 ? "VEC2" : "VEC3")+"\"";
+    if(sparse && i>=3) {
+      json+=R"(,"sparse":{"count":1,"indices":{"bufferView":7,"componentType":5121,"byteOffset":)"+
+            std::to_string(i>=5 ? 1 : 0)+"},\"values\":{\"bufferView\":"+std::to_string(i)+"}}";
+      }
+    else
+      json+=",\"bufferView\":"+std::to_string(i);
+    json+='}';
+    }
+  json+=R"(],"materials":[{"name":"OWN_TEST_BARREL_WOOD"}],"meshes":[{)";
+  if(invalid!="names")
+    json+=R"("extras":{"targetNames":["smile","normalOnly"]},)";
+  json+=R"("primitives":[{"attributes":{"POSITION":0,"NORMAL":1,"TEXCOORD_0":2)";
+  if(invalid=="joints") json+=R"(,"JOINTS_0":0)";
+  json+=R"(},"material":0,"targets":[{"POSITION":3)";
+  if(invalid!="normal") json+=R"(,"NORMAL":4)";
+  json+=R"(},{"POSITION":5,"NORMAL":6}]}]}]})";
+  while(json.size()%4!=0) json+=' ';
+  std::vector<uint8_t> bytes;
+  word(bytes,0x46546c67); word(bytes,2);
+  word(bytes,uint32_t(28+json.size()+binary.size()));
+  word(bytes,uint32_t(json.size())); word(bytes,0x4e4f534a);
+  bytes.insert(bytes.end(),json.begin(),json.end());
+  word(bytes,uint32_t(binary.size())); word(bytes,0x004e4942);
+  bytes.insert(bytes.end(),binary.begin(),binary.end());
+  std::ofstream out(path,std::ios::binary);
+  out.write(reinterpret_cast<const char*>(bytes.data()),std::streamsize(bytes.size()));
+  require(bool(out),"synthetic head GLB must be written");
+  }
+
 struct Fixture {
   std::filesystem::path root;
   Fixture() {
@@ -450,6 +535,99 @@ struct Fixture {
     return document;
     }
   };
+
+void headConverterCases(const Fixture& fixture) {
+  const auto path=fixture.root/"head.glb";
+  headGlbFile(path);
+  const auto dense=loadGltfHeadMesh(path);
+  require(dense.parts.size()==2 && dense.mesh.positions.size()==6 && dense.mesh.normals.size()==6,
+          "head nodes must merge into one mesh with parallel neutral positions/normals");
+  require(dense.mesh.sub_meshes.size()==1 && dense.mesh.sub_meshes[0].triangles.size()==2,
+          "head parts sharing a material must share a submesh");
+  require(dense.parts[0].firstVertex==0 && dense.parts[0].vertexCount==3 &&
+          dense.parts[1].firstVertex==3 && dense.parts[1].vertexCount==3 &&
+          dense.parts[0].name=="beard" && dense.parts[1].name=="face",
+          "head part ranges must describe the merged logical vertex order");
+  require(close(dense.mesh.positions[1].x,-10) && close(dense.mesh.positions[0].y,1) &&
+          close(dense.mesh.positions[3].y,0),"head positions must include node transforms, X mirror and centimetres");
+  require(dense.targets.size()==2 && dense.targets[0].name=="smile" && dense.targets[1].name=="normalOnly",
+          "target names must come from mesh.extras.targetNames and merge across parts");
+  require(dense.targets[0].vertices.size()==2 && dense.targets[1].vertices.size()==2,
+          "each sparse head target must retain only affected vertices from both parts");
+  const auto& smile=dense.targets[0].vertices;
+  require(smile[0].vertex==1 && smile[1].vertex==4 && close(smile[0].position.x,-1) &&
+          close(smile[0].position.y,2) && close(smile[0].position.z,3) &&
+          close(smile[0].normal.x,-.1f) && close(smile[0].normal.y,.2f),
+          "morph deltas must use global IDs, mirrored axes and position units without translation");
+  require(dense.targets[1].vertices[0].vertex==2 && dense.targets[1].vertices[1].vertex==5 &&
+          close(dense.targets[1].vertices[0].position.x,0) && close(dense.targets[1].vertices[0].normal.x,-.3f),
+          "normal-only changes must survive sparse filtering");
+  headGlbFile(path,true);
+  const auto sparse=loadGltfHeadMesh(path);
+  for(size_t t=0; t<dense.targets.size(); ++t) {
+    require(sparse.targets[t].name==dense.targets[t].name &&
+            sparse.targets[t].vertices.size()==dense.targets[t].vertices.size(),"sparse and dense target identity must match");
+    for(size_t i=0; i<dense.targets[t].vertices.size(); ++i) {
+      const auto& a=dense.targets[t].vertices[i];
+      const auto& b=sparse.targets[t].vertices[i];
+      require(a.vertex==b.vertex,"sparse and dense vertex IDs must match");
+      for(unsigned c=0; c<3; ++c)
+        require(close(a.position[c],b.position[c]) && close(a.normal[c],b.normal[c]),
+                "sparse and dense morph POSITION/NORMAL must match");
+      }
+    }
+  for(const auto& [invalid,reason]:{std::pair{"names","targetNames"}, {"normal","morph NORMAL"},
+                                  {"joints","JOINTS_0"}, {"node","unknown head mesh node: tail"}}) {
+    headGlbFile(path,false,invalid);
+    bool rejected=false;
+    try { (void)loadGltfHeadMesh(path); }
+    catch(const std::exception& error) { rejected=std::string_view(error.what()).find(reason)!=std::string_view::npos; }
+    require(rejected,std::string("head must reject with reason: ")+reason);
+    }
+  }
+
+void headManifestCases(const Fixture& fixture) {
+  const auto root=fixture.root/"characters";
+  std::filesystem::create_directories(root/"hero");
+  headGlbFile(root/"hero/head.glb");
+  const auto test=[&](std::string_view table, bool valid) {
+    textFile(root/"characters.json",table);
+    Resources resources;
+    const auto* head=Resources::loadCharacterHead("pC_hErO");
+    require((head!=nullptr)==valid,"characters.json must accept only valid head entries");
+    require(Resources::loadCharacterHead("PC_ROCKEFELLER")==nullptr,
+            "a different script instance must retain its original head even if listed in the manifest");
+    if(head==nullptr) return;
+    require(head==Resources::loadCharacterHead("PC_HERO") && head->head!=nullptr,
+            "head lookup must be case insensitive and retain the parsed target data");
+    require(head->morph.empty(),"custom heads must not install original MMB animations");
+    const auto& data=*head->head;
+    require(data.targets.size()==2 && data.targets[0].vertices.size()==2,"step 3 must be able to read target names and counts");
+    std::vector<bool> seen(data.mesh.positions.size(),false);
+    for(auto id:data.renderVertexIds)
+      if(id!=uint32_t(-1)) {
+        require(id<data.mesh.positions.size(),"render vertices must map into the merged head");
+        seen[id]=true;
+        }
+    require(std::all_of(seen.begin(),seen.end(),[](bool v) { return v; }),
+            "the deformation map must cover vertices of every part");
+    };
+  test(R"({"pc_hero":{"head":"hero/head.glb"},"PC_ROCKEFELLER":{"head":"hero/head.glb"}})",true);
+  const auto invalidPath=[&](std::string_view path) {
+    rapidjson::StringBuffer buffer;
+    rapidjson::Writer<rapidjson::StringBuffer> json(buffer);
+    json.StartObject(); json.Key("PC_HERO"); json.StartObject(); json.Key("head");
+    json.String(path.data(),rapidjson::SizeType(path.size())); json.EndObject(); json.EndObject();
+    test({buffer.GetString(),buffer.GetSize()},false);
+    };
+  invalidPath((root/"hero/head.glb").string());
+  for(const auto* path:{"../characters/hero/head.glb","hero/../hero/head.glb","hero/head.MRM",""})
+    invalidPath(path);
+  invalidPath(std::string_view("hero/head.glb\0suffix",20));
+  test(R"({"PC_HERO":{}})",false);
+  test(R"({"PC_HERO":{"head":"hero/head.glb"}})",true);
+  std::filesystem::remove(root/"characters.json");
+  }
 
 void checkCensus(const Fixture& fixture, bool own, uint64_t expectedOpens) {
   const auto document = fixture.census();
@@ -854,7 +1032,7 @@ void modelGpuGeometry(const Fixture& fixture, Tempest::Device& device, std::stri
     device.readBytes(attachment.vbo,vertices.data(),vertices.size()*sizeof(vertices[0]));
     device.readBytes(attachment.ibo,indices.data(),indices.size()*sizeof(indices[0]));
     const auto& global = expected.tr[node];
-    const auto sourceNormal = multi ? (node==0 ? zenkit::Vec3{0,0,1} : zenkit::Vec3{-1,0,0}) :
+    const auto sourceNormal = multi ? (node==0 ? asset::Vec3{0,0,1} : asset::Vec3{-1,0,0}) :
                                      source.sub_meshes[0].wedges[0].normal;
     const auto points = modelGlbPoints(multi,node);
     Tempest::Vec3 localNormal {
@@ -2327,6 +2505,118 @@ void effectCases(const std::string& game, const std::string& base) {
     }
   device.waitIdle();
   }
+
+// Real world, renderer instances, equipment and save loader, with a synthetic
+// head only. No screenshots or original assets are written by this contract.
+void heroHeadGameCases(const std::string& game, const std::string& base) {
+  Fixture fixture;
+  std::filesystem::create_directories(fixture.root/"characters/hero");
+  std::filesystem::create_directories(fixture.root/"materials");
+  headGlbFile(fixture.root/"characters/hero/head.glb",true);
+  textFile(fixture.root/"characters/characters.json",R"({"PC_HERO":{"head":"hero/head.glb"}})");
+  alphaDdsFile(fixture.root/"materials/head.dds",false);
+  textFile(fixture.root/"materials/materials.json",R"({"OWN_TEST_BARREL_WOOD.TGA":{"albedo":"head.dds"}})");
+  setenv("OPENGOTHIC_BASE",base.c_str(),1);
+  unsetenv("OPENGOTHIC_CENSUS");
+  setenv("TEMPEST_AUDIO_LOOPBACK","48000",1);
+  const char* args[]={"gothic-mesh-gltf-test","-g",game.c_str(),"-g2","-nointro"};
+  CommandLine commandLine(5,args);
+  Tempest::VulkanApi api;
+  Tempest::Device device(api);
+  {
+    Resources resources(device);
+    Shaders shaders;
+    shaders.waitCompiler();
+    Gothic gothic;
+    gothic.isNpcInDialogFn=[](const Npc*) { return false; };
+    gothic.setupGlobalScripts();
+    GameMusic music;
+    gothic.setGame(std::make_unique<GameSession>("NEWWORLD.ZEN"));
+    auto* hero=gothic.world()->player();
+    require(hero!=nullptr,"head contract needs the actual PC_HERO");
+    const auto* data=MeshGltfTest::visual(*hero).headMesh();
+    const auto checkHead=[&](Npc& npc) {
+      require(MeshGltfTest::visual(npc).headMesh()==data && data!=nullptr,
+              "hero must keep the same custom head and target data");
+      const auto& mesh=MeshGltfTest::head(npc);
+      require(mesh.nodesCount()==1 && !mesh.isEmpty() && mesh.protoMesh()->morph.empty(),
+              "merged glTF head must have a drawable rigid mesh and no MMB animations");
+      const auto bone=npc.visualSkeleton()->findNode("BIP01 HEAD");
+      require(MeshGltfTest::headBone(npc)==bone,"custom head must bind to BIP01 HEAD");
+      npc.updateTransform();
+      sameMatrix(mesh.node(0).position(),npc.renderedBone(bone),"custom head must follow the rendered head bone");
+      };
+    checkHead(*hero);
+    require(data->parts.size()==2 && data->mesh.positions.size()==6 && data->targets.size()==2,
+            "in-game head must retain all synthetic parts and targets");
+    for(const auto& target:data->targets) {
+      require(target.vertices.size()==2,"step 3 probe must expose both parts' affected vertices");
+      std::cout << "hero-head target " << target.name << " vertices=" << target.vertices.size() << '\n';
+      }
+
+    auto& visual=MeshGltfTest::visual(*hero);
+    for(const auto* name:{"R_EYESBLINK","S_ANGRY","VISEME","T_HURT"}) {
+      visual.startFaceAnim(*hero,name,1,100);
+      visual.startMMAnim(*hero,name,"BIP01 HEAD");
+      require(visual.faceWeight(name)==0,"original face names must silently leave the new head unchanged");
+      }
+    MeshGltfTest::head(*hero).setMMShape("VISEME",0,1,.5f,1);
+    visual.updateBlink(*hero,16);
+    visual.updateMouth(*hero,16);
+
+    auto& world=*gothic.world();
+    const auto* npcSymbol=world.script().findSymbol("PC_ROCKEFELLER");
+    require(npcSymbol!=nullptr,"original game scripts must provide the control NPC");
+    const auto npcId=npcSymbol->index();
+    auto* npc=world.addNpc(npcId,hero->position());
+    require(npc!=nullptr,"control NPC must spawn");
+    npc->setVisualBody(0,0,0,0,"HUM_BODY_NAKED0","Hum_Head_Pony");
+    const auto* original=Resources::loadMesh("HUM_HEAD_PONY.MMB");
+    require(original!=nullptr && MeshGltfTest::head(*npc).protoMesh()==original &&
+            MeshGltfTest::visual(*npc).headMesh()==nullptr,"NPC Hum_Head_Pony must remain HUM_HEAD_PONY.MMB");
+
+    const auto* armorSymbol=world.script().findSymbol("ITAR_MIL_L");
+    require(armorSymbol!=nullptr,"original game scripts must provide the test armor");
+    const auto armorId=armorSymbol->index();
+    auto* armor=hero->addItem(armorId,1);
+    require(armor!=nullptr,"test armor must enter the hero's inventory");
+    hero->useItem(armorId,Item::NSLOT,true);
+    require(hero->currentArmor()==armor,"the test must actually equip a different armor");
+    MeshGltfTest::refreshBody(*hero);
+    checkHead(*hero);
+
+    std::vector<uint8_t> bytes;
+    {
+      Tempest::MemWriter writer(bytes);
+      Serialize out(writer);
+      Tempest::Pixmap preview(1,1,Tempest::TextureFormat::RGBA8);
+      std::memset(preview.data(),0,4);
+      gothic.gameSession()->save(out,"synthetic hero head",preview);
+    }
+    gothic.clearGame().reset();
+    {
+      Tempest::MemReader reader(bytes);
+      Serialize in(reader);
+      gothic.setGame(std::make_unique<GameSession>(in));
+    }
+    hero=gothic.world()->player();
+    require(hero!=nullptr && hero->currentArmor()!=nullptr && hero->currentArmor()->clsId()==armorId,
+            "save reload must restore the equipped armor");
+    checkHead(*hero);
+    npc=gothic.world()->findNpcByInstance(npcId);
+    require(npc!=nullptr && MeshGltfTest::head(*npc).protoMesh()==original,
+            "control NPC must retain the original head across save reload");
+
+    const char* offArgs[]={"gothic-mesh-gltf-test","-g",game.c_str(),"-g2","-nointro","--no-hero-head"};
+    CommandLine off(6,offArgs);
+    MeshGltfTest::refreshBody(*hero);
+    require(MeshGltfTest::visual(*hero).headMesh()==nullptr && MeshGltfTest::head(*hero).protoMesh()==original,
+            "--no-hero-head must restore the original hero head");
+    std::cout << "hero-head game: GLB, head bone, armor, setVisualBody, save reload, original NPC, flag OFF passed\n";
+    gothic.clearGame().reset();
+  }
+  device.waitIdle();
+  }
 }
 
 int main() {
@@ -2337,8 +2627,10 @@ int main() {
     const char* baseDir = std::getenv("OPENGOTHIC_BASE");
     const std::string game = gameDir!=nullptr ? gameDir : "";
     const std::string base = baseDir!=nullptr ? baseDir : "";
-    if(!game.empty() && !base.empty())
+    if(!game.empty() && !base.empty()) {
       effectCases(game,base);
+      heroHeadGameCases(game,base);
+      }
     Fixture fixture;
     const auto root=fixture.root.string();
     const char* args[]={"gothic-mesh-gltf-test","-g",root.c_str()};
@@ -2346,6 +2638,8 @@ int main() {
     fixture.index();
     resourcePaths(fixture,true);
     converterCases(fixture);
+    headConverterCases(fixture);
+    headManifestCases(fixture);
     generatedBarrel(fixture);
     rejectionCases(fixture);
     indexCases(fixture);

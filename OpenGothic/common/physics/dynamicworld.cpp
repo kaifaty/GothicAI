@@ -2774,7 +2774,7 @@ DynamicWorld::BulletBody* DynamicWorld::bulletObj(BulletCallback* cb) {
   return bulletList->add(cb);
   }
 
-DynamicWorld::BBoxBody DynamicWorld::bboxObj(BBoxCallback* cb, const zenkit::AxisAlignedBoundingBox& bbox) {
+DynamicWorld::BBoxBody DynamicWorld::bboxObj(BBoxCallback* cb, const asset::Aabb& bbox) {
   return BBoxBody(this,cb,bbox);
   }
 
@@ -3845,7 +3845,7 @@ Tempest::Matrix4x4 DynamicWorld::BulletBody::matrix() const {
   return mat;
   }
 
-DynamicWorld::BBoxBody::BBoxBody(DynamicWorld* ow, BBoxCallback* cb, const zenkit::AxisAlignedBoundingBox& bbox)
+DynamicWorld::BBoxBody::BBoxBody(DynamicWorld* ow, BBoxCallback* cb, const asset::Aabb& bbox)
   :owner(ow),cb(cb) {
   const auto extent = Tempest::Vec3(bbox.max.x-bbox.min.x,bbox.max.y-bbox.min.y,bbox.max.z-bbox.min.z)*0.5f;
   const auto center = Tempest::Vec3(bbox.max.x+bbox.min.x,bbox.max.y+bbox.min.y,bbox.max.z+bbox.min.z)*0.5f;

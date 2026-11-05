@@ -21,14 +21,8 @@ static_assert(sizeof(AnimationSample)==sizeof(zenkit::AnimationSample));
 static_assert(alignof(AnimationSample)==alignof(zenkit::AnimationSample));
 static_assert(offsetof(AnimationSample,position)==offsetof(zenkit::AnimationSample,position));
 static_assert(offsetof(AnimationSample,rotation)==offsetof(zenkit::AnimationSample,rotation));
-static_assert(std::is_same_v<decltype(AnimationSample::position),decltype(zenkit::AnimationSample::position)>);
-static_assert(std::is_same_v<decltype(AnimationSample::rotation),decltype(zenkit::AnimationSample::rotation)>);
 static_assert(offsetof(AnimationSample,position)==0);
 static_assert(offsetof(AnimationSample,rotation)==3*sizeof(float));
-static_assert(offsetof(zenkit::Quat,w)==0);
-static_assert(offsetof(zenkit::Quat,x)==sizeof(float));
-static_assert(offsetof(zenkit::Quat,y)==2*sizeof(float));
-static_assert(offsetof(zenkit::Quat,z)==3*sizeof(float));
 static_assert(AnimationEvent::VMAX==zenkit::AnimationEvent::VMAX);
 static_assert(std::is_same_v<std::underlying_type_t<AnimationEventType>,std::underlying_type_t<zenkit::AnimationEventType>>);
 static_assert(std::is_same_v<std::underlying_type_t<MdsEventType>,std::underlying_type_t<zenkit::MdsEventType>>);
@@ -141,10 +135,10 @@ ModelHierarchy fromZenKit(const zenkit::ModelHierarchy& s) {
   ModelHierarchy m;
   m.nodes.reserve(s.nodes.size());
   for(const auto& n:s.nodes)
-    m.nodes.push_back({n.parent_index,n.name,n.transform});
-  m.bbox=s.bbox;
-  m.collision_bbox=s.collision_bbox;
-  m.root_translation=s.root_translation;
+    m.nodes.push_back({n.parent_index,n.name,fromZenKit(n.transform)});
+  m.bbox=fromZenKit(s.bbox);
+  m.collision_bbox=fromZenKit(s.collision_bbox);
+  m.root_translation=fromZenKit(s.root_translation);
   m.checksum=s.checksum;
   m.source_date=modelDate(s.source_date);
   m.source_path=s.source_path;
@@ -162,14 +156,14 @@ ModelAnimation fromZenKit(const zenkit::ModelAnimation& s) {
   m.fps_source=s.fps_source;
   m.sample_position_min=s.sample_position_min;
   m.sample_position_scale=s.sample_position_scale;
-  m.bbox=s.bbox;
+  m.bbox=fromZenKit(s.bbox);
   m.checksum=s.checksum;
   m.source_path=s.source_path;
   m.source_date=modelDate(s.source_date);
   m.source_script=s.source_script;
   m.samples.reserve(s.samples.size());
   for(const auto& sample:s.samples)
-    m.samples.push_back({sample.position,sample.rotation});
+    m.samples.push_back({fromZenKit(sample.position),fromZenKit(sample.rotation)});
   m.events.reserve(s.events.size());
   for(const auto& e:s.events) {
     AnimationEvent event;
@@ -216,11 +210,16 @@ MorphMesh fromZenKit(const zenkit::MorphMesh& s) {
   MorphMesh m;
   m.name=s.name;
   m.mesh=fromZenKit(s.mesh);
-  m.morph_positions=s.morph_positions;
+  m.morph_positions.reserve(s.morph_positions.size());
+  for(const auto& v:s.morph_positions) m.morph_positions.push_back(fromZenKit(v));
   m.animations.reserve(s.animations.size());
-  for(const auto& a:s.animations)
-    m.animations.push_back({a.name,a.layer,a.blend_in,a.blend_out,a.duration,a.speed,
-                            a.flags,a.frame_count,a.vertices,a.samples});
+  for(const auto& a:s.animations) {
+    MorphAnimation animation{a.name,a.layer,a.blend_in,a.blend_out,a.duration,a.speed,
+                             a.flags,a.frame_count,a.vertices,{}};
+    animation.samples.reserve(a.samples.size());
+    for(const auto& v:a.samples) animation.samples.push_back(fromZenKit(v));
+    m.animations.push_back(std::move(animation));
+    }
   m.sources.reserve(s.sources.size());
   for(const auto& source:s.sources)
     m.sources.push_back({modelDate(source.file_date),source.file_name});

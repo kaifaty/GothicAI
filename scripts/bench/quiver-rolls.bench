@@ -1,0 +1,231 @@
+# The quiver behind the right hip in the hero's melee dodges and on the ground (reports/archery/2026-11-05-quiver-rolls):
+# a one-hander in hand at 1H talent 1 (HUMANS_1HST1), the bow and the quiver worn. Medium armour (ITAR_MIL_M): the roll
+# four ways; heavy (ITAR_PAL_H): the slow roll four ways (forward with melee_barge off) and the shoulder barge; light
+# (ITAR_Leather_L): the dash forward and right. One dodge a clip, 0.5 s before and after; each writes its
+# `melee dodge PC_HERO: ...` line after its `rec`. Then on the ground: sneaking in light leather and the fire mage's
+# robe (ITAR_KDF_H), an npc bowman sitting down by a campfire, the hero knocked down for real (posture stun and a
+# two-hander). Onar's field, open and level, 16:00; the hero faces 210, the sun in front on the right of the camera
+# 2 m behind him on the right (on the ground: view full; the knockdown from above on his right side, 2.3 m from him).
+# slowmo 4: a row of metrics.csv is 1/120 s of the game; rolls.py makes the clips (real time and 2x slower, 60 fps).
+# Columns (graphics/mesh/quiver): qv_leg/qv_legt/qv_legl (the legs), qv_arm, qv_armor, qv_trunk (pelvis and spine
+# points), qv_swing, qv_yield, qv_ax/ay/az (the axis); qv_gnd, qv_gndm, qv_gndt (cm the tube, its mouth, the tube from
+# 16.75 cm down go under the world's collision), qv_botup (cm the bottom is over the ground), qv_gmode (1: the ground
+# pushes it, 2: back from it), qv_gon (rays on), qv_clear (cm the tube's lowest point is over the ground), qv_rays,
+# qv_rayus, qv_cpu (the step's CPU time on its thread), qv_need* (the least turn out of the ground, ignoring the body).
+# TEMPEST_WINDOW_SIZE=1280x720 WORLD=NEWWORLD.ZEN BENCH_HOST=local
+# OPENGOTHIC_CONTENT=<models of anim-strikes + meshes, materials of quiver>
+seed 73013
+cheat god
+set time 16 0
+release all
+view clean
+overlay off
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 210
+wait 500
+clear 3000
+watch player
+equip ItRw_Bow_L_01
+equip ITAR_MIL_M
+arrows player 20
+melee-shadow weapon 1h
+stats 1h 45 talent 1
+animinfo T_1HROLLB T_1HROLLL T_1HROLLR T_1HROLLF T_1HROLLHEAVYB T_1HROLLHEAVYL T_1HROLLHEAVYR T_1HROLLHEAVYF T_1HBARGE T_1HDASHF T_1HDASHR
+cam look 95
+cam follow 200 115 -135
+slowmo 4
+wait 2000
+rec probe_frame
+wait 200
+stop
+
+# --- medium: the roll
+rec mil_roll_back
+wait 500
+dodge player back
+wait 1520
+stop
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 210
+melee-shadow weapon 1h
+stats 1h 45 talent 1
+wait 2000
+rec mil_roll_left
+wait 500
+dodge player left
+wait 1520
+stop
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 210
+melee-shadow weapon 1h
+stats 1h 45 talent 1
+wait 2000
+rec mil_roll_right
+wait 500
+dodge player right
+wait 1520
+stop
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 210
+melee-shadow weapon 1h
+stats 1h 45 talent 1
+wait 2000
+rec mil_roll_forward
+wait 500
+dodge player forward
+wait 1520
+stop
+
+# --- heavy: the slow roll, forward with the barge off
+equip ITAR_PAL_H
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 210
+melee-shadow weapon 1h
+stats 1h 45 talent 1
+wait 2000
+rec pal_heavyroll_back
+wait 500
+dodge player back
+wait 1880
+stop
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 210
+melee-shadow weapon 1h
+stats 1h 45 talent 1
+wait 2000
+rec pal_heavyroll_left
+wait 500
+dodge player left
+wait 1880
+stop
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 210
+melee-shadow weapon 1h
+stats 1h 45 talent 1
+wait 2000
+rec pal_heavyroll_right
+wait 500
+dodge player right
+wait 1880
+stop
+toggle melee_barge
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 210
+melee-shadow weapon 1h
+stats 1h 45 talent 1
+wait 2000
+rec pal_heavyroll_forward
+wait 500
+dodge player forward
+wait 1880
+stop
+toggle melee_barge
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 210
+melee-shadow weapon 1h
+stats 1h 45 talent 1
+wait 2000
+rec pal_barge_forward
+wait 500
+dodge player forward
+wait 1640
+stop
+
+# --- light: the dash, to compare
+equip ITAR_Leather_L
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 210
+melee-shadow weapon 1h
+stats 1h 45 talent 1
+wait 2000
+rec lea_dash_forward
+wait 500
+dodge player forward
+wait 1200
+stop
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 210
+melee-shadow weapon 1h
+stats 1h 45 talent 1
+wait 2000
+rec lea_dash_right
+wait 500
+dodge player right
+wait 1200
+stop
+
+# --- the quiver on the ground, no thresholds. Sneaking with the bow on the back: light leather and the fire
+# mage's robe (ITAR_KDF_H); the hero puts his sword away first
+tap weapon
+wait 1500
+equip ITAR_Leather_L
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 210
+wait 1500
+walkmode sneak
+rec lea_sneak
+wait 500
+hold forward 3000
+wait 3000
+release all
+wait 500
+stop
+walkmode run
+equip ITAR_KDF_H
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 210
+wait 1500
+walkmode sneak
+rec kdf_sneak
+wait 500
+hold forward 3000
+wait 3000
+release all
+wait 500
+stop
+walkmode run
+
+# On the ground the camera looks down at the body: `view clean` would clip the ground before it (grey)
+view full
+# An npc bowman in ITAR_MIL_M sits down on the ground (as by a campfire), 3 m in front of the hero, facing 210 as
+# he did; frozen (`put`), not to draw his weapon at the hero
+equip ITAR_Leather_L
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 30
+wait 300
+insert BAU_904_BAUER
+wait 300
+npcequip BAU_904_BAUER ItRw_Bow_L_01
+npcequip BAU_904_BAUER ITAR_MIL_M
+arrows BAU_904_BAUER 20
+put BAU_904_BAUER 300 0
+watch BAU_904_BAUER
+cam follow 200 115 -135
+wait 1500
+rec npc_sit_ground
+wait 500
+ani BAU_904_BAUER T_STAND_2_SIT force
+wait 3500
+stop
+put BAU_904_BAUER 2500 90
+watch player
+wait 300
+
+# The hero knocked down for real, the bow on his back, nothing frozen: a mercenary's two-hander on him stunned by
+# posture (as knockdown-launch), from the blow till he is up again. Whether the bow (and the quiver) stays on
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 210
+wait 500
+arc SLD_826_SOELDNER 1 150 0
+freeze SLD_826_SOELDNER
+knockdown-launch-equip
+watch player
+cam follow 150 170 -90
+cam look 0
+wait 1500
+rec hero_knockdown
+wait 500
+stun player posture
+strike player SLD_826_SOELDNER
+wait 6000
+stop

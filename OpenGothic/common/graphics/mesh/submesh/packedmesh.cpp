@@ -170,7 +170,7 @@ void PackedMesh::Meshlet::flush(std::vector<Vertex>& vertices,
 void PackedMesh::Meshlet::flush(std::vector<Vertex>& vertices, std::vector<VertexA>& verticesA,
                                 std::vector<uint32_t>& indices, std::vector<uint8_t>& indices8,
                                 std::vector<uint32_t>* verticesId,
-                                const std::vector<zenkit::Vec3>& vboList,
+                                const std::vector<asset::Vec3>& vboList,
                                 const std::vector<asset::MeshWedge>& wedgeList,
                                 const std::vector<SkeletalData>* skeletal) {
   if(indSz==0)
@@ -352,7 +352,7 @@ void PackedMesh::Meshlet::updateBounds(const asset::StaticMesh& mesh) {
   updateBounds(mesh.positions);
   }
 
-void PackedMesh::Meshlet::updateBounds(const std::vector<zenkit::Vec3>& vbo) {
+void PackedMesh::Meshlet::updateBounds(const std::vector<asset::Vec3>& vbo) {
   float dim = 0;
   for(size_t i=0; i<vertSz; ++i)
     for(size_t r=i+1; r<vertSz; ++r) {

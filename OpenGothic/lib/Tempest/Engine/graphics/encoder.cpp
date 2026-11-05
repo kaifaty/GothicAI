@@ -331,6 +331,20 @@ void Encoder<CommandBuffer>::upscale(const Attachment& src, StorageImage& dst) {
   state.stage       = None;
   }
 
+void Encoder<CommandBuffer>::upscaleTemporal(const Attachment& color, const ZBuffer& depth, const Attachment& motion,
+                                             StorageImage& dst, const TemporalUpscaleDesc& desc) {
+  if(state.stage==Rendering)
+    throw std::system_error(Tempest::GraphicsErrc::ComputeCallInRenderPass);
+  if(!color.tImpl.impl.handler || !depth.tImpl.impl.handler || !motion.tImpl.impl.handler || !dst.tImpl.impl.handler)
+    throw std::system_error(Tempest::GraphicsErrc::InvalidTexture);
+  impl->upscaleTemporal(*color.tImpl.impl.handler, *depth.tImpl.impl.handler, *motion.tImpl.impl.handler,
+                        *dst.tImpl.impl.handler, desc);
+  // MetalFX closes whatever encoder was open
+  state.curPipeline = nullptr;
+  state.curCompute  = nullptr;
+  state.stage       = None;
+  }
+
 void Encoder<CommandBuffer>::generateMipmaps(Attachment& tex) {
   uint32_t w = tex.w(), h = tex.h();
   impl->generateMipmap(*textureCast<Texture2d&>(tex).impl.handler,w,h,mipCount(w,h));

@@ -153,7 +153,7 @@ struct FeatureKey {
 
 struct Corner {
   VertexKey         vertex;
-  zenkit::Vec3      position;
+  asset::Vec3      position;
   FeatureKey        feature;
   asset::VertexFeature value;
   };

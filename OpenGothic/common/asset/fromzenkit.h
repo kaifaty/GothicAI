@@ -1,5 +1,7 @@
 #pragma once
 
+#include <zenkit/Boxes.hh>
+
 #include "font.h"
 #include "staticmesh.h"
 #include "modeltypes.h"
@@ -24,6 +26,15 @@ class BspTree;
 }
 
 namespace asset {
+Vec2 fromZenKit(const zenkit::Vec2& source);
+Vec3 fromZenKit(const zenkit::Vec3& source);
+Vec4 fromZenKit(const zenkit::Vec4& source);
+Quat fromZenKit(const zenkit::Quat& source);
+Mat3 fromZenKit(const zenkit::Mat3& source);
+Mat4 fromZenKit(const zenkit::Mat4& source);
+Color fromZenKit(const zenkit::Color& source);
+Aabb fromZenKit(const zenkit::AxisAlignedBoundingBox& source);
+Obb fromZenKit(const zenkit::OrientedBoundingBox& source);
 Material fromZenKit(const zenkit::Material& source);
 WorldMesh fromZenKit(const zenkit::Mesh& source);
 StaticMesh fromZenKit(const zenkit::MultiResolutionMesh& source);

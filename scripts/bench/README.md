@@ -404,6 +404,9 @@ struck standing and while aiming a bow, where the game has no stumble; a wolf: t
 Lip sync: `lips` (Xardas says a voiced line of the game, the camera at his face; then the same line
 with the old talk loop), `lips-dialog` (the hero talks to Xardas through the dialog window and picks
 the first choice: the lines of both are played the way the game plays them).
+The hero's head: `hero-head` (his face close up - still, the moods of the AI lines, a voiced dialog line - and
+running from behind in the market; the clips of the original and of the new head, side by side,
+[step 0](../../reports/content/2026-11-hero-head/test-head.md)).
 Faces: `faces` (the face animations of a head one after another, then two of them while Xardas speaks),
 `face-fade` (faces fade in and out, one gives way to the next, three a moment apart, the lips over a
 fading face), `mood-ai` (given lines of an AI server with moods: start `gothic-ai serve --scenario m1 --llm off
@@ -1285,6 +1288,9 @@ explain the bounds and remaining combat/body work. `npcday` files:
 | `npc-day-events.csv` | Polled every world tick: `zs_start`/`zs_end`, `ta` (routine entry change), `death`/`revive`, `insert`/`remove`, with game minutes and position |
 | `npc-day-cost.csv` | Per sample: wall seconds, NPCs within 30/60 m of the hero, world ticks, NPCs per tier, tier transitions, `Npc::tick` milliseconds and NPC-tick counts per tier, plus Simplified combat ticks using the native executor since the previous sample |
 | `npc-day-arrivals.csv` | Audit-only exact terminal arrivals, observed movement start, final goal identity, actor/target position, ZS, queue and executor; it adds no records to the strict samples/events files. |
+
+The society stand's core is checked against the same journal: `scripts/society_parity.py` compares its marks
+with `npc-day.csv` and the `ta` events of `npc-day-events.csv` (people only; [how](../../docs/society-sim.md#проверка-самого-стенда)).
 
 Every NPC gets a private script random stream (`GameScript::isolateRandom`, seed from `seed`, stream from
 the key), so one NPC's extra `Hlp_Random` or dice roll does not shift every later NPC's numbers; `shared`

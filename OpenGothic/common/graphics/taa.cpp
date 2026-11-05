@@ -99,10 +99,24 @@ float Taa::halton(uint32_t index, uint32_t base) {
   return r;
   }
 
-Vec2 Taa::jitterPx(uint32_t frame) {
+Vec2 Taa::jitterPx(uint32_t frame, uint32_t phases) {
   // from 1: index 0 of Halton is 0 in both dimensions, a corner of the pixel
-  const uint32_t i = frame%Phases + 1;
+  const uint32_t i = frame%std::max(phases,1u) + 1;
   return Vec2(halton(i,2) - 0.5f, halton(i,3) - 0.5f);
+  }
+
+uint32_t Taa::upscalePhases(uint32_t inW, uint32_t inH, uint32_t outW, uint32_t outH) {
+  const double in  = double(std::max(inW,1u))*double(std::max(inH,1u));
+  const double out = double(outW)*double(outH);
+  // a hair below the integer: 2x by the area is 32 phases, not 33 from a rounding of the sizes
+  const double n   = std::ceil(8.0*out/in - 1e-3);
+  return uint32_t(std::clamp(n, double(Phases), 1024.0));
+  }
+
+float Taa::upscaleMipBias(uint32_t inW, uint32_t outW) {
+  if(inW==0 || outW==0)
+    return 0;
+  return float(std::log2(double(inW)/double(outW)) - 1.0);
   }
 
 Matrix4x4 Taa::jitterMatrix(const Vec2& px, uint32_t w, uint32_t h) {

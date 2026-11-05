@@ -13,6 +13,7 @@
 #include "physics/charactervirtualdiagnostics.h"
 #include "game/followtrail.h"
 #include "game/knownroadsbench.h"
+#include "game/navigationpassage.h"
 #include "game/navperceptionbench.h"
 #include "game/navperceptionsafety.h"
 #include "world/world.h"
@@ -74,6 +75,13 @@ struct Episode {
   // Follow carrot: the leader's trail (default) or the straight line ("line").
   FollowTrail followTrail;
   bool followLine=false,followRun=true;
+  // Teacher comparison switches and forced pace (0 own, 1 walk, 2 run; follow keeps followRun).
+  bool teacherBodyExit=true,followLostAside=true;
+  uint8_t teacherPace=0;
+  // Where the driving teacher stands (no forward/strafe key) far from its goal, by rule.
+  std::array<uint64_t,size_t(NavMemoryTeacher::Branch::Count)> teacherBranches={},teacherFarIdle={};
+  uint64_t teacherFarDecisions=0,teacherStallTraceAt=0;
+  bool teacherStallPrevious=false;
   std::array<uint64_t,size_t(FollowTrail::Source::Count)> followSources={};
   FollowTrail::Source followSource=FollowTrail::Source::Count;
   bool followVisibleNow=false;
@@ -143,6 +151,15 @@ struct Episode {
   std::deque<DaggerMotionSample> daggerMotion;
   std::mt19937_64 mixingRng,actionRng,dartRng;
   KnownRoads::Guidance guidance;
+  // Point goals: road progress per decision, and how often memory let progress
+  // take a later stretch or moved the start of a rebuilt route (roads-guidance.txt).
+  std::ofstream roadsGuidance;
+  uint64_t roadsCatchUps=0,roadsRebuilds=0,roadsStartsMoved=0,roadsStartFallbacks=0,roadsStartDepartures=0;
+  uint64_t roadsProjectionsRejected=0;
+  // Diagnosis only (OPENGOTHIC_NAV_ROADS_CLOSED_TRACE=N): at each rebuild every
+  // passage verdict and the memory cell that closed it, at most N lines.
+  std::ofstream roadsClosed;
+  uint64_t roadsClosedLines=0,roadsClosedLimit=0;
   uint64_t began=0,limit=240000,next=0,decisions=0,frames=0,cvFrames=0;
   uint64_t progressAt=0;
   float best=std::numeric_limits<float>::max();
@@ -231,6 +248,8 @@ struct Settings {
   bool perceptionMonitor=false;
   bool dagger=false;
   bool followLine=false,followRun=true;
+  bool teacherBodyExit=true,followLostAside=true;
+  uint8_t teacherPace=0;
   uint32_t driveTeacher=0;
   bool live=false,liveTargetPlayer=false,liveGuidePlayer=false,liveTargetWalkOnly=false;
   NavigationEye::FloorSampling floorSampling=NavigationEye::FloorSampling::WalkingGazeDown;
@@ -293,6 +312,27 @@ std::ofstream file(Episode& ep,const char* name) {
   if(!out)throw std::runtime_error(std::string("navdemos cannot write ")+name);
   out<<std::setprecision(9)<<std::boolalpha;return out;
 }
+// The walker's own memory decides where familiar-road progress may cut a loop
+// of the road and where a rebuilt route may start (game/navigationpassage.h).
+KnownRoads::Passage roadsPassage(NavigationPassage::Verdict verdict) {
+  switch(verdict) {
+    case NavigationPassage::Verdict::Free: return KnownRoads::Passage::Free;
+    case NavigationPassage::Verdict::Closed: return KnownRoads::Passage::Closed;
+    case NavigationPassage::Verdict::Unknown: break;
+  }
+  return KnownRoads::Passage::Unknown;
+}
+KnownRoads::PassageCheck memoryPassage(const NavigationMemory::View& view) {
+  return [&view](const Vec3& from,const Vec3& to) {
+    return roadsPassage(NavigationPassage::check(view,from,to,FollowTrail::corridorCm,FollowTrail::footprintCm));
+  };
+}
+// Diagnosis: the same verdicts, with the cell that closed each passage.
+struct RoadsPassageCall {
+  Vec3 from,to;
+  KnownRoads::Passage verdict=KnownRoads::Passage::Unknown;
+  NavigationPassage::Closing closing;
+};
 void trajectory(Episode& ep,uint64_t elapsed) {
   if(!ep.record)return;
   const auto p=NpcKeys::physicalPosition(*ep.npc);
@@ -453,6 +493,7 @@ void finish(Episode& ep,World& world) {
   }
   if(!ep.replay) {NpcKeys::KeyState end;end.walk=true;action(ep,elapsed,end);if(ep.writer)ep.writer->finish();}
   ep.trajectory.close();ep.actions.close();ep.knownPaths.close();ep.teacherPaths.close();ep.transitionFrames.close();ep.samples.close();ep.targetTrajectory.close();ep.perceptionSafetyFrames.close();ep.perceptionWaterObservations.close();
+  ep.roadsGuidance.close();ep.roadsClosed.close();
   if(ep.live) ep.live->finish();
   if(ep.live || (ep.goalKind=="follow" && ep.target))ep.npc->setCharacterVirtualDiagnosticsEnabled(false);
   auto out=file(ep,"episode.json");
@@ -466,6 +507,10 @@ void finish(Episode& ep,World& world) {
      <<",\"navigation_memory_version\":"<<ep.memory.representationVersion()
      <<",\"journey_memory\":"<<ep.memory.journeyMemoryEnabled()
      <<",\"familiar_map\":"<<ep.memory.familiarMapEnabled()
+     <<",\"roads_rebuilds\":"<<ep.roadsRebuilds<<",\"roads_catch_ups\":"<<ep.roadsCatchUps
+     <<",\"roads_starts_moved\":"<<ep.roadsStartsMoved<<",\"roads_start_fallbacks\":"<<ep.roadsStartFallbacks
+     <<",\"roads_start_departures\":"<<ep.roadsStartDepartures
+     <<",\"roads_projections_rejected\":"<<ep.roadsProjectionsRejected
      <<",\"memory_update_us\":"<<(ep.memoryUpdates?ep.memoryUpdateUs/double(ep.memoryUpdates):0.)
      <<",\"memory_view_us\":"<<(ep.memoryViews?ep.memoryViewUs/double(ep.memoryViews):0.)
      <<",\"memory_updates\":"<<ep.memoryUpdates<<",\"memory_views\":"<<ep.memoryViews
@@ -491,6 +536,20 @@ void finish(Episode& ep,World& world) {
   else {
     out<<"null";
   }
+  if(ep.teacherVersion==3 && !ep.drive) {
+    // The driving teacher's rules over all its decisions, and those standing far from the goal.
+    const auto counts=[&](const char* key,const auto& values) {
+      out<<",\""<<key<<"\":{";
+      for(size_t i=0;i<values.size();++i)
+        out<<(i?",":"")<<std::quoted(NavMemoryTeacher::name(NavMemoryTeacher::Branch(i)))<<':'<<values[i];
+      out<<'}';
+    };
+    out<<",\"teacher_body_exit\":"<<std::quoted(ep.teacherBodyExit?"on":"off")
+       <<",\"teacher_pace\":"<<std::quoted(ep.teacherPace==0?"own":ep.teacherPace==1?"walk":"run")
+       <<",\"teacher_far_decisions\":"<<ep.teacherFarDecisions;
+    counts("teacher_branches",ep.teacherBranches);
+    counts("teacher_far_idle",ep.teacherFarIdle);
+  }
   out<<",\"decisions\":"<<ep.decisions<<",\"record_us_mean\":"<<(ep.decisions?ep.writeUs/double(ep.decisions):0)
      <<",\"record_us_max\":"<<ep.maxWriteUs<<",\"wall_seconds\":"<<seconds
      <<",\"decisions_per_second\":"<<double(ep.decisions)/seconds<<",\"frames\":"<<ep.frames
@@ -508,6 +567,7 @@ void finish(Episode& ep,World& world) {
        <<",\"follow_far_ms\":"<<ep.followFarMs<<",\"follow_near_ms\":"<<ep.followNearMs;
   if(ep.teacherVersion>=2 && ep.goalKind=="follow" && ep.target) {
     out<<",\"follow_guidance\":"<<std::quoted(ep.followLine?"line":"trail")<<",\"follow_run\":"<<std::quoted(ep.followRun?"on":"off")
+       <<",\"follow_lost\":"<<std::quoted(ep.followLostAside?"aside":"last_seen")
        <<",\"follow_visible_decisions\":"<<ep.followVisibleDecisions
        <<",\"follow_contact_entries\":"<<ep.followContactEntries
        <<",\"follow_contact_decisions\":"<<ep.followContactDecisions
@@ -1378,7 +1438,8 @@ void bootstrap(Episode& ep,World& w) {
   // action or GRU step. Road progress is refreshed on a private guidance copy.
   observe(ep,w);
   auto guidance=ep.guidance;
-  KnownRoadsBench::readGuidance(w,*ep.npc,NpcKeys::physicalPosition(*ep.npc),ep.goal,guidance);
+  ep.memory.view(ep.view);
+  KnownRoadsBench::readGuidance(w,*ep.npc,NpcKeys::physicalPosition(*ep.npc),ep.goal,guidance,memoryPassage(ep.view));
   const auto sample=snapshot(ep,w,&guidance);
   const auto features=policyFeatures(ep,sample);
   std::vector<NonfiniteObservation::Field> fields;
@@ -1641,8 +1702,69 @@ bool followVisible(const Episode& ep,World& w) {
   const auto hit=physics->navigationRay(eye,body,ep.npc);
   return !hit.hasCol || (hit.kind==DynamicWorld::NavigationHit::Npc && (hit.point-body).length()<=80.f);
 }
+void traceRoadsClosed(Episode& ep,uint64_t elapsed,const std::vector<RoadsPassageCall>& calls) {
+  if(!ep.roadsClosed.is_open() || !ep.guidance.rebuilt)return;
+  auto& out=ep.roadsClosed;
+  const auto byte=[](float value) {return unsigned(std::lround(std::clamp(value,0.f,1.f)*255.f));};
+  for(const auto& call:calls) {
+    if(ep.roadsClosedLines>=ep.roadsClosedLimit)break;
+    ++ep.roadsClosedLines;
+    out<<"{\"elapsed_ms\":"<<elapsed<<",\"position_cm\":";vector(out,call.from);
+    out<<",\"to_cm\":";vector(out,call.to);
+    out<<",\"to_distance_cm\":"<<(call.to-call.from).length()<<",\"verdict\":"
+       <<std::quoted(call.verdict==KnownRoads::Passage::Closed?"closed":call.verdict==KnownRoads::Passage::Free?"free":"unknown");
+    if(call.verdict==KnownRoads::Passage::Closed) {
+      const auto& c=call.closing;
+      auto offset=c.center-call.from;offset.y=0;
+      // "Under the body": the cell reaches within 40 cm of the feet.
+      const float distance=offset.length();
+      out<<",\"layer\":"<<std::quoted(c.far?"far":"near")<<",\"cell_cm\":"<<c.cellCm
+         <<",\"cell_center_cm\":["<<c.center.x<<','<<c.center.z<<"],\"cell_distance_cm\":"<<distance
+         <<",\"under_body\":"<<(distance-c.cellCm*.5f<=40.f)<<",\"along_cm\":"<<c.alongCm
+         <<",\"channels\":{\"confidence\":"<<byte(c.cell.confidence)<<",\"free\":"<<byte(c.cell.free)
+         <<",\"wall\":"<<byte(c.cell.wall)<<",\"ledge\":"<<byte(c.cell.ledge)<<",\"drop\":"<<byte(c.cell.drop)
+         <<",\"water\":"<<byte(c.cell.water)<<",\"movable\":"<<byte(c.cell.movable)<<",\"familiar\":"<<byte(c.cell.familiar)<<'}';
+    }
+    out<<"}\n";
+  }
+  if(!out)throw std::runtime_error("navdemos roads closed trace write failed");
+}
+void traceRoads(Episode& ep,uint64_t elapsed) {
+  const auto& g=ep.guidance;
+  ep.roadsRebuilds+=g.rebuilt;ep.roadsCatchUps+=g.caughtUp;ep.roadsProjectionsRejected+=g.projectionRejected;
+  ep.roadsStartsMoved+=g.rebuilt && g.route.startSkipped>0;ep.roadsStartFallbacks+=g.rebuilt && g.route.startFallback;
+  ep.roadsStartDepartures+=g.rebuilt && g.route.startDeparture;
+  if(!ep.roadsGuidance.is_open())return;
+  auto& out=ep.roadsGuidance;
+  out<<"d "<<elapsed<<' '<<g.progressCm<<' '<<int(g.rebuilt)<<' '<<int(g.caughtUp)<<' '<<int(g.beyondKnown)<<' '
+     <<g.route.startSkipped<<' '<<int(g.route.startFallback)+int(g.route.startDeparture)<<' '<<g.carrot.x<<' '<<g.carrot.y<<' '<<g.carrot.z<<' '
+     <<g.remainingKnownCm<<' '<<int(g.projectionRejected)<<'\n';
+  if(g.rebuilt) {
+    out<<"p "<<g.polyline.size();
+    for(const auto& point:g.polyline)out<<' '<<point.x<<' '<<point.y<<' '<<point.z;
+    out<<'\n';
+  }
+  if(!out)throw std::runtime_error("navdemos roads guidance write failed");
+}
 void guidanceFor(Episode& ep,World& w,const Vec3& position) {
-  if(ep.goalKind=="point")KnownRoadsBench::readGuidance(w,*ep.npc,position,ep.goal,ep.guidance);
+  if(ep.goalKind=="point") {
+    ep.memory.view(ep.view);
+    if(ep.roadsClosed.is_open() && ep.roadsClosedLines<ep.roadsClosedLimit) {
+      std::vector<RoadsPassageCall> calls;
+      KnownRoads::PassageCheck check=[&](const Vec3& from,const Vec3& to) {
+        RoadsPassageCall call;call.from=from;call.to=to;
+        call.verdict=roadsPassage(NavigationPassage::scan(ep.view,from,to,FollowTrail::corridorCm,
+                                                          FollowTrail::footprintCm,&call.closing));
+        calls.push_back(call);
+        return call.verdict;
+      };
+      KnownRoadsBench::readGuidance(w,*ep.npc,position,ep.goal,ep.guidance,check);
+      traceRoadsClosed(ep,w.tickCount()-ep.began,calls);
+    }
+    else
+      KnownRoadsBench::readGuidance(w,*ep.npc,position,ep.goal,ep.guidance,memoryPassage(ep.view));
+    traceRoads(ep,w.tickCount()-ep.began);
+  }
   else {
     ep.guidance={};ep.guidance.carrot=ep.goal;ep.guidance.beyondKnown=true;
     if(ep.goalKind=="follow") {
@@ -1721,6 +1843,18 @@ void decideMemory(Episode& ep,World& w,uint64_t elapsed) {
   sample.keys=ep.memoryTeacher.decide(input);++ep.replans;
   // The game sets the pace: a companion always runs after its object.
   if(ep.goalKind=="follow" && ep.followRun)sample.keys.walk=false;
+  // A stand comparison may force the teacher's pace off follow, as --force-pace does for a policy.
+  if(!ep.drive && ep.goalKind!="follow" && ep.teacherPace!=0)sample.keys.walk=ep.teacherPace==1;
+  const auto branch=ep.memoryTeacher.lastBranch();
+  if(!ep.drive) {
+    // Far from the goal: outside the follow band, otherwise beyond 2 m.
+    const float far=ep.goalKind=="follow"?500.f:200.f;
+    ++ep.teacherBranches[size_t(branch)];
+    if((position-ep.goal).length()>far) {
+      ++ep.teacherFarDecisions;
+      if(sample.keys.forward==0 && sample.keys.strafe==0)++ep.teacherFarIdle[size_t(branch)];
+    }
+  }
   ep.maneuverMasked=false;
   if(ep.dagger) {
     sample.keys.jump=false;sample.keys.climb=false;
@@ -1756,6 +1890,35 @@ void decideMemory(Episode& ep,World& w,uint64_t elapsed) {
     }
     for(size_t k=0;k<8;++k)out<<(k?",":"")<<bytes[k];
     out<<']';
+  }
+  {
+    const auto& status=ep.memoryTeacher.lastPlanStatus();
+    out<<",\"teacher_branch\":"<<std::quoted(NavMemoryTeacher::name(branch))<<",\"body_exit_cm\":"<<status.bodyExitCm;
+    // Diagnosis only (OPENGOTHIC_NAV_STALL_TRACE=1): at the first decision of every
+    // stretch without a start cell, then every 5 s of it, the near memory around the
+    // feet (+-10 cells) next to the navmesh truth in the same body frame.
+    const auto* traced=std::getenv("OPENGOTHIC_NAV_STALL_TRACE");
+    const bool stalled=!status.startFound;
+    if(traced && std::string_view(traced)=="1" && stalled && (!ep.teacherStallPrevious || elapsed>=ep.teacherStallTraceAt+5000)) {
+      ep.teacherStallTraceAt=elapsed;
+      const auto raster=NavBench::navigationMesh(w).rasterLocal(meters(position),ep.npc->rotation());
+      const auto& near=sample.memory->near;
+      out<<",\"stall_patch\":{\"feet_y_cm\":"<<position.y<<",\"support\":"<<raster.supportValid<<",\"cells\":[";
+      bool first=true;
+      for(int z=int(near.size/2)-10;z<int(near.size/2)+10;++z)for(int x=int(near.size/2)-10;x<int(near.size/2)+10;++x) {
+        const auto& c=near.cells[size_t(z)*near.size+size_t(x)];
+        const auto& t=raster.near.cells[size_t(z)*raster.near.size+size_t(x)];
+        const auto byte=[](float v) {return unsigned(std::lround(v*255.f));};
+        out<<(first?"":",")<<'['<<x-int(near.size/2)<<','<<z-int(near.size/2)<<','<<byte(c.confidence)<<','<<byte(c.free)<<','
+           <<byte(c.wall)<<','<<byte(c.ledge)<<','<<byte(c.drop)<<','<<byte(c.water)<<','<<byte(c.movable)<<','<<byte(c.familiar)<<',';
+        if(std::isfinite(c.groundHeightCm))out<<std::lround(c.groundHeightCm-position.y);else out<<"null";
+        out<<','<<t.traversable<<','<<t.heightBoundary<<',';
+        if(t.heightValid)out<<std::lround(t.groundHeight*100.f-position.y);else out<<"null";
+        out<<']';first=false;
+      }
+      out<<"]}";
+    }
+    ep.teacherStallPrevious=stalled;
   }
   out<<",\"local_plan_cm\":[";
   for(size_t i=0;i<points.size();++i) {if(i)out<<',';out<<'['<<points[i].rightCm<<','<<points[i].forwardCm<<']';}
@@ -2505,6 +2668,17 @@ void NavDemos::command(const std::vector<std::string>& args,World& w,Npc& player
     settings.followLine=a[2]=="line";
     return;
   }
+  if(a.size()>=2 && (a[1]=="teacher-exit" || a[1]=="teacher-pace" || a[1]=="follow-lost")) {
+    // Comparison switches of the memory teacher's body exit and of the lost follow
+    // carrot, and the teacher's forced pace off follow (follow keeps follow-run).
+    if(running())throw std::runtime_error("navdemos cannot change teacher settings during an episode");
+    if(a[1]=="teacher-exit" && a.size()==3 && (a[2]=="on" || a[2]=="off"))settings.teacherBodyExit=a[2]=="on";
+    else if(a[1]=="follow-lost" && a.size()==3 && (a[2]=="aside" || a[2]=="last-seen"))settings.followLostAside=a[2]=="aside";
+    else if(a[1]=="teacher-pace" && a.size()==3 && (a[2]=="own" || a[2]=="walk" || a[2]=="run"))
+      settings.teacherPace=a[2]=="own"?0:a[2]=="walk"?1:2;
+    else throw std::runtime_error("navdemos teacher-exit on|off | teacher-pace own|walk|run | follow-lost aside|last-seen");
+    return;
+  }
   if(a.size()>=2 && a[1]=="follow-run") {
     if(running())throw std::runtime_error("navdemos cannot change the follow teacher pace during an episode");
     if(a.size()!=3 || (a[2]!="on" && a[2]!="off"))throw std::runtime_error("navdemos follow-run on|off");
@@ -2613,6 +2787,8 @@ void NavDemos::command(const std::vector<std::string>& args,World& w,Npc& player
     throw std::runtime_error("navdemos evaluation output already contains demonstration samples");
   }
   ep.goalKind=goalKind;ep.scenarioSeed=scenarioSeed;ep.followLine=settings.followLine;ep.followRun=settings.followRun;
+  ep.teacherBodyExit=settings.teacherBodyExit;ep.followLostAside=settings.followLostAside;ep.teacherPace=settings.teacherPace;
+  ep.memoryTeacher.setBodyExit(ep.teacherBodyExit);ep.followTrail.setLostAside(ep.followLostAside);
   ep.liveTargetPlayer=moving && settings.liveTargetPlayer;
   ep.liveTargetWalkOnly=ep.liveTargetPlayer && settings.liveTargetWalkOnly;
   ep.goal=goalPosition;ep.replay=replay;ep.drive=learner;
@@ -2775,6 +2951,13 @@ void NavDemos::command(const std::vector<std::string>& args,World& w,Npc& player
   }
   ep.minHeroDistanceCm=ep.maxHeroDistanceCm=(npc->position()-player.position()).length();
   ep.trajectory=file(ep,"trajectory.txt");
+  if(!replay && ep.goalKind=="point" && ep.teacherVersion>=2) {
+    ep.roadsGuidance=file(ep,"roads-guidance.txt");
+    if(const char* trace=std::getenv("OPENGOTHIC_NAV_ROADS_CLOSED_TRACE");trace && *trace) {
+      ep.roadsClosedLimit=std::stoull(trace);
+      if(ep.roadsClosedLimit>0)ep.roadsClosed=file(ep,"roads-closed.jsonl");
+    }
+  }
   if(replay) {
     std::ifstream input(a[5]);RecordedKeys row;int walk=0,jump=0,climb=0;
     while(input>>row.time>>row.keys.forward>>row.keys.strafe>>row.keys.turn>>walk>>jump>>climb>>row.keys.headYaw>>row.keys.headPitch) {

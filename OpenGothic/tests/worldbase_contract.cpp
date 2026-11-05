@@ -326,7 +326,7 @@ void worldDataContract(const zenkit::World& world, const WorldChunkSource& sourc
   const auto nz=uint64_t(std::ceil(double(bounds.max.z-bounds.min.z)/400.));
   size_t samples=0, indoor=0;
   for(uint64_t x=0;x<=nx;++x) for(uint64_t z=0;z<=nz;++z) for(unsigned h=0;h<3;++h) {
-    const zenkit::Vec3 p{bounds.min.x+(bounds.max.x-bounds.min.x)*float(double(x)/double(std::max(uint64_t(1),nx))),
+    const asset::Vec3 p{bounds.min.x+(bounds.max.x-bounds.min.x)*float(double(x)/double(std::max(uint64_t(1),nx))),
                          bounds.min.y+(bounds.max.y-bounds.min.y)*float(h+1)/4.f,
                          bounds.min.z+(bounds.max.z-bounds.min.z)*float(double(z)/double(std::max(uint64_t(1),nz)))};
     const auto expected=rooms.isIndoor({p.x,p.y,p.z});
@@ -461,7 +461,7 @@ void chunkContract(const fs::path& root) {
     const auto& chunk=table.entries[i];
     require(chunk.file==manifest.chunks[i],"chunk table file must match manifest order");
     uint32_t count=0;
-    zenkit::Vec3 minimum {},maximum {};
+    asset::Vec3 minimum {},maximum {};
     for(size_t t=0;t<table.triangleChunks.size();++t) {
       const auto& a=mesh.vertices[mesh.polygons.vertex_indices[t*3]];
       const auto& b=mesh.vertices[mesh.polygons.vertex_indices[t*3+1]];

@@ -158,36 +158,36 @@ struct BaseContentContract {
       modelField(a[i],b[i],field+"["+std::to_string(i)+"]");
     }
 
-  static void modelField(const zenkit::Vec2& a, const zenkit::Vec2& b, const std::string& field) {
+  static void modelField(const zenkit::Vec2& a, const asset::Vec2& b, const std::string& field) {
     modelField(a.x,b.x,field+".x"); modelField(a.y,b.y,field+".y");
     }
 
-  static void modelField(const zenkit::Vec3& a, const zenkit::Vec3& b, const std::string& field) {
+  static void modelField(const zenkit::Vec3& a, const asset::Vec3& b, const std::string& field) {
     modelField(a.x,b.x,field+".x"); modelField(a.y,b.y,field+".y"); modelField(a.z,b.z,field+".z");
     }
 
-  static void modelField(const zenkit::Quat& a, const zenkit::Quat& b, const std::string& field) {
+  static void modelField(const zenkit::Quat& a, const asset::Quat& b, const std::string& field) {
     modelField(a.w,b.w,field+".w"); modelField(a.x,b.x,field+".x");
     modelField(a.y,b.y,field+".y"); modelField(a.z,b.z,field+".z");
     }
 
-  static void modelField(const zenkit::Mat4& a, const zenkit::Mat4& b, const std::string& field) {
+  static void modelField(const zenkit::Mat4& a, const asset::Mat4& b, const std::string& field) {
     for(unsigned column=0;column<4;++column)
       for(unsigned row=0;row<4;++row)
         modelField(a[column][row],b[column][row],field+"["+std::to_string(column)+"]["+std::to_string(row)+"]");
     }
 
-  static void modelField(const zenkit::Color& a, const zenkit::Color& b, const std::string& field) {
+  static void modelField(const zenkit::Color& a, const asset::Color& b, const std::string& field) {
     modelField(a.r,b.r,field+".r"); modelField(a.g,b.g,field+".g");
     modelField(a.b,b.b,field+".b"); modelField(a.a,b.a,field+".a");
     }
 
-  static void modelField(const zenkit::AxisAlignedBoundingBox& a, const zenkit::AxisAlignedBoundingBox& b,
+  static void modelField(const zenkit::AxisAlignedBoundingBox& a, const asset::Aabb& b,
                          const std::string& field) {
     modelField(a.min,b.min,field+".min"); modelField(a.max,b.max,field+".max");
     }
 
-  static void modelField(const zenkit::OrientedBoundingBox& a, const zenkit::OrientedBoundingBox& b,
+  static void modelField(const zenkit::OrientedBoundingBox& a, const asset::Obb& b,
                          const std::string& field) {
     modelField(a.center,b.center,field+".center"); modelField(a.half_width,b.half_width,field+".half_width");
     for(size_t i=0;i<3;++i) modelField(a.axes[i],b.axes[i],field+".axes["+std::to_string(i)+"]");
@@ -901,7 +901,7 @@ struct BaseContentContract {
     oracle.name=source.name;
     oracle.height=source.height;
     for(const auto& glyph:source.glyphs)
-      oracle.glyphs.push_back({glyph.width,{glyph.uv[0],glyph.uv[1]}});
+      oracle.glyphs.push_back({glyph.width,{{glyph.uv[0].x,glyph.uv[0].y},{glyph.uv[1].x,glyph.uv[1].y}}});
     Tempest::Texture2d atlas;
     GthFont expected(oracle,&atlas,Tempest::Color(1.f));
     GthFont actual(loaded,&atlas,Tempest::Color(1.f));

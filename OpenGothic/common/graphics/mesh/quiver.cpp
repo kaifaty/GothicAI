@@ -57,6 +57,22 @@ float radiusAt(float depth) {
   return Quiver::MouthRadius + (Quiver::BottomRadius-Quiver::MouthRadius)*k;
   }
 
+// the axis (the rest frame, the bottom's way) for a turn by its angle across: (x, z) radians toward that way
+Vec3 axisOfAngle(const Vec3& a) {
+  const float l = std::hypot(a.x,a.z);
+  if(l<1e-6f)
+    return {0,-1,0};
+  return {std::sin(l)*a.x/l,-std::cos(l),std::sin(l)*a.z/l};
+  }
+
+Vec3 angleOf(const Vec3& u) {
+  const float s = std::hypot(u.x,u.z);
+  if(s<1e-6f)
+    return {};
+  const float l = std::atan2(s,-u.y);
+  return {u.x/s*l,0,u.z/s*l};
+  }
+
 bool nameHas(std::string_view name, std::initializer_list<std::string_view> parts) {
   for(auto p:parts)
     if(name.find(p)!=std::string_view::npos)
@@ -76,6 +92,7 @@ std::vector<bool> bonesNamed(const Skeleton& sk, std::initializer_list<std::stri
 Quiver::Place Quiver::place;
 
 bool          Quiver::still = false;
+bool          Quiver::measureGround = false;
 
 bool Quiver::enabled() {
   static const bool on = [](){
@@ -303,6 +320,25 @@ void Quiver::sync(const Matrix4x4& pelvis, const Matrix4x4& spine) {
     arrows[i].setObjMatrix(at*arrowLocal[i]);
   }
 
+std::vector<Vec3> Quiver::surface(const Matrix4x4& pelvis, const Matrix4x4& spine, int rings, int around) const {
+  std::vector<Vec3> ret;
+  if(!st.on || !fitted.valid || rings<2 || around<1)
+    return ret;
+  const auto at = restFrame(pelvis,spine)*swingMatrix();
+  ret.reserve(size_t(rings*around));
+  for(int i=0; i<rings; ++i) {
+    const float t = Length*float(i)/float(rings-1);
+    const float r = radiusAt(t);
+    for(int j=0; j<around; ++j) {
+      const float a = 2.f*float(M_PI)*float(j)/float(around);
+      Vec3 v = {r*std::cos(a),-t,r*std::sin(a)};
+      at.project(v);
+      ret.push_back(v);
+      }
+    }
+  return ret;
+  }
+
 void Quiver::setTextureOwner(const Vec3& position, bool spatial) {
   body.setTextureOwner(position,spatial);
   for(auto& a:arrows)
@@ -312,7 +348,7 @@ void Quiver::setTextureOwner(const Vec3& position, bool spatial) {
 Quiver::Probe Quiver::probe(const Matrix4x4& pelvis, const Matrix4x4& spine, const std::vector<SkinPoint>& posed,
                             const std::vector<bool>& legBone, const std::vector<bool>& armBone,
                             const std::vector<Vec3>& bowPts, const std::vector<Vec3>& longPts,
-                            const std::vector<bool>& leftBone) const {
+                            const std::vector<bool>& leftBone, const std::vector<bool>& trunkBone) const {
   Probe p;
   p.on = st.on && fitted.valid;
   if(!p.on)
@@ -325,12 +361,59 @@ Quiver::Probe Quiver::probe(const Matrix4x4& pelvis, const Matrix4x4& spine, con
   inv.inverse();
   {
     const Vec3 a = Vec3::normalize(axis);
+    p.axis    = a;
     p.swing   = std::acos(std::clamp(-a.y,-1.f,1.f))*180.f/float(M_PI);
     p.back    = std::atan2(-a.z,-a.y)*180.f/float(M_PI);
     p.outward = std::atan2( a.x,-a.y)*180.f/float(M_PI);
-    p.yield   = std::atan2(devTarget.length(),MassAt)*180.f/float(M_PI);
+    p.yield   = groundMode==0 ? std::atan2(devTarget.length(),MassAt)*180.f/float(M_PI)
+                                  : std::hypot(groundTarget.x,groundTarget.z)*180.f/float(M_PI);
     // the rest's turn against SPINE1 about the vertical: the pelvis's less the half of the gait's
     p.twist = (twistOf(pelvis,spine)-yawOffset)*180.f/float(M_PI);
+    p.ground   = groundMode;
+    p.groundOn = groundSeen;
+    if(measureGround && measured.on) {
+      // the least turn (2 deg steps, 24 ways) that leaves the tube from 14 cm down no deeper than 2 cm under the
+      // plane of the last step
+      const Vec3 gn = measured.n;
+      const float gd = measured.d;
+      auto deepest = [&](const Vec3& u) {
+        const float cu = Vec3::dotProduct(gn,u), side = std::sqrt(std::max(0.f,1.f-cu*cu));
+        float most = 0;
+        for(int k=0; k<8; ++k) {
+          const float t = 2.f*RingContact + (Length-2.f*RingContact)*float(k)/7.f;
+          most = std::max(most,gd - cu*t + radiusAt(t)*side);
+          }
+        return most;
+        };
+      p.needAngle = -1;
+      for(int a=0; a<=60 && p.needAngle<0; ++a) {
+        const float th = float(a)*2.f*float(M_PI)/180.f;
+        float bestDepth = 1e9f;
+        Vec3  bestU;
+        for(int k=0; k<(a==0 ? 1 : 24); ++k) {
+          const float ph = float(k)*2.f*float(M_PI)/24.f;
+          const Vec3  u  = {std::sin(th)*std::cos(ph),-std::cos(th),std::sin(th)*std::sin(ph)};
+          const float d  = deepest(u);
+          if(d<bestDepth) {
+            bestDepth = d;
+            bestU     = u;
+            }
+          }
+        if(bestDepth>2.f)
+          continue;
+        p.needAngle = float(a)*2.f;
+        p.needBack  = std::atan2(-bestU.z,-bestU.y)*180.f/float(M_PI);
+        p.needOut   = std::atan2( bestU.x,-bestU.y)*180.f/float(M_PI);
+        for(auto& q:measured.body) {
+          const Vec3  pt = {q.x,q.y,q.z};
+          const float t  = Vec3::dotProduct(pt,bestU);
+          if(t<0.f)
+            continue;
+          const float tc = std::min(t,Length);
+          p.needBody = std::max(p.needBody,radiusAt(tc)+q.w-(pt-bestU*tc).length());
+          }
+        }
+      }
   }
   auto depthOf = [&](Vec3 q) {
     inv.project(q);
@@ -342,6 +425,8 @@ Quiver::Probe Quiver::probe(const Matrix4x4& pelvis, const Matrix4x4& spine, con
     const float depth = depthOf(pt.pos);
     if(depth<=0)
       continue;
+    if(pt.bone<trunkBone.size() && trunkBone[pt.bone])
+      p.trunk = std::max(p.trunk,depth);
     if(pt.bone<armBone.size() && armBone[pt.bone])
       p.arm = std::max(p.arm,depth); else
     if(pt.bone<legBone.size() && legBone[pt.bone] && pt.bone<leftBone.size() && leftBone[pt.bone])
@@ -435,12 +520,55 @@ void Quiver::nearPoints(const Fit& f, const Skeleton& sk, const std::vector<Skin
     }
   }
 
+void Quiver::widePoints(const Fit& f, const Skeleton& sk, const std::vector<SkinPoint>& bind,
+                        const std::vector<size_t>& near, std::vector<size_t>& ids) {
+  ids.clear();
+  if(!f.valid || f.pelvis>=sk.tr.size())
+    return;
+  // the tube turned up to GroundAngle round the ring sweeps a cone; a point of the armour within its reach (the
+  // back, the buttock, the thigh, the other leg) may stop it: not the arms (their capsules), not the near ones
+  constexpr size_t MaxWide = 120;
+  const float reach = Length*std::sin(GroundAngle*float(M_PI)/180.f) + MouthRadius + 4.f;
+  auto inv = sk.tr[f.pelvis]*f.local;
+  inv.inverse();
+  const auto arm = armBones(sk);
+  std::vector<size_t> skip = near;
+  std::sort(skip.begin(),skip.end());
+  std::vector<std::pair<float,size_t>> list;
+  for(size_t i=0; i<bind.size(); ++i) {
+    if(bind[i].src==size_t(-1) || (bind[i].bone<arm.size() && arm[bind[i].bone]))
+      continue;
+    if(std::binary_search(skip.begin(),skip.end(),bind[i].src))
+      continue;
+    Vec3 q = bind[i].pos;
+    inv.project(q);
+    if(q.y>MouthRadius || q.y<-Length-MouthRadius || q.length()>Length+MouthRadius+4.f)
+      continue;
+    const float across = std::hypot(q.x,q.z);
+    if(across>reach)
+      continue;
+    list.emplace_back(across,i);
+    }
+  std::sort(list.begin(),list.end());
+  if(list.size()>MaxWide) {
+    std::vector<std::pair<float,size_t>> thin;
+    for(size_t k=0; k<MaxWide; ++k)
+      thin.push_back(list[k*list.size()/MaxWide]);
+    list = std::move(thin);
+    }
+  for(auto& n:list)
+    ids.push_back(bind[n.second].src);
+  }
+
 void Quiver::rest() {
   axis      = {0,-1,0};
   moving    = false;
   devV      = Vec3();
   devTarget = Vec3();
   yawOffset = 0;
+  groundMode = 0;
+  lastInvOn  = false;
+  gw = gwV = groundTarget = Vec3();
   }
 
 Matrix4x4 Quiver::swingMatrix() const {
@@ -457,7 +585,8 @@ Matrix4x4 Quiver::swingMatrix() const {
   return rotation(k/s,s,Vec3::dotProduct(from,to));
   }
 
-void Quiver::step(const Matrix4x4& pelvis, const Matrix4x4& spine, const std::vector<Obstacle>& obstacles, float dt) {
+void Quiver::step(const Matrix4x4& pelvis, const Matrix4x4& spine, const std::vector<Obstacle>& obstacles, float dt,
+                  const Ground& ground) {
   if(!st.on || !fitted.valid)
     return;
   if(still) {
@@ -467,6 +596,8 @@ void Quiver::step(const Matrix4x4& pelvis, const Matrix4x4& spine, const std::ve
   // no time: as it was (a forced pose update)
   if(dt<=0.f)
     return;
+  groundSeen = ground.on;
+  lastPelvis = pelvis;
   // the gait's turn of the pelvis against SPINE1: what the slow follower does not catch (a stance's twist,
   // the bow drawn, is caught: the quiver stays on the pelvis then)
   twistNow = twistOf(pelvis,spine);
@@ -478,31 +609,38 @@ void Quiver::step(const Matrix4x4& pelvis, const Matrix4x4& spine, const std::ve
   const Vec3 pivot = translation(frame);
 
   // the give: one turn round the ring (two axes, up to GiveAngle) that leaves the least sum of the squares
-  // of how deep goes what is in the tube - the leg, the forearm and hand, the flaps, the bow and a two-hander on the back
+  // of how deep goes what is in the tube - the leg, the forearm and hand, the flaps, the bow and a two-hander on the back.
+  // The ground is one more of them; while it is still in the tube at GiveAngle the turn may go to GroundAngle, and
+  // then the armour's points the wide turn reaches (Body) count too
   auto inv = frame;
   inv.inverse();
-  const float reachOut = Length*std::tan(GiveAngle*float(M_PI)/180.f) + 2.f;
-  static thread_local std::vector<Tempest::Vec4> near; // in the rest frame: the centre, the radius
+  const float reachOut  = Length*std::tan(GiveAngle*float(M_PI)/180.f) + 2.f;
+  const float reachWide = Length*std::sin(GroundAngle*float(M_PI)/180.f) + 2.f;
+  static thread_local std::vector<Tempest::Vec4> near, nearWide; // in the rest frame: the centre, the radius
   near.clear();
-  auto take = [&](Vec3 p, float r) {
+  nearWide.clear();
+  auto take = [&](Vec3 p, float r, bool body) {
     inv.project(p);
     if(p.y>r || p.y<-Length-reachOut-r)
-      return;
-    if(std::hypot(p.x,p.z)-r>MouthRadius+reachOut)
-      return;
-    near.emplace_back(p.x,p.y,p.z,r);
+      ;
+    else if(!body && std::hypot(p.x,p.z)-r<=MouthRadius+reachOut)
+      near.emplace_back(p.x,p.y,p.z,r);
+    if(ground.on && p.y<=r && p.y>=-Length-r && std::hypot(p.x,p.z)-r<=MouthRadius+reachWide)
+      nearWide.emplace_back(p.x,p.y,p.z,r);
     };
   for(auto& o:obstacles) {
+    if(o.kind==Body && !ground.on)
+      continue;
     const float len = (o.b-o.a).length();
     const int   n   = len<1e-3f ? 1 : std::clamp(int(std::ceil(len/std::max(o.r,3.f))),2,12);
     for(int i=0; i<n; ++i)
-      take(n==1 ? o.a : o.a+(o.b-o.a)*(float(i)/float(n-1)),o.r);
+      take(n==1 ? o.a : o.a+(o.b-o.a)*(float(i)/float(n-1)),o.r,o.kind==Body);
     }
   // how much of them is in the tube for the axis u (the rest frame, the bottom's direction): the sum of the
   // squares of how deep each goes, so each contact down the tube goes out as far as the turn allows
-  auto inside = [&](const Vec3& u) {
+  auto insideOf = [&](const std::vector<Tempest::Vec4>& list, const Vec3& u) {
     float sum = 0;
-    for(auto& q:near) {
+    for(auto& q:list) {
       const Vec3  p = {q.x,q.y,q.z};
       const float t = Vec3::dotProduct(p,u);
       if(t<0.f)
@@ -517,7 +655,52 @@ void Quiver::step(const Matrix4x4& pelvis, const Matrix4x4& spine, const std::ve
       }
     return sum;
     };
-  // the axis by its tangents across (x, z); no farther than GiveAngle
+  // the ground's plane in the rest frame; how deep the tube goes under it along its sections (the ring's own
+  // part does not count, as above)
+  // GroundAhead: the same plane as the last rest frame saw it, carried on as far: the tube starts out of the
+  // ground's way before it is there (a roll brings it 50 deg in 3 frames, GroundStep allows 30)
+  Vec3  gn, gnAhead;
+  float gd = 0, gdAhead = 0;
+  if(ground.on) {
+    auto planeIn = [&](const Matrix4x4& m, Vec3& n, float& d) {
+      Vec3 a = ground.at, b = ground.at+ground.n;
+      m.project(a);
+      m.project(b);
+      n = Vec3::normalize(b-a);
+      d = Vec3::dotProduct(n,a);
+      };
+    planeIn(inv,gn,gd);
+    gnAhead = gn;
+    gdAhead = gd;
+    if(lastInvOn && moving && dt<0.1f) {
+      Vec3  gnLast;
+      float gdLast = 0;
+      planeIn(lastInv,gnLast,gdLast);
+      const float k = GroundAhead/dt;
+      gnAhead = Vec3::normalize(gn + (gn-gnLast)*k);
+      gdAhead = gd + (gd-gdLast)*k;
+      }
+    }
+  lastInv   = inv;
+  lastInvOn = ground.on;
+  // lift: the plane raised so much (the hysteresis of the push)
+  auto underground = [&](const Vec3& u, float lift) {
+    if(!ground.on)
+      return 0.f;
+    const float cu   = Vec3::dotProduct(gn,u), ca = Vec3::dotProduct(gnAhead,u);
+    const float side = std::sqrt(std::max(0.f,1.f-cu*cu)), sa = std::sqrt(std::max(0.f,1.f-ca*ca));
+    float sum = 0;
+    for(int k=0; k<8; ++k) {
+      const float t = RingContact + (Length-RingContact)*float(k)/7.f;
+      const float d = std::max(gd - cu*t + radiusAt(t)*side, gdAhead - ca*t + radiusAt(t)*sa) + lift;
+      const float w = std::clamp((t-RingContact)/RingContact,0.f,1.f);
+      if(d>0.f)
+        sum += w*d*d;
+      }
+    return sum;
+    };
+  auto inside = [&](const Vec3& u) { return insideOf(near,u) + GroundWeight*underground(u,0.f); };
+  // the give's axis by its tangents across (x, z); no farther than GiveAngle
   const float maxTan = std::tan(GiveAngle*float(M_PI)/180.f);
   auto clampTan = [&](float& x, float& z) {
     const float l = std::hypot(x,z);
@@ -526,17 +709,18 @@ void Quiver::step(const Matrix4x4& pelvis, const Matrix4x4& spine, const std::ve
       z *= maxTan/l;
       }
     };
-  const float lastX = devTarget.x/MassAt, lastZ = devTarget.z/MassAt;
+  float lastX = devTarget.x/MassAt, lastZ = devTarget.z/MassAt;
+  clampTan(lastX,lastZ);
   // a small price on the turn and on the change keeps it from wandering between equal answers
   auto score = [&](float x, float z) {
     const Vec3 u = Vec3::normalize(Vec3(x,-1.f,z));
     return inside(u) + 2.f*std::hypot(x,z) + 2.f*std::hypot(x-lastX,z-lastZ);
     };
+  // from the last answer or the rest, whichever is better, down the gradient with a step that halves when it
+  // does not help
   float bx = 0, bz = 0;
   // nothing in the tube at rest (most frames): the rest, no search
-  if(!near.empty() && inside(Vec3(0,-1,0))>0.f) {
-    // from the last answer or the rest, whichever is better, down the gradient with a step that halves when it
-    // does not help
+  if(inside(Vec3(0,-1,0))>0.f) {
     float s0 = score(0,0), sl = score(lastX,lastZ);
     float x = 0, z = 0, sc = s0;
     if(sl<s0) {
@@ -570,15 +754,95 @@ void Quiver::step(const Matrix4x4& pelvis, const Matrix4x4& spine, const std::ve
   Vec3 dTarget = {best.x/-best.y*MassAt,0,best.z/-best.y*MassAt};
   devTarget = dTarget;
 
+  // the ground still in the tube at GiveAngle: the wide turn, to GroundAngle, by the turn's own angle across
+  // (x, z: radians toward that way). The ground outweighs the body far (GroundWeight against GroundBody): the quiver
+  // goes rather where the body lies on the ground, out of sight, than stands in the open ground
+  const float lift  = groundMode==1 ? GroundClear : 0.f; // pushed: stays so till the tube is that clear
+  const float wideA = GroundAngle*float(M_PI)/180.f;
+  Vec3 gTarget = angleOf(best);
+  bool wide    = false;
+  if(ground.on && underground(best,lift)>0.04f) {
+    wide = true;
+    const Vec3 last = groundMode!=0 ? groundTarget : gTarget;
+    // its weight: the height of the tube's middle over the ground (its potential energy), so the quiver the ground
+    // pushes falls and lies on it rather than standing up; the body's points keep it from lying across the body
+    auto score2 = [&](float x, float z) {
+      const Vec3  u      = axisOfAngle(Vec3(x,0,z));
+      const float height = Vec3::dotProduct(gn,u)*(Length*0.5f) - gd;
+      return GroundBody*insideOf(nearWide,u) + GroundWeight*underground(u,0.f) + GroundGravity*height +
+             0.2f*std::hypot(x,z) + 2.f*std::hypot(x-last.x,z-last.z);
+      };
+    auto clampA = [&](float& x, float& z) {
+      const float l = std::hypot(x,z);
+      if(l>wideA) {
+        x *= wideA/l;
+        z *= wideA/l;
+        }
+      };
+    float x = gTarget.x, z = gTarget.z, sc = score2(x,z);
+    auto seed = [&](float sx, float sz) {
+      clampA(sx,sz);
+      if(const float sn = score2(sx,sz); sn<sc) {
+        x  = sx;
+        z  = sz;
+        sc = sn;
+        }
+      };
+    seed(last.x,last.z);
+    // the way out may be on the other side of the body from where it is (a roll turns the ground round it):
+    // a coarse ring of starts, 8 ways at a third, two thirds and the whole of GroundAngle
+    for(int k=0; k<8; ++k) {
+      const float ph = float(k)*float(M_PI)/4.f;
+      for(int m=1; m<=3; ++m)
+        seed(std::cos(ph)*wideA*float(m)/3.f,std::sin(ph)*wideA*float(m)/3.f);
+      }
+    float step = wideA*0.25f;
+    constexpr float h = 0.004f;
+    for(int it=0; it<16 && step>wideA*0.005f; ++it) {
+      const float gx = (score2(x+h,z)-sc)/h, gz = (score2(x,z+h)-sc)/h;
+      const float gl = std::hypot(gx,gz);
+      if(gl<1e-6f)
+        break;
+      float nx = x - gx/gl*step, nz = z - gz/gl*step;
+      clampA(nx,nz);
+      const float sn = score2(nx,nz);
+      if(sn<sc) {
+        x  = nx;
+        z  = nz;
+        sc = sn;
+        step *= 1.2f;
+        } else {
+        step *= 0.5f;
+        }
+      }
+    gTarget = Vec3(x,0,z);
+    }
+  groundTarget = gTarget;
+
+  // the ground pushes it (1) or it comes back from the ground (2), faster and farther than the give (0)
+  const Vec3  now      = Vec3::normalize(axis);
+  const float nowAngle = std::acos(std::clamp(-now.y,-1.f,1.f))*180.f/float(M_PI);
+  const bool  pushed   = ground.on && (wide || underground(Vec3(0,-1,0),lift)>0.f || underground(now,lift)>0.f);
+  const int   mode     = pushed ? 1 : (nowAngle>GiveAngle+0.05f ? 2 : 0);
+
   // a jump (a teleport, a load) or the first step: at the target
   if(!moving || (pivot-lastPivot).length()>100.f || dt>0.25f) {
     dev       = dTarget;
     devV      = Vec3();
+    gw        = gTarget;
+    gwV       = Vec3();
     lastPivot = pivot;
     moving    = true;
-    } else {
-    // critically damped to the target, no overshoot (90% in GiveTime), no faster than GiveStep in 1/60 s
+    axis      = mode==0 ? Vec3::normalize(Vec3(dev.x,-MassAt,dev.z)) : axisOfAngle(gw);
+    } else if(mode==0) {
     lastPivot = pivot;
+    if(groundMode!=0) {
+      // back within the give: its follower takes over from where the ground left it
+      const Vec3 u = Vec3::normalize(axis);
+      dev  = Vec3(u.x/-u.y*MassAt,0,u.z/-u.y*MassAt);
+      devV = gwV*MassAt;
+      }
+    // critically damped to the target, no overshoot (90% in GiveTime), no faster than GiveStep in 1/60 s
     const Vec3  from = dev;
     const float w    = 3.89f/GiveTime;
     const int   n    = std::max(1,int(std::ceil(dt*240.f)));
@@ -596,6 +860,83 @@ void Quiver::step(const Matrix4x4& pelvis, const Matrix4x4& spine, const std::ve
       dev  = from + moved*(most/moved.length());
       devV = (dev-from)/dt;
       }
+    axis = Vec3::normalize(Vec3(dev.x,-MassAt,dev.z));
+    } else {
+    lastPivot = pivot;
+    if(groundMode==0) {
+      // from the give: the same axis, its speed
+      gw  = angleOf(Vec3::normalize(axis));
+      gwV = devV/MassAt;
+      }
+    const Vec3 from = gw;
+    if(mode==1) {
+      // the ground pushes it: straight to the target
+      gw  = gTarget;
+      gwV = Vec3();
+      } else {
+      // back: critically damped, no overshoot, 90% in GroundReturn
+      const float w = 3.89f/GroundReturn;
+      const int   n = std::max(1,int(std::ceil(dt*240.f)));
+      const float h = dt/float(n);
+      for(int i=0; i<n; ++i) {
+        Vec3 acc = (gTarget-gw)*(w*w) - gwV*(2.f*w);
+        acc.y = 0;
+        gwV += acc*h;
+        gw  += gwV*h;
+        gw.y = 0;
+        }
+      }
+    // no faster than GroundStep in 1/60 s, as the angle the axis turns
+    const Vec3  moved = gw-from;
+    const float most  = GroundStep*dt*60.f*float(M_PI)/180.f;
+    const Vec3  a0    = axisOfAngle(from);
+    auto turn = [&](float f) {
+      return std::acos(std::clamp(Vec3::dotProduct(a0,axisOfAngle(from+moved*f)),-1.f,1.f));
+      };
+    if(turn(1.f)>most) {
+      float lo = 0, hi = 1;
+      for(int i=0; i<12; ++i) {
+        const float mid = 0.5f*(lo+hi);
+        if(turn(mid)>most)
+          hi = mid; else
+          lo = mid;
+        }
+      gw  = from + moved*lo;
+      gwV = mode==1 ? Vec3() : (gw-from)/dt;
+      }
+    axis = axisOfAngle(gw);
     }
-  axis = Vec3::normalize(Vec3(dev.x,-MassAt,dev.z));
+  groundMode = mode;
+
+  if(measureGround) {
+    measured.on    = ground.on;
+    measured.n     = gn;
+    measured.d     = gd;
+    measured.body.assign(nearWide.begin(),nearWide.end());
+    }
+  }
+
+float Quiver::lowest(const Matrix4x4& pelvis, const Matrix4x4& spine, Vec3* midOut, Vec3* bottomOut) const {
+  const auto frame = restFrame(pelvis,spine);
+  const auto at    = frame*swingMatrix();
+  Vec3 ring = {0,0,0}, bottom = {0,-Length,0}, restBottom = {0,-Length,0}, mid = {0,-Length*0.5f,0};
+  frame.project(ring);
+  at.project(bottom);
+  at.project(mid);
+  frame.project(restBottom);
+  if(midOut!=nullptr)
+    *midOut = mid;
+  if(bottomOut!=nullptr)
+    *bottomOut = bottom;
+  return std::min({ring.y,bottom.y,restBottom.y}) - MouthRadius;
+  }
+
+bool Quiver::restsOnGround(const Matrix4x4& pelvis) const {
+  if(groundMode!=1 || !moving || (gw-groundTarget).length()>1e-4f)
+    return false;
+  for(int c=0; c<4; ++c)
+    for(int r=0; r<4; ++r)
+      if(std::abs(pelvis.at(c,r)-lastPelvis.at(c,r))>(c==3 ? 0.05f : 1e-4f))
+        return false;
+  return true;
   }
