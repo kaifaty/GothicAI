@@ -1,17 +1,19 @@
-# The quiver behind the right hip in the hero's melee dodges (reports/archery/2026-11-05-quiver-rolls): a one-hander
-# in hand at 1H talent 1 (HUMANS_1HST1), the bow and the quiver worn. Medium armour (ITAR_MIL_M): the roll four ways;
-# heavy (ITAR_PAL_H): the slow roll four ways (forward with melee_barge off) and the shoulder barge forward; light
-# (ITAR_Leather_L): the dash forward and right, to compare. One dodge a clip, 0.5 s before and after. Onar's field,
-# open and level, 16:00; the hero faces 210, so the sun is in front on the right of the camera 2 m behind him on the
-# right; nothing in the way of the dodges.
-# slowmo 4: a row of metrics.csv is 1/120 s of the game; a clip at 30 fps is the game 4x slower. The report's
-# script (rolls.py) makes the real-time 60 fps clip (setpts=0.25*PTS -r 60) and the 2x slower one (setpts=0.5*PTS -r 60).
-# Last, the quiver on the ground: sneaking (light leather, the fire mage's robe), an npc bowman sitting down on the
-# ground, the hero knocked down. Columns: qv_legt/qv_leg/qv_legl (the legs),
-# qv_arm, qv_armor (the flaps and the trunk), qv_swing, qv_yield, qv_gnd, qv_gndm (cm the tube and its mouth go under
-# the world's collision), qv_gmode (1: the ground pushes it, 2: back from it), qv_gon (the ground looked for).
-# Each dodge writes its `melee dodge PC_HERO: ...` line.
-# WORLD=NEWWORLD.ZEN BENCH_HOST=local OPENGOTHIC_CONTENT=<models of anim-strikes + meshes, materials of quiver>
+# The quiver behind the right hip in the hero's melee dodges and on the ground (reports/archery/2026-11-05-quiver-rolls):
+# a one-hander in hand at 1H talent 1 (HUMANS_1HST1), the bow and the quiver worn. Medium armour (ITAR_MIL_M): the roll
+# four ways; heavy (ITAR_PAL_H): the slow roll four ways (forward with melee_barge off) and the shoulder barge; light
+# (ITAR_Leather_L): the dash forward and right. One dodge a clip, 0.5 s before and after; each writes its
+# `melee dodge PC_HERO: ...` line after its `rec`. Then on the ground: sneaking in light leather and the fire mage's
+# robe (ITAR_KDF_H), an npc bowman sitting down by a campfire, the hero knocked down for real (posture stun and a
+# two-hander). Onar's field, open and level, 16:00; the hero faces 210, the sun in front on the right of the camera
+# 2 m behind him on the right (on the ground: view full; the knockdown from above on his right side, 2.3 m from him).
+# slowmo 4: a row of metrics.csv is 1/120 s of the game; rolls.py makes the clips (real time and 2x slower, 60 fps).
+# Columns (graphics/mesh/quiver): qv_leg/qv_legt/qv_legl (the legs), qv_arm, qv_armor, qv_trunk (pelvis and spine
+# points), qv_swing, qv_yield, qv_ax/ay/az (the axis); qv_gnd, qv_gndm, qv_gndt (cm the tube, its mouth, the tube from
+# 16.75 cm down go under the world's collision), qv_botup (cm the bottom is over the ground), qv_gmode (1: the ground
+# pushes it, 2: back from it), qv_gon (rays on), qv_clear (cm the tube's lowest point is over the ground), qv_rays,
+# qv_rayus, qv_cpu (the step's CPU time on its thread), qv_need* (the least turn out of the ground, ignoring the body).
+# TEMPEST_WINDOW_SIZE=1280x720 WORLD=NEWWORLD.ZEN BENCH_HOST=local
+# OPENGOTHIC_CONTENT=<models of anim-strikes + meshes, materials of quiver>
 seed 73013
 cheat god
 set time 16 0
@@ -218,8 +220,8 @@ arc SLD_826_SOELDNER 1 150 0
 freeze SLD_826_SOELDNER
 knockdown-launch-equip
 watch player
-cam follow 230 190 -135
-cam look 40
+cam follow 150 170 -90
+cam look 0
 wait 1500
 rec hero_knockdown
 wait 500

@@ -2547,8 +2547,16 @@ void updateCamera(World& w, Npc& pl) {
     }
   Vec3 tgt = pl.position() + Vec3(0,bench.camLook,0);
   Vec3 org = bench.camPos;
-  if(bench.cam==C_Follow || bench.cam==C_World)
+  if(bench.cam==C_Follow || bench.cam==C_World) {
     org = camOrigin(w,pl,bench.camAngle);
+    // a body down sinks its position under the ground (85 cm for the hero knocked down): look at the ground over it
+    const Vec3  at = pl.position();
+    const float g  = groundY(w,at.x,at.z,at.y+100.f);
+    if(!std::isnan(g) && g>at.y) {
+      tgt.y += g-at.y;
+      org.y  = std::max(org.y,g+bench.camHeight);
+      }
+    }
   if(bench.cam==C_Face) {
     // the mouth (a bit above the head bone), seen from the front or at an angle
     const Vec3  f    = facing(pl);
