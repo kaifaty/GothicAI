@@ -1,4 +1,5 @@
 import json
+import zlib
 
 import numpy as np
 import pytest
@@ -194,6 +195,31 @@ def test_enable_replaces_only_materials_and_meshes(tmp_path, monkeypatch):
     assert not (live / 'meshes').exists() and (live / 'materials/roofs-1-roof-01/albedo.dds').is_file()
     with pytest.raises(ValueError, match='no materials'):
         building_set.enable('missing')
+
+
+def test_enable_needs_fresh_convex_parts_for_tables_and_cupboards(tmp_path, monkeypatch):
+    monkeypatch.setenv('GOTHIC_AI_DATA', str(tmp_path))
+    staged(tmp_path, 'roofs-1', {'ROOF_01.TGA': 'roofs-1-roof-01'})
+    staged_prop(tmp_path, 'table-1')
+    part = tmp_path / 'content-staging/table-1/meshes'
+    (part / 'meshes.json').write_text(json.dumps({'NW_CITY_TABLE_NORMAL_01': {'glb': 'table-1/model.glb'},
+                                                  'CHAIR_NW_NORMAL_01': {'glb': 'table-1/model.glb'}}))
+    building_set.compose('city-1', ['roofs-1', 'table-1'])
+    with pytest.raises(ValueError, match=r'city-1: no fresh \.convex-parts for NW_CITY_TABLE_NORMAL_01; '
+                                         r'run scripts/convex-parts.sh content .*/content-staging/city-1'):
+        building_set.enable('city-1')
+    assert not (tmp_path / 'content').exists()
+    glb = (part / 'table-1/model.glb').read_bytes()
+    (part / 'table-1/model.convex-parts').write_text(f'GOTHIC_CONVEX_PARTS 1\nsource {len(glb)} {zlib.crc32(glb):08x}\n')
+    (part / 'table-1/model.fracture').write_text('fracture')
+    building_set.compose('city-2', ['roofs-1', 'table-1'])   # the caches travel with their GLB
+    out = tmp_path / 'content-staging/city-2/meshes/table-1'
+    assert (out / 'model.fracture').read_text() == 'fracture'
+    building_set.enable('city-2')
+    assert (tmp_path / 'content/meshes/table-1/model.convex-parts').read_bytes() == (out / 'model.convex-parts').read_bytes()
+    (out / 'model.convex-parts').write_text('GOTHIC_CONVEX_PARTS 1\nsource 3 00000000\n')
+    with pytest.raises(ValueError, match='no fresh .convex-parts for NW_CITY_TABLE_NORMAL_01'):
+        building_set.enable('city-2')
 
 
 def staged_chunk(root, name, chunk='1_-1'):
