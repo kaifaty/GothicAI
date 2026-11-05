@@ -2481,7 +2481,7 @@ void MdlVisual::updateFace(Npc& npc) {
     if(r!=FaceRig::Result::Same) {
       const auto start = std::chrono::steady_clock::now();
       if(r==FaceRig::Result::Deformed)
-        head.view.setPartDeformation(face.deformation()); else
+        head.view.setPartDeformation(face.deformation(),face.changed().first,face.changed().second); else
         head.view.setDeformation({});
       faceUploadUs = float(std::chrono::duration<double,std::micro>(std::chrono::steady_clock::now()-start).count());
       }

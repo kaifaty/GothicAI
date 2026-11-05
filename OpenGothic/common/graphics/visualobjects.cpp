@@ -195,7 +195,7 @@ void VisualObjects::Item::startMMAnim(std::string_view anim, float intensity, ui
   }
 
 void VisualObjects::Item::setDeformation(const std::vector<Tempest::Vec4>& vertices) {
-  setDeformation(vertices.data(),vertices.size()/2,0);
+  setDeformation(vertices.data(),vertices.size()/2,0,0,uint32_t(-1));
   }
 
 std::pair<uint32_t,uint32_t> VisualObjects::Item::vertexRange() const {
@@ -205,7 +205,8 @@ std::pair<uint32_t,uint32_t> VisualObjects::Item::vertexRange() const {
   return {obj.iboOff/PackedMesh::MaxInd*PackedMesh::MaxVert, (obj.iboOff+obj.iboLen)/PackedMesh::MaxInd*PackedMesh::MaxVert};
   }
 
-void VisualObjects::Item::setDeformation(const Tempest::Vec4* vertices, size_t pairs, uint32_t first) {
+void VisualObjects::Item::setDeformation(const Tempest::Vec4* vertices, size_t pairs, uint32_t first,
+                                         uint32_t changedFirst, uint32_t changedEnd) {
   if(owner==nullptr)
     return;
   auto& obj = owner->objects[id];
@@ -224,12 +225,24 @@ void VisualObjects::Item::setDeformation(const Tempest::Vec4* vertices, size_t p
     return;
     }
   const auto size = size_t(count)*2*sizeof(Tempest::Vec4);
+  const bool same = obj.deformCount==count && obj.deformFirst==first;
+  // the same range as before: only the vertices that changed are written
+  size_t from = 0, to = count;
+  if(same) {
+    from = std::clamp<size_t>(changedFirst,first,size_t(first)+count)-first;
+    to   = std::clamp<size_t>(changedEnd,  first,size_t(first)+count)-first;
+    if(from>=to)
+      return;
+    }
   const bool changed = owner->instanceMem.realloc(obj.objDeform,size);
-  obj.objDeform.set(vertices,0,size);
+  if(changed)
+    from = 0, to = count;
+  const size_t pairSize = 2*sizeof(Tempest::Vec4);
+  obj.objDeform.set(vertices+from*2,from*pairSize,(to-from)*pairSize);
   // The authored bounds are shared by every instance. Grow this instance's
   // sphere to retain cloth that folds beyond the original flat mesh bounds.
   float radius = 0;
-  for(size_t i=0;i<size_t(count)*2;i+=2) {
+  for(size_t i=from*2;i<to*2;i+=2) {
     const auto& p = vertices[i];
     Vec3 point(p.x,p.y,p.z);
     float zero = 0;

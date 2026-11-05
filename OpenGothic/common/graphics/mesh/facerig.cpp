@@ -415,8 +415,13 @@ FaceRig::Result FaceRig::update(uint64_t now) {
     changed = std::abs(want[i]-applied[i])>Changed;
   if(!changed)
     return Result::Same;
+  const bool whole = dirty || !deformed;  // the view has none of it: a rest or a new view
   applied = want;
   blend();
+  if(whole) {
+    changedFirst = 0;
+    changedEnd   = uint32_t(head->renderVertexIds.size());
+    }
   deformed = true;
   dirty    = false;
   return Result::Deformed;
@@ -480,9 +485,11 @@ void FaceRig::write(uint32_t v) {
   const auto& p = pos[v];
   const auto& n = nrm[v];
   for(uint32_t i=drawnFirst[v]; i<drawnFirst[v+1]; ++i) {
-    const size_t r = drawn[i];
-    deform[r*2+0] = Vec4(p.x,p.y,p.z,1.f);
-    deform[r*2+1] = Vec4(n.x,n.y,n.z,0.f);
+    const uint32_t r = drawn[i];
+    changedFirst = std::min(changedFirst,r);
+    changedEnd   = std::max(changedEnd,r+1);
+    deform[size_t(r)*2+0] = Vec4(p.x,p.y,p.z,1.f);
+    deform[size_t(r)*2+1] = Vec4(n.x,n.y,n.z,0.f);
     }
   }
 
@@ -492,6 +499,8 @@ void FaceRig::blend() {
   const auto start = std::chrono::steady_clock::now();
   if(basePos.size()!=head->mesh.positions.size() || deform.size()!=head->renderVertexIds.size()*2)
     prepare();
+  changedFirst = uint32_t(-1);
+  changedEnd   = 0;
   for(auto v:moved) {
     pos[v]  = basePos[v];
     nrm[v]  = baseNrm[v];

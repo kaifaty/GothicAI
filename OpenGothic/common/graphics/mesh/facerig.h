@@ -82,6 +82,8 @@ class FaceRig final {
     Result update(uint64_t now);
     const std::vector<float>&         weights()     const { return applied; }
     const std::vector<Tempest::Vec4>& deformation() const { return deform; }
+    // the drawn vertices [first, end) the last Deformed changed; the whole head after a rest or a new view
+    std::pair<uint32_t,uint32_t>      changed()     const { return {changedFirst,changedEnd}; }
     void   probe(Probe& p, uint64_t now) const;
 
     static Probe       subjectProbe;  // the npc the test bench watches
@@ -130,6 +132,7 @@ class FaceRig final {
     std::vector<std::vector<Delta>> deltas;       // per target: the deltas worth blending
     std::vector<uint8_t>       mark;
     std::vector<Tempest::Vec4> deform;
+    uint32_t                   changedFirst = 0, changedEnd = 0;
     float                      blendUs = 0;
     uint32_t                   blends  = 0;
   };

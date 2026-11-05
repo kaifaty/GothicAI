@@ -175,8 +175,10 @@ void rigCases(const GltfHeadMesh& head, const FaceProfile& p) {
   rig.startAnim("T_EAT",1,uint64_t(-1),7000);
   rig.update(7050);
   require(close(w[JawOpen],0.5f),"half a frame must mix two frames");
+  require(rig.changed()==std::pair<uint32_t,uint32_t>(0,6),"after the rest the whole head must be sent");
   rig.update(7100);
   require(close(w[JawOpen],1.f),"the next frame must show at frame_ms");
+  require(rig.changed()==std::pair<uint32_t,uint32_t>(1,6),"only the drawn vertices of moved vertices must be marked changed");
   rig.update(7150);
   require(close(w[JawOpen],0.5f),"the frames must loop");
   require(rig.weight("T_EAT",8999)==1 && rig.weight("T_EAT",9001)==0,"duration_ms must end the anim");

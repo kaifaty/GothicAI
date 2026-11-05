@@ -93,14 +93,15 @@ void MeshObjects::Mesh::setDeformation(const std::vector<Tempest::Vec4>& vertice
     sub[i].setDeformation(vertices);
   }
 
-void MeshObjects::Mesh::setPartDeformation(const std::vector<Tempest::Vec4>& vertices) {
+void MeshObjects::Mesh::setPartDeformation(const std::vector<Tempest::Vec4>& vertices, uint32_t changedFirst,
+                                           uint32_t changedEnd) {
   const auto count = uint32_t(vertices.size()/2);
   for(size_t i=0;i<subCount;++i) {
     auto [first,end] = sub[i].vertexRange();
     end = std::min(end,count);
     if(first>=end)
-      sub[i].setDeformation(nullptr,0,0); else
-      sub[i].setDeformation(vertices.data()+size_t(first)*2,end-first,first);
+      sub[i].setDeformation(nullptr,0,0,0,0); else
+      sub[i].setDeformation(vertices.data()+size_t(first)*2,end-first,first,changedFirst,changedEnd);
     }
   }
 
