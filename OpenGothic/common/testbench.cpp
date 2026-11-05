@@ -21465,3 +21465,6 @@ void TestBench::arrowAt(const void* arrow, float x, float y, float z) {
   std::erase_if(bench.trails,[](const Bench::Trail& t){ return bench.time>t.last+bench.trailKeep; });
   bench.trails.push_back({arrow,{p},bench.time});
   }
+// ratchet probe 1
+// ratchet probe 2
+// ratchet probe 3
