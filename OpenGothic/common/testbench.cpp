@@ -3534,7 +3534,7 @@ void prepareSpellFixture(World& world,Npc& player,std::string_view fixture) {
   if(bench.spellRunes.empty()) {
     for(size_t i=0;i<world.script().symbolsCount();++i) {
       const auto* symbol=world.script().findSymbol(i);
-      if(!symbol || symbol->type()!=zenkit::DaedalusDataType::INSTANCE) continue;
+      if(!symbol || symbol->type()!=daedalus::DaedalusDataType::INSTANCE) continue;
       auto name=symbol->name();for(auto& c:name) c=char(std::toupper(static_cast<unsigned char>(c)));
       if(!name.starts_with("ITRU_") && !name.starts_with("ITSC_")) continue;
       auto candidate=std::make_unique<Item>(world,i,Item::T_Inventory);
@@ -3594,7 +3594,7 @@ Npc* bodyImpactActor(World& world,std::string_view symbol,const Vec3& position) 
   auto* npc=world.addNpc(world.script().findSymbolIndex(symbol),position);
   if(!npc) {arenaAbort("body impact actor insertion failed");return nullptr;}
   npc->clearAiQueue();npc->clearState(false);npc->setExternalControl(true);npc->clearGoTo();npc->clearSpeed();
-  npc->handle().flags=zenkit::NpcFlag(uint32_t(npc->handle().flags)&~uint32_t(zenkit::NpcFlag::IMMORTAL));
+  npc->handle().flags=daedalus::NpcFlag(uint32_t(npc->handle().flags)&~uint32_t(daedalus::NpcFlag::IMMORTAL));
   npc->handle().attribute[ATR_HITPOINTS]=npc->handle().attribute[ATR_HITPOINTSMAX]=50000;
   npc->setDirection(Vec3(0,0,-1));npc->updateTransform();
   return npc;
@@ -3687,7 +3687,7 @@ void bodyImpactLaunch(World& world,Npc& player) {
     part.linearVelocity=part.linearVelocityMeters=part.angularVelocity={};part.sleeping=false;
     }
   if(!const_cast<Ragdoll*>(npc->ragdollBody())->restore(saved)) {arenaAbort("body impact launch cannot reset native velocities");return;}
-  if(state.mode=="immortal")npc->handle().flags=zenkit::NpcFlag(uint32_t(npc->handle().flags)|uint32_t(zenkit::NpcFlag::IMMORTAL));
+  if(state.mode=="immortal")npc->handle().flags=daedalus::NpcFlag(uint32_t(npc->handle().flags)|uint32_t(daedalus::NpcFlag::IMMORTAL));
   if(state.mode=="fatal" || paired)npc->handle().attribute[ATR_HITPOINTS]=20;
   state.hpBefore=npc->attribute(ATR_HITPOINTS);state.animatedBefore=state.animated ? state.animated->attribute(ATR_HITPOINTS) : 0;
   state.damage=state.capsuleDamage=0;state.impacts=state.deeds=state.murders=state.defeats=0;
@@ -4575,7 +4575,7 @@ void furnitureRagdoll(World& world,Npc& player) {
   if(!npc) {arenaAbort("furniture preparation: falling NPC insertion failed");return;}
   npc->clearAiQueue();npc->clearState(false);npc->stopWalking();npc->clearSpeed();npc->setExternalControl(true);
   npc->setDirection(direction);npc->updateTransform();
-  npc->handle().flags=zenkit::NpcFlag(uint32_t(npc->handle().flags)&~uint32_t(zenkit::NpcFlag::IMMORTAL));
+  npc->handle().flags=daedalus::NpcFlag(uint32_t(npc->handle().flags)&~uint32_t(daedalus::NpcFlag::IMMORTAL));
   npc->setLastHitBy(&player);
   if(!npc->setRagdollDown(true)) {arenaAbort("furniture preparation: NPC death refused");return;}
   npc->prepareRagdoll();
@@ -5298,7 +5298,7 @@ void prepareMovableCast(World& world,Npc& player) {
   npc->handle().attribute[ATR_HITPOINTS]=npc->handle().attribute[ATR_HITPOINTSMAX]=50000;
   npc->setDirection(player.position()-target);npc->updateTransform();bench.spellActors.push_back({npc,"movable_target"});
   for(size_t i=0;i<world.script().symbolsCount() && !bench.spellRunes.contains(23);++i) {
-    const auto* symbol=world.script().findSymbol(i);if(!symbol || symbol->type()!=zenkit::DaedalusDataType::INSTANCE)continue;
+    const auto* symbol=world.script().findSymbol(i);if(!symbol || symbol->type()!=daedalus::DaedalusDataType::INSTANCE)continue;
     auto name=symbol->name();for(auto& c:name)c=char(std::toupper(static_cast<unsigned char>(c)));
     if(!name.starts_with("ITRU_") && !name.starts_with("ITSC_"))continue;
     auto item=std::make_unique<Item>(world,i,Item::T_Inventory);
@@ -6968,7 +6968,7 @@ void clothShoot(World& world,Npc& player,std::string_view kind) {
   else if(kind=="fireball" || kind=="wind") {
     for(size_t i=0;i<world.script().symbolsCount();++i) {
       const auto* entry=world.script().findSymbol(i);
-      if(!entry || entry->type()!=zenkit::DaedalusDataType::INSTANCE)continue;
+      if(!entry || entry->type()!=daedalus::DaedalusDataType::INSTANCE)continue;
       auto name=entry->name();for(auto& c:name)c=char(std::toupper(static_cast<unsigned char>(c)));
       if(!name.starts_with("ITRU_") && !name.starts_with("ITSC_"))continue;
       Item candidate(world,i,Item::T_Inventory);
@@ -7704,7 +7704,7 @@ void itemWakeBegin(World& world,Npc& player) {
       auto* npc=world.addNpc(world.script().findSymbolIndex("BAU_904_BAUER"),at);
       if(!npc) {arenaAbort("item wake preparation: falling NPC insertion failed");return;}
       npc->clearAiQueue();npc->clearState(false);npc->setExternalControl(true);
-      npc->handle().flags=zenkit::NpcFlag(uint32_t(npc->handle().flags)&~uint32_t(zenkit::NpcFlag::IMMORTAL));
+      npc->handle().flags=daedalus::NpcFlag(uint32_t(npc->handle().flags)&~uint32_t(daedalus::NpcFlag::IMMORTAL));
       npc->setLastHitBy(&player);
       if(!npc->setRagdollDown(true)) {arenaAbort("item wake preparation: native NPC death refused");return;}
       npc->prepareRagdoll();
@@ -8405,7 +8405,7 @@ void prepareWaterFixture(World& world,Npc& player,std::string_view mode) {
       if(symbol==size_t(-1) && i==1)
         for(size_t candidate=0;candidate<world.script().symbolsCount();++candidate) {
           const auto* entry=world.script().findSymbol(candidate);
-          if(!entry || entry->type()!=zenkit::DaedalusDataType::INSTANCE)continue;
+          if(!entry || entry->type()!=daedalus::DaedalusDataType::INSTANCE)continue;
           auto name=entry->name();for(auto& c:name)c=char(std::toupper(static_cast<unsigned char>(c)));
           if(name.starts_with("ITMW_") && name.find("SWORD")!=std::string::npos) {symbol=candidate;break;}
           }
@@ -8567,7 +8567,7 @@ bool waterBodiesAdd(World& world,Npc& player,std::string_view symbol,std::string
   auto* npc=world.addNpc(instance,at);
   if(!npc) {arenaAbort("water corpse insertion failed");return false;}
   npc->clearAiQueue();npc->clearState(false);npc->setExternalControl(true);
-  npc->handle().flags=zenkit::NpcFlag(uint32_t(npc->handle().flags)&~uint32_t(zenkit::NpcFlag::IMMORTAL));
+  npc->handle().flags=daedalus::NpcFlag(uint32_t(npc->handle().flags)&~uint32_t(daedalus::NpcFlag::IMMORTAL));
   npc->setDirection(bench.waterDirection);npc->updateTransform();
   if(npc->isHuman()) {
     const auto apple=world.script().findSymbolIndex("ITFO_APPLE");
@@ -8627,7 +8627,7 @@ void prepareWaterBodiesFixture(World& world,Npc& player,std::string_view mode) {
     auto* human=bench.spellActors[0].npc;
     for(size_t i=1;i<bench.spellActors.size();++i)world.removeNpc(*bench.spellActors[i].npc);
     bench.spellActors.resize(1);bench.crew.clear();bench.crew.push_back(human);
-    human->handle().flags=zenkit::NpcFlag(uint32_t(human->handle().flags)&~uint32_t(zenkit::NpcFlag::IMMORTAL));
+    human->handle().flags=daedalus::NpcFlag(uint32_t(human->handle().flags)&~uint32_t(daedalus::NpcFlag::IMMORTAL));
     human->setPosition(lip);human->setDirection(direction);human->updateTransform();
     player.closeWeapon(true);player.clearAiQueue();player.stopWalking();
     player.setPosition(caster);player.setDirection(direction);player.updateTransform();
@@ -8981,7 +8981,7 @@ void prepareWaterSpell(World& world,Npc& player,bool wind) {
   int32_t spell=-1;
   for(size_t i=0;i<world.script().symbolsCount();++i) {
     const auto* symbol=world.script().findSymbol(i);
-    if(!symbol || symbol->type()!=zenkit::DaedalusDataType::INSTANCE)continue;
+    if(!symbol || symbol->type()!=daedalus::DaedalusDataType::INSTANCE)continue;
     auto name=symbol->name();for(auto& c:name)c=char(std::toupper(static_cast<unsigned char>(c)));
     if(!name.starts_with("ITRU_") && !name.starts_with("ITSC_"))continue;
     auto item=std::make_unique<Item>(world,i,Item::T_Inventory);
@@ -9345,7 +9345,7 @@ void waterFilmBegin(World& world,Npc& player) {
       if(symbol==size_t(-1) && i==0)
         for(size_t candidate=0;candidate<world.script().symbolsCount();++candidate) {
           const auto* entry=world.script().findSymbol(candidate);
-          if(entry && entry->type()==zenkit::DaedalusDataType::INSTANCE && entry->name().starts_with("ITMW_") &&
+          if(entry && entry->type()==daedalus::DaedalusDataType::INSTANCE && entry->name().starts_with("ITMW_") &&
              entry->name().find("SWORD")!=std::string::npos) {symbol=candidate;break;}
           }
       if(symbol==size_t(-1)) {arenaAbort("water film item instance missing");return;}
@@ -13095,7 +13095,7 @@ void healingCommand(const std::vector<std::string>& a,World& world,Npc& player,P
     player.handle().attribute[ATR_HITPOINTSMAX]=1000;
     const int hp=a.size()==5 ? std::stoi(a[4]) : 700;
     player.handle().attribute[ATR_HITPOINTS]=hp;
-    player.handle().flags=zenkit::NpcFlag(uint32_t(player.handle().flags)&~uint32_t(zenkit::NpcFlag::IMMORTAL));
+    player.handle().flags=daedalus::NpcFlag(uint32_t(player.handle().flags)&~uint32_t(daedalus::NpcFlag::IMMORTAL));
     const auto count=player.inventory().itemCount(item);
     if(count)player.delItem(item,uint32_t(count));
     test={};test.label=a[2];test.item=item;test.hp=hp;test.start=world.tickCount();
@@ -14864,7 +14864,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
          ((other->position()-hero).length()<clearRadius || (other->position()-site.dry).length()<clearRadius))
         monsters.push_back(other);
     for(auto* monster:monsters) w.removeNpc(*monster);
-    npc->handle().flags=zenkit::NpcFlag(uint32_t(npc->handle().flags)&~uint32_t(zenkit::NpcFlag::IMMORTAL));
+    npc->handle().flags=daedalus::NpcFlag(uint32_t(npc->handle().flags)&~uint32_t(daedalus::NpcFlag::IMMORTAL));
     npc->handle().attribute[ATR_HITPOINTS]=npc->handle().attribute[ATR_HITPOINTSMAX]=50000;
     npc->clearAiQueue();npc->clearState(false);npc->setExternalControl(true);
     npc->setPosition(site.dry);npc->setDirection(site.direction);npc->updateTransform();
@@ -15330,7 +15330,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     const auto reason=w.script().findSymbol("AIV_ATTACKREASON");
     const auto kill=w.script().findSymbol("AR_KILL");
     if(attack==size_t(-1) || !tactic || !reason || !kill || reason->get_int()<0 ||
-       size_t(reason->get_int())>=zenkit::INpc::aivar_count) {
+       size_t(reason->get_int())>=daedalus::INpc::aivar_count) {
       arenaAbort("melee brawl script symbols are absent");return;
       }
     for(size_t i=0;i<bench.crew.size();++i) {
@@ -15342,7 +15342,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       position.y=floor.v.y;
       npc.clearAiQueue();npc.clearState(true);npc.clearGoTo();npc.stopWalking();
       auto& h=npc.handle();
-      h.flags=zenkit::NpcFlag(uint32_t(h.flags)&~uint32_t(zenkit::NpcFlag::IMMORTAL));
+      h.flags=daedalus::NpcFlag(uint32_t(h.flags)&~uint32_t(daedalus::NpcFlag::IMMORTAL));
       h.attribute[ATR_HITPOINTSMAX]=100000;h.attribute[ATR_HITPOINTS]=100000;
       h.attribute[ATR_STRENGTH]=60;h.hitchance[TALENT_1H]=60;npc.setTalentSkill(TALENT_1H,2);
       h.guild=i%2==0 ? GIL_BDT : GIL_PAL;h.fight_tactic=tactic->get_int();
@@ -15601,7 +15601,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     if(!chooseQuestSite(w,water,site)) { arenaAbort("no supported dry quest-guard hazard site");return; }
     Gothic::settingsSetI("GAME","ragdoll_quest_guard",enabled);
     auto& flags=npc->handle().flags;
-    flags=zenkit::NpcFlag(uint32_t(flags)&~uint32_t(zenkit::NpcFlag::IMMORTAL));
+    flags=daedalus::NpcFlag(uint32_t(flags)&~uint32_t(daedalus::NpcFlag::IMMORTAL));
     npc->setAttitude(ATT_NEUTRAL);
     if(npc!=&pl && npc->isHuman()) {
       npc->handle().attribute[ATR_HITPOINTSMAX]=100;
@@ -15609,7 +15609,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       for(auto& protection:npc->handle().protection) protection=0;
       }
     pl.closeWeapon(true);pl.handle().attribute[ATR_STRENGTH]=1000;
-    pl.handle().damage_type=1<<size_t(zenkit::DamageType::BLUNT);
+    pl.handle().damage_type=1<<size_t(daedalus::DamageType::BLUNT);
     npc->clearAiQueue();npc->clearState(false);npc->setExternalControl(true);npc->setPosition(site.dry);npc->setDirection(site.direction);npc->updateTransform();
     auto hero=site.dry-site.direction*300;
     if(const auto floor=w.physic()->landRay(hero+Vec3(0,300,0),1500);floor.hasCol) hero.y=floor.v.y;
@@ -16975,7 +16975,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       if(ids[i]==size_t(-1)) { fail(std::string("missing symbol ")+names[i]); return; }
       }
     const int reason = w.script().findSymbol(names[6])->get_int();
-    if(reason<0 || size_t(reason)>=zenkit::INpc::aivar_count) { fail("invalid attack reason"); return; }
+    if(reason<0 || size_t(reason)>=daedalus::INpc::aivar_count) { fail("invalid attack reason"); return; }
     for(auto* actor:bench.observeActors)
       w.removeNpc(*actor);
     bench.observeActors.clear();
@@ -17007,7 +17007,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       actor->addItem(ids[2],1); actor->useItem(ids[2],Item::NSLOT,true);
       actor->addItem(ids[3],1); actor->useItem(ids[3],Item::NSLOT,true);
       auto& h = actor->handle();
-      h.flags = zenkit::NpcFlag(uint32_t(h.flags)&~uint32_t(zenkit::NpcFlag::IMMORTAL));
+      h.flags = daedalus::NpcFlag(uint32_t(h.flags)&~uint32_t(daedalus::NpcFlag::IMMORTAL));
       h.attribute[ATR_HITPOINTS] = h.attribute[ATR_HITPOINTSMAX] = 1000000;
       h.attribute[ATR_STRENGTH] = h.attribute[ATR_DEXTERITY] = 60;
       h.hitchance[TALENT_1H] = 60; actor->setTalentSkill(TALENT_1H,2);
@@ -17077,11 +17077,11 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       duel.before[i]=npcDuelSnapshot(w,*npc);
       if(auto* weapon=npc->currentMeleeWeapon())duel.weapons[i]=weapon->clsId();
       auto& flags=npc->handle().flags;
-      flags=zenkit::NpcFlag(uint32_t(flags)&~uint32_t(zenkit::NpcFlag::IMMORTAL));
+      flags=daedalus::NpcFlag(uint32_t(flags)&~uint32_t(daedalus::NpcFlag::IMMORTAL));
       npc->setDirection(pos[1-i]-pos[i]);npc->updateTransform();
       npc->setProcessPolicy(NpcProcessPolicy::AiNormal);
       }
-    pl.handle().flags=zenkit::NpcFlag(uint32_t(pl.handle().flags)|uint32_t(zenkit::NpcFlag::IMMORTAL));
+    pl.handle().flags=daedalus::NpcFlag(uint32_t(pl.handle().flags)|uint32_t(daedalus::NpcFlag::IMMORTAL));
     pl.clearAiQueue();pl.clearGoTo();pl.clearSpeed();
     Npc& npc=*duel.actors[0];Npc& target=*duel.actors[1];
     // Same nonlethal start as npc_act fight{deed:true}; the defender retains its constructor state.
@@ -17123,7 +17123,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
         }
       }
     const int reason = w.script().findSymbol(names[6])->get_int();
-    if(reason<0 || size_t(reason)>=zenkit::INpc::aivar_count) {
+    if(reason<0 || size_t(reason)>=daedalus::INpc::aivar_count) {
       fail("invalid AIV_ATTACKREASON index");
       return;
       }
@@ -17182,7 +17182,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       n.addItem(ids[3],1);
       n.useItem(ids[3],Item::NSLOT,true);
       auto& h = n.handle();
-      h.flags = zenkit::NpcFlag(uint32_t(h.flags) & ~uint32_t(zenkit::NpcFlag::IMMORTAL));
+      h.flags = daedalus::NpcFlag(uint32_t(h.flags) & ~uint32_t(daedalus::NpcFlag::IMMORTAL));
       h.attribute[ATR_STRENGTH] = 60;
       h.attribute[ATR_DEXTERITY] = 60;
       h.attribute[ATR_HITPOINTSMAX] = 300;
@@ -17728,8 +17728,8 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
         const auto attack = HeroDeed::constant(*n,"AIV_ATTACKREASON");
         const auto fight = HeroDeed::constant(*n,"AIV_LASTFIGHTAGAINSTPLAYER");
         const auto comment = HeroDeed::constant(*n,"AIV_LASTFIGHTCOMMENT");
-        const auto valid = [](int32_t i) { return i>=0 && uint32_t(i)<zenkit::INpc::aivar_count; };
-        if(none==nullptr || !none->is_const() || none->type()!=zenkit::DaedalusDataType::INT ||
+        const auto valid = [](int32_t i) { return i>=0 && uint32_t(i)<daedalus::INpc::aivar_count; };
+        if(none==nullptr || !none->is_const() || none->type()!=daedalus::DaedalusDataType::INT ||
            !valid(attack) || !valid(fight) || !valid(comment))
           throw std::runtime_error("fight deed needs native attack variables and AR_NONE");
         auto& aiv = n->handle().aivar;
@@ -18000,8 +18000,8 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       }
     auto& h = n->handle();
     if(a.size()>2 && a[2]=="off")
-      h.flags = zenkit::NpcFlag(uint32_t(h.flags) & ~uint32_t(zenkit::NpcFlag::IMMORTAL)); else
-      h.flags = zenkit::NpcFlag(uint32_t(h.flags) |  uint32_t(zenkit::NpcFlag::IMMORTAL));
+      h.flags = daedalus::NpcFlag(uint32_t(h.flags) & ~uint32_t(daedalus::NpcFlag::IMMORTAL)); else
+      h.flags = daedalus::NpcFlag(uint32_t(h.flags) |  uint32_t(daedalus::NpcFlag::IMMORTAL));
     say("immortal " + symName(w,n) + " " + (n->isImmortal() ? "on" : "off"));
     }
   else if(c=="stun-drift") {

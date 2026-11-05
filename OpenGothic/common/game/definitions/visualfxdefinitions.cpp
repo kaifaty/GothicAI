@@ -46,7 +46,7 @@ std::shared_ptr<Def::EffectBase> VisualFxDefinitions::implGet(std::string_view n
   try {
     return vm->init_instance<Def::EffectBase>(id);
     }
-  catch (const zenkit::DaedalusScriptError&) {
+  catch (const daedalus::DaedalusScriptError&) {
     return nullptr;
     }
   }

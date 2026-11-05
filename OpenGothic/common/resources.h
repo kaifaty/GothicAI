@@ -242,10 +242,10 @@ class Resources final {
 
     static bool                      hasWorld(std::string_view name);
     static int                       baseLanguage();
-    static zenkit::DaedalusScript     loadBaseProgram(std::string_view request, int language);
+    static daedalus::DaedalusScript     loadBaseProgram(std::string_view request, int language);
     static bool                      loadBaseOutputUnits(std::string_view request, int language,
                                                         std::vector<std::shared_ptr<asset::CutsceneBlock>>& blocks);
-    static zenkit::DaedalusScript     loadBaseProgram(std::string_view request, int language,
+    static daedalus::DaedalusScript     loadBaseProgram(std::string_view request, int language,
                                                      std::string_view branch, std::u16string_view hostPath = {});
     static bool                      loadBaseOutputUnits(std::string_view request, int language,
                                                         std::string_view branch,

@@ -8,11 +8,11 @@ using namespace Tempest;
 SoundDefinitions::SoundDefinitions() {
   auto vm = Gothic::inst().createPhoenixVm("Sfx.dat");
 
-  vm->enumerate_instances_by_class_name("C_SFX", [this, &vm](zenkit::DaedalusSymbol& s) {
+  vm->enumerate_instances_by_class_name("C_SFX", [this, &vm](daedalus::DaedalusSymbol& s) {
     try {
       this->sfx[s.name()] = vm->init_instance<Def::SoundEffect>(&s);
       }
-    catch(const zenkit::DaedalusScriptError&) {
+    catch(const daedalus::DaedalusScriptError&) {
       // There was an error during initialization. Ignore it.
       }
   });

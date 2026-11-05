@@ -2781,7 +2781,7 @@ void NavDemos::command(const std::vector<std::string>& args,World& w,Npc& player
       // This is a navigation target, not a combat encounter. The cloned stand
       // NPC still follows the ordinary seeded wandering route below.
       auto& handle=target.handle();
-      handle.flags=zenkit::NpcFlag(uint32_t(handle.flags)|uint32_t(zenkit::NpcFlag::IMMORTAL));
+      handle.flags=daedalus::NpcFlag(uint32_t(handle.flags)|uint32_t(daedalus::NpcFlag::IMMORTAL));
       target.setAttitude(ATT_FRIENDLY);target.setTempAttitude(ATT_FRIENDLY);
     }
     target.clearGoTo();target.attachToPoint(nullptr);

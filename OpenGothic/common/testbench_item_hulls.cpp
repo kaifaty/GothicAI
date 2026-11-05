@@ -64,7 +64,7 @@ void itemHullCensus(World& world) {
   std::map<std::string,size_t> reasons;
   std::vector<float> ratios,pointsBefore,pointsAfter;
   std::string outliers="[",extraPadding="[";
-  world.script().getVm().enumerate_instances_by_class_name("C_ITEM",[&](zenkit::DaedalusSymbol& symbol) {
+  world.script().getVm().enumerate_instances_by_class_name("C_ITEM",[&](daedalus::DaedalusSymbol& symbol) {
     Item item(world,symbol.index(),Item::T_Inventory);++instances;
     std::string visual=item.handle().visual;
     for(auto& c:visual)c=char(std::toupper(static_cast<unsigned char>(c)));

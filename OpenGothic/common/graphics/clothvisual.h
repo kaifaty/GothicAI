@@ -7,7 +7,7 @@
 #include <string_view>
 #include <vector>
 
-namespace zenkit { class Mesh; }
+namespace daedalus { class Mesh; }
 
 class World;
 class Cloth;

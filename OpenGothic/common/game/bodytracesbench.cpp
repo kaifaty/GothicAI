@@ -170,7 +170,7 @@ Npc* spawn(World& world, const char* instance, Vec3 at) {
 
 int32_t scriptInt(World& world, const char* name, int32_t fallback) {
   auto* s = world.script().getVm().find_symbol_by_name(name);
-  return s!=nullptr && s->type()==zenkit::DaedalusDataType::INT ? s->get_int(0) : fallback;
+  return s!=nullptr && s->type()==daedalus::DaedalusDataType::INT ? s->get_int(0) : fallback;
   }
 
 void giveMissionItem(World& world, Npc& npc) {
@@ -259,13 +259,13 @@ void setup(World& world, Npc& hero, bool sleepBatch) {
         role = &r;
     auto* npc = spawn(world,role->instance,anchor+right*places[i].side+fwd*places[i].ahead);
     if(!role->monster)
-      npc->handle().type = zenkit::NpcType(std::string_view(role->name)=="story" ? main : ambient);
+      npc->handle().type = daedalus::NpcType(std::string_view(role->name)=="story" ? main : ambient);
     if(std::string_view(role->name)=="mission" || std::string_view(role->name)=="sleeper_mission")
       giveMissionItem(world,*npc);
     kill(*npc,hero);
     // IMMORTAL people cannot be killed by damage: the flag is set on the body itself.
     if(std::string_view(role->name)=="immortal")
-      npc->handle().flags = npc->handle().flags | zenkit::NpcFlag::IMMORTAL;
+      npc->handle().flags = npc->handle().flags | daedalus::NpcFlag::IMMORTAL;
     st.actors[role->name] = Actor{role,npc,{},false,sleepBatch};
     }
   st.sleepBatch = sleepBatch;

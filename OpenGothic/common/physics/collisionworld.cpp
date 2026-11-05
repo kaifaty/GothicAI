@@ -1827,7 +1827,7 @@ bool CollisionWorld::CollisionBody::addImpulse(const Tempest::Vec3& impulseNs, N
     interface.AddImpulse(id,JPH::Vec3(impulseNs.x,impulseNs.y,impulseNs.z),JPH::RVec3(toMeters(*pointCm)));
   else
     interface.AddImpulse(id,JPH::Vec3(impulseNs.x,impulseNs.y,impulseNs.z));
-  noiseCulprit=culprit!=nullptr ? culprit->handlePtr() : std::weak_ptr<zenkit::INpc>();
+  noiseCulprit=culprit!=nullptr ? culprit->handlePtr() : std::weak_ptr<daedalus::INpc>();
   noiseCulpritUntilStep=owner->impl->simulationStep+300;
   setTraceCulprit(culprit);
   return true;

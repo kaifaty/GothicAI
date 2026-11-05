@@ -36,7 +36,7 @@ struct Light final : asset::VLight, Added {
 struct Context {
   std::vector<Vob> removed;
   const std::map<std::string,fs::path>* ownMeshes = nullptr;
-  std::unique_ptr<zenkit::DaedalusVm> particles;
+  std::unique_ptr<daedalus::DaedalusVm> particles;
   ParticleContent::Result ownParticles;
   };
 

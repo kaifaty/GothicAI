@@ -32,7 +32,7 @@ HeroDeed::Person resolveOwner(Npc& hero, std::string_view name) {
   if(s==nullptr)
     return {};
   auto* cls = s;
-  for(size_t i=0; i<16 && cls!=nullptr && cls->type()!=zenkit::DaedalusDataType::CLASS; ++i)
+  for(size_t i=0; i<16 && cls!=nullptr && cls->type()!=daedalus::DaedalusDataType::CLASS; ++i)
     cls = script.findSymbol(size_t(cls->parent()));
   if(cls==nullptr || cls->name()!="C_NPC")
     return {};
@@ -41,8 +41,8 @@ HeroDeed::Person resolveOwner(Npc& hero, std::string_view name) {
   // Preserve an explicit C_NPC owner even when that NPC is not in this world.
   HeroDeed::Person p;
   p.npc = s->name();
-  if(s->is_instance_of<zenkit::INpc>()) {
-    auto instance = std::static_pointer_cast<zenkit::INpc>(s->get_instance());
+  if(s->is_instance_of<daedalus::INpc>()) {
+    auto instance = std::static_pointer_cast<daedalus::INpc>(s->get_instance());
     p.guild = instance->guild;
     p.npctype = int32_t(instance->type);
     }
@@ -71,14 +71,14 @@ HeroDeed::Person resolveRoomOwner(Npc& hero, std::string_view portal) {
 
 int32_t HeroDeed::constant(Npc& npc, std::string_view name, int32_t fallback) {
   auto* s = npc.world().script().findSymbol(name);
-  if(s==nullptr || s->type()!=zenkit::DaedalusDataType::INT)
+  if(s==nullptr || s->type()!=daedalus::DaedalusDataType::INT)
     return fallback;
   return s->get_int(0);
   }
 
 int32_t HeroDeed::aivar(Npc& npc, std::string_view name) {
   const auto index = constant(npc,name);
-  if(index<0 || uint32_t(index)>=zenkit::INpc::aivar_count)
+  if(index<0 || uint32_t(index)>=daedalus::INpc::aivar_count)
     return 0;
   return npc.handlePtr()->aivar[size_t(index)];
   }

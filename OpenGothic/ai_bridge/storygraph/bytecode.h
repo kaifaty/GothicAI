@@ -6,7 +6,7 @@
 #include <unordered_map>
 #include <vector>
 
-namespace zenkit {
+namespace daedalus {
   class DaedalusScript;
   class DaedalusSymbol;
   }
@@ -30,22 +30,22 @@ struct FnSummary final {
 
 class Bytecode final {
   public:
-    explicit Bytecode(const zenkit::DaedalusScript& script);
+    explicit Bytecode(const daedalus::DaedalusScript& script);
 
     FnSummary summarize(uint32_t fnSymbol) const;
-    bool      isInfo(const zenkit::DaedalusSymbol& sym) const;
+    bool      isInfo(const daedalus::DaedalusSymbol& sym) const;
     // prints the instructions of a function to stdout; false if there is no such function
     bool      print(const std::string& fnName) const;
 
     // where the code block starting at `address` ends: the start of the next block
     uint32_t  codeEnd(uint32_t address) const;
-    static bool hasCode(const zenkit::DaedalusSymbol& sym);
+    static bool hasCode(const daedalus::DaedalusSymbol& sym);
     // the script function whose code starts at `address`, nullptr if there is none
-    const zenkit::DaedalusSymbol* functionAt(uint32_t address) const;
+    const daedalus::DaedalusSymbol* functionAt(uint32_t address) const;
 
   private:
 
-    const zenkit::DaedalusScript&          script;
+    const daedalus::DaedalusScript&          script;
     std::vector<uint32_t>                  starts;     // sorted start addresses of all code blocks
     std::unordered_map<uint32_t, uint32_t> fnByAddress;
     uint32_t                               infoClass = uint32_t(-1);

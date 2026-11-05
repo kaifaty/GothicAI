@@ -705,7 +705,7 @@ bool World::isStoryNpcType(int32_t type) const {
     std::array<std::optional<int32_t>,3> symbols;
     for(size_t i=0;i<symbols.size();++i) {
       auto* symbol = script().getVm().find_symbol_by_name(names[i]);
-      if(symbol!=nullptr && symbol->type()==zenkit::DaedalusDataType::INT)
+      if(symbol!=nullptr && symbol->type()==daedalus::DaedalusDataType::INT)
         symbols[i] = symbol->get_int(0);
       }
     storyNpcTypes = BodyTraces::storyTypes(symbols);
@@ -1031,7 +1031,7 @@ MeshObjects::Mesh World::addView(std::string_view visual, int32_t headTex, int32
   return view()->addView(visual,headTex,teetTex,bodyColor);
   }
 
-MeshObjects::Mesh World::addView(const zenkit::IItem& itm) {
+MeshObjects::Mesh World::addView(const daedalus::IItem& itm) {
   if(Resources::isHeadless())
     return addView(itm.visual,itm.material,0,itm.material);
   return view()->addView(itm.visual,itm.material,0,itm.material);
@@ -1854,7 +1854,7 @@ void World::invalidateVobIndex() {
   wobj.invalidateVobIndex();
   }
 
-const zenkit::IFocus& World::searchPolicy(const Npc& pl, TargetCollect& collAlgo, TargetType& collType, WorldObjects::SearchFlg& opt) const {
+const daedalus::IFocus& World::searchPolicy(const Npc& pl, TargetCollect& collAlgo, TargetType& collType, WorldObjects::SearchFlg& opt) const {
   opt      = WorldObjects::NoFlg;
   collAlgo = TARGET_COLLECT_FOCUS;
   collType = TARGET_TYPE_ALL;

@@ -31,7 +31,7 @@ void ItemTorchBurning::setPhysicsEnable(World& owner) {
   auto& sc = owner.script();
   size_t torchId = sc.findSymbolIndex("ItLsTorchburned");
   if(torchId!=size_t(-1)) {
-    auto hitem = std::make_shared<zenkit::IItem>();
+    auto hitem = std::make_shared<daedalus::IItem>();
     sc.initializeInstanceItem(hitem, torchId);
     auto m = Resources::loadMesh(hitem->visual);
     Item::setPhysicsEnable(m);

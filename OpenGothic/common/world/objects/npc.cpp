@@ -392,7 +392,7 @@ void Npc::GoTo::setFlee() {
 
 struct Npc::TransformBack {
   TransformBack(Npc& self) {
-    hnpc        = std::make_shared<zenkit::INpc>(*self.hnpc);
+    hnpc        = std::make_shared<daedalus::INpc>(*self.hnpc);
     invent      = std::move(self.invent);
     self.invent = Inventory(); // cleanup
 
@@ -409,8 +409,8 @@ struct Npc::TransformBack {
     skeleton = self.visual.visualSkeleton();
     }
 
-  TransformBack(Npc& owner, zenkit::DaedalusVm& vm, Serialize& fin) {
-    hnpc           = std::make_shared<zenkit::INpc>();
+  TransformBack(Npc& owner, daedalus::DaedalusVm& vm, Serialize& fin) {
+    hnpc           = std::make_shared<daedalus::INpc>();
     hnpc->user_ptr = nullptr;
     fin.readNpc(vm, hnpc);
     invent.load(fin,owner);
@@ -423,7 +423,7 @@ struct Npc::TransformBack {
     }
 
   void undo(Npc& self) {
-    int32_t aivar[zenkit::INpc::aivar_count]={};
+    int32_t aivar[daedalus::INpc::aivar_count]={};
 
     auto exp      = self.hnpc->exp;
     auto exp_next = self.hnpc->exp_next;
@@ -460,7 +460,7 @@ struct Npc::TransformBack {
     fout.write(skeleton!=nullptr ? skeleton->name() : "");
     }
 
-  std::shared_ptr<zenkit::INpc>   hnpc={};
+  std::shared_ptr<daedalus::INpc>   hnpc={};
   Inventory                       invent;
   int32_t                         talentsSk[TALENT_MAX_G2]={};
   int32_t                         talentsVl[TALENT_MAX_G2]={};
@@ -477,7 +477,7 @@ Npc::Npc(World &owner, size_t instance, std::string_view waypoint, NpcProcessPol
   :owner(owner),aiPolicy(aiPolicy),mvAlgo(*this) {
   outputPipe     = owner.script().openAiOuput();
 
-  hnpc           = std::make_shared<zenkit::INpc>();
+  hnpc           = std::make_shared<daedalus::INpc>();
   hnpc->user_ptr = this;
   hnpc->id       = int32_t(instance & 0x7FFFFFFF);
   hnpc->wp       = std::string(waypoint);
@@ -641,7 +641,7 @@ void Npc::load(Serialize &fin, size_t id, std::string_view directory) {
   ragdollQuestFrom = {};
   fin.setEntry("worlds/",fin.worldName(),directory,id,"/data");
 
-  hnpc = std::make_shared<zenkit::INpc>();
+  hnpc = std::make_shared<daedalus::INpc>();
   hnpc->user_ptr        = this;
   fin.readNpc(owner.script().getVm(), hnpc);
   fin.read(body,head,vHead,vTeeth,bdColor,vColor,bdFatness);
@@ -1523,18 +1523,18 @@ bool Npc::addSpellImpulse(const Vec3& impulseNs, bool reaction, Npc* culprit) {
     return false;
   if(ragdoll) {
     ragdoll->addImpulse(impulseNs,culprit);
-    bodyImpactLaunchCulprit=culprit!=nullptr ? culprit->handlePtr() : std::weak_ptr<zenkit::INpc>();
+    bodyImpactLaunchCulprit=culprit!=nullptr ? culprit->handlePtr() : std::weak_ptr<daedalus::INpc>();
     return true;
     }
   if(isDown()) {
     pendingSpellImpulse += impulseNs;
-    spellImpulseCulprit = culprit!=nullptr ? culprit->handlePtr() : std::weak_ptr<zenkit::INpc>();
+    spellImpulseCulprit = culprit!=nullptr ? culprit->handlePtr() : std::weak_ptr<daedalus::INpc>();
     return true;
     }
   updateRagdollQuestAnchor();
   if(!mvAlgo.addSpellImpulse(impulseNs,physicsMass(),reaction))
     return false;
-  spellImpulseCulprit = culprit!=nullptr ? culprit->handlePtr() : std::weak_ptr<zenkit::INpc>();
+  spellImpulseCulprit = culprit!=nullptr ? culprit->handlePtr() : std::weak_ptr<daedalus::INpc>();
   bodyImpactLaunchCulprit=spellImpulseCulprit;
   bodyImpactSpellFlight=true;
   if(living)
@@ -3144,7 +3144,7 @@ void Npc::queueArrowPhysics(const Bullet& bullet) {
   const float strength = std::clamp(momentum/8.f,0.1f,1.f);
   const Vec3 impulse = direction*(momentum/speed);
   arrowImpacts.push_back({bone,point,impulse,strength,
-                           bullet.origin()!=nullptr ? bullet.origin()->handlePtr() : std::weak_ptr<zenkit::INpc>()});
+                           bullet.origin()!=nullptr ? bullet.origin()->handlePtr() : std::weak_ptr<daedalus::INpc>()});
   arrowPhysics.bone = bone;
   arrowPhysics.point = point;
   arrowPhysics.impulseNs = impulse;
@@ -3984,7 +3984,7 @@ int32_t Npc::talentValue(Talent t) const {
   }
 
 int32_t Npc::hitChance(Talent t) const {
-  if(t<zenkit::INpc::hitchance_count)
+  if(t<daedalus::INpc::hitchance_count)
     return hnpc->hitchance[t];
   return 0;
   }
@@ -4121,8 +4121,8 @@ void Npc::setAttitude(Attitude att) {
 
 bool Npc::isFriend() const {
   bool g2 = owner.version().game==2;
-  return ( g2 && hnpc->type==zenkit::NpcType::G2_FRIEND) ||
-         (!g2 && hnpc->type==zenkit::NpcType::G1_FRIEND);
+  return ( g2 && hnpc->type==daedalus::NpcType::G2_FRIEND) ||
+         (!g2 && hnpc->type==daedalus::NpcType::G1_FRIEND);
   }
 
 void Npc::setTempAttitude(Attitude att) {
@@ -6093,7 +6093,7 @@ void Npc::applyMeleePosture(Npc& attacker, const MeleeBladeContact* contact, boo
   const bool beastAttacker = isHuman() && attacker.hasMeleeBeastPoise();
   if((!Gothic::physicsFlags().meleePosture && !barge) || (!isHuman() && !beast) || (!attacker.isHuman() && !beastAttacker))
     return;
-  if(beastAttacker && (DamageCalculator::damageTypeMask(attacker)&(1<<zenkit::DamageType::FLY))!=0)
+  if(beastAttacker && (DamageCalculator::damageTypeMask(attacker)&(1<<daedalus::DamageType::FLY))!=0)
     return;
   const auto mode = attacker.weaponState();
   if(!beastAttacker && mode!=WeaponState::Fist && mode!=WeaponState::W1H && mode!=WeaponState::W2H)
@@ -6352,7 +6352,7 @@ void Npc::takeDamage(Npc& other, const Bullet* b, const CollideMask bMask, int32
     auto& spl  = owner.script().spellDesc(splId);
     splCat     = SpellCategory(spl.spell_type);
     damageType = spl.damage_type;
-    for(size_t i=0; i<zenkit::DamageType::NUM; ++i)
+    for(size_t i=0; i<daedalus::DamageType::NUM; ++i)
       if((damageType&(1<<i))!=0)
         dmg[i] = spl.damage_per_level;
     }
@@ -6479,10 +6479,10 @@ void Npc::takeDamage(Npc& other, const Bullet* b, const CollideMask bMask, int32
         visual.interrupt(); // TODO: put down in pipeline, at Pose and merge with setAnimAngGet
         }
 
-      if((damageType & (1<<zenkit::DamageType::FLY))==0)
+      if((damageType & (1<<daedalus::DamageType::FLY))==0)
         stumble = setAnimAngGet(lastHitType=='A' ? Anim::StumbleA  : Anim::StumbleB)!=nullptr;
       }
-    if((damageType & (1<<zenkit::DamageType::FLY))==0 &&
+    if((damageType & (1<<daedalus::DamageType::FLY))==0 &&
        !(superArmor && (isMeleeCharging() || isMeleeChargeReleasing())))
       hitReaction(other,b,hitResult.value,stumble,contact);
     }
@@ -6490,7 +6490,7 @@ void Npc::takeDamage(Npc& other, const Bullet* b, const CollideMask bMask, int32
   // throw enemy
   const bool physicalWind = isSpell && Gothic::physicsFlags().spellPhysics &&
                             owner.script().physicalSpell(splId)==GameScript::PhysicalSpell::WindFist;
-  if(hitResult.hasHit && (damageType & (1<<zenkit::DamageType::FLY)) && !physicalWind && !bargeArmor && !riposteArmor &&
+  if(hitResult.hasHit && (damageType & (1<<daedalus::DamageType::FLY)) && !physicalWind && !bargeArmor && !riposteArmor &&
      !(superArmor && (isMeleeCharging() || isMeleeChargeReleasing()))) {
     mvAlgo.accessDamFly(x-other.x, z-other.z, lastHitType);
     }
@@ -6623,7 +6623,7 @@ void Npc::recordBodyImpact(float speedCmMs, Npc* culprit, const char* source) {
   applyBodyImpact();
   if(isDead()) return;
   if(bodyImpactWindow.add(owner.tickCount(),speedCmMs)) {
-    bodyImpactPendingCulprit=culprit!=nullptr ? culprit->handlePtr() : std::weak_ptr<zenkit::INpc>();
+    bodyImpactPendingCulprit=culprit!=nullptr ? culprit->handlePtr() : std::weak_ptr<daedalus::INpc>();
     bodyImpactSource=source;
     }
   }
@@ -6678,7 +6678,7 @@ void Npc::tickBodyImpact() {
     const float speed=ragdoll->takeImpactSpeed();
     if(speed>0.f) {
       auto* culprit=ragdoll->impactCulprit();
-      bodyImpactLaunchCulprit=culprit!=nullptr ? culprit->handlePtr() : std::weak_ptr<zenkit::INpc>();
+      bodyImpactLaunchCulprit=culprit!=nullptr ? culprit->handlePtr() : std::weak_ptr<daedalus::INpc>();
       recordBodyImpact(speed,culprit,"ragdoll");
       }
     }
@@ -8099,7 +8099,7 @@ void Npc::commitSpell() {
   if(active->isSpellShoot()) {
     const int lvl = (castLevel-CS_Emit_0)+1;
     DamageCalculator::Damage dmg={};
-    for(size_t i=0; i<zenkit::DamageType::NUM; ++i)
+    for(size_t i=0; i<daedalus::DamageType::NUM; ++i)
       if((spl.damage_type&(1<<i))!=0) {
         dmg[i] = spl.damage_per_level*lvl;
         }
@@ -9452,7 +9452,7 @@ float Npc::meleeAttackCost() const {
   int requirement = 0;
   if(const auto* weapon = invent.activeWeapon()) {
     const auto& item = weapon->handle();
-    for(size_t i=0;i<zenkit::IItem::condition_count;++i)
+    for(size_t i=0;i<daedalus::IItem::condition_count;++i)
       if(item.cond_atr[i]==ATR_STRENGTH)
         requirement = std::max(requirement,int(item.cond_value[i]));
     }
@@ -11028,7 +11028,7 @@ bool Npc::isPrehit() const {
   }
 
 bool Npc::isImmortal() const {
-  return hnpc->flags & zenkit::NpcFlag::IMMORTAL;
+  return hnpc->flags & daedalus::NpcFlag::IMMORTAL;
   }
 
 void Npc::setPerceptionTime(uint64_t time) {

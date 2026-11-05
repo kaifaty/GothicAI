@@ -33,18 +33,18 @@ void TouchDamage::tick(uint64_t dt) {
     return;
 
   for(auto npc:intersections()) {
-    bool mask[zenkit::DamageType::NUM] = {};
-    mask[zenkit::DamageType::BARRIER] = barrier;
-    mask[zenkit::DamageType::BLUNT]   = blunt;
-    mask[zenkit::DamageType::EDGE]    = edge;
-    mask[zenkit::DamageType::FIRE]    = fire;
-    mask[zenkit::DamageType::FLY]     = fly;
-    mask[zenkit::DamageType::MAGIC]   = magic;
-    mask[zenkit::DamageType::POINT]   = point;
-    mask[zenkit::DamageType::FALL]    = fall;
+    bool mask[daedalus::DamageType::NUM] = {};
+    mask[daedalus::DamageType::BARRIER] = barrier;
+    mask[daedalus::DamageType::BLUNT]   = blunt;
+    mask[daedalus::DamageType::EDGE]    = edge;
+    mask[daedalus::DamageType::FIRE]    = fire;
+    mask[daedalus::DamageType::FLY]     = fly;
+    mask[daedalus::DamageType::MAGIC]   = magic;
+    mask[daedalus::DamageType::POINT]   = point;
+    mask[daedalus::DamageType::FALL]    = fall;
 
     auto& hnpc = npc->handle();
-    for(size_t i=0; i<zenkit::DamageType::NUM; ++i) {
+    for(size_t i=0; i<daedalus::DamageType::NUM; ++i) {
       if(!mask[i])
         continue;
       takeDamage(*npc,int32_t(damage),hnpc.protection[i]);

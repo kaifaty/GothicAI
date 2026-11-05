@@ -1966,7 +1966,7 @@ void AiBridge::Impl::runWorldDebug(const rapidjson::Value& msg) {
       return;
       }
     bool vulnerable = false;
-    for(size_t i=0; i<zenkit::DamageType::NUM; ++i)
+    for(size_t i=0; i<daedalus::DamageType::NUM; ++i)
       if((weapon->handle().damage_type&(1<<i))!=0 && victim->handle().protection[i]>=0)
         vulnerable = true;
     if(!vulnerable) {

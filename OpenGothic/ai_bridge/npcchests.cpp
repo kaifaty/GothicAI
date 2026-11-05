@@ -8,8 +8,8 @@
 
 #include <rapidjson/stringbuffer.h>
 #include <rapidjson/writer.h>
-#include <zenkit/DaedalusVm.hh>
-#include <zenkit/addon/daedalus.hh>
+#include "daedalus/vm.h"
+#include "daedalus/classes.h"
 
 #include "game/inventory.h"
 #include "world/objects/interactive.h"
@@ -62,7 +62,7 @@ std::string itemName(World& world, std::string_view inst) {
   std::string out;
   auto prev = s->get_instance();
   try {
-    out = TextCodec::toUtf8(vm.init_instance<zenkit::IItem>(s)->name);
+    out = TextCodec::toUtf8(vm.init_instance<daedalus::IItem>(s)->name);
     }
   catch(const std::exception&) {
     }

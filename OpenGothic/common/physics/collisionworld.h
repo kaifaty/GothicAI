@@ -29,7 +29,7 @@ class Cloth;
 struct MeleeBladeSegment;
 struct MeleeBodyCapsule;
 struct MeleeBladeContact;
-namespace zenkit { struct INpc; }
+namespace daedalus { struct INpc; }
 namespace JPH { class PhysicsSystem; }
 
 class CollisionWorld final {
@@ -111,7 +111,7 @@ class CollisionWorld final {
         ItemMaterial       noiseMaterial = MAT_WOOD;
         asset::MaterialGroup noiseSurface = asset::MaterialGroup::STONE;
         std::string         noiseWhat = "item";
-        std::weak_ptr<zenkit::INpc> noiseCulprit;
+        std::weak_ptr<daedalus::INpc> noiseCulprit;
         uint64_t            noiseCulpritUntilStep = 0;
         uint64_t            nextNoiseStep = 0;
         std::string         traceCause;

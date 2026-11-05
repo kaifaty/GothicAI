@@ -1493,6 +1493,7 @@ int main(int argc, const char** argv) {
       std::filesystem::create_directories(opts.output);
     CommandLine commandLine(argc,argv);
     ZenKitLog::install(ZenKitLog::Level::Warning);
+    daedalus::set_log_level(daedalus::LogLevel::WARNING);
     Resources resources;
     Gothic gothic;
     auto stuckLogger = StuckLogger::fromEnvironment();

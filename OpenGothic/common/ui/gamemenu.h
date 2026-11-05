@@ -5,8 +5,8 @@
 #include <Tempest/Timer>
 #include <Tempest/Color>
 
-#include <zenkit/DaedalusVm.hh>
-#include <zenkit/addon/daedalus.hh>
+#include "daedalus/vm.h"
+#include "daedalus/classes.h"
 
 #include <memory>
 #include <unordered_map>
@@ -24,9 +24,9 @@ class GthFont;
 
 class GameMenu : public Tempest::Widget {
   public:
-    GameMenu(MenuRoot& owner, KeyCodec& keyCodec, zenkit::DaedalusVm& vm, std::string_view menuSection, KeyCodec::Action keyClose);
+    GameMenu(MenuRoot& owner, KeyCodec& keyCodec, daedalus::DaedalusVm& vm, std::string_view menuSection, KeyCodec::Action keyClose);
     ~GameMenu() override;
-    void resetVm(zenkit::DaedalusVm* vm);
+    void resetVm(daedalus::DaedalusVm* vm);
 
     void setPlayer(const Npc& pl);
 
@@ -64,7 +64,7 @@ class GameMenu : public Tempest::Widget {
     struct ChronicleRow;
     struct Item {
       std::string                         name;
-      std::shared_ptr<zenkit::IMenuItem>  handle={};
+      std::shared_ptr<daedalus::IMenuItem>  handle={};
       const Tempest::Texture2d*           img=nullptr;
       SaveGameHeader                      savHdr;
       Tempest::Pixmap                     savPriview;
@@ -75,18 +75,18 @@ class GameMenu : public Tempest::Widget {
 
     MenuRoot&                             owner;
     KeyCodec&                             keyCodec;
-    zenkit::DaedalusVm*                   vm = nullptr;
+    daedalus::DaedalusVm*                   vm = nullptr;
     Tempest::Timer                        timer;
     const Tempest::Texture2d*             up   = nullptr;
     const Tempest::Texture2d*             down = nullptr;
 
-    std::shared_ptr<zenkit::IMenu>        menu={};
+    std::shared_ptr<daedalus::IMenu>        menu={};
     const Tempest::Texture2d*             back=nullptr;
     const Tempest::Texture2d*             slider=nullptr;
     Tempest::Texture2d                    savThumb;
     std::vector<char>                     textBuf;
 
-    Item                                  hItems[zenkit::IMenu::item_count];
+    Item                                  hItems[daedalus::IMenu::item_count];
     Item*                                 ctrlInput = nullptr;
     uint32_t                              curItem=0;
     bool                                  exitFlag=false;
@@ -122,10 +122,10 @@ class GameMenu : public Tempest::Widget {
     void                                  getText(const Item &it, std::vector<char>& out);
     const GthFont&                        getTextFont(const Item &it);
 
-    static bool                           isSelectable(const std::shared_ptr<zenkit::IMenuItem>& item);
-    static bool                           isHorSelectable(const std::shared_ptr<zenkit::IMenuItem>& item);
-    static bool                           isEnabled(const std::shared_ptr<zenkit::IMenuItem>& item);
-    static bool                           isHidden(const std::shared_ptr<zenkit::IMenuItem>& item);
+    static bool                           isSelectable(const std::shared_ptr<daedalus::IMenuItem>& item);
+    static bool                           isHorSelectable(const std::shared_ptr<daedalus::IMenuItem>& item);
+    static bool                           isEnabled(const std::shared_ptr<daedalus::IMenuItem>& item);
+    static bool                           isHidden(const std::shared_ptr<daedalus::IMenuItem>& item);
 
     void                                  exec         (Item &item, int slideDx, KeyCodec::Action hint);
     void                                  execSingle   (Item &it,   int slideDx, KeyCodec::Action hint);

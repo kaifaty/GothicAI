@@ -187,7 +187,7 @@ bool Necromancy::start(World& world, Npc& npc, Card c, std::string spl, std::str
   spell  = std::move(spl);
   // the hero can die now (the bench and the scripts may keep him alive)
   auto& h = hero->handle();
-  h.flags = zenkit::NpcFlag(uint32_t(h.flags) & ~uint32_t(zenkit::NpcFlag::IMMORTAL));
+  h.flags = daedalus::NpcFlag(uint32_t(h.flags) & ~uint32_t(daedalus::NpcFlag::IMMORTAL));
   heroHp  = hero->attribute(ATR_HITPOINTS);
   Gothic::inst().setHudHidden(true);  // a scene of its own from here on
   // after its last words (they are in its queue), off the bookstand or the bench: a spell is cast standing

@@ -33,8 +33,8 @@
 #include <zenkit/Font.hh>
 #include <zenkit/Model.hh>
 #include <zenkit/Vfs.hh>
-#include <zenkit/DaedalusVm.hh>
-#include <zenkit/addon/daedalus.hh>
+#include "daedalus/vm.h"
+#include "daedalus/classes.h"
 #include <miniz.h>
 #include <rapidjson/document.h>
 #include <rapidjson/stringbuffer.h>
@@ -2170,14 +2170,14 @@ std::vector<std::pair<std::string,std::shared_ptr<T>>> originalRecords(Gothic& g
                                                                        std::string_view cls) {
   auto script = gothic.loadScript(dat,ScriptLang::NONE);
   T::register_(script);
-  zenkit::DaedalusVm vm(std::move(script),zenkit::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS);
+  daedalus::DaedalusVm vm(std::move(script),daedalus::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS);
   gothic.setupVmCommonApi(vm);
-  std::vector<zenkit::DaedalusSymbol*> symbols;
-  vm.enumerate_instances_by_class_name(cls,[&symbols](zenkit::DaedalusSymbol& sym) { symbols.push_back(&sym); });
+  std::vector<daedalus::DaedalusSymbol*> symbols;
+  vm.enumerate_instances_by_class_name(cls,[&symbols](daedalus::DaedalusSymbol& sym) { symbols.push_back(&sym); });
   std::vector<std::pair<std::string,std::shared_ptr<T>>> records;
   for(auto* sym:symbols) {
     try { records.emplace_back(sym->name(),vm.init_instance<T>(sym)); }
-    catch(const zenkit::DaedalusScriptError&) {}
+    catch(const daedalus::DaedalusScriptError&) {}
     }
   return records;
   }
@@ -2278,7 +2278,7 @@ void effectCases(const std::string& game, const std::string& base) {
 
     // Cases: the first original record (symbol order) with each property.
     std::string looping, mesh, keyed, linked;
-    for(const auto& [name,pfx]:originalRecords<zenkit::IParticleEffect>(gothic,"ParticleFx.dat","C_PARTICLEFX")) {
+    for(const auto& [name,pfx]:originalRecords<daedalus::IParticleEffect>(gothic,"ParticleFx.dat","C_PARTICLEFX")) {
       if(looping.empty() && pfx->pps_is_looping!=0)
         looping = name;
       if(mesh.empty() && pfx->shp_type_s=="MESH" && !pfx->shp_mesh_s.empty())
@@ -2287,7 +2287,7 @@ void effectCases(const std::string& game, const std::string& base) {
     auto vfxScript = gothic.loadScript("VisualFx.dat",ScriptLang::NONE);
     const auto has = [&vfxScript](const std::string& sym) { return vfxScript.find_symbol_by_name(sym)!=nullptr; };
     std::string anyKey;
-    for(const auto& [name,fx]:originalRecords<zenkit::IEffectBase>(gothic,"VisualFx.dat","CFX_BASE")) {
+    for(const auto& [name,fx]:originalRecords<daedalus::IEffectBase>(gothic,"VisualFx.dat","CFX_BASE")) {
       const bool key = has(name+"_KEY_OPEN") || has(name+"_KEY_INIT") || has(name+"_KEY_CAST") ||
                        has(name+"_KEY_INVEST") || has(name+"_KEY_COLLIDE");
       if(anyKey.empty() && key)
