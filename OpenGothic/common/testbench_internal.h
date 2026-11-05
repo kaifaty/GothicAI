@@ -15,6 +15,7 @@
 #include "physics/dynamicworld.h"
 #include "physics/physics.h"
 #include "utils/keycodec.h"
+#include "world/waypoint.h"
 
 class Npc;
 class PlayerControl;
@@ -64,6 +65,42 @@ struct PlacedItems {
   bool hasFrame=false;
 };
 
+struct FurnitureDrop {
+  Item* item=nullptr;
+  std::string role;
+  std::vector<Tempest::Vec3> vertices,collisionVertices;
+  float supportY=0,supportLocalY=0;
+  };
+struct FurnitureParts {
+  uint32_t table=uint32_t(-1),cupboard=uint32_t(-1);
+  std::string tableVisual;
+  Tempest::Matrix4x4 tableOrigin;
+  Tempest::Vec3 tableCenter,walkStart,walkGoal,walkDirection;
+  Npc* walker=nullptr;
+  WayPoint walkDestination;
+  std::vector<FurnitureDrop> drops;
+  Npc* corpse=nullptr;
+  bool walking=false;
+  float walkMaxStep=0;
+  Tempest::Vec3 walkPrevious;
+  uint64_t walkStartTick=0,walkArrived=0;
+  float walkMaxCrossTrack=0;
+  struct PhysicsSample {
+    uint64_t time=0,dt=0,nativeSteps=0;
+    float milliseconds=0;
+    size_t bodies=0,active=0;
+    };
+  std::vector<DynamicWorld::Item> loadBodies;
+  std::vector<PhysicsSample> loadSamples;
+  uint64_t loadWarmUntil=0,loadEnd=0,loadLastNative=0,loadZeroFrames=0,loadNextWake=0;
+  size_t loadWakeResets=0;
+  Tempest::Vec3 loadBounds[2];
+  float loadResetPoseError=0,loadResetVelocityError=0,loadResetAngularError=0;
+  size_t loadMinimumActive=10,loadDecomposed=0;
+  bool loadRunning=false;
+  bool traceApple=false;
+  };
+
 struct ItemHulls {
   struct ItemHullDrop {
     Item* item=nullptr;
@@ -98,6 +135,24 @@ void arenaAbort(std::string_view reason);
 Tempest::Vec3 movablePosition(const Tempest::Matrix4x4& matrix);
 std::optional<DynamicWorld::MovableVobSnapshot> furnitureBody(World& world,uint32_t zenId);
 void release(PlayerControl& ctrl, KeyCodec::Action a);
+bool destructionSupported(World& world,std::string_view visual,const Tempest::Vec3& at,Tempest::Vec3& support,Tempest::Vec3& failed);
+
+uint64_t furniturePeakMemory();
+void furnitureClearDrops(FurnitureParts& state,World& world);
+void furnitureTraceBegin(FurnitureParts& state,World& world);
+void furnitureTraceReport(FurnitureParts& state,World& world);
+void furnitureRemoveTable(FurnitureParts& state,World& world);
+void furnitureSetup(FurnitureParts& state,World& world,Npc& player);
+void furnitureTableItems(FurnitureParts& state,World& world,Npc& player);
+void furnitureCupboardItem(FurnitureParts& state,World& world,Npc& player);
+void furnitureItemReport(FurnitureParts& state,World& world);
+void furnitureRagdoll(FurnitureParts& state,World& world,Npc& player);
+void furnitureRagdollReport(FurnitureParts& state,World& world);
+void furnitureWalk(FurnitureParts& state,World& world,Npc& player,bool npc=false);
+void furnitureWalkReport(FurnitureParts& state,World& world,Npc& player);
+void furniturePerformance(FurnitureParts& state,World& world,Npc& player);
+void furniturePerformanceSample(FurnitureParts& state,World& world,uint64_t dt);
+void furniturePerformanceReport(FurnitureParts& state,World& world);
 
 void itemHullCensus(World& world);
 void itemHullClear(ItemHulls& state,World& world);
