@@ -48,6 +48,15 @@ namespace TestBench {
   std::vector<Npc*> bodyObservationActors();
   // Fixed time step while a scenario runs: the video and the metrics do not depend on the frame rate
   uint64_t frameDt(uint64_t dt);
+  // `deterministic on` (streaming-shots): every frame is a step, wall time does not skip one (MainWindow::tick)
+  bool     deterministic();
+  // ... and while `streaming wait` waits, the world takes no step at all
+  bool     simulationFrozen();
+  // The renderer drops its temporal state (TAA history, jitter phase) before this frame's picture; once per request
+  bool     takeRenderReset();
+  // The visibility pass appends clusters in their order (one GPU invocation): from the end of a deterministic
+  // `streaming wait` to the next shot
+  bool     orderedVisibility();
   // Move synthetic support fixtures before both NPC and player world steps.
   void     beforeWorldTick(uint64_t dt);
   // Exact healing strikes run at the advanced clock before the player consumes animation events.

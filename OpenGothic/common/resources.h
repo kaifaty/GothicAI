@@ -500,6 +500,7 @@ class Resources final {
     std::unordered_map<std::string,MeshOverride>                     meshOverrides;
     struct CharacterHead {
       std::filesystem::path file;
+      std::filesystem::path face;  // empty: no face profile
       std::unique_ptr<ProtoMesh> mesh;
       bool attempted = false;
       };

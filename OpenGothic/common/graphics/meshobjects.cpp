@@ -2,6 +2,8 @@
 
 #include <Tempest/Log>
 
+#include <algorithm>
+
 #include "graphics/mesh/skeleton.h"
 #include "graphics/mesh/pose.h"
 #include "graphics/mesh/attachbinder.h"
@@ -89,6 +91,18 @@ void MeshObjects::Mesh::setVisible(bool visible) {
 void MeshObjects::Mesh::setDeformation(const std::vector<Tempest::Vec4>& vertices) {
   for(size_t i=0;i<subCount;++i)
     sub[i].setDeformation(vertices);
+  }
+
+void MeshObjects::Mesh::setPartDeformation(const std::vector<Tempest::Vec4>& vertices, uint32_t changedFirst,
+                                           uint32_t changedEnd) {
+  const auto count = uint32_t(vertices.size()/2);
+  for(size_t i=0;i<subCount;++i) {
+    auto [first,end] = sub[i].vertexRange();
+    end = std::min(end,count);
+    if(first>=end)
+      sub[i].setDeformation(nullptr,0,0,0,0); else
+      sub[i].setDeformation(vertices.data()+size_t(first)*2,end-first,first,changedFirst,changedEnd);
+    }
   }
 
 void MeshObjects::Mesh::startMMAnim(std::string_view anim, float intensity, uint64_t timeUntil, bool freeOnly) {

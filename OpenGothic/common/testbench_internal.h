@@ -12,6 +12,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "game/constants.h"
 #include "physics/dynamicworld.h"
 #include "physics/physics.h"
 #include "utils/keycodec.h"
@@ -124,10 +125,54 @@ struct ItemHulls {
   bool itemHullTracing=false,itemHullLoad=false;
 };
 
+struct NpcTierTest {
+  Npc* npc = nullptr;
+  const WayPoint* ends[2] = {};
+  unsigned legs = 0, turns = 0, phase = 0, switches = 0;
+  unsigned toFull[2] = {}, toSimplified[2] = {};
+  uint64_t deadline = 0, switchedAt = 0;
+  Tempest::Vec3 before, started, lastPosition;
+  float beforeAngle = 0, lastAngle = 0, maximumJump = 0, maximumHeight = 0;
+  float travelPerMs = 0;
+  const WayPoint* destination = nullptr;
+  std::vector<const WayPoint*> path;
+  NpcSimTier previous = NpcSimTier::Full;
+  bool pending = false;
+};
+
+struct NpcSpeedTest {
+  Npc* npc = nullptr;
+  const WayPoint* start = nullptr;
+  const WayPoint* end = nullptr;
+  Tempest::Vec3 previous;
+  uint64_t began = 0, previousTick = 0, measuredMs = 0;
+  unsigned leg = 0, samples = 0;
+  float length = 0, distance = 0, expectedDistance = 0;
+  std::string firstAnimation, lastAnimation;
+};
+
+struct NpcDuel {
+  Npc* actors[2] = {};
+  std::string before[2];
+  size_t weapons[2] = {size_t(-1),size_t(-1)};
+  int hits[2] = {}, damage[2] = {};
+  int swings[2] = {}, blocked[2] = {}, misses[2] = {};
+  int64_t firstResponseMs = -1;
+  std::string hitLog = "[";
+  int loser = -1;
+  uint32_t seed = 0;
+  uint64_t from = 0, end = 0;
+  bool active = false;
+
+  void hit(Npc& victim, Npc& by, int32_t loss, std::string_view);
+  };
+
 extern std::string outDir;
 
 void event(std::string_view kind, const std::string& fields = {});
 std::string jsonStr(std::string_view s);
+std::string symName(World& w, const Npc* n);
+std::string stateName(World& w, const Npc& n);
 std::string ragdollNumber(float value);
 std::string ragdollVector(const Tempest::Vec3& value);
 std::string ragdollMatrix(const Tempest::Matrix4x4& value);
@@ -136,6 +181,12 @@ Tempest::Vec3 movablePosition(const Tempest::Matrix4x4& matrix);
 std::optional<DynamicWorld::MovableVobSnapshot> furnitureBody(World& world,uint32_t zenId);
 void release(PlayerControl& ctrl, KeyCodec::Action a);
 bool destructionSupported(World& world,std::string_view visual,const Tempest::Vec3& at,Tempest::Vec3& support,Tempest::Vec3& failed);
+
+std::string npcDuelSnapshot(World& world, Npc& npc);
+bool tickNpcDuel(NpcDuel& state,World& world);
+bool npcTierTestTick(NpcTierTest& state,World& world,Npc& player,uint64_t frameMs);
+bool npcSpeedPrepare(NpcSpeedTest& state,World& world);
+bool npcSpeedTick(NpcSpeedTest& state,World& world);
 
 uint64_t furniturePeakMemory();
 void furnitureClearDrops(FurnitureParts& state,World& world);

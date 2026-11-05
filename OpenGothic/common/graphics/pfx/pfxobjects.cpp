@@ -40,6 +40,7 @@ void PfxObjects::tick(uint64_t ticks) {
   uint64_t dt = ticks-lastUpdate;
   if(dt==0)
     return;
+  now = ticks;
 
   for(auto& i:bucket)
     i.tick(dt,viewerPos);

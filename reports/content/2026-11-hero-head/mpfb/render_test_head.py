@@ -1,10 +1,14 @@
 # Checks the test head GLB of export_test_head.py: front and profile against the original HUM_HEAD_PONY (red wire,
 # same bone frame), then shapes on all parts at once - jaw open, blink, smile, brows, U, look up.
-#   blender -b --factory-startup -P render_test_head.py -- <test-head.glb> <out dir>
+#   blender -b --factory-startup -P render_test_head.py -- <test-head.glb> <out dir> [<face profile .json>]
+# With a face profile (test-head.face.json) it renders its old names instead: each anim's frames as the engine
+# shows them, VISEME at frames 0, 5, 10 and 15.
 import bpy, json, struct, os, sys, math
 from mathutils import Vector
 
-GLB, OUT = sys.argv[sys.argv.index('--')+1:][:2]
+ARGS = sys.argv[sys.argv.index('--')+1:]
+GLB, OUT = ARGS[:2]
+PROFILE = ARGS[2] if len(ARGS) > 2 else None
 os.makedirs(OUT, exist_ok=True)
 bpy.ops.wm.read_factory_settings(use_empty=True)
 sc = bpy.context.scene
@@ -62,9 +66,18 @@ def pose(**w):
             for k in o.data.shape_keys.key_blocks[1:]:
                 k.value = w.get(k.name, 0.0)
 
+orig.hide_render = PROFILE is not None
+zc = ctr.z-0.015
+if PROFILE:
+    anims = json.load(open(PROFILE))['anims']
+    for name, a in anims.items():
+        frames = a['frames']
+        picks = [0, 5, 10, 15] if name == 'VISEME' else range(len(frames))
+        for f in picks:
+            pose(**frames[f]); shot('%s_%02d' % (name, f), 25, 0.24, zc)
+    sys.exit(0)
 pose(); shot('a_front', 0, 0.36, 0.115); shot('b_profile', 90, 0.36, 0.115)
 orig.hide_render = True
-zc = ctr.z-0.015
 for name, w in [('c_neutral', {}), ('d_jaw', {'jawOpen': 1}), ('e_blink', {'eyeBlinkLeft': 1, 'eyeBlinkRight': 1}),
                 ('f_smile', {'mouthSmileLeft': 1, 'mouthSmileRight': 1}),
                 ('g_brows', {'browInnerUp': 1, 'browOuterUpLeft': 1}), ('h_U', {'viseme_U': 1}),

@@ -549,6 +549,17 @@ def test_fix_layer_hold_keeps_a_bone_still_against_its_parent_while_the_body_tur
     assert np.array_equal(anim.rotations[:, [0, 1, 3, 4]], orig[:, [0, 1, 3, 4]])  # only the held bone changes
 
 
+def test_fix_layer_raise_lifts_the_root_in_its_window_and_keeps_the_path():
+    import fix_layer
+    skel, anim = leg_clip(8)
+    anim.positions[:, 0, 2] = np.arange(8) * 10.0
+    orig = ga.Animation(anim.name, "", 1, 25.0, 8, list(anim.node_indices), anim.positions.copy(), anim.rotations.copy())
+    fix_layer.apply(skel, anim, [{"kind": "raise", "window": [1, 3, 4, 6], "cm": 12}], floor=0.0)
+    assert np.allclose(anim.positions[:, 0, 1] - orig.positions[:, 0, 1], [0, 0, 6, 12, 12, 6, 0, 0])
+    assert np.array_equal(anim.positions[:, 0, [0, 2]], orig.positions[:, 0, [0, 2]])  # the path is the same
+    assert np.array_equal(anim.positions[:, 1:], orig.positions[:, 1:]) and np.array_equal(anim.rotations, orig.rotations)
+
+
 def test_fix_layer_keep_leaves_a_child_where_it_was_when_its_parent_is_fixed():
     import fix_layer
     skel, anim = leg_clip(8)

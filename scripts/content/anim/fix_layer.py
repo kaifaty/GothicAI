@@ -24,7 +24,10 @@ Kinds:
         instead of flipping the blade from one side of the body to the other;
 - keep  {"bones": ["BIP01 R CLAVICLE"], "window": [...]}: the bones keep the model-space turn they had before this
         layer, so a fix of a parent leaves the limb below it where it was: both clavicles hang on the neck, and a calm
-        of the neck would swing the sword arm.
+        of the neck would swing the sword arm;
+- raise {"window": [...], "cm": 12}: the whole body rises, by the root's height only: the engine moves the NPC by
+        the root's XZ, so the path stays. For a trunk that rolls over a shoulder sunk into the floor; a hand or foot
+        on the ground rises with it, and a later `lift` with negative cm puts it back.
 
 The legs and arms are solved by two-bone IK: the knee or elbow stays in its own plane. With `"joint_clear": cm` on
 a step, lift or tuck the plane turns only as far as it takes to keep the knee or elbow that high over the floor.
@@ -235,6 +238,10 @@ def apply(skel: ga.Skeleton, anim: ga.Animation, fixes: list, floor: float) -> l
                 for bone in fx["bones"]:
                     i = skel.index(bone)
                     clip.set_world_rot(f, W, bone, slerp_m(W[i][:3, :3], first[f][i][:3, :3], weight(win, f)))
+        elif kind == "raise":
+            c = clip.col[0]
+            for f in frames:
+                anim.positions[f, c, 1] += fx["cm"] * weight(win, f)
         else:
             raise SystemExit(f"unknown fix kind {kind}")
     return log
@@ -254,7 +261,10 @@ def main():
     orig, anim = ga.read_animation(src), ga.read_animation(src)
     log = apply(skel, anim, spec["fixes"], floor_of(skel, ga.read_animation(B / f"{spec['stance']}.MAN.json")))
     outside = [f for f in range(anim.frame_count) if all(weight(window_of(fx), f) == 0 for fx in spec["fixes"])]
-    assert np.array_equal(orig.rotations[outside], anim.rotations[outside]) and np.array_equal(orig.positions, anim.positions)
+    still = np.ones(anim.positions.shape[:2], bool)  # only `raise` moves a position: the root's, in its window
+    still[[f for fx in spec["fixes"] if fx["kind"] == "raise" for f in range(anim.frame_count) if weight(window_of(fx), f) > 0], 0] = False
+    assert np.array_equal(orig.rotations[outside], anim.rotations[outside]) and np.array_equal(orig.positions[still], anim.positions[still])
+    assert np.array_equal(orig.positions[:, 0, [0, 2]], anim.positions[:, 0, [0, 2]])  # the path is the same
     ga.write_animation(out, anim, f"fix_layer:{src.name} {fixes_path.name}")
     diff = ~np.all(orig.rotations == anim.rotations, axis=2)
     bones = sorted({skel.nodes[anim.node_indices[c]].name for c in np.where(diff.any(0))[0]})

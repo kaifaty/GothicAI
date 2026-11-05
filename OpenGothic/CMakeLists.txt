@@ -334,6 +334,10 @@ if(UNIX AND NOT IOS AND NOT ANDROID)
   add_executable(gothic-taa-test EXCLUDE_FROM_ALL tests/taa_test.cpp)
   target_link_libraries(gothic-taa-test PRIVATE OpenGothic AiBridge)
   target_compile_options(gothic-taa-test PRIVATE -Wall -Wconversion -Werror)
+  # The own head's face (graphics/mesh/facerig): a synthetic head and profile; CPU only, no device or game data.
+  add_executable(gothic-facerig-test EXCLUDE_FROM_ALL tests/facerig_test.cpp)
+  target_link_libraries(gothic-facerig-test PRIVATE OpenGothic AiBridge)
+  target_compile_options(gothic-facerig-test PRIVATE -Wall -Wconversion -Werror)
   # Indexed GLB replacement and fallback, generated assets only; no game or window.
   add_executable(gothic-mesh-gltf-test EXCLUDE_FROM_ALL tests/mesh_gltf_test.cpp)
   target_link_libraries(gothic-mesh-gltf-test PRIVATE OpenGothic AiBridge gothic-base-import)
@@ -444,6 +448,16 @@ if(NOT ANDROID AND NOT IOS)
         ${CMAKE_CURRENT_BINARY_DIR}/navpolicy-fixture/parity.bin.gz
       DEPENDS gothic-navpolicy-contract USES_TERMINAL)
   endif()
+  add_executable(gothic-navreward-contract EXCLUDE_FROM_ALL
+    tests/navreward_contract.cpp common/navreward.cpp)
+  target_include_directories(gothic-navreward-contract PRIVATE
+    common lib/Tempest/Engine/include lib/Tempest/Engine)
+  if(NOT MSVC)
+    target_compile_options(gothic-navreward-contract PRIVATE -Wall -Wconversion -Werror)
+  endif()
+  add_custom_target(check-navreward
+    COMMAND $<TARGET_FILE:gothic-navreward-contract>
+    DEPENDS gothic-navreward-contract USES_TERMINAL)
   add_executable(gothic-navkeyteacher-contract EXCLUDE_FROM_ALL
     tests/navkeyteacher_contract.cpp common/navkeyteacher.cpp)
   target_include_directories(gothic-navkeyteacher-contract PRIVATE
@@ -525,14 +539,17 @@ if(NOT ANDROID AND NOT IOS)
     target_compile_options(gothic-society-export-contract PRIVATE -Wall -Wconversion -Werror)
   endif()
   # The society stand's core over that export (docs/society-sim.md, «Интерфейсы → 2»): loads it, plays a day by
-  # the routine and checks the 5-minute marks, the journal's repeat and snapshot, the speed and gothic-society-day.
+  # the routine and checks the 5-minute marks, the journal's repeat and snapshot, the speed and gothic-society-day;
+  # then the same with the needs of data/society/config.json.
   if(TARGET gothic-body-runner)
     add_executable(gothic-society-core-contract EXCLUDE_FROM_ALL tests/society_core_contract.cpp)
     add_dependencies(gothic-society-core-contract gothic-body-runner gothic-society-day)
     target_link_libraries(gothic-society-core-contract PRIVATE society-core)
+    get_filename_component(SOCIETY_CONFIG_FILE "${CMAKE_CURRENT_SOURCE_DIR}/../data/society/config.json" ABSOLUTE)
     target_compile_definitions(gothic-society-core-contract PRIVATE
       SOCIETY_RUNNER="$<TARGET_FILE:gothic-body-runner>"
-      SOCIETY_DAY="$<TARGET_FILE:gothic-society-day>")
+      SOCIETY_DAY="$<TARGET_FILE:gothic-society-day>"
+      SOCIETY_CONFIG="${SOCIETY_CONFIG_FILE}")
     target_compile_options(gothic-society-core-contract PRIVATE -Wall -Wconversion -Werror)
   endif()
   add_executable(gothic-bodyimpact-contract EXCLUDE_FROM_ALL tests/bodyimpact_contract.cpp)

@@ -1,4 +1,8 @@
 #include "appcadence.h"
+// resources.cpp: texture residency of a deterministic bench (`deterministic on`)
+extern bool benchTexturesSettle;
+extern bool benchTexturesFrozen;
+
 #include "testbench.h"
 #include "testbench_internal.h"
 #include "ui/gamemenu.h"
@@ -78,6 +82,7 @@
 #include "graphics/mesh/lipsync.h"
 #include "graphics/mesh/talkgestures.h"
 #include "graphics/mesh/eyeblink.h"
+#include "graphics/mesh/facerig.h"
 #include "graphics/mesh/lean.h"
 #include "graphics/mesh/pose.h"
 #include "graphics/mesh/animblend.h"
@@ -146,6 +151,9 @@ std::string       outDir       = envStr("OPENGOTHIC_BENCH_OUT") ? envStr("OPENGO
 namespace {
 const bool        keepRunning  = envStr("OPENGOTHIC_BENCH_KEEP")!=nullptr;
 constexpr int     Fps          = 30;
+// `deterministic on`: steps between the end of `streaming wait` and the next command; the TAA history of the shot
+// holds all its jitter phases twice
+constexpr uint32_t DeterministicSettleSteps = 16;
 // the fixed steps keep to the wall clock (never faster): the AI server and its voices live in real time
 const bool        realtime     = envStr("OPENGOTHIC_BENCH_REALTIME")!=nullptr;
 bool              bodyTrace    = envStr("OPENGOTHIC_BODY_TRACE")!=nullptr &&
@@ -629,31 +637,11 @@ struct Bench {
   int64_t     npcDayStart = 0;
   uint64_t    npcDayMinutes = 0;
 
-  struct NpcTierTest {
-    Npc* npc = nullptr;
-    const WayPoint* ends[2] = {};
-    unsigned legs = 0, turns = 0, phase = 0, switches = 0;
-    unsigned toFull[2] = {}, toSimplified[2] = {};
-    uint64_t deadline = 0, switchedAt = 0;
-    Vec3 before, started, lastPosition;
-    float beforeAngle = 0, lastAngle = 0, maximumJump = 0, maximumHeight = 0;
-    float travelPerMs = 0;
-    const WayPoint* destination = nullptr;
-    std::vector<const WayPoint*> path;
-    NpcSimTier previous = NpcSimTier::Full;
-    bool pending = false;
-  } npcTierTest;
+  using NpcTierTest = testbench_detail::NpcTierTest;
+  NpcTierTest npcTierTest;
 
-  struct NpcSpeedTest {
-    Npc* npc = nullptr;
-    const WayPoint* start = nullptr;
-    const WayPoint* end = nullptr;
-    Vec3 previous;
-    uint64_t began = 0, previousTick = 0, measuredMs = 0;
-    unsigned leg = 0, samples = 0;
-    float length = 0, distance = 0, expectedDistance = 0;
-    std::string firstAnimation, lastAnimation;
-  } npcSpeedTest;
+  using NpcSpeedTest = testbench_detail::NpcSpeedTest;
+  NpcSpeedTest npcSpeedTest;
 
   struct Healing {
     std::string label;
@@ -736,6 +724,13 @@ struct Bench {
   bool        perfArmed = false;
   bool        waitStreaming = false;
   std::chrono::steady_clock::time_point streamingDeadline;
+  // `deterministic on`: a `shot` does not depend on how many frames the loading took
+  // (reports/engine/2026-11-03-streaming-optimisation/deterministic-shots.md)
+  bool        deterministic = false;
+  bool        frozen        = false; // the world stands still: `streaming wait` waits in deterministic mode
+  bool        renderReset   = false; // the renderer drops its temporal state before this frame's picture
+  uint32_t    settleSteps   = 0;     // fixed steps left between the end of `streaming wait` and the next command
+  bool        ordered       = false; // visibility appends clusters in order (slow): from the end of the wait to the shot
   struct StreamingSample {
     std::string segment;
     uint64_t frame = 0;
@@ -1314,28 +1309,8 @@ struct Bench {
   Npc*        duelB        = nullptr;
   uint64_t    duelFrom = 0, duelEnd = 0;
   bool        duelWaiting  = false;
-  struct NpcDuel {
-    Npc* actors[2] = {};
-    std::string before[2];
-    size_t weapons[2] = {size_t(-1),size_t(-1)};
-    int hits[2] = {}, damage[2] = {};
-    int swings[2] = {}, blocked[2] = {}, misses[2] = {};
-    int64_t firstResponseMs = -1;
-    std::string hitLog = "[";
-    int loser = -1;
-    uint32_t seed = 0;
-    uint64_t from = 0, end = 0;
-    bool active = false;
-
-    void hit(Npc& victim, Npc& by, int32_t loss, std::string_view) {
-      if(!active || loss<=0) return;
-      for(size_t i=0;i<2;++i)
-        if(actors[i]==&by && actors[1-i]==&victim) {
-          ++hits[i]; damage[i]+=loss;
-          if(loser<0 && victim.isDown())loser=int(1-i);
-          }
-      }
-    } npcDuel;
+  using NpcDuel = testbench_detail::NpcDuel;
+  NpcDuel npcDuel;
   std::vector<Npc*> observeActors;
   uint64_t    observeFrom = 0, observeEnd = 0;
   bool        observeActive = false;
@@ -2208,6 +2183,10 @@ std::string nameUtf8(const Npc& n) {
   return r;
   }
 
+}
+
+namespace testbench_detail {
+
 std::string symName(World& w, const Npc* n) {
   if(n==nullptr)
     return "-";
@@ -2215,6 +2194,10 @@ std::string symName(World& w, const Npc* n) {
     return sym->name();
   return nameUtf8(*n);
   }
+
+}
+
+namespace {
 
 const char* gazeSource(Gaze::Source s) {
   switch(s) {
@@ -2246,12 +2229,20 @@ const char* policyName(NpcProcessPolicy p) {
   return "?";
   }
 
+}
+
+namespace testbench_detail {
+
 // the script state it is in (ZS_SMALLTALK), "-" for none
 std::string stateName(World& w, const Npc& n) {
   const ScriptFn fn  = n.currentState();
   auto           sym = fn.isValid() ? w.script().findSymbol(fn.ptr) : nullptr;
   return sym!=nullptr ? sym->name() : "-";
   }
+
+}
+
+namespace {
 
 // a point is hidden if something is between it and the camera (not counting the ground right at the point)
 bool hidden(World& w, const Vec3& from, const Vec3& to) {
@@ -2570,6 +2561,7 @@ void writeHeader() {
   std::fprintf(bench.csv,",bk_on,bk_w,bk_n,bk_pause,bk_shift,bk_double");
   for(auto& f:FaceColumns)
     std::fprintf(bench.csv,",%s",f.column);
+  std::fprintf(bench.csv,",rig_on,rig_anims,rig_targets,rig_us,rig_n,rig_up_us");
   std::fprintf(bench.csv,",f_on,f_bend,f_yaw,f_twist,f_head,f_hits,f_str,f_ht");
   std::fprintf(bench.csv,",hp_player,hp_subject");
   std::fprintf(bench.csv,",stamina_player,stamina_subject");
@@ -9026,6 +9018,10 @@ void writeRow(Npc& pl) {
   Npc& s = subjectOf(pl);
   for(auto& f:FaceColumns)
     std::fprintf(bench.csv,",%.3f",s.faceWeight(f.anim));
+  // the own head's face (FaceRig): active anims, targets with a weight, the last blend and upload, blends so far
+  const auto& fr = FaceRig::subjectProbe;
+  std::fprintf(bench.csv,",%d,%u,%u,%.1f,%u,%.1f",int(fr.valid),fr.anims,fr.targets,double(fr.blendUs),fr.blends,
+               double(fr.uploadUs));
   // flinch of the watched one (or the hero)
   const auto& fl = bench.subject!=nullptr ? Flinch::subjectProbe : Flinch::playerProbe;
   std::fprintf(bench.csv,",%d,%.2f,%.1f,%.2f,%.2f,%u,%.2f,%.2f",int(fl.active),fl.bend,fl.bendYaw,fl.twist,fl.head,
@@ -12204,278 +12200,6 @@ void routineReturnTick(World& world,Npc& player,PlayerControl& ctrl) {
     }
   }
 
-// Raw script arrays match story_eval; weapon arrays are retained separately, without combining them.
-template<class T>
-std::string npcDuelArray(const T& values) {
-  std::string out="[";
-  for(const auto value:values) { if(out.size()>1)out+=','; out+=std::to_string(value); }
-  return out+"]";
-  }
-
-std::string npcDuelSnapshot(World& world, Npc& npc) {
-  const auto& h=npc.handle();
-  auto* weapon=npc.currentMeleeWeapon();
-  auto* symbol=weapon ? world.script().findSymbol(weapon->clsId()) : nullptr;
-  std::string skills="[", values="[";
-  for(int i=0;i<TALENT_MAX_G2;++i) {
-    if(i>0) {skills+=',';values+=',';}
-    skills+=std::to_string(npc.talentSkill(Talent(i)));
-    values+=std::to_string(npc.talentValue(Talent(i)));
-    }
-  return "\"instance\":"+jsonStr(symName(world,&npc))+",\"level\":"+std::to_string(h.level)+
-    ",\"hp_before\":"+std::to_string(npc.attribute(ATR_HITPOINTS))+
-    ",\"hp_max\":"+std::to_string(npc.attribute(ATR_HITPOINTSMAX))+
-    ",\"str\":"+std::to_string(npc.attribute(ATR_STRENGTH))+",\"dex\":"+std::to_string(npc.attribute(ATR_DEXTERITY))+
-    ",\"hitchance\":{\"fist\":"+std::to_string(npc.hitChance(TALENT_UNKNOWN))+
-    ",\"1h\":"+std::to_string(npc.hitChance(TALENT_1H))+",\"2h\":"+std::to_string(npc.hitChance(TALENT_2H))+"}"+
-    ",\"talent_skills\":"+skills+"],\"talent_values\":"+values+"]"+
-    ",\"protection\":"+npcDuelArray(h.protection)+",\"damage\":"+npcDuelArray(h.damage)+
-    ",\"damagetype\":"+std::to_string(h.damage_type)+",\"weapon\":"+jsonStr(symbol ? symbol->name() : std::string_view{})+
-    ",\"two_handed\":"+(weapon && weapon->is2H() ? "true" : "false")+
-    ",\"weapon_damage\":"+(weapon ? npcDuelArray(weapon->handle().damage) : "[0,0,0,0,0,0,0,0]")+
-    ",\"weapon_damage_total\":"+std::to_string(weapon ? weapon->handle().damage_total : 0)+
-    ",\"weapon_damagetype\":"+std::to_string(weapon ? weapon->handle().damage_type : 0)+
-    ",\"immortal_before\":"+(npc.isImmortal() ? "true" : "false")+
-    ",\"guild\":"+std::to_string(h.guild)+",\"fight_tactic\":"+std::to_string(h.fight_tactic);
-  }
-
-bool tickNpcDuel(World& world) {
-  auto& duel=bench.npcDuel;
-  if(!duel.active)return false;
-  const uint64_t now=world.tickCount();
-  const bool down[]={duel.actors[0]->isDown(),duel.actors[1]->isDown()};
-  if(!down[0] && !down[1] && now<duel.end)return true;
-  Gothic::inst().onCombatHit.ubind(&duel,&Bench::NpcDuel::hit);
-  duel.active=false;
-  std::string fields="\"seed\":"+std::to_string(duel.seed)+",\"duration_ms\":"+std::to_string(now-duel.from)+
-    ",\"hit_log\":"+duel.hitLog+"],\"defender_first_swing_ms\":"+
-    (duel.firstResponseMs<0 ? "null" : std::to_string(duel.firstResponseMs));
-  if(down[0] || down[1]) {
-    const size_t loser=duel.loser>=0 ? size_t(duel.loser) : (down[0] ? 0 : 1);
-    fields+=",\"winner\":"+jsonStr(symName(world,duel.actors[1-loser]))+
-            ",\"loser\":"+jsonStr(symName(world,duel.actors[loser]));
-    } else fields+=",\"timeout\":true";
-  std::vector<Item*> dropped;
-  for(size_t i=0;i<2;++i) {
-    Npc& npc=*duel.actors[i];
-    bool weaponDropped=false;
-    world.detectItem(npc.position(),3000.f,[&](Item& item) {
-      if(item.handle().owner!=int32_t(npc.instanceSymbol()) || !item.isDynamic())return;
-      if(item.clsId()==duel.weapons[i])weaponDropped=true;
-      dropped.push_back(&item);
-      });
-    fields+=std::string(i==0 ? ",\"attacker\":{" : ",\"defender\":{")+duel.before[i]+
-      ",\"hp_after\":"+std::to_string(npc.attribute(ATR_HITPOINTS))+
-      ",\"hits\":"+std::to_string(duel.hits[i])+",\"damage_dealt\":"+std::to_string(duel.damage[i])+
-      ",\"swings\":"+std::to_string(duel.swings[i])+",\"blocked\":"+std::to_string(duel.blocked[i])+
-      ",\"misses\":"+std::to_string(duel.misses[i])+
-      ",\"hp_one\":"+(npc.attribute(ATR_HITPOINTS)==1 ? "true" : "false")+
-      ",\"unconscious\":"+(stateName(world,npc)=="ZS_UNCONSCIOUS" ? "true" : "false")+
-      ",\"weapon_dropped\":"+(weaponDropped ? "true" : "false")+"}";
-    }
-  event("npc_duel",fields);
-  for(auto* item:dropped)world.removeItem(*item);
-  for(auto*& npc:duel.actors) {world.removeNpc(*npc);npc=nullptr;}
-  return false;
-  }
-
-std::vector<const WayPoint*> npcTierPath(const Npc& npc) {
-  std::vector<const WayPoint*> result;
-  if(const auto* current=npc.currentGoToPoint())result.push_back(current);
-  auto path=npc.navigationPath();
-  while(const auto* point=path.pop())
-    if(result.empty() || result.back()!=point)result.push_back(point);
-  return result;
-  }
-
-bool npcTierTestTick(World& world,Npc& player) {
-  auto& test=bench.npcTierTest;
-  if(!test.npc)return false;
-  auto& npc=*test.npc;
-  const auto now=world.tickCount();
-  const bool turning=test.phase==1;
-  const float moved=(npc.position()-test.lastPosition).length();
-  const float turned=std::abs(std::remainder(npc.rotation()-test.lastAngle,360.f));
-  test.lastPosition=npc.position();test.lastAngle=npc.rotation();
-  if(now>=test.deadline) {
-    test.npc=nullptr;
-    arenaAbort("NPC tier transition test timed out before every action arrived");
-    return true;
-    }
-  if(test.pending) {
-    if(now==test.switchedAt)return true;
-    const auto position=npc.position();
-    const auto delta=position-test.before;
-    const float horizontal=std::sqrt(delta.x*delta.x+delta.z*delta.z);
-    const auto elapsed=now-test.switchedAt;
-    const float travel=std::max(test.travelPerMs*float(elapsed),npc.animMoveSpeed(elapsed).length());
-    const auto path=npcTierPath(npc);
-    const bool suffix=path.size()<=test.path.size() && path.size()+1>=test.path.size() &&
-      std::equal(path.rbegin(),path.rend(),test.path.rbegin());
-    const auto goal=npc.navigationGoal();
-    const bool sameGoal=turning || (goal.active && goal.point==test.destination);
-    const auto* head=npc.aiQueueFront();
-    const bool sameTurn=!turning || (head && head->act==AI_TurnToNpc);
-    const float afterHeight=std::hypot(horizontal,std::max(0.f,std::abs(delta.y)-30.f));
-    const bool pass=npc.simTier()!=test.previous && suffix && sameGoal && sameTurn && afterHeight<=travel+0.1f;
-    test.maximumJump=std::max(test.maximumJump,delta.length());
-    test.maximumHeight=std::max(test.maximumHeight,std::abs(delta.y));
-    if(npc.simTier()==NpcSimTier::Full)++test.toFull[turning?1:0];
-    else ++test.toSimplified[turning?1:0];
-    event("npc_tier_transition","\"npc\":"+jsonStr(symName(world,&npc))+
-      ",\"action\":"+jsonStr(turning?"turn":"edge")+",\"from\":"+jsonStr(NpcSimTiers::name(test.previous))+
-      ",\"to\":"+jsonStr(NpcSimTiers::name(npc.simTier()))+",\"jump_cm\":"+ragdollNumber(delta.length())+
-      ",\"horizontal_cm\":"+ragdollNumber(horizontal)+",\"height_cm\":"+ragdollNumber(std::abs(delta.y))+
-      ",\"tick_travel_cm\":"+ragdollNumber(travel)+",\"after_height_correction_cm\":"+ragdollNumber(afterHeight)+",\"angle_delta_deg\":"+
-      ragdollNumber(std::abs(std::remainder(npc.rotation()-test.beforeAngle,360.f)))+
-      ",\"path_preserved\":"+(suffix?"true":"false")+",\"destination_preserved\":"+(sameGoal?"true":"false")+
-      ",\"pass\":"+(pass?"true":"false"));
-    test.pending=false;
-    if(!pass) {
-      test.npc=nullptr;
-      arenaAbort("NPC tier transition changed the remaining action or exceeded one tick of travel");
-      return true;
-      }
-    ++test.switches;
-    }
-  if(test.switches<2) {
-    const auto* head=npc.aiQueueFront();
-    const auto goal=npc.navigationGoal();
-    const auto* current=npc.currentGoToPoint();
-    const auto fromStart=npc.position()-test.started;
-    const auto toWaypoint=current ? current->groundPos-npc.position() : Vec3();
-    const bool ready=turning ? head && head->act==AI_TurnToNpc && turned>0.5f :
-      current && goal.active && moved>0.1f && std::hypot(fromStart.x,fromStart.z)>50.f &&
-      std::hypot(toWaypoint.x,toWaypoint.z)>200.f;
-    if(!ready)return true;
-    test.before=npc.position();
-    test.beforeAngle=npc.rotation();
-    test.destination=goal.point;
-    test.path=npcTierPath(npc);
-    test.previous=npc.simTier();
-    const auto tick=std::max<uint64_t>(bench.frameMs,1);
-    test.travelPerMs=turning?0.f:std::max(npc.simplifiedMoveSpeed(),npc.animMoveSpeed(tick).length()/float(tick));
-    test.switchedAt=now;
-    test.pending=true;
-    npc.setSimTierOverride(test.previous==NpcSimTier::Full?NpcSimTier::Simplified:NpcSimTier::Full);
-    return true;
-    }
-  if(!npc.isAiQueueEmpty())return true;
-  if(!turning) {
-    const auto* destination=test.ends[(test.legs+1)%2];
-    const bool arrived=(npc.position()-destination->position()).length()<=150.f;
-    event("npc_tier_arrival","\"leg\":"+std::to_string(test.legs)+",\"destination\":"+jsonStr(destination->name)+
-      ",\"distance_cm\":"+ragdollNumber((npc.position()-destination->position()).length())+
-      ",\"pass\":"+(arrived?"true":"false"));
-    if(!arrived) {test.npc=nullptr;arenaAbort("NPC tier transition action finished away from its destination");return true;}
-    ++test.legs;
-    if(test.legs<20) {
-      test.started=npc.position();test.switches=0;
-      npc.aiPush(AiQueue::aiGoToPoint(*test.ends[(test.legs+1)%2]));
-      return true;
-      }
-    test.phase=1;
-    }
-  else ++test.turns;
-  if(test.turns<20) {
-    npc.setDirection(player.position()-npc.position());
-    npc.setDirection(npc.rotation()+170.f);
-    test.beforeAngle=npc.rotation();test.lastAngle=npc.rotation();test.switches=0;
-    npc.aiPush(AiQueue::aiTurnToNpc(&player));
-    return true;
-    }
-  const bool enough=test.toFull[0]>=20 && test.toSimplified[0]>=20 &&
-                    test.toFull[1]>=20 && test.toSimplified[1]>=20 && test.legs==20 && test.turns==20;
-  event("npc_tier_transition_result","\"edge_to_full\":"+std::to_string(test.toFull[0])+
-    ",\"edge_to_simplified\":"+std::to_string(test.toSimplified[0])+
-    ",\"turn_to_full\":"+std::to_string(test.toFull[1])+
-    ",\"turn_to_simplified\":"+std::to_string(test.toSimplified[1])+
-    ",\"arrivals\":"+std::to_string(test.legs)+",\"turns_completed\":"+std::to_string(test.turns)+
-    ",\"max_jump_cm\":"+ragdollNumber(test.maximumJump)+",\"max_height_cm\":"+ragdollNumber(test.maximumHeight)+
-    ",\"pass\":"+(enough?"true":"false"));
-  npc.setSimTierOverride(std::nullopt);
-  test.npc=nullptr;
-  if(!enough)arenaAbort("NPC tier transition test did not observe 20 switches each way during both actions");
-  return false;
-  }
-
-bool npcSpeedPrepare(World& world) {
-  auto& test=bench.npcSpeedTest;
-  static constexpr const char* instances[]={"BAU_904_BAUER","OrcWarrior_Roam","Wolf"};
-  static constexpr WalkBit modes[]={WalkBit::WM_Walk,WalkBit::WM_Run,WalkBit::WM_Sneak};
-  if(test.leg%6==0) {
-    if(test.npc)world.removeNpc(*test.npc);
-    const auto instance=world.script().findSymbolIndex(instances[test.leg/6]);
-    test.npc=instance==size_t(-1) ? nullptr : world.addNpc(instance,test.start->groundPos);
-    if(!test.npc || !test.npc->visualSkeleton() || test.npc->isDown()) {
-      test.npc=nullptr;arenaAbort("NPC speed fixture instance is unavailable");return false;
-      }
-    }
-  auto& npc=*test.npc;
-  npc.setInteraction(nullptr,true);npc.clearAiQueue();npc.clearState(true);npc.clearGoTo();
-  npc.setTarget(nullptr);npc.setExternalControl(true);npc.stopWalking();npc.closeWeapon(true);npc.clearSpeed();
-  npc.setSimTierOverride(test.leg%2==0 ? NpcSimTier::Full : NpcSimTier::Simplified);
-  npc.setPosition(test.start->groundPos);npc.setDirection(test.end->groundPos-test.start->groundPos);
-  npc.attachToPoint(test.start);npc.updateTransform();
-  npc.aiPush(AiQueue::aiSetWalkMode(modes[(test.leg/2)%3]));
-  npc.aiPush(AiQueue::aiGoToPoint(*test.end));
-  test.began=test.previousTick=world.tickCount();test.previous=npc.position();
-  test.measuredMs=0;test.samples=0;test.distance=0;test.expectedDistance=0;
-  test.firstAnimation.clear();test.lastAnimation.clear();
-  return true;
-  }
-
-bool npcSpeedTick(World& world) {
-  auto& test=bench.npcSpeedTest;
-  if(!test.npc)return false;
-  auto& npc=*test.npc;
-  const auto now=world.tickCount();
-  if(now-test.began>600000) {
-    test.npc=nullptr;arenaAbort("NPC speed fixture did not arrive on the authored edge");return true;
-    }
-  const auto edge=test.end->groundPos-test.start->groundPos;
-  const auto offset=npc.position()-test.start->groundPos,previous=test.previous-test.start->groundPos;
-  const auto progress=[&](const Vec3& p) {return (p.x*edge.x+p.z*edge.z)/(test.length*test.length);};
-  if(now>test.previousTick && progress(previous)>=.2f && progress(offset)<=.8f) {
-    const auto expected=test.leg%2==0 ? NpcSimTier::Full : NpcSimTier::Simplified;
-    if(npc.simTier()!=expected || npc.currentGoToPoint()!=test.end) {
-      test.npc=nullptr;arenaAbort("NPC speed fixture left the requested tier or authored edge");return true;
-      }
-    const auto dt=now-test.previousTick;
-    const auto moved=npc.position()-test.previous;
-    test.distance+=(moved.x*edge.x+moved.z*edge.z)/test.length;
-    test.expectedDistance+=npc.simplifiedMoveSpeed()*float(dt);
-    test.measuredMs+=dt;++test.samples;
-    if(test.firstAnimation.empty())test.firstAnimation=npc.animNames();
-    test.lastAnimation=npc.animNames();
-    }
-  test.previous=npc.position();test.previousTick=now;
-  if(!npc.isAiQueueEmpty())return true;
-  static constexpr const char* species[]={"human","orc","wolf"};
-  static constexpr const char* modes[]={"walk","run","sneak"};
-  const bool arrived=(npc.position()-test.end->groundPos).length()<=150.f;
-  const bool pass=arrived && test.samples>=3 && test.distance>0;
-  event("npc_speed_sample","\"species\":"+jsonStr(species[test.leg/6])+
-    ",\"npc\":"+jsonStr(symName(world,&npc))+",\"walk_mode\":"+jsonStr(modes[(test.leg/2)%3])+
-    ",\"tier\":"+jsonStr(NpcSimTiers::name(npc.simTier()))+
-    ",\"from\":"+jsonStr(test.start->name)+",\"to\":"+jsonStr(test.end->name)+
-    ",\"edge_cm\":"+ragdollNumber(test.length)+",\"edge_height_cm\":"+ragdollNumber(edge.y)+
-    ",\"elapsed_ms\":"+std::to_string(now-test.began)+",\"measured_ms\":"+std::to_string(test.measuredMs)+
-    ",\"samples\":"+std::to_string(test.samples)+",\"distance_cm\":"+ragdollNumber(test.distance)+
-    ",\"sequence_speed_m_s\":"+ragdollNumber(test.measuredMs ? test.expectedDistance*10.f/float(test.measuredMs) : 0.f)+
-    ",\"observed_speed_m_s\":"+ragdollNumber(test.measuredMs ? test.distance*10.f/float(test.measuredMs) : 0.f)+
-    ",\"first_animation\":"+jsonStr(test.firstAnimation)+",\"last_animation\":"+jsonStr(test.lastAnimation)+
-    ",\"arrived\":"+(arrived?"true":"false")+",\"pass\":"+(pass?"true":"false"));
-  if(!pass) {test.npc=nullptr;arenaAbort("NPC speed fixture has no valid middle-edge measurement or arrival");return true;}
-  if(++test.leg==18) {
-    world.removeNpc(npc);test.npc=nullptr;
-    event("npc_speed_result","\"rows\":18,\"species\":3,\"walk_modes\":3,\"tiers\":2,\"pass\":true");
-    return false;
-    }
-  npcSpeedPrepare(world);
-  return true;
-  }
-
 void healingObserve(World& world,Npc& player) {
   auto& test=bench.healing;
   if(test.label.empty())return;
@@ -15464,6 +15188,16 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     // Camera and desired residency are updated after this bench tick.
     bench.waitUntil=bench.time+1;
     }
+  else if(c=="deterministic") {
+    if(a.size()!=2 || (a[1]!="on" && a[1]!="off")) {
+      arenaAbort("deterministic expects on or off");
+      return;
+      }
+    bench.deterministic=a[1]=="on";
+    benchTexturesSettle=bench.deterministic;
+    benchTexturesFrozen=false;
+    say("deterministic "+a[1]);
+    }
   else if(c=="wait") {
     if(a.size()>1 && a[1]=="real")
       bench.realWaitUntil=std::chrono::steady_clock::now()+std::chrono::milliseconds(uint64_t(num(a,2,1000)));
@@ -16338,7 +16072,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       if(auto* npc=w.npcById(i-1);npc!=&pl)w.removeNpc(*npc);
     bench.npcSpeedTest=Bench::NpcSpeedTest();
     auto& test=bench.npcSpeedTest;test.start=start;test.end=end;test.length=length;
-    npcSpeedPrepare(w);
+    npcSpeedPrepare(bench.npcSpeedTest,w);
     }
   else if(c=="npcday") {
     // npcday <game minutes> [period minutes 5] [shared]: journal every NPC over continuous game time
@@ -18214,6 +17948,8 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     TalkGestures::subjectProbe = TalkGestures::Probe();
     EyeBlink::probeNpc         = n;
     EyeBlink::subjectProbe     = EyeBlink::Probe();
+    FaceRig::probeNpc          = n;
+    FaceRig::subjectProbe      = FaceRig::Probe();
     Lean::probeNpc = bench.subject;
     Pose::probeNpc = bench.subject;
     bench.anim1.clear();
@@ -18664,9 +18400,53 @@ bool waitingForBodyLive() {
   return false;
   }
 
+// One frame of `streaming wait`; true while the scenario stays in it. In deterministic mode the world stands
+// still from the first frame that finds the landscape unready (MainWindow::tick takes no step, this runs with
+// dt 0); readiness then also means no texture demotion or reload is pending. Once it is ready, the renderer drops
+// its temporal state on this very frame, texture residency stands still, and the scenario takes a fixed number of
+// steps with visibility in cluster order; both last until the next shot.
+// Neither the frame count of the wait nor its wall time then reach the picture.
+bool streamingWaitTick(World& w) {
+  if(bench.time<bench.waitUntil)
+    return true;
+  if(!w.landscapeReady()) {
+    if(std::chrono::steady_clock::now()<bench.streamingDeadline) {
+      bench.frozen=bench.deterministic;
+      return true;
+      }
+    bench.waitStreaming=false;
+    bench.frozen=false;
+    arenaAbort("streaming wait timed out before all Near/Far landscape and vob visuals were published");
+    return true;
+    }
+  bench.waitStreaming=false;
+  bench.frozen=false;
+  std::string publications="[";
+  for(size_t i=0;i<bench.streamingWarmupFarMs.size();++i) {
+    if(i!=0)publications+=',';
+    publications+=std::to_string(bench.streamingWarmupFarMs[i]);
+    }
+  publications+=']';
+  event("streaming_ready","\"world\":"+jsonStr(w.name())+",\"pass\":true,\"far_publication_ms\":"+publications+
+    ",\"far_max_per_frame\":"+std::to_string(bench.streamingWarmupFarMaxPerFrame)+
+    ",\"queue_max_ms\":"+std::to_string(bench.streamingWarmupQueueMaxMs)+
+    ",\"vob_pending\":"+std::to_string(w.chunkResidency() ? w.chunkResidency()->stats().vobPending : 0)+
+    ",\"vob_near_missing\":"+std::to_string(w.chunkResidency() ? w.chunkResidency()->stats().vobNearMissing : 0));
+  bench.streamingWarmupFarMs.clear();
+  bench.streamingWarmupFarMaxPerFrame=0;
+  bench.streamingWarmupQueueMaxMs=0;
+  if(bench.deterministic) {
+    bench.renderReset=true;
+    bench.ordered=true;
+    benchTexturesFrozen=true; // the levels stay as they are now until the shot
+    bench.settleSteps=DeterministicSettleSteps;
+    }
+  return false;
+  }
+
 void run(World& w, Npc& pl, PlayerControl& ctrl) {
-  if(npcTierTestTick(w,pl))return;
-  if(npcSpeedTick(w))return;
+  if(npcTierTestTick(bench.npcTierTest,w,pl,bench.frameMs))return;
+  if(npcSpeedTick(bench.npcSpeedTest,w))return;
   if(bench.routeActive || bench.placedItems.probing)return;
   if(bench.routinePhase) {routineReturnTick(w,pl,ctrl);if(bench.routinePhase)return;}
   if(NavBench::running() || NavDemos::running() || NpcDayJournal::running()) return;
@@ -18802,32 +18582,8 @@ void run(World& w, Npc& pl, PlayerControl& ctrl) {
       }
     if(waitingForReply() || waitingForAi() || waitingForBodyLive())
       return;
-    if(bench.waitStreaming) {
-      if(bench.time<bench.waitUntil)
-        return;
-      if(!w.landscapeReady()) {
-        if(std::chrono::steady_clock::now()<bench.streamingDeadline)
-          return;
-        bench.waitStreaming=false;
-        arenaAbort("streaming wait timed out before all Near/Far landscape and vob visuals were published");
-        return;
-        }
-      bench.waitStreaming=false;
-      std::string publications="[";
-      for(size_t i=0;i<bench.streamingWarmupFarMs.size();++i) {
-        if(i!=0)publications+=',';
-        publications+=std::to_string(bench.streamingWarmupFarMs[i]);
-        }
-      publications+=']';
-      event("streaming_ready","\"world\":"+jsonStr(w.name())+",\"pass\":true,\"far_publication_ms\":"+publications+
-        ",\"far_max_per_frame\":"+std::to_string(bench.streamingWarmupFarMaxPerFrame)+
-        ",\"queue_max_ms\":"+std::to_string(bench.streamingWarmupQueueMaxMs)+
-        ",\"vob_pending\":"+std::to_string(w.chunkResidency() ? w.chunkResidency()->stats().vobPending : 0)+
-        ",\"vob_near_missing\":"+std::to_string(w.chunkResidency() ? w.chunkResidency()->stats().vobNearMissing : 0));
-      bench.streamingWarmupFarMs.clear();
-      bench.streamingWarmupFarMaxPerFrame=0;
-      bench.streamingWarmupQueueMaxMs=0;
-      }
+    if(bench.waitStreaming && streamingWaitTick(w))
+      return;
     if(bench.waitRagdollNpc!=nullptr) {
       const auto* npc=bench.waitRagdollNpc;
       const auto* body=npc->ragdollBody();
@@ -18845,7 +18601,7 @@ void run(World& w, Npc& pl, PlayerControl& ctrl) {
             ",\"reached\":"+(ready ? "true" : "false"));
       bench.waitRagdollNpc=nullptr;
       }
-    if(tickNpcDuel(w))return;
+    if(tickNpcDuel(bench.npcDuel,w))return;
     if(bench.duelWaiting) {
       Npc& first = *bench.duelA;
       Npc& second = *bench.duelB;
@@ -18891,7 +18647,8 @@ void run(World& w, Npc& pl, PlayerControl& ctrl) {
       }
     if(bench.pc>=bench.prog.size())
       break;
-    if(bench.time<bench.waitUntil || std::chrono::steady_clock::now()<bench.realWaitUntil || bench.volleyLeft>0)
+    if(bench.time<bench.waitUntil || std::chrono::steady_clock::now()<bench.realWaitUntil || bench.volleyLeft>0 ||
+       bench.settleSteps>0)
       return;
     if(bench.waitArrive) {
       if(!pl.isAiQueueEmpty() && bench.time<bench.arriveEnd)
@@ -18914,7 +18671,7 @@ void run(World& w, Npc& pl, PlayerControl& ctrl) {
     if(bench.cadenceWait) return;
 #endif
     }
-  if(bench.time>=bench.waitUntil && std::chrono::steady_clock::now()>=bench.realWaitUntil && !bench.waitArrive && bench.volleyLeft==0 && bench.downNpc==nullptr && bench.waitRagdollNpc==nullptr && !bench.duelWaiting && !bench.npcDuel.active && !bench.waitStreaming && bench.bodyLiveWait.empty())
+  if(bench.time>=bench.waitUntil && std::chrono::steady_clock::now()>=bench.realWaitUntil && !bench.waitArrive && bench.volleyLeft==0 && bench.downNpc==nullptr && bench.waitRagdollNpc==nullptr && !bench.duelWaiting && !bench.npcDuel.active && !bench.waitStreaming && bench.settleSteps==0 && bench.bodyLiveWait.empty())
     finish();
   }
 
@@ -19293,6 +19050,12 @@ void drawOverlay(Pixmap& pm) {
   if(bk.valid && EyeBlink::probeNpc!=nullptr) {
     std::snprintf(buf,sizeof(buf),"BLINK%s N%u P%u S%u D%u",bk.enabled ? "" : " OFF",bk.blinks,bk.pauses,bk.shifts,bk.doubles);
     cv.text(x,y,buf,2,{200,200,255,255});
+    y += 16;
+    }
+  const auto& fr = FaceRig::subjectProbe;
+  if(fr.valid && FaceRig::probeNpc!=nullptr) {
+    std::snprintf(buf,sizeof(buf),"FACE T%u %.0fus %s",fr.targets,double(fr.blendUs),fr.shown.empty() ? "-" : fr.shown.c_str());
+    cv.text(x,y,buf,2,{255,170,200,255});
     y += 16;
     }
   const auto& ge = TalkGestures::subjectProbe;
@@ -19887,6 +19650,8 @@ void TestBench::physicsNoiseHeard(const Npc& npc,const PhysicsNoise& noise,bool 
 
 void TestBench::configure(std::string scenario, std::string output, int64_t seedOverride) {
   stopBodyLive();
+  benchTexturesSettle=false;
+  benchTexturesFrozen=false;
   npcCharacterStopMotionTrace(Gothic::inst().world());
   KnownRoadsBench::reset();
   NavigationMemoryBench::reset();
@@ -20158,6 +19923,18 @@ std::string_view TestBench::who(const Npc* npc) {
 
 bool TestBench::filming() {
   return scenarioPath!=nullptr && realtime;
+  }
+
+bool TestBench::deterministic() { return bench.started && !bench.done && bench.deterministic; }
+
+bool TestBench::simulationFrozen() { return bench.started && !bench.done && bench.frozen; }
+
+bool TestBench::orderedVisibility() { return bench.ordered; }
+
+bool TestBench::takeRenderReset() {
+  const bool r=bench.renderReset;
+  bench.renderReset=false;
+  return r;
   }
 
 uint64_t TestBench::frameDt(uint64_t dt) {
@@ -20507,8 +20284,14 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
     return false;
     }
   writeHeartbeat(*world);
-  if(dt==0)
+  if(dt==0) {
+    // the world stands still (`deterministic on`): only the streaming wait runs
+    if(bench.frozen)
+      streamingWaitTick(*world);
     return false;
+    }
+  if(bench.settleSteps>0)
+    --bench.settleSteps;
   NavBench::tick(*world);
   NavDemos::tick(*world,dt);
   NavigationEyeBench::tick(world->tickCount());
@@ -21352,6 +21135,8 @@ void TestBench::capture(Pixmap& frame, float uiScale) {
       pm.save((outDir+"/"+bench.shot+".png").c_str());
     say("shot " + bench.shot);
     bench.shot.clear();
+    bench.ordered=false;
+    benchTexturesFrozen=false;
     }
   if(bench.rec && bench.recVideo) {
     if(!bench.trackNpcs.empty() && pm.w()>0)

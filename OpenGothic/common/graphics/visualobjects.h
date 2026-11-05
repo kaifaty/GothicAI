@@ -56,6 +56,12 @@ class VisualObjects final {
       void     setVisible  (bool visible);
       // Two vec4 entries (local position, local normal) per packed vertex.
       void     setDeformation(const std::vector<Tempest::Vec4>& vertices);
+      // The same for the packed vertices [first, first+count) only: the object reads no others (vertexRange).
+      // With the same range as before only the vertices [changedFirst, changedEnd) of the mesh are written.
+      void     setDeformation(const Tempest::Vec4* vertices, size_t count, uint32_t first,
+                              uint32_t changedFirst, uint32_t changedEnd);
+      // the packed vertices of the mesh this object draws: [first, end)
+      std::pair<uint32_t,uint32_t> vertexRange() const;
       void     startMMAnim (std::string_view anim, float intensity, uint64_t timeUntil, bool freeOnly = false);
       void     setMMShape  (std::string_view anim, uint32_t frame0, uint32_t frame1, float alpha, float intensity);
       float    morphWeight (std::string_view anim);  // as shown now: intensity and fade
@@ -139,6 +145,7 @@ class VisualObjects final {
       InstanceStorage::Id objMorphAnim;
       InstanceStorage::Id objDeform;
       uint32_t            deformCount = 0;
+      uint32_t            deformFirst = 0;  // the packed vertex objDeform starts at
 
       DrawCommands::Type  type      = DrawCommands::Type::Landscape;
       uint32_t            iboOff    = 0;

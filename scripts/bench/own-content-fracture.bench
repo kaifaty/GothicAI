@@ -1,0 +1,38 @@
+# Fresh NEWWORLD.ZEN with a content set: our harbour barrel and crate break under the native
+# one-handed attack. Without a fresh .fracture setup aborts: "needs intact cache-backed native prop".
+seed 73013
+cheat god
+set time 12 0
+movable on
+living on
+noise on
+destruction on
+overlay off
+ui off
+view full
+
+destruction2 setup barrel 1h
+wait 600
+shot own-barrel-before
+wait 100
+rec own-barrel-1h
+destruction2 attack
+wait 1200
+destruction2 checkpoint
+shot own-barrel-after
+wait 100
+stop
+
+destruction2 setup crate 1h
+wait 600
+shot own-crate-before
+wait 100
+rec own-crate-1h
+destruction2 attack
+wait 1200
+destruction2 checkpoint
+shot own-crate-after
+wait 100
+stop
+census
+wait 100

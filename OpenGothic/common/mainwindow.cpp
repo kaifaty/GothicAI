@@ -1109,8 +1109,9 @@ void MainWindow::onMarvinKey() {
 uint64_t MainWindow::tick() {
   auto time = Application::tickCount();
   auto dt   = time-lastTick;
-  // NOTE: limit to ~200 FPS in game logic to avoid math issues
-  if(dt<5)
+  // NOTE: limit to ~200 FPS in game logic to avoid math issues; a deterministic bench steps every frame
+  // (its step is fixed, TestBench::frameDt), so how fast frames come does not change their count
+  if(dt<5 && !TestBench::deterministic())
     return 0;
   lastTick  = time;
 
@@ -1135,6 +1136,10 @@ uint64_t MainWindow::tick() {
     return 0;
 
   if(Gothic::inst().isPause()) {
+    return 0;
+    }
+  if(TestBench::simulationFrozen()) {
+    update();
     return 0;
     }
 
@@ -1523,6 +1528,8 @@ void MainWindow::render(){
       FrameProfile::Scope timing(FrameProfile::Zone::FinishStep);
       return SimulationStep::finishStep(dt,player,[&] { FrameProfile::Scope cameraTiming(FrameProfile::Zone::Camera); tickCamera(dt); });
       }();
+    if(TestBench::takeRenderReset())
+      renderer.resetTemporal();
     if(auto world = Gothic::inst().world()) {
       auto hero = Gothic::inst().player();
       auto camera = Gothic::inst().camera();
