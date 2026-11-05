@@ -164,9 +164,9 @@ async def wait_gemma() -> None:
 
 
 async def pipeline(
-    sol: Any, quick: Any, ctx: Any, phrase: str, store: Any, previous: list, *, gist: dict | None = None
+    sol: Any, quick: Any, ctx: Any, phrase: str, store: Any, previous: list, *, saved: dict | None = None
 ) -> dict:
-    if gist is None:
+    if saved is None:
         started = time.monotonic()
         gist = await stand.sol_answer(sol, thinking(ctx), phrase, store)
         gist["total_s"] = time.monotonic() - started  # includes recall, not just the model requests
@@ -174,14 +174,14 @@ async def pipeline(
             if call["name"] != "recall":
                 call["result"] = "Принято."
     else:
-        gist = deepcopy(gist)  # keep the source's text, calls and measured Sol times unchanged
+        gist = deepcopy(saved["gist"])  # keep the source's text and measured Sol times unchanged
     record = {
         "gist": gist,
         "first_words": None,
         "voice": None,
         "voice_after_phrase_s": None,
         "text": "",
-        "calls": gist["calls"],
+        "calls": deepcopy(saved["calls"]) if saved is not None else gist["calls"],
         "error": gist["error"],
     }
     if not gist["text"].strip() and not record["error"]:
@@ -234,7 +234,7 @@ async def run(directory: Path, dataset: str, convs: list[str] | None, gists_from
         return 0
     source = (
         {
-            r["id"] if dataset == "turns" else (r["probe"], r["ask_after"]): r["gist"]
+            r["id"] if dataset == "turns" else (r["probe"], r["ask_after"]): r
             for r in pilot.rows(gists_from / path.name)
         }
         if gists_from is not None
@@ -263,16 +263,16 @@ async def run(directory: Path, dataset: str, convs: list[str] | None, gists_from
                         variant="note",
                         recorded_calls=recorded_probes[item["id"], conv]["calls"],
                     )
-                gist = None
+                saved = None
                 if gists_from is not None:
                     key = identifier if dataset == "turns" else (item["id"], conv)
-                    gist = source[key]
+                    saved = source[key]
                     meta["gists_from"] = str(gists_from)
                 records[identifier] = {
                     "id": identifier,
                     "conv": conv,
                     **meta,
-                    **await pipeline(sol, quick, ctx, item["phrase"], store, recent, gist=gist),
+                    **await pipeline(sol, quick, ctx, item["phrase"], store, recent, saved=saved),
                 }
                 pilot.save_rows(path, records.values())
                 # A regenerated answer must be judged again, even if its old judgment was successful.
@@ -686,8 +686,12 @@ async def selftest() -> int:
         # Exercise --gists-from through run for both key shapes, with every Sol entry point forbidden.
         source = directory / "source"
         source.mkdir()
-        pilot.save_rows(source / "turns.jsonl", [row])
-        pilot.save_rows(source / "answers.jsonl", [{**probe, "id": "legacy-probe-id"}])
+        # Source calls can carry recorded results absent from the nested gist.calls.
+        saved_row = {**row, "calls": [{**call, "result": "Source result"} for call in row["calls"]]}
+        pilot.save_rows(source / "turns.jsonl", [saved_row])
+        pilot.save_rows(
+            source / "answers.jsonl", [{**probe, "calls": saved_row["calls"], "id": "legacy-probe-id"}]
+        )
         base = directory / "phase1"
         base.mkdir()
         pilot.save_rows(
@@ -725,7 +729,7 @@ async def selftest() -> int:
             ):
                 assert await run(destination, dataset, ["c"], source) == 0
             copied = pilot.rows(destination / filename)[0]
-            assert copied["gist"] == row["gist"] and copied["calls"] == row["calls"]
+            assert copied["gist"] == row["gist"] and copied["calls"] == saved_row["calls"]
             assert copied["gists_from"] == str(source)
             assert stand.read_json(destination / "config.json")["sol_requests"] == 0
             assert len(quick.calls) == 2 and quick.calls[-1][1][-1].role == "developer"
