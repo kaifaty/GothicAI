@@ -195,15 +195,27 @@ void VisualObjects::Item::startMMAnim(std::string_view anim, float intensity, ui
   }
 
 void VisualObjects::Item::setDeformation(const std::vector<Tempest::Vec4>& vertices) {
+  setDeformation(vertices.data(),vertices.size()/2,0);
+  }
+
+std::pair<uint32_t,uint32_t> VisualObjects::Item::vertexRange() const {
+  if(owner==nullptr)
+    return {0,0};
+  const auto& obj = owner->objects[id];
+  return {obj.iboOff/PackedMesh::MaxInd*PackedMesh::MaxVert, (obj.iboOff+obj.iboLen)/PackedMesh::MaxInd*PackedMesh::MaxVert};
+  }
+
+void VisualObjects::Item::setDeformation(const Tempest::Vec4* vertices, size_t pairs, uint32_t first) {
   if(owner==nullptr)
     return;
   auto& obj = owner->objects[id];
-  const auto count = uint32_t(vertices.size()/2);
+  const auto count = uint32_t(pairs);
   if(count==0) {
     if(obj.deformCount==0)
       return;
     obj.objDeform = InstanceStorage::Id();
     obj.deformCount = 0;
+    obj.deformFirst = 0;
     if(auto mesh=obj.bucketId->staticMesh) {
       owner->clustersMem[obj.clusterId].r = mesh->bbox.rConservative+obj.bucketId->mat.waveMaxAmplitude;
       owner->clustersMem.markClusters(obj.clusterId);
@@ -211,13 +223,13 @@ void VisualObjects::Item::setDeformation(const std::vector<Tempest::Vec4>& verti
     owner->updateInstance(id);
     return;
     }
-  const auto size = vertices.size()*sizeof(Tempest::Vec4);
+  const auto size = size_t(count)*2*sizeof(Tempest::Vec4);
   const bool changed = owner->instanceMem.realloc(obj.objDeform,size);
-  obj.objDeform.set(vertices.data(),0,size);
+  obj.objDeform.set(vertices,0,size);
   // The authored bounds are shared by every instance. Grow this instance's
   // sphere to retain cloth that folds beyond the original flat mesh bounds.
   float radius = 0;
-  for(size_t i=0;i<vertices.size();i+=2) {
+  for(size_t i=0;i<size_t(count)*2;i+=2) {
     const auto& p = vertices[i];
     Vec3 point(p.x,p.y,p.z);
     float zero = 0;
@@ -228,8 +240,9 @@ void VisualObjects::Item::setDeformation(const std::vector<Tempest::Vec4>& verti
     owner->clustersMem[obj.clusterId].r = radius;
     owner->clustersMem.markClusters(obj.clusterId);
     }
-  if(changed || obj.deformCount!=count) {
+  if(changed || obj.deformCount!=count || obj.deformFirst!=first) {
     obj.deformCount = count;
+    obj.deformFirst = first;
     owner->updateInstance(id);
     }
   }
@@ -444,8 +457,10 @@ void VisualObjects::updateInstance(size_t id, Matrix4x4* pos) {
   d.setPosition(pos==nullptr ? obj.pos : *pos);
   d.animPtr = obj.animPtr;
   d.fatness = obj.fatness*0.5f;
-  d.deformPtr = obj.objDeform.offsetId<uint32_t>();
-  d.deformCount = obj.deformCount;
+  // The shader reads deformPtr + vboOffset*8 for vboOffset < deformCount: an object deformed from a later packed
+  // vertex (its own range) starts that much before its storage (uint arithmetic wraps on both sides).
+  d.deformPtr = obj.objDeform.offsetId<uint32_t>() - obj.deformFirst*8u;
+  d.deformCount = obj.deformCount==0 ? 0 : obj.deformFirst+obj.deformCount;
   obj.objInstance.set(&d, 0, sizeof(d));
 
   auto cId  = obj.clusterId;

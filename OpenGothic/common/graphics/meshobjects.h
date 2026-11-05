@@ -76,6 +76,8 @@ class MeshObjects final {
         void   setWind     (asset::AnimationType m, float intensity);
         void   setVisible  (bool visible);
         void   setDeformation(const std::vector<Tempest::Vec4>& vertices);
+        // as setDeformation, each part takes only the packed vertices it draws (a head of several materials)
+        void   setPartDeformation(const std::vector<Tempest::Vec4>& vertices);
         // freeOnly: not in place of another anim of the head (a blink gives way to the faces)
         void   startMMAnim (std::string_view anim, float intensity, uint64_t timeUntil, bool freeOnly = false);
         void   setMMShape  (std::string_view anim, uint32_t frame0, uint32_t frame1, float alpha, float intensity);

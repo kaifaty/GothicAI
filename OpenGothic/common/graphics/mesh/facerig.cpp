@@ -199,6 +199,12 @@ void FaceRig::setup(const GltfHeadMesh* h, const FaceProfile* p) {
   applied.clear();
   pos.clear();
   nrm.clear();
+  basePos.clear();
+  baseNrm.clear();
+  drawnFirst.clear();
+  drawn.clear();
+  moved.clear();
+  mark.clear();
   deform.clear();
   deformed = false;
   dirty    = true;
@@ -415,53 +421,100 @@ FaceRig::Result FaceRig::update(uint64_t now) {
   return Result::Deformed;
   }
 
-void FaceRig::blend() {
-  const auto start = std::chrono::steady_clock::now();
-  const auto& mesh = head->mesh;
+void FaceRig::prepare() {
+  // the neutral head once: logical vertices with normalized normals, every drawn vertex laid out
+  const auto&  mesh  = head->mesh;
   const size_t count = mesh.positions.size();
-  pos.resize(count);
-  nrm.resize(count);
+  basePos.resize(count);
+  baseNrm.resize(count);
   for(size_t i=0; i<count; ++i) {
     const auto& p = mesh.positions[i];
-    pos[i] = Vec3(p.x,p.y,p.z);
-    if(i<mesh.normals.size()) {
-      const auto& n = mesh.normals[i];
-      nrm[i] = Vec3(n.x,n.y,n.z);
-      } else {
-      nrm[i] = Vec3();
-      }
+    basePos[i] = Vec3(p.x,p.y,p.z);
+    Vec3 n;
+    if(i<mesh.normals.size())
+      n = Vec3(mesh.normals[i].x,mesh.normals[i].y,mesh.normals[i].z);
+    const float l = n.quadLength();
+    baseNrm[i] = l>1e-12f ? n/std::sqrt(l) : n;
+    }
+  pos = basePos;
+  nrm = baseNrm;
+  mark.assign(count,0);
+  moved.clear();
+
+  const auto& ids = head->renderVertexIds;
+  drawnFirst.assign(count+1,0);
+  for(auto id:ids)
+    if(id<count)
+      ++drawnFirst[id+1];
+  for(size_t i=0; i<count; ++i)
+    drawnFirst[i+1] += drawnFirst[i];
+  drawn.resize(drawnFirst[count]);
+  std::vector<uint32_t> at(drawnFirst.begin(),drawnFirst.end()-1);
+  // the drawn vertices: position (w = 1, as cloth) and normal per vertex, zeros for the padding of a meshlet
+  deform.assign(ids.size()*2,Vec4());
+  for(size_t i=0; i<ids.size(); ++i) {
+    const uint32_t id = ids[i];
+    if(id>=count)
+      continue;
+    drawn[at[id]++] = uint32_t(i);
+    deform[i*2+0] = Vec4(basePos[id].x,basePos[id].y,basePos[id].z,1.f);
+    deform[i*2+1] = Vec4(baseNrm[id].x,baseNrm[id].y,baseNrm[id].z,0.f);
+    }
+  }
+
+void FaceRig::write(uint32_t v) {
+  const auto& p = pos[v];
+  const auto& n = nrm[v];
+  for(uint32_t i=drawnFirst[v]; i<drawnFirst[v+1]; ++i) {
+    const size_t r = drawn[i];
+    deform[r*2+0] = Vec4(p.x,p.y,p.z,1.f);
+    deform[r*2+1] = Vec4(n.x,n.y,n.z,0.f);
+    }
+  }
+
+void FaceRig::blend() {
+  // only the vertices the shapes move: those moved before go back to neutral, those moved now get the weighted
+  // deltas, normals normalized after the sum, both written to their drawn vertices
+  const auto start = std::chrono::steady_clock::now();
+  if(basePos.size()!=head->mesh.positions.size() || deform.size()!=head->renderVertexIds.size()*2)
+    prepare();
+  const size_t count = pos.size();
+  for(auto v:moved) {
+    pos[v]  = basePos[v];
+    nrm[v]  = baseNrm[v];
+    mark[v] = 1;
     }
   for(size_t t=0; t<applied.size(); ++t) {
     const float w = applied[t];
     if(w<=0)
       continue;
     for(auto& d:head->targets[t].vertices) {
-      if(d.vertex>=count)
+      const uint32_t v = d.vertex;
+      if(v>=count)
         continue;
-      pos[d.vertex] += Vec3(d.position.x,d.position.y,d.position.z)*w;
-      nrm[d.vertex] += Vec3(d.normal.x,d.normal.y,d.normal.z)*w;
+      if(mark[v]!=2) {
+        if(mark[v]==0)
+          moved.push_back(v);
+        mark[v] = 2;
+        }
+      pos[v] += Vec3(d.position.x,d.position.y,d.position.z)*w;
+      nrm[v] += Vec3(d.normal.x,d.normal.y,d.normal.z)*w;
       }
     }
-  for(auto& n:nrm) {
-    const float l = n.quadLength();
-    if(l>1e-12f)
-      n = n/std::sqrt(l);
-    }
-  // the drawn vertices: position (w = 1, as cloth) and normal per vertex, zeros for the padding of a meshlet
-  const auto& ids = head->renderVertexIds;
-  deform.resize(ids.size()*2);
-  for(size_t i=0; i<ids.size(); ++i) {
-    const uint32_t id = ids[i];
-    if(id>=count) {
-      deform[i*2+0] = Vec4();
-      deform[i*2+1] = Vec4();
-      continue;
+  size_t keep = 0;
+  for(size_t i=0; i<moved.size(); ++i) {
+    const uint32_t v = moved[i];
+    if(mark[v]==2) {
+      auto&       n = nrm[v];
+      const float l = n.quadLength();
+      if(l>1e-12f)
+        n = n/std::sqrt(l);
+      moved[keep++] = v;
       }
-    const auto& p = pos[id];
-    const auto& n = nrm[id];
-    deform[i*2+0] = Vec4(p.x,p.y,p.z,1.f);
-    deform[i*2+1] = Vec4(n.x,n.y,n.z,0.f);
+    write(v);  // back to neutral when no shape moves it now
+    mark[v] = 0;
     }
+  moved.resize(keep);
   blendUs = float(std::chrono::duration<double,std::micro>(std::chrono::steady_clock::now()-start).count());
   ++blends;
   }

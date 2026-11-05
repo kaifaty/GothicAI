@@ -102,6 +102,8 @@ class FaceRig final {
     Slot&  freeSlot(uint64_t now);
     void   mix(uint64_t now, std::vector<float>& out) const;
     void   blend();
+    void   prepare();
+    void   write(uint32_t v);
 
     const GltfHeadMesh*        head    = nullptr;
     const FaceProfile*         profile = nullptr;
@@ -113,7 +115,11 @@ class FaceRig final {
     bool                       deformed = false;  // the head is not neutral
     bool                       dirty    = true;   // the view does not have the deformation yet
 
-    std::vector<Tempest::Vec3> pos, nrm;
+    // the head as the deformation shows it: logical vertices, the neutral ones, the drawn ones by logical vertex
+    std::vector<Tempest::Vec3> pos, nrm, basePos, baseNrm;
+    std::vector<uint32_t>      drawnFirst, drawn;  // drawn[drawnFirst[v] .. drawnFirst[v+1]) of logical vertex v
+    std::vector<uint32_t>      moved;             // logical vertices off the neutral head now
+    std::vector<uint8_t>       mark;
     std::vector<Tempest::Vec4> deform;
     float                      blendUs = 0;
     uint32_t                   blends  = 0;

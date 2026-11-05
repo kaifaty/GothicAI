@@ -162,6 +162,8 @@ void rigCases(const GltfHeadMesh& head, const FaceProfile& p) {
   require(close(w[BrowDown],0.6f) && close(w[JawOpen],0.25f),"the cross-fade must mix both anims");
   rig.update(4001);
   require(rig.weight("S_ANGRY",4001)==0 && close(w[BrowDown],0.4f) && w[JawOpen]==0,"the replaced anim must be gone");
+  require(close(d[2].y,0) && close(d[3].x,0) && close(d[3].z,1) && close(d[10].y,0) && close(d[6].z,-.4f),
+          "a vertex no shape moves any more must return to its neutral position and normal");
 
   // fade out by blend_out_ms, then the rest
   rig.startAnim("S_FRIENDLY",1,0,5000);
