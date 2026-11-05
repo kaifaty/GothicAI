@@ -7,6 +7,7 @@
 #include "gltfmesh.h"
 #include "graphics/shaders.h"
 #include "graphics/mesh/protomesh.h"
+#include "graphics/mesh/facerig.h"
 #include "graphics/mesh/skeleton.h"
 #include "graphics/mesh/pose.h"
 #include "graphics/mesh/submesh/packedmesh.h"
@@ -626,6 +627,33 @@ void headManifestCases(const Fixture& fixture) {
   invalidPath(std::string_view("hero/head.glb\0suffix",20));
   test(R"({"PC_HERO":{}})",false);
   test(R"({"PC_HERO":{"head":"hero/head.glb"}})",true);
+
+  // "face": the profile of the old face anim names; a bad one leaves the head without face anims
+  textFile(root/"hero/head.face.json",R"({"version":1,"mouth":["smile"],"anims":{"S_FRIENDLY":{"layer":1,"blend_in_ms":1000,)"
+                                      R"("blend_out_ms":1000,"duration_ms":-1,"frame_ms":1000,"frames":[{"smile":0.5}]}}})");
+  textFile(root/"hero/bad.face.json",R"({"version":1,"mouth":[],"anims":{"S_FRIENDLY":{"layer":1,"blend_in_ms":1000,)"
+                                     R"("blend_out_ms":1000,"duration_ms":-1,"frame_ms":1000,"frames":[{"frown":0.5}]}}})");
+  const auto face=[&](std::string_view value, bool loaded) {
+    textFile(root/"characters.json",std::string(R"({"PC_HERO":{"head":"hero/head.glb","face":)")+std::string(value)+"}}");
+    Resources resources;
+    const auto* head=Resources::loadCharacterHead("PC_HERO");
+    require(head!=nullptr && head->head!=nullptr,"a bad face profile must not cost the head: "+std::string(value));
+    require((head->face!=nullptr)==loaded,"characters.json face must load only a valid profile: "+std::string(value));
+    if(loaded)
+      require(head->face->anims.size()==1 && head->face->find("S_FRIENDLY")!=nullptr && head->face->mouth.size()==2 &&
+              head->face->mouth[0]==1 && head->face->mouth[1]==0,"the face profile must name the head's targets");
+    };
+  face(R"("hero/head.face.json")",true);
+  for(const auto* invalid:{R"("../characters/hero/head.face.json")",R"("hero/../hero/head.face.json")",R"("hero/head.glb")",
+                           R"("")",R"(1)",R"("hero/missing.face.json")",R"("hero/bad.face.json")"})
+    face(invalid,false);
+  {
+    rapidjson::StringBuffer buffer;
+    rapidjson::Writer<rapidjson::StringBuffer> json(buffer);
+    const auto absolute=(root/"hero/head.face.json").string();
+    json.String(absolute.data(),rapidjson::SizeType(absolute.size()));
+    face({buffer.GetString(),buffer.GetSize()},false);
+  }
   std::filesystem::remove(root/"characters.json");
   }
 

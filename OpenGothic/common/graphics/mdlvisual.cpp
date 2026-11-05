@@ -417,6 +417,9 @@ void MdlVisual::setVisualBody(Npc& npc, MeshObjects::Mesh &&h, MeshObjects::Mesh
     if(const auto* own=Resources::loadCharacterHead(instance->name()))
       h=npc.world().addView(own);
   bind(head,std::move(h),"BIP01 HEAD");
+  // a new view of the head: the face goes to it again (the anims go on)
+  const auto* proto=head.view.protoMesh();
+  face.setup(headMesh(),proto!=nullptr ? proto->face.get() : nullptr);
   implSetBody(&npc,npc.world(),std::move(body),version);
   head.view.setAsGhost(hnpcFlagGhost);
   head.view.setFatness(npc.fatness());
@@ -2441,20 +2444,52 @@ void MdlVisual::updateBlink(Npc& npc, uint64_t dt) {
   EyeBlink::Input in;
   in.now      = now;
   in.dt       = dt;
-  in.allowed  = !npc.isDown() && (npc.bodyStateMasked() & BS_MAX)!=BS_LIE && head.view.morphWeight("S_EYESCLOSED")<0.1f;
+  in.allowed  = !npc.isDown() && (npc.bodyStateMasked() & BS_MAX)!=BS_LIE && faceWeight(npc,"S_EYESCLOSED")<0.1f;
   in.speaking = mouth.isSpeaking(now) || npc.speechLeft()>0;
   in.voice    = mouth.voiceLevel();
   in.shift    = sh!=blinkShift;
   // a frightened face blinks more, a hostile or angry stare less
-  in.rate     = 1.f + 0.6f*head.view.morphWeight("S_FRIGHTENED")
-                    - 0.3f*std::max(head.view.morphWeight("S_HOSTILE"),head.view.morphWeight("S_ANGRY"));
+  in.rate     = 1.f + 0.6f*faceWeight(npc,"S_FRIGHTENED")
+                    - 0.3f*std::max(faceWeight(npc,"S_HOSTILE"),faceWeight(npc,"S_ANGRY"));
   blinkShift  = sh;
 
   uint64_t hold = 0;
-  if(blink.update(in,hold))
-    head.view.startMMAnim("R_EYESBLINK",1,now+hold,true);  // not in place of a face
+  if(blink.update(in,hold)) {
+    if(face.isActive())
+      face.startAnim("R_EYESBLINK",1,now+hold,now); // a layer of its own: never in place of a face
+    else
+      head.view.startMMAnim("R_EYESBLINK",1,now+hold,true);  // not in place of a face
+    }
   if(probing)
     blink.probe(EyeBlink::subjectProbe);
+  }
+
+float MdlVisual::faceWeight(const Npc& npc, std::string_view anim) const {
+  if(face.isActive())
+    return face.weight(anim,npc.world().tickCount());
+  return head.view.morphWeight(anim);
+  }
+
+void MdlVisual::updateFace(Npc& npc) {
+  if(!face.isActive())
+    return;
+  const bool     probing = &npc==FaceRig::probeNpc;
+  const uint64_t now     = npc.world().tickCount();
+  // a far face stays as it was last shown, as a far one does not blink
+  if(!head.view.isEmpty() && (npc.processPolicy()<=NpcProcessPolicy::AiNormal || probing)) {
+    const auto r = face.update(now);
+    if(r!=FaceRig::Result::Same) {
+      const auto start = std::chrono::steady_clock::now();
+      if(r==FaceRig::Result::Deformed)
+        head.view.setDeformation(face.deformation()); else
+        head.view.setDeformation({});
+      faceUploadUs = float(std::chrono::duration<double,std::micro>(std::chrono::steady_clock::now()-start).count());
+      }
+    }
+  if(probing) {
+    face.probe(FaceRig::subjectProbe,now);
+    FaceRig::subjectProbe.uploadUs = faceUploadUs;
+    }
   }
 
 void MdlVisual::startMMAnim(Npc& npc, std::string_view anim, std::string_view bone) {
@@ -2471,6 +2506,10 @@ void MdlVisual::startMMAnim(Npc& npc, std::string_view anim, std::string_view bo
       i->view.startMMAnim(BowDraw::StringLoose,1,uint64_t(-1));
       continue;
       }
+    if(i==&head && face.isActive()) {
+      face.startAnim(anim,1,uint64_t(-1),npc.world().tickCount());
+      continue;
+      }
     i->view.startMMAnim(anim,1,uint64_t(-1));
     }
   }
@@ -2481,7 +2520,9 @@ void MdlVisual::startFaceAnim(Npc& npc, std::string_view anim, float intensity, 
     return;
   if(duration!=uint64_t(-1) && duration!=0)
     duration += npc.world().tickCount();
-  head.view.startMMAnim(anim,intensity,duration);
+  if(face.isActive())
+    face.startAnim(anim,intensity,duration,npc.world().tickCount()); else
+    head.view.startMMAnim(anim,intensity,duration);
   }
 
 void MdlVisual::startSpeech(Npc& npc, std::shared_ptr<LipSync::Track> voice) {
@@ -2489,7 +2530,9 @@ void MdlVisual::startSpeech(Npc& npc, std::shared_ptr<LipSync::Track> voice) {
     return;
   // the mouth shapes of the head: a head without them gets the talk loop
   std::vector<float> shapes;
-  if(auto proto = head.view.protoMesh())
+  if(face.isActive())
+    shapes = face.strength("VISEME");
+  else if(auto proto = head.view.protoMesh())
     for(auto& m:proto->morph)
       if(m.name=="VISEME") {
         shapes = m.strength;
@@ -2501,8 +2544,11 @@ void MdlVisual::startSpeech(Npc& npc, std::shared_ptr<LipSync::Track> voice) {
 
 void MdlVisual::updateMouth(Npc& npc, uint64_t dt) {
   LipSync::Shape s;
-  if(mouth.update(npc.world().tickCount(),dt,s))
-    head.view.setMMShape("VISEME",s.frame0,s.frame1,s.alpha,s.intensity);
+  if(mouth.update(npc.world().tickCount(),dt,s)) {
+    if(face.isActive())
+      face.setShape("VISEME",s.frame0,s.frame1,s.alpha,s.intensity,npc.world().tickCount()); else
+      head.view.setMMShape("VISEME",s.frame0,s.frame1,s.alpha,s.intensity);
+    }
   if(&npc==LipSync::probeNpc)
     mouth.probe(LipSync::subjectProbe);
   }
