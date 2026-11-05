@@ -43,8 +43,8 @@ namespace Marks {
 constexpr Time Period = 5*60;
 
 std::string header();
-// The rows of every simulated NPC (only people with peopleOnly) at the sim's current time.
-void        append(std::string& out, const Sim& sim, bool peopleOnly);
+// The rows of every NPC at the sim's current time.
+void        append(std::string& out, const Sim& sim);
 
 }
 }

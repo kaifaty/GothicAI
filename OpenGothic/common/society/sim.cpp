@@ -232,16 +232,13 @@ void reset(Sim& sim, uint64_t seed) {
   s.queue.clear();
   s.events.clear();
   for(uint32_t i=0; i<w.npcs.size(); ++i) {
-    const bool on = !sim.config.peopleOnly || w.npcs.person[i]!=0;
     s.place[i]      = w.npcs.startPoint[i];
     s.dest[i]       = NoPoint;
     s.arrive[i]     = 0;
     s.entry[i]      = NoEntry;
     s.state[i]      = NoState;
     s.stateStart[i] = s.now;
-    s.flags[i]      = on ? uint8_t(Simulated | AtStart) : uint8_t(0);
-    if(!on)
-      continue;
+    s.flags[i]      = AtStart;
     emit(s,EventKind::Teleported,i,uint8_t(TeleportReason::StartPlacement),NoPoint,s.place[i]);
     Time next = 0;
     const auto e = entryAt(w,i,s.now,&next);

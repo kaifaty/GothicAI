@@ -82,15 +82,13 @@ std::string header() {
   return "t_min,key,routine,state,moving,point,to,arrive_min\n";
   }
 
-void append(std::string& out, const Sim& sim, bool peopleOnly) {
+void append(std::string& out, const Sim& sim) {
   const auto& w = *sim.world;
   const auto& s = sim.s;
   const Time  start = w.startTime();
   char t[32];
   const int tn = std::snprintf(t,sizeof(t),"%lld,",(long long)((s.now-start)/60));
   for(uint32_t i=0; i<w.npcs.size(); ++i) {
-    if((s.flags[i] & Simulated)==0 || (peopleOnly && !w.npcs.person[i]))
-      continue;
     out.append(t,size_t(tn));
     out += w.npcs.key[i];
     out += ',';

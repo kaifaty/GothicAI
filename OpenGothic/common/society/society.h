@@ -172,8 +172,7 @@ struct Choice {
   };
 
 struct SimConfig {
-  uint64_t seed       = 0;
-  bool     peopleOnly = false; // simulate only `person` NPCs; the others stay where the start put them
+  uint64_t seed = 0;
   };
 
 // A small generator of its own per world (xoshiro256**): part of the state and of every snapshot. The v1 rules do
@@ -194,9 +193,8 @@ struct Pending {
   };
 
 enum NpcFlag : uint8_t {
-  Simulated = 1, // in the run (SimConfig::peopleOnly leaves others out)
-  Moving    = 2, // on the way: from `place` to `dest`, arrives at `arrive`
-  AtStart   = 4, // has not left the start placement yet
+  Moving  = 1, // on the way: from `place` to `dest`, arrives at `arrive`
+  AtStart = 2, // has not left the start placement yet
   };
 
 // The changing state: arrays by field (SoA), indices only, no pointers; capacities fixed by makeSim.

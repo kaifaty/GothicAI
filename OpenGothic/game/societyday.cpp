@@ -1,10 +1,10 @@
 // gothic-society-day: plays N days of a `society-world` v1 export by the routine on the society stand's core
 // (docs/society-sim.md) and writes its journal and 5-minute marks.
 //
-//   gothic-society-day --world <export.json> --out <dir> [--days N] [--seed S] [--people]
+//   gothic-society-day --world <export.json> --out <dir> [--days N] [--seed S]
 //
 // <dir>/society-day.journal — the binary journal (common/society/journal.h);
-// <dir>/society-marks.csv   — a row per NPC every 5 game minutes from the start (--people: people only).
+// <dir>/society-marks.csv   — a row per NPC every 5 game minutes from the start.
 // Prints the load, each day's events and simulation time (advance only, without writing) and the totals.
 #include "society/journal.h"
 #include "society/society.h"
@@ -27,7 +27,7 @@ double since(Clock::time_point from) {
   }
 
 int usage() {
-  std::fprintf(stderr,"usage: gothic-society-day --world <export.json> --out <dir> [--days N] [--seed S] [--people]\n");
+  std::fprintf(stderr,"usage: gothic-society-day --world <export.json> --out <dir> [--days N] [--seed S]\n");
   return 2;
   }
 
@@ -44,7 +44,6 @@ int main(int argc, char** argv) {
   std::filesystem::path world, outDir;
   unsigned long days = 1;
   unsigned long long seed = 0;
-  bool people = false;
   for(int i=1; i<argc; ++i) {
     const bool hasValue = i+1<argc;
     if(std::strcmp(argv[i],"--world")==0 && hasValue)
@@ -55,8 +54,6 @@ int main(int argc, char** argv) {
       days = std::strtoul(argv[++i],nullptr,10);
     else if(std::strcmp(argv[i],"--seed")==0 && hasValue)
       seed = std::strtoull(argv[++i],nullptr,10);
-    else if(std::strcmp(argv[i],"--people")==0)
-      people = true;
     else
       return usage();
     }
@@ -85,7 +82,7 @@ int main(int argc, char** argv) {
     std::string jbytes = Society::Journal::header(w,seed);
     std::string mbytes = Society::Marks::header();
     Society::Journal::append(jbytes,Society::drainEvents(sim));
-    Society::Marks::append(mbytes,sim,people);
+    Society::Marks::append(mbytes,sim);
 
     const Society::Time start = w.startTime();
     const Society::Time marksPerDay = Society::DaySeconds/Society::Marks::Period;
@@ -100,7 +97,7 @@ int main(int argc, char** argv) {
         Society::advance(sim,batch,t);
         simDay += since(from);
         Society::Journal::append(jbytes,Society::drainEvents(sim));
-        Society::Marks::append(mbytes,sim,people);
+        Society::Marks::append(mbytes,sim);
         ++rows;
         }
       from = Clock::now();
@@ -116,12 +113,12 @@ int main(int argc, char** argv) {
     journal.close();
     marks.close();
     std::printf("%lu days, seed %llu: %llu events, %llu queue pops, path searches %zu (cached pairs %zu); "
-                "simulation %.3f s (%.2f ms per day, %.0f events/s); journal %s %llu bytes, marks %s %llu marks "
-                "(%s), write %.2f s\n",
+                "simulation %.3f s (%.2f ms per day, %.0f events/s); journal %s %llu bytes, marks %s %llu marks, "
+                "write %.2f s\n",
                 days,seed,(unsigned long long)events,(unsigned long long)sim.s.processed,sim.paths.searches(),
                 sim.paths.cached(),simTotal,simTotal*1000.0/double(days),simTotal>0 ? double(events)/simTotal : 0.0,
                 journalPath.string().c_str(),(unsigned long long)journalBytes,marksPath.string().c_str(),
-                (unsigned long long)rows,people ? "people" : "all NPCs",writeTotal);
+                (unsigned long long)rows,writeTotal);
     return EXIT_SUCCESS;
     }
   catch(const std::exception& e) {
