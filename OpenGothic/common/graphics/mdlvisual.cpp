@@ -694,8 +694,11 @@ void MdlVisual::quiverPoints(const Matrix4x4* bones, size_t n, std::vector<Quive
     }
   }
 
-// the calling thread's CPU time, µs: the quiver's own share of a step, apart from the thread being put aside
+// the calling thread's CPU time, µs: the quiver's own share of a step, apart from the thread being put aside;
+// read only while the bench measures (a call per quiver and frame is not the game's), 0 otherwise
 static double threadCpuUs() {
+  if(!Quiver::measureGround)
+    return 0;
   timespec ts = {};
   clock_gettime(CLOCK_THREAD_CPUTIME_ID,&ts);
   return double(ts.tv_sec)*1e6 + double(ts.tv_nsec)*1e-3;
