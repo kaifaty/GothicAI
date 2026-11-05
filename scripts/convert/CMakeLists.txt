@@ -44,4 +44,6 @@ target_include_directories(content-convert SYSTEM PRIVATE ../../OpenGothic/lib/r
 if(NOT MSVC)
   target_compile_options(content-convert PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wconversion>)
 endif()
+# Offline particle checks (check-particles) use the game's particlecontent loader and VM without writing base data.
+# Base import never executes this VM, so gothic-daedalus stays outside the base format digest.
 target_link_libraries(content-convert PRIVATE gothic-base-import gothic-video-import gothic-daedalus)
