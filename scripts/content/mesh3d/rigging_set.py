@@ -3,6 +3,7 @@
 
     uv run --no-project --with numpy --with pillow --with scipy python scripts/content/mesh3d/rigging_set.py models [ITEM ...]            # Blender models on this machine
     uv run --no-project --with numpy --with pillow --with scipy python scripts/content/mesh3d/rigging_set.py bake [ITEM ...] [--ryzen]    # bake_atlas.py; --ryzen: gq batch
+    uv run --no-project --with numpy --with pillow --with scipy python scripts/content/mesh3d/rigging_set.py debris [ITEM ...]            # model.debris.glb of the baked model
     uv run --no-project --with numpy --with pillow --with scipy python scripts/content/mesh3d/rigging_set.py pack --set rigging-1         # content-staging/<set>
 
 Run from the repository root. Every item is one original visual: a Blender script and config in
@@ -11,6 +12,10 @@ older pilot/market targets for the crate and the crate pile. Outputs go to
 ~/.local/share/gothic-ai/content-staging/rigging-build/<item>/ (model.glb, metrics.json, atlas/).
 Tiles: market-set/crate-tiles for the crates, rigging-tiles for the rest (net_tiles.py writes the nets;
 the wood, iron and rope tiles are the market set's image_gen tiles, copied by `tiles`).
+
+An item with `debris` (the crate) breaks into its parts: `debris` writes atlas/model.debris.glb beside the baked
+model by crate_debris.py with that seed, and pack puts it beside the packed model.glb; scripts/fracture.sh content
+then cuts the set's `.fracture` version 3 from it (reports/content/2026-11-wood-fracture).
 
 The nets are not baked: they are alpha-tested tiles. pack gives a net material its tile as its own
 materials.json entry, sets alphaMode MASK on it in the GLB, and merges the rack's baked model with its
@@ -46,7 +51,8 @@ RYZEN_BLENDER = '~/gothic-ai/mesh3d/blender/blender'
 # item: visual, builder script, config, atlas config (None: not baked), tiled materials of the GLB
 # {zone key: [material name, tile folder, linear colour target or None]}
 ITEMS = {
-    'crate': dict(visual='NW_HARBOUR_CRATE_01', script='crate.py', cfg='crate-rig.json', atlas='crate-rig-atlas.json'),
+    'crate': dict(visual='NW_HARBOUR_CRATE_01', script='crate.py', cfg='crate-rig.json', atlas='crate-rig-atlas.json',
+                  debris=7),
     'crate-pile': dict(visual='NW_HARBOUR_CRATEPILE_01', script='crate_pile.py', cfg='crate-pile-rig.json', atlas='crate-pile-rig-atlas.json'),
     'crate-broken': dict(visual='NW_HARBOUR_CRATEBROKEN_01', script='crate_broken.py', cfg='crate-broken.json',
                          atlas='crate-broken-atlas.json'),
@@ -162,6 +168,15 @@ def cmd_bake(args) -> int:
     return 0
 
 
+def cmd_debris(args) -> int:
+    for item in args.items or [i for i in ITEMS if ITEMS[i].get('debris') is not None]:
+        bake = BUILD / item / 'atlas'
+        albedo = bake / 'maps' / json.loads((bake / 'metrics.json').read_text())['materials'][0].lower() / 'albedo.png'
+        run([sys.executable, ROOT / 'scripts/content/mesh3d/crate_debris.py', bake / 'model.glb', albedo,
+             bake / 'model.debris.glb', '--seed', ITEMS[item]['debris']])
+    return 0
+
+
 def load_compressor():
     sys.path.insert(0, str(ROOT / 'scripts/content'))
     spec = importlib.util.spec_from_file_location('material_fixture', ROOT / 'scripts/content/test-material.py')
@@ -267,6 +282,11 @@ def cmd_pack(args) -> int:
             if alpha:
                 masked.add(key)
         used = glb_edit(glb, mesh_dir / 'model.glb', names, masked, spec.get('lift_normals', 0.0))
+        if spec.get('debris') is not None:
+            debris = BUILD / item / 'atlas' / 'model.debris.glb'
+            if not debris.is_file():
+                raise SystemExit(f'{item}: no {debris}; run rigging_set.py debris {item}')
+            glb_edit(debris, mesh_dir / 'model.debris.glb', names, masked, spec.get('lift_normals', 0.0))
         # an atlas slot or a tiled material without faces (a zone the model no longer uses) gets no entry
         for key in (keys if spec['atlas'] else []) + [k for k, _, _ in spec.get('tiled', {}).values()]:
             if key not in used:
@@ -317,6 +337,9 @@ def record(item: str, set_name: str, output: Path, name: str, used: list[str], m
     if spec.get('extra_glb'):
         rec['model']['extra_triangles'] = metrics.get('net_triangles')
     files = {'glb': {'path': f'{set_name}/meshes/{name}/model.glb', 'sha256': sha(output / 'meshes' / name / 'model.glb')}}
+    if spec.get('debris') is not None:
+        files['debris'] = {'path': f'{set_name}/meshes/{name}/model.debris.glb',
+                           'sha256': sha(output / 'meshes' / name / 'model.debris.glb'), 'seed': spec['debris']}
     for mat in used:
         for kind, rel in materials[f'{mat}.TGA'].items():
             if kind in ('albedo', 'normal', 'orm'):
@@ -332,6 +355,7 @@ def main() -> int:
     p = sub.add_parser('models'); p.add_argument('items', nargs='*'); p.set_defaults(func=cmd_models)
     p = sub.add_parser('bake'); p.add_argument('items', nargs='*'); p.add_argument('--ryzen', action='store_true')
     p.add_argument('--threads', type=int, default=12); p.set_defaults(func=cmd_bake)
+    p = sub.add_parser('debris'); p.add_argument('items', nargs='*'); p.set_defaults(func=cmd_debris)
     p = sub.add_parser('pack'); p.add_argument('--set', required=True); p.add_argument('items', nargs='*'); p.set_defaults(func=cmd_pack)
     args = parser.parse_args()
     return args.func(args)

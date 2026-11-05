@@ -29,7 +29,7 @@ with a staging set as base, it is that set with only these entries replaced.
 
 `compose SET PART...` joins the sets of several assets into one staging set for the game:
 each texture belongs to exactly one part, so a shared texture lives in its own asset. Meshes of a
-part (a prop's GLB with its `.convex-parts` and `.fracture` caches), particle descriptions
+part (a prop's GLB with its `.convex-parts` and `.fracture` caches and its `.debris.glb`), particle descriptions
 (`particles.d/*.json`) and vob trees (`vobtrees.d/*.json`) come along.
 
 `enable SET` copies a staging set into the working content `~/.local/share/gothic-ai/content`, which
@@ -73,7 +73,10 @@ CACHES = {
     '.convex-parts': ('GOTHIC_CONVEX_PARTS 1', 'movable-vobs.csv', ('table', 'cupboard'), 'scripts/convex-parts.sh content'),
     '.fracture': ('GOTHIC_FRACTURE 2', 'destructible-vobs.csv', ('crate', 'barrel', 'pot', 'fence'), 'scripts/fracture.sh content'),
 }
-SIDECARS = tuple(CACHES)
+# A destructible's debris (its pieces as parts, reports/content/2026-11-wood-fracture) travels with its GLB;
+# beside it the `.fracture` must be version 3, cut from that debris.
+DEBRIS, DEBRIS_TAG = '.debris.glb', 'GOTHIC_FRACTURE 3'
+SIDECARS = (*CACHES, DEBRIS)
 MODES = ('target', 'group', 'match')
 
 
@@ -499,7 +502,8 @@ def stale_caches(content: Path) -> dict[str, list[str]]:
             if cache.is_file():
                 with cache.open('rb') as stream:  # a .fracture runs to megabytes; only its first two lines matter
                     header = [stream.readline().decode('ascii', 'replace').rstrip('\n') for _ in range(2)]
-            if header != [tag, f'source {len(source)} {zlib.crc32(source):08x}']:
+            wanted = DEBRIS_TAG if suffix == '.fracture' and glb.with_suffix(DEBRIS).is_file() else tag
+            if header != [wanted, f'source {len(source)} {zlib.crc32(source):08x}']:
                 stale.setdefault(suffix, []).append(key)
     return stale
 
