@@ -322,7 +322,8 @@ void buildRow(Sim& sim, uint32_t npc, DecisionBatch& b) {
     o.point  = point;
     o.object = object;
     o.travel = ahead+travel;
-    const bool mine = actPoint && OptionType(s.actType[npc])==type && s.actPoint[npc]==point && s.actObject[npc]==object;
+    const bool mine = actPoint && OptionType(s.actType[npc])==type && s.actKind[npc]==kind && s.actPoint[npc]==point &&
+                      s.actObject[npc]==object;
     o.use = uint32_t(holders(s,type,object,point))-(mine ? 1u : 0u);
     const bool ok = acc!=Access::Other && guildMay(w,npc,kind) && o.use<w.config.objectKinds.capacity[kind] &&
                     (h==Hold::Free || fillsCritical(sim,npc,o.state));
@@ -630,8 +631,8 @@ void applyChoices(Sim& sim, std::span<const Choice> choices) {
       continue;
       }
     const auto mode = modeOf(s,npc);
-    const bool same = mode==Mode::Chosen && OptionType(s.actType[npc])==o.type && s.actPoint[npc]==o.point &&
-                      s.actObject[npc]==o.object;
+    const bool same = mode==Mode::Chosen && OptionType(s.actType[npc])==o.type && s.actKind[npc]==o.kind &&
+                      s.actPoint[npc]==o.point && s.actObject[npc]==o.object;
     if(same)
       continue;
     // A place taken since the menu was made (by an earlier row of this batch): a chosen activity goes on; otherwise
@@ -724,8 +725,8 @@ void teacherScores(const Sim& sim, const DecisionBatch& b, std::span<float> scor
         const Time dur = std::min(Society::detail::duration(sim,npc,o.kind,o.state,h,anchored,full),left);
         run(w,decay,o.state,false,dur,h);
         run(w,decay,routineState,false,left-dur,h);
-        current = mode==Mode::Chosen && OptionType(s.actType[npc])==o.type && s.actPoint[npc]==o.point &&
-                  s.actObject[npc]==o.object;
+        current = mode==Mode::Chosen && OptionType(s.actType[npc])==o.type && s.actKind[npc]==o.kind &&
+                  s.actPoint[npc]==o.point && s.actObject[npc]==o.object;
         }
       double score = d0-drive(w,h);
       if(o.type!=OptionType::Routine)
