@@ -746,7 +746,7 @@ struct Bench {
   // (reports/engine/2026-11-03-streaming-optimisation/deterministic-shots.md)
   bool        deterministic = false;
   bool        frozen        = false; // the world stands still: `streaming wait` waits in deterministic mode
-  bool        renderReset   = false; // the renderer is to drop its temporal state on the next frame of slot 0
+  bool        renderReset   = false; // the renderer drops its temporal state before this frame's picture
   uint32_t    settleSteps   = 0;     // fixed steps left between the end of `streaming wait` and the next command
   bool        ordered       = false; // visibility appends clusters in order (slow): from the end of the wait to the shot
   struct StreamingSample {
@@ -19213,8 +19213,8 @@ bool waitingForBodyLive() {
 
 // One frame of `streaming wait`; true while the scenario stays in it. In deterministic mode the world stands
 // still from the first frame that finds the landscape unready (MainWindow::tick takes no step, this runs with
-// dt 0). Once it is ready, the world stays still until the renderer drops its temporal state on a frame of
-// slot 0 (renderResetDone); then the scenario takes a fixed number of steps with visibility in cluster order.
+// dt 0). Once it is ready, the renderer drops its temporal state on this very frame and the scenario takes a
+// fixed number of steps with visibility in cluster order.
 // Neither the frame count of the wait nor its wall time then reach the picture.
 bool streamingWaitTick(World& w) {
   if(bench.time<bench.waitUntil)
@@ -19230,8 +19230,7 @@ bool streamingWaitTick(World& w) {
     return true;
     }
   bench.waitStreaming=false;
-  // deterministic: still frozen until the renderer has dropped its temporal state (renderResetDone)
-  bench.frozen=bench.deterministic;
+  bench.frozen=false;
   std::string publications="[";
   for(size_t i=0;i<bench.streamingWarmupFarMs.size();++i) {
     if(i!=0)publications+=',';
@@ -20733,11 +20732,10 @@ bool TestBench::simulationFrozen() { return bench.started && !bench.done && benc
 
 bool TestBench::orderedVisibility() { return bench.ordered; }
 
-bool TestBench::renderResetPending() { return bench.renderReset; }
-
-void TestBench::renderResetDone() {
+bool TestBench::takeRenderReset() {
+  const bool r=bench.renderReset;
   bench.renderReset=false;
-  bench.frozen=false;
+  return r;
   }
 
 uint64_t TestBench::frameDt(uint64_t dt) {

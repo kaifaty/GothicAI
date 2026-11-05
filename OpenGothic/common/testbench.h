@@ -52,9 +52,8 @@ namespace TestBench {
   bool     deterministic();
   // ... and while `streaming wait` waits, the world takes no step at all
   bool     simulationFrozen();
-  // The renderer is to drop its temporal state before a frame's picture; the world stands still until it has
-  bool     renderResetPending();
-  void     renderResetDone();
+  // The renderer drops its temporal state (TAA history, jitter phase) before this frame's picture; once per request
+  bool     takeRenderReset();
   // The visibility pass appends clusters in their order (one GPU invocation): from the end of a deterministic
   // `streaming wait` to the next shot
   bool     orderedVisibility();
