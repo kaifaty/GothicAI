@@ -411,10 +411,19 @@ size_t MdlVisual::bodyNodesCount() const {
 
 // Mdl_SetVisualBody
 void MdlVisual::setVisualBody(Npc& npc, MeshObjects::Mesh &&h, MeshObjects::Mesh &&body, int32_t version) {
+  const auto* instance=npc.world().script().findSymbol(npc.instanceSymbol());
+  if(instance!=nullptr)
+    if(const auto* own=Resources::loadCharacterHead(instance->name()))
+      h=npc.world().addView(own);
   bind(head,std::move(h),"BIP01 HEAD");
   implSetBody(&npc,npc.world(),std::move(body),version);
   head.view.setAsGhost(hnpcFlagGhost);
   head.view.setFatness(npc.fatness());
+  }
+
+const GltfHeadMesh* MdlVisual::headMesh() const {
+  const auto* proto=head.view.protoMesh();
+  return proto!=nullptr ? proto->head.get() : nullptr;
   }
 
 bool MdlVisual::hasOverlay(const Skeleton* sk) const {

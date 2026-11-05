@@ -186,6 +186,7 @@ class Resources final {
 
     static const AttachBinder*       bindMesh       (const ProtoMesh& anim, const Skeleton& s);
     static const ProtoMesh*          loadMesh       (std::string_view name);
+    static const ProtoMesh*          loadCharacterHead(std::string_view instance);
     // All static visual readers share the selected base and content overrides.
     static asset::StaticMesh loadVisualMesh(std::string_view name, bool* replaced = nullptr);
     struct MeshReplacementSource {
@@ -338,6 +339,7 @@ class Resources final {
     void                  indexHdTextures();
     void                  indexMaterialMaps();
     void                  indexMeshOverrides();
+    void                  indexCharacterHeads();
     enum class TextureKind : uint8_t { Color, Normal, Orm };
     const Tempest::Texture2d* implLoadMaterialTexture(const std::string& path, TextureKind kind);
     Tempest::Texture2d*   implLoadTexture(std::string_view cname, bool forceMips, bool pinned);
@@ -496,6 +498,12 @@ class Resources final {
       uint32_t sourceCrc32 = 0;
       };
     std::unordered_map<std::string,MeshOverride>                     meshOverrides;
+    struct CharacterHead {
+      std::filesystem::path file;
+      std::unique_ptr<ProtoMesh> mesh;
+      bool attempted = false;
+      };
+    std::unordered_map<std::string,CharacterHead>                    characterHeads;
     std::map<Tempest::Color,std::unique_ptr<Tempest::Texture2d>,Less> pixCache;
     std::unordered_map<std::string,std::unique_ptr<ProtoMesh>>        aniMeshCache;
     std::unordered_map<DecalK,std::unique_ptr<ProtoMesh>,Hash>        decalMeshCache;

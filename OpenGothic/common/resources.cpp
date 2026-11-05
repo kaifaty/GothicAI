@@ -92,6 +92,17 @@ struct Resources::VideoBase {
 namespace {
 thread_local bool loadingTextureTail = false;
 
+bool contentGlbPath(const std::string& path) {
+  const std::filesystem::path relative(path);
+  if(path.empty() || path.find('\0')!=std::string::npos || relative.is_absolute() ||
+     relative.has_root_name() || !FileExt::hasExt(path,"GLB"))
+    return false;
+  for(const auto& part:relative)
+    if(part=="..")
+      return false;
+  return true;
+  }
+
 std::string modelKey(std::string_view name) {
   const auto separator = name.find_last_of("/\\");
   std::string key(separator==std::string_view::npos ? name : name.substr(separator+1));
@@ -142,6 +153,7 @@ Resources::Resources() {
   configureTextures();
   initCensus();
   indexMeshOverrides();
+  indexCharacterHeads();
   // Sound buffers remain CPU data: native sound selection consumes RNG and
   // dialogue uses their durations even when playback is disabled.
   fBuff.reserve(8*1024*1024);
@@ -187,6 +199,7 @@ Resources::Resources(Tempest::Device &device)
   indexHdTextures();
   indexMaterialMaps();
   indexMeshOverrides();
+  indexCharacterHeads();
 
   {
   Pixmap pm(1,1,TextureFormat::RGBA8);
@@ -1122,12 +1135,7 @@ void Resources::indexMeshOverrides() {
     const auto& value = entry.value["glb"];
     const std::string path(value.GetString(),value.GetStringLength());
     const std::filesystem::path relative(path);
-    bool valid = !path.empty() && path.find('\0')==std::string::npos &&
-                 !relative.is_absolute() && !relative.has_root_name() && FileExt::hasExt(path,"GLB");
-    for(const auto& part:relative)
-      if(part=="..")
-        valid = false;
-    if(!valid) {
+    if(!contentGlbPath(path)) {
       Log::e("meshes: invalid glb path for \"",key,"\"");
       continue;
       }
@@ -1141,6 +1149,74 @@ void Resources::indexMeshOverrides() {
       };
     }
   Log::i("meshes: ",meshOverrides.size()," entries from \"",root.string(),"\"");
+  }
+
+void Resources::indexCharacterHeads() {
+  const auto content=contentDir();
+  if(content.empty())
+    return;
+  const auto root=content/"characters";
+  std::ifstream file(root/"characters.json",std::ios::binary);
+  if(!file)
+    return;
+  const std::string text{std::istreambuf_iterator<char>(file),std::istreambuf_iterator<char>()};
+  rapidjson::Document table;
+  table.Parse<rapidjson::kParseValidateEncodingFlag>(text.data(),text.size());
+  if(table.HasParseError() || !table.IsObject()) {
+    Log::e("characters: invalid characters.json in \"",root.string(),"\"");
+    return;
+    }
+  for(const auto& entry:table.GetObject()) {
+    std::string key(entry.name.GetString(),entry.name.GetStringLength());
+    if(key.empty() || key.find('\0')!=std::string::npos || key.find_first_of("/\\")!=std::string::npos ||
+       !entry.value.IsObject() || !entry.value.HasMember("head") || !entry.value["head"].IsString()) {
+      Log::e("characters: invalid head entry for \"",key,"\": expected an instance name and a head string");
+      continue;
+      }
+    const auto& value=entry.value["head"];
+    const std::string path(value.GetString(),value.GetStringLength());
+    if(!contentGlbPath(path)) {
+      Log::e("characters: invalid head path for \"",key,"\": expected a relative .glb path without '..'");
+      continue;
+      }
+    for(auto& c:key)
+      c=char(std::toupper(uint8_t(c)));
+    characterHeads[std::move(key)]={(root/path).lexically_normal(),nullptr,false};
+    }
+  }
+
+const ProtoMesh* Resources::loadCharacterHead(std::string_view instance) {
+  if(!CommandLine::inst().doHeroHead())
+    return nullptr;
+  std::string key(instance);
+  for(auto& c:key)
+    c=char(std::toupper(uint8_t(c)));
+  // The pilot replaces only this script instance, even if a package lists others.
+  if(key!="PC_HERO")
+    return nullptr;
+  std::lock_guard<std::recursive_mutex> guard(inst->sync);
+  const auto it=inst->characterHeads.find(key);
+  if(it==inst->characterHeads.end())
+    return nullptr;
+  auto& entry=it->second;
+  if(!entry.attempted) {
+    entry.attempted=true;
+    try {
+      auto head=std::make_unique<GltfHeadMesh>(loadGltfHeadMesh(entry.file));
+      // PK_VisualMorph retains source IDs; this does not install MMB animations.
+      PackedMesh packed(head->mesh,PackedMesh::PK_VisualMorph,true);
+      head->renderVertexIds=std::move(packed.verticesId);
+      auto mesh=std::make_unique<ProtoMesh>(std::move(packed),entry.file.generic_string());
+      Log::i("characters: loaded head for ",key,": ",head->parts.size()," parts, ",
+             head->mesh.positions.size()," vertices, ",head->targets.size()," targets");
+      mesh->head=std::move(head);
+      entry.mesh=std::move(mesh);
+      }
+    catch(const std::exception& error) {
+      Log::e("characters: unable to load head for ",key," from \"",entry.file.string(),"\": ",error.what());
+      }
+    }
+  return entry.mesh.get();
   }
 
 bool Resources::meshReplacementLoaded(std::string_view name, MeshReplacementSource* source) {

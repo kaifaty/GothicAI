@@ -157,7 +157,7 @@ asset::Material convertMaterial(const cgltf_material* source) {
   return material;
   }
 
-void validateSubset(cgltf_data& data) {
+void validateSubset(cgltf_data& data, bool head) {
   if(data.file_type!=cgltf_file_type_glb || data.asset.version==nullptr || std::strcmp(data.asset.version,"2.0")!=0)
     reject("expected glTF asset version 2.0");
   if(data.asset.min_version!=nullptr && std::strcmp(data.asset.min_version,"2.0")!=0)
@@ -179,18 +179,23 @@ void validateSubset(cgltf_data& data) {
   for(size_t i=0; i<data.nodes_count; ++i) {
     if(data.nodes[i].skin!=nullptr)
       reject("skins are not supported");
-    if(data.nodes[i].weights_count!=0)
+    if(!head && data.nodes[i].weights_count!=0)
       reject("morph targets are not supported");
     if(data.nodes[i].has_mesh_gpu_instancing)
       reject("GPU mesh instancing is not supported");
     }
   for(size_t i=0; i<data.meshes_count; ++i) {
     const auto& mesh = data.meshes[i];
-    if(mesh.weights_count!=0)
+    if(!head && mesh.weights_count!=0)
       reject("morph targets are not supported");
     for(size_t p=0; p<mesh.primitives_count; ++p) {
-      if(mesh.primitives[p].targets_count!=0)
+      if(!head && mesh.primitives[p].targets_count!=0)
         reject("morph targets are not supported");
+      for(size_t a=0; head && a<mesh.primitives[p].attributes_count; ++a) {
+        const auto type=mesh.primitives[p].attributes[a].type;
+        if(type==cgltf_attribute_type_joints || type==cgltf_attribute_type_weights)
+          reject("JOINTS_0/WEIGHTS_0 skinning is not supported for heads");
+        }
       if(mesh.primitives[p].has_draco_mesh_compression)
         reject("compressed primitives are not supported");
       }
@@ -204,7 +209,7 @@ void validateSubset(cgltf_data& data) {
     }
   for(size_t i=0; i<data.accessors_count; ++i) {
     const auto& accessor = data.accessors[i];
-    if(accessor.is_sparse)
+    if(!head && accessor.is_sparse)
       reject("sparse accessors are not supported");
     if(accessor.count==0 || accessor.type==cgltf_type_invalid || accessor.component_type==cgltf_component_type_invalid)
       reject("invalid accessor count or type");
@@ -272,7 +277,47 @@ struct Transform {
       reject("NORMAL must be finite and non-zero");
     return {float(-transformed[0]/length),float(transformed[1]/length),float(transformed[2]/length)};
     }
+
+  asset::Vec3 delta(const float* value, const float* baseNormal = nullptr) const {
+    double scale = 100;
+    if(baseNormal!=nullptr) {
+      double base[3];
+      for(unsigned a=0; a<3; ++a)
+        base[a]=(cofactor[a*3]*baseNormal[0]+cofactor[a*3+1]*baseNormal[1]+
+                 cofactor[a*3+2]*baseNormal[2])/determinant;
+      scale=1/std::hypot(base[0],base[1],base[2]);
+      }
+    asset::Vec3 result;
+    for(unsigned a=0; a<3; ++a) {
+      const double v=baseNormal==nullptr ?
+          double(matrix[a])*value[0]+double(matrix[a+4])*value[1]+double(matrix[a+8])*value[2] :
+          (cofactor[a*3]*value[0]+cofactor[a*3+1]*value[1]+cofactor[a*3+2]*value[2])/determinant;
+      result[a]=float(v*scale*(a==0 ? -1 : 1));
+      if(!std::isfinite(result[a]))
+        reject("non-finite morph delta");
+      }
+    return result;
+    }
   };
+
+std::vector<std::string> targetNames(const cgltf_mesh& mesh) {
+  size_t count=0;
+  for(size_t p=0; p<mesh.primitives_count; ++p)
+    count=std::max(count,size_t(mesh.primitives[p].targets_count));
+  if(count==0)
+    return {};
+  // cgltf extracts Blender's mesh.extras.targetNames into this dedicated field.
+  if(mesh.target_names==nullptr || mesh.target_names_count!=count)
+    reject("missing or mismatched mesh.extras.targetNames");
+  std::vector<std::string> names;
+  for(size_t i=0; i<count; ++i) {
+    auto name=decodedString(mesh.target_names[i]);
+    if(name.empty() || std::find(names.begin(),names.end(),name)!=names.end())
+      reject("targetNames must be non-empty and unique within a mesh");
+    names.push_back(std::move(name));
+    }
+  return names;
+  }
 
 const cgltf_accessor* attribute(const cgltf_primitive& primitive, cgltf_attribute_type type, int index=0) {
   const cgltf_accessor* result = nullptr;
@@ -316,15 +361,27 @@ class Converter {
   public:
     asset::StaticMesh mesh;
 
-    Converter() { mesh.alpha_test = false; }
+    explicit Converter(GltfHeadMesh* head = nullptr):head(head) { mesh.alpha_test = false; }
 
     void addNode(const cgltf_node& node) {
       if(node.mesh==nullptr)
         return;
       const Transform transform(node);
+      std::vector<std::string> names;
+      const size_t first=mesh.positions.size();
+      std::string part;
+      if(head!=nullptr) {
+        part=node.name==nullptr ? "" : decodedString(node.name);
+        const std::array<std::string_view,9> allowed={"face","brows","lashes","beard","eye_L","eye_R","teeth","tongue","hair"};
+        if(std::find(allowed.begin(),allowed.end(),part)==allowed.end())
+          reject("unknown head mesh node: "+part);
+        names=targetNames(*node.mesh);
+        }
       std::vector<PositionStream> positions;
       for(size_t p=0; p<node.mesh->primitives_count; ++p)
-        addPrimitive(node,node.mesh->primitives[p],transform,positions);
+        addPrimitive(node,node.mesh->primitives[p],transform,positions,names);
+      if(head!=nullptr)
+        head->parts.push_back({std::move(part),first,mesh.positions.size()-first});
       }
 
     void finish() {
@@ -347,6 +404,7 @@ class Converter {
       }
 
   private:
+    GltfHeadMesh* head;
     std::vector<MaterialState> materials;
 
     size_t materialIndex(const cgltf_material* source) {
@@ -365,7 +423,7 @@ class Converter {
 
     size_t positionBase(const cgltf_accessor& source, const Transform& transform, std::vector<PositionStream>& streams) {
       for(const auto& stream:streams)
-        if(stream.source==&source)
+        if(head==nullptr && stream.source==&source)
           return stream.base;
       if(source.count>mrmLimit-mesh.positions.size())
         reject("more than 65535 MRM positions");
@@ -381,7 +439,7 @@ class Converter {
       }
 
     void addPrimitive(const cgltf_node& node, const cgltf_primitive& primitive, const Transform& transform,
-                      std::vector<PositionStream>& positions) {
+                      std::vector<PositionStream>& positions, const std::vector<std::string>& names) {
       if(primitive.type!=cgltf_primitive_type_triangles)
         reject("only triangle primitives are supported");
       const auto* position = attribute(primitive,cgltf_attribute_type_position);
@@ -408,7 +466,7 @@ class Converter {
       size_t wedgeBase = submesh.wedges.size();
       bool existing = false;
       for(const auto& stream:state.streams)
-        if(stream.node==&node && stream.position==position && stream.normal==normal && stream.uv==uv) {
+        if(head==nullptr && stream.node==&node && stream.position==position && stream.normal==normal && stream.uv==uv) {
           wedgeBase = stream.base;
           existing = true;
           break;
@@ -423,9 +481,13 @@ class Converter {
           if(!std::isfinite(tex[0]) || !std::isfinite(tex[1]))
             reject("non-finite TEXCOORD_0");
           submesh.wedges.push_back({transform.normal(n),{tex[0],tex[1]},uint16_t(posBase+i)});
+          if(head!=nullptr)
+            mesh.normals.push_back(submesh.wedges.back().normal);
           }
         state.streams.push_back({&node,position,normal,uv,wedgeBase});
         }
+      if(head!=nullptr)
+        addTargets(primitive,transform,names,posBase,*normal);
       for(size_t i=0; i<count; i+=3) {
         asset::MeshTriangle triangle;
         for(unsigned corner=0; corner<3; ++corner) {
@@ -442,9 +504,48 @@ class Converter {
         submesh.triangles.push_back(triangle);
         }
       }
+
+    void addTargets(const cgltf_primitive& primitive, const Transform& transform,
+                    const std::vector<std::string>& names, size_t base, const cgltf_accessor& normals) {
+      if(primitive.targets_count!=names.size())
+        reject("targetNames count must match each primitive's morph targets");
+      for(size_t t=0; t<primitive.targets_count; ++t) {
+        cgltf_primitive attributes={};
+        attributes.attributes=primitive.targets[t].attributes;
+        attributes.attributes_count=primitive.targets[t].attributes_count;
+        const auto* dp=attribute(attributes,cgltf_attribute_type_position);
+        const auto* dn=attribute(attributes,cgltf_attribute_type_normal);
+        requireVector(dp,cgltf_type_vec3,"morph POSITION");
+        requireVector(dn,cgltf_type_vec3,"morph NORMAL");
+        if(dp->count!=normals.count || dn->count!=normals.count)
+          reject("morph attribute counts do not match base vertices");
+        std::vector<float> pos(dp->count*3), norm(dn->count*3);
+        if(cgltf_accessor_unpack_floats(dp,pos.data(),pos.size())!=pos.size() ||
+           cgltf_accessor_unpack_floats(dn,norm.data(),norm.size())!=norm.size())
+          reject("cannot unpack morph POSITION or NORMAL");
+        auto it=std::find_if(head->targets.begin(),head->targets.end(),[&](const auto& v) { return v.name==names[t]; });
+        if(it==head->targets.end()) {
+          head->targets.push_back({names[t],{}});
+          it=head->targets.end()-1;
+          }
+        for(size_t i=0; i<dp->count; ++i) {
+          float n[3];
+          if(!cgltf_accessor_read_float(&normals,i,n,3))
+            reject("cannot read base NORMAL");
+          const auto p=transform.delta(pos.data()+i*3);
+          // Linear inverse transpose, scaled like the neutral normal. Normalize
+          // only after all active targets have been mixed, preserving additivity.
+          const auto d=transform.delta(norm.data()+i*3,n);
+          if(std::hypot(p.x,p.y,p.z)<1e-6f && std::hypot(d.x,d.y,d.z)<1e-6f)
+            continue;
+          it->vertices.push_back({uint32_t(base+i),p,d});
+          }
+        }
+      }
   };
 
-std::vector<GltfMeshNode> loadScene(const std::filesystem::path& path, std::vector<uint8_t>* source, bool splitNodes) {
+std::vector<GltfMeshNode> loadScene(const std::filesystem::path& path, std::vector<uint8_t>* source, bool splitNodes,
+                                    GltfHeadMesh* head = nullptr) {
   auto bytes = readGlb(path);
   cgltf_options options = {};
   options.type = cgltf_file_type_glb;
@@ -453,8 +554,8 @@ std::vector<GltfMeshNode> loadScene(const std::filesystem::path& path, std::vect
   if(result!=cgltf_result_success)
     reject(std::string("parse failed: ")+resultName(result));
   const std::unique_ptr<cgltf_data,decltype(&cgltf_free)> data(parsed,cgltf_free);
-  validateSubset(*data);
-  Converter converter;
+  validateSubset(*data,head!=nullptr);
+  Converter converter(head);
   std::vector<GltfMeshNode> meshes;
   std::vector<const cgltf_node*> pending;
   std::vector<bool> visited(data->nodes_count,false);
@@ -498,4 +599,11 @@ asset::StaticMesh loadGltfMesh(const std::filesystem::path& path, std::vector<ui
 
 std::vector<GltfMeshNode> loadGltfMeshNodes(const std::filesystem::path& path, std::vector<uint8_t>* source) {
   return loadScene(path,source,true);
+  }
+
+GltfHeadMesh loadGltfHeadMesh(const std::filesystem::path& path) {
+  GltfHeadMesh head;
+  auto meshes=loadScene(path,nullptr,false,&head);
+  head.mesh=std::move(meshes.front().mesh);
+  return head;
   }
