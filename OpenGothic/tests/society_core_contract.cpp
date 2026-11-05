@@ -14,7 +14,12 @@
 //   traits, guild weights, noise from the seed, moments of crossings); on the game's data an empty config gives the
 //   routine-only journal and marks byte for byte, with needs the routine is the same event for event, every
 //   threshold in the journal is at the moment a recomputation from the journal gives and none is missing, the
-//   marks' levels are the recomputed ones and in 0..1, repeat and snapshot hold, a day takes under 0.5 s.
+//   marks' levels are the recomputed ones and in 0..1, repeat and snapshot hold, a day takes under 0.5 s;
+// - decisions (the config's `decisions` section): a day with the teacher repeats byte for byte and a snapshot gives
+//   the same tail; a choice out of its mask throws; a policy that always takes the routine gives the routine-only
+//   run (events by NPC and marks); with the teacher the NPCs that never decide (the protected, those without a
+//   routine, monsters) do their routine-only day event for event and mark for mark; a day with the teacher takes
+//   under 0.5 s; gothic-society-day --policy teacher plays 7 days.
 #include "society/journal.h"
 #include "society/society.h"
 
@@ -32,6 +37,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <vector>
 #include <unistd.h>
 
@@ -1040,13 +1046,319 @@ void checkEmptyNeeds(const fs::path& exportPath, const fs::path& root, const Day
                 "run's byte for byte\n",journal.size(),marks.size());
   }
 
+// --- Decisions on the game's data ---------------------------------------------------------------------------
+
+void checkTool(const Society::World& w, const fs::path& exportPath, const fs::path& dir, const fs::path& config = {},
+               const std::string& policy = {});
+
+enum class Policy { Teacher, Random, Routine };
+
+// Plays to `t`, answering every batch with the policy (Routine: option 0, the routine, for every row).
+size_t playTo(Society::Sim& sim, Society::DecisionBatch& batch, std::vector<Society::Choice>& choices, Time t, Policy p) {
+  size_t rows = 0;
+  while(Society::advance(sim,batch,t)>0) {
+    rows += batch.size();
+    if(p==Policy::Teacher)
+      Society::teacher(sim,batch,choices);
+    else if(p==Policy::Random)
+      Society::randomPolicy(sim,batch,choices);
+    else {
+      choices.clear();
+      for(auto npc:batch.npc)
+        choices.push_back({npc,0,Society::Chooser::External});
+      }
+    Society::act(sim,choices);
+    }
+  return rows;
+  }
+
+struct DecidedDay {
+  std::string journal, marks;
+  std::vector<Society::Event> events;
+  std::vector<size_t> movingAtMark;
+  size_t rows = 0;
+  uint64_t decisions = 0;
+  };
+
+const char* policyName(Policy p) {
+  return p==Policy::Teacher ? "teacher" : p==Policy::Random ? "random" : "routine";
+  }
+
+// A day with a policy that decides, marks every 5 minutes; `until` cuts it (the whole day by default).
+DecidedDay decidedDay(const Society::World& w, Policy p, Time until = -1) {
+  Society::SimConfig config;
+  config.seed      = Seed;
+  config.decisions = true;
+  auto sim = Society::makeSim(w,config);
+  Society::DecisionBatch batch;
+  std::vector<Society::Choice> choices;
+  DecidedDay day;
+  day.journal = Society::Journal::header(w,Seed,policyName(p));
+  day.marks   = Society::Marks::header(w,true);
+  const Time start = w.startTime(), end = until<0 ? start+Society::DaySeconds : until;
+  for(Time t=start; t<=end; t+=Society::Marks::Period) {
+    day.rows += playTo(sim,batch,choices,t,p);
+    const auto ev = Society::drainEvents(sim);
+    Society::Journal::append(day.journal,ev);
+    day.events.insert(day.events.end(),ev.begin(),ev.end());
+    Society::Marks::append(day.marks,sim);
+    size_t moving = 0;
+    for(auto f:sim.s.flags)
+      moving += (f & Society::Moving)!=0 ? 1 : 0;
+    day.movingAtMark.push_back(moving);
+    }
+  day.decisions = sim.s.decisions;
+  return day;
+  }
+
+bool decisionEvent(Society::EventKind k) {
+  return k==Society::EventKind::DecisionRequested || k==Society::EventKind::ActionChosen ||
+         k==Society::EventKind::ActionFailed || k==Society::EventKind::ActivityFinished;
+  }
+
+// Each NPC's events without the decisions' own, in order (sorted within a second when `loose`: a routine taken
+// through a decision may put an NPC's events of one second in another order).
+std::vector<std::vector<Society::Event>> perNpc(const Society::World& w, const std::vector<Society::Event>& events, bool loose) {
+  std::vector<std::vector<Society::Event>> ret(w.npcs.size());
+  for(const auto& e:events)
+    if(!decisionEvent(e.kind))
+      ret[e.npc].push_back(e);
+  if(loose)
+    for(auto& list:ret)
+      std::stable_sort(list.begin(),list.end(),[](const Society::Event& x, const Society::Event& y) {
+        return std::make_tuple(x.time,uint8_t(x.kind),x.reason,x.entry,x.a,x.b,x.c) <
+               std::make_tuple(y.time,uint8_t(y.kind),y.reason,y.entry,y.a,y.b,y.c);
+        });
+  return ret;
+  }
+
+bool sameEvent(const Society::Event& a, const Society::Event& b) {
+  return a.time==b.time && a.npc==b.npc && a.kind==b.kind && a.reason==b.reason && a.entry==b.entry && a.a==b.a &&
+         a.b==b.b && a.c==b.c;
+  }
+
+// The marks of NPC rows, the decisions' two columns dropped.
+std::vector<std::string> markRows(const std::string& marks, bool decisions) {
+  std::vector<std::string> ret;
+  std::istringstream in(marks);
+  std::string line;
+  std::getline(in,line);
+  while(std::getline(in,line)) {
+    if(decisions)
+      line.resize(line.rfind(',',line.rfind(',')-1));
+    ret.push_back(line);
+    }
+  return ret;
+  }
+
+void checkDecisions(const Society::World& w, const Day& routine, const fs::path& exportPath, const fs::path& root) {
+  const auto& d = w.config.decisions;
+  size_t deciders = 0, protectedPeople = 0;
+  for(uint32_t i=0; i<w.npcs.size(); ++i) {
+    deciders        += Society::decides(w,i) ? 1 : 0;
+    protectedPeople += w.npcs.person[i] && w.npcProtected[i] ? 1 : 0;
+    }
+  std::printf("decisions: K %u, travel limit %lld min, least time %lld min, posts release %s, protected %zu of %zu listed "
+              "(people %zu), deciders %zu\n",d.menu,(long long)(d.travelLimit/60),(long long)(d.minDwell/60),
+              d.postsRelease ? "yes" : "no",w.protectedFound,w.protectedListed,protectedPeople,deciders);
+  if(!d.loaded || deciders==0 || w.protectedFound==0)
+    fail("decisions: the config must have its decisions section, deciders and protected NPCs of this world");
+
+  // A policy that always takes the routine: the routine-only run (events by NPC, marks without the two columns).
+  const auto always = decidedDay(w,Policy::Routine);
+  {
+    const auto a = perNpc(w,always.events,true), b = perNpc(w,routine.events,true);
+    size_t differ = 0;
+    for(size_t i=0; i<a.size(); ++i) {
+      bool same = a[i].size()==b[i].size();
+      for(size_t k=0; same && k<a[i].size(); ++k)
+        same = sameEvent(a[i][k],b[i][k]);
+      if(!same && ++differ<=size_t(PrintLimit))
+        std::printf("  %s: %zu events taking the routine through decisions, %zu by the routine alone\n",
+                    w.npcs.key[i].c_str(),a[i].size(),b[i].size());
+      }
+    const bool marks = markRows(always.marks,true)==markRows(routine.marks,false);
+    std::printf("the routine taken through %zu decisions (%zu rows answered): %zu NPCs whose events differ from the "
+                "routine-only run, marks %s\n",size_t(always.decisions),always.rows,differ,marks ? "the same" : "differ");
+    if(differ>0 || !marks)
+      fail("decisions: always taking the routine must give the routine-only run");
+    if(always.rows==0)
+      fail("decisions: a day must ask decisions that only a policy answers");
+  }
+
+  // The teacher's day; who never decides does its routine-only day event for event.
+  const auto day = decidedDay(w,Policy::Teacher);
+  {
+    std::map<Society::EventKind,size_t> kinds;
+    for(const auto& e:day.events)
+      ++kinds[e.kind];
+    std::string text;
+    for(const auto& [k,n]:kinds)
+      if(decisionEvent(k))
+        text += (text.empty() ? "" : ", ")+std::string(Society::eventName(k))+" "+std::to_string(n);
+    const auto a = perNpc(w,day.events,false), b = perNpc(w,routine.events,false);
+    size_t never = 0, differ = 0, protectedSame = 0;
+    std::vector<uint8_t> decided(w.npcs.size(),0);
+    for(const auto& e:day.events)
+      if(e.kind==Society::EventKind::DecisionRequested)
+        decided[e.npc] = 1;
+    for(size_t i=0; i<a.size(); ++i) {
+      if(Society::decides(w,uint32_t(i)) && decided[i])
+        continue;
+      ++never;
+      bool same = a[i].size()==b[i].size();
+      for(size_t k=0; same && k<a[i].size(); ++k)
+        same = sameEvent(a[i][k],b[i][k]);
+      differ += same ? 0 : 1;
+      protectedSame += same && w.npcProtected[i] ? 1 : 0;
+      }
+    // Mark rows of the protected NPCs.
+    const auto ma = markRows(day.marks,true), mb = markRows(routine.marks,false);
+    size_t rows = 0, same = 0;
+    for(size_t r=0; r<ma.size() && r<mb.size(); ++r) {
+      if(!w.npcProtected[r%w.npcs.size()])
+        continue;
+      ++rows;
+      same += ma[r]==mb[r] ? 1 : 0;
+      }
+    std::printf("a day with the teacher: %" PRIu64 " decisions, %zu rows answered by it (%s); %zu NPCs that never decide, "
+                "%zu of them with other events than the routine-only run; protected: %zu with the same events, %zu of %zu "
+                "mark rows the same\n",day.decisions,day.rows,text.c_str(),never,differ,protectedSame,same,rows);
+    if(differ>0 || same!=rows || rows==0)
+      fail("decisions: with the teacher the NPCs that never decide must do their routine-only day");
+    if(day.rows==0 || kinds[Society::EventKind::ActivityFinished]==0)
+      fail("decisions: the teacher must choose activities and finish them in a day");
+  }
+
+  // Repeat: the same seed gives the same journal, whatever the horizons of advance.
+  {
+    Society::SimConfig config;
+    config.seed      = Seed;
+    config.decisions = true;
+    auto sim = Society::makeSim(w,config);
+    Society::DecisionBatch batch;
+    std::vector<Society::Choice> choices;
+    std::string again = Society::Journal::header(w,Seed,"teacher");
+    playTo(sim,batch,choices,w.startTime()+Society::DaySeconds,Policy::Teacher);
+    Society::Journal::append(again,Society::drainEvents(sim));
+    sameBytes("decisions: two teacher days with one seed (marks every 5 minutes, then one advance) give different journals",
+              day.journal,again);
+    if(day.journal==again)
+      std::printf("repeat with the teacher: the same journal, %zu bytes (%zu events)\n",again.size(),day.events.size());
+  }
+
+  // Snapshot: in the middle of the busiest walking, restored, the same tail; head and tail are the whole day.
+  {
+    const auto marks = day.movingAtMark.size();
+    size_t best = marks/4;
+    for(size_t i=marks/4; i<marks*3/4; ++i)
+      if(day.movingAtMark[i]>day.movingAtMark[best])
+        best = i;
+    const Time at = w.startTime()+Time(best)*Society::Marks::Period+150;
+    Society::SimConfig config;
+    config.seed      = Seed;
+    config.decisions = true;
+    auto sim = Society::makeSim(w,config);
+    Society::DecisionBatch batch;
+    std::vector<Society::Choice> choices;
+    std::string head = Society::Journal::header(w,Seed,"teacher"), tail1, tail2;
+    playTo(sim,batch,choices,at,Policy::Teacher);
+    Society::Journal::append(head,Society::drainEvents(sim));
+    size_t chosen = 0, held = 0;
+    for(uint32_t i=0; i<w.npcs.size(); ++i)
+      chosen += sim.s.mode[i]==uint8_t(Society::Mode::Chosen) ? 1 : 0;
+    for(auto u:sim.s.objectUse)
+      held += u;
+    for(auto u:sim.s.pointUse)
+      held += u;
+    const auto snap = Society::save(sim);
+    const Time end = w.startTime()+Society::DaySeconds;
+    playTo(sim,batch,choices,end,Policy::Teacher);
+    Society::Journal::append(tail1,Society::drainEvents(sim));
+    Society::restore(sim,snap);
+    playTo(sim,batch,choices,end,Policy::Teacher);
+    Society::Journal::append(tail2,Society::drainEvents(sim));
+    sameBytes("decisions: the tail after a restore differs from the tail before it",tail1,tail2);
+    sameBytes("decisions: the journal cut by a snapshot differs from the whole teacher day's",day.journal,head+tail1);
+    if(tail1==tail2 && day.journal==head+tail1)
+      std::printf("snapshot with the teacher at %s (%zu NPCs in a chosen activity, %zu places held): the same tail of %zu "
+                  "events, head and tail give the whole day\n",clock(w,at).c_str(),chosen,held,
+                  tail1.size()/Society::Journal::RecordBytes);
+    if(chosen==0 || held==0)
+      fail("decisions: the snapshot must hold chosen activities and reservations");
+  }
+
+  // A choice out of its mask is a logic error, and nothing of the batch is applied.
+  {
+    Society::SimConfig config;
+    config.seed      = Seed;
+    config.decisions = true;
+    auto sim = Society::makeSim(w,config);
+    Society::DecisionBatch batch;
+    std::vector<Society::Choice> choices;
+    bool tried = false, thrown = false, kept = false;
+    while(!tried && Society::advance(sim,batch,w.startTime()+Society::DaySeconds)>0) {
+      Society::teacher(sim,batch,choices);
+      for(size_t r=0; r<batch.size() && !tried; ++r)
+        for(size_t j=0; j<batch.count[r]; ++j)
+          if(!batch.mask[r*batch.stride+j]) {
+            auto bad = choices;
+            bad[r].option = uint16_t(j);
+            const auto before = sim.s.emitted;
+            try { Society::act(sim,bad); } catch(const std::logic_error&) { thrown = true; }
+            kept = sim.s.emitted==before;
+            tried = true;
+            break;
+            }
+      Society::act(sim,choices);
+      }
+    std::printf("a choice out of its mask: %s, the batch %s\n",thrown ? "logic error" : "accepted",
+                kept ? "not applied" : "applied");
+    if(!tried || !thrown || !kept)
+      fail("decisions: a choice out of its mask must throw before anything of the batch is applied");
+  }
+
+  // Speed: a day of the whole world with the teacher on one thread.
+  {
+    Society::SimConfig config;
+    config.seed      = Seed;
+    config.decisions = true;
+    auto sim = Society::makeSim(w,config);
+    Society::DecisionBatch batch;
+    std::vector<Society::Choice> choices;
+    const Time end = w.startTime()+Society::DaySeconds;
+    const auto oneDay = [&]() {
+      const auto from = Clock::now();
+      Society::reset(sim,Seed);
+      playTo(sim,batch,choices,end,Policy::Teacher);
+      const auto ev = Society::drainEvents(sim);
+      return std::make_pair(since(from),ev.size());
+      };
+    const auto [cold,events] = oneDay();
+    std::vector<double> warm;
+    for(int i=0; i<WarmDays; ++i)
+      warm.push_back(oneDay().first);
+    std::sort(warm.begin(),warm.end());
+    const double median = warm[warm.size()/2];
+    std::printf("speed with the teacher: a day of the whole world on one thread: %.2f ms with empty caches, %.2f ms median "
+                "over %d more days; %zu events, %" PRIu64 " decisions; limit %.1f s\n",cold*1000.0,median*1000.0,WarmDays,
+                events,sim.s.decisions,NeedsDayLimit);
+    if(cold>NeedsDayLimit || median>NeedsDayLimit)
+      fail("decisions: a day of the whole world with the teacher must take under "+std::to_string(NeedsDayLimit)+" s");
+  }
+
+  checkTool(w,exportPath,root/"teacher",SOCIETY_CONFIG,"teacher");
+  }
+
 // --- The tool --------------------------------------------------------------------------------------------
 
-void checkTool(const Society::World& w, const fs::path& exportPath, const fs::path& dir, const fs::path& config = {}) {
+void checkTool(const Society::World& w, const fs::path& exportPath, const fs::path& dir, const fs::path& config,
+               const std::string& policy) {
   const auto log = dir/"day.log";
   const auto cmd = shellQuote(SOCIETY_DAY)+" --world "+shellQuote(exportPath.string())+" --out "+shellQuote(dir.string())+
                    " --days "+std::to_string(ToolDays)+" --seed "+std::to_string(Seed)+
-                   (config.empty() ? std::string() : " --config "+shellQuote(config.string()))+" >"+shellQuote(log.string())+" 2>&1";
+                   (config.empty() ? std::string() : " --config "+shellQuote(config.string()))+
+                   (policy.empty() ? std::string() : " --policy "+policy)+" >"+shellQuote(log.string())+" 2>&1";
   fs::create_directories(dir);
   const int rc = std::system(cmd.c_str());
   std::string text;
@@ -1058,7 +1370,7 @@ void checkTool(const Society::World& w, const fs::path& exportPath, const fs::pa
     return;
     }
   const auto journal = read(dir/"society-day.journal");
-  const auto header  = Society::Journal::header(w,Seed);
+  const auto header  = Society::Journal::header(w,Seed,policy);
   if(journal.compare(0,header.size(),header)!=0 || (journal.size()-header.size())%Society::Journal::RecordBytes!=0)
     fail("gothic-society-day's journal has a wrong header or a cut record");
   size_t rows = 0;
@@ -1066,7 +1378,7 @@ void checkTool(const Society::World& w, const fs::path& exportPath, const fs::pa
     std::ifstream in(dir/"society-marks.csv",std::ios::binary);
     std::string line;
     std::getline(in,line);
-    if(line+"\n"!=Society::Marks::header(w))
+    if(line+"\n"!=Society::Marks::header(w,!policy.empty()))
       fail("gothic-society-day's marks have a wrong header: "+line);
     while(std::getline(in,line))
       ++rows;
@@ -1075,8 +1387,8 @@ void checkTool(const Society::World& w, const fs::path& exportPath, const fs::pa
   if(rows!=expected)
     fail("gothic-society-day wrote "+std::to_string(rows)+" mark rows, expected "+std::to_string(expected));
   else
-    std::printf("gothic-society-day%s: %lu days, journal %zu bytes (%zu events), marks %zu rows (%zu NPCs x %zu marks)\n",
-                config.empty() ? "" : " --config",ToolDays,journal.size(),
+    std::printf("gothic-society-day%s%s: %lu days, journal %zu bytes (%zu events), marks %zu rows (%zu NPCs x %zu marks)\n",
+                config.empty() ? "" : " --config",policy.empty() ? "" : (" --policy "+policy).c_str(),ToolDays,journal.size(),
                 (journal.size()-header.size())/Society::Journal::RecordBytes,rows,w.npcs.size(),rows/w.npcs.size());
   }
 
@@ -1117,6 +1429,8 @@ int main() {
     checkSnapshot(needsWorld,needsDay);
     checkSpeed(needsWorld,NeedsDayLimit);
     checkTool(needsWorld,exportPath,root/"needs",SOCIETY_CONFIG);
+    std::printf("with decisions:\n");
+    checkDecisions(needsWorld,needsDay,exportPath,root);
     if(failures>0) {
       std::fprintf(stderr,"FAIL: society core contract: %d checks failed\n",failures);
       return EXIT_FAILURE;
