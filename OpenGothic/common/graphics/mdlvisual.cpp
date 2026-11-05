@@ -696,8 +696,8 @@ void MdlVisual::quiverPoints(const Matrix4x4* bones, size_t n, std::vector<Quive
 
 // the calling thread's CPU time, µs: the quiver's own share of a step, apart from the thread being put aside;
 // read only while the bench measures (a call per quiver and frame is not the game's), 0 otherwise
-static double threadCpuUs() {
-  if(!Quiver::measureGround)
+static double threadCpuUs(bool on) {
+  if(!on)
     return 0;
   timespec ts = {};
   clock_gettime(CLOCK_THREAD_CPUTIME_ID,&ts);
@@ -715,7 +715,8 @@ bool MdlVisual::updateQuiver(const Npc& npc, uint64_t dt) {
     return false;
     }
   // the thread's CPU time is read outside the wall time it is set against (its own call is not the quiver's)
-  const double cpu0 = threadCpuUs();
+  const bool   cpuOn = Quiver::measureGround; // once: the bench may turn it on meanwhile
+  const double cpu0  = threadCpuUs(cpuOn);
   const auto   t0   = std::chrono::steady_clock::now();
   quiverRays  = 0;
   quiverRayUs = 0;
@@ -752,7 +753,7 @@ bool MdlVisual::updateQuiver(const Npc& npc, uint64_t dt) {
   }
   if(ground.on && quiv.restsOnGround(pelvisNow)) {
     quiverStepUs = float(std::chrono::duration<double,std::micro>(std::chrono::steady_clock::now()-t0).count());
-    quiverCpuUs  = float(threadCpuUs()-cpu0);
+    quiverCpuUs  = float(threadCpuUs(cpuOn)-cpu0);
     return false;
     }
   // the right leg and arm: the hit zones' capsules, fitted to the worn armour
@@ -806,7 +807,7 @@ bool MdlVisual::updateQuiver(const Npc& npc, uint64_t dt) {
   const size_t spine = spineBone;
   quiv.step(bones[quiv.bone()],bones[spine],obs,float(dt)*0.001f,ground);
   quiverStepUs = float(std::chrono::duration<double,std::micro>(std::chrono::steady_clock::now()-t0).count());
-  quiverCpuUs  = float(threadCpuUs()-cpu0);
+  quiverCpuUs  = float(threadCpuUs(cpuOn)-cpu0);
   return true;
   }
 
