@@ -29,6 +29,18 @@ namespace fs = std::filesystem;
 using Value = rapidjson::Value;
 
 constexpr size_t WorldNpcs = 1053;  // the startup scripts insert every NPC of Khorinis (docs/world-streaming.md)
+
+// The one expected difference from day_people.json, the secondary reference (the export is the fresh world).
+// Xardas starts with Rtn_PreStart_100 (TA_Stand_ArmsCrossed at NW_XARDAS_START), as the npc-day-parity journal
+// keeps him all day. day_people.json is a SCENARIO=places dump taken after his first talk, whose exit
+// (DIA_Xardas_FirstEXIT) calls Npc_ExchangeRoutine(self,"START"): TA_Read_Bookstand at NW_XARDAS_TOWER_IN1_28.
+// Anything else for him, or no difference at all, fails: then this exception is out of date.
+struct ExpectedDifference { const char* symbol; const char* exportRoutine; const char* dayPeopleRoutine; };
+constexpr ExpectedDifference Xardas = {
+  "NONE_100_XARDAS",
+  "480-1380 ZS_STAND_ARMSCROSSED NW_XARDAS_START; 1380-480 ZS_STAND_ARMSCROSSED NW_XARDAS_START;",
+  "480-1380 ZS_READ_BOOKSTAND NW_XARDAS_TOWER_IN1_28; 1380-480 ZS_READ_BOOKSTAND NW_XARDAS_TOWER_IN1_28;",
+  };
 int failures = 0;
 
 void fail(const std::string& what) {
@@ -333,7 +345,8 @@ std::set<std::string> checkNpcs(const Value& doc, const std::vector<Waypoint>& p
   std::map<std::string,std::vector<std::string>> people;
   std::string previous;
   uint32_t ordinal = 0;
-  size_t entries = 0, persons = 0, unresolved = 0;
+  size_t entries = 0, persons = 0;
+  std::vector<std::string> unresolved;
   for(rapidjson::SizeType i=0; i<list.Size(); ++i) {
     const auto& n  = list[i];
     const auto id  = str(n,"id");
@@ -362,19 +375,22 @@ std::set<std::string> checkNpcs(const Value& doc, const std::vector<Waypoint>& p
         fail("npc "+key+": routine point "+name+" has a wrong id");
         continue;
         }
-      ++unresolved;
+      // v1 allows null only where the engine itself finds no point (World::findPoint): no point of that name.
       const bool inWorld = std::any_of(points.begin(),points.end(),[&](const Waypoint& p) { return p.name==name; });
       if(inWorld)
         fail("npc "+key+": routine point "+name+" is in the world but has no id");
       else
-        fail("npc "+key+": routine point "+name+" is not in the world, the engine does not find it either");
+        unresolved.push_back(key+" "+std::to_string(start)+"-"+std::to_string(end)+" "+str(r,"state")+" "+name);
       }
     if(n["person"].GetBool()) {
       ++persons;
       people[id].push_back(personRecord(str(n,"name"),uint(n,"guild"),routine));
       }
     }
-  std::printf("people: %zu; routine entries of all NPCs: %zu, %zu without a point of the world\n",persons,entries,unresolved);
+  std::printf("people: %zu; routine entries of all NPCs: %zu; with waypoint null (no such point in the world): %zu\n",
+              persons,entries,unresolved.size());
+  for(const auto& u:unresolved)
+    std::printf("  %s\n",u.c_str());
 
   rapidjson::Document day;
   const auto text = read(dayPeoplePath);
@@ -395,12 +411,25 @@ std::set<std::string> checkNpcs(const Value& doc, const std::vector<Waypoint>& p
   std::set<std::string> symbols;
   for(const auto& [s,r]:people) symbols.insert(s);
   for(const auto& [s,r]:reference) symbols.insert(s);
+  if(!symbols.count(Xardas.symbol))
+    fail(std::string(Xardas.symbol)+" is in neither the export nor day_people.json (the exception is out of date)");
   size_t differences = 0;
   for(const auto& s:symbols) {
     auto a = people.count(s) ? people[s] : std::vector<std::string>();
     auto b = reference.count(s) ? reference[s] : std::vector<std::string>();
     std::sort(a.begin(),a.end());
     std::sort(b.begin(),b.end());
+    if(s==Xardas.symbol) {
+      const auto routine = [](const std::string& r) { return r.substr(r.rfind(" | ")+3); };
+      const auto person  = [](const std::string& r) { return r.substr(0,r.rfind(" | ")); };
+      if(a.size()==1 && b.size()==1 && person(a[0])==person(b[0]) &&
+         routine(a[0])==Xardas.exportRoutine && routine(b[0])==Xardas.dayPeopleRoutine) {
+        std::printf("  %s: the expected difference: the fresh world's %s day_people.json's %s\n",s.c_str(),
+                    Xardas.exportRoutine,Xardas.dayPeopleRoutine);
+        continue;
+        }
+      fail(s+": not the expected difference from day_people.json (the exception is out of date)");
+      }
     if(a==b)
       continue;
     ++differences;
@@ -415,7 +444,7 @@ std::set<std::string> checkNpcs(const Value& doc, const std::vector<Waypoint>& p
   if(differences>0)
     fail(std::to_string(differences)+" people differ from day_people.json (listed above)");
   else
-    std::printf("people and routines match day_people.json record by record\n");
+    std::printf("people and routines match day_people.json record by record, but the expected difference above\n");
   return ids;
   }
 

@@ -229,7 +229,10 @@ Result build(World& world) {
     w.Key("routine");
     w.StartArray();
     npc.forEachRoutine([&](const Npc::RoutineInfo& r) {
+      // null only where the engine found no point; a start point (outside the export) is not supported.
       const auto id = idOf(r.waypoint);
+      if(r.waypoint!=nullptr && !id)
+        throw std::runtime_error("society export: routine point "+std::string(r.point)+" is not a waynet or free point");
       w.StartObject();
       w.Key("start");         w.Int(minuteOfDay(r.start));
       w.Key("end");           w.Int(minuteOfDay(r.end));
