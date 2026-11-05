@@ -1774,6 +1774,12 @@ float CollisionWorld::CollisionBody::mass() const {
   return 1.f/lock.GetBody().GetMotionProperties()->GetInverseMass();
   }
 
+float CollisionWorld::CollisionBody::friction() const {
+  if(owner==nullptr || id.IsInvalid()) return 0.f;
+  JPH::BodyLockRead lock(owner->impl->system.GetBodyLockInterface(),id);
+  return lock.Succeeded() ? lock.GetBody().GetFriction() : 0.f;
+  }
+
 bool CollisionWorld::CollisionBody::isMovable() const {
   if(owner==nullptr || id.IsInvalid()) return false;
   JPH::BodyLockRead lock(owner->impl->system.GetBodyLockInterface(),id);
