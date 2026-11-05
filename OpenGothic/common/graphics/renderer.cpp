@@ -344,6 +344,10 @@ void Renderer::resetTemporal() {
   taa.valid = false;
   taa.frame = 0;
   taa.cur   = 0;
+  if(taa.swapped) {
+    std::swap(sceneLinear, taa.output);
+    taa.swapped = false;
+    }
   }
 
 void Renderer::updateCamera(const WorldView& wview, const Camera& camera) {
@@ -1106,6 +1110,7 @@ void Renderer::drawTaa(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
 
   // bloom and tonemapping go on from the resolved frame
   std::swap(sceneLinear, taa.output);
+  taa.swapped = !taa.swapped;
   taa.cur ^= 1;
   }
 

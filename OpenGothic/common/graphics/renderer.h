@@ -23,7 +23,8 @@ class Renderer final {
     ~Renderer();
 
     void onWorldChanged();
-    // Bench `deterministic on`: the next frame starts the TAA history over at jitter phase 0
+    // Bench `deterministic on`: the next frame starts the TAA history over at jitter phase 0, with the buffers
+    // the history swaps in their first order
     void resetTemporal();
 
     void draw(Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId,
@@ -249,6 +250,7 @@ class Renderer final {
       uint32_t                  cuts      = 0;     // Camera::cuts() of the last frame
       bool                      active    = false; // this frame is jittered and resolved
       bool                      valid     = false; // the history holds a frame of this view
+      bool                      swapped   = false; // sceneLinear and output have swapped an odd number of times
       bool                      shot      = false; // screenshoot(): an image of the internal size
       Taa::View                 prev;
       Tempest::Matrix4x4        reproject;

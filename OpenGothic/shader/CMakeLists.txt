@@ -120,6 +120,9 @@ add_shader(cluster_patch.comp           materials/cluster_patch.comp)
 add_shader(visibility_pass.comp         materials/visibility_pass.comp)
 add_shader(visibility_pass_hiz.comp     materials/visibility_pass.comp -DMAIN_VIEW -DHIZ)
 add_shader(visibility_pass_hiz_cr.comp  materials/visibility_pass.comp -DMAIN_VIEW -DHIZ -DLARGE)
+add_shader(visibility_pass_ordered.comp        materials/visibility_pass.comp -DORDERED)
+add_shader(visibility_pass_hiz_ordered.comp    materials/visibility_pass.comp -DMAIN_VIEW -DHIZ -DORDERED)
+add_shader(visibility_pass_hiz_cr_ordered.comp materials/visibility_pass.comp -DMAIN_VIEW -DHIZ -DLARGE -DORDERED)
 
 # mesh & vertex
 add_geom_shader(main_lnd       "-DMESH_TYPE=0" -DFLAT_NORMAL)

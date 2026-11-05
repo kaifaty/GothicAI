@@ -1528,8 +1528,11 @@ void MainWindow::render(){
       FrameProfile::Scope timing(FrameProfile::Zone::FinishStep);
       return SimulationStep::finishStep(dt,player,[&] { FrameProfile::Scope cameraTiming(FrameProfile::Zone::Camera); tickCamera(dt); });
       }();
-    if(TestBench::takeRenderReset())
+    // On frame slot 0: what is drawn from here on does not depend on how many frames came before
+    if(TestBench::renderResetPending() && cmdId==0) {
       renderer.resetTemporal();
+      TestBench::renderResetDone();
+      }
     if(auto world = Gothic::inst().world()) {
       auto hero = Gothic::inst().player();
       auto camera = Gothic::inst().camera();
