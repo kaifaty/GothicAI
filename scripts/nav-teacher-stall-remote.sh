@@ -14,6 +14,7 @@
 #                                                         # run-to-run spread of the policy on one runner
 #   bash scripts/nav-teacher-stall-remote.sh live         # 03-follow-hero, teacher and v5, three seeds, video
 #   bash scripts/nav-teacher-stall-remote.sh report       # tables from all finished stages
+#   NAV_STALL_TAG=name bash scripts/nav-teacher-stall-remote.sh follow-*|static-*  # into <stage>-<name> instead
 #   bash scripts/nav-teacher-stall-remote.sh clean        # remove ~/gothic-ai/nav-teacher-stall on Ryzen;
 #                                                         # refuses while a job of this owner is not finished
 # Jobs run from immutable snapshots in ~/gothic-ai/nav-teacher-stall/source/<hash>; the engine is built
@@ -96,7 +97,7 @@ HASH
   GQ_OWNER="$task_name" "$ROOT/scripts/gq" submit "${resources[@]}" --name "nav stall $stage $snapshot" -- \
     python3 -X faulthandler -I "$task/source/$snapshot/scripts/nav_job.py" --max-seconds 7080 -- \
     env NAV_STALL_ARCHIVE="$archive" "NAV_STALL_IDS=${NAV_STALL_IDS:-}" "NAV_STALL_EXIT=${NAV_STALL_EXIT:-on}" \
-    "NAV_STALL_PARALLEL=${NAV_STALL_PARALLEL:-6}" \
+    "NAV_STALL_PARALLEL=${NAV_STALL_PARALLEL:-6}" "NAV_STALL_TAG=${NAV_STALL_TAG:-}" \
     bash "$task/source/$snapshot/scripts/nav-teacher-stall-remote.sh" run "$stage" "$snapshot" "$engine"
   exit
 fi
@@ -265,13 +266,16 @@ if [[ "$stage" == repeat-v5 ]]; then
   exit
 fi
 
+# NAV_STALL_TAG=name writes a validation into its own folder (<stage>-<name>), e.g. the same
+# configuration again on a newer runner.
+tag="${NAV_STALL_TAG:+-$NAV_STALL_TAG}"
 if [[ "$stage" == follow-* ]]; then
   game_environment
   navmesh 12
   case "$stage" in
-    follow-teacher-on-aside) validate "$archive/validation/$stage" teacher --exit on --lost aside --parallel 12 ;;
-    follow-teacher-off-last-seen) validate "$archive/validation/$stage" teacher --exit off --lost last-seen --parallel 12 ;;
-    follow-v5-*) validate "$archive/validation/$stage" "$weights" --pace run --lost "${stage#follow-v5-}" --parallel 12 ;;
+    follow-teacher-on-aside) validate "$archive/validation/$stage$tag" teacher --exit on --lost aside --parallel 12 ;;
+    follow-teacher-off-last-seen) validate "$archive/validation/$stage$tag" teacher --exit off --lost last-seen --parallel 12 ;;
+    follow-v5-*) validate "$archive/validation/$stage$tag" "$weights" --pace run --lost "${stage#follow-v5-}" --parallel 12 ;;
   esac
   exit
 fi
@@ -280,7 +284,7 @@ if [[ "$stage" == static-* ]]; then
   IFS=- read -r _ _ pace body_exit part <<< "$stage"
   game_environment
   navmesh 12
-  validate "$archive/validation/teacher-$pace-$body_exit-$part" teacher --families "$part" --pace "$pace" \
+  validate "$archive/validation/teacher-$pace-$body_exit-$part$tag" teacher --families "$part" --pace "$pace" \
     --exit "$body_exit" --parallel 12
   exit
 fi
