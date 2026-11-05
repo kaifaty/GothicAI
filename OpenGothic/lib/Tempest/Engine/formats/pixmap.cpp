@@ -484,6 +484,7 @@ size_t Pixmap::blockSizeForFormat(TextureFormat frm) {
     //---
     case TextureFormat::R11G11B10UF: return 4;
     case TextureFormat::RGBA16F:     return 8;
+    case TextureFormat::RG16F:       return 4;
     }
   return 0;
   }
@@ -524,6 +525,7 @@ uint8_t Pixmap::componentCount(TextureFormat frm) {
     //---
     case TextureFormat::R11G11B10UF: return 3;
     case TextureFormat::RGBA16F:     return 4;
+    case TextureFormat::RG16F:       return 2;
     }
   return 0;
   }
@@ -555,6 +557,7 @@ Size Pixmap::blockCount(TextureFormat frm, uint32_t w, uint32_t h) {
     case TextureFormat::Depth32F:
     case TextureFormat::R11G11B10UF:
     case TextureFormat::RGBA16F:
+    case TextureFormat::RG16F:
       return Size(w,h);
     case TextureFormat::DXT1:
     case TextureFormat::DXT3:
