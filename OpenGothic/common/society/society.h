@@ -615,9 +615,11 @@ std::span<const Event> drainEvents(Sim& sim);
 double   needLevel(const Sim& sim, uint32_t npc, size_t need);
 
 // --- Policies: a batch in, a choice per row out -----------------------------------------------------------------
-// The teacher's score of every option of the batch ([n, K], -inf for a closed slot): the fall of the drive
-// D = (Σ w·|1 − h|^n)^(1/m) over the horizon (the walk, the activity, then the routine), minus the walk's cost, plus
-// the inertia of the activity in hand (the routine's, when it is not a chosen one).
+// The teacher's score of every option of the batch ([n, K], -inf for a closed slot): how much lower the drive
+// D = (Σ w·|1 − h|^n)^(1/m) is after the option (the walk, the activity, then the routine) than after the routine over
+// the same window — the horizon, but no shorter than the walk and an hour of the activity — minus the walk's cost,
+// plus the inertia of the activity in hand (the routine's, scored 0, when it is not a chosen one). In a free entry a
+// need forecast to be critical in the next anchor run counts at its forecast low.
 void     teacherScores(const Sim& sim, const DecisionBatch& batch, std::span<float> scores);
 // The teacher's pick: a weighted draw among the `top` best allowed options, softmax with the temperature (the best
 // at 0), on the world's generator.

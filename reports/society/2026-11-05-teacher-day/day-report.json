@@ -1,7 +1,7 @@
 {
  "world": "world.json",
  "world_hash": "1ae01e72617490c1",
- "config_hash": "4bf4e8a4e35941e5",
+ "config_hash": "c098cb3f9a68c3e6",
  "seed": 0,
  "thresholds": {
   "critical_median_h": 1.0,
@@ -16,25 +16,27 @@
  "people": {
   "deciders": 261,
   "on_post_all_day": 44,
-  "protected": 21
+  "protected": 21,
+  "with_needs": 347,
+  "deciders_with_a_need_not_in_use": 24
  },
  "runs": {
   "routine-1": {
    "days": 1,
    "policy": "routine",
-   "events": 14705,
+   "events": 14392,
    "decisions": 0,
    "rows": 0,
    "day_ms": [
-    3.31
+    3.36
    ],
    "critical": {
     "food": {
      "median_h": 9.81,
-     "p90_h": 11.805,
+     "p90_h": 11.806,
      "max_h": 12.167,
-     "person_days_over_4h": 210,
-     "person_days": 261,
+     "person_days_over_4h": 208,
+     "person_days": 259,
      "worst": 879
     },
     "sleep": {
@@ -55,18 +57,18 @@
     },
     "social": {
      "median_h": 0.0,
-     "p90_h": 4.86,
+     "p90_h": 4.834,
      "max_h": 9.359,
-     "person_days_over_4h": 37,
-     "person_days": 261,
+     "person_days_over_4h": 35,
+     "person_days": 256,
      "worst": 825
     },
     "work": {
-     "median_h": 11.421,
-     "p90_h": 14.073,
+     "median_h": 11.416,
+     "p90_h": 14.113,
      "max_h": 14.598,
-     "person_days_over_4h": 138,
-     "person_days": 261,
+     "person_days_over_4h": 136,
+     "person_days": 259,
      "worst": 761
     },
     "faith": {
@@ -74,25 +76,25 @@
      "p90_h": 0.0,
      "max_h": 0.0,
      "person_days_over_4h": 0,
-     "person_days": 261,
+     "person_days": 241,
      "worst": 3
     },
     "leisure": {
      "median_h": 0.0,
      "p90_h": 3.376,
      "max_h": 5.173,
-     "person_days_over_4h": 19,
-     "person_days": 261,
+     "person_days_over_4h": 18,
+     "person_days": 257,
      "worst": 57
     }
    },
    "critical_on_post_all_day": {
     "food": {
-     "median_h": 10.557,
+     "median_h": 10.538,
      "p90_h": 11.795,
      "max_h": 12.034,
-     "person_days_over_4h": 44,
-     "person_days": 44,
+     "person_days_over_4h": 43,
+     "person_days": 43,
      "worst": 45
     },
     "sleep": {
@@ -132,15 +134,15 @@
      "p90_h": 0.0,
      "max_h": 0.0,
      "person_days_over_4h": 0,
-     "person_days": 44,
+     "person_days": 40,
      "worst": 769
     },
     "leisure": {
-     "median_h": 2.209,
+     "median_h": 2.477,
      "p90_h": 4.243,
      "max_h": 4.686,
      "person_days_over_4h": 8,
-     "person_days": 44,
+     "person_days": 42,
      "worst": 610
     }
    },
@@ -163,25 +165,25 @@
   "routine-7": {
    "days": 7,
    "policy": "routine",
-   "events": 78299,
+   "events": 77926,
    "decisions": 0,
    "rows": 0,
    "day_ms": [
-    3.35,
-    2.22,
-    1.95,
-    2.02,
-    2.05,
-    1.98,
-    1.94
+    3.14,
+    2.03,
+    2.26,
+    2.33,
+    2.06,
+    2.0,
+    1.92
    ],
    "critical": {
     "food": {
      "median_h": 24.0,
      "p90_h": 24.0,
      "max_h": 24.0,
-     "person_days_over_4h": 1518,
-     "person_days": 1827,
+     "person_days_over_4h": 1504,
+     "person_days": 1813,
      "worst": 4
     },
     "sleep": {
@@ -201,35 +203,35 @@
      "worst": 3
     },
     "social": {
-     "median_h": 1.05,
+     "median_h": 0.0,
      "p90_h": 24.0,
      "max_h": 24.0,
-     "person_days_over_4h": 880,
-     "person_days": 1827,
-     "worst": 3
+     "person_days_over_4h": 848,
+     "person_days": 1792,
+     "worst": 4
     },
     "work": {
-     "median_h": 12.494,
+     "median_h": 12.396,
      "p90_h": 24.0,
      "max_h": 24.0,
-     "person_days_over_4h": 1020,
-     "person_days": 1827,
+     "person_days_over_4h": 1006,
+     "person_days": 1813,
      "worst": 3
     },
     "faith": {
      "median_h": 0.0,
      "p90_h": 24.0,
      "max_h": 24.0,
-     "person_days_over_4h": 664,
-     "person_days": 1827,
+     "person_days_over_4h": 590,
+     "person_days": 1687,
      "worst": 3
     },
     "leisure": {
-     "median_h": 13.155,
+     "median_h": 4.699,
      "p90_h": 24.0,
      "max_h": 24.0,
-     "person_days_over_4h": 934,
-     "person_days": 1827,
+     "person_days_over_4h": 909,
+     "person_days": 1799,
      "worst": 3
     }
    },
@@ -238,8 +240,8 @@
      "median_h": 24.0,
      "p90_h": 24.0,
      "max_h": 24.0,
-     "person_days_over_4h": 308,
-     "person_days": 308,
+     "person_days_over_4h": 301,
+     "person_days": 301,
      "worst": 769
     },
     "sleep": {
@@ -275,19 +277,19 @@
      "worst": 611
     },
     "faith": {
-     "median_h": 24.0,
+     "median_h": 23.234,
      "p90_h": 24.0,
      "max_h": 24.0,
-     "person_days_over_4h": 184,
-     "person_days": 308,
+     "person_days_over_4h": 163,
+     "person_days": 280,
      "worst": 395
     },
     "leisure": {
      "median_h": 24.0,
      "p90_h": 24.0,
      "max_h": 24.0,
-     "person_days_over_4h": 272,
-     "person_days": 308,
+     "person_days_over_4h": 260,
+     "person_days": 294,
      "worst": 769
     }
    },
@@ -310,32 +312,32 @@
   "teacher-1": {
    "days": 1,
    "policy": "teacher",
-   "events": 30969,
-   "decisions": 3409,
-   "rows": 3069,
+   "events": 31545,
+   "decisions": 3616,
+   "rows": 3262,
    "day_ms": [
-    75.68
+    105.26
    ],
    "critical": {
     "food": {
      "median_h": 0.0,
-     "p90_h": 4.196,
-     "max_h": 12.094,
-     "person_days_over_4h": 27,
-     "person_days": 261,
-     "worst": 559
+     "p90_h": 0.677,
+     "max_h": 8.048,
+     "person_days_over_4h": 3,
+     "person_days": 259,
+     "worst": 60
     },
     "sleep": {
      "median_h": 0.0,
-     "p90_h": 0.121,
+     "p90_h": 0.549,
      "max_h": 8.188,
-     "person_days_over_4h": 7,
+     "person_days_over_4h": 11,
      "person_days": 261,
      "worst": 612
     },
     "toilet": {
      "median_h": 0.0,
-     "p90_h": 0.261,
+     "p90_h": 0.324,
      "max_h": 8.707,
      "person_days_over_4h": 15,
      "person_days": 261,
@@ -346,41 +348,41 @@
      "p90_h": 0.0,
      "max_h": 2.822,
      "person_days_over_4h": 0,
-     "person_days": 261,
+     "person_days": 256,
      "worst": 15
     },
     "work": {
      "median_h": 0.0,
      "p90_h": 0.0,
-     "max_h": 10.354,
-     "person_days_over_4h": 7,
-     "person_days": 261,
-     "worst": 74
+     "max_h": 0.0,
+     "person_days_over_4h": 0,
+     "person_days": 259,
+     "worst": 3
     },
     "faith": {
      "median_h": 0.0,
      "p90_h": 0.0,
      "max_h": 0.0,
      "person_days_over_4h": 0,
-     "person_days": 261,
+     "person_days": 241,
      "worst": 3
     },
     "leisure": {
      "median_h": 0.0,
      "p90_h": 0.0,
-     "max_h": 1.894,
+     "max_h": 2.94,
      "person_days_over_4h": 0,
-     "person_days": 261,
-     "worst": 405
+     "person_days": 257,
+     "worst": 397
     }
    },
    "critical_on_post_all_day": {
     "food": {
-     "median_h": 10.557,
+     "median_h": 10.538,
      "p90_h": 11.795,
      "max_h": 12.034,
-     "person_days_over_4h": 44,
-     "person_days": 44,
+     "person_days_over_4h": 43,
+     "person_days": 43,
      "worst": 45
     },
     "sleep": {
@@ -420,62 +422,65 @@
      "p90_h": 0.0,
      "max_h": 0.0,
      "person_days_over_4h": 0,
-     "person_days": 44,
+     "person_days": 40,
      "worst": 769
     },
     "leisure": {
-     "median_h": 2.209,
+     "median_h": 2.477,
      "p90_h": 4.243,
      "max_h": 4.686,
      "person_days_over_4h": 8,
-     "person_days": 44,
+     "person_days": 42,
      "worst": 610
     }
    },
    "anchor": {
     "anchor_h": 2504.0,
-    "by_routine": 0.95271,
+    "by_routine": 0.95251,
     "posts_h": 270.4,
-    "without_posts_by_routine": 0.94701,
+    "without_posts_by_routine": 0.94678,
     "people_under_2_free_h": 44,
-    "by_routine_under_2_free_h": 0.92047,
-    "by_routine_2_free_h_or_more": 0.97599
+    "by_routine_under_2_free_h": 0.91315,
+    "by_routine_2_free_h_or_more": 0.98093
    },
    "changes": {
     "p95": 2,
-    "p99": 3,
-    "max": 10,
-    "mean": 0.589
+    "p99": 4,
+    "max": 21,
+    "mean": 0.627
    },
    "choices": {
     "choices": {
-     "routine": 1079,
-     "pee": 37,
-     "stove": 453,
-     "sleep_ground": 156,
-     "pee_outdoors": 1002,
-     "yard": 14,
-     "herb": 3,
-     "throne": 30,
-     "barbecue": 23,
-     "bed": 247,
-     "smalltalk": 97,
-     "grindstone": 6,
-     "cauldron": 51,
-     "field": 18,
-     "saw": 10,
-     "anvil": 5,
-     "cooling": 3,
-     "pan": 11,
-     "forge": 5,
-     "alchemy": 2,
+     "routine": 1018,
+     "cooling": 5,
+     "stove": 370,
+     "sleep_ground": 124,
+     "pee_outdoors": 1158,
+     "bed": 215,
+     "pee": 43,
+     "field": 51,
+     "yard": 8,
+     "herb": 5,
+     "eat_home": 105,
+     "cauldron": 35,
+     "saw": 13,
+     "repair": 4,
+     "chair": 45,
+     "throne": 18,
+     "barbecue": 30,
+     "grindstone": 7,
+     "anvil": 6,
+     "pan": 17,
+     "forge": 2,
+     "eat_campfire": 67,
+     "bench": 35,
      "campfire": 39,
-     "bench": 38,
-     "chair": 43,
-     "repair": 3,
+     "smalltalk": 113,
+     "eat_tavern": 36,
+     "bookstand": 25,
+     "alchemy": 4,
      "waterpipe": 17,
-     "seat": 3,
-     "bookstand": 14
+     "seat": 1
     },
     "out_of_mask": 0,
     "out_of_mask_by_rule": {},
@@ -484,14 +489,14 @@
     "over_capacity_examples": [],
     "most_holders": 4,
     "failed": {
-     "taken": 23,
-     "interrupted": 4
+     "taken": 31,
+     "interrupted": 3
     },
     "finished": {
-     "setpoint": 1561,
-     "anchor": 57,
-     "max time": 285,
-     "switched": 194
+     "setpoint": 1818,
+     "switched": 166,
+     "max time": 316,
+     "anchor": 56
     }
    },
    "protected": {
@@ -505,74 +510,74 @@
   "teacher-7": {
    "days": 7,
    "policy": "teacher",
-   "events": 260104,
-   "decisions": 32556,
-   "rows": 28675,
+   "events": 259998,
+   "decisions": 32885,
+   "rows": 28742,
    "day_ms": [
-    77.51,
-    78.89,
-    78.28,
-    76.69,
-    88.15,
-    77.22,
-    78.01
+    87.3,
+    82.04,
+    83.08,
+    80.31,
+    80.59,
+    84.05,
+    81.11
    ],
    "critical": {
     "food": {
      "median_h": 0.0,
-     "p90_h": 12.581,
-     "max_h": 24.0,
-     "person_days_over_4h": 304,
-     "person_days": 1827,
-     "worst": 550
+     "p90_h": 1.423,
+     "max_h": 22.441,
+     "person_days_over_4h": 98,
+     "person_days": 1813,
+     "worst": 817
     },
     "sleep": {
      "median_h": 0.0,
-     "p90_h": 4.755,
+     "p90_h": 6.019,
      "max_h": 24.0,
-     "person_days_over_4h": 196,
+     "person_days_over_4h": 226,
      "person_days": 1827,
-     "worst": 14
+     "worst": 10
     },
     "toilet": {
      "median_h": 0.001,
-     "p90_h": 0.523,
+     "p90_h": 0.712,
      "max_h": 16.355,
-     "person_days_over_4h": 110,
+     "person_days_over_4h": 98,
      "person_days": 1827,
      "worst": 817
     },
     "social": {
      "median_h": 0.0,
-     "p90_h": 0.867,
-     "max_h": 24.0,
-     "person_days_over_4h": 107,
-     "person_days": 1827,
-     "worst": 3
+     "p90_h": 0.722,
+     "max_h": 21.236,
+     "person_days_over_4h": 67,
+     "person_days": 1792,
+     "worst": 43
     },
     "work": {
      "median_h": 0.0,
      "p90_h": 0.0,
-     "max_h": 24.0,
-     "person_days_over_4h": 58,
-     "person_days": 1827,
-     "worst": 3
+     "max_h": 1.488,
+     "person_days_over_4h": 0,
+     "person_days": 1813,
+     "worst": 865
     },
     "faith": {
      "median_h": 0.0,
-     "p90_h": 0.713,
+     "p90_h": 0.097,
      "max_h": 24.0,
-     "person_days_over_4h": 136,
-     "person_days": 1827,
-     "worst": 6
+     "person_days_over_4h": 76,
+     "person_days": 1687,
+     "worst": 15
     },
     "leisure": {
      "median_h": 0.0,
-     "p90_h": 0.692,
-     "max_h": 24.0,
-     "person_days_over_4h": 103,
-     "person_days": 1827,
-     "worst": 60
+     "p90_h": 0.612,
+     "max_h": 19.941,
+     "person_days_over_4h": 64,
+     "person_days": 1799,
+     "worst": 817
     }
    },
    "critical_on_post_all_day": {
@@ -580,8 +585,8 @@
      "median_h": 24.0,
      "p90_h": 24.0,
      "max_h": 24.0,
-     "person_days_over_4h": 308,
-     "person_days": 308,
+     "person_days_over_4h": 301,
+     "person_days": 301,
      "worst": 769
     },
     "sleep": {
@@ -617,67 +622,70 @@
      "worst": 611
     },
     "faith": {
-     "median_h": 24.0,
+     "median_h": 23.234,
      "p90_h": 24.0,
      "max_h": 24.0,
-     "person_days_over_4h": 184,
-     "person_days": 308,
+     "person_days_over_4h": 163,
+     "person_days": 280,
      "worst": 395
     },
     "leisure": {
      "median_h": 24.0,
      "p90_h": 24.0,
      "max_h": 24.0,
-     "person_days_over_4h": 272,
-     "person_days": 308,
+     "person_days_over_4h": 260,
+     "person_days": 294,
      "worst": 769
     }
    },
    "anchor": {
     "anchor_h": 17528.0,
-    "by_routine": 0.83838,
+    "by_routine": 0.83637,
     "posts_h": 1892.9,
-    "without_posts_by_routine": 0.81888,
+    "without_posts_by_routine": 0.81662,
     "people_under_2_free_h": 44,
-    "by_routine_under_2_free_h": 0.7368,
-    "by_routine_2_free_h_or_more": 0.91173
+    "by_routine_under_2_free_h": 0.7098,
+    "by_routine_2_free_h_or_more": 0.92777
    },
    "changes": {
     "p95": 3,
     "p99": 4,
     "max": 30,
-    "mean": 0.778
+    "mean": 0.791
    },
    "choices": {
     "choices": {
-     "routine": 9291,
-     "pee": 283,
-     "stove": 4174,
-     "sleep_ground": 1417,
-     "pee_outdoors": 8376,
-     "yard": 135,
-     "herb": 29,
-     "throne": 188,
-     "barbecue": 276,
-     "bed": 2505,
-     "smalltalk": 1508,
-     "grindstone": 38,
-     "cauldron": 503,
-     "field": 125,
-     "saw": 56,
-     "anvil": 30,
-     "cooling": 46,
-     "pan": 94,
-     "forge": 28,
-     "alchemy": 16,
-     "campfire": 720,
-     "bench": 686,
-     "chair": 999,
-     "repair": 23,
-     "waterpipe": 208,
-     "seat": 62,
-     "bookstand": 278,
-     "shrine": 462
+     "routine": 8545,
+     "cooling": 37,
+     "stove": 3270,
+     "sleep_ground": 1247,
+     "pee_outdoors": 8520,
+     "bed": 2221,
+     "pee": 328,
+     "field": 208,
+     "yard": 128,
+     "herb": 42,
+     "eat_home": 1251,
+     "cauldron": 316,
+     "saw": 72,
+     "repair": 25,
+     "chair": 746,
+     "throne": 186,
+     "barbecue": 258,
+     "grindstone": 49,
+     "anvil": 32,
+     "pan": 141,
+     "forge": 36,
+     "eat_campfire": 597,
+     "bench": 588,
+     "campfire": 1019,
+     "smalltalk": 1463,
+     "eat_tavern": 325,
+     "bookstand": 419,
+     "alchemy": 22,
+     "waterpipe": 274,
+     "seat": 18,
+     "shrine": 502
     },
     "out_of_mask": 0,
     "out_of_mask_by_rule": {},
@@ -686,14 +694,14 @@
     "over_capacity_examples": [],
     "most_holders": 4,
     "failed": {
-     "taken": 133,
+     "taken": 129,
      "interrupted": 46
     },
     "finished": {
-     "setpoint": 13736,
-     "anchor": 935,
-     "max time": 3461,
-     "switched": 3474
+     "setpoint": 15190,
+     "switched": 3121,
+     "max time": 3474,
+     "anchor": 907
     }
    },
    "protected": {
@@ -707,73 +715,73 @@
   "random-7": {
    "days": 7,
    "policy": "random",
-   "events": 372506,
-   "decisions": 48974,
-   "rows": 46566,
+   "events": 370478,
+   "decisions": 48722,
+   "rows": 46088,
    "day_ms": [
-    180.29,
-    152.03,
-    150.28,
-    153.58,
-    134.64,
-    133.54,
-    149.15
+    193.2,
+    150.71,
+    147.71,
+    134.31,
+    142.4,
+    147.36,
+    145.67
    ],
    "critical": {
     "food": {
-     "median_h": 5.801,
-     "p90_h": 18.491,
+     "median_h": 1.736,
+     "p90_h": 12.411,
      "max_h": 24.0,
-     "person_days_over_4h": 1081,
-     "person_days": 1827,
-     "worst": 9
+     "person_days_over_4h": 672,
+     "person_days": 1813,
+     "worst": 10
     },
     "sleep": {
-     "median_h": 4.852,
-     "p90_h": 20.051,
+     "median_h": 4.704,
+     "p90_h": 19.501,
      "max_h": 24.0,
-     "person_days_over_4h": 956,
-     "person_days": 1827,
-     "worst": 3
-    },
-    "toilet": {
-     "median_h": 10.765,
-     "p90_h": 22.355,
-     "max_h": 24.0,
-     "person_days_over_4h": 1525,
+     "person_days_over_4h": 955,
      "person_days": 1827,
      "worst": 6
     },
-    "social": {
-     "median_h": 0.0,
-     "p90_h": 8.999,
+    "toilet": {
+     "median_h": 10.718,
+     "p90_h": 23.727,
      "max_h": 24.0,
-     "person_days_over_4h": 374,
+     "person_days_over_4h": 1519,
      "person_days": 1827,
      "worst": 3
+    },
+    "social": {
+     "median_h": 0.0,
+     "p90_h": 10.229,
+     "max_h": 24.0,
+     "person_days_over_4h": 395,
+     "person_days": 1792,
+     "worst": 817
     },
     "work": {
      "median_h": 0.0,
      "p90_h": 0.0,
-     "max_h": 24.0,
-     "person_days_over_4h": 53,
-     "person_days": 1827,
-     "worst": 56
+     "max_h": 23.677,
+     "person_days_over_4h": 72,
+     "person_days": 1813,
+     "worst": 85
     },
     "faith": {
      "median_h": 0.0,
-     "p90_h": 2.735,
+     "p90_h": 3.17,
      "max_h": 24.0,
-     "person_days_over_4h": 168,
-     "person_days": 1827,
-     "worst": 8
+     "person_days_over_4h": 157,
+     "person_days": 1687,
+     "worst": 15
     },
     "leisure": {
      "median_h": 0.0,
-     "p90_h": 7.093,
+     "p90_h": 6.755,
      "max_h": 24.0,
-     "person_days_over_4h": 281,
-     "person_days": 1827,
+     "person_days_over_4h": 277,
+     "person_days": 1799,
      "worst": 43
     }
    },
@@ -782,8 +790,8 @@
      "median_h": 24.0,
      "p90_h": 24.0,
      "max_h": 24.0,
-     "person_days_over_4h": 308,
-     "person_days": 308,
+     "person_days_over_4h": 301,
+     "person_days": 301,
      "worst": 769
     },
     "sleep": {
@@ -819,69 +827,72 @@
      "worst": 611
     },
     "faith": {
-     "median_h": 24.0,
+     "median_h": 23.234,
      "p90_h": 24.0,
      "max_h": 24.0,
-     "person_days_over_4h": 184,
-     "person_days": 308,
+     "person_days_over_4h": 163,
+     "person_days": 280,
      "worst": 395
     },
     "leisure": {
      "median_h": 24.0,
      "p90_h": 24.0,
      "max_h": 24.0,
-     "person_days_over_4h": 272,
-     "person_days": 308,
+     "person_days_over_4h": 260,
+     "person_days": 294,
      "worst": 769
     }
    },
    "anchor": {
     "anchor_h": 17528.0,
-    "by_routine": 0.63712,
+    "by_routine": 0.64418,
     "posts_h": 1892.9,
-    "without_posts_by_routine": 0.59327,
+    "without_posts_by_routine": 0.60118,
     "people_under_2_free_h": 44,
-    "by_routine_under_2_free_h": 0.53269,
-    "by_routine_2_free_h_or_more": 0.71253
+    "by_routine_under_2_free_h": 0.52397,
+    "by_routine_2_free_h_or_more": 0.73098
    },
    "changes": {
     "p95": 3,
     "p99": 4,
     "max": 8,
-    "mean": 1.126
+    "mean": 1.123
    },
    "choices": {
     "choices": {
-     "bookstand": 1035,
-     "bed": 3405,
-     "saw": 1084,
-     "stand": 3737,
-     "forge": 607,
-     "smalltalk": 4372,
-     "campfire": 2125,
-     "pee_outdoors": 2315,
-     "shrine": 1416,
-     "chair": 3085,
-     "field": 1840,
-     "sleep_ground": 709,
-     "seat": 638,
-     "bench": 2610,
-     "pan": 1163,
-     "pee": 1223,
-     "waterpipe": 720,
-     "grindstone": 652,
-     "throne": 1417,
-     "anvil": 663,
-     "yard": 720,
+     "bookstand": 973,
+     "stand": 3424,
+     "saw": 1032,
+     "eat_campfire": 1720,
+     "smalltalk": 4094,
+     "bed": 3296,
+     "forge": 602,
+     "field": 1755,
+     "pee_outdoors": 2241,
+     "eat_tavern": 998,
+     "bench": 2348,
+     "sleep_ground": 710,
+     "chair": 2790,
      "repair": 690,
-     "routine": 6047,
-     "cauldron": 962,
-     "barbecue": 411,
-     "stove": 3043,
-     "herb": 790,
-     "cooling": 778,
-     "alchemy": 651,
-     "ore": 66
+     "campfire": 1619,
+     "pan": 971,
+     "waterpipe": 672,
+     "cauldron": 818,
+     "eat_home": 706,
+     "anvil": 636,
+     "alchemy": 660,
+     "seat": 586,
+     "throne": 1262,
+     "grindstone": 643,
+     "routine": 6090,
+     "shrine": 1285,
+     "barbecue": 355,
+     "pee": 1182,
+     "stove": 2412,
+     "herb": 716,
+     "cooling": 723,
+     "yard": 653,
+     "ore": 60
     },
     "out_of_mask": 0,
     "out_of_mask_by_rule": {},
@@ -890,59 +901,453 @@
     "over_capacity_examples": [],
     "most_holders": 4,
     "failed": {
-     "taken": 117,
-     "interrupted": 169
+     "taken": 110,
+     "interrupted": 142
     },
     "finished": {
-     "setpoint": 24989,
-     "max time": 5879,
-     "anchor": 404,
-     "switched": 10825
+     "setpoint": 25132,
+     "anchor": 449,
+     "max time": 5703,
+     "switched": 10570
     }
    }
   }
  },
+ "unmet": [
+  {
+   "key": "BAU_4300_ADDON_CAVALORN#0",
+   "guild": 0,
+   "need": "social",
+   "kind": "campfire",
+   "place": "FP_CAMPFIRE_NW_FARM1_MILL_01",
+   "travel_min": 85.9
+  },
+  {
+   "key": "BAU_901_BAUER#0",
+   "guild": 8,
+   "need": "faith",
+   "kind": "shrine",
+   "place": "NW_BIGMILL_MALAKSVERSTECK_02",
+   "travel_min": 68.2
+  },
+  {
+   "key": "BAU_902_GUNNAR#0",
+   "guild": 8,
+   "need": "faith",
+   "kind": "shrine",
+   "place": "NW_BIGMILL_MALAKSVERSTECK_02",
+   "travel_min": 60.4
+  },
+  {
+   "key": "BAU_903_BODO#0",
+   "guild": 8,
+   "need": "faith",
+   "kind": "shrine",
+   "place": "NW_BIGMILL_MALAKSVERSTECK_02",
+   "travel_min": 60.9
+  },
+  {
+   "key": "BAU_904_BAUER#0",
+   "guild": 8,
+   "need": "faith",
+   "kind": "shrine",
+   "place": "NW_BIGMILL_MALAKSVERSTECK_02",
+   "travel_min": 60.8
+  },
+  {
+   "key": "BAU_907_WASILI#0",
+   "guild": 8,
+   "need": "faith",
+   "kind": "shrine",
+   "place": "NW_BIGMILL_MALAKSVERSTECK_02",
+   "travel_min": 76.2
+  },
+  {
+   "key": "BAU_908_HODGES#0",
+   "guild": 8,
+   "need": "faith",
+   "kind": "shrine",
+   "place": "NW_BIGMILL_MALAKSVERSTECK_02",
+   "travel_min": 65.2
+  },
+  {
+   "key": "BAU_910_MARIA#0",
+   "guild": 8,
+   "need": "faith",
+   "kind": "shrine",
+   "place": "NW_BIGMILL_MALAKSVERSTECK_02",
+   "travel_min": 66.8
+  },
+  {
+   "key": "BAU_914_BAEUERIN#0",
+   "guild": 8,
+   "need": "faith",
+   "kind": "shrine",
+   "place": "NW_BIGMILL_MALAKSVERSTECK_02",
+   "travel_min": 60.2
+  },
+  {
+   "key": "BAU_916_BAUER#0",
+   "guild": 8,
+   "need": "faith",
+   "kind": "shrine",
+   "place": "NW_BIGMILL_MALAKSVERSTECK_02",
+   "travel_min": 67.6
+  },
+  {
+   "key": "BAU_917_BAUER#0",
+   "guild": 8,
+   "need": "faith",
+   "kind": "shrine",
+   "place": "NW_BIGMILL_MALAKSVERSTECK_02",
+   "travel_min": 67.6
+  },
+  {
+   "key": "BAU_918_BAUER#0",
+   "guild": 8,
+   "need": "faith",
+   "kind": "shrine",
+   "place": "NW_BIGMILL_MALAKSVERSTECK_02",
+   "travel_min": 67.8
+  },
+  {
+   "key": "BAU_919_BAUER#0",
+   "guild": 8,
+   "need": "faith",
+   "kind": "shrine",
+   "place": "NW_BIGMILL_MALAKSVERSTECK_02",
+   "travel_min": 67.8
+  },
+  {
+   "key": "BAU_920_BAUER#0",
+   "guild": 8,
+   "need": "faith",
+   "kind": "shrine",
+   "place": "NW_BIGMILL_MALAKSVERSTECK_02",
+   "travel_min": 66.5
+  },
+  {
+   "key": "BAU_921_BAUER#0",
+   "guild": 8,
+   "need": "faith",
+   "kind": "shrine",
+   "place": "NW_BIGMILL_MALAKSVERSTECK_02",
+   "travel_min": 60.4
+  },
+  {
+   "key": "BAU_982_GRIMBALD#0",
+   "guild": 12,
+   "need": "food",
+   "kind": "pan",
+   "place": "NW_TROLLAREA_RUINS_28",
+   "travel_min": 136.6
+  },
+  {
+   "key": "BAU_982_GRIMBALD#0",
+   "guild": 12,
+   "need": "leisure",
+   "kind": "bench",
+   "place": "NW_TAVERNE_TROLLAREA_MONSTER_03_01",
+   "travel_min": 265.3
+  },
+  {
+   "key": "BAU_984_NICLAS#0",
+   "guild": 12,
+   "need": "social",
+   "kind": "smalltalk",
+   "place": "FP_SMALLTALK_NW_CITY_MERCHANT_01",
+   "travel_min": 78.0
+  },
+  {
+   "key": "BAU_984_NICLAS#0",
+   "guild": 12,
+   "need": "faith",
+   "kind": "shrine",
+   "place": "FP_PRAY_VATRAS",
+   "travel_min": 99.3
+  },
+  {
+   "key": "BDT_1002_BANDIT_L#1",
+   "guild": 9,
+   "need": "work",
+   "kind": "throne",
+   "place": "NW_CITY_MERCHANT_HUT_02_IN",
+   "travel_min": 60.7
+  },
+  {
+   "key": "BDT_1009_BANDIT_L#0",
+   "guild": 9,
+   "need": "work",
+   "kind": "field",
+   "place": "FP_PICK_NW_FARM2_FIELD_09",
+   "travel_min": 67.6
+  },
+  {
+   "key": "BDT_1010_BANDIT_L#0",
+   "guild": 9,
+   "need": "work",
+   "kind": "field",
+   "place": "FP_PICK_NW_FARM2_FIELD_09",
+   "travel_min": 66.5
+  },
+  {
+   "key": "BDT_1011_BANDIT_M#0",
+   "guild": 9,
+   "need": "work",
+   "kind": "field",
+   "place": "FP_PICK_NW_FARM2_FIELD_09",
+   "travel_min": 67.6
+  },
+  {
+   "key": "BDT_1013_BANDIT_L#0",
+   "guild": 9,
+   "need": "social",
+   "kind": "campfire",
+   "place": "FP_CAMPFIRE_NW_FARM1_MILL_01",
+   "travel_min": 76.2
+  },
+  {
+   "key": "BDT_1014_BANDIT_L#0",
+   "guild": 9,
+   "need": "food",
+   "kind": "stove",
+   "place": "NW_XARDAS_TOWER_IN1_32",
+   "travel_min": 77.0
+  },
+  {
+   "key": "BDT_1014_BANDIT_L#0",
+   "guild": 9,
+   "need": "social",
+   "kind": "campfire",
+   "place": "FP_CAMPFIRE_NW_FARM1_MILL_01",
+   "travel_min": 93.6
+  },
+  {
+   "key": "BDT_1014_BANDIT_L#0",
+   "guild": 9,
+   "need": "work",
+   "kind": "stove",
+   "place": "NW_XARDAS_TOWER_IN1_32",
+   "travel_min": 77.0
+  },
+  {
+   "key": "BDT_1015_BANDIT_L#0",
+   "guild": 9,
+   "need": "food",
+   "kind": "stove",
+   "place": "NW_XARDAS_TOWER_IN1_32",
+   "travel_min": 77.0
+  },
+  {
+   "key": "BDT_1015_BANDIT_L#0",
+   "guild": 9,
+   "need": "social",
+   "kind": "campfire",
+   "place": "FP_CAMPFIRE_NW_FARM1_MILL_01",
+   "travel_min": 93.6
+  },
+  {
+   "key": "BDT_1015_BANDIT_L#0",
+   "guild": 9,
+   "need": "work",
+   "kind": "stove",
+   "place": "NW_XARDAS_TOWER_IN1_32",
+   "travel_min": 77.0
+  },
+  {
+   "key": "KDW_1400_ADDON_SATURAS_NW#0",
+   "guild": 14,
+   "need": "leisure",
+   "kind": "bench",
+   "place": "NW_TAVERNE_TROLLAREA_MONSTER_03_01",
+   "travel_min": 129.3
+  },
+  {
+   "key": "KDW_1401_ADDON_CRONOS_NW#0",
+   "guild": 14,
+   "need": "faith",
+   "kind": "shrine",
+   "place": "NW_TROLLAREA_PATH_37",
+   "travel_min": 68.1
+  },
+  {
+   "key": "KDW_1401_ADDON_CRONOS_NW#0",
+   "guild": 14,
+   "need": "leisure",
+   "kind": "bench",
+   "place": "NW_TAVERNE_TROLLAREA_MONSTER_03_01",
+   "travel_min": 148.7
+  },
+  {
+   "key": "KDW_1402_ADDON_NEFARIUS_NW#0",
+   "guild": 14,
+   "need": "faith",
+   "kind": "shrine",
+   "place": "NW_TROLLAREA_PATH_37",
+   "travel_min": 71.1
+  },
+  {
+   "key": "KDW_1402_ADDON_NEFARIUS_NW#0",
+   "guild": 14,
+   "need": "leisure",
+   "kind": "bench",
+   "place": "NW_TAVERNE_TROLLAREA_MONSTER_03_01",
+   "travel_min": 151.7
+  },
+  {
+   "key": "KDW_1403_ADDON_MYXIR_NW#0",
+   "guild": 14,
+   "need": "faith",
+   "kind": "shrine",
+   "place": "NW_TROLLAREA_PATH_37",
+   "travel_min": 70.4
+  },
+  {
+   "key": "KDW_1403_ADDON_MYXIR_NW#0",
+   "guild": 14,
+   "need": "leisure",
+   "kind": "bench",
+   "place": "NW_TAVERNE_TROLLAREA_MONSTER_03_01",
+   "travel_min": 150.9
+  },
+  {
+   "key": "KDW_1404_ADDON_RIORDIAN_NW#0",
+   "guild": 14,
+   "need": "leisure",
+   "kind": "bench",
+   "place": "NW_TAVERNE_TROLLAREA_MONSTER_03_01",
+   "travel_min": 136.5
+  },
+  {
+   "key": "KDW_1405_ADDON_MERDARION_NW#0",
+   "guild": 14,
+   "need": "faith",
+   "kind": "shrine",
+   "place": "NW_TROLLAREA_PATH_37",
+   "travel_min": 68.5
+  },
+  {
+   "key": "KDW_1405_ADDON_MERDARION_NW#0",
+   "guild": 14,
+   "need": "leisure",
+   "kind": "bench",
+   "place": "NW_TAVERNE_TROLLAREA_MONSTER_03_01",
+   "travel_min": 149.1
+  },
+  {
+   "key": "NONE_100_XARDAS#0",
+   "guild": 0,
+   "need": "social",
+   "kind": "campfire",
+   "place": "FP_CAMPFIRE_NW_FARM1_MILL_01",
+   "travel_min": 82.5
+  },
+  {
+   "key": "PAL_222_SCHIFFSWACHE#0",
+   "guild": 1,
+   "need": "faith",
+   "kind": "shrine",
+   "place": "FP_PRAY_VATRAS",
+   "travel_min": 63.6
+  },
+  {
+   "key": "PAL_223_SCHIFFSWACHE#0",
+   "guild": 1,
+   "need": "faith",
+   "kind": "shrine",
+   "place": "FP_PRAY_VATRAS",
+   "travel_min": 66.5
+  },
+  {
+   "key": "PAL_224_SCHIFFSWACHE#0",
+   "guild": 1,
+   "need": "faith",
+   "kind": "shrine",
+   "place": "FP_PRAY_VATRAS",
+   "travel_min": 63.2
+  },
+  {
+   "key": "PAL_227_SCHIFFSWACHE#0",
+   "guild": 1,
+   "need": "faith",
+   "kind": "shrine",
+   "place": "FP_PRAY_VATRAS",
+   "travel_min": 60.8
+  },
+  {
+   "key": "PC_PSIONIC#0",
+   "guild": 0,
+   "need": "food",
+   "kind": "stove",
+   "place": "NW_XARDAS_TOWER_IN1_32",
+   "travel_min": 103.2
+  },
+  {
+   "key": "PC_PSIONIC#0",
+   "guild": 0,
+   "need": "work",
+   "kind": "stove",
+   "place": "NW_XARDAS_TOWER_IN1_32",
+   "travel_min": 103.2
+  },
+  {
+   "key": "PC_PSIONIC#0",
+   "guild": 0,
+   "need": "faith",
+   "kind": "shrine",
+   "place": "NW_XARDAS_TOWER_IN1_21",
+   "travel_min": 113.3
+  },
+  {
+   "key": "VLK_4301_ADDON_FARIM#0",
+   "guild": 3,
+   "need": "faith",
+   "kind": "shrine",
+   "place": "FP_PRAY_VATRAS",
+   "travel_min": 65.6
+  }
+ ],
  "sensitivity": {
   "food": {
-   "base_h": 716.6,
-   "zero_h": 874.9,
-   "change": 0.221,
+   "base_h": 772.5,
+   "zero_h": 984.8,
+   "change": 0.275,
    "grows": true
   },
   "sleep": {
-   "base_h": 1600.8,
-   "zero_h": 2672.9,
-   "change": 0.67,
+   "base_h": 1550.5,
+   "zero_h": 2668.3,
+   "change": 0.721,
    "grows": true
   },
   "toilet": {
-   "base_h": 45.6,
-   "zero_h": 52.6,
-   "change": 0.152,
+   "base_h": 50.7,
+   "zero_h": 56.1,
+   "change": 0.106,
    "grows": true
   },
   "social": {
-   "base_h": 964.9,
-   "zero_h": 1173.8,
-   "change": 0.217,
+   "base_h": 957.1,
+   "zero_h": 1170.9,
+   "change": 0.223,
    "grows": true
   },
   "work": {
-   "base_h": 1980.2,
-   "zero_h": 2298.7,
-   "change": 0.161,
+   "base_h": 1962.0,
+   "zero_h": 2279.3,
+   "change": 0.162,
    "grows": true
   },
   "faith": {
-   "base_h": 43.0,
-   "zero_h": 158.3,
-   "change": 2.682,
+   "base_h": 35.1,
+   "zero_h": 156.7,
+   "change": 3.463,
    "grows": true
   },
   "leisure": {
-   "base_h": 926.1,
-   "zero_h": 1403.1,
-   "change": 0.515,
+   "base_h": 898.3,
+   "zero_h": 1408.2,
+   "change": 0.568,
    "grows": true
   }
  },
@@ -953,15 +1358,15 @@
     "median_h": 24.0,
     "p90_h": 24.0,
     "max_h": 24.0,
-    "person_days_over_4h": 401,
-    "person_days": 448,
+    "person_days_over_4h": 363,
+    "person_days": 441,
     "worst": 769
    },
    "sleep": {
     "median_h": 24.0,
     "p90_h": 24.0,
     "max_h": 24.0,
-    "person_days_over_4h": 369,
+    "person_days_over_4h": 377,
     "person_days": 448,
     "worst": 769
    },
@@ -969,7 +1374,7 @@
     "median_h": 24.0,
     "p90_h": 24.0,
     "max_h": 24.0,
-    "person_days_over_4h": 415,
+    "person_days_over_4h": 406,
     "person_days": 448,
     "worst": 769
    },
@@ -977,7 +1382,7 @@
     "median_h": 24.0,
     "p90_h": 24.0,
     "max_h": 24.0,
-    "person_days_over_4h": 340,
+    "person_days_over_4h": 330,
     "person_days": 448,
     "worst": 769
    },
@@ -990,168 +1395,168 @@
     "worst": 611
    },
    "faith": {
-    "median_h": 2.567,
+    "median_h": 0.885,
     "p90_h": 24.0,
     "max_h": 24.0,
-    "person_days_over_4h": 221,
-    "person_days": 448,
-    "worst": 10
+    "person_days_over_4h": 190,
+    "person_days": 406,
+    "worst": 395
    },
    "leisure": {
     "median_h": 24.0,
     "p90_h": 24.0,
     "max_h": 24.0,
-    "person_days_over_4h": 336,
-    "person_days": 448,
+    "person_days_over_4h": 311,
+    "person_days": 434,
     "worst": 769
    }
   },
   "critical_guards_released": {
    "food": {
-    "median_h": 1.49,
-    "p90_h": 13.764,
-    "max_h": 24.0,
-    "person_days_over_4h": 113,
-    "person_days": 448,
-    "worst": 395
+    "median_h": 1.16,
+    "p90_h": 5.384,
+    "max_h": 13.615,
+    "person_days_over_4h": 67,
+    "person_days": 441,
+    "worst": 597
    },
    "sleep": {
-    "median_h": 1.355,
-    "p90_h": 14.144,
-    "max_h": 24.0,
-    "person_days_over_4h": 156,
+    "median_h": 1.764,
+    "p90_h": 13.766,
+    "max_h": 21.879,
+    "person_days_over_4h": 162,
     "person_days": 448,
-    "worst": 589
+    "worst": 493
    },
    "toilet": {
-    "median_h": 0.179,
-    "p90_h": 0.659,
-    "max_h": 4.912,
+    "median_h": 0.19,
+    "p90_h": 0.793,
+    "max_h": 4.413,
     "person_days_over_4h": 2,
     "person_days": 448,
     "worst": 407
    },
    "social": {
-    "median_h": 0.429,
-    "p90_h": 3.187,
-    "max_h": 10.305,
-    "person_days_over_4h": 27,
+    "median_h": 0.623,
+    "p90_h": 4.459,
+    "max_h": 14.859,
+    "person_days_over_4h": 57,
     "person_days": 448,
     "worst": 43
    },
    "work": {
     "median_h": 0.0,
     "p90_h": 0.0,
-    "max_h": 6.866,
-    "person_days_over_4h": 3,
+    "max_h": 6.927,
+    "person_days_over_4h": 6,
     "person_days": 448,
-    "worst": 622
+    "worst": 623
    },
    "faith": {
     "median_h": 0.0,
-    "p90_h": 24.0,
+    "p90_h": 13.97,
     "max_h": 24.0,
-    "person_days_over_4h": 120,
-    "person_days": 448,
-    "worst": 10
+    "person_days_over_4h": 103,
+    "person_days": 406,
+    "worst": 15
    },
    "leisure": {
-    "median_h": 0.43,
-    "p90_h": 3.291,
-    "max_h": 24.0,
-    "person_days_over_4h": 28,
-    "person_days": 448,
-    "worst": 407
+    "median_h": 0.419,
+    "p90_h": 3.962,
+    "max_h": 7.377,
+    "person_days_over_4h": 41,
+    "person_days": 434,
+    "worst": 495
    }
   },
   "anchor_deciders_released": {
    "anchor_h": 24920.0,
-   "by_routine": 0.72492,
+   "by_routine": 0.71481,
    "posts_h": 9284.9,
-   "without_posts_by_routine": 0.82658,
+   "without_posts_by_routine": 0.82378,
    "people_under_2_free_h": 88,
-   "by_routine_under_2_free_h": 0.61084,
-   "by_routine_2_free_h_or_more": 0.89016
+   "by_routine_under_2_free_h": 0.57973,
+   "by_routine_2_free_h_or_more": 0.91045
   }
  },
  "traits": {
-  "people_with_talk_off_middle": 81,
+  "people_with_talk_off_middle": 87,
   "agree": 76,
-  "agree_share": 0.938,
-  "pairs": 454,
-  "pairs_agree_share": 0.963,
+  "agree_share": 0.874,
+  "pairs": 460,
+  "pairs_agree_share": 0.957,
   "examples": [
    [
     "BAU_900_ONAR#0",
     2,
-    7.42,
-    9.23
+    7.13,
+    10.5
    ],
    [
     "BAU_902_GUNNAR#0",
     5,
-    1.62,
-    0.74
+    2.8,
+    1.61
+   ],
+   [
+    "BAU_903_BODO#0",
+    4,
+    0.82,
+    1.0
    ],
    [
     "BAU_907_WASILI#0",
     4,
-    8.94,
-    5.83
+    9.66,
+    9.4
    ],
    [
     "BAU_908_HODGES#0",
     2,
-    8.58,
-    9.9
+    9.05,
+    10.01
    ],
    [
     "BAU_910_MARIA#0",
     4,
-    10.84,
-    10.59
+    11.22,
+    9.87
    ],
    [
     "BAU_912_PEPE#0",
     4,
-    12.37,
-    5.75
+    14.54,
+    1.0
    ],
    [
     "BAU_913_THEKLA#0",
     4,
-    8.37,
-    7.74
+    8.24,
+    7.85
    ],
    [
     "BAU_932_BALTHASAR#0",
     4,
-    18.39,
-    16.0
+    18.75,
+    17.0
    ],
    [
     "BAU_936_ROSI#0",
     5,
-    19.78,
-    15.13
+    19.35,
+    14.24
+   ],
+   [
+    "BAU_940_AKIL#0",
+    4,
+    3.0,
+    5.95
    ],
    [
     "BAU_941_KATI#0",
     4,
-    14.36,
-    14.0
-   ],
-   [
-    "BAU_952_VINO#0",
-    4,
-    13.25,
-    11.56
-   ],
-   [
-    "BAU_954_MALETH#0",
-    4,
-    5.62,
-    5.24
+    15.09,
+    13.99
    ]
   ]
  },
@@ -1163,7 +1568,7 @@
   },
   {
    "what": "teacher-1: critical food, max h",
-   "value": 12.094,
+   "value": 8.048,
    "ok": false
   },
   {
@@ -1203,8 +1608,8 @@
   },
   {
    "what": "teacher-1: critical work, max h",
-   "value": 10.354,
-   "ok": false
+   "value": 0.0,
+   "ok": true
   },
   {
    "what": "teacher-1: critical faith, median h",
@@ -1223,7 +1628,7 @@
   },
   {
    "what": "teacher-1: critical leisure, max h",
-   "value": 1.894,
+   "value": 2.94,
    "ok": true
   },
   {
@@ -1243,7 +1648,7 @@
   },
   {
    "what": "teacher-1: anchor time by routine",
-   "value": 0.95271,
+   "value": 0.95251,
    "ok": true
   },
   {
@@ -1253,7 +1658,7 @@
   },
   {
    "what": "teacher-1: a day, s",
-   "value": 0.0757,
+   "value": 0.1053,
    "ok": true
   },
   {
@@ -1263,7 +1668,7 @@
   },
   {
    "what": "teacher-7: critical food, max h",
-   "value": 24.0,
+   "value": 22.441,
    "ok": false
   },
   {
@@ -1293,7 +1698,7 @@
   },
   {
    "what": "teacher-7: critical social, max h",
-   "value": 24.0,
+   "value": 21.236,
    "ok": false
   },
   {
@@ -1303,8 +1708,8 @@
   },
   {
    "what": "teacher-7: critical work, max h",
-   "value": 24.0,
-   "ok": false
+   "value": 1.488,
+   "ok": true
   },
   {
    "what": "teacher-7: critical faith, median h",
@@ -1323,7 +1728,7 @@
   },
   {
    "what": "teacher-7: critical leisure, max h",
-   "value": 24.0,
+   "value": 19.941,
    "ok": false
   },
   {
@@ -1343,7 +1748,7 @@
   },
   {
    "what": "teacher-7: anchor time by routine",
-   "value": 0.83838,
+   "value": 0.83637,
    "ok": false
   },
   {
@@ -1353,7 +1758,7 @@
   },
   {
    "what": "teacher-7: a day, s",
-   "value": 0.0882,
+   "value": 0.0873,
    "ok": true
   },
   {
@@ -1368,47 +1773,47 @@
   },
   {
    "what": "sensitivity: food grows",
-   "value": 0.221,
+   "value": 0.275,
    "ok": true
   },
   {
    "what": "sensitivity: sleep grows",
-   "value": 0.67,
+   "value": 0.721,
    "ok": true
   },
   {
    "what": "sensitivity: toilet grows",
-   "value": 0.152,
+   "value": 0.106,
    "ok": true
   },
   {
    "what": "sensitivity: social grows",
-   "value": 0.217,
+   "value": 0.223,
    "ok": true
   },
   {
    "what": "sensitivity: work grows",
-   "value": 0.161,
+   "value": 0.162,
    "ok": true
   },
   {
    "what": "sensitivity: faith grows",
-   "value": 2.682,
+   "value": 3.463,
    "ok": true
   },
   {
    "what": "sensitivity: leisure grows",
-   "value": 0.515,
+   "value": 0.568,
    "ok": true
   },
   {
    "what": "traits: talk moves chosen social time its way",
-   "value": 0.938,
+   "value": 0.874,
    "ok": true
   },
   {
    "what": "traits: same-guild pairs differ the same way",
-   "value": 0.963,
+   "value": 0.957,
    "ok": true
   }
  ],
