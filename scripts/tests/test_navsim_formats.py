@@ -35,3 +35,62 @@ def test_engine_snapshots_are_unaligned_little_endian(tmp_path):
         np.testing.assert_array_equal(ray["direction"], [1, 0, 0])
         assert (ray["max_range_cm"], ray["distance_cm"], ray["kind"], ray["normal_y"],
                 ray["hit"], ray["complete"]) == (10000, 237.5, 3, -.75, 1, 1 - update)
+
+
+def test_episode_package_preserves_engine_values_and_verifies_files(tmp_path):
+    import hashlib
+    import json
+
+    import pytest
+    from navsim.formats import read_package
+
+    # OGNAV001's native 64-bit Detour tile references and unaligned tile header.
+    tile = b"opaque Detour tile bytes"
+    checksum = 14695981039346656037
+    for value in tile:
+        checksum = ((checksum ^ value) * 1099511628211) & ((1 << 64) - 1)
+    mesh = struct.pack("<8sIIQd3f2f2iQ", b"OGNAV001", 2, 0x01020304, 123, .25,
+                       -20, 0, 30, 25.6, 25.6, 1, 32768, 1)
+    mesh += struct.pack("<QIQ", 1 << 40, len(tile), checksum) + tile
+    (tmp_path / "navmesh.navmesh").write_bytes(mesh)
+    documents = {
+        "navmesh-params.json": {"nearest_horizontal_m": 1, "nearest_vertical_m": 2},
+        "links.json": [{"start_m": [0, 0, 0], "end_m": [2, -1, 0], "radius_m": .6,
+                        "type": 3, "bidirectional": False, "id": 42}],
+        "roads-graph.json": {"nodes": [["HOME", 100, 200, 300], ["GOAL", 500, 200, 300]],
+                             "edges": [[0, 1, 400, True]]},
+        "places.json": {"world": "NEWWORLD", "places": [{"id": "CITY", "center": [100, 200, 300]}],
+                        "points": {"HOME": 0, "GOAL": 0}},
+    }
+    for name, value in documents.items():
+        (tmp_path / name).write_text(json.dumps(value), encoding="utf-8")
+    actor = dict(instance="CITIZEN", home_cm=[100, 200, 300], stranger=False,
+                 known_node_ids=[0, 1], known_edge_ids=[0])
+    (tmp_path / "actors.jsonl").write_text(json.dumps(actor) + "\n", encoding="utf-8")
+    pair = dict(start="HOME", goal="GOAL", region="city", teacher_success=True)
+    for split in ("train", "validation", "test"):
+        (tmp_path / f"{split}.jsonl").write_text(json.dumps(pair) + "\n", encoding="utf-8")
+    check = dict(split="validation", pair_index=0, start="HOME", goal="GOAL", start_m=[1, 2, 3],
+                 end_m=[5, 2, 3], allow_transitions=True, complete=True, length_m=4, reason="ok")
+    (tmp_path / "path-checks.jsonl").write_text(json.dumps(check) + "\n", encoding="utf-8")
+    files = [dict(path=p.name, size=p.stat().st_size, sha256=hashlib.sha256(p.read_bytes()).hexdigest())
+             for p in sorted(tmp_path.iterdir())]
+    manifest = dict(format="navsim-package-v1", world="NEWWORLD", engine_revision="abc123", files=files)
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    package = read_package(tmp_path)
+    assert package.manifest == manifest
+    assert package.navmesh.key == 123
+    assert package.navmesh.origin_m == (-20, 0, 30)
+    assert package.navmesh.tiles[0].reference == 1 << 40
+    assert bytes(package.navmesh.tiles[0].data) == tile
+    assert not package.navmesh.tiles[0].data.flags.writeable
+    assert package.links == documents["links.json"]
+    assert package.roads == documents["roads-graph.json"]
+    assert package.actors == [actor]
+    assert package.places == documents["places.json"]
+    assert package.pairs == {split: [pair] for split in ("train", "validation", "test")}
+    assert package.path_checks == [check]
+    (tmp_path / "train.jsonl").write_text("{}\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="Package size/SHA-256 mismatch: train.jsonl"):
+        read_package(tmp_path)
