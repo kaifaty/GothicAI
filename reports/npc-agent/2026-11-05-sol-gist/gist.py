@@ -439,7 +439,7 @@ def summary(directory: Path, *, emit: bool = True) -> dict:
     said = [WORDS.findall(f["said"].casefold()) for f in first if f["said"]]
 
     def most_common(length: int) -> dict:
-        counts = Counter(" ".join(words[:length]) for words in said)
+        counts = Counter(" ".join(words[:length]) for words in said if len(words) >= length)
         text, count = counts.most_common(1)[0] if counts else (None, 0)
         return {"text": text, "n": count, "of_said": count / len(said) if said else None}
 
@@ -671,6 +671,11 @@ async def selftest() -> int:
             row["first_words"]["first_sentence_s"] + 0.3 + len(row["first_words"]["said"]) / 13
         )
         assert out["timing"]["silence_after_first_words_s"]["median"] == expected
+        # A one-word sound is not a pair of first words, even when it is more frequent.
+        sound = {**probe, "first_words": {**probe["first_words"], "said": "Хм..."}}
+        pilot.save_rows(directory / "answers.jsonl", [sound, {**sound, "probe": "p2", "id": "p2@c"}])
+        pair = summary(directory, emit=False)["first_words"]["most_common_first_two_words"]
+        assert pair == {"text": "дай подумать", "n": 1, "of_said": 1 / 3}
         # The persisted counter must prevent request 2 from reaching the provider.
         stand.write_json(directory / "config.json", {"sol_requests": 0, "sol_request_limit": 1})
         backend = FakeBackend("answer", delay=0)
