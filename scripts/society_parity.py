@@ -4,9 +4,10 @@
     scripts/society_parity.py --world society-world.json --core CORE_DIR --engine ENGINE_DIR
                               [--out report.md] [--json report.json] [--check]
 
-CORE_DIR holds `society-marks.csv` (and `society-day.journal`) of `gothic-society-day` on the export WORLD; ENGINE_DIR
-holds `npc-day.csv` and `npc-day-events.csv` of the `npc-day-parity` bench on the same world (`day-headless-full`).
-Marks are matched by NPC key and minute since the start; only people count (`person` in the export, not the hero).
+CORE_DIR holds `society-marks.csv` of `gothic-society-day` on the export WORLD; ENGINE_DIR holds
+`npc-day.csv`, `npc-day-events.csv` and `npc-day.json` of the `npc-day-parity` bench on the same world
+(`day-headless-full`). Marks are matched by NPC key and minute since the start; only people count
+(`person` in the export, not the hero).
 
 For every person the engine's day is cut into episodes of one routine entry (its `ta` events). An episode's
 transition window runs from the entry's start until the engine's NPC first stands within 10 m of the entry's
@@ -16,13 +17,15 @@ point; when it never does, the window stays open for the whole episode. The repo
 - the share of those marks where the core's position is within 10 m of the engine's, without the states that
   move by themselves (SELF_MOVING below: their place is reported on its own line);
 - the same two shares inside the windows;
-- travel time on transitions: for an episode whose window closes, the time from the entry's start until the NPC
-  comes within 10 m of the point, for the engine and the core alike from their 5-minute positions (the first mark
-  inside 10 m and the one before it, the crossing interpolated linearly); the error is core minus engine;
-- the worst NPCs and states with the reason.
+- travel time on transitions: for an episode whose window closes, the time from the entry's start until the
+  NPC comes within 10 m of the point, for the engine and the core alike from their 5-minute positions (the
+  first mark inside 10 m and the one before it, the crossing interpolated linearly); the error is core minus
+  engine;
+- the worst NPCs and states with the reason; for information, the state of the NPCs that are not people.
 
 With --check the exit code is 1 when a threshold (THRESHOLDS) fails.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -31,14 +34,14 @@ import collections
 import csv
 import json
 import math
-from pathlib import Path
 import sys
+from pathlib import Path
 
 PLACE_M = 10.0
 THRESHOLDS = {
-    "state_outside": 0.95,          # share of person-marks outside the windows with the same ZS_*
-    "place_outside": 0.90,          # share within 10 m outside the windows, without SELF_MOVING states
-    "travel_median_abs_min": 2.0,   # median |core - engine| travel time on transitions, game minutes
+    "state_outside": 0.95,  # share of person-marks outside the windows with the same ZS_*
+    "place_outside": 0.90,  # share within 10 m outside the windows, without SELF_MOVING states
+    "travel_median_abs_min": 2.0,  # median |core - engine| travel time on transitions, game minutes
 }
 # Routine states that move the NPC by themselves in the engine: their place is not the entry's point.
 # ZS_*_FP states walk from free point to free point (AI_GotoNextFP), the smith's states move between the
@@ -91,13 +94,17 @@ def load_engine(directory):
             if r["hero"] == "hero":
                 continue
             rows[r["key"]][int(float(r["t_min"]))] = (
-                r["ta"], r["zs"], (float(r["x"]), float(r["y"]), float(r["z"])))
+                r["ta"],
+                r["zs"],
+                (float(r["x"]), float(r["y"]), float(r["z"])),
+            )
     changes = collections.defaultdict(list)
     with open(directory / "npc-day-events.csv", newline="") as stream:
         for r in csv.DictReader(stream):
             if r["kind"] == "ta":
-                changes[r["key"]].append((float(r["t_min"]), r["value"],
-                                          (float(r["x"]), float(r["y"]), float(r["z"]))))
+                changes[r["key"]].append(
+                    (float(r["t_min"]), r["value"], (float(r["x"]), float(r["y"]), float(r["z"])))
+                )
     header = json.loads((directory / "npc-day.json").read_text())
     return rows, changes, header
 
@@ -125,7 +132,7 @@ class Episode:
 
 
 def episodes(person, engine_rows, engine_changes, times):
-    """The engine's routine episodes of a person: (begin, entry index, position at the begin) and its marks."""
+    """The engine's routine episodes of a person: begin, entry index, position at the begin, marks."""
     routine = person["routine"]
     if not routine:
         return []
@@ -155,7 +162,7 @@ def episodes(person, engine_rows, engine_changes, times):
 
 
 def crossing(samples, target):
-    """First time a sequence of (t, pos) comes within PLACE_M of `target`, interpolated linearly; None if never."""
+    """First time a sequence of (t, pos) comes within PLACE_M of `target`, linearly; None if never."""
     previous = None
     for t, pos in samples:
         if pos is None:
@@ -219,17 +226,23 @@ def compare(world_path, core_dir, engine_dir):
             later = [t for t in times if t > e.begin]
             core_samples = [(e.begin, core_start)] + [(t, crows[t][3]) for t in later if t in crows]
             t_core = crossing(core_samples, target)
-            travel.append({"key": key, "begin": round(e.begin, 2), "state": e.state,
-                           "point": world["waypoints"][e.target]["name"],
-                           "engine_min": round(t_engine - e.begin, 2),
-                           "core_min": None if t_core is None else round(t_core - e.begin, 2)})
+            travel.append(
+                {
+                    "key": key,
+                    "begin": round(e.begin, 2),
+                    "state": e.state,
+                    "point": world["waypoints"][e.target]["name"],
+                    "engine_min": round(t_engine - e.begin, 2),
+                    "core_min": None if t_core is None else round(t_core - e.begin, 2),
+                }
+            )
 
         for t in times:
             er, cr = erows.get(t), crows.get(t)
             if er is None or cr is None:
                 continue
             where = window.get(t, "out")
-            # The entry's state; without a routine the state the engine runs (start_aistate as it resolved it).
+            # The entry's state; without a routine the state the engine runs (its start_aistate).
             state = state_of.get(t) or er[1]
             same_state = er[1] == cr[1]
             dist = math.dist(er[2], cr[3]) / 100.0 if cr[3] is not None else float("inf")
@@ -287,43 +300,95 @@ def compare(world_path, core_dir, engine_dir):
     errors = [r["core_min"] - r["engine_min"] for r in travel if r["core_min"] is not None]
     abs_errors = [abs(x) for x in errors]
     result = {
-        "world": str(world_path), "core": str(core_dir), "engine": str(engine_dir),
-        "engine_header": {k: engine_header.get(k) for k in ("world", "tier_mode", "seed", "minutes", "period_min",
-                                                            "start_day", "start_hour", "start_minute", "end_reason")},
-        "people": len(people), "people_missing": missing, "marks": len(times),
-        "place_m": PLACE_M, "thresholds": THRESHOLDS, "self_moving_states": SELF_MOVING,
-        "outside": {"marks": tally["out_marks"], "same_state": share(tally["out_same_state"], tally["out_marks"]),
-                    "place_marks": tally["out_place_marks"],
-                    "near": share(tally["out_near"], tally["out_place_marks"]),
-                    "near_with_self_moving": share(tally["out_all_near"], tally["out_marks"])},
-        "windows": {"marks": tally["win_marks"], "open_marks": tally["open_marks"],
-                    "same_state": share(tally["win_same_state"], tally["win_marks"]),
-                    "place_marks": tally["win_place_marks"], "near": share(tally["win_near"], tally["win_place_marks"]),
-                    "open_same_state": share(tally["open_same_state"], tally["open_marks"]),
-                    "open_near": share(tally["open_near"], tally["open_marks"])},
-        "self_moving": {s: {"marks": c["marks"], "same_state": share(c["same_state"], c["marks"]),
-                            "near": share(c["near"], c["marks"]), "why": SELF_MOVING.get(s, "")}
-                        for s, c in sorted(self_moving.items())},
-        "travel": {"transitions": len(travel), "core_missing": len(travel) - len(errors),
-                   "median_abs_min": percentile(abs_errors, 0.5), "p90_abs_min": percentile(abs_errors, 0.9),
-                   "median_signed_min": percentile(errors, 0.5),
-                   "engine_median_min": percentile([r["engine_min"] for r in travel], 0.5)},
-        "open_windows": {k: dict(v) for k, v in sorted(open_windows.items(), key=lambda x: -sum(x[1].values()))},
+        "world": str(world_path),
+        "core": str(core_dir),
+        "engine": str(engine_dir),
+        "engine_header": {
+            k: engine_header.get(k)
+            for k in (
+                "world",
+                "tier_mode",
+                "seed",
+                "minutes",
+                "period_min",
+                "start_day",
+                "start_hour",
+                "start_minute",
+                "end_reason",
+            )
+        },
+        "people": len(people),
+        "people_missing": missing,
+        "marks": len(times),
+        "place_m": PLACE_M,
+        "thresholds": THRESHOLDS,
+        "self_moving_states": SELF_MOVING,
+        "outside": {
+            "marks": tally["out_marks"],
+            "same_state": share(tally["out_same_state"], tally["out_marks"]),
+            "place_marks": tally["out_place_marks"],
+            "near": share(tally["out_near"], tally["out_place_marks"]),
+            "near_with_self_moving": share(tally["out_all_near"], tally["out_marks"]),
+        },
+        "windows": {
+            "marks": tally["win_marks"],
+            "open_marks": tally["open_marks"],
+            "same_state": share(tally["win_same_state"], tally["win_marks"]),
+            "place_marks": tally["win_place_marks"],
+            "near": share(tally["win_near"], tally["win_place_marks"]),
+            "open_same_state": share(tally["open_same_state"], tally["open_marks"]),
+            "open_near": share(tally["open_near"], tally["open_marks"]),
+        },
+        "self_moving": {
+            s: {
+                "marks": c["marks"],
+                "same_state": share(c["same_state"], c["marks"]),
+                "near": share(c["near"], c["marks"]),
+                "why": SELF_MOVING.get(s, ""),
+            }
+            for s, c in sorted(self_moving.items())
+        },
+        "travel": {
+            "transitions": len(travel),
+            "core_missing": len(travel) - len(errors),
+            "median_abs_min": percentile(abs_errors, 0.5),
+            "p90_abs_min": percentile(abs_errors, 0.9),
+            "median_signed_min": percentile(errors, 0.5),
+            "engine_median_min": percentile([r["engine_min"] for r in travel], 0.5),
+        },
+        "open_windows": {
+            k: dict(v) for k, v in sorted(open_windows.items(), key=lambda x: -sum(x[1].values()))
+        },
         "state_pairs": [[a, b, n] for (a, b), n in state_pairs.most_common(15)],
         "not_people": {"marks": others["marks"], "same_state": share(others["same_state"], others["marks"])},
     }
     worst = sorted(per_npc.items(), key=lambda x: -(x[1]["state_diff"] + x[1]["far"]))
     result["worst_npcs"] = [
-        {"key": k, "marks": c["marks"], "state_diff": c["state_diff"], "far": c["far"],
-         "pairs": [[a, b, n] for (a, b), n in npc_pairs[k].most_common(3)],
-         "far_median_m": percentile(npc_dist[k], 0.5)}
-        for k, c in worst[:25] if c["state_diff"] + c["far"] > 0]
+        {
+            "key": k,
+            "marks": c["marks"],
+            "state_diff": c["state_diff"],
+            "far": c["far"],
+            "pairs": [[a, b, n] for (a, b), n in npc_pairs[k].most_common(3)],
+            "far_median_m": percentile(npc_dist[k], 0.5),
+        }
+        for k, c in worst[:25]
+        if c["state_diff"] + c["far"] > 0
+    ]
     result["states"] = [
-        {"state": s, "marks": c["marks"], "state_diff": c["state_diff"],
-         "place_marks": c["place_marks"], "far": c["far"]}
-        for s, c in sorted(per_state.items(), key=lambda x: -(x[1]["state_diff"] + x[1]["far"]))]
-    worst_travel = sorted((r for r in travel), key=lambda r: -abs((r["core_min"] if r["core_min"] is not None
-                                                                     else 1e9) - r["engine_min"]))
+        {
+            "state": s,
+            "marks": c["marks"],
+            "state_diff": c["state_diff"],
+            "place_marks": c["place_marks"],
+            "far": c["far"],
+        }
+        for s, c in sorted(per_state.items(), key=lambda x: -(x[1]["state_diff"] + x[1]["far"]))
+    ]
+    worst_travel = sorted(
+        (r for r in travel),
+        key=lambda r: -abs((r["core_min"] if r["core_min"] is not None else 1e9) - r["engine_min"]),
+    )
     result["worst_travel"] = worst_travel[:15]
     result["travel_records"] = travel
     checks = {
@@ -361,9 +426,11 @@ def markdown(r):
         "| Check | Value | Limit | |",
         "|---|---|---|---|",
     ]
-    labels = {"state_outside": "same ZS_* outside the windows", "place_outside":
-              "within 10 m outside the windows, without self-moving states",
-              "travel_median_abs_min": "travel time error on transitions, median |core − engine|, game min"}
+    labels = {
+        "state_outside": "same ZS_* outside the windows",
+        "place_outside": "within 10 m outside the windows, without self-moving states",
+        "travel_median_abs_min": "travel time error on transitions, median |core − engine|, game min",
+    }
     for name, c in r["checks"].items():
         value = num(c["value"]) if name.endswith("_min") else pct(c["value"])
         limit = num(c["limit"]) if name.endswith("_min") else pct(c["limit"])
@@ -379,8 +446,10 @@ def markdown(r):
         f"{pct(o['near_with_self_moving'])} |",
     ]
     for s, c in r["self_moving"].items():
-        lines.append(f"| self-moving `{s}`, outside | {c['marks']} | {pct(c['same_state'])} | {pct(c['near'])} — "
-                     f"not in the place check: {c['why']} |")
+        lines.append(
+            f"| self-moving `{s}`, outside | {c['marks']} | {pct(c['same_state'])} | {pct(c['near'])} — "
+            f"not in the place check: {c['why']} |"
+        )
     lines += [
         "",
         f"Travel time on transitions: {t['transitions']} (the core never came within 10 m: {t['core_missing']}); "
@@ -394,34 +463,65 @@ def markdown(r):
     ]
     for n in r["worst_npcs"]:
         pairs = "; ".join(f"{a} / {b} ×{c}" for a, b, c in n["pairs"]) or "—"
-        lines.append(f"| {n['key']} | {n['marks']} | {n['state_diff']} | {n['far']} ({num(n['far_median_m'], 1)}) | {pairs} |")
-    lines += ["", "## States (outside the windows)", "", "| Entry state | Marks | ZS differs | Farther than 10 m |",
-              "|---|---|---|---|"]
+        lines.append(
+            f"| {n['key']} | {n['marks']} | {n['state_diff']} | {n['far']} ({num(n['far_median_m'], 1)}) | {pairs} |"
+        )
+    lines += [
+        "",
+        "## States (outside the windows)",
+        "",
+        "| Entry state | Marks | ZS differs | Farther than 10 m |",
+        "|---|---|---|---|",
+    ]
     for s in r["states"][:20]:
-        lines.append(f"| {s['state']} | {s['marks']} | {s['state_diff']} | {s['far']} of {s['place_marks']} |")
-    lines += ["", "## Engine / core ZS_* that differ most (outside the windows)", "", "| Engine | Core | Marks |",
-              "|---|---|---|"]
+        lines.append(
+            f"| {s['state']} | {s['marks']} | {s['state_diff']} | {s['far']} of {s['place_marks']} |"
+        )
+    lines += [
+        "",
+        "## Engine / core ZS_* that differ most (outside the windows)",
+        "",
+        "| Engine | Core | Marks |",
+        "|---|---|---|",
+    ]
     for a, b, n in r["state_pairs"]:
         lines.append(f"| {a} | {b} | {n} |")
-    lines += ["", f"Not people (monsters, without the hero and the dead or the moment of a state change in the engine): "
-              f"same ZS_* in {pct(r['not_people']['same_state'])} of {r['not_people']['marks']} marks, for information.",
-              "", "## Open windows (the engine never came within 10 m of the entry's point)", "",
-              "| NPC | Marks by entry state |", "|---|---|"]
+    lines += [
+        "",
+        f"Not people (monsters, without the hero and the dead or the moment of a state change in the engine): "
+        f"same ZS_* in {pct(r['not_people']['same_state'])} of {r['not_people']['marks']} marks, for information.",
+        "",
+        "## Open windows (the engine never came within 10 m of the entry's point)",
+        "",
+        "| NPC | Marks by entry state |",
+        "|---|---|",
+    ]
     for k, v in list(r["open_windows"].items())[:20]:
         lines.append(f"| {k} | " + ", ".join(f"{s} {n}" for s, n in v.items()) + " |")
-    lines += ["", "## Transitions with the largest travel error", "",
-              "| NPC | Start, min | State | Point | Engine, min | Core, min |", "|---|---|---|---|---|---|"]
+    lines += [
+        "",
+        "## Transitions with the largest travel error",
+        "",
+        "| NPC | Start, min | State | Point | Engine, min | Core, min |",
+        "|---|---|---|---|---|---|",
+    ]
     for x in r["worst_travel"]:
-        lines.append(f"| {x['key']} | {x['begin']} | {x['state']} | {x['point']} | {x['engine_min']} | "
-                     f"{'—' if x['core_min'] is None else x['core_min']} |")
+        lines.append(
+            f"| {x['key']} | {x['begin']} | {x['state']} | {x['point']} | {x['engine_min']} | "
+            f"{'—' if x['core_min'] is None else x['core_min']} |"
+        )
     return "\n".join(lines) + "\n"
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--world", required=True, help="society-world export (v1 or v2)")
-    parser.add_argument("--core", required=True, help="directory with society-marks.csv of gothic-society-day")
-    parser.add_argument("--engine", required=True, help="npc-day-parity bench directory (npc-day.csv, events, json)")
+    parser.add_argument(
+        "--core", required=True, help="directory with society-marks.csv of gothic-society-day"
+    )
+    parser.add_argument(
+        "--engine", required=True, help="npc-day-parity bench directory (npc-day.csv, events, json)"
+    )
     parser.add_argument("--out", help="Markdown report")
     parser.add_argument("--json", help="JSON report")
     parser.add_argument("--check", action="store_true", help="exit 1 when a threshold fails")
