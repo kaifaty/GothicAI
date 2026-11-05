@@ -277,6 +277,9 @@ void checkRules() {
   expect("GAP on day 1 at 16:30",at(1)+" entry "+std::to_string(sim.s.entry[1]),"ZS_WORK at A entry 1");
   expect("ORC on day 1 at 16:30",at(2),"ZS_MM_RTN_EATGROUND at B");
   expect("BDT on day 1 at 16:30",at(3),"ZS_BANDIT at B");
+  // The same start_aistate starts anew every StartStateSeconds+StartDelay from 08:00: last at 16:02:40.
+  expect("BDT's state began",clock(sim.s.stateStart[3])+std::to_string(sim.s.stateStart[3]%60),
+         clock(hm(1,16,2))+"40");
   Society::advance(sim,batch,hm(2,0,30));
   expect("ORC on day 2 at 00:30 (picked anew every four hours from 08:00)",at(2),"ZS_MM_RTN_SLEEP at B");
   std::printf("rules: Npc::endTime with a gap and over midnight, own walk speed, start_aistate and the monster schedule, "

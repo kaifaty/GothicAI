@@ -15,9 +15,11 @@
  },
  "people": 370,
  "people_missing": 0,
+ "missing_marks": 0,
  "marks": 289,
  "place_m": 10.0,
  "thresholds": {
+  "missing_marks": 0,
   "state_outside": 0.95,
   "place_outside": 0.9,
   "travel_median_abs_min": 2.0
@@ -5443,6 +5445,12 @@
   }
  ],
  "checks": {
+  "missing_marks": {
+   "value": 0,
+   "limit": 0,
+   "op": "<=",
+   "pass": true
+  },
   "state_outside": {
    "value": 0.9976098600472268,
    "limit": 0.95,

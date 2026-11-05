@@ -39,6 +39,7 @@ from pathlib import Path
 
 PLACE_M = 10.0
 THRESHOLDS = {
+    "missing_marks": 0,  # person-marks of the day (the engine's minutes and period) absent from either run
     "state_outside": 0.95,  # share of person-marks outside the windows with the same ZS_*
     "place_outside": 0.90,  # share within 10 m outside the windows, without SELF_MOVING states
     "travel_median_abs_min": 2.0,  # median |core - engine| travel time on transitions, game minutes
@@ -61,7 +62,13 @@ def percentile(values, q):
     values = sorted(values)
     position = (len(values) - 1) * q
     low, high = math.floor(position), math.ceil(position)
+    if values[low] == values[high]:
+        return values[low]
     return values[low] + (values[high] - values[low]) * (position - low)
+
+
+def finite(x):
+    return x if x is not None and math.isfinite(x) else None
 
 
 def share(hits, total):
@@ -136,7 +143,9 @@ def episodes(person, engine_rows, engine_changes, times):
     routine = person["routine"]
     if not routine:
         return []
-    first = engine_rows[times[0]]
+    first = engine_rows.get(times[0])
+    if first is None:
+        return []  # no start mark: its marks count as missing
     starts = [(0.0, entry_index(first[0]), first[2])]
     for t, value, pos in engine_changes:
         starts.append((t, entry_index(value), pos))
@@ -181,7 +190,10 @@ def compare(world_path, core_dir, engine_dir):
     world, points, names, people = load_world(world_path)
     engine_rows, engine_changes, engine_header = load_engine(engine_dir)
     core_rows = load_core(core_dir, names)
-    times = sorted({t for rows in engine_rows.values() for t in rows})
+    # Every mark of the requested day, so that a cut journal or CSV counts as missing marks, not as a shorter day.
+    if "minutes" not in engine_header or "period_min" not in engine_header:
+        raise SystemExit(f"{engine_dir}: npc-day.json has no minutes and period_min")
+    times = list(range(0, int(engine_header["minutes"]) + 1, int(engine_header["period_min"])))
 
     tally = collections.Counter()
     per_npc = collections.defaultdict(collections.Counter)
@@ -198,6 +210,7 @@ def compare(world_path, core_dir, engine_dir):
         erows, crows = engine_rows.get(key), core_rows.get(key)
         if erows is None or crows is None:
             missing += 1
+            tally["missing_marks"] += len(times)
             continue
         eps = episodes(person, erows, engine_changes.get(key, []), times)
         window = {}
@@ -240,6 +253,7 @@ def compare(world_path, core_dir, engine_dir):
         for t in times:
             er, cr = erows.get(t), crows.get(t)
             if er is None or cr is None:
+                tally["missing_marks"] += 1
                 continue
             where = window.get(t, "out")
             # The entry's state; without a routine the state the engine runs (its start_aistate).
@@ -298,7 +312,8 @@ def compare(world_path, core_dir, engine_dir):
             others["same_state"] += er[1] == cr[1]
 
     errors = [r["core_min"] - r["engine_min"] for r in travel if r["core_min"] is not None]
-    abs_errors = [abs(x) for x in errors]
+    # A transition the core never finished counts as an unbounded error, not as a missing one.
+    abs_errors = [abs(x) for x in errors] + [math.inf] * (len(travel) - len(errors))
     result = {
         "world": str(world_path),
         "core": str(core_dir),
@@ -319,6 +334,7 @@ def compare(world_path, core_dir, engine_dir):
         },
         "people": len(people),
         "people_missing": missing,
+        "missing_marks": tally["missing_marks"],
         "marks": len(times),
         "place_m": PLACE_M,
         "thresholds": THRESHOLDS,
@@ -351,8 +367,8 @@ def compare(world_path, core_dir, engine_dir):
         "travel": {
             "transitions": len(travel),
             "core_missing": len(travel) - len(errors),
-            "median_abs_min": percentile(abs_errors, 0.5),
-            "p90_abs_min": percentile(abs_errors, 0.9),
+            "median_abs_min": finite(percentile(abs_errors, 0.5)),
+            "p90_abs_min": finite(percentile(abs_errors, 0.9)),
             "median_signed_min": percentile(errors, 0.5),
             "engine_median_min": percentile([r["engine_min"] for r in travel], 0.5),
         },
@@ -392,6 +408,7 @@ def compare(world_path, core_dir, engine_dir):
     result["worst_travel"] = worst_travel[:15]
     result["travel_records"] = travel
     checks = {
+        "missing_marks": (result["missing_marks"], "<="),
         "state_outside": (result["outside"]["same_state"], ">="),
         "place_outside": (result["outside"]["near"], ">="),
         "travel_median_abs_min": (result["travel"]["median_abs_min"], "<="),
@@ -427,13 +444,17 @@ def markdown(r):
         "|---|---|---|---|",
     ]
     labels = {
+        "missing_marks": "person-marks of the day missing in a run",
         "state_outside": "same ZS_* outside the windows",
         "place_outside": "within 10 m outside the windows, without self-moving states",
         "travel_median_abs_min": "travel time error on transitions, median |core − engine|, game min",
     }
     for name, c in r["checks"].items():
-        value = num(c["value"]) if name.endswith("_min") else pct(c["value"])
-        limit = num(c["limit"]) if name.endswith("_min") else pct(c["limit"])
+        if name == "missing_marks":
+            value, limit = str(c["value"]), str(c["limit"])
+        else:
+            value = num(c["value"]) if name.endswith("_min") else pct(c["value"])
+            limit = num(c["limit"]) if name.endswith("_min") else pct(c["limit"])
         lines.append(f"| {labels[name]} | {value} | {c['op']} {limit} | {'pass' if c['pass'] else 'FAIL'} |")
     lines += [
         "",

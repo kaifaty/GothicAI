@@ -6,6 +6,7 @@
 
 | Check | Value | Limit | |
 |---|---|---|---|
+| person-marks of the day missing in a run | 0 | <= 0 | pass |
 | same ZS_* outside the windows | 99.76% | >= 95.00% | pass |
 | within 10 m outside the windows, without self-moving states | 99.77% | >= 90.00% | pass |
 | travel time error on transitions, median |core − engine|, game min | 0.38 | <= 2.00 | pass |

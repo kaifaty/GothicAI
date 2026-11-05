@@ -269,9 +269,8 @@ void onBegin(Sim& sim, uint32_t npc) {
   auto& s = sim.s;
   const auto& w = *sim.world;
   if(w.entryCount(npc)==0) {
-    const auto state = startStateAt(w,npc,s.now);
-    if(state!=s.state[npc])
-      setState(sim,npc,state,ActivityReason::StartState,s.place[npc]);
+    // The engine restarts it even when the dispatcher picks the same state (zs_end, zs_start in its journal).
+    setState(sim,npc,startStateAt(w,npc,s.now),ActivityReason::StartState,s.place[npc]);
     s.stateEnd[npc] = s.now+StartStateSeconds;
     push(s,s.stateEnd[npc]+StartDelay,npc,Pending::Begin);
     return;
