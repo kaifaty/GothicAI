@@ -185,6 +185,7 @@ def compare(world_path, core_dir, engine_dir):
     open_windows = collections.defaultdict(collections.Counter)
     travel = []
     missing = 0
+    state_pairs = collections.Counter()
 
     for key, person in sorted(people.items()):
         erows, crows = engine_rows.get(key), core_rows.get(key)
@@ -262,12 +263,26 @@ def compare(world_path, core_dir, engine_dir):
                     npc_dist[key].append(dist)
             if not same_state:
                 npc_pairs[key][(er[1], cr[1])] += 1
+                state_pairs[(er[1], cr[1])] += 1
             s = per_state[state]
             s["marks"] += 1
             s["state_diff"] += not same_state
             if not moves:
                 s["place_marks"] += 1
                 s["far"] += not near
+
+    # Not people (monsters and the like, without the hero): the state only, for information.
+    others = collections.Counter()
+    for n in world["npcs"]:
+        key = n["key"]
+        if n["person"] or key not in engine_rows or key not in core_rows:
+            continue
+        for t, er in engine_rows[key].items():
+            cr = core_rows[key].get(t)
+            if cr is None or er[1] in ("ZS_DEAD", "-"):
+                continue
+            others["marks"] += 1
+            others["same_state"] += er[1] == cr[1]
 
     errors = [r["core_min"] - r["engine_min"] for r in travel if r["core_min"] is not None]
     abs_errors = [abs(x) for x in errors]
@@ -294,6 +309,8 @@ def compare(world_path, core_dir, engine_dir):
                    "median_signed_min": percentile(errors, 0.5),
                    "engine_median_min": percentile([r["engine_min"] for r in travel], 0.5)},
         "open_windows": {k: dict(v) for k, v in sorted(open_windows.items(), key=lambda x: -sum(x[1].values()))},
+        "state_pairs": [[a, b, n] for (a, b), n in state_pairs.most_common(15)],
+        "not_people": {"marks": others["marks"], "same_state": share(others["same_state"], others["marks"])},
     }
     worst = sorted(per_npc.items(), key=lambda x: -(x[1]["state_diff"] + x[1]["far"]))
     result["worst_npcs"] = [
@@ -382,7 +399,13 @@ def markdown(r):
               "|---|---|---|---|"]
     for s in r["states"][:20]:
         lines.append(f"| {s['state']} | {s['marks']} | {s['state_diff']} | {s['far']} of {s['place_marks']} |")
-    lines += ["", "## Open windows (the engine never came within 10 m of the entry's point)", "",
+    lines += ["", "## Engine / core ZS_* that differ most (outside the windows)", "", "| Engine | Core | Marks |",
+              "|---|---|---|"]
+    for a, b, n in r["state_pairs"]:
+        lines.append(f"| {a} | {b} | {n} |")
+    lines += ["", f"Not people (monsters, without the hero and the dead or the moment of a state change in the engine): "
+              f"same ZS_* in {pct(r['not_people']['same_state'])} of {r['not_people']['marks']} marks, for information.",
+              "", "## Open windows (the engine never came within 10 m of the entry's point)", "",
               "| NPC | Marks by entry state |", "|---|---|"]
     for k, v in list(r["open_windows"].items())[:20]:
         lines.append(f"| {k} | " + ", ".join(f"{s} {n}" for s, n in v.items()) + " |")

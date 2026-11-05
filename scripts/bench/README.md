@@ -1271,6 +1271,9 @@ explain the bounds and remaining combat/body work. `npcday` files:
 | `npc-day-cost.csv` | Per sample: wall seconds, NPCs within 30/60 m of the hero, world ticks, NPCs per tier, tier transitions, `Npc::tick` milliseconds and NPC-tick counts per tier, plus Simplified combat ticks using the native executor since the previous sample |
 | `npc-day-arrivals.csv` | Audit-only exact terminal arrivals, observed movement start, final goal identity, actor/target position, ZS, queue and executor; it adds no records to the strict samples/events files. |
 
+The society stand's core is checked against the same journal: `scripts/society_parity.py` compares its marks
+with `npc-day.csv` and the `ta` events of `npc-day-events.csv` (people only; [how](../../docs/society-sim.md#проверка-самого-стенда)).
+
 Every NPC gets a private script random stream (`GameScript::isolateRandom`, seed from `seed`, stream from
 the key), so one NPC's extra `Hlp_Random` or dice roll does not shift every later NPC's numbers; `shared`
 keeps the game's single stream. The journal drops exactly the streams it registered when it finishes or
