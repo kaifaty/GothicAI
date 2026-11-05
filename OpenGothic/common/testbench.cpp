@@ -1,4 +1,8 @@
 #include "appcadence.h"
+// resources.cpp: texture residency of a deterministic bench (`deterministic on`)
+extern bool benchTexturesSettle;
+extern bool benchTexturesFrozen;
+
 #include "testbench.h"
 #include "testbench_internal.h"
 #include "ui/gamemenu.h"
@@ -16009,6 +16013,8 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       return;
       }
     bench.deterministic=a[1]=="on";
+    benchTexturesSettle=bench.deterministic;
+    benchTexturesFrozen=false;
     say("deterministic "+a[1]);
     }
   else if(c=="wait") {
@@ -19213,8 +19219,9 @@ bool waitingForBodyLive() {
 
 // One frame of `streaming wait`; true while the scenario stays in it. In deterministic mode the world stands
 // still from the first frame that finds the landscape unready (MainWindow::tick takes no step, this runs with
-// dt 0). Once it is ready, the renderer drops its temporal state on this very frame and the scenario takes a
-// fixed number of steps with visibility in cluster order.
+// dt 0); readiness then also means no texture demotion or reload is pending. Once it is ready, the renderer drops
+// its temporal state on this very frame, texture residency stands still, and the scenario takes a fixed number of
+// steps with visibility in cluster order; both last until the next shot.
 // Neither the frame count of the wait nor its wall time then reach the picture.
 bool streamingWaitTick(World& w) {
   if(bench.time<bench.waitUntil)
@@ -19248,6 +19255,7 @@ bool streamingWaitTick(World& w) {
   if(bench.deterministic) {
     bench.renderReset=true;
     bench.ordered=true;
+    benchTexturesFrozen=true; // the levels stay as they are now until the shot
     bench.settleSteps=DeterministicSettleSteps;
     }
   return false;
@@ -20453,6 +20461,8 @@ void TestBench::physicsNoiseHeard(const Npc& npc,const PhysicsNoise& noise,bool 
 
 void TestBench::configure(std::string scenario, std::string output, int64_t seedOverride) {
   stopBodyLive();
+  benchTexturesSettle=false;
+  benchTexturesFrozen=false;
   npcCharacterStopMotionTrace(Gothic::inst().world());
   KnownRoadsBench::reset();
   NavigationMemoryBench::reset();
@@ -21937,6 +21947,7 @@ void TestBench::capture(Pixmap& frame, float uiScale) {
     say("shot " + bench.shot);
     bench.shot.clear();
     bench.ordered=false;
+    benchTexturesFrozen=false;
     }
   if(bench.rec && bench.recVideo) {
     if(!bench.trackNpcs.empty() && pm.w()>0)
