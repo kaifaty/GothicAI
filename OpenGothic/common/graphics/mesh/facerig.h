@@ -60,6 +60,10 @@ class FaceRig final {
     static constexpr float    Changed     = 1e-4f; // a weight change that deforms the head again
     static constexpr float    SpeechMouth = 0.7f;  // a voice takes that much of the mouth from the other layers
     static constexpr uint64_t ShapeHold   = 250;   // ms a shape set by hand stays without being set again
+    // A target delta below both is not seen and not blended: exports carry normal noise on most of the mesh
+    // (the MPFB test head: 357 thousand normal deltas, 104 thousand above 1e-3)
+    static constexpr float    StillCm     = 1e-4f; // cm of position
+    static constexpr float    StillNormal = 1e-3f; // of a normal's component
 
     void   setup(const GltfHeadMesh* head, const FaceProfile* profile);
     bool   isActive() const { return head!=nullptr && profile!=nullptr; }
@@ -119,6 +123,11 @@ class FaceRig final {
     std::vector<Tempest::Vec3> pos, nrm, basePos, baseNrm;
     std::vector<uint32_t>      drawnFirst, drawn;  // drawn[drawnFirst[v] .. drawnFirst[v+1]) of logical vertex v
     std::vector<uint32_t>      moved;             // logical vertices off the neutral head now
+    struct Delta final {
+      uint32_t      vertex = 0;
+      Tempest::Vec3 position, normal;
+      };
+    std::vector<std::vector<Delta>> deltas;       // per target: the deltas worth blending
     std::vector<uint8_t>       mark;
     std::vector<Tempest::Vec4> deform;
     float                      blendUs = 0;

@@ -35,7 +35,7 @@ GltfHeadMesh makeHead() {
     head.targets.push_back({name,std::move(d)});
     };
   target("jawOpen",  {{0,{0,-2,0},{2,0,0}}});
-  target("browDown", {{1,{0,0,-1},{}}});
+  target("browDown", {{1,{0,0,-1},{}},{3,{0,0,0},{5e-4f,0,0}}});  // vertex 3: export noise, not blended
   target("eyeBlink", {{2,{0,-3,0},{}}});
   target("viseme_sil",{{0,{0,-.5f,0},{}}});
   target("viseme_aa",{{0,{0,-4,0},{}},{3,{0,-4,0},{}}});
@@ -137,6 +137,7 @@ void rigCases(const GltfHeadMesh& head, const FaceProfile& p) {
   require(d[4].x==0 && d[4].y==0 && d[4].z==0 && d[4].w==0 && d[5].x==0 && d[5].z==0 && d[5].w==0,
           "padding vertices must stay zero");
   require(close(d[0].z,10) && close(d[1].z,1),"an unmoved vertex must keep its base position and normal");
+  require(d[1].x==0.f,"a normal delta below FaceRig::StillNormal must not be blended");
   require(close(d[6].x,10) && close(d[6].z,-.8f) && close(d[10].x,0) && close(d[10].y,-1),
           "every drawn vertex must take its logical vertex, a duplicated one too");
 

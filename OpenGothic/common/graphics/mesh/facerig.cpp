@@ -205,6 +205,7 @@ void FaceRig::setup(const GltfHeadMesh* h, const FaceProfile* p) {
   drawn.clear();
   moved.clear();
   mark.clear();
+  deltas.clear();
   deform.clear();
   deformed = false;
   dirty    = true;
@@ -441,6 +442,19 @@ void FaceRig::prepare() {
   mark.assign(count,0);
   moved.clear();
 
+  deltas.assign(head->targets.size(),{});
+  for(size_t t=0; t<head->targets.size(); ++t)
+    for(auto& d:head->targets[t].vertices) {
+      const auto& p = d.position;
+      const auto& n = d.normal;
+      if(d.vertex>=count)
+        continue;
+      if(std::max({std::abs(p.x),std::abs(p.y),std::abs(p.z)})<StillCm &&
+         std::max({std::abs(n.x),std::abs(n.y),std::abs(n.z)})<StillNormal)
+        continue;
+      deltas[t].push_back({d.vertex,Vec3(p.x,p.y,p.z),Vec3(n.x,n.y,n.z)});
+      }
+
   const auto& ids = head->renderVertexIds;
   drawnFirst.assign(count+1,0);
   for(auto id:ids)
@@ -478,7 +492,6 @@ void FaceRig::blend() {
   const auto start = std::chrono::steady_clock::now();
   if(basePos.size()!=head->mesh.positions.size() || deform.size()!=head->renderVertexIds.size()*2)
     prepare();
-  const size_t count = pos.size();
   for(auto v:moved) {
     pos[v]  = basePos[v];
     nrm[v]  = baseNrm[v];
@@ -488,17 +501,15 @@ void FaceRig::blend() {
     const float w = applied[t];
     if(w<=0)
       continue;
-    for(auto& d:head->targets[t].vertices) {
+    for(auto& d:deltas[t]) {
       const uint32_t v = d.vertex;
-      if(v>=count)
-        continue;
       if(mark[v]!=2) {
         if(mark[v]==0)
           moved.push_back(v);
         mark[v] = 2;
         }
-      pos[v] += Vec3(d.position.x,d.position.y,d.position.z)*w;
-      nrm[v] += Vec3(d.normal.x,d.normal.y,d.normal.z)*w;
+      pos[v] += d.position*w;
+      nrm[v] += d.normal*w;
       }
     }
   size_t keep = 0;
