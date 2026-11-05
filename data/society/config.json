@@ -4,11 +4,11 @@
   "note": "Файл настройки стенда общества (docs/society-sim.md, «Файл настройки»). Часы: empty_hours — за сколько игровых часов нужда падает с 1 до 0 сама; fill_hours — за сколько часов состояние поднимает её с 0 до 1, пока NPC стоит и исполняет его. Каждая правка чисел — строкой в «План и журнал» с причиной.",
   "needs": [
     {"id": "food",    "name": "еда",     "empty_hours": 16, "low": 0.4,  "critical": 0.15, "start": 1.0, "awake_only": false},
-    {"id": "sleep",   "name": "сон",     "empty_hours": 18, "low": 0.35, "critical": 0.1,  "start": 1.0, "awake_only": true},
+    {"id": "sleep",   "name": "сон",     "empty_hours": 20, "low": 0.35, "critical": 0.1,  "start": 1.0, "awake_only": true},
     {"id": "toilet",  "name": "туалет",  "empty_hours": 8,  "low": 0.3,  "critical": 0.1,  "start": 1.0, "awake_only": false},
-    {"id": "social",  "name": "общение", "empty_hours": 24, "low": 0.3,  "critical": 0.1,  "start": 1.0, "awake_only": false},
-    {"id": "work",    "name": "дело",    "empty_hours": 12, "low": 0.3,  "critical": 0.1,  "start": 1.0, "awake_only": false},
-    {"id": "faith",   "name": "вера",    "empty_hours": 48, "low": 0.3,  "critical": 0.1,  "start": 1.0, "awake_only": false,
+    {"id": "social",  "name": "общение", "empty_hours": 24, "low": 0.3,  "critical": 0.1,  "start": 1.0, "awake_only": true},
+    {"id": "work",    "name": "дело",    "empty_hours": 12, "low": 0.3,  "critical": 0.1,  "start": 1.0, "awake_only": true},
+    {"id": "faith",   "name": "вера",    "empty_hours": 48, "low": 0.3,  "critical": 0.1,  "start": 1.0, "awake_only": true,
      "guild_weight": {"default": 0.5, "guilds": [
        {"guild": 1,  "name": "паладины",            "weight": 1.0},
        {"guild": 4,  "name": "маги Огня",           "weight": 1.0},
@@ -22,7 +22,7 @@
        {"guild": 13, "name": "пираты",              "weight": 0.0},
        {"guild": 59, "name": "орки",                "weight": 0.0}
      ]}},
-    {"id": "leisure", "name": "досуг",   "empty_hours": 24, "low": 0.3,  "critical": 0.1,  "start": 1.0, "awake_only": false}
+    {"id": "leisure", "name": "досуг",   "empty_hours": 24, "low": 0.3,  "critical": 0.1,  "start": 1.0, "awake_only": true}
   ],
   "states": [
     {"state": "ZS_GOTOBED",           "kind": "anchor", "asleep": false, "fill_hours": {}, "note": "идёт к кровати; у неё через 15 с — ZS_SLEEP"},
@@ -52,10 +52,10 @@
     {"state": "ZS_STUDY_WP",          "kind": "anchor", "asleep": false, "fill_hours": {"work": 2}},
     {"state": "ZS_PRACTICE_MAGIC",    "kind": "anchor", "asleep": false, "fill_hours": {"work": 2}},
     {"state": "ZS_PRACTICE_SWORD",    "kind": "anchor", "asleep": false, "fill_hours": {"work": 2}},
-    {"state": "ZS_COOK_STOVE",        "kind": "anchor", "asleep": false, "fill_hours": {"work": 2, "food": 4}, "note": "готовит и пробует"},
-    {"state": "ZS_COOK_CAULDRON",     "kind": "anchor", "asleep": false, "fill_hours": {"work": 2, "food": 4}, "note": "котёл"},
-    {"state": "ZS_COOK_PAN",          "kind": "anchor", "asleep": false, "fill_hours": {"work": 2, "food": 4}, "note": "жарка"},
-    {"state": "ZS_ROAST_SCAVENGER",   "kind": "anchor", "asleep": false, "fill_hours": {"work": 2, "food": 4}, "note": "жарка"},
+    {"state": "ZS_COOK_STOVE",        "kind": "anchor", "asleep": false, "fill_hours": {"work": 2, "food": 2}, "note": "готовит и пробует"},
+    {"state": "ZS_COOK_CAULDRON",     "kind": "anchor", "asleep": false, "fill_hours": {"work": 2, "food": 2}, "note": "котёл"},
+    {"state": "ZS_COOK_PAN",          "kind": "anchor", "asleep": false, "fill_hours": {"work": 2, "food": 2}, "note": "жарка"},
+    {"state": "ZS_ROAST_SCAVENGER",   "kind": "anchor", "asleep": false, "fill_hours": {"work": 2, "food": 2}, "note": "жарка"},
 
     {"state": "ZS_STAND_ARMSCROSSED", "kind": "free",   "asleep": false, "fill_hours": {}},
     {"state": "ZS_STAND_WP",          "kind": "free",   "asleep": false, "fill_hours": {}},
@@ -66,7 +66,7 @@
     {"state": "ZS_SMALLTALK",         "kind": "free",   "asleep": false, "fill_hours": {"social": 1}},
     {"state": "ZS_SIT_CAMPFIRE",      "kind": "free",   "asleep": false, "fill_hours": {"social": 3}, "note": "костёр лагеря"},
     {"state": "ZS_STAND_EATING",      "kind": "free",   "asleep": false, "fill_hours": {"food": 2}},
-    {"state": "ZS_STAND_DRINKING",    "kind": "free",   "asleep": false, "fill_hours": {"food": 4, "leisure": 4}},
+    {"state": "ZS_STAND_DRINKING",    "kind": "free",   "asleep": false, "fill_hours": {"food": 2, "leisure": 4}},
     {"state": "ZS_SMOKE_JOINT",       "kind": "free",   "asleep": false, "fill_hours": {"leisure": 1}},
     {"state": "ZS_SMOKE_WATERPIPE",   "kind": "free",   "asleep": false, "fill_hours": {"leisure": 1}},
     {"state": "ZS_PLAY_LUTE",         "kind": "free",   "asleep": false, "fill_hours": {"leisure": 1}},
@@ -93,10 +93,10 @@
     {"kind": "bench",      "schemes": ["BENCH"],    "freepoints": [],               "state": "ZS_SIT_BENCH",       "fill_hours": {},                        "capacity": 1, "minutes": 60},
     {"kind": "throne",     "schemes": ["THRONE"],   "freepoints": [],               "state": "ZS_SIT_THRONE",      "fill_hours": {"work": 2},               "capacity": 1, "minutes": 240},
     {"kind": "bookstand",  "schemes": ["BOOK"],     "freepoints": [],               "state": "ZS_READ_BOOKSTAND",  "fill_hours": {"leisure": 2},            "capacity": 1, "minutes": 60},
-    {"kind": "stove",      "schemes": ["STOVE"],    "freepoints": [],               "state": "ZS_COOK_STOVE",      "fill_hours": {"work": 2, "food": 4},    "capacity": 1, "minutes": 60},
-    {"kind": "pan",        "schemes": ["PAN"],      "freepoints": [],               "state": "ZS_COOK_PAN",        "fill_hours": {"work": 2, "food": 4},    "capacity": 1, "minutes": 60},
-    {"kind": "cauldron",   "schemes": ["CAULDRON"], "freepoints": [],               "state": "ZS_COOK_CAULDRON",   "fill_hours": {"work": 2, "food": 4},    "capacity": 1, "minutes": 60},
-    {"kind": "barbecue",   "schemes": ["BARBQ"],    "freepoints": [],               "state": "ZS_ROAST_SCAVENGER", "fill_hours": {"work": 2, "food": 4},    "capacity": 1, "minutes": 60},
+    {"kind": "stove",      "schemes": ["STOVE"],    "freepoints": [],               "state": "ZS_COOK_STOVE",      "fill_hours": {"work": 2, "food": 2},    "capacity": 1, "minutes": 60},
+    {"kind": "pan",        "schemes": ["PAN"],      "freepoints": [],               "state": "ZS_COOK_PAN",        "fill_hours": {"work": 2, "food": 2},    "capacity": 1, "minutes": 60},
+    {"kind": "cauldron",   "schemes": ["CAULDRON"], "freepoints": [],               "state": "ZS_COOK_CAULDRON",   "fill_hours": {"work": 2, "food": 2},    "capacity": 1, "minutes": 60},
+    {"kind": "barbecue",   "schemes": ["BARBQ"],    "freepoints": [],               "state": "ZS_ROAST_SCAVENGER", "fill_hours": {"work": 2, "food": 2},    "capacity": 1, "minutes": 60},
     {"kind": "shrine",     "schemes": ["INNOS"],    "freepoints": ["FP_PRAY"],      "state": "ZS_PRAY_INNOS",      "fill_hours": {"faith": 1},              "capacity": 1, "minutes": 30},
     {"kind": "alchemy",    "schemes": ["LAB"],      "freepoints": [],               "state": "ZS_POTION_ALCHEMY",  "fill_hours": {"work": 2},               "capacity": 1, "minutes": 120},
     {"kind": "saw",        "schemes": ["BAUMSAEGE"],"freepoints": [],               "state": "ZS_SAW",             "fill_hours": {"work": 2},               "capacity": 1, "minutes": 120},

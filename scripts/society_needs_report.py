@@ -63,7 +63,7 @@ TOP_STATES = 12
 
 def read_journal(path: Path) -> dict:
     data = path.read_bytes()
-    magic, version, size, world_hash, seed, start, npcs, points, states = JOURNAL_HEADER.unpack_from(data)
+    magic, version, size, world_hash, seed, start, npcs, _points, states = JOURNAL_HEADER.unpack_from(data)
     if magic != b"GSOCJRNL" or version != 3 or size != JOURNAL_RECORD.size:
         raise SystemExit(f"{path}: not a society journal v3 (needs): version {version}")
     at = JOURNAL_HEADER.size
@@ -96,7 +96,7 @@ def run_tool(tool: Path, world: Path, config: Path, out: Path, days: int, seed: 
     out.mkdir(parents=True, exist_ok=True)
     cmd = [str(tool), "--world", str(world), "--config", str(config), "--out", str(out)]
     cmd += ["--days", str(days), "--seed", str(seed)]
-    done = subprocess.run(cmd, capture_output=True, text=True)
+    done = subprocess.run(cmd, check=False, capture_output=True, text=True)
     (out / "day.log").write_text(done.stdout + done.stderr)
     if done.returncode != 0:
         raise SystemExit(f"{tool} exited with {done.returncode}:\n{done.stdout}{done.stderr}")
@@ -388,7 +388,8 @@ def main(argv: list[str] | None = None) -> int:
         "config_hash": journal["config_hash"],
         "seed": args.seed,
         "needs": [
-            {k: n[k] for k in ("id", "name", "empty_hours", "low", "critical")} for n in config["needs"]
+            {k: n[k] for k in ("id", "name", "empty_hours", "low", "critical", "awake_only")}
+            for n in config["needs"]
         ],
         "runs": runs,
     }
