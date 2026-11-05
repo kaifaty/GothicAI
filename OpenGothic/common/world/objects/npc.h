@@ -159,6 +159,8 @@ class Npc final {
     bool       nativeMobsiTransition() const;
     auto       simplifiedBodyState() const -> std::optional<BodyState>;
     float      simplifiedMoveSpeed() const;
+    // The same in another walk mode (WM_Walk, WM_Run), cm per ms of world time: the society export.
+    float      simplifiedMoveSpeed(WalkBit mode) const;
     void       tick(uint64_t dt);
     const NpcLogicalState& logicalBodyState() const { return logicalBody; }
     void       syncLogicalBodyState(bool rebuild=false);
@@ -607,6 +609,7 @@ class Npc final {
       gtime            end;
       ScriptFn         state;
       std::string_view point;
+      const WayPoint*  waypoint = nullptr;  // the point the engine resolved (World::findPoint), null if none
       };
     void      forEachRoutine(const std::function<void(const RoutineInfo&)>& f) const;
     // Index (in forEachRoutine order) of the entry in force now, -1 without routines: diagnostics only.

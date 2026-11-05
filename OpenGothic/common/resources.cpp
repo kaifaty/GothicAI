@@ -1016,6 +1016,10 @@ std::filesystem::path Resources::worldOverrideDir(std::string_view world) {
   return root.empty() ? std::filesystem::path{} : worldContentDir(root,world);
   }
 
+std::string Resources::selectedBaseFingerprint() {
+  return inst!=nullptr ? inst->baseFingerprint : std::string();
+  }
+
 Resources::WayHeightInputs Resources::wayHeightInputs(std::string_view world) {
   if(inst==nullptr || inst->baseFingerprint.empty())
     return {};

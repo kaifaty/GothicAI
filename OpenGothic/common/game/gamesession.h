@@ -61,6 +61,8 @@ class GameSession final {
     uint64_t     tickCount() const { return ticks; }
 
     void         setTimeMultiplyer(float t);
+    // Game seconds per second of world time at time multiplier 1 (14.5): the society export's clock.
+    static double clockRate() { return double(multTime)/double(divTime); }
 
     void         updateAnimation(uint64_t dt);
 

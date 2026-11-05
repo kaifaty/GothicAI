@@ -1315,7 +1315,11 @@ bool Npc::nativeBodyAction() const {
   }
 
 float Npc::simplifiedMoveSpeed() const {
-  const auto* sequence = visual.movementSequence(walkMode(),weaponState(),*this);
+  return simplifiedMoveSpeed(walkMode());
+  }
+
+float Npc::simplifiedMoveSpeed(WalkBit mode) const {
+  const auto* sequence = visual.movementSequence(mode,weaponState(),*this);
   if(sequence==nullptr || sequence->totalTime()<=0.f)
     return 0.f;
   const auto duration = uint64_t(sequence->totalTime());
@@ -8163,7 +8167,7 @@ bool Npc::transformInto(size_t instance) {
 
 void Npc::forEachRoutine(const std::function<void(const RoutineInfo&)>& f) const {
   for(auto& r:routines)
-    f(RoutineInfo{r.start,r.end,r.callback,r.wayPointName()});
+    f(RoutineInfo{r.start,r.end,r.callback,r.wayPointName(),r.point});
   }
 
 int Npc::currentRoutineIndex() const {

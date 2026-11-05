@@ -52,6 +52,10 @@ gothic-body-runner -g "$GOTHIC_DIR" -g2 -devmode -nointro --world NEWWORLD.ZEN -
   --scenario scripts/bench/npc-day-parity.bench --output /absolute/out --mode lockstep
 ```
 
+## Выгрузка мира: `--society-export`
+
+`--world <ZEN> --society-export <путь>` загружает новую игру в этом мире и сразу после стартовых скриптов (день 0, 08:00) пишет мир стенда общества. Шагов мира, сценария и `AiBridge` при этом нет. Потом раннер выходит. Формат, запуск и контракт описаны в [`society-sim.md`](society-sim.md#формат-v1).
+
 ## Игрок-наблюдатель и AI LOD
 
 Используется тот же save и [melee-сценарий](../scripts/bench/body-melee.bench), что в reference. Он ставит бессмертного игрока-наблюдателя примерно в 12 м от двух смертных native участников. Наблюдатель не атакует; fighter setup, оружие, броня, stats, guilds и `ZS_ATTACK` задаются существующим `bodyduel`.
