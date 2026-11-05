@@ -149,6 +149,9 @@ std::string       outDir       = envStr("OPENGOTHIC_BENCH_OUT") ? envStr("OPENGO
 namespace {
 const bool        keepRunning  = envStr("OPENGOTHIC_BENCH_KEEP")!=nullptr;
 constexpr int     Fps          = 30;
+// `deterministic on`: steps between the end of `streaming wait` and the next command; the TAA history of the shot
+// holds all its jitter phases twice
+constexpr uint32_t DeterministicSettleSteps = 16;
 // the fixed steps keep to the wall clock (never faster): the AI server and its voices live in real time
 const bool        realtime     = envStr("OPENGOTHIC_BENCH_REALTIME")!=nullptr;
 bool              bodyTrace    = envStr("OPENGOTHIC_BODY_TRACE")!=nullptr &&
@@ -739,6 +742,12 @@ struct Bench {
   bool        perfArmed = false;
   bool        waitStreaming = false;
   std::chrono::steady_clock::time_point streamingDeadline;
+  // `deterministic on`: a `shot` does not depend on how many frames the loading took
+  // (reports/engine/2026-11-03-streaming-optimisation/deterministic-shots.md)
+  bool        deterministic = false;
+  bool        frozen        = false; // the world stands still: `streaming wait` waits in deterministic mode
+  bool        renderReset   = false; // the renderer drops its temporal state before this frame
+  uint32_t    settleSteps   = 0;     // fixed steps left between the end of `streaming wait` and the next command
   struct StreamingSample {
     std::string segment;
     uint64_t frame = 0;
@@ -15993,6 +16002,14 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     // Camera and desired residency are updated after this bench tick.
     bench.waitUntil=bench.time+1;
     }
+  else if(c=="deterministic") {
+    if(a.size()!=2 || (a[1]!="on" && a[1]!="off")) {
+      arenaAbort("deterministic expects on or off");
+      return;
+      }
+    bench.deterministic=a[1]=="on";
+    say("deterministic "+a[1]);
+    }
   else if(c=="wait") {
     if(a.size()>1 && a[1]=="real")
       bench.realWaitUntil=std::chrono::steady_clock::now()+std::chrono::milliseconds(uint64_t(num(a,2,1000)));
@@ -19193,6 +19210,46 @@ bool waitingForBodyLive() {
   return false;
   }
 
+// One frame of `streaming wait`; true while the scenario stays in it. In deterministic mode the world stands
+// still from the first frame that finds the landscape unready (MainWindow::tick takes no step, this runs with
+// dt 0); once it is ready the renderer drops its temporal state and the scenario takes a fixed number of steps.
+// Neither the frame count of the wait nor its wall time then reach the picture.
+bool streamingWaitTick(World& w) {
+  if(bench.time<bench.waitUntil)
+    return true;
+  if(!w.landscapeReady()) {
+    if(std::chrono::steady_clock::now()<bench.streamingDeadline) {
+      bench.frozen=bench.deterministic;
+      return true;
+      }
+    bench.waitStreaming=false;
+    bench.frozen=false;
+    arenaAbort("streaming wait timed out before all Near/Far landscape and vob visuals were published");
+    return true;
+    }
+  bench.waitStreaming=false;
+  bench.frozen=false;
+  std::string publications="[";
+  for(size_t i=0;i<bench.streamingWarmupFarMs.size();++i) {
+    if(i!=0)publications+=',';
+    publications+=std::to_string(bench.streamingWarmupFarMs[i]);
+    }
+  publications+=']';
+  event("streaming_ready","\"world\":"+jsonStr(w.name())+",\"pass\":true,\"far_publication_ms\":"+publications+
+    ",\"far_max_per_frame\":"+std::to_string(bench.streamingWarmupFarMaxPerFrame)+
+    ",\"queue_max_ms\":"+std::to_string(bench.streamingWarmupQueueMaxMs)+
+    ",\"vob_pending\":"+std::to_string(w.chunkResidency() ? w.chunkResidency()->stats().vobPending : 0)+
+    ",\"vob_near_missing\":"+std::to_string(w.chunkResidency() ? w.chunkResidency()->stats().vobNearMissing : 0));
+  bench.streamingWarmupFarMs.clear();
+  bench.streamingWarmupFarMaxPerFrame=0;
+  bench.streamingWarmupQueueMaxMs=0;
+  if(bench.deterministic) {
+    bench.renderReset=true;
+    bench.settleSteps=DeterministicSettleSteps;
+    }
+  return false;
+  }
+
 void run(World& w, Npc& pl, PlayerControl& ctrl) {
   if(npcTierTestTick(w,pl))return;
   if(npcSpeedTick(w))return;
@@ -19331,32 +19388,8 @@ void run(World& w, Npc& pl, PlayerControl& ctrl) {
       }
     if(waitingForReply() || waitingForAi() || waitingForBodyLive())
       return;
-    if(bench.waitStreaming) {
-      if(bench.time<bench.waitUntil)
-        return;
-      if(!w.landscapeReady()) {
-        if(std::chrono::steady_clock::now()<bench.streamingDeadline)
-          return;
-        bench.waitStreaming=false;
-        arenaAbort("streaming wait timed out before all Near/Far landscape and vob visuals were published");
-        return;
-        }
-      bench.waitStreaming=false;
-      std::string publications="[";
-      for(size_t i=0;i<bench.streamingWarmupFarMs.size();++i) {
-        if(i!=0)publications+=',';
-        publications+=std::to_string(bench.streamingWarmupFarMs[i]);
-        }
-      publications+=']';
-      event("streaming_ready","\"world\":"+jsonStr(w.name())+",\"pass\":true,\"far_publication_ms\":"+publications+
-        ",\"far_max_per_frame\":"+std::to_string(bench.streamingWarmupFarMaxPerFrame)+
-        ",\"queue_max_ms\":"+std::to_string(bench.streamingWarmupQueueMaxMs)+
-        ",\"vob_pending\":"+std::to_string(w.chunkResidency() ? w.chunkResidency()->stats().vobPending : 0)+
-        ",\"vob_near_missing\":"+std::to_string(w.chunkResidency() ? w.chunkResidency()->stats().vobNearMissing : 0));
-      bench.streamingWarmupFarMs.clear();
-      bench.streamingWarmupFarMaxPerFrame=0;
-      bench.streamingWarmupQueueMaxMs=0;
-      }
+    if(bench.waitStreaming && streamingWaitTick(w))
+      return;
     if(bench.waitRagdollNpc!=nullptr) {
       const auto* npc=bench.waitRagdollNpc;
       const auto* body=npc->ragdollBody();
@@ -19420,7 +19453,8 @@ void run(World& w, Npc& pl, PlayerControl& ctrl) {
       }
     if(bench.pc>=bench.prog.size())
       break;
-    if(bench.time<bench.waitUntil || std::chrono::steady_clock::now()<bench.realWaitUntil || bench.volleyLeft>0)
+    if(bench.time<bench.waitUntil || std::chrono::steady_clock::now()<bench.realWaitUntil || bench.volleyLeft>0 ||
+       bench.settleSteps>0)
       return;
     if(bench.waitArrive) {
       if(!pl.isAiQueueEmpty() && bench.time<bench.arriveEnd)
@@ -19443,7 +19477,7 @@ void run(World& w, Npc& pl, PlayerControl& ctrl) {
     if(bench.cadenceWait) return;
 #endif
     }
-  if(bench.time>=bench.waitUntil && std::chrono::steady_clock::now()>=bench.realWaitUntil && !bench.waitArrive && bench.volleyLeft==0 && bench.downNpc==nullptr && bench.waitRagdollNpc==nullptr && !bench.duelWaiting && !bench.npcDuel.active && !bench.waitStreaming && bench.bodyLiveWait.empty())
+  if(bench.time>=bench.waitUntil && std::chrono::steady_clock::now()>=bench.realWaitUntil && !bench.waitArrive && bench.volleyLeft==0 && bench.downNpc==nullptr && bench.waitRagdollNpc==nullptr && !bench.duelWaiting && !bench.npcDuel.active && !bench.waitStreaming && bench.settleSteps==0 && bench.bodyLiveWait.empty())
     finish();
   }
 
@@ -20689,6 +20723,16 @@ bool TestBench::filming() {
   return scenarioPath!=nullptr && realtime;
   }
 
+bool TestBench::deterministic() { return bench.started && !bench.done && bench.deterministic; }
+
+bool TestBench::simulationFrozen() { return bench.started && !bench.done && bench.frozen; }
+
+bool TestBench::takeRenderReset() {
+  const bool r=bench.renderReset;
+  bench.renderReset=false;
+  return r;
+  }
+
 uint64_t TestBench::frameDt(uint64_t dt) {
   if(!bench.started || bench.done)
     return dt;
@@ -21036,8 +21080,14 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
     return false;
     }
   writeHeartbeat(*world);
-  if(dt==0)
+  if(dt==0) {
+    // the world stands still (`deterministic on`): only the streaming wait runs
+    if(bench.frozen)
+      streamingWaitTick(*world);
     return false;
+    }
+  if(bench.settleSteps>0)
+    --bench.settleSteps;
   NavBench::tick(*world);
   NavDemos::tick(*world,dt);
   NavigationEyeBench::tick(world->tickCount());

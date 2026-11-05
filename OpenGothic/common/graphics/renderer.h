@@ -23,6 +23,8 @@ class Renderer final {
     ~Renderer();
 
     void onWorldChanged();
+    // Bench `deterministic on`: the next frame starts the TAA history over at jitter phase 0
+    void resetTemporal();
 
     void draw(Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId,
               Tempest::VectorImage::Mesh& uiLayer, Tempest::VectorImage::Mesh& numOverlay,

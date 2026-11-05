@@ -340,6 +340,12 @@ void Renderer::onWorldChanged() {
   resetSkyFog();
   }
 
+void Renderer::resetTemporal() {
+  taa.valid = false;
+  taa.frame = 0;
+  taa.cur   = 0;
+  }
+
 void Renderer::updateCamera(const WorldView& wview, const Camera& camera) {
   proj        = camera.projective();
   viewProj    = camera.viewProj();
