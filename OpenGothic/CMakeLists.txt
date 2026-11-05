@@ -442,6 +442,16 @@ if(NOT ANDROID AND NOT IOS)
         ${CMAKE_CURRENT_BINARY_DIR}/navpolicy-fixture/parity.bin.gz
       DEPENDS gothic-navpolicy-contract USES_TERMINAL)
   endif()
+  add_executable(gothic-navreward-contract EXCLUDE_FROM_ALL
+    tests/navreward_contract.cpp common/navreward.cpp)
+  target_include_directories(gothic-navreward-contract PRIVATE
+    common lib/Tempest/Engine/include lib/Tempest/Engine)
+  if(NOT MSVC)
+    target_compile_options(gothic-navreward-contract PRIVATE -Wall -Wconversion -Werror)
+  endif()
+  add_custom_target(check-navreward
+    COMMAND $<TARGET_FILE:gothic-navreward-contract>
+    DEPENDS gothic-navreward-contract USES_TERMINAL)
   add_executable(gothic-navkeyteacher-contract EXCLUDE_FROM_ALL
     tests/navkeyteacher_contract.cpp common/navkeyteacher.cpp)
   target_include_directories(gothic-navkeyteacher-contract PRIVATE
