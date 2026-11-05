@@ -4,6 +4,7 @@
 #include <vector>
 #include <string>
 #include "asset/math.h"
+#include "graphics/pfx/pfxmotion.h"
 
 class LightSource final {
   public:
@@ -33,6 +34,11 @@ class LightSource final {
     bool                 isEnabled() const;
     float                currentRange() const { return curRgn; }
     const Tempest::Vec3& currentColor() const { return curClr; }
+    const Tempest::Vec3& currentPosition() const { return flicker.active() ? curPos : pos; }
+
+    // the brightness follows a flame's signal at the world time and the position trembles by jitterCm
+    // (vobs.d "flicker_from", "jitter_cm"): the same signal as the emitter's particles
+    void                 setFlicker(const PfxMotion::Flicker& f, float jitterCm);
 
     void                 setTimeOffset(uint64_t t);
 
@@ -63,6 +69,10 @@ class LightSource final {
 
     Tempest::Vec3      curClr;
     float              curRgn = 0;
+    Tempest::Vec3      curPos;
+
+    PfxMotion::Flicker flicker;
+    float              flickerJitterCm = 0;
 
     bool               enable = true;
   };

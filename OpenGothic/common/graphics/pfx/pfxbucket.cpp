@@ -15,6 +15,8 @@
 #include "world/objects/npc.h"
 #include "world/chunkresidency.h"
 
+#include <Tempest/Log>
+
 using namespace Tempest;
 
 static uint64_t ppsDiff(const ParticleFx& decl, bool loop, uint64_t time0, uint64_t time1) {
@@ -205,7 +207,8 @@ size_t PfxBucket::allocEmitter() {
   for(size_t i=0; i<impl.size(); ++i) {
     auto& b = impl[i];
     if(b.st==S_Free) {
-      b.st = S_Inactive;
+      b.st      = S_Inactive;
+      b.flicker = {};
       updateTextureDemand(i);
       return i;
       }
@@ -467,8 +470,15 @@ void PfxBucket::tick(Block& sys, ImplEmitter& emitter, size_t particle, uint64_t
 
   // eval particle
   ps.life  = uint16_t(ps.life-dt);
-  ps.pos  += ps.dir*dtF;
-  ps.dir  += decl.flyGravity*dtF;
+  if(decl.motion.active()) {
+    // own curl and drag (particles.d): substeps, drag integrated exactly, the field in world space
+    const Vec3  origin = decl.useEmittersFOR ? emitter.pos : Vec3();
+    const float t0     = float((parent.now>=dt ? parent.now-dt : 0)%3600000u);
+    PfxMotion::step(decl.motion, decl.flyGravity, ps.pos, ps.dir, origin, t0, dtF);
+    } else {
+    ps.pos  += ps.dir*dtF;
+    ps.dir  += decl.flyGravity*dtF;
+    }
 
   if(maxTrlTime!=0)
     tickTrail(ps,emitter,dt);
@@ -537,6 +547,13 @@ void PfxBucket::implTickCommon(uint64_t dt, const Vec3& viewPos) {
 
     if(emitter.waitforNext>=dt)
       emitter.waitforNext-=dt;
+
+    if(emitter.flicker.active() && emitter.block!=size_t(-1)) {
+      auto& p = getBlock(emitter);
+      p.flicker = PfxMotion::flicker(emitter.flicker, parent.now);
+      if(PfxMotion::logEnabled())
+        Log::i("flicker pfx seed=", emitter.flicker.seed, " t=", parent.now, " s=", p.flicker);
+      }
 
     if(decl.flipSteady && emitter.block!=size_t(-1) && (emitter.st!=S_Active || !nearby)) {
       // steady particles never die on their own: they go with their emitter or when it is out of view range
@@ -723,6 +740,13 @@ void PfxBucket::buildSsbo() {
         color.b = uint8_t(cl.z);
         color.a = uint8_t(clA*255);
         }
+      if(p.flicker!=1.f) {
+        // the flame's signal (vobs.d "flicker"): the brightness, up to white
+        const float k = p.flicker * (visAlphaFunc==Material::AlphaFunc::AdditiveLight ? clA : 1.f);
+        color.r = uint8_t(std::min(255.f, cl.x*k));
+        color.g = uint8_t(std::min(255.f, cl.y*k));
+        color.b = uint8_t(std::min(255.f, cl.z*k));
+        }
       uint32_t colorU32;
       std::memcpy(&colorU32,&color,4);
       buildBilboard(px,p,ps, colorU32, szX,szY,szZ);
@@ -783,6 +807,15 @@ void PfxBucket::buildBilboard(PfxState& v, const Block& p, const ParState& ps, c
   v.bits0 |= uint32_t(0) << 3; // TODO: trails
   v.bits0 |= uint32_t(decl.visOrientation) << 4;
   v.dir   = ps.dir;
+  if(decl.stretchMs>0 && decl.visOrientation!=ParticleFx::Orientation::None) {
+    // own streak (particles.d "stretch", pfx.vert): orientation 3, size.z the path of stretchMs at the velocity in cm
+    v.bits0 |= uint32_t(3) << 4;
+    v.size.z = ps.dir.length()*decl.stretchMs;
+    }
+  if(decl.minPixels>0) {
+    // own least size on screen (particles.d "minPixels", pfx.vert), 1/16 px in bits 7..14: no flipbook here
+    v.bits0 |= uint32_t(std::clamp(decl.minPixels*16.f+0.5f, 1.f, 255.f)) << 7;
+    }
   }
 
 void PfxBucket::buildTrailSegment(PfxState& v, const Trail& a, const Trail& b, float maxT) {

@@ -77,6 +77,25 @@ void overrideFields(zenkit::DaedalusVm& vm, Def::ParticleEffect& effect, const J
       }
     }
   }
+float number(const Json& value, const char* name, double lo, double hi, const char* range) {
+  require(value.IsNumber(),std::string(name)+": expected number");
+  const auto v=value.GetDouble();
+  require(std::isfinite(v) && v>=lo && v<=hi,std::string(name)+": expected "+range);
+  return float(v);
+  }
+void readMotion(const Json& entry, Motion& motion) {
+  if(entry.HasMember("curl")) {
+    const auto& curl=entry["curl"];
+    fields(curl,{"strength","frequency","speed"});
+    motion.curlStrength =number(member(curl,"strength"),"curl.strength",0,20,"0..20");
+    motion.curlFrequency=number(member(curl,"frequency"),"curl.frequency",0,50,"0..50");
+    require(motion.curlFrequency>0,"curl.frequency: must be positive");
+    motion.curlSpeed    =curl.HasMember("speed") ? number(curl["speed"],"curl.speed",0,10,"0..10") : 0.f;
+    }
+  if(entry.HasMember("drag"))      motion.drag     =number(entry["drag"],"drag",0,50,"0..50");
+  if(entry.HasMember("stretch"))   motion.stretch  =number(entry["stretch"],"stretch",0,0.5,"0..0.5");
+  if(entry.HasMember("minPixels")) motion.minPixels=number(entry["minPixels"],"minPixels",0,15,"0..15");
+  }
 } // namespace
 
 std::string canonicalName(std::string_view name) {
@@ -148,8 +167,9 @@ Result load(zenkit::DaedalusVm& vm, const fs::path& contentRoot) {
       require(effects.IsArray(),"effects: expected array");
       decltype(result.effects) pending;
       decltype(result.flipbooks) pendingFlipbooks;
+      decltype(result.motions) pendingMotions;
       for(const auto& entry:effects.GetArray()) {
-        fields(entry,{"name","base","set","flipbook"});
+        fields(entry,{"name","base","set","flipbook","curl","drag","stretch","minPixels"});
         const auto name=text(member(entry,"name"));
         require(!name.empty() && std::all_of(name.begin(),name.end(),[](char c) {
           return (c>='A' && c<='Z') || (c>='0' && c<='9') || c=='_';
@@ -195,10 +215,22 @@ Result load(zenkit::DaedalusVm& vm, const fs::path& contentRoot) {
           pendingFlipbooks.emplace(name,f->second);
         else if(const auto f=result.flipbooks.find(baseName); f!=result.flipbooks.end())
           pendingFlipbooks.emplace(name,f->second);
+        // own motion and look: inherited field by field from an own base, then the entry's own
+        Motion motion;
+        if(const auto m=pendingMotions.find(baseName); m!=pendingMotions.end()) motion=m->second;
+        else if(const auto m=result.motions.find(baseName); m!=result.motions.end()) motion=m->second;
+        readMotion(entry,motion);
+        if(motion.stretch>0) {
+          const auto orientation=uppercase(definition->vis_orientation_s);
+          require(orientation=="VELO" || orientation=="VELO3D","stretch: needs visOrientation_S VELO or VELO3D");
+          }
+        require(motion.minPixels==0 || pendingFlipbooks.count(name)==0,"minPixels: not with a flipbook");
+        if(!motion.empty()) pendingMotions.emplace(name,motion);
         pending.emplace(name,std::move(definition));
         }
       result.effects.insert(pending.begin(),pending.end());
       result.flipbooks.insert(pendingFlipbooks.begin(),pendingFlipbooks.end());
+      result.motions.insert(pendingMotions.begin(),pendingMotions.end());
       }
     catch(const std::exception& error) { result.errors.push_back(file.string()+": "+error.what()); }
     }

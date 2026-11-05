@@ -1,0 +1,12 @@
+{
+ "format": 1,
+ "effects": [
+  {"name": "OWN_TORCH_SPARKS_DEMO", "base": "FIRE_SPARKS",
+   "set": {"ppsValue": 16.0, "shpType_S": "SPHERE", "shpDim_S": "4", "shpIsVolume": 1, "shpOffsetVec_S": "0 4 0",
+           "dirMode_S": "DIR", "dirFOR_S": "WORLD", "dirAngleHead": 0.0, "dirAngleHeadVar": 179.0, "dirAngleElev": 90.0, "dirAngleElevVar": 30.0,
+           "velAvg": 0.18, "velVar": 0.07, "lspPartAvg": 1100.0, "lspPartVar": 400.0, "flyGravity_S": "0 -0.00015 0",
+           "visOrientation_S": "VELO", "visSizeStart_S": "0.8 0.8", "visSizeEndScale": 0.5,
+           "visTexColorStart_S": "255 200 120", "visTexColorEnd_S": "255 90 20", "visAlphaStart": 255.0, "visAlphaEnd": 0.0, "visAlphaFunc_S": "ADD"},
+   "curl": {"strength": 1.5, "frequency": 4, "speed": 0.3}, "drag": 2, "stretch": 0.025, "minPixels": 1.5}
+ ]
+}

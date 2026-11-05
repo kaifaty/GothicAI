@@ -1,0 +1,9 @@
+{
+ "format": 1,
+ "add": [
+  {"key": "wall-torch-demo-sparks", "kind": "emitter", "pfx": "OWN_TORCH_SPARKS_DEMO", "position": [405.4, 121.3, -3085.4], "yaw_deg": 0,
+   "flicker": {"pulse_hz": 6, "jitter_hz": 12, "amount": 0.2, "seed": 7}},
+  {"key": "wall-torch-demo-light", "kind": "light", "position": [401.9, 125.6, -3086.5], "yaw_deg": 0, "range": 400, "color": [184, 122, 107],
+   "flicker_from": "wall-torch-demo-sparks", "jitter_cm": 2}
+ ]
+}

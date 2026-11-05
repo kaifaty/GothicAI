@@ -2,6 +2,8 @@
 
 #include <cstring>
 
+#include <Tempest/Log>
+
 using namespace Tempest;
 
 static Vec3 toVec3(uint32_t v) {
@@ -104,7 +106,14 @@ void LightSource::setEnabled(bool e) {
   enable = e;
   }
 
+void LightSource::setFlicker(const PfxMotion::Flicker& f, float jitterCm) {
+  flicker         = f;
+  flickerJitterCm = jitterCm;
+  curPos          = pos;
+  }
+
 void LightSource::update(uint64_t time) {
+  const uint64_t worldTime = time;
   if(timeOff<time)
     time -= timeOff; else
     time  = 0;
@@ -134,10 +143,19 @@ void LightSource::update(uint64_t time) {
     Vec3 cl1 = colorAniList[(frame+1)%colorAniList.size()];
     curClr = cl0+(cl1-cl0)*a;
     }
+
+  if(flicker.active()) {
+    // the world time, without the light's offset: the emitter's particles read the same tick (pfxbucket.cpp)
+    const float s = PfxMotion::flicker(flicker, worldTime);
+    curClr = clr*s;
+    curPos = pos + PfxMotion::jitter(flicker, worldTime, flickerJitterCm);
+    if(PfxMotion::logEnabled())
+      Tempest::Log::i("flicker light seed=", flicker.seed, " t=", worldTime, " s=", s);
+    }
   }
 
 bool LightSource::isDynamic() const {
-  return rangeAniFPSInv!=0 || colorAniListFpsInv!=0;
+  return rangeAniFPSInv!=0 || colorAniListFpsInv!=0 || flicker.active();
   }
 
 bool LightSource::isEnabled() const {
