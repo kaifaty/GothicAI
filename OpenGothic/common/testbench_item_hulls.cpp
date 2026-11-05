@@ -237,7 +237,7 @@ void itemHullSetup(ItemHulls& state,World& world,Npc& player,std::string_view su
     if(state.itemHullSupportBody.isEmpty()) {arenaAbort("item hull fixture lacks native support");return;}
     }
   const Vec3 heroLocal=surface=="terrain"?Vec3():
-                       surface=="stairs"?Vec3(-550,itemHullSupportY(state,-550),-700):Vec3(-850,itemHullSupportY(state,-850),0);
+                       surface=="stairs"?Vec3(572.5f,itemHullSupportY(state,572.5f),-700):Vec3(-850,itemHullSupportY(state,-850),0);
   player.closeWeapon(true);player.clearAiQueue();player.stopWalking();
   player.setPosition(anchor+heroLocal);player.updateTransform();
   struct Spec {const char* label;std::initializer_list<const char*> symbols;bool longAxis=false;};
@@ -264,6 +264,9 @@ void itemHullSetup(ItemHulls& state,World& world,Npc& player,std::string_view su
     std::vector<Vec3> visibleVertices;mesh->appendItemVertices(visibleVertices);
     if(visibleVertices.empty()) {arenaAbort("item hull fixture has no visible mesh vertices: "+std::string(spec.label));return;}
     Vec3 place(float(i%5)*190.f-380.f,0,float(i/5)*260.f-130.f);
+    // Stairs: one mid-tread line, a 170 cm lane per item, the hero above them. On a riser edge the
+    // support ray below depends on float rounding, and an item rolling down a shared lane wakes those below.
+    if(surface=="stairs")place=Vec3(12.5f,0,float(i)*170.f-765.f);
     if(state.itemHullLoad) {
       const float angle=float(i%10)*2.f*float(M_PI)/10.f,radius=110.f+35.f*float(i/10);
       place=heroLocal+Vec3(std::cos(angle)*radius,0,std::sin(angle)*radius);
