@@ -2,7 +2,7 @@
 # The memory teacher's dead end without a start cell, on Ryzen; each stage is one gq job under nav_job.py.
 #   bash scripts/nav-teacher-stall-remote.sh smoke        # build runner, game, converter and both contracts;
 #                                                         # resolve the base; two short episodes
-#   NAV_STALL_IDS=id,id NAV_STALL_EXIT=on|off bash scripts/nav-teacher-stall-remote.sh diagnose
+#   NAV_STALL_IDS=id,id NAV_STALL_EXIT=on|off [NAV_STALL_PARALLEL=6] bash scripts/nav-teacher-stall-remote.sh diagnose
 #                                                         # follow teacher traces with memory/navmesh dumps at stalls
 #   bash scripts/nav-teacher-stall-remote.sh follow-teacher-on-aside      # follow validation: the teacher now
 #   bash scripts/nav-teacher-stall-remote.sh follow-teacher-off-last-seen # ... as on main (both switches back)
@@ -96,6 +96,7 @@ HASH
   GQ_OWNER="$task_name" "$ROOT/scripts/gq" submit "${resources[@]}" --name "nav stall $stage $snapshot" -- \
     python3 -X faulthandler -I "$task/source/$snapshot/scripts/nav_job.py" --max-seconds 7080 -- \
     env NAV_STALL_ARCHIVE="$archive" "NAV_STALL_IDS=${NAV_STALL_IDS:-}" "NAV_STALL_EXIT=${NAV_STALL_EXIT:-on}" \
+    "NAV_STALL_PARALLEL=${NAV_STALL_PARALLEL:-6}" \
     bash "$task/source/$snapshot/scripts/nav-teacher-stall-remote.sh" run "$stage" "$snapshot" "$engine"
   exit
 fi
@@ -212,9 +213,10 @@ if [[ "$stage" == diagnose ]]; then
   navmesh 6
   # One folder per set of routes and switch; a repeated run of the same set resumes it.
   routes="$(printf '%s' "$NAV_STALL_IDS" | sha256sum | cut -c1-10)"
-  output="$archive/diagnose/teacher-exit-$NAV_STALL_EXIT-$snapshot-$routes"
+  output="$archive/diagnose/teacher-exit-$NAV_STALL_EXIT-$snapshot-$routes-p$NAV_STALL_PARALLEL"
+  # NAV_STALL_PARALLEL=1 runs the routes in manifest order in one runner, as one worker of a validation did.
   validate "$output" teacher --families follow_below_gate --exit "$NAV_STALL_EXIT" --ids "$NAV_STALL_IDS" \
-    --parallel 6 --keep-traces --trace
+    --parallel "$NAV_STALL_PARALLEL" --keep-traces --trace
   "$python" -B -I scripts/nav_teacher_stall.py stalls --root "$output"
   exit
 fi
