@@ -1755,12 +1755,22 @@ void WorldObjects::resetPositionToTA() {
 
   for(size_t i=0;i<npcArr.size();) {
     auto& n = *npcArr[i];
+    LoadProbe::Startup::Detail::Scope detail("placement_npc",[&]{
+      const auto* symbol=owner.script().findSymbol(n.instanceSymbol());
+      return symbol!=nullptr ? symbol->name() : std::to_string(n.instanceSymbol());
+      });
     if(keepBodies && n.isDead() && !n.isPlayer()) {
       ++i;
       continue;
       }
     if(n.resetPositionToTA()){
+      LoadProbe::Startup::Detail::Scope sync("logical_sync");
       n.syncLogicalBodyState(true);
+      sync.stop();
+      if(LoadProbe::enabled()) {
+        const auto pos=n.position();
+        detail.position(pos.x,pos.y,pos.z,n.isPlayer());
+        }
       ++i;
       } else {
       npcInvalid.emplace_back(std::move(npcArr[i]));
@@ -1775,6 +1785,7 @@ void WorldObjects::resetPositionToTA() {
       npc.suspendLogicalBodyState();
       }
     }
+  LoadProbe::Startup::Detail::Scope mobs("placement_mobs");
   for(auto& i:routines) {
     auto s = i.stateByTime(owner.time());
     i.curState = s;

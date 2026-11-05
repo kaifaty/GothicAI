@@ -1,4 +1,5 @@
 #include "npc.h"
+#include "loadprobe.h"
 #include "world/animationlod.h"
 #include "world/bodytraces.h"
 #include "world/bloodspawn.h"
@@ -1029,6 +1030,7 @@ float Npc::angleDir(float x, float z) {
   }
 
 bool Npc::resetPositionToTA() {
+  LoadProbe::Startup::Detail::Scope reset("reset_npc");
   endMeleeAiSpecial();
   const bool g2       = owner.version().game==2;
   const bool isDragon = (g2 && guild()==GIL_DRAGON);
@@ -1056,11 +1058,14 @@ bool Npc::resetPositionToTA() {
   if(isPlayer())
     return true;
 
+  LoadProbe::Startup::Detail::Scope routine("current_ta");
   auto at = currentTaPoint();
+  routine.stop();
   if(at==nullptr)
     return false;
 
   if(at->isLocked() && !isDead) {
+    LoadProbe::Startup::Detail::Scope next("next_point");
     auto p = owner.findNextPoint(*at);
     if(p!=nullptr)
       at = p;
@@ -1071,6 +1076,7 @@ bool Npc::resetPositionToTA() {
 
   if(!isDead) {
     attachToPoint(at);
+    LoadProbe::Startup::Detail::Scope equip("auto_equip");
     invent.autoEquipWeapons(*this);
     }
 
