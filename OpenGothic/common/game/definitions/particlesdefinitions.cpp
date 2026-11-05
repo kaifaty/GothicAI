@@ -53,6 +53,16 @@ const ParticleFx* ParticlesDefinitions::implGet(std::string_view name, bool rela
       p->visYawAlign = true;
     p->flipSteady = book->second.steady;
     }
+  if(const auto m=content.motions.find(cname); m!=content.motions.end()) {
+    // particles.d units to the engine's cm and ms
+    const auto& own = m->second;
+    p->motion.curlStrength = own.curlStrength*1e-4f;
+    p->motion.curlWave     = own.curlFrequency*6.2831853f/100.f;
+    p->motion.curlDrift    = own.curlSpeed*0.1f;
+    p->motion.drag         = own.drag*1e-3f;
+    p->stretchMs           = own.stretch*1000.f;
+    p->minPixels           = own.minPixels;
+    }
   auto elt = pfx.insert(std::make_pair(std::move(cname),std::move(p)));
 
   return elt.first->second.get();

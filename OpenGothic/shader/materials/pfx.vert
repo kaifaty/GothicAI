@@ -8,6 +8,7 @@
 const int PfxOrientationNone       = 0;
 const int PfxOrientationVelocity   = 1;
 const int PfxOrientationVelocity3d = 2;
+const int PfxOrientationStretch    = 3; // own streak (pfxbucket.cpp, particles.d "stretch")
 
 struct Particle {
   vec3  pos;
@@ -77,6 +78,7 @@ void rotate(out vec3 rx, out vec3 ry, float a, in vec3 x, in vec3 y) {
   }
 
 vec4 processVertex(out Varyings shOut, in Vertex v, uint instanceId, uint vboOffset) {
+  float energy = 1.0; // own least size on screen: the alpha that keeps the sprite's light as it grows
   // Bilboards
   {
     const float U[6]   = { 0, 1, 0,  0, 1, 1};
@@ -134,6 +136,21 @@ vec4 processVertex(out Varyings shOut, in Vertex v, uint instanceId, uint vboOff
       top  = -v.dir;
       left = -cross(top,depth);
       }
+    else if(visOrientation==PfxOrientationStretch) {
+      // a card facing the camera along the velocity as seen on screen: size.y plus the path size.z (cm) foreshortened,
+      // its head at the particle and the streak behind it
+      const float speed = length(v.dir);
+      const vec3  dn    = speed>0.0 ? v.dir/speed : vec3(0);
+      const vec3  dp    = dn - dot(dn,depth)*depth;
+      const float lp    = length(dp);
+      if(lp>1e-4) {
+        top  = -dp/lp;
+        left = -cross(top,depth);
+        }
+      v.pos    -= dn*(v.size.z*0.5);
+      v.size.y += v.size.z*lp;
+      v.size.z  = 0.1*v.size.x;
+      }
     else if(visOrientation==PfxOrientationVelocity) {
       vec3  dir  = (m * vec4(v.dir,0)).xyz;
       float ldir = length(dir);
@@ -151,6 +168,17 @@ vec4 processVertex(out Varyings shOut, in Vertex v, uint instanceId, uint vboOff
       }
     else {
       // nope
+      }
+
+    // own least size on screen (pfxbucket.cpp, particles.d "minPixels"; 1/16 px in bits 7..14 without a flipbook):
+    // a smaller sprite is drawn that size and its alpha falls by the area, so its light stays and TAA keeps it
+    const uint minPx16 = bitfieldExtract(v.bits0, 6, 1)!=0 ? 0u : bitfieldExtract(v.bits0, 7, 8);
+    if(minPx16!=0u && !isTrail) {
+      const float w     = max((scene.viewProject*vec4(v.pos,1.0)).w, 1e-3);
+      const float pxPer = abs(scene.project[1][1])*0.5*float(scene.screenRes.y)/w;
+      const vec2  k     = max(vec2(1.0), (float(minPx16)/16.0)/max(v.size.xy*pxPer, vec2(1e-4)));
+      v.size.xy *= k;
+      energy     = 1.0/(k.x*k.y);
       }
 
     if(visTexIsQuadPoly)
@@ -173,6 +201,7 @@ vec4 processVertex(out Varyings shOut, in Vertex v, uint instanceId, uint vboOff
 #endif
 #if defined(MAT_COLOR)
   shOut.color = unpackUnorm4x8(v.color);
+  shOut.color.a *= energy;
 #endif
 #if defined(MAT_UV)
   shOut.flip = vec3(0, 0, -1);
