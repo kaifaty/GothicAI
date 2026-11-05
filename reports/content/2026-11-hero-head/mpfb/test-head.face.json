@@ -2,6 +2,18 @@
   "version": 1,
   "about": "Face profile of the MPFB test head: the old face animation names of Gothic heads as weights of the head's shapes (ARKit units, Meta visemes). Timing as the original HUM_HEAD_PONY.MMB: layer, fade in/out, frame time, duration (-1: until stopped). The two sides differ a little on purpose: no face is symmetric.",
   "mouth": ["mouth", "jaw", "viseme_", "tongue", "cheekPuff"],
+  "eyes": {
+    "about": "The eyeballs turn as rigid parts around their centres (eye_L is the character's own left eye, its lid shapes end in Left, eye_R in Right). Limits of the eye in its socket, degrees. Lids: per gaze direction the shapes that follow the eye, weight = max * clamp((angle - from) / (to - from), 0, 1), {side} is Left or Right. The upper lid follows a look down almost one to one: eyeLookDown covers ~14 deg of the ball, a part of eyeBlink takes it further.",
+    "parts": {"left": "eye_L", "right": "eye_R"},
+    "limits_deg": {"out": 35, "in": 35, "up": 25, "down": 30},
+    "lids": {
+      "down": [{"target": "eyeLookDown{side}", "from": 0, "to": 20, "max": 1.0},
+               {"target": "eyeBlink{side}", "from": 15, "to": 30, "max": 0.3}],
+      "up":   [{"target": "eyeLookUp{side}", "from": 0, "to": 22, "max": 1.0}],
+      "in":   [{"target": "eyeLookIn{side}", "from": 0, "to": 30, "max": 1.0}],
+      "out":  [{"target": "eyeLookOut{side}", "from": 0, "to": 30, "max": 1.0}]
+    }
+  },
   "anims": {
     "S_NEUTRAL": {"layer": 1, "blend_in_ms": 1000, "blend_out_ms": 1000, "duration_ms": -1, "frame_ms": 1000,
       "frames": [{}]},

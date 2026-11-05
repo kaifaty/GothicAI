@@ -6993,7 +6993,6 @@ void Npc::tick(uint64_t dt) {
   visual.updateMouth(*this,dt);
   visual.updateGestures(*this,dt);
   visual.updateBlink(*this,dt);
-  visual.updateFace(*this);
 
   if(!visual.pose().hasAnim())
     setAnim(AnimationSolver::Idle);
@@ -10976,6 +10975,10 @@ Gaze::Source Npc::gazeTarget(Tempest::Vec3& at) const {
     const float pitch = headInput->y*float(M_PI)/180.f;
     at = mapHeadBone() + Vec3(std::cos(yaw)*std::cos(pitch),std::sin(pitch),std::sin(yaw)*std::cos(pitch))*1000.f;
     return Gaze::Source::Input;
+    }
+  if(lookPointUntil>owner.tickCount()) {
+    at = lookPoint;
+    return Gaze::Source::Script;
     }
   static const float focusDist = 800;
   const Vec3 eyes = {0,6,0}; // the eyes are a bit above the head bone

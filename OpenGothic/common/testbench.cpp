@@ -83,6 +83,7 @@ extern bool benchTexturesFrozen;
 #include "graphics/mesh/talkgestures.h"
 #include "graphics/mesh/eyeblink.h"
 #include "graphics/mesh/facerig.h"
+#include "graphics/mesh/eyes.h"
 #include "graphics/mesh/lean.h"
 #include "graphics/mesh/pose.h"
 #include "graphics/mesh/animblend.h"
@@ -781,9 +782,11 @@ struct Bench {
   bool        hasPrev   = false;
   bool        inDialog  = false;
   Npc*        pinned    = nullptr;  // pin: held there every frame
-  Npc*        hearNpc   = nullptr;  // hear: it listens to the hero (words every hearEvery ms) until hearUntil
+  Npc*        hearNpc   = nullptr;  // hear: it listens to hearWith (words every hearEvery ms) until hearUntil
+  Npc*        hearWith  = nullptr;
   uint64_t    hearUntil = 0, hearEvery = 600, hearNext = 0;
-  Npc*        thinkNpc  = nullptr;  // think: it thinks of an answer until thinkUntil
+  Npc*        thinkNpc  = nullptr;  // think: it thinks of an answer to thinkWith until thinkUntil
+  Npc*        thinkWith = nullptr;
   uint64_t    thinkUntil = 0;
   Vec3        pinAt     = {};
   float       speed     = 0;
@@ -2562,6 +2565,7 @@ void writeHeader() {
   for(auto& f:FaceColumns)
     std::fprintf(bench.csv,",%s",f.column);
   std::fprintf(bench.csv,",rig_on,rig_anims,rig_targets,rig_us,rig_n,rig_up_us");
+  std::fprintf(bench.csv,",ey_on,ey_kind,ey_ly,ey_lp,ey_ry,ey_rp,ey_err,ey_over,ey_move,ey_sac,ey_big");
   std::fprintf(bench.csv,",f_on,f_bend,f_yaw,f_twist,f_head,f_hits,f_str,f_ht");
   std::fprintf(bench.csv,",hp_player,hp_subject");
   std::fprintf(bench.csv,",stamina_player,stamina_subject");
@@ -9022,6 +9026,12 @@ void writeRow(Npc& pl) {
   const auto& fr = FaceRig::subjectProbe;
   std::fprintf(bench.csv,",%d,%u,%u,%.1f,%u,%.1f",int(fr.valid),fr.anims,fr.targets,double(fr.blendUs),fr.blends,
                double(fr.uploadUs));
+  // its eyes (Eyes): the fixation point's kind, degrees in the socket (left, right), from the point and beyond the
+  // limits, in a saccade, saccades and the big ones so far
+  const auto& ey = Eyes::subjectProbe;
+  std::fprintf(bench.csv,",%d,%u,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%d,%u,%u",int(ey.valid),unsigned(ey.kind),double(ey.yaw[0]),
+               double(ey.pitch[0]),double(ey.yaw[1]),double(ey.pitch[1]),double(ey.error),double(ey.over),int(ey.moving),
+               ey.saccades,ey.big);
   // flinch of the watched one (or the hero)
   const auto& fl = bench.subject!=nullptr ? Flinch::subjectProbe : Flinch::playerProbe;
   std::fprintf(bench.csv,",%d,%.2f,%.1f,%.2f,%.2f,%u,%.2f,%.2f",int(fl.active),fl.bend,fl.bendYaw,fl.twist,fl.head,
@@ -9110,21 +9120,26 @@ void writeRow(Npc& pl) {
 
 void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl);
 
-// the hero stands around the watched npc, facing it
-void placeHero(World& w, Npc& pl) {
-  Npc& s = subjectOf(pl);
-  if(&s==&pl || bench.placeDist<=0)
-    return;
-  const float a   = (s.rotation()+bench.placeAngle)*float(M_PI)/180.f;
-  Vec3        pos = s.position() + Vec3(std::cos(a),0,std::sin(a))*bench.placeDist;
+// one stands around the other, that far, at that angle from the other's facing, facing it
+void standAround(World& w, Npc& s, Npc& pl, float dist, float angle) {
+  const float a   = (s.rotation()+angle)*float(M_PI)/180.f;
+  Vec3        pos = s.position() + Vec3(std::cos(a),0,std::sin(a))*dist;
   const float g   = groundY(w,pos.x,pos.z,pos.y+100);
   if(std::isnan(g))
-    return; // inside a rock: the hero would fall through the world
+    return; // inside a rock: it would fall through the world
   pos.y = g;
   pl.setPosition(pos);
   const Vec3 d = s.position()-pos;
   pl.setDirection(Vec3(d.x,0,d.z));
   pl.updateTransform();
+  }
+
+// the hero stands around the watched npc, facing it
+void placeHero(World& w, Npc& pl) {
+  Npc& s = subjectOf(pl);
+  if(&s==&pl || bench.placeDist<=0)
+    return;
+  standAround(w,s,pl,bench.placeDist,bench.placeAngle);
   }
 
 // foreach slope <min deg> <max deg> <count> | foreach stairs <count> | foreach wp <name part> <count>
@@ -17901,27 +17916,32 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       say("unknown gestures command: " + line);
     }
   else if(c=="hear") {
-    // hear <npc|nearest> <ms> [every ms]: the hero speaks to it that long, his words come every so often
-    // (as the bridge does with his voice: it listens, nods now and then)
-    Npc* n = findNpc(w,pl,a.size()>1 ? a[1] : "nearest");
-    if(n==nullptr || n==&pl) {
+    // hear <npc|nearest|player> <ms> [every ms]: the hero speaks to it that long, his words come every so often
+    // (as the bridge does with his voice: it listens, nods now and then); player: the hero listens to the nearest
+    Npc* n    = findNpc(w,pl,a.size()>1 ? a[1] : "nearest");
+    Npc* from = n==&pl ? findNpc(w,pl,"nearest") : &pl;
+    if(n==nullptr || from==nullptr || from==n) {
       say("hear: no npc " + line);
       return;
       }
     bench.hearNpc   = n;
+    bench.hearWith  = from;
     bench.hearUntil = bench.time + uint64_t(num(a,2,4000));
     bench.hearEvery = uint64_t(std::max(100.f,num(a,3,600)));
     bench.hearNext  = bench.time;
     say("hear " + symName(w,n));
     }
   else if(c=="think") {
-    // think <npc|nearest> <ms>: it thinks of an answer that long (as on the AI server's `thinking`)
-    Npc* n = findNpc(w,pl,a.size()>1 ? a[1] : "nearest");
-    if(n==nullptr || n==&pl) {
+    // think <npc|nearest|player> <ms>: it thinks of an answer that long (as on the AI server's `thinking`);
+    // the hero thinks of an answer to the nearest
+    Npc* n  = findNpc(w,pl,a.size()>1 ? a[1] : "nearest");
+    Npc* to = n==&pl ? findNpc(w,pl,"nearest") : &pl;
+    if(n==nullptr || to==nullptr || to==n) {
       say("think: no npc " + line);
       return;
       }
     bench.thinkNpc   = n;
+    bench.thinkWith  = to;
     bench.thinkUntil = bench.time + uint64_t(num(a,2,2500));
     say("think " + symName(w,n));
     }
@@ -17950,6 +17970,8 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     EyeBlink::subjectProbe     = EyeBlink::Probe();
     FaceRig::probeNpc          = n;
     FaceRig::subjectProbe      = FaceRig::Probe();
+    Eyes::probeNpc             = n;
+    Eyes::subjectProbe         = Eyes::Probe();
     Lean::probeNpc = bench.subject;
     Pose::probeNpc = bench.subject;
     bench.anim1.clear();
@@ -18081,6 +18103,19 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
                     policyName(n->processPolicy()));
     say(buf);
     }
+  else if(c=="gazeat") {
+    // gazeat <npc|nearest|player> <yaw> <pitch> <ms> [dist]: it looks at a point that many degrees aside (+ as
+    // its rotation goes) and up from its facing, dist cm (100) from its head, for ms
+    Npc* n = findNpc(w,pl,a.size()>1 ? a[1] : "player");
+    if(n==nullptr) {
+      say("gazeat: no npc " + line);
+      return;
+      }
+    const float yaw = (n->rotation()+num(a,2,0))*float(M_PI)/180.f, pitch = num(a,3,0)*float(M_PI)/180.f;
+    const Vec3  dir = Vec3(std::cos(yaw)*std::cos(pitch),std::sin(pitch),std::sin(yaw)*std::cos(pitch));
+    n->lookAtPoint(n->mapHeadBone() + dir*num(a,5,100),w.tickCount()+uint64_t(num(a,4,3000)));
+    say("gazeat " + symName(w,n) + " " + (a.size()>3 ? a[2]+" "+a[3] : std::string("0 0")));
+    }
   else if(c=="lookat") {
     // lookat <npc|nearest> <npc|player|off>: as the script AI_LookAtNpc, AI_StopLookAt
     Npc* n = findNpc(w,pl,a.size()>1 ? a[1] : "nearest");
@@ -18161,7 +18196,18 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     say(std::string("heropose ") + (pl.setPlayerPose(kneel,"testbench none") ? (kneel ? "kneel" : "none") : "refused"));
     }
   else if(c=="place") {
-    // place <dist> <angle>: the hero stands that far from the watched npc, at that angle from its facing
+    // place <dist> <angle>: the hero stands that far from the watched npc, at that angle from its facing;
+    // place <dist> <angle> <npc|nearest>: that npc stands so around the hero, facing him, the hero stays
+    if(a.size()>3) {
+      Npc* n = findNpc(w,pl,a[3]);
+      if(n==nullptr || n==&pl) {
+        say("place: no npc " + line);
+        return;
+        }
+      standAround(w,pl,*n,num(a,1,150),num(a,2,0));
+      say("place " + symName(w,n) + " " + a[1] + " " + a[2]);
+      return;
+      }
     bench.placeDist  = num(a,1,150);
     bench.placeAngle = num(a,2,0);
     placeHero(w,pl);
@@ -20587,8 +20633,8 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
   if(bench.hearNpc!=nullptr) {
     if(bench.time<bench.hearUntil) {
       bench.hearNpc->listenTo(300);
-      bench.hearNpc->setTalkPartner(player,1000);
-      player->setTalkPartner(bench.hearNpc,1000);
+      bench.hearNpc->setTalkPartner(bench.hearWith,1000);
+      bench.hearWith->setTalkPartner(bench.hearNpc,1000);
       if(bench.time>=bench.hearNext) {
         bench.hearNpc->heardWords();
         bench.hearNext = bench.time + bench.hearEvery;
@@ -20601,7 +20647,8 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
   if(bench.thinkNpc!=nullptr) {
     if(bench.time<bench.thinkUntil) {
       bench.thinkNpc->thinkOfAnswer(300);
-      bench.thinkNpc->setTalkPartner(player,1000);
+      bench.thinkNpc->setTalkPartner(bench.thinkWith,1000);
+      bench.thinkWith->setTalkPartner(bench.thinkNpc,1000);
       } else {
       bench.thinkNpc->thinkOfAnswer(0);
       bench.thinkNpc = nullptr;

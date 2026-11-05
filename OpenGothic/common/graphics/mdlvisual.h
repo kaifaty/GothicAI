@@ -11,6 +11,8 @@
 #include "graphics/mesh/talkgestures.h"
 #include "graphics/mesh/eyeblink.h"
 #include "graphics/mesh/facerig.h"
+#include "graphics/mesh/eyes.h"
+#include "graphics/mesh/gaze.h"
 #include "graphics/mesh/quiver.h"
 #include "game/constants.h"
 #include "meshobjects.h"
@@ -219,7 +221,8 @@ class MdlVisual final {
     void                           setTalkMood    (std::string_view mood) { gestures.setMood(TalkGestures::moodOf(mood)); }
     void                           updateGestures (Npc& npc, uint64_t dt);
     void                           updateBlink    (Npc& npc, uint64_t dt);
-    // the own head's face (FaceRig): its weights to the deformation of the head, near only
+    // the own head's face (FaceRig): its eyes and weights to the deformation of the head, near only; after the pose
+    // of the frame (the eyes aim from the head as drawn), on the main thread (the upload)
     void                           updateFace     (Npc& npc);
     // the other one speaks to it, it thinks of an answer (TalkGestures)
     void                           listen         (uint64_t until) { gestures.listen(until); }
@@ -311,6 +314,7 @@ class MdlVisual final {
     void                       lookForGround(const Npc& npc, const Tempest::Vec3& hip, const Tempest::Vec3& mid,
                                              const Tempest::Vec3& bottom);
     void setupGestures();
+    void updateEyes(Npc& npc, uint64_t now);
 
     Tempest::Matrix4x4             pos;
     Tempest::Vec3                 textureOwnerPosition;
@@ -326,6 +330,9 @@ class MdlVisual final {
     EyeBlink                       blink;
     uint32_t                       blinkShift = 0;        // gaze shifts seen so far
     FaceRig                        face;                  // the own head's face anims (a profile), else none
+    Eyes                           eyes;                  // its eyeballs (an "eyes" section in the profile)
+    Gaze::Source                   lookSource = Gaze::Source::None;  // what Gaze looked at last (updateGaze)...
+    Tempest::Vec3                  lookAt;                // ...where: the eyes go there too
     float                          faceUploadUs = 0;      // the last setDeformation of the face, µs (test bench)
     MeshAttach                     ammunition, stateItm;
     std::vector<MeshAttach>        item;
