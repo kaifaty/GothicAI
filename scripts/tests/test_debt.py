@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 import sys
+import textwrap
 from copy import deepcopy
 from datetime import date
 from pathlib import Path
@@ -595,7 +596,8 @@ def test_ratchet_workflow_checks_every_pr_against_base_sha():
     workflow = (ROOT / ".github/workflows/debt-ratchet.yml").read_text(encoding="utf-8")
     assert "name: Technical debt ratchet\n" in workflow
     assert "on: pull_request\n" in workflow and not re.search(r"\bpaths(?:-ignore)?:", workflow)
-    assert 'run: python3 scripts/debt.py check --base "$BASE_SHA"' in workflow
+    assert 'git show "$BASE_SHA:scripts/debt.py"' in workflow
+    assert 'python3 "$tool/debt.py" check --base "$BASE_SHA"' in workflow
     assert "BASE_SHA: ${{ github.event.pull_request.base.sha }}" in workflow
     assert "ref: ${{ github.event.pull_request.head.sha }}" in workflow
     assert "persist-credentials: false" in workflow and "fetch-depth: 0" in workflow
@@ -607,6 +609,77 @@ def test_ratchet_workflow_checks_every_pr_against_base_sha():
     for action in ("checkout", "setup-python"):
         pinned = re.search(rf"actions/{action}@[a-f0-9]{{40}}", tests)[0]
         assert pinned in workflow
+
+
+OLD_DEBT = (
+    "import argparse\n"
+    "parser = argparse.ArgumentParser()\n"
+    "parser.add_subparsers(dest='command', required=True).add_parser('scan')\n"
+    "parser.parse_args()\n"
+)
+RATCHET_CONFIG = """\
+exclude = ["OpenGothic/lib", "reports", "research_notes"]
+
+[ratchet]
+enforce_from = 2099-01-01
+
+[hotspot]
+extensions = [".py", ".cpp"]
+window_days = 30
+open_lines = 15
+close_lines = 10
+open_score = 20
+close_score = 10
+
+[doc-now]
+open_score = 150
+close_score = 100
+"""
+
+
+def run_ratchet_step(repository, base):
+    workflow = (ROOT / ".github/workflows/debt-ratchet.yml").read_text(encoding="utf-8")
+    step = re.search(r"^ +- name: Check debt growth\n(?: +.*\n)*? +run: \|\n((?:(?: {10}.*)?\n)+)",
+                     workflow, re.MULTILINE)
+    env = {**os.environ, "BASE_SHA": base}
+    env.pop("GITHUB_STEP_SUMMARY", None)
+    # GitHub's default shell for `run`.
+    return subprocess.run(["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", textwrap.dedent(step[1])],
+                          cwd=repository, env=env, capture_output=True, text=True)
+
+
+@pytest.mark.parametrize("base_tool", ["ratchet", "before-ratchet", "missing"])
+def test_ratchet_step_measures_old_branch_with_base_tool(repository, base_tool):
+    hot = repository / "OpenGothic/common/testbench.cpp"
+    hot.parent.mkdir(parents=True)
+    (repository / "src/hot.py").rename(hot)
+    (repository / "scripts/debt.py").write_text(OLD_DEBT)
+    (repository / "scripts/debt.toml").write_text(RATCHET_CONFIG)
+    commit(repository, "Debt tool before the ratchet", "2026-03-02T12:00:00+00:00")
+    # The branch forks before the ratchet lands: its own debt.py has no `check`.
+    git(repository, "switch", "-qc", "branch")
+    hot.write_text("pass\n" * 22)
+    commit(repository, "Grow hot file", "2026-03-04T12:00:00+00:00")
+    git(repository, "switch", "-q", "main")
+    if base_tool == "ratchet":
+        (repository / "scripts/debt.py").write_text((ROOT / "scripts/debt.py").read_text(encoding="utf-8"))
+        commit(repository, "Ratchet lands", "2026-03-03T12:00:00+00:00")
+    elif base_tool == "missing":
+        (repository / "scripts/debt.py").unlink()
+        commit(repository, "Remove debt tool", "2026-03-03T12:00:00+00:00")
+    base = git(repository, "rev-parse", "main")
+    git(repository, "switch", "-q", "branch")
+    result = run_ratchet_step(repository, base)
+    assert result.returncode == 0, result.stderr
+    assert "invalid choice" not in result.stderr
+    if base_tool == "ratchet":
+        assert result.stdout == (
+            "::warning file=OpenGothic/common/testbench.cpp,title=Техдолг%3A горячий файл растёт::"
+            "Строк в горячем файле: 20 → 22 (+2). Новый код — в новые файлы; рост, уже влитый в main, "
+            "не считается. Пока это предупреждение; с 2099-01-01 такой рост не пройдёт проверку.\n")
+    else:
+        assert result.stdout == ("::warning title=Храповик техдолга::На базе PR в scripts/debt.py "
+                                 "нет команды check; храповик пропущен.\n")
 
 
 def audit_finding(*, symbol="handle_request", severity="high", **fields):
