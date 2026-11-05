@@ -9,6 +9,7 @@ Ryzen, one gq job each (scripts/nav-teacher-stall-remote.sh):
         --rejections DIR [--detour /abs/detour-val.jsonl] --parallel 12
     python3 -I scripts/nav_teacher_stall.py stalls --root /abs/archive/diagnose/NAME
     python3 -I scripts/nav_teacher_stall.py report --root /abs/archive
+    python3 -I scripts/nav_teacher_stall.py contacts --root /abs/archive
 
 Validation: the frozen validation routes (follow_below_gate, point, object, approach)
 and the detour cohort, action seed 18102027, CV physics, gaze, nothing recorded.
@@ -265,6 +266,39 @@ def stalls(args):
     print(json.dumps(result, indent=2))
 
 
+def contacts(args):
+    """Where the follow teacher's extra contacts are: the run with the exit and `aside`
+    against the one as on main, paired by route. The stand counts contacts per episode
+    only, so episodes are grouped by the new code they reached (per-episode rule counts)."""
+    root = args.root / "validation"
+    on = {row["id"]: row for row in read_json(root / "follow-teacher-on-aside/summary.json")["episodes"]}
+    off = {row["id"]: row for row in read_json(root / "follow-teacher-off-last-seen/summary.json")["episodes"]}
+    count = lambda row: row["follow"]["contacts"]
+    def group(ids):
+        differences = [count(on[i]) - count(off[i]) for i in ids]
+        mean = sum(differences) / len(differences) if differences else None
+        se = (math.sqrt(sum((d - mean) ** 2 for d in differences) / (len(differences) - 1) / len(differences))
+              if len(differences) > 1 else None)
+        return dict(episodes=len(ids), off=sum(count(off[i]) for i in ids), on=sum(count(on[i]) for i in ids),
+                    delta=mean, se=se)
+    ids = sorted(on)
+    exit_ = [i for i in ids if on[i]["branches"]["body_exit"] > 0]
+    aside = [i for i in ids if i not in exit_ and on[i]["follow"]["sources"].get("aside", 0) > 0]
+    escape = [i for i in ids if i not in exit_ and i not in aside
+              and on[i]["branches"]["escape"] + on[i]["branches"]["escape_blocked"] > 0]
+    result = dict(
+        all=group(ids),
+        without_start_not_found=group([i for i in ids if off[i]["start_not_found"] == 0 and on[i]["start_not_found"] == 0]),
+        with_start_not_found=group([i for i in ids if off[i]["start_not_found"] > 0 or on[i]["start_not_found"] > 0]),
+        body_exit=group(exit_), aside_only=group(aside), old_escape_only=group(escape),
+        none=group([i for i in ids if i not in exit_ and i not in aside and i not in escape]),
+        largest=[dict(id=i, off=count(off[i]), on=count(on[i]), body_exit=on[i]["branches"]["body_exit"],
+                      start_not_found_off=off[i]["start_not_found"], start_not_found_on=on[i]["start_not_found"])
+                 for i in sorted(ids, key=lambda i: count(off[i]) - count(on[i]))[:12]])
+    follow.write_json(args.root / "contacts.json", result)
+    print(json.dumps(result, indent=2))
+
+
 def far_idle(rows):
     """Standing decisions far from the goal, by reason, over the teacher's decisions far from it."""
     total = sum(row["far_decisions"] or 0 for row in rows)
@@ -275,8 +309,14 @@ def far_idle(rows):
                 start_not_found=sum(row["start_not_found"] or 0 for row in rows))
 
 
+def seconds(row):
+    """Time to arrive; a failure counts as the whole horizon, also when it ended early
+    (actor_down, body_blocked)."""
+    return (row["elapsed_ms"] if row["success"] else row["limit_ms"]) / 1000
+
+
 def static_group(rows):
-    times = [row["elapsed_ms"] / 1000 for row in rows]
+    times = [seconds(row) for row in rows]
     return dict(episodes=len(rows), arrived=sum(row["success"] for row in rows),
                 share=sum(row["success"] for row in rows) / len(rows) if rows else None,
                 median_s=statistics.median(times) if times else None, **far_idle(rows))
@@ -287,6 +327,7 @@ def paired_static(before, after):
 
     SE of the arrival difference from per-route differences; SE of the median
     difference from 5000 paired bootstrap resamples of routes (seed 18102027).
+    A failure counts as the horizon in the medians and in every resample.
     """
     left = {row["id"]: row for row in before}
     right = {row["id"]: row for row in after}
@@ -296,8 +337,8 @@ def paired_static(before, after):
     arrived = [int(right[i]["success"]) - int(left[i]["success"]) for i in shared]
     mean = sum(arrived) / len(arrived)
     se = math.sqrt(sum((value - mean) ** 2 for value in arrived) / (len(arrived) - 1) / len(arrived))
-    a = [left[i]["elapsed_ms"] / 1000 for i in shared]
-    b = [right[i]["elapsed_ms"] / 1000 for i in shared]
+    a = [seconds(left[i]) for i in shared]
+    b = [seconds(right[i]) for i in shared]
     delta = statistics.median(b) - statistics.median(a)
     rng = random.Random(ACTION_SEED)
     samples = []
@@ -440,7 +481,7 @@ def markdown(result):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("command", choices=("validation", "stalls", "report"))
+    parser.add_argument("command", choices=("validation", "stalls", "report", "contacts"))
     parser.add_argument("--model", help="teacher or a .navbc weight file (validation)")
     parser.add_argument("--families", default="follow_below_gate")
     parser.add_argument("--exit", choices=("on", "off"), default="on")
@@ -465,11 +506,12 @@ def main(argv=None):
         if isinstance(value, Path):
             setattr(args, key, value.expanduser().resolve())
     required = dict(validation=("model", "output", "runner", "assets", "save", "links", "roads", "cache",
-                                "manifest", "rejections"), stalls=("root",), report=("root",))
+                                "manifest", "rejections"), stalls=("root",), report=("root",),
+                    contacts=("root",))
     missing = [name for name in required[args.command] if getattr(args, name) is None]
     if missing:
         parser.error("missing --" + ", --".join(missing))
-    {"validation": validation, "stalls": stalls, "report": report}[args.command](args)
+    {"validation": validation, "stalls": stalls, "report": report, "contacts": contacts}[args.command](args)
 
 
 if __name__ == "__main__":

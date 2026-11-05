@@ -145,13 +145,16 @@ navmesh() { # WORKERS: the archived ordinary navmesh, one copy per worker
     cp -n "$navmesh_source"/*.navmesh "$task/navmesh/$worker/"
   done
 }
+hold() { # PATH: one writer per path for the rest of this job; the lock lives on the local disk
+  # (flock on CIFS is not reliable), its descriptor stays open until the job ends.
+  local lock_fd
+  exec {lock_fd}>"$task/locks/$(printf '%s' "$1" | sha256sum | cut -c1-16).lock"
+  flock -n "$lock_fd" || stop "another job is writing $1"
+}
 validate() { # OUTPUT MODEL [nav_teacher_stall.py validation args]
-  local output="$1" model="$2" lock
+  local output="$1" model="$2"
   shift 2
-  # One writer per result folder; the lock lives on the local disk (flock on CIFS is not reliable).
-  lock="$task/locks/$(printf '%s' "$output" | sha256sum | cut -c1-16).lock"
-  exec {lock_fd}>"$lock"
-  flock -n "$lock_fd" || stop "another job is writing $output"
+  hold "$output"
   mkdir -p "$archive/setup-rejections"
   cp -n "$rejections_source"/*.json "$archive/setup-rejections/"
   "$python" -X faulthandler -B -I scripts/nav_teacher_stall.py validation --model "$model" \
@@ -161,6 +164,9 @@ validate() { # OUTPUT MODEL [nav_teacher_stall.py validation args]
 }
 
 if [[ "$stage" == smoke ]]; then
+  # One smoke at a time from here on: it builds into the engine folder and clears the
+  # short episodes every smoke shares.
+  hold "$task/smoke"
   # One build per engine snapshot; later snapshots of the same OpenGothic reuse the binaries.
   if [[ ! -f "$build_dir/built" ]]; then
     source "$source/scripts/ryzen-build.sh"
@@ -241,9 +247,16 @@ def replay(path, mode):
     result = subprocess.run([contract, "--body-exit", mode, str(path)], capture_output=True, text=True)
     value = json.loads(result.stdout.splitlines()[-1]) if result.stdout.strip() else {}
     return dict(path=str(path), family=path.parts[-4], mode=mode, start_not_found=counts[str(path)],
-                exit=result.returncode, decisions=value.get("decisions"), mismatches=value.get("mismatches"))
+                exit=result.returncode, decisions=value.get("decisions"), mismatches=value.get("mismatches"),
+                error=result.stderr.strip()[-300:])
 with ThreadPoolExecutor(8) as pool:
     rows = list(pool.map(lambda job: replay(*job), [(path, mode) for path in stalled + others for mode in ("off", "on")]))
+# The contract exits 1 on a mismatch and on an error: only a complete count with the
+# exit code its mismatches imply is a replay.
+broken = [row for row in rows if not row["decisions"] or row["mismatches"] is None
+          or row["exit"] != (1 if row["mismatches"] else 0)]
+if broken:
+    sys.exit(f"Replay failed for {len(broken)} of {len(rows)} runs, first: {broken[0]}")
 summary = {mode: dict(recordings=sum(row["mode"] == mode for row in rows),
                       decisions=sum(row["decisions"] or 0 for row in rows if row["mode"] == mode),
                       mismatches=sum(row["mismatches"] or 0 for row in rows if row["mode"] == mode),
@@ -290,6 +303,7 @@ if [[ "$stage" == static-* ]]; then
 fi
 
 if [[ "$stage" == live ]]; then
+  hold "$archive/live"
   game_environment
   # Windowed game on the admitted gq display slot, as in scripts/nav-follow-remote.sh.
   export XDG_RUNTIME_DIR="/run/user/$(id -u)"
