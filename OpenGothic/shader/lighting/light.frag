@@ -124,6 +124,8 @@ bool isShadow(vec3 rayOrigin, vec3 direction, float R) {
 // texel's own ray, so wide kernels do not shadow a sloped surface by itself. The tap pattern turns per pixel
 // (interleaved gradient noise) and stays still from frame to frame without TAA. Under TAA the noise moves by
 // 5.588238 pixels a frame and fewer taps are taken; TAA gathers the frames (omniShadowTaa).
+// The hard variant (-DVSM_LAMP_HARD, light_vsm_hard; [INTERNAL] vsmLampSoft=0, the default on Metal) takes one gather
+// of the home face for every pixel instead, as 'faint' does.
 const vec2 omniSearch[8] = {
   vec2(0.2500,0.0000), vec2(-0.3193,0.2925), vec2(0.0489,-0.5569), vec2(0.4024,0.5249),
   vec2(-0.7385,-0.1306), vec2(0.6996,-0.4450), vec2(-0.2340,0.8705), vec2(-0.4463,-0.8593)
@@ -356,6 +358,12 @@ float omniShadow(const vec3 P, const vec3 n, const float R, const float S, const
   const float    dist     = length(P);
   const vec3     u        = P/dist;
   float ratio = 0, count = 0;
+#if defined(VSM_LAMP_HARD)
+  // hard lamp shadows ([INTERNAL] vsmLampSoft=0, the default on Metal): every pixel as 'faint', one gather of the
+  // home face with its bilinear weight, no penumbra from the flame's size
+  // (reports/render-features/2026-11-05-vsm-mac-hard/README.md)
+  return omniGatherFace(u, hf, R, atlasInv, ratio, count);
+#else
 #if defined(VSM_LAMP_PROBE)
   if(faint || push.probeMode==1)
     return omniGatherFace(u, hf, R, atlasInv, ratio, count);
@@ -476,6 +484,7 @@ float omniShadow(const vec3 P, const vec3 n, const float R, const float S, const
     lit += omniGather(u + o.x*T + o.y*B, hf, filterHome, P, n, R, atlasInv, ratio, count);
     }
   return lit/float(omniFilter.length());
+#endif
   }
 #endif
 
