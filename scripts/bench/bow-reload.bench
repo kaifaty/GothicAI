@@ -1,0 +1,51 @@
+# Reload from the quiver (reports/archery/2026-11-05-quiver-reload), step 0: the three talent steps held drawn in
+# the field with the sun on the side; the rq_* columns give the quiver's mouth and axis, the head, the shoulder,
+# the bow's grip, the string and the arrow in the chest's frame (BowDraw::Probe). The clips of the pilot come
+# here once the line of the draw is decided
+cheat god
+set time 16 0
+view clean
+overlay off
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 90
+wait 500
+manual on
+equip ItRw_Bow_L_01
+equip ITAR_Leather_L
+arrows player 30
+insert BAU_904_BAUER
+wait 300
+immortal BAU_904_BAUER on
+pin BAU_904_BAUER 1200 0 0
+aimat BAU_904_BAUER body
+tap bow
+wait 1500
+stats str 30 dex 10 bow 10 talent 0
+volley 1 300
+wait 500
+cam follow 170 140 -40
+rec t0_hold_frontright
+volley 1 2500
+stop
+cam follow 170 140 -100
+rec t0_hold_back
+volley 1 2500
+stop
+stats str 60 dex 60 bow 40 talent 1
+volley 1 300
+wait 500
+cam follow 170 140 -40
+rec t1_hold_frontright
+volley 1 2500
+stop
+stats str 120 dex 150 bow 100 talent 2
+volley 1 300
+wait 500
+cam follow 170 140 -40
+rec t2_hold_frontright
+volley 1 2500
+stop
+cam follow 170 140 -100
+rec t2_hold_back
+volley 1 2500
+stop

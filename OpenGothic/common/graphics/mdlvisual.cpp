@@ -1501,6 +1501,15 @@ bool MdlVisual::updateAim(Npc& npc, uint64_t dt) {
     bd.bowAxis   = ext.x>=ext.y && ext.x>=ext.z ? Tempest::Vec3(1,0,0) : (ext.y>=ext.z ? Tempest::Vec3(0,1,0) : Tempest::Vec3(0,0,1));
     bd.hasString = high && straight;
     }
+  if(quiv.isShown() && skeleton!=nullptr && quiv.bone()<skInst->boneCount()) {
+    // the quiver as it hung last (the reload's hand is led to it), relative to the pelvis
+    const size_t sp = quiv.spineBone()<skInst->boneCount() ? quiv.spineBone() : quiv.bone();
+    auto pelvisInv = renderedBone(quiv.bone());
+    pelvisInv.inverse();
+    bd.quiverKnown = true;
+    bd.quiverNow   = pelvisInv*quiv.frameNow(renderedBone(quiv.bone()),renderedBone(sp));
+    bd.quiverClip  = quiv.reloadFrame();
+    }
   if(ar.stage()==Archer::Reloading) {
     // how far the reload is: not begun (the shot), the animation, over (the bow comes to rest)
     const float p = pose.animProgress("T_BOWRELOAD",npc.world().tickCount());

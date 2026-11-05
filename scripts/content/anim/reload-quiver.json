@@ -1,0 +1,21 @@
+{
+ "fps": 25,
+ "span": 50,
+ "quiver": {"body": "ARMOR_LEATHER_L.MDM.json", "around": 50, "height": 105, "out": 21.0, "tilt_back": 20, "tilt_out": 8},
+ "arrow": {"nock_back": 23, "tip_ahead": 71},
+ "levels": [
+  {"level": "HUMANS", "frames": 29, "take": 0.34, "ready": 0.93,
+   "head": [[0, 0], [0.12, 0], [0.24, 18], [0.36, 18], [0.45, 0], [1, 0]],
+   "keys": [
+    {"p": 0.0,  "hand": {"at": "aim", "back": 9, "out": 2}, "grip": 3, "elbow": "stance"},
+    {"p": 0.10, "hand": {"at": "between", "chest": [26, -32, -4]}, "grip": 23, "elbow": [-0.3, -0.5, -0.8]},
+    {"p": 0.28, "hand": {"at": "quiver", "u": 9}, "grip": 23, "elbow": [0.2, -0.4, -0.9]},
+    {"p": 0.34, "hand": {"at": "quiver", "u": 5}, "grip": 23, "elbow": [0.2, -0.4, -0.9], "stop": true, "straight": true},
+    {"p": 0.58, "hand": {"at": "quiver", "u": 71}, "grip": 23, "elbow": [-0.2, -0.6, -0.8], "along": 1.2},
+    {"p": 0.72, "hand": {"at": "shelf", "ahead": -2}, "grip": 10, "elbow": "stance", "stop": true},
+    {"p": 0.84, "hand": {"at": "string", "ahead": 0}, "grip": 3, "elbow": "stance"},
+    {"p": 0.92, "hand": {"at": "string", "ahead": -1}, "grip": 3, "elbow": "stance", "stop": true},
+    {"p": 0.97, "hand": {"at": "aim"}, "grip": 3, "elbow": "stance"}
+   ]}
+ ]
+}

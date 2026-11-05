@@ -109,6 +109,7 @@ class Quiver final {
       Tempest::Matrix4x4 pelvisBind, spineBind; // inverted: the bones' turns from the bind pose
       Tempest::Vec3      fwd = {0,0,1};          // the body's forward in the bind pose
       float              out = 0;
+      Tempest::Vec3      outward = {1,0,0};      // the way the ring is pushed out, in the pelvis bone's frame
       };
     // only the ring is pushed out, by the armour standing (the bind pose); the swing gets out of the legs' way
     static Fit fit(const Skeleton& sk, const std::vector<SkinPoint>& bind);
@@ -141,6 +142,14 @@ class Quiver final {
                         Tempest::Vec3* mid = nullptr, Tempest::Vec3* bottom = nullptr) const;
     // nothing to do: the ground pushes it, it has settled and the pelvis has not moved (a body lying still)
     bool         restsOnGround(const Tempest::Matrix4x4& pelvis) const;
+    // the quiver as it hangs now (the give, the turn), in the world: its frame has the mouth's centre at the origin
+    // and the bottom along -Y
+    Tempest::Matrix4x4 frameNow(const Tempest::Matrix4x4& pelvis, const Tempest::Matrix4x4& spine) const;
+    // the reload from the quiver (OPENGOTHIC_QUIVERRELOAD, BowDraw): its clips take the arrow out of the quiver at
+    // rest pushed ReloadOut cm out (the light leather armour), in the pelvis bone's frame; the hand is led from
+    // there to the quiver as it hangs (frameNow)
+    static constexpr float ReloadOut = 21.f;
+    Tempest::Matrix4x4 reloadFrame() const;
     // the quiver at rest in the world: on the pelvis, turned about the vertical halfway to SPINE1
     Tempest::Matrix4x4 restFrame(const Tempest::Matrix4x4& pelvis, const Tempest::Matrix4x4& spine) const;
     // the bench's ground probe: points of the tube's outer side in the world as it hangs now, `rings` rings from

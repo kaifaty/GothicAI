@@ -135,6 +135,7 @@ class Animation final {
       uint64_t                               blendOut  = 0;
       AnimClass                              animCls   = Transition;
       bool                                   reverse   = false;
+      bool                                   ownReload = false; // the reload from the quiver (BowDraw::QuiverReloadAnim)
 
       std::string                            next;
       const Sequence*                        nextPtr = nullptr;

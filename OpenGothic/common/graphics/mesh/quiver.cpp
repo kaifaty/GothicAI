@@ -195,6 +195,13 @@ Quiver::Fit Quiver::fit(const Skeleton& sk, const std::vector<SkinPoint>& bind) 
   inv.inverse();
   f.local = inv*basis(x,y,z,mouth);
   f.out   = s;
+  {
+    Vec3 o = right;
+    const auto& b = inv;
+    f.outward = Vec3(b.at(0,0)*o.x+b.at(1,0)*o.y+b.at(2,0)*o.z,
+                     b.at(0,1)*o.x+b.at(1,1)*o.y+b.at(2,1)*o.z,
+                     b.at(0,2)*o.x+b.at(1,2)*o.y+b.at(2,2)*o.z);
+  }
   f.fwd   = fwd;
   f.spine = sk.findNode("BIP01 SPINE1");
   f.pelvisBind = inv;
@@ -307,6 +314,19 @@ Matrix4x4 Quiver::restFrame(const Matrix4x4& pelvis, const Matrix4x4& spine) con
   m.mul(rotation(Vec3(0,1,0),std::sin(yawOffset),std::cos(yawOffset)));
   m.translate(at*-1.f);
   m.mul(frame);
+  return m;
+  }
+
+Matrix4x4 Quiver::frameNow(const Matrix4x4& pelvis, const Matrix4x4& spine) const {
+  return restFrame(pelvis,spine)*swingMatrix();
+  }
+
+Matrix4x4 Quiver::reloadFrame() const {
+  Matrix4x4 m = fitted.local;
+  const Vec3 back = fitted.outward*(ReloadOut-fitted.out);
+  m.set(3,0,m.at(3,0)+back.x);
+  m.set(3,1,m.at(3,1)+back.y);
+  m.set(3,2,m.at(3,2)+back.z);
   return m;
   }
 
