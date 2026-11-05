@@ -359,9 +359,9 @@ Result build(World& world) {
     w.StartObject();
     w.Key("name");        text(w,room);
     w.Key("owner_npc");   optionalText(w,owner.npc);
-    // A room assigned to a guild, not the guild of its private NPC owner.
+    // A room assigned to a guild, not the guild of its private NPC owner; GIL_PUBLIC grants public access.
     w.Key("owner_guild");
-    if(guild.id>GIL_NONE)
+    if(guild.id>GIL_NONE && guild.id!=GIL_PUBLIC)
       w.Int(guild.id); else
       w.Null();
     w.EndObject();

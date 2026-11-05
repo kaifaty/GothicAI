@@ -4,6 +4,8 @@
 // against evals/npc-decisions/day_people.json, every routine and start point resolved, the point names against
 // server/src/gothic_ai/gamedata/places.json, symmetric edges, a scheme and a waynet point for every object, the v2
 // fields (start_aistate, own walk speed, mm_schedule), room ownership and the same bytes from both runs.
+#include "../common/game/constants.h"
+
 #include <rapidjson/document.h>
 
 #include <algorithm>
@@ -202,8 +204,10 @@ Rooms checkRooms(const Value& doc, const std::vector<Waypoint>& points) {
     room.owner = nullableText(r,"owner_npc");
     const auto& guild = member(r,"owner_guild");
     need(guild.IsNull() || (guild.IsInt() && guild.GetInt()>0),"room owner_guild must be null or a positive guild id");
-    if(guild.IsInt())
+    if(guild.IsInt()) {
+      need(guild.GetInt()!=int32_t(GIL_PUBLIC),"public rooms must have owner_guild null");
       room.guild = guild.GetInt();
+      }
     ret.emplace(name,room);
     }
   for(const auto& p:points)

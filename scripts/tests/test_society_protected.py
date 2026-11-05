@@ -9,7 +9,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
 import society_protected  # noqa: E402
-from gothic_ai.gamedata import base  # noqa: E402
+from gothic_ai.gamedata import base, storygraph  # noqa: E402
 
 
 def test_protected_format():
@@ -29,6 +29,8 @@ def test_protected_matches_game():
     except RuntimeError as error:
         pytest.skip(f"needs a ready game base: {error}")
     with selected:
+        if storygraph.ensure(society_protected.GAME_DIR, society_protected.CACHE) is None:
+            pytest.skip("needs the storygraph tool")
         assert json.loads(society_protected.OUTPUT.read_text()) == society_protected.from_game(
             society_protected.GAME_DIR
         )
