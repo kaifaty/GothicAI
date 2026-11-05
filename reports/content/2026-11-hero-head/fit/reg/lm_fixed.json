@@ -1,0 +1,311 @@
+{
+ "note": "MPFB vertex id -> target point on the reference (metres, Blender frame); lid ids picked on the margin by hand (lidb_*.png)",
+ "landmarks": [
+  {
+   "name": "r_eye_in",
+   "mpfb_vertex": 1078,
+   "target": [
+    -0.0166,
+    -0.13633,
+    1.62971
+   ]
+  },
+  {
+   "name": "r_up25",
+   "mpfb_vertex": 6762,
+   "target": [
+    -0.03946,
+    -0.1451,
+    1.63704
+   ]
+  },
+  {
+   "name": "r_up50",
+   "mpfb_vertex": 6756,
+   "target": [
+    -0.03202,
+    -0.14581,
+    1.63786
+   ]
+  },
+  {
+   "name": "r_up75",
+   "mpfb_vertex": 1073,
+   "target": [
+    -0.02419,
+    -0.14181,
+    1.63679
+   ]
+  },
+  {
+   "name": "r_lo25",
+   "mpfb_vertex": 1068,
+   "target": [
+    -0.03958,
+    -0.13327,
+    1.63078
+   ]
+  },
+  {
+   "name": "r_lo50",
+   "mpfb_vertex": 1069,
+   "target": [
+    -0.03168,
+    -0.13697,
+    1.62972
+   ]
+  },
+  {
+   "name": "r_lo75",
+   "mpfb_vertex": 1070,
+   "target": [
+    -0.02422,
+    -0.13618,
+    1.62975
+   ]
+  },
+  {
+   "name": "l_eye_in",
+   "mpfb_vertex": 7770,
+   "target": [
+    0.01408,
+    -0.13448,
+    1.6303
+   ]
+  },
+  {
+   "name": "l_up25",
+   "mpfb_vertex": 6838,
+   "target": [
+    0.02112,
+    -0.13972,
+    1.63694
+   ]
+  },
+  {
+   "name": "l_up50",
+   "mpfb_vertex": 7748,
+   "target": [
+    0.0287,
+    -0.14177,
+    1.63769
+   ]
+  },
+  {
+   "name": "l_up75",
+   "mpfb_vertex": 13358,
+   "target": [
+    0.03565,
+    -0.14131,
+    1.63758
+   ]
+  },
+  {
+   "name": "l_lo25",
+   "mpfb_vertex": 7762,
+   "target": [
+    0.02138,
+    -0.133,
+    1.63005
+   ]
+  },
+  {
+   "name": "l_lo50",
+   "mpfb_vertex": 7761,
+   "target": [
+    0.02843,
+    -0.13508,
+    1.6289
+   ]
+  },
+  {
+   "name": "l_lo75",
+   "mpfb_vertex": 7760,
+   "target": [
+    0.03561,
+    -0.13302,
+    1.62974
+   ]
+  },
+  {
+   "name": "mouth_r",
+   "mpfb_vertex": 428,
+   "target": [
+    -0.03007,
+    -0.14609,
+    1.56067
+   ]
+  },
+  {
+   "name": "mouth_l",
+   "mpfb_vertex": 7188,
+   "target": [
+    0.02889,
+    -0.14494,
+    1.5604
+   ]
+  },
+  {
+   "name": "lip_mid",
+   "mpfb_vertex": 468,
+   "target": [
+    -0.00078,
+    -0.16628,
+    1.56262
+   ]
+  },
+  {
+   "name": "lip_lo",
+   "mpfb_vertex": 492,
+   "target": [
+    -0.00107,
+    -0.1651,
+    1.55352
+   ]
+  },
+  {
+   "name": "alar_r",
+   "mpfb_vertex": 336,
+   "target": [
+    -0.01906,
+    -0.14683,
+    1.58981
+   ]
+  },
+  {
+   "name": "alar_l",
+   "mpfb_vertex": 11710,
+   "target": [
+    0.02165,
+    -0.14434,
+    1.59078
+   ]
+  },
+  {
+   "name": "ear_top",
+   "mpfb_vertex": 12012,
+   "target": [
+    0.09702,
+    -0.02855,
+    1.64683
+   ]
+  },
+  {
+   "name": "ear_top_r",
+   "mpfb_vertex": 5413,
+   "target": [
+    -0.09403,
+    -0.0287,
+    1.64725
+   ]
+  },
+  {
+   "name": "ear_back",
+   "mpfb_vertex": 12062,
+   "target": [
+    0.1017,
+    -0.01526,
+    1.62817
+   ]
+  },
+  {
+   "name": "ear_back_r",
+   "mpfb_vertex": 5463,
+   "target": [
+    -0.09209,
+    -0.01496,
+    1.6279
+   ]
+  },
+  {
+   "name": "ear_lobe",
+   "mpfb_vertex": 12328,
+   "target": [
+    0.08525,
+    -0.04049,
+    1.58795
+   ]
+  },
+  {
+   "name": "ear_lobe_r",
+   "mpfb_vertex": 5731,
+   "target": [
+    -0.09534,
+    -0.04062,
+    1.58808
+   ]
+  },
+  {
+   "name": "tragus",
+   "mpfb_vertex": 12270,
+   "target": [
+    0.07987,
+    -0.04316,
+    1.60824
+   ]
+  },
+  {
+   "name": "tragus_r",
+   "mpfb_vertex": 5673,
+   "target": [
+    -0.07934,
+    -0.04285,
+    1.60785
+   ]
+  },
+  {
+   "name": "ear_front_top",
+   "mpfb_vertex": 12046,
+   "target": [
+    0.08792,
+    -0.03947,
+    1.64278
+   ]
+  },
+  {
+   "name": "ear_front_top_r",
+   "mpfb_vertex": 5447,
+   "target": [
+    -0.10354,
+    -0.0395,
+    1.64314
+   ]
+  },
+  {
+   "name": "pronasale",
+   "mpfb_vertex": 5054,
+   "target": [
+    -0.00081,
+    -0.18144,
+    1.59426
+   ]
+  },
+  {
+   "name": "subnasale",
+   "mpfb_vertex": 466,
+   "target": [
+    -0.00076,
+    -0.16469,
+    1.58254
+   ]
+  },
+  {
+   "name": "nasion",
+   "mpfb_vertex": 169,
+   "target": [
+    -0.00116,
+    -0.15549,
+    1.63324
+   ]
+  },
+  {
+   "name": "glabella",
+   "mpfb_vertex": 234,
+   "target": [
+    -0.00117,
+    -0.15923,
+    1.64781
+   ]
+  }
+ ]
+}
