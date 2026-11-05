@@ -162,6 +162,8 @@ class MdlVisual final {
     auto                           mapBone(const size_t boneId) const -> Tempest::Vec3;
     auto                           mapWeaponBone() const -> Tempest::Vec3;
     auto                           mapHeadBone() const -> Tempest::Vec3;
+    // its eyes as drawn (world): the centres of the own head's eyes, else EyesUp above the head bone along its up
+    auto                           mapEyes() const -> Tempest::Vec3;
     // the arrow on the string as posed: its nock, where it points
     bool                           arrowRay(Tempest::Vec3& pos, Tempest::Vec3& dir) const;
     // Rendered bow/arrow attachment bounds for the camera's test-bench visibility diagnostic.

@@ -293,6 +293,14 @@ void Eyes::update(const Input& in) {
     }
   last = at;
 
+  // the point from the middle of the eyes and the head's forward, in the world (the probe)
+  const Vec3  d  = at - project(in.head,center(*eyes));
+  const float dh = std::sqrt(d.x*d.x + d.z*d.z);
+  const Vec3  fw = Vec3(in.head.at(2,0),in.head.at(2,1),in.head.at(2,2));
+  rise   = d.y;
+  down   = -std::atan2(d.y,dh)/Deg;
+  headUp = fw.length()>1e-6f ? std::asin(std::clamp(fw.y/fw.length(),-1.f,1.f))/Deg : 0.f;
+
   // as shown, and how far from the point
   error  = 0;
   beyond = 0;
@@ -323,4 +331,7 @@ void Eyes::probe(Probe& p) const {
   p.moving   = moving;
   p.saccades = saccades;
   p.big      = big;
+  p.rise     = rise;
+  p.down     = down;
+  p.head     = headUp;
   }

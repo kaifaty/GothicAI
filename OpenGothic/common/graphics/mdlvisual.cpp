@@ -67,6 +67,7 @@ Vec3 asidePoint(const Vec3& head, const Vec3& target, float yaw, float pitch) {
   }
 
 constexpr float EyeAsideHead = 0.3f;  // a head with eyes of its own: of the look aside the head takes this part
+constexpr float EyesUp       = 11.f;  // cm: the eyes of a head of the original above its bone, along its up (x)
 
 bool validRenderFrame(const Matrix4x4& m) {
   for(int c=0; c<4; ++c)
@@ -1968,6 +1969,18 @@ Vec3 MdlVisual::mapHeadBone() const {
   return mapBone(skeleton->BIP01_HEAD);
   }
 
+Vec3 MdlVisual::mapEyes() const {
+  const size_t bone = skeleton->BIP01_HEAD;
+  if(bone==size_t(-1) || bone>=skInst->boneCount())
+    return mapHeadBone();
+  // the head bone: x up, y across, z forward (the frame of a head's vertices)
+  Vec3 at = Vec3(EyesUp,0,0);
+  if(const auto* e = face.eyes(); e!=nullptr && head.boneId==bone)
+    at = (e->eye[0].center + e->eye[1].center)*0.5f;
+  renderedBone(bone).project(at);
+  return at;
+  }
+
 void MdlVisual::stopAnim(Npc& npc, std::string_view anim) {
   skInst->stopAnim(anim);
   // Avoid issues with pfx on/off events within looped animations. Such as for Rupert and Bulko.
@@ -2492,13 +2505,18 @@ void MdlVisual::updateEyes(Npc& npc, uint64_t now) {
   in.head     = renderedBone(head.boneId);
   in.target   = lookSource!=Gaze::Source::None;
   in.at       = lookAt;
+  // Gaze aims the head at one's head bone, the eyes go to its eyes (the bone is at the neck)
+  const Npc* whom = nullptr;
+  Vec3       at;
+  if(in.target && npc.gazeTarget(at,&whom)==lookSource && whom!=nullptr)
+    in.at = whom->mapEyes();
   in.talk     = lookSource==Gaze::Source::Talk;
   in.speaking = mouth.isSpeaking(now) || npc.speechLeft()>0;
   in.left     = std::max(npc.speechLeft(),mouth.voiceLeft(now));
   // thinking: the eyes go all the way aside (the head a part of it, updateGaze)
   const auto& as = gestures.eyesAside();
   in.aside    = in.talk && as.weight>=0.5f;
-  in.asideAt  = asidePoint(npc.mapHeadBone(),lookAt,as.yaw,as.pitch);
+  in.asideAt  = asidePoint(mapEyes(),in.at,as.yaw,as.pitch);
   eyes.update(in);
   face.setEyes(eyes.turn(0),eyes.turn(1));
   }

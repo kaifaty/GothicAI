@@ -54,6 +54,9 @@ class Eyes final {
       bool     moving   = false; // in a saccade
       uint32_t saccades = 0;
       uint32_t big      = 0;     // of BigSaccade degrees and more
+      float    rise     = 0;     // cm the fixation point is above the middle of the eyes (world)
+      float    down     = 0;     // degrees it is below the level of the eyes (world)
+      float    head     = 0;     // degrees the head's forward is above the level (world)
       };
 
     static constexpr float Saccade     = 1.f;    // degrees: a farther change of the point is a jump
@@ -121,6 +124,7 @@ class Eyes final {
     FaceRig::EyeTurn   shown[2];
     float              error     = -1;
     float              beyond    = 0;
+    float              rise      = 0, down = 0, headUp = 0;  // the probe: the point from the eyes, the head (world)
     uint32_t           saccades  = 0;
     uint32_t           big       = 0;
   };

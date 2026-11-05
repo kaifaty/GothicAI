@@ -432,7 +432,9 @@ def eyes(segs):
     """the watched one's eyes per segment (an own head with "eyes" in its face profile, graphics/mesh/eyes):
     saccades a second, the largest turn in the socket (the left eye's + yaw and the right one's - yaw are out),
     beyond the limits, the error from the fixation point after landing (frames not in a saccade), where it
-    looked (share of the frames by kind) and the blend of the face (median µs of the blends in the segment)"""
+    looked (share of the frames by kind), the fixation point from the middle of its eyes (median below their
+    level, degrees, and above them, cm, and the head's forward above the level, degrees; over the frames at the
+    other one's eyes, else all) and the blend of the face (median µs of the blends in the segment)"""
     rows_all = [r for rows in segs.values() for r in rows]
     if not rows_all or "ey_on" not in rows_all[0] or not any(r["ey_on"] > 0 for r in rows_all):
         return [], {}
@@ -440,10 +442,13 @@ def eyes(segs):
            "The eyes of the watched one's own head: saccades a second (all, of 20° and more), the largest turn "
            "in the socket out / in / up / down and beyond the profile's limits (degrees), the error from the "
            "fixation point after landing (median / 90th percentile, degrees), where they looked (share of "
-           "the frames) and the FaceRig blend (median µs, blends).", "",
-           "| segment | saccades/s (n, big) | out / in / up / down ° | beyond ° | error p50 / p90 ° | looked at | blend µs p50 (n) |",
-           "|---|---|---|---|---|---|---|"]
-    landed_all, rates, blend_all, beyond_all = [], {}, [], 0.0
+           "the frames), the point from the middle of the eyes in the world (median degrees below their level, "
+           "cm above them, the head's forward above the level in degrees; at the other one's eyes, else all "
+           "frames) and the FaceRig blend (median µs, blends).", "",
+           "| segment | saccades/s (n, big) | out / in / up / down ° | beyond ° | error p50 / p90 ° | looked at | "
+           "point down ° / rise cm / head ° (of) | blend µs p50 (n) |",
+           "|---|---|---|---|---|---|---|---|"]
+    landed_all, rates, blend_all, beyond_all, down_eye = [], {}, [], 0.0, {}
     for seg, rows in segs.items():
         rows = [r for r in rows if r["ey_on"] > 0]
         if len(rows) < 2:
@@ -464,10 +469,18 @@ def eyes(segs):
         blend_all += blended
         err = "-" if not landed else f"{landed[len(landed) // 2]:.2f} / {landed[int(len(landed) * 0.9)]:.2f}"
         blend = "-" if not blended else f"{blended[len(blended) // 2]:.0f} ({len(blended)})"
+        point = "-"
+        if "ey_down" in rows[0]:
+            at_eye = [r for r in rows if int(r["ey_kind"]) == 2]
+            of = at_eye or rows
+            med = [sorted(r[k] for r in of)[len(of) // 2] for k in ("ey_down", "ey_dy", "ey_hp")]
+            point = f"{med[0]:.1f} / {med[1]:.1f} / {med[2]:.1f} ({'eyes' if at_eye else 'all'})"
+            if at_eye:
+                down_eye[seg] = med[0]
         out.append(f"| {seg} | {n / secs:.2f} ({n:.0f}, {big:.0f}) | " + " / ".join(f"{v:.1f}" for v in turn) +
-                   f" | {beyond:.2f} | {err} | {looked} | {blend} |")
+                   f" | {beyond:.2f} | {err} | {looked} | {point} | {blend} |")
     out.append("")
-    numbers = {"eyes_beyond_max": beyond_all, "eyes_saccades_per_s": rates}
+    numbers = {"eyes_beyond_max": beyond_all, "eyes_saccades_per_s": rates, "eyes_down_at_eyes_p50": down_eye}
     if landed_all:
         landed_all.sort()
         numbers["eyes_error_p50"] = landed_all[len(landed_all) // 2]

@@ -49,7 +49,8 @@ wait 9000
 stop
 # the eyes of the own head (step 5, reports/content/2026-11-hero-head/eyes.md), the hero close up: Xardas speaks and
 # the hero listens; the hero thinks of an answer (the eyes aside); Xardas stands around him at 0, +-40, +-80 and 0
-# degrees from his facing (the eyes first, the head after); the hero looks down and up past the reach of his head
+# degrees from his facing (the eyes first, the head after); the hero looks at a point 20 degrees below his eyes and
+# 18 above them, within the reach of the eyes (the lids follow them, the head turns a little)
 watch player
 cam face 38 0 1
 hear player 6000 600
@@ -77,13 +78,11 @@ place 110 0 nearest
 wait 1800
 stop
 talk nearest 0
-cam face 38 0 -8
-gazeat player 0 -60 3000 60
+gazeat player 0 -20 3000 100
 rec lookdown
 wait 3000
 stop
-cam face 38 0 1
-gazeat player 0 50 3000 100
+gazeat player 0 18 3000 100
 rec lookup
 wait 3000
 stop

@@ -2565,7 +2565,7 @@ void writeHeader() {
   for(auto& f:FaceColumns)
     std::fprintf(bench.csv,",%s",f.column);
   std::fprintf(bench.csv,",rig_on,rig_anims,rig_targets,rig_us,rig_n,rig_up_us");
-  std::fprintf(bench.csv,",ey_on,ey_kind,ey_ly,ey_lp,ey_ry,ey_rp,ey_err,ey_over,ey_move,ey_sac,ey_big");
+  std::fprintf(bench.csv,",ey_on,ey_kind,ey_ly,ey_lp,ey_ry,ey_rp,ey_err,ey_over,ey_move,ey_sac,ey_big,ey_dy,ey_down,ey_hp");
   std::fprintf(bench.csv,",f_on,f_bend,f_yaw,f_twist,f_head,f_hits,f_str,f_ht");
   std::fprintf(bench.csv,",hp_player,hp_subject");
   std::fprintf(bench.csv,",stamina_player,stamina_subject");
@@ -9027,11 +9027,12 @@ void writeRow(Npc& pl) {
   std::fprintf(bench.csv,",%d,%u,%u,%.1f,%u,%.1f",int(fr.valid),fr.anims,fr.targets,double(fr.blendUs),fr.blends,
                double(fr.uploadUs));
   // its eyes (Eyes): the fixation point's kind, degrees in the socket (left, right), from the point and beyond the
-  // limits, in a saccade, saccades and the big ones so far
+  // limits, in a saccade, saccades and the big ones so far; the point above the eyes (cm), below their level and
+  // the head's forward above it (degrees, world)
   const auto& ey = Eyes::subjectProbe;
-  std::fprintf(bench.csv,",%d,%u,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%d,%u,%u",int(ey.valid),unsigned(ey.kind),double(ey.yaw[0]),
-               double(ey.pitch[0]),double(ey.yaw[1]),double(ey.pitch[1]),double(ey.error),double(ey.over),int(ey.moving),
-               ey.saccades,ey.big);
+  std::fprintf(bench.csv,",%d,%u,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%d,%u,%u,%.1f,%.2f,%.2f",int(ey.valid),unsigned(ey.kind),
+               double(ey.yaw[0]),double(ey.pitch[0]),double(ey.yaw[1]),double(ey.pitch[1]),double(ey.error),double(ey.over),
+               int(ey.moving),ey.saccades,ey.big,double(ey.rise),double(ey.down),double(ey.head));
   // flinch of the watched one (or the hero)
   const auto& fl = bench.subject!=nullptr ? Flinch::subjectProbe : Flinch::playerProbe;
   std::fprintf(bench.csv,",%d,%.2f,%.1f,%.2f,%.2f,%u,%.2f,%.2f",int(fl.active),fl.bend,fl.bendYaw,fl.twist,fl.head,
@@ -18105,7 +18106,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     }
   else if(c=="gazeat") {
     // gazeat <npc|nearest|player> <yaw> <pitch> <ms> [dist]: it looks at a point that many degrees aside (+ as
-    // its rotation goes) and up from its facing, dist cm (100) from its head, for ms
+    // its rotation goes) and up from its facing, dist cm (100) from its eyes, for ms
     Npc* n = findNpc(w,pl,a.size()>1 ? a[1] : "player");
     if(n==nullptr) {
       say("gazeat: no npc " + line);
@@ -18113,7 +18114,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       }
     const float yaw = (n->rotation()+num(a,2,0))*float(M_PI)/180.f, pitch = num(a,3,0)*float(M_PI)/180.f;
     const Vec3  dir = Vec3(std::cos(yaw)*std::cos(pitch),std::sin(pitch),std::sin(yaw)*std::cos(pitch));
-    n->lookAtPoint(n->mapHeadBone() + dir*num(a,5,100),w.tickCount()+uint64_t(num(a,4,3000)));
+    n->lookAtPoint(n->mapEyes() + dir*num(a,5,100),w.tickCount()+uint64_t(num(a,4,3000)));
     say("gazeat " + symName(w,n) + " " + (a.size()>3 ? a[2]+" "+a[3] : std::string("0 0")));
     }
   else if(c=="lookat") {

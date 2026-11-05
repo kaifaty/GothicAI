@@ -522,8 +522,9 @@ class Npc final {
     Npc*      talkPartner() const;
     // it looks at a point until then, before anything else (the test bench)
     void      lookAtPoint(const Tempest::Vec3& at, uint64_t until) { lookPoint = at; lookPointUntil = until; }
-    // where the gaze looks: the partner, where a script says, the hero's focus, what caught the eye
-    auto      gazeTarget(Tempest::Vec3& at) const -> Gaze::Source;
+    // where the gaze looks: the partner, where a script says, the hero's focus, what caught the eye; whom: the npc
+    // whose head it is, if it is one
+    auto      gazeTarget(Tempest::Vec3& at, const Npc** whom = nullptr) const -> Gaze::Source;
     Npc*      attentionTarget() const { return attention.target(); }
 
     bool      isAttackAnim() const;
@@ -724,6 +725,8 @@ class Npc final {
     Item*     currentShield();
     auto      mapWeaponBone() const -> Tempest::Vec3;
     auto      mapHeadBone() const -> Tempest::Vec3;
+    // where its eyes are (world): the centres of its own head's eyes, else above the head bone along its up
+    auto      mapEyes() const -> Tempest::Vec3;
     struct EyePose {
       Tempest::Vec3 origin = {}, forward = {1,0,0}, right = {0,0,1}, up = {0,1,0};
       bool animatedHead = false;
