@@ -7,7 +7,13 @@ Gemma gets the same history as in phase 1 and one of these inputs; every arm is 
   say_oracle  the expected answer as «the answer is decided, say it, add nothing» (SAY);
   say_sol     Sol's phase 1 answer, framed as SAY;
   fair_bare   no memory, the honest hint FAIR instead of speak_probe.md (no «decide later» rule);
-  fair_items  phase 1's memory for this question (card + items_for, as saved in its answers) under FAIR.
+  fair_items  phase 1's memory for this question (card + items_for, as saved in its answers) under FAIR;
+  gist        the pipeline: Sol gets phase 1's `sol` input plus GIST and writes the gist after the phrase
+              (recall runs, other calls are recorded), Gemma voices it under SAY. The gist comes as the
+              tail of Gemma's prompt, after the warmed history and brief, so its prefill is measured;
+  gist_stall  the gists of `gist` (no new Sol calls) with Gemma's thinking words first: STALL right after
+              the phrase, then the gist voiced under SAY with «Ты уже сказал вслух». The judged answer is
+              both said in a row.
 
   cd server && uv run python ../reports/npc-memory/2026-11-05-shared-memory-phase2/voice_ready.py answer ARM
   cd server && uv run python ../reports/npc-memory/2026-11-05-shared-memory-phase2/voice_ready.py judge ARM
@@ -16,6 +22,7 @@ Gemma gets the same history as in phase 1 and one of these inputs; every arm is 
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import re
 import sys
@@ -25,11 +32,13 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import mind2  # noqa: E402
 
+from gothic_ai.dialogue import _SENTENCE_END  # noqa: E402
+
 stand, pilot = mind2.stand, mind2.pilot
 RESEARCH = Path.home() / ".local/share/gothic-ai/research"
 P1 = RESEARCH / "2026-11-04-shared-memory/full-2026-11-05"
 OUT = RESEARCH / "2026-11-05-shared-memory-phase2"
-ARMS = ("oracle", "solthought", "say_oracle", "say_sol", "fair_bare", "fair_items")
+ARMS = ("oracle", "solthought", "say_oracle", "say_sol", "fair_bare", "fair_items", "gist", "gist_stall")
 
 SAY = (
     "[Ответ герою уже решён тобой — вот его суть]\n{text}\n\n"
@@ -45,6 +54,12 @@ FAIR = (
     "вызывай и не пиши служебных пометок вроде [recall]."
 )
 FAIR_HEAD = "[Твоя память — что ты помнишь сам]"
+GIST = (
+    "[Голос] Вслух за тебя говорит голос: он уже начал отвечать и скажет твою суть своими словами. Сам ты "
+    "вслух не говоришь. Напиши суть ответа герою — то, что голос должен передать: факты, согласие или "
+    "отказ, что ты помнишь или чего не знаешь. Одна–две короткие фразы от первого лица, без ремарок, метки "
+    "настроения и приветствий. Если нужно действие — вызови инструмент как обычно."
+)
 
 
 def folder(arm: str) -> Path:
@@ -84,6 +99,80 @@ def messages_for(arm: str, ctx: Any, probe: dict, sol_text: str, memory: dict | 
     return note, mind2.note_messages(ctx, phrase, note)
 
 
+STALL = (
+    "Герой только что это сказал. Ответа ты ещё не знаешь: сначала надо вспомнить или прикинуть, это займёт "
+    "пару мгновений. Скажи вслух только это — что вспоминаешь или задумался, — одной короткой фразой до "
+    "восьми слов, своими словами, как сказал бы ты сам; можно зацепиться за его слова. Ответа не начинай: "
+    "ни да, ни нет, ни фактов, ни оценок."
+)
+SAID = "\nТы уже сказал вслух: «{said}» — ответ продолжает это, не повторяй его."
+
+
+def spoken(text: str, words: int) -> str:
+    """What sounds of a short line: whole sentences until it has three words, at most `words` words."""
+    text, out = bare_text(text), []
+    for part in _SENTENCE_END.split(text):
+        out += part.split()
+        if len(out) >= 3:
+            break
+    return " ".join(out[:words]).strip()
+
+
+async def stall_turn(quick: Any, ctx: Any, probe: dict, gist: str) -> tuple[str, dict]:
+    """Gemma's thinking words from the brief alone (no history: nothing to answer with yet), then the gist
+    voiced after them with the history."""
+    Message, phrase = mind2.Message, probe["phrase"]
+    head = [*ctx.history, Message("developer", ctx.brief)]
+    brief = [Message("developer", ctx.brief)]
+    first = await pilot.measure(
+        quick,
+        ctx.talk.instructions,
+        [*brief, Message("user", phrase), Message("developer", STALL)],
+        prefix=brief,
+        slot=mind2.SLOT,
+    )
+    stall = spoken(first["text"], 8)
+    voice_messages = [
+        *head,
+        Message("developer", SAY.format(text=gist) + SAID.format(said=stall)),
+        Message("user", phrase),
+    ]
+    result = await pilot.measure(quick, ctx.talk.instructions, voice_messages, prefix=head, slot=mind2.SLOT)
+    error = first["error"] or result["error"]
+    words = " ".join(t for t in (stall, bare_text(result["text"])) if t)
+    result.update(
+        text=words,
+        error=error,
+        voice=result["text"],
+        stall=stall,
+        stall_first_sentence_s=first.get("first_sentence_s"),
+    )
+    return gist, result
+
+
+async def gist_turn(sol: Any, quick: Any, ctx: Any, probe: dict, store: Any) -> tuple[str, dict]:
+    """Sol's gist, then Gemma voicing it. Timings: Sol's first token and whole turn, then Gemma's."""
+    thinking = dataclasses.replace(ctx, situation=ctx.situation + "\n\n" + GIST)
+    sol_result = await stand.sol_answer(sol, thinking, probe["phrase"], store)
+    gist = sol_result["text"].strip()
+    if sol_result["error"] is not None or not gist:
+        return gist, {"text": "", "error": sol_result["error"] or "Empty gist", "sol": sol_result}
+    Message = mind2.Message
+    messages = [
+        *ctx.history,
+        Message("developer", ctx.brief),
+        Message("developer", SAY.format(text=gist)),
+        Message("user", probe["phrase"]),
+    ]
+    result = await pilot.measure(
+        quick, ctx.talk.instructions, messages, prefix=messages[:-2], slot=mind2.SLOT
+    )
+    voice = result.get("first_sentence_s")
+    result["sol"] = sol_result
+    result["voice_after_phrase_s"] = sol_result["total_s"] + voice if voice is not None else None
+    return gist, result
+
+
 async def answer(arm: str) -> None:
     d = folder(arm)
     world = stand.World.of(d)
@@ -95,16 +184,31 @@ async def answer(arm: str) -> None:
     rows = pilot.rows(d / "answers.jsonl")
     done = {(r["probe"], r["ask_after"]): r for r in rows if r.get("error") is None}
     quick = pilot.make_quick(pilot.gemma_url(None), max_tokens=300)
+    sol_backend = embed = store = None
+    gists = {}
+    if arm == "gist_stall":
+        gists = {
+            (r["probe"], r["ask_after"]): r["note"] for r in pilot.rows(folder("gist") / "answers.jsonl")
+        }
+    if arm == "gist":
+        sol_backend = pilot.make_backend("chatgpt", reasoning_effort=stand.EFFORT)
+        embed = stand.EmbedClient(stand.embed_url(None, None))
+        store = stand.MemoryStore(stand.journal_copy(d, world.carry), embeddings=embed)
     try:
         for pid, c in schedule["asked"]:
             if (pid, c) in done:
                 continue
             probe = probes[pid]
             ctx = stand.asked(world, c)
-            note, messages = messages_for(arm, ctx, probe, sol.get((pid, c), ""), memories.get((pid, c)))
-            result = await pilot.measure(
-                quick, ctx.talk.instructions, messages, prefix=messages[:-1], slot=mind2.SLOT
-            )
+            if arm == "gist":
+                note, result = await gist_turn(sol_backend, quick, ctx, probe, store)
+            elif arm == "gist_stall":
+                note, result = await stall_turn(quick, ctx, probe, gists[pid, c])
+            else:
+                note, messages = messages_for(arm, ctx, probe, sol.get((pid, c), ""), memories.get((pid, c)))
+                result = await pilot.measure(
+                    quick, ctx.talk.instructions, messages, prefix=messages[:-1], slot=mind2.SLOT
+                )
             if result["error"] is None and not result["text"].strip():
                 result["error"] = "Empty answer"
             done[pid, c] = {
@@ -117,13 +221,19 @@ async def answer(arm: str) -> None:
                 "calls": [],
                 **result,
                 "handoff": False,
-                "stall": None,
+                "stall": result.get("stall"),
                 "note": note,
             }
             pilot.save_rows(d / "answers.jsonl", done.values())
             print(f"{arm} {pid}: {result['error'] or result['text'][:80]}", file=sys.stderr)
     finally:
         await quick.aclose()
+        if sol_backend is not None:
+            await sol_backend.aclose()
+        if embed is not None:
+            await embed.close()
+        if store is not None:
+            store.close()
         world.close()
 
 
