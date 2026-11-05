@@ -11,6 +11,7 @@ import subprocess
 import sys
 import time
 from collections import Counter
+from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -61,7 +62,7 @@ def voice_messages(ctx: Any, phrase: str, gist: str, said: str) -> tuple[list, l
     tail = prompt("voice.md").format(gist=gist)
     if said:
         tail += SOUND_SAID.format(said)
-    return [*head, Message("developer", tail), Message("user", phrase)], head
+    return [*head, Message("user", phrase), Message("developer", tail)], head
 
 
 def filter_first(result: dict, previous: list[dict]) -> dict:
@@ -162,13 +163,18 @@ async def wait_gemma() -> None:
         await asyncio.sleep(30)
 
 
-async def pipeline(sol: Any, quick: Any, ctx: Any, phrase: str, store: Any, previous: list) -> dict:
-    started = time.monotonic()
-    gist = await stand.sol_answer(sol, thinking(ctx), phrase, store)
-    gist["total_s"] = time.monotonic() - started  # includes recall, not just the model requests
-    for call in gist["calls"]:
-        if call["name"] != "recall":
-            call["result"] = "Принято."
+async def pipeline(
+    sol: Any, quick: Any, ctx: Any, phrase: str, store: Any, previous: list, *, gist: dict | None = None
+) -> dict:
+    if gist is None:
+        started = time.monotonic()
+        gist = await stand.sol_answer(sol, thinking(ctx), phrase, store)
+        gist["total_s"] = time.monotonic() - started  # includes recall, not just the model requests
+        for call in gist["calls"]:
+            if call["name"] != "recall":
+                call["result"] = "Принято."
+    else:
+        gist = deepcopy(gist)  # keep the source's text, calls and measured Sol times unchanged
     record = {
         "gist": gist,
         "first_words": None,
@@ -204,7 +210,7 @@ async def pipeline(sol: Any, quick: Any, ctx: Any, phrase: str, store: Any, prev
     return record
 
 
-async def run(directory: Path, dataset: str, convs: list[str] | None) -> int:
+async def run(directory: Path, dataset: str, convs: list[str] | None, gists_from: Path | None = None) -> int:
     setup(directory)
     world = stand.World.of(directory)
     selected = {world.match(c) for c in convs} if convs else set(world.by_conv)
@@ -226,11 +232,21 @@ async def run(directory: Path, dataset: str, convs: list[str] | None) -> int:
         world.close()
         print("Nothing to run", file=sys.stderr)
         return 0
+    source = (
+        {
+            r["id"] if dataset == "turns" else (r["probe"], r["ask_after"]): r["gist"]
+            for r in pilot.rows(gists_from / path.name)
+        }
+        if gists_from is not None
+        else {}
+    )
     await wait_gemma()
-    sol = CountedSol(pilot.make_backend("chatgpt", reasoning_effort=stand.EFFORT), directory)
+    sol = embed = store = None
+    if gists_from is None:
+        sol = CountedSol(pilot.make_backend("chatgpt", reasoning_effort=stand.EFFORT), directory)
+        embed = stand.EmbedClient(stand.embed_url(None, None))
+        store = stand.MemoryStore(stand.journal_copy(directory, world.carry), embeddings=embed)
     quick = pilot.make_quick(pilot.gemma_url(None), max_tokens=300)
-    embed = stand.EmbedClient(stand.embed_url(None, None))
-    store = stand.MemoryStore(stand.journal_copy(directory, world.carry), embeddings=embed)
     previous: dict[str, list[dict]] = {}
     try:
         for identifier, conv, item in plan:
@@ -247,11 +263,16 @@ async def run(directory: Path, dataset: str, convs: list[str] | None) -> int:
                         variant="note",
                         recorded_calls=recorded_probes[item["id"], conv]["calls"],
                     )
+                gist = None
+                if gists_from is not None:
+                    key = identifier if dataset == "turns" else (item["id"], conv)
+                    gist = source[key]
+                    meta["gists_from"] = str(gists_from)
                 records[identifier] = {
                     "id": identifier,
                     "conv": conv,
                     **meta,
-                    **await pipeline(sol, quick, ctx, item["phrase"], store, recent),
+                    **await pipeline(sol, quick, ctx, item["phrase"], store, recent, gist=gist),
                 }
                 pilot.save_rows(path, records.values())
                 # A regenerated answer must be judged again, even if its old judgment was successful.
@@ -278,10 +299,13 @@ async def run(directory: Path, dataset: str, convs: list[str] | None) -> int:
             recent.append(first or {"said": ""})
         return int(any(records[i]["error"] is not None for i, _, _ in plan))
     finally:
-        await sol.aclose()
+        if sol is not None:
+            await sol.aclose()
         await quick.aclose()
-        await embed.close()
-        store.close()
+        if embed is not None:
+            await embed.close()
+        if store is not None:
+            store.close()
         world.close()
 
 
@@ -393,6 +417,7 @@ def summary(directory: Path, *, emit: bool = True) -> dict:
         return {
             "n": len(rows),
             "judged": len(results),
+            "clean": sum(not any(r[key] for key in ("lost", "changed", "added")) for r in results),
             **{key: sum(bool(r[key]) for r in results) for key in ("lost", "changed", "added")},
         }
 
@@ -550,10 +575,10 @@ async def selftest() -> int:
     assert head == [*ctx.history, Message("developer", "brief")]
     assert messages == [
         *head,
-        Message("developer", prompt("voice.md").format(gist="gist {1}") + SOUND_SAID.format("Wait.")),
         Message("user", phrase),
+        Message("developer", prompt("voice.md").format(gist="gist {1}") + SOUND_SAID.format("Wait.")),
     ]
-    assert SOUND_SAID.format("") not in voice_messages(ctx, phrase, "gist", "")[0][-2].content
+    assert SOUND_SAID.format("") not in voice_messages(ctx, phrase, "gist", "")[0][-1].content
     valid = dict(
         lost=[],
         changed=[],
@@ -635,6 +660,7 @@ async def selftest() -> int:
         out = summary(directory, emit=False)
         assert out["records"]["complete"] == 2 and out["sol_requests"] == 4
         assert out["turns"]["by_label"]["true"]["lost"] == 1
+        assert out["turns"]["by_label"]["true"]["clean"] == 0
         assert len(out["turns"]["decision_losses"]) == 1
         assert out["first_words"]["first_words_claim"] == 1
         assert out["first_words"]["most_common_first_word"]["of_said"] == 1
@@ -657,6 +683,52 @@ async def selftest() -> int:
         else:
             raise AssertionError("Sol request budget exceeded")
         assert len(backend.calls) == 1 and stand.read_json(directory / "config.json")["sol_requests"] == 1
+        # Exercise --gists-from through run for both key shapes, with every Sol entry point forbidden.
+        source = directory / "source"
+        source.mkdir()
+        pilot.save_rows(source / "turns.jsonl", [row])
+        pilot.save_rows(source / "answers.jsonl", [{**probe, "id": "legacy-probe-id"}])
+        base = directory / "phase1"
+        base.mkdir()
+        pilot.save_rows(
+            base / "answers.jsonl", [{"variant": "sol", "probe": "p", "ask_after": "c", "calls": []}]
+        )
+        probes_path = directory / "probes.json"
+        stand.write_json(probes_path, [{"id": "p", "npc": "npc", "kind": "detail", "phrase": phrase}])
+        world = SimpleNamespace(
+            by_conv={"c": [row]},
+            turns=[{**row, "index": 0}],
+            match=lambda _: "c",
+            calls=lambda _: [],
+            close=lambda: None,
+        )
+        for dataset, filename in (("turns", "turns.jsonl"), ("probes", "answers.jsonl")):
+            destination = directory / dataset
+            destination.mkdir()
+            stand.write_json(destination / "config.json", {"sol_requests": 0})
+            stand.write_json(
+                destination / "schedule.json", {"probes": str(probes_path), "asked": [["p", "c"]]}
+            )
+            quick = FakeBackend(script=[FakeStep("Дай подумать. "), FakeStep("I offer 25 gold. ")], delay=0)
+            with (
+                patch.object(stand.World, "of", return_value=world),
+                patch(__name__ + ".turn_context", return_value=ctx),
+                patch.object(stand, "asked", return_value=ctx),
+                patch.object(
+                    pilot, "make_backend", side_effect=AssertionError("Sol must not be constructed")
+                ),
+                patch.object(stand, "sol_answer", side_effect=AssertionError("Sol must not be called")),
+                patch.object(pilot, "make_quick", return_value=quick),
+                patch.object(pilot, "gemma_url", return_value="fake"),
+                patch(__name__ + ".wait_gemma"),
+                patch(__name__ + ".P1", base),
+            ):
+                assert await run(destination, dataset, ["c"], source) == 0
+            copied = pilot.rows(destination / filename)[0]
+            assert copied["gist"] == row["gist"] and copied["calls"] == row["calls"]
+            assert copied["gists_from"] == str(source)
+            assert stand.read_json(destination / "config.json")["sol_requests"] == 0
+            assert len(quick.calls) == 2 and quick.calls[-1][1][-1].role == "developer"
     print("selftest: requests, tool loop, judge JSON, first words and summary passed (offline)")
     return 0
 
@@ -668,6 +740,7 @@ def main() -> int:
     p.add_argument("directory", type=Path)
     p.add_argument("--set", choices=("turns", "probes"), required=True, dest="dataset")
     p.add_argument("--conv", action="append")
+    p.add_argument("--gists-from", type=Path)
     for command in ("judge", "summary"):
         commands.add_parser(command).add_argument("directory", type=Path)
     commands.add_parser("selftest")
@@ -678,7 +751,8 @@ def main() -> int:
     if args.command == "selftest":
         return asyncio.run(selftest())
     if args.command == "run":
-        return asyncio.run(run(args.directory, args.dataset, args.conv))
+        source = args.gists_from.resolve() if args.gists_from is not None else None
+        return asyncio.run(run(args.directory, args.dataset, args.conv, source))
     return asyncio.run(judge(args.directory))
 
 
