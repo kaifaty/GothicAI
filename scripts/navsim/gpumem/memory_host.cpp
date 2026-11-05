@@ -1,6 +1,7 @@
 // Host build of memory_kernels.h (one lane): the same code on a CPU, loaded
 // through ctypes to check the port against the engine without a GPU.
 #include "memory_kernels.h"
+#include "passage_kernels.h"
 
 extern "C" {
 int64_t gm_ctx_bytes() { return int64_t(sizeof(gm::Ctx)); }
@@ -15,6 +16,10 @@ void gm_update(const gm::Ctx* c) {
 void gm_read(const gm::Ctx* c, const int32_t* agents, int64_t count, float* near, float* far) {
   for (int64_t k = 0; k < count; ++k)
     for (int r = 0; r < gm::Outputs; ++r) gm::readOutput(*c, agents[k], k, r, near, far);
+}
+
+void gm_passage(const gm::Ctx* c, const int32_t* agents, const float* segments, int64_t count, uint8_t* verdicts) {
+  for (int64_t q = 0; q < count; ++q) verdicts[q] = gm::passage::check(*c, agents[q], segments + 8 * q);
 }
 
 void gm_scatter(const gm::Ctx* c, const gm::Table* t, const int32_t* updates) {
