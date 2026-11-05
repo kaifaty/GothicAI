@@ -7,8 +7,6 @@
 #include <string_view>
 #include <vector>
 
-namespace daedalus { class Mesh; }
-
 class World;
 class Cloth;
 class MeshObjects;
