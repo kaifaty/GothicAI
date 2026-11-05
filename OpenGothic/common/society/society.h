@@ -52,7 +52,7 @@ inline constexpr FollowState FollowStates[] = {{"ZS_GOTOBED","ZS_SLEEP"}};
 // The monster dispatcher: its state is the first window of the NPC's `mm_schedule` that holds the hour.
 inline constexpr const char* MmScheduler = "ZS_MM_ALLSCHEDULER";
 
-// The world that does not change during a run: everything of the export v1, read once. Capacities are fixed here.
+// The world that does not change during a run: everything of the export (v1 or v2), read once. Capacities are fixed.
 // Every list keeps the export's order and ids: point = `waypoints[].id`, NPC = index in `npcs[]`, object =
 // `objects[].id`, routine entry = index in the NPC's `routine[]`.
 struct World {

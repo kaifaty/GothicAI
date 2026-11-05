@@ -1,4 +1,4 @@
-// gothic-society-day: plays N days of a `society-world` v1 export by the routine on the society stand's core
+// gothic-society-day: plays N days of a `society-world` export (v1 or v2) by the routine on the society stand's core
 // (docs/society-sim.md) and writes its journal and 5-minute marks.
 //
 //   gothic-society-day --world <export.json> --out <dir> [--days N] [--seed S]
