@@ -2599,7 +2599,8 @@ void heroHeadGameCases(const std::string& game, const std::string& base) {
     auto* npc=world.addNpc(npcId,hero->position());
     require(npc!=nullptr,"control NPC must spawn");
     npc->setVisualBody(0,0,0,0,"HUM_BODY_NAKED0","Hum_Head_Pony");
-    const auto* original=Resources::loadMesh("HUM_HEAD_PONY.MMB");
+    // The mesh cache keys on the name as spelled, so ask with the spelling the NPC's head got.
+    const auto* original=Resources::loadMesh("Hum_Head_Pony.MMB");
     require(original!=nullptr && MeshGltfTest::head(*npc).protoMesh()==original &&
             MeshGltfTest::visual(*npc).headMesh()==nullptr,"NPC Hum_Head_Pony must remain HUM_HEAD_PONY.MMB");
 
