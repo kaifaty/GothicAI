@@ -475,6 +475,7 @@ struct Npc::TransformBack {
 
 Npc::Npc(World &owner, size_t instance, std::string_view waypoint, NpcProcessPolicy aiPolicy)
   :owner(owner),aiPolicy(aiPolicy),mvAlgo(*this) {
+  animLodSeed    = AnimationLod::nextSeed();
   outputPipe     = owner.script().openAiOuput();
 
   hnpc           = std::make_shared<daedalus::INpc>();
