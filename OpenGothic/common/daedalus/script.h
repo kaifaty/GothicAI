@@ -20,7 +20,7 @@
 #include <variant>
 #include <vector>
 
-namespace zenkit { struct DaedalusProgramRecord; }
+#include "asset/program.h"
 
 namespace daedalus {
 	class Error : public std::exception {
@@ -777,10 +777,10 @@ namespace daedalus {
 
 
 		/// \brief Exports owned program records without parsing DAT.
-		[[nodiscard]] zenkit::DaedalusProgramRecord export_program() const;
+		[[nodiscard]] asset::ProgramRecord export_program() const;
 
 		/// \brief Constructs an unbound script from owned program records without parsing DAT.
-		[[nodiscard]] static DaedalusScript from_program(zenkit::DaedalusProgramRecord program);
+		[[nodiscard]] static DaedalusScript from_program(asset::ProgramRecord program);
 
 		/// \brief Registers a member offset
 		/// \param name The name of the member in the script

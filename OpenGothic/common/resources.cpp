@@ -1,5 +1,4 @@
 #include "resources.h"
-#include "zenkitlog.h"
 #include "loadprobe.h"
 #include "basestore.h"
 #include "commandline.h"
@@ -336,7 +335,6 @@ void Resources::startVideoBase() {
   const auto gothic=std::filesystem::path(CommandLine::inst().rootPath());
   const auto mainBase=inst->automaticBase.path;
   inst->videoWorker=std::thread([state,gothic,mainBase] {
-    ZenKitLog::silenceForVideo();
     try {
       auto selection=BaseStore::resolveVideos(gothic,mainBase,[](std::string_view message) {
         // Background selection diagnostics do not use the application's log callback.
