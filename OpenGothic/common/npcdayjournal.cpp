@@ -483,20 +483,25 @@ void NpcDayJournal::tick(World& w) {
       e.dead = dead;
       }
     }
+  // The entries are hashed by address, which differs between runs: write the removals by key.
+  std::vector<std::string> removed;
   for(auto it=j.entries.begin(); it!=j.entries.end();) {
     if(it->second.lastSeen==j.tick) {
       ++it;
       continue;
       }
     // The NPC has left the world array; its object may already be gone.
-    if(j.events!=nullptr) {
-      std::fprintf(j.events,"%.4f,%s,remove,-,0,0,0\n",relativeMinutes(j,w.time().toInt()),it->second.key.c_str());
-      ++j.eventCount;
-      }
+    removed.push_back(std::move(it->second.key));
     ++j.removed;
     j.movements.erase(it->first);
     it = j.entries.erase(it);
     }
+  std::sort(removed.begin(),removed.end());
+  for(const auto& key:removed)
+    if(j.events!=nullptr) {
+      std::fprintf(j.events,"%.4f,%s,remove,-,0,0,0\n",relativeMinutes(j,w.time().toInt()),key.c_str());
+      ++j.eventCount;
+      }
   const int64_t now = w.time().toInt();
   while(j.active && now>=j.nextSampleMs && j.nextSampleMs<=j.endMs) {
     writeSample(w,j,j.nextSampleMs);

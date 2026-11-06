@@ -196,6 +196,7 @@ class Npc final {
     // Whose pose the world logic reads every frame: never deferred.
     bool       animationLodPinned() const;
     void       setAnimationLodTargeted(bool t) { animLodTargeted = t; }
+    uint32_t   animationLodSeed() const { return animLodSeed; }
 
     std::string_view displayName() const;
     auto       displayPosition() const -> Tempest::Vec3;
@@ -1050,6 +1051,7 @@ class Npc final {
     float                          lieVisualYOffset = 0;
     uint64_t                       animLodPendingDt = 0;
     bool                           animLodTargeted = false;
+    uint32_t                       animLodSeed = 0;
     Tempest::Vec3                  characterVisualSamplePosition;
     Tempest::Vec3                  characterVisualSampleNormal;
     uint64_t                       characterVisualSampleTick = 0;
