@@ -2396,8 +2396,8 @@ void effectCases(const std::string& game, const std::string& base) {
   setenv("OPENGOTHIC_TEXTURES","",1);
   unsetenv("OPENGOTHIC_CENSUS");
   setenv("TEMPEST_AUDIO_LOOPBACK","48000",1);
-  const char* args[]={"gothic-mesh-gltf-test","-g",game.c_str(),"-g2"};
-  CommandLine commandLine(4,args);
+  const char* args[]={"gothic-mesh-gltf-test","-g",game.c_str()};
+  CommandLine commandLine(3,args);
   Tempest::VulkanApi api;
   Tempest::Device device(api);
   {
@@ -2547,8 +2547,8 @@ void heroHeadGameCases(const std::string& game, const std::string& base) {
   setenv("OPENGOTHIC_BASE",base.c_str(),1);
   unsetenv("OPENGOTHIC_CENSUS");
   setenv("TEMPEST_AUDIO_LOOPBACK","48000",1);
-  const char* args[]={"gothic-mesh-gltf-test","-g",game.c_str(),"-g2","-nointro"};
-  CommandLine commandLine(5,args);
+  const char* args[]={"gothic-mesh-gltf-test","-g",game.c_str(),"-nointro"};
+  CommandLine commandLine(4,args);
   Tempest::VulkanApi api;
   Tempest::Device device(api);
   {
@@ -2636,8 +2636,8 @@ void heroHeadGameCases(const std::string& game, const std::string& base) {
     require(npc!=nullptr && MeshGltfTest::head(*npc).protoMesh()==original,
             "control NPC must retain the original head across save reload");
 
-    const char* offArgs[]={"gothic-mesh-gltf-test","-g",game.c_str(),"-g2","-nointro","--no-hero-head"};
-    CommandLine off(6,offArgs);
+    const char* offArgs[]={"gothic-mesh-gltf-test","-g",game.c_str(),"-nointro","--no-hero-head"};
+    CommandLine off(5,offArgs);
     MeshGltfTest::refreshBody(*hero);
     require(MeshGltfTest::visual(*hero).headMesh()==nullptr && MeshGltfTest::head(*hero).protoMesh()==original,
             "--no-hero-head must restore the original hero head");

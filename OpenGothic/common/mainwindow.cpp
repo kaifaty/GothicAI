@@ -58,9 +58,7 @@ MainWindow::MainWindow(Device& device)
   Gothic::inst().onSettingsChanged.bind(this,&MainWindow::onSettings);
   onSettings();
 
-  if(Gothic::inst().version().game==2)
-    setWindowTitle("Gothic II"); else
-    setWindowTitle("Gothic");
+  setWindowTitle("Gothic II");
 
   if(!CommandLine::inst().isWindowMode()) {
     setFullscreen(true);
@@ -229,13 +227,7 @@ void MainWindow::paintEvent(PaintEvent& event) {
                    0,0,back->w(),back->h());
         }
       if(loadBox!=nullptr && !loadBox->isEmpty()) {
-        if(Gothic::inst().version().game==1) {
-          int lw = int(w()*0.5);
-          int lh = int(h()*0.05);
-          drawLoading(p,(w()-lw)/2, int(h()*0.75), lw, lh);
-          } else {
-          drawLoading(p,int(w()*0.92)-loadBox->w(), int(h()*0.12), loadBox->w(),loadBox->h());
-          }
+        drawLoading(p,int(w()*0.92)-loadBox->w(), int(h()*0.12), loadBox->w(),loadBox->h());
         }
       }
     } else {
@@ -958,11 +950,6 @@ void MainWindow::drawProgress(Painter &p, int x, int y, int w, int h, float v) {
   int paddL = int((float(w)*75.f)/float(loadBox->w()));
   int paddT = int((float(h)*10.f)/float(loadBox->h()));
 
-  if(Gothic::inst().version().game==1) {
-    paddL = int((float(w)*30.f)/float(loadBox->w()));
-    paddT = int((float(h)* 5.f)/float(loadBox->h()));
-    }
-
   p.setBrush(*loadVal);
   p.drawRect(x+paddL,y+paddT,int(float(w-2*paddL)*v),h-2*paddT,
              0,0,loadVal->w(),loadVal->h());
@@ -1262,7 +1249,6 @@ Camera::Mode MainWindow::solveCameraMode() const {
       return Camera::Swim;
     if(pl->isFallingDeep())
       return Camera::Fall;
-    bool g2 = Gothic::inst().version().game==2;
     switch(pl->weaponState()){
       case WeaponState::Fist:
       case WeaponState::W1H:
@@ -1270,9 +1256,9 @@ Camera::Mode MainWindow::solveCameraMode() const {
         return Camera::Melee;
       case WeaponState::Bow:
       case WeaponState::CBow:
-        return g2 ? Camera::Ranged : Camera::Normal;
+        return Camera::Ranged;
       case WeaponState::Mage:
-        return g2 ? Camera::Ranged : Camera::Melee;
+        return Camera::Ranged;
       case WeaponState::NoWeapon:
         return Camera::Normal;
       }

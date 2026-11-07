@@ -308,8 +308,7 @@ void Effect::onCollide(World& world, const VisualFx* root, const Vec3& pos, Npc*
 
    // Gothic 1 uses emFXCollDyn->sendAssessMagic as check for PERC_ASSESSMAGIC
    // Gothic 2 instead introduced new vfx emFXCollDynPerc specific for this purpose
-  const bool g2     = world.version().game==2;
-  const auto sender = g2 ? root->emFXCollDynPerc : vfx;
+  const auto sender = root->emFXCollDynPerc;
   if(sender!=nullptr && sender->sendAssessMagic && npc!=nullptr) {
     auto oth = other==nullptr ? npc : other;
     npc->perceptionProcess(*oth,npc,0,PERC_ASSESSMAGIC);

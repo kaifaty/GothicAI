@@ -229,7 +229,7 @@ for section, values in ini.items():
 (leaf / 'run/Gothic.ini').write_text('\n'.join(lines) + '\n')
 subprocess.run(['bash', str(Path(scenario).parents[1] / 'base-ensure.sh'), env['GOTHIC_DIR']],
                env=env, check=True)
-command = [env['GAME_BIN'], '-g', env['GOTHIC_DIR'], '-g2', '-window', '-devmode',
+command = [env['GAME_BIN'], '-g', env['GOTHIC_DIR'], '-window', '-devmode',
            '-nomenu', '-nointro', '-w', 'NEWWORLD.ZEN', *meta['game_args']]
 meta.update(place=place, repeat=int(repeat), command=command)
 with (leaf / 'game.log').open('w') as log:

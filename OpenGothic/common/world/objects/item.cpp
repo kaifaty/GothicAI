@@ -10,7 +10,6 @@
 #include "game/gamescript.h"
 #include "world/objects/npc.h"
 #include "world/world.h"
-#include "utils/versioninfo.h"
 #include "utils/fileext.h"
 #include "utils/dbgpainter.h"
 
@@ -360,15 +359,8 @@ bool Item::isMulti() const {
   }
 
 bool Item::isSpellShoot() const {
-  // Whether a spell is a projectile is hardcoded in vanilla, see
-  // https://forum.worldofplayers.de/forum/threads/1460092-Stuck-in-a-charge-spell/page2?p=24786462&viewfull=1#post24786462
-  // Only hardcode Stormfist for now since other spells work with the heuristic based on target_collect_algo
   if(!isSpellOrRune())
     return false;
-  bool          g1            = world.version().game==1;
-  const int32_t SPL_STORMFIST = 47;
-  if(g1 && spellId()==SPL_STORMFIST)
-    return true;
   auto& spl = world.script().spellDesc(spellId());
   return spl.target_collect_algo!=TargetCollect::TARGET_COLLECT_NONE &&
          spl.target_collect_algo!=TargetCollect::TARGET_COLLECT_CASTER &&
