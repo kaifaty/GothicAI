@@ -17,6 +17,7 @@
 #include "shaders.h"
 #include "world/chunkresidency.h"
 #include "loadprobe.h"
+#include "frameprofile.h"
 #include "utils/workers.h"
 
 using namespace Tempest;
@@ -606,7 +607,10 @@ void WorldView::preFrameUpdate(const Camera& camera, uint64_t tickCount, uint8_t
   sGlobal.setTime(tickCount);
   sGlobal.commitUbo(fId);
 
+  {
+  FrameProfile::Scope pfx(FrameProfile::Zone::PfxPrepare);
   pfxGroup.preFrameUpdate(fId);
+  }
   visuals .preFrameUpdate();
   }
 
