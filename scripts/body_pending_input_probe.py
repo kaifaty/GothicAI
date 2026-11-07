@@ -55,7 +55,7 @@ class ProbeRunner(ArenaRunner):
         self.transport = (args.output/"collector-transport.jsonl").open("x")
         workdir = args.output/"run"; workdir.mkdir()
         (workdir/"Gothic.ini").write_bytes((args.reference/"run/Gothic.ini").read_bytes())
-        argv = [str(args.runner), "-g", str(args.assets), "-g2", "-devmode", "--save", str(args.save),
+        argv = [str(args.runner), "-g", str(args.assets), "-devmode", "--save", str(args.save),
                 "--scenario", str(args.scenario), "--output", str(args.output/"initial"),
                 "--mode", "realtime", "--stdio", "--scheduling-diagnostics"]
         if args.compact_replies:

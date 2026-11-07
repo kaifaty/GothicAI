@@ -34,7 +34,7 @@ class CompactRunner(ArenaRunner):
         workdir = args.output/"run"
         workdir.mkdir()
         (workdir/"Gothic.ini").write_bytes((args.reference/"run/Gothic.ini").read_bytes())
-        self.argv = [str(args.runner), "-g", str(args.assets), "-g2", "-devmode", "--save", str(args.save),
+        self.argv = [str(args.runner), "-g", str(args.assets), "-devmode", "--save", str(args.save),
                      "--scenario", str(args.scenario), "--output", str(args.output/"initial"),
                      "--mode", "lockstep", "--stdio", "--compact-replies"]
         self.argv.extend(native_worker_arguments(args))

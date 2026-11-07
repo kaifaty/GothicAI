@@ -530,8 +530,8 @@ int main() {
   try {
     const auto* gothic=std::getenv("GOTHIC_DIR");
     WorldDataContract::require(gothic && *gothic,"GOTHIC_DIR must point to a Gothic II installation");
-    const char* args[]={"gothic-worlddata-contract","-g",gothic,"-g2"};
-    CommandLine commandLine(4,args);
+    const char* args[]={"gothic-worlddata-contract","-g",gothic};
+    CommandLine commandLine(3,args);
     fs::create_directories(root);
     WorldDataContract::run(root,gothic);
     std::puts("World data contract passed");

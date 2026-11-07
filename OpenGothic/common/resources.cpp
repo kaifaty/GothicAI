@@ -2405,8 +2405,7 @@ std::unique_ptr<Animation> Resources::implLoadAnimation(std::string name) {
   if(name.size()<4)
     return nullptr;
 
-  if(Gothic::inst().version().game==2)
-    FileExt::exchangeExt(name,"MDS","MSB");
+  FileExt::exchangeExt(name,"MDS","MSB");
 
   if(FileExt::hasExt(name,"MSB") || FileExt::hasExt(name,"MDS")) {
     asset::ModelScript own {};

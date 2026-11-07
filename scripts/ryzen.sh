@@ -497,7 +497,7 @@ PY
   else
     cat >"$out/game.sh" <<'WRAPPER'
 #!/usr/bin/env bash
-exec "$RYZEN_GAME_BIN" "$@" -g2 -window
+exec "$RYZEN_GAME_BIN" "$@" -window
 WRAPPER
     chmod +x "$out/game.sh"
     export GAME_BIN="$out/game.sh"
@@ -558,7 +558,7 @@ remote_run() {
   # Windowed on the logged-in desktop; never take it fullscreen or use a software display.
   cat >"$LOG_DIR/game.sh" <<'WRAPPER'
 #!/usr/bin/env bash
-exec "$RYZEN_GAME_BIN" "$@" -g2 -window
+exec "$RYZEN_GAME_BIN" "$@" -window
 WRAPPER
   chmod +x "$LOG_DIR/game.sh"
   export GAME_BIN="$LOG_DIR/game.sh"

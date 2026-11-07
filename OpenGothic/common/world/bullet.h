@@ -51,8 +51,6 @@ class Bullet final : public DynamicWorld::BulletCallback {
     auto     damage() const -> const DamageCalculator::Damage& { return dmg; }
     void     setDamage(DamageCalculator::Damage d) { dmg=d; }
 
-    float    critChance() const { return critCh; }
-    void     setCritChance(float v) { critCh=v; }
     float    hitChance() const { return hitCh; }
     void     setHitChance(float v) { hitCh=v; }
 
@@ -87,7 +85,6 @@ class Bullet final : public DynamicWorld::BulletCallback {
 
     DamageCalculator::Damage  dmg        = {};
     float                     hitCh      = 1.f;
-    float                     critCh     = 0.f;
     bool                      precise    = false;
     float                     drawK      = 1.f;
     HitZones::Zone            zone       = HitZones::None;

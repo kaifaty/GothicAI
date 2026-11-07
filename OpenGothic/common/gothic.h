@@ -17,10 +17,8 @@
 #include "world/world.h"
 #include "ui/documentmenu.h"
 #include "ui/chapterscreen.h"
-#include "utils/versioninfo.h"
 #include "sound/soundfx.h"
 
-class VersionInfo;
 class CameraDefinitions;
 class SoundDefinitions;
 class VisualFxDefinitions;
@@ -120,8 +118,6 @@ class Gothic final {
       uint8_t  showManaBar       = 2;
       uint8_t  showSwimBar       = 1;
       };
-
-    auto         version() const -> const VersionInfo&;
 
     bool         isInGame() const;
     bool         isInGameAndAlive() const;
@@ -331,7 +327,6 @@ class Gothic final {
     static void                           flushSettings();
 
   private:
-    VersionInfo                             vinfo;
     Options                                 opts;
     PhysicsFlags                            physicsFlagsCache;
     std::mt19937                            randGen;
@@ -393,7 +388,6 @@ class Gothic final {
                                                               bool load,
                                                               const std::function<std::unique_ptr<GameSession>(std::unique_ptr<GameSession>&&)> f);
 
-    void                                    detectGothicVersion();
     void                                    setupSettings();
     void                                    refreshPhysicsFlags();
 
