@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-namespace zenkit {
+namespace daedalus {
   class DaedalusScript;
   }
 
@@ -48,7 +48,7 @@ struct Program final {
   std::vector<Step> steps;
   };
 
-Program     liftProgram(const zenkit::DaedalusScript& script, const Bytecode& code, uint32_t fnSymbol);
+Program     liftProgram(const daedalus::DaedalusScript& script, const Bytecode& code, uint32_t fnSymbol);
 
 // readable, UTF-8: one step per line, branches indented
 std::string describe(const Program& p);

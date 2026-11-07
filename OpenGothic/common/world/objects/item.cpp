@@ -38,7 +38,7 @@ Item::Item(World &owner, size_t itemInstance, Type type, const Tempest::Matrix4x
   LoadProbe::Startup::Scope startupProbe(LoadProbe::Startup::Item);
   LoadProbe::Startup::Scope::bytes(LoadProbe::Startup::Item,sizeof(Item));
   assert(itemInstance!=size_t(-1));
-  hitem = std::make_shared<zenkit::IItem>();
+  hitem = std::make_shared<daedalus::IItem>();
   hitem->user_ptr=this;
   owner.script().initializeInstanceItem(hitem, itemInstance);
   setCount(1);
@@ -62,7 +62,7 @@ Item::Item(World &owner, size_t itemInstance, Type type, const Tempest::Matrix4x
 Item::Item(World &owner, Serialize &fin, Type type)
   :Vob(owner) {
   auto& h = hitem;
-  h = std::make_shared<zenkit::IItem>();
+  h = std::make_shared<daedalus::IItem>();
   h->user_ptr = this;
 
   Tempest::Matrix4x4 mat;
@@ -448,7 +448,7 @@ bool Item::checkCond(const Npc &other) const {
   }
 
 bool Item::checkCondUse(const Npc &other, int32_t &a, int32_t &nv) const {
-  for(size_t i=0;i<zenkit::IItem::condition_count;++i){
+  for(size_t i=0;i<daedalus::IItem::condition_count;++i){
     auto atr = Attribute(hitem->cond_atr[i]);
     if(other.attribute(atr)<hitem->cond_value[i] && hitem->cond_value[i]!=0) {
       a  = atr;

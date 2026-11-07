@@ -1,8 +1,10 @@
-// Copyright © 2022-2023 GothicKit Contributors.
+// Copyright © 2021-2024 GothicKit Contributors.
 // SPDX-License-Identifier: MIT
+// Copy of ZenKit 1.3.0 with project modifications.
+// MIT license: OpenGothic/lib/ZenKit/license.md (../../lib/ZenKit/license.md).
+
 #pragma once
-#include "zenkit/DaedalusScript.hh"
-#include "zenkit/Library.hh"
+#include "script.h"
 
 #include <cstdint>
 
@@ -18,7 +20,7 @@
 	inline bool operator&(E a, E b) { return (static_cast<std::uint32_t>(a) & static_cast<std::uint32_t>(b)) != 0; }
 // clang-format on
 
-namespace zenkit {
+namespace daedalus {
 	struct IGuildValues : DaedalusInstance {
 		static constexpr std::uint32_t count = 66;
 
@@ -54,7 +56,7 @@ namespace zenkit {
 		var string blood_texture[count];
 		var int32_t turn_speed[count];
 
-		ZKAPI static void register_(DaedalusScript& s);
+		static void register_(DaedalusScript& s);
 	};
 
 	namespace DamageType {
@@ -69,15 +71,15 @@ namespace zenkit {
 
 		static constexpr std::uint32_t NUM = 8U;
 
-		static constexpr std::uint32_t barrier ZKREM("renamed to DamageType::BARRIER") = BARRIER;
-		static constexpr std::uint32_t blunt ZKREM("renamed to DamageType::BLUNT") = BLUNT;
-		static constexpr std::uint32_t edge ZKREM("renamed to DamageType::EDGE") = EDGE;
-		static constexpr std::uint32_t fire ZKREM("renamed to DamageType::FIRE") = FIRE;
-		static constexpr std::uint32_t fly ZKREM("renamed to DamageType::FLY") = FLY;
-		static constexpr std::uint32_t magic ZKREM("renamed to DamageType::MAGIC") = MAGIC;
-		static constexpr std::uint32_t point ZKREM("renamed to DamageType::POINT") = POINT;
-		static constexpr std::uint32_t fall ZKREM("renamed to DamageType::FALL") = FALL;
-		static constexpr std::uint32_t count ZKREM("renamed to DamageType::NUM") = NUM;
+		static constexpr std::uint32_t barrier = BARRIER;
+		static constexpr std::uint32_t blunt = BLUNT;
+		static constexpr std::uint32_t edge = EDGE;
+		static constexpr std::uint32_t fire = FIRE;
+		static constexpr std::uint32_t fly = FLY;
+		static constexpr std::uint32_t magic = MAGIC;
+		static constexpr std::uint32_t point = POINT;
+		static constexpr std::uint32_t fall = FALL;
+		static constexpr std::uint32_t count = NUM;
 	} // namespace DamageType
 
 	namespace NpcAttribute {
@@ -92,16 +94,16 @@ namespace zenkit {
 
 		static constexpr std::uint32_t NUM = 8U;
 
-		static constexpr std::uint32_t hitpoints ZKREM("renamed to NpcAttribute::HITPOINTS") = HITPOINTS;
-		static constexpr std::uint32_t hitpoints_max ZKREM("renamed to NpcAttribute::HITPOINTS_MAX") = HITPOINTS_MAX;
-		static constexpr std::uint32_t mana ZKREM("renamed to NpcAttribute::MANA") = MANA;
-		static constexpr std::uint32_t mana_max ZKREM("renamed to NpcAttribute::MANA_MAX") = MANA_MAX;
-		static constexpr std::uint32_t strength ZKREM("renamed to NpcAttribute::STRENGTH") = STRENGTH;
-		static constexpr std::uint32_t dexterity ZKREM("renamed to NpcAttribute::DEXTERITY") = DEXTERITY;
-		static constexpr std::uint32_t regenerate_hp ZKREM("renamed to NpcAttribute::REGENERATE_HP") = REGENERATE_HP;
+		static constexpr std::uint32_t hitpoints = HITPOINTS;
+		static constexpr std::uint32_t hitpoints_max = HITPOINTS_MAX;
+		static constexpr std::uint32_t mana = MANA;
+		static constexpr std::uint32_t mana_max = MANA_MAX;
+		static constexpr std::uint32_t strength = STRENGTH;
+		static constexpr std::uint32_t dexterity = DEXTERITY;
+		static constexpr std::uint32_t regenerate_hp = REGENERATE_HP;
 		static constexpr std::uint32_t
-		    regenerate_mana ZKREM("renamed to NpcAttribute::REGENERATE_MANA") = REGENERATE_MANA;
-		static constexpr std::uint32_t count ZKREM("renamed to NpcAttribute::NUM") = NUM;
+		    regenerate_mana = REGENERATE_MANA;
+		static constexpr std::uint32_t count = NUM;
 	} // namespace NpcAttribute
 
 	enum class NpcType : std::uint32_t {
@@ -127,34 +129,34 @@ namespace zenkit {
 		AMBIENT = G2_AMBIENT,
 		MAIN = G2_MAIN,
 
-		g1_ambient ZKREM("renamed to NpcType::G1_AMBIENT") = G1_AMBIENT,
-		g1_main ZKREM("renamed to NpcType::G1_MAIN") = G1_MAIN,
-		g1_guard ZKREM("renamed to NpcType::G1_GUARD") = G1_GUARD,
-		g1_friend ZKREM("renamed to NpcType::G1_FRIEND") = G1_FRIEND,
-		g1_mine_ambient ZKREM("renamed to NpcType::G1_MINE_AMBIENT") = G1_MINE_AMBIENT,
-		g1_mine_guard ZKREM("renamed to NpcType::G1_MINE_GUARD") = G1_MINE_GUARD,
-		g1_ow_ambient ZKREM("renamed to NpcType::G1_OW_AMBIENT") = G1_OW_AMBIENT,
-		g1_ow_guard ZKREM("renamed to NpcType::G1_OW_GUARD") = G1_OW_GUARD,
-		g1_rogue ZKREM("renamed to NpcType::G1_ROGUE") = G1_ROGUE,
+		g1_ambient = G1_AMBIENT,
+		g1_main = G1_MAIN,
+		g1_guard = G1_GUARD,
+		g1_friend = G1_FRIEND,
+		g1_mine_ambient = G1_MINE_AMBIENT,
+		g1_mine_guard = G1_MINE_GUARD,
+		g1_ow_ambient = G1_OW_AMBIENT,
+		g1_ow_guard = G1_OW_GUARD,
+		g1_rogue = G1_ROGUE,
 
-		g2_ambient ZKREM("renamed to NpcType::G2_AMBIENT") = G2_AMBIENT,
-		g2_main ZKREM("renamed to NpcType::G2_MAIN") = G2_MAIN,
-		g2_friend ZKREM("renamed to NpcType::G2_FRIEND") = G2_FRIEND,
-		g2_oc_ambient ZKREM("renamed to NpcType::G2_OC_AMBIENT") = G2_OC_AMBIENT,
-		g2_oc_main ZKREM("renamed to NpcType::G2_OC_MAIN") = G2_OC_MAIN,
-		g2_bl_ambient ZKREM("renamed to NpcType::G2_BL_AMBIENT") = G2_BL_AMBIENT,
-		g2_tal_ambient ZKREM("renamed to NpcType::G2_TAL_AMBIENT") = G2_TAL_AMBIENT,
-		g2_bl_main ZKREM("renamed to NpcType::G2_BL_MAIN") = G2_BL_MAIN,
+		g2_ambient = G2_AMBIENT,
+		g2_main = G2_MAIN,
+		g2_friend = G2_FRIEND,
+		g2_oc_ambient = G2_OC_AMBIENT,
+		g2_oc_main = G2_OC_MAIN,
+		g2_bl_ambient = G2_BL_AMBIENT,
+		g2_tal_ambient = G2_TAL_AMBIENT,
+		g2_bl_main = G2_BL_MAIN,
 
-		ambient ZKREM("renamed to NpcType::AMBIENT") = AMBIENT,
-		main ZKREM("renamed to NpcType::MAIN") = MAIN,
+		ambient = AMBIENT,
+		main = MAIN,
 
-		friend_ ZKREM("use NpcType::G2_FRIEND") = G2_FRIEND,
-		oc_ambient ZKREM("use NpcType::G2_OC_AMBIENT") = G2_OC_AMBIENT,
-		oc_main ZKREM("use NpcType::G2_OC_MAIN") = G2_OC_MAIN,
-		bl_ambient ZKREM("use NpcType::G2_BL_AMBIENT") = G2_BL_AMBIENT,
-		tal_ambient ZKREM("use NpcType::G2_TAL_AMBIENT") = G2_TAL_AMBIENT,
-		bl_main ZKREM("use NpcType::G2_BL_MAIN") = G2_BL_MAIN,
+		friend_ = G2_FRIEND,
+		oc_ambient = G2_OC_AMBIENT,
+		oc_main = G2_OC_MAIN,
+		bl_ambient = G2_BL_AMBIENT,
+		tal_ambient = G2_TAL_AMBIENT,
+		bl_main = G2_BL_MAIN,
 	};
 
 	static_assert(NpcType::G1_AMBIENT == NpcType::G2_AMBIENT);
@@ -167,11 +169,11 @@ namespace zenkit {
 		GHOST = 1U << 2U,
 		PROTECTED = 1U << 3U,
 
-		none ZKREM("renamed to zenkit::NONE") = NONE,
-		friends ZKREM("renamed to zenkit::FRIENDS") = FRIENDS,
-		immortal ZKREM("renamed to zenkit::IMMORTAL") = IMMORTAL,
-		ghost ZKREM("renamed to zenkit::GHOST") = GHOST,
-		protected_ ZKREM("renamed to zenkit::PROTECTED") = PROTECTED,
+		none = NONE,
+		friends = FRIENDS,
+		immortal = IMMORTAL,
+		ghost = GHOST,
+		protected_ = PROTECTED,
 	};
 	FLAG(NpcFlag)
 
@@ -215,7 +217,7 @@ namespace zenkit {
 		var int32_t bodystate_interruptable_override;
 		var int32_t no_focus;
 
-		ZKAPI static void register_(DaedalusScript& s);
+		static void register_(DaedalusScript& s);
 	};
 
 	struct IMission : DaedalusInstance {
@@ -233,7 +235,7 @@ namespace zenkit {
 		var func obsolete;
 		var func running;
 
-		ZKAPI static void register_(DaedalusScript& s);
+		static void register_(DaedalusScript& s);
 	};
 
 	enum class ItemFlag : std::uint32_t {
@@ -249,17 +251,17 @@ namespace zenkit {
 		BELT = 1U << 24U,
 		MISSION = 1U << 12U,
 
-		dagger ZKREM("renamed to zenkit::DAGGER") = DAGGER,
-		sword ZKREM("renamed to zenkit::SWORD") = SWORD,
-		axe ZKREM("renamed to zenkit::AXE") = AXE,
-		two_handed_sword ZKREM("renamed to zenkit::TWO_HANDED_SWORD") = TWO_HANDED_SWORD,
-		two_handed_axe ZKREM("renamed to zenkit::TWO_HANDED_AXE") = TWO_HANDED_AXE,
-		bow ZKREM("renamed to zenkit::BOW") = BOW,
-		crossbow ZKREM("renamed to zenkit::CROSSBOW") = CROSSBOW,
-		amulet ZKREM("renamed to zenkit::AMULET") = AMULET,
-		ring ZKREM("renamed to zenkit::RING") = RING,
-		belt ZKREM("renamed to zenkit::BELT") = BELT,
-		mission ZKREM("renamed to zenkit::MISSION") = MISSION,
+		dagger = DAGGER,
+		sword = SWORD,
+		axe = AXE,
+		two_handed_sword = TWO_HANDED_SWORD,
+		two_handed_axe = TWO_HANDED_AXE,
+		bow = BOW,
+		crossbow = CROSSBOW,
+		amulet = AMULET,
+		ring = RING,
+		belt = BELT,
+		mission = MISSION,
 	};
 	FLAG(ItemFlag)
 
@@ -313,7 +315,7 @@ namespace zenkit {
 		var int32_t inv_rot_z;
 		var int32_t inv_animate;
 
-		ZKAPI static void register_(DaedalusScript& s);
+		static void register_(DaedalusScript& s);
 	};
 
 	struct IFocus : DaedalusInstance {
@@ -337,7 +339,7 @@ namespace zenkit {
 		var float mob_elevup;
 		var int32_t mob_prio;
 
-		ZKAPI static void register_(DaedalusScript& s);
+		static void register_(DaedalusScript& s);
 	};
 
 	struct IInfoChoice {
@@ -357,10 +359,10 @@ namespace zenkit {
 
 		std::vector<IInfoChoice> choices {};
 
-		ZKAPI void add_choice(IInfoChoice const& ch);
-		ZKAPI void remove_choice(std::size_t index);
+		void add_choice(IInfoChoice const& ch);
+		void remove_choice(std::size_t index);
 
-		ZKAPI static void register_(DaedalusScript& s);
+		static void register_(DaedalusScript& s);
 	};
 
 	struct IItemReact : DaedalusInstance {
@@ -372,7 +374,7 @@ namespace zenkit {
 		var int32_t requested_amount;
 		var func reaction;
 
-		ZKAPI static void register_(DaedalusScript& s);
+		static void register_(DaedalusScript& s);
 	};
 
 	struct ISpell : DaedalusInstance {
@@ -389,7 +391,7 @@ namespace zenkit {
 		var int32_t target_collect_azi;
 		var int32_t target_collect_elev;
 
-		ZKAPI static void register_(DaedalusScript& s);
+		static void register_(DaedalusScript& s);
 	};
 
 	struct ISvm : DaedalusInstance {
@@ -706,7 +708,7 @@ namespace zenkit {
 		var string you_defeated_me_well;
 		var string om;
 
-		ZKAPI static void register_(DaedalusScript& s);
+		static void register_(DaedalusScript& s);
 	};
 
 	enum class MenuFlag : std::uint32_t {
@@ -718,13 +720,13 @@ namespace zenkit {
 		ALIGN_CENTER = 1 << 5,
 		SHOW_INFO = 1 << 6,
 
-		overtop ZKREM("renamed to MenuFlag::OVERTOP") = OVERTOP,
-		exclusive ZKREM("renamed to MenuFlag::EXCLUSIVE") = EXCLUSIVE,
-		no_animation ZKREM("renamed to MenuFlag::NO_ANIMATION") = NO_ANIMATION,
-		dont_scale_dimension ZKREM("renamed to MenuFlag::DONT_SCALE_DIMENSION") = DONT_SCALE_DIMENSION,
-		dont_scale_position ZKREM("renamed to MenuFlag::DONT_SCALE_POSITION") = DONT_SCALE_POSITION,
-		align_center ZKREM("renamed to MenuFlag::ALIGN_CENTER") = ALIGN_CENTER,
-		show_info ZKREM("renamed to MenuFlag::SHOW_INFO") = SHOW_INFO,
+		overtop = OVERTOP,
+		exclusive = EXCLUSIVE,
+		no_animation = NO_ANIMATION,
+		dont_scale_dimension = DONT_SCALE_DIMENSION,
+		dont_scale_position = DONT_SCALE_POSITION,
+		align_center = ALIGN_CENTER,
+		show_info = SHOW_INFO,
 	};
 	FLAG(MenuFlag)
 
@@ -745,7 +747,7 @@ namespace zenkit {
 		var int32_t default_outgame;
 		var int32_t default_ingame;
 
-		ZKAPI static void register_(DaedalusScript& s);
+		static void register_(DaedalusScript& s);
 	};
 
 	enum class MenuItemFlag : std::uint32_t {
@@ -766,22 +768,22 @@ namespace zenkit {
 		EXTENDED_MENU = 1 << 14,
 		HOR_SELECTABLE = 1 << 15,
 
-		chromakeyed ZKREM("renamed to MenuItemFlag::CHROMAKEYED") = CHROMAKEYED,
-		transparent ZKREM("renamed to MenuItemFlag::TRANSPARENT") = TRANSPARENT,
-		selectable ZKREM("renamed to MenuItemFlag::SELECTABLE") = SELECTABLE,
-		movable ZKREM("renamed to MenuItemFlag::MOVABLE") = MOVABLE,
-		centered ZKREM("renamed to MenuItemFlag::CENTERED") = CENTERED,
-		disabled ZKREM("renamed to MenuItemFlag::DISABLED") = DISABLED,
-		fade ZKREM("renamed to MenuItemFlag::FADE") = FADE,
-		effects ZKREM("renamed to MenuItemFlag::EFFECTS") = EFFECTS,
-		only_outgame ZKREM("renamed to MenuItemFlag::ONLY_OUTGAME") = ONLY_OUTGAME,
-		only_ingame ZKREM("renamed to MenuItemFlag::ONLY_INGAME") = ONLY_INGAME,
-		perf_option ZKREM("renamed to MenuItemFlag::PERF_OPTION") = PERF_OPTION,
-		multiline ZKREM("renamed to MenuItemFlag::MULTILINE") = MULTILINE,
-		needs_apply ZKREM("renamed to MenuItemFlag::NEEDS_APPLY") = NEEDS_APPLY,
-		needs_restart ZKREM("renamed to MenuItemFlag::NEEDS_RESTART") = NEEDS_RESTART,
-		extended_menu ZKREM("renamed to MenuItemFlag::EXTENDED_MENU") = EXTENDED_MENU,
-		hor_selectable ZKREM("renamed to MenuItemFlag::HOR_SELECTABLE") = HOR_SELECTABLE,
+		chromakeyed = CHROMAKEYED,
+		transparent = TRANSPARENT,
+		selectable = SELECTABLE,
+		movable = MOVABLE,
+		centered = CENTERED,
+		disabled = DISABLED,
+		fade = FADE,
+		effects = EFFECTS,
+		only_outgame = ONLY_OUTGAME,
+		only_ingame = ONLY_INGAME,
+		perf_option = PERF_OPTION,
+		multiline = MULTILINE,
+		needs_apply = NEEDS_APPLY,
+		needs_restart = NEEDS_RESTART,
+		extended_menu = EXTENDED_MENU,
+		hor_selectable = HOR_SELECTABLE,
 	};
 	FLAG(MenuItemFlag)
 
@@ -795,14 +797,14 @@ namespace zenkit {
 		BUTTON = 6,
 		LISTBOX = 7,
 
-		unknown ZKREM("renamed to MenuItemType::UNKNOWN") = UNKNOWN,
-		text ZKREM("renamed to MenuItemType::TEXT") = TEXT,
-		slider ZKREM("renamed to MenuItemType::SLIDER") = SLIDER,
-		input ZKREM("renamed to MenuItemType::INPUT") = INPUT,
-		cursor ZKREM("renamed to MenuItemType::CURSOR") = CURSOR,
-		choicebox ZKREM("renamed to MenuItemType::CHOICEBOX") = CHOICEBOX,
-		button ZKREM("renamed to MenuItemType::BUTTON") = BUTTON,
-		listbox ZKREM("renamed to MenuItemType::LISTBOX") = LISTBOX,
+		unknown = UNKNOWN,
+		text = TEXT,
+		slider = SLIDER,
+		input = INPUT,
+		cursor = CURSOR,
+		choicebox = CHOICEBOX,
+		button = BUTTON,
+		listbox = LISTBOX,
 	};
 
 	enum class MenuItemSelectEvent : uint8_t {
@@ -815,14 +817,14 @@ namespace zenkit {
 		SELECT_PREVIOUS = 7,
 		SELECT_NEXT = 8,
 
-		execute ZKREM("renamed to MenuItemSelectEvent::EXECUTE") = EXECUTE,
-		changed ZKREM("renamed to MenuItemSelectEvent::CHANGED") = CHANGED,
-		leave ZKREM("renamed to MenuItemSelectEvent::LEAVE") = LEAVE,
-		timer ZKREM("renamed to MenuItemSelectEvent::TIMER") = TIMER,
-		close ZKREM("renamed to MenuItemSelectEvent::CLOSE") = CLOSE,
-		init ZKREM("renamed to MenuItemSelectEvent::INIT") = INIT,
-		select_previous ZKREM("renamed to MenuItemSelectEvent::SELECT_PREVIOUS") = SELECT_PREVIOUS,
-		select_next ZKREM("renamed to MenuItemSelectEvent::SELECT_NEXT") = SELECT_NEXT,
+		execute = EXECUTE,
+		changed = CHANGED,
+		leave = LEAVE,
+		timer = TIMER,
+		close = CLOSE,
+		init = INIT,
+		select_previous = SELECT_PREVIOUS,
+		select_next = SELECT_NEXT,
 	};
 
 	enum class MenuItemSelectAction : uint8_t {
@@ -835,14 +837,14 @@ namespace zenkit {
 		PLAY_SOUND = 6,
 		EXECUTE_COMMANDS = 7,
 
-		unknown ZKREM("renamed to MenuItemSelectAction::UNKNOWN") = UNKNOWN,
-		back ZKREM("renamed to MenuItemSelectAction::BACK") = BACK,
-		start_menu ZKREM("renamed to MenuItemSelectAction::START_MENU") = START_MENU,
-		start_item ZKREM("renamed to MenuItemSelectAction::START_ITEM") = START_ITEM,
-		close ZKREM("renamed to MenuItemSelectAction::CLOSE") = CLOSE,
-		con_commands ZKREM("renamed to MenuItemSelectAction::CON_COMMANDS") = CON_COMMANDS,
-		play_sound ZKREM("renamed to MenuItemSelectAction::PLAY_SOUND") = PLAY_SOUND,
-		execute_commands ZKREM("renamed to MenuItemSelectAction::EXECUTE_COMMANDS") = EXECUTE_COMMANDS,
+		unknown = UNKNOWN,
+		back = BACK,
+		start_menu = START_MENU,
+		start_item = START_ITEM,
+		close = CLOSE,
+		con_commands = CON_COMMANDS,
+		play_sound = PLAY_SOUND,
+		execute_commands = EXECUTE_COMMANDS,
 	};
 
 	struct IMenuItem : DaedalusInstance {
@@ -880,7 +882,7 @@ namespace zenkit {
 		var string hide_if_option_set;
 		var int32_t hide_on_value;
 
-		ZKAPI static void register_(DaedalusScript& s);
+		static void register_(DaedalusScript& s);
 	};
 
 	struct ICamera : DaedalusInstance {
@@ -908,7 +910,7 @@ namespace zenkit {
 		var int32_t rotate;
 		var int32_t collision;
 
-		ZKAPI static void register_(DaedalusScript& s);
+		static void register_(DaedalusScript& s);
 	};
 
 	enum class MusicTransitionEffect : std::uint32_t {
@@ -921,14 +923,14 @@ namespace zenkit {
 		END = 6,
 		END_AND_INTO = 7,
 
-		unknown ZKREM("renamed to MusicTransitionEffect::UNKNOWN") = UNKNOWN,
-		none ZKREM("renamed to MusicTransitionEffect::NONE") = NONE,
-		groove ZKREM("renamed to MusicTransitionEffect::GROOVE") = GROOVE,
-		fill ZKREM("renamed to MusicTransitionEffect::FILL") = FILL,
-		break_ ZKREM("renamed to MusicTransitionEffect::BREAK") = BREAK,
-		intro ZKREM("renamed to MusicTransitionEffect::INTRO") = INTRO,
-		end ZKREM("renamed to MusicTransitionEffect::END") = END,
-		end_and_into ZKREM("renamed to MusicTransitionEffect::END_AND_INTO") = END_AND_INTO,
+		unknown = UNKNOWN,
+		none = NONE,
+		groove = GROOVE,
+		fill = FILL,
+		break_ = BREAK,
+		intro = INTRO,
+		end = END,
+		end_and_into = END_AND_INTO,
 	};
 
 	enum class MusicTransitionType : std::uint32_t {
@@ -937,10 +939,10 @@ namespace zenkit {
 		BEAT = 2,
 		MEASURE = 3,
 
-		unknown ZKREM("renamed to MusicTransitionType::UNKNOWN") = UNKNOWN,
-		immediate ZKREM("renamed to MusicTransitionType::IMMEDIATE") = IMMEDIATE,
-		beat ZKREM("renamed to MusicTransitionType::BEAT") = BEAT,
-		measure ZKREM("renamed to MusicTransitionType::MEASURE") = MEASURE,
+		unknown = UNKNOWN,
+		immediate = IMMEDIATE,
+		beat = BEAT,
+		measure = MEASURE,
 	};
 
 	struct IMusicSystem : DaedalusInstance {
@@ -951,7 +953,7 @@ namespace zenkit {
 		var int32_t num_channels;
 		var int32_t reverb_buffer_size;
 
-		ZKAPI static void register_(DaedalusScript& s);
+		static void register_(DaedalusScript& s);
 	};
 
 	struct IMusicTheme : DaedalusInstance {
@@ -963,7 +965,7 @@ namespace zenkit {
 		var MusicTransitionEffect transtype;
 		var MusicTransitionType transsubtype;
 
-		ZKAPI static void register_(DaedalusScript& s);
+		static void register_(DaedalusScript& s);
 	};
 
 	struct IMusicJingle : DaedalusInstance {
@@ -972,7 +974,7 @@ namespace zenkit {
 		var float vol;
 		var int32_t transsubtype;
 
-		ZKAPI static void register_(DaedalusScript& s);
+		static void register_(DaedalusScript& s);
 	};
 
 	struct IParticleEffect : DaedalusInstance {
@@ -1034,7 +1036,7 @@ namespace zenkit {
 		var string time_start_end_s;
 		var int32_t m_bis_ambient_pfx;
 
-		ZKAPI static void register_(DaedalusScript& s);
+		static void register_(DaedalusScript& s);
 	};
 
 	struct IEffectBase : DaedalusInstance {
@@ -1087,7 +1089,7 @@ namespace zenkit {
 		var float secs_per_damage;
 		var string em_fx_coll_dyn_perc_s;
 
-		ZKAPI static void register_(DaedalusScript& s);
+		static void register_(DaedalusScript& s);
 	};
 
 	struct IParticleEffectEmitKey : DaedalusInstance {
@@ -1124,7 +1126,7 @@ namespace zenkit {
 		var int32_t em_check_collision;
 		var float em_fx_lifespan;
 
-		ZKAPI static void register_(DaedalusScript& s);
+		static void register_(DaedalusScript& s);
 	};
 
 	enum class FightAiMove : std::uint32_t {
@@ -1147,24 +1149,24 @@ namespace zenkit {
 		WAIT_LONGER = 23,
 		WAIT_EXT = 24,
 
-		nop ZKREM("renamed to zenkit::NOP") = NOP,
-		run ZKREM("renamed to zenkit::RUN") = RUN,
-		run_back ZKREM("renamed to zenkit::RUN_BACK") = RUN_BACK,
-		jump_back ZKREM("renamed to zenkit::JUMP_BACK") = JUMP_BACK,
-		turn ZKREM("renamed to zenkit::TURN") = TURN,
-		strafe ZKREM("renamed to zenkit::STRAFE") = STRAFE,
-		attack ZKREM("renamed to zenkit::ATTACK") = ATTACK,
-		attack_side ZKREM("renamed to zenkit::ATTACK_SIDE") = ATTACK_SIDE,
-		attack_front ZKREM("renamed to zenkit::ATTACK_FRONT") = ATTACK_FRONT,
-		attack_triple ZKREM("renamed to zenkit::ATTACK_TRIPLE") = ATTACK_TRIPLE,
-		attack_whirl ZKREM("renamed to zenkit::ATTACK_WHIRL") = ATTACK_WHIRL,
-		attack_master ZKREM("renamed to zenkit::ATTACK_MASTER") = ATTACK_MASTER,
-		turn_to_hit ZKREM("renamed to zenkit::TURN_TO_HIT") = TURN_TO_HIT,
-		parry ZKREM("renamed to zenkit::PARRY") = PARRY,
-		stand_up ZKREM("renamed to zenkit::STAND_UP") = STAND_UP,
-		wait ZKREM("renamed to zenkit::WAIT") = WAIT,
-		wait_longer ZKREM("renamed to zenkit::WAIT_LONGER") = WAIT_LONGER,
-		wait_ext ZKREM("renamed to zenkit::WAIT_EXT") = WAIT_EXT,
+		nop = NOP,
+		run = RUN,
+		run_back = RUN_BACK,
+		jump_back = JUMP_BACK,
+		turn = TURN,
+		strafe = STRAFE,
+		attack = ATTACK,
+		attack_side = ATTACK_SIDE,
+		attack_front = ATTACK_FRONT,
+		attack_triple = ATTACK_TRIPLE,
+		attack_whirl = ATTACK_WHIRL,
+		attack_master = ATTACK_MASTER,
+		turn_to_hit = TURN_TO_HIT,
+		parry = PARRY,
+		stand_up = STAND_UP,
+		wait = WAIT,
+		wait_longer = WAIT_LONGER,
+		wait_ext = WAIT_EXT,
 	};
 
 	struct IFightAi : DaedalusInstance {
@@ -1172,7 +1174,7 @@ namespace zenkit {
 
 		var FightAiMove move[move_count];
 
-		ZKAPI static void register_(DaedalusScript& s);
+		static void register_(DaedalusScript& s);
 	};
 
 	struct ISoundEffect : DaedalusInstance {
@@ -1186,7 +1188,7 @@ namespace zenkit {
 		var float reverb_level;
 		var string pfx_name;
 
-		ZKAPI static void register_(DaedalusScript& s);
+		static void register_(DaedalusScript& s);
 	};
 
 	struct ISoundSystem : DaedalusInstance {
@@ -1197,11 +1199,11 @@ namespace zenkit {
 		var int32_t num_sfx_channels;
 		var string used_3d_provider_name;
 
-		ZKAPI static void register_(DaedalusScript& s);
+		static void register_(DaedalusScript& s);
 	};
 
-	ZKAPI void register_all_script_classes(DaedalusScript& s);
-} // namespace zenkit
+	void register_all_script_classes(DaedalusScript& s);
+} // namespace daedalus
 
 #undef var
 #undef string

@@ -1,7 +1,7 @@
 #pragma once
 
-#include <zenkit/DaedalusVm.hh>
-#include <zenkit/addon/daedalus.hh>
+#include "daedalus/vm.h"
+#include "daedalus/classes.h"
 #include "game/definitions/definitiontypes.h"
 
 #include <Tempest/Point>
@@ -14,7 +14,7 @@ class World;
 
 class VisualFx final {
   public:
-    VisualFx(const Def::EffectBase& src, zenkit::DaedalusVm& tmpVm, std::string_view name);
+    VisualFx(const Def::EffectBase& src, daedalus::DaedalusVm& tmpVm, std::string_view name);
 
     enum Collision : uint8_t {
       NoCollision = 0,

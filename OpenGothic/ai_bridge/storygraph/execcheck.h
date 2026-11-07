@@ -14,7 +14,7 @@
 #include <utility>
 #include <vector>
 
-namespace zenkit {
+namespace daedalus {
   class DaedalusVm;
   class DaedalusInstance;
   struct INpc;
@@ -32,18 +32,18 @@ struct Node;
 class Ledger final : public Externals {
   public:
     // `hasItems`: the engine's Npc_HasItems, to ask the world what an npc has
-    Ledger(Externals& world, const zenkit::DaedalusSymbol* hasItems) : world(world), hasItemsFn(hasItems) {}
-    Value call(const zenkit::DaedalusSymbol& fn, const std::vector<Value>& args) override;
+    Ledger(Externals& world, const daedalus::DaedalusSymbol* hasItems) : world(world), hasItemsFn(hasItems) {}
+    Value call(const daedalus::DaedalusSymbol& fn, const std::vector<Value>& args) override;
 
     void  reset() { items.clear(); }
     // npc, item instance -> how much more (or less) it has than the world says
-    std::map<std::pair<const zenkit::DaedalusInstance*,int32_t>,int32_t> items;
+    std::map<std::pair<const daedalus::DaedalusInstance*,int32_t>,int32_t> items;
 
   private:
     int32_t has(const std::vector<Value>& npcAndItem);
 
     Externals&                    world;
-    const zenkit::DaedalusSymbol* hasItemsFn = nullptr;
+    const daedalus::DaedalusSymbol* hasItemsFn = nullptr;
   };
 
 // Step 1 of «Исполнение без VM» (docs/story-graph.md): a function's program (program.h) run by the Interpreter
@@ -61,7 +61,7 @@ class ExecCheck final {
       };
 
     // the VM is bound to engine() by the caller, before any instance is built
-    ExecCheck(zenkit::DaedalusVm& vm, Externals& world);
+    ExecCheck(daedalus::DaedalusVm& vm, Externals& world);
     ~ExecCheck();
 
     Externals&     engine();
@@ -69,7 +69,7 @@ class ExecCheck final {
     const Program& program(uint32_t fnSymbol);
 
     // the npc of an instance symbol in the world (its members are watched), nullptr if there is none
-    std::function<std::shared_ptr<zenkit::DaedalusInstance>(uint32_t)> npcOf;
+    std::function<std::shared_ptr<daedalus::DaedalusInstance>(uint32_t)> npcOf;
     // where the driver's VM exception handler leaves what went wrong; nullptr: exceptions are thrown
     std::string*   vmFault = nullptr;
     // when set, run() reports both sides' engine calls
@@ -78,8 +78,8 @@ class ExecCheck final {
     // reach the game (readProgram); one that reads back otherwise is not a program
     static inline bool viaJson = false;
 
-    Result         run(uint32_t fnSymbol, const std::shared_ptr<zenkit::INpc>& self,
-                       const std::shared_ptr<zenkit::INpc>& hero);
+    Result         run(uint32_t fnSymbol, const std::shared_ptr<daedalus::INpc>& self,
+                       const std::shared_ptr<daedalus::INpc>& hero);
 
   private:
     struct Call final {
@@ -91,15 +91,15 @@ class ExecCheck final {
     struct State;
 
     const std::set<std::string>& reach(uint32_t fnSymbol);
-    std::vector<std::shared_ptr<zenkit::DaedalusInstance>> watched(uint32_t fnSymbol,
-                                                                   const std::shared_ptr<zenkit::INpc>& self,
-                                                                   const std::shared_ptr<zenkit::INpc>& hero);
-    const std::vector<zenkit::DaedalusSymbol*>& membersOf(const zenkit::DaedalusInstance& inst);
-    void           take(State& s, const std::vector<std::shared_ptr<zenkit::DaedalusInstance>>& insts);
+    std::vector<std::shared_ptr<daedalus::DaedalusInstance>> watched(uint32_t fnSymbol,
+                                                                   const std::shared_ptr<daedalus::INpc>& self,
+                                                                   const std::shared_ptr<daedalus::INpc>& hero);
+    const std::vector<daedalus::DaedalusSymbol*>& membersOf(const daedalus::DaedalusInstance& inst);
+    void           take(State& s, const std::vector<std::shared_ptr<daedalus::DaedalusInstance>>& insts);
     void           restore(State& s);
     std::string    text(const Call& c) const;
 
-    zenkit::DaedalusVm&                                       vm;
+    daedalus::DaedalusVm&                                       vm;
     std::unique_ptr<Ledger>                                   book;
     std::unique_ptr<Recorder>                                 recorder;
     std::unique_ptr<Bytecode>                                 code;
@@ -107,7 +107,7 @@ class ExecCheck final {
     std::unordered_map<uint32_t,Program>                      programs;
     std::unordered_map<uint32_t,std::set<std::string>>        reaches;
     std::set<uint32_t>                                        busy;
-    std::unordered_map<uint32_t,std::vector<zenkit::DaedalusSymbol*>> members;  // class symbol -> members
+    std::unordered_map<uint32_t,std::vector<daedalus::DaedalusSymbol*>> members;  // class symbol -> members
     std::unique_ptr<State>                                    before, afterVm, afterProgram;
   };
 
@@ -124,6 +124,6 @@ struct ExecTotals final {
   };
 
 // the functions a node runs: a dialog's condition and information, or the choice's function
-std::vector<uint32_t> nodeFunctions(zenkit::DaedalusVm& vm, const Node& n);
+std::vector<uint32_t> nodeFunctions(daedalus::DaedalusVm& vm, const Node& n);
 
 }

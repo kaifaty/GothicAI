@@ -21,6 +21,7 @@ if(MSVC)
   target_compile_options(gothic-base-import PRIVATE $<$<COMPILE_LANGUAGE:C>:/experimental:c11atomics>)
 endif()
 include(../../OpenGothic/cmake/VideoImport.cmake)
+add_subdirectory(../../OpenGothic/common/daedalus daedalus)
 if(MSVC)
   # M_PI in the Bink decoder; OpenGothic/CMakeLists.txt defines this for every target
   target_compile_definitions(gothic-video-import PRIVATE _USE_MATH_DEFINES)
@@ -43,4 +44,6 @@ target_include_directories(content-convert SYSTEM PRIVATE ../../OpenGothic/lib/r
 if(NOT MSVC)
   target_compile_options(content-convert PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-Wall -Wconversion>)
 endif()
-target_link_libraries(content-convert PRIVATE gothic-base-import gothic-video-import)
+# Offline particle checks (check-particles) use the game's particlecontent loader and VM without writing base data.
+# Base import never executes this VM, so gothic-daedalus stays outside the base format digest.
+target_link_libraries(content-convert PRIVATE gothic-base-import gothic-video-import gothic-daedalus)

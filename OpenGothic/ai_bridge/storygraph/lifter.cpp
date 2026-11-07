@@ -3,15 +3,15 @@
 #include "bytecode.h"
 #include "vocab.h"
 
-#include <zenkit/DaedalusScript.hh>
+#include "daedalus/script.h"
 
 #include <algorithm>
 #include <map>
 #include <set>
 
 using namespace storygraph;
-using zenkit::DaedalusDataType;
-using zenkit::DaedalusOpcode;
+using daedalus::DaedalusDataType;
+using daedalus::DaedalusOpcode;
 
 // ---- Dnf
 
@@ -216,13 +216,13 @@ static const char* storeOp(DaedalusOpcode op, bool& isStore) {
   }
 
 // script parameters declared `var int` that take an instance: B_GIVEINVITEMS.ITEMINSTANCE
-static bool instanceParam(const zenkit::DaedalusSymbol& par) {
+static bool instanceParam(const daedalus::DaedalusSymbol& par) {
   auto dot = par.name().find('.');
   return par.type()==DaedalusDataType::INT && dot!=std::string::npos &&
          par.name().find("INSTANCE", dot)!=std::string::npos;
   }
 
-static bool isLocal(const zenkit::DaedalusSymbol& s) {
+static bool isLocal(const daedalus::DaedalusSymbol& s) {
   return !s.is_member() && s.name().find('.')!=std::string::npos;
   }
 
@@ -231,7 +231,7 @@ static std::string memberName(const std::string& full) {
   return dot==std::string::npos ? full : full.substr(dot+1);
   }
 
-Lifter::Lifter(const zenkit::DaedalusScript& script, const Bytecode& code)
+Lifter::Lifter(const daedalus::DaedalusScript& script, const Bytecode& code)
   :script(script), code(code) {
   // names for array members' indices: aivar[AIV_*], attribute[ATR_*], hitchance[NPC_TALENT_*]
   static const std::pair<const char*,const char*> prefixes[] = {
@@ -272,7 +272,7 @@ ExprP Lifter::resolve(const State& s, const ExprP& e) const {
   return unstored(e);
   }
 
-const Lifter::Clobbers& Lifter::clobbers(const zenkit::DaedalusSymbol& fn) const {
+const Lifter::Clobbers& Lifter::clobbers(const daedalus::DaedalusSymbol& fn) const {
   auto it = clobberCache.find(fn.index());
   if(it!=clobberCache.end())
     return it->second;
@@ -293,7 +293,7 @@ const Lifter::Clobbers& Lifter::clobbers(const zenkit::DaedalusSymbol& fn) const
   return clobberCache[fn.index()] = std::move(c);
   }
 
-ExprP Lifter::pushVar(const State& s, const zenkit::DaedalusSymbol& sym, int32_t index) const {
+ExprP Lifter::pushVar(const State& s, const daedalus::DaedalusSymbol& sym, int32_t index) const {
   const uint16_t i = uint16_t(std::max(index,0));
   if(sym.is_const()) {
     switch(sym.type()) {
@@ -397,7 +397,7 @@ Lifted Lifter::lift(uint32_t fnSymbol) const {
   return out;
   }
 
-bool Lifter::inlines(const zenkit::DaedalusSymbol& fn, uint32_t depth) const {
+bool Lifter::inlines(const daedalus::DaedalusSymbol& fn, uint32_t depth) const {
   if(depth>MaxInline || fn.is_external() || fn.has_return() || !Bytecode::hasCode(fn))
     return false;
   // the model reads these by name: a chapter change, experience, a journal entry, teaching...
@@ -413,9 +413,9 @@ bool Lifter::inlines(const zenkit::DaedalusSymbol& fn, uint32_t depth) const {
   return inlineCache[fn.index()] = quest && lift(fn.index()).error.empty();
   }
 
-bool Lifter::run(const zenkit::DaedalusSymbol& func, State entry, Lifted& out, uint32_t depth, State* exit) const {
+bool Lifter::run(const daedalus::DaedalusSymbol& func, State entry, Lifted& out, uint32_t depth, State* exit) const {
   auto* fn = &func;
-  std::vector<zenkit::DaedalusInstruction> ins;
+  std::vector<daedalus::DaedalusInstruction> ins;
   std::unordered_map<uint32_t, size_t>     at;
   for(uint32_t pc=fn->address(), end=code.codeEnd(pc); pc<end;) {
     auto i = script.instruction_at(pc);

@@ -1,12 +1,14 @@
-// Copyright © 2021-2023 GothicKit Contributors.
+// Copyright © 2021-2024 GothicKit Contributors.
 // SPDX-License-Identifier: MIT
-#include "zenkit/DaedalusVm.hh"
+// Copy of ZenKit 1.3.0 with project modifications.
+// MIT license: OpenGothic/lib/ZenKit/license.md (../../lib/ZenKit/license.md).
 
-#include "Internal.hh"
+#include "vm.h"
+
 
 #include <utility>
 
-namespace zenkit {
+namespace daedalus {
 	/// \brief A helper class for preventing stack corruption.
 	///
 	/// This class can be used to guard against stack corruption when a value is expected to be
@@ -370,7 +372,7 @@ namespace zenkit {
 					auto result = ref->get_int(idx, context.get()) + value;
 					ref->set_int(result, idx, context.get());
 				} else if (ref->is_member()) {
-					ZKLOGE("DaedalusVm", "Accessing member \"%s\" without an instance set", ref->name().c_str());
+					log(LogLevel::ERROR, "DaedalusVm", "Accessing member \"%s\" without an instance set", ref->name().c_str());
 				}
 
 				break;
@@ -388,7 +390,7 @@ namespace zenkit {
 					auto result = ref->get_int(idx, context.get()) - value;
 					ref->set_int(result, idx, context.get());
 				} else if (ref->is_member()) {
-					ZKLOGE("DaedalusVm", "Accessing member \"%s\" without an instance set", ref->name().c_str());
+					log(LogLevel::ERROR, "DaedalusVm", "Accessing member \"%s\" without an instance set", ref->name().c_str());
 				}
 				break;
 			}
@@ -405,7 +407,7 @@ namespace zenkit {
 					auto result = ref->get_int(idx, context.get()) * value;
 					ref->set_int(result, idx, context.get());
 				} else if (ref->is_member()) {
-					ZKLOGE("DaedalusVm", "Accessing member \"%s\" without an instance set", ref->name().c_str());
+					log(LogLevel::ERROR, "DaedalusVm", "Accessing member \"%s\" without an instance set", ref->name().c_str());
 				}
 
 				break;
@@ -427,7 +429,7 @@ namespace zenkit {
 					auto result = ref->get_int(idx, context.get()) / value;
 					ref->set_int(result, idx, context.get());
 				} else if (ref->is_member()) {
-					ZKLOGE("DaedalusVm", "Accessing member \"%s\" without an instance set", ref->name().c_str());
+					log(LogLevel::ERROR, "DaedalusVm", "Accessing member \"%s\" without an instance set", ref->name().c_str());
 				}
 
 				break;
@@ -472,7 +474,7 @@ namespace zenkit {
 				auto strategy = (*_m_exception_handler)(*this, err, instr);
 
 				if (strategy == DaedalusVmExceptionStrategy::FAIL) {
-					ZKLOGE("DaedalusVm", "+++ Error while executing script: %s +++", err.what());
+					log(LogLevel::ERROR, "DaedalusVm", "+++ Error while executing script: %s +++", err.what());
 					print_stack_trace();
 					throw;
 				}
@@ -481,7 +483,7 @@ namespace zenkit {
 					return false;
 				}
 			} else {
-				ZKLOGE("DaedalusVm", "+++ Error while executing script: %s +++", err.what());
+				log(LogLevel::ERROR, "DaedalusVm", "+++ Error while executing script: %s +++", err.what());
 				print_stack_trace();
 				throw;
 			}
@@ -617,7 +619,7 @@ namespace zenkit {
 				break;
 			case DaedalusDataType::CLASS:
 			case DaedalusDataType::PROTOTYPE:
-				ZKLOGW("DaedalusVm", "Attempted to save class or prototype in stack frame");
+				log(LogLevel::WARNING, "DaedalusVm", "Attempted to save class or prototype in stack frame");
 				break;
 			}
 		}
@@ -673,7 +675,7 @@ namespace zenkit {
 				break;
 			case DaedalusDataType::CLASS:
 			case DaedalusDataType::PROTOTYPE:
-				ZKLOGW("DaedalusVm", "Attempted to restore class or prototype in stack frame");
+				log(LogLevel::WARNING, "DaedalusVm", "Attempted to restore class or prototype in stack frame");
 				break;
 			}
 		}
@@ -827,7 +829,7 @@ namespace zenkit {
 				throw DaedalusNoContextError {s};
 			}
 
-			ZKLOGE("DaedalusVm", "Accessing member \"%s\" without an instance set", s->name().c_str());
+			log(LogLevel::ERROR, "DaedalusVm", "Accessing member \"%s\" without an instance set", s->name().c_str());
 			return empty;
 		}
 
@@ -897,17 +899,17 @@ namespace zenkit {
 
 		std::stack callstack {_m_call_stack};
 
-		ZKLOGE("DaedalusVm", "------- CALL STACK (MOST RECENT CALL FIRST) -------");
+		log(LogLevel::ERROR, "DaedalusVm", "------- CALL STACK (MOST RECENT CALL FIRST) -------");
 
 		while (!callstack.empty()) {
 			auto v = callstack.top();
-			ZKLOGE("DaedalusVm", "in %s at %x", v.function->name().c_str(), last_pc);
+			log(LogLevel::ERROR, "DaedalusVm", "in %s at %x", v.function->name().c_str(), last_pc);
 
 			last_pc = v.program_counter;
 			callstack.pop();
 		}
 
-		ZKLOGE("DaedalusVm", "------- STACK (MOST RECENT PUSH FIRST) -------");
+		log(LogLevel::ERROR, "DaedalusVm", "------- STACK (MOST RECENT PUSH FIRST) -------");
 
 		while (tmp_stack_ptr > 0) {
 			auto& v = _m_stack[--tmp_stack_ptr];
@@ -944,7 +946,7 @@ namespace zenkit {
 					value = "<invalid stack frame>";
 				}
 
-				ZKLOGE("DaedalusVm",
+				log(LogLevel::ERROR, "DaedalusVm",
 				       "%u: [REFERENCE] %s[%hu] = %s",
 				       tmp_stack_ptr,
 				       ref->name().c_str(),
@@ -952,14 +954,14 @@ namespace zenkit {
 				       value.c_str());
 			} else {
 				if (std::holds_alternative<float>(v.value)) {
-					ZKLOGE("DaedalusVm", "%d: [IMMEDIATE FLOAT] = %f", tmp_stack_ptr, std::get<float>(v.value));
+					log(LogLevel::ERROR, "DaedalusVm", "%d: [IMMEDIATE FLOAT] = %f", tmp_stack_ptr, std::get<float>(v.value));
 				} else if (std::holds_alternative<int32_t>(v.value)) {
-					ZKLOGE("DaedalusVm", "%d: [IMMEDIATE INT] = %d", tmp_stack_ptr, std::get<int32_t>(v.value));
+					log(LogLevel::ERROR, "DaedalusVm", "%d: [IMMEDIATE INT] = %d", tmp_stack_ptr, std::get<int32_t>(v.value));
 				} else if (std::holds_alternative<std::shared_ptr<DaedalusInstance>>(v.value)) {
 					if (auto& inst = std::get<std::shared_ptr<DaedalusInstance>>(v.value); inst == nullptr) {
-						ZKLOGE("DaedalusVm", "%d: [IMMEDIATE INSTANCE] = NULL", tmp_stack_ptr);
+						log(LogLevel::ERROR, "DaedalusVm", "%d: [IMMEDIATE INSTANCE] = NULL", tmp_stack_ptr);
 					} else {
-						ZKLOGE("DaedalusVm",
+						log(LogLevel::ERROR, "DaedalusVm",
 						       "%d: [IMMEDIATE INSTANCE] = <instance of '%s'>",
 						       tmp_stack_ptr,
 						       inst->_m_type->name());
@@ -968,7 +970,7 @@ namespace zenkit {
 			}
 		}
 
-		ZKLOGE("DaedalusVm", "------- GLOBAL VARIABLES -------");
+		log(LogLevel::ERROR, "DaedalusVm", "------- GLOBAL VARIABLES -------");
 
 		DaedalusSymbol* symbols[] = {
 		    _m_hero_sym,
@@ -984,25 +986,25 @@ namespace zenkit {
 			auto instance = sym->get_instance();
 			if (instance != nullptr && instance->symbol_index() != static_cast<uint32_t>(-1)) {
 				DaedalusSymbol const* instance_symbol = find_symbol_by_instance(instance);
-				ZKLOGE("DaedalusVm",
+				log(LogLevel::ERROR, "DaedalusVm",
 				       "%s = %s (%u)",
 				       sym->name().c_str(),
 				       instance_symbol->name().c_str(),
 				       instance->symbol_index());
 			} else if (instance == nullptr) {
-				ZKLOGE("DaedalusVm", "%s = NULL", sym->name().c_str());
+				log(LogLevel::ERROR, "DaedalusVm", "%s = NULL", sym->name().c_str());
 			} else {
-				ZKLOGE("DaedalusVm", "%s = <TRANSIENT>", sym->name().c_str());
+				log(LogLevel::ERROR, "DaedalusVm", "%s = <TRANSIENT>", sym->name().c_str());
 			}
 		}
 
 		if (_m_instance != nullptr && _m_instance->symbol_index() != static_cast<uint32_t>(-1)) {
 			auto instance_symbol = find_symbol_by_instance(_m_instance);
-			ZKLOGE("DaedalusVm", "<__THIS__> = %s (%u)", instance_symbol->name().c_str(), _m_instance->symbol_index());
+			log(LogLevel::ERROR, "DaedalusVm", "<__THIS__> = %s (%u)", instance_symbol->name().c_str(), _m_instance->symbol_index());
 		} else if (_m_instance == nullptr) {
-			ZKLOGE("DaedalusVm", "<__THIS__> = NULL");
+			log(LogLevel::ERROR, "DaedalusVm", "<__THIS__> = NULL");
 		} else {
-			ZKLOGE("DaedalusVm", "<__THIS__> = <TRANSIENT>");
+			log(LogLevel::ERROR, "DaedalusVm", "<__THIS__> = <TRANSIENT>");
 		}
 	}
 
@@ -1027,7 +1029,7 @@ namespace zenkit {
 
 	DaedalusVmExceptionStrategy
 	lenient_vm_exception_handler(DaedalusVm& v, DaedalusScriptError const& exc, DaedalusInstruction const& instr) {
-		ZKLOGE("DaedalusVm", "Internal Exception: %s", exc.what());
+		log(LogLevel::ERROR, "DaedalusVm", "Internal Exception: %s", exc.what());
 
 		switch (instr.op) {
 		case DaedalusOpcode::ADD:
@@ -1110,7 +1112,7 @@ namespace zenkit {
 				throw DaedalusNoContextError {sym};
 			}
 
-			ZKLOGE("DaedalusVm", "Accessing member \"%s\" without an instance set", sym->name().c_str());
+			log(LogLevel::ERROR, "DaedalusVm", "Accessing member \"%s\" without an instance set", sym->name().c_str());
 			return 0;
 		}
 
@@ -1130,7 +1132,7 @@ namespace zenkit {
 				throw DaedalusNoContextError {sym};
 			}
 
-			ZKLOGE("DaedalusVm", "Accessing member \"%s\" without an instance set", sym->name().c_str());
+			log(LogLevel::ERROR, "DaedalusVm", "Accessing member \"%s\" without an instance set", sym->name().c_str());
 			return 0;
 		}
 
@@ -1149,7 +1151,7 @@ namespace zenkit {
 		    !(_m_flags & DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS)) {
 			ref->set_int(value, index, context.get());
 		} else if (ref->is_member()) {
-			ZKLOGE("DaedalusVm", "Accessing member \"%s\" without an instance set", ref->name().c_str());
+			log(LogLevel::ERROR, "DaedalusVm", "Accessing member \"%s\" without an instance set", ref->name().c_str());
 		}
 	}
 
@@ -1165,7 +1167,7 @@ namespace zenkit {
 		    !(_m_flags & DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS)) {
 			ref->set_float(value, index, context.get());
 		} else if (ref->is_member()) {
-			ZKLOGE("DaedalusVm", "Accessing member \"%s\" without an instance set", ref->name().c_str());
+			log(LogLevel::ERROR, "DaedalusVm", "Accessing member \"%s\" without an instance set", ref->name().c_str());
 		}
 	}
 
@@ -1181,7 +1183,7 @@ namespace zenkit {
 		    !(_m_flags & DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS)) {
 			ref->set_string(value, index, context.get());
 		} else if (ref->is_member()) {
-			ZKLOGE("DaedalusVm", "Accessing member \"%s\" without an instance set", ref->name().c_str());
+			log(LogLevel::ERROR, "DaedalusVm", "Accessing member \"%s\" without an instance set", ref->name().c_str());
 		}
 	}
 
@@ -1205,4 +1207,4 @@ namespace zenkit {
 		this->_m_temporary_strings_free.pop();
 		return index;
 	}
-} // namespace zenkit
+} // namespace daedalus

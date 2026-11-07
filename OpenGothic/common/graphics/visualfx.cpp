@@ -54,7 +54,7 @@ VisualFx::Key::Key(const Def::ParticleEffectEmitKey& k) {
   emFXLifeSpan            = k.em_fx_lifespan<0 ? 0 : uint64_t(k.em_fx_lifespan*1000.f);
   }
 
-VisualFx::VisualFx(const Def::EffectBase& fx, zenkit::DaedalusVm& vm, std::string_view name) {
+VisualFx::VisualFx(const Def::EffectBase& fx, daedalus::DaedalusVm& vm, std::string_view name) {
   visName_S                = fx.vis_name_s;
   visSize                  = Parser::loadVec2(fx.vis_size_s);
   visAlpha                 = fx.vis_alpha;

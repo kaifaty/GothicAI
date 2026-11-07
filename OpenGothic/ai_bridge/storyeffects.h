@@ -8,7 +8,7 @@
 
 class Npc;
 
-namespace zenkit {
+namespace daedalus {
   class DaedalusVm;
   }
 
@@ -42,10 +42,10 @@ struct StoryEffect final {
 
   // `{"do": "give", "item": ..., ...}`; an error if it is malformed or, with a VM, names something
   // the scripts don't have
-  static std::string read(const rapidjson::Value& v, zenkit::DaedalusVm* vm, StoryEffect& e);
+  static std::string read(const rapidjson::Value& v, daedalus::DaedalusVm* vm, StoryEffect& e);
   // with the npc as self and the hero as other; failures are logged with `who`
-  void run(zenkit::DaedalusVm& vm, Npc& npc, Npc& player, std::string_view who) const;
+  void run(daedalus::DaedalusVm& vm, Npc& npc, Npc& player, std::string_view who) const;
   // teach: the learning points it takes from the hero, as the scripts' teacher function counts them;
   // -1 and `error` if the scripts can't say
-  int32_t learnCost(zenkit::DaedalusVm& vm, Npc& player, std::string& error) const;
+  int32_t learnCost(daedalus::DaedalusVm& vm, Npc& player, std::string& error) const;
   };

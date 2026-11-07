@@ -123,7 +123,7 @@ struct GameMenu::ChronicleDialog : Dialog {
   };
 
 bool GameMenu::isChronicle(const Item& it) {
-  return it.handle!=nullptr && it.handle->type==zenkit::MenuItemType::LISTBOX && it.handle->user_string[0]==Chronicle;
+  return it.handle!=nullptr && it.handle->type==daedalus::MenuItemType::LISTBOX && it.handle->user_string[0]==Chronicle;
   }
 
 bool GameMenu::isChronicleSlot(const Item& it) {
@@ -147,11 +147,11 @@ void GameMenu::addChronicleItems() {
     }
   // the tab goes into the first free slot after «Общее», so that the keys reach it right after it
   size_t selAt = size_t(selLog-hItems)+1, listAt = 0;
-  while(selAt<zenkit::IMenu::item_count && !hItems[selAt].name.empty())
+  while(selAt<daedalus::IMenu::item_count && !hItems[selAt].name.empty())
     ++selAt;
-  for(listAt=selAt+1; listAt<zenkit::IMenu::item_count && !hItems[listAt].name.empty(); ++listAt)
+  for(listAt=selAt+1; listAt<daedalus::IMenu::item_count && !hItems[listAt].name.empty(); ++listAt)
     ;
-  if(listAt>=zenkit::IMenu::item_count) {
+  if(listAt>=daedalus::IMenu::item_count) {
     Log::e("[chronicle] the diary has no free slots: no chronicle tab");
     return;
     }
@@ -163,7 +163,7 @@ void GameMenu::addChronicleItems() {
                              i.name=="MENU_ITEM_TIME_TITLE" || i.name=="MENU_ITEM_TIME"))
       i.handle->pos_y += step;
 
-  auto sel = std::make_shared<zenkit::IMenuItem>(*selLog->handle);
+  auto sel = std::make_shared<daedalus::IMenuItem>(*selLog->handle);
   sel->text[0] = TabTitle;
   sel->text[1] = TabInfo;
   sel->pos_y  += step;
@@ -176,7 +176,7 @@ void GameMenu::addChronicleItems() {
   hItems[selAt].handle = sel;
   hItems[selAt].img    = selLog->img;
 
-  auto list = std::make_shared<zenkit::IMenuItem>(*listLog->handle);
+  auto list = std::make_shared<daedalus::IMenuItem>(*listLog->handle);
   list->user_string[0] = Chronicle;
   hItems[listAt].name    = ListChronicle;
   hItems[listAt].handle  = list;
@@ -354,7 +354,7 @@ void GameMenu::execChronicle(Item& list) {
   if(chronicleFeatCount()==0)
     return;
   const uint32_t prev = curItem;
-  for(uint32_t i=0; i<zenkit::IMenu::item_count; ++i)
+  for(uint32_t i=0; i<daedalus::IMenu::item_count; ++i)
     if(&hItems[i]==&list)
       curItem = i;
   ChronicleDialog dlg(*this,list);
@@ -366,10 +366,10 @@ void GameMenu::execChronicle(Item& list) {
 
 void GameMenu::applyBenchDiary() {
   const auto preset = std::exchange(benchDiary,BenchDiary());
-  for(uint32_t i=0; i<zenkit::IMenu::item_count; ++i)
+  for(uint32_t i=0; i<daedalus::IMenu::item_count; ++i)
     if(hItems[i].name==SelChronicle)
       setSelection(int(i));
-  for(uint32_t i=0; i<zenkit::IMenu::item_count; ++i)
+  for(uint32_t i=0; i<daedalus::IMenu::item_count; ++i)
     if(hItems[i].name==ListChronicle && preset.feat>=0) {
       hItems[i].value = preset.feat;
       curItem         = i;

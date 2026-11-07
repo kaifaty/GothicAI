@@ -66,7 +66,7 @@ std::string npcId(World& world, Npc& npc) {
 // what a mob is called in the game: its focus name is a script string (MOBNAME_BOOKSBOARD), shown by value
 std::string mobName(World& world, std::string_view focus) {
   auto sym = world.script().findSymbol(focus);
-  if(sym!=nullptr && sym->type()==zenkit::DaedalusDataType::STRING)
+  if(sym!=nullptr && sym->type()==daedalus::DaedalusDataType::STRING)
     return sym->get_string();
   return std::string(focus);
   }
@@ -128,10 +128,10 @@ std::string_view attitude(Attitude a) {
 
 bool partyMember(World& world, const Npc& npc) {
   auto* s = world.script().getVm().find_symbol_by_name("AIV_PARTYMEMBER");
-  if(s==nullptr || s->type()!=zenkit::DaedalusDataType::INT)
+  if(s==nullptr || s->type()!=daedalus::DaedalusDataType::INT)
     return false;
   const int32_t aiv = s->get_int(0);
-  return aiv>=0 && uint32_t(aiv)<zenkit::INpc::aivar_count && npc.handlePtr()->aivar[size_t(aiv)]!=0;
+  return aiv>=0 && uint32_t(aiv)<daedalus::INpc::aivar_count && npc.handlePtr()->aivar[size_t(aiv)]!=0;
   }
 
 bool distantMonster(World& world, const Npc& self, const Npc& other) {

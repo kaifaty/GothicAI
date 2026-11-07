@@ -1,6 +1,6 @@
 #pragma once
 
-#include <zenkit/DaedalusVm.hh>
+#include "daedalus/vm.h"
 #include "game/definitions/definitiontypes.h"
 
 class FightAi final {
@@ -38,8 +38,8 @@ class FightAi final {
     const FA& operator[](size_t i) const;
 
   private:
-    auto loadAi(zenkit::DaedalusVm &vm, std::string_view name) -> Def::FightAi;
-    FA   loadAi(zenkit::DaedalusVm &vm, size_t id);
+    auto loadAi(daedalus::DaedalusVm &vm, std::string_view name) -> Def::FightAi;
+    FA   loadAi(daedalus::DaedalusVm &vm, size_t id);
 
     std::vector<FA> fAi;
   };

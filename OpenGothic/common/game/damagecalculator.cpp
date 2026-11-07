@@ -174,7 +174,7 @@ DamageCalculator::Val DamageCalculator::rangeDamage(Npc&, Npc& nother, Damage dm
 
   int  value = 0;
   bool invincible = true;
-  for(unsigned int i=0; i<zenkit::DamageType::NUM; ++i) {
+  for(unsigned int i=0; i<daedalus::DamageType::NUM; ++i) {
     if(dmg[size_t(i)]==0)
       continue;
     int vd = std::max(dmg[size_t(i)] - other.protection[i],0);
@@ -228,7 +228,7 @@ DamageCalculator::Val DamageCalculator::swordDamage(Npc& nsrc, Npc& nother, bool
       }
 
     bool invincible = true;
-    for(unsigned int i=0; i<zenkit::DamageType::NUM; ++i) {
+    for(unsigned int i=0; i<daedalus::DamageType::NUM; ++i) {
       if((dtype & (1<<i))==0)
         continue;
       int vd = std::max(str + damage(i) - other.protection[i],0);
@@ -246,7 +246,7 @@ DamageCalculator::Val DamageCalculator::swordDamage(Npc& nsrc, Npc& nother, bool
     } else {
     bool invincible = true;
     const int32_t mul = script.criticalDamageMultiplyer();
-    for(unsigned int i=0; i<zenkit::DamageType::NUM; ++i) {
+    for(unsigned int i=0; i<daedalus::DamageType::NUM; ++i) {
       if((dtype & (1<<i))==0)
         continue;
       int vd = 0;
@@ -276,13 +276,13 @@ bool DamageCalculator::checkDamageMask(Npc& nsrc, Npc& nother, const Bullet* b) 
 
   if(b!=nullptr) {
     auto dmg = b->damage();
-    for(unsigned int i=0;i<zenkit::DamageType::NUM;++i) {
+    for(unsigned int i=0;i<daedalus::DamageType::NUM;++i) {
       if(dmg[size_t(i)]>0 && other.protection[i]>=0)
         return true;
       }
     } else {
     const int dtype = damageTypeMask(nsrc);
-    for(unsigned int i=0;i<zenkit::DamageType::NUM;++i){
+    for(unsigned int i=0;i<daedalus::DamageType::NUM;++i){
       if((dtype & (1<<i))==0)
         continue;
       return true;
@@ -296,7 +296,7 @@ DamageCalculator::Damage DamageCalculator::rangeDamageValue(Npc& src) {
   const int dtype = damageTypeMask(src);
   int d = Gothic::inst().version().game==2 ? src.attribute(Attribute::ATR_DEXTERITY) : 0;
   Damage ret={};
-  for(unsigned int i=0;i<zenkit::DamageType::NUM;++i){
+  for(unsigned int i=0;i<daedalus::DamageType::NUM;++i){
     if((dtype & (1<<i))==0)
       continue;
     ret[size_t(i)] = d + src.handle().damage[i];

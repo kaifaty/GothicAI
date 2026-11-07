@@ -1,5 +1,4 @@
 #include "resources.h"
-#include "zenkitlog.h"
 #include "loadprobe.h"
 #include "basestore.h"
 #include "commandline.h"
@@ -336,7 +335,6 @@ void Resources::startVideoBase() {
   const auto gothic=std::filesystem::path(CommandLine::inst().rootPath());
   const auto mainBase=inst->automaticBase.path;
   inst->videoWorker=std::thread([state,gothic,mainBase] {
-    ZenKitLog::silenceForVideo();
     try {
       auto selection=BaseStore::resolveVideos(gothic,mainBase,[](std::string_view message) {
         // Background selection diagnostics do not use the application's log callback.
@@ -499,7 +497,7 @@ const char* scriptDirectory(int language) {
   }
 }
 
-zenkit::DaedalusScript Resources::loadBaseProgram(std::string_view request, int language) {
+daedalus::DaedalusScript Resources::loadBaseProgram(std::string_view request, int language) {
   try {
     std::string_view branch;
     if(inst->basePrograms.findVfs(request,&branch)!=nullptr)
@@ -548,7 +546,7 @@ bool Resources::loadBaseOutputUnits(std::string_view request, int language,
   catch(const std::exception& error) { throw BaseStore::Error("output units "+std::string(request)+": "+error.what()); }
   }
 
-zenkit::DaedalusScript Resources::loadBaseProgram(std::string_view request, int language,
+daedalus::DaedalusScript Resources::loadBaseProgram(std::string_view request, int language,
                                                 std::string_view branch, std::u16string_view hostPath) {
   try {
     const auto& index = inst->basePrograms;
@@ -569,7 +567,7 @@ zenkit::DaedalusScript Resources::loadBaseProgram(std::string_view request, int 
     auto program = ProgramData::readProgram(file,&actualSha256);
     if(actualSha256!=source->recordSha256)
       throw std::runtime_error("program record identity differs from base index");
-    auto script = zenkit::DaedalusScript::from_program(std::move(program));
+    auto script = daedalus::DaedalusScript::from_program(std::move(program));
     if(inst->census) {
       const auto record = "base/programs/"+file.filename().generic_string();
       inst->census->replaced(request,record);

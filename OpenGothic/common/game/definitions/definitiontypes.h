@@ -5,7 +5,7 @@
 // them at the same moment; this replaces only the ZenKit addon types. Field names, types and order
 // follow the original classes exactly, including their source spellings.
 
-#include <zenkit/DaedalusScript.hh>
+#include "daedalus/script.h"
 
 #include <cstdint>
 #include <string>
@@ -56,7 +56,7 @@ enum class MusicTransitionType : uint32_t {
 // constructors: make_shared<T>() value-initializes, so scalars start at zero as before.
 
 // CCAMSYS, 23 fields
-struct Camera final : zenkit::DaedalusInstance {
+struct Camera final : daedalus::DaedalusInstance {
   float best_range;
   float min_range;
   float max_range;
@@ -81,7 +81,7 @@ struct Camera final : zenkit::DaedalusInstance {
   int32_t rotate;
   int32_t collision;
 
-  static void register_(zenkit::DaedalusScript& s);
+  static void register_(daedalus::DaedalusScript& s);
   };
 
 // C_FIGHTAI stays an opaque VM class (mods often declare MOVE wrongly); this is the copied result.
@@ -92,7 +92,7 @@ struct FightAi final {
   };
 
 // C_SFX, 9 fields
-struct SoundEffect final : zenkit::DaedalusInstance {
+struct SoundEffect final : daedalus::DaedalusInstance {
   std::string file;
   int32_t pitch_off;
   int32_t pitch_var;
@@ -103,11 +103,11 @@ struct SoundEffect final : zenkit::DaedalusInstance {
   float reverb_level;
   std::string pfx_name;
 
-  static void register_(zenkit::DaedalusScript& s);
+  static void register_(daedalus::DaedalusScript& s);
   };
 
 // C_MUSICTHEME, 7 fields
-struct MusicTheme final : zenkit::DaedalusInstance {
+struct MusicTheme final : daedalus::DaedalusInstance {
   std::string file;
   float vol;
   int32_t loop;
@@ -116,11 +116,11 @@ struct MusicTheme final : zenkit::DaedalusInstance {
   MusicTransitionEffect transtype;
   MusicTransitionType transsubtype;
 
-  static void register_(zenkit::DaedalusScript& s);
+  static void register_(daedalus::DaedalusScript& s);
   };
 
 // C_PARTICLEFX, 57 fields
-struct ParticleEffect final : zenkit::DaedalusInstance {
+struct ParticleEffect final : daedalus::DaedalusInstance {
   float pps_value;
   std::string pps_scale_keys_s;
   int32_t pps_is_looping;
@@ -179,11 +179,11 @@ struct ParticleEffect final : zenkit::DaedalusInstance {
   std::string time_start_end_s;
   int32_t m_bis_ambient_pfx;
 
-  static void register_(zenkit::DaedalusScript& s);
+  static void register_(daedalus::DaedalusScript& s);
   };
 
 // CFX_BASE, 46 fields
-struct EffectBase final : zenkit::DaedalusInstance {
+struct EffectBase final : daedalus::DaedalusInstance {
   static constexpr uint8_t user_string_count = 5;
 
   std::string vis_name_s;
@@ -233,11 +233,11 @@ struct EffectBase final : zenkit::DaedalusInstance {
   float secs_per_damage;
   std::string em_fx_coll_dyn_perc_s;
 
-  static void register_(zenkit::DaedalusScript& s);
+  static void register_(daedalus::DaedalusScript& s);
   };
 
 // C_PARTICLEFXEMITKEY, 32 fields
-struct ParticleEffectEmitKey final : zenkit::DaedalusInstance {
+struct ParticleEffectEmitKey final : daedalus::DaedalusInstance {
   std::string vis_name_s;
   float vis_size_scale;
   float scale_duration;
@@ -271,7 +271,7 @@ struct ParticleEffectEmitKey final : zenkit::DaedalusInstance {
   int32_t em_check_collision;
   float em_fx_lifespan;
 
-  static void register_(zenkit::DaedalusScript& s);
+  static void register_(daedalus::DaedalusScript& s);
   };
 
 }

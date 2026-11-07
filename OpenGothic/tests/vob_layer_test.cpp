@@ -333,7 +333,7 @@ void saveBoundPolicy(const Fixture& f) {
   require(cases==180,"all 44 class tags, unknown and both operations/subtree guards are checked");
   }
 
-void particleFields(zenkit::DaedalusVm& vm, const Def::ParticleEffect& actual,
+void particleFields(daedalus::DaedalusVm& vm, const Def::ParticleEffect& actual,
                     const Def::ParticleEffect& expected) {
   const auto* cls=vm.find_symbol_by_name("C_PARTICLEFX");
   require(cls!=nullptr,"particle class exists in base program");
@@ -342,9 +342,9 @@ void particleFields(zenkit::DaedalusVm& vm, const Def::ParticleEffect& actual,
   for(const auto* field:fields) {
     bool same=false;
     switch(field->type()) {
-      case zenkit::DaedalusDataType::INT: same=field->get_int(0,&actual)==field->get_int(0,&expected); break;
-      case zenkit::DaedalusDataType::FLOAT: same=field->get_float(0,&actual)==field->get_float(0,&expected); break;
-      case zenkit::DaedalusDataType::STRING: same=field->get_string(0,&actual)==field->get_string(0,&expected); break;
+      case daedalus::DaedalusDataType::INT: same=field->get_int(0,&actual)==field->get_int(0,&expected); break;
+      case daedalus::DaedalusDataType::FLOAT: same=field->get_float(0,&actual)==field->get_float(0,&expected); break;
+      case daedalus::DaedalusDataType::STRING: same=field->get_string(0,&actual)==field->get_string(0,&expected); break;
       default: throw std::runtime_error("unexpected particle field type");
       }
     require(same,"inherited/set source particle field "+field->name());

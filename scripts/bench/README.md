@@ -1277,7 +1277,7 @@ differ for Lester (`PC_PSIONIC`) when he approaches the hero to talk: `AI_Proces
 by the dialogue menu in the window; the runner has no menu. The current exact-journal control
 also checks those fields, so window/runner comparisons need to report this difference explicitly.
 Compare only runs from the same build,
-base and environment. A day writes about 55 MB.
+base and environment. Days of one build are byte-identical on a host and between dev-ubuntu and Ryzen, so a difference is a real change, not noise; nothing in the simulation may depend on heap addresses ([why](../../docs/world-streaming.md#почему-сутки-перестали-повторяться-фаза-lod-анимации-2026-11-07)). A day writes about 55 MB.
 With `OPENGOTHIC_NPC_LOGIC_AUDIT=1`, `npc-day-heights.csv` compares sampled Simplified positions with a ground ray; movement itself does not cast these verification rays. The comparer splits position errors into `stationary_both` and `moving_either` from the existing body-state column, and accepts final-HP, matched-death and stationary-p95 guards.
 
 Use `npc-day-parity.tolerances.json` for Full and `OPENGOTHIC_NPC_SIMPLE_MOVE=0` controls against

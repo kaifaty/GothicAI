@@ -111,7 +111,7 @@ class MdlVisual final {
     // an effect of the animations' events that does not start (the native PEE while an aimed one plays)
     void                           setMutedPfx(std::string_view name) { muted = name; }
     std::string_view               mutedPfx() const { return muted; }
-    void                           setNpcEffect(World& owner, Npc& npc, std::string_view s, zenkit::NpcFlag flags);
+    void                           setNpcEffect(World& owner, Npc& npc, std::string_view s, daedalus::NpcFlag flags);
     void                           setFatness  (float f);
     void                           emitBlockEffect(Npc& dst, Npc& src);
 

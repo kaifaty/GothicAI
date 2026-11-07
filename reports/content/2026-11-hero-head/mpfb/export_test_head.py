@@ -5,12 +5,19 @@
 #     blender -b ~/.local/share/gothic-ai/mpfb/work/probe.blend -P export_test_head.py -- <content root>
 # Writes <root>/characters/hero/test-head.glb, <root>/characters/characters.json (PC_HERO) and the albedo
 # materials (<root>/materials/materials.json, test-head/*.dds packed by scripts/hd/texpack.cpp).
+# With --hero the same probe becomes the hero's head (README, "Моргание и глаза"): the registered shape of
+# fit/reg (reg.npz over mpfb.npz), the rebuilt blink (blink.npz, closed frame) as eyeBlinkLeft/Right, the eyeballs
+# where the blink was built around them and the grey-blue iris; written as hero/head.glb, OWN_HERO_HEAD_*.
+#     ... -P export_test_head.py -- <content root> --hero <round dir> <reg work dir> <eye texture png>
 import bpy, bmesh, os, sys, json, struct, subprocess, shutil
 import numpy as np
 from mathutils import Matrix
 from bl_ext.user_default.mpfb.services import FaceService
 
-ROOT = os.path.abspath(sys.argv[sys.argv.index('--')+1])
+ARGS = sys.argv[sys.argv.index('--')+1:]
+ROOT = os.path.abspath(ARGS[0])
+HERO = ARGS[ARGS.index('--hero')+1:ARGS.index('--hero')+4] if '--hero' in ARGS else None
+NAME, MATS = ('head', 'HERO_HEAD') if HERO else ('test-head', 'TEST_HEAD')
 DATA = os.path.expanduser('~/.local/share/gothic-ai/mpfb/blender/extensions/.user/user_default/mpfb/data')
 TEXPACK = os.path.expanduser('~/.local/share/gothic-ai/hd-textures/bin/texpack')
 
@@ -38,11 +45,7 @@ human = bpy.data.objects['Human']
 for o in bpy.data.objects:
     for m in getattr(o, 'modifiers', []):
         m.show_viewport = m.show_render = False
-FaceService.interpolate_targets(human)
-
 kb = human.data.shape_keys.key_blocks
-FACE = [k.name for k in kb if k.name != 'Basis' and not k.name.startswith('$')]
-print('FACE SHAPES', len(FACE))
 
 # body shape of the probe (macro keys at their values) baked into the neutral face
 basis = coords(kb['Basis'])
@@ -50,6 +53,88 @@ neutral = basis.copy()
 for k in kb:
     if k.name.startswith('$') and k.value != 0:
         neutral += k.value*(coords(k)-coords(k.relative_key))
+
+if HERO:
+    from bl_ext.user_default.mpfb.services import ClothesService
+    RD, WD, EYE_PNG = (os.path.expanduser(a) for a in HERO)
+    R = np.load(os.path.join(RD, 'reg.npz')); M = np.load(os.path.join(WD, 'mpfb.npz'))
+    BL = np.load(os.path.join(RD, 'blink.npz'))
+    assert np.abs(M['co'][neutral[:, 2] < 1.0]-neutral[neutral[:, 2] < 1.0]).max() < 1e-5, 'the fit is not on this probe'
+    # the registered head as one more macro-like key, so the proxies (brows, lashes, teeth, tongue) refit onto it
+    hk = human.shape_key_add(name='$hero', from_mix=False)
+    hk.data.foreach_set('co', (basis+R['co']-neutral).astype(np.float32).ravel()); hk.value = 1.0
+    probe_neutral, neutral = neutral, R['co'].astype(np.float64)
+    # the rebuilt blink, closed frame, as the ARKit blink of its side (MPFB l = +x)
+    for side in ('l', 'r'):
+        d = BL[side][list(BL['t']).index(1.0)]
+        sx = np.sign(neutral[np.linalg.norm(d, axis=1) > 1e-4, 0].mean())
+        for name in ('eyeBlinkLeft', 'eyeBlinkRight'):
+            m0 = coords(kb[name])-basis
+            if np.sign(neutral[np.linalg.norm(m0, axis=1) > 1e-4, 0].mean()) == sx:
+                kb[name].data.foreach_set('co', (basis+d).astype(np.float32).ravel())
+                print('BLINK', side, '->', name, 'max mm %.1f' % (1000*np.linalg.norm(d, axis=1).max()))
+    # teeth and tongue refit by their MPFB binding; brows and lashes are bound to helper geometry the registration
+    # did not shape, so they are rebound to the skin itself after the face shapes (rebind_to_skin below)
+    for o in bpy.data.objects:
+        if o.parent == human and o.type == 'MESH' and ('teeth' in o.name or 'tongue' in o.name):
+            ClothesService.fit_clothes_to_human(o, human, set_parent=False)
+    # the eyeballs of the fit moved with their helpers, as blink_build.py placed them for the lid clearance
+    eo = [o for o in bpy.data.objects if o.parent == human and 'high-poly' in o.name][0]
+    ec = M['eye_obj_co'].astype(np.float64).copy()
+    for side, mask, sg in (('l', M['leye'], 1), ('r', M['reye'], -1)):
+        sel = ec[:, 0]*sg > 0
+        ec[sel] += R['co'][mask].mean(0)-M['co'][mask].mean(0)
+    inv = np.array(eo.matrix_world.inverted())
+    eo.data.vertices.foreach_set('co', (ec @ inv[:3, :3].T + inv[:3, 3]).astype(np.float32).ravel())
+
+FaceService.interpolate_targets(human)
+FACE = [k.name for k in kb if k.name != 'Basis' and not k.name.startswith('$')]
+print('FACE SHAPES', len(FACE))
+
+def rebind_to_skin(ob, rest_skin, skin):
+    """Wrap ob onto the skin: each vertex keeps its nearest skin triangle, barycentric point and offset in the
+    triangle's frame, measured on rest_skin (where ob was fitted) and rebuilt on `skin` and on every face shape."""
+    from mathutils.bvhtree import BVHTree
+    from mathutils.geometry import barycentric_transform
+    from mathutils import Vector
+    human.data.calc_loop_triangles()
+    tris = np.array([t.vertices[:] for t in human.data.loop_triangles])
+    tris = tris[body[tris].all(1)]
+    bvh = BVHTree.FromPolygons([Vector(v) for v in rest_skin], tris.tolist())
+    pv = world(ob, coords_mesh(ob))
+    def frame(P, t):
+        a, b, c = P[t[:, 0]], P[t[:, 1]], P[t[:, 2]]
+        e1 = (b-a)/np.linalg.norm(b-a, axis=1, keepdims=True)
+        n = np.cross(b-a, c-a); n /= np.linalg.norm(n, axis=1, keepdims=True)
+        return a, b, c, e1, np.cross(n, e1), n
+    hit = [bvh.find_nearest(Vector(v)) for v in pv]
+    ti = np.array([h[2] for h in hit]); t = tris[ti]
+    a, b, c, e1, e2, n = frame(rest_skin, t)
+    near = np.array([h[0] for h in hit])
+    # barycentric of the nearest point
+    v0, v1, v2 = b-a, c-a, near-a
+    d00, d01, d11 = (v0*v0).sum(1), (v0*v1).sum(1), (v1*v1).sum(1)
+    d20, d21 = (v2*v0).sum(1), (v2*v1).sum(1)
+    den = d00*d11-d01*d01
+    wb = (d11*d20-d01*d21)/den; wc = (d00*d21-d01*d20)/den; wa = 1-wb-wc
+    o = pv-near
+    off = np.stack([(o*e1).sum(1), (o*e2).sum(1), (o*n).sum(1)], 1)
+    def place(P):
+        a, b, c, e1, e2, n = frame(P, t)
+        return wa[:, None]*a+wb[:, None]*b+wc[:, None]*c + off[:, :1]*e1+off[:, 1:2]*e2+off[:, 2:]*n
+    inv = np.array(ob.matrix_world.inverted()); loc = lambda P: P @ inv[:3, :3].T + inv[:3, 3]
+    if ob.data.shape_keys:
+        ob.shape_key_clear()
+    rest = place(skin)
+    ob.data.vertices.foreach_set('co', loc(rest).astype(np.float32).ravel())
+    ob.shape_key_add(name='Basis', from_mix=False)
+    kept = 0
+    for name in FACE:
+        P = place(skin+coords(kb[name])-basis)
+        if np.linalg.norm(P-rest, axis=1).max() > 1e-4:
+            ob.shape_key_add(name=name, from_mix=False).data.foreach_set('co', loc(P).astype(np.float32).ravel()); kept += 1
+    print('REBIND %s: offset mm median %.2f max %.2f, %d shapes' % (ob.name, 1000*np.median(np.abs(off[:, 2])),
+          1000*np.abs(off[:, 2]).max(), kept))
 height = neutral[:, 2].max()-neutral[:, 2].min()
 assert 1.5 < height < 2.1, 'basemesh is not in metres: %.3f' % height
 
@@ -120,6 +205,10 @@ def coords_mesh(o):
 def set_coords(seq, c):
     seq.foreach_set('co', c.astype(np.float32).ravel())
 
+if HERO:
+    for o in bpy.data.objects:
+        if o.parent == human and o.type == 'MESH' and ('eyebrow' in o.name or 'eyelashes' in o.name):
+            rebind_to_skin(o, world(human, probe_neutral), world(human, neutral))
 nzc = nw[:, 2]
 make_part(human, 'face', lambda i: body[i] and nzc[i] >= cut_z, FACE)
 proxy = {o.name.split('.', 1)[1]: o for o in bpy.data.objects if o.parent == human and o.type == 'MESH'}
@@ -132,7 +221,7 @@ eyes = proxy['high-poly']; ex = world(eyes, coords_mesh(eyes))[:, 0]
 # transparent part of the texture (black with alpha 0): drawn opaque, they hid the iris behind black.
 # The ball alone is kept; the cornea comes back as a shader (plan step 7). The two eyes' UVs are mirrored,
 # so the test is the texture's alpha under each vertex, not a UV range.
-eye_img = bpy.data.images.load(os.path.join(DATA, 'eyes/materials/grey_eye.png'))
+eye_img = bpy.data.images.load(EYE_PNG if HERO else os.path.join(DATA, 'eyes/materials/grey_eye.png'))
 ew, eh = eye_img.size
 eye_alpha = np.array(eye_img.pixels[:]).reshape(eh, ew, 4)[..., 3]
 eye_clear = np.zeros(len(eyes.data.vertices), bool)
@@ -147,18 +236,18 @@ MAT = {'face': 'SKIN', 'brows': 'BROWS', 'lashes': 'LASHES', 'teeth': 'TEETH', '
 TEX = {'SKIN': 'skins/middleage_caucasian_male/middleage_lightskinned_male_diffuse.png',
        'BROWS': 'eyebrows/eyebrow006/eyebrow006.png', 'LASHES': 'eyelashes/eyelashes01/eyelashes01.png',
        'TEETH': 'teeth/teeth_base/teeth.png', 'TONGUE': 'tongue/tongue01/tongue01_diffuse.png',
-       'EYE': 'eyes/materials/grey_eye.png'}
+       'EYE': EYE_PNG if HERO else 'eyes/materials/grey_eye.png'}
 mats = {}
 for ob in parts:
     key = MAT[ob.name]
     if key not in mats:
-        mats[key] = bpy.data.materials.new('OWN_TEST_HEAD_'+key)
+        mats[key] = bpy.data.materials.new('OWN_%s_%s' % (MATS, key))
     ob.data.materials.append(mats[key])
     ob.select_set(True)
     print('PART %-7s verts %5d tris %5d shapes %d' % (ob.name, len(ob.data.vertices),
           sum(len(p.vertices)-2 for p in ob.data.polygons), len(ob.data.shape_keys.key_blocks)-1 if ob.data.shape_keys else 0))
 
-glb = os.path.join(ROOT, 'characters', 'hero', 'test-head.glb')
+glb = os.path.join(ROOT, 'characters', 'hero', NAME+'.glb')
 os.makedirs(os.path.dirname(glb), exist_ok=True)
 bpy.ops.export_scene.gltf(filepath=glb, export_format='GLB', use_selection=True, export_yup=True,
                           export_apply=False, export_morph=True, export_morph_normal=True, export_morph_tangent=False,
@@ -187,12 +276,12 @@ print('GLB', glb, len(out), 'bytes; targets per mesh', {k: len(v) for k, v in na
 
 # the face profile: the old face animation names as weights of these shapes (authored by hand, next to this script)
 shutil.copyfile(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'test-head.face.json'),
-                os.path.join(ROOT, 'characters', 'hero', 'test-head.face.json'))
-json.dump({'PC_HERO': {'head': 'hero/test-head.glb', 'face': 'hero/test-head.face.json'}},
+                os.path.join(ROOT, 'characters', 'hero', NAME+'.face.json'))
+json.dump({'PC_HERO': {'head': 'hero/%s.glb' % NAME, 'face': 'hero/%s.face.json' % NAME}},
           open(os.path.join(ROOT, 'characters', 'characters.json'), 'w'), indent=2)
 
 # albedo maps: MPFB PNGs packed as the game's own (DXT1/DXT5 with mips)
-png = os.path.join(ROOT, 'materials', 'test-head-png'); dds = os.path.join(ROOT, 'materials', 'test-head')
+png = os.path.join(ROOT, 'materials', NAME+'-png'); dds = os.path.join(ROOT, 'materials', NAME)
 os.makedirs(png, exist_ok=True); os.makedirs(dds, exist_ok=True)
 for key, src in TEX.items():
     shutil.copyfile(os.path.join(DATA, src), os.path.join(png, key.lower()+'.png'))
@@ -201,6 +290,6 @@ shutil.rmtree(png)
 mj = os.path.join(ROOT, 'materials', 'materials.json')
 table = json.load(open(mj)) if os.path.exists(mj) else {}
 for key in TEX:
-    table['OWN_TEST_HEAD_%s.TGA' % key] = {'albedo': 'test-head/%s.dds' % key.lower()}
+    table['OWN_%s_%s.TGA' % (MATS, key)] = {'albedo': '%s/%s.dds' % (NAME, key.lower())}
 json.dump(table, open(mj, 'w'), indent=2)
 print('DONE')

@@ -44,7 +44,7 @@ void fields(const Json& value, std::initializer_list<const char*> allowed) {
             "unknown field "+name);
     }
   }
-void overrideFields(zenkit::DaedalusVm& vm, Def::ParticleEffect& effect, const Json& values) {
+void overrideFields(daedalus::DaedalusVm& vm, Def::ParticleEffect& effect, const Json& values) {
   require(values.IsObject(),"set: expected object");
   const auto* cls=vm.find_symbol_by_name("C_PARTICLEFX");
   std::set<std::string> seen;
@@ -57,11 +57,11 @@ void overrideFields(zenkit::DaedalusVm& vm, Def::ParticleEffect& effect, const J
             "unknown field "+name);
     const auto& value=field.value;
     switch(symbol->type()) {
-      case zenkit::DaedalusDataType::INT:
+      case daedalus::DaedalusDataType::INT:
         require(value.IsInt(),name+": expected int");
         symbol->set_int(value.GetInt(),0,&effect);
         break;
-      case zenkit::DaedalusDataType::FLOAT: {
+      case daedalus::DaedalusDataType::FLOAT: {
         require(value.IsNumber(),name+": expected float");
         const auto number=value.GetDouble();
         require(std::isfinite(number) && std::abs(number)<=std::numeric_limits<float>::max(),
@@ -69,7 +69,7 @@ void overrideFields(zenkit::DaedalusVm& vm, Def::ParticleEffect& effect, const J
         symbol->set_float(float(number),0,&effect);
         break;
         }
-      case zenkit::DaedalusDataType::STRING:
+      case daedalus::DaedalusDataType::STRING:
         require(value.IsString(),name+": expected string");
         symbol->set_string(text(value),0,&effect);
         break;
@@ -105,17 +105,17 @@ std::string canonicalName(std::string_view name) {
   return result;
   }
 
-bool hasBase(const zenkit::DaedalusScript& script, std::string_view name) {
+bool hasBase(const daedalus::DaedalusScript& script, std::string_view name) {
   const auto* symbol=script.find_symbol_by_name(canonicalName(name));
   const auto* cls=script.find_symbol_by_name("C_PARTICLEFX");
-  if(symbol==nullptr || cls==nullptr || symbol->type()!=zenkit::DaedalusDataType::INSTANCE)
+  if(symbol==nullptr || cls==nullptr || symbol->type()!=daedalus::DaedalusDataType::INSTANCE)
     return false;
   auto* parent=symbol;
   while(parent!=nullptr && parent!=cls) parent=script.find_symbol_by_index(parent->parent());
   return parent==cls;
   }
 
-std::shared_ptr<Def::ParticleEffect> base(zenkit::DaedalusVm& vm, std::string_view name) {
+std::shared_ptr<Def::ParticleEffect> base(daedalus::DaedalusVm& vm, std::string_view name) {
   if(!hasBase(vm,name)) return nullptr;
   auto result=std::make_shared<Def::ParticleEffect>();
   result->vis_tex_is_quadpoly=1;
@@ -123,7 +123,7 @@ std::shared_ptr<Def::ParticleEffect> base(zenkit::DaedalusVm& vm, std::string_vi
   return result;
   }
 
-std::unique_ptr<zenkit::DaedalusVm> openProgram(const fs::path& baseRoot) {
+std::unique_ptr<daedalus::DaedalusVm> openProgram(const fs::path& baseRoot) {
   const auto index=ProgramData::readIndex(baseRoot/"programs");
   const auto* source=index.findVfs("ParticleFx.dat");
   if(source==nullptr) source=index.findHost("_work/Data/Scripts/_compiled/ParticleFx.dat");
@@ -131,13 +131,13 @@ std::unique_ptr<zenkit::DaedalusVm> openProgram(const fs::path& baseRoot) {
   std::string sha256;
   auto program=ProgramData::readProgram(index.path(*source),&sha256);
   require(sha256==source->recordSha256,"particle program identity differs from base index");
-  auto script=zenkit::DaedalusScript::from_program(std::move(program));
+  auto script=daedalus::DaedalusScript::from_program(std::move(program));
   Def::ParticleEffect::register_(script);
-  return std::make_unique<zenkit::DaedalusVm>(std::move(script),
-      zenkit::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS);
+  return std::make_unique<daedalus::DaedalusVm>(std::move(script),
+      daedalus::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS);
   }
 
-Result load(zenkit::DaedalusVm& vm, const fs::path& contentRoot) {
+Result load(daedalus::DaedalusVm& vm, const fs::path& contentRoot) {
   Result result;
   if(contentRoot.empty()) return result;
   const auto directory=contentRoot/"particles.d";

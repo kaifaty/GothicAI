@@ -14,7 +14,7 @@
 #include <malloc.h>
 #endif
 
-#include <zenkit/addon/daedalus.hh>
+#include "daedalus/classes.h"
 
 #include "game/definitions/definitiontypes.h"
 #include "game/bodyenginepolicy.h"
@@ -793,21 +793,21 @@ std::string_view Gothic::menuMain() const {
   return ::menuMain;
   }
 
-std::unique_ptr<zenkit::DaedalusVm> Gothic::createPhoenixVm(std::string_view datFile, const ScriptLang lang) {
+std::unique_ptr<daedalus::DaedalusVm> Gothic::createPhoenixVm(std::string_view datFile, const ScriptLang lang) {
   auto sc = loadScript(datFile, lang);
   setupCommonScriptClasses(sc);
 
-  auto vm = std::make_unique<zenkit::DaedalusVm>(std::move(sc), zenkit::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS);
+  auto vm = std::make_unique<daedalus::DaedalusVm>(std::move(sc), daedalus::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS);
   setupVmCommonApi(*vm);
   return vm;
   }
 
-zenkit::DaedalusScript Gothic::loadScript(std::string_view datFile, const ScriptLang lang) {
+daedalus::DaedalusScript Gothic::loadScript(std::string_view datFile, const ScriptLang lang) {
   return Resources::loadBaseProgram(datFile,int(lang));
   }
 
-void Gothic::setupCommonScriptClasses(zenkit::DaedalusScript& sc) {
-  // Use customized setup, instead of zenkit::register_all_script_classes
+void Gothic::setupCommonScriptClasses(daedalus::DaedalusScript& sc) {
+  // Use customized setup, instead of daedalus::register_all_script_classes
   auto registerIfExists = [&](std::string_view sym, auto d) {
     if(sc.find_symbol_by_name(sym) != nullptr) {
       d(sc);
@@ -820,27 +820,27 @@ void Gothic::setupCommonScriptClasses(zenkit::DaedalusScript& sc) {
       }
     };
 
-  registerIfExists("C_GILVALUES",    zenkit::IGuildValues::register_);
-  registerIfExists("C_NPC",          zenkit::INpc::register_);
-  registerIfExists("C_MISSION",      zenkit::IMission::register_);
-  registerIfExists("C_ITEM",         zenkit::IItem::register_);
-  registerIfExists("C_FOCUS",        zenkit::IFocus::register_);
-  registerIfExists("C_INFO",         zenkit::IInfo::register_);
-  registerIfExists("C_ITEMREACT",    zenkit::IItemReact::register_);
-  registerIfExists("C_SPELL",        zenkit::ISpell::register_);
+  registerIfExists("C_GILVALUES",    daedalus::IGuildValues::register_);
+  registerIfExists("C_NPC",          daedalus::INpc::register_);
+  registerIfExists("C_MISSION",      daedalus::IMission::register_);
+  registerIfExists("C_ITEM",         daedalus::IItem::register_);
+  registerIfExists("C_FOCUS",        daedalus::IFocus::register_);
+  registerIfExists("C_INFO",         daedalus::IInfo::register_);
+  registerIfExists("C_ITEMREACT",    daedalus::IItemReact::register_);
+  registerIfExists("C_SPELL",        daedalus::ISpell::register_);
   registerOpaque  ("C_SVM"); // structure is very customizable, so better to use type-less mapping
-  registerIfExists("C_MENU",         zenkit::IMenu::register_);
-  registerIfExists("C_MENU_ITEM",    zenkit::IMenuItem::register_);
+  registerIfExists("C_MENU",         daedalus::IMenu::register_);
+  registerIfExists("C_MENU_ITEM",    daedalus::IMenuItem::register_);
   registerIfExists("CCAMSYS",        Def::Camera::register_);
-  registerIfExists("C_MUSICSYS_CFG", zenkit::IMusicSystem::register_);
+  registerIfExists("C_MUSICSYS_CFG", daedalus::IMusicSystem::register_);
   registerIfExists("C_MUSICTHEME",   Def::MusicTheme::register_);
-  registerIfExists("C_MUSICJINGLE",  zenkit::IMusicJingle::register_);
+  registerIfExists("C_MUSICJINGLE",  daedalus::IMusicJingle::register_);
   registerIfExists("C_PARTICLEFX",   Def::ParticleEffect::register_);
   registerIfExists("CFX_BASE",       Def::EffectBase::register_);
   registerIfExists("C_PARTICLEFXEMITKEY", Def::ParticleEffectEmitKey::register_);
   registerOpaque  ("C_FIGHTAI"); // many mods get it wrong/corrupted. Opaque binding is one is a way to get around it
   registerIfExists("C_SFX",          Def::SoundEffect::register_);
-  registerIfExists("C_SNDSYS_CFG",   zenkit::ISoundSystem::register_);
+  registerIfExists("C_SNDSYS_CFG",   daedalus::ISoundSystem::register_);
   }
 
 bool Gothic::settingsHasSection(std::string_view sec) {
@@ -1043,7 +1043,7 @@ std::u16string Gothic::nestedPath(const std::initializer_list<const char16_t*> &
   return CommandLine::inst().nestedPath(name,type);
   }
 
-void Gothic::setupVmCommonApi(zenkit::DaedalusVm& vm) {
+void Gothic::setupVmCommonApi(daedalus::DaedalusVm& vm) {
   vm.register_default_external([](std::string_view name) { notImplementedRoutine(std::string {name}); });
 
   if(auto sym = vm.find_symbol_by_name("C_SVM"))

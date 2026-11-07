@@ -331,7 +331,7 @@ void furnitureRagdoll(FurnitureParts& state,World& world,Npc& player) {
   if(!npc) {arenaAbort("furniture preparation: falling NPC insertion failed");return;}
   npc->clearAiQueue();npc->clearState(false);npc->stopWalking();npc->clearSpeed();npc->setExternalControl(true);
   npc->setDirection(direction);npc->updateTransform();
-  npc->handle().flags=zenkit::NpcFlag(uint32_t(npc->handle().flags)&~uint32_t(zenkit::NpcFlag::IMMORTAL));
+  npc->handle().flags=daedalus::NpcFlag(uint32_t(npc->handle().flags)&~uint32_t(daedalus::NpcFlag::IMMORTAL));
   npc->setLastHitBy(&player);
   if(!npc->setRagdollDown(true)) {arenaAbort("furniture preparation: NPC death refused");return;}
   npc->prepareRagdoll();

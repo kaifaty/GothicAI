@@ -1,8 +1,10 @@
-// Copyright © 2021-2023 GothicKit Contributors.
+// Copyright © 2021-2024 GothicKit Contributors.
 // SPDX-License-Identifier: MIT
+// Copy of ZenKit 1.3.0 with project modifications.
+// MIT license: OpenGothic/lib/ZenKit/license.md (../../lib/ZenKit/license.md).
+
 #pragma once
-#include "zenkit/DaedalusScript.hh"
-#include "zenkit/Library.hh"
+#include "script.h"
 
 #include <array>
 #include <cstdint>
@@ -13,7 +15,7 @@
 #include <string>
 #include <unordered_map>
 
-namespace zenkit {
+namespace daedalus {
 	struct IgnoreReturnValue {};
 
 	struct DaedalusNakedCall {};
@@ -32,7 +34,7 @@ namespace zenkit {
 	/// \brief An exception thrown if the definition of an external is incorrect.
 	class DaedalusIllegalExternalDefinition : public DaedalusScriptError {
 	public:
-		ZKAPI DaedalusIllegalExternalDefinition(DaedalusSymbol const* sym, std::string&& message);
+		DaedalusIllegalExternalDefinition(DaedalusSymbol const* sym, std::string&& message);
 
 		/// \brief The symbol the external is being registered for.
 		DaedalusSymbol const* sym;
@@ -42,14 +44,14 @@ namespace zenkit {
 	///        the return type defined in the script.
 	class DaedalusIllegalExternalReturnType final : public DaedalusIllegalExternalDefinition {
 	public:
-		ZKAPI DaedalusIllegalExternalReturnType(DaedalusSymbol const* sym, std::string&& provided);
+		DaedalusIllegalExternalReturnType(DaedalusSymbol const* sym, std::string&& provided);
 	};
 
 	/// \brief An exception thrown if one of the parameter types of a new external registration does not match
 	///        the type defined in the script.
 	class DaedalusIllegalExternalParameter final : public DaedalusIllegalExternalDefinition {
 	public:
-		ZKAPI DaedalusIllegalExternalParameter(DaedalusSymbol const* sym, std::string&& provided, std::uint8_t i);
+		DaedalusIllegalExternalParameter(DaedalusSymbol const* sym, std::string&& provided, std::uint8_t i);
 	};
 
 	class DaedalusVmException final : public DaedalusScriptError {
@@ -63,9 +65,9 @@ namespace zenkit {
 		FAIL = 2,     ///< Re-throw the exception and fail.
 
 		// Deprecated entries.
-		continue_ ZKREM("renamed to DaedalusVmExceptionStrategy::CONTINUE") = CONTINUE,
-		return_ ZKREM("renamed to DaedalusVmExceptionStrategy::RETURN") = RETURN,
-		fail_ ZKREM("renamed to DaedalusVmExceptionStrategy::FAIL") = FAIL,
+		continue_ = CONTINUE,
+		return_ = RETURN,
+		fail_ = FAIL,
 	};
 
 	/// \brief A stack frame in the VM.
@@ -90,12 +92,10 @@ namespace zenkit {
 		static constexpr std::uint8_t IGNORE_CONST_SPECIFIER = 1 << 2;
 
 		// Deprecated entries.
-		ZKREM("renamed to DaedalusVmExecutionFlag::NONE") static constexpr std::uint8_t none = NONE;
+		static constexpr std::uint8_t none = NONE;
 
-		ZKREM("renamed to DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS")
 		static constexpr std::uint8_t vm_allow_null_instance_access = ALLOW_NULL_INSTANCE_ACCESS;
 
-		ZKREM("renamed to DaedalusVmExecutionFlag::IGNORE_CONST_SPECIFIER")
 		static constexpr std::uint8_t vm_ignore_const_specifier = IGNORE_CONST_SPECIFIER;
 	} // namespace DaedalusVmExecutionFlag
 
@@ -105,7 +105,7 @@ namespace zenkit {
 
 		/// \brief Creates a DaedalusVM DaedalusInstance for the given script.
 		/// \param scr The script to load into the VM.
-		ZKAPI explicit DaedalusVm(DaedalusScript&& scr, uint8_t flags = DaedalusVmExecutionFlag::NONE);
+		explicit DaedalusVm(DaedalusScript&& scr, uint8_t flags = DaedalusVmExecutionFlag::NONE);
 
 		/// \brief Calls a function by it's name.
 		/// \tparam P The types for the argument values.
@@ -317,19 +317,19 @@ namespace zenkit {
 			sym->set_instance(instance);
 		}
 
-		ZKAPI void push_int(std::int32_t value);
-		ZKAPI void push_float(float value);
-		ZKAPI void push_instance(std::shared_ptr<DaedalusInstance> value);
-		ZKAPI void push_reference(DaedalusSymbol* value, std::uint8_t index = 0);
-		ZKAPI void push_string(std::string_view value);
+		void push_int(std::int32_t value);
+		void push_float(float value);
+		void push_instance(std::shared_ptr<DaedalusInstance> value);
+		void push_reference(DaedalusSymbol* value, std::uint8_t index = 0);
+		void push_string(std::string_view value);
 
-		[[nodiscard]] ZKAPI std::int32_t pop_int();
-		[[nodiscard]] ZKAPI float pop_float();
-		[[nodiscard]] ZKAPI std::shared_ptr<DaedalusInstance> pop_instance();
-		[[nodiscard]] ZKAPI std::string const& pop_string();
-		[[nodiscard]] ZKAPI std::tuple<DaedalusSymbol*, std::uint8_t, std::shared_ptr<DaedalusInstance>>
+		[[nodiscard]] std::int32_t pop_int();
+		[[nodiscard]] float pop_float();
+		[[nodiscard]] std::shared_ptr<DaedalusInstance> pop_instance();
+		[[nodiscard]] std::string const& pop_string();
+		[[nodiscard]] std::tuple<DaedalusSymbol*, std::uint8_t, std::shared_ptr<DaedalusInstance>>
 		pop_reference();
-		[[nodiscard]] ZKAPI bool top_is_reference() const;
+		[[nodiscard]] bool top_is_reference() const;
 
 		/// \brief Registers a Daedalus external function.
 		///
@@ -398,7 +398,7 @@ namespace zenkit {
 		/// </table>
 		///
 		/// <p>
-		/// [<sup>1</sup>] instances in the C++-World have to inherit from zenkit::DaedalusInstance.
+		/// [<sup>1</sup>] instances in the C++-World have to inherit from daedalus::DaedalusInstance.
 		/// </p>
 		///
 		/// \tparam R The return type of the external.
@@ -600,7 +600,7 @@ namespace zenkit {
 		///
 		/// \param callback The function to call. The one parameter of the function is the name of the unresolved
 		///                 external.
-		ZKAPI void register_default_external(std::function<void(std::string_view)> const& callback);
+		void register_default_external(std::function<void(std::string_view)> const& callback);
 
 		/// \brief Registers a function to be called when the script tries to call an external which has not been
 		///        registered.
@@ -611,11 +611,11 @@ namespace zenkit {
 		///
 		/// \param callback The function to call. The one parameter of the function is the symbol of the unresolved
 		///                 external.
-		ZKAPI void register_default_external(std::function<void(DaedalusSymbol const&)> const& callback);
+		void register_default_external(std::function<void(DaedalusSymbol const&)> const& callback);
 
-		ZKAPI void register_default_external_custom(std::function<void(DaedalusVm&, DaedalusSymbol&)> const& callback);
+		void register_default_external_custom(std::function<void(DaedalusVm&, DaedalusSymbol&)> const& callback);
 
-		ZKAPI void register_access_trap(std::function<void(DaedalusSymbol&)> const& callback);
+		void register_access_trap(std::function<void(DaedalusSymbol&)> const& callback);
 
 		/// \brief Registers a function to be called when script execution fails.
 		///
@@ -626,7 +626,7 @@ namespace zenkit {
 		///                 If the function returns `true` the error is assumed to have been handled and execution will
 		///                 continue as normal. If `false` is returned, the VM will re-raise the exception and thus,
 		///                 halt execution.
-		ZKAPI void register_exception_handler(
+		void register_exception_handler(
 		    std::function<DaedalusVmExceptionStrategy(DaedalusVm&,
 		                                              DaedalusScriptError const&,
 		                                              DaedalusInstruction const&)> const& callback);
@@ -637,73 +637,73 @@ namespace zenkit {
 		/// the caller is required to deal with them appropriately.
 		///
 		/// \param sym The symbol to unsafe_call.
-		ZKAPI void unsafe_call(DaedalusSymbol const* sym);
-		ZKAPI void unsafe_jump(uint32_t address);
+		void unsafe_call(DaedalusSymbol const* sym);
+		void unsafe_jump(uint32_t address);
 
 		/// \brief Calls an external the way the `BE` instruction does: its arguments must be on the stack,
 		///        its return value is left there. Falls back to the default external.
 		/// \return false if no external is registered for \p sym and there is no default (the arguments are
 		///         dropped, nothing is pushed).
 		/// \note Local addition (OpenGothic ai_bridge), see lib/VENDORED.md.
-		ZKAPI bool unsafe_call_external(DaedalusSymbol const* sym);
+		bool unsafe_call_external(DaedalusSymbol const* sym);
 
 		/// \brief Calls a script function the way the `BL` instruction does: an override registered with
 		///        #override_function runs instead of its code. The arguments must be on the stack, the
 		///        return value is left there.
 		/// \note Local addition (OpenGothic ai_bridge), see lib/VENDORED.md.
-		ZKAPI void unsafe_call_bl(DaedalusSymbol const* sym);
-		ZKAPI std::shared_ptr<DaedalusInstance> unsafe_get_gi();
-		ZKAPI void unsafe_set_gi(std::shared_ptr<DaedalusInstance> i);
+		void unsafe_call_bl(DaedalusSymbol const* sym);
+		std::shared_ptr<DaedalusInstance> unsafe_get_gi();
+		void unsafe_set_gi(std::shared_ptr<DaedalusInstance> i);
 
 		/// \return the symbol referring to the global <tt>var C_NPC self</tt>.
-		[[nodiscard]] ZKAPI DaedalusSymbol* global_self() {
+		[[nodiscard]] DaedalusSymbol* global_self() {
 			return _m_self_sym;
 		}
 
 		/// \return the symbol referring to the global <tt>var C_NPC other</tt>.
-		[[nodiscard]] ZKAPI DaedalusSymbol* global_other() {
+		[[nodiscard]] DaedalusSymbol* global_other() {
 			return _m_other_sym;
 		}
 
 		/// \return the symbol referring to the global <tt>var C_NPC victim</tt>.
-		[[nodiscard]] ZKAPI DaedalusSymbol* global_victim() {
+		[[nodiscard]] DaedalusSymbol* global_victim() {
 			return _m_victim_sym;
 		}
 
 		/// \return the symbol referring to the global <tt>var C_NPC hero</tt>.
-		[[nodiscard]] ZKAPI DaedalusSymbol* global_hero() {
+		[[nodiscard]] DaedalusSymbol* global_hero() {
 			return _m_hero_sym;
 		}
 
 		/// \return the symbol referring to the global <tt>var C_NPC item</tt>.
-		[[nodiscard]] ZKAPI DaedalusSymbol* global_item() {
+		[[nodiscard]] DaedalusSymbol* global_item() {
 			return _m_item_sym;
 		}
 
 		/// \brief Prints the contents of the function call stack and the VMs stack to stderr.
-		ZKAPI void print_stack_trace() const;
+		void print_stack_trace() const;
 
 		/// \return The current program counter (or instruction index) the VM is at.
-		[[nodiscard]] ZKAPI uint32_t pc() const noexcept {
+		[[nodiscard]] uint32_t pc() const noexcept {
 			return _m_pc;
 		}
 
-		[[nodiscard]] ZKAPI std::int32_t
+		[[nodiscard]] std::int32_t
 		get_int(std::shared_ptr<DaedalusInstance> const& context,
 		        std::variant<int32_t, float, DaedalusSymbol*, std::shared_ptr<DaedalusInstance>> const& value,
 		        uint16_t index) const;
-		[[nodiscard]] ZKAPI float
+		[[nodiscard]] float
 		get_float(std::shared_ptr<DaedalusInstance> const& context,
 		          std::variant<int32_t, float, DaedalusSymbol*, std::shared_ptr<DaedalusInstance>> const& value,
 		          uint16_t index) const;
 
-		ZKAPI void set_int(std::shared_ptr<DaedalusInstance> const& context,
+		void set_int(std::shared_ptr<DaedalusInstance> const& context,
 		                   DaedalusSymbol* ref,
 		                   uint16_t index,
 		                   std::int32_t value);
-		ZKAPI void
+		void
 		set_float(std::shared_ptr<DaedalusInstance> const& context, DaedalusSymbol* ref, uint16_t index, float value);
-		ZKAPI void set_string(std::shared_ptr<DaedalusInstance> const& context,
+		void set_string(std::shared_ptr<DaedalusInstance> const& context,
 		                      DaedalusSymbol* ref,
 		                      uint16_t index,
 		                      std::string_view value);
@@ -711,11 +711,11 @@ namespace zenkit {
 	protected:
 		/// \brief Runs the instruction at the current program counter and advances it properly.
 		/// \return false, the instruction executed was a op_return instruction, otherwise true.
-		ZKINT bool exec();
+		bool exec();
 
 		/// \brief Validates the given address and jumps to it (sets the program counter).
 		/// \param address The address to jump to.
-		ZKINT void jump(std::uint32_t address);
+		void jump(std::uint32_t address);
 
 		/// \brief Pushes a call stack frame onto the call stack.
 		///
@@ -723,24 +723,24 @@ namespace zenkit {
 		/// as #pop_call is invoked.
 		///
 		/// \param sym The symbol referring to the function called.
-		ZKINT void push_call(DaedalusSymbol const* sym);
+		void push_call(DaedalusSymbol const* sym);
 
 		/// \brief Pops a call stack frame from the call stack.
 		///
 		/// This method restores the interpreter's state to before the function which the
 		/// call stack entry refers to was called.
-		ZKINT void pop_call();
+		void pop_call();
 
 		/// \brief Pushes a function local variables onto the call stack.
 		///
 		/// Part of #push_call implementation
 		/// \param sym The symbol referring to the function called.
-		ZKINT void push_local_variables(DaedalusSymbol const* sym);
+		void push_local_variables(DaedalusSymbol const* sym);
 
 		/// \brief Pops a function-local variables from the call stack.
 		///
 		/// Part of #pop_call implementation
-		ZKINT void pop_local_variables(DaedalusSymbol const* sym);
+		void pop_local_variables(DaedalusSymbol const* sym);
 
 		/// \brief Checks that the type of each symbol in the given set of defined symbols matches the given type
 		/// parameters.
@@ -1044,7 +1044,7 @@ namespace zenkit {
 	/// \param exc The exception being handled.
 	/// \param instr The instruction being executed.
 	/// \return DaedalusVmExceptionStrategy::continue_
-	ZKAPI DaedalusVmExceptionStrategy lenient_vm_exception_handler(DaedalusVm& v,
+	DaedalusVmExceptionStrategy lenient_vm_exception_handler(DaedalusVm& v,
 	                                                               DaedalusScriptError const& exc,
 	                                                               DaedalusInstruction const& instr);
-} // namespace zenkit
+} // namespace daedalus

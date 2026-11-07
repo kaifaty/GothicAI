@@ -15,7 +15,7 @@
 using namespace Tempest;
 using storygraph::ExprP;
 using storygraph::Expr;
-using zenkit::DaedalusDataType;
+using daedalus::DaedalusDataType;
 
 StoryRuntime::StoryRuntime(std::function<std::string(const std::string&,const std::string&)> ownLine)
   :ownLine(std::move(ownLine)) {
@@ -23,7 +23,7 @@ StoryRuntime::StoryRuntime(std::function<std::string(const std::string&,const st
 
 StoryRuntime::~StoryRuntime() = default;
 
-zenkit::DaedalusVm* StoryRuntime::vm() const {
+daedalus::DaedalusVm* StoryRuntime::vm() const {
   World* w = Gothic::inst().world();
   return w!=nullptr ? &w->script().getVm() : nullptr;
   }
@@ -136,7 +136,7 @@ storygraph::Predicates& StoryRuntime::predicates() {
   return *lifted;
   }
 
-storygraph::Interpreter& StoryRuntime::interpreter(zenkit::DaedalusVm& v) {
+storygraph::Interpreter& StoryRuntime::interpreter(daedalus::DaedalusVm& v) {
   ensureVars();
   if(runFor==&v && interp!=nullptr)
     return *interp;
@@ -160,7 +160,7 @@ std::string StoryRuntime::checkExpr(const ExprP& e) {
   return lifted->whyNotLifted(e);
   }
 
-std::string StoryRuntime::checkNames(zenkit::DaedalusVm& vm, const ExprP& e) const {
+std::string StoryRuntime::checkNames(daedalus::DaedalusVm& vm, const ExprP& e) const {
   auto* v = &vm;
   std::string err;
   storygraph::ex::walk(e, [&](const Expr& x) {
@@ -198,8 +198,8 @@ std::string StoryRuntime::checkNames(zenkit::DaedalusVm& vm, const ExprP& e) con
   return err;
   }
 
-std::string StoryRuntime::checkProgram(zenkit::DaedalusVm& v, const storygraph::Program& p,
-                                       const zenkit::DaedalusSymbol* fn, bool choices) const {
+std::string StoryRuntime::checkProgram(daedalus::DaedalusVm& v, const storygraph::Program& p,
+                                       const daedalus::DaedalusSymbol* fn, bool choices) const {
   const size_t params = fn!=nullptr ? v.find_parameters_for_function(fn).size() : 0;
   auto member = [&v](const std::string& name) {
     for(auto* cls : {"C_NPC.", "C_ITEM.", "C_INFO.", "C_FOCUS.", "C_MENU_ITEM."})
@@ -291,15 +291,15 @@ std::optional<bool> StoryRuntime::test(const ExprP& e, std::string_view what) {
   return r->i!=0;
   }
 
-StoryRuntime::Bind::Bind(zenkit::DaedalusVm& v, Npc* s, Npc* o)
+StoryRuntime::Bind::Bind(daedalus::DaedalusVm& v, Npc* s, Npc* o)
   :self(v.global_self()), other(v.global_other()) {
   if(self!=nullptr) {
     prevSelf = self->get_instance();
-    self->set_instance(s!=nullptr ? std::shared_ptr<zenkit::DaedalusInstance>(s->handlePtr()) : nullptr);
+    self->set_instance(s!=nullptr ? std::shared_ptr<daedalus::DaedalusInstance>(s->handlePtr()) : nullptr);
     }
   if(other!=nullptr) {
     prevOther = other->get_instance();
-    other->set_instance(o!=nullptr ? std::shared_ptr<zenkit::DaedalusInstance>(o->handlePtr()) : nullptr);
+    other->set_instance(o!=nullptr ? std::shared_ptr<daedalus::DaedalusInstance>(o->handlePtr()) : nullptr);
     }
   }
 

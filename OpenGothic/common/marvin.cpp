@@ -887,7 +887,7 @@ bool Marvin::addItemOrNpcBySymbolName(World* world, std::string_view name, const
   if(sym==nullptr || sym->parent()==uint32_t(-1))
     return false;
 
-  if(sym->type()!=zenkit::DaedalusDataType::INSTANCE || sym->address()==0)
+  if(sym->type()!=daedalus::DaedalusDataType::INSTANCE || sym->address()==0)
     return false;
 
   const auto* cls = sym;
@@ -912,16 +912,16 @@ bool Marvin::printVariable(World* world, std::string_view name) {
   if(sym==nullptr)
     return false;
   switch(sym->type()) {
-    case zenkit::DaedalusDataType::INT:
+    case daedalus::DaedalusDataType::INT:
       buf = string_frm(name," = ",sym->get_int(0));
       break;
-    case zenkit::DaedalusDataType::FLOAT:
+    case daedalus::DaedalusDataType::FLOAT:
       buf = string_frm(name," = ",sym->get_float(0));
       break;
-    case zenkit::DaedalusDataType::STRING:
+    case daedalus::DaedalusDataType::STRING:
       buf = string_frm(name," = ",sym->get_string(0));
       break;
-    case zenkit::DaedalusDataType::INSTANCE:
+    case daedalus::DaedalusDataType::INSTANCE:
       buf = string_frm(name," = ",sym->get_instance().get());
       break;
     default:
@@ -937,24 +937,24 @@ bool Marvin::setVariable(World* world, std::string_view name, std::string_view v
   if(sym==nullptr)
     return false;
   switch(sym->type()) {
-    case zenkit::DaedalusDataType::INT: {
+    case daedalus::DaedalusDataType::INT: {
       int32_t valueI = 0;
       if(!fromString(value, valueI))
         return false;
       sym->set_int(valueI);
       break;
       }
-    case zenkit::DaedalusDataType::FLOAT: {
+    case daedalus::DaedalusDataType::FLOAT: {
       float valueF = 0;
       if(!fromString(value, valueF))
         return false;
       sym->set_float(valueF);
       break;
       }
-    case zenkit::DaedalusDataType::STRING:
+    case daedalus::DaedalusDataType::STRING:
       sym->set_string(value);
       break;
-    case zenkit::DaedalusDataType::INSTANCE:
+    case daedalus::DaedalusDataType::INSTANCE:
       print("unable to override instance variable");
       break;
     default:

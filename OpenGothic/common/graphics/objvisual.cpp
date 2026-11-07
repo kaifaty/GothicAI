@@ -230,7 +230,7 @@ void ObjVisual::setType(Type t) {
   type = t;
   }
 
-void ObjVisual::setVisual(const zenkit::IItem& hitem, World& world, bool staticDraw) {
+void ObjVisual::setVisual(const daedalus::IItem& hitem, World& world, bool staticDraw) {
   cleanup();
 
   if(FileExt::hasExt(hitem.visual,"ZEN")) {
@@ -242,7 +242,7 @@ void ObjVisual::setVisual(const zenkit::IItem& hitem, World& world, bool staticD
     }
   }
 
-void ObjVisual::setWorldItem(const zenkit::IItem& item, World& world, const Tempest::Matrix4x4& matrix) {
+void ObjVisual::setWorldItem(const daedalus::IItem& item, World& world, const Tempest::Matrix4x4& matrix) {
   cleanup();
   const auto* proto=Resources::loadMesh(item.visual);
   if(proto==nullptr)
