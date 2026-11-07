@@ -21,6 +21,12 @@
 //   u64 the config's hash (FNV-1a 64 of its bytes), u32 needs, then each need's id: u16 length and its bytes
 // and the records add kind 6 need_threshold: reason 0 down (to the threshold or below) / 1 up (above it),
 // a = need (the index in that list), b = threshold (1 low, 2 critical), c = the state being done (0xFFFF none).
+// Version 4 (decisions, only with a policy that decides): the v3 header goes on with
+//   u16 length and the policy's name ("teacher", "random"), u32 K (options per decision)
+// and the records add kinds 7-10 (Society::EventKind): decision_requested (reason = Cause bits, a = options,
+// b = allowed), action_chosen (reason = Chooser), action_failed (reason = FailReason), activity_finished
+// (reason = FinishReason), each with a = the option's kind (0xFFFF for the routine), b = its point, c = its object
+// (0xFFFFFFFF for none). activity_started gains reasons 3 (a chosen option's state) and 4 (back to the routine).
 //
 // Marks: CSV, one row per NPC every 5 game minutes from the start, NPCs in the export's order:
 //   t_min,key,routine,state,moving,point,to,arrive_min,x,y,z
@@ -29,7 +35,10 @@
 // moving 1: on the way from `point` to `to`, arriving at arrive_min; moving 0: at `point`, `to` and arrive_min "-";
 // x, y, z — the position in cm: the point's, or on the way the place along the walk's points by the time gone.
 // With needs (journal v3) every row goes on with a column per need, `need_<id>`: a person's level at the mark with
-// four decimals, "-" for an NPC that is not a person.
+// four decimals, "-" for an NPC without needs (not a person, or of decisions.no_needs_guilds) and for a need not in
+// use (World::needActive). With decisions (journal v4) two columns more, `source,target`:
+// `routine` or `need` (a chosen activity), and the chosen activity's `kind:place` (the mobsi's vob or #id, the
+// point's name), "-" for the routine.
 
 #include "society.h"
 
@@ -40,10 +49,12 @@ namespace Journal {
 
 constexpr uint32_t Version     = 2;
 constexpr uint32_t NeedsVersion = 3; // with needs
+constexpr uint32_t DecisionsVersion = 4; // with decisions
 constexpr uint32_t RecordBytes = 24;
 constexpr char     Magic[8]    = {'G','S','O','C','J','R','N','L'};
 
-std::string header(const World& world, uint64_t seed);
+// `policy`: the name of the policy that decides, empty for none (the routine: journal v2 or v3 as before).
+std::string header(const World& world, uint64_t seed, std::string_view policy = {});
 // Appends the records; throws when a time does not fit the u32 field.
 void        append(std::string& out, std::span<const Event> events);
 
@@ -53,7 +64,7 @@ namespace Marks {
 
 constexpr Time Period = 5*60;
 
-std::string header(const World& world);
+std::string header(const World& world, bool decisions = false);
 // The rows of every NPC at the sim's current time; the walk's points come from (and fill) the sim's path cache.
 void        append(std::string& out, Sim& sim);
 

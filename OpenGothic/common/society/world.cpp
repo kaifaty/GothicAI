@@ -1,4 +1,4 @@
-#include "society.h"
+#include "core.h"
 
 #include <rapidjson/document.h>
 
@@ -9,6 +9,7 @@
 #include <numeric>
 #include <sstream>
 #include <stdexcept>
+#include <tuple>
 
 namespace Society {
 namespace {
@@ -455,7 +456,7 @@ void readObjectKinds(Config& c, const Value& doc) {
   for(rapidjson::SizeType i=0; i<list.Size(); ++i) {
     const auto& v = list[i];
     const std::string where = "object_kinds["+std::to_string(i)+"]";
-    onlyKeys(v,{"kind","schemes","freepoints","state","fill_hours","capacity","minutes","note"},where);
+    onlyKeys(v,{"kind","schemes","freepoints","at","places","guilds","state","fill_hours","capacity","minutes","note"},where);
     const auto id = str(v,"kind");
     need(!id.empty() && std::find(o.id.begin(),o.id.end(),id)==o.id.end(),where+": kind must be unique and not empty");
     const auto k = uint16_t(o.id.size());
@@ -478,14 +479,42 @@ void readObjectKinds(Config& c, const Value& doc) {
       need(fp[j].IsString() && std::string_view(fp[j].GetString()).rfind("FP_",0)==0,where+": freepoints must be FP_* prefixes");
       prefixes.emplace_back(fp[j].GetString(),k);
       }
-    need(sc.Size()+fp.Size()>0,where+": a kind needs a scheme or a freepoint prefix");
+    // Optional: where else it is done (outdoors, in the NPC's own or guild's rooms, at the points of places of
+    // places.json) and the only guilds that may use it.
+    o.at.push_back(uint8_t(KindAt::Listed));
+    o.places.emplace_back();
+    if(v.HasMember("at")) {
+      const auto at = str(v,"at");
+      need(at=="outdoors" || at=="own_rooms" || at=="places",where+": at must be outdoors, own_rooms or places");
+      o.at.back() = uint8_t(at=="outdoors" ? KindAt::Outdoors : at=="own_rooms" ? KindAt::OwnRooms : KindAt::Places);
+      }
+    if(v.HasMember("places")) {
+      const auto& pl = array(v,"places");
+      for(rapidjson::SizeType j=0; j<pl.Size(); ++j) {
+        need(pl[j].IsString(),where+": places must be place ids of places.json");
+        o.places.back().emplace_back(pl[j].GetString(),pl[j].GetStringLength());
+        }
+      }
+    need((o.at.back()==uint8_t(KindAt::Places))==!o.places.back().empty(),where+": places go with at: places, and it needs them");
+    o.guilds.emplace_back();
+    if(v.HasMember("guilds")) {
+      const auto& g = array(v,"guilds");
+      for(rapidjson::SizeType j=0; j<g.Size(); ++j) {
+        need(g[j].IsUint(),where+": guilds must be guild numbers");
+        o.guilds.back().push_back(g[j].GetUint());
+        }
+      std::sort(o.guilds.back().begin(),o.guilds.back().end());
+      }
+    need(sc.Size()+fp.Size()>0 || o.at.back()!=uint8_t(KindAt::Listed),where+": a kind needs a scheme, a freepoint prefix or at");
     }
   need(o.size()<NoKind,"too many object kinds");
-  for(auto* list:{&schemes,&prefixes}) {
-    std::sort(list->begin(),list->end());
-    for(size_t i=1; i<list->size(); ++i)
-      need((*list)[i-1].first!=(*list)[i].first,"object_kinds: "+(*list)[i].first+" belongs to two kinds");
-    }
+  // A mobsi has one kind; a freepoint may have several (eating at a campfire is another option than sitting at it).
+  std::sort(schemes.begin(),schemes.end());
+  for(size_t i=1; i<schemes.size(); ++i)
+    need(schemes[i-1].first!=schemes[i].first,"object_kinds: "+schemes[i].first+" belongs to two kinds");
+  std::sort(prefixes.begin(),prefixes.end());
+  for(size_t i=1; i<prefixes.size(); ++i)
+    need(prefixes[i-1]!=prefixes[i],"object_kinds: "+prefixes[i].first+" is listed twice in one kind");
   for(auto& [name,k]:schemes) { o.scheme.push_back(name); o.schemeKind.push_back(k); }
   for(auto& [name,k]:prefixes) { o.prefix.push_back(name); o.prefixKind.push_back(k); }
   }
@@ -555,6 +584,192 @@ void readTraits(Config& c, const Value& doc, const std::filesystem::path& dir,
     }
   }
 
+// decisions: the menu, the masks, the switches and the teacher (docs/society-sim.md, «Файл настройки → decisions»).
+void readDecisions(Config& c, const Value& doc, const std::filesystem::path& dir) {
+  if(!doc.HasMember("decisions"))
+    return;
+  const auto& v = doc["decisions"];
+  const std::string where = "decisions";
+  onlyKeys(v,{"note","menu","travel_limit_min","min_dwell_min","posts_release_for_needs","post_states","no_needs_guilds",
+              "protected","places","guild_names","teacher"},where);
+  auto& d = c.decisions;
+  d.loaded = true;
+  d.menu   = uint(v,"menu");
+  need(d.menu>=1 && d.menu<=MenuSize,where+": menu must be 1.."+std::to_string(MenuSize));
+  d.travelLimit = int64_t(std::llround(hours(v,"travel_limit_min",where)*60.0));
+  d.minDwell    = int64_t(std::llround(hours(v,"min_dwell_min",where)*60.0));
+  need(d.minDwell>=60,where+": min_dwell_min must be a minute or more");
+  d.postsRelease = flag(v,"posts_release_for_needs");
+  const auto& posts = array(v,"post_states");
+  for(rapidjson::SizeType i=0; i<posts.Size(); ++i) {
+    need(posts[i].IsString() && std::string_view(posts[i].GetString()).rfind("ZS_",0)==0,where+": post_states must be ZS_* names");
+    d.postStates.emplace_back(posts[i].GetString(),posts[i].GetStringLength());
+    }
+  const auto& guilds = array(v,"no_needs_guilds");
+  for(rapidjson::SizeType i=0; i<guilds.Size(); ++i) {
+    need(guilds[i].IsUint(),where+": no_needs_guilds must be guild numbers");
+    d.noNeedsGuilds.push_back(guilds[i].GetUint());
+    }
+  const auto path = optionalStr(v,"protected");
+  if(!path.empty()) {
+    const std::filesystem::path p(path);
+    d.protectedPath = (p.is_absolute() ? p : dir/p).lexically_normal().string();
+    }
+  if(v.HasMember("places")) {
+    const std::filesystem::path p(str(v,"places"));
+    d.placesPath = (p.is_absolute() ? p : dir/p).lexically_normal().string();
+    }
+  const auto& names = member(v,"guild_names");
+  need(names.IsObject(),where+": guild_names must be an object of GIL_* name: guild number");
+  for(auto it=names.MemberBegin(); it!=names.MemberEnd(); ++it) {
+    need(it->value.IsUint(),where+": guild_names values must be guild numbers");
+    d.guildNames.emplace(std::string(it->name.GetString(),it->name.GetStringLength()),it->value.GetUint());
+    }
+  const auto& t = member(v,"teacher");
+  onlyKeys(t,{"note","n","m","weights","horizon_min","travel_cost_per_min","inertia","temperature","top"},where+".teacher");
+  d.n = real(t,"n");
+  d.m = real(t,"m");
+  need(d.n>=1 && d.m>=1 && std::isfinite(d.n) && std::isfinite(d.m),where+".teacher: n and m must be 1 or more");
+  d.horizon = int64_t(std::llround(hours(t,"horizon_min",where+".teacher")*60.0));
+  d.travelCost  = real(t,"travel_cost_per_min")/60.0;
+  d.inertia     = real(t,"inertia");
+  d.temperature = real(t,"temperature");
+  need(d.travelCost>=0 && d.inertia>=0 && d.temperature>=0,where+".teacher: travel_cost_per_min, inertia and temperature must not be negative");
+  d.top = uint(t,"top");
+  need(d.top>=1,where+".teacher: top must be 1 or more");
+  d.weight.assign(c.needs.size(),1.0);
+  const auto& w = member(t,"weights");
+  need(w.IsObject(),where+".teacher: weights must be an object of need: weight");
+  for(auto it=w.MemberBegin(); it!=w.MemberEnd(); ++it) {
+    const auto k = needIndex(c,std::string_view(it->name.GetString(),it->name.GetStringLength()),where+".teacher");
+    need(it->value.IsNumber() && it->value.GetDouble()>=0,where+".teacher: weights must not be negative");
+    d.weight[k] = it->value.GetDouble();
+    }
+  }
+
+// The protected list (data/society/protected.json): [{"id": instance, "reasons": [...]}].
+std::vector<std::string> readProtected(const std::string& path) {
+  std::vector<std::string> ret;
+  if(path.empty())
+    return ret;
+  std::ifstream in(path,std::ios::binary);
+  need(bool(in),"cannot read the protected list "+path);
+  std::ostringstream text;
+  text << in.rdbuf();
+  rapidjson::Document doc;
+  const auto json = text.str();
+  doc.Parse(json.data(),json.size());
+  need(!doc.HasParseError() && doc.IsArray(),"the protected list "+path+" is not a JSON array");
+  for(const auto& e:doc.GetArray())
+    ret.push_back(str(e,"id"));
+  return ret;
+  }
+
+// The states of the object kinds that the export does not use go after its own, sorted among themselves: the
+// export's state indices (and so a routine run's journal records) stay.
+void appendKindStates(World& w) {
+  std::vector<std::string> extra;
+  for(const auto& state:w.config.objectKinds.state)
+    if(!std::binary_search(w.stateNames.begin(),w.stateNames.end(),state))
+      extra.push_back(state);
+  std::sort(extra.begin(),extra.end());
+  extra.erase(std::unique(extra.begin(),extra.end()),extra.end());
+  w.stateNames.insert(w.stateNames.end(),extra.begin(),extra.end());
+  w.followState.resize(w.stateNames.size(),NoState);
+  need(w.stateNames.size()<NoState,"too many states");
+  }
+
+uint16_t stateIndex(const World& w, std::string_view name) {
+  for(size_t i=0; i<w.stateNames.size(); ++i)
+    if(w.stateNames[i]==name)
+      return uint16_t(i);
+  return NoState;
+  }
+
+// Who decides, the posts, the owners of objects and points (a mobsi's own, otherwise its room's), the places of
+// options by waynet point.
+void applyDecisions(World& w, const std::vector<std::string>& protectedIds) {
+  const auto& c = w.config;
+  const auto& d = c.decisions;
+  const size_t n = w.npcs.size();
+  std::unordered_map<std::string,uint32_t> byId;
+  for(uint32_t i=0; i<n; ++i)
+    byId.emplace(w.npcs.id[i],i);
+  w.npcProtected.assign(n,0);
+  w.protectedListed = protectedIds.size();
+  for(const auto& id:protectedIds)
+    if(auto it = byId.find(id); it!=byId.end()) {
+      w.npcProtected[it->second] = 1;
+      ++w.protectedFound;
+      }
+  w.npcDecider.assign(n,0);
+  for(uint32_t i=0; i<n; ++i) {
+    const bool guild = std::find(d.noNeedsGuilds.begin(),d.noNeedsGuilds.end(),w.npcs.guild[i])==d.noNeedsGuilds.end();
+    w.npcDecider[i] = w.npcs.person[i] && w.entryCount(i)>0 && !w.npcProtected[i] && guild ? 1 : 0;
+    if(w.npcDecider[i])
+      w.deciderWalk = std::max(w.deciderWalk,w.npcs.walkCmPerS[i]);
+    }
+  w.statePost.assign(w.stateNames.size(),0);
+  for(size_t i=0; i<w.stateNames.size(); ++i)
+    for(const auto& p:d.postStates) {
+      const bool prefix = !p.empty() && p.back()=='*';
+      const auto base = prefix ? std::string_view(p).substr(0,p.size()-1) : std::string_view(p);
+      if(prefix ? std::string_view(w.stateNames[i]).rfind(base,0)==0 : w.stateNames[i]==base)
+        w.statePost[i] = 1;
+      }
+  w.kindState.resize(c.objectKinds.size());
+  for(size_t k=0; k<c.objectKinds.size(); ++k)
+    w.kindState[k] = stateIndex(w,c.objectKinds.state[k]);
+  // A kind advertises what its state does: the core fills the needs by the state, so the two must agree.
+  const size_t needs = c.needs.size();
+  for(size_t k=0; k<c.objectKinds.size(); ++k) {
+    const auto row = size_t(std::lower_bound(c.states.name.begin(),c.states.name.end(),c.objectKinds.state[k])-c.states.name.begin());
+    for(size_t j=0; j<needs; ++j)
+      need(std::abs(c.objectKinds.fill[k*needs+j]-c.states.fill[row*needs+j])<=1e-12,
+           "object_kinds "+c.objectKinds.id[k]+": fill_hours of "+c.needs.id[j]+" differ from its state "+c.objectKinds.state[k]);
+    }
+
+  // Owners: a room's NPC by its full instance, its guild by number; a mobsi's NPC by instance, its guild by GIL_* name.
+  const auto ownerNpc = [&](const std::string& id) {
+    if(id.empty())
+      return NoNpc;
+    const auto it = byId.find(id);
+    return it==byId.end() ? AbsentNpc : it->second;
+    };
+  std::vector<uint32_t> roomNpc(w.rooms.size());
+  for(size_t r=0; r<w.rooms.size(); ++r)
+    roomNpc[r] = ownerNpc(w.rooms.ownerNpc[r]);
+  const auto room = [&](const std::string& name) -> std::pair<uint32_t,int32_t> {
+    if(name.empty())
+      return {NoNpc,-1};
+    const auto it = std::lower_bound(w.rooms.name.begin(),w.rooms.name.end(),name);
+    const auto r  = size_t(it-w.rooms.name.begin());
+    return {roomNpc[r],w.rooms.ownerGuild[r]};
+    };
+  const size_t objects = w.objects.size(), points = w.points.size();
+  w.objectOwnerNpc.resize(objects);
+  w.objectOwnerGuild.resize(objects);
+  for(size_t i=0; i<objects; ++i) {
+    const auto& npc = w.objects.ownerNpc[i];
+    const auto& gil = w.objects.ownerGuild[i];
+    if(npc.empty() && gil.empty()) {
+      std::tie(w.objectOwnerNpc[i],w.objectOwnerGuild[i]) = room(w.objects.room[i]);
+      continue;
+      }
+    w.objectOwnerNpc[i] = ownerNpc(npc);
+    const auto it = d.guildNames.find(gil);
+    w.objectOwnerGuild[i] = gil.empty() ? -1 : it==d.guildNames.end() ? -2 : int32_t(it->second);
+    }
+  w.pointOwnerNpc.resize(points);
+  w.pointOwnerGuild.resize(points);
+  w.pointOutdoors.assign(points,0);
+  for(size_t i=0; i<points; ++i) {
+    std::tie(w.pointOwnerNpc[i],w.pointOwnerGuild[i]) = room(w.points.room[i]);
+    w.pointOutdoors[i] = !w.points.free[i] && w.points.room[i].empty() ? 1 : 0;
+    }
+
+  }
+
 // What the config gives this world: the state rows, each person's decay by traits and guild, the object kinds.
 void applyConfig(World& w, const std::unordered_map<std::string,std::vector<uint8_t>>& cards) {
   const auto& c = w.config;
@@ -568,12 +783,16 @@ void applyConfig(World& w, const std::unordered_map<std::string,std::vector<uint
   w.npcCard.assign(n,0);
   w.npcScale.assign(n*scales,uint8_t(c.middle));
   w.npcDecay.assign(n*needs,0.0);
+  // Needs are people's, but for the guilds of decisions.no_needs_guilds (orcs): those have none at all.
+  const auto& noNeeds = c.decisions.noNeedsGuilds;
+  w.npcNeeds.assign(n,0);
   for(uint32_t i=0; i<n; ++i) {
     if(auto it = cards.find(w.npcs.id[i]); it!=cards.end()) {
       w.npcCard[i] = 1;
       std::copy(it->second.begin(),it->second.end(),w.npcScale.begin()+std::ptrdiff_t(i*scales));
       }
-    if(!w.npcs.person[i])
+    w.npcNeeds[i] = w.npcs.person[i] && std::find(noNeeds.begin(),noNeeds.end(),w.npcs.guild[i])==noNeeds.end() ? 1 : 0;
+    if(!w.npcNeeds[i])
       continue;
     for(size_t k=0; k<needs; ++k) {
       double mult = 1.0;
@@ -610,6 +829,32 @@ void applyConfig(World& w, const std::unordered_map<std::string,std::vector<uint
     }
   }
 
+// places.json of the server (places[] with ids, points: name -> place index): the place id of each point name.
+std::unordered_map<std::string,std::string> readPlaces(const std::string& path) {
+  std::unordered_map<std::string,std::string> ret;
+  if(path.empty())
+    return ret;
+  std::ifstream in(path,std::ios::binary);
+  need(bool(in),"cannot read the places "+path);
+  std::ostringstream text;
+  text << in.rdbuf();
+  rapidjson::Document doc;
+  const auto json = text.str();
+  doc.Parse(json.data(),json.size());
+  need(!doc.HasParseError() && doc.IsObject(),"the places "+path+" are not a JSON object");
+  const auto& places = array(doc,"places");
+  std::vector<std::string> ids;
+  for(const auto& p:places.GetArray())
+    ids.push_back(str(p,"id"));
+  const auto& points = member(doc,"points");
+  need(points.IsObject(),"places: points must be an object of name: place");
+  for(auto it=points.MemberBegin(); it!=points.MemberEnd(); ++it) {
+    need(it->value.IsUint() && it->value.GetUint()<ids.size(),"places: a point's place must be an index of places");
+    ret.emplace(std::string(it->name.GetString(),it->name.GetStringLength()),ids[it->value.GetUint()]);
+    }
+  return ret;
+  }
+
 void readConfig(World& w, std::string_view json, const std::filesystem::path& dir) {
   rapidjson::Document doc;
   doc.Parse(json.data(),json.size());
@@ -618,7 +863,7 @@ void readConfig(World& w, std::string_view json, const std::filesystem::path& di
   c.loaded = true;
   c.hash   = fnv1a64(json);
   c.bytes  = json.size();
-  onlyKeys(doc,{"format","version","note","needs","states","object_kinds","traits"},"the config");
+  onlyKeys(doc,{"format","version","note","needs","states","object_kinds","traits","decisions"},"the config");
   need(str(doc,"format")=="society-config","format must be society-config");
   const auto& version = member(doc,"version");
   need(version.IsInt() && version.GetInt()==1,"only version 1 is supported");
@@ -626,12 +871,22 @@ void readConfig(World& w, std::string_view json, const std::filesystem::path& di
   readNeeds(c,doc);
   std::unordered_map<std::string,std::vector<uint8_t>> cards;
   // "needs": [] turns the needs off: the sections that refer to them are not read.
+  std::vector<std::string> protectedIds;
   if(c.needs.size()>0) {
     readStates(c,doc);
     readObjectKinds(c,doc);
     readTraits(c,doc,dir,cards);
+    readDecisions(c,doc,dir);
+    if(c.decisions.loaded) {
+      protectedIds = readProtected(c.decisions.protectedPath);
+      appendKindStates(w);
+      }
     }
   applyConfig(w,cards);
+  if(c.decisions.loaded) {
+    applyDecisions(w,protectedIds);
+    detail::applyReach(w,readPlaces(c.decisions.placesPath));
+    }
   }
 
 // The entry in force at each minute of the day, compressed to the minutes where it changes (cyclically).
