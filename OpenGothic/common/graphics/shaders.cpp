@@ -246,6 +246,7 @@ void Shaders::compileShaders() noexcept {
   taaSharpen             = postEffect("triangle", "taa_sharpen", RenderState::ZTestMode::Always);
   motionCamera           = postEffect("triangle",    "motion_camera",     RenderState::ZTestMode::Always);
   tonemappingBloom       = postEffect("triangle_uv", "tonemapping_bloom", RenderState::ZTestMode::Always);
+  tonemappingTaa         = postEffect("triangle_uv", "tonemapping_taa",   RenderState::ZTestMode::Always);
   {
     auto sh = GothicShader::get("cmaa2_deferred_color_apply_2x2.vert.sprv");
     auto vs = device.shader(sh.data,sh.len);

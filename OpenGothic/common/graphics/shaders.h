@@ -90,7 +90,7 @@ class Shaders {
     Tempest::RenderPipeline  cmaa2DeferredColorApply2x2;
     Tempest::RenderPipeline  taaResolve, taaSharpen;
     // temporal upscale (MetalFX Temporal): camera motion vectors, tonemapping with the bloom in it
-    Tempest::RenderPipeline  motionCamera, tonemappingBloom;
+    Tempest::RenderPipeline  motionCamera, tonemappingBloom, tonemappingTaa;
 
     // HUD
 
