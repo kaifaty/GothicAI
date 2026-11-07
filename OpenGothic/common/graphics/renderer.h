@@ -98,9 +98,10 @@ class Renderer final {
     void drawSky          (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& view);
     void drawAmbient      (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& view);
     void drawTonemapping  (Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
-    void drawBloom        (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
+    void drawBloom        (Tempest::Encoder<Tempest::CommandBuffer>& cmd, bool fused = false);
     void drawCMAA2        (Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
-    void drawTaa          (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
+    void drawTaa          (Tempest::Encoder<Tempest::CommandBuffer>& cmd, bool fused = false);
+    void drawTonemappingTaa(Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
     void drawTaaSharpen   (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawUpscale      (Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawTemporalUpscale(Tempest::Encoder<Tempest::CommandBuffer>& cmd);

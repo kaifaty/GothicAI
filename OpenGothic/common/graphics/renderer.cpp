@@ -923,6 +923,8 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   if(world!=nullptr && blood.prepare(fId, *world, wview.sceneGlobals(), camera.listenerPosition().pos))
     blood.draw(cmd, fId, wview.sceneGlobals(), gbufDiffuse, Shaders::options().doMaterialMaps ? &gbufOrm : nullptr,
                gbufNormal, zbuffer);
+  // SSAO needs only the depth: ahead of the shadow maps its compute runs under their vertex work on Metal
+  prepareSSAO(cmd, wview);
   mainTiming.finish();
 
   drawShadowMap(cmd, fId, wview);
@@ -938,7 +940,6 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   { FrameProfile::Scope timing(FrameProfile::Zone::EncodeMain); prepareIrradiance(cmd, wview); }
   prepareExposure(cmd, wview);
   FrameProfile::Scope lightingTiming(FrameProfile::Zone::EncodeMain);
-  prepareSSAO(cmd, wview);
   prepareFog (cmd, wview);
   prepareGi  (cmd, wview);
   prepareSurfels(cmd, wview);
@@ -990,9 +991,9 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   drawRayQueryDbg(cmd, wview);
   //
 
-  cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}});
   FrameProfile::Scope postTiming(FrameProfile::Zone::EncodePost);
   if(camera.isInWater()) {
+    cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}});
     cmd.setDebugMarker("Underwater");
     drawUnderwater(cmd, wview);
     }
@@ -1008,12 +1009,19 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
     return;
     }
 
-  if(taa.active)
-    drawTaa(cmd);
-  drawBloom(cmd);
-
   auto& tonemapTarget = (upscale.input.isEmpty() || shotNative) ? result : upscale.input;
-  if(settings.aaEnabled) {
+  // sharpening, bloom and tonemapping of the TAA frame are one pass; Lanczos at a smaller size still goes the long way
+  const bool fused = taa.active && settings.bloomEnabled && !bloomChain[0].isEmpty() &&
+                     tonemapTarget.size()==sceneLinear.size();
+  if(taa.active)
+    drawTaa(cmd, fused);
+  drawBloom(cmd, fused);
+
+  if(fused) {
+    cmd.setDebugMarker("Tonemapping");
+    drawTonemappingTaa(tonemapTarget, cmd, wview);
+    }
+  else if(settings.aaEnabled) {
     cmd.setDebugMarker("CMAA2 & Tonemapping");
     drawCMAA2(tonemapTarget, cmd, wview);
     } else {
@@ -1030,7 +1038,7 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   wview.postFrameupdate();
   }
 
-void Renderer::drawBloom(Encoder<CommandBuffer>& cmd) {
+void Renderer::drawBloom(Encoder<CommandBuffer>& cmd, bool fused) {
   if(!settings.bloomEnabled || bloomChain[0].isEmpty())
     return;
   cmd.setDebugMarker("Bloom");
@@ -1038,7 +1046,10 @@ void Renderer::drawBloom(Encoder<CommandBuffer>& cmd) {
   for(size_t i=0; i<bloomChain.size(); ++i) {
     cmd.setFramebuffer({{bloomChain[i], Tempest::Discard, Tempest::Preserve}});
     if(i==0 && temporal.active)
-      cmd.setBinding(0, temporal.output, Sampler::bilinear(ClampMode::ClampToEdge)); else
+      cmd.setBinding(0, temporal.output, Sampler::bilinear(ClampMode::ClampToEdge));
+    else if(i==0 && fused)
+      cmd.setBinding(0, taa.history[taa.cur^1], Sampler::bilinear(ClampMode::ClampToEdge));
+    else
       cmd.setBinding(0, i==0 ? sceneLinear : bloomChain[i-1], Sampler::bilinear(ClampMode::ClampToEdge));
     cmd.setPipeline(i==0 ? shaders.bloomDownKaris : shaders.bloomDown);
     cmd.draw(nullptr, 0, 3);
@@ -1050,8 +1061,8 @@ void Renderer::drawBloom(Encoder<CommandBuffer>& cmd) {
     cmd.setPipeline(shaders.bloomUp);
     cmd.draw(nullptr, 0, 3);
     }
-  if(temporal.active)
-    return; // the tonemapping mixes it in (drawTonemappingTemporal)
+  if(temporal.active || fused)
+    return; // the tonemapping mixes it in (drawTonemappingTemporal, drawTonemappingTaa)
   struct Push {
     float strength = 0.05f;  // the share of the scene's light a lens scatters into the glow
     float levels   = 0;
@@ -1158,7 +1169,7 @@ void Renderer::drawCMAA2(Tempest::Attachment& result, Tempest::Encoder<Tempest::
   cmd.drawIndirect(cmaa2.indirectBuffer, 3*sizeof(uint32_t));
   }
 
-void Renderer::drawTaa(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
+void Renderer::drawTaa(Tempest::Encoder<Tempest::CommandBuffer>& cmd, bool fused) {
   // In linear HDR after the translucent and underwater passes, before bloom (shader/antialiasing/taa_resolve.frag)
   struct Push {
     Matrix4x4 reproject;
@@ -1179,6 +1190,11 @@ void Renderer::drawTaa(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
   cmd.setPipeline(shaders.taaResolve);
   cmd.draw(nullptr, 0, 3);
   taa.valid = true;
+
+  if(fused) {
+    taa.cur ^= 1; // the frame stays in the history: drawTonemappingTaa sharpens it on the way out
+    return;
+    }
 
   // the history stays unsharpened: sharpening fed back would build up from frame to frame
   drawTaaSharpen(cmd);
@@ -1244,6 +1260,32 @@ void Renderer::drawTemporalUpscale(Tempest::Encoder<Tempest::CommandBuffer>& cmd
   cmd.setDebugMarker("Upscale-temporal");
   cmd.upscaleTemporal(sceneLinear, zbuffer, temporal.motion, temporal.output, desc);
   taa.valid = true;
+  }
+
+void Renderer::drawTonemappingTaa(Attachment& result, Encoder<CommandBuffer>& cmd, const WorldView& wview) {
+  // drawTaaSharpen, the mix of drawBloom and drawTonemapping in one pass (tonemapping.frag BLOOM, RCAS)
+  struct Push {
+    float brightness    = 0;
+    float contrast      = 1;
+    float gamma         = 1.f/2.2f;
+    float mul           = 1;
+    float bloomStrength = 0.05f; // as drawBloom's mix
+    float bloomLevels   = 1;
+    float sharpness     = 0;
+    } p;
+  p.brightness  = (settings.zVidBrightness - 0.5f)*0.1f;
+  p.contrast    = std::max(1.5f - settings.zVidContrast, 0.01f);
+  p.gamma       = p.gamma/std::max(2.0f*settings.zVidGamma,  0.01f);
+  p.bloomLevels = float(bloomChain.size());
+  p.sharpness   = settings.taaSharpness;
+
+  cmd.setFramebuffer({ {result, Tempest::Discard, Tempest::Preserve} });
+  cmd.setBinding(0, wview.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
+  cmd.setBinding(1, taa.history[taa.cur^1], Sampler::nearest(ClampMode::ClampToEdge));
+  cmd.setBinding(2, bloomChain[0], Sampler::bilinear(ClampMode::ClampToEdge));
+  cmd.setPushData(p);
+  cmd.setPipeline(shaders.tonemappingTaa);
+  cmd.draw(nullptr, 0, 3);
   }
 
 void Renderer::drawTonemappingTemporal(Attachment& result, Encoder<CommandBuffer>& cmd, const WorldView& wview) {
@@ -2449,6 +2491,7 @@ void Renderer::prepareSSAO(Encoder<CommandBuffer>& cmd, WorldView& wview) {
   cmd.setPipeline(shaders.ssao);
   cmd.dispatchThreads(ssao.ssaoBuf.size());
 
+  cmd.setDebugMarker("SSAO-blur");
   cmd.setBinding(0, ssao.ssaoBlur);
   cmd.setBinding(1, wview.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
   cmd.setBinding(2, ssao.ssaoBuf, Sampler::bilinear(ClampMode::ClampToEdge));
