@@ -237,7 +237,12 @@ void Shaders::compileShaders() noexcept {
   cmaa2EdgeColor2x2Presets[uint32_t(AaPreset::ULTRA)]  = computeShader("cmaa2_edges_color2x2_quality_1.comp.sprv");
 
   cmaa2ProcessCandidates = computeShader("cmaa2_process_candidates.comp.sprv");
+#if defined(__APPLE__)
+  // the Mac is always Metal: half colours, -14% of the pass; Vulkan would need shaderFloat16
+  taaResolve             = postEffect("triangle", "taa_resolve_h", RenderState::ZTestMode::Always);
+#else
   taaResolve             = postEffect("triangle", "taa_resolve", RenderState::ZTestMode::Always);
+#endif
   taaSharpen             = postEffect("triangle", "taa_sharpen", RenderState::ZTestMode::Always);
   motionCamera           = postEffect("triangle",    "motion_camera",     RenderState::ZTestMode::Always);
   tonemappingBloom       = postEffect("triangle_uv", "tonemapping_bloom", RenderState::ZTestMode::Always);
