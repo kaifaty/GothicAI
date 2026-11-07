@@ -47,6 +47,16 @@ struct MeleeBodyCapsule final {
   uint8_t zone = 0;
   };
 
+// A shadow body ready to publish: its capsules and their bounds in world metres.
+// boundShadowBody fills the bounds; it touches no world, so it may run on a worker.
+// A body with a non-finite capsule or a radius that is not positive is not valid:
+// publishing it throws, as publishing those capsules always did.
+struct MeleeShadowBody final {
+  std::vector<MeleeBodyCapsule> capsules;
+  Tempest::Vec3 boundsMin, boundsMax;
+  bool valid = false;
+  };
+
 struct MeleeBladeContact final {
   Npc* npc = nullptr;
   size_t bone = size_t(-1);
@@ -598,7 +608,11 @@ class DynamicWorld final {
     void measureMeleeBench(std::string path);
     void reportMeleeBench();
     void updateShadowBody(Npc* owner, const std::vector<MeleeBodyCapsule>& capsules);
+    void updateShadowBody(Npc* owner, const MeleeShadowBody& body);
+    static void boundShadowBody(MeleeShadowBody& body);
     void removeShadowBody(const Npc* owner);
+    // The published body of owner, false when it has none (the slot check, tests).
+    bool shadowBody(const Npc* owner, MeleeShadowBody& out) const;
     // Pose time and the half-open active window use absolute game milliseconds.
     // forward: the attacker's facing; a wall met by a blade going back or up (the wind-up,
     // the follow-through) does not stop the swing. Zero: every wall stops it.

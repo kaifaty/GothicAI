@@ -50,6 +50,7 @@
 #include <filesystem>
 #include <fstream>
 #include <chrono>
+#include <random>
 #include <string>
 #include <utility>
 #include <vector>
@@ -5703,8 +5704,203 @@ namespace {
     }
   }
 
+namespace {
+  // Shadow bodies as they were published before owner slots: a linear find per
+  // publication, erase_if per removal. Casts must see exactly these bodies, in
+  // this order: equal-time contacts on the same bone keep it.
+  struct ReferenceShadowBodies final {
+    struct Body final {
+      const Npc*                    owner = nullptr;
+      std::vector<MeleeBodyCapsule> capsules;
+      JPH::AABox                    bounds;
+      };
+    std::vector<Body> bodies;
+
+    void update(const Npc* owner, const std::vector<MeleeBodyCapsule>& capsules) {
+      JPH::AABox bounds;
+      for(const auto& capsule:capsules) {
+        const auto from=CollisionWorld::toMeters(capsule.from),to=CollisionWorld::toMeters(capsule.to);
+        const auto radius=JPH::Vec3::sReplicate(capsule.radiusCm*.01f);
+        bounds.Encapsulate(JPH::AABox(JPH::Vec3::sMin(from,to)-radius,JPH::Vec3::sMax(from,to)+radius));
+        }
+      auto it=std::find_if(bodies.begin(),bodies.end(),[owner](const Body& body) { return body.owner==owner; });
+      if(it==bodies.end()) {
+        bodies.push_back({owner,capsules,bounds});
+        } else {
+        it->capsules=capsules;
+        it->bounds=bounds;
+        }
+      }
+
+    void remove(const Npc* owner) {
+      std::erase_if(bodies,[owner](const Body& body) { return body.owner==owner; });
+      }
+    };
+
+  std::array<uint32_t,3> bitsOf(const Tempest::Vec3& v) {
+    return {std::bit_cast<uint32_t>(v.x),std::bit_cast<uint32_t>(v.y),std::bit_cast<uint32_t>(v.z)};
+    }
+
+  std::array<uint32_t,3> bitsOf(JPH::Vec3Arg v) {
+    return bitsOf(Tempest::Vec3(v.GetX(),v.GetY(),v.GetZ()));
+    }
+
+  bool sameShadowBody(const MeleeShadowBody& body, const ReferenceShadowBodies::Body& expected) {
+    if(!body.valid || body.capsules.size()!=expected.capsules.size() ||
+       bitsOf(body.boundsMin)!=bitsOf(expected.bounds.mMin) || bitsOf(body.boundsMax)!=bitsOf(expected.bounds.mMax))
+      return false;
+    for(size_t i=0; i<body.capsules.size(); ++i) {
+      const auto& a=body.capsules[i];
+      const auto& b=expected.capsules[i];
+      if(bitsOf(a.from)!=bitsOf(b.from) || bitsOf(a.to)!=bitsOf(b.to) ||
+         std::bit_cast<uint32_t>(a.radiusCm)!=std::bit_cast<uint32_t>(b.radiusCm) || a.bone!=b.bone || a.zone!=b.zone)
+        return false;
+      }
+    return true;
+    }
+
+  // The published list equals the reference body for body and in order, and
+  // every owner's slot leads to its own body; owners without one have no slot.
+  void requireReferenceShadowBodies(const CollisionWorld& world, const ReferenceShadowBodies& reference,
+                                    const std::vector<const Npc*>& owners, const char* message) {
+    const auto published=world.shadowBodies();
+    bool same=published.size()==reference.bodies.size();
+    for(size_t i=0; same && i<published.size(); ++i)
+      same=published[i].first==reference.bodies[i].owner && sameShadowBody(published[i].second,reference.bodies[i]);
+    for(const auto* owner:owners) {
+      MeleeShadowBody slot;
+      const bool found=world.shadowBody(owner,slot);
+      auto it=std::find_if(reference.bodies.begin(),reference.bodies.end(),[owner](const auto& body) { return body.owner==owner; });
+      same=same && found==(it!=reference.bodies.end()) && (!found || sameShadowBody(slot,*it));
+      }
+    require(same,message);
+    }
+
+  std::vector<MeleeBodyCapsule> shadowCapsules(size_t owner, uint32_t pose) {
+    // Two or three capsules, a different place for every owner and pose.
+    std::vector<MeleeBodyCapsule> capsules;
+    const float x=float(owner)*37.f+float(pose%7)*1.25f, z=float(pose%5)*-3.5f;
+    for(size_t i=0; i<2+(owner+pose)%2; ++i)
+      capsules.push_back({{x,90.f+float(i)*20.f,z},{x+float(i),110.f+float(i)*20.f,z+2.f},3.f+float(i),i+owner,uint8_t(1+i%3)});
+    return capsules;
+    }
+
+  void testShadowBodySlots() {
+    std::array<int,8> identities{};
+    std::vector<const Npc*> owners;
+    for(auto& identity:identities)
+      owners.push_back(reinterpret_cast<const Npc*>(&identity));
+    auto npc=[&](size_t i) { return const_cast<Npc*>(owners[i]); };
+
+    {
+      CollisionWorld world;
+      ReferenceShadowBodies reference;
+      auto publish=[&](size_t owner, uint32_t pose) {
+        const auto capsules=shadowCapsules(owner,pose);
+        world.updateShadowBody(npc(owner),capsules);
+        reference.update(owners[owner],capsules);
+        };
+      auto remove=[&](size_t owner) {
+        world.removeShadowBody(owners[owner]);
+        reference.remove(owners[owner]);
+        };
+      for(size_t i=0; i<6; ++i)
+        publish(i,0);
+      requireReferenceShadowBodies(world,reference,owners,"first publications append bodies in order");
+      for(size_t i=0; i<6; ++i)
+        publish(i,1);
+      requireReferenceShadowBodies(world,reference,owners,"republishing updates every body in its own slot");
+
+      // removeShadowBody in the middle: the bodies behind it move down a slot.
+      remove(2);
+      for(size_t i=3; i<6; ++i)
+        publish(i,2);
+      requireReferenceShadowBodies(world,reference,owners,"a removed body leaves the later slots pointing at their owners");
+      remove(2);
+      remove(7);
+      requireReferenceShadowBodies(world,reference,owners,"removing an owner without a body changes nothing");
+
+      // A damage script in the middle of the shadow loop spawns one NPC and
+      // removes two: one published already this frame, one not yet.
+      publish(0,3);
+      publish(1,3);
+      publish(6,3);
+      remove(4);
+      remove(0);
+      publish(3,3);
+      publish(5,3);
+      publish(6,4);
+      requireReferenceShadowBodies(world,reference,owners,"spawn and removal mid-loop keep slots and order");
+
+      // Publishing again after removal appends at the end, as before.
+      publish(2,5);
+      publish(0,5);
+      publish(2,6);
+      requireReferenceShadowBodies(world,reference,owners,"a body published again after removal returns at the end");
+
+      // Any sequence: the slot table never disagrees with the linear search.
+      std::mt19937 random(20261108);
+      for(uint32_t step=0; step<4000; ++step) {
+        const size_t owner=random()%owners.size();
+        if(random()%4==0)
+          remove(owner); else
+          publish(owner,step);
+        if(step%97==0)
+          requireReferenceShadowBodies(world,reference,owners,"random publications and removals match the linear search");
+        }
+      requireReferenceShadowBodies(world,reference,owners,"random publications and removals match the linear search");
+      }
+
+    // An NPC destroyed before another NPC's blade is flushed: its body is gone
+    // from that cast, and contacts already recorded on it are dropped.
+    for(const bool recorded:{false,true}) {
+      CollisionWorld world;
+      ReferenceShadowBodies reference;
+      auto* attacker=npc(0);
+      auto* first=npc(1);
+      auto* second=npc(2);
+      auto* third=npc(3);
+      auto publish=[&](Npc* owner, const std::vector<MeleeBodyCapsule>& capsules) {
+        world.updateShadowBody(owner,capsules);
+        reference.update(owner,capsules);
+        };
+      publish(attacker,{{{0,0,-300},{0,20,-300},1.f,0,1}});
+      publish(first,{{{-30,0,0},{-30,20,0},1.f,0,1}});
+      publish(second,{{{30,0,0},{30,20,0},1.f,0,1}});
+      publish(third,{{{0,0,50},{0,20,50},1.f,0,1}});
+      const MeleeBladeSegment before{{-100,1,0},{-100,20,0},{1,0,0},2.f};
+      const MeleeBladeSegment after{{100,1,0},{100,20,0},{1,0,0},2.f};
+      world.updateShadowBlade(attacker,1,{before},0,0,100);
+      world.updateShadowBlade(attacker,1,{after},100,0,100);
+      if(recorded)
+        world.flushShadowBlades();
+      world.removeShadowBody(first);
+      reference.remove(first);
+      if(!recorded)
+        world.flushShadowBlades();
+      const auto hits=world.takeShadowBladeContacts(attacker);
+      require(hits.size()==1 && hits[0].npc==second,
+              recorded ? "a destroyed NPC's recorded contact is dropped before the attacker takes it"
+                       : "a body removed before the flush is not cast against");
+      requireReferenceShadowBodies(world,reference,owners,"removal during a swing keeps the other slots");
+      // The next frame moves the survivors; a new swing finds them in their slots.
+      publish(second,{{{60,0,0},{60,20,0},1.f,0,1}});
+      publish(third,{{{0,0,2},{0,20,2},1.f,0,1}});
+      requireReferenceShadowBodies(world,reference,owners,"survivors republish into their own slots");
+      world.removeShadowBlade(attacker);
+      world.updateShadowBlade(attacker,2,{before},200,200,300);
+      world.updateShadowBlade(attacker,2,{after},300,200,300);
+      world.flushShadowBlades();
+      const auto next=world.takeShadowBladeContacts(attacker);
+      require(next.size()==2 && next[0].npc==third && next[1].npc==second,
+              "a swing after the removal hits the republished bodies where they moved");
+      }
+    }
+  }
+
 int main() {
   try {
+    testShadowBodySlots();
     testCompoundChunkSeams();
     if(const auto* only=std::getenv("OPENGOTHIC_COMPOUND_SEAMS_ONLY"); only && std::string_view(only)=="1")
       return EXIT_SUCCESS;
