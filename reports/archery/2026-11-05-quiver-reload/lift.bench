@@ -1,0 +1,200 @@
+# The quiver's lift (reports/archery/2026-11-05-quiver-reload, step 1): while the bow is up (S_BOWAIM, S_BOWSHOOT,
+# T_BOWRELOAD) the quiver turns round its ring so the trunk is out of the fletching; the reload's arrow takes it onto
+# its line; the bow down, it is back at rest. Onar's field, 16:00. Content (OPENGOTHIC_CONTENT): the quiver's meshes
+# and materials, the reload's clips T_BOWRELOADQ. Segments: up_t* (the bow up, held, down; novideo), still shots
+# (up: the left button, down: the right one, `parade`), still shots t*_off|on_* (`quiver lift off`: as before), the reloads slow_*, fast_* (slowmo 4), the user's clip user_* (slowmo 4).
+# Columns qv_swing, qv_lift, qv_fletch, qv_line, qv_drawout, qv_leg, qv_armor, qv_cpu; rails.py reads them.
+cheat god
+set time 16 0
+view clean
+overlay off
+goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
+face 90
+wait 500
+manual on
+equip ItRw_Bow_L_01
+equip ITAR_Leather_L
+arrows player 40
+insert BAU_904_BAUER
+wait 300
+immortal BAU_904_BAUER on
+pin BAU_904_BAUER 1200 0 0
+aimat BAU_904_BAUER body
+tap bow
+cam look 110
+wait 1500
+
+# talent 0: up, held, down
+stats str 30 dex 10 bow 10 talent 0
+quiver lift on
+wait 1500
+rec up_t0 novideo
+press action
+wait 1500
+release action
+wait 3500
+tap parade
+wait 1500
+stop
+quiver lift off
+press action
+wait 1500
+rec hold_t0_off novideo
+cam follow 110 105 -160
+wait 150
+shot t0_off_back
+wait 150
+cam follow 110 105 -45
+wait 150
+shot t0_off_fr
+wait 150
+stop
+release action
+wait 1500
+tap parade
+wait 1500
+quiver lift on
+press action
+wait 1500
+rec hold_t0_on novideo
+cam follow 110 105 -160
+wait 150
+shot t0_on_back
+wait 150
+cam follow 110 105 -45
+wait 150
+shot t0_on_fr
+wait 150
+stop
+release action
+wait 1500
+tap parade
+wait 1500
+quiver lift on
+
+# talent 1: up, held, down
+stats str 60 dex 60 bow 40 talent 1
+quiver lift on
+wait 1500
+rec up_t1 novideo
+press action
+wait 1500
+release action
+wait 3500
+tap parade
+wait 1500
+stop
+quiver lift off
+press action
+wait 1500
+rec hold_t1_off novideo
+wait 600
+stop
+quiver lift on
+wait 600
+rec hold_t1_on novideo
+wait 600
+stop
+release action
+wait 1500
+tap parade
+wait 1500
+
+# talent 2: up, held, down
+stats str 120 dex 150 bow 100 talent 2
+quiver lift on
+wait 1500
+rec up_t2 novideo
+press action
+wait 1500
+release action
+wait 3500
+tap parade
+wait 1500
+stop
+quiver lift off
+press action
+wait 1500
+rec hold_t2_off novideo
+cam follow 110 105 -160
+wait 150
+shot t2_off_back
+wait 150
+cam follow 110 105 -45
+wait 150
+shot t2_off_fr
+wait 150
+stop
+release action
+wait 1500
+tap parade
+wait 1500
+quiver lift on
+press action
+wait 1500
+rec hold_t2_on novideo
+cam follow 110 105 -160
+wait 150
+shot t2_on_back
+wait 150
+cam follow 110 105 -45
+wait 150
+shot t2_on_fr
+wait 150
+stop
+release action
+wait 1500
+tap parade
+wait 1500
+quiver lift on
+
+# the reloads: slow (talent 0, dex 10), quick (talent 2, dex 150), the bow up
+slowmo 4
+stats str 30 dex 10 bow 10 talent 0
+volley 1 300
+cam follow 280 125 -80
+rec slow_A
+volley 3 300
+wait 300
+stop
+cam follow 280 125 -140
+rec slow_B
+volley 3 300
+wait 300
+stop
+stats str 120 dex 150 bow 100 talent 2
+volley 1 300
+cam follow 280 125 -80
+rec fast_A
+volley 3 300
+wait 300
+stop
+cam follow 280 125 -140
+rec fast_B
+volley 3 300
+wait 300
+stop
+tap parade
+wait 1500
+
+# the user's clip: the bow up and drawn, the shot, one reload, held, down; the player's camera and from the side (talent 0)
+stats str 30 dex 10 bow 10 talent 0
+cam game
+rec user_t0_game
+press action
+wait 1200
+release action
+wait 2200
+tap parade
+wait 1800
+stop
+cam follow 260 120 -90
+rec user_t0_side
+press action
+wait 1200
+release action
+wait 2200
+tap parade
+wait 1800
+stop
+slowmo 1

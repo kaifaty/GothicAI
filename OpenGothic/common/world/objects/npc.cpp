@@ -3567,6 +3567,8 @@ void Npc::refitQuiver() {
   }
 
 void Npc::setQuiverTaken(int n) {
+  if(visual.quiver().taken()==n)
+    return;
   visual.setQuiverTaken(n);
   updateQuiver();
   }
@@ -3601,6 +3603,9 @@ void Npc::setStateItem(MeshObjects::Mesh&& itm, std::string_view slot) {
   }
 
 void Npc::setAmmoItem(MeshObjects::Mesh&& itm, std::string_view slot) {
+  // the arrow put away (the bow lowered): back in the quiver
+  if(itm.isEmpty())
+    setQuiverTaken(0);
   visual.setAmmoItem(std::move(itm),slot);
   }
 
@@ -6825,6 +6830,10 @@ void Npc::tickTimedEvt(Animation::EvCount& ev) {
         if(active!=nullptr) {
           const int32_t munition = active->handle().munition;
           invent.putAmmunition(*this,uint32_t(munition),i.slot[0]);
+          // the reload from the quiver took it out of there: one less shows till the shot takes it from the
+          // inventory
+          if(visual.pose().isOwnReload() && visual.hasAmmoShown())
+            setQuiverTaken(1);
           }
         break;
         }
@@ -10775,6 +10784,7 @@ bool Npc::shootBow(Interactive* focOverride) {
     }
 
   invent.delItem(size_t(munition),1,*this);
+  setQuiverTaken(0);
   b.setOrigin(this);
   b.setDamage(DamageCalculator::rangeDamageValue(*this));
 
@@ -10903,6 +10913,8 @@ bool Npc::releaseArrow(float draw, const Archery::Stats& st) {
     TestBench::note(buf);
     }
   invent.delItem(size_t(munition),1,*this);
+  // the inventory shows as it is again (the arrow taken from the quiver is gone)
+  setQuiverTaken(0);
   b.setOrigin(this);
   b.setDamage(DamageCalculator::rangeDamageValue(*this));
   b.setPrecise(draw);
