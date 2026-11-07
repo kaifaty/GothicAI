@@ -27,8 +27,11 @@ class ExplainError(RuntimeError):
     pass
 
 
-def speech_windows(plan: dict) -> tuple[list[levels.Window], float, float]:
-    """Absolute first-to-last-word spans, clipped to the frame-rounded body."""
+def speech_windows(plan: dict, ws: Path | None = None) -> tuple[list[levels.Window], float, float]:
+    """Absolute first-to-last-word spans, clipped to the frame-rounded body.
+
+    A plan without captions (`lines` empty, e.g. a long video with captions as a separate track) takes the spans
+    from its voice clips instead: `words` trims every clean take to its speech, so a clip is its words' span."""
     durations = [float(beat["dur"]) for beat in plan["beats"]]
     if not durations or any(not math.isfinite(dur) or dur <= 0 for dur in durations):
         raise ValueError("The explainer needs beats with positive finite durations")
@@ -36,6 +39,11 @@ def speech_windows(plan: dict) -> tuple[list[levels.Window], float, float]:
     length = total + (STING_FRAMES / FPS if plan.get("brand", True) else 0)
     windows = [(float(line[0]["start"]), float(line[-1]["end"]))
                for line in plan.get("lines", []) if line]
+    if not windows and ws is not None:
+        for clip in plan.get("voice", []):
+            with wave.open(str(ws / clip["file"])) as audio:
+                start = float(clip["start"])
+                windows.append((start, start + audio.getnframes() / audio.getframerate()))
     return levels.merge_speech_windows(windows, total), total, length
 
 
@@ -171,7 +179,7 @@ def publish(ws: Path, plan_file: str = "plan.json", out: Path | None = None) -> 
         lang = plan["lang"]
         if lang not in ("ru", "en"):
             raise ValueError("The plan's lang must be ru or en")
-        speech, total, length = speech_windows(plan)
+        speech, total, length = speech_windows(plan, ws)
         music = plan.get("music")
         # Remotion has already applied these fades to its music stem. Match
         # schema.ts defaults, preserving an explicitly disabled (zero) fade.

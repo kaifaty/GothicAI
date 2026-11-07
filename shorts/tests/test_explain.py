@@ -45,6 +45,28 @@ def test_speech_windows_use_absolute_line_words_and_merge_clip_to_rounded_body()
     assert plan == original
 
 
+def test_speech_windows_without_captions_come_from_voice_clips(tmp_path):
+    (tmp_path / "voice").mkdir()
+    for name, seconds in (("a.wav", 1.5), ("b.wav", 2.0)):
+        with wave.open(str(tmp_path / "voice" / name), "wb") as audio:
+            audio.setnchannels(1)
+            audio.setsampwidth(2)
+            audio.setframerate(48000)
+            audio.writeframes(b"\0\0" * int(48000 * seconds))
+    plan = {"brand": False, "beats": [{"dur": 6}], "lines": [],
+            "voice": [{"file": "voice/a.wav", "start": 0.5}, {"file": "voice/b.wav", "start": 4.5}]}
+
+    windows, total, _ = explain.speech_windows(plan, tmp_path)
+
+    assert total == pytest.approx(6)
+    for actual, expected in zip(windows, [(0.5, 2.0), (4.5, 6)], strict=True):
+        assert actual == pytest.approx(expected)
+    # captions win over the clips, and without a workspace nothing is read
+    assert explain.speech_windows({**plan, "lines": [[{"text": "x", "start": 1, "end": 2}]]}, tmp_path)[0] \
+        == [pytest.approx((1, 2))]
+    assert explain.speech_windows(plan)[0] == []
+
+
 @pytest.mark.parametrize("brand,ending", [(False, 0), (True, 66 / 30)])
 def test_speech_windows_match_remotion_rounding_and_optional_sting(brand, ending):
     # Math.round(4.5) is 5 in Remotion; Python's round(4.5) would give 4.
