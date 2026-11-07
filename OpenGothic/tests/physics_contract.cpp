@@ -1,3 +1,4 @@
+#define MINIZ_NO_ZLIB_COMPATIBLE_NAMES
 #include "asset/fromzenkit.h"
 #include "physics/collisionworld.h"
 #include "physics/dynamicworld.h"
@@ -16,6 +17,7 @@
 #include "world/bodytraces.h"
 #include "world/bloodstains.h"
 #include "gothic.h"
+#include "basemesh.h"
 
 #include <Tempest/Log>
 #include <Tempest/MemReader>
@@ -2013,6 +2015,156 @@ namespace {
       require(!object.isBroken() && world.fragmentSnapshot().empty(),
               "uncached visuals must preserve intact legacy physics even after a large impulse");
       }
+    }
+
+  void testOwnFractureMotion() {
+    const auto root=std::filesystem::temp_directory_path()/
+                    ("gothic-fracture-motion-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::create_directories(root/"meshes");
+    const auto* oldContentValue=std::getenv("OPENGOTHIC_CONTENT");
+    const bool hadContent=oldContentValue!=nullptr;
+    const std::string oldContent=hadContent ? oldContentValue : "";
+    const auto* oldMotionValue=std::getenv("OPENGOTHIC_FRACTURE_MOTION");
+    const bool hadMotion=oldMotionValue!=nullptr;
+    const std::string oldMotion=hadMotion ? oldMotionValue : "";
+    setenv("OPENGOTHIC_CONTENT",root.c_str(),1);
+    setenv("OPENGOTHIC_FRACTURE_MOTION","hit=250,falloff=45,outward=60,spin=4,cap=450",1);
+    constexpr const char* visual="NW_NATURE_FENCE_01.MRM";
+    constexpr uint32_t zenId=6403;
+    auto parent=movableCollisionBox({100,100,100});
+    parent.sub_meshes[0].mat.name="WOOD";
+    writeBaseMesh(parent,"NW_NATURE_FENCE_01",root/"meshes/model.glb");
+    std::ofstream(root/"meshes/meshes.json")<<R"({"NW_NATURE_FENCE_01":{"glb":"model.glb"}})";
+    {
+      Resources resources;
+      bool replaced=false;
+      const auto loaded=Resources::loadVisualMesh(visual,&replaced);
+      Resources::MeshReplacementSource source;
+      require(replaced && Resources::meshReplacementLoaded(visual,&source),
+              "motion fixture must bind its sidecar to a successfully loaded own GLB");
+      ProtoMesh proto(PackedMesh(loaded,PackedMesh::PK_Visual,true),visual);
+      const auto write=[&](size_t version,size_t count) {
+        std::ofstream file(root/"meshes/model.fracture");
+        file<<"GOTHIC_FRACTURE "<<version<<"\nsource "<<source.size<<' '<<std::hex<<source.crc32<<std::dec
+            <<"\npieces "<<count<<'\n';
+        for(size_t i=0;i<count;++i) {
+          const Tempest::Vec3 center=version==3 ? Tempest::Vec3(-42.f+12.f*float(i%8),-24.f+12.f*float(i/8),0) :
+                                               Tempest::Vec3(i&1 ? 25.f : -25.f,i&2 ? 25.f : -25.f,i&4 ? 25.f : -25.f);
+          auto piece=movableBox(version==3 ? Tempest::Vec3(10,10,10) : Tempest::Vec3(50,50,50));
+          for(auto& p:piece.positions) { p.x+=center.x; p.y+=center.y; p.z+=center.z; }
+          file<<"piece "<<(version==3 ? 1000 : 125000)<<' '<<center.x<<' '<<center.y<<' '<<center.z<<' ';
+          if(version==3) {
+            file<<(i%2==0 ? "WOOD" : "METAL")<<" 1 12\nhull 8\n";
+            for(const auto& p:piece.positions) file<<p.x<<' '<<p.y<<' '<<p.z<<'\n';
+            }
+          else file<<"12\n";
+          for(const auto& triangle:piece.sub_meshes[0].triangles) {
+            file<<"tri WOOD.TGA\n";
+            for(const auto index:triangle.wedges) {
+              const auto& p=piece.positions[index];
+              file<<p.x<<' '<<p.y<<' '<<p.z<<" 0 1 0 0 0\n";
+              }
+            }
+          }
+        require(bool(file),"motion fixture must write the complete sidecar");
+        };
+      const auto birth=at(0,1000,0);
+      const auto make=[&](DynamicWorld& world) {
+        // A static fence isolates the added fracture velocity from transferred
+        // parent momentum, damping and integration.
+        return world.addMovableVob(proto,visual,birth,.04f,true,"fence",true,zenId);
+        };
+      const auto strike=[&](DynamicWorld& target) {
+        MeleeBladeContact contact {};
+        contact.world=contact.stopsSwing=true;
+        contact.movableVob=target.movableVobSnapshot()[0].id;
+        contact.point={-50,1000,0};
+        contact.velocityCmS={250,0,0};
+        std::vector<uintptr_t> struck;
+        return target.meleeStoppedMovableVob(contact,40,1000,FractureRule::Melee::OneHand,nullptr,struck);
+        };
+      write(3,40);
+      DynamicWorld world(nullptr,asset::WorldMesh{});
+      auto object=make(world);
+      require(object.fractureMesh()!=nullptr && object.fractureMesh()->pieces.size()==40,
+              "version 3 physics must preload all forty authored pieces");
+      require(strike(world),"the own fence must break through the stopped blade's directed melee path");
+      world.tick(0);
+      const auto pieces=world.fragmentSnapshot();
+      require(object.isBroken() && pieces.size()==40,"version 3 must replace the parent with forty native fragments");
+      float mean=0;
+      const auto water=world.waterBodySnapshot();
+      for(const auto& piece:pieces) {
+        mean+=piece.velocity.x/40.f;
+        requireNear(piece.friction,piece.piece%2==0 ? .4f : 1.1f,.000001f,
+                    "fragment friction must use the authored wood or metal group");
+        requireNear(waterBody(water,zenId,piece.piece).targetFraction,piece.piece%2==0 ? .6f : 7.8f,.000001f,
+                    "fragment buoyancy must use the authored wood or metal group");
+        require(piece.velocity.length()<=450.001f && piece.angularVelocity.length()<=4.00001f,
+                "the added motion and deterministic spin must respect their limits");
+        }
+      require(mean>0 && pieces[16].velocity.x>pieces[23].velocity.x,
+              "the directed mean must be positive and the near central piece faster than the far central piece");
+      const auto saved=saveArchive([&](Serialize& output) { world.saveMovableVobs(output); });
+      DynamicWorld restored(nullptr,asset::WorldMesh{});
+      auto restoredObject=make(restored);
+      loadMovables(restored,saved);
+      const auto restoredPieces=restored.fragmentSnapshot();
+      require(restoredObject.isBroken() && restoredPieces.size()==40,
+              "save and load must restore all forty version 3 fragments");
+      const auto restoredWater=restored.waterBodySnapshot();
+      for(size_t i=0;i<pieces.size();++i) {
+        requireMatrix(restoredPieces[i].transform,pieces[i].transform,"forty-piece saves must restore each pose");
+        requireNear((restoredPieces[i].velocity-pieces[i].velocity).length(),0,.001f,
+                    "forty-piece saves must restore each velocity");
+        requireNear((restoredPieces[i].angularVelocity-pieces[i].angularVelocity).length(),0,.001f,
+                    "forty-piece saves must restore each spin");
+        requireNear(restoredPieces[i].friction,i%2==0 ? .4f : 1.1f,.000001f,
+                    "restored fragments must retain per-piece friction");
+        requireNear(waterBody(restoredWater,zenId,i).targetFraction,i%2==0 ? .6f : 7.8f,.000001f,
+                    "restored fragments must retain per-piece buoyancy");
+        }
+      write(3,39);
+      DynamicWorld mismatched(nullptr,asset::WorldMesh{});
+      auto mismatchedObject=make(mismatched);
+      loadMovables(mismatched,saved);
+      require(!mismatchedObject.isBroken() && mismatched.fragmentSnapshot().empty(),
+              "a changed sidecar piece count must skip saved debris without breaking the intact object");
+
+      write(3,40);
+      setenv("OPENGOTHIC_FRACTURE_MOTION","hit=500,falloff=90,outward=0,spin=0,cap=50",1);
+      DynamicWorld capped(nullptr,asset::WorldMesh{});
+      auto cappedObject=make(capped);
+      require(strike(capped),"the environment override fixture must receive a directed melee hit");
+      capped.tick(0);
+      require(cappedObject.isBroken(),"motion overrides must preserve destruction");
+      for(const auto& piece:capped.fragmentSnapshot()) {
+        requireNear(piece.velocity.x,50.f,.0001f,"motion overrides must cap the added hit velocity");
+        requireNear(piece.velocity.y,0.f,.0001f,"outward=0 must suppress vertical separation");
+        requireNear(piece.angularVelocity.length(),0.f,.0001f,"spin=0 must suppress added spin");
+        }
+
+      write(2,8);
+      DynamicWorld legacy(nullptr,asset::WorldMesh{});
+      auto legacyObject=make(legacy);
+      require(legacy.meleeMovableVobs({-100,1000,0},{1,0,0},150,40,1000,FractureRule::Melee::OneHand)==1,
+              "version 2 must retain the original melee destruction path");
+      legacy.tick(0);
+      const auto legacyPieces=legacy.fragmentSnapshot();
+      require(legacyObject.isBroken() && legacyPieces.size()==8,"version 2 must retain its original eight pieces");
+      for(const auto& piece:legacyPieces) {
+        const auto expected=Tempest::Vec3::normalize(legacyObject.fractureMesh()->pieces[piece.piece].center)*40.f;
+        requireNear((piece.velocity-expected).length(),0,.0001f,
+                    "version 2 must retain exactly forty centimetres per second outward despite motion overrides");
+        requireNear(piece.angularVelocity.length(),0.f,.0001f,"version 2 must not receive added spin");
+        }
+      std::printf("Own fracture v3: forty pieces, WOOD 0.4 / METAL 1.1 friction; hit mean %.6f, near %.6f > far %.6f cm/s; "
+                  "save/load and changed-count skip; override cap 50; v2 outward 40 cm/s passed\n",
+                  double(mean),double(pieces[16].velocity.x),double(pieces[23].velocity.x));
+      }
+    if(hadContent) setenv("OPENGOTHIC_CONTENT",oldContent.c_str(),1); else unsetenv("OPENGOTHIC_CONTENT");
+    if(hadMotion) setenv("OPENGOTHIC_FRACTURE_MOTION",oldMotion.c_str(),1); else unsetenv("OPENGOTHIC_FRACTURE_MOTION");
+    std::filesystem::remove_all(root);
     }
 
   void testRotatingFragments() {
@@ -5745,6 +5897,7 @@ int main() {
     testMovableVobArrowIdentity();
     testSkinnedMeshMinimum();
     testDestruction();
+    testOwnFractureMotion();
     testRotatingFragments();
     testPhysicsNoise();
     testRagdollNoise();

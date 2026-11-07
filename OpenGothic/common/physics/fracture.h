@@ -1,6 +1,7 @@
 #pragma once
 
 #include "physics/physics.h"
+#include "asset/material.h"
 #include <Tempest/Vec>
 #include <memory>
 #include <string>
@@ -21,14 +22,16 @@ struct FractureMesh {
   struct Piece {
     double volume = 0; // cubic centimetres
     Tempest::Vec3 center;
+    asset::MaterialGroup group = asset::MaterialGroup::UNDEFINED;
     std::vector<Triangle> triangles;
     JPH::ShapeRefC hull;
     };
   std::vector<Piece> pieces;
   double volume = 0;
+  size_t version = 0;
 
   // Originals use v1 from OPENGOTHIC_FRACTURE, otherwise ~/.local/share/gothic-ai/fracture.
-  // Loaded GLB replacements use only their v2 sidecar, matched to the loaded bytes.
+  // Loaded GLB replacements use only their v2/v3 sidecar, matched to the loaded bytes.
   static std::shared_ptr<const FractureMesh> load(std::string_view visual);
   };
 
