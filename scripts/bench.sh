@@ -26,7 +26,7 @@
 #      WORLD         start a fresh game in this world instead (NEWWORLD.ZEN, OLDWORLD.ZEN, ADDONWORLD.ZEN, DRAGONISLAND.ZEN)
 #      GOTHIC_INTRO=1 play the new game's intro and the scripts' videos (default: -nointro, none)
 #      NO_BUILD=1    do not rebuild the engine first
-#      TIMEOUT=300   seconds before the game is killed
+#      TIMEOUT=300   seconds before the game is killed (default: scenario's # @timeout <seconds> marker, else 300)
 #      BENCH_PROGRESS seconds between progress lines (default: 300; 0 disables)
 #      BENCH_STALL   seconds without output changes before killing a stalled game (default: 600; 0 disables)
 #      KEEP=1        the window stays open after the scenario (incompatible with headless)
@@ -108,6 +108,11 @@ case "$BENCH_HEADLESS" in
   0|1) export BENCH_HEADLESS ;;
   *) echo 'bench: BENCH_HEADLESS must be 0 or 1' >&2; exit 2 ;;
 esac
+# a long scenario says how long its game may take: a line `# @timeout <seconds>`; TIMEOUT wins
+if [[ -z "${TIMEOUT:-}" ]]; then
+  SCEN_TIMEOUT="$(sed -n 's/^# @timeout \([0-9][0-9]*\)$/\1/p' "$SCEN" | head -n 1)"
+  if [[ -n "$SCEN_TIMEOUT" ]]; then export TIMEOUT="$SCEN_TIMEOUT"; fi
+fi
 if [[ "$BENCH_HOST" == dev-ubuntu ]]; then
   [[ "$BENCH_HEADLESS" == 1 ]] || { echo 'bench: окна на dev-ubuntu нет' >&2; exit 2; }
   [[ -z "${RYZEN_BENCH_ARCHIVE:-}" ]] || { echo 'bench: RYZEN_BENCH_ARCHIVE is not supported on dev-ubuntu (no shared store)' >&2; exit 2; }

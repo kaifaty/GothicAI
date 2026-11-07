@@ -1,8 +1,11 @@
 # The hero's head close up and from behind (reports/content/2026-11-hero-head/engine-plan.md, step 0): the baseline
 # of the original HUM_HEAD_PONY with face V18, and later the same clips of the new head, judged side by side.
 # Xardas in the default save: the hero in front of him, the camera at the hero's face - still (blinks),
-# the moods of the AI lines, a voiced dialog line of the hero's; then the market, the hero runs from behind.
+# the moods of the AI lines, a voiced dialog line of the hero's; the eyes (listen, think, circle, lookdown, lookup);
+# then the market, the hero runs from behind.
 #   TEMPEST_WINDOW_SIZE=1920x1080 BENCH_HOST=ryzen scripts/bench.sh scripts/bench/hero-head.bench
+# about 2000 frames filmed: the game takes longer than the default 300 s
+# @timeout 600
 seed 73013
 cheat god
 set time 12 0
@@ -43,6 +46,45 @@ rec speak
 wait 1500
 choose 1
 wait 9000
+stop
+# the eyes of the own head (step 5, reports/content/2026-11-hero-head/eyes.md), the hero close up: Xardas speaks and
+# the hero listens; the hero thinks of an answer (the eyes aside); Xardas stands around him at 0, +-40, +-80 and 0
+# degrees from his facing (the eyes first, the head after); the hero looks at a point 20 degrees below his eyes and
+# 18 above them, within the reach of the eyes (the lids follow them, the head turns a little)
+watch player
+cam face 38 0 1
+hear player 6000 600
+speak nearest DIA_Addon_Xardas_Hello_14_00
+rec listen
+wait 6000
+stop
+think player 3000
+rec think
+wait 3500
+stop
+talk nearest 14000
+rec circle
+place 110 0 nearest
+wait 1800
+place 110 40 nearest
+wait 1800
+place 110 -40 nearest
+wait 1800
+place 110 80 nearest
+wait 1800
+place 110 -80 nearest
+wait 1800
+place 110 0 nearest
+wait 1800
+stop
+talk nearest 0
+gazeat player 0 -20 3000 100
+rec lookdown
+wait 3000
+stop
+gazeat player 0 18 3000 100
+rec lookup
+wait 3000
 stop
 goto NW_CITY_MERCHANT_TRADE_04
 watch player
