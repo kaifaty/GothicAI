@@ -34,7 +34,6 @@
 #include "world/objects/interactive.h"
 #include "world/objects/item.h"
 #include "world/world.h"
-#include "utils/versioninfo.h"
 #include "utils/fileext.h"
 #include "utils/dbgpainter.h"
 #include "camera.h"
@@ -1033,8 +1032,7 @@ float Npc::angleDir(float x, float z) {
 bool Npc::resetPositionToTA() {
   LoadProbe::Startup::Detail::Scope reset("reset_npc");
   endMeleeAiSpecial();
-  const bool g2       = owner.version().game==2;
-  const bool isDragon = (g2 && guild()==GIL_DRAGON);
+  const bool isDragon = (guild()==GIL_DRAGON);
   const bool isDead   = this->isDead();
 
   if(isDead && !invent.hasMissionItems() && !isDragon)
@@ -2708,7 +2706,7 @@ void Npc::consumeMeleeContacts() {
       entry.result = "target_down";
       continue;
       }
-    const int partyMember = Gothic::inst().version().game==2 ? 15 : 36;
+    const int partyMember = 15;
     const bool sameParty = owner.script().isFriendlyFire(*this,*target) ||
                            (handle().aivar[partyMember]!=0 && target->handle().aivar[partyMember]!=0);
     if(skipMeleeAlly(isPlayer(),target==currentTarget,guild()==target->guild(),sameParty,isEnemy(*target))) {
@@ -4070,16 +4068,11 @@ uint32_t Npc::guild() const {
   }
 
 bool Npc::isMonster() const {
-  const bool g2 = owner.version().game==2;
-  const auto SEPERATOR_ORC = g2 ? GIL_SEPERATOR_ORC : GIL_G1_SEPERATOR_ORC;
-  const auto SEPERATOR_HUM = g2 ? GIL_SEPERATOR_HUM : GIL_G1_SEPERATOR_HUM;
-  return SEPERATOR_HUM<guild() && guild()<SEPERATOR_ORC;
+  return GIL_SEPERATOR_HUM<guild() && guild()<GIL_SEPERATOR_ORC;
   }
 
 bool Npc::isHuman() const {
-  const bool g2 = owner.version().game==2;
-  const auto SEPERATOR_HUM = g2 ? GIL_SEPERATOR_HUM : GIL_G1_SEPERATOR_HUM;
-  return guild() < SEPERATOR_HUM;
+  return guild() < GIL_SEPERATOR_HUM;
   }
 
 void Npc::setTrueGuild(int32_t g) {
@@ -4121,9 +4114,7 @@ void Npc::setAttitude(Attitude att) {
   }
 
 bool Npc::isFriend() const {
-  bool g2 = owner.version().game==2;
-  return ( g2 && hnpc->type==daedalus::NpcType::G2_FRIEND) ||
-         (!g2 && hnpc->type==daedalus::NpcType::G1_FRIEND);
+  return hnpc->type==daedalus::NpcType::G2_FRIEND;
   }
 
 void Npc::setTempAttitude(Attitude att) {
@@ -5742,7 +5733,7 @@ Npc::BodyObservationState Npc::bodyObservationState() const {
   s.hasAttackRight = hasAnim(Anim::AttackR);
   if(ws==WeaponState::W1H || ws==WeaponState::W2H) {
     const std::string prefix = ws==WeaponState::W1H ? "T_1HPARADE_" : "T_2HPARADE_";
-    s.hasBlock = Gothic::inst().version().game==2 ? hasAnim(prefix+"0") : hasAnim(prefix+"O");
+    s.hasBlock = hasAnim(prefix+"0");
     }
   const auto bs = bodyStateMasked();
   const bool melee = ws==WeaponState::W1H || ws==WeaponState::W2H;
@@ -7825,12 +7816,6 @@ bool Npc::isPlayerEnabledState(const ::AiState& st) const {
   // allowed player states are hard-coded
   // https://forum.worldofplayers.de/forum/threads/1533803-G1-AI_StartState-hardcoded-ZS-states-for-Player?p=26034737&viewfull=1#post26034737
 
-  static const std::array playerEnabledStatesG1 = {
-    "ZS_DEAD",   "ZS_UNCONSCIOUS", "ZS_MAGICFREEZE",
-    "ZS_PYRO",   "ZS_ASSESSMAGIC", "ZS_ASSESSSTOPMAGIC",
-    "ZS_ZAPPED", "ZS_SHORTZAPPED", "ZS_MAGICSLEEP",
-    "ZS_MAGICFEAR"
-    };
   static const std::array playerEnabledStatesG2 = {
     "ZS_DEAD",   "ZS_UNCONSCIOUS", "ZS_MAGICFREEZE",
     "ZS_PYRO",   "ZS_ASSESSMAGIC", "ZS_ASSESSSTOPMAGIC",
@@ -7842,8 +7827,7 @@ bool Npc::isPlayerEnabledState(const ::AiState& st) const {
   if(sym==nullptr)
     return false;
 
-  const auto& playerEnabledStates = (owner.version().game==2 ? playerEnabledStatesG2 : playerEnabledStatesG1);
-  for(auto* pState:playerEnabledStates)
+  for(auto* pState:playerEnabledStatesG2)
     if(sym->name()==pState)
       return true;
   return false;
@@ -7907,7 +7891,7 @@ void Npc::tickRoutine() {
       } else {
       // ZS_DEATH   have no loop-function, in G1, G2-classic
       // ZS_GETMEAT have no loop-function, in G2-notr
-      loop = owner.version().hasZSStateLoop() ? 1 : 0;
+      loop = 1;
       }
 
     if(aiState.eTime<=owner.time()) {
@@ -8067,9 +8051,6 @@ bool Npc::isTargetableBySpell(TargetType t) const {
 
   const Guild gil = Guild(trueGuild());
 
-  const bool g2 = owner.version().game==2;
-  const auto SEPERATOR_ORC = g2 ? GIL_SEPERATOR_ORC : GIL_G1_SEPERATOR_ORC;
-  const auto G1_UNDEAD = (gil == GIL_G1_ZOMBIE || gil == GIL_G1_UNDEADORC || gil == GIL_G1_SKELETON);
   const auto G2_UNDEAD = (gil == GIL_GOBBO_SKELETON ||
     gil == GIL_SUMMONED_GOBBO_SKELETON || gil == GIL_SKELETON      ||
     gil == GIL_SUMMONED_SKELETON       || gil == GIL_SKELETON_MAGE ||
@@ -8077,11 +8058,9 @@ bool Npc::isTargetableBySpell(TargetType t) const {
 
   if(bool(t&TARGET_TYPE_HUMANS) && isHuman())
     return true;
-  if(bool(t&TARGET_TYPE_ORCS) && gil>SEPERATOR_ORC)
+  if(bool(t&TARGET_TYPE_ORCS) && gil>GIL_SEPERATOR_ORC)
     return true;
-  if(bool(t&TARGET_TYPE_UNDEAD) && g2 && G2_UNDEAD)
-    return true;
-  if(bool(t&TARGET_TYPE_UNDEAD) && !g2 && G1_UNDEAD)
+  if(bool(t&TARGET_TYPE_UNDEAD) && G2_UNDEAD)
     return true;
 
   return false;
@@ -8095,8 +8074,7 @@ void Npc::commitSpell() {
   const int32_t splId = active->spellId();
   const auto&   spl   = owner.script().spellDesc(splId);
 
-  if(owner.version().game==2)
-    owner.script().invokeSpell(*this,currentTarget,*active);
+  owner.script().invokeSpell(*this,currentTarget,*active);
 
   if(active->isSpellShoot()) {
     const int lvl = (castLevel-CS_Emit_0)+1;
@@ -10617,10 +10595,8 @@ bool Npc::tickCast(uint64_t dt) {
     // cast anim
     if(active!=nullptr) {
       auto ani = owner.script().spellCastAnim(*this,*active);
-      bool g2  = owner.version().game==2;
-      if(g2 || visual.hasAnim(string_frm("T_MAGRUN_2_",ani,"CAST")))
-        if(!visual.startAnimSpell(*this,ani,false))
-          return true;
+      if(!visual.startAnimSpell(*this,ani,false))
+        return true;
       }
     castLevel    = CastState(int(castLevel) + int(CS_Emit_0) - int(CS_Cast_0));
     castNextTime = 0;
@@ -10650,12 +10626,6 @@ bool Npc::tickCast(uint64_t dt) {
     return true;
 
   const SpellCode code = SpellCode(owner.script().invokeMana(*this,currentTarget,manaInvested));
-
-  if(owner.version().game==1) {
-    changeAttribute(ATR_MANA,-1,false);
-    if(!isPlayer() && code!=SpellCode::SPL_SENDCAST)
-      assert(attribute(ATR_MANA)>0);
-    }
 
   if(!isPlayer() && aiExpectedInvest<=manaInvested) {
     endCastSpell();
@@ -10779,17 +10749,9 @@ bool Npc::shootBow(Interactive* focOverride) {
   b.setDamage(DamageCalculator::rangeDamageValue(*this));
 
   auto rgn = currentRangedWeapon();
-  if(Gothic::inst().version().game==1) {
-    b.setHitChance(float(hnpc->attribute[ATR_DEXTERITY])/100.f);
-    if(rgn!=nullptr && rgn->isCrossbow())
-      b.setCritChance(float(talentsVl[TALENT_CROSSBOW])/100.f); else
-      b.setCritChance(float(talentsVl[TALENT_BOW]     )/100.f);
-    }
-  else {
-    if(rgn!=nullptr && rgn->isCrossbow())
-      b.setHitChance(float(hnpc->hitchance[TALENT_CROSSBOW])/100.f); else
-      b.setHitChance(float(hnpc->hitchance[TALENT_BOW]     )/100.f);
-    }
+  if(rgn!=nullptr && rgn->isCrossbow())
+    b.setHitChance(float(hnpc->hitchance[TALENT_CROSSBOW])/100.f); else
+    b.setHitChance(float(hnpc->hitchance[TALENT_BOW]     )/100.f);
   return true;
   }
 

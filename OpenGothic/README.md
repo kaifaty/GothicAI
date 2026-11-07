@@ -188,9 +188,6 @@ Rendering distance is not customizable.
 | `-save <number>`       | load a specified save-game slot on start                         |
 | `-v -validation`       | enable validation layers for graphics api                        |
 | `-dx12`                | force DirectX 12 renderer instead of Vulkan (Windows only)       |
-| `-g1`                  | assume a Gothic 1 installation                                   |
-| `-g2c`                 | assume a Gothic 2 classic installation                           |
-| `-g2`                  | assume a Gothic 2 night of the raven installation                |
 | `-rt <boolean>`        | explicitly enable or disable ray-query                           |
 | `-gi <boolean>`        | explicitly enable or disable ray-traced global illumination      |
 | `-ms <boolean>`        | explicitly enable or disable meshlets                            |

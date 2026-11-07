@@ -95,7 +95,7 @@ bool ArcherAi::isEnabled() {
       enabled = v[0]!='0' ? 1 : 0; else
       enabled = Gothic::settingsGetI("GAME","npcManualAim")!=0 ? 1 : 0;
     }
-  return enabled!=0 && Gothic::inst().version().game==2;
+  return enabled!=0;
   }
 
 void ArcherAi::setEnabled(bool e) {

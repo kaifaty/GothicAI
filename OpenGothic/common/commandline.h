@@ -9,7 +9,6 @@
 
 #include "game/constants.h"
 
-class VersionInfo;
 class GothicNotFoundException : std::logic_error {
   using logic_error::logic_error;
   };
@@ -42,9 +41,6 @@ class CommandLine {
     bool                doIntro()          const { return !noIntro;     }
     bool                doHeroHead()       const { return !noHeroHead;  }
     Benchmark           isBenchmarkMode()  const { return isBenchmark;  }
-    bool                doForceG1()        const { return forceG1;      }
-    bool                doForceG2()        const { return forceG2;      }
-    bool                doForceG2NR()      const { return forceG2NR;    }
     uint32_t            aaPreset()         const { return aaPresetId;   }
     bool                doTaa()            const { return isTaa;        }
     std::string_view    defaultSave()      const { return saveDef;    }
@@ -82,9 +78,6 @@ class CommandLine {
     bool                isRtSm       = false;
     GiMethod            isGi         = GiMethod::None;
     bool                isGiSet      = false;  // -gi given: else Gothic picks by the device
-    bool                forceG1      = false;
-    bool                forceG2      = false;
-    bool                forceG2NR    = false;
     uint32_t            aaPresetId = 1;        // CMAA2; -aa 0 turns it off
     bool                isTaa      = true;     // temporal AA (replaces CMAA2); -taa 0 turns it off
   };

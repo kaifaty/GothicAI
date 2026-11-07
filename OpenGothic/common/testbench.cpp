@@ -1664,7 +1664,7 @@ void observeAnimationAttempt(const Npc& npc, const std::string& fields, uint64_t
   auto& control = bench.bodyAnimation;
   if(!control.active || control.mode==BodyAnimationControl::Default)
     return;
-  if((npc.weaponState()!=WeaponState::W1H && npc.weaponState()!=WeaponState::W2H) || Gothic::inst().version().game!=2)
+  if(npc.weaponState()!=WeaponState::W1H && npc.weaponState()!=WeaponState::W2H)
     return;
   const unsigned side = animationActorIndex(npc);
   if(side>=control.actorCount)

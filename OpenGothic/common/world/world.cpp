@@ -722,7 +722,7 @@ BodyTraces::Body World::bodyRule(const Npc& body, const Npc* hero) const {
   rule.now          = gameMinute();
   rule.heroDistance = hero!=nullptr ? (body.position()-hero->position()).length() : 0.f;
   rule.missionItems = body.inventory().hasMissionItems();
-  rule.dragon       = version().game==2 && body.guild()==GIL_DRAGON;
+  rule.dragon       = body.guild()==GIL_DRAGON;
   rule.immortal     = body.isImmortal();
   rule.storyType    = isStoryNpcType(int32_t(body.handlePtr()->type));
   return rule;
@@ -2051,10 +2051,6 @@ WayPath World::wayTo(const Npc &npc, const WayPoint &end) const {
 
 GameScript& World::script() const {
   return *game.script();
-  }
-
-const VersionInfo& World::version() const {
-  return game.version();
   }
 
 void World::assignRoomToGuild(std::string_view r, int32_t guildId) {

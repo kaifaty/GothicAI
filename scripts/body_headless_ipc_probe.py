@@ -102,7 +102,7 @@ def main() -> int:
         result["environment"] = {name: environment[name] for name in
                                  ("DISPLAY", "WAYLAND_DISPLAY", "GOTHIC_AI", "VK_DRIVER_FILES",
                                   "VK_ICD_FILENAMES", "OPENGOTHIC_BODY_ANIMATION_RNG")}
-        runner = suite.Runner([str(args.runner), "-g", str(args.assets), "-g2", "-devmode",
+        runner = suite.Runner([str(args.runner), "-g", str(args.assets), "-devmode",
                               "--save", str(args.save), "--scenario", str(args.scenario),
                               "--output", str(lockstep), "--mode", "lockstep", "--stdio"],
                              workdir, args.output, timeout_s=5, environment=environment)
