@@ -351,7 +351,13 @@ the visible (vertex) penetration below that plane and below the ground under eac
 writes `destruction2_start` (each piece's centre over the ground and native hull depth at birth) and,
 frame by frame for 5 s, `destruction2_fell` for the first frame a piece's centre is under the ground or
 over no ground, with its previous frame; a fallen piece's row adds the static surface above and under
-it and water at it. Run with the
+it and water at it. `destruction_sleep15` and `destruction_checkpoint` give each piece its
+`center_cm`, `in_water` (water at most 50 cm under the centre of mass) and `under_ground` (a static
+surface within 20 m above). `destruction_fragment_retired` logs each sleeping piece that
+`cleanupFragments` removes (`expired` or `distant`, over 30 m from the hero).
+`destruction_compare.py` does not count such a piece as lost; a piece missing without one fails. Its
+15 s sleep gate requires every piece on land asleep; a piece in water passes when it is not under
+the ground, and the result line reports whether it sleeps at the final checkpoint. Run with the
 `own-content-fracture` settings plus `TEMPEST_WINDOW_SIZE=1280x720`; `OPENGOTHIC_FRACTURE_MOTION`
 varies the version 3 piece motion. Inside a `movable measure` window the pieces are not sampled: the
 timed frames stay free of bench work.
