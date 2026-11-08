@@ -894,19 +894,14 @@ void Resources::indexContentModels() {
   if(root.empty())
     return;
   const auto folder = root/"models";
-  renderRigs = std::make_unique<RenderRigIndex>(
-      [](std::string_view record, asset::ModelHierarchy& out) { return loadHierarchyData(record,out); },
-      [](const std::string& message) { Log::e(message); });
-  renderRigs->read(folder/"render-rigs.json");
   const auto index = folder/"models.json";
   std::ifstream file(index,std::ios::binary);
   if(!file) {
     std::error_code ec;
     if(std::filesystem::exists(index,ec) || ec)
       Log::e("content models: cannot read \"",index.string(),"\"");
-    return;
     }
-  try {
+  else try {
     const std::string text{std::istreambuf_iterator<char>(file),std::istreambuf_iterator<char>()};
     rapidjson::Document table;
     table.Parse<rapidjson::kParseValidateEncodingFlag>(text.data(),text.size());
@@ -941,6 +936,36 @@ void Resources::indexContentModels() {
   catch(const std::exception& error) {
     Log::e("content models: \"",index.string(),"\": ",error.what());
     }
+  indexRenderRigs(folder/"render-rigs.json");
+  }
+
+// After the content models: a rig's skeleton record may be one of them. Each rig is built at once. A body bound to a
+// rig is of the rig's skeleton (its bone indices): with the rigs off (--no-render-rig: only the names of the table's
+// meshes are taken, no rig is built) or its rig broken, its content mesh is left out and the base original is drawn.
+void Resources::indexRenderRigs(const std::filesystem::path& file) {
+  const bool on = CommandLine::inst().doRenderRig();
+  auto rigs = std::make_unique<RenderRigIndex>(
+      [](std::string_view record, asset::ModelHierarchy& out) { return loadHierarchyData(record,out); },
+      [on](const std::string& message) { if(on) Log::e(message); });
+  rigs->read(file);
+  std::set<std::string> left;
+  for(const auto& name:rigs->rigNames()) {
+    const RenderRig* rig = on ? rigs->rig(name) : nullptr;
+    size_t meshes = 0;
+    for(const auto& [mesh,of]:rigs->meshTable())
+      meshes += of==name ? 1 : 0;
+    if(rig!=nullptr)
+      Log::i("render rig ",name,": ",rig->bones()," bones, ",meshes," meshes"); else
+      left.insert(name);
+    }
+  for(const auto& [mesh,of]:rigs->meshTable())
+    if(left.count(of)!=0)
+      for(const char* ext:{".MDM",".MDL"})
+        contentModels.erase(mesh+ext);
+  if(!on)
+    Log::i("render rig: off");
+  else if(rigs->size()>0)
+    renderRigs = std::move(rigs);
   }
 
 void Resources::BaseIndex::load(const std::filesystem::path& root, const char* kind) {

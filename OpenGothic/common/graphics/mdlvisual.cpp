@@ -2,6 +2,7 @@
 
 #include "graphics/mesh/skeleton.h"
 #include "graphics/mesh/protomesh.h"
+#include "graphics/mesh/renderrig.h"
 #include "game/serialize.h"
 #include "world/objects/npc.h"
 #include "world/objects/interactive.h"
@@ -10,6 +11,8 @@
 #include "graphics/worldview.h"
 #include "objvisual.h"
 #include "gothic.h"
+
+#include <Tempest/Log>
 
 #include <chrono>
 #include <ctime>
@@ -23,6 +26,8 @@
 #include <array>
 #include <cmath>
 #include <cstdlib>
+#include <mutex>
+#include <set>
 
 using namespace Tempest;
 
@@ -173,11 +178,13 @@ void MdlVisual::setVisual(const Skeleton *v) {
     rebindAttaches(*v);
   solver.setSkeleton(v);
   skInst->setSkeleton(v);
-  view.setSkeleton(v);
 
   skeleton = v;
+  const bool rigChanged = bindBodyRig();
   hitZones.setSkeleton(v);
   setObjMatrix(pos); // invalidate obj matrix
+  if(rigChanged)
+    syncAttaches();
   }
 
 bool MdlVisual::setPhysicalPose(const std::vector<Matrix4x4>& physical,
@@ -222,7 +229,7 @@ bool MdlVisual::setPhysicalPose(const std::vector<Matrix4x4>& physical,
   for(size_t i=0; i<count; ++i)
     if(!bone(bone,i))
       return clearPhysicalPose();
-  view.setPose(pos,renderedPose.data());
+  pushBodyPose();
   return true;
   }
 
@@ -231,7 +238,7 @@ bool MdlVisual::clearPhysicalPose() {
     return false;
   renderedPose.clear();
   renderedMask.clear();
-  view.setPose(pos,*skInst);
+  pushBodyPose();
   return true;
   }
 
@@ -239,6 +246,81 @@ const Matrix4x4& MdlVisual::renderedBone(size_t bone) const {
   if(bone<renderedPose.size())
     return renderedPose[bone];
   return skInst->bone(bone);
+  }
+
+const Matrix4x4* MdlVisual::skinPalette(size_t& count) const {
+  if(bodyRig!=nullptr) {
+    count = rigPalette.size();
+    return rigPalette.data();
+    }
+  count = skInst->boneCount();
+  return renderedPose.empty() ? skInst->transform() : renderedPose.data();
+  }
+
+bool MdlVisual::bindBodyRig() {
+  const RenderRig* const was   = bodyRig;
+  const ProtoMesh*       proto = view.protoMesh();
+  const RenderRig*       rig   = proto!=nullptr && skeleton!=nullptr ? Resources::renderRigOfMesh(proto->fname) : nullptr;
+  // the palette the mesh reads: its bones are the rig's
+  size_t bones = 0;
+  if(proto!=nullptr)
+    for(const auto& skin:proto->skined)
+      bones = std::max(bones,skin.bonesCount);
+  std::string why;
+  if(rig!=nullptr && !rig->fits(*skeleton))
+    why = "is put on \""+std::string(skeleton->name())+"\", not on the rig's source: drawn on it";
+  else if(rig!=nullptr && bones>rig->bones())
+    why = "has "+std::to_string(bones)+" bones, the rig "+std::to_string(rig->bones())+": drawn on the visual's skeleton";
+  if(!why.empty()) {
+    // once for a body, a skeleton and a rig: each NPC so dressed would repeat it
+    static std::mutex            sync;
+    static std::set<std::string> told;
+    const std::string key = std::string(rig->name())+"|"+proto->fname+"|"+std::string(skeleton->name());
+    std::lock_guard<std::mutex> guard(sync);
+    if(told.insert(key).second)
+      Log::e("render rig ",rig->name(),": body \"",proto->fname,"\" ",why);
+    rig = nullptr;
+    }
+  bodyRig = rig;
+  rigPalette.resize(rig!=nullptr ? rig->bones() : 0);
+  view.setSkeleton(rig!=nullptr ? &rig->skeleton() : skeleton);
+  return bodyRig!=was;
+  }
+
+void MdlVisual::pushBodyPose() {
+  const Matrix4x4* source = renderedPose.empty() ? skInst->transform() : renderedPose.data();
+  if(bodyRig==nullptr) {
+    view.setPose(pos,source);
+    return;
+    }
+  if(!bodyRig->solve(source,skInst->boneCount(),rigPalette.data())) {
+    // the Gothic pose is not there yet: the rig's bind pose where the body stands
+    const auto& bind = bodyRig->skeleton().tr;
+    for(size_t i=0; i<rigPalette.size() && i<bind.size(); ++i)
+      rigPalette[i] = pos*bind[i];
+    }
+  view.setPose(pos,rigPalette.data());
+  }
+
+Matrix4x4 MdlVisual::attachMatrix(size_t node) const {
+  Matrix4x4 m;
+  if(bodyRig!=nullptr && bodyRig->socket(node,rigPalette.data(),m))
+    return m;
+  return renderedBone(node);
+  }
+
+const Matrix4x4* MdlVisual::skinOf(const Matrix4x4* bones, size_t n, std::vector<Matrix4x4>& rig, size_t& count) const {
+  if(bodyRig!=nullptr) {
+    rig.resize(bodyRig->bones());
+    if(bodyRig->solve(bones,n,rig.data())) {
+      count = rig.size();
+      return rig.data();
+      }
+    count = 0;  // too few Gothic bones: no skin
+    return rig.data();
+    }
+  count = n;
+  return bones;
   }
 
 bool MdlVisual::stickArrow(MeshObjects::Mesh&& arrow, size_t bone, const Matrix4x4& worldMatrix,
@@ -379,8 +461,8 @@ void MdlVisual::setVisualBody(WorldView& owner, MeshObjects::Mesh&& body) {
   bodyDetached=false;
   if(textureOwnerKnown)
     view.setTextureOwner(textureOwnerPosition,textureOwnerSpatial);
-  view.setSkeleton(skeleton);
-  view.setPose(pos,*skInst);
+  bindBodyRig();
+  pushBodyPose();
   for(auto& slot:item)
     if(slot.deferredProto!=nullptr) {
       slot.view=owner.addView(slot.deferredProto,slot.deferredMaterial);
@@ -392,6 +474,8 @@ void MdlVisual::setVisualBody(WorldView& owner, MeshObjects::Mesh&& body) {
 
 void MdlVisual::clearVisualBody() {
   view={};
+  bodyRig=nullptr;
+  rigPalette.clear();
   attach.clear();
   for(auto& slot:item) {
     if(auto proto=slot.view.protoMesh())
@@ -486,18 +570,41 @@ void MdlVisual::implSetBody(Npc* npc, World& world, MeshObjects::Mesh&& body, co
     view.setTextureOwner(textureOwnerPosition,textureOwnerSpatial);
   view.setAsGhost(hnpcFlagGhost);
   view.setFatness(npc==nullptr ? 0 : npc->fatness());
-  view.setSkeleton(skeleton);
-  view.setPose(pos,*skInst);
+  const bool rigChanged = bindBodyRig();
+  pushBodyPose();
   hnpcVisual.view.setMesh(&view);
   fitHitZones();
+  if(rigChanged)
+    syncAttaches();  // the head and the hands: from the rig's sockets or back on Gothic's nodes
   }
 
 void MdlVisual::fitHitZones() {
   // the zones as thick as the body is: its mesh by bone, its parts on the bones of their names, the head's
   // mesh on its bone
   std::vector<HitZones::Shape> shape;
+  // a body on its render rig: the points of a rig bone go to its Gothic node (RenderRig::sourceOf), from the rig posed
+  // as Gothic's bind pose into that node's bind frame; the zones stay Gothic's
+  std::vector<std::vector<Vec3>> byNode;
+  std::vector<Matrix4x4>         rigBind;
+  size_t                         rigCount = 0;
+  if(auto p = view.protoMesh(); p!=nullptr && bodyRig!=nullptr && skeleton!=nullptr) {
+    skinOf(skeleton->tr.data(),skeleton->tr.size(),rigBind,rigCount);
+    byNode.resize(skeleton->tr.size());
+    for(size_t r=0; r<p->nodePoints.size() && r<rigCount; ++r) {
+      const size_t node = bodyRig->sourceOf(r);
+      if(node>=byNode.size())
+        continue;
+      auto toNode = skeleton->tr[node];
+      toNode.inverse();
+      toNode.mul(rigBind[r]);
+      for(auto pt:p->nodePoints[r]) {
+        toNode.project(pt);
+        byNode[node].push_back(pt);
+        }
+      }
+    }
   if(auto p = view.protoMesh()) {
-    shape.push_back({&p->nodePoints,size_t(-1),nullptr});
+    shape.push_back({bodyRig!=nullptr && skeleton!=nullptr ? &byNode : &p->nodePoints,size_t(-1),nullptr});
     for(size_t i=0; skeleton!=nullptr && i<p->attach.size() && i<p->attachPoints.size(); ++i)
       if(!p->attach[i].hasNode)
         shape.push_back({nullptr,skeleton->findNode(p->attach[i].name),&p->attachPoints[i]});
@@ -672,20 +779,24 @@ void MdlVisual::quiverPoints(const Matrix4x4* bones, size_t n, std::vector<Quive
   const ProtoMesh* pm = view.protoMesh();
   if(pm==nullptr)
     return;
+  // the skin on a render rig: its bones solved from Gothic's, each point on the Gothic node of its bone
+  std::vector<Matrix4x4> rig;
+  size_t                 skinN = 0;
+  const Matrix4x4*       skin  = skinOf(bones,n,rig,skinN);
   for(const auto& v:pm->skinVertexData()) {
     Quiver::SkinPoint p;
     float weight = 0, best = 0;
     for(size_t r=0; r<4; ++r) {
-      if(!(v.weights[r]>0.f) || v.boneId[r]>=n)
+      if(!(v.weights[r]>0.f) || v.boneId[r]>=skinN)
         continue;
       Vec3 part(v.pos[r][0],v.pos[r][1],v.pos[r][2]);
-      bones[v.boneId[r]].project(part);
+      skin[v.boneId[r]].project(part);
       p.pos  += part*v.weights[r];
       p.src   = size_t(&v-pm->skinVertexData().data());
       weight += v.weights[r];
       if(v.weights[r]>best) {
         best   = v.weights[r];
-        p.bone = v.boneId[r];
+        p.bone = bodyRig!=nullptr ? bodyRig->sourceOf(v.boneId[r]) : v.boneId[r];
         }
       }
     if(weight>0.f) {
@@ -786,6 +897,9 @@ bool MdlVisual::updateQuiver(const Npc& npc, uint64_t dt) {
     }
   // the armour's flaps and the legs' skin near the quiver: its points; with the ground near, the far ones too
   if(const ProtoMesh* pm = view.protoMesh()) {
+    static thread_local std::vector<Matrix4x4> rig;
+    size_t           skinN = 0;
+    const Matrix4x4* skin  = skinOf(bones.data(),n,rig,skinN);
     const auto& sv   = pm->skinVertexData();
     const auto& legs = quiv.nearLeg();
     const size_t nNear = quiv.near().size();
@@ -798,10 +912,10 @@ bool MdlVisual::updateQuiver(const Npc& npc, uint64_t dt) {
       Vec3  p;
       float weight = 0;
       for(size_t r=0; r<4; ++r) {
-        if(!(v.weights[r]>0.f) || v.boneId[r]>=n)
+        if(!(v.weights[r]>0.f) || v.boneId[r]>=skinN)
           continue;
         Vec3 part(v.pos[r][0],v.pos[r][1],v.pos[r][2]);
-        bones[v.boneId[r]].project(part);
+        skin[v.boneId[r]].project(part);
         p      += part*v.weights[r];
         weight += v.weights[r];
         }
@@ -1129,7 +1243,7 @@ void MdlVisual::setObjMatrix(const Tempest::Matrix4x4 &m, bool syncAttach) {
   FrameProfile::Scope timing(FrameProfile::Zone::PaletteCpu,FrameProfile::actorContext());
   pos = m;
   skInst->setObjectMatrix(m,syncAttach);
-  view.setPose(m,renderedPose.empty() ? skInst->transform() : renderedPose.data());
+  pushBodyPose();
   if(syncAttach)
     syncAttaches();
   }
@@ -1160,8 +1274,9 @@ bool MdlVisual::minSkinnedVertex(float fatness,Vec3& point) const {
   const auto* mesh=view.protoMesh();
   if(mesh==nullptr)
     return false;
-  const auto* bones=renderedPose.empty() ? skInst->transform() : renderedPose.data();
-  return mesh->minSkinnedVertex(bones,skInst->boneCount(),pos,fatness,point);
+  size_t count = 0;
+  const auto* bones = skinPalette(count);
+  return mesh->minSkinnedVertex(bones,count,pos,fatness,point);
   }
 
 void MdlVisual::setHeadRotation(float dx, float dz) {
@@ -1220,7 +1335,7 @@ void MdlVisual::setTorch(bool t, World& owner) {
   auto& pose = *skInst;
   auto  p    = pos;
   if(torch.boneId<pose.boneCount())
-    p = renderedBone(torch.boneId);
+    p = attachMatrix(torch.boneId);
   torch.view->setObjMatrix(p);
   }
 
@@ -1270,7 +1385,7 @@ bool MdlVisual::updateAnimation(Npc* npc, Interactive* mobsi, World& world, uint
 
   if(changed) {
     FrameProfile::Scope timing(FrameProfile::Zone::PaletteCpu,FrameProfile::watchedActor(npc));
-    view.setPose(pos,pose);
+    pushBodyPose();
     }
   return changed;
   }
@@ -1320,7 +1435,7 @@ bool MdlVisual::updateGaze(Npc& npc, uint64_t dt) {
   if(&npc==Gaze::probeNpc)
     gaze.probe(Gaze::subjectProbe);
   if(changed)
-    view.setPose(pos,pose);
+    pushBodyPose();
   return changed;
   }
 
@@ -1351,7 +1466,7 @@ bool MdlVisual::updateLean(Npc& npc, uint64_t dt) {
   if(&npc==Lean::probeNpc)
     lean.probe(Lean::subjectProbe);
   if(changed)
-    view.setPose(pos,pose);
+    pushBodyPose();
   return changed;
   }
 
@@ -1542,7 +1657,7 @@ bool MdlVisual::updateAim(Npc& npc, uint64_t dt) {
     pose.bowDrawIk().probe(BowDraw::playerProbe);
 
   if(changed)
-    view.setPose(pos,pose);
+    pushBodyPose();
   return changed;
   }
 
@@ -1567,7 +1682,7 @@ bool MdlVisual::updateFlinch(Npc& npc, uint64_t dt) {
   if(&npc==Flinch::probeNpc)
     fl.probe(Flinch::subjectProbe);
   if(changed)
-    view.setPose(pos,pose);
+    pushBodyPose();
   return changed;
   }
 
@@ -1603,7 +1718,7 @@ bool MdlVisual::updateFootIk(Npc& npc, World& world, uint64_t dt, bool alignedTo
   if(npc.isPlayer())
     ik.probe(FootIk::playerProbe,in);
   if(changed)
-    view.setPose(pos,pose);
+    pushBodyPose();
   return changed;
   }
 
@@ -2297,7 +2412,7 @@ void MdlVisual::syncAttaches() {
     auto& pose = *skInst;
     auto  p    = pos;
     if(torch.boneId<pose.boneCount())
-      p = renderedBone(torch.boneId);
+      p = attachMatrix(torch.boneId);
     torch.view->setObjMatrix(p);
     }
   }
@@ -2321,7 +2436,7 @@ void MdlVisual::syncAttaches(Attach<View>& att) {
   auto& pose = *skInst;
   auto  p    = pos;
   if(att.boneId<pose.boneCount())
-    p = renderedBone(att.boneId);
+    p = attachMatrix(att.boneId);
   att.view.setObjMatrix(p);
   }
 

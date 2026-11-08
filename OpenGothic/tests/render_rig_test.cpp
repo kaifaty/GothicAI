@@ -341,6 +341,13 @@ int main() {
     // (b, c) the leg: IK onto the ankle, out of reach - straight
     const RenderRig* legRig = index.rig("LEG");
     require(legRig!=nullptr && index.rigOfMesh("models/hum_body_test.asc")==legRig,"the leg rig loads, by its mesh too");
+    require(index.meshTable().size()==1 && index.meshTable().count("HUM_BODY_TEST")==1 && index.rigNames().size()==7,
+            "the table lists its rigs and meshes");
+    // a bone's Gothic node: its source, else its parent's, else the source's root
+    require(legRig->sourceOf(leg.find("ball_l"))==source.find("BIP01 L TOE0") &&
+            legRig->sourceOf(leg.find("pelvis"))==source.find("BIP01 PELVIS") &&
+            legRig->sourceOf(leg.find("root"))==source.find("BIP01") && legRig->sourceOf(99)==size_t(-1),
+            "a leg bone belongs to its source node");
     const size_t th = leg.find("thigh_l"), ca = leg.find("calf_l"), fo = leg.find("foot_l"), ba = leg.find("ball_l");
     const double L1 = distance(leg.joints[ca].at,leg.joints[th].at), L2 = distance(leg.joints[fo].at,leg.joints[ca].at);
     const size_t sCalf = source.find("BIP01 L CALF");
@@ -387,6 +394,8 @@ int main() {
     // (d) the finger's bend over the phalanges: 60 degrees of FINGER0 against the hand -> 60, 54, 42
     const RenderRig* handRig = index.rig("HAND");
     require(handRig!=nullptr,"the hand rig loads");
+    require(handRig->sourceOf(hand.find("middle_03_l"))==source.find("BIP01 L HAND"),
+            "a phalanx without a source belongs to the hand's");
     for(int n=0; n<20; ++n) {
       auto turns = source.bindTurns();
       turns[source.find("BIP01 L HAND")]    = turn(randomAxis(),uniform(-90,90));

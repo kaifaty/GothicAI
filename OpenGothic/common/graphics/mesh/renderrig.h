@@ -99,6 +99,10 @@ class RenderRig final {
     bool             socket(std::string_view sourceNode, const Tempest::Matrix4x4* palette, Tempest::Matrix4x4& out) const;
     bool             socket(size_t sourceNode, const Tempest::Matrix4x4* palette, Tempest::Matrix4x4& out) const;
 
+    // the source node a rig bone belongs to (the skin's points for the hit zones): its source, else the nearest
+    // ancestor's, else the source's root node; size_t(-1) - no such bone
+    size_t           sourceOf(size_t bone) const;
+
   private:
     RenderRig() = default;
 
@@ -158,6 +162,9 @@ class RenderRigIndex final {
     void             read(const std::filesystem::path& file);  // no file: no rigs, as without the feature
     void             parse(std::string_view json);
     size_t           size() const { return specs.size(); }
+    // the rigs read (built or not yet), by name; meshTable - mesh (upper case, without folder and extension) -> rig
+    std::vector<std::string> rigNames() const;
+    const std::map<std::string,std::string,std::less<>>& meshTable() const { return meshes; }
 
     // nullptr: no such rig or a broken one (reported once)
     const RenderRig* rig(std::string_view name);
