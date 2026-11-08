@@ -45,17 +45,21 @@
 #undef far
 #endif
 
-inline std::string npcSymbol(World& world, Npc& npc) {
+namespace {
+
+std::string npcSymbol(World& world, Npc& npc) {
   if(auto sym = world.script().findSymbol(npc.instanceSymbol()))
     return sym->name();
   return {};
   }
 
 // any npc of the world by script symbol (attached or not)
-inline Npc* npcBySymbol(World& world, std::string_view symbol) {
+Npc* npcBySymbol(World& world, std::string_view symbol) {
   const size_t id = world.script().findSymbolIndex(symbol);
   return id==size_t(-1) ? nullptr : world.findNpcByInstance(id);
   }
+
+}
 
 struct Voice final {
   std::string                  line;

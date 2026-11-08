@@ -1,5 +1,3 @@
-#include "aibridge_impl.h"
-
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -20,6 +18,8 @@
 #include "world/objects/interactive.h"
 #include "world/objects/item.h"
 #include "world/waypoint.h"
+
+#include "aibridge_impl.h"
 
 using namespace Tempest;
 

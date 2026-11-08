@@ -1,5 +1,3 @@
-#include "aibridge_impl.h"
-
 #include <Tempest/Application>
 #include <Tempest/Log>
 
@@ -38,6 +36,8 @@
 #include "textcodec.h"
 #include "voicebuffer.h"
 #include "testbench.h"
+
+#include "aibridge_impl.h"
 
 using namespace Tempest;
 
