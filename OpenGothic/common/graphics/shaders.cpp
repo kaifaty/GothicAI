@@ -108,6 +108,7 @@ void Shaders::compileShaders() noexcept {
 
   ssao                = computeShader("ssao.comp.sprv");
   ssaoBlur            = computeShader("ssao_blur.comp.sprv");
+  ssaoMips            = computeShader("ssao_mips.comp.sprv");
 
   bloodDecal       = bloodDecalShader(opts.doMaterialMaps);
   bloodDecalAlbedo = bloodDecalShader(false);
