@@ -31,7 +31,7 @@ struct MeleeBodyCapsule;
 struct MeleeShadowBody;
 struct MeleeBladeContact;
 namespace daedalus { struct INpc; }
-namespace JPH { class PhysicsSystem; }
+namespace JPH { class PhysicsSystem; class GroupFilter; }
 
 class CollisionWorld final {
   public:
@@ -82,8 +82,8 @@ class CollisionWorld final {
         // Zero uses physical density; a target above one makes the body sink.
         void                setBuoyancyFraction(float fraction);
         void                setNoiseProfile(ItemMaterial material, asset::MaterialGroup surface, std::string_view what);
-        // Pieces of one break share `group`; fractureMaterialsCollide decides their pairs for life.
-        void                setFractureGroup(uint32_t group, asset::MaterialGroup material);
+        // Pieces of one break share `group` and its `filter` for life (fractureGroupFilter).
+        void                setFractureGroup(const JPH::GroupFilter* filter, uint32_t group, uint32_t piece);
         // The latest engine-known cause survives the short noise attribution
         // window and NPC destruction, until a new impulse replaces it.
         void                setTraceCulprit(Npc* culprit);

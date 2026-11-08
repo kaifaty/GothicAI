@@ -34,7 +34,6 @@
 #include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/PhysicsSettings.h>
 #include <Jolt/Physics/Collision/CollisionGroup.h>
-#include <Jolt/Physics/Collision/GroupFilter.h>
 
 #include <Jolt/Physics/Collision/CastSphereVsTriangles.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
@@ -2259,12 +2258,15 @@ namespace {
           requireNear(stacked[version][piece],expected[version][piece],slop,
                       version==0 ? "format 3 METAL and WOOD of one break must not collide, each with the ground and its own material must" :
                                    "version 2 pieces of one break must keep colliding with each other");
-      const auto* filter=fractureGroupFilter();
-      require(!JPH::CollisionGroup(filter,0x80000000u,uint32_t(asset::MaterialGroup::METAL)).CanCollide(
-                JPH::CollisionGroup(filter,0x80000000u,uint32_t(asset::MaterialGroup::WOOD))) &&
-              JPH::CollisionGroup(filter,0x80000000u,uint32_t(asset::MaterialGroup::METAL)).CanCollide(
-                JPH::CollisionGroup(filter,0x80000001u,uint32_t(asset::MaterialGroup::WOOD))) &&
-              JPH::CollisionGroup(filter,0x80000000u,uint32_t(asset::MaterialGroup::METAL)).CanCollide(JPH::CollisionGroup()),
+      // Another break of the same mesh, or a plain body, still meets the hoop.
+      FractureMesh hoopMesh;
+      hoopMesh.pieces.resize(2);
+      hoopMesh.pieces[0].group=asset::MaterialGroup::METAL;
+      hoopMesh.pieces[1].group=asset::MaterialGroup::WOOD;
+      const auto filter=fractureGroupFilter(hoopMesh);
+      const JPH::CollisionGroup hoop(filter,0x80000000u,0);
+      require(!hoop.CanCollide(JPH::CollisionGroup(filter,0x80000000u,1)) &&
+              hoop.CanCollide(JPH::CollisionGroup(filter,0x80000001u,1)) && hoop.CanCollide(JPH::CollisionGroup()),
               "the hoop filter must separate only METAL and WOOD of the same break");
       std::printf("Own fracture v3: forty pieces, WOOD 0.4 / METAL 1.1 friction; hit mean %.6f, near %.6f > far %.6f cm/s; "
                   "save/load and changed-count skip; whitespace and invalid override fallback; override cap 50; v2 outward 40 cm/s; "

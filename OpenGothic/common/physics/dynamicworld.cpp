@@ -2299,6 +2299,7 @@ void DynamicWorld::loadDestructionVobs(Serialize& fin) {
           break;
         std::vector<std::unique_ptr<CollisionWorld::DynamicBody>> fragments(pieces.size());
         const uint32_t breakGroup=mesh.version==3 ? world->newFractureGroup() : 0;
+        const auto breakFilter=mesh.version==3 ? fractureGroupFilter(mesh) : nullptr;
         for(size_t i=0;i<pieces.size();++i) {
           const auto& piece=pieces[i];
           if(!piece.present)
@@ -2307,7 +2308,7 @@ void DynamicWorld::loadDestructionVobs(Serialize& fin) {
           const auto group=mesh.version==3 ? mesh.pieces[i].group : obj->movableShape->material;
           const float friction=mesh.version==3 ? materialFriction(group) : obj->movableShape->friction;
           auto body=world->addDynamicBody(mesh.pieces[i].hull,piece.matrix,friction,mass,C_Fragment);
-          if(mesh.version==3) body->setFractureGroup(breakGroup,group);
+          if(breakFilter!=nullptr) body->setFractureGroup(breakFilter,breakGroup,uint32_t(i));
           body->setLabel(obj->visual+" fragment");
           body->setNoiseProfile(impactMaterial(group),group,obj->visual+" fragment");
           body->setBuoyancyFraction(vobBuoyancyFraction(group));
@@ -2684,6 +2685,7 @@ void DynamicWorld::breakMovableVob(BodyData& obj) {
   std::vector<std::unique_ptr<CollisionWorld::DynamicBody>> fragments;
   fragments.reserve(mesh.pieces.size());
   const uint32_t breakGroup=mesh.version==3 ? world->newFractureGroup() : 0;
+  const auto breakFilter=mesh.version==3 ? fractureGroupFilter(mesh) : nullptr;
   // All hulls, triangle data and GPU meshes are prepared while loading the
   // visual. The replacement only installs native bodies and transfers motion.
   for(size_t i=0;i<mesh.pieces.size();++i) {
@@ -2692,7 +2694,7 @@ void DynamicWorld::breakMovableVob(BodyData& obj) {
     const auto group=mesh.version==3 ? piece.group : obj.movableShape->material;
     const float friction=mesh.version==3 ? materialFriction(group) : obj.movableShape->friction;
     auto body=world->addDynamicBody(piece.hull,matrix,friction,mass,C_Fragment);
-    if(mesh.version==3) body->setFractureGroup(breakGroup,group);
+    if(breakFilter!=nullptr) body->setFractureGroup(breakFilter,breakGroup,uint32_t(i));
     body->setLabel(obj.visual+" fragment");
     body->setNoiseProfile(impactMaterial(group),group,obj.visual+" fragment");
     body->setBuoyancyFraction(vobBuoyancyFraction(group));

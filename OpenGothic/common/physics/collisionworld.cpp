@@ -11,7 +11,6 @@
 #include "world/objects/npc.h"
 #include "world/world.h"
 #include "sha256.h"
-#include "fracture.h"
 #include <Tempest/Log>
 
 #include <cstdlib>
@@ -1698,10 +1697,10 @@ void CollisionWorld::CollisionBody::setNoiseProfile(ItemMaterial material, asset
   noiseWhat=what;
   }
 
-void CollisionWorld::CollisionBody::setFractureGroup(uint32_t group, asset::MaterialGroup material) {
+void CollisionWorld::CollisionBody::setFractureGroup(const JPH::GroupFilter* filter, uint32_t group, uint32_t piece) {
   JPH::BodyLockWrite lock(owner->impl->system.GetBodyLockInterface(),id);
   if(lock.Succeeded())
-    lock.GetBody().SetCollisionGroup(JPH::CollisionGroup(fractureGroupFilter(),group,uint32_t(material)));
+    lock.GetBody().SetCollisionGroup(JPH::CollisionGroup(filter,group,piece));
   }
 
 Tempest::Vec3 CollisionWorld::CollisionBody::position() const {
