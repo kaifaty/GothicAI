@@ -1,4 +1,4 @@
-"""destruction_compare: retired pieces are not losses, and floats in water are counted apart."""
+"""destruction_compare: retired pieces are not losses, bond groups retire whole, floats in water are counted apart."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -36,6 +36,22 @@ def test_piece_missing_without_cleanup_fails():
     events, final = rows(present=range(7), retired=(7, 8))
     with pytest.raises(ValueError, match=r'pieces \[9\] of 1001 lost without cleanup'):
         dc.broken(events, 'five', final, 1)
+
+
+def test_bond_group_retires_whole():
+    events, final = rows(present=range(7), retired=(7, 8, 9))
+    for part in final['fragments']:
+        part['bond_group'] = min(part['piece'], 5)
+    sleep = {'kind': 'destruction_sleep15', 'case': 'five', 'elapsed_since_last_break_ms': 15_003,
+             'fragments': [piece(i, bond_group=min(i, 5)) for i in range(10)]}
+    events.insert(-1, sleep)
+    with pytest.raises(ValueError, match=r'bond group \(1001, 5\) lost pieces \[7, 8, 9\]'):
+        dc.broken(events, 'five', final, 1)
+    for part in sleep['fragments'][7:]:
+        part['bond_group'] = 7
+    assert len(dc.broken(events, 'five', final, 1)[0]) == 1
+    asleep, summary = dc.asleep15(events, 'five', report=True)
+    assert asleep and summary['land'] == 7
 
 
 def test_float_in_water_is_counted_apart():

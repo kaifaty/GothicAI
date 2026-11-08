@@ -343,9 +343,13 @@ until the pieces sleep (3 m, slightly above, the hero strikes towards +z) and
 `destruction2 view <camera xyz> <target xyz>` places the held camera in centimetres from the centre
 of the prop. Each break writes `destruction2_pieces` 0.5, 1, 2, 5, 13 and 15 s after it: per piece
 the centre's travel, the angle of a flat piece's face and long axis from vertical, sleep, speed and
-`fell` (centre below the floor); at 15 s the native hull penetration into a floor plane, into the
+`fell` (centre below the floor), its `bond_group`, and per break the bond groups (`groups`,
+`largest_group_volume_fraction`, `single_pieces`) and their bodies now present, asleep and through the
+ground (`bodies`, `bodies_sleeping`, `bodies_fell`: pieces of one group share one body; without
+bonds a group is a piece); at 15 s the native hull penetration into a floor plane, into the
 real ground (`native_floor_penetration_cm`, Jolt `CollideShape` against landscape and static objects)
-and into the other pieces (format 3 METAL–WOOD pairs of one break are skipped: they never collide),
+and into the other pieces (format 3 METAL–WOOD pairs of one break and pieces of one bond group are
+skipped: they never collide),
 the visible (vertex) penetration below that plane and below the ground under each vertex
 (`visible_terrain_penetration_cm`), hoops on the ground (`metal_on_ground`) and the 13→15 s jitter. Every break also
 writes `destruction2_start` (each piece's centre over the ground and native hull depth at birth) and,
@@ -355,11 +359,12 @@ it and water at it. `destruction_sleep15` and `destruction_checkpoint` give each
 `center_cm`, `in_water` (water at most 50 cm under the centre of mass) and `under_ground` (a static
 surface within 20 m above). `destruction_fragment_retired` logs each sleeping piece that
 `cleanupFragments` removes (`expired` or `distant`, over 30 m from the hero).
-`destruction_compare.py` does not count such a piece as lost; a piece missing without one fails. Its
-15 s sleep gate requires every piece on land asleep; a piece in water passes when it is not under
+A bond group retires whole, one event per piece. `destruction_compare.py` does not count such a piece as
+lost; a piece missing without one fails, and so does a bond group that is only partly present. Its
+15 s sleep gate counts bodies (`bond_group`; without it, pieces) and requires every body on land asleep; a piece in water passes when it is not under
 the ground, and the result line reports whether it sleeps at the final checkpoint. Run with the
 `own-content-fracture` settings plus `TEMPEST_WINDOW_SIZE=1280x720`; `OPENGOTHIC_FRACTURE_MOTION`
-varies the version 3 piece motion. Inside a `movable measure` window the pieces are not sampled: the
+varies the version 3 piece motion, `OPENGOTHIC_FRACTURE_BONDS` the bond rule. Inside a `movable measure` window the pieces are not sampled: the
 timed frames stay free of bench work.
 
 Corpse water: `water-bodies` records a real harbour WindFist throw, a dead wolf and a
