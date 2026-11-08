@@ -122,7 +122,7 @@ namespace TestBench {
   // First 300 ms of native simulation; inert outside an active bench.
   void     ragdollBirthPeak(const Npc& npc, const Npc* culprit, const std::string& fields);
 
-  // What the AI bridge does, for scenarios that talk (`ptt`, `waitreply`; shorts/): texts in UTF-8.
+  // What the AI bridge does, for scenarios that talk (`ptt`, `waitreply`; gothic-shorts): texts in UTF-8.
   // An npc line starts (`ms`: its length as known now; `to`: the npc it is said to, empty for the hero;
   // `filler`: a sound said at once while the model thinks, "Хм..."), an npc voice has played out, the hero's
   // phrase was recognized (`to`: whom the server says it was said to)

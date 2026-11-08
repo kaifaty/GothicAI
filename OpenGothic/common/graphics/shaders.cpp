@@ -76,7 +76,6 @@ void Shaders::setupOptions() {
   opts.doMeshShading    = gpu.meshlets.meshShader && CommandLine::inst().isMeshShading();
   opts.doSoftwareShadow = Shaders::isRtsmSupported() && CommandLine::inst().isSoftwareShadow();
   opts.doVirtualShadow  = Shaders::isVsmSupported()  && CommandLine::inst().isVirtualShadow();
-  opts.doSoftwareRT     = false;
   opts.doMaterialMaps   = Resources::materialMapsEnabled();
   }
 
@@ -108,6 +107,7 @@ void Shaders::compileShaders() noexcept {
 
   ssao                = computeShader("ssao.comp.sprv");
   ssaoBlur            = computeShader("ssao_blur.comp.sprv");
+  ssaoMips            = computeShader("ssao_mips.comp.sprv");
 
   bloodDecal       = bloodDecalShader(opts.doMaterialMaps);
   bloodDecalAlbedo = bloodDecalShader(false);
@@ -131,6 +131,7 @@ void Shaders::compileShaders() noexcept {
   fogViewLut3d       = computeShader("fog_view_lut.comp.sprv");
   fogViewLutSep      = computeShader("fog_view_lut_sep.comp.sprv");
   fogOcclusion       = computeShader("fog3d.comp.sprv");
+  fogOcclusionEmpty  = computeShader("fog3d_empty.comp.sprv");
 
   skyExposure        = computeShader("sky_exposure.comp.sprv");
   sky                = postEffect("sky");
@@ -237,10 +238,16 @@ void Shaders::compileShaders() noexcept {
   cmaa2EdgeColor2x2Presets[uint32_t(AaPreset::ULTRA)]  = computeShader("cmaa2_edges_color2x2_quality_1.comp.sprv");
 
   cmaa2ProcessCandidates = computeShader("cmaa2_process_candidates.comp.sprv");
+#if defined(__APPLE__)
+  // the Mac is always Metal: half colours, -14% of the pass; Vulkan would need shaderFloat16
+  taaResolve             = postEffect("triangle", "taa_resolve_h", RenderState::ZTestMode::Always);
+#else
   taaResolve             = postEffect("triangle", "taa_resolve", RenderState::ZTestMode::Always);
+#endif
   taaSharpen             = postEffect("triangle", "taa_sharpen", RenderState::ZTestMode::Always);
   motionCamera           = postEffect("triangle",    "motion_camera",     RenderState::ZTestMode::Always);
   tonemappingBloom       = postEffect("triangle_uv", "tonemapping_bloom", RenderState::ZTestMode::Always);
+  tonemappingTaa         = postEffect("triangle_uv", "tonemapping_taa",   RenderState::ZTestMode::Always);
   {
     auto sh = GothicShader::get("cmaa2_deferred_color_apply_2x2.vert.sprv");
     auto vs = device.shader(sh.data,sh.len);
@@ -414,25 +421,6 @@ void Shaders::compileShaders() noexcept {
     rtsmRendering    = computeShader("rtsm_rendering.comp.sprv");
     rtsmRenderingOmni= computeShader("rtsm_omni_rendering.comp.sprv");
     rtsmDbg          = postEffect("rtsm_dbg", RenderState::ZTestMode::Always);
-    }
-
-  swRaytracing    = computeShader("sw_raytracing.comp.sprv");
-  swRaytracing8   = computeShader("sw_raytracing8.comp.sprv");
-  swRaytracing64  = computeShader("sw_raytracing64.comp.sprv");
-
-  if(options().swRenderingPreset>0) {
-    switch(options().swRenderingPreset) {
-      case 1:
-        swRendering = computeShader("sw_rendering_imm.comp.sprv");
-        break;
-      case 2:
-        swRendering = computeShader("sw_rendering_tbr.comp.sprv");
-        break;
-      case 3:
-        swRendering = computeShader("sw_light.comp.sprv");
-        break;
-      }
-    swRenderingDbg = postEffect("vbuffer_blit", RenderState::ZTestMode::Always);
     }
 
   {

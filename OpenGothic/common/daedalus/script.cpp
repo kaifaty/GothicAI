@@ -5,7 +5,7 @@
 
 #include "script.h"
 
-#include <zenkit/DaedalusScript.hh>
+#include "asset/program.h"
 #include <Tempest/Log>
 
 #include <algorithm>
@@ -135,17 +135,17 @@ namespace daedalus {
 		return s;
 	}
 
-	zenkit::DaedalusProgramRecord DaedalusScript::export_program() const {
+	asset::ProgramRecord DaedalusScript::export_program() const {
 		if (!_m_text) throw DaedalusScriptError {"cannot export an unloaded program"};
 
-		zenkit::DaedalusProgramRecord program;
+		asset::ProgramRecord program;
 		program.version = _m_version;
 		program.symbols.reserve(_m_symbols.size());
 		for (auto const& sym : _m_symbols) {
 			auto& record = program.symbols.emplace_back();
 			record.name = sym._m_name;
 			record.generated = sym._m_generated;
-			record.type = static_cast<zenkit::DaedalusDataType>(sym._m_type);
+			record.type = static_cast<uint32_t>(sym._m_type);
 			record.count = sym._m_count;
 			record.flags = sym._m_flags;
 			record.address = sym._m_address;
@@ -153,7 +153,7 @@ namespace daedalus {
 			record.class_offset = sym._m_class_offset;
 			record.member_offset = sym._m_member_offset;
 			record.class_size = sym._m_class_size;
-			record.return_type = static_cast<zenkit::DaedalusDataType>(sym._m_return_type);
+			record.return_type = static_cast<uint32_t>(sym._m_return_type);
 			record.file_index = sym._m_file_index;
 			record.line_start = sym._m_line_start;
 			record.line_count = sym._m_line_count;
@@ -192,7 +192,7 @@ namespace daedalus {
 		return program;
 	}
 
-	DaedalusScript DaedalusScript::from_program(zenkit::DaedalusProgramRecord program) {
+	DaedalusScript DaedalusScript::from_program(asset::ProgramRecord program) {
 		if (program.symbols.size() > std::numeric_limits<std::uint32_t>::max() - 1 - MAX_ADDED_SYMBOLS) {
 			throw DaedalusScriptError {"program has too many symbols"};
 		}

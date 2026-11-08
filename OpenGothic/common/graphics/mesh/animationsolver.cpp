@@ -4,7 +4,6 @@
 #include "world/world.h"
 #include "game/serialize.h"
 #include "utils/fileext.h"
-#include "gothic.h"
 #include "skeleton.h"
 #include "pose.h"
 #include "resources.h"
@@ -125,8 +124,7 @@ const Animation::Sequence* AnimationSolver::implSolveAnim(AnimationSolver::Anim 
       return solveFrm("S_FISTATTACK");
       }
     if(a==Anim::AttackBlock) {
-      bool g2 = Gothic::inst().version().game==2;
-      return g2 ? solveFrm("T_FISTPARADE_0") : solveFrm("T_FISTPARADE_O");
+      return solveFrm("T_FISTPARADE_0");
       }
     }
   else if(st==WeaponState::W1H || st==WeaponState::W2H) {
@@ -139,24 +137,19 @@ const Animation::Sequence* AnimationSolver::implSolveAnim(AnimationSolver::Anim 
     if(a==Anim::Attack || a==Anim::AttackL || a==Anim::AttackR)
       return solveFrm("S_%sATTACK",st);
     if(a==Anim::AttackBlock) {
-      bool g2 = Gothic::inst().version().game==2;
-      if(g2) {
-        const Animation::Sequence* s=nullptr;
-        // Preserve the original shared RNG draw at precisely this solve point in every mode.
-        // Only an explicit benchmark opt-in may replace its presentation-clip branch.
-        const int fallback = std::rand()%3;
-        const int variant = npc==nullptr ? fallback : TestBench::bodyBlockVariant(*npc,fallback);
-        switch(variant) {
-          case 0: s = solveFrm("T_%sPARADE_0",   st); break;
-          case 1: s = solveFrm("T_%sPARADE_0_A2",st); break;
-          case 2: s = solveFrm("T_%sPARADE_0_A3",st); break;
-          }
-        if(s==nullptr)
-          s = solveFrm("T_%sPARADE_0",st);
-        return s;
-        } else {
-        return solveFrm("T_%sPARADE_O",st);
+      const Animation::Sequence* s=nullptr;
+      // Preserve the original shared RNG draw at precisely this solve point in every mode.
+      // Only an explicit benchmark opt-in may replace its presentation-clip branch.
+      const int fallback = std::rand()%3;
+      const int variant = npc==nullptr ? fallback : TestBench::bodyBlockVariant(*npc,fallback);
+      switch(variant) {
+        case 0: s = solveFrm("T_%sPARADE_0",   st); break;
+        case 1: s = solveFrm("T_%sPARADE_0_A2",st); break;
+        case 2: s = solveFrm("T_%sPARADE_0_A3",st); break;
         }
+      if(s==nullptr)
+        s = solveFrm("T_%sPARADE_0",st);
+      return s;
       }
     if(a==Anim::AttackFinish)
       return solveFrm("T_%sSFINISH",st);

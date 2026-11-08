@@ -217,7 +217,17 @@ The complete `<zone>` list (each produces all four columns above):
 `pose_elapsed_sum`, `palette_elapsed_sum`, `storage_join`, `storage_commit`, `storage_pack`,
 `storage_dispatch`, `storage_grow`, `storage_upload_execution_elapsed`, `bodynet`, `cloth`, `water`,
 `destruction`, `ai_bridge`, `sound`, `npc_full_tick`, `npc_simplified_tick`, `npc_logic_shadow`, `encode_shadows`, `encode_main`,
-`encode_water`, `encode_post`, `encode_ui`.
+`encode_water`, `encode_post`, `encode_ui`, `animation_npc_pass`, `melee_shadow`, `melee_contacts`,
+`interactive_animation`, `logical_body_sync`, `pfx_prepare`, `upload_wait`.
+
+`animation_npc_pass`, `melee_shadow`, `melee_contacts`, `interactive_animation` and `logical_body_sync`
+split `parallel_animation`: the worker pass over NPCs (with the posing of their melee shadow bodies), then
+the serial loops after it (publishing those bodies and the blades, the blade flush with contact resolution,
+interactive objects, the logical-body sync). `melee_shadow` poses a body itself only for an NPC the worker
+pass skipped or whose bones moved since (a script, a sync on read).
+`pfx_prepare` is `PfxObjects::preFrameUpdate` inside the frame encode. `upload_wait` is the CPU wait of a
+synchronous buffer upload on Metal (`MtBuffer::update` of a device-memory buffer): inside a frame it lasts
+until the GPU finishes what was committed before, so a nonzero value there is a stall.
 
 `npc_full_tick` and `npc_simplified_tick` split the `Npc::tick` loop inside `world_logic` by NPC simulation
 tier (`common/world/npcsimtier.h`); their calls count runs of consecutive same-tier NPCs, not NPCs. The
@@ -380,7 +390,7 @@ uses `OPENGOTHIC_STUCK_LOG`, and can resume a measured series. `summarize` write
 coverage/walk tables and two top-down PNGs using only the Python standard library.
 
 A line `off: <command>` or `on: <command>` runs in that take only: `OPENGOTHIC_BENCH_TAKE=off|on`, set by
-`shorts/compare/film.sh` (without it the take is `on`). `OPENGOTHIC_MANUALAIM=0|1` and `OPENGOTHIC_NPCAIM=0|1`
+`compare/film.sh` in gothic-shorts (without it the take is `on`). `OPENGOTHIC_MANUALAIM=0|1` and `OPENGOTHIC_NPCAIM=0|1`
 set the hero's and the npc archers' manual aim over Gothic.ini.
 
 Scenarios for foot IK: `ik-sweep` (12 slopes all over the world: run up, run down, walk across; ~2 min),
@@ -721,7 +731,7 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `ledges [min drop] [max drop] [count] [steep]` | waypoints at an edge with open ground that much lower 1.5..14 m away, seen from there (a target below): the yaw to `face`, the distance, the drop, the angle down; nearest first or the steepest |
 | `say <text>`, `quit` | |
 
-Talking, for shorts (`shorts/`; needs the AI server, see `shorts/README.md`):
+Talking (needs the AI server; the video tool lives in the private `kaifaty/gothic-shorts` repository):
 
 | Command | |
 |---|---|
@@ -1277,7 +1287,7 @@ differ for Lester (`PC_PSIONIC`) when he approaches the hero to talk: `AI_Proces
 by the dialogue menu in the window; the runner has no menu. The current exact-journal control
 also checks those fields, so window/runner comparisons need to report this difference explicitly.
 Compare only runs from the same build,
-base and environment. A day writes about 55 MB.
+base and environment. Days of one build are byte-identical on a host and between dev-ubuntu and Ryzen, so a difference is a real change, not noise; nothing in the simulation may depend on heap addresses ([why](../../docs/world-streaming.md#почему-сутки-перестали-повторяться-фаза-lod-анимации-2026-11-07)). A day writes about 55 MB.
 With `OPENGOTHIC_NPC_LOGIC_AUDIT=1`, `npc-day-heights.csv` compares sampled Simplified positions with a ground ray; movement itself does not cast these verification rays. The comparer splits position errors into `stationary_both` and `moving_either` from the existing body-state column, and accepts final-HP, matched-death and stationary-p95 guards.
 
 Use `npc-day-parity.tolerances.json` for Full and `OPENGOTHIC_NPC_SIMPLE_MOVE=0` controls against

@@ -84,4 +84,4 @@ The engine is [OpenGothic](https://github.com/Try/OpenGothic). The design and th
 [`archery.cpp`](https://github.com/kaifaty/GothicAI/blob/main/OpenGothic/common/game/archery.cpp) and
 [`damagecalculator.cpp`](https://github.com/kaifaty/GothicAI/blob/main/OpenGothic/common/game/damagecalculator.cpp).
 The short was filmed on the [test bench](https://github.com/kaifaty/GothicAI/tree/main/scripts/bench) and
-drawn with [`shorts/explain`](https://github.com/kaifaty/GothicAI/tree/main/shorts/explain).
+drawn with [`shorts/explain`](https://github.com/kaifaty/GothicAI/tree/0061fde837235378936b735d9669f20bfeef56f8/shorts/explain).

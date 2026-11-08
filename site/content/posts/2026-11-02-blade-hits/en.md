@@ -75,4 +75,4 @@ How it works now is in [`docs/physics.md`](https://github.com/kaifaty/GothicAI/b
 [`damagecalculator.cpp`](https://github.com/kaifaty/GothicAI/blob/main/OpenGothic/common/game/damagecalculator.cpp),
 the push in [`meleeimpact.cpp`](https://github.com/kaifaty/GothicAI/blob/main/OpenGothic/common/game/meleeimpact.cpp).
 The short was filmed on the [test bench](https://github.com/kaifaty/GothicAI/tree/main/scripts/bench) and
-drawn with [`shorts/explain`](https://github.com/kaifaty/GothicAI/tree/main/shorts/explain).
+drawn with [`shorts/explain`](https://github.com/kaifaty/GothicAI/tree/0061fde837235378936b735d9669f20bfeef56f8/shorts/explain).

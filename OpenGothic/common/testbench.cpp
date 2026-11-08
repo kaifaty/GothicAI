@@ -1345,7 +1345,7 @@ struct Bench {
   float       orbitSpeed = 0;     // degrees per second
   uint64_t    orbitUntil = 0;
 
-  // talking (scripts/shorts)
+  // talking (gothic-shorts)
   std::string camNpc;           // C_Shoulder, C_NpcFace, C_Two
   std::string zonesNpc;         // showzones: the npc whose hit zones the overlay draws
   bool        zonesOnly = false; // the overlay draws the hit zones only
@@ -1664,7 +1664,7 @@ void observeAnimationAttempt(const Npc& npc, const std::string& fields, uint64_t
   auto& control = bench.bodyAnimation;
   if(!control.active || control.mode==BodyAnimationControl::Default)
     return;
-  if((npc.weaponState()!=WeaponState::W1H && npc.weaponState()!=WeaponState::W2H) || Gothic::inst().version().game!=2)
+  if(npc.weaponState()!=WeaponState::W1H && npc.weaponState()!=WeaponState::W2H)
     return;
   const unsigned side = animationActorIndex(npc);
   if(side>=control.actorCount)
@@ -1806,7 +1806,7 @@ void loadScenario() {
     size_t b = 0;
     while(b<line.size() && std::isspace(uint8_t(line[b])))
       ++b;
-    // `off: <command>` / `on: <command>`: in that take of a before/after short only (shorts/compare/film.sh
+    // `off: <command>` / `on: <command>`: in that take of a before/after short only (gothic-shorts compare/film.sh
     // sets OPENGOTHIC_BENCH_TAKE; without it the take is `on`)
     for(const std::string_view tk:{std::string_view("off:"),std::string_view("on:")}) {
       if(line.compare(b,tk.size(),tk)!=0)
@@ -18244,7 +18244,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     bench.waitAiEnd   = bench.time + uint64_t(num(a,3,20000));
     }
   else if(c=="caption") {
-    // text on the screen of a short from here (scripts/shorts cut): caption <text>, caption off
+    // text on the screen of a short from here (gothic-shorts cut): caption <text>, caption off
     event("caption","\"text\":" + jsonStr(rest(line)=="off" ? "" : rest(line)));
     }
   else if(c=="mark") {

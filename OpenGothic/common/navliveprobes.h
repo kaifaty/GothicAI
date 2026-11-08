@@ -63,6 +63,7 @@ inline const char* materialName(asset::MaterialGroup value) {
     case asset::MaterialGroup::EARTH:return "earth";
     case asset::MaterialGroup::WATER:return "water";
     case asset::MaterialGroup::SNOW:return "snow";
+    case asset::MaterialGroup::CLAY:return "clay";
     case asset::MaterialGroup::NONE:return "none";
   }
   return "unknown";

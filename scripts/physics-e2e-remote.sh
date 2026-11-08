@@ -213,7 +213,7 @@ cp "$converter" "$out/"
 binary="$out/reference/Gothic2Notr"
 cat > "$out/game-wrapper.sh" <<'WRAPPER'
 #!/usr/bin/env bash
-exec "$PHYSICS_E2E_BINARY" "$@" -g2 -window -aa 0 -gi 0 -rt 0
+exec "$PHYSICS_E2E_BINARY" "$@" -window -aa 0 -gi 0 -rt 0
 WRAPPER
 chmod +x "$out/game-wrapper.sh"
 printf '%s\n' "$engine" > "$out/engine.txt"

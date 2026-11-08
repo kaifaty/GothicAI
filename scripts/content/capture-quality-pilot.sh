@@ -153,7 +153,7 @@ PYGAME
     bash "$(dirname "$0")/base-ensure.sh" "$game"
   rc=0
   (cd "$out/run" && timeout "${QUALITY_PILOT_TIMEOUT:-240}" "$HOME/$BUILD_TASK/build/opengothic/Gothic2Notr" \
-    -g "$game" -g2 -window -devmode -save 1) >"$out/game.log" 2>&1 || rc=$?
+    -g "$game" -window -devmode -save 1) >"$out/game.log" 2>&1 || rc=$?
   printf '%s\n' "$rc" >"$out/exit.txt"
   [[ "$rc" == 0 ]] || { tail -30 "$out/game.log"; exit "$rc"; }
   check_args=()

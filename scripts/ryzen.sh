@@ -497,7 +497,7 @@ PY
   else
     cat >"$out/game.sh" <<'WRAPPER'
 #!/usr/bin/env bash
-exec "$RYZEN_GAME_BIN" "$@" -g2 -window
+exec "$RYZEN_GAME_BIN" "$@" -window
 WRAPPER
     chmod +x "$out/game.sh"
     export GAME_BIN="$out/game.sh"
@@ -558,7 +558,7 @@ remote_run() {
   # Windowed on the logged-in desktop; never take it fullscreen or use a software display.
   cat >"$LOG_DIR/game.sh" <<'WRAPPER'
 #!/usr/bin/env bash
-exec "$RYZEN_GAME_BIN" "$@" -g2 -window
+exec "$RYZEN_GAME_BIN" "$@" -window
 WRAPPER
   chmod +x "$LOG_DIR/game.sh"
   export GAME_BIN="$LOG_DIR/game.sh"
@@ -1423,7 +1423,9 @@ RUN="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 RUN_CREATED=1
 remote mkdir -p "$STATE/source" "$STATE/inputs/$RUN"
 started=$SECONDS
-rsync -a --checksum --delete \
+# Copy by content and stamp the copied files now: a file edited before the last build of this folder keeps a time
+# older than its objects, and ninja would skip it (a renderer.cpp edited during a run was not rebuilt, 2026-11-08).
+rsync -a --checksum --no-times --delete \
   --exclude=.git --exclude=build/ --exclude='build-*/' --exclude=cmake-build-\*/ \
   --exclude=.venv/ --exclude=__pycache__/ --exclude=.pytest_cache/ --exclude=.ruff_cache/ --exclude=.mypy_cache/ \
   --exclude=.claude/ --exclude=.codex/ --exclude=.DS_Store --exclude=node_modules/ \

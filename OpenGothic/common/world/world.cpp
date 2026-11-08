@@ -119,6 +119,8 @@ const char* materialTag(asset::MaterialGroup src) {
       return "WA";
     case asset::MaterialGroup::SNOW:
       return "SA"; // sand?
+    case asset::MaterialGroup::CLAY:
+      return "CL";
     }
   return "UD";
   }
@@ -141,12 +143,12 @@ World::World(GameSession& game, std::string_view file, bool startup, std::functi
     windRooms.reset(world.bsp.mode,std::move(world.rooms));
     auto worldCloth=WorldCloth::extract(worldMesh,&chunks);
     const bool streamLandscape=residency && !Resources::isHeadless() && !Gothic::inst().isBenchmarkMode() &&
-        !CommandLine::inst().isRayQuery() && !Shaders::options().doRtScene && !Shaders::options().doSoftwareRT;
+        !CommandLine::inst().isRayQuery() && !Shaders::options().doRtScene;
     if(residency && !Resources::isHeadless() && !streamLandscape) {
       if(Gothic::inst().isBenchmarkMode())
         Tempest::Log::i("Landscape streaming disabled: built-in benchmark requires the complete landscape");
       else
-        Tempest::Log::i("Landscape streaming disabled: RT, GI or SWRT requires a whole-world BVH");
+        Tempest::Log::i("Landscape streaming disabled: RT or GI requires a whole-world BVH");
       }
 
     const bool probeSerial = LoadProbe::serial();
@@ -722,7 +724,7 @@ BodyTraces::Body World::bodyRule(const Npc& body, const Npc* hero) const {
   rule.now          = gameMinute();
   rule.heroDistance = hero!=nullptr ? (body.position()-hero->position()).length() : 0.f;
   rule.missionItems = body.inventory().hasMissionItems();
-  rule.dragon       = version().game==2 && body.guild()==GIL_DRAGON;
+  rule.dragon       = body.guild()==GIL_DRAGON;
   rule.immortal     = body.isImmortal();
   rule.storyType    = isStoryNpcType(int32_t(body.handlePtr()->type));
   return rule;
@@ -2051,10 +2053,6 @@ WayPath World::wayTo(const Npc &npc, const WayPoint &end) const {
 
 GameScript& World::script() const {
   return *game.script();
-  }
-
-const VersionInfo& World::version() const {
-  return game.version();
   }
 
 void World::assignRoomToGuild(std::string_view r, int32_t guildId) {

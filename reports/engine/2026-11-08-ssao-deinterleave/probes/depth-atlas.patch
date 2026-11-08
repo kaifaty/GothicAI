@@ -1,0 +1,218 @@
+diff --git a/OpenGothic/common/graphics/renderer.cpp b/OpenGothic/common/graphics/renderer.cpp
+index 01cef111..1691edb1 100644
+--- a/OpenGothic/common/graphics/renderer.cpp
++++ b/OpenGothic/common/graphics/renderer.cpp
+@@ -2472,14 +2472,24 @@ void Renderer::prepareSSAO(Encoder<CommandBuffer>& cmd, WorldView& wview) {
+ 
+   auto& device = Resources::device();
+   const auto aoSize = effectResolution();
+-  if(ssao.ssaoBuf.size()!=aoSize || ssao.ssaoBlur.size()!=zbuffer.size()) {
++  const auto atlasTile = Size((zbuffer.w()+3)/4, (zbuffer.h()+3)/4);
++  const auto atlasSize = Size(atlasTile.w*4, atlasTile.h*4);
++  if(ssao.ssaoBuf.size()!=aoSize || ssao.ssaoBlur.size()!=zbuffer.size() || ssao.depthAtlas.size()!=atlasSize) {
+     Resources::recycle(std::move(ssao.ssaoBuf));
+     Resources::recycle(std::move(ssao.ssaoBlur));
+-    ssao.ssaoBuf  = device.image2d(ssao.aoFormat, aoSize);
+-    ssao.ssaoBlur = device.image2d(ssao.aoFormat, zbuffer.size());
++    Resources::recycle(std::move(ssao.depthAtlas));
++    ssao.ssaoBuf    = device.image2d(ssao.aoFormat, aoSize);
++    ssao.ssaoBlur   = device.image2d(ssao.aoFormat, zbuffer.size());
++    ssao.depthAtlas = device.image2d(TextureFormat::R32F, atlasSize);
+     }
+ 
+   cmd.setFramebuffer({});
++  cmd.setDebugMarker("SSAO-depth");
++  cmd.setBinding(0, ssao.depthAtlas);
++  cmd.setBinding(1, zbuffer, Sampler::nearest(ClampMode::ClampToEdge));
++  cmd.setPipeline(shaders.ssaoDepth);
++  cmd.dispatchThreads(atlasTile);
++
+   cmd.setDebugMarker("SSAO");
+ 
+   cmd.setBinding(0, ssao.ssaoBuf);
+@@ -2487,9 +2497,11 @@ void Renderer::prepareSSAO(Encoder<CommandBuffer>& cmd, WorldView& wview) {
+   cmd.setBinding(2, gbufDiffuse, Sampler::nearest(ClampMode::ClampToEdge));
+   cmd.setBinding(3, gbufNormal,  Sampler::nearest(ClampMode::ClampToEdge));
+   cmd.setBinding(4, zbuffer,     Sampler::nearest(ClampMode::ClampToEdge));
++  cmd.setBinding(5, ssao.depthAtlas, Sampler::nearest(ClampMode::ClampToEdge));
+   cmd.setPushData(&push, sizeof(push));
+   cmd.setPipeline(shaders.ssao);
+-  cmd.dispatchThreads(ssao.ssaoBuf.size());
++  // ssao.comp gives the four 2x2 phases of a 16x16 tile to four groups: whole tiles only
++  cmd.dispatchThreads(size_t(aoSize.w+15)/16*16, size_t(aoSize.h+15)/16*16);
+ 
+   cmd.setDebugMarker("SSAO-blur");
+   cmd.setBinding(0, ssao.ssaoBlur);
+diff --git a/OpenGothic/common/graphics/renderer.h b/OpenGothic/common/graphics/renderer.h
+index b27d19ea..fdd67b64 100644
+--- a/OpenGothic/common/graphics/renderer.h
++++ b/OpenGothic/common/graphics/renderer.h
+@@ -239,6 +239,7 @@ class Renderer final {
+       Tempest::TextureFormat    aoFormat = Tempest::TextureFormat::R8;
+       Tempest::StorageImage     ssaoBuf;
+       Tempest::StorageImage     ssaoBlur;
++      Tempest::StorageImage     depthAtlas; // ssao_depth.comp
+       } ssao;
+ 
+     struct Cmaa2 {
+diff --git a/OpenGothic/common/graphics/shaders.cpp b/OpenGothic/common/graphics/shaders.cpp
+index 91c9d358..1a06e840 100644
+--- a/OpenGothic/common/graphics/shaders.cpp
++++ b/OpenGothic/common/graphics/shaders.cpp
+@@ -108,6 +108,7 @@ void Shaders::compileShaders() noexcept {
+ 
+   ssao                = computeShader("ssao.comp.sprv");
+   ssaoBlur            = computeShader("ssao_blur.comp.sprv");
++  ssaoDepth           = computeShader("ssao_depth.comp.sprv");
+ 
+   bloodDecal       = bloodDecalShader(opts.doMaterialMaps);
+   bloodDecalAlbedo = bloodDecalShader(false);
+diff --git a/OpenGothic/common/graphics/shaders.h b/OpenGothic/common/graphics/shaders.h
+index 574729d1..974b93e2 100644
+--- a/OpenGothic/common/graphics/shaders.h
++++ b/OpenGothic/common/graphics/shaders.h
+@@ -59,7 +59,7 @@ class Shaders {
+     Tempest::RenderPipeline  stash;
+     Tempest::RenderPipeline  bink;
+ 
+-    Tempest::ComputePipeline ssao, ssaoBlur;
++    Tempest::ComputePipeline ssao, ssaoBlur, ssaoDepth;
+ 
+     Tempest::ComputePipeline irradiance;
+ 
+diff --git a/OpenGothic/shader/CMakeLists.txt b/OpenGothic/shader/CMakeLists.txt
+index 4d296445..c9844f42 100644
+--- a/OpenGothic/shader/CMakeLists.txt
++++ b/OpenGothic/shader/CMakeLists.txt
+@@ -338,6 +338,7 @@ add_shader(patch.comp                patch.comp)
+ 
+ add_shader(ssao.comp                 ssao/ssao.comp)
+ add_shader(ssao_blur.comp            ssao/ssao_blur.comp)
++add_shader(ssao_depth.comp           ssao/ssao_depth.comp)
+ 
+ # GPU-driven: HiZ
+ if(IOS)
+diff --git a/OpenGothic/shader/ssao/ssao.comp b/OpenGothic/shader/ssao/ssao.comp
+index 834b235c..fed0e1c6 100644
+--- a/OpenGothic/shader/ssao/ssao.comp
++++ b/OpenGothic/shader/ssao/ssao.comp
+@@ -21,6 +21,7 @@ layout(binding  = 1, std140) uniform UboScene {
+ layout(binding  = 2) uniform sampler2D  gbufDiffuse;
+ layout(binding  = 3) uniform usampler2D gbufNormal;
+ layout(binding  = 4) uniform sampler2D  depthBuf;
++layout(binding  = 5) uniform sampler2D  depthAtlas; // ssao_depth.comp
+ 
+ const uint  numSamples     = 32;
+ const uint  numIter        = 8;
+@@ -111,6 +112,29 @@ float wangHashNoise(uvec2 uv, uint s) {
+   return value;
+   }
+ 
++// Deinterleaved sampling (reports/engine/2026-11-08-ssao-deinterleave): a texel's sample rotation depends on its
++// phase in a 2x2 block, and the four phases of a 16x16 tile run in four separate groups. All threads of a SIMD
++// group then share one rotation: their sample offsets are alike and their depth reads hit neighbouring texels.
++// A white rotation per texel made neighbours read far apart lines of the cache and diverge on every branch.
++const int interleave = 2;
++
++ivec2 deinterleavedTexel() {
++  const ivec2 group = ivec2(gl_WorkGroupID.xy);
++  const ivec2 tile  = group/interleave;
++  const ivec2 phase = group%interleave;
++  return (tile*ivec2(gl_WorkGroupSize.xy) + ivec2(gl_LocalInvocationID.xy))*interleave + phase;
++  }
++
++float sampleRotation(ivec2 texel) {
++  // 2x2 Bayer order of the phases. A phase turns the 32 azimuths of the set by a quarter turn and a quarter of
++  // their step: the blur mixes the four into 128 azimuths, each elevation at four of them about 90 deg apart.
++  const ivec2 p   = texel & 1;
++  const uint  idx = uint(((p.x ^ p.y) << 1) | p.y);
++  // one more turn per 16x8 region, the footprint of a SIMD group: no single kernel over the whole screen
++  const float region = wangHashNoise(uvec2(texel.x >> 4, texel.y >> 3), 0);
++  return M_PI*2.0*(region + float(idx)*(0.25 + 1.0/128.0));
++  }
++
+ int estimateMaxSteps(float z) {
+   if(z>=1.0)
+     return 0; // sky
+@@ -136,6 +160,14 @@ float readZ(in vec2 posf) {
+   return textureLod(depthBuf, posf.xy*0.5+vec2(0.5), 0).r;
+   }
+ 
++// The pixel of depthBuf that readZ() samples, read from the 4x4 atlas
++float readZAtlas(in vec2 posf) {
++  const ivec2 size = textureSize(depthBuf,0);
++  const ivec2 tile = (size + 3)/4;
++  const ivec2 pix  = clamp(ivec2(floor((posf.xy*0.5+vec2(0.5))*vec2(size))), ivec2(0), size-1);
++  return texelFetch(depthAtlas, (pix & 3)*tile + (pix >> 2), 0).r;
++  }
++
+ float sampleRadius(uint i, uint maxSmp) {
+   return 0.5+float(i)/float(maxSmp);
+   }
+@@ -153,7 +185,7 @@ void calcOcclussion(const vec3 at0, const vec3 pos0, const float f0, uint seed,
+       continue;
+       }
+ 
+-    float z      = readZ(at1.xy);
++    float z      = readZAtlas(at1.xy);
+     bool  isHit  = floor(z*32768.0+0.5) < floor(at1.z*32768.0);
+     float distQ  = 1;
+ 
+@@ -218,7 +250,7 @@ void main() {
+   barrier();
+ 
+   screenSize = imageSize(result); // half of the depth buffer with halfResAoFog
+-  fragCoord  = ivec2(gl_GlobalInvocationID.xy);
++  fragCoord  = deinterleavedTexel();
+ 
+   // A half-res texel traces from the top-left depth pixel of its 2x2 block (ssao_blur.comp undoes the shift).
+   // Its own centre lies on a border between two depth pixels: rounding of 1/640 then picked the left or
+@@ -246,8 +278,7 @@ void main() {
+     tangent[2] = norm;
+     }
+ 
+-  // const float f0 = M_PI*2.0*interleavedGradientNoise(fragCoord);
+-  const float f0 = M_PI*2.0*wangHashNoise(uvec2(fragCoord), 0);
++  const float f0 = sampleRotation(fragCoord);
+ 
+   int maxSteps = estimateMaxSteps(at0.z);
+   atomicMax(shMaxSteps, maxSteps);
+@@ -278,7 +309,7 @@ void main() {
+     occlusion = resolveOcclusion();
+ #endif
+ 
+-    imageStore(result, ivec2(gl_GlobalInvocationID.xy), vec4(1.0 - occlusion));
++    imageStore(result, fragCoord, vec4(1.0 - occlusion));
+     // if(dbg>4)
+     //   imageStore(result, ivec2(gl_GlobalInvocationID.xy), vec4(0.0));
+     // imageStore(result, ivec2(gl_GlobalInvocationID.xy), vec4(float(dbg)/10.0));
+diff --git a/OpenGothic/shader/ssao/ssao_depth.comp b/OpenGothic/shader/ssao/ssao_depth.comp
+new file mode 100644
+--- /dev/null
++++ b/OpenGothic/shader/ssao/ssao_depth.comp
+@@ -0,0 +1,25 @@
++#version 460
++#extension GL_ARB_separate_shader_objects : enable
++#extension GL_GOOGLE_include_directive : enable
++#extension GL_EXT_control_flow_attributes : enable
++
++// The depth buffer laid out as a 4x4 atlas for ssao.comp: tile (a,b) holds the pixels x%4==a, y%4==b. Threads of
++// one SIMD group trace texels four depth pixels apart; in the atlas their samples read neighbouring texels.
++// One thread moves one 4x4 block, so both the reads and the writes of neighbouring threads are neighbours.
++layout(local_size_x = 8, local_size_y = 8) in;
++
++layout(binding = 0) uniform writeonly image2D result;
++layout(binding = 1) uniform sampler2D depthBuf;
++
++void main() {
++  const ivec2 size = textureSize(depthBuf, 0);
++  const ivec2 tile = (size + 3)/4;
++  const ivec2 at   = ivec2(gl_GlobalInvocationID.xy);
++  if(any(greaterThanEqual(at, tile)))
++    return;
++  [[unroll]] for(int b=0; b<4; ++b)
++    [[unroll]] for(int a=0; a<4; ++a) {
++      const ivec2 src = min(at*4 + ivec2(a,b), size-1);
++      imageStore(result, ivec2(a,b)*tile + at, vec4(texelFetch(depthBuf, src, 0).r));
++      }
++  }

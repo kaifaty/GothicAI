@@ -89,7 +89,7 @@ cat > "$out/game-wrapper.sh" <<'WRAPPER'
 #!/usr/bin/env bash
 set -euo pipefail
 GAME_BIN="$0" bash "$(dirname "$0")/base-ensure.sh" "$GOTHIC_DIR"
-exec "$PHYSICS_E2E_BINARY" "$@" -g2 -window -aa 0 -gi 0 -rt 0
+exec "$PHYSICS_E2E_BINARY" "$@" -window -aa 0 -gi 0 -rt 0
 WRAPPER
 chmod +x "$out/game-wrapper.sh"
 cat > "$out/see/Gothic.ini" <<'INI'

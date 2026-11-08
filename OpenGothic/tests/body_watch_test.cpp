@@ -854,6 +854,107 @@ void meleeRemoval(Npc& victim) {
   }
 }
 
+namespace {
+// The melee shadow body of npc posed now, the way the shadow loop always posed it in place.
+MeleeShadowBody posedShadowBody(const Npc& npc) {
+  std::vector<HitZones::Posed> zones;
+  npc.hitZonesPosed(zones);
+  MeleeShadowBody body;
+  for(const auto& capsule:zones)
+    body.capsules.push_back({capsule.a,capsule.b,capsule.r,capsule.bone,uint8_t(capsule.zone)});
+  DynamicWorld::boundShadowBody(body);
+  return body;
+  }
+
+bool sameShadowBody(const MeleeShadowBody& a, const MeleeShadowBody& b) {
+  const auto bits=[](const Tempest::Vec3& v) { return std::array<float,3>{v.x,v.y,v.z}; };
+  if(a.capsules.size()!=b.capsules.size() ||
+     std::memcmp(bits(a.boundsMin).data(),bits(b.boundsMin).data(),sizeof(float)*3)!=0 ||
+     std::memcmp(bits(a.boundsMax).data(),bits(b.boundsMax).data(),sizeof(float)*3)!=0)
+    return false;
+  for(size_t i=0;i<a.capsules.size();++i) {
+    const auto& x=a.capsules[i]; const auto& y=b.capsules[i];
+    if(std::memcmp(bits(x.from).data(),bits(y.from).data(),sizeof(float)*3)!=0 ||
+       std::memcmp(bits(x.to).data(),bits(y.to).data(),sizeof(float)*3)!=0 ||
+       std::memcmp(&x.radiusCm,&y.radiusCm,sizeof(float))!=0 || x.bone!=y.bone || x.zone!=y.zone)
+      return false;
+    }
+  return true;
+  }
+
+// A damage script inside the melee shadow loop of WorldObjects::updateAnimation spawns
+// an NPC, removes the attacker (published this frame) and an NPC behind it (not yet
+// published) and moves another one. Bodies are posed in the parallel pass; the loop must
+// publish what posing in place gives, and removed owners must leave the published set.
+void meleeShadowLoopChanges(Npc& victim) {
+  ++cases;
+  auto& gothic=Gothic::inst();
+  auto& world=victim.world();
+  const auto bandit=world.script().findSymbolIndex("BDT_1003_BANDIT_M");
+  const auto sword=world.script().findSymbolIndex("ItMw_1h_Common_01");
+  const auto perception=world.script().findSymbolIndex("ZS_ATTACK");
+  expect(bandit!=size_t(-1) && sword!=size_t(-1) && perception!=size_t(-1),"melee loop stock symbols exist");
+  victim.clearAiQueue(); victim.clearState(true); victim.clearGoTo(); victim.stopWalking();
+  victim.closeWeapon(true); victim.setExternalControl(false);
+  victim.handle().attribute[ATR_HITPOINTS]=victim.handle().attribute[ATR_HITPOINTSMAX]=5000;
+  victim.setPerceptionEnable(PERC_ASSESSDAMAGE,perception);
+  // Fighters with a target are animated every frame, outside the animation LOD.
+  auto fighter=[&](const Tempest::Vec3& offset) {
+    auto* npc=world.addNpc(bandit,victim.position()+offset);
+    expect(npc!=nullptr,"melee loop creates a real NPC");
+    npc->clearAiQueue(); npc->clearState(true); npc->clearGoTo(); npc->stopWalking();
+    npc->setExternalControl(true); npc->setToFightMode(sword); npc->setTarget(&victim);
+    return npc;
+    };
+  auto* attacker=fighter({150,0,0});
+  expect(attacker->playAnimByName("S_1HATTACK",BS_HIT)!=nullptr,"melee loop starts a stock attack");
+  attacker->updateAnimation(0,true); attacker->updateMeleeShadow();
+  BodyController::fixturePrepare(*attacker,victim,150,0);
+  victim.setExternalControl(false);
+  expect(attacker->playAnimByName("T_1HATTACKL",BS_HIT)!=nullptr,"melee loop starts the next stock attack");
+  auto* bystander=fighter({-150,0,0});
+  auto* mover=fighter({0,0,150});
+  for(auto* npc:{bystander,mover}) {
+    npc->updateAnimation(0,true); npc->updateMeleeShadow();
+    }
+  expect(world.npcId(attacker)<world.npcId(bystander) && world.npcId(bystander)<world.npcId(mover),
+         "the removed and the moved NPC come after the attacker in the shadow loop");
+  // The pending contact the attacker's next shadow update retires, as in meleeRemoval.
+  const uint64_t now=world.tickCount();
+  world.physic()->updateShadowBody(&victim,{{{10,100000,0},{10,100020,0},1.f,0,1}});
+  world.physic()->updateShadowBlade(attacker,1,{{{0,100000,0},{0,100020,0},{0,0,1},1.f}},now,0,double(now+34));
+  world.physic()->updateShadowBlade(attacker,1,{{{20,100000,0},{20,100020,0},{0,0,1},1.f}},now+33,0,double(now+34));
+  world.physic()->flushShadowBlades();
+  Npc* newcomer=nullptr;
+  MeleeShadowBody beforeMove;
+  unsigned callbacks=0;
+  gothic.interceptPerception=[&](Npc& self,Npc& other,Npc*,PercType type,const HeroDeed*) {
+    if(&self==&victim && &other==attacker && type==PERC_ASSESSDAMAGE && callbacks++==0) {
+      beforeMove=posedShadowBody(*mover);
+      mover->setPosition(mover->position()+Tempest::Vec3(40,0,0));
+      mover->updateTransform();
+      world.removeNpc(*bystander);
+      world.removeNpc(*attacker);
+      newcomer=world.addNpc(bandit,victim.position()+Tempest::Vec3(0,0,-150));
+      }
+    return true;
+    };
+  Gothic::inst().gameSession()->updateAnimation(33);
+  gothic.interceptPerception={};
+  expect(callbacks==1 && newcomer!=nullptr,"the damage script ran once inside the shadow loop");
+  MeleeShadowBody published;
+  expect(!world.physic()->shadowBody(attacker,published) && !world.physic()->shadowBody(bystander,published),
+         "NPCs removed inside the shadow loop leave the published bodies");
+  expect(world.physic()->shadowBody(newcomer,published) && sameShadowBody(published,posedShadowBody(*newcomer)),
+         "an NPC spawned inside the shadow loop publishes its body posed in place");
+  expect(world.physic()->shadowBody(mover,published) && sameShadowBody(published,posedShadowBody(*mover)) &&
+         !sameShadowBody(published,beforeMove),
+         "an NPC moved inside the shadow loop publishes its moved body, not the parallel pass's");
+  world.removeNpc(*newcomer);
+  world.removeNpc(*mover);
+  }
+}
+
 // Uses a fresh full session, so unsaved Pose speed overrides cannot survive in
 // the object being tested. The restored native body is the canonical reference.
 class NpcLogicalStateContract final {
@@ -1743,6 +1844,7 @@ int main(int argc,const char** argv) {
     BodyController::reset();
     BodyObservations::disable();
     meleeRemoval(b);
+    meleeShadowLoopChanges(b);
     NpcLogicalStateContract::run(gothic.world()->npcId(&b),scenario,output);
     {
       const auto statsScenario=output/"melee-stats.bench";

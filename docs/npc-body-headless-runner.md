@@ -48,7 +48,7 @@ CPU adapters сохраняют скелеты, последовательнос
 `--world <ZEN>` вместо `--save` начинает новую игру в этом мире, как `-w` в игре; после загрузки runner, как `Gothic::finishLoading`, зовёт `Gothic::onWorldLoaded`. `--game-parity` считает мир так же, как окно: создаёт `AiBridge`, как `game/main.cpp` (без сервера мост всё равно считает важные разговоры вокруг героя при `-nointro` сказанными, перехватывает восприятие зверей и запускает диалоги как программы графа; `GOTHIC_AI=0` выключает); после каждого шага отдаёт `World::setHeadlessViewer` позицию камеры, и `World::isInPfxRange` даёт те же 40 м, что рендер (события анимаций с эффектами и foot IK — только рядом с камерой, а не у всех NPC мира); ставит `OPENGOTHIC_BODY_TRACE=0`, если вызывающий не задал своё. С ним час `npc-day-parity` без окна побайтно равен оконному прогону той же сборки и окружения и идёт 66 с вместо 98 ([замер](../reports/compute/2026-11-02-headless-bench/README.md)). Без флага runner ведёт себя как раньше: сбор данных тел и навигации не меняется.
 
 ```sh
-gothic-body-runner -g "$GOTHIC_DIR" -g2 -devmode -nointro --world NEWWORLD.ZEN --game-parity \
+gothic-body-runner -g "$GOTHIC_DIR" -devmode -nointro --world NEWWORLD.ZEN --game-parity \
   --scenario scripts/bench/npc-day-parity.bench --output /absolute/out --mode lockstep
 ```
 
@@ -66,7 +66,7 @@ gothic-body-runner -g "$GOTHIC_DIR" -g2 -devmode -nointro --world NEWWORLD.ZEN -
 
 `--stdio` включает построчный протокол через stdin/stdout. Каждая команда — JSON object с `cmd`; необязательный `id` возвращается без изменения. Ответы имеют `schema_version: 1`, `ok` и status fields. Engine/library logs отправляются в stderr, чтобы stdout оставался JSONL.
 
-CLI требует `--save` и `--scenario`; `--output` по умолчанию `.body-runner`, `--mode` по умолчанию `lockstep`. `-g <assets>` и `-g2` выбирают игровые данные и Gothic II. Без `--stdio` runner сам загружает save, исполняет сценарий до завершения, записывает summary и выходит.
+CLI требует `--save` и `--scenario`; `--output` по умолчанию `.body-runner`, `--mode` по умолчанию `lockstep`. `-g <assets>` выбирает игровые данные Gothic II NotR. Без `--stdio` runner сам загружает save, исполняет сценарий до завершения, записывает summary и выходит.
 
 | Команда | Семантика |
 | --- | --- |

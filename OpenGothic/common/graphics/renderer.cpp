@@ -95,8 +95,6 @@ Renderer::Renderer() {
   settings.giMethod         = Gothic::options().doGi;
   settings.vsmEnabled       = Shaders::options().doVirtualShadow;
   settings.rtsmEnabled      = Shaders::options().doSoftwareShadow;
-  settings.swrEnabled       = Shaders::options().swRenderingPreset>0;
-  settings.swrtEnabled      = Shaders::options().doSoftwareRT;
   if(const char* stats = std::getenv("OPENGOTHIC_VSM_STATS"))
     settings.vsmStats = std::string_view(stats)=="1";
   // OPENGOTHIC_VSM_LAMP=hard|flat: the lamp shadow filter for a study of its cost
@@ -643,12 +641,6 @@ void Renderer::resetViewport(Tempest::Size res, Tempest::Size fullRes) {
   // volumetric sky
   sky.occlusionLut = StorageImage();
 
-  // software renderer
-  swr.outputImage = StorageImage();
-
-  // swrt
-  swrt.outputImage = StorageImage();
-
   resetSkyFog();
   }
 
@@ -809,14 +801,12 @@ void Renderer::dbgDraw(Tempest::Painter& p) {
     return;
 
   std::vector<const Texture2d*> tex;
-  //tex.push_back(&textureCast(swr.outputImage));
   //tex.push_back(&textureCast(hiz.hiZ));
   //tex.push_back(&textureCast(hiz.smProj));
   //tex.push_back(&textureCast(hiz.hiZSm1));
   //tex.push_back(&textureCast(shadowMap[1]));
   //tex.push_back(&textureCast<const Texture2d&>(shadowMap[0]));
   //tex.push_back(&textureCast<const Texture2d&>(vsm.pageData));
-  //tex.push_back(&textureCast<const Texture2d&>(swrt.outputImage));
   tex.push_back(&textureCast<const Texture2d&>(surf.irrImage));
 
   static int size = 400;
@@ -923,22 +913,20 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   if(world!=nullptr && blood.prepare(fId, *world, wview.sceneGlobals(), camera.listenerPosition().pos))
     blood.draw(cmd, fId, wview.sceneGlobals(), gbufDiffuse, Shaders::options().doMaterialMaps ? &gbufOrm : nullptr,
                gbufNormal, zbuffer);
+  // SSAO needs only the depth: ahead of the shadow maps its compute runs under their vertex work on Metal
+  prepareSSAO(cmd, wview);
   mainTiming.finish();
 
   drawShadowMap(cmd, fId, wview);
   prepareEpipolar(cmd, wview);
 
   drawVsm(cmd, wview);
-  drawSwr(cmd, wview);
   drawRtsm(cmd, wview);
   drawRtsmOmni(cmd, wview);
-
-  drawSwRT(cmd, wview);
 
   { FrameProfile::Scope timing(FrameProfile::Zone::EncodeMain); prepareIrradiance(cmd, wview); }
   prepareExposure(cmd, wview);
   FrameProfile::Scope lightingTiming(FrameProfile::Zone::EncodeMain);
-  prepareSSAO(cmd, wview);
   prepareFog (cmd, wview);
   prepareGi  (cmd, wview);
   prepareSurfels(cmd, wview);
@@ -985,14 +973,13 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   drawProbesHitDbg(cmd);
   drawSurfelsDbg(cmd, wview);
   drawVsmDbg(cmd, wview);
-  drawSwrDbg(cmd, wview);
   drawRtsmDbg(cmd, wview);
   drawRayQueryDbg(cmd, wview);
   //
 
-  cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}});
   FrameProfile::Scope postTiming(FrameProfile::Zone::EncodePost);
   if(camera.isInWater()) {
+    cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}});
     cmd.setDebugMarker("Underwater");
     drawUnderwater(cmd, wview);
     }
@@ -1008,12 +995,19 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
     return;
     }
 
-  if(taa.active)
-    drawTaa(cmd);
-  drawBloom(cmd);
-
   auto& tonemapTarget = (upscale.input.isEmpty() || shotNative) ? result : upscale.input;
-  if(settings.aaEnabled) {
+  // sharpening, bloom and tonemapping of the TAA frame are one pass; Lanczos at a smaller size still goes the long way
+  const bool fused = taa.active && settings.bloomEnabled && !bloomChain[0].isEmpty() &&
+                     tonemapTarget.size()==sceneLinear.size();
+  if(taa.active)
+    drawTaa(cmd, fused);
+  drawBloom(cmd, fused);
+
+  if(fused) {
+    cmd.setDebugMarker("Tonemapping");
+    drawTonemappingTaa(tonemapTarget, cmd, wview);
+    }
+  else if(settings.aaEnabled) {
     cmd.setDebugMarker("CMAA2 & Tonemapping");
     drawCMAA2(tonemapTarget, cmd, wview);
     } else {
@@ -1030,7 +1024,7 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
   wview.postFrameupdate();
   }
 
-void Renderer::drawBloom(Encoder<CommandBuffer>& cmd) {
+void Renderer::drawBloom(Encoder<CommandBuffer>& cmd, bool fused) {
   if(!settings.bloomEnabled || bloomChain[0].isEmpty())
     return;
   cmd.setDebugMarker("Bloom");
@@ -1038,7 +1032,10 @@ void Renderer::drawBloom(Encoder<CommandBuffer>& cmd) {
   for(size_t i=0; i<bloomChain.size(); ++i) {
     cmd.setFramebuffer({{bloomChain[i], Tempest::Discard, Tempest::Preserve}});
     if(i==0 && temporal.active)
-      cmd.setBinding(0, temporal.output, Sampler::bilinear(ClampMode::ClampToEdge)); else
+      cmd.setBinding(0, temporal.output, Sampler::bilinear(ClampMode::ClampToEdge));
+    else if(i==0 && fused)
+      cmd.setBinding(0, taa.history[taa.cur^1], Sampler::bilinear(ClampMode::ClampToEdge));
+    else
       cmd.setBinding(0, i==0 ? sceneLinear : bloomChain[i-1], Sampler::bilinear(ClampMode::ClampToEdge));
     cmd.setPipeline(i==0 ? shaders.bloomDownKaris : shaders.bloomDown);
     cmd.draw(nullptr, 0, 3);
@@ -1050,8 +1047,8 @@ void Renderer::drawBloom(Encoder<CommandBuffer>& cmd) {
     cmd.setPipeline(shaders.bloomUp);
     cmd.draw(nullptr, 0, 3);
     }
-  if(temporal.active)
-    return; // the tonemapping mixes it in (drawTonemappingTemporal)
+  if(temporal.active || fused)
+    return; // the tonemapping mixes it in (drawTonemappingTemporal, drawTonemappingTaa)
   struct Push {
     float strength = 0.05f;  // the share of the scene's light a lens scatters into the glow
     float levels   = 0;
@@ -1158,7 +1155,7 @@ void Renderer::drawCMAA2(Tempest::Attachment& result, Tempest::Encoder<Tempest::
   cmd.drawIndirect(cmaa2.indirectBuffer, 3*sizeof(uint32_t));
   }
 
-void Renderer::drawTaa(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
+void Renderer::drawTaa(Tempest::Encoder<Tempest::CommandBuffer>& cmd, bool fused) {
   // In linear HDR after the translucent and underwater passes, before bloom (shader/antialiasing/taa_resolve.frag)
   struct Push {
     Matrix4x4 reproject;
@@ -1179,6 +1176,11 @@ void Renderer::drawTaa(Tempest::Encoder<Tempest::CommandBuffer>& cmd) {
   cmd.setPipeline(shaders.taaResolve);
   cmd.draw(nullptr, 0, 3);
   taa.valid = true;
+
+  if(fused) {
+    taa.cur ^= 1; // the frame stays in the history: drawTonemappingTaa sharpens it on the way out
+    return;
+    }
 
   // the history stays unsharpened: sharpening fed back would build up from frame to frame
   drawTaaSharpen(cmd);
@@ -1244,6 +1246,32 @@ void Renderer::drawTemporalUpscale(Tempest::Encoder<Tempest::CommandBuffer>& cmd
   cmd.setDebugMarker("Upscale-temporal");
   cmd.upscaleTemporal(sceneLinear, zbuffer, temporal.motion, temporal.output, desc);
   taa.valid = true;
+  }
+
+void Renderer::drawTonemappingTaa(Attachment& result, Encoder<CommandBuffer>& cmd, const WorldView& wview) {
+  // drawTaaSharpen, the mix of drawBloom and drawTonemapping in one pass (tonemapping.frag BLOOM, RCAS)
+  struct Push {
+    float brightness    = 0;
+    float contrast      = 1;
+    float gamma         = 1.f/2.2f;
+    float mul           = 1;
+    float bloomStrength = 0.05f; // as drawBloom's mix
+    float bloomLevels   = 1;
+    float sharpness     = 0;
+    } p;
+  p.brightness  = (settings.zVidBrightness - 0.5f)*0.1f;
+  p.contrast    = std::max(1.5f - settings.zVidContrast, 0.01f);
+  p.gamma       = p.gamma/std::max(2.0f*settings.zVidGamma,  0.01f);
+  p.bloomLevels = float(bloomChain.size());
+  p.sharpness   = settings.taaSharpness;
+
+  cmd.setFramebuffer({ {result, Tempest::Discard, Tempest::Preserve} });
+  cmd.setBinding(0, wview.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
+  cmd.setBinding(1, taa.history[taa.cur^1], Sampler::nearest(ClampMode::ClampToEdge));
+  cmd.setBinding(2, bloomChain[0], Sampler::bilinear(ClampMode::ClampToEdge));
+  cmd.setPushData(p);
+  cmd.setPipeline(shaders.tonemappingTaa);
+  cmd.draw(nullptr, 0, 3);
   }
 
 void Renderer::drawTonemappingTemporal(Attachment& result, Encoder<CommandBuffer>& cmd, const WorldView& wview) {
@@ -1392,37 +1420,6 @@ void Renderer::drawSunMoon(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const 
   cmd.draw(nullptr, 0, 6);
   }
 
-void Renderer::drawSwRT(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview) {
-  if(!settings.swrtEnabled)
-    return;
-  FrameProfile::Scope timing(FrameProfile::Zone::EncodeMain);
-
-  const auto& scene     = wview.sceneGlobals();
-  const auto& bvh       = wview.landscape().bvh();
-  const auto  originLwc = scene.originLwc;
-
-  if(swrt.outputImage.size()!=zbuffer.size()) {
-    Resources::recycle(std::move(swrt.outputImage));
-    auto& device = Resources::device();
-    // swrt.outputImage = device.image2d(TextureFormat::R32U, zbuffer.size());
-    swrt.outputImage = device.image2d(TextureFormat::RGBA8, zbuffer.size());
-    }
-
-  cmd.setFramebuffer({});
-  cmd.setDebugMarker("Raytracing");
-  //cmd.setPipeline(shaders.swRaytracing8);
-  cmd.setPipeline(shaders.swRaytracing);
-  cmd.setPushData(&originLwc, sizeof(originLwc));
-  cmd.setBinding(0, swrt.outputImage);
-  cmd.setBinding(1, scene.uboGlobal[SceneGlobals::V_Main]);
-  cmd.setBinding(2, gbufDiffuse);
-  cmd.setBinding(3, gbufNormal);
-  cmd.setBinding(4, zbuffer);
-  cmd.setBinding(5, bvh);
-
-  cmd.dispatchThreads(swrt.outputImage.size());
-  }
-
 void Renderer::stashSceneAux(Encoder<CommandBuffer>& cmd) {
   auto& device = Resources::device();
   if(!device.properties().hasSamplerFormat(zBufferFormat))
@@ -1452,22 +1449,6 @@ void Renderer::drawVsmDbg(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const W
   cmd.setBinding(8, wview.sceneGlobals().vsmDbg);
   cmd.setPushData(&settings.vsmMipBias, sizeof(settings.vsmMipBias));
   cmd.setPipeline(shaders.vsmDbg);
-  cmd.draw(nullptr, 0, 3);
-  }
-
-void Renderer::drawSwrDbg(Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview) {
-  static bool enable = true;
-  if(!enable || !settings.swrEnabled)
-    return;
-
-  cmd.setFramebuffer({{sceneLinear, Tempest::Preserve, Tempest::Preserve}});
-  cmd.setDebugMarker("SWR-dbg");
-  cmd.setBinding(0, swr.outputImage);
-  cmd.setBinding(1, wview.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
-  cmd.setBinding(2, gbufDiffuse, Sampler::nearest());
-  cmd.setBinding(3, gbufNormal,  Sampler::nearest());
-  cmd.setBinding(4, zbuffer,     Sampler::nearest());
-  cmd.setPipeline(shaders.swRenderingDbg);
   cmd.draw(nullptr, 0, 3);
   }
 
@@ -2142,65 +2123,6 @@ void Renderer::drawRtsmOmni(Tempest::Encoder<Tempest::CommandBuffer>& cmd, World
     }
   }
 
-void Renderer::drawSwr(Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& wview) {
-  if(!settings.swrEnabled)
-    return;
-  FrameProfile::Scope timing(FrameProfile::Zone::EncodeMain);
-
-  const auto& scene        = wview.sceneGlobals();
-  const auto& clusters     = wview.clusters();
-  const auto& buckets      = wview.drawBuckets();
-  const auto& instanceSsbo = wview.instanceSsbo();
-
-  auto& outputImage = usesImage2d(swr.outputImage, TextureFormat::R32U, zbuffer.size());
-
-  cmd.setFramebuffer({});
-  cmd.setDebugMarker("SW-rendering");
-
-  struct Push { uint32_t firstMeshlet; uint32_t meshletCount; float znear; } push = {};
-  push.firstMeshlet = 0;
-  push.meshletCount = uint32_t(clusters.size());
-  push.znear        = scene.znear;
-
-  cmd.setBinding(0, outputImage);
-  cmd.setBinding(1, scene.uboGlobal[SceneGlobals::V_Main]);
-  cmd.setBinding(2, *scene.gbufNormals);
-  cmd.setBinding(3, *scene.zbuffer);
-  cmd.setBinding(4, clusters.ssbo());
-  cmd.setBinding(5, buckets.ibo());
-  cmd.setBinding(6, buckets.vbo());
-  cmd.setBinding(7, buckets.textures());
-  cmd.setBinding(8, Sampler::bilinear());
-
-  auto* pso = &Shaders::inst().swRendering;
-  switch(Shaders::options().swRenderingPreset) {
-    case 1: {
-      cmd.setPushData(&push, sizeof(push));
-      cmd.setPipeline(*pso);
-      //cmd.dispatch(10);
-      cmd.dispatch(clusters.size());
-      break;
-      }
-    case 2: {
-      IVec2  tileSize = IVec2(128);
-      int    tileX    = (outputImage.w()+tileSize.x-1)/tileSize.x;
-      int    tileY    = (outputImage.h()+tileSize.y-1)/tileSize.y;
-      cmd.setPushData(&push, sizeof(push));
-      cmd.setPipeline(*pso);
-      cmd.dispatch(size_t(tileX), size_t(tileY)); //outputImage.size());
-      break;
-      }
-    case 3: {
-      cmd.setBinding(9,  *scene.lights);
-      cmd.setBinding(10, instanceSsbo);
-      cmd.setPushData(&push, sizeof(push));
-      cmd.setPipeline(*pso);
-      cmd.dispatchThreads(outputImage.size());
-      break;
-      }
-    }
-  }
-
 void Renderer::drawGBuffer(Encoder<CommandBuffer>& cmd, uint8_t fId, WorldView& view) {
   cmd.setDebugMarker("GBuffer");
   if(Shaders::options().doMaterialMaps) {
@@ -2430,14 +2352,25 @@ void Renderer::prepareSSAO(Encoder<CommandBuffer>& cmd, WorldView& wview) {
 
   auto& device = Resources::device();
   const auto aoSize = effectResolution();
-  if(ssao.ssaoBuf.size()!=aoSize || ssao.ssaoBlur.size()!=zbuffer.size()) {
+  const auto mipsSize = Size((zbuffer.w()+1)/2, (zbuffer.h()+1)/2);
+  if(ssao.ssaoBuf.size()!=aoSize || ssao.ssaoBlur.size()!=zbuffer.size() || ssao.depthMips.size()!=mipsSize) {
     Resources::recycle(std::move(ssao.ssaoBuf));
     Resources::recycle(std::move(ssao.ssaoBlur));
-    ssao.ssaoBuf  = device.image2d(ssao.aoFormat, aoSize);
-    ssao.ssaoBlur = device.image2d(ssao.aoFormat, zbuffer.size());
+    Resources::recycle(std::move(ssao.depthMips));
+    ssao.ssaoBuf   = device.image2d(ssao.aoFormat, aoSize);
+    ssao.ssaoBlur  = device.image2d(ssao.aoFormat, zbuffer.size());
+    ssao.depthMips = device.image2d(TextureFormat::R32F, mipsSize, true);
     }
 
   cmd.setFramebuffer({});
+  // decimated depth for the far samples of ssao.comp, six levels from 2 to 64 pixels
+  cmd.setDebugMarker("SSAO-mips");
+  cmd.setBinding(0, zbuffer, Sampler::nearest(ClampMode::ClampToEdge));
+  for(uint32_t i=0; i<6; ++i)
+    cmd.setBinding(1+i, ssao.depthMips, Sampler::nearest(), std::min(i, ssao.depthMips.mipCount()-1));
+  cmd.setPipeline(shaders.ssaoMips);
+  cmd.dispatchThreads(ssao.depthMips.size());
+
   cmd.setDebugMarker("SSAO");
 
   cmd.setBinding(0, ssao.ssaoBuf);
@@ -2445,10 +2378,12 @@ void Renderer::prepareSSAO(Encoder<CommandBuffer>& cmd, WorldView& wview) {
   cmd.setBinding(2, gbufDiffuse, Sampler::nearest(ClampMode::ClampToEdge));
   cmd.setBinding(3, gbufNormal,  Sampler::nearest(ClampMode::ClampToEdge));
   cmd.setBinding(4, zbuffer,     Sampler::nearest(ClampMode::ClampToEdge));
+  cmd.setBinding(5, ssao.depthMips, Sampler::nearest(ClampMode::ClampToEdge));
   cmd.setPushData(&push, sizeof(push));
   cmd.setPipeline(shaders.ssao);
   cmd.dispatchThreads(ssao.ssaoBuf.size());
 
+  cmd.setDebugMarker("SSAO-blur");
   cmd.setBinding(0, ssao.ssaoBlur);
   cmd.setBinding(1, wview.sceneGlobals().uboGlobal[SceneGlobals::V_Main]);
   cmd.setBinding(2, ssao.ssaoBuf, Sampler::bilinear(ClampMode::ClampToEdge));
@@ -2494,6 +2429,7 @@ void Renderer::prepareFog(Encoder<Tempest::CommandBuffer>& cmd, WorldView& wview
       break;
     case VolumetricHQ: {
       auto& occlusionLut = usesImage2d(sky.occlusionLut, TextureFormat::R32U, effectResolution());
+      cmd.setDebugMarker("Fog-occlusion");
       if(settings.vsmEnabled && !settings.rtsmEnabled && !settings.pathTraceEnabled) {
         cmd.setFramebuffer({});
         cmd.setBinding(0, occlusionLut);
@@ -2504,12 +2440,15 @@ void Renderer::prepareFog(Encoder<Tempest::CommandBuffer>& cmd, WorldView& wview
         cmd.setPipeline(shaders.fogEpipolarOcclusion);
         cmd.dispatchThreads(occlusionLut.size());
         } else {
+        // drawShadowMap cleared the map and drew nothing: the mask follows from the clear value alone
+        const bool emptyMap = !(wview.mainLight().dir().y > Camera::minShadowY);
         cmd.setFramebuffer({});
         cmd.setBinding(2, zbuffer, Sampler::nearest());
         cmd.setBinding(3, scene.uboGlobal[SceneGlobals::V_Main]);
         cmd.setBinding(4, occlusionLut);
-        cmd.setBinding(5, shadowMap[1], Resources::shadowSampler());
-        cmd.setPipeline(shaders.fogOcclusion);
+        if(!emptyMap)
+          cmd.setBinding(5, shadowMap[1], Resources::shadowSampler());
+        cmd.setPipeline(emptyMap ? shaders.fogOcclusionEmpty : shaders.fogOcclusion);
         cmd.dispatchThreads(occlusionLut.size());
         }
       break;

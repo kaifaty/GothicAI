@@ -29,7 +29,11 @@ enum class Zone : size_t {
   // Npc::tick inside WorldLogic, split by simulation tier (world/npcsimtier.h);
   // calls count runs of consecutive same-tier NPCs, not NPCs.
   NpcFullTick, NpcSimplifiedTick, NpcLogicShadow,
-  EncodeShadows, EncodeMain, EncodeWater, EncodePost, EncodeUi, Count
+  EncodeShadows, EncodeMain, EncodeWater, EncodePost, EncodeUi,
+  // Parts of ParallelAnimation: the NPC worker pass and the serial passes after it.
+  AnimationNpcPass, MeleeShadow, MeleeContacts, InteractiveAnimation, LogicalBodySync,
+  // PfxObjects::preFrameUpdate, and the CPU wait of a synchronous buffer upload (Metal).
+  PfxPrepare, UploadWait, Count
   };
 enum class Amount : size_t { PaletteCalls, PaletteBytes, IdenticalCalls, IdenticalBytes,
   PatchCalls, PatchBytes, PatchBlocks, GrowBytes, UploadBytes, DrawCalls, DispatchCalls,

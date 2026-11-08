@@ -262,6 +262,41 @@ def test_non_python_resource_matches_filename(repository):
     }
 
 
+@pytest.mark.parametrize("text", [
+    "value = math.hypot(1, 2)",
+    'path = "math.h.bak"',
+    'path = "fast_math.h"',
+    'path = "math.h-old"',
+])
+def test_part_of_a_longer_word_is_not_a_file_name(text):
+    assert not check.names_file("engine/math.h", "tests/test_x.py", text, check.Counter({"math.h": 1}))
+
+
+@pytest.mark.parametrize("text", ['"math.h"', "engine/math.h", "reads math.h.", "./math.h"])
+def test_whole_file_name_counts(text):
+    assert check.names_file("engine/math.h", "tests/test_x.py", text, check.Counter({"math.h": 1}))
+
+
+@pytest.mark.parametrize(("path", "test", "text", "named"), [
+    ("data/society/config.json", "scripts/tests/test_x.py", 'path = "config.json"', False),
+    ("data/society/config.json", "scripts/tests/test_x.py", 'ROOT / "society" / "config.json"', True),
+    ("scripts/config.json", "scripts/tests/test_x.py", 'path = "config.json"', True),
+    ("scripts/tool/config.json", "scripts/tool/test_x.py", 'path = "config.json"', True),
+    ("config.json", "scripts/tests/test_x.py", 'path = "config.json"', True),
+])
+def test_shared_file_name_needs_its_folder(path, test, text, named):
+    assert check.names_file(path, test, text, check.Counter({"config.json": 2})) is named
+
+
+def test_shared_resource_name_selects_only_its_own_tests(repository):
+    root, _ = repository
+    (root / "app/other").mkdir()
+    (root / "app/other/data.json").write_text("{}\n")
+    git(root, "add", "app/other/data.json")
+    assert selection(repository, "app/other/data.json") == []
+    assert selected_files(selection(repository, "app/data.json")) == {"app/tests/test_resource.py"}
+
+
 @pytest.mark.parametrize("path", ["app/unread.txt", "unreferenced.sh"])
 def test_unreferenced_path_selects_nothing_and_explains(repository, capsys, path):
     assert selection(repository, path) == []
@@ -515,8 +550,7 @@ def test_real_selector_change_selects_every_group():
     }
     matrix = check.select_groups(ROOT, ["scripts/check.py"])
     assert selected_files(matrix) == expected
-    assert {group["name"] for group in matrix if group["platform"] == "macos-15"} == {"shorts"}
-    assert all(group["platform"] == "ubuntu-24.04" for group in matrix if group["name"] != "shorts")
+    assert all(group["platform"] == "ubuntu-24.04" for group in matrix)
     assert all("--with pytest-timeout" in group["command"] for group in matrix)
     assert all("--timeout=120 --timeout-method=signal" in group["command"] for group in matrix)
     assert all("faulthandler_timeout" not in group["command"] for group in matrix)
