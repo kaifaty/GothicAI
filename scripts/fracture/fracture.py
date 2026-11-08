@@ -331,6 +331,13 @@ def cut_content(args):
             summary = (f"version 3 from {pieces_glb.name}: {count} pieces, {stats['hulls']} hulls, "
                        f"largest piece {stats['largest']:.0f} cm3, overlap {10 * stats['overlap']:.2f} mm, "
                        f"hulls/pieces volume {stats['hull_volume'] / stats['volume']:.3f}")
+            # per class of detail: how far the written hulls stand outside (and a ring's inside), the least
+            # cover of the shapes before the 1.5 mm shrink, the largest overlap with another piece
+            classes = "".join(
+                f"\n  {cls}: {row['pieces']} pieces, {row['hulls']} hulls, outside {10 * row['outside']:.2f} mm, "
+                f"cover {row['cover']:.3f}, overlap {10 * row['overlap']:.2f} mm" +
+                (f", inward {10 * row['inward']:.2f} mm" if "inward" in row else "")
+                for cls, row in stats["classes"].items())
         else:
             source, textures = convert(args.extractor, glb)
             cutter = fracture_boards if cls == "fence" else fracture
@@ -342,6 +349,7 @@ def cut_content(args):
                 raise ValueError(f"{visual}: serialized volume ratio {ratio}")
             summary = (f"{count} pieces, shell {shell_volume:.6f} cm3, pieces {actual_volume:.6f} cm3, "
                        f"volume {ratio:.9f}, closed + convex")
+            classes = ""
         if args.verify:
             if target.read_bytes() != data:
                 raise ValueError(f"{target}: repeated fracture differs byte-for-byte")
@@ -352,7 +360,7 @@ def cut_content(args):
                 temporary.replace(target)
         rows.append((visual, count))
         print(f"{visual}: {summary}, {time.monotonic() - started:.3f} s" +
-              (", identical bytes" if args.verify else ""), flush=True)
+              (", identical bytes" if args.verify else "") + classes, flush=True)
     if not rows:
         raise ValueError("no indexed destructible GLB meshes")
     print(f"Validated {len(rows)} visuals, {sum(row[1] for row in rows)} pieces.")
