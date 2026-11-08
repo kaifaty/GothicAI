@@ -29,6 +29,11 @@ posed = fit.posed_skeleton(skel, LW)
 tz = fit.tz_of(LW)
 src, dst = fit.control_points(skel, posed, LW)
 tps = fit.TPS(src, dst)
+# RIG=1 (mpfb_body.py RIG=1): the body stays human for the render skeleton - no warp onto Gothic's joints, the 53 bones
+# of MPFB's game_engine rig keep their weights, and the rig's bind pose goes to rig.json for mpfb_write.py
+RIG = meta.get('rig', False)
+if RIG:
+    tps = lambda p: p
 
 BRAIES = (float(os.environ.get('BRAIES_LO', -22.0)), float(os.environ.get('BRAIES_HI', 12.0)))  # cm from the hip joint
 OFFSET = float(os.environ.get('BRAIES_OFFSET', 0.45))   # cm off the skin
@@ -76,20 +81,38 @@ def gothic_node(b):
     raise KeyError(b)
 
 bones = list(rig.data.bones.keys())
-groups = sorted({gothic_node(b) for b in bones}, key=names.index)
-gidx = {g: i for i, g in enumerate(groups)}
-vg_to_g = {bm.vertex_groups[b].index: gidx[gothic_node(b)] for b in bones if b in bm.vertex_groups}
+if RIG:
+    groups = bones
+    gidx = {g: i for i, g in enumerate(groups)}
+    vg_to_g = {bm.vertex_groups[b].index: gidx[b] for b in bones if b in bm.vertex_groups}
+else:
+    groups = sorted({gothic_node(b) for b in bones}, key=names.index)
+    gidx = {g: i for i, g in enumerate(groups)}
+    vg_to_g = {bm.vertex_groups[b].index: gidx[gothic_node(b)] for b in bones if b in bm.vertex_groups}
 Wt = np.zeros((nv, len(groups)), np.float32)
 for v in me.vertices:
     for g in v.groups:
         if g.group in vg_to_g: Wt[v.index, vg_to_g[g.group]] += g.weight
 s = Wt.sum(1)
 
-# --- neck cut along the original body's top ring: y = 167.2 - 0.47 (z + 1), model space
-neck_cut = 167.2 - 0.47 * (Gz + 1.0)
+# --- neck cut along the original body's top ring: y = 167.2 - 0.47 (z + 1), model space. On the render skeleton the
+# Gothic head rides our head bone shifted forward by HEAD_DZ (his head sits 8 cm ahead of Gothic's head node), so the
+# ring moves with it
+Q = np.array([[-1.0, 0, 0], [0, 0, 1.0], [0, -1.0, 0]])     # Blender -> Gothic axes
+def to_gothic(p_b):                                          # Blender rest point (m) -> Gothic model space, cm
+    t = np.array([p_b[0], p_b[2], -p_b[1]]) * 100; t[1] -= meta.get('ground_cm', 0.0)
+    w = t * fit.S
+    return np.array([-w[0], w[1] - fit.FLOOR, w[2] + tz])
+HEAD_DZ = 0.0
+if RIG:
+    gothic_head = fit.load_skeleton(MDH)[3][names.index('BIP01 HEAD')][:3, 3]
+    our_head = to_gothic(np.array(rig.data.bones['head'].head_local))
+    HEAD_DZ = float(os.environ.get('HEAD_DZ', our_head[2] - gothic_head[2]))
+neck_cut = 167.2 - 0.47 * (Gz - HEAD_DZ + 1.0)
 hip_y = float(posed[names.index('BIP01 L THIGH')][1, 3] + fit.FLOOR)   # model y of the hip joints after the warp
 lo, hi = hip_y + BRAIES[0], hip_y + BRAIES[1]
-arm_nodes = [gidx[n] for n in groups if any(p in n for p in ('UPPERARM', 'FOREARM', 'HAND', 'FINGER'))]
+ARM_PARTS = ('UPPERARM', 'FOREARM', 'HAND', 'FINGER', 'LOWERARM', 'THUMB', 'INDEX', 'MIDDLE', 'RING', 'PINKY')
+arm_nodes = [gidx[n] for n in groups if any(p in n.upper() for p in ARM_PARTS)]   # Gothic or MPFB names
 armish = Wt[:, arm_nodes].sum(1) > 0.05
 
 polys = [(p.index, list(p.vertices), list(p.loop_indices)) for p in me.polygons]
@@ -148,5 +171,25 @@ info = {'body': part(body_f, 0.0, 'body'), 'braies': part(braies_f, OFFSET, 'bra
         'groups': groups, 'braies_band_model_y': [lo, hi], 'hip_y': hip_y, 'tz': tz,
         'tps_max_move_cm': float(np.linalg.norm(dst - src, axis=1).max()),
         'unweighted_body_verts': int(((s <= 0) & body_v).sum())}
+if RIG:
+    order = []
+    def visit(b):
+        order.append(b.name)
+        for c in b.children:
+            visit(c)
+    for b in rig.data.bones:
+        if b.parent is None:
+            visit(b)
+    bind = {}
+    for b in rig.data.bones:
+        M = np.array(b.matrix_local)
+        G = np.eye(4); G[:3, :3] = Q @ M[:3, :3] @ Q.T; G[:3, 3] = to_gothic(M[:3, 3])
+        bind[b.name] = G
+    json.dump({'space': 'HUMANS.MDH chain without its root translation (fit.py), cm', 'head_dz_cm': HEAD_DZ,
+               'bones': [{'name': n, 'parent': rig.data.bones[n].parent.name if rig.data.bones[n].parent else None,
+                          'bind': bind[n].tolist(), 'tail': to_gothic(np.array(rig.data.bones[n].tail_local)).tolist()}
+                         for n in order]},
+              open(os.path.join(RUN, 'rig.json'), 'w'), indent=1)
+    info['rig_bones'] = len(order); info['head_dz_cm'] = HEAD_DZ
 json.dump(info, open(os.path.join(RUN, 'export.json'), 'w'), indent=1)
 print('EXPORT', json.dumps(info))

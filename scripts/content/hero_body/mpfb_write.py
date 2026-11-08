@@ -26,6 +26,16 @@ skel = fit.load_skeleton(mdh)
 names, parent, local, rest = skel
 posed = fit.posed_skeleton(skel, LW)
 tz = fit.tz_of(LW)
+# RIG mode (mpfb_body.py / mpfb_export.py RIG=1): the body is skinned to its own skeleton, MPFB's game_engine rig in
+# HUMANS.MDH's model space, and render-rigs.json tells the engine how that skeleton follows Gothic's pose
+# (reports/engine/2026-11-modern-skeleton). Gothic's own skeleton stays the source.
+RIG = meta.get('rig', False)
+g_names, g_glob = names, rest
+if RIG:
+    rig = json.load(open(run / 'rig.json'))
+    names = [b['name'] for b in rig['bones']]
+    rig_bind = [np.array(b['bind']) for b in rig['bones']]
+    posed = rest = rig_bind                      # a true bind pose: local positions and normals need no fix
 
 def to_lin(c): c = np.asarray(c, float); return np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)
 def to_srgb(c): c = np.clip(c, 0, 1); return np.where(c <= 0.0031308, c * 12.92, 1.055 * c ** (1 / 2.4) - 0.055)
@@ -112,7 +122,86 @@ record = {'format': 'gothic-model', 'version': 1, 'kind': 'mesh', 'buffer': MESH
 models = root / 'models'; models.mkdir(parents=True, exist_ok=True)
 (models / (MESH + '.bin')).write_bytes(bytes(bin_))
 (models / (MESH + '.json')).write_text(json.dumps(record))
-(models / 'models.json').write_text(json.dumps({'format': 'gothic-models', 'version': 1, 'files': {MESH: MESH + '.json'}}, indent=1) + '\n')
+files = {MESH: MESH + '.json'}
+if RIG:
+    RIGNAME = 'HUM_RIG_MPFB'
+    gi = {n: i for i, n in enumerate(g_names)}
+    G = lambda n: g_glob[gi[n]]
+    hum = json.load(open(mdh))['data']
+    # the engine moves HUMANS.MDH's root by its root translation in the root's own frame: ours sits in that space
+    T0 = np.eye(4); T0[:3, 3] = G('BIP01')[:3, :3] @ np.array(hum['root_translation'])
+    nodes, ridx = [], {n: i for i, n in enumerate(names)}
+    for b, M in zip(rig['bones'], rig_bind):
+        par = ridx[b['parent']] if b['parent'] else -1
+        local = (T0 @ M) if par < 0 else np.linalg.inv(rig_bind[par]) @ M
+        nodes.append({'parent_index': par, 'name': b['name'], 'transform': local.T.reshape(-1).tolist()})
+    mdh_rec = {'format': 'gothic-model', 'version': 1, 'kind': 'hierarchy', 'buffer': RIGNAME + '.MDH.bin', 'byte_length': 0,
+               'data': {'nodes': nodes, 'bbox': hum['bbox'], 'collision_bbox': hum['collision_bbox'],
+                        'root_translation': [0.0, 0.0, 0.0], 'checksum': 0, 'source_date': hum['source_date'],
+                        'source_path': 'scripts/content/hero_body (MPFB 2 game_engine rig)'}}
+    (models / (RIGNAME + '.MDH.bin')).write_bytes(b'')
+    (models / (RIGNAME + '.MDH.json')).write_text(json.dumps(mdh_rec))
+    files[RIGNAME + '.MDH'] = RIGNAME + '.MDH.json'
+
+    def rot_between(a, b):
+        a = a / np.linalg.norm(a); b = b / np.linalg.norm(b); v = np.cross(a, b); c = float(a @ b)
+        if np.linalg.norm(v) < 1e-9: return np.eye(3)
+        vx = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
+        return np.eye(3) + vx + vx @ vx / (1 + c)
+    def quat(R):                                  # (w, x, y, z) of a rotation matrix
+        w = np.sqrt(max(0.0, 1 + R[0, 0] + R[1, 1] + R[2, 2])) / 2
+        x = np.copysign(np.sqrt(max(0.0, 1 + R[0, 0] - R[1, 1] - R[2, 2])) / 2, R[2, 1] - R[1, 2])
+        y = np.copysign(np.sqrt(max(0.0, 1 - R[0, 0] + R[1, 1] - R[2, 2])) / 2, R[0, 2] - R[2, 0])
+        z = np.copysign(np.sqrt(max(0.0, 1 - R[0, 0] - R[1, 1] + R[2, 2])) / 2, R[1, 0] - R[0, 1])
+        q = np.array([w, x, y, z]); return (q / np.linalg.norm(q)).tolist()
+    ANKLE = np.array([0.0, -5.0, 9.0])            # Gothic's foot node sits 5 cm above and 9 cm behind a real ankle
+    def ankle_world(S): return G(f'BIP01 {S} FOOT')[:3, 3] + ANKLE
+    MAP = {'pelvis': 'PELVIS', 'spine_01': 'SPINE', 'spine_02': 'SPINE1', 'spine_03': 'SPINE2', 'neck_01': 'NECK', 'head': 'HEAD'}
+    DIRS = {}
+    for sd, S in (('l', 'L'), ('r', 'R')):
+        MAP.update({f'clavicle_{sd}': f'{S} CLAVICLE', f'upperarm_{sd}': f'{S} UPPERARM', f'lowerarm_{sd}': f'{S} FOREARM',
+                    f'hand_{sd}': f'{S} HAND', f'thigh_{sd}': f'{S} THIGH', f'calf_{sd}': f'{S} CALF',
+                    f'foot_{sd}': f'{S} FOOT', f'ball_{sd}': f'{S} TOE0'})
+        DIRS.update({f'clavicle_{sd}': (G(f'BIP01 {S} UPPERARM')[:3, 3] - G(f'BIP01 {S} CLAVICLE')[:3, 3]),
+                     f'upperarm_{sd}': (G(f'BIP01 {S} FOREARM')[:3, 3] - G(f'BIP01 {S} UPPERARM')[:3, 3]),
+                     f'lowerarm_{sd}': (G(f'BIP01 {S} HAND')[:3, 3] - G(f'BIP01 {S} FOREARM')[:3, 3]),
+                     f'hand_{sd}': (G(f'BIP01 {S} FINGER0')[:3, 3] - G(f'BIP01 {S} HAND')[:3, 3]),
+                     f'thigh_{sd}': (G(f'BIP01 {S} CALF')[:3, 3] - G(f'BIP01 {S} THIGH')[:3, 3]),
+                     f'calf_{sd}': (ankle_world(S) - G(f'BIP01 {S} CALF')[:3, 3]),
+                     f'foot_{sd}': (G(f'BIP01 {S} TOE0')[:3, 3] - ankle_world(S))})
+    tails = {b['name']: np.array(b['tail']) for b in rig['bones']}
+    align, bones_out = {}, []
+    for b, M in zip(rig['bones'], rig_bind):
+        n = b['name']; e = {'name': n}
+        if n in MAP:
+            e['source'] = 'BIP01 ' + MAP[n]
+            A = rot_between(tails[n] - M[:3, 3], DIRS[n]) if n in DIRS else np.eye(3)   # spine, neck, head stay
+            align[n] = A; e['align'] = quat(A)
+        bones_out.append(e)
+    B = lambda n: rig_bind[ridx[n]]
+    def socket(src, bone, shift=np.zeros(3)):
+        Mg = G(src).copy(); Mg[:3, 3] += shift
+        Mb = B(bone).copy(); A = align.get(bone, np.eye(3)); Mb[:3, :3] = A @ Mb[:3, :3]
+        if bone.startswith('hand_'):              # the slot keeps its offset from the hand, as on Gothic's hand
+            Mb[:3, 3] = G('BIP01 ' + MAP[bone])[:3, 3]
+        off = np.linalg.inv(Mb) @ Mg
+        return {'bone': bone, 'offset': off.T.reshape(-1).tolist()}
+    head_shift = np.array([0.0, 0.0, rig['head_dz_cm']])
+    table = {'format': 'gothic-render-rigs', 'version': 1, 'rigs': {RIGNAME: {
+        'skeleton': RIGNAME + '.MDH', 'source': 'HUMANS.MDH', 'bones': bones_out,
+        'root': {'bone': 'pelvis', 'source': 'BIP01 PELVIS'},
+        'legs': [{'thigh': f'thigh_{sd}', 'calf': f'calf_{sd}', 'foot': f'foot_{sd}', 'ball': f'ball_{sd}',
+                  'source_foot': f'BIP01 {S} FOOT', 'source_knee': f'BIP01 {S} CALF',
+                  'ankle': (np.linalg.inv(G(f'BIP01 {S} FOOT')) @ np.r_[ankle_world(S), 1.0])[:3].tolist()}
+                 for sd, S in (('l', 'L'), ('r', 'R'))],
+        'fingers': [{'source_hand': f'BIP01 {S} HAND', 'source_finger': f'BIP01 {S} FINGER0',
+                     'chains': [[f'{f}_0{j}_{sd}' for j in (1, 2, 3)] for f in ('index', 'middle', 'ring', 'pinky')],
+                     'shares': [1.0, 0.9, 0.7]} for sd, S in (('l', 'L'), ('r', 'R'))],
+        'sockets': {'BIP01 HEAD': socket('BIP01 HEAD', 'head', head_shift),
+                    'ZS_RIGHTHAND': socket('ZS_RIGHTHAND', 'hand_r'), 'ZS_LEFTHAND': socket('ZS_LEFTHAND', 'hand_l')}}},
+        'meshes': {MESH: RIGNAME}}
+    (models / 'render-rigs.json').write_text(json.dumps(table, indent=1) + '\n')
+(models / 'models.json').write_text(json.dumps({'format': 'gothic-models', 'version': 1, 'files': files}, indent=1) + '\n')
 
 # maps through the project's packer
 spec = importlib.util.spec_from_file_location('material_fixture', repo / 'scripts/content/test-material.py')
