@@ -338,8 +338,9 @@ with before/after screenshots and a checkpoint of the pieces each. Run it with
 `max_displacement_cm` of every piece: how far the prop fell apart.
 `own-wood-fracture-clip` is the acceptance take of the same pair for the
 [wood fracture](../../reports/content/2026-11-wood-fracture/README.md#клип-было--стало-и-ограждения):
-per prop a close `<prop>-close-before|after.png` pair, a side take `<prop>-side.mp4` from the blow
-until the pieces sleep (3 m, slightly above, the hero strikes towards +z) and
+per prop a close `<prop>-close-before|after.png` pair, a take `<prop>-side.mp4` from the blow
+until the pieces sleep (the hero strikes towards +z; both cameras stand at an angle on the struck
++x/-z side, the close one 2.8 m off, the take 3.6 m) and
 `destruction2 view <camera xyz> <target xyz>` places the held camera in centimetres from the centre
 of the prop. Each break writes `destruction2_pieces` 0.5, 1, 2, 5, 13 and 15 s after it: per piece
 the centre's travel, the angle of a flat piece's face and long axis from vertical, sleep, speed and
