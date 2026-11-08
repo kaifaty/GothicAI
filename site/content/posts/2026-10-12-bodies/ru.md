@@ -58,5 +58,5 @@ youtube = "r4ZYddctjH4"
 
 Поиграть пока нельзя: проект запускается из исходников на macOS и требует своей копии Gothic II: Ночь
 Ворона. Движок — [OpenGothic](https://github.com/Try/OpenGothic); инструменты, которыми это снято, лежат
-в репозитории: [`shorts/compare`](https://github.com/kaifaty/GothicAI/tree/main/shorts/compare)
+в репозитории: [`shorts/compare`](https://github.com/kaifaty/GothicAI/tree/0061fde837235378936b735d9669f20bfeef56f8/shorts/compare)
 и [тестовый стенд](https://github.com/kaifaty/GothicAI/tree/main/scripts/bench).
