@@ -42,6 +42,7 @@ overrides the dev-ubuntu SSH alias (default `dev-ubuntu`); dispatch uses
 execution (`auto` falls back, an explicit remote host exits with code 2).
 `NO_BUILD=1` only skips a local build; remote hosts always check the engine source hash.
 
+A line `# @timeout <seconds>` in the scenario sets its `TIMEOUT` default (an explicit `TIMEOUT` wins).
 A line `# @headless` in the scenario selects `gothic-body-runner --game-parity --mode lockstep`,
 without a window, GPU or sound. `BENCH_HEADLESS=1` selects this path for any scenario;
 `BENCH_HEADLESS=0` selects the window even for a marked scenario. `KEEP=1` with the headless path
@@ -338,14 +339,21 @@ with before/after screenshots and a checkpoint of the pieces each. Run it with
 `max_displacement_cm` of every piece: how far the prop fell apart.
 `own-wood-fracture-clip` is the acceptance take of the same pair for the
 [wood fracture](../../reports/content/2026-11-wood-fracture/README.md#клип-было--стало-и-ограждения):
-per prop a close `<prop>-close-before|after.png` pair, a side take `<prop>-side.mp4` from the blow
-until the pieces sleep (3 m, slightly above, the hero strikes towards +z) and
+per prop a close `<prop>-close-before|after.png` pair, a take `<prop>-side.mp4` from the blow
+until the pieces sleep (the hero strikes towards +z; both cameras stand at an angle on the struck
++x/-z side, the close one 2.9 m off, the take 3.8 m) and
 `destruction2 view <camera xyz> <target xyz>` places the held camera in centimetres from the centre
-of the prop. Each break writes `destruction2_pieces` 0.5, 1, 2, 5, 13 and 15 s after it: per piece
+of the prop. The lunge leaves the hero inside the prop, so after the take `destruction2 stand` puts
+him back where he stood before the blow (`destruction2_stand` gives the distance) and the close
+"pieces" frame shows the breach. The scenario declares `# @timeout 600`. Each break writes `destruction2_pieces` 0.5, 1, 2, 5, 13 and 15 s after it: per piece
 the centre's travel, the angle of a flat piece's face and long axis from vertical, sleep, speed and
-`fell` (centre below the floor); at 15 s the native hull penetration into a floor plane, into the
+`fell` (centre below the floor), its `bond_group`, and per break the bond groups (`groups`,
+`largest_group_volume_fraction`, `single_pieces`) and their bodies now present, asleep and through the
+ground (`bodies`, `bodies_sleeping`, `bodies_fell`: pieces of one group share one body; without
+bonds a group is a piece); at 15 s the native hull penetration into a floor plane, into the
 real ground (`native_floor_penetration_cm`, Jolt `CollideShape` against landscape and static objects)
-and into the other pieces (format 3 METAL–WOOD pairs of one break are skipped: they never collide),
+and into the other pieces (format 3 METAL–WOOD pairs of one break and pieces of one bond group are
+skipped: they never collide),
 the visible (vertex) penetration below that plane and below the ground under each vertex
 (`visible_terrain_penetration_cm`), hoops on the ground (`metal_on_ground`) and the 13→15 s jitter. Every break also
 writes `destruction2_start` (each piece's centre over the ground and native hull depth at birth) and,
@@ -355,11 +363,12 @@ it and water at it. `destruction_sleep15` and `destruction_checkpoint` give each
 `center_cm`, `in_water` (water at most 50 cm under the centre of mass) and `under_ground` (a static
 surface within 20 m above). `destruction_fragment_retired` logs each sleeping piece that
 `cleanupFragments` removes (`expired` or `distant`, over 30 m from the hero).
-`destruction_compare.py` does not count such a piece as lost; a piece missing without one fails. Its
-15 s sleep gate requires every piece on land asleep; a piece in water passes when it is not under
+A bond group retires whole, one event per piece. `destruction_compare.py` does not count such a piece as
+lost; a piece missing without one fails, and so does a bond group that is only partly present. Its
+15 s sleep gate counts bodies (`bond_group`; without it, pieces) and requires every body on land asleep; a piece in water passes when it is not under
 the ground, and the result line reports whether it sleeps at the final checkpoint. Run with the
 `own-content-fracture` settings plus `TEMPEST_WINDOW_SIZE=1280x720`; `OPENGOTHIC_FRACTURE_MOTION`
-varies the version 3 piece motion. Inside a `movable measure` window the pieces are not sampled: the
+varies the version 3 piece motion, `OPENGOTHIC_FRACTURE_BONDS` the bond rule. Inside a `movable measure` window the pieces are not sampled: the
 timed frames stay free of bench work.
 
 Corpse water: `water-bodies` records a real harbour WindFist throw, a dead wolf and a

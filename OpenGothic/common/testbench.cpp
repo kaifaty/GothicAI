@@ -4758,7 +4758,7 @@ std::string destructionFragments(World& world) {
     const auto& center=part.centerOfMass;
     const auto water=world.physic()->waterRay(center,50);
     const auto above=world.physic()->rayStatic(center+Vec3(0,2000,0),center);
-    result+="{\"parent_id\":"+std::to_string(part.parentId)+",\"piece\":"+std::to_string(part.piece)+
+    result+="{\"parent_id\":"+std::to_string(part.parentId)+",\"piece\":"+std::to_string(part.piece)+",\"bond_group\":"+std::to_string(part.bondGroup)+
       ",\"sleeping\":"+(part.sleeping?"true":"false")+",\"position_cm\":"+ragdollVector(movablePosition(part.transform))+
       ",\"velocity_cm_s\":"+ragdollVector(part.velocity)+",\"max_displacement_cm\":"+
       ragdollNumber(bench.destructionFragmentTravel[key])+",\"center_cm\":"+ragdollVector(center)+
@@ -13393,7 +13393,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     bench.destructionMeleeRunning=true;bench.destructionMeleeNext=w.tickCount();
     bench.destructionMeleeDeadline=w.tickCount()+90000;bench.waitUntil=bench.time+90034;
     }
-  else if(c=="destruction2" && a.size()==2 && a[1]=="checkpoint") destructionCheckpoint(w);
+  else if(c=="destruction2" && a.size()==2 && (a[1]=="checkpoint" || a[1]=="stand")) a[1]=="checkpoint" ? destructionCheckpoint(w) : fracturePiecesStand(bench.destructionMeleeActor,bench.destructionMeleeStand,bench.destructionMeleeFacing);
   else if(c=="destruction2" && a.size()==8 && a[1]=="view") {
     // view <camera xyz> <target xyz>: centimetres from the centre of the prop, held after the break
     const auto view=fracturePiecesView(w,bench.destructionIds,Vec3(num(a,2,0),num(a,3,0),num(a,4,0)),Vec3(num(a,5,0),num(a,6,0),num(a,7,0)));

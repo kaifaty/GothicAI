@@ -54,6 +54,33 @@ def fixture(rows, case, enabled=True):
     return setup, begin, final
 
 
+def body_key(part):
+    """The native body of a piece: its bond group (pieces of one group share one body); older logs: the piece."""
+    return part['parent_id'], part.get('bond_group', part['piece'])
+
+
+def unique_bodies(parts):
+    seen = {}
+    for part in parts:
+        seen.setdefault(body_key(part), part)
+    return list(seen.values())
+
+
+def whole_groups(rows, case, final):
+    """A bond group retires whole: at the final checkpoint all pieces seen in it are present, or none."""
+    members = {}
+    for row in rows:
+        if row['kind'] in ('destruction_sleep15', 'destruction_checkpoint') and row.get('case') == case:
+            for part in row['fragments']:
+                members.setdefault(body_key(part), set()).add(part['piece'])
+    present = {}
+    for part in final['fragments']:
+        present.setdefault(body_key(part), set()).add(part['piece'])
+    for key, pieces in present.items():
+        require(pieces == members[key], f'{case}: bond group {key} lost pieces {sorted(members[key] - pieces)}')
+    return len(present)
+
+
 def retired(rows, case):
     """Sleeping pieces DynamicWorld::cleanupFragments removed (expired, or over 30 m from the hero)."""
     found = set()
@@ -83,21 +110,23 @@ def broken(rows, case, final, count):
         lost = set(range(row['pieces'])) - present - gone
         require(not lost, f'{case}: pieces {sorted(lost)} of {row["body"]} lost without cleanup')
         require(math.isfinite(row['break_ms']) and row['break_ms'] >= 0, 'break timing invalid')
+    whole_groups(rows, case, final)
     return breaks, fragments
 
 
 def asleep15(rows, case, report=False, final=None):
-    """Pieces on land sleep at 15 s. A piece in water at 15 s is counted apart: it passes when it is not
-    under the ground (a float still rocks after a fall into a pool); its sleep at the final checkpoint is reported."""
+    """Bodies on land sleep at 15 s (a bond group is one body; without bonds a body is a piece). A body in
+    water at 15 s is counted apart: it passes when it is not under the ground (a float still rocks after a
+    fall into a pool); its sleep at the final checkpoint is reported."""
     row = one(rows, 'destruction_sleep15', case=case)
     require(15_000 <= row['elapsed_since_last_break_ms'] <= 15_100, f'{case}: sleep observation did not occur at 15s')
-    parts = row['fragments']
+    parts = unique_bodies(row['fragments'])
     land = [part for part in parts if not part.get('in_water', False)]
     water = [part for part in parts if part.get('in_water', False)]
     later, later_ms = None, None
     if final is not None and water:
-        last = {(part['parent_id'], part['piece']): part for part in final['fragments']}
-        later = sum(1 for part in water if last.get((part['parent_id'], part['piece']), {}).get('sleeping', False))
+        last = {body_key(part): part for part in final['fragments']}
+        later = sum(1 for part in water if last.get(body_key(part), {}).get('sleeping', False))
         later_ms = final['elapsed_ms']
     summary = {'land_asleep': sum(part['sleeping'] for part in land), 'land': len(land), 'water': len(water),
                'water_under_ground': sum(part.get('under_ground', False) for part in water),
@@ -220,6 +249,7 @@ def measured(directory, enabled):
             'break_costs_ms': [row['break_ms'] for row in breaks], 'fragments_asleep_15s': asleep,
             'sleep_15s': sleep15['line'] if sleep15 else None,
             'retired_pieces': len(retired(rows, 'five')),
+            'bodies_final': len(unique_bodies(final['fragments'])) if enabled else 0,
             'fixture': sorted(body['visual'] for body in setup['bodies'])}
 
 

@@ -1,7 +1,11 @@
 # The wood fracture clip of a content set: our harbour barrel, then our crate, broken by the
-# native one-handed attack. Each prop: a close "intact" frame, a side take from the blow until
-# the pieces sleep, then the close "pieces" frame from the same camera. `destruction2_pieces`
-# gives the guards 5, 13 and 15 s after the break. The hero strikes towards +z.
+# native one-handed attack. Each prop: a close "intact" frame, a take from the blow until the
+# pieces sleep, then the close "pieces" frame from the same camera. `destruction2_pieces`
+# gives the guards 0.5..15 s after the break. The hero strikes towards +z; the blow opens the
+# +x/-z quarter, so both cameras stand on that side at an angle (the hero is on their left).
+# The lunge leaves the hero inside the prop: after the take `destruction2 stand` puts him back
+# where he stood before the blow, so the close "pieces" frame shows the breach.
+# @timeout 600
 seed 73013
 cheat god
 set time 12 0
@@ -14,11 +18,11 @@ ui off
 view full
 
 destruction2 setup barrel 1h
-destruction2 view 170 90 130 0 -20 30
+destruction2 view 240 100 -140 20 5 -20
 wait 800
 shot barrel-close-before
 wait 100
-destruction2 view 280 100 35 0 0 35
+destruction2 view 300 120 -200 0 -10 -10
 wait 800
 shot barrel-side-before
 wait 100
@@ -28,21 +32,22 @@ wait 10000
 stop
 destruction2 checkpoint
 wait 4500
-destruction2 view 170 90 130 0 -20 30
+destruction2 stand
+destruction2 view 240 100 -140 20 5 -20
 wait 800
 shot barrel-close-after
 wait 100
-destruction2 view 280 100 35 0 0 35
+destruction2 view 300 120 -200 0 -10 -10
 wait 300
 shot barrel-side-after
 wait 100
 
 destruction2 setup crate 1h
-destruction2 view 170 90 130 0 -20 30
+destruction2 view 240 100 -140 20 5 -20
 wait 800
 shot crate-close-before
 wait 100
-destruction2 view 280 100 35 0 0 35
+destruction2 view 300 120 -200 0 -10 -10
 wait 800
 shot crate-side-before
 wait 100
@@ -52,11 +57,12 @@ wait 10000
 stop
 destruction2 checkpoint
 wait 4500
-destruction2 view 170 90 130 0 -20 30
+destruction2 stand
+destruction2 view 240 100 -140 20 5 -20
 wait 800
 shot crate-close-after
 wait 100
-destruction2 view 280 100 35 0 0 35
+destruction2 view 300 120 -200 0 -10 -10
 wait 300
 shot crate-side-after
 wait 100

@@ -24,6 +24,7 @@
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
 #include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
 #include <Jolt/Physics/Collision/Shape/OffsetCenterOfMassShape.h>
+#include <Jolt/Physics/Collision/Shape/StaticCompoundShape.h>
 #include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/Collision/CastResult.h>
 #include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
@@ -127,6 +128,58 @@ float vobBuoyancyFraction(asset::MaterialGroup material, std::string_view classN
   return .6f;
   }
 
+// The pieces of each bond group of one break, in piece order; groups by index.
+std::vector<std::vector<uint32_t>> fractureMembers(const std::vector<uint32_t>& pieceGroup) {
+  std::vector<std::vector<uint32_t>> members;
+  for(uint32_t i=0;i<pieceGroup.size();++i) {
+    if(pieceGroup[i]>=members.size()) members.resize(pieceGroup[i]+1);
+    members[pieceGroup[i]].push_back(i);
+    }
+  return members;
+  }
+
+// The native body of one bond group of a break, in the parent's pose. One piece keeps its own
+// hull; several pieces share a compound of their hulls (pieces are in the visual's frame, so
+// without offsets). Mass is the sum of the pieces' volume shares; friction, sound and buoyancy
+// follow the material with the largest volume in the group.
+std::unique_ptr<CollisionWorld::DynamicBody> addFragmentBody(CollisionWorld& world, const FractureMesh& mesh,
+                                                             const std::vector<uint32_t>& members,
+                                                             const Tempest::Matrix4x4& matrix, float parentMass,
+                                                             asset::MaterialGroup parentMaterial, float parentFriction,
+                                                             const std::string& visual, const JPH::GroupFilter* filter,
+                                                             uint32_t breakGroup, uint32_t group) {
+  float mass=0;
+  std::vector<std::pair<asset::MaterialGroup,double>> volumes;
+  for(const auto i:members) {
+    const auto& piece=mesh.pieces[i];
+    mass+=float(parentMass*piece.volume/mesh.volume);
+    auto found=std::find_if(volumes.begin(),volumes.end(),[&](const auto& entry) { return entry.first==piece.group; });
+    if(found==volumes.end()) volumes.emplace_back(piece.group,piece.volume);
+    else found->second+=piece.volume;
+    }
+  auto dominant=volumes.front();
+  for(const auto& entry:volumes)
+    if(entry.second>dominant.second) dominant=entry;
+  const auto material=mesh.version==3 ? dominant.first : parentMaterial;
+  const float friction=mesh.version==3 ? DynamicWorld::materialFriction(material) : parentFriction;
+  JPH::ShapeRefC shape=mesh.pieces[members.front()].hull;
+  if(members.size()>1) {
+    JPH::StaticCompoundShapeSettings compound;
+    for(const auto i:members)
+      for(const auto& hull:mesh.pieces[i].hulls)
+        compound.AddShape(JPH::Vec3::sZero(),JPH::Quat::sIdentity(),hull);
+    const auto result=compound.Create();
+    if(result.HasError()) Tempest::Log::e("fracture: bond group of ",visual,": ",result.GetError().c_str());
+    else shape=result.Get();
+    }
+  auto body=world.addDynamicBody(shape,matrix,friction,mass,DynamicWorld::C_Fragment);
+  if(filter!=nullptr) body->setFracturePiece(filter,breakGroup,group);
+  body->setLabel(visual+" fragment");
+  body->setNoiseProfile(impactMaterial(material),material,visual+" fragment");
+  body->setBuoyancyFraction(vobBuoyancyFraction(material));
+  return body;
+  }
+
 double volumeScale(const Tempest::Matrix4x4& matrix) {
   const auto* m = matrix.data();
   return std::abs(double(m[0])*(double(m[5])*m[10]-double(m[9])*m[6])-
@@ -202,6 +255,7 @@ struct DynamicWorld::MovableVobs {
   std::vector<BodyData*> bodies;
   std::vector<MovableVobContacts> census;
   const FractureMotion fractureMotion = FractureMotion::load();
+  const FractureBonds fractureBonds = FractureBonds::load();
   double validationMs = 0;
   bool finalized = false;
   bool enabled = true;
@@ -239,10 +293,15 @@ struct DynamicWorld::BodyData {
   const FractureRule* fractureRule = nullptr;
   float health = 0, breakImpulse = 0;
   Tempest::Vec3 breakPoint, breakDirection;
+  FractureHit breakHit = FractureHit::Impact;
   bool pendingBreak = false, fragmentsWereSleeping = true;
+  // One native body per bond group (reports/physics/2026-11-destruction-bonds): fragments,
+  // their sleep time and permanence are per group, fragmentGroup maps each piece to its
+  // group. Without bonds every piece is its own group, numbered as the piece.
   std::vector<std::unique_ptr<CollisionWorld::DynamicBody>> fragments;
   std::vector<int64_t> fragmentSleepTime;
   std::vector<bool> fragmentPermanent;
+  std::vector<uint32_t> fragmentGroup;
   std::function<void(bool,const std::vector<Tempest::Matrix4x4>&)> fractureCallback;
   };
 
@@ -920,7 +979,7 @@ DynamicWorld::DynamicWorld(World* owner, const asset::WorldMesh& worldMesh, cons
   world->setBodyImpactCallback([this](CollisionWorld::CollisionBody& body,float impulse,const Tempest::Vec3& point,
                                      std::string_view culprit) {
     if(body.ptrType()==P_MovableVob && body.payload()!=nullptr)
-      damageMovableVob(*static_cast<BodyData*>(body.payload()),impulse,point,false,culprit);
+      damageMovableVob(*static_cast<BodyData*>(body.payload()),impulse,point,FractureHit::Impact,culprit);
     });
 
   {
@@ -1780,6 +1839,7 @@ void DynamicWorld::rebuildMovableVob(BodyData& obj) {
   obj.fragments.clear();
   obj.fragmentSleepTime.clear();
   obj.fragmentPermanent.clear();
+  obj.fragmentGroup.clear();
   obj.pendingBreak=false;
   obj.pose->broken=false;
   obj.health=obj.fractureRule!=nullptr ? obj.fractureRule->health : 0.f;
@@ -2076,6 +2136,7 @@ bool DynamicWorld::meleeStrike(BodyData& obj,const Tempest::Vec3& direction,cons
   obj.breakImpulse=impulse;
   obj.breakPoint=point;
   obj.breakDirection=direction;
+  obj.breakHit=FractureRule::hit(kind);
   return true;
   }
 
@@ -2218,15 +2279,23 @@ void DynamicWorld::saveDestructionVobs(Serialize& fout) const {
   // Separate optional archive entry: older saves have no destruction state,
   // and movable-vobs readers keep their existing schema and meaning.
   fout.setEntry("worlds/",fout.worldName(),"/destruction-vobs");
-  fout.write(uint32_t(0x31534544),uint16_t(2),fout.worldName(),uint32_t(changed.size()));
+  // Schema 3: a pending break keeps its blow, each piece its bond group, and the
+  // native state is per group (reports/physics/2026-11-destruction-bonds).
+  fout.write(uint32_t(0x31534544),uint16_t(3),fout.worldName(),uint32_t(changed.size()));
   for(const auto* obj:changed) {
     fout.write(obj->pose->zenId,obj->visual,obj->origin,obj->current,obj->health,obj->pose->broken,
-               uint32_t(obj->fragments.size()),uint64_t(obj->traceTime)+1,obj->traceCulprit);
+               uint32_t(obj->fragmentGroup.size()),uint64_t(obj->traceTime)+1,obj->traceCulprit);
+    fout.write(obj->pendingBreak);
+    if(obj->pendingBreak)
+      fout.write(uint8_t(obj->breakHit),obj->breakPoint,obj->breakDirection,obj->breakImpulse);
+    for(const auto group:obj->fragmentGroup)
+      fout.write(group);
+    fout.write(uint32_t(obj->fragments.size()));
     for(size_t i=0;i<obj->fragments.size();++i) {
-      const auto& piece=obj->fragments[i];
-      fout.write(piece!=nullptr,obj->fragmentPermanent[i],uint64_t(obj->fragmentSleepTime[i])+1);
-      if(piece!=nullptr)
-        fout.write(piece->matrix(),piece->velocity(),piece->angularVelocity(),piece->isSleeping());
+      const auto& body=obj->fragments[i];
+      fout.write(body!=nullptr,obj->fragmentPermanent[i],uint64_t(obj->fragmentSleepTime[i])+1);
+      if(body!=nullptr)
+        fout.write(body->matrix(),body->velocity(),body->angularVelocity(),body->isSleeping());
       }
     }
   }
@@ -2239,7 +2308,7 @@ void DynamicWorld::loadDestructionVobs(Serialize& fin) {
     uint16_t schema=0;
     std::string worldName;
     fin.read(magic,schema,worldName,count);
-    if(magic!=0x31534544 || (schema!=1 && schema!=2) || worldName!=fin.worldName() || count>100000)
+    if(magic!=0x31534544 || schema<1 || schema>3 || worldName!=fin.worldName() || count>100000)
       return;
     struct Piece {
       bool present=false,permanent=false,sleeping=true;
@@ -2261,11 +2330,39 @@ void DynamicWorld::loadDestructionVobs(Serialize& fin) {
       std::string traceCulprit;
       if(schema>=2)
         fin.read(traceTimeEncoded,traceCulprit);
+      bool pending=false;
+      uint8_t pendingHit=0;
+      Tempest::Vec3 pendingPoint,pendingDirection;
+      float pendingImpulse=0;
+      if(schema>=3) {
+        fin.read(pending);
+        if(pending)
+          fin.read(pendingHit,pendingPoint,pendingDirection,pendingImpulse);
+        }
       if(pieceCount>64)
         return;
-      std::vector<Piece> pieces(pieceCount);
+      // Older schemas have no bond groups: each piece is its own group.
+      std::vector<uint32_t> pieceGroup(pieceCount);
+      uint32_t groupCount=pieceCount;
+      for(uint32_t i=0;i<pieceCount;++i) pieceGroup[i]=i;
+      if(schema>=3) {
+        for(auto& group:pieceGroup) fin.read(group);
+        fin.read(groupCount);
+        if(groupCount>pieceCount)
+          return;
+        }
+      std::vector<Piece> pieces(groupCount);
       bool valid=std::isfinite(health) && health>=0.f && PhysicsSave::validTransform(matrix) &&
-                 PhysicsSave::sameScale(matrix,origin) && (broken || pieceCount==0);
+                 PhysicsSave::sameScale(matrix,origin) && (broken || pieceCount==0) &&
+                 (!pending || (!broken && health<=.001f && pendingHit<=uint8_t(FractureHit::Spell) &&
+                               finiteVelocity(pendingPoint) && finiteVelocity(pendingDirection) &&
+                               std::isfinite(pendingImpulse)));
+      std::vector<bool> used(groupCount,false);
+      for(const auto group:pieceGroup) {
+        valid &= group<groupCount;
+        if(group<groupCount) used[group]=true;
+        }
+      valid &= std::all_of(used.begin(),used.end(),[](bool value) { return value; });
       size_t permanentCount=0;
       for(auto& piece:pieces) {
         fin.read(piece.present,piece.permanent,piece.sleepTime);
@@ -2287,31 +2384,40 @@ void DynamicWorld::loadDestructionVobs(Serialize& fin) {
           continue;
         if(!broken) {
           obj->health=health;
+          // A break struck just before saving happens on the next tick, with its blow.
+          if(pending && obj->body!=nullptr) {
+            obj->pendingBreak=true;
+            obj->breakHit=FractureHit(pendingHit);
+            obj->breakPoint=pendingPoint;
+            obj->breakDirection=pendingDirection;
+            obj->breakImpulse=pendingImpulse;
+            obj->traceTime=traceTimeEncoded>0 && traceTimeEncoded-1<=uint64_t(std::numeric_limits<int64_t>::max())
+                             ? int64_t(traceTimeEncoded-1) : -1;
+            obj->traceCulprit=traceCulprit;
+            }
           break;
           }
         const auto& mesh=*obj->movableShape->fracture;
-        if(pieces.size()!=mesh.pieces.size())
+        if(pieceGroup.size()!=mesh.pieces.size())
           break;
         // Loading debris does not enable movement of any intact prop. Its
         // authored hull is needed only to recover the original fragment mass.
         prepareMovableVobShape(*obj);
         if(!std::isfinite(obj->movableMass) || obj->movableMass<=0.f)
           break;
+        // Groups of more than one piece need the bonds that made them.
+        const auto members=fractureMembers(pieceGroup);
+        if(mesh.version!=3 && members.size()!=pieceGroup.size())
+          break;
         std::vector<std::unique_ptr<CollisionWorld::DynamicBody>> fragments(pieces.size());
         const uint32_t breakGroup=mesh.version==3 ? world->newFractureGroup() : 0;
-        const auto breakFilter=mesh.version==3 ? fractureGroupFilter(mesh) : nullptr;
-        for(size_t i=0;i<pieces.size();++i) {
+        const auto breakFilter=mesh.version==3 ? fractureGroupFilter(mesh,pieceGroup,groupCount) : nullptr;
+        for(uint32_t i=0;i<pieces.size();++i) {
           const auto& piece=pieces[i];
           if(!piece.present)
             continue;
-          const float mass=float(obj->movableMass*mesh.pieces[i].volume/mesh.volume);
-          const auto group=mesh.version==3 ? mesh.pieces[i].group : obj->movableShape->material;
-          const float friction=mesh.version==3 ? materialFriction(group) : obj->movableShape->friction;
-          auto body=world->addDynamicBody(mesh.pieces[i].hull,piece.matrix,friction,mass,C_Fragment);
-          if(breakFilter!=nullptr) body->setFracturePiece(breakFilter,breakGroup,uint32_t(i));
-          body->setLabel(obj->visual+" fragment");
-          body->setNoiseProfile(impactMaterial(group),group,obj->visual+" fragment");
-          body->setBuoyancyFraction(vobBuoyancyFraction(group));
+          auto body=addFragmentBody(*world,mesh,members[i],piece.matrix,obj->movableMass,obj->movableShape->material,
+                                    obj->movableShape->friction,obj->visual,breakFilter.GetPtr(),breakGroup,i);
           body->restoreTransform(piece.matrix,piece.sleeping);
           if(!piece.sleeping)
             body->setVelocity(piece.velocity,piece.omega);
@@ -2330,6 +2436,7 @@ void DynamicWorld::loadDestructionVobs(Serialize& fin) {
                          ? int64_t(traceTimeEncoded-1) : -1;
         obj->traceCulprit=std::move(traceCulprit);
         obj->fragments=std::move(fragments);
+        obj->fragmentGroup=std::move(pieceGroup);
         obj->fragmentSleepTime.resize(pieces.size());
         obj->fragmentPermanent.resize(pieces.size());
         for(size_t i=0;i<pieces.size();++i) {
@@ -2508,23 +2615,25 @@ std::vector<DynamicWorld::MovableVobSnapshot> DynamicWorld::movableVobSnapshot()
 std::vector<DynamicWorld::FragmentSnapshot> DynamicWorld::fragmentSnapshot() const {
   std::vector<FragmentSnapshot> result;
   for(const auto* obj:movableVobs->bodies)
-    for(size_t i=0;i<obj->fragments.size();++i) {
-      if(obj->fragments[i]==nullptr)
+    for(size_t i=0;i<obj->fragmentGroup.size();++i) {
+      const auto group=obj->fragmentGroup[i];
+      if(obj->fragments[group]==nullptr)
         continue;
-      const auto& body=*obj->fragments[i];
+      const auto& body=*obj->fragments[group];
       result.push_back({reinterpret_cast<uintptr_t>(obj),obj->pose->zenId,i,body.isSleeping(),
-                        body.matrix(),body.velocity(),body.angularVelocity(),obj->fragmentPermanent[i],
-                        obj->fragmentSleepTime[i],body.friction(),body.centerOfMass()});
+                        body.matrix(),body.velocity(),body.angularVelocity(),obj->fragmentPermanent[group],
+                        obj->fragmentSleepTime[group],body.friction(),body.centerOfMass(),group});
       }
   return result;
   }
 
 float DynamicWorld::fragmentGroundPenetration(uintptr_t parentId, size_t piece) const {
   for(const auto* obj:movableVobs->bodies) {
-    if(reinterpret_cast<uintptr_t>(obj)!=parentId || piece>=obj->fragments.size() || obj->fragments[piece]==nullptr)
+    if(reinterpret_cast<uintptr_t>(obj)!=parentId || piece>=obj->fragmentGroup.size() ||
+       obj->fragments[obj->fragmentGroup[piece]]==nullptr)
       continue;
     float depth=0;
-    for(const auto& contact:world->overlaps(*obj->fragments[piece],0.f,(1u<<C_Landscape)|(1u<<C_Object)))
+    for(const auto& contact:world->overlaps(*obj->fragments[obj->fragmentGroup[piece]],0.f,(1u<<C_Landscape)|(1u<<C_Object)))
       depth=std::max(depth,contact.depth);
     return depth;
     }
@@ -2536,8 +2645,9 @@ std::vector<DynamicWorld::WaterBodySnapshot> DynamicWorld::waterBodySnapshot() c
   std::unordered_map<const CollisionWorld::CollisionBody*,std::pair<const BodyData*,size_t>> identity;
   for(const auto* obj:movableVobs->bodies) {
     if(obj->body!=nullptr) identity.emplace(obj->body.get(),std::make_pair(obj,size_t(-1)));
-    for(size_t i=0;i<obj->fragments.size();++i)
-      if(obj->fragments[i]!=nullptr) identity.emplace(obj->fragments[i].get(),std::make_pair(obj,i));
+    // A bond group reports its first piece.
+    for(size_t i=0;i<obj->fragmentGroup.size();++i)
+      if(const auto* body=obj->fragments[obj->fragmentGroup[i]].get(); body!=nullptr) identity.emplace(body,std::make_pair(obj,i));
     }
   for(const auto& native:world->waterBodySnapshot()) {
     WaterBodySnapshot entry;
@@ -2619,10 +2729,10 @@ std::vector<DynamicWorld::RagdollSupport> DynamicWorld::ragdollSupports(const Ra
         for(const auto& query:obj->query)
           matches|=query.get()==contact.body;
       if(!matches)
-        for(size_t i=0;i<obj->fragments.size();++i)
-          if(obj->fragments[i].get()==contact.body && contact.body!=nullptr) {
+        for(size_t i=0;i<obj->fragmentGroup.size();++i)
+          if(obj->fragments[obj->fragmentGroup[i]].get()==contact.body && contact.body!=nullptr) {
             matches=true;
-            piece=i;
+            piece=i; // the first piece of its bond group
             kind="fragment";
             break;
             }
@@ -2636,10 +2746,14 @@ std::vector<DynamicWorld::RagdollSupport> DynamicWorld::ragdollSupports(const Ra
       entry.broken=obj->pose->broken;
       entry.visible=piece!=size_t(-1) || !entry.broken;
       if(piece!=size_t(-1)) {
-        const auto matrix=obj->fragments[piece]->matrix();
-        for(const auto& face:obj->movableShape->fracture->pieces[piece].triangles) {
-          const Tempest::Vec3 vertices[]={face.vertices[0].position,face.vertices[1].position,face.vertices[2].position};
-          triangle(vertices,matrix);
+        const auto group=obj->fragmentGroup[piece];
+        const auto matrix=obj->fragments[group]->matrix();
+        for(size_t member=piece;member<obj->fragmentGroup.size();++member) {
+          if(obj->fragmentGroup[member]!=group) continue;
+          for(const auto& face:obj->movableShape->fracture->pieces[member].triangles) {
+            const Tempest::Vec3 vertices[]={face.vertices[0].position,face.vertices[1].position,face.vertices[2].position};
+            triangle(vertices,matrix);
+            }
           }
         }
       else if(entry.visible) {
@@ -2666,8 +2780,9 @@ std::vector<DynamicWorld::RagdollSupport> DynamicWorld::ragdollSupports(const Ra
   return result;
   }
 
-void DynamicWorld::damageMovableVob(BodyData& obj,float impulse,const Tempest::Vec3& point,bool arrow,
+void DynamicWorld::damageMovableVob(BodyData& obj,float impulse,const Tempest::Vec3& point,FractureHit hit,
                                   std::string_view impactCulprit,const Tempest::Vec3& direction) {
+  const bool arrow=hit==FractureHit::Arrow;
   if(!movableVobs->destructionEnabled || obj.fractureRule==nullptr || obj.movableShape->fracture==nullptr ||
      obj.body==nullptr || obj.pose->broken || obj.pendingBreak || !std::isfinite(impulse) || impulse<=0.f)
     return;
@@ -2683,6 +2798,7 @@ void DynamicWorld::damageMovableVob(BodyData& obj,float impulse,const Tempest::V
   obj.breakImpulse=impulse;
   obj.breakPoint=point;
   obj.breakDirection=direction;
+  obj.breakHit=hit;
   }
 
 void DynamicWorld::breakMovableVob(BodyData& obj) {
@@ -2694,24 +2810,40 @@ void DynamicWorld::breakMovableVob(BodyData& obj) {
   const auto& mesh=*obj.movableShape->fracture;
   const auto& motion=movableVobs->fractureMotion;
   const auto hit=obj.breakDirection.quadLength()>1.e-12f ? Tempest::Vec3::normalize(obj.breakDirection) : Tempest::Vec3();
+  // Bonds of format 3 decide which pieces stay joined: the blow point in the visual's frame.
+  std::vector<uint32_t> pieceGroup(mesh.pieces.size());
+  for(uint32_t i=0;i<pieceGroup.size();++i) pieceGroup[i]=i;
+  if(!mesh.bonds.empty()) {
+    auto inverse=matrix;
+    inverse.inverse();
+    auto local=obj.breakPoint;
+    inverse.project(local);
+    pieceGroup=fractureGroups(mesh,movableVobs->fractureBonds,obj.breakHit,local);
+    }
+  const auto members=fractureMembers(pieceGroup);
   std::vector<std::unique_ptr<CollisionWorld::DynamicBody>> fragments;
-  fragments.reserve(mesh.pieces.size());
+  fragments.reserve(members.size());
   const uint32_t breakGroup=mesh.version==3 ? world->newFractureGroup() : 0;
-  const auto breakFilter=mesh.version==3 ? fractureGroupFilter(mesh) : nullptr;
+  const auto breakFilter=mesh.version==3 ? fractureGroupFilter(mesh,pieceGroup,uint32_t(members.size())) : nullptr;
   // All hulls, triangle data and GPU meshes are prepared while loading the
   // visual. The replacement only installs native bodies and transfers motion.
-  for(size_t i=0;i<mesh.pieces.size();++i) {
-    const auto& piece=mesh.pieces[i];
-    const float mass=float(obj.movableMass*piece.volume/mesh.volume);
-    const auto group=mesh.version==3 ? piece.group : obj.movableShape->material;
-    const float friction=mesh.version==3 ? materialFriction(group) : obj.movableShape->friction;
-    auto body=world->addDynamicBody(piece.hull,matrix,friction,mass,C_Fragment);
-    if(breakFilter!=nullptr) body->setFracturePiece(breakFilter,breakGroup,uint32_t(i));
-    body->setLabel(obj.visual+" fragment");
-    body->setNoiseProfile(impactMaterial(group),group,obj.visual+" fragment");
-    body->setBuoyancyFraction(vobBuoyancyFraction(group));
+  for(uint32_t g=0;g<members.size();++g) {
+    auto body=addFragmentBody(*world,mesh,members[g],matrix,obj.movableMass,obj.movableShape->material,
+                              obj.movableShape->friction,obj.visual,breakFilter.GetPtr(),breakGroup,g);
     const auto r=(body->centerOfMass()-center)*.01f;
     const Tempest::Vec3 tangential(omega.y*r.z-omega.z*r.y,omega.z*r.x-omega.x*r.z,omega.x*r.y-omega.y*r.x);
+    if(members[g].size()>1) {
+      // A joined group keeps the inherited motion and takes the blow by its own centre of
+      // mass: no push from the prop's centre and no added spin.
+      const float distance=(body->centerOfMass()-obj.breakPoint).length();
+      auto added=hit*(motion.hit*std::exp(-distance/motion.falloff));
+      const float speed=added.length();
+      if(speed>motion.cap) added*=motion.cap/speed;
+      body->setVelocity(velocity+tangential*100.f+added,omega);
+      fragments.push_back(std::move(body));
+      continue;
+      }
+    const size_t i=members[g].front();
     // A small separation velocity releases touching cut faces. Linear and
     // angular momentum inherited from the intact body remain the base motion.
     auto outward=r.quadLength()>1.e-6f ? Tempest::Vec3::normalize(r) : Tempest::Vec3();
@@ -2735,14 +2867,17 @@ void DynamicWorld::breakMovableVob(BodyData& obj) {
   obj.body.reset();
   obj.query.clear();
   obj.fragments=std::move(fragments);
+  obj.fragmentGroup=std::move(pieceGroup);
   obj.fragmentSleepTime.assign(obj.fragments.size(),-1);
   obj.fragmentPermanent.assign(obj.fragments.size(),false);
-  // Keep stable piece indices throughout cleanup and save/load. Equal-volume
-  // pieces are ordered by their authored cache index, making the choice fixed.
+  // Keep stable piece and group indices throughout cleanup and save/load. The three largest
+  // groups by volume stay; equal volumes are ordered by group index (by smallest piece).
+  std::vector<double> groupVolume(obj.fragments.size(),0.);
+  for(size_t i=0;i<mesh.pieces.size();++i) groupVolume[obj.fragmentGroup[i]]+=mesh.pieces[i].volume;
   std::vector<size_t> largest(obj.fragments.size());
   for(size_t i=0;i<largest.size();++i) largest[i]=i;
   std::stable_sort(largest.begin(),largest.end(),[&](size_t a,size_t b) {
-    return mesh.pieces[a].volume>mesh.pieces[b].volume;
+    return groupVolume[a]>groupVolume[b];
     });
   for(size_t i=0;i<std::min(size_t(3),largest.size());++i)
     obj.fragmentPermanent[largest[i]]=true;
@@ -2766,7 +2901,7 @@ void DynamicWorld::breakMovableVob(BodyData& obj) {
   noise.body=reinterpret_cast<uintptr_t>(&obj);
   world->emitPhysicsNoise(noise);
   if(TestBench::isActive())
-    TestBench::destructionBreak(reinterpret_cast<uintptr_t>(&obj),obj.fragments.size(),
+    TestBench::destructionBreak(reinterpret_cast<uintptr_t>(&obj),obj.fragmentGroup.size(),
                                float(std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-started).count()));
   }
 
@@ -2779,8 +2914,10 @@ void DynamicWorld::syncFragments(BodyData& obj) {
   obj.fragmentsWereSleeping=sleeping;
   if(!obj.fractureCallback) return;
   std::vector<Tempest::Matrix4x4> matrices;
-  matrices.reserve(obj.fragments.size());
-  for(const auto& body:obj.fragments) {
+  matrices.reserve(obj.fragmentGroup.size());
+  // One matrix per piece: the body of its bond group.
+  for(const auto group:obj.fragmentGroup) {
+    const auto& body=obj.fragments[group];
     if(body!=nullptr) {
       matrices.push_back(body->matrix());
       }
@@ -2810,9 +2947,12 @@ void DynamicWorld::cleanupFragments(BodyData& obj) {
     const bool expired=since>=0 && traceTime>=since && traceTime-since>=30;
     const bool distant=hasFragmentObserver && (body->centerOfMass()-fragmentObserver).quadLength()>3000.f*3000.f;
     if(!obj.fragmentPermanent[i] && (expired || distant)) {
+      // A group retires whole: every piece of it.
       if(TestBench::isActive())
-        TestBench::destructionRetire(reinterpret_cast<uintptr_t>(&obj),i,expired,
-                                     hasFragmentObserver ? (body->centerOfMass()-fragmentObserver).length() : -1.f);
+        for(size_t piece=0;piece<obj.fragmentGroup.size();++piece)
+          if(obj.fragmentGroup[piece]==i)
+            TestBench::destructionRetire(reinterpret_cast<uintptr_t>(&obj),piece,expired,
+                                         hasFragmentObserver ? (body->centerOfMass()-fragmentObserver).length() : -1.f);
       body.reset();
       changed=true;
       }
@@ -2846,7 +2986,7 @@ size_t DynamicWorld::applyMovableVobImpulse(const Tempest::Vec3& center, float r
       obj->body->setTraceCulprit(culprit);
     if(obj->className=="fence" || obj->body->addImpulse(force,culprit,pointCm)) {
       ++count;
-      damageMovableVob(*obj,force.length(),pointCm!=nullptr ? *pointCm : target,false,{},force);
+      damageMovableVob(*obj,force.length(),pointCm!=nullptr ? *pointCm : target,FractureHit::Spell,{},force);
       }
     }
   return count;
@@ -2950,7 +3090,7 @@ void DynamicWorld::moveBullet(BulletBody &b, const Tempest::Vec3& dir, uint64_t 
           target.body->setTraceCulprit(culprit);
           target.body->addImpulseAtPoint(impulse,hit.point,culprit);
           }
-        damageMovableVob(target,impulse.length(),hit.point,true,{},b.direction());
+        damageMovableVob(target,impulse.length(),hit.point,FractureHit::Arrow,{},b.direction());
         }
       }
     if(isSpell){
@@ -3844,7 +3984,7 @@ bool DynamicWorld::Item::touchedByNpc() const {
 
 bool DynamicWorld::Item::addImpulse(const Tempest::Vec3& impulseNs, Npc* culprit) {
   if(obj==nullptr || obj->body==nullptr || !obj->body->addImpulse(impulseNs,culprit)) return false;
-  if(obj->movableShape!=nullptr) owner->damageMovableVob(*obj,impulseNs.length(),obj->body->centerOfMass(),false,{},impulseNs);
+  if(obj->movableShape!=nullptr) owner->damageMovableVob(*obj,impulseNs.length(),obj->body->centerOfMass(),FractureHit::Impact,{},impulseNs);
   return true;
   }
 

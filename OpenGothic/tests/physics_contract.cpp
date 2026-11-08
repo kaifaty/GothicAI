@@ -6247,6 +6247,8 @@ namespace {
     }
   }
 
+void testFractureBonds(); // physics_bonds_contract.cpp
+
 int main() {
   try {
     testShadowBodySlots();
@@ -6291,6 +6293,7 @@ int main() {
     testSkinnedMeshMinimum();
     testDestruction();
     testOwnFractureMotion();
+    testFractureBonds();
     testRotatingFragments();
     testPhysicsNoise();
     testRagdollNoise();

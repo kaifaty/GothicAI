@@ -142,11 +142,12 @@ struct FracturePieces {
     float lastHeight=0,lastNative=0;
     std::vector<Tempest::Vec3> vertices;
     JPH::ShapeRefC hull;
+    uint32_t bondGroup=0; // bond group at the break: pieces of one group share one body
     };
   struct Break {
     uintptr_t parent=0;
     std::string label,visual;
-    size_t version=0,samples=0;
+    size_t version=0,samples=0,groups=0;
     uint64_t breakTime=0;
     std::vector<Piece> pieces;
     };
@@ -243,6 +244,9 @@ void fracturePiecesBreak(FracturePieces& state,World& world,uintptr_t parent,std
 void fracturePiecesTick(FracturePieces& state,World& world);
 std::optional<std::pair<Tempest::Vec3,Tempest::Vec3>> fracturePiecesView(World& world,const std::vector<uintptr_t>& ids,
                                                                          const Tempest::Vec3& camera,const Tempest::Vec3& target);
+// `destruction2 stand`: the actor back where it stood before the blow, facing the same way
+// (the close "pieces" frame after the take: the lunge leaves the hero inside the prop).
+void fracturePiecesStand(Npc* actor,const Tempest::Vec3& stand,const Tempest::Vec3& facing);
 
 void placedItemsCensus(World& world);
 void placedItemsProbe(PlacedItems& state,World& world,Npc& player);

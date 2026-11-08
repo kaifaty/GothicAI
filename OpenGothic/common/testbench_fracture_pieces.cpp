@@ -14,6 +14,7 @@
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 
 #include "physics/fracture.h"
+#include "world/objects/npc.h"
 #include "world/world.h"
 
 using namespace Tempest;
@@ -164,6 +165,8 @@ void fracturePiecesBreak(FracturePieces& state,World& world,uintptr_t parent,std
   size_t under=0;
   for(const auto& part:world.physic()->fragmentSnapshot()) {
     if(part.parentId!=parent || part.piece>=item.pieces.size())continue;
+    item.pieces[part.piece].bondGroup=part.bondGroup;
+    item.groups=std::max(item.groups,size_t(part.bondGroup)+1);
     const auto center=apply(part.transform,item.pieces[part.piece].center);
     const auto floor=world.physic()->landRay(center+Vec3(0,100,0),400);
     const float height=floor.hasCol?Vec3::dotProduct(center-floor.v,floor.n):0.f;
@@ -174,7 +177,7 @@ void fracturePiecesBreak(FracturePieces& state,World& world,uintptr_t parent,std
     start+="["+std::to_string(part.piece)+","+ragdollNumber(height)+","+ragdollNumber(native)+"]";
     }
   event("destruction2_start","\"case\":"+jsonStr(item.label)+",\"visual\":"+jsonStr(item.visual)+",\"pieces\":"+
-    std::to_string(item.pieces.size())+",\"below_ground\":"+std::to_string(under)+",\"max_native_ground_penetration_cm\":"+
+    std::to_string(item.pieces.size())+",\"groups\":"+std::to_string(item.groups)+",\"below_ground\":"+std::to_string(under)+",\"max_native_ground_penetration_cm\":"+
     ragdollNumber(deepest)+",\"piece_height_native\":"+start+"]");
   state.breaks.push_back(std::move(item));
   }
@@ -221,6 +224,12 @@ void fracturePiecesTick(FracturePieces& state,World& world) {
     std::vector<float> displacement,resting,volumes;
     std::vector<JPH::Mat44> poses(parts.size());
     std::vector<Vec3> low(parts.size()),high(parts.size());
+    // Bodies of the bond groups: present, asleep, through the ground (any of its pieces).
+    std::vector<uint8_t> groupPresent(item.groups,0),groupAsleep(item.groups,0),groupFell(item.groups,0);
+    std::vector<double> groupVolume(item.groups,0.);
+    std::vector<size_t> groupPieces(item.groups,0);
+    for(const auto& piece:item.pieces)
+      if(piece.bondGroup<item.groups) {groupVolume[piece.bondGroup]+=piece.volume;++groupPieces[piece.bondGroup];}
     size_t missing=0,flat=0,onEdge=0,upright=0,sleeping=0,restingAsleep=0,fell=0,metal=0,metalOnGround=0;
     float maxJitter=0,maxFloor=0,maxNative=0,maxVisible=0,maxTerrain=0,maxPieces=0,maxSpeed=0;
     std::string rows="[";
@@ -236,6 +245,9 @@ void fracturePiecesTick(FracturePieces& state,World& world) {
       const auto floor=world.physic()->landRay(center+Vec3(0,100,0),400);
       const bool below=!floor.hasCol || Vec3::dotProduct(center-floor.v,floor.n)<-1.f;
       if(below)++fell;else resting.push_back(moved);
+      if(piece.bondGroup<item.groups) {
+        groupPresent[piece.bondGroup]=1;groupAsleep[piece.bondGroup]=part.sleeping;groupFell[piece.bondGroup]|=below;
+        }
       std::string where;
       if(below) {
         // A fallen piece: the static surface straight above or below it within 20 m, and water at it.
@@ -300,7 +312,7 @@ void fracturePiecesTick(FracturePieces& state,World& world) {
           ",\"lowest_over_terrain_cm\":"+ragdollNumber(std::isfinite(terrain)?terrain:0.f);
         }
       if(rows.size()>1)rows+=',';
-      rows+="{\"piece\":"+std::to_string(i)+",\"group\":"+jsonStr(piece.group)+",\"volume_cm3\":"+
+      rows+="{\"piece\":"+std::to_string(i)+",\"group\":"+jsonStr(piece.group)+",\"bond_group\":"+std::to_string(piece.bondGroup)+",\"volume_cm3\":"+
         ragdollNumber(float(piece.volume))+",\"extent_cm\":["+ragdollNumber(piece.extent[0])+","+
         ragdollNumber(piece.extent[1])+","+ragdollNumber(piece.extent[2])+"],\"flat\":"+(piece.flat?"true":"false")+
         ",\"stave\":"+(piece.stave?"true":"false")+",\"center_cm\":"+ragdollVector(center)+
@@ -315,8 +327,9 @@ void fracturePiecesTick(FracturePieces& state,World& world) {
       for(size_t i=0;i<parts.size();++i)
         for(size_t j=i+1;j<parts.size();++j) {
           if(parts[i]==nullptr || parts[j]==nullptr || item.pieces[i].hull==nullptr || item.pieces[j].hull==nullptr)continue;
-          // Format 3 hoops pass through the staves of their own break by design.
+          // Format 3 hoops pass through the staves of their own break by design; joined pieces are one body.
           if(item.version==3 && !fractureMaterialsCollide(item.pieces[i].material,item.pieces[j].material))continue;
+          if(item.pieces[i].bondGroup==item.pieces[j].bondGroup)continue;
           if(low[i].x>high[j].x+3 || low[j].x>high[i].x+3 || low[i].y>high[j].y+3 || low[j].y>high[i].y+3 ||
              low[i].z>high[j].z+3 || low[j].z>high[i].z+3)continue;
           const float depth=penetration(item.pieces[i].hull.GetPtr(),poses[i],item.pieces[j].hull.GetPtr(),poses[j]);
@@ -329,6 +342,16 @@ void fracturePiecesTick(FracturePieces& state,World& world) {
       }
     const float largest=volumes.empty()?0.f:*std::max_element(volumes.begin(),volumes.end());
     const float middle=median(volumes);
+    double total=0,largestGroup=0;
+    size_t singles=0,bodies=0,bodiesAsleep=0,bodiesFell=0;
+    for(size_t g=0;g<item.groups;++g) {
+      total+=groupVolume[g];largestGroup=std::max(largestGroup,groupVolume[g]);singles+=groupPieces[g]==1;
+      bodies+=groupPresent[g];bodiesAsleep+=groupPresent[g] && groupAsleep[g];bodiesFell+=groupPresent[g] && groupFell[g];
+      }
+    const std::string groups=",\"groups\":"+std::to_string(item.groups)+",\"largest_group_volume_fraction\":"+
+      ragdollNumber(total>0?float(largestGroup/total):0.f)+",\"single_pieces\":"+std::to_string(singles)+
+      ",\"bodies\":"+std::to_string(bodies)+",\"bodies_sleeping\":"+std::to_string(bodiesAsleep)+
+      ",\"bodies_fell\":"+std::to_string(bodiesFell);
     event("destruction2_pieces","\"case\":"+jsonStr(item.label)+",\"visual\":"+jsonStr(item.visual)+
       ",\"version\":"+std::to_string(item.version)+",\"after_break_ms\":"+std::to_string(at)+
       ",\"pieces\":"+std::to_string(item.pieces.size())+",\"missing\":"+std::to_string(missing)+
@@ -338,7 +361,7 @@ void fracturePiecesTick(FracturePieces& state,World& world) {
       ",\"flat_long_axis_within_30_of_vertical\":"+std::to_string(upright)+
       ",\"sleeping\":"+std::to_string(sleeping)+",\"resting_sleeping\":"+std::to_string(restingAsleep)+",\"max_speed_cm_s\":"+ragdollNumber(maxSpeed)+
       ",\"largest_volume_cm3\":"+ragdollNumber(largest)+",\"median_volume_cm3\":"+ragdollNumber(middle)+
-      ",\"largest_to_median\":"+ragdollNumber(middle>0?largest/middle:0.f)+pairs+",\"rows\":"+rows);
+      ",\"largest_to_median\":"+ragdollNumber(middle>0?largest/middle:0.f)+groups+pairs+",\"rows\":"+rows);
     }
   }
 
@@ -350,6 +373,17 @@ std::optional<std::pair<Vec3,Vec3>> fracturePiecesView(World& world,const std::v
     return std::make_pair(center+camera,center+target);
     }
   return std::nullopt;
+  }
+
+void fracturePiecesStand(Npc* actor,const Vec3& stand,const Vec3& facing) {
+  if(actor==nullptr) {
+    event("destruction2_stand","\"moved\":false");
+    return;
+    }
+  const Vec3 from=actor->position();
+  actor->setPosition(stand);actor->setDirection(facing);actor->updateTransform();
+  event("destruction2_stand","\"moved\":true,\"from_cm\":"+ragdollVector(from)+",\"to_cm\":"+ragdollVector(actor->position())+
+        ",\"distance_cm\":"+ragdollNumber((actor->position()-from).length()));
   }
 
 }
