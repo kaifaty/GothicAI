@@ -1929,24 +1929,22 @@ void Renderer::prepareSSAO(Encoder<CommandBuffer>& cmd, WorldView& wview) {
 
   auto& device = Resources::device();
   const auto aoSize = effectResolution();
-  const auto mipsSize = Size((zbuffer.w()+1)/2, (zbuffer.h()+1)/2);
-  if(ssao.ssaoBuf.size()!=aoSize || ssao.ssaoBlur.size()!=zbuffer.size() || ssao.depthMips.size()!=mipsSize) {
+  if(ssao.ssaoBuf.size()!=aoSize || ssao.ssaoBlur.size()!=zbuffer.size() || ssao.depthHalf.size()!=aoSize) {
     Resources::recycle(std::move(ssao.ssaoBuf));
     Resources::recycle(std::move(ssao.ssaoBlur));
-    Resources::recycle(std::move(ssao.depthMips));
+    Resources::recycle(std::move(ssao.depthHalf));
     ssao.ssaoBuf   = device.image2d(ssao.aoFormat, aoSize);
     ssao.ssaoBlur  = device.image2d(ssao.aoFormat, zbuffer.size());
-    ssao.depthMips = device.image2d(TextureFormat::R32F, mipsSize, true);
+    ssao.depthHalf = device.image2d(TextureFormat::R32F, aoSize);
     }
 
   cmd.setFramebuffer({});
-  // decimated depth for the far samples of ssao.comp, six levels from 2 to 64 pixels
-  cmd.setDebugMarker("SSAO-mips");
+  // depth at the SSAO size for the samples of ssao.comp: the full buffer misses the cache under their scatter
+  cmd.setDebugMarker("SSAO-depth");
   cmd.setBinding(0, zbuffer, Sampler::nearest(ClampMode::ClampToEdge));
-  for(uint32_t i=0; i<6; ++i)
-    cmd.setBinding(1+i, ssao.depthMips, Sampler::nearest(), std::min(i, ssao.depthMips.mipCount()-1));
-  cmd.setPipeline(shaders.ssaoMips);
-  cmd.dispatchThreads(ssao.depthMips.size());
+  cmd.setBinding(1, ssao.depthHalf);
+  cmd.setPipeline(shaders.ssaoDepth);
+  cmd.dispatchThreads(ssao.depthHalf.size());
 
   cmd.setDebugMarker("SSAO");
 
@@ -1955,7 +1953,7 @@ void Renderer::prepareSSAO(Encoder<CommandBuffer>& cmd, WorldView& wview) {
   cmd.setBinding(2, gbufDiffuse, Sampler::nearest(ClampMode::ClampToEdge));
   cmd.setBinding(3, gbufNormal,  Sampler::nearest(ClampMode::ClampToEdge));
   cmd.setBinding(4, zbuffer,     Sampler::nearest(ClampMode::ClampToEdge));
-  cmd.setBinding(5, ssao.depthMips, Sampler::nearest(ClampMode::ClampToEdge));
+  cmd.setBinding(5, ssao.depthHalf, Sampler::nearest(ClampMode::ClampToEdge));
   cmd.setPushData(&push, sizeof(push));
   cmd.setPipeline(shaders.ssao);
   cmd.dispatchThreads(ssao.ssaoBuf.size());

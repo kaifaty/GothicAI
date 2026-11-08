@@ -228,7 +228,7 @@ class Renderer final {
       Tempest::TextureFormat    aoFormat = Tempest::TextureFormat::R8;
       Tempest::StorageImage     ssaoBuf;
       Tempest::StorageImage     ssaoBlur;
-      Tempest::StorageImage     depthMips; // ssao_mips.comp
+      Tempest::StorageImage     depthHalf; // R32F depth at half size for the samples of ssao.comp, ssao_depth.comp
       } ssao;
 
     struct Cmaa2 {

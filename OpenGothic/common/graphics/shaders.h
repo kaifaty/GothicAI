@@ -54,7 +54,7 @@ class Shaders {
     Tempest::RenderPipeline  stash;
     Tempest::RenderPipeline  bink;
 
-    Tempest::ComputePipeline ssao, ssaoBlur, ssaoMips;
+    Tempest::ComputePipeline ssao, ssaoBlur, ssaoDepth;
 
     Tempest::ComputePipeline irradiance;
 

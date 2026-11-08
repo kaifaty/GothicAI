@@ -21,7 +21,7 @@ layout(binding  = 1, std140) uniform UboScene {
 layout(binding  = 2) uniform sampler2D  gbufDiffuse;
 layout(binding  = 3) uniform usampler2D gbufNormal;
 layout(binding  = 4) uniform sampler2D  depthBuf;
-layout(binding  = 5) uniform sampler2D  depthMips; // ssao_mips.comp
+layout(binding  = 5) uniform sampler2D  depthHalf; // ssao_depth.comp, the depth at this pass's size
 
 const uint  numSamples     = 32;
 const uint  numIter        = 8;
@@ -29,19 +29,12 @@ const uint  samplesPerStep = numSamples/numIter;
 const float sphereLen      = 100;
 const float unorm16        = 65025;
 
-// a sample d pixels from its point reads level floor(log2(d) - mipOffset) of the decimated depth (XeGTAO's 3.3):
-// nearer than 20 pixels the depth buffer itself, then the stored pixel nearest to the sample, at most 5-10 % of d off
-const float mipOffset      = 3.3;
-const int   mipLevels      = 6;
-
 const int   gridSize       = 5;
 const int   gridQSize      = 25;
 
 ivec2 fragCoord;
 ivec2 screenSize;
 mat3  tangent;
-vec2  tracePix;  // the centre of the depth pixel the texel traces from, in depth pixels
-vec2  depthGrad; // the slope of the NDC depth of the receiving plane, per depth pixel
 
 float occlusionAll = 0;
 
@@ -144,22 +137,11 @@ float readZ(in vec2 posf) {
   return textureLod(depthBuf, posf.xy*0.5+vec2(0.5), 0).r;
   }
 
-// Where the sample's depth is read (xy, NDC) and the depth there (z). A far sample reads the stored pixel nearest to
-// it, and its own depth at1.z moves to that pixel along the depth slope of the receiving plane: on a slope the shift
-// of the read would otherwise put a sample just over the surface under it. The NDC depth of a plane is linear in
-// screen space, so on a plane the move is exact.
-vec3 readSample(inout vec3 at1) {
-  const vec2  size = vec2(textureSize(depthBuf,0));
-  const vec2  pix  = (at1.xy*0.5+vec2(0.5))*size;
-  const float d    = length(pix - tracePix);
-  const int   lod  = clamp(int(floor(log2(max(d, 1.0)) - mipOffset)), 0, min(mipLevels, textureQueryLevels(depthMips)));
-  if(lod==0)
-    return vec3(at1.xy, readZ(at1.xy));
-  const float s  = float(1 << lod);
-  const ivec2 u  = clamp(ivec2(floor((pix - vec2(0.5))/s + vec2(0.5))), ivec2(0), textureSize(depthMips, lod-1)-1);
-  const vec2  at = vec2(u)*s + vec2(0.5);
-  at1.z += dot(depthGrad, at - pix);
-  return vec3(at/size*2.0 - vec2(1.0), texelFetch(depthMips, u, lod-1).r);
+// The depth under a sample. The samples scatter over the screen, and on the full depth buffer the trace waited on
+// cache misses; the copy at this pass's size is a quarter as large. Coarser levels for far samples gained nothing
+// over it, their per-sample math cost what the smaller reads saved (docs/performance.md, 2026-11-08).
+float readSampleZ(in vec2 posf) {
+  return textureLod(depthHalf, posf.xy*0.5+vec2(0.5), 0).r;
   }
 
 float sampleRadius(uint i, uint maxSmp) {
@@ -179,13 +161,13 @@ void calcOcclussion(const vec3 at0, const vec3 pos0, const float f0, uint seed, 
       continue;
       }
 
-    vec3  at2    = readSample(at1);
-    float z      = at2.z;
+    float z      = readSampleZ(at1.xy);
     bool  isHit  = floor(z*32768.0+0.5) < floor(at1.z*32768.0);
     float distQ  = 1;
 
     // distance attenuation
     if(isHit) {
+      vec3  at2  = vec3(at1.xy,z);
       vec3  pos2 = unproject(at2);
       vec3  dp   = (pos2.xyz-pos0);
       float lenQ = dot(dp,dp);
@@ -225,8 +207,6 @@ vec3 reconstructNormal(const vec3 at0, in vec2 uv){
 
   const vec3 bestHor  = bestL ? atL : atR;
   const vec3 bestVert = bestT ? atT : atB;
-  // the neighbours are one depth pixel away; T is the one above (-y)
-  depthGrad = vec2(bestL ? at0.z - atL.z : atR.z - at0.z, bestT ? at0.z - atT.z : atB.z - at0.z);
 
   vec3 P0 = unproject(at0);
   vec3 P1 = unproject(bestHor);
@@ -261,8 +241,6 @@ void main() {
 
   const vec3 camPos = unproject(vec3(0,0,0));
   const vec3 at0    = vec3(inPos.xy,readZ(inPos.xy));
-  tracePix = vec2(depthPix) + vec2(0.5);
-  depthGrad = vec2(0);
   const vec3 pos0   = unproject(at0);
 
   if(valid) {

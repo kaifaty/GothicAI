@@ -338,7 +338,7 @@ add_shader(patch.comp                patch.comp)
 
 add_shader(ssao.comp                 ssao/ssao.comp)
 add_shader(ssao_blur.comp            ssao/ssao_blur.comp)
-add_shader(ssao_mips.comp            ssao/ssao_mips.comp)
+add_shader(ssao_depth.comp           ssao/ssao_depth.comp)
 
 # GPU-driven: HiZ
 if(IOS)
