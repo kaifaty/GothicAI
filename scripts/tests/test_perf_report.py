@@ -356,6 +356,25 @@ def test_gpu_completion_and_matching_cpu_duration(tmp_path):
     assert gpu["p95_ms"] == pytest.approx(3.85)
     assert gpu["longer_than_cpu_fraction"] == .5
     assert gpu["buffers_per_completed_frame"] == 1.5
+    summary = report.build_report(tmp_path)["places"]["market"]["summary"]
+    assert "gpu_passes" not in summary
+    assert "GPU pass" not in report.report_markdown(report.build_report(tmp_path))
+
+    # One row per marker region; a frame sums its label's valid rows, invalid rows are skipped.
+    with (tmp_path / "frameprofile.csv.gpu.csv").open("w", newline="") as stream:
+        writer = csv.writer(stream)
+        writer.writerow(["attempt", "cmd_id", "segment", "frame", "encoder", "type", "labels", "gpu_ns",
+                         "vertex_ns", "fragment_ns", "draw_calls", "dispatch_calls", "valid"])
+        for attempt, label, gpu_ns, valid in ((0, "GI-Trace", 2_000_000, 1), (0, "Sky", 250_000, 1),
+                                              (0, "Sky", 250_000, 1), (1, "GI-Trace", 4_000_000, 1),
+                                              (1, "Sky", 9_000_000, 0), (2, "GI-Trace", 6_000_000, 1)):
+            writer.writerow([attempt, 0, "perf-market/view-1", 0, 0, "compute", label, gpu_ns, 0, 0, 0, 1, valid])
+    result = report.build_report(tmp_path)
+    passes = result["places"]["market"]["summary"]["gpu_passes"]
+    assert list(passes) == ["GI-Trace", "Sky"]
+    assert passes["GI-Trace"] == {"frames": 3, "mean_ms": 4, "p95_ms": pytest.approx(5.8)}
+    assert passes["Sky"] == {"frames": 1, "mean_ms": .5, "p95_ms": .5}
+    assert "| GI-Trace | 3 | 4.000 | 5.800 |" in report.report_markdown(result)
 
 
 def test_compare_repeat_noise_sorted_regressions_and_leaf_inputs(tmp_path):

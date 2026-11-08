@@ -116,6 +116,43 @@ def read_texture_activity(path):
     return indexed
 
 
+GPU_PASS_COLUMNS = {"attempt", "labels", "gpu_ns", "valid"}
+
+
+def read_gpu_passes(path):
+    """Valid `.gpu.csv` rows as {attempt: {label: ns}}; None without a pass sidecar."""
+    path = Path(str(path) + ".gpu.csv")
+    if not path.exists():
+        return None
+    passes = {}
+    with path.open(newline="") as stream:
+        reader = csv.DictReader(stream)
+        if not GPU_PASS_COLUMNS.issubset(reader.fieldnames or []):
+            return None
+        for line, row in enumerate(reader, 2):
+            try:
+                attempt, gpu_ns, valid = int(row["attempt"]), int(row["gpu_ns"]), int(row["valid"])
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"{path}:{line}: invalid GPU pass row") from exc
+            if valid != 1 or gpu_ns < 0:
+                continue
+            labels = passes.setdefault(attempt, {})
+            labels[row["labels"]] = labels.get(row["labels"], 0) + gpu_ns
+    return passes
+
+
+def gpu_pass_summary(samples):
+    measured = [row["gpu_passes"] for row in samples if "gpu_passes" in row]
+    if not measured:
+        return None
+    result = {}
+    for label in {label for row in measured for label in row}:
+        values = [row[label] for row in measured if label in row]
+        result[label] = {"frames": len(values), "mean_ms": statistics.fmean(values),
+                         "p95_ms": percentile(values, 0.95)}
+    return dict(sorted(result.items(), key=lambda item: item[1]["mean_ms"], reverse=True))
+
+
 def texture_activity(events, left, right):
     flags = {}
     for kind, (starts, ends) in events.items():
@@ -129,6 +166,7 @@ def texture_activity(events, left, right):
 def samples_from_profile(path):
     rows, zones, amounts, has_gpu = read_profile(path)
     activity = read_texture_activity(path)
+    passes = read_gpu_passes(path)
     samples = {}
     start = 0
     while start < len(rows):
@@ -164,6 +202,12 @@ def samples_from_profile(path):
                 })
                 if activity is not None:
                     target[-1]["texture_activity"] = texture_activity(activity, submitted["begin_ns"], rows[right]["begin_ns"])
+                if passes is not None:
+                    frame = {}
+                    for row in attempts:
+                        for label, gpu_ns in passes.get(row.get("attempt"), {}).items():
+                            frame[label] = frame.get(label, 0) + gpu_ns / 1e6
+                    target[-1]["gpu_passes"] = frame
         start = end
     warnings = []
     overflow = max((row.get("overflow", 0) for row in rows), default=0)
@@ -222,6 +266,9 @@ def summarize(samples):
                                          / len(completed)) if completed else None,
             "buffers_per_completed_frame": statistics.fmean(buffers) if buffers else None,
         }
+    gpu_passes = gpu_pass_summary(samples)
+    if gpu_passes is not None:
+        result["gpu_passes"] = gpu_passes
     return result
 
 
@@ -528,6 +575,13 @@ def report_markdown(report):
                               f"({100 * gpu['completion_fraction']:.1f}%); GPU longer than CPU "
                               f"{number(None if gpu['longer_than_cpu_fraction'] is None else 100 * gpu['longer_than_cpu_fraction'], 1)}%; "
                               f"buffers/completed frame {number(gpu['buffers_per_completed_frame'])}.", ""])
+            if "gpu_passes" in stats:
+                lines.extend(["GPU passes: per frame, the sum of a label's valid `.gpu.csv` rows; frames count "
+                              "frames with that label. Pass intervals can overlap and must not be added.", "",
+                              "| GPU pass | Frames | Mean ms | p95 ms |", "|---|---:|---:|---:|"])
+                lines.extend(f"| {label.replace('|', '\\|')} | {values['frames']} | {values['mean_ms']:.3f} | {number(values['p95_ms'])} |"
+                             for label, values in stats["gpu_passes"].items())
+                lines.append("")
             lines.extend(["| Zone | Mean ms/frame | % frame | Calls/frame |",
                           "|---|---:|---:|---:|"])
             lines.extend(f"| {zone['name']} | {zone['mean_ms']:.3f} | {zone['frame_pct']:.2f} | {zone['calls_per_frame']:.2f} |"

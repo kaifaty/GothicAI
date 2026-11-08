@@ -33,7 +33,9 @@ enum class Zone : size_t {
   // Parts of ParallelAnimation: the NPC worker pass and the serial passes after it.
   AnimationNpcPass, MeleeShadow, MeleeContacts, InteractiveAnimation, LogicalBodySync,
   // PfxObjects::preFrameUpdate, and the CPU wait of a synchronous buffer upload (Metal).
-  PfxPrepare, UploadWait, Count
+  PfxPrepare, UploadWait,
+  // WorldView::updateRtScene: the ray-tracing scene refresh, TLAS and landscape BLAS builds included.
+  RtScene, Count
   };
 enum class Amount : size_t { PaletteCalls, PaletteBytes, IdenticalCalls, IdenticalBytes,
   PatchCalls, PatchBytes, PatchBlocks, GrowBytes, UploadBytes, DrawCalls, DispatchCalls,
@@ -72,6 +74,8 @@ class TextureWork final {
 // Capture the attempt at submission, never look up a reused cmdId on completion.
 void* gpuSubmitted();
 void gpuCompleted(void* record, double startSeconds, double endSeconds);
+// Vulkan: the buffer's span from its timestamp queries; invalid leaves the attempt without gpu_ns.
+void gpuCompletedNs(void* record, uint64_t gpuNs, bool valid);
 void* geometrySubmitted();
 void geometryCompleted(void* record, uint64_t triangles, bool valid);
 

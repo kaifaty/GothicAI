@@ -65,10 +65,16 @@ class RtScene {
 
       BuildBlas                                  staticOpaque;
       BuildBlas                                  staticAt;
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+      uint64_t                                   triangles = 0;
+#endif
       };
 
     uint32_t aquireBucketId(const Material& mat, const StaticMesh& mesh);
     void     addInstance(const BuildBlas& build, Tempest::AccelerationStructure& blas, Tempest::RtInstanceFlags flags);
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+    void     logBuild(double buildMs) const;
+#endif
 
     Build                          build;
     std::vector<const Tempest::Texture2d*> textureIdentities;

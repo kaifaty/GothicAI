@@ -806,6 +806,7 @@ bool WorldView::updateLights(const gtime gameTime) {
 bool WorldView::updateRtScene() {
   if(!Shaders::options().doRtScene)
     return false;
+  FrameProfile::Scope profile(FrameProfile::Zone::RtScene);
   if(visuals.updateRtScene(sGlobal.rtScene))
     return true;
   return sGlobal.rtScene.refreshTextures();
