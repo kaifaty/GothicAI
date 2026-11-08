@@ -4,7 +4,7 @@
 
 Bench families are extracted into `common/testbench_<family>.cpp`, with shared state types and helpers in `testbench_internal.h`.
 The dispatcher calls one `bool <family>Command(...)` wrapper in each extracted family file:
-`npc_sim`, `water`, `character`, `monster`, `furniture_parts`, `placed_items`, `item_hulls` and `fracture_pieces`.
+`npc_sim`, `water`, `character`, `monster`, `furniture_parts`, `placed_items`, `item_hulls`, `fracture_pieces` and `destruction`.
 Each wrapper handles its command branches in their original order and returns whether it matched.
 Tick and reset remain in `testbench.cpp`, along with water-film and monster camera/follow commands.
 Healing observations, commands and checks live in `common/testbench_healing.cpp`; its `Healing` state
@@ -23,6 +23,11 @@ The independent `ownMeshChest*` family stays in `testbench.cpp`.
 Ground-monster CharacterVirtual fixtures, observations and helpers live in `common/testbench_monster.cpp`.
 Their `MonsterCharacter` state and `MonsterCharacterContext` references are in `testbench_internal.h`.
 `monsterCharacterRenderProof`, `monsterCharacterCamera` and `TestBench::monsterCharacterCollision` stay in `testbench.cpp`.
+
+Destruction fixtures, observations and commands live in `common/testbench_destruction.cpp`.
+Their `Destruction` state and `DestructionContext` references are in `testbench_internal.h`.
+`destructionCamera`, `destructionSkinSample` and the `TestBench::destruction*` hooks stay in `testbench.cpp`;
+shared helpers have one definition and declarations in `testbench_internal.h`.
 
 Runs a scenario through the windowed game or the headless runner and records metrics and a report.
 Windowed scenarios can also capture video with a debug overlay and point at suspicious frames.
@@ -1552,7 +1557,7 @@ physics contracts pass after explicit signed Guild comparisons in the fixture.
 
 `OpenGothic/common/testbench.cpp` and `testbench_<family>.cpp` (including healing in
 `testbench_healing.cpp`, water / corpse-water in `testbench_water.cpp` and hero / human NPC
-CharacterVirtual in `testbench_character.cpp` and ground monsters in `testbench_monster.cpp`), inert unless `OPENGOTHIC_BENCH` is set. Hooks: the fixed time step and
+CharacterVirtual in `testbench_character.cpp` and ground monsters in `testbench_monster.cpp`, destruction in `testbench_destruction.cpp`), inert unless `OPENGOTHIC_BENCH` is set. Hooks: the fixed time step and
 the capture in `MainWindow` (in film mode the captured frame replaces the window's), the AI bridge's lines
 and voices (`TestBench::aiLine`, `aiVoiceEnd`, `aiHeard`, `aiBusy`), an npc's lines of the game and SVMs
 (`TestBench::npcOutput` in `Npc::nextAiAction`), the OpenAL loopback device in Tempest's

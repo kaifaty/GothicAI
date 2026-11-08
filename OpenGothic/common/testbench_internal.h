@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <deque>
 #include <map>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -17,6 +18,7 @@
 #include <utility>
 #include <vector>
 
+#include "resources.h"
 #include "game/constants.h"
 #include "graphics/objvisual.h"
 #include "game/inventory.h"
@@ -33,6 +35,7 @@ class Interactive;
 class MoveTrigger;
 class Npc;
 class PlayerControl;
+class Skeleton;
 class World;
 struct HeroDeed;
 enum PercType : uint8_t;
@@ -70,6 +73,64 @@ enum CamMode : uint8_t {
 struct QuestSite { bool ready=false; Tempest::Vec3 dry={}, direction={}; float waterY=0; std::string waypoint; };
 struct SpellActor {Npc* npc=nullptr;std::string role;};
 struct MovableFixture { ObjVisual visual; DynamicWorld::Item body; };
+
+struct Destruction {
+  std::vector<std::unique_ptr<MovableFixture>> destructionFixtures;
+  std::vector<uintptr_t> destructionIds;
+  std::map<std::pair<uintptr_t,size_t>,Tempest::Vec3> destructionFragmentOrigins;
+  std::map<std::pair<uintptr_t,size_t>,float> destructionFragmentTravel;
+  std::string destructionCase;
+  Tempest::Vec3 destructionCaster,destructionTarget,destructionDirection,destructionActorStart;
+  Npc* destructionActor=nullptr;
+  WayPoint destructionDestination;
+  uint64_t destructionStart=0,destructionNextArrow=0;
+  uint64_t destructionLastBreak=0;
+  uint64_t destructionFallSample=0;
+  unsigned destructionArrows=0;
+  bool destructionReady=false,destructionTrace=false,destructionShooting=false;
+  bool destructionSleepSampled=false;
+  bool destructionSupportTrace=false;
+  uint64_t destructionSupportNext=0;
+  const Npc* destructionSkinRequest=nullptr;
+  std::unordered_map<const ProtoMesh*,std::vector<Resources::VertexA>> destructionSkinGeometry;
+  std::string destructionSkinSample="null";
+  Npc* destructionMeleeActor=nullptr;
+  Npc* destructionMeleeNpc=nullptr;
+  Tempest::Vec3 destructionMeleeFacing,destructionMeleeStand;
+  bool destructionMeleeRestance=false;
+  uint64_t destructionMeleeNext=0,destructionMeleeDeadline=0;
+  unsigned destructionMeleeAttempts=0,destructionMeleeHits=0,destructionMeleeBlows=0;
+  bool destructionMeleeRunning=false,destructionMeleeArena=false;
+  Npc* destructionFarmNpc=nullptr;
+  Tempest::Vec3 destructionFarmNpcStart,destructionFarmStart,destructionFarmEnd;
+  const WayPoint* destructionFarmNpcGoal=nullptr;
+  uint32_t destructionFarmZen=uint32_t(-1);
+  float destructionFarmNpcTravel=0;
+  float destructionFarmNpcBest=std::numeric_limits<float>::infinity();
+  Npc* destructionTraceHost=nullptr;
+  World* destructionTraceWorld=nullptr;
+  uint32_t destructionTraceZen=uint32_t(-1);
+  Tempest::Vec3 destructionTraceSource;
+  bool destructionTraceDebug=false;
+};
+
+// References to the shared bench fields used by the destruction fixtures.
+struct DestructionContext {
+  CamMode& cam;
+  Tempest::Vec3& movableCenter;
+  std::vector<uintptr_t>& movableIds;
+  bool& movableMeasuring;
+  bool& movableReady;
+  Tempest::Vec3& movableWalkStart;
+  Npc*& noiseHost;
+  Tempest::Vec3& noiseSource;
+  bool& noiseTrace;
+  Tempest::Vec3& ragdollArenaTarget;
+  std::string& ragdollArenaWaypoint;
+  std::vector<SpellActor>& spellActors;
+  uint64_t& time;
+  uint64_t& waitUntil;
+};
 
 struct LivingWalker { Npc* npc=nullptr; WayPoint ends[2]; bool next=false,queued=false; int meleePhase=-1;uint64_t meleeAttackAt=0; };
 
@@ -521,6 +582,37 @@ bool hidden(World& w,const Tempest::Vec3& from,const Tempest::Vec3& to);
 float num(const std::vector<std::string>& a,size_t i,float def);
 void prepareSpellFixture(World& world,Npc& player,std::string_view fixture);
 void destructionCheckpoint(World& world);
+
+bool destructionOwns(Destruction& state,uintptr_t id);
+std::string destructionRows(Destruction& state,World& world);
+std::string destructionFragments(Destruction& state,World& world);
+void destructionFields(Destruction& state,const DestructionContext& context,World& world);
+uintptr_t destructionAdd(Destruction& state,const DestructionContext& context,World& world,std::string_view name,const Tempest::Vec3& support);
+bool destructionDropFloor(const DestructionContext& context,World& world,Tempest::Vec3& result);
+void destructionSetup(Destruction& state,const DestructionContext& context,World& world,Npc& player,std::string_view name);
+void destructionBegin(Destruction& state,const DestructionContext& context,World& world);
+void destructionShoot(Destruction& state,World& world,Npc& player);
+void destructionCheckpoint(Destruction& state,const DestructionContext& context,World& world);
+std::string destructionFloorProbe(const Npc& npc,std::string_view label,const Tempest::Vec3& point);
+void destructionSupportSample(Destruction& state,const DestructionContext& context,World& world);
+bool destructionMeleeEquip(World& world,Npc& actor,std::string_view weapon);
+bool destructionMeleeProbe(Destruction& state,World& world,Npc& actor,const DynamicWorld::MovableVobSnapshot& body,std::string_view stage);
+void destructionMeleeSetup(Destruction& state,const DestructionContext& context,World& world,Npc& player,std::string_view kind,std::string_view weapon,bool npc);
+void destructionMeleeTick(Destruction& state,const DestructionContext& context,World& world);
+std::string destructionRoutineRows(const Npc& npc);
+void destructionFarmSetup(Destruction& state,const DestructionContext& context,World& world,Npc& player,uint32_t zenId,bool npc=false);
+void destructionFarmSetupNext(Destruction& state,const DestructionContext& context,World& world,Npc& player);
+void destructionFarmNpcWalk(Destruction& state,World& world,std::string_view phase);
+void destructionFarmCheckpoint(Destruction& state,World& world,Npc& player,std::string_view phase);
+void destructionSessionSnapshot(World& world,std::string_view label);
+void destructionAge(World& world,int64_t minutes,bool youngest);
+
+bool destructionCommand(Destruction& state,const DestructionContext& context,const std::vector<std::string>& a,World& w,Npc& pl,PlayerControl& ctrl);
+
+void destructionCamera(World& world,const Tempest::Vec3& source,const Tempest::Vec3& direction);
+size_t arrowBone(const Skeleton& skeleton,std::string_view token);
+bool noiseFloor(World& world,const Tempest::Vec3& source,float distance,bool wall,Tempest::Vec3& result,bool distant=false);
+void prepareMovableCast(World& world,Npc& player);
 void saveMovableSession(World& world,const std::string& label);
 
 bool monsterCharacterCommand(MonsterCharacter& state,const MonsterCharacterContext& context,const std::vector<std::string>& a,World& w,Npc& pl);
