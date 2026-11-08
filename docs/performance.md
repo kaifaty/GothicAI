@@ -111,6 +111,22 @@ VS/FS-время и число draw/dispatch. Метки проходов, ко�
 Подробные сэмплы увеличивают стоимость кадра; для проверки обычного GPU-порога
 этот режим выключают, а для разбивки включают в отдельном диагностическом прогоне.
 
+**GPU-время на Vulkan.** В сборке с профайлером каждый command buffer получает
+пару timestamp-запросов (начало и конец, `BOTTOM_OF_PIPE`), результат читается
+при штатной проверке fence, как статистика `triangles`, без ожиданий и лишних
+отправок. Тики переводятся в наносекунды по `timestampPeriod`; очередь без
+`timestampValidBits` даёт `gpu_done=0`. С `OPENGOTHIC_GPU_PASSES=1` пара
+timestamp ставится на каждую область `setDebugMarker` (до следующей метки или
+конца буфера), и Vulkan пишет тот же `.gpu.csv`: строка — область, тип `render`
+или `compute` по наличию draw, `vertex_ns`/`fragment_ns` = 0. Строка идёт от
+конца предыдущей работы до конца своей; работа без барьера перекрывается,
+поэтому строки не складывают в `gpu_ns`. `perf_report.py run` сводит их по
+меткам в `gpu_passes` (`frames`, `mean_ms`, `p95_ms`; за кадр — сумма строк
+метки с `valid=1`) и таблицу проходов в `report.md`. Зона `rt_scene` — это
+`WorldView::updateRtScene`, а каждая `RtScene::buildTlas` пишет в журнал
+`render: rt scene instances=… blas=… triangles=… tlas_bytes=… blas_bytes=… build_ms=…`
+(байты на Metal — `-1`). Подробности — `scripts/bench/README.md`.
+
 **Цена отдельного прохода GPU.** Драйвер Apple склеивает соседние compute-энкодеры, поэтому
 Metal System Trace (`xcrun xctrace record --template 'Metal System Trace'
 --attach <pid>`, таблица `metal-gpu-intervals`) показывает SSAO, туман и
@@ -681,6 +697,9 @@ GPU-измерения, показывает mean/p95, количество из
   4,14 / 7,16 / 5,11 → 3,73 / 6,31 / 4,30 мс, кадр 15,34 / 19,21 / 15,96 →
   15,05 / 18,62 / 15,31 мс. На Vulkan с RTX 3080 кадр упирается в CPU.
   [Заметка](../reports/engine/2026-11-07-shader-optimisation/README.md#ssao-куда-уходит-время-2026-11-08).
+- 2026-11-08, шаг 0 [пересмотра трассировки](../reports/render-features/2026-11-08-rt-revisit/README.md#шаги):
+  Vulkan пишет `gpu_ns` и `.gpu.csv` по timestamp-запросам, отчёт сводит проходы в `gpu_passes`,
+  зона `rt_scene` и строка `render: rt scene` показывают цену и размер сцены лучей.
 
 ## Следующие шаги
 

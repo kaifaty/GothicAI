@@ -209,7 +209,7 @@ The complete column set is:
 | `palette_calls`, `identical_calls`, `patch_calls`, `patch_blocks` | Counts |
 | `palette_bytes`, `identical_bytes`, `patch_bytes`, `grow_bytes`, `upload_execution_bytes` | Bytes |
 | `draw_calls`, `dispatch_calls` | Encoded draw and compute dispatch counts; dispatch counting currently covers Metal |
-| `gpu_ns`, `gpu_done`, `gpu_buffers` | Sum of Metal command buffer `GPUEndTime-GPUStartTime` in nanoseconds; 1 only when all submitted buffers have valid timing; submitted buffer count |
+| `gpu_ns`, `gpu_done`, `gpu_buffers` | Sum of the attempt's command buffer GPU time in nanoseconds (Metal `GPUEndTime-GPUStartTime`, Vulkan a timestamp pair per buffer); 1 only when all submitted buffers have valid timing; submitted buffer count |
 
 The complete `<zone>` list (each produces all four columns above):
 `tick`, `finish_step`, `camera`, `observations`, `bench`, `fence_poll`, `recycle`, `ui`,
@@ -219,7 +219,7 @@ The complete `<zone>` list (each produces all four columns above):
 `storage_dispatch`, `storage_grow`, `storage_upload_execution_elapsed`, `bodynet`, `cloth`, `water`,
 `destruction`, `ai_bridge`, `sound`, `npc_full_tick`, `npc_simplified_tick`, `npc_logic_shadow`, `encode_shadows`, `encode_main`,
 `encode_water`, `encode_post`, `encode_ui`, `animation_npc_pass`, `melee_shadow`, `melee_contacts`,
-`interactive_animation`, `logical_body_sync`, `pfx_prepare`, `upload_wait`.
+`interactive_animation`, `logical_body_sync`, `pfx_prepare`, `upload_wait`, `rt_scene`.
 
 `animation_npc_pass`, `melee_shadow`, `melee_contacts`, `interactive_animation` and `logical_body_sync`
 split `parallel_animation`: the worker pass over NPCs (with the posing of their melee shadow bodies), then
@@ -229,6 +229,13 @@ pass skipped or whose bones moved since (a script, a sync on read).
 `pfx_prepare` is `PfxObjects::preFrameUpdate` inside the frame encode. `upload_wait` is the CPU wait of a
 synchronous buffer upload on Metal (`MtBuffer::update` of a device-memory buffer): inside a frame it lasts
 until the GPU finishes what was committed before, so a nonzero value there is a stall.
+`rt_scene` is `WorldView::updateRtScene` (only with `-rt 1`): the walk over the visual objects, the landscape
+BLAS and TLAS builds and the descriptor arrays when the scene is rebuilt, a texture refresh otherwise. Every
+`RtScene::buildTlas` of a frame-profile build also logs one line,
+`render: rt scene instances=<N> blas=<N> triangles=<N> tlas_bytes=<N> blas_bytes=<N> build_ms=<ms>`:
+TLAS instances, unique BLAS among them, triangles summed over the instances (index ranges / 3),
+the TLAS storage, the sum over the unique BLAS storage and the CPU time of `buildTlas`. The bytes are the
+Vulkan acceleration-structure sizes (`accelerationStructureSize`); Metal keeps none and writes `-1`.
 
 `npc_full_tick` and `npc_simplified_tick` split the `Npc::tick` loop inside `world_logic` by NPC simulation
 tier (`common/world/npcsimtier.h`); their calls count runs of consecutive same-tier NPCs, not NPCs. The
@@ -261,7 +268,12 @@ Metal captures the exact attempt record at command submission and updates atomic
 buffer's completed handler, including presentation, uploads/readback and acceleration-structure builds
 submitted during the attempt. Slot reuse cannot redirect a late completion to a later attempt.
 There are no added waits. Missing/failed/incomplete timing gives `gpu_done=0,gpu_ns=0`;
-`gpu_buffers` still counts captured Metal submissions. Vulkan and other backends currently write three zeros.
+`gpu_buffers` still counts captured submissions.
+Vulkan (frame-profile build) writes a timestamp query at the start and at the end of each command buffer
+(`BOTTOM_OF_PIPE`, so the start waits for the queue's earlier work) and reads them, without waiting, when the
+buffer's fence is seen signalled, like the pipeline statistics of `triangles`. Ticks become nanoseconds by
+`timestampPeriod`; a graphics queue with `timestampValidBits=0` gives `gpu_done=0`. Buffers submitted
+outside `VDevice::submit` (uploads, acceleration-structure builds of the data manager) are not counted.
 Pending completions at CSV flush are left incomplete. This is diagnostic timing, not a performance stand.
 
 On Metal, `OPENGOTHIC_GPU_PASSES=1` additionally samples native encoder stage boundaries and writes
@@ -270,6 +282,15 @@ GPU/vertex/fragment nanoseconds, draw/dispatch counts and validity. Passes shari
 joined; intervals may overlap and must not be summed into total GPU time. Unsupported or invalid
 samples have `valid=0`. Detailed counters have measurable overhead: leave them off for the GPU
 acceptance runs, then enable them separately when a pass breakdown is needed.
+
+On Vulkan, `OPENGOTHIC_GPU_PASSES=1` writes the same `.gpu.csv` columns with one row per
+`setDebugMarker` region (from the marker to the next marker or the buffer's end): `labels` is the marker,
+`type` is `render` when the region issued draws and `compute` otherwise, `vertex_ns`/`fragment_ns` are 0.
+Each region is a pair of `BOTTOM_OF_PIPE` timestamps, so a row runs from the end of the earlier work to the
+end of its own: work running without a barrier overlaps, rows must not be added into `gpu_ns`.
+Up to 255 regions per command buffer are timed, later ones get `valid=0`. Without the variable no region
+queries are written. `scripts/perf_report.py run` sums a label's valid rows per frame into `gpu_passes`
+(`{"frames", "mean_ms", "p95_ms"}` per label) and a table in `report.md`; no `.gpu.csv`, no key.
 
 ### План и журнал
 
