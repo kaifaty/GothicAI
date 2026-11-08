@@ -32,6 +32,8 @@ class ProtoMesh;
 class Skeleton;
 class Animation;
 class AttachBinder;
+class RenderRig;
+class RenderRigIndex;
 class PfxEmitterMesh;
 class GthFont;
 class ContentCensus;
@@ -200,6 +202,9 @@ class Resources final {
     static bool                      meshReplacementLoaded(std::string_view name, MeshReplacementSource* source = nullptr);
     static const PfxEmitterMesh*     loadEmiterMesh (std::string_view name);
     static const Skeleton*           loadSkeleton   (std::string_view name);
+    // our render skeleton (models/render-rigs.json, graphics/mesh/renderrig.h): nullptr - none or broken
+    static const RenderRig*          loadRenderRig  (std::string_view name);
+    static const RenderRig*          renderRigOfMesh(std::string_view mesh);
     static const Animation*          loadAnimation  (std::string_view name);
     static bool                      loadAnimationData(std::string_view name, asset::ModelAnimation& out);
     static asset::MorphMesh           loadMorphData(std::string_view name);
@@ -290,6 +295,7 @@ class Resources final {
       };
     BaseIndex baseTextures, baseMeshes, baseZen, baseModels, baseFonts;
     std::map<std::string,std::filesystem::path> contentModels;
+    std::unique_ptr<RenderRigIndex> renderRigs;
     ProgramData::Index basePrograms;
     OutputUnits::Index baseOutputUnits;
     AudioData::Index baseAudio;

@@ -342,6 +342,10 @@ if(UNIX AND NOT IOS AND NOT ANDROID)
   add_executable(gothic-facerig-test EXCLUDE_FROM_ALL tests/facerig_test.cpp)
   target_link_libraries(gothic-facerig-test PRIVATE OpenGothic AiBridge)
   target_compile_options(gothic-facerig-test PRIVATE -Wall -Wconversion -Werror)
+  # Our render skeleton under a Gothic one (graphics/mesh/renderrig): synthetic skeletons and rig table; CPU only.
+  add_executable(gothic-render-rig-test EXCLUDE_FROM_ALL tests/render_rig_test.cpp)
+  target_link_libraries(gothic-render-rig-test PRIVATE OpenGothic AiBridge)
+  target_compile_options(gothic-render-rig-test PRIVATE -Wall -Wconversion -Werror)
   # Indexed GLB replacement and fallback, generated assets only; no game or window.
   add_executable(gothic-mesh-gltf-test EXCLUDE_FROM_ALL tests/mesh_gltf_test.cpp)
   target_link_libraries(gothic-mesh-gltf-test PRIVATE OpenGothic AiBridge gothic-base-import)
