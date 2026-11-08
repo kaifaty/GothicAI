@@ -700,6 +700,7 @@ struct CollisionWorld::Impl final : JPH::ContactListener, JPH::PhysicsStepListen
     Npc* owner = nullptr;
     std::vector<MeleeBodyCapsule> capsules;
     JPH::AABox bounds;
+    uint64_t serial = 0; // MeleeShadowBody::serial of the capsules held
     };
   struct ShadowBlade {
     const Npc* owner = nullptr;
@@ -715,6 +716,7 @@ struct CollisionWorld::Impl final : JPH::ContactListener, JPH::PhysicsStepListen
     std::vector<MeleeBladeContact> contacts;
     };
   std::vector<ShadowBody> shadowBodies;
+  std::unordered_map<const Npc*,size_t> shadowBodySlots; // owner: its index in shadowBodies
   std::vector<ShadowBlade> shadowBlades;
   std::mutex shadowMutex;
   std::atomic<bool> hasShadowBlades{false};
@@ -2559,32 +2561,95 @@ void CollisionWorld::removeMeleeBlade(const Npc* owner) {
   impl->meleeBlades.erase(it);
   }
 
-void CollisionWorld::updateShadowBody(Npc* owner, const std::vector<MeleeBodyCapsule>& capsules) {
-  if(owner==nullptr) throw std::runtime_error("Melee shadow body requires an owner");
+void CollisionWorld::boundShadowBody(MeleeShadowBody& body) {
   JPH::AABox bounds;
-  for(const auto& capsule:capsules) {
+  body.valid=true;
+  for(const auto& capsule:body.capsules) {
     const auto from=toMeters(capsule.from),to=toMeters(capsule.to);
     if(std::isfinite(from.LengthSq()) && std::isfinite(to.LengthSq()) &&
        std::isfinite(capsule.radiusCm) && capsule.radiusCm>0.f) {
       const auto radius=JPH::Vec3::sReplicate(capsule.radiusCm*.01f);
       bounds.Encapsulate(JPH::AABox(JPH::Vec3::sMin(from,to)-radius,JPH::Vec3::sMax(from,to)+radius));
       }
-    else throw std::runtime_error("Invalid melee shadow body capsule");
+    else {
+      body.valid=false;
+      break;
+      }
     }
+  body.boundsMin={bounds.mMin.GetX(),bounds.mMin.GetY(),bounds.mMin.GetZ()};
+  body.boundsMax={bounds.mMax.GetX(),bounds.mMax.GetY(),bounds.mMax.GetZ()};
+  }
+
+void CollisionWorld::updateShadowBody(Npc* owner, const std::vector<MeleeBodyCapsule>& capsules) {
+  if(owner==nullptr) throw std::runtime_error("Melee shadow body requires an owner");
+  MeleeShadowBody body;
+  body.capsules=capsules;
+  boundShadowBody(body);
+  updateShadowBody(owner,body);
+  }
+
+void CollisionWorld::updateShadowBody(Npc* owner, const MeleeShadowBody& body, size_t* slotHint) {
+  if(owner==nullptr) throw std::runtime_error("Melee shadow body requires an owner");
+  if(!body.valid) throw std::runtime_error("Invalid melee shadow body capsule");
   std::lock_guard<std::mutex> guard(impl->shadowMutex);
-  auto it=std::find_if(impl->shadowBodies.begin(),impl->shadowBodies.end(),[owner](const auto& body) { return body.owner==owner; });
-  if(it==impl->shadowBodies.end()) {
-    impl->shadowBodies.push_back({owner,capsules,bounds});
+  auto&  bodies=impl->shadowBodies;
+  size_t at=slotHint!=nullptr ? *slotHint : size_t(-1);
+  if(at>=bodies.size() || bodies[at].owner!=owner) {
+    const auto [slot,added]=impl->shadowBodySlots.try_emplace(owner,bodies.size());
+    if(added)
+      bodies.push_back({owner,{},{},0});
+    at=slot->second;
     }
-  else {
-    it->capsules=capsules;
-    it->bounds=bounds;
-    }
+  if(slotHint!=nullptr)
+    *slotHint=at;
+  auto& published=bodies[at];
+  if(body.serial!=0 && published.serial==body.serial)
+    return;
+  published.capsules=body.capsules;
+  // Vec3 keeps w equal to z, as the box that boundShadowBody encapsulated.
+  published.bounds=JPH::AABox(JPH::Vec3(body.boundsMin.x,body.boundsMin.y,body.boundsMin.z),
+                              JPH::Vec3(body.boundsMax.x,body.boundsMax.y,body.boundsMax.z));
+  published.serial=body.serial;
+  }
+
+static MeleeShadowBody publishedShadowBody(const std::vector<MeleeBodyCapsule>& capsules, const JPH::AABox& bounds) {
+  MeleeShadowBody out;
+  out.capsules=capsules;
+  out.boundsMin={bounds.mMin.GetX(),bounds.mMin.GetY(),bounds.mMin.GetZ()};
+  out.boundsMax={bounds.mMax.GetX(),bounds.mMax.GetY(),bounds.mMax.GetZ()};
+  out.valid=true;
+  return out;
+  }
+
+bool CollisionWorld::shadowBody(const Npc* owner, MeleeShadowBody& out) const {
+  std::lock_guard<std::mutex> guard(impl->shadowMutex);
+  const auto slot=impl->shadowBodySlots.find(owner);
+  if(slot==impl->shadowBodySlots.end())
+    return false;
+  const auto& body=impl->shadowBodies[slot->second];
+  out=publishedShadowBody(body.capsules,body.bounds);
+  return true;
+  }
+
+std::vector<std::pair<const Npc*,MeleeShadowBody>> CollisionWorld::shadowBodies() const {
+  std::lock_guard<std::mutex> guard(impl->shadowMutex);
+  std::vector<std::pair<const Npc*,MeleeShadowBody>> bodies;
+  for(const auto& body:impl->shadowBodies)
+    bodies.emplace_back(body.owner,publishedShadowBody(body.capsules,body.bounds));
+  return bodies;
   }
 
 void CollisionWorld::removeShadowBody(const Npc* owner) {
   std::lock_guard<std::mutex> guard(impl->shadowMutex);
-  std::erase_if(impl->shadowBodies,[owner](const auto& body) { return body.owner==owner; });
+  if(const auto slot=impl->shadowBodySlots.find(owner); slot!=impl->shadowBodySlots.end()) {
+    // Keep the publication order: a cast records contacts of equal time and
+    // bone in it. Removal is rare (death, suspension), reindexing the tail is cheap.
+    const size_t at=slot->second;
+    impl->shadowBodySlots.erase(slot);
+    impl->shadowBodies.erase(impl->shadowBodies.begin()+std::ptrdiff_t(at));
+    for(size_t i=at;i<impl->shadowBodies.size();++i)
+      impl->shadowBodySlots[impl->shadowBodies[i].owner]=i;
+    }
   // NPC destruction can precede a different attacker's journal flush.
   for(auto& blade:impl->shadowBlades) {
     std::erase(blade.hit,owner);

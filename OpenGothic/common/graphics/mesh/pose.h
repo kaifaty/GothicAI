@@ -143,6 +143,9 @@ class Pose final {
     void               interruptItemUse();
 
     const Tempest::Matrix4x4* transform() const;
+    // Changes whenever transform() or boneCount() may have changed: equal
+    // revisions of one Pose mean the same world-space bones.
+    uint64_t           revision() const { return trRevision; }
 
     // The animated pose for the test bench: joints in the model space, before the post-passes
     // (lean, foot IK, gaze), and what plays
@@ -318,5 +321,6 @@ class Pose final {
     asset::AnimationSample         base      [Resources::MAX_NUM_SKELETAL_NODES] = {};  // shown: raw blended by AnimBlend
     asset::AnimationSample         raw       [Resources::MAX_NUM_SKELETAL_NODES] = {};  // what the animations give
     Tempest::Matrix4x4              tr        [Resources::MAX_NUM_SKELETAL_NODES] = {};
+    uint64_t                        trRevision = 0;
     Tempest::Matrix4x4              pos;
   };

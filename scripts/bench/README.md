@@ -217,7 +217,17 @@ The complete `<zone>` list (each produces all four columns above):
 `pose_elapsed_sum`, `palette_elapsed_sum`, `storage_join`, `storage_commit`, `storage_pack`,
 `storage_dispatch`, `storage_grow`, `storage_upload_execution_elapsed`, `bodynet`, `cloth`, `water`,
 `destruction`, `ai_bridge`, `sound`, `npc_full_tick`, `npc_simplified_tick`, `npc_logic_shadow`, `encode_shadows`, `encode_main`,
-`encode_water`, `encode_post`, `encode_ui`.
+`encode_water`, `encode_post`, `encode_ui`, `animation_npc_pass`, `melee_shadow`, `melee_contacts`,
+`interactive_animation`, `logical_body_sync`, `pfx_prepare`, `upload_wait`.
+
+`animation_npc_pass`, `melee_shadow`, `melee_contacts`, `interactive_animation` and `logical_body_sync`
+split `parallel_animation`: the worker pass over NPCs (with the posing of their melee shadow bodies), then
+the serial loops after it (publishing those bodies and the blades, the blade flush with contact resolution,
+interactive objects, the logical-body sync). `melee_shadow` poses a body itself only for an NPC the worker
+pass skipped or whose bones moved since (a script, a sync on read).
+`pfx_prepare` is `PfxObjects::preFrameUpdate` inside the frame encode. `upload_wait` is the CPU wait of a
+synchronous buffer upload on Metal (`MtBuffer::update` of a device-memory buffer): inside a frame it lasts
+until the GPU finishes what was committed before, so a nonzero value there is a stall.
 
 `npc_full_tick` and `npc_simplified_tick` split the `Npc::tick` loop inside `world_logic` by NPC simulation
 tier (`common/world/npcsimtier.h`); their calls count runs of consecutive same-tier NPCs, not NPCs. The

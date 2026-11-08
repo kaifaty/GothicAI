@@ -1,0 +1,11 @@
+--- a/OpenGothic/shader/ssao/ssao.comp
++++ b/OpenGothic/shader/ssao/ssao.comp
+@@ -116,7 +116,7 @@
+     return 0; // sky
+   if(z>=0.999)
+     return 1; // almost sky
+-  return int(numIter);
++  return 1; // probe: first iteration only
+   }
+ 
+ float resolveOcclusion() {

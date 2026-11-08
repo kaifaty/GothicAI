@@ -45,6 +45,8 @@
 #include "navdemos.h"
 #include "npcdayjournal.h"
 
+#include <atomic>
+#include <bit>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -2375,20 +2377,89 @@ void Npc::syncMeleeShadowSwing() {
     }
   }
 
+bool Npc::wantsMeleeShadowBody() const {
+  return !meleeShadowSuspended && (Gothic::physicsFlags().meleeBladeShadow || Gothic::physicsFlags().meleePhysicsHits ||
+                                   (meleeShadow && meleeShadow->window));
+  }
+
+void Npc::prepareMeleeShadowBody() {
+  if(wantsMeleeShadowBody())
+    poseMeleeShadowBody();
+  }
+
+void Npc::poseMeleeShadowBody() {
+  auto& cached = meleeShadowPose;
+  const auto& pose = visual.pose();
+  const auto& matrix = visual.transform();
+  // The scale exactly as MdlVisual::hitZonesPosed computes it.
+  const auto scale = std::bit_cast<uint32_t>(Vec3(matrix.at(0,0),matrix.at(0,1),matrix.at(0,2)).length());
+  const auto shape = visual.hitZoneShape().revision();
+  if(cached.pose==&pose && cached.bones==pose.revision() && cached.shape==shape && cached.scale==scale)
+    return;
+  visual.hitZonesPosed(cached.zones);
+  auto& capsules = cached.body.capsules;
+  capsules.clear();
+  for(const auto& capsule:cached.zones)
+    capsules.push_back({capsule.a,capsule.b,capsule.r,capsule.bone,uint8_t(capsule.zone)});
+  DynamicWorld::boundShadowBody(cached.body);
+  // Unique across NPCs and frames: a slot holding this serial holds these capsules.
+  static std::atomic<uint64_t> serials{0};
+  cached.body.serial = serials.fetch_add(1,std::memory_order_relaxed)+1;
+  cached.pose  = &pose;
+  cached.bones = pose.revision();
+  cached.shape = shape;
+  cached.scale = scale;
+  }
+
+// OPENGOTHIC_MELEE_SHADOW_CHECK=1: after each publication, poses the body again
+// the way it was always posed in place and compares it bit by bit with the
+// published one. Counts go to stderr every 100000 bodies and on every mismatch.
+static void checkMeleeShadowBody(const Npc& npc, const World& world) {
+  static const bool enabled = [] {
+    const char* v = std::getenv("OPENGOTHIC_MELEE_SHADOW_CHECK");
+    return v!=nullptr && v[0]=='1';
+    }();
+  if(!enabled)
+    return;
+  static uint64_t checked = 0, mismatched = 0;
+  std::vector<HitZones::Posed> zones;
+  npc.hitZonesPosed(zones);
+  MeleeShadowBody expected, published;
+  for(const auto& capsule:zones)
+    expected.capsules.push_back({capsule.a,capsule.b,capsule.r,capsule.bone,uint8_t(capsule.zone)});
+  DynamicWorld::boundShadowBody(expected);
+  const auto bits = [](const Vec3& v) {
+    return std::array<uint32_t,3>{std::bit_cast<uint32_t>(v.x),std::bit_cast<uint32_t>(v.y),std::bit_cast<uint32_t>(v.z)};
+    };
+  bool same = world.physic()->shadowBody(&npc,published) && published.capsules.size()==expected.capsules.size() &&
+              bits(published.boundsMin)==bits(expected.boundsMin) && bits(published.boundsMax)==bits(expected.boundsMax);
+  for(size_t i=0; same && i<expected.capsules.size(); ++i) {
+    const auto& a = published.capsules[i];
+    const auto& b = expected.capsules[i];
+    same = bits(a.from)==bits(b.from) && bits(a.to)==bits(b.to) &&
+           std::bit_cast<uint32_t>(a.radiusCm)==std::bit_cast<uint32_t>(b.radiusCm) && a.bone==b.bone && a.zone==b.zone;
+    }
+  ++checked;
+  if(!same)
+    ++mismatched;
+  if(!same || checked%100000==0)
+    std::fprintf(stderr,"[melee-shadow-check] checked=%llu mismatched=%llu%s%s\n",
+                 static_cast<unsigned long long>(checked),static_cast<unsigned long long>(mismatched),
+                 same ? "" : " npc=",same ? "" : std::string(npc.displayName()).c_str());
+  }
+
 void Npc::updateMeleeShadow() {
-  if(meleeShadowSuspended || (!(Gothic::physicsFlags().meleeBladeShadow || Gothic::physicsFlags().meleePhysicsHits) &&
-                              !(meleeShadow && meleeShadow->window))) {
+  if(!wantsMeleeShadowBody()) {
     clearMeleeShadow();
     return;
     }
-  std::vector<HitZones::Posed> zones;
-  visual.hitZonesPosed(zones);
-  std::vector<MeleeBodyCapsule> body;
-  body.reserve(zones.size());
-  for(const auto& capsule:zones)
-    body.push_back({capsule.a,capsule.b,capsule.r,capsule.bone,uint8_t(capsule.zone)});
-  owner.physic()->updateShadowBody(this,body);
+  // Usually posed already by the parallel animation pass; reposed here when
+  // that pass skipped this NPC or something moved its bones since.
+  poseMeleeShadowBody();
+  const auto& zones = meleeShadowPose.zones;
+  owner.physic()->updateShadowBody(this,meleeShadowPose.body,&meleeShadowPose.slot);
   meleeShadowBody = true;
+  checkMeleeShadowBody(*this,owner);
   if(TestBench::bodyTracing() && isHuman() && currentTarget!=nullptr && owner.npcId(currentTarget)!=uint32_t(-1)) {
     std::vector<HitZones::Posed> targetZones;
     currentTarget->visual.hitZonesPosed(targetZones);
