@@ -3,19 +3,29 @@
 The debris GLB (convention in reports/content/2026-11-wood-fracture/README.md) holds one glTF node per
 piece. The engine's converter (fracture-gltf-extract --nodes) gives each node's triangles in Gothic
 centimetres with the material group of each triangle. A piece is one or more closed two-manifold
-details plus open trims (nail heads, rivets) that only draw. Its physics is up to 16 convex hulls:
+details plus open trims (nail heads) that only draw. Its physics is up to 16 convex hulls, an
+approximation of its details rather than their copy (the shape rule, same README):
 
-- every closed detail is cut by planes until each hull exceeds its part of the detail by at most 10%
-  of that part's volume (a curved stave falls into a few lengths, a hoop into arcs);
-- every hull is shrunk inward by 1.5 mm, so pieces that touch face to face spawn apart;
-- hulls of different pieces may still overlap by at most 2 mm, measured as the diameter of the
-  largest ball inside their intersection (linprog); a hull that overlaps more is cut further.
+- no point of a hull's shape stands more than 8 mm outside its detail, and the shapes cover at least 85%
+  of each detail's volume;
+- a torn end's teeth and splinters beyond the line of its valleys only draw: the body is cut there by the
+  plane through the valleys (the lower envelope of the tear) and its hulls are built from the body;
+- a bent detail (a stave) falls into equal lengths until each length's hull keeps within 8 mm;
+- a ring (a closed band, a hoop) falls into up to 16 arcs, cut at the corners of its polygon; each arc's
+  prism lies on the ring's outer side and reaches at most 2 mm inside its inner surface (into the staves);
+- a small closed detail (a rivet, a seam plate: under 2% of the piece's largest) joins the nearest hull;
+- every hull is then shrunk inward by 1.5 mm, so pieces that touch face to face spawn apart; the shape
+  rule is measured before this shrink (validate grows the written hulls back by it);
+- hulls of different pieces may still overlap by at most 2 mm, measured as the diameter of the largest
+  ball inside their intersection (linprog); a hull that overlaps more is cut further.
 
-The drawing is the node's triangles as they are, with their UV and normals. Requires numpy and scipy.
+Where the rule cannot hold the cut fails with the piece's name and its numbers. The drawing is the node's
+triangles as they are, with their UV and normals. Requires numpy and scipy.
 """
 from __future__ import annotations
 
 import io
+import math
 from pathlib import Path
 import zlib
 
@@ -23,7 +33,16 @@ import numpy as np
 from scipy.optimize import linprog
 from scipy.spatial import ConvexHull, HalfspaceIntersection, QhullError
 
-EXCESS = 0.10        # hull volume beyond its part of the detail, share of that part
+OUTSIDE = 0.8        # cm, the farthest a hull's shape stands outside its detail
+COVER = 0.85         # the least share of a detail's volume its piece's hull shapes cover (a ring: reported)
+INWARD = 0.2         # cm, the deepest a ring's prism reaches inside the ring's inner surface
+SMALL = 0.02         # a closed detail under this share of its piece's largest joins the nearest hull
+SHARP = math.cos(math.radians(15))   # a concave edge sharper than 15 degrees marks a tear ...
+END = 0.3            # ... within this share of the detail's length from one of its ends
+SLOT = 2 * OUTSIDE   # cm, a notch of a tear narrower than this across the detail stays in its body:
+                     # the hull spans it within OUTSIDE
+BENT = 0.02          # a detail whose convex hull exceeds it by more is bent (report only)
+SAMPLE = 0.8         # cm between samples on a hull's faces; the 16 farthest are refined 8 times finer
 SHRINK = 0.15        # cm, every hull inward
 OVERLAP = 0.2        # cm, largest ball diameter inside two hulls of different pieces
 THICK = 0.05         # cm, the least radius a cut hull keeps after shrinking
@@ -34,6 +53,9 @@ MAX_POINTS = 256
 MAX_PIECES = 64
 MAX_TRIANGLES = 20000
 GROUPS = ('WOOD', 'METAL', 'STONE', 'CLAY', 'EARTH', 'WATER', 'SNOW', 'UNDEF')
+CLASSES = ('board', 'bent', 'torn', 'ring')
+SKEW = np.array([0.5773502691896258, 0.5773502691896258, 0.5773502691896258]) + [0.0123, -0.0311, 0.0077]
+SKEW /= np.linalg.norm(SKEW)   # a ray direction off every axis and diagonal of the generators' meshes
 
 
 def number(value):
@@ -217,25 +239,460 @@ def cut_mesh(V, F, normal, offset):
     return result
 
 
+# --- the shape rule --------------------------------------------------------------------------------------------
+
+def triangle_distance(points, tris):
+    """Distance of each point (N, 3) to the nearest triangle (M, 3, 3) and that triangle's index: the distance to
+    its plane where the point projects inside it, else to the nearest of its edges (dot products as matmuls)."""
+    a, b, c = tris[:, 0], tris[:, 1], tris[:, 2]
+    normal = np.cross(b - a, c - a)
+    size = np.linalg.norm(normal, axis=1)
+    index = np.flatnonzero(size > 1e-10)                   # earclip's collinear runs draw nothing
+    a, b, c, normal = a[index], b[index], c[index], normal[index] / size[index, None]
+    sides = [(a, b), (b, c), (c, a)]
+    inward = [np.cross(normal, q - p) for p, q in sides]  # in the plane, toward the triangle
+    best = np.full(len(points), np.inf)
+    which = np.zeros(len(points), dtype=np.int64)
+    step = max(1, 2000000 // max(len(a), 1))
+    for start in range(0, len(points), step):
+        P = points[start:start + step]
+        square = (P * P).sum(1)[:, None]
+        plane = np.abs(P @ normal.T - (a * normal).sum(1))
+        within = np.ones(plane.shape, dtype=bool)
+        edge = np.full(plane.shape, np.inf)
+        for (p, q), m in zip(sides, inward):
+            within &= P @ m.T - (p * m).sum(1) >= 0
+            d = q - p
+            length = np.maximum((d * d).sum(1), 1e-24)
+            along = P @ d.T - (p * d).sum(1)
+            t = np.clip(along / length, 0, 1)
+            to_p = square - 2 * P @ p.T + (p * p).sum(1)
+            edge = np.minimum(edge, to_p - 2 * t * along + t * t * length)
+        dist = np.where(within, plane, np.sqrt(np.maximum(edge, 0)))
+        k = np.argmin(dist, axis=1)
+        best[start:start + step] = dist[np.arange(len(k)), k]
+        which[start:start + step] = index[k]
+    return best, which
+
+
+def crossings(origins, direction, tris):
+    """Parameters t > 0 where each ray origin + t direction crosses the triangles: (N, M), inf where it misses
+    (Moller-Trumbore, its dot products as matmuls)."""
+    a = tris[:, 0]
+    e1, e2 = tris[:, 1] - a, tris[:, 2] - a
+    h = np.cross(direction, e2)
+    det = np.einsum('ij,ij->i', e1, h)
+    good = np.abs(det) > 1e-12
+    inv = np.where(good, 1 / np.where(good, det, 1), 0)
+    g, k = np.cross(e1, direction), np.cross(e1, e2)
+    out = np.full((len(origins), len(tris)), np.inf)
+    step = max(1, 2000000 // max(len(tris), 1))
+    for start in range(0, len(origins), step):
+        P = origins[start:start + step]
+        u = (P @ h.T - (a * h).sum(1)) * inv
+        v = (P @ g.T - (a * g).sum(1)) * inv
+        t = (P @ k.T - (a * k).sum(1)) * inv
+        hit = good & (u >= 0) & (v >= 0) & (u + v <= 1) & (t > 1e-9)
+        out[start:start + step] = np.where(hit, t, np.inf)
+    return out
+
+
+def inside(points, solids):
+    """Whether each point lies inside any of the closed surfaces (each (M, 3, 3)): ray parity along SKEW."""
+    result = np.zeros(len(points), dtype=bool)
+    for tris in solids:
+        result |= np.isfinite(crossings(points, SKEW, tris)).sum(1) % 2 == 1
+    return result
+
+
+def facet_samples(tris, step):
+    """Points about `step` apart over each triangle (a grid in its plane, its edges and corners) and the index
+    of their triangle."""
+    points, owner = [], []
+    for index, tri in enumerate(tris):
+        sides = np.linalg.norm(tri[[1, 2, 0]] - tri, axis=1)
+        k = int(np.argmax(sides))
+        a, b, c = tri[k], tri[(k + 1) % 3], tri[(k + 2) % 3]
+        base = sides[k]
+        e1 = (b - a) / max(base, 1e-12)
+        e2 = c - a - e1 * ((c - a) @ e1)
+        height = np.linalg.norm(e2)
+        e2 = e2 / max(height, 1e-12)
+        x, y = np.meshgrid(np.arange(step / 2, base, step), np.arange(step / 2, height, step), indexing='ij')
+        local = a + x.reshape(-1, 1) * e1 + y.reshape(-1, 1) * e2
+        m = np.c_[b - a, c - a]
+        uv = np.linalg.lstsq(m, (local - a).T, rcond=None)[0].T if len(local) else np.zeros((0, 2))
+        grid = local[(uv >= 0).all(1) & (uv.sum(1) <= 1)]
+        edges = [p + np.linspace(0, 1, int(math.ceil(np.linalg.norm(q - p) / step)) + 1)[:, None] * (q - p)
+                 for p, q in ((a, b), (b, c), (c, a))]
+        sample = np.vstack([grid, *edges])
+        points.append(sample)
+        owner.append(np.full(len(sample), index))
+    return np.vstack(points), np.concatenate(owner)
+
+
+def outside_samples(points, solids, solid=True):
+    """Samples of the faces of the convex hull of `points`, their distance outside the closed `solids` and the
+    index of the nearest triangle of the stacked solids. Samples run every SAMPLE cm; around the 16 farthest
+    the grid is refined to SAMPLE / 8 (the distance changes by at most the step between samples). With
+    `solid`, a sample inside a solid counts 0: a written hull's face may run inside its detail along a cut.
+    The cutter's hulls hold their cells, so their faces never do."""
+    hull = ConvexHull(points)
+    faces = points[hull.simplices]
+    tris = np.concatenate(solids)
+
+    def measure(sample):
+        dist, near = triangle_distance(sample, tris)
+        out = np.flatnonzero(dist > 1e-3)
+        if solid and len(out):
+            dist[out[inside(sample[out], solids)]] = 0.0
+        return dist, near
+
+    sample, owner = facet_samples(faces, SAMPLE)
+    dist, near = measure(sample)
+    finer = []
+    for k in np.argsort(-dist, kind='stable')[:16]:
+        a, b, c = faces[owner[k]]
+        e1 = (b - a) / np.linalg.norm(b - a)
+        e2 = c - a - e1 * ((c - a) @ e1)
+        e2 /= np.linalg.norm(e2)
+        grid = np.linspace(-SAMPLE, SAMPLE, 17)
+        local = (sample[k] + grid[:, None, None] * e1 + grid[None, :, None] * e2).reshape(-1, 3)
+        uv = np.linalg.lstsq(np.c_[b - a, c - a], (local - a).T, rcond=None)[0].T   # kept inside the face
+        finer.append(local[(uv >= -1e-9).all(1) & (uv.sum(1) <= 1 + 1e-9)])
+    finer = np.vstack(finer)
+    more, close = measure(finer)
+    return np.vstack((sample, finer)), np.r_[dist, more], np.r_[near, close]
+
+
+def outside(points, solids, solid=False):
+    """The farthest a point of the convex hull of `points` stands outside the closed `solids`, in cm."""
+    return float(outside_samples(points, solids, solid)[1].max())
+
+
+def triangles(V, F):
+    return V[F]
+
+
+def euler(F):
+    edges = np.unique(np.sort(np.r_[F[:, [0, 1]], F[:, [1, 2]], F[:, [2, 0]]], axis=1), axis=0)
+    return len(np.unique(F)) - len(edges) + len(F)
+
+
+def principal(V):
+    centre = V.mean(0)
+    return centre, np.linalg.svd(V - centre, full_matrices=False)[2]
+
+
+def face_normals(V, F):
+    a, b, c = (V[F[:, k]] for k in range(3))
+    normals = np.cross(b - a, c - a)
+    return normals, np.linalg.norm(normals, axis=1)
+
+
+def tears(V, F):
+    """[(normal, offset)] of each torn end's valley line: the plane under every point of the tear (the vertices
+    of its end faces and of its sharp concave edges) that runs highest under the tear's middle, the lower
+    envelope of the teeth; the teeth lie on its + side. Notches narrower than SLOT are closed first: they
+    stay in the body, whose hull spans them."""
+    _, (a1, a2, a3) = principal(V)
+    normals, lengths = face_normals(V, F)
+    unit = normals / np.maximum(lengths, 1e-12)[:, None]
+    concave = concave_edges(_Mesh(V, F), normals, lengths)
+    planes = []
+    for sign in (1.0, -1.0):
+        height = sign * (V @ a1)
+        region = height >= height.max() - END * np.ptp(height)
+        sharp = [edge for edge, (f, g) in concave if region[list(edge)].all() and unit[f] @ unit[g] < SHARP]
+        if not sharp:
+            continue
+        ends = region[F].all(1) & (unit @ (sign * a1) > 0.5) & (lengths > 1e-9)
+        tear = np.unique(np.r_[F[ends].ravel(), np.asarray(sharp).ravel()])
+        u, w, h = V[tear] @ a2, V[tear] @ a3, height[tear]
+        # a notch narrower than SLOT (where the other half's splinter was) does not lower the line: closing of
+        # the tear's heights over the break (a disc, so outer and inner fibres torn at other heights stay
+        # apart); the hull then spans the notch
+        window = np.hypot(u[:, None] - u[None, :], w[:, None] - w[None, :]) <= SLOT / 2
+        rim = np.where(window, h[None, :], -np.inf).max(1)
+        h = np.maximum(h, np.where(window, rim[None, :], np.inf).min(1))
+        result = linprog([-u.mean(), -w.mean(), -1.0], A_ub=np.c_[u, w, np.ones_like(u)], b_ub=h,
+                         bounds=[(-1, 1), (-1, 1), (None, None)], method='highs')
+        if result.status != 0:
+            raise ValueError(f'valley line: {result.message}')
+        alpha, beta, gamma = result.x
+        normal = sign * a1 - alpha * a2 - beta * a3
+        size = np.linalg.norm(normal)
+        planes.append((normal / size, gamma / size))
+    return planes
+
+
+class _Mesh:
+    def __init__(self, V, F):
+        self.V, self.F = V, F
+
+
+def closed_parts(V, F):
+    return [(W, G) for W, G, _ in details(V[F])[0]]
+
+
+def trim(V, F):
+    """The body of a detail: its closed parts behind the valley line of each torn end."""
+    parts = [(V, F)]
+    for normal, offset in tears(V, F):
+        kept = []
+        for W, G in parts:
+            side = W @ normal - offset
+            if side.max() <= NUDGE:          # this part lies behind the line
+                kept.append((W, G))
+                continue
+            for k in range(1, 9):           # just beyond the valleys, clear of every vertex
+                cut = cut_mesh(W, G, normal, offset + k * NUDGE)
+                if cut is not None:
+                    break
+            else:
+                raise ValueError('the valley line of a tear does not cut the detail')
+            kept.extend(closed_parts(*cut[0]))
+        parts = kept
+    return parts
+
+
+def lengths(V, F, count):
+    """The closed part in `count` equal lengths along its longest axis, or None when a cut does not serve."""
+    _, (axis, _, _) = principal(V)
+    values = V @ axis
+    low, high = values.min(), values.max()
+    parts, rest = [], (V, F)
+    for j in range(1, count):
+        offset = low + (high - low) * j / count
+        for shift in (0, 1, -1, 2, -2, 3, -3):
+            cut = cut_mesh(*rest, axis, offset + shift * NUDGE)
+            if cut is not None:
+                break
+        else:
+            return None
+        below, above = closed_parts(*cut[0]), closed_parts(*cut[1])
+        if len(above) != 1:
+            return None
+        parts.extend(below)
+        rest = above[0]
+    return parts + [rest]
+
+
+def fit(V, F, budget, depth=0):
+    """Closed parts of a body whose hulls stand at most OUTSIDE outside them, and their worst: the body itself,
+    else the fewest equal lengths (up to 8) along its longest axis that serve, else halves across its axes in
+    turn, each fitted again (twice at most)."""
+    worst = outside(V, [triangles(V, F)])
+    if worst <= OUTSIDE:
+        return [(V, F)], worst
+    for count in range(2, min(budget, 8) + 1):
+        parts = lengths(V, F, count)
+        if parts is None or len(parts) > budget:
+            continue
+        deviations = []
+        for W, G in parts:
+            deviations.append(outside(W, [triangles(W, G)]))
+            if deviations[-1] > OUTSIDE:
+                break
+        else:
+            return parts, max(deviations)
+    if depth < 2 and budget >= 2:
+        for normal, offset in middles(_Mesh(V, F)):
+            cut = cut_mesh(V, F, normal, offset)
+            halves = [] if cut is None else closed_parts(*cut[0]) + closed_parts(*cut[1])
+            if not 2 <= len(halves) <= budget:
+                continue
+            result, deviation = [], 0.0
+            try:
+                for i, (W, G) in enumerate(halves):
+                    more, d = fit(W, G, budget - len(result) - (len(halves) - i - 1), depth + 1)
+                    result.extend(more)
+                    deviation = max(deviation, d)
+            except ValueError:
+                continue
+            return result, deviation
+    raise ValueError(f'hulls stand {10 * worst:.1f} mm outside the detail (limit {10 * OUTSIDE:.0f} mm) '
+                     f'within {budget} hulls')
+
+
+def ring_frame(V):
+    """Centre, axis and two radial directions of a ring."""
+    centre, axes = principal(V)
+    axis = axes[2]
+    e1 = axes[0] - axis * (axes[0] @ axis)
+    e1 /= np.linalg.norm(e1)
+    return centre, axis, e1, np.cross(axis, e1)
+
+
+def inner_faces(V, F, centre, axis):
+    """Faces of (a part of) a ring that look toward its axis."""
+    normals, size = face_normals(V, F)
+    middle = V[F].mean(1) - centre
+    radial = middle - np.outer(middle @ axis, axis)
+    radial /= np.maximum(np.linalg.norm(radial, axis=1), 1e-12)[:, None]
+    return (np.einsum('ij,ij->i', normals, radial) < -0.5 * size) & (size > 1e-9)
+
+
+def arcs(V, F, count):
+    """A ring (a closed band) in at most `count` arcs: cut at its corners (the polygon of the staves it lies on),
+    evenly spread when it has more corners than arcs; each arc's inner side cut by the plane INWARD inside the
+    farthest point of its inner surface along the arc's middle. The arcs lie on the ring's outer side."""
+    centre, axis, e1, e2 = ring_frame(V)
+    offset = V - centre
+    angle = np.mod(np.arctan2(offset @ e2, offset @ e1), 2 * np.pi)
+    radius = float(np.mean(np.hypot(offset @ e1, offset @ e2)))
+    order = np.sort(angle)
+    ends = np.flatnonzero(np.diff(np.r_[order, order[0] + 2 * np.pi]) > math.radians(0.5))
+    corners = np.sort(order[ends])                           # the last angle of each cluster of vertices
+    if len(corners) < 3:
+        corners = np.arange(count) * 2 * np.pi / count
+    if len(corners) > count:
+        corners = corners[np.round(np.arange(count) * len(corners) / count).astype(int)]
+
+    def at(t):
+        return centre + radius * (math.cos(t) * e1 + math.sin(t) * e2)
+
+    def radial(t):                                           # the plane through the axis at angle t
+        normal = -math.sin(t) * e1 + math.cos(t) * e2
+        return normal, float(normal @ centre)
+
+    pieces = None
+    for k in range(1, 9):                                    # just past the corners, clear of their vertices
+        bounds = np.mod(corners + k * 2 * NUDGE / radius, 2 * np.pi)
+        # the first cut runs through two bounds across the ring, so each half is at most about half a turn
+        far = int(np.argmin(np.abs(np.mod(bounds - bounds[0], 2 * np.pi) - np.pi)))
+        normal = np.cross(axis, at(bounds[far]) - at(bounds[0]))
+        normal /= np.linalg.norm(normal)
+        halves = cut_mesh(V, F, normal, float(normal @ at(bounds[0])))
+        if halves is None:
+            continue
+        span = np.mod(bounds[far] - bounds[0], 2 * np.pi)
+        pieces = []
+        for mesh in halves:
+            rel = np.mod(np.arctan2((mesh[0] - centre) @ e2, (mesh[0] - centre) @ e1) - bounds[0], 2 * np.pi)
+            low, high = (0.0, span) if np.median(rel) < span else (span, 2 * np.pi)
+            inner = sorted(r for r in np.mod(bounds - bounds[0], 2 * np.pi)
+                           if low + math.radians(1) < r < high - math.radians(1))
+            for r in inner:
+                cut = cut_mesh(*mesh, *radial(bounds[0] + r))
+                parts = None if cut is None else (closed_parts(*cut[0]), closed_parts(*cut[1]))
+                if parts is None or len(parts[0]) != 1 or len(parts[1]) != 1:
+                    pieces = None
+                    break
+                pieces.append(parts[0][0])
+                mesh = parts[1][0]
+            if pieces is None:
+                break
+            pieces.append(mesh)
+        if pieces is not None:
+            break
+    if pieces is None:
+        raise ValueError('a ring does not cut at its corners')
+    result = []
+    for W, G in pieces:
+        faces = inner_faces(W, G, centre, axis)
+        normals, _ = face_normals(W, G)
+        normal = -normals[faces].sum(0)                      # outward, across the arc's inner faces
+        normal /= np.linalg.norm(normal)
+        level = float((W[np.unique(G[faces])] @ normal).max()) - INWARD
+        if (W @ normal).min() >= level:                      # one facet of the polygon: the arc is convex
+            result.append((W, G))
+            continue
+        for k in range(8):
+            cut = cut_mesh(W, G, normal, level + k * NUDGE)
+            if cut is not None:
+                break
+        else:
+            raise ValueError('a ring arc does not cut along its inner side')
+        result.extend(closed_parts(*cut[1]))
+    return result
+
+
+def kind(V, F):
+    """The class of a closed detail: ring, torn, bent or board."""
+    if euler(F) == 0:
+        return 'ring'
+    if tears(V, F):
+        return 'torn'
+    return 'bent' if ConvexHull(V).volume > (1 + BENT) * volume(V, F)[0] else 'board'
+
+
+def coverage(tris, shapes, step=0.2):
+    """Share of the closed surface's volume inside the union of the convex shapes (each planes (K, 4),
+    n . x + d <= 0): along lines through it on a grid `step` apart, across its thinnest axis, exact on each line.
+    A line that grazes an edge (odd crossings) is left out."""
+    points = tris.reshape(-1, 3)
+    centre, (e1, e2, axis) = principal(points)
+    x, y, z = (points - centre) @ e1, (points - centre) @ e2, (points - centre) @ axis
+    gx = np.arange(x.min() + 0.371 * step, x.max(), step)
+    gy = np.arange(y.min() + 0.613 * step, y.max(), step)
+    origins = (centre + (z.min() - 1) * axis + gx[:, None, None] * e1 + gy[None, :, None] * e2).reshape(-1, 3)
+    total = covered = 0.0
+    for start in range(0, len(origins), 4096):
+        o = origins[start:start + 4096]
+        t = np.sort(crossings(o, axis, tris), axis=1)
+        count = np.isfinite(t).sum(1)
+        keep = (count > 0) & (count % 2 == 0)
+        o, t, count = o[keep], t[keep], count[keep]
+        if not len(o):
+            continue
+        t = t[:, :count.max()]
+        lows, highs = [], []
+        for planes in shapes:
+            n, d = planes[:, :3], planes[:, 3]
+            num, den = o @ n.T + d, n @ axis
+            with np.errstate(divide='ignore', invalid='ignore'):
+                bound = -num / den
+            low = np.where(den < -1e-12, bound, -np.inf).max(1)
+            high = np.where(den > 1e-12, bound, np.inf).min(1)
+            empty = ((np.abs(den) <= 1e-12) & (num > 0)).any(1) | (low >= high)
+            lows.append(np.where(empty, 0, low))
+            highs.append(np.where(empty, 0, high))
+        lows, highs = np.array(lows).T, np.array(highs).T
+        cuts = np.sort(np.c_[np.where(np.isfinite(t), t, 0), lows, highs, np.zeros(len(o))], axis=1)
+        cuts = np.clip(cuts, 0, None)
+        middle = (cuts[:, 1:] + cuts[:, :-1]) / 2
+        span = np.diff(cuts, axis=1)
+        in_detail = (t[:, None, :] < middle[:, :, None]).sum(2) % 2 == 1
+        in_shape = ((lows[:, None, :] < middle[:, :, None]) & (middle[:, :, None] < highs[:, None, :])).any(2)
+        total += float((span * in_detail).sum())
+        covered += float((span * (in_detail & in_shape)).sum())
+    return covered / total if total > 0 else 0.0
+
+
+def nearest(detail, parts):
+    """Index of the closed part [(V, F)] whose surface lies nearest the centre of a small detail."""
+    centre = detail[0].mean(0)[None]
+    return int(np.argmin([triangle_distance(centre, triangles(W, G))[0][0] for W, G in parts]))
+
+
 # --- hulls -----------------------------------------------------------------------------------------------------
 
 class Cell:
-    """A closed part of one detail and its convex hull."""
+    """A closed part of one detail and its convex hull; `extras` are the small closed details [(V, F)] of the
+    same piece that its hull takes in."""
     made = 0
 
-    def __init__(self, piece, V, F):
+    def __init__(self, piece, V, F, extras=()):
         Cell.made += 1
         self.key = Cell.made
-        self.piece, self.V, self.F = piece, V, F
+        self.piece, self.V, self.F, self.extras = piece, V, F, list(extras)
         self.volume, _ = volume(V, F)
-        hull = ConvexHull(V)
+        self.points = np.vstack([V, *(W for W, _ in self.extras)]) if self.extras else V
+        hull = ConvexHull(self.points)
         self.hull_volume = hull.volume
         self.planes = np.unique(np.round(hull.equations, 12), axis=0)
-        self.lower, self.upper = V.min(0), V.max(0)
+        self.lower, self.upper = self.points.min(0), self.points.max(0)
 
-    @property
-    def excess(self):
-        return self.hull_volume / max(self.volume, 1e-12) - 1
+    def children(self, parts):
+        """Cells of the closed parts this cell is cut into; each small detail goes to the nearest."""
+        groups = [[] for _ in parts]
+        for extra in self.extras:
+            groups[nearest(extra, parts)].append(extra)
+        return [Cell(self.piece, W, G, group) for (W, G), group in zip(parts, groups)]
+
+    def solids(self):
+        return [triangles(self.V, self.F), *(triangles(W, G) for W, G in self.extras)]
 
 
 def chebyshev(planes, shrink=0.0):
@@ -380,7 +837,7 @@ def split(cell, planes, score=None):
         if parts is None:
             continue
         try:   # a cut may leave several disjoint bits on one side (the tips of two teeth): each its own cell
-            children = [Cell(cell.piece, W, G) for V, F in parts for W, G, _ in details(V[F])[0]]
+            children = cell.children([(W, G) for V, F in parts for W, G, _ in details(V[F])[0]])
         except QhullError:
             continue
         if len(children) < 2 or abs(sum(c.volume for c in children) - cell.volume) > 1e-6 * cell.volume or \
@@ -410,23 +867,41 @@ def shrunk_points(cell):
 
 
 def hulls(pieces, names):
-    """Cells per piece: detail cuts to <= EXCESS, then cuts until no two pieces overlap by > OVERLAP."""
+    """Cells per piece under the shape rule, then cuts until no two pieces overlap by more than OVERLAP."""
     cells = []
     for index, closed in enumerate(pieces):
-        work = [Cell(index, V, F) for V, F in closed][::-1]
-        while work:
-            cell = work.pop()
-            if cell.excess <= EXCESS:
-                cells.append(cell)
-                continue
-            if sum(c.piece == index for c in cells) + len(work) + 2 > MAX_HULLS:
-                raise ValueError(f'{names[index]}: more than {MAX_HULLS} hulls to keep each within '
-                                 f'{EXCESS:.0%} of its part of the detail')
-            best = split(cell, middles(cell)) or split(cell, notch_planes(cell), lambda children: (
-                max(c.hull_volume - c.volume for c in children), sum(c.hull_volume for c in children)))
-            if best is None:
-                raise ValueError(f'{names[index]}: a detail cannot be cut below {EXCESS:.0%} hull excess')
-            work.extend(best[1][::-1])
+        name = names[index]
+        volumes = [volume(V, F)[0] for V, F in closed]
+        small = [k for k, v in enumerate(volumes) if len(closed) > 1 and v < SMALL * max(volumes)]
+        main = [k for k in range(len(closed)) if k not in small]
+        made = []
+        for order, k in enumerate(main):
+            V, F = closed[k]
+            room = MAX_HULLS - len(made) - (len(main) - order - 1)
+            try:
+                if euler(F) == 0:
+                    parts = arcs(V, F, room)
+                else:
+                    parts, bodies = [], trim(V, F)
+                    for j, (W, G) in enumerate(bodies):
+                        parts.extend(fit(W, G, room - len(parts) - (len(bodies) - j - 1))[0])
+            except ValueError as error:
+                raise ValueError(f'{name}: {error}') from None
+            share = sum(volume(W, G)[0] for W, G in parts) / volumes[k]
+            if euler(F) != 0 and share < COVER:
+                raise ValueError(f'{name}: hulls cover {share:.3f} of a detail (least {COVER})')
+            made.extend(parts)
+        if len(made) > MAX_HULLS:
+            raise ValueError(f'{name}: {len(made)} hulls exceed {MAX_HULLS}')
+        groups = [[] for _ in made]
+        for k in small:
+            groups[nearest(closed[k], made)].append(closed[k])
+        for (W, G), group in zip(made, groups):
+            cell = Cell(index, W, G, group)
+            if (far := outside(cell.points, cell.solids())) > OUTSIDE:
+                raise ValueError(f'{name}: a hull stands {10 * far:.1f} mm outside the detail '
+                                 f'(limit {10 * OUTSIDE:.0f} mm)')
+            cells.append(cell)
 
     depths = {}
 
@@ -485,6 +960,8 @@ def hulls(pieces, names):
     return cells
 
 
+
+
 # --- version 3 -------------------------------------------------------------------------------------------------
 
 def cut(nodes, glb: bytes):
@@ -540,9 +1017,25 @@ def cut(nodes, glb: bytes):
     return out.getvalue().encode('ascii')
 
 
+def grown(points):
+    """The planes (K, 4) of the shape of a written hull: its faces moved back out by SHRINK. A face under
+    0.01 mm2 is left out: at the thin ends of a hoop's arc the written float32 points give qhull slivers along
+    sharp edges, whose planes grown back would cut a bevel off the shape. Where a face vanished in the shrink
+    the grown shape is larger than the cut's."""
+    hull = ConvexHull(points)
+    corners = points[hull.simplices]
+    area = np.linalg.norm(np.cross(corners[:, 1] - corners[:, 0], corners[:, 2] - corners[:, 0]), axis=1) / 2
+    planes, which = np.unique(np.round(hull.equations, 12), axis=0, return_inverse=True)
+    planes = planes[np.bincount(which.ravel(), area, len(planes)) >= 1e-4]
+    planes[:, 3] -= SHRINK
+    return planes
+
+
 def validate(data: bytes, glb: bytes | None):
-    """Check version 3 bytes as the game reads them: counts, the GLB binding, closed details, hulls and
-    their overlaps. Returns dict(pieces, hulls, volume, hull_volume, largest (cm3), overlap (cm))."""
+    """Check version 3 bytes as the game reads them: counts, the GLB binding, closed details, hulls, the shape
+    rule and the overlaps of different pieces. Returns dict(pieces, hulls, volume, hull_volume, largest (cm3),
+    overlap, outside (cm), cover and classes: per class of the pieces' largest details (board, bent, torn, ring)
+    pieces, hulls, outside, cover, overlap and for rings inward (cm))."""
     lines = iter(data.decode('ascii').splitlines())
     if next(lines) != 'GOTHIC_FRACTURE 3':
         raise ValueError('expected version 3')
@@ -555,6 +1048,7 @@ def validate(data: bytes, glb: bytes | None):
     if header[0] != 'pieces' or not 2 <= count <= MAX_PIECES:
         raise ValueError(f'invalid piece count {header}')
     hull_planes, volume_sum, hull_sum, largest = [], 0.0, 0.0, 0.0
+    classes = {}
     for index in range(count):
         words = next(lines).split()
         if len(words) != 8 or words[0] != 'piece' or words[5] not in GROUPS:
@@ -563,6 +1057,7 @@ def validate(data: bytes, glb: bytes | None):
         h, t = int(words[6]), int(words[7])
         if declared <= 0 or not 1 <= h <= MAX_HULLS or not 1 <= t <= MAX_TRIANGLES:
             raise ValueError(f'piece {index}: volume, hull or triangle count out of range')
+        written = []
         for _ in range(h):
             words = next(lines).split()
             if len(words) != 2 or words[0] != 'hull' or not 4 <= int(words[1]) <= MAX_POINTS:
@@ -574,15 +1069,16 @@ def validate(data: bytes, glb: bytes | None):
                 raise ValueError(f'piece {index}: flat hull')
             hull_planes.append((index, np.unique(np.round(hull.equations, 12), axis=0), points.min(0), points.max(0)))
             hull_sum += hull.volume
-        triangles = []
+            written.append(points)
+        triangles_ = []
         for _ in range(t):
             if not next(lines).startswith('tri '):
                 raise ValueError(f'piece {index}: missing triangle texture')
             vertex = np.array([[float(x) for x in next(lines).split()] for _ in range(3)], dtype=np.float32)
             if vertex.shape != (3, 8) or not np.isfinite(vertex).all():
                 raise ValueError(f'piece {index}: invalid triangle')
-            triangles.append(vertex.astype(np.float64))
-        closed, _ = details(np.asarray(triangles)[:, :, :3])
+            triangles_.append(vertex.astype(np.float64))
+        closed, _ = details(np.asarray(triangles_)[:, :, :3])
         measured = [volume(V, F) for V, F, _ in closed]
         total = sum(v for v, _ in measured)
         if not closed or not np.isclose(total, declared, rtol=1e-4):
@@ -591,15 +1087,58 @@ def validate(data: bytes, glb: bytes | None):
             raise ValueError(f'piece {index}: centre differs from its closed details')
         volume_sum += declared
         largest = max(largest, declared)
+
+        # the shape rule: how far out and in the written hulls stand, as physics takes them; the cover of the
+        # shapes before the shrink, which only parts the pieces (it alone takes 14% of a 2.2 cm board)
+        main = int(np.argmax([v for v, _ in measured]))
+        V, F, _ = closed[main]
+        cls = kind(V, F)
+        solids = [triangles(W, G) for W, G, _ in closed]
+        shapes = [grown(points) for points in written]
+        stats = classes.setdefault(cls, dict(pieces=0, hulls=0, outside=0.0, cover=1.0, overlap=0.0))
+        stats['pieces'] += 1
+        stats['hulls'] += h
+        inner = None
+        if cls == 'ring':
+            ring_centre, axis, _, _ = ring_frame(V)
+            offsets = np.cumsum([0] + [len(s) for s in solids])
+            inner = np.zeros(offsets[-1], dtype=bool)
+            inner[offsets[main]:offsets[main + 1]] = inner_faces(V, F, ring_centre, axis)
+            stats.setdefault('inward', 0.0)
+        for k, points in enumerate(written):
+            _, distance, nearest = outside_samples(points, solids)
+            far = float(distance.max())
+            if far > OUTSIDE + 1e-3:
+                raise ValueError(f'piece {index}: hull {k} stands {10 * far:.1f} mm outside its details '
+                                 f'(limit {10 * OUTSIDE:.0f} mm)')
+            stats['outside'] = max(stats['outside'], far)
+            if inner is not None:
+                deep = float(distance[inner[nearest]].max(initial=0.0))
+                if deep > INWARD + 1e-3:
+                    raise ValueError(f'piece {index}: hull {k} reaches {10 * deep:.1f} mm inside the ring '
+                                     f'(limit {10 * INWARD:.0f} mm)')
+                stats['inward'] = max(stats['inward'], deep)
+        for W, G, _ in closed:
+            share = coverage(triangles(W, G), shapes)
+            if cls != 'ring' and share < COVER:
+                raise ValueError(f'piece {index}: hulls cover {share:.3f} of a detail (least {COVER})')
+            stats['cover'] = min(stats['cover'], share)
+        hull_planes[-h:] = [(i, p, lo, hi, cls) for i, p, lo, hi in hull_planes[-h:]]
     if next(lines, None) is not None:
         raise ValueError('trailing data')
     worst = -np.inf
-    for i, (a, a_planes, a_low, a_high) in enumerate(hull_planes):
-        for b, b_planes, b_low, b_high in hull_planes[i + 1:]:
+    for i, (a, a_planes, a_low, a_high, a_cls) in enumerate(hull_planes):
+        for b, b_planes, b_low, b_high, b_cls in hull_planes[i + 1:]:
             if a == b or np.any(a_low > b_high) or np.any(b_low > a_high):
                 continue
-            worst = max(worst, 2 * chebyshev(np.vstack((a_planes, b_planes)))[1])
+            depth = 2 * chebyshev(np.vstack((a_planes, b_planes)))[1]
+            worst = max(worst, depth)
+            for cls in (a_cls, b_cls):
+                classes[cls]['overlap'] = max(classes[cls]['overlap'], depth)
     if worst > OVERLAP + 1e-4:
         raise ValueError(f'hulls of different pieces overlap by {10 * worst:.2f} mm')
     return dict(pieces=count, hulls=len(hull_planes), volume=volume_sum, hull_volume=hull_sum,
-                largest=largest, overlap=max(worst, 0.0))
+                largest=largest, overlap=max(worst, 0.0),
+                outside=max(s['outside'] for s in classes.values()),
+                cover=min(s['cover'] for s in classes.values()),
+                classes={cls: classes[cls] for cls in CLASSES if cls in classes})
