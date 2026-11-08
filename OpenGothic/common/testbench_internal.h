@@ -5,17 +5,22 @@
 
 #include <chrono>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
 #include "game/constants.h"
+#include "graphics/objvisual.h"
+#include "game/inventory.h"
 #include "physics/dynamicworld.h"
 #include "physics/physics.h"
+#include "physics/ragdoll.h"
 #include "utils/keycodec.h"
 #include "world/waypoint.h"
 
@@ -38,6 +43,70 @@ struct Hold {
   KeyCodec::Action a;
   uint64_t         until;
   };
+
+enum CamMode : uint8_t {
+  C_Game,
+  C_Follow, // around the player, relative to its facing
+  C_World,  // around the player, fixed world direction
+  C_Fixed,  // fixed position, looking at the player
+  C_Hold,   // the camera stays as it is: the position and where it looks
+  C_Turn,   // yaw at the held camera position, retaining its pitch
+  C_Water,  // retain the water overview after deferred player teleports
+  C_RagdollArena, // benchmark-only fixed view derived from the complete twenty-model group
+  C_Face,   // close to the face, relative to the facing of the body
+  C_Shoulder, // over the hero's shoulder at an npc (camNpc)
+  C_NpcFace,  // the npc's face, from the hero's side
+  C_Two,      // the hero and the npc from the side
+  C_Arrow,    // from the side of the newest arrow's way, going along with it (overlay trail records it)
+  };
+
+struct QuestSite { bool ready=false; Tempest::Vec3 dry={}, direction={}; float waterY=0; std::string waypoint; };
+struct SpellActor {Npc* npc=nullptr;std::string role;};
+struct MovableFixture { ObjVisual visual; DynamicWorld::Item body; };
+
+struct Water {
+  std::unordered_set<uintptr_t> ids;
+  std::unordered_map<uintptr_t,std::string> labels;
+  std::unordered_map<uintptr_t,uint64_t> sleepAt;
+  std::unordered_map<uintptr_t,Tempest::Vec3> reference;
+  std::unordered_map<uintptr_t,float> travel;
+  std::vector<Item*> items;
+  std::string caseName,waypoint;
+  Tempest::Vec3 dry,center,direction,heroStart,heroLast,observerStart,cameraTarget;
+  uint32_t barrelZen=uint32_t(-1),crateZen=uint32_t(-1);
+  uint64_t start=0,sample=0,observerSample=0;
+  float heroMaxStep=0,rayTop=0;
+  bool ready=false,trace=false,swim=false,sawSwim=false,observer=false;
+  struct WaterActor { Npc* npc=nullptr; std::string role; uint64_t sleepAt=uint64_t(-1); };
+  std::vector<WaterActor> actors;
+  bool bodiesReady=false,lootReady=false,killOnThrow=false;
+  std::string lootMode;
+};
+
+// References to the shared bench state used by the water fixtures.
+struct WaterContext {
+  CamMode& cam;
+  Tempest::Vec3& camPos;
+  bool& movableMeasuring;
+  std::vector<uintptr_t>& movableIds;
+  std::unordered_set<uintptr_t>& movableMapIds;
+  bool& movableReady;
+  Tempest::Vec3& movableCenter;
+  QuestSite& questWater;
+  std::vector<std::unique_ptr<MovableFixture>>& destructionFixtures;
+  std::vector<Hold>& holds;
+  std::vector<KeyCodec::Action>& taps;
+  PlayerControl*& ctrl;
+  std::vector<Npc*>& crew;
+  std::vector<SpellActor>& spellActors;
+  bool& spellGuardTrace;
+  std::map<int32_t,size_t>& spellRunes;
+  int32_t& spellCastingId;
+  int32_t& spellEquipPending;
+  uint64_t& spellEquipUntil;
+  const Npc*& expectedRagdollLoot;
+  bool& ragdollLootDidOpen;
+};
 
 struct PlacedItems {
   std::vector<std::vector<size_t>> batches;
@@ -239,6 +308,34 @@ void say(const std::string& s);
 Tempest::Vec3 facing(const Npc& pl);
 Npc* findNpc(World& w, Npc& pl, const std::string& name);
 void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl);
+
+void lookFrom(const Tempest::Vec3& org,const Tempest::Vec3& tgt);
+std::string ragdollNativePrecision(const Ragdoll::PartState& part);
+std::string ragdollInventory(const Npc& npc,World& world,Inventory::IteratorType type=Inventory::T_Inventory);
+std::string noiseListenerRows(World& world);
+void noiseBegin(World& world,std::string_view phase,const Tempest::Vec3& source);
+Npc* noiseAddListener(World& world,std::string role,const Tempest::Vec3& point,Npc* npc=nullptr);
+void noiseRetireListeners();
+uintptr_t destructionAdd(World& world,std::string_view name,const Tempest::Vec3& support);
+
+bool waterOwns(Water& state,const DynamicWorld::WaterBodySnapshot& body);
+void waterFields(Water& state,const WaterContext& context,World& world);
+std::string waterRows(Water& state,World& world);
+void waterCheckpoint(Water& state,const WaterContext& context,World& world,std::string_view label);
+bool waterProbe(World& world,const Tempest::Vec3& at,float minDepth,float maxDepth,Tempest::Vec3& surface);
+bool waterFireballCaster(World& world,const Tempest::Vec3& target,float targetRadius,Tempest::Vec3& caster);
+bool waterFindWindSite(Water& state,World& world,std::vector<Tempest::Vec3>& places);
+void waterTorch(Water& state,World& world,Npc& player);
+void prepareWaterFixture(Water& state,const WaterContext& context,World& world,Npc& player,std::string_view mode);
+void waterInitial(Water& state,const WaterContext& context,World& world,Npc& player,PlayerControl& ctrl,std::string_view label);
+std::string waterActorRows(Water& state,World& world);
+void waterBodiesCheckpoint(Water& state,const WaterContext& context,World& world,std::string_view label);
+bool waterBodiesAdd(Water& state,const WaterContext& context,World& world,Npc& player,std::string_view symbol,std::string role,const Tempest::Vec3& at,bool dead=true);
+void prepareWaterBodiesFixture(Water& state,const WaterContext& context,World& world,Npc& player,std::string_view mode);
+void waterBodiesInitial(Water& state,const WaterContext& context,World& world,Npc& player,std::string_view label);
+void waterBodiesLootReady(Water& state,World& world,Npc& player,std::string_view mode);
+void waterBodiesLoot(Water& state,const WaterContext& context,World& world,Npc& player,PlayerControl& ctrl);
+void prepareWaterSpell(Water& state,const WaterContext& context,World& world,Npc& player,bool wind);
 
 void healingObserve(Healing& state,World& world,Npc& player);
 void healingCommand(Healing& state,const std::vector<std::string>& a,World& world,Npc& player,PlayerControl& ctrl,
