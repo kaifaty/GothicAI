@@ -20,7 +20,14 @@ approximation of its details rather than their copy (the shape rule, same README
   ball inside their intersection (linprog); a hull that overlaps more is cut further.
 
 Where the rule cannot hold the cut fails with the piece's name and its numbers. The drawing is the node's
-triangles as they are, with their UV and normals. Requires numpy and scipy.
+triangles as they are, with their UV and normals.
+
+After the pieces comes the bond block (reports/physics/2026-11-destruction-bonds/README.md): two pieces that
+touch (samples of one's closed details within 3 mm of the other's faces over 1 cm2 or more) are bonded by the
+generator's names: a barrel's staves to their hoops (HOOP), head boards to the staves (GROOVE) and to each
+other (DOWEL); a crate's details of different orientation (NAIL), never one wall's boards edge to edge; the
+strips of one split board (ALONG) and the halves of one broken board or stave (ACROSS). Debris with other
+names gets no block, as before bonds. Requires numpy and scipy.
 """
 from __future__ import annotations
 
@@ -50,6 +57,11 @@ OVERLAP = 0.2        # cm, largest ball diameter inside two hulls of different p
 THICK = 0.05         # cm, the least radius a cut hull keeps after shrinking
 NUDGE = 0.01         # cm, a cut along a face runs this far outside it, clear of its vertices: inside, the
                      # cut would leave a skin of the face on the far side, joined at the concave edge
+CONTACT = 0.3        # cm, two pieces closer than this touch (a stave joint is 0.5 mm, a head board gap 1 mm)
+MIN_CONTACT = 1.0    # cm2, the least touching area of a bond: a corner grazing a neighbour is none
+BOND_STEP = 0.5      # cm between the samples that find the touching area
+BOND_KINDS = ('NAIL', 'HOOP', 'GROOVE', 'DOWEL', 'ALONG', 'ACROSS')
+MAX_BONDS = 1024
 MAX_HULLS = 16
 MAX_POINTS = 256
 MAX_PIECES = 64
@@ -962,6 +974,119 @@ def hulls(pieces, names):
     return cells
 
 
+# --- bonds -----------------------------------------------------------------------------------------------------
+
+def thickness_axis(V):
+    """The direction of a detail's least extent: through the thickness of a board."""
+    return principal(V)[1][2]
+
+
+def contact(a, b):
+    """Where two pieces touch: (area in cm2, centre, normal) of the samples of each piece's closed details within
+    CONTACT of the other's, the normal that of the other's nearest faces (sign of the first); None if apart."""
+    lo_a, hi_a = a[0].reshape(-1, 3).min(0), a[0].reshape(-1, 3).max(0)
+    lo_b, hi_b = b[0].reshape(-1, 3).min(0), b[0].reshape(-1, 3).max(0)
+    if np.any(lo_a > hi_b + CONTACT) or np.any(lo_b > hi_a + CONTACT):
+        return None
+    area, points, normals = 0.0, [], []
+    for (own, own_samples), (other, _) in ((a, b), (b, a)):
+        lo, hi = other.reshape(-1, 3).min(0) - CONTACT, other.reshape(-1, 3).max(0) + CONTACT
+        near = own_samples[np.all((own_samples >= lo) & (own_samples <= hi), axis=1)]
+        if not len(near):
+            continue
+        distance, which = triangle_distance(near, other)
+        touching = distance <= CONTACT
+        area = max(area, float(touching.sum()) * BOND_STEP * BOND_STEP)
+        points.append(near[touching])
+        tri = other[which[touching]]
+        n = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
+        normals.append(n / np.maximum(np.linalg.norm(n, axis=1, keepdims=True), 1e-12))
+    if area < MIN_CONTACT:
+        return None
+    points, normals = np.vstack(points), np.vstack(normals)
+    normals *= np.where(normals @ normals[0] < 0, -1.0, 1.0)[:, None]
+    normal = normals.sum(0)
+    return area, points.mean(0), normal / max(np.linalg.norm(normal), 1e-12)
+
+
+def stem(name):
+    """The detail a piece was cut from: a split board's strip, a broken board's half, a stave's top."""
+    for mark in ('-strip-', '-half-'):
+        if mark in name:
+            return name.split(mark)[0], mark.strip('-')
+    if name.endswith('-top'):
+        return name[:-4], 'top'
+    return name, None
+
+
+def bond_kind(rules, a, b, touch, axes, groups):
+    """The KIND of a bond between pieces named a, b (README of reports/physics/2026-11-destruction-bonds), or
+    None when the two only touch: staves side by side, boards edge to edge in one wall."""
+    (base_a, part_a), (base_b, part_b) = stem(a), stem(b)
+    if base_a == base_b:
+        return 'ALONG' if 'strip' in (part_a, part_b) else 'ACROSS'
+    if rules == 'barrel':
+        metal = [group == 'METAL' for group in groups]
+        if any(metal):
+            return 'HOOP' if not all(metal) else None
+        heads = [name.startswith(('lid-', 'bottom-')) for name in (a, b)]
+        if all(heads):
+            return 'DOWEL' if a.split('-')[0] == b.split('-')[0] else None
+        return 'GROOVE' if any(heads) else None
+    # crate: details of different orientation that touch are nailed; one wall's boards lie edge to edge
+    if abs(axes[0] @ axes[1]) > 0.9 and abs(touch @ axes[0]) < 0.5:
+        return None
+    return 'NAIL'
+
+
+def bonding(nodes, pieces, groups):
+    """[(a, b, KIND, point)] of the debris, a < b, by contact and the generator's names: 'barrel' when it has
+    staves, 'crate' when it has planks and posts, else none (each piece breaks off alone, as before bonds)."""
+    names = [name for name, *_ in nodes]
+    if any(name.startswith('stave-') for name in names):
+        rules = 'barrel'
+    elif any(name.startswith(('plank-', 'post-')) for name in names):
+        rules = 'crate'
+    else:
+        return []
+    shapes = []
+    for closed in pieces:
+        tris = np.vstack([triangles(V, F) for V, F in closed])
+        samples, _ = facet_samples(tris, BOND_STEP)
+        shapes.append((tris, samples))
+    axes = [thickness_axis(max(closed, key=lambda d: volume(*d)[0])[0]) for closed in pieces]
+    result = []
+    for i in range(len(nodes)):
+        for j in range(i + 1, len(nodes)):
+            touch = contact(shapes[i], shapes[j])
+            if touch is None:
+                continue
+            kind_ = bond_kind(rules, names[i], names[j], touch[2], (axes[i], axes[j]), (groups[i], groups[j]))
+            if kind_ is not None:
+                result.append((i, j, kind_, touch[1]))
+    if len(result) > MAX_BONDS:
+        raise ValueError(f'{len(result)} bonds exceed {MAX_BONDS}')
+    return result
+
+
+def islands(count, bonds):
+    """Connected groups of pieces over the bonds, each a sorted list of piece indices."""
+    parent = list(range(count))
+
+    def root(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    for a, b, *_ in bonds:
+        parent[max(root(a), root(b))] = min(root(a), root(b))
+    groups = {}
+    for i in range(count):
+        groups.setdefault(root(i), []).append(i)
+    return sorted(groups.values())
+
+
 
 
 # --- version 3 -------------------------------------------------------------------------------------------------
@@ -1016,6 +1141,11 @@ def cut(nodes, glb: bytes):
             out.write(f'tri {texture}\n')
             for vertex in triangle:
                 out.write(' '.join(number(x) for x in vertex) + '\n')
+    bonds = bonding(nodes, pieces, [group for _, _, group in meta])
+    if bonds:
+        out.write(f'bonds {len(bonds)}\n')
+        for a, b, kind_, point in bonds:
+            out.write(f'bond {a} {b} {kind_} ' + ' '.join(number(x) for x in point) + '\n')
     return out.getvalue().encode('ascii')
 
 
@@ -1128,6 +1258,23 @@ def validate(data: bytes, glb: bytes | None):
             row = classes.setdefault(own, dict(pieces=0, hulls=0, outside=0.0, cover=1.0, overlap=0.0))
             row['cover'] = min(row['cover'], share)
         hull_planes[-h:] = [(i, p, lo, hi, cls) for i, p, lo, hi in hull_planes[-h:]]
+    bonds = []
+    header = next(lines, None)
+    if header is not None:
+        words = header.split()
+        if len(words) != 2 or words[0] != 'bonds' or not 1 <= int(words[1]) <= MAX_BONDS:
+            raise ValueError(f'invalid bond count {words}')
+        for _ in range(int(words[1])):
+            words = next(lines, '').split()
+            if len(words) != 7 or words[0] != 'bond' or words[3] not in BOND_KINDS:
+                raise ValueError(f'invalid bond {words}')
+            a, b = int(words[1]), int(words[2])
+            point = np.array([float(x) for x in words[4:]])
+            if not 0 <= a < b < count or not np.isfinite(point).all():
+                raise ValueError(f'invalid bond {words}')
+            if any((a, b) == (x, y) for x, y, _ in bonds):
+                raise ValueError(f'bond {a} {b} repeated')
+            bonds.append((a, b, words[3]))
     if next(lines, None) is not None:
         raise ValueError('trailing data')
     worst = -np.inf
@@ -1141,8 +1288,9 @@ def validate(data: bytes, glb: bytes | None):
                 classes[cls]['overlap'] = max(classes[cls]['overlap'], depth)
     if worst > OVERLAP + 1e-4:
         raise ValueError(f'hulls of different pieces overlap by {10 * worst:.2f} mm')
+    kinds = {k: sum(kind_ == k for *_, kind_ in bonds) for k in BOND_KINDS if any(kind_ == k for *_, kind_ in bonds)}
     return dict(pieces=count, hulls=len(hull_planes), volume=volume_sum, hull_volume=hull_sum,
-                largest=largest, overlap=max(worst, 0.0),
+                largest=largest, overlap=max(worst, 0.0), bonds=kinds, islands=len(islands(count, bonds)),
                 outside=max(s['outside'] for s in classes.values()),
                 cover=min(s['cover'] for s in classes.values()),
                 classes={cls: classes[cls] for cls in CLASSES if cls in classes})
