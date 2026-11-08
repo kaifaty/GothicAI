@@ -82,4 +82,4 @@ Gothic2.exe. Вблизи он 100% и к 15 м спускается до нав
 [`archery.cpp`](https://github.com/kaifaty/GothicAI/blob/main/OpenGothic/common/game/archery.cpp) и
 [`damagecalculator.cpp`](https://github.com/kaifaty/GothicAI/blob/main/OpenGothic/common/game/damagecalculator.cpp).
 Шортс снят на [тестовом стенде](https://github.com/kaifaty/GothicAI/tree/main/scripts/bench) и нарисован
-с помощью [`shorts/explain`](https://github.com/kaifaty/GothicAI/tree/main/shorts/explain).
+с помощью [`shorts/explain`](https://github.com/kaifaty/GothicAI/tree/0061fde837235378936b735d9669f20bfeef56f8/shorts/explain).

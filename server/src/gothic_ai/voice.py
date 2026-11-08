@@ -355,7 +355,7 @@ class VoiceInput:
 
     `hints`: ASR vocabulary for the hero's focus, snapshotted once when the key is pressed.
     `files`: a `ptt_start` may name a recording (`audio`) the hero says instead of the microphone; the test
-    bench speaks for the hero this way (scripts/shorts/). Off by default: the game is not to make the server
+    bench speaks for the hero this way (gothic-shorts). Off by default: the game is not to make the server
     read files."""
 
     def __init__(

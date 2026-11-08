@@ -390,7 +390,7 @@ uses `OPENGOTHIC_STUCK_LOG`, and can resume a measured series. `summarize` write
 coverage/walk tables and two top-down PNGs using only the Python standard library.
 
 A line `off: <command>` or `on: <command>` runs in that take only: `OPENGOTHIC_BENCH_TAKE=off|on`, set by
-`shorts/compare/film.sh` (without it the take is `on`). `OPENGOTHIC_MANUALAIM=0|1` and `OPENGOTHIC_NPCAIM=0|1`
+`compare/film.sh` in gothic-shorts (without it the take is `on`). `OPENGOTHIC_MANUALAIM=0|1` and `OPENGOTHIC_NPCAIM=0|1`
 set the hero's and the npc archers' manual aim over Gothic.ini.
 
 Scenarios for foot IK: `ik-sweep` (12 slopes all over the world: run up, run down, walk across; ~2 min),
@@ -731,7 +731,7 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `ledges [min drop] [max drop] [count] [steep]` | waypoints at an edge with open ground that much lower 1.5..14 m away, seen from there (a target below): the yaw to `face`, the distance, the drop, the angle down; nearest first or the steepest |
 | `say <text>`, `quit` | |
 
-Talking, for shorts (`shorts/`; needs the AI server, see `shorts/README.md`):
+Talking (needs the AI server; the video tool lives in the private `kaifaty/gothic-shorts` repository):
 
 | Command | |
 |---|---|

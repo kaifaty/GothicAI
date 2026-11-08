@@ -550,8 +550,7 @@ def test_real_selector_change_selects_every_group():
     }
     matrix = check.select_groups(ROOT, ["scripts/check.py"])
     assert selected_files(matrix) == expected
-    assert {group["name"] for group in matrix if group["platform"] == "macos-15"} == {"shorts"}
-    assert all(group["platform"] == "ubuntu-24.04" for group in matrix if group["name"] != "shorts")
+    assert all(group["platform"] == "ubuntu-24.04" for group in matrix)
     assert all("--with pytest-timeout" in group["command"] for group in matrix)
     assert all("--timeout=120 --timeout-method=signal" in group["command"] for group in matrix)
     assert all("faulthandler_timeout" not in group["command"] for group in matrix)

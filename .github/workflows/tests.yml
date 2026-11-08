@@ -68,9 +68,6 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "**/uv.lock"
           cache-suffix: ${{ matrix.name }}
-      - name: Install FFmpeg for synthetic media tests
-        if: ${{ runner.os == 'macOS' }}
-        run: brew install ffmpeg
       - name: Run selected tests
         working-directory: ${{ matrix.dir }}
         env:
