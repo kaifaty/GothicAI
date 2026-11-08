@@ -86,6 +86,13 @@ class PackedMesh {
       float         weights[4]        = {};
       };
 
+    // The rest rotation of a node a soft skin is bound to (node frame -> model), found from the skin itself
+    struct SkinRest {
+      float rot[3][3] = {};
+      bool  valid     = false;
+      };
+    static std::vector<SkinRest> fitSkinRest(const asset::SoftSkinMesh& skinned);
+
     using  Vert = std::pair<uint32_t,uint32_t>;
     struct PrimitiveHeap;
     struct Meshlet {
@@ -103,7 +110,8 @@ class PackedMesh {
                     std::vector<uint32_t>& indices, std::vector<uint8_t>& indices8,
                     std::vector<uint32_t>* verticesId, const std::vector<asset::Vec3>& vbo,
                     const std::vector<asset::MeshWedge>& wedgeList,
-                    const std::vector<SkeletalData>* skeletal);
+                    const std::vector<SkeletalData>* skeletal,
+                    const std::vector<SkinRest>* rest);
       bool    validate() const;
 
       bool    insert(const Vert& a, const Vert& b, const Vert& c);
@@ -127,7 +135,8 @@ class PackedMesh {
                           std::span<const uint32_t> materialMap,
                           std::span<const uint32_t> vertexIds = {}, std::span<const uint32_t> featureIds = {});
     void   packMeshletsObj(const asset::StaticMesh& mesh, PkgType type,
-                           const std::vector<SkeletalData>* skeletal);
+                           const std::vector<SkeletalData>* skeletal,
+                           const std::vector<SkinRest>* rest = nullptr);
 
     std::vector<Meshlet> buildMeshlets(const asset::WorldMesh* mesh, const asset::SubMesh* proto_mesh,
                                        PrimitiveHeap& heap, std::vector<bool>& used,

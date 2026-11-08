@@ -1,0 +1,27 @@
+Full-body character modelling sheet for a dark medieval fantasy game: one man shown exactly three times side by side on a plain mid-grey background (#7a7c80) — strict front view, strict left profile view (the face looking to the left of the image), strict back view. No perspective, like orthographic camera blueprints for a 3D character artist. Same man, same scale, with the top of the head, the shoulders, the belt, the knees and the soles on the same horizontal lines in all three views. The whole figure is visible from the top of the head to the soles with a small margin; nothing is cropped. Wide landscape image.
+
+Pose: a neutral A-pose for rigging. He stands straight, feet shoulder-width apart and pointing forward, arms straight and held away from the body about 40 degrees from the torso, hands relaxed and open with the fingers slightly apart. The arms do not touch the torso or the trousers, the legs do not touch each other. Head straight, eyes looking ahead, neutral face, mouth closed.
+
+Flat even diffuse light from the front, very soft shadows, no rim light, no floor, no cast shadow. Rendered like a high-end realistic 3D game character (real skin, real cloth and leather with thickness and folds), not a painting and not a photo of a real person.
+
+Two reference images:
+- man.png — THIS is the man's head. Keep exactly his face, head shape, grey-blue eyes, eyebrows, forehead wrinkles, the two faint scratches on the cheekbone, the goatee joined with the moustache with only stubble on the jaw, and the greasy slicked-back hair with olive-golden strands and the short ponytail tied with a leather thong. Ignore the shirt collar in man.png.
+- outfit.png — the outfit of the original 2002 game on a headless low-poly body: front, left profile, back. Keep its garments, their order and their colours, remade as real clothing. Do not copy its low-poly look, its flat painted details or its stiff bent arms.
+
+The outfit from top to bottom, every part is kept:
+- a sleeveless shirt of coarse dark charcoal wool with a low V-neck closed by a short leather lacing of three or four crossings; the sleeves were torn off, the shoulder edges are ragged and frayed; bare arms;
+- a wide dark leather belt with a plain iron buckle at the front;
+- a narrow dark leather flap hanging from the belt at the front down to mid-thigh;
+- wide baggy trousers of heavy olive-drab cloth, mottled with dirt and mine grime, with darker patches;
+- black hardened leather knee guards strapped over the trousers;
+- dark leather plates on the shins edged with a row of iron rivets, with a strap and a square iron buckle at the back of each ankle;
+- short brown leather boot cuffs turned down over heavy dark leather boots with a blunt toe and a thick sole;
+- on both forearms wide dark leather bracers covered with rows of iron studs, with a worn lighter band at the top and bottom edge.
+
+Who he is: a former prisoner of a penal mining colony, mid thirties, a few weeks after being pulled half-dead out of ruins. Everything he wears was made in the camp from scraps; nothing is new and nothing is a matching set. This is worn working clothing, not a knight's armour. About 180 cm tall, broad shoulders and strong forearms from years in the mine, not a bodybuilder. Rough dirty hands.
+
+Wear is not mirrored: the two shoulders are torn differently, the two bracers and the two knee guards are worn differently, dirt and folds differ between left and right.
+
+Colours as the eye sees them, keep the outfit this dark: shirt #2d2c2d; belt #27231f; leather flap #332e29; trousers #42402f in the lighter areas and #292b23 in the darker areas; shin plates #1d1c1a; boot cuffs #3c2f23; boots #2a2620; bracers #323131. Skin as on the head: #b28767, tanned and weathered, the same on the arms and the face.
+
+Avoid: perspective, a three-quarter turn, a T-pose with horizontal arms, arms touching the body, clenched fists, a floor, a cast shadow, text, labels, numbers, plate armour, chainmail, a cape, a cloak, a hood, a helmet, weapons, a scabbard, pouches, extra belts, straps across the chest, ornament, gold, clean new clothes, a bodybuilder physique, shiny leather, a different face from man.png, orange or golden colour cast, warm saturated browns, lighter clothing than the colours above, painterly brush strokes.
