@@ -476,18 +476,6 @@ add_shader(rtsm_omni_task.comp       rtsm/rtsm_omni_task.comp)
 add_shader(rtsm_omni_primitive.comp  rtsm/rtsm_omni_primitive.comp)
 add_shader(rtsm_omni_raster.comp     rtsm/rtsm_omni_raster.comp)
 
-# software ray-tracing
-#add_shader(sw_raytracing.comp swrt/sw_raytracing.comp -DANY_HIT -DUNIFORM_TRAVERSE "--target-env" "spirv1.3")
-add_shader(sw_raytracing.comp   swrt/sw_raytracing.comp  -DANY_HIT)
-add_shader(sw_raytracing8.comp  swrt/sw_raytracing8.comp)
-add_shader(sw_raytracing64.comp swrt/sw_raytracing64.comp)
-
-# software rendering
-add_shader(sw_rendering_imm.comp  software_rendering/sw_rendering_imm.comp)
-add_shader(sw_rendering_tbr.comp  software_rendering/sw_rendering_tbr.comp)
-add_shader(sw_light.comp          software_rendering/sw_light.comp)
-add_shader(vbuffer_blit.frag      software_rendering/vbuffer_blit.frag)
-
 add_custom_command(
   OUTPUT     ${HEADER} ${CPP}
   DEPENDS    ${OPENGOTHIC_SHADERS_SPRV}

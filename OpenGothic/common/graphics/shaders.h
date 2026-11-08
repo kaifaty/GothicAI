@@ -32,9 +32,6 @@ class Shaders {
       bool     doVirtualShadow   = false;
       bool     doSoftwareShadow  = false;
       bool     doMaterialMaps    = false;
-
-      bool     doSoftwareRT      = false;
-      uint32_t swRenderingPreset = 0;
       };
 
     static Shaders& inst(bool waitCompiler = true);
@@ -160,13 +157,6 @@ class Shaders {
 
     Tempest::ComputePipeline rtsmRendering, rtsmRenderingOmni; //reference
     Tempest::RenderPipeline  rtsmDbg;
-
-    Tempest::ComputePipeline swRaytracing, swRaytracing64;
-    Tempest::ComputePipeline swRaytracing8;
-
-    // Software rendering
-    Tempest::ComputePipeline swRendering;
-    Tempest::RenderPipeline  swRenderingDbg;
 
     // Inventory
     Tempest::RenderPipeline  inventory;
