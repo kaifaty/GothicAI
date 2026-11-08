@@ -114,7 +114,7 @@ class VisualObjects final {
     void drawVsm        (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawHiZ        (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
 
-    bool updateRtScene(RtScene& out);
+    bool updateRtScene(RtScene& out, Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
 
     void dbgClusters(Tempest::Painter& p, Tempest::Vec2 wsz);
 

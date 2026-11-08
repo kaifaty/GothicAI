@@ -832,7 +832,7 @@ void Renderer::draw(Tempest::Attachment& result, Encoder<CommandBuffer>& cmd, ui
     }
 
   if(requiresRtScene())
-    wview.updateRtScene();
+    wview.updateRtScene(cmd, fId);
   wview.updateLights(gameTime);
 
   if(requiresLightsTree())

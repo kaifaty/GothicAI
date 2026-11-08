@@ -177,6 +177,21 @@ AbstractGraphicsApi::PRtAs MetalApi::createTopAccelerationStruct(Device* d, cons
   return PRtAs(new MtTopAccelerationStructure(dev,inst,as,size));
   }
 
+AbstractGraphicsApi::PRtAs MetalApi::createTopAccelerationStruct(Device* d, size_t capacity) {
+  auto& dev = *reinterpret_cast<MtDevice*>(d);
+  return PRtAs(new MtTopAccelerationStructure(dev,capacity));
+  }
+
+size_t MetalApi::rtInstanceSize() const {
+  return sizeof(MTL::AccelerationStructureUserIDInstanceDescriptor);
+  }
+
+size_t MetalApi::packRtInstances(Device* d, AccelerationStructure& tlas, const RtInstance* inst,
+                                 AccelerationStructure*const* as, size_t count, void* out) {
+  (void)d;
+  return reinterpret_cast<MtTopAccelerationStructure&>(tlas).pack(inst, as, count, out);
+  }
+
 AbstractGraphicsApi::DescArray* MetalApi::createDescriptors(Device* d, Texture** tex, size_t cnt, uint32_t mipLevel) {
   auto& dev = *reinterpret_cast<MtDevice*>(d);
   return new MtDescriptorArray(dev,tex,cnt,mipLevel);

@@ -1026,7 +1026,7 @@ void VisualObjects::postFrameupdate() {
   instanceMem.join();
   }
 
-bool VisualObjects::updateRtScene(RtScene& out) {
+bool VisualObjects::updateRtScene(RtScene& out, Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId) {
   if(!out.isUpdateRequired())
     return false;
   for(auto& obj:objects) {
@@ -1041,7 +1041,7 @@ bool VisualObjects::updateRtScene(RtScene& out) {
       out.addInstance(obj.pos, *blas, mat, *mesh, obj.iboOff, obj.iboLen, toRtCategory(obj.type));
       }
     }
-  out.buildTlas();
+  out.buildTlas(cmd, fId);
   return true;
   }
 

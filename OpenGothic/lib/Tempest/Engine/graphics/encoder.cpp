@@ -345,6 +345,21 @@ void Encoder<CommandBuffer>::upscaleTemporal(const Attachment& color, const ZBuf
   state.stage       = None;
   }
 
+void Encoder<CommandBuffer>::buildTlas(AccelerationStructure& tlas, const StorageBuffer& instances, size_t count) {
+  if(state.stage==Rendering)
+    throw std::system_error(Tempest::GraphicsErrc::ComputeCallInRenderPass);
+  if(tlas.impl.handler==nullptr || count>tlas.capacity())
+    throw std::system_error(Tempest::GraphicsErrc::InvalidAccelerationStructure);
+  auto* inst = instances.impl.impl.handler;
+  if(inst==nullptr && count>0)
+    throw std::system_error(Tempest::GraphicsErrc::InvalidStorageBuffer);
+  impl->buildTlas(*tlas.impl.handler, inst, count);
+  // Metal records the build in an encoder of its own: the next pipeline is bound again
+  state.curPipeline = nullptr;
+  state.curCompute  = nullptr;
+  state.stage       = None;
+  }
+
 void Encoder<CommandBuffer>::generateMipmaps(Attachment& tex) {
   uint32_t w = tex.w(), h = tex.h();
   impl->generateMipmap(*textureCast<Texture2d&>(tex).impl.handler,w,h,mipCount(w,h));

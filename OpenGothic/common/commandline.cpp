@@ -83,6 +83,9 @@ CommandLine::CommandLine(int argc, const char** argv) {
     else if(arg=="--no-hero-head") {
       noHeroHead = true;
       }
+    else if(arg=="--no-render-rig") {
+      noRenderRig = true;
+      }
     else if(arg=="-benchmark") {
       isBenchmark = Benchmark::Normal;
       if(i+1<argc && argv[i+1][0]!='-') {

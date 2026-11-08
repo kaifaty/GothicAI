@@ -185,10 +185,32 @@ if RIG:
         M = np.array(b.matrix_local)
         G = np.eye(4); G[:3, :3] = Q @ M[:3, :3] @ Q.T; G[:3, 3] = to_gothic(M[:3, 3])
         bind[b.name] = G
+    # Gothic's hand is a fist in its bind pose (one FINGER0 node bends the whole finger block); ours is open. The
+    # fist - a power grip with room for a hilt, the thumb across the fingers (reports/engine/2026-11-modern-skeleton,
+    # «Кулак») - is posed here and its world turns go to rig.json; mpfb_write.py puts them in the bones' align.
+    import math
+    FIST = {'index': (55, 75, 40), 'middle': (62, 80, 45), 'ring': (68, 82, 45), 'pinky': (72, 85, 45),
+            'thumb': ((25, 0, 30), (30, 0, 0), (40, 0, 0))}     # degrees about the bones' own X (Y, Z for the thumb)
+    for sd in ('l', 'r'):
+        for f, angles in FIST.items():
+            for j, a in enumerate(angles, 1):
+                e = a if f == 'thumb' else (a, 0, 0)
+                pb = rig.pose.bones[f'{f}_0{j}_{sd}']; pb.rotation_mode = 'XYZ'
+                pb.rotation_euler = tuple(math.radians(v * (1 if (k == 0 or sd == 'r') else -1)) for k, v in enumerate(e))
+    bpy.context.view_layer.update()
+    fist = {pb.name: (Q @ np.array(pb.matrix)[:3, :3] @ Q.T).tolist() for pb in rig.pose.bones
+            if pb.name.split('_')[0] in FIST}
+    for pb in rig.pose.bones:
+        pb.rotation_euler = (0, 0, 0)
+    bpy.context.view_layer.update()
+    def bone_rec(n):
+        r = {'name': n, 'parent': rig.data.bones[n].parent.name if rig.data.bones[n].parent else None,
+             'bind': bind[n].tolist(), 'tail': to_gothic(np.array(rig.data.bones[n].tail_local)).tolist()}
+        if n in fist:
+            r['fist'] = fist[n]
+        return r
     json.dump({'space': 'HUMANS.MDH chain without its root translation (fit.py), cm', 'head_dz_cm': HEAD_DZ,
-               'bones': [{'name': n, 'parent': rig.data.bones[n].parent.name if rig.data.bones[n].parent else None,
-                          'bind': bind[n].tolist(), 'tail': to_gothic(np.array(rig.data.bones[n].tail_local)).tolist()}
-                         for n in order]},
+               'bones': [bone_rec(n) for n in order]},
               open(os.path.join(RUN, 'rig.json'), 'w'), indent=1)
     info['rig_bones'] = len(order); info['head_dz_cm'] = HEAD_DZ
 json.dump(info, open(os.path.join(RUN, 'export.json'), 'w'), indent=1)

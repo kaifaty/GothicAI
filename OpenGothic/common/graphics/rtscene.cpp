@@ -2,6 +2,8 @@
 
 #include <Tempest/Log>
 
+#include <algorithm>
+
 #include "graphics/mesh/submesh/staticmesh.h"
 
 #if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
@@ -118,7 +120,7 @@ void RtScene::addInstance(const BuildBlas& ctx, Tempest::AccelerationStructure& 
   build.rtDesc.insert(build.rtDesc.end(), ctx.rtDesc.begin(), ctx.rtDesc.end());
   }
 
-void RtScene::buildTlas() {
+void RtScene::buildTlas(Encoder<CommandBuffer>& cmd, uint8_t fId) {
 #if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
   const auto start = std::chrono::steady_clock::now();
 #endif
@@ -134,7 +136,6 @@ void RtScene::buildTlas() {
   Resources::recycle(std::move(vbo));
   Resources::recycle(std::move(ibo));
   Resources::recycle(std::move(rtDesc));
-  Resources::recycle(std::move(tlas));
 
   auto& device = Resources::device();
   tex    = device.descriptors(build.tex);
@@ -143,7 +144,27 @@ void RtScene::buildTlas() {
   vbo    = device.descriptors(build.vbo);
   ibo    = device.descriptors(build.ibo);
   rtDesc = device.ssbo(build.rtDesc);
-  tlas   = device.tlas(build.inst);
+
+  // The TLAS keeps its memory between builds; a scene that outgrows it gets new memory with a margin,
+  // the old one goes away once the frames in flight are done with it
+  const size_t count = build.inst.size();
+  if(tlas.capacity()<count) {
+    Resources::recycle(std::move(tlas));
+    tlas = device.tlas(Tempest::Uninitialized, count + count/2);
+    }
+  const size_t instanceSize = device.rtInstanceSize();
+  instanceBytes.resize(std::max<size_t>(count,1)*instanceSize);
+  const size_t packed = device.packRtInstances(tlas, build.inst.data(), count, instanceBytes.data());
+  auto& buf = instances[fId];
+  if(buf.byteSize()<instanceBytes.size()) {
+    Resources::recycle(std::move(buf));
+    buf = device.ssbo(BufferHeap::Upload, Tempest::Uninitialized, instanceBytes.size() + instanceBytes.size()/2);
+    }
+  buf.update(instanceBytes.data(), 0, packed*instanceSize);
+
+  cmd.setDebugMarker("RT-TLAS");
+  cmd.buildTlas(tlas, buf, packed);
+  cmd.setDebugMarker("");
 
 #if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
   logBuild(std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count());

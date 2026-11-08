@@ -4597,7 +4597,7 @@ void destructionCamera(World& world,const Vec3& source,const Vec3& direction) {
 
 namespace {
 
-void destructionSkinSample(const Npc& npc,const ProtoMesh& proto,const Matrix4x4& object,const Pose& pose) {
+void destructionSkinSample(const Npc& npc,const ProtoMesh& proto,const MdlVisual& mdl,const Matrix4x4& object,const Pose& pose) {
   auto [cache,inserted]=bench.destruction.destructionSkinGeometry.try_emplace(&proto);
   if(inserted)
     for(const auto& mesh:proto.skined) {
@@ -4613,8 +4613,8 @@ void destructionSkinSample(const Npc& npc,const ProtoMesh& proto,const Matrix4x4
           cache->second.push_back(vertices[index]);
           }
       }
-  const auto* skeleton=npc.visualSkeleton();
-  if(cache->second.empty() || !skeleton)return;
+  const auto* skeleton=npc.visualSkeleton();const auto* skinSkeleton=mdl.skinSkeleton();size_t skinCount=0;const Matrix4x4* skin=mdl.skinPalette(skinCount); // as drawn: a render rig's
+  if(cache->second.empty() || !skeleton || !skinSkeleton)return;
   // Probe a copy because AnimBlend::probe consumes its diagnostic counters.
   // The real animation and its telemetry remain untouched.
   Pose rawPose=pose;
@@ -4640,9 +4640,9 @@ void destructionSkinSample(const Npc& npc,const ProtoMesh& proto,const Matrix4x4
     Vec3 point;
     float weight=0;
     for(size_t r=0;r<4;++r) {
-      if(vertex.weights[r]<=0.f || vertex.boneId[r]>=skeleton->nodes.size())continue;
+      if(vertex.weights[r]<=0.f || vertex.boneId[r]>=skinCount || vertex.boneId[r]>=skinSkeleton->nodes.size())continue;
       Vec3 p(vertex.pos[r][0],vertex.pos[r][1],vertex.pos[r][2]);
-      npc.renderedBone(vertex.boneId[r]).project(p);
+      skin[vertex.boneId[r]].project(p);
       point+=p*vertex.weights[r];
       weight+=vertex.weights[r];
       }
@@ -4728,7 +4728,7 @@ void destructionSkinSample(const Npc& npc,const ProtoMesh& proto,const Matrix4x4
     ",\"object_up\":"+ragdollVector(Vec3(object.at(1,0),object.at(1,1),object.at(1,2)))+
     ",\"raw_model_bones\":"+rawBones+
     ",\"lowest_world_cm\":"+ragdollVector(lowest)+",\"highest_world_cm\":"+ragdollVector(highest)+
-    ",\"lowest_dominant_bone\":"+(lowestBone<skeleton->nodes.size()?jsonStr(skeleton->nodes[lowestBone].name):"null")+
+    ",\"lowest_dominant_bone\":"+(lowestBone<skinSkeleton->nodes.size()?jsonStr(skinSkeleton->nodes[lowestBone].name):"null")+
     ",\"ray_from_cm\":"+ragdollVector(rayFrom)+",\"ray_to_cm\":"+ragdollVector(rayTo)+
     ",\"support_found\":"+(found?"true":"false")+
     ",\"support_kind\":"+jsonStr(kind)+",\"support_visual\":"+jsonStr(visual)+
@@ -14674,7 +14674,7 @@ bool TestBench::ragdollBodyDrawable(const Npc& npc) {
     }
   if(mesh.cpuOnly) return false;
   if(bench.destruction.destructionSkinRequest==&npc && mesh.protoMesh()!=nullptr)
-    destructionSkinSample(npc,*mesh.protoMesh(),npc.visual.transform(),npc.visual.pose());
+    destructionSkinSample(npc,*mesh.protoMesh(),npc.visual,npc.visual.transform(),npc.visual.pose());
   for(size_t i=0;i<mesh.subCount;++i) {
     const auto& item=mesh.sub[i];
     if(item.isEmpty()) continue;
