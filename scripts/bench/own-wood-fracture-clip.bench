@@ -14,11 +14,11 @@ ui off
 view full
 
 destruction2 setup barrel 1h
-destruction2 view 165 60 -60 0 -20 30
+destruction2 view 170 90 130 0 -20 30
 wait 800
 shot barrel-close-before
 wait 100
-destruction2 view 280 110 50 0 -15 50
+destruction2 view 280 100 35 0 0 35
 wait 800
 shot barrel-side-before
 wait 100
@@ -28,21 +28,21 @@ wait 10000
 stop
 destruction2 checkpoint
 wait 4500
-destruction2 view 165 60 -60 0 -20 30
+destruction2 view 170 90 130 0 -20 30
 wait 800
 shot barrel-close-after
 wait 100
-destruction2 view 280 110 50 0 -15 50
+destruction2 view 280 100 35 0 0 35
 wait 300
 shot barrel-side-after
 wait 100
 
 destruction2 setup crate 1h
-destruction2 view 165 60 -60 0 -20 30
+destruction2 view 170 90 130 0 -20 30
 wait 800
 shot crate-close-before
 wait 100
-destruction2 view 280 110 50 0 -15 50
+destruction2 view 280 100 35 0 0 35
 wait 800
 shot crate-side-before
 wait 100
@@ -52,11 +52,11 @@ wait 10000
 stop
 destruction2 checkpoint
 wait 4500
-destruction2 view 165 60 -60 0 -20 30
+destruction2 view 170 90 130 0 -20 30
 wait 800
 shot crate-close-after
 wait 100
-destruction2 view 280 110 50 0 -15 50
+destruction2 view 280 100 35 0 0 35
 wait 300
 shot crate-side-after
 wait 100

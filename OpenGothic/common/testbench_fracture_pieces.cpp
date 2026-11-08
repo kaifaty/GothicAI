@@ -23,8 +23,9 @@ namespace testbench_detail {
 namespace {
 
 // Acceptance guards of the destruction system (reports/physics/2026-11-destruction-system):
-// the pieces of one broken prop 5, 13 and 15 seconds of game time after its break.
-constexpr uint64_t SampleMs[]={5000,13000,15000};
+// the pieces of one broken prop 0.5-15 seconds of game time after its break. The early
+// samples catch pieces through the ground; jitter is the travel from 13 to 15 s.
+constexpr uint64_t SampleMs[]={500,1000,2000,5000,13000,15000};
 
 const char* groupName(asset::MaterialGroup group) {
   switch(group) {
@@ -172,7 +173,7 @@ void fracturePiecesTick(FracturePieces& state,World& world) {
     std::vector<float> displacement,resting,volumes;
     std::vector<JPH::Mat44> poses(parts.size());
     std::vector<Vec3> low(parts.size()),high(parts.size());
-    size_t missing=0,flat=0,onEdge=0,upright=0,sleeping=0,fell=0;
+    size_t missing=0,flat=0,onEdge=0,upright=0,sleeping=0,restingAsleep=0,fell=0;
     float maxJitter=0,maxFloor=0,maxVisible=0,maxPieces=0,maxSpeed=0;
     std::string rows="[";
     for(size_t i=0;i<parts.size();++i) {
@@ -195,13 +196,14 @@ void fracturePiecesTick(FracturePieces& state,World& world) {
       if(piece.flat) {++flat;if(face<30.f)++onEdge;}
       if(piece.flat && length<30.f)++upright;
       if(part.sleeping)++sleeping;
+      if(part.sleeping && !below)++restingAsleep;
       const float speed=part.velocity.length();
       maxSpeed=std::max(maxSpeed,speed);
       std::string extra;
       if(at==13000)piece.at13=center;
       if(last) {
         const float jitter=(center-piece.at13).length();
-        maxJitter=std::max(maxJitter,jitter);
+        if(!below)maxJitter=std::max(maxJitter,jitter);
         float visible=0,ground=0;
         poses[i]=joltPose(part.transform);
         low[i]=Vec3(1e9f,1e9f,1e9f);high[i]=Vec3(-1e9f,-1e9f,-1e9f);
@@ -258,7 +260,7 @@ void fracturePiecesTick(FracturePieces& state,World& world) {
       ",\"median_displacement_all_cm\":"+ragdollNumber(median(displacement))+
       ",\"flat\":"+std::to_string(flat)+",\"flat_face_within_30_of_vertical\":"+std::to_string(onEdge)+
       ",\"flat_long_axis_within_30_of_vertical\":"+std::to_string(upright)+
-      ",\"sleeping\":"+std::to_string(sleeping)+",\"max_speed_cm_s\":"+ragdollNumber(maxSpeed)+
+      ",\"sleeping\":"+std::to_string(sleeping)+",\"resting_sleeping\":"+std::to_string(restingAsleep)+",\"max_speed_cm_s\":"+ragdollNumber(maxSpeed)+
       ",\"largest_volume_cm3\":"+ragdollNumber(largest)+",\"median_volume_cm3\":"+ragdollNumber(middle)+
       ",\"largest_to_median\":"+ragdollNumber(middle>0?largest/middle:0.f)+pairs+",\"rows\":"+rows);
     }
