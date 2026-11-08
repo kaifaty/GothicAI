@@ -5,6 +5,8 @@
 
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
+#include <deque>
 #include <map>
 #include <memory>
 #include <optional>
@@ -18,12 +20,16 @@
 #include "game/constants.h"
 #include "graphics/objvisual.h"
 #include "game/inventory.h"
+#include "physics/charactervirtualdiagnostics.h"
 #include "physics/dynamicworld.h"
 #include "physics/physics.h"
+#include "physics/physicmesh.h"
 #include "physics/ragdoll.h"
 #include "utils/keycodec.h"
 #include "world/waypoint.h"
 
+class Interactive;
+class MoveTrigger;
 class Npc;
 class PlayerControl;
 class World;
@@ -63,6 +69,130 @@ enum CamMode : uint8_t {
 struct QuestSite { bool ready=false; Tempest::Vec3 dry={}, direction={}; float waterY=0; std::string waypoint; };
 struct SpellActor {Npc* npc=nullptr;std::string role;};
 struct MovableFixture { ObjVisual visual; DynamicWorld::Item body; };
+
+struct LivingWalker { Npc* npc=nullptr; WayPoint ends[2]; bool next=false,queued=false; int meleePhase=-1;uint64_t meleeAttackAt=0; };
+
+struct CharacterMoveFrame {
+  Tempest::Vec3 requested,acceptedDelta,steepNormal;
+  uint64_t sequence=0,dt=0;
+  float advancementRatio=0;
+  bool valid=false,steepContact=false,blocked=false;
+  };
+
+struct Character {
+  struct CharacterRoute {
+    std::string name,waypoint;
+    Tempest::Vec3 start,goal,direction;
+    float tolerance=80;
+    bool prepared=false,active=false,reached=false,sawSwim=false,sawSlide=false,falling=false;
+    unsigned fallCount=0;
+    Tempest::Vec3 lastSupported;
+    uint64_t began=0,arrived=0;
+  } characterRoute;
+  struct CharacterIdleSlope {
+    bool prepared=false,npc=false;
+    float angle=0;
+    uint64_t began=0,previousTick=0;
+    Tempest::Vec3 start,previous;
+  } characterIdleSlope;
+  struct CharacterFrame {
+    std::string route;
+    uint64_t frame=0,time=0,dt=0;
+    Tempest::Vec3 root,groundVelocity,visualRoot;
+    bool moving=false,air=false,fall=false,swim=false,enabled=false,active=false,captured=false,normal=false;
+    float physics=0,wall=0;
+  };
+  std::vector<CharacterFrame> characterFrames;
+  struct NpcCharacterRoute {
+    Npc* npc=nullptr;
+    WayPoint destination;
+    Interactive* seat=nullptr;
+    std::string name;
+    Tempest::Vec3 start,goal,lastPosition,lastVisual,progressPosition;
+    uint64_t began=0,arrived=0,progressTime=0;
+    unsigned stalls=0;
+    float maxVisualJump=0,maxPhysicalJump=0,maxAboveFloor=0,mugMassKg=0;
+    bool mugContact=false;
+    uint64_t supportSince=0;Tempest::Vec3 preparationSample;
+    bool sawPreparationSample=false;
+    std::deque<std::string> supportHistory;
+    bool active=false,reached=false,stalled=false,sat=false,standing=false;
+  } npcCharacterRoute;
+  struct NpcCharacterFrame {
+    std::string phase;
+    uint64_t frame=0,time=0,dt=0,npc=0;
+    Tempest::Vec3 root,visual;
+    bool enabled=false,active=false,moving=false,air=false,interactive=false,captured=false,normal=false;
+    float physics=0,wall=0;
+    unsigned nearby=0,virtualNearby=0,movingNearby=0,movingVirtualNearby=0;
+    CharacterMoveFrame move;
+  };
+  std::deque<LivingWalker> npcCharacterCrowd;
+  std::vector<NpcCharacterFrame> npcCharacterFrames;
+  struct NpcCharacterTraceActor { Npc* npc=nullptr;Tempest::Vec3 lastRoot,lastVisual;bool hasPrevious=false; };
+  std::vector<NpcCharacterTraceActor> npcCharacterTraceActors;
+  struct CharacterIdle {
+    Npc* actor=nullptr;
+    Npc* fixtureNpc=nullptr;
+    std::string site,role;
+    Tempest::Vec3 initial;
+    uint64_t began=0;
+  } characterIdle;
+  bool npcCharacterMeasuring=false,npcCharacterHasWall=false,npcCharacterObserving=false;
+  std::chrono::steady_clock::time_point npcCharacterLastWall;
+  std::string npcCharacterWindow;
+  struct NpcCharacterGoal { Tempest::Vec3 target;const Npc* npc=nullptr;std::string name,kind;bool active=false; };
+  std::unordered_map<const Npc*,NpcCharacterGoal> npcCharacterGoals;
+  std::unordered_set<const Npc*> npcCharacterWalkers;
+  uint64_t npcCharacterObservedFrames=0,npcCharacterCvFrames=0,npcCharacterArrivals=0,npcCharacterObserveStart=0;
+  unsigned npcCharacterMaxNearby=0,npcCharacterCrowdMinNearby=20,npcCharacterCrowdMaxNearby=0;
+  float npcCharacterCrowdMaximumDistance=0;
+  std::chrono::steady_clock::time_point characterLastWall;
+  bool characterHasWall=false,characterMeasuring=false;
+  uint64_t characterFrame=0;
+  Item* characterItem=nullptr;
+  std::unique_ptr<MovableFixture> characterProp;
+  uintptr_t characterPropId=0;
+  std::string characterPropRole;
+  Tempest::Vec3 characterPropInitial,characterPropHeroInitial;
+  float characterPropTravel=0;
+  uint64_t characterPropBegan=0;
+  Tempest::Vec3 characterPropDirection;
+  uint64_t characterMeasureStart=0;
+  std::unique_ptr<ObjVisual> characterPlatformVisual;
+  std::unique_ptr<PhysicMesh> characterPlatform;
+  Tempest::Matrix4x4 characterPlatformMatrix;
+  MoveTrigger* characterMover=nullptr;
+  Npc* characterRideNpc=nullptr;
+  Tempest::Vec3 characterRideStart,characterRideHeroStart,characterRideLocalStart,characterRideDirection,characterRidePivot;
+  Tempest::Matrix4x4 characterRideMatrixStart;
+  float characterRideAngle=0,characterRideTravel=0,characterRideMaximumDrift=0;
+  float characterRideMaximumHorizontalDrift=0,characterRideMaximumLocalDrift=0;
+  uint64_t characterRideBegan=0;
+  bool characterRiding=false,characterRideMoving=false,characterRideRotating=false;
+};
+
+// References to the shared bench fields used by the human CharacterVirtual fixtures.
+struct CharacterContext {
+  CamMode& cam;
+  float& camAngle;
+  bool& camAuto;
+  float& camDist;
+  float& camHeight;
+  uint64_t& frameMs;
+  bool& hasPrev;
+  std::vector<Hold>& holds;
+  std::vector<std::unique_ptr<MovableFixture>>& movableFixtures;
+  bool& movableReady;
+  Tempest::Vec3& movableWalkEnd;
+  Tempest::Vec3& movableWalkStart;
+  Npc*& noiseHost;
+  bool& rec;
+  bool& recVideo;
+  uint64_t& step;
+  Npc*& subject;
+  std::vector<KeyCodec::Action>& taps;
+};
 
 struct Water {
   std::unordered_set<uintptr_t> ids;
@@ -317,6 +447,56 @@ void noiseBegin(World& world,std::string_view phase,const Tempest::Vec3& source)
 Npc* noiseAddListener(World& world,std::string role,const Tempest::Vec3& point,Npc* npc=nullptr);
 void noiseRetireListeners();
 uintptr_t destructionAdd(World& world,std::string_view name,const Tempest::Vec3& support);
+
+extern const bool npcCharacterTrace;
+extern const char* characterMoveFrameColumns;
+
+bool slopeAt(World& w, const Tempest::Vec3& p, float& angle, Tempest::Vec3& down, float& rough);
+void prepareMovableFixture(World& world,Npc& player);
+
+void npcCharacterStopMotionTrace(Character& state,World* world);
+bool characterFloor(World& world,const Tempest::Vec3& at,Tempest::Vec3& floor,float depth=600.f);
+bool characterLane(World& world,const Tempest::Vec3& start,const Tempest::Vec3& end,float maximumStep=35.f);
+bool characterStairsProfile(World& world,const Tempest::Vec3& low,const Tempest::Vec3& high,unsigned& risers,float& maximumRiser,
+                            float minimumRiser=6.f,float minimumRise=45.f);
+void characterFreezeNear(World& world,Npc& player,const Tempest::Vec3& start,const Tempest::Vec3& goal);
+void characterIdleGuards(World& world,const Npc& player);
+bool prepareCharacterRoute(Character& state,const CharacterContext& context,World& world,Npc& player,const std::string& name,bool abortMissing=true,std::string_view onlyWaypoint={});
+void characterSnapshot(World& world,Npc& player,std::string_view operation);
+void characterRouteEnd(Character& state,World& world,Npc& player);
+Tempest::Matrix4x4 characterSupportMatrix(Character& state,World& world);
+void characterRideSample(Character& state,World& world,const Npc& rider);
+void characterFields(Character& state,const CharacterContext& context,World& world,Npc& player,uint64_t dt,PlayerControl& ctrl);
+void characterPropCheckpoint(Character& state,World& world,Npc& player);
+void prepareCharacterProp(Character& state,const CharacterContext& context,World& world,Npc& player,const std::string& role);
+void characterRideCheckpoint(Character& state,World& world,Npc& player,bool setup=false);
+std::string npcCharacterBodyJson(const CharacterVirtualDiagnostics::Body& body,
+                                const std::vector<DynamicWorld::MovableVobSnapshot>& movable);
+std::string npcCharacterPoseJson(const CharacterVirtualDiagnostics::Pose& pose,
+                                const std::vector<DynamicWorld::MovableVobSnapshot>& movable);
+std::string npcCharacterCollisionJson(World& world,const CharacterVirtualDiagnostics::NpcCollision& collision);
+std::string npcCharacterMoveJson(World& world,const CharacterVirtualDiagnostics::NpcMove& move);
+CharacterMoveFrame characterMoveFrame(const Npc& npc);
+bool npcCharacterNeedsMovableLookup(const CharacterVirtualDiagnostics::Pose& pose);
+std::string npcCharacterSample(World& world,const Npc& npc,float physicalJump,float visualJump,uint64_t frame,uint64_t dt);
+void npcCharacterSupportTrace(Character& state,const CharacterContext& context,World& world,const Npc& npc,float physicalJump,float visualJump);
+void npcCharacterMotionTrace(Character& state,const CharacterContext& context,World& world,uint64_t dt);
+void npcCharacterSnapshot(World& world,Npc& player,std::string_view label);
+Npc* npcCharacterActor(World& world,const Tempest::Vec3& position);
+void npcCharacterPlaceHero(World& world,Npc& player,const Tempest::Vec3& start,const Tempest::Vec3& goal);
+void characterIdleSlopeSample(Character& state,const CharacterContext& context,World& world,Npc& player,std::string_view label);
+void characterIdleSlopePrepare(Character& state,const CharacterContext& context,World& world,Npc& player,float requestedAngle,bool npc);
+void characterIdlePrepare(Character& state,const CharacterContext& context,World& world,Npc& player,PlayerControl& ctrl,std::string_view role,std::string_view site);
+void characterIdleWeapon(Character& state,World& world,std::string_view kind);
+void characterIdleSnapshot(Character& state,const CharacterContext& context,World& world,std::string_view label,bool begin=false);
+void npcCharacterPrepare(Character& state,const CharacterContext& context,World& world,Npc& player,const std::string& name);
+void npcCharacterBegin(Character& state,World& world,std::string_view phase={});
+void npcCharacterEnd(Character& state,World& world);
+void characterStairPerformance(World& world,Npc& player);
+void npcCharacterMarket(Character& state,const CharacterContext& context,World& world,Npc& player);
+void npcCharacterFields(Character& state,const CharacterContext& context,World& world,Npc& player,uint64_t dt);
+bool prepareCharacterRideSupport(Character& state,World& world,Npc& player,bool kinematic,bool rotating,Tempest::Vec3& top);
+void writeCharacterMoveFrame(std::FILE* file,const CharacterMoveFrame& move);
 
 bool waterOwns(Water& state,const DynamicWorld::WaterBodySnapshot& body);
 void waterFields(Water& state,const WaterContext& context,World& world);
