@@ -61,8 +61,9 @@ class Check:
 
 
 def find_games(extra: list[Path] | None = None) -> list[Path]:
-    """Folders that look like Gothic II (they have a Data folder): Steam libraries, Wine bottles with
-    Steam or GOG, the usual places. A copy made by hand elsewhere is not found: the player picks it."""
+    """Folders that look like Gothic II (they have a Data folder): Steam libraries (on Linux also the
+    Flatpak's), Wine bottles with Steam or GOG on a Mac, the usual places. A copy made by hand elsewhere is
+    not found: the player picks it."""
     if sys.platform == "win32":
         steam_roots = []
         for steam in _windows_steam():
@@ -72,6 +73,12 @@ def find_games(extra: list[Path] | None = None) -> list[Path]:
         places += [Path("C:/"), Path("C:/GOG Games"), x86 / "GOG Galaxy" / "Games", x86 / "JoWooD"]
         places += [Path.home() / "Games"]
         return _gothic_folders(places, extra)
+    if sys.platform == "linux":
+        steam_roots = []
+        for steam in _linux_steam():
+            steam_roots += [steam, *_steam_libraries(steam / "steamapps" / "libraryfolders.vdf")]
+        places = [root / "steamapps" / "common" for root in steam_roots] + steam_roots
+        return _gothic_folders([*places, Path.home() / "Games"], extra)
     steam_roots = [STEAM, *_steam_libraries(STEAM / "steamapps" / "libraryfolders.vdf")]
     for bottles in BOTTLES:
         for drive in _children(bottles, lambda p: p / "drive_c"):
@@ -110,6 +117,17 @@ def _windows_steam() -> list[Path]:
             roots.append(Path(winreg.QueryValueEx(key, "SteamPath")[0]))
     x86 = os.environ.get("ProgramFiles(x86)") or r"C:\Program Files (x86)"
     return [*roots, Path(x86) / "Steam"]
+
+
+def _linux_steam() -> list[Path]:
+    """Steam's own link to its folder, its default folder and the Flatpak's; Gothic II under Proton is
+    installed into the same steamapps/common."""
+    home = Path.home()
+    return [
+        home / ".steam" / "steam",
+        home / ".local" / "share" / "Steam",
+        home / ".var" / "app" / "com.valvesoftware.Steam" / ".local" / "share" / "Steam",
+    ]
 
 
 def _children(folder: Path, pick: Callable[[Path], Path]) -> list[Path]:
