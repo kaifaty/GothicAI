@@ -1697,10 +1697,14 @@ void CollisionWorld::CollisionBody::setNoiseProfile(ItemMaterial material, asset
   noiseWhat=what;
   }
 
-void CollisionWorld::CollisionBody::setFractureGroup(const JPH::GroupFilter* filter, uint32_t group, uint32_t piece) {
+void CollisionWorld::CollisionBody::setFracturePiece(const JPH::GroupFilter* filter, uint32_t group, uint32_t piece) {
   JPH::BodyLockWrite lock(owner->impl->system.GetBodyLockInterface(),id);
-  if(lock.Succeeded())
-    lock.GetBody().SetCollisionGroup(JPH::CollisionGroup(filter,group,piece));
+  if(!lock.Succeeded()) return;
+  auto& native=lock.GetBody();
+  native.SetCollisionGroup(JPH::CollisionGroup(filter,group,piece));
+  // Reduction merges the manifolds of a compound stave's hulls into four points,
+  // and its other hulls sank 2 cm into the ground unresisted. The new body has no contacts yet.
+  native.SetUseManifoldReduction(false);
   }
 
 Tempest::Vec3 CollisionWorld::CollisionBody::position() const {

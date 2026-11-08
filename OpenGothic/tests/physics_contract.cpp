@@ -2212,15 +2212,19 @@ namespace {
       // Hoops and staves: METAL and WOOD of one format 3 break never touch, so a
       // hoop falls through its wood to the ground; equal materials and v2 stack.
       const auto writeStack=[&](size_t version) {
-        struct Slab { Tempest::Vec3 size; float y; const char* group; };
-        const Slab slabs[]={{{40,4,40},-28,"WOOD"},{{20,2,20},-25,"METAL"},{{20,2,20},-23,"METAL"},{{10,2,10},-21,"WOOD"}};
+        struct Slab { Tempest::Vec3 size; float x, y; const char* group; };
+        // Version 2 needs eight pieces: four loose blocks lie apart from the stack.
+        const Slab slabs[]={{{40,4,40},0,-28,"WOOD"},{{20,2,20},0,-25,"METAL"},{{20,2,20},0,-23,"METAL"},{{10,2,10},0,-21,"WOOD"},
+                            {{10,4,10},80,-28,"WOOD"},{{10,4,10},100,-28,"WOOD"},{{10,4,10},120,-28,"WOOD"},{{10,4,10},140,-28,"WOOD"}};
+        const size_t count=version==3 ? 4 : 8;
         std::ofstream file(root/"meshes/model.fracture");
         file<<"GOTHIC_FRACTURE "<<version<<"\nsource "<<source.size<<' '<<std::hex<<source.crc32<<std::dec
-            <<"\npieces "<<std::size(slabs)<<'\n';
-        for(const auto& slab:slabs) {
+            <<"\npieces "<<count<<'\n';
+        for(size_t k=0;k<count;++k) {
+          const auto& slab=slabs[k];
           auto piece=movableBox(slab.size);
-          for(auto& p:piece.positions) p.y+=slab.y;
-          file<<"piece "<<slab.size.x*slab.size.y*slab.size.z<<" 0 "<<slab.y<<" 0 ";
+          for(auto& p:piece.positions) { p.x+=slab.x; p.y+=slab.y; }
+          file<<"piece "<<slab.size.x*slab.size.y*slab.size.z<<' '<<slab.x<<' '<<slab.y<<" 0 ";
           if(version==3) {
             file<<slab.group<<" 1 12\nhull 8\n";
             for(const auto& p:piece.positions) file<<p.x<<' '<<p.y<<' '<<p.z<<'\n';
@@ -2256,8 +2260,9 @@ namespace {
                      "the version 2 stack must break through the original melee path");
         tickWater(ground,300);
         const auto settled=ground.fragmentSnapshot();
-        require(stackObject.isBroken() && settled.size()==4,"the hoop fixture must leave four pieces");
+        require(stackObject.isBroken() && settled.size()==(version==3 ? 4u : 8u),"the hoop fixture must keep every piece");
         for(const auto& piece:settled) {
+          if(piece.piece>=4) continue;
           Tempest::Vec3 center(0,piece.piece==0 ? -28.f : piece.piece==1 ? -25.f : piece.piece==2 ? -23.f : -21.f,0);
           piece.transform.project(center);
           stacked[version==3 ? 0 : 1][piece.piece]=center.y;

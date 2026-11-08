@@ -82,8 +82,9 @@ class CollisionWorld final {
         // Zero uses physical density; a target above one makes the body sink.
         void                setBuoyancyFraction(float fraction);
         void                setNoiseProfile(ItemMaterial material, asset::MaterialGroup surface, std::string_view what);
-        // Pieces of one break share `group` and its `filter` for life (fractureGroupFilter).
-        void                setFractureGroup(const JPH::GroupFilter* filter, uint32_t group, uint32_t piece);
+        // A format 3 piece: one break shares `group` and its `filter` for life (fractureGroupFilter);
+        // every hull of a compound piece keeps its own ground contacts (no manifold reduction).
+        void                setFracturePiece(const JPH::GroupFilter* filter, uint32_t group, uint32_t piece);
         // The latest engine-known cause survives the short noise attribution
         // window and NPC destruction, until a new impulse replaces it.
         void                setTraceCulprit(Npc* culprit);

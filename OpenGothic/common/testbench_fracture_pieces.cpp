@@ -214,8 +214,8 @@ void fracturePiecesTick(FracturePieces& state,World& world) {
           if(floor.hasCol)lowest=std::min(lowest,Vec3::dotProduct(p-floor.v,floor.n));
           }
         if(floor.hasCol)visible=std::max(0.f,-lowest);
-        // A hoop lies on the ground when its lowest drawn point is within 1 cm of the floor, not on a stave.
-        if(piece.material==asset::MaterialGroup::METAL) {++metal;if(floor.hasCol && !below && std::abs(lowest)<=1.f)++metalOnGround;}
+        // A hoop lies on the ground when its lowest drawn point is at most 1 cm over the floor, not on a stave.
+        if(piece.material==asset::MaterialGroup::METAL) {++metal;if(floor.hasCol && !below && lowest<=1.f)++metalOnGround;}
         if(floor.hasCol && !below) {
           // The ground as a native box whose top face is the floor plane under the piece.
           const auto normal=JPH::Vec3(floor.n.x,floor.n.y,floor.n.z).Normalized();

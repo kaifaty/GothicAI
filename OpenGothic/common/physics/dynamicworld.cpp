@@ -2308,7 +2308,7 @@ void DynamicWorld::loadDestructionVobs(Serialize& fin) {
           const auto group=mesh.version==3 ? mesh.pieces[i].group : obj->movableShape->material;
           const float friction=mesh.version==3 ? materialFriction(group) : obj->movableShape->friction;
           auto body=world->addDynamicBody(mesh.pieces[i].hull,piece.matrix,friction,mass,C_Fragment);
-          if(breakFilter!=nullptr) body->setFractureGroup(breakFilter,breakGroup,uint32_t(i));
+          if(breakFilter!=nullptr) body->setFracturePiece(breakFilter,breakGroup,uint32_t(i));
           body->setLabel(obj->visual+" fragment");
           body->setNoiseProfile(impactMaterial(group),group,obj->visual+" fragment");
           body->setBuoyancyFraction(vobBuoyancyFraction(group));
@@ -2706,7 +2706,7 @@ void DynamicWorld::breakMovableVob(BodyData& obj) {
     const auto group=mesh.version==3 ? piece.group : obj.movableShape->material;
     const float friction=mesh.version==3 ? materialFriction(group) : obj.movableShape->friction;
     auto body=world->addDynamicBody(piece.hull,matrix,friction,mass,C_Fragment);
-    if(breakFilter!=nullptr) body->setFractureGroup(breakFilter,breakGroup,uint32_t(i));
+    if(breakFilter!=nullptr) body->setFracturePiece(breakFilter,breakGroup,uint32_t(i));
     body->setLabel(obj.visual+" fragment");
     body->setNoiseProfile(impactMaterial(group),group,obj.visual+" fragment");
     body->setBuoyancyFraction(vobBuoyancyFraction(group));
