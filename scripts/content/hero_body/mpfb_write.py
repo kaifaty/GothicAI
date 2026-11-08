@@ -178,6 +178,16 @@ if RIG:
             A = rot_between(tails[n] - M[:3, 3], DIRS[n]) if n in DIRS else np.eye(3)   # spine, neck, head stay
             align[n] = A; e['align'] = quat(A)
         bones_out.append(e)
+    # the fist (mpfb_export.py): a phalanx takes the turn of Gothic's FINGER0, the thumb the hand's, on top of the
+    # hand's align and its own curl from the bind pose: R = dR(source) * A_hand * (R_fist R_bind^T) * R_bind
+    by_name = {e['name']: e for e in bones_out}
+    for b, M in zip(rig['bones'], rig_bind):
+        if 'fist' not in b:
+            continue
+        n = b['name']; sd = n[-1]; S = sd.upper()
+        A = align[f'hand_{sd}'] @ np.array(b['fist']) @ M[:3, :3].T
+        by_name[n]['source'] = f'BIP01 {S} HAND' if n.startswith('thumb') else f'BIP01 {S} FINGER0'
+        by_name[n]['align'] = quat(A)
     B = lambda n: rig_bind[ridx[n]]
     def socket(src, bone, shift=np.zeros(3)):
         Mg = G(src).copy(); Mg[:3, 3] += shift
@@ -194,9 +204,6 @@ if RIG:
                   'source_foot': f'BIP01 {S} FOOT', 'source_knee': f'BIP01 {S} CALF',
                   'ankle': (np.linalg.inv(G(f'BIP01 {S} FOOT')) @ np.r_[ankle_world(S), 1.0])[:3].tolist()}
                  for sd, S in (('l', 'L'), ('r', 'R'))],
-        'fingers': [{'source_hand': f'BIP01 {S} HAND', 'source_finger': f'BIP01 {S} FINGER0',
-                     'chains': [[f'{f}_0{j}_{sd}' for j in (1, 2, 3)] for f in ('index', 'middle', 'ring', 'pinky')],
-                     'shares': [1.0, 0.9, 0.7]} for sd, S in (('l', 'L'), ('r', 'R'))],
         'sockets': {'BIP01 HEAD': socket('BIP01 HEAD', 'head', head_shift),
                     'ZS_RIGHTHAND': socket('ZS_RIGHTHAND', 'hand_r'), 'ZS_LEFTHAND': socket('ZS_LEFTHAND', 'hand_l')}}},
         'meshes': {MESH: RIGNAME}}
