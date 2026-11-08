@@ -36,7 +36,6 @@ class CommandLine {
     bool                isMeshShading()    const { return isMeshSh;     }
     bool                isBindless()       const { return isBindlessSh; }
     bool                isVirtualShadow()  const { return isVsm;        }
-    bool                isSoftwareShadow() const { return isRtSm;       }
     bool                doStartMenu()      const { return !noMenu;      }
     bool                doIntro()          const { return !noIntro;     }
     bool                doHeroHead()       const { return !noHeroHead;  }
@@ -75,7 +74,6 @@ class CommandLine {
 #else
     bool                isVsm        = true;  // virtual shadow maps: sun and lamp shadows, where the GPU can (Shaders::isVsmSupported)
 #endif
-    bool                isRtSm       = false;
     GiMethod            isGi         = GiMethod::None;
     bool                isGiSet      = false;  // -gi given: else Gothic picks by the device
     uint32_t            aaPresetId = 1;        // CMAA2; -aa 0 turns it off

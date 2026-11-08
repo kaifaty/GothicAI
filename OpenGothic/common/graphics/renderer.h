@@ -61,7 +61,6 @@ class Renderer final {
     Tempest::Attachment&    usesAttachment(Tempest::Attachment&ret, Tempest::TextureFormat frm, uint32_t w, uint32_t h);
     Tempest::StorageBuffer& usesSsbo(Tempest::StorageBuffer& ret, size_t size);
     Tempest::StorageBuffer& usesSsboInit(Tempest::StorageBuffer& ret, size_t size);
-    Tempest::StorageBuffer& usesScratch(Tempest::StorageBuffer& ret, size_t size);
 
     void prepareUniforms(WorldView& wview);
     void resetViewport(Tempest::Size size, Tempest::Size fullRes);
@@ -87,8 +86,6 @@ class Renderer final {
     void buildHiZ         (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawVsm          (Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& view);
     void logVsmStats      (const WorldView& view);
-    void drawRtsm         (Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& view);
-    void drawRtsmOmni     (Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& view);
     void drawGBuffer      (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, WorldView& view);
     void drawGWater       (Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& view);
     void drawShadowMap    (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, WorldView& view);
@@ -121,20 +118,17 @@ class Renderer final {
     void drawSurfelsDbg   (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
     void drawProbesHitDbg (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawVsmDbg       (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
-    void drawRtsmDbg      (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
     void drawHashDbg      (Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
     void drawLightTreeDbg (Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
 
     void setupSettings();
     void toggleGi();
     void toggleVsm();
-    void toggleRtsm();
     void togglePathtrace();
 
     struct Settings {
       const uint32_t shadowResolution   = 2048;
       bool           vsmEnabled         = false;
-      bool           rtsmEnabled        = false;
       bool           pathTraceEnabled   = false;
 
       bool           zEnvMappingEnabled = false;
@@ -340,25 +334,6 @@ class Renderer final {
       bool                      lampArmed  = false; // the next drawLights counts
       bool                      lampCounted = false; // lampProbe holds a counted frame
       } vsm;
-
-    struct {
-      Tempest::StorageImage     outputImage;
-      Tempest::StorageImage     outputImageClr;
-
-      Tempest::StorageImage     pages;
-      Tempest::StorageBuffer    visList;
-      Tempest::StorageBuffer    posList;
-
-      Tempest::StorageImage     meshTiles;
-      Tempest::StorageImage     primTiles;
-
-      Tempest::StorageBuffer    visibleLights;
-      Tempest::StorageBuffer    drawTasks;
-      Tempest::StorageImage     lightTiles;
-      Tempest::StorageImage     lightBins, primTilesOmni;
-
-      Tempest::StorageImage     dbg64, dbg32, dbg16, dbg8;
-      } rtsm;
 
     Tempest::TextureFormat    shadowFormat  = Tempest::TextureFormat::Depth16;
     Tempest::TextureFormat    zBufferFormat = Tempest::TextureFormat::Depth16;

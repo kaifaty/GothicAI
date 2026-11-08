@@ -791,16 +791,8 @@ const DrawClusters& WorldView::clusters() const {
   return visuals.clusters();
   }
 
-const DrawCommands& WorldView::drawCommands() const {
-  return visuals.drawCommands();
-  }
-
 const DrawBuckets& WorldView::drawBuckets() const {
   return visuals.drawBuckets();
-  }
-
-const Tempest::StorageBuffer& WorldView::instanceSsbo() const {
-  return visuals.instanceSsbo();
   }
 
 bool WorldView::updateLights(const gtime gameTime) {

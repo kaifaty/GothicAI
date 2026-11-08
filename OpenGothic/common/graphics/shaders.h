@@ -30,7 +30,6 @@ class Shaders {
       bool     doRayQuery        = false;
       bool     doMeshShading     = false;
       bool     doVirtualShadow   = false;
-      bool     doSoftwareShadow  = false;
       bool     doMaterialMaps    = false;
       };
 
@@ -38,7 +37,6 @@ class Shaders {
     static const Options& options();
 
     static bool isVsmSupported();
-    static bool isRtsmSupported();
     static bool isLightsTreeSupported();
     static bool isGi1Supported();
     static bool isGi2Supported();
@@ -139,24 +137,6 @@ class Shaders {
     Tempest::RenderPipeline  vsmDbg;
 
     Tempest::ComputePipeline vsmRendering;
-
-    // RTSM (Experimental)
-    Tempest::RenderPipeline  rtsmDirectLight;
-
-    Tempest::ComputePipeline rtsmClear, rtsmPages, rtsmFogPages, rtsmHiZ;
-    Tempest::ComputePipeline rtsmCulling, rtsmPosition;
-    Tempest::ComputePipeline rtsmMeshletCull, rtsmPrimCull;
-    Tempest::ComputePipeline rtsmRaster;
-
-    Tempest::ComputePipeline rtsmClearOmni;
-    Tempest::ComputePipeline rtsmCullLights, rtsmCompactLights, rtsmCullingOmni;
-    Tempest::ComputePipeline rtsmPositionOmni;
-    Tempest::ComputePipeline rtsmMeshletOmni, rtsmBackfaceOmni;
-    Tempest::ComputePipeline rtsmLightsOmni, rtsmBboxesOmni, rtsmCompactOmni, rtsmTaskOmni;
-    Tempest::ComputePipeline rtsmPrimOmni, rtsmRasterOmni;
-
-    Tempest::ComputePipeline rtsmRendering, rtsmRenderingOmni; //reference
-    Tempest::RenderPipeline  rtsmDbg;
 
     // Inventory
     Tempest::RenderPipeline  inventory;

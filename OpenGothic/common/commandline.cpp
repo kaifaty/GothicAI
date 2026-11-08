@@ -143,12 +143,6 @@ CommandLine::CommandLine(int argc, const char** argv) {
       if(i<argc)
         isVsm = boolArg(argv[i]);
       }
-    else if(arg=="-rtsm") {
-      // not to document - debug only
-      ++i;
-      if(i<argc)
-        isRtSm = boolArg(argv[i]);
-      }
     else {
       Log::i("unrecognized commandline option: \"", arg, "\"");
       }

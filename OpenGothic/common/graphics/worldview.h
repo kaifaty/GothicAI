@@ -104,9 +104,7 @@ class WorldView {
     const Sky&          sky() const { return gSky; }
     const LightGroup&   lights() const { return gLights; }
     const DrawClusters& clusters() const;
-    const DrawCommands& drawCommands() const;
     const DrawBuckets&  drawBuckets() const;
-    auto                instanceSsbo() const -> const Tempest::StorageBuffer&;
 
   private:
     std::pair<Tempest::Vec3, Tempest::Vec3> aabb;
