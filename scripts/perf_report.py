@@ -138,12 +138,13 @@ def read_gpu_passes(path):
                 continue
             labels = passes.setdefault(attempt, {})
             labels[row["labels"]] = labels.get(row["labels"], 0) + gpu_ns
-    return passes
+    # FrameProfile always writes the sidecar header: no valid rows means no pass timing.
+    return passes or None
 
 
 def gpu_pass_summary(samples):
     measured = [row["gpu_passes"] for row in samples if "gpu_passes" in row]
-    if not measured:
+    if not any(measured):
         return None
     result = {}
     for label in {label for row in measured for label in row}:

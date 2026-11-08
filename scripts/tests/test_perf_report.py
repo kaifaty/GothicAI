@@ -359,6 +359,12 @@ def test_gpu_completion_and_matching_cpu_duration(tmp_path):
     summary = report.build_report(tmp_path)["places"]["market"]["summary"]
     assert "gpu_passes" not in summary
     assert "GPU pass" not in report.report_markdown(report.build_report(tmp_path))
+    # Without OPENGOTHIC_GPU_PASSES the profiler still writes the sidecar header.
+    (tmp_path / "frameprofile.csv.gpu.csv").write_text(
+        "attempt,cmd_id,segment,frame,encoder,type,labels,gpu_ns,vertex_ns,fragment_ns,draw_calls,dispatch_calls,valid\n")
+    result = report.build_report(tmp_path)
+    assert "gpu_passes" not in result["places"]["market"]["summary"]
+    assert "| GPU pass |" not in report.report_markdown(result)
 
     # One row per marker region; a frame sums its label's valid rows, invalid rows are skipped.
     with (tmp_path / "frameprofile.csv.gpu.csv").open("w", newline="") as stream:
