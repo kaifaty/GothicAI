@@ -119,6 +119,8 @@ const char* materialTag(asset::MaterialGroup src) {
       return "WA";
     case asset::MaterialGroup::SNOW:
       return "SA"; // sand?
+    case asset::MaterialGroup::CLAY:
+      return "CL";
     }
   return "UD";
   }

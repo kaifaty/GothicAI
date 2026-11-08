@@ -60,6 +60,7 @@ class CollisionWorld final {
         void                getAabb(JPH::Vec3& min, JPH::Vec3& max) const;
         Tempest::Vec3       lowestPoint() const; // actual convex envelope, world centimetres
         float               mass() const; // kilograms; zero for non-dynamic bodies
+        float               friction() const;
         bool                isMovable() const; // native dynamic or kinematic, including doors/lifts
         Tempest::Vec3        velocity() const; // centimetres/second
         Tempest::Vec3        angularVelocity() const; // world radians/second

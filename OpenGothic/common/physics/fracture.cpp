@@ -4,6 +4,7 @@
 #include "utils/userhome.h"
 
 #include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
+#include <Jolt/Physics/Collision/Shape/StaticCompoundShape.h>
 #include <Tempest/Log>
 #include <algorithm>
 #include <cctype>
@@ -39,10 +40,23 @@ bool matches(std::string_view pattern,std::string_view text) {
   return p==pattern.size();
   }
 
-bool finite(const FractureMesh::Vertex& v) {
+bool finite(const FractureMesh::Vertex& v, bool legacyBounds) {
   return std::isfinite(v.position.x) && std::isfinite(v.position.y) && std::isfinite(v.position.z) &&
          std::isfinite(v.normal.x) && std::isfinite(v.normal.y) && std::isfinite(v.normal.z) &&
-         std::isfinite(v.uv.x) && std::isfinite(v.uv.y) && v.position.quadLength()<1.e12f;
+         std::isfinite(v.uv.x) && std::isfinite(v.uv.y) && (!legacyBounds || v.position.quadLength()<1.e12f);
+  }
+
+bool materialGroup(std::string_view name, asset::MaterialGroup& group) {
+  if(name=="UNDEF") group=asset::MaterialGroup::UNDEFINED;
+  else if(name=="WOOD") group=asset::MaterialGroup::WOOD;
+  else if(name=="METAL") group=asset::MaterialGroup::METAL;
+  else if(name=="STONE") group=asset::MaterialGroup::STONE;
+  else if(name=="CLAY") group=asset::MaterialGroup::CLAY;
+  else if(name=="EARTH") group=asset::MaterialGroup::EARTH;
+  else if(name=="WATER") group=asset::MaterialGroup::WATER;
+  else if(name=="SNOW") group=asset::MaterialGroup::SNOW;
+  else return false;
+  return true;
   }
 }
 
@@ -104,35 +118,70 @@ std::shared_ptr<const FractureMesh> FractureMesh::load(std::string_view visual) 
     file.imbue(std::locale::classic());
     std::string tag;
     size_t version=0,count=0;
-    if(!(file>>tag>>version) || tag!="GOTHIC_FRACTURE" || version!=(replacement ? 2u : 1u)) return {};
+    if(!(file>>tag>>version) || tag!="GOTHIC_FRACTURE" ||
+       (replacement ? version!=2 && version!=3 : version!=1)) return {};
     if(replacement) {
       size_t size=0;
       uint32_t crc=0;
       if(!(file>>tag>>size>>std::hex>>crc>>std::dec) || tag!="source" || size!=source.size || crc!=source.crc32) return {};
       }
-    if(!(file>>tag>>count) || tag!="pieces" || count<8 || count>20) return {};
+    const bool compoundPieces=version==3;
+    if(!(file>>tag>>count) || tag!="pieces" || count<(compoundPieces ? 2u : 8u) || count>(compoundPieces ? 64u : 20u)) return {};
     auto mesh=std::make_shared<FractureMesh>();
+    mesh->version=version;
     Physics::initialize();
     for(size_t p=0;p<count;++p) {
       Piece piece;
-      size_t triangles=0;
-      if(!(file>>tag>>piece.volume>>piece.center.x>>piece.center.y>>piece.center.z>>triangles) ||
-         tag!="piece" || !std::isfinite(piece.volume) || piece.volume<=0 || triangles<4 || triangles>100000) return {};
+      size_t triangles=0,hulls=0;
+      if(!(file>>tag>>piece.volume>>piece.center.x>>piece.center.y>>piece.center.z) ||
+         tag!="piece" || !std::isfinite(piece.volume) || piece.volume<=0) return {};
+      if(compoundPieces) {
+        std::string group;
+        if(!(file>>group>>hulls>>triangles) || !materialGroup(group,piece.group) ||
+           hulls<1 || hulls>16 || triangles<1 || triangles>20000 ||
+           !std::isfinite(piece.center.x) || !std::isfinite(piece.center.y) || !std::isfinite(piece.center.z)) return {};
+        JPH::StaticCompoundShapeSettings compound;
+        for(size_t h=0;h<hulls;++h) {
+          size_t pointCount=0;
+          if(!(file>>tag>>pointCount) || tag!="hull" || pointCount<4 || pointCount>256) return {};
+          std::vector<JPH::Vec3> points;
+          points.reserve(pointCount);
+          for(size_t v=0;v<pointCount;++v) {
+            float x=0,y=0,z=0;
+            if(!(file>>x>>y>>z) || !std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) return {};
+            points.emplace_back(x*.01f,y*.01f,z*.01f);
+            }
+          JPH::ConvexHullShapeSettings settings(points.data(),int(points.size()),.001f);
+          const auto shape=settings.Create();
+          if(shape.HasError() || !std::isfinite(shape.Get()->GetVolume()) || shape.Get()->GetVolume()<=0.f) return {};
+          if(hulls==1) piece.hull=shape.Get();
+          else compound.AddShape(JPH::Vec3::sZero(),JPH::Quat::sIdentity(),shape.Get());
+          }
+        if(hulls>1) {
+          const auto shape=compound.Create();
+          if(shape.HasError()) return {};
+          piece.hull=shape.Get();
+          }
+        }
+      else if(!(file>>triangles) || triangles<4 || triangles>100000) return {};
       piece.triangles.resize(triangles);
       std::vector<JPH::Vec3> points;
-      points.reserve(triangles*3);
+      if(!compoundPieces) points.reserve(triangles*3);
       for(auto& triangle:piece.triangles) {
         if(!(file>>tag>>triangle.texture) || tag!="tri" || triangle.texture.size()>255) return {};
         for(auto& v:triangle.vertices) {
-          if(!(file>>v.position.x>>v.position.y>>v.position.z>>v.normal.x>>v.normal.y>>v.normal.z>>v.uv.x>>v.uv.y) || !finite(v)) return {};
-          points.emplace_back(v.position.x*.01f,v.position.y*.01f,v.position.z*.01f);
+          if(!(file>>v.position.x>>v.position.y>>v.position.z>>v.normal.x>>v.normal.y>>v.normal.z>>v.uv.x>>v.uv.y) || !finite(v,!compoundPieces)) return {};
+          if(!compoundPieces) points.emplace_back(v.position.x*.01f,v.position.y*.01f,v.position.z*.01f);
           }
         }
-      JPH::ConvexHullShapeSettings settings(points.data(),int(points.size()),.001f);
-      const auto shape=settings.Create();
-      if(shape.HasError() || shape.Get()->GetVolume()<=0.f) return {};
-      piece.hull=shape.Get();
+      if(!compoundPieces) {
+        JPH::ConvexHullShapeSettings settings(points.data(),int(points.size()),.001f);
+        const auto shape=settings.Create();
+        if(shape.HasError() || shape.Get()->GetVolume()<=0.f) return {};
+        piece.hull=shape.Get();
+        }
       mesh->volume+=piece.volume;
+      if(compoundPieces && !std::isfinite(mesh->volume)) return {};
       mesh->pieces.push_back(std::move(piece));
       }
     if(file>>tag) return {}; // Reject truncated/newer formats instead of rendering partial geometry.

@@ -549,6 +549,7 @@ class DynamicWorld final {
       Tempest::Vec3 velocity, angularVelocity;
       bool permanent = false;
       int64_t asleepSince = -1;
+      float friction = 0;
       };
     std::vector<FragmentSnapshot> fragmentSnapshot() const;
     struct WaterBodySnapshot {
@@ -752,7 +753,7 @@ class DynamicWorld final {
     void           validateMovableVobs();
     void           syncMovableVob(BodyData& body);
     void           damageMovableVob(BodyData& body, float impulse, const Tempest::Vec3& point, bool arrow = false,
-                                    std::string_view impactCulprit = {});
+                                    std::string_view impactCulprit = {}, const Tempest::Vec3& direction = {});
     void           breakMovableVob(BodyData& body);
     void           syncFragments(BodyData& body);
     void           cleanupFragments(BodyData& body);
