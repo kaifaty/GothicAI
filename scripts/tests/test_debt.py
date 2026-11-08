@@ -129,7 +129,7 @@ def test_create_limit_orders_heavy_priority_ratio_and_key(config):
                finding("heavy", kind="ruff", score=100, level="heavy"),
                finding("normal-z.py", score=800_000),
                finding("large.md", kind="doc-now", score=102_400),
-               finding("shorts", kind="ruff", score=96),
+               finding("server", kind="ruff", score=96),
                finding(kind="orphan-scripts", score=10)]
     client = FakeClient()
     plan = debt.sync(values, config, client, apply=True)
@@ -137,8 +137,8 @@ def test_create_limit_orders_heavy_priority_ratio_and_key(config):
     assert created == ["doc-file:manual.md", "hotspot:heavy.py", "ruff:heavy",
                        "hotspot:normal-5.py", "hotspot:normal-z.py"]
     ordered = [item["key"] for item in plan]
-    assert ordered.index("doc-now:large.md") < ordered.index("ruff:shorts")
-    assert ordered.index("ruff:shorts") < ordered.index("orphan-scripts")
+    assert ordered.index("doc-now:large.md") < ordered.index("ruff:server")
+    assert ordered.index("ruff:server") < ordered.index("orphan-scripts")
     assert actions(plan).count("defer") == 8
     assert len([call for call in client.writes if call[0] == "create"]) == 5
     client.writes.clear()
@@ -707,7 +707,7 @@ def test_ingest_config_has_audit_kinds_visual_exclusions_and_limit(config):
     }
     assert set(config["codex"]["exclude"]) == {
         "OpenGothic/shader", "OpenGothic/common/graphics", "OpenGothic/common/ui",
-        "scripts/content", "scripts/meshes", "scripts/hd", "shorts", "site", "launcher/app",
+        "scripts/content", "scripts/meshes", "scripts/hd", "site", "launcher/app",
     }
     assert config["codex"]["max_new"] == 3
 

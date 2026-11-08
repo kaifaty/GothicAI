@@ -202,7 +202,7 @@ async def process(args, phase: str, save: Path, exercise) -> dict[str, Any]:
         env = dict(os.environ, GOTHIC_AI_URL=f"ws://127.0.0.1:{server.port}", TEMPEST_BACKGROUND="1")
         with (directory / "game.log").open("w") as stream:
             game = await asyncio.create_subprocess_exec(
-                str(args.game_bin), "-g", str(args.gothic_dir), "-g2", "-window", "-save", "1", "-devmode",
+                str(args.game_bin), "-g", str(args.gothic_dir), "-window", "-save", "1", "-devmode",
                 cwd=runtime, env=env, stdout=stream, stderr=subprocess.STDOUT)
             result = await asyncio.wait_for(finished, args.timeout)
         result["production_broken_rows_checked"] = assert_private_fields_absent(directory / "wire.jsonl")

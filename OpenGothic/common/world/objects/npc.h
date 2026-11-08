@@ -108,6 +108,9 @@ class Npc final {
     // Debug overlay of the shadow melee blade: its pose during a swing and the latest contacts.
     void       drawMeleeShadow(DbgPainter& p, uint64_t now) const;
     void       updateMeleeShadow();
+    // Poses the melee shadow body that updateMeleeShadow will publish. Reads and
+    // writes this NPC only: the parallel animation pass calls it after the pose.
+    void       prepareMeleeShadowBody();
     void       resolveMeleeContacts();
     static bool skipMeleeAlly(bool player, bool selectedTarget, bool sameGuild, bool sameParty, bool enemy) {
       return !player && !selectedTarget && (sameGuild || sameParty || !enemy);
@@ -196,6 +199,7 @@ class Npc final {
     // Whose pose the world logic reads every frame: never deferred.
     bool       animationLodPinned() const;
     void       setAnimationLodTargeted(bool t) { animLodTargeted = t; }
+    uint32_t   animationLodSeed() const { return animLodSeed; }
 
     std::string_view displayName() const;
     auto       displayPosition() const -> Tempest::Vec3;
@@ -1050,6 +1054,7 @@ class Npc final {
     float                          lieVisualYOffset = 0;
     uint64_t                       animLodPendingDt = 0;
     bool                           animLodTargeted = false;
+    uint32_t                       animLodSeed = 0;
     Tempest::Vec3                  characterVisualSamplePosition;
     Tempest::Vec3                  characterVisualSampleNormal;
     uint64_t                       characterVisualSampleTick = 0;
@@ -1072,6 +1077,20 @@ class Npc final {
     mutable std::unique_ptr<MeleeShadow> meleeShadow;
     bool                          meleeShadowBody = false;
     bool                          meleeShadowSuspended = false;
+    // The shadow body posed last and what it was posed from. Equal inputs pose
+    // bit-identical capsules, so a body posed in the parallel pass is published
+    // as is unless something moved the bones since (a script, a sync on read).
+    struct MeleeShadowPose final {
+      std::vector<HitZones::Posed> zones;
+      MeleeShadowBody              body;
+      const Pose*                  pose  = nullptr;
+      uint64_t                     bones = 0, shape = 0;
+      uint32_t                     scale = 0; // the bits of the visual's scale
+      size_t                       slot  = size_t(-1); // in the published bodies, a hint
+      };
+    MeleeShadowPose               meleeShadowPose;
+    bool          wantsMeleeShadowBody() const;
+    void          poseMeleeShadowBody();
     struct MeleeShadowMark final {
       Tempest::Vec3 point;
       uint64_t      time  = 0;

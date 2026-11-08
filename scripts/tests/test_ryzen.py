@@ -2451,7 +2451,7 @@ os.execvp('bash', ['bash', '-c', sys.argv[-1]])
         self.assertEqual(invocation['binary'], 'custom-runner')
         self.assertEqual(invocation['save'], 'saved game')
         self.assertEqual(invocation['args'], ['-g', str(self.root / 'data'), '-devmode',
-                                             '--save', str(out / 'run/save_slot_1.sav'), '-nointro', '-g2',
+                                             '--save', str(out / 'run/save_slot_1.sav'), '-nointro',
                                              '--game-parity', '--scenario', str(self.root / 'smoke.bench'),
                                              '--output', str(out), '--mode', 'lockstep'])
         self.assertEqual((out / 'host.txt').read_text(), 'dev-ubuntu\n')

@@ -28,7 +28,7 @@
 #include "utils/fileutil.h"
 
 #include <zenkit/Vfs.hh>
-#include <zenkit/DaedalusVm.hh>
+#include <zenkit/DaedalusScript.hh>
 #include "daedalus/vm.h"
 #include <zenkit/CutsceneLibrary.hh>
 #include <zenkit/Font.hh>
@@ -1077,7 +1077,7 @@ struct BaseContentContract {
     std::puts("Model fixtures: complete script/MAN events, metadata, sample bits, skin weights, nested OBB and native attachment order equal");
     }
 
-  static void programSymbols(zenkit::DaedalusScript& source, const zenkit::DaedalusProgramRecord& record,
+  static void programSymbols(zenkit::DaedalusScript& source, const asset::ProgramRecord& record,
                              daedalus::DaedalusScript& loaded, const std::string& name) {
     equal(source.symbols().size(),record.symbols.size(),name+" record symbol count");
     equal(source.symbols().size(),loaded.symbols().size(),name+" factory symbol count");
@@ -1152,7 +1152,7 @@ struct BaseContentContract {
             loaded.find_symbol_by_index(uint32_t(record.symbols.size()))==nullptr,name+": out-of-range index must stay absent");
     // class_offset and the unnamed flag bit have no public symbol getter. Keep
     // this complete record check in addition to the independent public checks.
-    const auto difference=ProgramData::compare(source.export_program(),record);
+    const auto difference=ProgramData::compare(asset::fromZenKit(source.export_program()),record);
     require(difference.empty(),name+": "+difference);
     const auto factoryDifference=ProgramData::compare(record,loaded.export_program());
     require(factoryDifference.empty(),name+" factory: "+factoryDifference);
@@ -1254,7 +1254,7 @@ struct BaseContentContract {
       programSymbols(original,record,native,field);
       const auto count=original.symbols().size();
       const auto* first=count==0 ? nullptr : native.find_symbol_by_index(0);
-      zenkit::DaedalusVm sourceVm(std::move(original));
+      daedalus::DaedalusVm sourceVm(daedalus::DaedalusScript::from_program(asset::fromZenKit(original.export_program())));
       daedalus::DaedalusVm nativeVm(std::move(native));
       equal(sourceVm.symbols().size(),count+1,field+" source VM temporary symbol");
       equal(nativeVm.symbols().size(),count+1,field+" native VM temporary symbol");
@@ -1563,7 +1563,7 @@ struct BaseContentContract {
     auto reader=zenkit::Read::from(&raw);
     zenkit::DaedalusScript original;
     original.load(reader.get());
-    auto script=daedalus::DaedalusScript::from_program(original.export_program());
+    auto script=daedalus::DaedalusScript::from_program(asset::fromZenKit(original.export_program()));
     // Replay the original registrations, including opaque Fight, before constructing the oracle VM.
     definitionSourceClasses(script);
     auto vm=std::make_unique<daedalus::DaedalusVm>(std::move(script),daedalus::DaedalusVmExecutionFlag::ALLOW_NULL_INSTANCE_ACCESS);

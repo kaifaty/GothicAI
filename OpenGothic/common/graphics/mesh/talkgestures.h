@@ -82,7 +82,7 @@ class TalkGestures final {
 
     // how long each gesture of the model plays, ms (0: it has not this one); the liveliness of the
     // Gothic II ones is known, others count as lively
-    void           setGestures(std::vector<uint32_t> durationMs, bool gothic2);
+    void           setGestures(std::vector<uint32_t> durationMs);
     void           setMood(Mood m) { mood = m; }
     bool           isIdle(uint64_t now) const {
       return !engaged && current==0 && !headMoves && now>=listenUntil && now>=thinkUntil && aside.weight<=0.f;

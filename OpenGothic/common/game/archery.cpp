@@ -171,10 +171,9 @@ float Archery::holdLimit(float r, float draw) {
 
 Archery::Stats Archery::stats(Npc& npc, const Item* w) {
   const bool crossbow = w!=nullptr && w->isCrossbow();
-  const bool  g2  = Gothic::inst().version().game==2;
   const float dex = float(npc.attribute(ATR_DEXTERITY));
   const float str = float(npc.attribute(ATR_STRENGTH));
-  const float skill = g2 ? float(npc.hitChance(crossbow ? TALENT_CROSSBOW : TALENT_BOW))/100.f : dex/100.f;
+  const float skill = float(npc.hitChance(crossbow ? TALENT_CROSSBOW : TALENT_BOW))/100.f;
   const float dmg  = w!=nullptr ? float(w->handle().damage_total) : DamageLight;
   float requirement = 0;
   if(w!=nullptr) {

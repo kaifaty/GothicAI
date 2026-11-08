@@ -13,6 +13,7 @@ using namespace Tempest;
 namespace {
 std::atomic<bool>     inPass{false};
 std::atomic<uint64_t> syncs{0};
+std::atomic<uint32_t> seeds{0};
 // The thread that runs the animation pass is the one that runs world logic.
 std::atomic<std::thread::id> mainThread{};
 
@@ -99,12 +100,16 @@ bool AnimationLod::View::probeVisible(const Npc& npc) const {
   }
 
 uint32_t AnimationLod::phase(const Npc& npc) {
-  // splitmix64 of the address: uniform over the frames, stable for the NPC's life.
-  uint64_t z = uint64_t(reinterpret_cast<uintptr_t>(&npc)) + 0x9e3779b97f4a7c15ull;
+  // splitmix64 of the creation seed: uniform over the frames, stable for the NPC's life.
+  uint64_t z = uint64_t(npc.animationLodSeed()) + 0x9e3779b97f4a7c15ull;
   z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ull;
   z = (z ^ (z >> 27)) * 0x94d049bb133111ebull;
   z =  z ^ (z >> 31);
   return uint32_t(z % config().rate);
+  }
+
+uint32_t AnimationLod::nextSeed() {
+  return seeds.fetch_add(1,std::memory_order_relaxed);
   }
 
 void AnimationLod::beginPass() {

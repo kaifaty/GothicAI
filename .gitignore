@@ -81,7 +81,7 @@ log.txt
 # Collected Ryzen test logs
 /.ryzen/
 
-# Shorts: takes and voiced lines (gothic-shorts)
+# Takes and voiced lines written by gothic-shorts
 /.shorts/
 
 # Site build (gothic-site)

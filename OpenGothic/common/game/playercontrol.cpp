@@ -84,11 +84,7 @@ PlayerControl::~PlayerControl() {
   }
 
 void PlayerControl::setupSettings() {
-  if(Gothic::inst().version().game==2) {
-    g2Ctrl = Gothic::inst().settingsGetI("GAME","USEGOTHIC1CONTROLS")==0;
-    } else {
-    g2Ctrl = false;
-    }
+  g2Ctrl = Gothic::inst().settingsGetI("GAME","USEGOTHIC1CONTROLS")==0;
   }
 
 void PlayerControl::setTarget(Npc *other) {
@@ -991,7 +987,7 @@ void PlayerControl::implMove(uint64_t dt) {
     }
 
   if(casting) {
-    if(!actrl[ActForward] || (Gothic::inst().version().game==1 && pl.attribute(ATR_MANA)==0)) {
+    if(!actrl[ActForward]) {
       casting = false;
       pl.endCastSpell(true);
       }
@@ -1514,7 +1510,7 @@ void PlayerControl::processPickLock(Npc& pl, Interactive& inter, KeyCodec::Actio
 
   if(pickLockProgress<cmp.size() && std::toupper(cmp[pickLockProgress])!=ch) {
     pickLockProgress = 0;
-    const int32_t dex = Gothic::inst().version().game==2 ? pl.attribute(ATR_DEXTERITY) : (100 - pl.talentValue(TALENT_PICKLOCK));
+    const int32_t dex = pl.attribute(ATR_DEXTERITY);
     if(dex<=int32_t(script.rand(100)))  {
       script.invokePickLock(pl,0,1);
       pl.delItem(ItKE_lockpick,1);
