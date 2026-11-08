@@ -1034,6 +1034,8 @@ void WorldObjects::updateAnimation(uint64_t dt) {
       } else {
       i->updateAnimation(dt);
       }
+    // The melee shadow loop below publishes this body unless its bones move first.
+    i->prepareMeleeShadowBody();
     });
   AnimationLod::endPass();
   npcPass.finish();

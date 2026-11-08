@@ -28,6 +28,7 @@ class Ragdoll;
 class Cloth;
 struct MeleeBladeSegment;
 struct MeleeBodyCapsule;
+struct MeleeShadowBody;
 struct MeleeBladeContact;
 namespace daedalus { struct INpc; }
 namespace JPH { class PhysicsSystem; }
@@ -184,7 +185,15 @@ class CollisionWorld final {
     void measureMeleeBench(std::string path);
     void reportMeleeBench();
     void updateShadowBody(Npc* owner, const std::vector<MeleeBodyCapsule>& capsules);
+    // Publishes a body bounded by boundShadowBody. An owner keeps its slot until
+    // removeShadowBody; casts see the bodies in the order they were first published.
+    // slotHint: the owner's slot from its last publication, checked before use.
+    void updateShadowBody(Npc* owner, const MeleeShadowBody& body, size_t* slotHint = nullptr);
+    static void boundShadowBody(MeleeShadowBody& body);
     void removeShadowBody(const Npc* owner);
+    bool shadowBody(const Npc* owner, MeleeShadowBody& out) const;
+    // Every published body in cast order (tests).
+    std::vector<std::pair<const Npc*,MeleeShadowBody>> shadowBodies() const;
     // Pose time and the half-open active window use absolute game milliseconds.
     // forward: the attacker's facing; a wall met by a blade going back or up (the wind-up,
     // the follow-through) does not stop the swing. Zero: every wall stops it.
