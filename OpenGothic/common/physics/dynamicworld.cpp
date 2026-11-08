@@ -72,6 +72,10 @@ struct FractureMotion {
     FractureMotion motion;
     const auto* env=std::getenv("OPENGOTHIC_FRACTURE_MOTION");
     if(env==nullptr || env[0]=='\0') return motion;
+    const auto invalid=[](const std::string& entry, const char* reason) {
+      Tempest::Log::e("Invalid OPENGOTHIC_FRACTURE_MOTION entry '",entry,"': ",reason,"; using defaults");
+      return FractureMotion{};
+      };
     std::istringstream entries(env);
     for(std::string entry;std::getline(entries,entry,',');) {
       std::istringstream field(entry);
@@ -80,13 +84,19 @@ struct FractureMotion {
       float value=0;
       if(!std::getline(field,key,'=') || !(field>>value) || !(field>>std::ws).eof() ||
          !std::isfinite(value) || value<0.f)
-        throw std::invalid_argument("Invalid OPENGOTHIC_FRACTURE_MOTION entry: "+entry);
+        return invalid(entry,"expected key=value with a finite non-negative number");
+      const auto first=key.find_first_not_of(" \t\r\n\f\v");
+      if(first==std::string::npos) return invalid(entry,"missing key");
+      key=key.substr(first,key.find_last_not_of(" \t\r\n\f\v")-first+1);
       if(key=="hit") motion.hit=value;
-      else if(key=="falloff" && value>0.f) motion.falloff=value;
+      else if(key=="falloff") {
+        if(value==0.f) return invalid(entry,"falloff must be greater than zero");
+        motion.falloff=value;
+        }
       else if(key=="outward") motion.outward=value;
       else if(key=="spin") motion.spin=value;
       else if(key=="cap") motion.cap=value;
-      else throw std::invalid_argument("Invalid OPENGOTHIC_FRACTURE_MOTION entry: "+entry);
+      else return invalid(entry,"unknown key");
       }
     return motion;
     }
@@ -191,6 +201,7 @@ struct DynamicWorld::MovableVobs {
   std::unordered_map<std::string,std::shared_ptr<Shape>> shapes;
   std::vector<BodyData*> bodies;
   std::vector<MovableVobContacts> census;
+  const FractureMotion fractureMotion = FractureMotion::load();
   double validationMs = 0;
   bool finalized = false;
   bool enabled = true;
@@ -2666,7 +2677,7 @@ void DynamicWorld::breakMovableVob(BodyData& obj) {
   const auto velocity=obj.body->velocity(),omega=obj.body->angularVelocity();
   const auto center=obj.body->centerOfMass();
   const auto& mesh=*obj.movableShape->fracture;
-  const auto motion=mesh.version==3 ? FractureMotion::load() : FractureMotion{};
+  const auto& motion=movableVobs->fractureMotion;
   const auto hit=obj.breakDirection.quadLength()>1.e-12f ? Tempest::Vec3::normalize(obj.breakDirection) : Tempest::Vec3();
   std::vector<std::unique_ptr<CollisionWorld::DynamicBody>> fragments;
   fragments.reserve(mesh.pieces.size());

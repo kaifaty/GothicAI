@@ -2132,6 +2132,40 @@ namespace {
               "a changed sidecar piece count must skip saved debris without breaking the intact object");
 
       write(3,40);
+      for(const char* config:{"hit=250, cap=450","hit=abc"}) {
+        setenv("OPENGOTHIC_FRACTURE_MOTION",config,1);
+        std::vector<std::string> errors;
+        Tempest::Log::setOutputCallback([&](Tempest::Log::Mode mode,const char* line) {
+          if(mode==Tempest::Log::Error && std::string_view(line).find("OPENGOTHIC_FRACTURE_MOTION")!=std::string_view::npos)
+            errors.emplace_back(line);
+          });
+        try {
+          DynamicWorld configured(nullptr,asset::WorldMesh{});
+          auto configuredObject=make(configured);
+          setenv("OPENGOTHIC_FRACTURE_MOTION","cap=0",1);
+          require(strike(configured),"whitespace or an invalid motion override must not prevent destruction");
+          configured.tick(0);
+          const auto configuredPieces=configured.fragmentSnapshot();
+          require(configuredObject.isBroken() && configuredPieces.size()==pieces.size(),
+                  "whitespace and invalid motion overrides must preserve every fragment");
+          for(size_t i=0;i<pieces.size();++i) {
+            requireNear((configuredPieces[i].velocity-pieces[i].velocity).length(),0,.0001f,
+                        "trimmed defaults and invalid overrides must retain the full default linear motion");
+            requireNear((configuredPieces[i].angularVelocity-pieces[i].angularVelocity).length(),0,.0001f,
+                        "trimmed defaults and invalid overrides must retain the full default spin");
+            }
+          }
+        catch(...) { Tempest::Log::setOutputCallback({}); throw; }
+        Tempest::Log::setOutputCallback({});
+        require(errors.size()==(std::string_view(config)=="hit=abc" ? 1u : 0u),
+                "invalid motion overrides must log one error per world; whitespace must be accepted silently");
+        if(!errors.empty()) {
+          constexpr std::string_view prefix="Invalid OPENGOTHIC_FRACTURE_MOTION entry 'hit=abc': ";
+          const auto fallback=errors[0].find("; using defaults");
+          require(errors[0].starts_with(prefix) && fallback!=std::string::npos && fallback>prefix.size(),
+                  "an invalid motion override must identify its entry and explain why defaults were selected");
+          }
+        }
       setenv("OPENGOTHIC_FRACTURE_MOTION","hit=500,falloff=90,outward=0,spin=0,cap=50",1);
       DynamicWorld capped(nullptr,asset::WorldMesh{});
       auto cappedObject=make(capped);
@@ -2159,7 +2193,7 @@ namespace {
         requireNear(piece.angularVelocity.length(),0.f,.0001f,"version 2 must not receive added spin");
         }
       std::printf("Own fracture v3: forty pieces, WOOD 0.4 / METAL 1.1 friction; hit mean %.6f, near %.6f > far %.6f cm/s; "
-                  "save/load and changed-count skip; override cap 50; v2 outward 40 cm/s passed\n",
+                  "save/load and changed-count skip; whitespace and invalid override fallback; override cap 50; v2 outward 40 cm/s passed\n",
                   double(mean),double(pieces[16].velocity.x),double(pieces[23].velocity.x));
       }
     if(hadContent) setenv("OPENGOTHIC_CONTENT",oldContent.c_str(),1); else unsetenv("OPENGOTHIC_CONTENT");
