@@ -645,6 +645,10 @@ namespace Tempest {
 
         virtual void dispatch(size_t x, size_t y, size_t z) = 0;
         virtual void dispatchIndirect(const Buffer& indirect, size_t offset) = 0;
+
+        // Build of a top-level structure made by createTopAccelerationStruct(d, capacity) in this command buffer;
+        // instances may be null when count is 0.
+        virtual void buildTlas(AccelerationStructure& tlas, const Buffer* instances, size_t count);
         };
 
       using PBuffer       = Detail::DSharedPtr<Buffer*>;
@@ -683,6 +687,13 @@ namespace Tempest {
 
       virtual PRtAs      createBottomAccelerationStruct(Device* d, const RtGeometry* geom, size_t geomSize);
       virtual PRtAs      createTopAccelerationStruct(Device* d, const RtInstance* geom, AccelerationStructure*const* as, size_t geomSize);
+      // Top-level structure with its own memory for `capacity` instances, built by CommandBuffer::buildTlas.
+      virtual PRtAs      createTopAccelerationStruct(Device* d, size_t capacity);
+      // Size of one instance in the backend's layout, and packing of instances for a build of `tlas`:
+      // as[i] is the BLAS of inst[i], instances with a null one are skipped. Returns the number written.
+      virtual size_t     rtInstanceSize() const;
+      virtual size_t     packRtInstances(Device* d, AccelerationStructure& tlas, const RtInstance* inst,
+                                         AccelerationStructure*const* as, size_t count, void* out);
 
       virtual void       readPixels   (Device* d, Pixmap& out, const PTexture t,
                                        TextureFormat frm, const uint32_t w, const uint32_t h, uint32_t mip, bool storageImg) = 0;

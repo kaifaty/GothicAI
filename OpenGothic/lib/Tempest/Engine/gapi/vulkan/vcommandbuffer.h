@@ -124,8 +124,9 @@ class VCommandBuffer:public AbstractGraphicsApi::CommandBuffer {
                    AbstractGraphicsApi::BlasBuildCtx& ctx, AbstractGraphicsApi::Buffer& scratch);
 
     void buildTlas(VkAccelerationStructureKHR dest, AbstractGraphicsApi::Buffer& tbo,
-                   const AbstractGraphicsApi::Buffer& instances, uint32_t numInstances,
+                   const AbstractGraphicsApi::Buffer* instances, uint32_t numInstances,
                    AbstractGraphicsApi::Buffer& scratch);
+    void buildTlas(AbstractGraphicsApi::AccelerationStructure& tlas, const AbstractGraphicsApi::Buffer* instances, size_t count) override;
 
     struct Chunk {
       VkCommandBuffer impl = nullptr;

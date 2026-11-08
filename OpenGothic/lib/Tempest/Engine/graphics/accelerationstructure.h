@@ -67,16 +67,19 @@ int64_t profileByteSize(const AccelerationStructure& as);
 class AccelerationStructure final {
   public:
     AccelerationStructure() = default;
-    AccelerationStructure(AccelerationStructure&&)=default;
+    AccelerationStructure(AccelerationStructure&& other);
     ~AccelerationStructure()=default;
-    AccelerationStructure& operator=(AccelerationStructure&&)=default;
+    AccelerationStructure& operator=(AccelerationStructure&& other);
 
-    bool isEmpty() const;
+    bool   isEmpty() const;
+    // Instances a top-level structure of Device::tlas(Uninitialized, capacity) holds without new memory; 0 otherwise.
+    size_t capacity() const { return cap; }
 
   private:
-    AccelerationStructure(Tempest::Device& dev, AbstractGraphicsApi::PRtAs&& impl);
+    AccelerationStructure(Tempest::Device& dev, AbstractGraphicsApi::PRtAs&& impl, size_t capacity = 0);
 
     Detail::DSharedPtr<AbstractGraphicsApi::AccelerationStructure*> impl;
+    size_t                                                          cap = 0;
 
   friend class Tempest::Device;
   friend class Tempest::DescriptorSet;

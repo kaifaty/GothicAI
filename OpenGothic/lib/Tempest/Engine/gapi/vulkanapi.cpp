@@ -14,6 +14,7 @@
 #include "vulkan/vaccelerationstructure.h"
 
 #include <Tempest/Pixmap>
+#include <cstring>
 #include <Tempest/Log>
 #include <Tempest/Application>
 
@@ -428,6 +429,35 @@ AbstractGraphicsApi::PRtAs VulkanApi::createTopAccelerationStruct(Device* d, con
   Detail::DSharedPtr<VTopAccelerationStructure*> prtas(new VTopAccelerationStructure(dx));
   prtas.handler->build(inst, as, size);
   return PRtAs(prtas.handler);
+  }
+
+AbstractGraphicsApi::PRtAs VulkanApi::createTopAccelerationStruct(Device* d, size_t capacity) {
+  auto& dx = *reinterpret_cast<VDevice*>(d);
+
+  Detail::DSharedPtr<VTopAccelerationStructure*> prtas(new VTopAccelerationStructure(dx));
+  prtas.handler->alloc(capacity);
+  return PRtAs(prtas.handler);
+  }
+
+size_t VulkanApi::rtInstanceSize() const {
+  return sizeof(VkAccelerationStructureInstanceKHR);
+  }
+
+size_t VulkanApi::packRtInstances(Device* d, AccelerationStructure& tlas, const RtInstance* inst,
+                                  AccelerationStructure*const* as, size_t count, void* out) {
+  (void)d;
+  (void)tlas; // instances point at their BLAS by device address
+  auto*  dst = reinterpret_cast<VkAccelerationStructureInstanceKHR*>(out);
+  size_t ret = 0;
+  for(size_t i=0; i<count; ++i) {
+    if(as[i]==nullptr)
+      continue;
+    VkAccelerationStructureInstanceKHR obj = {};
+    VTopAccelerationStructure::pack(obj, inst[i], *reinterpret_cast<const VAccelerationStructure*>(as[i]));
+    std::memcpy(dst+ret, &obj, sizeof(obj));
+    ++ret;
+    }
+  return ret;
   }
 
 void VulkanApi::readPixels(AbstractGraphicsApi::Device *d, Pixmap& out, const PTexture t,

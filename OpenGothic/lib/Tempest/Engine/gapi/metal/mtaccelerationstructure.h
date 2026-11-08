@@ -40,15 +40,26 @@ class MtAccelerationStructure : public Tempest::AbstractGraphicsApi::Acceleratio
 class MtTopAccelerationStructure : public AbstractGraphicsApi::AccelerationStructure {
   public:
     MtTopAccelerationStructure(MtDevice& owner, const RtInstance* inst, AccelerationStructure* const * as, size_t asSize);
+    // Memory for `capacity` instances, the structure and the scratch of its builds (MtCommandBuffer::buildTlas)
+    MtTopAccelerationStructure(MtDevice& owner, size_t capacity);
     ~MtTopAccelerationStructure();
 
     void useResource(MTL::RenderCommandEncoder&  cmd, ShaderReflection::Stage st) const;
     void useResource(MTL::ComputeCommandEncoder& cmd, ShaderReflection::Stage st) const;
 
+    // Instances of a build into `out`; replaces the list of BLAS they index. Returns the number written.
+    size_t pack(const RtInstance* inst, AccelerationStructure* const * as, size_t count, void* out);
+    // Descriptor of a build from `count` instances that pack() wrote into `instances`
+    NsPtr<MTL::InstanceAccelerationStructureDescriptor> buildDesc(MTL::Buffer* instances, size_t count) const;
+
     MtDevice&                         owner;
     NsPtr<MTL::AccelerationStructure> impl;
     NsPtr<MTL::Buffer>                instances;
+    NsPtr<MTL::Buffer>                scratch;  // second constructor: kept between builds
+    size_t                            capacity = 0;
 
+    // BLAS of the last build: its instances index them, ray queries make them resident (useResources).
+    // Raw pointers: the engine keeps every BLAS of a build alive while frames in flight read it.
     std::vector<MTL::Resource*>       blas;
 
   private:
