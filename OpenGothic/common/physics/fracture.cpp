@@ -3,6 +3,7 @@
 #include "resources.h"
 #include "utils/userhome.h"
 
+#include <Jolt/Physics/Collision/GroupFilter.h>
 #include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
 #include <Jolt/Physics/Collision/Shape/StaticCompoundShape.h>
 #include <Tempest/Log>
@@ -59,6 +60,24 @@ bool materialGroup(std::string_view name, asset::MaterialGroup& group) {
   return true;
   }
 }
+
+bool fractureMaterialsCollide(asset::MaterialGroup a, asset::MaterialGroup b) {
+  using G=asset::MaterialGroup;
+  return !((a==G::METAL && b==G::WOOD) || (a==G::WOOD && b==G::METAL));
+  }
+
+const JPH::GroupFilter* fractureGroupFilter() {
+  class Filter final : public JPH::GroupFilter {
+    public:
+      bool CanCollide(const JPH::CollisionGroup& a, const JPH::CollisionGroup& b) const override {
+        // Ragdolls and other breaks keep colliding; their group IDs never match a live break's.
+        if(a.GetGroupFilter()!=b.GetGroupFilter() || a.GetGroupID()!=b.GetGroupID()) return true;
+        return fractureMaterialsCollide(asset::MaterialGroup(a.GetSubGroupID()),asset::MaterialGroup(b.GetSubGroupID()));
+        }
+    };
+  static const JPH::RefConst<JPH::GroupFilter> filter=new Filter();
+  return filter.GetPtr();
+  }
 
 const FractureRule* FractureRule::classify(std::string_view visual) {
   static const auto rules=[] {

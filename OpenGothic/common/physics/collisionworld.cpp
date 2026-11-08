@@ -11,6 +11,7 @@
 #include "world/objects/npc.h"
 #include "world/world.h"
 #include "sha256.h"
+#include "fracture.h"
 #include <Tempest/Log>
 
 #include <cstdlib>
@@ -415,6 +416,7 @@ struct CollisionWorld::Impl final : JPH::ContactListener, JPH::PhysicsStepListen
     auto settings = system.GetPhysicsSettings();
     settings.mTimeBeforeSleep = 2.f;
     settings.mPointVelocitySleepThreshold = 0.8f;
+    settings.mPenetrationSlop = CollisionWorld::penetrationSlop;
     settings.mDeepestContactLayers = 1u<<DynamicWorld::C_Item;
     system.SetPhysicsSettings(settings);
     system.SetContactListener(this);
@@ -1696,6 +1698,12 @@ void CollisionWorld::CollisionBody::setNoiseProfile(ItemMaterial material, asset
   noiseWhat=what;
   }
 
+void CollisionWorld::CollisionBody::setFractureGroup(uint32_t group, asset::MaterialGroup material) {
+  JPH::BodyLockWrite lock(owner->impl->system.GetBodyLockInterface(),id);
+  if(lock.Succeeded())
+    lock.GetBody().SetCollisionGroup(JPH::CollisionGroup(fractureGroupFilter(),group,uint32_t(material)));
+  }
+
 Tempest::Vec3 CollisionWorld::CollisionBody::position() const {
   return toCentimeters(owner->impl->system.GetBodyInterface().GetPosition(id));
   }
@@ -1911,6 +1919,11 @@ std::unique_ptr<CollisionWorld::DynamicBody> CollisionWorld::addDynamicBody(JPH:
   addBody(*result,matrix,friction,false,false,mass,startSleeping);
   rigid.push_back(result.get());
   return result;
+  }
+
+uint32_t CollisionWorld::newFractureGroup() {
+  if(nextFractureGroup==JPH::CollisionGroup::cInvalidGroup) nextFractureGroup=0x80000000u;
+  return nextFractureGroup++;
   }
 
 void CollisionWorld::cycleBodyIds(size_t count) {

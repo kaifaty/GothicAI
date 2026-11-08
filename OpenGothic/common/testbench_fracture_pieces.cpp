@@ -119,7 +119,7 @@ void fracturePiecesBreak(FracturePieces& state,World& world,uintptr_t parent,std
   for(size_t i=0;i<mesh->pieces.size();++i) {
     const auto& source=mesh->pieces[i];
     FracturePieces::Piece piece;
-    piece.index=i;piece.volume=source.volume;piece.group=groupName(source.group);
+    piece.index=i;piece.volume=source.volume;piece.group=groupName(source.group);piece.material=source.group;
     piece.center=source.center;piece.hull=source.hull;
     for(const auto& triangle:source.triangles)
       for(const auto& vertex:triangle.vertices)piece.vertices.push_back(vertex.position);
@@ -173,7 +173,7 @@ void fracturePiecesTick(FracturePieces& state,World& world) {
     std::vector<float> displacement,resting,volumes;
     std::vector<JPH::Mat44> poses(parts.size());
     std::vector<Vec3> low(parts.size()),high(parts.size());
-    size_t missing=0,flat=0,onEdge=0,upright=0,sleeping=0,restingAsleep=0,fell=0;
+    size_t missing=0,flat=0,onEdge=0,upright=0,sleeping=0,restingAsleep=0,fell=0,metal=0,metalOnGround=0;
     float maxJitter=0,maxFloor=0,maxVisible=0,maxPieces=0,maxSpeed=0;
     std::string rows="[";
     for(size_t i=0;i<parts.size();++i) {
@@ -204,15 +204,18 @@ void fracturePiecesTick(FracturePieces& state,World& world) {
       if(last) {
         const float jitter=(center-piece.at13).length();
         if(!below)maxJitter=std::max(maxJitter,jitter);
-        float visible=0,ground=0;
+        float visible=0,ground=0,lowest=std::numeric_limits<float>::infinity();
         poses[i]=joltPose(part.transform);
         low[i]=Vec3(1e9f,1e9f,1e9f);high[i]=Vec3(-1e9f,-1e9f,-1e9f);
         for(const auto& v:piece.vertices) {
           const auto p=apply(part.transform,v);
           low[i]=Vec3(std::min(low[i].x,p.x),std::min(low[i].y,p.y),std::min(low[i].z,p.z));
           high[i]=Vec3(std::max(high[i].x,p.x),std::max(high[i].y,p.y),std::max(high[i].z,p.z));
-          if(floor.hasCol)visible=std::max(visible,-Vec3::dotProduct(p-floor.v,floor.n));
+          if(floor.hasCol)lowest=std::min(lowest,Vec3::dotProduct(p-floor.v,floor.n));
           }
+        if(floor.hasCol)visible=std::max(0.f,-lowest);
+        // A hoop lies on the ground when its lowest drawn point is within 1 cm of the floor, not on a stave.
+        if(piece.material==asset::MaterialGroup::METAL) {++metal;if(floor.hasCol && !below && std::abs(lowest)<=1.f)++metalOnGround;}
         if(floor.hasCol && !below) {
           // The ground as a native box whose top face is the floor plane under the piece.
           const auto normal=JPH::Vec3(floor.n.x,floor.n.y,floor.n.z).Normalized();
@@ -223,7 +226,8 @@ void fracturePiecesTick(FracturePieces& state,World& world) {
           }
         maxFloor=std::max(maxFloor,ground);maxVisible=std::max(maxVisible,visible);
         extra=",\"jitter_cm\":"+ragdollNumber(jitter)+",\"floor_penetration_cm\":"+ragdollNumber(ground)+
-          ",\"visible_floor_penetration_cm\":"+ragdollNumber(visible);
+          ",\"visible_floor_penetration_cm\":"+ragdollNumber(visible)+
+          ",\"lowest_over_floor_cm\":"+ragdollNumber(std::isfinite(lowest)?lowest:0.f);
         }
       if(rows.size()>1)rows+=',';
       rows+="{\"piece\":"+std::to_string(i)+",\"group\":"+jsonStr(piece.group)+",\"volume_cm3\":"+
@@ -241,6 +245,8 @@ void fracturePiecesTick(FracturePieces& state,World& world) {
       for(size_t i=0;i<parts.size();++i)
         for(size_t j=i+1;j<parts.size();++j) {
           if(parts[i]==nullptr || parts[j]==nullptr || item.pieces[i].hull==nullptr || item.pieces[j].hull==nullptr)continue;
+          // Format 3 hoops pass through the staves of their own break by design.
+          if(item.version==3 && !fractureMaterialsCollide(item.pieces[i].material,item.pieces[j].material))continue;
           if(low[i].x>high[j].x+3 || low[j].x>high[i].x+3 || low[i].y>high[j].y+3 || low[j].y>high[i].y+3 ||
              low[i].z>high[j].z+3 || low[j].z>high[i].z+3)continue;
           const float depth=penetration(item.pieces[i].hull.GetPtr(),poses[i],item.pieces[j].hull.GetPtr(),poses[j]);
@@ -249,7 +255,7 @@ void fracturePiecesTick(FracturePieces& state,World& world) {
       pairs=",\"max_floor_penetration_cm\":"+ragdollNumber(maxFloor)+",\"max_visible_floor_penetration_cm\":"+
         ragdollNumber(maxVisible)+",\"max_piece_penetration_cm\":"+ragdollNumber(maxPieces)+
         ",\"worst_piece_pair\":["+std::to_string(worstA)+","+std::to_string(worstB)+"],\"max_jitter_cm\":"+
-        ragdollNumber(maxJitter);
+        ragdollNumber(maxJitter)+",\"metal\":"+std::to_string(metal)+",\"metal_on_ground\":"+std::to_string(metalOnGround);
       }
     const float largest=volumes.empty()?0.f:*std::max_element(volumes.begin(),volumes.end());
     const float middle=median(volumes);

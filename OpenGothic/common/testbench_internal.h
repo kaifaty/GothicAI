@@ -131,6 +131,7 @@ struct FracturePieces {
     size_t index=0;
     double volume=0;
     std::string group;
+    asset::MaterialGroup material=asset::MaterialGroup::UNDEFINED;
     Tempest::Vec3 center,thin,longAxis,start,at13;
     float extent[3]={};
     bool flat=false,stave=false;
