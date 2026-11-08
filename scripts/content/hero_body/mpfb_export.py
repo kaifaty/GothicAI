@@ -171,7 +171,100 @@ def part(faces, push=0.0, name='', snap=None):
              loop_normal=n[loop_vertex], weights=w, groups=np.array(groups))
     return {'verts': len(used), 'tris': len(tri_v), 'height': [float(P[:, 1].min()), float(P[:, 1].max())]}
 
-info = {'body': part(body_f, 0.0, 'body'), 'braies': part(braies_f, OFFSET, 'braies', snap=(lo, hi)),
+# --- the outfit (outfit_build.py, run on outfit.blend): each piece with its own weights, or the nearest skin's; the
+# body under the pieces (their 'covers' height band, Blender metres) is left out, and no braies
+PIECES = [o for o in bpy.data.objects if o.type == 'MESH' and 'outfit_piece' in o]
+outfit = []
+if PIECES:
+    from mathutils.kdtree import KDTree
+    from mathutils.bvhtree import BVHTree
+    from mathutils import Vector
+    dg = bpy.context.evaluated_depsgraph_get()
+    # a skin point is covered when a piece lies over it along its normal within REACH: the V of the vest and the
+    # armholes keep their skin, the legs under the trousers and the feet in the boots go
+    REACH = float(os.environ.get('COVER_REACH', 0.06))
+    pv, pf = [], []
+    for o in PIECES:
+        pm = o.evaluated_get(dg).to_mesh(); M = o.matrix_world; base = len(pv)
+        pv += [tuple(M @ v.co) for v in pm.vertices]; pf += [[base + i for i in p.vertices] for p in pm.polygons]
+        o.evaluated_get(dg).to_mesh_clear()
+    bvh = BVHTree.FromPolygons(pv, pf)
+    body_tris = np.array([[vs[0], vs[k], vs[k + 1]] for _, vs, _ in polys for k in range(1, len(vs) - 1)])
+    vn = smooth_normals(co, body_tris)
+    covered_o = np.zeros(nv, bool)
+    for i in np.where(body_v)[0]:
+        hit = bvh.ray_cast(Vector(co[i] + vn[i] * 0.001), Vector(vn[i]), REACH)
+        covered_o[i] = hit[0] is not None
+    for g in bm.vertex_groups:                   # MPFB's own delete lists of the clothes it fitted (Delete.shoes03)
+        if g.name.startswith('Delete.'):
+            covered_o |= group(g.name, 0.5)
+    body_f = faces_where(lambda vs: body_v[vs].all() and (model_y[vs] < neck_cut[vs]).all() and not covered_o[vs].all())
+    skin_ix = np.where(body_v)[0]
+    kd = KDTree(len(skin_ix))
+    for k, i in enumerate(skin_ix): kd.insert(co[i], k)
+    kd.balance()
+    TILE = 0.35                                             # m of cloth or leather per UV unit (tiling materials)
+
+    def piece_arrays(o):
+        ev = o.evaluated_get(dg); pm = ev.to_mesh()
+        M = np.array(o.matrix_world)
+        P = np.array([(M @ np.r_[v.co, 1.0])[:3] for v in pm.vertices])
+        own = {g.index: g.name for g in o.vertex_groups if g.name in gidx}
+        W = np.zeros((len(P), len(groups)), np.float32)
+        for v in pm.vertices:
+            for g in v.groups:
+                if g.group in own: W[v.index, gidx[own[g.group]]] += g.weight
+        for i in np.where(W.sum(1) <= 1e-6)[0]:           # no weights of its own: the nearest skin's
+            found = kd.find_n(P[i], 6)
+            wk = np.array([1.0 / (d + 1e-3) for _, _, d in found]); ix = [skin_ix[k] for _, k, _ in found]
+            W[i] = (wk[:, None] * Wt[ix]).sum(0) / wk.sum()
+        W = W / np.maximum(W.sum(1, keepdims=True), 1e-9)
+        tri_v, tri_l = [], []
+        for p in pm.polygons:
+            vs, ls = list(p.vertices), list(p.loop_indices)
+            for k in range(1, len(vs) - 1):
+                tri_v.append([vs[0], vs[k], vs[k + 1]]); tri_l.append([ls[0], ls[k], ls[k + 1]])
+        loop_v = np.array([l.vertex_index for l in pm.loops])
+        if pm.uv_layers.active is not None:
+            uv = np.empty(len(pm.loops) * 2); pm.uv_layers.active.data.foreach_get('uv', uv); uv = uv.reshape(-1, 2)
+        else:                                               # box mapping at a real-world scale
+            uv = np.zeros((len(pm.loops), 2))
+            for p in pm.polygons:
+                ax = int(np.argmax(np.abs(p.normal)))
+                keep = [a for a in range(3) if a != ax]
+                for l in p.loop_indices:
+                    uv[l] = P[pm.loops[l].vertex_index][keep] / TILE
+        col = list(o.data.materials[0].diffuse_color)[:3] if o.data.materials else [0.2, 0.2, 0.2]
+        ev.to_mesh_clear()
+        return P, W, np.array(tri_v), np.array(tri_l), uv, loop_v, col
+
+    import re
+    def material_of(o):                                     # bracer_l, bracer_r -> bracer; kneepad and shin guard -> guards
+        n = re.sub(r'_[lr]\d?$', '', o['outfit_piece'])
+        return {'kneepad': 'guards', 'shinguard': 'guards'}.get(n, n)
+    by_mat = {}
+    for o in PIECES:
+        by_mat.setdefault(material_of(o), []).append(o)
+
+    def export_group(name, objs):
+        Ps, Ws, TV, TL, UV, LV, col = [], [], [], [], [], [], None
+        nvert = nloop = 0
+        for o in objs:
+            P, W, tv, tl, uv, lv, c = piece_arrays(o)
+            Ps.append(P); Ws.append(W); TV.append(tv + nvert); TL.append(tl + nloop); UV.append(uv); LV.append(lv + nvert)
+            nvert += len(P); nloop += len(uv); col = col or c
+        P = np.vstack(Ps); W = np.vstack(Ws); tri_v = np.vstack(TV); tri_l = np.vstack(TL); uv = np.vstack(UV)
+        loop_v = np.concatenate(LV)
+        T = np.c_[P[:, 0], P[:, 2], -P[:, 1]] * 100; T[:, 1] -= meta.get('ground_cm', 0.0)
+        Pw = tps(T * fit.S)
+        n = smooth_normals(Pw, tri_v)
+        np.savez(os.path.join(RUN, f'{name}.npz'), co=Pw, tri_v=tri_v, tri_l=tri_l, uv=uv,
+                 loop_normal=n[loop_v], weights=W, groups=np.array(groups))
+        return {'name': name, 'colour_linear': col, 'verts': len(P), 'tris': len(tri_v), 'objects': [o.name for o in objs]}
+    outfit = [export_group(k, v) for k, v in by_mat.items()]
+
+info = {'body': part(body_f, 0.0, 'body'),
+        'braies': part(braies_f, OFFSET, 'braies', snap=(lo, hi)) if not PIECES else None, 'outfit': outfit,
         'groups': groups, 'braies_band_model_y': [lo, hi], 'hip_y': hip_y, 'tz': tz,
         'tps_max_move_cm': float(np.linalg.norm(dst - src, axis=1).max()),
         'unweighted_body_verts': int(((s <= 0) & body_v).sum())}

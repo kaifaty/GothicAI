@@ -115,8 +115,14 @@ def write_part(npz, matname, texname, size):
         'max_influences': max(len(w) for w in weights), 'rest_bbox': [model_pos.min(0).round(1).tolist(), model_pos.max(0).round(1).tolist()]}
 
 parts, report = [], []
-for npz, mat, tex, size in ((run / 'body.npz', 'OWN_HERO_BODY_MPFB', 'OWN_HERO_BODY_MPFB.TGA', 2048),
-                            (run / 'braies.npz', 'OWN_HERO_BRAIES', 'OWN_HERO_BRAIES.TGA', 64)):
+OUTFIT = json.load(open(run / 'export.json')).get('outfit') or []   # outfit_build.py pieces instead of the braies
+plan = [(run / 'body.npz', 'OWN_HERO_BODY_MPFB', 'OWN_HERO_BODY_MPFB.TGA', 2048)]
+if OUTFIT:
+    plan += [(run / f'{p["name"]}.npz', f'OWN_HERO_{p["name"].upper()}', f'OWN_HERO_{p["name"].upper()}.TGA', 64)
+             for p in OUTFIT]
+else:
+    plan += [(run / 'braies.npz', 'OWN_HERO_BRAIES', 'OWN_HERO_BRAIES.TGA', 64)]
+for npz, mat, tex, size in plan:
     p, r = write_part(npz, mat, tex, size); parts.append(p); report.append(r)
 record = {'format': 'gothic-model', 'version': 1, 'kind': 'mesh', 'buffer': MESH + '.bin', 'byte_length': len(bin_),
           'attachment_order': [], 'data': {'meshes': parts, 'attachments': []}}
@@ -273,13 +279,20 @@ if (run / 'normal.npy').exists():
     ao = 1 - AO_STRENGTH * (1 - ao)         # a soft AO: the engine has its own ambient occlusion on top
     ao, _ = pad_islands(np.repeat(ao[..., None], 3, 2), run / 'body.npz'); ao = ao[..., 0]
     body_n = nrm; body_orm = np.stack([ao, np.full_like(ao, 0.55), np.zeros_like(ao)], 2)
-for name, alb, nmap, orm in (('own-hero-body-mpfb', skin, body_n, body_orm),
-                             ('own-hero-braies', flat(to_srgb(to_lin(np.array([0x7d, 0x70, 0x5e]) / 255))), flat([0.0, 0.0, 1.0]), flat([1.0, 0.9, 0.0]))):
+maps = [('own-hero-body-mpfb', skin, body_n, body_orm)]
+if OUTFIT:                                  # flat colours until the pieces get their texture pass
+    maps += [(f'own-hero-{p["name"]}', flat(to_srgb(np.array(p['colour_linear']))), flat([0.0, 0.0, 1.0]),
+              flat([1.0, 0.85, 0.0])) for p in OUTFIT]
+else:
+    maps += [('own-hero-braies', flat(to_srgb(to_lin(np.array([0x7d, 0x70, 0x5e]) / 255))), flat([0.0, 0.0, 1.0]), flat([1.0, 0.9, 0.0]))]
+for name, alb, nmap, orm in maps:
     d = root / 'materials' / name; d.mkdir(parents=True, exist_ok=True)
     mod.write_dds(d / 'albedo.dds', np.clip(alb, 0, 1))
     mod.write_dds(d / 'normal.dds', nmap, normal=True)
     mod.write_dds(d / 'orm.dds', np.clip(orm, 0, 1))
-mats['OWN_HERO_BODY_MPFB.TGA'] = 'own-hero-body-mpfb'; mats['OWN_HERO_BRAIES.TGA'] = 'own-hero-braies'
+mats['OWN_HERO_BODY_MPFB.TGA'] = 'own-hero-body-mpfb'
+for p in OUTFIT: mats[f'OWN_HERO_{p["name"].upper()}.TGA'] = f'own-hero-{p["name"]}'
+if not OUTFIT: mats['OWN_HERO_BRAIES.TGA'] = 'own-hero-braies'
 (root / 'materials' / 'materials.json').write_text(json.dumps({t: {
     'albedo': f'{d}/albedo.dds', 'normal': f'{d}/normal.dds', 'orm': f'{d}/orm.dds',
     'scale': 1.0, 'antitile': 'off', 'antitile_cell': 1.0} for t, d in mats.items()}, indent=2) + '\n')
