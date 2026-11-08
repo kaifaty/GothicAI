@@ -17,6 +17,7 @@
 #include "graphics/mesh/ikmath.h"
 #include "frameprofile.h"
 #include "worldchunksruntime.h"
+#include "utils/workers.h"
 
 #include <algorithm>
 #include <array>
@@ -711,9 +712,7 @@ void MdlVisual::quiverPoints(const Matrix4x4* bones, size_t n, std::vector<Quive
 static double threadCpuUs(bool on) {
   if(!on)
     return 0;
-  timespec ts = {};
-  clock_gettime(CLOCK_THREAD_CPUTIME_ID,&ts);
-  return double(ts.tv_sec)*1e6 + double(ts.tv_nsec)*1e-3;
+  return Workers::threadCpuUs();
   }
 
 bool MdlVisual::updateQuiver(const Npc& npc, uint64_t dt) {
@@ -2351,7 +2350,7 @@ std::array<char,32> gestureName(uint16_t id) {
 
 void MdlVisual::setupGestures() {
   // how long each gesture plays; an alias of one before it (Gothic II: 11 is 01) is left out
-  const uint16_t count = Gothic::inst().version().dialogGestureCount();
+  const uint16_t count = 11;
   std::vector<uint32_t>                   time(count);
   std::vector<const Animation::AnimData*> seen;
   for(uint16_t i=0; i<count; ++i) {
@@ -2361,7 +2360,7 @@ void MdlVisual::setupGestures() {
     seen.push_back(sq->data.get());
     time[i] = uint32_t(sq->totalTime());
     }
-  gestures.setGestures(std::move(time),Gothic::inst().version().game==2);
+  gestures.setGestures(std::move(time));
   }
 
 bool MdlVisual::startAnimDialog(Npc &npc) {
@@ -2377,7 +2376,7 @@ bool MdlVisual::startAnimDialog(Npc &npc) {
   if(npc.bodyStateMasked()!=BS_STAND)
     return true;
 
-  const uint16_t count = Gothic::inst().version().dialogGestureCount();
+  const uint16_t count = 11;
   const int      id    = std::rand()%count + 1;
 
   const Animation::Sequence *sq   = solver.solveFrm(gestureName(uint16_t(id)).data());
@@ -2557,7 +2556,7 @@ void MdlVisual::stopDlgAnim(Npc& npc) {
   mouth.stop();
   gestures.stop();
   gestureSeq = nullptr;
-  const uint16_t count = Gothic::inst().version().dialogGestureCount();
+  const uint16_t count = 11;
   for(uint16_t i=0; i<count; i++)
     skInst->stopAnim(gestureName(uint16_t(i+1)).data());
 

@@ -28,15 +28,20 @@ class Ragdoll;
 class Cloth;
 struct MeleeBladeSegment;
 struct MeleeBodyCapsule;
+struct MeleeShadowBody;
 struct MeleeBladeContact;
 namespace daedalus { struct INpc; }
-namespace JPH { class PhysicsSystem; }
+namespace JPH { class PhysicsSystem; class GroupFilter; }
 
 class CollisionWorld final {
   public:
     CollisionWorld();
     ~CollisionWorld();
     CollisionWorld(const CollisionWorld&) = delete;
+
+    // Contact slop of broken pieces (C_Fragment), metres; everything else keeps Jolt's 2 cm.
+    // At 2 cm resting 1.9 cm cut boards sat their whole thickness deep and left through one-sided terrain.
+    static constexpr float fragmentPenetrationSlop = .005f;
 
     static float         toMeters(float v);
     static JPH::Vec3     toMeters(const Tempest::Vec3& v);
@@ -59,6 +64,7 @@ class CollisionWorld final {
         void                getAabb(JPH::Vec3& min, JPH::Vec3& max) const;
         Tempest::Vec3       lowestPoint() const; // actual convex envelope, world centimetres
         float               mass() const; // kilograms; zero for non-dynamic bodies
+        float               friction() const;
         bool                isMovable() const; // native dynamic or kinematic, including doors/lifts
         Tempest::Vec3        velocity() const; // centimetres/second
         Tempest::Vec3        angularVelocity() const; // world radians/second
@@ -76,6 +82,9 @@ class CollisionWorld final {
         // Zero uses physical density; a target above one makes the body sink.
         void                setBuoyancyFraction(float fraction);
         void                setNoiseProfile(ItemMaterial material, asset::MaterialGroup surface, std::string_view what);
+        // A format 3 piece: one break shares `group` and its `filter` for life (fractureGroupFilter);
+        // every hull of a compound piece keeps its own ground contacts (no manifold reduction).
+        void                setFracturePiece(const JPH::GroupFilter* filter, uint32_t group, uint32_t piece);
         // The latest engine-known cause survives the short noise attribution
         // window and NPC destruction, until a new impulse replaces it.
         void                setTraceCulprit(Npc* culprit);
@@ -184,7 +193,15 @@ class CollisionWorld final {
     void measureMeleeBench(std::string path);
     void reportMeleeBench();
     void updateShadowBody(Npc* owner, const std::vector<MeleeBodyCapsule>& capsules);
+    // Publishes a body bounded by boundShadowBody. An owner keeps its slot until
+    // removeShadowBody; casts see the bodies in the order they were first published.
+    // slotHint: the owner's slot from its last publication, checked before use.
+    void updateShadowBody(Npc* owner, const MeleeShadowBody& body, size_t* slotHint = nullptr);
+    static void boundShadowBody(MeleeShadowBody& body);
     void removeShadowBody(const Npc* owner);
+    bool shadowBody(const Npc* owner, MeleeShadowBody& out) const;
+    // Every published body in cast order (tests).
+    std::vector<std::pair<const Npc*,MeleeShadowBody>> shadowBodies() const;
     // Pose time and the half-open active window use absolute game milliseconds.
     // forward: the attacker's facing; a wall met by a blade going back or up (the wind-up,
     // the follow-through) does not stop the swing. Zero: every wall stops it.
@@ -303,6 +320,8 @@ class CollisionWorld final {
     // placeholder bodies never enter the broadphase. Jolt orders contacts and
     // active bodies by BodyID, so later bodies must receive the same IDs.
     void cycleBodyIds(size_t count);
+    // A fresh native collision group for the pieces of one format 3 break.
+    uint32_t newFractureGroup();
     // SHA-256 over every native body: ID (index and sequence), motion type,
     // layer, sensor, activity and full shape geometry (SaveWithChildren, shared
     // shapes once); pose, bounds and velocities too, except for animated
@@ -368,6 +387,7 @@ class CollisionWorld final {
     JPH::PhysicsSystem& physicsSystem();
     friend class ClothContractDriver;
     uint32_t registerRagdoll(Ragdoll& body);
+
     void unregisterRagdoll(Ragdoll& body);
     std::vector<uint32_t> ragdollBirthGuardGroups(const Ragdoll& body) const;
     std::unique_ptr<Impl> impl;
@@ -375,6 +395,8 @@ class CollisionWorld final {
     std::vector<DynamicBody*> rigid;
     std::vector<Ragdoll*> ragdolls;
     uint32_t nextRagdollGroup = 1;
+    // Disjoint from ragdoll groups: a ragdoll's filter table drops equal IDs with another filter.
+    uint32_t nextFractureGroup = 0x80000000u;
     std::function<void(Item&, asset::MaterialGroup, float, float)> hitItem;
     std::function<void(const PhysicsNoise&)> physicsNoise;
     std::function<void(CollisionBody&,float,const Tempest::Vec3&,std::string_view)> bodyImpact;

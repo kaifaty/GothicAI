@@ -251,3 +251,31 @@ async def test_voxtral_checks_health_at_the_configured_address(tmp_path):
     [request] = requests
     assert request.method == "GET"
     assert str(request.url) == "http://gpu:47830/health"
+
+
+def test_linux_finds_gothic_in_steam_flatpak_and_a_second_library(tmp_path, monkeypatch):
+    monkeypatch.setattr(checks.sys, "platform", "linux")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+
+    def gothic(steam: Path, name: str = "Gothic II") -> Path:
+        folder = steam / "steamapps" / "common" / name
+        (folder / "Data").mkdir(parents=True)
+        return folder
+
+    native = tmp_path / ".local/share/Steam"
+    found_native = gothic(native)
+    (tmp_path / ".steam").mkdir()
+    (tmp_path / ".steam/steam").symlink_to(native)  # Steam's own link: the same game, found once
+    flatpak = tmp_path / ".var/app/com.valvesoftware.Steam/.local/share/Steam"
+    found_flatpak = gothic(flatpak, "Gothic 2 Gold")
+    library = tmp_path / "disk/SteamLibrary"
+    found_library = gothic(library, "Gothic II Gold")
+    (flatpak / "steamapps/libraryfolders.vdf").write_text(
+        f'"libraryfolders"\n{{\n\t"1"\n\t{{\n\t\t"path"\t\t"{library}"\n\t}}\n}}\n', encoding="utf-8"
+    )
+
+    found = checks.find_games()
+
+    assert sorted(p.resolve() for p in found) == sorted(
+        p.resolve() for p in (found_native, found_flatpak, found_library)
+    )

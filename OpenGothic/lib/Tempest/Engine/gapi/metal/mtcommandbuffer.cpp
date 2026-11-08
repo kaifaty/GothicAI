@@ -11,6 +11,7 @@
 #include "mtswapchain.h"
 #include "mtaccelerationstructure.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 
@@ -18,10 +19,15 @@
 #include "frameprofile.h"
 
 // OPENGOTHIC_GPU_SKIP="SSAO,Fog-LUTs": draws and dispatches under these debug markers are dropped,
-// so the GPU time a pass costs shows up in the frame profile (docs/performance.md); the picture breaks
+// so the GPU time a pass costs shows up in the frame profile (docs/performance.md); the picture breaks.
+// Spaces do not count: "ShadowMap#1" names the marker "ShadowMap #1".
+static std::string noSpaces(std::string s) {
+  s.erase(std::remove(s.begin(),s.end(),' '),s.end());
+  return s;
+  }
 static bool skipPass(const std::string& label) {
-  static const std::string skip = [] { auto v = std::getenv("OPENGOTHIC_GPU_SKIP"); return v!=nullptr ? ","+std::string(v)+"," : std::string(); }();
-  return !skip.empty() && !label.empty() && skip.find(","+label+",")!=std::string::npos;
+  static const std::string skip = [] { auto v = std::getenv("OPENGOTHIC_GPU_SKIP"); return v!=nullptr ? ","+noSpaces(v)+"," : std::string(); }();
+  return !skip.empty() && !label.empty() && skip.find(","+noSpaces(label)+",")!=std::string::npos;
   }
 #define T_SKIP_PASS() if(skipPass(activeLabel)) return
 #define T_PROFILE_DRAW() profileCommand(false)

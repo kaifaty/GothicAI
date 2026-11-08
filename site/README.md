@@ -9,8 +9,8 @@ cd site
 bun install
 bun run dev                                    # http://localhost:47860/ (the preview "site" in .claude/launch.json)
 bun run new first-quest --title "The first quest" --title-ru "Первый квест"
-bun run frame ../.shorts/xardas-lie/take-02/main.mp4 content/posts/<post>/cover.jpg --at 41 --width 540
-bun run clip ../.shorts/xardas-wrath/take-09/short-ru.mp4 static/hero/wrath-ru.mp4 --start 33.6 --length 20
+bun run frame /path/to/takes/xardas-lie/take-02/main.mp4 content/posts/<post>/cover.jpg --at 41 --width 540
+bun run clip /path/to/takes/xardas-wrath/take-09/short-ru.mp4 static/hero/wrath-ru.mp4 --start 33.6 --length 20
 bun run generate                               # .output/public/ for /GothicAI/ (what the workflow publishes)
 bun run preview                                # serves .output/public under its base path, compressed, at :47861
 bun run test                                   # generates the site, then checks the files (vitest)
@@ -47,7 +47,7 @@ bun run test                                   # generates the site, then checks
   the post are linked by their name: `![Frames of the short](sheet-en.jpg)`.
 - `content/pages/<slug>/en.md` and `ru.md`: pages outside the devlog at `/<slug>/`, linked from every
   footer, with `title` and `summary` only. `privacy` is the privacy policy that the Google Cloud project of
-  the YouTube uploader points to (`shorts/README.md`): change it when the uploader asks for more.
+  the YouTube uploader points to (the private `kaifaty/gothic-shorts` repository): change it when the uploader asks for more.
 
 ## Media
 
@@ -119,4 +119,4 @@ are a product look the brand avoids, so ours replace them. Every value is a toke
 ## Publishing
 
 Once: Settings → Pages → Source: GitHub Actions. Then a push to `main` that touches `site/` publishes it.
-The page shows real takes: no edited answers, and say when pauses were cut (`shorts/README.md`).
+The page shows real takes: no edited answers, and say when pauses were cut (the private `kaifaty/gothic-shorts` repository).

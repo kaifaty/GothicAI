@@ -439,8 +439,8 @@ void irregularSupport() {
 void moverChildSave() {
   const auto* game=std::getenv("GOTHIC_DIR");
   require(game!=nullptr && *game!='\0',"GOTHIC_DIR must point to prepared Gothic II settings");
-  const char* args[]={"gothic-placed-items-contract","-g",game,"-g2"};
-  CommandLine commandLine(4,args);
+  const char* args[]={"gothic-placed-items-contract","-g",game};
+  CommandLine commandLine(3,args);
   Resources resources;
   Gothic gothic;
   gothic.isNpcInDialogFn=[](const Npc*) { return false; };

@@ -74,9 +74,7 @@ void Shaders::setupOptions() {
   opts.doRtScene        = gpu.raytracing.rayQuery && CommandLine::inst().isRayQuery();
   opts.doRayQuery       = opts.doRtScene && opts.doBindless;
   opts.doMeshShading    = gpu.meshlets.meshShader && CommandLine::inst().isMeshShading();
-  opts.doSoftwareShadow = Shaders::isRtsmSupported() && CommandLine::inst().isSoftwareShadow();
   opts.doVirtualShadow  = Shaders::isVsmSupported()  && CommandLine::inst().isVirtualShadow();
-  opts.doSoftwareRT     = false;
   opts.doMaterialMaps   = Resources::materialMapsEnabled();
   }
 
@@ -108,6 +106,7 @@ void Shaders::compileShaders() noexcept {
 
   ssao                = computeShader("ssao.comp.sprv");
   ssaoBlur            = computeShader("ssao_blur.comp.sprv");
+  ssaoDepth           = computeShader("ssao_depth.comp.sprv");
 
   bloodDecal       = bloodDecalShader(opts.doMaterialMaps);
   bloodDecalAlbedo = bloodDecalShader(false);
@@ -131,6 +130,7 @@ void Shaders::compileShaders() noexcept {
   fogViewLut3d       = computeShader("fog_view_lut.comp.sprv");
   fogViewLutSep      = computeShader("fog_view_lut_sep.comp.sprv");
   fogOcclusion       = computeShader("fog3d.comp.sprv");
+  fogOcclusionEmpty  = computeShader("fog3d_empty.comp.sprv");
 
   skyExposure        = computeShader("sky_exposure.comp.sprv");
   sky                = postEffect("sky");
@@ -237,10 +237,16 @@ void Shaders::compileShaders() noexcept {
   cmaa2EdgeColor2x2Presets[uint32_t(AaPreset::ULTRA)]  = computeShader("cmaa2_edges_color2x2_quality_1.comp.sprv");
 
   cmaa2ProcessCandidates = computeShader("cmaa2_process_candidates.comp.sprv");
+#if defined(__APPLE__)
+  // the Mac is always Metal: half colours, -14% of the pass; Vulkan would need shaderFloat16
+  taaResolve             = postEffect("triangle", "taa_resolve_h", RenderState::ZTestMode::Always);
+#else
   taaResolve             = postEffect("triangle", "taa_resolve", RenderState::ZTestMode::Always);
+#endif
   taaSharpen             = postEffect("triangle", "taa_sharpen", RenderState::ZTestMode::Always);
   motionCamera           = postEffect("triangle",    "motion_camera",     RenderState::ZTestMode::Always);
   tonemappingBloom       = postEffect("triangle_uv", "tonemapping_bloom", RenderState::ZTestMode::Always);
+  tonemappingTaa         = postEffect("triangle_uv", "tonemapping_taa",   RenderState::ZTestMode::Always);
   {
     auto sh = GothicShader::get("cmaa2_deferred_color_apply_2x2.vert.sprv");
     auto vs = device.shader(sh.data,sh.len);
@@ -382,59 +388,6 @@ void Shaders::compileShaders() noexcept {
     vsmRendering       = computeShader("vsm_rendering.comp.sprv");
     }
 
-  if(Shaders::isRtsmSupported()) {
-    rtsmDirectLight = postEffect("rtsm_direct_light", RenderState::ZTestMode::NoEqual);
-
-    rtsmClear       = computeShader("rtsm_clear.comp.sprv");
-    rtsmPages       = computeShader("rtsm_mark_pages.comp.sprv");
-    rtsmFogPages    = computeShader("rtsm_mark_fog_pages.comp.sprv");
-    rtsmHiZ         = computeShader("rtsm_hiz_pages.comp.sprv");
-
-    rtsmCulling     = computeShader("rtsm_culling.comp.sprv");
-    rtsmPosition    = computeShader("rtsm_position.comp.sprv");
-    rtsmMeshletCull = computeShader("rtsm_meshlet_cull.comp.sprv");
-    rtsmPrimCull    = computeShader("rtsm_primitive_cull.comp.sprv");
-    rtsmRaster      = computeShader("rtsm_raster.comp.sprv");
-
-    rtsmClearOmni    = computeShader("rtsm_omni_clear.comp.sprv");
-    rtsmCullLights   = computeShader("rtsm_cull_lights.comp.sprv");
-    rtsmCompactLights = computeShader("rtsm_compact_lights.comp.sprv");
-    rtsmLightsOmni   = computeShader("rtsm_omni_lights.comp.sprv");
-    rtsmBboxesOmni   = computeShader("rtsm_omni_bboxes.comp.sprv");
-    rtsmCullingOmni  = computeShader("rtsm_omni_culling.comp.sprv");
-    rtsmPositionOmni = computeShader("rtsm_omni_position.comp.sprv");
-
-    rtsmMeshletOmni  = computeShader("rtsm_omni_meshlet.comp.sprv");
-    rtsmBackfaceOmni = computeShader("rtsm_omni_backface.comp.sprv");
-    rtsmCompactOmni  = computeShader("rtsm_omni_compact.comp.sprv");
-    rtsmTaskOmni     = computeShader("rtsm_omni_task.comp.sprv");
-    rtsmPrimOmni     = computeShader("rtsm_omni_primitive.comp.sprv");
-    rtsmRasterOmni   = computeShader("rtsm_omni_raster.comp.sprv");
-
-    rtsmRendering    = computeShader("rtsm_rendering.comp.sprv");
-    rtsmRenderingOmni= computeShader("rtsm_omni_rendering.comp.sprv");
-    rtsmDbg          = postEffect("rtsm_dbg", RenderState::ZTestMode::Always);
-    }
-
-  swRaytracing    = computeShader("sw_raytracing.comp.sprv");
-  swRaytracing8   = computeShader("sw_raytracing8.comp.sprv");
-  swRaytracing64  = computeShader("sw_raytracing64.comp.sprv");
-
-  if(options().swRenderingPreset>0) {
-    switch(options().swRenderingPreset) {
-      case 1:
-        swRendering = computeShader("sw_rendering_imm.comp.sprv");
-        break;
-      case 2:
-        swRendering = computeShader("sw_rendering_tbr.comp.sprv");
-        break;
-      case 3:
-        swRendering = computeShader("sw_light.comp.sprv");
-        break;
-      }
-    swRenderingDbg = postEffect("vbuffer_blit", RenderState::ZTestMode::Always);
-    }
-
   {
     RenderState state;
     state.setCullFaceMode(RenderState::CullMode::Front);
@@ -455,19 +408,6 @@ bool Shaders::isVsmSupported() {
     return true;
     }
   return false;
-  }
-
-bool Shaders::isRtsmSupported() {
-  if(!Shaders::options().doBindless) {
-    return false;
-    }
-  auto& gpu = Resources::device().properties();
-  if(!gpu.hasStorageFormat(TextureFormat::RG32U) || !gpu.hasStorageFormat(TextureFormat::R11G11B10UF))
-    return false;
-  if(gpu.compute.maxInvocations<512 || gpu.compute.maxSharedMemory<32*1024 || !gpu.descriptors.nonUniformIndexing) {
-    return false;
-    }
-  return true;
   }
 
 bool Shaders::isLightsTreeSupported() {

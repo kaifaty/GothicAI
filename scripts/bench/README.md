@@ -4,6 +4,18 @@
 
 Bench families are extracted into `common/testbench_<family>.cpp`, with shared state types and helpers in `testbench_internal.h`.
 The dispatcher, tick and reset remain in `testbench.cpp` for now.
+Healing observations, commands and checks live in `common/testbench_healing.cpp`; its `Healing` state
+in `testbench_internal.h` keeps the current use separate from walk-speed references retained across `begin`.
+Family functions take that state by reference; the dispatcher also passes the melee-shadow actors.
+
+Water and corpse-water fixtures, observations and helpers live in `common/testbench_water.cpp`.
+Their `Water` state and `WaterContext` references to shared bench fields are in `testbench_internal.h`;
+`waterFilm*` stays in `testbench.cpp` and uses the same shared water helpers.
+
+Hero and human NPC CharacterVirtual fixtures, observations and helpers live in `common/testbench_character.cpp`.
+Their `Character` state and `CharacterContext` references are in `testbench_internal.h`;
+shared movement samples (`CharacterMoveFrame`) and walkers (`LivingWalker`) are declared there too.
+The independent `ownMeshChest*` and `monsterCharacter*` families stay in `testbench.cpp`.
 
 Runs a scenario through the windowed game or the headless runner and records metrics and a report.
 Windowed scenarios can also capture video with a debug overlay and point at suspicious frames.
@@ -42,6 +54,7 @@ overrides the dev-ubuntu SSH alias (default `dev-ubuntu`); dispatch uses
 execution (`auto` falls back, an explicit remote host exits with code 2).
 `NO_BUILD=1` only skips a local build; remote hosts always check the engine source hash.
 
+A line `# @timeout <seconds>` in the scenario sets its `TIMEOUT` default (an explicit `TIMEOUT` wins).
 A line `# @headless` in the scenario selects `gothic-body-runner --game-parity --mode lockstep`,
 without a window, GPU or sound. `BENCH_HEADLESS=1` selects this path for any scenario;
 `BENCH_HEADLESS=0` selects the window even for a marked scenario. `KEEP=1` with the headless path
@@ -208,7 +221,7 @@ The complete column set is:
 | `palette_calls`, `identical_calls`, `patch_calls`, `patch_blocks` | Counts |
 | `palette_bytes`, `identical_bytes`, `patch_bytes`, `grow_bytes`, `upload_execution_bytes` | Bytes |
 | `draw_calls`, `dispatch_calls` | Encoded draw and compute dispatch counts; dispatch counting currently covers Metal |
-| `gpu_ns`, `gpu_done`, `gpu_buffers` | Sum of Metal command buffer `GPUEndTime-GPUStartTime` in nanoseconds; 1 only when all submitted buffers have valid timing; submitted buffer count |
+| `gpu_ns`, `gpu_done`, `gpu_buffers` | Sum of the attempt's command buffer GPU time in nanoseconds (Metal `GPUEndTime-GPUStartTime`, Vulkan a timestamp pair per buffer); 1 only when all submitted buffers have valid timing; submitted buffer count |
 
 The complete `<zone>` list (each produces all four columns above):
 `tick`, `finish_step`, `camera`, `observations`, `bench`, `fence_poll`, `recycle`, `ui`,
@@ -217,7 +230,24 @@ The complete `<zone>` list (each produces all four columns above):
 `pose_elapsed_sum`, `palette_elapsed_sum`, `storage_join`, `storage_commit`, `storage_pack`,
 `storage_dispatch`, `storage_grow`, `storage_upload_execution_elapsed`, `bodynet`, `cloth`, `water`,
 `destruction`, `ai_bridge`, `sound`, `npc_full_tick`, `npc_simplified_tick`, `npc_logic_shadow`, `encode_shadows`, `encode_main`,
-`encode_water`, `encode_post`, `encode_ui`.
+`encode_water`, `encode_post`, `encode_ui`, `animation_npc_pass`, `melee_shadow`, `melee_contacts`,
+`interactive_animation`, `logical_body_sync`, `pfx_prepare`, `upload_wait`, `rt_scene`.
+
+`animation_npc_pass`, `melee_shadow`, `melee_contacts`, `interactive_animation` and `logical_body_sync`
+split `parallel_animation`: the worker pass over NPCs (with the posing of their melee shadow bodies), then
+the serial loops after it (publishing those bodies and the blades, the blade flush with contact resolution,
+interactive objects, the logical-body sync). `melee_shadow` poses a body itself only for an NPC the worker
+pass skipped or whose bones moved since (a script, a sync on read).
+`pfx_prepare` is `PfxObjects::preFrameUpdate` inside the frame encode. `upload_wait` is the CPU wait of a
+synchronous buffer upload on Metal (`MtBuffer::update` of a device-memory buffer): inside a frame it lasts
+until the GPU finishes what was committed before, so a nonzero value there is a stall.
+`rt_scene` is `WorldView::updateRtScene` (only with `-rt 1`): the walk over the visual objects, the landscape
+BLAS and TLAS builds and the descriptor arrays when the scene is rebuilt, a texture refresh otherwise. Every
+`RtScene::buildTlas` of a frame-profile build also logs one line,
+`render: rt scene instances=<N> blas=<N> triangles=<N> tlas_bytes=<N> blas_bytes=<N> build_ms=<ms>`:
+TLAS instances, unique BLAS among them, triangles summed over the instances (index ranges / 3),
+the TLAS storage, the sum over the unique BLAS storage and the CPU time of `buildTlas`. The bytes are the
+Vulkan acceleration-structure sizes (`accelerationStructureSize`); Metal keeps none and writes `-1`.
 
 `npc_full_tick` and `npc_simplified_tick` split the `Npc::tick` loop inside `world_logic` by NPC simulation
 tier (`common/world/npcsimtier.h`); their calls count runs of consecutive same-tier NPCs, not NPCs. The
@@ -250,7 +280,12 @@ Metal captures the exact attempt record at command submission and updates atomic
 buffer's completed handler, including presentation, uploads/readback and acceleration-structure builds
 submitted during the attempt. Slot reuse cannot redirect a late completion to a later attempt.
 There are no added waits. Missing/failed/incomplete timing gives `gpu_done=0,gpu_ns=0`;
-`gpu_buffers` still counts captured Metal submissions. Vulkan and other backends currently write three zeros.
+`gpu_buffers` still counts captured submissions.
+Vulkan (frame-profile build) writes a timestamp query at the start and at the end of each command buffer
+(`BOTTOM_OF_PIPE`, so the start waits for the queue's earlier work) and reads them, without waiting, when the
+buffer's fence is seen signalled, like the pipeline statistics of `triangles`. Ticks become nanoseconds by
+`timestampPeriod`; a graphics queue with `timestampValidBits=0` gives `gpu_done=0`. Buffers submitted
+outside `VDevice::submit` (uploads, acceleration-structure builds of the data manager) are not counted.
 Pending completions at CSV flush are left incomplete. This is diagnostic timing, not a performance stand.
 
 On Metal, `OPENGOTHIC_GPU_PASSES=1` additionally samples native encoder stage boundaries and writes
@@ -259,6 +294,15 @@ GPU/vertex/fragment nanoseconds, draw/dispatch counts and validity. Passes shari
 joined; intervals may overlap and must not be summed into total GPU time. Unsupported or invalid
 samples have `valid=0`. Detailed counters have measurable overhead: leave them off for the GPU
 acceptance runs, then enable them separately when a pass breakdown is needed.
+
+On Vulkan, `OPENGOTHIC_GPU_PASSES=1` writes the same `.gpu.csv` columns with one row per
+`setDebugMarker` region (from the marker to the next marker or the buffer's end): `labels` is the marker,
+`type` is `render` when the region issued draws and `compute` otherwise, `vertex_ns`/`fragment_ns` are 0.
+Each region is a pair of `BOTTOM_OF_PIPE` timestamps, so a row runs from the end of the earlier work to the
+end of its own: work running without a barrier overlaps, rows must not be added into `gpu_ns`.
+Up to 255 regions per command buffer are timed, later ones get `valid=0`. Without the variable no region
+queries are written. `scripts/perf_report.py run` sums a label's valid rows per frame into `gpu_passes`
+(`{"frames", "mean_ms", "p95_ms"}` per label) and a table in `report.md`; no `.gpu.csv`, no key.
 
 ### План и журнал
 
@@ -326,6 +370,39 @@ with before/after screenshots and a checkpoint of the pieces each. Run it with
 `OPENGOTHIC_CONTENT= OPENGOTHIC_FRACTURE=~/.local/share/gothic-ai/fracture`. Each
 `destruction2_melee_complete` event gives hits and pieces, `destruction_checkpoint` the
 `max_displacement_cm` of every piece: how far the prop fell apart.
+`own-wood-fracture-clip` is the acceptance take of the same pair for the
+[wood fracture](../../reports/content/2026-11-wood-fracture/README.md#клип-было--стало-и-ограждения):
+per prop a close `<prop>-close-before|after.png` pair, a take `<prop>-side.mp4` from the blow
+until the pieces sleep (the hero strikes towards +z; both cameras stand at an angle on the struck
++x/-z side, the close one 2.9 m off, the take 3.8 m) and
+`destruction2 view <camera xyz> <target xyz>` places the held camera in centimetres from the centre
+of the prop. The lunge leaves the hero inside the prop, so after the take `destruction2 stand` puts
+him back where he stood before the blow (`destruction2_stand` gives the distance) and the close
+"pieces" frame shows the breach. The scenario declares `# @timeout 600`. Each break writes `destruction2_pieces` 0.5, 1, 2, 5, 13 and 15 s after it: per piece
+the centre's travel, the angle of a flat piece's face and long axis from vertical, sleep, speed and
+`fell` (centre below the floor), its `bond_group`, and per break the bond groups (`groups`,
+`largest_group_volume_fraction`, `single_pieces`) and their bodies now present, asleep and through the
+ground (`bodies`, `bodies_sleeping`, `bodies_fell`: pieces of one group share one body; without
+bonds a group is a piece); at 15 s the native hull penetration into a floor plane, into the
+real ground (`native_floor_penetration_cm`, Jolt `CollideShape` against landscape and static objects)
+and into the other pieces (format 3 METAL–WOOD pairs of one break and pieces of one bond group are
+skipped: they never collide),
+the visible (vertex) penetration below that plane and below the ground under each vertex
+(`visible_terrain_penetration_cm`), hoops on the ground (`metal_on_ground`) and the 13→15 s jitter. Every break also
+writes `destruction2_start` (each piece's centre over the ground and native hull depth at birth) and,
+frame by frame for 5 s, `destruction2_fell` for the first frame a piece's centre is under the ground or
+over no ground, with its previous frame; a fallen piece's row adds the static surface above and under
+it and water at it. `destruction_sleep15` and `destruction_checkpoint` give each piece its
+`center_cm`, `in_water` (water at most 50 cm under the centre of mass) and `under_ground` (a static
+surface within 20 m above). `destruction_fragment_retired` logs each sleeping piece that
+`cleanupFragments` removes (`expired` or `distant`, over 30 m from the hero).
+A bond group retires whole, one event per piece. `destruction_compare.py` does not count such a piece as
+lost; a piece missing without one fails, and so does a bond group that is only partly present. Its
+15 s sleep gate counts bodies (`bond_group`; without it, pieces) and requires every body on land asleep; a piece in water passes when it is not under
+the ground, and the result line reports whether it sleeps at the final checkpoint. Run with the
+`own-content-fracture` settings plus `TEMPEST_WINDOW_SIZE=1280x720`; `OPENGOTHIC_FRACTURE_MOTION`
+varies the version 3 piece motion, `OPENGOTHIC_FRACTURE_BONDS` the bond rule. Inside a `movable measure` window the pieces are not sampled: the
+timed frames stay free of bench work.
 
 Corpse water: `water-bodies` records a real harbour WindFist throw, a dead wolf and a
 sinking skeleton, then saves `session-water-bodies.sav` and tries normal corpse loot
@@ -380,8 +457,8 @@ uses `OPENGOTHIC_STUCK_LOG`, and can resume a measured series. `summarize` write
 coverage/walk tables and two top-down PNGs using only the Python standard library.
 
 A line `off: <command>` or `on: <command>` runs in that take only: `OPENGOTHIC_BENCH_TAKE=off|on`, set by
-`shorts/compare/film.sh` (without it the take is `on`). `OPENGOTHIC_MANUALAIM=0|1` and `OPENGOTHIC_NPCAIM=0|1`
-set the hero's and the npc archers' manual aim over Gothic.ini.
+`compare/film.sh` in gothic-shorts (without it the take is `on`). `OPENGOTHIC_NPCAIM=0|1`
+sets the NPC archers' manual aim over Gothic.ini.
 
 Scenarios for foot IK: `ik-sweep` (12 slopes all over the world: run up, run down, walk across; ~2 min),
 `ik-stairs` (8 stairs: walk up and down, run up), `ik-moves` (stand, turn on the spot, strafe, walk
@@ -648,7 +725,6 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `strike <victim\|player> [attacker\|player]` | the attacker's blow lands as the game deals it (the stumble, the damage, the flinch); the victim gets its hit points back below a third |
 | `clear [radius]` | the npcs around the hero (2500 cm) leave the world, not the watched one: rats, wolves that would join in |
 | `aim on\|off` | the upper body turning to the target with a bow, a crossbow, a spell; leaning over an edge (and the focus seeing from there) |
-| `manual on\|off` | the manual aim (`game/archery`, `GAME/manualAim` in Gothic.ini, on by default; `aim.bench` turns it off to test the game's aim): the hero aims a bow by hand, no dice: the arrow hits where it flies (bones), the sway comes from the skill, strength, dexterity |
 | `bowdraw on\|off` | the hand draws the string as far as the bow is drawn by hand (`graphics/mesh/bowdraw`): the bow held as an archer holds it (up in the hand, the arrow on the hand at the bow's middle, the string drawn straight back: the `S_DRAWN` morph), the nock straight along the arrow as far as the arm reaches, the string with it; the hand follows through after the shot; in the reload the upper body holds the aim and the hand goes round the head to the quiver and back to the string. `bow-draw.bench` films it close by. CSV `bd_w bd_draw bd_span bd_travel bd_miss bd_follow bd_fit bd_offset bd_angle` (the string against the arrow), `hd_hand hd_fore hd_arrow` (cm from the head's capsule, < 0 in it), `bd_hold bd_nock` (the reload: held; 0..1 to the quiver, 1..2 to the string), `rh_x rh_y rh_z` (the drawing hand in the body's frame), `bd_held bd_overgrip bd_atmiddle bd_nockgap bd_square bd_cant bd_bowmove bd_bowmiss` (the archer's pose, `docs/manual-aim.md`: held so 0..1, cm the arrow is over the grip and over the bow's middle, cm from the nock to the string, degrees between the arrow and the limbs, degrees the bow leans, cm the bow hand raises the bow and does not reach; `bd_nockgap` -1: no arrow nocked) |
 | `bowgeom` | the bow and the bow hand of the hero in the arrow's frame (x along it from its slot, y up, z to the side), cm: the bow's box, the grip, the string's middle at rest and drawn by `S_READY` and `S_DRAWN`, the bow hand's bones, the head |
 | `animspeed <anim> <k>` | the hero's animation of that name plays k times as fast from its next start (`Pose::setAnimSpeed`: a layer keeps its speed, the next one starts at 1). The manual aim sets `T_BOWRELOAD` from dexterity (`stats` prints it: `reload x`); this overrides it until dexterity changes. The hero's animation events go to bench.log (`anim event <type> <item> <slot>`, `anim morph <anim> <slot>`): at any tempo each once, in the same order |
@@ -721,7 +797,7 @@ game when it is done (`KEEP=1` keeps it open). Anything not listed is passed to 
 | `ledges [min drop] [max drop] [count] [steep]` | waypoints at an edge with open ground that much lower 1.5..14 m away, seen from there (a target below): the yaw to `face`, the distance, the drop, the angle down; nearest first or the steepest |
 | `say <text>`, `quit` | |
 
-Talking, for shorts (`shorts/`; needs the AI server, see `shorts/README.md`):
+Talking (needs the AI server; the video tool lives in the private `kaifaty/gothic-shorts` repository):
 
 | Command | |
 |---|---|
@@ -1467,7 +1543,9 @@ The native placed-Item contract also moves the mover-child Item before saving
 and checks its identity and exact matrix on reload. Linux builds and all four
 physics contracts pass after explicit signed Guild comparisons in the fixture.
 
-`OpenGothic/common/testbench.cpp`, inert unless `OPENGOTHIC_BENCH` is set. Hooks: the fixed time step and
+`OpenGothic/common/testbench.cpp` and `testbench_<family>.cpp` (including healing in
+`testbench_healing.cpp`, water / corpse-water in `testbench_water.cpp` and hero / human NPC
+CharacterVirtual in `testbench_character.cpp`), inert unless `OPENGOTHIC_BENCH` is set. Hooks: the fixed time step and
 the capture in `MainWindow` (in film mode the captured frame replaces the window's), the AI bridge's lines
 and voices (`TestBench::aiLine`, `aiVoiceEnd`, `aiHeard`, `aiBusy`), an npc's lines of the game and SVMs
 (`TestBench::npcOutput` in `Npc::nextAiAction`), the OpenAL loopback device in Tempest's

@@ -17,6 +17,7 @@
 #include "shaders.h"
 #include "world/chunkresidency.h"
 #include "loadprobe.h"
+#include "frameprofile.h"
 #include "utils/workers.h"
 
 using namespace Tempest;
@@ -606,7 +607,10 @@ void WorldView::preFrameUpdate(const Camera& camera, uint64_t tickCount, uint8_t
   sGlobal.setTime(tickCount);
   sGlobal.commitUbo(fId);
 
+  {
+  FrameProfile::Scope pfx(FrameProfile::Zone::PfxPrepare);
   pfxGroup.preFrameUpdate(fId);
+  }
   visuals .preFrameUpdate();
   }
 
@@ -787,16 +791,8 @@ const DrawClusters& WorldView::clusters() const {
   return visuals.clusters();
   }
 
-const DrawCommands& WorldView::drawCommands() const {
-  return visuals.drawCommands();
-  }
-
 const DrawBuckets& WorldView::drawBuckets() const {
   return visuals.drawBuckets();
-  }
-
-const Tempest::StorageBuffer& WorldView::instanceSsbo() const {
-  return visuals.instanceSsbo();
   }
 
 bool WorldView::updateLights(const gtime gameTime) {
@@ -810,6 +806,7 @@ bool WorldView::updateLights(const gtime gameTime) {
 bool WorldView::updateRtScene() {
   if(!Shaders::options().doRtScene)
     return false;
+  FrameProfile::Scope profile(FrameProfile::Zone::RtScene);
   if(visuals.updateRtScene(sGlobal.rtScene))
     return true;
   return sGlobal.rtScene.refreshTextures();

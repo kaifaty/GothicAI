@@ -21,6 +21,7 @@ layout(binding  = 1, std140) uniform UboScene {
 layout(binding  = 2) uniform sampler2D  gbufDiffuse;
 layout(binding  = 3) uniform usampler2D gbufNormal;
 layout(binding  = 4) uniform sampler2D  depthBuf;
+layout(binding  = 5) uniform sampler2D  depthHalf; // ssao_depth.comp, the depth at this pass's size
 
 const uint  numSamples     = 32;
 const uint  numIter        = 8;
@@ -57,7 +58,8 @@ uint pyramidId(vec3 direction) {
 uint  hits   = 0;
 uint  anySmp = 0;
 // Per-thread cells in shared memory: a dynamically indexed private array spills to the stack on Apple GPUs.
-shared float hitV[gridQSize][gl_WorkGroupSize.x*gl_WorkGroupSize.y];
+// Two cells of half precision per word: the size of this array decides how many groups fit a core.
+shared uint hitV[(gridQSize+1)/2][gl_WorkGroupSize.x*gl_WorkGroupSize.y];
 
 void addHit(vec3 dir, float v) {
   uint uv = pyramidId(dir);
@@ -65,11 +67,16 @@ void addHit(vec3 dir, float v) {
   hits   = hits   | (1u << uv);
   anySmp = anySmp | (1u << uv);
 
-  float value   = hitV[uv][gl_LocalInvocationIndex];
-  occlusionAll -= value;
-  occlusionAll += max(value,v);
+  vec2  pair = unpackHalf2x16(hitV[uv>>1][gl_LocalInvocationIndex]);
+  float cell = (uv&1u)==0u ? pair.x : pair.y;
+  float next = max(cell, unpackHalf2x16(packHalf2x16(vec2(v))).x);
 
-  hitV[uv][gl_LocalInvocationIndex] = max(value, v);
+  occlusionAll += next - cell;
+
+  if((uv&1u)==0u)
+    pair.x = next; else
+    pair.y = next;
+  hitV[uv>>1][gl_LocalInvocationIndex] = packHalf2x16(pair);
   }
 
 void addMis(vec3 dir) {
@@ -130,6 +137,13 @@ float readZ(in vec2 posf) {
   return textureLod(depthBuf, posf.xy*0.5+vec2(0.5), 0).r;
   }
 
+// The depth under a sample. The samples scatter over the screen, and on the full depth buffer the trace waited on
+// cache misses; the copy at this pass's size is a quarter as large. Coarser levels for far samples gained nothing
+// over it, their per-sample math cost what the smaller reads saved (docs/performance.md, 2026-11-08).
+float readSampleZ(in vec2 posf) {
+  return textureLod(depthHalf, posf.xy*0.5+vec2(0.5), 0).r;
+  }
+
 float sampleRadius(uint i, uint maxSmp) {
   return 0.5+float(i)/float(maxSmp);
   }
@@ -147,7 +161,7 @@ void calcOcclussion(const vec3 at0, const vec3 pos0, const float f0, uint seed, 
       continue;
       }
 
-    float z      = readZ(at1.xy);
+    float z      = readSampleZ(at1.xy);
     bool  isHit  = floor(z*32768.0+0.5) < floor(at1.z*32768.0);
     float distQ  = 1;
 
@@ -205,7 +219,7 @@ vec3 reconstructNormal(const vec3 at0, in vec2 uv){
   }
 
 void main() {
-  for(int i=0; i<gridQSize; ++i)
+  for(int i=0; i<(gridQSize+1)/2; ++i)
     hitV[i][gl_LocalInvocationIndex] = 0;
 
   shMaxSteps = 0;

@@ -56,7 +56,7 @@ Keep these when updating a library from upstream.
 - `Tempest/Engine/system/api/macosapi.mm`: `TEMPEST_BACKGROUND=1` starts the app without taking the
   focus and without a Dock icon (used by the test bench, `scripts/bench.sh`).
 - `Tempest/Engine/system/api/macosapi.mm`: `TEMPEST_WINDOW_SIZE=<w>x<h>` sets the size of a window created
-  by show mode (points; shorts are filmed in a 9:16 window, `shorts/`).
+  by show mode (points; shorts are filmed in a 9:16 window, `gothic-shorts`).
 - `Tempest/Engine/system/api/x11api.{h,cpp}`: the same `TEMPEST_WINDOW_SIZE` on X11, in pixels, with the size
   fixed by WM hints; with it a minimized window gets that size instead of the whole screen (the test bench
   on Ryzen).

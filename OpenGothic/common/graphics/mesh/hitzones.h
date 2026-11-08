@@ -25,6 +25,8 @@ class HitZones final {
 
     void             setSkeleton(const Skeleton* sk);
     bool             isValid() const { return !caps.empty(); }
+    // Changes with every setSkeleton and fit: equal revisions mean the same zones.
+    uint64_t         revision() const { return rev; }
     // the thickness from the body's shape: points by bone in the bone's frame (a skinned mesh), and the
     // points of a mesh on a bone (a head); nothing: the guess
     struct Shape final {
@@ -88,6 +90,7 @@ class HitZones final {
     std::vector<Point>   shape; // fitted to, for the coverage
     const Skeleton*      skeleton = nullptr;
     float                size     = 0; // cm: the creature from end to end (the bind pose)
+    uint64_t             rev      = 0;
 
     static Tempest::Vec3 point(const Tempest::Matrix4x4* tr, const End& e);
     friend class Ragdoll;

@@ -73,4 +73,4 @@ youtube = "TgeheWkXcwI"
 [`damagecalculator.cpp`](https://github.com/kaifaty/GothicAI/blob/main/OpenGothic/common/game/damagecalculator.cpp),
 толчок — в [`meleeimpact.cpp`](https://github.com/kaifaty/GothicAI/blob/main/OpenGothic/common/game/meleeimpact.cpp).
 Шортс снят на [тестовом стенде](https://github.com/kaifaty/GothicAI/tree/main/scripts/bench) и нарисован
-с помощью [`shorts/explain`](https://github.com/kaifaty/GothicAI/tree/main/shorts/explain).
+с помощью [`shorts/explain`](https://github.com/kaifaty/GothicAI/tree/0061fde837235378936b735d9669f20bfeef56f8/shorts/explain).

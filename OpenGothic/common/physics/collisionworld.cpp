@@ -1,4 +1,5 @@
 #include "collisionworld.h"
+#include "collisionworld_internal.h"
 #include "physicvbo.h"
 #include "dynamicworld.h"
 #include "ragdoll.h"
@@ -28,7 +29,6 @@
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Body/BodyLock.h>
 #include <Jolt/Physics/Body/BodyFilter.h>
-#include <Jolt/Physics/Character/CharacterVirtual.h>
 #include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
 #include <Jolt/Physics/Collision/CollisionDispatch.h>
 #include <Jolt/Physics/Collision/ContactListener.h>
@@ -89,30 +89,6 @@ namespace {
     return bounds;
     }
 
-  CollisionWorld::NativeTriangle traceTriangle(const JPH::Body& body, JPH::SubShapeID subShape,
-                                                JPH::Vec3Arg normal) {
-    CollisionWorld::NativeTriangle result;
-    JPH::SubShapeID remainder;
-    const auto* leaf=body.GetShape()->GetLeafShape(subShape,remainder);
-    if(leaf==nullptr || (leaf->GetSubType()!=JPH::EShapeSubType::Mesh && leaf->GetSubType()!=JPH::EShapeSubType::Triangle))
-      return result;
-    const auto base=body.GetCenterOfMassPosition();
-    JPH::Shape::SupportingFace face;
-    body.GetTransformedShape().GetSupportingFace(subShape,normal,base,face);
-    if(face.size()!=3)
-      return result;
-    result.valid=true;
-    result.nativeSubShapeId=subShape.GetValue();
-    if(leaf->GetSubType()==JPH::EShapeSubType::Mesh)
-      result.sourceTriangle=Physics::triangleData(*body.GetShape(),subShape);
-    result.normal={normal.GetX(),normal.GetY(),normal.GetZ()};
-    for(JPH::uint i=0;i<3;++i) {
-      result.vertices[i]=CollisionWorld::toCentimeters(base+face[i]);
-      result.edgesCm[i]=(face[(i+1)%3]-face[i]).Length()*100.f;
-      }
-    return result;
-    }
-
   void submergedVolume(const JPH::Body& body, const JPH::Shape& shape, float waterY,
                        float& total, float& submerged, JPH::Vec3& center) {
     const auto relative=JPH::RVec3(0,waterY,0)-body.GetCenterOfMassPosition();
@@ -120,96 +96,6 @@ namespace {
     shape.GetSubmergedVolume(JPH::Mat44::sRotation(body.GetRotation()),JPH::Vec3::sOne(),
                              plane,total,submerged,center JPH_IF_DEBUG_RENDERER(,body.GetCenterOfMassPosition()));
     }
-
-  constexpr JPH::BroadPhaseLayer staticLayer(0);
-  constexpr JPH::BroadPhaseLayer dynamicLayer(1);
-  constexpr JPH::BroadPhaseLayer sensorLayer(2);
-
-  struct LayerInterface final : JPH::BroadPhaseLayerInterface {
-    JPH::uint GetNumBroadPhaseLayers() const override { return 3; }
-    JPH::BroadPhaseLayer GetBroadPhaseLayer(JPH::ObjectLayer layer) const override {
-      if(layer==DynamicWorld::C_Item || layer==DynamicWorld::C_Ragdoll || layer==DynamicWorld::C_LivingBody || layer==DynamicWorld::C_ActiveBody || layer==DynamicWorld::C_MovableVob || layer==DynamicWorld::C_Fragment)
-        return dynamicLayer;
-      if(layer==DynamicWorld::C_Water || layer==DynamicWorld::C_Ghost || layer==DynamicWorld::C_MovableQuery || layer==DynamicWorld::C_SmallVobQuery)
-        return sensorLayer;
-      if(layer==DynamicWorld::C_Cloth)
-        return dynamicLayer;
-      return staticLayer;
-      }
-#if defined(JPH_EXTERNAL_PROFILE) || defined(JPH_PROFILE_ENABLED)
-    const char* GetBroadPhaseLayerName(JPH::BroadPhaseLayer layer) const override {
-      return layer==staticLayer ? "World" : layer==dynamicLayer ? "Items" : "Sensors";
-      }
-#endif
-    };
-
-  struct LayerPairFilter final : JPH::ObjectLayerPairFilter {
-    bool ShouldCollide(JPH::ObjectLayer a, JPH::ObjectLayer b) const override {
-      if(a==DynamicWorld::C_Cloth || b==DynamicWorld::C_Cloth)
-        return false;
-      if(a==DynamicWorld::C_MovableQuery || a==DynamicWorld::C_SmallVobQuery ||
-         b==DynamicWorld::C_MovableQuery || b==DynamicWorld::C_SmallVobQuery)
-        return false;
-      if(a==DynamicWorld::C_ActiveBody)
-        return b==DynamicWorld::C_Landscape || b==DynamicWorld::C_Object || b==DynamicWorld::C_Item || b==DynamicWorld::C_Ragdoll || b==DynamicWorld::C_MovableVob;
-      if(b==DynamicWorld::C_ActiveBody)
-        return a==DynamicWorld::C_Landscape || a==DynamicWorld::C_Object || a==DynamicWorld::C_Item || a==DynamicWorld::C_Ragdoll || a==DynamicWorld::C_MovableVob;
-      if(a==DynamicWorld::C_LivingBody)
-        return b==DynamicWorld::C_Item || b==DynamicWorld::C_Ragdoll || b==DynamicWorld::C_MovableVob;
-      if(b==DynamicWorld::C_LivingBody)
-        return a==DynamicWorld::C_Item || a==DynamicWorld::C_Ragdoll || a==DynamicWorld::C_MovableVob;
-      return (a==DynamicWorld::C_Item || b==DynamicWorld::C_Item ||
-              a==DynamicWorld::C_Fragment || b==DynamicWorld::C_Fragment ||
-              a==DynamicWorld::C_Ragdoll || b==DynamicWorld::C_Ragdoll ||
-              a==DynamicWorld::C_MovableVob || b==DynamicWorld::C_MovableVob) &&
-             a!=DynamicWorld::C_Null && b!=DynamicWorld::C_Null;
-      }
-    };
-
-  struct BroadPhaseFilter final : JPH::ObjectVsBroadPhaseLayerFilter {
-    bool ShouldCollide(JPH::ObjectLayer layer, JPH::BroadPhaseLayer broad) const override {
-      if(layer==DynamicWorld::C_Cloth)
-        return false;
-      if(layer==DynamicWorld::C_LivingBody)
-        return broad==dynamicLayer;
-      if(layer==DynamicWorld::C_MovableQuery || layer==DynamicWorld::C_SmallVobQuery)
-        return false;
-      return layer==DynamicWorld::C_Item || layer==DynamicWorld::C_Ragdoll || layer==DynamicWorld::C_ActiveBody || layer==DynamicWorld::C_MovableVob || layer==DynamicWorld::C_Fragment ||
-             (layer!=DynamicWorld::C_Null && broad==dynamicLayer);
-      }
-    };
-
-  struct QueryLayerFilter final : JPH::ObjectLayerFilter {
-    explicit QueryLayerFilter(uint32_t mask):mask(mask) {}
-    bool ShouldCollide(JPH::ObjectLayer layer) const override {
-      // Cloth has only its attachment guard; it never contacts the world or
-      // becomes a solid target for gameplay rays, sweeps or character queries.
-      return layer!=DynamicWorld::C_Cloth && layer<32 && (mask & (1u<<layer))!=0;
-      }
-    const uint32_t mask;
-    };
-
-  struct QueryBroadPhaseFilter final : JPH::BroadPhaseLayerFilter {
-    explicit QueryBroadPhaseFilter(uint32_t mask):mask(mask) {}
-    bool ShouldCollide(JPH::BroadPhaseLayer layer) const override {
-      constexpr uint32_t itemMask = (1u<<DynamicWorld::C_Item)|(1u<<DynamicWorld::C_Ragdoll)|
-                                    (1u<<DynamicWorld::C_LivingBody)|(1u<<DynamicWorld::C_ActiveBody)|(1u<<DynamicWorld::C_MovableVob);
-      constexpr uint32_t sensorMask = (1u<<DynamicWorld::C_Water)|(1u<<DynamicWorld::C_Ghost)|
-                                      (1u<<DynamicWorld::C_MovableQuery)|(1u<<DynamicWorld::C_SmallVobQuery);
-      if(layer==dynamicLayer)
-        return (mask & itemMask)!=0;
-      if(layer==sensorLayer)
-        return (mask & sensorMask)!=0;
-      return layer==staticLayer && (mask & ~(itemMask|sensorMask))!=0;
-      }
-    const uint32_t mask;
-    };
-
-  // Use simulated hulls, including small props. The movable query meshes are
-  // duplicate sensor geometry used by the legacy controller and aiming only.
-  constexpr uint32_t characterMask = (1u<<DynamicWorld::C_Landscape)|(1u<<DynamicWorld::C_Object)|
-                                     (1u<<DynamicWorld::C_Item)|(1u<<DynamicWorld::C_MovableVob)|
-                                     (1u<<DynamicWorld::C_Ragdoll);
 
   float angularMotionDisc(const JPH::Shape& shape) {
     const auto bounds = shape.GetLocalBounds();
@@ -339,20 +225,6 @@ namespace {
     return result.Get();
     }
 
-  int workerCount() {
-    // OPENGOTHIC_PHYSICS_THREADS: Jolt's worker threads; 0 runs every physics job on the stepping
-    // thread. The headless body runner forks its loaded world and needs a single-threaded process.
-    if(const char* env = std::getenv("OPENGOTHIC_PHYSICS_THREADS"); env!=nullptr && *env!='\0')
-      return std::max(0,std::atoi(env));
-    unsigned int cores = std::max(1u,std::thread::hardware_concurrency());
-#ifdef __APPLE__
-    unsigned int performanceCores = 0;
-    size_t size = sizeof(performanceCores);
-    if(sysctlbyname("hw.perflevel0.physicalcpu",&performanceCores,&size,nullptr,0)==0 && performanceCores>0)
-      cores = performanceCores;
-#endif
-    return int(cores>2 ? cores-2 : 1);
-    }
   }
 
 void Physics::initialize() {
@@ -377,1145 +249,6 @@ uint32_t Physics::triangleData(const JPH::Shape& shape, JPH::SubShapeID subShape
   if(leaf!=nullptr && leaf->GetSubType()==JPH::EShapeSubType::Mesh)
     return static_cast<const JPH::MeshShape*>(leaf)->GetTriangleUserData(remainder);
   return 0;
-  }
-
-struct CollisionWorld::Impl final : JPH::ContactListener, JPH::PhysicsStepListener {
-  std::function<void(float)> waterStep;
-  std::function<void(float)> shadowStep;
-  bool waterSteps = false;
-  void OnStep(const JPH::PhysicsStepListenerContext& context) override {
-    if(waterSteps && waterStep) waterStep(context.mDeltaTime);
-    if(shadowStep) shadowStep(context.mDeltaTime);
-    }
-  struct NoiseImpact {
-    JPH::BodyID body,other;
-    Tempest::Vec3 point;
-    asset::MaterialGroup surface;
-    float impulse, structuralImpulse;
-    uint64_t step;
-    uint64_t logicalBody;
-    bool otherPushing;
-    };
-  struct Impact {
-    JPH::BodyID item;
-    asset::MaterialGroup material;
-    float impulse;
-    float mass;
-    uint64_t step;
-    uint32_t landscape;
-    uint32_t subShape;
-    };
-
-  Impl() : allocator(32*1024*1024), jobs(JPH::cMaxPhysicsJobs,JPH::cMaxPhysicsBarriers,workerCount()) {
-    system.Init(65536,0,65536,32768,layers,broadFilter,pairFilter);
-    system.SetGravity(JPH::Vec3(0,-DynamicWorld::gravityMS,0));
-    system.SetCombineFriction([](const JPH::Body& a, const JPH::SubShapeID&, const JPH::Body& b, const JPH::SubShapeID&) {
-      return std::clamp(a.GetFriction()*b.GetFriction(),-10.f,10.f);
-      });
-    auto settings = system.GetPhysicsSettings();
-    settings.mTimeBeforeSleep = 2.f;
-    settings.mPointVelocitySleepThreshold = 0.8f;
-    settings.mDeepestContactLayers = 1u<<DynamicWorld::C_Item;
-    system.SetPhysicsSettings(settings);
-    system.SetContactListener(this);
-    }
-
-  bool guardRagdollContact(const JPH::Body& a, const JPH::Body& b) {
-    if(birthGuards.empty()) return false;
-    const auto living=[](const JPH::Body& body) {
-      return body.GetObjectLayer()==DynamicWorld::C_LivingBody || body.GetObjectLayer()==DynamicWorld::C_ActiveBody;
-      };
-    const JPH::Body* ragdoll=nullptr;
-    const JPH::Body* rig=nullptr;
-    if(a.GetObjectLayer()==DynamicWorld::C_Ragdoll && living(b)) { ragdoll=&a;rig=&b; }
-    else if(b.GetObjectLayer()==DynamicWorld::C_Ragdoll && living(a)) { ragdoll=&b;rig=&a; }
-    else return false;
-    const auto group=ragdoll->GetCollisionGroup().GetGroupID();
-    const auto found=birthGuards.find(group);
-    if(found==birthGuards.end()) return false;
-    const auto& guard=found->second;
-    const auto livingGroup=rig->GetCollisionGroup().GetGroupID();
-    if(!guard.birth && std::find(guard.livingGroups.begin(),guard.livingGroups.end(),livingGroup)==guard.livingGroups.end())
-      return false;
-    std::lock_guard<std::mutex> lock(birthMutex);
-    birthTouches.emplace_back(group,livingGroup);
-    return true;
-    }
-
-  void finishRagdollBirthStep() {
-    if(birthGuards.empty()) return;
-    // Update has joined its workers. Only this thread changes the guard table;
-    // callbacks append touches under birthMutex, including cached sensor contacts.
-    std::sort(birthTouches.begin(),birthTouches.end());
-    birthTouches.erase(std::unique(birthTouches.begin(),birthTouches.end()),birthTouches.end());
-    for(const auto& touch:birthTouches) {
-      auto& guard=birthGuards.at(touch.first);
-      if(guard.birth) guard.livingGroups.push_back(touch.second);
-      }
-    for(auto it=birthGuards.begin();it!=birthGuards.end();) {
-      auto& guard=it->second;
-      guard.birth=false;
-      // Sleeping parts stop reporting contacts. Retain protection until at
-      // least one part is active and can confirm that the rig has separated.
-      if(!guard.body->isSleeping()) {
-        auto& groups=guard.livingGroups;
-        groups.erase(std::remove_if(groups.begin(),groups.end(),[&](uint32_t group) {
-          return !std::binary_search(birthTouches.begin(),birthTouches.end(),std::make_pair(it->first,group));
-          }),groups.end());
-        }
-      if(guard.livingGroups.empty()) it=birthGuards.erase(it); else ++it;
-      }
-    birthTouches.clear();
-    }
-
-  void onContact(const JPH::Body& a, const JPH::Body& b, const JPH::ContactManifold& manifold,
-                 JPH::ContactSettings& settings, bool persisted) {
-    if(guardRagdollContact(a,b)) {
-      settings.mIsSensor=true;
-      return;
-      }
-    if(emitBodyImpacts && !a.IsSensor() && !b.IsSensor()) {
-      const auto accepts=[](const JPH::Body& body) {
-        const auto layer=body.GetObjectLayer();
-        return layer==DynamicWorld::C_Landscape || layer==DynamicWorld::C_Object || layer==DynamicWorld::C_MovableVob;
-        };
-      const bool first=a.GetObjectLayer()==DynamicWorld::C_Ragdoll && accepts(b);
-      const bool second=b.GetObjectLayer()==DynamicWorld::C_Ragdoll && accepts(a);
-      if(first || second) {
-        float speed=0;
-        for(uint i=0;i<manifold.mRelativeContactPointsOn1.size();++i) {
-          const auto point=manifold.GetWorldSpaceContactPointOn1(i);
-          speed=std::max(speed,(a.GetPointVelocity(point)-b.GetPointVelocity(point)).Dot(manifold.mWorldSpaceNormal));
-          }
-        if(speed>0.f) {
-          std::lock_guard<std::mutex> guard(impactMutex);
-          bodyImpacts.push_back({first ? a.GetID() : b.GetID(),speed*.1f});
-          }
-        }
-      }
-    if(const auto* target=solverTraceTarget.load(std::memory_order_relaxed)) {
-      const auto traced=[&](const JPH::Body& body) {
-        if(body.GetObjectLayer()!=DynamicWorld::C_Item)return false;
-        const auto* wrapper=reinterpret_cast<const CollisionBody*>(body.GetUserData());
-        return wrapper!=nullptr && wrapper->ptrType()==DynamicWorld::P_Item && wrapper->payload()==target;
-      };
-      const bool first=traced(a),second=traced(b);
-      if(first || second) {
-        const auto& item=first?a:b;
-        const auto& other=first?b:a;
-        const auto subshape=first?manifold.mSubShapeID2:manifold.mSubShapeID1;
-        for(uint i=0;i<manifold.mRelativeContactPointsOn1.size();++i) {
-          ItemSolverContact entry;
-          entry.nativeStep=simulationStep;
-          entry.itemBodyId=item.GetID().GetIndexAndSequenceNumber();
-          entry.bodyId=other.GetID().GetIndexAndSequenceNumber();
-          entry.persisted=persisted;
-          auto& contact=entry.contact;
-          const auto layer=other.GetObjectLayer();
-          if(layer!=DynamicWorld::C_Ragdoll && layer!=DynamicWorld::C_ActiveBody && layer!=DynamicWorld::C_LivingBody)
-            contact.body=reinterpret_cast<CollisionBody*>(other.GetUserData());
-          contact.category=int(layer);
-          contact.depth=manifold.mPenetrationDepth*100.f;
-          const auto outward=first?manifold.mWorldSpaceNormal:-manifold.mWorldSpaceNormal;
-          contact.axis={outward.GetX(),outward.GetY(),outward.GetZ()};
-          const auto point=first?manifold.GetWorldSpaceContactPointOn1(i):manifold.GetWorldSpaceContactPointOn2(i);
-          const auto otherPoint=first?manifold.GetWorldSpaceContactPointOn2(i):manifold.GetWorldSpaceContactPointOn1(i);
-          contact.point1=toCentimeters(point);
-          contact.point2=toCentimeters(otherPoint);
-          contact.triangle=traceTriangle(other,subshape,other.GetWorldSpaceSurfaceNormal(subshape,otherPoint));
-          std::lock_guard<std::mutex> guard(impactMutex);
-          solverContacts.push_back(std::move(entry));
-        }
-      }
-    }
-    auto markNpcContact = [](const JPH::Body& movable, const JPH::Body& other) {
-      if(movable.GetObjectLayer()!=DynamicWorld::C_MovableVob ||
-         (other.GetObjectLayer()!=DynamicWorld::C_LivingBody && other.GetObjectLayer()!=DynamicWorld::C_ActiveBody))
-        return;
-      auto* body = reinterpret_cast<CollisionBody*>(movable.GetUserData());
-      if(body!=nullptr)
-        body->npcContact.store(true,std::memory_order_relaxed);
-      };
-    markNpcContact(a,b);
-    markNpcContact(b,a);
-    if(a.GetObjectLayer()==DynamicWorld::C_MovableVob && b.GetObjectLayer()==DynamicWorld::C_MovableVob) {
-      auto* first = reinterpret_cast<CollisionBody*>(a.GetUserData());
-      auto* second = reinterpret_cast<CollisionBody*>(b.GetUserData());
-      if(first!=nullptr && second!=nullptr && (first->touchedByNpc() || second->touchedByNpc())) {
-        first->npcContact.store(true,std::memory_order_relaxed);
-        second->npcContact.store(true,std::memory_order_relaxed);
-        }
-      }
-    // Movable traces need the same push attribution even when audible noise
-    // is disabled. Resolve identities after the native workers have finished.
-    if((emitNoise || a.GetObjectLayer()==DynamicWorld::C_MovableVob || b.GetObjectLayer()==DynamicWorld::C_MovableVob) &&
-       !manifold.mRelativeContactPointsOn1.empty() && !a.IsSensor() && !b.IsSensor()) {
-      auto source=[this](const JPH::Body& body) {
-        if(!emitNoise && body.GetObjectLayer()!=DynamicWorld::C_MovableVob) return false;
-        return body.IsDynamic() && (body.GetObjectLayer()==DynamicWorld::C_Item ||
-               body.GetObjectLayer()==DynamicWorld::C_MovableVob || body.GetObjectLayer()==DynamicWorld::C_Ragdoll ||
-               body.GetObjectLayer()==DynamicWorld::C_ActiveBody);
-        };
-      const bool first=source(a),second=source(b);
-      if(first || second) {
-        const auto point=manifold.GetWorldSpaceContactPointOn1(0);
-        const auto firstVelocity=a.GetPointVelocity(point),secondVelocity=b.GetPointVelocity(point);
-        const float speed=(firstVelocity-secondVelocity).Dot(manifold.mWorldSpaceNormal);
-        const bool firstNpc=b.GetObjectLayer()==DynamicWorld::C_LivingBody || b.GetObjectLayer()==DynamicWorld::C_ActiveBody ||
-                            b.GetObjectLayer()==DynamicWorld::C_Ragdoll;
-        const bool secondNpc=a.GetObjectLayer()==DynamicWorld::C_LivingBody || a.GetObjectLayer()==DynamicWorld::C_ActiveBody ||
-                             a.GetObjectLayer()==DynamicWorld::C_Ragdoll;
-        const bool firstPushed=first && firstNpc && secondVelocity.Dot(manifold.mWorldSpaceNormal)<-.05f;
-        const bool secondPushed=second && secondNpc && firstVelocity.Dot(manifold.mWorldSpaceNormal)>.05f;
-        // Resting contacts do not need the native impulse solver. Slow contact
-        // with an NPC rig still retains who pushed a body before its fall.
-        if(speed>=.9f || firstPushed || secondPushed) {
-          float impulse=0.f,structuralImpulse=0.f;
-          if(speed>=.9f) {
-            JPH::CollisionEstimationResult response;
-            JPH::EstimateCollisionResponse(a,b,manifold,response,settings.mCombinedFriction,settings.mCombinedRestitution);
-            for(float contact:response.mContactImpulse) impulse+=contact;
-            // A slightly tilted floor first contacts one corner. The native
-            // manifold response then spends part of its impulse on rotation;
-            // it is only a fraction of the whole impact before later corners
-            // arrive. Structural damage uses the incoming normal momentum of
-            // the collision pair, independent of how triangles split contacts.
-            // A static/kinematic support contributes no inverse mass; dynamic
-            // impactors contribute their finite mass through the reduced mass.
-            const float inverseMass=(a.IsDynamic() ? a.GetMotionProperties()->GetInverseMass() : 0.f)+
-                                    (b.IsDynamic() ? b.GetMotionProperties()->GetInverseMass() : 0.f);
-            if(inverseMass>0.f) structuralImpulse=speed/inverseMass;
-            }
-          auto surface=[](const JPH::Body& body,JPH::SubShapeID subShape) {
-            const auto layer=body.GetObjectLayer();
-            if(layer==DynamicWorld::C_Ragdoll || layer==DynamicWorld::C_LivingBody || layer==DynamicWorld::C_ActiveBody)
-              return asset::MaterialGroup::UNDEFINED;
-            auto* obj=reinterpret_cast<CollisionBody*>(body.GetUserData());
-            if(obj==nullptr) return asset::MaterialGroup::STONE;
-            if(obj->mesh!=nullptr)
-              return obj->mesh->materialId(Physics::triangleData(*body.GetShape(),subShape));
-            return obj->noiseSurface;
-            };
-          auto identity=[](const JPH::Body& body) -> uint64_t {
-            const auto layer=body.GetObjectLayer();
-            if(layer==DynamicWorld::C_Ragdoll || layer==DynamicWorld::C_ActiveBody)
-              return (uint64_t(1)<<63)|body.GetCollisionGroup().GetGroupID();
-            return body.GetID().GetIndexAndSequenceNumber();
-            };
-          std::lock_guard<std::mutex> guard(impactMutex);
-          if(first && (impulse>=.08f || firstPushed))
-            noises.push_back({a.GetID(),b.GetID(),toCentimeters(point),surface(b,manifold.mSubShapeID2),impulse,structuralImpulse,simulationStep,identity(a),
-                              firstPushed});
-          if(second && (impulse>=.08f || secondPushed))
-            noises.push_back({b.GetID(),a.GetID(),toCentimeters(point),surface(a,manifold.mSubShapeID1),impulse,structuralImpulse,simulationStep,identity(b),
-                              secondPushed});
-          }
-        }
-      }
-    if(!emitImpacts)
-      return;
-    const JPH::Body* item = nullptr;
-    const JPH::Body* land = nullptr;
-    JPH::SubShapeID landSubShape;
-    if(a.GetObjectLayer()==DynamicWorld::C_Item && b.GetObjectLayer()==DynamicWorld::C_Landscape) {
-      item = &a;
-      land = &b;
-      landSubShape = manifold.mSubShapeID2;
-      }
-    else if(b.GetObjectLayer()==DynamicWorld::C_Item && a.GetObjectLayer()==DynamicWorld::C_Landscape) {
-      item = &b;
-      land = &a;
-      landSubShape = manifold.mSubShapeID1;
-      }
-    if(item==nullptr || manifold.mRelativeContactPointsOn1.empty())
-      return;
-    auto* obj = reinterpret_cast<DynamicBody*>(item->GetUserData());
-    auto* terrain = reinterpret_cast<CollisionBody*>(land->GetUserData());
-    if(obj==nullptr || obj->pointer==nullptr || obj->pointerType!=DynamicWorld::P_Item)
-      return;
-    JPH::CollisionEstimationResult response;
-    JPH::EstimateCollisionResponse(a,b,manifold,response,settings.mCombinedFriction,settings.mCombinedRestitution);
-    if(response.mContactImpulse.empty())
-      return;
-    const float impulse = response.mContactImpulse[0];
-    if(impulse/obj->bodyMass<0.9f)
-      return;
-    auto material = asset::MaterialGroup::STONE;
-    if(terrain!=nullptr && terrain->mesh!=nullptr)
-      material = terrain->mesh->materialId(Physics::triangleData(*land->GetShape(),landSubShape));
-    std::lock_guard<std::mutex> guard(impactMutex);
-    impacts.push_back({item->GetID(),material,impulse,obj->bodyMass,simulationStep,land->GetID().GetIndexAndSequenceNumber(),landSubShape.GetValue()});
-    }
-
-  void OnContactAdded(const JPH::Body& a, const JPH::Body& b, const JPH::ContactManifold& manifold,
-                      JPH::ContactSettings& settings) override {
-    onContact(a,b,manifold,settings,false);
-    }
-  void OnContactPersisted(const JPH::Body& a, const JPH::Body& b, const JPH::ContactManifold& manifold,
-                          JPH::ContactSettings& settings) override {
-    onContact(a,b,manifold,settings,true);
-    }
-
-  LayerInterface layers;
-  BroadPhaseFilter broadFilter;
-  LayerPairFilter pairFilter;
-  JPH::PhysicsSystem system;
-  JPH::TempAllocatorImpl allocator;
-  JPH::JobSystemThreadPool jobs;
-  std::mutex impactMutex;
-  struct BirthGuard {
-    Ragdoll* body;
-    bool birth=true;
-    std::vector<uint32_t> livingGroups;
-    };
-  bool birthGuardEnabled=true;
-  std::unordered_map<uint32_t,BirthGuard> birthGuards;
-  std::mutex birthMutex;
-  std::vector<std::pair<uint32_t,uint32_t>> birthTouches;
-  std::atomic<const Item*> solverTraceTarget {nullptr};
-  std::vector<ItemSolverContact> solverContacts;
-  struct BodyImpact { JPH::BodyID body;float speed; };
-  std::vector<BodyImpact> bodyImpacts;
-  bool emitBodyImpacts=true;
-  std::vector<Impact> impacts;
-  std::vector<NoiseImpact> noises;
-  uint64_t simulationStep = 0;
-  bool emitImpacts = false;
-  bool noiseEnabled = true,emitNoise = false;
-  std::atomic<uint64_t> rayCount {0};
-  uint64_t lastRayCount = 0;
-  float stepMilliseconds = 0;
-  float characterMilliseconds = 0;
-  std::vector<VirtualCharacter*> virtualCharacters;
-  struct MeleeBlade {
-    const Npc* owner=nullptr;
-    JPH::BodyID body;
-    JPH::RefConst<JPH::CapsuleShape> shape;
-    JPH::RVec3 position=JPH::RVec3::sZero(),targetPosition=JPH::RVec3::sZero();
-    JPH::Quat rotation=JPH::Quat::sIdentity(),targetRotation=JPH::Quat::sIdentity();
-    };
-  std::vector<MeleeBlade> meleeBlades;
-  std::mutex meleeMutex;
-  struct ShadowBody {
-    Npc* owner = nullptr;
-    std::vector<MeleeBodyCapsule> capsules;
-    JPH::AABox bounds;
-    };
-  struct ShadowBlade {
-    const Npc* owner = nullptr;
-    uint64_t swing = 0;
-    bool blocked = false, groundRecorded = false;
-    float walkableCos = .7f;
-    double poseTimeMs = 0, targetTimeMs = 0, activeBeginMs = 0, activeEndMs = 0;
-    Tempest::Vec3 forward;
-    MeleeImpact::Weapon weapon=MeleeImpact::Weapon::OneHand;
-    std::vector<MeleeBladeSegment> pose, target;
-    std::vector<Npc*> hit;
-    std::vector<JPH::BodyID> hitItems;
-    std::vector<MeleeBladeContact> contacts;
-    };
-  std::vector<ShadowBody> shadowBodies;
-  std::vector<ShadowBlade> shadowBlades;
-  std::mutex shadowMutex;
-  std::atomic<bool> hasShadowBlades{false};
-  int meleeSubsteps=0;
-  struct MeleeSample {
-    uint64_t step=0;
-    float milliseconds=0,solveMs=0,castMs=0;
-    size_t updates=0,casts=0,bodyHits=0,worldHits=0,parts=0,blades=0,floorSamples=0,floorMisses=0;
-    float linear=0,angular=0,poseRms=0,poseMax=0,footDrop=0,footPenetration=0;
-    bool finite=true;
-    };
-  MeleeSample meleeSample;
-  std::vector<MeleeSample> meleeSamples;
-  struct MeleeStep { uint64_t step;float milliseconds,castMs;int substeps; };
-  std::vector<MeleeStep> meleeSteps;
-  std::string meleeOutput;
-  float meleeDiagnosticMs=0;
-  };
-
-struct CollisionWorld::VirtualCharacter::Impl final : JPH::CharacterContactListener {
-  explicit Impl(CollisionWorld& world):world(world) {}
-
-  static bool isPushable(const JPH::Body& body) {
-    const auto layer = body.GetObjectLayer();
-    return body.IsDynamic() && (layer==DynamicWorld::C_Item || layer==DynamicWorld::C_MovableVob);
-    }
-
-  static bool blocksAutomaticStairs(const JPH::Body& body) {
-    if(isPushable(body))
-      return true;
-    // C_Object bodies are CollisionBody wrappers, unlike native ragdoll parts.
-    // Interactive furniture/containers are not architectural treads. Doors
-    // retain their blocking/perception path and ladders use explicit climbing.
-    if(body.GetObjectLayer()!=DynamicWorld::C_Object)
-      return false;
-    const auto* source = reinterpret_cast<const CollisionBody*>(body.GetUserData());
-    return source!=nullptr && source->ptrType()==DynamicWorld::P_Interactive;
-    }
-
-  bool rejectsSupport(const JPH::Body& body, const JPH::CharacterContact& contact) const {
-    if(!isPushable(body) || contact.mIsSensorB)
-      return false;
-    const auto up = character->GetUp();
-    const float mass = 1.f/body.GetMotionProperties()->GetInverseMass();
-    if(carrying && body.GetID()==ground && mass>=10.f)
-      return false; // This top was accepted before the supporting body advanced.
-    const float contactHeight = JPH::Vec3(contact.mPosition-character->GetPosition()).Dot(up);
-    return mass<10.f ? contact.mSurfaceNormal.Dot(up)>1.e-3f :
-                      contact.mSurfaceNormal.Dot(up)>.99f && contactHeight>.02f;
-    }
-
-  JPH::Vec3 finiteGroundNormal(const char* phase) {
-    const auto normal=character->GetGroundNormal();
-    const float x=normal.GetX(),y=normal.GetY(),z=normal.GetZ();
-    const bool finite=std::isfinite(x) && std::isfinite(y) && std::isfinite(z);
-    const double squared=double(x)*x+double(y)*y+double(z)*z;
-    if(finite && squared>1.e-12) {
-      lastGroundNormal=normal;
-      return normal; // Keep every valid native normal bit-for-bit, without normalization.
-    }
-    ++groundNormalFallbacks;
-    // A zero normal while airborne is Jolt's ordinary no-contact sentinel. Log
-    // anomalous support only; all fallback reads still count in diagnostics.
-    if(!finite || character->IsSupported()) {
-      const auto position=toCentimeters(JPH::Vec3(character->GetPosition()));
-      std::fprintf(stderr,"CV_GROUND_NORMAL_FALLBACK phase=%s count=%llu tick_ms=%llu body=%u subshape=%u state=%u "
-                          "position_cm=(%.9g,%.9g,%.9g) raw=(%.9g,%.9g,%.9g) fallback=(%.9g,%.9g,%.9g) contacts=%zu\n",
-                   phase,static_cast<unsigned long long>(groundNormalFallbacks),
-                   static_cast<unsigned long long>(culprit!=nullptr?culprit->world().tickCount():0),
-                   character->GetGroundBodyID().GetIndexAndSequenceNumber(),character->GetGroundSubShapeID().GetValue(),
-                   unsigned(character->GetGroundState()),double(position.x),double(position.y),double(position.z),
-                   double(x),double(y),double(z),double(lastGroundNormal.GetX()),double(lastGroundNormal.GetY()),
-                   double(lastGroundNormal.GetZ()),static_cast<size_t>(character->GetActiveContacts().size()));
-    }
-    return lastGroundNormal;
-    }
-
-  JPH::Vec3 initialIdleGravity(JPH::Vec3Arg gravity) {
-    // A tangent pose can have tiny negative distances from floating-point
-    // contact calculations. Anything beyond one percent of the solver's
-    // collision tolerance still needs the ordinary initial recovery solve.
-    const float numericalPenetration = .01f*character->GetCharacterVirtualSettings().mCollisionTolerance;
-    for(const auto& contact:character->GetActiveContacts())
-      if(!contact.mWasDiscarded && !contact.mIsSensorB && contact.mDistance < -numericalPenetration)
-        return gravity;
-
-    const auto groundNormal=finiteGroundNormal("initial_idle");
-    const auto id = character->GetGroundBodyID();
-    JPH::BodyLockRead lock(world.impl->system.GetBodyLockInterface(),id);
-    if(!lock.SucceededAndIsInBroadPhase() || !lock.GetBody().IsStatic())
-      return gravity;
-    const auto& body = lock.GetBody();
-    const auto subShape = character->GetGroundSubShapeID();
-    JPH::SubShapeID remainder;
-    const auto* leaf = body.GetShape()->GetLeafShape(subShape,remainder);
-    if(leaf==nullptr || (leaf->GetSubType()!=JPH::EShapeSubType::Mesh && leaf->GetSubType()!=JPH::EShapeSubType::Box))
-      return gravity;
-    // Keep the full subshape ID here: compound and decorated shapes must
-    // resolve their leaf's face in the body's world transform.
-    const auto face = body.GetWorldSpaceSurfaceNormal(subShape,character->GetGroundPosition());
-    constexpr float cosTwoDegrees = .999390827f;
-    if(character->IsSlopeTooSteep(face) || face.Dot(groundNormal)<cosTwoDegrees)
-      return gravity;
-    for(const auto& contact:character->GetActiveContacts()) {
-      if(contact.mBodyB!=id || contact.mSubShapeIDB!=subShape || !contact.mHadCollision ||
-         contact.mWasDiscarded || contact.mIsSensorB)
-        continue;
-      // A rounded toe on a tread edge is not an already acquired plane.
-      if(face.Dot(contact.mContactNormal)>=cosTwoDegrees && face.Dot(contact.mSurfaceNormal)>=cosTwoDegrees)
-        return face*gravity.Dot(face);
-      }
-    return gravity;
-    }
-
-  CharacterVirtualDiagnostics::Body diagnosticBody(JPH::BodyID id, JPH::RVec3Arg point) const {
-    CharacterVirtualDiagnostics::Body result;
-    result.id = id.GetIndexAndSequenceNumber();
-    if(id.IsInvalid())
-      return result;
-    JPH::BodyLockRead lock(world.impl->system.GetBodyLockInterface(),id);
-    if(!lock.SucceededAndIsInBroadPhase())
-      return result;
-    const auto& body = lock.GetBody();
-    result.present = true;
-    result.layer = body.GetObjectLayer();
-    result.motionType = int(body.GetMotionType());
-    result.nativeUserData = uintptr_t(body.GetUserData());
-    result.mass = body.IsDynamic() ? 1.f/body.GetMotionProperties()->GetInverseMass() : 0.f;
-    result.position = toCentimeters(JPH::Vec3(body.GetPosition()));
-    result.linearVelocity = toCentimeters(body.GetLinearVelocity());
-    const auto angular = body.GetAngularVelocity();
-    result.angularVelocity = Tempest::Vec3(angular.GetX(),angular.GetY(),angular.GetZ());
-    result.pointVelocity = toCentimeters(body.GetPointVelocity(point));
-    // Ragdoll / living-body user data is not owned by CollisionBody. Resolve
-    // metadata through this world's actual wrappers rather than casting it.
-    const auto sourceIt = std::find_if(world.bodies.begin(),world.bodies.end(),
-                                      [id](const auto* candidate) { return candidate->id==id; });
-    if(sourceIt!=world.bodies.end()) {
-      const auto* source = *sourceIt;
-      result.pointerType = source->ptrType();
-      result.payload = source->payload();
-      result.label = source->label();
-      }
-    return result;
-    }
-
-  CharacterVirtualDiagnostics::Pose diagnosticPose() {
-    CharacterVirtualDiagnostics::Pose result;
-    result.position = toCentimeters(JPH::Vec3(character->GetPosition()));
-    result.velocity = toCentimeters(character->GetLinearVelocity());
-    result.groundPosition = toCentimeters(JPH::Vec3(character->GetGroundPosition()));
-    const auto normal = finiteGroundNormal("diagnostic");
-    result.groundNormal = Tempest::Vec3(normal.GetX(),normal.GetY(),normal.GetZ());
-    result.groundVelocity = toCentimeters(character->GetGroundVelocity());
-    result.ground = diagnosticBody(character->GetGroundBodyID(),character->GetGroundPosition());
-    result.groundSubShape = character->GetGroundSubShapeID().GetValue();
-    result.groundUserData = uintptr_t(character->GetGroundUserData());
-    result.groundState = uint8_t(character->GetGroundState());
-    const auto inverse = JPH::RMat44::sInverseRotationTranslation(character->GetRotation(),character->GetPosition());
-    result.contacts.reserve(character->GetActiveContacts().size());
-    for(const auto& contact:character->GetActiveContacts()) {
-      CharacterVirtualDiagnostics::Contact out;
-      out.body = diagnosticBody(contact.mBodyB,contact.mPosition);
-      out.subShape = contact.mSubShapeIDB.GetValue();
-      out.contactUserData = uintptr_t(contact.mUserData);
-      out.position = toCentimeters(JPH::Vec3(contact.mPosition));
-      out.contactNormal = Tempest::Vec3(contact.mContactNormal.GetX(),contact.mContactNormal.GetY(),contact.mContactNormal.GetZ());
-      out.surfaceNormal = Tempest::Vec3(contact.mSurfaceNormal.GetX(),contact.mSurfaceNormal.GetY(),contact.mSurfaceNormal.GetZ());
-      out.pointVelocity = toCentimeters(contact.mLinearVelocity);
-      out.distance = contact.mDistance*100.f;
-      const float supportingDistance = character->GetSupportingVolume().SignedDistance(JPH::Vec3(inverse*contact.mPosition));
-      out.supportingVolumeDistance = supportingDistance*100.f;
-      out.hadCollision = contact.mHadCollision;
-      out.discarded = contact.mWasDiscarded;
-      out.sensor = contact.mIsSensorB;
-      out.canPushCharacter = contact.mCanPushCharacter;
-      out.withinSupportingVolume = supportingDistance<=0.f;
-      out.walkableSlope = !character->IsSlopeTooSteep(contact.mSurfaceNormal);
-      out.supportAllowedByPolicy = true;
-      if(out.body.present) {
-        JPH::BodyLockRead lock(world.impl->system.GetBodyLockInterface(),contact.mBodyB);
-        if(lock.SucceededAndIsInBroadPhase())
-          out.supportAllowedByPolicy = !rejectsSupport(lock.GetBody(),contact);
-        }
-      out.supportEligible = out.hadCollision && !out.discarded && !out.sensor &&
-                            out.withinSupportingVolume && out.walkableSlope && out.supportAllowedByPolicy;
-      result.contacts.push_back(std::move(out));
-      }
-    return result;
-    }
-
-  bool OnContactValidate(const JPH::CharacterVirtual*, const JPH::CharacterContact& contact) override {
-    bool rejectSupport = false;
-    {
-      JPH::BodyLockRead lock(world.impl->system.GetBodyLockInterface(),contact.mBodyB);
-      if(!lock.SucceededAndIsInBroadPhase() || !isPushable(lock.GetBody()) || contact.mIsSensorB)
-        return true;
-      // Loose utensils never become a floor. A heavy body's top may support a
-      // character placed on it, but walking into it must not acquire that top
-      // as a new step. Keep the side contacts, which still stop and push it.
-      rejectSupport = rejectsSupport(lock.GetBody(),contact);
-      }
-    if(!rejectSupport)
-      return true;
-
-    // Rejecting a support in Jolt also removes its solver impulse. Retain the
-    // real contact point and horizontal push, within the same per-move budget.
-    // The capsule's rounded toe must slide through a mug rather than climb it.
-    // Sweeps also validate distant future contacts, so only push a point that
-    // is already touching the current capsule (including its padding).
-    auto local = JPH::Vec3(contact.mPosition-character->GetPosition());
-    auto closest = character->GetUp()*std::clamp(local.Dot(character->GetUp()),radius,height-radius);
-    if((local-closest).Length()<=radius+character->GetCharacterPadding()+.001f) {
-      auto horizontal = contact.mContactNormal-contact.mContactNormal.Dot(character->GetUp())*character->GetUp();
-      if(horizontal.IsNearZero()) {
-        const auto velocity = character->GetLinearVelocity();
-        horizontal = -(velocity-velocity.Dot(character->GetUp())*character->GetUp());
-        }
-      if(!horizontal.IsNearZero()) {
-        auto pushContact = contact;
-        pushContact.mContactNormal = horizontal.Normalized();
-        pushContact.mDistance = std::max(contact.mDistance,0.f);
-        pushContact.mHadCollision = true;
-        JPH::CharacterContactSettings settings;
-        onContact(pushContact,settings);
-        }
-      }
-    return false;
-    }
-
-  void OnContactSolve(const JPH::CharacterVirtual*, const JPH::BodyID& bodyID, const JPH::SubShapeID&,
-                      JPH::RVec3Arg point, JPH::Vec3Arg normal, JPH::Vec3Arg, const JPH::PhysicsMaterial*,
-                      JPH::Vec3Arg velocity, JPH::Vec3& newVelocity) override {
-    JPH::BodyLockRead lock(world.impl->system.GetBodyLockInterface(),bodyID);
-    if(!lock.SucceededAndIsInBroadPhase() || !isPushable(lock.GetBody()) ||
-       (carrying && bodyID==ground && !character->IsSlopeTooSteep(normal)))
-      return;
-    const auto up = character->GetUp();
-    if(JPH::Vec3(point-character->GetPosition()).Dot(up)<=.02f)
-      return; // Existing top support, including a moving body.
-    // The rounded capsule can turn even a vertical furniture side into an
-    // upward velocity. Side contacts still block us, but cannot lift the feet.
-    const float gained = (newVelocity-velocity).Dot(up);
-    if(gained>0.f)
-      newVelocity -= gained*up;
-    }
-
-  void onContact(const JPH::CharacterContact& contact, JPH::CharacterContactSettings& settings) {
-    // Jolt's native limit applies afresh to each contact / stair probe. Dose
-    // the impulse here instead, sharing one force budget across the whole move.
-    settings.mCanReceiveImpulses = false;
-    JPH::BodyLockWrite lock(world.impl->system.GetBodyLockInterface(),contact.mBodyB);
-    if(!lock.SucceededAndIsInBroadPhase())
-      return;
-    const auto& nativeBody = lock.GetBody();
-    const auto layer = nativeBody.GetObjectLayer();
-    if((layer!=DynamicWorld::C_Item && layer!=DynamicWorld::C_MovableVob) || !nativeBody.IsDynamic() || contact.mIsSensorB)
-      return;
-    const float inverseMass = nativeBody.GetMotionProperties()->GetInverseMass();
-    if(inverseMass<=0.f)
-      return;
-    const float bodyMass = 1.f/inverseMass;
-    // A rotating utensil's side-point velocity can enter the combined floor
-    // constraint and lift the feet even with a perfectly horizontal normal.
-    // Keep it as a blocking, pushable object without letting it move the walker.
-    // Heavy supports retain their native velocity and continue to carry feet.
-    if(bodyMass<10.f)
-      settings.mCanPushCharacter = false;
-    auto* body = reinterpret_cast<CollisionBody*>(contact.mUserData);
-    if(body==nullptr)
-      return;
-    // Attribute an approaching contact, including the character's weight on a
-    // simulated support, rather than a separating or predictive-only contact.
-    const auto relative = character->GetLinearVelocity()-contact.mLinearVelocity;
-    const float projectedVelocity = relative.Dot(contact.mContactNormal);
-    if(projectedVelocity<-0.01f) {
-      body->npcContact.store(true,std::memory_order_relaxed);
-      body->setTraceCulprit(culprit);
-      }
-    if(!contact.mHadCollision || pushSeconds<=0.f || pushRemaining<=0.f)
-      return;
-
-    // Use the native effective contact mass, including the torque caused by an
-    // off-centre push. Penetration recovery has the same damping as Jolt.
-    const float deltaVelocity = -projectedVelocity*0.9f-std::min(contact.mDistance,0.f)*0.4f/pushSeconds;
-    if(deltaVelocity<=0.f)
-      return;
-    const auto jacobian = JPH::Vec3(contact.mPosition-nativeBody.GetCenterOfMassPosition()).Cross(contact.mContactNormal);
-    const float inverseEffectiveMass = nativeBody.GetInverseInertia().Multiply3x3(jacobian).Dot(jacobian)+inverseMass;
-    auto impulse = -(deltaVelocity/inverseEffectiveMass)*contact.mContactNormal;
-    // Downward weight is applied independently by CharacterVirtual::Update;
-    // do not spend the walking push budget on that supporting contact.
-    const float down = impulse.Dot(character->GetUp());
-    if(down<0.f)
-      impulse -= down*character->GetUp();
-    const float magnitude = impulse.Length();
-    if(magnitude<=0.f)
-      return;
-
-    auto used = std::find_if(pushBodies.begin(),pushBodies.end(),[&](const auto& entry) {return entry.first==contact.mBodyB;});
-    if(used==pushBodies.end()) {
-      pushBodies.emplace_back(contact.mBodyB,0.f);
-      used = std::prev(pushBodies.end());
-      }
-    // Ordinary walking has less effective effort against a heavier load than
-    // a braced push. Keep this continuous in both masses; no furniture classes.
-    const float force = character->GetMaxStrength()*character->GetMass()/(character->GetMass()+bodyMass);
-    const float available = std::min(pushRemaining,std::max(0.f,force*pushSeconds-used->second));
-    const float amount = std::min(magnitude,available);
-    if(amount<=0.f)
-      return;
-    pushRemaining -= amount;
-    used->second += amount;
-    // The write lock is already held. AddImpulse activates a sleeping body and
-    // applies the torque at the real contact point, in native SI units.
-    world.impl->system.GetBodyInterfaceNoLock().AddImpulse(contact.mBodyB,impulse*(amount/magnitude),contact.mPosition);
-    }
-
-  void OnContactAdded(const JPH::CharacterVirtual*, const JPH::CharacterContact& contact,
-                      JPH::CharacterContactSettings& settings) override { onContact(contact,settings); }
-  void OnContactPersisted(const JPH::CharacterVirtual*, const JPH::CharacterContact& contact,
-                          JPH::CharacterContactSettings& settings) override { onContact(contact,settings); }
-
-  void OnAdjustBodyVelocity(const JPH::CharacterVirtual*, const JPH::Body& body, JPH::Vec3& linear,
-                            JPH::Vec3& angular) override {
-    // Carry sweeps through the already integrated world. Predicting the bodies
-    // for another interval here would count their motion a second time.
-    // An idle update also already accounts for its tracked support's observed
-    // motion; its endpoint velocity must not advance that support again.
-    if(carrying || (idleSupportMotionObserved && body.GetID()==ground))
-      linear = angular = JPH::Vec3::sZero();
-    }
-
-  CollisionWorld& world;
-  std::unique_ptr<JPH::CharacterVirtual> character;
-  std::unique_ptr<CharacterVirtualDiagnostics> diagnostic;
-  Npc* culprit = nullptr;
-  float pushSeconds = 0.f;
-  float pushRemaining = 0.f;
-  std::vector<std::pair<JPH::BodyID,float>> pushBodies;
-  struct LimitedSteepFace {
-    JPH::BodyID body;
-    JPH::SubShapeID subShape;
-    bool seen = true;
-    };
-  std::vector<LimitedSteepFace> limitedSteepFaces;
-  bool contactsDirty = true;
-  bool needsInitialUpdate = true;
-  bool carrying = false;
-  bool idleSupportMotionObserved = false;
-  float radius = 0.f;
-  float height = 0.f;
-  JPH::Vec3 lastGroundNormal = JPH::Vec3::sAxisY();
-  uint64_t groundNormalFallbacks = 0;
-  JPH::BodyID ground;
-  JPH::RMat44 groundTransform = JPH::RMat44::sIdentity();
-  };
-
-CollisionWorld::VirtualCharacter::VirtualCharacter(CollisionWorld& owner, float radius, float height,
-                                                  const Tempest::Vec3& feet)
-  :impl(std::make_unique<Impl>(owner)) {
-  const float r = std::max(toMeters(radius),0.01f);
-  const float h = std::max(toMeters(height),2.f*r);
-  impl->radius = r;
-  impl->height = h;
-  JPH::CharacterVirtualSettings settings;
-  settings.mShape = new JPH::CapsuleShape(std::max(h*0.5f-r,0.001f),r);
-  settings.mShapeOffset = JPH::Vec3(0,h*0.5f,0);
-  settings.mSupportingVolume = JPH::Plane(JPH::Vec3::sAxisY(),-r);
-  settings.mCharacterPadding = 0.01f;
-  settings.mPredictiveContactDistance = 0.05f;
-  settings.mCollisionTolerance = 0.001f;
-  settings.mEnhancedInternalEdgeRemoval = true;
-  impl->character = std::make_unique<JPH::CharacterVirtual>(&settings,JPH::RVec3(toMeters(feet)),
-                                                          JPH::Quat::sIdentity(),&owner.impl->system);
-  impl->character->SetListener(impl.get());
-  owner.impl->virtualCharacters.push_back(this);
-  }
-
-CollisionWorld::VirtualCharacter::~VirtualCharacter() {
-  auto& characters = impl->world.impl->virtualCharacters;
-  characters.erase(std::remove(characters.begin(),characters.end(),this),characters.end());
-  }
-
-std::unique_ptr<CollisionWorld::VirtualCharacter> CollisionWorld::createVirtualCharacter(
-    float radius, float height, const Tempest::Vec3& feet) {
-  return std::unique_ptr<VirtualCharacter>(new VirtualCharacter(*this,radius,height,feet));
-  }
-
-void CollisionWorld::VirtualCharacter::setPosition(const Tempest::Vec3& feet) {
-  impl->character->SetPosition(JPH::RVec3(toMeters(feet)));
-  impl->contactsDirty = true;
-  impl->needsInitialUpdate = true;
-  impl->ground = JPH::BodyID();
-  impl->limitedSteepFaces.clear();
-  }
-
-void CollisionWorld::VirtualCharacter::setDiagnosticsEnabled(bool enabled) {
-  if(enabled && impl->diagnostic==nullptr)
-    impl->diagnostic = std::make_unique<CharacterVirtualDiagnostics>();
-  if(!enabled)
-    impl->diagnostic.reset();
-  }
-
-bool CollisionWorld::VirtualCharacter::diagnostics(CharacterVirtualDiagnostics& out) const {
-  if(impl->diagnostic==nullptr || !impl->diagnostic->valid)
-    return false;
-  out = *impl->diagnostic;
-  out.groundNormalFallbacks = impl->groundNormalFallbacks;
-  return true;
-  }
-
-CollisionWorld::CharacterMoveResult CollisionWorld::VirtualCharacter::move(
-    const Tempest::Vec3& displacement, uint64_t dt, float stepHeight, float maxSlope, float mass, Npc* culprit,
-    bool limitStairAdvance, bool standing) {
-  const auto started = std::chrono::steady_clock::now();
-  auto& state = *impl;
-  auto& character = *state.character;
-  auto& world = *state.world.impl;
-  const QueryBroadPhaseFilter broadFilter(characterMask);
-  const QueryLayerFilter layerFilter(characterMask);
-  const JPH::BodyFilter bodyFilter;
-  const JPH::ShapeFilter shapeFilter;
-  state.culprit = culprit;
-  character.SetMass(std::max(mass,1.f));
-  // Jolt uses metres, kilograms and seconds: this is a 450 N human push,
-  // capped independently of the character's weight on a supporting body.
-  character.SetMaxStrength(std::min(character.GetMass()*DynamicWorld::gravityMS,450.f));
-  const float seconds = float(dt)*0.001f;
-  // Zero-dt contact refreshes do not end a physical contact's classification.
-  if(dt>0) {
-    if(!limitStairAdvance)
-      state.limitedSteepFaces.clear();
-    else
-      for(auto& face:state.limitedSteepFaces)
-        face.seen = false;
-    }
-  state.pushSeconds = seconds;
-  state.pushRemaining = character.GetMaxStrength()*seconds;
-  state.pushBodies.clear();
-  character.SetMaxSlopeAngle(maxSlope);
-  if(state.contactsDirty) {
-    character.RefreshContacts(broadFilter,layerFilter,bodyFilter,shapeFilter,world.allocator);
-    state.contactsDirty = false;
-    }
-  // A zero-dt refresh after NPC clipping must not replace the main move's trace.
-  auto* diagnostic = state.diagnostic!=nullptr && (dt>0 || !state.diagnostic->valid) ? state.diagnostic.get() : nullptr;
-  if(diagnostic!=nullptr) {
-    diagnostic->valid = false;
-    diagnostic->dt = dt;
-    diagnostic->requested = displacement;
-    diagnostic->requestedVelocity = {};
-    diagnostic->stairDesiredVelocity = {};
-    diagnostic->maxSlopeRadians = maxSlope;
-    diagnostic->stairHeight = stepHeight;
-    diagnostic->stairDesiredDistance = 0.f;
-    diagnostic->stairAchievedDistance = 0.f;
-    diagnostic->stairSupported = false;
-    diagnostic->stairCanWalk = false;
-    diagnostic->stairBlockedByPolicy = false;
-    diagnostic->stairProgressBlocked = false;
-    diagnostic->stairProbe = {};
-    diagnostic->stairAttempted = false;
-    diagnostic->stairSucceeded = false;
-    diagnostic->stairObstacleId = uint32_t(-1);
-    diagnostic->before = state.diagnosticPose();
-    }
-  auto inheritedGroundVelocity = character.GetGroundVelocity();
-  bool inferredGroundVelocity = false;
-  bool climbedStep = false;
-  if(seconds>0.f) {
-    bool onGround = character.GetGroundState()==JPH::CharacterBase::EGroundState::OnGround;
-    auto carriedVelocity = JPH::Vec3::sZero();
-    if(character.IsSupported() && state.ground==character.GetGroundBodyID() && !state.ground.IsInvalid()) {
-      JPH::BodyLockRead lock(world.system.GetBodyLockInterface(),state.ground);
-      if(!lock.SucceededAndIsInBroadPhase())
-        onGround = false;
-      else if(!lock.GetBody().IsStatic()) {
-        // Both direct-matrix movers and fixed-step dynamic bodies have already
-        // advanced. Carry the observed displacement at the feet, including the
-        // finite rotation, rather than extrapolating their endpoint velocity
-        // over a render interval that may contain a different number of steps.
-        const auto transform = lock.GetBody().GetWorldTransform();
-        const auto position = character.GetPosition();
-        carriedVelocity = JPH::Vec3(transform*(state.groundTransform.InversedRotationTranslation()*position)-position)/seconds;
-        inheritedGroundVelocity = carriedVelocity;
-        inferredGroundVelocity = true;
-        }
-      }
-    character.UpdateGroundVelocity();
-    auto groundVelocity = character.GetGroundVelocity();
-    if(inferredGroundVelocity) {
-      groundVelocity = carriedVelocity;
-      // The floor has already advanced vertically. Resolve its new height
-      // through penetration recovery / floor sticking; adding its upward
-      // speed again would detach the feet from a direct-matrix lift.
-      groundVelocity.SetY(0.f);
-      }
-    auto velocity = toMeters(displacement)/seconds;
-    if(onGround)
-      velocity += groundVelocity;
-    auto gravityStep = JPH::Vec3(0,-DynamicWorld::gravityMS*seconds,0);
-    // A standing body may still pass its stance's root sway (S_1HRUN,
-    // S_BOWRUN): it stands as firmly as one with zero displacement.
-    const bool idle = displacement==Tempest::Vec3() || standing;
-    if(idle && onGround) {
-      // A supported idle character has static friction. Feeding vertical
-      // gravity to Jolt's frictionless contact solver adds a downhill tangent
-      // every frame, even on a walkable slope. Keep only pressure into the
-      // support; moving platforms still carry us through groundVelocity and
-      // Update applies the character's weight independently. Steep slopes and
-      // requested walking/jumping retain their ordinary gravity response.
-      if(state.needsInitialUpdate)
-        gravityStep = state.initialIdleGravity(gravityStep);
-      else {
-        const auto normal = state.finiteGroundNormal("idle_gravity");
-        gravityStep = normal*gravityStep.Dot(normal);
-        }
-      }
-    velocity += gravityStep;
-    if(diagnostic!=nullptr)
-      diagnostic->requestedVelocity = toCentimeters(velocity);
-    // ExtendedUpdate cancels steep-slope motion internally, while preserving
-    // this original request for the separate world-stair recipe below.
-    character.SetLinearVelocity(velocity);
-    JPH::CharacterVirtual::ExtendedUpdateSettings settings;
-    const float step = std::max(toMeters(stepHeight),0.f);
-    // A steep, slanted riser can be longer than Jolt's fixed 15 cm probe.
-    // Search its possible horizontal run, bounded by the permitted step's
-    // height and slope, plus the toe. This changes only the support test;
-    // accepted forward travel still uses the original per-frame request.
-    const float riserRun = maxSlope>0.f ? std::min(step,step/std::tan(maxSlope)) : step;
-    settings.mWalkStairsStepForwardTest = std::max(settings.mWalkStairsStepForwardTest,
-                                                  riserRun+state.radius+character.GetCharacterPadding());
-    // Run Jolt's ordinary update and floor sticking first. Its automatic stair
-    // recipe is applied below only for world geometry, after contact solving
-    // has identified pushable objects or interactive walking obstacles.
-    settings.mWalkStairsStepUp = JPH::Vec3::sZero();
-    settings.mStickToFloorStepDown = JPH::Vec3(0,-step,0);
-    const auto oldPosition = character.GetPosition();
-    const auto desiredVelocity = character.GetLinearVelocity();
-    if(diagnostic!=nullptr)
-      diagnostic->stairDesiredVelocity = toCentimeters(desiredVelocity);
-    state.idleSupportMotionObserved = inferredGroundVelocity && onGround && idle;
-    character.ExtendedUpdate(seconds,JPH::Vec3(0,-DynamicWorld::gravityMS,0),settings,
-                             broadFilter,layerFilter,bodyFilter,shapeFilter,world.allocator);
-    state.idleSupportMotionObserved = false;
-    // RefreshContacts only classifies the initial overlap. Let the first
-    // physical solve after creation/teleport recover penetration with native
-    // gravity. Only a verified nonpenetrating static plane can start at rest;
-    // edges retain the native contact pose used to enter stairs.
-    // A zero-dt refresh does not complete this acquisition.
-    state.needsInitialUpdate = false;
-    if(diagnostic!=nullptr)
-      diagnostic->afterExtendedUpdate = state.diagnosticPose();
-    bool stairObstacle = false;
-    for(const auto& contact:character.GetActiveContacts()) {
-      if(!contact.mHadCollision || contact.mWasDiscarded || contact.mIsSensorB ||
-         contact.mSurfaceNormal.Dot(desiredVelocity-contact.mLinearVelocity)>=0.f)
-        continue;
-      for(auto& face:state.limitedSteepFaces)
-        if(face.body==contact.mBodyB && face.subShape==contact.mSubShapeIDB)
-          face.seen = true;
-      JPH::BodyLockRead lock(world.system.GetBodyLockInterface(),contact.mBodyB);
-      if(lock.SucceededAndIsInBroadPhase() && Impl::blocksAutomaticStairs(lock.GetBody())) {
-        stairObstacle = true;
-        if(diagnostic!=nullptr)
-          diagnostic->stairObstacleId = contact.mBodyB.GetIndexAndSequenceNumber();
-        break;
-        }
-      }
-    // The remainder is the WalkStairs part of Jolt's ExtendedUpdate recipe,
-    // including its direction and minimum-distance tests for oblique steps.
-    const auto up = character.GetUp();
-    // Static friction has a horizontal component on a slope; it is a contact
-    // force, not a walking request. Keep support motion in the stair intent.
-    const auto stairVelocity = desiredVelocity-gravityStep;
-    const auto desiredStep = (stairVelocity-stairVelocity.Dot(up)*up)*seconds;
-    const float desiredLength = desiredStep.Length();
-    if(diagnostic!=nullptr) {
-      const auto achieved = JPH::Vec3(character.GetPosition()-oldPosition);
-      const float achievedLength = desiredLength>0.f ? std::max(0.f,achieved.Dot(desiredStep/desiredLength)) : 0.f;
-      diagnostic->stairDesiredDistance = desiredLength*100.f;
-      diagnostic->stairAchievedDistance = achievedLength*100.f;
-      diagnostic->stairSupported = character.IsSupported();
-      diagnostic->stairCanWalk = character.CanWalkStairs(desiredVelocity);
-      diagnostic->stairBlockedByPolicy = stairObstacle;
-      diagnostic->stairProgressBlocked = achievedLength+1.e-4f<desiredLength;
-      }
-    if(step>0.f && !stairObstacle && desiredLength>0.f && character.CanWalkStairs(desiredVelocity)) {
-      const auto forward = desiredStep/desiredLength;
-      const auto achieved = JPH::Vec3(character.GetPosition()-oldPosition);
-      const float achievedLength = std::max(0.f,achieved.Dot(forward));
-      if(achievedLength+1.e-4f<desiredLength) {
-        auto direction = forward;
-        float best = settings.mWalkStairsCosAngleForwardContact;
-        bool extendedSteepFace = false;
-        for(const auto& contact:character.GetActiveContacts()) {
-          if(!contact.mHadCollision || contact.mWasDiscarded ||
-             contact.mSurfaceNormal.Dot(desiredVelocity-contact.mLinearVelocity)>=0.f ||
-             !character.IsSlopeTooSteep(contact.mSurfaceNormal))
-            continue;
-          const auto candidate = contact.mSurfaceNormal.Dot(up)*up-contact.mSurfaceNormal;
-          const float length = candidate.Length();
-          if(length>1.e-6f && candidate.Dot(forward)/length>best) {
-            direction = candidate/length;
-            best = direction.Dot(forward);
-            }
-          if(limitStairAdvance && !contact.mIsSensorB) {
-            const auto limited = std::find_if(state.limitedSteepFaces.begin(),state.limitedSteepFaces.end(),[&](const auto& face) {
-              return face.body==contact.mBodyB && face.subShape==contact.mSubShapeIDB;
-              });
-            if(limited!=state.limitedSteepFaces.end()) {
-              extendedSteepFace = true;
-              continue;
-              }
-            JPH::BodyLockRead lock(world.system.GetBodyLockInterface(),contact.mBodyB);
-            if(lock.SucceededAndIsInBroadPhase()) {
-              JPH::Shape::SupportingFace face;
-              lock.GetBody().GetTransformedShape().GetSupportingFace(contact.mSubShapeIDB,contact.mSurfaceNormal,oldPosition,face);
-              if(face.size()>=3) {
-                float low = std::numeric_limits<float>::infinity(), high = -low;
-                for(const auto& vertex:face) {
-                  low = std::min(low,vertex.Dot(up));
-                  high = std::max(high,vertex.Dot(up));
-                  }
-                // Face vertices are relative to the physical feet before this
-                // update. Buried geometry below that support level cannot add
-                // to the height of the obstacle the monster must climb.
-                const float exposedHeight = std::max(0.f,high-std::max(low,0.f));
-                if(exposedHeight>step+character.GetCharacterPadding()) {
-                  extendedSteepFace = true;
-                  // Retain this decision until contact ends: approaching the
-                  // crest must not turn the same bank into a new low ledge.
-                  state.limitedSteepFaces.push_back({contact.mBodyB,contact.mSubShapeIDB,true});
-                  }
-                }
-              }
-            }
-          }
-        // Keep a monster's stair advance within the remaining animation travel
-        // instead of imposing Jolt's 2 cm minimum. A face exposed above the feet
-        // by more than the guild step is extended terrain, not a permitted riser:
-        // ascend it gradually. Ordinary ledges and shapes without polygonal
-        // faces retain the full guild step and the native safe landing sweeps.
-        const float forwardDistance = desiredLength-achievedLength;
-        const auto forwardStep = direction*(limitStairAdvance ? forwardDistance :
-                                            std::max(settings.mWalkStairsMinStepForward,forwardDistance));
-        const float stairUp = extendedSteepFace ?
-                                std::max(0.f,std::min(step,.12f)-std::max(0.f,achieved.Dot(up))) : step;
-        JPH::CharacterVirtual::WalkStairsDiagnostics stairProbe;
-        const bool stepped = stairUp>0.f && character.WalkStairs(seconds,up*stairUp,forwardStep,direction*settings.mWalkStairsStepForwardTest,
-                                                settings.mWalkStairsStepDownExtra,broadFilter,layerFilter,bodyFilter,shapeFilter,world.allocator,
-                                                diagnostic!=nullptr ? &stairProbe : nullptr);
-        // A completed ordinary step is traversable even if a toe still touches
-        // its riser. The limited rise against an extended bank is not one.
-        climbedStep = stepped && !extendedSteepFace;
-        if(diagnostic!=nullptr) {
-          diagnostic->stairAttempted = true;
-          diagnostic->stairSucceeded = stepped;
-          static constexpr const char* reasons[]={"notAttempted","upBlocked","noSteep","noHorizontal","noProgress","noFloor",
-                                                   "noForwardTest","testNoProgress","testNoFloor","testSteep","noHeight","success"};
-          auto& probe=diagnostic->stairProbe;
-          probe.reason = reasons[unsigned(stairProbe.mResult)];
-          probe.upPosition = toCentimeters(JPH::Vec3(stairProbe.mUpPosition));
-          probe.forwardPosition = toCentimeters(JPH::Vec3(stairProbe.mForwardPosition));
-          probe.finalPosition = toCentimeters(JPH::Vec3(stairProbe.mFinalPosition));
-          probe.testPosition = toCentimeters(JPH::Vec3(stairProbe.mTestPosition));
-          probe.testFinalPosition = toCentimeters(JPH::Vec3(stairProbe.mTestFinalPosition));
-          const auto normal=stairProbe.mLandingNormal, testNormal=stairProbe.mTestLandingNormal;
-          probe.landingNormal = Tempest::Vec3(normal.GetX(),normal.GetY(),normal.GetZ());
-          probe.testLandingNormal = Tempest::Vec3(testNormal.GetX(),testNormal.GetY(),testNormal.GetZ());
-          probe.upFraction = stairProbe.mUpFraction;
-          probe.landingFraction = stairProbe.mLandingFraction;
-          probe.testLandingFraction = stairProbe.mTestLandingFraction;
-          }
-        }
-      }
-    }
-  if(dt>0)
-    state.limitedSteepFaces.erase(std::remove_if(state.limitedSteepFaces.begin(),state.limitedSteepFaces.end(),
-                                                [](const auto& face) { return !face.seen; }),state.limitedSteepFaces.end());
-  if(diagnostic!=nullptr) {
-    if(seconds<=0.f)
-      diagnostic->afterExtendedUpdate = state.diagnosticPose();
-    diagnostic->afterStairs = state.diagnosticPose();
-    diagnostic->valid = true;
-    }
-  const auto previousGround = state.ground;
-  state.ground = character.GetGroundBodyID();
-  if(!state.ground.IsInvalid()) {
-    JPH::BodyLockRead lock(world.system.GetBodyLockInterface(),state.ground);
-    if(lock.Succeeded())
-      state.groundTransform = lock.GetBody().GetWorldTransform();
-    else
-      state.ground = JPH::BodyID();
-    }
-  CharacterMoveResult result;
-  result.position = toCentimeters(JPH::Vec3(character.GetPosition()));
-  // Jolt keeps its requested velocity after moving. Resolve the carried
-  // velocity against actual contacts so downhill acceleration survives, while
-  // stair snaps and penetration recovery never turn into airborne momentum.
-  auto solvedVelocity = character.GetLinearVelocity();
-  for(int iteration=0;iteration<2;++iteration) {
-    for(const auto& contact:character.GetActiveContacts()) {
-      if(!contact.mHadCollision || contact.mWasDiscarded || contact.mIsSensorB)
-        continue;
-      const float into = (solvedVelocity-contact.mLinearVelocity).Dot(contact.mContactNormal);
-      if(into<0.f)
-        solvedVelocity -= contact.mContactNormal*into;
-      }
-    }
-  result.velocity = toCentimeters(solvedVelocity);
-  result.groundVelocity = toCentimeters(inferredGroundVelocity && previousGround==state.ground ?
-                                        inheritedGroundVelocity : character.GetGroundVelocity());
-  const auto normal = state.finiteGroundNormal("move_output");
-  result.groundNormal = Tempest::Vec3(normal.GetX(),normal.GetY(),normal.GetZ());
-  result.grounded = character.GetGroundState()==JPH::CharacterBase::EGroundState::OnGround;
-  result.steep = character.GetGroundState()==JPH::CharacterBase::EGroundState::OnSteepGround;
-  if(!climbedStep) {
-    const auto horizontal = toMeters(Tempest::Vec3(displacement.x,0,displacement.z));
-    float strongest = -.01f*horizontal.Length();
-    for(const auto& contact:character.GetActiveContacts()) {
-      if(!contact.mHadCollision || contact.mWasDiscarded || contact.mIsSensorB ||
-         !character.IsSlopeTooSteep(contact.mSurfaceNormal))
-        continue;
-      const float into = contact.mSurfaceNormal.Dot(horizontal);
-      if(into>=strongest)
-        continue;
-      JPH::BodyLockRead lock(world.system.GetBodyLockInterface(),contact.mBodyB);
-      if(!lock.SucceededAndIsInBroadPhase() || lock.GetBody().IsDynamic())
-        continue;
-      strongest = into;
-      result.steepContact = true;
-      const auto normal = contact.mSurfaceNormal;
-      result.steepContactNormal = Tempest::Vec3(normal.GetX(),normal.GetY(),normal.GetZ());
-      }
-    }
-  world.characterMilliseconds += std::chrono::duration<float,std::milli>(std::chrono::steady_clock::now()-started).count();
-  return result;
-  }
-
-CollisionWorld::CharacterMoveResult CollisionWorld::VirtualCharacter::carry(uint64_t dt) {
-  auto& state = *impl;
-  auto& character = *state.character;
-  auto& world = *state.world.impl;
-  CharacterMoveResult result;
-  result.position = toCentimeters(JPH::Vec3(character.GetPosition()));
-  if(dt==0 || character.GetGroundState()!=JPH::CharacterBase::EGroundState::OnGround ||
-     state.ground.IsInvalid() || state.ground!=character.GetGroundBodyID())
-    return result;
-  JPH::RMat44 transform;
-  {
-    JPH::BodyLockRead lock(world.system.GetBodyLockInterface(),state.ground);
-    if(!lock.SucceededAndIsInBroadPhase() || lock.GetBody().IsStatic())
-      return result;
-    transform = lock.GetBody().GetWorldTransform();
-  }
-  const auto position = character.GetPosition();
-  const auto delta = JPH::Vec3(transform*(state.groundTransform.InversedRotationTranslation()*position)-position);
-  state.groundTransform = transform;
-  if(delta.IsNearZero(1.e-7f))
-    return result;
-  const auto started = std::chrono::steady_clock::now();
-  const QueryBroadPhaseFilter broadFilter(characterMask);
-  const QueryLayerFilter layerFilter(characterMask);
-  const JPH::BodyFilter bodyFilter;
-  const JPH::ShapeFilter shapeFilter;
-  const float seconds = float(dt)*.001f;
-  const auto velocity = character.GetLinearVelocity();
-  state.pushSeconds = state.pushRemaining = 0.f;
-  state.carrying = true;
-  // This is a collision sweep of the support's observed motion, never a pose
-  // assignment. No second root input, gravity impulse, push budget or stairs.
-  character.SetLinearVelocity(delta/seconds);
-  character.Update(seconds,JPH::Vec3::sZero(),broadFilter,layerFilter,bodyFilter,shapeFilter,world.allocator);
-  // A rising support can separate relative to the frozen body's zero velocity.
-  // Re-evaluate support at the swept endpoint without that velocity test.
-  character.SetLinearVelocity(JPH::Vec3::sZero());
-  character.RefreshContacts(broadFilter,layerFilter,bodyFilter,shapeFilter,world.allocator);
-  state.carrying = false;
-  character.SetLinearVelocity(velocity);
-  character.UpdateGroundVelocity();
-  state.ground = character.GetGroundBodyID();
-  if(!state.ground.IsInvalid()) {
-    JPH::BodyLockRead lock(world.system.GetBodyLockInterface(),state.ground);
-    if(lock.SucceededAndIsInBroadPhase())
-      state.groundTransform = lock.GetBody().GetWorldTransform();
-    else
-      state.ground = JPH::BodyID();
-  }
-  result.position = toCentimeters(JPH::Vec3(character.GetPosition()));
-  result.velocity = toCentimeters(velocity);
-  result.groundVelocity = toCentimeters(delta/seconds);
-  const auto normal = state.finiteGroundNormal("carry_output");
-  result.groundNormal = Tempest::Vec3(normal.GetX(),normal.GetY(),normal.GetZ());
-  result.grounded = character.GetGroundState()==JPH::CharacterBase::EGroundState::OnGround;
-  result.steep = character.GetGroundState()==JPH::CharacterBase::EGroundState::OnSteepGround;
-  result.supportMoved = true;
-  world.characterMilliseconds += std::chrono::duration<float,std::milli>(std::chrono::steady_clock::now()-started).count();
-  return result;
   }
 
 CollisionWorld::CollisionWorld() {
@@ -1642,18 +375,6 @@ void CollisionWorld::CollisionBody::retainForItemWake() {
   itemWakeUntilStep=owner->impl->simulationStep+8;
   }
 
-bool CollisionWorld::CollisionBody::keepSleepingItem(const Tempest::Vec3& positionCm) const {
-  if((owner->buoyancy && inWater) || itemRecovered ||
-     (owner->itemWake && itemWakeUntilStep>=owner->impl->simulationStep && itemWakeUntilStep!=0))
-    return true;
-  const auto position=toMeters(positionCm);
-  const float range=toMeters(DynamicWorld::characterItemRange);
-  for(const auto* character:owner->impl->virtualCharacters)
-    if((position-character->impl->character->GetPosition()).LengthSq()<=range*range)
-      return true;
-  return false;
-  }
-
 void CollisionWorld::CollisionBody::setScale(const Tempest::Vec3& value) {
   const auto next = JPH::Vec3(value.x,value.y,value.z);
   if(scale==next)
@@ -1692,6 +413,16 @@ void CollisionWorld::CollisionBody::setNoiseProfile(ItemMaterial material, asset
   noiseMaterial=material;
   noiseSurface=surface;
   noiseWhat=what;
+  }
+
+void CollisionWorld::CollisionBody::setFracturePiece(const JPH::GroupFilter* filter, uint32_t group, uint32_t piece) {
+  JPH::BodyLockWrite lock(owner->impl->system.GetBodyLockInterface(),id);
+  if(!lock.Succeeded()) return;
+  auto& native=lock.GetBody();
+  native.SetCollisionGroup(JPH::CollisionGroup(filter,group,piece));
+  // Reduction merges the manifolds of a compound stave's hulls into four points,
+  // and its other hulls sank 2 cm into the ground unresisted. The new body has no contacts yet.
+  native.SetUseManifoldReduction(false);
   }
 
 Tempest::Vec3 CollisionWorld::CollisionBody::position() const {
@@ -1772,6 +503,12 @@ float CollisionWorld::CollisionBody::mass() const {
   JPH::BodyLockRead lock(owner->impl->system.GetBodyLockInterface(),id);
   if(!lock.Succeeded() || !lock.GetBody().IsDynamic()) return 0.f;
   return 1.f/lock.GetBody().GetMotionProperties()->GetInverseMass();
+  }
+
+float CollisionWorld::CollisionBody::friction() const {
+  if(owner==nullptr || id.IsInvalid()) return 0.f;
+  JPH::BodyLockRead lock(owner->impl->system.GetBodyLockInterface(),id);
+  return lock.Succeeded() ? lock.GetBody().GetFriction() : 0.f;
   }
 
 bool CollisionWorld::CollisionBody::isMovable() const {
@@ -1903,6 +640,11 @@ std::unique_ptr<CollisionWorld::DynamicBody> CollisionWorld::addDynamicBody(JPH:
   addBody(*result,matrix,friction,false,false,mass,startSleeping);
   rigid.push_back(result.get());
   return result;
+  }
+
+uint32_t CollisionWorld::newFractureGroup() {
+  if(nextFractureGroup==JPH::CollisionGroup::cInvalidGroup) nextFractureGroup=0x80000000u;
+  return nextFractureGroup++;
   }
 
 void CollisionWorld::cycleBodyIds(size_t count) {
@@ -2559,32 +1301,95 @@ void CollisionWorld::removeMeleeBlade(const Npc* owner) {
   impl->meleeBlades.erase(it);
   }
 
-void CollisionWorld::updateShadowBody(Npc* owner, const std::vector<MeleeBodyCapsule>& capsules) {
-  if(owner==nullptr) throw std::runtime_error("Melee shadow body requires an owner");
+void CollisionWorld::boundShadowBody(MeleeShadowBody& body) {
   JPH::AABox bounds;
-  for(const auto& capsule:capsules) {
+  body.valid=true;
+  for(const auto& capsule:body.capsules) {
     const auto from=toMeters(capsule.from),to=toMeters(capsule.to);
     if(std::isfinite(from.LengthSq()) && std::isfinite(to.LengthSq()) &&
        std::isfinite(capsule.radiusCm) && capsule.radiusCm>0.f) {
       const auto radius=JPH::Vec3::sReplicate(capsule.radiusCm*.01f);
       bounds.Encapsulate(JPH::AABox(JPH::Vec3::sMin(from,to)-radius,JPH::Vec3::sMax(from,to)+radius));
       }
-    else throw std::runtime_error("Invalid melee shadow body capsule");
+    else {
+      body.valid=false;
+      break;
+      }
     }
+  body.boundsMin={bounds.mMin.GetX(),bounds.mMin.GetY(),bounds.mMin.GetZ()};
+  body.boundsMax={bounds.mMax.GetX(),bounds.mMax.GetY(),bounds.mMax.GetZ()};
+  }
+
+void CollisionWorld::updateShadowBody(Npc* owner, const std::vector<MeleeBodyCapsule>& capsules) {
+  if(owner==nullptr) throw std::runtime_error("Melee shadow body requires an owner");
+  MeleeShadowBody body;
+  body.capsules=capsules;
+  boundShadowBody(body);
+  updateShadowBody(owner,body);
+  }
+
+void CollisionWorld::updateShadowBody(Npc* owner, const MeleeShadowBody& body, size_t* slotHint) {
+  if(owner==nullptr) throw std::runtime_error("Melee shadow body requires an owner");
+  if(!body.valid) throw std::runtime_error("Invalid melee shadow body capsule");
   std::lock_guard<std::mutex> guard(impl->shadowMutex);
-  auto it=std::find_if(impl->shadowBodies.begin(),impl->shadowBodies.end(),[owner](const auto& body) { return body.owner==owner; });
-  if(it==impl->shadowBodies.end()) {
-    impl->shadowBodies.push_back({owner,capsules,bounds});
+  auto&  bodies=impl->shadowBodies;
+  size_t at=slotHint!=nullptr ? *slotHint : size_t(-1);
+  if(at>=bodies.size() || bodies[at].owner!=owner) {
+    const auto [slot,added]=impl->shadowBodySlots.try_emplace(owner,bodies.size());
+    if(added)
+      bodies.push_back({owner,{},{},0});
+    at=slot->second;
     }
-  else {
-    it->capsules=capsules;
-    it->bounds=bounds;
-    }
+  if(slotHint!=nullptr)
+    *slotHint=at;
+  auto& published=bodies[at];
+  if(body.serial!=0 && published.serial==body.serial)
+    return;
+  published.capsules=body.capsules;
+  // Vec3 keeps w equal to z, as the box that boundShadowBody encapsulated.
+  published.bounds=JPH::AABox(JPH::Vec3(body.boundsMin.x,body.boundsMin.y,body.boundsMin.z),
+                              JPH::Vec3(body.boundsMax.x,body.boundsMax.y,body.boundsMax.z));
+  published.serial=body.serial;
+  }
+
+static MeleeShadowBody publishedShadowBody(const std::vector<MeleeBodyCapsule>& capsules, const JPH::AABox& bounds) {
+  MeleeShadowBody out;
+  out.capsules=capsules;
+  out.boundsMin={bounds.mMin.GetX(),bounds.mMin.GetY(),bounds.mMin.GetZ()};
+  out.boundsMax={bounds.mMax.GetX(),bounds.mMax.GetY(),bounds.mMax.GetZ()};
+  out.valid=true;
+  return out;
+  }
+
+bool CollisionWorld::shadowBody(const Npc* owner, MeleeShadowBody& out) const {
+  std::lock_guard<std::mutex> guard(impl->shadowMutex);
+  const auto slot=impl->shadowBodySlots.find(owner);
+  if(slot==impl->shadowBodySlots.end())
+    return false;
+  const auto& body=impl->shadowBodies[slot->second];
+  out=publishedShadowBody(body.capsules,body.bounds);
+  return true;
+  }
+
+std::vector<std::pair<const Npc*,MeleeShadowBody>> CollisionWorld::shadowBodies() const {
+  std::lock_guard<std::mutex> guard(impl->shadowMutex);
+  std::vector<std::pair<const Npc*,MeleeShadowBody>> bodies;
+  for(const auto& body:impl->shadowBodies)
+    bodies.emplace_back(body.owner,publishedShadowBody(body.capsules,body.bounds));
+  return bodies;
   }
 
 void CollisionWorld::removeShadowBody(const Npc* owner) {
   std::lock_guard<std::mutex> guard(impl->shadowMutex);
-  std::erase_if(impl->shadowBodies,[owner](const auto& body) { return body.owner==owner; });
+  if(const auto slot=impl->shadowBodySlots.find(owner); slot!=impl->shadowBodySlots.end()) {
+    // Keep the publication order: a cast records contacts of equal time and
+    // bone in it. Removal is rare (death, suspension), reindexing the tail is cheap.
+    const size_t at=slot->second;
+    impl->shadowBodySlots.erase(slot);
+    impl->shadowBodies.erase(impl->shadowBodies.begin()+std::ptrdiff_t(at));
+    for(size_t i=at;i<impl->shadowBodies.size();++i)
+      impl->shadowBodySlots[impl->shadowBodies[i].owner]=i;
+    }
   // NPC destruction can precede a different attacker's journal flush.
   for(auto& blade:impl->shadowBlades) {
     std::erase(blade.hit,owner);
@@ -4048,4 +2853,45 @@ void CollisionWorld::setBodyImpactCallback(std::function<void(CollisionBody&,flo
 
 void CollisionWorld::emitPhysicsNoise(const PhysicsNoise& noise) {
   if(impl->noiseEnabled && physicsNoise) physicsNoise(noise);
+  }
+
+namespace CollisionWorldInternal {
+  CollisionWorld::NativeTriangle traceTriangle(const JPH::Body& body, JPH::SubShapeID subShape,
+                                                JPH::Vec3Arg normal) {
+    CollisionWorld::NativeTriangle result;
+    JPH::SubShapeID remainder;
+    const auto* leaf=body.GetShape()->GetLeafShape(subShape,remainder);
+    if(leaf==nullptr || (leaf->GetSubType()!=JPH::EShapeSubType::Mesh && leaf->GetSubType()!=JPH::EShapeSubType::Triangle))
+      return result;
+    const auto base=body.GetCenterOfMassPosition();
+    JPH::Shape::SupportingFace face;
+    body.GetTransformedShape().GetSupportingFace(subShape,normal,base,face);
+    if(face.size()!=3)
+      return result;
+    result.valid=true;
+    result.nativeSubShapeId=subShape.GetValue();
+    if(leaf->GetSubType()==JPH::EShapeSubType::Mesh)
+      result.sourceTriangle=Physics::triangleData(*body.GetShape(),subShape);
+    result.normal={normal.GetX(),normal.GetY(),normal.GetZ()};
+    for(JPH::uint i=0;i<3;++i) {
+      result.vertices[i]=CollisionWorld::toCentimeters(base+face[i]);
+      result.edgesCm[i]=(face[(i+1)%3]-face[i]).Length()*100.f;
+      }
+    return result;
+    }
+
+  int workerCount() {
+    // OPENGOTHIC_PHYSICS_THREADS: Jolt's worker threads; 0 runs every physics job on the stepping
+    // thread. The headless body runner forks its loaded world and needs a single-threaded process.
+    if(const char* env = std::getenv("OPENGOTHIC_PHYSICS_THREADS"); env!=nullptr && *env!='\0')
+      return std::max(0,std::atoi(env));
+    unsigned int cores = std::max(1u,std::thread::hardware_concurrency());
+#ifdef __APPLE__
+    unsigned int performanceCores = 0;
+    size_t size = sizeof(performanceCores);
+    if(sysctlbyname("hw.perflevel0.physicalcpu",&performanceCores,&size,nullptr,0)==0 && performanceCores>0)
+      cores = performanceCores;
+#endif
+    return int(cores>2 ? cores-2 : 1);
+    }
   }

@@ -108,7 +108,6 @@ Gothic::Gothic() {
   defaults->set("GAME", "useGothic1Controls",  1);
   defaults->set("GAME", "highlightMeleeFocus", 0);
   defaults->set("GAME", "useQuickSaveKeys",    1);
-  defaults->set("GAME", "manualAim",           1); // the bow aimed by hand (game/archery)
   defaults->set("GAME", "bowDrawByStrength",   1); // strength sets a bow's draw speed and limit
   defaults->set("GAME", "npcManualAim",        1); // npc archers aim by hand too (game/archerai)
   defaults->set("GAME", "ragdoll",             1); // physical death/KO bodies; GAME/ragdoll=0 keeps animation-only behavior
@@ -237,7 +236,6 @@ Gothic::Gothic() {
   }
 
   Resources::loadBase();
-  detectGothicVersion();
 
   std::u16string_view mod = CommandLine::inst().modPath();
   if(!mod.empty()){
@@ -255,9 +253,7 @@ Gothic::Gothic() {
     }
 
   if(wrldDef.empty()) {
-    if(version().game==2)
-      wrldDef = "newworld.zen"; else
-      wrldDef = "world.zen";
+    wrldDef = "newworld.zen";
     }
 
   if(plDef.empty())
@@ -295,10 +291,6 @@ void Gothic::setupGlobalScripts() {
   particleDef.reset(new ParticlesDefinitions());
   vfxDef     .reset(new VisualFxDefinitions());
   music      .reset(new MusicDefinitions());
-  }
-
-const VersionInfo& Gothic::version() const {
-  return vinfo;
   }
 
 bool Gothic::isInGame() const {
@@ -916,12 +908,6 @@ void Gothic::flushSettings() {
   instance->iniFile->flush();
   }
 
-void Gothic::detectGothicVersion() {
-  // The selected base supports Gothic II: Night of the Raven only.
-  vinfo.game  = 2;
-  vinfo.patch = 5;
-  }
-
 void Gothic::refreshPhysicsFlags() {
   physicsFlagsCache = {
     settingsGetI("GAME","ragdoll")!=0,
@@ -1297,21 +1283,17 @@ void Gothic::exitgame() {
   }
 
 void Gothic::printdebug(std::string_view msg) {
-  if(version().game==2)
-    Log::d("[zspy]: ",msg);
+  Log::d("[zspy]: ",msg);
   }
 
 void Gothic::printdebugch(int ch, std::string_view msg) {
-  if(version().game==2)
-    Log::d("[zspy,",ch,"]: ",msg);
+  Log::d("[zspy,",ch,"]: ",msg);
   }
 
 void Gothic::printdebuginst(std::string_view msg) {
-  if(version().game==2)
-    Log::d("[zspy]: ",msg);
+  Log::d("[zspy]: ",msg);
   }
 
 void Gothic::printdebuginstch(int ch, std::string_view msg) {
-  if(version().game==2)
-    Log::d("[zspy,",ch,"]: ",msg);
+  Log::d("[zspy,",ch,"]: ",msg);
   }

@@ -872,7 +872,10 @@ void PfxBucket::preFrameUpdate(const SceneGlobals& scene, uint8_t fId) {
       ssbo = device.ssbo(heap,pfxCpu);
       } else {
       if(!decl.isDecal() || forceUpdate[fId]) {
-        ssbo.update(pfxCpu);
+        // A decal buffer lives in device memory: a plain update there waits for the GPU to finish the
+        // frame in flight (Metal). The copy is queued ahead of this frame's commands, nobody reads this
+        // frame's buffer before it, so the wait buys nothing.
+        ssbo.updateAsync(pfxCpu.data(), 0, pfxCpu.size()*sizeof(pfxCpu[0]));
         forceUpdate[fId] = false;
         }
       }

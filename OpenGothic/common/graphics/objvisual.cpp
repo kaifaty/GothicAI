@@ -10,8 +10,13 @@
 #include "graphics/worldview.h"
 #include "utils/fileext.h"
 #include "physics/fracture.h"
+#include "graphics/mesh/submesh/packedmesh.h"
 
+#include <array>
+#include <cctype>
+#include <limits>
 #include <map>
+#include <tuple>
 #include <unordered_map>
 
 namespace {
@@ -37,47 +42,107 @@ struct ObjVisual::FractureView {
   std::vector<MeshObjects::Mesh> views;
   bool broken = false;
 
-  static std::shared_ptr<Geometry> load(std::shared_ptr<const FractureMesh> mesh) {
+  static std::string materialKey(std::string_view texture) {
+    std::string key(texture);
+    for(auto& c:key)
+      c = char(std::toupper(uint8_t(c)));
+    return key;
+    }
+
+  // The intact visual's materials by texture key: a piece triangle renders
+  // with the very material of the submesh it was cut from (colour, normal,
+  // ORM, scale, antitile and alpha classification), not just its albedo.
+  static std::unordered_map<std::string,Material> wholeMaterials(const ProtoMesh* whole) {
+    std::unordered_map<std::string,Material> ret;
+    if(whole==nullptr)
+      return ret;
+    for(const auto& attach:whole->attach)
+      for(const auto& sub:attach.sub)
+        if(!sub.texName.empty())
+          ret.emplace(materialKey(sub.texName),sub.material);
+    return ret;
+    }
+
+  // One mesh per piece, one submesh per material, packed into 64-vertex
+  // meshlets by PackedMesh like any static visual. Vertices keep the cache's
+  // normals and UVs; equal corners are shared so meshlets fill up.
+  static std::unique_ptr<ProtoMesh> pieceMesh(const FractureMesh::Piece& piece,
+                                               const std::unordered_map<std::string,Material>& whole) {
+    asset::StaticMesh mesh;
+    mesh.bbox = {asset::Vec3{std::numeric_limits<float>::max()},asset::Vec3{-std::numeric_limits<float>::max()}};
+    std::map<std::tuple<float,float,float>,uint32_t> positions;
+    std::map<std::string,size_t> subOf;
+    std::vector<std::map<std::array<float,8>,uint16_t>> wedgeOf;
+    for(const auto& triangle:piece.triangles) {
+      auto at = subOf.find(triangle.texture);
+      // MeshWedge/MeshTriangle address wedges with 16 bits: continue the
+      // same material in a new submesh before the index would overflow.
+      if(at!=subOf.end() && mesh.sub_meshes[at->second].wedges.size()+3>0xFFFF) {
+        subOf.erase(at);
+        at = subOf.end();
+        }
+      if(at==subOf.end()) {
+        at = subOf.emplace(triangle.texture,mesh.sub_meshes.size()).first;
+        asset::SubMesh sub;
+        sub.mat.texture = triangle.texture;
+        sub.mat.disable_collision = true; // pieces collide through their Jolt hulls only
+        mesh.sub_meshes.push_back(std::move(sub));
+        mesh.materials.push_back(mesh.sub_meshes.back().mat);
+        wedgeOf.emplace_back();
+        }
+      auto& sub = mesh.sub_meshes[at->second];
+      auto& wedges = wedgeOf[at->second];
+      asset::MeshTriangle out = {};
+      // Gothic draw meshes wind clockwise around their outward normal;
+      // the cache winds outward counterclockwise for hull validation.
+      const size_t corners[3] = {0,2,1};
+      for(size_t c=0;c<3;++c) {
+        const auto& vertex = triangle.vertices[corners[c]];
+        const auto& p = vertex.position;
+        auto pos = positions.find({p.x,p.y,p.z});
+        if(pos==positions.end()) {
+          pos = positions.emplace(std::make_tuple(p.x,p.y,p.z),uint32_t(mesh.positions.size())).first;
+          mesh.positions.push_back(asset::Vec3{p.x,p.y,p.z});
+          mesh.bbox.min = asset::Vec3{std::min(mesh.bbox.min.x,p.x),std::min(mesh.bbox.min.y,p.y),std::min(mesh.bbox.min.z,p.z)};
+          mesh.bbox.max = asset::Vec3{std::max(mesh.bbox.max.x,p.x),std::max(mesh.bbox.max.y,p.y),std::max(mesh.bbox.max.z,p.z)};
+          }
+        if(pos->second>0xFFFF)
+          return nullptr; // wedges address positions with 16 bits too
+        const std::array<float,8> key = {p.x,p.y,p.z,vertex.normal.x,vertex.normal.y,vertex.normal.z,vertex.uv.x,vertex.uv.y};
+        auto wedge = wedges.find(key);
+        if(wedge==wedges.end()) {
+          wedge = wedges.emplace(key,uint16_t(sub.wedges.size())).first;
+          asset::MeshWedge w = {};
+          w.normal  = asset::Vec3{vertex.normal.x,vertex.normal.y,vertex.normal.z};
+          w.texture = asset::Vec2{vertex.uv.x,vertex.uv.y};
+          w.index   = uint16_t(pos->second);
+          sub.wedges.push_back(w);
+          }
+        out.wedges[c] = wedge->second;
+        }
+      sub.triangles.push_back(out);
+      }
+    if(mesh.positions.empty())
+      return nullptr;
+    PackedMesh packed(mesh,PackedMesh::PK_Visual);
+    auto proto = std::make_unique<ProtoMesh>(std::move(packed),"");
+    for(auto& attach:proto->attach)
+      for(auto& sub:attach.sub)
+        if(auto it = whole.find(materialKey(sub.texName)); it!=whole.end())
+          sub.material = it->second;
+    return proto;
+    }
+
+  static std::shared_ptr<Geometry> load(std::shared_ptr<const FractureMesh> mesh, const ProtoMesh* whole) {
     static std::unordered_map<const FractureMesh*,std::weak_ptr<Geometry>> cache;
     if(auto existing = cache[mesh.get()].lock())
       return existing;
     auto geometry = std::make_shared<Geometry>();
     geometry->source = std::move(mesh);
-    for(size_t piece=0;piece<geometry->source->pieces.size();++piece) {
-      std::map<std::string,std::vector<const FractureMesh::Triangle*>> materials;
-      for(const auto& triangle:geometry->source->pieces[piece].triangles)
-        materials[triangle.texture].push_back(&triangle);
-      for(const auto& [texture,triangles]:materials) {
-        Material material;
-        material.setAlbedo(Resources::loadMaterialAlbedo(texture));
-        // The small-mesh constructor accepts one 64-vertex meshlet. Keep flat
-        // face normals and independent UVs by batching at most 20 triangles.
-        for(size_t first=0;first<triangles.size();first+=20) {
-          std::vector<Resources::Vertex> vertices;
-          std::vector<uint32_t> indices;
-          const size_t end = std::min(first+20,triangles.size());
-          for(size_t t=first;t<end;++t)
-            // Gothic draw meshes wind clockwise around their outward normal;
-            // the cache winds outward counterclockwise for hull validation.
-            for(const size_t corner:{size_t(0),size_t(2),size_t(1)}) {
-              const auto& vertex = triangles[t]->vertices[corner];
-              Resources::Vertex out = {};
-              out.pos[0] = vertex.position.x;
-              out.pos[1] = vertex.position.y;
-              out.pos[2] = vertex.position.z;
-              out.norm[0] = vertex.normal.x;
-              out.norm[1] = vertex.normal.y;
-              out.norm[2] = vertex.normal.z;
-              out.uv[0] = vertex.uv.x;
-              out.uv[1] = vertex.uv.y;
-              out.color = 0xFFFFFFFFu;
-              indices.push_back(uint32_t(vertices.size()));
-              vertices.push_back(out);
-              }
-          geometry->batches.push_back({piece,std::make_unique<ProtoMesh>(material,std::move(vertices),std::move(indices))});
-          }
-        }
-      }
+    const auto materials = wholeMaterials(whole);
+    for(size_t piece=0;piece<geometry->source->pieces.size();++piece)
+      if(auto proto = pieceMesh(geometry->source->pieces[piece],materials))
+        geometry->batches.push_back({piece,std::move(proto)});
     cache[geometry->source.get()] = geometry;
     return geometry;
     }
@@ -476,7 +541,7 @@ void ObjVisual::setupFracture(World& world, DynamicWorld::Item& body) {
     return;
   fracture = std::make_shared<FractureView>();
   fracture->owner = this;
-  fracture->geometry = FractureView::load(std::move(source));
+  fracture->geometry = FractureView::load(std::move(source),mesh.proto);
   for(const auto& batch:fracture->geometry->batches) {
     fracture->views.push_back(world.addView(batch.mesh.get()));
     fracture->views.back().setObjMatrix(hiddenFractureMatrix());

@@ -1427,20 +1427,34 @@ void indexCases(const Fixture& fixture) {
   resourcePaths(fixture,true);
   }
 
-void fractureFile(const std::filesystem::path& path, size_t version = 1, size_t sourceSize = 0, uint32_t sourceCrc32 = 0) {
+void fractureFile(const std::filesystem::path& path, size_t version = 1, size_t sourceSize = 0, uint32_t sourceCrc32 = 0,
+                  size_t pieceCount = 8) {
   // Eight independent solid tetrahedra exercise the real cache parser and
   // Jolt convex-hull construction, with no geometry from the original game.
   std::ofstream file(path);
   file << "GOTHIC_FRACTURE " << version << '\n';
-  if(version==2)
+  if(version>=2)
     file << "source " << sourceSize << ' ' << std::hex << sourceCrc32 << std::dec << '\n';
-  file << "pieces 8\n";
+  file << "pieces " << pieceCount << '\n';
   const std::array<std::array<float,3>,4> points = {{{0,0,0},{10,0,0},{0,10,0},{0,0,10}}};
   const std::array<std::array<size_t,3>,4> triangles = {{{0,2,1},{0,1,3},{0,3,2},{1,2,3}}};
-  for(size_t piece=0;piece<8;++piece) {
-    file << "piece 166.6666666667 " << float(piece)*20.f+2.5f << " 2.5 2.5 4\n";
-    for(const auto& triangle:triangles) {
-      file << "tri " << (version==2 ? "OWN_TEST_BARREL_WOOD.TGA" : "ORIGINAL.TGA") << '\n';
+  const std::array groups = {"WOOD","METAL","STONE","CLAY","EARTH","WATER","SNOW","UNDEF"};
+  for(size_t piece=0;piece<pieceCount;++piece) {
+    file << "piece 166.6666666667 " << float(piece)*20.f+2.5f << " 2.5 2.5 ";
+    if(version==3) {
+      const size_t hulls=1+piece%2;
+      file << groups[piece%groups.size()] << ' ' << hulls << " 1\n";
+      for(size_t hull=0;hull<hulls;++hull) {
+        file << "hull 4\n";
+        for(const auto& point:points)
+          file << point[0]+float(piece)*20.f+float(hull)*5.f << ' ' << point[1] << ' ' << point[2] << '\n';
+        }
+      }
+    else file << "4\n";
+    const size_t triangleCount=version==3 ? 1 : triangles.size();
+    for(size_t t=0;t<triangleCount;++t) {
+      file << "tri " << (version>=2 ? "OWN_TEST_BARREL_WOOD.TGA" : "ORIGINAL.TGA") << '\n';
+      const auto& triangle=triangles[t];
       for(const auto index:triangle) {
         const auto& point = points[index];
         file << point[0]+float(piece)*20.f << ' ' << point[1] << ' ' << point[2] << " 0 1 0 0 0\n";
@@ -1479,6 +1493,7 @@ void fractureCache(const Fixture& fixture) {
   const auto original = FractureMesh::load("own_mesh.3ds");
   require(original!=nullptr && original->pieces.size()==8 && original->volume>0,
           "synthetic original fracture cache must contain eight valid solid pieces");
+  require(original->version==1,"original sidecars must retain version 1");
   for(const auto& piece:original->pieces)
     require(piece.hull!=nullptr && piece.triangles.size()==4,"each original cache piece must have a real convex hull");
 
@@ -1505,6 +1520,7 @@ void fractureCache(const Fixture& fixture) {
       else {
         require(fracture!=nullptr && fracture->pieces.size()==8 && fracture->volume==original->volume,
                 "selected geometry must retain eight matched cached pieces for saved destruction");
+        require(fracture->version==(own ? 2u : 1u),"legacy sidecars must retain their version");
         for(const auto& piece:fracture->pieces) {
           require(piece.hull!=nullptr && piece.triangles.size()==4,
                   "selected fracture pieces must retain their solid hulls");
@@ -1553,6 +1569,52 @@ void fractureCache(const Fixture& fixture) {
   const uint32_t crc = uint32_t(mz_crc32(0,bytes.data(),bytes.size()));
   fractureFile(sidecar,2,bytes.size(),crc);
   expectFracture(true,true);
+  {
+    Resources resources;
+    fixture.mount();
+    Resources::loadVisualMesh("OWN_MESH.MRM");
+    fractureFile(sidecar,3,bytes.size(),crc);
+    const auto fracture=FractureMesh::load("OWN_MESH.MRM");
+    require(fracture!=nullptr && fracture->version==3 && fracture->pieces.size()==8,
+            "v3 sidecars must load matched GLB geometry");
+    const std::array groups = {asset::MaterialGroup::WOOD,asset::MaterialGroup::METAL,asset::MaterialGroup::STONE,
+                              asset::MaterialGroup::CLAY,asset::MaterialGroup::EARTH,asset::MaterialGroup::WATER,
+                              asset::MaterialGroup::SNOW,asset::MaterialGroup::UNDEFINED};
+    for(size_t i=0;i<groups.size();++i)
+      require(fracture->pieces[i].group==groups[i],"v3 pieces must retain their material group");
+    require(fracture->pieces[0].hull->GetSubType()==JPH::EShapeSubType::ConvexHull &&
+            fracture->pieces[1].hull->GetSubType()==JPH::EShapeSubType::StaticCompound &&
+            fracture->pieces[0].triangles.size()==1,
+            "v3 collision must use independent single or compound hulls, including an open render mesh");
+    fractureFile(sidecar,3,bytes.size(),crc,2);
+    const auto minimum=FractureMesh::load("OWN_MESH.MRM");
+    require(minimum!=nullptr && minimum->pieces.size()==2,"v3 must accept two pieces");
+    fractureFile(sidecar,3,bytes.size(),crc,64);
+    const auto maximum=FractureMesh::load("OWN_MESH.MRM");
+    require(maximum!=nullptr && maximum->pieces.size()==64,"v3 must accept 64 pieces");
+    fractureFile(sidecar,3,bytes.size(),crc,65);
+    require(!FractureMesh::load("OWN_MESH.MRM"),"v3 must reject 65 pieces");
+    fractureFile(sidecar,3,bytes.size(),crc^1u);
+    require(!FractureMesh::load("OWN_MESH.MRM"),"v3 must reject stale source identity");
+    fractureFile(sidecar,3,bytes.size(),crc);
+    std::ifstream validFile(sidecar);
+    const std::string valid{std::istreambuf_iterator<char>(validFile),std::istreambuf_iterator<char>()};
+    const auto reject=[&](std::string_view from,std::string_view to,std::string_view message) {
+      auto invalid=valid;
+      const auto at=invalid.find(from);
+      require(at!=std::string::npos,"v3 invalid fixture must replace an existing token");
+      invalid.replace(at,from.size(),to);
+      textFile(sidecar,invalid);
+      require(!FractureMesh::load("OWN_MESH.MRM"),message);
+      };
+    reject("WOOD 1 1","WOOD 0 1","v3 must reject zero hulls");
+    reject("hull 4","hull 3","v3 must reject three hull points");
+    reject("WOOD 1 1","UNKNOWN 1 1","v3 must reject unknown material groups");
+    textFile(sidecar,valid.substr(0,valid.size()-10));
+    require(!FractureMesh::load("OWN_MESH.MRM"),"v3 must reject truncated sidecars");
+    textFile(sidecar,valid+"unexpected\n");
+    require(!FractureMesh::load("OWN_MESH.MRM"),"v3 must reject trailing data");
+    }
   fractureFile(sidecar,2,bytes.size(),crc^1u);
   expectFracture(true);
   fractureFile(sidecar,2,bytes.size()+1,crc);
@@ -2396,8 +2458,8 @@ void effectCases(const std::string& game, const std::string& base) {
   setenv("OPENGOTHIC_TEXTURES","",1);
   unsetenv("OPENGOTHIC_CENSUS");
   setenv("TEMPEST_AUDIO_LOOPBACK","48000",1);
-  const char* args[]={"gothic-mesh-gltf-test","-g",game.c_str(),"-g2"};
-  CommandLine commandLine(4,args);
+  const char* args[]={"gothic-mesh-gltf-test","-g",game.c_str()};
+  CommandLine commandLine(3,args);
   Tempest::VulkanApi api;
   Tempest::Device device(api);
   {
@@ -2547,8 +2609,8 @@ void heroHeadGameCases(const std::string& game, const std::string& base) {
   setenv("OPENGOTHIC_BASE",base.c_str(),1);
   unsetenv("OPENGOTHIC_CENSUS");
   setenv("TEMPEST_AUDIO_LOOPBACK","48000",1);
-  const char* args[]={"gothic-mesh-gltf-test","-g",game.c_str(),"-g2","-nointro"};
-  CommandLine commandLine(5,args);
+  const char* args[]={"gothic-mesh-gltf-test","-g",game.c_str(),"-nointro"};
+  CommandLine commandLine(4,args);
   Tempest::VulkanApi api;
   Tempest::Device device(api);
   {
@@ -2636,8 +2698,8 @@ void heroHeadGameCases(const std::string& game, const std::string& base) {
     require(npc!=nullptr && MeshGltfTest::head(*npc).protoMesh()==original,
             "control NPC must retain the original head across save reload");
 
-    const char* offArgs[]={"gothic-mesh-gltf-test","-g",game.c_str(),"-g2","-nointro","--no-hero-head"};
-    CommandLine off(6,offArgs);
+    const char* offArgs[]={"gothic-mesh-gltf-test","-g",game.c_str(),"-nointro","--no-hero-head"};
+    CommandLine off(5,offArgs);
     MeshGltfTest::refreshBody(*hero);
     require(MeshGltfTest::visual(*hero).headMesh()==nullptr && MeshGltfTest::head(*hero).protoMesh()==original,
             "--no-hero-head must restore the original hero head");

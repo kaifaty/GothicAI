@@ -90,15 +90,6 @@ CommandLine::CommandLine(int argc, const char** argv) {
         isBenchmark = std::string_view(argv[i])=="ci" ? Benchmark::CiTooling : isBenchmark;
         }
       }
-    else if(arg=="-g1") {
-      forceG1 = true;
-      }
-    else if(arg=="-g2c") {
-      forceG2 = true;
-      }
-    else if(arg=="-g2") {
-      forceG2NR = true;
-      }
     else if(arg=="-dx12") {
       graphics = GraphicBackend::DirectX12;
       }
@@ -151,12 +142,6 @@ CommandLine::CommandLine(int argc, const char** argv) {
       ++i;
       if(i<argc)
         isVsm = boolArg(argv[i]);
-      }
-    else if(arg=="-rtsm") {
-      // not to document - debug only
-      ++i;
-      if(i<argc)
-        isRtSm = boolArg(argv[i]);
       }
     else {
       Log::i("unrecognized commandline option: \"", arg, "\"");

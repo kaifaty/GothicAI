@@ -5,7 +5,6 @@
 #include "game/constants.h"
 #include "graphics/mesh/hitzones.h"
 #include "graphics/mesh/skeleton.h"
-#include "utils/versioninfo.h"
 #include "world/objects/npc.h"
 #include "world/world.h"
 #include "testbench.h"
@@ -1297,15 +1296,10 @@ void Ragdoll::updateBuoyancyFractions() {
   bool sinks=named(name,"SKELETON") || named(name,"GOLEM") || named(name,"STONEGUARDIAN");
   if(const auto* npc=noiseNpc()) {
     const auto guild=npc->trueGuild();
-    if(npc->world().version().game==2) {
-      sinks=sinks || guild==GIL_GOBBO_SKELETON || guild==GIL_SUMMONED_GOBBO_SKELETON ||
-            guild==GIL_SKELETON || guild==GIL_SUMMONED_SKELETON || guild==GIL_SKELETON_MAGE ||
-            guild==GIL_SHADOWBEAST_SKELETON || guild==GIL_STONEGOLEM || guild==GIL_SUMMONED_GOLEM ||
-            guild==GIL_Stoneguardian || guild==GIL_SummonedGuardian;
-      }
-    else {
-      sinks=sinks || guild==GIL_G1_SKELETON || guild==GIL_G1_GOLEM;
-      }
+    sinks=sinks || guild==GIL_GOBBO_SKELETON || guild==GIL_SUMMONED_GOBBO_SKELETON ||
+          guild==GIL_SKELETON || guild==GIL_SUMMONED_SKELETON || guild==GIL_SKELETON_MAGE ||
+          guild==GIL_SHADOWBEAST_SKELETON || guild==GIL_STONEGOLEM || guild==GIL_SUMMONED_GOLEM ||
+          guild==GIL_Stoneguardian || guild==GIL_SummonedGuardian;
     }
   // A fraction above one leaves weight even when fully immersed. Stone and
   // bones still receive water drag and entry splashes, but settle on the bed.

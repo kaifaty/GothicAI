@@ -290,6 +290,8 @@ add_shader(tonemapping_up.frag       lighting/tonemapping.frag -DUPSCALE)
 # temporal upscale (graphics plan 1г): camera motion vectors, tonemapping with the bloom at the output resolution
 add_shader(motion_camera.frag        upscale/motion_camera.frag)
 add_shader(tonemapping_bloom.frag    lighting/tonemapping.frag -DBLOOM)
+# the TAA frame at the internal resolution: the sharpening and the bloom in one pass with the tonemapping
+add_shader(tonemapping_taa.frag      lighting/tonemapping.frag -DBLOOM -DRCAS)
 
 add_shader(water_reflection.mesh     water/water_reflection.mesh)
 add_shader(water_reflection.frag     water/water_reflection.frag)
@@ -313,6 +315,7 @@ add_shader(fog_view_lut_sep.comp     sky/fog_view_lut.comp -DSUN_SCATTERING -DMU
 add_shader(sky.frag                  sky/sky.frag)
 add_shader(sky_sep.frag              sky/sky.frag -DSEPARABLE)
 add_shader(fog3d.comp                sky/fog.frag -S comp -DVOLUMETRIC)
+add_shader(fog3d_empty.comp          sky/fog.frag -S comp -DVOLUMETRIC -DSHADOW_EMPTY)
 add_shader(fog3d_hq.frag             sky/fog.frag -DVOLUMETRIC)
 add_shader(fog_epipolar.frag         sky/fog_epipolar.frag)
 add_shader(fog.frag                  sky/fog.frag)
@@ -335,6 +338,7 @@ add_shader(patch.comp                patch.comp)
 
 add_shader(ssao.comp                 ssao/ssao.comp)
 add_shader(ssao_blur.comp            ssao/ssao_blur.comp)
+add_shader(ssao_depth.comp           ssao/ssao_depth.comp)
 
 # GPU-driven: HiZ
 if(IOS)
@@ -412,6 +416,7 @@ add_shader(cmaa2_deferred_color_apply_2x2.frag     antialiasing/cmaa2/deferred_c
 
 # temporal AA by the camera (docs/graphics-plan.md, step 1a)
 add_shader(taa_resolve.frag                        antialiasing/taa_resolve.frag)
+add_shader(taa_resolve_h.frag                      antialiasing/taa_resolve.frag -DFP16)
 add_shader(taa_sharpen.frag                        antialiasing/taa_sharpen.frag)
 
 # virtual shadows
@@ -439,50 +444,6 @@ add_shader(vsm_fog_mark_pages.comp   virtual_shadow/vsm_fog_shadow.comp -DPAGES)
 add_shader(vsm_fog_trace.comp        virtual_shadow/vsm_fog_trace.comp)
 
 add_shader(vsm_rendering.comp        virtual_shadow/vsm_rendering.comp)
-
-# software meshlet rt
-add_shader(rtsm_clear.comp           rtsm/rtsm_clear.comp)
-add_shader(rtsm_mark_pages.comp      rtsm/rtsm_mark_pages.comp)
-add_shader(rtsm_mark_fog_pages.comp  rtsm/rtsm_mark_fog_pages.comp)
-add_shader(rtsm_hiz_pages.comp       rtsm/rtsm_hiz_pages.comp)
-add_shader(rtsm_culling.comp         rtsm/rtsm_culling.comp)
-add_shader(rtsm_position.comp        rtsm/rtsm_position.comp)
-
-add_shader(rtsm_meshlet_cull.comp    rtsm/rtsm_meshlet_cull.comp)
-add_shader(rtsm_primitive_cull.comp  rtsm/rtsm_primitive_cull.comp)
-
-add_shader(rtsm_raster.comp          rtsm/rtsm_raster.comp)
-add_shader(rtsm_direct_light.frag    rtsm/rtsm_direct_light.frag)
-
-add_shader(rtsm_rendering.comp       rtsm/rtsm_rendering.comp)
-add_shader(rtsm_omni_rendering.comp  rtsm/rtsm_omni_rendering.comp)
-add_shader(rtsm_dbg.frag             rtsm/rtsm_dbg.frag)
-
-add_shader(rtsm_omni_clear.comp      rtsm/rtsm_omni_clear.comp)
-add_shader(rtsm_cull_lights.comp     rtsm/rtsm_cull_lights.comp)
-add_shader(rtsm_compact_lights.comp  rtsm/rtsm_compact_lights.comp)
-add_shader(rtsm_omni_lights.comp     rtsm/rtsm_omni_lights.comp)
-add_shader(rtsm_omni_bboxes.comp     rtsm/rtsm_omni_bboxes.comp)
-add_shader(rtsm_omni_culling.comp    rtsm/rtsm_omni_culling.comp)
-add_shader(rtsm_omni_position.comp   rtsm/rtsm_position.comp -DOMNI)
-add_shader(rtsm_omni_meshlet.comp    rtsm/rtsm_omni_meshlet.comp)
-add_shader(rtsm_omni_backface.comp   rtsm/rtsm_omni_backface.comp)
-add_shader(rtsm_omni_compact.comp    rtsm/rtsm_omni_compact.comp)
-add_shader(rtsm_omni_task.comp       rtsm/rtsm_omni_task.comp)
-add_shader(rtsm_omni_primitive.comp  rtsm/rtsm_omni_primitive.comp)
-add_shader(rtsm_omni_raster.comp     rtsm/rtsm_omni_raster.comp)
-
-# software ray-tracing
-#add_shader(sw_raytracing.comp swrt/sw_raytracing.comp -DANY_HIT -DUNIFORM_TRAVERSE "--target-env" "spirv1.3")
-add_shader(sw_raytracing.comp   swrt/sw_raytracing.comp  -DANY_HIT)
-add_shader(sw_raytracing8.comp  swrt/sw_raytracing8.comp)
-add_shader(sw_raytracing64.comp swrt/sw_raytracing64.comp)
-
-# software rendering
-add_shader(sw_rendering_imm.comp  software_rendering/sw_rendering_imm.comp)
-add_shader(sw_rendering_tbr.comp  software_rendering/sw_rendering_tbr.comp)
-add_shader(sw_light.comp          software_rendering/sw_light.comp)
-add_shader(vbuffer_blit.frag      software_rendering/vbuffer_blit.frag)
 
 add_custom_command(
   OUTPUT     ${HEADER} ${CPP}

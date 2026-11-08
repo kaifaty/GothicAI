@@ -1676,7 +1676,10 @@ void PhysicsSystem::JobIntegrateVelocity(const PhysicsUpdateContext *ioContext, 
 						uint32 ccd_body_idx = ioStep->mNumCCDBodies++;
 						JPH_ASSERT(active_body_idx < ioStep->mNumActiveBodyToCCDBody);
 						ioStep->mActiveBodyToCCDBody[active_body_idx] = ccd_body_idx;
-						new (&ioStep->mCCDBodies[ccd_body_idx]) CCDBody(body_id, delta_pos, linear_cast_threshold_sq, min(mPhysicsSettings.mPenetrationSlop, mPhysicsSettings.mLinearCastMaxPenetration * inner_radius));
+						// GothicAI: A body in mFineSlopLayers casts with its own smaller slop.
+						const ObjectLayer layer = body.GetObjectLayer();
+						const float penetration_slop = layer < 32 && (mPhysicsSettings.mFineSlopLayers & (1u << layer)) != 0 ? mPhysicsSettings.mFinePenetrationSlop : mPhysicsSettings.mPenetrationSlop;
+						new (&ioStep->mCCDBodies[ccd_body_idx]) CCDBody(body_id, delta_pos, linear_cast_threshold_sq, min(penetration_slop, mPhysicsSettings.mLinearCastMaxPenetration * inner_radius));
 
 						update_position = false;
 					}

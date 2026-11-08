@@ -1010,6 +1010,7 @@ void WorldObjects::updateAnimation(uint64_t dt) {
   if(lod)
     pinAnimationLodTargets();
   std::atomic<uint64_t> deferred{0};
+  FrameProfile::Scope npcPass(FrameProfile::Zone::AnimationNpcPass);
   AnimationLod::beginPass();
   Workers::parallelTasks(npcArr,[&](std::unique_ptr<Npc>& i){
     if(skipFar && i->processPolicy()==NpcProcessPolicy::AiFar2 && !BodyObservations::watched(*i))
@@ -1033,12 +1034,16 @@ void WorldObjects::updateAnimation(uint64_t dt) {
       } else {
       i->updateAnimation(dt);
       }
+    // The melee shadow loop below publishes this body unless its bones move first.
+    i->prepareMeleeShadowBody();
     });
   AnimationLod::endPass();
+  npcPass.finish();
   animationLodDeferred = deferred.load(std::memory_order_relaxed);
   FrameProfile::add(FrameProfile::Amount::NpcAnimDeferred,animationLodDeferred);
   // Retiring a shadow window can also run damage scripts here. Scripts may
   // append or remove NPCs, so retain neither vector iterators nor references.
+  FrameProfile::Scope meleeShadow(FrameProfile::Zone::MeleeShadow);
   for(size_t i=0;i<npcArr.size();) {
     auto* npc = npcArr[i].get();
     if(skipFar && npc->processPolicy()==NpcProcessPolicy::AiFar2 && !BodyObservations::watched(*npc))
@@ -1055,6 +1060,8 @@ void WorldObjects::updateAnimation(uint64_t dt) {
     }
   // Query the final published interval before callers can decide a terminal
   // combat outcome. The flush does not advance physics, animation or clocks.
+  meleeShadow.finish();
+  FrameProfile::Scope meleeContacts(FrameProfile::Zone::MeleeContacts);
   owner.physic()->flushShadowBlades();
   for(size_t i=0;i<npcArr.size();) {
     auto* npc = npcArr[i].get();
@@ -1064,7 +1071,9 @@ void WorldObjects::updateAnimation(uint64_t dt) {
     else if(const auto at=npcId(npc); at!=uint32_t(-1))
       i=size_t(at)+1;
     }
+  meleeContacts.finish();
   if(!frozen) {
+    FrameProfile::Scope interactive(FrameProfile::Zone::InteractiveAnimation);
     AnimationLod::beginPass();
     interactiveObj.parallelFor([dt](Interactive& i){
       i.updateAnimation(dt);
@@ -1077,8 +1086,11 @@ void WorldObjects::updateAnimation(uint64_t dt) {
   const uint64_t logicBefore[] = {logic.ticks,logic.bodyMismatch,logic.weaponMismatch,
                                  logic.early,logic.late,logic.events,logic.eventMismatch,
                                  logic.waitEarly,logic.waitLate,logic.reanchoredCount(),logic.bodySamples,logic.weaponSamples};
+  {
+  FrameProfile::Scope logicalBodies(FrameProfile::Zone::LogicalBodySync);
   for(auto& npc:npcArr)
     npc->syncLogicalBodyState();
+  }
   FrameProfile::add(FrameProfile::Amount::NpcLogicSamples,logic.ticks-logicBefore[0]);
   FrameProfile::add(FrameProfile::Amount::NpcLogicBodyMismatch,logic.bodyMismatch-logicBefore[1]);
   FrameProfile::add(FrameProfile::Amount::NpcLogicWeaponMismatch,logic.weaponMismatch-logicBefore[2]);

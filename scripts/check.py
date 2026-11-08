@@ -33,12 +33,11 @@ class Group:
 
 LOCKED_PROJECTS = (
     "server", "asr-service", "tts-service", "launcher/core",
-    "libs/chatgpt-auth", "shorts", "decider-service", "embed-service", "laughter-service",
+    "libs/chatgpt-auth", "decider-service", "embed-service", "laughter-service",
 )
 PYTEST = ("pytest", "-q", "-rs", "--timeout=120", "--timeout-method=signal")
 # The pip interface scopes the CPU index to torch; uv run's --index affects all packages.
-GROUPS = tuple(Group(p, p, ("uv", "run", "--locked", "--with", "pytest-timeout", *PYTEST),
-                     platform="macos-15" if p == "shorts" else "ubuntu-24.04")
+GROUPS = tuple(Group(p, p, ("uv", "run", "--locked", "--with", "pytest-timeout", *PYTEST))
                for p in LOCKED_PROJECTS) + (
     Group("body-service", "body-service", (
         "bash", "-c", 'uv venv --allow-existing .venv && '

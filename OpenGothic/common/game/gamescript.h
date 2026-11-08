@@ -111,7 +111,6 @@ class GameScript final {
     ScriptFn         playerPercAssessMagic();
     std::string_view currencyName() const { return goldTxt; }
     int              npcDamDiveTime();
-    int32_t          criticalDamageMultiplyer() const;
     // cm: G2's dice for arrows - the talent's chance at the first, none at the second (AI_Constants.d)
     float            rangedChanceMinDist() const { return rangedChanceMin; }
     float            rangedChanceMaxDist() const { return rangedChanceMax; }
@@ -164,7 +163,6 @@ class GameScript final {
     void invokeRefreshAtInsert(Npc& npc);
     auto canNpcCollideWithSpell(Npc& npc, Npc* shooter, int32_t spellId) -> CollideMask;
 
-    int  playerHotKeyScreenMap_G1(Npc& pl);
     int  playerHotKeyScreenMap(Npc& pl);
     void playerHotLamePotion(Npc& pl);
     void playerHotLameHeal(Npc& pl);
@@ -505,7 +503,6 @@ class GameScript final {
     daedalus::DaedalusSymbol*                                     spellFxAniLetters = nullptr;
     std::string                                                 goldTxt;
     float                                                       viewTimePerChar = 0.5;
-    int32_t                                                     damCriticalMultiplier = 2;
     float                                                       rangedChanceMin = 1500;
     float                                                       rangedChanceMax = 4500;
     mutable std::unordered_map<std::string,uint32_t>            msgTimings;

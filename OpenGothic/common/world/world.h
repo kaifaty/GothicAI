@@ -30,7 +30,6 @@ class VisualFx;
 class GlobalEffects;
 class ParticleFx;
 class Interactive;
-class VersionInfo;
 class GlobalFx;
 class ClothVisual;
 struct PhysicsNoise;
@@ -153,7 +152,6 @@ class World final {
 
     GameScript&          script()   const;
     GameSession&         gameSession() const { return game; }
-    auto                 version()  const -> const VersionInfo&;
 
     void                 assignRoomToGuild(std::string_view room, int32_t guildId);
     int32_t              guildOfRoom(const Tempest::Vec3& pos);

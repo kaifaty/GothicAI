@@ -263,6 +263,7 @@ void Pose::load(Serialize &fin, const AnimationSolver& solver) {
     fin.read(i);
   for(auto& i:tr)
     fin.read(i);
+  ++trRevision;
   blend.reset(numBones);
   }
 
@@ -300,6 +301,7 @@ void Pose::setSkeleton(const Skeleton* sk) {
   skeleton = sk;
   for(auto& i:tr)
     i.identity();
+  ++trRevision;
   if(skeleton!=nullptr) {
     numBones = skeleton->tr.size();
     } else {
@@ -596,6 +598,7 @@ void Pose::mkSkeleton(const Tempest::Matrix4x4& mt) {
 void Pose::mkSkeleton(const Tempest::Matrix4x4& mt, float ikFloorY) {
   if(skeleton==nullptr)
     return;
+  ++trRevision;
   Matrix4x4 m = mt;
   m.translate(mkBaseTranslation());
   if(skeleton->ordered)

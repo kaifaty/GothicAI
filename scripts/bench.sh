@@ -26,7 +26,7 @@
 #      WORLD         start a fresh game in this world instead (NEWWORLD.ZEN, OLDWORLD.ZEN, ADDONWORLD.ZEN, DRAGONISLAND.ZEN)
 #      GOTHIC_INTRO=1 play the new game's intro and the scripts' videos (default: -nointro, none)
 #      NO_BUILD=1    do not rebuild the engine first
-#      TIMEOUT=300   seconds before the game is killed
+#      TIMEOUT=300   seconds before the game is killed (a scenario's `# @timeout <s>` line sets its own default)
 #      BENCH_PROGRESS seconds between progress lines (default: 300; 0 disables)
 #      BENCH_STALL   seconds without output changes before killing a stalled game (default: 600; 0 disables)
 #      KEEP=1        the window stays open after the scenario (incompatible with headless)
@@ -100,6 +100,10 @@ SCEN="${1:?usage: scripts/bench.sh <scenario> [out dir]}"
 [[ -f "$SCEN" ]] || { echo "no scenario: $1" >&2; exit 2; }
 SCEN="$(cd "$(dirname "$SCEN")" && pwd)/$(basename "$SCEN")"
 NAME="$(basename "$SCEN" .bench)"
+if [[ -z "${TIMEOUT:-}" ]]; then
+  SCEN_TIMEOUT="$(awk '$1 == "#" && $2 == "@timeout" { print $3; exit }' "$SCEN")"
+  [[ -z "$SCEN_TIMEOUT" ]] || export TIMEOUT="$SCEN_TIMEOUT"
+fi
 if [[ -z "${BENCH_HEADLESS+x}" ]]; then
   BENCH_HEADLESS=0
   if grep -qx '# @headless' "$SCEN"; then BENCH_HEADLESS=1; fi
@@ -500,7 +504,6 @@ RUN_MODE=window
 if [[ "$BENCH_HEADLESS" == 1 ]]; then
   RUN_MODE='headless lockstep'
   GAME_ARGS=("${RUNNER_BIN:-$(dirname "$GAME_BIN")/gothic-body-runner}" -g "$GOTHIC_DIR" -devmode "${START_ARGS[@]}")
-  if [[ "${RYZEN_BENCH:-}" == 1 ]]; then GAME_ARGS+=(-g2); fi
   GAME_ARGS+=(--game-parity --scenario "$SCEN" --output "$OUT" --mode lockstep)
   WINDOW_ENV=()
 else

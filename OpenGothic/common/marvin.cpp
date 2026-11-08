@@ -167,7 +167,6 @@ Marvin::Marvin() {
 
     {"toggle gi",                  C_ToggleGI},
     {"toggle vsm",                 C_ToggleVsm},
-    {"toggle rtsm",                C_ToggleRtsm},
     {"toggle pathtrace",           C_TogglePathtrace},
     {"toggle footik",              C_ToggleFootIk},
     {"toggle gaze",                C_ToggleGaze},
@@ -177,7 +176,6 @@ Marvin::Marvin() {
     {"toggle aim",                 C_ToggleAim},
     {"toggle gestures",            C_ToggleGestures},
     {"toggle blink",               C_ToggleBlink},
-    {"toggle manualaim",           C_ToggleManualAim},
     {"toggle bowstrength",         C_ToggleBowStrength},
     {"toggle npcmanualaim",        C_ToggleNpcManualAim},
     {"toggle flinch",              C_ToggleFlinch},
@@ -575,9 +573,6 @@ bool Marvin::exec(std::string_view v) {
     case C_ToggleVsm:
       Gothic::inst().toggleVsm();
       return true;
-    case C_ToggleRtsm:
-      Gothic::inst().toggleRtsm();
-      return true;
     case C_TogglePathtrace:
       Gothic::inst().togglePathtrace();
       return true;
@@ -604,9 +599,6 @@ bool Marvin::exec(std::string_view v) {
       return true;
     case C_ToggleBlink:
       EyeBlink::setEnabled(!EyeBlink::isEnabled());
-      return true;
-    case C_ToggleManualAim:
-      Archery::setEnabled(!Archery::isEnabled());
       return true;
     case C_ToggleBowStrength:
       Archery::setBowStrengthEnabled(!Archery::isBowStrengthEnabled());

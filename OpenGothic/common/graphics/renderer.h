@@ -61,7 +61,6 @@ class Renderer final {
     Tempest::Attachment&    usesAttachment(Tempest::Attachment&ret, Tempest::TextureFormat frm, uint32_t w, uint32_t h);
     Tempest::StorageBuffer& usesSsbo(Tempest::StorageBuffer& ret, size_t size);
     Tempest::StorageBuffer& usesSsboInit(Tempest::StorageBuffer& ret, size_t size);
-    Tempest::StorageBuffer& usesScratch(Tempest::StorageBuffer& ret, size_t size);
 
     void prepareUniforms(WorldView& wview);
     void resetViewport(Tempest::Size size, Tempest::Size fullRes);
@@ -87,9 +86,6 @@ class Renderer final {
     void buildHiZ         (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawVsm          (Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& view);
     void logVsmStats      (const WorldView& view);
-    void drawRtsm         (Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& view);
-    void drawRtsmOmni     (Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& view);
-    void drawSwr          (Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& view);
     void drawGBuffer      (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, WorldView& view);
     void drawGWater       (Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& view);
     void drawShadowMap    (Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId, WorldView& view);
@@ -98,9 +94,10 @@ class Renderer final {
     void drawSky          (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& view);
     void drawAmbient      (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& view);
     void drawTonemapping  (Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
-    void drawBloom        (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
+    void drawBloom        (Tempest::Encoder<Tempest::CommandBuffer>& cmd, bool fused = false);
     void drawCMAA2        (Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
-    void drawTaa          (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
+    void drawTaa          (Tempest::Encoder<Tempest::CommandBuffer>& cmd, bool fused = false);
+    void drawTonemappingTaa(Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
     void drawTaaSharpen   (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawUpscale      (Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawTemporalUpscale(Tempest::Encoder<Tempest::CommandBuffer>& cmd);
@@ -112,7 +109,6 @@ class Renderer final {
     void drawSunMoon      (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
     void drawSunMoon      (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview, bool isSun);
 
-    void drawSwRT         (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
     void drawPathtrace    (Tempest::Encoder<Tempest::CommandBuffer>& cmd, WorldView& wview, uint8_t fId);
 
     void stashSceneAux    (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
@@ -122,23 +118,17 @@ class Renderer final {
     void drawSurfelsDbg   (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
     void drawProbesHitDbg (Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     void drawVsmDbg       (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
-    void drawSwrDbg       (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
-    void drawRtsmDbg      (Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
     void drawHashDbg      (Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
     void drawLightTreeDbg (Tempest::Attachment& result, Tempest::Encoder<Tempest::CommandBuffer>& cmd, const WorldView& wview);
 
     void setupSettings();
     void toggleGi();
     void toggleVsm();
-    void toggleRtsm();
     void togglePathtrace();
 
     struct Settings {
       const uint32_t shadowResolution   = 2048;
       bool           vsmEnabled         = false;
-      bool           rtsmEnabled        = false;
-      bool           swrEnabled         = false;
-      bool           swrtEnabled        = false;
       bool           pathTraceEnabled   = false;
 
       bool           zEnvMappingEnabled = false;
@@ -238,6 +228,7 @@ class Renderer final {
       Tempest::TextureFormat    aoFormat = Tempest::TextureFormat::R8;
       Tempest::StorageImage     ssaoBuf;
       Tempest::StorageImage     ssaoBlur;
+      Tempest::StorageImage     depthHalf; // R32F depth at half size for the samples of ssao.comp, ssao_depth.comp
       } ssao;
 
     struct Cmaa2 {
@@ -343,33 +334,6 @@ class Renderer final {
       bool                      lampArmed  = false; // the next drawLights counts
       bool                      lampCounted = false; // lampProbe holds a counted frame
       } vsm;
-
-    struct {
-      Tempest::StorageImage     outputImage;
-      Tempest::StorageImage     outputImageClr;
-
-      Tempest::StorageImage     pages;
-      Tempest::StorageBuffer    visList;
-      Tempest::StorageBuffer    posList;
-
-      Tempest::StorageImage     meshTiles;
-      Tempest::StorageImage     primTiles;
-
-      Tempest::StorageBuffer    visibleLights;
-      Tempest::StorageBuffer    drawTasks;
-      Tempest::StorageImage     lightTiles;
-      Tempest::StorageImage     lightBins, primTilesOmni;
-
-      Tempest::StorageImage     dbg64, dbg32, dbg16, dbg8;
-      } rtsm;
-
-    struct {
-      Tempest::StorageImage     outputImage;
-      } swr;
-
-    struct {
-      Tempest::StorageImage     outputImage;
-      } swrt;
 
     Tempest::TextureFormat    shadowFormat  = Tempest::TextureFormat::Depth16;
     Tempest::TextureFormat    zBufferFormat = Tempest::TextureFormat::Depth16;

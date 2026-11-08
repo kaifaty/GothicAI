@@ -281,7 +281,7 @@ class SoakVideoTests(unittest.TestCase):
                 runtime.write_text("#!/bin/sh\nexit 0\n")
                 runtime.chmod(0o755 if executable else 0o644)
                 game = run / "game.sh"
-                game.write_text('#!/bin/bash\nexec "$RYZEN_GAME_BIN" "$@" -g2 -window\n')
+                game.write_text('#!/bin/bash\nexec "$RYZEN_GAME_BIN" "$@" -window\n')
             else:
                 runtime = None
                 game = root / "OpenGothic/build/opengothic/Gothic2Notr"

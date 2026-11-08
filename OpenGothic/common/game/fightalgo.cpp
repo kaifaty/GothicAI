@@ -379,7 +379,7 @@ float FightAlgo::weaponRange(GameScript &owner, const Npc &npc) {
   auto& gv  = owner.guildVal();
   auto  w   = npc.inventory().activeWeapon();
   int   add = w ? w->swordLength() : 0;
-  auto  bR  = Gothic::inst().version().game==2 ? ReferenceBowRangeG2 : ReferenceBowRangeG1;
+  auto  bR  = ReferenceBowRangeG2;
 
   switch(npc.weaponState()) {
     case WeaponState::W1H:

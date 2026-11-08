@@ -11,6 +11,10 @@
 #include "gapi/shaderreflection.h"
 
 #include "../utility/smallarray.h"
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+#include <string>
+#include <vector>
+#endif
 
 namespace Tempest {
 namespace Detail {
@@ -26,13 +30,29 @@ class VTexture;
 #if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
 struct VFrameProfileQueries {
   static constexpr uint32_t MaxQueries=256;
+  // [0] start and [1] end of the command buffer, then a begin/end pair per debug-marker region.
+  static constexpr uint32_t MaxTimestamps=512;
+  struct Region {
+    std::string label;
+    uint32_t    first=0;
+    uint64_t    drawCalls=0, dispatchCalls=0;
+    bool        timed=false;
+    };
   VkDevice device=VK_NULL_HANDLE;
-  VkQueryPool pool=VK_NULL_HANDLE;
-  uint32_t count=0;
-  bool active=false, valid=true;
-  void* record=nullptr;
+  VkQueryPool pool=VK_NULL_HANDLE;       // pipeline statistics; null without the device feature
+  VkQueryPool timestamps=VK_NULL_HANDLE; // null when the graphics queue has no timestampValidBits
+  uint32_t count=0, timestampCount=0;
+  uint64_t timestampMask=0;
+  double   timestampPeriod=0;
+  bool active=false, valid=true, passes=false;
+  std::vector<Region> regions;
+  size_t region=size_t(-1);
+  void* record=nullptr;     // geometry (triangles)
+  void* gpuRecord=nullptr;  // gpu_ns of the attempt
+  void* passRecord=nullptr; // .gpu.csv rows
   ~VFrameProfileQueries();
   void complete(bool success);
+  bool span(const uint64_t* ticks, uint32_t first, uint64_t& ns) const;
   };
 #endif
 
@@ -131,7 +151,11 @@ class VCommandBuffer:public AbstractGraphicsApi::CommandBuffer {
     void pushChunk();
     void newChunk();
 #if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+    void profileBegin();
     void profileDraw();
+    void profileDispatch();
+    void profileRegion(std::string_view tag);
+    void profileTimestamp(uint32_t id);
 #endif
 
     void bindVbo(const VBuffer& vbo, size_t stride);

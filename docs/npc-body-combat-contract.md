@@ -21,7 +21,7 @@ Daedalus AI_Attack
   → takeDamage: блок/отскок либо расчёт урона
 ```
 
-Источники: [`AI_Attack` в `Npc::nextAiAction`](../OpenGothic/common/world/objects/npc.cpp), [`FightAlgo`](../OpenGothic/common/game/fightalgo.cpp), [`Npc::implAttack` и `commitDamage`](../OpenGothic/common/world/objects/npc.cpp), [`Pose`](../OpenGothic/common/graphics/mesh/pose.cpp).
+Источники: [`AI_Attack` в `Npc::nextAiAction`](../OpenGothic/common/world/objects/npc_aiqueue.cpp), [`FightAlgo`](../OpenGothic/common/game/fightalgo.cpp), [`Npc::implAttack` и `commitDamage`](../OpenGothic/common/world/objects/npc.cpp), [`Pose`](../OpenGothic/common/graphics/mesh/pose.cpp).
 
 Здесь две очереди: script `aiQueue` и внутренняя боевая `FightAlgo::tr`. Перед исполнением `implAttack` уступает непустой `aiQueue`. Повторный внешний запрос через [`NpcController::action`](../OpenGothic/ai_bridge/npccontroller.cpp) способен отменить длинное действие и очистить script queue. Поэтому этот endpoint не подходит для потока решений 20 Гц. Будущий provider должен заменять источник следующего боевого решения в движке, сохраняя один общий исполнитель.
 

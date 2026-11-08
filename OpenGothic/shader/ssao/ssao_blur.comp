@@ -22,7 +22,10 @@ layout(binding  = 2) uniform sampler2D ssao;
 layout(binding  = 3) uniform sampler2D depth;
 
 shared vec2 samples[LANE_SIZE][LANE_SIZE];
-shared uint sSsaoMax;
+shared uint sSsaoMax, sSsaoMin;
+
+// AO texels are R8: two different texels, or a texel and a bilinear half of two, differ by at least 0.5/255
+const float flatSpread = 1.0/1024.0;
 
 vec2 sampleAt(ivec2 at) {
   at += ivec2(KERNEL_RADIUS);
@@ -57,6 +60,7 @@ vec2 blurPass(ivec2 pAt, ivec2 dir) {
 
 void main() {
   sSsaoMax = 0;
+  sSsaoMin = floatBitsToUint(1.0);
   barrier();
 
   const ivec2 res      = ivec2(textureSize(depth,0).xy);
@@ -66,7 +70,7 @@ void main() {
   const ivec2 aoSize   = textureSize(ssao,0);
   const ivec2 aoRatio  = (res + aoSize - 1)/aoSize;
 
-  float ssaoMax  = 0;
+  float ssaoMax  = 0, ssaoMin = 1;
   vec3  clipInfo = scene.clipInfo;
   for(uint i=gl_LocalInvocationID.x; i<LANE_SIZE; i+=gl_WorkGroupSize.x)
     for(uint r=gl_LocalInvocationID.y; r<LANE_SIZE; r+=gl_WorkGroupSize.y) {
@@ -81,10 +85,13 @@ void main() {
       d = linearDepth(d, clipInfo);
       sampleAt(xy, vec2(c,d));
       ssaoMax = max(ssaoMax, c);
+      ssaoMin = min(ssaoMin, c);
       }
 
   if(ssaoMax>0)
     atomicMax(sSsaoMax, floatBitsToUint(ssaoMax));
+  if(ssaoMin<1)
+    atomicMin(sSsaoMin, floatBitsToUint(ssaoMin));
 
   barrier();
 
@@ -92,6 +99,12 @@ void main() {
   if(ssaoMax<0.001) {
     if(gl_GlobalInvocationID.x<res.x && gl_GlobalInvocationID.y<res.y)
       imageStore(result, ivec2(gl_GlobalInvocationID.xy), vec4(0));
+    return; // uniform exit
+    }
+  if(ssaoMax-uintBitsToFloat(sSsaoMin)<flatSpread) {
+    // a normalized blur of a constant is that constant: the same R8 value the full path stores
+    if(gl_GlobalInvocationID.x<res.x && gl_GlobalInvocationID.y<res.y)
+      imageStore(result, ivec2(gl_GlobalInvocationID.xy), vec4(sampleAt(ivec2(gl_LocalInvocationID.xy)).x));
     return; // uniform exit
     }
   barrier();

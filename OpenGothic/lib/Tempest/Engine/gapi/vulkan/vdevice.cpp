@@ -206,6 +206,17 @@ void VDevice::createLogicalDevice(VkPhysicalDevice pdev) {
 #if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
   deviceFeatures.pipelineStatisticsQuery = supportedFeatures.pipelineStatisticsQuery;
   profilePipelineStatistics = supportedFeatures.pipelineStatisticsQuery;
+  {
+    VkPhysicalDeviceProperties devProps={};
+    vkGetPhysicalDeviceProperties(pdev,&devProps);
+    uint32_t familyCount=0;
+    vkGetPhysicalDeviceQueueFamilyProperties(pdev,&familyCount,nullptr);
+    std::vector<VkQueueFamilyProperties> families(familyCount);
+    vkGetPhysicalDeviceQueueFamilyProperties(pdev,&familyCount,families.data());
+    if(props.graphicsFamily<familyCount && devProps.limits.timestampPeriod>0)
+      profileTimestampBits=families[props.graphicsFamily].timestampValidBits;
+    profileTimestampPeriod=devProps.limits.timestampPeriod;
+    }
 #endif
 
   deviceFeatures.vertexPipelineStoresAndAtomics = supportedFeatures.vertexPipelineStoresAndAtomics;
@@ -1167,7 +1178,12 @@ std::shared_ptr<VFence> VDevice::submit(VCommandBuffer& cmd) {
   VkFence fence = pfence->fence;
 #if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
   if(cmd.profileQueries!=nullptr) {
-    cmd.profileQueries->record=FrameProfile::geometrySubmitted();
+    auto& query=*cmd.profileQueries;
+    if(query.pool!=VK_NULL_HANDLE)
+      query.record=FrameProfile::geometrySubmitted();
+    query.gpuRecord=FrameProfile::gpuSubmitted();
+    if(query.passes)
+      query.passRecord=FrameProfile::gpuPassesSubmitted();
     pfence->profileQueries=cmd.profileQueries;
     }
 #endif

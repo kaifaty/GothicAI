@@ -1262,15 +1262,14 @@ void GameMenu::setPlayer(const Npc &pl) {
   set("MENU_ITEM_ARMOR_3",     pl.protection(PROT_FIRE));
   set("MENU_ITEM_ARMOR_4",     pl.protection(PROT_MAGIC));
 
-  const bool g2        = Gothic::inst().version().game==2;
-  const int  talentMax = g2 ? TALENT_MAX_G2 : TALENT_MAX_G1;
+  const int  talentMax = TALENT_MAX_G2;
   for(uint16_t i=0; i<talentMax; ++i) {
     auto& str = tal->get_string(i);
     if(str.empty())
       continue;
 
     const int sk  = pl.talentSkill(Talent(i));
-    const int val = g2 ? pl.hitChance(Talent(i)) : pl.talentValue(Talent(i));
+    const int val = pl.hitChance(Talent(i));
 
     set(string_frm("MENU_ITEM_TALENT_",i,"_TITLE"), str);
     set(string_frm("MENU_ITEM_TALENT_",i,"_SKILL"), strEnum(talV->get_string(i),sk,textBuf));

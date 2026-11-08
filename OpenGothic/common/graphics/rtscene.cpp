@@ -4,6 +4,13 @@
 
 #include "graphics/mesh/submesh/staticmesh.h"
 
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+#include <chrono>
+#include <cinttypes>
+#include <cstdio>
+#include <unordered_set>
+#endif
+
 using namespace Tempest;
 
 static bool isSupported(Material::AlphaFunc alpha, RtScene::Category cat) {
@@ -46,6 +53,9 @@ void RtScene::addInstance(const Matrix4x4& pos, const AccelerationStructure& bla
   if(!isSupported(mat.alpha, cat))
     return;
 
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+  build.triangles += iboLength/3;
+#endif
   const uint32_t bucketId       = aquireBucketId(mat,mesh);
   const uint32_t firstPrimitive = uint32_t(firstIndex/3);
 
@@ -109,6 +119,9 @@ void RtScene::addInstance(const BuildBlas& ctx, Tempest::AccelerationStructure& 
   }
 
 void RtScene::buildTlas() {
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+  const auto start = std::chrono::steady_clock::now();
+#endif
   needToUpdate = false;
 
   Resources::recycle(std::move(blasStaticOpaque));
@@ -132,8 +145,32 @@ void RtScene::buildTlas() {
   rtDesc = device.ssbo(build.rtDesc);
   tlas   = device.tlas(build.inst);
 
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+  logBuild(std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count());
+#endif
   build = Build();
   }
+
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+void RtScene::logBuild(double buildMs) const {
+  // Size of the scene each rebuild: instances and unique BLAS in the TLAS, triangles summed over
+  // the instances; bytes are -1 when the backend keeps no size (Metal).
+  std::unordered_set<const AccelerationStructure*> unique;
+  int64_t blasBytes = 0;
+  for(auto& i:build.inst) {
+    if(i.blas==nullptr || !unique.insert(i.blas).second)
+      continue;
+    const int64_t bytes = profileByteSize(*i.blas);
+    blasBytes = (bytes<0 || blasBytes<0) ? -1 : blasBytes+bytes;
+    }
+  char line[256] = {};
+  std::snprintf(line, sizeof(line),
+                "render: rt scene instances=%zu blas=%zu triangles=%" PRIu64 " tlas_bytes=%" PRId64
+                " blas_bytes=%" PRId64 " build_ms=%.3f",
+                build.inst.size(), unique.size(), build.triangles, profileByteSize(tlas), blasBytes, buildMs);
+  Log::i(line);
+  }
+#endif
 
 bool RtScene::refreshTextures() {
   const auto generation=Resources::textureGeneration();

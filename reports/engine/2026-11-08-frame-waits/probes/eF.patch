@@ -1,0 +1,11 @@
+--- a/OpenGothic/shader/ssao/ssao.comp
++++ b/OpenGothic/shader/ssao/ssao.comp
+@@ -100,7 +100,7 @@
+     atomicAdd(vCnt, 1);
+   barrier();
+ 
+-  return vCnt<4;
++  return false; // probe: every group runs all iterations
+   // return d < 0.1 + samples*0.005;
+   }
+ 

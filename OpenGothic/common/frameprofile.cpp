@@ -24,7 +24,9 @@ const char* names[Zones]={"tick","finish_step","camera","observations","bench","
   "bodynet","cloth","water","destruction","ai_bridge","sound","vob_sound_load",
   "texture_update","texture_demand_elapsed_sum","bindless_rebuild","bindless_patch",
   "npc_full_tick","npc_simplified_tick","npc_logic_shadow",
-  "encode_shadows","encode_main","encode_water","encode_post","encode_ui"};
+  "encode_shadows","encode_main","encode_water","encode_post","encode_ui",
+  "animation_npc_pass","melee_shadow","melee_contacts","interactive_animation","logical_body_sync",
+  "pfx_prepare","upload_wait","rt_scene"};
 const char* amountNames[Amounts]={"palette_calls","palette_bytes","identical_calls","identical_bytes",
   "patch_calls","patch_bytes","patch_blocks","grow_bytes","upload_execution_bytes","draw_calls","dispatch_calls",
   "bindless_texture_slots","bindless_buffer_slots","bindless_patched_slots",
@@ -275,10 +277,14 @@ void* FrameProfile::gpuSubmitted() {
   return record;
   }
 void FrameProfile::gpuCompleted(void* record, double startSeconds, double endSeconds) {
+  const bool valid=std::isfinite(startSeconds) && std::isfinite(endSeconds) && startSeconds>0 && endSeconds>=startSeconds;
+  gpuCompletedNs(record,valid ? uint64_t((endSeconds-startSeconds)*1e9) : 0,valid);
+  }
+void FrameProfile::gpuCompletedNs(void* record, uint64_t gpuNs, bool valid) {
   if(record==nullptr) return;
   auto& r=*static_cast<Record*>(record);
-  if(std::isfinite(startSeconds) && std::isfinite(endSeconds) && startSeconds>0 && endSeconds>=startSeconds) {
-    r.gpuNs.fetch_add(uint64_t((endSeconds-startSeconds)*1e9),std::memory_order_relaxed);
+  if(valid) {
+    r.gpuNs.fetch_add(gpuNs,std::memory_order_relaxed);
     r.gpuValid.fetch_add(1,std::memory_order_relaxed);
     }
   // Publish the sum only after every captured buffer has completed. The records

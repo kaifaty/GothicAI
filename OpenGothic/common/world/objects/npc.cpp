@@ -34,7 +34,6 @@
 #include "world/objects/interactive.h"
 #include "world/objects/item.h"
 #include "world/world.h"
-#include "utils/versioninfo.h"
 #include "utils/fileext.h"
 #include "utils/dbgpainter.h"
 #include "camera.h"
@@ -46,6 +45,8 @@
 #include "navdemos.h"
 #include "npcdayjournal.h"
 
+#include <atomic>
+#include <bit>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -1033,8 +1034,7 @@ float Npc::angleDir(float x, float z) {
 bool Npc::resetPositionToTA() {
   LoadProbe::Startup::Detail::Scope reset("reset_npc");
   endMeleeAiSpecial();
-  const bool g2       = owner.version().game==2;
-  const bool isDragon = (g2 && guild()==GIL_DRAGON);
+  const bool isDragon = (guild()==GIL_DRAGON);
   const bool isDead   = this->isDead();
 
   if(isDead && !invent.hasMissionItems() && !isDragon)
@@ -2377,20 +2377,89 @@ void Npc::syncMeleeShadowSwing() {
     }
   }
 
+bool Npc::wantsMeleeShadowBody() const {
+  return !meleeShadowSuspended && (Gothic::physicsFlags().meleeBladeShadow || Gothic::physicsFlags().meleePhysicsHits ||
+                                   (meleeShadow && meleeShadow->window));
+  }
+
+void Npc::prepareMeleeShadowBody() {
+  if(wantsMeleeShadowBody())
+    poseMeleeShadowBody();
+  }
+
+void Npc::poseMeleeShadowBody() {
+  auto& cached = meleeShadowPose;
+  const auto& pose = visual.pose();
+  const auto& matrix = visual.transform();
+  // The scale exactly as MdlVisual::hitZonesPosed computes it.
+  const auto scale = std::bit_cast<uint32_t>(Vec3(matrix.at(0,0),matrix.at(0,1),matrix.at(0,2)).length());
+  const auto shape = visual.hitZoneShape().revision();
+  if(cached.pose==&pose && cached.bones==pose.revision() && cached.shape==shape && cached.scale==scale)
+    return;
+  visual.hitZonesPosed(cached.zones);
+  auto& capsules = cached.body.capsules;
+  capsules.clear();
+  for(const auto& capsule:cached.zones)
+    capsules.push_back({capsule.a,capsule.b,capsule.r,capsule.bone,uint8_t(capsule.zone)});
+  DynamicWorld::boundShadowBody(cached.body);
+  // Unique across NPCs and frames: a slot holding this serial holds these capsules.
+  static std::atomic<uint64_t> serials{0};
+  cached.body.serial = serials.fetch_add(1,std::memory_order_relaxed)+1;
+  cached.pose  = &pose;
+  cached.bones = pose.revision();
+  cached.shape = shape;
+  cached.scale = scale;
+  }
+
+// OPENGOTHIC_MELEE_SHADOW_CHECK=1: after each publication, poses the body again
+// the way it was always posed in place and compares it bit by bit with the
+// published one. Counts go to stderr every 100000 bodies and on every mismatch.
+static void checkMeleeShadowBody(const Npc& npc, const World& world) {
+  static const bool enabled = [] {
+    const char* v = std::getenv("OPENGOTHIC_MELEE_SHADOW_CHECK");
+    return v!=nullptr && v[0]=='1';
+    }();
+  if(!enabled)
+    return;
+  static uint64_t checked = 0, mismatched = 0;
+  std::vector<HitZones::Posed> zones;
+  npc.hitZonesPosed(zones);
+  MeleeShadowBody expected, published;
+  for(const auto& capsule:zones)
+    expected.capsules.push_back({capsule.a,capsule.b,capsule.r,capsule.bone,uint8_t(capsule.zone)});
+  DynamicWorld::boundShadowBody(expected);
+  const auto bits = [](const Vec3& v) {
+    return std::array<uint32_t,3>{std::bit_cast<uint32_t>(v.x),std::bit_cast<uint32_t>(v.y),std::bit_cast<uint32_t>(v.z)};
+    };
+  bool same = world.physic()->shadowBody(&npc,published) && published.capsules.size()==expected.capsules.size() &&
+              bits(published.boundsMin)==bits(expected.boundsMin) && bits(published.boundsMax)==bits(expected.boundsMax);
+  for(size_t i=0; same && i<expected.capsules.size(); ++i) {
+    const auto& a = published.capsules[i];
+    const auto& b = expected.capsules[i];
+    same = bits(a.from)==bits(b.from) && bits(a.to)==bits(b.to) &&
+           std::bit_cast<uint32_t>(a.radiusCm)==std::bit_cast<uint32_t>(b.radiusCm) && a.bone==b.bone && a.zone==b.zone;
+    }
+  ++checked;
+  if(!same)
+    ++mismatched;
+  if(!same || checked%100000==0)
+    std::fprintf(stderr,"[melee-shadow-check] checked=%llu mismatched=%llu%s%s\n",
+                 static_cast<unsigned long long>(checked),static_cast<unsigned long long>(mismatched),
+                 same ? "" : " npc=",same ? "" : std::string(npc.displayName()).c_str());
+  }
+
 void Npc::updateMeleeShadow() {
-  if(meleeShadowSuspended || (!(Gothic::physicsFlags().meleeBladeShadow || Gothic::physicsFlags().meleePhysicsHits) &&
-                              !(meleeShadow && meleeShadow->window))) {
+  if(!wantsMeleeShadowBody()) {
     clearMeleeShadow();
     return;
     }
-  std::vector<HitZones::Posed> zones;
-  visual.hitZonesPosed(zones);
-  std::vector<MeleeBodyCapsule> body;
-  body.reserve(zones.size());
-  for(const auto& capsule:zones)
-    body.push_back({capsule.a,capsule.b,capsule.r,capsule.bone,uint8_t(capsule.zone)});
-  owner.physic()->updateShadowBody(this,body);
+  // Usually posed already by the parallel animation pass; reposed here when
+  // that pass skipped this NPC or something moved its bones since.
+  poseMeleeShadowBody();
+  const auto& zones = meleeShadowPose.zones;
+  owner.physic()->updateShadowBody(this,meleeShadowPose.body,&meleeShadowPose.slot);
   meleeShadowBody = true;
+  checkMeleeShadowBody(*this,owner);
   if(TestBench::bodyTracing() && isHuman() && currentTarget!=nullptr && owner.npcId(currentTarget)!=uint32_t(-1)) {
     std::vector<HitZones::Posed> targetZones;
     currentTarget->visual.hitZonesPosed(targetZones);
@@ -2708,7 +2777,7 @@ void Npc::consumeMeleeContacts() {
       entry.result = "target_down";
       continue;
       }
-    const int partyMember = Gothic::inst().version().game==2 ? 15 : 36;
+    const int partyMember = 15;
     const bool sameParty = owner.script().isFriendlyFire(*this,*target) ||
                            (handle().aivar[partyMember]!=0 && target->handle().aivar[partyMember]!=0);
     if(skipMeleeAlly(isPlayer(),target==currentTarget,guild()==target->guild(),sameParty,isEnemy(*target))) {
@@ -4070,16 +4139,11 @@ uint32_t Npc::guild() const {
   }
 
 bool Npc::isMonster() const {
-  const bool g2 = owner.version().game==2;
-  const auto SEPERATOR_ORC = g2 ? GIL_SEPERATOR_ORC : GIL_G1_SEPERATOR_ORC;
-  const auto SEPERATOR_HUM = g2 ? GIL_SEPERATOR_HUM : GIL_G1_SEPERATOR_HUM;
-  return SEPERATOR_HUM<guild() && guild()<SEPERATOR_ORC;
+  return GIL_SEPERATOR_HUM<guild() && guild()<GIL_SEPERATOR_ORC;
   }
 
 bool Npc::isHuman() const {
-  const bool g2 = owner.version().game==2;
-  const auto SEPERATOR_HUM = g2 ? GIL_SEPERATOR_HUM : GIL_G1_SEPERATOR_HUM;
-  return guild() < SEPERATOR_HUM;
+  return guild() < GIL_SEPERATOR_HUM;
   }
 
 void Npc::setTrueGuild(int32_t g) {
@@ -4121,9 +4185,7 @@ void Npc::setAttitude(Attitude att) {
   }
 
 bool Npc::isFriend() const {
-  bool g2 = owner.version().game==2;
-  return ( g2 && hnpc->type==daedalus::NpcType::G2_FRIEND) ||
-         (!g2 && hnpc->type==daedalus::NpcType::G1_FRIEND);
+  return hnpc->type==daedalus::NpcType::G2_FRIEND;
   }
 
 void Npc::setTempAttitude(Attitude att) {
@@ -5742,7 +5804,7 @@ Npc::BodyObservationState Npc::bodyObservationState() const {
   s.hasAttackRight = hasAnim(Anim::AttackR);
   if(ws==WeaponState::W1H || ws==WeaponState::W2H) {
     const std::string prefix = ws==WeaponState::W1H ? "T_1HPARADE_" : "T_2HPARADE_";
-    s.hasBlock = Gothic::inst().version().game==2 ? hasAnim(prefix+"0") : hasAnim(prefix+"O");
+    s.hasBlock = hasAnim(prefix+"0");
     }
   const auto bs = bodyStateMasked();
   const bool melee = ws==WeaponState::W1H || ws==WeaponState::W2H;
@@ -7168,568 +7230,6 @@ bool Npc::hasQueuedPhysicalSpellState(const AiQueue& queue) const {
   return symbol!=nullptr && (symbol->name()=="ZS_MAGICFREEZE" || symbol->name()=="ZS_WHIRLWIND");
   }
 
-void Npc::nextAiAction(AiQueue& queue, uint64_t dt) {
-  if(isInAir() && !hasQueuedPhysicalSpellState(queue))
-    return;
-  if(queue.size()==0)
-    return;
-  auto act = queue.pop();
-  NpcLogicalState::Admission logicalAdmission(*this,act.act);
-  switch(act.act) {
-    case AI_None: break;
-    case AI_LookAtNpc:{
-      currentLookAt=nullptr;
-      currentLookAtNpc=act.target;
-      break;
-      }
-    case AI_LookAt:{
-      currentLookAtNpc=nullptr;
-      currentLookAt=act.point;
-      break;
-      }
-    case AI_TurnAway: {
-      if(!prepareTurn()) {
-        queue.pushFront(std::move(act));
-        break;
-        }
-      if(act.target!=nullptr && implTurnAway(*act.target,dt)) {
-        queue.pushFront(std::move(act));
-        break;
-        }
-      break;
-      }
-    case AI_TurnToNpc: {
-      if(!prepareTurn()) {
-        queue.pushFront(std::move(act));
-        break;
-        }
-      if(act.target!=nullptr && implTurnTo(*act.target,dt)) {
-        queue.pushFront(std::move(act));
-        break;
-        }
-      // Not looking quite correct in dialogs, when npc turns around
-      // Example: Esteban dialog
-      // currentLookAt    = nullptr;
-      // currentLookAtNpc = nullptr;
-      break;
-      }
-    case AI_WhirlToNpc: {
-      if(!prepareTurn()) {
-        queue.pushFront(std::move(act));
-        break;
-        }
-      if(act.target!=nullptr && implWhirlTo(*act.target,dt)) {
-        queue.pushFront(std::move(act));
-        break;
-        }
-      break;
-      }
-    case AI_GoToNpc:
-      if(!setInteraction(nullptr)) {
-        queue.pushFront(std::move(act));
-        break;
-        }
-      attachToPoint(nullptr);
-      if(usesSimplifiedMovement() && act.target!=nullptr) {
-        act.point=owner.findWayPoint(act.target->position(),[](const WayPoint& p) { return p.isConnected(); });
-        if(act.point==nullptr) {
-          fallbackSimpleMovement("NPC target has no connected waypoint");
-          } else {
-          const auto* anchor=act.point;
-          beginSimpleGoTo(std::move(act),*anchor);
-          break;
-          }
-        }
-      go2.set(act.target,act.point!=nullptr || act.i0>0 ? GT_Point : GT_Way);
-      go2.pointDistance = float(act.i0);
-      go2.nativeCombatTarget = act.nativeCombatTarget==act.target ? act.nativeCombatTarget : nullptr;
-      wayPath.clear();
-      if(act.point!=nullptr)
-        queue.pushFront(std::move(act));
-      break;
-    case AI_GoToNextFp: {
-      if(!setInteraction(nullptr)) {
-        queue.pushFront(std::move(act));
-        break;
-        }
-      auto fp = act.point!=nullptr ? act.point : owner.findNextFreePoint(*this,act.s0);
-      if(fp!=nullptr) {
-        attachToPoint(fp);
-        if(usesSimplifiedMovement()) {
-          act.point=fp;
-          beginSimpleGoTo(std::move(act),*fp);
-          break;
-          }
-        go2.set(fp,GoToHint::GT_NextFp);
-        wayPath.clear();
-        if(act.point!=nullptr)
-          queue.pushFront(std::move(act));
-        }
-      break;
-      }
-    case AI_GoToPoint: {
-      if(isInAir() || !setInteraction(nullptr)) {
-        queue.pushFront(std::move(act));
-        break;
-        }
-      if(usesSimplifiedMovement() && act.point->isFreePoint()) {
-        act.i0=1;
-        const auto* target=act.point;
-        beginSimpleGoTo(std::move(act),*target);
-        break;
-        }
-      if(wayPath.last()!=act.point) {
-        wayPath = usesSimplifiedMovement() ? simpleWayTo(*act.point) : owner.wayTo(*this,*act.point);
-        simpleMovement.edgeTo = nullptr;
-        auto wpoint = wayPath.pop();
-
-        if(wpoint!=nullptr) {
-          go2.set(wpoint);
-          attachToPoint(wpoint);
-          } else {
-          attachToPoint(act.point);
-          clearGoTo();
-          }
-        }
-      break;
-      }
-    case AI_StopLookAt:
-      currentLookAtNpc=nullptr;
-      currentLookAt=nullptr;
-      visual.setHeadRotation(0,0);
-      break;
-    case AI_RemoveWeapon:
-      if(!isDead()) {
-        if(closeWeapon(false)) {
-          stopWalkAnimation();
-          }
-        auto ws = weaponState();
-        if(ws!=WeaponState::NoWeapon){
-          queue.pushFront(std::move(act));
-          }
-        }
-      break;
-    case AI_StartState:
-      startQueuedState(act);
-      break;
-    case AI_PlayAnim:{
-      if(auto sq = playAnimByName(act.s0,BS_NONE)) {
-        logicalAdmission.sequence=sq;
-        implAniWait(uint64_t(sq->totalTime()));
-        implFaiWait(uint64_t(sq->totalTime()));
-        } else {
-        if(visual.hasAnim(act.s0))
-          queue.pushFront(std::move(act));
-        }
-      break;
-      }
-    case AI_PlayAnimBs:{
-      BodyState bs = BodyState(act.i0);
-      if(auto sq = playAnimByName(act.s0,bs)) {
-        logicalAdmission.sequence=sq;
-        implAniWait(uint64_t(sq->totalTime()));
-        implFaiWait(uint64_t(sq->totalTime()));
-        } else {
-        if(visual.hasAnim(act.s0)) {
-          queue.pushFront(std::move(act));
-          } else {
-          /* ZS_MM_Rtn_Sleep will set NPC_WALK mode and run T_STAND_2_SLEEP animation.
-           * The problem is: T_STAND_2_SLEEP may not exists, in that case only NPC_WALK should be applied,
-           * we will do so by playing Idle anim.
-           */
-          setAnim(Anim::Idle);
-          }
-        }
-      break;
-      }
-    case AI_Wait:
-      if(isExternalControl() && CommandLine::inst().isDevMode()) {
-        const auto* symbol = owner.script().findSymbol(instanceSymbol());
-        Log::i("[ai] queue_wait ",symbol!=nullptr ? symbol->name() : ""," game_ms=",owner.tickCount(),
-               " duration_ms=",act.i0);
-        }
-      implAiWait(uint64_t(act.i0));
-      break;
-    case AI_StandUp:
-    case AI_StandUpQuick: {
-      if(ragdoll) {
-        if(isDead())
-          break;
-        if(!recoverRagdoll()) {
-          queue.pushFront(std::move(act));
-          break;
-          }
-        }
-      const auto bs = bodyStateMasked();
-      // NOTE: B_ASSESSTALK calls AI_StandUp, to make npc stand, if it's not on a chair or something
-      if(interactive()!=nullptr) {
-        if((interactive()->isLadder() && !isPlayer()) || !setInteraction(nullptr,false)) {
-          queue.pushFront(std::move(act));
-          }
-        break;
-        }
-      else if(bs==BS_UNCONSCIOUS || bs==BS_LIE) {
-        if(!setAnim(Anim::Idle))
-          queue.pushFront(std::move(act)); else
-          implAniWait(visual.pose().animationTotalTime());
-        }
-      else if(bs!=BS_DEAD) {
-        visual.stopAnim(*this,"");
-        setStateItem(MeshObjects::Mesh(),"");
-        setAnim(Anim::Idle);
-        }
-      break;
-      }
-    case AI_EquipArmor:
-      invent.equipArmor(act.i0,*this);
-      break;
-    case AI_EquipBestArmor:
-      invent.equipBestArmor(*this);
-      break;
-    case AI_EquipMelee:
-      invent.equipBestMeleeWeapon(*this);
-      break;
-    case AI_EquipRange:
-      invent.equipBestRangedWeapon(*this);
-      break;
-    case AI_UseMob: {
-      if(act.i0<0) {
-        if(!setInteraction(nullptr))
-          queue.pushFront(std::move(act));
-        break;
-        }
-      /*
-       * Rhademes doesn't quit talk properly
-      if(owner.script().isTalk(*this)) {
-        queue.pushFront(std::move(act));
-        break;
-        }*/
-
-      auto inter = owner.availableMob(*this,act.s0);
-      if(inter==nullptr) {
-        /* in L`Hiver, version 1.3 there is a typo: "COOL" instead of "BSCOOL"
-         * maybe 'scheme' need to be checked loosely, or maybe ignored.
-         *
-         * For now, if no mob found - discard command, to avoid npc soft-lock.
-         */
-        // queue.pushFront(std::move(act));
-        break;
-        }
-
-      if(currentInteract!=nullptr && inter!=currentInteract) {
-        setInteraction(nullptr);
-        queue.pushFront(std::move(act));
-        break;
-        }
-
-      if(inter!=nullptr) {
-        auto pos = inter->nearestPoint(*this);
-        if(currentInteract==nullptr && !MoveAlgo::isClose(*this, pos, MAX_AI_USE_DISTANCE)) { // too far
-          go2.set(pos);
-          // go to MOBSI and then complete AI_UseMob
-          queue.pushFront(std::move(act));
-          return;
-          }
-        if(!setInteraction(inter)) {
-          // queue.pushFront(std::move(act));
-          }
-        }
-
-      if(currentInteract==nullptr || currentInteract->stateId()!=act.i0) {
-        queue.pushFront(std::move(act));
-        return;
-        }
-
-      clearGoTo();
-      break;
-      }
-    case AI_UseItem: {
-      if(!isStanding()) {
-        setAnim(Npc::Anim::Idle);
-        queue.pushFront(std::move(act));
-        break;
-        }
-      if(act.i0!=0)
-        useItem(uint32_t(act.i0));
-      break;
-      }
-    case AI_UseItemToState:
-      if(act.i0!=0) {
-        uint32_t itm   = uint32_t(act.i0);
-        int      state = act.i1;
-        if(state>0)
-          visual.stopDlgAnim(*this);
-        if(!invent.putState(*this,state>=0 ? itm : 0,state))
-          queue.pushFront(std::move(act));
-        }
-      break;
-    case AI_Teleport: {
-      setPosition (act.point->position() );
-      setDirection(act.point->direction());
-      if(isPlayer()) {
-        updateTransform();
-        Gothic::inst().camera()->reset(this);
-        }
-      }
-      break;
-    case AI_DrawWeapon:
-      if(canSwitchWeapon()) {
-        if(!drawWeaponMelee() &&
-           !drawWeaponBow())
-          queue.pushFront(std::move(act));
-        }
-      break;
-    case AI_DrawWeaponMelee:
-      if(canSwitchWeapon()) {
-        if(!drawWeaponMelee())
-          queue.pushFront(std::move(act));
-        }
-      break;
-    case AI_DrawWeaponRange:
-      if(canSwitchWeapon()) {
-        if(!drawWeaponBow())
-          queue.pushFront(std::move(act));
-        }
-      break;
-    case AI_DrawSpell: {
-      if(canSwitchWeapon()) {
-        const int32_t spell = act.i0;
-        if(!invent.hasSpell(spell))
-          break;
-        if(drawSpell(spell))
-          aiExpectedInvest = act.i1; else
-          queue.pushFront(std::move(act));
-        }
-      break;
-      }
-    case AI_Attack:
-      if(!BodyController::owns(*this) && currentTarget!=nullptr) {
-        if(!fghAlgo.fetchInstructions(*this,*currentTarget,owner.script()))
-          queue.pushFront(std::move(act));
-        }
-      break;
-    case AI_Flee:
-      if(!implAiFlee(dt))
-        queue.pushFront(std::move(act));
-      break;
-    case AI_Dodge:
-      if(auto sq = setAnimAngGet(Anim::MoveBack)) {
-        visual.setAnimRotate(*this,0);
-        implAniWait(uint64_t(sq->totalTime()));
-        } else {
-        queue.pushFront(std::move(act));
-        }
-      break;
-    case AI_UnEquipWeapons:
-      invent.unequipWeapons(owner.script(),*this);
-      break;
-    case AI_UnEquipArmor:
-      invent.unequipArmor(owner.script(),*this);
-      break;
-    case AI_Output:
-    case AI_OutputSvm:
-    case AI_OutputSvmOverlay:{
-      if(performOutput(act)) {
-        uint64_t msgTime = 0;
-        if(aiPolicy!=NpcProcessPolicy::AiFar2) {
-          if(act.act==AI_Output) {
-            msgTime = owner.script().messageTime(act.s0);
-            } else {
-            auto svm  = owner.script().messageFromSvm(act.s0,hnpc->voice);
-            msgTime   = owner.script().messageTime(svm);
-            }
-          visual.startFaceAnim(*this,"VISEME",1,msgTime);
-          // the speaker and the one it speaks to look at each other while the line lasts
-          if(act.target!=nullptr && act.target!=this) {
-            static const uint64_t tail = 1000;
-            setTalkPartner(act.target,msgTime+tail);
-            act.target->setTalkPartner(this,msgTime+tail);
-            }
-          }
-        if(TestBench::isActive())
-          TestBench::npcOutput(*this,act.s0,act.target,msgTime);
-        if(act.act!=AI_OutputSvmOverlay) {
-          visual.startAnimDialog(*this);
-          visual.setAnimRotate(*this,0);
-          }
-        } else {
-        queue.pushFront(std::move(act));
-        }
-      break;
-      }
-    case AI_ProcessInfo: {
-      const int PERC_DIST_DIALOG = 2000;
-
-      if(act.target==nullptr)
-        break;
-
-      if(owner.isInDialog()) {
-        queue.pushFront(std::move(act));
-        break;
-        }
-
-      if(this!=act.target && act.target->isPlayer() && act.target->currentInteract!=nullptr) {
-        //queue.pushFront(std::move(act));
-        break;
-        }
-
-      if(act.target->qDistTo(*this)>PERC_DIST_DIALOG*PERC_DIST_DIALOG) {
-        break;
-        }
-
-      if(act.target->interactive()==nullptr && !act.target->isAiBusy())
-        act.target->stopWalkAnimation();
-      if(interactive()==nullptr && !isAiBusy())
-        stopWalkAnimation();
-
-      if(auto p = owner.script().openDlgOuput(*this,*act.target)) {
-        outputPipe = p;
-        setOther(act.target);
-        act.target->setOther(this);
-        act.target->outputPipe = p;
-        } else {
-        queue.pushFront(std::move(act));
-        }
-      }
-      break;
-    case AI_StopProcessInfo:
-      if(outputPipe->close()) {
-        outputPipe = owner.script().openAiOuput();
-        if(currentOther!=nullptr)
-          currentOther->outputPipe = owner.script().openAiOuput();
-        } else {
-        queue.pushFront(std::move(act));
-        }
-      break;
-    case AI_ContinueRoutine:
-      resumeAiRoutine();
-      break;
-    case AI_AlignToWp:
-    case AI_AlignToFp:{
-      if(auto fp = currentFp){
-        if(fp->dir.x!=0.f || fp->dir.z!=0.f){
-          if(usesSimplifiedMovement())
-            prepareTurn();
-          if(implTurnTo(fp->dir.x,fp->dir.z,AnimationSolver::TurnType::Std,dt))
-            queue.pushFront(std::move(act));
-          }
-        }
-      break;
-      }
-    case AI_SetNpcsToState:{
-      const int32_t r = act.i0*act.i0;
-      owner.detectNpc(position(),float(hnpc->senses_range),[&act,this,r](Npc& other) {
-        if(&other==this)
-          return;
-        if(other.isDead())
-          return;
-        if(qDistTo(other)>float(r))
-          return;
-        other.aiPush(AiQueue::aiStartState(act.func,1,other.currentOther,other.currentVictim,other.hnpc->wp));
-        });
-      break;
-      }
-    case AI_SetWalkMode:{
-      setWalkMode(WalkBit(act.i0));
-      break;
-      }
-    case AI_FinishingMove:{
-      if(act.target==nullptr || !act.target->isUnconscious())
-        break;
-
-      if(!fghAlgo.isInFinishRange(*this,*act.target,owner.script())){
-        queue.pushFront(std::move(act));
-        go2.set(act.target);
-        setAnim(Npc::Anim::Move);
-        implGoTo(dt,fghAlgo.attackFinishDistance(owner.script()));
-        }
-      else if(!isStanding()) {
-        clearGoTo();
-        queue.pushFront(std::move(act));
-        }
-      else if(!implTurnTo(*act.target,dt)) {
-        queue.pushFront(std::move(act));
-        }
-      else if(canFinish(*act.target)){
-        setTarget(act.target);
-        if(!finishingMove())
-          queue.pushFront(std::move(act));
-        }
-      break;
-      }
-    case AI_TakeItem:{
-      if(act.item==nullptr)
-        break;
-      if(takeItem(*act.item)==nullptr)
-        queue.pushFront(std::move(act));
-      break;
-      }
-    case AI_GotoItem:{
-      simpleMovement.nativeItem=act.item;
-      if(usesSimplifiedMovement()) {
-        if(act.item==nullptr && !(act.point!=nullptr && act.i0==1))
-          break;
-        const auto target=act.item!=nullptr ? act.item->position() : go2.pos;
-        act.point=owner.findWayPoint(target,[](const WayPoint& p) { return p.isConnected(); });
-        if(act.point==nullptr) {
-          fallbackSimpleMovement("item target has no connected waypoint");
-          } else {
-          const auto* anchor=act.point;
-          beginSimpleGoTo(std::move(act),*anchor);
-          break;
-          }
-        }
-      if(act.point!=nullptr) {
-        go2.clear();
-        if(act.item!=nullptr)
-          go2.set(act.item);
-        else if(act.i0==1)
-          go2.flag=GT_Item;
-        if(!go2.empty())
-          queue.pushFront(std::move(act));
-        break;
-        }
-      go2.set(act.item);
-      break;
-      }
-    case AI_PointAt:{
-      if(act.point==nullptr)
-        break;
-      if(!implPointAt(act.point->position()))
-        queue.pushFront(std::move(act));
-      break;
-      }
-    case AI_PointAtNpc:{
-      if(act.target==nullptr)
-        break;
-      if(!implPointAt(act.target->position()))
-        queue.pushFront(std::move(act));
-      break;
-      }
-    case AI_StopPointAt:{
-      visual.stopAnim(*this,"T_POINT");
-      break;
-      }
-    case AI_PrintScreen:{
-      auto  msg     = act.s0;
-      auto  posx    = act.i0;
-      auto  posy    = act.i1;
-      int   timesec = act.i2;
-      auto  font    = act.s1;
-
-      bool complete = false;
-      if(aiOutputBarrier<=owner.tickCount()) {
-        if(outputPipe->printScr(*this,timesec,msg,posx,posy,font))
-          complete = true;
-        }
-
-      if(!complete)
-        queue.pushFront(std::move(act));
-      break;
-      }
-    }
-  }
-
 bool Npc::startQueuedState(const AiQueue::AiAction& act) {
   // Preserve the routine end time for transitions such as ZS_GotoBed -> ZS_Sleep.
   if(!startState(act.func,act.s0,aiState.eTime,act.i0==0))
@@ -7825,12 +7325,6 @@ bool Npc::isPlayerEnabledState(const ::AiState& st) const {
   // allowed player states are hard-coded
   // https://forum.worldofplayers.de/forum/threads/1533803-G1-AI_StartState-hardcoded-ZS-states-for-Player?p=26034737&viewfull=1#post26034737
 
-  static const std::array playerEnabledStatesG1 = {
-    "ZS_DEAD",   "ZS_UNCONSCIOUS", "ZS_MAGICFREEZE",
-    "ZS_PYRO",   "ZS_ASSESSMAGIC", "ZS_ASSESSSTOPMAGIC",
-    "ZS_ZAPPED", "ZS_SHORTZAPPED", "ZS_MAGICSLEEP",
-    "ZS_MAGICFEAR"
-    };
   static const std::array playerEnabledStatesG2 = {
     "ZS_DEAD",   "ZS_UNCONSCIOUS", "ZS_MAGICFREEZE",
     "ZS_PYRO",   "ZS_ASSESSMAGIC", "ZS_ASSESSSTOPMAGIC",
@@ -7842,8 +7336,7 @@ bool Npc::isPlayerEnabledState(const ::AiState& st) const {
   if(sym==nullptr)
     return false;
 
-  const auto& playerEnabledStates = (owner.version().game==2 ? playerEnabledStatesG2 : playerEnabledStatesG1);
-  for(auto* pState:playerEnabledStates)
+  for(auto* pState:playerEnabledStatesG2)
     if(sym->name()==pState)
       return true;
   return false;
@@ -7907,7 +7400,7 @@ void Npc::tickRoutine() {
       } else {
       // ZS_DEATH   have no loop-function, in G1, G2-classic
       // ZS_GETMEAT have no loop-function, in G2-notr
-      loop = owner.version().hasZSStateLoop() ? 1 : 0;
+      loop = 1;
       }
 
     if(aiState.eTime<=owner.time()) {
@@ -8067,9 +7560,6 @@ bool Npc::isTargetableBySpell(TargetType t) const {
 
   const Guild gil = Guild(trueGuild());
 
-  const bool g2 = owner.version().game==2;
-  const auto SEPERATOR_ORC = g2 ? GIL_SEPERATOR_ORC : GIL_G1_SEPERATOR_ORC;
-  const auto G1_UNDEAD = (gil == GIL_G1_ZOMBIE || gil == GIL_G1_UNDEADORC || gil == GIL_G1_SKELETON);
   const auto G2_UNDEAD = (gil == GIL_GOBBO_SKELETON ||
     gil == GIL_SUMMONED_GOBBO_SKELETON || gil == GIL_SKELETON      ||
     gil == GIL_SUMMONED_SKELETON       || gil == GIL_SKELETON_MAGE ||
@@ -8077,11 +7567,9 @@ bool Npc::isTargetableBySpell(TargetType t) const {
 
   if(bool(t&TARGET_TYPE_HUMANS) && isHuman())
     return true;
-  if(bool(t&TARGET_TYPE_ORCS) && gil>SEPERATOR_ORC)
+  if(bool(t&TARGET_TYPE_ORCS) && gil>GIL_SEPERATOR_ORC)
     return true;
-  if(bool(t&TARGET_TYPE_UNDEAD) && g2 && G2_UNDEAD)
-    return true;
-  if(bool(t&TARGET_TYPE_UNDEAD) && !g2 && G1_UNDEAD)
+  if(bool(t&TARGET_TYPE_UNDEAD) && G2_UNDEAD)
     return true;
 
   return false;
@@ -8095,8 +7583,7 @@ void Npc::commitSpell() {
   const int32_t splId = active->spellId();
   const auto&   spl   = owner.script().spellDesc(splId);
 
-  if(owner.version().game==2)
-    owner.script().invokeSpell(*this,currentTarget,*active);
+  owner.script().invokeSpell(*this,currentTarget,*active);
 
   if(active->isSpellShoot()) {
     const int lvl = (castLevel-CS_Emit_0)+1;
@@ -10617,10 +10104,8 @@ bool Npc::tickCast(uint64_t dt) {
     // cast anim
     if(active!=nullptr) {
       auto ani = owner.script().spellCastAnim(*this,*active);
-      bool g2  = owner.version().game==2;
-      if(g2 || visual.hasAnim(string_frm("T_MAGRUN_2_",ani,"CAST")))
-        if(!visual.startAnimSpell(*this,ani,false))
-          return true;
+      if(!visual.startAnimSpell(*this,ani,false))
+        return true;
       }
     castLevel    = CastState(int(castLevel) + int(CS_Emit_0) - int(CS_Cast_0));
     castNextTime = 0;
@@ -10650,12 +10135,6 @@ bool Npc::tickCast(uint64_t dt) {
     return true;
 
   const SpellCode code = SpellCode(owner.script().invokeMana(*this,currentTarget,manaInvested));
-
-  if(owner.version().game==1) {
-    changeAttribute(ATR_MANA,-1,false);
-    if(!isPlayer() && code!=SpellCode::SPL_SENDCAST)
-      assert(attribute(ATR_MANA)>0);
-    }
 
   if(!isPlayer() && aiExpectedInvest<=manaInvested) {
     endCastSpell();
@@ -10779,17 +10258,9 @@ bool Npc::shootBow(Interactive* focOverride) {
   b.setDamage(DamageCalculator::rangeDamageValue(*this));
 
   auto rgn = currentRangedWeapon();
-  if(Gothic::inst().version().game==1) {
-    b.setHitChance(float(hnpc->attribute[ATR_DEXTERITY])/100.f);
-    if(rgn!=nullptr && rgn->isCrossbow())
-      b.setCritChance(float(talentsVl[TALENT_CROSSBOW])/100.f); else
-      b.setCritChance(float(talentsVl[TALENT_BOW]     )/100.f);
-    }
-  else {
-    if(rgn!=nullptr && rgn->isCrossbow())
-      b.setHitChance(float(hnpc->hitchance[TALENT_CROSSBOW])/100.f); else
-      b.setHitChance(float(hnpc->hitchance[TALENT_BOW]     )/100.f);
-    }
+  if(rgn!=nullptr && rgn->isCrossbow())
+    b.setHitChance(float(hnpc->hitchance[TALENT_CROSSBOW])/100.f); else
+    b.setHitChance(float(hnpc->hitchance[TALENT_BOW]     )/100.f);
   return true;
   }
 
@@ -11031,414 +10502,6 @@ bool Npc::isPrehit() const {
 
 bool Npc::isImmortal() const {
   return hnpc->flags & daedalus::NpcFlag::IMMORTAL;
-  }
-
-void Npc::setPerceptionTime(uint64_t time) {
-  perceptionTime = time;
-  }
-
-uint64_t Npc::perceptionTimeClampt() const {
-  return std::max<uint64_t>(perceptionTime, 1);
-  }
-
-void Npc::setPerceptionEnable(PercType t, size_t fn) {
-  if(t>0 && t<PERC_Count)
-    perception[t].func = fn;
-  }
-
-void Npc::setPerceptionDisable(PercType t) {
-  if(t>0 && t<PERC_Count)
-    perception[t].func = ScriptFn();
-  }
-
-void Npc::startDialog(Npc& pl) {
-  if(BodyController::owns(*this)) {
-    BodyController::legacyRejected(*this,"dialogue_owned");
-    return;
-    }
-  if(pl.isDown() || pl.isInAir() || isPlayer())
-    return;
-  stopPhysicsInvestigation(false);
-  if(perceptionProcess(pl,nullptr,0,PERC_ASSESSTALK))
-    setOther(&pl);
-  }
-
-bool Npc::perceptionProcess(Npc &pl) {
-  static bool dbg = false;
-  static int  kId = -1;
-  if(dbg && hnpc->id!=kId)
-    return false;
-
-  if(isPlayer())
-    return true;
-
-  bool ret=false;
-  SensesBit sensedPlayer = SensesBit::SENSE_NONE;
-  const auto trace = [&](std::string_view gate) {
-    if(!TestBench::bodyTracing() || currentTarget==nullptr)
-      return;
-    TestBench::bodyEvent(*this,&pl,"native_perception",owner.tickCount(),
-                         "\"perception_kind\":\"periodic\",\"gate\":"+TestBench::bodyJson(gate)+
-                         ",\"process_policy\":"+std::to_string(int(processPolicy()))+
-                         ",\"external_control\":"+(externalCtrl ? "true" : "false")+
-                         ",\"sensed_player\":"+std::to_string(int(sensedPlayer))+
-                         ",\"result\":"+(ret ? "true" : "false")+
-                         ",\"next_time\":"+std::to_string(perceptionNextTime));
-    };
-  if(processPolicy()!=NpcProcessPolicy::AiNormal) {
-    perceptionNextTime = owner.tickCount()+perceptionTimeClampt();
-    trace("policy_disabled");
-    return ret;
-    }
-
-  const float quadDist = pl.qDistTo(*this);
-  const bool assessPlayer = hasPerc(PERC_ASSESSPLAYER);
-  if(assessPlayer)
-    sensedPlayer = canSenseNpc(pl,false);
-  if(assessPlayer && sensedPlayer!=SensesBit::SENSE_NONE) {
-    if(perceptionProcess(pl,nullptr,quadDist,PERC_ASSESSPLAYER)) {
-      ret = true;
-      }
-    }
-
-  Npc* enem=hasPerc(PERC_ASSESSENEMY) ? updateNearestEnemy() : nullptr;
-  if(enem!=nullptr){
-    float dist=qDistTo(*enem);
-    if(perceptionProcess(*enem,nullptr,dist,PERC_ASSESSENEMY)){
-      ret          = true;
-      } else {
-      nearestEnemy = nullptr;
-      }
-    }
-
-  Npc* body=hasPerc(PERC_ASSESSBODY) ? updateNearestBody() : nullptr;
-  if(body!=nullptr){
-    float dist=qDistTo(*body);
-    if(perceptionProcess(*body,nullptr,dist,PERC_ASSESSBODY)) {
-      ret = true;
-      }
-    }
-
-  // if(aiQueue.size()==0) // NOTE: Gothic1 fights
-  perceptionNextTime = owner.tickCount()+perceptionTimeClampt();
-  trace("normal");
-  return ret;
-  }
-
-bool Npc::passPerception(Npc& other, Npc* victim, PercType perc) {
-  percPassThrough = true;
-  const bool ret = perceptionProcess(other,victim,0,perc);
-  percPassThrough = false;
-  return ret;
-  }
-
-bool Npc::perceptionProcess(Npc &pl, Npc* victim, float quadDist, PercType perc, const std::shared_ptr<HeroDeed>& deed) {
-  const auto trace = [&](std::string_view gate, bool result, bool dispatched) {
-    if(!TestBench::bodyTracing() || currentTarget==nullptr)
-      return;
-    TestBench::bodyEvent(*this,&pl,"native_perception",owner.tickCount(),
-                         "\"perception_kind\":\"dispatch\",\"gate\":"+TestBench::bodyJson(gate)+
-                         ",\"process_policy\":"+std::to_string(int(processPolicy()))+
-                         ",\"perception\":"+std::to_string(int(perc))+
-                         ",\"quad_distance_cm\":"+std::to_string(quadDist)+
-                         ",\"external_control\":"+(externalCtrl ? "true" : "false")+
-                         ",\"native_callback_dispatched\":"+(dispatched ? "true" : "false")+
-                         ",\"result\":"+(result ? "true" : "false"));
-    };
-  if(BodyController::owns(*this)) {
-    if(deed!=nullptr)
-      deed->witnessed(*this);
-    Gothic::inst().onObservedPerception(*this,pl,victim,perc);
-    trace("body_control_owned",false,false);
-    return false;
-    }
-  if(!aiState.started && aiState.funcIni.isValid()) {
-    // avoid ugly soft-lock (ZS_MM_Attack <-> B_MM_AssessWarn) for the orks near ramp
-    trace("waiting_for_state",false,false);
-    return false;
-    }
-
-  float r = perceptionRange(perc);
-  r = r*r;
-
-  if(quadDist>r) {
-    trace("out_of_range",false,false);
-    return false;
-    }
-
-  if(externalCtrl) {
-    if(deed!=nullptr)
-      deed->witnessed(*this);
-    Gothic::inst().onExternalPerception(*this,pl,victim,perc);
-    trace("external_control",false,false);
-    return false;
-    }
-  Gothic::inst().onObservedPerception(*this,pl,victim,perc);
-
-  if(isPhysicsInvestigating()) {
-    constexpr auto interrupts = [](PercType observed) {
-      switch(observed) {
-      case PERC_ASSESSENEMY:
-      case PERC_ASSESSFIGHTER:
-      case PERC_ASSESSDAMAGE:
-      case PERC_ASSESSOTHERSDAMAGE:
-      case PERC_ASSESSTHREAT:
-      case PERC_ASSESSFIGHTSOUND:
-      case PERC_ASSESSWARN:
-      case PERC_ASSESSCALL:
-      case PERC_ASSESSTALK:
-      case PERC_DRAWWEAPON:
-      case PERC_ASSESSMURDER:
-      case PERC_ASSESSMAGIC:
-      case PERC_ASSESSCASTER:
-      case PERC_CATCHTHIEF:
-      case PERC_ASSESSTHEFT:
-      case PERC_ASSESSUSEMOB:
-      case PERC_ASSESSENTERROOM:
-      case PERC_MOVEMOB:
-      case PERC_OBSERVEINTRUDER:
-      case PERC_OBSERVESUSPECT:
-      case PERC_ASSESSBODY:
-      case PERC_ASSESSDEFEAT:
-        return true;
-      default:
-        return false;
-        }
-      };
-    // Contract for this active-investigation gate: witnessed crimes reach the scripts,
-    // while ordinary proximity and quiet sounds keep the ongoing check intact.
-    static_assert(interrupts(PERC_CATCHTHIEF) && interrupts(PERC_ASSESSTHEFT));
-    static_assert(interrupts(PERC_ASSESSENTERROOM));
-    static_assert(!interrupts(PERC_ASSESSPLAYER) && !interrupts(PERC_ASSESSQUIETSOUND));
-    if(!interrupts(perc)) {
-      // The planner has observed it above. Routine chatter and ordinary hero
-      // activity must not replace the ongoing check through a script callback.
-      trace("investigating",false,false);
-      return false;
-      }
-    stopPhysicsInvestigation(false);
-    }
-
-  if(hasPerc(perc)) {
-    // Receipt makes a witness, even when the server takes the reaction. A late
-    // passPerception has no deed, so returning it to scripts cannot add one twice.
-    if(deed!=nullptr)
-      deed->witnessed(*this);
-    auto& intercept = Gothic::inst().interceptPerception;
-    if(!percPassThrough && intercept && intercept(*this,pl,victim,perc,deed.get())) {
-      trace("intercepted",true,false);
-      return true;  // taken over by an outside AI (ai_bridge); it may hand it back
-      }
-    trace("native_callback",true,true);
-    owner.script().invokeState(this,&pl,victim,perception[perc].func);
-    return true;
-    }
-  if(perc==PERC_ASSESSMAGIC && isPlayer()) {
-    auto defaultFn = owner.script().playerPercAssessMagic();
-    if(defaultFn.isValid()) {
-      trace("native_magic_callback",true,true);
-      owner.script().invokeState(this,&pl,victim,defaultFn);
-      }
-    return true;
-    }
-  trace("no_callback",false,false);
-  return false;
-  }
-
-bool Npc::canHearPhysicsNoise() const {
-  if(isPlayer() || processPolicy()!=NpcProcessPolicy::AiNormal || externalCtrl || isDown() ||
-     isLie() || isTalk() || isAttack() || currentTarget!=nullptr || talkPartner()!=nullptr ||
-     Gothic::inst().isNpcInDialog(*this))
-    return false;
-  const auto* state = owner.script().findSymbol(aiState.funcIni.ptr);
-  return state==nullptr || (state->name()!="ZS_SLEEP" && state->name()!="ZS_MAGICSLEEP" &&
-                            state->name()!="ZS_MM_RTN_SLEEP");
-  }
-
-float Npc::perceptionRange(PercType perc) const {
-  return float(world().script().percRanges().at(perc,hnpc->senses_range));
-  }
-
-bool Npc::canWitnessDeed(const Npc& culprit, const Npc* victim, PercType perc) const {
-  const auto* state = owner.script().findSymbol(aiState.funcIni.ptr);
-  DeedWitness gates;
-  gates.culprit = this==&culprit;
-  gates.victim = this==victim;
-  gates.player = isPlayer();
-  gates.guild = guild();
-  gates.perceptionEnabled = hasPerc(perc);
-  gates.down = isDown();
-  gates.lying = isLie();
-  gates.simulated = processPolicy()==NpcProcessPolicy::AiNormal;
-  gates.stateStarted = aiState.started || !aiState.funcIni.isValid();
-  gates.sleeping = state!=nullptr && (state->name()=="ZS_SLEEP" || state->name()=="ZS_MAGICSLEEP" ||
-                                    state->name()=="ZS_MM_RTN_SLEEP");
-  // A participant in an unrelated fight is occupied. A defender already fighting
-  // this culprit may still see a fresh deed against somebody else.
-  gates.foreignFight = DeedWitness::foreignCombat(isAttack(),currentTarget==&culprit);
-  gates.range = perceptionRange(perc);
-  // Native ASSESSOTHERSDAMAGE is sent by the damaged body (PerceptionMsg::self),
-  // so delivery measures range from the victim, while OTHER names the culprit.
-  gates.distanceSquared = perc==PERC_ASSESSOTHERSDAMAGE && victim!=nullptr ?
-                          qDistTo(*victim) : qDistTo(culprit);
-  return gates.admitted() && canSeeNpc(culprit,false);
-  }
-
-void Npc::setServerDeed(std::string_view kind, Npc* victim, size_t count, std::string_view expectedOwner) {
-  serverDeedKind = kind;
-  serverDeedVictim = victim;
-  serverAttackRecorded = false;
-  serverDeedSimulationLost = false;
-  serverDeedCount = count;
-  serverDeedOwner = expectedOwner;
-  }
-
-void Npc::clearServerDeed() {
-  serverDeedKind.clear();
-  serverDeedVictim = nullptr;
-  serverAttackRecorded = false;
-  serverDeedSimulationLost = false;
-  serverDeedCount = 0;
-  serverDeedOwner.clear();
-  }
-
-bool Npc::isServerDeed(std::string_view kind, const Npc* victim) const {
-  return kind==serverDeedKind && (kind!="attack" || (victim==serverDeedVictim && !serverAttackRecorded));
-  }
-
-const char* Npc::serverDeedSimulationError() {
-  // NPC queues run before WorldObjects updates the policy; the observer runs at
-  // the next frame's start. Remember a refused native pickup even if the policy
-  // has become normal again before that observer can report the failure.
-  return NpcDeedSimulation::refusal(processPolicy(),serverDeedSimulationLost);
-  }
-
-void Npc::consumeServerAttack() {
-  serverAttackRecorded = true;
-  }
-
-void Npc::setNonlethalFight(Npc& other) {
-  nonlethalTarget = other.instanceSymbol();
-  nonlethalUntil = owner.tickCount()+5000;
-  }
-
-bool Npc::isNonlethalFight(const Npc& other) const {
-  return nonlethalTarget==other.instanceSymbol() || other.nonlethalTarget==instanceSymbol();
-  }
-
-bool Npc::hearPhysicsNoise(const PhysicsNoise& noise) {
-  const uint64_t now = owner.tickCount();
-  if(noise.culprit==this || !canHearPhysicsNoise() || isPhysicsInvestigating() || now<physicsNoiseNextTime)
-    return false;
-  // The observer checks sight now, before either the native turn or a script callback.
-  Gothic::inst().onPhysicsNoiseHeard(*this,noise);
-  physicsNoiseNextTime = now+2001;
-  physicsNoisePosition = noise.position;
-  physicsNoiseUntil = now+2000;
-  // Vanilla B_AssessQuietSound dereferences OTHER. Unknown physical causes
-  // still turn the listener natively, without inventing a script actor.
-  const bool callbackDispatched = noise.culprit!=nullptr && hasPerc(PERC_ASSESSQUIETSOUND);
-  if(callbackDispatched) {
-    physicsNoiseCallback = true;
-    owner.script().invokeState(this,noise.culprit,nullptr,perception[PERC_ASSESSQUIETSOUND].func);
-    physicsNoiseCallback = false;
-    // B_AssessQuietSound clears perceptions before queuing its state. Run only
-    // that transition and its initializer now; its queued actions still wait
-    // for the native turn, rather than leaving perceptions disabled for 2 s.
-    auto state = aiQueue.popPhysicsNoiseState();
-    if(state.act==AI_StartState && startQueuedState(state) && !aiState.started)
-      tickRoutine();
-    }
-  TestBench::physicsNoiseHeard(*this,noise,callbackDispatched);
-  return true;
-  }
-
-bool Npc::startPhysicsInvestigation(const Tempest::Vec3& at, uint64_t scanMs) {
-  if(!canHearPhysicsNoise() || !isHuman() || weaponState()!=WeaponState::NoWeapon)
-    return false;
-  clearAiQueue();
-  physicsInvestigationPosition = at;
-  physicsInvestigationUntil = owner.tickCount()+45000;
-  physicsInvestigationScanUntil = 0;
-  physicsInvestigationScanMs = std::clamp<uint64_t>(scanMs,2000,8000);
-  physicsInvestigationWalking = false;
-  physicsInvestigationReason = {};
-  return true;
-  }
-
-void Npc::stopPhysicsInvestigation(bool resume, std::string_view reason) {
-  if(physicsInvestigationUntil==0)
-    return;
-  physicsInvestigationUntil = 0;
-  physicsInvestigationScanUntil = 0;
-  physicsInvestigationReason = reason;
-  physicsNoiseUntil = 0;
-  // A new owner or native state may already have installed its own movement.
-  if(go2.flag==GT_Point && (go2.pos-physicsInvestigationPosition).quadLength()<1.f)
-    clearGoTo();
-  if(resume) {
-    clearAiQueue();
-    resumeAiRoutine();
-    }
-  }
-
-bool Npc::tickPhysicsInvestigation(uint64_t dt) {
-  if(physicsInvestigationUntil==0)
-    return false;
-  if(!canHearPhysicsNoise() || weaponState()!=WeaponState::NoWeapon) {
-    stopPhysicsInvestigation(false);
-    return false;
-    }
-  const uint64_t now = owner.tickCount();
-  if(now>=physicsInvestigationUntil) {
-    stopPhysicsInvestigation(true,"timeout");
-    return false;
-    }
-  if(physicsInvestigationScanUntil!=0) {
-    if(now>=physicsInvestigationScanUntil) {
-      stopPhysicsInvestigation(true,"done");
-      return false;
-      }
-    // Look to either side of the impact, then back, while standing at the spot.
-    const uint64_t elapsed = physicsInvestigationScanMs-(physicsInvestigationScanUntil-now);
-    const float offset = elapsed<physicsInvestigationScanMs/3 ? -.7f :
-                         elapsed<2*physicsInvestigationScanMs/3 ? .7f : 0.f;
-    const float facing = physicsInvestigationFacing+offset;
-    implTurnTo(std::cos(facing),std::sin(facing),AnimationSolver::TurnType::Std,dt);
-    mvAlgo.tick(dt,MoveAlgo::WaitMove);
-    return true;
-    }
-  if(!setInteraction(nullptr)) {
-    mvAlgo.tick(dt,MoveAlgo::WaitMove);
-    return true;
-    }
-  if((position()-physicsInvestigationPosition).quadLength()<140.f*140.f) {
-    clearGoTo();
-    stopWalking();
-    physicsInvestigationFacing = rotationRad();
-    physicsInvestigationScanUntil = now+physicsInvestigationScanMs;
-    mvAlgo.tick(dt,MoveAlgo::WaitMove);
-    return true;
-    }
-  if(!physicsInvestigationWalking) {
-    wayPath.clear();
-    attachToPoint(nullptr);
-    go2.clear();
-    go2.set(physicsInvestigationPosition);
-    physicsInvestigationWalking = true;
-    }
-  // Position targets use the same native movement/collision checks as AI_UseMob.
-  // A blocked approach ends at the deadline; it never teleports the listener.
-  implGoTo(dt,60.f);
-  return true;
-  }
-
-bool Npc::hasPerc(PercType perc) const {
-  return perception[perc].func.isValid();
-  }
-
-uint64_t Npc::percNextTime() const {
-  return perceptionNextTime;
   }
 
 bool Npc::setInteraction(Interactive *id, bool quick) {
@@ -11908,22 +10971,6 @@ void Npc::drawVobRay(DbgPainter& p, const Npc& oth) const {
   p.drawLine(mapHeadBone(), head);
   }
 
-bool Npc::canSeeNpc(const Npc &oth, bool freeLos) const {
-  const auto mid = oth.physic.center();
-  if(canRayHitPoint(mid,freeLos)) {
-    // mid of dead npc may endedup inside a wall; extra check for physical center
-    return true;
-    }
-  if(oth.visual.visualSkeleton()==nullptr)
-    return false;
-  if(oth.visual.visualSkeleton()->BIP01_HEAD==size_t(-1))
-    return false;
-  auto head = oth.mapHeadBone();
-  if(canRayHitPoint(head,freeLos))
-    return true;
-  return false;
-  }
-
 Vec3 Npc::aimDirection(const Vec3& target) const {
   const float a = rotationRad();
   const Vec3 f(std::cos(a),0,std::sin(a));
@@ -12007,142 +11054,6 @@ Aim::LeanResult Npc::aimLean(const Vec3& target, bool manual) const {
   const auto look = aimLookAt(target);
   const float down = -std::atan2(look.y,std::sqrt(look.x*look.x+look.z*look.z));
   return visual.pose().aimIk().leanNeeded(*this,look,look,down,aimEdge(look));
-  }
-
-bool Npc::canSeeNpcOverEdge(const Npc& oth) const {
-  const auto ws = weaponState();
-  if(!Aim::isEnabled() || (ws!=WeaponState::Bow && ws!=WeaponState::CBow && ws!=WeaponState::Mage))
-    return false;
-  const Vec3  head = mapHeadBone();
-  const Vec3  tg   = oth.physic.center();
-  const Vec3  d    = tg - head;
-  const float h    = std::sqrt(d.x*d.x+d.z*d.z);
-  const float lean = Aim::leanForNpc(-std::atan2(d.y,h));
-  if(lean<=0.f)
-    return false;
-  // Classic focus keeps its original angular rule and head estimate.
-  static constexpr float reach = 58.f, drop = 28.f;
-  const float a   = rotationRad();
-  const Vec3  dir = Vec3::normalize(Vec3(d.x,0,d.z)*(1.f/std::max(h,1.f)) + Vec3(std::cos(a),0,std::sin(a))*0.25f);
-  const float k   = lean/(Aim::NpcLeanMax*float(M_PI)/180.f);
-  const Vec3  eye = head + dir*(reach*k) - Vec3(0,drop*k,0);
-  if(owner.physic()->ray(head,eye).hasCol)
-    return false; // no room to lean
-  return canRayHitPoint(eye,tg,180.f) || canRayHitPoint(eye,oth.mapHeadBone(),180.f);
-  }
-
-bool Npc::canSeeSource() const {
-  const auto head = mapHeadBone();
-  const bool ret  = owner.sound()->canSeeSource(head);
-  if(ret)
-    return ret;
-  if(currentLookAtNpc!=nullptr)
-    return canSeeNpc(*currentLookAtNpc, false);
-  return false;
-  }
-
-bool Npc::canRayHitPoint(const Tempest::Vec3 pos, bool freeLos, float extRange) const {
-  float ang = freeLos ? 180.f : -1;
-  return canRayHitPoint(pos, ang, extRange);
-  }
-
-bool Npc::canRayHitPoint(const Tempest::Vec3 pos, float angOverride, float extRange) const {
-  const float range = float(hnpc->senses_range) + extRange;
-  if(qDistTo(pos)>range*range)
-    return false;
-  // npc eyesight height by default
-  return canRayHitPoint(mapHeadBone(), pos, angOverride, extRange);
-  }
-
-bool Npc::canRayHitPoint(const Tempest::Vec3 self, const Tempest::Vec3 pos, float angOverride, float extRange) const {
-  const float range = float(hnpc->senses_range) + extRange;
-  if(qDistTo(pos)>range*range)
-    return false;
-
-  static const double ref = std::cos(100*M_PI/180.0); // spec requires +-100 view angle range
-  const DynamicWorld* w   = owner.physic();
-  bool freeLos = angOverride>=180.f;
-  if(freeLos) {
-    return !w->ray(self, pos).hasCol;
-    }
-
-  float dx  = self.x-pos.x, dz=self.z-pos.z;
-  float dir = angleDir(dx,dz);
-  syncDeferredAnimation();
-  float da  = float(M_PI)*(visual.viewDirection()-dir)/180.f;
-  auto  ca  = angOverride > 0 ? std::cos(angOverride*M_PI/180.0) : ref;
-  if(double(std::cos(da))<=ca) {
-    if(!w->ray(self, pos).hasCol)
-      return true;
-    }
-  return false;
-  }
-
-SensesBit Npc::canSenseNpc(const Npc &oth, bool freeLos, float extRange) const {
-  // NOTE1: https://github.com/Try/OpenGothic/pull/589#issuecomment-2045897394
-  // NOTE2: interacting with chest(lockpicking) or some MOBSI should not produce 'noise'
-  // NOTE3: seem npc can't hear player in general case, and hearing relevant only for sendImmediatePerc cases
-  const bool isNoisy = false;
-  const auto mid     = oth.centerPosition();
-  return canSenseNpc(mid,freeLos,isNoisy,extRange);
-  }
-
-SensesBit Npc::canSenseNpc(const Tempest::Vec3 pos, bool freeLos, bool isNoisy, float extRange) const {
-  const float range = float(hnpc->senses_range)+extRange;
-  if(qDistTo(pos)>range*range)
-    return SensesBit::SENSE_NONE;
-
-  SensesBit ret = SensesBit::SENSE_SMELL;
-
-  if(isNoisy) {
-    // no need to be in same room: https://github.com/Try/OpenGothic/issues/420
-    ret = ret | SensesBit::SENSE_HEAR;
-    }
-
-  if((hnpc->senses & int32_t(SensesBit::SENSE_SEE))!=0 && canRayHitPoint(pos, freeLos, extRange)) {
-    ret = ret | SensesBit::SENSE_SEE;
-    }
-
-  return ret & SensesBit(hnpc->senses);
-  }
-
-bool Npc::canSeeItem(const Item& it, bool freeLos) const {
-  static const double ref = std::cos(100*M_PI/180.0); // spec requires +-100 view angle range
-
-  const auto  itMid = it.midPosition();
-  const auto  cen   = mapHeadBone();
-  const auto  dir   = itMid - cen;
-  const float range = float(hnpc->senses_range);
-
-  if(dir.quadLength()>range*range)
-    return false;
-
-  if(!freeLos) {
-    float dx  = dir.x, dz = dir.z;
-    float dir = angleDir(dx,dz);
-    syncDeferredAnimation();
-    float da  = float(M_PI)*(visual.viewDirection()-dir)/180.f;
-    if(double(std::cos(da))>ref)
-      return false;
-    }
-
-  if(auto bbox = it.bBox()) {
-    // npc eyesight height
-    auto  at     = it.midPosition();
-    auto  tMax   = (at - cen).length();
-    auto  dir    = (at - cen)/tMax;
-    float tHit   = DynamicWorld::rayBox(cen, dir, tMax, it.transform(), bbox[0], bbox[1]);
-
-    const auto r = owner.physic()->ray(cen, cen+dir*tHit);
-    if(r.hasCol)
-      return false;
-    } else {
-    const auto r = owner.physic()->ray(cen, itMid);
-    if(r.hasCol)
-      return false;
-    }
-
-  return true;
   }
 
 bool Npc::isAlignedToGround() const {

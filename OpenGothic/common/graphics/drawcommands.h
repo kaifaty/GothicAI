@@ -54,7 +54,6 @@ class DrawCommands {
     ~DrawCommands();
 
     const DrawCmd& operator[](size_t i) const { return cmd[i]; }
-    size_t   maxMeshlets() const { return maxPayload; }
 
     void     commit(Tempest::Encoder<Tempest::CommandBuffer>& cmd);
     uint16_t commandId(const Material& m, Type type, uint32_t bucketId);

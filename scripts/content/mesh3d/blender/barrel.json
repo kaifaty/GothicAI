@@ -1,6 +1,6 @@
 {
   "id": "barrel",
-  "front": "mesh3d-pilot/barrel-v3-front.png",
+  "front": "mesh3d-pilot/2026-10-20-pilot/barrel-v3-front.png",
   "sides": 20,
   "seed": 1,
   "hoops": [
@@ -32,5 +32,30 @@
   "jitter": 0.12,
   "stave_tile": 0.38,
   "planks_per_tile": 4,
-  "ring_step": 0.09
+  "ring_step": 0.09,
+  "debris": {
+    "seed": 7,
+    "stave_thickness": 0.025,
+    "joint_gap": 0.0005,
+    "head_thickness": 0.025,
+    "broken": 10,
+    "break_columns": 14,
+    "board_gap": 0.001,
+    "clearance": 0.0003,
+    "end_scale": 2.0,
+    "zones": {
+      "INNER": [
+        "OWN_PROP_WOOD_INNER",
+        "WOOD"
+      ],
+      "END": [
+        "OWN_PROP_WOOD_END",
+        "WOOD"
+      ],
+      "RUST": [
+        "OWN_PROP_IRON_INNER",
+        "METAL"
+      ]
+    }
+  }
 }
