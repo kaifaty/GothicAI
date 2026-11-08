@@ -136,3 +136,19 @@ def test_refuses(tree, spoil, refusal):
     assert result.returncode != 0
     assert refusal in result.stderr
     assert not (tree.parent / "dist" / "GothicAI-test.tar.gz").exists()
+
+
+def test_setup_finds_a_library_in_a_long_ldconfig_cache(tmp_path):
+    """Setup-GothicAI.sh runs under pipefail: a grep that stops at the first line must not lose the match."""
+    fake = tmp_path / "bin" / "ldconfig"
+    fake.parent.mkdir()
+    fake.write_text('#!/bin/sh\necho "\tlibvulkan.so.1 (libc6,x86-64) => /usr/lib/libvulkan.so.1"\n'
+                    'yes "\tlibother.so.1 (libc6,x86-64) => /usr/lib/libother.so.1" | head -n 200000\n')
+    fake.chmod(0o755)
+    common = SCRIPT.parent / "common.sh"
+    probe = (f'set -euo pipefail; GOTHIC_ROOT={tmp_path}; source "{common}"; '
+             'have_library libvulkan.so.1 && echo found; have_library libnothere.so.9 || echo missing')
+    result = subprocess.run(["bash", "-c", probe], capture_output=True, text=True, timeout=60,
+                            env={**os.environ, "PATH": f"{fake.parent}{os.pathsep}{os.environ['PATH']}"})
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.split() == ["found", "missing"]

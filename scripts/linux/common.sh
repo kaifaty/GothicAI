@@ -40,7 +40,11 @@ have_library() {
   for folder in /sbin /usr/sbin; do
     if [[ -z "$ldconfig" && -x "$folder/ldconfig" ]]; then ldconfig="$folder/ldconfig"; fi
   done
-  if [[ -n "$ldconfig" ]] && "$ldconfig" -p 2> /dev/null | grep -Eq "^[[:space:]]*$1 \(.*x86-64"; then
+  # The cache is read whole first: grep -q would stop at the first match, ldconfig would die of SIGPIPE and
+  # the pipeline would fail under the callers' pipefail although the library is there.
+  local cache=''
+  if [[ -n "$ldconfig" ]]; then cache="$("$ldconfig" -p 2> /dev/null || true)"; fi
+  if grep -E "^[[:space:]]*$1 \(.*x86-64" > /dev/null <<< "$cache"; then
     return 0
   fi
   for folder in /usr/lib/x86_64-linux-gnu /lib/x86_64-linux-gnu /usr/lib64 /lib64 /usr/lib; do

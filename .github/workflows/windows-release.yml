@@ -297,11 +297,21 @@ jobs:
           mkdir -p "$RUNNER_TEMP/VulkanSDK"
           tar -xJf "$tarball" -C "$RUNNER_TEMP/VulkanSDK"
           rm -f "$tarball"
+          # Layout of the Linux SDK 1.4.357.0 (checked by listing the tarball): headers in include/vulkan/,
+          # the loader in lib/VulkanLoader/lib/ (libvulkan.so -> .so.1 -> .so.1.4.357), not lib/;
+          # bin/glslangValidator is a link to bin/glslang of the same SDK. Tempest links -lvulkan with
+          # $VULKAN_SDK/lib as its only extra folder, so the linker finds the loader through LIBRARY_PATH,
+          # as upstream's setup-vulkan action does.
           root="$RUNNER_TEMP/VulkanSDK/$VULKAN_SDK_VERSION/x86_64"
+          loader="$root/lib/VulkanLoader/lib"
           test -f "$root/include/vulkan/vulkan.h"
-          ls "$root"/lib/libvulkan.so*
+          test -e "$loader/libvulkan.so"
+          ls -l "$loader"/libvulkan.so*
           "$root/bin/glslangValidator" --version
-          echo "VULKAN_SDK=$root" >> "$GITHUB_ENV"
+          {
+            echo "VULKAN_SDK=$root"
+            echo "LIBRARY_PATH=$loader${LIBRARY_PATH:+:$LIBRARY_PATH}"
+          } >> "$GITHUB_ENV"
           echo "$root/bin" >> "$GITHUB_PATH"
 
       - name: Build this fork's game (AI bridge), content-convert and storygraph with GCC
