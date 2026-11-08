@@ -19549,7 +19549,8 @@ void TestBench::destructionBreak(uintptr_t body,size_t pieces,float milliseconds
     ",\"wall_ns\":"+std::to_string(std::chrono::duration_cast<std::chrono::nanoseconds>(
       std::chrono::steady_clock::now().time_since_epoch()).count())+
     ",\"t_game_ms\":"+std::to_string(world?world->tickCount():0)+",\"arrows\":"+std::to_string(bench.destructionArrows));
-  if(world)fracturePiecesBreak(bench.fracturePieces,*world,body,bench.destructionCase);
+  // Not inside a timed window: loading the pieces would land in the measured break frame.
+  if(world && !bench.movableMeasuring)fracturePiecesBreak(bench.fracturePieces,*world,body,bench.destructionCase);
   }
 
 void TestBench::destructionMeleeHit(const Npc& actor,size_t affected,float damage) {

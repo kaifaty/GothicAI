@@ -69,10 +69,13 @@ def broken(rows, case, final, count):
     return breaks, fragments
 
 
-def asleep15(rows, case):
+def asleep15(rows, case, report=False):
     row = one(rows, 'destruction_sleep15', case=case)
     require(15_000 <= row['elapsed_since_last_break_ms'] <= 15_100, f'{case}: sleep observation did not occur at 15s')
-    require(row['fragments'] and all(part['sleeping'] for part in row['fragments']), f'{case}: fragments awake at 15s')
+    asleep = bool(row['fragments']) and all(part['sleeping'] for part in row['fragments'])
+    if report:
+        return asleep
+    require(asleep, f'{case}: fragments awake at 15s')
     return row['elapsed_since_last_break_ms']
 
 
@@ -153,10 +156,7 @@ def measured(directory, enabled):
         require(max(row['t_game_ms'] for row in breaks) - min(row['t_game_ms'] for row in breaks) <= 100,
                 'five bodies did not break in the same physical impact')
         # Reported with the timings rather than raised: pieces through the ground never sleep.
-        try:
-            asleep15(rows, 'five')
-        except ValueError:
-            asleep = False
+        asleep = asleep15(rows, 'five', report=True)
     else:
         require(all(not body['broken'] for body in final['bodies']), 'disabled destruction broke a body')
     meta = json.loads((directory / 'appcadence.csv.json').read_text())

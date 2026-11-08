@@ -346,7 +346,8 @@ the centre's travel, the angle of a flat piece's face and long axis from vertica
 `fell` (centre below the floor); at 15 s the native hull penetration into a floor plane and into the
 other pieces, the visible (vertex) floor penetration and the 13→15 s jitter. Run with the
 `own-content-fracture` settings plus `TEMPEST_WINDOW_SIZE=1280x720`; `OPENGOTHIC_FRACTURE_MOTION`
-varies the version 3 piece motion.
+varies the version 3 piece motion. Inside a `movable measure` window the pieces are not sampled: the
+timed frames stay free of bench work.
 
 Corpse water: `water-bodies` records a real harbour WindFist throw, a dead wolf and a
 sinking skeleton, then saves `session-water-bodies.sav` and tries normal corpse loot
