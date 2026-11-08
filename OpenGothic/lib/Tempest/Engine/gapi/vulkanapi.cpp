@@ -443,21 +443,15 @@ size_t VulkanApi::rtInstanceSize() const {
   return sizeof(VkAccelerationStructureInstanceKHR);
   }
 
-size_t VulkanApi::packRtInstances(Device* d, AccelerationStructure& tlas, const RtInstance* inst,
-                                  AccelerationStructure*const* as, size_t count, void* out) {
+void VulkanApi::packRtInstance(Device* d, AccelerationStructure& tlas, const RtInstance& inst,
+                               AccelerationStructure* as, void* slot) {
   (void)d;
-  (void)tlas; // instances point at their BLAS by device address
-  auto*  dst = reinterpret_cast<VkAccelerationStructureInstanceKHR*>(out);
-  size_t ret = 0;
-  for(size_t i=0; i<count; ++i) {
-    if(as[i]==nullptr)
-      continue;
-    VkAccelerationStructureInstanceKHR obj = {};
-    VTopAccelerationStructure::pack(obj, inst[i], *reinterpret_cast<const VAccelerationStructure*>(as[i]));
-    std::memcpy(dst+ret, &obj, sizeof(obj));
-    ++ret;
-    }
-  return ret;
+  (void)tlas; // instances point at their BLAS by device address: nothing is held
+  // zero reference: an inactive instance, which the build skips
+  VkAccelerationStructureInstanceKHR obj = {};
+  if(as!=nullptr)
+    VTopAccelerationStructure::pack(obj, inst, *reinterpret_cast<const VAccelerationStructure*>(as));
+  std::memcpy(slot, &obj, sizeof(obj));
   }
 
 void VulkanApi::readPixels(AbstractGraphicsApi::Device *d, Pixmap& out, const PTexture t,

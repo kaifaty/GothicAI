@@ -560,8 +560,13 @@ void textureResidency(Tempest::Device& device, const Fixture& fixture) {
   RtScene rayScene;
   auto blas=Resources::blas(mesh.vbo,mesh.ibo,0,3);
   if(!blas.isEmpty()) {
-    rayScene.addInstance(Tempest::Matrix4x4::mkIdentity(),blas,material,mesh,0,3,RtScene::Static);
-    rayScene.buildTlas();
+    rayScene.setSlot(rayScene.allocSlot(),Tempest::Matrix4x4::mkIdentity(),blas,material,mesh,0,3,true);
+    auto command=device.commandBuffer();
+    {
+    auto encoder=command.startEncoding(device);
+    rayScene.commit(encoder,0);
+    }
+    device.submit(command).wait();
     require(!rayScene.tex.isEmpty() && !rayScene.refreshTextures(),
             "a built RT array must retain its current texture generation");
     }

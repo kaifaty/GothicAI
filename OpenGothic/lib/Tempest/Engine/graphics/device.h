@@ -163,10 +163,13 @@ class Device {
     // Bytes of one instance in the backend's layout (VkAccelerationStructureInstanceKHR on Vulkan,
     // MTLAccelerationStructureUserIDInstanceDescriptor on Metal).
     size_t                rtInstanceSize() const;
-    // Writes the instances for a build of `tlas` into `out`, rtInstanceSize() bytes each, and returns how many it wrote:
-    // an instance without a BLAS or with an empty one is skipped. On Metal they index the list of BLAS that `tlas` keeps
-    // for its build and for the ray queries reading it; this call replaces that list, so build `tlas` from them next.
-    size_t                packRtInstances(AccelerationStructure& tlas, const RtInstance* inst, size_t count, void* out);
+    // An instance of `tlas` kept in a slot between its builds: writes `inst` into `slot`, rtInstanceSize() bytes in the
+    // backend's layout. `slot` holds zeros (an inactive instance) or what this call wrote there for `tlas` before.
+    // An instance without a BLAS or with an empty one is written inactive: the build keeps it, rays never meet it.
+    // On Metal an instance indexes its BLAS in the list of `tlas`, which its builds and the ray queries reading it use:
+    // a BLAS keeps one index while any slot holds it, so a change of one slot rewrites no other. On Vulkan an instance
+    // addresses its BLAS directly.
+    void                  packRtInstance(AccelerationStructure& tlas, const RtInstance& inst, void* slot);
 
     Pixmap                readPixels(const Texture2d&    t, uint32_t mip=0);
     Pixmap                readPixels(const Attachment&   t, uint32_t mip=0);

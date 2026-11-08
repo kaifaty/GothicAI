@@ -9,7 +9,8 @@
 
 #include <Tempest/Log>
 #include <algorithm>
-#include <unordered_map>
+#include <cassert>
+#include <cstring>
 
 #if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
 #include "gapi/metalapi.h"
@@ -108,6 +109,17 @@ MtAccelerationStructure::~MtAccelerationStructure() {
   }
 
 
+static void writeInstance(MTL::AccelerationStructureUserIDInstanceDescriptor& obj, const Tempest::RtInstance& inst, uint32_t index) {
+  for(int x=0; x<4; ++x)
+    for(int y=0; y<3; ++y)
+      obj.transformationMatrix[x][y]  = inst.mat.at(x,y);
+  obj.options                         = nativeFormat(inst.flags);
+  obj.mask                            = inst.mask;
+  obj.intersectionFunctionTableOffset = 0;
+  obj.accelerationStructureIndex      = index;
+  obj.userID                          = inst.id;
+  }
+
 MtTopAccelerationStructure::MtTopAccelerationStructure(MtDevice& dx, const RtInstance* inst,
                                                        AccelerationStructure*const* as, size_t asSize)
   :owner(dx) {
@@ -117,7 +129,14 @@ MtTopAccelerationStructure::MtTopAccelerationStructure(MtDevice& dx, const RtIns
   if(instances==nullptr)
     throw std::system_error(GraphicsErrc::OutOfVideoMemory);
 
-  const size_t count = pack(inst, as, asSize, instances->contents());
+  auto*  dst   = reinterpret_cast<MTL::AccelerationStructureUserIDInstanceDescriptor*>(instances->contents());
+  size_t count = 0;
+  for(size_t i=0; i<asSize; ++i) {
+    if(as[i]==nullptr)
+      continue;
+    writeInstance(dst[count], inst[i], acquire(reinterpret_cast<MtAccelerationStructure*>(as[i])->impl.get()));
+    ++count;
+    }
   if(instances->storageMode()==MTL::StorageModeManaged)
     instances->didModifyRange(NS::Range(0,instances->length()));
 
@@ -141,6 +160,40 @@ MtTopAccelerationStructure::MtTopAccelerationStructure(MtDevice& dx, const RtIns
 MtTopAccelerationStructure::MtTopAccelerationStructure(MtDevice& dx, size_t cap)
   :owner(dx), capacity(cap) {
   auto pool = NsPtr<NS::AutoreleasePool>::init();
+  {
+  // The placeholder: a BLAS of one degenerate triangle, index 0 of the list. The builds that read it come later on
+  // this queue (tracked resources), and the command buffer retains the buffers it reads.
+  static const float    vert[9] = {};
+  static const uint32_t ind [3] = {};
+  auto vbo = NsPtr<MTL::Buffer>(dx.impl->newBuffer(vert, sizeof(vert), hostVisibleResourceOptions(*dx.impl)));
+  auto ibo = NsPtr<MTL::Buffer>(dx.impl->newBuffer(ind,  sizeof(ind),  hostVisibleResourceOptions(*dx.impl)));
+  auto geo = NsPtr<MTL::AccelerationStructureTriangleGeometryDescriptor>::init();
+  auto pd  = NsPtr<MTL::PrimitiveAccelerationStructureDescriptor>::init();
+  if(vbo==nullptr || ibo==nullptr || geo==nullptr || pd==nullptr)
+    throw std::system_error(GraphicsErrc::OutOfVideoMemory);
+  geo->setVertexBuffer(vbo.get());
+  geo->setVertexStride(sizeof(float)*3);
+  geo->setVertexFormat(MTL::AttributeFormatFloat3);
+  geo->setIndexBuffer(ibo.get());
+  geo->setIndexType(MTL::IndexTypeUInt32);
+  geo->setTriangleCount(1);
+  geo->setOpaque(true);
+  const NS::Object* geoArr[] = {geo.get()};
+  pd->setGeometryDescriptors(NS::Array::array(geoArr, 1));
+  auto psz = dx.impl->accelerationStructureSizes(pd.get());
+  placeholder = NsPtr<MTL::AccelerationStructure>(dx.impl->newAccelerationStructure(psz.accelerationStructureSize));
+  auto pscratch = NsPtr<MTL::Buffer>(dx.impl->newBuffer(std::max<size_t>(psz.buildScratchBufferSize,1),MTL::ResourceStorageModePrivate));
+  if(placeholder==nullptr || pscratch==nullptr)
+    throw std::system_error(GraphicsErrc::OutOfVideoMemory);
+  auto cmd = dx.queue->commandBuffer();
+  auto enc = cmd->accelerationStructureCommandEncoder();
+  enc->buildAccelerationStructure(placeholder.get(), pd.get(), pscratch.get(), 0);
+  enc->endEncoding();
+  submitBuild(dx, *cmd, "placeholder blas");
+  blas.push_back(placeholder.get());
+  blasRefs.push_back(0);
+  }
+
   auto desc = buildDesc(nullptr, cap);
   auto sz   = dx.impl->accelerationStructureSizes(desc.get());
   impl = NsPtr<MTL::AccelerationStructure>(dx.impl->newAccelerationStructure(sz.accelerationStructureSize));
@@ -151,36 +204,51 @@ MtTopAccelerationStructure::MtTopAccelerationStructure(MtDevice& dx, size_t cap)
     throw std::system_error(GraphicsErrc::OutOfVideoMemory);
   }
 
-size_t MtTopAccelerationStructure::pack(const RtInstance* inst, AccelerationStructure*const* as, size_t count, void* out) {
-  auto* dst = reinterpret_cast<MTL::AccelerationStructureUserIDInstanceDescriptor*>(out);
+void MtTopAccelerationStructure::pack(const RtInstance& inst, AccelerationStructure* as, void* slot) {
+  assert(placeholder!=nullptr); // second constructor only
+  MTL::AccelerationStructureUserIDInstanceDescriptor obj = {};
+  std::memcpy(&obj, slot, sizeof(obj));
+  const uint32_t prev = obj.accelerationStructureIndex;
+  // acquire first: an instance that keeps its BLAS keeps the index
+  const uint32_t next = as!=nullptr ? acquire(reinterpret_cast<MtAccelerationStructure*>(as)->impl.get()) : 0;
+  release(prev);
+  obj = {};
+  if(as!=nullptr)
+    writeInstance(obj, inst, next); // else zeros: mask 0, the placeholder
+  std::memcpy(slot, &obj, sizeof(obj));
+  }
 
-  std::unordered_map<MTL::Resource*,uint32_t> usedBlas;
-  blas.clear();
-  size_t ret = 0;
-  for(size_t i=0; i<count; ++i) {
-    if(as[i]==nullptr)
-      continue;
-    auto* ax  = reinterpret_cast<MtAccelerationStructure*>(as[i])->impl.get();
-    auto& obj = dst[ret];
-    for(int x=0; x<4; ++x)
-      for(int y=0; y<3; ++y)
-        obj.transformationMatrix[x][y]  = inst[i].mat.at(x,y);
-    obj.options                         = nativeFormat(inst[i].flags);
-    obj.mask                            = inst[i].mask;
-    obj.intersectionFunctionTableOffset = 0;
-    obj.userID                          = inst[i].id;
-
-    auto it = usedBlas.find(ax);
-    if(it!=usedBlas.end()) {
-      obj.accelerationStructureIndex = it->second;
-      } else {
-      obj.accelerationStructureIndex = uint32_t(blas.size());
-      usedBlas[ax] = uint32_t(blas.size());
-      blas.push_back(ax);
-      }
-    ++ret;
+uint32_t MtTopAccelerationStructure::acquire(MTL::Resource* ax) {
+  auto it = blasIndex.find(ax);
+  if(it!=blasIndex.end()) {
+    ++blasRefs[it->second];
+    return it->second;
     }
-  return ret;
+  uint32_t index = 0;
+  if(!blasFree.empty()) {
+    index = blasFree.back();
+    blasFree.pop_back();
+    blas    [index] = ax;
+    blasRefs[index] = 1;
+    } else {
+    index = uint32_t(blas.size());
+    blas    .push_back(ax);
+    blasRefs.push_back(1);
+    }
+  ax->retain();
+  blasIndex[ax] = index;
+  return index;
+  }
+
+void MtTopAccelerationStructure::release(uint32_t index) {
+  if(index>=blas.size() || blasRefs[index]==0)
+    return; // the placeholder
+  if(--blasRefs[index]>0)
+    return;
+  blasIndex.erase(blas[index]);
+  blas[index]->release();
+  blas[index] = placeholder.get();
+  blasFree.push_back(index);
   }
 
 NsPtr<MTL::InstanceAccelerationStructureDescriptor> MtTopAccelerationStructure::buildDesc(MTL::Buffer* ibo, size_t count) const {
@@ -204,6 +272,9 @@ NsPtr<MTL::InstanceAccelerationStructureDescriptor> MtTopAccelerationStructure::
   }
 
 MtTopAccelerationStructure::~MtTopAccelerationStructure() {
+  for(size_t i=0; i<blas.size(); ++i)
+    if(blasRefs[i]>0)
+      blas[i]->release();
   }
 
 void MtTopAccelerationStructure::useResource(MTL::RenderCommandEncoder& cmd, ShaderReflection::Stage st) const {

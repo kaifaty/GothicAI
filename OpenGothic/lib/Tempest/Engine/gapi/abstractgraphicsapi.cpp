@@ -118,8 +118,8 @@ size_t AbstractGraphicsApi::rtInstanceSize() const {
   throw std::system_error(Tempest::GraphicsErrc::UnsupportedExtension);
   }
 
-size_t AbstractGraphicsApi::packRtInstances(Device* d, AccelerationStructure& tlas, const RtInstance* inst,
-                                            AccelerationStructure*const* as, size_t count, void* out) {
+void AbstractGraphicsApi::packRtInstance(Device* d, AccelerationStructure& tlas, const RtInstance& inst,
+                                         AccelerationStructure* as, void* slot) {
   throw std::system_error(Tempest::GraphicsErrc::UnsupportedExtension);
   }
 

@@ -34,8 +34,8 @@ enum class Zone : size_t {
   AnimationNpcPass, MeleeShadow, MeleeContacts, InteractiveAnimation, LogicalBodySync,
   // PfxObjects::preFrameUpdate, and the CPU wait of a synchronous buffer upload (Metal).
   PfxPrepare, UploadWait,
-  // WorldView::updateRtScene: the ray-tracing scene refresh, landscape BLAS builds and the recording of the TLAS build
-  // into the frame (pass RT-TLAS) included.
+  // WorldView::updateRtScene: the changed objects into their slots of the ray scene, and in a frame with changes their
+  // upload and the TLAS build recorded into it (pass RT-TLAS); a landscape BLAS build and new descriptor arrays included.
   RtScene, Count
   };
 enum class Amount : size_t { PaletteCalls, PaletteBytes, IdenticalCalls, IdenticalBytes,
@@ -45,7 +45,9 @@ enum class Amount : size_t { PaletteCalls, PaletteBytes, IdenticalCalls, Identic
   NpcLogicSamples, NpcLogicBodyMismatch, NpcLogicWeaponMismatch,
   NpcLogicEarly, NpcLogicLate, NpcLogicEvents, NpcLogicEventMismatch,
   NpcLogicWaitEarly, NpcLogicWaitLate, NpcLogicReanchored, NpcLogicBodySamples, NpcLogicWeaponSamples,
-  NpcAnimDeferred, NpcAnimCatchUp, NpcAnimSyncOnRead, Count };
+  NpcAnimDeferred, NpcAnimCatchUp, NpcAnimSyncOnRead,
+  // RtScene::commit: builds of the TLAS in the frame, slots of the ray scene written into it
+  RtTlasBuilds, RtDirtySlots, Count };
 enum class Outcome : uint8_t { Unfinished, Submitted, FenceBusy, Capture, Error };
 enum class Flag : uint32_t { SubmitCompleted=1, PresentCompleted=2,
   CaptureRequested=4, CaptureReadCompleted=8, FenceBusy=16, Error=32 };

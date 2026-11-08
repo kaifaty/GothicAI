@@ -186,10 +186,10 @@ size_t MetalApi::rtInstanceSize() const {
   return sizeof(MTL::AccelerationStructureUserIDInstanceDescriptor);
   }
 
-size_t MetalApi::packRtInstances(Device* d, AccelerationStructure& tlas, const RtInstance* inst,
-                                 AccelerationStructure*const* as, size_t count, void* out) {
+void MetalApi::packRtInstance(Device* d, AccelerationStructure& tlas, const RtInstance& inst,
+                              AccelerationStructure* as, void* slot) {
   (void)d;
-  return reinterpret_cast<MtTopAccelerationStructure&>(tlas).pack(inst, as, count, out);
+  reinterpret_cast<MtTopAccelerationStructure&>(tlas).pack(inst, as, slot);
   }
 
 AbstractGraphicsApi::DescArray* MetalApi::createDescriptors(Device* d, Texture** tex, size_t cnt, uint32_t mipLevel) {

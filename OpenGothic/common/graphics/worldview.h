@@ -74,7 +74,7 @@ class WorldView {
     void dbgLights      (DbgPainter& p) const;
 
     bool updateLights(const gtime gameTime);
-    bool updateRtScene(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
+    void updateRtScene(Tempest::Encoder<Tempest::CommandBuffer>& cmd, uint8_t fId);
 
     void updateFrustrum (const Frustrum fr[]);
     void visibilityPass (Tempest::Encoder<Tempest::CommandBuffer>& cmd, int pass);
