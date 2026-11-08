@@ -921,38 +921,7 @@ struct Bench {
   Vec3 waterFilmLip;
   bool waterFilmKill=false;
   uint64_t waterFilmStart=0;
-  std::vector<std::unique_ptr<MovableFixture>> destructionFixtures;
-  std::vector<uintptr_t> destructionIds;
-  std::map<std::pair<uintptr_t,size_t>,Vec3> destructionFragmentOrigins;
-  std::map<std::pair<uintptr_t,size_t>,float> destructionFragmentTravel;
-  std::string destructionCase;
-  Vec3 destructionCaster,destructionTarget,destructionDirection,destructionActorStart;
-  Npc* destructionActor=nullptr;
-  WayPoint destructionDestination;
-  uint64_t destructionStart=0,destructionNextArrow=0;
-  uint64_t destructionLastBreak=0;
-  uint64_t destructionFallSample=0;
-  unsigned destructionArrows=0;
-  bool destructionReady=false,destructionTrace=false,destructionShooting=false;
-  bool destructionSleepSampled=false;
-  bool destructionSupportTrace=false;
-  uint64_t destructionSupportNext=0;
-  const Npc* destructionSkinRequest=nullptr;
-  std::unordered_map<const ProtoMesh*,std::vector<Resources::VertexA>> destructionSkinGeometry;
-  std::string destructionSkinSample="null";
-  Npc* destructionMeleeActor=nullptr;
-  Npc* destructionMeleeNpc=nullptr;
-  Vec3 destructionMeleeFacing,destructionMeleeStand;
-  bool destructionMeleeRestance=false;
-  uint64_t destructionMeleeNext=0,destructionMeleeDeadline=0;
-  unsigned destructionMeleeAttempts=0,destructionMeleeHits=0,destructionMeleeBlows=0;
-  bool destructionMeleeRunning=false,destructionMeleeArena=false;
-  Npc* destructionFarmNpc=nullptr;
-  Vec3 destructionFarmNpcStart,destructionFarmStart,destructionFarmEnd;
-  const WayPoint* destructionFarmNpcGoal=nullptr;
-  uint32_t destructionFarmZen=uint32_t(-1);
-  float destructionFarmNpcTravel=0;
-  float destructionFarmNpcBest=std::numeric_limits<float>::infinity();
+  Destruction destruction;
   Character character;
   struct OwnMeshChest {
     Interactive* chest=nullptr;
@@ -1008,11 +977,6 @@ struct Bench {
   Matrix4x4 traceOrigin;
   Vec3 traceCenter,traceVisible,traceBlocked,traceFar,traceWall,traceShotDirection;
   bool traceReady=false;
-  Npc* destructionTraceHost=nullptr;
-  World* destructionTraceWorld=nullptr;
-  uint32_t destructionTraceZen=uint32_t(-1);
-  Vec3 destructionTraceSource;
-  bool destructionTraceDebug=false;
   Npc* arrowNpc=nullptr;
   std::string arrowCase,arrowAim;
   float arrowDraw=1.f;
@@ -1250,6 +1214,28 @@ struct Bench {
 
 Bench bench;
 
+DestructionContext destructionContext() {
+  return {bench.cam,bench.movableCenter,bench.movableIds,bench.movableMeasuring,bench.movableReady,
+          bench.movableWalkStart,bench.noiseHost,bench.noiseSource,bench.noiseTrace,bench.ragdollArenaTarget,
+          bench.ragdollArenaWaypoint,bench.spellActors,bench.time,bench.waitUntil};
+  }
+
+}
+
+namespace testbench_detail {
+
+uintptr_t destructionAdd(World& world,std::string_view name,const Vec3& support) {
+  return destructionAdd(bench.destruction,destructionContext(),world,name,support);
+  }
+
+void destructionCheckpoint(World& world) {
+  destructionCheckpoint(bench.destruction,destructionContext(),world);
+  }
+
+}
+
+namespace {
+
 CharacterContext characterContext() {
   return {bench.cam,bench.camAngle,bench.camAuto,bench.camDist,bench.camHeight,bench.frameMs,
           bench.hasPrev,bench.holds,bench.movableFixtures,bench.movableReady,bench.movableWalkEnd,
@@ -1263,7 +1249,7 @@ MonsterCharacterContext monsterCharacterContext() {
 
 WaterContext waterContext() {
   return {bench.cam,bench.camPos,bench.movableMeasuring,bench.movableIds,bench.movableMapIds,
-          bench.movableReady,bench.movableCenter,bench.questWater,bench.destructionFixtures,
+          bench.movableReady,bench.movableCenter,bench.questWater,bench.destruction.destructionFixtures,
           bench.holds,bench.taps,bench.ctrl,bench.crew,bench.spellActors,bench.spellGuardTrace,
           bench.spellRunes,bench.spellCastingId,bench.spellEquipPending,bench.spellEquipUntil,
           bench.expectedRagdollLoot,bench.ragdollLootDidOpen};
@@ -1845,7 +1831,7 @@ void finish() {
   bench.monster.monsterCharacterProps.clear();
   bench.monster.monsterCharacterLedgeBody=DynamicWorld::Item();bench.monster.monsterCharacterLedgeShape.reset();
   bench.character.characterProp.reset();bench.character.characterPlatform.reset();bench.character.characterPlatformVisual.reset();
-  bench.destructionFixtures.clear();
+  bench.destruction.destructionFixtures.clear();
   bench.furnitureParts.loadBodies.clear();
   if(bench.npcDuel.active) {
     Gothic::inst().onCombatHit.ubind(&bench.npcDuel,&Bench::NpcDuel::hit);
@@ -3107,21 +3093,6 @@ void livingFields(World& world) {
   event("living_frame",livingCountFields(s,world)+",\"phase\":"+jsonStr(bench.livingPhase)+",\"actors\":"+actors+"]");
   }
 
-size_t arrowBone(const Skeleton& skeleton, std::string_view token) {
-  const auto compact=[](std::string_view text) {
-    std::string result;
-    for(const char value:text) {
-      const auto c=static_cast<unsigned char>(value);
-      if(std::isalnum(c)) result+=char(std::toupper(c));
-      }
-    return result;
-    };
-  const auto wanted=compact(token);
-  for(size_t i=0;i<skeleton.nodes.size();++i)
-    if(compact(skeleton.nodes[i].name).find(wanted)!=std::string::npos) return i;
-  return size_t(-1);
-  }
-
 bool arrowAimPoint(Npc& npc, Vec3& point) {
   const auto* skeleton=npc.visualSkeleton();
   if(skeleton==nullptr || bench.arrowAim.empty()) return false;
@@ -4141,13 +4112,9 @@ void noiseBegin(World& world,std::string_view phase,const Vec3& source) {
   for(auto& listener:bench.noiseListeners)listener.heard=0;
   }
 
-}
-
-namespace {
-
 // Select actual supported tavern/world floor, using the same acoustic query as
 // hearing. No synthetic wall, injected noise, spell sound or direct NPC turn.
-bool noiseFloor(World& world,const Vec3& source,float distance,bool wall,Vec3& result,bool distant=false) {
+bool noiseFloor(World& world,const Vec3& source,float distance,bool wall,Vec3& result,bool distant) {
   float best=-1;
   for(unsigned step=0;step<96;++step) {
     const float angle=float(step)*float(M_PI)/48.f;
@@ -4528,6 +4495,10 @@ void noiseFields(World& world) {
         ",\"hero_error_deg\":"+ragdollNumber(noiseFacingError(*listener.npc,world.player()->position())));
   }
 
+}
+
+namespace testbench_detail {
+
 void prepareMovableCast(World& world,Npc& player) {
   // Existing native actors stop only after the 60-second untouched observation.
   for(uint32_t i=0;i<world.npcCount();++i) {
@@ -4598,154 +4569,6 @@ void prepareMovableCast(World& world,Npc& player) {
     ragdollVector(target)+",\"caster_cm\":"+ragdollVector(player.position()));
   }
 
-bool destructionOwns(uintptr_t id) {
-  return std::find(bench.destructionIds.begin(),bench.destructionIds.end(),id)!=bench.destructionIds.end();
-  }
-
-std::string destructionRows(World& world) {
-  std::string result="[";
-  for(const auto& body:world.physic()->movableVobSnapshot()) {
-    if(!destructionOwns(body.id))continue;
-    if(result.size()>1)result+=',';
-    result+="{\"id\":"+std::to_string(body.id)+",\"visual\":"+jsonStr(body.visual)+
-      ",\"class\":"+jsonStr(body.className)+",\"destructible\":"+(body.destructible?"true":"false")+
-      ",\"broken\":"+(body.broken?"true":"false")+",\"health\":"+ragdollNumber(body.health)+
-      ",\"max_health\":"+ragdollNumber(body.maxHealth)+",\"mass_kg\":"+ragdollNumber(body.mass)+
-      ",\"sleeping\":"+(body.sleeping?"true":"false")+",\"npc_contact\":"+(body.touchedByNpc?"true":"false")+
-      ",\"position_cm\":"+ragdollVector(movablePosition(body.transform))+",\"velocity_cm_s\":"+
-      ragdollVector(body.velocity)+"}";
-    }
-  return result+"]";
-  }
-
-std::string destructionFragments(World& world) {
-  std::string result="[";
-  for(const auto& part:world.physic()->fragmentSnapshot()) {
-    if(!destructionOwns(part.parentId))continue;
-    if(result.size()>1)result+=',';
-    const auto key=std::make_pair(part.parentId,part.piece);
-    // Water at the centre of mass (surface at most 50 cm under it) and a static surface straight above
-    // within 20 m: a float in a pool below the arena is not a piece under the ground.
-    const auto& center=part.centerOfMass;
-    const auto water=world.physic()->waterRay(center,50);
-    const auto above=world.physic()->rayStatic(center+Vec3(0,2000,0),center);
-    result+="{\"parent_id\":"+std::to_string(part.parentId)+",\"piece\":"+std::to_string(part.piece)+",\"bond_group\":"+std::to_string(part.bondGroup)+
-      ",\"sleeping\":"+(part.sleeping?"true":"false")+",\"position_cm\":"+ragdollVector(movablePosition(part.transform))+
-      ",\"velocity_cm_s\":"+ragdollVector(part.velocity)+",\"max_displacement_cm\":"+
-      ragdollNumber(bench.destructionFragmentTravel[key])+",\"center_cm\":"+ragdollVector(center)+
-      ",\"in_water\":"+(water.hasCol?"true":"false")+",\"under_ground\":"+(above.hasCol?"true":"false")+"}";
-    }
-  return result+"]";
-  }
-
-void destructionFields(World& world) {
-  if(!bench.destructionTrace)return;
-  const auto elapsed=world.tickCount()-bench.destructionStart;
-  if((bench.destructionCase=="drop1" || bench.destructionCase=="drop5") && elapsed<=2500 &&
-     elapsed>=bench.destructionFallSample) {
-    bench.destructionFallSample=elapsed+100;
-    event("destruction_fall","\"case\":"+jsonStr(bench.destructionCase)+",\"elapsed_ms\":"+
-      std::to_string(elapsed)+",\"bodies\":"+destructionRows(world));
-    }
-  const bool sleepSample=bench.destructionLastBreak!=0 && !bench.destructionSleepSampled &&
-                         world.tickCount()-bench.destructionLastBreak>=15000;
-  if(bench.movableMeasuring && !sleepSample)return;
-  for(const auto& part:world.physic()->fragmentSnapshot()) {
-    if(!destructionOwns(part.parentId))continue;
-    const auto key=std::make_pair(part.parentId,part.piece);
-    const auto point=movablePosition(part.transform);
-    const auto [entry,inserted]=bench.destructionFragmentOrigins.emplace(key,point);
-    bench.destructionFragmentTravel[key]=std::max(bench.destructionFragmentTravel[key],(point-entry->second).length());
-    }
-  if(sleepSample) {
-    bench.destructionSleepSampled=true;
-    event("destruction_sleep15","\"case\":"+jsonStr(bench.destructionCase)+",\"elapsed_since_last_break_ms\":"+
-      std::to_string(world.tickCount()-bench.destructionLastBreak)+",\"fragments\":"+destructionFragments(world));
-    }
-  }
-
-}
-
-namespace testbench_detail {
-
-uintptr_t destructionAdd(World& world,std::string_view name,const Vec3& support) {
-  const std::string visual(name);
-  const auto* mesh=Resources::loadMesh(visual);const auto* rule=MovableVobs::classifyVisual(visual);
-  if(!mesh || !rule)return 0;
-  const auto* bounds=mesh->bbox();
-  asset::VirtualObject data;data.type=asset::VirtualObjectType::zCVob;data.id=uint32_t(-1);
-  data.show_visual=true;data.cd_dynamic=true;data.cd_static=true;
-  data.position={support.x-(bounds[0].x+bounds[1].x)*.5f,support.y-bounds[0].y+.2f,support.z-(bounds[0].z+bounds[1].z)*.5f};
-  data.visual=std::make_shared<asset::VisualMesh>();data.visual->type=asset::VisualType::MESH;data.visual->name=visual;
-  const auto before=world.physic()->movableVobSnapshot();
-  auto fixture=std::make_unique<Bench::MovableFixture>();
-  fixture->visual.setVisual(data,world,false,false);
-  auto matrix=Matrix4x4::mkIdentity();matrix.translate(data.position.x,data.position.y,data.position.z);
-  fixture->visual.setObjMatrix(matrix);
-  fixture->body=world.physic()->addMovableVob(*mesh,visual,matrix,rule->massMultiplier,rule->blocksWalking,rule->className,true);
-  if(fixture->body.isEmpty())return 0;
-  fixture->body.setTransformCallback([view=&fixture->visual](const Matrix4x4& pose){view->setObjMatrix(pose);});
-  fixture->visual.setupFracture(world,fixture->body);
-  bench.destructionFixtures.emplace_back(std::move(fixture));
-  for(const auto& body:world.physic()->movableVobSnapshot())
-    if(std::none_of(before.begin(),before.end(),[&](const auto& old){return old.id==body.id;})) {
-      bench.destructionIds.push_back(body.id);bench.movableIds.push_back(body.id);return body.id;
-      }
-  return 0;
-  }
-
-}
-
-namespace {
-
-bool destructionDropFloor(World& world,Vec3& result) {
-  // A five-metre drop must start under open sky, not intersect the tavern roof.
-  for(float distance:{600.f,900.f,1200.f,1600.f,2000.f})
-    for(unsigned i=0;i<64;++i) {
-      const float angle=float(i)*float(M_PI)/32.f;
-      const auto point=bench.movableCenter+Vec3(std::cos(angle)*distance,0,std::sin(angle)*distance);
-      const auto floor=world.physic()->landRay(point+Vec3(0,180,0),500);
-      if(!floor.hasCol || floor.n.y<.95f || std::abs(floor.v.y-bench.movableWalkStart.y)>200)continue;
-      bool clear=true;
-      for(const auto delta:{Vec3(),Vec3(70,0,0),Vec3(-70,0,0),Vec3(0,0,70),Vec3(0,0,-70)}) {
-        const auto support=world.physic()->landRay(floor.v+delta+Vec3(0,30,0),60);
-        if(!support.hasCol || support.n.y<.95f || std::abs(support.v.y-floor.v.y)>2 ||
-           world.physic()->ray(floor.v+delta+Vec3(0,10,0),floor.v+delta+Vec3(0,720,0)).hasCol)clear=false;
-        }
-      if(clear) {result=floor.v;return true;}
-      }
-  return false;
-  }
-
-}
-
-namespace testbench_detail {
-
-bool destructionSupported(World& world,std::string_view visual,const Vec3& at,Vec3& support,Vec3& failed) {
-  const auto* mesh=Resources::loadMesh(std::string(visual));
-  if(!mesh) {failed=at;return false;}
-  const auto* bounds=mesh->bbox();
-  const auto size=bounds[1]-bounds[0];
-  const auto center=world.physic()->landRay(at+Vec3(0,30,0),80);
-  if(!center.hasCol || center.n.y<.8f || std::abs(center.v.y-at.y)>20.f) {failed=at;return false;}
-  // Check the whole identity-oriented footprint: all corners, edge midpoints,
-  // and centre. The body also needs clear space up to its original mesh top.
-  for(int x=-1;x<=1;++x)
-    for(int z=-1;z<=1;++z) {
-      const auto point=Vec3(at.x+size.x*.5f*float(x),center.v.y,at.z+size.z*.5f*float(z));
-      const auto floor=world.physic()->landRay(point+Vec3(0,30,0),80);
-      if(!floor.hasCol || floor.n.y<.8f || std::abs(floor.v.y-center.v.y)>3.f ||
-         world.physic()->ray(point+Vec3(0,2,0),point+Vec3(0,size.y+2.f,0)).hasCol) {
-        failed=point;return false;
-        }
-      }
-  support=center.v;return true;
-  }
-
-}
-
-namespace {
-
 void destructionCamera(World& world,const Vec3& source,const Vec3& direction) {
   const Vec3 side(-direction.z,0,direction.x);
   // Look back from the open end of the tavern. The caster-side view has a
@@ -4756,285 +4579,26 @@ void destructionCamera(World& world,const Vec3& source,const Vec3& direction) {
       const auto camera=source+direction*forward+side*lateral+Vec3(0,190,0);
       bool clear=true;
       for(const auto& body:world.physic()->movableVobSnapshot()) {
-        if(!destructionOwns(body.id))continue;
+        if(!destructionOwns(bench.destruction,body.id))continue;
         auto center=(body.localBounds[0]+body.localBounds[1])*.5f;body.transform.project(center);
         const auto hit=world.physic()->ray(camera,center);
         if(hit.hasCol && (hit.v-center).length()>85.f)clear=false;
         }
       if(!clear)continue;
       bench.cam=C_Hold;lookFrom(camera,source+Vec3(0,55,0));
-      event("destruction_camera","\"case\":"+jsonStr(bench.destructionCase)+",\"camera_cm\":"+
+      event("destruction_camera","\"case\":"+jsonStr(bench.destruction.destructionCase)+",\"camera_cm\":"+
         ragdollVector(camera)+",\"target_cm\":"+ragdollVector(source+Vec3(0,55,0)));
       return;
       }
   arenaAbort("destruction before/after camera has no clear view of both native props");
   }
 
-void destructionSetup(World& world,Npc& player,std::string_view name) {
-  if(!bench.destructionReady) {
-    if(!bench.movableReady)prepareMovableFixture(world,player);
-    if(!bench.movableReady)return;
-    prepareMovableCast(world,player);
-    if(bench.spellActors.empty())return;
-    bench.destructionCaster=player.position();bench.destructionTarget=bench.spellActors.back().npc->position();
-    bench.destructionDirection=Vec3::normalize(bench.destructionTarget-bench.destructionCaster);
-    bench.destructionDirection.y=0;
-    bench.destructionReady=true;
-    }
-  noiseRetireListeners();
-  if(bench.destructionActor && bench.destructionActor!=&player) {
-    bench.destructionActor->clearAiQueue();bench.destructionActor->setExternalControl(true);
-    }
-  bench.destructionActor=nullptr;
-  bench.destructionShooting=false;bench.destructionTrace=false;
-  bench.destructionFixtures.clear();bench.destructionIds.clear();
-  bench.destructionFragmentOrigins.clear();bench.destructionFragmentTravel.clear();
-  bench.destructionCase=name;bench.destructionArrows=0;
-  player.clearAiQueue();player.clearGoTo();player.stopWalking();player.closeWeapon(true);
-  player.setPosition(bench.destructionCaster);player.setDirection(bench.destructionDirection);player.updateTransform();
-  auto direction=bench.destructionDirection,side=Vec3(-direction.z,0,direction.x);
-  auto source=bench.destructionTarget;
-  if(name=="drop1" || name=="drop5") {
-    if(!destructionDropFloor(world,source)) {arenaAbort("destruction drop needs flat open-sky native ground");return;}
-    const float height=name=="drop1"?100.f:500.f;
-    if(!destructionAdd(world,"NW_HARBOUR_CRATE_01.3DS",source+Vec3(0,height,0))) {
-      arenaAbort("destruction drop crate insertion failed");return;
-      }
-    player.setPosition(source-direction*250.f);player.updateTransform();
-    bench.cam=C_Hold;lookFrom(source-direction*450.f+side*180.f+Vec3(0,250,0),source+Vec3(0,200,0));
-    event("destruction_drop_setup","\"case\":"+jsonStr(name)+",\"height_cm\":"+ragdollNumber(height)+
-      ",\"floor_cm\":"+ragdollVector(source)+",\"clear_vertical_cm\":720");
-    }
-  else if(name=="fireball" || name=="five") {
-    const unsigned count=name=="five"?5:2;
-    // The functional pair sits beyond the edge of the authored tavern table.
-    if(name=="five") {
-      // The functional pair stays in Coragon's tavern. Performance uses real
-      // open stock-world ground, where the complete ring and its flight lane
-      // fit without walls or unsupported footprint corners.
-      if(const auto* anchor=world.findPoint("NW_XARDAS_TOWER_VALLEY_091",false)) {
-        player.setPosition(anchor->pos);player.updateTransform();
-        }
-      if(!chooseRagdollArena(world,player)) {arenaAbort("destruction five needs native open stock-world ground");return;}
-      const auto original=bench.ragdollArenaTarget-Vec3(0,80,0);
-      direction=Vec3(0,0,1);side=Vec3(-1,0,0);
-      bool found=false;Vec3 caster;
-      for(float forward:{0.f,-100.f,100.f,-200.f,200.f}) {
-        for(float lateral:{0.f,-100.f,100.f,-200.f,200.f}) {
-          const auto candidate=original+direction*forward+side*lateral;
-          const auto floor=world.physic()->landRay(candidate+Vec3(0,300,0),900);
-          if(!floor.hasCol || floor.n.y<.98f)continue;
-          auto center=candidate;center.y=floor.v.y;
-          bool supported=true;Vec3 failed;
-          for(unsigned i=0;i<count;++i) {
-            const float angle=float(i)*float(2*M_PI)/float(count)+float(M_PI)/10.f;
-            const auto at=center+(side*std::cos(angle)+direction*std::sin(angle))*140.f;
-            Vec3 support;
-            if(!destructionSupported(world,(i%2)?"NW_HARBOUR_BARREL_01.3DS":"NW_HARBOUR_CRATE_01.3DS",at,support,failed)) {
-              supported=false;break;
-              }
-            // The native blast must reach every original centre through the
-            // actual world mesh, before any fixture body is inserted.
-            const auto* mesh=Resources::loadMesh((i%2)?"NW_HARBOUR_BARREL_01.3DS":"NW_HARBOUR_CRATE_01.3DS");
-            const auto height=mesh->bbox()[1].y-mesh->bbox()[0].y;
-            if(world.physic()->ray(center+Vec3(0,92,0),support+Vec3(0,height*.5f,0)).hasCol) {
-              supported=false;failed=at;break;
-              }
-            }
-          auto hero=center-direction*500.f;
-          const auto heroFloor=world.physic()->landRay(hero+Vec3(0,300,0),900);
-          if(!heroFloor.hasCol || heroFloor.n.y<.98f || std::abs(heroFloor.v.y-center.y)>30.f) supported=false;
-          else {
-            hero.y=heroFloor.v.y;
-            if(world.physic()->ray(hero+Vec3(0,145,0),center+Vec3(0,92,0)).hasCol ||
-               world.physic()->rayNpc(hero+Vec3(0,100,0),center+Vec3(0,100,0),&player).npcHit!=nullptr) supported=false;
-            }
-          event("destruction_ring_candidate","\"source_cm\":"+ragdollVector(center)+",\"supported\":"+
-            (supported?"true":"false")+",\"failed_probe_cm\":"+(supported?"null":ragdollVector(failed)));
-          if(supported) {source=center;caster=hero;found=true;break;}
-          }
-        if(found)break;
-        }
-      if(!found) {arenaAbort("destruction five ring lacks native support, open blast rays, or clear caster lane");return;}
-      bench.destructionCaster=caster;bench.destructionTarget=source;bench.destructionDirection=direction;
-      player.setPosition(caster);player.setDirection(direction);player.updateTransform();
-      auto* target=bench.spellActors[0].npc;target->setPosition(source);target->setDirection(caster-source);target->updateTransform();
-      event("destruction_site","\"case\":\"five\",\"location\":\"stock_outdoor_arena\",\"waypoint\":"+
-        jsonStr(bench.ragdollArenaWaypoint)+",\"caster_cm\":"+ragdollVector(caster)+",\"target_cm\":"+ragdollVector(source));
-      }
-    for(unsigned i=0;i<count;++i) {
-      // Put a gap towards the caster, so the rear crate cannot intercept the
-      // real fireball before it reaches the NPC at the centre of the ring.
-      const float angle=float(i)*float(2*M_PI)/float(count)+float(M_PI)/10.f;
-      const auto at=name=="five" ? source+(side*std::cos(angle)+direction*std::sin(angle))*140.f :
-                                      source+side*(i?100.f:-100.f)+direction*40.f;
-      // Start below tabletop height: the ground query must not mistake
-      // nearby authored furniture for the floor of the tavern.
-      const auto floor=world.physic()->landRay(at+Vec3(0,30,0),80);
-      const bool supported=floor.hasCol && floor.n.y>.8f && std::abs(floor.v.y-source.y)<=20.f;
-      event("destruction_preparation","\"case\":"+jsonStr(name)+",\"ordinal\":"+std::to_string(i)+
-        ",\"at_cm\":"+ragdollVector(at)+",\"has_floor\":"+(floor.hasCol?"true":"false")+
-        ",\"floor_cm\":"+ragdollVector(floor.v)+",\"normal\":"+ragdollVector(floor.n)+
-        ",\"supported\":"+(supported?"true":"false"));
-      if(!supported || !destructionAdd(world,(i%2)?"NW_HARBOUR_BARREL_01.3DS":"NW_HARBOUR_CRATE_01.3DS",floor.v)) {
-        arenaAbort("destruction fireball needs supported real crate/barrel positions");return;
-        }
-      }
-    if(name=="five") {
-      const auto blast=bench.spellActors[0].npc->collosionCenter();
-      const bool flightClear=!world.physic()->ray(bench.destructionCaster+Vec3(0,145,0),blast).hasCol;
-      unsigned visible=0;
-      for(const auto& body:world.physic()->movableVobSnapshot()) {
-        if(!destructionOwns(body.id))continue;
-        auto center=(body.localBounds[0]+body.localBounds[1])*.5f;body.transform.project(center);
-        const auto hit=world.physic()->ray(blast,center);
-        // The final intersection is with the tested object's own shell.
-        if(!hit.hasCol || (hit.v-center).length()<=85.f)++visible;
-        }
-      event("destruction_five_los","\"flight_clear\":"+std::string(flightClear?"true":"false")+
-        ",\"unobstructed_bodies\":"+std::to_string(visible)+",\"blast_cm\":"+ragdollVector(blast));
-      if(!flightClear || visible!=count) {arenaAbort("destruction five native bodies obstruct the real fireball or one another");return;}
-      }
-    if(name=="fireball") {
-      noiseBegin(world,name,source+Vec3(0,60,0));
-      Vec3 near;bool listenerFloor=false;
-      // The same blast also knocks the authored table. Its earlier impact has
-      // a 7.2m hearing radius; a listener beyond it can identify the louder break
-      // through the unchanged native hearing cooldown and acoustic queries.
-      for(float distance:{1000.f,1100.f,1200.f})
-        if(noiseFloor(world,bench.noiseSource,distance,false,near)) {listenerFloor=true;break;}
-      if(!listenerFloor) {arenaAbort("destruction needs a clear supported 10-12m listener floor");return;}
-      if(!noiseAddListener(world,"destruction-near",near))return;
-      event("destruction_listener_setup","\"case\":"+jsonStr(name)+",\"position_cm\":"+ragdollVector(near)+
-        ",\"break_source_cm\":"+ragdollVector(bench.noiseSource)+",\"distance_cm\":"+
-        ragdollNumber((near-bench.noiseSource).length())+",\"table_distance_cm\":"+
-        ragdollNumber((near-bench.movableCenter).length()));
-      } else bench.noiseTrace=false;
-    destructionCamera(world,source,direction);
-    }
-  else if(name=="arrows" || name=="walk-hero" || name=="walk-npc") {
-    source=bench.destructionTarget+direction*80.f;
-    // The fireball target is no longer a participant in these cases.
-    auto* spellTarget=bench.spellActors[0].npc;
-    spellTarget->setPosition(bench.destructionCaster);spellTarget->updateTransform();
-    const auto floor=world.physic()->landRay(source+Vec3(0,30,0),80);
-    if(!floor.hasCol || !destructionAdd(world,"NW_HARBOUR_CRATE_01.3DS",floor.v)) {
-      arenaAbort("destruction single-crate insertion failed");return;
-      }
-    source=floor.v;
-    if(name!="arrows") {
-      const auto approach=direction*-1.f;
-      auto start=source-approach*170.f;
-      const auto ground=world.physic()->landRay(start+Vec3(0,80,0),180);
-      if(!ground.hasCol) {arenaAbort("destruction walking actor has no native floor");return;}
-      start.y=ground.v.y;
-      auto* actor=name=="walk-hero"?&player:world.addNpc(world.script().findSymbolIndex("BAU_904_BAUER"),start);
-      if(!actor) {arenaAbort("destruction walking actor unavailable");return;}
-      actor->clearAiQueue();actor->clearState(false);actor->stopWalking();actor->closeWeapon(true);
-      actor->setPosition(start);actor->setDirection(approach);actor->updateTransform();actor->setWalkMode(WalkBit::WM_Walk);
-      if(actor!=&player) {actor->setExternalControl(false);actor->setProcessPolicy(NpcProcessPolicy::AiNormal);
-        player.setPosition(start+side*160.f);player.updateTransform();}
-      bench.destructionActor=actor;bench.destructionActorStart=start;
-      bench.destructionDestination=WayPoint(source+approach*170.f,"FP_DESTRUCTION_CRATE_WALK");
-      bench.destructionDestination.groundPos=source+approach*170.f;
-      }
-    bench.cam=C_Hold;lookFrom(source-direction*280.f+side*230.f+Vec3(0,190,0),source+Vec3(0,55,0));
-    }
-  else {arenaAbort("unknown destruction fixture case");return;}
-  bench.destructionStart=world.tickCount();
-  event("destruction_setup","\"case\":"+jsonStr(name)+",\"world\":"+jsonStr(world.name())+
-    ",\"host\":"+jsonStr(symName(world,bench.noiseHost))+",\"enabled\":"+
-    (world.physic()->destructionEnabled()?"true":"false")+",\"location\":"+
-    jsonStr(name=="five"?"stock_outdoor_arena":name=="fireball"?"coragon_tavern":"coragon_area")+",\"bodies\":"+destructionRows(world)+
-    ",\"spell_target_cm\":"+ragdollVector(bench.spellActors[0].npc->collosionCenter()));
-  }
-
-void destructionBegin(World& world) {
-  bench.destructionTrace=true;bench.destructionStart=world.tickCount();
-  bench.destructionSupportNext=1000;
-  bench.destructionLastBreak=0;bench.destructionSleepSampled=false;
-  bench.destructionFallSample=0;
-  bench.destructionFragmentOrigins.clear();bench.destructionFragmentTravel.clear();
-  if(bench.destructionCase=="arrows") {bench.destructionShooting=true;bench.destructionNextArrow=world.tickCount();}
-  if(bench.destructionCase=="drop1" || bench.destructionCase=="drop5")
-    for(auto& fixture:bench.destructionFixtures)fixture->body.addImpulse(Vec3(0,-.001f,0));
-  if(bench.destructionCase=="walk-npc" && bench.destructionActor)
-    bench.destructionActor->aiPush(AiQueue::aiGoToPoint(bench.destructionDestination));
-  unsigned pins=0;
-  for(size_t i=0;i<world.stuckArrowCount();++i) {uint32_t zenId;Matrix4x4 local;if(world.stuckArrowAttachment(i,zenId,local))++pins;}
-  event("destruction_begin","\"case\":"+jsonStr(bench.destructionCase)+",\"bodies\":"+destructionRows(world)+
-    ",\"world_pinned_arrows\":"+std::to_string(pins)+",\"spell_target_cm\":"+
-    ragdollVector(bench.spellActors[0].npc->collosionCenter())+",\"spell_target\":"+
-    jsonStr(symName(world,bench.spellActors[0].npc))+",\"spell_target_npc_id\":"+
-    std::to_string(world.npcId(bench.spellActors[0].npc)));
-  }
-
-void destructionShoot(World& world,Npc& player) {
-  if(!bench.destructionShooting || world.tickCount()<bench.destructionNextArrow)return;
-  const auto all=world.physic()->movableVobSnapshot();
-  const auto found=std::find_if(all.begin(),all.end(),[](const auto& body){return destructionOwns(body.id);});
-  if(found==all.end() || found->broken || bench.destructionArrows>=30) {bench.destructionShooting=false;return;}
-  const auto* mesh=Resources::loadMesh(found->visual);if(!mesh) {arenaAbort("destruction arrow crate mesh missing");return;}
-  const auto* bounds=mesh->bbox();
-  auto center=(bounds[0]+bounds[1])*.5f;found->transform.project(center);
-  auto top=Vec3((bounds[0].x+bounds[1].x)*.5f,bounds[1].y,(bounds[0].z+bounds[1].z)*.5f);found->transform.project(top);
-  const auto from=top+Vec3(0,80,0);
-  const auto hit=world.physic()->rayMovableVob(from,center);
-  if(!hit || hit->visual!=found->visual || (movablePosition(hit->transform)-movablePosition(found->transform)).length()>1.f) {
-    arenaAbort("destruction arrow has no exposed native path to its exact crate");return;
-    }
-  const auto symbol=world.script().findSymbolIndex("ITRW_ARROW");
-  if(symbol==size_t(-1)) {arenaAbort("destruction arrow instance unavailable");return;}
-  Item arrow(world,symbol,Item::T_Inventory);
-  auto& bullet=world.shootArrow(arrow,from,Vec3::normalize(center-from),DynamicWorld::bulletSpeed);
-  bullet.setOrigin(&player);bullet.setPrecise(1.f);
-  ++bench.destructionArrows;bench.destructionNextArrow=world.tickCount()+500;
-  event("destruction_arrow","\"ordinal\":"+std::to_string(bench.destructionArrows)+",\"health_before\":"+
-    ragdollNumber(found->health)+",\"from_cm\":"+ragdollVector(from)+",\"to_cm\":"+ragdollVector(center));
-  }
-
-}
-
-namespace testbench_detail {
-
-void destructionCheckpoint(World& world) {
-  destructionFields(world);
-  unsigned attached=0;
-  for(size_t i=0;i<world.stuckArrowCount();++i) {
-    uint32_t zenId;Matrix4x4 local;
-    if(world.stuckArrowAttachment(i,zenId,local))++attached;
-    }
-  event("destruction_checkpoint","\"case\":"+jsonStr(bench.destructionCase)+",\"elapsed_ms\":"+
-    std::to_string(world.tickCount()-bench.destructionStart)+",\"arrows\":"+std::to_string(bench.destructionArrows)+
-    ",\"bodies\":"+destructionRows(world)+",\"fragments\":"+destructionFragments(world)+
-    ",\"listeners\":"+noiseListenerRows(world)+",\"world_pinned_arrows\":"+std::to_string(attached)+
-    ",\"actor_start_cm\":"+ragdollVector(bench.destructionActorStart)+",\"actor_cm\":"+
-    (bench.destructionActor?ragdollVector(bench.destructionActor->position()):"null"));
-  bench.destructionShooting=false;
-  }
-
 }
 
 namespace {
 
-std::string destructionFloorProbe(const Npc& npc,std::string_view label,const Vec3& point) {
-  const auto root=npc.position();
-  const Vec3 from(point.x,std::max(root.y+20.f,point.y+20.f),point.z);
-  const Vec3 to(point.x,std::min(root.y,point.y)-600.f,point.z);
-  const auto hit=npc.world().physic()->landRay(from,from.y-to.y);
-  return "{\"label\":"+jsonStr(label)+",\"reference_cm\":"+ragdollVector(point)+
-    ",\"ray_from_cm\":"+ragdollVector(from)+",\"ray_to_cm\":"+ragdollVector(to)+
-    ",\"found\":"+(hit.hasCol?"true":"false")+
-    ",\"point_cm\":"+(hit.hasCol?ragdollVector(hit.v):"null")+
-    ",\"normal\":"+(hit.hasCol?ragdollVector(hit.n):"null")+
-    ",\"material\":"+std::to_string(int(hit.mat))+
-    ",\"sector\":"+(hit.sector?jsonStr(hit.sector):"null")+
-    ",\"interactive\":"+(hit.vob?"true":"false")+
-    ",\"vertical_delta_cm\":"+(hit.hasCol?ragdollNumber(point.y-hit.v.y):"null")+"}";
-  }
-
 void destructionSkinSample(const Npc& npc,const ProtoMesh& proto,const Matrix4x4& object,const Pose& pose) {
-  auto [cache,inserted]=bench.destructionSkinGeometry.try_emplace(&proto);
+  auto [cache,inserted]=bench.destruction.destructionSkinGeometry.try_emplace(&proto);
   if(inserted)
     for(const auto& mesh:proto.skined) {
       std::vector<Resources::VertexA> vertices(mesh.vbo.size());
@@ -5159,7 +4723,7 @@ void destructionSkinSample(const Npc& npc,const ProtoMesh& proto,const Matrix4x4
                            std::pair("+z",Vec3(0,0,30)),std::pair("-z",Vec3(0,0,-30))})
       probe(std::string(center.first)+offset.first,center.second+offset.second);
   probes+=']';
-  bench.destructionSkinSample="{\"mesh\":"+jsonStr(proto.fname)+",\"indexed_vertices\":"+std::to_string(count)+
+  bench.destruction.destructionSkinSample="{\"mesh\":"+jsonStr(proto.fname)+",\"indexed_vertices\":"+std::to_string(count)+
     ",\"object_matrix\":"+ragdollMatrix(object)+
     ",\"object_up\":"+ragdollVector(Vec3(object.at(1,0),object.at(1,1),object.at(1,2)))+
     ",\"raw_model_bones\":"+rawBones+
@@ -5173,405 +4737,6 @@ void destructionSkinSample(const Npc& npc,const ProtoMesh& proto,const Matrix4x4
     ",\"support_world_cm\":"+(found?ragdollVector(support):"null")+
     ",\"support_normal\":"+(found?ragdollVector(supportNormal):"null")+
     ",\"gap_cm\":"+(found?ragdollNumber(lowest.y-support.y):"null")+",\"floor_probes\":"+probes+"}";
-  }
-
-void destructionSupportSample(World& world) {
-  if(bench.spellActors.empty() || bench.spellActors[0].npc==nullptr) {
-    event("destruction_error","\"reason\":\"support probe has no native fireball target\"");
-    return;
-    }
-  const auto& npc=*bench.spellActors[0].npc;
-  bench.destructionSkinSample="null";
-  bench.destructionSkinRequest=&npc;
-  const bool drawable=TestBench::ragdollBodyDrawable(npc);
-  bench.destructionSkinRequest=nullptr;
-  const auto* rig=npc.ragdollBody()!=nullptr ? npc.ragdollBody() : npc.livingBody();
-  std::vector<Matrix4x4> native;
-  const bool nativePose=rig && rig->getPose(native);
-  std::string bones="[";
-  if(const auto* skeleton=npc.visualSkeleton())
-    for(std::string_view name:{"BIP01 PELVIS","BIP01 SPINE2","BIP01 L THIGH","BIP01 L CALF","BIP01 L FOOT"}) {
-      const auto bone=arrowBone(*skeleton,name);
-      if(bone==size_t(-1))continue;
-      if(bones.size()>1)bones+=',';
-      bones+="{\"name\":"+jsonStr(name)+",\"bone\":"+std::to_string(bone)+
-        ",\"render\":"+ragdollMatrix(npc.renderedBone(bone))+
-        ",\"animation\":"+ragdollMatrix(npc.animationBone(bone));
-      if(nativePose && bone<native.size())bones+=",\"native\":"+ragdollMatrix(native[bone]);
-      bones+='}';
-      }
-  bones+=']';
-  std::string contacts="[";
-  size_t supports=0,invisible=0,unknown=0;
-  float maximumGap=0;
-  if(rig!=nullptr)
-    for(const auto& contact:world.physic()->ragdollSupports(*rig,2.f)) {
-      const bool support=contact.axis.y<-.25f;
-      // Source-triangle contacts may penetrate the floor. Report their signed
-      // separation, while hulls retain a distance that exposes empty cavities.
-      const float visibleGap=contact.sourceTriangle!=uint32_t(-1) ?
-          Vec3::dotProduct(contact.point1-contact.visiblePoint,contact.axis*-1.f) : contact.visibleDistance;
-      if(support) {
-        ++supports;
-        if(!contact.visible)++invisible;
-        if(contact.visibleDistance<0.f)++unknown;
-        else maximumGap=std::max(maximumGap,visibleGap);
-        }
-      if(contacts.size()>1)contacts+=',';
-      contacts+="{\"bone\":"+std::to_string(contact.bone)+
-        ",\"part_body_id\":"+std::to_string(contact.partBodyId)+
-        ",\"support_body_id\":"+std::to_string(contact.supportBodyId)+
-        ",\"layer\":"+std::to_string(contact.category)+",\"kind\":"+jsonStr(contact.kind)+
-        ",\"visual\":"+jsonStr(contact.visual)+",\"parent_id\":"+std::to_string(contact.parentId)+
-        ",\"zen_id\":"+std::to_string(contact.zenId)+",\"piece\":"+
-        (contact.piece==size_t(-1)?"null":std::to_string(contact.piece))+
-        ",\"source_triangle\":"+(contact.sourceTriangle==uint32_t(-1)?"null":std::to_string(contact.sourceTriangle))+
-        ",\"sleeping\":"+(contact.sleeping?"true":"false")+
-        ",\"broken\":"+(contact.broken?"true":"false")+
-        ",\"visible\":"+(contact.visible?"true":"false")+
-        ",\"supports_weight\":"+(support?"true":"false")+
-        ",\"depth_cm\":"+ragdollNumber(contact.depth)+
-        ",\"normal\":"+ragdollVector(contact.axis*-1.f)+
-        ",\"part_contact_cm\":"+ragdollVector(contact.point1)+
-        ",\"support_contact_cm\":"+ragdollVector(contact.point2)+
-        ",\"visible_distance_cm\":"+(contact.visibleDistance<0.f?"null":ragdollNumber(contact.visibleDistance))+
-        ",\"visible_gap_cm\":"+(contact.visibleDistance<0.f?"null":ragdollNumber(visibleGap))+
-        ",\"visible_penetration_cm\":"+(contact.visibleDistance<0.f?"null":ragdollNumber(std::max(0.f,-visibleGap)))+
-        ",\"visible_point_cm\":"+(contact.visibleDistance<0.f?"null":ragdollVector(contact.visiblePoint))+"}";
-      }
-  contacts+=']';
-  event("destruction_support_sample","\"elapsed_ms\":"+std::to_string(world.tickCount()-bench.destructionStart)+
-    ",\"actor\":"+jsonStr(symName(world,&npc))+",\"actor_id\":"+std::to_string(world.npcId(&npc))+
-    ",\"body_drawable\":"+(drawable?"true":"false")+
-    ",\"ragdoll\":"+(npc.ragdollBody()?"true":"false")+
-    ",\"rig_kind\":"+jsonStr(npc.ragdollBody()?"ragdoll":npc.livingBody()?"living":"none")+
-    ",\"kinematic\":"+(rig && rig->isKinematic()?"true":"false")+
-    ",\"sleeping\":"+(rig && rig->isSleeping()?"true":"false")+
-    ",\"reaction_weight\":"+ragdollNumber(rig?rig->reactionWeight():0.f)+
-    ",\"ragdoll_enabled\":"+(Gothic::physicsFlags().ragdoll?"true":"false")+
-    ",\"spell_physics_enabled\":"+(Gothic::physicsFlags().spellPhysics?"true":"false")+
-    ",\"npc_character_virtual\":"+(Gothic::physicsFlags().npcCharacterVirtual?"true":"false")+
-    ",\"cv_active\":"+(npc.characterVirtualActive()?"true":"false")+
-    ",\"visual_root_cm\":"+ragdollVector(npc.characterVisualPosition())+
-    ",\"external_control\":"+(npc.isExternalControl()?"true":"false")+
-    ",\"process_policy\":"+std::to_string(int(npc.processPolicy()))+
-    ",\"body_state\":"+std::to_string(int(npc.bodyState()))+
-    ",\"state\":"+jsonStr(stateName(world,npc))+",\"state_time\":"+std::to_string(npc.stateTime())+
-    ",\"quest_return_count\":"+std::to_string(npc.ragdollQuestReturnCount())+
-    ",\"quest_return_armed\":"+(npc.ragdollQuestReturnState().armed?"true":"false")+
-    ",\"quest_return_hazards\":"+std::to_string(npc.ragdollQuestReturnState().hazards)+
-    ",\"animations\":"+jsonStr(npc.animNames())+
-    ",\"hp\":"+std::to_string(npc.attribute(ATR_HITPOINTS))+
-    ",\"dead\":"+(npc.isDead()?"true":"false")+
-    ",\"down\":"+(npc.isDown()?"true":"false")+
-    ",\"in_air\":"+(npc.isInAir()?"true":"false")+
-    ",\"falling\":"+(npc.isFalling()?"true":"false")+
-    ",\"standing\":"+(npc.isStanding()?"true":"false")+
-    ",\"spell_velocity_cm_s\":"+ragdollVector(npc.spellVelocity())+
-    ",\"bones\":"+bones+",\"rendered_skin\":"+bench.destructionSkinSample+
-    ",\"position_cm\":"+ragdollVector(npc.position())+",\"supports\":"+std::to_string(supports)+
-    ",\"invisible_supports\":"+std::to_string(invisible)+",\"unknown_supports\":"+std::to_string(unknown)+
-    ",\"maximum_visible_gap_cm\":"+ragdollNumber(maximumGap)+",\"contacts\":"+contacts);
-  }
-
-bool destructionMeleeEquip(World& world,Npc& actor,std::string_view weapon) {
-  actor.clearAiQueue();actor.clearState(false);actor.clearGoTo();actor.stopWalking();actor.closeWeapon(true);
-  actor.setTarget(nullptr);actor.setExternalControl(true);
-  actor.handle().attribute[ATR_STRENGTH]=100;
-  actor.setTalentSkill(TALENT_1H,2);actor.setTalentSkill(TALENT_2H,2);
-  if(weapon=="fist")actor.setToFistMode();
-  else {
-    const auto symbol=world.script().findSymbolIndex(weapon=="1h"?"ITMW_1H_COMMON_01":"ITMW_2H_BAU_AXE");
-    if(symbol==size_t(-1)) {arenaAbort("destruction melee stock weapon symbol absent");return false;}
-    actor.setToFightMode(symbol);
-    const auto* equipped=actor.currentMeleeWeapon();
-    if(!equipped || equipped->clsId()!=symbol || equipped->is2H()!=(weapon=="2h")) {
-      arenaAbort("destruction melee stock weapon did not equip");return false;
-      }
-    }
-  return true;
-  }
-
-bool destructionMeleeProbe(World& world,Npc& actor,const DynamicWorld::MovableVobSnapshot& body,std::string_view stage) {
-  const auto& guild=world.script().guildVal();const auto gl=actor.guild();
-  const bool fist=actor.weaponState()==WeaponState::Fist;
-  const auto* weapon=fist?nullptr:actor.currentMeleeWeapon();
-  const float reach=float(guild.fight_range_base[gl]+(fist?guild.fight_range_fist[gl]:
-    weapon && weapon->is2H()?guild.fight_range_2ha[gl]:guild.fight_range_1ha[gl]))+float(weapon?weapon->swordLength():0);
-  const auto origin=actor.collosionCenter();
-  unsigned contacts=0;float closest=std::numeric_limits<float>::infinity();Vec3 point;
-  for(int yaw=-(fist?20:60);yaw<=(fist?20:60);yaw+=10)
-    for(int pitch=-40;pitch<=20;pitch+=20) {
-      const float a=actor.rotationRad()+float(yaw)*float(M_PI)/180.f,p=float(pitch)*float(M_PI)/180.f;
-      const Vec3 direction(std::cos(a)*std::cos(p),std::sin(p),std::sin(a)*std::cos(p));
-      const auto end=origin+direction*reach;
-      const auto target=world.physic()->rayMovableVob(origin,end);
-      if(!target || target->visual!=body.visual || target->zenId!=body.zenId ||
-         (movablePosition(target->transform)-movablePosition(body.transform)).length()>1.f)continue;
-      const auto hit=world.physic()->ray(origin,end);
-      if(!hit.hasCol)continue;
-      ++contacts;const float distance=(hit.v-origin).length();
-      if(distance<closest) {closest=distance;point=hit.v;}
-      }
-  auto local=point;auto inverse=body.transform;inverse.inverse();inverse.project(local);
-  event("destruction2_melee_probe","\"case\":"+jsonStr(bench.destructionCase)+",\"stage\":"+jsonStr(stage)+
-    ",\"actor_cm\":"+ragdollVector(actor.position())+",\"origin_cm\":"+ragdollVector(origin)+
-    ",\"reach_cm\":"+ragdollNumber(reach)+",\"contact_rays\":"+std::to_string(contacts)+
-    ",\"closest_contact_cm\":"+(contacts?ragdollNumber(closest):"null")+
-    ",\"contact_point_cm\":"+(contacts?ragdollVector(point):"null")+
-    ",\"contact_local_cm\":"+(contacts?ragdollVector(local):"null"));
-  return contacts>0;
-  }
-
-void destructionMeleeSetup(World& world,Npc& player,std::string_view kind,std::string_view weapon,bool npc) {
-  if((kind!="crate" && kind!="barrel" && kind!="fence") || (weapon!="fist" && weapon!="1h" && weapon!="2h")) {
-    arenaAbort("destruction melee expects crate|barrel|fence and fist|1h|2h");return;
-    }
-  bench.destructionMeleeRunning=false;bench.destructionTrace=false;
-  bench.destructionFixtures.clear();bench.destructionIds.clear();
-  if(bench.destructionMeleeNpc) {
-    world.removeNpc(*bench.destructionMeleeNpc);bench.destructionMeleeNpc=nullptr;
-    }
-  if(!bench.destructionMeleeArena) {
-    if(const auto* anchor=world.findPoint("NW_XARDAS_TOWER_VALLEY_091",false)) {
-      player.setPosition(anchor->pos);player.updateTransform();
-      }
-    if(!chooseRagdollArena(world,player)) {arenaAbort("destruction melee needs native flat outdoor ground");return;}
-    bench.destructionMeleeArena=true;
-    }
-  const auto source=bench.ragdollArenaTarget-Vec3(0,80,0);
-  std::string visual=kind=="barrel"?"NW_HARBOUR_BARREL_01.3DS":"NW_HARBOUR_CRATE_01.3DS";
-  if(kind=="fence") {
-    visual.clear();
-    for(const auto& body:world.physic()->movableVobSnapshot())
-      if(body.className=="fence") {visual=body.visual;break;}
-    if(visual.empty()) {arenaAbort("destruction melee stock fence mesh is absent");return;}
-    }
-  if(!destructionAdd(world,visual,source)) {arenaAbort("destruction melee native mesh insertion failed");return;}
-  const auto bodies=world.physic()->movableVobSnapshot();
-  const auto found=std::find_if(bodies.begin(),bodies.end(),[](const auto& body){return destructionOwns(body.id);});
-  if(found==bodies.end() || !found->destructible || found->broken) {
-    arenaAbort("destruction melee needs intact cache-backed native prop");return;
-    }
-  auto center=(found->localBounds[0]+found->localBounds[1])*.5f;found->transform.project(center);
-  const float extent=(found->localBounds[1].z-found->localBounds[0].z)*.5f;
-  auto stand=center-Vec3(0,0,extent+75.f);
-  // This upright authored post spans the full strike height. The middle of
-  // NW_NATURE_FENCE_01 is a gap between two narrow horizontal rails.
-  if(kind=="fence")stand.x+=100.f;
-  const auto floor=world.physic()->landRay(Vec3(stand.x,source.y+80,stand.z),180);
-  if(!floor.hasCol) {arenaAbort("destruction melee actor has no native floor");return;}
-  stand.y=floor.v.y;
-  // The arena is an isolated acceptance fixture. It never changes map-vob IDs.
-  for(uint32_t id=0;id<world.npcCount();++id)
-    if(auto* other=world.npcById(id);other && other!=&player && (other->position()-source).length()<2300.f) {
-      other->clearAiQueue();other->clearState(false);other->stopWalking();other->setExternalControl(true);
-      }
-  auto* actor=&player;
-  if(npc) {
-    actor=world.addNpc(world.script().findSymbolIndex("BAU_904_BAUER"),stand);
-    if(!actor) {arenaAbort("destruction melee NPC actor insertion failed");return;}
-    bench.destructionMeleeNpc=actor;
-    }
-  if(!destructionMeleeEquip(world,*actor,weapon))return;
-  actor->setPosition(stand);actor->setDirection(Vec3(0,0,1));actor->updateTransform();
-  if(npc) {player.closeWeapon(true);player.setPosition(stand+Vec3(200,0,-100));player.updateTransform();}
-  bench.destructionMeleeActor=actor;bench.destructionMeleeFacing=Vec3(0,0,1);
-  bench.destructionMeleeStand=stand;bench.destructionMeleeRestance=kind=="fence";
-  bench.destructionMeleeAttempts=bench.destructionMeleeHits=0;
-  bench.destructionCase=std::string(kind)+"-"+std::string(weapon)+(npc?"-npc":"");
-  bench.destructionStart=world.tickCount();bench.destructionTrace=true;
-  if(!destructionMeleeProbe(world,*actor,*found,"setup")) {
-    arenaAbort("destruction melee stance has no real wood contact inside native attack reach");return;
-    }
-  bench.cam=C_Hold;lookFrom(center+Vec3(250,230,-310),center+Vec3(0,35,0));
-  const auto* item=weapon=="fist"?nullptr:actor->currentMeleeWeapon();
-  event("destruction2_melee_setup","\"case\":"+jsonStr(bench.destructionCase)+",\"class\":"+jsonStr(kind)+
-    ",\"weapon\":"+jsonStr(weapon)+",\"actor\":"+jsonStr(npc?"npc":"hero")+",\"strength\":100,\"weapon_damage\":"+
-    std::to_string(item?item->handle().damage_total:0)+",\"weapon_range_cm\":"+std::to_string(item?item->swordLength():0)+
-    ",\"actor_cm\":"+ragdollVector(stand)+",\"bodies\":"+destructionRows(world));
-  }
-
-void destructionMeleeTick(World& world) {
-  if(!bench.destructionMeleeRunning || !bench.destructionMeleeActor)return;
-  if(bench.destructionMeleeBlows>0 && bench.destructionMeleeAttempts>=bench.destructionMeleeBlows) {
-    if(world.tickCount()>=bench.destructionMeleeNext) {bench.destructionMeleeRunning=false;bench.waitUntil=0;}
-    return;
-    }
-  const auto bodies=world.physic()->movableVobSnapshot();
-  const auto found=std::find_if(bodies.begin(),bodies.end(),[](const auto& body){return destructionOwns(body.id);});
-  if(found==bodies.end() || world.tickCount()>=bench.destructionMeleeDeadline) {
-    bench.destructionMeleeRunning=false;bench.waitUntil=0;
-    arenaAbort("destruction melee timed out before native animation broke its prop");return;
-    }
-  if(found->broken) {
-    bench.destructionMeleeRunning=false;bench.waitUntil=bench.time+1000;
-    event("destruction2_melee_complete","\"case\":"+jsonStr(bench.destructionCase)+",\"attempts\":"+
-      std::to_string(bench.destructionMeleeAttempts)+",\"hits\":"+std::to_string(bench.destructionMeleeHits)+
-      ",\"bodies\":"+destructionRows(world)+",\"fragments\":"+destructionFragments(world));return;
-    }
-  if(world.tickCount()<bench.destructionMeleeNext)return;
-  auto& actor=*bench.destructionMeleeActor;
-  // Each fence sample starts outside its post. Forward fist root motion would
-  // otherwise carry repeated attacks into the open rail gap after two swings.
-  // The animation and its impact run freely between these setup boundaries.
-  if(bench.destructionMeleeRestance) {
-    actor.stopWalking();actor.clearSpeed();actor.setPosition(bench.destructionMeleeStand);
-    actor.setDirection(bench.destructionMeleeFacing);actor.updateTransform();
-    if(!destructionMeleeProbe(world,actor,*found,"before-animation")) {
-      bench.destructionMeleeRunning=false;arenaAbort("destruction melee reset stance lost native wood contact");return;
-      }
-    }
-  const bool accepted=actor.doAttack(Npc::Anim::Attack,BS_HIT);
-  if(accepted)++bench.destructionMeleeAttempts;
-  bench.destructionMeleeNext=world.tickCount()+(accepted?2200:100);
-  event("destruction2_melee_attempt","\"case\":"+jsonStr(bench.destructionCase)+",\"accepted\":"+
-    (accepted?"true":"false")+",\"ordinal\":"+std::to_string(bench.destructionMeleeAttempts)+
-    ",\"actor_cm\":"+ragdollVector(actor.position())+",\"bodies\":"+destructionRows(world));
-  }
-
-std::string destructionRoutineRows(const Npc& npc) {
-  std::string result="[";
-  npc.forEachRoutine([&](const Npc::RoutineInfo& routine) {
-    if(result.size()>1)result+=',';
-    result+="{\"start\":"+std::to_string(routine.start.toInt())+",\"end\":"+std::to_string(routine.end.toInt())+
-      ",\"state\":"+std::to_string(routine.state.ptr)+",\"point\":"+jsonStr(routine.point)+"}";
-    });
-  return result+"]";
-  }
-
-void destructionFarmSetup(World& world,Npc& player,uint32_t zenId,bool npc=false) {
-  bench.destructionMeleeRunning=false;bench.destructionTrace=false;
-  bench.destructionFixtures.clear();bench.destructionIds.clear();
-  if(bench.destructionMeleeNpc) {
-    world.removeNpc(*bench.destructionMeleeNpc);bench.destructionMeleeNpc=nullptr;
-    }
-  const auto bodies=world.physic()->movableVobSnapshot();
-  const auto found=std::find_if(bodies.begin(),bodies.end(),[&](const auto& body){return body.zenId==zenId;});
-  if(found==bodies.end() || found->className!="fence" || !found->destructible || found->broken) {
-    arenaAbort("destruction farm needs an intact cache-backed stock map fence");return;
-    }
-  auto center=(found->localBounds[0]+found->localBounds[1])*.5f;found->transform.project(center);
-  const bool thinZ=found->localBounds[1].z-found->localBounds[0].z<found->localBounds[1].x-found->localBounds[0].x;
-  auto axis=(found->localBounds[0]+found->localBounds[1])*.5f+(thinZ?Vec3(0,0,1):Vec3(1,0,0));
-  found->transform.project(axis);auto normal=axis-center;normal.y=0;normal=Vec3::normalize(normal);
-  const float depth=(thinZ?found->localBounds[1].z-found->localBounds[0].z:found->localBounds[1].x-found->localBounds[0].x)*.5f;
-  bool supported=false;Vec3 start,end;
-  for(const auto sign:{1.f,-1.f}) {
-    start=center-normal*(depth+75.f)*sign;end=center+normal*(depth+180.f)*sign;
-    const auto first=world.physic()->landRay(start+Vec3(0,80,0),350);
-    const auto last=world.physic()->landRay(end+Vec3(0,80,0),350);
-    if(!first.hasCol || !last.hasCol || std::abs(first.v.y-last.v.y)>100.f)continue;
-    start.y=first.v.y;end.y=last.v.y;normal*=sign;supported=true;break;
-    }
-  if(!supported) {arenaAbort("destruction farm fence lacks native walkable ground on both sides");return;}
-  auto* actor=&player;
-  if(npc) {
-    actor=world.findNpcByInstance(world.script().findSymbolIndex("BAU_952_VINO"));
-    if(!actor) {arenaAbort("destruction farm NPC actor Vino is absent");return;}
-    }
-  if(!destructionMeleeEquip(world,*actor,"1h"))return;
-  actor->setPosition(start);actor->setDirection(normal);actor->updateTransform();
-  if(npc) {player.closeWeapon(true);player.setPosition(start-normal*800.f);player.updateTransform();}
-  bench.destructionIds.push_back(found->id);bench.destructionMeleeActor=actor;
-  bench.destructionMeleeRestance=false;
-  bench.destructionMeleeFacing=normal;
-  bench.destructionMeleeAttempts=bench.destructionMeleeHits=0;
-  bench.destructionFarmZen=zenId;bench.destructionFarmStart=start;bench.destructionFarmEnd=end;
-  bench.destructionCase=npc?"farm-fence-1h-npc":"farm-fence-1h";
-  bench.destructionTrace=true;bench.destructionStart=world.tickCount();
-  auto* maleth=world.findNpcByInstance(world.script().findSymbolIndex("BAU_954_MALETH"));
-  if(!maleth) {arenaAbort("destruction farm routine NPC Maleth is absent");return;}
-  bench.destructionFarmNpc=maleth;bench.destructionFarmNpcStart=maleth->position();bench.destructionFarmNpcTravel=0;
-  const auto side=Vec3(-normal.z,0,normal.x);
-  bench.cam=C_Hold;lookFrom(center-normal*310.f+side*290.f+Vec3(0,170,0),center+Vec3(0,-10,0));
-  event("destruction2_farm_setup","\"zen_id\":"+std::to_string(zenId)+",\"visual\":"+jsonStr(found->visual)+
-    ",\"from_map\":true,\"start_cm\":"+ragdollVector(start)+",\"goal_cm\":"+ragdollVector(end)+
-    ",\"actor\":"+jsonStr(symName(world,actor))+
-    ",\"intact_passable\":"+(player.testMove(end)?"true":"false")+",\"npc\":"+jsonStr(symName(world,maleth))+
-    ",\"npc_cm\":"+ragdollVector(maleth->position())+",\"npc_routines\":"+destructionRoutineRows(*maleth)+
-    ",\"bodies\":"+destructionRows(world));
-  }
-
-void destructionFarmSetupNext(World& world,Npc& player) {
-  const auto bodies=world.physic()->movableVobSnapshot();
-  const DynamicWorld::MovableVobSnapshot* nearest=nullptr;
-  float distance=1800.f;
-  for(const auto& body:bodies) {
-    if(body.zenId==uint32_t(-1) || body.className!="fence" || !body.destructible || body.broken)continue;
-    const float cm=(movablePosition(body.transform)-bench.destructionFarmStart).length();
-    if(cm<distance || (nearest && cm==distance && body.zenId<nearest->zenId)) {nearest=&body;distance=cm;}
-    }
-  if(!nearest) {arenaAbort("destruction farm needs another intact native fence within 18 m");return;}
-  destructionFarmSetup(world,player,nearest->zenId);
-  }
-
-void destructionFarmNpcWalk(World& world,std::string_view phase) {
-  auto* npc=bench.destructionFarmNpc;
-  if(!npc) {arenaAbort("destruction farm NPC route requires farm setup");return;}
-  const auto* start=world.findWayPoint("NW_FARM1_FIELD_08");
-  if(!start) {arenaAbort("destruction farm authored route start absent");return;}
-  const WayPoint* goal=nullptr;
-  for(const auto& conn:start->connections())
-    if(conn.point && !conn.point->underWater && (conn.point->pos-start->pos).length()>=250.f &&
-       (conn.point->pos-start->pos).length()<=1400.f) {goal=conn.point;break;}
-  if(!goal) {arenaAbort("destruction farm authored nearby route has no connected endpoint");return;}
-  if(auto* player=world.player())player->closeWeapon(true);
-  npc->setInteraction(nullptr,true);npc->clearAiQueue();npc->clearGoTo();npc->stopWalking();npc->closeWeapon(true);
-  npc->setExternalControl(false);npc->setProcessPolicy(NpcProcessPolicy::AiNormal);npc->setWalkMode(WalkBit::WM_Walk);
-  npc->setPosition(start->pos);npc->setDirection(goal->pos-start->pos);npc->updateTransform();
-  bench.destructionFarmNpcStart=npc->position();bench.destructionFarmNpcTravel=0;bench.destructionFarmNpcGoal=goal;
-  bench.destructionFarmNpcBest=(npc->position()-goal->pos).length();
-  npc->aiPush(AiQueue::aiGoToPoint(*goal));
-  event("destruction2_farm_npc_begin","\"phase\":"+jsonStr(phase)+",\"npc\":"+jsonStr(symName(world,npc))+",\"start_waypoint\":"+jsonStr(start->name)+
-    ",\"goal_waypoint\":"+jsonStr(goal->name)+",\"start_cm\":"+ragdollVector(npc->position())+
-    ",\"goal_cm\":"+ragdollVector(goal->pos)+",\"routines\":"+destructionRoutineRows(*npc));
-  }
-
-void destructionFarmCheckpoint(World& world,Npc& player,std::string_view phase) {
-  auto* npc=bench.destructionFarmNpc;
-  event("destruction2_farm_checkpoint","\"phase\":"+jsonStr(phase)+",\"zen_id\":"+std::to_string(bench.destructionFarmZen)+
-    ",\"start_cm\":"+ragdollVector(bench.destructionFarmStart)+",\"goal_cm\":"+ragdollVector(bench.destructionFarmEnd)+
-    ",\"hero_cm\":"+ragdollVector(player.position())+",\"broken_passable\":"+(player.testMove(bench.destructionFarmStart)?"true":"false")+
-    ",\"npc_cm\":"+(npc?ragdollVector(npc->position()):"null")+",\"npc_travel_cm\":"+ragdollNumber(bench.destructionFarmNpcTravel)+
-    ",\"npc_goal_distance_cm\":"+(npc && bench.destructionFarmNpcGoal?ragdollNumber((npc->position()-bench.destructionFarmNpcGoal->pos).length()):"null")+
-    ",\"npc_best_goal_distance_cm\":"+(std::isfinite(bench.destructionFarmNpcBest)?ragdollNumber(bench.destructionFarmNpcBest):"null")+
-    ",\"npc_routines\":"+(npc?destructionRoutineRows(*npc):"[]")+",\"bodies\":"+destructionRows(world)+",\"fragments\":"+destructionFragments(world));
-  }
-
-void destructionSessionSnapshot(World& world,std::string_view label) {
-  std::string bodies="[",fragments="[";
-  for(const auto& body:world.physic()->movableVobSnapshot()) {
-    if(body.zenId==uint32_t(-1) || (body.className!="crate" && body.className!="barrel" && body.className!="fence"))continue;
-    if(bodies.size()>1)bodies+=',';
-    bodies+="{\"zen_id\":"+std::to_string(body.zenId)+",\"class\":"+jsonStr(body.className)+",\"visual\":"+
-      jsonStr(body.visual)+",\"broken\":"+(body.broken?"true":"false")+",\"health\":"+ragdollNumber(body.health)+
-      ",\"max_health\":"+ragdollNumber(body.maxHealth)+",\"transform\":"+ragdollMatrix(body.transform)+"}";
-    }
-  for(const auto& part:world.physic()->fragmentSnapshot()) {
-    if(part.zenId==uint32_t(-1))continue;
-    if(fragments.size()>1)fragments+=',';
-    fragments+="{\"zen_id\":"+std::to_string(part.zenId)+",\"piece\":"+std::to_string(part.piece)+
-      ",\"sleeping\":"+(part.sleeping?"true":"false")+",\"permanent\":"+(part.permanent?"true":"false")+
-      ",\"asleep_since_min\":"+std::to_string(part.asleepSince)+",\"transform\":"+ragdollMatrix(part.transform)+
-      ",\"position_cm\":"+ragdollVector(movablePosition(part.transform))+",\"velocity_cm_s\":"+
-      ragdollVector(part.velocity)+",\"angular_velocity\":"+ragdollVector(part.angularVelocity)+"}";
-    }
-  event("destruction2_snapshot","\"label\":"+jsonStr(label)+",\"world\":"+jsonStr(world.name())+
-    ",\"game_minutes\":"+std::to_string(world.time().toInt()/60000)+",\"enabled\":"+
-    (world.physic()->destructionEnabled()?"true":"false")+",\"bodies\":"+bodies+"],\"fragments\":"+fragments+"]");
-  }
-
-void destructionAge(World& world,int64_t minutes,bool youngest) {
-  int64_t asleep=-1;
-  for(const auto& part:world.physic()->fragmentSnapshot())
-    if(part.zenId!=uint32_t(-1) && !part.permanent && part.sleeping && part.asleepSince>=0)
-      asleep=asleep<0?part.asleepSince:youngest?std::max(asleep,part.asleepSince):std::min(asleep,part.asleepSince);
-  if(asleep<0 || minutes<0) {arenaAbort("destruction age requires sleeping map debris and nonnegative minutes");return;}
-  Gothic::inst().gameSession()->setTime(gtime(int64_t(0),int64_t(0),asleep+minutes));
-  event("destruction2_age","\"anchor\":"+jsonStr(youngest?"youngest":"oldest")+
-    ",\"asleep_since_min\":"+std::to_string(asleep)+",\"age_min\":"+std::to_string(minutes)+
-    ",\"game_minutes\":"+std::to_string(world.time().toInt()/60000));
   }
 
 void movableSaveSnapshot(World& world,std::string_view label) {
@@ -6715,7 +5880,7 @@ void itemWakeFields(World& world) {
     }
   if((bench.itemWakeCase=="debris" || bench.itemWakeCase=="event-debris") && world.tickCount()-bench.itemWakeStart>=200) {
     const auto parts=world.physic()->fragmentSnapshot();
-    if(std::none_of(parts.begin(),parts.end(),[](const auto& part){return destructionOwns(part.parentId);})) {
+    if(std::none_of(parts.begin(),parts.end(),[](const auto& part){return destructionOwns(bench.destruction,part.parentId);})) {
       arenaAbort("item wake preparation: crate break created no native debris");return;
       }
     }
@@ -6792,7 +5957,7 @@ void itemWakeSetup(World& world,Npc& player,std::string_view name) {
   bench.itemWakeSwordSequence=nullptr;
   bench.itemWakeBladePath.clear();bench.itemWakeBladePathEnd=0;
   std::fill(std::begin(bench.itemWakeBladeCrossed),std::end(bench.itemWakeBladeCrossed),false);
-  bench.destructionFixtures.clear();bench.destructionIds.clear();
+  bench.destruction.destructionFixtures.clear();bench.destruction.destructionIds.clear();
   if(!bench.itemWakeSite) {
     if(const auto* anchor=world.findPoint("NW_XARDAS_TOWER_VALLEY_091",false)) {
       player.setPosition(anchor->pos);player.updateTransform();
@@ -6966,7 +6131,7 @@ bool itemWakeBreakCrate(World& world,Npc& player) {
     arenaAbort("item wake preparation: crate insertion failed");return false;
     }
   const auto bodies=world.physic()->movableVobSnapshot();
-  const auto found=std::find_if(bodies.begin(),bodies.end(),[](const auto& body){return destructionOwns(body.id);});
+  const auto found=std::find_if(bodies.begin(),bodies.end(),[](const auto& body){return destructionOwns(bench.destruction,body.id);});
   if(found==bodies.end()) {arenaAbort("item wake preparation: crate has no native snapshot");return false;}
   auto target=(found->localBounds[0]+found->localBounds[1])*.5f;found->transform.project(target);
   if(groundEvent) {
@@ -7294,7 +6459,7 @@ void waterFilmCheckpoint(World& world) {
     }
   event("water_film_checkpoint","\"scene\":"+jsonStr(bench.waterFilm)+",\"elapsed_ms\":"+
     std::to_string(world.tickCount()-bench.waterFilmStart)+",\"actors\":"+actors+"],\"items\":"+items+
-    "],\"props\":"+destructionRows(world)+",\"fragments\":"+fragments+"],\"bodies\":"+waterRows(bench.water,world));
+    "],\"props\":"+destructionRows(bench.destruction,world)+",\"fragments\":"+fragments+"],\"bodies\":"+waterRows(bench.water,world));
   }
 
 void waterFilmTick(World& world) {
@@ -7407,9 +6572,9 @@ void waterFilmSetup(World& world,Npc& player,std::string_view scene) {
   for(auto* item:bench.spellItems)world.removeItem(*item);
   for(auto* item:bench.water.items)world.removeItem(*item);
   bench.spellActors.clear();bench.spellItems.clear();bench.water.items.clear();
-  bench.destructionFixtures.clear();bench.destructionIds.clear();bench.movableIds.clear();
+  bench.destruction.destructionFixtures.clear();bench.destruction.destructionIds.clear();bench.movableIds.clear();
   bench.water.ids.clear();bench.water.labels.clear();bench.water.reference.clear();bench.water.travel.clear();bench.water.sleepAt.clear();
-  bench.destructionTrace=false;
+  bench.destruction.destructionTrace=false;
   std::vector<Vec3> places;
   if(!waterFindWindSite(bench.water,world,places) || bench.water.waypoint!="NW_CITY_HABOUR_05") {
     arenaAbort("water film needs the low NW_CITY_HABOUR_05 pier");return;
@@ -9028,84 +8193,8 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     if(!TestBench::physicsTracesDebug(w,pl,command,value,error)) {arenaAbort(error);return;}
     event("physics_traces_debug","\"command\":"+jsonStr(command)+",\"sample\":"+value);
     }
-  else if(c=="destruction_traces" && a.size()>=2) {
-    std::string command=a[1],value,error;
-    for(size_t i=2;i<a.size();++i)command+=' '+a[i];
-    if(!TestBench::destructionTracesDebug(w,pl,command,value,error)) {arenaAbort(error);return;}
-    event("destruction_traces_debug","\"command\":"+jsonStr(command)+",\"sample\":"+value);
-    }
-  else if(c=="destruction" && a.size()==2 && (a[1]=="on" || a[1]=="off")) {
-    Gothic::settingsSetI("GAME","destruction",a[1]=="on");
-    w.physic()->setDestructionEnabled(a[1]=="on");
-    }
-  else if(c=="destruction" && a.size()==3 && a[1]=="setup") destructionSetup(w,pl,a[2]);
-  else if(c=="destruction" && a.size()==2 && a[1]=="begin") destructionBegin(w);
-  else if(c=="destruction" && a.size()==2 && a[1]=="checkpoint") destructionCheckpoint(w);
-  else if(c=="destruction" && a.size()==3 && a[1]=="support" && (a[2]=="on" || a[2]=="off")) {
-    bench.destructionSupportTrace=a[2]=="on";
-    bench.destructionSupportNext=0;
-    }
-  else if(c=="destruction" && a.size()==3 && a[1]=="support" && a[2]=="sample") destructionSupportSample(w);
-  else if(c=="destruction2" && (a.size()==4 || a.size()==5) && a[1]=="setup")
-    destructionMeleeSetup(w,pl,a[2],a[3],a.size()==5 && a[4]=="npc");
-  else if(c=="destruction2" && (a.size()==2 || a.size()==3) && a[1]=="attack") {
-    if(!bench.destructionMeleeActor || bench.destructionIds.empty()) {arenaAbort("destruction melee setup required");return;}
-    // `attack <n>`: n blows and no more, whether the prop broke or not (a take with destruction off)
-    bench.destructionMeleeBlows=a.size()==3 ? unsigned(num(a,2,0)) : 0;
-    bench.destructionMeleeRunning=true;bench.destructionMeleeNext=w.tickCount();
-    bench.destructionMeleeDeadline=w.tickCount()+90000;bench.waitUntil=bench.time+90034;
-    }
-  else if(fracturePiecesCommand(bench.destructionIds,bench.destructionMeleeActor,bench.destructionMeleeStand,bench.destructionMeleeFacing,bench.cam,bench.cutPending,a,w)) return;
-  else if(c=="destruction2" && (a.size()==2 || a.size()==3 || (a.size()==4 && a[3]=="npc")) && a[1]=="farm")
-    destructionFarmSetup(w,pl,uint32_t(num(a,2,19355)),a.size()==4);
-  else if(c=="destruction2" && a.size()==2 && a[1]=="farm-nearby") destructionFarmSetupNext(w,pl);
-  else if(c=="destruction2" && a.size()==2 && a[1]=="farm-walk") {
-    pl.closeWeapon(true);pl.stopWalking();pl.clearAiQueue();pl.setDirection(bench.destructionMeleeFacing);pl.updateTransform();
-    exec("hold forward 2800",w,pl,ctrl);bench.waitUntil=bench.time+2834;
-    }
-  else if(c=="destruction2" && a.size()==2 && a[1]=="farm-ready") {
-    if(!destructionMeleeEquip(w,pl,"1h"))return;
-    pl.setPosition(bench.destructionFarmStart);
-    pl.setDirection(bench.destructionMeleeFacing);pl.updateTransform();
-    }
-  else if(c=="destruction2" && a.size()==3 && a[1]=="farm-npc-walk") destructionFarmNpcWalk(w,a[2]);
-  else if(c=="destruction2" && a.size()==3 && a[1]=="farm-checkpoint") destructionFarmCheckpoint(w,pl,a[2]);
-  else if(c=="destruction2" && a.size()==3 && a[1]=="snapshot") destructionSessionSnapshot(w,a[2]);
-  else if(c=="destruction2" && a.size()==4 && a[1]=="age" && (a[3]=="oldest" || a[3]=="youngest"))
-    destructionAge(w,int64_t(num(a,2,0)),a[3]=="youngest");
-  else if(c=="destruction2" && a.size()==3 && a[1]=="save") {
-    try {destructionSessionSnapshot(w,"saved-"+a[2]);saveMovableSession(w,a[2]);}
-    catch(const std::exception& error) {arenaAbort(error.what());}
-    }
-  else if(c=="destruction2" && a.size()==2 && a[1]=="far") {
-    const auto parts=w.physic()->fragmentSnapshot();
-    if(parts.empty()) {arenaAbort("destruction far requires map debris");return;}
-    const auto origin=movablePosition(parts.front().transform);
-    std::vector<const WayPoint*> candidates;
-    w.findWayPoint(origin,[&](const WayPoint& point) {
-      const auto distance=(point.pos-origin).length();
-      if(!point.underWater && distance>=3600.f && distance<=10000.f)candidates.push_back(&point);
-      return false;
-      });
-    std::sort(candidates.begin(),candidates.end(),[&](const auto* first,const auto* second) {
-      const auto a=(first->pos-origin).quadLength(),b=(second->pos-origin).quadLength();
-      return a==b?first->name<second->name:a<b;
-      });
-    Vec3 destination;std::string waypoint;float minimum=0;
-    for(const auto* point:candidates) {
-      const auto floor=w.physic()->landRay(point->pos+Vec3(0,200,0),800);
-      if(!floor.hasCol || (floor.n.length()>0 && floor.n.y<.6f))continue;
-      float distance=std::numeric_limits<float>::infinity();
-      for(const auto& part:parts)distance=std::min(distance,(floor.v-movablePosition(part.transform)).length());
-      if(distance<3500.f)continue;
-      destination=floor.v;waypoint=point->name;minimum=distance;break;
-      }
-    if(waypoint.empty()) {arenaAbort("destruction far needs a supported distant authored waypoint");return;}
-    pl.closeWeapon(true);pl.clearAiQueue();pl.stopWalking();pl.setPosition(destination);pl.updateTransform();
-    event("destruction2_far","\"debris_cm\":"+ragdollVector(origin)+",\"hero_cm\":"+ragdollVector(destination)+
-      ",\"waypoint\":"+jsonStr(waypoint)+",\"minimum_debris_distance_cm\":"+ragdollNumber(minimum)+
-      ",\"distance_cm\":"+ragdollNumber((destination-origin).length()));
-    }
+  else if(destructionCommand(bench.destruction,destructionContext(),a,w,pl,ctrl)) return;
+  else if(fracturePiecesCommand(bench.destruction.destructionIds,bench.destruction.destructionMeleeActor,bench.destruction.destructionMeleeStand,bench.destruction.destructionMeleeFacing,bench.cam,bench.cutPending,a,w)) return;
   else dispatched=false;
   if(dispatched) return;
   dispatched=true;
@@ -14876,20 +13965,20 @@ bool TestBench::destructionTracesDebug(World& world,Npc& player,std::string_view
   const auto park=[&](Npc& npc,const Vec3& point) {
     npc.clearAiQueue();npc.clearState(false);npc.clearGoTo();npc.stopWalking();npc.setInteraction(nullptr,true);
     npc.closeWeapon(true);npc.setPosition(point);npc.setExternalControl(false);
-    npc.setDirection(bench.destructionTraceSource-point);npc.updateTransform();
+    npc.setDirection(bench.destruction.destructionTraceSource-point);npc.updateTransform();
     npc.aiPush(AiQueue::aiWait(120000));
     };
   const auto floorAt=[&](Vec3& point) {
     const auto floor=world.physic()->landRay(point+Vec3(0,220,0),600);
-    if(!floor.hasCol || floor.n.y<.8f || std::abs(floor.v.y-bench.destructionTraceSource.y)>350)return false;
+    if(!floor.hasCol || floor.n.y<.8f || std::abs(floor.v.y-bench.destruction.destructionTraceSource.y)>350)return false;
     point.y=floor.v.y;
     for(const auto offset:{Vec3(40,0,0),Vec3(-40,0,0),Vec3(0,0,40),Vec3(0,0,-40)})
       if(world.physic()->ray(point+Vec3(0,85,0),point+offset+Vec3(0,85,0)).hasCol)return false;
     return true;
     };
   if(command=="setup" || command.starts_with("reload ")) {
-    bench.destructionTraceDebug=false;bench.destructionMeleeRunning=false;
-    bench.destructionTraceHost=nullptr;bench.destructionTraceWorld=nullptr;
+    bench.destruction.destructionTraceDebug=false;bench.destruction.destructionMeleeRunning=false;
+    bench.destruction.destructionTraceHost=nullptr;bench.destruction.destructionTraceWorld=nullptr;
     uint32_t zenId=19355;
     if(command.starts_with("reload ")) {
       try {zenId=uint32_t(std::stoul(std::string(command.substr(7))));}
@@ -14906,42 +13995,42 @@ bool TestBench::destructionTracesDebug(World& world,Npc& player,std::string_view
       auto* npc=world.npcById(i);if(!npc)continue;
       auto name=symName(world,npc);
       for(auto& c:name)c=char(std::toupper(static_cast<unsigned char>(c)));
-      if(name.find("LOBART")!=std::string::npos) {bench.destructionTraceHost=npc;break;}
+      if(name.find("LOBART")!=std::string::npos) {bench.destruction.destructionTraceHost=npc;break;}
       }
-    if(!bench.destructionTraceHost)return fail("destruction trace fixture requires Lobart");
-    bench.destructionTraceZen=zenId;
-    bench.destructionTraceSource=(found->localBounds[0]+found->localBounds[1])*.5f;
-    found->transform.project(bench.destructionTraceSource);
+    if(!bench.destruction.destructionTraceHost)return fail("destruction trace fixture requires Lobart");
+    bench.destruction.destructionTraceZen=zenId;
+    bench.destruction.destructionTraceSource=(found->localBounds[0]+found->localBounds[1])*.5f;
+    found->transform.project(bench.destruction.destructionTraceSource);
     if(command=="setup") {
-      destructionFarmSetup(world,player,zenId);
-      if(bench.destructionFarmZen!=zenId || bench.destructionMeleeActor!=&player)
+      destructionFarmSetup(bench.destruction,destructionContext(),world,player,zenId);
+      if(bench.destruction.destructionFarmZen!=zenId || bench.destruction.destructionMeleeActor!=&player)
         return fail("destruction trace native sword stance preparation failed");
       }
-    world.script().skipImportantInfos(*bench.destructionTraceHost,player);
+    world.script().skipImportantInfos(*bench.destruction.destructionTraceHost,player);
     player.handle().attribute[ATR_HITPOINTS]=100000;player.handle().attribute[ATR_HITPOINTSMAX]=100000;
     bool supported=false;
     for(unsigned i=0;i<96;++i) {
       const float angle=float(i)*float(M_PI)/48.f;
-      auto point=bench.destructionTraceSource+Vec3(std::cos(angle)*500,0,std::sin(angle)*500);
+      auto point=bench.destruction.destructionTraceSource+Vec3(std::cos(angle)*500,0,std::sin(angle)*500);
       if(!floorAt(point))continue;
-      park(*bench.destructionTraceHost,point);supported=true;break;
+      park(*bench.destruction.destructionTraceHost,point);supported=true;break;
       }
     if(!supported)return fail("destruction trace fixture lacks supported observer floor");
-    bench.destructionTraceWorld=&world;bench.destructionTraceDebug=true;
+    bench.destruction.destructionTraceWorld=&world;bench.destruction.destructionTraceDebug=true;
     }
-  if(!bench.destructionTraceDebug || bench.destructionTraceWorld!=&world || !bench.destructionTraceHost)
+  if(!bench.destruction.destructionTraceDebug || bench.destruction.destructionTraceWorld!=&world || !bench.destruction.destructionTraceHost)
     return fail("destruction_traces setup or reload required");
-  auto& npc=*bench.destructionTraceHost;
-  const auto traceId=std::string(world.name())+":vob:"+std::to_string(bench.destructionTraceZen);
+  auto& npc=*bench.destruction.destructionTraceHost;
+  const auto traceId=std::string(world.name())+":vob:"+std::to_string(bench.destruction.destructionTraceZen);
   if(command=="break") {
-    if(bench.destructionFarmZen!=bench.destructionTraceZen || bench.destructionMeleeActor!=&player)
+    if(bench.destruction.destructionFarmZen!=bench.destruction.destructionTraceZen || bench.destruction.destructionMeleeActor!=&player)
       return fail("destruction trace break requires the original intact setup");
-    if(bench.destructionMeleeRunning)return fail("destruction trace native sword attack is already running");
+    if(bench.destruction.destructionMeleeRunning)return fail("destruction trace native sword attack is already running");
     const auto bodies=world.physic()->movableVobSnapshot();
-    const auto found=std::find_if(bodies.begin(),bodies.end(),[&](const auto& body){return body.zenId==bench.destructionTraceZen;});
+    const auto found=std::find_if(bodies.begin(),bodies.end(),[&](const auto& body){return body.zenId==bench.destruction.destructionTraceZen;});
     if(found==bodies.end() || found->broken)return fail("destruction trace break requires its intact farm fence");
-    bench.destructionMeleeRunning=true;bench.destructionMeleeNext=world.tickCount();
-    bench.destructionMeleeDeadline=world.tickCount()+90000;
+    bench.destruction.destructionMeleeRunning=true;bench.destruction.destructionMeleeNext=world.tickCount();
+    bench.destruction.destructionMeleeDeadline=world.tickCount()+90000;
     if(scenarioPath!=nullptr)bench.waitUntil=bench.time+90034;
     }
   else if(command=="visible" || command=="blocked") {
@@ -14952,7 +14041,7 @@ bool TestBench::destructionTracesDebug(World& world,Npc& player,std::string_view
     for(float distance:{300.f,450.f,600.f,800.f,1000.f,1250.f,1400.f}) {
       for(unsigned i=0;i<192;++i) {
         const float angle=float(i)*float(M_PI)/96.f;
-        auto point=bench.destructionTraceSource+Vec3(std::cos(angle)*distance,0,std::sin(angle)*distance);
+        auto point=bench.destruction.destructionTraceSource+Vec3(std::cos(angle)*distance,0,std::sin(angle)*distance);
         if(!floorAt(point))continue;
         park(npc,point);
         if((source->position-point).length()>1500.f)continue;
@@ -14982,44 +14071,44 @@ bool TestBench::destructionTracesDebug(World& world,Npc& player,std::string_view
       ",\"can_ray_hit_point\":"+(visible?"true":"false")+"}";
     }
   value="{\"npc\":"+jsonStr(symName(world,&npc))+",\"hero\":"+jsonStr(symName(world,&player))+
-    ",\"zen_id\":"+std::to_string(bench.destructionTraceZen)+",\"trace_id\":"+jsonStr(traceId)+
-    ",\"source_position_cm\":"+ragdollVector(bench.destructionTraceSource)+
+    ",\"zen_id\":"+std::to_string(bench.destruction.destructionTraceZen)+",\"trace_id\":"+jsonStr(traceId)+
+    ",\"source_position_cm\":"+ragdollVector(bench.destruction.destructionTraceSource)+
     ",\"npc_position_cm\":"+ragdollVector(npc.position())+
     ",\"game_minutes\":"+std::to_string(world.time().toInt()/60000)+
-    ",\"melee_running\":"+(bench.destructionMeleeRunning?"true":"false")+
-    ",\"melee_attempts\":"+std::to_string(bench.destructionMeleeAttempts)+",\"truth\":"+rows+"]}";
+    ",\"melee_running\":"+(bench.destruction.destructionMeleeRunning?"true":"false")+
+    ",\"melee_attempts\":"+std::to_string(bench.destruction.destructionMeleeAttempts)+",\"truth\":"+rows+"]}";
   return true;
   }
 
 void TestBench::destructionBreak(uintptr_t body,size_t pieces,float milliseconds) {
-  if(scenarioPath==nullptr || !bench.destructionTrace || !destructionOwns(body))return;
+  if(scenarioPath==nullptr || !bench.destruction.destructionTrace || !destructionOwns(bench.destruction,body))return;
   auto* world=Gothic::inst().world();
-  if(world)destructionFields(*world);
-  bench.destructionLastBreak=world?world->tickCount():0;bench.destructionSleepSampled=false;
-  event("destruction_break","\"case\":"+jsonStr(bench.destructionCase)+",\"body\":"+std::to_string(body)+
+  if(world)destructionFields(bench.destruction,destructionContext(),*world);
+  bench.destruction.destructionLastBreak=world?world->tickCount():0;bench.destruction.destructionSleepSampled=false;
+  event("destruction_break","\"case\":"+jsonStr(bench.destruction.destructionCase)+",\"body\":"+std::to_string(body)+
     ",\"pieces\":"+std::to_string(pieces)+",\"break_ms\":"+ragdollNumber(milliseconds)+
     ",\"wall_ns\":"+std::to_string(std::chrono::duration_cast<std::chrono::nanoseconds>(
       std::chrono::steady_clock::now().time_since_epoch()).count())+
-    ",\"t_game_ms\":"+std::to_string(world?world->tickCount():0)+",\"arrows\":"+std::to_string(bench.destructionArrows));
+    ",\"t_game_ms\":"+std::to_string(world?world->tickCount():0)+",\"arrows\":"+std::to_string(bench.destruction.destructionArrows));
   // Not inside a timed window: loading the pieces would land in the measured break frame.
-  if(world && !bench.movableMeasuring)fracturePiecesBreak(bench.fracturePieces,*world,body,bench.destructionCase);
+  if(world && !bench.movableMeasuring)fracturePiecesBreak(bench.fracturePieces,*world,body,bench.destruction.destructionCase);
   }
 
 void TestBench::destructionRetire(uintptr_t body,size_t piece,bool expired,float observerDistanceCm) {
-  if(scenarioPath==nullptr || !bench.destructionTrace || !destructionOwns(body))return;
+  if(scenarioPath==nullptr || !bench.destruction.destructionTrace || !destructionOwns(bench.destruction,body))return;
   auto* world=Gothic::inst().world();
-  event("destruction_fragment_retired","\"case\":"+jsonStr(bench.destructionCase)+",\"parent_id\":"+std::to_string(body)+
+  event("destruction_fragment_retired","\"case\":"+jsonStr(bench.destruction.destructionCase)+",\"parent_id\":"+std::to_string(body)+
     ",\"piece\":"+std::to_string(piece)+",\"sleeping\":true,\"reason\":"+jsonStr(expired?"expired":"distant")+
     ",\"observer_distance_cm\":"+ragdollNumber(observerDistanceCm)+",\"t_game_ms\":"+std::to_string(world?world->tickCount():0));
   }
 
 void TestBench::destructionMeleeHit(const Npc& actor,size_t affected,float damage) {
-  if(scenarioPath==nullptr || !bench.destructionMeleeRunning || bench.destructionMeleeActor!=&actor)return;
-  if(affected)++bench.destructionMeleeHits;
+  if(scenarioPath==nullptr || !bench.destruction.destructionMeleeRunning || bench.destruction.destructionMeleeActor!=&actor)return;
+  if(affected)++bench.destruction.destructionMeleeHits;
   auto* world=Gothic::inst().world();
-  event("destruction2_melee_hit","\"case\":"+jsonStr(bench.destructionCase)+",\"affected\":"+
-    std::to_string(affected)+",\"hits\":"+std::to_string(bench.destructionMeleeHits)+
-    ",\"raw_hit_power\":"+ragdollNumber(damage)+",\"bodies\":"+(world?destructionRows(*world):"[]"));
+  event("destruction2_melee_hit","\"case\":"+jsonStr(bench.destruction.destructionCase)+",\"affected\":"+
+    std::to_string(affected)+",\"hits\":"+std::to_string(bench.destruction.destructionMeleeHits)+
+    ",\"raw_hit_power\":"+ragdollNumber(damage)+",\"bodies\":"+(world?destructionRows(bench.destruction,*world):"[]"));
   }
 
 void TestBench::movementImpulseHandoff(const Npc& actor,std::string_view backend,uint32_t fromState,
@@ -15457,13 +14546,13 @@ void TestBench::beforeWorldTick(uint64_t dt) {
     bench.ctrl->clearInput();
   // The live bridge stand has no bench program, but uses the same real sword
   // animation and its normal hit frame as the scripted destruction fixture.
-  if(scenarioPath==nullptr && bench.destructionTraceDebug && bench.destructionMeleeRunning && dt!=0) {
+  if(scenarioPath==nullptr && bench.destruction.destructionTraceDebug && bench.destruction.destructionMeleeRunning && dt!=0) {
     auto* world=Gothic::inst().world();
-    if(world && world==bench.destructionTraceWorld)destructionMeleeTick(*world);
-    else {bench.destructionTraceDebug=false;bench.destructionMeleeRunning=false;}
+    if(world && world==bench.destruction.destructionTraceWorld)destructionMeleeTick(bench.destruction,destructionContext(),*world);
+    else {bench.destruction.destructionTraceDebug=false;bench.destruction.destructionMeleeRunning=false;}
     }
-  const bool destructionCast=bench.destructionTrace &&
-                             (bench.destructionCase=="fireball" || bench.destructionCase=="five");
+  const bool destructionCast=bench.destruction.destructionTrace &&
+                             (bench.destruction.destructionCase=="fireball" || bench.destruction.destructionCase=="five");
   const bool movableCast=bench.movableTrace && bench.movablePhase=="blast";
   const bool waterCast=bench.water.ready && !bench.spellActors.empty() && bench.spellActors[0].role=="water_target";
   if(scenarioPath!=nullptr && bench.started && !bench.done && (destructionCast || movableCast || waterCast) && !bench.spellActors.empty()) {
@@ -15584,7 +14673,7 @@ bool TestBench::ragdollBodyDrawable(const Npc& npc) {
       ",\"cpu_only\":"+(mesh.cpuOnly?"true":"false")+",\"submeshes\":"+std::to_string(mesh.subCount)+",\"parts\":"+parts+"]");
     }
   if(mesh.cpuOnly) return false;
-  if(bench.destructionSkinRequest==&npc && mesh.protoMesh()!=nullptr)
+  if(bench.destruction.destructionSkinRequest==&npc && mesh.protoMesh()!=nullptr)
     destructionSkinSample(npc,*mesh.protoMesh(),npc.visual.transform(),npc.visual.pose());
   for(size_t i=0;i<mesh.subCount;++i) {
     const auto& item=mesh.sub[i];
@@ -15772,21 +14861,21 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
       if(++drift.next==17) drift={};
       }
     }
-  destructionFields(*world);
+  destructionFields(bench.destruction,destructionContext(),*world);
   if(!bench.movableMeasuring)fracturePiecesTick(bench.fracturePieces,*world);
-  if(bench.destructionSupportTrace && bench.destructionTrace &&
-     world->tickCount()-bench.destructionStart>=bench.destructionSupportNext) {
-    bench.destructionSupportNext=world->tickCount()-bench.destructionStart+1000;
-    destructionSupportSample(*world);
+  if(bench.destruction.destructionSupportTrace && bench.destruction.destructionTrace &&
+     world->tickCount()-bench.destruction.destructionStart>=bench.destruction.destructionSupportNext) {
+    bench.destruction.destructionSupportNext=world->tickCount()-bench.destruction.destructionStart+1000;
+    destructionSupportSample(bench.destruction,destructionContext(),*world);
     }
-  destructionShoot(*world,*player);
-  destructionMeleeTick(*world);
-  if(bench.destructionFarmNpc) {
-    bench.destructionFarmNpcTravel=std::max(bench.destructionFarmNpcTravel,
-      (bench.destructionFarmNpc->position()-bench.destructionFarmNpcStart).length());
-    if(bench.destructionFarmNpcGoal)
-      bench.destructionFarmNpcBest=std::min(bench.destructionFarmNpcBest,
-        (bench.destructionFarmNpc->position()-bench.destructionFarmNpcGoal->pos).length());
+  destructionShoot(bench.destruction,*world,*player);
+  destructionMeleeTick(bench.destruction,destructionContext(),*world);
+  if(bench.destruction.destructionFarmNpc) {
+    bench.destruction.destructionFarmNpcTravel=std::max(bench.destruction.destructionFarmNpcTravel,
+      (bench.destruction.destructionFarmNpc->position()-bench.destruction.destructionFarmNpcStart).length());
+    if(bench.destruction.destructionFarmNpcGoal)
+      bench.destruction.destructionFarmNpcBest=std::min(bench.destruction.destructionFarmNpcBest,
+        (bench.destruction.destructionFarmNpc->position()-bench.destruction.destructionFarmNpcGoal->pos).length());
     }
   if(bench.furnitureParts.walking) {
     auto& fixture=bench.furnitureParts;
