@@ -59,6 +59,11 @@ class RtGeometry {
   size_t               iboSize   = 0;
   };
 
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+// Frame-profile diagnostics: bytes of the structure's storage, 0 when empty, -1 when the backend cannot tell.
+int64_t profileByteSize(const AccelerationStructure& as);
+#endif
+
 class AccelerationStructure final {
   public:
     AccelerationStructure() = default;
@@ -76,6 +81,9 @@ class AccelerationStructure final {
   friend class Tempest::Device;
   friend class Tempest::DescriptorSet;
   friend class Encoder<Tempest::CommandBuffer>;
+#if defined(OPENGOTHIC_ENABLE_FRAME_PROFILE) && OPENGOTHIC_ENABLE_FRAME_PROFILE
+  friend int64_t profileByteSize(const AccelerationStructure& as);
+#endif
   };
 
 }
