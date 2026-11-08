@@ -311,6 +311,7 @@ class Resources final {
     static std::filesystem::path baseDir();
     void indexBaseContent();
     void indexContentModels();
+    void indexRenderRigs(const std::filesystem::path& file);
     static std::filesystem::path baseModelFile(std::string_view name);
     template<class T>
     static bool loadModelRecord(std::string_view name, T& out, T (*read)(const std::filesystem::path&));

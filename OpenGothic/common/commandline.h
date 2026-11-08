@@ -39,6 +39,7 @@ class CommandLine {
     bool                doStartMenu()      const { return !noMenu;      }
     bool                doIntro()          const { return !noIntro;     }
     bool                doHeroHead()       const { return !noHeroHead;  }
+    bool                doRenderRig()      const { return !noRenderRig; }
     Benchmark           isBenchmarkMode()  const { return isBenchmark;  }
     uint32_t            aaPreset()         const { return aaPresetId;   }
     bool                doTaa()            const { return isTaa;        }
@@ -54,6 +55,7 @@ class CommandLine {
     bool                noMenu       = false;
     bool                noIntro      = false;  // -nointro: no videos, the start's dialog counts as told
     bool                noHeroHead   = false;
+    bool                noRenderRig  = false;  // --no-render-rig: bodies on Gothic's skeleton (graphics/mesh/renderrig)
     Benchmark           isBenchmark  = Benchmark::None;
     bool                isWindow     = false;
     bool                isDebug      = false;

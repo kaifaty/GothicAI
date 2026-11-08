@@ -502,6 +502,17 @@ bool RenderRig::socket(size_t sourceNode, const Matrix4x4* palette, Matrix4x4& o
   return false;
   }
 
+size_t RenderRig::sourceOf(size_t i) const {
+  if(i>=bone.size())
+    return None;
+  for(size_t depth=0; i!=None && depth<bone.size(); ++depth) {
+    if(bone[i].source!=None)
+      return bone[i].source;
+    i = bone[i].parent;
+    }
+  return sourceRoot;
+  }
+
 RenderRigIndex::RenderRigIndex(Lookup lookup, Report report)
   :lookup(std::move(lookup)), report(std::move(report)) {
   }
@@ -581,6 +592,13 @@ void RenderRigIndex::parse(std::string_view json) {
       }
     meshes[key] = std::string(str(m.value));
     }
+  }
+
+std::vector<std::string> RenderRigIndex::rigNames() const {
+  std::vector<std::string> ret;
+  for(const auto& s:specs)
+    ret.push_back(s.first);
+  return ret;
   }
 
 const RenderRig* RenderRigIndex::rig(std::string_view rigName) {

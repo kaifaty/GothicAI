@@ -17,6 +17,7 @@
 #include "effect.h"
 
 class Serialize;
+class RenderRig;
 class ObjVisual;
 class Npc;
 struct NpcLogicalState;
@@ -129,6 +130,10 @@ class MdlVisual final {
                                                    const std::vector<size_t>& bones, float weight);
     bool                           clearPhysicalPose();
     const Tempest::Matrix4x4&       renderedBone(size_t bone) const;
+    // The body's skin as drawn, on a render skeleton of its own (graphics/mesh/renderrig, models/render-rigs.json)
+    // when it has one: its matrices and their count, else renderedBone's; the skeleton its bone indices are of.
+    const Tempest::Matrix4x4*      skinPalette(size_t& count) const;
+    const Skeleton*                skinSkeleton() const;
     struct ArrowPinProbe {
       size_t             bone=size_t(-1);
       Tempest::Matrix4x4 local, world;
@@ -287,6 +292,18 @@ class MdlVisual final {
     static constexpr size_t MaxStuckArrows=64;
 
     void implSetBody(Npc* npc, World& world, MeshObjects::Mesh&& body, const int32_t version);
+    // the body's rig by its mesh and the visual's skeleton, the body's view on its skeleton; true - the rig changed
+    bool bindBodyRig();
+    // the pose to the body's view, every time it changes: Gothic's final matrices (renderedPose, else the Pose's),
+    // the rig's solved from them when the body has one
+    void pushBodyPose();
+    // the body's own bone matrices for the effects that emit from its skin: the rig's palette, nullptr - the pose's
+    const std::vector<Tempest::Matrix4x4>* bodySkin() const { return bodyRig!=nullptr ? &rigPalette : nullptr; }
+    // where a thing on a Gothic node is drawn: the rig's socket over its palette (the head, the hands), else the node
+    Tempest::Matrix4x4 attachMatrix(size_t node) const;
+    // the skin's matrices from Gothic's world ones bones[n]: the rig's solved into rig, else bones; count - their count
+    const Tempest::Matrix4x4* skinOf(const Tempest::Matrix4x4* bones, size_t n, std::vector<Tempest::Matrix4x4>& rig,
+                                     size_t& count) const;
     void setSlotAttachment(MeshObjects::Mesh&& itm, std::string_view bone);
 
     void bind(MeshAttach& slot, MeshObjects::Mesh&&   itm, std::string_view bone);
@@ -357,6 +374,8 @@ class MdlVisual final {
     std::unique_ptr<Pose>          skInst;
     std::vector<Tempest::Matrix4x4> renderedPose;
     std::vector<uint8_t>           renderedMask;
+    const RenderRig*               bodyRig = nullptr;  // the body's render skeleton, its palette as last solved
+    std::vector<Tempest::Matrix4x4> rigPalette;
     friend bool TestBench::ragdollBodyDrawable(const Npc& npc);
     friend struct MeshGltfTest;
   };

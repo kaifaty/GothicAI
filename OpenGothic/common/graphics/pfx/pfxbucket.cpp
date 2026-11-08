@@ -239,6 +239,7 @@ void PfxBucket::freeEmitter(size_t& id) {
     forceUpdate[i] = true;
   updateTextureDemand(id);
   v.next.reset();
+  v.skin = nullptr;  // its owner's palette may go: a free or fading emitter emits no more
   id = size_t(-1);
   shrink();
   }
@@ -338,8 +339,9 @@ void PfxBucket::init(PfxBucket::Block& block, ImplEmitter& emitter, size_t parti
       p.pos = Vec3();
       auto mesh = (emitter.mesh!=nullptr) ? emitter.mesh : decl.shpMesh;
       auto pose = (emitter.mesh!=nullptr) ? emitter.pose : nullptr;
+      auto skin = (emitter.mesh!=nullptr) ? emitter.skin : nullptr;
       if(mesh!=nullptr) {
-        auto pos = mesh->randCoord(randf(),pose);
+        auto pos = skin!=nullptr ? mesh->randCoord(randf(),pose,skin->data(),skin->size()) : mesh->randCoord(randf(),pose);
         pos -= emitter.pos;
         p.pos = emitter.direction[0]*pos.x +
                 emitter.direction[1]*pos.y +

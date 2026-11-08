@@ -39,7 +39,8 @@ class Effect final {
 
     void     setObjMatrix(const Tempest::Matrix4x4& mt);
     void     setKey      (World& owner, SpellFxKey key, int32_t keyLvl=0);
-    void     setMesh     (const MeshObjects::Mesh* mesh);
+    // skin: the mesh's own bone matrices when it is on a render rig (MdlVisual), else the pose's (bindAttaches)
+    void     setMesh     (const MeshObjects::Mesh* mesh, const std::vector<Tempest::Matrix4x4>* skin = nullptr);
     void     setBullet   (Bullet* b, World& owner);
     void     setSpellId  (int32_t splId, World& owner);
 
@@ -78,6 +79,7 @@ class Effect final {
     const Pose*           pose     = nullptr;
 
     const MeshObjects::Mesh* meshEmitter = nullptr;
+    const std::vector<Tempest::Matrix4x4>* meshSkin = nullptr;
 
     Tempest::Matrix4x4    pos;
     Tempest::Vec3         selfRotation;
