@@ -186,8 +186,7 @@ uint32_t RtScene::allocSlot() {
     }
   auto& s = slots[slot];
   s.used = true;
-  s.inst = RtInstance();
-  s.inst.blas = nullptr; // inactive until set
+  s.inst = RtInstance(); // no BLAS: inactive until set
   markSlot(slot);
   return slot;
   }
@@ -195,8 +194,7 @@ uint32_t RtScene::allocSlot() {
 void RtScene::freeSlot(uint32_t slot) {
   auto& s = slots[slot];
   s.used      = false;
-  s.inst      = RtInstance();
-  s.inst.blas = nullptr;
+  s.inst      = RtInstance(); // no BLAS: inactive
   s.triangles = 0;
   markSlot(slot);
   freeSlots.push(slot);

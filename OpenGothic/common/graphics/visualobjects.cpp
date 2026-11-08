@@ -10,6 +10,7 @@
 #include "frameprofile.h"
 #include "loadprobe.h"
 #include "physics/worldwind.h"
+#include "shaders.h"
 #include "world/chunkresidency.h"
 
 using namespace Tempest;
@@ -491,6 +492,8 @@ void VisualObjects::updateRtAs(size_t id) {
   const auto cat = toRtCategory(obj.type);
   if(cat!=RtScene::Landscape && cat!=RtScene::Static)
     return; // never in the scene: NPC, movable vob, pfx, morph
+  if(!Shaders::options().doRtScene)
+    return;
   std::lock_guard<std::mutex> guard(rtSync);
   if(obj.rtDirty)
     return;
@@ -680,14 +683,14 @@ void VisualObjects::free(size_t id) {
 
   drawCmd.addClusters(obj.cmdId, -meshletCount);
   clustersMem.free(obj.clusterId, numCluster);
-  {
+  if(Shaders::options().doRtScene) {
     // the slot goes at the next frame; a reused id is marked again by its new object
     std::lock_guard<std::mutex> guard(rtSync);
     if(obj.rtSlot!=RtScene::NoSlot)
       rtFreed.push_back(obj.rtSlot);
     if(RtScene::isMergedLandscape(obj.bucketId->mat, toRtCategory(obj.type)))
       rtLandscape = true;
-  }
+    }
 
   if(obj.wind!=asset::AnimationType::NONE)
     objectsWind.erase(id);
