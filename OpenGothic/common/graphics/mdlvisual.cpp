@@ -17,6 +17,7 @@
 #include "graphics/mesh/ikmath.h"
 #include "frameprofile.h"
 #include "worldchunksruntime.h"
+#include "utils/workers.h"
 
 #include <algorithm>
 #include <array>
@@ -711,9 +712,7 @@ void MdlVisual::quiverPoints(const Matrix4x4* bones, size_t n, std::vector<Quive
 static double threadCpuUs(bool on) {
   if(!on)
     return 0;
-  timespec ts = {};
-  clock_gettime(CLOCK_THREAD_CPUTIME_ID,&ts);
-  return double(ts.tv_sec)*1e6 + double(ts.tv_nsec)*1e-3;
+  return Workers::threadCpuUs();
   }
 
 bool MdlVisual::updateQuiver(const Npc& npc, uint64_t dt) {

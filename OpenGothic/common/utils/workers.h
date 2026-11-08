@@ -54,6 +54,8 @@ class Workers final {
       }
 
     static uint8_t maxThreads();
+    // the calling thread's CPU time, µs (POSIX CLOCK_THREAD_CPUTIME_ID, Windows GetThreadTimes)
+    static double  threadCpuUs();
 
   private:
     enum { MAX_THREADS=16 };
