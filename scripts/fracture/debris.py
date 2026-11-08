@@ -34,7 +34,7 @@ from scipy.optimize import linprog
 from scipy.spatial import ConvexHull, HalfspaceIntersection, QhullError
 
 OUTSIDE = 0.8        # cm, the farthest a hull's shape stands outside its detail
-COVER = 0.85         # the least share of a detail's volume its piece's hull shapes cover (a ring: reported)
+COVER = 0.85         # the least share of a detail's volume its piece's hull shapes cover
 INWARD = 0.2         # cm, the deepest a ring's prism reaches inside the ring's inner surface
 SMALL = 0.02         # a closed detail under this share of its piece's largest joins the nearest hull
 SHARP = math.cos(math.radians(15))   # a concave edge sharper than 15 degrees marks a tear ...
@@ -888,7 +888,7 @@ def hulls(pieces, names):
             except ValueError as error:
                 raise ValueError(f'{name}: {error}') from None
             share = sum(volume(W, G)[0] for W, G in parts) / volumes[k]
-            if euler(F) != 0 and share < COVER:
+            if share < COVER:
                 raise ValueError(f'{name}: hulls cover {share:.3f} of a detail (least {COVER})')
             made.extend(parts)
         if len(made) > MAX_HULLS:
@@ -1120,7 +1120,7 @@ def validate(data: bytes, glb: bytes | None):
                 stats['inward'] = max(stats['inward'], deep)
         for W, G, _ in closed:
             share = coverage(triangles(W, G), shapes)
-            if cls != 'ring' and share < COVER:
+            if share < COVER:
                 raise ValueError(f'piece {index}: hulls cover {share:.3f} of a detail (least {COVER})')
             stats['cover'] = min(stats['cover'], share)
         hull_planes[-h:] = [(i, p, lo, hi, cls) for i, p, lo, hi in hull_planes[-h:]]

@@ -315,15 +315,15 @@ class TestDebris(unittest.TestCase):
             debris.cut([node("open", bar((0, 0, 0), (1, 1, 1))[:-1]), node("b", bar((5, 0, 0), (6, 1, 1)))], self.glb)
 
     def test_v3_ring_in_16_prisms_within_2_mm_of_its_inner_side(self):
-        # a hoop: 8 mm thick, 6 cm wide, on the polygon of 20 staves with an inner radius of 32 cm
-        nodes = [node("hoop", band(32, 0.8, 6, 0, 2 * np.pi, 20), "OWN_IRON.TGA", "METAL"),
+        # a ring 2.5 cm thick, 6 cm wide, on the polygon of 20 staves with an inner radius of 32 cm
+        nodes = [node("hoop", band(32, 2.5, 6, 0, 2 * np.pi, 20), "OWN_IRON.TGA", "METAL"),
                  node("board", bar((60, 0, 0), (70, 2, 10)))]
         data = debris.cut(nodes, self.glb)
         self.assertEqual(hull_counts(data), [16, 1])     # one prism per arc: 12 single facets, 4 over a corner
         ring = debris.validate(data, self.glb)["classes"]["ring"]
         self.assertLessEqual(ring["inward"], debris.INWARD)
         self.assertLessEqual(ring["outside"], debris.OUTSIDE)
-        self.assertGreater(ring["cover"], 0.7)
+        self.assertGreaterEqual(ring["cover"], debris.COVER)
         # no point of a hull lies deeper inside the staves' polygon than 2 mm: the deepest point of each hull
         # below every side of the polygon (linprog over the point and its depth)
         middle = np.arange(20) * 2 * np.pi / 20 + np.pi / 20
@@ -337,6 +337,10 @@ class TestDebris(unittest.TestCase):
             depths.append(-deepest.fun)
         self.assertLessEqual(max(depths), debris.INWARD)
         self.assertEqual(sum(d > 0 for d in depths), 4)  # the four prisms over a corner reach into the staves
+        # a hoop 8 mm thick: 16 such prisms cover only 0.75 of it, and the cut refuses
+        nodes[0] = node("hoop", band(32, 0.8, 6, 0, 2 * np.pi, 20), "OWN_IRON.TGA", "METAL")
+        with self.assertRaisesRegex(ValueError, r"hoop: hulls cover 0\.7\d\d of a detail \(least 0\.85\)"):
+            debris.cut(nodes, self.glb)
 
     def test_v3_torn_edge_teeth_only_draw(self):
         board, _ = uv_board()
