@@ -460,16 +460,31 @@ void prepareWaterFixture(Water& state,const WaterContext& context,World& world,N
     }
   else for(const std::string name:{"crate","barrel","table"}) {
     if(harbourOnly && name!="barrel")continue;
+    // The lightest barrel material wins, as before. Wooden barrels of every
+    // mesh share 0.03 x 700 = 21 kg/m3, so an exact comparison was decided by
+    // float rounding: ARM and x86 picked different barrels. Densities within
+    // 0.01% are one material; then the deep case, which swims the hero through
+    // the barrel and measures the real water under it, takes a barrel without
+    // an original-mesh query body (rays and walking meet that mesh as the
+    // barrel's own floor), and the smallest footprint decides.
+    const bool swimThrough=mode=="deep" && name=="barrel";
     const DynamicWorld::MovableVobSnapshot* found=nullptr;
     float area=std::numeric_limits<float>::infinity(),density=std::numeric_limits<float>::infinity();
+    bool foundQuery=true;
     for(const auto& body:all) {
       if(!body.enabled || body.broken || body.zenId==uint32_t(-1) || body.className!=name)continue;
       const auto extent=body.localBounds[1]-body.localBounds[0];
       const float footprint=extent.x*extent.z;
       float rho=std::numeric_limits<float>::infinity();
       for(const auto& sample:native)if(sample.parentId==body.id) {rho=sample.density;break;}
-      if((name=="barrel" && (rho<density || (rho==density && footprint<area))) ||
-         (name!="barrel" && footprint<area)) {found=&body;area=footprint;density=rho;}
+      const bool query=body.legacyCollision;
+      bool better=footprint<area;
+      if(name=="barrel") {
+        const bool lighter=rho<density*(1.f-1e-4f);
+        const bool sameMaterial=!lighter && rho<=density*(1.f+1e-4f);
+        better=lighter || (sameMaterial && ((swimThrough && query!=foundQuery) ? !query : footprint<area));
+        }
+      if(better) {found=&body;area=footprint;density=rho;foundQuery=query;}
       }
     if(!found) {arenaAbort("water fixture lacks an enabled saved map "+name);return;}
     selected.push_back(*found);
