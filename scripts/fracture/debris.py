@@ -26,7 +26,9 @@ from scipy.spatial import ConvexHull, HalfspaceIntersection, QhullError
 EXCESS = 0.10        # hull volume beyond its part of the detail, share of that part
 SHRINK = 0.15        # cm, every hull inward
 OVERLAP = 0.2        # cm, largest ball diameter inside two hulls of different pieces
-THICK = 0.1          # cm, the least half-thickness a cut hull keeps after shrinking
+THICK = 0.05         # cm, the least radius a cut hull keeps after shrinking
+NUDGE = 0.01         # cm, a cut along a face runs this far outside it, clear of its vertices: inside, the
+                     # cut would leave a skin of the face on the far side, joined at the concave edge
 MAX_HULLS = 16
 MAX_POINTS = 256
 MAX_PIECES = 64
@@ -148,8 +150,7 @@ def cut_mesh(V, F, normal, offset):
     """The closed mesh below and above the plane normal . x = offset, each capped; None when the plane
     misses, touches a vertex or leaves a cap with holes."""
     s = V @ normal - offset
-    scale = np.ptp(V, axis=0).max()
-    if np.abs(s).min() < 1e-7 * scale or (s > 0).all() or (s < 0).all():
+    if np.abs(s).min() < NUDGE / 10 or (s > 0).all() or (s < 0).all():
         return None
     above = s > 0
     points = [*V]
@@ -291,7 +292,7 @@ def candidates(cell, other):
         if length < 1e-9:
             continue
         normal = normal / length
-        offset = float(normal @ point) - 1e-4
+        offset = float(normal @ point) + NUDGE
         key = (*np.round(normal, 5), round(offset, 3))
         if key in seen:
             continue
@@ -302,12 +303,70 @@ def candidates(cell, other):
     if len(faces) > 24:   # a smooth curved detail has many: an even sample of them
         faces = [faces[i] for i in np.linspace(0, len(faces) - 1, 24).round().astype(int)]
     planes.extend(faces)
+    planes.extend(valley_planes(cell, normals, lengths))
     for plane in other.planes:
         normal = plane[:3] / np.linalg.norm(plane[:3])
-        offset = -plane[3] / np.linalg.norm(plane[:3]) + 1e-4
+        offset = -plane[3] / np.linalg.norm(plane[:3]) + NUDGE
         side = cell.V @ normal - offset
         if side.max() > 0.05 and side.min() < -0.05:
             planes.append((normal, offset))
+    return planes
+
+
+def concave_edges(cell, normals, lengths):
+    """[((a, b), (face, face))] of the edges where the detail turns inward."""
+    faces_of = {}
+    for index, face in enumerate(cell.F):
+        for a, b in ((face[0], face[1]), (face[1], face[2]), (face[2], face[0])):
+            faces_of.setdefault((min(a, b), max(a, b)), []).append(index)
+    concave = []
+    for (a, b), faces in sorted(faces_of.items()):
+        if len(faces) != 2 or min(lengths[faces]) < 1e-9:
+            continue
+        other = next(v for v in cell.F[faces[1]] if v not in (a, b))
+        if (cell.V[other] - cell.V[a]) @ normals[faces[0]] / lengths[faces[0]] > 1e-3:
+            concave.append(((a, b), tuple(faces)))
+    return concave
+
+
+def notch_planes(cell):
+    """The planes of the faces at each concave edge, run on through the detail: cutting along one takes that
+    concave edge away, so such cuts end in convex cells."""
+    a, b, c = (cell.V[cell.F[:, k]] for k in range(3))
+    normals = np.cross(b - a, c - a)
+    lengths = np.linalg.norm(normals, axis=1)
+    planes, seen = [], set()
+    for _, faces in concave_edges(cell, normals, lengths):
+        for face in faces:
+            normal = normals[face] / lengths[face]
+            offset = float(normal @ a[face]) + NUDGE
+            key = (*np.round(normal, 5), round(offset, 3))
+            side = cell.V @ normal - offset
+            if key not in seen and side.max() > 0.05 and side.min() < -0.05:
+                seen.add(key)
+                planes.append((normal, offset))
+    return planes
+
+
+def valley_planes(cell, normals, lengths, limit=16):
+    """Planes through two concave edges of the detail at once: the line of the valleys between teeth,
+    which bounds the body behind them."""
+    concave = [edge for edge, _ in concave_edges(cell, normals, lengths)][:limit]
+    planes, seen = [], set()
+    for i, (a, b) in enumerate(concave):
+        for c, d in concave[i + 1:]:
+            points = cell.V[[a, b, c, d]]
+            centre = points.mean(0)
+            _, values, axes = np.linalg.svd(points - centre)
+            if values[1] < 0.05 or values[2] > 0.01:   # collinear, or not one plane
+                continue
+            normal = axes[2] * (1 if axes[2][np.argmax(np.abs(axes[2]))] > 0 else -1)
+            offset = float(normal @ centre) + NUDGE
+            key = (*np.round(normal, 4), round(offset, 2))
+            side = cell.V @ normal - offset
+            if key not in seen and side.max() > 0.05 and side.min() < -0.05:
+                seen.add(key)
+                planes.append((normal, offset))
     return planes
 
 
@@ -323,6 +382,9 @@ def split(cell, planes, score=None):
             children = [Cell(cell.piece, W, G) for V, F in parts for W, G, _ in details(V[F])[0]]
         except QhullError:
             continue
+        if len(children) < 2 or abs(sum(c.volume for c in children) - cell.volume) > 1e-6 * cell.volume or \
+                min(c.volume - 1e-3 * c.hull_volume for c in children) <= 0:
+            continue   # a cap that did not close or folded
         if min(c.volume for c in children) > 1e-6 * cell.volume:
             scored.append((score(children) if score else 0, len(scored), children))
     scored.sort(key=lambda item: item[:2])
@@ -399,6 +461,15 @@ def hulls(pieces, names):
                 sum(badness(c, t) for c in children), sum(c.hull_volume for c in children)))
             if best is not None and best[0][0] < before * (1 - 1e-3):
                 options.append(((best[0][0] / before, best[0][1]), mine, best[1]))
+        if not options:   # no cut lowers the overlap at once: take a concave edge away, the least bad way
+            for mine, other in ((i, j), (j, i)):
+                if sum(c.piece == cells[mine].piece for c in cells) >= MAX_HULLS:
+                    continue
+                target = cells[other]
+                best = split(cells[mine], notch_planes(cells[mine]), lambda children, t=target: (
+                    sum(badness(c, t) for c in children), sum(c.hull_volume for c in children)))
+                if best is not None:
+                    options.append(((best[0][0] / max(badness(cells[mine], target), 1e-12), best[0][1]), mine, best[1]))
         if not options:
             a, b = cells[i].piece, cells[j].piece
             raise ValueError(f'{names[a]} and {names[b]} overlap by {10 * d:.1f} mm; '
