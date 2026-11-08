@@ -2031,7 +2031,8 @@ namespace {
     const bool hadMotion=oldMotionValue!=nullptr;
     const std::string oldMotion=hadMotion ? oldMotionValue : "";
     setenv("OPENGOTHIC_CONTENT",root.c_str(),1);
-    unsetenv("OPENGOTHIC_FRACTURE_MOTION");
+    // Direction and falloff are checked with the earlier set, where the hit outweighs separation.
+    setenv("OPENGOTHIC_FRACTURE_MOTION","hit=250,falloff=45,outward=60,spin=4,cap=450",1);
     constexpr const char* visual="NW_NATURE_FENCE_01.MRM";
     constexpr uint32_t zenId=6403;
     auto parent=movableCollisionBox({100,100,100});
@@ -2103,8 +2104,8 @@ namespace {
                     "fragment friction must use the authored wood or metal group");
         requireNear(waterBody(water,zenId,piece.piece).targetFraction,piece.piece%2==0 ? .6f : 7.8f,.000001f,
                     "fragment buoyancy must use the authored wood or metal group");
-        require(piece.velocity.length()<=200.001f && piece.angularVelocity.length()<=3.00001f,
-                "the default added motion (cap 200 cm/s) and deterministic spin (3 rad/s) must respect their limits");
+        require(piece.velocity.length()<=450.001f && piece.angularVelocity.length()<=4.00001f,
+                "the added motion and deterministic spin must respect their limits");
         }
       require(mean>0 && pieces[16].velocity.x>pieces[23].velocity.x,
               "the directed mean must be positive and the near central piece faster than the far central piece");
@@ -2135,6 +2136,19 @@ namespace {
               "a changed sidecar piece count must skip saved debris without breaking the intact object");
 
       write(3,40);
+      unsetenv("OPENGOTHIC_FRACTURE_MOTION");
+      DynamicWorld tuned(nullptr,asset::WorldMesh{});
+      auto tunedObject=make(tuned);
+      require(strike(tuned),"the default motion fixture must break through the stopped blade");
+      tuned.tick(0);
+      const auto defaults=tuned.fragmentSnapshot();
+      require(tunedObject.isBroken() && defaults.size()==pieces.size(),"default motion must preserve every fragment");
+      for(const auto& piece:defaults)
+        require(piece.velocity.length()<=200.001f && piece.angularVelocity.length()<=3.00001f,
+                "the tuned default motion must respect its 200 cm/s cap and 3 rad/s spin");
+      // The far central piece, 92 cm from the blow along it: outward 120 plus hit 150*exp(-92/60).
+      requireNear(defaults[23].velocity.x,120.f+150.f*std::exp(-92.f/60.f),.5f,
+                  "hit=150,falloff=60,outward=120 must be the defaults without the variable");
       for(const char* config:{"hit=150, falloff = 60,outward=120 ,spin=3, cap=200","hit=abc"}) {
         setenv("OPENGOTHIC_FRACTURE_MOTION",config,1);
         std::vector<std::string> errors;
@@ -2152,9 +2166,9 @@ namespace {
           require(configuredObject.isBroken() && configuredPieces.size()==pieces.size(),
                   "whitespace and invalid motion overrides must preserve every fragment");
           for(size_t i=0;i<pieces.size();++i) {
-            requireNear((configuredPieces[i].velocity-pieces[i].velocity).length(),0,.0001f,
+            requireNear((configuredPieces[i].velocity-defaults[i].velocity).length(),0,.0001f,
                         "trimmed defaults and invalid overrides must retain the full default linear motion");
-            requireNear((configuredPieces[i].angularVelocity-pieces[i].angularVelocity).length(),0,.0001f,
+            requireNear((configuredPieces[i].angularVelocity-defaults[i].angularVelocity).length(),0,.0001f,
                         "trimmed defaults and invalid overrides must retain the full default spin");
             }
           }
@@ -4866,7 +4880,7 @@ namespace {
       };
 
     const auto check=[](const char* name, const auto& points, JPH::Vec3Arg position, JPH::QuatArg rotation,
-                       float volume, const JPH::VertexList& vertices, int supportLayer) {
+                       float volume, const JPH::VertexList& vertices, int supportLayer, bool upstreamCrosses) {
       JPH::ConvexHullShapeSettings hullSettings(points,int(std::size(points)),.00025f);
       hullSettings.mHullTolerance=.0001f;
       hullSettings.mMaxErrorConvexRadius=.0001f;
@@ -4917,20 +4931,24 @@ namespace {
           require(minComAbove>=0,"deepest contact must keep blade COM above the support on every step");
           require(recovered==0,"deepest contact must hold each blade without recovery");
           }
-        else
+        else if(upstreamCrosses)
           require(crossed>0 && crossed<=20,"upstream manifold must reproduce the blade crossing within twenty steps");
+        else
+          require(crossed==0,"the 0.5 cm contact slop alone must hold this blade even with the upstream manifold");
         }
       };
     check("OLDWORLD 1644",canePoints,{-126.0437775f,29.5590572f,-336.4428711f},
           {-.000000022f,.939692676f,-.000000008f,.342020154f},.00205267756f,
           {{-126.625645f,29.5296582f,-336.858516f},
            {-125.506016f,29.5296582f,-335.660703f},
-           {-125.335527f,29.5296582f,-335.977812f}},DynamicWorld::C_Object);
+           {-125.335527f,29.5296582f,-335.977812f}},DynamicWorld::C_Object,true);
     check("ADDONWORLD 6863",rapierPoints,{42.7198410f,-32.5431252f,258.7348328f},
           {0,0,0,1},.00332153379f,
           {{42.4582031f,-32.5876465f,257.429688f},
            {40.8759204f,-32.5876465f,260.700645f},
-           {43.5833301f,-32.5876465f,259.642266f}},DynamicWorld::C_Landscape);
+           {43.5833301f,-32.5876465f,259.642266f}},DynamicWorld::C_Landscape,
+          // It crossed at step 1 under Jolt's 2 cm slop; at 0.5 cm its COM stays 0.84 cm above.
+          false);
     }
 
   void testItemWake() {
