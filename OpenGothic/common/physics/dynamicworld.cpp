@@ -3075,7 +3075,7 @@ void DynamicWorld::configureMeleeBench(int substeps) { world->configureMeleeBenc
 void DynamicWorld::updateMeleeBlade(const Npc* owner,const Tempest::Matrix4x4& hand,float lengthCm) { world->updateMeleeBlade(owner,hand,lengthCm); }
 void DynamicWorld::removeMeleeBlade(const Npc* owner) { world->removeMeleeBlade(owner); }
 void DynamicWorld::updateShadowBody(Npc* owner,const std::vector<MeleeBodyCapsule>& capsules) { world->updateShadowBody(owner,capsules); }
-void DynamicWorld::updateShadowBody(Npc* owner,const MeleeShadowBody& body) { world->updateShadowBody(owner,body); }
+void DynamicWorld::updateShadowBody(Npc* owner,const MeleeShadowBody& body,size_t* slotHint) { world->updateShadowBody(owner,body,slotHint); }
 void DynamicWorld::boundShadowBody(MeleeShadowBody& body) { CollisionWorld::boundShadowBody(body); }
 void DynamicWorld::removeShadowBody(const Npc* owner) { world->removeShadowBody(owner); }
 bool DynamicWorld::shadowBody(const Npc* owner,MeleeShadowBody& out) const { return world->shadowBody(owner,out); }

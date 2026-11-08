@@ -50,11 +50,13 @@ struct MeleeBodyCapsule final {
 // A shadow body ready to publish: its capsules and their bounds in world metres.
 // boundShadowBody fills the bounds; it touches no world, so it may run on a worker.
 // A body with a non-finite capsule or a radius that is not positive is not valid:
-// publishing it throws, as publishing those capsules always did.
+// publishing it throws, as publishing those capsules always did. A nonzero serial
+// names these exact capsules: a slot that holds the same serial is not copied again.
 struct MeleeShadowBody final {
   std::vector<MeleeBodyCapsule> capsules;
   Tempest::Vec3 boundsMin, boundsMax;
   bool valid = false;
+  uint64_t serial = 0;
   };
 
 struct MeleeBladeContact final {
@@ -608,7 +610,7 @@ class DynamicWorld final {
     void measureMeleeBench(std::string path);
     void reportMeleeBench();
     void updateShadowBody(Npc* owner, const std::vector<MeleeBodyCapsule>& capsules);
-    void updateShadowBody(Npc* owner, const MeleeShadowBody& body);
+    void updateShadowBody(Npc* owner, const MeleeShadowBody& body, size_t* slotHint = nullptr);
     static void boundShadowBody(MeleeShadowBody& body);
     void removeShadowBody(const Npc* owner);
     // The published body of owner, false when it has none (the slot check, tests).

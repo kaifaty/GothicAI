@@ -187,7 +187,8 @@ class CollisionWorld final {
     void updateShadowBody(Npc* owner, const std::vector<MeleeBodyCapsule>& capsules);
     // Publishes a body bounded by boundShadowBody. An owner keeps its slot until
     // removeShadowBody; casts see the bodies in the order they were first published.
-    void updateShadowBody(Npc* owner, const MeleeShadowBody& body);
+    // slotHint: the owner's slot from its last publication, checked before use.
+    void updateShadowBody(Npc* owner, const MeleeShadowBody& body, size_t* slotHint = nullptr);
     static void boundShadowBody(MeleeShadowBody& body);
     void removeShadowBody(const Npc* owner);
     bool shadowBody(const Npc* owner, MeleeShadowBody& out) const;

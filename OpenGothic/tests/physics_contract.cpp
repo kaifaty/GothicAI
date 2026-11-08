@@ -5851,6 +5851,48 @@ namespace {
       requireReferenceShadowBodies(world,reference,owners,"random publications and removals match the linear search");
       }
 
+    // NPCs publish posed bodies with a serial and their slot hint. The same
+    // serial is not copied again; a hint gone stale after a removal, or a body
+    // written by another path in between, still ends in the owner's own slot.
+    {
+      CollisionWorld world;
+      ReferenceShadowBodies reference;
+      std::array<MeleeShadowBody,4> posed;
+      std::array<size_t,4> hints;
+      hints.fill(size_t(-1));
+      uint64_t serial=0;
+      auto pose=[&](size_t owner, uint32_t at) {
+        posed[owner].capsules=shadowCapsules(owner,at);
+        CollisionWorld::boundShadowBody(posed[owner]);
+        posed[owner].serial=++serial;
+        };
+      auto publish=[&](size_t owner) {
+        world.updateShadowBody(npc(owner),posed[owner],&hints[owner]);
+        reference.update(owners[owner],posed[owner].capsules);
+        };
+      for(size_t i=0; i<4; ++i) {
+        pose(i,0);
+        publish(i);
+        }
+      require(hints==std::array<size_t,4>{0,1,2,3},"slot hints follow the publication order");
+      publish(1);
+      requireReferenceShadowBodies(world,reference,owners,"a serial published again keeps its body");
+      world.removeShadowBody(owners[0]);
+      reference.remove(owners[0]);
+      pose(2,1);
+      for(size_t i=1; i<4; ++i)
+        publish(i);
+      require(hints[1]==0 && hints[2]==1 && hints[3]==2,"hints stale after a removal are corrected");
+      requireReferenceShadowBodies(world,reference,owners,"stale hints publish into the owners' slots");
+      world.updateShadowBody(npc(3),shadowCapsules(3,9));
+      reference.update(owners[3],shadowCapsules(3,9));
+      publish(3);
+      requireReferenceShadowBodies(world,reference,owners,"a body written in between is replaced by the posed serial");
+      publish(0);
+      require(hints[0]==3,"an owner published again after removal gets the last slot");
+      requireReferenceShadowBodies(world,reference,owners,"an owner published again keeps its posed body");
+      }
+
     // An NPC destroyed before another NPC's blade is flushed: its body is gone
     // from that cast, and contacts already recorded on it are dropped.
     for(const bool recorded:{false,true}) {

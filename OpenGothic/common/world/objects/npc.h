@@ -1086,6 +1086,7 @@ class Npc final {
       const Pose*                  pose  = nullptr;
       uint64_t                     bones = 0, shape = 0;
       uint32_t                     scale = 0; // the bits of the visual's scale
+      size_t                       slot  = size_t(-1); // in the published bodies, a hint
       };
     MeleeShadowPose               meleeShadowPose;
     bool          wantsMeleeShadowBody() const;

@@ -700,6 +700,7 @@ struct CollisionWorld::Impl final : JPH::ContactListener, JPH::PhysicsStepListen
     Npc* owner = nullptr;
     std::vector<MeleeBodyCapsule> capsules;
     JPH::AABox bounds;
+    uint64_t serial = 0; // MeleeShadowBody::serial of the capsules held
     };
   struct ShadowBlade {
     const Npc* owner = nullptr;
@@ -2587,22 +2588,28 @@ void CollisionWorld::updateShadowBody(Npc* owner, const std::vector<MeleeBodyCap
   updateShadowBody(owner,body);
   }
 
-void CollisionWorld::updateShadowBody(Npc* owner, const MeleeShadowBody& body) {
+void CollisionWorld::updateShadowBody(Npc* owner, const MeleeShadowBody& body, size_t* slotHint) {
   if(owner==nullptr) throw std::runtime_error("Melee shadow body requires an owner");
   if(!body.valid) throw std::runtime_error("Invalid melee shadow body capsule");
-  // Vec3 keeps w equal to z, as the box that boundShadowBody encapsulated.
-  const JPH::AABox bounds(JPH::Vec3(body.boundsMin.x,body.boundsMin.y,body.boundsMin.z),
-                          JPH::Vec3(body.boundsMax.x,body.boundsMax.y,body.boundsMax.z));
   std::lock_guard<std::mutex> guard(impl->shadowMutex);
-  const auto [slot,added]=impl->shadowBodySlots.try_emplace(owner,impl->shadowBodies.size());
-  if(added) {
-    impl->shadowBodies.push_back({owner,body.capsules,bounds});
+  auto&  bodies=impl->shadowBodies;
+  size_t at=slotHint!=nullptr ? *slotHint : size_t(-1);
+  if(at>=bodies.size() || bodies[at].owner!=owner) {
+    const auto [slot,added]=impl->shadowBodySlots.try_emplace(owner,bodies.size());
+    if(added)
+      bodies.push_back({owner,{},{},0});
+    at=slot->second;
     }
-  else {
-    auto& published=impl->shadowBodies[slot->second];
-    published.capsules=body.capsules;
-    published.bounds=bounds;
-    }
+  if(slotHint!=nullptr)
+    *slotHint=at;
+  auto& published=bodies[at];
+  if(body.serial!=0 && published.serial==body.serial)
+    return;
+  published.capsules=body.capsules;
+  // Vec3 keeps w equal to z, as the box that boundShadowBody encapsulated.
+  published.bounds=JPH::AABox(JPH::Vec3(body.boundsMin.x,body.boundsMin.y,body.boundsMin.z),
+                              JPH::Vec3(body.boundsMax.x,body.boundsMax.y,body.boundsMax.z));
+  published.serial=body.serial;
   }
 
 static MeleeShadowBody publishedShadowBody(const std::vector<MeleeBodyCapsule>& capsules, const JPH::AABox& bounds) {

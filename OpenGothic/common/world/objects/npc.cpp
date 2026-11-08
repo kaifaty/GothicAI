@@ -45,6 +45,7 @@
 #include "navdemos.h"
 #include "npcdayjournal.h"
 
+#include <atomic>
 #include <bit>
 #include <chrono>
 #include <filesystem>
@@ -2401,6 +2402,9 @@ void Npc::poseMeleeShadowBody() {
   for(const auto& capsule:cached.zones)
     capsules.push_back({capsule.a,capsule.b,capsule.r,capsule.bone,uint8_t(capsule.zone)});
   DynamicWorld::boundShadowBody(cached.body);
+  // Unique across NPCs and frames: a slot holding this serial holds these capsules.
+  static std::atomic<uint64_t> serials{0};
+  cached.body.serial = serials.fetch_add(1,std::memory_order_relaxed)+1;
   cached.pose  = &pose;
   cached.bones = pose.revision();
   cached.shape = shape;
@@ -2453,7 +2457,7 @@ void Npc::updateMeleeShadow() {
   // that pass skipped this NPC or something moved its bones since.
   poseMeleeShadowBody();
   const auto& zones = meleeShadowPose.zones;
-  owner.physic()->updateShadowBody(this,meleeShadowPose.body);
+  owner.physic()->updateShadowBody(this,meleeShadowPose.body,&meleeShadowPose.slot);
   meleeShadowBody = true;
   checkMeleeShadowBody(*this,owner);
   if(TestBench::bodyTracing() && isHuman() && currentTarget!=nullptr && owner.npcId(currentTarget)!=uint32_t(-1)) {
