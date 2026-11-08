@@ -550,6 +550,7 @@ class DynamicWorld final {
       bool permanent = false;
       int64_t asleepSince = -1;
       float friction = 0;
+      Tempest::Vec3 centerOfMass;
       };
     std::vector<FragmentSnapshot> fragmentSnapshot() const;
     // Bench-only: the deepest native contact of one piece with landscape and static objects, centimetres.

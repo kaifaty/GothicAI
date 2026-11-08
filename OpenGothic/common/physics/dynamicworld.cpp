@@ -2514,7 +2514,7 @@ std::vector<DynamicWorld::FragmentSnapshot> DynamicWorld::fragmentSnapshot() con
       const auto& body=*obj->fragments[i];
       result.push_back({reinterpret_cast<uintptr_t>(obj),obj->pose->zenId,i,body.isSleeping(),
                         body.matrix(),body.velocity(),body.angularVelocity(),obj->fragmentPermanent[i],
-                        obj->fragmentSleepTime[i],body.friction()});
+                        obj->fragmentSleepTime[i],body.friction(),body.centerOfMass()});
       }
   return result;
   }
@@ -2810,6 +2810,9 @@ void DynamicWorld::cleanupFragments(BodyData& obj) {
     const bool expired=since>=0 && traceTime>=since && traceTime-since>=30;
     const bool distant=hasFragmentObserver && (body->centerOfMass()-fragmentObserver).quadLength()>3000.f*3000.f;
     if(!obj.fragmentPermanent[i] && (expired || distant)) {
+      if(TestBench::isActive())
+        TestBench::destructionRetire(reinterpret_cast<uintptr_t>(&obj),i,expired,
+                                     hasFragmentObserver ? (body->centerOfMass()-fragmentObserver).length() : -1.f);
       body.reset();
       changed=true;
       }
