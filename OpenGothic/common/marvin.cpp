@@ -167,7 +167,6 @@ Marvin::Marvin() {
 
     {"toggle gi",                  C_ToggleGI},
     {"toggle vsm",                 C_ToggleVsm},
-    {"toggle rtsm",                C_ToggleRtsm},
     {"toggle pathtrace",           C_TogglePathtrace},
     {"toggle footik",              C_ToggleFootIk},
     {"toggle gaze",                C_ToggleGaze},
@@ -573,9 +572,6 @@ bool Marvin::exec(std::string_view v) {
       return true;
     case C_ToggleVsm:
       Gothic::inst().toggleVsm();
-      return true;
-    case C_ToggleRtsm:
-      Gothic::inst().toggleRtsm();
       return true;
     case C_TogglePathtrace:
       Gothic::inst().togglePathtrace();

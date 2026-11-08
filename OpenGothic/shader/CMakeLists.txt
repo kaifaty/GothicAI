@@ -445,38 +445,6 @@ add_shader(vsm_fog_trace.comp        virtual_shadow/vsm_fog_trace.comp)
 
 add_shader(vsm_rendering.comp        virtual_shadow/vsm_rendering.comp)
 
-# software meshlet rt
-add_shader(rtsm_clear.comp           rtsm/rtsm_clear.comp)
-add_shader(rtsm_mark_pages.comp      rtsm/rtsm_mark_pages.comp)
-add_shader(rtsm_mark_fog_pages.comp  rtsm/rtsm_mark_fog_pages.comp)
-add_shader(rtsm_hiz_pages.comp       rtsm/rtsm_hiz_pages.comp)
-add_shader(rtsm_culling.comp         rtsm/rtsm_culling.comp)
-add_shader(rtsm_position.comp        rtsm/rtsm_position.comp)
-
-add_shader(rtsm_meshlet_cull.comp    rtsm/rtsm_meshlet_cull.comp)
-add_shader(rtsm_primitive_cull.comp  rtsm/rtsm_primitive_cull.comp)
-
-add_shader(rtsm_raster.comp          rtsm/rtsm_raster.comp)
-add_shader(rtsm_direct_light.frag    rtsm/rtsm_direct_light.frag)
-
-add_shader(rtsm_rendering.comp       rtsm/rtsm_rendering.comp)
-add_shader(rtsm_omni_rendering.comp  rtsm/rtsm_omni_rendering.comp)
-add_shader(rtsm_dbg.frag             rtsm/rtsm_dbg.frag)
-
-add_shader(rtsm_omni_clear.comp      rtsm/rtsm_omni_clear.comp)
-add_shader(rtsm_cull_lights.comp     rtsm/rtsm_cull_lights.comp)
-add_shader(rtsm_compact_lights.comp  rtsm/rtsm_compact_lights.comp)
-add_shader(rtsm_omni_lights.comp     rtsm/rtsm_omni_lights.comp)
-add_shader(rtsm_omni_bboxes.comp     rtsm/rtsm_omni_bboxes.comp)
-add_shader(rtsm_omni_culling.comp    rtsm/rtsm_omni_culling.comp)
-add_shader(rtsm_omni_position.comp   rtsm/rtsm_position.comp -DOMNI)
-add_shader(rtsm_omni_meshlet.comp    rtsm/rtsm_omni_meshlet.comp)
-add_shader(rtsm_omni_backface.comp   rtsm/rtsm_omni_backface.comp)
-add_shader(rtsm_omni_compact.comp    rtsm/rtsm_omni_compact.comp)
-add_shader(rtsm_omni_task.comp       rtsm/rtsm_omni_task.comp)
-add_shader(rtsm_omni_primitive.comp  rtsm/rtsm_omni_primitive.comp)
-add_shader(rtsm_omni_raster.comp     rtsm/rtsm_omni_raster.comp)
-
 add_custom_command(
   OUTPUT     ${HEADER} ${CPP}
   DEPENDS    ${OPENGOTHIC_SHADERS_SPRV}

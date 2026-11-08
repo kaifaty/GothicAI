@@ -74,7 +74,6 @@ void Shaders::setupOptions() {
   opts.doRtScene        = gpu.raytracing.rayQuery && CommandLine::inst().isRayQuery();
   opts.doRayQuery       = opts.doRtScene && opts.doBindless;
   opts.doMeshShading    = gpu.meshlets.meshShader && CommandLine::inst().isMeshShading();
-  opts.doSoftwareShadow = Shaders::isRtsmSupported() && CommandLine::inst().isSoftwareShadow();
   opts.doVirtualShadow  = Shaders::isVsmSupported()  && CommandLine::inst().isVirtualShadow();
   opts.doMaterialMaps   = Resources::materialMapsEnabled();
   }
@@ -389,40 +388,6 @@ void Shaders::compileShaders() noexcept {
     vsmRendering       = computeShader("vsm_rendering.comp.sprv");
     }
 
-  if(Shaders::isRtsmSupported()) {
-    rtsmDirectLight = postEffect("rtsm_direct_light", RenderState::ZTestMode::NoEqual);
-
-    rtsmClear       = computeShader("rtsm_clear.comp.sprv");
-    rtsmPages       = computeShader("rtsm_mark_pages.comp.sprv");
-    rtsmFogPages    = computeShader("rtsm_mark_fog_pages.comp.sprv");
-    rtsmHiZ         = computeShader("rtsm_hiz_pages.comp.sprv");
-
-    rtsmCulling     = computeShader("rtsm_culling.comp.sprv");
-    rtsmPosition    = computeShader("rtsm_position.comp.sprv");
-    rtsmMeshletCull = computeShader("rtsm_meshlet_cull.comp.sprv");
-    rtsmPrimCull    = computeShader("rtsm_primitive_cull.comp.sprv");
-    rtsmRaster      = computeShader("rtsm_raster.comp.sprv");
-
-    rtsmClearOmni    = computeShader("rtsm_omni_clear.comp.sprv");
-    rtsmCullLights   = computeShader("rtsm_cull_lights.comp.sprv");
-    rtsmCompactLights = computeShader("rtsm_compact_lights.comp.sprv");
-    rtsmLightsOmni   = computeShader("rtsm_omni_lights.comp.sprv");
-    rtsmBboxesOmni   = computeShader("rtsm_omni_bboxes.comp.sprv");
-    rtsmCullingOmni  = computeShader("rtsm_omni_culling.comp.sprv");
-    rtsmPositionOmni = computeShader("rtsm_omni_position.comp.sprv");
-
-    rtsmMeshletOmni  = computeShader("rtsm_omni_meshlet.comp.sprv");
-    rtsmBackfaceOmni = computeShader("rtsm_omni_backface.comp.sprv");
-    rtsmCompactOmni  = computeShader("rtsm_omni_compact.comp.sprv");
-    rtsmTaskOmni     = computeShader("rtsm_omni_task.comp.sprv");
-    rtsmPrimOmni     = computeShader("rtsm_omni_primitive.comp.sprv");
-    rtsmRasterOmni   = computeShader("rtsm_omni_raster.comp.sprv");
-
-    rtsmRendering    = computeShader("rtsm_rendering.comp.sprv");
-    rtsmRenderingOmni= computeShader("rtsm_omni_rendering.comp.sprv");
-    rtsmDbg          = postEffect("rtsm_dbg", RenderState::ZTestMode::Always);
-    }
-
   {
     RenderState state;
     state.setCullFaceMode(RenderState::CullMode::Front);
@@ -443,19 +408,6 @@ bool Shaders::isVsmSupported() {
     return true;
     }
   return false;
-  }
-
-bool Shaders::isRtsmSupported() {
-  if(!Shaders::options().doBindless) {
-    return false;
-    }
-  auto& gpu = Resources::device().properties();
-  if(!gpu.hasStorageFormat(TextureFormat::RG32U) || !gpu.hasStorageFormat(TextureFormat::R11G11B10UF))
-    return false;
-  if(gpu.compute.maxInvocations<512 || gpu.compute.maxSharedMemory<32*1024 || !gpu.descriptors.nonUniformIndexing) {
-    return false;
-    }
-  return true;
   }
 
 bool Shaders::isLightsTreeSupported() {

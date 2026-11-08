@@ -72,7 +72,6 @@ class Marvin {
       C_PlayVideo,
       C_ToggleGI,
       C_ToggleVsm,
-      C_ToggleRtsm,
       C_TogglePathtrace,
       C_ToggleFootIk,
       C_ToggleGaze,

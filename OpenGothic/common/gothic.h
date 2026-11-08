@@ -209,7 +209,7 @@ class Gothic final {
     bool         isBenchmarkModeCi() const;
     void         setBenchmarkMode(Benchmark b);
 
-    Tempest::Signal<void()> toggleGi, toggleVsm, toggleRtsm, togglePathtrace;
+    Tempest::Signal<void()> toggleGi, toggleVsm, togglePathtrace;
 
     LoadState    checkLoading() const;
     bool         finishLoading();
