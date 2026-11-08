@@ -81,6 +81,10 @@ class MtTopAccelerationStructure : public AbstractGraphicsApi::AccelerationStruc
                          const MTL::Resource* const resources[], NS::UInteger count, MTL::ResourceUsage usage, MTL::RenderStages stages) const;
 
     NsPtr<MTL::AccelerationStructure>           placeholder;
+    // Vertices and indices of the placeholder: its build reads them through the geometry descriptor, and Metal does
+    // not document that the command buffer retains those, so the structure keeps them
+    NsPtr<MTL::Buffer>                          placeholderVbo;
+    NsPtr<MTL::Buffer>                          placeholderIbo;
     std::vector<uint32_t>                       blasRefs;  // instances holding blas[i]; 0 for the placeholder
     std::unordered_map<MTL::Resource*,uint32_t> blasIndex;
     std::vector<uint32_t>                       blasFree;

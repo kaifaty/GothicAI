@@ -162,19 +162,21 @@ MtTopAccelerationStructure::MtTopAccelerationStructure(MtDevice& dx, size_t cap)
   auto pool = NsPtr<NS::AutoreleasePool>::init();
   {
   // The placeholder: a BLAS of one degenerate triangle, index 0 of the list. The builds that read it come later on
-  // this queue (tracked resources), and the command buffer retains the buffers it reads.
+  // this queue (tracked resources). Its vertex and index buffers are members: the build reads them through the
+  // geometry descriptor, which the command buffer is not documented to retain. The scratch is an argument of the
+  // encoder, which the command buffer retains.
   static const float    vert[9] = {};
   static const uint32_t ind [3] = {};
-  auto vbo = NsPtr<MTL::Buffer>(dx.impl->newBuffer(vert, sizeof(vert), hostVisibleResourceOptions(*dx.impl)));
-  auto ibo = NsPtr<MTL::Buffer>(dx.impl->newBuffer(ind,  sizeof(ind),  hostVisibleResourceOptions(*dx.impl)));
+  placeholderVbo = NsPtr<MTL::Buffer>(dx.impl->newBuffer(vert, sizeof(vert), hostVisibleResourceOptions(*dx.impl)));
+  placeholderIbo = NsPtr<MTL::Buffer>(dx.impl->newBuffer(ind,  sizeof(ind),  hostVisibleResourceOptions(*dx.impl)));
   auto geo = NsPtr<MTL::AccelerationStructureTriangleGeometryDescriptor>::init();
   auto pd  = NsPtr<MTL::PrimitiveAccelerationStructureDescriptor>::init();
-  if(vbo==nullptr || ibo==nullptr || geo==nullptr || pd==nullptr)
+  if(placeholderVbo==nullptr || placeholderIbo==nullptr || geo==nullptr || pd==nullptr)
     throw std::system_error(GraphicsErrc::OutOfVideoMemory);
-  geo->setVertexBuffer(vbo.get());
+  geo->setVertexBuffer(placeholderVbo.get());
   geo->setVertexStride(sizeof(float)*3);
   geo->setVertexFormat(MTL::AttributeFormatFloat3);
-  geo->setIndexBuffer(ibo.get());
+  geo->setIndexBuffer(placeholderIbo.get());
   geo->setIndexType(MTL::IndexTypeUInt32);
   geo->setTriangleCount(1);
   geo->setOpaque(true);
