@@ -297,6 +297,8 @@ class MdlVisual final {
     // the pose to the body's view, every time it changes: Gothic's final matrices (renderedPose, else the Pose's),
     // the rig's solved from them when the body has one
     void pushBodyPose();
+    // the body's own bone matrices for the effects that emit from its skin: the rig's palette, nullptr - the pose's
+    const std::vector<Tempest::Matrix4x4>* bodySkin() const { return bodyRig!=nullptr ? &rigPalette : nullptr; }
     // where a thing on a Gothic node is drawn: the rig's socket over its palette (the head, the hands), else the node
     Tempest::Matrix4x4 attachMatrix(size_t node) const;
     // the skin's matrices from Gothic's world ones bones[n]: the rig's solved into rig, else bones; count - their count

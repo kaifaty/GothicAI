@@ -288,7 +288,13 @@ bool MdlVisual::bindBodyRig() {
   bodyRig = rig;
   rigPalette.resize(rig!=nullptr ? rig->bones() : 0);
   view.setSkeleton(rig!=nullptr ? &rig->skeleton() : skeleton);
-  return bodyRig!=was;
+  if(bodyRig==was)
+    return false;
+  // the effects on the skin (burning, spells): the new body's emitter mesh and its bones
+  for(auto& e:effects)
+    e.view.setMesh(&view,bodySkin());
+  hnpcVisual.view.setMesh(&view,bodySkin());
+  return true;
   }
 
 void MdlVisual::pushBodyPose() {
@@ -478,8 +484,7 @@ void MdlVisual::setVisualBody(WorldView& owner, MeshObjects::Mesh&& body) {
 
 void MdlVisual::clearVisualBody() {
   view={};
-  bodyRig=nullptr;
-  rigPalette.clear();
+  bindBodyRig();  // no body, no rig: the effects on its skin let go of the palette
   attach.clear();
   for(auto& slot:item) {
     if(auto proto=slot.view.protoMesh())
@@ -576,7 +581,7 @@ void MdlVisual::implSetBody(Npc* npc, World& world, MeshObjects::Mesh&& body, co
   view.setFatness(npc==nullptr ? 0 : npc->fatness());
   const bool rigChanged = bindBodyRig();
   pushBodyPose();
-  hnpcVisual.view.setMesh(&view);
+  hnpcVisual.view.setMesh(&view,bodySkin());
   fitHitZones();
   if(rigChanged)
     syncAttaches();  // the head and the hands: from the rig's sockets or back on Gothic's nodes
@@ -1139,7 +1144,7 @@ void MdlVisual::startEffect(World& owner, Effect&& vfx, int32_t slot, bool noSlo
   if(skeleton==nullptr)
     return;
 
-  vfx.setMesh(&view);
+  vfx.setMesh(&view,bodySkin());
   vfx.setBullet(nullptr,owner);
 
   for(auto& i:effects) {
@@ -1197,7 +1202,7 @@ void MdlVisual::setNpcEffect(World& owner, Npc& npc, std::string_view s, daedalu
       hnpcVisual.view.bindAttaches(*skInst,*skeleton);
     hnpcVisual.view.setActive(true);
     hnpcVisual.view.setLooped(true);
-    hnpcVisual.view.setMesh(&view);
+    hnpcVisual.view.setMesh(&view,bodySkin());
     }
 
   const bool nextGhost = (flags & daedalus::NpcFlag::GHOST);

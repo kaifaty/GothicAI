@@ -71,7 +71,7 @@ void Effect::setupPfx(World& owner) {
 
   pfx = PfxEmitter(owner,pfxDecl);
   if(root->isMeshEmmiter())
-    pfx.setMesh(meshEmitter,pose);
+    pfx.setMesh(meshEmitter,pose,meshSkin);
   pfx.setActive(active);
   pfx.setLooped(looped);
   }
@@ -239,12 +239,13 @@ void Effect::setKey(World& owner, SpellFxKey k, int32_t keyLvl) {
   syncAttachesSingle(pos);
   }
 
-void Effect::setMesh(const MeshObjects::Mesh* mesh) {
+void Effect::setMesh(const MeshObjects::Mesh* mesh, const std::vector<Tempest::Matrix4x4>* skin) {
   if(next!=nullptr)
-    next->setMesh(mesh);
+    next->setMesh(mesh,skin);
   meshEmitter = mesh;
+  meshSkin    = skin;
   if(root!=nullptr && root->isMeshEmmiter())
-    pfx.setMesh(meshEmitter,pose);
+    pfx.setMesh(meshEmitter,pose,meshSkin);
   }
 
 void Effect::setBullet(Bullet* b, World& owner) {
@@ -295,7 +296,7 @@ void Effect::bindAttaches(const Pose& p, const Skeleton& to) {
     boneId = to.findRootNode();
     }
   if(root!=nullptr && root->isMeshEmmiter())
-    pfx.setMesh(meshEmitter,pose);
+    pfx.setMesh(meshEmitter,pose,meshSkin);
   }
 
 void Effect::onCollide(World& world, const VisualFx* root, const Vec3& pos, Npc* npc, Npc* other, int32_t splId) {

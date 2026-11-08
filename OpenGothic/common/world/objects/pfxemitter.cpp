@@ -203,7 +203,7 @@ void PfxEmitter::setLooped(bool loop) {
     v.next->setLooped(loop);
   }
 
-void PfxEmitter::setMesh(const MeshObjects::Mesh* mesh, const Pose* pose) {
+void PfxEmitter::setMesh(const MeshObjects::Mesh* mesh, const Pose* pose, const std::vector<Tempest::Matrix4x4>* skin) {
   if(bucket==nullptr)
     return;
   const PfxEmitterMesh* m = (mesh!=nullptr) ? mesh->toMeshEmitter() : nullptr;
@@ -212,8 +212,9 @@ void PfxEmitter::setMesh(const MeshObjects::Mesh* mesh, const Pose* pose) {
   auto& v = bucket->get(id);
   v.mesh = m;
   v.pose = pose;
+  v.skin = skin;
   if(v.next!=nullptr)
-    v.next->setMesh(mesh,pose);
+    v.next->setMesh(mesh,pose,skin);
   }
 
 void PfxEmitter::setPhysicsEnable(World& p, std::function<void (Npc&)> cb) {

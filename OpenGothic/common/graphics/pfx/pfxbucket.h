@@ -41,6 +41,8 @@ class PfxBucket {
 
       const PfxEmitterMesh* mesh = nullptr;
       const Pose*           pose = nullptr;
+      // the mesh's own bone matrices (a render rig's palette), read at each emission; nullptr - the pose's
+      const std::vector<Tempest::Matrix4x4>* skin = nullptr;
 
       uint64_t      waitforNext = 0;
       std::unique_ptr<PfxEmitter> next;
