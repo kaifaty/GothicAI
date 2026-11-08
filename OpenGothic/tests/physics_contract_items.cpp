@@ -1,5 +1,6 @@
 #define MINIZ_NO_ZLIB_COMPATIBLE_NAMES
 #include "physics_contract_common.h"
+#include "gothic.h"
 #include "physics/collisionworld.h"
 #include "physics/physicvbo.h"
 #include "graphics/mesh/protomesh.h"

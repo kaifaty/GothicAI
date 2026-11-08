@@ -3,6 +3,7 @@
 #include "physics/collisionworld.h"
 #include "physics/physicvbo.h"
 #include "graphics/mesh/protomesh.h"
+#include "graphics/mesh/skeleton.h"
 #include "graphics/mesh/hitzones.h"
 #include "graphics/mesh/submesh/packedmesh.h"
 #include "game/serialize.h"
