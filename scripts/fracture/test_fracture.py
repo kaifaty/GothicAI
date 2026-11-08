@@ -469,6 +469,65 @@ def island(uv, islands):
                  v0 - 1e-6 <= uv[:, 1].min() and uv[:, 1].max() <= v1 + 1e-6), None)
 
 
+def bonds_of(data):
+    """{(a name, b name): KIND} of version 3 bytes, by piece index."""
+    lines = data.decode("ascii").splitlines()
+    rows = [line.split() for line in lines if line.startswith("bond ")]
+    return {(int(r[1]), int(r[2])): r[3] for r in rows}
+
+
+class TestBonds(unittest.TestCase):
+    glb = b"our model GLB bytes"
+
+    def test_crate_nails_cross_members_not_boards_edge_to_edge(self):
+        # a wall of two boards edge to edge, a post across both behind them, one board split into two strips,
+        # a lid board on top of the wall touching the post's top end
+        nodes = [node("post-al", bar((0, -5, 0), (3, 0, 50))),
+                 node("plank-side-a-1-strip-1", bar((0, 0, 0), (60, 2, 10))),
+                 node("plank-side-a-1-strip-2", bar((0, 0, 10.1), (60, 2, 20))),
+                 node("plank-side-a-2", bar((0, 0, 20.1), (60, 2, 30))),
+                 node("lid-1", bar((0, -4, 50), (60, 2, 52)))]
+        data = debris.cut(nodes, self.glb)
+        self.assertEqual(debris.cut(nodes, self.glb), data)
+        self.assertEqual(bonds_of(data), {(0, 1): "NAIL", (0, 2): "NAIL", (0, 3): "NAIL", (0, 4): "NAIL",
+                                          (1, 2): "ALONG"})
+        stats = debris.validate(data, self.glb)
+        self.assertEqual(stats["bonds"], {"NAIL": 4, "ALONG": 1})
+        self.assertEqual(stats["islands"], 1)
+        point = next(line.split()[4:] for line in data.decode("ascii").splitlines() if line.startswith("bond 0 4 "))
+        self.assertAlmostEqual(float(point[2]), 50, delta=0.3)      # where the lid sits on the post's top end
+
+    def test_barrel_hoops_grooves_dowels_and_a_broken_stave(self):
+        # two staves side by side (no bond), one broken across, a hoop around both, two head boards on them
+        nodes = [node("stave-01", bar((30, 0, -5), (32.5, 40, 5))),
+                 node("stave-01-top", bar((30, 40, -5), (32.5, 80, 5))),
+                 node("stave-02", bar((30, 0, 5.05), (32.5, 80, 15))),
+                 node("hoop-1", bar((32.5, 10, -6), (33.3, 16, 16)), "OWN_IRON.TGA", "METAL"),
+                 node("lid-1", bar((20, 70, -5), (30, 72.5, 2))),
+                 node("lid-2", bar((20, 70, 2.1), (30, 72.5, 15)))]
+        data = debris.cut(nodes, self.glb)
+        self.assertEqual(bonds_of(data), {(0, 1): "ACROSS", (0, 3): "HOOP", (2, 3): "HOOP", (1, 4): "GROOVE",
+                                          (1, 5): "GROOVE", (2, 5): "GROOVE", (4, 5): "DOWEL"})
+
+    def test_debris_without_a_known_generator_has_no_bonds(self):
+        data = debris.cut([node("board-a", bar((0, 0, 0), (40, 2, 10))), node("board-b", bar((0, 2, 0), (40, 4, 10)))],
+                          self.glb)
+        self.assertNotIn(b"bonds", data)
+        self.assertEqual(debris.validate(data, self.glb)["bonds"], {})
+
+    def test_validate_refuses_broken_bond_blocks(self):
+        nodes = [node("post-al", bar((0, -5, 0), (3, 0, 50))), node("plank-side-a-1", bar((0, 0, 0), (60, 2, 10)))]
+        data = debris.cut(nodes, self.glb).decode("ascii")
+        line = next(row for row in data.splitlines() if row.startswith("bond 0 1 NAIL "))
+        for bad, message in ((data.replace("bond 0 1 NAIL", "bond 0 1 GLUE"), "invalid bond"),
+                             (data.replace("bond 0 1 NAIL", "bond 1 0 NAIL"), "invalid bond"),
+                             (data.replace("bond 0 1 NAIL", "bond 0 2 NAIL"), "invalid bond"),
+                             (data.replace("bonds 1\n", "bonds 2\n") + line + "\n", "repeated"),
+                             (data.replace("bonds 1\n", "bonds 2\n"), "invalid bond")):
+            with self.subTest(bad=bad[-60:]), self.assertRaisesRegex(ValueError, message):
+                debris.validate(bad.encode("ascii"), self.glb)
+
+
 class TestCrateBoards(unittest.TestCase):
     """The crate's split and broken boards keep their uv on their own board's islands, unstretched."""
 

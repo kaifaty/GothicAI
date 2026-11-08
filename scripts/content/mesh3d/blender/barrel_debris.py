@@ -2,7 +2,7 @@
 
 barrel.py calls build() after it has exported the whole barrel, when its config has a "debris" key:
     "debris": {"seed": 7, "stave_thickness": 0.025, "joint_gap": 0.0005, "head_thickness": 0.025,
-               "broken": 3, "break_columns": 14, "board_gap": 0.001, "clearance": 0.0003, "end_scale": 2.0,
+               "broken": 10, "break_columns": 14, "board_gap": 0.001, "clearance": 0.0003, "end_scale": 2.0,
                "zones": {"INNER": [KEY, GROUP], "END": [KEY, GROUP], "RUST": [KEY, GROUP]}}
 It writes model.debris.glb next to model.glb: one glTF node per piece (stave-07, stave-07-top, lid-2,
 bottom-2, hoop-3), in the pose of the whole barrel, whose outer surface is the whole's within 1 mm

@@ -38,7 +38,7 @@
     "stave_thickness": 0.025,
     "joint_gap": 0.0005,
     "head_thickness": 0.025,
-    "broken": 3,
+    "broken": 10,
     "break_columns": 14,
     "board_gap": 0.001,
     "clearance": 0.0003,
