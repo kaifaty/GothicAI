@@ -242,11 +242,12 @@ def chebyshev(planes, shrink=0.0):
     """Centre and radius of the largest ball inside {x: n . x + d + shrink <= 0}; radius < 0 when empty."""
     normals, offsets = planes[:, :3], planes[:, 3] + shrink
     lengths = np.linalg.norm(normals, axis=1)
-    result = linprog([0, 0, 0, -1], A_ub=np.c_[normals, lengths], b_ub=-offsets,
-                     bounds=[(None, None)] * 4, method='highs')
-    if result.status != 0:
-        raise ValueError(f'linprog failed: {result.message}')
-    return result.x[:3], float(result.x[3])
+    for method in ('highs', 'highs-ds', 'highs-ipm'):   # the dual simplex now and then gives up on a near tie
+        result = linprog([0, 0, 0, -1], A_ub=np.c_[normals, lengths], b_ub=-offsets,
+                         bounds=[(None, None)] * 4, method=method)
+        if result.status == 0:
+            return result.x[:3], float(result.x[3])
+    raise ValueError(f'linprog failed: {result.message}')
 
 
 def overlap(a_planes, b_planes):
@@ -421,7 +422,8 @@ def hulls(pieces, names):
             if sum(c.piece == index for c in cells) + len(work) + 2 > MAX_HULLS:
                 raise ValueError(f'{names[index]}: more than {MAX_HULLS} hulls to keep each within '
                                  f'{EXCESS:.0%} of its part of the detail')
-            best = split(cell, middles(cell))
+            best = split(cell, middles(cell)) or split(cell, notch_planes(cell), lambda children: (
+                max(c.hull_volume - c.volume for c in children), sum(c.hull_volume for c in children)))
             if best is None:
                 raise ValueError(f'{names[index]}: a detail cannot be cut below {EXCESS:.0%} hull excess')
             work.extend(best[1][::-1])
@@ -477,6 +479,9 @@ def hulls(pieces, names):
         options.sort(key=lambda option: option[0])
         _, mine, children = options[0]
         cells[mine:mine + 1] = children
+    for index, name in enumerate(names):
+        if (count := sum(c.piece == index for c in cells)) > MAX_HULLS:
+            raise ValueError(f'{name}: {count} hulls exceed {MAX_HULLS}')
     return cells
 
 

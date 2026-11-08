@@ -36,6 +36,8 @@ SPLIT_WANDER = 0.0015   # m, sideways wander of a split along the grain
 SPLIT_RUNOUT = 0.012    # m, the most a split drifts across the board from end to end (grain runout)
 SPLIT_SLANT = 0.002     # m, offset of the split between the two faces of the board
 TOOTH = (0.02, 0.04)    # m, peak-to-valley of the torn edge
+TOOTH_PITCH = 0.04      # m, a valley and a peak across the board
+SPLINTERS = 1           # long thin teeth; a second one (into the other half) gives up to 18 hulls a half
 SPLINTER = (0.05, 0.08) # m, length of the splinter beyond the torn edge
 BREAK_SLANT = (0.0015, 0.003)  # m, the tension face torn further: at most 1% stretch of the end's uv on a facet
 NAIL_CLEAR = 0.015      # m, a split or a break keeps this far from a nail head
@@ -367,13 +369,13 @@ def split(name, board, rng, strips, nails_lw):
 
 
 def broken(name, board, rng, nails_lw):
-    """Two halves of a plank broken across: a torn edge of uneven teeth and one long splinter.
+    """Two halves of a plank broken across: a torn edge of narrow uneven teeth and a long splinter.
 
     The valleys of one half lie on one line and its peaks on another, the two lines at different slants,
     so the teeth grow from 2 to 4 cm across the board while every tooth and the body behind them stay
-    convex: the cutter then gives a half one hull for its body and one for each tooth. One peak runs out
-    into a narrow splinter. The tear runs slanted through the thickness by the same amount everywhere,
-    so all its facets are flat."""
+    convex: the cutter then gives a half one hull for its body and one for each tooth. An inner peak
+    runs out into a narrow splinter. The tear runs slanted through the thickness by the same amount
+    everywhere, so all its facets are flat."""
     half_l, half_w = board.size[0] / 2, board.size[1] / 2
     clear = (NAIL_CLEAR + TOOTH[1] + SPLINTER[1]) / half_l
     for _ in range(200):
@@ -382,19 +384,21 @@ def broken(name, board, rng, nails_lw):
             break
     else:
         raise ValueError(f'{name}: no break clear of the nails')
-    count = 2 * max(3, int(round(board.size[1] / 0.08)))     # segments: valley-peak pairs, about 4 cm each
+    count = 2 * max(4, int(round(board.size[1] / TOOTH_PITCH)))   # segments: valley-peak pairs
     w = np.linspace(-1, 1, count + 1)
     w[1:-1] += rng.uniform(-0.3, 0.3, count - 1) * (2 / count)
-    k = int(rng.choice(np.arange(3, count - 2, 2)))                    # an inner peak becomes the splinter
-    width = rng.uniform(0.012, 0.018) / half_w
-    w[k - 1], w[k + 1] = w[k] - width / 2, w[k] + width / 2           # a narrow peak ...
+    # an inner peak (and with SPLINTERS = 2 an inner valley three segments away) becomes a splinter
+    pairs = [(p, v) for p in range(3, count - 2, 2) for v in range(2, count - 1, 2) if abs(p - v) >= 3]
+    splinters = pairs[int(rng.integers(len(pairs)))][:SPLINTERS]
+    for k in splinters:
+        width = rng.uniform(0.012, 0.018) / half_w
+        w[k - 1], w[k + 1] = w[k] - width / 2, w[k] + width / 2       # a narrow tooth ...
     ends = rng.permutation([TOOTH[0], TOOTH[1]]) * rng.uniform(0.9, 1.0, 2)
     rise = (ends[0] + (ends[1] - ends[0]) * (w + 1) / 2) / half_l     # tooth height across the board
     tilt = rng.uniform(-0.015, 0.015) / half_l                         # the whole tear a little oblique
     l_top = at + tilt * w + np.where(np.arange(count + 1) % 2, 0.5, -0.5) * rise
-    l_top[k] = (l_top[k - 1] + l_top[k + 1]) / 2 + rng.uniform(*SPLINTER) / half_l   # ... runs out far
-    if rng.uniform() < 0.5:                                        # it may belong to either half
-        l_top = 2 * at - l_top
+    for k in splinters:                                                # ... runs out far
+        l_top[k] = (l_top[k - 1] + l_top[k + 1]) / 2 + (1 if k % 2 else -1) * rng.uniform(*SPLINTER) / half_l
     slant = rng.choice([-1, 1]) * rng.uniform(*BREAK_SLANT) / half_l
     top, bottom = np.c_[l_top, w], np.c_[l_top + slant, w]
     m = len(w)
