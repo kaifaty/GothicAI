@@ -336,6 +336,17 @@ with before/after screenshots and a checkpoint of the pieces each. Run it with
 `OPENGOTHIC_CONTENT= OPENGOTHIC_FRACTURE=~/.local/share/gothic-ai/fracture`. Each
 `destruction2_melee_complete` event gives hits and pieces, `destruction_checkpoint` the
 `max_displacement_cm` of every piece: how far the prop fell apart.
+`own-wood-fracture-clip` is the acceptance take of the same pair for the
+[wood fracture](../../reports/content/2026-11-wood-fracture/README.md#клип-было--стало-и-ограждения):
+per prop a close `<prop>-close-before|after.png` pair, a side take `<prop>-side.mp4` from the blow
+until the pieces sleep (3 m, slightly above, the hero strikes towards +z) and
+`destruction2 view <camera xyz> <target xyz>` places the held camera in centimetres from the centre
+of the prop. Each break writes `destruction2_pieces` 0.5, 1, 2, 5, 13 and 15 s after it: per piece
+the centre's travel, the angle of a flat piece's face and long axis from vertical, sleep, speed and
+`fell` (centre below the floor); at 15 s the native hull penetration into a floor plane and into the
+other pieces, the visible (vertex) floor penetration and the 13→15 s jitter. Run with the
+`own-content-fracture` settings plus `TEMPEST_WINDOW_SIZE=1280x720`; `OPENGOTHIC_FRACTURE_MOTION`
+varies the version 3 piece motion.
 
 Corpse water: `water-bodies` records a real harbour WindFist throw, a dead wolf and a
 sinking skeleton, then saves `session-water-bodies.sav` and tries normal corpse loot

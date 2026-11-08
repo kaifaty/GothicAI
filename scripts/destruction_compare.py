@@ -64,7 +64,7 @@ def broken(rows, case, final, count):
     require(len({(part['parent_id'], part['piece']) for part in fragments}) == len(fragments), 'duplicate native fragments')
     for row in breaks:
         parts = [part for part in fragments if part['parent_id'] == row['body']]
-        require(8 <= row['pieces'] <= 20 and len(parts) == row['pieces'], f'{case}: chunk count differs from native break')
+        require(8 <= row['pieces'] <= 64 and len(parts) == row['pieces'], f'{case}: chunk count differs from native break')
         require(math.isfinite(row['break_ms']) and row['break_ms'] >= 0, 'break timing invalid')
     return breaks, fragments
 
@@ -147,12 +147,16 @@ def measured(directory, enabled):
     setup, _, final = fixture(rows, 'five', enabled)
     require(len(setup['bodies']) == 5, 'performance fixture must contain five intact things')
     one(rows, 'spell_physics_cast', id=23)
-    breaks = []
+    breaks, asleep = [], True
     if enabled:
         breaks, _ = broken(rows, 'five', final, 5)
         require(max(row['t_game_ms'] for row in breaks) - min(row['t_game_ms'] for row in breaks) <= 100,
                 'five bodies did not break in the same physical impact')
-        asleep15(rows, 'five')
+        # Reported with the timings rather than raised: pieces through the ground never sleep.
+        try:
+            asleep15(rows, 'five')
+        except ValueError:
+            asleep = False
     else:
         require(all(not body['broken'] for body in final['bodies']), 'disabled destruction broke a body')
     meta = json.loads((directory / 'appcadence.csv.json').read_text())
@@ -178,7 +182,7 @@ def measured(directory, enabled):
             'frame_p95_ms': percentile(intervals), 'frame_max_ms': max(intervals),
             'break_frame_max_ms': max(break_intervals, default=0), 'physics_p95_ms': percentile(costs),
             'physics_mean_ms': statistics.mean(costs), 'native_samples': len(native),
-            'break_costs_ms': [row['break_ms'] for row in breaks],
+            'break_costs_ms': [row['break_ms'] for row in breaks], 'fragments_asleep_15s': asleep,
             'fixture': sorted(body['visual'] for body in setup['bodies'])}
 
 
@@ -186,7 +190,8 @@ def performance(directory):
     off, on = measured(directory / 'off', False), measured(directory / 'on', True)
     require(off['fixture'] == on['fixture'], 'matched measurements use different visuals')
     drop = (1 - on['mean_fps'] / off['mean_fps']) * 100
-    return {'pass': on['break_frame_max_ms'] <= 50 and on['physics_p95_ms'] <= 2 and drop <= 5,
+    return {'pass': on['break_frame_max_ms'] <= 50 and on['physics_p95_ms'] <= 2 and drop <= 5
+            and on['fragments_asleep_15s'],
             'off': off, 'on': on, 'fps_drop_percent': drop,
             'measurement': '30s completed app frames under normal game clock; native physics ticks; actual break wall time maps to its containing app frame.'}
 

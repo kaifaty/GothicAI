@@ -193,8 +193,8 @@ void fracturePiecesTick(FracturePieces& state,World& world) {
       // Angle of the broad face from vertical, and of the long axis from vertical, degrees.
       const float face=std::asin(std::min(1.f,std::abs(thin.y)))*180.f/float(M_PI);
       const float length=std::acos(std::min(1.f,std::abs(along.y)))*180.f/float(M_PI);
-      if(piece.flat) {++flat;if(face<30.f)++onEdge;}
-      if(piece.flat && length<30.f)++upright;
+      // Orientation counts only pieces that lie on the ground, not those falling through it.
+      if(piece.flat && !below) {++flat;if(face<30.f)++onEdge;if(length<30.f)++upright;}
       if(part.sleeping)++sleeping;
       if(part.sleeping && !below)++restingAsleep;
       const float speed=part.velocity.length();
