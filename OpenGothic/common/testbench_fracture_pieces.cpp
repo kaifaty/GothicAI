@@ -174,7 +174,7 @@ void fracturePiecesTick(FracturePieces& state,World& world) {
     std::vector<JPH::Mat44> poses(parts.size());
     std::vector<Vec3> low(parts.size()),high(parts.size());
     size_t missing=0,flat=0,onEdge=0,upright=0,sleeping=0,restingAsleep=0,fell=0,metal=0,metalOnGround=0;
-    float maxJitter=0,maxFloor=0,maxNative=0,maxVisible=0,maxPieces=0,maxSpeed=0;
+    float maxJitter=0,maxFloor=0,maxNative=0,maxVisible=0,maxTerrain=0,maxPieces=0,maxSpeed=0;
     std::string rows="[";
     for(size_t i=0;i<parts.size();++i) {
       auto& piece=item.pieces[i];
@@ -204,7 +204,7 @@ void fracturePiecesTick(FracturePieces& state,World& world) {
       if(last) {
         const float jitter=(center-piece.at13).length();
         if(!below)maxJitter=std::max(maxJitter,jitter);
-        float visible=0,ground=0,lowest=std::numeric_limits<float>::infinity();
+        float visible=0,ground=0,lowest=std::numeric_limits<float>::infinity(),terrain=lowest;
         poses[i]=joltPose(part.transform);
         low[i]=Vec3(1e9f,1e9f,1e9f);high[i]=Vec3(-1e9f,-1e9f,-1e9f);
         for(const auto& v:piece.vertices) {
@@ -212,10 +212,17 @@ void fracturePiecesTick(FracturePieces& state,World& world) {
           low[i]=Vec3(std::min(low[i].x,p.x),std::min(low[i].y,p.y),std::min(low[i].z,p.z));
           high[i]=Vec3(std::max(high[i].x,p.x),std::max(high[i].y,p.y),std::max(high[i].z,p.z));
           if(floor.hasCol)lowest=std::min(lowest,Vec3::dotProduct(p-floor.v,floor.n));
+          // Drawn vertices near the ground against the ground right under them: the plane
+          // under the centre bends away from curved terrain under a 1 m board.
+          if(floor.hasCol && !below && Vec3::dotProduct(p-floor.v,floor.n)<5.f) {
+            const auto under=world.physic()->landRay(p+Vec3(0,30,0),60);
+            if(under.hasCol)terrain=std::min(terrain,p.y-under.v.y);
+            }
           }
         if(floor.hasCol)visible=std::max(0.f,-lowest);
         // A hoop lies on the ground when its lowest drawn point is at most 1 cm over the floor, not on a stave.
-        if(piece.material==asset::MaterialGroup::METAL) {++metal;if(floor.hasCol && !below && lowest<=1.f)++metalOnGround;}
+        if(piece.material==asset::MaterialGroup::METAL) {++metal;if(floor.hasCol && !below && terrain<=1.f)++metalOnGround;}
+        const float sunk=std::isfinite(terrain)?std::max(0.f,-terrain):0.f;
         if(floor.hasCol && !below) {
           // The ground as a native box whose top face is the floor plane under the piece.
           const auto normal=JPH::Vec3(floor.n.x,floor.n.y,floor.n.z).Normalized();
@@ -227,10 +234,12 @@ void fracturePiecesTick(FracturePieces& state,World& world) {
         // The plane under the centre misses curved ground under a 1.1 m stave: also the native contact itself.
         const float native=below?0.f:world.physic()->fragmentGroundPenetration(item.parent,i);
         maxFloor=std::max(maxFloor,ground);maxNative=std::max(maxNative,native);maxVisible=std::max(maxVisible,visible);
+        maxTerrain=std::max(maxTerrain,sunk);
         extra=",\"jitter_cm\":"+ragdollNumber(jitter)+",\"floor_penetration_cm\":"+ragdollNumber(ground)+
           ",\"native_floor_penetration_cm\":"+ragdollNumber(native)+
           ",\"visible_floor_penetration_cm\":"+ragdollNumber(visible)+
-          ",\"lowest_over_floor_cm\":"+ragdollNumber(std::isfinite(lowest)?lowest:0.f);
+          ",\"visible_terrain_penetration_cm\":"+ragdollNumber(sunk)+
+          ",\"lowest_over_terrain_cm\":"+ragdollNumber(std::isfinite(terrain)?terrain:0.f);
         }
       if(rows.size()>1)rows+=',';
       rows+="{\"piece\":"+std::to_string(i)+",\"group\":"+jsonStr(piece.group)+",\"volume_cm3\":"+
@@ -256,7 +265,7 @@ void fracturePiecesTick(FracturePieces& state,World& world) {
           if(depth>maxPieces) {maxPieces=depth;worstA=i;worstB=j;}
           }
       pairs=",\"max_floor_penetration_cm\":"+ragdollNumber(maxFloor)+",\"max_native_floor_penetration_cm\":"+ragdollNumber(maxNative)+",\"max_visible_floor_penetration_cm\":"+
-        ragdollNumber(maxVisible)+",\"max_piece_penetration_cm\":"+ragdollNumber(maxPieces)+
+        ragdollNumber(maxVisible)+",\"max_visible_terrain_penetration_cm\":"+ragdollNumber(maxTerrain)+",\"max_piece_penetration_cm\":"+ragdollNumber(maxPieces)+
         ",\"worst_piece_pair\":["+std::to_string(worstA)+","+std::to_string(worstB)+"],\"max_jitter_cm\":"+
         ragdollNumber(maxJitter)+",\"metal\":"+std::to_string(metal)+",\"metal_on_ground\":"+std::to_string(metalOnGround);
       }
