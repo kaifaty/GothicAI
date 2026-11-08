@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <deque>
+#include <functional>
 #include <map>
 #include <limits>
 #include <memory>
@@ -74,6 +75,90 @@ enum CamMode : uint8_t {
 struct QuestSite { bool ready=false; Tempest::Vec3 dry={}, direction={}; float waterY=0; std::string waypoint; };
 struct SpellActor {Npc* npc=nullptr;std::string role;};
 struct MovableFixture { ObjVisual visual; DynamicWorld::Item body; };
+
+struct LivingPhysics { uint64_t time=0;uint64_t dt=0;float milliseconds=0;size_t bodies=0; };
+
+struct Movables {
+  // Test-only props use the body API directly; the map allowlist contains only
+  // visuals actually authored in the stock worlds, not these Item mesh copies.
+  std::vector<std::unique_ptr<MovableFixture>> movableFixtures;
+  std::unordered_set<uintptr_t> movableMapIds;
+  std::vector<uintptr_t> movableIds;
+  std::unordered_map<uintptr_t,Tempest::Vec3> movableReference;
+  std::unordered_map<uintptr_t,float> movableTravel;
+  std::unordered_set<uintptr_t> movableNpcTouched;
+  uintptr_t movableTable=0,movableDish=0;
+  Tempest::Vec3 movableCenter,movableWalkStart,movableWalkEnd;
+  Npc* movableWalker=nullptr;
+  WayPoint movableDestination;
+  bool movableReady=false,movableTrace=false,movableMeasuring=false,movableOverflow=false;
+  std::string movablePhase;
+  uint64_t movablePhaseStart=0,movableSampleTick=0;
+  std::vector<LivingPhysics> movablePhysics;
+  uint64_t movableWakeStart=0;
+  bool movableWakeTrace=false;
+  std::unordered_map<uintptr_t,float> movableWakeTravel;
+  struct CandleAttachment {
+    uint32_t zenId=uint32_t(-1);
+    std::string visual;
+    bool light=false;
+    Tempest::Vec3 local,initial;
+    float maximumError=0,maximumTravel=0;
+  };
+  std::vector<CandleAttachment> candleAttachments;
+  uintptr_t candleBody=0;
+  uint32_t candleZenId=uint32_t(-1),candleTableZenId=uint32_t(-1);
+  Tempest::Matrix4x4 candleTableInitial;
+  Tempest::Vec3 candleInitial,candleSupport;
+  Tempest::Vec3 candleTableBounds[2];
+  float candleMaximumTilt=0,candleMaximumTravel=0;
+  bool candleTrace=false,candleLeftTable=false,candleSnapshotMissing=false,candleCaptured=false;
+  uint64_t candleStart=0,candleSamples=0;
+  struct NoiseListener { Npc* npc=nullptr; std::string role; Tempest::Vec3 initial; unsigned heard=0; };
+  std::vector<NoiseListener> noiseListeners;
+  bool noiseTrace=false,noiseHasPushed=false,noiseTipNegative=false;
+  std::string noisePhase;
+  uint64_t noiseStart=0;
+  Tempest::Vec3 noiseSource;
+  Tempest::Matrix4x4 noiseTableInitial;
+  float noiseTableMaximumTilt=0;
+  std::unordered_map<uint32_t,unsigned> noisePerceptions;
+  std::unordered_map<const Npc*,uint32_t> noiseNpcIds;
+  uint32_t noiseNextNpcId=0;
+  Npc* noiseHost=nullptr;
+  uint64_t noiseMeasuredImpacts=0,noiseMeasuredHeard=0,noiseMeasuredRays=0;
+  bool noiseBridgeDebug=false;
+  uint64_t noiseBridgeImpacts=0,noiseBridgeLoudImpacts=0,noiseBridgeCulpritImpacts=0;
+  uint64_t noiseBridgeUnseenCulpritImpacts=0,noiseBridgeCupImpacts=0;
+  uint64_t noiseBridgeDialogueImpacts=0,noiseBridgeCombatImpacts=0;
+  float noiseBridgeCupMaxRadius=0;
+  std::vector<uint64_t> noiseBridgeHeard;
+  std::vector<uint64_t> noiseBridgeEvents;
+  std::vector<SpellActor> spellActors;
+  std::vector<Item*> spellItems;
+  std::map<int32_t,size_t> spellRunes;
+  bool spellArenaReady=false,spellTrace=false,spellWasFrozen=false;
+  std::string spellCase;
+  uint64_t spellSampleTick=0,spellReleaseAt=0,spellWaitUntil=0;
+  int32_t spellCastingId=0;
+  int32_t spellEquipPending=0;
+  uint64_t spellEquipUntil=0;
+  int spellWaitFrozen=-1;
+  bool spellGuardTrace=false;
+  std::string spellGuardCase;
+  uint32_t spellGuardObservedReturns=0;
+};
+
+struct MovablesContext {
+  Movables& movables;
+  CamMode& cam;
+  std::vector<Npc*>& crew;
+  QuestSite& questCliff;
+  QuestSite& questWater;
+  Tempest::Vec3& ragdollArenaTarget;
+  std::string& shot;
+  Npc*& subject;
+};
 
 struct BodyAnimationEntry {
   uint32_t seed = 0;
@@ -670,6 +755,32 @@ struct NpcDuel {
 
   void hit(Npc& victim, Npc& by, int32_t loss, std::string_view);
   };
+
+std::string movableRows(World& world,bool allMap=false);
+void movableBegin(World& world,std::string phase);
+void movableFields(World& world);
+void movableCheckpoint(World& world);
+float noiseFacingError(const Npc& npc,const Tempest::Vec3& point);
+uint32_t noiseNpcId(const Npc* npc);
+void prepareNoiseFixture(World& world,Npc& player,bool tipping=false);
+void noisePushTable(World& world,Npc* culprit=nullptr);
+void movableCandleSetup(World& world,Npc& player);
+void movableCandleFields(World& world);
+void movableCandlePush(World& world);
+void movableCandleCheckpoint(World& world);
+void noiseTableCase(World& world,Npc& player,bool push=true);
+void noiseDropItems(World& world,unsigned count);
+void noiseItemCase(World& world,Npc& player,std::string_view phase);
+void noiseCheckpoint(World& world);
+void noiseFields(World& world);
+void movableSaveSnapshot(World& world,std::string_view label);
+void movablePin(World& world,Npc& player,std::string_view target);
+void pushMovablePinnedTable(World& world);
+bool noiseCommand(const MovablesContext& context,const std::vector<std::string>& a,World& w,Npc& pl,PlayerControl& ctrl);
+bool movableCommand(const MovablesContext& context,const std::vector<std::string>& a,World& w,Npc& pl,PlayerControl& ctrl);
+bool spellCommand(const MovablesContext& context,const std::vector<std::string>& a,World& w,Npc& pl,PlayerControl& ctrl);
+MovablesContext movablesContext();
+bool chooseQuestSite(World& world,bool water,QuestSite& site,const std::function<bool(QuestSite&)>& accept={});
 
 extern std::string outDir;
 

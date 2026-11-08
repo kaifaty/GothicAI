@@ -4,7 +4,7 @@
 
 Bench families are extracted into `common/testbench_<family>.cpp`, with shared state types and helpers in `testbench_internal.h`.
 The dispatcher calls one `bool <family>Command(...)` wrapper in each extracted family file:
-`npc_sim`, `water`, `character`, `monster`, `furniture_parts`, `placed_items`, `item_hulls`, `fracture_pieces`, `destruction`, `body_impact` and `body`.
+`npc_sim`, `water`, `character`, `monster`, `furniture_parts`, `placed_items`, `item_hulls`, `fracture_pieces`, `destruction`, `body_impact`, `body`, `movable`, `noise` and `spell`.
 Each wrapper handles its command branches in their original order and returns whether it matched.
 Tick and reset remain in `testbench.cpp`, along with water-film and monster camera/follow commands.
 Healing observations, commands and checks live in `common/testbench_healing.cpp`; its `Healing` state
@@ -35,6 +35,11 @@ P30 commands (`bodyarena`, `bodylive`, `bodyreplay`, `bodyobserve`/`bodyapi`, `b
 `bodyobserveprobe`, `bodyprobe`) and their animation/live helpers live in `common/testbench_body.cpp`.
 `BodyAnimation*` state types and `BodyContext` references are in `testbench_internal.h`.
 The `TestBench::body*` hooks and `body_traces` command stay in `testbench.cpp`.
+
+Movable-object, candle, physics-noise and spell fixtures and commands live in `common/testbench_movables.cpp`.
+Their `Movables` state, shared `LivingPhysics` samples and `MovablesContext` references are in `testbench_internal.h`.
+The dispatcher calls `movableCommand`, `noiseCommand` and `spellCommand` at each group's first original branch;
+shared helpers used by other families retain one definition. Camera/capture helpers and `TestBench::` hooks stay in `testbench.cpp`.
 
 Runs a scenario through the windowed game or the headless runner and records metrics and a report.
 Windowed scenarios can also capture video with a debug overlay and point at suspicious frames.
@@ -1564,7 +1569,7 @@ physics contracts pass after explicit signed Guild comparisons in the fixture.
 
 `OpenGothic/common/testbench.cpp` and `testbench_<family>.cpp` (including healing in
 `testbench_healing.cpp`, water / corpse-water in `testbench_water.cpp` and hero / human NPC
-CharacterVirtual in `testbench_character.cpp` and ground monsters in `testbench_monster.cpp`, destruction in `testbench_destruction.cpp`), inert unless `OPENGOTHIC_BENCH` is set. Hooks: the fixed time step and
+CharacterVirtual in `testbench_character.cpp` and ground monsters in `testbench_monster.cpp`, destruction in `testbench_destruction.cpp`, movable objects/candles, physics noise and spells in `testbench_movables.cpp`), inert unless `OPENGOTHIC_BENCH` is set. Hooks: the fixed time step and
 the capture in `MainWindow` (in film mode the captured frame replaces the window's), the AI bridge's lines
 and voices (`TestBench::aiLine`, `aiVoiceEnd`, `aiHeard`, `aiBusy`), an npc's lines of the game and SVMs
 (`TestBench::npcOutput` in `Npc::nextAiAction`), the OpenAL loopback device in Tempest's
