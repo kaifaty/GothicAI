@@ -36,6 +36,7 @@ extern bool benchTexturesFrozen;
 #include <limits>
 #include <new>
 #include <optional>
+#include <span>
 #include <string>
 #include <thread>
 #include <tuple>
@@ -5266,8 +5267,8 @@ void destructionSkinSample(const Npc& npc,const ProtoMesh& proto,const Matrix4x4
     npc.renderedBone(bone).project(point);
     probe(name,point);
     }
-  for(const auto center:{std::pair("root",npc.position()),std::pair("skin_lowest",lowest)})
-    for(const auto offset:{std::pair("+x",Vec3(30,0,0)),std::pair("-x",Vec3(-30,0,0)),
+  for(const auto& center:{std::pair("root",npc.position()),std::pair("skin_lowest",lowest)})
+    for(const auto& offset:{std::pair("+x",Vec3(30,0,0)),std::pair("-x",Vec3(-30,0,0)),
                            std::pair("+z",Vec3(0,0,30)),std::pair("-z",Vec3(0,0,-30))})
       probe(std::string(center.first)+offset.first,center.second+offset.second);
   probes+=']';
@@ -19364,8 +19365,12 @@ bool TestBench::physicsTracesDebug(World& world,Npc& player,std::string_view com
       if((trace.position-bench.traceCenter).length()<1300.f)scene.push_back(&trace);
     if(scene.size()<2)return fail("trace observer placement requires table and wall arrow");
     bool found=false;
-    for(float distance:command=="far"?std::initializer_list<float>{1700,1900,2100,2400}:
-                                       std::initializer_list<float>{300,450,600,800,1000}) {
+    // named arrays: a ?: over two initializer_lists copies the lists, and their arrays die with the expression
+    static constexpr float farDistances[]={1700,1900,2100,2400};
+    static constexpr float nearDistances[]={300,450,600,800,1000};
+    const std::span<const float> distances=command=="far"?std::span<const float>(farDistances):
+                                                          std::span<const float>(nearDistances);
+    for(float distance:distances) {
       const unsigned steps=command=="far"?360:96;
       for(unsigned i=0;i<steps;++i) {
         const float angle=float(i)*float(M_PI)*2.f/float(steps);
