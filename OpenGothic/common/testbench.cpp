@@ -885,6 +885,7 @@ struct Bench {
   std::unordered_map<uintptr_t,Vec3> waterReference;
   std::unordered_map<uintptr_t,float> waterTravel;
   ItemHulls itemHulls;
+  FracturePieces fracturePieces;
   std::vector<Item*> waterItems;
   std::string waterCase,waterWaypoint;
   Vec3 waterDry,waterCenter,waterDirection,waterHeroStart,waterHeroLast,waterObserverStart,waterCameraTarget;
@@ -13386,6 +13387,12 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     bench.destructionMeleeDeadline=w.tickCount()+90000;bench.waitUntil=bench.time+90034;
     }
   else if(c=="destruction2" && a.size()==2 && a[1]=="checkpoint") destructionCheckpoint(w);
+  else if(c=="destruction2" && a.size()==8 && a[1]=="view") {
+    // view <camera xyz> <target xyz>: centimetres from the centre of the prop, held after the break
+    const auto view=fracturePiecesView(w,bench.destructionIds,Vec3(num(a,2,0),num(a,3,0),num(a,4,0)),Vec3(num(a,5,0),num(a,6,0),num(a,7,0)));
+    if(!view) {arenaAbort("destruction view needs a fixture prop");return;}
+    bench.cam=C_Hold;bench.cutPending=true;lookFrom(view->first,view->second);
+    }
   else if(c=="destruction2" && (a.size()==2 || a.size()==3 || (a.size()==4 && a[3]=="npc")) && a[1]=="farm")
     destructionFarmSetup(w,pl,uint32_t(num(a,2,19355)),a.size()==4);
   else if(c=="destruction2" && a.size()==2 && a[1]=="farm-nearby") destructionFarmSetupNext(w,pl);
@@ -19542,6 +19549,8 @@ void TestBench::destructionBreak(uintptr_t body,size_t pieces,float milliseconds
     ",\"wall_ns\":"+std::to_string(std::chrono::duration_cast<std::chrono::nanoseconds>(
       std::chrono::steady_clock::now().time_since_epoch()).count())+
     ",\"t_game_ms\":"+std::to_string(world?world->tickCount():0)+",\"arrows\":"+std::to_string(bench.destructionArrows));
+  // Not inside a timed window: loading the pieces would land in the measured break frame.
+  if(world && !bench.movableMeasuring)fracturePiecesBreak(bench.fracturePieces,*world,body,bench.destructionCase);
   }
 
 void TestBench::destructionMeleeHit(const Npc& actor,size_t affected,float damage) {
@@ -20304,6 +20313,7 @@ bool TestBench::tick(uint64_t dt, PlayerControl& ctrl) {
       }
     }
   destructionFields(*world);
+  if(!bench.movableMeasuring)fracturePiecesTick(bench.fracturePieces,*world);
   if(bench.destructionSupportTrace && bench.destructionTrace &&
      world->tickCount()-bench.destructionStart>=bench.destructionSupportNext) {
     bench.destructionSupportNext=world->tickCount()-bench.destructionStart+1000;

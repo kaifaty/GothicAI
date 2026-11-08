@@ -125,6 +125,28 @@ struct ItemHulls {
   bool itemHullTracing=false,itemHullLoad=false;
 };
 
+// The pieces of each prop broken during a bench, sampled for the destruction guards.
+struct FracturePieces {
+  struct Piece {
+    size_t index=0;
+    double volume=0;
+    std::string group;
+    Tempest::Vec3 center,thin,longAxis,start,at13;
+    float extent[3]={};
+    bool flat=false,stave=false;
+    std::vector<Tempest::Vec3> vertices;
+    JPH::ShapeRefC hull;
+    };
+  struct Break {
+    uintptr_t parent=0;
+    std::string label,visual;
+    size_t version=0,samples=0;
+    uint64_t breakTime=0;
+    std::vector<Piece> pieces;
+    };
+  std::vector<Break> breaks;
+  };
+
 struct NpcTierTest {
   Npc* npc = nullptr;
   const WayPoint* ends[2] = {};
@@ -210,6 +232,11 @@ void itemHullClear(ItemHulls& state,World& world);
 void itemHullSetup(ItemHulls& state,World& world,Npc& player,std::string_view surface);
 void itemHullSample(ItemHulls& state,World& world);
 void itemHullReport(ItemHulls& state,World& world);
+
+void fracturePiecesBreak(FracturePieces& state,World& world,uintptr_t parent,std::string_view label);
+void fracturePiecesTick(FracturePieces& state,World& world);
+std::optional<std::pair<Tempest::Vec3,Tempest::Vec3>> fracturePiecesView(World& world,const std::vector<uintptr_t>& ids,
+                                                                         const Tempest::Vec3& camera,const Tempest::Vec3& target);
 
 void placedItemsCensus(World& world);
 void placedItemsProbe(PlacedItems& state,World& world,Npc& player);
