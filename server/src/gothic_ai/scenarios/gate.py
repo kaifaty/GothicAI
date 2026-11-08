@@ -43,6 +43,27 @@ PASS = "DIA_MIL_310_STADTWACHE_PASSIERSCHEIN"
 LETTER = "ITWR_PASSIERSCHEIN"
 
 
+async def _guard_posted(link: GameLink, timeout: float = 30) -> bool:
+    """The guard stands at his post and faces its way, twice in a row: half a second apart.
+
+    The teleport puts the hero in front of the guard as he faces now. Placement by routine (a new game,
+    a clock leap) can push him off his point, and he faces wherever he walks back: the far graph mover
+    even rounds the nearest waypoint first. In front of a walking guard the hero may land behind the
+    gate wall, out of earshot; in front of the posted one he stands outside, facing the gate.
+    """
+    last: float | None = None
+    deadline = asyncio.get_running_loop().time() + timeout
+    while True:
+        npc = (await link.snapshot(GUARD, fresh=True)).npc
+        posted = not npc.busy and npc.waypoint is not None and npc.nearest_waypoint == npc.waypoint
+        if posted and last is not None and abs((npc.rot - last + 180) % 360 - 180) < 1:
+            return True
+        last = npc.rot if posted else None
+        if asyncio.get_running_loop().time() >= deadline:
+            return False
+        await asyncio.sleep(0.5)
+
+
 async def gate_scenario(
     link: GameLink,
     dialogue: DialogueManager,
@@ -109,6 +130,8 @@ async def gate_scenario(
     try:
         # The hero faces the actual guard from outside and speaks without opening the native menu.
         # No guard is held, moved or stripped of any of his native dialogs.
+        if not check("guard_posted", await _guard_posted(link)):
+            return _logged(results)
         await link.debug("teleport", near=GUARD, distance=1200)
         if not check("guard_hears", await _until_async(ready, bool, 20)):
             return _logged(results)
@@ -265,6 +288,8 @@ async def gate_vouch_scenario(
     try:
         # Keep the native gatekeepers at their posts. Only the hero and guarantor are staged.
         await link.debug("time", hour=14, minute=30)
+        if not check("guard_posted", await _guard_posted(link)):
+            return _logged(results)
         await link.debug("teleport", near=GUARD, distance=1200)
         if not check("guard_hears", await _until_async(ready, bool, 20)):
             return _logged(results)
