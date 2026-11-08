@@ -42,8 +42,6 @@ namespace PhysicsContract {
   void testNpcFrozenBodyReplacement();
   void testNpcScalarWitness();
   void testNpcSeparatedContactResponse();
-  void testFixedStepCarry();
-  void testFixedStepCadence();
   void testCharacterVirtual();
   void testVirtualFloorGuard();
   void testShadowBodySlots();

@@ -221,6 +221,36 @@ namespace {
     requireNear((minimum-sentinel).length(),0,0,"an absent skin must leave the minimum output unchanged");
     }
 
+  void testFixedStepCarry() {
+    CollisionWorld world;
+    auto first = world.addDynamicBody(new JPH::BoxShape(JPH::Vec3(.1f,.1f,.1f)),at(0,700,0),.4f,1);
+    world.tick(8);
+    requireNear(first->position().y,700,.001f,"eight milliseconds must remain below the fixed step");
+    first.reset();
+    // An empty world ignores elapsed time while retaining the existing remainder.
+    world.tick(1000);
+    auto next = world.addDynamicBody(new JPH::BoxShape(JPH::Vec3(.1f,.1f,.1f)),at(0,700,0),.4f,1);
+    world.tick(9);
+    const float step = 1.f/60.f;
+    requireNear(next->position().y,700.f-DynamicWorld::gravityMS*100.f*step*step,.005f,
+                "fixed-step remainder must survive removal and addition of dynamic bodies");
+    }
+
+  void testFixedStepCadence() {
+    CollisionWorld world;
+    auto body = world.addDynamicBody(new JPH::BoxShape(JPH::Vec3(.1f,.1f,.1f)),at(0,700,0),.4f,1);
+    const float step = 1.f/60.f;
+    const float acceleration = DynamicWorld::gravityMS*100.f*step*step;
+    world.tick(16);
+    requireNear(body->position().y,700,.005f,"sixteen milliseconds must not advance a new body");
+    world.tick(17);
+    requireNear(body->position().y,700.f-acceleration,.005f,"first seventeen millisecond frame must advance one step");
+    world.tick(17);
+    requireNear(body->position().y,700.f-3.f*acceleration,.005f,"second seventeen millisecond frame must preserve the previous float cadence");
+    world.tick(16);
+    requireNear(body->position().y,700.f-6.f*acceleration,.005f,"next sixteen millisecond frame must advance the retained step");
+    }
+
   void testContracts() {
     {
       using MeleeImpact::BackstabKind;
