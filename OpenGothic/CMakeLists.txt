@@ -522,7 +522,15 @@ if(NOT ANDROID AND NOT IOS)
   add_custom_target(check-aimwalk
     COMMAND $<TARGET_FILE:gothic-aimwalk-contract>
     DEPENDS gothic-aimwalk-contract USES_TERMINAL)
-  add_executable(gothic-physics-contract EXCLUDE_FROM_ALL tests/physics_contract.cpp tests/physics_bonds_contract.cpp)
+  add_executable(gothic-physics-contract EXCLUDE_FROM_ALL
+    tests/physics_contract.cpp
+    tests/physics_contract_common.cpp
+    tests/physics_contract_rays.cpp
+    tests/physics_contract_npc.cpp
+    tests/physics_contract_items.cpp
+    tests/physics_contract_movables.cpp
+    tests/physics_contract_noise.cpp
+    tests/physics_bonds_contract.cpp)
   target_link_libraries(gothic-physics-contract PRIVATE OpenGothic AiBridge gothic-base-import)
   add_executable(gothic-placed-items-contract EXCLUDE_FROM_ALL tests/placed_items_contract.cpp)
   target_link_libraries(gothic-placed-items-contract PRIVATE OpenGothic AiBridge gothic-base-import)
