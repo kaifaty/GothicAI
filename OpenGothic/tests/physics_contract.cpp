@@ -33,6 +33,7 @@
 #include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
 #include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/PhysicsSettings.h>
+#include <Jolt/Physics/Collision/CollisionGroup.h>
 #include <Jolt/Physics/Collision/GroupFilter.h>
 
 #include <Jolt/Physics/Collision/CastSphereVsTriangles.h>

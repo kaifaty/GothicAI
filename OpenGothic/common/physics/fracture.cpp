@@ -3,6 +3,7 @@
 #include "resources.h"
 #include "utils/userhome.h"
 
+#include <Jolt/Physics/Collision/CollisionGroup.h>
 #include <Jolt/Physics/Collision/GroupFilter.h>
 #include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
 #include <Jolt/Physics/Collision/Shape/StaticCompoundShape.h>
