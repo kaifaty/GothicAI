@@ -56,7 +56,6 @@ constexpr float CantCone       = 0.3f;  // ...and the release throws it off by t
 constexpr float HeadDamage     = 2.f;
 constexpr float LimbDamage     = 0.6f;
 
-int enabled     = -1; // -1: as Gothic.ini says
 int bowStrength = -1;
 
 float lerp(float a, float b, float t) {
@@ -64,22 +63,6 @@ float lerp(float a, float b, float t) {
   }
 
 }
-
-bool Archery::isEnabled() {
-  if(enabled<0) {
-    // OPENGOTHIC_MANUALAIM=0|1 over Gothic.ini (a before/after short films the auto aim)
-    const char* v = std::getenv("OPENGOTHIC_MANUALAIM");
-    if(v!=nullptr && v[0]!='\0')
-      enabled = v[0]!='0' ? 1 : 0; else
-      enabled = Gothic::settingsGetI("GAME","manualAim")!=0 ? 1 : 0;
-    }
-  return enabled!=0;
-  }
-
-void Archery::setEnabled(bool e) {
-  enabled = e ? 1 : 0;
-  Log::i("manual aim: ", e ? "on" : "off");
-  }
 
 bool Archery::isBowStrengthEnabled() {
   if(bowStrength<0) {

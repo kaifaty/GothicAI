@@ -10,7 +10,6 @@ goto NW_XARDAS_TOWER_VALLEY_01
 turn 225
 wait 500
 open 5000
-manual on
 equip ItRw_Bow_L_01
 give ItRw_Arrow 200
 insert BAU_904_BAUER

@@ -9,7 +9,6 @@ goto NW_XARDAS_TOWER_VALLEY_01    # open for 50 m to the left behind; the ground
 turn 225                          # the farmer hangs at the hero's height
 wait 500
 open 5000
-manual on
 equip ItRw_Bow_L_01
 give ItRw_Arrow 200
 insert BAU_904_BAUER

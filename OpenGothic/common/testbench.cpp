@@ -15849,13 +15849,6 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     n->aiPush(AiQueue::aiGoToPoint(*wp));
     say("npcgo " + symName(w,n) + " " + a[2]);
     }
-  else if(c=="manual") {
-    // manual on|off: the hero aims a bow by hand (game/archery)
-    const std::string m = a.size()>1 ? a[1] : "";
-    if(m=="on" || m=="off")
-      Archery::setEnabled(m=="on"); else
-      say("unknown manual command: " + line);
-    }
   else if(c=="bowstrength") {
     // bowstrength on|off: strength sets a bow's draw speed and limit (game/archery)
     const std::string m = a.size()>1 ? a[1] : "";
@@ -17138,7 +17131,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     say(out);
     }
   else if(c=="volley") {
-    // volley <shots> [hold ms] [draw 0..1] [jitter ms]: shots by hand in a row (manual on): the string drawn
+    // volley <shots> [hold ms] [draw 0..1] [jitter ms]: shots by hand in a row: the string drawn
     // that far (1: full), held (up to jitter longer, at random), let go; the scenario goes on after the last
     // one is reloaded. Held only at the archer's own limit: short of it the string goes as it is reached
     bench.volleyLeft  = int(num(a,1,5));

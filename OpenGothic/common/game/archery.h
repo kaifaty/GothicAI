@@ -39,10 +39,6 @@ namespace Archery {
   static constexpr float DrawT1  = 1.25f; // seconds to full draw with strength equal to draw weight (hero-balance tempo, #814)
   static constexpr float DrawEpsilon = 0.05f; // minimum draw-speed fraction at the burst limit
 
-  // Manual aim on (GAME/manualAim in Gothic.ini, on by default; Marvin: toggle manualaim): the hero aims a
-  // bow by hand
-  bool  isEnabled();
-  void  setEnabled(bool e);
   bool  isBowStrengthEnabled();
   void  setBowStrengthEnabled(bool e);
 

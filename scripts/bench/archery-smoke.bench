@@ -7,7 +7,6 @@ view clean
 goto NW_TROLLAREA_PATH_23
 wait 500
 clear 3000
-manual on
 equip ItRw_Bow_L_01
 give ItRw_Arrow 200
 stats str 60 dex 60 bow 60 talent auto

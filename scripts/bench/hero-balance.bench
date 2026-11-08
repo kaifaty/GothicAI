@@ -8,7 +8,6 @@ view clean
 goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
 turn 210
 wait 500
-manual on
 arrow feature off
 give ItRw_Arrow 2000
 insert BAU_904_BAUER
