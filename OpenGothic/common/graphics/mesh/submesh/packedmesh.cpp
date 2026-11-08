@@ -6,6 +6,7 @@
 #include <cassert>
 #include <fstream>
 #include <algorithm>
+#include <cmath>
 #include <numeric>
 
 #include "game/compatibility/phoenix.h"
@@ -16,6 +17,23 @@ using namespace Tempest;
 static uint64_t mkUInt64(uint32_t a, uint32_t b) {
   return (uint64_t(a)<<32) | uint64_t(b);
   };
+
+// A unit vector as octahedral snorm16x2, x in the low half; the shader decodes it with octNormal (vertex_process.glsl)
+static uint32_t packOctNormal(float x, float y, float z) {
+  const float s = std::abs(x)+std::abs(y)+std::abs(z);
+  if(s<=0.f)
+    return 0;
+  x /= s; y /= s; z /= s;
+  if(z<0.f) {
+    const float ox = (1.f-std::abs(y))*(x>=0.f ? 1.f : -1.f);
+    const float oy = (1.f-std::abs(x))*(y>=0.f ? 1.f : -1.f);
+    x = ox; y = oy;
+    }
+  auto q = [](float v) {
+    return uint32_t(uint16_t(int16_t(std::lround(std::clamp(v,-1.f,1.f)*32767.f))));
+    };
+  return q(x) | (q(y)<<16);
+  }
 
 static bool isVisuallySame(const asset::Material& a, const asset::Material& b) {
   return
@@ -172,7 +190,8 @@ void PackedMesh::Meshlet::flush(std::vector<Vertex>& vertices, std::vector<Verte
                                 std::vector<uint32_t>* verticesId,
                                 const std::vector<asset::Vec3>& vboList,
                                 const std::vector<asset::MeshWedge>& wedgeList,
-                                const std::vector<SkeletalData>* skeletal) {
+                                const std::vector<SkeletalData>* skeletal,
+                                const std::vector<SkinRest>* rest) {
   if(indSz==0)
     return;
 
@@ -235,6 +254,24 @@ void PackedMesh::Meshlet::flush(std::vector<Vertex>& vertices, std::vector<Verte
         vx.pos    [r][2] = sk[vert[i].first].localPositions[r].z;
         vx.boneId [r]    = sk[vert[i].first].boneIndices[r];
         vx.weights[r]    = sk[vert[i].first].weights[r];
+        }
+      // the bones turn the normal like the position: store it in each bone's rest frame, n_r = R_r^T n
+      bool posed = rest!=nullptr;
+      for(int r=0; r<4 && posed; ++r)
+        if(vx.weights[r]>0.f && (vx.boneId[r]>=rest->size() || !(*rest)[vx.boneId[r]].valid))
+          posed = false;
+      if(posed) {
+        for(int r=0; r<4; ++r) {
+          if(vx.weights[r]<=0.f)
+            continue;
+          auto& R = (*rest)[vx.boneId[r]].rot;
+          const float n[3] = {v.normal.x, v.normal.y, v.normal.z};
+          float l[3];
+          for(int c=0; c<3; ++c)
+            l[c] = R[0][c]*n[0] + R[1][c]*n[1] + R[2][c]*n[2];
+          vx.normalLocal[r] = packOctNormal(l[0],l[1],l[2]);
+          }
+        vx.color = 0;
         }
       verticesA[vboSz+i]  = vx;
       }
@@ -493,7 +530,147 @@ PackedMesh::PackedMesh(const asset::SoftSkinMesh& skinned) {
       }
     }
 
-  packMeshletsObj(mesh,PK_Visual,&vertices);
+  const auto rest = fitSkinRest(skinned);
+  packMeshletsObj(mesh,PK_Visual,&vertices,&rest);
+  }
+
+// Symmetric 4x4 eigen-decomposition by Jacobi rotations: a ends diagonal, the columns of v are the eigenvectors.
+static void jacobi4(double a[4][4], double v[4][4]) {
+  for(int i=0; i<4; ++i)
+    for(int j=0; j<4; ++j)
+      v[i][j] = (i==j) ? 1.0 : 0.0;
+  for(int sweep=0; sweep<64; ++sweep) {
+    double off = 0;
+    for(int p=0; p<4; ++p)
+      for(int q=p+1; q<4; ++q)
+        off += a[p][q]*a[p][q];
+    if(off<1e-24)
+      break;
+    for(int p=0; p<4; ++p)
+      for(int q=p+1; q<4; ++q) {
+        if(std::abs(a[p][q])<1e-300)
+          continue;
+        const double theta = (a[q][q]-a[p][p])/(2.0*a[p][q]);
+        const double t     = (theta>=0 ? 1.0 : -1.0)/(std::abs(theta)+std::sqrt(theta*theta+1.0));
+        const double c     = 1.0/std::sqrt(t*t+1.0), s = t*c;
+        for(int k=0; k<4; ++k) {
+          const double kp = a[k][p], kq = a[k][q];
+          a[k][p] = c*kp - s*kq;
+          a[k][q] = s*kp + c*kq;
+          }
+        for(int k=0; k<4; ++k) {
+          const double pk = a[p][k], qk = a[q][k];
+          a[p][k] = c*pk - s*qk;
+          a[q][k] = s*pk + c*qk;
+          }
+        for(int k=0; k<4; ++k) {
+          const double kp = v[k][p], kq = v[k][q];
+          v[k][p] = c*kp - s*kq;
+          v[k][q] = s*kp + c*kq;
+          }
+        }
+    }
+  }
+
+// Every weight of a soft skin holds the vertex in its node's rest frame, so the local and the model positions of
+// the vertices a node carries differ by that node's rest transform, P = R*p + t. Horn's quaternion fit recovers R
+// per node; a node whose points are too few, collinear, or do not fit one rigid transform stays invalid, and its
+// vertices keep the rest normal. The fit takes the vertices a node dominates, its weight within 90% of its own
+// maximum, when it has enough of them: a blended vertex's model position may be the blend of its nodes' rest
+// positions rather than each one's (our MDM writer), and a clavicle may carry no vertex alone.
+std::vector<PackedMesh::SkinRest> PackedMesh::fitSkinRest(const asset::SoftSkinMesh& skinned) {
+  static constexpr double Tolerance = 0.5;  // RMS of the fit, model units (cm)
+  static constexpr size_t MinRigid  = 6;
+  auto& positions = skinned.mesh.positions;
+  const size_t count = std::min(skinned.weights.size(),positions.size());
+  std::vector<float> top;
+  for(size_t i=0; i<count; ++i)
+    for(auto& w:skinned.weights[i]) {
+      if(w.node_index>=top.size())
+        top.resize(w.node_index+1u,0.f);
+      top[w.node_index] = std::max(top[w.node_index],w.weight);
+      }
+  std::vector<std::vector<std::pair<asset::Vec3,asset::Vec3>>> pairs(top.size()), rigid(top.size()); // (local, model)
+  for(size_t i=0; i<count; ++i)
+    for(auto& w:skinned.weights[i]) {
+      pairs[w.node_index].emplace_back(w.position,positions[i]);
+      if(w.weight>=0.9f*top[w.node_index])
+        rigid[w.node_index].emplace_back(w.position,positions[i]);
+      }
+
+  std::vector<SkinRest> ret(pairs.size());
+  size_t failed = 0;
+  double worst  = 0;
+  for(size_t node=0; node<pairs.size(); ++node) {
+    auto& pr = rigid[node].size()>=MinRigid ? rigid[node] : pairs[node];
+    if(pr.size()<3)
+      continue;
+    double cq[3] = {}, cp[3] = {};
+    for(auto& [q,p]:pr) {
+      cq[0] += q.x; cq[1] += q.y; cq[2] += q.z;
+      cp[0] += p.x; cp[1] += p.y; cp[2] += p.z;
+      }
+    for(int k=0; k<3; ++k) {
+      cq[k] /= double(pr.size());
+      cp[k] /= double(pr.size());
+      }
+    double S[3][3] = {};
+    for(auto& [q,p]:pr) {
+      const double a[3] = {q.x-cq[0], q.y-cq[1], q.z-cq[2]};
+      const double b[3] = {p.x-cp[0], p.y-cp[1], p.z-cp[2]};
+      for(int i=0; i<3; ++i)
+        for(int j=0; j<3; ++j)
+          S[i][j] += a[i]*b[j];
+      }
+    double N[4][4] = {
+      {S[0][0]+S[1][1]+S[2][2], S[1][2]-S[2][1],          S[2][0]-S[0][2],          S[0][1]-S[1][0]},
+      {S[1][2]-S[2][1],         S[0][0]-S[1][1]-S[2][2],  S[0][1]+S[1][0],          S[2][0]+S[0][2]},
+      {S[2][0]-S[0][2],         S[0][1]+S[1][0],         -S[0][0]+S[1][1]-S[2][2],  S[1][2]+S[2][1]},
+      {S[0][1]-S[1][0],         S[2][0]+S[0][2],          S[1][2]+S[2][1],         -S[0][0]-S[1][1]+S[2][2]},
+      };
+    double V[4][4];
+    jacobi4(N,V);
+    int best = 0;
+    for(int k=1; k<4; ++k)
+      if(N[k][k]>N[best][best])
+        best = k;
+    double second = -1e300;
+    for(int k=0; k<4; ++k)
+      if(k!=best)
+        second = std::max(second,N[k][k]);
+    if(N[best][best]-second <= 1e-6*std::max(1.0,std::abs(N[best][best])))
+      continue; // collinear points: the turn about their line is unknown
+    double w = V[0][best], x = V[1][best], y = V[2][best], z = V[3][best];
+    const double len = std::sqrt(w*w+x*x+y*y+z*z);
+    w /= len; x /= len; y /= len; z /= len;
+    const double R[3][3] = {
+      {1-2*(y*y+z*z), 2*(x*y-w*z),   2*(x*z+w*y)},
+      {2*(x*y+w*z),   1-2*(x*x+z*z), 2*(y*z-w*x)},
+      {2*(x*z-w*y),   2*(y*z+w*x),   1-2*(x*x+y*y)},
+      };
+    double err = 0;
+    for(auto& [q,p]:pr) {
+      const double a[3] = {q.x-cq[0], q.y-cq[1], q.z-cq[2]};
+      const double b[3] = {p.x-cp[0], p.y-cp[1], p.z-cp[2]};
+      for(int i=0; i<3; ++i) {
+        const double d = R[i][0]*a[0] + R[i][1]*a[1] + R[i][2]*a[2] - b[i];
+        err += d*d;
+        }
+      }
+    const double rms = std::sqrt(err/double(pr.size()));
+    if(rms>Tolerance) {
+      failed++;
+      worst = std::max(worst,rms);
+      continue;
+      }
+    for(int i=0; i<3; ++i)
+      for(int j=0; j<3; ++j)
+        ret[node].rot[i][j] = float(R[i][j]);
+    ret[node].valid = true;
+    }
+  if(failed>0)
+    Log::i("skin rest: ",failed," node(s) do not fit one rigid frame (worst rms ",float(worst),"), rest normals kept");
+  return ret;
   }
 
 void PackedMesh::packPhysics(const asset::WorldMesh& mesh, PkgType type) {
@@ -1340,7 +1517,8 @@ void PackedMesh::packMeshletsLnd(const asset::WorldMesh& mesh, std::span<const u
   }
 
 void PackedMesh::packMeshletsObj(const asset::StaticMesh& mesh, PkgType type,
-                                 const std::vector<SkeletalData>* skeletal) {
+                                 const std::vector<SkeletalData>* skeletal,
+                                 const std::vector<SkinRest>* rest) {
   auto* vId = (type==PK_VisualMorph) ? &verticesId : nullptr;
 
   size_t maxTri = 0;
@@ -1371,7 +1549,7 @@ void PackedMesh::packMeshletsObj(const asset::StaticMesh& mesh, PkgType type,
 
     pack.iboOffset = indices.size();
     for(auto& i:meshlets)
-      i.flush(vertices,verticesA,indices,indices8,vId,mesh.positions,sm.wedges,skeletal);
+      i.flush(vertices,verticesA,indices,indices8,vId,mesh.positions,sm.wedges,skeletal,rest);
     pack.iboLength = indices.size() - pack.iboOffset;
 
     //dbgUtilization(meshlets);

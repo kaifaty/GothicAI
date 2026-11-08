@@ -220,7 +220,7 @@ VertexA pullVertexA(const uint meshletId, const uint bucketId, const uint laneId
   uint vboOffset = meshletId * MaxVert + laneId;
 
   // animated geometry
-  const uint id = vboOffset * 23;
+  const uint id = vboOffset * 27; // Resources::VertexA, 27 floats
 
   VertexA ret;
   ret.normal = vec3(vbo[bId].vertices[id + 0], vbo[bId].vertices[id + 1], vbo[bId].vertices[id + 2]);

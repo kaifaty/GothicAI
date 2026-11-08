@@ -266,6 +266,16 @@ bool DrawBuckets::commit(Encoder<CommandBuffer>& cmd, uint8_t fId) {
       bx.bbox[0]    = Vec4(bbox[0].x,bbox[0].y,bbox[0].z,0.f);
       bx.bbox[1]    = Vec4(bbox[1].x,bbox[1].y,bbox[1].z,0.f);
       bx.flags     |= BK_SKIN;
+      // own skins (materials.json) bring normal and ORM maps like static meshes; no antitile on a body
+      if(i.mat.alpha==Material::Solid || i.mat.alpha==Material::AlphaTest) {
+        bx.uvScale = i.mat.uvScale;
+        if(i.mat.normal!=nullptr)
+          bx.flags |= BK_NORMAL;
+        if(i.mat.orm!=nullptr)
+          bx.flags |= BK_ORM;
+        if(i.mat.hasMaterialMaps())
+          bx.flags |= BK_MATERIAL_MAPS;
+        }
       }
     if(i.mat.alpha==Material::Solid)
       bx.flags |= BK_SOLID;

@@ -84,10 +84,11 @@ class Resources final {
     struct VertexA {
       float    norm[3];
       float    uv[2];
-      uint32_t color/*unused*/;
+      uint32_t color;          // not a colour: 0 when normalLocal is valid, 0xFFFFFFFF for the rest normal only
       float    pos[4][3];
       uint8_t  boneId[4];
       float    weights[4];
+      uint32_t normalLocal[4]; // the normal in each bone's rest frame, octahedral snorm16x2 (packedmesh.cpp)
       };
 
     struct VertexFsq {

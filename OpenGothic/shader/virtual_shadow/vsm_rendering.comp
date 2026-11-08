@@ -152,7 +152,7 @@ Vertex pullVertexA(const uint instanceId, const uint meshletId, const uint bucke
   uint vboOffset = meshletId * MaxVert + laneId;
 
   // skinned geometry
-  uint  id     = vboOffset * 23;
+  uint  id     = vboOffset * 27; // Resources::VertexA, 27 floats
   vec3  normal = vec3(vbo[bId].vertices[id +  0], vbo[bId].vertices[id + 1], vbo[bId].vertices[id + 2]);
   vec2  uv     = vec2(vbo[bId].vertices[id +  3], vbo[bId].vertices[id + 4]);
   //uint  color  = floatBitsToUint(vbo[bId].vertices[id + 5]);
