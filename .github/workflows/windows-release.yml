@@ -237,13 +237,21 @@ jobs:
       - name: Build packages (compiler, Ninja, the X11 and sound headers the engine and OpenAL Soft use)
         run: |
           sudo apt-get update
-          if ! apt-cache show "g++-$GCC_VERSION" > /dev/null 2>&1; then
+          # Exact names only: apt-cache show and apt-get install read a name that matches no package as a
+          # regular expression, and "g++-13" ("g", one or more "+", "-13") then matches clang-13. The whole
+          # list is read (no grep -q) so that pipefail does not turn apt-cache's SIGPIPE into "absent".
+          has_package() { apt-cache pkgnames | grep -xF "$1" > /dev/null; }
+          if ! has_package "g++-$GCC_VERSION"; then
             # a newer GCC than Ubuntu 22.04 has: the toolchain PPA; static libstdc++ keeps the glibc floor
             sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
             sudo apt-get update
+            has_package "g++-$GCC_VERSION" || { echo "no package g++-$GCC_VERSION even with the toolchain PPA"; exit 1; }
           fi
-          sudo apt-get install -y --no-install-recommends "g++-$GCC_VERSION" ninja-build pkg-config \
+          sudo apt-get install -y --no-install-recommends "gcc-$GCC_VERSION" "g++-$GCC_VERSION" ninja-build pkg-config \
             libx11-dev libxcursor-dev libasound2-dev libpulse-dev libpipewire-0.3-dev
+          for tool in "gcc-$GCC_VERSION" "g++-$GCC_VERSION"; do
+            command -v "$tool" > /dev/null || { echo "$tool is not installed after apt-get install"; exit 1; }
+          done
           {
             echo "CC=gcc-$GCC_VERSION"
             echo "CXX=g++-$GCC_VERSION"
