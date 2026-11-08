@@ -66,7 +66,7 @@ constexpr uint32_t visualMask    = landscapeMask | (1u << DynamicWorld::C_SmallV
 constexpr uint32_t waterMask     = 1u << DynamicWorld::C_Water;
 
 struct FractureMotion {
-  float hit = 250.f, falloff = 45.f, outward = 60.f, spin = 4.f, cap = 450.f;
+  float hit = 150.f, falloff = 60.f, outward = 120.f, spin = 3.f, cap = 200.f;
 
   static FractureMotion load() {
     FractureMotion motion;
@@ -2298,6 +2298,8 @@ void DynamicWorld::loadDestructionVobs(Serialize& fin) {
         if(!std::isfinite(obj->movableMass) || obj->movableMass<=0.f)
           break;
         std::vector<std::unique_ptr<CollisionWorld::DynamicBody>> fragments(pieces.size());
+        const uint32_t breakGroup=mesh.version==3 ? world->newFractureGroup() : 0;
+        const auto breakFilter=mesh.version==3 ? fractureGroupFilter(mesh) : nullptr;
         for(size_t i=0;i<pieces.size();++i) {
           const auto& piece=pieces[i];
           if(!piece.present)
@@ -2306,6 +2308,7 @@ void DynamicWorld::loadDestructionVobs(Serialize& fin) {
           const auto group=mesh.version==3 ? mesh.pieces[i].group : obj->movableShape->material;
           const float friction=mesh.version==3 ? materialFriction(group) : obj->movableShape->friction;
           auto body=world->addDynamicBody(mesh.pieces[i].hull,piece.matrix,friction,mass,C_Fragment);
+          if(breakFilter!=nullptr) body->setFracturePiece(breakFilter,breakGroup,uint32_t(i));
           body->setLabel(obj->visual+" fragment");
           body->setNoiseProfile(impactMaterial(group),group,obj->visual+" fragment");
           body->setBuoyancyFraction(vobBuoyancyFraction(group));
@@ -2511,9 +2514,21 @@ std::vector<DynamicWorld::FragmentSnapshot> DynamicWorld::fragmentSnapshot() con
       const auto& body=*obj->fragments[i];
       result.push_back({reinterpret_cast<uintptr_t>(obj),obj->pose->zenId,i,body.isSleeping(),
                         body.matrix(),body.velocity(),body.angularVelocity(),obj->fragmentPermanent[i],
-                        obj->fragmentSleepTime[i],body.friction()});
+                        obj->fragmentSleepTime[i],body.friction(),body.centerOfMass()});
       }
   return result;
+  }
+
+float DynamicWorld::fragmentGroundPenetration(uintptr_t parentId, size_t piece) const {
+  for(const auto* obj:movableVobs->bodies) {
+    if(reinterpret_cast<uintptr_t>(obj)!=parentId || piece>=obj->fragments.size() || obj->fragments[piece]==nullptr)
+      continue;
+    float depth=0;
+    for(const auto& contact:world->overlaps(*obj->fragments[piece],0.f,(1u<<C_Landscape)|(1u<<C_Object)))
+      depth=std::max(depth,contact.depth);
+    return depth;
+    }
+  return 0;
   }
 
 std::vector<DynamicWorld::WaterBodySnapshot> DynamicWorld::waterBodySnapshot() const {
@@ -2681,6 +2696,8 @@ void DynamicWorld::breakMovableVob(BodyData& obj) {
   const auto hit=obj.breakDirection.quadLength()>1.e-12f ? Tempest::Vec3::normalize(obj.breakDirection) : Tempest::Vec3();
   std::vector<std::unique_ptr<CollisionWorld::DynamicBody>> fragments;
   fragments.reserve(mesh.pieces.size());
+  const uint32_t breakGroup=mesh.version==3 ? world->newFractureGroup() : 0;
+  const auto breakFilter=mesh.version==3 ? fractureGroupFilter(mesh) : nullptr;
   // All hulls, triangle data and GPU meshes are prepared while loading the
   // visual. The replacement only installs native bodies and transfers motion.
   for(size_t i=0;i<mesh.pieces.size();++i) {
@@ -2689,6 +2706,7 @@ void DynamicWorld::breakMovableVob(BodyData& obj) {
     const auto group=mesh.version==3 ? piece.group : obj.movableShape->material;
     const float friction=mesh.version==3 ? materialFriction(group) : obj.movableShape->friction;
     auto body=world->addDynamicBody(piece.hull,matrix,friction,mass,C_Fragment);
+    if(breakFilter!=nullptr) body->setFracturePiece(breakFilter,breakGroup,uint32_t(i));
     body->setLabel(obj.visual+" fragment");
     body->setNoiseProfile(impactMaterial(group),group,obj.visual+" fragment");
     body->setBuoyancyFraction(vobBuoyancyFraction(group));
@@ -2792,6 +2810,9 @@ void DynamicWorld::cleanupFragments(BodyData& obj) {
     const bool expired=since>=0 && traceTime>=since && traceTime-since>=30;
     const bool distant=hasFragmentObserver && (body->centerOfMass()-fragmentObserver).quadLength()>3000.f*3000.f;
     if(!obj.fragmentPermanent[i] && (expired || distant)) {
+      if(TestBench::isActive())
+        TestBench::destructionRetire(reinterpret_cast<uintptr_t>(&obj),i,expired,
+                                     hasFragmentObserver ? (body->centerOfMass()-fragmentObserver).length() : -1.f);
       body.reset();
       changed=true;
       }

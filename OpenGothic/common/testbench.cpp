@@ -4752,10 +4752,16 @@ std::string destructionFragments(World& world) {
     if(!destructionOwns(part.parentId))continue;
     if(result.size()>1)result+=',';
     const auto key=std::make_pair(part.parentId,part.piece);
+    // Water at the centre of mass (surface at most 50 cm under it) and a static surface straight above
+    // within 20 m: a float in a pool below the arena is not a piece under the ground.
+    const auto& center=part.centerOfMass;
+    const auto water=world.physic()->waterRay(center,50);
+    const auto above=world.physic()->rayStatic(center+Vec3(0,2000,0),center);
     result+="{\"parent_id\":"+std::to_string(part.parentId)+",\"piece\":"+std::to_string(part.piece)+
       ",\"sleeping\":"+(part.sleeping?"true":"false")+",\"position_cm\":"+ragdollVector(movablePosition(part.transform))+
       ",\"velocity_cm_s\":"+ragdollVector(part.velocity)+",\"max_displacement_cm\":"+
-      ragdollNumber(bench.destructionFragmentTravel[key])+"}";
+      ragdollNumber(bench.destructionFragmentTravel[key])+",\"center_cm\":"+ragdollVector(center)+
+      ",\"in_water\":"+(water.hasCol?"true":"false")+",\"under_ground\":"+(above.hasCol?"true":"false")+"}";
     }
   return result+"]";
   }
@@ -19551,6 +19557,14 @@ void TestBench::destructionBreak(uintptr_t body,size_t pieces,float milliseconds
     ",\"t_game_ms\":"+std::to_string(world?world->tickCount():0)+",\"arrows\":"+std::to_string(bench.destructionArrows));
   // Not inside a timed window: loading the pieces would land in the measured break frame.
   if(world && !bench.movableMeasuring)fracturePiecesBreak(bench.fracturePieces,*world,body,bench.destructionCase);
+  }
+
+void TestBench::destructionRetire(uintptr_t body,size_t piece,bool expired,float observerDistanceCm) {
+  if(scenarioPath==nullptr || !bench.destructionTrace || !destructionOwns(body))return;
+  auto* world=Gothic::inst().world();
+  event("destruction_fragment_retired","\"case\":"+jsonStr(bench.destructionCase)+",\"parent_id\":"+std::to_string(body)+
+    ",\"piece\":"+std::to_string(piece)+",\"sleeping\":true,\"reason\":"+jsonStr(expired?"expired":"distant")+
+    ",\"observer_distance_cm\":"+ragdollNumber(observerDistanceCm)+",\"t_game_ms\":"+std::to_string(world?world->tickCount():0));
   }
 
 void TestBench::destructionMeleeHit(const Npc& actor,size_t affected,float damage) {

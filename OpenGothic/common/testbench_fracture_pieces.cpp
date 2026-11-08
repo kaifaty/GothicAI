@@ -119,7 +119,7 @@ void fracturePiecesBreak(FracturePieces& state,World& world,uintptr_t parent,std
   for(size_t i=0;i<mesh->pieces.size();++i) {
     const auto& source=mesh->pieces[i];
     FracturePieces::Piece piece;
-    piece.index=i;piece.volume=source.volume;piece.group=groupName(source.group);
+    piece.index=i;piece.volume=source.volume;piece.group=groupName(source.group);piece.material=source.group;
     piece.center=source.center;piece.hull=source.hull;
     for(const auto& triangle:source.triangles)
       for(const auto& vertex:triangle.vertices)piece.vertices.push_back(vertex.position);
@@ -158,11 +158,59 @@ void fracturePiecesBreak(FracturePieces& state,World& world,uintptr_t parent,std
     piece.start=apply(body->transform,piece.center);
     item.pieces.push_back(std::move(piece));
     }
+  // Where each piece starts: centre over the ground under it and native hull depth into it.
+  std::string start="[";
+  float deepest=0;
+  size_t under=0;
+  for(const auto& part:world.physic()->fragmentSnapshot()) {
+    if(part.parentId!=parent || part.piece>=item.pieces.size())continue;
+    const auto center=apply(part.transform,item.pieces[part.piece].center);
+    const auto floor=world.physic()->landRay(center+Vec3(0,100,0),400);
+    const float height=floor.hasCol?Vec3::dotProduct(center-floor.v,floor.n):0.f;
+    const float native=world.physic()->fragmentGroundPenetration(parent,part.piece);
+    deepest=std::max(deepest,native);
+    under+=floor.hasCol && height<-1.f;
+    if(start.size()>1)start+=',';
+    start+="["+std::to_string(part.piece)+","+ragdollNumber(height)+","+ragdollNumber(native)+"]";
+    }
+  event("destruction2_start","\"case\":"+jsonStr(item.label)+",\"visual\":"+jsonStr(item.visual)+",\"pieces\":"+
+    std::to_string(item.pieces.size())+",\"below_ground\":"+std::to_string(under)+",\"max_native_ground_penetration_cm\":"+
+    ragdollNumber(deepest)+",\"piece_height_native\":"+start+"]");
   state.breaks.push_back(std::move(item));
+  }
+
+// Frame by frame for 5 s: the first frame a piece's centre is under the ground, with the frame before it.
+void fracturePiecesTrack(FracturePieces::Break& item,World& world) {
+  const uint64_t now=world.tickCount();
+  if(now-item.breakTime>5000)return;
+  for(const auto& part:world.physic()->fragmentSnapshot()) {
+    if(part.parentId!=item.parent || part.piece>=item.pieces.size())continue;
+    auto& piece=item.pieces[part.piece];
+    if(piece.fellReported)continue;
+    const auto center=apply(part.transform,piece.center);
+    const auto floor=world.physic()->landRay(center+Vec3(0,100,0),400);
+    const float height=floor.hasCol?Vec3::dotProduct(center-floor.v,floor.n):-1000.f;
+    if(height<-1.f) {
+      piece.fellReported=true;
+      event("destruction2_fell","\"case\":"+jsonStr(item.label)+",\"visual\":"+jsonStr(item.visual)+",\"piece\":"+
+        std::to_string(part.piece)+",\"group\":"+jsonStr(piece.group)+",\"extent_cm\":["+ragdollNumber(piece.extent[0])+","+
+        ragdollNumber(piece.extent[1])+","+ragdollNumber(piece.extent[2])+"],\"after_break_ms\":"+std::to_string(now-item.breakTime)+
+        ",\"frame_ms\":"+std::to_string(now-piece.lastTime)+",\"floor_hit\":"+(floor.hasCol?"true":"false")+
+        ",\"floor_normal\":"+ragdollVector(floor.n)+",\"height_cm\":"+ragdollNumber(height)+
+        ",\"center_cm\":"+ragdollVector(center)+",\"velocity_cm_s\":"+ragdollVector(part.velocity)+
+        ",\"omega\":"+ragdollVector(part.angularVelocity)+",\"before\":{\"height_cm\":"+ragdollNumber(piece.lastHeight)+
+        ",\"native_ground_penetration_cm\":"+ragdollNumber(piece.lastNative)+",\"center_cm\":"+ragdollVector(piece.lastCenter)+
+        ",\"velocity_cm_s\":"+ragdollVector(piece.lastVelocity)+",\"omega\":"+ragdollVector(piece.lastOmega)+"}");
+      continue;
+      }
+    piece.lastTime=now;piece.lastCenter=center;piece.lastVelocity=part.velocity;piece.lastOmega=part.angularVelocity;
+    piece.lastHeight=height;piece.lastNative=world.physic()->fragmentGroundPenetration(item.parent,part.piece);
+    }
   }
 
 void fracturePiecesTick(FracturePieces& state,World& world) {
   for(auto& item:state.breaks) {
+    fracturePiecesTrack(item,world);
     if(item.samples>=std::size(SampleMs) || world.tickCount()-item.breakTime<SampleMs[item.samples])continue;
     const uint64_t at=SampleMs[item.samples++];
     std::vector<const DynamicWorld::FragmentSnapshot*> parts(item.pieces.size(),nullptr);
@@ -173,8 +221,8 @@ void fracturePiecesTick(FracturePieces& state,World& world) {
     std::vector<float> displacement,resting,volumes;
     std::vector<JPH::Mat44> poses(parts.size());
     std::vector<Vec3> low(parts.size()),high(parts.size());
-    size_t missing=0,flat=0,onEdge=0,upright=0,sleeping=0,restingAsleep=0,fell=0;
-    float maxJitter=0,maxFloor=0,maxVisible=0,maxPieces=0,maxSpeed=0;
+    size_t missing=0,flat=0,onEdge=0,upright=0,sleeping=0,restingAsleep=0,fell=0,metal=0,metalOnGround=0;
+    float maxJitter=0,maxFloor=0,maxNative=0,maxVisible=0,maxTerrain=0,maxPieces=0,maxSpeed=0;
     std::string rows="[";
     for(size_t i=0;i<parts.size();++i) {
       auto& piece=item.pieces[i];
@@ -188,6 +236,16 @@ void fracturePiecesTick(FracturePieces& state,World& world) {
       const auto floor=world.physic()->landRay(center+Vec3(0,100,0),400);
       const bool below=!floor.hasCol || Vec3::dotProduct(center-floor.v,floor.n)<-1.f;
       if(below)++fell;else resting.push_back(moved);
+      std::string where;
+      if(below) {
+        // A fallen piece: the static surface straight above or below it within 20 m, and water at it.
+        const auto above=world.physic()->rayStatic(center+Vec3(0,2000,0),center);
+        const auto under=world.physic()->rayStatic(center+Vec3(0,5,0),center-Vec3(0,2000,0));
+        const auto water=world.physic()->waterRay(center+Vec3(0,50,0),50);
+        where=",\"static_above_cm\":"+(above.hasCol?ragdollNumber(above.v.y-center.y):std::string("null"))+
+          ",\"static_under_cm\":"+(under.hasCol?ragdollNumber(center.y-under.v.y):std::string("null"))+
+          ",\"water\":"+(water.hasCol?"true":"false")+",\"water_depth_cm\":"+ragdollNumber(water.wdepth);
+        }
       const auto thin=Vec3::normalize(rotate(part.transform,piece.thin));
       const auto along=Vec3::normalize(rotate(part.transform,piece.longAxis));
       // Angle of the broad face from vertical, and of the long axis from vertical, degrees.
@@ -204,15 +262,25 @@ void fracturePiecesTick(FracturePieces& state,World& world) {
       if(last) {
         const float jitter=(center-piece.at13).length();
         if(!below)maxJitter=std::max(maxJitter,jitter);
-        float visible=0,ground=0;
+        float visible=0,ground=0,lowest=std::numeric_limits<float>::infinity(),terrain=lowest;
         poses[i]=joltPose(part.transform);
         low[i]=Vec3(1e9f,1e9f,1e9f);high[i]=Vec3(-1e9f,-1e9f,-1e9f);
         for(const auto& v:piece.vertices) {
           const auto p=apply(part.transform,v);
           low[i]=Vec3(std::min(low[i].x,p.x),std::min(low[i].y,p.y),std::min(low[i].z,p.z));
           high[i]=Vec3(std::max(high[i].x,p.x),std::max(high[i].y,p.y),std::max(high[i].z,p.z));
-          if(floor.hasCol)visible=std::max(visible,-Vec3::dotProduct(p-floor.v,floor.n));
+          if(floor.hasCol)lowest=std::min(lowest,Vec3::dotProduct(p-floor.v,floor.n));
+          // Drawn vertices near the ground against the ground right under them: the plane
+          // under the centre bends away from curved terrain under a 1 m board.
+          if(floor.hasCol && !below && Vec3::dotProduct(p-floor.v,floor.n)<5.f) {
+            const auto under=world.physic()->landRay(p+Vec3(0,30,0),60);
+            if(under.hasCol)terrain=std::min(terrain,p.y-under.v.y);
+            }
           }
+        if(floor.hasCol)visible=std::max(0.f,-lowest);
+        // A hoop lies on the ground when its lowest drawn point is at most 1 cm over the floor, not on a stave.
+        if(piece.material==asset::MaterialGroup::METAL) {++metal;if(floor.hasCol && !below && terrain<=1.f)++metalOnGround;}
+        const float sunk=std::isfinite(terrain)?std::max(0.f,-terrain):0.f;
         if(floor.hasCol && !below) {
           // The ground as a native box whose top face is the floor plane under the piece.
           const auto normal=JPH::Vec3(floor.n.x,floor.n.y,floor.n.z).Normalized();
@@ -221,9 +289,15 @@ void fracturePiecesTick(FracturePieces& state,World& world) {
           const auto pose=JPH::Mat44::sRotationTranslation(JPH::Quat::sFromTo(JPH::Vec3::sAxisY(),normal),top-normal*.5f);
           if(piece.hull!=nullptr)ground=penetration(piece.hull.GetPtr(),poses[i],box.GetPtr(),pose);
           }
-        maxFloor=std::max(maxFloor,ground);maxVisible=std::max(maxVisible,visible);
+        // The plane under the centre misses curved ground under a 1.1 m stave: also the native contact itself.
+        const float native=below?0.f:world.physic()->fragmentGroundPenetration(item.parent,i);
+        maxFloor=std::max(maxFloor,ground);maxNative=std::max(maxNative,native);maxVisible=std::max(maxVisible,visible);
+        maxTerrain=std::max(maxTerrain,sunk);
         extra=",\"jitter_cm\":"+ragdollNumber(jitter)+",\"floor_penetration_cm\":"+ragdollNumber(ground)+
-          ",\"visible_floor_penetration_cm\":"+ragdollNumber(visible);
+          ",\"native_floor_penetration_cm\":"+ragdollNumber(native)+
+          ",\"visible_floor_penetration_cm\":"+ragdollNumber(visible)+
+          ",\"visible_terrain_penetration_cm\":"+ragdollNumber(sunk)+
+          ",\"lowest_over_terrain_cm\":"+ragdollNumber(std::isfinite(terrain)?terrain:0.f);
         }
       if(rows.size()>1)rows+=',';
       rows+="{\"piece\":"+std::to_string(i)+",\"group\":"+jsonStr(piece.group)+",\"volume_cm3\":"+
@@ -232,7 +306,7 @@ void fracturePiecesTick(FracturePieces& state,World& world) {
         ",\"stave\":"+(piece.stave?"true":"false")+",\"center_cm\":"+ragdollVector(center)+
         ",\"displacement_cm\":"+ragdollNumber(moved)+",\"face_from_vertical_deg\":"+ragdollNumber(face)+
         ",\"long_from_vertical_deg\":"+ragdollNumber(length)+",\"sleeping\":"+(part.sleeping?"true":"false")+
-        ",\"speed_cm_s\":"+ragdollNumber(speed)+",\"fell\":"+(below?"true":"false")+extra+"}";
+        ",\"speed_cm_s\":"+ragdollNumber(speed)+",\"fell\":"+(below?"true":"false")+where+extra+"}";
       }
     rows+="]";
     std::string pairs;
@@ -241,15 +315,17 @@ void fracturePiecesTick(FracturePieces& state,World& world) {
       for(size_t i=0;i<parts.size();++i)
         for(size_t j=i+1;j<parts.size();++j) {
           if(parts[i]==nullptr || parts[j]==nullptr || item.pieces[i].hull==nullptr || item.pieces[j].hull==nullptr)continue;
+          // Format 3 hoops pass through the staves of their own break by design.
+          if(item.version==3 && !fractureMaterialsCollide(item.pieces[i].material,item.pieces[j].material))continue;
           if(low[i].x>high[j].x+3 || low[j].x>high[i].x+3 || low[i].y>high[j].y+3 || low[j].y>high[i].y+3 ||
              low[i].z>high[j].z+3 || low[j].z>high[i].z+3)continue;
           const float depth=penetration(item.pieces[i].hull.GetPtr(),poses[i],item.pieces[j].hull.GetPtr(),poses[j]);
           if(depth>maxPieces) {maxPieces=depth;worstA=i;worstB=j;}
           }
-      pairs=",\"max_floor_penetration_cm\":"+ragdollNumber(maxFloor)+",\"max_visible_floor_penetration_cm\":"+
-        ragdollNumber(maxVisible)+",\"max_piece_penetration_cm\":"+ragdollNumber(maxPieces)+
+      pairs=",\"max_floor_penetration_cm\":"+ragdollNumber(maxFloor)+",\"max_native_floor_penetration_cm\":"+ragdollNumber(maxNative)+",\"max_visible_floor_penetration_cm\":"+
+        ragdollNumber(maxVisible)+",\"max_visible_terrain_penetration_cm\":"+ragdollNumber(maxTerrain)+",\"max_piece_penetration_cm\":"+ragdollNumber(maxPieces)+
         ",\"worst_piece_pair\":["+std::to_string(worstA)+","+std::to_string(worstB)+"],\"max_jitter_cm\":"+
-        ragdollNumber(maxJitter);
+        ragdollNumber(maxJitter)+",\"metal\":"+std::to_string(metal)+",\"metal_on_ground\":"+std::to_string(metalOnGround);
       }
     const float largest=volumes.empty()?0.f:*std::max_element(volumes.begin(),volumes.end());
     const float middle=median(volumes);

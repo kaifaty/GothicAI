@@ -4,6 +4,7 @@
 #include "physics/dynamicworld.h"
 #include "physics/physicvbo.h"
 #include "physics/ragdoll.h"
+#include "physics/fracture.h"
 #include "graphics/mesh/animblend.h"
 #include "graphics/mesh/protomesh.h"
 #include "graphics/mesh/skeleton.h"
@@ -32,6 +33,7 @@
 #include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
 #include <Jolt/Physics/Collision/RayCast.h>
 #include <Jolt/Physics/PhysicsSettings.h>
+#include <Jolt/Physics/Collision/CollisionGroup.h>
 
 #include <Jolt/Physics/Collision/CastSphereVsTriangles.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
@@ -2029,6 +2031,7 @@ namespace {
     const bool hadMotion=oldMotionValue!=nullptr;
     const std::string oldMotion=hadMotion ? oldMotionValue : "";
     setenv("OPENGOTHIC_CONTENT",root.c_str(),1);
+    // Direction and falloff are checked with the earlier set, where the hit outweighs separation.
     setenv("OPENGOTHIC_FRACTURE_MOTION","hit=250,falloff=45,outward=60,spin=4,cap=450",1);
     constexpr const char* visual="NW_NATURE_FENCE_01.MRM";
     constexpr uint32_t zenId=6403;
@@ -2133,7 +2136,20 @@ namespace {
               "a changed sidecar piece count must skip saved debris without breaking the intact object");
 
       write(3,40);
-      for(const char* config:{"hit=250, cap=450","hit=abc"}) {
+      unsetenv("OPENGOTHIC_FRACTURE_MOTION");
+      DynamicWorld tuned(nullptr,asset::WorldMesh{});
+      auto tunedObject=make(tuned);
+      require(strike(tuned),"the default motion fixture must break through the stopped blade");
+      tuned.tick(0);
+      const auto defaults=tuned.fragmentSnapshot();
+      require(tunedObject.isBroken() && defaults.size()==pieces.size(),"default motion must preserve every fragment");
+      for(const auto& piece:defaults)
+        require(piece.velocity.length()<=200.001f && piece.angularVelocity.length()<=3.00001f,
+                "the tuned default motion must respect its 200 cm/s cap and 3 rad/s spin");
+      // The far central piece, 92 cm from the blow along it: outward 120 plus hit 150*exp(-92/60).
+      requireNear(defaults[23].velocity.x,120.f+150.f*std::exp(-92.f/60.f),.5f,
+                  "hit=150,falloff=60,outward=120 must be the defaults without the variable");
+      for(const char* config:{"hit=150, falloff = 60,outward=120 ,spin=3, cap=200","hit=abc"}) {
         setenv("OPENGOTHIC_FRACTURE_MOTION",config,1);
         std::vector<std::string> errors;
         Tempest::Log::setOutputCallback([&](Tempest::Log::Mode mode,const char* line) {
@@ -2150,9 +2166,9 @@ namespace {
           require(configuredObject.isBroken() && configuredPieces.size()==pieces.size(),
                   "whitespace and invalid motion overrides must preserve every fragment");
           for(size_t i=0;i<pieces.size();++i) {
-            requireNear((configuredPieces[i].velocity-pieces[i].velocity).length(),0,.0001f,
+            requireNear((configuredPieces[i].velocity-defaults[i].velocity).length(),0,.0001f,
                         "trimmed defaults and invalid overrides must retain the full default linear motion");
-            requireNear((configuredPieces[i].angularVelocity-pieces[i].angularVelocity).length(),0,.0001f,
+            requireNear((configuredPieces[i].angularVelocity-defaults[i].angularVelocity).length(),0,.0001f,
                         "trimmed defaults and invalid overrides must retain the full default spin");
             }
           }
@@ -2193,9 +2209,90 @@ namespace {
                     "version 2 must retain exactly forty centimetres per second outward despite motion overrides");
         requireNear(piece.angularVelocity.length(),0.f,.0001f,"version 2 must not receive added spin");
         }
+      // Hoops and staves: METAL and WOOD of one format 3 break never touch, so a
+      // hoop falls through its wood to the ground; equal materials and v2 stack.
+      const auto writeStack=[&](size_t version) {
+        struct Slab { Tempest::Vec3 size; float x, y; const char* group; };
+        // Version 2 needs eight pieces: four loose blocks lie apart from the stack.
+        const Slab slabs[]={{{40,4,40},0,-28,"WOOD"},{{20,2,20},0,-25,"METAL"},{{20,2,20},0,-23,"METAL"},{{10,2,10},0,-21,"WOOD"},
+                            {{10,4,10},80,-28,"WOOD"},{{10,4,10},100,-28,"WOOD"},{{10,4,10},120,-28,"WOOD"},{{10,4,10},140,-28,"WOOD"}};
+        const size_t count=version==3 ? 4 : 8;
+        std::ofstream file(root/"meshes/model.fracture");
+        file<<"GOTHIC_FRACTURE "<<version<<"\nsource "<<source.size<<' '<<std::hex<<source.crc32<<std::dec
+            <<"\npieces "<<count<<'\n';
+        for(size_t k=0;k<count;++k) {
+          const auto& slab=slabs[k];
+          auto piece=movableBox(slab.size);
+          for(auto& p:piece.positions) { p.x+=slab.x; p.y+=slab.y; }
+          file<<"piece "<<slab.size.x*slab.size.y*slab.size.z<<' '<<slab.x<<' '<<slab.y<<" 0 ";
+          if(version==3) {
+            file<<slab.group<<" 1 12\nhull 8\n";
+            for(const auto& p:piece.positions) file<<p.x<<' '<<p.y<<' '<<p.z<<'\n';
+            }
+          else file<<"12\n";
+          for(const auto& triangle:piece.sub_meshes[0].triangles) {
+            file<<"tri WOOD.TGA\n";
+            for(const auto index:triangle.wedges) {
+              const auto& p=piece.positions[index];
+              file<<p.x<<' '<<p.y<<' '<<p.z<<" 0 1 0 0 0\n";
+              }
+            }
+          }
+        require(bool(file),"the hoop fixture must write the complete sidecar");
+        };
+      setenv("OPENGOTHIC_FRACTURE_MOTION","hit=0,outward=0,spin=0",1);
+      float stacked[2][4]={};
+      for(const size_t version:{size_t(3),size_t(2)}) {
+        writeStack(version);
+        DynamicWorld ground(nullptr,movableFloor());
+        auto stackObject=ground.addMovableVob(proto,visual,at(0,30,0),.04f,true,"fence",true,zenId);
+        if(version==3) {
+          MeleeBladeContact contact {};
+          contact.world=contact.stopsSwing=true;
+          contact.movableVob=ground.movableVobSnapshot()[0].id;
+          contact.point={-50,30,0};
+          contact.velocityCmS={250,0,0};
+          std::vector<uintptr_t> struck;
+          require(ground.meleeStoppedMovableVob(contact,40,1000,FractureRule::Melee::OneHand,nullptr,struck),
+                  "the hoop fixture must break through the stopped blade");
+          }
+        else require(ground.meleeMovableVobs({-100,30,0},{1,0,0},150,40,1000,FractureRule::Melee::OneHand)==1,
+                     "the version 2 stack must break through the original melee path");
+        tickWater(ground,300);
+        const auto settled=ground.fragmentSnapshot();
+        require(stackObject.isBroken() && settled.size()==(version==3 ? 4u : 8u),"the hoop fixture must keep every piece");
+        for(const auto& piece:settled) {
+          if(piece.piece>=4) continue;
+          Tempest::Vec3 center(0,piece.piece==0 ? -28.f : piece.piece==1 ? -25.f : piece.piece==2 ? -23.f : -21.f,0);
+          piece.transform.project(center);
+          stacked[version==3 ? 0 : 1][piece.piece]=center.y;
+          }
+        }
+      // Centres over the floor at y=0: the wood slab 0..4, hoop 1 on the ground, hoop 2 on hoop 1,
+      // the small wood slab through both hoops onto the large one. Version 2 keeps the authored stack.
+      const float expected[2][4]={{2,1,3,5},{2,5,7,9}};
+      const float slop=CollisionWorld::fragmentPenetrationSlop*100.f+.1f;
+      for(int version=0;version<2;++version)
+        for(int piece=0;piece<4;++piece)
+          requireNear(stacked[version][piece],expected[version][piece],slop,
+                      version==0 ? "format 3 METAL and WOOD of one break must not collide, each with the ground and its own material must" :
+                                   "version 2 pieces of one break must keep colliding with each other");
+      // Another break of the same mesh, or a plain body, still meets the hoop.
+      FractureMesh hoopMesh;
+      hoopMesh.pieces.resize(2);
+      hoopMesh.pieces[0].group=asset::MaterialGroup::METAL;
+      hoopMesh.pieces[1].group=asset::MaterialGroup::WOOD;
+      const auto filter=fractureGroupFilter(hoopMesh);
+      const JPH::CollisionGroup hoop(filter,0x80000000u,0);
+      require(!hoop.CanCollide(JPH::CollisionGroup(filter,0x80000000u,1)) &&
+              hoop.CanCollide(JPH::CollisionGroup(filter,0x80000001u,1)) && hoop.CanCollide(JPH::CollisionGroup()),
+              "the hoop filter must separate only METAL and WOOD of the same break");
       std::printf("Own fracture v3: forty pieces, WOOD 0.4 / METAL 1.1 friction; hit mean %.6f, near %.6f > far %.6f cm/s; "
-                  "save/load and changed-count skip; whitespace and invalid override fallback; override cap 50; v2 outward 40 cm/s passed\n",
-                  double(mean),double(pieces[16].velocity.x),double(pieces[23].velocity.x));
+                  "save/load and changed-count skip; whitespace and invalid override fallback; override cap 50; v2 outward 40 cm/s; "
+                  "hoops v3 %.2f/%.2f/%.2f/%.2f, v2 %.2f/%.2f/%.2f/%.2f cm passed\n",
+                  double(mean),double(pieces[16].velocity.x),double(pieces[23].velocity.x),
+                  double(stacked[0][0]),double(stacked[0][1]),double(stacked[0][2]),double(stacked[0][3]),
+                  double(stacked[1][0]),double(stacked[1][1]),double(stacked[1][2]),double(stacked[1][3]));
       }
     if(hadContent) setenv("OPENGOTHIC_CONTENT",oldContent.c_str(),1); else unsetenv("OPENGOTHIC_CONTENT");
     if(hadMotion) setenv("OPENGOTHIC_FRACTURE_MOTION",oldMotion.c_str(),1); else unsetenv("OPENGOTHIC_FRACTURE_MOTION");
@@ -2287,6 +2384,30 @@ namespace {
                 fragments.size(),double(lowestCenter),double(lowestVertex));
     require(lowestCenter>=0.f,"a rapidly rotating convex fragment must never fall through one-sided terrain");
     require(lowestVertex>=-6.f,"rotating fragment vertices must stay within the native contact band of uneven terrain");
+
+    // Fine slop: a 4 cm board born 1.5 cm deep in the floor is pushed out to 0.5 cm as a fragment;
+    // as an item it stays within Jolt's 2 cm slop and is not pushed at all.
+    CollisionWorld flat;
+    JPH::TriangleList ground;
+    ground.emplace_back(JPH::Float3(-5,0,-5),JPH::Float3(-5,0,5),JPH::Float3(5,0,-5));
+    ground.emplace_back(JPH::Float3(5,0,-5),JPH::Float3(-5,0,5),JPH::Float3(5,0,5));
+    const auto groundShape=JPH::MeshShapeSettings(ground).Create();
+    require(!groundShape.HasError(),"the fine slop fixture needs a one-sided floor");
+    auto groundBody=flat.addCollisionBody(groundShape.Get(),at(0,0,0),.8f,DynamicWorld::C_Landscape);
+    const auto board=JPH::BoxShapeSettings(JPH::Vec3(.5f,.02f,.1f),.001f).Create();
+    require(!board.HasError(),"the fine slop fixture needs a thin board");
+    auto fragment=flat.addDynamicBody(board.Get(),at(-150,.5f,0),.8f,8.f,DynamicWorld::C_Fragment);
+    auto item=flat.addDynamicBody(board.Get(),at(150,.5f,0),.8f,8.f,DynamicWorld::C_Item);
+    for(int i=0;i<120;++i) flat.tick(16);
+    float depth[2]={};
+    for(int k=0;k<2;++k)
+      for(const auto& contact:flat.overlaps(k==0 ? *fragment : *item,0.f,1u<<DynamicWorld::C_Landscape))
+        depth[k]=std::max(depth[k],contact.depth);
+    std::printf("Fine slop: board born 1.5 cm deep, after 2 s fragment %.3f cm, item %.3f cm\n",double(depth[0]),double(depth[1]));
+    require(fragment->position().y>0.f && depth[0]<=CollisionWorld::fragmentPenetrationSlop*100.f+.05f,
+            "a fragment must be pushed out to its 0.5 cm slop");
+    require(item->position().y>0.f && depth[1]>1.f && depth[1]<2.f,
+            "an item must keep Jolt's 2 cm slop: only C_Fragment uses the fine slop");
     }
 
   void testMovableVobLegacyCollision() {

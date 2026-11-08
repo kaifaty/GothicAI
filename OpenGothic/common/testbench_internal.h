@@ -131,9 +131,15 @@ struct FracturePieces {
     size_t index=0;
     double volume=0;
     std::string group;
+    asset::MaterialGroup material=asset::MaterialGroup::UNDEFINED;
     Tempest::Vec3 center,thin,longAxis,start,at13;
     float extent[3]={};
     bool flat=false,stave=false;
+    // Frame-by-frame track until the piece first goes below the ground (destruction2_fell).
+    bool fellReported=false;
+    uint64_t lastTime=0;
+    Tempest::Vec3 lastCenter,lastVelocity,lastOmega;
+    float lastHeight=0,lastNative=0;
     std::vector<Tempest::Vec3> vertices;
     JPH::ShapeRefC hull;
     };

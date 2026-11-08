@@ -4,6 +4,8 @@
 
 #pragma once
 
+#include <Jolt/Physics/Collision/ObjectLayer.h> // GothicAI: mFineSlopLayers
+
 JPH_NAMESPACE_BEGIN
 
 /// If objects are closer than this distance, they are considered to be colliding (used for GJK) (unit: meter)
@@ -63,6 +65,20 @@ struct PhysicsSettings
 
 	// GothicAI: Object layer mask for retaining the deepest EPA contact point; zero preserves upstream behavior.
 	uint32		mDeepestContactLayers = 0;
+
+	// GothicAI: Object layer mask whose contacts use mFinePenetrationSlop instead of mPenetrationSlop, in the
+	// position solve and as the LinearCast penetration limit of a body in the mask; zero preserves upstream behavior.
+	uint32		mFineSlopLayers = 0;
+
+	// GothicAI: Penetration slop of contacts with a body in mFineSlopLayers (unit: meters)
+	float		mFinePenetrationSlop = 0.005f;
+
+	// GothicAI: The slop of a contact between two object layers
+	inline float GetPenetrationSlop(ObjectLayer inLayer1, ObjectLayer inLayer2) const
+	{
+		const bool fine = (inLayer1 < 32 && (mFineSlopLayers & (1u << inLayer1)) != 0) || (inLayer2 < 32 && (mFineSlopLayers & (1u << inLayer2)) != 0);
+		return fine ? mFinePenetrationSlop : mPenetrationSlop;
+	}
 
 	/// Maximum distance to correct in a single iteration when solving position constraints (unit: meters)
 	float		mMaxPenetrationDistance = 0.2f;

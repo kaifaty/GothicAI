@@ -76,6 +76,8 @@ namespace TestBench {
   void     physicsNoiseHeard(const Npc& npc, const PhysicsNoise& noise, bool callbackDispatched = false);
   // Native destruction telemetry: includes body creation and the render callback.
   void     destructionBreak(uintptr_t body, size_t pieces, float milliseconds);
+  // A sleeping piece removed by DynamicWorld::cleanupFragments: expired, or farther than 30 m from the hero.
+  void     destructionRetire(uintptr_t body, size_t piece, bool expired, float observerDistanceCm);
   void     destructionMeleeHit(const Npc& actor, size_t affected, float damage);
   void     movementImpulseHandoff(const Npc& actor, std::string_view backend, uint32_t fromState,
                                   uint32_t toState, const Tempest::Vec3& velocity);

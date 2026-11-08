@@ -8,6 +8,8 @@
 #include <string_view>
 #include <vector>
 
+#include <Jolt/Physics/Collision/GroupFilter.h>
+
 // Offline cache geometry in source-visual centimetres. Piece transforms use
 // these coordinates directly, so texture coordinates remain unchanged.
 struct FractureMesh {
@@ -34,6 +36,13 @@ struct FractureMesh {
   // Loaded GLB replacements use only their v2/v3 sidecar, matched to the loaded bytes.
   static std::shared_ptr<const FractureMesh> load(std::string_view visual);
   };
+
+// Format 3 pieces of one break: METAL hoops and bands never touch WOOD staves
+// and boards, so the hoops fall free as the wood spreads. Everything else collides.
+bool fractureMaterialsCollide(asset::MaterialGroup a, asset::MaterialGroup b);
+// Native filter of one format 3 break: the group ID is the break, the sub-group the
+// piece index, and the table disables only the pairs fractureMaterialsCollide rejects.
+JPH::Ref<JPH::GroupFilter> fractureGroupFilter(const FractureMesh& mesh);
 
 struct FractureRule {
   enum class Melee { Fist, OneHand, TwoHand };

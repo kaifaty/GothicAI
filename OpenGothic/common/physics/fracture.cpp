@@ -3,6 +3,7 @@
 #include "resources.h"
 #include "utils/userhome.h"
 
+#include <Jolt/Physics/Collision/GroupFilterTable.h>
 #include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
 #include <Jolt/Physics/Collision/Shape/StaticCompoundShape.h>
 #include <Tempest/Log>
@@ -59,6 +60,22 @@ bool materialGroup(std::string_view name, asset::MaterialGroup& group) {
   return true;
   }
 }
+
+bool fractureMaterialsCollide(asset::MaterialGroup a, asset::MaterialGroup b) {
+  using G=asset::MaterialGroup;
+  return !((a==G::METAL && b==G::WOOD) || (a==G::WOOD && b==G::METAL));
+  }
+
+JPH::Ref<JPH::GroupFilter> fractureGroupFilter(const FractureMesh& mesh) {
+  // A native table (Jolt is built without RTTI, so its filter cannot be subclassed here).
+  // Other breaks and ragdolls carry other group IDs and collide with every piece.
+  JPH::Ref<JPH::GroupFilterTable> table=new JPH::GroupFilterTable(uint32_t(mesh.pieces.size()));
+  for(uint32_t i=0;i<mesh.pieces.size();++i)
+    for(uint32_t j=i+1;j<mesh.pieces.size();++j)
+      if(!fractureMaterialsCollide(mesh.pieces[i].group,mesh.pieces[j].group))
+        table->DisableCollision(i,j);
+  return JPH::Ref<JPH::GroupFilter>(table.GetPtr());
+  }
 
 const FractureRule* FractureRule::classify(std::string_view visual) {
   static const auto rules=[] {

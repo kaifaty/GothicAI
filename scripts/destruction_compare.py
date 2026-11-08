@@ -54,8 +54,21 @@ def fixture(rows, case, enabled=True):
     return setup, begin, final
 
 
+def retired(rows, case):
+    """Sleeping pieces DynamicWorld::cleanupFragments removed (expired, or over 30 m from the hero)."""
+    found = set()
+    for row in rows:
+        if row['kind'] == 'destruction_fragment_retired' and row['case'] == case:
+            require(row['sleeping'] and row['reason'] in ('expired', 'distant'), f'{case}: invalid fragment cleanup')
+            key = (row['parent_id'], row['piece'])
+            require(key not in found, f'{case}: piece {key} retired twice')
+            found.add(key)
+    return found
+
+
 def broken(rows, case, final, count):
     catalog = bodies(final)
+    cleaned = retired(rows, case)
     breaks = [row for row in rows if row['kind'] == 'destruction_break' and row['case'] == case]
     require(len(breaks) == count and len({row['body'] for row in breaks}) == count,
             f'{case}: expected {count} native breaks; got {len(breaks)}')
@@ -63,19 +76,41 @@ def broken(rows, case, final, count):
     fragments = final['fragments']
     require(len({(part['parent_id'], part['piece']) for part in fragments}) == len(fragments), 'duplicate native fragments')
     for row in breaks:
-        parts = [part for part in fragments if part['parent_id'] == row['body']]
-        require(8 <= row['pieces'] <= 64 and len(parts) == row['pieces'], f'{case}: chunk count differs from native break')
+        present = {part['piece'] for part in fragments if part['parent_id'] == row['body']}
+        gone = {piece for parent, piece in cleaned if parent == row['body']}
+        require(8 <= row['pieces'] <= 64 and present <= set(range(row['pieces'])), f'{case}: chunk count differs from native break')
+        require(not present & gone, f'{case}: a retired piece is still present')
+        lost = set(range(row['pieces'])) - present - gone
+        require(not lost, f'{case}: pieces {sorted(lost)} of {row["body"]} lost without cleanup')
         require(math.isfinite(row['break_ms']) and row['break_ms'] >= 0, 'break timing invalid')
     return breaks, fragments
 
 
-def asleep15(rows, case, report=False):
+def asleep15(rows, case, report=False, final=None):
+    """Pieces on land sleep at 15 s. A piece in water at 15 s is counted apart: it passes when it is not
+    under the ground (a float still rocks after a fall into a pool); its sleep at the final checkpoint is reported."""
     row = one(rows, 'destruction_sleep15', case=case)
     require(15_000 <= row['elapsed_since_last_break_ms'] <= 15_100, f'{case}: sleep observation did not occur at 15s')
-    asleep = bool(row['fragments']) and all(part['sleeping'] for part in row['fragments'])
+    parts = row['fragments']
+    land = [part for part in parts if not part.get('in_water', False)]
+    water = [part for part in parts if part.get('in_water', False)]
+    later, later_ms = None, None
+    if final is not None and water:
+        last = {(part['parent_id'], part['piece']): part for part in final['fragments']}
+        later = sum(1 for part in water if last.get((part['parent_id'], part['piece']), {}).get('sleeping', False))
+        later_ms = final['elapsed_ms']
+    summary = {'land_asleep': sum(part['sleeping'] for part in land), 'land': len(land), 'water': len(water),
+               'water_under_ground': sum(part.get('under_ground', False) for part in water),
+               'water_asleep_later': later, 'later_ms': later_ms}
+    asleep = bool(parts) and summary['land_asleep'] == len(land) and summary['water_under_ground'] == 0
+    line = f"на суше спят {summary['land_asleep']}/{summary['land']}, в воде {summary['water']}"
+    if water:
+        line += (f" (спят к {later_ms / 1000:.0f} с: {later}/{len(water)})" if later is not None else '') + \
+                f", под землёй {summary['water_under_ground']}"
+    summary['line'] = line
     if report:
-        return asleep
-    require(asleep, f'{case}: fragments awake at 15s')
+        return asleep, summary
+    require(asleep, f'{case}: fragments awake at 15s: {line}')
     return row['elapsed_since_last_break_ms']
 
 
@@ -150,13 +185,13 @@ def measured(directory, enabled):
     setup, _, final = fixture(rows, 'five', enabled)
     require(len(setup['bodies']) == 5, 'performance fixture must contain five intact things')
     one(rows, 'spell_physics_cast', id=23)
-    breaks, asleep = [], True
+    breaks, asleep, sleep15 = [], True, None
     if enabled:
         breaks, _ = broken(rows, 'five', final, 5)
         require(max(row['t_game_ms'] for row in breaks) - min(row['t_game_ms'] for row in breaks) <= 100,
                 'five bodies did not break in the same physical impact')
         # Reported with the timings rather than raised: pieces through the ground never sleep.
-        asleep = asleep15(rows, 'five', report=True)
+        asleep, sleep15 = asleep15(rows, 'five', report=True, final=final)
     else:
         require(all(not body['broken'] for body in final['bodies']), 'disabled destruction broke a body')
     meta = json.loads((directory / 'appcadence.csv.json').read_text())
@@ -183,6 +218,8 @@ def measured(directory, enabled):
             'break_frame_max_ms': max(break_intervals, default=0), 'physics_p95_ms': percentile(costs),
             'physics_mean_ms': statistics.mean(costs), 'native_samples': len(native),
             'break_costs_ms': [row['break_ms'] for row in breaks], 'fragments_asleep_15s': asleep,
+            'sleep_15s': sleep15['line'] if sleep15 else None,
+            'retired_pieces': len(retired(rows, 'five')),
             'fixture': sorted(body['visual'] for body in setup['bodies'])}
 
 
