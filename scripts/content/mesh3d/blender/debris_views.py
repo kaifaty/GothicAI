@@ -13,7 +13,6 @@ import sys
 from pathlib import Path
 
 import bpy
-import numpy as np
 from mathutils import Matrix, Vector
 
 argv = sys.argv[sys.argv.index("--") + 1:]

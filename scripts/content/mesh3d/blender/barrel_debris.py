@@ -249,7 +249,7 @@ def build(B, spec, out):
     def inner_polygon(level):
         pts = []
         for i in range(sides):
-            edges, zs, radii, _ = stave_frame(i)
+            edges, _zs, radii, _ = stave_frame(i)
             radius = radii[level] - t - clear
             pts += [(cx + radius * math.cos(a), cy + radius * math.sin(a)) for a in edges[level]]
         return pts
@@ -282,10 +282,10 @@ def build(B, spec, out):
             u_left = B.lid_plank[p] * B.plank_u
             off = float(B.lid_off[p])
 
-            def plank_uv(v):
+            def plank_uv(v, u_left=u_left, left=left, off=off):
                 return (u_left + (v.co.x - left) / pw * B.plank_u, v.co.y - cy + off)
 
-            def put(verts, zone, uvs):
+            def put(verts, zone, uvs, bm=bm, uvl=uvl):
                 f = bm.faces.new(verts)
                 f.material_index = zone
                 for loop, coord in zip(f.loops, uvs):
