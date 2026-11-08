@@ -330,7 +330,9 @@ def cut_content(args):
             count = stats["pieces"]
             summary = (f"version 3 from {pieces_glb.name}: {count} pieces, {stats['hulls']} hulls, "
                        f"largest piece {stats['largest']:.0f} cm3, overlap {10 * stats['overlap']:.2f} mm, "
-                       f"hulls/pieces volume {stats['hull_volume'] / stats['volume']:.3f}")
+                       f"hulls/pieces volume {stats['hull_volume'] / stats['volume']:.3f}, bonds " +
+                       (", ".join(f"{kind} {n}" for kind, n in stats["bonds"].items()) or "none") +
+                       f" ({stats['islands']} islands joined)")
             # per class of detail: how far the written hulls stand outside (and a ring's inside), the least
             # cover of the shapes before the 1.5 mm shrink, the largest overlap with another piece
             classes = "".join(
