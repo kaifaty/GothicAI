@@ -1,5 +1,7 @@
 #include "testbench_internal.h"
 
+#include "game/herodeed.h"
+
 #include <algorithm>
 #include <cmath>
 
@@ -301,6 +303,126 @@ bool npcSpeedTick(NpcSpeedTest& state,World& world) {
     return false;
     }
   npcSpeedPrepare(state,world);
+  return true;
+  }
+
+bool npcSimCommand(NpcDuel& duelState,NpcTierTest& tierState,NpcSpeedTest& speedState,size_t& pc,const std::vector<std::string>& prog,const std::vector<std::string>& a,World& w,Npc& pl) {
+  const std::string& c = a[0];
+  if(c=="npctier") {
+    // npctier <npc> full|simplified|auto: a runtime-only override of one actor.
+    Npc* npc=a.size()==3?findNpc(w,pl,a[1]):nullptr;
+    if(!npc || (a[2]!="full" && a[2]!="simplified" && a[2]!="auto")) {
+      arenaAbort("npctier expects an existing NPC and full, simplified or auto");
+      return true;
+      }
+    npc->setSimTierOverride(a[2]=="auto"?std::nullopt:
+      std::optional<NpcSimTier>(a[2]=="full"?NpcSimTier::Full:NpcSimTier::Simplified));
+    event("npc_tier_override","\"npc\":"+jsonStr(symName(w,npc))+",\"mode\":"+jsonStr(a[2]));
+    }
+  else if(c=="npctier-test") {
+    // npctier-test <npc> <start waypoint> <end waypoint>: 20 walking legs and
+    // 20 turns, each with one switch in either direction while still active.
+    Npc* npc=a.size()==4?findNpc(w,pl,a[1]):nullptr;
+    const auto* start=a.size()==4?w.findPoint(a[2],false):nullptr;
+    const auto* end=a.size()==4?w.findPoint(a[3],false):nullptr;
+    if(!npc || npc==&pl || !start || !end || start==end) {
+      arenaAbort("npctier-test expects an NPC and two distinct existing waypoints");
+      return true;
+      }
+    tierState=NpcTierTest();
+    auto& test=tierState;
+    test.npc=npc;test.ends[0]=start;test.ends[1]=end;
+    test.deadline=w.tickCount()+1800000;
+    npc->setInteraction(nullptr,true);npc->clearAiQueue();npc->clearState(false);
+    npc->setExternalControl(true);npc->stopWalking();npc->closeWeapon(true);
+    npc->setSimTierOverride(NpcSimTier::Full);npc->setWalkMode(WalkBit::WM_Walk);
+    const auto floor=w.physic()->landRay(start->position()+Vec3(0,100,0),300.f);
+    if(!floor.hasCol) {test.npc=nullptr;arenaAbort("npctier-test start waypoint has no ground");return true;}
+    npc->setPosition(floor.v);npc->updateTransform();
+    test.started=npc->position();test.lastPosition=npc->position();test.lastAngle=npc->rotation();
+    npc->aiPush(AiQueue::aiGoToPoint(*end));
+    event("npc_tier_transition_start","\"npc\":"+jsonStr(symName(w,npc))+",\"from\":"+jsonStr(start->name)+
+      ",\"to\":"+jsonStr(end->name));
+    }
+  else if(c=="npcspeed") {
+    const auto* start=a.size()==2?w.findPoint(a[1],false):nullptr;
+    const WayPoint* end=nullptr;
+    float length=0;
+    if(start)for(const auto& connection:start->connections()) {
+      const auto edge=connection.point->groundPos-start->groundPos;
+      const float distance=std::hypot(edge.x,edge.z);
+      if(distance>length) {end=connection.point;length=distance;}
+      }
+    if(!start || !end || length<500.f) {
+      arenaAbort("npcspeed expects an authored waypoint with a connected edge at least 5 m long");return true;
+      }
+    // This fresh calibration world has no ambient combat, crowding or other
+    // actors using the edge; the player's distant position is retained.
+    for(uint32_t i=w.npcCount();i>0;--i)
+      if(auto* npc=w.npcById(i-1);npc!=&pl)w.removeNpc(*npc);
+    speedState=NpcSpeedTest();
+    auto& test=speedState;test.start=start;test.end=end;test.length=length;
+    npcSpeedPrepare(speedState,w);
+    }
+  else if(c=="npcduel") {
+    auto fail=[&](const std::string& reason) {
+      say("npcduel: "+reason);event("npc_duel_error","\"reason\":"+jsonStr(reason));
+      pc=prog.size();
+      };
+    if(a.size()<4 || a.size()>5) {fail("expected attacker defender seed [timeout_ms]");return true;}
+    const auto first=w.script().findSymbolIndex(a[1]), second=w.script().findSymbolIndex(a[2]);
+    const auto attack=w.script().findSymbolIndex("ZS_ATTACK");
+    if(first==size_t(-1) || second==size_t(-1) || attack==size_t(-1)) {fail("missing script instance or ZS_ATTACK");return true;}
+    const float an=pl.rotation()*float(M_PI)/180.f;
+    const Vec3 forward(std::cos(an),0,std::sin(an)), side(-forward.z,0,forward.x);
+    const Vec3 center=pl.position()+forward*1200.f;
+    Vec3 pos[]={center-side*150.f,center+side*150.f};
+    for(auto& p:pos) {
+      DynamicWorld::RayLandResult ground;
+      for(float y=p.y+1500;y>p.y-1500 && !ground.hasCol;y-=400)
+        ground=w.physic()->ray({p.x,y,p.z},{p.x,y-450,p.z});
+      if(!ground.hasCol) {fail("arena ground not found");return true;}
+      p.y=ground.v.y;
+      }
+    auto& duel=duelState;
+    duel=NpcDuel{};
+    duel.seed=uint32_t(std::stoul(a[3]));
+    const uint64_t timeout=a.size()>4 ? std::stoull(a[4]) : 180000;
+    w.script().setSeed(duel.seed);
+    duel.actors[0]=w.addNpc(first,pos[0]);duel.actors[1]=w.addNpc(second,pos[1]);
+    for(size_t i=0;i<2;++i) {
+      auto* npc=duel.actors[i];
+      if(npc==nullptr || npc->isMonster() || npc->handle().guild>=16) {
+        for(auto*& copy:duel.actors)if(copy) {w.removeNpc(*copy);copy=nullptr;}
+        fail("two human NPCs with guild < 16 are required");return true;
+        }
+      duel.before[i]=npcDuelSnapshot(w,*npc);
+      if(auto* weapon=npc->currentMeleeWeapon())duel.weapons[i]=weapon->clsId();
+      auto& flags=npc->handle().flags;
+      flags=daedalus::NpcFlag(uint32_t(flags)&~uint32_t(daedalus::NpcFlag::IMMORTAL));
+      npc->setDirection(pos[1-i]-pos[i]);npc->updateTransform();
+      npc->setProcessPolicy(NpcProcessPolicy::AiNormal);
+      }
+    pl.handle().flags=daedalus::NpcFlag(uint32_t(pl.handle().flags)|uint32_t(daedalus::NpcFlag::IMMORTAL));
+    pl.clearAiQueue();pl.clearGoTo();pl.clearSpeed();
+    Npc& npc=*duel.actors[0];Npc& target=*duel.actors[1];
+    // Same nonlethal start as npc_act fight{deed:true}; the defender retains its constructor state.
+    auto& aiv=npc.handle().aivar;
+    aiv[size_t(HeroDeed::constant(npc,"AIV_ATTACKREASON"))]=HeroDeed::constant(npc,"AR_NONE");
+    aiv[size_t(HeroDeed::constant(npc,"AIV_LASTFIGHTAGAINSTPLAYER"))]=HeroDeed::constant(npc,"FIGHT_CANCEL",0);
+    aiv[size_t(HeroDeed::constant(npc,"AIV_LASTFIGHTCOMMENT"))]=0;
+    npc.stopListening();npc.thinkOfAnswer(0);npc.clearAiQueue();
+    if(!npc.startState(ScriptFn(attack),"",gtime::endOfTime(),true)) {
+      for(auto*& copy:duel.actors) {w.removeNpc(*copy);copy=nullptr;}
+      fail("cannot start ZS_ATTACK");return true;
+      }
+    npc.setOther(&target);npc.setVictim(nullptr);npc.setTarget(&target);
+    npc.setNonlethalFight(target);npc.setServerDeed("attack",&target);
+    if(npc.weaponState()==WeaponState::NoWeapon)npc.aiPush(AiQueue::aiDrawWeapon());
+    duel.from=w.tickCount();duel.end=duel.from+timeout;duel.active=true;
+    Gothic::inst().onCombatHit.bind(&duel,&NpcDuel::hit);
+    }
+  else return false;
   return true;
   }
 

@@ -3,7 +3,10 @@
 ## Как работает сейчас
 
 Bench families are extracted into `common/testbench_<family>.cpp`, with shared state types and helpers in `testbench_internal.h`.
-The dispatcher, tick and reset remain in `testbench.cpp` for now.
+The dispatcher calls one `bool <family>Command(...)` wrapper in each extracted family file:
+`npc_sim`, `water`, `character`, `monster`, `furniture_parts`, `placed_items`, `item_hulls` and `fracture_pieces`.
+Each wrapper handles its command branches in their original order and returns whether it matched.
+Tick and reset remain in `testbench.cpp`, along with water-film and monster camera/follow commands.
 Healing observations, commands and checks live in `common/testbench_healing.cpp`; its `Healing` state
 in `testbench_internal.h` keeps the current use separate from walk-speed references retained across `begin`.
 Family functions take that state by reference; the dispatcher also passes the melee-shadow actors.

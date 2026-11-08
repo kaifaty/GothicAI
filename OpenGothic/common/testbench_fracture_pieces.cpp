@@ -386,4 +386,17 @@ void fracturePiecesStand(Npc* actor,const Vec3& stand,const Vec3& facing) {
         ",\"distance_cm\":"+ragdollNumber((actor->position()-from).length()));
   }
 
+bool fracturePiecesCommand(const std::vector<uintptr_t>& ids,Npc* actor,const Vec3& stand,const Vec3& direction,CamMode& cam,bool& cutPending,const std::vector<std::string>& a,World& w) {
+  const std::string& c = a[0];
+  if(c=="destruction2" && a.size()==2 && (a[1]=="checkpoint" || a[1]=="stand")) a[1]=="checkpoint" ? destructionCheckpoint(w) : fracturePiecesStand(actor,stand,direction);
+  else if(c=="destruction2" && a.size()==8 && a[1]=="view") {
+    // view <camera xyz> <target xyz>: centimetres from the centre of the prop, held after the break
+    const auto view=fracturePiecesView(w,ids,Vec3(num(a,2,0),num(a,3,0),num(a,4,0)),Vec3(num(a,5,0),num(a,6,0),num(a,7,0)));
+    if(!view) {arenaAbort("destruction view needs a fixture prop");return true;}
+    cam=C_Hold;cutPending=true;lookFrom(view->first,view->second);
+    }
+  else return false;
+  return true;
+  }
+
 }

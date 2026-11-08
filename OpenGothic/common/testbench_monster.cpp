@@ -869,4 +869,129 @@ void monsterCharacterFields(MonsterCharacter& state,const MonsterCharacterContex
     }
   }
 
+bool monsterCharacterCommand(MonsterCharacter& state,const MonsterCharacterContext& context,const std::vector<std::string>& a,World& w,Npc& pl) {
+  const std::string& c = a[0];
+  if(c=="monstercharacter" && a.size()==2 && (a[1]=="on" || a[1]=="off")) {
+    Gothic::settingsSetI("GAME","monster_character_virtual",a[1]=="on");
+    event("monster_character_toggle","\"enabled\":"+std::string(a[1]=="on"?"true":"false"));
+    }
+  else if(c=="monstercharacter" && a.size()==3 && a[1]=="route")monsterCharacterPrepare(state,context,w,pl,a[2]);
+  else if(c=="monstercharacter" && (a.size()==4 || a.size()==5) && a[1]=="ledge")
+    monsterCharacterLedge(state,context,w,pl,a[2],num(a,3,NAN),a.size()==5?num(a,4,NAN):0.f);
+  else if(c=="monstercharacter" && a.size()==2 && a[1]=="pack")monsterCharacterPack(state,context,w,pl);
+  else if(c=="monstercharacter" && a.size()==2 && (a[1]=="cliff" || a[1]=="cliff46"))monsterCharacterCliff(state,context,w,pl,a[1]=="cliff46");
+  else if(c=="monstercharacter" && a.size()==2 && a[1]=="crowd")monsterCharacterCrowd(state,context,w,pl);
+#ifdef OPENGOTHIC_ENABLE_APP_CADENCE
+  else if(c=="monstercharacter" && a.size()==3 && a[1]=="measure") {
+    if(!state.monsterCharacterCrowd || !AppCadence::normalClock() || !AppCadence::arm(a[2]=="on")) {
+      monsterCharacterError("monster normal cadence arm requires the twenty-monster fixture");return true;
+      }
+    state.monsterCharacterMeasuring=true;state.monsterCharacterHasWall=false;state.monsterCharacterPerformance.clear();
+    state.monsterCharacterMinNearby=20;state.monsterCharacterMaxNearby=0;state.monsterCharacterMaximumDistance=0;
+    AppCadence::counts(true,uint32_t(state.monsterCharacterExtras.size()),0,uint32_t(w.physic()->physicsStats().bodies),0,0);
+    event("monster_character_measure_begin","\"cv_enabled\":"+std::string(Gothic::settingsGetI("GAME","monster_character_virtual")?"true":"false"));
+    }
+  else if(c=="monstercharacter" && a.size()==2 && a[1]=="report") {
+    state.monsterCharacterMeasuring=false;
+    AppCadence::counts(false,uint32_t(state.monsterCharacterExtras.size()),0,uint32_t(w.physic()->physicsStats().bodies),0,0);
+    event("monster_character_measure_end","\"frames\":"+std::to_string(state.monsterCharacterPerformance.size())+
+      ",\"fixture_actors\":"+std::to_string(state.monsterCharacterExtras.size())+",\"fixture_min_nearby\":"+std::to_string(state.monsterCharacterMinNearby)+
+      ",\"fixture_max_nearby\":"+std::to_string(state.monsterCharacterMaxNearby)+",\"fixture_max_distance_cm\":"+ragdollNumber(state.monsterCharacterMaximumDistance));
+    }
+#endif
+  else if(c=="monstercharacter" && a.size()==2 && a[1]=="begin")monsterCharacterBegin(state,w);
+  else if(c=="monstercharacter" && a.size()==2 && a[1]=="end")monsterCharacterEnd(state,context,w);
+  else if(c=="monstercharacter" && a.size()==2 && a[1]=="reverse") {
+    auto& route=state.monsterCharacterRoute;
+    if(!route.npc || route.name!="wolf_water" || !route.sawSwim) {monsterCharacterError("water exit requires the same wolf after actual swimming entry");return true;}
+    route.goal=route.start;route.start=route.npc->position();route.name="wolf_water_exit";
+    route.destination=WayPoint(route.goal,"FP_MONSTER_CHARACTER_DRY");route.destination.groundPos=route.goal;
+    route.npc->setDirection(route.goal-route.start);route.npc->updateTransform();
+    event("monster_character_water_reverse","\"start_cm\":"+ragdollVector(route.start)+",\"goal_cm\":"+ragdollVector(route.goal));
+    }
+  else if(c=="monstercharacter" && a.size()==3 && a[1]=="attack")monsterCharacterAttack(state,context,w,pl,a[2]);
+  else if(c=="monstercharacter" && a.size()==2 && a[1]=="stair-attack") {
+    auto& route=state.monsterCharacterRoute;
+    if(!route.npc || !route.active || route.name!="wolf_stairs") {
+      monsterCharacterError("stair-attack requires the active stair chase");return true;
+      }
+    const float pending=route.npc->characterVisualPosition().y-route.npc->position().y;
+    route.npc->clearAiQueue();route.npc->clearGoTo();route.npc->stopWalking();
+    const auto* attack=route.npc->playAnimByName("T_FISTATTACKMOVE",BS_HIT);
+    event("monster_character_stair_attack","\"pending_offset_cm\":"+ragdollNumber(pending)+
+      ",\"accepted\":"+(attack?"true":"false"));
+    if(!attack)monsterCharacterError("stair handoff lacks the wolf lunge animation");
+    }
+  else if(c=="monstercharacter" && a.size()==2 && a[1]=="attack-start") {
+    auto& route=state.monsterCharacterRoute;
+    if(!route.npc || !route.attack) {monsterCharacterError("attack-start requires an authored monster attack fixture");return true;}
+    route.npc->clearAiQueue();
+    const Animation::Sequence* sequence=nullptr;
+    if(route.name=="fieldraider_attack") {
+      // Giant_Bug's layer-2 attack does not animate root 0. Prepare the
+      // native S_FISTRUNL layer-1 clip before the ordinary attack entry point;
+      // both translation and collision remain owned by production movement.
+      const auto before=route.npc->animNames();
+      event("monster_character_attack_preparation","\"route\":"+jsonStr(route.name)+",\"before\":"+jsonStr(before)+
+        ",\"root_cm\":"+ragdollVector(route.npc->position())+",\"target_cm\":"+ragdollVector(pl.position())+
+        ",\"target_distance_cm\":"+ragdollNumber((route.npc->position()-pl.position()).length())+
+        ",\"native_stop_cm\":"+ragdollNumber(route.npc->bodyObservationTarget(pl).attackRangeCm));
+      const auto* running=route.npc->playAnimByName("S_FISTRUNL",BS_RUN);
+      event("monster_character_attack_base","\"accepted\":"+std::string(running?"true":"false")+
+        ",\"layers\":"+jsonStr(route.npc->animNames()));
+      if(!running) {monsterCharacterError("fieldraider native running base unavailable");return true;}
+      sequence=route.npc->visualSkeleton()->sequence(route.animation);
+      const bool accepted=sequence && route.npc->doAttack(Npc::Anim::Attack,BS_HIT);
+      const auto after=route.npc->animNames();
+      event("monster_character_attack_running_base","\"accepted\":"+std::string(accepted?"true":"false")+
+        ",\"before\":"+jsonStr(before)+",\"after\":"+jsonStr(after)+
+        ",\"target_distance_cm\":"+ragdollNumber((route.npc->position()-pl.position()).length()));
+      if(!accepted || after.find(route.animation)==std::string::npos) {
+        monsterCharacterError("native fieldraider running attack was not accepted");return true;
+        }
+      } else {
+      route.npc->clearGoTo();route.npc->stopWalking();
+      sequence=route.npc->playAnimByName(route.animation,BS_HIT);
+      if(!sequence) {monsterCharacterError("monster has no authored "+route.animation);return true;}
+      }
+    route.attackStart=route.npc->position();
+    route.attackEnded=0;route.attackDistance=0;route.attackRise=0;route.callbacks=0;
+    monsterCharacterBegin(state,w);
+    event("monster_character_attack_begin","\"route\":"+jsonStr(route.name)+",\"animation\":"+jsonStr(route.animation)+
+      ",\"authored_duration_ms\":"+ragdollNumber(sequence->totalTime())+",\"root_cm\":"+ragdollVector(route.attackStart));
+    }
+  else if(c=="monstercharacter" && a.size()==3 && a[1]=="distance") {
+    const auto* npc=state.monsterCharacterRoute.npc;
+    if(!npc) {monsterCharacterError("monster distance requires fixture actor");return true;}
+    pl.stopWalking();pl.clearAiQueue();pl.setPosition(npc->centerPosition()+Vec3(num(a,2,400),0,0)-(pl.centerPosition()-pl.position()));pl.updateTransform();
+    event("monster_character_distance","\"distance_cm\":"+ragdollNumber((npc->centerPosition()-pl.centerPosition()).length()));
+    }
+  else if(c=="monstercharacter" && a.size()==4 && a[1]=="expect") {
+    const auto* npc=state.monsterCharacterRoute.npc;
+    if(!npc) {monsterCharacterError("monster expectation requires fixture actor");return true;}
+    const bool actual=npc->characterVirtualActive(),expected=num(a,3,0)!=0;
+    event("monster_character_expect","\"label\":"+jsonStr(a[2])+",\"npc_id\":"+std::to_string(w.npcId(npc))+
+      ",\"instance\":"+jsonStr(symName(w,npc))+",\"expected_cv_active\":"+(expected?"true":"false")+
+      ",\"cv_active\":"+(actual?"true":"false")+",\"passed\":"+(actual==expected?"true":"false")+
+      ",\"distance_cm\":"+ragdollNumber((npc->centerPosition()-pl.centerPosition()).length()));
+    if(actual!=expected)monsterCharacterError("monster CV activity disagrees with "+a[2]);
+    }
+  else if(c=="monstercharacter" && a.size()==3 && a[1]=="flying") {
+    monsterCharacterClear(state,context,w);
+    if(!chooseRagdollArena(w,pl)) {monsterCharacterError("flying exclusion requires supported stock ground");return true;}
+    auto& route=state.monsterCharacterRoute;route.name="flying_"+a[2];route.start=context.ragdollArenaPlaces.front();
+    characterFreezeNear(w,pl,route.start,route.start);npcCharacterPlaceHero(w,pl,route.start,route.start+Vec3(1,0,0));
+    route.npc=monsterCharacterActor(w,a[2],route.start);if(!route.npc)return true;context.subject=route.npc;
+    const auto& guild=w.script().guildVal();const auto g=route.npc->guild();
+    const bool flying=guild.water_depth_knee[g]==999999 && guild.water_depth_chest[g]==999999;
+    event("monster_character_flying_setup","\"instance\":"+jsonStr(a[2])+",\"can_fly_over_water\":"+(flying?"true":"false")+
+      ",\"root_cm\":"+ragdollVector(route.start));
+    if(!flying)monsterCharacterError("flying fixture instance lacks production flying guild marker");
+    }
+  else if(c=="monstercharacter" && a.size()==2 && a[1]=="save")monsterCharacterSave(state,w,pl);
+  else if(c=="monstercharacter" && a.size()==3 && a[1]=="snapshot")monsterCharacterSnapshot(w,pl,a[2]);
+  else return false;
+  return true;
+  }
+
 }

@@ -208,9 +208,17 @@ std::vector<std::string> split(std::string_view s) {
   return ret;
   }
 
+}
+
+namespace testbench_detail {
+
 float num(const std::vector<std::string>& a, size_t i, float def) {
   return i<a.size() ? std::strtof(a[i].c_str(),nullptr) : def;
   }
+
+}
+
+namespace {
 
 bool isNumber(const std::string& s) {
   char* end = nullptr;
@@ -2059,15 +2067,15 @@ std::string stateName(World& w, const Npc& n) {
   return sym!=nullptr ? sym->name() : "-";
   }
 
-}
-
-namespace {
-
 // a point is hidden if something is between it and the camera (not counting the ground right at the point)
 bool hidden(World& w, const Vec3& from, const Vec3& to) {
   auto r = w.physic()->ray(from,to);
   return r.hasCol && (r.v-to).length()>15.f;
   }
+
+}
+
+namespace {
 
 Vec3 camOrigin(World& w, const Npc& pl, float angle) {
   const Vec3  p = pl.position();
@@ -3272,6 +3280,10 @@ void spellFields(World& world) {
     ",\"physics_ms\":"+ragdollNumber(stats.stepMilliseconds)+",\"actors\":"+actors+"],\"items\":"+items+"]");
   }
 
+}
+
+namespace testbench_detail {
+
 void prepareSpellFixture(World& world,Npc& player,std::string_view fixture) {
   bench.spellTrace=false;bench.spellReleaseAt=0;bench.spellWaitFrozen=-1;bench.spellWasFrozen=false;bench.spellEquipPending=0;
   player.setTarget(nullptr);player.closeWeapon(true);
@@ -3349,6 +3361,10 @@ void prepareSpellFixture(World& world,Npc& player,std::string_view fixture) {
   event("spell_physics_setup","\"fixture\":"+jsonStr(fixture)+",\"default_enabled\":"+
     std::string(Gothic::settingsGetI("GAME","spell_physics")?"true":"false"));
   }
+
+}
+
+namespace {
 
 void bodyImpactSurface(World& world,const std::vector<Vec3>& vertices,
                        std::unique_ptr<PhysicMeshShape>& shape,DynamicWorld::Item& body) {
@@ -4977,6 +4993,10 @@ void destructionShoot(World& world,Npc& player) {
     ragdollNumber(found->health)+",\"from_cm\":"+ragdollVector(from)+",\"to_cm\":"+ragdollVector(center));
   }
 
+}
+
+namespace testbench_detail {
+
 void destructionCheckpoint(World& world) {
   destructionFields(world);
   unsigned attached=0;
@@ -4992,6 +5012,10 @@ void destructionCheckpoint(World& world) {
     (bench.destructionActor?ragdollVector(bench.destructionActor->position()):"null"));
   bench.destructionShooting=false;
   }
+
+}
+
+namespace {
 
 std::string destructionFloorProbe(const Npc& npc,std::string_view label,const Vec3& point) {
   const auto root=npc.position();
@@ -6418,6 +6442,10 @@ void meleeAiResponseFields(World& world) {
     ",\"started\":"+(started ? "true" : "false"));
   }
 
+}
+
+namespace testbench_detail {
+
 void saveMovableSession(World& world,const std::string& label) {
   if(label.empty() || label.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")!=std::string::npos)
     throw std::runtime_error("invalid movable save label");
@@ -6431,6 +6459,10 @@ void saveMovableSession(World& world,const std::string& label) {
   event("movable_session_save","\"archive\":"+jsonStr("session-"+label+".sav")+",\"bytes\":"+
     std::to_string(bytes.size())+",\"world\":"+jsonStr(world.name())+",\"bodies\":"+movableRows(world));
   }
+
+}
+
+namespace {
 
 bool itemWakeTableItems(World& world,Npc& player,bool sword) {
   const auto symbol=world.script().findSymbolIndex(sword?"ITFO_BEER":"ITFO_APPLE");
@@ -8898,13 +8930,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     bench.navigationOnly = true;
     if(a.size()!=2 || a[1]!="wait") NavBench::command(a,w,pl,outDir);
     }
-  else if(c=="monstercharacter" && a.size()==2 && (a[1]=="on" || a[1]=="off")) {
-    Gothic::settingsSetI("GAME","monster_character_virtual",a[1]=="on");
-    event("monster_character_toggle","\"enabled\":"+std::string(a[1]=="on"?"true":"false"));
-    }
-  else if(c=="monstercharacter" && a.size()==3 && a[1]=="route")monsterCharacterPrepare(bench.monster,monsterCharacterContext(),w,pl,a[2]);
-  else if(c=="monstercharacter" && (a.size()==4 || a.size()==5) && a[1]=="ledge")
-    monsterCharacterLedge(bench.monster,monsterCharacterContext(),w,pl,a[2],num(a,3,NAN),a.size()==5?num(a,4,NAN):0.f);
+  else if(monsterCharacterCommand(bench.monster,monsterCharacterContext(),a,w,pl)) return;
   else if(c=="monstercharacter" && a.size()>=2 && a[1]=="camera") {
     if((a.size()!=2 && a.size()!=4) || (a.size()==4 && (!isNumber(a[2]) || !isNumber(a[3])))) {
       monsterCharacterError("monster camera expects no arguments or yaw_degrees elevation_fraction");return;
@@ -8930,551 +8956,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
       ",\"minute\":"+std::to_string(w.time().minute())+",\"hero_cm\":"+ragdollVector(bench.monster.monsterCharacterHeroStart)+",\"actors\":"+actors+"]");
     monsterCharacterRenderProof(w,*watched,"followed");
     }
-  else if(c=="monstercharacter" && a.size()==2 && a[1]=="pack")monsterCharacterPack(bench.monster,monsterCharacterContext(),w,pl);
-  else if(c=="monstercharacter" && a.size()==2 && (a[1]=="cliff" || a[1]=="cliff46"))monsterCharacterCliff(bench.monster,monsterCharacterContext(),w,pl,a[1]=="cliff46");
-  else if(c=="monstercharacter" && a.size()==2 && a[1]=="crowd")monsterCharacterCrowd(bench.monster,monsterCharacterContext(),w,pl);
-#ifdef OPENGOTHIC_ENABLE_APP_CADENCE
-  else if(c=="monstercharacter" && a.size()==3 && a[1]=="measure") {
-    if(!bench.monster.monsterCharacterCrowd || !AppCadence::normalClock() || !AppCadence::arm(a[2]=="on")) {
-      monsterCharacterError("monster normal cadence arm requires the twenty-monster fixture");return;
-      }
-    bench.monster.monsterCharacterMeasuring=true;bench.monster.monsterCharacterHasWall=false;bench.monster.monsterCharacterPerformance.clear();
-    bench.monster.monsterCharacterMinNearby=20;bench.monster.monsterCharacterMaxNearby=0;bench.monster.monsterCharacterMaximumDistance=0;
-    AppCadence::counts(true,uint32_t(bench.monster.monsterCharacterExtras.size()),0,uint32_t(w.physic()->physicsStats().bodies),0,0);
-    event("monster_character_measure_begin","\"cv_enabled\":"+std::string(Gothic::settingsGetI("GAME","monster_character_virtual")?"true":"false"));
-    }
-  else if(c=="monstercharacter" && a.size()==2 && a[1]=="report") {
-    bench.monster.monsterCharacterMeasuring=false;
-    AppCadence::counts(false,uint32_t(bench.monster.monsterCharacterExtras.size()),0,uint32_t(w.physic()->physicsStats().bodies),0,0);
-    event("monster_character_measure_end","\"frames\":"+std::to_string(bench.monster.monsterCharacterPerformance.size())+
-      ",\"fixture_actors\":"+std::to_string(bench.monster.monsterCharacterExtras.size())+",\"fixture_min_nearby\":"+std::to_string(bench.monster.monsterCharacterMinNearby)+
-      ",\"fixture_max_nearby\":"+std::to_string(bench.monster.monsterCharacterMaxNearby)+",\"fixture_max_distance_cm\":"+ragdollNumber(bench.monster.monsterCharacterMaximumDistance));
-    }
-#endif
-  else if(c=="monstercharacter" && a.size()==2 && a[1]=="begin")monsterCharacterBegin(bench.monster,w);
-  else if(c=="monstercharacter" && a.size()==2 && a[1]=="end")monsterCharacterEnd(bench.monster,monsterCharacterContext(),w);
-  else if(c=="monstercharacter" && a.size()==2 && a[1]=="reverse") {
-    auto& route=bench.monster.monsterCharacterRoute;
-    if(!route.npc || route.name!="wolf_water" || !route.sawSwim) {monsterCharacterError("water exit requires the same wolf after actual swimming entry");return;}
-    route.goal=route.start;route.start=route.npc->position();route.name="wolf_water_exit";
-    route.destination=WayPoint(route.goal,"FP_MONSTER_CHARACTER_DRY");route.destination.groundPos=route.goal;
-    route.npc->setDirection(route.goal-route.start);route.npc->updateTransform();
-    event("monster_character_water_reverse","\"start_cm\":"+ragdollVector(route.start)+",\"goal_cm\":"+ragdollVector(route.goal));
-    }
-  else if(c=="monstercharacter" && a.size()==3 && a[1]=="attack")monsterCharacterAttack(bench.monster,monsterCharacterContext(),w,pl,a[2]);
-  else if(c=="monstercharacter" && a.size()==2 && a[1]=="stair-attack") {
-    auto& route=bench.monster.monsterCharacterRoute;
-    if(!route.npc || !route.active || route.name!="wolf_stairs") {
-      monsterCharacterError("stair-attack requires the active stair chase");return;
-      }
-    const float pending=route.npc->characterVisualPosition().y-route.npc->position().y;
-    route.npc->clearAiQueue();route.npc->clearGoTo();route.npc->stopWalking();
-    const auto* attack=route.npc->playAnimByName("T_FISTATTACKMOVE",BS_HIT);
-    event("monster_character_stair_attack","\"pending_offset_cm\":"+ragdollNumber(pending)+
-      ",\"accepted\":"+(attack?"true":"false"));
-    if(!attack)monsterCharacterError("stair handoff lacks the wolf lunge animation");
-    }
-  else if(c=="monstercharacter" && a.size()==2 && a[1]=="attack-start") {
-    auto& route=bench.monster.monsterCharacterRoute;
-    if(!route.npc || !route.attack) {monsterCharacterError("attack-start requires an authored monster attack fixture");return;}
-    route.npc->clearAiQueue();
-    const Animation::Sequence* sequence=nullptr;
-    if(route.name=="fieldraider_attack") {
-      // Giant_Bug's layer-2 attack does not animate root 0. Prepare the
-      // native S_FISTRUNL layer-1 clip before the ordinary attack entry point;
-      // both translation and collision remain owned by production movement.
-      const auto before=route.npc->animNames();
-      event("monster_character_attack_preparation","\"route\":"+jsonStr(route.name)+",\"before\":"+jsonStr(before)+
-        ",\"root_cm\":"+ragdollVector(route.npc->position())+",\"target_cm\":"+ragdollVector(pl.position())+
-        ",\"target_distance_cm\":"+ragdollNumber((route.npc->position()-pl.position()).length())+
-        ",\"native_stop_cm\":"+ragdollNumber(route.npc->bodyObservationTarget(pl).attackRangeCm));
-      const auto* running=route.npc->playAnimByName("S_FISTRUNL",BS_RUN);
-      event("monster_character_attack_base","\"accepted\":"+std::string(running?"true":"false")+
-        ",\"layers\":"+jsonStr(route.npc->animNames()));
-      if(!running) {monsterCharacterError("fieldraider native running base unavailable");return;}
-      sequence=route.npc->visualSkeleton()->sequence(route.animation);
-      const bool accepted=sequence && route.npc->doAttack(Npc::Anim::Attack,BS_HIT);
-      const auto after=route.npc->animNames();
-      event("monster_character_attack_running_base","\"accepted\":"+std::string(accepted?"true":"false")+
-        ",\"before\":"+jsonStr(before)+",\"after\":"+jsonStr(after)+
-        ",\"target_distance_cm\":"+ragdollNumber((route.npc->position()-pl.position()).length()));
-      if(!accepted || after.find(route.animation)==std::string::npos) {
-        monsterCharacterError("native fieldraider running attack was not accepted");return;
-        }
-      } else {
-      route.npc->clearGoTo();route.npc->stopWalking();
-      sequence=route.npc->playAnimByName(route.animation,BS_HIT);
-      if(!sequence) {monsterCharacterError("monster has no authored "+route.animation);return;}
-      }
-    route.attackStart=route.npc->position();
-    route.attackEnded=0;route.attackDistance=0;route.attackRise=0;route.callbacks=0;
-    monsterCharacterBegin(bench.monster,w);
-    event("monster_character_attack_begin","\"route\":"+jsonStr(route.name)+",\"animation\":"+jsonStr(route.animation)+
-      ",\"authored_duration_ms\":"+ragdollNumber(sequence->totalTime())+",\"root_cm\":"+ragdollVector(route.attackStart));
-    }
-  else if(c=="monstercharacter" && a.size()==3 && a[1]=="distance") {
-    const auto* npc=bench.monster.monsterCharacterRoute.npc;
-    if(!npc) {monsterCharacterError("monster distance requires fixture actor");return;}
-    pl.stopWalking();pl.clearAiQueue();pl.setPosition(npc->centerPosition()+Vec3(num(a,2,400),0,0)-(pl.centerPosition()-pl.position()));pl.updateTransform();
-    event("monster_character_distance","\"distance_cm\":"+ragdollNumber((npc->centerPosition()-pl.centerPosition()).length()));
-    }
-  else if(c=="monstercharacter" && a.size()==4 && a[1]=="expect") {
-    const auto* npc=bench.monster.monsterCharacterRoute.npc;
-    if(!npc) {monsterCharacterError("monster expectation requires fixture actor");return;}
-    const bool actual=npc->characterVirtualActive(),expected=num(a,3,0)!=0;
-    event("monster_character_expect","\"label\":"+jsonStr(a[2])+",\"npc_id\":"+std::to_string(w.npcId(npc))+
-      ",\"instance\":"+jsonStr(symName(w,npc))+",\"expected_cv_active\":"+(expected?"true":"false")+
-      ",\"cv_active\":"+(actual?"true":"false")+",\"passed\":"+(actual==expected?"true":"false")+
-      ",\"distance_cm\":"+ragdollNumber((npc->centerPosition()-pl.centerPosition()).length()));
-    if(actual!=expected)monsterCharacterError("monster CV activity disagrees with "+a[2]);
-    }
-  else if(c=="monstercharacter" && a.size()==3 && a[1]=="flying") {
-    monsterCharacterClear(bench.monster,monsterCharacterContext(),w);
-    if(!chooseRagdollArena(w,pl)) {monsterCharacterError("flying exclusion requires supported stock ground");return;}
-    auto& route=bench.monster.monsterCharacterRoute;route.name="flying_"+a[2];route.start=bench.ragdollArenaPlaces.front();
-    characterFreezeNear(w,pl,route.start,route.start);npcCharacterPlaceHero(w,pl,route.start,route.start+Vec3(1,0,0));
-    route.npc=monsterCharacterActor(w,a[2],route.start);if(!route.npc)return;bench.subject=route.npc;
-    const auto& guild=w.script().guildVal();const auto g=route.npc->guild();
-    const bool flying=guild.water_depth_knee[g]==999999 && guild.water_depth_chest[g]==999999;
-    event("monster_character_flying_setup","\"instance\":"+jsonStr(a[2])+",\"can_fly_over_water\":"+(flying?"true":"false")+
-      ",\"root_cm\":"+ragdollVector(route.start));
-    if(!flying)monsterCharacterError("flying fixture instance lacks production flying guild marker");
-    }
-  else if(c=="monstercharacter" && a.size()==2 && a[1]=="save")monsterCharacterSave(bench.monster,w,pl);
-  else if(c=="monstercharacter" && a.size()==3 && a[1]=="snapshot")monsterCharacterSnapshot(w,pl,a[2]);
-  else if(c=="npccharacter" && a.size()==2 && (a[1]=="on" || a[1]=="off")) {
-    Gothic::settingsSetI("GAME","npc_character_virtual",a[1]=="on");
-    event("npc_character_toggle","\"enabled\":"+std::string(a[1]=="on"?"true":"false"));
-    }
-  else if(c=="npccharacter" && a.size()>=3 && a[1]=="trace") {
-    if(a.size()==3 && a[2]=="off") {
-      const auto count=bench.character.npcCharacterTraceActors.size();npcCharacterStopMotionTrace(bench.character,&w);
-      event("npc_character_trace_end","\"actors\":"+std::to_string(count));
-      return;
-      }
-    std::vector<Npc*> selected;
-    for(size_t i=2;i<a.size();++i) {
-      const bool numeric=!a[i].empty() && std::all_of(a[i].begin(),a[i].end(),[](char ch){return ch>='0' && ch<='9';});
-      auto* npc=findNpc(w,pl,numeric?"id:"+a[i]:a[i]);
-      if(!npc) {arenaAbort("NPC character trace has no existing actor: "+a[i]);return;}
-      if(std::find(selected.begin(),selected.end(),npc)==selected.end())selected.push_back(npc);
-      }
-    npcCharacterStopMotionTrace(bench.character,&w);
-    std::string actors="[";
-    for(auto* npc:selected) {
-      npc->setCharacterVirtualDiagnosticsEnabled(true);
-      bench.character.npcCharacterTraceActors.push_back({npc,npc->position(),npc->characterVisualPosition(),false});
-      if(actors.size()>1)actors+=',';
-      actors+="{\"npc_id\":"+std::to_string(w.npcId(npc))+",\"npc\":"+jsonStr(symName(w,npc))+
-        ",\"root_cm\":"+ragdollVector(npc->position())+"}";
-      }
-    event("npc_character_trace_begin","\"actors\":"+actors+"]");
-    }
-  else if(c=="npccharacter" && a.size()==3 && a[1]=="route") {
-    npcCharacterPrepare(bench.character,characterContext(),w,pl,a[2]);
-    if(bench.character.npcCharacterRoute.npc)exec("watch watched",w,pl,ctrl);
-    }
-  else if(c=="npccharacter" && a.size()==2 && a[1]=="begin") {
-    auto& route=bench.character.npcCharacterRoute;
-    if(!route.npc) {arenaAbort("NPC character begin needs a prepared route");return;}
-    if(bench.character.characterItem) {
-      const auto position=bench.character.characterItem->position(),velocity=bench.character.characterItem->physicsVelocity();
-      auto along=route.goal-route.start;along.y=0;along=Vec3::normalize(along);
-      const auto delta=position-(route.start+route.goal)*.5f;
-      const float side=std::abs(delta.x*along.z-delta.z*along.x),forward=std::abs(Vec3::dotProduct(delta,along));
-      const bool ready=side<45.f && forward<60.f && velocity.length()<5.f && delta.y>=0 && delta.y<60.f;
-      event("npc_character_mug_prebegin","\"position_cm\":"+ragdollVector(position)+",\"velocity_cm_s\":"+ragdollVector(velocity)+
-        ",\"settling_displacement_cm\":"+ragdollNumber((position-bench.character.characterPropInitial).length())+
-        ",\"lane_side_cm\":"+ragdollNumber(side)+",\"lane_forward_cm\":"+ragdollNumber(forward)+",\"ready\":"+(ready?"true":"false"));
-      if(!ready) {arenaAbort("NPC tavern mug did not settle inside its route lane");return;}
-      bench.character.characterPropInitial=position;bench.character.characterPropTravel=0;
-      }
-    route.npc->clearAiQueue();route.npc->stopWalking();route.npc->setPosition(route.start);route.npc->updateTransform();
-    npcCharacterBegin(bench.character,w);
-    route.npc->aiPush(AiQueue::aiGoToPoint(route.destination));route.npc->aiPush(AiQueue::aiWait(60000));
-    }
-  else if(c=="npccharacter" && a.size()==2 && a[1]=="end") npcCharacterEnd(bench.character,w);
-  else if(c=="npccharacter" && (a.size()==2 || a.size()==3) && a[1]=="seat") {
-    auto& route=bench.character.npcCharacterRoute;
-    if(route.npc) {w.removeNpc(*route.npc);route.npc=nullptr;}
-    if(bench.character.characterItem) {w.removeItem(*bench.character.characterItem);bench.character.characterItem=nullptr;}
-    route=Character::NpcCharacterRoute();route.name="seat";
-    const WayPoint* requestedAnchor=a.size()==3?w.findPoint(a[2],false):nullptr;
-    if(a.size()==3 && !requestedAnchor) {arenaAbort("NPC character seat requested an unknown exact waypoint");return;}
-    struct Candidate {Interactive* mob=nullptr;const WayPoint* waypoint=nullptr;uint32_t id=0;unsigned region=0;float distance=0;};
-    std::vector<Candidate> candidates;
-    Npc* coragon=nullptr;
-    for(uint32_t id=0;id<w.npcCount();++id)
-      if(auto* npc=w.npcById(id);npc && symName(w,npc)=="VLK_420_CORAGON") {coragon=npc;break;}
-    for(uint32_t id=0;;++id) {
-      auto* mob=w.mobsiById(id);if(!mob)break;
-      if(mob->schemeName()!="BENCH")continue;
-      const auto* waypoint=w.findWayPoint(mob->position());
-      if(requestedAnchor && (!waypoint || waypoint->name!=requestedAnchor->name))continue;
-      unsigned region=4;
-      if(waypoint) {
-        const auto& name=waypoint->name;
-        const bool harbour=name.starts_with("NW_CITY_") &&
-          (name.find("HABOUR")!=std::string::npos || name.find("HARBOUR")!=std::string::npos || name.find("HARBOR")!=std::string::npos);
-        region=harbour?0:(name.starts_with("NW_BIGFARM") || name.starts_with("NW_FARM")?1:name.starts_with("NW_CITY_")?3:2);
-        }
-      candidates.push_back({mob,waypoint,id,region,waypoint?(waypoint->position()-mob->position()).length():1e10f});
-      }
-    std::sort(candidates.begin(),candidates.end(),[](const Candidate& a,const Candidate& b) {
-      if(a.region!=b.region)return a.region<b.region;
-      if(a.distance!=b.distance)return a.distance<b.distance;
-      return a.id<b.id;
-      });
-    // An explicit waypoint pins one authored BENCH by geometry. Occupancy or
-    // failed native preconditions must not silently select a different seat.
-    if(requestedAnchor && candidates.size()>1)candidates.resize(1);
-    event("npc_character_seat_candidates","\"count\":"+std::to_string(candidates.size())+
-      ",\"requested_waypoint\":"+jsonStr(requestedAnchor?requestedAnchor->name:std::string()));
-    Vec3 socket,camera,focus;std::string anchorName;bool selected=false;
-    uint32_t selectedId=uint32_t(-1);
-    for(const auto& candidate:candidates) {
-      auto* mob=candidate.mob;
-      const auto candidateEvent=[&](std::string_view reason) {
-        event("npc_character_seat_candidate","\"mob_id\":"+std::to_string(candidate.id)+",\"scheme\":"+jsonStr(mob->schemeName())+
-          ",\"vob\":"+jsonStr(mob->vobNameStr())+",\"mob_cm\":"+ragdollVector(mob->position())+
-          ",\"waypoint\":"+jsonStr(candidate.waypoint?candidate.waypoint->name:std::string())+
-          ",\"available\":"+(mob->isAvailable()?"true":"false")+",\"state\":"+std::to_string(mob->stateId())+
-          ",\"reason\":"+jsonStr(reason));
-        };
-      if(!mob->isAvailable() || mob->stateId()>0) {candidateEvent("occupied_or_active");continue;}
-      if(coragon && (mob->position()-coragon->position()).length()<1500.f) {candidateEvent("coragon_bar_excluded");continue;}
-      if(!candidate.waypoint || candidate.distance>1000.f) {candidateEvent("no_nearby_authored_waypoint");continue;}
-      const auto reference=w.physic()->landRay(candidate.waypoint->position()+Vec3(0,80,0),200.f);
-      if(!reference.hasCol) {candidateEvent("waypoint_has_no_supported_floor");continue;}
-      const float floorReference=reference.v.y;
-      if(std::abs(mob->position().y-floorReference)>200.f) {candidateEvent("floor_in_different_storey");continue;}
-      if(!route.npc)route.npc=npcCharacterActor(w,reference.v);
-      if(!route.npc)return;
-      route.npc->setPosition(reference.v);route.npc->updateTransform();
-      socket=mob->nearestPoint(*route.npc);
-      bool prepared=false;
-      // A native animation socket is not an approach point. Find ordinary
-      // supported floor for a real GoToPoint, within UseMob's 165 cm range.
-      for(float distance:{240.f,280.f,320.f})for(unsigned step=0;step<24 && !prepared;++step) {
-        const float yaw=float(step)*float(M_PI)/12.f;
-        auto at=socket+Vec3(std::cos(yaw)*distance,0,std::sin(yaw)*distance);
-        const auto floor=w.physic()->landRay(Vec3(at.x,floorReference+50.f,at.z),150.f);
-        if(!floor.hasCol || std::abs(floor.v.y-floorReference)>20.f)continue;
-        at.y=floor.v.y;route.npc->setPosition(at);route.npc->updateTransform();
-        if(route.npc->hasCollision() || w.availableMob(*route.npc,"BENCH")!=mob)continue;
-        auto toward=socket-at;toward.y=0;toward=Vec3::normalize(toward);
-        const auto approachEnd=socket-toward*120.f;
-        auto previous=at;bool lane=true;
-        for(unsigned sample=1;sample<=12;++sample) {
-          auto point=at+(approachEnd-at)*(float(sample)/12.f);
-          const auto support=w.physic()->landRay(Vec3(point.x,floorReference+50.f,point.z),150.f);
-          if(!support.hasCol || std::abs(support.v.y-at.y)>20.f) {lane=false;break;}
-          point.y=support.v.y;
-          if(w.physic()->ray(previous+Vec3(0,100,0),point+Vec3(0,100,0)).hasCol) {lane=false;break;}
-          previous=point;
-          }
-        if(!lane)continue;
-        route.npc->setPosition(previous);route.npc->updateTransform();
-        const auto usePosition=mob->nearestPoint(*route.npc);
-        if(route.npc->hasCollision() || (route.npc->centerPosition()-usePosition).length()>140.f ||
-           w.availableMob(*route.npc,"BENCH")!=mob)continue;
-        route.destination=WayPoint(previous,"FP_NPC_CHARACTER_SEAT_APPROACH");route.destination.groundPos=previous;
-        route.start=at;prepared=true;
-        }
-      if(!prepared) {candidateEvent("no_supported_collision_free_approach");continue;}
-      // Check one fixed camera against both the approach and the actual
-      // seated/standing socket area, rather than hiding room geometry.
-      focus=(route.start+socket)*.5f;focus.y=floorReference+130.f;
-      const Vec3 targets[]{route.start+Vec3(0,10,0),route.start+Vec3(0,130,0),
-                           route.destination.position()+Vec3(0,10,0),route.destination.position()+Vec3(0,130,0),
-                           Vec3(socket.x,floorReference+50.f,socket.z),socket+Vec3(0,60,0),socket+Vec3(0,150,0)};
-      bool visible=false;
-      for(float distance:{450.f,550.f,350.f})for(float height:{170.f,140.f,220.f})for(unsigned step=0;step<48 && !visible;++step) {
-        const float yaw=float(step)*float(M_PI)/24.f;
-        const Vec3 at(focus.x+std::cos(yaw)*distance,floorReference+height,focus.z+std::sin(yaw)*distance);
-        bool clear=true;
-        for(const auto& target:targets)if(hidden(w,at,target)) {clear=false;break;}
-        if(clear) {camera=at;visible=true;}
-        }
-      if(!visible) {candidateEvent("no_clear_fixed_view");continue;}
-      route.seat=mob;route.goal=socket;anchorName=candidate.waypoint->name;selectedId=candidate.id;
-      selected=true;candidateEvent("selected");break;
-      }
-    if(!selected) {arenaAbort("no free authored BENCH has a supported native approach and clear fixed view");return;}
-    characterFreezeNear(w,pl,route.start,route.goal);
-    route.npc->stopWalking();route.npc->setPosition(route.start);route.npc->setDirection(route.goal-route.start);route.npc->updateTransform();
-    route.npc->setExternalControl(true);route.npc->aiPush(AiQueue::aiWait(60000));
-    route.preparationSample=route.start;route.sawPreparationSample=true;route.supportSince=w.tickCount();
-    bench.subject=route.npc;npcCharacterPlaceHero(w,pl,route.start,route.goal);
-    bench.cam=C_Hold;bench.camAuto=false;lookFrom(camera,focus);
-    event("npc_character_seat_setup","\"scheme\":"+jsonStr(route.seat->schemeName())+",\"vob\":"+jsonStr(route.seat->vobNameStr())+
-      ",\"mob_id\":"+std::to_string(selectedId)+",\"anchor\":"+jsonStr(anchorName)+",\"mob_cm\":"+ragdollVector(route.seat->position())+
-      ",\"socket_cm\":"+ragdollVector(socket)+",\"start_cm\":"+ragdollVector(route.start)+
-      ",\"approach_cm\":"+ragdollVector(route.destination.position())+",\"camera_cm\":"+ragdollVector(camera)+
-      ",\"camera_target_cm\":"+ragdollVector(focus)+",\"camera_clear\":true");
-    exec("watch watched",w,pl,ctrl);
-    }
-  else if(c=="npccharacter" && a.size()==2 && a[1]=="sit") {
-    auto& route=bench.character.npcCharacterRoute;
-    if(!route.npc || !route.seat) {arenaAbort("NPC character sit needs its BENCH fixture");return;}
-    const bool stable=route.sawPreparationSample && w.tickCount()-route.supportSince>=300 &&
-      !route.npc->isInAir() && !route.npc->isFalling() && (route.npc->position()-route.start).length()<5.f;
-    event("npc_character_seat_prebegin","\"ready\":"+std::string(stable?"true":"false")+
-      ",\"root_cm\":"+ragdollVector(route.npc->position())+",\"supported_ms\":"+std::to_string(w.tickCount()-route.supportSince)+
-      ",\"selected_vob\":"+jsonStr(route.seat->vobNameStr()));
-    if(!stable) {arenaAbort("NPC character seat approach did not settle supported before sit");return;}
-    npcCharacterBegin(bench.character,w);
-    route.npc->clearAiQueue();
-    // Scripted routines normally approach a grounded waypoint before UseMob.
-    // A direct far UseMob chases the elevated animation socket to a 20 cm
-    // position-goal, which can send the legacy actor onto adjacent furniture.
-    route.npc->aiPush(AiQueue::aiGoToPoint(route.destination));
-    route.npc->aiPush(AiQueue::aiUseMob(route.seat->schemeName(),1));route.npc->aiPush(AiQueue::aiWait(60000));
-    }
-  else if(c=="npccharacter" && a.size()==2 && a[1]=="stand") {
-    auto& route=bench.character.npcCharacterRoute;
-    if(!route.npc || !route.seat || !route.sat) {arenaAbort("NPC character did not reach real sitting state before stand");return;}
-    route.npc->clearAiQueue();route.npc->aiPush(AiQueue::aiUseMob(route.seat->schemeName(),-1));route.npc->aiPush(AiQueue::aiWait(60000));
-    event("npc_character_stand","\"root_cm\":"+ragdollVector(route.npc->position()));
-    }
-  else if(c=="npccharacter" && a.size()==2 && a[1]=="market") npcCharacterMarket(bench.character,characterContext(),w,pl);
-  else if(c=="npccharacter" && a.size()>=3 && a[1]=="observe" && a[2]=="begin") {
-    bench.character.npcCharacterObserving=true;bench.character.npcCharacterWindow=a.size()>3?a[3]:"window";
-    bench.character.npcCharacterGoals.clear();bench.character.npcCharacterWalkers.clear();bench.character.npcCharacterArrivals=0;
-    bench.character.npcCharacterObservedFrames=0;bench.character.npcCharacterCvFrames=0;bench.character.npcCharacterMaxNearby=0;bench.character.npcCharacterObserveStart=w.tickCount();
-    event("npc_character_observe_begin","\"window\":"+jsonStr(bench.character.npcCharacterWindow)+",\"radius_cm\":3000,\"humans_only\":true,\"cv_enabled\":"+
-      (Gothic::settingsGetI("GAME","npc_character_virtual")?"true":"false"));
-    }
-  else if(c=="npccharacter" && a.size()==3 && a[1]=="observe" && a[2]=="end") {
-    bench.character.npcCharacterObserving=false;
-    event("npc_character_observe_end","\"window\":"+jsonStr(bench.character.npcCharacterWindow)+",\"window_ms\":"+std::to_string(w.tickCount()-bench.character.npcCharacterObserveStart)+
-      ",\"radius_cm\":3000,\"humans_only\":true,\"unique_walkers\":"+std::to_string(bench.character.npcCharacterWalkers.size())+
-      ",\"reached_goals\":"+std::to_string(bench.character.npcCharacterArrivals)+",\"frames\":"+std::to_string(bench.character.npcCharacterObservedFrames)+
-      ",\"cv_actor_frames\":"+std::to_string(bench.character.npcCharacterCvFrames)+",\"max_nearby_humans\":"+std::to_string(bench.character.npcCharacterMaxNearby)+
-      ",\"cv_enabled\":"+(Gothic::settingsGetI("GAME","npc_character_virtual")?"true":"false"));
-    }
-  else if(c=="npccharacter" && a.size()==3 && a[1]=="snapshot") npcCharacterSnapshot(w,pl,a[2]);
-  else if(c=="npccharacter" && a.size()==3 && a[1]=="distance") {
-    const auto* npc=bench.character.npcCharacterRoute.npc;
-    if(!npc) {arenaAbort("NPC character distance needs a fixture actor");return;}
-    pl.setPosition(npc->centerPosition()+Vec3(num(a,2,400),0,0)-(pl.centerPosition()-pl.position()));pl.updateTransform();
-    event("npc_character_distance","\"distance_cm\":"+ragdollNumber((npc->centerPosition()-pl.centerPosition()).length())+
-      ",\"npc_cm\":"+ragdollVector(npc->position()));
-    }
-  else if(c=="npccharacter" && a.size()==2 && (a[1]=="teleport" || a[1]=="setposition")) {
-    auto& route=bench.character.npcCharacterRoute;
-    if(!route.npc) {arenaAbort("NPC character relocation needs its fixture actor");return;}
-    route.npc->setInteraction(nullptr,true);route.npc->clearAiQueue();route.npc->stopWalking();
-    const auto target=a[1]=="teleport"?route.start:route.goal;
-    if(a[1]=="teleport") {
-      route.destination=WayPoint(target,"FP_NPC_CHARACTER_TELEPORT");route.destination.groundPos=target;
-      route.npc->aiPush(AiQueue::aiTeleport(route.destination));
-      } else {route.npc->setPosition(target);route.npc->updateTransform();}
-    route.npc->aiPush(AiQueue::aiWait(60000));
-    event("npc_character_relocate","\"kind\":"+jsonStr(a[1])+",\"target_cm\":"+ragdollVector(target));
-    }
-  else if(c=="npccharacter" && a.size()==3 && a[1]=="save") {
-    if(a[2].empty() || a[2].find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")!=std::string::npos) {
-      arenaAbort("invalid NPC character save label");return;
-      }
-    try {
-      npcCharacterSnapshot(w,pl,"saved");std::vector<uint8_t> bytes;
-      {MemWriter writer(bytes);Serialize out(writer);Pixmap preview(1,1,TextureFormat::RGBA8);std::memset(preview.data(),0,4);
-      Gothic::inst().gameSession()->save(out,"npc character "+a[2],preview);}
-      std::ofstream file(outDir+"/session-"+a[2]+".sav",std::ios::binary);
-      file.write(reinterpret_cast<const char*>(bytes.data()),std::streamsize(bytes.size()));
-      if(!file)throw std::runtime_error("cannot write complete NPC CharacterVirtual session save");
-      event("npc_character_save","\"archive\":"+jsonStr("session-"+a[2]+".sav")+",\"bytes\":"+std::to_string(bytes.size()));
-      } catch(const std::exception& error) {arenaAbort(error.what());}
-    }
-#ifdef OPENGOTHIC_ENABLE_APP_CADENCE
-  else if(c=="npccharacter" && a.size()==3 && a[1]=="measure") {
-    if(!AppCadence::normalClock() || !AppCadence::arm(a[2]=="on")) {arenaAbort("NPC character normal cadence arm failed");return;}
-    bench.character.npcCharacterMeasuring=true;bench.character.npcCharacterHasWall=false;
-    bench.character.npcCharacterCrowdMinNearby=20;bench.character.npcCharacterCrowdMaxNearby=0;bench.character.npcCharacterCrowdMaximumDistance=0;
-    AppCadence::counts(true,uint32_t(bench.character.npcCharacterCrowd.size()),0,uint32_t(w.physic()->physicsStats().bodies),0,0);
-    event("npc_character_measure_begin","\"cv_enabled\":"+std::string(Gothic::settingsGetI("GAME","npc_character_virtual")?"true":"false"));
-    }
-  else if(c=="npccharacter" && a.size()==2 && a[1]=="report") {
-    bench.character.npcCharacterMeasuring=false;
-    AppCadence::counts(false,uint32_t(bench.character.npcCharacterCrowd.size()),0,uint32_t(w.physic()->physicsStats().bodies),0,0);
-    event("npc_character_measure_end","\"frames\":"+std::to_string(bench.character.npcCharacterFrames.size())+
-      ",\"fixture_actors\":"+std::to_string(bench.character.npcCharacterCrowd.size())+",\"fixture_min_nearby\":"+std::to_string(bench.character.npcCharacterCrowdMinNearby)+
-      ",\"fixture_max_nearby\":"+std::to_string(bench.character.npcCharacterCrowdMaxNearby)+",\"fixture_max_distance_cm\":"+ragdollNumber(bench.character.npcCharacterCrowdMaximumDistance));
-    }
-#endif
-  else if(c=="character" && (a.size()==3 || a.size()==4) && a[1]=="idle" && (a[2]=="hero" || a[2]=="npc"))
-    characterIdlePrepare(bench.character,characterContext(),w,pl,ctrl,a[2],a.size()==4?a[3]:"gentle");
-  else if(c=="character" && a.size()==3 && a[1]=="idle" && a[2]=="begin") characterIdleSnapshot(bench.character,characterContext(),w,"begin",true);
-  else if(c=="character" && a.size()==4 && a[1]=="idle" && a[2]=="weapon") characterIdleWeapon(bench.character,w,a[3]);
-  else if(c=="character" && a.size()==4 && a[1]=="idle" && a[2]=="snapshot") characterIdleSnapshot(bench.character,characterContext(),w,a[3]);
-  else if(c=="character" && a.size()==2 && (a[1]=="on" || a[1]=="off")) {
-    Gothic::settingsSetI("GAME","character_virtual",a[1]=="on");
-    event("character_toggle","\"enabled\":"+std::string(a[1]=="on"?"true":"false"));
-    }
-  else if(c=="character" && a.size()==2 && a[1]=="probe") {
-    size_t prepared=0;
-    for(const std::string route:{"stairs_up","stairs_down","steep_slope","port_edge","doorway","tavern","jump_ledge","water_entry"})
-      prepared+=prepareCharacterRoute(bench.character,characterContext(),w,pl,route,false);
-    event("character_probe_complete","\"prepared\":"+std::to_string(prepared)+",\"expected\":8");
-    }
-  else if(c=="character" && a.size()==3 && a[1]=="route") prepareCharacterRoute(bench.character,characterContext(),w,pl,a[2]);
-  else if(c=="character" && a.size()==2 && a[1]=="stair-performance") characterStairPerformance(w,pl);
-  else if(c=="character" && a.size()==4 && a[1]=="idle-slope") {
-    if(a[3]!="hero" && a[3]!="npc") {arenaAbort("character idle-slope expects hero or npc");return;}
-    characterIdleSlopePrepare(bench.character,characterContext(),w,pl,num(a,2,0),a[3]=="npc");
-    }
-  else if(c=="character" && a.size()==3 && a[1]=="idle-slope-sample") characterIdleSlopeSample(bench.character,characterContext(),w,pl,a[2]);
-  else if(c=="character" && a.size()==6 && a[1]=="approach") {
-    auto& route=bench.character.characterRoute;
-    if(!route.prepared || route.active) {arenaAbort("character approach needs a prepared route");return;}
-    const Vec3 side(-route.direction.z,0,route.direction.x);
-    const auto shifted=route.start+side*num(a,3,0)+route.direction*num(a,4,0);
-    Vec3 floor;
-    if(!characterFloor(w,shifted,floor)) {arenaAbort("character approach has no floor");return;}
-    route.start=floor;route.name+='_'+a[2];
-    pl.setPosition(route.start);pl.setDirection(route.direction);
-    const float yaw=(pl.rotation()+num(a,5,0))*float(M_PI)/180.f;
-    pl.setDirection(Vec3(std::cos(yaw),0,std::sin(yaw)));pl.updateTransform();
-    event("character_approach","\"route\":"+jsonStr(route.name)+",\"start_cm\":"+ragdollVector(route.start)+
-      ",\"goal_cm\":"+ragdollVector(route.goal)+",\"yaw_deg\":"+ragdollNumber(pl.rotation()));
-    }
-  else if(c=="character" && a.size()==2 && a[1]=="begin") {
-    auto& route=bench.character.characterRoute;
-    if(!route.prepared || route.active) {arenaAbort("character begin needs a prepared route");return;}
-    route.active=true;route.reached=false;route.sawSwim=false;route.sawSlide=false;route.fallCount=0;route.falling=false;
-    // Idle settling can already slide on the steep route. Start held input
-    // from the same prepared coordinate in both modes after the camera settles.
-    pl.setPosition(route.start);pl.updateTransform();
-    route.began=w.tickCount();route.lastSupported=route.start;
-    bench.character.characterHasWall=false;
-    event("character_route_begin","\"route\":"+jsonStr(route.name)+",\"start_cm\":"+ragdollVector(route.start)+
-      ",\"visual_start_cm\":"+ragdollVector(pl.characterVisualPosition())+
-      ",\"goal_cm\":"+ragdollVector(route.goal)+",\"tolerance_cm\":"+ragdollNumber(route.tolerance)+
-      ",\"cv_enabled\":"+(Gothic::physicsFlags().characterVirtual?"true":"false"));
-    }
-  else if(c=="character" && a.size()==2 && a[1]=="end") characterRouteEnd(bench.character,w,pl);
-  else if(c=="character" && a.size()==3 && a[1]=="snapshot") characterSnapshot(w,pl,a[2]);
-  else if(c=="character" && a.size()==3 && a[1]=="save") {
-    if(a[2].find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")!=std::string::npos) {
-      arenaAbort("invalid character save label");return;
-      }
-    try {
-      characterSnapshot(w,pl,"saved");
-      std::vector<uint8_t> bytes;
-      {MemWriter writer(bytes);Serialize out(writer);Pixmap preview(1,1,TextureFormat::RGBA8);std::memset(preview.data(),0,4);
-      Gothic::inst().gameSession()->save(out,"character "+a[2],preview);}
-      std::ofstream file(outDir+"/session-"+a[2]+".sav",std::ios::binary);
-      file.write(reinterpret_cast<const char*>(bytes.data()),std::streamsize(bytes.size()));
-      if(!file)throw std::runtime_error("cannot write complete CharacterVirtual save");
-      event("character_save","\"archive\":"+jsonStr("session-"+a[2]+".sav")+",\"bytes\":"+std::to_string(bytes.size()));
-      } catch(const std::exception& error) {arenaAbort(error.what());}
-    }
-  else if(c=="character" && a.size()==3 && a[1]=="prop") prepareCharacterProp(bench.character,characterContext(),w,pl,a[2]);
-  else if(c=="character" && a.size()==2 && a[1]=="prop-checkpoint") characterPropCheckpoint(bench.character,w,pl);
-  else if(c=="character" && a.size()==2 && a[1]=="cleanup") {
-    if(bench.character.characterItem)w.removeItem(*bench.character.characterItem);
-    bench.character.characterItem=nullptr;bench.character.characterProp.reset();bench.character.characterPropId=0;bench.character.characterPropRole.clear();
-    bench.character.characterPlatform.reset();bench.character.characterPlatformVisual.reset();bench.character.characterMover=nullptr;
-    if(bench.character.characterRideNpc) {
-      if(bench.subject==bench.character.characterRideNpc)bench.subject=nullptr;
-      w.removeNpc(*bench.character.characterRideNpc);bench.character.characterRideNpc=nullptr;
-      }
-    bench.character.characterRiding=false;bench.character.characterRideMoving=false;bench.character.characterRideRotating=false;
-    }
-  else if(c=="character" && (a.size()==3 || a.size()==4) && a[1]=="ride") {
-    if(a.size()==4 && a[3]!="npc") {arenaAbort("character ride rider must be npc");return;}
-    if(bench.character.characterRideNpc || bench.character.characterPlatform || bench.character.characterProp) {arenaAbort("character ride needs cleanup before another support");return;}
-    bench.character.characterRiding=false;bench.character.characterRideMoving=false;bench.character.characterMover=nullptr;
-    bench.character.characterRideRotating=a[2]=="rotation";
-    bench.character.characterRideDirection=Vec3(1,0,0);
-    bench.character.characterRideAngle=0;bench.character.characterRideTravel=0;
-    bench.character.characterRideMaximumDrift=0;bench.character.characterRideMaximumHorizontalDrift=0;bench.character.characterRideMaximumLocalDrift=0;
-    Vec3 top;
-    if(a[2]=="mover") {
-      std::vector<MoveTrigger*> movers;
-      w.detectMover([&](MoveTrigger& mover){movers.push_back(&mover);});
-      std::sort(movers.begin(),movers.end(),[](const auto* a,const auto* b){return a->name()<b->name();});
-      bool selected=false;
-      for(auto* mover:movers) {
-        const auto* mesh=Resources::loadMesh(mover->visualNameView());
-        if(!mesh || mover->keyFrameCount()<2)continue;
-        const auto* bounds=mesh->bbox();
-        auto localTop=(bounds[0]+bounds[1])*.5f;localTop.y=bounds[1].y;
-        auto supported=localTop;mover->transform().project(supported);
-        const auto ground=w.physic()->landRay(supported+Vec3(0,25,0),60);
-        bool eligible=bounds[1].x-bounds[0].x>=100 && bounds[1].z-bounds[0].z>=100 &&
-          ground.hasCol && std::abs(ground.v.y-supported.y)<15;
-        // The legacy query deliberately clears C_Object normals. Compare five
-        // actual surface heights instead of treating that zero normal as slope.
-        for(const auto delta:{Vec3(-35,0,0),Vec3(35,0,0),Vec3(0,0,-35),Vec3(0,0,35)}) {
-          const auto corner=w.physic()->landRay(supported+delta+Vec3(0,25,0),60);
-          eligible&=corner.hasCol && std::abs(corner.v.y-supported.y)<15;
-          }
-        event("character_mover_candidate","\"name\":"+jsonStr(mover->name())+",\"visual\":"+jsonStr(mover->visualNameView())+
-          ",\"frames\":"+std::to_string(mover->keyFrameCount())+",\"standable\":"+(eligible?"true":"false")+
-          ",\"root_cm\":"+ragdollVector(mover->position())+",\"top_cm\":"+ragdollVector(supported));
-        if(eligible && !selected) {bench.character.characterMover=mover;top=ground.v;selected=true;}
-        }
-      if(!selected) {event("character_mover_unavailable","\"movers\":"+std::to_string(movers.size())+
-        ",\"reason\":\"no mover has an exposed supported horizontal top at least 1m wide\"");return;}
-      }
-    else if(a[2]=="dynamic" || a[2]=="kinematic" || a[2]=="rotation") {
-      if(!prepareCharacterRideSupport(bench.character,w,pl,a[2]!="dynamic",bench.character.characterRideRotating,top))return;
-      }
-    else {arenaAbort("unknown character ride support: "+a[2]);return;}
-    characterFreezeNear(w,pl,top,top+bench.character.characterRideDirection*400.f);
-    if(a.size()==4) {
-      npcCharacterPlaceHero(w,pl,top,top+bench.character.characterRideDirection*400.f);
-      bench.character.characterRideNpc=npcCharacterActor(w,top+Vec3(0,1,0));if(!bench.character.characterRideNpc)return;
-      bench.subject=bench.character.characterRideNpc;
-      }
-    else {pl.stopWalking();pl.clearAiQueue();pl.setPosition(top+Vec3(0,1,0));pl.updateTransform();}
-    const auto& rider=bench.character.characterRideNpc?*bench.character.characterRideNpc:pl;
-    bench.character.characterRideMatrixStart=characterSupportMatrix(bench.character,w);bench.character.characterRideStart=movablePosition(bench.character.characterRideMatrixStart);
-    auto inverse=bench.character.characterRideMatrixStart;inverse.inverse();bench.character.characterRideLocalStart=rider.position();inverse.project(bench.character.characterRideLocalStart);
-    bench.character.characterRideBegan=w.tickCount();bench.character.characterPropRole.clear();
-    bench.character.characterRideHeroStart=pl.position();bench.character.characterHasWall=false;bench.character.characterRiding=true;
-    characterRideCheckpoint(bench.character,w,pl,true);
-    }
-  else if(c=="character" && a.size()==2 && a[1]=="ride-start") {
-    if(!bench.character.characterRiding)return; // explicit unavailable mover event already identifies missing coverage
-    // The setup already selects Idle through stopWalking(). Animation blending
-    // and native contact recovery can still settle during its 700ms wait; begin
-    // the carry measurement from the actual pose immediately before movement.
-    const auto& rider=bench.character.characterRideNpc?*bench.character.characterRideNpc:pl;
-    bench.character.characterRideMatrixStart=characterSupportMatrix(bench.character,w);bench.character.characterRideStart=movablePosition(bench.character.characterRideMatrixStart);
-    auto inverse=bench.character.characterRideMatrixStart;inverse.inverse();bench.character.characterRideLocalStart=rider.position();inverse.project(bench.character.characterRideLocalStart);
-    bench.character.characterRideBegan=w.tickCount();
-    bench.character.characterRideMaximumDrift=0;bench.character.characterRideMaximumHorizontalDrift=0;bench.character.characterRideMaximumLocalDrift=0;
-    bench.character.characterRideHeroStart=pl.position();
-    characterRideCheckpoint(bench.character,w,pl);
-    bench.character.characterRideMoving=true;
-    if(bench.character.characterMover)w.triggerEvent(TriggerEvent(std::string(bench.character.characterMover->name()),"CHARACTER_BENCH",TriggerEvent::T_Trigger));
-    else if(bench.character.characterProp) {
-      const auto impulse=bench.character.characterRideDirection*(5.f*bench.character.characterProp->body.mass());
-      const bool accepted=bench.character.characterProp->body.addImpulse(impulse,&pl);
-      event("character_ride_impulse","\"mass_kg\":"+ragdollNumber(bench.character.characterProp->body.mass())+
-        ",\"impulse_ns\":"+ragdollVector(impulse)+",\"accepted\":"+(accepted?"true":"false")+
-        ",\"velocity_cm_s\":"+ragdollVector(bench.character.characterProp->body.velocity()));
-      }
-    }
-  else if(c=="character" && a.size()==2 && a[1]=="ride-checkpoint") {
-    if(bench.character.characterRiding)characterRideCheckpoint(bench.character,w,pl);
-    }
-#ifdef OPENGOTHIC_ENABLE_APP_CADENCE
-  else if(c=="character" && a.size()==3 && a[1]=="measure") {
-    if(!AppCadence::normalClock() || !AppCadence::arm(a[2]=="on")) {arenaAbort("character normal cadence arm failed");return;}
-    bench.character.characterMeasuring=true;bench.character.characterHasWall=false;bench.character.characterMeasureStart=w.tickCount();
-    AppCadence::counts(true,1,0,uint32_t(w.physic()->physicsStats().bodies),0,0);
-    event("character_measure_begin","\"cv_enabled\":"+std::string(Gothic::physicsFlags().characterVirtual?"true":"false"));
-    }
-  else if(c=="character" && a.size()==2 && a[1]=="report") {
-    bench.character.characterMeasuring=false;
-    AppCadence::counts(false,1,0,uint32_t(w.physic()->physicsStats().bodies),0,0);
-    event("character_measure_end","\"frames\":"+std::to_string(bench.character.characterFrames.size()));
-    }
-#endif
+  else if(characterCommand(bench.character,characterContext(),a,w,pl,ctrl)) return;
   else if(Resources::isHeadless() && c=="cheat" && a.size()==2 && a[1]=="god") {
     // Marvin also draws a notification with a GPU font. The CPU runner needs the same game flag.
     Gothic::inst().setGodMode(!Gothic::inst().isGodMode());
@@ -9484,34 +8966,8 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
   else if(c=="item-wake" && a.size()==2 && a[1]=="begin")itemWakeBegin(w,pl);
   else if(c=="item-wake" && a.size()==2 && a[1]=="checkpoint")itemWakeCheckpoint(w);
   else if(c=="item-wake" && a.size()==2 && a[1]=="event-debris")itemWakeEventDebris(w,pl);
-  else if(c=="placed-items" && a.size()==2 && a[1]=="floor")placedItemsFloor(bench.placedItems,w,pl);
-  else if(c=="placed-items" && a.size()==2 && a[1]=="walk")placedItemsWalk(bench.placedItems,w,pl);
-  else if(c=="placed-items" && a.size()==2 && a[1]=="walk-report")placedItemsWalkReport(bench.placedItems,w,pl);
-  else if(c=="placed-items" && a.size()==2 && a[1]=="arrow-ready")placedItemsArrowReady(bench.placedItems,w,pl);
-  else if(c=="placed-items" && a.size()==2 && a[1]=="arrow")placedItemsArrow(bench.placedItems,w,pl);
-  else if(c=="placed-items" && a.size()==2 && a[1]=="arrow-report")placedItemsArrowReport(bench.placedItems,w);
-  else if(c=="placed-items" && a.size()==2 && a[1]=="table")placedItemsTable(bench.placedItems,w,pl);
-  else if(c=="placed-items" && a.size()==2 && a[1]=="owned-table")placedItemsTable(bench.placedItems,w,pl,true);
-  else if(c=="placed-items" && a.size()==2 && a[1]=="table-push")placedItemsTablePush(bench.placedItems,w,pl);
-  else if(c=="placed-items" && a.size()==2 && a[1]=="table-report")placedItemsTableReport(bench.placedItems,w);
-  else if(c=="placed-items" && a.size()==2 && a[1]=="save")placedItemsSave(w);
-  else if(c=="placed-items" && a.size()==2 && a[1]=="snapshot")placedItemsSnapshot(w,"before");
-  else if(c=="placed-items" && a.size()==2 && a[1]=="initial")placedItemsSnapshot(w,"initial",w.tickCount());
-  else if(c=="placed-items" && a.size()==2 && a[1]=="pickup-ready")placedItemsPickupReady(bench.placedItems,w,pl);
-  else if(c=="placed-items" && a.size()==2 && a[1]=="pickup")placedItemsPickup(bench.placedItems,w,pl,ctrl);
-  else if(c=="placed-items" && a.size()==2 && a[1]=="pickup-report")placedItemsPickupReport(bench.placedItems,w,pl);
-  else if(c=="placed-items" && a.size()==2 && a[1]=="census")placedItemsCensus(w);
-  else if(c=="placed-items" && a.size()==2 && a[1]=="probe")placedItemsProbe(bench.placedItems,w,pl);
-  else if(c=="placed-items" && (a.size()==3 || (a.size()==4 && a[3]=="control")) && a[1]=="diagnose")
-    placedItemsDiagnose(bench.placedItems,w,pl,uint32_t(std::stoul(a[2])),a.size()==4);
-  else if(c=="placed-items" && a.size()==2 && a[1]=="performance")placedItemsPerformance(bench.placedItems,w,pl);
-  else if(c=="placed-items" && a.size()==2 && a[1]=="performance-report")placedItemsPerformanceReport(bench.placedItems,w);
-  else if(c=="item-hulls" && a.size()==2 && a[1]=="census")itemHullCensus(w);
-  else if(c=="item-hulls" && a.size()==3 && a[1]=="setup")itemHullSetup(bench.itemHulls,w,pl,a[2]);
-  else if(c=="item-hulls" && a.size()==2 && a[1]=="report")itemHullReport(bench.itemHulls,w);
-  else if(c=="item-hulls" && a.size()==2 && a[1]=="clear") {
-    itemHullClear(bench.itemHulls,w);pl.setPosition(bench.itemHulls.itemHullHero);pl.updateTransform();
-    }
+  else if(placedItemsCommand(bench.placedItems,a,w,pl,ctrl)) return;
+  else if(itemHullsCommand(bench.itemHulls,a,w,pl)) return;
   else if(c=="physics" && a.size()>1 && a[1]=="dump") {
     physicsDump(w,pl,size_t(std::clamp(num(a,2,100000),1.f,1000000.f)),uint32_t(num(a,3,73013)),a.size()>4 ? a[4] : "");
     }
@@ -9599,13 +9055,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     bench.destructionMeleeRunning=true;bench.destructionMeleeNext=w.tickCount();
     bench.destructionMeleeDeadline=w.tickCount()+90000;bench.waitUntil=bench.time+90034;
     }
-  else if(c=="destruction2" && a.size()==2 && (a[1]=="checkpoint" || a[1]=="stand")) a[1]=="checkpoint" ? destructionCheckpoint(w) : fracturePiecesStand(bench.destructionMeleeActor,bench.destructionMeleeStand,bench.destructionMeleeFacing);
-  else if(c=="destruction2" && a.size()==8 && a[1]=="view") {
-    // view <camera xyz> <target xyz>: centimetres from the centre of the prop, held after the break
-    const auto view=fracturePiecesView(w,bench.destructionIds,Vec3(num(a,2,0),num(a,3,0),num(a,4,0)),Vec3(num(a,5,0),num(a,6,0),num(a,7,0)));
-    if(!view) {arenaAbort("destruction view needs a fixture prop");return;}
-    bench.cam=C_Hold;bench.cutPending=true;lookFrom(view->first,view->second);
-    }
+  else if(fracturePiecesCommand(bench.destructionIds,bench.destructionMeleeActor,bench.destructionMeleeStand,bench.destructionMeleeFacing,bench.cam,bench.cutPending,a,w)) return;
   else if(c=="destruction2" && (a.size()==2 || a.size()==3 || (a.size()==4 && a[3]=="npc")) && a[1]=="farm")
     destructionFarmSetup(w,pl,uint32_t(num(a,2,19355)),a.size()==4);
   else if(c=="destruction2" && a.size()==2 && a[1]=="farm-nearby") destructionFarmSetupNext(w,pl);
@@ -9800,105 +9250,13 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     arenaAbort("cloth timing requires a build with OPENGOTHIC_ENABLE_APP_CADENCE=ON");
     }
 #endif
-  else if(c=="water" && a.size()==2 && (a[1]=="on" || a[1]=="off")) {
-    Gothic::settingsSetI("GAME","buoyancy",a[1]=="on");
-    w.physic()->setBuoyancyEnabled(a[1]=="on");
-    }
-  else if(c=="water" && a.size()==3 && a[1]=="setup")prepareWaterFixture(bench.water,waterContext(),w,pl,a[2]);
-  else if(c=="water-bodies" && a.size()==3 && a[1]=="setup") {
-    if(a[2]=="deep")prepareSpellFixture(w,pl,"wind");
-    prepareWaterBodiesFixture(bench.water,waterContext(),w,pl,a[2]);
-    }
-  else if(c=="water-bodies" && a.size()==2 && a[1]=="kill-human") {
-    if(bench.water.actors.empty() || bench.water.caseName!="bodies-deep" || bench.water.actors.front().npc->isDown()) {
-      arenaAbort("water corpse kill requires the living human at the prepared water lip");return;
-      }
-    bench.water.killOnThrow=true;
-    event("water_bodies_death_armed","\"actor_id\":"+std::to_string(w.npcId(bench.water.actors.front().npc))+
-      ",\"minimum_wind_speed_cm_s\":100,\"minimum_displacement_cm\":50");
-    }
-  else if(c=="water-bodies" && a.size()==3 && a[1]=="checkpoint")waterBodiesCheckpoint(bench.water,waterContext(),w,a[2]);
-  else if(c=="water-bodies" && a.size()==3 && a[1]=="initial")waterBodiesInitial(bench.water,waterContext(),w,pl,a[2]);
-  else if(c=="water-bodies" && a.size()==2 && a[1]=="reset-motion") {
-    bench.water.reference.clear();bench.water.travel.clear();bench.water.sample=uint64_t(-1);waterFields(bench.water,waterContext(),w);
-    waterBodiesCheckpoint(bench.water,waterContext(),w,"motion-reference");
-    }
-  else if(c=="water-bodies" && a.size()==3 && a[1]=="save") {
-    try {
-      if(bench.water.actors.empty() || std::any_of(bench.water.actors.begin(),bench.water.actors.end(),[](const auto& actor) {
-        return !actor.npc->ragdollBody() || !actor.npc->ragdollBody()->isSleeping();
-        })) {arenaAbort("water body save requires every observed corpse to have slept");return;}
-      waterBodiesCheckpoint(bench.water,waterContext(),w,"saved");saveMovableSession(w,a[2]);
-      }
-    catch(const std::exception& error) {arenaAbort(error.what());}
-    }
-  else if(c=="water-bodies" && a.size()==3 && a[1]=="loot-ready")waterBodiesLootReady(bench.water,w,pl,a[2]);
-  else if(c=="water-bodies" && a.size()==2 && a[1]=="loot")waterBodiesLoot(bench.water,waterContext(),w,pl,ctrl);
+  else if(waterCommand(bench.water,waterContext(),a,w,pl,ctrl)) return;
   else if(c=="item-save" && a.size()==2 && a[1]=="initial") {
     arenaAbort("item save initial must be the first scenario command before simulation");
     }
   else if(c=="item-save" && a.size()==2 && a[1]=="report") {
     try {savedItemReport(w);}
     catch(const std::exception& error) {arenaAbort(error.what());}
-    }
-  else if(c=="water" && a.size()==2 && a[1]=="torch")waterTorch(bench.water,w,pl);
-  else if(c=="water" && a.size()==3 && a[1]=="checkpoint")waterCheckpoint(bench.water,waterContext(),w,a[2]);
-  else if(c=="water" && a.size()==3 && a[1]=="initial")waterInitial(bench.water,waterContext(),w,pl,ctrl,a[2]);
-  else if(c=="water" && a.size()==2 && a[1]=="push-ready")prepareWaterSpell(bench.water,waterContext(),w,pl,true);
-  else if(c=="water" && a.size()==2 && a[1]=="fireball-ready")prepareWaterSpell(bench.water,waterContext(),w,pl,false);
-  else if(c=="water" && a.size()==3 && a[1]=="save") {
-    try {
-      for(const auto& body:w.physic()->waterBodySnapshot())
-        if(waterOwns(bench.water,body) && !body.sleeping) {
-          arenaAbort("water save requires every observed body to have settled and slept");return;
-          }
-      waterCheckpoint(bench.water,waterContext(),w,"saved");saveMovableSession(w,a[2]);
-      }
-    catch(const std::exception& error) {arenaAbort(error.what());}
-    }
-  else if(c=="water" && a.size()==2 && a[1]=="swim-ready") {
-    const auto all=w.physic()->movableVobSnapshot();
-    const auto barrel=std::find_if(all.begin(),all.end(),[&](const auto& body){return body.zenId==bench.water.barrelZen;});
-    if(barrel==all.end() || barrel->broken) {arenaAbort("water swim requires the intact native barrel");return;}
-    auto center=(barrel->localBounds[0]+barrel->localBounds[1])*.5f;barrel->transform.project(center);
-    Vec3 surface;
-    if(!waterProbe(w,Vec3(center.x,bench.water.center.y,center.z),160.f,6000.f,surface)) {
-      arenaAbort("water swim barrel has not reached deep enough real water");return;
-      }
-    pl.closeWeapon(true);pl.clearAiQueue();pl.stopWalking();pl.setDirection(bench.water.direction);
-    pl.setPosition(surface-bench.water.direction*280.f-Vec3(0,100,0));pl.updateTransform();
-    bench.water.heroStart=pl.position();bench.water.heroLast=pl.position();bench.water.heroMaxStep=0;
-    bench.water.swim=true;bench.water.sawSwim=false;
-    bench.cam=C_Hold;lookFrom(surface-bench.water.direction*600.f+Vec3(250,250,0),surface);
-    event("water_swim_begin","\"barrel_cm\":"+ragdollVector(center)+",\"hero_cm\":"+ragdollVector(pl.position())+
-      ",\"direction\":"+ragdollVector(bench.water.direction));
-    }
-  else if(c=="water" && a.size()==2 && a[1]=="pickup-ready") {
-    if(bench.water.items.empty()) {arenaAbort("water pickup requires the fixture arrow");return;}
-    bench.water.swim=false;
-    const auto point=bench.water.items.front()->midPosition();
-    const auto floor=w.physic()->landRay(point+Vec3(70,100,0),6000.f);
-    if(!floor.hasCol) {arenaAbort("water pickup requires real ground beneath the item");return;}
-    const auto water=w.physic()->waterRay(floor.v+Vec3(0,.1f,0),0);
-    pl.closeWeapon(true);pl.clearAiQueue();pl.stopWalking();
-    auto at=point+Vec3(70,0,0);at.y=water.hasCol && water.wdepth-floor.v.y>150.f?water.wdepth-100.f:floor.v.y;
-    pl.setPosition(at);pl.setDirection(point-at);pl.updateTransform();
-    event("water_pickup_ready","\"item_cm\":"+ragdollVector(point)+",\"hero_cm\":"+ragdollVector(at));
-    }
-  else if(c=="water" && a.size()==2 && a[1]=="pickup") {
-    if(bench.water.items.empty()) {arenaAbort("water pickup fixture arrow is absent");return;}
-    auto* item=bench.water.items.front();
-    const auto symbol=item->clsId();
-    const auto before=pl.itemCount(symbol);
-    const auto point=item->midPosition();const auto state=pl.bodyStateMasked();
-    const bool swimming=pl.isSwim();
-    const bool accepted=ctrl.interact(*item);
-    if(accepted)bench.water.items.erase(bench.water.items.begin());
-    event("water_pickup","\"accepted\":"+std::string(accepted?"true":"false")+
-      ",\"body_state\":"+std::to_string(unsigned(state))+",\"swimming\":"+(swimming?"true":"false")+
-      ",\"inventory_before\":"+std::to_string(before)+",\"inventory_after\":"+std::to_string(pl.itemCount(symbol))+
-      ",\"distance_cm\":"+ragdollNumber((pl.position()-point).length())+
-      ",\"item_cm\":"+ragdollVector(point));
     }
   else if(c=="noise" && a.size()==2 && (a[1]=="on" || a[1]=="off")) {
     Gothic::settingsSetI("GAME","physics_noise",a[1]=="on");
@@ -10000,21 +9358,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
   else if(c=="own-mesh" && a.size()==2 && a[1]=="clearance")ownMeshClearance(w,pl);
   else if(c=="own-mesh" && a.size()==2 && a[1]=="walk")ownMeshWalk(w,pl);
   else if(c=="own-mesh" && a.size()==2 && a[1]=="checkpoint")ownMeshCheckpoint(w,pl);
-  else if(c=="furniture-parts" && a.size()==2 && a[1]=="setup") furnitureSetup(bench.furnitureParts,w,pl);
-  else if(c=="furniture-parts" && a.size()==2 && a[1]=="trace") furnitureTraceBegin(bench.furnitureParts,w);
-  else if(c=="furniture-parts" && a.size()==2 && a[1]=="trace-report") furnitureTraceReport(bench.furnitureParts,w);
-  else if(c=="furniture-parts" && a.size()==2 && a[1]=="remove-table") furnitureRemoveTable(bench.furnitureParts,w);
-  else if(c=="furniture-parts" && a.size()==2 && a[1]=="table-items") furnitureTableItems(bench.furnitureParts,w,pl);
-  else if(c=="furniture-parts" && a.size()==2 && a[1]=="shelf-item") furnitureCupboardItem(bench.furnitureParts,w,pl);
-  else if(c=="furniture-parts" && a.size()==2 && a[1]=="items-report") furnitureItemReport(bench.furnitureParts,w);
-  else if(c=="furniture-parts" && a.size()==2 && a[1]=="clear-items") furnitureClearDrops(bench.furnitureParts,w);
-  else if(c=="furniture-parts" && a.size()==2 && a[1]=="ragdoll") furnitureRagdoll(bench.furnitureParts,w,pl);
-  else if(c=="furniture-parts" && a.size()==2 && a[1]=="ragdoll-report") furnitureRagdollReport(bench.furnitureParts,w);
-  else if(c=="furniture-parts" && a.size()==2 && a[1]=="walk") furnitureWalk(bench.furnitureParts,w,pl);
-  else if(c=="furniture-parts" && a.size()==2 && a[1]=="npc-walk") furnitureWalk(bench.furnitureParts,w,pl,true);
-  else if(c=="furniture-parts" && a.size()==2 && a[1]=="walk-report") furnitureWalkReport(bench.furnitureParts,w,pl);
-  else if(c=="furniture-parts" && a.size()==2 && a[1]=="performance") furniturePerformance(bench.furnitureParts,w,pl);
-  else if(c=="furniture-parts" && a.size()==2 && a[1]=="performance-report") furniturePerformanceReport(bench.furnitureParts,w);
+  else if(furniturePartsCommand(bench.furnitureParts,a,w,pl)) return;
   else if(c=="movable" && a.size()==2 && (a[1]=="on" || a[1]=="off")) {
     Gothic::settingsSetI("GAME","movable_vobs",a[1]=="on");
     w.physic()->setMovableVobsEnabled(a[1]=="on");
@@ -12231,62 +11575,7 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
                   double(st.reload),double(st.need),double(st.strength),double(st.steadyDraw),double(st.burstDraw));
     say(buf);
     }
-  else if(c=="npctier") {
-    // npctier <npc> full|simplified|auto: a runtime-only override of one actor.
-    Npc* npc=a.size()==3?findNpc(w,pl,a[1]):nullptr;
-    if(!npc || (a[2]!="full" && a[2]!="simplified" && a[2]!="auto")) {
-      arenaAbort("npctier expects an existing NPC and full, simplified or auto");
-      return;
-      }
-    npc->setSimTierOverride(a[2]=="auto"?std::nullopt:
-      std::optional<NpcSimTier>(a[2]=="full"?NpcSimTier::Full:NpcSimTier::Simplified));
-    event("npc_tier_override","\"npc\":"+jsonStr(symName(w,npc))+",\"mode\":"+jsonStr(a[2]));
-    }
-  else if(c=="npctier-test") {
-    // npctier-test <npc> <start waypoint> <end waypoint>: 20 walking legs and
-    // 20 turns, each with one switch in either direction while still active.
-    Npc* npc=a.size()==4?findNpc(w,pl,a[1]):nullptr;
-    const auto* start=a.size()==4?w.findPoint(a[2],false):nullptr;
-    const auto* end=a.size()==4?w.findPoint(a[3],false):nullptr;
-    if(!npc || npc==&pl || !start || !end || start==end) {
-      arenaAbort("npctier-test expects an NPC and two distinct existing waypoints");
-      return;
-      }
-    bench.npcTierTest=Bench::NpcTierTest();
-    auto& test=bench.npcTierTest;
-    test.npc=npc;test.ends[0]=start;test.ends[1]=end;
-    test.deadline=w.tickCount()+1800000;
-    npc->setInteraction(nullptr,true);npc->clearAiQueue();npc->clearState(false);
-    npc->setExternalControl(true);npc->stopWalking();npc->closeWeapon(true);
-    npc->setSimTierOverride(NpcSimTier::Full);npc->setWalkMode(WalkBit::WM_Walk);
-    const auto floor=w.physic()->landRay(start->position()+Vec3(0,100,0),300.f);
-    if(!floor.hasCol) {test.npc=nullptr;arenaAbort("npctier-test start waypoint has no ground");return;}
-    npc->setPosition(floor.v);npc->updateTransform();
-    test.started=npc->position();test.lastPosition=npc->position();test.lastAngle=npc->rotation();
-    npc->aiPush(AiQueue::aiGoToPoint(*end));
-    event("npc_tier_transition_start","\"npc\":"+jsonStr(symName(w,npc))+",\"from\":"+jsonStr(start->name)+
-      ",\"to\":"+jsonStr(end->name));
-    }
-  else if(c=="npcspeed") {
-    const auto* start=a.size()==2?w.findPoint(a[1],false):nullptr;
-    const WayPoint* end=nullptr;
-    float length=0;
-    if(start)for(const auto& connection:start->connections()) {
-      const auto edge=connection.point->groundPos-start->groundPos;
-      const float distance=std::hypot(edge.x,edge.z);
-      if(distance>length) {end=connection.point;length=distance;}
-      }
-    if(!start || !end || length<500.f) {
-      arenaAbort("npcspeed expects an authored waypoint with a connected edge at least 5 m long");return;
-      }
-    // This fresh calibration world has no ambient combat, crowding or other
-    // actors using the edge; the player's distant position is retained.
-    for(uint32_t i=w.npcCount();i>0;--i)
-      if(auto* npc=w.npcById(i-1);npc!=&pl)w.removeNpc(*npc);
-    bench.npcSpeedTest=Bench::NpcSpeedTest();
-    auto& test=bench.npcSpeedTest;test.start=start;test.end=end;test.length=length;
-    npcSpeedPrepare(bench.npcSpeedTest,w);
-    }
+  else if(npcSimCommand(bench.npcDuel,bench.npcTierTest,bench.npcSpeedTest,bench.pc,bench.prog,a,w,pl)) return;
   else if(c=="npcday") {
     // npcday <game minutes> [period minutes 5] [shared]: journal every NPC over continuous game time
     // (common/npcdayjournal.h) into npc-day*.csv; the scenario waits until the time has passed. Each NPC gets
@@ -12459,64 +11748,6 @@ void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl) {
     event(bodyApi ? "body_api_setup" : "body_observe_setup","\"seed\":"+std::to_string(seed)+",\"t_game_ms\":"+
           std::to_string(bench.observeFrom)+",\"duration_ms\":"+std::to_string(duration)+
           ",\"ownership\":\"native\",\"actors\":"+actors+"]");
-    }
-  else if(c=="npcduel") {
-    auto fail=[&](const std::string& reason) {
-      say("npcduel: "+reason);event("npc_duel_error","\"reason\":"+jsonStr(reason));
-      bench.pc=bench.prog.size();
-      };
-    if(a.size()<4 || a.size()>5) {fail("expected attacker defender seed [timeout_ms]");return;}
-    const auto first=w.script().findSymbolIndex(a[1]), second=w.script().findSymbolIndex(a[2]);
-    const auto attack=w.script().findSymbolIndex("ZS_ATTACK");
-    if(first==size_t(-1) || second==size_t(-1) || attack==size_t(-1)) {fail("missing script instance or ZS_ATTACK");return;}
-    const float an=pl.rotation()*float(M_PI)/180.f;
-    const Vec3 forward(std::cos(an),0,std::sin(an)), side(-forward.z,0,forward.x);
-    const Vec3 center=pl.position()+forward*1200.f;
-    Vec3 pos[]={center-side*150.f,center+side*150.f};
-    for(auto& p:pos) {
-      DynamicWorld::RayLandResult ground;
-      for(float y=p.y+1500;y>p.y-1500 && !ground.hasCol;y-=400)
-        ground=w.physic()->ray({p.x,y,p.z},{p.x,y-450,p.z});
-      if(!ground.hasCol) {fail("arena ground not found");return;}
-      p.y=ground.v.y;
-      }
-    auto& duel=bench.npcDuel;
-    duel=Bench::NpcDuel{};
-    duel.seed=uint32_t(std::stoul(a[3]));
-    const uint64_t timeout=a.size()>4 ? std::stoull(a[4]) : 180000;
-    w.script().setSeed(duel.seed);
-    duel.actors[0]=w.addNpc(first,pos[0]);duel.actors[1]=w.addNpc(second,pos[1]);
-    for(size_t i=0;i<2;++i) {
-      auto* npc=duel.actors[i];
-      if(npc==nullptr || npc->isMonster() || npc->handle().guild>=16) {
-        for(auto*& copy:duel.actors)if(copy) {w.removeNpc(*copy);copy=nullptr;}
-        fail("two human NPCs with guild < 16 are required");return;
-        }
-      duel.before[i]=npcDuelSnapshot(w,*npc);
-      if(auto* weapon=npc->currentMeleeWeapon())duel.weapons[i]=weapon->clsId();
-      auto& flags=npc->handle().flags;
-      flags=daedalus::NpcFlag(uint32_t(flags)&~uint32_t(daedalus::NpcFlag::IMMORTAL));
-      npc->setDirection(pos[1-i]-pos[i]);npc->updateTransform();
-      npc->setProcessPolicy(NpcProcessPolicy::AiNormal);
-      }
-    pl.handle().flags=daedalus::NpcFlag(uint32_t(pl.handle().flags)|uint32_t(daedalus::NpcFlag::IMMORTAL));
-    pl.clearAiQueue();pl.clearGoTo();pl.clearSpeed();
-    Npc& npc=*duel.actors[0];Npc& target=*duel.actors[1];
-    // Same nonlethal start as npc_act fight{deed:true}; the defender retains its constructor state.
-    auto& aiv=npc.handle().aivar;
-    aiv[size_t(HeroDeed::constant(npc,"AIV_ATTACKREASON"))]=HeroDeed::constant(npc,"AR_NONE");
-    aiv[size_t(HeroDeed::constant(npc,"AIV_LASTFIGHTAGAINSTPLAYER"))]=HeroDeed::constant(npc,"FIGHT_CANCEL",0);
-    aiv[size_t(HeroDeed::constant(npc,"AIV_LASTFIGHTCOMMENT"))]=0;
-    npc.stopListening();npc.thinkOfAnswer(0);npc.clearAiQueue();
-    if(!npc.startState(ScriptFn(attack),"",gtime::endOfTime(),true)) {
-      for(auto*& copy:duel.actors) {w.removeNpc(*copy);copy=nullptr;}
-      fail("cannot start ZS_ATTACK");return;
-      }
-    npc.setOther(&target);npc.setVictim(nullptr);npc.setTarget(&target);
-    npc.setNonlethalFight(target);npc.setServerDeed("attack",&target);
-    if(npc.weaponState()==WeaponState::NoWeapon)npc.aiPush(AiQueue::aiDrawWeapon());
-    duel.from=w.tickCount();duel.end=duel.from+timeout;duel.active=true;
-    Gothic::inst().onCombatHit.bind(&duel,&Bench::NpcDuel::hit);
     }
   else if(c=="bodyduel") {
     // bodyduel <seed> [timeout ms]: native human melee reference, both participants mortal. The

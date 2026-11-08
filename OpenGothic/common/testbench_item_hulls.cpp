@@ -435,4 +435,16 @@ void itemHullReport(ItemHulls& state,World& world) {
     ",\"pass\":"+(!enabled || reportOnly || pass?"true":"false"));
   }
 
+bool itemHullsCommand(ItemHulls& state,const std::vector<std::string>& a,World& w,Npc& pl) {
+  const std::string& c = a[0];
+  if(c=="item-hulls" && a.size()==2 && a[1]=="census")itemHullCensus(w);
+  else if(c=="item-hulls" && a.size()==3 && a[1]=="setup")itemHullSetup(state,w,pl,a[2]);
+  else if(c=="item-hulls" && a.size()==2 && a[1]=="report")itemHullReport(state,w);
+  else if(c=="item-hulls" && a.size()==2 && a[1]=="clear") {
+    itemHullClear(state,w);pl.setPosition(state.itemHullHero);pl.updateTransform();
+    }
+  else return false;
+  return true;
+  }
+
 }
