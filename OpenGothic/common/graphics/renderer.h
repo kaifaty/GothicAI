@@ -234,6 +234,7 @@ class Renderer final {
       Tempest::TextureFormat    aoFormat = Tempest::TextureFormat::R8;
       Tempest::StorageImage     ssaoBuf;
       Tempest::StorageImage     ssaoBlur;
+      Tempest::StorageImage     depthMips; // ssao_mips.comp
       } ssao;
 
     struct Cmaa2 {
