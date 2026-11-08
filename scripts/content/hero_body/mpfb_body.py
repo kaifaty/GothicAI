@@ -44,7 +44,14 @@ GIRTH_TARGETS = {'neck': ['measure-neck-circ'], 'upperarm': ['lr-upperarm-scale-
                  'thigh': ['lr-upperleg-scale-horiz', 'lr-upperleg-scale-depth'], 'calf': ['lr-lowerleg-scale-horiz'],
                  'waist': ['measure-waist-circ'], 'hips': ['measure-hips-circ']}
 GREG = float(os.environ.get('GREG', 2.0))  # cm of girth misfit worth a full target
-TRAPS = float(os.environ.get('TRAPS', 3.0))  # cm: the upper trapezius, from the neck to the shoulder (no MPFB target)
+TRAPS = float(os.environ.get('TRAPS', 3.0))
+# RIG=1: the body for the render skeleton (reports/engine/2026-11-modern-skeleton): MPFB's macros only, no fit to
+# HUMANS.MDH, no girth levers, no hand-made trapezius; one uniform scale puts his hips at Gothic's hip height
+RIG = os.environ.get('RIG') == '1'
+if RIG:
+    MACRO.update(muscle=float(os.environ.get('MUSCLE', 0.75)), weight=float(os.environ.get('WEIGHT', 0.6)), proportions=1.0)
+    STYLE = {'bulge-incr': float(os.environ.get('BULGE', 1.0))}
+    TRAPS = 0.0  # cm: the upper trapezius, from the neck to the shoulder (no MPFB target)
 
 # --- Gothic rest joints (HUMANS.MDH), heights above the floor, cm
 FLOOR = 99.95
@@ -202,10 +209,15 @@ def gauss_newton(names, measure, goal, reg, w, iters, fixed_scale=None):
 
 goal = np.array([GOAL[k] for k in KEYS])
 w = np.zeros(len(TARGETS))
-w, s = gauss_newton(TARGETS, measures, goal, REG, w, 4)            # joints onto the skeleton
+if RIG:
+    gw = np.zeros(0); GNAMES = []
+    s = float(GOAL['h_hip'] / measures(coords())[0])
+else:
+    w, s = gauss_newton(TARGETS, measures, goal, REG, w, 4)            # joints onto the skeleton
 GNAMES = [t for ts in GIRTH_TARGETS.values() for t in ts]; ggoal = np.array([GIRTH[k] for k in GIRTH_TARGETS])
-gw, _ = gauss_newton(GNAMES, girths, ggoal, GREG, np.zeros(len(GNAMES)), 6, fixed_scale=s)   # then the girths
-w, s = gauss_newton(TARGETS, measures, goal, REG, w, 2)            # the girths moved the joints a little
+if not RIG:
+    gw, _ = gauss_newton(GNAMES, girths, ggoal, GREG, np.zeros(len(GNAMES)), 6, fixed_scale=s)   # then the girths
+    w, s = gauss_newton(TARGETS, measures, goal, REG, w, 2)            # the girths moved the joints a little
 co = coords(); m = measures(co); g = girths(co)
 print('TARGETS', dict(zip(TARGETS, np.round(w, 3).tolist())))
 print('GIRTH TARGETS', dict(zip(GNAMES, np.round(gw, 3).tolist())))
@@ -257,7 +269,7 @@ for side, sx in (('L', 'l'), ('R', 'r')):
     foot = cb[((cb[:, 0] > 0) if side == 'L' else (cb[:, 0] < 0)) & (cb[:, 2] < 6)]
     L[f'toe_{side}'] = T(foot[np.argmin(foot[:, 1])]); L[f'heel_{side}'] = T(foot[np.argmax(foot[:, 1])])
 json.dump({'landmarks': L, 'scale': s, 'ground_cm': ground, 'style': STYLE, 'targets': dict(zip(TARGETS, w.tolist())),
-           'girth_targets': dict(zip(GNAMES, gw.tolist())), 'girths_cm': dict(zip(GIRTH_TARGETS, (s * g).tolist())),
+           'girth_targets': dict(zip(GNAMES, gw.tolist())), 'girths_cm': dict(zip(GIRTH_TARGETS, (s * g).tolist())), 'rig': RIG,
            'trapezius_cm': TRAPS, 'macro': MACRO},
           open(os.path.join(OUT, 'landmarks.json'), 'w'), indent=1)
 
