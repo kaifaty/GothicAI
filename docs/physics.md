@@ -220,7 +220,7 @@
   - `stepSimulation` вызывается, только когда такие есть (`collisionworld.cpp:310`);
   - уснувший предмет выключается из физики навсегда (`:380-387`);
   - удар о землю даёт звук по силе удара (`dynamicworld.cpp:665`).
-- **Лучи:** `ray` (32 вызова, из них 23 в стенде), `landRay`, `landSweep`, `waterRay`, `cameraRay`, `rayNpc`, `rayArrow`, `soundOclusion` (`:870`). На лучах стоит зрение NPC `Npc::canSeeNpc` (`npc.cpp:5022`), а от него — восприятие моста (`npcview.cpp:188`, `:208`) и правила лжи.
+- **Лучи:** `ray` (32 вызова, из них 23 в стенде), `landRay`, `landSweep`, `waterRay`, `cameraRay`, `rayNpc`, `rayArrow`, `soundOclusion` (`:870`). На лучах стоит зрение NPC [`Npc::canSeeNpc`](../OpenGothic/common/world/objects/npc_perception.cpp), а от него — восприятие моста (`npcview.cpp:188`, `:208`) и правила лжи.
 - **Лучи:** у broadphase один стек на все лучи (`rayTestStk`, `collisionworld.cpp:77`). Проверка миграции выявила, что параллельное обновление NPC вызывает эти лучи одновременно; это гонка исходного Bullet, а не безопасный однопоточный режим. Диагностическая блокировка обхода в отдельной исходной сборке устранила расхождения контактов foot IK на проверенных 495 кадрах; подробности — в [отчёте проверки](../reports/physics/2026-10-14-jolt-stage1/validation-notes.md).
 
 **Анимация — заготовки для тел:**
