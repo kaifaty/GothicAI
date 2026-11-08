@@ -343,8 +343,11 @@ until the pieces sleep (3 m, slightly above, the hero strikes towards +z) and
 `destruction2 view <camera xyz> <target xyz>` places the held camera in centimetres from the centre
 of the prop. Each break writes `destruction2_pieces` 0.5, 1, 2, 5, 13 and 15 s after it: per piece
 the centre's travel, the angle of a flat piece's face and long axis from vertical, sleep, speed and
-`fell` (centre below the floor); at 15 s the native hull penetration into a floor plane and into the
-other pieces, the visible (vertex) floor penetration and the 13→15 s jitter. Run with the
+`fell` (centre below the floor); at 15 s the native hull penetration into a floor plane, into the
+real ground (`native_floor_penetration_cm`, Jolt `CollideShape` against landscape and static objects)
+and into the other pieces (format 3 METAL–WOOD pairs of one break are skipped: they never collide),
+the visible (vertex) penetration below that plane and below the ground under each vertex
+(`visible_terrain_penetration_cm`), hoops on the ground (`metal_on_ground`) and the 13→15 s jitter. Run with the
 `own-content-fracture` settings plus `TEMPEST_WINDOW_SIZE=1280x720`; `OPENGOTHIC_FRACTURE_MOTION`
 varies the version 3 piece motion. Inside a `movable measure` window the pieces are not sampled: the
 timed frames stay free of bench work.
