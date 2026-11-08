@@ -108,7 +108,6 @@ Gothic::Gothic() {
   defaults->set("GAME", "useGothic1Controls",  1);
   defaults->set("GAME", "highlightMeleeFocus", 0);
   defaults->set("GAME", "useQuickSaveKeys",    1);
-  defaults->set("GAME", "manualAim",           1); // the bow aimed by hand (game/archery)
   defaults->set("GAME", "bowDrawByStrength",   1); // strength sets a bow's draw speed and limit
   defaults->set("GAME", "npcManualAim",        1); // npc archers aim by hand too (game/archerai)
   defaults->set("GAME", "ragdoll",             1); // physical death/KO bodies; GAME/ragdoll=0 keeps animation-only behavior

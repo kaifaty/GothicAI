@@ -9,7 +9,6 @@ wait 500
 living on
 arrow setup
 wait 600
-manual on
 equip ItRw_Bow_L_01
 give ItRw_Arrow 30
 stats str 150 dex 150 bow 100

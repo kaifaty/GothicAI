@@ -28,7 +28,6 @@ put WOLF 160 0
 pin WOLF 160 0 -733
 wait 300
 cam lift off
-manual on
 aim off
 draw bow
 wait 1500
@@ -111,7 +110,6 @@ goto pos 14591 2349 -14597
 cheat full
 ani player S_RUN
 wait 400
-manual on
 aim off
 draw bow
 wait 1500
@@ -152,7 +150,6 @@ goto pos 14591 2349 -14597
 cheat full
 ani player S_RUN
 wait 400
-manual on
 aim off
 draw bow
 wait 1500
@@ -193,7 +190,6 @@ goto pos 14591 2349 -14597
 cheat full
 ani player S_RUN
 wait 400
-manual on
 draw bow
 wait 1500
 aimat WOLF body mouse
@@ -233,7 +229,6 @@ goto pos 14591 2349 -14597
 cheat full
 ani player S_RUN
 wait 400
-manual on
 draw bow
 wait 1500
 aimat WOLF body mouse
@@ -297,7 +292,6 @@ goto pos 14591 2349 -14597
 cheat full
 ani player S_RUN
 wait 400
-manual on
 draw bow
 wait 1500
 face 247.5
@@ -325,7 +319,6 @@ wait 400
 equip ItRw_Crossbow_L_01
 give ItRw_Bolt 100
 stats cbow 100 talent 0
-manual on
 draw bow
 wait 1500
 face 247.5
@@ -350,7 +343,6 @@ goto pos 14591 2349 -14597
 cheat full
 ani player S_RUN
 wait 400
-manual on
 draw bow
 wait 1500
 face 247.5

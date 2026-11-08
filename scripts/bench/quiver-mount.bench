@@ -16,7 +16,6 @@ overlay off
 goto NW_XARDAS_TOWER_VALLEY_091   # flat open ground
 face -106                         # a rock behind, open in front
 wait 500
-manual on
 equip ItRw_Bow_L_01
 arrows player 20
 insert Sheep

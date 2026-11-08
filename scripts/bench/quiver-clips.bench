@@ -11,7 +11,6 @@ overlay off
 goto NW_BIGFARM_VORPOSTEN1_01_RIGHTFIELD_02
 face 90
 wait 500
-manual on
 equip ItRw_Bow_L_01
 equip ITAR_Leather_L
 arrows player 20
