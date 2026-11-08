@@ -4,6 +4,9 @@
 
 Bench families are extracted into `common/testbench_<family>.cpp`, with shared state types and helpers in `testbench_internal.h`.
 The dispatcher, tick and reset remain in `testbench.cpp` for now.
+Healing observations, commands and checks live in `common/testbench_healing.cpp`; its `Healing` state
+in `testbench_internal.h` keeps the current use separate from walk-speed references retained across `begin`.
+Family functions take that state by reference; the dispatcher also passes the melee-shadow actors.
 
 Runs a scenario through the windowed game or the headless runner and records metrics and a report.
 Windowed scenarios can also capture video with a debug overlay and point at suspicious frames.
@@ -1510,7 +1513,8 @@ The native placed-Item contract also moves the mover-child Item before saving
 and checks its identity and exact matrix on reload. Linux builds and all four
 physics contracts pass after explicit signed Guild comparisons in the fixture.
 
-`OpenGothic/common/testbench.cpp`, inert unless `OPENGOTHIC_BENCH` is set. Hooks: the fixed time step and
+`OpenGothic/common/testbench.cpp` and `testbench_<family>.cpp` (including healing in
+`testbench_healing.cpp`), inert unless `OPENGOTHIC_BENCH` is set. Hooks: the fixed time step and
 the capture in `MainWindow` (in film mode the captured frame replaces the window's), the AI bridge's lines
 and voices (`TestBench::aiLine`, `aiVoiceEnd`, `aiHeard`, `aiBusy`), an npc's lines of the game and SVMs
 (`TestBench::npcOutput` in `Npc::nextAiAction`), the OpenAL loopback device in Tempest's

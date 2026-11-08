@@ -10,6 +10,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "game/constants.h"
@@ -23,6 +24,13 @@ class PlayerControl;
 class World;
 struct HeroDeed;
 enum PercType : uint8_t;
+
+class ClothBulletBenchDriver final {
+  public:
+    static void step(DynamicWorld& world,DynamicWorld::BulletBody& bullet,const Tempest::Vec3& direction,uint64_t dt) {
+      world.moveBullet(bullet,direction,dt);
+      }
+  };
 
 namespace testbench_detail {
 
@@ -154,6 +162,35 @@ struct FracturePieces {
   std::vector<Break> breaks;
   };
 
+struct Healing {
+  struct {
+    std::string label;
+    size_t item = size_t(-1), lastItems = 0;
+    uint64_t start = 0, firstHeal = 0, lastHeal = 0, lastConsume = 0, nextSecond = 0, strikeAt = 0, hotkeyAt = 0;
+    uint64_t paused = 0, savedAt = 0, savedPaused = 0, savedLastHeal = 0, savedNextSecond = 0;
+    size_t portions = 0, savedSamples = 0;
+    int hp = 0, healed = 0, damage = 0, savedHealed = 0, savedDamage = 0;
+    bool sawDrink = false;
+    bool armed = false, sawHand = false, heldWeapon = true, handLayer = false, leftInsert = false, sound = false;
+    bool leftHeld = true, sawLeftItem = false;
+    bool walking = false, baseline = false, walkOnly = true, actionExecuted = false;
+    bool hotkey = false, checkWalk = false;
+    WalkBit expectedWalk = WalkBit::WM_Run;
+    Npc* npc = nullptr;
+    uint64_t queueRunAt = 0;
+    WeaponState weapon = WeaponState::NoWeapon;
+    std::string clip, nativeClip, action, motion;
+    Tempest::Vec3 previous;
+    float distance = 0, previousYaw = 0, yawTravel = 0;
+    uint64_t observedAt = 0, handStart = 0, handEnd = 0, insertAt = 0, destroyAt = 0, movingMs = 0, strikeDelay = 0;
+    unsigned direction = 0;
+    size_t secondItem = size_t(-1);
+    std::vector<std::pair<uint64_t,int>> samples;
+    std::vector<uint8_t> saved;
+    } test;
+  float walkSpeed[2] = {};
+};
+
 struct NpcTierTest {
   Npc* npc = nullptr;
   const WayPoint* ends[2] = {};
@@ -197,6 +234,15 @@ struct NpcDuel {
   };
 
 extern std::string outDir;
+
+void say(const std::string& s);
+Tempest::Vec3 facing(const Npc& pl);
+Npc* findNpc(World& w, Npc& pl, const std::string& name);
+void exec(const std::string& line, World& w, Npc& pl, PlayerControl& ctrl);
+
+void healingObserve(Healing& state,World& world,Npc& player);
+void healingCommand(Healing& state,const std::vector<std::string>& a,World& world,Npc& player,PlayerControl& ctrl,
+                    const std::vector<Npc*>& meleeShadowActors);
 
 void event(std::string_view kind, const std::string& fields = {});
 std::string jsonStr(std::string_view s);
